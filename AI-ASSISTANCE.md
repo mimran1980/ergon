@@ -32,7 +32,9 @@ The observable output is constrained by live byte-for-byte comparisons against
 official `sbe-tool` Rust codecs, Java-produced official fixtures, upstream
 schemas, compile-fail proofs for illegal stage ordering, property tests, exact
 encoded-length matrices, malformed-buffer tests, zero-allocation checks, and
-performance gates at or below the 1.00x sbe-tool ceiling. That is strong
+a blocking performance gate against sbe-tool (ceiling 1.00x for most pairs,
+with the listed exceptions; an over-ceiling pair inside its A/A noise band
+passes as inconclusive: `sbe/BENCHMARKS.md`, "The gate"). That is strong
 evidence. It is not a substitute for independent production use.
 
 ## Known failure modes
@@ -53,10 +55,13 @@ pattern. A removed, skipped, or weakened test or gate is a blocking defect.
 
 ## Trust boundary, cost, and status
 
-Checked entry points (`wrap`, `decode`) return `Result`, validate extents once,
-then enter a private zero-check core. Public `*_unchecked` twins are not
-currently shipped. Unsafe is kept only where Rust borrowing requires it or a
-repeatable hot-path benchmark justifies it. The initial 0.1.0 release used
+Generated constructors come in three tiers: `try_*` (`try_wrap`,
+`try_decode`) return `Result` and validate extents once; the bare names
+(`wrap`, `decode`) panic on a short buffer (`decode` still returns a
+`Result` for a bad header field); `unsafe *_unchecked` twins skip
+the check and are for callers that prove the requirement themselves. Use
+`try_*` on untrusted input. Unsafe is kept only where Rust borrowing requires
+it or a repeatable hot-path benchmark justifies it. The initial 0.1.0 release used
 approximately 14 billion tokens (provider dashboards). Out-of-pocket spend for
 the intensive development period was about **$261** (DeepSeek pay-as-you-go
 $77.39, GLM plan $114, subscriptions $70). This is experimental 0.x software,

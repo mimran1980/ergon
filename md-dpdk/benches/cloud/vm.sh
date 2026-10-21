@@ -58,17 +58,8 @@
 #                            telemetry, never loss (info-: the agents' longest cycles and cycles over
 #                            threshold, back-pressure, status messages, flow control; host.sh
 #                            aeron_telemetry), which lib.sh writes as aeron rows
-#   vm.sh clockcheck [secs]  the clocks' read cost and the TSC's drift, on the app CPU
+#   vm.sh clockcheck [secs]  the clocks' read cost and the clients' clock's (quanta's) drift, on the app CPU
 #   vm.sh criterion          the clock Criterion bench (benches/clock.rs), on the app CPU
-#   vm.sh clockbench [quick|full] [<state>]  ergon-clock's benchmark (clock/bench, clockbench) against
-#                            quanta, minstant, std and the kernel's clocks, on the app CPU and the receiver
-#                            CPU (no driver runs then): the CSV on stdout, the table on stderr; full
-#                            (LAB_CLOCK_ONLY=1) adds 120 s of drift and the build without LTO run again
-#   vm.sh build-clock        (LAB_CLOCK_ONLY=1, in place of build) clockbench alone, with and without LTO
-#   vm.sh discipline <secs> [<state>]  (lab.sh LAB_DISCIPLINE_SECONDS) ergon-clock's discipline of the
-#                            counter to CLOCK_REALTIME for <secs> (clockbench --discipline), pinned as
-#                            clockbench is (the verifier on --cpu2): the CSV on stdout, chrony's tracking before and after it
-#                            and the table on stderr
 #   vm.sh hostchecks         the media driver's start-up host checks as it printed them (its
 #                            `ergon-md-dpdk warning:`/`info:` lines, md-dpdk/src/checks.rs) from this
 #                            run's driver.log; none under INVOKER, whose clients print their drivers'
@@ -124,12 +115,12 @@ mkdir -p "$run"
 tools=$HOME/ergon/target/release
 bin=$(cat "$run/bin" 2>/dev/null || true)
 bin=${bin:-${BENCH_BIN:-$tools}}
-# The lab's baseline, the recommended configuration's (md-dpdk/BENCHMARKS.md)
-# settings that apply to every mode or every DPDK mode: every mode runs on top
-# of it, and an A/B against it is a mode's override (@THP=always,
-# @AERON_RECEIVER_IO_VECTOR_CAPACITY=4). Transparent hugepages are host-wide,
-# so every mode's; the receiver's IO vectors are DPDK modes'. A setting the
-# recommended configuration gives one transport only, such as kernel busy
+# The lab's baseline: settings that apply to every mode or every DPDK mode.
+# Every mode runs on top of it, and an A/B against it is a mode's override
+# (@THP=always, @AERON_RECEIVER_IO_VECTOR_CAPACITY=4). Transparent hugepages
+# are host-wide, so every mode's (never: not separated in md-dpdk/BENCHMARKS.md);
+# the receiver's IO vectors are DPDK modes' (16: its recommended
+# configuration). A setting for one transport only, such as kernel busy
 # polling's 4,096-entry receive ring, stays in the mode (@RX_RING=4096).
 BASE_THP=never
 BASE_RCV_IO_VECTORS=16
@@ -1115,19 +1106,6 @@ agents_placed() {
 # <marker>, which `driver`, `criterion`, `host` and lib.sh's dpdk_ready read,
 # so a DPDK mode is refused before it starts, never run on the kernel. x86
 # must build with it.
-# instance_type: this VM's instance type or size from the cloud's metadata
-# service (the clock benchmarks' labels), or nothing where it does not answer
-instance_type() {
-    local token
-    if [[ $CLOUD == aws ]]; then
-        token=$(curl -fsS -m 2 -X PUT -H "X-aws-ec2-metadata-token-ttl-seconds: 60" http://169.254.169.254/latest/api/token 2>/dev/null) &&
-            curl -fsS -m 2 -H "X-aws-ec2-metadata-token: $token" http://169.254.169.254/latest/meta-data/instance-type 2>/dev/null || true
-    else
-        curl -fsS -m 2 -H Metadata:true "http://169.254.169.254/metadata/instance/compute/vmSize?api-version=2021-02-01&format=text" 2>/dev/null || true
-    fi
-    return 0
-}
-
 build_driver() {
     local marker=$1
     rm -f "$marker"
@@ -2123,15 +2101,6 @@ diag-stop)
     if [[ -s $run/diag-ipmon.pid ]]; then kill "$(cat "$run/diag-ipmon.pid")" 2>/dev/null || true; rm -f "$run/diag-ipmon.pid"; fi
     echo 0 | sudo tee /sys/kernel/tracing/tracing_on >/dev/null
     ;;
-build-clock)
-    # LAB_CLOCK_ONLY=1's build, in place of `build`: clockbench alone (no
-    # media driver, no DPDK), with the workspace's release profile (LTO) and,
-    # in a target directory of its own, without LTO (quanta's reads are not
-    # #[inline]: without LTO each is a call)
-    export PATH=$HOME/.cargo/bin:$PATH
-    cargo build --release -p ergon-clock-bench --bin clockbench
-    CARGO_PROFILE_RELEASE_LTO=false cargo build --release -p ergon-clock-bench --bin clockbench --target-dir target/nolto
-    ;;
 hostchecks)
     # vm.sh hostchecks: the media driver's start-up host checks
     # (ConfiguredDriver::from_env, md-dpdk/src/checks.rs: one line each that
@@ -2141,59 +2110,6 @@ hostchecks)
     # client's embedded driver prints its own in the client's output, which
     # lib.sh reads there)
     grep -E '^ergon-md-dpdk (warning|info): ' "$run/driver.log" 2>/dev/null || true
-    ;;
-discipline)
-    # vm.sh discipline <seconds> [<state>]: ergon-clock's discipline of the
-    # calibrated counter to CLOCK_REALTIME, live, for <seconds> (clock/bench:
-    # clockbench --discipline, an update a second, a verifier reading through a
-    # follower 100 times a second), after the state's timesync gate (lib.sh,
-    # LAB_DISCIPLINE_SECONDS), pinned as clockbench is (the app and receiver
-    # CPUs: the owner on the app CPU, the verifier on the receiver CPU, both
-    # busy-waiting) and labelled with the instance type and
-    # <state>. The CSV on stdout; on stderr chrony's tracking before and after
-    # it ("== chrony before", "== chrony after": the discipline it ran
-    # under), the build and the summary table. Exit 2 for seconds that are
-    # not a whole number from 1, nothing built or run
-    export PATH=$HOME/.cargo/bin:$PATH
-    secs=${2:-}
-    [[ $secs =~ ^[1-9][0-9]*$ ]] || { echo "discipline: <seconds>, a whole number from 1, not '${secs}'" >&2; exit 2; }
-    itype=$(instance_type)
-    label="${itype:-unknown}${3:+ $3}"
-    cargo build -q --release -p ergon-clock-bench --bin clockbench >&2
-    { echo "== chrony before"; chronyc -n tracking 2>&1 || true; } >&2
-    rc=0
-    taskset -c "$APP_CPU,$RECEIVER_CPU" "$tools/clockbench" --discipline "$secs" --cpu "$APP_CPU" --cpu2 "$RECEIVER_CPU" --label "$label" --build lto || rc=$?
-    { echo "== chrony after"; chronyc -n tracking 2>&1 || true; } >&2
-    exit "$rc"
-    ;;
-clockbench)
-    # vm.sh clockbench [quick|full] [<state>]: ergon-clock's benchmark of every
-    # clock read on this host (clock/bench: ergon-clock, the bare counter
-    # reads, quanta, minstant, std, clock_gettime), pinned to the app CPU, its
-    # cross-core thread on the receiver CPU; labelled with the instance type
-    # and <state>. Built here when not built yet (`build-clock` builds both).
-    # quick (every state of a run, beside clockcheck): no drift, 5 calibration
-    # spawns; full (LAB_CLOCK_ONLY=1): 120 s of drift and 20 spawns, then the
-    # build without LTO, no drift and no spawns. The CSV on stdout, the
-    # readable table and the build on stderr; exit 1 when a clock failed its
-    # check (the rest still measured and reported).
-    export PATH=$HOME/.cargo/bin:$PATH
-    variant=${2:-quick}
-    [[ $variant == quick || $variant == full ]] || { echo "clockbench: quick or full, not $variant" >&2; exit 2; }
-    itype=$(instance_type)
-    label="${itype:-unknown}${3:+ $3}"
-    pin=(taskset -c "$APP_CPU,$RECEIVER_CPU")
-    args=(--cpu "$APP_CPU" --cpu2 "$RECEIVER_CPU" --label "$label")
-    cargo build -q --release -p ergon-clock-bench --bin clockbench >&2
-    rc=0
-    if [[ $variant == full ]]; then
-        "${pin[@]}" "$tools/clockbench" "${args[@]}" --build lto --drift-secs 120 --spawns 20 || rc=$?
-        CARGO_PROFILE_RELEASE_LTO=false cargo build -q --release -p ergon-clock-bench --bin clockbench --target-dir target/nolto >&2
-        "${pin[@]}" target/nolto/release/clockbench "${args[@]}" --build nolto --drift-secs 0 --spawns 0 || rc=$?
-    else
-        "${pin[@]}" "$tools/clockbench" "${args[@]}" --build lto --quick || rc=$?
-    fi
-    exit "$rc"
     ;;
 criterion)
     # the same features as `build`: cargo also builds the package's binaries

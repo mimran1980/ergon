@@ -33,9 +33,6 @@ pub enum DpdkError {
     /// ([`crate::checks`]): the driver was not started. Names the warnings,
     /// which were printed in full.
     HostCheck(String),
-    /// The transport's clock could not be made ([`crate::clock`]): a kernel
-    /// clock ergon-clock calibrates against could not be read.
-    Clock(ergon_clock::Error),
 }
 
 impl fmt::Display for DpdkError {
@@ -60,7 +57,6 @@ impl fmt::Display for DpdkError {
             Self::Native(msg) => write!(f, "DPDK native error: {msg}"),
             Self::Aeron(msg) => write!(f, "Aeron installation error: {msg}"),
             Self::HostCheck(msg) => write!(f, "host check refused to start the driver: {msg}"),
-            Self::Clock(e) => write!(f, "the transport's clock (ergon-clock): {e}"),
         }
     }
 }

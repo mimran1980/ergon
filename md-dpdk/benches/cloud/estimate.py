@@ -20,22 +20,6 @@ its files' times), per step:
                          runs (not a +idle mode), before its first ladder
   mix profile            mix_seconds + 7 s
   teardown     180 s
-  clockbench   ergon-clock's benchmark (vm.sh clockbench quick) beside the
-                      clock checks: 60 s at boot (its build and a run), 15 s in
-                      each isolated state. Estimated, not yet timed by a run:
-                      replace with a run's times.
-With LAB_CLOCK_ONLY=1 (the clock benchmarks alone: no media driver, no mode):
-  setup        420 s  launch to the first state: bootstrap, reboot, vm.sh
-                      build-clock (clockbench with and without LTO), tune
-  state        pinned 180 s (diagnostics, vm.sh clockbench full: 120 s of
-                      drift, the build without LTO run again); isolated and
-                      isolated-poll 330 s (the kernel command line, reboot and
-                      tune too). Estimated likewise.
-  no bytes between the hosts.
-With LAB_DISCIPLINE_SECONDS (in a run or with LAB_CLOCK_ONLY=1): in each
-state, ergon-clock's discipline on both hosts at once for that long, and
-20 s more (clockbench already built, chrony's view either side); no bytes
-between the hosts.
 Both instances run the whole time: instance-hours are twice the wall time.
 
 Bytes between the hosts (cross-host modes only; a localhost run crosses no
@@ -45,7 +29,8 @@ out. The round trip: its warm-up and messages of 32 bytes, each way. A load
 point: (load_seconds + 1) s (the first second is warm-up) at its rate, echoed
 back the same size; a warm-up likewise, (warmup_seconds + 1) s at
 LAB_WARMUP_RATE, at the sweep's first size. A flat-out phase (none with LAB_NO_FLATOUT=1) is counted
-at one flow's ceiling, AWS's 7.8–8.0 Gbit/s (md-dpdk/BENCHMARKS.md), for the
+at 8.0 Gbit/s of IP packets, above one AWS flow's measured ceiling (7.75–7.77
+Gbit/s of Aeron frames, about 7.9 as IP packets: md-dpdk/BENCHMARKS.md), for the
 publisher's tput_seconds + 6 s: an upper bound, as is a fraction of a flat-out
 maximum (LAB_LOAD_FRACTIONS) taken of that ceiling. GB are 10^9 bytes.
 
@@ -87,20 +72,14 @@ PRICES = {
 SPOT_PRICES = {"c9g.2xlarge": 0.153, "c8g.xlarge": 0.077, "c7i.2xlarge": 0.200}
 SPOT_AS_OF, SPOT_SOURCE = "2026-10-15", "instances.vantage.sh"
 SETUP_S, TEARDOWN_S = 600, 180
-# LAB_DISCIPLINE_SECONDS: the discipline itself and this much more a state
-DISCIPLINE_EXTRA_S = 20
 STATE_S = {"pinned": 150, "isolated": 450, "isolated-poll": 450}
-# vm.sh clockbench quick in a normal run: at boot (with its build), and in
-# each isolated state (estimated)
-CLOCKBENCH_BOOT_S, CLOCKBENCH_STATE_S = 60, 15
-# LAB_CLOCK_ONLY=1 (estimated)
-CLOCK_SETUP_S = 420
-CLOCK_STATE_S = {"pinned": 180, "isolated": 330, "isolated-poll": 330}
 MODE_S, RTT_S = 12, 85
 POINT_EXTRA_S, MIX_EXTRA_S, TPUT_EXTRA_S, MAX_EXTRA_S = 7, 7, 9, 11
 WIRE_OVERHEAD = 32 + 28  # Aeron's data header, IPv4 and UDP
-FLOW_CAP_BYTES_S = 8.0e9 / 8  # one flow's ceiling on AWS, 7.8-8.0 Gbit/s (BENCHMARKS.md).
-# The high end, so a flat-out phase's bytes are an upper bound.
+# One AWS flow's ceiling, rounded up: md-dpdk/BENCHMARKS.md measured 7.75-7.77 Gbit/s
+# of Aeron frames (about 7.9 as the IP packets counted here) on c7i.4xlarge, so a
+# flat-out phase's bytes at 8.0 are an upper bound.
+FLOW_CAP_BYTES_S = 8.0e9 / 8
 RTT_SIZE = 32
 TRANSFER_USD_GB = {"cluster": 0.0, "precision-time": 0.0, "cross-az": 0.02, "cross-region": 0.02}
 
@@ -119,15 +98,12 @@ def points(size, fractions, ladder):
 
 def estimate(type_a, type_b, placement, reps, modes, local_modes, states, load_sizes, load_fractions, load_ladder,
              load_seconds, mix, mix_seconds, tput_seconds, tput_flows, rtt_messages, rtt_warmup, no_flatout, max_hours,
-             clock_only=False, warmup_seconds=0, warmup_rate=0, discipline_seconds=0):
+             warmup_seconds=0, warmup_rate=0):
     """The plan's wall time (s), instance-hours, dollars (on demand, and at
     the lab's spot prices where it has them) and bytes each way.
     mix: [[(rate, size), ...] a profile]; load_ladder: {size: [rates]};
-    clock_only (LAB_CLOCK_ONLY=1): the clock benchmarks alone, every other
-    part of the plan ignored; warmup_seconds at warmup_rate (LAB_WARMUP_*):
-    a warm-up load before each mode's first ladder, in each rep;
-    discipline_seconds (LAB_DISCIPLINE_SECONDS): that long of ergon-clock's
-    discipline in each state, in a run or the clock benchmarks alone."""
+    warmup_seconds at warmup_rate (LAB_WARMUP_*): a warm-up load before each
+    mode's first ladder, in each rep."""
     flat = not no_flatout
     flows = tput_flows if flat and tput_flows >= 2 else 0
     per_mode, ab, ba, bound = 0, 0, 0, False
@@ -174,14 +150,7 @@ def estimate(type_a, type_b, placement, reps, modes, local_modes, states, load_s
                         to_b += flows * FLOW_CAP_BYTES_S * (tput_seconds + 6)
             per_mode += secs
             ab, ba = ab + to_b, ba + to_a
-    wall = SETUP_S + CLOCKBENCH_BOOT_S + TEARDOWN_S + sum(
-        STATE_S.get(s, 450) + (CLOCKBENCH_STATE_S if s != "pinned" else 0) + reps * per_mode for s in states)
-    if clock_only:
-        wall = CLOCK_SETUP_S + TEARDOWN_S + sum(CLOCK_STATE_S.get(s, 330) for s in states)
-        ab = ba = per_mode = 0
-        bound = False
-    if discipline_seconds > 0:
-        wall += len(states) * (discipline_seconds + DISCIPLINE_EXTRA_S)
+    wall = SETUP_S + TEARDOWN_S + sum(STATE_S.get(s, 450) + reps * per_mode for s in states)
     n = reps * len(states)
     unknown = [t for t in (type_a, type_b) if t not in PRICES]
     hourly = None if unknown else PRICES[type_a] + PRICES[type_b]
@@ -208,10 +177,9 @@ def main():
                  "load-ladder", "mix"):
         p.add_argument("--" + name, default="")
     for name in ("reps", "load-seconds", "mix-seconds", "tput-seconds", "tput-flows", "rtt-messages", "rtt-warmup",
-                 "max-hours", "warmup-seconds", "warmup-rate", "discipline-seconds"):
+                 "max-hours", "warmup-seconds", "warmup-rate"):
         p.add_argument("--" + name, type=int, default=0)
     p.add_argument("--no-flatout", default="")
-    p.add_argument("--clock-only", default="")
     p.add_argument("--market", choices=("on-demand", "spot"), default="on-demand")
     p.add_argument("--refuse-over-deadline", action="store_true")
     a = p.parse_args()
@@ -228,8 +196,8 @@ def main():
     e = estimate(a.type_a, a.type_b, a.placement, a.reps, a.modes.split(), a.local_modes.split(), a.states.split(),
                  [int(s) for s in a.load_sizes.split()], [int(f) for f in a.load_fractions.split()], ladder,
                  a.load_seconds, mix, a.mix_seconds, a.tput_seconds, a.tput_flows, a.rtt_messages, a.rtt_warmup,
-                 a.no_flatout == "1", a.max_hours, clock_only=a.clock_only == "1", warmup_seconds=a.warmup_seconds,
-                 warmup_rate=a.warmup_rate, discipline_seconds=a.discipline_seconds)
+                 a.no_flatout == "1", a.max_hours, warmup_seconds=a.warmup_seconds,
+                 warmup_rate=a.warmup_rate)
     over = (f"about {e['wall_s'] / 3600:.2f} h, longer than LAB_MAX_HOURS={a.max_hours}: each instance powers off "
             f"(and so terminates) {a.max_hours} h after launch, cutting the run short: give LAB_MAX_HOURS="
             f"{e['hours_needed']} (the estimate and a fifth more) or trim the plan (fewer modes, reps or states)")
@@ -241,14 +209,9 @@ def main():
     where = {"cluster": "one zone (cluster placement)", "precision-time": "one zone (precision-time placement)",
              "cross-az": "cross-AZ", "cross-region": "cross-region"}[a.placement]
     print(f"LAB_ESTIMATE: nothing created, no cloud call made. {where}, a {a.type_a}, b {a.type_b}")
-    if a.clock_only == "1":
-        print(f"LAB_CLOCK_ONLY=1: the clock benchmarks alone (vm.sh clockbench full), states {a.states}")
-    elif a.warmup_seconds > 0 and a.load_sizes.split():
+    if a.warmup_seconds > 0 and a.load_sizes.split():
         print(f"warm-up: {a.warmup_seconds} s at {a.warmup_rate:,}/s before each mode's first ladder, in each rep "
               "(counted below)")
-    if a.discipline_seconds > 0:
-        print(f"discipline: {a.discipline_seconds} s of ergon-clock's discipline on both hosts in each state, after "
-              f"its timesync gate, and {DISCIPLINE_EXTRA_S} s more (counted below)")
     print(f"wall time about {e['wall_s'] / 3600:.2f} h: {2 * e['wall_s'] / 3600:.2f} instance-hours")
     if e["over_deadline"]:
         print(f"WARNING: {over}")
@@ -269,7 +232,7 @@ def main():
     else:
         print(f"instances about ${e['instance_usd']:.2f} (on-demand, us-east-1: ${PRICES[a.type_a]}/h and "
               f"${PRICES[a.type_b]}/h); at most ${e['deadline_usd']:.2f} should they run to LAB_MAX_HOURS={a.max_hours}")
-    bound = " (flat-out phases at one flow's 7.8–8.0 Gbit/s ceiling: an upper bound)" if e["bound"] else ""
+    bound = " (flat-out phases at 8.0 Gbit/s, above one flow's measured ceiling: an upper bound)" if e["bound"] else ""
     print(f"between the hosts about {e['bytes_ab'] / 1e9:.3f} GB a to b and {e['bytes_ba'] / 1e9:.3f} GB b to a{bound}")
     rule = {"cross-az": "cross-AZ: $0.01/GB out of one zone and $0.01/GB into the other",
             "cross-region": "cross-region: $0.02/GB out of the sending region"}.get(a.placement, "none within one zone")

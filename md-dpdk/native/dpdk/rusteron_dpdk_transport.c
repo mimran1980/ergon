@@ -134,20 +134,20 @@ RUSTERON_DPDK_CONFIG_AT(max_aeron_mtu, 4280);
 RUSTERON_DPDK_CONFIG_AT(sender_mac, 4288);
 RUSTERON_DPDK_CONFIG_AT(receiver_mac, 4306);
 RUSTERON_DPDK_CONFIG_AT(rx_hw_timestamp, 4324);
-RUSTERON_DPDK_CONFIG_AT(clock, 4328);
-_Static_assert(sizeof(rusteron_dpdk_config_t) == 4376, "config size changed: update the Rust mirrors");
-/* ergon-clock's Params, field by field (src/ffi.rs asserts the Rust side). */
-#define RUSTERON_DPDK_CLOCK_PARAMS_AT(field, offset) \
-    _Static_assert(offsetof(rusteron_dpdk_clock_params_t, field) == (offset), #field " moved: ergon-clock's Params")
-RUSTERON_DPDK_CLOCK_PARAMS_AT(version, 0);
-RUSTERON_DPDK_CLOCK_PARAMS_AT(kind, 4);
-RUSTERON_DPDK_CLOCK_PARAMS_AT(domain, 8);
-RUSTERON_DPDK_CLOCK_PARAMS_AT(reserved, 12);
-RUSTERON_DPDK_CLOCK_PARAMS_AT(base_ticks, 16);
-RUSTERON_DPDK_CLOCK_PARAMS_AT(base_ns, 24);
-RUSTERON_DPDK_CLOCK_PARAMS_AT(mult, 32);
-RUSTERON_DPDK_CLOCK_PARAMS_AT(hz, 40);
-_Static_assert(sizeof(rusteron_dpdk_clock_params_t) == 48, "ergon-clock's Params are 48 bytes");
+RUSTERON_DPDK_CONFIG_AT(clock, 4325);
+_Static_assert(sizeof(rusteron_dpdk_config_t) == 4328, "config size changed: update the Rust mirrors");
+/* The clock report, field by field (src/ffi.rs asserts the Rust side). */
+#define RUSTERON_DPDK_CLOCK_REPORT_AT(field, offset) \
+    _Static_assert(offsetof(rusteron_dpdk_clock_report_t, field) == (offset), #field " moved: update src/ffi.rs")
+RUSTERON_DPDK_CLOCK_REPORT_AT(hz, 0);
+RUSTERON_DPDK_CLOCK_REPORT_AT(eal_hz, 8);
+RUSTERON_DPDK_CLOCK_REPORT_AT(cntfrq, 16);
+RUSTERON_DPDK_CLOCK_REPORT_AT(measured_hz, 24);
+RUSTERON_DPDK_CLOCK_REPORT_AT(source, 32);
+RUSTERON_DPDK_CLOCK_REPORT_AT(why, 36);
+RUSTERON_DPDK_CLOCK_REPORT_AT(invariant, 40);
+RUSTERON_DPDK_CLOCK_REPORT_AT(rate, 44);
+_Static_assert(sizeof(rusteron_dpdk_clock_report_t) == 48, "clock report size changed: update src/ffi.rs");
 
 /* The threading modes the runtime keys housekeeping and pacing on are Aeron's. */
 _Static_assert(RUSTERON_DPDK_THREADING_DEDICATED == (int)AERON_THREADING_MODE_DEDICATED, "Aeron's DEDICATED moved");
@@ -236,8 +236,9 @@ static int rusteron_dpdk_config_validate(const rusteron_dpdk_config_t *config)
         return -1;
     }
 
-    if (rusteron_dpdk_clock_params_check(&config->clock) < 0)
+    if (RUSTERON_DPDK_CLOCK_CHOICE_COUNTER != config->clock && RUSTERON_DPDK_CLOCK_CHOICE_MONOTONIC != config->clock)
     {
+        rusteron_dpdk_set_error("clock must be 0 (the counter) or 1 (CLOCK_MONOTONIC)");
         return -1;
     }
 

@@ -10,27 +10,23 @@
 #
 # The build context is the ergon repository root. CARGO_INCREMENTAL=0. rusteron
 # 0.2.11's static feature runs Aeron's Gradle and CMake from source, so the
-# build stage carries JDK 17 (Java 27 fails with an unsupported class file
-# version), cmake and clang. Debian bookworm: it is the only release that
-# still packages openjdk-17 (trixie dropped it). Bookworm's own cmake is
-# 3.25.1 and Aeron's CMakeLists requires 3.30 or higher, so cmake comes from
-# cmake.org's official binary. The runtime image matches the build's glibc
-# (rtt is dynamically linked). The pods run `prelock --mlock -- rtt ...` (on
+# build stage carries JDK 25 (Aeron's Gradle 9.7.1 fails on 27 with an
+# unsupported class file version), cmake and clang. Debian 13 (trixie)
+# packages openjdk-25 and cmake 3.31.6, which meets Aeron's CMakeLists
+# minimum of 3.30. The runtime image matches the build's glibc (rtt is
+# dynamically linked). The pods run `prelock --mlock -- rtt ...` (on
 # the modes with the RLIMIT_MEMLOCK grant) and kubectl exec runs `counters`
 # and the probes.
 
-FROM rust:1.99.0-slim-bookworm AS build
-ARG CMAKE_VERSION=3.31.6
+FROM rust:1.99.0-slim-trixie AS build
 RUN apt-get update && apt-get install -y --no-install-recommends \
         make gcc g++ libc6-dev pkg-config \
         clang libclang-dev \
-        openjdk-17-jdk-headless \
+        openjdk-25-jdk-headless \
+        cmake \
         uuid-dev libbsd-dev \
         ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* \
-    && curl -fsSL "https://cmake.org/files/v${CMAKE_VERSION%.*}/cmake-${CMAKE_VERSION}-linux-$(uname -m).tar.gz" \
-        | tar -xz -C /opt \
-    && ln -s "/opt/cmake-${CMAKE_VERSION}-linux-$(uname -m)/bin/cmake" /usr/local/bin/cmake \
     && cmake --version | head -1
 ENV CARGO_INCREMENTAL=0
 # rusteron's build script runs rustfmt over the generated bindings and panics
@@ -54,7 +50,7 @@ RUN gcc -O2 -Wall -Wextra -o /out-prelock prelock.c \
  && gcc -O2 -Wall -Wextra -o /out-io-uring-probe io-uring-probe.c \
  && gcc -O2 -Wall -Wextra -o /out-gapspin ../gapspin.c
 
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 # rtt is dynamically linked; it needs the same C libraries the build linked
 # against. util-linux brings libuuid1; libbsd0 is explicit.
 RUN apt-get update && apt-get install -y --no-install-recommends \

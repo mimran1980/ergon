@@ -1,12 +1,13 @@
-//! The transport's clock: ergon-clock's calibration, made once in Rust and
-//! handed to the native transport in its configuration, whose hot path reads
-//! the counter inline and converts it with ergon-clock's arithmetic.
+//! The transport's clock: the CPU counter at the rate DPDK's EAL gives it,
+//! else `CLOCK_MONOTONIC`, started by the native transport at create.
 //!
-//! The choice (`RUSTERON_DPDK_CLOCK`) and the calibration run on every
-//! platform. With the `dpdk` feature (Linux x86_64 or aarch64, against the
-//! DPDK-free fakes) the native side is checked against ergon-clock: the
-//! conversion bit for bit, the reads within a bracket of ergon-clock's, the
-//! fallback, the configuration's checks and the test pin.
+//! The choice (`RUSTERON_DPDK_CLOCK`) and the kernel clock-source rule run on
+//! every platform. With the `dpdk` feature (Linux x86_64 or aarch64, against
+//! the DPDK-free fakes, whose EAL reports a rate a test sets: none after the
+//! reset) the native side is checked: the counter path at the EAL's rate, the
+//! start-up measurement that replaces a rate more than 100 ppm off, the
+//! conversion against the 32.32 arithmetic, the rule for a rate the CPU does
+//! not vouch for, the fallback, the configuration's check and the test pin.
 #![allow(
     missing_docs,
     unsafe_code,
@@ -19,13 +20,11 @@
 
 mod common;
 
-use ergon_clock::Domain;
-use ergon_clock::advanced::{Fallback, KIND_MONOTONIC, Policy, TimeSyncPolicy, Trust};
 use ergon_md_dpdk::DpdkError;
-use ergon_md_dpdk::clock::{CLOCK_ENV, ClockChoice, clock_config, transport_clock};
+use ergon_md_dpdk::clock::{CLOCK_ENV, ClockChoice, MonotonicReason, kernel_refuses_counter};
 use serial_test::serial;
 
-// --- The choice and the calibration (every platform) ---------------------------
+// --- The choice and the kernel's clock source (every platform) ---------------
 
 /// `RUSTERON_DPDK_CLOCK`: the counter when unset or empty, `counter`, or
 /// `tsc` (its name before aarch64, on either architecture); the fallback for
@@ -51,63 +50,35 @@ fn the_clock_choice_is_read_from_the_environment() {
         let text = e.to_string();
         assert!(text.contains("RUSTERON_DPDK_CLOCK") && text.contains(bad), "{text}");
     }
-}
-
-/// The transport's clock is calibrated for intervals: in the monotonic
-/// domain, the counter trusted on calibration's own measurement and
-/// verification (as the transport's own calibration did: a paravirtual
-/// clock source keeps the counter), the wall clock's discipline not probed;
-/// `monotonic` forces ergon-clock's fallback.
-#[test]
-fn the_clock_is_calibrated_for_intervals_in_the_monotonic_domain() {
-    for (choice, policy) in [
-        (ClockChoice::Counter, Policy::Auto),
-        (ClockChoice::Monotonic, Policy::Monotonic),
-    ] {
-        let config = clock_config(choice);
-        assert_eq!(config.policy, policy, "{choice:?}");
-        assert_eq!(config.trust, Trust::CrossCheck, "{choice:?}");
-        assert_eq!(config.domain, Domain::Monotonic, "{choice:?}");
-        assert_eq!(config.time_sync, TimeSyncPolicy::Off, "{choice:?}");
-    }
     assert_eq!(ClockChoice::default(), ClockChoice::Counter);
 }
 
-/// The counter is calibrated once a process: every transport adopts the
-/// same parameters, ergon-clock's own choice for this host.
+/// The kernel's clock source keeps the counter only where it is the counter
+/// (`tsc` on x86_64, `arch_sys_counter` on aarch64) or a hypervisor's scaled
+/// view of it (`kvm-clock`, Azure's `hyperv_clocksource_tsc_page`, `xen`), as
+/// sysfs gives it (a trailing newline). Any other source (`hpet` or `acpi_pm`,
+/// where the kernel's watchdog put it after finding the counter unstable; the
+/// other architecture's counter) rules the counter out, naming the source.
 #[test]
-#[serial]
-fn the_counter_is_calibrated_once_a_process() {
-    let first = transport_clock(ClockChoice::Counter).unwrap();
-    let again = transport_clock(ClockChoice::Counter).unwrap();
-    assert_eq!(first.clock.params(), again.clock.params(), "one calibration");
-    assert_eq!(first.report, again.report);
-    assert_eq!(first.clock.domain(), Domain::Monotonic);
-    let fresh = ergon_clock::advanced::calibrate(&clock_config(ClockChoice::Counter)).unwrap();
-    assert_eq!(
-        fresh.clock.is_counter(),
-        first.clock.is_counter(),
-        "ergon-clock's choice: {}",
-        fresh.report
-    );
-    let (a, b) = (first.clock.now_ns(), first.clock.now_ns());
-    assert!(b >= a, "{a} then {b}");
-}
-
-/// `monotonic` is ergon-clock's fallback, forced: `CLOCK_MONOTONIC`'s
-/// nanoseconds through a factor of one, from no offset.
-#[test]
-#[serial]
-fn the_monotonic_choice_is_ergon_clocks_fallback() {
-    let m = transport_clock(ClockChoice::Monotonic).unwrap();
-    assert!(!m.clock.is_counter());
-    assert_eq!(m.report.fallback, Some(Fallback::Forced));
-    let p = m.clock.params();
-    assert_eq!(
-        (p.kind, p.domain, p.base_ticks, p.base_ns, p.mult),
-        (KIND_MONOTONIC, 0, 0, 0, 1 << 32),
-        "{p:?}"
-    );
+fn the_kernel_clocksource_rules_out_a_counter_it_does_not_keep_time_with() {
+    let (counter, other) = if cfg!(target_arch = "aarch64") {
+        ("arch_sys_counter", "tsc")
+    } else {
+        ("tsc", "arch_sys_counter")
+    };
+    for kept in [counter, "kvm-clock", "hyperv_clocksource_tsc_page", "xen"] {
+        assert_eq!(kernel_refuses_counter(kept), None, "{kept}");
+        assert_eq!(kernel_refuses_counter(&format!("{kept}\n")), None, "{kept} from sysfs");
+    }
+    for refused in ["hpet", "acpi_pm", "jiffies", other, ""] {
+        assert_eq!(
+            kernel_refuses_counter(&format!("{refused}\n")),
+            Some(MonotonicReason::KernelClocksource(refused.to_string())),
+            "{refused:?}"
+        );
+    }
+    let text = MonotonicReason::KernelClocksource("hpet".to_string()).to_string();
+    assert!(text.contains("hpet"), "{text}");
 }
 
 // --- The native transport's clock (`dpdk`) ------------------------------------
@@ -119,281 +90,481 @@ fn the_monotonic_choice_is_ergon_clocks_fallback() {
 ))]
 mod native {
     use super::common::*;
-    use ergon_clock::Domain;
-    use ergon_clock::advanced::{Clock, KIND_COUNTER, KIND_MONOTONIC, MonotonicClock, PARAMS_VERSION, Params, Scale};
-    use ergon_md_dpdk::clock::{ClockChoice, transport_clock};
     use serial_test::serial;
     use std::os::raw::c_int;
-    use std::time::{Duration, Instant};
 
-    unsafe extern "C" {
-        /// The adopted conversion applied to `ticks`: what the hot path
-        /// computes from a counter read (or, for the fallback, from a read
-        /// of `CLOCK_MONOTONIC`).
-        fn rusteron_dpdk_test_clock_ns_at(ticks: u64) -> u64;
+    fn now_ns() -> u64 {
+        unsafe { rusteron_dpdk_clock_ns() }
     }
 
-    /// The transport clock's source as counter type 80 reports it: 1 the
-    /// TSC, 2 `CNTVCT_EL0`, 0 `CLOCK_MONOTONIC`.
-    fn source_of(clock: &Clock) -> c_int {
-        match (clock.is_counter(), cfg!(target_arch = "aarch64")) {
-            (false, _) => 0,
-            (true, false) => 1,
-            (true, true) => 2,
+    /// A transport created over `config` with the fake EAL reporting what
+    /// `setup` set, closed again: the clock it started stays (it is
+    /// process-lifetime) until the next reset.
+    fn start(config: &rusteron_dpdk_config_t, setup: impl FnOnce(&TestEnv)) -> TestEnv {
+        let env = TestEnv::new();
+        env.eal_skip();
+        setup(&env);
+        let t = create(config).unwrap_or_else(|e| panic!("create: {e}"));
+        assert_eq!(close(t), 0);
+        env
+    }
+
+    /// The tightest of 16 reads of the transport's clock bracketed by
+    /// `CLOCK_MONOTONIC`: (the native read, the bracket's midpoint, its width).
+    fn bracketed() -> (u64, u64, u64) {
+        bracketed_by(monotonic_ns)
+    }
+
+    /// As [`bracketed`], bracketed by `reference`.
+    fn bracketed_by(reference: fn() -> u64) -> (u64, u64, u64) {
+        let mut best = (0, 0, u64::MAX);
+        for _ in 0..16 {
+            let m0 = reference();
+            let n = now_ns();
+            let m1 = reference();
+            if m1 - m0 < best.2 {
+                best = (n, m0 + (m1 - m0) / 2, m1 - m0);
+            }
+        }
+        best
+    }
+
+    /// Every native read lies between `CLOCK_MONOTONIC` reads either side of
+    /// it, with no slack: the fallback reads `CLOCK_MONOTONIC` itself.
+    fn assert_reads_clock_monotonic() {
+        let mut last = 0;
+        for i in 0..10_000 {
+            let before = monotonic_ns();
+            let native = now_ns();
+            let after = monotonic_ns();
+            assert!(
+                before <= native && native <= after,
+                "read {i}: native {native} outside CLOCK_MONOTONIC's {before}..{after}"
+            );
+            assert!(native >= last, "read {i}: {last} then {native}");
+            last = native;
         }
     }
 
-    /// A transport created with `params` as its clock, closed again: the
-    /// calibration stays adopted (it is process-lifetime).
-    fn adopt(params: Params) {
+    /// The 32.32 conversion of `ticks` as the C hot path computes it from a
+    /// started clock's parameters, in Rust: the reference.
+    fn reference_ns_at(base_ticks: u64, base_ns: u64, mult: u64, ticks: u64) -> u64 {
+        let delta = ticks.wrapping_sub(base_ticks) as i64;
+        base_ns.wrapping_add(((i128::from(delta) * i128::from(mult as i64)) >> 32) as i64 as u64)
+    }
+
+    /// ns per tick at `hz`, 32.32 and rounded to the nearest.
+    fn mult_for(hz: u64) -> u64 {
+        u64::try_from(((1_000_000_000u128 << 32) + u128::from(hz / 2)) / u128::from(hz)).unwrap()
+    }
+
+    fn params() -> (u64, u64, u64) {
+        let (mut base_ticks, mut base_ns, mut mult) = (0, 0, 0);
+        unsafe { rusteron_dpdk_test_clock_params(&mut base_ticks, &mut base_ns, &mut mult) };
+        (base_ticks, base_ns, mult)
+    }
+
+    /// The counter path: with the EAL giving the counter's own rate, which
+    /// the start-up measurement confirms to 100 ppm, the transport reads the
+    /// counter (counter type 80's source for this architecture) at that
+    /// rate, in nanoseconds since boot (its first read within 50 us of
+    /// `CLOCK_MONOTONIC`), advancing as `CLOCK_MONOTONIC` does to 0.1% over
+    /// 100 ms; a read is never more than a microsecond behind the one before
+    /// it on one thread (the reads are unordered).
+    #[test]
+    #[serial]
+    fn the_counter_path_runs_at_the_eal_rate() {
+        let hz = measured_counter_hz();
         let env = TestEnv::new();
         env.eal_skip();
-        let mut config = rusteron_dpdk_config_t::valid();
-        config.clock = params;
-        let t = create(&config).unwrap_or_else(|e| panic!("create with {params:?}: {e}"));
+        env.set_counter_rate(hz);
+        let t = create(&rusteron_dpdk_config_t::valid()).unwrap_or_else(|e| panic!("{e}"));
+        let report = clock_report();
+        assert_eq!(unsafe { rusteron_dpdk_clock_source() }, COUNTER_SOURCE, "{report:?}");
+        assert_eq!(
+            (report.source, report.why, report.rate, report.hz, report.eal_hz),
+            (COUNTER_SOURCE, WHY_COUNTER, RATE_EAL, hz, hz),
+            "{report:?}"
+        );
+        assert!(
+            report.measured_hz.abs_diff(hz) * 10_000 <= hz,
+            "measured {} Hz at start, {hz} Hz here: {report:?}",
+            report.measured_hz
+        );
+
+        let (native, mono, width) = bracketed();
+        assert!(
+            native.abs_diff(mono) <= 50_000 + width,
+            "first read {native} ns, CLOCK_MONOTONIC {mono} ns (bracket {width} ns)"
+        );
+
+        let (n0, m0, _) = bracketed();
+        while monotonic_ns() - m0 < 100_000_000 {
+            std::hint::spin_loop();
+        }
+        let (n1, m1, _) = bracketed();
+        let (native, mono) = (n1 - n0, m1 - m0);
+        assert!(
+            native.abs_diff(mono) * 1000 <= mono,
+            "native advanced {native} ns against {mono} ns of CLOCK_MONOTONIC (more than 0.1% apart)"
+        );
+
+        let mut last = now_ns();
+        for i in 0..10_000 {
+            let now = now_ns();
+            assert!(now + 1_000 >= last, "read {i}: {last} then {now}");
+            last = last.max(now);
+        }
         assert_eq!(close(t), 0);
     }
 
-    /// Native reads bracketed by ergon-clock's: each within `slack_ns` of
-    /// the reads either side of it (both unordered, on one thread).
-    fn assert_bracketed(clock: &Clock, slack_ns: u64) {
-        for i in 0..10_000 {
-            let before = clock.now_ns();
-            let native = unsafe { rusteron_dpdk_clock_ns() };
-            let after = clock.now_ns();
-            assert!(
-                native + slack_ns >= before && native <= after + slack_ns,
-                "read {i}: native {native} outside ergon-clock's {before}..{after}"
-            );
-        }
-    }
-
-    /// Over a 50 ms busy wait the native clock advances as ergon-clock's does
-    /// and as `Instant` (`CLOCK_MONOTONIC`) does, within 0.1%.
-    fn assert_tracks(clock: &Clock) {
-        let (n0, c0, i0) = (unsafe { rusteron_dpdk_clock_ns() }, clock.now_ns(), Instant::now());
-        while i0.elapsed() < Duration::from_millis(50) {
-            std::hint::spin_loop();
-        }
-        let (n1, c1, i1) = (unsafe { rusteron_dpdk_clock_ns() }, clock.now_ns(), Instant::now());
-        let (native, ergon) = (n1 - n0, c1 - c0);
-        let mono = u64::try_from((i1 - i0).as_nanos()).unwrap();
-        assert!(
-            native.abs_diff(ergon) <= 20_000,
-            "native advanced {native} ns, ergon-clock {ergon} ns"
-        );
-        assert!(
-            native.abs_diff(mono) * 1000 <= mono,
-            "native advanced {native} ns against {mono} ns monotonic (more than 0.1% apart)"
-        );
-    }
-
-    /// A transport adopts the clock its configuration carries: the clock
-    /// counter (type 80) reports ergon-clock's choice, and every read is
-    /// ergon-clock's time, within a bracket of its reads.
+    /// The conversion is the EAL's rate in 32.32 fixed point, rounded: for
+    /// each rate the factor is 1e9 * 2^32 / hz to the nearest, the native
+    /// result matches the Rust reference to the bit, a second of ticks is a
+    /// second (within 1 ns), and any k ticks are k * 1e9 / hz ns within the
+    /// factor's rounding (k / 2^33 ns) and 1 ns. A tick behind the base (an
+    /// unordered read on another core, just after the start) is a little
+    /// before the base's time, never 2^64 ns later.
     #[test]
     #[serial]
-    fn a_transport_reads_the_clock_its_configuration_carries() {
-        let calibrated = transport_clock(ClockChoice::Counter).unwrap();
-        adopt(calibrated.clock.params());
-        assert_eq!(
-            unsafe { rusteron_dpdk_clock_source() },
-            source_of(&calibrated.clock),
-            "ergon-clock chose: {}",
-            calibrated.report
-        );
-        assert_bracketed(&calibrated.clock, 1_000);
-        assert_tracks(&calibrated.clock);
-    }
+    fn the_counter_conversion_is_the_eal_rate() {
+        for hz in [2_400_000_000u64, 1_000_000_000, 121_875_000, 24_000_000] {
+            let _env = start(&rusteron_dpdk_config_t::valid(), |env| {
+                env.set_counter_rate(hz);
+                env.set_measured_counter_rate(hz);
+            });
+            assert_eq!((clock_report().hz, clock_report().rate), (hz, RATE_EAL));
+            let (base_ticks, base_ns, mult) = params();
+            assert_eq!(mult, mult_for(hz), "{hz} Hz");
+            let ns_at = |t: u64| unsafe { rusteron_dpdk_test_clock_ns_at(t) };
 
-    /// The counter path: the transport reports the counter and every read is
-    /// ergon-clock's counter clock's time, within a bracket of its reads.
-    #[test]
-    #[serial]
-    fn the_counter_path_reads_ergon_clocks_counter_time() {
-        let counter = counter_clock();
-        adopt(counter.params());
-        assert_eq!(unsafe { rusteron_dpdk_clock_source() }, source_of(&counter));
-        assert_ne!(unsafe { rusteron_dpdk_clock_source() }, 0, "the counter");
-        assert_bracketed(&counter, 1_000);
-        adopt(transport_clock(ClockChoice::Counter).unwrap().clock.params());
-    }
-
-    /// The native conversion is ergon-clock's to the bit, for the counter's
-    /// parameters and the fallback's: a tick behind the base (an unordered
-    /// read on another core, just after calibration) is a little before the
-    /// base's time, never 2^64 ns later.
-    #[test]
-    #[serial]
-    fn the_native_conversion_is_ergon_clocks_to_the_bit() {
-        let calibrated = transport_clock(ClockChoice::Counter).unwrap().clock.params();
-        let base = 1u64 << 40;
-        let synthetic = [
-            Scale::from_hz(2_400_000_000, base, 5_000_000_000).unwrap(),
-            Scale::from_hz(24_000_000, base, 0).unwrap(),
-            Scale::from_hz(1_000_000_000, 0, 7).unwrap(),
-            Scale::from_mult((1 << 32) + 12_345, base, 1 << 50).unwrap(),
-        ];
-        let mut cases: Vec<Params> = synthetic
-            .iter()
-            .map(|s| Params {
-                version: PARAMS_VERSION,
-                kind: KIND_COUNTER,
-                domain: 0,
-                reserved: 0,
-                base_ticks: s.base_ticks(),
-                base_ns: s.base_ns(),
-                mult: s.mult(),
-                hz: s.hz(),
-            })
-            .collect();
-        cases.push(calibrated);
-        // the fallback, as made and retuned (the formula with the monotonic
-        // clock as the ticks)
-        let (mono, _) = MonotonicClock::always(Domain::Monotonic);
-        cases.push(Params {
-            kind: KIND_MONOTONIC,
-            ..mono.params()
-        });
-        let retuned = mono.retuned(1_000_000_000, (1 << 32) - 4_295, 5).unwrap();
-        cases.push(retuned.params());
-
-        for p in cases {
-            adopt(p);
-            let reference = Scale::from_mult(p.mult, p.base_ticks, p.base_ns).unwrap();
-            let mut ticks: Vec<u64> = vec![
-                p.base_ticks,
-                p.base_ticks.wrapping_add(1),
-                p.base_ticks.wrapping_sub(1),
-                p.base_ticks.wrapping_sub(3_000_000_000),
-                p.base_ticks.wrapping_add(1 << 45),
-                p.base_ticks.wrapping_add(u64::from(u32::MAX)),
+            let mut ticks = vec![
+                base_ticks,
+                base_ticks + 1,
+                base_ticks - 1,
+                base_ticks - hz / 100,
+                base_ticks + (1 << 45),
+                base_ticks + u64::from(u32::MAX),
             ];
-            let mut x = 0x9e37_79b9_7f4a_7c15u64 ^ p.mult;
-            for _ in 0..2_000 {
+            let mut x = 0x9e37_79b9_7f4a_7c15u64 ^ hz;
+            let mut next = || {
                 x ^= x << 13;
                 x ^= x >> 7;
                 x ^= x << 17;
-                // within ±2^46 ticks of the base: hours to days of time
-                ticks.push(p.base_ticks.wrapping_add(x >> 17).wrapping_sub(1 << 46));
+                x
+            };
+            for _ in 0..2_000 {
+                // within ±2^40 ticks of the base: minutes to hours of time
+                ticks.push(base_ticks.wrapping_add(next() >> 23).wrapping_sub(1 << 40));
             }
-            for t in ticks {
+            for &t in &ticks {
                 assert_eq!(
-                    unsafe { rusteron_dpdk_test_clock_ns_at(t) },
-                    reference.to_ns(t),
-                    "ticks {t} with {p:?}"
+                    ns_at(t),
+                    reference_ns_at(base_ticks, base_ns, mult, t),
+                    "{hz} Hz: ticks {t}"
+                );
+            }
+
+            for &t in &ticks[..8] {
+                let second = ns_at(t + hz) - ns_at(t);
+                assert!(
+                    second.abs_diff(1_000_000_000) <= 1,
+                    "{hz} Hz: a second of ticks is {second} ns"
+                );
+            }
+            for _ in 0..2_000 {
+                let k = next() >> 24; // < 2^40
+                let t = base_ticks.wrapping_add(next() >> 34);
+                let diff = u128::from(ns_at(t + k) - ns_at(t));
+                // |diff - k * 1e9 / hz| <= k / 2^33 + 1, scaled by hz
+                let err = (diff * u128::from(hz)).abs_diff(u128::from(k) * 1_000_000_000);
+                let bound = (u128::from(k) * u128::from(hz) >> 33) + u128::from(hz) + 1;
+                assert!(err <= bound, "{hz} Hz: {k} ticks are {diff} ns");
+            }
+
+            for behind in [1, hz / 100] {
+                let ns = ns_at(base_ticks - behind);
+                assert!(
+                    ns < base_ns && base_ns - ns <= behind * 1_000_000_000 / hz + 1,
+                    "{hz} Hz: {behind} ticks behind the base is {ns} ns, the base {base_ns} ns"
                 );
             }
         }
-        adopt(calibrated);
     }
 
-    /// `monotonic`, or a host whose counter ergon-clock will not take: the
-    /// fallback reads `CLOCK_MONOTONIC` through ergon-clock's conversion,
-    /// reported as 0, monotonic, and ergon-clock's fallback's time.
+    /// The rate the counter is converted at: DPDK's where the start-up
+    /// measurement agrees with it to 100 ppm of the measurement, in either
+    /// direction; else the measurement (DPDK 23.11 rounds its own x86
+    /// measurement to 10 MHz, 0.2% at 2.5 GHz). A measurement that is no rate
+    /// the transport converts (none, or outside 1 MHz..=20 GHz) keeps DPDK's.
     #[test]
     #[serial]
-    fn the_fallback_reads_clock_monotonic_as_ergon_clocks_fallback_does() {
-        let fallback = transport_clock(ClockChoice::Monotonic).unwrap().clock;
-        adopt(fallback.params());
-        assert_eq!(unsafe { rusteron_dpdk_clock_source() }, 0, "monotonic fallback");
-        let mut last = unsafe { rusteron_dpdk_clock_ns() };
-        for _ in 0..1_000 {
-            let now = unsafe { rusteron_dpdk_clock_ns() };
-            assert!(now >= last, "monotonic: {last} then {now}");
-            last = now;
+    fn the_measured_rate_replaces_a_dpdk_rate_more_than_100_ppm_off() {
+        let choose = |eal_hz: u64, measured_hz: u64| {
+            let mut hz = 0;
+            let rate = unsafe { rusteron_dpdk_clock_choose_rate(eal_hz, measured_hz, &mut hz) };
+            (rate, hz)
+        };
+        let ghz = 1_000_000_000u64;
+        // DPDK 23.11's 10 MHz rounding: 2.5 GHz for a 2.495 GHz TSC, and back.
+        assert_eq!(choose(2_500_000_000, 2_495_000_000), (RATE_MEASURED, 2_495_000_000));
+        assert_eq!(choose(2_490_000_000, 2_495_000_000), (RATE_MEASURED, 2_495_000_000));
+        for measured in [ghz, 24_000_000, 2_495_000_000] {
+            let ppm = measured / 1_000_000; // 100 ppm is 100 * ppm Hz
+            for (eal, rate) in [
+                (measured, RATE_EAL),
+                (measured + 100 * ppm, RATE_EAL),
+                (measured - 100 * ppm, RATE_EAL),
+                (measured + 100 * ppm + 1, RATE_MEASURED),
+                (measured - 100 * ppm - 1, RATE_MEASURED),
+                (measured + measured / 500, RATE_MEASURED),
+            ] {
+                let hz = if rate == RATE_EAL { eal } else { measured };
+                assert_eq!(
+                    choose(eal, measured),
+                    (rate, hz),
+                    "DPDK {eal} Hz, measured {measured} Hz"
+                );
+            }
         }
-        assert_bracketed(&fallback, 0);
-        assert_tracks(&fallback);
-        // a retuned fallback is converted, not read raw
-        let (mono, _) = MonotonicClock::always(Domain::Monotonic);
-        let retuned = Clock::Monotonic(mono.retuned(mono.ticks(), 1 << 32, 1 << 40).unwrap());
-        adopt(retuned.params());
-        assert_bracketed(&retuned, 0);
-        adopt(transport_clock(ClockChoice::Counter).unwrap().clock.params());
+        for measured in [0, 999_999, 20 * ghz + 1, u64::MAX] {
+            assert_eq!(choose(3 * ghz, measured), (RATE_EAL, 3 * ghz), "measured {measured} Hz");
+        }
+
+        // Through the start: the rate chosen is the one the clock converts at.
+        for (eal, measured, rate, hz) in [
+            (2_400_000_000, 2_405_000_000, RATE_MEASURED, 2_405_000_000),
+            (2_400_000_000, 2_400_100_000, RATE_EAL, 2_400_000_000),
+        ] {
+            let _env = start(&rusteron_dpdk_config_t::valid(), |env| {
+                env.set_counter_rate(eal);
+                env.set_measured_counter_rate(measured);
+            });
+            let report = clock_report();
+            assert_eq!(
+                (
+                    report.source,
+                    report.why,
+                    report.rate,
+                    report.hz,
+                    report.eal_hz,
+                    report.measured_hz
+                ),
+                (COUNTER_SOURCE, WHY_COUNTER, rate, hz, eal, measured),
+                "{report:?}"
+            );
+            assert_eq!(params().2, mult_for(hz), "DPDK {eal} Hz, measured {measured} Hz");
+        }
     }
 
-    /// Parameters the transport cannot use are refused at create, naming the
-    /// field, before any device work, and the clock in use stays as it was.
+    /// DPDK's rate deliberately 0.2% off the counter's, either way: the
+    /// transport measures the counter against `CLOCK_MONOTONIC_RAW` at start,
+    /// converts at its measurement and so tracks `CLOCK_MONOTONIC_RAW` to
+    /// 0.01% over 50 ms, reporting both rates. 50 ppm off, it keeps DPDK's.
+    /// (Not `CLOCK_MONOTONIC`: NTP's frequency correction, up to 500 ppm,
+    /// moves it off the raw rate.)
     #[test]
     #[serial]
-    fn clock_parameters_the_transport_cannot_use_are_refused() {
-        let good = transport_clock(ClockChoice::Counter).unwrap().clock;
-        adopt(good.params());
-        let p = good.params();
-        for (bad, field) in [
-            (Params { version: 0, ..p }, "version"),
-            (Params { version: 2, ..p }, "version"),
-            (Params { kind: 2, ..p }, "kind"),
-            (Params { domain: 1, ..p }, "domain"),
-            (Params { reserved: 1, ..p }, "reserved"),
-            (Params { mult: 0, ..p }, "mult"),
-            (Params { mult: 1 << 63, ..p }, "mult"),
+    fn the_started_clock_measures_a_dpdk_rate_that_is_off() {
+        let hz = measured_counter_hz();
+        for (eal, rate) in [
+            (hz + hz / 500, RATE_MEASURED),
+            (hz - hz / 500, RATE_MEASURED),
+            (hz + hz / 20_000, RATE_EAL),
         ] {
             let env = TestEnv::new();
             env.eal_skip();
+            env.set_counter_rate(eal);
+            let t = create(&rusteron_dpdk_config_t::valid()).unwrap_or_else(|e| panic!("{e}"));
+            let report = clock_report();
+            assert_eq!(
+                (report.source, report.why, report.rate, report.eal_hz),
+                (COUNTER_SOURCE, WHY_COUNTER, rate, eal),
+                "{report:?}"
+            );
+            let used = if rate == RATE_EAL { eal } else { report.measured_hz };
+            assert_eq!(report.hz, used, "{report:?}");
+            assert!(
+                report.measured_hz.abs_diff(hz) * 10_000 <= hz,
+                "measured {} Hz at start, {hz} Hz here: {report:?}",
+                report.measured_hz
+            );
+
+            if rate == RATE_MEASURED {
+                let (n0, r0, _) = bracketed_by(monotonic_raw_ns);
+                while monotonic_raw_ns() - r0 < 50_000_000 {
+                    std::hint::spin_loop();
+                }
+                let (n1, r1, _) = bracketed_by(monotonic_raw_ns);
+                let (native, raw) = (n1 - n0, r1 - r0);
+                assert!(
+                    native.abs_diff(raw) * 10_000 <= raw,
+                    "DPDK {eal} Hz: native advanced {native} ns against {raw} ns of CLOCK_MONOTONIC_RAW (more than 0.01% apart): {report:?}"
+                );
+            }
+            assert_eq!(close(t), 0);
+            drop(env);
+        }
+    }
+
+    /// No rate from the EAL (the fakes' default, and what the real EAL
+    /// reports before it is up): the transport reads `CLOCK_MONOTONIC`,
+    /// reported as source 0 with no rate, and every read is `CLOCK_MONOTONIC`
+    /// itself.
+    #[test]
+    #[serial]
+    fn the_fallback_is_clock_monotonic_when_the_eal_gives_no_counter_rate() {
+        let _env = start(&rusteron_dpdk_config_t::valid(), |_| {});
+        let report = clock_report();
+        assert_eq!(
+            (report.source, report.why, report.hz, report.eal_hz, report.measured_hz),
+            (SOURCE_MONOTONIC, WHY_NO_RATE, 0, 0, 0),
+            "{report:?}"
+        );
+        assert_eq!(unsafe { rusteron_dpdk_clock_source() }, SOURCE_MONOTONIC);
+        assert_eq!(params(), (0, 0, 1 << 32), "a factor of one");
+        assert_reads_clock_monotonic();
+    }
+
+    /// The configuration's `monotonic` (`RUSTERON_DPDK_CLOCK=monotonic`, read
+    /// in Rust) wins over any rate the EAL gives, and nothing measures the
+    /// counter.
+    #[test]
+    #[serial]
+    fn the_monotonic_choice_forces_the_fallback_whatever_the_eal_rate() {
+        let mut config = rusteron_dpdk_config_t::valid();
+        config.clock = CLOCK_CHOICE_MONOTONIC;
+        let _env = start(&config, TestEnv::use_counter);
+        let report = clock_report();
+        assert_eq!(
+            (report.source, report.why, report.hz, report.measured_hz),
+            (SOURCE_MONOTONIC, WHY_CHOSEN, 0, 0),
+            "{report:?}"
+        );
+        assert_eq!(report.eal_hz, measured_counter_hz(), "what the EAL said, reported");
+        assert_reads_clock_monotonic();
+    }
+
+    /// The rule for the EAL's rate, for both counters whatever this host's:
+    /// a rate in 1 MHz..=20 GHz, and the TSC invariant (x86_64) or the rate
+    /// `CNTFRQ_EL0`'s (aarch64: a DPDK timing with the PMU's cycle counter
+    /// reports another). Through create, a rate this CPU does not vouch for
+    /// leaves the transport on `CLOCK_MONOTONIC`, saying why.
+    #[test]
+    #[serial]
+    fn a_counter_rate_the_cpu_does_not_vouch_for_is_not_used() {
+        let rule = |source: c_int, eal_hz: u64, invariant: c_int, cntfrq: u64| {
+            let rate = CounterRate {
+                eal_hz,
+                cntfrq,
+                invariant,
+            };
+            unsafe { rusteron_dpdk_clock_rule(source, &rate) }
+        };
+        let ghz = 1_000_000_000;
+        assert_eq!(rule(SOURCE_TSC, 3 * ghz, 1, 0), WHY_COUNTER);
+        assert_eq!(rule(SOURCE_TSC, 3 * ghz, 0, 0), WHY_NOT_INVARIANT);
+        assert_eq!(rule(SOURCE_CNTVCT, ghz, 0, ghz), WHY_COUNTER);
+        assert_eq!(rule(SOURCE_CNTVCT, 3 * ghz, 0, ghz), WHY_NOT_CNTFRQ);
+        assert_eq!(rule(SOURCE_CNTVCT, ghz, 0, 0), WHY_NOT_CNTFRQ);
+        for (hz, why) in [
+            (0, WHY_NO_RATE),
+            (999_999, WHY_NO_RATE),
+            (1_000_000, WHY_COUNTER),
+            (20 * ghz, WHY_COUNTER),
+            (20 * ghz + 1, WHY_NO_RATE),
+        ] {
+            assert_eq!(rule(SOURCE_TSC, hz, 1, hz), why, "TSC at {hz} Hz");
+            assert_eq!(rule(SOURCE_CNTVCT, hz, 1, hz), why, "CNTVCT at {hz} Hz");
+        }
+
+        let hz = measured_counter_hz();
+        let (invariant, cntfrq, why) = if cfg!(target_arch = "aarch64") {
+            (true, hz / 2, WHY_NOT_CNTFRQ)
+        } else {
+            (false, 0, WHY_NOT_INVARIANT)
+        };
+        let _env = start(&rusteron_dpdk_config_t::valid(), |env| {
+            env.set_counter_facts(hz, invariant, cntfrq)
+        });
+        let report = clock_report();
+        assert_eq!(
+            (report.source, report.why, report.hz, report.eal_hz, report.cntfrq),
+            (SOURCE_MONOTONIC, why, 0, hz, cntfrq),
+            "{report:?}"
+        );
+        assert_reads_clock_monotonic();
+    }
+
+    /// A clock choice the transport does not know is refused at create,
+    /// naming the field, before any device work, and the clock already
+    /// started stays as it was.
+    #[test]
+    #[serial]
+    fn a_clock_choice_the_transport_does_not_know_is_refused() {
+        let env = start(&rusteron_dpdk_config_t::valid(), TestEnv::use_counter);
+        let live = (clock_report(), params());
+        assert_eq!(live.0.source, COUNTER_SOURCE);
+        for bad in [2u8, 255] {
+            let logged = env.log_count();
             let mut config = rusteron_dpdk_config_t::valid();
             config.clock = bad;
             let err = create(&config).unwrap_err();
-            assert!(err.contains("clock") && err.contains(field), "{field}: {err}");
-            assert!(
-                (0..env.log_count()).all(|i| !env.log_at(i).contains("probe")),
-                "{field}: device work before the check"
-            );
-            assert_eq!(unsafe { rusteron_dpdk_clock_source() }, source_of(&good), "{field}");
-            assert_bracketed(&good, 1_000);
+            assert!(err.contains("clock"), "{bad}: {err}");
+            assert_eq!(env.log_count(), logged, "{bad}: device work before the check");
+            assert_eq!((clock_report(), params()), live, "{bad}");
         }
     }
 
     /// A second transport, refused while the first is up (one EAL a process),
-    /// leaves the clock the first adopted alone: its agents read it.
+    /// leaves the clock the first started alone: its agents read it.
     #[test]
     #[serial]
     fn a_refused_second_transport_leaves_the_live_clock_alone() {
-        let live = Scale::from_hz(2_400_000_000, 1 << 40, 5_000_000_000).unwrap();
-        let other = Scale::from_hz(1_000_000_000, 7, 9).unwrap();
-        let params = |s: &Scale| Params {
-            version: PARAMS_VERSION,
-            kind: KIND_COUNTER,
-            domain: 0,
-            reserved: 0,
-            base_ticks: s.base_ticks(),
-            base_ns: s.base_ns(),
-            mult: s.mult(),
-            hz: s.hz(),
-        };
         let env = TestEnv::new();
         env.eal_skip();
-        let mut config = rusteron_dpdk_config_t::valid();
-        config.clock = params(&live);
+        env.set_counter_rate(2_400_000_000);
+        env.set_measured_counter_rate(2_400_000_000);
+        let config = rusteron_dpdk_config_t::valid();
         let first = create(&config).unwrap_or_else(|e| panic!("{e}"));
-        config.clock = params(&other);
+        let live = (clock_report(), params());
+        env.set_counter_rate(1_000_000_000);
+        env.set_measured_counter_rate(1_000_000_000);
         let err = create(&config).unwrap_err();
         assert!(err.contains("already initialized"), "{err}");
-        for t in [0, 1 << 40, (1 << 40) + 12_345, u64::MAX / 3] {
-            assert_eq!(unsafe { rusteron_dpdk_test_clock_ns_at(t) }, live.to_ns(t), "ticks {t}");
-        }
+        assert_eq!((clock_report(), params()), live);
+        assert_eq!(live.0.hz, 2_400_000_000);
+        let (base_ticks, _, _) = live.1;
+        let second = unsafe {
+            rusteron_dpdk_test_clock_ns_at(base_ticks + 2_400_000_000) - rusteron_dpdk_test_clock_ns_at(base_ticks)
+        };
+        assert_eq!(second, 1_000_000_000);
         assert_eq!(close(first), 0);
-        adopt(transport_clock(ClockChoice::Counter).unwrap().clock.params());
     }
 
-    /// The test pin stays in force while a transport adopts a calibration,
-    /// and the reset hands the clock back to the calibration adopted.
+    /// The test pin stays in force while a transport starts the clock, which
+    /// still reports the counter it started; the reset unpins and returns the
+    /// clock to its boot default, `CLOCK_MONOTONIC`, never started.
     #[test]
     #[serial]
-    fn a_pinned_clock_stays_pinned_while_a_calibration_is_adopted() {
-        let good = transport_clock(ClockChoice::Counter).unwrap().clock;
+    fn a_pinned_clock_stays_pinned_while_the_clock_starts() {
         let env = TestEnv::new();
         env.eal_skip();
+        env.use_counter();
         pin_clock_ns(42_000);
-        let mut config = rusteron_dpdk_config_t::valid();
-        config.clock = good.params();
-        let t = create(&config).unwrap_or_else(|e| panic!("{e}"));
-        assert_eq!(unsafe { rusteron_dpdk_clock_ns() }, 42_000, "still pinned");
+        let t = create(&rusteron_dpdk_config_t::valid()).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(now_ns(), 42_000, "still pinned");
+        assert_eq!(unsafe { rusteron_dpdk_clock_source() }, COUNTER_SOURCE, "started");
         assert_eq!(close(t), 0);
-        drop(TestEnv::new());
-        assert_ne!(unsafe { rusteron_dpdk_clock_ns() }, 42_000, "the reset unpins");
-        assert_eq!(unsafe { rusteron_dpdk_clock_source() }, source_of(&good));
-        assert_bracketed(&good, 1_000);
+        drop(env);
+        let _env = TestEnv::new();
+        assert_ne!(now_ns(), 42_000, "the reset unpins");
+        let report = clock_report();
+        assert_eq!(
+            (report.source, report.why),
+            (SOURCE_MONOTONIC, WHY_NOT_STARTED),
+            "{report:?}"
+        );
+        assert_reads_clock_monotonic();
     }
 }

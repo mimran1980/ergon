@@ -281,6 +281,17 @@ fn advance<E>(job: &mut Job<E>, resolver: &mut Resolver, now: i64) -> Result<Opt
     r
 }
 
+/// Held by every unit test in this crate that may start an `ergon-io-dial`
+/// helper. Unit tests share one process and may run in parallel
+/// (`--test-threads`); a test that finds its helper by diffing the process's
+/// dial threads must not pick up another test's.
+#[cfg(test)]
+pub fn dial_helper_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Instant;
@@ -315,6 +326,7 @@ mod tests {
 
     #[test]
     fn a_stopped_helper_fails_every_outstanding_connect() -> Result<()> {
+        let _helpers = super::dial_helper_test_lock();
         let mut bg = Background::<u8>::start(
             &[],
             DnsConfig::system(),
@@ -418,6 +430,7 @@ mod tests {
     /// whatever else ran on its CPU), and dropping the mailbox stops it.
     #[test]
     fn an_idle_helper_never_wakes_and_stops_when_dropped() -> R {
+        let _helpers = super::dial_helper_test_lock();
         let before = dial_threads()?;
         let bg = Background::<u8>::start(
             &[],
@@ -443,6 +456,7 @@ mod tests {
     /// long idle spell is still taken and reported.
     #[test]
     fn a_parked_helper_wakes_for_work() -> R {
+        let _helpers = super::dial_helper_test_lock();
         let mut bg = Background::<u8>::start(
             &[],
             DnsConfig::system(),
@@ -476,6 +490,7 @@ mod tests {
     /// `uring-sqpoll`'s spinner).
     #[test]
     fn a_dial_in_flight_steps_at_the_given_interval() -> R {
+        let _helpers = super::dial_helper_test_lock();
         let before = dial_threads()?;
         let mut bg = Background::<u8>::start(&[], DnsConfig::system(), Duration::from_millis(1))?;
         let tid = started_helper(&before)?;
@@ -502,6 +517,7 @@ mod tests {
     /// does not sleep between steps.
     #[test]
     fn work_arrives_at_once_while_a_dial_is_in_flight() -> R {
+        let _helpers = super::dial_helper_test_lock();
         let mut bg = Background::<u8>::start(&[], DnsConfig::system(), Duration::from_millis(200))?;
         bg.submit(
             1,

@@ -49,7 +49,7 @@
 # CloudWatch log groups (logging is off), the launch template.
 #
 #   EKS_REGION (us-east-1) EKS_TYPE (c7i.4xlarge; x86, 5+ cores; *.metal too, e.g.
-#   c7i.metal-24xl: igb_uio through iommu=pt, no C-state cap, a longer join wait)
+#   c7i.metal-24xl: igb_uio through iommu=pt, a longer join wait)
 #   EKS_K8S (1.36; 1.36 or later: the kubelet sets no CPU quota on a container
 #   with exclusive CPUs from 1.33, and 1.36 is the floor for latency nodes)
 #   EKS_REPS (5) EKS_MAX_MINUTES (150) EKS_HUGEPAGES (2048 2 MiB pages a node)
@@ -1022,33 +1022,20 @@ cmdline=" $(cat /proc/cmdline) "
 # and provision-node.sh on bare metal).
 v=$(cat /sys/devices/system/cpu/smt/active 2>/dev/null || echo 0)
 if [[ $v == 0 ]]; then ok "SMT off (smt/active=0)"; else bad "smt/active=$v (want 0: one CPU is one physical core)"; fi
-# the C-state cap on a VM only (provision-node.sh): on metal it did not help
-vm=
-grep -m1 '^flags' /proc/cpuinfo | grep -qw hypervisor && vm=1
+# no C-state cap on any node (provision-node.sh): no committed A/B showed a gain
 args="nosmt isolcpus= nohz_full= rcu_nocbs= irqaffinity= iommu=pt transparent_hugepage=never hugepagesz=2M hugepages="
-[[ -n $vm ]] && args+=" intel_idle.max_cstate=1 processor.max_cstate=1"
 for arg in $args; do
     if [[ $cmdline == *" $arg"* ]]; then ok "cmdline has $arg"; else bad "cmdline lacks $arg"; fi
 done
-if [[ -z $vm ]]; then
-    for arg in intel_idle.max_cstate= processor.max_cstate=; do
-        if [[ $cmdline == *" $arg"* ]]; then bad "bare metal cmdline has $arg (no C-state cap on metal)"; else ok "bare metal: no $arg"; fi
-    done
-fi
+for arg in intel_idle.max_cstate= processor.max_cstate=; do
+    if [[ $cmdline == *" $arg"* ]]; then bad "cmdline has $arg (provision-node.sh sets no C-state cap)"; else ok "no $arg"; fi
+done
 for f in isolated nohz_full; do
     v=$(cat /sys/devices/system/cpu/$f 2>/dev/null)
     if [[ -n $v && $(expand "$v") == "$iso" ]]; then ok "$f $v"; else bad "$f is '$v', not the CPUs $iso(empty nohz_full: no CONFIG_NO_HZ_FULL)"; fi
 done
 names=$(cat /sys/devices/system/cpu/cpu0/cpuidle/state*/name 2>/dev/null | tr '\n' ' ')
-deep=
-for s in $names; do [[ $s == POLL || $s == C1 || $s == C1_ACPI ]] || deep+="$s "; done
-if [[ -z $vm ]]; then
-    info "bare metal, no C-state cap: cpuidle states ${names:-none} ($(cat /sys/devices/system/cpu/cpuidle/current_driver 2>/dev/null))"
-elif [[ -z $deep ]]; then
-    ok "cpuidle states: ${names:-none} ($(cat /sys/devices/system/cpu/cpuidle/current_driver 2>/dev/null))"
-else
-    bad "cpuidle states deeper than C1: $deep"
-fi
+info "no C-state cap: cpuidle states ${names:-none} ($(cat /sys/devices/system/cpu/cpuidle/current_driver 2>/dev/null))"
 # igb_uio programs no IOMMU: on metal every group must be in passthrough
 groups=$(find /sys/kernel/iommu_groups -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)
 if ((groups == 0)); then

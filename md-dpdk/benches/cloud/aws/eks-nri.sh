@@ -55,8 +55,8 @@
 #   EKS_CHECK_ONLY=1 stops after the estimate; EKS_DELETE=<stamp> deletes.
 #   RTT_MESSAGES (300000) RTT_WARMUP (50000) RTT_SECONDS (60)
 #
-# Modes (latency-build-plan.md §9). SCHED_FIFO is deliberately absent: measured
-# not worth it on AWS (io/benches/BENCHMARK.md). Rlimits (MEMLOCK) ride along
+# Modes (latency-build-plan.md §9). SCHED_FIFO is deliberately absent: the one
+# AWS A/B was inconclusive (io/benches/BENCHMARK.md). Rlimits (MEMLOCK) ride along
 # on the hugepage modes so the app can mlock the pages.
 #   M0 baseline   AERON_DIR on a plain emptyDir; no extension annotations
 #   M1 +hugepages hugepages.ergon.io/app=2M + hugepages-2Mi request; the
@@ -1101,7 +1101,7 @@ done
 # come from the plugin's grants, never from the pod spec (PSS Baseline
 # forbids hostPath and Unconfined). cpu: 2 Guaranteed takes the isolated
 # CPUs; the shared-millicpus request is the opt-in to the plugin's shared
-# CPU. SCHED_FIFO is deliberately absent (measured not worth it on AWS).
+# CPU. SCHED_FIFO is deliberately absent (inconclusive in the one AWS A/B).
 make_pod() {
     local mode=$1 which=$2 ping_ep=$3 pong_ep=$4
     local name=ergon-lab-$which-$mode ns=ergon-latency-pods

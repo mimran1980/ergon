@@ -210,7 +210,7 @@ fn k3_warns_when_the_smt_sibling_is_outside_the_pod() -> R {
     assert!(k3.is_warning(), "{v:#?}");
     let m = &k3.message;
     assert!(m.contains("CPU 2 (loop): CPU 6"), "{m}");
-    assert!(m.contains("+2.3–2.7 µs p50"), "{m}");
+    assert!(m.contains("T10's figures"), "{m}");
     assert!(m.contains("Fix (node): turn SMT off"), "{m}");
     assert!(m.contains("Fix (pod spec):"), "{m}");
     Ok(())

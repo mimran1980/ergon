@@ -365,7 +365,7 @@ pub fn t9_cpu_quota(host: &Host) -> Finding {
     };
     let _ = write!(
         message,
-        " Fix: on Kubernetes, use kubelet 1.33 or later (1.36 or later on a latency node) with \
+        " Fix: on Kubernetes, use kubelet 1.33 or later with \
          `cpuManagerPolicy: static`, make the pod Guaranteed and this container's CPU request a \
          whole number: the kubelet then sets no quota on the container or its pod, and every \
          other pod keeps its CPU limit. Never set kubelet `cpuCFSQuota: false`: it removes the \
@@ -454,7 +454,7 @@ fn parse_local(text: &str) -> Result<Option<u64>, &'static str> {
 /// Reads `file` from its start into `buf` (`pread` at offset 0: no seek,
 /// no allocation); the bytes read.
 #[cfg(unix)]
-fn read_from_start(file: &File, buf: &mut [u8]) -> std::io::Result<usize> {
+pub fn read_from_start(file: &File, buf: &mut [u8]) -> std::io::Result<usize> {
     use std::os::unix::fs::FileExt;
     let mut n = 0;
     while n < buf.len() {
@@ -470,7 +470,7 @@ fn read_from_start(file: &File, buf: &mut [u8]) -> std::io::Result<usize> {
 }
 
 #[cfg(not(unix))]
-fn read_from_start(file: &File, buf: &mut [u8]) -> std::io::Result<usize> {
+pub fn read_from_start(file: &File, buf: &mut [u8]) -> std::io::Result<usize> {
     use std::io::{Read, Seek, SeekFrom};
     let mut file = file;
     file.seek(SeekFrom::Start(0))?;

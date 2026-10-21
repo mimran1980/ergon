@@ -78,7 +78,7 @@ fn t1_warns_separately_for_isolation_nohz_and_default_affinity_on_an_untuned_hos
         domain.message
     );
     assert!(
-        domain.message.contains("69 → 30 µs (max 216 → 71 µs)"),
+        domain.message.contains("120 and 162 a minute to 4 and 0.5"),
         "{}",
         domain.message
     );
@@ -87,7 +87,7 @@ fn t1_warns_separately_for_isolation_nohz_and_default_affinity_on_an_untuned_hos
         .iter()
         .find(|f| f.message.contains("not nohz_full"))
         .ok_or("nohz")?;
-    assert!(nohz.message.contains("1,003"), "{}", nohz.message);
+    assert!(nohz.message.contains("1,002"), "{}", nohz.message);
     assert!(nohz.message.contains("60,120"), "{}", nohz.message);
     assert!(nohz.message.contains(fix), "{}", nohz.message);
     // The tick rate is the kernel's CONFIG_HZ (250 on Debian), not always
@@ -145,9 +145,9 @@ fn t1_counts_a_cgroup_isolated_partition_as_isolated() -> R {
 
 #[test]
 fn t1_does_not_ask_nohz_full_of_an_sqpoll_cpu() -> R {
-    // ergon-io measured no difference with the SQPOLL CPU out of nohz_full
-    // (io/benches/BENCHMARK.md, Host and NIC settings on AWS): a host whose
-    // SQPOLL CPU is isolated but ticking is tuned.
+    // T1 does not ask nohz_full of the SQPOLL CPU (its effect there is not
+    // measured here): a host whose SQPOLL CPU is isolated but ticking is
+    // tuned.
     let f = c7i_tuned("t1-sqpoll")?;
     f.file("/sys/devices/system/cpu/nohz_full", "1-3\n")?;
     let hot = HotSet::new().with(2, Role::Loop).with(6, Role::SqPoll);
@@ -289,11 +289,7 @@ fn t2_warns_for_each_irq_that_may_fire_on_a_hot_cpu() -> R {
     assert_eq!(q2.severity, Severity::Warn);
     assert!(q2.message.contains("ens5-Tx-Rx-2"), "{}", q2.message);
     assert!(q2.message.contains("CPU 2 (loop)"), "{}", q2.message);
-    assert!(
-        q2.message.contains("from about 30 to 411 a minute"),
-        "{}",
-        q2.message
-    );
+    assert!(q2.message.contains("462–547 a"), "{}", q2.message);
     assert!(
         q2.message
             .contains("echo 0-1,3-7 > /proc/irq/27/smp_affinity_list"),
@@ -521,20 +517,14 @@ fn t3_warns_for_aeron_processes_and_informs_for_ergon_io() -> R {
         assert!(v[0].is_finding());
         assert_eq!(v[0].severity, severity, "{component:?}");
         assert!(v[0].message.contains("`always`"), "{}", v[0].message);
+        // The md-dpdk THP figures have no archived data: the finding
+        // says so instead of quoting them.
         assert!(
-            v[0].message.contains("8–22 µs every 10.24 s"),
+            v[0].message.contains("not measured with archived data"),
             "{}",
             v[0].message
         );
-        assert!(
-            v[0].message.contains("670 to 120–277 µs"),
-            "{}",
-            v[0].message
-        );
-        // The idle max (546 → 106 µs) had overlapping ranges (82–632
-        // against 98–286): the spec drops it. The under-load maxima stand.
-        assert!(!v[0].message.contains("546"), "{}", v[0].message);
-        assert!(v[0].message.contains("1,148 → 149 µs"), "{}", v[0].message);
+        assert!(!v[0].message.contains("1,148"), "{}", v[0].message);
         assert!(
             v[0].message
                 .contains("echo never > /sys/kernel/mm/transparent_hugepage/enabled"),
@@ -752,7 +742,7 @@ fn t7_warns_for_fifo_and_round_robin() -> R {
         let v = t7_sched_policy(&f.host(), Thread::Current, Role::Loop);
         assert!(v.is_warning(), "{v:?}");
         assert!(v.message.contains(name), "{}", v.message);
-        assert!(v.message.contains("550/s against 18/s"), "{}", v.message);
+        assert!(v.message.contains("533–947 local-timer"), "{}", v.message);
         assert!(v.message.contains("950000"), "{}", v.message);
     }
     Ok(())
@@ -950,14 +940,13 @@ fn t10_warns_when_smt_is_on_and_names_every_way_to_turn_it_off() -> R {
     // What it means in Kubernetes, with the measured numbers.
     assert!(m.contains("`cpu: 2` is one physical core"), "{m}");
     assert!(m.contains("a busy sibling slows the loop"), "{m}");
-    assert!(m.contains("+0.5 µs p50 at 1 connection"), "{m}");
     assert!(
-        m.contains("+2.3–2.7 µs p50 and +9–12 µs p99 at 10–100"),
+        m.contains("10 connections 7.5–8.4 / 29–33 / 96–349 against 5.2–6.0 / 20–24 / 77–109"),
         "{m}"
     );
     // EKS/EC2: the exact launch-template CpuOptions.
     assert!(
-        m.contains("\"CpuOptions\": {\"CoreCount\": 4, \"ThreadsPerCore\": 1}"),
+        m.contains("\"CpuOptions\": {\"CoreCount\": <the type's cores>, \"ThreadsPerCore\": 1}"),
         "{m}"
     );
     assert!(

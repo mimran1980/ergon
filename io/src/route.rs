@@ -13,10 +13,9 @@
 //! - A peer using Nagle's algorithm sends its next small segment only once
 //!   the last one is acknowledged, so our delayed ACK (up to tens of ms)
 //!   holds it back.
-//! - Its cost is not measured: every ergon-io benchmark ran with
-//!   `quickack 1 rto_min 5ms` (`io/benches/BENCHMARK.md`), and the one run
-//!   without it (`flags-aws-20261014T163114Z`, rows `r1-noquickack`) was
-//!   confounded by the sender's C6 state. No figure is claimed.
+//! - Its latency effect is not measured here: every ergon-io benchmark ran
+//!   with `quickack 1 rto_min 5ms` (`io/benches/BENCHMARK.md`). No figure is
+//!   claimed.
 //! - The route's `rto_min` is reported as information only (kernel default
 //!   200 ms; the benchmarks set 5 ms).
 //!

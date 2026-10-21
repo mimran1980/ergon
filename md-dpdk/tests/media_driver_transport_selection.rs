@@ -331,8 +331,8 @@ fn socket_backend_keeps_aerons_receiver_io_vector_capacity() {
     let dir = aeron_dir("iovec-default");
     let (status, out) = run_and_stop(&[("AERON_DIR", dir.as_str())], "INT");
     assert_eq!(status.code(), Some(0), "graceful SIGINT shutdown must exit 0");
-    // Kernel busy polling with 16 dropped frames at the NIC in the Azure lab
-    // (round 5), so the socket backend keeps Aeron's default of 4.
+    // No committed run separates 16 on the socket transport (md-dpdk/
+    // BENCHMARKS.md), so the socket backend keeps Aeron's default of 4.
     assert_eq!(
         printed_setting(&out, "receiver_io_vector_capacity"),
         Some("4"),

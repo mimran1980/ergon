@@ -142,8 +142,8 @@ package_cluster() {
     fi
     # The run's own evidence is the `repeats/<k>/` tree the runner snapshotted,
     # which is also what the gate grades. The cluster Criterion home is shared
-    # with other bench binaries (`target/criterion` also holds ergon-clock-bench's
-    # groups) and Criterion leaves `new/` in place for groups a run does not
+    # with other bench binaries (`target/criterion` also holds ergon-md-dpdk's
+    # `clock_read`, `send_32b` and `poll_32b` groups) and Criterion leaves `new/` in place for groups a run does not
     # touch, so counting or shipping `new/` folds foreign keys into the release
     # artifact — one run packaged 53 "estimates" of which 35 belonged to other
     # benches. With no repeats on disk there is nothing better to go on, so fall

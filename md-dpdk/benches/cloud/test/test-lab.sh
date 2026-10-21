@@ -163,23 +163,9 @@
 #     lib.sh: no SSH once a run is abandoned, the market in the hosts'
 #     records, no second flow on the spare core, and prepare_vms asking for
 #     ynl and checking each host's readiness before any state;
-#   * ergon-clock's benchmark (clockbench): clockbench.py prints
-#     expected-clock.md from fixture/clock (two hosts' CSVs, one with a run
-#     built without LTO, a less isolated state, a second node, a clock that
-#     failed its check, and the diagnostics its longest gaps are attributed
-#     against: a host stall, a preemption, an interrupt, none; each host's
-#     ordered read named, and the bare row each gate compared against where
-#     the CSV records it); a calibration that fell back has no counter rate,
-#     said so with why; vm.sh
-#     clockbench (quick and full, pinned to the app and receiver CPUs,
-#     labelled; full runs the build without LTO too, even after the LTO run
-#     fails, and fails with it) and build-clock in a sandbox; lib.sh, dry: a
-#     run's clockbench at boot and in each isolated state, and LAB_CLOCK_ONLY=1
-#     (build-clock alone, no mode checks, no clockcheck, Criterion or network
-#     round trip; in each state, booted as ever, clockbench full between the
-#     diagnostics, then clock-summary.md); aws/lab.sh refuses a LAB_CLOCK_ONLY
-#     it cannot run before any cloud call, LAB_ESTIMATE=1 prices it, and end
-#     to end it makes the cluster run's calls, deletes and verifies;
+#   * the clock benchmarks' removal: aws/lab.sh refuses LAB_CLOCK_ONLY and
+#     LAB_DISCIPLINE_SECONDS before any cloud call, never a full run in their
+#     place;
 #   * the pre-flight before any cloud call (modes.sh, both lab.sh): an
 #     upper-case @KEY that is neither a setting the lab knows nor an AERON_*
 #     or RUSTERON_* variable, a pair or transport vm.sh would refuse, the
@@ -225,19 +211,6 @@
 #     the lab's end_client never SIGTERMs its own ssh to the client; in a
 #     dry run every answering client's hung session (a subscriber piped
 #     into the results too) is ended whole at its wait's bound;
-#   * ergon-clock's discipline (LAB_DISCIPLINE_SECONDS): aws/lab.sh refuses a
-#     value that is not a whole number of seconds up to a day before any cloud
-#     call; vm.sh discipline (clockbench --discipline, its owner on the app
-#     CPU and its verifier on the receiver CPU, labelled, chrony's tracking
-#     before and after it; bad seconds refused);
-#     lib.sh, dry, in LAB_CLOCK_ONLY=1 and in a run, the discipline on both
-#     hosts after each state's timesync gate and before its diagnostics,
-#     none without it, the CSVs and logs kept and clock-summary.md written;
-#     clockbench.py's residual table per host (the start update's action
-#     apart, its forward step never counted as a step; samples, verifier,
-#     where its max fell, rejected samples, clock steps after the start and
-#     wall steps, cost) and chrony's tracking around it, in
-#     expected-clock.md; estimate.py's time for it;
 #   * the media driver's start-up host checks: vm.sh hostchecks (its warning
 #     and info lines from driver.log, nothing else), lib.sh's hostcheck rows
 #     per host and mode (an external driver's log, INVOKER's clients'
@@ -247,12 +220,12 @@
 #     a subscription as reserved or a payload offset from 16 to 24, never
 #     over the clients' stamp and sequence, and vm.sh hands it to the
 #     clients as SUB_CHANNEL_PARAMS;
-#   * the final round's plans (G3, C8, C7): accepted before any cloud call,
+#   * the final round's plan (G3): accepted before any cloud call,
 #     and LAB_ESTIMATE=1's hours, bytes and dollars at the lab's spot prices
 #     beside the on-demand ceiling (estimate.py's spot table);
 #   * vm.sh, irqs.sh, host.sh, modes.sh, lib.sh, remote.sh and both lab.sh
-#     parse (bash -n), and analyse.py, spikes.py, estimate.py, clockbench.py
-#     and fake_aws.py compile.
+#     parse (bash -n), and analyse.py, spikes.py, estimate.py and
+#     fake_aws.py compile.
 #
 # Run from anywhere:  bash md-dpdk/benches/cloud/test/test-lab.sh
 set -euo pipefail
@@ -949,10 +922,9 @@ fi
 # LAB_ESTIMATE=1 (aws/lab.sh's, below): estimate.py's arithmetic, against a
 # plan worked by hand: two c7i.4xlarge across zones, one isolated state, two modes, two reps,
 # 288 B at a ladder of 1000 and 2000/s (the burst at the median, 1000/s),
-# 5 s a point, nothing flat out. Wall time: setup 600 s and clockbench's 60 s
-# at boot, the isolated state's 450 s and clockbench's 15 s, per mode and rep
-# 12 s + the round trip's 85 s + 3 points of 5 + 7 s, teardown 180 s: 600 +
-# 60 + 450 + 15 + 4 x 133 + 180 = 1837 s; instances 1837/3600 h x $0.714 x 2. Bytes each way per mode and rep: the round trip's 350,000
+# 5 s a point, nothing flat out. Wall time: setup 600 s, the isolated state's
+# 450 s, per mode and rep 12 s + the round trip's 85 s + 3 points of 5 + 7 s,
+# teardown 180 s: 600 + 450 + 4 x 133 + 180 = 1762 s; instances 1762/3600 h x $0.714 x 2. Bytes each way per mode and rep: the round trip's 350,000
 # messages of 32 + 60 B, and (5 + 1) s of each point at its rate of 288 + 60 B
 # (an echo back for each): 32,200,000 + 6 x (1000 + 2000 + 1000) x 348 =
 # 40,552,000; x 4 = 162,208,000 B each way. Cross-AZ: $0.01/GB out of one zone
@@ -968,9 +940,9 @@ plan = dict(type_a="c7i.4xlarge", type_b="c7i.4xlarge", placement="cross-az", re
             no_flatout=True, max_hours=8)
 e = estimate.estimate(**plan)
 close = lambda a, b: abs(a - b) < 1e-9 * max(1, abs(b))
-assert e["wall_s"] == 1837, e["wall_s"]
-assert close(e["instance_hours"], 2 * 1837 / 3600), e["instance_hours"]
-assert close(e["instance_usd"], 1837 / 3600 * 0.714 * 2), e["instance_usd"]
+assert e["wall_s"] == 1762, e["wall_s"]
+assert close(e["instance_hours"], 2 * 1762 / 3600), e["instance_hours"]
+assert close(e["instance_usd"], 1762 / 3600 * 0.714 * 2), e["instance_usd"]
 assert close(e["deadline_usd"], 8 * 0.714 * 2), e["deadline_usd"]
 assert e["bytes_ab"] == 162208000 and e["bytes_ba"] == 162208000, (e["bytes_ab"], e["bytes_ba"])
 assert close(e["transfer_usd"], 2 * 0.162208 * 0.02), e["transfer_usd"]
@@ -988,37 +960,21 @@ for t, usd in (("c7i.2xlarge", 0.357), ("c8g.xlarge", 0.15952), ("c9g.xlarge", 0
                ("c8g.metal-24xl", 3.82848), ("c7i.metal-24xl", 4.284)):
     assert estimate.PRICES.get(t) == usd, (t, estimate.PRICES.get(t), usd)
 g = estimate.estimate(**dict(plan, type_a="c8g.xlarge", type_b="c9g.xlarge"))
-assert close(g["instance_usd"], 1837 / 3600 * (0.15952 + 0.17388)) and not g["unknown"], g
+assert close(g["instance_usd"], 1762 / 3600 * (0.15952 + 0.17388)) and not g["unknown"], g
 # a plan longer than LAB_MAX_HOURS: each instance powers off at its deadline,
-# cutting the run short. 400 reps of the plan: 600 + 60 + 450 + 15 + 800 x
-# 133 + 180 = 107,705 s, 29.9 h; the hours to give it: a fifth more, rounded
-# up, 36
+# cutting the run short. 400 reps of the plan: 600 + 450 + 800 x 133 + 180
+# = 107,630 s, 29.9 h; the hours to give it: a fifth more, rounded up, 36
 assert not e["over_deadline"], e
 o = estimate.estimate(**dict(plan, reps=400))
-assert o["wall_s"] == 107705 and o["over_deadline"] and o["hours_needed"] == 36, o
+assert o["wall_s"] == 107630 and o["over_deadline"] and o["hours_needed"] == 36, o
 assert not estimate.estimate(**dict(plan, reps=400, max_hours=30))["over_deadline"]
-# LAB_CLOCK_ONLY=1: the clock benchmarks alone, whatever else the plan says:
-# setup 420 s, pinned 180 s, isolated 330 s, teardown 180 s = 1,110 s, and
-# nothing between the hosts
-c = estimate.estimate(**dict(plan, clock_only=True, states=["pinned", "isolated"], placement="cluster"))
-assert c["wall_s"] == 1110 and c["bytes_ab"] == 0 and c["bytes_ba"] == 0 and not c["bound"], c
-assert close(c["instance_usd"], 1110 / 3600 * 0.714 * 2), c
-# LAB_DISCIPLINE_SECONDS: ergon-clock's discipline on both hosts at once
-# after each state's timesync gate, its seconds and 20 s more a state (the
-# build already made, chrony's view either side), in a run and in
-# LAB_CLOCK_ONLY=1's; nothing between the hosts
-d = estimate.estimate(**dict(plan, discipline_seconds=1800))
-assert d["wall_s"] == 1837 + 1820 and d["bytes_ab"] == e["bytes_ab"], d
-cd = estimate.estimate(**dict(plan, clock_only=True, states=["pinned", "isolated"], placement="cluster",
-                              discipline_seconds=1800))
-assert cd["wall_s"] == 1110 + 2 * 1820 and cd["bytes_ab"] == 0, cd
 # spot: the lab's us-east-1 spot prices (each below its on-demand price,
 # a one-time spot instance's default maximum, so the ceiling), the
 # instances at them beside the on-demand figure; a type without one has none
 for t, usd in (("c9g.2xlarge", 0.153), ("c8g.xlarge", 0.077), ("c7i.2xlarge", 0.200)):
     assert estimate.SPOT_PRICES.get(t) == usd and usd < estimate.PRICES[t], (t, estimate.SPOT_PRICES.get(t), usd)
 sp = estimate.estimate(**dict(plan, type_a="c9g.2xlarge", type_b="c9g.2xlarge", placement="cluster"))
-assert close(sp["spot_usd"], 1837 / 3600 * 0.153 * 2) and close(sp["instance_usd"], 1837 / 3600 * 0.34776 * 2), sp
+assert close(sp["spot_usd"], 1762 / 3600 * 0.153 * 2) and close(sp["instance_usd"], 1762 / 3600 * 0.34776 * 2), sp
 assert close(sp["spot_deadline_usd"], 8 * 0.153 * 2), sp
 assert e["spot_usd"] is None and e["spot_deadline_usd"] is None, e
 PY
@@ -1689,17 +1645,13 @@ fi
 # RUSTERON_DPDK_RX_DESCRIPTORS; a kernel socket's buffer up to net.core's 16
 # MiB), SMT=off and LAB_THREADS_PER_CORE=1 on x86,
 # and cross-AZ and cross-region with LAB_NO_FLATOUT=1 and a ladder for every size
-# The final round's three plans (scratchpad final-round-plan.md), as their
-# command lines give them: G3, a c9g.2xlarge spot pair, the isolated state, 5
+# The final round's plan (scratchpad final-round-plan.md), as its
+# command line gives it: G3, a c9g.2xlarge spot pair, the isolated state, 5
 # reps, nothing flat out, the 288 B and 1344 B ladders (a burst each) after a
 # 30 s warm-up at 25,000/s, DPDK with no RX descriptor override, kernel UDP
 # with coalescing off and the queue IRQs on the spare core, and DPDK with
-# Aeron's media receive timestamps in each frame's reserved value; C8 and C7,
-# the clock benchmarks alone on a c8g.xlarge and a c7i.2xlarge spot pair, the
-# isolated state, with 30 minutes of ergon-clock's discipline
+# Aeron's media receive timestamps in each frame's reserved value
 G3_PLAN="LAB_SPOT=1|LAB_ALLOW_ARM=1|LAB_TYPE=c9g.2xlarge|LAB_STATES=isolated|LAB_REPS=5|LAB_NO_FLATOUT=1|LAB_LOAD_SIZES=288 1344|LAB_LOAD_LADDER=288:100000,1000000 1344:500000|LAB_LOAD_SECONDS=10|LAB_WARMUP_SECONDS=30|LAB_WARMUP_RATE=25000|LAB_MODES=dpdk kernel@COALESCE=off@IRQ=spare dpdk@SUB_PARAMS=media-rcv-ts-offset=reserved|LAB_MAX_HOURS=2"
-C8_PLAN="LAB_CLOCK_ONLY=1|LAB_SPOT=1|LAB_ALLOW_ARM=1|LAB_TYPE=c8g.xlarge|LAB_STATES=isolated|LAB_DISCIPLINE_SECONDS=1800|LAB_MAX_HOURS=1"
-C7_PLAN="LAB_CLOCK_ONLY=1|LAB_SPOT=1|LAB_TYPE=c7i.2xlarge|LAB_STATES=isolated|LAB_DISCIPLINE_SECONDS=1800|LAB_MAX_HOURS=1"
 accepted=0
 for case in "LAB_MODES=dpdk@AERON_THREADING_MODE=SHARED_NETWORK dpdk@AERON_THREADING_MODE=SHARED kernel@AERON_THREADING_MODE=INVOKER dpdk@AERON_THREADING_MODE=INVOKER" \
     "LAB_MODES=kernel kernel@JUMBO=1|LAB_LOAD_SIZES=288 8192|LAB_LOAD_LADDER=288:1000 8192:1000|LAB_MIX=p=o:3001:100:32 q:3002:100:8192" \
@@ -1709,7 +1661,7 @@ for case in "LAB_MODES=dpdk@AERON_THREADING_MODE=SHARED_NETWORK dpdk@AERON_THREA
     "LAB_PLACEMENT=cross-az|LAB_NO_FLATOUT=1|LAB_LOAD_SIZES=288|LAB_LOAD_LADDER=288:1000,2000" \
     "LAB_PLACEMENT=cross-region|LAB_REGION2=us-west-2|LAB_NO_FLATOUT=1|LAB_MODES=kernel dpdk@JUMBO=1" \
     "LAB_TYPE=c7i.4xlarge|LAB_MODES=kernel@IRQ=hk kernel@IRQ=receiver kernel-busy@IRQ=spare@NAPI_BUSY=spare kernel@NAPI_DEFER=2/200000|LAB_LOCAL_MODES=kernel@IRQ=receiver" \
-    "$G3_PLAN" "$C8_PLAN" "$C7_PLAN"; do
+    "$G3_PLAN"; do
     IFS='|' read -ra vars <<<"$case"
     lab_aws "$tmp/accepted" "${vars[@]}" || true
     if ! grep -q 'sts get-caller-identity' "$tmp/accepted" || grep -q 'ERROR: mode\|refuse' "$tmp/accepted.out"; then
@@ -1721,7 +1673,7 @@ for case in "LAB_MODES=dpdk@AERON_THREADING_MODE=SHARED_NETWORK dpdk@AERON_THREA
         accepted=$((accepted + 1))
     fi
 done
-((accepted == 12)) && pass "aws/lab.sh takes INVOKER (Graviton's DPDK too), DPDK's shared modes, jumbo frames and 8192 B, URI parameters with deep rings, SMT off, cross-AZ and cross-region (oversized messages skipped per mode, said so), the data NICs' IRQ and NAPI settings, and the final round's three plans (G3's media-receive-timestamp mode, C8's and C7's discipline)"
+((accepted == 10)) && pass "aws/lab.sh takes INVOKER (Graviton's DPDK too), DPDK's shared modes, jumbo frames and 8192 B, URI parameters with deep rings, SMT off, cross-AZ and cross-region (oversized messages skipped per mode, said so), the data NICs' IRQ and NAPI settings, and the final round's G3 plan (its media-receive-timestamp mode)"
 
 # LAB_ESTIMATE=1 (estimate.py's arithmetic is checked above): the plan's cost
 # printed, and no cloud call, not even signing in
@@ -1745,43 +1697,31 @@ elif [[ -z $od ]] || ! grep -q "^instances at most $od (on-demand.*an upper boun
 else
     pass "aws/lab.sh LAB_ESTIMATE=1 LAB_SPOT=1: the on-demand figure as an upper bound, spot said to be lower, no cloud call"
 fi
-# The final round's plans (G3_PLAN, C8_PLAN, C7_PLAN, above) with
-# LAB_ESTIMATE=1: no cloud call, and what the plan file quotes. G3: setup
-# 600 s, clockbench at boot 60 s, the isolated state 450 s and its
-# clockbench 15 s, teardown 180 s, and 5 reps of 3 modes of 219 s (12 s, the
+# The final round's plan (G3_PLAN, above) with LAB_ESTIMATE=1: no cloud
+# call. G3: setup 600 s, the isolated state 450 s, teardown 180 s, and 5 reps of 3 modes of 219 s (12 s, the
 # round trip's 85 s, the warm-up's 30 + 7 s, then 288 B at 100,000 and
 # 1,000,000/s and the burst at 100,000, 1344 B at 500,000/s and its burst,
-# 10 + 7 s a point): 4,590 s, 1.27 h; at the spot price ($0.153/h) $0.39, at
-# on-demand ($0.34776/h) $0.89; each way per mode and rep the round trip's
+# 10 + 7 s a point): 4,515 s, 1.25 h; at the spot price ($0.153/h) $0.38, at
+# on-demand ($0.34776/h) $0.87; each way per mode and rep the round trip's
 # 32,200,000 B, the warm-up's 31 x 25,000 x 348 B, 11 x 1,200,000 x 348 B and
 # 11 x 1,000,000 x 1404 B: 20,339,500,000 B, x 15 = 305.092 GB, free within
-# one zone. C8 and C7: setup 420 s, the isolated state 330 s, the discipline
-# 1,800 + 20 s, teardown 180 s: 2,750 s, 0.76 h; c8g.xlarge $0.12 at spot,
-# $0.24 on demand; c7i.2xlarge $0.31 and $0.55
+# one zone.
 plan_estimate() { # <calls file> <plan>: lab.sh LAB_ESTIMATE=1 with the plan's variables
     local vars
     IFS='|' read -ra vars <<<"$2"
     lab_aws "$1" LAB_ESTIMATE=1 "${vars[@]}" || true
 }
 plan_estimate "$tmp/estimate-g3" "$G3_PLAN"
-plan_estimate "$tmp/estimate-c8" "$C8_PLAN"
-plan_estimate "$tmp/estimate-c7" "$C7_PLAN"
-if [[ -s $tmp/estimate-g3 || -s $tmp/estimate-c8 || -s $tmp/estimate-c7 ]]; then
-    fail "aws/lab.sh LAB_ESTIMATE=1 of the final round's plans made cloud calls: $(head -2 "$tmp"/estimate-{g3,c8,c7})"
-elif ! grep -q '^wall time about 1.27 h: 2.55 instance-hours' "$tmp/estimate-g3.out" ||
-    ! grep -q '^instances about \$0.39 at spot prices (us-east-1 .*\$0.153/h and \$0.153/h.*), at most \$0.89 at on-demand prices' "$tmp/estimate-g3.out" ||
+if [[ -s $tmp/estimate-g3 ]]; then
+    fail "aws/lab.sh LAB_ESTIMATE=1 of the final round's plan made cloud calls: $(head -2 "$tmp/estimate-g3")"
+elif ! grep -q '^wall time about 1.25 h: 2.51 instance-hours' "$tmp/estimate-g3.out" ||
+    ! grep -q '^instances about \$0.38 at spot prices (us-east-1 .*\$0.153/h and \$0.153/h.*), at most \$0.87 at on-demand prices' "$tmp/estimate-g3.out" ||
     ! grep -q '^between the hosts about 305.092 GB a to b and 305.092 GB b to a' "$tmp/estimate-g3.out" ||
-    ! grep -q '^total about \$0.39 at spot prices, at most \$0.89 at on-demand prices' "$tmp/estimate-g3.out" ||
+    ! grep -q '^total about \$0.38 at spot prices, at most \$0.87 at on-demand prices' "$tmp/estimate-g3.out" ||
     grep -q 'WARNING' "$tmp/estimate-g3.out"; then
     fail "aws/lab.sh LAB_ESTIMATE=1 of G3: $(cat "$tmp/estimate-g3.out")"
-elif ! grep -q '^discipline: 1800 s of ergon-clock.s discipline on both hosts in each state' "$tmp/estimate-c8.out" ||
-    ! grep -q '^wall time about 0.76 h: 1.53 instance-hours' "$tmp/estimate-c8.out" ||
-    ! grep -q '^total about \$0.12 at spot prices, at most \$0.24 at on-demand prices' "$tmp/estimate-c8.out" ||
-    ! grep -q '^total about \$0.31 at spot prices, at most \$0.55 at on-demand prices' "$tmp/estimate-c7.out" ||
-    grep -q 'WARNING' "$tmp/estimate-c8.out" "$tmp/estimate-c7.out"; then
-    fail "aws/lab.sh LAB_ESTIMATE=1 of C8 and C7: $(cat "$tmp/estimate-c8.out" "$tmp/estimate-c7.out")"
 else
-    pass "aws/lab.sh LAB_ESTIMATE=1 of the final round's plans: hours, spot and on-demand dollars, bytes, the discipline counted, no cloud call"
+    pass "aws/lab.sh LAB_ESTIMATE=1 of the final round's plan: hours, spot and on-demand dollars, bytes, no cloud call"
 fi
 # a plan longer than LAB_MAX_HOURS (each instance powers off at its deadline,
 # cutting the run short): 100 reps of the default plan, about 18.9 h.
@@ -1791,7 +1731,7 @@ fi
 lab_aws "$tmp/estimate-long" LAB_ESTIMATE=1 LAB_REPS=100 || true
 lab_aws "$tmp/long" LAB_REPS=100 || true
 lab_aws "$tmp/long-hours" LAB_REPS=100 LAB_MAX_HOURS=23 || true
-if [[ -s $tmp/estimate-long ]] || ! grep -q '^WARNING: about 18.90 h, longer than LAB_MAX_HOURS=8: .*LAB_MAX_HOURS=23' "$tmp/estimate-long.out"; then
+if [[ -s $tmp/estimate-long ]] || ! grep -q '^WARNING: about 18.88 h, longer than LAB_MAX_HOURS=8: .*LAB_MAX_HOURS=23' "$tmp/estimate-long.out"; then
     fail "aws/lab.sh LAB_ESTIMATE=1, a plan over LAB_MAX_HOURS: $(cat "$tmp/estimate-long.out")"
 elif [[ -s $tmp/long ]] || ! grep -q 'ERROR: .*longer than LAB_MAX_HOURS=8: .*LAB_MAX_HOURS=23' "$tmp/long.out"; then
     fail "aws/lab.sh, a plan over LAB_MAX_HOURS not refused before any cloud call: $(head -2 "$tmp/long"; tail -2 "$tmp/long.out")"
@@ -4406,328 +4346,19 @@ plain = run("plain", "", "")
 assert "no spinner" not in plain and "gap spinner" not in plain and "| isolated-kernel-rtt | 2 | 0 | 0 | 0 | 0 | 2 | 0 |" in plain, plain
 PY
 
-# ergon-clock's benchmark. clockbench.py: two hosts' runs (fixture/clock:
-# c8g isolated, LTO and without, and pinned; c7i isolated on both nodes, one
-# clock failed its check) as one comparison, each host in its most isolated
-# state, node a, the LTO build; each host's ordered read (a run without the
-# record: "-") and the bare row each gate compared against (an older gate
-# record names none, and none is shown); c8g's drift against CLOCK_MONOTONIC_RAW
-# (records of the older form, with no reference named) and against
-# CLOCK_MONOTONIC, a table each; c8g's longest gaps attributed against its
-# diagnostics (a host stall, a preemption, an interrupt, unexplained)
-python3 "$cloud/clockbench.py" "$here/fixture/clock/c8g" "$here/fixture/clock/c7i" >"$tmp/clock.md" ||
-    fail "clockbench.py exited $?"
-same "clockbench.py: the hosts' comparison" "$here/expected-clock.md" "$tmp/clock.md"
-# clockbench.py's calibration cell: a counter's rate spread and its source;
-# calibrations that fell back to the monotonic clock have no counter rate,
-# said so with why, never a spread of "-" ppm
-python3 - "$cloud" <<'PY' && pass "clockbench.py: a fallback calibration is said to have no counter rate" || fail "clockbench.py: a fallback calibration's cell"
-import sys
-sys.path.insert(0, sys.argv[1])
-import clockbench
-counter = ["ergon", "20", "40.100", "40.200", "41.900", "1000000000.000", "1000000000.000", "1000000000.000", "0.000", "register"]
-assert clockbench.calib_cell(counter) == "40.100 / 40.200 / 41.900 ms; 0.000 ppm (register)", clockbench.calib_cell(counter)
-fallback = ["ergon", "20", "40.100", "40.200", "41.900", "-", "-", "-", "-", "fallback:kernel-clocksource:hpet"]
-assert clockbench.calib_cell(fallback) == "40.100 / 40.200 / 41.900 ms; no counter rate (fallback:kernel-clocksource:hpet)", \
-    clockbench.calib_cell(fallback)
-PY
-if python3 "$cloud/clockbench.py" "$tmp" >/dev/null 2>"$tmp/clock-none.err"; then
-    fail "clockbench.py with no runs succeeded"
-elif ! grep -q 'no clockbench runs' "$tmp/clock-none.err"; then
-    fail "clockbench.py with no runs: $(cat "$tmp/clock-none.err")"
-else
-    pass "clockbench.py: no runs is an error, said so"
-fi
-
-# vm.sh clockbench and build-clock in a sandbox (fake cargo logs each build
-# with its LTO setting; fake taskset logs the pinned command and runs
-# nothing, failing the LTO build's run with FAKE_LTO_RC): quick builds and
-# runs the LTO build pinned to the app and receiver CPUs, labelled with the
-# instance type (unknown here: the metadata service does not answer) and
-# the state; full adds 120 s of drift and 20 calibration spawns, then builds
-# without LTO in target/nolto and runs that too, no drift and no spawns, even
-# after the first run failed, failing with it; another variant is refused;
-# build-clock builds both
-sbc2=$tmp/vm-clockbench
-mkdir -p "$sbc2/bin" "$sbc2/home/ergon" "$sbc2/home/bench"
-cp "$sb/bin/"* "$sbc2/bin/"
-# the fakes' own arguments and FAKE_* expand when they run
-# shellcheck disable=SC2016
-{
-    printf '#!/bin/sh\necho "cargo $* lto=${CARGO_PROFILE_RELEASE_LTO:-default}" >>"$FAKE_LOG"\nexit 0\n' >"$sbc2/bin/cargo"
-    printf '#!/bin/sh\necho "taskset $*" >>"$FAKE_LOG"\ncase "$*" in *"--build lto"*) exit "${FAKE_LTO_RC:-0}" ;; esac\nexit 0\n' >"$sbc2/bin/taskset"
-}
-chmod +x "$sbc2/bin/"*
-echo aws >"$sbc2/home/bench/cloud"
-clock_sb() { # [FAKE_LTO_RC] <vm.sh args>...: "rc <rc>", then its cargo and taskset calls
-    local rc=0 lto_rc=$1
-    shift
-    : >"$sbc2/log"
-    env -i PATH="$sbc2/bin:$PATH" HOME="$sbc2/home" FAKE_LOG="$sbc2/log" FAKE_ARCH=x86_64 FAKE_LTO_RC="$lto_rc" \
-        LAB_SYS_ROOT="$sys/aws-x86" bash "$cloud/vm.sh" "$@" >"$sbc2/out" 2>&1 || rc=$?
-    echo "rc $rc"
-    grep -E '^(cargo|taskset) ' "$sbc2/log" | sed "s#$sbc2/home#~#g"
-}
-read -r _ app _ rcv _ <<<"$(env -i PATH="$sbc2/bin:$PATH" HOME="$sbc2/home" FAKE_LOG=/dev/null FAKE_ARCH=x86_64 \
-    LAB_SYS_ROOT="$sys/aws-x86" bash "$cloud/vm.sh" layout 2>/dev/null)"
-pinned="-c $app,$rcv"
-args="--cpu $app --cpu2 $rcv --label unknown isolated"
-got="quick:
-$(clock_sb 0 clockbench quick isolated)
-full:
-$(clock_sb 0 clockbench full isolated)
-full, the LTO run failing:
-$(clock_sb 1 clockbench full isolated)
-slow:
-$(clock_sb 0 clockbench slow isolated)
-build-clock:
-$(clock_sb 0 build-clock)"
-want="quick:
-rc 0
-cargo build -q --release -p ergon-clock-bench --bin clockbench lto=default
-taskset $pinned ~/ergon/target/release/clockbench $args --build lto --quick
-full:
-rc 0
-cargo build -q --release -p ergon-clock-bench --bin clockbench lto=default
-taskset $pinned ~/ergon/target/release/clockbench $args --build lto --drift-secs 120 --spawns 20
-cargo build -q --release -p ergon-clock-bench --bin clockbench --target-dir target/nolto lto=false
-taskset $pinned target/nolto/release/clockbench $args --build nolto --drift-secs 0 --spawns 0
-full, the LTO run failing:
-rc 1
-cargo build -q --release -p ergon-clock-bench --bin clockbench lto=default
-taskset $pinned ~/ergon/target/release/clockbench $args --build lto --drift-secs 120 --spawns 20
-cargo build -q --release -p ergon-clock-bench --bin clockbench --target-dir target/nolto lto=false
-taskset $pinned target/nolto/release/clockbench $args --build nolto --drift-secs 0 --spawns 0
-slow:
-rc 2
-build-clock:
-rc 0
-cargo build --release -p ergon-clock-bench --bin clockbench lto=default
-cargo build --release -p ergon-clock-bench --bin clockbench --target-dir target/nolto lto=false"
-if [[ -z $app || -z $rcv || $app == "$rcv" ]]; then
-    fail "vm.sh clockbench: no app and receiver CPUs from the layout ($app, $rcv)"
-elif [[ $got != "$want" ]]; then
-    fail "vm.sh clockbench and build-clock"
-    diff -u <(echo "$want") <(echo "$got") >&2 || true
-else
-    pass "vm.sh clockbench (quick, full: the build without LTO run too, failing with either) pinned to the app and receiver CPUs, labelled; build-clock builds both"
-fi
-
-# vm.sh discipline <seconds> <state> in the same sandbox (a fake chronyc
-# answers with a tracking report): ergon-clock's discipline (clockbench
-# --discipline) built and run as clockbench is, pinned to the app and
-# receiver CPUs, the owner on the app CPU (--cpu) and the verifier on the
-# receiver CPU (--cpu2: both busy-wait), labelled with the instance type and
-# the state; chrony's tracking before and after it on stderr, each headed;
-# seconds that are not a whole number from 1 refused, nothing built or run
-# shellcheck disable=SC2016
-printf '#!/bin/sh\necho "chronyc $*" >>"$FAKE_LOG"\necho "Reference ID    : A9FEA97B (169.254.169.123)"\necho "System time     : 0.000000123 seconds fast of NTP time"\n' >"$sbc2/bin/chronyc"
-chmod +x "$sbc2/bin/chronyc"
-# (one subshell, in order: a refused run lists no cargo or taskset call, and
-# clock_sb's grep then fails, which must not end this script)
-got=$(
-    echo "discipline:"
-    clock_sb 0 discipline 1800 isolated
-    echo "chrony: $(grep -c '^== chrony before$' "$sbc2/out") $(grep -c '^== chrony after$' "$sbc2/out") $(grep -c '^System time' "$sbc2/out") $(grep -c '^chronyc -n tracking$' "$sbc2/log")"
-    echo "refused:"
-    clock_sb 0 discipline 30m isolated
-    clock_sb 0 discipline
-) || true
-want="discipline:
-rc 0
-cargo build -q --release -p ergon-clock-bench --bin clockbench lto=default
-taskset $pinned ~/ergon/target/release/clockbench --discipline 1800 --cpu $app --cpu2 $rcv --label unknown isolated --build lto
-chrony: 1 1 2 2
-refused:
-rc 2
-rc 2"
-if [[ $got != "$want" ]]; then
-    fail "vm.sh discipline"
-    diff -u <(echo "$want") <(echo "$got") >&2 || true
-else
-    pass "vm.sh discipline: clockbench --discipline, the owner on the app CPU and the verifier on the receiver CPU, labelled, chrony's tracking before and after; bad seconds refused"
-fi
-
-# lib.sh, dry (every VM command faked, a clockbench CSV from each host):
-# with LAB_CLOCK_ONLY=1, prepare_vms builds clockbench alone (vm.sh
-# build-clock) and checks no mode, runs no clockcheck, Criterion or network
-# round trip; run_clock_bench boots each state as run_bench does, runs
-# clockbench full between the diagnostics, keeps each host's CSV, and writes
-# clock-summary.md. Without it, prepare_vms builds as ever and runs
-# clockbench at boot after Criterion.
-cat >"$tmp/dry-clock.sh" <<'SH'
-set -uo pipefail
-cloud=$1 out=$2
-known=$out/known_hosts user=admin A=192.0.2.1 B=192.0.2.2 repo=$out/repo data_subnet=10.30.1.0/24
-log() { echo "$*" >>"$out/log"; }
-die() { log "ERROR: $*"; exit 1; }
-. "$cloud/lib.sh"
-sleep() { :; }
-scp() { return 0; }
-on() {
-    local host=$1 last
-    shift
-    printf '%s %s\n' "$host" "$*" >>"$out/calls"
-    case $* in
-    "cat bench/"*".rc 2>/dev/null") echo 0 ;;
-    *"vm.sh clockbench "*)
-        last=${*##* }
-        printf 'meta,tool,clockbench\nmeta,label,c8g.xlarge %s\nmeta,build,lto\ncost,ergon_now_ns,ns,1,1,12.00,12.00,12.00,12.00\n' "$last"
-        ;;
-    *"vm.sh discipline "*)
-        last=${*##* }
-        printf 'meta,tool,clockbench\nmeta,mode,discipline\nmeta,label,c8g.xlarge %s\nmeta,build,lto\nmeta,settings,discipline_secs=60 verifier_hz=100\ndiscipline,0.000000,slewed,-30,0,40,0,0,0,64,3000,-\ntruth,0.500000,-25,150\ndiscipline_summary,residual_at_samples_ns,1,30,30,30,30\ndiscipline_summary,residual_verifier_ns,1,25,25,25,25\ndiscipline_summary,update_cost_ns,1,3000,3000,3000,3000\n' "$last"
-        printf '== chrony before\nReference ID    : A9FEA97B (169.254.169.123)\n== chrony after\nReference ID    : A9FEA97B (169.254.169.123)\n' >&2
-        ;;
-    esac
-    return 0
-}
-modes=(kernel dpdk) local_modes= market=spot states=(pinned isolated) reps=1
-clock_only=${CLOCK_ONLY:-} discipline_seconds=${DISCIPLINE:-0}
-prepare_vms
-# clockbench.py from this checkout: the run's repo is a stand-in to pack
-repo=$(cd "$cloud/../../.." && pwd)
-if [[ -n $clock_only ]]; then run_clock_bench >/dev/null; fi
-echo "rc $?" >>"$out/calls"
-SH
-for case in only normal discipline; do
-    dc=$tmp/dry-clock-$case
-    mkdir -p "$dc/repo"
-    git -C "$dc/repo" init -q && echo x >"$dc/repo/f"
-    env CLOCK_ONLY="$([[ $case != normal ]] && echo 1)" DISCIPLINE="$([[ $case == discipline ]] && echo 60)" \
-        bash "$tmp/dry-clock.sh" "$cloud" "$dc" </dev/null 2>"$dc/stderr" || true
-done
-# the steps, in order, as the run made them (VM a's)
-steps() {
-    grep '^192.0.2.1 ' "$1" | sed -nE "s#.*nohup bash -c '[^ ]*vm.sh ([a-z-]+);.*#\1#p; s#^192.0.2.1 [^ ]*vm.sh (clockbench .*|isolate.*|tune|diag-start|diag-fetch|diag-stop|clockcheck.*|criterion|ready.*|base-rtt.*)\$#\1#p; s#^192.0.2.1 sudo systemctl reboot\$#reboot#p" | tr '\n' ';'
-}
-dc=$tmp/dry-clock
-only=$(steps "$dc-only/calls")
-normal=$(steps "$dc-normal/calls")
-if grep -E 'unbound variable|command not found|syntax error' "$dc"-*/stderr; then
-    fail "lib.sh LAB_CLOCK_ONLY dry: shell errors"
-elif [[ $only != "bootstrap;reboot;build-clock;tune;diag-start;clockbench full pinned;diag-fetch;diag-stop;isolate;reboot;tune;diag-start;clockbench full isolated;diag-fetch;diag-stop;" ]]; then
-    fail "lib.sh LAB_CLOCK_ONLY dry: the steps: $only"
-elif ! grep -q '^rc 0' "$dc-only/calls" || ! grep -qx 'meta,label,c8g.xlarge isolated' "$dc-only/b-clockbench-isolated.csv" ||
-    ! grep -q '^| c8g.xlarge | b | pinned | lto ' "$dc-only/clock-summary.md"; then
-    fail "lib.sh LAB_CLOCK_ONLY dry: the CSVs and summary: $(tail -2 "$dc-only/log"; head -3 "$dc-only/clock-summary.md")"
-elif [[ $normal != *"build;ready kernel dpdk"* || $normal != *"criterion;clockbench quick boot;" || $normal == *full* ]]; then
-    fail "lib.sh dry, a run: clockbench at boot after Criterion: $normal"
-else
-    pass "lib.sh: LAB_CLOCK_ONLY=1 builds clockbench alone and runs it full in each state between the diagnostics, the CSVs kept and summarised; a run's clockbench at boot after Criterion"
-fi
-
-# LAB_DISCIPLINE_SECONDS (here 60) in a LAB_CLOCK_ONLY=1 run: ergon-clock's
-# discipline on both hosts after each state's timesync gate, before its
-# diagnostics and clock benchmarks; each host's CSV and its log (chrony's
-# tracking around it) kept, and clock-summary.md reporting the residual per
-# host; without it (the run above), no discipline anywhere
-dd=$tmp/dry-clock-discipline
-# each host's steps in order (the two hosts' run at once)
-host_steps() { sed -nE "s#^192.0.2.$2 [^ ]*vm.sh (timesync-wait|discipline .*|diag-start|clockbench full .*)\$#\\1#p" "$1" | tr '\n' ';'; }
-order="a: $(host_steps "$dd/calls" 1) b: $(host_steps "$dd/calls" 2)"
-each="timesync-wait;discipline 60 pinned;diag-start;clockbench full pinned;timesync-wait;discipline 60 isolated;diag-start;clockbench full isolated;"
-if grep -E 'unbound variable|command not found|syntax error' "$dd/stderr"; then
-    fail "lib.sh LAB_DISCIPLINE_SECONDS dry: shell errors"
-elif [[ $order != "a: $each b: $each" ]]; then
-    fail "lib.sh LAB_DISCIPLINE_SECONDS dry: the order: $order"
-elif ! grep -qx 'meta,label,c8g.xlarge isolated' "$dd/b-discipline-isolated.csv" ||
-    ! grep -qx '== chrony after' "$dd/a-discipline-pinned.log" ||
-    ! grep -q "^## ergon-clock's discipline to CLOCK_REALTIME" "$dd/clock-summary.md" ||
-    ! grep -q '^| c8g.xlarge | b | isolated | 60 | slewed | 30 / 30 / 30 | 25 / 25 / 25 |' "$dd/clock-summary.md"; then
-    fail "lib.sh LAB_DISCIPLINE_SECONDS dry: the CSVs, logs and summary: $(ls "$dd"; grep -A6 'discipline' "$dd/clock-summary.md")"
-elif grep -q 'vm.sh discipline' "$tmp/dry-clock-only/calls" "$tmp/dry-clock-normal/calls"; then
-    fail "lib.sh: a discipline ran without LAB_DISCIPLINE_SECONDS"
-else
-    pass "lib.sh: LAB_DISCIPLINE_SECONDS runs ergon-clock's discipline on both hosts after each state's timesync gate, CSVs and chrony's view kept and summarised; none without it"
-fi
-# and in a run (run_bench): after each state's timesync gate, before its
-# diagnostics and benchmark; the clock summary written beside summary.md
-cat >"$tmp/dry-discipline-run.sh" <<'SH'
-set -uo pipefail
-cloud=$1 out=$2
-known=$out/known_hosts user=admin A=192.0.2.1 B=192.0.2.2 reps=1
-log() { echo "$*" >>"$out/log"; }
-die() { log "ERROR: $*"; exit 1; }
-. "$cloud/lib.sh"
-repo=$(cd "$cloud/../../.." && pwd)
-sleep() { :; }
-remote_access() { :; }
-both() { echo "both $*" >>"$out/calls"; }
-reboot_both() { echo "reboot" >>"$out/calls"; }
-remote_state() { echo "state $1" >>"$out/calls"; : >>"$out/results.csv"; }
-on() {
-    echo "on $1 ${*:2}" >>"$out/calls"
-    case $2 in
-    *"vm.sh discipline "*)
-        printf 'meta,tool,clockbench\nmeta,mode,discipline\nmeta,label,c8g.xlarge %s\nmeta,settings,discipline_secs=60 verifier_hz=100\ndiscipline_summary,residual_at_samples_ns,1,30,30,30,30\n' "${2##* }"
-        ;;
-    esac
-    return 0
-}
-states=(pinned isolated) modes=(kernel) discipline_seconds=${DISCIPLINE:-0}
-run_bench >/dev/null
-echo "rc $?" >>"$out/calls"
-SH
-for case in on off; do
-    mkdir -p "$tmp/dry-discipline-$case"
-    env DISCIPLINE="$([[ $case == on ]] && echo 60)" bash "$tmp/dry-discipline-run.sh" "$cloud" "$tmp/dry-discipline-$case" </dev/null 2>"$tmp/dry-discipline-$case/stderr" || true
-done
-order=$(sed -nE 's#^both timesync-([a-z]+) timesync-wait$#gate \1#p; s#^on 192.0.2.[12] [^ ]*vm.sh (discipline .*)$#\1#p; s#^both diag-start-([a-z]+) diag-start$#diag \1#p; s#^state (.*)$#state \1#p' "$tmp/dry-discipline-on/calls" | tr '\n' ';')
-if grep -E 'unbound variable|command not found|syntax error' "$tmp"/dry-discipline-*/stderr; then
-    fail "lib.sh LAB_DISCIPLINE_SECONDS in a run: shell errors"
-elif [[ $order != "gate pinned;discipline 60 pinned;discipline 60 pinned;diag pinned;state pinned;gate isolated;discipline 60 isolated;discipline 60 isolated;diag isolated;state isolated;" ]]; then
-    fail "lib.sh LAB_DISCIPLINE_SECONDS in a run: the order: $order"
-elif ! grep -q "^## ergon-clock's discipline to CLOCK_REALTIME" "$tmp/dry-discipline-on/clock-summary.md" 2>/dev/null; then
-    fail "lib.sh LAB_DISCIPLINE_SECONDS in a run: no clock summary: $(cat "$tmp/dry-discipline-on/log")"
-elif grep -q 'discipline' "$tmp/dry-discipline-off/calls" || [[ -e $tmp/dry-discipline-off/clock-summary.md ]]; then
-    fail "lib.sh: a run without LAB_DISCIPLINE_SECONDS ran a discipline: $(grep discipline "$tmp/dry-discipline-off/calls")"
-else
-    pass "lib.sh: LAB_DISCIPLINE_SECONDS in a run: the discipline after each state's timesync gate, before its diagnostics and benchmark, summarised; none without it"
-fi
-
-# aws/lab.sh LAB_CLOCK_ONLY=1: a value other than 1, a placement other than
-# cluster (the clock benchmarks need no second zone or region) and LAB_BASE
-# (no media driver is built) are refused before any cloud call; LAB_ESTIMATE=1
-# prices the clock benchmarks alone (estimate.py: about 0.31 h, nothing
-# between the hosts) with no cloud call; and end to end against the stateful
-# fake it makes exactly the cluster run's calls (the run stops at packing the
-# checkout, as there), deletes everything and verifies it
-for refused in "LAB_CLOCK_ONLY=yes|LAB_CLOCK_ONLY is 1" \
-    "LAB_CLOCK_ONLY=1 LAB_PLACEMENT=cross-az LAB_NO_FLATOUT=1|cluster only" \
-    "LAB_CLOCK_ONLY=1 LAB_REPO=$cloud/../../.. LAB_BASE=HEAD|no LAB_BASE" \
-    "LAB_CLOCK_ONLY=1 LAB_DISCIPLINE_SECONDS=30m|LAB_DISCIPLINE_SECONDS is a whole number of seconds" \
-    "LAB_DISCIPLINE_SECONDS=86401|LAB_DISCIPLINE_SECONDS is a whole number of seconds"; do
+# The clock benchmarks were removed: aws/lab.sh refuses LAB_CLOCK_ONLY and
+# LAB_DISCIPLINE_SECONDS before any cloud call, so a stale command line never
+# becomes a full (billed) run in their place
+for refused in "LAB_CLOCK_ONLY=1" "LAB_DISCIPLINE_SECONDS=1800" "LAB_ESTIMATE=1 LAB_CLOCK_ONLY=1"; do
     # shellcheck disable=SC2086
-    if lab_aws "$tmp/clock-refused" ${refused%|*}; then
-        fail "aws/lab.sh ran with ${refused%|*}"
-    elif grep -qF -- "${refused##*|}" "$tmp/clock-refused.out" && [[ ! -s $tmp/clock-refused ]]; then
-        pass "aws/lab.sh refuses ${refused%|*} before any cloud call (${refused##*|})"
+    if lab_aws "$tmp/clock-refused" $refused; then
+        fail "aws/lab.sh ran with $refused"
+    elif grep -qF "LAB_CLOCK_ONLY and LAB_DISCIPLINE_SECONDS were removed" "$tmp/clock-refused.out" && [[ ! -s $tmp/clock-refused ]]; then
+        pass "aws/lab.sh refuses $refused before any cloud call (removed)"
     else
-        fail "aws/lab.sh with ${refused%|*}: $(tail -3 "$tmp/clock-refused.out"; cat "$tmp/clock-refused")"
+        fail "aws/lab.sh with $refused: $(tail -3 "$tmp/clock-refused.out"; cat "$tmp/clock-refused")"
     fi
 done
-lab_aws "$tmp/clock-estimate" LAB_ESTIMATE=1 LAB_CLOCK_ONLY=1 LAB_SPOT=1 LAB_ALLOW_ARM=1 LAB_TYPE=c8g.xlarge || true
-if [[ -s $tmp/clock-estimate ]]; then
-    fail "aws/lab.sh LAB_ESTIMATE=1 LAB_CLOCK_ONLY=1 made cloud calls: $(head -3 "$tmp/clock-estimate")"
-elif ! grep -q '^LAB_CLOCK_ONLY=1: the clock benchmarks alone' "$tmp/clock-estimate.out" ||
-    ! grep -q '^wall time about 0.31 h: 0.62 instance-hours' "$tmp/clock-estimate.out" ||
-    ! grep -q '^between the hosts about 0.000 GB a to b and 0.000 GB b to a' "$tmp/clock-estimate.out" ||
-    ! grep -q '^total about \$0.05 at spot prices, at most \$0.10 at on-demand prices' "$tmp/clock-estimate.out"; then
-    fail "aws/lab.sh LAB_ESTIMATE=1 LAB_CLOCK_ONLY=1: $(cat "$tmp/clock-estimate.out")"
-else
-    pass "aws/lab.sh LAB_ESTIMATE=1 LAB_CLOCK_ONLY=1: the clock benchmarks alone priced, nothing between the hosts, no cloud call"
-fi
-lab_full clock LAB_CLOCK_ONLY=1 LAB_TYPE_A=c7i.4xlarge LAB_TYPE_B=c7i.8xlarge FAKE_NO_CAPACITY=us-east-1a/c7i.8xlarge
-awk -v h="## cluster" '$0 == h {on = 1; next} on && /^## / {exit} on' "$here/expected-aws-calls.txt" >"$tmp/full-clock/want"
-if ! diff -u "$tmp/full-clock/want" "$tmp/full-clock/calls" >"$tmp/diff"; then
-    fail "aws/lab.sh LAB_CLOCK_ONLY=1 end to end: not the cluster run's calls"
-    cat "$tmp/diff" >&2
-elif [[ -n $(full_left "$tmp/full-clock/state.json") ]] || ! grep -q 'verified: nothing tagged run=.* remains in us-east-1' "$tmp/full-clock/out"; then
-    fail "aws/lab.sh LAB_CLOCK_ONLY=1 end to end: left $(full_left "$tmp/full-clock/state.json"); $(tail -3 "$tmp/full-clock/out")"
-else
-    pass "aws/lab.sh LAB_CLOCK_ONLY=1 end to end: the cluster run's calls, nothing left, verified"
-fi
 
 # modes.sh's pre-flight (lab.sh, before any cloud call), against what vm.sh
 # and the DPDK transport would do hours in: an upper-case @KEY that is
@@ -5401,8 +5032,8 @@ fi
 # way across the network, the client's own first second included), none for
 # a +idle mode or a localhost one's bytes, nothing without load sizes; and
 # prices c9g.2xlarge, c8gn.xlarge and c6in.4xlarge (us-east-1, on demand).
-# The plan above (1,837 s; 162,208,000 B each way) with a 30 s warm-up at
-# 25,000/s: 4 mode-reps of 37 s more, 1,985 s; and 4 x 31 s x 25,000 x
+# The plan above (1,762 s; 162,208,000 B each way) with a 30 s warm-up at
+# 25,000/s: 4 mode-reps of 37 s more, 1,910 s; and 4 x 31 s x 25,000 x
 # (288 + 60) B = 1,078,800,000 B more each way. A +idle mode added: no more
 # warm-up; a localhost mode: its seconds, no bytes.
 python3 - "$cloud" <<'PY' && pass "estimate.py: the warm-up's time and bytes; c9g.2xlarge, c8gn.xlarge and c6in.4xlarge priced" || fail "estimate.py: the warm-up and the new prices"
@@ -5414,9 +5045,9 @@ plan = dict(type_a="c7i.4xlarge", type_b="c7i.4xlarge", placement="cross-az", re
             load_seconds=5, mix=[], mix_seconds=10, tput_seconds=5, tput_flows=0, rtt_messages=300000, rtt_warmup=50000,
             no_flatout=True, max_hours=8)
 base = estimate.estimate(**plan)
-assert base["wall_s"] == 1837 and base["bytes_ab"] == 162208000, base
+assert base["wall_s"] == 1762 and base["bytes_ab"] == 162208000, base
 w = estimate.estimate(**plan, warmup_seconds=30, warmup_rate=25000)
-assert w["wall_s"] == 1837 + 4 * 37, w["wall_s"]
+assert w["wall_s"] == 1762 + 4 * 37, w["wall_s"]
 assert w["bytes_ab"] == 162208000 + 4 * 31 * 25000 * 348 and w["bytes_ba"] == w["bytes_ab"], (w["bytes_ab"], w["bytes_ba"])
 idle = estimate.estimate(**dict(plan, modes=["kernel", "dpdk", "dpdk+idle"]), warmup_seconds=30, warmup_rate=25000)
 assert idle["wall_s"] - w["wall_s"] == 2 * 97 and idle["bytes_ab"] - w["bytes_ab"] == 2 * 350000 * 92, idle
@@ -5813,7 +5444,7 @@ fi
 for script in vm.sh irqs.sh host.sh modes.sh lib.sh remote.sh azure/lab.sh aws/lab.sh; do
     bash -n "$cloud/$script" && pass "bash -n $script" || fail "bash -n $script"
 done
-for script in analyse.py spikes.py estimate.py clockbench.py test/fake_aws.py; do
+for script in analyse.py spikes.py estimate.py test/fake_aws.py; do
     python3 -c 'import ast, sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' "$cloud/$script" &&
         pass "$script compiles" || fail "$script does not compile"
 done

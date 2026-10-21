@@ -30,8 +30,8 @@ set -euo pipefail
 # device reset (its own recovery included), a queue or ring change
 # (ethtool -L, -G), an ifdown/ifup, and a rebind to the kernel driver (a
 # rollback, a kernel baseline); an MTU or coalescing change does not.
-# irqaffinity= and the boot-time pinning cannot stop that, and the lab traced
-# 1.1 M such interrupts on the isolated CPUs (BENCHMARKS.md, AWS round 5).
+# irqaffinity= and the boot-time pinning cannot stop that, so the interrupts
+# land on the isolated CPUs until something re-pins them.
 # Every one of those paths ends with the interface's carrier or flags
 # changing, which the kernel announces on netlink at once (a carrier change
 # at most a second later), so a pass on each link event leaves a hint in

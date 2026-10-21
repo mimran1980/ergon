@@ -139,9 +139,7 @@ has `isolcpus=`, so it can never loop. Otherwise it:
    and checks the default entry took it: `nosmt` (SMT stays off on every later
    boot), `isolcpus`
    (`nohz,domain,managed_irq`), `nohz_full` and `rcu_nocbs` on every CPU but
-   the housekeeping core, `irqaffinity` on it, `intel_idle.max_cstate=1
-   processor.max_cstate=1` on a VM only (the CPU's `hypervisor` flag; see
-   [Bare metal](#bare-metal)), `iommu=pt`, `transparent_hugepage=never`, and
+   the housekeeping core, `irqaffinity` on it, `iommu=pt`, `transparent_hugepage=never`, and
    boot-time 2 MiB hugepages (so kubelet's first start advertises
    `hugepages-2Mi`). The clocksource is left to the kernel. Bare metal may
    add `clocksource=tsc tsc=reliable` with `RUSTERON_FORCE_TSC=1`, which is
@@ -183,12 +181,12 @@ leaves none. Then, in order:
    primary ENA and any VPC CNI ENI are never selected, whatever their MAC
    order.
 3. **Kernel command line.** Fails if it lacks the provisioned isolation flags
-   (with the C-state cap on a VM, and `iommu=pt` wherever IOMMU groups exist),
+   (with `iommu=pt` wherever IOMMU groups exist),
    or if `irqaffinity` is not the housekeeping CPUs.
 4. **Release and bind.** First takes both ENAs from the OS's network
    configuration, so that one handed back to the kernel (a rollback, a kernel
    baseline) is never re-addressed behind the operator's back, as cloud-init's
-   hotplug did in the Debian lab (`BENCHMARKS.md`, AWS round 2). AL2023 has the
+   hotplug did in the Debian lab. AL2023 has the
    same path through udev: on the EKS AMI, `90-eks.rules` starts
    `udev-net-manager@<iface>.service` for every ENA that appears, which writes
    `/run/systemd/network/70-eks-<iface>.network` (DHCP) and reloads networkd;
@@ -217,9 +215,9 @@ leaves none. Then, in order:
    balancing off, `net.core.rmem_max`/`wmem_max` 16 MiB, and Aeron's
    hugetlbfs mounted at `/mnt/huge-aeron` (`RUSTERON_AERON_HUGE_SIZE`, 1G),
    which fails if it is larger than the free 2 MiB pool. The kernel keeps its
-   own `vm.min_free_kbytes` and the primary ENA its interrupt coalescing (the
-   lab measured both worse when changed: a 2% reserve on Azure in round 5,
-   coalescing off on AWS in round 2), and busy polling stays off unless asked:
+   own `vm.min_free_kbytes` and the primary ENA its interrupt coalescing (no
+   committed run measures a change to either), and busy polling stays off
+   unless asked:
    `busy_read` reaches every blocking socket read on the node, kubelet's
    included, and was never measured on the primary ENA's path.
 6. **Inventory.** Writes `/var/lib/rusteron-dpdk/ena-pairs.json` atomically,
@@ -237,9 +235,8 @@ The kernel's ENA driver sets each queue IRQ's affinity to its per-queue hint
 (queue *i* on CPU *i*, so mostly isolated CPUs) whenever it brings an
 interface up: after a device reset (its own recovery included), a queue or
 ring change (`ethtool -L`, `-G`), an `ifdown`/`ifup`, and a data ENA handed
-back to the kernel driver. The boot-time pinning cannot prevent that; the
-VM lab traced 1.1 M ENA interrupts on the isolated CPUs after its data NICs
-went back to the kernel (`BENCHMARKS.md`, AWS round 5).
+back to the kernel driver. The boot-time pinning cannot prevent that, so the
+interrupts then land on the isolated CPUs.
 `rusteron-irq-affinity.service` (`irq-affinity.sh watch`) keeps them off:
 it follows the kernel's netlink link events (`ip -o monitor link`), and every
 one of those paths ends in one (the interface's flags or carrier), so it
@@ -299,21 +296,22 @@ Optional settings, read from `/etc/rusteron-dpdk/node.env` (the unit's
 
 ### Bare metal
 
-Where the tail matters, `c7i.metal-24xl` is the measured choice
-(`BENCHMARKS.md`, AWS round 4): DPDK's idle p99.99 38.7 µs and median max
-71 µs (48–845 across reps), against 56 and 675 µs on `c7i.4xlarge`. The same
-node path serves it, with two differences:
+No run compared metal with a VM
+([BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#open)).
+Round 4 measured `c7i.metal-24xl` alone: DPDK's idle p99.99 38.72 µs, max
+71 (48–845) µs, the median of the reps' maxima and their range. The same node
+path serves it, with two differences:
 
 - Metal has a real IOMMU, which igb_uio does not program. `iommu=pt` (set by
   `provision-node.sh` on every node; a VM has no IOMMU, so it changes nothing
   there) puts every group in passthrough, and the preflight checks that each
   one is.
-- No C-state cap: holding C-states at C1 made plain kernel UDP's p50 2 µs
-  worse on metal and brought single-rep collapses under load
-  ([data](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md)), so
-  `provision-node.sh` sets it only on a VM, where the EKS run measured it
-  (`c7i.4xlarge` exposes C6, with a 190 µs exit, on the core that takes every
-  interrupt).
+- No C-state cap: on metal, C1 did not separate at idle, and at 288 B 1 M
+  msgs/s at least one rep of each capped arm had a p50 above 4 ms
+  ([data](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#measured-but-no-setting-recommended)),
+  and the one committed VM A/B was mixed
+  ([C-states](https://mimran1980.github.io/ergon/deploy/hft.html#c-states)),
+  so `provision-node.sh` sets it on no node.
 - SMT off at boot, not by EC2: bare metal takes no CPU options, so
   `provision-node.sh` writes sysfs's `smt/control` before kubelet's first
   start and `nosmt` holds every later boot
@@ -343,13 +341,13 @@ the SIGKILL that ends the grace period (`terminationGracePeriodSeconds: 15`).
 
 `media-driver-config.yaml` sets what is the same on every node. It leaves
 `RUSTERON_DPDK_RX_DESCRIPTORS` unset, so each port takes min(4096, the NIC's
-maximum), 4096 on an ENA (`BENCHMARKS.md`, AWS round 6: no first-point
-`nic-rx-missed` loss, a higher loss-free rate than 1024), and the pool holds
-that ring.
+maximum), 4096 on an ENA: room for a burst; against 1024 it did not separate
+at idle (`BENCHMARKS.md`, "Measured, but no setting recommended"). The pool
+holds that ring.
 
 | Setting | Value | Why |
 |---|---|---|
-| `AERON_RECEIVER_IO_VECTOR_CAPACITY` | `16` | Aeron's maximum (its default is 4), the setting every kept DPDK measurement used and `BENCHMARKS.md`'s recommended configuration. The DPDK receive poll drains whole bursts whatever this is; it still sizes each receive from a host-local socket. The media driver also defaults to 16 under `dpdk-ena` when it is unset, never under the socket transport; a rollback sets it back to 4 (the runbook's §4) |
+| `AERON_RECEIVER_IO_VECTOR_CAPACITY` | `16` | Aeron's maximum (its default is 4) and `BENCHMARKS.md`'s recommended configuration: with DPDK at 1,344 B 600 k msgs/s no NAK against 16,247 at the default (one run). The DPDK receive poll drains whole bursts whatever this is; it still sizes each receive from a host-local socket. The media driver also defaults to 16 under `dpdk-ena` when it is unset, never under the socket transport; a rollback sets it back to 4 (the runbook's §4) |
 | `RUSTERON_DPDK_TX_DESCRIPTORS` | `512` | An ENA queue takes at most 512 transmit descriptors; a larger ring fails the port's start |
 | `RUSTERON_DPDK_MBUFS_PER_PORT` | `16384` | The count every lab measurement used (`benches/cloud/vm.sh`): about 37 MiB of hugepages a port; see [Hugepage budget](#hugepage-budget). It holds the 4096-descriptor receive ring, the transmit ring, four bursts of 32 and two mempool caches (4096 + 512 + 128 + 768 = 5,504) with room to spare |
 | `RUSTERON_DPDK_VFIO_WC` | `1` | A vfio-pci node's write-combining, as its preflight confirmed: the bootstrap binds the ENAs to vfio-pci only after `preflight.sh` passed with the operator's `RUSTERON_DPDK_VFIO_WC=1`, and a failed run leaves no inventory, so the device plugin hands out no pair. vfio-pci maps the LLQ BAR through its device file, so `/proc/self/maps` cannot show it write-combined; with this the transport's start check accepts a port bound to vfio-pci, with no warning. Inert for igb_uio ports, which must still show `resource2_wc` |
@@ -433,14 +431,15 @@ spec:
 
 ### Throughput per channel
 
-AWS caps one UDP flow at about 8 Gbit/s of frames (measured on every c7i
-size, kernel UDP and DPDK alike; documented as up to 10 Gbit/s within a
-cluster placement group). An Aeron channel is one flow whatever its stream
+One UDP flow carried at most 7.75–7.77 Gbit/s of Aeron frames on
+`c7i.4xlarge` (round 7), kernel UDP and DPDK alike; AWS documents up to
+10 Gbit/s within a cluster placement group. An Aeron channel is one flow whatever its stream
 ids, so one channel carries at most about 0.7 M msgs/s of 1,344 B or 15 M of
 32 B. Spread a heavier stream over several channels on different ports and
 divide the traffic in the application. The transport's transmit cap
 (`RUSTERON_DPDK_TX_RATE_MBPS`) is per NIC, not per flow: it cannot raise this,
-and it is off unless you set it. `BENCHMARKS.md` has the measurements.
+and it is off unless you set it. Measurements:
+[`BENCHMARKS.md`](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#one-flows-ceiling-on-aws).
 
 ## 4. Entrypoint
 
@@ -505,7 +504,7 @@ and the watcher re-pinning after a link event), and idempotent rerun (dry
 run: no
 host sysfs, /proc or networkd directory is touched), provisioning (SMT off
 on a node that still has it and CPU lists of one CPU per physical core, the
-C-state cap on VMs only, the kubelet hold on failure), the user data's size
+no C-state cap, the kubelet hold on failure), the user data's size
 with an incompressible CA, its kubelet settings and a dry run of the scripts
 it embeds, `launch-template.py`'s `CpuOptions` (present on x86 with SMT,
 absent on Graviton, bare metal and 1-thread types), and the entrypoint's CPU

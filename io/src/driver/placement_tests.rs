@@ -96,6 +96,7 @@ fn cpu_error<T>(r: crate::Result<T>) -> R<CpuError> {
 /// starts no thread; nothing is left connecting.
 #[test]
 fn in_a_single_cpu_pod_connect_background_refuses_at_once() -> R {
+    let _helpers = super::background::dial_helper_test_lock();
     let pod = Pod::new("refuse", "2", 2)?;
     let mut d = pod.driver(Config::new(Backend::EpollSpin))?;
     let e = cpu_error(d.connect_background(dial()?))?;
@@ -122,6 +123,7 @@ fn in_a_single_cpu_pod_connect_background_refuses_at_once() -> R {
 /// polling thread, as `Driver::connect`.
 #[test]
 fn in_a_single_cpu_pod_the_fallback_connects_on_the_loop() -> R {
+    let _helpers = super::background::dial_helper_test_lock();
     let pod = Pod::new("fallback", "2", 2)?;
     let mut cfg = Config::new(Backend::EpollSpin);
     cfg.inline_connect_fallback = true;
@@ -156,6 +158,7 @@ fn in_a_single_cpu_pod_uring_sqpoll_refuses() -> R {
 /// cpuset named; `connect_cpu` may not be the polling CPU either.
 #[test]
 fn cpu_settings_outside_the_pod_are_refused() -> R {
+    let _helpers = super::background::dial_helper_test_lock();
     let pod = Pod::new("outside", "2,3", 2)?;
     let mut cfg = Config::new(Backend::EpollSpin);
     cfg.helper_cpus = vec![7];

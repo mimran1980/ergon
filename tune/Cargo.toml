@@ -1,6 +1,6 @@
 [package]
 name = "ergon-tune"
-description = "Start-up and housekeeping checks of a host's low-latency settings (CPU isolation, NIC interrupts, transparent hugepages, the Aeron directory, NUMA, scheduling policy, SMT siblings, a CPU quota and its throttling, and with `nic` the NIC's moderation, deferral, VF and ring): pure functions returning findings, with no threads, statics or unsafe"
+description = "Start-up and housekeeping checks of a host's low-latency settings (CPU isolation, NIC interrupts, transparent hugepages, the Aeron directory, NUMA, scheduling policy, SMT siblings, a CPU quota and its throttling, how CLOCK_REALTIME is kept and the kernel's clock source, and with `nic` the NIC's moderation, deferral, VF and ring): pure functions returning findings, with no threads or statics, and one audited unsafe call (a read-only adjtimex)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -31,12 +31,14 @@ default = []
 nic = ["rustix/net"]
 
 # rustix is already in the workspace's lock (tempfile, terminal_size). It is
-# the only dependency: `statfs` for the Aeron directory's filesystem (T4) and
-# the netlink socket (N1, N4) without `unsafe` in this crate, so a runtime
-# that forbids `unsafe` can call it. Linux only:
-# elsewhere every reader reports unknown ("not Linux").
+# the only dependency: `statfs` for the Aeron directory's filesystem (T4),
+# the netlink socket (N1, N4) and `CLOCK_MONOTONIC_COARSE` (T11's ClockBound
+# age) without `unsafe` here. rustix has no `adjtimex` yet, so T11 declares
+# the C library's itself: the crate's one `unsafe` call, in
+# src/time/kernel.rs, removed once rustix wraps it. Linux only: elsewhere
+# every reader reports unknown ("not Linux").
 [target.'cfg(target_os = "linux")'.dependencies]
-rustix = { version = "1.1.5", default-features = false, features = ["std", "fs"] }
+rustix = { version = "1.1.5", default-features = false, features = ["std", "fs", "time"] }
 
 # The NIC checks on docs.rs too.
 [package.metadata.docs.rs]

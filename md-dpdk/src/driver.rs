@@ -36,11 +36,12 @@ use rusteron_media_driver::{AeronDriver, AeronDriverContext};
 use std::ffi::CString;
 
 /// The receiver IO vector capacity under `dpdk-ena`, unless the environment
-/// sets one: 16, Aeron's maximum, the setting every kept DPDK measurement used
-/// (BENCHMARKS.md). The DPDK receive poll no longer depends on it, since it
-/// drains whole bursts whatever Aeron's vlen; it still sizes each receive from
-/// a host-local socket. Never applied to the socket transport, where 16 cost
-/// NIC drops with kernel busy polling.
+/// sets one: 16, Aeron's maximum. With DPDK at 1,344 B 600 k msgs/s it had no
+/// NAK against 16,247 without it (md-dpdk/BENCHMARKS.md, "Measured, but no
+/// setting recommended", one run). The DPDK receive poll no longer depends on
+/// it, since it drains whole bursts whatever Aeron's vlen; it still sizes each
+/// receive from a host-local socket. Never applied to the socket transport,
+/// where no committed run separates it.
 const DPDK_RECEIVER_IO_VECTOR_CAPACITY: u32 = 16;
 const RECEIVER_IO_VECTOR_CAPACITY_ENV: &str = "AERON_RECEIVER_IO_VECTOR_CAPACITY";
 

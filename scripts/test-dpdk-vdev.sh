@@ -163,6 +163,49 @@ attach_tap() {
 # Environment for a harness process
 # ---------------------------------------------------------------------------
 
+# The CPUs of one CPU's core: its SMT siblings, itself included.
+core_of() {
+    local list
+    list=$(cat "/sys/devices/system/cpu/cpu$1/topology/thread_siblings_list" 2>/dev/null || echo "$1")
+    expand_cpus "$list"
+}
+
+# "0-2,5" -> "0 1 2 5"
+expand_cpus() {
+    local part a b out=()
+    IFS=, read -ra parts <<<"$1"
+    for part in "${parts[@]}"; do
+        a=${part%-*}; b=${part#*-}
+        for ((c = a; c <= b; c++)); do out+=("$c"); done
+    done
+    echo "${out[@]}"
+}
+
+# The transport refuses DEDICATED when the EAL's main lcore (its interrupt and
+# alarm threads) shares a core with the busy-spinning sender or receiver, SMT
+# siblings included. Plan from this host's topology: the main lcore on the
+# first allowed CPU, the sender and the receiver on the last two CPUs off its
+# core (siblings of each other on a 2-core runner, which is allowed).
+# RUSTERON_HARNESS_{SENDER,RECEIVER}_CPU and RUSTERON_DPDK_EAL_ARGS override.
+plan_cpus() {
+    local allowed main off=() c
+    allowed=$(expand_cpus "$(awk '/^Cpus_allowed_list:/ {print $2}' /proc/self/status)")
+    read -ra cpus <<<"$allowed"
+    main=${cpus[0]}
+    local main_core
+    main_core=" $(core_of "$main") "
+    for c in "${cpus[@]}"; do
+        [[ "$main_core" == *" $c "* ]] || off+=("$c")
+    done
+    if (( ${#off[@]} < 2 )); then
+        die "need two CPUs off the EAL main lcore's core (CPU $main, core $main_core) for the sender and the receiver; allowed: $allowed"
+    fi
+    PLAN_MAIN_LCORE=$main
+    PLAN_SENDER_CPU=${off[${#off[@]}-1]}
+    PLAN_RECEIVER_CPU=${off[${#off[@]}-2]}
+    log "CPU plan: EAL main lcore $PLAN_MAIN_LCORE, sender $PLAN_SENDER_CPU, receiver $PLAN_RECEIVER_CPU (allowed $allowed)"
+}
+
 dpdk_env() {
     local role=$1 suffix s_ip r_ip
     suffix=rusteron-vdev-p
@@ -199,6 +242,9 @@ dpdk_env() {
     echo "RUSTERON_DPDK_MEMPOOL_CACHE=256"
     echo "RUSTERON_DPDK_BURST_SIZE=32"
     echo "RUSTERON_DPDK_MAX_AERON_MTU=1408"
+    # One word: run_one passes this file through `env $(cat ...)`, which
+    # splits on spaces, so the lcore list is attached (`-l3`, not `-l 3`).
+    echo "RUSTERON_DPDK_EAL_ARGS=${RUSTERON_DPDK_EAL_ARGS:--l$PLAN_MAIN_LCORE}"
 }
 
 harness_common_env() {
@@ -207,8 +253,8 @@ harness_common_env() {
     echo "RUSTERON_HARNESS_STREAM=32931"
     echo "RUSTERON_HARNESS_TIMEOUT_SECS=40"
     echo "RUSTERON_HARNESS_MTU=1408"
-    echo "RUSTERON_HARNESS_SENDER_CPU=${RUSTERON_HARNESS_SENDER_CPU:-1}"
-    echo "RUSTERON_HARNESS_RECEIVER_CPU=${RUSTERON_HARNESS_RECEIVER_CPU:-2}"
+    echo "RUSTERON_HARNESS_SENDER_CPU=${RUSTERON_HARNESS_SENDER_CPU:-$PLAN_SENDER_CPU}"
+    echo "RUSTERON_HARNESS_RECEIVER_CPU=${RUSTERON_HARNESS_RECEIVER_CPU:-$PLAN_RECEIVER_CPU}"
 }
 
 # run_one <role> <scenario> <run-id> <envfile> [extra args...]
@@ -254,7 +300,33 @@ assert_report() {
     log "assert $label: ok=$ok sent=$sent received=$received duration_ms=$duration backpressure_ops=$backpressure"
     [[ "$ok" == true ]] || die "$label: report not ok"
     [[ "$received" == "$expect_received" ]] || die "$label: received $received != $expect_received"
+    assert_clock "$report" "$label"
     echo "$sent"
+}
+
+# assert_clock <report> <label>: an embedded DPDK transport reads the CPU
+# counter at the rate the real EAL gives it (rte_get_tsc_hz) or, where that is
+# more than 100 ppm off the rate the transport measures at start, at the
+# measured rate. On aarch64 it is the generic timer's own (CNTFRQ_EL0, as the
+# harness reads it). A fallback to CLOCK_MONOTONIC fails the run and prints the
+# transport's reason: a host whose kernel clock source or CPU rules the counter
+# out says so there; otherwise the real EAL path is broken.
+assert_clock() {
+    local report=$1 label=$2
+    [[ "$(report_field "$report" transport)" == '"dpdk"' ]] || return 0
+    local clock; clock=$(report_field "$report" clock)
+    local hz; hz=$(report_field "$report" clock_hz)
+    local cntfrq; cntfrq=$(report_field "$report" cntfrq_hz)
+    local rate; rate=$(report_field "$report" clock_rate)
+    local eal_hz; eal_hz=$(report_field "$report" clock_eal_hz)
+    local measured_hz; measured_hz=$(report_field "$report" clock_measured_hz)
+    local reason; reason=$(grep -o '"clock_reason": "[^"]*"' "$report" | head -1 | cut -d'"' -f4)
+    log "assert $label: clock=$clock clock_hz=$hz rate=$rate eal_hz=$eal_hz measured_hz=$measured_hz cntfrq_hz=$cntfrq ${reason:+reason=$reason}"
+    [[ "$clock" == '"counter"' ]] || die "$label: the transport reads CLOCK_MONOTONIC, not the counter: $reason"
+    (( hz > 0 )) || die "$label: the counter's rate is $hz"
+    if [[ "$(uname -m)" == aarch64 ]]; then
+        [[ "$hz" == "$cntfrq" ]] || die "$label: the counter's rate $hz Hz is not CNTFRQ_EL0's $cntfrq Hz"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -552,6 +624,7 @@ build_harness
 # find them at runtime. Export the dirs so the launched harness resolves them.
 export LD_LIBRARY_PATH="$(find target -name 'libaeron*.so' -printf '%h\n' 2>/dev/null | sort -u | tr '\n' ':' | sed 's/:$//' || true)"
 
+plan_cpus
 bridge_up
 
 run_one_scenario() {

@@ -27,8 +27,7 @@
 #      per-boot unit and the IRQ watcher's unit, and enable both units.
 #   6. Set the kernel command line with grubby: nosmt (SMT stays off on every
 #      later boot), CPU isolation (isolcpus, nohz_full, rcu_nocbs,
-#      irqaffinity), C1 as the deepest idle state on a
-#      VM (not on bare metal), IOMMU passthrough,
+#      irqaffinity), IOMMU passthrough,
 #      transparent hugepages off from boot and 2 MiB hugepages
 #      (RUSTERON_HUGEPAGES, default 2048). The clocksource is left to the
 #      kernel unless bare metal and RUSTERON_FORCE_TSC=1 say otherwise; the
@@ -155,7 +154,7 @@ if [[ " $cmdline " == *" isolcpus="* ]]; then
     exit 0
 fi
 
-# x86 Intel only: production is x86, and intel_idle.max_cstate assumes Intel.
+# x86 Intel only: production is x86 (c7i).
 grep -q '^vendor_id[[:space:]]*:[[:space:]]*GenuineIntel' "$RUSTERON_PROC_ROOT/cpuinfo" \
     || fail "not an Intel x86 CPU ($(uname -m)): the node needs a c7i (or other Intel x86) instance"
 
@@ -308,14 +307,15 @@ ok "$UNIT and $IRQ_UNIT enabled from the next boot"
 # off already with CpuOptions ThreadsPerCore=1; bare metal needs this).
 # The isolation flags are the VM lab's (vm.sh isolate).
 args="nosmt isolcpus=nohz,domain,managed_irq,$ISO nohz_full=$ISO rcu_nocbs=$ISO irqaffinity=$HK"
-# C1 as the deepest idle state on a VM (the CPU reports the hypervisor flag),
-# as the EKS run measured it: c7i.4xlarge exposes C6, with a 190 us exit, on
-# the housekeeping core that takes every interrupt. Not on bare metal, where
-# it made kernel UDP slower (BENCHMARKS.md, AWS round 4).
+# No C-state cap (intel_idle.max_cstate), on a VM or bare metal: no committed
+# A/B showed a gain. VM (io/benches/BENCHMARK.md, run
+# flags-aws-20261015T062428Z, cstate): mixed, WebSocket worse, HTTP better at
+# p99.99. Bare metal (md-dpdk/BENCHMARKS.md, round 4): idle not separated, and
+# at least one rep of each capped arm went above 4 ms p50 at 288 B 1 M msgs/s.
+# A VM: the CPU reports the hypervisor flag (bare metal does not).
 is_vm=0
 if grep -m1 '^flags' "$RUSTERON_PROC_ROOT/cpuinfo" | grep -qw hypervisor; then
     is_vm=1
-    args+=" intel_idle.max_cstate=1 processor.max_cstate=1"
 fi
 # The clocksource is an explicit hardware profile, not a fix for a source the
 # kernel rejected. `tsc=reliable` turns the kernel's TSC verification off, and

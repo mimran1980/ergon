@@ -64,11 +64,6 @@
   - [Rate Limits and Errors](./io/rate-limits.md)
   - [Kubernetes](./io/kubernetes.md)
 
-# ergon-clock
-
-- [Hardware-Counter Clock](./clock/overview.md)
-  - [UTC and Time Sync](./clock/wall-clock.md)
-
 # ergon-tune
 
 - [Host Checks](./tune/overview.md)
@@ -83,6 +78,7 @@
 - [Low-Latency Hosts](./deploy/overview.md)
   - [Kubernetes HFT tuning](./deploy/hft.md)
   - [AWS and Azure, x86 and Graviton](./deploy/hosts.md)
+  - [Clocks](./deploy/clocks.md)
   - [Kubernetes](./deploy/kubernetes.md)
   - [Shared CPUs for Helper Threads (`k8s/nri-shared-cpus`)](./deploy/shared-cpus.md)
   - [Latency Pods](./deploy/latency-pods.md)

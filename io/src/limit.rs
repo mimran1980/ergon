@@ -10,7 +10,7 @@
 //!   [`Budget::new`] ([`Budget::add`] allocates; it is for start-up and for
 //!   instruments listed later, not the send path).
 //! - Every call takes `now_ns` from the caller. Use one clock that never
-//!   jumps for every call: `CLOCK_MONOTONIC`, ergon-clock, or replay time.
+//!   jumps for every call: `CLOCK_MONOTONIC`, quanta, or replay time.
 //!   A clock that goes back is clamped: the budget keeps the latest time seen.
 //!
 //! # One sender per account and IP

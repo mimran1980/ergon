@@ -1,0 +1,58 @@
+# Recovered raw output of run eks-20261014-195824
+# instances.txt: type c7i.4xlarge zone us-east-1a placement ergon-lab-eks-20261014-195824
+# The run directory target/md-dpdk-bench/eks-20261014-195824/ (summary.md, results.csv, logs) was
+# deleted. These lines are what commands printed from that directory before it was deleted,
+# recovered from that printed output. PARTIAL: only what was printed survives; nothing here
+# was recomputed. Lines are de-duplicated. A line printed cut short (cut -c) is kept only
+# where no full copy was printed; such summary.md rows are marked. summary.md rows may come
+# from more than one analyse.py version run over the same results.csv.
+# results.csv columns: see md-dpdk/benches/cloud/analyse.py. Clock rows for this period are in
+# clockbench-aws-20261016.txt.
+
+==== summary.md: 22 lines ====
+---- printed without line numbers, in the order first printed
+## UDP round trip (µs): between the two hosts, or both ends on one (localhost)
+| state, transport | reps | p50                 | p90                 | p99                 | p99.9               | p99.99              | max                    |
+| ---------------- | ---- | ------------------- | ------------------- | ------------------- | ------------------- | ------------------- | ---------------------- |
+| eks, DPDK        | 5    | 28.37 (28.02–29.60) | 30.77 (30.35–32.06) | 33.66 (33.18–34.85) | 39.68 (38.88–43.33) | 63.33 (57.79–71.81) | 125.95 (112.19–148.22) |
+## UDP throughput, 32-byte messages (M msgs/s)
+| state, transport | reps | msgs/s | dropped (median, % range) |
+| ---------------- | ---- | ------ | ------------------------- |
+## Round trips of 100 µs or more, by run (reps pooled)
+| run          | reps | spikes | in busiest 10 ms of the second |
+| ------------ | ---- | ------ | ------------------------------ |
+| eks-dpdk-rtt | 5    | 27     | 11%                            |
+## Loss counters over the round-trip and throughput runs (both hosts, all reps; none = every one 0; `sat-` counters are saturation and `noport-` ones frames to a port nobody listens on, not loss; localhost base runs are not sampled)
+| state, transport | grew                                                                   |
+| ---------------- | ---------------------------------------------------------------------- |
+| eks, DPDK        | noport-dpdk-queue-drop 56, sat-dpdk-rx-burst-full 1,052, short-sends 4 |
+## Spikes of 200 us or more by cause, eks
+| run | spikes | client stall | host stall | guest preemption | unexplained | not attributed |
+## Each rep's max round trip and its cause, eks
+| run | max per rep (us): cause |
+| --- | --- | --- | --- | --- | --- | --- |
+| eks-dpdk-rtt | 0 | 0 | 0 | 0 | 0 | 0 |
+| eks-dpdk-rtt | 126: pong stall (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 112: pong stall (agent loop gaps 20-50/50-100/100+ us: a 0/0/2, b 0/0/2); 148: pong stall (agent loop gaps 20-50/50-100/100+ us: a 0/0/2, b 2/0/2); 127: pong stall (agent loop gaps 20-50/50-100/100+ us: a 0/0/2, b 1/0/2); 119: pong stall (agent loop gaps 20-50/50-100/100+ us: a 0/0/2, b 1/0/2) |
+
+==== results.csv: 8 lines ====
+---- printed without line numbers, in the order first printed
+1,rtt,eks:dpdk,udp,29599,32063,34847,39679,63327,125951,29787,300000,0
+1,loss,eks:dpdk,a,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=2;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;noport-dpdk-queue-drop=0;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=103;sat-dpdk-tx-paced=0
+1,loss,eks:dpdk,b,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=2;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;noport-dpdk-queue-drop=0;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=98;sat-dpdk-tx-paced=0
+2,rtt,eks:dpdk,udp,28399,30767,33855,43327,62655,112191,28643,300000,0
+2,loss,eks:dpdk,a,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;noport-dpdk-queue-drop=12;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=101;sat-dpdk-tx-paced=0
+2,loss,eks:dpdk,b,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;noport-dpdk-queue-drop=0;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=103;sat-dpdk-tx-paced=0
+3,rtt,eks:dpdk,udp,28367,30767,33663,38879,57791,148223,28603,300000,0
+3,loss,eks:dpdk,a,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;noport-dpdk-queue-drop=21;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=107;sat-dpdk-tx-paced=0
+
+==== instances.txt: 1 lines ====
+---- printed with their line numbers, in file order (line: text)
+2: type c7i.4xlarge zone us-east-1a placement ergon-lab-eks-20261014-195824
+
+==== logs/a-host.log: 1 lines ====
+---- printed with their line numbers, in file order (line: text)
+1715: [Wed Oct 14 19:16:20 2026] systemd[1]: Listening on dm-event.socket - Device-mapper event daemon FIFOs.
+
+==== logs/b-host.log: 1 lines ====
+---- printed with their line numbers, in file order (line: text)
+1713: [Wed Oct 14 19:16:07 2026] systemd[1]: Listening on dm-event.socket - Device-mapper event daemon FIFOs.

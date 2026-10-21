@@ -18,8 +18,9 @@ Checks of a Linux host's low-latency settings, for start-up and housekeeping.
   running out.
 - Each of those is a host setting, and a reboot, a new image or a NIC reset
   can undo it.
-- ergon-tune reads the host and returns findings: what is wrong, what it cost
-  where it was measured, and the exact fix. It changes nothing.
+- ergon-tune reads the host and returns findings: what is wrong, the exact
+  fix, and the evidence (an archived A/B, or documentation and "not measured
+  here"). It changes nothing.
 - ergon-io and the ergon-md-dpdk media driver run these checks themselves.
   Call them yourself only from your own busy loop.
 
@@ -31,10 +32,12 @@ Checks of a Linux host's low-latency settings, for start-up and housekeeping.
 | T4 | the Aeron directory on tmpfs or hugetlbfs |
 | T5, T6 | NUMA balancing off, and the NIC on the hot CPUs' node (multi-node hosts) |
 | T7 | no hot thread under `SCHED_FIFO` or `SCHED_RR` |
-| T8 | no two busy threads on one physical core |
+| T8 | no two busy threads on one CPU or one physical core |
 | T9 | no CPU quota on the process's cgroup (a Kubernetes CPU limit, `docker run --cpus`); `ThrottleWatch` reads its throttling counters while the loop runs. Fix on Kubernetes: kubelet 1.33+, `cpuManagerPolicy: static`, a Guaranteed pod and a whole-number CPU request, so the kubelet drops the quota itself. Never `cpuCFSQuota: false`: it removes every pod's CPU limit on the node |
-| T10 | SMT (hyperthreading) off on x86 (Graviton and arm64 pass: one vCPU is one physical core). On x86 a Kubernetes `cpu: 2` is one physical core, and a busy sibling slows the loop (+2.3–2.7 µs p50, +9–12 µs p99 at 10–100 connections; [data](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#smt-sibling-cost)). The fix is on the node: EKS/EC2 `CpuOptions: ThreadsPerCore: 1`, self-managed `nosmt`, or an Azure size without SMT (Fasv6, Falsv6, Famsv6, Dpsv6, Dplsv6) |
-| K1-K7 | inside a Kubernetes pod only, with T7 and T9: Guaranteed `QoS`, exclusive CPUs (the static CPU manager, not the shared pool), the loop's SMT sibling inside the pod's cpuset, a CPU for the helper threads (`ERGON_SHARED_CPUS`/`ERGON_HELPER_CPUS`), the capabilities the caller says it uses (`Needs`: busy polling, `SCHED_FIFO`, `mlockall`), no `memory.high` and no CPU/memory pressure, and the NIC's NUMA node. Each finding says whether the fix goes in the pod spec or on the node, with the exact setting |
+| T10 | SMT (hyperthreading) off on x86 (Graviton and arm64 pass: one vCPU is one physical core). On x86 a Kubernetes `cpu: 2` is one physical core, and a busy sibling slows the loop (measured for ergon-io's SQPOLL thread on the sibling; the finding quotes the figures with their max). The fix is on the node: EKS/EC2 `CpuOptions: ThreadsPerCore: 1`, self-managed `nosmt`, or an Azure size without SMT (Fasv6, Falsv6, Famsv6, Dpsv6, Dplsv6) |
+| K1-K7 | inside a Kubernetes pod only, with T7 and T9: Guaranteed `QoS`, exclusive CPUs (the static CPU manager, not the shared pool), the loop's SMT sibling inside the pod's cpuset, a CPU for the helper threads (`ERGON_SHARED_CPUS`/`ERGON_HELPER_CPUS`), the capabilities the caller says it uses (`Needs`: busy polling, `SCHED_FIFO`, `mlockall`), no `memory.high` and no CPU/memory pressure (any non-zero reading; no threshold is measured), and, when the caller names the NIC (`Needs::with_nic`), its NUMA node. Each finding says whether the fix goes in the pod spec or on the node, with the exact setting |
+| T11 | how `CLOCK_REALTIME` is kept: PTP-grade (chronyd locked to a PTP hardware clock, or phc2sys) is ok; NTP-disciplined or unsynchronised warns, with the chrony `refclock PHC` line for the host's PHC (a node setting); a correction still being slewed out, an error bound wider than 1 ms or a pending leap second warns. What the process cannot see (in a pod: the daemons and chronyd's port) is unknown, never a warning |
+| T12 | the kernel's clock source: the counter (`tsc`, `arch_sys_counter`) is ok; a hypervisor's view of it (`kvm-clock`, Hyper-V's TSC page) is info; anything else (`hpet`, `acpi_pm`) on x86-64 or 64-bit Arm warns: every `CLOCK_REALTIME` and `CLOCK_MONOTONIC` read is a system call. On another architecture a source other than `tsc` or `arch_sys_counter` is unknown |
 | N1-N4 (`nic`) | ENA adaptive RX moderation, deferred interrupts without a busy poller, the Azure accelerated-networking VF, the kernel RX ring |
 
 A finding names its fix. T1 on a stock host with its loop on CPU 2 of 8
@@ -42,7 +45,8 @@ gives `isolcpus=nohz,domain,managed_irq,2 nohz_full=2 rcu_nocbs=2 irqaffinity=0-
 
 ## The switch
 
-`ERGON_HOST_CHECKS` is the one switch over every host-check warning:
+ergon-io and the media driver read one switch, `ERGON_HOST_CHECKS`, through
+`HostCheckPolicy` (any other value is an error at start):
 
 | Value | What it does |
 |---|---|
@@ -58,6 +62,9 @@ pass those checks exist to stop. An unknown of a check whose subsystem the
 node may not have — PSI and `memory.high`, a NUMA node, a NIC knob, THP — is
 printed and allowed through: that is a real host, and refusing there would
 stop every start on it. Which is which is `CheckId::unknown_stops_require`.
+Under `require`, T10 refuses every x86 host with SMT on, and K2 refuses a
+stock static-CPU-manager pod: it proves exclusive CPUs only from an isolated
+or root cpuset partition (Linux 6.7+, as the nri-latency-pods plugin sets).
 
 Every printed warning line ends with `(ERGON_HOST_CHECKS=off silences host-check
 warnings)`. The media driver takes `RUSTERON_MEDIA_DRIVER_HOST_CHECK` as its
@@ -69,25 +76,34 @@ stay pure functions over a `Host`.
 
 | Use it for | Not for |
 |---|---|
-| start-up, before a latency-sensitive loop | the hot path: checks read files and allocate; N1 and N4 make a netlink query that can wait 100 ms |
-| housekeeping: an ENA reset turns adaptive moderation back on and moves queue interrupts; `ThrottleWatch::check` sees a CPU quota stopping the container | tuning a host: it only reads |
+| start-up, before a latency-sensitive loop | the hot path: checks read files and allocate; N1 and N4 make netlink exchanges with 100 ms send and receive timeouts each |
+| housekeeping: an ENA reset turns adaptive moderation back on and moves queue interrupts; `ThrottleWatch::check` sees a CPU quota stopping the container; `ClockWatch::check` sees time sync or the clock source change | tuning a host: it only reads |
 | CI or review, against a captured or hand-made `/sys` and `/proc` tree | hosts other than Linux: every reader reports unknown |
 
 ## Guarantees and limits
 
-- **Read-only.** No check writes a file or changes a setting.
+- **Read-only.** No check writes a file or changes a setting. T11 asks the
+  kernel with `adjtimex` `modes` 0 (unprivileged, changes nothing) and chronyd
+  with its `tracking` monitoring request (UDP to 127.0.0.1:323, an address, no
+  name lookup).
 - **Unknown is never a warning.** Unreadable data (a pod's network namespace,
   an interface with no device, `hidepid`) gives an unknown result with the
   reason.
-- **Safe before a busy loop.** No threads, statics, thread-locals, atomics,
-  DNS or `unsafe`, and it logs nothing.
+- **Safe before a busy loop.** No threads, statics, thread-locals, atomics
+  or DNS, and it logs nothing.
+- **One `unsafe` call.** T11's `adjtimex` (`src/time/kernel.rs`): rustix has
+  no wrapper for it yet, so the crate declares the C library's function over
+  a hand-written `struct timex` (64-bit x86 and Arm Linux only; its size and
+  field offsets, from the kernel's `include/uapi/linux/timex.h`, are asserted
+  at compile time). It goes when rustix wraps `adjtimex`. Everything else is
+  safe Rust.
 - **Runs on fixtures.** Every read goes through a `Host`: the running host
   (`Host::system()`) or a tree standing for its `/` (`Host::at`), on any OS.
-  Kernel queries (T4's `statfs`, N1's and N4's ethtool) reach only the running
-  host; on a tree they report unknown.
-- **Measured.** Each finding quotes this repository's AWS and Azure
-  measurements, or the kernel's or vendor's documentation where nothing was
-  measured, and names its source. Hosts differ: measure yours.
+  Kernel queries (T4's `statfs`, T11's `adjtimex`, N1's and N4's ethtool)
+  reach only the running host; on a tree they report unknown.
+- **Evidence named.** Each finding's `evidence` names its source: an AWS
+  `c7i` A/B table in git history (T1, T2, T7, T10, N1), or documentation and
+  "not measured here". Hosts differ: measure yours.
 - **Only what the table lists.** CPU idle states and frequency are not
   checked.
 
@@ -140,6 +156,28 @@ fn main() {
 }
 ```
 
+How `CLOCK_REALTIME` is kept (T11) and the clock source (T12), before the
+loop and then from housekeeping. `open` scans `/proc` and asks chronyd,
+waiting at most 50 ms; `check` never waits and allocates only when a finding
+changes. chronyd's answer is read one check late:
+
+```rust
+use ergon_tune::{ClockWatch, Host, TimeSyncProbe};
+
+fn main() {
+    let host = Host::system();
+    let (mut watch, findings) = ClockWatch::open(&host, &TimeSyncProbe::default()); // before the loop
+    for f in &findings {
+        eprintln!("{f}"); // `T11 warn: CLOCK_REALTIME is not disciplined to a PTP hardware clock ...`
+    }
+    // From housekeeping, every few seconds; never inside the hot path:
+    for f in watch.check() {
+        eprintln!("{f}"); // none unless T11's judgement or the clock source changed
+    }
+    let _ = (watch.verdict(), watch.bound(), watch.leap_pending());
+}
+```
+
 The same checks read a tree that stands for a host, on any OS:
 
 ```rust
@@ -167,7 +205,7 @@ fn main() -> std::io::Result<()> {
 
 ## Further reading
 
-- The book chapter: each setting in plain English, measured effects, and a
+- The book chapter: each setting in plain English, the evidence per check, and a
   symptom-to-fix table: [ergon-tune](https://mimran1980.github.io/ergon/tune/overview.html).
 - What the terms mean (IRQ, `nohz_full`, interrupt moderation, busy polling,
   THP, …), with pros and cons: the chapter's

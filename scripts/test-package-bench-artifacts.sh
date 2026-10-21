@@ -236,7 +236,7 @@ check "missing cluster fails closed" \
 
 # ── 7. Cluster archive carries only the run's own evidence ──────────────
 # The cluster Criterion home is shared (`target/criterion` also holds
-# ergon-clock-bench's groups) and Criterion leaves `new/` in place for groups
+# ergon-md-dpdk's `clock_read` groups) and Criterion leaves `new/` in place for groups
 # a run does not touch. `repeats/<k>/` is what the runner snapshotted for this
 # run and what the gate grades, so the archive and the manifest's estimate
 # count must come from there — not from whatever else lives under the home.
@@ -244,10 +244,10 @@ write_cluster_with_repeats() {
     local dir="$1" prof="$2"
     rm -rf "$dir"
     mkdir -p "$dir/cluster_fake/new" \
-             "$dir/clock_read_ergon_now_ns/ergon-clock/new" \
+             "$dir/clock_read/std_instant/new" \
              "$dir/repeats/1/cluster_fake"
     echo '{"mean":{"point_estimate":2.0}}' >"$dir/cluster_fake/new/estimates.json"
-    echo '{"mean":{"point_estimate":9.0}}' >"$dir/clock_read_ergon_now_ns/ergon-clock/new/estimates.json"
+    echo '{"mean":{"point_estimate":9.0}}' >"$dir/clock_read/std_instant/new/estimates.json"
     echo '{"mean":{"point_estimate":2.0}}' >"$dir/repeats/1/cluster_fake/estimates.json"
     python3 -c "
 import json
@@ -273,7 +273,7 @@ check "packages clusters that carry repeats" \
 check "cluster archive keeps the run's own estimates" \
     bash -c "tar -tzf '$OUT_CL_REPEATS/bench-cluster-lto.tar.gz' | grep -q 'repeats/1/cluster_fake'"
 check "cluster archive drops another bench's keys" \
-    bash -c "! tar -tzf '$OUT_CL_REPEATS/bench-cluster-lto.tar.gz' | grep -q 'clock_read_'"
+    bash -c "! tar -tzf '$OUT_CL_REPEATS/bench-cluster-lto.tar.gz' | grep -q 'clock_read/'"
 check "cluster archive has the manifest" \
     bash -c "tar -tzf '$OUT_CL_REPEATS/bench-cluster-lto.tar.gz' | grep -q 'run-manifest.json'"
 

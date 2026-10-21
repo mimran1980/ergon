@@ -25,7 +25,7 @@
 
 mod common;
 use common::{
-    EnvGuard, TestEnv, assert_no_leak, close, counter_clock, create, dump, expected_counter_source, last_error,
+    COUNTER_SOURCE, EnvGuard, SOURCE_MONOTONIC, TestEnv, assert_no_leak, close, create, dump, last_error,
     last_error_code, rusteron_dpdk_clock_source, rusteron_dpdk_config_t, rusteron_dpdk_fake_allocated,
     rusteron_dpdk_fake_set_desc_limits, rusteron_dpdk_fake_set_max_mtu, rusteron_dpdk_fake_set_mbuf_room_cap,
 };
@@ -294,32 +294,34 @@ fn rx_hw_timestamp_must_be_a_flag() {
 }
 
 /// `RUSTERON_DPDK_CLOCK` is the Rust install's to read (`clock`): the
-/// native transport takes the clock its configuration carries (here a
-/// counter clock), whatever the variable says, so a stale native reading of
-/// it cannot override the calibration handed over.
+/// native transport takes the clock its configuration chooses (here the
+/// counter, with the EAL giving a rate), whatever the variable says, so a
+/// stale native reading of it cannot override the choice handed over.
 #[serial]
 #[test]
 fn the_native_transport_does_not_read_the_clock_variable() {
-    let counter = counter_clock();
-    let source = if cfg!(target_arch = "aarch64") { 2 } else { 1 };
     for value in ["monotonic", "hpet"] {
         let env = TestEnv::new();
         env.eal_skip();
+        env.use_counter();
         let _guard = EnvGuard::set("RUSTERON_DPDK_CLOCK", value);
-        let mut config = rusteron_dpdk_config_t::valid();
-        config.clock = counter.params();
-        let transport = create(&config).unwrap_or_else(|e| panic!("{value}: {e}"));
+        let transport = create(&rusteron_dpdk_config_t::valid()).unwrap_or_else(|e| panic!("{value}: {e}"));
         assert_eq!(
             unsafe { rusteron_dpdk_clock_source() },
-            source,
+            COUNTER_SOURCE,
             "{value}: the configuration's counter"
         );
         assert_eq!(close(transport), 0);
     }
     let env = TestEnv::new();
     env.eal_skip();
+    let _guard = EnvGuard::set("RUSTERON_DPDK_CLOCK", "counter");
     let transport = create(&rusteron_dpdk_config_t::valid()).unwrap_or_else(|e| panic!("{e}"));
-    assert_eq!(unsafe { rusteron_dpdk_clock_source() }, expected_counter_source());
+    assert_eq!(
+        unsafe { rusteron_dpdk_clock_source() },
+        SOURCE_MONOTONIC,
+        "no rate from the EAL: CLOCK_MONOTONIC"
+    );
     assert_eq!(close(transport), 0);
 }
 
@@ -688,20 +690,21 @@ fn housekeeping_threads_join_the_conductor_and_avoid_spinning_agents() {
         let _bad = EnvGuard::set("RUSTERON_DPDK_HOUSEKEEPING_CPU", "x");
         assert_eq!(affinity().0, -1);
     }
+    let cpu_list = |l: &str| -> Vec<usize> {
+        l.trim()
+            .split(',')
+            .flat_map(|r| {
+                let mut ends = r.split('-').map(|n| n.parse::<usize>().unwrap());
+                let a = ends.next().unwrap();
+                a..=ends.next().unwrap_or(a)
+            })
+            .collect()
+    };
     let allowed: Vec<usize> = std::fs::read_to_string("/proc/self/status")
         .unwrap()
         .lines()
         .find_map(|l| l.strip_prefix("Cpus_allowed_list:"))
-        .map(|l| {
-            l.trim()
-                .split(',')
-                .flat_map(|r| {
-                    let mut ends = r.split('-').map(|n| n.parse::<usize>().unwrap());
-                    let a = ends.next().unwrap();
-                    a..=ends.next().unwrap_or(a)
-                })
-                .collect()
-        })
+        .map(cpu_list)
         .unwrap();
     let conductor = *allowed.last().unwrap();
     let _conductor = EnvGuard::set("AERON_CONDUCTOR_CPU_AFFINITY", &conductor.to_string());
@@ -710,15 +713,30 @@ fn housekeeping_threads_join_the_conductor_and_avoid_spinning_agents() {
     let sender = allowed[0];
     let _sender = EnvGuard::set("AERON_SENDER_CPU_AFFINITY", &sender.to_string());
     let _spins = EnvGuard::set("AERON_CONDUCTOR_IDLE_STRATEGY", "spin");
+    // A spinning agent owns its whole core, SMT siblings included, so what is
+    // left depends on the host's topology, not on the CPU count: a 4-vCPU
+    // host of two cores has no CPU off the sender's and conductor's cores.
+    let core = |cpu: usize| -> Vec<usize> {
+        std::fs::read_to_string(format!(
+            "/sys/devices/system/cpu/cpu{cpu}/topology/thread_siblings_list"
+        ))
+        .map_or_else(|_| vec![cpu], |l| cpu_list(&l))
+    };
+    let owned: Vec<usize> = core(sender).into_iter().chain(core(conductor)).collect();
+    let free: Vec<usize> = allowed.iter().copied().filter(|c| !owned.contains(c)).collect();
     let (rc, cpus) = affinity();
-    if allowed.len() > 2 {
-        assert_eq!(rc, 1);
-        assert!(
-            !cpus.contains(&conductor) && !cpus.contains(&sender),
-            "{cpus:?} avoids the spinners"
+    if free.is_empty() {
+        assert_eq!(
+            (rc, cpus),
+            (0, vec![]),
+            "no CPU off the spinners' cores {owned:?}: left unpinned"
         );
     } else {
-        assert!(rc == 0 || !cpus.contains(&sender));
+        assert_eq!(rc, 1);
+        assert!(
+            !cpus.is_empty() && cpus.iter().all(|c| free.contains(c)),
+            "{cpus:?} avoids the spinners' cores {owned:?}"
+        );
     }
 }
 

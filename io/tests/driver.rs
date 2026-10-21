@@ -13,6 +13,18 @@ use ergon_io::{
 };
 use support::{Lab, R};
 
+/// Held by every test here that starts an `ergon-io-dial` helper. Tests in
+/// one binary share a process and may run in parallel (`--test-threads`), and
+/// a test that inspects its helper through /proc/self/task by name must not
+/// find another test's.
+static DIAL_HELPERS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn dial_helpers() -> std::sync::MutexGuard<'static, ()> {
+    DIAL_HELPERS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 // ANCHOR: handler
 #[derive(Default)]
 struct Collect {
@@ -707,6 +719,7 @@ fn pinned_threads_start_on_their_cpus() -> R {
 #[test]
 fn background_dns_waits_never_hold_up_other_connects() -> R {
     use ergon_io::dns::DnsConfig;
+    let _helpers = dial_helpers();
     // The property is the helper's: one dial waits on DNS there while the
     // other opens. A pod with one CPU has no core for the helper and refuses
     // typed instead (asserted; the helper half runs on a pod with two CPUs).
@@ -976,6 +989,7 @@ fn frames_sent_with_the_upgrade_then_more_on_every_backend() -> R {
 
 #[test]
 fn background_connect_keeps_handshake_cpu_off_the_loop() -> R {
+    let _helpers = dial_helpers();
     // `connect_step_max_ns == 0` is the helper's: the loop never sets a
     // connection up. A pod with one CPU has no core for the helper and
     // refuses typed instead (asserted; the helper half runs on a pod with
@@ -1048,6 +1062,7 @@ fn accept_raw_within(lab: &Lab, wait: Duration) -> R<std::net::TcpStream> {
 
 #[test]
 fn background_connect_closed_early_is_discarded() -> R {
+    let _helpers = dial_helpers();
     // The race is the helper's: the dial is in flight there when the loop
     // closes it. A pod with one CPU has no core for the helper and refuses
     // typed instead (asserted; the helper half runs on a pod with two CPUs).
@@ -1153,6 +1168,7 @@ fn background_refuses_on_one_cpu() -> R {
 // and `--cpuset-cpus=0`, a pod with one CPU, where they check the refusal.
 #[test]
 fn background_helper_leaves_the_polling_cpu() -> R {
+    let _helpers = dial_helpers();
     let cpus = cpuset()?;
     let poller = *cpus.first().ok_or("an empty cpuset")?;
     if cpus.len() == 1 {

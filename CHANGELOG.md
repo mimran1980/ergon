@@ -1,5 +1,87 @@
 # Changelog
 
+## [0.1.31] — 2026-10-21
+
+### Added
+
+- `ergon-tune`: T11, how `CLOCK_REALTIME` is kept (time daemon, PTP-grade or
+  NTP verdict, error bound, an unsettled correction, a pending leap second,
+  unsynchronised), and T12, the kernel's clock source (the counter, a
+  hypervisor's view of it, or `hpet`/`acpi_pm`, read by system call).
+  `ClockWatch` checks both again from housekeeping without waiting
+  (chronyd's answer is read one check late) and allocates only when a
+  finding changes. Ported from `ergon-clock`'s time-sync probe. T11 makes
+  the crate's one `unsafe` call, a read-only `adjtimex`, until rustix wraps
+  it.
+- Book: Deployment → [Clocks](https://mimran1980.github.io/ergon/deploy/clocks.html),
+  which clock to read for what, and the chrony set-up for AWS and Azure.
+
+### Removed
+
+- `ergon-clock` and its unpublished `ergon-clock-bench` leave the workspace
+  and the release. 0.1.30 stays on crates.io and will be yanked, with
+  `ergon-md-dpdk` 0.1.30, which depends on it. Replacements:
+
+  | need | use |
+  |---|---|
+  | timestamps (wire, logs, storage) | `CLOCK_REALTIME`: `std::time::SystemTime` |
+  | durations and timers in one process | `quanta` |
+  | is the host's clock right | `ergon-tune` T11, T12 and `ClockWatch` |
+  | the DPDK transport's stamps | its own clock (`RUSTERON_DPDK_CLOCK`) |
+
+  The book's `ergon-clock` part is replaced by Deployment → Clocks. The
+  md-dpdk AWS lab loses `LAB_CLOCK_ONLY`, `LAB_DISCIPLINE_SECONDS` and
+  `vm.sh` `clockbench`, `build-clock` and `discipline`; `aws/lab.sh` refuses
+  the two variables. The surviving raw benchmark rows are in
+  `md-dpdk/benches/cloud/results/clockbench-aws-20261016.txt`.
+
+### Changed
+
+- `ergon-md-dpdk` check M4 reports global busy polling as information and
+  recommends no setting: the committed A/B rows (md-dpdk/BENCHMARKS.md,
+  "Measured, but no setting recommended") do not support one. It no longer
+  warns, so `require` no longer refuses on it.
+- EKS node bootstrap: no C-state cap on any node. The committed runs list
+  the C1 cap under "no setting recommended" on VMs and on metal.
+- Docs: every figure in the README, the book and the BENCHMARKS files cites a
+  committed results file, a code line or a kernel/vendor document, or is
+  removed; settings without a measured effect say "not measured here".
+  Deployment → Kubernetes HFT tuning is one table of settings with their
+  evidence. Raw output recovered for the cited AWS/EKS runs is committed
+  under `md-dpdk/benches/cloud/results/`. The book's link check now covers
+  absolute links into the repository and anchors cited from code.
+- CI: lint, test and dpdk run on x86_64 and arm64; Aeron is built and run on
+  Java 25; the test job is split into four suites per architecture; the
+  vdev interop places its agents off the EAL main lcore's core and keeps
+  send-only publishers up for retransmits; io tests that inspect
+  process-wide state hold a lock, so they pass with `--test-threads=2`.
+- MSRV raised from 1.88 to 1.99, the pinned toolchain. `serial_test` 4.0.1,
+  a dev-dependency, needs 1.93.1.
+- **Breaking (ergon-md-dpdk API), released as 0.1.31 all the same:** the
+  transport no longer depends on `ergon-clock`. It reads the CPU counter at
+  the rate DPDK's EAL gives it (`rte_get_tsc_hz()`), or `CLOCK_MONOTONIC` when
+  DPDK gives no usable rate, the kernel's clock source is not the counter (or
+  a hypervisor's view of it), the TSC is not invariant (x86_64), or DPDK's
+  rate is not `CNTFRQ_EL0` (aarch64). At start the transport measures the
+  counter against `CLOCK_MONOTONIC_RAW` for 25 ms and converts at that
+  measurement where DPDK's rate is more than 100 ppm off it (DPDK 23.11 rounds
+  its own x86 measurement to 10 MHz; see md-dpdk/README.md, Clocks).
+  `RUSTERON_DPDK_CLOCK` keeps its values.
+  - Removed: `clock::clock_config`, `clock::transport_clock` and
+    `DpdkError::Clock`.
+  - Changed: `DpdkTransport::clock()` returns `&clock::TransportClock`
+    (`Counter { hz, rate, eal_hz, measured_hz }` or `Monotonic { reason }`),
+    not `ergon_clock::advanced::Clock`.
+  - Added: `clock::TransportClock` (`#[non_exhaustive]`),
+    `clock::RateSource`, `clock::MonotonicReason`,
+    `clock::kernel_refuses_counter` and `clock::CLOCKSOURCE_PATH`.
+  - Kept: `clock::CLOCK_ENV`, `clock::ClockChoice` and
+    `ClockChoice::from_env`.
+  - Native ABI: the config's 48-byte clock parameters are now a one-byte
+    choice, so `rusteron_dpdk_config_t` is 4328 bytes, not 4376; the new
+    `rusteron_dpdk_clock_report` (48 bytes) says which clock started and
+    why, and which rate it uses: DPDK's or the measured one, with both.
+
 ## [0.1.30] — 2026-10-20
 
 ### Added

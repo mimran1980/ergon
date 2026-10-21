@@ -16,7 +16,7 @@ Experimental and unpublished. Nothing is pushed to a registry.
 NRI plugin cannot be installed) and no `reservedSystemCPUs` list. Everything
 here needs one of those. **The target is EKS on AL2023**: containerd 2.3.5
 with NRI on by default. The cloud lab
-(`md-dpdk/benches/cloud/aws/latency-lab.sh`) runs on EKS with SPOT `c8g.xlarge`
+(`md-dpdk/benches/cloud/aws/eks-nri.sh`) runs on EKS with SPOT `c8g.xlarge`
 nodes.
 
 ## The five extensions
@@ -71,10 +71,14 @@ before it accepts `cpuset.cpus.partition=isolated`; the plugin then reads the
 file back and requires exactly `isolated`. The parent container cgroup keeps
 E ∪ S and stays `member`/`root`, so the helpers keep load balancing.
 
-At start-up the app moves its loop tid into `$ERGON_ISOLATED_CGROUP` and only
-then pins to `$ERGON_ISOLATED_CPUS`. The file is parent-owned and not
-delegatable, so a pod cannot do this itself. Needs Linux 6.1+; older kernels
-get a fail-closed create naming the kernel. Do **not** use
+The child is threaded, so it can hold single threads. At start-up the app
+writes its pid to `$ERGON_ISOLATED_CGROUP/cgroup.procs`, moves each helper
+thread back through the container cgroup's `cgroup.threads`, then pins the
+hot threads to `$ERGON_ISOLATED_CPUS` (kernel lane:
+`../nri-shared-cpus/test/cgroup/kernel_test.go`). The partition file itself
+is parent-owned and not delegatable, so the plugin writes it. Needs
+`cpuset.cpus.exclusive` (Linux 6.7 or a vendor backport); without it every
+`cpu-partition` opt-in is refused, naming the cause. Do **not** use
 `AddLinuxUnified("cpuset.cpus.partition")` on the container cgroup: that would
 strip load balancing from the shared CPUs.
 
@@ -101,8 +105,8 @@ For pods labelled `ergon.io/latency: "hot"` (a **pod** label, not a namespace
 label):
 
 - no `livenessProbe`/`readinessProbe` of type `exec`/`command` (an exec probe
-  runs inside the container and resets the loop's CPU affinity;
-  `httpGet`/`tcpSocket`/`grpc` run from outside and are fine);
+  starts a process on any CPU of the container's cpuset, the loop's
+  included; `httpGet`/`tcpSocket`/`grpc` run from outside and are fine);
 - no container and no init container with `restartPolicy: Always` (an injected
   sidecar shares the pod's CPU budget and wakes on the hot core);
 - `ergon.io/shared-millicpus` requested, and
@@ -121,8 +125,8 @@ config's `devRoot: /host/dev` is where the plugin stats the nodes; granted
 paths stay the container's `/dev/...` names.
 
 - **PHC** (`ptp.ergon.io`): read-only `/dev/ptp*`, plus a read-only bind of
-  `/run/ergon/node.json` so `RequirePtp` can read the NIC's node and PHC name.
-  The node keeps chrony + PHC discipline. Do not run a PTP daemon in a pod: a
+  `/run/ergon/node.json` so the app can read the NIC's node and PHC name.
+  The node keeps chrony on the PHC. Do not run a PTP daemon in a pod: a
   pod that steps the NIC clock affects every tenant.
 - **PM QoS** (`cpuqos.ergon.io`, x86 only, default-off): writable
   `/dev/cpu_dma_latency`. The app writes the µs value and keeps the fd; the
@@ -153,7 +157,7 @@ scheduling policy.
 | `ergon-cpus --fifo <prio>` | the exec wrapper takes `SCHED_FIFO` on the thread before exec | off (no flag) |
 | `sched-fifo.ergon.io/<container>: "thread"` | the NRI plugin grants `RLIMIT_RTPRIO` and `ERGON_SCHED_FIFO`; the app or `prelock` takes the policy on the hot thread only | `schedFifo: "off"` — the node refuses the annotation |
 
-Why it is off: no gain on an isolated CPU on AWS ([data](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#host-and-network-aws-in-a-pod): p50 +0.5/−1.8 µs, p99.99 +1/−45 µs, directional only — a sleeping sender inflated that run). The RT throttle and RT group scheduling bite it. This project's latency-pods path never takes a policy: the e2e asserts PID 1 stays `SCHED_OTHER` and `ERGON_SCHED_FIFO` is empty.
+Why it is off: its one committed A/B (run `070339Z`, `rt` arm) is mixed, and under it the loop's `nohz_full` CPU took timer interrupts again ([evidence](https://mimran1980.github.io/ergon/deploy/hft.html#sched_fifo)). RT throttling can take the CPU away. This project's latency-pods path never takes a policy: the e2e asserts PID 1 stays `SCHED_OTHER` and `ERGON_SCHED_FIFO` is empty.
 
 ## Deliberately not built
 
@@ -161,7 +165,7 @@ Why it is off: no gain on an isolated CPU on AWS ([data](https://github.com/mimr
 |---|---|
 | SR-IOV VF per pod | Nitro guests have one ENA per ENI, no in-guest VFs |
 | a netns-sysctl writer that pretends the knobs are per-netns | `busy_poll`/`busy_read` are global; `gro_flush_timeout` and `napi_defer_hard_irqs` are per-netdev sysfs; `rmem_max` is not writable per-netns. Node config instead (`node-checks.md`) |
-| an IRQ DaemonSet that pins the latency pod's NIC IRQs to the SHARED CPUs | IRQs on a busy housekeeping CPU lose frames at 1 M/s, max **10.8 ms** ([data](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md), Graviton only). The kept-CPU default stays |
+| an IRQ DaemonSet that pins the latency pod's NIC IRQs to the SHARED CPUs | IRQs on a CPU that also runs other work are not measured from committed data; IRQs on a core of their own are ([evidence](https://mimran1980.github.io/ergon/deploy/hft.html#interrupt-placement)). The kept-CPU default stays |
 
 ## Contract summary
 
@@ -195,8 +199,9 @@ The two `node/` files are node config, not pod extensions.
 
 ## Benchmark modes (M0–M6)
 
-One entry point, one mode set: `md-dpdk/benches/cloud/aws/latency-lab.sh`.
-Manifests live in `md-dpdk/benches/cloud/aws/latency-lab.d/`.
+One entry point, one mode set: `md-dpdk/benches/cloud/aws/eks-nri.sh`.
+Manifests live in `md-dpdk/benches/cloud/aws/latency-bench.d/`. No mode has
+a committed result yet.
 
 | mode | what it adds |
 |---|---|
@@ -259,10 +264,9 @@ test/e2e.sh
   `SetLinuxMemoryPolicy` (both are in the v0.12.3 proto).
 - Whether c8g.xlarge exposes `/dev/ptp*`, and whether it is single-NUMA (the
   lab records both).
-- `/dev/cpu_dma_latency` in an EC2 guest at all, and whether enabling it ever
-  wins (the C1 cap was **not kept** on `c7i.metal-24xl` and made plain kernel
-  UDP's p50 **2 µs** worse there, with single-rep collapses under load
-  ([data](https://github.com/mimran1980/ergon/blob/main/md-dpdk/deploy/aws-eks/README.md#bare-metal)).
+- `/dev/cpu_dma_latency` in an EC2 guest at all, and whether enabling it
+  helps (the one committed C1-cap A/B, on a c7i VM, is mixed:
+  [evidence](https://mimran1980.github.io/ergon/deploy/hft.html#c-states)).
 - The latency of `cpuset.cpus.partition=isolated` alone (the boot-arg
   **bundle** is measured; the partition alone is "measure first", the lab's
   job).

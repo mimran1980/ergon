@@ -107,6 +107,12 @@ void rusteron_dpdk_fake_set_eal_version(int year, int month);
  * where the real one confines its own threads; -1 (none) until set, and
  * again after the reset. */
 void rusteron_dpdk_fake_set_eal_main_cpu(int cpu);
+/* What the fake EAL reports about the counter (rusteron_dpdk_eal_counter_rate),
+ * whether or not it ran: nothing after the reset (the transport's clock is then
+ * CLOCK_MONOTONIC). `hz` as rte_get_tsc_hz() on a host whose counter it trusts
+ * (an invariant TSC; CNTFRQ_EL0 the same); or each fact on its own. */
+void rusteron_dpdk_fake_set_eal_tsc_hz(uint64_t hz);
+void rusteron_dpdk_fake_set_eal_counter_facts(uint64_t eal_hz, int invariant, uint64_t cntfrq);
 /* Whether the calling thread registered with the fake EAL
  * (rusteron_dpdk_eal_thread_register) and has not unregistered since. */
 int rusteron_dpdk_fake_eal_thread_registered(void);

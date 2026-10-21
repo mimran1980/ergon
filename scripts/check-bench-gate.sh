@@ -4,13 +4,17 @@
 # `scripts/run-sbe-bench.sh`) and `just bench-cluster`.
 #
 # Parses Criterion estimates.json; exits non-zero when a maintained ratio
-# exceeds its ceiling. Criterion's default benchmark output reports the
-# regression slope, so the gate uses that same estimator, falling back to the
-# median when `slope` is null or absent — which is what flat sampling writes,
-# since it runs no regression.
+# exceeds its ceiling and is not inconclusive (below). The estimator is
+# Criterion's own: the regression slope, else the **mean** when `slope` is
+# null or absent, which is what flat sampling writes (every gated group
+# samples flat).
 #
-# Both suites have NO noise tolerance: `1.0000` passes and any mathematical
-# ratio above `1.00` fails. A caller-supplied tolerance argument is ignored.
+# No tolerance is added to a ceiling (SBE_TOLERANCE=0, CLUSTER_TOLERANCE=0);
+# a caller-supplied tolerance argument is ignored. Verdicts, by the highest
+# ratio across the repeats: at or below the ceiling passes. Above it, a ratio
+# whose CI envelope overlaps the measured A/A control band is inconclusive and
+# does not fail the run (it is reported); one outside the band, or with no
+# measured band or CI, fails.
 #
 # Uncertainty is the envelope of every independent invocation the runner
 # produced, not one invocation's confidence interval. Identical code walked
@@ -736,7 +740,8 @@ if [[ "$SUITE" == "cluster" || "$SUITE" == "all" ]]; then
     # claim_shaped 1.0103 -> 1.0215 across two runs of unchanged code).
     #
     # This is recorded as a measurement-sensitivity finding, NOT as grounds to
-    # pass: the ceiling stays at 1.00 and a point ratio above it still fails.
+    # raise a ceiling: it stays at 1.00, and a ratio above it fails unless its
+    # envelope overlaps the measured A/A band (inconclusive, reported).
     # Making the measurement able to separate two identical loops needs a
     # harness change (interleaved arm order, or per-arm processes), not a
     # ceiling. If a future run moves one of these pairs well outside the

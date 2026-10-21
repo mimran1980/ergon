@@ -5,7 +5,9 @@
 # the cgroup kernel lane. Both run in a golang container, so nothing is
 # installed on the host.
 #   scripts/check.sh            both lanes in Docker (needs only docker)
-#   scripts/check.sh --local    the unit lane with the go on PATH (CI)
+#   scripts/check.sh --unit     the unit lane in Docker only (CI)
+#   scripts/check.sh --local    the unit lane with the go on PATH; needs
+#                               CAP_SYS_NICE, so it runs inside the container
 #   scripts/check-cgroup.sh     the cgroup kernel lane on its own
 # Extra `docker run` arguments, e.g. a module cache volume:
 #   CHECK_DOCKER_ARGS="-v my-gomod:/go/pkg/mod" scripts/check.sh
@@ -14,7 +16,9 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")/.." && pwd)
 image=${GO_IMAGE:-golang:1.27-trixie}
 
-if [[ "${1:-}" != "--local" ]]; then
+mode=${1:-}
+
+if [[ "$mode" != "--local" ]]; then
     # --cap-add=SYS_NICE: SetTimerSlack writes another process's
     # /proc/PID/timerslack_ns, which the kernel refuses without CAP_SYS_NICE
     # (timerslack_ns_write, `task != current`). The OCI hook has the
@@ -24,6 +28,7 @@ if [[ "${1:-}" != "--local" ]]; then
     docker run --rm --name "ergon-nri-check-$$" --cap-add=SYS_NICE \
         -v "$here":/src -w /src ${CHECK_DOCKER_ARGS:-} \
         "$image" bash scripts/check.sh --local
+    [[ "$mode" == "--unit" ]] && exit 0
     # The cgroup kernel lane needs a privileged container with the host's
     # cgroup namespace; see scripts/check-cgroup.sh.
     exec "$here/scripts/check-cgroup.sh"

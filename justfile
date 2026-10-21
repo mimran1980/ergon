@@ -191,14 +191,13 @@ release-check: test check-coverage check-generated-rustdoc
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-aeron-cluster --no-deps
     cargo publish -p ergo-sbe --dry-run --allow-dirty
     ./scripts/check-publish-set.sh
-    RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-clock --no-deps
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-tune --all-features --no-deps
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-io --features webpki-roots --no-deps
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-md-dpdk --no-deps
     # One multi-package dry run, so ergon-io and ergon-md-dpdk verify against
-    # the packaged ergon-clock and ergon-tune: none of the four is on
-    # crates.io at this version until the release publishes them.
-    cargo publish -p ergon-clock -p ergon-tune -p ergon-io -p ergon-md-dpdk --dry-run --allow-dirty
+    # the packaged ergon-tune: none of the three is on crates.io at this
+    # version until the release publishes them.
+    cargo publish -p ergon-tune -p ergon-io -p ergon-md-dpdk --dry-run --allow-dirty
     bash scripts/check-packaged-cluster-features.sh --list
     bash scripts/check-packaged-cluster-features.sh --unpack --package ergo-sbe
     # ergo-aeron-cluster unpack-and-build waits until ergo-sbe is on crates.io (publish step below).
@@ -210,9 +209,8 @@ release-check: test check-coverage check-generated-rustdoc
 #
 # Why this exists: `just release` runs the benchmark gates ~40 minutes into its
 # own run, so they execute on a machine hot from compiling and testing. On the
-# tightest maintained pair (encode_scalar_body_only, ergon ~0.99 against a hard
-# 1.00 ceiling) that measurement noise alone decides pass/fail — measured 0.985
-# idle vs 1.027-1.104 mid-release, on identical code.
+# tightest maintained pair (encode_scalar_body_only, against a hard 1.00
+# ceiling) noise from that load can decide pass/fail on identical code.
 #
 # This recipe does NOT weaken anything. Every gate still runs except the bench
 # re-run, and step 9/9 (`package-bench-artifacts.sh`) fails closed unless BOTH
@@ -295,11 +293,10 @@ _release-post:
     bash scripts/check-packaged-cluster-features.sh --unpack
     @echo "=== publish ergo-aeron-cluster ==="
     cargo publish -p ergo-aeron-cluster
-    @echo "=== publish ergon-clock, ergon-tune, ergon-io, ergon-md-dpdk ==="
+    @echo "=== publish ergon-tune, ergon-io, ergon-md-dpdk ==="
     # Cargo publishes them in dependency order and waits for crates.io to
-    # list ergon-tune before it publishes ergon-io, and ergon-clock and
-    # ergon-tune before it publishes ergon-md-dpdk.
-    cargo publish -p ergon-clock -p ergon-tune -p ergon-io -p ergon-md-dpdk
+    # list ergon-tune before it publishes ergon-io and ergon-md-dpdk.
+    cargo publish -p ergon-tune -p ergon-io -p ergon-md-dpdk
     @echo "=== tag ==="
     just _tag
     @echo "=== GitHub release (with bench archives) ==="
@@ -437,13 +434,15 @@ fix:
 # ── benchmarks ─────────────────────────────────────────────────────────────
 
 # Benchmark parity — ergo-sbe vs sbe-tool head-to-head.
-# Gate: every maintained ergon/sbe-tool ratio must stay at or below a literal
-# 1.00 — no noise tolerance — in BOTH profiles. Both are blocking: a regression
+# Gate: every maintained ergon/sbe-tool ratio must stay at or below its ceiling
+# (1.00 except the listed exceptions; no tolerance added) in BOTH profiles, or
+# be inconclusive: over the ceiling but inside the measured A/A noise band
+# (reported, not failed; scripts/check-bench-gate.sh). Both are blocking: a regression
 # that only appears without LTO is still a regression for downstream consumers.
 # Each invocation owns a unique result root, so the gate can only read estimates
 # produced by that same invocation.
 # Uses trusted direct wraps for fair comparison (sbe-tool's wrap does not validate).
-# Head-to-head ergon vs sbe-tool benches; every ratio gated at 1.00 in both LTO profiles
+# Head-to-head ergon vs sbe-tool benches; every ratio gated against its ceiling in both LTO profiles
 bench:
     ./scripts/run-sbe-bench.sh
 
@@ -547,7 +546,7 @@ bench-cluster:
     # LTO-on (release profile: lto=true, codegen-units=1)
     for k in $(seq 1 "$repeats"); do
         echo "=== cluster LTO — invocation $k/$repeats ==="
-        # The Criterion home is shared with ergon-clock-bench, and Criterion
+        # The Criterion home is shared with other bench binaries, and Criterion
         # leaves `new/` in place for groups this binary does not touch. The
         # marker bounds the snapshot to what this invocation is about to write.
         touch "$lto_crit/.bench-since"

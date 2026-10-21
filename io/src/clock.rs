@@ -34,9 +34,8 @@ fn clock_ns(id: libc::clockid_t) -> i64 {
 /// `arch_timer_read_cntvct_el0` (`arch/arm64/include/asm/arch_timer.h`): the
 /// architecture lets a `CNTVCT_EL0` read run speculatively and out of order,
 /// so without it two reads could come back in the wrong order and a
-/// difference wrap to an enormous value. It costs about 10 ns a read on
-/// Apple M-series (a plain `mrs` pipelines at under 1 ns), about what
-/// `rdtsc` costs on x86.
+/// difference wrap to an enormous value. The `isb` makes each read wait for
+/// the instructions before it; its cost is not measured here.
 #[must_use]
 #[inline]
 pub fn rdtsc() -> u64 {

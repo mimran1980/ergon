@@ -251,8 +251,8 @@ pin_irqs() {
 # AWS recommends it off for latency-sensitive work on Graviton ("Set to
 # ethtool -C ethN adaptive-rx off for a latency sensitive workload":
 # aws-graviton-getting-started, perfrunbook/optimization_recommendation.md);
-# the AWS Tokyo runs found it the best NIC setting (BENCHMARK.md, host and NIC
-# settings on AWS).
+# on the AWS Tokyo x86 runs it stopped the polling loop's preemptions
+# (BENCHMARK.md, "Host and NIC settings (AWS x86)").
 pin_nic() {
   local off="" usecs="" cqe="" d a u c
   [[ -e $STATE/want-tune-nic || -e $STATE/want-cond-nodim || -e $STATE/want-cond-nocoalesce || -e $STATE/want-fair ]] && off=1
