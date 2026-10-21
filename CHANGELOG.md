@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.31] — 2026-10-21
 
 ### Added
 
@@ -37,6 +37,24 @@
 
 ### Changed
 
+- `ergon-md-dpdk` check M4 reports global busy polling as information and
+  recommends no setting: the committed A/B rows (md-dpdk/BENCHMARKS.md,
+  "Measured, but no setting recommended") do not support one. It no longer
+  warns, so `require` no longer refuses on it.
+- EKS node bootstrap: no C-state cap on any node. The committed runs list
+  the C1 cap under "no setting recommended" on VMs and on metal.
+- Docs: every figure in the README, the book and the BENCHMARKS files cites a
+  committed results file, a code line or a kernel/vendor document, or is
+  removed; settings without a measured effect say "not measured here".
+  Deployment → Kubernetes HFT tuning is one table of settings with their
+  evidence. Raw output recovered for the cited AWS/EKS runs is committed
+  under `md-dpdk/benches/cloud/results/`. The book's link check now covers
+  absolute links into the repository and anchors cited from code.
+- CI: lint, test and dpdk run on x86_64 and arm64; Aeron is built and run on
+  Java 25; the test job is split into four suites per architecture; the
+  vdev interop places its agents off the EAL main lcore's core and keeps
+  send-only publishers up for retransmits; io tests that inspect
+  process-wide state hold a lock, so they pass with `--test-threads=2`.
 - MSRV raised from 1.88 to 1.99, the pinned toolchain. `serial_test` 4.0.1,
   a dev-dependency, needs 1.93.1.
 - **Breaking (ergon-md-dpdk API), released as 0.1.31 all the same:** the
