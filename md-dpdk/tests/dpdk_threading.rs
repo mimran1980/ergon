@@ -446,12 +446,11 @@ fn housekeeping_from_the_environment_avoids_each_modes_spinning_core() {
     let owned: Vec<usize> = core_of(first).into_iter().chain(core_of(last)).collect();
     let free: Vec<usize> = cpus.iter().copied().filter(|c| !owned.contains(c)).collect();
     let (rc, on) = housekeeping(std::ptr::null());
-    assert_eq!(
-        rc,
-        i32::from(!free.is_empty()),
+    assert_eq!(rc, i32::from(!free.is_empty()), "SHARED_NETWORK: {on:?}, free {free:?}");
+    assert!(
+        on.iter().all(|c| free.contains(c)),
         "SHARED_NETWORK: {on:?}, free {free:?}"
     );
-    assert!(on.iter().all(|c| free.contains(c)), "SHARED_NETWORK: {on:?}, free {free:?}");
 }
 
 /// `RUSTERON_DPDK_HOUSEKEEPING_CPU` is an override, not an exemption: a CPU a
@@ -748,7 +747,11 @@ fn a_dedicated_agent_spinning_on_the_eal_main_lcores_core_is_refused() {
             .to_string();
         // The first agent, sender then receiver, whose core holds the main
         // lcore: the sender for the receiver's CPU when they share a core.
-        let named = if core_of(sender).contains(&cpu) { "sender" } else { "receiver" };
+        let named = if core_of(sender).contains(&cpu) {
+            "sender"
+        } else {
+            "receiver"
+        };
         assert!(
             text.contains("main lcore")
                 && text.contains(named)
