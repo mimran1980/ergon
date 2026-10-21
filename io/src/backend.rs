@@ -23,13 +23,12 @@
 //! | 5 or more sockets, one physical core (two hyperthreads) | `uring-sqpoll`: its `SQPOLL` thread goes on the loop CPU's sibling by default ([`crate::placement`]) |
 //! | 5 or more sockets, a single CPU | `recv-busy` with `per_queue` (`uring-sqpoll` refuses: `SQPOLL` would spin on the loop's CPU) |
 //! | the loop's CPU time in the kernel matters | `uring-spin`: interrupt-driven, far fewer syscalls than `epoll-spin` (about 800 a second against 4.1 million at 800 msg/s, Azure) |
-//! | the thread may nap | `epoll-busy` or `uring-napi`: they poll the NIC only inside a timed wait |
+//! | the NIC's interrupts on a core of their own (node-level), moderation off | `epoll-spin` or `uring-spin`: level with `uring-sqpoll` from 4 sockets in the one fair comparison (Graviton) |
 //!
 //! - `epoll_wait(0)` never blocks, but it also skips the kernel's NIC
 //!   busy-poll step; mio (and so tokio) is this path.
-//! - `epoll-spin`, `uring-spin` and mio are not yet measured fairly against
-//!   the NIC-polling backends: every AWS comparison ran with ENA's adaptive
-//!   interrupt moderation on. Do not choose against them on those numbers.
+//! - `epoll-busy` and `uring-napi` poll the NIC only inside a timed wait,
+//!   then sleep. No run shows them saving CPU.
 //! - `uring-sqpoll` spins one kernel thread per ring; rings in one process
 //!   can share one, other processes cannot.
 //!
@@ -172,9 +171,10 @@ pub struct Config {
     /// `Driver::connect_background` when the process may use the polling CPU
     /// only (a pod with one CPU, [`crate::placement`]): `false` (the
     /// default) returns [`crate::Error::Cpu`]; `true` connects as
-    /// `Driver::connect` does instead, the handshake on the polling thread
-    /// (about 0.7 ms of CPU per TLS handshake, once per connect or
-    /// reconnect). `HttpClient`'s pool and `Reconnect` follow it.
+    /// `Driver::connect` does instead, the handshake on the polling thread:
+    /// one long poll per connect or reconnect (measured worst poll per
+    /// connect: `io/benches/BENCHMARK.md`, "Connection set-up").
+    /// `HttpClient`'s pool and `Reconnect` follow it.
     pub inline_connect_fallback: bool,
     /// Preferred busy polling (`SO_PREFER_BUSY_POLL`, or the `io_uring` / epoll
     /// equivalent): while the application keeps polling, the kernel leaves the

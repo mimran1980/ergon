@@ -178,25 +178,23 @@ A ban, step by step:
 
 ## Cost
 
-`try_charge`, the check before each request, is on the send path. **Not
-measured:** no archived run holds its cost, so this section quotes no
-figures. The table that used to be here came from a local microbench whose
-run is not archived, and its percentiles were means of 64-call batches,
-not per-call costs. Reproduce with `io/benches` `limit_bench`:
+`try_charge`, the check before each request, is on the send path. Its
+cost is **not measured** here: no committed run holds it. Measure it with
+`io/benches` `limit_bench`:
 
 ```sh
 cargo build --release --manifest-path io/benches/Cargo.toml --bin limit_bench
 io/benches/target/release/limit_bench --samples 200000 --batch 64   # Linux: --cpu <isolated cpu>
 ```
 
-- The bench reports ns per call (the mean of a `--batch`-call batch),
-  the slowest batch, stalls and `allocs` (allocations in the timed loop;
-  must be 0).
+- The bench reports ns per call (the mean of a `--batch`-call batch, not
+  a per-call percentile), the slowest batch, stalls and `allocs`
+  (allocations in the timed loop; expect 0).
 - **Catch-up walk.** A ring stepped just under one full turn walks every
   slot instead of taking the `fill(0)` path a longer idle would.
   `Budget::tick` during idle keeps this off the send path: the send path
   only ever pays for the slots since the last charge.
 - macOS cannot pin or isolate the thread; a quiet max needs an isolated
-  CPU. **Linux on an isolated core: not measured yet.**
+  Linux CPU.
 - Inside ergon-io the send path adds one store per request and one add per
   `send` (for `Sent`), and one add per automatic WebSocket frame.

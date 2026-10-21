@@ -555,11 +555,9 @@ pub fn napi_line(
     Some(format!(
         "ergon-io warning: {who} is on {backend}, which polls the NIC, but its socket had no \
          NAPI id after the handshake: busy polling reaches no NIC queue{dev} (a device without \
-         NAPI, such as a pod's veth), so the loop waits for interrupts. Paired per message on \
-         Azure, NIC polling decoded the same market-data message 10.8–10.9 µs earlier at the \
-         median than an interrupt-driven loop (Δ max 1,556–8,180 µs; io/benches/BENCHMARK.md, \
-         NIC polling without sleeping). Fix: give the loop a NIC with NAPI (the host's network \
-         namespace, or a CNI that passes the NIC through), or use an interrupt-driven backend \
-         (epoll-spin, uring-spin), which is what this one amounts to here."
+         NAPI, such as a pod's veth), so the loop waits for interrupts. Fix: give the loop a \
+         NIC with NAPI (the host's network namespace, or a CNI that passes the NIC through), \
+         or use an interrupt-driven backend (epoll-spin, uring-spin), which is what this one \
+         amounts to here."
     ))
 }
