@@ -6,11 +6,11 @@
 |-----------|---------|-------|
 | Aeron Java/C media driver | 1.53.3 | `aeron` submodule tag; archive + consensus module |
 | Aeron Cluster Java | 1.53.3 | clustered service container |
-| rusteron (Rust bindings) | 0.2.11+ | `rusteron-client`, `rusteron-media-driver`; bundles Aeron C 1.53.3 (the tutorial sample also uses `rusteron-archive`) |
+| rusteron (Rust bindings) | 0.2.13 (workspace `Cargo.toml`) | `rusteron-client`, `rusteron-media-driver`; bundles Aeron C 1.53.3 (the tutorial sample also uses `rusteron-archive`) |
 | ergo-sbe (codec generator) | 0.1.x | schema 111 session + mark codecs |
-| Rust | 1.99+ | MSRV, edition 2024 |
-| OS | Linux x86-64, macOS aarch64 | CI-tested |
-| Java | 25 (17+) | Archive and Cluster; the test harness runs Temurin 25 in CI (17 for the Aeron 1.46.8 compatibility job). [Java for Archive and Cluster](../deploy/java.md) |
+| Rust | 1.99+ | the workspace `rust-version` (the cluster `Cargo.toml` declares none); edition 2024. CI builds the cluster crate with 1.99.0; the MSRV job checks `ergo-sbe` only |
+| OS | Linux x86-64 and arm64 | CI runs the cluster unit tests on `ubuntu-24.04` and `ubuntu-24.04-arm`, and the live-cluster harness on `ubuntu-24.04` only. macOS is not run in CI |
+| Java | 25 (17+) | Archive and Cluster; the test harness runs Temurin 25 in CI (21 for the Aeron 1.46.8 compatibility job). [Java for Archive and Cluster](../deploy/java.md) |
 
 ## Schema identities
 
@@ -42,16 +42,30 @@ The client handles these documented transitions:
 | Payload too large | `ClusterError::PayloadTooLarge` |
 | Publication backpressure | Retryable `ClusterError::Publication` |
 
-## Multi-node test matrix
+## What CI runs against a live cluster
 
-CI (`cluster-compatibility.yml`) covers:
+The harness (`cluster-test-harness/tests/`) runs in `ci.yml`
+(`aeron-cluster-integration`, Aeron 1.53.3, Java 25) and in
+`cluster-compatibility.yml` (Aeron 1.46.8, Java 21, when `cluster/` or
+`sbe/src/` changes).
 
-- 3-node cluster: leader loss + redirect
-- Auth challenge/rejection
-- Fragmentation above max payload
-- Controlled abort/retry
-- Close + reconnect atomicity
-- Timeout expiry (sync + async)
+| Covered | Test file |
+|---|---|
+| 3-node connect, leader failover, redirect | `failover.rs`, `failover_own_driver.rs`, `client_parity.rs`, `nonblocking.rs` |
+| New leader that never connects times out | `nonblocking.rs` (`a_new_leader_that_never_connects_times_out`) |
+| `SessionEvent(CLOSED)` while a new leader is pending | `nonblocking.rs` |
+| Ingress channel settings kept across failover and redirect | `ingress_channel_settings.rs` |
+| Fragmented egress, regular and controlled poll | `egress_fragmentation.rs` |
+| Restart, reconnect, quorum loss, log recovery | `restart.rs` |
+| Null and simple credentials (the default authenticator accepts all) | `auth.rs` |
+
+Not covered by the harness: auth challenge and rejection, controlled-poll
+abort, and connect or poll timeout expiry. Unit tests in `cluster/src/` (run
+by `ci.yml`'s `test` job) cover challenge dispatch (`egress.rs`), the
+challenge response (`credentials.rs`, `client.rs`) and the new-leader timeout
+(`client.rs`, `test_new_leader_timeout_disconnects`). No test drives
+`ClusterError::AuthRejected`, a controlled-poll abort, or a connect or poll
+timeout.
 
 ## Limitations
 

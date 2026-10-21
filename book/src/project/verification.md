@@ -16,14 +16,14 @@ Performance method:
 
 ## SBE parity gate artifacts (1.0 streak)
 
-After material codegen or before each release minor, archive no-LTO gate
-output so `road-to-1.0.md` criterion 2 (three consecutive minors ≤ `1.00`)
-is auditable:
+`release.yml` runs `just bench` and `just bench-cluster`, then attaches the
+Criterion archives (`*.tar.gz`) and `sbe-bench-gate-no-lto.txt` to the GitHub
+release. That output is the record for
+[Road to 1.0](road-to-1.0.md) criterion 2. Run the same locally after a
+material codegen change:
 
 ```sh
-# from monorepo root — stamps target/bench-runs/<run-id>/ and gates at 1.00
-just bench
+just bench   # stamps target/bench-runs/<run-id>/ and runs the gate
 ```
 
-Store the gate stdout in the GitHub release notes or CI artifact named
-`sbe-bench-gate-no-lto.txt`. Do **not** raise ceilings to pass.
+Do **not** raise ceilings to pass.

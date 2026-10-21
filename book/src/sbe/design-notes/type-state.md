@@ -14,14 +14,14 @@ that point. Inlining can remove the intermediate moves. Decoder stages also
 carry acting version and block length; dynamic group callbacks check that the
 returned completion belongs to the supplied entry.
 
-A fair dual-LTO comparison at the `1.00` sbe-tool ceiling is the expected
-proof that the abstraction is free. A measurable type-state tax would be a
-codegen defect. Whether a particular revision passes requires a fresh run:
+The sbe-tool gate compares two different codecs, so it cannot isolate the
+cost of type-state, and no benchmark here measures that cost on its own. A
+measurable type-state tax would be a codegen defect. Gate and method:
 [Benchmarks](../benchmarks.md).
 
 Named stages (`CarEncoder` → `CarAfterFuelFigures` → `CarComplete`) **are**
 the type-state pattern. The other spelling is `Encoder<'a, Stage>` with
-phantom markers. Both compile the same way; only the API surface differs.
+phantom markers. This crate uses named stages; the two were not compared.
 
 | Concern | Choice | Why |
 |---------|--------|-----|
