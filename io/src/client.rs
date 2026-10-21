@@ -2,7 +2,7 @@
 //!
 //! | `HttpImpl` | What | Use it for |
 //! |---|---|---|
-//! | [`HttpImpl::Native`] (default) | ergon-io's HTTP/1.1 client: a pool of warm connections on a [`Driver`] | latency: on the same interrupt-driven path (`epoll-spin`), 7–11 µs faster per round trip than the source-built libcurl at the median, paced, 1 connection; the p99 was not always lower (`io/benches/BENCHMARK.md`; each pooled connection is one more socket the loop polls) |
+//! | [`HttpImpl::Native`] (default) | ergon-io's HTTP/1.1 client: a pool of warm connections on a [`Driver`] | latency: on the same interrupt-driven path (`epoll-spin`), 5–12 µs faster per round trip than the source-built libcurl at the median, 1 connection; the p99 and max were lower on Azure, not on AWS (`io/benches/BENCHMARK.md`, "HTTP clients"; each pooled connection is one more socket the loop polls) |
 //! | [`HttpImpl::Curl`] (feature `curl`) | libcurl, linked in-process: one multi handle, reused easy handles | endpoints that need redirects, proxies, HTTP/2, other auth schemes or compression |
 //!
 //! - One API for both: [`HttpClient::request`] and

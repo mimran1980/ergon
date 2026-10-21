@@ -66,7 +66,8 @@ use `Target::new("api.binance.com", 443, "")` and
   be placed twice (`io/tests/client.rs` shows it happening). The native
   client never re-sends: send orders through it.
 - **Connections open in the background** (`background_connect`, on by
-  default): the handshake's CPU never lands on the loop. A failed connect
+  default): the handshake runs off the loop, unless the driver's
+  `inline_connect_fallback` is set. A failed connect
   goes to `ClientHandler::on_connect_error` and is retried with backoff.
 - **Reconnects spread out:** a dropped connection reopens after a random
   delay of up to 100 ms (the limit doubles per failed connect, up to 5 s),
@@ -82,8 +83,10 @@ use `Target::new("api.binance.com", 443, "")` and
 - **Responses:** `Content-Length` or chunked bodies. The body in
   `on_response` borrows the client's buffer: copy what you keep.
 - **libcurl:** `curl_drive` picks `curl_multi_perform` on every poll
-  (default) or `curl_multi_socket_action`; both never block. The two modes
-  were not compared.
+  (default) or `curl_multi_socket_action`; both never block. Compared once
+  on Azure at 1,000/s: `curl_multi_perform` was 1–6 µs ahead at the
+  median in both rounds and had the higher max
+  ([data](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#http-clients)).
   Trust comes from `curl_ca_file` or the system store, not from the rustls
   configuration.
 
@@ -94,10 +97,12 @@ without allocating. `HttpClient::signed_request` appends the timestamp and
 the signature itself; `signed_request_at` takes the timestamp from you
 (your clock, or replay time).
 
-| signer | cost per request | use it for |
-|---|---|---|
-| `Signer::hmac_sha256` | **262 ns** (best of 7, max not recorded; [data](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md)) | signed REST requests |
-| `Signer::ed25519_pkcs8` | **21,558 ns** (best of 7, max not recorded; [data](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#conclusions)); measure before putting it on a hot path | log-on, once per session; the private key never leaves the machine |
+| signer | use it for |
+|---|---|
+| `Signer::hmac_sha256` | signed REST requests |
+| `Signer::ed25519_pkcs8` | log-on, once per session; the private key never leaves the machine. About 80 times HMAC's cost: measure before putting it on a hot path |
+
+Cost per signature: [request signing](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#request-signing-and-tls-records).
 
 Checked against Binance's documented example:
 
@@ -112,46 +117,28 @@ platform.)*
 
 ## Measured results
 
-Round trip, **1 connection**, one request in flight. More connections:
-[not measured](#many-connections). Figures, with their max, in
-[`io/benches/BENCHMARK.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#conclusions).
+Every figure, with its max: [HTTP clients](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#http-clients)
+(1 connection, x86) and the
+[fair run](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton)
+(pool of 1 and 20, Graviton).
 
-- **Native beats libcurl** on the same path, and beats it by more when
-  native polls the NIC. reqwest parks its thread between requests and is
-  behind native on the same run; the two families are not compared across
-  interrupt and polling paths.
-- **`HttpClient` with a pool of 1** costs a little over a raw `HttpConn`.
-  A larger pool was not measured.
-- **Interrupt-driven against NIC polling:** no conclusion from the x86 runs
-  (ENA's adaptive moderation was left on). The Graviton
-  [fair run](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton)
-  turns it off for every backend and compares them.
-- **Maxima** are network, hypervisor or untraced; Azure's traced runs put
-  every maximum in a once-a-minute hypervisor stall.
-- Why native is faster:
-  [BENCHMARK.md](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#how-the-ergon-io-http-client-differs-from-libcurl).
+- **Native against libcurl, same interrupt path:** native is ahead at the
+  median on Azure and AWS. Its p99 and max are lower on Azure, not on AWS.
+- **`HttpClient` with a pool of 1** was within 1 µs of a raw `HttpConn`
+  at the median and p99; one of its rounds had a higher max.
+- **reqwest** parks its thread between requests and trailed both on Azure.
 
 ## Many connections
 
-**Not measured.** Every figure above is 1 connection. What the data
-supports for a pool of 20 on one loop, one request in flight:
+Measured on Graviton with a pool of 20 on one loop, one request in flight
+([fair run](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton)):
+`uring-sqpoll` and the interrupt backends lead, `per_queue` is behind them
+and plain `recv-busy` further behind.
 
-| backend | what 20 connections change |
-|---|---|
-| `recv-busy` (the default) | a poll reads every socket: the response waits half a poll on average, up to one |
-| `recv-busy,per_queue=true` | a poll reads one socket per NIC queue |
-| `uring-sqpoll` | none: its kernel thread completes every socket into one ring |
-| `epoll-spin` | none: `epoll_wait` returns only the ready sockets |
-
-- **An estimate has no max.** Measure it (below).
-- **Of the polling backends, `per_queue` is the one-core candidate**
-  (not measured at this pool size); `uring-sqpoll` needs a spare core. Poll
-  costs: [cost per poll](backends.md#cost-per-poll).
-- **Rule:** count the pool with every other socket the thread polls:
-  feeds, order connections, other pools. Each `HttpClient` has its own
-  `Driver`, so its poll adds to theirs. Plain `recv-busy` up to about 4
-  sockets in all; above that `recv-busy,per_queue=true`, or `uring-sqpoll`
-  with a spare core.
+- **Count the pool with every other socket the thread polls:** feeds,
+  order connections, other pools. Each `HttpClient` has its own `Driver`,
+  so its poll adds to theirs. Then pick:
+  [choosing a backend](overview.md#choosing-a-backend).
 - **Set it** with `HttpClientConfig::driver`, for example
   `Config::parse("recv-busy,per_queue=true")?`.
 
@@ -175,8 +162,7 @@ sudo $B/http_bench --client client --backend recv-busy --pool 20 --server SENDER
 $B/analyse --warmup-s 2 res/http20-*
 ```
 
-- On AWS, give each family its own best NIC setting. Polling runs:
-  `ethtool -C <nic> adaptive-rx off`. The `epoll-spin` run:
-  `adaptive-rx off rx-usecs 0 tx-usecs 0`, with the NIC's interrupts on a
-  core of their own ([ergon-tune N1](../tune/overview.md)).
+- On AWS, set the NIC on the node first (node-level):
+  `ethtool -C <nic> adaptive-rx off rx-usecs 0`, with the NIC's interrupts
+  on a core of their own, as in the fair run.
 - Compare p50, p99 and max per backend; repeat in reversed order.

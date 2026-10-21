@@ -113,18 +113,10 @@ fn main() {}
 
 ## Defaults
 
-| Setting | Default | Change with |
-|---|---|---|
-| `TCP_NODELAY` | on, every socket | always on |
-| TCP keepalive | on: 10 s idle, then a probe every 5 s, 3 probes (libcurl's connections too) | `Config`: `keepalive_idle_s` (0: off), `keepalive_interval_s`, `keepalive_count` |
-| `TCP_USER_TIMEOUT` | 25 s | `Config::tcp_user_timeout_ms` (0: kernel default) |
-| `SO_RCVBUF` | 4 MiB, fixed; needs `net.core.rmem_max` ≥ 4 MiB (warned at start-up) | `Config::rcvbuf` (0: kernel autotuning) |
-| TCP quick ACK | assumed: `quickack 1` on each route | checked once per route: one warning, or refused with `quickack_check=require` |
-| WebSocket Ping | after 10 s with nothing received | `WsOptions::ping_interval_ms` (0: off) |
-| WebSocket Pong timeout | 5 s after a Ping | `WsOptions::pong_timeout_ms` (0: off) |
-| WebSocket idle timeout | off | `WsOptions::idle_timeout_ms` |
-| Close handshake wait | 1 s | `WsOptions::close_timeout_ms` (0: no wait) |
-| Reconnect | off | `Reconnect` with `Retry`: 250 ms, doubling to 30 s, 20 % jitter |
+`TCP_NODELAY` on, keepalive and `TCP_USER_TIMEOUT` set, a 4 MiB receive
+buffer, WebSocket Pings after 10 s quiet, reconnect off. Every default and
+how to change it: the book's
+[defaults](https://mimran1980.github.io/ergon/io/overview.html#defaults).
 
 ## Guarantees and limits
 
@@ -132,8 +124,9 @@ fn main() {}
   `uring-sqpoll`. `epoll-busy` and `uring-napi` may wait up to `wait_us`.
 - **One failure closes one connection.** It goes to `Handler::on_closed`;
   the others keep running. `poll` fails only when the backend fails.
-- **Connecting never stalls the loop.** `Driver::connect` takes a step per
-  poll; `Driver::connect_background` runs the handshake on a helper thread.
+- **Connecting does not block.** `Driver::connect` takes a step per poll,
+  but the TLS handshake makes one poll long; `Driver::connect_background`
+  runs it on a helper thread.
 - **Timers stay off the hot path.** Pings and timeouts run on the driver's
   deadline check (every 250 µs), never on the read or send path.
 - **TLS 1.3 only.** TLS 1.2 is refused with a clear error.
@@ -151,44 +144,23 @@ fn main() {}
   NIC. Each finding goes to stderr once, with its fix, from a warning thread.
   `ERGON_HOST_CHECKS=off` silences those warning lines (`require` makes a
   warning refuse the start); the results stay on `Driver::host_report()`.
-- **Measured on x86 only** (AWS `c7i`, Azure `D8ds_v6`).
+- **Measured on x86** (AWS `c7i`, Azure `D8ds_v6`) **and Graviton** (AWS
+  `c8g`): [io/benches/BENCHMARK.md](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md).
 
 ## Choosing a backend
 
-`Config::parse("backend[,key=value...]")`. Pick by how many sockets the
-loop thread polls (count them all: feeds, order connections, `HttpClient`
-pool connections) and whether a second core is free:
+`Config::parse("backend[,key=value...]")`. Count every socket the loop
+thread polls (feeds, order connections, `HttpClient` pool connections):
 
-| Sockets on the loop thread | One core | A second core, or the loop's sibling |
-|---|---|---|
-| 1–4 | `recv-busy` | `recv-busy` or `uring-sqpoll`: equal |
-| 5–16 | `recv-busy,per_queue=true` | `uring-sqpoll`, `sqpoll_cpu` that CPU |
-| more than 16 | `recv-busy,per_queue=true` | `uring-sqpoll`, `sqpoll_cpu` that CPU |
+- 1–4 sockets: `recv-busy`.
+- More: `uring-sqpoll` with a spare CPU, or `recv-busy,per_queue=true` on
+  one CPU.
+- The interrupt backends (`epoll-spin`, `uring-spin`) were level with
+  `uring-sqpoll` from 4 sockets with node-level NIC settings: moderation
+  off and the NIC's interrupts on a core of their own.
 
-- **Plain `recv-busy` reads every socket on every poll** (about 0.6 µs
-  each on AWS `c7i`), so it falls behind `uring-sqpoll` as sockets grow:
-  higher p99 from about 10. At 100 connections: 40.6–41.5 / 120–124 /
-  196–404 µs (p50 / p99 / max, kernel arrival → decoded), against 6.3 /
-  27–28 / 99–201 for `uring-sqpoll` (AWS `c7i.2xlarge`,
-  `flags-aws-20261015T093248Z`).
-- **`per_queue`** reads one socket per NIC queue: the same latency as plain
-  `recv-busy` at 1–16 sockets, and a poll of 2–6 µs up to 256.
-- **`epoll-spin`, `uring-spin` and mio: not yet measured fairly.** Every
-  AWS comparison ran with ENA's adaptive interrupt moderation on, which
-  holds back the interrupts they wait for. A fair rerun is planned; until
-  then, do not choose against epoll on these numbers.
-- **The loop's CPU time in the kernel matters:** `uring-spin` (far fewer
-  syscalls than `epoll-spin`). **The thread may nap:** `uring-napi` or
-  `epoll-busy`.
-- **Round trips (WebSocket, HTTP) were measured with 1 connection only.**
-- On AWS, turn ENA's adaptive receive moderation off
-  (`ethtool -C <nic> adaptive-rx off`): it pre-empts the polling loop about
-  40 times a second. With an interrupt-driven backend, turn moderation fully
-  off instead (`adaptive-rx off rx-usecs 0 tx-usecs 0`) and give the NIC's
-  interrupts a core of their own (ergon-tune's advice; not yet measured
-  with ergon-io).
-- Every number, with run ids, and how to find the crossover on your host:
-  the book's [ergon-io chapter](https://mimran1980.github.io/ergon/io/overview.html#choosing-a-backend).
+The full table, the evidence and the node settings: the book's
+[choosing a backend](https://mimran1980.github.io/ergon/io/overview.html#choosing-a-backend).
 
 ## Rate limits and errors
 
@@ -210,7 +182,7 @@ pool connections) and whether a second core is free:
 |---|---|---|
 | `uring` | on | the `io_uring` backends (Linux); without it, choosing one returns `Error::Unsupported` |
 | `webpki-roots` | off | Mozilla's root store, `tls::webpki_roots` (CDLA-Permissive-2.0, so opt-in) |
-| `curl` | off | libcurl as an `HttpClient` implementation (the system libcurl, through pkg-config). It refuses POST, PUT and PATCH unless `curl_allow_non_idempotent_methods` is set: libcurl can send a request twice |
+| `curl` | off | libcurl as an `HttpClient` implementation (the system libcurl, through pkg-config). It refuses every method but GET, HEAD, OPTIONS and DELETE unless `curl_allow_non_idempotent_methods` is set: libcurl can send a request twice |
 
 Install with the features you need:
 
