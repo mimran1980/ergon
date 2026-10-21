@@ -52,7 +52,13 @@ jobs:
 
   lint:
     needs: policy
-    runs-on: ubuntu-24.04
+    # x86_64 and aarch64 (Graviton): clock, tune, io and md-dpdk have code
+    # for each architecture, and only the runner's architecture is compiled.
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -108,7 +114,13 @@ jobs:
 
   test:
     needs: policy
-    runs-on: ubuntu-24.04
+    # x86_64 and aarch64 (Graviton): clock, tune, io and md-dpdk have code
+    # for each architecture, and only the runner's architecture is compiled.
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     # Was 45, then 90; the workspace suite keeps growing (sbe_tool_multi_schema_wire_parity_test.rs
     # alone is 52 compile-and-run cases at ~30s each) and this job was
     # cancelled mid-suite at 90m on 2026-09-06 with several test files still
@@ -147,7 +159,13 @@ jobs:
   # bridge, which need root.
   dpdk:
     needs: policy
-    runs-on: ubuntu-24.04
+    # x86_64 and aarch64 (Graviton): clock, tune, io and md-dpdk have code
+    # for each architecture, and only the runner's architecture is compiled.
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
