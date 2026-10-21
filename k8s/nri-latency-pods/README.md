@@ -157,7 +157,7 @@ scheduling policy.
 | `ergon-cpus --fifo <prio>` | the exec wrapper takes `SCHED_FIFO` on the thread before exec | off (no flag) |
 | `sched-fifo.ergon.io/<container>: "thread"` | the NRI plugin grants `RLIMIT_RTPRIO` and `ERGON_SCHED_FIFO`; the app or `prelock` takes the policy on the hot thread only | `schedFifo: "off"` — the node refuses the annotation |
 
-Why it is off: its one committed A/B (run `070339Z`, `rt` arm) is mixed and kept the tick running on the `nohz_full` CPU ([evidence](https://mimran1980.github.io/ergon/deploy/hft.html#sched_fifo)). RT throttling can take the CPU away. This project's latency-pods path never takes a policy: the e2e asserts PID 1 stays `SCHED_OTHER` and `ERGON_SCHED_FIFO` is empty.
+Why it is off: its one committed A/B (run `070339Z`, `rt` arm) is mixed, and under it the loop's `nohz_full` CPU took timer interrupts again ([evidence](https://mimran1980.github.io/ergon/deploy/hft.html#sched_fifo)). RT throttling can take the CPU away. This project's latency-pods path never takes a policy: the e2e asserts PID 1 stays `SCHED_OTHER` and `ERGON_SCHED_FIFO` is empty.
 
 ## Deliberately not built
 

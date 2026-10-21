@@ -474,7 +474,7 @@ kubectl exec aeron-driver -- sh -c 'ps -L -o pid,tid,psr,comm | head'
   `resizePolicy: RestartContainer` for `cpu`.
 - **Not measured / not verified:** the latency cost of helpers on shared
   CPUs, and a real EKS node (the NRI socket, nodeadm TOML merge, `/opt`
-  writable). Two EKS spot lab attempts found no capacity.
+  writable).
 
 **Decision.** Use it on kind or a self-managed node where you can set
 `reservedSystemCPUs` and enable NRI. That the exclusive cores stay quiet

@@ -12,8 +12,7 @@ built in the shared-cpus plugin and off by default
 ([evidence: mixed](hft.md#sched_fifo)).
 
 Status: experimental and unpublished. A kind e2e covers the five (one check
-per extension). Their latency effect is **not measured**: two EKS spot labs
-reached no capacity.
+per extension).
 
 ## The five
 
@@ -142,8 +141,8 @@ the `cpuqos` annotation (`k8s/nri-latency-pods/README.md`, item 5).
 | `ergon-cpus --fifo <prio>` | the exec wrapper takes `SCHED_FIFO` on the thread before it execs the command | off (no flag) |
 | `sched-fifo.ergon.io/<container>: "thread"` | the NRI plugin grants `RLIMIT_RTPRIO` and `ERGON_SCHED_FIFO`; the app or `prelock` takes the policy on the hot thread only | `schedFifo: "off"` — the node refuses the annotation |
 
-Why it is off: its one committed A/B is mixed and it kept the tick running
-on the `nohz_full` CPU ([SCHED_FIFO](hft.md#sched_fifo)). RT throttling
+Why it is off: its one committed A/B is mixed, and under it the loop's
+`nohz_full` CPU took timer interrupts again ([SCHED_FIFO](hft.md#sched_fifo)). RT throttling
 (`kernel.sched_rt_runtime_us`, 950,000 of 1,000,000 µs by default,
 [sched-rt-group](https://docs.kernel.org/scheduler/sched-rt-group.html)) can
 take the CPU away. `ergon-tune` T7 warns on a real-time policy.

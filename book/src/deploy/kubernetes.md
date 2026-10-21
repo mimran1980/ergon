@@ -14,7 +14,7 @@ Terms: [deployment glossary](overview.md#glossary),
 | | x86 (`c7i`) | Graviton |
 |---|---|---|
 | manifests and node bootstrap | yes: Amazon Linux 2023, self-managed nodes | none: the bootstrap refuses non-Intel CPUs and the images are `linux/amd64` |
-| measured | no committed data: the one EKS lab run kept no raw output, and it ran the driver pod on 4 CPUs through an overlay (`md-dpdk/deploy/aws-eks/README.md`, live test) | not measured |
+| measured | no committed data. The live test runs the driver pod on 4 CPUs through an overlay (`md-dpdk/deploy/aws-eks/README.md`, Live test) | not measured |
 
 The kubelet and pod settings are not x86-specific, but no Graviton node has
 been built with them. For Graviton's kernel arguments see [hosts](hosts.md).

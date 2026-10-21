@@ -76,7 +76,7 @@ interrupts does.
 | setting | how | evidence |
 |---|---|---|
 | transparent hugepages off | `transparent_hugepage=never` on the boot line, or `never` into `/sys/kernel/mm/transparent_hugepage/enabled` | [transhuge](https://docs.kernel.org/admin-guide/mm/transhuge.html); not measured here |
-| 2 MiB hugepage pool | `hugepagesz=2M hugepages=<n>` on the boot line, or `vm.nr_hugepages` | DPDK and Aeron's hugetlbfs draw from it. On Graviton use a 4 KiB-page kernel (Debian's cloud-arm64 is) so 2 MiB pages exist |
+| 2 MiB hugepage pool | `hugepagesz=2M hugepages=<n>` on the boot line, or `vm.nr_hugepages` | DPDK and Aeron's hugetlbfs draw from it |
 | Aeron's directory on a sized hugetlbfs | `mount -t hugetlbfs -o pagesize=2M,size=1G nodev /mnt/huge-aeron`; on the media driver `AERON_FILE_PAGE_SIZE=2097152`, `AERON_TERM_BUFFER_SPARSE_FILE=false` | without `size=` Aeron sees no free space and refuses every log buffer ([hft](hft.md#settings)) |
 | `net.core.rmem_max`, `wmem_max` | 16 MiB | needed only when Aeron's socket buffers are raised above the kernel's limit ([hft](hft.md#settings)) |
 | automatic NUMA balancing off | `sysctl -w kernel.numa_balancing=0` | not measured here (one-node lab hosts) |
@@ -102,10 +102,11 @@ One physical core per role. SMT is off on x86 latency nodes
 - **`SHARED_NETWORK`** (sender and receiver on one thread) saves a core. Its
   latency is not measured from committed data.
 - **ergon-io `uring-sqpoll`:** its kernel thread on a CPU of its own beat
-  the loop's SMT sibling ([SMT sibling](hft.md#smt-sibling)). With SMT off,
+  the loop's SMT sibling at 10 and 100 connections; at 1 the result is mixed
+  ([SMT sibling](hft.md#smt-sibling)). With SMT off,
   ergon-io takes another CPU of the pod's own.
 - **Name one CPU per core.** `thread_siblings_list` still lists the offline
-  twin; use the lowest id of each core. AWS numbers x86 siblings N and
+  twin; use the lowest id of each core (`node/provision-node.sh:167-169`). AWS numbers x86 siblings N and
   N + cores, Azure adjacently (0–1, 2–3).
 
 ## Build for the CPU

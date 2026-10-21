@@ -21,7 +21,7 @@ Terms: [deployment glossary](overview.md#glossary).
 | no CPU quota on a busy container | the kernel never stops the container mid-period | node + pod | [sched-bwc](https://docs.kernel.org/scheduler/sched-bwc.html), Kubernetes PR #127525 (kubelet 1.33+); not measured here (`tune/src/quota.rs` T9) | kubelet 1.33+, static CPU manager, Guaranteed pod, whole-number `cpu`. Not `cpuCFSQuota: false` ([why](kubernetes.md#no-cpu-quota)) |
 | Guaranteed QoS, whole-number `cpu` | the only pods the static CPU manager gives exclusive CPUs | pod | Kubernetes CPU management page; not measured here | [pod block](#copy-paste) |
 | each busy thread pinned to one CPU of the pod's cpuset | the thread stays on its exclusive CPU | pod | the isolation runs pinned every loop; pinning alone is not measured | `sched_setaffinity` from `Cpus_allowed_list` ([io: Kubernetes](../io/kubernetes.md#pin-the-loop-thread-inside-the-pod)) |
-| `uring-sqpoll`: the SQPOLL thread on its own CPU | the kernel's polling thread does not share the loop's core | pod | measured: [SMT sibling](#smt-sibling) | ergon-io picks a CPU of the pod's own outside the shared CPUs ([shared CPUs](shared-cpus.md#pinning-by-index)) |
+| `uring-sqpoll`: the SQPOLL thread on its own CPU | the kernel's polling thread does not share the loop's core | pod | measured at 10 and 100 connections: [SMT sibling](#smt-sibling) | ergon-io picks a CPU of the pod's own outside the shared CPUs ([shared CPUs](shared-cpus.md#pinning-by-index)) |
 | transparent hugepages `never` | no `khugepaged` merging under busy threads | node | [transhuge](https://docs.kernel.org/admin-guide/mm/transhuge.html); not measured here | `transparent_hugepage=never` on the boot line |
 | Aeron directory on a sized 2 MiB hugetlbfs, `AERON_FILE_PAGE_SIZE=2097152`, `AERON_TERM_BUFFER_SPARSE_FILE=false` | no 4 KiB page faults on the log buffers | node (pool, mount) + driver pod | [hugetlbpage](https://docs.kernel.org/admin-guide/mm/hugetlbpage.html); not measured here. An unsized hugetlbfs reports no free space, which Aeron's storage check refuses (`aeron_fileutil.c:952-959` in rusteron-media-driver 0.2.11) | [hosts](hosts.md#memory); driver env as in `md-dpdk/deploy/aws-eks/media-driver-config.yaml` |
 | `AERON_CLIENT_PRE_TOUCH_MAPPED_MEMORY=true` | a client faults its mapped terms in at start | pod (client) | `aeronc.h:170` (rusteron-client 0.2.11); not measured here | [pod block](#copy-paste) |
@@ -64,9 +64,11 @@ and `…/flags-azure-20261014T144146Z/tables.md`, "Platform noise".
 | Azure | `isolcpus=managed_irq,domain` + `irqaffinity` | 10,656 | 47.0 | 0.0 | 58.94 |
 | Azure | + `nohz_full`, `rcu_nocbs` | 239.5 | 37.0 | 0.0 | 67.82 |
 
-`isolcpus` cut gaps over 20 µs; `nohz_full` cut gaps over 5 µs (the tick,
-1,000 a second) by 97.7 % (Azure) and 99.9 % (AWS). The longest gap is one event per sample and
-does not rank the two isolated lines.
+`isolcpus` cut gaps over 20 µs. Adding `nohz_full` cut gaps over 5 µs
+(about 1,000 a second before it, the tick rate it stops:
+[NO_HZ](https://docs.kernel.org/timers/no_hz.html)) by 97.7 % (Azure) and
+99.9 % (AWS). The longest gap is one event per sample and does not rank the
+two isolated lines.
 
 ### Interrupt placement
 
@@ -80,10 +82,11 @@ senders fell behind; the file's top note names them.
 | 1 | 45.87–47.17 / 134.98–161.30 | 46.97–48.37 / 107.72–145.15 |
 | 4–64 | 52.31–86.46 / 128.56–640.75 | 49.15–53.85 / 135.64–425.45 |
 
-Same file, own-core IRQs, 1 connection: the interrupt backends' p50 is
-38.78–39.33 against 36.01–37.04 for NIC polling; level from 4 connections.
-At 64 connections `recv-busy`'s p50 is 78.14–78.29 and its from-due p99
-9.7 s.
+Same file, own-core IRQs, p50: at 1 connection the interrupt backends
+read 38.78–39.33 against 36.01–37.04 for NIC polling; at 4 connections the
+two families overlap. From 16 connections `recv-busy` (48.98–49.63 at 16,
+78.14–78.29 at 64, from-due p99 9.7 s) and `recv-busy-pq` (44.26–44.73) sit
+above the interrupt backends (39.27–40.42); `uring-sqpoll` stays level.
 
 **x86** (`git show 2517309d:io/benches/results/flags-aws-20261015T062428Z/tables.md`,
 `irqlocal` arm: every queue IRQ on the loop's CPU), `recv-busy` market data,
@@ -108,8 +111,8 @@ AWS c7i, `recv-busy`, 10,000 round trips a second. Baseline: adaptive-rx on
 | `adaptive-rx off` | 40.88 / 40.93 | 71.89 / 76.02 | 354.05 / 970.07 | 116.06 / 83.44 | 980.65 / 201.50 |
 | `adaptive-rx off rx-usecs 0` | 41.90 / 41.55 | 78.50 / 80.41 | 233.02 / 343.68 | 80.99 / 73.78 | 201.65 / 226.79 |
 
-WebSocket p99.99 fell 36–47 µs in both rounds. HTTP sits inside the 42 µs
-gap between its own two baselines. One run. The interrupt path with
+WebSocket p99.99 fell 36–47 µs in both rounds. HTTP p99.99 moved no more
+than the 42 µs gap between its own two baselines. One run. The interrupt path with
 moderation on is not measured.
 
 ### SMT sibling
@@ -124,7 +127,10 @@ the SQPOLL kernel thread on its own core against the loop's SMT sibling.
 | 10 | 5.18–6.04 / 20.41–23.81 / 77.03–109.42 | 7.53–8.37 / 29.46–32.77 / 95.85–349.01 |
 | 100 | 5.00–5.28 / 20.56–21.98 / 76.01–301.08 | 7.46–7.81 / 32.46–34.17 / 94.51–111.56 |
 
-This is one busy sibling (SQPOLL); other sibling loads are not measured.
+At 1 connection the own core is lower at p50 and the sibling at p99. At 10
+and 100 connections the own core is
+lower at p50 and p99 in every round. This is one busy sibling (SQPOLL);
+other sibling loads are not measured.
 
 ### C-states
 
@@ -149,7 +155,8 @@ gain.
 | baseline | 118.85 / 116.53 | 1,023.80 / 259.23 | 118.88 / 77.06 | 445.88 / 432.70 | 11–23 |
 | `SCHED_FIFO` | 119.81 / 73.87 | 579.59 / 1,008.92 | 75.62 / 75.47 | 982.27 / 229.95 | 533–947 |
 
-Mixed. The policy kept the tick running on the `nohz_full` CPU.
+Mixed. Under the policy the loop's `nohz_full` CPU took 533–947 timer
+interrupts a second, against 11–23 without it.
 
 ## Copy-paste
 
