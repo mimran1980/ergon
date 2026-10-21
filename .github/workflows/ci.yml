@@ -69,8 +69,10 @@ jobs:
       - run: cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
       # ergon-md-dpdk without its Linux-only `dpdk` feature; the `dpdk` job lints the rest.
       - run: cargo clippy -p ergon-md-dpdk -p ergon-md-dpdk-harness --all-targets -- -D warnings
-      # rusteron's bundled Aeron and the aeron submodule pin are one release
-      # (offline: after clippy, cargo has fetched rusteron's sources).
+      # rusteron's bundled Aeron and the aeron submodule pin are one release.
+      # The check runs cargo metadata offline, which needs every platform's
+      # crates (clippy fetches only this host's), so fetch them all first.
+      - run: cargo fetch --locked
       - run: ./scripts/check-aeron-version.sh
       - run: cargo check --manifest-path sbe/fuzz/Cargo.toml --bins
       - run: cargo test --manifest-path sbe/miri-fixtures/Cargo.toml
