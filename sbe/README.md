@@ -28,6 +28,7 @@ guide for ergo-sbe (also linked from this crate on
 - [Configuration](https://mimran1980.github.io/ergon/sbe/configuration.html) — `with_conversion` vs `with_domain_type`, hooks
 - [Recipes](https://mimran1980.github.io/ergon/sbe/recipes.html) — Display/Debug, schema→rustdoc, domain DTOs, timestamps
 - [Benchmarks](https://mimran1980.github.io/ergon/sbe/benchmarks.html) — parity methodology and gates
+- [Samples](https://mimran1980.github.io/ergon/samples/overview.html) — the teaching path that follows this guide: feature tour, L3 book, exchange example, codegen as a library
 
 **Compatibility profile (normative):**
 [`docs/SBE_COMPATIBILITY.md`](https://github.com/mimran1980/ergon/blob/main/docs/SBE_COMPATIBILITY.md)

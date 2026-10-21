@@ -47,6 +47,19 @@
 - [Benchmarks](./sbe/benchmarks.md)
   - [Methodology](./sbe/benchmarks/methodology.md)
 
+# Samples
+
+- [Teaching Path](./samples/overview.md)
+  - [SBE Feature Tour](./samples/sbe-feature-tour.md)
+  - [L3 Order Book](./samples/l3-book.md)
+  - [Exchange Example](./samples/exchange-example.md)
+  - [Codegen as Library](./samples/codegen-library.md)
+  - [Cluster Tutorial](./samples/cluster-tutorial.md)
+  - [Cluster HA Orderbook](./samples/cluster-ha-orderbook.md)
+  - [Cluster RFQ](./samples/cluster-rfq.md)
+- [Build Patterns](./samples/build-patterns.md)
+- [Buffer Sizing Guide](./samples/buffer-sizing.md)
+
 # ergo-aeron-cluster
 
 - [Cluster Client](./cluster/overview.md)
@@ -84,19 +97,6 @@
   - [Latency Pods](./deploy/latency-pods.md)
   - [Benchmarks: x86 and Graviton](./deploy/benchmarks.md)
   - [Java for Archive and Cluster](./deploy/java.md)
-
-# Samples
-
-- [Teaching Path](./samples/overview.md)
-  - [SBE Feature Tour](./samples/sbe-feature-tour.md)
-  - [L3 Order Book](./samples/l3-book.md)
-  - [Exchange Example](./samples/exchange-example.md)
-  - [Codegen as Library](./samples/codegen-library.md)
-  - [Cluster Tutorial](./samples/cluster-tutorial.md)
-  - [Cluster HA Orderbook](./samples/cluster-ha-orderbook.md)
-  - [Cluster RFQ](./samples/cluster-rfq.md)
-- [Build Patterns](./samples/build-patterns.md)
-- [Buffer Sizing Guide](./samples/buffer-sizing.md)
 
 # Project
 

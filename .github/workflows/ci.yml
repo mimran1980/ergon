@@ -28,7 +28,7 @@ jobs:
           submodules: recursive
 
       - name: Install ripgrep (required by check-test-policy.sh)
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
+        run: sudo rm -f /etc/apt/sources.list.d/microsoft-prod.* && sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
 
       - name: Prove test policy and reject suppressions
         run: |
@@ -148,7 +148,7 @@ jobs:
           java-version: "25"
 
       - name: Install native build dependencies
-        run: sudo apt-get update && sudo apt-get install -y libbsd-dev uuid-dev curl
+        run: sudo rm -f /etc/apt/sources.list.d/microsoft-prod.* && sudo apt-get update && sudo apt-get install -y libbsd-dev uuid-dev curl
 
       - run: ${{ matrix.suite }}
 
@@ -179,7 +179,7 @@ jobs:
           components: clippy
 
       - name: Install native build dependencies
-        run: sudo apt-get update && sudo apt-get install -y libbsd-dev uuid-dev curl pkg-config clang libdpdk-dev
+        run: sudo rm -f /etc/apt/sources.list.d/microsoft-prod.* && sudo apt-get update && sudo apt-get install -y libbsd-dev uuid-dev curl pkg-config clang libdpdk-dev
 
       # rusteron's Aeron build needs CMake >= 3.30; ubuntu-24.04 apt ships 3.28.
       - name: Install newer CMake
@@ -274,7 +274,7 @@ jobs:
           java-version: '25'
 
       - name: Install native build dependencies
-        run: sudo apt-get update && sudo apt-get install -y libbsd-dev uuid-dev
+        run: sudo rm -f /etc/apt/sources.list.d/microsoft-prod.* && sudo apt-get update && sudo apt-get install -y libbsd-dev uuid-dev
 
       - name: Build Aeron jars
         run: cd aeron && ./gradlew :aeron-cluster:jar :aeron-archive:jar :aeron-all:jar :aeron-samples:jar
@@ -306,7 +306,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Install native build dependencies
-        run: sudo apt-get update && sudo apt-get install -y libbsd-dev
+        run: sudo rm -f /etc/apt/sources.list.d/microsoft-prod.* && sudo apt-get update && sudo apt-get install -y libbsd-dev
 
       - name: Pre-build exchange-example (generates code before fmt)
         run: cd samples/exchange-example && cargo check
@@ -356,7 +356,7 @@ jobs:
           toolchain: "1.99.0"
 
       - name: Install native build dependencies
-        run: sudo apt-get update && sudo apt-get install -y libbsd-dev
+        run: sudo rm -f /etc/apt/sources.list.d/microsoft-prod.* && sudo apt-get update && sudo apt-get install -y libbsd-dev
 
       - run: cargo build --release --workspace --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness
       - run: cargo build --release -p ergo-aeron-cluster
@@ -376,7 +376,7 @@ jobs:
           toolchain: "1.99.0"
 
       - name: Install native build dependencies
-        run: sudo apt-get update && sudo apt-get install -y libbsd-dev
+        run: sudo rm -f /etc/apt/sources.list.d/microsoft-prod.* && sudo apt-get update && sudo apt-get install -y libbsd-dev
 
       - run: cargo bench -p ergo-sbe-benchmarks --no-run
       - run: cargo bench -p ergo-aeron-cluster --no-run

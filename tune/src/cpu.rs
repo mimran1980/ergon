@@ -662,7 +662,8 @@ pub fn t10_smt_on(host: &Host) -> Finding {
              100 connections 7.5–7.8 / 32–34 / 95–112 against 5.0–5.3 / 21–22 / 76–301. Other \
              sibling loads are not measured. Turn SMT off on the NODE. EKS/EC2: launch template \
              `\"CpuOptions\": {\"CoreCount\": <the type's cores>, \"ThreadsPerCore\": 1}` (not \
-             possible on T2, C7a, M7a, R7a, Mac or Graviton). Self-managed: \
+             possible on bare metal, or on T2, C7a, M7a, R7a, Apple silicon Mac \
+             or Graviton). Self-managed: \
              boot with `nosmt` (`nosmt=force` cannot be undone at runtime), or `echo off > \
              /sys/devices/system/cpu/smt/control` before the kubelet starts, then delete its \
              cpu_manager_state so it re-pins. Azure: a size without SMT (Fasv6, Falsv6, Famsv6, \

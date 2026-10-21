@@ -3,13 +3,15 @@
 //! Profile: `ergo-sbe-fix-sbe-0.1.10`. The respond leg uses ergo-sbe generated
 //! codecs; inject bytes and RL golden responses are pinned under
 //! `tests/fixtures/fix-sbe-conformance/` (produced by the Real Logic Java
-//! injector / UnderTest). Equality to RL goldens is the primary gate;
-//! `scripts/run-fix-sbe-conformance.sh` additionally runs the official
-//! Java RLValidator when a built suite is available.
+//! injector / UnderTest). Equality to RL goldens is the primary gate. The
+//! official Java RLValidator is compiled only with `--cfg ergon_rlvalidator`.
+//! `scripts/run-fix-sbe-conformance.sh` builds the suite, sets that cfg and
+//! stops if the suite is missing.
 
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 use std::error::Error;
 use std::path::PathBuf;
+#[cfg(ergon_rlvalidator)]
 use std::process::Command;
 
 mod common;
@@ -239,22 +241,27 @@ fn fixtures_present_for_declared_profile() {
     }
 }
 
-/// Optional: run official RLValidator on ergon-equivalent response bytes.
+/// Official RLValidator over ergon-equivalent response bytes.
+///
+/// Compiled only with `--cfg ergon_rlvalidator`.
+/// `scripts/run-fix-sbe-conformance.sh` sets that cfg after the Java suite
+/// is built. A missing home, class directory or classpath fails this test.
+/// `cargo test` without the cfg does not compile it, so a suite that was
+/// never run cannot be reported as passed.
+#[cfg(ergon_rlvalidator)]
 #[test]
 fn optional_java_rlvalidator_accepts_ergon_equivalent_responses() -> Result<(), Box<dyn Error>> {
-    let conf = match std::env::var_os("FIX_SBE_CONFORMANCE_HOME") {
-        Some(p) => PathBuf::from(p),
-        None => {
-            eprintln!("RLValidator not available: FIX_SBE_CONFORMANCE_HOME unset");
-            return Ok(());
-        }
+    let Some(home) = std::env::var_os("FIX_SBE_CONFORMANCE_HOME") else {
+        return Err("FIX_SBE_CONFORMANCE_HOME is unset".into());
     };
-    if !conf.join("target/classes").is_dir() {
-        eprintln!(
-            "RLValidator not available: suite not built under {}",
-            conf.display()
-        );
-        return Ok(());
+    let conf = PathBuf::from(home);
+    let classes = conf.join("target/classes");
+    if !classes.is_dir() {
+        return Err(format!(
+            "RLValidator classes are missing under {}",
+            classes.display()
+        )
+        .into());
     }
     let cp_out = Command::new("mvn")
         .args([
@@ -266,11 +273,14 @@ fn optional_java_rlvalidator_accepts_ergon_equivalent_responses() -> Result<(), 
         .current_dir(&conf)
         .output()?;
     if !cp_out.status.success() {
-        eprintln!("RLValidator not available: classpath failed");
-        return Ok(());
+        return Err(format!(
+            "RLValidator classpath failed (mvn status {})",
+            cp_out.status
+        )
+        .into());
     }
     let deps = String::from_utf8_lossy(&cp_out.stdout);
-    let classpath = format!("{}:{}", conf.join("target/classes").display(), deps.trim());
+    let classpath = format!("{}:{}", classes.display(), deps.trim());
     let work = PathBuf::from(std::env::temp_dir()).join("ergo_fix_sbe_rlvalidator");
     let _ = std::fs::remove_dir_all(&work);
     std::fs::create_dir_all(&work)?;
@@ -279,13 +289,16 @@ fn optional_java_rlvalidator_accepts_ergon_equivalent_responses() -> Result<(), 
         // official oracle over that wire image.
         let respond = work.join(format!("test{n}respond_ergon.sbe"));
         std::fs::write(&respond, golden)?;
+        let Some(respond_arg) = respond.to_str() else {
+            return Err("response path is not UTF-8".into());
+        };
         let status = Command::new("java")
             .args([
                 "-cp",
                 &classpath,
                 "io.fixprotocol.sbe.conformance.rlimpl.RLValidator",
                 &format!("test{n}.json"),
-                respond.to_str().unwrap(),
+                respond_arg,
             ])
             .current_dir(&conf)
             .status()?;

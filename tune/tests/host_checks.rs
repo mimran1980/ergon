@@ -950,7 +950,9 @@ fn t10_warns_when_smt_is_on_and_names_every_way_to_turn_it_off() -> R {
         "{m}"
     );
     assert!(
-        m.contains("not possible on T2, C7a, M7a, R7a, Mac or Graviton"),
+        m.contains(
+            "not possible on bare metal, or on T2, C7a, M7a, R7a, Apple silicon Mac or Graviton"
+        ),
         "{m}"
     );
     // Self-managed: the boot argument and the sysfs control.

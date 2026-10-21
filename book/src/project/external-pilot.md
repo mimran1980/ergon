@@ -20,19 +20,22 @@ exit item.
 | Part | Runs in CI | Source |
 |---|---|---|
 | Byte-identity of ergon responses against Real Logic's goldens, suite tests 1–3 | yes (`cargo test -p ergo-sbe`) | `sbe/tests/fix_sbe_conformance_test.rs` |
-| Official RLValidator over ergon's responses | no: the test returns `Ok` when `FIX_SBE_CONFORMANCE_HOME` is unset, and no workflow sets it | `optional_java_rlvalidator_accepts_ergon_equivalent_responses` |
+| Official RLValidator over ergon's responses | no: compiled only with `--cfg ergon_rlvalidator`, which CI does not set. With the cfg, a missing suite fails | `optional_java_rlvalidator_accepts_ergon_equivalent_responses` |
 
 `scripts/run-fix-sbe-conformance.sh` builds the suite, sets
-`FIX_SBE_CONFORMANCE_HOME` and runs that test by its full name. Inside the
-test, a suite that is built but cannot give its classpath still returns `Ok`.
+`FIX_SBE_CONFORMANCE_HOME`, compiles that test with `--cfg ergon_rlvalidator`
+and runs it by name. A missing suite directory, an unbuilt `target/classes`
+or a classpath failure stops the script.
 
 ### Commands
 
 ```sh
-# Run the conformance suite
+# Byte-identity only. The RLValidator test is not compiled.
 cargo test -p ergo-sbe --test fix_sbe_conformance_test --all-features
 
-# RLValidator leg: needs FIX_SBE_CONFORMANCE_HOME and the built Java suite
-FIX_SBE_CONFORMANCE_HOME=/path/to/suite cargo test -p ergo-sbe --all-features \
+# RLValidator leg: built Java suite, and the cfg that compiles the test.
+RUSTFLAGS="--cfg ergon_rlvalidator" \
+  FIX_SBE_CONFORMANCE_HOME=/path/to/suite \
+  cargo test -p ergo-sbe --all-features \
   --test fix_sbe_conformance_test optional_java_rlvalidator_accepts_ergon_equivalent_responses
 ```
