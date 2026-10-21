@@ -9,8 +9,8 @@
 >
 > This file is a frozen artefact. The raw `records.bin` were left on the lab VM
 > and the VM is terminated, so it cannot be regenerated; the generator
-> (`analyse --fair`) has since been fixed to emit the two accounts below beside
-> every comparison, and will do so on the next run.
+> (`analyse --fair`) now emits the two accounts below beside every comparison;
+> this run predates that, so they were added here by hand.
 >
 > Two accounts, never one number. `work.late` (in
 > [`work-counts.md`](work-counts.md)) counts paced **order slots** filled when
@@ -40,10 +40,8 @@
 > Separately: every `md-mio-c1` point shows a sender `late >100 µs` **max** of
 > 36,059–40,180 µs on 0.07 % of batches (next largest anywhere in the run:
 > 197 µs). Confined to `mio` at one connection across every flag combination.
-> No latency sample saw it, so the `md-mio-c1` latency figures stand. The
-> mechanism consistent with the evidence is a multi-ms `mio` read loop closing
-> the TCP window on a single-connection run's only socket; that link is **not
-> traced** — see `BENCHMARK.md`.
+> No latency sample saw it, so the `md-mio-c1` latency figures stand. Its cause
+> is **not traced** ([`BENCHMARK.md`](../../BENCHMARK.md#open), Open).
 
 **Settings every backend shares** (held, and checked before and after every point):
 

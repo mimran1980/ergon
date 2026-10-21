@@ -3,13 +3,18 @@
 # a fence, including when it is not on the line after the opening fence.
 # Prose that only mentions the call must pass. A line-oriented grep of the
 # old pattern does not see this fixture, so putting that grep back fails here.
-# Missing {{#include}} files and anchors, and dangling relative links, fail.
+# Missing {{#include}} files and anchors, dangling relative links, and dead
+# absolute links into the repository or book, fail.
+# check-repo-links: fixtures (the dead links below are written on purpose)
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "$0")/../.." && pwd)
 checker="$repo_root/scripts/check-book-content.sh"
 fixture=$(mktemp -d)
 trap 'rm -rf "$fixture"' EXIT
+# Fixture books link into an empty repository, so only the fixture is checked.
+mkdir -p "$fixture/empty-repo"
+export LINK_REPO_ROOT="$fixture/empty-repo"
 
 mkdir -p "$fixture/bad" "$fixture/prose"
 cat > "$fixture/bad/page.md" <<'EOF'
@@ -131,6 +136,62 @@ grep -F -q 'link ../clock/wall-clock.md' "$fixture/links-file.out"
 grep -F -q 'no heading #keep-the-wall-clock-right' "$fixture/links-anchor.out"
 grep -F -q 'link ../clock/overview.md' "$fixture/links-ref.out"
 
-"$checker" >"$fixture/real.out"
+# Absolute links into the repository (GitHub blob/tree URLs) and the book,
+# relative links in Markdown outside the book, and benchmark anchors cited in
+# source must resolve against the working tree. A git submodule is not
+# scanned. mdbook and GitHub both render a dead one without a warning.
+make_repo() {
+    local repo="$fixture/abs/$1"
+    mkdir -p "$repo/book/src/guide" "$repo/docs" "$repo/src" "$repo/vendor/docs"
+    printf '[submodule "vendor"]\n\tpath = vendor\n' >"$repo/.gitmodules"
+    printf '# Summary\n\n[Intro](./intro.md)\n- [Guide](guide/page.md)\n' >"$repo/book/src/SUMMARY.md"
+    printf '# Intro\n' >"$repo/book/src/intro.md"
+    printf '# Guide\n\n## Tune the host\n' >"$repo/book/src/guide/page.md"
+    printf '# Bench\n\n## SMT sibling cost (x86)\n\n## `uring-sqpoll`, own core\n' >"$repo/docs/BENCHMARKS.md"
+    printf 'fn a() {}\nfn b() {}\n' >"$repo/src/a.rs"
+    printf '[gone](https://github.com/mimran1980/ergon/blob/main/missing.md)\n' >"$repo/vendor/docs/x.md"
+}
+make_repo ok
+repo="$fixture/abs/ok"
+cat >"$repo/README.md" <<'EOF'
+[cost](https://github.com/mimran1980/ergon/blob/main/docs/BENCHMARKS.md#smt-sibling-cost-x86),
+[own](https://github.com/mimran1980/ergon/blob/main/docs/BENCHMARKS.md#uring-sqpoll-own-core),
+[docs](https://github.com/mimran1980/ergon/tree/main/docs), [lines](https://github.com/mimran1980/ergon/blob/main/src/a.rs#L1-L2),
+[book](https://mimran1980.github.io/ergon/), [tune](https://mimran1980.github.io/ergon/guide/page.html#tune-the-host),
+[relative](docs/BENCHMARKS.md#smt-sibling-cost-x86)
+EOF
+printf '// See docs/BENCHMARKS.md#smt-sibling-cost-x86 and BENCHMARKS.md#uring-sqpoll-own-core.\n' >"$repo/docs/cite.rs"
+LINK_REPO_ROOT="$repo" BOOK_CONTENT_ROOT="$repo/book/src" "$checker" >"$fixture/abs-ok.out"
+grep -F -q 'check-book-content: PASS' "$fixture/abs-ok.out"
+
+make_repo file
+printf '[gone](https://github.com/mimran1980/ergon/blob/main/docs/BENCHMARK.md)\n' >"$fixture/abs/file/README.md"
+make_repo anchor
+printf '[gone](https://github.com/mimran1980/ergon/blob/main/docs/BENCHMARKS.md#experiment-log)\n' >"$fixture/abs/anchor/book/src/guide/link.md"
+make_repo code
+printf '/// Evidence: docs/BENCHMARKS.md#round-6-recommended-configuration\nfn c() {}\n' >"$fixture/abs/code/src/c.rs"
+make_repo book
+printf 'See https://mimran1980.github.io/ergon/guide/page.html#tune-the-nic.\n' >"$fixture/abs/book/docs/README.md"
+make_repo relative
+printf '[log](BENCHMARKS.md#experiment-log)\n' >"$fixture/abs/relative/docs/README.md"
+for case in file anchor code book relative; do
+    repo="$fixture/abs/$case"
+    if LINK_REPO_ROOT="$repo" BOOK_CONTENT_ROOT="$repo/book/src" "$checker" >"$fixture/abs-$case.out" 2>&1; then
+        echo "expected a dead absolute link ($case) to fail" >&2
+        cat "$fixture/abs-$case.out" >&2
+        exit 1
+    fi
+    if grep -F -q 'vendor/' "$fixture/abs-$case.out"; then
+        echo "a submodule's links were checked ($case)" >&2
+        exit 1
+    fi
+done
+grep -F -q 'docs/BENCHMARK.md does not exist' "$fixture/abs-file.out"
+grep -F -q 'no heading #experiment-log' "$fixture/abs-anchor.out"
+grep -F -q 'src/c.rs:1: docs/BENCHMARKS.md#round-6-recommended-configuration: no heading' "$fixture/abs-code.out"
+grep -F -q 'no heading #tune-the-nic' "$fixture/abs-book.out"
+grep -F -q 'docs/README.md:1: BENCHMARKS.md#experiment-log: no heading' "$fixture/abs-relative.out"
+
+env -u LINK_REPO_ROOT "$checker" >"$fixture/real.out"
 grep -F -q 'check-book-content: PASS' "$fixture/real.out"
 echo "test-book-content: PASS"

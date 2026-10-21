@@ -14,9 +14,9 @@ data:
   # 2 MiB hugepages mounted by the DaemonSet; the DPDK EAL mempools live here.
   RUSTERON_DPDK_HUGE_DIR: "/dev/hugepages"
   # RUSTERON_DPDK_RX_DESCRIPTORS is left unset: each port takes min(4096, the
-  # NIC's maximum), 4096 on an ENA (BENCHMARKS.md, AWS round 6: no first-point
-  # rx-missed loss and a higher loss-free rate than 1024). The pool below holds
-  # that ring.
+  # NIC's maximum), 4096 on an ENA: room for a burst. Against 1024 it did not
+  # separate at idle (BENCHMARKS.md, "Measured, but no setting recommended").
+  # The pool below holds that ring.
   # ENA queues take at most 512 TX descriptors (the device reports
   # tx_desc_lim.nb_max = 512); a larger ring fails port init.
   RUSTERON_DPDK_TX_DESCRIPTORS: "512"
@@ -57,8 +57,8 @@ data:
   AERON_SOCKET_SO_SNDBUF: "2097152"
   # Aeron UDP MTU that fits the DPDK max_aeron_mtu default.
   AERON_MTU_LENGTH: "1408"
-  # Aeron's maximum (its default is 4), the setting every kept DPDK
-  # measurement used (BENCHMARKS.md, recommended configuration). The DPDK
+  # Aeron's maximum (its default is 4): with DPDK at 1,344 B 600 k msgs/s no
+  # NAK against 16,247 at the default (BENCHMARKS.md, one run). The DPDK
   # receive poll drains whole bursts whatever this is; it still sizes each
   # receive from a host-local socket. Pinned although the media driver also
   # defaults to 16 under dpdk-ena, so a rollback edits one visible value. A

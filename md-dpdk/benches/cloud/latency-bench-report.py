@@ -164,7 +164,7 @@ def main():
     out.append("")
     out.append("- the veth path (this lab runs hostNetwork: design.md test 4)")
     out.append("- hardware packet timestamps (ENA has none; the PHC is a clock source only)")
-    out.append("- SCHED_FIFO (measured not worth it on AWS: io/benches/BENCHMARK.md)")
+    out.append("- SCHED_FIFO (inconclusive in the one AWS A/B: io/benches/BENCHMARK.md)")
     out.append("- SR-IOV VF per pod (Nitro guests have one ENA per ENI, no in-guest VFs)")
     out.append("- NUMA cpuset.mems on this lab size (c8g.xlarge is single-NUMA)")
     out.append("- IRQ pinning to the shared CPUs (our Graviton data says it costs the tail)")

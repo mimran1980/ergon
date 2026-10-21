@@ -625,8 +625,8 @@ static int rusteron_dpdk_init_port(rusteron_dpdk_transport_t *native, rusteron_d
     /* The receive ring: as configured, else RUSTERON_DPDK_RX_DESCRIPTORS_DEFAULT
      * or the NIC's maximum where lower: MANA's 256, which netvsc sets its VF
      * up with whatever it reports itself. A power of two, as ENA's and MANA's
-     * rings must be. AWS measured 4096 against ENA's 1024 (BENCHMARKS.md,
-     * round 6): no first-point rx-missed loss, a higher loss-free rate. */
+     * rings must be. 4096 against ENA's 1024 did not separate at idle
+     * (md-dpdk/BENCHMARKS.md, "Measured, but no setting recommended"). */
     p->rx_descriptors = cfg->rx_descriptors;
     if (0 == p->rx_descriptors)
     {

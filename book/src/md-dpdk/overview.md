@@ -35,8 +35,8 @@ Terms this chapter uses. Host, Kubernetes and Java terms:
 | threading mode | how the agents share threads: `DEDICATED`, `SHARED_NETWORK`, `SHARED` or `INVOKER` | [measured cost of `SHARED_NETWORK`](configuration.md#threads-and-cores) |
 | idle strategy, park | what an Aeron thread does with no work: `spin` and `noop` never sleep; `backoff` spins, yields, then parks (sleeps) ever longer | spinning needs a CPU of its own |
 | log buffer, term buffer | Aeron's memory-mapped file of one stream's messages, in three term buffers | [on hugepages, not sparse](configuration.md#aeron-settings) |
-| [receiver window, status message](configuration.md#aeron-settings) | window: the bytes a sender may have in flight. Status message: the receiver's "send more" | on MANA, sized to what the 256-entry ring holds |
-| heartbeat, keep-alive | heartbeat: Aeron's frame on a quiet stream. Keep-alive: your own small message, about 1 kHz | [why a keep-alive](configuration.md#aeron-settings) |
+| [receiver window, status message](configuration.md#aeron-settings) | window: the bytes a sender may have in flight. Status message: the receiver's "send more" | on MANA, sized to what the 256-entry ring holds (not measured here) |
+| heartbeat, keep-alive | heartbeat: Aeron's frame on a quiet stream. Keep-alive: your own small message | [why a keep-alive](configuration.md#aeron-settings); its effect is not measured here |
 | [kernel UDP](#what-it-is) | the normal path: NIC interrupt, the kernel's network stack, a system call | no setup, every tool works ([tuning](#tuning-kernel-udp-first)) |
 | [kernel bypass](#why-bypass-is-faster-and-what-it-costs) | one process takes a NIC from the kernel and reads and writes its queues itself | lower median and max in these runs; costs cores, NICs, root setup and upkeep |
 | DPDK | the Data Plane Development Kit: the kernel-bypass library this crate uses | |
@@ -59,12 +59,12 @@ Terms this chapter uses. Host, Kubernetes and Java terms:
 | jumbo frames | packets above Ethernet's usual 1,500 B | [one run only](configuration.md#aeron-settings) |
 | hugepages | large memory pages (2 MiB here), reserved up front | DPDK needs them; about 37 MiB a NIC at the defaults. Node-level reservation |
 | hugetlbfs | a filesystem of hugepages; Aeron's directory can live on one | mount it with `size=`, or Aeron refuses every log buffer |
-| transparent hugepages | the kernel building large pages by itself, in the background (`khugepaged`) | [mixed results](configuration.md#aeron-settings); node-level |
+| transparent hugepages | the kernel building large pages by itself, in the background (`khugepaged`) | [not separated in one run](configuration.md#aeron-settings); node-level |
 | page fault | the first touch of a memory page: the kernel stops the thread to map it | hugepages and pre-touching move it off the hot path |
-| flow | packets between one source and one destination address and port | an Aeron channel is one flow; one flow topped out at 7.8–8.0 Gbit/s on AWS in these runs |
+| flow | packets between one source and one destination address and port | an Aeron channel is one flow; one flow topped out at 7.75–7.77 Gbit/s of Aeron frames on `c7i.4xlarge` |
 | placement group | hosts placed close together: a cluster placement group (AWS) or a proximity placement group (Azure) | two c7i.4xlarge pairs still differed by about 7 µs at the median |
 | spot instance | spare AWS capacity, sold cheaper; AWS can take it back | a `c9g.2xlarge` pair: $0.306 spot against $0.696 on demand an hour ([cost](../deploy/benchmarks.md#cost-per-hour)) |
-| x86, Graviton | x86: Intel and AMD CPUs. Graviton: AWS's Arm CPUs | Graviton5 had the lowest latency measured; its median lead is not proven ([benchmarks](../deploy/benchmarks.md)) |
+| x86, Graviton | x86: Intel and AMD CPUs. Graviton: AWS's Arm CPUs | never compared in one run: pairs, days and builds differ ([BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#open)) |
 | SMT, hyperthread, sibling, vCPU | SMT runs two hyperthreads (siblings) on one core. A vCPU is a hyperthread on x86, a whole core on Graviton (no SMT) | on x86, leave each busy core's sibling idle |
 | bare metal | an instance with no hypervisor | `c7i.metal-24xl`, round 4: DPDK max 103 µs at 1 M msgs/s, 845 µs idle; 6 times a `c7i.4xlarge` pair's price |
 | round trip (ping-pong) | one message out and its reply back | every latency here is a round trip |
@@ -124,7 +124,7 @@ Source:
 
 No interrupt, no system call, no scheduler wake-up on the data path. In every
 pair [below](#measured-between-two-hosts) DPDK's median was lower: by
-1.25–6.94 µs idle and by 8.64–25.47 µs at 1 M msgs/s of 288 B.
+4.96–6.94 µs idle and by 8.64–25.47 µs at 1 M msgs/s of 288 B.
 
 | cost | what it means |
 | --- | --- |
@@ -141,7 +141,7 @@ pair [below](#measured-between-two-hosts) DPDK's median was lower: by
 | --- | --- |
 | both ends on one host | kernel UDP, or Aeron IPC (shared memory, no network); DPDK gives no bypass there |
 | between hosts, Graviton | kernel UDP, moderation off, the NIC's interrupts on a core of their own: the best kernel path measured (no lossy rep at 1 M msgs/s in G1 and G3, one in G2) |
-| between hosts, x86 | kernel UDP with busy polling and a 4,096-entry ring: the best kernel mode tried. The Graviton settings are not measured on x86. On `c7i.4xlarge` at 1 M msgs/s its max was 6,664 µs, with 1 lossy rep of 5 |
+| between hosts, x86 | kernel UDP with busy polling and a 4,096-entry ring: the best kernel mode tried. The Graviton settings are not measured on x86. On `c7i.4xlarge` at 1 M msgs/s its max was 6,664 µs, with 4 NAKs and 849 short sends over 5 reps |
 | between hosts, the kernel's median or tail is not good enough | kernel bypass with [Aeron Premium](https://aeron.io/) |
 | learning how a transport binding works, or reproducing these numbers | this crate, in a lab |
 
@@ -159,15 +159,14 @@ platform only.
 | Graviton5 `c9g.2xlarge`, G3 | DPDK | 13.97 / 79 | 19.36 / 114 | 0 of 5 |
 | | kernel UDP, moderation off, interrupts on their own core | 18.93 / 168 | 44.83 / 211 | 0 of 5 |
 | x86 `c7i.4xlarge`, round 7 | DPDK | 21.28 / 116 | 30.38 / 155 | 0 of 5 |
-| | kernel UDP, busy polling, 4,096 ring | 28.22 / 4,846 | 43.74 / 6,664 | 1 of 5 |
+| | kernel UDP, busy polling, 4,096 ring | 28.22 / 4,846 | 43.74 / 6,664 | 4 NAKs over 5 reps; lossy reps not in the table |
 | x86 `c7i.metal-24xl`, round 4 | DPDK | 28.13 / 845 | 34.30 / 103 | not in the table |
 | | kernel UDP, busy polling | 33.70 / 307 | 42.94 / 1,150 | not in the table |
-| Azure `D8s_v6`, round 11, isolated | DPDK | 19.90 / 64.22 | [see round 11](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#round-11-the-288-b-loss-under-load) | |
-| | kernel UDP, busy polling | 21.15 / 209.41 | | |
 
 Source:
-[BENCHMARKS.md, which transport per platform](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#which-transport-per-platform)
-(its `max X (a–b)` cells: the max here is `b`).
+[BENCHMARKS.md, DPDK against the best kernel arm](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#dpdk-against-the-best-kernel-arm-same-run)
+(its `max X (a–b)` cells: the max here is `b`). Azure: no run output is
+committed, so no Azure figure is kept.
 
 - DPDK's max was lower in every pair except bare-metal idle (845 against
   307 µs).

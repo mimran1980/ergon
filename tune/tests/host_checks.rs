@@ -145,9 +145,9 @@ fn t1_counts_a_cgroup_isolated_partition_as_isolated() -> R {
 
 #[test]
 fn t1_does_not_ask_nohz_full_of_an_sqpoll_cpu() -> R {
-    // ergon-io measured no difference with the SQPOLL CPU out of nohz_full
-    // (io/benches/BENCHMARK.md, Host and NIC settings on AWS): a host whose
-    // SQPOLL CPU is isolated but ticking is tuned.
+    // T1 does not ask nohz_full of the SQPOLL CPU (its effect there is not
+    // measured here): a host whose SQPOLL CPU is isolated but ticking is
+    // tuned.
     let f = c7i_tuned("t1-sqpoll")?;
     f.file("/sys/devices/system/cpu/nohz_full", "1-3\n")?;
     let hot = HotSet::new().with(2, Role::Loop).with(6, Role::SqPoll);

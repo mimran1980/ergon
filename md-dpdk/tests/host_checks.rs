@@ -467,8 +467,8 @@ fn m1_warns_for_a_pinned_agent_that_idles_with_backoff() {
         "sender",
         "CPU 2",
         "backoff",
-        "61 µs at p50",
-        "no max",
+        "timer slack, 50 µs by default",
+        "not measured here",
         "AERON_SENDER_IDLE_STRATEGY=noop",
     ] {
         assert!(text.contains(needle), "{needle:?} in {text}");
@@ -487,7 +487,12 @@ fn m1_warns_for_a_busy_spinning_agent_that_floats() {
     };
     let w: Vec<Finding> = m1_agents(&a).into_iter().filter(Finding::is_warning).collect();
     assert_eq!(w.len(), 1, "{w:?}");
-    for needle in ["receiver", "AERON_RECEIVER_CPU_AFFINITY", "2.8 ms"] {
+    for needle in [
+        "receiver",
+        "AERON_RECEIVER_CPU_AFFINITY",
+        "time slice",
+        "not measured here",
+    ] {
         assert!(w[0].message.contains(needle), "{needle:?} in {}", w[0].message);
     }
     // neither pinned nor spinning, while the other is set up: both fixes
@@ -535,7 +540,7 @@ fn m1_warns_for_an_agent_on_the_conductors_cpu() {
     ] {
         let w: Vec<Finding> = m1_agents(&a).into_iter().filter(Finding::is_warning).collect();
         assert_eq!(w.len(), 1, "{agent}: {w:?}");
-        for needle in [agent, "conductor", "AERON_CONDUCTOR_CPU_AFFINITY", "2.8 ms"] {
+        for needle in [agent, "conductor", "AERON_CONDUCTOR_CPU_AFFINITY", "time slice"] {
             assert!(w[0].message.contains(needle), "{needle:?} in {}", w[0].message);
         }
     }
@@ -596,7 +601,7 @@ fn m1_checks_the_shared_modes_network_agent() {
                 shared_idle: "noop".into(),
                 ..agents(SHARED)
             },
-            ["shared agent", "AERON_CONDUCTOR_CPU_AFFINITY", "2.8 ms"],
+            ["shared agent", "AERON_CONDUCTOR_CPU_AFFINITY", "time slice"],
         ),
     ] {
         let w: Vec<Finding> = m1_agents(&a).into_iter().filter(Finding::is_warning).collect();
@@ -761,22 +766,19 @@ fn m4_warns_without_busy_polling_on_x86_and_informs_on_graviton() {
     let x86 = Fixture::x86("m4-x86");
     let m4 = m4_busy_polling(&x86.host());
     assert!(m4.is_warning(), "{m4:?}");
-    for needle in [
-        "35.1 → 21.5 µs",
-        "max",
-        "115 → 34 µs",
-        "38.8 → 28.2 µs",
-        "dpdk-ena",
-        "busy_read=50",
-    ] {
+    for needle in ["38.8 → 28.2 µs", "106 → 56 µs", "max", "two settings", "busy_read=50"] {
         assert!(m4.message.contains(needle), "{needle:?} in {}", m4.message);
     }
-    // Every max it quotes overlaps across reps (BENCHMARKS.md: Azure
-    // 336 (274–1,032) against 280 (233–295), 289 (244–2,740) against 82
-    // (75–449); AWS 4,612 (381–5,378) against 1,938 (349–4,846)): said so
-    // beside each, so none reads as a measured gain.
+    // ergon-md-dpdk is a proof of concept: no check sends an operator to it.
+    // Azure's figures had no committed run output, so none is quoted.
+    for absent in ["dpdk-ena", "Azure"] {
+        assert!(!m4.message.contains(absent), "{absent:?} in {}", m4.message);
+    }
+    // The max it quotes overlaps across reps (round 7, aws-20261015-185813.txt
+    // lines 5 and 8: 4,612 (381–5,378) against 1,938 (349–4,846)): said so
+    // beside it, so it does not read as a measured gain.
     let maxima: Vec<&str> = m4.message.split("(max ").skip(1).collect();
-    assert_eq!(maxima.len(), 3, "{}", m4.message);
+    assert_eq!(maxima.len(), 1, "{}", m4.message);
     for max in maxima {
         let quoted = max.split(')').next().unwrap();
         assert!(quoted.ends_with("the ranges overlapping"), "(max {quoted})");
@@ -789,18 +791,18 @@ fn m4_warns_without_busy_polling_on_x86_and_informs_on_graviton() {
         (CheckId::M4, &Status::Finding, Severity::Info)
     );
     assert!(m4.message.contains("collapsed"), "{}", m4.message);
-    // the kernel's best and DPDK's maxima from every Graviton round that
-    // ran them (BENCHMARKS.md: G1–G3), G2's one lossy rep and its maxima
-    // (to 1,944 µs at 1 M/s): none left out
+    // the kernel's best arm's maxima at 288 B 1 M msgs/s from every Graviton
+    // round that ran it (BENCHMARKS.md, Graviton kernel UDP: G1–G3) and G2's
+    // one lossy rep: none left out
     for needle in [
-        "87–122 µs in G1",
-        "to 1,944 µs in G2",
-        "122–211 µs in G3",
+        "122 (111–216) µs in G1",
+        "121 (105–1,944) µs in G2",
+        "204 (122–211) µs in G3",
         "one of five in G2",
-        "93–114 µs in G3",
     ] {
         assert!(m4.message.contains(needle), "{needle:?} in {}", m4.message);
     }
+    assert!(!m4.message.contains("dpdk-ena"), "{}", m4.message);
     assert!(m4.evidence.contains("rounds G1–G3"), "{}", m4.evidence);
 
     for (read, poll) in [("50", "0"), ("0", "50")] {

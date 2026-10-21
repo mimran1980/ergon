@@ -65,7 +65,7 @@ Each returns `Result<_, DpdkError>`, except `clock()`.
 | `configure_media_transport_from_env(&context)` | `None` for the kernel transport, `Some(DpdkTransport)` for DPDK | you set up Aeron yourself and only want the transport |
 | `DpdkTransport::install(&context, &config)` | a `DpdkTransport`, from a typed `DpdkTransportConfig` | you want no environment variables ([example](https://github.com/mimran1980/ergon/blob/main/md-dpdk/examples/embedded_dpdk.rs), built by `just check-dpdk`) |
 | `pin_agents_to_configured_cpus(&context)` | `()` | your own driver on the kernel transport: Aeron's C driver reads `AERON_*_CPU_AFFINITY`, but only `aeronmd` applies it |
-| `lock_memory_from_env()` | `true` if it locked memory | **Not recommended.** `RUSTERON_MEDIA_DRIVER_MLOCKALL=1`: no gain on x86 or Azure ([BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#conclusions), what did not help) |
+| `lock_memory_from_env()` | `true` if it locked memory | **Not recommended.** `RUSTERON_MEDIA_DRIVER_MLOCKALL=1`: its latency effect is not measured here |
 | `DpdkTransport::clock()` | the `TransportClock` the transport reads: `Counter { hz, rate, eal_hz, measured_hz }` or `Monotonic { reason }` | you check whether the transport reads the CPU counter, at which rate, and if not, why |
 
 **Dropping a `DpdkTransport` only leaks it** (`md-dpdk/src/ffi.rs`, no
@@ -127,11 +127,11 @@ pod's cpuset (static CPU manager, whole cores):
 | sender | the media driver's sender |
 | receiver | the media driver's receiver |
 
-- **The agents are pinned for you**, in every mode. Without the pins,
-  DPDK's round trip on Azure was 2.8 ms
-  ([BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#what-got-dpdk-working-on-azure)).
-- **`SHARED_NETWORK` saves a core.** Graviton G1, one A/B: 1,344 B bursts
-  p50 522 against 234 µs, max 886 against 745 µs.
+- **The agents are pinned for you**, in every mode, each to the CPU its
+  `AERON_*_CPU_AFFINITY` names. Running unpinned is not measured here.
+- **`SHARED_NETWORK` saves a core and costs latency.** Graviton G1, one A/B:
+  1,344 B bursts p50 522 against 234 µs, max 886 against 745 µs
+  ([BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#measured-but-no-setting-recommended)).
 - **Start the driver confined to the housekeeping CPU** (`taskset -c <cpu>`,
   a CPU from the pod's cpuset that no busy thread uses), so the threads it
   does not pin stay off the busy cores. Name the same CPU in
@@ -162,18 +162,19 @@ the pod spec or the channel URI; **node** needs node-level access.
 
 | setting | where | what it does | evidence |
 |---|---|---|---|
-| `AERON_RECEIVER_IO_VECTOR_CAPACITY=16` (the default under `dpdk-ena`) | pod | up to 16 frames a receive, Aeron's maximum (`md-dpdk/src/driver.rs`) | measured before the DPDK poll drained whole bursts itself; it now sizes host-local socket reads. `c7i` round 3: the one loss-free DPDK mode at 1.25 M msgs/s of 288 B; Azure rounds 4–5: no NAK at 288 B up to 4.5 M msgs/s |
+| `AERON_RECEIVER_IO_VECTOR_CAPACITY=16` (the default under `dpdk-ena`) | pod | up to 16 frames a receive, Aeron's maximum (`md-dpdk/src/driver.rs`) | measured before the DPDK poll drained whole bursts itself; it now sizes host-local socket reads. One run (`aws-20261014-113947`, platform not recorded), DPDK, 1,344 B at 600 k msgs/s: no NAK against 16,247 NAKs without it, max 142 against 1,130 µs ([BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#measured-but-no-setting-recommended)) |
 | `AERON_DIR` on a *sized* 2 MiB hugetlbfs, `AERON_FILE_PAGE_SIZE=2097152`, `AERON_TERM_BUFFER_SPARSE_FILE=false` | node mount, pod env | the log buffers sit on hugepages, allocated up front | required, not A/B'd: an unsized hugetlbfs reports no free space, and Aeron refuses every log buffer |
 | `AERON_CLIENT_PRE_TOUCH_MAPPED_MEMORY=true` on clients | pod | clients fault their mappings in before the first message | not measured here |
 | `AERON_MTU_LENGTH=1408` (at most `RUSTERON_DPDK_MAX_AERON_MTU`, 1,408 by default) | pod | every frame fits one packet buffer | jumbo frames, Graviton G2, **one run**: 1,344 B bursts p50 242 → 210 µs, max 954 → 1,533 µs; idle unchanged. A candidate for bulk or bursty channels only |
-| `AERON_RCV_INITIAL_WINDOW_LENGTH`, `AERON_SOCKET_SO_RCVBUF`, `_SNDBUF` all 2 MiB; `net.core.rmem_max`/`wmem_max` 16 MiB | pod; sysctls node | the window fits the socket buffer | 2 MiB not A/B'd here; a 1 MiB window did not help on x86 or Azure (one result) |
-| Azure: `AERON_CONDUCTOR_IDLE_STRATEGY_INIT_ARGS=100-10-1us-20us` **and**, per channel, `rcv-wnd` of 256 × the smallest datagram (80 KiB for 288 B) | pod | status messages go out every 20 µs, and the sender never has more in flight than MANA's 256-entry ring holds | round 13, one pair, 32 B: flat-out 7.25 M msgs/s plain, 1.21 M window alone, 7.14 M both; idle max 2,206 / 52,265 / 1,164 µs. Set both or neither |
-| transparent hugepages off | node | the kernel stops building large pages in the background | mixed: round 6 idle max 632 → 286 µs; round 4 idle max 498 → 1,180 µs (p99.99 67.01 → 53.15 µs) |
-| a ~1 kHz keep-alive on sparse, latency-critical streams | application | a lost frame is noticed within a millisecond, not at Aeron's next heartbeat (100 ms) | not A/B'd: one lost ping cost 134 ms (Azure round 5) |
+| `AERON_RCV_INITIAL_WINDOW_LENGTH`, `AERON_SOCKET_SO_RCVBUF`, `_SNDBUF` all 2 MiB; `net.core.rmem_max`/`wmem_max` 16 MiB | pod; sysctls node | the window fits the socket buffer | not A/B'd here |
+| Azure: `AERON_CONDUCTOR_IDLE_STRATEGY_INIT_ARGS=100-10-1us-20us` **and**, per channel, `rcv-wnd` of 256 × the smallest datagram (80 KiB for 288 B) | pod | status messages go out every 20 µs, and the sender never has more in flight than MANA's 256-entry ring holds | not measured here: no Azure run output is committed. Set both or neither |
+| transparent hugepages off | node | the kernel stops building large pages in the background | not separated: one run (`aws-20261014-113947`), idle p99.99 53.15 against 67.01 µs, max 90 (77–1,180) against 94 (80–498) |
+| a ~1 kHz keep-alive on sparse, latency-critical streams | application | a lost frame is noticed within a millisecond, not at Aeron's next heartbeat (100 ms) | not measured here; the 100 ms is `aeron_network_publication.h:38` (rusteron-media-driver 0.2.13) |
 
-**One AWS flow topped out at 7.8–8.0 Gbit/s** in these runs, x86 and
-Graviton, kernel or DPDK
-([BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#conclusions)). AWS documents a single-flow limit of
+**One AWS flow topped out at 7.75–7.77 Gbit/s of Aeron frames** on
+`c7i.4xlarge`, kernel UDP and DPDK alike; on `c9g.2xlarge` 1,344 B messages
+stopped at 685,574 msgs/s
+([BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#one-flows-ceiling-on-aws)). AWS documents a single-flow limit of
 10 Gbit/s inside a cluster placement group
 ([EC2 network bandwidth](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-network-bandwidth.html)).
 An Aeron channel is one flow: spread a heavier stream over several channels
@@ -197,8 +198,9 @@ on different ports.
   the host on the NIC's clock ([time sync](../deploy/clocks.md#set-up-time-sync)).
 - **Media receive timestamps** (`media-rcv-ts-offset=reserved` on a
   subscription). One run (Graviton G3, DPDK): p50 within 0.07 µs of without
-  at idle and every steady rate; idle max 153 against 79 µs; one rep a point reached
-  152–183 µs ([G3](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#graviton5-c9g2xlarge-round-g3--best-measured-p50--p9999--max)).
+  at idle and every steady rate; idle max 153 against 79 µs; at 1,344 B
+  bursts 1 of 5 reps lossy (short sends) against 0. Not separated
+  ([BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#measured-but-no-setting-recommended)).
   Repeat before relying on it.
 - **Your own code:** `quanta` for durations, `CLOCK_REALTIME` for stamps
   ([clocks](../deploy/clocks.md)).
@@ -226,5 +228,5 @@ on different ports.
 | Aeron refuses every log buffer | hugetlbfs mounted without `size=` | node: mount it sized |
 | window smaller than asked | `net.core.rmem_max` below 2 MiB | node: raise it to 16 MiB |
 | a channel stops at a fixed rate of 1,344 B on AWS | one flow's Gbit/s cap | more channels, on different ports |
-| millisecond spikes about once a minute on Azure | not traced; a spin test saw some vCPUs stop for up to 3.7 ms, with nothing in the guest | keep busy threads off the cores the spin test flags |
+| millisecond spikes about once a minute on Azure | not traced: an ergon-io run saw stalls up to 2.1 ms at seconds :49–:51 of every minute, on both hosts ([io benchmarks](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#worst-cases)) | keep busy threads off the cores the spin test flags; the spin test's effect is not measured here |
 | no gain on localhost | host-local channels use kernel sockets | expected; use IPC |

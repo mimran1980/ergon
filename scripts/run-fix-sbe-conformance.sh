@@ -65,7 +65,7 @@ PY
   (cd "$CONF_HOME" && mvn -q -DskipTests package)
   export FIX_SBE_CONFORMANCE_HOME="$CONF_HOME"
   echo "--- RLValidator on ergon-equivalent responses ---"
-  cargo test -p ergo-sbe --test fix_sbe_conformance_test optional_java_rlvalidator -- --exact --nocapture
+  cargo test -p ergo-sbe --test fix_sbe_conformance_test optional_java_rlvalidator_accepts_ergon_equivalent_responses -- --exact --nocapture
 else
   echo "WARN: Java suite unavailable; cargo byte-identity tests are the gate."
 fi

@@ -20,7 +20,7 @@ directory that produced it.
 
 Each profile directory has a `run-manifest.json` with run id, profile, commit,
 rustc, target, host and repeat count. The gate fails closed when any of the
-first six is missing (`scripts/check-bench-gate.sh:92`). Quote a ratio with its
+first six is missing (`scripts/check-bench-gate.sh:96`). Quote a ratio with its
 run id, commit, host, rustc and profile, or do not quote it.
 
 ## Consumer build profile
@@ -144,17 +144,17 @@ closed. Both profiles block.
 
 | Step | What the gate does | Source |
 |---|---|---|
-| Repeat | Each profile runs 5 times (`BENCH_REPEATS`) | `scripts/run-sbe-bench.sh:183`, `justfile:534` |
-| Estimate | Criterion's **mean**. Every gated group samples flat, which writes no regression slope | `check-bench-gate.sh:213` |
-| Range | Highest and lowest ratio across the repeats, and the union of their confidence intervals | `check-bench-gate.sh:334-337` |
+| Repeat | Each profile runs 5 times (`BENCH_REPEATS`) | `scripts/run-sbe-bench.sh:183`, `justfile:536` |
+| Estimate | Criterion's **mean**. Every gated group samples flat, which writes no regression slope | `check-bench-gate.sh:217` |
+| Range | Highest and lowest ratio across the repeats, and the union of their confidence intervals | `check-bench-gate.sh:338-341` |
 | Pass | Highest ratio ≤ ceiling | |
-| Inconclusive (passes) | Highest ratio > ceiling, and the CI union overlaps the A/A control's band | `check-bench-gate.sh:350`, `:435-443` |
+| Inconclusive (passes) | Highest ratio > ceiling, and the CI union overlaps the A/A control's band | `check-bench-gate.sh:354`, `:439-447` |
 | Fail | Highest ratio > ceiling, and the CI union lies outside the A/A band, or no A/A band was measured | |
 
 The A/A control runs two identical arms. Its band is the harness's own noise
 for that loop. The tolerance constant is zero: zero tolerance means no slack
 is added to a ceiling (`SBE_TOLERANCE=0`, `CLUSTER_TOLERANCE=0`,
-`check-bench-gate.sh:57-58`). An over-ceiling pair can still pass as
+`check-bench-gate.sh:61-62`). An over-ceiling pair can still pass as
 inconclusive, so read the printed ratios, not only PASS.
 
 Ratios are ergon / sbe-tool. Ceilings, from `check-bench-gate.sh`:

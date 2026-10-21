@@ -1,8 +1,8 @@
 /* prelock [--mlock] -- <cmd> [args...]: prepare the command's memory lock, then
  * exec it. Real-time scheduling is deliberately absent (no SCHED_FIFO, no
- * --fifo, no sched_setscheduler): measured not worth it on AWS
- * (io/benches/BENCHMARK.md, loop deltas +0.5/-1.8 us; RT throttle and
- * RT-group-sched bite it).
+ * --fifo, no sched_setscheduler): the one AWS A/B was inconclusive and kept
+ * the CPU's tick on (io/benches/BENCHMARK.md, Host and NIC settings; RT
+ * throttle and RT-group-sched bite it).
  *
  * mlockall(2) does NOT survive execve(2): the address space it locked is the
  * one exec replaces, so a wrapper that locks and then execs leaves the target

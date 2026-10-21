@@ -201,7 +201,7 @@ else
 fi
 
 # ---- 11. the plan's static contract (no cloud, no fake needed) ---------------
-# SCHED_FIFO is not built (measured not worth it on AWS); the hugepage mount
+# SCHED_FIFO is not built (inconclusive in the one AWS A/B); the hugepage mount
 # is the plugin's sized hugetlbfs, never an emptyDir medium (no size=); the
 # node never gets a node-wide cpuCFSQuota:false; the cost gate is $0.30/h and
 # 180 minutes; on-demand fallback is off.
@@ -213,7 +213,7 @@ contract() { # <name> <ok-if-this-regex-is-absent> <why>
         ok "$name: $why"
     fi
 }
-contract no-fifo '--fifo|sched_setscheduler|SCHED_FIFO mode' "no SCHED_FIFO path (plan: measured not worth it)"
+contract no-fifo '--fifo|sched_setscheduler|SCHED_FIFO mode' "no SCHED_FIFO path (plan: inconclusive A/B)"
 contract no-emptydir-hugepage 'medium:[[:space:]]*HugePages' "no emptyDir hugepage volume (Aeron needs a sized mount)"
 contract no-cfs-quota-false 'cpuCFSQuota:[[:space:]]*false|cpuCFSQuota=false' "no node-wide cpuCFSQuota:false"
 if grep -q 'OnDemandTargetCapacity=0' "$script"; then

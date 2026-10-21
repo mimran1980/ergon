@@ -22,9 +22,9 @@ exit item.
 | Byte-identity of ergon responses against Real Logic's goldens, suite tests 1–3 | yes (`cargo test -p ergo-sbe`) | `sbe/tests/fix_sbe_conformance_test.rs` |
 | Official RLValidator over ergon's responses | no: the test returns `Ok` when `FIX_SBE_CONFORMANCE_HOME` is unset, and no workflow sets it | `optional_java_rlvalidator_accepts_ergon_equivalent_responses` |
 
-`scripts/run-fix-sbe-conformance.sh` runs the RLValidator leg with the filter
-`optional_java_rlvalidator -- --exact`. `--exact` needs the full test name, so
-that command runs no test.
+`scripts/run-fix-sbe-conformance.sh` builds the suite, sets
+`FIX_SBE_CONFORMANCE_HOME` and runs that test by its full name. Inside the
+test, a suite that is built but cannot give its classpath still returns `Ok`.
 
 ### Commands
 

@@ -98,7 +98,7 @@ and its loss-by-point table); G3 in 0 of 5 (max 204 (122–211)).
 | media receive timestamps (`media-rcv-ts-offset=reserved`) | G3 lines 5–6, 32–41 | p50 within 0.07 at idle and steady rates (bursts 122.75 against 122.43 and 245.12 against 245.89); idle max 74 (62–153) against 75 (73–79). At 1,344 B bursts max 1,134 (484–1,595) against 501 (491–1,819), and 1 of 5 reps lossy (short sends) against 0. Not separated. One run |
 | DPDK transmit pacing 7,900 Mbit/s (`RUSTERON_DPDK_TX_RATE_MBPS=7900`, `TX_PACE_SPIN_US=0`) | round 6 results.csv lines 220–238 | idle p50 29.58 (29.04–29.98) against 28.70 (28.58–28.93), ranges apart; max 150 (114–296) against 125 (94–142). One run |
 | conductor park 20 µs with a 256 KiB window, DPDK | round 7 lines 6–7, 150, 162 | idle not separated (max 105 (93–114) against 109 (52–116)); 288 B 500 k/s p99.9 1,795 (37.79–2,527) against 38.11 (36.00–58.27), max 5,140 (135–5,247) against 135 (132–278) |
-| receiver IO vectors 16, DPDK | `aws-20261014-113947` lines 88, 124 | 1,344 B at 600 k/s: 16,247 NAKs over 5 reps against none; max 142 (134–259) against 1,130 (132–3,424,649). Platform not recorded. The lab baseline now sets 16 (`vm.sh:126`) |
+| receiver IO vectors 16, DPDK | `aws-20261014-113947` lines 88, 124 | 1,344 B at 600 k/s: no NAK against 16,247 over 5 reps; max 142 (134–259) against 1,130 (132–3,424,649). Platform not recorded. The one row here that separated: listed under the recommended configuration; the lab baseline sets 16 (`vm.sh:126`) |
 | transparent hugepages off | `aws-20261014-113947` lines 6, 11 | idle p99.99 53.15 (51.81–82.24) against 67.01 (51.84–87.23); max 90 (77–1,180) against 94 (80–498). Not separated. The lab baseline sets `never` (`vm.sh:125`) |
 | C-states capped at C1, metal | round 4 lines 5–6, 11–12, 80, 85 | idle p50 not separated (37.18 (36.48–38.34) against 35.13 (34.49–38.62); max 66 (57–107) against 127 (68–514)); at 288 B 1 M/s at least one rep per capped arm had p50 above 4 ms (ranges 42.17–4,042.75 busy, max 132 (108–8,380); 57.05–31,719 plain, max 289 (109–32,129)) |
 | threaded NAPI busy polling (`NAPI_BUSY=spare`) | G2 lines 13, 108–113 | the run failed: p50 up to 72 ms idle, most load points returned no echo. Not a measurement of the setting |
@@ -137,7 +137,7 @@ streams bounds that wait. Its effect is not measured here.
   (`benches/cloud/host.sh:46-59`). Not compared.
 - Interrupt moderation on against off: no A/B on any platform.
 - Kernel polling against interrupts: no single-setting A/B.
-- 4,096 RX descriptors (the code default, `src/config.rs:81`): no separating
+- 4,096 RX descriptors (the code default, `src/config.rs:82`): no separating
   result in the recovered rows.
 - CPU isolation, hugetlbfs, quiet-core pinning: not measured in the
   committed runs.

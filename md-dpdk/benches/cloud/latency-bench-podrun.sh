@@ -37,7 +37,7 @@
 #   vmstat.txt          pgfault/pgmajfault around the run (/proc/vmstat)
 #   meta.txt            env the run saw (AERON_DIR mount type, ulimits, cgroup)
 #
-# No prelock, no SCHED_FIFO: measured not worth it on AWS (io/benches/BENCHMARK.md).
+# No prelock, no SCHED_FIFO: inconclusive in the one AWS A/B (io/benches/BENCHMARK.md).
 # Nothing here adds capabilities; rlimits ride along from the NRI plugin.
 set -uo pipefail
 

@@ -20,7 +20,7 @@
 # set-up applies Graviton's own settings (core layout without SMT, idle CPUs
 # polling on the sender, Rust built for its Neoverse core). The sender may
 # stay the x86 rig: its programs are then built on it. See BENCHMARK.md,
-# "Graviton".
+# "Interrupt against NIC polling: the fair run (Graviton)".
 #
 # Every resource carries the tags owner=ergon-lab and run=<stamp>: a key pair,
 # a security group, a cluster placement group and two instances (their root

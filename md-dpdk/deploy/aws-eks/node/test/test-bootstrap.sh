@@ -276,8 +276,8 @@ assert_grep "dry-run: would disable irqbalance" "$TMP/bootstrap.err"
 # its queue IRQs back on their per-queue hints whenever it brings an interface
 # up, so the bootstrap starts the watcher that re-pins them on each link event.
 assert_grep "dry-run: would start rusteron-irq-affinity.service" "$TMP/bootstrap.err"
-# The primary ENA's kernel path keeps its driver's interrupt coalescing:
-# turning it off made kernel busy polling worse (BENCHMARKS.md, AWS round 2).
+# The primary ENA's kernel path keeps its driver's interrupt coalescing: no
+# committed run measures a change there.
 assert_no_grep "coalescing" "$TMP/bootstrap.err"
 assert_no_grep "ethtool" "$TMP/bootstrap.err"
 
@@ -307,7 +307,7 @@ assert_file "$PROC/irq/default_smp_affinity" "1"
 assert_file "$SYSFS/kernel/mm/transparent_hugepage/enabled" "never"
 assert_file "$SYSFS/kernel/mm/ksm/run" "0"
 assert_file "$PROC/sys/kernel/numa_balancing" "0"
-# The kernel's own reserve: 2% caused NAK storms and a 12 s stall (Azure round 5).
+# The kernel's own reserve unless RUSTERON_MIN_FREE_PCT is set.
 assert_file "$PROC/sys/vm/min_free_kbytes" "67584"
 # Busy polling only when asked (RUSTERON_BUSY_POLL_US): off by default.
 assert_file "$PROC/sys/net/core/busy_poll" "0"
@@ -345,7 +345,7 @@ echo "bootstrap assertions PASSED"
 # The ENA driver applies its per-queue affinity hint (queue i on CPU i) as the
 # queue IRQ's affinity whenever it brings an interface up: after a device
 # reset, a queue or ring change, or a data ENA's return to the kernel driver.
-# AWS round 5 traced 1.1 M such interrupts on the isolated CPUs.
+# They then land on the isolated CPUs until something re-pins them.
 echo "== IRQ placement (irq-affinity.sh) =="
 IRQ_AFFINITY="$NODE_DIR/irq-affinity.sh"
 make_irq() { # irq smp_affinity_list effective_affinity_list ("" for none) action
@@ -477,7 +477,8 @@ echo "BOOT_IMAGE=/boot/vmlinuz ro" > "$PROC/cmdline"
 expect_fail "bootstrap unprovisioned kernel" "isolcpus" fixture_env RUSTERON_DRY_RUN=1 "$BOOTSTRAP"
 echo "${PROVISIONED_CMDLINE/irqaffinity=0/irqaffinity=1}" > "$PROC/cmdline"
 expect_fail "bootstrap irqaffinity mismatch" "irqaffinity" fixture_env RUSTERON_DRY_RUN=1 "$BOOTSTRAP"
-# A VM is capped at C1; bare metal is not (C1 did not help there: AWS round 4).
+# A VM is capped at C1; bare metal is not (C1 went above 4 ms p50 under load
+# there: md-dpdk/BENCHMARKS.md, round 4).
 echo "$METAL_CMDLINE" > "$PROC/cmdline"
 expect_fail "bootstrap VM without the C-state cap" "intel_idle.max_cstate" fixture_env RUSTERON_DRY_RUN=1 "$BOOTSTRAP"
 echo "$METAL_CPUINFO" > "$PROC/cpuinfo"

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # check-book-content.sh — grep book code fences for known stale/incorrect API
 # patterns that the allowlist alone doesn't catch, and check every relative
-# link and {{#include}} resolves. Called from release-check, CI and book-ci.
+# link and {{#include}} resolves, plus (check-repo-links.py) absolute links
+# into the repository and book and benchmark anchors cited from code. Called
+# from release-check, CI and book-ci.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -193,6 +195,15 @@ for page in sorted(root.rglob("*.md")):
 sys.exit(1 if failed else 0)
 PY
 then
+    rc=1
+fi
+
+# Absolute links into this repository (GitHub blob/tree URLs) and into the
+# published book, relative links in Markdown outside the book, and benchmark
+# write-up anchors cited from source files. A removed or renamed section
+# otherwise leaves links that no build notices. LINK_REPO_ROOT points the
+# check at a fixture repository in the self-test.
+if ! python3 "$root/scripts/check-repo-links.py" "${LINK_REPO_ROOT:-$root}" "$book_src"; then
     rc=1
 fi
 

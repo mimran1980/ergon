@@ -336,3 +336,8 @@ namespace. [ergon-tune](../tune/overview.md) reports the network settings it
 cannot read there as unknown, never as a warning. Run the NIC checks on the
 node, or in a pod on the host's network. T9 reads the container's own cgroup;
 the pod's quota shows only in `cpu.stat.local` ([verify](#verify)).
+
+`ERGON_HOST_CHECKS=require` refuses a stock static-CPU-manager pod: K2
+cannot prove exclusive CPUs from the kubelet's cpuset, so it reports unknown.
+An isolated cpuset partition, as the [latency pods](latency-pods.md) plugin
+grants, passes it ([ergon-tune](../tune/overview.md#where-the-checks-run)).

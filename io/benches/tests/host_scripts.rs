@@ -54,9 +54,8 @@ fn an_smt_receiver_keeps_its_layout() -> R {
 
 #[test]
 fn an_x86_receiver_without_smt_keeps_its_layout() -> R {
-    // c7a.2xlarge (AMD, one thread per core): measured with core 0 alone for
-    // housekeeping (BENCHMARK.md, instance types); the two-core housekeeping
-    // is Graviton's.
+    // c7a.2xlarge (AMD, one thread per core): core 0 alone for housekeeping,
+    // as on the other x86 hosts; the two-core housekeeping is Graviton's.
     let topo = "0,0\\n1,1\\n2,2\\n3,3\\n4,4\\n5,5\\n6,6\\n7,7";
     assert_eq!(
         roles(topo, "x86_64")?,

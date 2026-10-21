@@ -321,16 +321,17 @@ fn push(hot: &mut HotSet, cpu: Option<u32>, role: Role) {
 }
 
 const M1_EVIDENCE: &str = "Aeron's C driver (aeron_driver_context.c: every agent's idle strategy defaults to backoff; \
-     aeron_agent.h: backoff parks from 1 µs to 1 ms); a 1 µs park measured on an Azure \
-     D4s_v6, Linux 6.12; md-dpdk/BENCHMARKS.md (Summary: pin the driver's agents; Method: noop agents)";
+     aeron_agent.h: backoff parks from 1 µs to 1 ms); prctl(2) PR_SET_TIMERSLACK (default slack 50 µs); \
+     md-dpdk/BENCHMARKS.md, Runs and their data (every lab run pins noop agents); the cost of a park or of \
+     an unpinned agent is not measured here";
 
-/// What a park costs, with the figure's limits.
-const PARK_COST: &str = "a requested 1 µs park took 61 µs at p50 with Linux's default 50 µs timer slack \
-     (7 µs at 1 ns; p50 only, no max was recorded)";
+/// What a park costs, and the limit of what is known.
+const PARK_COST: &str = "a sleep can overrun by the thread's timer slack, 50 µs by default (prctl(2) \
+     PR_SET_TIMERSLACK), so a 1 µs park can take tens of µs; not measured here";
 
-/// What sharing a core cost, with the figure's limits.
+/// What sharing a core costs, and the limit of what is known.
 const SHARED_CORE_COST: &str =
-    "with the agents on one core a round trip took 2.8 ms (one reading: no percentiles or max were recorded)";
+    "the agent then waits for the other thread's time slice before it polls again; not measured here";
 
 const fn m1(status: Status, message: String) -> Finding {
     Finding {
@@ -614,8 +615,9 @@ pub fn m3_socket_buffers(buffers: &SocketBuffers, dpdk: bool) -> Vec<Finding> {
     .collect()
 }
 
-const M4_EVIDENCE: &str = "md-dpdk/BENCHMARKS.md (UDP round trip between the two hosts; AWS c7i.4xlarge, rounds 6 \
-     and 7; AWS Graviton5 (c9g.2xlarge), rounds G1–G3)";
+const M4_EVIDENCE: &str = "md-dpdk/BENCHMARKS.md (Conclusions: Graviton kernel UDP, where the data NICs' interrupts \
+     go; Measured, but no setting recommended): c7i.4xlarge round 7 (benches/cloud/results/aws-20261015-185813.txt \
+     lines 5, 8) and c9g.2xlarge rounds G1–G3 (aws-20261016-072005, -135004, -223251)";
 
 /// M4: kernel busy polling is on for the socket transport.
 ///
@@ -637,22 +639,22 @@ pub fn m4_busy_polling(host: &Host) -> Finding {
             "the socket transport runs without kernel busy polling (net.core.busy_read 0, busy_poll 0), which \
              on Graviton is the better kernel setting: on a c9g.2xlarge pair busy polling collapsed at 1 M \
              msgs/s of 288 B (p50 5.0 ms, 61,488 NAKs), and interrupt moderation off with the data NICs' \
-             interrupts on a core of their own was the best kernel configuration (to 1 M msgs/s: no lossy rep \
-             in G1 and G3, one of five in G2; max 87–122 µs in G1, to 1,944 µs in G2, 122–211 µs in G3). \
-             Fix: prefer RUSTERON_MEDIA_DRIVER_TRANSPORT=dpdk-ena there (p50 14 µs; max 82–107 µs in G1, \
-             93–114 µs in G3, to 1 M msgs/s); otherwise keep busy polling off"
+             interrupts on a core of their own was the best kernel configuration measured (288 B at 1 M \
+             msgs/s: no lossy rep in G1 and G3, one of five in G2; max 122 (111–216) µs in G1, 121 \
+             (105–1,944) µs in G2, 204 (122–211) µs in G3, each the median of the five reps' maxima with \
+             their range). Fix: none needed; keep busy polling off, moderation off and the data NICs' \
+             interrupts on a core of their own (N1, T2)"
                 .to_owned(),
         ),
         Ok(_) => (
             Severity::Warn,
             Status::Finding,
             "the socket transport runs without kernel busy polling (net.core.busy_read 0, busy_poll 0): on \
-             Azure busy polling cut the round trip's p50 35.1 → 21.5 µs (max 336 → 280 µs, the ranges \
-             overlapping) on the stock kernel and, isolated, its p99.99 115 → 34 µs (max 289 → 82 µs, the \
-             ranges overlapping); on AWS (c7i.4xlarge, round 7) p50 38.8 → \
-             28.2 µs and p99.99 106 → 56 µs (max 4,612 → 1,938 µs, the ranges overlapping). Fix: prefer \
-             RUSTERON_MEDIA_DRIVER_TRANSPORT=dpdk-ena (DPDK stayed ahead of busy polling at every percentile); \
-             else `sysctl -w net.core.busy_read=50 net.core.busy_poll=50` with N2's values on the data NICs \
+             AWS (c7i.4xlarge, round 7, one run, idle round trip) busy polling with a 4,096-entry receive \
+             ring against plain kernel UDP had p50 38.8 → 28.2 µs and p99.99 106 → 56 µs (max 4,612 → \
+             1,938 µs, median of the reps' maxima, the ranges overlapping); the two arms differ in two \
+             settings, and Graviton collapsed under load with it (M4 on Graviton). Fix: \
+             `sysctl -w net.core.busy_read=50 net.core.busy_poll=50` with N2's values on the data NICs \
              (`echo 2 > /sys/class/net/<if>/napi_defer_hard_irqs; echo 200000 > \
              /sys/class/net/<if>/gro_flush_timeout`); busy_read makes every blocking socket read on the host \
              busy-poll"

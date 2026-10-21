@@ -115,12 +115,12 @@ mkdir -p "$run"
 tools=$HOME/ergon/target/release
 bin=$(cat "$run/bin" 2>/dev/null || true)
 bin=${bin:-${BENCH_BIN:-$tools}}
-# The lab's baseline, the recommended configuration's (md-dpdk/BENCHMARKS.md)
-# settings that apply to every mode or every DPDK mode: every mode runs on top
-# of it, and an A/B against it is a mode's override (@THP=always,
-# @AERON_RECEIVER_IO_VECTOR_CAPACITY=4). Transparent hugepages are host-wide,
-# so every mode's; the receiver's IO vectors are DPDK modes'. A setting the
-# recommended configuration gives one transport only, such as kernel busy
+# The lab's baseline: settings that apply to every mode or every DPDK mode.
+# Every mode runs on top of it, and an A/B against it is a mode's override
+# (@THP=always, @AERON_RECEIVER_IO_VECTOR_CAPACITY=4). Transparent hugepages
+# are host-wide, so every mode's (never: not separated in md-dpdk/BENCHMARKS.md);
+# the receiver's IO vectors are DPDK modes' (16: its recommended
+# configuration). A setting for one transport only, such as kernel busy
 # polling's 4,096-entry receive ring, stays in the mode (@RX_RING=4096).
 BASE_THP=never
 BASE_RCV_IO_VECTORS=16

@@ -74,10 +74,11 @@ pub struct DpdkPortConfig {
 /// The receive ring a port takes when [`DpdkTransportConfig::rx_descriptors`]
 /// is `None`.
 ///
-/// Fewer only where the NIC reports a lower maximum (Azure MANA's 256). AWS
-/// measured 4096 against ENA's 1024 (BENCHMARKS.md, round 6): no first-point
-/// `rx-missed` loss, a higher loss-free rate, and no NAKs with two flows, at
-/// the same idle latency.
+/// Fewer only where the NIC reports a lower maximum (Azure MANA's 256).
+/// 4096 against ENA's 1024 did not separate at idle (md-dpdk/BENCHMARKS.md,
+/// "Measured, but no setting recommended": round 6 and G1), and round 6's
+/// loss rows for 1024 were not recovered, so the default rests on room for a
+/// burst, not on a measured gain.
 pub const DEFAULT_RX_DESCRIPTORS: u16 = 4096;
 
 /// Azure MANA's queue limit (the native `RUSTERON_DPDK_MANA_MAX_DESCRIPTORS`):

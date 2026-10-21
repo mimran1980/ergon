@@ -6,9 +6,8 @@
 # each queue IRQ's affinity again (its hint, one queue a CPU) whenever it
 # brings an interface up (or resets it: a ring change, its own recovery), so
 # once the data NICs came back from a DPDK mode, or a ring change reset them,
-# the kernel modes took their interrupts on the isolated CPUs (AWS round 5's
-# trace, which covered the agents', the clients' and its spinner's CPUs but
-# not housekeeping's: 1.1 M on each VM). vm.sh pins again after each of those
+# the kernel modes took their interrupts on the isolated CPUs (an early lab
+# run's trace; its output is not committed). vm.sh pins again after each of those
 # and just before each driver starts; a reset mid-run is not undone until
 # then, and `loss` counts what landed elsewhere (isolated-nic-irqs).
 LAB_PROC_ROOT=${LAB_PROC_ROOT:-/proc}
@@ -134,7 +133,7 @@ irqs_nic_queues() {
 # one's affinity is that CPU, or when none is found. Judged by the affinity
 # (smp_affinity_list, which a refused write leaves as it was): a VM moves an
 # IRQ only at its next interrupt, so a quiet queue's effective CPU lags until
-# then (AWS round B stopped on exactly that), and is reported, not failed;
+# then (an early lab run stopped on exactly that), and is reported, not failed;
 # isolated-nic-irqs counts what interrupts actually land elsewhere in a run
 irqs_queues_check() {
     local cpu=$1 irq name want got on=0 n=0 off='' lag=''

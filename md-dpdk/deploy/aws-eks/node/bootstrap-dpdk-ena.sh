@@ -53,12 +53,12 @@ RUSTERON_IGB_UIO_KO="${RUSTERON_IGB_UIO_KO:-/opt/rusteron-dpdk/igb_uio.ko}"
 RUSTERON_HOUSEKEEPING_CPUS="${RUSTERON_HOUSEKEEPING_CPUS:-}"
 RUSTERON_THP="${RUSTERON_THP:-never}"
 # vm.min_free_kbytes as a share of memory (1-5%), only when set: the kernel's
-# own reserve otherwise. 2% caused NAK storms and a 12 s stall in the Azure
-# lab (BENCHMARKS.md, round 5).
+# own reserve otherwise. Its latency effect is not measured in a committed
+# run.
 RUSTERON_MIN_FREE_PCT="${RUSTERON_MIN_FREE_PCT:-}"
 # net.core.busy_poll and busy_read in microseconds: off (0) unless set. 50 is
-# the lab's value for the kernel path (BENCHMARKS.md, recommended
-# configuration); it reaches only kernel sockets (the primary ENA, rollback).
+# what the lab's kernel-busy arm uses (benches/cloud/vm.sh BUSY_POLL); it
+# reaches only kernel sockets (the primary ENA, rollback).
 RUSTERON_BUSY_POLL_US="${RUSTERON_BUSY_POLL_US:-0}"
 # systemd-networkd's administrator directory, for the data ENAs' unmanaged file
 RUSTERON_NETWORKD_DIR="${RUSTERON_NETWORKD_DIR:-/etc/systemd/network}"
@@ -178,7 +178,7 @@ check_kernel_cmdline() {
     local cmdline w missing=() irqaff="" words=(isolcpus= nohz_full= rcu_nocbs= irqaffinity=)
     cmdline="$(cat "$RUSTERON_PROC_ROOT/cmdline" 2>/dev/null || true)"
     # C1 as the deepest idle state on a VM only: on bare metal it did not help
-    # (BENCHMARKS.md, AWS round 4), and provision-node.sh leaves it off there.
+    # (md-dpdk/BENCHMARKS.md, round 4), and provision-node.sh leaves it off there.
     if on_vm; then words+=(intel_idle.max_cstate= processor.max_cstate=); fi
     # An IOMMU (bare metal): igb_uio's DMA passes only in passthrough.
     if compgen -G "$RUSTERON_SYSFS_ROOT/kernel/iommu_groups/*" >/dev/null; then words+=(iommu=pt); fi
@@ -261,7 +261,7 @@ bind_driver() {
 # The OS must never configure the data ENAs, now or when one goes back to the
 # kernel's ena driver (a rollback, a kernel baseline): the lab's Debian VMs
 # re-ran DHCP on each ENA back from DPDK through cloud-init's hotplug,
-# replacing addresses and dropping routes (BENCHMARKS.md, AWS round 2). AL2023
+# replacing addresses and dropping routes. AL2023
 # has the same path through udev: on the EKS AMI, 90-eks.rules starts
 # udev-net-manager@<iface>.service for every ENA that appears, which writes
 # /run/systemd/network/70-eks-<iface>.network (DHCP) and reloads networkd;
@@ -395,8 +395,8 @@ tune_host() {
     fi
     # Busy polling on the kernel sockets (the primary ENA, the rollback path):
     # off unless asked. The primary ENA keeps its driver's interrupt
-    # coalescing: turning it off made kernel busy polling worse on AWS
-    # (BENCHMARKS.md, round 2).
+    # coalescing: its path carries no latency-critical traffic, and no
+    # committed run measures a change there.
     [[ "$RUSTERON_BUSY_POLL_US" =~ ^(0|[1-9][0-9]{0,3})$ ]] \
         || fail "RUSTERON_BUSY_POLL_US=$RUSTERON_BUSY_POLL_US: microseconds, 0 (off) to 9999; the lab's kernel path used 50"
     write_value "$RUSTERON_PROC_ROOT/sys/net/core/busy_poll" "$RUSTERON_BUSY_POLL_US"

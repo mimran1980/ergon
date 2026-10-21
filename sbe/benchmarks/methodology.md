@@ -26,8 +26,9 @@ Each `just bench` invocation owns one unique result root under
 
 The gate reads only that root. It fails closed on missing, incomplete, stale, or
 mixed-run results, so a release can never pass on evidence from another run. Both
-profiles (LTO and no-LTO) are blocking, and the SBE ceiling is a literal `1.00`
-with no noise tolerance.
+profiles (LTO and no-LTO) are blocking. The SBE ceiling is `1.00` with no
+tolerance added; a ratio above it whose envelope overlaps the measured A/A band
+is reported as inconclusive, not failed (`sbe/BENCHMARKS.md`, "The gate").
 
 Quote a result by naming its run id, commit, and host — or do not quote it.
 

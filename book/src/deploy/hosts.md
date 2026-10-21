@@ -39,7 +39,7 @@ cores (SMT off, so one CPU is one core).
 |---|---|---|
 | AWS x86, bare metal | `iommu=pt` | `igb_uio` (DPDK) does not program the IOMMU; a VM has none |
 | AWS Graviton, bare metal | `iommu.passthrough=1` | the same, on Arm |
-| EKS DPDK node (x86) | `nosmt transparent_hugepage=never hugepagesz=2M hugepages=<n>`; on a VM also `intel_idle.max_cstate=1 processor.max_cstate=1` | `node/provision-node.sh:310-349`. The C1 cap's evidence is mixed: [C-states](hft.md#c-states) |
+| EKS DPDK node (x86) | `nosmt transparent_hugepage=never hugepagesz=2M hugepages=<n>`; on a VM also `intel_idle.max_cstate=1 processor.max_cstate=1` | `node/provision-node.sh:310-351`. The C1 cap's evidence is mixed: [C-states](hft.md#c-states) |
 
 `clocksource=tsc tsc=reliable` turns the kernel's TSC checks off. The EKS
 node takes it only on bare metal with `RUSTERON_FORCE_TSC=1`, never on a VM
@@ -57,7 +57,7 @@ interrupt: less CPU, more latency
 | NIC queue interrupts pinned again after every NIC reset | ENA puts each queue's interrupt back on CPU *i* when the interface comes up (reset, `ethtool -G`/`-L`, a NIC back from DPDK). The EKS node re-pins on each link event (`node/irq-affinity.sh watch`) | as above |
 | ENA moderation off | `ethtool -C <if> adaptive-rx off rx-usecs 0`; ENA turns adaptive moderation back on when the interface comes up, so re-apply it with the pins | [moderation](hft.md#interrupt-moderation), x86 polling backend only |
 | receive ring | `ethtool -G <if> rx 4096` | not measured here |
-| global busy polling | `net.core.busy_read`, `busy_poll` | not measured here; it reaches every blocking read on the host. Leave unset; ergon-io busy-polls per socket |
+| global busy polling | `net.core.busy_read`, `busy_poll` | it reaches every socket read on the host. ergon-io: leave unset, it busy-polls per socket. Aeron's media driver: [hft](hft.md#settings) |
 
 ## C-states
 
@@ -68,7 +68,7 @@ interrupts does.
 | host | setting | evidence |
 |---|---|---|
 | x86 VM | cap at C1 (`intel_idle.max_cstate=1`), or leave it | mixed: [C-states](hft.md#c-states) |
-| x86 metal | leave it | not measured from committed data |
+| x86 metal | leave it | `c7i.metal-24xl`, round 4: idle not separated; at 288 B 1 M msgs/s at least one rep of each capped arm had a p50 above 4 ms ([BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#measured-but-no-setting-recommended)) |
 | Graviton | nothing to set | the OS has no C-states to pick: an idle core waits for an interrupt (`WFI`) |
 
 ## Memory
@@ -99,8 +99,9 @@ One physical core per role. SMT is off on x86 latency nodes
 | media driver sender | one CPU | one CPU |
 | media driver receiver | one CPU | one CPU |
 
-- **`SHARED_NETWORK`** (sender and receiver on one thread) saves a core. Its
-  latency is not measured from committed data.
+- **`SHARED_NETWORK`** (sender and receiver on one thread) saves a core and
+  costs latency: Graviton G1, DPDK, 1,344 B bursts p50 522 against 234 µs
+  ([threads and cores](../md-dpdk/configuration.md#threads-and-cores)).
 - **ergon-io `uring-sqpoll`:** its kernel thread on a CPU of its own beat
   the loop's SMT sibling at 10 and 100 connections; at 1 the result is mixed
   ([SMT sibling](hft.md#smt-sibling)). With SMT off,

@@ -44,7 +44,7 @@ guide, with which transport to use when:
 | Cloud | DPDK driver | Port selected by |
 |---|---|---|
 | AWS | `net_ena`, the ENA bound to `igb_uio` (`wc_activate=1`) or a write-combining `vfio-pci` | its PCI address |
-| Azure | `net_netvsc` over the MANA VF. `net_mana` alone is accepted, but no run has shown it receiving ([BENCHMARKS.md](BENCHMARKS.md#what-got-dpdk-working-on-azure)) | its MAC (`RUSTERON_DPDK_*_MAC`): every accelerated NIC of a VM is a vport on one PCI function |
+| Azure | `net_netvsc` over the MANA VF. `net_mana` alone is accepted, but no committed run shows it receiving | its MAC (`RUSTERON_DPDK_*_MAC`): every accelerated NIC of a VM is a vport on one PCI function |
 
 ## Requirements
 
@@ -93,8 +93,8 @@ RUSTERON_MEDIA_DRIVER_TRANSPORT=dpdk-ena cargo run -p ergon-md-dpdk --features d
   variables.
 - **`RUSTERON_MEDIA_DRIVER_MLOCKALL=1`** (or `lock_memory_from_env()`) calls
   `mlockall(MCL_CURRENT | MCL_FUTURE)` before the driver starts. Needs
-  `CAP_IPC_LOCK` or a large enough `RLIMIT_MEMLOCK`. Not recommended: no gain
-  on x86 or Azure ([BENCHMARKS.md](BENCHMARKS.md#conclusions)).
+  `CAP_IPC_LOCK` or a large enough `RLIMIT_MEMLOCK`. Not recommended; its
+  latency effect is not measured here.
 - **Embedded:** a typed `DpdkTransportConfig`
   ([`examples/embedded_dpdk.rs`](examples/embedded_dpdk.rs)), or the binary's
   whole configuration with `driver::ConfiguredDriver`, then
@@ -135,8 +135,7 @@ sleeping or yielding stalls a DPDK queue) on a CPU the transport knows.
 Aeron's C driver parses `AERON_{CONDUCTOR,SENDER,RECEIVER}_CPU_AFFINITY`, but
 only `aeronmd` applies them. `pin_agents_to_configured_cpus` installs the same
 start hook; `DpdkTransport::install` and the bundled binary call it in every
-mode. Without the pins, DPDK's round trip on Azure was 2.8 ms
-([BENCHMARKS.md](BENCHMARKS.md#what-got-dpdk-working-on-azure)).
+mode. Running unpinned is not measured here.
 
 ## Receive ring
 
@@ -144,10 +143,11 @@ mode. Without the pins, DPDK's round trip on Azure was 2.8 ms
   rounded down to a power of two: 4096 on ENA, 256 on MANA. Set: 64 to 8192,
   used as given; start fails on a NIC that cannot take it. The `port-info`
   label reports it (`rx-desc=`).
-- **4096 against ENA's 1024**, one `c7i` A/B (round 6, not reproduced):
-  loss-free 1,344 B rate 400 k → 600 k msgs/s; idle max 517 against 142 µs.
-  On Graviton (c9g, round G1): idle max 88 against 155 µs, no other effect
-  ([BENCHMARKS.md](BENCHMARKS.md#recommended-configuration)).
+- **4096 against ENA's 1024** did not separate at idle: `c7i.4xlarge`
+  round 6 max 107 (88–517) against 125 (94–142) µs, `c9g.2xlarge` G1 73
+  (60–88) against 75 (68–155) µs. Round 6's loss rows for 1024 were not
+  recovered
+  ([BENCHMARKS.md](BENCHMARKS.md#measured-but-no-setting-recommended)).
 - **`RUSTERON_DPDK_MBUFS_PER_PORT`** (default 16384) must hold both rings,
   four bursts and two lcores' mempool caches (1.5 ×
   `RUSTERON_DPDK_MEMPOOL_CACHE` each): 5,504 with the defaults. Start fails,
@@ -248,8 +248,7 @@ periodic runs on them.
   (`nic-rx-errors`, `nic-rx-missed`, `nic-rx-nombuf`), PMD extended
   statistics (on ENA an admin command each) and the mempool.
   `RUSTERON_DPDK_NIC_STATS_MS` sets the interval (1000 to 3600000; `0` stops
-  the reads). Turning the reads off gave no gain (AWS round 3,
-  [BENCHMARKS.md](BENCHMARKS.md#experiment-log)).
+  the reads). The latency effect of the reads is not measured here.
 - **Housekeeping placement:** `RUSTERON_DPDK_HOUSEKEEPING_CPU`, else the
   conductor's CPU unless the conductor spins, else the EAL main lcore's CPU;
   not a busy agent's core or its SMT sibling. The EAL's own threads are
@@ -316,10 +315,9 @@ kernel UDP sockets.
 ## Bandwidth allowance
 
 Clouds drop traffic over a VM's allowance before any counter here sees it;
-Aeron then retransmits and throughput collapses. Azure's 1,344 B NAKs
-coincided with `rx-ring-full-suspected`, a heuristic: MANA counts no drop
-(`native/dpdk/rusteron_dpdk_runtime.c`). They stopped with receiver IO vectors
-16 and a ring-sized receiver window (below).
+Aeron then retransmits and throughput collapses. MANA counts no drop of its
+own; `rx-ring-full-suspected` is a heuristic for it
+(`native/dpdk/rusteron_dpdk_runtime.c`). No Azure run output is committed.
 
 | variable | meaning |
 |---|---|
@@ -332,21 +330,21 @@ coincided with `rx-ring-full-suspected`, a heuristic: MANA counts no drop
 - **A cap is per NIC and opt-in.** Set one only to keep a sender below the
   link's capacity, or to shape a slower route with `RUSTERON_DPDK_TX_ROUTE_MBPS`.
   It costs a refill, a sum and a charge on every send.
-- **One AWS flow (one channel) topped out at 7.8–8.0 Gbit/s** in these runs,
-  x86 and Graviton ([BENCHMARKS.md](BENCHMARKS.md#conclusions)), below AWS's
-  documented 10 Gbit/s single-flow limit in a cluster placement group. Spread
-  a heavier stream over several channels on different ports.
-- **A small receiver window (`rcv-wnd`) is a rate cap, not a loss fix.**
-  Round 12 A/B, 80 KiB against the 2 MiB default: flat-out falls 6.5–6.8× at
-  every size, and the 288 B loss-free ceiling **drops** (157 k → 121 k msgs/s;
-  [data](BENCHMARKS.md)).
-  It raises only the 1,344 B ceiling (39 k → 56 k). Name `rcv-wnd=80k` on a
-  288 B channel only when that rate cut is acceptable, or when the ring cannot
-  hold more (Azure MANA: 256 × the smallest datagram, 80 KiB for 288 B). Pair
-  it with the conductor's park capped at 20 µs
-  (`AERON_CONDUCTOR_IDLE_STRATEGY_INIT_ARGS=100-10-1us-20us`); do not use the
-  faster park without the small window
-  ([round 12](BENCHMARKS.md#the-80-kib-window-is-a-rate-cap-not-a-loss-fix)).
+- **One AWS flow (one channel) topped out at 7.75–7.77 Gbit/s of Aeron
+  frames** on `c7i.4xlarge`, kernel UDP and DPDK alike; on `c9g.2xlarge`
+  1,344 B messages stopped at 685,574 msgs/s
+  ([BENCHMARKS.md](BENCHMARKS.md#one-flows-ceiling-on-aws)). AWS documents a
+  10 Gbit/s single-flow limit in a cluster placement group. Spread a heavier
+  stream over several channels on different ports.
+- **A small receiver window (`rcv-wnd`) caps the rate.** Only a ring that
+  cannot hold more needs one (Azure MANA: 256 × the smallest datagram, 80 KiB
+  for 288 B), paired with the conductor's park capped at 20 µs
+  (`AERON_CONDUCTOR_IDLE_STRATEGY_INIT_ARGS=100-10-1us-20us`). On AWS
+  (`c7i.4xlarge`, round 7) the 20 µs park with a 256 KiB window did not
+  separate at idle, and at 288 B 500 k msgs/s its max was 5,140 against
+  135 µs
+  ([BENCHMARKS.md](BENCHMARKS.md#measured-but-no-setting-recommended)). The
+  Azure pairing is not measured here.
 
 ## Host-local channels
 
@@ -445,9 +443,10 @@ must be `CNTFRQ_EL0` (above), the generic timer's stated rate.
   `SO_TIMESTAMPNS`. A NIC with no such channel open reads no clock for them.
   `channel-rcv-ts-offset` needs nothing from the transport.
 - **Cost, one run** (Graviton G3, DPDK): p50 within 0.07 µs of without at
-  idle and every steady rate; idle max 153 against 79 µs; one rep a point reached
-  152–183 µs. Repeat before relying on it
-  ([G3](BENCHMARKS.md#graviton5-c9g2xlarge-round-g3--best-measured-p50--p9999--max)).
+  idle and every steady rate; idle max 153 against 79 µs; at 1,344 B bursts
+  1 of 5 reps lossy (short sends) against 0. Not separated; repeat before
+  relying on it
+  ([BENCHMARKS.md](BENCHMARKS.md#measured-but-no-setting-recommended)).
 
 ## Lifetime
 

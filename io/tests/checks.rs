@@ -958,9 +958,18 @@ fn nic_polling_that_reaches_no_queue_is_a_warning() -> R {
         return Err("a polled connection without a NAPI id was not reported".into());
     };
     assert!(line.starts_with("ergon-io warning: "), "{line}");
-    for part in ["recv-busy", "NAPI id", "10.0.1.7:443", "interrupts", "µs"] {
+    for part in [
+        "recv-busy",
+        "NAPI id",
+        "10.0.1.7:443",
+        "interrupts",
+        "epoll-spin",
+    ] {
         assert!(line.contains(part), "{part:?} not in {line:?}");
     }
+    // No latency figure: the only one it quoted came from an Azure run whose
+    // NIC interrupt settings were not recorded (io/benches/BENCHMARK.md).
+    assert!(!line.contains("µs"), "{line:?}");
     // A NAPI id: polling reaches the NIC.
     assert_eq!(
         checks::napi_line(Backend::RecvBusy, id, Some(&flow), &remote, Some(8193)),
