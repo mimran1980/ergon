@@ -406,9 +406,9 @@ fn driver_of(
 
 const N1_EVIDENCE: &str = "git show \
      128747b9^:io/benches/results/flags-aws-20261015T070339Z/tables.md (c1/c2-base, -nodim, \
-     -nocoalesce: lines 22-29, 50-57, 63-70; loop counters lines 386, 598, 1232, 1450) and \
-     128747b9^:io/benches/results/flags-aws-20261015T062428Z/tables.md (loop counters lines 414, \
-     1537): AWS c7i, recv-busy, two 8-minute reps each; io/benches/results/flags-aws-20261019T175248Z/env-rcv.txt \
+     -nocoalesce: lines 22-29, 50-57, 63-70; loop counters lines 386, 598, 1232, 1450; \
+     pre-empting worker kworker/2:1, lines 186 and 190): AWS c7i, recv-busy, two 8-minute \
+     reps each; io/benches/results/flags-aws-20261019T175248Z/env-rcv.txt \
      (lines 81-82, 146-149: on with rx-usecs 20 as found, back on after a reset); Linux \
      drivers/net/ethernet/amazon/ena/ena_netdev.c (ena_up enables adaptive moderation); \
      aws-graviton-getting-started perfrunbook (adaptive-rx off for latency-sensitive work)";
@@ -454,7 +454,7 @@ pub fn n1_adaptive_rx<E: Ethtool>(
                 N1_EVIDENCE,
                 format!(
                     "{interface}: adaptive RX interrupt moderation is on: on AWS c7i a kernel \
-                     worker pre-empted a busy-polling loop 8,724–15,638 times in 8 minutes (18–33 a \
+                     worker pre-empted a busy-polling loop 8,841–8,906 times in 8 minutes (about 18 a \
                      second), and 0 times with it off. Off, the WebSocket round trip's p99.99 was \
                      72–76 against 117–119 µs (max 354–970 against 259–1,024 µs); the HTTP round \
                      trip's p99.99 was 83–116 against 77–119 µs (max 202–981 against 433–446 µs); \

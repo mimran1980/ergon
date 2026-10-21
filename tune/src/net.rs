@@ -325,7 +325,7 @@ fn t2_irq(
             format!(
                 "{} may fire on {}: its smp_affinity_list is {affinity}. On AWS c7i, NIC interrupts on \
                  the loop's CPU raised a gap-spinner's gaps over 5 µs from 126–153 to 462–547 a \
-                 minute, and busy-polled market data's p99 / max from 7.9–8.1 / 36–48 µs to \
+                 minute (longest gap 135–408 µs before, 41–74 µs after), and busy-polled market data's p99 / max from 7.9–8.1 / 36–48 µs to \
                  20–26 / 74–99 µs (two reps).{reset} Fix: `echo {hk} > \
                  /proc/irq/{}/smp_affinity_list`{repin}",
                 irq.label(),

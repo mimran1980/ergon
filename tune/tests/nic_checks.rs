@@ -84,7 +84,7 @@ fn n1_warns_while_ena_adaptive_moderation_is_on() -> R {
         "{}",
         v.message
     );
-    assert!(v.message.contains("18–33 a second"), "{}", v.message);
+    assert!(v.message.contains("about 18 a second"), "{}", v.message);
     assert!(
         v.message.contains("p99.99 was 72–76 against 117–119 µs"),
         "{}",

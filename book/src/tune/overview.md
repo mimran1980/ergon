@@ -36,7 +36,7 @@ In brackets: the check (T1–N4). Times are in µs.
 | [SMT siblings](../deploy/hosts.md#cpu-layout) (hyperthreads) | Two hardware threads that share one core. | A busy sibling slows the loop: measured for ergon-io's SQPOLL thread on the sibling (T10). Graviton, AWS's Arm CPU, has no SMT. |
 | real-time scheduling (`SCHED_FIFO`, `SCHED_RR`) | Runs a thread ahead of all normal ones. RT throttling caps it at 0.95 s a second by default. | Its CPU's tick stays on; the latency A/B was inconclusive (T7). |
 | [CPU quota (CFS quota)](../deploy/kubernetes.md#latency-checklist) | A cgroup's CPU limit: its threads may run for the quota in each period (100 ms by default). Kubernetes sets one from a container's CPU limit, `docker run --cpus` too. | A busy-spinning thread runs at the cap: when the cgroup's threads use the quota up, the kernel stops all of them until the period ends (T9). |
-| throttled, `nr_throttled` | A cgroup stopped because its quota ran out. `nr_throttled` in its `cpu.stat` counts the periods it happened in. | Should never grow for a busy-spinning container. `cpu.stat.local` also counts a parent's (a pod's) quota (T9). |
+| throttled, `nr_throttled` | A cgroup stopped because its quota ran out. `nr_throttled` in its `cpu.stat` counts the periods it happened in. | Should not grow for a busy-spinning container. `cpu.stat.local` also counts a parent's (a pod's) quota (T9). |
 | [CPU idle states (C-states), frequency](../deploy/hosts.md#c-states) | How deeply an idle CPU sleeps, and how fast it runs. | Deeper sleep saves power but wakes later. Not checked. |
 | [transparent hugepages (THP)](../deploy/hosts.md#memory) | The kernel's own 2 MiB pages: `always`, or where the app asks (`madvise`). `khugepaged` builds them in the background. | `khugepaged` works in the background, under `madvise` too (on the regions that asked). Not measured with archived data (T3). |
 | Aeron directory | Where Aeron, the messaging library under ergon's transports, keeps its buffers as memory-mapped files. | On a disk filesystem, the kernel writes them back to disk (T4). |
@@ -48,7 +48,7 @@ In brackets: the check (T1–N4). Times are in µs.
 | interrupt-driven | Packets reach the socket through the NIC's interrupt, not busy polling. | Each packet waits for an interrupt (and any moderation delay: N1). |
 | [NIC receive queue](../deploy/hosts.md#interrupts-and-the-nic) | A lane the NIC puts arriving packets on. Each has its own interrupt. | After every reset, ENA puts queue *i*'s interrupt on CPU *i*, isolated CPUs included (T2). |
 | [interrupt moderation](../deploy/hosts.md#interrupts-and-the-nic) (`rx-usecs`) | The NIC waits up to `rx-usecs` µs so one interrupt covers several packets. | Fewer interrupts, later packets (N1). |
-| adaptive RX moderation | The driver re-tunes that wait by itself, from a kernel worker. | On AWS that worker pre-empted a busy-polling loop 18–33 times a second (N1). |
+| adaptive RX moderation | The driver re-tunes that wait by itself, from a kernel worker. | On AWS that worker pre-empted a busy-polling loop about 18 times a second, and not at all with it off (N1). |
 | [busy polling](../deploy/hosts.md#interrupts-and-the-nic) | A socket read polls the NIC queue itself instead of sleeping until an interrupt. | ergon-io's backends: [which backend](../io/backends.md). |
 | deferred interrupts (`napi_defer_hard_irqs`, `gro_flush_timeout`) | The kernel keeps the NIC's interrupts off and polls from a timer instead, so a busy poller can take the packets. | With no busy poller, packets wait for the timer (N2). |
 | [RX ring](../deploy/hosts.md#interrupts-and-the-nic) | The NIC's buffer for arriving packets: how many it can hold. | Too small drops bursts (N4). |
@@ -80,7 +80,7 @@ In brackets: the check (T1–N4). Times are in µs.
 |---|---|---|
 | T1 | CPU isolation: `isolcpus`, `nohz_full`, `irqaffinity` | `isolcpus` keeps other tasks off the loop's CPU. `nohz_full` stops its timer tick, an interrupt `CONFIG_HZ` times a second (1,000 on the AWS lab's Ubuntu kernel). `irqaffinity` sends new interrupts elsewhere. `isolcpus` alone leaves the tick on. |
 | T2 | NIC interrupt placement | Each NIC receive queue raises interrupts. On the loop's CPU, the kernel runs the handler instead of the loop. |
-| T3 | transparent hugepages (THP) | The kernel thread `khugepaged` merges small pages into 2 MiB pages in the background. Its work pauses spinning threads. |
+| T3 | transparent hugepages (THP) | The kernel thread `khugepaged` merges small pages into 2 MiB pages in the background. Its work can run on a spinning thread's CPU (not measured here). |
 | T4 | the Aeron directory's filesystem | Aeron, the messaging library under ergon's transports, keeps its buffers in memory-mapped files in one directory. On a disk filesystem the kernel writes them back to disk. |
 | T5 | automatic NUMA balancing | On a host with several memory nodes, the kernel unmaps pages to see which CPU uses them, so pinned threads take page faults. |
 | T6 | the NIC's NUMA node | A NIC on another node makes every packet cross between the sockets. |
@@ -145,7 +145,7 @@ its max.
 | T7 | run `flags-aws-20261015T070339Z` (`rt`, two reps): tick measured; latency inconclusive | measured |
 | T8 | two threads on one CPU: not measured here; a busy sibling: T10's run | partly measured |
 | T10, K3 | run `flags-aws-20261015T122127Z` (SQPOLL on the loop's sibling, three rounds); other sibling loads not measured | measured |
-| N1 | runs `flags-aws-20261015T070339Z` (`nodim`, `nocoalesce`, two reps), `062428Z` (pre-emption counts) | measured, x86 busy polling only |
+| N1 | runs `flags-aws-20261015T070339Z` (`base`, `nodim`, `nocoalesce`, two reps each) | measured, x86 busy polling only |
 | T3, T4, T5, T6, T9, T11, T12, K1, K2, K4–K7, N2, N3, N4 | kernel, Kubernetes, Aeron, chrony, AWS or Azure documentation | not measured here |
 
 ## Where the checks run
@@ -181,6 +181,8 @@ Two consequences under `require`:
   manager writes neither, so a stock Guaranteed pod is K2 unknown and
   refused. The [nri-latency-pods](../deploy/latency-pods.md) plugin's
   isolated partition (Linux 6.7+) passes it.
+
+Limits:
 
 - **ergon-io** needs the loop's CPU: pin the thread that calls `Driver::new`
   to one CPU, or set `loop_cpu`. Otherwise it skips T1, T8 and T2, and says so.
@@ -273,7 +275,7 @@ too.
 | tool | good at | short of | use it |
 |---|---|---|---|
 | `tuned` profiles (`cpu-partitioning`, `latency-performance`) | applying isolation, IRQ and power settings; `tuned-adm verify` checks they stuck | does not know which threads spin, which NIC they use, or what a setting costs; not measured here | to apply settings, with ergon-tune checking the result |
-| a gap spinner, or the kernel's `osnoise` and `hwlat` tracers (`rtla`) | measuring noise on each CPU, whatever its cause | says how much, not which setting | to choose quiet cores: on Azure `D8ds_v6` the lab's spinner saw 47 of its 48 stalls of 300 µs or more at one second of the minute (longest 1,083 µs; run `flags-azure-20261014T144146Z`, `tables-local.md` line 519) |
+| a gap spinner, or the kernel's `osnoise` and `hwlat` tracers (`rtla`) | measuring noise on each CPU, whatever its cause | says how much, not which setting | to choose quiet cores: on Azure `D8ds_v6` the lab's spinner saw 47 of its 48 stalls of 300 µs or more at one second of the minute (the longest of those 47: 1,083 µs; run `flags-azure-20261014T144146Z`, `tables-local.md` line 519) |
 | provisioning scripts alone | setting everything once | drift: ENA re-places queue IRQs whenever an interface comes up (`ena_setup_io_intr` in its driver) | with ergon-tune re-checking |
 
 ## Best practices and pitfalls
@@ -284,10 +286,11 @@ too.
   device reset, `ethtool -G` or `-L`, a NIC handed back from DPDK), it puts
   queue *i*'s interrupt on CPU *i*, isolated CPUs included, and turns adaptive
   moderation back on. Re-pin from a link-event hook.
-- **N1, busy polling:** `adaptive-rx off` with `rx-usecs` 20 and with
-  `rx-usecs` 0 measured within 9 µs of each other at the WebSocket round
-  trip's p99.99; `rx-usecs` 0 was lower on HTTP p99.99 and market-data p99 (one run,
-  two reps). The interrupt-driven path is not A/B'd here.
+- **N1, busy polling: `adaptive-rx off rx-usecs 0`.** Against `adaptive-rx off`
+  alone (one run, two reps): WebSocket p99.99 78–80 against 72–76 µs (max
+  233–344 against 354–970), HTTP p99.99 74–81 against 83–116 µs (max 202–227
+  against 202–981), market-data p99 7.9–8.6 against 9.3–12.9 µs (max 34–41
+  against 25–29). The interrupt-driven path is not A/B'd here.
 - **Use THP `never`, not `madvise`.** khugepaged still runs under `madvise`
   (kernel `transhuge.rst`); the cost is not measured here.
 - **No CPU quota on a busy-spinning container.** `/sys/fs/cgroup/cpu.max`
