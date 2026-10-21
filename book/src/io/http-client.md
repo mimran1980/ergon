@@ -66,7 +66,8 @@ use `Target::new("api.binance.com", 443, "")` and
   be placed twice (`io/tests/client.rs` shows it happening). The native
   client never re-sends: send orders through it.
 - **Connections open in the background** (`background_connect`, on by
-  default): the handshake's CPU never lands on the loop. A failed connect
+  default): the handshake runs off the loop, unless the driver's
+  `inline_connect_fallback` is set. A failed connect
   goes to `ClientHandler::on_connect_error` and is retried with backoff.
 - **Reconnects spread out:** a dropped connection reopens after a random
   delay of up to 100 ms (the limit doubles per failed connect, up to 5 s),
@@ -83,7 +84,8 @@ use `Target::new("api.binance.com", 443, "")` and
   `on_response` borrows the client's buffer: copy what you keep.
 - **libcurl:** `curl_drive` picks `curl_multi_perform` on every poll
   (default) or `curl_multi_socket_action`; both never block. Compared once
-  on Azure: no consistent difference
+  on Azure at 1,000/s: `curl_multi_perform` was 1–6 µs ahead at the
+  median in both rounds and had the higher max
   ([data](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#http-clients)).
   Trust comes from `curl_ca_file` or the system store, not from the rustls
   configuration.
