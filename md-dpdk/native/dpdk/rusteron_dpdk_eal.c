@@ -8,7 +8,8 @@
  * the test/TAP path (plan §11.2) — plus a per-process file prefix,
  * primary-process mode, no telemetry, and either a hugepage directory
  * (production, so startup fails if hugetlbfs is unusable) or --no-huge (tests
- * without hugetlbfs).
+ * without hugetlbfs). Once it is up, it reports the rate DPDK found for the
+ * CPU counter (rte_get_tsc_hz), which the transport's clock starts from.
  *
  * Only this translation unit and rusteron_dpdk_port.c reference libdpdk, so
  * the seam keeps every other translation unit DPDK-free and testable.
@@ -22,9 +23,13 @@
 #include <sched.h>
 #include <stdlib.h>
 
+#include <rte_cycles.h>
 #include <rte_eal.h>
 #include <rte_lcore.h>
 #include <rte_version.h>
+#if defined(__x86_64__)
+#include <cpuid.h>
+#endif
 
 #include <stdio.h>
 #include <string.h>
@@ -216,4 +221,30 @@ int rusteron_dpdk_eal_main_cpu(void)
         return -1;
     }
     return (int)rte_lcore_to_cpu_id((int)rte_get_main_lcore());
+}
+
+void rusteron_dpdk_eal_counter_rate(rusteron_dpdk_counter_rate_t *rate)
+{
+    *rate = (rusteron_dpdk_counter_rate_t){ 0 };
+    if (!rusteron_dpdk_eal_initialized)
+    {
+        return;
+    }
+    /* rte_eal_init set it: the arch's own value (CPUID 0x15 or MSR 0xCE on
+     * x86_64, CNTFRQ_EL0 on aarch64) or, failing that, a measurement against
+     * CLOCK_MONOTONIC_RAW, depending on the DPDK version and the CPU. */
+    rate->eal_hz = rte_get_tsc_hz();
+#if defined(__x86_64__)
+    /* Advanced power management: EDX bit 8 is the invariant TSC, the bit
+     * Linux reports as constant_tsc and nonstop_tsc. */
+    unsigned int eax = 0, ebx = 0, ecx = 0, edx = 0;
+    if (__get_cpuid(0x80000007u, &eax, &ebx, &ecx, &edx))
+    {
+        rate->invariant = (int)((edx >> 8) & 1u);
+    }
+#else
+    uint64_t cntfrq;
+    __asm__ __volatile__("mrs %0, cntfrq_el0" : "=r"(cntfrq));
+    rate->cntfrq = cntfrq;
+#endif
 }

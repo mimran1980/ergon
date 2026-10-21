@@ -196,8 +196,8 @@ release-check: test check-coverage check-generated-rustdoc
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-io --features webpki-roots --no-deps
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-md-dpdk --no-deps
     # One multi-package dry run, so ergon-io and ergon-md-dpdk verify against
-    # the packaged ergon-clock and ergon-tune: none of the four is on
-    # crates.io at this version until the release publishes them.
+    # the packaged ergon-tune: none of the four is on crates.io at this
+    # version until the release publishes them.
     cargo publish -p ergon-clock -p ergon-tune -p ergon-io -p ergon-md-dpdk --dry-run --allow-dirty
     bash scripts/check-packaged-cluster-features.sh --list
     bash scripts/check-packaged-cluster-features.sh --unpack --package ergo-sbe
@@ -297,8 +297,7 @@ _release-post:
     cargo publish -p ergo-aeron-cluster
     @echo "=== publish ergon-clock, ergon-tune, ergon-io, ergon-md-dpdk ==="
     # Cargo publishes them in dependency order and waits for crates.io to
-    # list ergon-tune before it publishes ergon-io, and ergon-clock and
-    # ergon-tune before it publishes ergon-md-dpdk.
+    # list ergon-tune before it publishes ergon-io and ergon-md-dpdk.
     cargo publish -p ergon-clock -p ergon-tune -p ergon-io -p ergon-md-dpdk
     @echo "=== tag ==="
     just _tag

@@ -436,7 +436,7 @@ static inline void rusteron_dpdk_spin_hint(void)
 
 /* Credit an allowance's bucket for the time since its last refill. A read
  * behind the last refill (a counter read a little behind on another core, a
- * calibration adopted afresh) credits nothing and leaves last_ns at the furthest time
+ * clock started afresh) credits nothing and leaves last_ns at the furthest time
  * credited, so no interval is ever credited twice; unguarded, the difference
  * would wrap and refill the bucket. */
 static inline void rusteron_dpdk_pacer_refill(rusteron_dpdk_pacer_t *p, uint64_t now_ns)
@@ -704,16 +704,18 @@ int rusteron_dpdk_test_local_io_mode(const rusteron_dpdk_transport_t *native);
 /* Test reset for the transport.c singleton (cleared by rusteron_dpdk_test_reset). */
 void rusteron_dpdk_transport_test_reset(void);
 
-/* Monotonic nanosecond clock (runtime.c): ergon-clock's calibration, made in
- * Rust and adopted at create (the config's `clock`, rusteron_dpdk_clock_adopt).
- * No calibration runs here. The counter is the TSC on x86_64 and the generic
- * timer's virtual counter, CNTVCT_EL0, on aarch64, converted with ergon-clock's
- * arithmetic; ergon-clock's fallback is CLOCK_MONOTONIC through the same
- * formula. Until a transport adopts one, the clock is that fallback with a
- * factor of one. Tests pin it with the setter so ARP rate limiting, expiry and
- * the counter sample gate are deterministic; reset clears the pin.
- * The source values are what counter type 80 reports, so they never change:
- * 0 CLOCK_MONOTONIC, 1 the TSC, 2 CNTVCT_EL0. */
+/* Monotonic nanosecond clock (runtime.c), started at create
+ * (rusteron_dpdk_clock_start, with the config's choice): the CPU counter (the
+ * TSC on x86_64, the generic timer's virtual counter CNTVCT_EL0 on aarch64) at
+ * the rate DPDK's EAL measured or read (rte_get_tsc_hz), converted with a
+ * 32.32 factor; or CLOCK_MONOTONIC through the same formula with a factor of
+ * one. The counter is used only where the EAL's rate can be trusted
+ * (rusteron_dpdk_clock_rule); otherwise, and until a transport starts it, the
+ * clock is CLOCK_MONOTONIC. Either way, nanoseconds since boot. Tests pin it
+ * with the setter so ARP rate limiting, expiry and the counter sample gate are
+ * deterministic; reset clears the pin and returns the clock to its boot
+ * default. The source values are what counter type 80 reports, so they never
+ * change: 0 CLOCK_MONOTONIC, 1 the TSC, 2 CNTVCT_EL0. */
 #define RUSTERON_DPDK_CLOCK_MONOTONIC 0
 #define RUSTERON_DPDK_CLOCK_TSC 1
 #define RUSTERON_DPDK_CLOCK_CNTVCT 2
@@ -730,7 +732,7 @@ void rusteron_dpdk_transport_test_reset(void);
 typedef struct rusteron_dpdk_clock_stct
 {
     int mode;            /* RUSTERON_DPDK_CLOCK_{COUNTER,MONOTONIC,PINNED} */
-    uint64_t base_ticks; /* ergon-clock's: the ticks at the base */
+    uint64_t base_ticks; /* the ticks at the base */
     uint64_t base_ns;    /* the time, ns, at the base (monotonic domain) */
     uint64_t mult;       /* ns per tick, 32.32 fixed point, in (0, 2^63) */
 } rusteron_dpdk_clock_t;
@@ -740,9 +742,9 @@ extern rusteron_dpdk_clock_t rusteron_dpdk_clock __attribute__((visibility("hidd
 __attribute__((noinline, cold)) uint64_t rusteron_dpdk_clock_ns_slow(void);
 
 /* One read of the hardware counter, as fast as it can be read: rdtsc on
- * x86_64, mrs CNTVCT_EL0 on aarch64 (DPDK's rte_rdtsc on each, ergon-clock's
- * unordered read). Neither waits for the instructions before it, which a few
- * ns of skew in a freshness, pacing or loop-gap time never matters to. */
+ * x86_64, mrs CNTVCT_EL0 on aarch64 (DPDK's rte_rdtsc on each). Neither waits
+ * for the instructions before it, which a few ns of skew in a freshness,
+ * pacing or loop-gap time never matters to. */
 static inline uint64_t rusteron_dpdk_counter(void)
 {
 #if defined(__x86_64__)
@@ -754,11 +756,11 @@ static inline uint64_t rusteron_dpdk_counter(void)
 #endif
 }
 
-/* `ticks` in ns through the adopted conversion: ergon-clock's formula to the
- * bit (its Conversion::ns_at). The difference is signed, so a tick a little
- * behind the base (an unordered read on another core, just after calibration)
- * is a little before base_ns, never 2^64 ns later; one widening signed
- * multiply (x86 imul, Arm mul and smulh). */
+/* `ticks` in ns through the started conversion:
+ * base_ns + ((ticks - base_ticks) * mult) >> 32. The difference is signed, so
+ * a tick a little behind the base (an unordered read on another core, just
+ * after the start) is a little before base_ns, never 2^64 ns later; one
+ * widening signed multiply (x86 imul, Arm mul and smulh). */
 static inline uint64_t rusteron_dpdk_clock_ns_at(uint64_t ticks)
 {
     const int64_t delta = (int64_t)(ticks - rusteron_dpdk_clock.base_ticks);
@@ -780,18 +782,40 @@ static inline uint64_t rusteron_dpdk_clock_now(void)
 
 /* rusteron_dpdk_clock_now as an exported function (tests, benchmarks). */
 uint64_t rusteron_dpdk_clock_ns(void);
-/* Whether `params` can be the transport's clock: ergon-clock's parameters of
- * this version, in the monotonic domain, a factor in (0, 2^63). 0, or -1 with
- * the error recorded naming the field. */
-int rusteron_dpdk_clock_params_check(const rusteron_dpdk_clock_params_t *params);
-/* Check and adopt `params` as the transport's clock, for the process (create
- * does, with its config's). A test pin stays in force. 0 or -1. */
-int rusteron_dpdk_clock_adopt(const rusteron_dpdk_clock_params_t *params);
-/* RUSTERON_DPDK_CLOCK_COUNTER or RUSTERON_DPDK_CLOCK_MONOTONIC: the adopted
+/* What the EAL says about the counter (rusteron_dpdk_eal_counter_rate): all
+ * zero before the EAL is up. */
+typedef struct rusteron_dpdk_counter_rate_stct
+{
+    uint64_t eal_hz; /* rte_get_tsc_hz() */
+    uint64_t cntfrq; /* aarch64: CNTFRQ_EL0, the generic timer's rate; 0 on x86_64 */
+    int invariant;   /* x86_64: CPUID 0x80000007 EDX bit 8, an invariant TSC; 0 on aarch64 */
+} rusteron_dpdk_counter_rate_t;
+/* EAL seam (rusteron_dpdk_eal.c, or the fake EAL's settable values). */
+void rusteron_dpdk_eal_counter_rate(rusteron_dpdk_counter_rate_t *rate);
+/* The rate range the transport converts: mult stays in (0, 2^63). */
+#define RUSTERON_DPDK_CLOCK_MIN_HZ 1000000ULL
+#define RUSTERON_DPDK_CLOCK_MAX_HZ 20000000000ULL
+/* Whether the counter `source` (RUSTERON_DPDK_CLOCK_TSC or _CNTVCT) can run at
+ * `rate->eal_hz`: RUSTERON_DPDK_CLOCK_WHY_COUNTER, or why not (_NO_RATE: none,
+ * or outside the range above; _NOT_INVARIANT: a TSC CPUID does not call
+ * invariant; _NOT_CNTFRQ: an EAL rate that is not CNTFRQ_EL0, a DPDK built to
+ * time with the PMU's cycle counter, RTE_ARM_EAL_RDTSC_USE_PMU). Pure. */
+int rusteron_dpdk_clock_rule(int source, const rusteron_dpdk_counter_rate_t *rate);
+/* Start the transport's clock for the process with the config's `choice`
+ * (RUSTERON_DPDK_CLOCK_CHOICE_*): the counter at the EAL's rate where the
+ * rule allows it, anchored on CLOCK_MONOTONIC, else CLOCK_MONOTONIC with a
+ * factor of one. A test pin stays in force. Create calls it once the EAL is
+ * up. */
+void rusteron_dpdk_clock_start(int choice);
+/* RUSTERON_DPDK_CLOCK_COUNTER or RUSTERON_DPDK_CLOCK_MONOTONIC: the started
  * clock's (a pin aside). */
 int rusteron_dpdk_clock_source(void);
-/* The adopted conversion applied to `ticks` (tests: against ergon-clock's). */
+/* The started conversion applied to `ticks` (tests). */
 uint64_t rusteron_dpdk_test_clock_ns_at(uint64_t ticks);
+/* The started conversion's base ticks, base ns and factor (tests). */
+void rusteron_dpdk_test_clock_params(uint64_t *base_ticks, uint64_t *base_ns, uint64_t *mult);
+/* One read of the counter the clock converts (tests, the benchmark). */
+uint64_t rusteron_dpdk_test_counter(void);
 /* Pin the clock at `ns`. Pinning a clock not pinned yet also moves the active
  * transport's allowances onto it (their last refill becomes `ns`). */
 void rusteron_dpdk_test_set_clock_ns(uint64_t ns);

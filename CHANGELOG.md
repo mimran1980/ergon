@@ -6,6 +6,24 @@
 
 - MSRV raised from 1.88 to 1.99, the pinned toolchain. `serial_test` 4.0.1,
   a dev-dependency, needs 1.93.1.
+- **Breaking (ergon-md-dpdk API), released as 0.1.31 all the same:** the
+  transport no longer depends on `ergon-clock`. It reads the CPU counter at
+  the rate DPDK's EAL gives it (`rte_get_tsc_hz()`), or `CLOCK_MONOTONIC` when
+  the kernel's clock source is not the counter (or a hypervisor's view of
+  it), the TSC is not invariant (x86_64), or DPDK's rate is not `CNTFRQ_EL0`
+  (aarch64). `RUSTERON_DPDK_CLOCK` keeps its values.
+  - Removed: `clock::clock_config`, `clock::transport_clock` and
+    `DpdkError::Clock`.
+  - Changed: `DpdkTransport::clock()` returns `&clock::TransportClock`
+    (`Counter { hz }` or `Monotonic { reason }`), not
+    `ergon_clock::advanced::Clock`.
+  - Added: `clock::TransportClock`, `clock::MonotonicReason`,
+    `clock::kernel_refuses_counter` and `clock::CLOCKSOURCE_PATH`.
+  - Kept: `clock::CLOCK_ENV`, `clock::ClockChoice` and
+    `ClockChoice::from_env`.
+  - Native ABI: the config's 48-byte clock parameters are now a one-byte
+    choice, so `rusteron_dpdk_config_t` is 4328 bytes, not 4376; the new
+    `rusteron_dpdk_clock_report` says which clock started and why.
 
 ## [0.1.30] — 2026-10-20
 

@@ -3,6 +3,7 @@
 // build script compiles, and the `Send`/`Sync` of its opaque handle.
 #![allow(unsafe_code)]
 
+use crate::clock::TransportClock;
 use crate::config::DpdkTransportConfig;
 use crate::error::DpdkError;
 use rusteron_media_driver::AeronDriverContext;
@@ -38,9 +39,9 @@ pub struct DpdkTransport {
     /// Whether the ports are test vdevs (`RUSTERON_DPDK_TEST_VDEV`).
     #[cfg_attr(not(feature = "dpdk"), allow(dead_code))]
     test_vdev: bool,
-    /// The clock the native transport adopted ([`crate::clock`]).
+    /// The clock the native transport started ([`crate::clock`]).
     #[cfg_attr(not(feature = "dpdk"), allow(dead_code))]
-    clock: ergon_clock::advanced::Clock,
+    clock: TransportClock,
 }
 
 /// Opaque native transport state. Empty without the `dpdk` feature.
@@ -55,9 +56,10 @@ impl DpdkTransport {
     /// native DPDK runtime (EAL and both ENA ports), and install its sender and
     /// receiver bindings into `context`.
     ///
-    /// The native transport's clock is ergon-clock's, as `RUSTERON_DPDK_CLOCK`
-    /// chooses ([`crate::clock`]): the counter is calibrated once a process
-    /// and its conversion handed over in the native configuration.
+    /// The native transport's clock is the one `RUSTERON_DPDK_CLOCK` chooses
+    /// ([`crate::clock`]): the CPU counter at DPDK's rate where the kernel's
+    /// clock source and DPDK allow it, else `CLOCK_MONOTONIC`;
+    /// [`clock`](Self::clock) says which.
     ///
     /// Call it after the context is configured and before the driver is
     /// created. The returned handle must outlive every driver started from
@@ -69,9 +71,9 @@ impl DpdkTransport {
     /// config or context is inspected; otherwise
     /// [`DpdkError::InvalidConfiguration`] for a config or context that breaks
     /// the transport's requirements, [`DpdkError::InvalidEnvironment`] for a
-    /// `RUSTERON_DPDK_CLOCK` that does not parse, [`DpdkError::Clock`] when the
-    /// clock cannot be calibrated, [`DpdkError::Native`] when DPDK fails to
-    /// initialise, and [`DpdkError::Aeron`] when installation fails.
+    /// `RUSTERON_DPDK_CLOCK` that does not parse, [`DpdkError::Native`] when
+    /// DPDK fails to initialise, and [`DpdkError::Aeron`] when installation
+    /// fails.
     #[cfg_attr(not(feature = "dpdk"), allow(clippy::missing_const_for_fn))]
     pub fn install(context: &AeronDriverContext, config: &DpdkTransportConfig) -> Result<Self, DpdkError> {
         #[cfg(feature = "dpdk")]
@@ -79,10 +81,32 @@ impl DpdkTransport {
             config.validate()?;
             validate_context(context, config)?;
             let choice = crate::clock::ClockChoice::from_env()?;
-            let clock = crate::clock::transport_clock(choice)?.clock;
+            // The kernel's clock source can rule the counter out before DPDK
+            // is asked (unreadable: the counter stays, as DPDK decides).
+            let refused = match choice {
+                crate::clock::ClockChoice::Counter => std::fs::read_to_string(crate::clock::CLOCKSOURCE_PATH)
+                    .ok()
+                    .and_then(|source| crate::clock::kernel_refuses_counter(&source)),
+                crate::clock::ClockChoice::Monotonic => None,
+            };
+            let native_choice = if refused.is_some() {
+                crate::clock::ClockChoice::Monotonic
+            } else {
+                choice
+            };
             pin_agents_to_configured_cpus(context)?;
+            let native = NativeTransport::create(config, native_choice)?;
+            let clock = match (native_clock(), refused) {
+                (Ok(TransportClock::Monotonic { .. }), Some(reason)) => TransportClock::Monotonic { reason },
+                (Ok(clock), _) => clock,
+                (Err(err), _) => {
+                    // Created in this call and never installed: free it.
+                    native.destroy();
+                    return Err(err);
+                }
+            };
             let transport = Self {
-                inner: Arc::new(NativeTransport::create(config, clock.params())?),
+                inner: Arc::new(native),
                 ports: [config.sender.pci_address.clone(), config.receiver.pci_address.clone()],
                 test_vdev: config.test_vdev,
                 clock,
@@ -105,12 +129,12 @@ impl DpdkTransport {
         }
     }
 
-    /// The clock the native transport reads: ergon-clock's calibration it
-    /// adopted ([`crate::clock`]). A copy on any thread reads the same
-    /// timebase, in the monotonic domain.
+    /// The clock the native transport reads ([`crate::clock`]): the CPU
+    /// counter and its rate, or `CLOCK_MONOTONIC` and why. Counter type 80
+    /// reports the same source.
     #[must_use]
-    pub const fn clock(&self) -> ergon_clock::advanced::Clock {
-        self.clock
+    pub const fn clock(&self) -> &TransportClock {
+        &self.clock
     }
 
     /// Free the native runtime: the EAL, both ports and their mempools.
@@ -217,7 +241,7 @@ impl Drop for CloseOnDrop {
 
 #[cfg(feature = "dpdk")]
 impl NativeTransport {
-    fn create(config: &DpdkTransportConfig, clock: ergon_clock::advanced::Params) -> Result<Self, DpdkError> {
+    fn create(config: &DpdkTransportConfig, clock: crate::clock::ClockChoice) -> Result<Self, DpdkError> {
         let native_config = native_config(config, clock)?;
         let mut ptr: *mut c_void = std::ptr::null_mut();
         // SAFETY: both pointers are valid for the call; the C side copies the
@@ -290,8 +314,8 @@ struct rusteron_dpdk_config_t {
     sender_mac: [c_char; 18],
     receiver_mac: [c_char; 18],
     rx_hw_timestamp: u8,
-    /// ergon-clock's calibration, the C `rusteron_dpdk_clock_params_t`.
-    clock: ergon_clock::advanced::Params,
+    /// `RUSTERON_DPDK_CLOCK_CHOICE_*`: 0 the counter, 1 `CLOCK_MONOTONIC`.
+    clock: u8,
 }
 
 // The C layout, field by field (asserted in native/dpdk/rusteron_dpdk_transport.c
@@ -320,26 +344,65 @@ const _: () = {
     assert!(offset_of!(C, sender_mac) == 4288);
     assert!(offset_of!(C, receiver_mac) == 4306);
     assert!(offset_of!(C, rx_hw_timestamp) == 4324);
-    assert!(offset_of!(C, clock) == 4328);
-    assert!(size_of::<C>() == 4376);
+    assert!(offset_of!(C, clock) == 4325);
+    assert!(size_of::<C>() == 4328);
 };
 
-// ergon-clock's Params as the C clock parameters lay them out
-// (rusteron_dpdk_clock_params_t, asserted in rusteron_dpdk_transport.c too).
+/// Mirror of the C `rusteron_dpdk_clock_report_t` in
+/// `native/dpdk/rusteron_dpdk_transport.h`: the clock the transport started.
+#[cfg(feature = "dpdk")]
+#[repr(C)]
+#[derive(Default)]
+struct rusteron_dpdk_clock_report_t {
+    hz: u64,
+    eal_hz: u64,
+    cntfrq: u64,
+    source: i32,
+    why: i32,
+    invariant: i32,
+    reserved: i32,
+}
+
+// The C layout (asserted in native/dpdk/rusteron_dpdk_transport.c too).
 #[cfg(feature = "dpdk")]
 const _: () = {
     use std::mem::{offset_of, size_of};
-    type P = ergon_clock::advanced::Params;
-    assert!(offset_of!(P, version) == 0);
-    assert!(offset_of!(P, kind) == 4);
-    assert!(offset_of!(P, domain) == 8);
-    assert!(offset_of!(P, reserved) == 12);
-    assert!(offset_of!(P, base_ticks) == 16);
-    assert!(offset_of!(P, base_ns) == 24);
-    assert!(offset_of!(P, mult) == 32);
-    assert!(offset_of!(P, hz) == 40);
-    assert!(size_of::<P>() == 48);
+    type R = rusteron_dpdk_clock_report_t;
+    assert!(offset_of!(R, hz) == 0);
+    assert!(offset_of!(R, eal_hz) == 8);
+    assert!(offset_of!(R, cntfrq) == 16);
+    assert!(offset_of!(R, source) == 24);
+    assert!(offset_of!(R, why) == 28);
+    assert!(offset_of!(R, invariant) == 32);
+    assert!(offset_of!(R, reserved) == 36);
+    assert!(size_of::<R>() == 40);
 };
+
+/// The clock the native transport started, from its report.
+#[cfg(feature = "dpdk")]
+fn native_clock() -> Result<TransportClock, DpdkError> {
+    use crate::clock::MonotonicReason;
+    let mut report = rusteron_dpdk_clock_report_t::default();
+    // SAFETY: the C side fills the struct it is given and keeps no pointer.
+    unsafe { rusteron_dpdk_clock_report(&raw mut report) };
+    let reason = match report.why {
+        0 if report.source != 0 && report.hz != 0 => return Ok(TransportClock::Counter { hz: report.hz }),
+        1 => MonotonicReason::Chosen,
+        2 => MonotonicReason::NoCounterRate { eal_hz: report.eal_hz },
+        3 => MonotonicReason::TscNotInvariant,
+        4 => MonotonicReason::RateIsNotCntfrq {
+            eal_hz: report.eal_hz,
+            cntfrq: report.cntfrq,
+        },
+        why => {
+            return Err(DpdkError::Native(format!(
+                "the transport's clock report makes no sense (source {}, hz {}, why {why})",
+                report.source, report.hz
+            )));
+        }
+    };
+    Ok(TransportClock::Monotonic { reason })
+}
 
 #[cfg(feature = "dpdk")]
 #[link(name = "rusteron_dpdk", kind = "static")]
@@ -352,12 +415,13 @@ unsafe extern "C" {
     fn rusteron_dpdk_transport_close(transport: *mut c_void) -> c_int;
     fn rusteron_dpdk_last_error() -> *const c_char;
     fn rusteron_dpdk_eal_main_cpu() -> c_int;
+    fn rusteron_dpdk_clock_report(report: *mut rusteron_dpdk_clock_report_t);
 }
 
 #[cfg(feature = "dpdk")]
 fn native_config(
     config: &DpdkTransportConfig,
-    clock: ergon_clock::advanced::Params,
+    clock: crate::clock::ClockChoice,
 ) -> Result<rusteron_dpdk_config_t, DpdkError> {
     let mut c = rusteron_dpdk_config_t {
         struct_size: u32::try_from(std::mem::size_of::<rusteron_dpdk_config_t>())
@@ -381,7 +445,10 @@ fn native_config(
         sender_mac: [0; 18],
         receiver_mac: [0; 18],
         rx_hw_timestamp: u8::from(config.rx_hw_timestamp),
-        clock,
+        clock: match clock {
+            crate::clock::ClockChoice::Counter => 0,
+            crate::clock::ClockChoice::Monotonic => 1,
+        },
     };
     if let Some(mac) = config.sender.mac {
         fill(&mut c.sender_mac, &mac.to_string(), "sender.mac")?;

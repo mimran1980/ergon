@@ -228,25 +228,31 @@ fn counts_carry_over_when_a_port_reregisters() {
 
 /// Each port publishes which clock the transport reads (type 80): 1 for the
 /// x86_64 TSC, 2 for the aarch64 generic timer's virtual counter
-/// (`CNTVCT_EL0`), 0 for the `CLOCK_MONOTONIC` fallback.
+/// (`CNTVCT_EL0`), 0 for `CLOCK_MONOTONIC` (here: no rate from the EAL).
 #[test]
 #[serial]
 fn clock_counter_reports_the_clock_in_use() {
-    let mut h = Harness::new();
-    h.init_tx(SENDER_IP, 40000, None, 1472);
-    h.init_rx(RECEIVER_IP, 60000, 1472);
+    for (counter, expected) in [(true, COUNTER_SOURCE), (false, SOURCE_MONOTONIC)] {
+        let env = TestEnv::new();
+        if counter {
+            env.use_counter();
+        }
+        let mut h = Harness::build_after(env, rusteron_dpdk_config_t::valid());
+        h.init_tx(SENDER_IP, 40000, None, 1472);
+        h.init_rx(RECEIVER_IP, 60000, 1472);
 
-    let expected = i64::from(expected_counter_source());
-    assert_eq!(i64::from(unsafe { rusteron_dpdk_clock_source() }), expected);
-    let (v, _, label) = h
-        .counters
-        .find(TYPE_CLOCK, "role=sender")
-        .expect("sender clock counter");
-    assert_eq!(v, expected);
-    assert!(label.contains("dir=- clock"), "label: {label}");
-    assert_eq!(h.counter(TYPE_CLOCK, "role=receiver"), expected);
-
-    assert_no_leak();
+        let expected = i64::from(expected);
+        assert_eq!(i64::from(unsafe { rusteron_dpdk_clock_source() }), expected);
+        let (v, _, label) = h
+            .counters
+            .find(TYPE_CLOCK, "role=sender")
+            .expect("sender clock counter");
+        assert_eq!(v, expected, "counter: {counter}");
+        assert!(label.contains("dir=- clock"), "label: {label}");
+        assert_eq!(h.counter(TYPE_CLOCK, "role=receiver"), expected, "counter: {counter}");
+        drop(h);
+        assert_no_leak();
+    }
 }
 
 // ---------------------------------------------------------------------------

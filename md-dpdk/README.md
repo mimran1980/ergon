@@ -384,22 +384,33 @@ transport would carry them. That is why localhost gains nothing.
 
 ## Clocks
 
-- **One calibration.** `DpdkTransport::install` calibrates
-  `ergon-clock` once a process, in nanoseconds since boot
-  (`Domain::Monotonic`), and hands its `advanced::Params` to the C, whose
-  hot path reads the counter inline with the same arithmetic: no system
-  call, no call into Rust.
-- **The counter:** the TSC on x86_64 (invariant, with `rdtscp`), `CNTVCT_EL0`
-  on aarch64. Where ergon-clock refuses it, the fallback is
-  `CLOCK_MONOTONIC` through the same formula; either way, monotonic
-  nanoseconds.
-- **Which:** each port's `clock` counter (type 80) reads 1 TSC,
-  2 `CNTVCT_EL0`, 0 fallback. `RUSTERON_DPDK_CLOCK=monotonic` forces the
-  fallback (`counter` is the default).
-- **`DpdkTransport::clock`** returns the adopted clock
-  (`ergon_clock::advanced::Clock`), for your threads to stamp in the same
-  timebase. `ergon_clock::calibrate` gives UTC by default: another
-  timebase.
+The transport times intervals (ARP freshness, the pacer, poll gaps) in
+nanoseconds since boot. It never stamps wall-clock time: for UTC stamps,
+read `CLOCK_REALTIME`.
+
+| `RUSTERON_DPDK_CLOCK` | The transport reads |
+|---|---|
+| `counter` (default; `tsc` too) | The CPU counter inline (TSC on x86_64, `CNTVCT_EL0` on aarch64), scaled by DPDK's rate for it (`rte_get_tsc_hz()`), when all of the checks below pass; else `CLOCK_MONOTONIC` |
+| `monotonic` | `CLOCK_MONOTONIC` |
+
+The counter is used only when:
+
+- DPDK's EAL gives it a rate;
+- the kernel's clock source is the counter (`tsc`, `arch_sys_counter`) or a
+  hypervisor's view of it (`kvm-clock`, `hyperv_clocksource_tsc_page`,
+  `xen`);
+- x86_64: CPUID calls the TSC invariant;
+- aarch64: DPDK's rate is `CNTFRQ_EL0` (a DPDK built to time with the PMU
+  reports another).
+
+The rate is DPDK's and nothing re-measures it. On aarch64 it is
+`CNTFRQ_EL0`'s, or the counter is not used. On x86_64 it is the CPU's stated
+rate or DPDK's own short measurement, depending on the DPDK version and the
+CPU.
+
+**Which one ran:** each port's `clock` counter (type 80) reads 1 TSC,
+2 `CNTVCT_EL0`, 0 `CLOCK_MONOTONIC`. `DpdkTransport::clock()` returns a
+`TransportClock`: `Counter { hz }`, or `Monotonic { reason }`.
 
 ## Receive timestamps
 
