@@ -120,12 +120,16 @@ jobs:
       fail-fast: false
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        # Three ergo-sbe shards split by measured time
+        # (scripts/ci-test-weights.tsv) and everything else. Unsharded,
+        # x86_64 took 2 h 54 min for the workspace step alone and hit this
+        # timeout in the cluster tests.
+        suite:
+          - scripts/ci-test-shard.sh 1 3
+          - scripts/ci-test-shard.sh 2 3
+          - scripts/ci-test-shard.sh 3 3
+          - scripts/ci-test-rest.sh
     runs-on: ${{ matrix.runner }}
-    # Was 45, then 90; the workspace suite keeps growing (sbe_tool_multi_schema_wire_parity_test.rs
-    # alone is 52 compile-and-run cases at ~30s each) and this job was
-    # cancelled mid-suite at 90m on 2026-09-06 with several test files still
-    # to go — same "cancelled, not failed" pattern as the 2026-08-18 bump.
-    # Bump this again when it recurs; do not shrink it back down.
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
@@ -146,12 +150,7 @@ jobs:
       - name: Install native build dependencies
         run: sudo apt-get update && sudo apt-get install -y libbsd-dev uuid-dev curl
 
-      - run: ./scripts/regenerate-sbe-tool-reference.sh --check
-      - run: ./scripts/regenerate-golden.sh --check
-      - run: ./scripts/regenerate-codegen-matrix-fixture.py --check
-      - run: cargo test --workspace --all-features --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness -- --test-threads=2
-      - run: cargo test -p ergo-aeron-cluster -- --test-threads=1
-      - run: cargo test --doc --workspace --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness
+      - run: ${{ matrix.suite }}
 
   # ergon-md-dpdk: the DPDK ENA kernel-bypass transport. The `dpdk` feature
   # needs Linux x86_64 or aarch64 and libdpdk >= 23.11, which Ubuntu 24.04
