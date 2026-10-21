@@ -102,7 +102,7 @@ pub enum TransportClock {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RateSource {
     /// DPDK's (`rte_get_tsc_hz()`): the start-up measurement agrees with it
-    /// within 100 ppm.
+    /// within 100 ppm, or is no usable rate (0, or outside 1 MHz to 20 GHz).
     Eal,
     /// The start-up measurement: DPDK's rate is more than 100 ppm off it.
     Measured,

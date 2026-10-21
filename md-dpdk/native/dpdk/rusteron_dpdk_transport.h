@@ -137,7 +137,7 @@ const char *rusteron_dpdk_last_error(void);
 #define RUSTERON_DPDK_CLOCK_WHY_NOT_STARTED 5   /* no transport has started the clock */
 
 /* Which rate the counter is converted at (the report's `rate`). */
-#define RUSTERON_DPDK_CLOCK_RATE_EAL 0      /* DPDK's: the start-up measurement agrees to 100 ppm */
+#define RUSTERON_DPDK_CLOCK_RATE_EAL 0      /* DPDK's: the start-up measurement agrees to 100 ppm, or is no usable rate */
 #define RUSTERON_DPDK_CLOCK_RATE_MEASURED 1 /* the start-up measurement: DPDK's is further off */
 
 typedef struct rusteron_dpdk_clock_report_stct

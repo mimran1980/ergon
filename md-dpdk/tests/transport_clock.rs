@@ -112,11 +112,16 @@ mod native {
     /// The tightest of 16 reads of the transport's clock bracketed by
     /// `CLOCK_MONOTONIC`: (the native read, the bracket's midpoint, its width).
     fn bracketed() -> (u64, u64, u64) {
+        bracketed_by(monotonic_ns)
+    }
+
+    /// As [`bracketed`], bracketed by `reference`.
+    fn bracketed_by(reference: fn() -> u64) -> (u64, u64, u64) {
         let mut best = (0, 0, u64::MAX);
         for _ in 0..16 {
-            let m0 = monotonic_ns();
+            let m0 = reference();
             let n = now_ns();
-            let m1 = monotonic_ns();
+            let m1 = reference();
             if m1 - m0 < best.2 {
                 best = (n, m0 + (m1 - m0) / 2, m1 - m0);
             }
@@ -354,8 +359,10 @@ mod native {
 
     /// DPDK's rate deliberately 0.2% off the counter's, either way: the
     /// transport measures the counter against `CLOCK_MONOTONIC_RAW` at start,
-    /// converts at its measurement and so tracks `CLOCK_MONOTONIC` to 0.01%
-    /// over 50 ms, reporting both rates. 50 ppm off, it keeps DPDK's.
+    /// converts at its measurement and so tracks `CLOCK_MONOTONIC_RAW` to
+    /// 0.01% over 50 ms, reporting both rates. 50 ppm off, it keeps DPDK's.
+    /// (Not `CLOCK_MONOTONIC`: NTP's frequency correction, up to 500 ppm,
+    /// moves it off the raw rate.)
     #[test]
     #[serial]
     fn the_started_clock_measures_a_dpdk_rate_that_is_off() {
@@ -384,15 +391,15 @@ mod native {
             );
 
             if rate == RATE_MEASURED {
-                let (n0, m0, _) = bracketed();
-                while monotonic_ns() - m0 < 50_000_000 {
+                let (n0, r0, _) = bracketed_by(monotonic_raw_ns);
+                while monotonic_raw_ns() - r0 < 50_000_000 {
                     std::hint::spin_loop();
                 }
-                let (n1, m1, _) = bracketed();
-                let (native, mono) = (n1 - n0, m1 - m0);
+                let (n1, r1, _) = bracketed_by(monotonic_raw_ns);
+                let (native, raw) = (n1 - n0, r1 - r0);
                 assert!(
-                    native.abs_diff(mono) * 10_000 <= mono,
-                    "DPDK {eal} Hz: native advanced {native} ns against {mono} ns of CLOCK_MONOTONIC (more than 0.01% apart): {report:?}"
+                    native.abs_diff(raw) * 10_000 <= raw,
+                    "DPDK {eal} Hz: native advanced {native} ns against {raw} ns of CLOCK_MONOTONIC_RAW (more than 0.01% apart): {report:?}"
                 );
             }
             assert_eq!(close(t), 0);

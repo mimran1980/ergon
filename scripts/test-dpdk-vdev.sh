@@ -308,10 +308,9 @@ assert_report() {
 # counter at the rate the real EAL gives it (rte_get_tsc_hz) or, where that is
 # more than 100 ppm off the rate the transport measures at start, at the
 # measured rate. On aarch64 it is the generic timer's own (CNTFRQ_EL0, as the
-# harness reads it). A fallback
-# to CLOCK_MONOTONIC fails the run and prints the transport's reason: a host
-# whose kernel clock source or CPU rules the counter out says so there;
-# otherwise the real EAL path is broken.
+# harness reads it). A fallback to CLOCK_MONOTONIC fails the run and prints the
+# transport's reason: a host whose kernel clock source or CPU rules the counter
+# out says so there; otherwise the real EAL path is broken.
 assert_clock() {
     local report=$1 label=$2
     [[ "$(report_field "$report" transport)" == '"dpdk"' ]] || return 0

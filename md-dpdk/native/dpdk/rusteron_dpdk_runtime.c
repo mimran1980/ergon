@@ -51,8 +51,9 @@ void rusteron_dpdk_test_set_eal_mode(int mode)
  * rate DPDK's EAL gives the counter, checked against a measurement of the
  * counter at start (rusteron_dpdk_clock_choose_rate). The hot path
  * (rusteron_dpdk_clock_now) reads the counter and converts it inline;
- * CLOCK_MONOTONIC and a test pin go through the slow path. Until a transport starts it the clock is
- * CLOCK_MONOTONIC with a factor of one: CLOCK_MONOTONIC as it reads. */
+ * CLOCK_MONOTONIC and a test pin go through the slow path. Until a transport
+ * starts it the clock is CLOCK_MONOTONIC with a factor of one: CLOCK_MONOTONIC
+ * as it reads. */
 #define RUSTERON_DPDK_CLOCK_BOOT \
     { .mode = RUSTERON_DPDK_CLOCK_MONOTONIC, .base_ticks = 0, .base_ns = 0, .mult = 1ULL << 32 }
 rusteron_dpdk_clock_t rusteron_dpdk_clock = RUSTERON_DPDK_CLOCK_BOOT;

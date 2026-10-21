@@ -598,6 +598,12 @@ pub fn monotonic_ns() -> u64 {
     clock_ns(libc::CLOCK_MONOTONIC)
 }
 
+/// `CLOCK_MONOTONIC_RAW`, ns: what the transport measures the counter's rate
+/// against at start.
+pub fn monotonic_raw_ns() -> u64 {
+    clock_ns(libc::CLOCK_MONOTONIC_RAW)
+}
+
 /// `clock`, ns.
 fn clock_ns(clock: libc::clockid_t) -> u64 {
     let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
@@ -614,13 +620,12 @@ fn clock_ns(clock: libc::clockid_t) -> u64 {
 pub fn measured_counter_hz() -> u64 {
     static HZ: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *HZ.get_or_init(|| {
-        let raw = || clock_ns(libc::CLOCK_MONOTONIC_RAW);
         let sample = || {
             let mut best = (u64::MAX, 0u64, 0u64);
             for _ in 0..16 {
-                let m0 = raw();
+                let m0 = monotonic_raw_ns();
                 let ticks = unsafe { rusteron_dpdk_test_counter() };
-                let m1 = raw();
+                let m1 = monotonic_raw_ns();
                 if m1 - m0 < best.0 {
                     best = (m1 - m0, ticks, m0 + (m1 - m0) / 2);
                 }
@@ -628,7 +633,7 @@ pub fn measured_counter_hz() -> u64 {
             (best.1, best.2)
         };
         let (t0, m0) = sample();
-        while raw() - m0 < 100_000_000 {
+        while monotonic_raw_ns() - m0 < 100_000_000 {
             std::hint::spin_loop();
         }
         let (t1, m1) = sample();
