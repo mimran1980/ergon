@@ -25,7 +25,7 @@
 
 mod common;
 use common::{
-    EnvGuard, TestEnv, assert_no_leak, close, counter_clock, create, dump, expected_counter_source, last_error,
+    COUNTER_SOURCE, EnvGuard, SOURCE_MONOTONIC, TestEnv, assert_no_leak, close, create, dump, last_error,
     last_error_code, rusteron_dpdk_clock_source, rusteron_dpdk_config_t, rusteron_dpdk_fake_allocated,
     rusteron_dpdk_fake_set_desc_limits, rusteron_dpdk_fake_set_max_mtu, rusteron_dpdk_fake_set_mbuf_room_cap,
 };
@@ -294,32 +294,34 @@ fn rx_hw_timestamp_must_be_a_flag() {
 }
 
 /// `RUSTERON_DPDK_CLOCK` is the Rust install's to read (`clock`): the
-/// native transport takes the clock its configuration carries (here a
-/// counter clock), whatever the variable says, so a stale native reading of
-/// it cannot override the calibration handed over.
+/// native transport takes the clock its configuration chooses (here the
+/// counter, with the EAL giving a rate), whatever the variable says, so a
+/// stale native reading of it cannot override the choice handed over.
 #[serial]
 #[test]
 fn the_native_transport_does_not_read_the_clock_variable() {
-    let counter = counter_clock();
-    let source = if cfg!(target_arch = "aarch64") { 2 } else { 1 };
     for value in ["monotonic", "hpet"] {
         let env = TestEnv::new();
         env.eal_skip();
+        env.use_counter();
         let _guard = EnvGuard::set("RUSTERON_DPDK_CLOCK", value);
-        let mut config = rusteron_dpdk_config_t::valid();
-        config.clock = counter.params();
-        let transport = create(&config).unwrap_or_else(|e| panic!("{value}: {e}"));
+        let transport = create(&rusteron_dpdk_config_t::valid()).unwrap_or_else(|e| panic!("{value}: {e}"));
         assert_eq!(
             unsafe { rusteron_dpdk_clock_source() },
-            source,
+            COUNTER_SOURCE,
             "{value}: the configuration's counter"
         );
         assert_eq!(close(transport), 0);
     }
     let env = TestEnv::new();
     env.eal_skip();
+    let _guard = EnvGuard::set("RUSTERON_DPDK_CLOCK", "counter");
     let transport = create(&rusteron_dpdk_config_t::valid()).unwrap_or_else(|e| panic!("{e}"));
-    assert_eq!(unsafe { rusteron_dpdk_clock_source() }, expected_counter_source());
+    assert_eq!(
+        unsafe { rusteron_dpdk_clock_source() },
+        SOURCE_MONOTONIC,
+        "no rate from the EAL: CLOCK_MONOTONIC"
+    );
     assert_eq!(close(transport), 0);
 }
 

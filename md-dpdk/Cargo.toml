@@ -37,10 +37,6 @@ log = "0.4"
 # (src/checks.rs). Path and version, as ergo-sbe is for the cluster crate: the
 # release publishes it first (scripts/check-publish-set.sh).
 ergon-tune = { version = "0.1.31", path = "../tune", features = ["nic"] }
-# The transport's clock (src/clock.rs): calibrated once in Rust, its
-# conversion handed to the native transport, whose hot path reads the counter
-# with the same arithmetic. Path and version, so this crate can publish.
-ergon-clock = { version = "0.1.31", path = "../clock" }
 
 # The M3 probe socket's buffer sizes and the re-check thread's CPU affinity,
 # without `unsafe` (already in the lock through ergon-tune).
@@ -49,7 +45,6 @@ rustix = { version = "1.1.5", default-features = false, features = ["std", "net"
 
 [dev-dependencies]
 criterion = "0.8"
-minstant = "0.1"
 serial_test = { version = "4", features = ["file_locks"] }
 
 [build-dependencies]
@@ -67,8 +62,8 @@ static = ["rusteron-media-driver/static"]
 name = "media_driver"
 path = "src/bin/media_driver.rs"
 
-# Clock costs and the transport's send and poll paths per clock, against the
-# DPDK-free fakes (Linux x86_64 or aarch64, `dpdk`; elsewhere an empty run).
+# The transport's clock costs and its send and poll paths per clock, against
+# the DPDK-free fakes (Linux x86_64 or aarch64, `dpdk`; elsewhere an empty run).
 [[bench]]
 name = "clock"
 harness = false

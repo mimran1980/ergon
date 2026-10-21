@@ -16,8 +16,8 @@
 //! A slow configuration stops early: warmup after a quarter of `RTT_SECONDS`
 //! (default 20) and the measured run after all of it.
 //!
-//! Round trips are stamped with ergon-clock's calibrated counter, its ordered
-//! read at both ends (`lab::Clock::stamp`), in nanoseconds. With
+//! Round trips are stamped with quanta's clock, its ordered read at both ends
+//! (`lab::Clock::stamp`), in nanoseconds. With
 //! `RTT_HISTOGRAM=<path>` xping also writes the full histogram there, one
 //! `value_ns,count` row per recorded value. With `LOAD_SPIKES=<path>` it writes
 //! every measured round trip of at least `LOAD_SPIKE_NS` (default 100000) as
@@ -162,9 +162,6 @@ fn run_ping(
     let image = subscription.image_at_index(0).unwrap();
     pin(cpu);
     let clock = Clock::calibrate();
-    if !clock.is_counter() {
-        eprintln!("rtt: no hardware counter (or BENCH_CLOCK=monotonic), stamping with CLOCK_MONOTONIC");
-    }
 
     let budget = Duration::from_secs(std::env::var("RTT_SECONDS").map_or(20, |s| s.parse().unwrap()));
     let mut histogram = Histogram::<u64>::new_with_bounds(1, 60_000_000_000, 3).unwrap();

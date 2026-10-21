@@ -885,56 +885,93 @@ fn install_succeeds_on_configured_context() {
     common::teardown(guard);
 }
 
-/// The install calibrates the transport's clock with ergon-clock (once a
-/// process) and hands it to the native transport: `RUSTERON_DPDK_CLOCK`
-/// unset, `counter` or `tsc` is ergon-clock's choice for this host,
-/// `monotonic` its fallback; the native clock reports and reads what the
-/// transport holds. Any other value refuses before any native work.
+/// The install hands the native transport the clock `RUSTERON_DPDK_CLOCK`
+/// chooses and reports the clock it started: unset, `counter` or `tsc` is
+/// the counter at the EAL's rate (unless this host's kernel clock source
+/// rules it out, as `kernel_refuses_counter` says), or at the rate measured
+/// at start where the EAL's is 0.2% off; `monotonic` is `CLOCK_MONOTONIC`,
+/// and with no rate from the EAL the counter falls back, saying why. Counter
+/// type 80's source agrees. Any other value refuses before any native work.
 #[cfg(feature = "dpdk")]
 #[serial]
 #[test]
-fn install_hands_the_native_transport_ergon_clocks_calibration() {
-    use ergon_md_dpdk::clock::{ClockChoice, transport_clock};
-    let counter = transport_clock(ClockChoice::Counter).unwrap().clock;
-    let source = |c: &ergon_clock::advanced::Clock| match (c.is_counter(), cfg!(target_arch = "aarch64")) {
-        (false, _) => 0,
-        (true, false) => 1,
-        (true, true) => 2,
+fn install_reports_the_clock_the_native_transport_reads() {
+    use ergon_md_dpdk::clock::{CLOCKSOURCE_PATH, MonotonicReason, RateSource, TransportClock, kernel_refuses_counter};
+    let hz = common::measured_counter_hz();
+    let off = hz + hz / 500;
+    let kernel = std::fs::read_to_string(CLOCKSOURCE_PATH)
+        .ok()
+        .and_then(|source| kernel_refuses_counter(&source));
+    // The counter, its start-up measurement read as this test's own (the
+    // two agree to 100 ppm, checked below).
+    let counter = |eal_hz: u64, rate: RateSource| match &kernel {
+        Some(reason) => TransportClock::Monotonic { reason: reason.clone() },
+        None => TransportClock::Counter {
+            hz: if rate == RateSource::Eal { eal_hz } else { hz },
+            rate,
+            eal_hz,
+            measured_hz: hz,
+        },
     };
-    for (value, monotonic) in [
-        (None, false),
-        (Some("counter"), false),
-        (Some("tsc"), false),
-        (Some("monotonic"), true),
+    let no_rate = match &kernel {
+        Some(reason) => TransportClock::Monotonic { reason: reason.clone() },
+        None => TransportClock::Monotonic {
+            reason: MonotonicReason::NoCounterRate { eal_hz: 0 },
+        },
+    };
+    let chosen = TransportClock::Monotonic {
+        reason: MonotonicReason::Chosen,
+    };
+    for (value, rate, expected) in [
+        (None, hz, counter(hz, RateSource::Eal)),
+        (Some("counter"), hz, counter(hz, RateSource::Eal)),
+        (Some("tsc"), hz, counter(hz, RateSource::Eal)),
+        (Some(""), hz, counter(hz, RateSource::Eal)),
+        (None, off, counter(off, RateSource::Measured)),
+        (Some("monotonic"), hz, chosen.clone()),
+        (None, 0, no_rate.clone()),
+        (Some("monotonic"), 0, chosen.clone()),
     ] {
         let env = TestEnv::new();
         env.eal_skip();
+        env.set_counter_rate(rate);
         match value {
             Some(v) => set_var("RUSTERON_DPDK_CLOCK", v),
             None => remove_var("RUSTERON_DPDK_CLOCK"),
         }
         let guard = DpdkTransport::install(&configured_context(), &canonical());
         remove_var("RUSTERON_DPDK_CLOCK");
-        let guard = guard.unwrap_or_else(|e| panic!("{value:?}: {e}"));
-        let clock = guard.clock();
-        if monotonic {
-            assert!(!clock.is_counter(), "{value:?}");
-        } else {
-            assert_eq!(clock.params(), counter.params(), "{value:?}: the process's calibration");
-        }
+        let guard = guard.unwrap_or_else(|e| panic!("{value:?} at {rate} Hz: {e}"));
+        let clock = match guard.clock().clone() {
+            TransportClock::Counter {
+                hz: used,
+                rate,
+                eal_hz,
+                measured_hz,
+            } => {
+                assert!(
+                    measured_hz.abs_diff(hz) * 10_000 <= hz,
+                    "{value:?} at {rate:?}: measured {measured_hz} Hz at start, {hz} Hz here"
+                );
+                let used = if used == measured_hz { hz } else { used };
+                TransportClock::Counter {
+                    hz: used,
+                    rate,
+                    eal_hz,
+                    measured_hz: hz,
+                }
+            }
+            other => other,
+        };
+        assert_eq!(clock, expected, "{value:?} at {rate} Hz: {}", guard.clock());
+        let source = match guard.clock() {
+            TransportClock::Counter { .. } => common::COUNTER_SOURCE,
+            _ => common::SOURCE_MONOTONIC,
+        };
         assert_eq!(
             unsafe { common::rusteron_dpdk_clock_source() },
-            source(&clock),
-            "{value:?}"
-        );
-        let (before, native, after) = (
-            clock.now_ns(),
-            unsafe { common::rusteron_dpdk_clock_ns() },
-            clock.now_ns(),
-        );
-        assert!(
-            native + 1_000 >= before && native <= after + 1_000,
-            "{value:?}: native {native} outside {before}..{after}"
+            source,
+            "{value:?} at {rate} Hz"
         );
         common::teardown(guard);
     }

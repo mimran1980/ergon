@@ -24,6 +24,25 @@ pub struct Report {
     pub backpressure_ops: u64,
     /// Unrecovered sequence gaps observed by the receiver.
     pub gaps: u64,
+    /// The embedded DPDK transport's clock: `counter`, `monotonic`, or
+    /// `unknown` (one this harness does not know, named in `clock_reason`);
+    /// empty for kernel UDP or a standalone driver.
+    pub clock: String,
+    /// The counter's rate when `clock` is `counter`, else 0.
+    pub clock_hz: u64,
+    /// Which rate `clock_hz` is: `eal` (DPDK's) or `measured` (at start,
+    /// DPDK's being more than 100 ppm off); empty unless `counter`.
+    pub clock_rate: String,
+    /// DPDK's rate for the counter (`rte_get_tsc_hz()`) when `clock` is
+    /// `counter`, else 0.
+    pub clock_eal_hz: u64,
+    /// The counter's rate measured at start when `clock` is `counter`, else 0.
+    pub clock_measured_hz: u64,
+    /// Why `clock` is `monotonic`, or what the `unknown` clock is; empty
+    /// otherwise.
+    pub clock_reason: String,
+    /// `CNTFRQ_EL0` as this process reads it on aarch64, else 0.
+    pub cntfrq_hz: u64,
     pub detail: Vec<String>,
     pub error: Option<String>,
 }
@@ -49,6 +68,13 @@ impl Report {
         s.push_str(&format!("  \"delivered_per_sec\": {},\n", self.delivered_per_sec));
         s.push_str(&format!("  \"backpressure_ops\": {},\n", self.backpressure_ops));
         s.push_str(&format!("  \"gaps\": {},\n", self.gaps));
+        s.push_str(&format!("  \"clock\": {},\n", json_str(&self.clock)));
+        s.push_str(&format!("  \"clock_hz\": {},\n", self.clock_hz));
+        s.push_str(&format!("  \"clock_rate\": {},\n", json_str(&self.clock_rate)));
+        s.push_str(&format!("  \"clock_eal_hz\": {},\n", self.clock_eal_hz));
+        s.push_str(&format!("  \"clock_measured_hz\": {},\n", self.clock_measured_hz));
+        s.push_str(&format!("  \"clock_reason\": {},\n", json_str(&self.clock_reason)));
+        s.push_str(&format!("  \"cntfrq_hz\": {},\n", self.cntfrq_hz));
         s.push_str("  \"detail\": [\n");
         for (i, d) in self.detail.iter().enumerate() {
             s.push_str(&format!("    {}", json_str(d)));
@@ -84,4 +110,37 @@ fn json_str(s: &str) -> String {
     }
     out.push('"');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The vdev script reads `"<field>": <value>` up to the next comma: the
+    /// transport's clock, its rate and `CNTFRQ_EL0` come out that way.
+    #[test]
+    fn the_report_carries_the_transports_clock() {
+        let report = Report {
+            transport: "dpdk".to_string(),
+            clock: "counter".to_string(),
+            clock_hz: 1_000_000_000,
+            clock_rate: "eal".to_string(),
+            clock_eal_hz: 1_000_000_000,
+            clock_measured_hz: 1_000_000_017,
+            cntfrq_hz: 1_000_000_000,
+            ..Report::default()
+        };
+        let json = report.to_json();
+        for line in [
+            "\"clock\": \"counter\",",
+            "\"clock_hz\": 1000000000,",
+            "\"clock_rate\": \"eal\",",
+            "\"clock_eal_hz\": 1000000000,",
+            "\"clock_measured_hz\": 1000000017,",
+            "\"clock_reason\": \"\",",
+            "\"cntfrq_hz\": 1000000000,",
+        ] {
+            assert!(json.contains(line), "{line} in {json}");
+        }
+    }
 }

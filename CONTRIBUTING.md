@@ -129,17 +129,16 @@ the benchmark is re-audited.
 ## Package boundaries
 
 Only `ergo-sbe`, `ergo-aeron-cluster`, `ergon-clock`, `ergon-tune`, `ergon-io`
-and `ergon-md-dpdk` are publication candidates; `ergon-io` depends on
-`ergon-tune`, and `ergon-md-dpdk` on `ergon-clock` and `ergon-tune`, so the
-release publishes those two first.
+and `ergon-md-dpdk` are publication candidates; `ergon-io` and
+`ergon-md-dpdk` depend on `ergon-tune`, so the release publishes it first.
 `scripts/check-publish-set.sh` (in `just policy`) fails when a published crate
 depends on an unpublished one, on a path without a version or on an older
 version than a published sibling's own, or when the release recipe, the
 release workflow, the dry runs or the public-API gate leave a published crate
 out or publish it before its dependencies. A version bump therefore updates
 every `version` beside a workspace `path` with `[workspace.package]`:
-`ergo-sbe` in `[workspace.dependencies]`, and the `ergon-clock` and
-`ergon-tune` lines in `md-dpdk/`, `io/` and `clock/bench/Cargo.toml`.
+`ergo-sbe` in `[workspace.dependencies]`, the `ergon-tune` lines in
+`md-dpdk/` and `io/`, and the `ergon-clock` line in `clock/bench/Cargo.toml`.
 Inspect their payloads before any release:
 
 ```sh

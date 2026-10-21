@@ -37,32 +37,15 @@ extern "C" {
 #define RUSTERON_DPDK_MAX_AERON_MTU 8960
 
 /*
- * The transport's clock: ergon-clock's calibration (its `Params`, the same
- * layout), made once in Rust and adopted at create. Both kinds convert with
- * ergon-clock's formula:
- *
- *   ns = base_ns + (int64_t)(((__int128)(int64_t)(ticks - base_ticks) * (int64_t)mult) >> 32)
- *
- * with `ticks` the hardware counter (kind 1: rdtsc on x86_64, CNTVCT_EL0 on
- * aarch64) or CLOCK_MONOTONIC in nanoseconds (kind 0, the fallback, whose
- * factor is 2^32 until its owner retunes it).
+ * The clock the transport reads (the config's `clock`): the CPU counter (rdtsc
+ * on x86_64, CNTVCT_EL0 on aarch64) at the rate DPDK's EAL gives
+ * (rte_get_tsc_hz), or at the rate measured at start where DPDK's is more
+ * than 100 ppm off; or CLOCK_MONOTONIC. COUNTER falls back to CLOCK_MONOTONIC
+ * where the EAL gives no rate the transport can trust; the clock report says
+ * why, and which rate.
  */
-#define RUSTERON_DPDK_CLOCK_PARAMS_VERSION 1 /* ergon-clock's PARAMS_VERSION */
-#define RUSTERON_DPDK_CLOCK_KIND_MONOTONIC 0
-#define RUSTERON_DPDK_CLOCK_KIND_COUNTER 1
-
-typedef struct rusteron_dpdk_clock_params_stct
-{
-    uint32_t version;    /* RUSTERON_DPDK_CLOCK_PARAMS_VERSION */
-    uint32_t kind;       /* RUSTERON_DPDK_CLOCK_KIND_{COUNTER,MONOTONIC} */
-    uint32_t domain;     /* 0: the monotonic domain, the only one the transport takes */
-    uint32_t reserved;   /* 0 */
-    uint64_t base_ticks; /* the ticks at the base */
-    uint64_t base_ns;    /* the time, ns, at the base */
-    uint64_t mult;       /* ns per tick, 32.32 fixed point, in (0, 2^63) */
-    uint64_t hz;         /* ticks a second (the rate mult stands for; not read) */
-}
-rusteron_dpdk_clock_params_t;
+#define RUSTERON_DPDK_CLOCK_CHOICE_COUNTER 0
+#define RUSTERON_DPDK_CLOCK_CHOICE_MONOTONIC 1
 
 typedef struct rusteron_dpdk_config_stct
 {
@@ -105,9 +88,9 @@ typedef struct rusteron_dpdk_config_stct
     uint8_t rx_hw_timestamp;
 
     /* The clock the transport reads (ARP freshness, the pacer, poll gaps):
-     * ergon-clock's calibration, checked at create and adopted for the
-     * process. */
-    rusteron_dpdk_clock_params_t clock;
+     * RUSTERON_DPDK_CLOCK_CHOICE_{COUNTER,MONOTONIC}, started at create for
+     * the process. */
+    uint8_t clock;
 }
 rusteron_dpdk_config_t;
 
@@ -139,6 +122,38 @@ aeron_udp_channel_transport_bindings_t *rusteron_dpdk_transport_bindings(void);
 
 /* Last recorded native error message (thread-local, valid until next call). */
 const char *rusteron_dpdk_last_error(void);
+
+/*
+ * The clock the transport started (at create; process-lifetime): its source,
+ * as counter type 80 reports it, its rate and where that came from, and why
+ * it is CLOCK_MONOTONIC when it is. Before any transport starts it,
+ * CLOCK_MONOTONIC, why NOT_STARTED.
+ */
+#define RUSTERON_DPDK_CLOCK_WHY_COUNTER 0       /* the counter (`rate` says at which rate) */
+#define RUSTERON_DPDK_CLOCK_WHY_CHOSEN 1        /* the config chose CLOCK_MONOTONIC */
+#define RUSTERON_DPDK_CLOCK_WHY_NO_RATE 2       /* the EAL gave no rate, or one outside 1 MHz..20 GHz */
+#define RUSTERON_DPDK_CLOCK_WHY_NOT_INVARIANT 3 /* x86_64: CPUID says the TSC is not invariant */
+#define RUSTERON_DPDK_CLOCK_WHY_NOT_CNTFRQ 4    /* aarch64: the EAL's rate is not CNTFRQ_EL0 */
+#define RUSTERON_DPDK_CLOCK_WHY_NOT_STARTED 5   /* no transport has started the clock */
+
+/* Which rate the counter is converted at (the report's `rate`). */
+#define RUSTERON_DPDK_CLOCK_RATE_EAL 0      /* DPDK's: the start-up measurement agrees to 100 ppm, or is no usable rate */
+#define RUSTERON_DPDK_CLOCK_RATE_MEASURED 1 /* the start-up measurement: DPDK's is further off */
+
+typedef struct rusteron_dpdk_clock_report_stct
+{
+    uint64_t hz;          /* counter ticks a second, the rate it is converted at; 0 on CLOCK_MONOTONIC */
+    uint64_t eal_hz;      /* rte_get_tsc_hz() at start; 0 without an EAL */
+    uint64_t cntfrq;      /* aarch64: CNTFRQ_EL0 at start; 0 on x86_64 */
+    uint64_t measured_hz; /* the counter against CLOCK_MONOTONIC_RAW at start; 0 on CLOCK_MONOTONIC */
+    int32_t source;       /* 0 CLOCK_MONOTONIC, 1 the TSC, 2 CNTVCT_EL0 (counter type 80) */
+    int32_t why;          /* RUSTERON_DPDK_CLOCK_WHY_* */
+    int32_t invariant;    /* x86_64: CPUID's invariant-TSC bit; 0 on aarch64 */
+    int32_t rate;         /* RUSTERON_DPDK_CLOCK_RATE_*: which rate hz is (EAL on CLOCK_MONOTONIC) */
+}
+rusteron_dpdk_clock_report_t;
+
+void rusteron_dpdk_clock_report(rusteron_dpdk_clock_report_t *report);
 
 /* Machine-readable error code for the last native failure (plan §7.2). */
 #define RUSTERON_DPDK_ERR_OK 0

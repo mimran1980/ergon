@@ -61,8 +61,9 @@ pub struct rusteron_dpdk_config_t {
     pub sender_mac: [c_char; 18],
     pub receiver_mac: [c_char; 18],
     pub rx_hw_timestamp: u8,
-    /// ergon-clock's calibration, which the transport's clock adopts.
-    pub clock: ergon_clock::advanced::Params,
+    /// `RUSTERON_DPDK_CLOCK_CHOICE_*`: 0 the counter ([`CLOCK_CHOICE_COUNTER`]),
+    /// 1 `CLOCK_MONOTONIC` ([`CLOCK_CHOICE_MONOTONIC`]).
+    pub clock: u8,
 }
 
 // The C layout, field by field (asserted in native/dpdk/rusteron_dpdk_transport.c
@@ -91,9 +92,68 @@ const _: () = {
     assert!(offset_of!(C, sender_mac) == 4288);
     assert!(offset_of!(C, receiver_mac) == 4306);
     assert!(offset_of!(C, rx_hw_timestamp) == 4324);
-    assert!(offset_of!(C, clock) == 4328);
-    assert!(size_of::<C>() == 4376);
+    assert!(offset_of!(C, clock) == 4325);
+    assert!(size_of::<C>() == 4328);
 };
+
+/// The config's clock choices (`RUSTERON_DPDK_CLOCK_CHOICE_*`).
+pub const CLOCK_CHOICE_COUNTER: u8 = 0;
+pub const CLOCK_CHOICE_MONOTONIC: u8 = 1;
+
+/// Mirror of `rusteron_dpdk_clock_report_t` in native/dpdk/rusteron_dpdk_transport.h:
+/// the clock the transport started.
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ClockReport {
+    pub hz: u64,
+    pub eal_hz: u64,
+    pub cntfrq: u64,
+    pub measured_hz: u64,
+    pub source: c_int,
+    pub why: c_int,
+    pub invariant: c_int,
+    pub rate: c_int,
+}
+
+const _: () = {
+    use std::mem::{offset_of, size_of};
+    assert!(offset_of!(ClockReport, measured_hz) == 24);
+    assert!(offset_of!(ClockReport, source) == 32);
+    assert!(offset_of!(ClockReport, rate) == 44);
+    assert!(size_of::<ClockReport>() == 48);
+};
+
+/// `RUSTERON_DPDK_CLOCK_RATE_*`: which rate the counter is converted at.
+pub const RATE_EAL: c_int = 0;
+pub const RATE_MEASURED: c_int = 1;
+
+/// `RUSTERON_DPDK_CLOCK_WHY_*`: why the transport's clock is what it is.
+pub const WHY_COUNTER: c_int = 0;
+pub const WHY_CHOSEN: c_int = 1;
+pub const WHY_NO_RATE: c_int = 2;
+pub const WHY_NOT_INVARIANT: c_int = 3;
+pub const WHY_NOT_CNTFRQ: c_int = 4;
+pub const WHY_NOT_STARTED: c_int = 5;
+
+/// The clock sources (`RUSTERON_DPDK_CLOCK_*`, counter type 80's values).
+pub const SOURCE_MONOTONIC: c_int = 0;
+pub const SOURCE_TSC: c_int = 1;
+pub const SOURCE_CNTVCT: c_int = 2;
+/// This architecture's counter: the TSC on x86_64, `CNTVCT_EL0` on aarch64.
+pub const COUNTER_SOURCE: c_int = if cfg!(target_arch = "aarch64") {
+    SOURCE_CNTVCT
+} else {
+    SOURCE_TSC
+};
+
+/// Mirror of `rusteron_dpdk_counter_rate_t` in native/dpdk/rusteron_dpdk_internal.h.
+#[repr(C)]
+#[derive(Debug, Default, Clone, Copy)]
+pub struct CounterRate {
+    pub eal_hz: u64,
+    pub cntfrq: u64,
+    pub invariant: c_int,
+}
 
 impl rusteron_dpdk_config_t {
     /// A configuration that passes every native validation rule (plan §6.5).
@@ -119,7 +179,7 @@ impl rusteron_dpdk_config_t {
             sender_mac: [0; 18],
             receiver_mac: [0; 18],
             rx_hw_timestamp: 0,
-            clock: test_clock().params(),
+            clock: CLOCK_CHOICE_COUNTER,
         };
         fill_cstr(&mut c.file_prefix, "rusteron-ena");
         fill_cstr(&mut c.hugepage_dir, "/dev/hugepages");
@@ -250,6 +310,31 @@ impl TestEnv {
     /// ENA's LLQ device argument.
     pub fn set_eal_version(&self, year: c_int, month: c_int) {
         unsafe { rusteron_dpdk_fake_set_eal_version(year, month) };
+    }
+
+    /// What the fake EAL says the counter's rate is (`rte_get_tsc_hz()`),
+    /// on a host whose counter it trusts (an invariant TSC; `CNTFRQ_EL0` the
+    /// same): the transport's clock is then the counter at `hz`. Nothing
+    /// after reset, so the clock is `CLOCK_MONOTONIC`.
+    pub fn set_counter_rate(&self, hz: u64) {
+        unsafe { rusteron_dpdk_fake_set_eal_tsc_hz(hz) };
+    }
+
+    /// Each fact the fake EAL reports about the counter.
+    pub fn set_counter_facts(&self, eal_hz: u64, invariant: bool, cntfrq: u64) {
+        unsafe { rusteron_dpdk_fake_set_eal_counter_facts(eal_hz, invariant as c_int, cntfrq) };
+    }
+
+    /// The counter at its own rate ([`measured_counter_hz`]): the transport's
+    /// clock as the real EAL gives it on a trusted host.
+    pub fn use_counter(&self) {
+        self.set_counter_rate(measured_counter_hz());
+    }
+
+    /// The rate the clock start takes as its measurement of the counter, in
+    /// place of measuring it (0, and after reset: it measures).
+    pub fn set_measured_counter_rate(&self, hz: u64) {
+        unsafe { rusteron_dpdk_test_set_measured_counter_hz(hz) };
     }
 
     /// The kernel driver every PCI port reads as bound to (its sysfs driver
@@ -454,9 +539,26 @@ unsafe extern "C" {
     pub fn rusteron_dpdk_test_set_thread_cpu_ns(ns: u64);
     pub fn rusteron_dpdk_clock_ns() -> u64;
     pub fn rusteron_dpdk_clock_source() -> c_int;
-    /// Adopt ergon-clock's calibration as the transport's clock, as create
-    /// does with its configuration's (0, or -1 with the error recorded).
-    pub fn rusteron_dpdk_clock_adopt(params: *const ergon_clock::advanced::Params) -> c_int;
+    /// The clock the transport started.
+    pub fn rusteron_dpdk_clock_report(report: *mut ClockReport);
+    /// Start the transport's clock with a config's choice, as create does.
+    pub fn rusteron_dpdk_clock_start(choice: c_int);
+    /// Whether the counter `source` can run at the rate `rate` gives:
+    /// `WHY_COUNTER` or why not. Pure.
+    pub fn rusteron_dpdk_clock_rule(source: c_int, rate: *const CounterRate) -> c_int;
+    /// The rate the counter is converted at, given DPDK's and the start-up
+    /// measurement: `RATE_EAL` or `RATE_MEASURED`, the rate in `hz`. Pure.
+    pub fn rusteron_dpdk_clock_choose_rate(eal_hz: u64, measured_hz: u64, hz: *mut u64) -> c_int;
+    fn rusteron_dpdk_test_set_measured_counter_hz(hz: u64);
+    /// The started conversion applied to `ticks`: what the hot path computes
+    /// from a counter read (or, for the fallback, from a `CLOCK_MONOTONIC` read).
+    pub fn rusteron_dpdk_test_clock_ns_at(ticks: u64) -> u64;
+    /// The started conversion's base ticks, base ns and 32.32 factor.
+    pub fn rusteron_dpdk_test_clock_params(base_ticks: *mut u64, base_ns: *mut u64, mult: *mut u64);
+    /// One read of the counter the clock converts.
+    pub fn rusteron_dpdk_test_counter() -> u64;
+    fn rusteron_dpdk_fake_set_eal_tsc_hz(hz: u64);
+    fn rusteron_dpdk_fake_set_eal_counter_facts(eal_hz: u64, invariant: c_int, cntfrq: u64);
     fn rusteron_dpdk_test_set_pci_kernel_driver(driver: *const c_char);
 }
 
@@ -466,15 +568,6 @@ pub const ENA_LLQ_WC: c_int = 1;
 pub const ENA_LLQ_UNCACHED: c_int = 2;
 pub const ENA_LLQ_UNSEEN: c_int = 3;
 pub const ENA_LLQ_UNKNOWN: c_int = 4;
-
-/// The clock every test transport adopts ([`rusteron_dpdk_config_t::valid`]):
-/// the transport's own, ergon-clock's calibration as `DpdkTransport::install`
-/// makes it (once a process).
-pub fn test_clock() -> ergon_clock::advanced::Clock {
-    ergon_md_dpdk::clock::transport_clock(ergon_md_dpdk::clock::ClockChoice::Counter)
-        .unwrap_or_else(|e| panic!("the transport's clock: {e}"))
-        .clock
-}
 
 /// Free a transport a test installed. Dropping does not free — the Aeron
 /// context's bindings point into the native runtime — so a test that wants
@@ -493,54 +586,59 @@ pub fn teardown_result(result: Result<ergon_md_dpdk::DpdkTransport, ergon_md_dpd
     }
 }
 
-/// A counter clock made from parameters (another calibration's, as
-/// ergon-clock lets a process share one), wherever this process can read the
-/// counter: the transport's counter path is exercised even on a host whose
-/// own calibration falls back (amd64 emulated on an arm64 kernel, whose clock
-/// source is not the TSC). The rate is measured roughly over 10 ms; the
-/// native and ergon-clock reads convert the same ticks either way. Panics
-/// where the counter cannot be read (x86_64 without `rdtscp`).
-#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
-pub fn counter_clock() -> ergon_clock::advanced::Clock {
-    use std::time::{Duration, Instant};
-    #[cfg(target_arch = "x86_64")]
-    let read = ergon_clock::advanced::raw::rdtsc;
-    #[cfg(target_arch = "aarch64")]
-    let read = ergon_clock::advanced::raw::cntvct;
-    let (t0, i0) = (read(), Instant::now());
-    while i0.elapsed() < Duration::from_millis(10) {
-        std::hint::spin_loop();
-    }
-    let (t1, i1) = (read(), Instant::now());
-    let hz = u64::try_from(u128::from(t1 - t0) * 1_000_000_000 / (i1 - i0).as_nanos()).unwrap();
-    let (mono, _) = ergon_clock::advanced::MonotonicClock::always(ergon_clock::Domain::Monotonic);
-    let scale = ergon_clock::advanced::Scale::from_hz(hz, read(), mono.now_ns()).unwrap();
-    let params = ergon_clock::advanced::Params {
-        version: ergon_clock::advanced::PARAMS_VERSION,
-        kind: ergon_clock::advanced::KIND_COUNTER,
-        domain: 0,
-        reserved: 0,
-        base_ticks: scale.base_ticks(),
-        base_ns: scale.base_ns(),
-        mult: scale.mult(),
-        hz: scale.hz(),
-    };
-    ergon_clock::advanced::Clock::Counter(
-        ergon_clock::advanced::CounterClock::from_params(&params)
-            .unwrap_or_else(|e| panic!("this process cannot read the counter: {e}")),
-    )
+/// The clock the transport started.
+pub fn clock_report() -> ClockReport {
+    let mut report = ClockReport::default();
+    unsafe { rusteron_dpdk_clock_report(&mut report) };
+    report
 }
 
-/// The clock source a test transport reports (`rusteron_dpdk_clock_source`,
-/// counter type 80): ergon-clock's choice for this host, 1 for the TSC on
-/// x86_64 or 2 for the generic timer's virtual counter (`CNTVCT_EL0`) on
-/// aarch64, else 0, its `CLOCK_MONOTONIC` fallback.
-pub fn expected_counter_source() -> c_int {
-    match (test_clock().is_counter(), cfg!(target_arch = "aarch64")) {
-        (false, _) => 0,
-        (true, false) => 1,
-        (true, true) => 2,
-    }
+/// `CLOCK_MONOTONIC`, ns.
+pub fn monotonic_ns() -> u64 {
+    clock_ns(libc::CLOCK_MONOTONIC)
+}
+
+/// `CLOCK_MONOTONIC_RAW`, ns: what the transport measures the counter's rate
+/// against at start.
+pub fn monotonic_raw_ns() -> u64 {
+    clock_ns(libc::CLOCK_MONOTONIC_RAW)
+}
+
+/// `clock`, ns.
+fn clock_ns(clock: libc::clockid_t) -> u64 {
+    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let rc = unsafe { libc::clock_gettime(clock, &mut ts) };
+    assert_eq!(rc, 0, "clock_gettime({clock})");
+    ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
+}
+
+/// The counter's rate, measured once a test binary: its ticks against
+/// `CLOCK_MONOTONIC_RAW` (what the transport measures it against at start)
+/// over 100 ms, each end the tightest of 16 bracketed reads, so the rate is
+/// good to a few ppm on a quiet CPU (the transport keeps DPDK's rate within
+/// 100 ppm of its own measurement).
+pub fn measured_counter_hz() -> u64 {
+    static HZ: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *HZ.get_or_init(|| {
+        let sample = || {
+            let mut best = (u64::MAX, 0u64, 0u64);
+            for _ in 0..16 {
+                let m0 = monotonic_raw_ns();
+                let ticks = unsafe { rusteron_dpdk_test_counter() };
+                let m1 = monotonic_raw_ns();
+                if m1 - m0 < best.0 {
+                    best = (m1 - m0, ticks, m0 + (m1 - m0) / 2);
+                }
+            }
+            (best.1, best.2)
+        };
+        let (t0, m0) = sample();
+        while monotonic_raw_ns() - m0 < 100_000_000 {
+            std::hint::spin_loop();
+        }
+        let (t1, m1) = sample();
+        u64::try_from(u128::from(t1 - t0) * 1_000_000_000 / u128::from(m1 - m0)).unwrap()
+    })
 }
 
 /// Pin the transport clock at `ms` milliseconds (stored in nanoseconds).

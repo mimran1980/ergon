@@ -270,9 +270,6 @@ fn run(
     });
     pin(cpu);
     let clock = Clock::calibrate();
-    if !clock.is_counter() {
-        eprintln!("load: no hardware counter (or BENCH_CLOCK=monotonic), stamping with CLOCK_MONOTONIC");
-    }
     let mut streams: Vec<Offered> = pending
         .into_iter()
         .map(|(spec, publication, subscription)| {

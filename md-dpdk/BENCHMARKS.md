@@ -790,7 +790,7 @@ One change per experiment, A/B against the current best, 5 reps; kept only if th
 | date | change | result | decision |
 | --- | --- | --- | --- |
 | 2026-10-13 | DPDK against kernel UDP and busy polling (D8s_v6 pair) | DPDK fastest at every percentile | baseline |
-| 2026-10-13 | TSC clock in the transport and clients | 9–10 ns off each send, 4 ns off each poll; round trips unchanged within noise at every percentile and the max | kept: cheaper and calibrated to 0.01 ppm |
+| 2026-10-13 | TSC clock in the transport and clients | 9–10 ns off each send, 4 ns off each poll; round trips unchanged within noise at every percentile and the max | kept: cheaper. Since 0.1.31 the transport takes the counter's rate from DPDK (or its own start-up measurement, where DPDK's is more than 100 ppm off) and the clients use quanta; not re-measured |
 | 2026-10-14 | host-local channels read every cycle after data (`LOCAL_IO=adaptive`) | localhost p50 14.1 → 6.4 µs, max 260 (203–1,117) → 61 (50–116) pinned | kept, now the default |
 | 2026-10-14 | re-offer a refused transmit tail for 50 µs | round trips unchanged; flat-out short sends −99%; 1,344 B still collapsed | open |
 | 2026-10-14 | (finding) 1,344 B frames flat out over DPDK collapsed | 0.03 M msgs/s in 4 of 5 reps: frames dropped unseen, Aeron fell into NAKs | led to TX rate and stream priority, under test |
