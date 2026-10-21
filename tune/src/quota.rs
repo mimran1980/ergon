@@ -365,7 +365,7 @@ pub fn t9_cpu_quota(host: &Host) -> Finding {
     };
     let _ = write!(
         message,
-        " Fix: on Kubernetes, use kubelet 1.33 or later (1.36 or later on a latency node) with \
+        " Fix: on Kubernetes, use kubelet 1.33 or later with \
          `cpuManagerPolicy: static`, make the pod Guaranteed and this container's CPU request a \
          whole number: the kubelet then sets no quota on the container or its pod, and every \
          other pod keeps its CPU limit. Never set kubelet `cpuCFSQuota: false`: it removes the \

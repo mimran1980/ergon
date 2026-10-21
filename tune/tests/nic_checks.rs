@@ -84,12 +84,12 @@ fn n1_warns_while_ena_adaptive_moderation_is_on() -> R {
         "{}",
         v.message
     );
+    assert!(v.message.contains("18–33 a second"), "{}", v.message);
     assert!(
-        v.message.contains("about 40 times a second"),
+        v.message.contains("p99.99 was 72–76 against 117–119 µs"),
         "{}",
         v.message
     );
-    assert!(v.message.contains("p99.99 fell 43–47 µs"), "{}", v.message);
     assert!(v.message.contains("is not measured"), "{}", v.message);
     // The c7i 100 k/s moderation pair (p50 106 → 71 µs) was withdrawn: those
     // figures came from an idle, single-rep run with moderation on. It must not
@@ -249,7 +249,7 @@ fn n2_does_not_suggest_busy_polling_on_graviton() -> R {
     let v = n2_deferred_irqs(&f.host(), "ens6", Some(false));
     assert!(v[0].is_warning(), "{v:#?}");
     assert!(
-        v[0].message.contains("collapsed at 1 M msgs/s"),
+        v[0].message.contains("busy polling is not suggested"),
         "{}",
         v[0].message
     );
@@ -360,11 +360,7 @@ fn n4_warns_below_the_smaller_of_4096_and_the_nics_maximum() -> R {
         v.message
     );
     assert!(v.message.contains("resets the interface"), "{}", v.message);
-    assert!(
-        v.message.contains("max 15.0 ms against 21.2 ms"),
-        "{}",
-        v.message
-    );
+    assert!(v.message.contains("not measured here"), "{}", v.message);
     // A NIC that takes at most 256 (MANA) is at its maximum.
     let mut cache = cache_with(|k| {
         k.rings.insert(3, Ok(ring(256, 256)));
