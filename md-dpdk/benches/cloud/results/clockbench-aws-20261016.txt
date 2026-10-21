@@ -1,11 +1,13 @@
-# Recovered clockbench rows, runs aws-20261016-231320 (c7i.2xlarge), aws-20261016-223331 (c8g.xlarge),
-# aws-20261016-223251 (c9g.2xlarge), aws-20261016-084001 node b (c9g.xlarge, just after boot).
-# Source: tool outputs in Claude Code session 507e90d8 transcript, 2026-10-19 19:45-21:28 UTC,
-# which read target/md-dpdk-bench/<run>/*.csv before those files were deleted. Partial: only the rows
-# those commands printed. Row formats: see clock/BENCHMARKS.md 'What is measured'.
-# clock/BENCHMARKS.md was deleted with the crate on 2026-10-21: git show 6df5e47e:clock/BENCHMARKS.md
+# Raw clockbench rows recovered for runs aws-20261016-231320 (c7i.2xlarge),
+# aws-20261016-223331 (c8g.xlarge), aws-20261016-223251 (c9g.2xlarge) and
+# aws-20261016-084001 node b (c9g.xlarge, just after boot).
+# The original target/md-dpdk-bench/<run>/*.csv files were not kept. These rows were
+# printed from them on 2026-10-19 and recovered from that output, so the set is partial
+# and only what was printed. Row formats: clockbench, as in
+# git show 6df5e47e:clock/BENCHMARKS.md ("What is measured"). ergon-clock was removed
+# on 2026-10-21; these rows are kept as the record of the figures it cited.
 
-## from transcript hit-016-line75049.txt
+## Read cost: ergon-clock, quanta, minstant (node a of each run)
 === minstant / quanta measured read cost, both nodes ===
 --- aws-20261016-223331 ---
 meta,label,c8g.xlarge isolated
@@ -38,7 +40,7 @@ cost,minstant_now,cost-only,200,10000,14.55,15.41,15.44,14.55
 cost,minstant_elapsed_ns,ns,200,10000,24.55,25.77,25.81,24.55
 cost,minstant_unix_ns,ns,200,10000,21.31,22.08,22.32,21.01
 
-## from transcript hit-017-line75078.txt
+## Read cost: minstant against the std and clock_gettime controls (both rows per run as printed)
 === aws-20261016-223331 ===
 meta,label,c8g.xlarge isolated
 cost,ergon_now_ns,ns,200,10000,12.17,12.38,12.47,12.15
@@ -77,7 +79,7 @@ cost,clock_gettime_monotonic_raw,ns,50,10000,20.86,21.21,21.21,20.83
 cost,clock_gettime_realtime,ns,50,10000,21.09,21.65,21.65,21.07
 cost,clock_gettime_monotonic_coarse,ns,50,10000,7.27,7.69,7.69,7.26
 
-## from transcript hit-019-line75186.txt
+## Read cost: ergon-clock, minstant, std Instant (c7i, c8g, c9g)
 === aws-20261016-231320 ===
 meta,label,c7i.2xlarge isolated
 cost,ergon_now_ns,ns,200,10000,15.16,15.93,16.13,15.15
@@ -100,7 +102,7 @@ cost,ergon_now_ns,ns,50,10000,10.92,11.25,11.25,10.91
 cost,minstant_now,cost-only,50,10000,28.16,28.50,28.50,28.14
 cost,std_instant_now,cost-only,50,10000,21.29,21.68,21.68,21.28
 
-## from transcript hit-020-line75219.txt
+## Read cost: minstant, std Instant, std SystemTime (node a)
 === meta,label,c7i.2xlarge isolated ===
 cost,minstant_now,cost-only,200,10000,14.55,15.41,15.44,14.55
 cost,std_instant_now,cost-only,200,10000,24.85,25.90,25.99,24.55
@@ -114,7 +116,7 @@ cost,minstant_now,cost-only,50,10000,28.16,28.50,28.50,28.14
 cost,std_instant_now,cost-only,50,10000,21.29,21.68,21.68,21.28
 cost,std_systemtime_ns,ns,50,10000,28.51,28.92,28.92,28.48
 
-## from transcript line73276.txt
+## Drift at 120 s and earlier checkpoints, settled hosts (blocks in order: c7i a, c7i b, c8g a, c8g b; error ns and ppm against CLOCK_MONOTONIC_RAW and CLOCK_MONOTONIC)
 drift at 120 s (error ns, ppm) | against CLOCK_MONOTONIC_RAW | against CLOCK_MONOTONIC
 drift,ergon_now_ns,1,1010166101,-50,-0.049,raw
 drift,ergon_now_ns,1,1010184279,2547,2.521,monotonic
@@ -524,7 +526,7 @@ drift,30,30000126919,30000097396,0.984,minstant_ppm,-0.003,raw_ppm,-0.002,mono_v
 drift,60,60000156049,60000096822,0.987,minstant_ppm,-0.001,raw_ppm,-0.001,mono_vs_raw_ppm,-0.988
 drift,120,120000216511,120000099057,0.979,minstant_ppm,-0.001,raw_ppm,-0.000,mono_vs_raw_ppm,-0.979
 
-## from transcript line73372.txt
+## Discipline summaries, 1,800 s per node (count, p50, p99, p99.9, max in ns)
 === aws-20261016-231320 ===
   -- a-discipline-isolated.csv
 meta,settings,discipline_secs=1800 verifier_hz=100
@@ -564,7 +566,7 @@ discipline_summary,residual_verifier_ns,179041,7,360,1694,2662
 discipline_summary,verifier_interrupted_width_ns,3,4820,4820,4820,5040
 discipline_summary,update_cost_ns,1801,278,365,430,1840
 
-## from transcript line75027.txt
+## Drift, c9g.xlarge node b just after boot, run aws-20261016-084001
 drift,ergon_now_ns,1,1002010918,1,0.001,raw
 drift,ergon_now_ns,1,1002835681,-821905,-819.581,monotonic
 drift,ergon_monotonic_now_ns,1,1002014678,821905,820.252,raw
