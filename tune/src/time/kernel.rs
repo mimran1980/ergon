@@ -3,8 +3,8 @@
 //!
 //! This is the crate's one `unsafe` call. rustix (this crate's only
 //! dependency) has no wrapper for `adjtimex` or `clock_adjtime` yet, so
-//! [`adjtimex`] declares the C library's function itself (std already links
-//! the C library: no new crate) over a hand-written `struct timex`, whose
+//! `adjtimex` below declares the C library's function itself (std already
+//! links the C library: no new crate) over a hand-written `struct timex`, whose
 //! layout the compile-time assertions below pin to the kernel's
 //! `include/uapi/linux/timex.h` on 64-bit Linux (glibc and musl declare the
 //! same). It goes when rustix wraps `adjtimex`.

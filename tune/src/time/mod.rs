@@ -1,5 +1,5 @@
 //! T11 (how `CLOCK_REALTIME` is kept) and T12 (the kernel's clock source),
-//! and [`ClockWatch`](crate::ClockWatch), which checks both again from
+//! and [`ClockWatch`], which checks both again from
 //! housekeeping without waiting.
 
 mod chrony;
