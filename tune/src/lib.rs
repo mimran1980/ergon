@@ -12,31 +12,35 @@
 //! | T6 | [`t6_nic_node`] | md |
 //! | T7 | [`t7_sched_policy`] | io, md, rt |
 //! | T8 | [`t8_smt_siblings`] | io, md, rt |
-//! | T9 | [`t9_cpu_quota`] at start; [`ThrottleWatch`] while running | io, md, rt (start); rt (housekeeping) |
-//! | T10 | [`t10_smt_on`] | io, md, rt |
+//! | T9 | [`t9_cpu_quota`] at start; [`ThrottleWatch`] while running | io, md (start); `ThrottleWatch`: no caller in this repository |
+//! | T10 | [`t10_smt_on`] | io, md |
 //! | T11 | [`t11_time_sync`] at start; [`ClockWatch`] while running | rt (start, housekeeping) |
 //! | T12 | [`t12_clocksource`] at start; [`ClockWatch`] while running | rt (start, housekeeping) |
-//! | K1-K7 | [`k8s_checks`] (with T7 and T9), inside a pod only | io, rt |
+//! | K1-K6 | [`k8s_checks`] (with T7 and T9), inside a pod only | io |
+//! | K7 | [`k8s_checks`] with [`Needs::with_nic`] | no caller in this repository names a NIC |
 //! | N1 (`nic`) | `n1_adaptive_rx` | io, md (kernel sockets) |
 //! | N2 (`nic`) | `n2_deferred_irqs` | io, md |
 //! | N3 (`nic`) | `n3_azure_vf` | io |
 //! | N4 (`nic`) | `n4_rx_ring` | md (socket transport with busy polling) |
 //!
 //! - **Callers** ([`Component`]): io is ergon-io, md the ergon-md-dpdk media
-//!   driver, rt an application's busy-spinning runtime.
+//!   driver, rt an application's busy-spinning runtime (outside this
+//!   repository; it calls what it chooses).
 //! - **Results**: each is a [`Finding`]. Its [`Status`] says whether the check
 //!   fired; its [`Severity`] says how to log it.
 //! - **Cost**: file reads and allocations. T7 reads `/proc/thread-self` (no
 //!   system call); T2 reads one directory and two files per interrupt; N1 and
-//!   N4 make one netlink query that waits at most 100 ms.
+//!   N4 make one netlink exchange per interface per reset (plus one family
+//!   lookup on first use), each with 100 ms send and receive timeouts.
 //!   [`ThrottleWatch::check`] reads one open file (`cpu.stat` too once
 //!   throttling shows) and allocates only when it reports. T11 scans
 //!   `/proc` and waits at most 50 ms for chronyd; [`ClockWatch::check`]
 //!   never waits and allocates only when a finding changes.
-//! - **Evidence**: this repository's measurements (`md-dpdk/BENCHMARKS.md`,
-//!   `io/benches/BENCHMARK.md`, the settings-matrix runs under
-//!   `io/benches/results/`), or the kernel's and vendors' documentation where
-//!   nothing was measured. Each finding names its source.
+//! - **Evidence**: each finding's `evidence` names its source: a
+//!   settings-matrix table in git history (`git show
+//!   128747b9^:io/benches/results/<run>/tables.md`, with lines), or the
+//!   kernel's, Kubernetes' or a vendor's documentation, marked "not
+//!   measured here".
 //! - **The switch**: every host-check warning line ends with how to silence
 //!   it. [`HOST_CHECKS_ENV`] is `off` (no warning line, the results are
 //!   still returned), `on` (the default) or `require` (a warning is an error
