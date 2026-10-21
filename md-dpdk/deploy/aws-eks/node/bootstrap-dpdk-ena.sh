@@ -12,7 +12,7 @@
 #      telemetry and is the kernel-UDP rollback path, and never an ENI the
 #      VPC CNI attached.
 #   3. Check the kernel command line provision-node.sh set at first boot
-#      (the C-state cap on a VM only; iommu=pt wherever there is an IOMMU).
+#      (iommu=pt wherever there is an IOMMU).
 #   4. Take the two ENAs from the OS's network configuration (systemd-networkd
 #      leaves their MACs unmanaged; their hotplug units are masked for this
 #      boot), then bind each to the DPDK driver (unbind, driver_override,
@@ -169,17 +169,9 @@ fi
 hk_expanded="$(cpulist_expand "$RUSTERON_HOUSEKEEPING_CPUS")" \
     || fail "RUSTERON_HOUSEKEEPING_CPUS='$RUSTERON_HOUSEKEEPING_CPUS': a CPU list such as 0,8"
 
-# A VM: the CPU reports the hypervisor flag (bare metal does not).
-on_vm() {
-    grep -m1 '^flags' "$RUSTERON_PROC_ROOT/cpuinfo" 2>/dev/null | grep -qw hypervisor
-}
-
 check_kernel_cmdline() {
     local cmdline w missing=() irqaff="" words=(isolcpus= nohz_full= rcu_nocbs= irqaffinity=)
     cmdline="$(cat "$RUSTERON_PROC_ROOT/cmdline" 2>/dev/null || true)"
-    # C1 as the deepest idle state on a VM only: on bare metal it did not help
-    # (md-dpdk/BENCHMARKS.md, round 4), and provision-node.sh leaves it off there.
-    if on_vm; then words+=(intel_idle.max_cstate= processor.max_cstate=); fi
     # An IOMMU (bare metal): igb_uio's DMA passes only in passthrough.
     if compgen -G "$RUSTERON_SYSFS_ROOT/kernel/iommu_groups/*" >/dev/null; then words+=(iommu=pt); fi
     # "name=" takes any value; anything else is a whole word

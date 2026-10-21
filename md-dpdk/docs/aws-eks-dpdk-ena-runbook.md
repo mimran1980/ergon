@@ -30,8 +30,7 @@ and the kernel-UDP rollback path.
   warns when it is absent, and fails the run when the two nodes differ.
 - Node kernel cmdline carries `isolcpus`/`nohz_full`/`rcu_nocbs` on every CPU
   but the housekeeping core, `irqaffinity` on it, `iommu=pt`,
-  `transparent_hugepage=never`, and on a VM (not on `*.metal`) the
-  `max_cstate` caps.
+  `transparent_hugepage=never`, and no `max_cstate` cap.
   `provision-node.sh` sets them on first boot and reboots once; the per-boot
   bootstrap fails, leaving the node without a DPDK pair, when they are missing.
   A failed provision holds kubelet back (a drop-in asserting

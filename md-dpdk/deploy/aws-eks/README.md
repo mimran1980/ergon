@@ -139,9 +139,7 @@ has `isolcpus=`, so it can never loop. Otherwise it:
    and checks the default entry took it: `nosmt` (SMT stays off on every later
    boot), `isolcpus`
    (`nohz,domain,managed_irq`), `nohz_full` and `rcu_nocbs` on every CPU but
-   the housekeeping core, `irqaffinity` on it, `intel_idle.max_cstate=1
-   processor.max_cstate=1` on a VM only (the CPU's `hypervisor` flag; see
-   [Bare metal](#bare-metal)), `iommu=pt`, `transparent_hugepage=never`, and
+   the housekeeping core, `irqaffinity` on it, `iommu=pt`, `transparent_hugepage=never`, and
    boot-time 2 MiB hugepages (so kubelet's first start advertises
    `hugepages-2Mi`). The clocksource is left to the kernel. Bare metal may
    add `clocksource=tsc tsc=reliable` with `RUSTERON_FORCE_TSC=1`, which is
@@ -183,7 +181,7 @@ leaves none. Then, in order:
    primary ENA and any VPC CNI ENI are never selected, whatever their MAC
    order.
 3. **Kernel command line.** Fails if it lacks the provisioned isolation flags
-   (with the C-state cap on a VM, and `iommu=pt` wherever IOMMU groups exist),
+   (with `iommu=pt` wherever IOMMU groups exist),
    or if `irqaffinity` is not the housekeeping CPUs.
 4. **Release and bind.** First takes both ENAs from the OS's network
    configuration, so that one handed back to the kernel (a rollback, a kernel
@@ -311,8 +309,9 @@ path serves it, with two differences:
 - No C-state cap: on metal, C1 did not separate at idle, and at 288 B 1 M
   msgs/s at least one rep of each capped arm had a p50 above 4 ms
   ([data](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#measured-but-no-setting-recommended)),
-  so `provision-node.sh` sets it only on a VM. The one committed VM A/B was
-  mixed ([C-states](https://mimran1980.github.io/ergon/deploy/hft.html#c-states)).
+  and the one committed VM A/B was mixed
+  ([C-states](https://mimran1980.github.io/ergon/deploy/hft.html#c-states)),
+  so `provision-node.sh` sets it on no node.
 - SMT off at boot, not by EC2: bare metal takes no CPU options, so
   `provision-node.sh` writes sysfs's `smt/control` before kubelet's first
   start and `nosmt` holds every later boot
@@ -505,7 +504,7 @@ and the watcher re-pinning after a link event), and idempotent rerun (dry
 run: no
 host sysfs, /proc or networkd directory is touched), provisioning (SMT off
 on a node that still has it and CPU lists of one CPU per physical core, the
-C-state cap on VMs only, the kubelet hold on failure), the user data's size
+no C-state cap, the kubelet hold on failure), the user data's size
 with an incompressible CA, its kubelet settings and a dry run of the scripts
 it embeds, `launch-template.py`'s `CpuOptions` (present on x86 with SMT,
 absent on Graviton, bare metal and 1-thread types), and the entrypoint's CPU

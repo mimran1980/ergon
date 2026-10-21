@@ -28,8 +28,8 @@
 #   * provision-node.sh turns SMT off where the node still has it (bare metal:
 #     no EC2 CPU options there) before it computes the CPU lists, so one
 #     Kubernetes CPU is one physical core as the launch template leaves it;
-#     it computes the kernel command line from that topology (nosmt, the
-#     C-state cap on VMs only), retries its network steps, holds kubelet back
+#     it computes the kernel command line from that topology (nosmt, no
+#     C-state cap), retries its network steps, holds kubelet back
 #     when it fails, and does nothing on an already provisioned node;
 #   * userdata.sh fits EC2's user-data limit gzipped with an incompressible
 #     CA, carries the kubelet settings (no Memory Manager, CPU quota left at
@@ -176,15 +176,17 @@ VM_CPUINFO="$(printf 'processor\t: 0\nvendor_id\t: GenuineIntel\nmodel name\t: I
 METAL_CPUINFO="${VM_CPUINFO/ hypervisor/}"
 echo "$VM_CPUINFO" > "$PROC/cpuinfo"
 ISO="1-7"
-# As provision-node.sh writes it: nosmt always, the C-state cap on a VM only.
+# As provision-node.sh writes it: nosmt always, never a C-state cap (the
+# committed A/Bs gave it no gain: io/benches/BENCHMARK.md cstate on a VM,
+# md-dpdk/BENCHMARKS.md round 4 on metal).
 ISOLATION="nosmt isolcpus=nohz,domain,managed_irq,$ISO nohz_full=$ISO rcu_nocbs=$ISO irqaffinity=0"
 # The clocksource is no longer forced by default: only bare metal with
 # RUSTERON_FORCE_TSC=1 gets it, and a VM never does (tsc=reliable turns the
 # kernel's TSC checks off).
 COMMON_ARGS="iommu=pt transparent_hugepage=never hugepagesz=2M hugepages=2048"
 TSC_ARGS="clocksource=tsc tsc=reliable $COMMON_ARGS"
-PROVISIONED_CMDLINE="BOOT_IMAGE=(hd0,gpt1)/boot/vmlinuz root=UUID=x ro $ISOLATION intel_idle.max_cstate=1 processor.max_cstate=1 $COMMON_ARGS"
-METAL_CMDLINE="BOOT_IMAGE=(hd0,gpt1)/boot/vmlinuz root=UUID=x ro $ISOLATION $COMMON_ARGS"
+PROVISIONED_CMDLINE="BOOT_IMAGE=(hd0,gpt1)/boot/vmlinuz root=UUID=x ro $ISOLATION $COMMON_ARGS"
+METAL_CMDLINE="$PROVISIONED_CMDLINE"
 echo "$PROVISIONED_CMDLINE" > "$PROC/cmdline"
 
 # --- fake IMDS --------------------------------------------------------------
@@ -477,10 +479,11 @@ echo "BOOT_IMAGE=/boot/vmlinuz ro" > "$PROC/cmdline"
 expect_fail "bootstrap unprovisioned kernel" "isolcpus" fixture_env RUSTERON_DRY_RUN=1 "$BOOTSTRAP"
 echo "${PROVISIONED_CMDLINE/irqaffinity=0/irqaffinity=1}" > "$PROC/cmdline"
 expect_fail "bootstrap irqaffinity mismatch" "irqaffinity" fixture_env RUSTERON_DRY_RUN=1 "$BOOTSTRAP"
-# A VM is capped at C1; bare metal is not (C1 went above 4 ms p50 under load
-# there: md-dpdk/BENCHMARKS.md, round 4).
+# No node needs a C-state cap: a VM and bare metal both pass without one.
 echo "$METAL_CMDLINE" > "$PROC/cmdline"
-expect_fail "bootstrap VM without the C-state cap" "intel_idle.max_cstate" fixture_env RUSTERON_DRY_RUN=1 "$BOOTSTRAP"
+fixture_env RUSTERON_DRY_RUN=1 "$BOOTSTRAP" 2>"$TMP/vm.err" \
+    || { cat "$TMP/vm.err" >&2; die "bootstrap on a VM without the C-state cap failed"; }
+assert_no_grep "max_cstate" "$TMP/vm.err"
 echo "$METAL_CPUINFO" > "$PROC/cpuinfo"
 fixture_env RUSTERON_DRY_RUN=1 "$BOOTSTRAP" 2>"$TMP/metal.err" \
     || { cat "$TMP/metal.err" >&2; die "bootstrap on bare metal without the C-state cap failed"; }
@@ -526,7 +529,8 @@ printf 'RUSTERON_HOUSEKEEPING_CPUS=0\nRUSTERON_DPDK_DEVICE_NUMBERS="1 2"\nRUSTER
 fixture_env RUSTERON_NODE_ENV="$TMP/node.env" RUSTERON_DRY_RUN=1 "$PROVISION" 2>"$TMP/provision.err" \
     || { cat "$TMP/provision.err" >&2; die "provision failed"; }
 cat "$TMP/provision.err"
-assert_grep "dry-run: kernel args: $ISOLATION intel_idle.max_cstate=1 processor.max_cstate=1 $COMMON_ARGS" "$TMP/provision.err"
+assert_grep "dry-run: kernel args: $ISOLATION $COMMON_ARGS" "$TMP/provision.err"
+assert_no_grep "max_cstate" "$TMP/provision.err"
 # A VM never gets a clocksource override: the hypervisor's is the kernel's
 # choice, and tsc=reliable would turn the kernel's TSC checks off.
 assert_no_grep "clocksource=" "$TMP/provision.err"

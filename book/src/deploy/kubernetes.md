@@ -86,7 +86,7 @@ The node scripts (tested against fixtures by `just test-dpdk-bootstrap`):
 
 | script | when | what it does |
 |---|---|---|
-| `node/provision-node.sh` | once, then one reboot before kubelet | kernel command line: `nosmt`, every CPU but the reserved core isolated, interrupts on that core, C-states C1 on a VM ([mixed evidence](hft.md#c-states)), `iommu=pt`, `transparent_hugepage=never`, 2 MiB hugepages, so kubelet's first start advertises `hugepages-2Mi` |
+| `node/provision-node.sh` | once, then one reboot before kubelet | kernel command line: `nosmt`, every CPU but the reserved core isolated, interrupts on that core, no C-state cap ([evidence](hosts.md#c-states)), `iommu=pt`, `transparent_hugepage=never`, 2 MiB hugepages, so kubelet's first start advertises `hugepages-2Mi` |
 | `node/bootstrap-dpdk-ena.sh` | every boot, before kubelet | interrupts on housekeeping with a watcher that re-pins on each link event; `irqbalance`, KSM, NUMA balancing off; THP off; `rmem_max`/`wmem_max` 16 MiB; Aeron's directory on a sized hugetlbfs at `/mnt/huge-aeron`; for DPDK the two spare ENAs on `igb_uio`. On failure the node still runs kernel UDP and advertises no DPDK pair |
 
 Clocksource is left to the kernel. A forced `clocksource=tsc tsc=reliable`

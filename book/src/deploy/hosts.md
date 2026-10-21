@@ -39,7 +39,7 @@ cores (SMT off, so one CPU is one core).
 |---|---|---|
 | AWS x86, bare metal | `iommu=pt` | `igb_uio` (DPDK) does not program the IOMMU; a VM has none |
 | AWS Graviton, bare metal | `iommu.passthrough=1` | the same, on Arm |
-| EKS DPDK node (x86) | `nosmt transparent_hugepage=never hugepagesz=2M hugepages=<n>`; on a VM also `intel_idle.max_cstate=1 processor.max_cstate=1` | `node/provision-node.sh:310-351`. The C1 cap's evidence is mixed: [C-states](hft.md#c-states) |
+| EKS DPDK node (x86) | `nosmt transparent_hugepage=never hugepagesz=2M hugepages=<n>`; no C-state cap | `node/provision-node.sh`, step 6. No cap: [C-states](#c-states) |
 
 `clocksource=tsc tsc=reliable` turns the kernel's TSC checks off. The EKS
 node takes it only on bare metal with `RUSTERON_FORCE_TSC=1`, never on a VM
@@ -67,7 +67,7 @@ interrupts does.
 
 | host | setting | evidence |
 |---|---|---|
-| x86 VM | cap at C1 (`intel_idle.max_cstate=1`), or leave it | mixed: [C-states](hft.md#c-states) |
+| x86 VM | leave it | capping at C1 was mixed: [C-states](hft.md#c-states) |
 | x86 metal | leave it | `c7i.metal-24xl`, round 4: idle not separated; at 288 B 1 M msgs/s at least one rep of each capped arm had a p50 above 4 ms ([BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#measured-but-no-setting-recommended)) |
 | Graviton | nothing to set | the OS has no C-states to pick: an idle core waits for an interrupt (`WFI`) |
 
