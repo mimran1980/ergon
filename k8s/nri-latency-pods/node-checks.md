@@ -16,16 +16,16 @@ plugin and the pod can read them (the NIC's node and PHC name among them). The t
 | `full-pcpus-only` | x86 with SMT only | c8g has no SMT; the option is a no-op there | `grep full-pcpus /var/lib/kubelet/config.yaml` |
 | kernel | `>= 6.2` (cgroup v2) | keeps a thread's requested affinity across cpuset changes | `uname -r`; `stat -fc %T /sys/fs/cgroup` |
 | cgroup v2 | mounted | the plugin refuses cgroup v1 | `test -f /sys/fs/cgroup/cgroup.controllers` |
-| `net.core.rmem_max` / `wmem_max` | 4–16 MiB | Aeron's 2 MiB receive window needs them; without them the window caps and frames drop | `sysctl net.core.rmem_max net.core.wmem_max` |
-| `net.core.busy_poll` / `busy_read` | **off** on Graviton | busy polling on Graviton was catastrophic: p50 **4,973 µs**, max **9,175 (8,544–102,826)**, **61,488 NAKs** ([data](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md)) | `sysctl net.core.busy_poll net.core.busy_read` |
-| `kernel.numa_balancing` | `0` | no automatic page migration under a latency pod | `sysctl kernel.numa_balancing` |
+| `net.core.rmem_max` / `wmem_max` | at least Aeron's `AERON_SOCKET_SO_RCVBUF` / `SNDBUF` (16 MiB on the EKS node) | the media driver refuses to start when its receive window is larger than the `SO_RCVBUF` the kernel granted (`aeron_driver.c`, rusteron-media-driver 0.2.11); Aeron's default buffer is 128 KiB | `sysctl net.core.rmem_max net.core.wmem_max` |
+| `net.core.busy_poll` / `busy_read` | `0` (unset) | global: every blocking read on the host would spin. Not measured from committed data; ergon-io busy-polls per socket instead | `sysctl net.core.busy_poll net.core.busy_read` |
+| `kernel.numa_balancing` | `0` | no automatic page migration under a latency pod; matters only with several NUMA nodes; not measured | `sysctl kernel.numa_balancing` |
 | hugepages | boot `hugepagesz=2M hugepages=256` | `AERON_DIR` on hugetlbfs removes 4 KiB page faults | `grep HugePages /proc/meminfo` |
-| `transparent_hugepage` | `never` | THP off cut idle p99.99 **67 → 53** and idle max **546 → 106** µs ([data](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md)) | `cat /sys/kernel/mm/transparent_hugepage/enabled` |
+| `transparent_hugepage` | `never` | no `khugepaged` merging under busy threads (kernel `transhuge.rst`); latency not measured from committed data | `cat /sys/kernel/mm/transparent_hugepage/enabled` |
 | `nohz_full` | every non-reserved CPU | keeps the tick off the loop's core | `cat /sys/devices/system/cpu/nohz_full` |
 | `rcu_nocbs` | every non-reserved CPU | RCU callbacks off the hot cores | `cat /sys/devices/system/cpu/rcu_nocbs 2>/dev/null` or `grep rcu_nocbs /proc/cmdline` |
 | `isolcpus=managed_irq` | every non-reserved CPU | no stray IRQ on the loop's core | `grep isolcpus /proc/cmdline` |
 | `irqaffinity` | the reserved CPUs | NIC IRQs on the kept CPU, never the loop's | `grep irqaffinity /proc/cmdline`; `grep eth0 /proc/interrupts` |
-| NIC IRQ CPU | CPU 1 (kept), **not** a shared CPU | IRQs on a busy housekeeping CPU lose frames at 1 M/s, max **10.8 ms** ([data](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md), Graviton only) | `md-dpdk/deploy/aws-eks/node/irq-affinity.sh` status |
+| NIC IRQ CPU | CPU 1 (kept), **not** a shared CPU | IRQs on a core of their own, not the loop's ([evidence](https://mimran1980.github.io/ergon/deploy/hft.html#interrupt-placement)); IRQs on a shared CPU are not measured | `md-dpdk/deploy/aws-eks/node/irq-affinity.sh` status |
 | `gro_flush_timeout`, `napi_defer_hard_irqs` | node unit writes `/sys/class/net/<dev>/…` | per-netdev sysfs, not a sysctl | `cat /sys/class/net/eth0/gro_flush_timeout` |
 | `/dev/ptp*` | present or not | a clock source only; ENA has no hardware packet stamps | `ls /dev/ptp*` |
 | chrony | running, synced | pods read the node's `CLOCK_REALTIME`; chrony on the node keeps it on the PHC ([Clocks](https://mimran1980.github.io/ergon/deploy/clocks.html)) | `chronyc tracking` |

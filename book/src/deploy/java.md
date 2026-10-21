@@ -3,7 +3,9 @@
 `ergo-aeron-cluster` is only a client. The cluster (consensus module,
 clustered services, Archive) runs on Aeron's Java, as does an Archive beside
 a C media driver. This page: which Java, and the JVM and Aeron settings for
-latency, for Aeron 1.53.3 (the release ergon pins).
+latency, for Aeron 1.53.3 (the release ergon pins). Each setting comes from
+Aeron's own scripts, benchmarks or wiki ([sources](#sources)); none has a
+latency A/B here.
 
 Terms: [deployment glossary](overview.md#glossary),
 [network and DPDK glossary](../md-dpdk/overview.md#glossary).
