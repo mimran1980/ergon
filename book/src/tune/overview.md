@@ -24,7 +24,7 @@ In brackets: the check (T1–N4) and, where a number is quoted, its lab: **A**
 
 | term | what it is | pros / cons, or when it matters |
 |---|---|---|
-| [check](#what-it-checks), [finding](#read-a-finding) | A check tests one host (T1–T10, K1–K7) or NIC (N1–N4) setting. A finding is a check that fired, with its fix. | Data it cannot read gives *unknown*, never a warning. |
+| [check](#what-it-checks), [finding](#read-a-finding) | A check tests one host (T1–T12, K1–K7) or NIC (N1–N4) setting. A finding is a check that fired, with its fix. | Data it cannot read gives *unknown*, never a warning. |
 | busy-spinning thread | A thread that loops on one CPU and never sleeps. | Never waits to wake up, but takes a whole CPU. Anything else that runs there pauses it. |
 | [hot, housekeeping CPU](../deploy/hosts.md#cpu-layout) | Hot: a CPU a thread busy-spins on. Housekeeping: any other CPU. | Move the kernel's work and interrupts to housekeeping CPUs. |
 | p50, p99, p99.9, p99.99, max | The median; the slowest 1 in 100, 1,000 or 10,000; the slowest of all. The high ones are the *tail*. | Host noise shows in the tail and max; the p50 often hardly moves. |
@@ -63,6 +63,9 @@ In brackets: the check (T1–N4) and, where a number is quoted, its lab: **A**
 | sysfs, `/proc` | Files under `/sys` and `/proc` where the kernel shows its settings. | Most checks only read these, so they also run on a copied tree (`Host::at`). |
 | NAK | An Aeron receiver's request to resend lost data. | NAKs in bursts with kernel busy polling: check the RX ring (N4). |
 | open loop | Each message is timed from when it was due, not when it was sent. | A stall counts against every message it delays. |
+| `CLOCK_REALTIME` | The kernel's wall clock: UTC stamps, kernel and NIC timestamps. A time daemon disciplines it. | A pod shares the node's: fix time sync on the node (T11). |
+| PTP hardware clock (PHC) | A NIC's or hypervisor's clock (`/dev/ptp0`; ENA's `ptp_ena`, Hyper-V's `ptp_hyperv`) that chrony can lock `CLOCK_REALTIME` to (`refclock PHC`). | Tighter than NTP over the network; needs the device on the node (T11). |
+| clock source | The counter the kernel keeps time with (`current_clocksource`): `tsc`, `arch_sys_counter`, or `hpet`, `acpi_pm`. | Only the counter (or a hypervisor's view of it) is read without a system call (T12). |
 
 ## Why check the host
 
@@ -87,6 +90,8 @@ In brackets: the check (T1–N4) and, where a number is quoted, its lab: **A**
 | T8 | SMT siblings | Two hyperthreads share one core. Two busy threads on one core slow each other. |
 | T9 | CPU quota (a container's CPU limit) | A cgroup with a quota may use only that much CPU time per period. A busy-spinning thread uses its CPU all the time, so it runs at the cap, and the kernel stops the whole container when the cap is reached. On Kubernetes 1.33+ the kubelet drops the quota itself for a container with exclusive CPUs; never turn it off for the whole node. |
 | T10 | SMT (hyperthreading) on, x86 | One Kubernetes `cpu: 2` is one physical core, not two. A busy sibling slows the loop. Turn SMT off on the node: EKS/EC2 `"CpuOptions": {"CoreCount": 4, "ThreadsPerCore": 1}` (no extra charge; not on T2, C7a, M7a, R7a, Mac or Graviton), self-managed `nosmt` or `echo off > /sys/devices/system/cpu/smt/control` before the kubelet (then delete its `cpu_manager_state`), or an Azure size without SMT (Fasv6, Falsv6, Famsv6, Dpsv6, Dplsv6). Graviton and arm64 pass: one vCPU is one physical core. |
+| T11 | how `CLOCK_REALTIME` is kept | UTC stamps are only as good as `CLOCK_REALTIME`, and `CLOCK_MONOTONIC` is slewed with it. PTP-grade (chronyd locked to a PHC, or phc2sys) is ok. NTP-disciplined or unsynchronised warns with the `refclock PHC` line for the host's PHC; so do a correction still being slewed out, an error bound over 1 ms and a pending leap second. In a pod the daemons and chronyd's port are usually out of sight: unknown, never a warning. |
+| T12 | the kernel's clock source | `tsc` or `arch_sys_counter` is read through the vDSO; `kvm-clock` and Hyper-V's TSC page are too, where the hypervisor marks them stable (info). `hpet` or `acpi_pm` has no vDSO read: every UTC stamp and Aeron clock read is a system call. |
 | K1 | the pod's `QoS` class | Anything but Guaranteed gets a CPU limit and shares CPUs; the loop runs at the cap or with a neighbour. Fix (pod spec): `resources.requests` = `resources.limits`. |
 | K2 | exclusive CPUs | The shared pool means other pods land on the loop's CPU. Fix (node): kubelet `cpuManagerPolicy: static` (with `full-pcpus-only` on x86); fix (pod spec): whole-CPU requests in a Guaranteed pod. |
 | K3 | the loop's SMT sibling | A sibling in another pod is a busy neighbour (the T10 numbers). Fix (node): turn SMT off; fix (pod spec): ask for whole cores so both siblings come together. |
@@ -121,6 +126,8 @@ Not checked: CPU idle states and frequency.
 | Azure: VF missing or down | N3 | `az vm deallocate`, then `az network nic update --name <NIC> --resource-group <group> --accelerated-networking true`, then `az vm start` |
 | NIC drops and NAKs in bursts with kernel busy polling | N4 | `ethtool -G <if> rx 4096` (on ENA this resets the NIC: re-pin, turn adaptive-rx off again) |
 | fine after boot, worse later | T2, N1 | an ENA reset undid them: re-apply from a link-event hook |
+| cross-host one-way latencies drift or jump | T11 | on the node: chrony `refclock PHC /dev/ptp_ena poll 0 delay 0.000010 prefer` (AWS, ENA PHC enabled) or `refclock PHC /dev/ptp_hyperv poll 3 dpoll -2 offset 0` (Azure) |
+| clock reads slow; `current_clocksource` is `hpet` | T12 | find why the kernel left the counter: `dmesg \| grep -i clocksource`. Force `tsc=reliable` only on hardware qualified across cores, never on a VM |
 
 Each finding carries the fix for that host, with its real CPU lists and IRQ
 numbers. T1 with the loop on CPU 2 of 8:
@@ -134,9 +141,9 @@ and
 [`io/benches/BENCHMARK.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md).
 The checks name the cost of the missing setting; the crate files hold the
 number. Labs: **A** = the AWS x86 runs, **G** = the Graviton runs.
-Not measured: T4, T5, T6 (every lab host had one NUMA node), T9, N2's timer
-wait and N3. T8's effect was weak. Their findings cite Aeron's, the kernel's
-or the vendor's documentation.
+Not measured: T4, T5, T6 (every lab host had one NUMA node), T9, T11, T12,
+N2's timer wait and N3. T8's effect was weak. Their findings cite Aeron's,
+the kernel's, chrony's or the vendor's documentation.
 
 ## Where the checks run
 
@@ -145,7 +152,7 @@ or the vendor's documentation.
 | ergon-io's `Driver` (`Component::Io`) | T1 and T8 on the loop's CPU (and `sqpoll_cpu`); T7 on the calling thread; T9, T10; T3 as info; K1–K7 inside a pod | `Driver::new`; read them back with `Driver::host_report()` | `ERGON_HOST_CHECKS`: `on` (default), `off` (no warning line; the results stay) or `require` (a warning, or an unproven proof check, stops the start) |
 | ergon-io's `Driver` | T2, N1, N2 (interrupt-driven backends only), N3 on each connection's egress NIC | after the first route lookup to it; again after a NIC reset | `quickack_check=off` skips them |
 | the ergon-md-dpdk media driver (`Component::Md`) | T1, T3, T4, T5, T7, T8, T9, T10; T2 and T6 on the data NICs; on the socket transport also N1, N2, and N4 with busy polling | before the driver starts; N1 and T2 again after a NIC reset, on its `md-host-checks` thread | `ERGON_HOST_CHECKS`, alias `RUSTERON_MEDIA_DRIVER_HOST_CHECK`: `on`/`warn` (default), `off` (no check runs at all) or `require` (any warning or unproven proof stops the start) |
-| your own busy loop (`Component::Rt`) | T1, T3, T4 (the directory it connects to), T5, T7, T8, T9, T10; K1–K7 inside a pod; on a kernel NIC also T2, N1, N2, N3; `ThrottleWatch` | before the loop; the NIC checks again when the NIC's `carrier_changes` moves; `ThrottleWatch::check` every few seconds from housekeeping | do not call them |
+| your own busy loop (`Component::Rt`) | T1, T3, T4 (the directory it connects to), T5, T7, T8, T9, T10, T11, T12; K1–K7 inside a pod; on a kernel NIC also T2, N1, N2, N3; `ThrottleWatch`, `ClockWatch` | before the loop; the NIC checks again when the NIC's `carrier_changes` moves; `ThrottleWatch::check` and `ClockWatch::check` every few seconds from housekeeping | do not call them |
 | [ergon-clock](../clock/overview.md)'s `calibrate` | the clock source and `CLOCK_REALTIME`'s keeping (`Report::warnings`) | at calibration | `ERGON_HOST_CHECKS`: `off` or `0` silences the print (a typo leaves it on) |
 
 Every printed warning line ends with `(ERGON_HOST_CHECKS=off silences host-check
@@ -216,6 +223,9 @@ on: `cargo test -p ergon-tune --all-features`.)*
 | `n1_adaptive_rx`, `n4_rx_ring(&host, ifname, &mut cache)` | one finding | one netlink query per interface per reset, at most 100 ms; unprivileged |
 | `n2_deferred_irqs(&host, ifname, busy_polls)` | one finding per deferring device | sysfs; `busy_polls` is `Some(true)` if your sockets busy-poll, `None` if not known |
 | `n3_azure_vf(&host, ifname)` | one finding | sysfs |
+| `t11_time_sync(&host, &probe)` | the verdict's finding, plus one each for an unsettled clock, a wide bound, a pending leap second | `adjtimex`, a `/proc` scan, `/sys/class/ptp`, ClockBound's segment, and a chronyd query of at most 50 ms; the pure step is `TimeSync::from_observed` |
+| `t12_clocksource(&host)` | one finding | two file reads |
+| `ClockWatch::open(&host, &probe)`, then `.check()` | `open`: T11 and T12, and the watch, before the loop; `check`: only the findings that changed | `check`: one `adjtimex`, one non-blocking receive and send to chronyd (its answer used one check late), ClockBound's segment and the clock source read again; never waits; no allocation unless a finding changed; `update(sample)` judges an injected sample |
 
 A `Nic` is `Nic::Interface("ens5")` or a DPDK port, `Nic::Pci("0000:00:06.0")`.
 The readers underneath (`thread_affinity`, `carrier_changes`, `nic_irqs`,

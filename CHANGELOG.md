@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Added
+
+- `ergon-tune`: T11, how `CLOCK_REALTIME` is kept (time daemon, PTP-grade or
+  NTP verdict, error bound, an unsettled correction, a pending leap second,
+  unsynchronised), and T12, the kernel's clock source (the counter, a
+  hypervisor's view of it, or `hpet`/`acpi_pm`, read by system call).
+  `ClockWatch` checks both again from housekeeping without waiting
+  (chronyd's answer is read one check late) and allocates only when a
+  finding changes. Ported from `ergon-clock`'s time-sync probe, which stays
+  in this release. T11 makes the crate's one `unsafe` call, a read-only
+  `adjtimex`, until rustix wraps it.
+
 ### Changed
 
 - MSRV raised from 1.88 to 1.99, the pinned toolchain. `serial_test` 4.0.1,
