@@ -282,7 +282,8 @@ crates; it is not comparator evidence.
 - The A/A overlap test lets a noisier pair pass more easily, and the gate
   runs the two arms in a fixed order, not interleaved
   (`check-bench-gate.sh`, comment above `cluster_pairs`).
-- The three cluster encode pairs have instruction-identical timed loops on
+- Two cluster encode pairs (`session_message_header`,
+  `claim_shaped_header_plus_app`) have instruction-identical timed loops on
   aarch64 (disassembly recorded in the same comment). The cause of their
   wall-clock difference is not known.
 - `release.yml` runs the blocking gate on a shared `ubuntu-latest` runner.

@@ -11,7 +11,7 @@ and the gate:
 | What is graded | ergon / sbe-tool, Criterion's mean, highest ratio over 5 repeats, both LTO profiles |
 | Pass | Highest ratio ≤ ceiling (1.00 for most pairs) |
 | Inconclusive (also passes) | Above the ceiling, but its confidence range overlaps the A/A control's noise band |
-| Fail | Above the ceiling and outside the A/A band |
+| Fail | Above the ceiling and outside the A/A band, or no A/A band measured |
 | Tolerance | none (zero tolerance): no slack is added to a ceiling |
 | Where results go | `target/bench-runs/<run-id>/` (`just bench`); `target/criterion` and `target/bench-no-lto/criterion` (`just bench-cluster`, overwritten) |
 
