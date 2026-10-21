@@ -28,10 +28,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Java 17, not the 25 the other cluster jobs run: Aeron 1.46.8's
+        # Java 21, not the 25 the other cluster jobs run: Aeron 1.46.8's
         # Gradle 8.10 predates Java 25 support, and that release was tested
-        # on 17 and 21 only. The harness takes java from JAVA_HOME.
-        java: ["17"]
+        # on 17 and 21 only, so 21 is the newest it supports. The harness
+        # takes java from JAVA_HOME.
+        java: ["21"]
         aeron-version: ["1.46.8"]
 
     steps:
