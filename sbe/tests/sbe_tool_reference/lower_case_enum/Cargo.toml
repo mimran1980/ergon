@@ -1,0 +1,12 @@
+[package]
+name = "parity_lower_case_enum"
+version = "0.1.0"
+authors = ["sbetool"]
+description = "issue 505 test case"
+edition = "2021"
+
+[lib]
+name = "parity_lower_case_enum"
+path = "src/lib.rs"
+
+[workspace]

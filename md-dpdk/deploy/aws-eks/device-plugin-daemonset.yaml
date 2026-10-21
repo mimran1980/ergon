@@ -1,0 +1,74 @@
+# Kubelet device plugin DaemonSet (plan §10.3). Runs on every node labelled
+# rusteron-dpdk/ena=true (the low-latency DPDK node group; see
+# node/bootstrap-dpdk-ena.sh for what the host must prepare first). The plugin
+# advertises rusteron.io/dpdk-ena-pair from /var/lib/rusteron-dpdk/ena-pairs.json
+# and, at Allocate, injects each port's device node (/dev/uioN for igb_uio,
+# /dev/vfio/<group> for vfio-pci) + DPDK env into media driver pods. It reads
+# the inventory again whenever the file changes (a bootstrap rerun deletes it,
+# rebinds the pair and writes it again), advertising no pair while it is
+# missing or unsafe; the inventory's directory, not the file, is mounted, so
+# the bootstrap's rename over it shows. It stops on SIGTERM.
+#
+# Least privilege: hostPath mounts only — /var/lib/kubelet/device-plugins
+# (plugin socket + kubelet.sock), the read-only inventory, /sys (bound driver,
+# and uio liveness via the BDF's uio/<uioN>/dev attribute), and /dev/vfio
+# (vfio group-node liveness). The host's /dev is deliberately not mounted: its
+# submounts (/dev/hugepages with the driver's DPDK memory, /dev/shm) would stay
+# writable under a readOnly mount. No privileged container is required.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: rusteron-dpdk-device-plugin
+spec:
+  selector:
+    matchLabels:
+      app: rusteron-dpdk-device-plugin
+  template:
+    metadata:
+      labels:
+        app: rusteron-dpdk-device-plugin
+    spec:
+      nodeSelector:
+        rusteron-dpdk/ena: "true"
+      tolerations:
+        - key: rusteron-dpdk
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: device-plugin
+          image: rusteron-dpdk-device-plugin:latest
+          env:
+            - name: RUSTERON_DPDK_INVENTORY
+              value: /var/lib/rusteron-dpdk/ena-pairs.json
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          volumeMounts:
+            - name: device-plugins
+              mountPath: /var/lib/kubelet/device-plugins
+            - name: inventory
+              mountPath: /var/lib/rusteron-dpdk
+              readOnly: true
+            - name: sys
+              mountPath: /sys
+              readOnly: true
+            - name: vfio
+              mountPath: /dev/vfio
+              readOnly: true
+      volumes:
+        - name: device-plugins
+          hostPath:
+            path: /var/lib/kubelet/device-plugins
+        - name: inventory
+          hostPath:
+            path: /var/lib/rusteron-dpdk
+        - name: sys
+          hostPath:
+            path: /sys
+        - name: vfio
+          hostPath:
+            path: /dev/vfio

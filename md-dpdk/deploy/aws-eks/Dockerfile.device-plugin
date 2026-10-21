@@ -1,0 +1,29 @@
+# Kubelet device plugin for the rusteron DPDK ENA transport (plan §10.3).
+# The plugin is a pure-Rust tonic gRPC service — it never touches the DPDK C
+# stack — so this image is just the pinned toolchain plus the compiled binary.
+# protox compiles the vendored kubelet proto, so no protoc is installed.
+#
+# Build (from the ergon repo root):
+#   docker build -f md-dpdk/deploy/aws-eks/Dockerfile.device-plugin -t rusteron-dpdk-device-plugin:latest .
+FROM --platform=linux/amd64 public.ecr.aws/amazonlinux/amazonlinux:2023 AS builder
+
+# cc/ld needed by the Rust toolchain for its host target probes.
+RUN dnf install -y gcc gcc-c++ make tar xz \
+    && dnf clean all
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --default-toolchain 1.99.0 --profile minimal
+ENV PATH="/root/.cargo/bin:$PATH"
+
+WORKDIR /src
+# Whole workspace context: the plugin is a workspace member, so cargo needs the
+# root manifest and every member's Cargo.toml to resolve the graph.
+COPY . .
+
+RUN cargo build -p ergon-md-dpdk-device-plugin --release
+
+FROM --platform=linux/amd64 public.ecr.aws/amazonlinux/amazonlinux:2023
+COPY --from=builder /src/target/release/rusteron-dpdk-device-plugin /usr/local/bin/rusteron-dpdk-device-plugin
+# The plugin is short-lived in terms of process state but runs for the node's
+# lifetime; CMD overridable (e.g. `docker run ... ldd /usr/local/bin/...`).
+ENTRYPOINT ["/usr/local/bin/rusteron-dpdk-device-plugin"]

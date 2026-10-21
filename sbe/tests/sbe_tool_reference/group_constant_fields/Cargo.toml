@@ -1,0 +1,12 @@
+[package]
+name = "parity_group_constant_fields"
+version = "0.1.0"
+authors = ["sbetool"]
+description = "Constants galore"
+edition = "2021"
+
+[lib]
+name = "parity_group_constant_fields"
+path = "src/lib.rs"
+
+[workspace]

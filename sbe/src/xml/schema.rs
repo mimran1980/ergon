@@ -294,9 +294,26 @@ fn ingest_included_document(
     let Some(inc_node) = included_doc.root().children().find(Node::is_element) else {
         return Ok(());
     };
-    if inc_node.tag_name().name() == "types" {
-        parse_types_node(inc_node, registry, tokens, warn_state)?;
-        return Ok(());
+    match inc_node.tag_name().name() {
+        "types" => {
+            parse_types_node(inc_node, registry, tokens, warn_state)?;
+            return Ok(());
+        }
+        // sbe-tool splices an included <message> in as a schema message; we
+        // only read messages from the root document, so dropping it would
+        // silently lose a codec.
+        "message" => {
+            return Err(Fault {
+                kind: FaultKind::Invalid {
+                    what: format!("included file {href}"),
+                    value: "a <message> in an included file is not supported; \
+                            declare it in the root schema"
+                        .to_string(),
+                },
+                span,
+            });
+        }
+        _ => {}
     }
     for sub_child in element_children(inc_node) {
         match sub_child.tag_name().name() {

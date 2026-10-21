@@ -1,0 +1,19 @@
+
+ Summary of events:
+
+ uring-spin-1 (41635), 18401 events, 0.6%
+
+   syscall            calls  errors  total       min       avg       max       stddev
+                                     (msec)    (msec)    (msec)    (msec)        (%)
+   --------------- --------  ------ -------- --------- --------- ---------     ------
+   io_uring_enter      9184      0    36.583     0.003     0.004     0.034      0.31%
+
+
+ recv-busy-0 (41634), 2892553 events, 99.4%
+
+   syscall            calls  errors  total       min       avg       max       stddev
+                                     (msec)    (msec)    (msec)    (msec)        (%)
+   --------------- --------  ------ -------- --------- --------- ---------     ------
+   recvmsg          1445414 1440790  5029.662     0.002     0.003     0.062      0.02%
+
+

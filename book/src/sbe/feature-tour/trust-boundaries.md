@@ -19,7 +19,8 @@ walks the complete dynamic tail before bulk access:
 | **Unchecked hybrid** | `unsafe decode_unchecked` | **UB** on OOB extent; **`Err`** on wrong template/schema |
 
 Bare `decode` looks like `try_decode` (`Result`) but short buffers still panic
-— prefer `try_decode` when every failure must be a `Result`. Full table:
+— prefer `try_decode` when every failure must be a `Result`. Full table and
+the ladder from untrusted bytes to typed fields:
 [Trust Boundary (core concepts)](../core-concepts/trust-boundary.md). sbe-tool
 offsets: [Coming from sbe-tool](../getting-started/from-sbe-tool.md).
 

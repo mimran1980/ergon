@@ -80,7 +80,7 @@ fn example_2_ragged() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(len, actual);
 
     let dec = l3_book::L3BookDecoder::try_from(&buf[..actual])?;
-    let _ts: DateTime<Utc> = dec.try_exchange_timestamp()?;
+    let _ts: DateTime<Utc> = dec.exchange_timestamp()?;
     println!("  {dec}");
 
     // DTO round-trip — byte-identical.

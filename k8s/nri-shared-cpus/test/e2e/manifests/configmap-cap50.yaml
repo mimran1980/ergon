@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The same as configmap-e2e.yaml with oversubscription 50: capacity 100000.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ergon-shared-cpus
+  namespace: ergon-system
+data:
+  config.yaml: |
+    sharedCpus: "0,1"
+    oversubscription: 50
+    namespaces: [ergon-e2e]
+    defaultAffinity: shared
+    hookPath: /opt/ergon/bin/ergon-cpus
+    annotationOptIn: true
+    metricsAddress: ":9466"

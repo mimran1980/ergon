@@ -58,6 +58,36 @@ pub trait EgressListener {
     /// payload bytes after the `SessionMessageHeader` (no SBE framing).
     fn on_message(&mut self, cluster_session_id: i64, timestamp: i64, buffer: &[u8]);
 
+    /// [`Self::on_message`] plus the Aeron header's reserved value.
+    ///
+    /// The default calls [`Self::on_message`] and ignores `reserved_value`.
+    /// Override this when the clustered service stamps a send timestamp.
+    fn on_message_with_reserved_value(
+        &mut self,
+        cluster_session_id: i64,
+        timestamp: i64,
+        buffer: &[u8],
+        reserved_value: i64,
+    ) {
+        let _ = reserved_value;
+        self.on_message(cluster_session_id, timestamp, buffer);
+    }
+
+    /// A frame this client does not decode (unknown template or schema).
+    ///
+    /// `buffer` is the payload after the 8-byte SBE header. The default
+    /// ignores it. A schema mismatch is not an error: the poll continues.
+    fn on_extension_message(
+        &mut self,
+        acting_block_length: u16,
+        template_id: u16,
+        schema_id: u16,
+        acting_version: u16,
+        buffer: &[u8],
+    ) {
+        let _ = (acting_block_length, template_id, schema_id, acting_version, buffer);
+    }
+
     /// Cluster→client session lifecycle event. See [`EventCode`] for the
     /// possible codes. `detail` is validated ASCII text.
     fn on_session_event(
@@ -149,18 +179,23 @@ impl<L: EgressListener> EgressAdapter<L> {
     pub fn on_fragment(&mut self, data: &[u8]) -> Result<bool, crate::ClusterError> {
         let frag = match Fragment::decode(data)? {
             Some(f) => f,
-            None => return Ok(false),
+            None => return self.dispatch_extension(data),
         };
-        self.dispatch_fragment(frag)
+        self.dispatch_fragment(frag, 0)
     }
 
     /// Dispatch a pre-decoded [`Fragment`]. Use when the caller already
     /// decoded (e.g. one decode shared between state tracking and listener
-    /// dispatch on the poll path).
+    /// dispatch on the poll path). `reserved_value` is the Aeron header's
+    /// reserved value, or 0 when the caller has no header.
     #[inline]
-    pub(crate) fn dispatch_fragment(&mut self, frag: Fragment<'_>) -> Result<bool, crate::ClusterError> {
+    pub(crate) fn dispatch_fragment(
+        &mut self,
+        frag: Fragment<'_>,
+        reserved_value: i64,
+    ) -> Result<bool, crate::ClusterError> {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            self.dispatch(frag);
+            self.dispatch(frag, reserved_value);
         }));
         match result {
             Ok(()) => Ok(true),
@@ -170,7 +205,29 @@ impl<L: EgressListener> EgressAdapter<L> {
         }
     }
 
-    fn dispatch(&mut self, frag: Fragment<'_>) {
+    /// An unknown template. `Ok(false)` when `data` has no SBE header.
+    pub(crate) fn dispatch_extension(&mut self, data: &[u8]) -> Result<bool, crate::ClusterError> {
+        let Some(view) = crate::fragment::extension_view(data) else {
+            return Ok(false);
+        };
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.listener.on_extension_message(
+                view.acting_block_length,
+                view.template_id,
+                view.schema_id,
+                view.acting_version,
+                view.payload,
+            );
+        }));
+        match result {
+            Ok(()) => Ok(true),
+            Err(_) => Err(crate::ClusterError::ListenerPanicked {
+                context: "egress extension",
+            }),
+        }
+    }
+
+    fn dispatch(&mut self, frag: Fragment<'_>, reserved_value: i64) {
         match frag {
             Fragment::Message {
                 cluster_session_id,
@@ -183,7 +240,8 @@ impl<L: EgressListener> EgressAdapter<L> {
                 {
                     return;
                 }
-                self.listener.on_message(cluster_session_id, timestamp, payload);
+                self.listener
+                    .on_message_with_reserved_value(cluster_session_id, timestamp, payload, reserved_value);
             }
             Fragment::SessionEvent {
                 correlation_id,
@@ -192,6 +250,7 @@ impl<L: EgressListener> EgressAdapter<L> {
                 leader_member_id,
                 code,
                 detail,
+                leader_heartbeat_timeout_ns: _,
             } => {
                 if self
                     .expected_session_id

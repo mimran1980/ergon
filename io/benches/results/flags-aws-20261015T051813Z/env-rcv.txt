@@ -1,0 +1,123 @@
+== uname
+Linux ip-172-31-46-178 7.0.0-1014-aws #14~24.04.1-Ubuntu SMP PREEMPT Fri Sep 18 21:24:59 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+== cmdline
+BOOT_IMAGE=/vmlinuz-7.0.0-1014-aws root=PARTUUID=ff84a5a7-578e-4843-9465-767e4a11edcc ro console=tty1 console=ttyS0 nvme_core.io_timeout=4294967295 isolcpus=managed_irq,domain,1,2,3,4,5,6,7 nohz_full=1,2,3,4,5,6,7 rcu_nocbs=1,2,3,4,5,6,7 irqaffinity=0 panic=-1
+== boot profile
+full
+== isolated
+1-7
+== clocksource
+tsc
+== mitigations
+ Automatic IBRS; IBPB: conditional; STIBP: disabled; PBRSB-eIBRS: Not affected; BHI: Not affected
+indirect_target_selection:Not affected
+itlb_multihit:Not affected
+ghostwrite:Not affected
+vmscape:Not affected
+mmio_stale_data:Not affected
+mds:Not affected
+reg_file_data_sampling:Not affected
+tsa:Mitigation: Clear CPU buffers
+l1tf:Not affected
+spec_store_bypass:Mitigation: Speculative Store Bypass disabled via prctl
+tsx_async_abort:Not affected
+old_microcode:Not affected
+swapgs barriers and __user pointer sanitization
+gather_data_sampling:Not affected
+retbleed:Not affected
+spec_rstack_overflow:Mitigation: Safe RET
+srbds:Not affected
+meltdown:Not affected
+== cpuidle
+driver acpi_idle
+POLL latency 0 µs disabled 0
+C1 latency 1 µs disabled 0
+C2 latency 800 µs disabled 0
+== cpu
+CPU(s):                                  8
+Model name:                              AMD EPYC 9R14
+BIOS Model name:                         AMD EPYC 9R14  CPU @ 2.6GHz
+Thread(s) per core:                      1
+Core(s) per socket:                      8
+Socket(s):                               1
+Hypervisor vendor:                       KVM
+NUMA node0 CPU(s):                       0-7
+== topology
+0,0
+1,1
+2,2
+3,3
+4,4
+5,5
+6,6
+7,7
+== routes
+default via 172.31.32.1 dev enp39s0 proto dhcp src 172.31.46.178 metric 100 rto_min lock 5ms quickack 1 
+172.31.0.2 via 172.31.32.1 dev enp39s0 proto dhcp src 172.31.46.178 metric 100 
+172.31.32.0/20 dev enp39s0 proto kernel scope link src 172.31.46.178 metric 100 rto_min lock 5ms quickack 1 
+172.31.32.1 dev enp39s0 proto dhcp scope link src 172.31.46.178 metric 100 rto_min lock 5ms quickack 1 
+== links
+lo               UNKNOWN        00:00:00:00:00:00 <LOOPBACK,UP,LOWER_UP> 
+enp39s0          UP             06:ff:cf:7e:c9:37 <BROADCAST,MULTICAST,UP,LOWER_UP> 
+== ethtool -i enp39s0
+driver: ena
+version: 7.0.0-1014-aws
+firmware-version: 
+== ethtool -l enp39s0
+Current hardware settings:
+RX:		n/a
+TX:		n/a
+Other:		n/a
+Combined:	8
+== ethtool -c enp39s0
+Adaptive RX: on  TX: n/a
+rx-usecs:	20
+rx-usecs-irq:	n/a
+tx-usecs:	64
+== ethtool -T enp39s0
+Time stamping parameters for enp39s0:
+Capabilities:
+	software-transmit
+	software-receive
+	software-system-clock
+PTP Hardware Clock: none
+Hardware Transmit Timestamp Modes: none
+Hardware Receive Filter Modes: none
+== nic irqs
+66 0 ena-mgmnt@pci:0000:27:00.0
+67 0 enp39s0-Tx-Rx-0
+68 0 enp39s0-Tx-Rx-1
+69 0 enp39s0-Tx-Rx-2
+70 0 enp39s0-Tx-Rx-3
+71 0 enp39s0-Tx-Rx-4
+72 0 enp39s0-Tx-Rx-5
+73 0 enp39s0-Tx-Rx-6
+74 0 enp39s0-Tx-Rx-7
+== chrony
+Reference ID    : A9FEA97B (169.254.169.123)
+Stratum         : 2
+Ref time (UTC)  : Thu Oct 15 05:23:24 2026
+System time     : 0.000003011 seconds fast of NTP time
+Last offset     : +0.000001202 seconds
+RMS offset      : 0.000001202 seconds
+Frequency       : 3.956 ppm slow
+Residual freq   : +0.107 ppm
+Skew            : 0.112 ppm
+Root delay      : 0.000149375 seconds
+Root dispersion : 0.000023267 seconds
+Update interval : 16.1 seconds
+Leap status     : Normal
+== chrony sources
+MS Name/IP address         Stratum Poll Reach LastRx Last sample               
+===============================================================================
+^* 169.254.169.123               1   4    77     0   -100ns[+1102ns] +/-   94us
+^- prod-ntp-5.ntp1.ps5.cano>     2   6    17    32  +7766us[+7766us] +/-  115ms
+^- alphyn.canonical.com          2   6    17    31  +3586us[+3590us] +/-  105ms
+^- prod-ntp-4.ntp1.ps5.cano>     2   6    17    32  +5294us[+5294us] +/-  112ms
+^- prod-ntp-3.ntp1.ps5.cano>     2   6    17    31  +4049us[+4053us] +/-  111ms
+^- ntp1.hnd.jp.hojmark.net       2   6    17    32   +357us[ +358us] +/-   36ms
+^- 208.88.66.8                   2   6    17    33   +698us[ +698us] +/-   21ms
+^- vmi3026968.contaboserver>     2   6    17    33   +255us[ +256us] +/-   85ms
+^- 43.167.216.182                2   6    17    32   +304us[ +305us] +/- 4115us
+== io_uring
+kernel.io_uring_disabled = 0

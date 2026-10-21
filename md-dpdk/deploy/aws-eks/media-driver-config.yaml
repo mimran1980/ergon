@@ -1,0 +1,76 @@
+# Media Driver tunables shared by every DPDK pod. Per-pair values (PCI, CIDR,
+# gateway) are injected by the device plugin at Allocate time, and the
+# entrypoint (entrypoint.sh) derives the CPU roles, idle strategies, wildcard
+# port ranges and EAL lcore from the pod's cpuset. Pinned here: the settings
+# that are the same on every node and either differ from rusteron-media-driver's
+# built-ins or are values every measurement used (so a change of default does
+# not silently change production). They match the VM lab's driver
+# (benches/cloud/vm.sh).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rusteron-media-driver
+data:
+  # 2 MiB hugepages mounted by the DaemonSet; the DPDK EAL mempools live here.
+  RUSTERON_DPDK_HUGE_DIR: "/dev/hugepages"
+  # RUSTERON_DPDK_RX_DESCRIPTORS is left unset: each port takes min(4096, the
+  # NIC's maximum), 4096 on an ENA (BENCHMARKS.md, AWS round 6: no first-point
+  # rx-missed loss and a higher loss-free rate than 1024). The pool below holds
+  # that ring.
+  # ENA queues take at most 512 TX descriptors (the device reports
+  # tx_desc_lim.nb_max = 512); a larger ring fails port init.
+  RUSTERON_DPDK_TX_DESCRIPTORS: "512"
+  # The VM lab's count, which every DPDK measurement used (benches/cloud/vm.sh).
+  # Each mbuf is about 2.3 KiB of 2 MiB hugepages (a 2 KiB data room, the
+  # headroom and its headers), so two ports take about 75 MiB of the pod's
+  # hugepages-2Mi; see the README's hugepage budget before raising it.
+  RUSTERON_DPDK_MBUFS_PER_PORT: "16384"
+  # A vfio-pci node's write-combining, as the node's preflight confirmed it.
+  # vfio-pci maps an ENA's low-latency-queue BAR through its device file, so
+  # /proc/self/maps cannot show it write-combined and the transport's LLQ
+  # check would refuse the port; it accepts one bound to vfio-pci when this
+  # is 1. The bootstrap binds the ENAs to vfio-pci (RUSTERON_DPDK_DRIVER) only
+  # after preflight.sh passed, which for vfio-pci requires the operator's
+  # RUSTERON_DPDK_VFIO_WC=1 on the node (a write-combining vfio-pci, Amazon's
+  # patch); a failed run leaves no inventory, so the device plugin hands out
+  # no pair. Inert for igb_uio ports, which must still show their BAR mapped
+  # write-combined (resource2_wc).
+  RUSTERON_DPDK_VFIO_WC: "1"
+  RUSTERON_DPDK_MEMPOOL_CACHE: "256"
+  RUSTERON_DPDK_BURST_SIZE: "32"
+  # The Aeron directory on the node's own 1 GiB hugetlbfs for it (the
+  # DaemonSet's /mnt/huge-aeron hostPath, mounted by the node bootstrap), so
+  # clients on the node can map it and the term buffers sit on hugepages, as in
+  # the VM lab. It needs a sized mount: an unsized hugetlbfs reports no free
+  # space and Aeron's storage check refuses every log buffer. Hugetlbfs files
+  # must be whole 2 MiB pages and cannot be sparse. A restarted driver replaces
+  # its old directory.
+  AERON_DIR: "/mnt/huge-aeron/aeron"
+  RUSTERON_MEDIA_DRIVER_DIR: "/mnt/huge-aeron/aeron"
+  AERON_DIR_DELETE_ON_START: "true"
+  AERON_FILE_PAGE_SIZE: "2097152"
+  AERON_TERM_BUFFER_SPARSE_FILE: "false"
+  # The receive window needs a socket buffer at least as large (Aeron refuses
+  # to start otherwise); the node bootstrap raises rmem_max/wmem_max to allow it.
+  AERON_RCV_INITIAL_WINDOW_LENGTH: "2097152"
+  AERON_SOCKET_SO_RCVBUF: "2097152"
+  AERON_SOCKET_SO_SNDBUF: "2097152"
+  # Aeron UDP MTU that fits the DPDK max_aeron_mtu default.
+  AERON_MTU_LENGTH: "1408"
+  # Aeron's maximum (its default is 4), the setting every kept DPDK
+  # measurement used (BENCHMARKS.md, recommended configuration). The DPDK
+  # receive poll drains whole bursts whatever this is; it still sizes each
+  # receive from a host-local socket. Pinned although the media driver also
+  # defaults to 16 under dpdk-ena, so a rollback edits one visible value. A
+  # rollback to the socket transport sets it back to 4 (the runbook's
+  # rollback): kernel busy polling with 16 dropped frames at the NIC.
+  AERON_RECEIVER_IO_VECTOR_CAPACITY: "16"
+  # With the entrypoint's Aeron wildcard ranges set, Aeron itself picks the
+  # source port of a publication without a fixed port (a plain endpoint=
+  # channel) from 20000-20999, and receiver-side wildcard binds from
+  # 21000-21999; peers' status messages and NAKs come back to those ports, so
+  # the security group allows UDP 20000-21999 between the data subnets. This
+  # range is the transport's own fallback for a wildcard bind Aeron leaves at
+  # port 0: disjoint from the kernel's 32768-60999, so it never collides with
+  # kernel sockets.
+  RUSTERON_DPDK_EPHEMERAL_PORT_RANGE: "61000 63999"

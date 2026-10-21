@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# OPTIONAL. MutatingAdmissionPolicy that strips livenessProbe from legacy
+# manifests in latency namespaces. Off by default: prefer the validating
+# policy, which rejects with a named message and makes the author fix the
+# manifest. JSON Patch is the only way to delete a field (apply-configuration
+# cannot).
+#
+# Enable with: kubectl apply -f mutating-admission-policy.yaml
+---
+apiVersion: admissionregistration.k8s.io/v1alpha1
+kind: MutatingAdmissionPolicy
+metadata:
+  name: ergon-latency-strip-liveness
+spec:
+  failurePolicy: Ignore
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  matchConditions:
+    - name: latency-namespace
+      expression: >-
+        has(object.metadata.namespace) &&
+        (namespaceObject.metadata.labels["ergon.io/latency"] ?? "") == "true"
+  mutations:
+    - patchType: JSONPatch
+      expression: >-
+        object.spec.containers.filter(c, has(c.livenessProbe)).map(c, [
+          {"op": "remove", "path": "/spec/containers/" + string(object.spec.containers.indexOf(c)) + "/livenessProbe"}
+        ])
+---
+apiVersion: admissionregistration.k8s.io/v1alpha1
+kind: MutatingAdmissionPolicyBinding
+metadata:
+  name: ergon-latency-strip-liveness
+spec:
+  policyName: ergon-latency-strip-liveness

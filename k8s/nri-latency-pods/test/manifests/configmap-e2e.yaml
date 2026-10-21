@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# E2E plugin config for nri-latency-pods. sharedCpus matches the kind node's
+# reservedSystemCPUs. Every grant knob is on so one check per extension can
+# run; the values are the node-side ceilings a pod may ask for.
+#
+# devRoot is the host's /dev as the DaemonSet mounts it (hostPath /dev at
+# /host/dev): the plugin stats the PHC and PM QoS nodes there and grants them
+# under their /dev/... names.
+#
+# schedFifo stays "off": RT scheduling is deliberately not built. It is
+# quoted: YAML 1.1 turns an unquoted off into the boolean false, and
+# sigs.k8s.io/yaml then hands the plugin the string "false", which is not
+# a legal value. seccomp.ioUring accepts both spellings; schedFifo does not.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ergon-shared-cpus
+  namespace: ergon-system
+data:
+  config.yaml: |
+    sharedCpus: "0,1"
+    oversubscription: 2
+    namespaces: [ergon-latency-pods, ergon-latency-pods-other, ergon-latency-pods-plain]
+    defaultAffinity: shared
+    hookPath: /opt/ergon/bin/ergon-cpus
+    annotationOptIn: true
+    metricsAddress: ":9466"
+    devRoot: /host/dev
+    rlimits:
+      memlock: "inf"
+      nofile: "65536"
+      rtPrio: "50"
+    seccomp:
+      ioUring: allow
+    schedFifo: "off"
+    ptp: "auto"
+    hugepagesAeronDir: "/dev/hugepages/aeron"

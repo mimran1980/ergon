@@ -857,7 +857,7 @@ fn shared_bool_domain_type_emits_impl_once() -> Result<(), Box<dyn std::error::E
             .fixed(&common_types::AMsgFixedFields { flag: common_types::BooleanType::T })
             .encoded_length_with_header();
         let dec = common_types::AMsgDecoder::try_decode(&buf[..len], 0)?;
-        assert_eq!(dec.try_flag()?, true);
+        assert_eq!(dec.flag()?, true);
         "#,
     );
 

@@ -1,0 +1,179 @@
+# aws/lab.sh's AWS CLI calls, per scenario of test-lab.sh's end-to-end run against fake_aws.py,
+# as the lab made them before cross-AZ, cross-region, LAB_THREADS_PER_CORE, LAB_SPOT and LAB_NO_FLATOUT
+# (<stamp>: the run's stamp; <dir>: the test's directory). With none of those set, unchanged, but for
+# one deliberate change: the instances' states are polled with describe-instances where `aws ec2 wait`
+# held the shared AWS CLI lock for the whole wait (cluster and precision-time; see test-lab.sh).
+## cluster
+aws sts get-caller-identity
+aws ec2 --region us-east-1 describe-instance-type-offerings --location-type availability-zone --filters Name=instance-type,Values=c7i.4xlarge --query InstanceTypeOfferings[].Location --output text
+aws ec2 --region us-east-1 describe-instance-type-offerings --location-type availability-zone --filters Name=instance-type,Values=c7i.8xlarge --query InstanceTypeOfferings[].Location --output text
+aws ec2 --region us-east-1 describe-images --owners 136693071363 --filters Name=name,Values=debian-13-amd64-* Name=architecture,Values=x86_64 --query sort_by(Images,&CreationDate)[-1].ImageId --output text
+aws ec2 --region us-east-1 create-vpc --cidr-block 10.30.0.0/16 --tag-specifications ResourceType=vpc,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-vpc}] --query Vpc.VpcId --output text
+aws ec2 --region us-east-1 create-internet-gateway --tag-specifications ResourceType=internet-gateway,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-igw}] --query InternetGateway.InternetGatewayId --output text
+aws ec2 --region us-east-1 attach-internet-gateway --internet-gateway-id igw-0002 --vpc-id vpc-0001
+aws ec2 --region us-east-1 create-route-table --vpc-id vpc-0001 --tag-specifications ResourceType=route-table,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-rt}] --query RouteTable.RouteTableId --output text
+aws ec2 --region us-east-1 create-route --route-table-id rtb-0003 --destination-cidr-block 0.0.0.0/0 --gateway-id igw-0002
+aws ec2 --region us-east-1 create-security-group --vpc-id vpc-0001 --group-name ergon-md-dpdk-<stamp> --description ergon md-dpdk bench <stamp> --tag-specifications ResourceType=security-group,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-sg}] --query GroupId --output text
+aws ec2 --region us-east-1 authorize-security-group-ingress --group-id sg-0004 --protocol tcp --port 22 --cidr 192.0.2.10/32
+aws ec2 --region us-east-1 authorize-security-group-ingress --group-id sg-0004 --protocol -1 --cidr 10.30.0.0/16
+aws ec2 --region us-east-1 import-key-pair --key-name ergon-md-dpdk-<stamp> --public-key-material fileb://<dir>/home/.ssh/id_ed25519.pub --tag-specifications ResourceType=key-pair,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-key}]
+aws ec2 --region us-east-1 create-placement-group --group-name ergon-md-dpdk-<stamp> --strategy cluster --tag-specifications ResourceType=placement-group,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-pg}]
+aws ec2 --region us-east-1 create-subnet --vpc-id vpc-0001 --cidr-block 10.30.0.0/24 --availability-zone us-east-1a --tag-specifications ResourceType=subnet,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-mgmt}] --query Subnet.SubnetId --output text
+aws ec2 --region us-east-1 modify-subnet-attribute --subnet-id subnet-0006 --map-public-ip-on-launch
+aws ec2 --region us-east-1 associate-route-table --route-table-id rtb-0003 --subnet-id subnet-0006
+aws ec2 --region us-east-1 create-subnet --vpc-id vpc-0001 --cidr-block 10.30.1.0/24 --availability-zone us-east-1a --tag-specifications ResourceType=subnet,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-data}] --query Subnet.SubnetId --output text
+aws ec2 --region us-east-1 run-instances --image-id ami-x86-us-east-1 --instance-type c7i.4xlarge --count 1 --key-name ergon-md-dpdk-<stamp> --instance-initiated-shutdown-behavior terminate --user-data file://<dir>/repo/target/md-dpdk-bench/aws-<stamp>/deadline-userdata.sh --subnet-id subnet-0006 --security-group-ids sg-0004 --placement GroupName=ergon-md-dpdk-<stamp> --block-device-mappings DeviceName=/dev/xvda,Ebs={VolumeSize=40,VolumeType=gp3,DeleteOnTermination=true} --metadata-options HttpTokens=required --tag-specifications ResourceType=instance,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-node}] ResourceType=volume,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-disk}] ResourceType=network-interface,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-mgmt-eni}] --query Instances[0].InstanceId --output text
+aws ec2 --region us-east-1 run-instances --image-id ami-x86-us-east-1 --instance-type c7i.8xlarge --count 1 --key-name ergon-md-dpdk-<stamp> --instance-initiated-shutdown-behavior terminate --user-data file://<dir>/repo/target/md-dpdk-bench/aws-<stamp>/deadline-userdata.sh --subnet-id subnet-0006 --security-group-ids sg-0004 --placement GroupName=ergon-md-dpdk-<stamp> --block-device-mappings DeviceName=/dev/xvda,Ebs={VolumeSize=40,VolumeType=gp3,DeleteOnTermination=true} --metadata-options HttpTokens=required --tag-specifications ResourceType=instance,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-node}] ResourceType=volume,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-disk}] ResourceType=network-interface,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-mgmt-eni}] --query Instances[0].InstanceId --output text
+aws ec2 --region us-east-1 terminate-instances --instance-ids i-0008
+aws ec2 --region us-east-1 describe-instances --instance-ids i-0008 --query Reservations[].Instances[].State.Name --output text
+aws ec2 --region us-east-1 delete-subnet --subnet-id subnet-0006
+aws ec2 --region us-east-1 delete-subnet --subnet-id subnet-0007
+aws ec2 --region us-east-1 create-subnet --vpc-id vpc-0001 --cidr-block 10.30.0.0/24 --availability-zone us-east-1b --tag-specifications ResourceType=subnet,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-mgmt}] --query Subnet.SubnetId --output text
+aws ec2 --region us-east-1 modify-subnet-attribute --subnet-id subnet-0009 --map-public-ip-on-launch
+aws ec2 --region us-east-1 associate-route-table --route-table-id rtb-0003 --subnet-id subnet-0009
+aws ec2 --region us-east-1 create-subnet --vpc-id vpc-0001 --cidr-block 10.30.1.0/24 --availability-zone us-east-1b --tag-specifications ResourceType=subnet,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-data}] --query Subnet.SubnetId --output text
+aws ec2 --region us-east-1 run-instances --image-id ami-x86-us-east-1 --instance-type c7i.4xlarge --count 1 --key-name ergon-md-dpdk-<stamp> --instance-initiated-shutdown-behavior terminate --user-data file://<dir>/repo/target/md-dpdk-bench/aws-<stamp>/deadline-userdata.sh --subnet-id subnet-0009 --security-group-ids sg-0004 --placement GroupName=ergon-md-dpdk-<stamp> --block-device-mappings DeviceName=/dev/xvda,Ebs={VolumeSize=40,VolumeType=gp3,DeleteOnTermination=true} --metadata-options HttpTokens=required --tag-specifications ResourceType=instance,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-node}] ResourceType=volume,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-disk}] ResourceType=network-interface,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-mgmt-eni}] --query Instances[0].InstanceId --output text
+aws ec2 --region us-east-1 run-instances --image-id ami-x86-us-east-1 --instance-type c7i.8xlarge --count 1 --key-name ergon-md-dpdk-<stamp> --instance-initiated-shutdown-behavior terminate --user-data file://<dir>/repo/target/md-dpdk-bench/aws-<stamp>/deadline-userdata.sh --subnet-id subnet-0009 --security-group-ids sg-0004 --placement GroupName=ergon-md-dpdk-<stamp> --block-device-mappings DeviceName=/dev/xvda,Ebs={VolumeSize=40,VolumeType=gp3,DeleteOnTermination=true} --metadata-options HttpTokens=required --tag-specifications ResourceType=instance,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-node}] ResourceType=volume,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-disk}] ResourceType=network-interface,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-mgmt-eni}] --query Instances[0].InstanceId --output text
+aws ec2 --region us-east-1 describe-instances --instance-ids i-0011 --query Reservations[].Instances[].State.Name --output text
+aws ec2 --region us-east-1 describe-instances --instance-ids i-0012 --query Reservations[].Instances[].State.Name --output text
+aws ec2 --region us-east-1 create-network-interface --subnet-id subnet-0010 --groups sg-0004 --private-ip-address 10.30.1.4 --tag-specifications ResourceType=network-interface,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-data-eni}] --query NetworkInterface.NetworkInterfaceId --output text
+aws ec2 --region us-east-1 attach-network-interface --network-interface-id eni-0013 --instance-id i-0011 --device-index 1 --query AttachmentId --output text
+aws ec2 --region us-east-1 modify-network-interface-attribute --network-interface-id eni-0013 --attachment AttachmentId=eni-attach-eni-0013,DeleteOnTermination=true
+aws ec2 --region us-east-1 create-network-interface --subnet-id subnet-0010 --groups sg-0004 --private-ip-address 10.30.1.5 --tag-specifications ResourceType=network-interface,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-data-eni}] --query NetworkInterface.NetworkInterfaceId --output text
+aws ec2 --region us-east-1 attach-network-interface --network-interface-id eni-0014 --instance-id i-0011 --device-index 2 --query AttachmentId --output text
+aws ec2 --region us-east-1 modify-network-interface-attribute --network-interface-id eni-0014 --attachment AttachmentId=eni-attach-eni-0014,DeleteOnTermination=true
+aws ec2 --region us-east-1 create-network-interface --subnet-id subnet-0010 --groups sg-0004 --private-ip-address 10.30.1.6 --tag-specifications ResourceType=network-interface,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-data-eni}] --query NetworkInterface.NetworkInterfaceId --output text
+aws ec2 --region us-east-1 attach-network-interface --network-interface-id eni-0015 --instance-id i-0012 --device-index 1 --query AttachmentId --output text
+aws ec2 --region us-east-1 modify-network-interface-attribute --network-interface-id eni-0015 --attachment AttachmentId=eni-attach-eni-0015,DeleteOnTermination=true
+aws ec2 --region us-east-1 create-network-interface --subnet-id subnet-0010 --groups sg-0004 --private-ip-address 10.30.1.7 --tag-specifications ResourceType=network-interface,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-data-eni}] --query NetworkInterface.NetworkInterfaceId --output text
+aws ec2 --region us-east-1 attach-network-interface --network-interface-id eni-0016 --instance-id i-0012 --device-index 2 --query AttachmentId --output text
+aws ec2 --region us-east-1 modify-network-interface-attribute --network-interface-id eni-0016 --attachment AttachmentId=eni-attach-eni-0016,DeleteOnTermination=true
+aws ec2 --region us-east-1 describe-instances --instance-ids i-0011 --query Reservations[0].Instances[0].PublicIpAddress --output text
+aws ec2 --region us-east-1 describe-instances --instance-ids i-0012 --query Reservations[0].Instances[0].PublicIpAddress --output text
+aws ec2 --region us-east-1 describe-instances --instance-ids i-0011 --query Reservations[0].Instances[0].PrivateIpAddress --output text
+aws ec2 --region us-east-1 describe-instances --instance-ids i-0012 --query Reservations[0].Instances[0].PrivateIpAddress --output text
+aws sts get-caller-identity --region us-east-1
+aws ec2 --region us-east-1 describe-instances --filters Name=tag:run,Values=<stamp> Name=instance-state-name,Values=pending,running,stopping,stopped --query Reservations[].Instances[].InstanceId --output text
+aws ec2 --region us-east-1 terminate-instances --instance-ids i-0011 i-0012
+aws ec2 --region us-east-1 describe-instances --instance-ids i-0011 i-0012 --query Reservations[].Instances[].State.Name --output text
+aws ec2 --region us-east-1 describe-network-interfaces --filters Name=tag:run,Values=<stamp> --query NetworkInterfaces[].NetworkInterfaceId --output text
+aws ec2 --region us-east-1 describe-vpcs --filters Name=tag:run,Values=<stamp> --query Vpcs[0].VpcId --output text
+aws ec2 --region us-east-1 describe-internet-gateways --filters Name=attachment.vpc-id,Values=vpc-0001 --query InternetGateways[].InternetGatewayId --output text
+aws ec2 --region us-east-1 detach-internet-gateway --internet-gateway-id igw-0002 --vpc-id vpc-0001
+aws ec2 --region us-east-1 delete-internet-gateway --internet-gateway-id igw-0002
+aws ec2 --region us-east-1 describe-subnets --filters Name=vpc-id,Values=vpc-0001 --query Subnets[].SubnetId --output text
+aws ec2 --region us-east-1 delete-subnet --subnet-id subnet-0009
+aws ec2 --region us-east-1 delete-subnet --subnet-id subnet-0010
+aws ec2 --region us-east-1 describe-route-tables --filters Name=vpc-id,Values=vpc-0001 Name=tag:run,Values=<stamp> --query RouteTables[].RouteTableId --output text
+aws ec2 --region us-east-1 delete-route-table --route-table-id rtb-0003
+aws ec2 --region us-east-1 describe-security-groups --filters Name=vpc-id,Values=vpc-0001 --query SecurityGroups[?GroupName!=`default`].GroupId --output text
+aws ec2 --region us-east-1 delete-security-group --group-id sg-0004
+aws ec2 --region us-east-1 delete-vpc --vpc-id vpc-0001
+aws ec2 --region us-east-1 delete-placement-group --group-name ergon-md-dpdk-<stamp>
+aws ec2 --region us-east-1 delete-placement-group --group-name ergon-md-dpdk-pt-<stamp>
+aws ec2 --region us-east-1 delete-key-pair --key-name ergon-md-dpdk-<stamp>
+aws ec2 --region us-east-1 describe-instances --filters Name=tag:run,Values=<stamp> Name=instance-state-name,Values=pending,running,stopping,stopped --query Reservations[].Instances[].InstanceId --output text
+aws ec2 --region us-east-1 describe-volumes --filters Name=tag:run,Values=<stamp> --query Volumes[].VolumeId --output text
+aws ec2 --region us-east-1 describe-network-interfaces --filters Name=tag:run,Values=<stamp> --query NetworkInterfaces[].NetworkInterfaceId --output text
+aws ec2 --region us-east-1 describe-addresses --filters Name=tag:run,Values=<stamp> --query Addresses[].AllocationId --output text
+aws ec2 --region us-east-1 describe-vpcs --filters Name=tag:run,Values=<stamp> --query Vpcs[].VpcId --output text
+aws ec2 --region us-east-1 describe-route-tables --filters Name=tag:run,Values=<stamp> --query RouteTables[].RouteTableId --output text
+aws ec2 --region us-east-1 describe-subnets --filters Name=tag:run,Values=<stamp> --query Subnets[].SubnetId --output text
+aws ec2 --region us-east-1 describe-security-groups --filters Name=tag:run,Values=<stamp> --query SecurityGroups[].GroupId --output text
+aws ec2 --region us-east-1 describe-internet-gateways --filters Name=tag:run,Values=<stamp> --query InternetGateways[].InternetGatewayId --output text
+aws ec2 --region us-east-1 describe-placement-groups --filters Name=tag:run,Values=<stamp> --query PlacementGroups[].GroupName --output text
+aws ec2 --region us-east-1 describe-key-pairs --filters Name=tag:run,Values=<stamp> --query KeyPairs[].KeyName --output text
+aws sts get-caller-identity --region us-east-1
+## precision-time
+aws sts get-caller-identity
+aws ec2 --region us-east-1 describe-instance-type-offerings --location-type availability-zone --filters Name=instance-type,Values=c7i.2xlarge --query InstanceTypeOfferings[].Location --output text
+aws ec2 --region us-east-1 describe-instance-type-offerings --location-type availability-zone --filters Name=instance-type,Values=c7i.2xlarge --query InstanceTypeOfferings[].Location --output text
+aws ec2 --region us-east-1 describe-images --owners 136693071363 --filters Name=name,Values=debian-13-amd64-* Name=architecture,Values=x86_64 --query sort_by(Images,&CreationDate)[-1].ImageId --output text
+aws ec2 --region us-east-1 create-vpc --cidr-block 10.30.0.0/16 --tag-specifications ResourceType=vpc,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-vpc}] --query Vpc.VpcId --output text
+aws ec2 --region us-east-1 create-internet-gateway --tag-specifications ResourceType=internet-gateway,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-igw}] --query InternetGateway.InternetGatewayId --output text
+aws ec2 --region us-east-1 attach-internet-gateway --internet-gateway-id igw-0002 --vpc-id vpc-0001
+aws ec2 --region us-east-1 create-route-table --vpc-id vpc-0001 --tag-specifications ResourceType=route-table,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-rt}] --query RouteTable.RouteTableId --output text
+aws ec2 --region us-east-1 create-route --route-table-id rtb-0003 --destination-cidr-block 0.0.0.0/0 --gateway-id igw-0002
+aws ec2 --region us-east-1 create-security-group --vpc-id vpc-0001 --group-name ergon-md-dpdk-<stamp> --description ergon md-dpdk bench <stamp> --tag-specifications ResourceType=security-group,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-sg}] --query GroupId --output text
+aws ec2 --region us-east-1 authorize-security-group-ingress --group-id sg-0004 --protocol tcp --port 22 --cidr 192.0.2.10/32
+aws ec2 --region us-east-1 authorize-security-group-ingress --group-id sg-0004 --protocol -1 --cidr 10.30.0.0/16
+aws ec2 --region us-east-1 import-key-pair --key-name ergon-md-dpdk-<stamp> --public-key-material fileb://<dir>/home/.ssh/id_ed25519.pub --tag-specifications ResourceType=key-pair,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-key}]
+aws ec2 --region us-east-1 create-placement-group --group-name ergon-md-dpdk-pt-<stamp> --strategy precision-time --tag-specifications ResourceType=placement-group,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-pg-pt}] --query PlacementGroup.GroupId --output text
+aws ec2 --region us-east-1 create-placement-group --group-name ergon-md-dpdk-<stamp> --strategy cluster --parent-group-id pg-0005 --tag-specifications ResourceType=placement-group,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-pg}]
+aws ec2 --region us-east-1 create-subnet --vpc-id vpc-0001 --cidr-block 10.30.0.0/24 --availability-zone us-east-1a --tag-specifications ResourceType=subnet,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-mgmt}] --query Subnet.SubnetId --output text
+aws ec2 --region us-east-1 modify-subnet-attribute --subnet-id subnet-0007 --map-public-ip-on-launch
+aws ec2 --region us-east-1 associate-route-table --route-table-id rtb-0003 --subnet-id subnet-0007
+aws ec2 --region us-east-1 create-subnet --vpc-id vpc-0001 --cidr-block 10.30.1.0/24 --availability-zone us-east-1a --tag-specifications ResourceType=subnet,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-data}] --query Subnet.SubnetId --output text
+aws ec2 --region us-east-1 run-instances --image-id ami-x86-us-east-1 --instance-type c7i.2xlarge --count 1 --key-name ergon-md-dpdk-<stamp> --instance-initiated-shutdown-behavior terminate --user-data file://<dir>/repo/target/md-dpdk-bench/aws-<stamp>/deadline-userdata.sh --subnet-id subnet-0007 --security-group-ids sg-0004 --placement GroupName=ergon-md-dpdk-<stamp> --block-device-mappings DeviceName=/dev/xvda,Ebs={VolumeSize=40,VolumeType=gp3,DeleteOnTermination=true} --metadata-options HttpTokens=required --tag-specifications ResourceType=instance,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-node}] ResourceType=volume,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-disk}] ResourceType=network-interface,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-mgmt-eni}] --query Instances[0].InstanceId --output text
+aws ec2 --region us-east-1 run-instances --image-id ami-x86-us-east-1 --instance-type c7i.2xlarge --count 1 --key-name ergon-md-dpdk-<stamp> --instance-initiated-shutdown-behavior terminate --user-data file://<dir>/repo/target/md-dpdk-bench/aws-<stamp>/deadline-userdata.sh --subnet-id subnet-0007 --security-group-ids sg-0004 --placement GroupName=ergon-md-dpdk-<stamp> --block-device-mappings DeviceName=/dev/xvda,Ebs={VolumeSize=40,VolumeType=gp3,DeleteOnTermination=true} --metadata-options HttpTokens=required --tag-specifications ResourceType=instance,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-node}] ResourceType=volume,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-disk}] ResourceType=network-interface,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-mgmt-eni}] --query Instances[0].InstanceId --output text
+aws ec2 --region us-east-1 describe-instances --instance-ids i-0009 --query Reservations[].Instances[].State.Name --output text
+aws ec2 --region us-east-1 describe-instances --instance-ids i-0010 --query Reservations[].Instances[].State.Name --output text
+aws ec2 --region us-east-1 create-network-interface --subnet-id subnet-0008 --groups sg-0004 --private-ip-address 10.30.1.4 --tag-specifications ResourceType=network-interface,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-data-eni}] --query NetworkInterface.NetworkInterfaceId --output text
+aws ec2 --region us-east-1 attach-network-interface --network-interface-id eni-0011 --instance-id i-0009 --device-index 1 --query AttachmentId --output text
+aws ec2 --region us-east-1 modify-network-interface-attribute --network-interface-id eni-0011 --attachment AttachmentId=eni-attach-eni-0011,DeleteOnTermination=true
+aws ec2 --region us-east-1 create-network-interface --subnet-id subnet-0008 --groups sg-0004 --private-ip-address 10.30.1.5 --tag-specifications ResourceType=network-interface,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-data-eni}] --query NetworkInterface.NetworkInterfaceId --output text
+aws ec2 --region us-east-1 attach-network-interface --network-interface-id eni-0012 --instance-id i-0009 --device-index 2 --query AttachmentId --output text
+aws ec2 --region us-east-1 modify-network-interface-attribute --network-interface-id eni-0012 --attachment AttachmentId=eni-attach-eni-0012,DeleteOnTermination=true
+aws ec2 --region us-east-1 create-network-interface --subnet-id subnet-0008 --groups sg-0004 --private-ip-address 10.30.1.6 --tag-specifications ResourceType=network-interface,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-data-eni}] --query NetworkInterface.NetworkInterfaceId --output text
+aws ec2 --region us-east-1 attach-network-interface --network-interface-id eni-0013 --instance-id i-0010 --device-index 1 --query AttachmentId --output text
+aws ec2 --region us-east-1 modify-network-interface-attribute --network-interface-id eni-0013 --attachment AttachmentId=eni-attach-eni-0013,DeleteOnTermination=true
+aws ec2 --region us-east-1 create-network-interface --subnet-id subnet-0008 --groups sg-0004 --private-ip-address 10.30.1.7 --tag-specifications ResourceType=network-interface,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=<stamp>},{Key=Name,Value=ergon-md-dpdk-data-eni}] --query NetworkInterface.NetworkInterfaceId --output text
+aws ec2 --region us-east-1 attach-network-interface --network-interface-id eni-0014 --instance-id i-0010 --device-index 2 --query AttachmentId --output text
+aws ec2 --region us-east-1 modify-network-interface-attribute --network-interface-id eni-0014 --attachment AttachmentId=eni-attach-eni-0014,DeleteOnTermination=true
+aws ec2 --region us-east-1 describe-instances --instance-ids i-0009 --query Reservations[0].Instances[0].PublicIpAddress --output text
+aws ec2 --region us-east-1 describe-instances --instance-ids i-0010 --query Reservations[0].Instances[0].PublicIpAddress --output text
+aws ec2 --region us-east-1 describe-instances --instance-ids i-0009 --query Reservations[0].Instances[0].PrivateIpAddress --output text
+aws ec2 --region us-east-1 describe-instances --instance-ids i-0010 --query Reservations[0].Instances[0].PrivateIpAddress --output text
+aws sts get-caller-identity --region us-east-1
+aws ec2 --region us-east-1 describe-instances --filters Name=tag:run,Values=<stamp> Name=instance-state-name,Values=pending,running,stopping,stopped --query Reservations[].Instances[].InstanceId --output text
+aws ec2 --region us-east-1 terminate-instances --instance-ids i-0009 i-0010
+aws ec2 --region us-east-1 describe-instances --instance-ids i-0009 i-0010 --query Reservations[].Instances[].State.Name --output text
+aws ec2 --region us-east-1 describe-network-interfaces --filters Name=tag:run,Values=<stamp> --query NetworkInterfaces[].NetworkInterfaceId --output text
+aws ec2 --region us-east-1 describe-vpcs --filters Name=tag:run,Values=<stamp> --query Vpcs[0].VpcId --output text
+aws ec2 --region us-east-1 describe-internet-gateways --filters Name=attachment.vpc-id,Values=vpc-0001 --query InternetGateways[].InternetGatewayId --output text
+aws ec2 --region us-east-1 detach-internet-gateway --internet-gateway-id igw-0002 --vpc-id vpc-0001
+aws ec2 --region us-east-1 delete-internet-gateway --internet-gateway-id igw-0002
+aws ec2 --region us-east-1 describe-subnets --filters Name=vpc-id,Values=vpc-0001 --query Subnets[].SubnetId --output text
+aws ec2 --region us-east-1 delete-subnet --subnet-id subnet-0007
+aws ec2 --region us-east-1 delete-subnet --subnet-id subnet-0008
+aws ec2 --region us-east-1 describe-route-tables --filters Name=vpc-id,Values=vpc-0001 Name=tag:run,Values=<stamp> --query RouteTables[].RouteTableId --output text
+aws ec2 --region us-east-1 delete-route-table --route-table-id rtb-0003
+aws ec2 --region us-east-1 describe-security-groups --filters Name=vpc-id,Values=vpc-0001 --query SecurityGroups[?GroupName!=`default`].GroupId --output text
+aws ec2 --region us-east-1 delete-security-group --group-id sg-0004
+aws ec2 --region us-east-1 delete-vpc --vpc-id vpc-0001
+aws ec2 --region us-east-1 delete-placement-group --group-name ergon-md-dpdk-<stamp>
+aws ec2 --region us-east-1 delete-placement-group --group-name ergon-md-dpdk-pt-<stamp>
+aws ec2 --region us-east-1 delete-key-pair --key-name ergon-md-dpdk-<stamp>
+aws ec2 --region us-east-1 describe-instances --filters Name=tag:run,Values=<stamp> Name=instance-state-name,Values=pending,running,stopping,stopped --query Reservations[].Instances[].InstanceId --output text
+aws ec2 --region us-east-1 describe-volumes --filters Name=tag:run,Values=<stamp> --query Volumes[].VolumeId --output text
+aws ec2 --region us-east-1 describe-network-interfaces --filters Name=tag:run,Values=<stamp> --query NetworkInterfaces[].NetworkInterfaceId --output text
+aws ec2 --region us-east-1 describe-addresses --filters Name=tag:run,Values=<stamp> --query Addresses[].AllocationId --output text
+aws ec2 --region us-east-1 describe-vpcs --filters Name=tag:run,Values=<stamp> --query Vpcs[].VpcId --output text
+aws ec2 --region us-east-1 describe-route-tables --filters Name=tag:run,Values=<stamp> --query RouteTables[].RouteTableId --output text
+aws ec2 --region us-east-1 describe-subnets --filters Name=tag:run,Values=<stamp> --query Subnets[].SubnetId --output text
+aws ec2 --region us-east-1 describe-security-groups --filters Name=tag:run,Values=<stamp> --query SecurityGroups[].GroupId --output text
+aws ec2 --region us-east-1 describe-internet-gateways --filters Name=tag:run,Values=<stamp> --query InternetGateways[].InternetGatewayId --output text
+aws ec2 --region us-east-1 describe-placement-groups --filters Name=tag:run,Values=<stamp> --query PlacementGroups[].GroupName --output text
+aws ec2 --region us-east-1 describe-key-pairs --filters Name=tag:run,Values=<stamp> --query KeyPairs[].KeyName --output text
+aws sts get-caller-identity --region us-east-1
+## delete
+aws sts get-caller-identity
+aws sts get-caller-identity --region us-east-1
+aws ec2 --region us-east-1 describe-instances --filters Name=tag:run,Values=<stamp> Name=instance-state-name,Values=pending,running,stopping,stopped --query Reservations[].Instances[].InstanceId --output text
+aws ec2 --region us-east-1 describe-network-interfaces --filters Name=tag:run,Values=<stamp> --query NetworkInterfaces[].NetworkInterfaceId --output text
+aws ec2 --region us-east-1 describe-vpcs --filters Name=tag:run,Values=<stamp> --query Vpcs[0].VpcId --output text
+aws ec2 --region us-east-1 delete-placement-group --group-name ergon-md-dpdk-<stamp>
+aws ec2 --region us-east-1 delete-placement-group --group-name ergon-md-dpdk-pt-<stamp>
+aws ec2 --region us-east-1 delete-key-pair --key-name ergon-md-dpdk-<stamp>
+aws ec2 --region us-east-1 describe-instances --filters Name=tag:run,Values=<stamp> Name=instance-state-name,Values=pending,running,stopping,stopped --query Reservations[].Instances[].InstanceId --output text
+aws ec2 --region us-east-1 describe-volumes --filters Name=tag:run,Values=<stamp> --query Volumes[].VolumeId --output text
+aws ec2 --region us-east-1 describe-network-interfaces --filters Name=tag:run,Values=<stamp> --query NetworkInterfaces[].NetworkInterfaceId --output text
+aws ec2 --region us-east-1 describe-addresses --filters Name=tag:run,Values=<stamp> --query Addresses[].AllocationId --output text
+aws ec2 --region us-east-1 describe-vpcs --filters Name=tag:run,Values=<stamp> --query Vpcs[].VpcId --output text
+aws ec2 --region us-east-1 describe-route-tables --filters Name=tag:run,Values=<stamp> --query RouteTables[].RouteTableId --output text
+aws ec2 --region us-east-1 describe-subnets --filters Name=tag:run,Values=<stamp> --query Subnets[].SubnetId --output text
+aws ec2 --region us-east-1 describe-security-groups --filters Name=tag:run,Values=<stamp> --query SecurityGroups[].GroupId --output text
+aws ec2 --region us-east-1 describe-internet-gateways --filters Name=tag:run,Values=<stamp> --query InternetGateways[].InternetGatewayId --output text
+aws ec2 --region us-east-1 describe-placement-groups --filters Name=tag:run,Values=<stamp> --query PlacementGroups[].GroupName --output text
+aws ec2 --region us-east-1 describe-key-pairs --filters Name=tag:run,Values=<stamp> --query KeyPairs[].KeyName --output text
+aws sts get-caller-identity --region us-east-1

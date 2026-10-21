@@ -52,8 +52,8 @@ the chain, start with `decoder.ordered()`:
 
 The fixed callback comes before tails and receives a fixed-fields-only view;
 each group callback receives the entry and its `EntryInfo`, and var-data
-callbacks receive bytes or strictly validated text. Unprefixed methods return
-`DecodeError` so the closures infer; `try_*` takes a custom `E`. These
+callbacks receive bytes or strictly validated text. Every callback returns
+`Result<_, DecodeError>`, so the closures infer. These
 callbacks borrow the original wire buffer, so bytes and text may
 be retained as the chain advances. The message chain ends on
 `encoded_length_with_header()` / `as_bytes_with_header()`, like encode —
@@ -84,19 +84,16 @@ These borrowed payloads can be retained while advancing later stages.
 `performanceFigures` entries carry tails, so they take closures;
 `acceleration` is fixed-stride, so it is an iterator.)*
 
-When the payload is processed inside a callback, `try_<name>(|bytes| ...)`
-returns the next stage directly. This existing byte API keeps consecutive
-var-data fields in one expression:
+Consecutive var-data fields chain through the `next` stage each tuple
+returns; the borrowed slices stay valid while later stages advance:
 
 ```rust,no_run
-{{#include ../../../examples/car-decode-closures.rs:var_data_callbacks}}
+{{#include ../../../examples/car-decode-closures.rs:var_data_tuples}}
 ```
 
-The callback returns `Result<(), E>` where `E: From<DecodeError>`. Its bytes
-are scoped to the callback; use `into_<name>()` when retaining a borrowed
-slice. There is no staged `try_<name>_as_str` callback companion: use the
-strict tuple-returning accessor, or the ordered lane's `<name>_as_str` callback.
+For callbacks instead of tuples, use the ordered lane's `<name>(|bytes| ..)`
+and `<name>_as_str(|text| ..)`, which return `DecodeError`.
 
 The generated staged walk advances once through dynamic tails. Random-access
 getters used before that walk, including counts or lengths for later tails,
-can add scans. See [Keeping the walk single-pass](../feature-tour/decode-stages.md#keeping-the-walk-single-pass).
+can add scans. See [Asking before walking](../feature-tour/decode-stages.md#asking-before-walking).

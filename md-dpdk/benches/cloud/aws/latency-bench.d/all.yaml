@@ -1,0 +1,106 @@
+# latency-pods lab: all mode (M6). M1+M2+M3+M4, no probe.
+# hugepages + partition + seccomp + devices together. The combined row is
+# what an opted-in latency pod gets when every extension is on.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: latency-__RUN__-pong
+  namespace: ergon-latency-pods
+  labels: { app: ergon-latency-pods, role: pong, mode: all, ergon.io/latency: "hot" }
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus","ergon-latency-pods-ext"]'
+    ptp.ergon.io/app: "auto"
+    seccomp.ergon.io/app: "io-uring"
+    cpu-partition.ergon.io/app: "isolated"
+    hugepages.ergon.io/app: "2M"
+spec:
+  nodeName: __B_NODE__
+  restartPolicy: Never
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  terminationGracePeriodSeconds: 5
+  priorityClassName: ergon-latency-pods-hot
+  nodeSelector: { ergon.io/shared-cpus: "true" }
+  containers:
+    - name: app
+      image: __IMAGE__
+      imagePullPolicy: Never
+      command: ["/latency-bench-podrun.sh", "pong", "__A_EP__", "__B_EP__"]
+      env:
+        - name: LATENCY_OUT
+          value: /out
+        # This mode asked for cpu-partition.ergon.io: a missing partition
+        # grant is a failure, not a control run.
+        - name: LATENCY_REQUIRE_PARTITION
+          value: "1"
+        - name: AERON_DIR
+          value: /dev/hugepages/aeron
+        - name: HARNESS_DRIVER
+          value: invoker
+        - name: RTT_SECONDS
+          value: "60"
+        - name: RTT_MESSAGES
+          value: "300000"
+        - name: RTT_WARMUP
+          value: "50000"
+      resources:
+        requests: { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250", hugepages-2Mi: 256Mi }
+        limits: { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250", hugepages-2Mi: 256Mi }
+      volumeMounts:
+        - { name: aeron, mountPath: /aeron }
+        - { name: out, mountPath: /out }
+  volumes:
+    - { name: aeron, emptyDir: {} }
+    - { name: out, emptyDir: {} }
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: latency-__RUN__-ping
+  namespace: ergon-latency-pods
+  labels: { app: ergon-latency-pods, role: ping, mode: all, ergon.io/latency: "hot" }
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus","ergon-latency-pods-ext"]'
+    ptp.ergon.io/app: "auto"
+    seccomp.ergon.io/app: "io-uring"
+    cpu-partition.ergon.io/app: "isolated"
+    hugepages.ergon.io/app: "2M"
+spec:
+  nodeName: __A_NODE__
+  restartPolicy: Never
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  terminationGracePeriodSeconds: 5
+  priorityClassName: ergon-latency-pods-hot
+  nodeSelector: { ergon.io/shared-cpus: "true" }
+  containers:
+    - name: app
+      image: __IMAGE__
+      imagePullPolicy: Never
+      command: ["/latency-bench-podrun.sh", "ping", "__A_EP__", "__B_EP__"]
+      env:
+        - name: LATENCY_OUT
+          value: /out
+        # This mode asked for cpu-partition.ergon.io: a missing partition
+        # grant is a failure, not a control run.
+        - name: LATENCY_REQUIRE_PARTITION
+          value: "1"
+        - name: AERON_DIR
+          value: /dev/hugepages/aeron
+        - name: HARNESS_DRIVER
+          value: invoker
+        - name: RTT_SECONDS
+          value: "60"
+        - name: RTT_MESSAGES
+          value: "300000"
+        - name: RTT_WARMUP
+          value: "50000"
+      resources:
+        requests: { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250", hugepages-2Mi: 256Mi }
+        limits: { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250", hugepages-2Mi: 256Mi }
+      volumeMounts:
+        - { name: aeron, mountPath: /aeron }
+        - { name: out, mountPath: /out }
+  volumes:
+    - { name: aeron, emptyDir: {} }
+    - { name: out, emptyDir: {} }

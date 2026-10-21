@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Refusal: Burstable (requests != limits) asking for the resource.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: refuse-burstable
+  namespace: ergon-e2e
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus"]'
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    ergon.io/shared-cpus: "true"
+  containers:
+    - name: app
+      image: ergon-nri-pin-test:e2e
+      imagePullPolicy: Never
+      command: ["sleep", "infinity"]
+      resources:
+        requests:
+          # Small: the point is requests != limits, not the size. The e2e has
+          # one node and A already holds two CPUs.
+          cpu: 100m
+          memory: 32Mi
+          ergon.io/shared-millicpus: "250"
+        limits:
+          cpu: 200m
+          memory: 32Mi
+          ergon.io/shared-millicpus: "250"

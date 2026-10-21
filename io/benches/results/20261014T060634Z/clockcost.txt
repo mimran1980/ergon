@@ -1,0 +1,2 @@
+clock_gettime(CLOCK_REALTIME): 21.9 ns/read
+rdtsc: 10.1 ns/read

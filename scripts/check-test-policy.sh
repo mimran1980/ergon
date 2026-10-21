@@ -91,8 +91,11 @@ while IFS= read -r file; do
             workflow_files+=("$file")
             ;;
     esac
+    # A bench with its own `main` (a gate that exits non-zero) has no marker:
+    # everything under `benches/` is owned all the same.
     if [[ "$file" == *.rs ]] &&
-        (cd "$root" && rg -q '#\[(tokio::)?test\]|proptest!|criterion_(group|main)!|fuzz_target!|```rust' "$file"); then
+        { [[ "$file" == benches/* || "$file" == */benches/* ]] ||
+            (cd "$root" && rg -q '#\[(tokio::)?test\]|proptest!|criterion_(group|main)!|fuzz_target!|```rust' "$file"); }; then
         printf '%s\n' "$file" >>"$test_sources"
     fi
 done <"$tracked"
@@ -228,6 +231,7 @@ while IFS= read -r file; do
     matches=0
     owners=
     while IFS=$'\t' read -r pattern lane command; do
+        # shellcheck disable=SC2053  # $pattern is a glob from the lane manifest
         if [[ "$file" == $pattern ]]; then
             matches=$((matches + 1))
             owners="${owners}${owners:+, }${lane}"
@@ -247,6 +251,7 @@ done <"$test_sources"
 while IFS=$'\t' read -r pattern lane command; do
     pattern_matches=0
     while IFS= read -r file; do
+        # shellcheck disable=SC2053  # $pattern is a glob from the lane manifest
         if [[ "$file" == $pattern ]]; then
             pattern_matches=$((pattern_matches + 1))
         fi

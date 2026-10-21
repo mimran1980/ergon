@@ -1,0 +1,3 @@
+# realtime=1760500311.000000000
+sender bw_in_allowance_exceeded: 0 pps_allowance_exceeded: 0 tx_packets: 5580100 rx_packets: 60
+receiver bw_in_allowance_exceeded: 0 pps_allowance_exceeded: 0 tx_packets: 10 rx_packets: 5

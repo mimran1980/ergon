@@ -1,0 +1,58 @@
+# OKX v5 REST responses, written from the documented codes (read 2026-10-17).
+# Not captured from a live session; numbers are made up and messages
+# shortened. OKX documents the body codes, not the HTTP status: only 50011's
+# 429 is stated ("HTTP 429"), and 50011 often arrives as 200 as well. The
+# other statuses here are the ones these tests exercise, not a claim about
+# what OKX sends. OKX sends no usage headers. Requests went out at server
+# time 1700000000000 ms.
+# - Rate limits: https://www.okx.com/docs-v5/en/#overview-rate-limits
+# - Place order: https://www.okx.com/docs-v5/en/#order-book-trading-trade-post-place-order
+
+### order-ok
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"code":"0","msg":"","data":[{"clOrdId":"b15","ordId":"312269865356374016","tag":"","ts":"1700000000000","sCode":"0","sMsg":""}],"inTime":"1700000000000000","outTime":"1700000000001000"}
+
+### rate-limit-50011
+HTTP/1.1 429 Too Many Requests
+Content-Type: application/json
+
+{"code":"50011","msg":"Rate limit reached.","data":[]}
+
+### sub-account-50061
+HTTP/1.1 429 Too Many Requests
+Content-Type: application/json
+
+{"code":"50061","msg":"Sub-account rate limit exceeded.","data":[]}
+
+### timestamp-50102
+HTTP/1.1 401 Unauthorized
+Content-Type: application/json
+
+{"code":"50102","msg":"Timestamp request expired.","data":[]}
+
+### timeout-50004
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+
+{"code":"50004","msg":"API endpoint request timeout (does not mean that the request was successful or failed, please check the request result).","data":[]}
+
+### order-failed-1
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"code":"1","msg":"All operations failed","data":[{"clOrdId":"b15","ordId":"","tag":"","ts":"1700000000000","sCode":"51008","sMsg":"Order failed. Insufficient balance."}],"inTime":"1700000000000000","outTime":"1700000000001000"}
+
+### unavailable-503
+HTTP/1.1 503 Service Unavailable
+Content-Type: text/html
+
+<html><body>503 Service Unavailable</body></html>
+
+### truncated-body
+# Malformed: the JSON stops short.
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"code":"0","msg":"","data":[

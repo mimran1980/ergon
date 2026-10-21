@@ -1,0 +1,97 @@
+# latency-pods lab: hugepages mode (M1). Item 1 of the build set.
+# The pod requests hugepages-2Mi (requests = limits) so the scheduler, the
+# hugetlb cgroup limit and the accounting stay in Kubernetes. The NRI plugin
+# AddMounts a sized hugetlbfs at /dev/hugepages (pagesize=2M,size=<limit>).
+# No emptyDir hugepage volume: emptyDir medium HugePages-2Mi has no size=,
+# and Aeron refuses an unsized hugetlbfs.
+# Env the app reads: ERGON_HUGEPAGES_DIR, ERGON_HUGEPAGE_SIZE (set by the
+# plugin); latency-bench-podrun.sh points AERON_DIR at $ERGON_HUGEPAGES_DIR/aeron.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: latency-__RUN__-pong
+  namespace: ergon-latency-pods
+  labels: { app: ergon-latency-pods, role: pong, mode: hugepages, ergon.io/latency: "hot" }
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus","ergon-latency-pods-ext"]'
+    hugepages.ergon.io/app: "2M"
+spec:
+  nodeName: __B_NODE__
+  restartPolicy: Never
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  terminationGracePeriodSeconds: 5
+  priorityClassName: ergon-latency-pods-hot
+  nodeSelector: { ergon.io/shared-cpus: "true" }
+  containers:
+    - name: app
+      image: __IMAGE__
+      imagePullPolicy: Never
+      command: ["/latency-bench-podrun.sh", "pong", "__A_EP__", "__B_EP__"]
+      env:
+        - name: LATENCY_OUT
+          value: /out
+        - name: AERON_DIR
+          value: /dev/hugepages/aeron
+        - name: HARNESS_DRIVER
+          value: invoker
+        - name: RTT_SECONDS
+          value: "60"
+        - name: RTT_MESSAGES
+          value: "300000"
+        - name: RTT_WARMUP
+          value: "50000"
+      resources:
+        requests: { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250", hugepages-2Mi: 256Mi }
+        limits: { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250", hugepages-2Mi: 256Mi }
+      volumeMounts:
+        - { name: aeron, mountPath: /aeron }
+        - { name: out, mountPath: /out }
+  volumes:
+    - { name: aeron, emptyDir: {} }
+    - { name: out, emptyDir: {} }
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: latency-__RUN__-ping
+  namespace: ergon-latency-pods
+  labels: { app: ergon-latency-pods, role: ping, mode: hugepages, ergon.io/latency: "hot" }
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus","ergon-latency-pods-ext"]'
+    hugepages.ergon.io/app: "2M"
+spec:
+  nodeName: __A_NODE__
+  restartPolicy: Never
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  terminationGracePeriodSeconds: 5
+  priorityClassName: ergon-latency-pods-hot
+  nodeSelector: { ergon.io/shared-cpus: "true" }
+  containers:
+    - name: app
+      image: __IMAGE__
+      imagePullPolicy: Never
+      command: ["/latency-bench-podrun.sh", "ping", "__A_EP__", "__B_EP__"]
+      env:
+        - name: LATENCY_OUT
+          value: /out
+        - name: AERON_DIR
+          value: /dev/hugepages/aeron
+        - name: HARNESS_DRIVER
+          value: invoker
+        - name: RTT_SECONDS
+          value: "60"
+        - name: RTT_MESSAGES
+          value: "300000"
+        - name: RTT_WARMUP
+          value: "50000"
+      resources:
+        requests: { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250", hugepages-2Mi: 256Mi }
+        limits: { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250", hugepages-2Mi: 256Mi }
+      volumeMounts:
+        - { name: aeron, mountPath: /aeron }
+        - { name: out, mountPath: /out }
+  volumes:
+    - { name: aeron, emptyDir: {} }
+    - { name: out, emptyDir: {} }

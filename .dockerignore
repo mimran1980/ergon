@@ -1,0 +1,15 @@
+# Build context for md-dpdk/deploy/aws-eks/Dockerfile.* (run from the repo
+# root). The images build ergon-md-dpdk and its device plugin from the
+# workspace; they need no VCS history, build outputs, upstream submodules or
+# secrets.
+.git
+**/.git
+target
+**/target
+/aeron
+/simple-binary-encoding
+*.key
+*.pem
+id_ed25519
+aeron-cluster-[0-9]
+.DS_Store

@@ -77,6 +77,7 @@ fn test_fragmented_egress_regular_poll_reassembles() -> Result<(), Box<dyn std::
     client.offer(PAYLOAD)?;
 
     for _ in 0..50 {
+        let _ = client.send_keep_alive();
         client.poll_egress(&mut adapter, 10)?;
         if !adapter.listener().messages.lock().unwrap().is_empty() {
             break;
@@ -119,6 +120,7 @@ fn test_fragmented_egress_controlled_poll_reassembles_and_commits()
     client.offer(PAYLOAD)?;
 
     for _ in 0..50 {
+        let _ = client.send_keep_alive();
         client.poll_egress_controlled(&mut adapter, 10)?;
         if !adapter.listener().messages.lock().unwrap().is_empty() {
             break;

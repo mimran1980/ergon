@@ -10,6 +10,9 @@ flags default to the value shown.
 | `with_conversion(selector)` | — | Generic `*_as::<T>()` / `*_from(&t)` per selected field |
 | `with_domain_type(selector, path)` | — | One canonical app type per field (implies conversion); Generated impl |
 | `with_manual_domain_type(selector, path)` | — | Same signatures, caller supplies `TryFromSbe`/`TryToSbe` |
+| `with_enum_mapping(EnumMapping)` | — | Generated `TryFromSbe`/`TryToSbe` between an SBE enum and your enum, an exhaustive `match` with renames; `NullVal` (and an unknown value) is an error ([App Types](../recipes/app-types-composites.md)) |
+| `with_composite_mapping(CompositeMapping)` | — | Generated struct-literal mapping between a composite and your struct, member by member with renames; constants skipped, optional members `Option` |
+| `with_source_traits(enable: bool)` | `false` | `{Message}Source` trait per message; `encode_from(&src)` encodes your own type, groups and var-data included, without allocating |
 | `with_domain_objects(var_data)` | off | Owned `*Domain` + `encode`; `Strings` → `String` (bad UTF-8 → `InvalidUtf8`), `Bytes` → `Vec<u8>` |
 | `with_display_debug(enable: bool)` | `true` | Emit `Debug`/`Display` impls on generated types |
 | `with_meta_attributes(enable: bool)` | `true` | Emit `*_ENCODING_OFFSET`, `*_ID`, `*_META_ATTRIBUTE` etc. |
@@ -42,7 +45,7 @@ let decoder = decoder.memoized();            // lazy cache, no allocation
 
 Build it **once** and share `&` references. The base decoder is `Sync`; the
 memoized one is `Send` but not `Sync`. Compact `u32` tail-offset storage was
-measured and removed. Decision table:
+tried and removed; the deciding measurement was not archived. Lanes:
 [Decoder Lanes](../feature-tour/decode-stages.md).
 
 ## Typed error conversions

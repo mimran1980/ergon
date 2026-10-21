@@ -1,6 +1,7 @@
 import io.aeron.cluster.ClusteredMediaDriver;
 import io.aeron.cluster.service.*;
 import io.aeron.samples.cluster.ClusterConfig;
+import io.aeron.samples.cluster.tutorial.BasicAuctionClusteredService;
 import io.aeron.logbuffer.Header;
 import io.aeron.ExclusivePublication;
 import io.aeron.Image;
@@ -32,12 +33,23 @@ public class ClusterLauncher {
         List<String> hosts = new ArrayList<>();
         for (int i = 0; i < nodeCount; i++) hosts.add("localhost");
 
-        // When arg[3] == "keep", preserve the durable archive/consensus dirs
-        // across this launch -- used by log-recovery restart tests. The media
-        // driver directory is ephemeral and must always be recreated; keeping
-        // its cnc.dat after a killed process triggers ActiveDriverException.
-        boolean keep = args.length > 3 && args[3].equals("keep");
-        ClusterConfig config = ClusterConfig.create(memberId, hosts, basePort, new Echo());
+        // Optional args after the node triple: "keep" preserves archive and
+        // consensus dirs (log-recovery restart). "auction" runs the official
+        // sample service; anything else, including omission, is the echo service.
+        // The media driver directory is always recreated: a leftover cnc.dat
+        // from a killed process triggers ActiveDriverException.
+        boolean keep = false;
+        ClusteredService service = new Echo();
+        for (int i = 3; i < args.length; i++) {
+            if (args[i].equals("keep")) {
+                keep = true;
+            } else if (args[i].equals("auction")) {
+                service = new BasicAuctionClusteredService();
+            } else if (!args[i].equals("echo")) {
+                throw new IllegalArgumentException("unknown ClusterLauncher arg: " + args[i]);
+            }
+        }
+        ClusterConfig config = ClusterConfig.create(memberId, hosts, basePort, service);
         config.mediaDriverContext().dirDeleteOnStart(true);
         config.archiveContext().deleteArchiveOnStart(!keep);
         // Per-node ingress port: portBase + memberId*100 + 2 (matches

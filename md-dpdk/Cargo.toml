@@ -1,0 +1,81 @@
+[package]
+name = "ergon-md-dpdk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Experimental DPDK ENA kernel-bypass UDP transport for the rusteron Aeron media driver"
+keywords = ["aeron", "dpdk", "kernel-bypass", "media-driver", "low-latency"]
+categories = ["network-programming"]
+readme = "README.md"
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+# Published package = the transport only: the Rust API, the native C it
+# compiles and the standalone media driver. Tests, the example, the interop
+# harness, the device plugin and the deployment assets are repo-only.
+include = [
+    "/Cargo.toml",
+    "/README.md",
+    "/build.rs",
+    "/native/dpdk/*.c",
+    "/native/dpdk/*.h",
+    "/native/dpdk/test/*.c",
+    "/native/dpdk/test/*.h",
+    "/src/**/*.rs",
+]
+
+[dependencies]
+# 0.2.11 is the first release whose `links = "aeron_driver"` key hands this
+# crate's build script the headers of the Aeron it builds (DEP_AERON_DRIVER_*)
+# and whose context exposes `set_udp_channel_transport_bindings`.
+rusteron-media-driver = "0.2.13"
+ctrlc = { version = "3.5", features = ["termination"] }
+libc = "0.2"
+log = "0.4"
+# The low-latency host and NIC checks `driver::ConfiguredDriver` runs at start
+# (src/checks.rs). Path and version, as ergo-sbe is for the cluster crate: the
+# release publishes it first (scripts/check-publish-set.sh).
+ergon-tune = { version = "0.1.30", path = "../tune", features = ["nic"] }
+# The transport's clock (src/clock.rs): calibrated once in Rust, its
+# conversion handed to the native transport, whose hot path reads the counter
+# with the same arithmetic. Path and version, so this crate can publish.
+ergon-clock = { version = "0.1.30", path = "../clock" }
+
+# The M3 probe socket's buffer sizes and the re-check thread's CPU affinity,
+# without `unsafe` (already in the lock through ergon-tune).
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "1.1.5", default-features = false, features = ["std", "net", "thread"] }
+
+[dev-dependencies]
+criterion = "0.8"
+minstant = "0.1"
+serial_test = { version = "4", features = ["file_locks"] }
+
+[build-dependencies]
+cc = "1.2"
+pkg-config = "0.3"
+
+[features]
+default = []
+# The DPDK ENA kernel-bypass transport. Linux x86_64 or aarch64; needs libdpdk >= 23.11.
+dpdk = []
+# Statically link the Aeron C media driver (forwarded to rusteron).
+static = ["rusteron-media-driver/static"]
+
+[[bin]]
+name = "media_driver"
+path = "src/bin/media_driver.rs"
+
+# Clock costs and the transport's send and poll paths per clock, against the
+# DPDK-free fakes (Linux x86_64 or aarch64, `dpdk`; elsewhere an empty run).
+[[bench]]
+name = "clock"
+harness = false
+
+[[example]]
+name = "embedded_dpdk"
+required-features = ["dpdk"]
+
+[lints]
+workspace = true

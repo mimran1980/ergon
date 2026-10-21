@@ -22,6 +22,8 @@ pub enum EgressEvent {
         code: EventCode,
         /// Human-readable detail string from the cluster.
         detail: String,
+        /// Leader heartbeat advertised by the cluster, when the event carries one.
+        leader_heartbeat_timeout_ns: Option<i64>,
     },
     /// An auth challenge.
     Challenge {
@@ -81,6 +83,7 @@ pub fn parse_event(data: &[u8]) -> Result<EgressEvent, ClusterError> {
             leader_member_id,
             code,
             detail,
+            leader_heartbeat_timeout_ns,
         } => EgressEvent::SessionEvent {
             correlation_id,
             cluster_session_id,
@@ -88,6 +91,7 @@ pub fn parse_event(data: &[u8]) -> Result<EgressEvent, ClusterError> {
             leader_member_id,
             code,
             detail: detail.to_string(),
+            leader_heartbeat_timeout_ns,
         },
         Fragment::Challenge {
             correlation_id,
@@ -242,6 +246,7 @@ mod tests {
                 leader_member_id,
                 code,
                 detail,
+                leader_heartbeat_timeout_ns,
             } => {
                 assert_eq!(correlation_id, 42);
                 assert_eq!(cluster_session_id, 7);
@@ -249,6 +254,7 @@ mod tests {
                 assert_eq!(leader_member_id, 1);
                 assert_eq!(code, EventCode::OK);
                 assert_eq!(detail, "connected");
+                assert_eq!(leader_heartbeat_timeout_ns, None);
             }
             other => panic!("expected SessionEvent, got {other:?}"),
         }

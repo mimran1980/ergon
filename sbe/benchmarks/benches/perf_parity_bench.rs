@@ -13,7 +13,12 @@
 //! Note: sbe-tool uses a different API pattern (mutable self, parent
 //! references, advance()-based group iteration). These benchmarks compare
 //! semantically equivalent operations — same fields, same buffer, same count.
-//! Fair comparison uses `wrap` (sbe-tool's `wrap` does no bounds check).
+//! Keep-alive rule (the `encode/session_keep_alive` fairness fix, BENCHMARKS.md):
+//! sbe-tool's `wrap` does no bounds check, so a matched pair runs ergon's
+//! unchecked constructor — ergon's checked `wrap` proves the extent and then
+//! panics, which is unequal work. Every body-wrap decode pair, gated
+//! `decode/entry_point` included, proves the extent in an untimed preflight and
+//! times `wrap_unchecked` against sbe-tool's zero-check wrap.
 //!
 //! Results are profile-specific. The fairness audit found that sbe-tool
 //! performs well with and without LTO because its generated accessors carry
@@ -44,13 +49,16 @@
 // ergon generated code
 
 use ergo_sbe_benchmarks::{
-    assert_encode_extent, assert_stream_wrap_extent, ergo_car::*, sbe_tool_car_body_decoder,
+    THROUGHPUT_SLOT, assert_baseline_wrap_extent, assert_stream_wrap_extent, ergo_car::*,
+    sample_decode_throughput, sample_encode_throughput, sbe_tool_car_body_decoder,
+    throughput_decode_ergo, throughput_decode_tool, throughput_encode_ergo, throughput_encode_tool,
 };
 
 // sbe-tool Rust SBE generated code (patched for module inclusion)
 
-use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{Criterion, SamplingMode, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
+use std::time::Duration;
 
 #[path = "_common.rs"]
 mod common;
@@ -61,6 +69,63 @@ use common::BASELINE;
 // Criterion iteration so maintained ratios measure codec work.
 const MICRO_BATCH_SIZE: usize = 1_024;
 const BATCH_SIZE: usize = 10_000;
+
+/// Keep repeated codec reads/writes observable without black-box stack spills.
+#[inline(always)]
+fn clobber_memory() {
+    unsafe { core::arch::asm!("", options(nostack, preserves_flags)) };
+}
+
+/// Per-slot buffer view shared by both arms of every encode pair.
+///
+/// The extent is proved once — by the allocation (`BATCH_SIZE * slot`) and the
+/// parity assert in the gated function — and the timed region must not re-prove
+/// it. A safe `buf[off..off + slot]` index emits a bounds check every
+/// iteration, and rustc does not fuse that check the same way twice: on aarch64
+/// it compiled one arm's as `adds`+`b.hs` and the other's as `add`+`cmp`+`b.lo`,
+/// one extra instruction per iteration, which measured as a several-percent
+/// wall-clock gap while the hot loops were otherwise instruction-identical. That
+/// reads the harness, not the codec. Both arms index through this helper so the
+/// timed loops retire the same instructions. Guarded mechanically by
+/// `fairness_policy_test::encode_arms_index_the_buffer_without_a_per_iteration_bounds_check`.
+///
+/// # Safety
+///
+/// `base.add(off..off + len)` must be in bounds of the allocation the caller
+/// owns, and the returned view must not be aliased by any other live `&mut`.
+#[inline(always)]
+unsafe fn slot_slice<'a>(base: *mut u8, off: usize, len: usize) -> &'a mut [u8] {
+    unsafe { core::slice::from_raw_parts_mut(base.add(off), len) }
+}
+
+const SCALAR_FRAME_SIZE: usize = CarEncoder::HEADER_LENGTH + CarEncoder::BLOCK_LENGTH;
+
+/// # Safety
+/// Every frame must hold at least `SCALAR_FRAME_SIZE` bytes.
+#[inline(always)]
+unsafe fn encode_scalar_bodies_ergo(frames: &mut [&mut [u8]], serial: u64, year: u16) {
+    for frame in frames {
+        // SAFETY: the caller proves every frame's fixed extent before timing.
+        unsafe { CarEncoder::wrap_unchecked(frame, 0) }
+            .serial_number(serial)
+            .model_year(year);
+        clobber_memory();
+    }
+}
+
+#[inline(always)]
+fn encode_scalar_bodies_tool(frames: &mut [&mut [u8]], serial: u64, year: u16) {
+    use ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::{
+        WriteBuf, car_codec::encoder::CarEncoder as ToolCarEncoder,
+    };
+    for frame in frames {
+        ToolCarEncoder::default()
+            .wrap(WriteBuf::new(frame), 8)
+            .serial_number(serial)
+            .model_year(year);
+        clobber_memory();
+    }
+}
 
 // Header bytes for sbe-tool decoder construction
 fn sbe_tool_block_length() -> u16 {
@@ -285,15 +350,22 @@ fn bench_decode_entry_point(c: &mut Criterion) {
     let bl = sbe_tool_block_length();
     let ver = sbe_tool_version();
     let (bl_e, ver_e) = ergo_sbe_header_fields();
+    assert_baseline_wrap_extent(BASELINE, 0, bl_e, ver_e);
 
-    let mut group = c.benchmark_group("parity/decode/entry_point");
+    let mut group = parity_group(c, "parity/decode/entry_point");
     group.throughput(Throughput::Elements(MICRO_BATCH_SIZE as u64));
 
-    // Fast path: pre-computed header, lean wrap (4 field assigns).
+    // Gated arm, class `none` like the other body-wrap pairs: the extent is
+    // proved once above, outside the measurement, and the timed region wraps
+    // with the unchecked constructor. Keep-alive rule (BENCHMARKS.md): match
+    // sbe-tool's zero-check `wrap`, which only stores buffer/offset/block-
+    // length/version. A validating wrap in the timer would charge ergon for a
+    // bounds proof its reference never performs.
     group.bench_function("ergo-sbe_wrap", |b| {
         b.iter(|| {
             for _ in 0..MICRO_BATCH_SIZE {
-                let car = CarDecoder::wrap(black_box(BASELINE), 0, bl_e, ver_e);
+                let car =
+                    unsafe { CarDecoder::wrap_unchecked(black_box(BASELINE), 0, bl_e, ver_e) };
                 black_box(car);
             }
         });
@@ -327,20 +399,14 @@ fn bench_decode_scalar(c: &mut Criterion) {
     let ver = sbe_tool_version();
     let sbe_tool_car = sbe_tool_car_body_decoder(BASELINE, 0, bl, ver);
 
-    let mut group = c.benchmark_group("parity/decode/scalar");
+    let mut group = parity_group(c, "parity/decode/scalar");
     group.throughput(Throughput::Elements(MICRO_BATCH_SIZE as u64));
 
     // Keep the 1024 field loads in the loop. A single `black_box` outside lets
     // LLVM rewrite the batch as `(serial_number + model_year) << 10`. Opaque
     // the decoder *inside* the batch (decode_array's shape) instead drowns
-    // the getter under 1024 pointer store/reloads — LTO then ties (~1.004)
-    // because sbe-tool's never-taken bounds checks hide in that traffic.
+    // the getter under 1024 pointer store/reloads — LTO then ties (~1.004).
     // Empty asm is a memory clobber without that extra stack round-trip.
-    #[inline(always)]
-    fn clobber_memory() {
-        unsafe { core::arch::asm!("", options(nostack, preserves_flags)) };
-    }
-
     // First arm in a group pays a position penalty (same class as encode/scalar
     // `warmup_body_only`). Throwaway; the gate matches `ergo-sbe` / `sbe-tool`.
     group.bench_function("warmup", |b| {
@@ -391,7 +457,7 @@ fn bench_decode_array(c: &mut Criterion) {
     let ver = sbe_tool_version();
     let sbe_tool_car = sbe_tool_car_body_decoder(BASELINE, 0, bl, ver);
 
-    let mut group = c.benchmark_group("parity/decode/array");
+    let mut group = parity_group(c, "parity/decode/array");
     group.throughput(Throughput::Elements(MICRO_BATCH_SIZE as u64));
 
     group.bench_function("ergo-sbe", |b| {
@@ -433,7 +499,7 @@ fn bench_decode_composite(c: &mut Criterion) {
     assert_eq!(ergo_engine.capacity(), tool_engine.capacity());
     assert_eq!(ergo_engine.num_cylinders(), tool_engine.num_cylinders());
 
-    let mut group = c.benchmark_group("parity/decode/composite");
+    let mut group = parity_group(c, "parity/decode/composite");
     group.throughput(Throughput::Elements(MICRO_BATCH_SIZE as u64));
 
     // Traverse a contiguous stream so the gate measures composite decoding,
@@ -502,8 +568,14 @@ fn bench_throughput_batch(c: &mut Criterion) {
     let (bl_e, ver_e) = ergo_sbe_header_fields();
     // Untimed: prove every message start the timed loop will wrap unchecked.
     assert_stream_wrap_extent(&buf, msg_len, BATCH_SIZE, bl_e, ver_e);
+    let decoded = sample_decode_throughput(&buf, msg_len, BATCH_SIZE, bl_e, ver_e, bl, ver);
+    assert_eq!(&buf[..msg_len], BASELINE);
+    assert_eq!(decoded.ergo_serial, decoded.tool_serial);
+    assert_eq!(decoded.ergo_year, decoded.tool_year);
+    assert_eq!(decoded.ergo_serial, BATCH_SIZE as u64 * decoded.one_serial);
+    assert_eq!(decoded.ergo_year, BATCH_SIZE as u64 * decoded.one_year);
 
-    let mut group = c.benchmark_group("parity/throughput/batch_10k");
+    let mut group = parity_group(c, "parity/throughput/batch_10k");
     group.throughput(Throughput::Elements(BATCH_SIZE as u64));
 
     // Equal work: both arms stride absolute offsets into one prebuilt buffer
@@ -519,11 +591,10 @@ fn bench_throughput_batch(c: &mut Criterion) {
             for _ in 0..BATCH_SIZE {
                 // SAFETY: `buf` is a prebuilt concat of full baseline frames;
                 // each `off` is a message start with proven header+body extent.
-                let car = unsafe {
-                    CarDecoder::wrap_unchecked(black_box(buf.as_slice()), off, bl_e, ver_e)
-                };
-                total += car.serial_number();
-                total_year += car.model_year() as u64;
+                let (serial, year) =
+                    unsafe { throughput_decode_ergo(black_box(buf.as_slice()), off, bl_e, ver_e) };
+                total += serial;
+                total_year += year;
                 off += msg_len;
             }
             black_box((total, total_year));
@@ -536,9 +607,10 @@ fn bench_throughput_batch(c: &mut Criterion) {
             let mut total_year: u64 = 0;
             let mut off = 0;
             for _ in 0..BATCH_SIZE {
-                let car = sbe_tool_car_body_decoder(black_box(buf.as_slice()), off, bl, ver);
-                total += car.serial_number() as u64;
-                total_year += car.model_year() as u64;
+                let (serial, year) =
+                    throughput_decode_tool(black_box(buf.as_slice()), off, bl, ver);
+                total += serial;
+                total_year += year;
                 off += msg_len;
             }
             black_box((total, total_year));
@@ -549,7 +621,7 @@ fn bench_throughput_batch(c: &mut Criterion) {
 }
 
 fn bench_encode_scalar(c: &mut Criterion) {
-    let mut group = c.benchmark_group("parity/encode/scalar");
+    let mut group = parity_group(c, "parity/encode/scalar");
     group.throughput(Throughput::Elements(MICRO_BATCH_SIZE as u64));
 
     // ── length parity: both codecs must produce identical encoded lengths ──
@@ -663,6 +735,25 @@ fn bench_encode_scalar(c: &mut Criterion) {
         assert_eq!(&ergon[..18], &sbe_tool[..18], "scalar header+body bytes");
     }
 
+    // The timed body-only helpers write successive fixed-block destinations.
+    // Check every destination, including untouched bytes.
+    {
+        let mut ergo_slab = vec![0xA5; SCALAR_FRAME_SIZE * MICRO_BATCH_SIZE];
+        let mut tool_slab = ergo_slab.clone();
+        let mut ergo_frames: Vec<_> = ergo_slab.chunks_exact_mut(SCALAR_FRAME_SIZE).collect();
+        let mut tool_frames: Vec<_> = tool_slab.chunks_exact_mut(SCALAR_FRAME_SIZE).collect();
+        // SAFETY: chunks_exact_mut gives every frame its full fixed extent.
+        unsafe { encode_scalar_bodies_ergo(&mut ergo_frames, 1234, 2013) };
+        encode_scalar_bodies_tool(&mut tool_frames, 1234, 2013);
+        for (ergo, tool) in ergo_frames.iter().zip(&tool_frames) {
+            assert_eq!(ergo, tool, "scalar body-only frame bytes");
+            assert_eq!(&ergo[..8], &[0xA5; 8], "body-only leaves the header alone");
+            assert_eq!(&ergo[8..16], &1234u64.to_le_bytes());
+            assert_eq!(&ergo[16..18], &2013u16.to_le_bytes());
+            assert!(ergo[18..].iter().all(|byte| *byte == 0xA5));
+        }
+    }
+
     // Header-inclusive API comparison.
     group.bench_function("ergo-sbe_header_and_body", |b| {
         let mut buf = [0u8; 512];
@@ -725,58 +816,49 @@ fn bench_encode_scalar(c: &mut Criterion) {
     // start; sbe-tool wrap takes the absolute body offset. sbe-tool wrap does
     // no extent check — use wrap_unchecked so the gated pair is equal work
     // (same unfairness class as batch decode; product bare wrap still proves).
-    // Fairness: the first benchmark measured in a group pays a one-off
-    // position penalty (CPU frequency ramp, icache/branch-predictor cold start).
-    // Measured at 1.0-1.6% — the same magnitude as the entire ergo/sbe-tool
-    // margin on this scenario, and it always landed on ergo because ergo was
-    // listed first. This throwaway arm absorbs it so neither implementation is
-    // measured cold. It is not a gated pair (check-bench-gate.sh matches the
-    // `*_body_only` names explicitly).
+    // Write a stream of preallocated fixed-block destinations, with one opaque
+    // descriptor per destination. Inputs are opaque once per batch; a memory
+    // clobber keeps each frame's stores observable without black-box spills.
+    // Reusing one destination instead lets bounds checks hoist out of the loop
+    // and produces identical hot instructions: useful diagnostic evidence, but
+    // it does not model a stream of outgoing destinations.
+    // Both arms and the throwaway warmup use identical opacity; the gate
+    // matches only the two named codec arms.
     group.bench_function("warmup_body_only", |b| {
-        let mut buf = [0u8; 512];
-        assert_encode_extent(&buf, CarEncoder::HEADER_LENGTH + CarEncoder::BLOCK_LENGTH);
+        let mut slab = vec![0u8; SCALAR_FRAME_SIZE * MICRO_BATCH_SIZE];
+        let mut frames: Vec<_> = slab.chunks_exact_mut(SCALAR_FRAME_SIZE).collect();
         b.iter(|| {
-            for _ in 0..MICRO_BATCH_SIZE {
-                // SAFETY: extent asserted directly above.
-                unsafe { CarEncoder::wrap_unchecked(black_box(&mut buf), 0) }
-                    .serial_number(black_box(1234))
-                    .model_year(black_box(2013));
-            }
-            black_box(&buf[8..18]);
+            let frames = black_box(frames.as_mut_slice());
+            let serial = black_box(1234);
+            let year = black_box(2013);
+            // SAFETY: every preallocated chunk has its complete fixed extent.
+            unsafe { encode_scalar_bodies_ergo(frames, serial, year) };
+            black_box(frames);
         });
     });
 
     group.bench_function("ergo-sbe_body_only", |b| {
-        let mut buf = [0u8; 512];
-        // Untimed: prove the buffer holds a complete frame before the timed
-        // region wraps it unchecked.
-        // This arm writes only the fixed block, so header + block length is the
-        // exact extent the timed region touches.
-        assert_encode_extent(&buf, CarEncoder::HEADER_LENGTH + CarEncoder::BLOCK_LENGTH);
+        let mut slab = vec![0u8; SCALAR_FRAME_SIZE * MICRO_BATCH_SIZE];
+        let mut frames: Vec<_> = slab.chunks_exact_mut(SCALAR_FRAME_SIZE).collect();
         b.iter(|| {
-            for _ in 0..MICRO_BATCH_SIZE {
-                // SAFETY: extent asserted directly above.
-                unsafe { CarEncoder::wrap_unchecked(black_box(&mut buf), 0) }
-                    .serial_number(black_box(1234))
-                    .model_year(black_box(2013));
-            }
-            black_box(&buf[8..18]);
+            let frames = black_box(frames.as_mut_slice());
+            let serial = black_box(1234);
+            let year = black_box(2013);
+            // SAFETY: every preallocated chunk has its complete fixed extent.
+            unsafe { encode_scalar_bodies_ergo(frames, serial, year) };
+            black_box(frames);
         });
     });
 
     group.bench_function("sbe-tool_body_only", |b| {
-        let mut buf = [0u8; 512];
+        let mut slab = vec![0u8; SCALAR_FRAME_SIZE * MICRO_BATCH_SIZE];
+        let mut frames: Vec<_> = slab.chunks_exact_mut(SCALAR_FRAME_SIZE).collect();
         b.iter(|| {
-            for _ in 0..MICRO_BATCH_SIZE {
-                ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::car_codec::encoder::CarEncoder::default()
-                    .wrap(
-                        ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::WriteBuf::new(black_box(&mut buf)),
-                        8,
-                    )
-                    .serial_number(black_box(1234))
-                    .model_year(black_box(2013));
-            }
-            black_box(&buf[8..18]);
+            let frames = black_box(frames.as_mut_slice());
+            let serial = black_box(1234);
+            let year = black_box(2013);
+            encode_scalar_bodies_tool(frames, serial, year);
+            black_box(frames);
         });
     });
 
@@ -784,47 +866,109 @@ fn bench_encode_scalar(c: &mut Criterion) {
 }
 
 fn bench_encode_throughput(c: &mut Criterion) {
-    let mut group = c.benchmark_group("parity/encode/throughput_10k");
+    let encoded = sample_encode_throughput(BATCH_SIZE);
+    assert_eq!(encoded.one_ergo, encoded.one_tool);
+    assert_eq!(encoded.batch_ergo, encoded.batch_tool);
+    assert_eq!(
+        &encoded.batch_ergo[..THROUGHPUT_SLOT],
+        &encoded.one_ergo[..]
+    );
+    assert_eq!(encoded.year_total, BATCH_SIZE as u64 * encoded.one_year);
+
+    let mut group = parity_group(c, "parity/encode/throughput_10k");
     group.throughput(Throughput::Elements(BATCH_SIZE as u64));
 
-    // Equal work: both arms encode header + 2 scalars per message.
-    // ergon wrap_and_apply_header() writes header at 0 and body at 8.
-    // sbe-tool wrap(buf,8) + header(0) writes header at 0 and body at 8.
-    // Buffer allocated once and reused — no alloc on the timed path.
+    // Equal work: both arms encode header + 2 scalars per message, via the
+    // same helpers the preflight just compared. Buffer allocated once and
+    // reused — no alloc on the timed path.
     group.bench_function("ergo-sbe", |b| {
-        let mut buf = vec![0u8; BATCH_SIZE * 64];
+        let mut buf = vec![0u8; BATCH_SIZE * THROUGHPUT_SLOT];
         b.iter(|| {
+            let base = buf.as_mut_ptr();
             for i in 0..BATCH_SIZE {
-                let off = i * 64;
-                black_box(
-                    CarEncoder::wrap_and_apply_header(&mut buf[off..off + 64], 0)
-                        .serial_number(i as u64)
-                        .model_year(2013),
-                );
+                let off = i * THROUGHPUT_SLOT;
+                // SAFETY: `BATCH_SIZE * THROUGHPUT_SLOT` allocation, disjoint
+                // per iteration. The extent is proved by the allocation and the
+                // preflight above, not re-proved every iteration.
+                black_box(throughput_encode_ergo(
+                    unsafe { slot_slice(base, off, THROUGHPUT_SLOT) },
+                    i as u64,
+                ));
             }
             black_box(&buf);
         });
     });
 
     group.bench_function("sbe-tool", |b| {
-        let mut buf = vec![0u8; BATCH_SIZE * 64];
+        let mut buf = vec![0u8; BATCH_SIZE * THROUGHPUT_SLOT];
         b.iter(|| {
+            let base = buf.as_mut_ptr();
             for i in 0..BATCH_SIZE {
-                let off = i * 64;
-                black_box(
-                    ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::car_codec::encoder::CarEncoder::default()
-                        .wrap(
-                            ergo_sbe_benchmarks::sbe_tool_car::sbe_tool::WriteBuf::new(
-                                &mut buf[off..off + 64],
-                            ),
-                            8,
-                        )
-                        .header(0)
-                        .parent()
-                        .unwrap()
-                        .serial_number(i as u64)
-                        .model_year(2013),
-                );
+                let off = i * THROUGHPUT_SLOT;
+                // SAFETY: same extent proof as the ergo arm.
+                black_box(throughput_encode_tool(
+                    unsafe { slot_slice(base, off, THROUGHPUT_SLOT) },
+                    i as u64,
+                ));
+            }
+            black_box(&buf);
+        });
+    });
+
+    group.finish();
+}
+
+/// A/A control for the SBE encode harness.
+///
+/// Both arms run the identical throughput encode chain — same codec, same
+/// slice helper, same opaque serial. Their ratio is the harness's own null
+/// distribution: any deviation from 1.0 is placement or timing sensitivity,
+/// not codec work. Read it beside every maintained pair. A real pair whose
+/// ratio falls inside this band has **no established winner** — inconclusive,
+/// not an ergon loss and not an ergon win. Ceilings are unchanged; this only
+/// says whether a ceiling breach is resolved.
+///
+/// `fairness_policy_test::aa_control_arms_run_identical_work` keeps the two
+/// bodies textually identical.
+fn bench_aa_control_encode_throughput(c: &mut Criterion) {
+    let encoded = sample_encode_throughput(BATCH_SIZE);
+    assert_eq!(encoded.one_ergo, encoded.one_tool);
+    assert_eq!(encoded.batch_ergo, encoded.batch_tool);
+
+    let mut group = parity_group(c, "parity/control/aa_encode_throughput");
+    group.throughput(Throughput::Elements(BATCH_SIZE as u64));
+
+    group.bench_function("arm_a", |b| {
+        let mut buf = vec![0u8; BATCH_SIZE * THROUGHPUT_SLOT];
+        b.iter(|| {
+            let base = buf.as_mut_ptr();
+            for i in 0..BATCH_SIZE {
+                let off = i * THROUGHPUT_SLOT;
+                // SAFETY: `BATCH_SIZE * THROUGHPUT_SLOT` allocation, disjoint
+                // per iteration. The extent is proved by the allocation and the
+                // preflight above, not re-proved every iteration.
+                black_box(throughput_encode_ergo(
+                    unsafe { slot_slice(base, off, THROUGHPUT_SLOT) },
+                    i as u64,
+                ));
+            }
+            black_box(&buf);
+        });
+    });
+
+    group.bench_function("arm_b", |b| {
+        let mut buf = vec![0u8; BATCH_SIZE * THROUGHPUT_SLOT];
+        b.iter(|| {
+            let base = buf.as_mut_ptr();
+            for i in 0..BATCH_SIZE {
+                let off = i * THROUGHPUT_SLOT;
+                // SAFETY: `BATCH_SIZE * THROUGHPUT_SLOT` allocation, disjoint
+                // per iteration. The extent is proved by the allocation and the
+                // preflight above, not re-proved every iteration.
+                black_box(throughput_encode_ergo(
+                    unsafe { slot_slice(base, off, THROUGHPUT_SLOT) },
+                    i as u64,
+                ));
             }
             black_box(&buf);
         });
@@ -848,7 +992,7 @@ fn bench_decode_consuming_full(c: &mut Criterion) {
     let ver = sbe_tool_version();
     let (bl_e, ver_e) = ergo_sbe_header_fields();
 
-    let mut group = c.benchmark_group("parity/decode/full_message");
+    let mut group = parity_group(c, "parity/decode/full_message");
     group.throughput(Throughput::Elements(MICRO_BATCH_SIZE as u64));
 
     group.bench_function("ergo-sbe_random", |b| {
@@ -866,16 +1010,17 @@ fn bench_decode_consuming_full(c: &mut Criterion) {
                     car.extras(),
                 ));
                 let engine = car.engine();
-                let booster = engine.booster();
+                // Observed at the same program point as the sbe-tool arm, which
+                // must read these before `booster_decoder` consumes the engine.
                 black_box((
                     engine.capacity(),
                     engine.num_cylinders(),
                     engine.manufacturer_code(),
                     engine.efficiency(),
                     engine.booster_enabled(),
-                    booster.boost_type(),
-                    booster.horse_power(),
                 ));
+                let booster = engine.booster();
+                black_box((booster.boost_type(), booster.horse_power()));
                 let mut fuel = car.fuel_figures().unwrap();
                 while let Some(Ok(e)) = fuel.next() {
                     black_box((e.speed(), e.mpg()));
@@ -888,11 +1033,9 @@ fn bench_decode_consuming_full(c: &mut Criterion) {
                         black_box((a.mph(), a.seconds()));
                     }
                 }
-                black_box((
-                    car.manufacturer().unwrap(),
-                    car.model().unwrap(),
-                    car.activation_code().unwrap(),
-                ));
+                black_box(car.manufacturer().unwrap());
+                black_box(car.model().unwrap());
+                black_box(car.activation_code().unwrap());
             }
         });
     });
@@ -912,16 +1055,17 @@ fn bench_decode_consuming_full(c: &mut Criterion) {
                     car.extras(),
                 ));
                 let engine = car.engine();
-                let booster = engine.booster();
+                // Observed at the same program point as the sbe-tool arm, which
+                // must read these before `booster_decoder` consumes the engine.
                 black_box((
                     engine.capacity(),
                     engine.num_cylinders(),
                     engine.manufacturer_code(),
                     engine.efficiency(),
                     engine.booster_enabled(),
-                    booster.boost_type(),
-                    booster.horse_power(),
                 ));
+                let booster = engine.booster();
+                black_box((booster.boost_type(), booster.horse_power()));
                 let after_perf = car
                     .into_fuel_figures(|e| -> Result<_, sbe_rt::DecodeError> {
                         black_box((e.speed(), e.mpg()));
@@ -940,9 +1084,11 @@ fn bench_decode_consuming_full(c: &mut Criterion) {
                     })
                     .unwrap();
                 let (mfr, a1) = after_perf.into_manufacturer().unwrap();
+                black_box(mfr);
                 let (model, a2) = a1.into_model().unwrap();
+                black_box(model);
                 let (code, _done) = a2.into_activation_code().unwrap();
-                black_box((mfr, model, code));
+                black_box(code);
             }
         });
     });
@@ -962,16 +1108,17 @@ fn bench_decode_consuming_full(c: &mut Criterion) {
                     car.extras(),
                 ));
                 let engine = car.engine();
-                let booster = engine.booster();
+                // Observed at the same program point as the sbe-tool arm, which
+                // must read these before `booster_decoder` consumes the engine.
                 black_box((
                     engine.capacity(),
                     engine.num_cylinders(),
                     engine.manufacturer_code(),
                     engine.efficiency(),
                     engine.booster_enabled(),
-                    booster.boost_type(),
-                    booster.horse_power(),
                 ));
+                let booster = engine.booster();
+                black_box((booster.boost_type(), booster.horse_power()));
                 // The ordered lane, not a second copy of the staged one:
                 // same fields, same traversal, one callback per tail.
                 car.ordered()
@@ -1068,7 +1215,7 @@ fn bench_decode_consuming_full(c: &mut Criterion) {
 fn bench_encode_full_stage_transition(c: &mut Criterion) {
     // ergon-only stage-transition diagnostic (no sbe-tool equivalent) — not a
     // parity scenario, so the group is not under parity/.
-    let mut group = c.benchmark_group("encode/full_stage");
+    let mut group = parity_group(c, "encode/full_stage");
     group.throughput(Throughput::Elements(1));
 
     group.bench_function("ergo-sbe", |b| {
@@ -1227,7 +1374,7 @@ fn bench_wire_parity_encode_full_message(c: &mut Criterion) {
     };
 
     assert_full_message_encode_wire_parity();
-    let mut group = c.benchmark_group("parity/wire_parity/encode_full");
+    let mut group = parity_group(c, "parity/wire_parity/encode_full");
     group.throughput(Throughput::Elements(MICRO_BATCH_SIZE as u64));
 
     group.bench_function("ergo-sbe", |b| {
@@ -1321,17 +1468,57 @@ fn bench_wire_parity_encode_full_message(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_decode_entry_point,
-    bench_decode_scalar,
-    bench_decode_array,
-    bench_decode_composite,
-    bench_throughput_batch,
-    bench_encode_scalar,
-    bench_encode_throughput,
-    bench_decode_consuming_full,
-    bench_encode_full_stage_transition,
-    bench_wire_parity_encode_full_message,
-);
+/// Sampling for the parity suite.
+///
+/// Criterion's default `Linear` mode ramps each sample up to tens of
+/// milliseconds of work. Measured on `parity/control/aa_encode_throughput` — two
+/// textually identical arms — with the default mode: per-sample work ramped to
+/// 10,900 iterations (about 95 ms) and the per-iteration cost drifted from
+/// 8,440 ns to 8,650 ns as the sample lengthened, with spikes to 12,172 and
+/// 18,318 ns. One arm took those spikes in a given run and the other did not, so
+/// the same code measured 12.5 % CV against 1.6 % and the A/A "null band" came
+/// out [1.0418, 1.1201] — a noise band, not a null. Re-running the same binary
+/// twice moved the spikes to the other arm. The cause of the spikes is not
+/// measured; a sample that absorbs one is not comparable with a clean one.
+///
+/// Flat mode with a short measurement budget keeps every sample under a few
+/// milliseconds. Both arms then land on the same clean cost. Ceilings are
+/// unchanged; this only makes the ratio mean what it claims.
+///
+/// `sampling_mode` lives on `BenchmarkGroup`, not on `Criterion`, so
+/// [`parity_group`] applies it. The budget and sample count are set here and
+/// bound how long any sample can be. That is why the samples are short; a
+/// short sample is still not immune to a stall.
+fn parity_criterion() -> Criterion {
+    Criterion::default()
+        .measurement_time(Duration::from_millis(500))
+        .sample_size(200)
+}
+
+/// Every group in this suite samples flat. See [`parity_criterion`] for why
+/// the sample length matters more than the total budget.
+fn parity_group<'a>(
+    c: &'a mut Criterion,
+    name: &str,
+) -> criterion::BenchmarkGroup<'a, criterion::measurement::WallTime> {
+    let mut group = c.benchmark_group(name);
+    group.sampling_mode(SamplingMode::Flat);
+    group
+}
+
+criterion_group! {
+    name = benches;
+    config = parity_criterion();
+    targets = bench_decode_entry_point,
+        bench_decode_scalar,
+        bench_decode_array,
+        bench_decode_composite,
+        bench_throughput_batch,
+        bench_encode_scalar,
+        bench_encode_throughput,
+        bench_aa_control_encode_throughput,
+        bench_decode_consuming_full,
+        bench_encode_full_stage_transition,
+        bench_wire_parity_encode_full_message
+}
 criterion_main!(benches);

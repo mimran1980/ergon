@@ -1,0 +1,79 @@
+# Bybit v5 REST responses, written from the documented formats. Not captured
+# from a live session; numbers are made up to fit the tests. `retMsg` is the
+# documented wording, shortened; the adapter reads `retCode` only. The three
+# `X-Bapi-Limit*` headers are shown where the docs show them: on the
+# responses that report the endpoint's quota, not on every success. Requests
+# went out at server time 1700000000000 ms.
+# - Rate limits, usage headers, the IP ban: https://bybit-exchange.github.io/docs/v5/rate-limit
+# - Error and HTTP codes: https://bybit-exchange.github.io/docs/v5/error
+# - Place order response: https://bybit-exchange.github.io/docs/v5/order/create-order
+
+### order-ok
+HTTP/1.1 200 OK
+Content-Type: application/json
+X-Bapi-Limit: 10
+X-Bapi-Limit-Status: 9
+
+{"retCode":0,"retMsg":"OK","result":{"orderId":"1321003749386327552","orderLinkId":"spot-test-postonly"},"retExtInfo":{},"time":1700000000000}
+
+### too-many-visits
+HTTP/1.1 200 OK
+Content-Type: application/json
+X-Bapi-Limit: 10
+X-Bapi-Limit-Status: 0
+X-Bapi-Limit-Reset-Timestamp: 1700000000400
+
+{"retCode":10006,"retMsg":"Too many visits","result":{},"retExtInfo":{},"time":1700000000000}
+
+### ip-limit-10018
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"retCode":10018,"retMsg":"Exceeded the IP Rate Limit.","result":{},"retExtInfo":{},"time":1700000000000}
+
+### ip-ban-403
+HTTP/1.1 403 Forbidden
+Content-Type: text/plain
+
+access too frequent
+
+### forbidden-403
+# 403 has other causes too (a GET with an empty JSON body, a U.S. IP).
+# Halted anyway: the safe side, until a person clears it.
+HTTP/1.1 403 Forbidden
+Content-Type: text/plain
+
+Forbidden
+
+### protection-429
+# "System level frequency protection": not this account's quota.
+HTTP/1.1 429 Too Many Requests
+Content-Length: 0
+
+
+### timestamp-10002
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"retCode":10002,"retMsg":"The request time exceeds the time window range.","result":{},"retExtInfo":{},"time":1700000000000}
+
+### server-error-10016
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"retCode":10016,"retMsg":"Server error.","result":{},"retExtInfo":{},"time":1700000000000}
+
+### insufficient-balance
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{"retCode":110007,"retMsg":"Insufficient available balance.","result":{},"retExtInfo":{},"time":1700000000000}
+
+### remaining-above-limit
+# Malformed: more requests left than the limit allows.
+HTTP/1.1 200 OK
+Content-Type: application/json
+X-Bapi-Limit: 10
+X-Bapi-Limit-Status: 11
+
+{"retCode":0,"retMsg":"OK","result":{},"retExtInfo":{},"time":1700000000000}

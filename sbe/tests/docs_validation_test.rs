@@ -95,6 +95,8 @@ fn feature_tour_codec_source() -> Result<String, Box<dyn std::error::Error>> {
     Ok(Generator::new(
         GenerationConfig::new("tour_codec")
             .with_domain_objects(DomainVarData::Strings)
+            // The send recipe encodes an application type through `NoteSource`.
+            .with_source_traits(true)
             .with_domain_type(
                 ergo_sbe::ConversionSelector::named_type("BooleanType"),
                 "bool",

@@ -1,0 +1,25 @@
+# Keeps every IRQ that can move on the housekeeping CPUs while the node runs:
+# irq-affinity.sh watch re-pins them after each network link event, since
+# the ENA driver puts its queue IRQs back on their per-queue hints (the
+# isolated CPUs) whenever it brings an interface up: a device reset, a queue
+# or ring change, a data ENA handed back to the kernel. It sleeps between
+# events. provision-node.sh installs and enables it; the bootstrap starts it
+# and fails if it does not run.
+[Unit]
+Description=Rusteron IRQ placement: every movable IRQ on the housekeeping CPUs
+Documentation=file:///usr/local/sbin/irq-affinity.sh
+# Before the bootstrap, which checks that it runs, and so before kubelet.
+Before=rusteron-dpdk-ena.service kubelet.service nodeadm-run.service
+# Restarts (below) are bounded: about 20 attempts, then the unit stays failed.
+StartLimitIntervalSec=600
+StartLimitBurst=20
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/rusteron-dpdk/node.env
+ExecStart=/usr/local/sbin/irq-affinity.sh watch
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

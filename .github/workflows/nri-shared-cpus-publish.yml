@@ -1,0 +1,147 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Push the ergon-shared-cpus image and chart to GHCR. THE ONLY STEP THAT
+# WRITES TO A REGISTRY.
+#
+# This is a separate workflow from nri-shared-cpus-image.yml on purpose. The
+# test policy forbids a workflow `if:`, because a condition can silently
+# suppress a test lane. Gating a publish is not that, but a gate built from an
+# `if:` is indistinguishable from one. So the gate here is the dispatch itself
+# plus a first step that refuses to continue unless the operator typed
+# `publish`, and no job is conditional: every lane runs every time, and the
+# push is refused loudly rather than skipped silently.
+#
+# Do not run it until every row of k8s/nri-shared-cpus/RELEASE.md is signed
+# off. See RELEASE.md section 6 for the order.
+#
+# Triggers on workflow_dispatch only. Never on push or pull_request.
+
+name: nri-shared-cpus publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag (also used as appVersion for the chart)"
+        required: true
+      publish:
+        description: 'Type "publish" to push to GHCR. Anything else fails the run.'
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/ergon-shared-cpus
+
+jobs:
+  checks:
+    name: unit, vet and static build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: k8s/nri-shared-cpus/go.mod
+          cache-dependency-path: k8s/nri-shared-cpus/go.sum
+
+      - name: gofmt
+        working-directory: k8s/nri-shared-cpus
+        run: test -z "$(gofmt -l .)"
+
+      - name: go vet
+        working-directory: k8s/nri-shared-cpus
+        run: go vet ./...
+
+      - name: go test -race
+        working-directory: k8s/nri-shared-cpus
+        run: go test -race ./...
+
+      - name: static build, amd64 and arm64
+        working-directory: k8s/nri-shared-cpus
+        run: |
+          set -eu
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o /tmp/ergon-shared-cpus-amd64 ./cmd/ergon-shared-cpus
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -o /tmp/ergon-shared-cpus-arm64 ./cmd/ergon-shared-cpus
+
+  chart:
+    name: helm lint and template
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+
+      - name: helm lint
+        run: helm lint k8s/nri-shared-cpus/charts/ergon-shared-cpus
+
+      - name: helm template
+        run: helm template ergon-shared-cpus k8s/nri-shared-cpus/charts/ergon-shared-cpus >/dev/null
+
+  publish:
+    name: push to GHCR
+    needs: [checks, chart]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # The gate. No job is conditional, so nothing can be skipped without
+      # failing the run: a dispatch that does not name `publish` dies here,
+      # before anything is built, let alone pushed.
+      - name: Refuse unless the operator typed "publish"
+        run: |
+          set -eu
+          if [ "${{ github.event.inputs.publish }}" != "publish" ]; then
+            echo "publish input is '${{ github.event.inputs.publish }}', not 'publish'." >&2
+            echo "Nothing was built and nothing was pushed." >&2
+            echo "Read k8s/nri-shared-cpus/RELEASE.md, then dispatch again typing publish." >&2
+            exit 1
+          fi
+          echo "publish input accepted: ${{ github.event.inputs.tag }} will be pushed to GHCR."
+
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push multi-arch image
+        uses: docker/build-push-action@v6
+        with:
+          context: k8s/nri-shared-cpus
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ github.event.inputs.tag }}
+            ${{ env.IMAGE_NAME }}:latest
+          build-args: |
+            VERSION=${{ github.event.inputs.tag }}
+            GIT_DESCRIBE=${{ github.sha }}
+          cache-from: type=gha
+          provenance: true
+          sbom: true
+
+      - name: Package the chart
+        run: |
+          helm package k8s/nri-shared-cpus/charts/ergon-shared-cpus \
+            --version "${{ github.event.inputs.tag }}" \
+            --app-version "${{ github.event.inputs.tag }}" \
+            --destination /tmp/chart
+
+      - name: Push the chart to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io \
+            --username "${{ github.actor }}" --password-stdin
+          helm push /tmp/chart/*.tgz oci://ghcr.io/${{ github.repository_owner }}/charts

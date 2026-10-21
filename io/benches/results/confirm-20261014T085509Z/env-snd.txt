@@ -1,0 +1,75 @@
+== uname
+Linux snd 6.17.0-1022-azure #22-Ubuntu SMP Mon Jul 27 17:24:03 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+== cmdline
+BOOT_IMAGE=/vmlinuz-6.17.0-1022-azure root=PARTUUID=d8f74b2e-a58d-4539-8b59-53da6417ef90 ro console=tty1 console=ttyS0 earlyprintk=ttyS0 nvme_core.io_timeout=240 isolcpus=managed_irq,domain,1 nohz_full=1 rcu_nocbs=1 irqaffinity=0 panic=-1
+== isolated
+1
+== clocksource
+tsc
+== cpu
+CPU(s):                                  2
+Model name:                              INTEL(R) XEON(R) PLATINUM 8573C
+BIOS Model name:                         INTEL(R) XEON(R) PLATINUM 8573C None CPU @ 2.3GHz
+Thread(s) per core:                      2
+Core(s) per socket:                      1
+Socket(s):                               1
+CPU(s) scaling MHz:                      120%
+NUMA node0 CPU(s):                       0,1
+== topology
+0,0
+1,0
+== routes
+default via 10.22.1.1 dev eth0 proto dhcp src 10.22.1.5 metric 100 rto_min lock 5ms quickack 1 
+10.22.1.0/24 dev eth0 proto kernel scope link src 10.22.1.5 metric 100 rto_min lock 5ms quickack 1 
+10.22.1.1 dev eth0 proto dhcp scope link src 10.22.1.5 metric 100 rto_min lock 5ms quickack 1 
+168.63.129.16 via 10.22.1.1 dev eth0 proto dhcp src 10.22.1.5 metric 100 
+169.254.169.254 via 10.22.1.1 dev eth0 proto dhcp src 10.22.1.5 metric 100 
+== links
+lo               UNKNOWN        00:00:00:00:00:00 <LOOPBACK,UP,LOWER_UP> 
+eth0             UP             00:22:48:ee:26:6f <BROADCAST,MULTICAST,UP,LOWER_UP> 
+ens1             UP             00:22:48:ee:26:6f <BROADCAST,MULTICAST,SLAVE,UP,LOWER_UP> 
+== ethtool -i ens1
+driver: mana
+version: 6.17.0-1022-azure
+firmware-version: 
+== ethtool -T ens1
+Time stamping parameters for ens1:
+Capabilities:
+	software-receive
+	software-system-clock
+PTP Hardware Clock: none
+Hardware Transmit Timestamp Modes: none
+Hardware Receive Filter Modes: none
+== ethtool -i eth0
+driver: hv_netvsc
+version: 6.17.0-1022-azure
+firmware-version: N/A
+== ethtool -T eth0
+Time stamping parameters for eth0:
+Capabilities:
+	software-transmit
+	software-receive
+	software-system-clock
+PTP Hardware Clock: none
+Hardware Transmit Timestamp Modes: none
+Hardware Receive Filter Modes: none
+== chrony
+Reference ID    : 50484330 (PHC0)
+Stratum         : 1
+Ref time (UTC)  : Wed Oct 14 09:05:37 2026
+System time     : 0.000000000 seconds fast of NTP time
+Last offset     : +0.000236133 seconds
+RMS offset      : 0.000236133 seconds
+Frequency       : 55.087 ppm fast
+Residual freq   : +1.318 ppm
+Skew            : 5.727 ppm
+Root delay      : 0.000000001 seconds
+Root dispersion : 0.000116227 seconds
+Update interval : 0.0 seconds
+Leap status     : Normal
+== chrony sources
+MS Name/IP address         Stratum Poll Reach LastRx Last sample               
+===============================================================================
+#* PHC0                          0   3     7    11    -86us[ +150us] +/-   11us
+== io_uring
+kernel.io_uring_disabled = 0

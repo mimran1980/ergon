@@ -1,0 +1,41 @@
+# Reboot-safe node bootstrap for the rusteron-media-driver DPDK ENA pair
+# (plan sections 9 and 10.2). Runs at every boot before kubelet, so the two
+# data ENAs are bound to the DPDK driver, the host is tuned and the pair
+# inventory is fresh when the device plugin advertises capacity.
+#
+# provision-node.sh installs and enables it at the node's first boot:
+#   /usr/local/sbin/bootstrap-dpdk-ena.sh, /usr/local/sbin/preflight.sh,
+#   /usr/local/sbin/irq-affinity.sh,
+#   /etc/systemd/system/rusteron-dpdk-ena.service and
+#   rusteron-irq-affinity.service (which the bootstrap needs running), and
+#   the settings in /etc/rusteron-dpdk/node.env (written by userdata.sh).
+[Unit]
+Description=Rusteron DPDK ENA pair bootstrap (DPDK driver bind, host tuning, inventory)
+Documentation=file:///usr/local/sbin/bootstrap-dpdk-ena.sh
+# The script reads IMDS and writes /var/lib/rusteron-dpdk. It does not wait
+# for the ENAs to be probed: one that is not yet there fails the preflight,
+# and Restart= (below) runs it again. nodeadm-run.service starts kubelet, so
+# ordering before it holds kubelet back while the bootstrap runs.
+After=network-online.target local-fs.target
+Wants=network-online.target
+Before=kubelet.service nodeadm-run.service
+# Restarts (below) are bounded: about 20 attempts, then the unit stays failed.
+StartLimitIntervalSec=600
+StartLimitBurst=20
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=-/etc/rusteron-dpdk/node.env
+# A node that cannot host a DPDK pair fails the unit loudly and writes no
+# inventory, so the device plugin advertises nothing and no DPDK pod is
+# scheduled there. The node stays usable for kernel-UDP workloads; the
+# failure is visible in `systemctl status`.
+ExecStart=/usr/local/sbin/bootstrap-dpdk-ena.sh
+TimeoutStartSec=120
+# Retry transient IMDS/sysfs races at boot.
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

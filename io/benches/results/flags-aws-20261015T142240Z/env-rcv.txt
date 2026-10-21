@@ -1,0 +1,220 @@
+== uname
+Linux ip-172-31-35-102 7.0.0-1014-aws #14~24.04.1-Ubuntu SMP PREEMPT Fri Sep 18 21:24:59 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+== cmdline
+BOOT_IMAGE=/vmlinuz-7.0.0-1014-aws root=PARTUUID=ff84a5a7-578e-4843-9465-767e4a11edcc ro console=tty1 console=ttyS0 nvme_core.io_timeout=4294967295 isolcpus=managed_irq,domain,1,49,2,50,3,51,4,52,5,53,6,54,7,55,8,56,9,57,10,58,11,59,12,60,13,61,14,62,15,63,16,64,17,65,18,66,19,67,20,68,21,69,22,70,23,71,24,72,25,73,26,74,27,75,28,76,29,77,30,78,31,79,32,80,33,81,34,82,35,83,36,84,37,85,38,86,39,87,40,88,41,89,42,90,43,91,44,92,45,93,46,94,47,95 nohz_full=1,49,2,50,3,51,4,52,5,53,6,54,7,55,8,56,9,57,10,58,11,59,12,60,13,61,14,62,15,63,16,64,17,65,18,66,19,67,20,68,21,69,22,70,23,71,24,72,25,73,26,74,27,75,28,76,29,77,30,78,31,79,32,80,33,81,34,82,35,83,36,84,37,85,38,86,39,87,40,88,41,89,42,90,43,91,44,92,45,93,46,94,47,95 rcu_nocbs=1,49,2,50,3,51,4,52,5,53,6,54,7,55,8,56,9,57,10,58,11,59,12,60,13,61,14,62,15,63,16,64,17,65,18,66,19,67,20,68,21,69,22,70,23,71,24,72,25,73,26,74,27,75,28,76,29,77,30,78,31,79,32,80,33,81,34,82,35,83,36,84,37,85,38,86,39,87,40,88,41,89,42,90,43,91,44,92,45,93,46,94,47,95 irqaffinity=0,48 panic=-1
+== boot profile
+full
+== isolated
+1-47,49-95
+== clocksource
+tsc
+== mitigations
+ Automatic IBRS; IBPB: conditional; PBRSB-eIBRS: SW sequence; BHI: BHI_DIS_S
+indirect_target_selection:Not affected
+itlb_multihit:Not affected
+ghostwrite:Not affected
+vmscape:Mitigation: IBPB before exit to userspace
+mmio_stale_data:Not affected
+mds:Not affected
+reg_file_data_sampling:Not affected
+tsa:Not affected
+l1tf:Not affected
+spec_store_bypass:Mitigation: Speculative Store Bypass disabled via prctl
+tsx_async_abort:Not affected
+old_microcode:Not affected
+swapgs barriers and __user pointer sanitization
+gather_data_sampling:Not affected
+retbleed:Not affected
+spec_rstack_overflow:Not affected
+srbds:Not affected
+meltdown:Not affected
+== cpuidle
+driver intel_idle
+POLL latency 0 µs disabled 0
+C1 latency 1 µs disabled 0
+C1E latency 2 µs disabled 0
+C6 latency 290 µs disabled 0
+== cpu
+CPU(s):                                  96
+Model name:                              Intel(R) Xeon(R) Platinum 8488C
+BIOS Model name:                         Intel(R) Xeon(R) Platinum 8488C  CPU @ 2.4GHz
+Thread(s) per core:                      2
+Core(s) per socket:                      48
+Socket(s):                               1
+CPU(s) scaling MHz:                      23%
+NUMA node0 CPU(s):                       0-95
+== topology
+0,0
+1,1
+2,2
+3,3
+4,4
+5,5
+6,6
+7,7
+8,8
+9,9
+10,10
+11,11
+12,12
+13,13
+14,14
+15,15
+16,16
+17,17
+18,18
+19,19
+20,20
+21,21
+22,22
+23,23
+24,24
+25,25
+26,26
+27,27
+28,28
+29,29
+30,30
+31,31
+32,32
+33,33
+34,34
+35,35
+36,36
+37,37
+38,38
+39,39
+40,40
+41,41
+42,42
+43,43
+44,44
+45,45
+46,46
+47,47
+48,0
+49,1
+50,2
+51,3
+52,4
+53,5
+54,6
+55,7
+56,8
+57,9
+58,10
+59,11
+60,12
+61,13
+62,14
+63,15
+64,16
+65,17
+66,18
+67,19
+68,20
+69,21
+70,22
+71,23
+72,24
+73,25
+74,26
+75,27
+76,28
+77,29
+78,30
+79,31
+80,32
+81,33
+82,34
+83,35
+84,36
+85,37
+86,38
+87,39
+88,40
+89,41
+90,42
+91,43
+92,44
+93,45
+94,46
+95,47
+== routes
+default via 172.31.32.1 dev ens41 proto dhcp src 172.31.35.102 metric 100 rto_min lock 5ms quickack 1 
+172.31.0.2 via 172.31.32.1 dev ens41 proto dhcp src 172.31.35.102 metric 100 
+172.31.32.0/20 dev ens41 proto kernel scope link src 172.31.35.102 metric 100 rto_min lock 5ms quickack 1 
+172.31.32.1 dev ens41 proto dhcp scope link src 172.31.35.102 metric 100 rto_min lock 5ms quickack 1 
+== links
+lo               UNKNOWN        00:00:00:00:00:00 <LOOPBACK,UP,LOWER_UP> 
+ens41            UP             06:ff:cc:60:86:fd <BROADCAST,MULTICAST,UP,LOWER_UP> 
+== ethtool -i ens41
+driver: ena
+version: 7.0.0-1014-aws
+firmware-version: 
+== ethtool -l ens41
+Current hardware settings:
+RX:		n/a
+TX:		n/a
+Other:		n/a
+Combined:	16
+== ethtool -c ens41
+Adaptive RX: on  TX: n/a
+rx-usecs:	20
+rx-usecs-irq:	n/a
+tx-usecs:	64
+== ethtool -T ens41
+Time stamping parameters for ens41:
+Capabilities:
+	software-transmit
+	software-receive
+	software-system-clock
+PTP Hardware Clock: none
+Hardware Transmit Timestamp Modes: none
+Hardware Receive Filter Modes: none
+== nic irqs
+118 0,48 ena-mgmnt@pci:0000:32:00.0
+119 0,48 ens41-Tx-Rx-0
+120 0,48 ens41-Tx-Rx-1
+121 0,48 ens41-Tx-Rx-2
+122 0,48 ens41-Tx-Rx-3
+123 0,48 ens41-Tx-Rx-4
+124 0,48 ens41-Tx-Rx-5
+125 0,48 ens41-Tx-Rx-6
+126 0,48 ens41-Tx-Rx-7
+127 0,48 ens41-Tx-Rx-8
+128 0,48 ens41-Tx-Rx-9
+129 0,48 ens41-Tx-Rx-10
+130 0,48 ens41-Tx-Rx-11
+131 0,48 ens41-Tx-Rx-12
+132 0,48 ens41-Tx-Rx-13
+133 0,48 ens41-Tx-Rx-14
+134 0,48 ens41-Tx-Rx-15
+== chrony
+Reference ID    : A9FEA97B (169.254.169.123)
+Stratum         : 2
+Ref time (UTC)  : Thu Oct 15 14:35:20 2026
+System time     : 0.000101767 seconds slow of NTP time
+Last offset     : +0.000002179 seconds
+RMS offset      : 0.000002179 seconds
+Frequency       : 4.242 ppm fast
+Residual freq   : +0.409 ppm
+Skew            : 1.763 ppm
+Root delay      : 0.000167018 seconds
+Root dispersion : 0.000042740 seconds
+Update interval : 0.4 seconds
+Leap status     : Normal
+== chrony sources
+MS Name/IP address         Stratum Poll Reach LastRx Last sample               
+===============================================================================
+^* 169.254.169.123               1   4    17     5   +746ns[+2925ns] +/-  104us
+^- prod-ntp-4.ntp1.ps5.cano>     2   6    17     3  +6748us[+6748us] +/-  114ms
+^- prod-ntp-3.ntp4.ps5.cano>     2   6    17     4  +6407us[+6407us] +/-  115ms
+^- alphyn.canonical.com          2   6    17     2   -106us[ -106us] +/-  108ms
+^- prod-ntp-5.ntp4.ps5.cano>     2   6    17     3  +4207us[+4207us] +/-  115ms
+^- 138.2.23.206                  2   6    17     5    +52us[  +52us] +/- 2681us
+^- ntp1.hnd.jp.hojmark.net       2   6    17     5   +320us[ +404ms] +/-   45ms
+^- y.ns.gin.ntt.net              2   6    17     4   +103us[ +103us] +/-   87ms
+^- time.cloudflare.com           3   6    17     4  +1326us[+1326us] +/-   55ms
+== io_uring
+kernel.io_uring_disabled = 0

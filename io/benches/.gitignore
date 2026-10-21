@@ -1,0 +1,21 @@
+/target
+# Per-run SSH keys, binaries, tarballs, raw per-message records, remote job
+# output and the generated tables stay local. The write-up (BENCHMARK.md),
+# the run ids, the environment dumps and the perf census are what get committed.
+results/**/ssh/
+results/**/bin/
+results/**/res/
+results/**/early/
+results/**/*.tgz
+results/**/*.bin
+results/**/run.log
+results/**/job-*.log
+results/**/binance-args.txt
+results/**/replay_server
+results/**/relay.*
+results/**/records/
+results/**/logs/
+results/**/scripts/
+results/**/cond-warnings.txt
+results/**/tables.md
+results/**/tables-local.md

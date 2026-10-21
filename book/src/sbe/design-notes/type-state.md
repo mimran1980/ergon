@@ -1,4 +1,4 @@
-# Type-state is zero-cost
+# Type-state and runtime cost
 
 Stage identity adds no runtime tag. The named structs carry buffer and cursor
 state; markers such as `HeaderPresent` are zero-sized. A transition moves that

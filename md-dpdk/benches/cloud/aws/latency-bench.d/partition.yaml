@@ -1,0 +1,107 @@
+# latency-pods lab: partition mode (M2). Item 2 of the build set.
+# cpuset.cpus.partition=isolated on the exclusive CPUs. The createRuntime hook
+# (the shared-cpus plugin's ergon-cpus hook) creates a child cgroup holding
+# only the exclusive CPUs, writes cpuset.cpus.exclusive down the hierarchy,
+# then cpuset.cpus.partition=isolated on the child. The shared CPUs stay
+# member so they keep load balancing. The pod never writes the file: it is
+# parent-owned and not delegatable.
+# Env the app reads: ERGON_ISOLATED_CGROUP (the child), ERGON_ISOLATED_CPUS,
+# ERGON_SHARED_CPUS. latency-bench-podrun.sh moves the measuring thread into the
+# child, then pins to the first exclusive CPU (move-then-pin).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: latency-__RUN__-pong
+  namespace: ergon-latency-pods
+  labels: { app: ergon-latency-pods, role: pong, mode: partition, ergon.io/latency: "hot" }
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus","ergon-latency-pods-ext"]'
+    cpu-partition.ergon.io/app: "isolated"
+spec:
+  nodeName: __B_NODE__
+  restartPolicy: Never
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  terminationGracePeriodSeconds: 5
+  priorityClassName: ergon-latency-pods-hot
+  nodeSelector: { ergon.io/shared-cpus: "true" }
+  containers:
+    - name: app
+      image: __IMAGE__
+      imagePullPolicy: Never
+      command: ["/latency-bench-podrun.sh", "pong", "__A_EP__", "__B_EP__"]
+      env:
+        - name: LATENCY_OUT
+          value: /out
+        # This mode asked for cpu-partition.ergon.io: a missing partition
+        # grant is a failure, not a control run.
+        - name: LATENCY_REQUIRE_PARTITION
+          value: "1"
+        - name: AERON_DIR
+          value: /aeron
+        - name: HARNESS_DRIVER
+          value: invoker
+        - name: RTT_SECONDS
+          value: "60"
+        - name: RTT_MESSAGES
+          value: "300000"
+        - name: RTT_WARMUP
+          value: "50000"
+      resources:
+        requests: { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250" }
+        limits: { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250" }
+      volumeMounts:
+        - { name: aeron, mountPath: /aeron }
+        - { name: out, mountPath: /out }
+  volumes:
+    - { name: aeron, emptyDir: {} }
+    - { name: out, emptyDir: {} }
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: latency-__RUN__-ping
+  namespace: ergon-latency-pods
+  labels: { app: ergon-latency-pods, role: ping, mode: partition, ergon.io/latency: "hot" }
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus","ergon-latency-pods-ext"]'
+    cpu-partition.ergon.io/app: "isolated"
+spec:
+  nodeName: __A_NODE__
+  restartPolicy: Never
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  terminationGracePeriodSeconds: 5
+  priorityClassName: ergon-latency-pods-hot
+  nodeSelector: { ergon.io/shared-cpus: "true" }
+  containers:
+    - name: app
+      image: __IMAGE__
+      imagePullPolicy: Never
+      command: ["/latency-bench-podrun.sh", "ping", "__A_EP__", "__B_EP__"]
+      env:
+        - name: LATENCY_OUT
+          value: /out
+        # This mode asked for cpu-partition.ergon.io: a missing partition
+        # grant is a failure, not a control run.
+        - name: LATENCY_REQUIRE_PARTITION
+          value: "1"
+        - name: AERON_DIR
+          value: /aeron
+        - name: HARNESS_DRIVER
+          value: invoker
+        - name: RTT_SECONDS
+          value: "60"
+        - name: RTT_MESSAGES
+          value: "300000"
+        - name: RTT_WARMUP
+          value: "50000"
+      resources:
+        requests: { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250" }
+        limits: { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250" }
+      volumeMounts:
+        - { name: aeron, mountPath: /aeron }
+        - { name: out, mountPath: /out }
+  volumes:
+    - { name: aeron, emptyDir: {} }
+    - { name: out, emptyDir: {} }

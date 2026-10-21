@@ -1,4 +1,4 @@
-name: Nightly hostile-input verification
+name: Weekly hostile-input verification
 
 on:
   schedule:

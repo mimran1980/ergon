@@ -222,8 +222,8 @@ pub fn assert_source_ok(src: &str, expected: &[&str]) {
 ///
 /// A plain `src.contains(method)` check cannot tell a method on the type
 /// under test from a same-named method the generator emits on an unrelated
-/// type — e.g. the ordered decode lane's `try_fixed` and the encoder's
-/// (absent) fixed-phase bypass share a name but are different invariants.
+/// type — e.g. the ordered decode lane's `fixed` callback and the encoder's
+/// fixed phase share a name but are different invariants.
 /// Parsing scopes the check to the type that actually owns the invariant.
 pub fn impl_for_type_defines_method(src: &str, type_name: &str, method: &str) -> bool {
     let file = syn::parse_file(src).expect("generated code is not valid Rust");
@@ -281,6 +281,19 @@ pub fn compile_fails_with_diagnostics(
     source: &str,
     code: &str,
     expected_diagnostics: &[&str],
+) {
+    compile_fails_with_diagnostics_excluding(module_name, source, code, expected_diagnostics, &[]);
+}
+
+/// [`compile_fails_with_diagnostics`], and none of `absent` may appear in the
+/// compiler's output: a fixture that must fail for one reason only (say, only
+/// the field setters are candidates, never a third item).
+pub fn compile_fails_with_diagnostics_excluding(
+    module_name: &str,
+    source: &str,
+    code: &str,
+    expected_diagnostics: &[&str],
+    absent: &[&str],
 ) {
     assert!(
         !expected_diagnostics.is_empty(),
@@ -343,6 +356,59 @@ pub fn compile_fails_with_diagnostics(
             stderr.contains(expected),
             "compile-fail {module_name} failed for the wrong reason: missing diagnostic fragment {expected:?}\nstderr:\n{stderr}"
         );
+    }
+    for unwanted in absent {
+        assert!(
+            !stderr.contains(unwanted),
+            "compile-fail {module_name} failed for another reason too: diagnostic fragment {unwanted:?}\nstderr:\n{stderr}"
+        );
+    }
+}
+
+/// Build `modules` into a library crate and run `cargo test --doc` on it.
+///
+/// `root_items` is appended to `lib.rs` (e.g. trait impls a module needs).
+/// Returns the combined output on failure, so a caller can assert either way.
+pub fn run_doctests(
+    crate_name: &str,
+    modules: &[(&str, &str)],
+    root_items: &str,
+    deps: &str,
+) -> Result<(), String> {
+    let dir = scratch_dir("ergo_doctest", crate_name);
+    let _ = fs::remove_dir_all(&dir);
+    let src = dir.join("src");
+    fs::create_dir_all(&src).map_err(|e| e.to_string())?;
+    let mut lib = String::from("#![allow(dead_code, unused_imports, unused_variables)]\n");
+    for (name, source) in modules {
+        fs::write(src.join(format!("{name}.rs")), source).map_err(|e| e.to_string())?;
+        lib.push_str(&format!("pub mod {name};\n"));
+    }
+    lib.push_str(root_items);
+    fs::write(src.join("lib.rs"), lib).map_err(|e| e.to_string())?;
+    let sbe_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let cargo = format!(
+        "[package]\nname=\"{crate_name}_doctest\"\nversion=\"0.1.0\"\nedition=\"2024\"\n\
+         [dependencies]\n\
+         ergo-sbe = {{ path = \"{}\", features = [\"compact_str\", \"smol_str\", \"bytes\", \"chrono\"] }}\n{deps}",
+        sbe_path.display(),
+    );
+    fs::write(dir.join("Cargo.toml"), cargo).map_err(|e| e.to_string())?;
+    let out = scratch_cargo()
+        .args(["test", "--doc"])
+        .current_dir(&dir)
+        .env("CARGO_TARGET_DIR", dir.join("target_ci"))
+        .output()
+        .map_err(|e| e.to_string())?;
+    let _ = fs::remove_dir_all(&dir);
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ))
     }
 }
 

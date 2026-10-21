@@ -1,0 +1,97 @@
+# latency-pods lab: seccomp mode (M3). Item 3 of the build set.
+# io_uring seccomp profile, NOT Unconfined: containerd 2.x RuntimeDefault
+# blocks io_uring_* (containerd #9320), and PSS Baseline forbids Unconfined.
+# The NRI plugin SetLinuxSeccompPolicy clones the request's profile and adds
+# an allow rule for io_uring_setup / io_uring_enter / io_uring_register.
+# No plugin fallback: seccompProfile Localhost / ergon-io-uring.json.
+# Expect no RTT change: this row is a no-regression proof and a functional
+# check. No env var; ergon-io maps EPERM from io_uring_setup to a typed error.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: latency-__RUN__-pong
+  namespace: ergon-latency-pods
+  labels: { app: ergon-latency-pods, role: pong, mode: seccomp, ergon.io/latency: "hot" }
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus","ergon-latency-pods-ext"]'
+    seccomp.ergon.io/app: "io-uring"
+spec:
+  nodeName: __B_NODE__
+  restartPolicy: Never
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  terminationGracePeriodSeconds: 5
+  priorityClassName: ergon-latency-pods-hot
+  nodeSelector: { ergon.io/shared-cpus: "true" }
+  containers:
+    - name: app
+      image: __IMAGE__
+      imagePullPolicy: Never
+      command: ["/latency-bench-podrun.sh", "pong", "__A_EP__", "__B_EP__"]
+      env:
+        - name: LATENCY_OUT
+          value: /out
+        - name: AERON_DIR
+          value: /aeron
+        - name: HARNESS_DRIVER
+          value: invoker
+        - name: RTT_SECONDS
+          value: "60"
+        - name: RTT_MESSAGES
+          value: "300000"
+        - name: RTT_WARMUP
+          value: "50000"
+      resources:
+        requests: { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250" }
+        limits: { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250" }
+      volumeMounts:
+        - { name: aeron, mountPath: /aeron }
+        - { name: out, mountPath: /out }
+  volumes:
+    - { name: aeron, emptyDir: {} }
+    - { name: out, emptyDir: {} }
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: latency-__RUN__-ping
+  namespace: ergon-latency-pods
+  labels: { app: ergon-latency-pods, role: ping, mode: seccomp, ergon.io/latency: "hot" }
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus","ergon-latency-pods-ext"]'
+    seccomp.ergon.io/app: "io-uring"
+spec:
+  nodeName: __A_NODE__
+  restartPolicy: Never
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  terminationGracePeriodSeconds: 5
+  priorityClassName: ergon-latency-pods-hot
+  nodeSelector: { ergon.io/shared-cpus: "true" }
+  containers:
+    - name: app
+      image: __IMAGE__
+      imagePullPolicy: Never
+      command: ["/latency-bench-podrun.sh", "ping", "__A_EP__", "__B_EP__"]
+      env:
+        - name: LATENCY_OUT
+          value: /out
+        - name: AERON_DIR
+          value: /aeron
+        - name: HARNESS_DRIVER
+          value: invoker
+        - name: RTT_SECONDS
+          value: "60"
+        - name: RTT_MESSAGES
+          value: "300000"
+        - name: RTT_WARMUP
+          value: "50000"
+      resources:
+        requests: { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250" }
+        limits: { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250" }
+      volumeMounts:
+        - { name: aeron, mountPath: /aeron }
+        - { name: out, mountPath: /out }
+  volumes:
+    - { name: aeron, emptyDir: {} }
+    - { name: out, emptyDir: {} }

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- UTCTimestamp fields in every SBE timeUnit, mapped to chrono::DateTime:
+     the conversion must honour each field's unit, at message level, in an
+     optional field, in a group entry and in a nested group entry. -->
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="ts_units" id="92" version="0" byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="groupSizeEncoding">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="numInGroup" primitiveType="uint16"/>
+        </composite>
+    </types>
+    <sbe:message name="Stamps" id="1">
+        <field name="tsSec" id="1" type="uint64" semanticType="UTCTimestamp" timeUnit="second"/>
+        <field name="tsMs" id="2" type="uint64" semanticType="UTCTimestamp" timeUnit="millisecond"/>
+        <field name="tsUs" id="3" type="uint64" semanticType="UTCTimestamp" timeUnit="microsecond"/>
+        <field name="tsNs" id="4" type="uint64" semanticType="UTCTimestamp" timeUnit="nanosecond"/>
+        <field name="tsDefault" id="5" type="uint64" semanticType="UTCTimestamp"/>
+        <field name="optMs" id="6" type="uint64" semanticType="UTCTimestamp" timeUnit="millisecond" presence="optional"/>
+        <group name="fills" id="7" dimensionType="groupSizeEncoding">
+            <field name="at" id="8" type="uint64" semanticType="UTCTimestamp" timeUnit="microsecond"/>
+            <group name="legs" id="9" dimensionType="groupSizeEncoding">
+                <field name="when" id="10" type="uint64" semanticType="UTCTimestamp" timeUnit="millisecond"/>
+            </group>
+        </group>
+    </sbe:message>
+</sbe:messageSchema>

@@ -27,6 +27,7 @@ SHAPES = [
     ("sOptPlain",  "OptPlain",  "",                            "optional scalar, unmapped"),
     ("aDom",       "Tag",       'semanticType="TagText"',     "fixed array, domain-mapped (domain not applied)"),
     ("aPlain",     "TagPlain",  "",                            "fixed array, unmapped"),
+    ("aCollision", "TagPlain",  "",                            "fixed text with a schema-owned string accessor name"),
     ("cDom",       "Money",     "",                            "composite, domain-mapped via NamedType"),
     ("cPlain",     "Pair",      "",                            "composite, unmapped"),
     ("eBool",      "BooleanType", "",                          "bool enum, required"),
@@ -34,6 +35,11 @@ SHAPES = [
     ("eNorm",      "Model",     "",                            "non-bool enum"),
     ("setOpt",     "Opts",      "",                            "bitset"),
     ("sDep",       "uint32",    'deprecated="2"',              "deprecated scalar (with_deprecated_attrs)"),
+    ("fOptInf",    "OptInfF",   "",                            "optional float, nullValue Infinity"),
+    ("dOptNeg",    "OptNegD",   "",                            "optional double, finite nullValue -1.0"),
+    ("eTdNull",    "Side",      "",                            "enum whose encodingType typedef declares nullValue"),
+    ("cFloatNull", "Bounds",    "",                            "composite with float constant and non-NaN optional nulls"),
+    ("tsMs",       "uint64",    'semanticType="UTCTimestamp" timeUnit="millisecond"', "millisecond timestamp, built-in chrono domain type"),
 ]
 
 # sinceVersion values under test.
@@ -56,11 +62,27 @@ def fields(start_id, indent):
             a = f" {attrs}" if attrs else ""
             out.append(f'{indent}<field name="{prefix}V{v}" id="{fid}" type="{ty}"{a}{since}/>')
             fid += 1
+            if prefix == "aCollision":
+                out.append(f'{indent}<field name="{prefix}V{v}AsStr" id="{fid}" type="uint32"{since}/>')
+                fid += 1
     # Not a shape: a Rust keyword name, so every location takes the
     # keyword-append rename (with_keyword_append_token).
     out.append(f"{indent}<!-- Rust keyword name -->")
     out.append(f'{indent}<field name="type" id="{fid}" type="uint8"/>')
     fid += 1
+    # Not shapes either (constants have no DTO cell): float constants no Rust
+    # literal spells, at every location.
+    out.append(f"{indent}<!-- float constants: Infinity, -Infinity, NaN -->")
+    for name, ty in (("kInfF", "InfF"), ("kNegInfD", "NegInfD"), ("kNanD", "NanD")):
+        out.append(f'{indent}<field name="{name}" id="{fid}" type="{ty}" presence="constant"/>')
+        fid += 1
+    # Field-level constant enums end the block: they take no wire space at
+    # any location, so their accessors must not read the wire.
+    out.append(f"{indent}<!-- constant enums: plain and bool -->")
+    for name, ref in (("kEnum", "Model.A"), ("kBool", "BooleanType.T")):
+        ty = ref.split(".")[0]
+        out.append(f'{indent}<field name="{name}" id="{fid}" type="{ty}" presence="constant" valueRef="{ref}"/>')
+        fid += 1
     return out, fid
 
 
@@ -125,6 +147,22 @@ HEADER = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
         <type name="OptPlain" primitiveType="int32" presence="optional"/>
         <type name="Tag" primitiveType="char" length="4"/>
         <type name="TagPlain" primitiveType="char" length="4"/>
+
+        <type name="OptInfF" primitiveType="float" presence="optional" nullValue="Infinity"/>
+        <type name="OptNegD" primitiveType="double" presence="optional" nullValue="-1.0"/>
+        <type name="SideEncoding" primitiveType="uint8" presence="optional" nullValue="254"/>
+        <enum name="Side" encodingType="SideEncoding">
+            <validValue name="Buy">0</validValue>
+            <validValue name="Sell">1</validValue>
+        </enum>
+        <composite name="Bounds">
+            <type name="lo" primitiveType="float" presence="optional" nullValue="-Infinity"/>
+            <type name="hi" primitiveType="double" presence="optional" nullValue="-1.0"/>
+            <type name="cap" primitiveType="double" presence="constant">-Infinity</type>
+        </composite>
+        <type name="InfF" primitiveType="float" presence="constant">Infinity</type>
+        <type name="NegInfD" primitiveType="double" presence="constant">-Infinity</type>
+        <type name="NanD" primitiveType="double" presence="constant">NaN</type>
     </types>
 '''
 

@@ -7,7 +7,10 @@
     unused
 )]
 mod common;
-use common::{Paths, compile_and_run, generate_domain as generate, generate_domain_with};
+use common::{
+    Paths, compile_and_run, compile_fails_with_diagnostics, generate_domain as generate,
+    generate_domain_with,
+};
 use ergo_sbe::DomainVarData;
 use std::path::PathBuf;
 
@@ -632,7 +635,7 @@ fn versioned_domain_type_schema() -> PathBuf {
 /// A versioned (`sinceVersion > 0`) field carrying a domain type — composite or
 /// primitive scalar — must materialise into the DTO exactly once.
 ///
-/// `try_*` on a versioned field already returns `Result<Option<T>, E>` (see
+/// The domain accessor on a versioned field already returns `Result<Option<T>, E>` (see
 /// `converter_impls::is_optional_domain_field`), so the DTO's `from_decoder`
 /// expression must **not** wrap it in `Some(..)` again — that yields
 /// `Option<Option<T>>` against an `Option<T>` field and the generated module
@@ -698,8 +701,8 @@ fn domain_versioned_fields_with_domain_type_materialise_single_option()
 
         let mut buf = [0u8; VersionedEncoder::compute_length_with_header()];
         let mut enc = VersionedEncoder::try_wrap_and_apply_header(&mut buf, 0).unwrap();
-        enc.try_scaled(Decimal::new(12345, 3))?
-            .try_extra(Decimal::new(799, 2))?
+        enc.scaled(Decimal::new(12345, 3))?
+            .extra(Decimal::new(799, 2))?
             .count(42);
         let dec = VersionedDecoder::try_decode(&buf, 0).unwrap();
 
@@ -884,6 +887,47 @@ fn domain_dto_field_type_matrix() -> Result<(), Box<dyn std::error::Error>> {
         let dec = MatrixDecoder::try_decode(&buf[..written], 0)?;
         let back: MatrixDomain = MatrixDomain::try_from_decoder(dec)?;
         assert_eq!(back, dto);
+
+        // An optional scalar keeps the wire type even when a domain type is
+        // configured (see `dto_domain_type`), so its null sentinel is refused
+        // like any other optional's. `OptScaled` carries no schema nullValue,
+        // so resolve fills the SBE default for int64 — `i64::MIN`. Writing
+        // `Some(i64::MIN)` would produce the null image and read back as
+        // `None`, so the encode refuses rather than lose the value. `Some(0)`
+        // is an ordinary value and must encode.
+        let bad = MatrixDomain {
+            prim_opt: Some(i64::MIN),
+            ..dto
+        };
+        let mut bad_buf = [0u8; MatrixEncoder::compute_length_with_header()];
+        match bad.encode(&mut bad_buf) {
+            Err(sbe_rt::EncodeError::SomeNullValue { at }) => {
+                assert_eq!(at.to_string(), "primOpt", "the refusal must name the field");
+            }
+            other => panic!("Some(null) on an optional scalar must be refused, got {other:?}"),
+        }
+
+        let zero = MatrixDomain {
+            prim_opt: Some(0),
+            ..dto
+        };
+        let mut zero_buf = [0u8; MatrixEncoder::compute_length_with_header()];
+        let zero_written = zero.encode(&mut zero_buf)?;
+        let zero_back: MatrixDomain =
+            MatrixDomain::try_from_decoder(MatrixDecoder::try_decode(&zero_buf[..zero_written], 0)?)?;
+        assert_eq!(zero_back.prim_opt, Some(0), "0 is a value, not the null image");
+
+        let absent = MatrixDomain {
+            prim_opt: None,
+            ..dto
+        };
+        let mut none_buf = [0u8; MatrixEncoder::compute_length_with_header()];
+        let none_written = absent.encode(&mut none_buf)?;
+        let none_back: MatrixDomain = MatrixDomain::try_from_decoder(MatrixDecoder::try_decode(
+            &none_buf[..none_written],
+            0,
+        )?)?;
+        assert_eq!(none_back.prim_opt, None, "None must read back as None");
         "#,
         "rust_decimal = \"1\"\n",
     );
@@ -1513,6 +1557,268 @@ fn versioned_required_enum_none_writes_null_on_reused_buffer()
             Some(Status::NullVal),
             "versioned required None must write NullVal; without null_as_option the getter keeps the variant"
         );
+        "#,
+    );
+    Ok(())
+}
+
+/// A domain-typed enum (here a generated mapping) under `with_null_as_option`
+/// or `sinceVersion` is `Option<app type>` on the DTO. `None` must write
+/// `NullVal` at message level and in nested entries alike: skipping it would
+/// leave the previous frame's value in a reused buffer, which decodes back
+/// as that `Some`.
+#[test]
+fn domain_typed_enum_none_writes_null_on_reused_buffer() -> Result<(), Box<dyn std::error::Error>> {
+    use ergo_sbe::{
+        ConversionSelector, DomainVarData, EnumMapping, GenerationConfig, Generator, Schema, parse,
+    };
+    const XML: &str = r#"<messageSchema package="reviewd" id="1" version="1" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+    <enum name="Status" encodingType="uint8">
+      <validValue name="Pending">1</validValue>
+      <validValue name="Done">2</validValue>
+    </enum>
+  </types>
+  <message name="M" id="1">
+    <field name="status" id="1" type="Status"/>
+    <field name="late" id="2" type="Status" sinceVersion="1"/>
+    <group name="rows" id="3" dimensionType="groupSizeEncoding">
+      <field name="status" id="4" type="Status"/>
+      <group name="cells" id="5" dimensionType="groupSizeEncoding">
+        <field name="status" id="6" type="Status"/>
+      </group>
+    </group>
+  </message>
+</messageSchema>"#;
+    let schema = Schema::from_ir(parse(XML)?);
+    let src = Generator::new(
+        GenerationConfig::new("reviewd")
+            .with_domain_objects(DomainVarData::Bytes)
+            .with_enum_mapping(EnumMapping::new("Status", "app::Status"))
+            .with_null_as_option(ConversionSelector::named_type("Status")),
+    )
+    .generate(&schema)?
+    .modules()
+    .next()
+    .expect("one module")
+    .source
+    .clone()
+        + r#"
+pub mod app {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Status { Pending, Done }
+}
+"#;
+    compile_and_run(
+        "dto_none_domain_enum",
+        &src,
+        r#"
+        let done = Some(app::Status::Done);
+        let some = MDomain {
+            status: done,
+            late: done,
+            rows: vec![MRowsEntryDomain {
+                status: done,
+                cells: vec![MRowsEntryCellsEntryDomain { status: done }],
+            }],
+        };
+        let none = MDomain {
+            status: None,
+            late: None,
+            rows: vec![MRowsEntryDomain {
+                status: None,
+                cells: vec![MRowsEntryCellsEntryDomain { status: None }],
+            }],
+        };
+        let len = some.encoded_length_with_header()?;
+        assert_eq!(none.encoded_length_with_header()?, len);
+        let mut storage = [0u8; 64];
+        let buffer = &mut storage[..len];
+        some.encode(buffer)?;
+        assert_eq!(MDomain::try_from_slice_with_header(buffer, 0)?, some);
+        none.encode(buffer)?;
+        assert_eq!(MDomain::try_from_slice_with_header(buffer, 0)?, none);
+        "#,
+    );
+    Ok(())
+}
+
+fn fixture_schema(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/schemas")
+        .join(name)
+}
+
+/// The entry DTO's `length_contribution` must use the stride the entry
+/// encoder writes. Constant fields ending a top-level entry take no wire
+/// space (sbe-tool's entry blockLength for this schema is 2).
+#[test]
+fn dto_length_skips_constant_fields_in_group_entries() -> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(
+        &fixture_schema("group-with-constant-fields.xml"),
+        "dto_const_galore",
+    );
+    compile_and_run(
+        "dto_const_galore",
+        &src,
+        r#"
+        let mut pad = [0u8; ConstantsGaloreEncoder::compute_length_with_header(3)];
+        for n in 0..=3u8 {
+            let dto = ConstantsGaloreDomain {
+                a: 7,
+                e: CompositeWithConst::new(9),
+                f: (0..n)
+                    .map(|i| ConstantsGaloreFEntryDomain { g: i, h: CompositeWithConst::new(i + 100) })
+                    .collect(),
+            };
+            let len = ConstantsGaloreEncoder::compute_length_with_header(usize::from(n));
+            assert_eq!(dto.encoded_length()? + ConstantsGaloreEncoder::HEADER_LENGTH, len);
+            let buf = &mut pad[..len];
+            assert_eq!(dto.encode(buf)?, len);
+            assert_eq!(u16::from_le_bytes([buf[10], buf[11]]), 2, "entry blockLength");
+            assert_eq!(ConstantsGaloreDomain::try_from_slice_with_header(buf, 0)?, dto);
+        }
+        "#,
+    );
+    Ok(())
+}
+
+/// Nested entries ending in constants are 2 bytes wide at both levels, and a
+/// nested entry wider than its parent (`wide`, 8) does not widen the parent.
+#[test]
+fn dto_length_skips_constant_fields_in_nested_group_entries()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(
+        &fixture_schema("nested-group-constant-fields.xml"),
+        "dto_const_nested",
+    );
+    compile_and_run(
+        "dto_const_nested",
+        &src,
+        r#"
+        let dto = OuterDomain {
+            a: 1,
+            rows: vec![
+                OuterRowsEntryDomain {
+                    p: 2,
+                    q: CompositeWithConst::new(3),
+                    cells: vec![OuterRowsEntryCellsEntryDomain { t: 4, u: CompositeWithConst::new(5) }; 2],
+                    wide: vec![OuterRowsEntryWideEntryDomain { m: 6 }],
+                },
+                OuterRowsEntryDomain { p: 7, q: CompositeWithConst::new(8), cells: vec![], wide: vec![] },
+            ],
+        };
+        let len = OuterEncodedLength::new()
+            .rows_ragged(2, |r| {
+                r.add()?.cells(|c| { c.uniform(2)?; Ok(()) })?.wide(|w| { w.uniform(1)?; Ok(()) })?;
+                r.add()?.cells(|c| { c.uniform(0)?; Ok(()) })?.wide(|w| { w.uniform(0)?; Ok(()) })?;
+                Ok(())
+            })?
+            .encoded_length_with_header();
+        // header, a, rows dim, row 0 (block, cells dim + 2 x 2, wide dim + 8),
+        // row 1 (block, two empty dims).
+        assert_eq!(len, 8 + 1 + 4 + (2 + 4 + 2 * 2 + 4 + 8) + (2 + 4 + 4));
+        assert_eq!(dto.encoded_length()? + OuterEncoder::HEADER_LENGTH, len);
+
+        let mut pad = [0u8; 64];
+        let buf = &mut pad[..len];
+        assert_eq!(dto.encode(buf)?, len);
+        let block_length = |at: usize| u16::from_le_bytes([buf[at], buf[at + 1]]);
+        assert_eq!((block_length(9), block_length(15), block_length(23)), (2, 2, 8));
+        assert_eq!(OuterDomain::try_from_slice_with_header(buf, 0)?, dto);
+
+        for row in OuterDecoder::try_from(&buf[..])?.rows()? {
+            let row = row?;
+            assert_eq!(row.k(), Model::A);
+            for cell in row.cells()? {
+                assert_eq!(cell.kk(), Model::B);
+            }
+        }
+        "#,
+    );
+    Ok(())
+}
+
+/// Constant enum fields in group and nested-group entries have no setter: one
+/// would write at its IR offset, past the entry block, into the next entry.
+#[test]
+fn constant_enum_fields_in_group_entries_have_no_setter() -> Result<(), Box<dyn std::error::Error>>
+{
+    let (_schema, src) = generate(
+        &fixture_schema("nested-group-constant-fields.xml"),
+        "const_entry_setter",
+    );
+    let encode = |row_extra: &str, cell_extra: &str| {
+        format!(
+            r#"
+            let run = || -> Result<(), Box<dyn std::error::Error>> {{
+            let mut pad = [0u8; 64];
+            let len = OuterEncoder::wrap_and_apply_header(&mut pad, 0)
+                .fixed(&OuterFixedFields {{ a: 1 }})
+                .rows(1, |rows| {{
+                    rows.add(|mut r| {{
+                        r.p(2){row_extra};
+                        Ok(r.cells(1, |cells| {{
+                                cells.add(|c| {{ c.t(4){cell_extra}; Ok(()) }})?;
+                                Ok(())
+                            }})?
+                            .wide(0, |_| Ok(()))?)
+                    }})?;
+                    Ok(())
+                }})?
+                .encoded_length_with_header();
+            assert!(len > 0);
+            Ok(())
+            }};
+            run().map_err(|e| e.to_string()).expect("encode");
+            "#
+        )
+    };
+    compile_and_run("const_entry_setter_ok", &src, &encode("", ""));
+    compile_fails_with_diagnostics(
+        "const_entry_setter_cf",
+        &src,
+        &encode(".k(Model::A)", ".kk(Model::B)"),
+        &["no method named `k`", "no method named `kk`"],
+    );
+    Ok(())
+}
+
+/// A group's declared blockLength (16) pads each entry past its fields (12);
+/// the entry DTO must count the padding the encoder writes.
+#[test]
+fn dto_length_keeps_declared_group_block_length() -> Result<(), Box<dyn std::error::Error>> {
+    let (_schema, src) = generate(
+        &fixture_schema("block-length-schema.xml"),
+        "dto_padded_group",
+    );
+    compile_and_run(
+        "dto_padded_group",
+        &src,
+        r#"
+        let mut pad = [0u8; Message3Encoder::compute_length_with_header(2)];
+        for n in 0..=2u32 {
+            let dto = Message3Domain {
+                header: MessageHeader([0u8; 8]),
+                group: (0..n).map(|i| Message3GroupEntryDomain { f1: i, f2: u64::from(i) }).collect(),
+            };
+            let len = Message3Encoder::compute_length_with_header(n as usize);
+            assert_eq!(len, 8 + 64 + 3 + n as usize * 16);
+            assert_eq!(dto.encoded_length()? + Message3Encoder::HEADER_LENGTH, len);
+            let buf = &mut pad[..len];
+            assert_eq!(dto.encode(buf)?, len);
+            assert_eq!(Message3Domain::try_from_slice_with_header(buf, 0)?, dto);
+        }
         "#,
     );
     Ok(())

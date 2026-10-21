@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- Constant fields (field-level and type-level) ending group and nested-group
+     entries take no wire space: each entry here is 2 bytes wide except `wide`
+     (8), which is wider than its parent entry. -->
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="nested_constants"
+                   id="1"
+                   version="0"
+                   byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="groupSizeEncoding">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="numInGroup" primitiveType="uint16"/>
+        </composite>
+        <type name="PrimitiveConst" primitiveType="uint16" presence="constant">9000</type>
+        <type name="StrConst" primitiveType="char" presence="constant">Huzzah</type>
+        <composite name="CompositeWithConst">
+            <type name="w" primitiveType="uint8"/>
+            <type name="x" primitiveType="uint8" presence="constant">250</type>
+            <ref name="y" type="PrimitiveConst"/>
+        </composite>
+        <enum name="Model" encodingType="char">
+            <validValue name="A">A</validValue>
+            <validValue name="B">B</validValue>
+        </enum>
+    </types>
+    <sbe:message name="Outer" id="1">
+        <field name="a" id="1" type="uint8"/>
+        <group name="rows" id="2" dimensionType="groupSizeEncoding">
+            <field name="p" id="3" type="uint8"/>
+            <field name="q" id="4" type="CompositeWithConst"/>
+            <field name="r" id="5" type="PrimitiveConst" presence="constant"/>
+            <field name="s" id="6" type="PrimitiveConst"/>
+            <field name="k" id="15" type="Model" presence="constant" valueRef="Model.A"/>
+            <group name="cells" id="7" dimensionType="groupSizeEncoding">
+                <field name="t" id="8" type="uint8"/>
+                <field name="u" id="9" type="CompositeWithConst"/>
+                <field name="v" id="10" type="PrimitiveConst"/>
+                <field name="z" id="11" type="StrConst"/>
+                <field name="kk" id="16" type="Model" presence="constant" valueRef="Model.B"/>
+            </group>
+            <group name="wide" id="12" dimensionType="groupSizeEncoding">
+                <field name="m" id="13" type="uint64"/>
+                <field name="n" id="14" type="PrimitiveConst" presence="constant"/>
+            </group>
+        </group>
+    </sbe:message>
+</sbe:messageSchema>

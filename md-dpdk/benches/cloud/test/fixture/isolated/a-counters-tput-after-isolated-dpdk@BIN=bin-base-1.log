@@ -1,0 +1,2 @@
+# realtime=1760500211.000000000
+ 7400000 82 rusteron-dpdk role=sender bdf=0000:00:06.0 port=0 q=0 dir=tx pkts; 7400000000 83 rusteron-dpdk role=sender bdf=0000:00:06.0 port=0 q=0 dir=tx bytes; 250000 78 rusteron-dpdk role=sender bdf=0000:00:06.0 port=0 q=0 dir=tx tx-eagain;

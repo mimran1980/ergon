@@ -1,0 +1,12 @@
+[package]
+name = "parity_since_version_filter"
+version = "0.1.0"
+authors = ["sbetool"]
+description = "Test case for transforming based on sinceVersion"
+edition = "2021"
+
+[lib]
+name = "parity_since_version_filter"
+path = "src/lib.rs"
+
+[workspace]

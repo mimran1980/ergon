@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# A livenessProbe is fine on a pod that is not labelled ergon.io/latency:
+# hot. The validating policy must admit this pod: it only matches the hot
+# pod label.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: probe-elsewhere
+  namespace: ergon-latency-pods-plain
+spec:
+  restartPolicy: Never
+  containers:
+    - name: app
+      image: ergon-latency-pods-demo:e2e
+      imagePullPolicy: Never
+      command: ["sleep", "3600"]
+      livenessProbe:
+        exec: { command: ["true"] }
+        periodSeconds: 10

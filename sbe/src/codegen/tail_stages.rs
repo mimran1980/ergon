@@ -225,15 +225,15 @@ pub(crate) fn generate_owner_consuming_stages(
                 pub fn #into_ident(self) -> Result<(&'a [u8], #next_stage<'a>), sbe_rt::DecodeError> {
                     #absent_vardata
                     let offset = #se;
-                    if offset + #prefix_size_lit > self.buf.len() {
+                    if offset.checked_add(#prefix_size_lit).is_none_or(|end| end > self.buf.len()) {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #vd_name_lit,
                             needed: #prefix_size_lit,
                             available: self.buf.len().saturating_sub(offset),
                         });
                     }
-                    // SAFETY: bounds verified by the preceding check
-                    // (offset + prefix_size <= buf.len()).
+                    // SAFETY: bounds verified by the preceding overflow-checked
+                    // test (offset + prefix_size <= buf.len()).
                     let bytes: [u8; #prefix_size_lit] = unsafe {
                         core::ptr::read_unaligned(
                             self.buf.as_ptr().add(offset) as *const [u8; #prefix_size_lit],
@@ -266,7 +266,7 @@ pub(crate) fn generate_owner_consuming_stages(
                 pub fn #slice_ident(&self) -> Result<&'a [u8], sbe_rt::DecodeError> {
                     #slice_cached_tail
                     let offset = #se;
-                    if offset + #prefix_size_lit > self.buf.len() {
+                    if offset.checked_add(#prefix_size_lit).is_none_or(|end| end > self.buf.len()) {
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #vd_name_lit,
                             needed: #prefix_size_lit,
@@ -426,34 +426,10 @@ pub(crate) fn generate_owner_consuming_stages(
             }
         }
 
-        // Scoped fallible combinator: try_<data> always available.
-        let try_data_ident = syn::Ident::new(&format!("try_{}", vd.accessor_snake), span);
-        ts.extend(quote::quote! {
-            impl<'a> #current_stage<'a> {
-                /// Fallible scoped var-data accessor. Calls the closure with
-                /// the decoded bytes and returns the next stage on success.
-                #[inline]
-                pub fn #try_data_ident<E, F>(
-                    self,
-                    f: F,
-                ) -> Result<#next_stage<'a>, E>
-                where
-                    E: From<sbe_rt::DecodeError>,
-                    F: FnOnce(&[u8]) -> Result<(), E>,
-                {
-                    let (data, next) = self.#into_ident()?;
-                    f(data)?;
-                    Ok(next)
-                }
-            }
-        });
-
         // Nested-message helpers need AnyMessage/DecodedFrame (dispatch surface).
         if enable_dispatch {
             let as_msg_ident =
                 syn::Ident::new(&format!("into_{}_as_message", vd.accessor_snake), span);
-            let try_data_as_msg_ident =
-                syn::Ident::new(&format!("try_{}_as_message", vd.accessor_snake), span);
             ts.extend(quote::quote! {
                 impl<'a> #current_stage<'a> {
                     /// Consume this stage, decode the var-data field as a nested
@@ -464,21 +440,6 @@ pub(crate) fn generate_owner_consuming_stages(
                         let (data, next) = self.#into_ident()?;
                         let frame = AnyMessage::decode_frame(data, 0, data.len())?;
                         Ok((frame, next))
-                    }
-
-                    /// Fallible scoped nested-message accessor.
-                    #[inline]
-                    pub fn #try_data_as_msg_ident<E, F>(
-                        self,
-                        f: F,
-                    ) -> Result<#next_stage<'a>, E>
-                    where
-                        E: From<sbe_rt::DecodeError>,
-                        F: FnOnce(DecodedFrame<'a>) -> Result<(), E>,
-                    {
-                        let (frame, next) = self.#as_msg_ident()?;
-                        f(frame)?;
-                        Ok(next)
                     }
                 }
             });
@@ -705,6 +666,7 @@ pub(crate) fn generate_owner_consuming_stages(
                  so the rest of the message cannot be dropped by a loop.",
                 iter = iter_type
             );
+            let into_doc = super::runtime::doc_lines_tokens(&into_doc);
             ts.extend(quote::quote! {
                 /// Fixed-stride group iterator — this type *is* the decoder
                 /// stage for the group. Call [`Self::finish`] or a following
@@ -746,7 +708,7 @@ pub(crate) fn generate_owner_consuming_stages(
                 }
                 impl<'a> core::iter::FusedIterator for &mut #iter_type<'a> {}
                 impl<'a> #current_stage<'a> {
-                    #[doc = #into_doc]
+                    #into_doc
                     #[inline]
                     pub fn #into_ident(self) -> Result<#iter_type<'a>, sbe_rt::DecodeError> {
                         let group_start = #se;
@@ -868,16 +830,18 @@ pub(crate) fn generate_owner_consuming_stages(
                 " Skip any unread `{}` entries and consume `{}`.",
                 tg.accessor_snake, ng.accessor_snake
             );
+            let into_doc = super::runtime::doc_lines_tokens(&into_doc);
             let skip_doc = format!(
                 " Skip any unread `{}` entries and skip `{}`.",
                 tg.accessor_snake, ng.accessor_snake
             );
+            let skip_doc = super::runtime::doc_lines_tokens(&skip_doc);
             if ng.entries_have_tails {
                 let next_entry = syn::Ident::new(&ng.entry_decoder_ident, span);
                 let next_complete =
                     syn::Ident::new(&format!("{}Complete", ng.entry_decoder_ident), span);
                 next_tail.extend(quote::quote! {
-                    #[doc = #into_doc]
+                    #into_doc
                     #[inline]
                     pub fn #into_next<E, F>(self, visit: F) -> Result<#after_next<'a>, E>
                     where
@@ -890,7 +854,7 @@ pub(crate) fn generate_owner_consuming_stages(
             } else {
                 let next_iter = quote::format_ident!("{}Iter", ng.group_decoder_ident);
                 next_tail.extend(quote::quote! {
-                    #[doc = #into_doc]
+                    #into_doc
                     #[inline]
                     pub fn #into_next(self) -> Result<#next_iter<'a>, sbe_rt::DecodeError> {
                         self.finish()?.#into_next()
@@ -898,7 +862,7 @@ pub(crate) fn generate_owner_consuming_stages(
                 });
             }
             next_tail.extend(quote::quote! {
-                #[doc = #skip_doc]
+                #skip_doc
                 #[inline]
                 pub fn #skip_next(self) -> Result<#after_next<'a>, sbe_rt::DecodeError> {
                     self.finish()?.#skip_next()
@@ -911,8 +875,9 @@ pub(crate) fn generate_owner_consuming_stages(
                 " Skip any unread `{}` entries and read `{}`.",
                 tg.accessor_snake, vd.accessor_snake
             );
+            let into_doc = super::runtime::doc_lines_tokens(&into_doc);
             next_tail.extend(quote::quote! {
-                #[doc = #into_doc]
+                #into_doc
                 #[inline]
                 pub fn #into_vd(self) -> Result<(&'a [u8], #after_vd<'a>), sbe_rt::DecodeError> {
                     self.finish()?.#into_vd()
@@ -924,8 +889,9 @@ pub(crate) fn generate_owner_consuming_stages(
                     " Skip any unread `{}` entries and read `{}` as `&str`.",
                     tg.accessor_snake, vd.accessor_snake
                 );
+                let as_str_doc = super::runtime::doc_lines_tokens(&as_str_doc);
                 next_tail.extend(quote::quote! {
-                    #[doc = #as_str_doc]
+                    #as_str_doc
                     #[inline]
                     pub fn #as_str(self) -> Result<(&'a str, #after_vd<'a>), sbe_rt::DecodeError> {
                         self.finish()?.#as_str()
@@ -1059,6 +1025,7 @@ pub(crate) fn generate_decoder_consuming_stages(
     let taken = owner_accessor_names(
         &msg.fields,
         conversions,
+        domain_types,
         DECODER_RESERVED,
         msg.groups
             .iter()
@@ -1093,6 +1060,7 @@ pub(crate) fn generate_entry_consuming_stages(
     byte_order: ByteOrder,
     enable_dispatch: bool,
     conversions: &[crate::ConversionSelector],
+    domain_types: &[(crate::ConversionSelector, String)],
 ) -> proc_macro2::TokenStream {
     let span = proc_macro2::Span::call_site();
     let entry_prefix = format!("{name}EntryDecoder");
@@ -1155,6 +1123,7 @@ pub(crate) fn generate_entry_consuming_stages(
     let taken = crate::codegen::conversion_helpers::owner_accessor_names(
         &g.fields,
         conversions,
+        domain_types,
         &[],
         g.groups
             .iter()

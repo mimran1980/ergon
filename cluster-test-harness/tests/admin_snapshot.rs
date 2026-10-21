@@ -68,6 +68,7 @@ fn test_admin_snapshot_request_gets_response() -> Result<(), Box<dyn std::error:
     // Poll egress until the admin response arrives (or timeout).
     let deadline = Instant::now() + Duration::from_secs(15);
     while Instant::now() < deadline {
+        let _ = client.send_keep_alive();
         client.poll_egress(&mut adapter, 10)?;
         client.poll_state_changes()?;
         if adapter.listener().admin_cid.lock().unwrap().is_some() {

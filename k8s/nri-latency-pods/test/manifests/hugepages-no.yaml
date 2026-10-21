@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Item 1, not asked for: the same hugepages-2Mi request with no annotation. The
+# sized mount is absent and no ERGON_HUGEPAGES_* env appears (today's path).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hugepages-no
+  namespace: ergon-latency-pods
+spec:
+  restartPolicy: Never
+  containers:
+    - name: app
+      image: ergon-latency-pods-demo:e2e
+      imagePullPolicy: Never
+      command: ["sleep", "3600"]
+      resources:
+        # Same shape as hugepages-yes (16Mi = 8 pages; the e2e reserves 32).
+        requests: { cpu: "100m", memory: 32Mi, hugepages-2Mi: 16Mi }
+        limits:   { cpu: "100m", memory: 32Mi, hugepages-2Mi: 16Mi }

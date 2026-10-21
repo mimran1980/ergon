@@ -13,4 +13,5 @@ just build-aeron-jars
 cargo run --manifest-path samples/cluster-tutorial/Cargo.toml
 ```
 
-Requires Java 17+ and built Aeron artifacts.
+Requires a JDK 25 (17 or newer) and built Aeron artifacts; see
+[Java for Archive and Cluster](../deploy/java.md).

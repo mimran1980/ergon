@@ -6,13 +6,13 @@ description = "Multi-exchange IPC sample: Bitget + Binance WebSocket → Aeron I
 publish = false
 
 [dependencies]
-rusteron-client = "0.2"
-rusteron-media-driver = "0.2"
+rusteron-client = "0.2.13"
+rusteron-media-driver = "0.2.13"
 rust_decimal = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
-tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
+tokio-tungstenite = { version = "0.30", features = ["native-tls"] }
 futures-util = "0.3"
 
 [build-dependencies]

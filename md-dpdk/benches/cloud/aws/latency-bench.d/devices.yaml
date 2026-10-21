@@ -1,0 +1,98 @@
+# latency-pods lab: devices mode (M4). Item 5 of the build set.
+# NRI AddDevice grants /dev/ptp* (NIC PHC) read-only. The node keeps chrony +
+# PHC discipline; the pod gets read-only use for clock reads and RequirePtp.
+# Do not let a pod run a PTP daemon: a pod that can step the NIC clock affects
+# every tenant. The plugin also AddMounts /run/ergon/node.json read-only.
+# cpuqos.ergon.io (x86 only, /dev/cpu_dma_latency) is off on Graviton: the
+# annotation is ignored on arm64. Functional check plus no-regression RTT.
+# Env the app reads: ERGON_PTP_DEVICE=/dev/ptp* (sorted comma list).
+# No hostPath: PSS Baseline forbids it; the plugin is the clean path.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: latency-__RUN__-pong
+  namespace: ergon-latency-pods
+  labels: { app: ergon-latency-pods, role: pong, mode: devices, ergon.io/latency: "hot" }
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus","ergon-latency-pods-ext"]'
+    ptp.ergon.io/app: "auto"
+spec:
+  nodeName: __B_NODE__
+  restartPolicy: Never
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  terminationGracePeriodSeconds: 5
+  priorityClassName: ergon-latency-pods-hot
+  nodeSelector: { ergon.io/shared-cpus: "true" }
+  containers:
+    - name: app
+      image: __IMAGE__
+      imagePullPolicy: Never
+      command: ["/latency-bench-podrun.sh", "pong", "__A_EP__", "__B_EP__"]
+      env:
+        - name: LATENCY_OUT
+          value: /out
+        - name: AERON_DIR
+          value: /aeron
+        - name: HARNESS_DRIVER
+          value: invoker
+        - name: RTT_SECONDS
+          value: "60"
+        - name: RTT_MESSAGES
+          value: "300000"
+        - name: RTT_WARMUP
+          value: "50000"
+      resources:
+        requests: { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250" }
+        limits: { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250" }
+      volumeMounts:
+        - { name: aeron, mountPath: /aeron }
+        - { name: out, mountPath: /out }
+  volumes:
+    - { name: aeron, emptyDir: {} }
+    - { name: out, emptyDir: {} }
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: latency-__RUN__-ping
+  namespace: ergon-latency-pods
+  labels: { app: ergon-latency-pods, role: ping, mode: devices, ergon.io/latency: "hot" }
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus","ergon-latency-pods-ext"]'
+    ptp.ergon.io/app: "auto"
+spec:
+  nodeName: __A_NODE__
+  restartPolicy: Never
+  hostNetwork: true
+  dnsPolicy: ClusterFirstWithHostNet
+  terminationGracePeriodSeconds: 5
+  priorityClassName: ergon-latency-pods-hot
+  nodeSelector: { ergon.io/shared-cpus: "true" }
+  containers:
+    - name: app
+      image: __IMAGE__
+      imagePullPolicy: Never
+      command: ["/latency-bench-podrun.sh", "ping", "__A_EP__", "__B_EP__"]
+      env:
+        - name: LATENCY_OUT
+          value: /out
+        - name: AERON_DIR
+          value: /aeron
+        - name: HARNESS_DRIVER
+          value: invoker
+        - name: RTT_SECONDS
+          value: "60"
+        - name: RTT_MESSAGES
+          value: "300000"
+        - name: RTT_WARMUP
+          value: "50000"
+      resources:
+        requests: { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250" }
+        limits: { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250" }
+      volumeMounts:
+        - { name: aeron, mountPath: /aeron }
+        - { name: out, mountPath: /out }
+  volumes:
+    - { name: aeron, emptyDir: {} }
+    - { name: out, emptyDir: {} }

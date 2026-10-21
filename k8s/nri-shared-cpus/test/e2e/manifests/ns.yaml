@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ergon-e2e
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ergon-e2e-other

@@ -19,8 +19,8 @@ cargo test -p ergo-sbe --test sbe_tool_multi_schema_wire_parity_test --test sbe_
 
 Requires Java + Gradle (submodule build).
 
-The script regenerates all 37 packages from the pinned submodule without
-modifying the submodule. Three packages receive documented compile-only Rust
+The script regenerates all 46 packages from the pinned submodule (sbe-tool
+1.40.2) without modifying the submodule. Three packages receive documented compile-only Rust
 keyword repairs after generation (`basic_types`, `code_generation`, and
 `dto_test`). The `constant_header` package receives one compile-only repair:
 the Rust backend calls a nonexistent setter for a constant `schemaId`, so the

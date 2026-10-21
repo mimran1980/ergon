@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: v2
+name: ergon-shared-cpus
+description: >-
+  Give a Kubernetes pod its exclusive CPUs and the node's shared housekeeping
+  CPUs. Containerd NRI plugin and kubelet device plugin in one daemon.
+type: application
+# Chart version. Tracks the chart, not the image; see RELEASE.md.
+version: 0.1.0
+# Image tag this chart deploys. Unreleased: nothing is on the registry yet.
+# See RELEASE.md for what must be true before the first push.
+appVersion: "0.1.0"
+home: https://github.com/mimran1980/ergon/tree/main/k8s/nri-shared-cpus
+sources:
+  - https://github.com/mimran1980/ergon/tree/main/k8s/nri-shared-cpus
+keywords:
+  - nri
+  - cpu-manager
+  - cpuset
+  - latency
+  - latency-pods
+maintainers:
+  - name: Mohammed Imran
+annotations:
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/changes: |
+    - kind: added
+      description: First chart. Not published; see RELEASE.md.

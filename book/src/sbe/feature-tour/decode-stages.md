@@ -104,12 +104,11 @@ compile, so a loop cannot drop the rest of the message. Also
 ```
 
 Each `into_*_as_str()` returns `(&'a str, NextStage<'a>)` — the `&str` borrows
-the original buffer. `try_<data>(|bytes| ...)` returns the next stage without
-a tuple binding. See [Method chaining](../getting-started/method-chaining.md#decoding).
+the original buffer. See [Method chaining](../getting-started/method-chaining.md#decoding).
 
 Start with `try_decode` / `try_from`. Do not `verify` first then walk — that
 is two structural passes. Inside a dynamic-entry callback, consume nested
-tails with `into_*` / `try_*` / `skip_*` / `ordered()` and return that
+tails with `into_*` / `skip_*` / `ordered()` and return that
 completion. Random-access getters or a root `manufacturer_len()` before
 visiting preceding groups rescan.
 
@@ -159,7 +158,7 @@ A nested `ordered()` walk **is** the completion the parent callback owes.
 
 | Tail | Callback |
 |------|----------|
-| Fixed block | `fixed(\|&{Name}DecoderFixedView\|)`; `try_fixed` for a custom `E` |
+| Fixed block | `fixed(\|&{Name}DecoderFixedView\|)` |
 | Group, entries with tails | `group(\|entry, EntryInfo\|)` → entry completion, or `Ordered<completion>` from nested `ordered()` |
 | Group, fixed-stride | `group(\|entry, EntryInfo\|)` → `()` |
 | Var-data | `field(\|&[u8]\|)`, and `field_as_str(\|&str\|)` when the schema declares text encoding |
@@ -169,11 +168,10 @@ A nested `ordered()` walk **is** the completion the parent callback owes.
 length is absent: entries with tails only settle it by traversing.
 
 Message-level `fixed` is optional. Skip it, or call it and lose the view.
-The view has no group/var-data accessors. A first tail named `fixed` owns
-both the `fixed()` and `try_fixed()` names, so both callbacks yield; a first
-tail named `tryFixed` owns only `try_fixed()`, so `fixed()` stays available
-for the fixed-block callback. Either way, read the colliding field through
-the tail accessor before `ordered()` reaches it.
+The view has no group/var-data accessors. A first tail named `fixed` owns the
+`fixed()` name, so the fixed-block callback yields: read fixed fields before
+`ordered()`. Every callback returns `Result<_, DecodeError>`; a caller error
+type converts after the walk.
 Entry-level wrappers have no `fixed`: the parent already holds the entry.
 
 Empty and version-absent groups invoke the callback zero times.

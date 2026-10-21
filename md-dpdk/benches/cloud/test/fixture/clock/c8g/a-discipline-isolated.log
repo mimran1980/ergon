@@ -1,0 +1,26 @@
+== chrony before
+Reference ID    : A9FEA97B (169.254.169.123)
+Stratum         : 4
+Ref time (UTC)  : Fri Oct 16 08:00:00 2026
+System time     : 0.000000123 seconds fast of NTP time
+Last offset     : +0.000000045 seconds
+RMS offset      : 0.000000310 seconds
+Frequency       : 12.345 ppm slow
+Residual freq   : +0.000 ppm
+Skew            : 0.012 ppm
+Root delay      : 0.000045000 seconds
+Root dispersion : 0.000012000 seconds
+Update interval : 16.0 seconds
+Leap status     : Normal
+
+clockbench --discipline 5 c8g.xlarge isolated (lto, aarch64 linux): 6 updates, 7 verifier reads
+residual_at_samples_ns   n       5  p50       420  p99       850  p99.9       850  max      2600
+== chrony after
+Reference ID    : A9FEA97B (169.254.169.123)
+Stratum         : 4
+System time     : 0.000000080 seconds slow of NTP time
+Last offset     : -0.000000020 seconds
+RMS offset      : 0.000000290 seconds
+Frequency       : 12.346 ppm slow
+Skew            : 0.010 ppm
+Leap status     : Normal

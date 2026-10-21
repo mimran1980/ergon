@@ -1,0 +1,10 @@
+driver VmLck: 0 kB VmRSS: 45000 kB 
+thread media_driver/700 cpus=0 vcsw=1 nvcsw=1
+thread receiver/705 cpus=3 vcsw=0 nvcsw=1
+counter            1   87 rusteron-dpdk role=sender bdf=0000:00:06.0 port=0 q=0 dir=rx poll-cycle-gaps-20-50us
+counter            0   87 rusteron-dpdk role=sender bdf=0000:00:06.0 port=0 q=0 dir=rx poll-cycle-gaps-50-100us
+counter            0   87 rusteron-dpdk role=sender bdf=0000:00:06.0 port=0 q=0 dir=rx poll-cycle-gaps-over-100us
+counter            0   87 rusteron-dpdk role=receiver bdf=0000:00:07.0 port=1 q=0 dir=rx poll-cycle-gaps-20-50us
+counter            0   87 rusteron-dpdk role=receiver bdf=0000:00:07.0 port=1 q=0 dir=rx poll-cycle-gaps-50-100us
+counter            0   87 rusteron-dpdk role=receiver bdf=0000:00:07.0 port=1 q=0 dir=rx poll-cycle-gaps-over-100us
+cpu 2 irqs=24229 timer=14696 steal=0

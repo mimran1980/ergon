@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Item 1, refused (fail closed): the annotation asks for a sized hugetlbfs but
+# the container has no hugepages-2Mi limit, so there is no size to mount. The
+# plugin refuses the create and the message names the fix. The pod must NOT
+# run with a 4 KiB AERON_DIR.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hugepages-nolimit
+  namespace: ergon-latency-pods
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus"]'
+    hugepages.ergon.io/app: "2M"
+spec:
+  restartPolicy: Never
+  containers:
+    - name: app
+      image: ergon-latency-pods-demo:e2e
+      imagePullPolicy: Never
+      command: ["sleep", "3600"]
+      resources:
+        requests: { cpu: "100m", memory: 32Mi }
+        limits:   { cpu: "100m", memory: 32Mi }

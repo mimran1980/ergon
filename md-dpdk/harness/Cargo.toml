@@ -1,0 +1,62 @@
+[package]
+name = "ergon-md-dpdk-harness"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "Unpublished DPDK interoperability harness for ergon-md-dpdk (scripts/test-dpdk-vdev.sh)"
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+# The vdev and AWS acceptance scripts run this binary by name.
+name = "dpdk-harness"
+path = "src/main.rs"
+
+# The benchmark clients md-dpdk/benches/cloud runs against an external media driver
+# (kernel UDP or DPDK), or one each embeds with HARNESS_DRIVER=invoker (src/lab.rs),
+# ported from rusteron's x86 lab.
+[[bin]]
+name = "rtt"
+path = "src/bin/rtt.rs"
+
+[[bin]]
+name = "load"
+path = "src/bin/load.rs"
+
+[[bin]]
+name = "tput"
+path = "src/bin/tput.rs"
+
+[[bin]]
+name = "clockcheck"
+path = "src/bin/clockcheck.rs"
+
+[[bin]]
+name = "counters"
+path = "src/bin/counters.rs"
+
+[dependencies]
+env_logger = "0.11"
+# The clients' clock (src/lab.rs): every latency stamp is its ordered read.
+ergon-clock = { path = "../../clock" }
+ergon-md-dpdk = { path = ".." }
+hdrhistogram = "7.5"
+libc = "0.2"
+log = "0.4"
+minstant = "0.1"
+rusteron-client = { workspace = true }
+rusteron-media-driver = { workspace = true }
+
+[features]
+# Off by default so the workspace and macOS build without the native DPDK
+# toolchain. The vdev script enables it with `--features dpdk`, as must a
+# build whose clients embed a DPDK driver (HARNESS_DRIVER=invoker with
+# RUSTERON_MEDIA_DRIVER_TRANSPORT=dpdk-ena).
+default = []
+dpdk = ["ergon-md-dpdk/dpdk"]
+# Statically link Aeron into the harness and the clients (the benchmark
+# builds, which run the binaries directly, off cargo's library path).
+static = ["ergon-md-dpdk/static", "rusteron-client/static", "rusteron-media-driver/static"]
+
+[lints.rust]
+missing_docs = "warn"

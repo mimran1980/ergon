@@ -1,7 +1,8 @@
 //! `Display` / `Debug` impl codegen for message decoders.
 
 use super::conversion_helpers::{
-    DECODER_RESERVED, field_has_conversion_free, find_domain_type, resolve_field_ident,
+    DECODER_RESERVED, domain_accessor_ident, field_has_conversion_free, find_domain_type,
+    resolve_field_ident,
 };
 use super::runtime::{to_pascal_case, to_snake_case};
 use crate::ir::Presence;
@@ -27,7 +28,7 @@ pub(crate) fn generate_decoder_display(
     let mut out_idx = 0usize;
     for f in &msg.fields {
         let snake = to_snake_case(&f.name);
-        // Domain-converted fields use fallible `try_<name>` for Display.
+        // Domain-converted fields use the fallible domain getter for Display.
         // The raw getter is renamed to `*_wire` by *any* conversion, not only
         // by a domain type — keying this off `find_domain_type` made Display
         // read a getter that conversion-only configs had already renamed.
@@ -35,7 +36,7 @@ pub(crate) fn generate_decoder_display(
         // Shared list: inherent decoder methods only (not get_metadata placement).
         let f_ident = resolve_field_ident(&snake, &wire_name, DECODER_RESERVED);
         let domain_try = find_domain_type(f, domain_types)
-            .map(|_| syn::Ident::new(&format!("try_{snake}"), proc_macro2::Span::call_site()));
+            .map(|_| domain_accessor_ident(&snake, DECODER_RESERVED));
         let sep = if out_idx == 0 { "" } else { ", " };
         let end_off = f.offset + f.field_type.size();
         let end_off_lit = syn::LitInt::new(&end_off.to_string(), proc_macro2::Span::call_site());
@@ -92,7 +93,7 @@ pub(crate) fn generate_decoder_display(
                 let fmt_str = format!("{sep}{snake}: {enum_name}::{{e:?}}");
                 let name_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
                 if let Some(try_ident) = &domain_try {
-                    // Domain enum (e.g. bool) — fallible try_*; show value only on Ok.
+                    // Domain enum (e.g. bool) — fallible domain getter; show value only on Ok.
                     let fmt_dom = format!("{sep}{snake}: {{:?}}");
                     body.extend(quote::quote! {
                         if #in_bounds {
@@ -143,7 +144,7 @@ pub(crate) fn generate_decoder_display(
                 // reuse it via format_args! (Arguments: Debug delegates to
                 // Display) so the message-level Debug shows readable flags
                 // instead of raw bits, or silently omitting the field.
-                // Domain-mapped sets use fallible `try_*` and `{:?}`.
+                // Domain-mapped sets use the fallible domain getter and `{:?}`.
                 if f.presence == Presence::Constant {
                     continue;
                 }
@@ -178,11 +179,10 @@ pub(crate) fn generate_decoder_display(
                     continue;
                 }
                 let name_lit = syn::LitStr::new(&f.name, proc_macro2::Span::call_site());
-                // Domain-converted composites use fallible `try_*`.
+                // Domain-converted composites use the fallible domain getter.
                 // Wire-only composites use the *_value() accessor.
                 if find_domain_type(f, domain_types).is_some() {
-                    let try_ident =
-                        syn::Ident::new(&format!("try_{snake}"), proc_macro2::Span::call_site());
+                    let try_ident = domain_accessor_ident(&snake, DECODER_RESERVED);
                     // A caller's domain type is only ever required to be
                     // `Debug` — never assume `Display`.
                     debug_body.extend(quote::quote! {
@@ -194,7 +194,7 @@ pub(crate) fn generate_decoder_display(
                     });
                 } else {
                     let f_value = syn::Ident::new(
-                        &format!("{}_value", &snake),
+                        &format!("{}_value", snake),
                         proc_macro2::Span::call_site(),
                     );
                     debug_body.extend(quote::quote! {

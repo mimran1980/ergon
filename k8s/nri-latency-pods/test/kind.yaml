@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# One schedulable control-plane node. The kubelet runs the static CPU manager
+# with reservedSystemCPUs 0,1 (the shared housekeeping set for this test), so
+# the latency-pod grants can be exercised on a node that looks like the EKS one.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: ergon-latency-pods-e2e
+containerdConfigPatches:
+  # Turn on containerd's NRI default validator so required-plugins works
+  # (containerd >= 2.2).
+  - |
+    [plugins."io.containerd.nri.v1.nri".default_validator]
+      enable = true
+  - |
+    [plugins."io.containerd.nri.v1.nri"]
+      disable = false
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ergon.io/shared-cpus=true"
+      - |
+        kind: KubeletConfiguration
+        apiVersion: kubelet.config.k8s.io/v1beta1
+        cpuManagerPolicy: static
+        reservedSystemCPUs: "0,1"
+        cpuManagerReconcilePeriod: "2s"
+        nodeStatusUpdateFrequency: "5s"
+        nodeStatusReportFrequency: "5s"

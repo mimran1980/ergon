@@ -1,0 +1,25 @@
+ergon-shared-cpus {{ .Chart.Version }} installed in namespace {{ include "ergon-shared-cpus.namespace" . }}.
+
+This chart is NOT released. The image {{ include "ergon-shared-cpus.image" . }}
+is not on any registry yet; see RELEASE.md in the module for what must be
+true before the first push.
+
+1. Wait for the plugin to be ready:
+
+   kubectl -n {{ include "ergon-shared-cpus.namespace" . }} get pods -l app={{ include "ergon-shared-cpus.name" . }}
+
+2. Check the resource is registered on a node:
+
+   kubectl get node <node> -o jsonpath='{.status.allocatable.ergon\.io/shared-millicpus}'
+
+3. Run a pod that asks for cpu and ergon.io/shared-millicpus, then check
+   cpuset.cpus.effective and the ERGON_* variables inside it.
+
+Node requirements (not set by this chart):
+  - Kubernetes >= 1.33, cpuManagerPolicy: static
+  - reservedSystemCPUs covers the IRQ CPU(s) and sharedCpus
+  - kernel >= 6.2, cgroup v2 at /sys/fs/cgroup (the DaemonSet mounts the
+    node's tree read-only into the plugin); >= 6.7 (or a backport of
+    cpuset.cpus.exclusive) for the cpu-partition opt-in
+  - containerd >= 2.2 with the NRI default validator on
+  - node label ergon.io/shared-cpus=true

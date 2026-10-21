@@ -1,7 +1,8 @@
 //! Generated public-API snapshots for the 1.0 freeze gate.
 //!
 //! Fixtures are the `[[fixtures]]` records in `api/public-api-baseline.toml`.
-//! Generation uses each record's schema, profile, domain, and shared topology.
+//! Generation uses each record's schema, profile, domain, shared topology,
+//! source traits, and enum / composite mappings.
 
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 
@@ -11,7 +12,10 @@ use std::path::{Path, PathBuf};
 
 mod common;
 use common::Paths;
-use ergo_sbe::{DomainVarData, GenerationConfig, GenerationProfile, Generator, Schema, parse_file};
+use ergo_sbe::{
+    CompositeMapping, DomainVarData, EnumMapping, GenerationConfig, GenerationProfile, Generator,
+    Schema, parse_file,
+};
 
 /// Canonically serialise the semver-relevant `syn` surface of every public
 /// item: struct fields (name/position + type), enum variant payloads and
@@ -316,6 +320,51 @@ struct Fixture {
     shared_schema: Option<PathBuf>,
     shared_topology: Option<String>,
     consumer_module: Option<String>,
+    source_traits: bool,
+    enum_mappings: Vec<EnumMapping>,
+    composite_mappings: Vec<CompositeMapping>,
+}
+
+/// `[{ sbe = "Side", rust = "app::Side", renames = [["Buy", "Bid"]] }, …]`
+/// as `(schema name, Rust type, renames)`.
+fn mapping_rows(
+    name: &str,
+    row: &toml::Value,
+    key: &str,
+) -> Result<Vec<(String, String, Vec<(String, String)>)>, Box<dyn Error>> {
+    let Some(entries) = row.get(key) else {
+        return Ok(Vec::new());
+    };
+    let entries = entries
+        .as_array()
+        .ok_or_else(|| format!("fixture {name}: {key} must be an array"))?;
+    let mut out = Vec::new();
+    for entry in entries {
+        let field = |k: &str| -> Result<String, Box<dyn Error>> {
+            Ok(entry
+                .get(k)
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| format!("fixture {name}: {key} entry missing {k}"))?
+                .to_owned())
+        };
+        let mut renames = Vec::new();
+        if let Some(pairs) = entry.get("renames").and_then(|v| v.as_array()) {
+            for pair in pairs {
+                let pair = pair
+                    .as_array()
+                    .filter(|p| p.len() == 2)
+                    .ok_or_else(|| format!("fixture {name}: {key} rename must be [from, to]"))?;
+                let text = |v: &toml::Value| -> Result<String, Box<dyn Error>> {
+                    Ok(v.as_str()
+                        .ok_or_else(|| format!("fixture {name}: {key} rename must be strings"))?
+                        .to_owned())
+                };
+                renames.push((text(&pair[0])?, text(&pair[1])?));
+            }
+        }
+        out.push((field("sbe")?, field("rust")?, renames));
+    }
+    Ok(out)
 }
 
 fn workspace() -> PathBuf {
@@ -386,6 +435,34 @@ fn fixtures_from_manifest() -> Result<Vec<Fixture>, Box<dyn Error>> {
         if shared_schema.is_some() && shared_topology.is_none() {
             return Err(format!("fixture {name}: shared_schema requires shared_topology").into());
         }
+        let source_traits = row
+            .get("source_traits")
+            .map(|v| {
+                v.as_bool()
+                    .ok_or_else(|| format!("fixture {name}: source_traits must be a boolean"))
+            })
+            .transpose()?
+            .unwrap_or(false);
+        let enum_mappings = mapping_rows(&name, row, "enum_mappings")?
+            .into_iter()
+            .map(|(sbe, rust, renames)| {
+                renames
+                    .into_iter()
+                    .fold(EnumMapping::new(sbe, rust), |m, (from, to)| {
+                        m.rename(from, to)
+                    })
+            })
+            .collect();
+        let composite_mappings = mapping_rows(&name, row, "composite_mappings")?
+            .into_iter()
+            .map(|(sbe, rust, renames)| {
+                renames
+                    .into_iter()
+                    .fold(CompositeMapping::new(sbe, rust), |m, (from, to)| {
+                        m.rename(from, to)
+                    })
+            })
+            .collect();
         out.push(Fixture {
             name,
             schema,
@@ -396,6 +473,9 @@ fn fixtures_from_manifest() -> Result<Vec<Fixture>, Box<dyn Error>> {
             shared_schema,
             shared_topology,
             consumer_module,
+            source_traits,
+            enum_mappings,
+            composite_mappings,
         });
     }
     Ok(out)
@@ -409,7 +489,13 @@ fn config_for(fix: &Fixture) -> GenerationConfig {
     if fix.shared_schema.is_some() {
         cfg = cfg.with_shared_module(&fix.generated_module);
     }
-    cfg
+    for mapping in &fix.enum_mappings {
+        cfg = cfg.with_enum_mapping(mapping.clone());
+    }
+    for mapping in &fix.composite_mappings {
+        cfg = cfg.with_composite_mapping(mapping.clone());
+    }
+    cfg.with_source_traits(fix.source_traits)
 }
 
 fn generate_source(fix: &Fixture) -> Result<String, Box<dyn Error>> {

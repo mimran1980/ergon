@@ -1,0 +1,117 @@
+== uname
+Linux ip-172-31-42-166 7.0.0-1014-aws #14~24.04.1-Ubuntu SMP PREEMPT Fri Sep 18 21:24:59 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+== cmdline
+BOOT_IMAGE=/vmlinuz-7.0.0-1014-aws root=PARTUUID=ff84a5a7-578e-4843-9465-767e4a11edcc ro console=tty1 console=ttyS0 nvme_core.io_timeout=4294967295 isolcpus=managed_irq,domain,1,3 nohz_full=1,3 rcu_nocbs=1,3 irqaffinity=0,2 panic=-1
+== boot profile
+full
+== isolated
+1,3
+== clocksource
+tsc
+== mitigations
+ Automatic IBRS; IBPB: conditional; PBRSB-eIBRS: SW sequence; BHI: BHI_DIS_S
+indirect_target_selection:Not affected
+itlb_multihit:Not affected
+ghostwrite:Not affected
+vmscape:Not affected
+mmio_stale_data:Not affected
+mds:Not affected
+reg_file_data_sampling:Not affected
+tsa:Not affected
+l1tf:Not affected
+spec_store_bypass:Mitigation: Speculative Store Bypass disabled via prctl
+tsx_async_abort:Not affected
+old_microcode:Not affected
+swapgs barriers and __user pointer sanitization
+gather_data_sampling:Not affected
+retbleed:Not affected
+spec_rstack_overflow:Not affected
+srbds:Not affected
+meltdown:Not affected
+== cpuidle
+driver intel_idle
+POLL latency 0 µs disabled 0
+C1 latency 1 µs disabled 0
+C1E latency 2 µs disabled 0
+C6 latency 190 µs disabled 0
+== cpu
+CPU(s):                                  4
+Model name:                              Intel(R) Xeon(R) Platinum 8488C
+BIOS Model name:                         Intel(R) Xeon(R) Platinum 8488C  CPU @ 2.4GHz
+Thread(s) per core:                      2
+Core(s) per socket:                      2
+Socket(s):                               1
+Hypervisor vendor:                       KVM
+NUMA node0 CPU(s):                       0-3
+== topology
+0,0
+1,1
+2,0
+3,1
+== routes
+default via 172.31.32.1 dev enp39s0 proto dhcp src 172.31.42.166 metric 100 rto_min lock 5ms quickack 1 
+172.31.0.2 via 172.31.32.1 dev enp39s0 proto dhcp src 172.31.42.166 metric 100 
+172.31.32.0/20 dev enp39s0 proto kernel scope link src 172.31.42.166 metric 100 rto_min lock 5ms quickack 1 
+172.31.32.1 dev enp39s0 proto dhcp scope link src 172.31.42.166 metric 100 rto_min lock 5ms quickack 1 
+== links
+lo               UNKNOWN        00:00:00:00:00:00 <LOOPBACK,UP,LOWER_UP> 
+enp39s0          UP             06:ff:cf:33:f6:d9 <BROADCAST,MULTICAST,UP,LOWER_UP> 
+== ethtool -i enp39s0
+driver: ena
+version: 7.0.0-1014-aws
+firmware-version: 
+== ethtool -l enp39s0
+Current hardware settings:
+RX:		n/a
+TX:		n/a
+Other:		n/a
+Combined:	4
+== ethtool -c enp39s0
+Adaptive RX: on  TX: n/a
+rx-usecs:	20
+rx-usecs-irq:	n/a
+tx-usecs:	64
+== ethtool -T enp39s0
+Time stamping parameters for enp39s0:
+Capabilities:
+	software-transmit
+	software-receive
+	software-system-clock
+PTP Hardware Clock: none
+Hardware Transmit Timestamp Modes: none
+Hardware Receive Filter Modes: none
+== nic irqs
+66 0,2 ena-mgmnt@pci:0000:27:00.0
+67 0,2 enp39s0-Tx-Rx-0
+68 0,2 enp39s0-Tx-Rx-1
+69 0,2 enp39s0-Tx-Rx-2
+70 0,2 enp39s0-Tx-Rx-3
+== chrony
+Reference ID    : A9FEA97B (169.254.169.123)
+Stratum         : 2
+Ref time (UTC)  : Thu Oct 15 04:59:08 2026
+System time     : 0.000004667 seconds slow of NTP time
+Last offset     : -0.000005292 seconds
+RMS offset      : 0.000005292 seconds
+Frequency       : 3.078 ppm fast
+Residual freq   : -0.144 ppm
+Skew            : 1.084 ppm
+Root delay      : 0.000145523 seconds
+Root dispersion : 0.000030596 seconds
+Update interval : 16.0 seconds
+Leap status     : Normal
+== chrony sources
+MS Name/IP address         Stratum Poll Reach LastRx Last sample               
+===============================================================================
+^* 169.254.169.123               1   4    77     2   -507ns[-5799ns] +/-   92us
+^- prod-ntp-3.ntp1.ps5.cano>     2   6    17    34  +4416us[+4396us] +/-  112ms
+^- prod-ntp-4.ntp4.ps5.cano>     2   6    17    35  +5411us[+5408us] +/-  111ms
+^- alphyn.canonical.com          2   6    17    34  -3868us[-3887us] +/-  106ms
+^- prod-ntp-5.ntp4.ps5.cano>     2   6    17    35  +5857us[+5854us] +/-  113ms
+^- mikan.aoharu.jp               2   6    17    35    +34us[  +30us] +/-   17ms
+^- v133-18-147-168.vir.kago>     2   6    17    34  +4178us[+4175us] +/-   23ms
+^- v4.ntp.admtan.jp              2   6    17    36   +376us[ +373us] +/- 1686us
+^- 108.160.132.224.vultruse>     2   6    17    35  +2602us[+2599us] +/-   39ms
+== io_uring
+kernel.io_uring_disabled = 0
+cond cstate on

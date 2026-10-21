@@ -29,21 +29,21 @@
 //! # // Stand-ins for the generated codec, so the shape below is compile-checked.
 //! # struct CarDecoder;
 //! # impl CarDecoder {
-//! #     fn try_created_at(&self) -> Result<DateTime<Utc>, Box<dyn std::error::Error>> {
+//! #     fn created_at(&self) -> Result<DateTime<Utc>, Box<dyn std::error::Error>> {
 //! #         unimplemented!()
 //! #     }
 //! # }
 //! # struct CarEncoder;
 //! # impl CarEncoder {
-//! #     fn try_created_at(&mut self, _v: DateTime<Utc>) -> Result<(), Box<dyn std::error::Error>> {
+//! #     fn created_at(&mut self, _v: DateTime<Utc>) -> Result<(), Box<dyn std::error::Error>> {
 //! #         unimplemented!()
 //! #     }
 //! # }
 //! # fn demo(dec: CarDecoder, mut enc: CarEncoder) -> Result<(), Box<dyn std::error::Error>> {
 //! // Decoder
-//! let ts: DateTime<Utc> = dec.try_created_at()?;
+//! let ts: DateTime<Utc> = dec.created_at()?;
 //! // Encoder
-//! enc.try_created_at(Utc::now())?;
+//! enc.created_at(Utc::now())?;
 //! # let _ = ts;
 //! # Ok(())
 //! # }

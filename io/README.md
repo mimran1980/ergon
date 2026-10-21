@@ -1,0 +1,234 @@
+# ergon-io
+
+[![Crates.io](https://img.shields.io/crates/v/ergon-io)](https://crates.io/crates/ergon-io)
+[![API Docs](https://docs.rs/ergon-io/badge.svg)](https://docs.rs/ergon-io/)
+
+Network I/O for exchange clients on one busy-spinning thread: WebSocket and
+HTTP/1.1 over TLS 1.3.
+
+- One non-blocking `poll` moves bytes between your loop and the kernel.
+- The kernel interface (epoll or `io_uring`, with or without NIC polling) is
+  configuration, chosen at run time.
+- TLS records are decrypted in place and messages parsed in place: one copy
+  per byte.
+
+> **AI assistance.** Like the rest of ergon, this crate was written **with heavy
+> AI assistance**. See
+> [AI-ASSISTANCE.md](https://github.com/mimran1980/ergon/blob/main/AI-ASSISTANCE.md).
+> It is not production-ready.
+
+```sh
+cargo add ergon-io --features webpki-roots
+```
+
+Which features to pick: see Features, below.
+
+## When to use it
+
+| Use it for | Use something else for |
+|---|---|
+| A Linux thread that spins on its own core and owns 1 to a few hundred exchange connections (pick the backend by count: below) | An async application: tokio or mio |
+| A loop that must never sleep in the kernel | Production on macOS or Windows: the driver is Linux-only |
+| Fixed endpoints: HTTP/1.1 keep-alive, TLS 1.3 | HTTP/2 or 3, proxies, redirects, cookies, compression: the `curl` feature or a general client |
+
+## Parts
+
+| Part | What it does |
+|---|---|
+| `Driver` | Owns the connections. Each `poll` makes one pass (receive, decrypt, decode, deliver, send) and returns. |
+| `WsConn` | WebSocket client. `WsHandler::on_message` gets a slice of the receive buffer. |
+| `WsOptions` | WebSocket limits and timers. |
+| `Reconnect` | Optional. Reopens closed connections with backoff; you resubscribe. |
+| `HttpClient` | A pool of warm HTTP connections behind one API: native (fast) or libcurl (feature `curl`). |
+| `HttpConn` | One HTTP/1.1 keep-alive connection. |
+| `Signer` | Binance-style request signing (HMAC-SHA256 or Ed25519), no allocation. |
+
+## Example: a WebSocket feed
+
+Connect, subscribe, handle each message, and reconnect and subscribe again
+after a drop (Linux, feature `webpki-roots`):
+
+```rust,no_run
+use ergon_io::reconnect::Retry;
+use ergon_io::{ConnId, Error, Handler, Reconnect, RxMeta, WsDial, WsHandler};
+
+/// The application: `Driver::poll` calls it.
+struct App {
+    links: Reconnect<WsDial>, // reopens the connection with backoff
+    opened: Vec<ConnId>,      // subscribe on these once `poll` returns
+}
+
+impl Handler for App {
+    fn on_open(&mut self, id: ConnId) {
+        if self.links.on_open(id).is_some() {
+            self.opened.push(id); // first connect or reconnect
+        }
+    }
+    fn on_closed(&mut self, id: ConnId, error: Error) {
+        eprintln!("closed: {error}");
+        self.links.on_closed(id); // schedules the reconnect
+    }
+}
+
+impl WsHandler for App {
+    fn on_message(&mut self, _: ConnId, _: u8, payload: &[u8], _: &RxMeta, _: u16) {
+        // `payload` points into the receive buffer: decode it here.
+        println!("{}", String::from_utf8_lossy(payload));
+    }
+}
+
+#[cfg(all(target_os = "linux", feature = "webpki-roots"))]
+fn main() -> ergon_io::Result<()> {
+    use ergon_io::{Config, Driver, Target, WsConn, tls};
+
+    let tls = tls::client_config(tls::webpki_roots())?;
+    let target = Target::new("stream.binance.com", 9443, "/ws");
+    let mut app = App { links: Reconnect::new(Retry::default())?, opened: Vec::new() };
+    app.links.add(move || WsDial::new(target.clone(), tls.clone(), 1 << 20));
+
+    // Pin this thread to an isolated core first: ergon-io never pins it.
+    let mut driver: Driver<WsConn> = Driver::new(Config::parse("recv-busy")?)?;
+    loop {
+        driver.poll(&mut app)?; // receive, decrypt, deliver, send
+        app.links.poll(&mut driver); // connect, or reconnect when due
+        for id in app.opened.drain(..) {
+            if let Some(mut ws) = driver.get_mut(id)
+                && !ws.is_closing()
+            {
+                ws.send_text(r#"{"method":"SUBSCRIBE","params":["btcusdt@trade"],"id":1}"#)?;
+            }
+        }
+    }
+}
+
+#[cfg(not(all(target_os = "linux", feature = "webpki-roots")))]
+fn main() {}
+```
+
+- The full example, with a clean close:
+  [io/examples/websocket.rs](https://github.com/mimran1980/ergon/blob/main/io/examples/websocket.rs).
+  A test runs it against a local server on every backend.
+- Run it from a checkout of the repository:
+  `cargo run -p ergon-io --features webpki-roots --example websocket`.
+
+## Defaults
+
+| Setting | Default | Change with |
+|---|---|---|
+| `TCP_NODELAY` | on, every socket | always on |
+| TCP keepalive | on: 10 s idle, then a probe every 5 s, 3 probes (libcurl's connections too) | `Config`: `keepalive_idle_s` (0: off), `keepalive_interval_s`, `keepalive_count` |
+| `TCP_USER_TIMEOUT` | 25 s | `Config::tcp_user_timeout_ms` (0: kernel default) |
+| `SO_RCVBUF` | 4 MiB, fixed; needs `net.core.rmem_max` ≥ 4 MiB (warned at start-up) | `Config::rcvbuf` (0: kernel autotuning) |
+| TCP quick ACK | assumed: `quickack 1` on each route | checked once per route: one warning, or refused with `quickack_check=require` |
+| WebSocket Ping | after 10 s with nothing received | `WsOptions::ping_interval_ms` (0: off) |
+| WebSocket Pong timeout | 5 s after a Ping | `WsOptions::pong_timeout_ms` (0: off) |
+| WebSocket idle timeout | off | `WsOptions::idle_timeout_ms` |
+| Close handshake wait | 1 s | `WsOptions::close_timeout_ms` (0: no wait) |
+| Reconnect | off | `Reconnect` with `Retry`: 250 ms, doubling to 30 s, 20 % jitter |
+
+## Guarantees and limits
+
+- **Never sleeps** with `epoll-spin`, `recv-busy`, `uring-spin` or
+  `uring-sqpoll`. `epoll-busy` and `uring-napi` may wait up to `wait_us`.
+- **One failure closes one connection.** It goes to `Handler::on_closed`;
+  the others keep running. `poll` fails only when the backend fails.
+- **Connecting never stalls the loop.** `Driver::connect` takes a step per
+  poll; `Driver::connect_background` runs the handshake on a helper thread.
+- **Timers stay off the hot path.** Pings and timeouts run on the driver's
+  deadline check (every 250 µs), never on the read or send path.
+- **TLS 1.3 only.** TLS 1.2 is refused with a clear error.
+- **Client side only.** No listener.
+- **WebSocket, not supported:** compression (`permessage-deflate`), other
+  extensions, proxies, sending fragmented messages.
+- **Linux for the driver.** `Driver` and `HttpClient` are Linux-only; the
+  protocol code builds everywhere.
+- **Kernel.** `uring-spin` needs Linux 6.1+; `uring-sqpoll`, `uring-napi`
+  and `epoll-busy` need 6.9+. The `io_uring` backends need the `uring`
+  feature (on by default). `prefer_busy_poll` on `recv-busy` and a raised
+  `busy_poll_budget` need `CAP_NET_ADMIN`.
+- **Host checks at start-up** ([ergon-tune](https://github.com/mimran1980/ergon/tree/main/tune)):
+  the loop's CPU, the receive buffer, each route's quick ACK and each egress
+  NIC. Each finding goes to stderr once, with its fix, from a warning thread.
+  `ERGON_HOST_CHECKS=off` silences those warning lines (`require` makes a
+  warning refuse the start); the results stay on `Driver::host_report()`.
+- **Measured on x86 only** (AWS `c7i`, Azure `D8ds_v6`).
+
+## Choosing a backend
+
+`Config::parse("backend[,key=value...]")`. Pick by how many sockets the
+loop thread polls (count them all: feeds, order connections, `HttpClient`
+pool connections) and whether a second core is free:
+
+| Sockets on the loop thread | One core | A second core, or the loop's sibling |
+|---|---|---|
+| 1–4 | `recv-busy` | `recv-busy` or `uring-sqpoll`: equal |
+| 5–16 | `recv-busy,per_queue=true` | `uring-sqpoll`, `sqpoll_cpu` that CPU |
+| more than 16 | `recv-busy,per_queue=true` | `uring-sqpoll`, `sqpoll_cpu` that CPU |
+
+- **Plain `recv-busy` reads every socket on every poll** (about 0.6 µs
+  each on AWS `c7i`), so it falls behind `uring-sqpoll` as sockets grow:
+  higher p99 from about 10. At 100 connections: 40.6–41.5 / 120–124 /
+  196–404 µs (p50 / p99 / max, kernel arrival → decoded), against 6.3 /
+  27–28 / 99–201 for `uring-sqpoll` (AWS `c7i.2xlarge`,
+  `flags-aws-20261015T093248Z`).
+- **`per_queue`** reads one socket per NIC queue: the same latency as plain
+  `recv-busy` at 1–16 sockets, and a poll of 2–6 µs up to 256.
+- **`epoll-spin`, `uring-spin` and mio: not yet measured fairly.** Every
+  AWS comparison ran with ENA's adaptive interrupt moderation on, which
+  holds back the interrupts they wait for. A fair rerun is planned; until
+  then, do not choose against epoll on these numbers.
+- **The loop's CPU time in the kernel matters:** `uring-spin` (far fewer
+  syscalls than `epoll-spin`). **The thread may nap:** `uring-napi` or
+  `epoll-busy`.
+- **Round trips (WebSocket, HTTP) were measured with 1 connection only.**
+- On AWS, turn ENA's adaptive receive moderation off
+  (`ethtool -C <nic> adaptive-rx off`): it pre-empts the polling loop about
+  40 times a second. With an interrupt-driven backend, turn moderation fully
+  off instead (`adaptive-rx off rx-usecs 0 tx-usecs 0`) and give the NIC's
+  interrupts a core of their own (ergon-tune's advice; not yet measured
+  with ergon-io).
+- Every number, with run ids, and how to find the crossover on your host:
+  the book's [ergon-io chapter](https://mimran1980.github.io/ergon/io/overview.html#choosing-a-backend).
+
+## Rate limits and errors
+
+- `limit::Budget` checks each request against the venue's limits before it
+  goes out: up to 8 buckets, all or none. It never sleeps or queues.
+- A failed request says whether it left (`outcome::Sent`); a response maps
+  to one `outcome::Verdict`.
+- A ban halts its scope until a person calls `Budget::clear_halt`.
+- Send again only what did not run, inside its deadline
+  (`Budget::try_resend`); look up an unknown order by its client order id.
+- One sending process per account and IP: the budget cannot see others.
+- Binance, Bybit and OKX adapters: `io/examples/venues.rs` (repository
+  only). Venue limits, the error policy and the cost: the book's
+  [rate limits and errors](https://mimran1980.github.io/ergon/io/rate-limits.html).
+
+## Features
+
+| Feature | Default | Adds |
+|---|---|---|
+| `uring` | on | the `io_uring` backends (Linux); without it, choosing one returns `Error::Unsupported` |
+| `webpki-roots` | off | Mozilla's root store, `tls::webpki_roots` (CDLA-Permissive-2.0, so opt-in) |
+| `curl` | off | libcurl as an `HttpClient` implementation (the system libcurl, through pkg-config). It refuses POST, PUT and PATCH unless `curl_allow_non_idempotent_methods` is set: libcurl can send a request twice |
+
+Install with the features you need:
+
+```sh
+cargo add ergon-io                          # every backend (uring is on by default)
+cargo add ergon-io --features webpki-roots  # and Mozilla's root store
+cargo add ergon-io --features curl          # and libcurl as an HttpClient
+cargo add ergon-io --no-default-features    # no io_uring backends, no io-uring crate
+```
+
+## More
+
+- The book chapter: [ergon-io](https://mimran1980.github.io/ergon/io/overview.html)
+  (backends, WebSocket, HTTP client, measured results).
+- Terms (busy polling, `io_uring`, quick ACK, p50 / p99 / max):
+  [glossary](https://mimran1980.github.io/ergon/io/overview.html#glossary).
+- Every measurement, with hosts and run ids:
+  [io/benches/BENCHMARK.md](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md).
+- API reference: [docs.rs/ergon-io](https://docs.rs/ergon-io/).
+
+Licensed under Apache-2.0.

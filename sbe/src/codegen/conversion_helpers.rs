@@ -271,6 +271,70 @@ pub(crate) const ENCODER_RESERVED: &[&str] = &[
     "buffer_too_short",
 ];
 
+/// Inherent method names a message's encoder type gets from the message
+/// itself: every non-constant field's setters (raw, domain, `*_from`,
+/// `*_str`, `*_bool`) and the method its first group, else its first
+/// var-data, becomes. Later tails sit on later stage types.
+///
+/// These are what an encoder helper added beside them (`send`,
+/// `send_fixed`, `encode_from`, `encoded_length_with_header_from`) must not
+/// take, because a field setter and the helper would be duplicate
+/// definitions, and a first tail and the helper would make every
+/// `XEncoder::name` path ambiguous. The rule is [`tail_accessor_ident`]'s:
+/// the field or tail keeps the name it had before the helper existed and
+/// nothing is renamed; the helper is left out of that message (see
+/// [`encoder_helper_ident`]).
+pub(crate) fn encoder_inherent_names(
+    msg: &crate::structured_ir::MessageStructure,
+    conversions: &[crate::ConversionSelector],
+    domain_types: &[(crate::ConversionSelector, String)],
+) -> Vec<String> {
+    let mut names = Vec::new();
+    for f in msg
+        .fields
+        .iter()
+        .filter(|f| f.presence != Presence::Constant)
+    {
+        let snake = to_snake_case(&f.name);
+        let converted = field_has_conversion_free(f, conversions);
+        let wire_name = converted.then(|| format!("{snake}_wire"));
+        let raw = resolve_field_ident(&snake, &wire_name, ENCODER_RESERVED).to_string();
+        let method_name = wire_name.clone().unwrap_or_else(|| snake.clone());
+        names.push(format!("{method_name}_str"));
+        names.push(format!("{snake}_bool"));
+        names.push(raw);
+        if converted {
+            if find_domain_type(f, domain_types).is_some() {
+                names.push(domain_accessor_ident(&snake, ENCODER_RESERVED).to_string());
+            } else {
+                names.push(format!("{snake}_from"));
+            }
+        }
+    }
+    names.extend(
+        msg.groups
+            .first()
+            .map(|g| to_snake_case(&g.name))
+            .or_else(|| msg.var_data.first().map(|vd| to_snake_case(&vd.name))),
+    );
+    names
+}
+
+/// The encoder helper `name`, or `None` when the message's own fields or
+/// first tail already own it ([`encoder_inherent_names`]): the helper is
+/// left out, the field or tail keeps its name.
+pub(crate) fn encoder_helper_ident(
+    name: &str,
+    msg: &crate::structured_ir::MessageStructure,
+    conversions: &[crate::ConversionSelector],
+    domain_types: &[(crate::ConversionSelector, String)],
+) -> Option<syn::Ident> {
+    named_accessor_ident(
+        name,
+        &encoder_inherent_names(msg, conversions, domain_types),
+    )
+}
+
 /// Placement utility names that live only on `get_metadata()` facets.
 /// Must never appear in [`DECODER_RESERVED`] / [`ENCODER_RESERVED`].
 #[cfg(test)]
@@ -310,22 +374,31 @@ pub(crate) fn resolve_field_ident(
 /// named `orders` wants, so checking fields alone still lets two definitions
 /// of `orders_count` reach the same `impl`.
 ///
+/// A domain-typed field owns its plain name too: the raw accessor moves to
+/// `*_wire` and the domain getter/setter takes the field name. That holds
+/// for a constant field's domain getter as well ([`constant_converts`]).
+///
 /// Pass `reserved` exactly as the owner's own emission site passes it:
 /// [`DECODER_RESERVED`] for message decoders and the memoized wrapper, and an
 /// empty slice for group entries, which do not rename.
 pub(crate) fn owner_accessor_names<'n>(
     fields: &[MessageField],
     conversions: &[crate::ConversionSelector],
+    domain_types: &[(crate::ConversionSelector, String)],
     reserved: &[&str],
     tail_names: impl IntoIterator<Item = &'n str>,
 ) -> Vec<String> {
     fields
         .iter()
-        .map(|f| {
+        .flat_map(|f| {
             let snake = crate::codegen::runtime::to_snake_case(&f.name);
             let wire_name =
                 field_has_conversion_free(f, conversions).then(|| format!("{snake}_wire"));
-            resolve_field_ident(&snake, &wire_name, reserved).to_string()
+            let raw = resolve_field_ident(&snake, &wire_name, reserved).to_string();
+            let domain = (find_domain_type(f, domain_types).is_some()
+                && (f.presence != Presence::Constant || constant_converts(f)))
+            .then(|| domain_accessor_ident(&snake, reserved).to_string());
+            core::iter::once(raw).chain(domain)
         })
         .chain(
             tail_names
@@ -333,6 +406,32 @@ pub(crate) fn owner_accessor_names<'n>(
                 .map(crate::codegen::runtime::to_snake_case),
         )
         .collect()
+}
+
+/// Whether a constant field gets the decoder-side conversion accessors (the
+/// domain getter, or `*_as`) a non-constant one has. They convert what the
+/// constant's `*_wire` getter returns, so a field whose constant getter does
+/// not return its wire type (a multi-character `char` constant, which is a
+/// `&'static str`) gets none. A constant never has a setter.
+pub(crate) fn constant_converts(f: &MessageField) -> bool {
+    f.presence == Presence::Constant
+        && match &f.field_type {
+            FieldType::Primitive(PrimitiveType::Char, None) => f
+                .constant_value
+                .as_ref()
+                .is_some_and(|value| value.len() <= 1),
+            FieldType::Primitive(_, None) | FieldType::Enum { .. } | FieldType::Set { .. } => {
+                f.constant_value.is_some()
+            }
+            FieldType::Primitive(_, Some(_)) | FieldType::Composite { .. } => false,
+        }
+}
+
+/// The domain-typed getter or setter for a field: the plain field name, renamed
+/// against `reserved` like any raw accessor. Every emitter and caller of a
+/// domain accessor resolves the name here, so they cannot disagree.
+pub(crate) fn domain_accessor_ident(field_snake: &str, reserved: &[&str]) -> syn::Ident {
+    resolve_field_ident(field_snake, &None, reserved)
 }
 
 /// Name for a tail-derived convenience accessor (`<group>_count`,
@@ -382,9 +481,7 @@ pub(crate) fn acting_accessors(
 ) -> proc_macro2::TokenStream {
     let version = named_accessor_ident("acting_version", taken).map(|ident| {
         quote::quote! {
-            /// Schema version from the message header (or wrap args), not the
-            /// compiled schema constant. Fields with `sinceVersion` and optional
-            /// presence depend on this value.
+            /// Schema version from the header or wrap args, which `sinceVersion` fields follow.
             #attrs
             #[inline]
             pub const fn #ident(&self) -> u16 {
@@ -394,8 +491,7 @@ pub(crate) fn acting_accessors(
     });
     let block_length = named_accessor_ident("acting_block_length", taken).map(|ident| {
         quote::quote! {
-            /// Block length from the wire header / wrap args. Tail offsets use
-            /// this acting length, not only the compiled `BLOCK_LENGTH`.
+            /// Block length from the header or wrap args, which tail offsets use.
             #attrs
             #[inline]
             pub const fn #ident(&self) -> usize {
@@ -436,7 +532,7 @@ pub(crate) fn warn_version_gated(
         "warning: shared type `{}` (schema {} id {}) has members at sinceVersion={max_since}. \
          Version numbers are per-schema — importing schemas at different versions may decode \
          these members incorrectly. Consider keeping shared types at version 0.",
-        type_name, &schema.package, schema.id
+        type_name, schema.package, schema.id
     ))
 }
 
@@ -517,7 +613,7 @@ pub(crate) fn find_domain_selector<'a>(
 /// It must stay the one predicate: when the DTO field type, the `from_decoder`
 /// expression, and the encode setter each decided this independently they
 /// drifted apart and produced modules that did not compile — an array field
-/// typed `[u8; 4]` written through a `try_*` setter taking the domain type, and
+/// typed `[u8; 4]` written through a domain setter taking the domain type, and
 /// an optional scalar typed `Option<i64>` written through one taking `Decimal`.
 ///
 /// Arrays and optional scalars deliberately keep the wire type. Composites,
@@ -525,7 +621,7 @@ pub(crate) fn find_domain_selector<'a>(
 ///
 /// Boolean enums are excluded: they already materialise as `bool` through
 /// `*_bool` accessors, and `with_bool_domain_type` registers `bool` as their
-/// domain type — routing them here would send the DTO down the `try_*` path
+/// domain type — routing them here would send the DTO down the domain-setter path
 /// while the field branch still emitted `*_bool`, which is exactly the drift
 /// this predicate exists to prevent.
 pub(crate) fn dto_domain_type<'a>(
@@ -557,7 +653,8 @@ pub(crate) fn dto_domain_type<'a>(
 /// Encoder setter name used by domain DTOs.
 ///
 /// - Conversion-only (no domain type): flyweight is `*_wire`.
-/// - Concrete domain type: fallible `try_*` setter.
+/// - Concrete domain type: the fallible domain setter, resolved against
+///   `reserved` ([`ENCODER_RESERVED`] for messages, empty for group entries).
 /// - Otherwise: bare field name.
 pub(crate) fn domain_encode_setter_name(
     field: &MessageField,
@@ -565,9 +662,10 @@ pub(crate) fn domain_encode_setter_name(
     domain_types: &[(crate::ConversionSelector, String)],
     field_snake: &str,
     elements: &crate::structured_ir::SchemaElements,
+    reserved: &[&str],
 ) -> String {
     if dto_domain_type(field, domain_types, elements).is_some() {
-        format!("try_{field_snake}")
+        domain_accessor_ident(field_snake, reserved).to_string()
     } else if field_has_conversion_free(field, conversions) {
         format!("{field_snake}_wire")
     } else {

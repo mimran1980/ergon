@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Pod D: asks for the extended resource. While the device plugin is down the
+# e2e records what the kubelet does with it (expected: it cannot schedule).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: d
+  namespace: ergon-e2e
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus"]'
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    ergon.io/shared-cpus: "true"
+  containers:
+    - name: app
+      image: ergon-nri-pin-test:e2e
+      imagePullPolicy: Never
+      command: ["sleep", "infinity"]
+      resources:
+        requests:
+          cpu: "1"
+          memory: 32Mi
+          ergon.io/shared-millicpus: "250"
+        limits:
+          cpu: "1"
+          memory: 32Mi
+          ergon.io/shared-millicpus: "250"

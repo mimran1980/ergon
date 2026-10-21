@@ -1,0 +1,115 @@
+# Amazon Linux 2023 runtime image for the ergon-md-dpdk DPDK ENA
+# kernel-bypass transport. Built on AL2023 x86_64 so the image records the
+# exact distro/DPDK/ENA versions; uses `--features static,dpdk` so both the
+# Aeron driver C and the DPDK native transport are compiled from the workspace
+# (rusteron-media-driver builds the Aeron C from its crates.io sources). The
+# node's secondary ENAs are bound to igb_uio (loaded with wc_activate=1) by
+# node/bootstrap-dpdk-ena.sh on the host, never inside this container.
+#
+# AL2023 ships no DPDK packages, so the builder compiles DPDK 24.11.4 from
+# source (the version the VM lab runs; pinned tarball and checksum, ENA PMD
+# only) and installs it to /usr/local; the runtime image carries the shared
+# librte_* libs. The image also carries the benchmark clients `rtt` and
+# `counters` (ergon-md-dpdk-harness), which run inside the driver's pod against
+# its Aeron directory, and taskset/nsenter (util-linux) and pkill (procps-ng).
+#
+# Build (from the ergon repo root):
+#   docker build -f md-dpdk/deploy/aws-eks/Dockerfile.media-driver -t rusteron-media-driver:dpdk .
+# Verify:
+#   docker run --rm rusteron-media-driver:dpdk ldd /usr/local/bin/media_driver
+FROM --platform=linux/amd64 public.ecr.aws/amazonlinux/amazonlinux:2023 AS builder
+
+# Build deps. cmake + pyelftools come via pip (no AL2023 packages).
+RUN dnf install -y \
+        gcc gcc-c++ make clang \
+        pkgconf-pkg-config \
+        libbsd-devel libuuid-devel openssl-devel zlib-devel \
+        numactl-devel \
+        meson ninja-build tar xz \
+        python3-pip \
+    && dnf clean all \
+    # AL2023 ships pip 21.3.1 (no --break-system-packages; no PEP 668 check).
+    && python3 -m pip install --no-cache-dir cmake pyelftools
+
+# DPDK from source: the ENA PMD and the buses/mempool it needs, no apps or
+# tests, shared libs to /usr/local/lib64. The stable tarball unpacks to
+# dpdk-stable-<version>, so it is unpacked into a fixed directory instead.
+# -Dplatform=generic, as Debian's package (the DPDK the lab measured) is
+# built: meson's default, native, would tune DPDK to whichever CPU builds the
+# image (or the emulator's, on an Arm Mac), not to the nodes'. The versions
+# file records the instruction set it chose.
+ARG DPDK_VERSION=24.11.4
+ARG DPDK_SHA256=5c387f19f0df9d38d417f7bd0e7d10920d432a14f2414914854a9f2e781d3453
+RUN curl -fsSLO "https://fast.dpdk.org/rel/dpdk-${DPDK_VERSION}.tar.xz" \
+    && echo "${DPDK_SHA256}  dpdk-${DPDK_VERSION}.tar.xz" | sha256sum -c - \
+    && mkdir dpdk \
+    && tar -xJf "dpdk-${DPDK_VERSION}.tar.xz" -C dpdk --strip-components=1 \
+    && cd dpdk \
+    # `examples` defaults to empty (no examples); -Dexamples=disabled would
+    # look for an example literally named "disabled" and fail.
+    && meson setup build -Dplatform=generic -Dtests=false -Ddisable_apps='*' \
+        -Denable_drivers=bus/pci,bus/vdev,mempool/ring,net/ena \
+    && ninja -C build \
+    && meson install -C build
+
+# Rust toolchain pinned to the workspace version (rust-toolchain.toml).
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --default-toolchain 1.99.0 --profile minimal
+ENV PATH="/root/.cargo/bin:$PATH"
+# libdpdk.pc lands in the meson-install pkgconfig dir.
+ENV PKG_CONFIG_PATH="/usr/local/lib64/pkgconfig"
+# rusteron's CMake build of the Aeron C sets CMAKE_C_FLAGS itself, and AL2023's
+# gcc (unlike Debian's) does not default to PIE, so the Aeron objects would be
+# non-PIC and the PIE Rust binaries would fail to link (R_X86_64_32
+# relocations). A toolchain file, which the cmake crate takes from the
+# environment, turns position-independent code on for every CMake target.
+RUN echo 'set(CMAKE_POSITION_INDEPENDENT_CODE ON)' > /usr/local/share/rusteron-pic.cmake
+ENV CMAKE_TOOLCHAIN_FILE="/usr/local/share/rusteron-pic.cmake"
+
+WORKDIR /src
+COPY . .
+
+# The DPDK ENA transport requires Linux x86_64; this image is amd64-only.
+# `static` implies `build-from-source`; the libdpdk pkg-config probe resolves
+# against the source-built DPDK. The benchmark clients need no DPDK: they talk
+# to the driver through its Aeron directory (as benches/cloud/vm.sh builds them).
+RUN cargo build -p ergon-md-dpdk --release --features static,dpdk --bin media_driver
+RUN cargo build -p ergon-md-dpdk-harness --release --features static --bin rtt --bin counters
+
+# Record the exact DPDK/ENA versions the image was built against (plan §9:
+# "Build on AL2023 and record exact DPDK/ENA versions").
+RUN { \
+        echo "distro: Amazon Linux 2023 ($(cat /etc/system-release))"; \
+        echo "kernel: $(uname -r)"; \
+        echo "dpdk: $(pkg-config --modversion libdpdk 2>/dev/null || echo unknown) (source-built dpdk-${DPDK_VERSION}.tar.xz)"; \
+        echo "dpdk-isa: platform generic, RTE_MACHINE $(sed -n 's/^#define RTE_MACHINE "*\([^"]*\)"*$/\1/p' /usr/local/include/rte_build_config.h 2>/dev/null | head -1), $(pkg-config --cflags libdpdk 2>/dev/null | tr ' ' '\n' | grep -E '^-m(arch|cpu)=' | head -1)"; \
+        echo "ena-driver: $(modinfo -F version ena 2>/dev/null || echo not-loaded-in-container)"; \
+        echo "rusteron-media-driver: $(cargo pkgid rusteron-media-driver 2>/dev/null || echo unknown)"; \
+    } > /etc/rusteron-dpdk-versions.txt
+
+# ---- runtime ----
+FROM --platform=linux/amd64 public.ecr.aws/amazonlinux/amazonlinux:2023
+
+# Runtime libs for the statically-linked media_driver: libnuma (DPDK EAL) and
+# libbsd/libuuid (Aeron driver); the librte_* shared libs come from the builder.
+# util-linux: taskset (the entrypoint) and nsenter; procps-ng: pkill.
+RUN dnf install -y numactl-libs libbsd libuuid util-linux procps-ng \
+    && dnf clean all
+
+COPY --from=builder /usr/local/lib64 /usr/local/lib64
+# Loader finds the DPDK shared libs (media_driver links librte_*).
+RUN echo "/usr/local/lib64" > /etc/ld.so.conf.d/rusteron-dpdk.conf && ldconfig
+
+COPY --from=builder /src/target/release/media_driver /usr/local/bin/media_driver
+COPY --from=builder /src/target/release/rtt /usr/local/bin/rtt
+COPY --from=builder /src/target/release/counters /usr/local/bin/counters
+COPY --from=builder /etc/rusteron-dpdk-versions.txt /etc/rusteron-dpdk-versions.txt
+COPY md-dpdk/deploy/aws-eks/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/media_driver /usr/local/bin/rtt /usr/local/bin/counters /usr/local/bin/entrypoint.sh
+
+# Hugepages and the igb_uio-bound ENAs live on the node (host): the kubelet
+# mounts /dev/hugepages (the DPDK EAL mempools and the Aeron directory) and the
+# device plugin injects the /dev/uioN nodes. CMD is overridable (e.g.
+# `docker run ... ldd ...`); the entrypoint runs it on the housekeeping CPU.
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["/usr/local/bin/media_driver"]

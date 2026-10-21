@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: Apache-2.0
+# A hot pod that passes the validating policy: no exec probe, a readinessProbe
+# of httpGet, no sidecar, the shared-millicpus resource, the required-plugins
+# annotation and a priorityClassName. The rlimits annotation keeps the pod
+# spec unprivileged: no IPC_LOCK, no capabilities.
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: latency-good
+  namespace: ergon-latency-pods
+  labels:
+    ergon.io/latency: "hot"
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus"]'
+    rlimits.ergon.io/app: "memlock,nofile"
+    seccomp.ergon.io/app: "io-uring"
+spec:
+  priorityClassName: ergon-hot
+  nodeSelector: { ergon.io/shared-cpus: "true" }
+  containers:
+    - name: app
+      image: ergon-latency-pods-demo:e2e
+      command: ["sleep", "3600"]
+      resources:
+        requests: { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250" }
+        limits:   { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250" }
+      readinessProbe:
+        httpGet: { path: /readyz, port: 8080 }
+        periodSeconds: 5

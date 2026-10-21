@@ -10,8 +10,8 @@
         </composite>
     </types>
     <sbe:message name="M" id="1" description="constant float/double/int64 fields">
-        <field name="f" id="1" type="float" presence="constant" valueRef="1.5"/>
-        <field name="d" id="2" type="double" presence="constant" valueRef="2.5"/>
-        <field name="i" id="3" type="int64" presence="constant" valueRef="-1"/>
+        <field name="f" id="1" type="float" presence="constant" constantValue="1.5"/>
+        <field name="d" id="2" type="double" presence="constant" constantValue="2.5"/>
+        <field name="i" id="3" type="int64" presence="constant" constantValue="-1"/>
     </sbe:message>
 </sbe:messageSchema>

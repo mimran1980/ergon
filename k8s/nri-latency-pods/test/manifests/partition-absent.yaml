@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Item 2, not asked for: the same Guaranteed shape with no partition
+# annotation. No child cgroup, no ERGON_ISOLATED_CGROUP. The shared-cpus
+# widening still applies (that is the baseline plugin behaviour).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: partition-absent
+  namespace: ergon-latency-pods
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus"]'
+spec:
+  restartPolicy: Never
+  containers:
+    - name: app
+      image: ergon-latency-pods-demo:e2e
+      imagePullPolicy: Never
+      command: ["sleep", "3600"]
+      resources:
+        requests: { cpu: "2", memory: 64Mi, ergon.io/shared-millicpus: "250" }
+        limits:   { cpu: "2", memory: 64Mi, ergon.io/shared-millicpus: "250" }

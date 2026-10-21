@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Item 1, granted: the annotation plus a hugepages-2Mi request (requests =
+# limits). The plugin mounts a sized hugetlbfs at /dev/hugepages and exports
+# ERGON_HUGEPAGES_DIR / ERGON_HUGEPAGE_SIZE. The app itself creates
+# $ERGON_HUGEPAGES_DIR/aeron and points AERON_DIR there — the plugin does not
+# set AERON_DIR. No emptyDir hugepage volume: Kubernetes would mount it without
+# a size= option, and Aeron refuses an unsized hugetlbfs.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: hugepages-yes
+  namespace: ergon-latency-pods
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus"]'
+    hugepages.ergon.io/app: "2M"
+spec:
+  restartPolicy: Never
+  containers:
+    - name: app
+      image: ergon-latency-pods-demo:e2e
+      imagePullPolicy: Never
+      command: ["sleep", "3600"]
+      resources:
+        # 16Mi = 8 pages. The e2e reserves 32 pages on the kind node, so this
+        # fits and the mount's size= is still large enough to see in /proc/mounts.
+        requests: { cpu: "100m", memory: 32Mi, hugepages-2Mi: 16Mi }
+        limits:   { cpu: "100m", memory: 32Mi, hugepages-2Mi: 16Mi }

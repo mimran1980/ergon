@@ -4,7 +4,8 @@
 
 `ergon` is 0.x experimental software (see [AI-ASSISTANCE.md](AI-ASSISTANCE.md)
 and the crate READMEs for the maturity statement). Only the latest published
-version of each crate (`ergo-sbe`, `ergo-aeron-cluster`) receives fixes. There
+version of each crate (`ergo-sbe`, `ergo-aeron-cluster`, `ergon-clock`,
+`ergon-tune`, `ergon-io`, `ergon-md-dpdk`) receives fixes. There
 is no backport policy for older 0.x releases.
 
 ## Reporting a vulnerability

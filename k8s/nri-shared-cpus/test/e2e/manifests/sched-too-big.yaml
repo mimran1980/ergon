@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Scheduler: 4001 millicpus is more than the node's capacity (4000). It must
+# stay Pending with an Insufficient ergon.io/shared-millicpus event.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sched-too-big
+  namespace: ergon-e2e
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus"]'
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    ergon.io/shared-cpus: "true"
+  containers:
+    - name: app
+      image: ergon-nri-pin-test:e2e
+      imagePullPolicy: Never
+      command: ["sleep", "infinity"]
+      resources:
+        requests:
+          cpu: "1"
+          memory: 32Mi
+          ergon.io/shared-millicpus: "4001"
+        limits:
+          cpu: "1"
+          memory: 32Mi
+          ergon.io/shared-millicpus: "4001"

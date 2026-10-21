@@ -1,0 +1,21 @@
+
+ Summary of events:
+
+ uring-spin-1 (41573), 17125 events, 0.5%
+
+   syscall            calls  errors  total       min       avg       max       stddev
+                                     (msec)    (msec)    (msec)    (msec)        (%)
+   --------------- --------  ------ -------- --------- --------- ---------     ------
+   io_uring_enter      8547      0    32.339     0.002     0.004     0.025      0.29%
+
+
+ epoll-spin-0 (41572), 3351116 events, 99.5%
+
+   syscall            calls  errors  total       min       avg       max       stddev
+                                     (msec)    (msec)    (msec)    (msec)        (%)
+   --------------- --------  ------ -------- --------- --------- ---------     ------
+   epoll_wait       1670582      0  4714.613     0.002     0.003     0.361      0.03%
+   recvmsg             4238      0    15.951     0.003     0.004     0.020      0.49%
+   sendto                 1      0     0.033     0.033     0.033     0.033      0.00%
+
+

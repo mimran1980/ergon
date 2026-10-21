@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Item 3, the no-plugin fallback (shape 2): the pod names the shipped profile
+# itself as a Localhost seccomp profile. PSS Baseline allows Localhost; it only
+# forbids explicit Unconfined. The profile file lives on the node at
+# /var/lib/kubelet/seccomp/ergon-io-uring.json (the e2e puts it there).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: seccomp-localhost
+  namespace: ergon-latency-pods
+spec:
+  restartPolicy: Never
+  containers:
+    - name: app
+      image: ergon-latency-pods-demo:e2e
+      imagePullPolicy: Never
+      command: ["sleep", "3600"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: Localhost
+          localhostProfile: ergon-io-uring.json
+      resources:
+        requests: { cpu: "100m", memory: 32Mi }
+        limits:   { cpu: "100m", memory: 32Mi }

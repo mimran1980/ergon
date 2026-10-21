@@ -28,6 +28,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Java 17, not the 25 the other cluster jobs run: Aeron 1.46.8's
+        # Gradle 8.10 predates Java 25 support, and that release was tested
+        # on 17 and 21 only. The harness takes java from JAVA_HOME.
         java: ["17"]
         aeron-version: ["1.46.8"]
 
@@ -38,7 +41,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.95.0"
+          toolchain: "1.99.0"
 
       - uses: actions/setup-java@v6
         with:

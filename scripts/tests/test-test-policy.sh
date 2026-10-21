@@ -94,6 +94,17 @@ git -C "$fixture" add unowned.rs
 expect_failure 'no test lane owns'
 git -C "$fixture" rm -qf unowned.rs
 
+# A gated bench with its own `main` and no Criterion macro is still a check.
+mkdir -p "$fixture/benches"
+printf '%s\n' \
+    'fn main() -> std::process::ExitCode {' \
+    '    std::process::ExitCode::FAILURE' \
+    '}' \
+    >"$fixture/benches/gate.rs"
+git -C "$fixture" add benches/gate.rs
+expect_failure 'no test lane owns benches/gate.rs'
+git -C "$fixture" rm -qf benches/gate.rs
+
 printf '%s\n' \
     'test:' \
     '    cargo test -- --skip broken_test' \

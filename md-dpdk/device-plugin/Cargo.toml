@@ -1,0 +1,41 @@
+# Kubelet device plugin for the ergon-md-dpdk ENA transport. Advertises
+# `rusteron.io/dpdk-ena-pair` (one device per healthy vfio-pci or igb_uio pair
+# in /var/lib/rusteron-dpdk/ena-pairs.json) and injects the pair's PCI/CIDR/
+# gateway env plus its VFIO or UIO device nodes at Allocate time. Standalone
+# tonic gRPC binary; no dependency on the DPDK C stack.
+[package]
+name = "ergon-md-dpdk-device-plugin"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "Unpublished kubelet device plugin advertising DPDK-bound ENA pairs for the ergon-md-dpdk media driver"
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+# The deploy manifests and Dockerfile run this binary by name.
+name = "rusteron-dpdk-device-plugin"
+path = "src/main.rs"
+
+[dependencies]
+env_logger = "0.11"
+hyper-util = { version = "0.1", features = ["tokio"] }
+log = "0.4"
+prost = "0.14"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal"] }
+tokio-stream = "0.1"
+tonic = "0.14"
+tonic-prost = "0.14"
+tower = "0.5"
+
+# The vendored kubelet v1beta1 proto (proto/deviceplugin/v1beta1/api.proto) is
+# compiled by protox (pure-Rust, no protoc binary in Docker/CI) and handed to
+# tonic-prost-build as a FileDescriptorSet.
+[build-dependencies]
+protox = "0.10"
+tonic-prost-build = "0.14"
+
+[lints.rust]
+missing_docs = "warn"

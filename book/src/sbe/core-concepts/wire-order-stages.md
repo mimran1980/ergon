@@ -41,4 +41,4 @@ After fixed fields you may only call the **next** group or var-data.
 
 Group bodies use `|g| { g.add(|e| { … }) }`: the closure ends, then chaining
 continues. See [Type-state](../design-notes/type-state.md) and
-[Benchmarks](../benchmarks.md) for the zero-cost claim and the `1.00×` gate.
+[Benchmarks](../benchmarks.md) for the cost claim and the `1.00×` gate.

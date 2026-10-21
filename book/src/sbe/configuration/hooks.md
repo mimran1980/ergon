@@ -73,7 +73,7 @@ fn serde_hook(ctx: &ItemContext) -> Vec<proc_macro2::TokenStream> {
                         let mut val = Self::default();
                         for n in &names {
                             match *n {
-                                #(#labels => val = val.#froms(),)*
+                                #(#labels => { val.#froms(true); })*
                                 // Reject unknown labels — don't silently drop.
                                 other => return Err(serde::de::Error::unknown_variant(
                                     other, &[#(#labels),*])),

@@ -68,6 +68,8 @@
 # [must_use] sbe_rt::EntryInfo::const fn is_first (& self) -> bool
 # [must_use] sbe_rt::EntryInfo::const fn is_last (& self) -> bool
 # [must_use] sbe_rt::EntryInfo::const fn remaining (& self) -> usize
+# [must_use] sbe_rt::FieldPath::const fn field (& self) -> & 'static str
+# [must_use] sbe_rt::FieldPath::fn entries (& self) -> & [u32]
 # [non_exhaustive] enum AnyMessage< 'a >
 # [repr (transparent)] struct Decimal { 0: [u8 ; 9] }
 # [repr (transparent)] struct GroupSizeEncoding { 0: [u8 ; 4] }
@@ -125,6 +127,8 @@ CommonMessageEncoder::const fn price_meta_attribute (attr : sbe_rt :: MetaAttrib
 CommonMessageEncoder::const fn side_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> Option < & 'static str >
 CommonMessageEncoder::fn into_remaining_mut (self) -> & 'a mut [u8]
 CommonMessageEncoder::fn price (& mut self , val : Decimal) -> & mut Self
+CommonMessageEncoder::fn send < C , W > (claim : C , encode : W) -> Result < () , sbe_rt :: SendError < C :: Error > > where C : sbe_rt :: Claim , W : for < 'b > FnOnce (CommonMessageEncoder < 'b > ,) -> Result < CommonMessageEncoder < 'b , sbe_rt :: HeaderPresent , sbe_rt :: FieldsFixed > , sbe_rt :: EncodeError , > ,
+CommonMessageEncoder::fn send_fixed < C : sbe_rt :: Claim > (claim : C , fixed : & CommonMessageFixedFields ,) -> Result < () , sbe_rt :: SendError < C :: Error > >
 CommonMessageEncoder::fn side (& mut self , val : Side) -> & mut Self
 CommonMessageEncoder::fn try_wrap (buf : & 'a mut [u8] , msg_offset : usize ,) -> Result < CommonMessageEncoder < 'a , sbe_rt :: HeaderAbsent > , sbe_rt :: EncodeError >
 CommonMessageEncoder::fn try_wrap_and_apply_header (buf : & 'a mut [u8] , offset : usize ,) -> Result < CommonMessageEncoder < 'a , sbe_rt :: HeaderPresent > , sbe_rt :: EncodeError >
@@ -169,11 +173,17 @@ fn fn write_bytes < const N : usize > (buf : & mut [u8] , offset : usize , bytes
 mod common_message_field_meta
 mod prelude
 mod sbe_rt
+sbe_rt::FieldPath::const MAX_ENTRIES: usize
+sbe_rt::OfferClaim::fn new (buf : & 'a mut [u8] , offer : F) -> Self
 sbe_rt::TailBoundaryCache::const fn new () -> Self
 sbe_rt::TailBoundaryCache::fn end_of (& self , idx : usize) -> Option < usize >
 sbe_rt::TailBoundaryCache::fn is_complete (& self) -> bool
 sbe_rt::TailBoundaryCache::fn known_through (& self) -> usize
 sbe_rt::TailBoundaryCache::fn publish (& self , idx : usize , abs_end : usize)
+sbe_rt::enum ConversionError
+sbe_rt::enum ConversionError::Custom(error_type: & 'static str)
+sbe_rt::enum ConversionError::Mapping(0: MappingError)
+sbe_rt::enum ConversionError::Reason(0: & 'static str)
 sbe_rt::enum DecodeError
 sbe_rt::enum DecodeError::BufferTooShort(field: & 'static str, needed: usize, available: usize)
 sbe_rt::enum DecodeError::DomainConversionFailed(field: & 'static str, reason: & 'static str)
@@ -189,6 +199,7 @@ sbe_rt::enum DecodeError::WrongTemplate(expected: u16, actual: u16, expected_nam
 sbe_rt::enum EncodeError
 sbe_rt::enum EncodeError::BufferTooShort(field: & 'static str, needed: usize, available: usize)
 sbe_rt::enum EncodeError::ClaimLengthMismatch(expected: usize, actual: usize)
+sbe_rt::enum EncodeError::Conversion(at: Option < FieldPath >, error: ConversionError)
 sbe_rt::enum EncodeError::Decode(0: DecodeError)
 sbe_rt::enum EncodeError::DomainConversionFailed(field: & 'static str, reason: & 'static str)
 sbe_rt::enum EncodeError::EncodedLengthOverflow
@@ -197,13 +208,22 @@ sbe_rt::enum EncodeError::GroupCountMismatch(declared: u32, actual: u32)
 sbe_rt::enum EncodeError::GroupCountOverflow(maximum: u32, actual: u32)
 sbe_rt::enum EncodeError::GroupFull(declared: u32, attempted: u32)
 sbe_rt::enum EncodeError::InvalidAscii(field: & 'static str)
+sbe_rt::enum EncodeError::SomeNullValue(at: FieldPath)
 sbe_rt::enum EncodeError::ValueOutOfRange(field: & 'static str, min: i128, max: i128, actual: i128)
 sbe_rt::enum EncodeError::VarDataTooLong(field: & 'static str, max_length: usize, actual: usize)
+sbe_rt::enum MappingError
+sbe_rt::enum MappingError::NullEnum(enum_name: & 'static str)
+sbe_rt::enum MappingError::SomeNullValue(composite: & 'static str, member: & 'static str)
 sbe_rt::enum MetaAttribute
 sbe_rt::enum MetaAttribute::Epoch
 sbe_rt::enum MetaAttribute::Presence
 sbe_rt::enum MetaAttribute::SemanticType
 sbe_rt::enum MetaAttribute::TimeUnit
+sbe_rt::enum SendError::Commit(0: E)
+sbe_rt::enum SendError::Encode(0: EncodeError)
+sbe_rt::enum SendError::HeaderMismatch
+sbe_rt::enum SendError::LengthMismatch(claimed: usize, frame: usize)
+sbe_rt::enum SendError< E >
 sbe_rt::enum VerifyError
 sbe_rt::enum VerifyError::DecodeError(0: DecodeError)
 sbe_rt::enum VerifyError::GroupDimOutOfBounds(field: & 'static str, offset: usize)
@@ -211,15 +231,25 @@ sbe_rt::enum VerifyError::HeaderTooShort
 sbe_rt::enum VerifyError::InvalidBlockLength(expected_min: usize, actual: usize)
 sbe_rt::enum VerifyError::MessageTooShort(needed: usize, available: usize)
 sbe_rt::enum VerifyError::VarDataOutOfBounds(field: & 'static str, offset: usize, length: u64)
+sbe_rt::fn fn decode_fixed_text < 'a > (field : & 'static str , bytes : & 'a [u8] , ascii : bool ,) -> Result < & 'a str , DecodeError >
+sbe_rt::fn fn encode_fixed_text < const N : usize > (field : & 'static str , src : & str , ascii : bool ,) -> Result < [u8 ; N] , EncodeError >
+sbe_rt::fn fn send_frame < C , W > (claim : C , header : & [u8] , encode : W ,) -> Result < () , SendError < C :: Error > > where C : Claim , W : FnOnce (& mut [u8]) -> Result < usize , EncodeError > ,
 sbe_rt::struct Attached {  }
 sbe_rt::struct DecodeCacheStats { hits: u32, misses: u32, boundary_calcs: u32, known_through: usize }
 sbe_rt::struct Detached {  }
 sbe_rt::struct EntryInfo { index: usize, count: usize, block_length: usize }
+sbe_rt::struct FieldPath {  }
 sbe_rt::struct FieldsFixed {  }
 sbe_rt::struct FieldsUnfixed {  }
 sbe_rt::struct HeaderAbsent {  }
 sbe_rt::struct HeaderPresent {  }
+sbe_rt::struct OfferClaim< 'a , F > {  }
 sbe_rt::struct TailBoundaryCache< const N : usize > {  }
+sbe_rt::trait Claim
+sbe_rt::trait Claim::fn abort (self)
+sbe_rt::trait Claim::fn commit (self) -> Result < () , Self :: Error >
+sbe_rt::trait Claim::fn frame_mut (& mut self) -> & mut [u8]
+sbe_rt::trait Claim::type Error
 sbe_rt::trait FieldsState: private :: Sealed
 sbe_rt::trait GroupContext: private :: Sealed
 sbe_rt::trait HeaderState: private :: Sealed
@@ -365,6 +395,8 @@ QuoteEncoder::fn ask_mantissa (& mut self , val : i64) -> & mut Self
 QuoteEncoder::fn bid_mantissa (& mut self , val : i64) -> & mut Self
 QuoteEncoder::fn bid_side (& mut self , val : Side) -> & mut Self
 QuoteEncoder::fn into_remaining_mut (self) -> & 'a mut [u8]
+QuoteEncoder::fn send < C , W > (claim : C , encode : W) -> Result < () , sbe_rt :: SendError < C :: Error > > where C : sbe_rt :: Claim , W : for < 'b > FnOnce (QuoteEncoder < 'b > ,) -> Result < QuoteEncoder < 'b , sbe_rt :: HeaderPresent , sbe_rt :: FieldsFixed > , sbe_rt :: EncodeError , > ,
+QuoteEncoder::fn send_fixed < C : sbe_rt :: Claim > (claim : C , fixed : & QuoteFixedFields ,) -> Result < () , sbe_rt :: SendError < C :: Error > >
 QuoteEncoder::fn try_wrap (buf : & 'a mut [u8] , msg_offset : usize ,) -> Result < QuoteEncoder < 'a , sbe_rt :: HeaderAbsent > , sbe_rt :: EncodeError >
 QuoteEncoder::fn try_wrap_and_apply_header (buf : & 'a mut [u8] , offset : usize ,) -> Result < QuoteEncoder < 'a , sbe_rt :: HeaderPresent > , sbe_rt :: EncodeError >
 QuoteEncoder::fn wrap (buf : & 'a mut [u8] , msg_offset : usize ,) -> QuoteEncoder < 'a , sbe_rt :: HeaderAbsent >

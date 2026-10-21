@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Candidate 6, granted: RuntimeDefault plus the four io_uring syscalls. The
+# memlock annotation is here only so a Grants object exists and the plugin
+# exports ERGON_SECCOMP; the seccomp widening is the thing under test.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: seccomp-yes
+  namespace: ergon-latency-pods
+  annotations:
+    seccomp.ergon.io/app: "io-uring"
+    rlimits.ergon.io/app: "memlock"
+spec:
+  restartPolicy: Never
+  containers:
+    - name: app
+      image: ergon-latency-pods-demo:e2e
+      imagePullPolicy: Never
+      command: ["sleep", "3600"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault
+      resources:
+        requests: { cpu: "100m", memory: 32Mi }
+        limits:   { cpu: "100m", memory: 32Mi }

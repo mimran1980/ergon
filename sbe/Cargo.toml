@@ -113,7 +113,7 @@ name = "fix_sbe_conformance_test"
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
 proptest = "=1.11.0"
-serial_test = "3"
+serial_test = "4"
 toml = "1.1"
 # fancy-no-backtrace (not "fancy"): GraphicalReportHandler for tests proving
 # the miette rendering pipeline actually snippets — skips the heavier

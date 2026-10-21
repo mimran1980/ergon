@@ -57,28 +57,33 @@ print_plan() {
     done
 }
 
+# The machine the numbers were taken on. `target` alone does not tell one
+# Apple Silicon generation from another, and figures from an M1 are not figures
+# from an M4: a manifest without a host makes a later comparison guess.
+host_cpu() {
+    local brand=""
+    if command -v sysctl >/dev/null 2>&1; then
+        brand=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || true)
+    fi
+    if [ -z "$brand" ] && [ -r /proc/cpuinfo ]; then
+        brand=$(awk -F': ' '/^model name|^Hardware/ {print $2; exit}' /proc/cpuinfo)
+    fi
+    printf '%s' "${brand:-unknown}"
+}
+
 # Stamp a freshly produced profile directory so the gate can prove provenance.
 stamp_profile() {
     local dir="$1" run_id="$2" profile="$3"
-    local commit rustc target
+    local commit rustc target host
     commit=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)
     rustc=$(rustc --version)
     target=$(rustc --version --verbose | awk '/^host: /{print $2}')
+    host=$(host_cpu)
 
-    python3 - "$dir" "$run_id" "$profile" "$commit" "$rustc" "$target" <<'PY'
+    python3 - "$dir" "$run_id" "$profile" "$commit" "$rustc" "$target" "$host" <<'PY'
 import json, os, sys
 
-directory, run_id, profile, commit, rustc, target = sys.argv[1:7]
-manifest = {
-    "run_id": run_id,
-    "profile": profile,
-    "commit": commit,
-    "rustc": rustc,
-    "target": target,
-}
-with open(os.path.join(directory, "run-manifest.json"), "w", encoding="utf-8") as handle:
-    json.dump(manifest, handle, indent=2, sort_keys=True)
-
+directory, run_id, profile, commit, rustc, target, host = sys.argv[1:8]
 stamped = 0
 for root, dirs, files in os.walk(directory):
     if os.path.basename(root) == "new" and "estimates.json" in files:
@@ -87,7 +92,38 @@ for root, dirs, files in os.walk(directory):
         stamped += 1
 if stamped == 0:
     sys.exit(f"no Criterion estimates were produced under {directory}")
-print(f"stamped {stamped} estimate(s) in {directory} with run id {run_id}")
+# Each independent invocation the runner took is snapshotted under
+# `repeats/<k>/`; stamp those too, and declare how many there are. The gate
+# grades the envelope of those invocations and refuses a manifest claiming
+# more of them than are on disk.
+repeats_dir = os.path.join(directory, "repeats")
+repeats = 0
+if os.path.isdir(repeats_dir):
+    for name in sorted(
+        (n for n in os.listdir(repeats_dir) if os.path.isdir(os.path.join(repeats_dir, n))),
+        key=lambda n: (0, int(n)) if n.isdigit() else (1, n),
+    ):
+        repeat_root = os.path.join(repeats_dir, name)
+        found = 0
+        for root, dirs, files in os.walk(repeat_root):
+            if "estimates.json" in files:
+                with open(os.path.join(root, "run-id.txt"), "w", encoding="utf-8") as handle:
+                    handle.write(run_id)
+                found += 1
+        if found:
+            repeats += 1
+manifest = {
+    "run_id": run_id,
+    "profile": profile,
+    "commit": commit,
+    "rustc": rustc,
+    "target": target,
+    "host": host,
+    "repeats": repeats if repeats > 1 else 1,
+}
+with open(os.path.join(directory, "run-manifest.json"), "w", encoding="utf-8") as handle:
+    json.dump(manifest, handle, indent=2, sort_keys=True)
+print(f"stamped {stamped} estimate(s) in {directory} with run id {run_id} repeats={manifest['repeats']}")
 PY
 }
 
@@ -139,8 +175,25 @@ for profile in "${PROFILES[@]}"; do
         exit 2
         ;;
     esac
-    env "${profile_env[@]}" cargo bench -p ergo-sbe-benchmarks --bench perf_parity_bench
-    env "${profile_env[@]}" cargo bench -p ergo-sbe-benchmarks --bench perf_parity_extended_bench
+    # BENCH_REPEATS independent invocations (default 5), each snapshotted under
+    # `repeats/<k>/`. One invocation's confidence interval is not the harness's
+    # resolution: identical code walked 3.5 % across three invocations on
+    # 2026-10-20 while each run's own ratio CI was ±0.5 %. The gate grades the
+    # envelope of the invocations.
+    repeats="${BENCH_REPEATS:-5}"
+    # A stale snapshot from an earlier run would widen this run's envelope with
+    # foreign evidence; the gate refuses a mixed one, so clear it here.
+    rm -rf "$criterion_dir/repeats"
+    for k in $(seq 1 "$repeats"); do
+        echo "=== SBE perf parity — $profile — invocation $k/$repeats ==="
+        # Bounds the snapshot to what this invocation is about to write: the
+        # Criterion home can also hold other benches' groups, and Criterion
+        # leaves `new/` in place for groups a run does not touch.
+        touch "$criterion_dir/.bench-since"
+        env "${profile_env[@]}" cargo bench -p ergo-sbe-benchmarks --bench perf_parity_bench
+        env "${profile_env[@]}" cargo bench -p ergo-sbe-benchmarks --bench perf_parity_extended_bench
+        "$REPO_ROOT/scripts/snapshot-bench-repeat.sh" "$criterion_dir" "$k"
+    done
 
     stamp_profile "$criterion_dir" "$RUN_ID" "$profile"
 
@@ -148,8 +201,15 @@ for profile in "${PROFILES[@]}"; do
     echo "=== Gate — $profile (blocking) ==="
     # Both profiles are blocking: a regression that only appears without LTO is
     # still a regression for every downstream consumer that does not use LTO.
-    "$REPO_ROOT/scripts/check-bench-gate.sh" "$criterion_dir" 0 sbe --run-id "$RUN_ID" \
-        || failures=$((failures + 1))
+    # Keep the gate's stdout beside the run it graded: the release ships
+    # `sbe-bench-gate-no-lto.txt`, and `package-bench-artifacts.sh` takes it
+    # from here rather than anyone remembering to capture a terminal. `if`
+    # is what stops `set -e` aborting on a gate failure, and `pipefail` is
+    # what makes the pipeline report the gate's status rather than `tee`'s.
+    if ! "$REPO_ROOT/scripts/check-bench-gate.sh" "$criterion_dir" 0 sbe --run-id "$RUN_ID" \
+            2>&1 | tee "$criterion_dir/gate.txt"; then
+        failures=$((failures + 1))
+    fi
 done
 
 echo ""

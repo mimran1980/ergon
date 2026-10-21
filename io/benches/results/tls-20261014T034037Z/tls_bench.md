@@ -1,0 +1,30 @@
+| implementation | payload B | messages | reads | ns/message (best of 5) | GB/s | allocs/message |
+|---|---|---|---|---|---|---|
+| inplace-ring | 200 | 335544 | 335544 | 105.2 | 1.90 | 0.00 |
+| rustls-buffered-ring | 200 | 335544 | 335544 | 230.9 | 0.87 | 1.00 |
+| rustls-buffered-ring-copy | 200 | 335544 | 17661 | 231.4 | 0.86 | 1.00 |
+| rustls-unbuffered-ring | 200 | 335544 | 335544 | 181.0 | 1.11 | 1.00 |
+| inplace-awslc | 200 | 335544 | 335544 | 100.0 | 2.00 | 0.00 |
+| rustls-buffered-awslc | 200 | 335544 | 335544 | 234.6 | 0.85 | 1.00 |
+| openssl | 200 | 335544 | 335544 | 460.1 | 0.43 | 0.00 |
+| inplace-ring | 1000 | 67108 | 67108 | 175.1 | 5.71 | 0.00 |
+| rustls-buffered-ring | 1000 | 67108 | 67108 | 329.5 | 3.04 | 1.00 |
+| rustls-buffered-ring-copy | 1000 | 67108 | 13452 | 332.7 | 3.01 | 1.00 |
+| rustls-unbuffered-ring | 1000 | 67108 | 67108 | 256.5 | 3.90 | 1.00 |
+| inplace-awslc | 1000 | 67108 | 67108 | 167.5 | 5.97 | 0.00 |
+| rustls-buffered-awslc | 1000 | 67108 | 67108 | 331.6 | 3.02 | 1.00 |
+| openssl | 1000 | 67108 | 67108 | 562.5 | 1.78 | 0.00 |
+| inplace-ring | 4000 | 16777 | 16777 | 428.5 | 9.33 | 0.00 |
+| rustls-buffered-ring | 4000 | 16777 | 16777 | 722.1 | 5.54 | 1.00 |
+| rustls-buffered-ring-copy | 4000 | 16777 | 8389 | 774.2 | 5.17 | 1.00 |
+| rustls-unbuffered-ring | 4000 | 16777 | 16777 | 557.2 | 7.18 | 1.00 |
+| inplace-awslc | 4000 | 16777 | 16777 | 341.8 | 11.70 | 0.00 |
+| rustls-buffered-awslc | 4000 | 16777 | 16777 | 646.9 | 6.18 | 1.00 |
+| openssl | 4000 | 16777 | 16777 | 826.8 | 4.84 | 0.00 |
+| inplace-ring | 16000 | 4194 | 4194 | 1464.1 | 10.93 | 0.00 |
+| rustls-buffered-ring | 16000 | 4194 | 4194 | 2213.2 | 7.23 | 1.00 |
+| rustls-buffered-ring-copy | 16000 | 4194 | 4194 | 2607.1 | 6.14 | 1.00 |
+| rustls-unbuffered-ring | 16000 | 4194 | 4194 | 1669.6 | 9.58 | 1.00 |
+| inplace-awslc | 16000 | 4194 | 4194 | 955.0 | 16.75 | 0.00 |
+| rustls-buffered-awslc | 16000 | 4194 | 4194 | 1756.9 | 9.11 | 1.00 |
+| openssl | 16000 | 4194 | 4194 | 1951.0 | 8.20 | 0.00 |

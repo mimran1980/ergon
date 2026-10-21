@@ -17,15 +17,15 @@ no `sbe_mod!` needed. See [Build Patterns](./build-patterns.md).
 
 | Selector | Config | Decode API | Encode API | Who writes the impl? |
 |----------|--------|------------|------------|-----------------------|
-| `BooleanType` | `with_domain_type(.., "bool")` | `dec.try_available()?` | `enc.try_available(true)?` | ergo-sbe |
-| `UTCTimestamp` | `with_domain_type(.., chrono)` | `dec.try_timestamp()?` | `enc.try_timestamp(t)?` | ergo-sbe |
+| `BooleanType` | `with_domain_type(.., "bool")` | `dec.available()?` | `enc.available(true)?` | ergo-sbe |
+| `UTCTimestamp` | `with_domain_type(.., chrono)` | `dec.timestamp()?` | `enc.timestamp(t)?` | ergo-sbe |
 | `Decimal` (Quote) | **`with_conversion` only** | `dec.price_as::<T>()?` | `enc.price_from(&t)?` | app (generic, any `T`) |
-| `ManualDecimal` (Quote) | `with_manual_domain_type(.., rust_decimal)` | `dec.try_manual_price()?` | `enc.try_manual_price(v)?` | app (one concrete type) |
+| `ManualDecimal` (Quote) | `with_manual_domain_type(.., rust_decimal)` | `dec.manual_price()?` | `enc.manual_price(v)?` | app (one concrete type) |
 
 Runnable proof for the `Decimal` row: **`demo_conversion_only`** in
 `src/lib.rs` (uses both `rust_decimal` and a tiny `FixedPrice`
 adapter on the same buffer). Runnable proof for the `ManualDecimal` row:
-**`demo_domain_type_manual_impl`** — same concrete `try_manual_price(...)?`
+**`demo_domain_type_manual_impl`** — same concrete `manual_price(...)?`
 signature `DomainImpl::Generated` would give you, but the `impl
 TryFromSbe<ManualDecimal>` / `TryToSbe<ManualDecimal>` above it are a literal
 copy-paste of the doc comment ergo-sbe put on the generated method (see

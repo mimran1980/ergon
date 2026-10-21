@@ -261,18 +261,14 @@ fn ordered_lane_callback_error_propagates() -> Result<(), Box<dyn std::error::Er
         &format!(
             r#"
         {ENCODE}
-        #[derive(Debug)]
-        enum E {{ Decode(sbe_rt::DecodeError), Mine }}
-        impl From<sbe_rt::DecodeError> for E {{
-            fn from(e: sbe_rt::DecodeError) -> Self {{ E::Decode(e) }}
-        }}
+        let mine = sbe_rt::DecodeError::DomainConversionFailed {{ field: "mine", reason: "callback" }};
         let r = CarDecoder::try_decode(encoded, 0)?
             .ordered()
-            .try_fuel_figures(|_e, info| -> Result<_, E> {{
-                if info.index == 1 {{ return Err(E::Mine); }}
-                _e.into_usage_description().map(|(_u, d)| d).map_err(E::from)
+            .fuel_figures(|e, info| {{
+                if info.index == 1 {{ return Err(mine); }}
+                e.into_usage_description().map(|(_u, d)| d)
             }});
-        assert!(matches!(r, Err(E::Mine)), "callback error must propagate");
+        assert_eq!(r.err(), Some(mine), "callback error must propagate");
     "#
         ),
     );
@@ -545,9 +541,8 @@ const HEADER_TYPES: &str = r#"
 "#;
 
 /// A message whose first tail is named `fixed` must still compile: `fixed()`
-/// on the ordered wrapper is the group visit. That tail also owns
-/// `try_fixed()`, so both ordered callbacks yield; read fixed fields before
-/// `ordered()`.
+/// on the ordered wrapper is the group visit, so the fixed-block callback
+/// yields; read fixed fields before `ordered()`.
 #[test]
 fn message_first_tail_named_fixed_compiles() -> Result<(), Box<dyn std::error::Error>> {
     let xml = format!(
@@ -576,7 +571,7 @@ fn message_first_tail_named_fixed_compiles() -> Result<(), Box<dyn std::error::E
         .clone();
     assert!(
         !src.contains("struct MsgDecoderFixedView"),
-        "a first tail named `fixed` also owns try_fixed(), so both ordered callbacks yield"
+        "a first tail named `fixed` owns fixed(), so the fixed-block callback yields"
     );
     compile_and_run(
         "fixedclash",
@@ -610,9 +605,9 @@ fn message_first_tail_named_fixed_compiles() -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
-/// A first tail named `tryFixed` keeps `try_fixed()` as the var-data visit
-/// and `fixed()` as the fixed-block callback. Yielding both was over-broad
-/// (HFT review 2026-09-18).
+/// A first tail named `tryFixed` is an ordinary var-data visit: `fixed()`
+/// stays the fixed-block callback. Yielding it was over-broad (HFT review
+/// 2026-09-18).
 #[test]
 fn message_first_tail_named_try_fixed_compiles() -> Result<(), Box<dyn std::error::Error>> {
     let xml = format!(

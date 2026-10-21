@@ -643,7 +643,9 @@ fn binance_websocket_response_group_roundtrip() -> Result<(), Box<dyn std::error
     assert_eq!(decoder.status(), 200, "status");
 
     let mut entries = Vec::new();
-    let mut rates = decoder.into_rate_limits().expect("rate_limits group decode");
+    let mut rates = decoder
+        .into_rate_limits()
+        .expect("rate_limits group decode");
     for entry in &mut rates {
         entries.push((
             entry.rate_limit_type(),

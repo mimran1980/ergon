@@ -8,6 +8,7 @@
 //! - Three-thread architecture: producer, SHARED driver, consumer
 
 // Generated codecs under `src/generated/` (gitignored) — IDE can go-to-def.
+// rustfmt skips them: the build script rewrites them on every regeneration.
 #[allow(
     dead_code,
     unused_imports,
@@ -20,6 +21,7 @@
     warnings
 )]
 #[path = "generated/normalized_app.rs"]
+#[rustfmt::skip]
 pub mod normalized_app;
 
 #[allow(
@@ -34,6 +36,7 @@ pub mod normalized_app;
     warnings
 )]
 #[path = "generated/bitget_spot.rs"]
+#[rustfmt::skip]
 pub mod bitget_spot;
 
 #[allow(
@@ -48,6 +51,7 @@ pub mod bitget_spot;
     warnings
 )]
 #[path = "generated/binance_spot.rs"]
+#[rustfmt::skip]
 pub mod binance_spot;
 
 pub mod bitget;

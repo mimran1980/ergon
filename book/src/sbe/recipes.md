@@ -25,9 +25,9 @@ let unknown_len = CarEncoder::wrap_and_apply_header(&mut buf, 0)
     .fixed(&fields)
     .fuel_figures_unknown_size(|g| {
         for row in rows {
-            g.add(|e| {
+            g.add(|mut e| {
                 e.speed(row.speed).mpg(row.mpg);
-                Ok(())
+                e.usage_description_as_str(&row.usage)
             })?;
         }
         Ok(())

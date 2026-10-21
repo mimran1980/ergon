@@ -1,0 +1,887 @@
+# Sourced by vm.sh: the host settings that depend on the architecture
+# (x86_64, or aarch64: AWS Graviton, run only with lab.sh's LAB_ALLOW_ARM=1)
+# and the media driver's CPUs under each Aeron threading mode, as functions
+# that print what vm.sh applies, so test/test-lab.sh checks them against
+# fakes. Reads $LAB_SYS_ROOT (/sys; the test gives it a fake tree).
+#
+# Graviton differs from x86 where these say so; everything else vm.sh does
+# (isolcpus, nohz_full, rcu_nocbs, IRQs on housekeeping, 2 MiB hugepages,
+# transparent hugepages off) is the same on both. Sources: AWS's DPDK ENA
+# README and Graviton guides, the kernel's kernel-parameters.txt, and Debian's
+# cloud-arm64 kernel configuration. What is a choice rather than a necessity
+# (nohlt, the threading modes) is an A/B: a state or a mode, never the
+# baseline.
+LAB_SYS_ROOT=${LAB_SYS_ROOT:-/sys}
+# jumbo_mtus and the mode settings' other readers
+# shellcheck source=modes.sh
+. "$(dirname "${BASH_SOURCE[0]}")/modes.sh"
+
+# host_arch_ok <uname -m> <allow_arm>: x86_64; aarch64 only where lab.sh's
+# LAB_ALLOW_ARM=1 reached the host (1); anything else refused (2)
+host_arch_ok() {
+    case $1 in
+    x86_64) return 0 ;;
+    aarch64)
+        [[ $2 == 1 ]] && return 0
+        echo "vm.sh: aarch64 host without lab.sh's LAB_ALLOW_ARM=1: production runs on x86, so Graviton runs only on request" >&2
+        return 2
+        ;;
+    *)
+        echo "vm.sh: $1 host: the lab runs on x86_64, or on aarch64 (Graviton) with LAB_ALLOW_ARM=1" >&2
+        return 2
+        ;;
+    esac
+}
+
+# debian_arch <uname -m>: Debian's name for it (its cloud kernel is
+# linux-image-cloud-<it>)
+debian_arch() {
+    case $1 in
+    x86_64) echo amd64 ;;
+    aarch64) echo arm64 ;;
+    *) return 1 ;;
+    esac
+}
+
+# build_env <uname -m>: the compiler settings vm.sh exports for every cargo
+# build and bench, as one export line (none on x86). Graviton: code for the
+# core it runs on (the lab builds on the instance itself), so atomics compile
+# to single LSE instructions (ldadd) rather than the outline-atomics helper
+# calls gcc and rustc emit for generic aarch64, on every counter bump of the
+# send and receive paths (AWS's Graviton C/C++ and Rust guides). RUSTFLAGS
+# reaches the Rust and CFLAGS md-dpdk's C (the cc crate), but not Aeron's:
+# rusteron gives CMake its own CMAKE_C_FLAGS, so CMake ignores CFLAGS, and
+# builds Aeron's C with -march=native on every architecture (rusteron's
+# release default; RUSTERON_C_MARCH overrides it). x86 thus differs only in
+# its Rust and md-dpdk's C, which stay generic there. Every cargo call must
+# see the same flags, or it rebuilds the media driver without them.
+build_env() {
+    if [[ $1 == aarch64 ]]; then echo "export CFLAGS='-mcpu=native' RUSTFLAGS='-Ctarget-cpu=native'"; fi
+}
+
+# boot_args <uname -m> <cloud>: the kernel command line every boot needs from
+# bootstrap on, so the pinned state has it too. Graviton metal's SMMU
+# translates DMA, which igb_uio does not program: iommu.passthrough=1 (arm64
+# ignores x86's iommu=pt, an [X86] parameter). A virtualised Graviton has no
+# IOMMU, so it changes nothing there.
+boot_args() {
+    if [[ $1 == aarch64 && $2 == aws ]]; then echo iommu.passthrough=1; fi
+}
+
+# isolation_args <uname -m> <cloud> <last CPU> [poll]: the isolated state's
+# kernel command line, every CPU but the housekeeping one (0) off the
+# scheduler's balancing, the tick, RCU callbacks and managed IRQs (generic:
+# the same on Graviton); x86 AWS adds iommu=pt for metal's IOMMU (Graviton's
+# passthrough is boot_args'). poll (the isolated-poll state): idle CPUs poll
+# instead of halting, for the interrupt-driven paths (kernel UDP's
+# housekeeping CPU). x86: idle=poll. arm64 has no C-states the OS controls
+# (Debian's cloud-arm64 kernel builds no cpuidle driver; idle is WFI, which
+# the hypervisor may trap): nohlt, which busy-waits in do_idle instead.
+isolation_args() {
+    local arch=$1 cloud=$2 last=$3 variant=${4:-}
+    local args="isolcpus=nohz,domain,managed_irq,1-$last nohz_full=1-$last rcu_nocbs=1-$last irqaffinity=0"
+    if [[ $arch == x86_64 && $cloud == aws ]]; then args+=" iommu=pt"; fi
+    case $variant in
+    '') ;;
+    poll)
+        case $arch in
+        x86_64) args+=" idle=poll" ;;
+        aarch64) args+=" nohlt" ;;
+        *) return 2 ;;
+        esac
+        ;;
+    *)
+        echo "isolate $variant: nothing, or poll (idle CPUs poll)" >&2
+        return 2
+        ;;
+    esac
+    echo "$args"
+}
+
+# cpu_layout [noisy CPUs]: "<housekeeping> <app> <sender> <receiver> <app2>":
+# the first thread of the first five cores, in core order: housekeeping (the
+# driver's conductor, its housekeeping and local-I/O threads, the clients'
+# conductors), app (ping, pong, publisher or subscriber), the driver's sender
+# (under SHARED_NETWORK and SHARED, its one shared agent: threading_env), its
+# receiver, and a second app core for the localhost runs (both ends on one
+# host; empty on a four-core VM). Physical cores always: Azure numbers SMT
+# twins adjacently (0-1, 2-3, ...), AWS x86 as N and N+cores, and Graviton
+# has no SMT (each CPU's siblings are itself), so each role has a core to
+# itself. Cores with a CPU the pre-flight saw stall (vm.sh preflight's
+# noisy_cpus) are skipped, housekeeping's excepted, while enough quiet ones
+# remain; the noisy ones fill in last, so a short VM still gets a layout.
+cpu_layout() {
+    local cpu first siblings primaries=() quiet=() noisy=() part s hit
+    local bad=" ${1:-} " dir=$LAB_SYS_ROOT/devices/system/cpu
+    for cpu in $(printf '%s\n' "$dir"/cpu[0-9]* | sed 's/.*cpu//' | sort -n); do
+        # an offline CPU (SMT=off's siblings) has no topology: not a core
+        [[ -r $dir/cpu$cpu/topology/thread_siblings_list ]] || continue
+        siblings=$(cat "$dir/cpu$cpu/topology/thread_siblings_list")
+        first=${siblings%%[,-]*}
+        [[ $first == "$cpu" ]] || continue
+        primaries+=("$cpu")
+        hit=0
+        for part in ${siblings//,/ }; do
+            for s in $(seq "${part%-*}" "${part#*-}"); do
+                [[ $bad == *" $s "* ]] && hit=1
+            done
+        done
+        if ((${#primaries[@]} == 1 || hit == 0)); then quiet+=("$cpu"); else noisy+=("$cpu"); fi
+    done
+    local ordered=("${quiet[@]}" "${noisy[@]}")
+    echo "${ordered[@]:0:5}"
+}
+
+# threading_env <mode> <housekeeping CPU> <sender CPU> <receiver CPU>: the
+# driver's environment for an Aeron threading mode (vm.sh driver
+# <mode>@AERON_THREADING_MODE=<it>; DEDICATED otherwise). Aeron pins its
+# agents by role name (aeron_set_thread_affinity_on_start, which
+# ergon-md-dpdk's pin_agents_to_configured_cpus installs in every transport
+# mode): the shared network agent by the sender's CPU, the shared agent by
+# the conductor's (there are no variables of their own). Every agent on the
+# data path busy-spins on a core of its own from the layout, as the dedicated
+# sender and receiver do (noop; on arm64 Aeron's spin is the same loop, its
+# proc_yield being empty there); an @AERON_*_IDLE_STRATEGY= override in the
+# same mode applies after these.
+#   DEDICATED       conductor on housekeeping, sender and receiver a core each
+#   SHARED_NETWORK  conductor on housekeeping, sender and receiver as one
+#                   agent ("[sender, receiver]") on the sender's core
+#   SHARED          conductor, sender and receiver as one agent on the
+#                   sender's core: the media driver's main thread, which runs
+#                   Aeron's first agent itself, with the native resource
+#                   agent's work (name resolution, freeing log buffers) inline
+#   INVOKER         no media driver process: each benchmark client embeds the
+#                   driver (vm.sh client, HARNESS_DRIVER=invoker) and runs its
+#                   own work, its client conductor's and the driver's on its
+#                   one thread, pinned to its app CPU as ever. No agent
+#                   threads to place; the DPDK transport's housekeeping and
+#                   local-I/O threads on the housekeeping CPU, explicitly, as
+#                   no conductor CPU names it
+# A mode Aeron does not know is refused: it would take it as DEDICATED with
+# only a warning.
+threading_env() {
+    local mode=$1 hk=$2 sender=$3 receiver=$4
+    case $mode in
+    DEDICATED)
+        [[ -n $hk && -n $sender && -n $receiver ]] || { echo "AERON_THREADING_MODE=$mode: the layout has no sender and receiver cores" >&2; return 2; }
+        cat <<ENV
+export AERON_THREADING_MODE='DEDICATED'
+export AERON_CONDUCTOR_CPU_AFFINITY='$hk'
+export AERON_SENDER_CPU_AFFINITY='$sender'
+export AERON_RECEIVER_CPU_AFFINITY='$receiver'
+export AERON_SENDER_IDLE_STRATEGY='noop'
+export AERON_RECEIVER_IDLE_STRATEGY='noop'
+ENV
+        ;;
+    SHARED_NETWORK)
+        [[ -n $hk && -n $sender ]] || { echo "AERON_THREADING_MODE=$mode: the layout has no sender core" >&2; return 2; }
+        cat <<ENV
+export AERON_THREADING_MODE='SHARED_NETWORK'
+export AERON_CONDUCTOR_CPU_AFFINITY='$hk'
+export AERON_SENDER_CPU_AFFINITY='$sender'
+export AERON_SHAREDNETWORK_IDLE_STRATEGY='noop'
+ENV
+        ;;
+    SHARED)
+        [[ -n $sender ]] || { echo "AERON_THREADING_MODE=$mode: the layout has no sender core" >&2; return 2; }
+        cat <<ENV
+export AERON_THREADING_MODE='SHARED'
+export AERON_CONDUCTOR_CPU_AFFINITY='$sender'
+export AERON_SHARED_IDLE_STRATEGY='noop'
+ENV
+        ;;
+    INVOKER)
+        [[ -n $hk ]] || { echo "AERON_THREADING_MODE=$mode: the layout has no housekeeping core" >&2; return 2; }
+        cat <<ENV
+export AERON_THREADING_MODE='INVOKER'
+export RUSTERON_DPDK_HOUSEKEEPING_CPU='$hk'
+ENV
+        ;;
+    *)
+        echo "AERON_THREADING_MODE=$mode: DEDICATED, SHARED_NETWORK, SHARED or INVOKER (Aeron would take anything else as DEDICATED)" >&2
+        return 2
+        ;;
+    esac
+}
+
+# setting_cpu <hk|receiver|spare> <threading mode> <housekeeping> <app>
+# <sender> <receiver> <app2>: the CPU a mode's @IRQ= (the data NICs' queue
+# IRQs) or @NAPI_BUSY= (its kthreads) names, from the layout (cpu_layout):
+#   hk        the housekeeping CPU, where every IRQ is otherwise (the baseline)
+#   receiver  the Aeron receiver agent's (threading_env): DEDICATED's receiver
+#             core; SHARED_NETWORK's and SHARED's one network agent, on the
+#             sender's core; INVOKER's, each client's own thread, on its app
+#             CPU. AWS's ENA guidance: interrupts on the application's vCPU
+#   spare     the layout's fifth core, which only the localhost runs and a
+#             second flow use (lab.sh and lib.sh keep both off it under these);
+#             none on a four-core host: 2, saying so
+setting_cpu() {
+    local what=$1 threading=${2:-DEDICATED} hk=$3 app=$4 sender=$5 receiver=$6 app2=${7:-}
+    case $what in
+    hk) echo "$hk" ;;
+    receiver)
+        case $threading in
+        DEDICATED) echo "$receiver" ;;
+        SHARED_NETWORK | SHARED) echo "$sender" ;;
+        INVOKER) echo "$app" ;;
+        *) echo "receiver: AERON_THREADING_MODE $threading: DEDICATED, SHARED_NETWORK, SHARED or INVOKER" >&2; return 2 ;;
+        esac
+        ;;
+    spare)
+        [[ -n $app2 ]] || {
+            echo "spare: no fifth core on this host (its layout $hk $app $sender $receiver: four cores), so no spare one: a host with five cores or more (c7i.4xlarge, c8g.2xlarge and up)" >&2
+            return 2
+        }
+        echo "$app2"
+        ;;
+    *) echo "$what: hk, receiver or spare" >&2; return 2 ;;
+    esac
+}
+
+# diag_spare_cpu <the layout's CPUs>...: the CPU the diagnostics' gap
+# spinner takes (vm.sh diag-start), never one of the layout's: the first core
+# the layout leaves (its first thread), else housekeeping's SMT twin (the
+# first of the layout's CPUs is housekeeping), else none (1): a four-core
+# Graviton has neither, and the spinner on a layout core would take it
+diag_spare_cpu() {
+    local dir=$LAB_SYS_ROOT/devices/system/cpu cpu siblings used=" $* " s part
+    for cpu in $(printf '%s\n' "$dir"/cpu[0-9]* | sed 's/.*cpu//' | sort -n); do
+        [[ -r $dir/cpu$cpu/topology/thread_siblings_list ]] || continue
+        siblings=$(cat "$dir/cpu$cpu/topology/thread_siblings_list")
+        [[ ${siblings%%[,-]*} == "$cpu" && $used != *" $cpu "* ]] && { echo "$cpu"; return 0; }
+    done
+    [[ -n ${1:-} && -r $dir/cpu$1/topology/thread_siblings_list ]] || return 1
+    siblings=$(cat "$dir/cpu$1/topology/thread_siblings_list")
+    for part in ${siblings//,/ }; do
+        for s in $(seq "${part%-*}" "${part#*-}"); do
+            [[ $used != *" $s "* ]] && { echo "$s"; return 0; }
+        done
+    done
+    return 1
+}
+
+# smt_takes_offline <CPU>: 0 when SMT=off takes the CPU offline: a thread
+# of its core other than the first (the only ones the layout uses)
+smt_takes_offline() {
+    local f=$LAB_SYS_ROOT/devices/system/cpu/cpu$1/topology/thread_siblings_list
+    [[ -r $f ]] || return 1
+    local siblings
+    siblings=$(cat "$f")
+    [[ ${siblings%%[,-]*} != "$1" ]]
+}
+
+# kernel_at_least <uname -r> <major> <minor>: whether that kernel release is
+# <major>.<minor> or later (Debian's: 7.2.6+deb13-cloud-amd64)
+kernel_at_least() {
+    [[ $1 =~ ^([0-9]+)\.([0-9]+) ]] || return 1
+    local major=${BASH_REMATCH[1]} minor=${BASH_REMATCH[2]}
+    ((major > $2 || (major == $2 && minor >= $3)))
+}
+
+# napi_defer_args <n>/<ns>: "<n> <ns>", a mode's @NAPI_DEFER= for the data
+# NICs' napi_defer_hard_irqs (empty polls before their IRQ is armed again; the
+# kernel takes at most S32_MAX) and gro_flush_timeout (ns); a slash between,
+# as a comma would split the mode's results.csv rows. 2 for anything else.
+napi_defer_args() {
+    local n ns
+    if [[ $1 =~ ^([0-9]{1,10})/([0-9]{1,18})$ ]]; then
+        n=$((10#${BASH_REMATCH[1]})) ns=$((10#${BASH_REMATCH[2]}))
+        if ((n <= 2147483647)); then
+            echo "$n $ns"
+            return 0
+        fi
+    fi
+    echo "NAPI_DEFER=$1: <n>/<ns>: napi_defer_hard_irqs (0 to 2147483647) and gro_flush_timeout in ns" >&2
+    return 2
+}
+
+# Threaded NAPI busy polling (@NAPI_BUSY=spare, Linux 6.17 and later): each
+# NAPI of the data NICs polled without end by a kernel thread of its own, not
+# woken by its interrupt, the thread pinned to a core no one else uses. The
+# kthread spins its core at 100% for as long as the mode runs. The sysfs
+# `threaded` file takes 0 or 1 only (Linux 7.2), so busy polling is set per
+# NAPI over generic netlink (the netdev family's napi-set, threaded =
+# busy-poll, NETDEV_NAPI_THREADED_BUSY_POLL), with the kernel's own tool,
+# ynl (tools/net/ynl; Documentation/networking/napi.rst, "Threaded NAPI busy
+# polling"). `ynl` is the caller's: vm.sh's runs the one vm.sh build-ynl
+# fetched for the running kernel, as root. Its replies are Python literals
+# (pprint), or JSON with --output-json: ynl_reply reads either.
+
+# ynl_reply <field>: a ynl reply on stdin (a NAPI's attributes, or a dump's
+# list of them), "<ifindex> <id> <threaded> <pid>" a NAPI (- for a field it
+# lacks); with <field>, that field alone
+ynl_reply() {
+    python3 -c '
+import ast, json, sys
+text = sys.stdin.read().strip()
+try:
+    reply = json.loads(text)
+except ValueError:
+    reply = ast.literal_eval(text)
+for napi in reply if isinstance(reply, list) else [reply]:
+    if len(sys.argv) > 1:
+        print(napi.get(sys.argv[1], "-"))
+    else:
+        print(*(napi.get(k, "-") for k in ("ifindex", "id", "threaded", "pid")))
+' "$@"
+}
+
+# napi_list <ifindex>...: "<ifindex> <NAPI id>" a line, every NAPI of those
+# interfaces (napi-get, dumped by ifindex); 1 when a dump fails or an
+# interface has none
+napi_list() {
+    local ix reply rows
+    for ix in "$@"; do
+        reply=$(ynl --dump napi-get --json "{\"ifindex\": $ix}") || { echo "NAPI_BUSY: napi-get dump of ifindex $ix failed: $reply" >&2; return 1; }
+        rows=$(ynl_reply <<<"$reply" | awk -v ix="$ix" '$1 == ix && $2 ~ /^[0-9]+$/ {print $1, $2}')
+        [[ -n $rows ]] || { echo "NAPI_BUSY: no NAPI on ifindex $ix (napi-get: $reply)" >&2; return 1; }
+        echo "$rows"
+    done
+}
+
+# napi_busy_on <CPU> <ifindex>...: every NAPI of those interfaces set to
+# threaded busy-poll, its kthread's pid read back and pinned to <CPU>
+# (taskset), as "napi <id> ifindex <ifindex> pid <pid> cpu <CPU>" a line;
+# 1, saying why, at the first NAPI that fails (refused, a kthread with no
+# pid, a pin refused), its line printed with pid and CPU unknown (?), so the
+# caller turns off every NAPI listed (napi_busy_off)
+napi_busy_on() {
+    local cpu=$1 ix id got threaded pid napis
+    shift
+    napis=$(napi_list "$@") || return 1
+    while read -r ix id; do
+        got=$(ynl --do napi-set --json "{\"id\": $id, \"threaded\": \"busy-poll\"}" 2>&1) ||
+            { echo "NAPI_BUSY: napi-set of NAPI $id (ifindex $ix) to threaded busy-poll failed: $got" >&2; return 1; }
+        read -r threaded pid < <(ynl --do napi-get --json "{\"id\": $id}" | ynl_reply | awk '{print $3, $4}')
+        if [[ $threaded != busy-poll || ! ${pid:-} =~ ^[1-9][0-9]*$ ]]; then
+            echo "napi $id ifindex $ix pid ? cpu ?"
+            echo "NAPI_BUSY: NAPI $id (ifindex $ix) is threaded ${threaded:-?} but has no kthread pid (napi-get: threaded ${threaded:-?})" >&2
+            return 1
+        fi
+        if ! sudo taskset -pc "$cpu" "$pid" >/dev/null 2>&1; then
+            echo "napi $id ifindex $ix pid ? cpu ?"
+            echo "NAPI_BUSY: taskset -pc $cpu $pid (NAPI $id's kthread) failed" >&2
+            return 1
+        fi
+        echo "napi $id ifindex $ix pid $pid cpu $cpu"
+    done <<<"$napis"
+}
+
+# napi_busy_off <NAPI id>...: each back to threaded disabled (interrupt-driven
+# NAPI, softirq); 1 if any refuses, after trying them all
+napi_busy_off() {
+    local id rc=0 got
+    for id in "$@"; do
+        got=$(ynl --do napi-set --json "{\"id\": $id, \"threaded\": \"disabled\"}" 2>&1) ||
+            { echo "NAPI_BUSY: NAPI $id back to threaded disabled failed: $got" >&2; rc=1; }
+    done
+    return $rc
+}
+
+# threading_of <overrides>: the AERON_THREADING_MODE in a mode's @-separated
+# overrides (empty without one); two are refused
+threading_of() {
+    local pair found=
+    local IFS=@
+    for pair in $1; do
+        [[ $pair == AERON_THREADING_MODE=* ]] || continue
+        [[ -z $found ]] || { echo "two AERON_THREADING_MODE overrides in one mode" >&2; return 2; }
+        found=${pair#*=}
+    done
+    echo "$found"
+}
+
+# ena_llq_check <driver log> <driver's memory map> <PCI address>...: whether
+# DPDK's ENA PMD put every port's transmit queues in the device's low-latency
+# queues (LLQ: "Placement policy: Low latency", one line a port; "Regular" is
+# host memory, AWS's "huge performance degradation") and mapped each port's
+# LLQ BAR (BAR 2) write-combining (its resource2_wc in the driver's map;
+# DPDK falls back to the uncached resource2 without it). One line; 1 unless
+# every port has both. On arm64 the mapping is the evidence (x86's PAT table
+# does not exist there; the kernel maps resource2_wc Normal-NC).
+ena_llq_check() {
+    local log=$1 maps=$2 bdf low regular ok=0 wc='' mapped also=''
+    shift 2
+    low=$(grep -c 'Placement policy: Low latency' "$log" 2>/dev/null) || true
+    regular=$(grep -c 'Placement policy: Regular' "$log" 2>/dev/null) || true
+    low=${low:-0} regular=${regular:-0}
+    if ((low < $# || regular > 0)); then ok=1; fi
+    if ((regular > 0)); then also=", $regular Regular"; fi
+    for bdf in "$@"; do
+        mapped=$(grep -F "/$bdf/resource2" "$maps" 2>/dev/null | awk '{print $NF}' | sed 's|.*/||' | sort -u | tr '\n' ' ')
+        mapped=${mapped% }
+        if [[ " $mapped " == *" resource2_wc "* ]]; then
+            wc+=${wc:+, }"$bdf resource2_wc"
+        else
+            wc+=${wc:+, }"$bdf NOT (${mapped:-unmapped})"
+            ok=1
+        fi
+    done
+    echo "llq $low of $# ports Low latency$also; write-combining: $wc"
+    return $ok
+}
+
+# invoker_llq_probe <driver env> <housekeeping CPU> <app CPU> <media driver>
+# <log> <map> <PCI address>...: INVOKER under DPDK on Graviton (vm.sh
+# driver). ena_llq_check reads a driver process's log and memory map, which
+# no client's embedded driver leaves where vm.sh can read them before the
+# client measures, so the bundled driver starts once with the embedded
+# drivers' environment (driver.env, INVOKER with lab.rs embed's settings: the
+# conductor, so the one thread, on the app CPU, its idle strategy noop;
+# started on the housekeeping CPU, as each client), its PMD's lines to <log>
+# and its map to <map>; then it stops (SIGINT, as `stop`), whatever the
+# check found. Same host, NICs, igb_uio, DPDK and environment: the embedded
+# drivers get what it got. 1 if it never starts or the check fails. (ps, not
+# kill -0: the driver runs as root.)
+invoker_llq_probe() {
+    local env=$1 hk=$2 app=$3 bin=$4 log=$5 maps=$6 pid rc=0
+    shift 6
+    # the log and the map are the caller's files: root only runs the driver and reads its map
+    # shellcheck disable=SC2024
+    sudo bash -c ". '$env' && export AERON_CONDUCTOR_CPU_AFFINITY='$app' AERON_SHARED_IDLE_STRATEGY='noop' && exec taskset -c $hk '$bin'" >"$log" 2>&1 &
+    pid=$!
+    for _ in $(seq 120); do
+        grep -q "media driver started" "$log" 2>/dev/null && break
+        ps -p "$pid" >/dev/null || break
+        sleep 0.5
+    done
+    if grep -q "media driver started" "$log" 2>/dev/null; then
+        # shellcheck disable=SC2024
+        sudo cat "/proc/$(pgrep -x media_driver | head -1)/maps" >"$maps" 2>/dev/null || true
+        ena_llq_check "$log" "$maps" "$@" || rc=1
+    else
+        echo "INVOKER's LLQ check: the media driver did not start ($(tail -1 "$log" 2>/dev/null))" >&2
+        rc=1
+    fi
+    sudo pkill -INT -x media_driver 2>/dev/null || true
+    for _ in $(seq 40); do ps -p "$pid" >/dev/null || break; sleep 0.25; done
+    sudo pkill -KILL -x media_driver 2>/dev/null || true
+    wait "$pid" 2>/dev/null
+    return $rc
+}
+
+# iommu_passthrough_ok <PCI address>...: igb_uio gives the device physical
+# addresses, so DMA works only where no IOMMU translates for the device: no
+# IOMMU group (a virtualised instance), or one in passthrough (identity, as
+# boot_args' iommu.passthrough=1 leaves Graviton metal's SMMU). 1, naming the
+# device, otherwise.
+iommu_passthrough_ok() {
+    local bdf group type ok=0
+    for bdf in "$@"; do
+        group=$LAB_SYS_ROOT/bus/pci/devices/$bdf/iommu_group
+        [[ -e $group ]] || continue
+        type=$(cat "$group/type" 2>/dev/null || echo unknown)
+        if [[ $type != identity ]]; then
+            echo "$bdf: IOMMU group $(basename "$(readlink "$group")") translates DMA ($type): igb_uio needs iommu.passthrough=1" >&2
+            ok=1
+        fi
+    done
+    return $ok
+}
+
+# mthp_changes <PMD size in kB>: the transparent hugepage sizes (mTHP, since
+# Linux 6.9; on arm64 also 16-64 KiB contiguous-PTE ones) not at the lab's
+# setting, as "<enabled file> <value>" lines: the PMD size inherits the
+# top-level setting (never, the baseline; @THP= otherwise) and every other
+# size is never, the kernel's defaults, so the top level alone decides, as
+# on x86
+mthp_changes() {
+    local pmd=$1 f size cur want
+    for f in "$LAB_SYS_ROOT"/kernel/mm/transparent_hugepage/hugepages-*kB/enabled; do
+        [[ -e $f ]] || continue
+        size=${f%kB/enabled}
+        size=${size##*hugepages-}
+        cur=$(sed -n 's/.*\[\(.*\)\].*/\1/p' "$f")
+        want=never
+        [[ $size == "$pmd" ]] && want=inherit
+        [[ $cur == "$want" ]] || echo "$f $want"
+    done
+}
+
+# ping_stats: ping -q's summary on stdin as "<min> <avg> <max> <mdev> (ns)
+# <replies>/<sent>"; 1 when nothing came back (no rtt line)
+ping_stats() {
+    awk '/packets transmitted/ {sent = $1; got = $4}
+        /^(rtt|round-trip) / {split($4, v, "/"); line = 1}
+        END {
+            if (!line) exit 1
+            printf "%.0f %.0f %.0f %.0f %d/%d\n", v[1] * 1e6, v[2] * 1e6, v[3] * 1e6, v[4] * 1e6, got, sent
+        }'
+}
+
+# subnet_gateway <address>/<prefix>: the subnet's first address, where AWS's
+# VPC router (and Azure's gateway) answers: the next hop to anything off the
+# subnet, a peer in another zone's subnet or another region's VPC
+subnet_gateway() {
+    python3 -c 'import ipaddress, sys; print(next(ipaddress.ip_network(sys.argv[1], strict=False).hosts()))' "$1"
+}
+
+# policy_routes <address> <prefix> <interface> <table> [<peer subnet>]: the
+# routes `ip route replace` gives a data NIC's own table (vm.sh
+# data_kernel_up): its subnet, and the peer's data subnet through the
+# gateway when the peer is off it (cross-AZ, cross-region; lab.sh writes it
+# to ~/bench/peer_subnet), one a line
+policy_routes() {
+    local ip=$1 prefix=$2 iface=$3 table=$4 peer=${5:-} net
+    net=$(python3 -c 'import ipaddress, sys; print(ipaddress.ip_network(sys.argv[1], strict=False))' "$ip/$prefix")
+    echo "$net dev $iface src $ip table $table"
+    if [[ -n $peer && $peer != "$net" ]]; then
+        echo "$peer via $(subnet_gateway "$ip/$prefix") dev $iface src $ip table $table"
+    fi
+}
+
+# jumbo_env <placement> <kernel|dpdk>: the driver's environment under JUMBO=1
+# (vm.sh appends it; the data NICs' own MTU is vm.sh's): Aeron's MTU, and the
+# DPDK transport's (RUSTERON_DPDK_MAX_AERON_MTU: it sets the port's L3 MTU to
+# that plus 28), the jumbo MTU's less IP, UDP and alignment (modes.sh jumbo_mtus)
+jumbo_env() {
+    local mtus aeron
+    mtus=$(jumbo_mtus "$1")
+    aeron=${mtus#* }
+    echo "export AERON_MTU_LENGTH='$aeron'"
+    if [[ $2 == dpdk ]]; then echo "export RUSTERON_DPDK_MAX_AERON_MTU='$aeron'"; fi
+}
+
+# path_mtu_check <MTU> <local address>... -- <peer address>...: whether
+# packets of <MTU> bytes pass from each local data address to each of the
+# peer's, unfragmented (ping -M do: Don't Fragment, as Aeron's frames; a path
+# that cannot carry them drops them, inter-Region VPC peering above 8500
+# bytes). Each pair retried up to LAB_PMTU_TRIES (20) times a second apart:
+# the peer sets its own MTU at the same time. A line per pair; 1 if any fails.
+path_mtu_check() {
+    local mtu=$1 src peer tries=${LAB_PMTU_TRIES:-20} srcs=() peers=() rc=0 ok
+    shift
+    while (($#)) && [[ $1 != -- ]]; do srcs+=("$1"); shift; done
+    shift
+    peers=("$@")
+    for src in "${srcs[@]}"; do
+        for peer in "${peers[@]}"; do
+            ok=0
+            for _ in $(seq "$tries"); do
+                if ping -M do -s $((mtu - 28)) -c 1 -W 1 -I "$src" "$peer" >/dev/null 2>&1; then ok=1; break; fi
+                sleep 1
+            done
+            if ((ok)); then
+                echo "pmtu $src -> $peer: $mtu bytes pass"
+            else
+                echo "pmtu $src -> $peer: $mtu bytes do not pass (ping -M do -s $((mtu - 28)), $tries tries): the path's MTU is lower"
+                rc=1
+            fi
+        done
+    done
+    return $rc
+}
+
+# effective_mtu <driver env file> <publications' channel parameters> <DPDK
+# holds the NICs: 0|1> [<data NIC MTU>...]: "<link MTU> <Aeron MTU>" a run
+# used: under DPDK the port's L3 MTU (the transport's max Aeron MTU plus 28),
+# else the data NICs' smallest; Aeron's what the publications send at, their
+# channels' mtu (PUB_PARAMS), else the driver's last AERON_MTU_LENGTH
+effective_mtu() {
+    local env=$1 pub=$2 dpdk=$3 aeron link nic
+    shift 3
+    aeron=$(sed -n "s/^export AERON_MTU_LENGTH='\([0-9]*\)'$/\1/p" "$env" | tail -1)
+    if [[ "|$pub|" =~ \|mtu=([0-9]+)\| ]]; then aeron=${BASH_REMATCH[1]}; fi
+    if ((dpdk)); then
+        link=$(sed -n "s/^export RUSTERON_DPDK_MAX_AERON_MTU='\([0-9]*\)'$/\1/p" "$env" | tail -1)
+        link=$((${link:-1408} + 28))
+    else
+        link=
+        for nic in "$@"; do if [[ -z $link ]] || ((nic < link)); then link=$nic; fi; done
+    fi
+    echo "${link:-?} ${aeron:-?}"
+}
+
+# rtt_lost_timeout_us <subscription channel parameters> <base round trip max,
+# us>: how long the round-trip client waits before it counts a ping lost: on
+# an unreliable channel (reliable=false), which never repairs one, 50 ms, or
+# four of the network's own round trips where that is longer (cross-region);
+# 0, never, on a reliable one
+rtt_lost_timeout_us() {
+    [[ "|$1|" == *"|reliable=false|"* ]] || { echo 0; return; }
+    local base=${2:-0}
+    echo $((4 * base > 50000 ? 4 * base : 50000))
+}
+
+# shared_agent_check <threading mode> </proc/<driver pid>> <sender CPU>: the
+# shared modes' one busy agent on the CPU threading_env gave it, read from
+# each thread's allowed CPUs (as vm.sh jitter lists them): SHARED_NETWORK's
+# "[sender, receiver]" (the kernel keeps 15 characters of a name), SHARED's
+# "[conductor, sender, receiver]", else the media driver's main thread, which
+# runs it. 2, saying where it is, when it may run anywhere but that CPU or
+# is not there (vm.sh stops the driver: a run measured elsewhere would be
+# another mode's); 0 under DEDICATED and INVOKER (nothing shared to check)
+shared_agent_check() {
+    local mode=$1 dir=$2 cpu=$3 want t found= cpus
+    case $mode in
+    SHARED_NETWORK) want='[sender, receiv' ;;
+    SHARED) want='[conductor, sen' ;;
+    *) return 0 ;;
+    esac
+    for t in "$dir"/task/*; do
+        [[ $(cat "$t/comm" 2>/dev/null) == "$want"* ]] && { found=$t; break; }
+    done
+    if [[ -z $found && $mode == SHARED && -e $dir/task/${dir##*/} ]]; then found=$dir/task/${dir##*/}; fi
+    [[ -n $found ]] || { echo "$mode: no thread of its shared agent ($want) in the media driver" >&2; return 2; }
+    cpus=$(awk '/^Cpus_allowed_list:/ {print $2}' "$found/status" 2>/dev/null)
+    [[ $cpus == "$cpu" ]] && return 0
+    echo "$mode: its shared agent ($(cat "$found/comm")/${found##*/}) may run on ${cpus:-?}, not on the sender CPU $cpu alone" >&2
+    return 2
+}
+
+# conductor_check </proc/<driver pid>> <CPU>: @CONDUCTOR=own's conductor on
+# the CPU vm.sh gave it (the layout's fifth core) alone, read from its
+# thread's allowed CPUs (as vm.sh jitter lists them): a thread of its own
+# named after Aeron's role (conductor; aeron-md-cnd under Aeron's newer
+# thread names), else the media driver's main thread, which runs the first
+# agent under Aeron's manual main loop (ergon-md-dpdk's driver: the conductor
+# under DEDICATED and SHARED_NETWORK). 2, saying where it may run, otherwise
+# (vm.sh stops the driver: a run measured with it elsewhere would be another
+# mode's)
+conductor_check() {
+    local dir=$1 cpu=$2 t found= what cpus
+    for t in "$dir"/task/*; do
+        [[ $(cat "$t/comm" 2>/dev/null) =~ ^(conductor|aeron-md-cnd)$ ]] && { found=$t what="its own thread"; break; }
+    done
+    if [[ -z $found && -e $dir/task/${dir##*/} ]]; then found=$dir/task/${dir##*/} what="the main thread"; fi
+    [[ -n $found ]] || { echo "CONDUCTOR=own: no media driver threads in $dir" >&2; return 2; }
+    cpus=$(awk '/^Cpus_allowed_list:/ {print $2}' "$found/status" 2>/dev/null)
+    [[ $cpus == "$cpu" ]] && return 0
+    echo "CONDUCTOR=own: the conductor ($(cat "$found/comm" 2>/dev/null)/${found##*/}, $what) may run on ${cpus:-?}, not on the fifth core $cpu alone" >&2
+    return 2
+}
+
+# cnc_identity <cnc.dat>: an embedded driver's name, "<pid>-<start ms>", from
+# Aeron's CnC metadata (aeron_cnc_metadata_t, packed to 4: six int32s, the
+# client liveness timeout, then the start timestamp and pid, int64s); 1
+# without a readable file
+cnc_identity() {
+    python3 -c 'import struct, sys
+d = open(sys.argv[1], "rb").read(48)
+start, pid = struct.unpack_from("<qq", d, 32)
+print(f"{pid}-{start}")' "$1" 2>/dev/null
+}
+
+# Under INVOKER each client embeds its own driver, whose counters start at
+# zero and stay in its CnC file after it exits, until the next client's
+# driver replaces it. vm.sh loss keeps a ledger, one file per embedded driver
+# (named by cnc_identity) holding the last of its loss lines read, and
+# reports their sum: counters that grow across a mode's clients as one
+# driver's would, so a run's growth is still after less before.
+# invoker_ledger_record <ledger dir> <identity> <loss line>
+invoker_ledger_record() {
+    mkdir -p "$1"
+    printf '%s\n' "$3" >"$1/$2"
+}
+
+# invoker_ledger_total <ledger dir>: "invoker-ledger=<drivers>;<key>=<sum>;..."
+# (keys in the order first read; lib.sh loss_row counts a key the line before
+# a run lacks from zero, and drops the marker). Aeron's telemetry's longest
+# cycles and thresholds (aeron_telemetry: *-max-cycle-ns, *-threshold-ns)
+# are the highest of the drivers', not their sum
+invoker_ledger_total() {
+    local f files=()
+    for f in "$1"/*; do [[ -f $f ]] && files+=("$f"); done
+    if ((${#files[@]} == 0)); then echo "invoker-ledger=0"; return; fi
+    awk -v n="${#files[@]}" -F';' '{for (i = 1; i <= NF; i++) if (split($i, kv, "=") == 2) {
+            if (!(kv[1] in sum)) {order[++k] = kv[1]; sum[kv[1]] = kv[2] + 0; continue}
+            if (kv[1] ~ /-(max-cycle|threshold)-ns$/) {if (kv[2] + 0 > sum[kv[1]]) sum[kv[1]] = kv[2] + 0}
+            else sum[kv[1]] += kv[2]}}
+        END {printf "invoker-ledger=%d", n; for (i = 1; i <= k; i++) printf ";%s=%d", order[i], sum[order[i]]; print ""}' "${files[@]}"
+}
+
+# aeron_telemetry: every counter of a driver (`counters ''`: "<value> <type>
+# <label>" a line) on stdin; one "info-<key>=<value>;..." line of Aeron's
+# stall and flow-control telemetry, matched by Aeron 1.53.3's labels exactly
+# (aeron_system_counters.c; the conductor appends ": <threading mode>" to the
+# agents' longest cycles and ": threshold=<duration> <threading mode>" to
+# their cycles over it, aeron_driver_conductor.c), system counters (type 0)
+# only: each agent's longest duty cycle (ns, since the driver started), its
+# cycles over the threshold and the threshold (ns, from the label: vm.sh
+# common_env sets them); the sender's flow-control limits (back-pressure
+# events), status messages sent and received, flow control under and over
+# runs. Nothing printed when none is there (another driver build)
+aeron_telemetry() {
+    awk '
+        BEGIN {
+            n = split("conductor-max-cycle-ns conductor-cycles-over conductor-threshold-ns sender-max-cycle-ns sender-cycles-over sender-threshold-ns receiver-max-cycle-ns receiver-cycles-over receiver-threshold-ns sender-fc-limits sms-sent sms-received fc-under-runs fc-over-runs", keys, " ")
+            exact["Sender flow control limits, i.e. back-pressure events"] = "sender-fc-limits"
+            exact["Status Messages sent"] = "sms-sent"
+            exact["Status Messages received"] = "sms-received"
+            exact["Flow control under runs"] = "fc-under-runs"
+            exact["Flow control over runs"] = "fc-over-runs"
+            split("Conductor Sender Receiver", agent, " ")
+            split("conductor sender receiver", role, " ")
+            unit["ns"] = 1; unit["us"] = 1000; unit["ms"] = 1000000; unit["s"] = 1000000000
+        }
+        # a label may hold any character but the two fields before it
+        $2 != "0" || $1 !~ /^-?[0-9]+$/ {next}
+        {
+            label = $0
+            sub(/^[ \t]*-?[0-9]+[ \t]+[0-9]+[ \t]/, "", label)
+            if (label in exact) {got[exact[label]] = $1; next}
+            for (i = 1; i <= 3; i++) {
+                base = agent[i] " max cycle time doing its work in ns"
+                if (label == base || index(label, base ": ") == 1) got[role[i] "-max-cycle-ns"] = $1
+                base = agent[i] " work cycle exceeded threshold count"
+                if (label == base || index(label, base ": ") == 1) {
+                    got[role[i] "-cycles-over"] = $1
+                    if (match(label, /: threshold=[0-9]+(ns|us|ms|s)( |$)/)) {
+                        t = substr(label, RSTART + 12, RLENGTH - 12)
+                        sub(/ $/, "", t)
+                        u = t
+                        sub(/^[0-9]+/, "", u)
+                        got[role[i] "-threshold-ns"] = sprintf("%d", (t + 0) * unit[u])
+                    }
+                }
+            }
+        }
+        END {
+            for (i = 1; i <= n; i++) if (keys[i] in got) {printf "%sinfo-%s=%s", sep, keys[i], got[keys[i]]; sep = ";"}
+            if (sep != "") print ""
+        }'
+}
+
+# invoker_client_ready <cnc.dat> <ledger dir>: 0 when no CnC file is there or
+# its driver is in the ledger; 1, saying so, when the last client's embedded
+# driver was never read by vm.sh loss (the next client's would delete its
+# counters unread)
+invoker_client_ready() {
+    [[ -e $1 ]] || return 0
+    local id
+    id=$(cnc_identity "$1") || { echo "the last client's embedded driver's CnC file cannot be read" >&2; return 1; }
+    [[ -e $2/$id ]] && return 0
+    echo "the last client's embedded driver (CnC $id) was never read by vm.sh loss: its loss counters would be lost" >&2
+    return 1
+}
+
+# smt_check <uname -m> <smt/control>: whether SMT=off can apply here: x86
+# whose control is on (or already off); arm64 has no SMT, and notsupported,
+# forceoff (the kernel command line) or notimplemented leave nothing to turn
+# off. 2 with why otherwise.
+smt_check() {
+    [[ $1 == x86_64 ]] || { echo "SMT=off: $1 has no SMT (each CPU a core)" >&2; return 2; }
+    case $2 in
+    on | off) return 0 ;;
+    *) echo "SMT=off: smt/control is ${2:-missing}: nothing to turn off" >&2; return 2 ;;
+    esac
+}
+
+# Time on AWS. Debian's EC2 image keeps time with systemd-timesyncd
+# (FallbackNTP=169.254.169.123), which slews the clock by up to some
+# thousands of ppm for minutes after a boot and records nothing: vm.sh
+# bootstrap puts chrony in its place, on the Amazon Time Sync Service (with
+# LAB_PLACEMENT=precision-time on the ENA's PTP hardware clock first, from
+# the boot after build-ptp turns it on), lib.sh waits for it to settle
+# before each state and logs it around every mode. Azure's image keeps its
+# own chrony on the Hyper-V PTP clock (ptp_hyperv).
+
+# chrony_conf <aws|precision-time>: Debian's chrony.conf on stdin as the lab
+# runs it, on stdout: its pool (and any server or peer) commented out, and
+# leapseclist, or Debian 12's leapsectz (the service smears leap seconds,
+# and Debian's own comment says to drop it for such a source), and its
+# makestep (the lab's below); then, between marker lines, AWS's own line
+# for the Amazon Time Sync Service at its link-local address, polled every
+# 16 s, and a step of any offset over 100 us in the first three updates.
+# precision-time (vm.sh phc_setup's, from the next boot): the PHC
+# first (/dev/ptp_ena, vm.sh phc_setup; AWS's line: poll 0, the driver's
+# default dpoll of 0, inside ENA's 125 reads a second, so never under -2),
+# the service a backup, not preferred. Its own output again gives the same
+# (the marked block replaced, nothing commented twice). 2 for another kind.
+chrony_conf() {
+    local kind=$1 block
+    case $kind in
+    aws)
+        block='# The Amazon Time Sync Service at its link-local address, AWS'\''s own line for
+# chrony. It serves leap-smeared time, so no leapseclist (above). Any offset
+# over 100 us stepped in the first three updates, slewed after.
+server 169.254.169.123 prefer iburst minpoll 4 maxpoll 4
+makestep 0.0001 3'
+        ;;
+    precision-time)
+        block='# The ENA'\''s PTP hardware clock on the primary ENI first (/dev/ptp_ena: vm.sh
+# phc_setup), polled every second (the driver'\''s default dpoll, 0: ENA allows
+# 125 reads a second, so never under -2), AWS'\''s own line; the Amazon Time
+# Sync Service a backup, not preferred. It serves leap-smeared time, so no
+# leapseclist (above). Any offset over 100 us stepped in the first three
+# updates, slewed after.
+refclock PHC /dev/ptp_ena poll 0 delay 0.000010 prefer
+server 169.254.169.123 iburst minpoll 4 maxpoll 4
+makestep 0.0001 3'
+        ;;
+    *)
+        echo "chrony_conf: aws or precision-time, not $kind" >&2
+        return 2
+        ;;
+    esac
+    awk '
+        /^# ergon-lab time sync begin/ {skip = 1; next}
+        skip && /^# ergon-lab time sync end/ {skip = 0; next}
+        skip {next}
+        /^(pool|server|peer|refclock|leapseclist|leapsectz|makestep)([ \t]|$)/ {print "#" $0; next}
+        {print}' || return 2
+    printf '# ergon-lab time sync begin (vm.sh bootstrap)\n%s\n# ergon-lab time sync end\n' "$block"
+}
+
+# phc_selected <bound, ns>: `chronyc -c -n sources` on stdin (mode, state,
+# name, stratum, poll, reach, last rx, adjusted offset (s), ...); 0 when the
+# PHC (a reference clock, #, named PHC<n>) is chrony's selected source (*)
+# and its last offset is within the bound; 2 otherwise. A line saying which,
+# for the run's record
+phc_selected() {
+    awk -F, -v bound="$1" '
+        $1 == "#" && $3 ~ /^PHC/ {phc = $3; state = $2; off = $8 * 1e9}
+        $2 == "*" {selected = $3}
+        END {
+            if (phc == "") {print "phc none among chrony'\''s sources"; exit 2}
+            if (state != "*") {printf "phc not selected: chrony'\''s selected source is %s (%s is %s)\n", (selected == "" ? "none" : selected), phc, state; exit 2}
+            if (off > bound + 0 || -off > bound + 0) {printf "phc %s selected, last offset %.0f ns: over %s ns\n", phc, off, bound; exit 2}
+            printf "phc %s selected, last offset %.0f ns (within %s ns)\n", phc, off, bound
+        }'
+}
+
+# phc_udev_rule <PCI address>: /dev/ptp_ena, the name chrony reads the PHC
+# by, for the PTP clock of the primary ENI at that address alone (with the
+# PHC on there only, no data ENI's clock could take the name)
+phc_udev_rule() {
+    echo "SUBSYSTEM==\"ptp\", KERNELS==\"$1\", SYMLINK+=\"ptp_ena\""
+}
+
+# phc_boot_script <PCI address>: what turns the primary ENI's PHC on at each
+# boot, before the network is up. Linux's own ENA driver has the PHC from
+# 6.17 (this kernel, 7.2, included), off unless devlink turns it on:
+# enable_phc, a driverinit parameter, so it takes effect at the reload, and
+# lost at every boot. Fails (set -e) when the device never comes or the
+# clock is not there after
+phc_boot_script() {
+    cat <<SCRIPT
+#!/bin/sh
+# ergon-lab (vm.sh phc_setup): the ENA's PTP hardware clock on the primary
+# ENI, $1, for chrony (/dev/ptp_ena)
+set -e
+for _ in \$(seq 60); do [ -e /sys/bus/pci/devices/$1/net ] && break; sleep 0.5; done
+devlink dev param set pci/$1 name enable_phc value true cmode driverinit
+devlink dev reload pci/$1
+udevadm settle
+test -e /dev/ptp_ena
+SCRIPT
+}
+
+# phc_unit: the systemd unit that runs it at every boot, before the network
+# and chrony
+phc_unit() {
+    cat <<'UNIT'
+[Unit]
+Description=ergon-lab: the ENA's PTP hardware clock on the primary ENI, for chrony
+DefaultDependencies=no
+After=systemd-udev-trigger.service
+Before=network-pre.target chrony.service
+Wants=network-pre.target
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/ergon-lab-phc
+[Install]
+WantedBy=multi-user.target
+UNIT
+}

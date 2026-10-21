@@ -1,0 +1,21 @@
+
+ Summary of events:
+
+ epoll-busy-0 (41297), 135748 events, 41.7%
+
+   syscall            calls  errors  total       min       avg       max       stddev
+                                     (msec)    (msec)    (msec)    (msec)        (%)
+   --------------- --------  ------ -------- --------- --------- ---------     ------
+   epoll_pwait2       62931      0  9656.336     0.000     0.153     0.324      0.06%
+   recvmsg             4955      0    15.423     0.002     0.003     0.072      0.56%
+   sendto                 1      0     0.021     0.021     0.021     0.021      0.00%
+
+
+ uring-napi-1 (41298), 189480 events, 58.3%
+
+   syscall            calls  errors  total       min       avg       max       stddev
+                                     (msec)    (msec)    (msec)    (msec)        (%)
+   --------------- --------  ------ -------- --------- --------- ---------     ------
+   io_uring_enter     94742  84715  9533.353     0.000     0.101     0.163      0.09%
+
+

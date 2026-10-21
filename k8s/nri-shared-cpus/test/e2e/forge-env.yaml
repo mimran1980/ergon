@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Forge pod, env path: a Guaranteed integer-CPU pod that hand-sets the CPU
+# env to claim another pod's exclusive CPU, and sets no opt-in marker. A pod
+# author can write env; env is not a marker. Created while the plugin is down,
+# it must never be widened.
+#
+# 2 is replaced with an exclusive CPU of pod A at apply time.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: forge-env
+  namespace: ergon-e2e
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    ergon.io/shared-cpus: "true"
+  containers:
+    - name: app
+      image: ergon-nri-pin-test:e2e
+      imagePullPolicy: Never
+      command: ["sleep", "infinity"]
+      env:
+        - name: ERGON_ISOLATED_CPUS
+          value: "99"
+        - name: ERGON_SHARED_CPUS
+          value: "2"
+        - name: ERGON_SHARED_MILLICPUS
+          value: "250"
+        - name: ERGON_HELPER_CPUS
+          value: "2"
+      resources:
+        requests:
+          cpu: "1"
+          memory: 32Mi
+        limits:
+          cpu: "1"
+          memory: 32Mi

@@ -1,0 +1,109 @@
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ergon-shared-cpus
+  namespace: ergon-system
+  labels:
+    app: ergon-shared-cpus
+spec:
+  selector:
+    matchLabels:
+      app: ergon-shared-cpus
+  template:
+    metadata:
+      labels:
+        app: ergon-shared-cpus
+    spec:
+      nodeSelector:
+        ergon.io/shared-cpus: "true"
+      tolerations:
+        - operator: Exists
+      priorityClassName: system-node-critical
+      automountServiceAccountToken: false
+      containers:
+        - name: plugin
+          image: ergon-shared-cpus:dev
+          imagePullPolicy: IfNotPresent
+          args: ["--config", "/etc/ergon-shared-cpus/config.yaml"]
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+          ports:
+            - name: metrics
+              containerPort: 9466
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            periodSeconds: 10
+          volumeMounts:
+            - name: nri
+              mountPath: /var/run/nri
+            - name: device-plugins
+              mountPath: /var/lib/kubelet/device-plugins
+            - name: hook-bin
+              mountPath: /opt/ergon/bin
+            - name: config
+              mountPath: /etc/ergon-shared-cpus
+              readOnly: true
+            - name: host-dev
+              mountPath: /host/dev
+              readOnly: true
+            - name: host-cgroup
+              mountPath: /sys/fs/cgroup
+              readOnly: true
+      volumes:
+        - name: nri
+          hostPath:
+            path: /var/run/nri
+            type: Directory
+        - name: device-plugins
+          hostPath:
+            path: /var/lib/kubelet/device-plugins
+            type: Directory
+        - name: hook-bin
+          hostPath:
+            path: /opt/ergon/bin
+            type: DirectoryOrCreate
+        - name: config
+          configMap:
+            name: ergon-shared-cpus
+        # The plugin stats the PHC and PM QoS device nodes to grant them (NRI
+        # AddDevice needs the major/minor). The container's own /dev does not
+        # carry them, so the host's /dev is mounted read-only at /host/dev and
+        # the config points devRoot at it. Granted paths stay /dev/...
+        - name: host-dev
+          hostPath:
+            path: /dev
+            type: Directory
+        # The plugin reads the host cgroup tree. The container's own
+        # /sys/fs/cgroup is this pod's cgroup namespace root, not the node's
+        # hierarchy, so the pod cgroup's hugepage limit and the
+        # cpuset.cpus.exclusive probe cannot be read there. The host's cgroup v2
+        # is mounted read-only at /sys/fs/cgroup — the node's own path, which
+        # config.cgroupRoot names and the createRuntime hook matches against
+        # /proc/<pid>/cgroup — because the plugin never writes this tree from
+        # inside the pod: the cpu-partition writes are the ergon-cpus hook's,
+        # and runc runs that hook on the node against the node's own mount.
+        - name: host-cgroup
+          hostPath:
+            path: /sys/fs/cgroup
+            type: Directory

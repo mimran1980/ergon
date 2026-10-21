@@ -12,6 +12,18 @@ cluster/tests/*.rs	pr	cargo test -p ergo-aeron-cluster
 cluster/benches/*.rs	benchmark	cargo bench -p ergo-aeron-cluster --no-run
 cluster-test-harness/src/*.rs	java-harness	cargo test -p ergo-aeron-cluster-test-harness -- --test-threads=1
 cluster-test-harness/tests/*.rs	java-harness	cargo test -p ergo-aeron-cluster-test-harness -- --test-threads=1
+io/src/driver/*.rs	pr	cargo test -p ergon-io --lib -- --test-threads=1 && cargo test -p ergon-io --doc
+io/src/warn.rs	pr	cargo test -p ergon-io --lib -- --test-threads=1
+io/src/placement.rs	pr	cargo test -p ergon-io --lib -- --test-threads=1
+io/tests/*.rs	pr	cargo test -p ergon-io -- --test-threads=1
+io/benches/src/*.rs	benchmark	cd io/benches && cargo build --release --bins
+io/benches/tests/*.rs	samples	cd io/benches && cargo test
+clock/src/*.rs	pr	cargo test -p ergon-clock --all-features --lib -- --test-threads=1 && cargo test -p ergon-clock --all-features --doc
+clock/tests/*.rs	pr	cargo test -p ergon-clock --all-features -- --test-threads=1
+clock/bench/src/*.rs	pr	cargo test -p ergon-clock-bench -- --test-threads=1
+clock/bench/benches/*.rs	benchmark	cargo bench -p ergon-clock-bench --no-run
+tune/src/*.rs	pr	cargo test -p ergon-tune --all-features --lib -- --test-threads=1 && cargo test -p ergon-tune --all-features --doc
+tune/tests/*.rs	pr	cargo test -p ergon-tune --all-features -- --test-threads=1 && cargo test -p ergon-tune -- --test-threads=1
 samples/exchange-example/src/*.rs	samples	cd samples/exchange-example && cargo test
 samples/exchange-example/tests/*.rs	samples	cd samples/exchange-example && cargo test
 samples/cluster-ha-orderbook/src/*.rs	samples	cd samples/cluster-ha-orderbook && cargo test --features test-harness
@@ -20,3 +32,8 @@ samples/l3-book/tests/*.rs	samples	cd samples/l3-book && cargo test
 samples/l3-book/benches/*.rs	benchmark	cd samples/l3-book && cargo bench --no-run
 samples/sbe-feature-tour/src/*.rs	samples	cd samples/sbe-feature-tour && cargo test
 samples/sbe-feature-tour/tests/*.rs	samples	cd samples/sbe-feature-tour && cargo test
+md-dpdk/tests/*.rs	dpdk	cargo test -p ergon-md-dpdk -- --test-threads=1 && cargo test -p ergon-md-dpdk --features dpdk -- --test-threads=1 && cargo test -p ergon-md-dpdk --features static,dpdk -- --test-threads=1
+md-dpdk/benches/*.rs	benchmark	cargo bench -p ergon-md-dpdk --no-run && cargo bench -p ergon-md-dpdk --features dpdk --no-run
+md-dpdk/harness/src/*.rs	dpdk	cargo test -p ergon-md-dpdk-harness -- --test-threads=1
+md-dpdk/harness/tests/*.rs	dpdk	cargo test -p ergon-md-dpdk-harness -- --test-threads=1
+md-dpdk/device-plugin/src/*.rs	pr	cargo test -p ergon-md-dpdk-device-plugin -- --test-threads=1

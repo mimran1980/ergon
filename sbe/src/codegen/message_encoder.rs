@@ -13,8 +13,8 @@ use crate::ir::{ByteOrder, Presence};
 use crate::structured_ir::*;
 
 use super::conversion_helpers::{
-    ENCODER_RESERVED, FixedArrayTextKind, field_has_conversion_free, fixed_array_text_kind,
-    named_accessor_ident, owner_accessor_names, resolve_field_ident,
+    ENCODER_RESERVED, FixedArrayTextKind, encoder_helper_ident, field_has_conversion_free,
+    fixed_array_text_kind, named_accessor_ident, owner_accessor_names, resolve_field_ident,
 };
 use super::encoded_length;
 use super::field_type::field_type_ident;
@@ -47,16 +47,7 @@ pub(crate) fn generate_message_encoder(
     // Prefer the resolved message block length (includes schema-declared
     // padding via `blockLength="…"`). Fall back to a tight field-span only if
     // resolve left it zero (should not happen for real messages).
-    // Constant fields have zero wire footprint.
-    let computed_block_length = msg
-        .fields
-        .iter()
-        .filter(|f| f.presence != Presence::Constant)
-        .fold(0, |acc, f| {
-            let size = f.field_type.size();
-            acc.max(f.offset + size)
-        });
-    let block_length = msg.block_length.max(computed_block_length);
+    let block_length = msg.block_length.max(fixed_extent(&msg.fields));
 
     #[expect(unused_variables)]
     let header_pascal = to_pascal_case(header_type);
@@ -292,11 +283,12 @@ pub(crate) fn generate_message_encoder(
             quote::quote! {}
         } else {
             quote::quote! {
-                #[doc = " Upper bound of any encoded form of this message (header + body). \
-                         Prefer exact sizing via `Self::compute_length()` / the staged \
-                         `*EncodedLength` builder when the message has groups or var-data; \
-                         a stack `[0u8; Self::MAX_ENCODED_LENGTH]` is fine only when this \
-                         constant is a true fixed upper bound you intend to use."]
+                #[doc = " Size of one encoding that has exactly one entry per group and each \
+                         var-data field at its schema `maxLength` (0 when the schema declares \
+                         none). An upper bound only when the message has no groups and every \
+                         var-data field declares a `maxLength`. Otherwise size exactly with \
+                         `Self::compute_length()` / the staged `*EncodedLength` builder; a \
+                         stack `[0u8; Self::MAX_ENCODED_LENGTH]` is then too small."]
                 pub const MAX_ENCODED_LENGTH: usize = #max_encoded_capped_lit;
                 const _MAX_ENCODED_LEN: () = assert!(Self::MAX_ENCODED_LENGTH >= Self::BLOCK_LENGTH);
             }
@@ -332,7 +324,7 @@ pub(crate) fn generate_message_encoder(
     // The error path is `#[cold] #[inline(never)]` so the hot path is a single
     // `cmp + ja` followed by the same body as the unchecked companion. The
     // compiler keeps the cold `Err` constructor out of the hot icache, and
-    // the branch predictor always predicts not-taken for correctly-sized buffers.
+    // a correctly-sized buffer leaves that branch not-taken on the success path.
     let needed_lit = syn::LitInt::new(&(header_size + block_length).to_string(), span);
     let cold_check = quote::quote! {
         /// Cold error constructor — never inlined into the hot path.
@@ -506,6 +498,71 @@ pub(crate) fn generate_message_encoder(
         });
     }
 
+    // Send helpers: claim → encode → check → commit, over `sbe_rt::Claim`.
+    // `send` takes the encoder already wrapped on the claim and must return
+    // the terminal stage, so only a finished frame can be committed; the
+    // length and header checks live once, in `sbe_rt::send_frame`. A field
+    // or first tail that owns `send` / `send_fixed` keeps its name and the
+    // helper is omitted (`encoder_helper_ident`): the frame still goes out
+    // through `send_frame`.
+    let fixed_name = syn::Ident::new(&format!("{name}FixedFields"), span);
+    if let Some(send_ident) = encoder_helper_ident("send", msg, conversions, domain_types) {
+        let terminal = if is_fixed {
+            quote::quote! { #name_encoder_ident<'b, sbe_rt::HeaderPresent, sbe_rt::FieldsFixed> }
+        } else {
+            let complete_ident = syn::Ident::new(&format!("{name}Complete"), span);
+            quote::quote! { #complete_ident<'b> }
+        };
+        let send_doc = format!(
+            "Encode one `{name}` frame into `claim` and commit it, through \
+             [`sbe_rt::send_frame`]: `encode` gets the encoder wrapped on the \
+             claim and returns the finished frame, which must fill the claim."
+        );
+        let send_doc = crate::codegen::runtime::doc_lines_tokens(&send_doc);
+        impl_consts.extend(quote::quote! {
+            #send_doc
+            #[inline]
+            pub fn #send_ident<C, W>(claim: C, encode: W) -> Result<(), sbe_rt::SendError<C::Error>>
+            where
+                C: sbe_rt::Claim,
+                W: for<'b> FnOnce(#name_encoder_ident<'b>) -> Result<#terminal, sbe_rt::EncodeError>,
+            {
+                sbe_rt::send_frame(claim, &Self::HEADER_TEMPLATE, |buf| {
+                    let enc = #name_encoder_ident::try_wrap_and_apply_header(buf, 0)?;
+                    Ok(encode(enc)?.encoded_length_with_header())
+                })
+            }
+        });
+    }
+    if is_fixed
+        && let Some(send_fixed_ident) =
+            encoder_helper_ident("send_fixed", msg, conversions, domain_types)
+    {
+        let send_fixed_doc = format!(
+            "Encode `fixed` as one `{name}` frame into `claim`, exactly \
+             `ENCODED_LENGTH` bytes, and commit it ([`sbe_rt::send_frame`])."
+        );
+        let send_fixed_doc = crate::codegen::runtime::doc_lines_tokens(&send_fixed_doc);
+        impl_consts.extend(quote::quote! {
+            #send_fixed_doc
+            #[inline]
+            pub fn #send_fixed_ident<C: sbe_rt::Claim>(
+                claim: C,
+                fixed: &#fixed_name,
+            ) -> Result<(), sbe_rt::SendError<C::Error>> {
+                sbe_rt::send_frame(claim, &Self::HEADER_TEMPLATE, |buf| {
+                    // A fixed-only frame is always ENCODED_LENGTH bytes:
+                    // write it only into a claim of that size, and let
+                    // `send_frame` report any other as a length mismatch.
+                    if buf.len() == Self::ENCODED_LENGTH {
+                        let _ = #name_encoder_ident::try_wrap_and_apply_header(buf, 0)?.fixed(fixed);
+                    }
+                    Ok(Self::ENCODED_LENGTH)
+                })
+            }
+        });
+    }
+
     // Opt-in: write null sentinels for all optional fields. Call this after
     // wrap_and_apply_header if you want unset optional fields to carry their
     // schema-defined null value instead of whatever was in the buffer.
@@ -615,35 +672,11 @@ pub(crate) fn generate_message_encoder(
                         {
                             let str_ident = syn::Ident::new(&format!("{method_name}_str"), span);
                             let field_lit = syn::LitStr::new(&f.name, span);
-                            let ascii_check = match kind {
-                                FixedArrayTextKind::Ascii => quote::quote! {
-                                    if !src.is_ascii() {
-                                        return Err(sbe_rt::EncodeError::InvalidAscii {
-                                            field: #field_lit,
-                                        });
-                                    }
-                                },
-                                FixedArrayTextKind::Utf8 => quote::quote! {},
-                            };
+                            let ascii = matches!(kind, FixedArrayTextKind::Ascii);
                             let str_fn = quote::quote! {
                                 #[inline]
                                 pub fn #str_ident(&mut self, src: &str) -> Result<&mut Self, sbe_rt::EncodeError> {
-                                    #ascii_check
-                                    if src.len() > #len_lit {
-                                        return Err(sbe_rt::EncodeError::FixedArrayTooLong {
-                                            field: #field_lit,
-                                            max_length: #len_lit,
-                                            actual: src.len(),
-                                        });
-                                    }
-                                    let mut tmp = [0 as #r_type; #len_lit];
-                                    let bytes = src.as_bytes();
-                                    let mut i = 0usize;
-                                    while i < bytes.len() {
-                                        tmp[i] = bytes[i] as #r_type;
-                                        i += 1;
-                                    }
-                                    Ok(self.#f_ident(tmp))
+                                    Ok(self.#f_ident(sbe_rt::encode_fixed_text(#field_lit, src, #ascii)?))
                                 }
                             };
                             impl_contents.extend(str_fn.clone());
@@ -922,15 +955,11 @@ pub(crate) fn generate_message_encoder(
                 continue;
             }
             let fname_snake = to_snake_case(&f.name);
-            let is_converted = field_has_conversion_free(f, conversions);
-            let setter_ident = {
-                let base = resolve_field_ident(&fname_snake, &None, ENCODER_RESERVED);
-                if is_converted {
-                    syn::Ident::new(&format!("{}_wire", base), span)
-                } else {
-                    base
-                }
-            };
+            // The same resolution the setter's own emission uses: a `*_wire`
+            // name is never renamed against the reserved list.
+            let wire_name =
+                field_has_conversion_free(f, conversions).then(|| format!("{fname_snake}_wire"));
+            let setter_ident = resolve_field_ident(&fname_snake, &wire_name, ENCODER_RESERVED);
             let field_ident = syn::Ident::new(&fname_snake, span);
             if f.presence == crate::Presence::Optional {
                 // Some → write value; None → write exact schema null image so
@@ -995,10 +1024,12 @@ pub(crate) fn generate_message_encoder(
             #fixed_doc_tokens
             // `inline(always)`, not `inline`: T-13 added a null-image `else`
             // arm per optional field, which pushed this body past LLVM's
-            // inline threshold and got the hint declined. Measured on
-            // `ergo_historic/null_option/encode_fixed`: 2.33ns baseline →
-            // 4.28ns (hint declined) → 1.92ns (forced). Re-verify with
-            // `just bench-historic` before weakening this.
+            // inline threshold and got the hint declined, which cost more
+            // than the baseline. The checkable figure is
+            // `ergo_historic/null_option/encode_fixed` in
+            // `sbe/benchmarks/ergo-historic-baseline.env` (2.33 ns); the
+            // gate is `just bench-historic`. Re-run it before weakening
+            // this.
             #[inline(always)]
             #[must_use]
             pub fn fixed(mut self, fixed: &#fixed_name) -> #name_encoder_ident<'a, H, sbe_rt::FieldsFixed> {
@@ -1243,7 +1274,7 @@ pub(crate) fn generate_message_encoder(
             let g_snake = syn::Ident::new(&to_snake_case(&g.name), span);
             let raw_enc_name = to_pascal_case(&g.name);
             let scoped_enc = if multi_message {
-                format!("{}{}", &name, raw_enc_name)
+                format!("{}{}", name, raw_enc_name)
             } else {
                 raw_enc_name
             };
@@ -1385,7 +1416,13 @@ pub(crate) fn generate_message_encoder(
             let vd_snake_unchecked =
                 syn::Ident::new(&format!("{}_unchecked", to_snake_case(&vd.name)), span);
             let vd_snake_with = syn::Ident::new(&format!("{}_with", to_snake_case(&vd.name)), span);
-            let taken = owner_accessor_names(&msg.fields, conversions, &[], core::iter::empty());
+            let taken = owner_accessor_names(
+                &msg.fields,
+                conversions,
+                domain_types,
+                &[],
+                core::iter::empty(),
+            );
             let str_setter = vardata_encode_str_setter(
                 &vd_snake,
                 &vd.name,
@@ -1688,7 +1725,7 @@ pub(crate) fn generate_message_encoder(
         .map(|g| {
             let raw = to_pascal_case(&g.name);
             if multi_message {
-                format!("{}{}", &name, raw)
+                format!("{}{}", name, raw)
             } else {
                 raw
             }

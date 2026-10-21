@@ -106,6 +106,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── 4. Poll egress until all echoes received ─────────────────────────
     let deadline = Instant::now() + Duration::from_secs(15);
     while Instant::now() < deadline && adapter.listener().echo_count < messages.len() {
+        let _ = client.send_keep_alive();
         let n = client.poll_egress(&mut adapter, 10)?;
         client.poll_state_changes()?;
         if n == 0 {

@@ -11,6 +11,6 @@
       "schema_sha256": "0d7d10d85cc94b54a293513a40bd2b075729ee6db1441f5e092573f6929784ad"
     }
   },
-  "tool_version": "1.40.0-SNAPSHOT",
-  "upstream_commit": "44b04492d67aff2cd1fab19da77f365860b1e8c8"
+  "tool_version": "1.40.2",
+  "upstream_commit": "05b076c0c64d7164b56db2f9b5e6ca476ac46072"
 }

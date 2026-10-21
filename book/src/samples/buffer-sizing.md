@@ -1,7 +1,11 @@
 # Buffer Sizing Guide
 
-Every protocol buffer must be sized using the generated EncodedLength API.
-Never guess with `vec![0u8; 4096]`.
+Size buffers with the generated length APIs (`compute_length_with_header()`,
+the staged `*EncodedLength` builders). A `MAX_ENCODED_LENGTH` stack array is
+fine when that constant is a true fixed upper bound — check first: it counts
+one entry per group and only var-data that declares `maxLength`, so multi-entry
+groups need the staged builder. Avoid guess constants such as
+`vec![0u8; 4096]`: they hide size bugs.
 
 **Const-sized messages** — stack array, no heap:
 

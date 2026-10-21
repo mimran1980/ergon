@@ -5,7 +5,7 @@
 //! | API | When to use | Generated decode | Generated encode |
 //! |-----|-------------|------------------|------------------|
 //! | [`GenerationConfig::with_conversion`] | Pluggable adapters; no forced crate dep | `dec.price_as::<T>()?` | `enc.price_from(&t)?` |
-//! | [`GenerationConfig::with_domain_type`] | One canonical app type | `dec.try_price()? -> path::Type` | `enc.try_price(value)?` |
+//! | [`GenerationConfig::with_domain_type`] | One canonical app type | `dec.price()? -> path::Type` | `enc.price(value)?` |
 //!
 //! `with_domain_type` **implies** conversion for that selector. Do **not** also
 //! call `with_conversion` for the same selector.
@@ -129,8 +129,132 @@ pub enum DomainImpl {
     /// You write `impl TryFromSbe<Wire>` / `impl TryToSbe<Wire>` yourself —
     /// e.g. a custom rounding rule, or null/validation behaviour the
     /// built-in impl doesn't match. ergo-sbe still generates the concrete
-    /// `try_price(...)?` / `try_price()?` signatures that call it.
+    /// `price(...)?` / `price()?` signatures that call it.
     Manual,
+}
+
+/// A generated mapping from one SBE enum to an application enum, passed to
+/// [`GenerationConfig::with_enum_mapping`].
+///
+/// Each schema variant maps to the application variant of the same
+/// generated name (`sellShort` → `SellShort`) unless [`Self::rename`] says
+/// otherwise. The generated `TryFromSbe` / `TryToSbe` impls are exhaustive
+/// `match`es over both enums, so a variant either side lacks is a compile
+/// error, not a default.
+///
+/// `NullVal` has no application value and decodes as
+/// `sbe_rt::MappingError::NullEnum`. That includes every discriminant the
+/// schema does not declare: the decoder folds those into `NullVal` before
+/// the mapping sees them, so the mapping cannot tell them apart from the
+/// schema null. With [`GenerationConfig::with_null_as_option`] on the same
+/// enum, both decode as `Ok(None)` instead. A `presence="optional"` field of
+/// the enum needs that option: there `NullVal` means the field is absent, so
+/// a mapping without it is rejected at generate time rather than failing
+/// every valid frame that leaves the field out.
+///
+/// ```rust
+/// use ergo_sbe::EnumMapping;
+///
+/// let side = EnumMapping::new("Side", "crate::order::Side")
+///     .rename("Buy", "Bid")
+///     .rename("Sell", "Ask");
+/// # let _ = side;
+/// ```
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct EnumMapping {
+    pub(crate) sbe_enum: String,
+    pub(crate) rust_type: String,
+    pub(crate) renames: Vec<(String, String)>,
+}
+
+impl EnumMapping {
+    /// Map the schema enum `sbe_enum` (its name in the schema) to the
+    /// application enum at `rust_type`, a path the generated module can
+    /// name.
+    #[must_use]
+    pub fn new(sbe_enum: impl Into<String>, rust_type: impl Into<String>) -> Self {
+        Self {
+            sbe_enum: sbe_enum.into(),
+            rust_type: rust_type.into(),
+            renames: Vec::new(),
+        }
+    }
+
+    /// Map the schema variant `sbe_variant` (its name in the schema) to the
+    /// application variant `rust_variant`. A later rename of the same schema
+    /// variant replaces an earlier one.
+    #[must_use]
+    pub fn rename(
+        mut self,
+        sbe_variant: impl Into<String>,
+        rust_variant: impl Into<String>,
+    ) -> Self {
+        push_rename(&mut self.renames, sbe_variant.into(), rust_variant.into());
+        self
+    }
+}
+
+/// A generated mapping from one SBE composite to an application struct,
+/// passed to [`GenerationConfig::with_composite_mapping`].
+///
+/// Each member fills the struct field of the same generated name
+/// (`minQty` → `min_qty`) unless [`Self::rename`] says otherwise. The
+/// generated `TryFromSbe` builds the struct with a literal and `TryToSbe`
+/// reads every field, so a field either side lacks is a compile error.
+///
+/// | Member | Struct field |
+/// |--------|--------------|
+/// | constant | none: it is not on the wire |
+/// | `presence="optional"` scalar | `Option<T>`; `None` writes the null value |
+/// | enum / composite with its own mapping | that mapping's application type |
+/// | anything else | the generated wire type (`u32`, `[u8; 4]`, `Flags`, …) |
+///
+/// `Some(v)` where `v` is the member's null value would read back as
+/// `None`, so encoding it is `sbe_rt::MappingError::SomeNullValue`.
+///
+/// ```rust
+/// use ergo_sbe::CompositeMapping;
+///
+/// let qty = CompositeMapping::new("OrderQty", "crate::order::Qty")
+///     .rename("mantissa", "units");
+/// # let _ = qty;
+/// ```
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct CompositeMapping {
+    pub(crate) composite: String,
+    pub(crate) rust_type: String,
+    pub(crate) renames: Vec<(String, String)>,
+}
+
+impl CompositeMapping {
+    /// Map the schema composite `composite` (its name in the schema) to the
+    /// application struct at `rust_type`, a path the generated module can
+    /// name.
+    #[must_use]
+    pub fn new(composite: impl Into<String>, rust_type: impl Into<String>) -> Self {
+        Self {
+            composite: composite.into(),
+            rust_type: rust_type.into(),
+            renames: Vec::new(),
+        }
+    }
+
+    /// Fill the struct field `field` from the member `member` (its name in
+    /// the schema). A later rename of the same member replaces an earlier
+    /// one.
+    #[must_use]
+    pub fn rename(mut self, member: impl Into<String>, field: impl Into<String>) -> Self {
+        push_rename(&mut self.renames, member.into(), field.into());
+        self
+    }
+}
+
+fn push_rename(renames: &mut Vec<(String, String)>, from: String, to: String) {
+    if let Some(existing) = renames.iter_mut().find(|(f, _)| *f == from) {
+        existing.1 = to;
+    } else {
+        renames.push((from, to));
+    }
 }
 
 /// Generated-code surface presets.
@@ -404,7 +528,7 @@ pub struct GenerationConfig {
     /// Implicitly enables conversion for the same selector.
     pub(crate) domain_types: Vec<(ConversionSelector, String)>,
     /// Selectors passed to [`Self::with_manual_domain_type`]:
-    /// get the same concrete `try_*` signatures as any other `domain_types`
+    /// get the same concrete domain accessor signatures as any other `domain_types`
     /// entry, but the built-in `TryFromSbe`/`TryToSbe` impl (for `bool` /
     /// `rust_decimal::Decimal` / `chrono::DateTime<Utc>`) is not generated —
     /// the caller supplies it.
@@ -444,6 +568,15 @@ pub struct GenerationConfig {
     /// full schema so it can read every acting version the schema declares.
     /// `None` means encode at the schema version (default).
     pub(crate) encode_version: Option<u16>,
+    /// Generated SBE-enum ↔ application-enum mappings, one per enum
+    /// (last registered wins). Each also registers a domain type.
+    pub(crate) enum_mappings: Vec<EnumMapping>,
+    /// Generated composite ↔ application-struct mappings, one per composite
+    /// (last registered wins). Each also registers a domain type.
+    pub(crate) composite_mappings: Vec<CompositeMapping>,
+    /// Emit a `{Message}Source` trait per message (and `…EntrySource` per
+    /// group) with `encode_from` / `encoded_length_with_header_from`.
+    pub(crate) source_traits: bool,
 }
 
 impl std::fmt::Debug for GenerationConfig {
@@ -468,6 +601,9 @@ impl std::fmt::Debug for GenerationConfig {
             .field("enable_dispatch", &self.enable_dispatch)
             .field("hooks", &self.hooks)
             .field("encode_version", &self.encode_version)
+            .field("enum_mappings", &self.enum_mappings)
+            .field("composite_mappings", &self.composite_mappings)
+            .field("source_traits", &self.source_traits)
             .finish()
     }
 }
@@ -502,6 +638,9 @@ impl GenerationConfig {
             enable_dispatch: true,
             hooks: Hooks::default(),
             encode_version: None,
+            enum_mappings: Vec::new(),
+            composite_mappings: Vec::new(),
+            source_traits: false,
         }
     }
 
@@ -669,7 +808,7 @@ impl GenerationConfig {
     /// # Generated API
     ///
     /// In build.rs: `.with_domain_type(ConversionSelector::named_type("Decimal"), "rust_decimal::Decimal")`
-    /// Application: `enc.try_price(rust_decimal::Decimal::new(12345, 2))?` / `let p = dec.try_price()?`.
+    /// Application: `enc.price(rust_decimal::Decimal::new(12345, 2))?` / `let p = dec.price()?`.
     ///
     /// # Example
     ///
@@ -697,7 +836,7 @@ impl GenerationConfig {
     /// / `impl TryToSbe<Wire>` yourself — e.g. a custom rounding rule, or
     /// null/validation behaviour the built-in impl does not match.
     ///
-    /// ergo-sbe still generates the concrete `try_price(...)?` / `try_price()?`
+    /// ergo-sbe still generates the concrete `price(...)?` / `price()?`
     /// signatures that call those impls. A missing impl fails closed with a
     /// named compile error, and for the three built-ins the generated
     /// accessor's rustdoc carries the exact impl `Generated` would have
@@ -750,6 +889,124 @@ impl GenerationConfig {
         } else {
             self.domain_types.push((sel, ty));
         }
+        self
+    }
+
+    /// Generate the mapping between an SBE enum and an application enum.
+    ///
+    /// Emits `impl TryFromSbe<Side> for app::Side` and `impl TryToSbe<Side>
+    /// for app::Side` as exhaustive `match`es (see [`EnumMapping`] for
+    /// renames), and makes every field of that enum use the application
+    /// type, as [`Self::with_domain_type`] does: `dec.side()?`,
+    /// `enc.side(app::Side::Bid)?`, and the application type in a domain
+    /// DTO (except for an enum named `BooleanType` or with
+    /// `semanticType="Boolean"`, whose DTO field stays `bool`, as it does
+    /// under `with_domain_type`). A constant field of the enum gets the
+    /// domain getter too, beside its `*_wire` getter. Both impls use
+    /// `sbe_rt::MappingError`, which converts into `sbe_rt::EncodeError`, so
+    /// `enc.side(v)?` works in an encode closure. Wire bytes are unchanged.
+    ///
+    /// **Null and unknown values.** `NullVal` decodes as
+    /// `Err(MappingError::NullEnum)`, never as some default variant. The
+    /// decoder folds every discriminant the schema does not declare into
+    /// `NullVal`, so an unknown value is the same error: the mapping cannot
+    /// recover it, and only the decoder's `raw_<field>()` still reads the
+    /// wire discriminant. With [`Self::with_null_as_option`] on the enum,
+    /// both decode as `Ok(None)`. A `presence="optional"` field of the enum
+    /// requires that option, since its `NullVal` means absent, not invalid.
+    ///
+    /// The application enum must be fieldless and exhaustively matchable
+    /// from the generated module (not `#[non_exhaustive]` in another
+    /// crate). A later mapping for the same enum replaces an earlier one.
+    /// Mismatches the schema can reveal — an unknown enum or variant, two
+    /// variants mapped to one, an optional field of the enum without
+    /// `with_null_as_option` — are [`crate::GenerateError::InvalidConfiguration`].
+    ///
+    /// ```rust
+    /// use ergo_sbe::{EnumMapping, GenerationConfig};
+    ///
+    /// let config = GenerationConfig::new("orders").with_enum_mapping(
+    ///     EnumMapping::new("Side", "crate::order::Side").rename("Buy", "Bid"),
+    /// );
+    /// # let _ = config;
+    /// ```
+    #[must_use]
+    pub fn with_enum_mapping(mut self, mapping: EnumMapping) -> Self {
+        let selector = ConversionSelector::named_type(mapping.sbe_enum.clone());
+        let rust_type = mapping.rust_type.clone();
+        self.enum_mappings
+            .retain(|m| m.sbe_enum != mapping.sbe_enum);
+        self.enum_mappings.push(mapping);
+        self.apply_domain_type(selector, rust_type, DomainImpl::Generated)
+    }
+
+    /// Generate the mapping between an SBE composite and an application
+    /// struct, member by member.
+    ///
+    /// Emits `impl TryFromSbe<Leg> for app::Leg` (a struct literal) and
+    /// `impl TryToSbe<Leg> for app::Leg` (the composite's `new`), and makes
+    /// every field of that composite use the application type, as
+    /// [`Self::with_domain_type`] does. Constant members are skipped,
+    /// optional scalar members are `Option`, and a member whose enum or
+    /// composite has its own mapping uses that mapping's type; see
+    /// [`CompositeMapping`]. Both impls use `sbe_rt::MappingError`. Wire
+    /// bytes are unchanged.
+    ///
+    /// A later mapping for the same composite replaces an earlier one. An
+    /// unknown composite or member, a rename of a constant member, or two
+    /// members filling one field are
+    /// [`crate::GenerateError::InvalidConfiguration`].
+    ///
+    /// ```rust
+    /// use ergo_sbe::{CompositeMapping, GenerationConfig};
+    ///
+    /// let config = GenerationConfig::new("orders").with_composite_mapping(
+    ///     CompositeMapping::new("Leg", "crate::order::Leg").rename("qty", "quantity"),
+    /// );
+    /// # let _ = config;
+    /// ```
+    #[must_use]
+    pub fn with_composite_mapping(mut self, mapping: CompositeMapping) -> Self {
+        let selector = ConversionSelector::named_type(mapping.composite.clone());
+        let rust_type = mapping.rust_type.clone();
+        self.composite_mappings
+            .retain(|m| m.composite != mapping.composite);
+        self.composite_mappings.push(mapping);
+        self.apply_domain_type(selector, rust_type, DomainImpl::Generated)
+    }
+
+    /// Generate a `{Message}Source` trait per message, so an application
+    /// type can be encoded directly, without a DTO and without allocating.
+    ///
+    /// The trait has one getter per field: a fixed field returns the type
+    /// its `*FixedFields` field has (`Option<T>` for an optional one) or
+    /// its domain type when one is configured; a repeating group returns
+    /// `impl ExactSizeIterator<Item = impl …EntrySource>`; var-data returns
+    /// `&[u8]`. The encoder gains `encode_from(&src)`, which writes every
+    /// field in wire order and returns the terminal stage, so it composes
+    /// with `send`:
+    ///
+    /// ```text
+    /// let len = OrderEncoder::encoded_length_with_header_from(&order)?;
+    /// OrderEncoder::send(publication.try_claim(len)?, |enc| enc.encode_from(&order))?;
+    /// ```
+    ///
+    /// An iterator whose `len()` differs from what it yields is
+    /// `GroupCountMismatch` / `GroupFull`, as with a hand-written group.
+    /// `Some` of an optional field's null value (NaN for a float without
+    /// another `nullValue`), which would read back as `None`, is
+    /// `EncodeError::SomeNullValue`; a value its domain conversion refuses is
+    /// `EncodeError::Conversion`. Both carry the field's path, with the
+    /// entry index in each group on the way (`sbe_rt::FieldPath`).
+    /// A message whose own field, or first group or var-data, is named
+    /// `encode_from` or `encoded_length_with_header_from` keeps that
+    /// accessor unchanged and has no helper of that name (both would be
+    /// methods on the encoder).
+    /// Cannot be combined with an [`Self::with_encode_version`] below the
+    /// schema version.
+    #[must_use]
+    pub fn with_source_traits(mut self, enable: bool) -> Self {
+        self.source_traits = enable;
         self
     }
 
@@ -1061,7 +1318,10 @@ fn is_rust_keyword_or_reserved(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{ConversionSelector, DomainVarData, GenerationConfig, GenerationProfile};
+    use super::{
+        CompositeMapping, ConversionSelector, DomainVarData, EnumMapping, GenerationConfig,
+        GenerationProfile,
+    };
 
     #[test]
     fn default_config_is_clean() -> Result<(), Box<dyn std::error::Error>> {
@@ -1221,6 +1481,43 @@ mod tests {
         let bytes = GenerationConfig::new("m").with_domain_objects(DomainVarData::Bytes);
         assert!(bytes.domain_objects_enabled());
         assert_eq!(bytes.domain_var_data, DomainVarData::Bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn mappings_register_their_domain_type_and_last_one_wins()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let config = GenerationConfig::new("m")
+            .with_enum_mapping(EnumMapping::new("Side", "a::Side").rename("Buy", "Bid"))
+            .with_enum_mapping(
+                EnumMapping::new("Side", "b::Side")
+                    .rename("Buy", "Bid")
+                    .rename("Buy", "Long"),
+            )
+            .with_composite_mapping(CompositeMapping::new("Leg", "b::Leg").rename("qty", "n"));
+        assert_eq!(config.enum_mappings.len(), 1);
+        assert_eq!(config.enum_mappings[0].rust_type, "b::Side");
+        assert_eq!(
+            config.enum_mappings[0].renames,
+            vec![("Buy".to_string(), "Long".to_string())]
+        );
+        assert_eq!(
+            config.domain_types,
+            vec![
+                (
+                    ConversionSelector::named_type("Side"),
+                    "b::Side".to_string()
+                ),
+                (ConversionSelector::named_type("Leg"), "b::Leg".to_string()),
+            ]
+        );
+        assert!(config.has_conversions());
+        assert!(!config.source_traits);
+        assert!(
+            GenerationConfig::new("m")
+                .with_source_traits(true)
+                .source_traits
+        );
         Ok(())
     }
 

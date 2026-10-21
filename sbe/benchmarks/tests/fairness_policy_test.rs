@@ -19,10 +19,29 @@ fn function_source<'a>(source: &'a str, name: &str) -> Option<&'a str> {
     let signature = format!("fn {name}(");
     let start = source.find(&signature)?;
     let rest = &source[start..];
-    let end = rest[signature.len()..]
-        .find("\nfn ")
-        .map_or(rest.len(), |offset| signature.len() + offset);
+    let tail = &rest[signature.len()..];
+    let mut end = rest.len();
+    for marker in ["\nfn ", "\npub fn ", "\npub(crate) fn ", "\npub unsafe fn "] {
+        if let Some(offset) = tail.find(marker) {
+            end = end.min(signature.len() + offset);
+        }
+    }
     Some(&rest[..end])
+}
+
+/// A gated function's own body must assert. An assert earlier in the file,
+/// before the first timed case, does not count.
+fn gated_function_preflight(source: &str, name: &str) -> Result<(), String> {
+    let body = function_source(source, name).ok_or_else(|| format!("{name} missing"))?;
+    if !body.contains("assert_eq!") {
+        return Err(format!(
+            "{name} has no assert_eq! inside the function; a file-level assert is not enough"
+        ));
+    }
+    if !body.contains("BATCH_SIZE") {
+        return Err(format!("{name} does not tie its preflight to BATCH_SIZE"));
+    }
+    Ok(())
 }
 
 fn get_source(source: &'static str, fn_name: &str) -> Result<&'static str, String> {
@@ -60,6 +79,124 @@ fn maintained_bench_sources_have_a_correctness_preflight() -> Result<(), Box<dyn
         );
     }
     Ok(())
+}
+
+#[test]
+fn gated_throughput_functions_assert_inside_the_function() -> Result<(), Box<dyn std::error::Error>>
+{
+    for name in ["bench_encode_throughput", "bench_throughput_batch"] {
+        gated_function_preflight(PERF_PARITY, name)?;
+    }
+    // A file-level assert does not cover a gated function that has none.
+    let file_level_only = "\nfn setup() {\n    assert_eq!(1, 1);\n}\nfn bench_encode_throughput() {\n    let _ = BATCH_SIZE;\n}\n";
+    assert!(
+        gated_function_preflight(file_level_only, "bench_encode_throughput").is_err(),
+        "a file-level assert must not satisfy the per-function check"
+    );
+    let real =
+        function_source(PERF_PARITY, "bench_encode_throughput").ok_or("bench_encode_throughput")?;
+    let stripped = format!(
+        "\nfn setup() {{ assert_eq!(1, 1); }}\n{}\nfn after() {{}}\n",
+        real.replace("assert_eq!", "let _kept = ")
+    );
+    assert!(
+        gated_function_preflight(&stripped, "bench_encode_throughput").is_err(),
+        "removing the assert from bench_encode_throughput must fail the policy"
+    );
+    Ok(())
+}
+
+#[test]
+fn throughput_preflight_matches_bytes_and_batch_totals() {
+    use ergo_sbe_benchmarks::{
+        THROUGHPUT_SLOT, sample_decode_throughput, sample_encode_throughput,
+    };
+
+    let encoded = sample_encode_throughput(10_000);
+    assert_eq!(
+        encoded.one_year,
+        u64::from(ergo_sbe_benchmarks::THROUGHPUT_YEAR)
+    );
+    assert_eq!(encoded.one_ergo, encoded.one_tool);
+    assert_eq!(encoded.batch_ergo, encoded.batch_tool);
+    assert_eq!(
+        &encoded.batch_ergo[..THROUGHPUT_SLOT],
+        &encoded.one_ergo[..]
+    );
+    assert_eq!(encoded.year_total, 10_000 * encoded.one_year);
+    assert_eq!(encoded.batch_ergo.len(), 10_000 * THROUGHPUT_SLOT);
+
+    let baseline = include_bytes!("../benches/fixtures/car_example_baseline_data.sbe");
+    let msg_len = baseline.len();
+    let mut buf = vec![0u8; 10_000 * msg_len];
+    for chunk in buf.chunks_mut(msg_len) {
+        chunk.copy_from_slice(baseline);
+    }
+    let block_length = u16::from_le_bytes([baseline[0], baseline[1]]);
+    let version = u16::from_le_bytes([baseline[6], baseline[7]]);
+    let decoded = sample_decode_throughput(
+        &buf,
+        msg_len,
+        10_000,
+        usize::from(block_length),
+        version,
+        block_length,
+        version,
+    );
+    assert_eq!(&buf[..msg_len], &baseline[..]);
+    assert_eq!(decoded.ergo_serial, decoded.tool_serial);
+    assert_eq!(decoded.ergo_year, decoded.tool_year);
+    assert_eq!(decoded.ergo_serial, 10_000 * decoded.one_serial);
+    assert_eq!(decoded.ergo_year, 10_000 * decoded.one_year);
+}
+
+#[test]
+#[should_panic(expected = "a zero-length message would never advance")]
+fn decode_preflight_rejects_zero_stride() {
+    let baseline = include_bytes!("../benches/fixtures/car_example_baseline_data.sbe");
+    let block_length = u16::from_le_bytes([baseline[0], baseline[1]]);
+    let version = u16::from_le_bytes([baseline[6], baseline[7]]);
+    // The backing frame is complete even before the fix, so this negative
+    // test never attempts an out-of-bounds read on the unsound implementation.
+    ergo_sbe_benchmarks::sample_decode_throughput(
+        baseline,
+        0,
+        1,
+        usize::from(block_length),
+        version,
+        block_length,
+        version,
+    );
+}
+
+#[test]
+fn decode_preflight_rejects_missing_or_truncated_frames() {
+    use ergo_sbe_benchmarks::sample_decode_throughput;
+
+    let baseline = include_bytes!("../benches/fixtures/car_example_baseline_data.sbe");
+    let block_length = u16::from_le_bytes([baseline[0], baseline[1]]);
+    let version = u16::from_le_bytes([baseline[6], baseline[7]]);
+    for (buf, stride, count) in [
+        (&[][..], baseline.len(), 0),
+        (&baseline[..8], baseline.len(), 1),
+        (&baseline[..], baseline.len(), 2),
+        (&baseline[..], usize::MAX, 2),
+    ] {
+        assert!(
+            std::panic::catch_unwind(|| {
+                sample_decode_throughput(
+                    buf,
+                    stride,
+                    count,
+                    usize::from(block_length),
+                    version,
+                    block_length,
+                    version,
+                )
+            })
+            .is_err()
+        );
+    }
 }
 
 #[test]
@@ -117,6 +254,41 @@ fn composite_decode_streams_equal_fields_from_equal_message_offsets()
             "{label} composite arm must observe the same two-field checksum"
         );
     }
+
+    Ok(())
+}
+
+#[test]
+fn entry_point_wrap_pairs_zero_check_wraps_with_the_extent_proved_untimed()
+-> Result<(), Box<dyn std::error::Error>> {
+    // Equal work, per the keep-alive rule. sbe-tool's `wrap` only stores
+    // buffer/offset/block-length/version; ergon's bare `wrap` proves the
+    // version-aware fixed extent on every call. Timing the validating
+    // constructor against the unvalidating one charges ergon for a bounds
+    // proof its reference never performs, so the timed region must use the
+    // unchecked constructor — with the extent proven once, outside the
+    // measurement.
+    let source = get_source(PERF_PARITY, "bench_decode_entry_point")?;
+    let ergo = timed_arm_body(source, "ergo-sbe_wrap").ok_or("missing Ergo entry-point arm")?;
+    let tool = timed_arm_body(source, "sbe-tool_wrap").ok_or("missing sbe-tool entry-point arm")?;
+
+    assert!(
+        source.contains("assert_baseline_wrap_extent(BASELINE, 0, bl_e, ver_e)"),
+        "entry-point decode must prove the baseline extent in an untimed preflight"
+    );
+    assert!(
+        ergo.contains("CarDecoder::wrap_unchecked(black_box(BASELINE), 0, bl_e, ver_e)"),
+        "Ergo entry-point arm must use the unchecked constructor that matches \
+         sbe-tool's zero-check wrap"
+    );
+    assert!(
+        !strip_line_comments(ergo).contains("CarDecoder::wrap("),
+        "a validating wrap in the timed region would not be equal work"
+    );
+    assert!(
+        tool.contains("sbe_tool_car_body_decoder(black_box(BASELINE), 0, bl, ver)"),
+        "sbe-tool entry-point arm must wrap the same baseline"
+    );
 
     Ok(())
 }
@@ -287,6 +459,68 @@ fn strip_line_comments(src: &str) -> String {
         .join("\n")
 }
 
+const BENCH_LIB: &str = include_str!("../src/lib.rs");
+
+fn helper_names(arm: &str) -> Vec<String> {
+    let code = strip_line_comments(arm);
+    let bytes = code.as_bytes();
+    let mut names = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_alphabetic() || bytes[i] == b'_' {
+            let start = i;
+            i += 1;
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+            if i < bytes.len() && bytes[i] == b'(' {
+                let name = &code[start..i];
+                if name.starts_with("throughput_") || name.starts_with("encode_scalar_bodies_") {
+                    names.push(name.to_string());
+                }
+            }
+        } else {
+            i += 1;
+        }
+    }
+    names
+}
+
+/// Inspect direct encoding work and the known codec helpers an arm calls.
+/// Missing helpers must fail rather than silently evade the header policy.
+fn encoding_work(source: &str, arm: &str) -> Result<String, String> {
+    let mut work = arm.to_string();
+    for name in helper_names(arm) {
+        let helper_source = if name.starts_with("throughput_") {
+            BENCH_LIB
+        } else {
+            source
+        };
+        let helper = function_source(helper_source, &name)
+            .ok_or_else(|| format!("encoding helper {name} missing"))?;
+        work.push_str(helper);
+    }
+    Ok(work)
+}
+
+#[test]
+fn scalar_helper_header_work_cannot_evade_policy() -> Result<(), Box<dyn std::error::Error>> {
+    let arm = "unsafe { encode_scalar_bodies_ergo(frames, serial, year) };";
+    let work = encoding_work(PERF_PARITY, arm)?;
+    assert!(arm_is_body_only_encode(&work));
+    assert!(!arm_writes_message_header(&work));
+    let changed = PERF_PARITY.replacen(
+        "CarEncoder::wrap_unchecked(frame, 0)",
+        "CarEncoder::wrap_and_apply_header_unchecked(frame, 0)",
+        1,
+    );
+    let work = encoding_work(&changed, arm)?;
+    assert!(arm_writes_message_header(&work));
+    assert!(!arm_is_body_only_encode(&work));
+    assert!(encoding_work("", arm).is_err());
+    Ok(())
+}
+
 fn arm_writes_message_header(arm: &str) -> bool {
     // Ignore // comments — body-only arms may mention header(0) in notes.
     let code = strip_line_comments(arm);
@@ -389,8 +623,10 @@ fn encode_parity_arms_do_not_mix_header_writes() -> Result<(), Box<dyn std::erro
             .ok_or_else(|| format!("{fn_name}/{ergo_label}: timed arm not found"))?;
         let tool = timed_arm_body(fn_src, tool_label)
             .ok_or_else(|| format!("{fn_name}/{tool_label}: timed arm not found"))?;
-        let ergo_hdr = arm_writes_message_header(ergo);
-        let tool_hdr = arm_writes_message_header(tool);
+        let ergo = encoding_work(source, ergo)?;
+        let tool = encoding_work(source, tool)?;
+        let ergo_hdr = arm_writes_message_header(&ergo);
+        let tool_hdr = arm_writes_message_header(&tool);
         match *mode {
             "header" => {
                 assert!(
@@ -407,7 +643,7 @@ fn encode_parity_arms_do_not_mix_header_writes() -> Result<(), Box<dyn std::erro
             }
             "body" => {
                 assert!(
-                    !ergo_hdr && arm_is_body_only_encode(ergo),
+                    !ergo_hdr && arm_is_body_only_encode(&ergo),
                     "{fn_name}/{ergo_label} must be body-only (wrap without header write)"
                 );
                 assert!(
@@ -423,6 +659,127 @@ fn encode_parity_arms_do_not_mix_header_writes() -> Result<(), Box<dyn std::erro
             "{fn_name}: mixed header work — {ergo_label} header={ergo_hdr}, \
              {tool_label} header={tool_hdr}. Both arms must write the MessageHeader \
              or both must skip it."
+        );
+    }
+    Ok(())
+}
+
+/// Timed encode arms must not re-prove the buffer extent every iteration.
+///
+/// `buf[off..off + slot]` is a safe slice index, so rustc emits a bounds check
+/// on every iteration — and it does not fuse the overflow check identically in
+/// the two arms. On aarch64 (2026-10-20) it compiled the sbe-tool arm's check
+/// as `adds`+`b.hs` and the ergon arm's as `add`+`cmp`+`b.lo`: one extra
+/// instruction per iteration, which measured as a 4.6% wall-clock gap on
+/// `cluster_encode_session_keep_alive` even though the two hot loops are
+/// instruction-identical once the check is excluded. That is harness work, not
+/// codec work, and it must not be asymmetric. The extent is proved by the
+/// allocation (`BATCH_SIZE * slot`) and the parity assert in the gated
+/// function; both arms index through `slot_slice`, which does not check.
+#[test]
+fn encode_arms_index_the_buffer_without_a_per_iteration_bounds_check()
+-> Result<(), Box<dyn std::error::Error>> {
+    // (source, function, ergo_label, tool_label)
+    let pairs: &[(&str, &str, &str, &str)] = &[
+        (
+            CLUSTER_CODEC,
+            "bench_encode_msg_header_ergo",
+            "ergo-sbe",
+            "sbe-tool",
+        ),
+        (
+            CLUSTER_CODEC,
+            "bench_encode_keep_alive_ergo",
+            "ergo-sbe",
+            "sbe-tool",
+        ),
+        (
+            CLUSTER_CODEC,
+            "bench_claim_shaped_write",
+            "ergo-sbe",
+            "sbe-tool",
+        ),
+        (
+            PERF_PARITY,
+            "bench_encode_throughput",
+            "ergo-sbe",
+            "sbe-tool",
+        ),
+    ];
+
+    for (source, fn_name, ergo_label, tool_label) in pairs {
+        let fn_src =
+            function_source(source, fn_name).ok_or_else(|| format!("{fn_name}: not found"))?;
+        for (label, arm_label) in [("ergo", ergo_label), ("sbe-tool", tool_label)] {
+            let arm = timed_arm_body(fn_src, arm_label)
+                .ok_or_else(|| format!("{fn_name}/{arm_label}: timed arm not found"))?;
+            let code = strip_line_comments(arm);
+            for (bad, why) in [
+                (
+                    "buf[off",
+                    "a safe `buf[off..` index re-proves the buffer extent every iteration",
+                ),
+                (
+                    "slot[",
+                    "a safe `slot[..` / `slot[..]` index re-proves the buffer extent every iteration",
+                ),
+            ] {
+                assert!(
+                    !code.contains(bad),
+                    "{fn_name}/{label} {why}. That bounds check is unequal work between \
+                     the arms (rustc does not fuse it the same way twice), so the ratio \
+                     would measure the harness. Index through `slot_slice` instead — the \
+                     extent is proved once, outside the timed region."
+                );
+            }
+            assert!(
+                code.contains("slot_slice("),
+                "{fn_name}/{label} must index the buffer through `slot_slice`, which \
+                 both arms share so the timed loops retire the same instructions"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// A/A controls must run identical work in both arms.
+///
+/// An A/A control is the harness's null distribution: two arms running the same
+/// codec so their ratio measures placement and timing sensitivity rather than
+/// codec work. If the arms differ in any way, the control stops being a null
+/// and starts measuring whatever the difference is — which would let a real
+/// ceiling breach be dismissed as "noise". Compare the arms after stripping
+/// comments, whitespace and the arm label itself; nothing else may differ.
+#[test]
+fn aa_control_arms_run_identical_work() -> Result<(), Box<dyn std::error::Error>> {
+    // (source, function)
+    let controls: &[(&str, &str)] = &[
+        (CLUSTER_CODEC, "bench_aa_control_keep_alive"),
+        (CLUSTER_CODEC, "bench_aa_control_claim_shaped"),
+        (PERF_PARITY, "bench_aa_control_encode_throughput"),
+    ];
+
+    for (source, fn_name) in controls {
+        let fn_src =
+            function_source(source, fn_name).ok_or_else(|| format!("{fn_name}: not found"))?;
+        let arm_a = timed_arm_body(fn_src, "arm_a")
+            .ok_or_else(|| format!("{fn_name}/arm_a: timed arm not found"))?;
+        let arm_b = timed_arm_body(fn_src, "arm_b")
+            .ok_or_else(|| format!("{fn_name}/arm_b: timed arm not found"))?;
+
+        let normalise = |src: &str| -> String {
+            let code = strip_line_comments(src)
+                .replace("arm_a", "ARM")
+                .replace("arm_b", "ARM");
+            code.chars().filter(|c| !c.is_whitespace()).collect()
+        };
+        assert_eq!(
+            normalise(arm_a),
+            normalise(arm_b),
+            "{fn_name}: the A/A control's two arms differ. An A/A control is only a \
+             null when both arms run identical work; any difference makes the ratio \
+             measure that difference, and a ceiling breach could then be waved away \
+             as noise. Keep the two bodies identical."
         );
     }
     Ok(())
@@ -511,13 +868,12 @@ fn group_with_data_timed_arms_both_read_entry_fields_and_var_data()
 #[test]
 fn optional_enum_nullify_arms_make_the_same_values_opaque() -> Result<(), Box<dyn std::error::Error>>
 {
-    // Both codecs compile this scenario to the same three member loads, so the
-    // pair is a near-tie decided by what the harness adds around them. Ergon's
-    // arm once black-boxed its message offset while sbe-tool's passed a literal
-    // body offset: ergon alone paid a per-iteration stack store/reload, and
-    // code placement then decided the LTO verdict (a crate version bump with no
-    // code change moved the ratio from 0.77 to 1.01). Every value one arm makes
-    // opaque, the other must too.
+    // Both codecs compile one message to the same three member loads. A single
+    // running total makes those loads a latency chain, which is not the
+    // throughput the row gates: each arm keeps four independent totals and
+    // calls the same per-message fold. Ergon's arm once black-boxed its
+    // message offset while sbe-tool's passed a literal body offset. Every
+    // value one arm makes opaque, the other must too.
     let source = get_source(PERF_PARITY_EXTENDED, "bench_optional_enum_nullify")?;
     let ergo = strip_line_comments(
         timed_arm_body(source, "ergo-sbe").ok_or("missing ergo optional-enum-nullify arm")?,
@@ -543,12 +899,131 @@ fn optional_enum_nullify_arms_make_the_same_values_opaque() -> Result<(), Box<dy
                 "{label} optional-enum-nullify arm must read {member} exactly once per message"
             );
         }
+        assert_eq!(
+            arm.matches(".wrapping_add(fold_message(encoded").count(),
+            4,
+            "{label} optional-enum-nullify arm must keep four independent totals"
+        );
+        assert!(
+            arm.contains("for _ in 0..(AMP / INDEPENDENT_SUMS)"),
+            "{label} optional-enum-nullify amplification must be split across the independent totals"
+        );
+        assert_eq!(
+            arm.matches("black_box(s0.wrapping_add(s1).wrapping_add(s2).wrapping_add(s3))")
+                .count(),
+            1,
+            "{label} must observe every independent total"
+        );
     }
+    assert!(
+        PERF_PARITY_EXTENDED.contains("const INDEPENDENT_SUMS: usize = 4;"),
+        "optional-enum-nullify independent-total count drifted from the four folds"
+    );
     assert_eq!(
         ergo.matches("black_box(").count(),
         tool.matches("black_box(").count(),
         "optional-enum-nullify arms must make the same values opaque: a black_box on one \
          arm's offset or header field is harness work the other arm never pays"
     );
+    Ok(())
+}
+
+/// `fn bench_*` names in a source, in order.
+fn bench_function_names(source: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut rest = source;
+    while let Some(i) = rest.find("\nfn bench_") {
+        rest = &rest[i + 1..];
+        let end = rest.find('(').unwrap_or(rest.len());
+        if let Some(name) = rest[..end].strip_prefix("fn ") {
+            names.push(name.to_string());
+        }
+    }
+    names
+}
+
+/// `(label, body)` for every `bench_function("...")` arm in `fn_source`.
+fn bench_arms(fn_source: &str) -> Vec<(String, String)> {
+    let mut arms = Vec::new();
+    let mut rest = fn_source;
+    while let Some(i) = rest.find("bench_function(\"") {
+        rest = &rest[i + "bench_function(\"".len()..];
+        let Some(label_end) = rest.find('"') else {
+            break;
+        };
+        let label = rest[..label_end].to_string();
+        let Some(body) = timed_arm_body(fn_source, &label) else {
+            continue;
+        };
+        arms.push((label, body.to_string()));
+    }
+    arms
+}
+
+/// A `black_box` is an observation barrier: the compiler may not drop a value
+/// that reaches one, and it may not move work across one. Two arms gated with
+/// different barrier placements are gated under different optimization
+/// constraints, so their ratio is not a like-for-like comparison — and packing
+/// two of sbe-tool's barriers into one tuple hands that arm's compiler strictly
+/// more freedom. Every value one arm makes opaque, the other must too, through
+/// the same number of barriers.
+#[test]
+fn parity_arms_use_identical_observation_barriers() -> Result<(), Box<dyn std::error::Error>> {
+    for (file, source) in [
+        ("perf_parity_bench.rs", PERF_PARITY),
+        ("perf_parity_extended_bench.rs", PERF_PARITY_EXTENDED),
+    ] {
+        for name in bench_function_names(source) {
+            let fn_source = get_source(source, &name)?;
+            let arms = bench_arms(fn_source);
+            for (label, body) in &arms {
+                if label != "ergo-sbe" && !label.starts_with("ergo-sbe_") {
+                    continue;
+                }
+                // Pair by suffix so `ergo-sbe_header_only` is not graded against
+                // `sbe-tool_header_and_body`; a bare `sbe-tool` is the partner
+                // of every ergon lane of the same message.
+                let suffix = label.strip_prefix("ergo-sbe").unwrap_or("");
+                let partner = format!("sbe-tool{suffix}");
+                let tool = arms
+                    .iter()
+                    .find(|(l, _)| *l == partner)
+                    .or_else(|| arms.iter().find(|(l, _)| l == "sbe-tool"));
+                let Some(tool) = tool else {
+                    continue;
+                };
+                let tool_n = strip_line_comments(&tool.1).matches("black_box(").count();
+                let n = strip_line_comments(body).matches("black_box(").count();
+                assert_eq!(
+                    n, tool_n,
+                    "{file}: {name}/{label} and {} pay {n} vs {tool_n} black_box calls. \
+                     A merged tuple is one barrier where sbe-tool pays two: not the same \
+                     optimization constraint.",
+                    tool.0
+                );
+            }
+        }
+    }
+
+    // The composite boundary is an observation point in both APIs. The engine's
+    // scalars are read before `booster_decoder` consumes the engine in sbe-tool;
+    // ergon must observe them at the same point, not defer them into a tuple
+    // taken after the booster is already in hand.
+    let source = get_source(PERF_PARITY, "bench_decode_consuming_full")?;
+    for label in ["ergo-sbe_random", "ergo-sbe_consuming", "ergo-sbe_ordered"] {
+        let arm = strip_line_comments(timed_arm_body(source, label).ok_or("missing arm")?);
+        let observed = arm
+            .find("booster_enabled()")
+            .ok_or("arm never reads booster_enabled")?;
+        let fetched = arm
+            .find("booster_decoder()")
+            .or_else(|| arm.find("engine.booster()"))
+            .ok_or("arm never fetches the booster")?;
+        assert!(
+            observed < fetched,
+            "{label} must observe the engine's scalars before the booster is fetched, \
+             as the sbe-tool arm does"
+        );
+    }
     Ok(())
 }

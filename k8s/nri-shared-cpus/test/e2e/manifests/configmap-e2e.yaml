@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# E2E plugin config. sharedCpus matches the kind node's reservedSystemCPUs.
+# annotationOptIn is on so the fallback annotation pod works.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ergon-shared-cpus
+  namespace: ergon-system
+data:
+  config.yaml: |
+    sharedCpus: "0,1"
+    oversubscription: 2
+    namespaces: [ergon-e2e]
+    defaultAffinity: shared
+    hookPath: /opt/ergon/bin/ergon-cpus
+    annotationOptIn: true
+    metricsAddress: ":9466"

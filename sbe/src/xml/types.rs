@@ -197,6 +197,11 @@ pub(crate) fn parse_type_element(
         None
     };
 
+    if let Some(cv) = &constant_value {
+        super::registry::check_float_constant(primitive_type, cv)
+            .map_err(|e| Fault::invalid(node, "constant value", e))?;
+    }
+
     if primitive_type == Some(PrimitiveType::Char) && presence == Presence::Constant {
         if let Some(len) = length {
             if len > 1 {
@@ -598,6 +603,13 @@ pub(crate) fn parse_enum(
         ));
     }
 
+    // The encodingType typedef's nullValue: validValues must not equal it, and
+    // it is the enum's null when the enum declares none.
+    let null_sentinel: Option<u64> = registry
+        .encodings
+        .get(&encoding_type_name)
+        .and_then(|e| e.null_value);
+
     let mut enum_tokens = Vec::new();
     let semantic_type = node.attribute("semanticType").map(str::to_string);
     enum_tokens.push(Token {
@@ -610,22 +622,18 @@ pub(crate) fn parse_enum(
             deprecated: parse_deprecated_attr(node)?.is_some(),
             description: collect_description(node),
             semantic_type,
+            // Java EnumType precedence: the enum's own nullValue, else the
+            // encodingType typedef's, else the primitive default (resolve).
             null_value: match node.attribute("nullValue") {
                 Some(s) => super::registry::try_parse_u64_val(s, Some(encoding_type))
                     .map_err(|e| Fault::invalid(node, "enum @nullValue", e))?,
                 None => None,
-            },
+            }
+            .or(null_sentinel),
             ..Encoding::default()
         },
         span: None,
     });
-
-    // Resolve null sentinel for the enum's encoding type (sbe-tool: valid values
-    // must not equal the type's null value).
-    let null_sentinel: Option<u64> = registry
-        .encodings
-        .get(&encoding_type_name)
-        .and_then(|e| e.null_value);
 
     let mut seen_names = HashSet::new();
     let mut seen_values = HashSet::new();

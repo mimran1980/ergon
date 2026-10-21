@@ -49,11 +49,10 @@ untimed preflight (`assert_baseline_wrap_extent`, `assert_stream_wrap_extent`,
 constructor. `fairness_policy_test` enforces this mechanically — a maintained arm
 that calls a validating constructor fails the test.
 
-The checked constructors are still benchmarked, as separately labelled
-diagnostic arms (`ergo-sbe_wrap_checked`, `ergo-sbe_try_from`,
-`ergo-sbe_header_and_body_checked`). The gate does not read them; they exist to
-price the safety ergon offers, not to be compared against an unchecked
-reference.
+The checked constructors are still benchmarked, as the separately labelled
+diagnostic arm `ergo-sbe_try_from` (header read plus schema-id check every
+call). The gate does not read it; it exists to price the safety ergon offers,
+not to be compared against an unchecked reference.
 
 The benchmark gate exists to prove that ergo-sbe is **not slower than**
 sbe-tool — not to claim it is faster. sbe-tool is the reference; the goal is
@@ -184,15 +183,10 @@ throughput/checked) are ergon-only or DTO-vs-DTO — not ergon/sbe-tool ratios.
 
 ### Cluster codec gate — `just bench-cluster`
 
-All 5 maintained scenarios pass:
-
-| Scenario | Ratio | Status |
-|----------|-------|--------|
-| encode/session_message_header | 0.7464 | PASS |
-| encode/session_keep_alive | 0.6213 | PASS |
-| decode/session_message_header | 0.8968 | PASS |
-| decode/session_event | 0.8209 | PASS |
-| encode/claim_shaped_header_plus_app | 0.8288 | PASS |
+Five maintained scenarios, ratios ergo-sbe / sbe-tool, each against its
+ceiling in `scripts/check-bench-gate.sh`. Run `just bench-cluster` and read
+the gate's printed table: a ratio in prose is only evidence for the tree
+that produced it, so no point estimates are kept here.
 
 Cluster encode arms locally assert exact sbe-tool byte parity before timing,
 use identical exact message lengths, make both mutable buffer inputs opaque,
@@ -206,17 +200,12 @@ Not a ≤1.00 gate. Compares **flyweight vs wire-image value vs
 `#[repr(C, packed)]`** for a single mid-block field on a **256-byte** composite
 (`BigBlock`, field `f15`). Field-only arms; no alloc on the timed path.
 
-| Arm | Median (this host) |
-|-----|--------------------|
-| flyweight_f15 | ~0.415 ns |
-| value_preheld_f15 | ~0.431 ns |
-| packed_preheld_f15 | ~0.426 ns |
-| value_copy_then_f15 (copy 256 B first) | ~25.8 ns |
-
-**Conclusion:** single-field access is one load for flyweight, preheld
-`[u8; N]` wire image, and packed overlay alike. Packing does **not** beat the
-wire-image design. Materialising the whole composite just to read one field is
-the expensive path. See README
+The run was never archived, so no figure is published here. What the arm
+establishes on this shape only: single-field access is one load for flyweight,
+preheld `[u8; N]` wire image and packed overlay alike; packing did not beat
+the wire-image design for a mid-block field on this 256-byte composite;
+materialising the whole composite to read one field is the expensive path. The
+size of that gap is not measured. See README
 [Composite layout & little-endian](https://mimran1980.github.io/ergon/sbe/core-concepts/composite-layout.html).
 
 ```sh
@@ -281,9 +270,10 @@ comparison must:
 - stay within the strict `1.00` per-scenario ceiling in
   `scripts/check-bench-gate.sh`.
 
-A ceiling above `1.00` records a repeatable, fair sbe-tool win; it is not
-permission to add overhead. Changing a ceiling requires a fresh fairness audit
-and recorded measurements, not merely a failing gate.
+A ceiling above `1.00` records a repeatable sbe-tool win on a placement-
+sensitive micro-op — a noise floor, not a real win. It is not permission to
+add overhead. Changing a ceiling requires a fresh fairness audit and recorded
+measurements, not merely a failing gate.
 
 ## Expanded codec matrix
 

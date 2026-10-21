@@ -1,0 +1,124 @@
+== uname
+Linux ip-172-31-32-73 7.0.0-1014-aws #14~24.04.1-Ubuntu SMP PREEMPT Fri Sep 18 21:24:59 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+== cmdline
+BOOT_IMAGE=/vmlinuz-7.0.0-1014-aws root=PARTUUID=ff84a5a7-578e-4843-9465-767e4a11edcc ro console=tty1 console=ttyS0 nvme_core.io_timeout=4294967295 isolcpus=managed_irq,domain,1,5,2,6,3,7 nohz_full=1,5,6,3,7 rcu_nocbs=1,5,2,6,3,7 irqaffinity=0,4 panic=-1
+== boot profile
+full-sqtick
+== isolated
+1-3,5-7
+== clocksource
+tsc
+== mitigations
+ Automatic IBRS; IBPB: conditional; PBRSB-eIBRS: SW sequence; BHI: BHI_DIS_S
+indirect_target_selection:Not affected
+itlb_multihit:Not affected
+ghostwrite:Not affected
+vmscape:Not affected
+mmio_stale_data:Not affected
+mds:Not affected
+reg_file_data_sampling:Not affected
+tsa:Not affected
+l1tf:Not affected
+spec_store_bypass:Mitigation: Speculative Store Bypass disabled via prctl
+tsx_async_abort:Not affected
+old_microcode:Not affected
+swapgs barriers and __user pointer sanitization
+gather_data_sampling:Not affected
+retbleed:Not affected
+spec_rstack_overflow:Not affected
+srbds:Not affected
+meltdown:Not affected
+== cpuidle
+driver intel_idle
+POLL latency 0 µs disabled 0
+C1 latency 1 µs disabled 0
+C1E latency 2 µs disabled 0
+C6 latency 190 µs disabled 0
+== cpu
+CPU(s):                                  8
+Model name:                              Intel(R) Xeon(R) Platinum 8488C
+BIOS Model name:                         Intel(R) Xeon(R) Platinum 8488C  CPU @ 2.4GHz
+Thread(s) per core:                      2
+Core(s) per socket:                      4
+Socket(s):                               1
+Hypervisor vendor:                       KVM
+NUMA node0 CPU(s):                       0-7
+== topology
+0,0
+1,1
+2,2
+3,3
+4,0
+5,1
+6,2
+7,3
+== routes
+default via 172.31.32.1 dev enp39s0 proto dhcp src 172.31.32.73 metric 100 rto_min lock 5ms quickack 1 
+172.31.0.2 via 172.31.32.1 dev enp39s0 proto dhcp src 172.31.32.73 metric 100 
+172.31.32.0/20 dev enp39s0 proto kernel scope link src 172.31.32.73 metric 100 rto_min lock 5ms quickack 1 
+172.31.32.1 dev enp39s0 proto dhcp scope link src 172.31.32.73 metric 100 rto_min lock 5ms quickack 1 
+== links
+lo               UNKNOWN        00:00:00:00:00:00 <LOOPBACK,UP,LOWER_UP> 
+enp39s0          UP             06:ff:c2:f3:5a:1d <BROADCAST,MULTICAST,UP,LOWER_UP> 
+== ethtool -i enp39s0
+driver: ena
+version: 7.0.0-1014-aws
+firmware-version: 
+== ethtool -l enp39s0
+Current hardware settings:
+RX:		n/a
+TX:		n/a
+Other:		n/a
+Combined:	8
+== ethtool -c enp39s0
+Adaptive RX: on  TX: n/a
+rx-usecs:	20
+rx-usecs-irq:	n/a
+tx-usecs:	64
+== ethtool -T enp39s0
+Time stamping parameters for enp39s0:
+Capabilities:
+	software-transmit
+	software-receive
+	software-system-clock
+PTP Hardware Clock: none
+Hardware Transmit Timestamp Modes: none
+Hardware Receive Filter Modes: none
+== nic irqs
+66 0,4 ena-mgmnt@pci:0000:27:00.0
+67 0,4 enp39s0-Tx-Rx-0
+68 0,4 enp39s0-Tx-Rx-1
+69 0,4 enp39s0-Tx-Rx-2
+70 0,4 enp39s0-Tx-Rx-3
+71 0,4 enp39s0-Tx-Rx-4
+72 0,4 enp39s0-Tx-Rx-5
+73 0,4 enp39s0-Tx-Rx-6
+74 0,4 enp39s0-Tx-Rx-7
+== chrony
+Reference ID    : A9FEA97B (169.254.169.123)
+Stratum         : 2
+Ref time (UTC)  : Thu Oct 15 05:53:03 2026
+System time     : 0.000000062 seconds slow of NTP time
+Last offset     : -0.000000069 seconds
+RMS offset      : 0.000000069 seconds
+Frequency       : 1.488 ppm fast
+Residual freq   : +0.024 ppm
+Skew            : 0.164 ppm
+Root delay      : 0.000164547 seconds
+Root dispersion : 0.000033748 seconds
+Update interval : 16.3 seconds
+Leap status     : Normal
+== chrony sources
+MS Name/IP address         Stratum Poll Reach LastRx Last sample               
+===============================================================================
+^* 169.254.169.123               1   4    37    11   -107ns[ -176ns] +/-  101us
+^- prod-ntp-3.ntp1.ps5.cano>     2   6    17    27  +3248us[+3248us] +/-  110ms
+^- prod-ntp-4.ntp4.ps5.cano>     2   6    17    28  +4148us[+4148us] +/-  111ms
+^- prod-ntp-5.ntp1.ps5.cano>     2   6    17    27  +3388us[+3388us] +/-  110ms
+^- alphyn.canonical.com          2   6    17    27   -706us[ -706us] +/-  110ms
+^- 43-229-16-158.ip.neody.a>     2   6   125    22   +399us[ +399us] +/- 2941us
+^- 138.2.23.206                  2   6    17    27    +64us[  +63us] +/- 2475us
+^- x.ns.gin.ntt.net              2   6    17    28   +494us[ +494us] +/-   57ms
+^- 208.88.66.8                   2   6    17    27   +589us[ +588us] +/-   37ms
+== io_uring
+kernel.io_uring_disabled = 0

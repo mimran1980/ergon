@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use ergo_aeron_cluster::ClusterError;
 
@@ -39,33 +39,6 @@ pub fn try_find_jar(name_prefix: &str) -> Result<PathBuf, ClusterError> {
 /// Locate a jar in the aeron Gradle build output (panics if missing).
 pub fn find_jar(name_prefix: &str) -> PathBuf {
     try_find_jar(name_prefix).unwrap_or_else(|e| panic!("{e}"))
-}
-
-/// Compute SHA-256 of a file. Uses `shasum -a 256` (macOS) or `sha256sum`.
-pub fn try_sha256(path: &Path) -> Result<String, ClusterError> {
-    let (bin, args): (&str, &[&str]) = if cfg!(target_os = "macos") {
-        ("shasum", &["-a", "256"])
-    } else {
-        ("sha256sum", &[])
-    };
-    let output = std::process::Command::new(bin)
-        .args(args)
-        .arg(path)
-        .output()
-        .map_err(|e| ClusterError::connect(format!("{bin} failed: {e}")))?;
-    if !output.status.success() {
-        return Err(ClusterError::connect(format!(
-            "{bin} exited {}",
-            output.status
-        )));
-    }
-    let s = String::from_utf8_lossy(&output.stdout);
-    Ok(s.split_whitespace().next().unwrap_or("unknown").to_string())
-}
-
-/// Compute SHA-256 of a file (panics on tool failure).
-pub fn sha256(path: &Path) -> String {
-    try_sha256(path).unwrap_or_else(|e| panic!("{e}"))
 }
 
 #[cfg(test)]

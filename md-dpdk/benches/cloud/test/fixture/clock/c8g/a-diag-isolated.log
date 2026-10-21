@@ -1,0 +1,7 @@
+== gapspin
+1792032879.200010 50
+== trace
+      clockbench-901   [001] d..2.  1000.000000: sched_switch: prev_comm=clockbench prev_pid=901 prev_prio=120 prev_state=R+ ==> next_comm=kworker/1:1 next_pid=77 next_prio=120
+          <idle>-0     [002] d.h1.  1001.500000: irq_handler_entry: irq=11 name=arch_timer
+          <idle>-0     [001] d.h1.  1001.499995: irq_handler_entry: irq=12 name=ens6-Tx-Rx-0
+UPTIME 1000.000010 REALTIME 1792032878.500010

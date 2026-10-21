@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+# A hot pod the validating policy REJECTS: a sidecar with restartPolicy: Always.
+# Every other rule is satisfied, so the rejection names the sidecar.
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: latency-bad-sidecar
+  namespace: ergon-latency-pods
+  labels:
+    ergon.io/latency: "hot"
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus"]'
+spec:
+  priorityClassName: ergon-hot
+  containers:
+    - name: app
+      image: ergon-latency-pods-demo:e2e
+      command: ["sleep", "3600"]
+      resources:
+        requests: { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250" }
+        limits:   { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250" }
+    - name: sidecar
+      image: ergon-latency-pods-demo:e2e
+      command: ["sleep", "3600"]
+      restartPolicy: Always

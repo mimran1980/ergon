@@ -1,0 +1,162 @@
+== arch
+aarch64, MIDR_EL1 0x00000000410fd4f1
+== uname
+Linux ip-172-31-36-243 7.0.0-1014-aws #14~24.04.1-Ubuntu SMP PREEMPT Fri Sep 18 21:50:22 UTC 2026 aarch64 aarch64 aarch64 GNU/Linux
+== cmdline
+BOOT_IMAGE=/vmlinuz-7.0.0-1014-aws root=PARTUUID=475a3e81-aa70-4faf-8cc3-89b032d5b69b ro console=tty1 console=ttyS0 nvme_core.io_timeout=4294967295 isolcpus=managed_irq,domain,1 nohz_full=1 rcu_nocbs=1 irqaffinity=0,2,3 nohlt panic=-1
+== boot profile
+full-pollidle
+== isolated
+1
+== clocksource
+arch_sys_counter
+== mitigations
+spectre_v2:Mitigation: CSV2, BHB
+indirect_target_selection:Not affected
+itlb_multihit:Not affected
+ghostwrite:Not affected
+vmscape:Not affected
+mmio_stale_data:Not affected
+mds:Not affected
+reg_file_data_sampling:Not affected
+tsa:Not affected
+l1tf:Not affected
+spec_store_bypass:Mitigation: Speculative Store Bypass disabled via prctl
+tsx_async_abort:Not affected
+old_microcode:Not affected
+spectre_v1:Mitigation: __user pointer sanitization
+gather_data_sampling:Not affected
+retbleed:Not affected
+spec_rstack_overflow:Not affected
+srbds:Not affected
+meltdown:Not affected
+== cpuidle
+driver none
+aarch64: WFI is the idle instruction (Graviton offers the OS no idle or frequency states: EC2 User Guide, processor state control)
+nohlt: idle CPUs poll
+== counter
+[    0.000000] arch_timer: cp15 timer running at 1000.00MHz (virt).
+== smt
+0
+== nohz_full
+1
+== memory
+THP always [madvise] never, defrag always defer defer+madvise [madvise] never, page size 4096
+== cpu
+CPU(s):                                  4
+Model name:                              Neoverse-V2
+BIOS Model name:                         AWS Graviton4 AWS Graviton4 CPU @ 2.8GHz
+Thread(s) per core:                      1
+Core(s) per socket:                      4
+Socket(s):                               1
+NUMA node0 CPU(s):                       0-3
+== topology
+0,0
+1,1
+2,2
+3,3
+== routes
+default via 172.31.32.1 dev ens34 proto dhcp src 172.31.36.243 metric 100 rto_min lock 5ms quickack 1 
+172.31.0.2 via 172.31.32.1 dev ens34 proto dhcp src 172.31.36.243 metric 100 
+172.31.32.0/20 dev ens34 proto kernel scope link src 172.31.36.243 metric 100 rto_min lock 5ms quickack 1 
+172.31.32.1 dev ens34 proto dhcp scope link src 172.31.36.243 metric 100 rto_min lock 5ms quickack 1 
+== links
+lo               UNKNOWN        00:00:00:00:00:00 <LOOPBACK,UP,LOWER_UP> 
+ens34            UP             06:ff:f8:67:96:eb <BROADCAST,MULTICAST,UP,LOWER_UP> 
+== ethtool -i ens34
+driver: ena
+version: 7.0.0-1014-aws
+firmware-version: 
+== ethtool -l ens34
+Current hardware settings:
+RX:		n/a
+TX:		n/a
+Other:		n/a
+Combined:	4
+== ethtool -c ens34
+Adaptive RX: on  TX: n/a
+rx-usecs:	20
+rx-frames:	n/a
+rx-usecs-irq:	n/a
+rx-frames-irq:	n/a
+tx-usecs:	64
+tx-usecs-irq:	n/a
+rx-usecs-low:	n/a
+== ethtool -T ens34
+Time stamping parameters for ens34:
+Capabilities:
+	software-transmit
+	software-receive
+	software-system-clock
+PTP Hardware Clock: none
+Hardware Transmit Timestamp Modes: none
+Hardware Receive Filter Modes: none
+== nic irqs
+94 0,2-3 ena-mgmnt@pci:0000:27:00.0
+95 0,2-3 ens34-Tx-Rx-0
+96 0,2-3 ens34-Tx-Rx-1
+97 0,2-3 ens34-Tx-Rx-2
+98 0,2-3 ens34-Tx-Rx-3
+== chrony
+Reference ID    : A9FEA97B (169.254.169.123)
+Stratum         : 2
+Ref time (UTC)  : Mon Oct 19 17:58:43 2026
+System time     : 0.000001387 seconds fast of NTP time
+Last offset     : +0.000001478 seconds
+RMS offset      : 0.000009885 seconds
+Frequency       : 29.340 ppm fast
+Residual freq   : +0.066 ppm
+Skew            : 0.195 ppm
+Root delay      : 0.000143008 seconds
+Root dispersion : 0.000025056 seconds
+Update interval : 16.2 seconds
+Leap status     : Normal
+== chrony sources
+MS Name/IP address         Stratum Poll Reach LastRx Last sample               
+===============================================================================
+^* 169.254.169.123               1   4    77     3   +178ns[+1656ns] +/-   91us
+^- alphyn.canonical.com          2   6    17    36  -1998us[-1988us] +/-  107ms
+^- prod-ntp-3.ntp4.ps5.cano>     2   6    17    37  +4925us[+4934us] +/-  112ms
+^- prod-ntp-5.ntp1.ps5.cano>     2   6    17    35  +7008us[+7017us] +/-  114ms
+^- prod-ntp-4.ntp4.ps5.cano>     2   6    17    36  +6118us[+6127us] +/-  113ms
+^- time.cloudflare.com           3   6    17    36   +804us[ +813us] +/-   55ms
+^- 108.160.132.224.vultruse>     2   6    17    36   -558us[ -549us] +/-   34ms
+^- time.cloudflare.com           3   6    17    36   +898us[ +907us] +/-   54ms
+^- capricieux.magi-reco.com      2   6    17    37  -5137us[-5128us] +/- 9135us
+== io_uring
+kernel.io_uring_disabled = 0
+== nic held
+driver defaults
+== pin
+pin: 0 of 94 IRQs moved to 0,2,3; 2 cannot move (per-CPU or kernel-managed)
+== skipped on aarch64
+msr-tools and the SMI count (irqs): x86 MSRs
+cstate cap (cond cstate): no OS-controlled idle states; boot profile full-nohlt instead
+irq_vectors: x86 interrupt vectors (arm64 traces the tick as irq arch_timer and IPIs as ipi events)
+exceptions/page_fault_user: an x86-only tracepoint (page faults are not attributed here; the loops mlock and pre-fault)
+exceptions/page_fault_kernel: an x86-only tracepoint (page faults are not attributed here; the loops mlock and pre-fault)
+fair: ens34 (ena): interrupt moderation adaptive-rx on, rx-usecs 20, rx-frames n/a, rx-cqe-frames - (before)
+pin: 0 of 94 IRQs moved to 0,2,3; 2 cannot move (per-CPU or kernel-managed)
+pin: ens34 adaptive-rx was on, set off again
+pin: ens34 rx-usecs was 20, set 0 again
+fair: net.core.busy_poll 0, busy_read 0; NIC queue IRQs on 0,2,3
+fair=on
+boot-profile=full-pollidle
+idle=poll-nohlt
+housekeeping=0,2,3
+sysctl.net.core.busy_poll=0
+sysctl.net.core.busy_read=0
+nic.ens34.driver=ena
+nic.ens34.adaptive-rx=off
+nic.ens34.rx-usecs=0
+nic.ens34.rx-frames=n/a
+nic.ens34.rx-cqe-frames=-
+nic.ens34.napi_defer_hard_irqs=0
+nic.ens34.gro_flush_timeout=0
+irq.94.ena-mgmnt@pci:0000:27:00.0=0,2-3
+irq.95.ens34-Tx-Rx-0=0,2-3
+irq.96.ens34-Tx-Rx-1=0,2-3
+irq.97.ens34-Tx-Rx-2=0,2-3
+irq.98.ens34-Tx-Rx-3=0,2-3
+irqbalance=inactive
+check: ok

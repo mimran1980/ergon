@@ -57,11 +57,13 @@ just check-mutation
 ```
 
 Coverage runs on every pull request and may not fall below the checked-in
-region/function/line baseline. Mutation testing runs weekly over parser,
-resolver, sizing, and dynamic-tail code; missing or empty mutation output is a
-failure. Nightly CI runs every fuzz target for ten minutes and executes the
-LE/BE/nested fixture crate under Miri. Pull requests also execute codec library
-tests on 32-bit x86 and big-endian s390x through `cross`/QEMU.
+region/function/line baseline. Mutation testing is manual (`just check-mutation`)
+over parser, resolver, sizing, and dynamic-tail code; CI enforces only the
+mutation configuration, and the ratchet fails when mutation output is missing or
+empty. A weekly schedule (Sundays) runs every fuzz target for ten minutes and
+executes the LE/BE/nested fixture crate under Miri. Pull requests execute that
+fixture crate as ordinary tests. Codec tests on 32-bit x86 and big-endian s390x
+are not run in CI.
 
 ## Performance
 
@@ -84,19 +86,18 @@ not raise them further:
 
 | Comparison | no-LTO | LTO |
 |---|---:|---:|
-| SBE `optional_enum_nullify` | 1.01 | 1.00 |
 | Cluster session-message-header decode | 1.01 | 1.01 |
 | Cluster session-event decode | 1.05 | 1.01 |
-| All other maintained comparisons | 1.00 | 1.00 |
+| All other maintained comparisons, including SBE `optional_enum_nullify` | 1.00 | 1.00 |
 
 A gate pass is not literal `1.00` everywhere. A ceiling above `1.00` records a
 repeatable sbe-tool win on a placement-sensitive micro-op; it is not permission
 to add overhead. Record fresh measurements instead of copying old numbers into
 documentation. Documentation-only changes do not require a benchmark run.
 
-Shared GitHub runners execute both profiles and publish Criterion diagnostics,
-but noisy wall-clock ratios are not merge gates there. Run the strict ratio
-gate locally or on a dedicated stable benchmark runner.
+CI compiles both benchmark suites (`cargo bench --no-run`) and runs no
+benchmark: it executes neither profile and publishes no Criterion diagnostics.
+Run the strict ratio gate locally or on a dedicated stable benchmark runner.
 
 `fairness_policy_test` mechanically requires the maintained SBE and Cluster
 parity suites to use `std::hint::black_box`, assert correctness before timing,
@@ -127,17 +128,36 @@ the benchmark is re-audited.
 
 ## Package boundaries
 
-Only `ergo-sbe` and `ergo-aeron-cluster` are publication candidates. Inspect
-their payloads before any release:
+Only `ergo-sbe`, `ergo-aeron-cluster`, `ergon-clock`, `ergon-tune`, `ergon-io`
+and `ergon-md-dpdk` are publication candidates; `ergon-io` depends on
+`ergon-tune`, and `ergon-md-dpdk` on `ergon-clock` and `ergon-tune`, so the
+release publishes those two first.
+`scripts/check-publish-set.sh` (in `just policy`) fails when a published crate
+depends on an unpublished one, on a path without a version or on an older
+version than a published sibling's own, or when the release recipe, the
+release workflow, the dry runs or the public-API gate leave a published crate
+out or publish it before its dependencies. A version bump therefore updates
+every `version` beside a workspace `path` with `[workspace.package]`:
+`ergo-sbe` in `[workspace.dependencies]`, and the `ergon-clock` and
+`ergon-tune` lines in `md-dpdk/`, `io/` and `clock/bench/Cargo.toml`.
+Inspect their payloads before any release:
 
 ```sh
 cargo package -p ergo-sbe --list --allow-dirty
 cargo package -p ergo-aeron-cluster --list --allow-dirty
+cargo package -p ergon-clock --list --allow-dirty
+cargo package -p ergon-tune --list --allow-dirty
+cargo package -p ergon-io --list --allow-dirty
+cargo package -p ergon-md-dpdk --list --allow-dirty
 ```
 
 Packages must exclude repository integration tests, fixtures not required at
 build time, benchmarks, Java harness code, application protocols, samples, and
-internal plans.
+internal plans. `ergon-clock`, `ergon-tune` and `ergon-io` ship their library
+sources and README only (not `ergon-clock-bench`, `io/benches`, the tests,
+the example or their fixture trees).
+`ergon-md-dpdk` ships its native C (including the test fakes its own build
+compiles) but not its interop harness, device plugin or deployment assets.
 
 Publishing, tagging, and announcing a release require explicit maintainer
 authorization.

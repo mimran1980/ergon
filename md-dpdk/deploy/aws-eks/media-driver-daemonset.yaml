@@ -1,0 +1,105 @@
+# Media Driver DaemonSet. One driver per DPDK node, each pod requesting one
+# rusteron.io/dpdk-ena-pair, six CPUs, memory, and 2 MiB hugepages under
+# Guaranteed QoS (requests == limits on every resource, so the kubelet's CPU
+# Manager static policy hands it a dedicated cpuset).
+#
+# SMT (hyper-threading) is off on every latency node (the launch template's
+# CpuOptions ThreadsPerCore=1; nosmt and provision-node.sh on bare metal), so
+# one CPU is one physical core and six CPUs are six cores: housekeeping (the
+# conductor, which does not busy-spin, plus the EAL and transport housekeeping
+# threads), sender and receiver (the last two busy-spinning) and three spare.
+# The entrypoint (entrypoint.sh) assigns them from the pod's cpuset and fails
+# fast if fewer than three physical cores remain after SMT-sibling exclusion
+# (a safety net: with SMT off every CPU is already its own core). A node
+# therefore needs at least 5 physical cores, which provision-node.sh checks:
+# one reserved for the system and kubelet, three for the driver (housekeeping,
+# sender, receiver) and one for an application. The smallest c7i with them is
+# c7i.4xlarge (8 cores).
+#
+# The secondary ENAs are bound on the host to igb_uio loaded with
+# wc_activate=1, the only binding on virtualised EC2 that maps the ENA's
+# low-latency-queue BAR write-combining (there is no IOMMU, and mainline
+# vfio-pci maps no write-combining). On *.metal, which has an IOMMU, the same
+# binding works in passthrough (iommu=pt, which provision-node.sh sets); it is
+# the configuration the metal lab measured (BENCHMARKS.md, AWS round 4). With
+# igb_uio the DPDK EAL runs in IOVA-as-PA mode (it logs
+# `EAL: Selected IOVA mode 'PA'`), so the container must be privileged:
+# translating hugepage addresses through /proc/self/pagemap needs
+# CAP_SYS_ADMIN and CAP_DAC_READ_SEARCH, locking hugepages needs CAP_IPC_LOCK
+# (https://doc.dpdk.org/guides/linux_gsg/enable_func.html), and the PMD maps
+# the device's BARs through its sysfs resource files, which need a read-write
+# /sys that only a privileged container gets.
+#
+# The device plugin injects the pair's /dev/uioN nodes + RUSTERON_DPDK_* env
+# at Allocate time, so no device hostPath is declared here.
+#
+# Client pods on the node (the README's "Client pods") reach the driver
+# through its Aeron directory: the /mnt/huge-aeron hostPath (type Directory)
+# mounted at /mnt/huge-aeron, with AERON_DIR=/mnt/huge-aeron/aeron,
+# AERON_TERM_BUFFER_SPARSE_FILE=false and
+# AERON_CLIENT_PRE_TOUCH_MAPPED_MEMORY=true. Give them Guaranteed QoS with
+# whole cores (requests equal to limits) and pin each busy-spinning thread to
+# a core of its own in the pod's cpuset.
+#
+# kubelet stops the pod with SIGTERM, on which the driver stops and then
+# releases the DPDK transport, as on SIGINT; the grace period bounds that.
+#
+# Nodes are picked by the rusteron-dpdk/ena=true label and taint; the VPC CNI
+# keeps the primary ENA for pod networking, while the two secondary ENAs stay
+# bound to igb_uio on the host (never claimed by the CNI: they are tagged
+# node.k8s.amazonaws.com/no_manage=true when created).
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: rusteron-media-driver
+spec:
+  selector:
+    matchLabels:
+      app: rusteron-media-driver
+  template:
+    metadata:
+      labels:
+        app: rusteron-media-driver
+    spec:
+      nodeSelector:
+        rusteron-dpdk/ena: "true"
+      tolerations:
+        - key: rusteron-dpdk
+          operator: Exists
+          effect: NoSchedule
+      # SIGTERM first, SIGKILL once this has passed.
+      terminationGracePeriodSeconds: 15
+      containers:
+        - name: media-driver
+          image: rusteron-media-driver:dpdk
+          envFrom:
+            - configMapRef:
+                name: rusteron-media-driver
+          securityContext:
+            # igb_uio + IOVA-as-PA: see the header comment.
+            privileged: true
+          resources:
+            requests:
+              rusteron.io/dpdk-ena-pair: "1"
+              cpu: "6"
+              memory: 2Gi
+              hugepages-2Mi: 2Gi
+            limits:
+              rusteron.io/dpdk-ena-pair: "1"
+              cpu: "6"
+              memory: 2Gi
+              hugepages-2Mi: 2Gi
+          volumeMounts:
+            - name: hugepages
+              mountPath: /dev/hugepages
+            # Aeron's directory: the node's sized hugetlbfs (bootstrap-dpdk-ena.sh)
+            - name: aeron-huge
+              mountPath: /mnt/huge-aeron
+      volumes:
+        - name: hugepages
+          hostPath:
+            path: /dev/hugepages
+        - name: aeron-huge
+          hostPath:
+            path: /mnt/huge-aeron
+            type: Directory

@@ -15,6 +15,7 @@ use ergo_sbe::parse_file;
 
 /// Schemas that are intentionally invalid — tested separately.
 const EXPECTED_PARSE_ERRORS: &[&str] = &[
+    "constant-set-field.xml", // valueRef names a set, not an enum validValue
     "cyclic-self-include.xml",
     "duplicate-message-id.xml",
     "fix_examples_v2rc3.xml", // missing xi:include targets (types-include.xml, messages-include.xml)

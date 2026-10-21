@@ -1,0 +1,36 @@
+
+Running kernel seems to be up-to-date.
+
+Restarting services...
+ /etc/needrestart/restart.d/systemd-manager
+ systemctl restart packagekit.service ssh.service systemd-journald.service systemd-networkd.service systemd-resolved.service systemd-udevd.service udisks2.service walinuxagent.service
+
+Service restarts being deferred:
+ /etc/needrestart/restart.d/dbus.service
+ systemctl restart getty@tty1.service
+ systemctl restart networkd-dispatcher.service
+ systemctl restart serial-getty@ttyS0.service
+ systemctl restart systemd-logind.service
+ systemctl restart unattended-upgrades.service
+
+No containers need to be restarted.
+
+User sessions running outdated binaries:
+ azureuser @ user manager service: systemd[4443]
+
+No VM guests are running outdated hypervisor (qemu) binaries on this host.
+info: syncing channel updates for 1.95.0-x86_64-unknown-linux-gnu
+info: latest update on 2026-04-16 for version 1.95.0 (59807616e 2026-04-14)
+info: downloading 6 components
+warn: the missing active toolchain `1.95.0-x86_64-unknown-linux-gnu` has been auto-installed
+warn: this might cause rustup commands to take longer time to finish than expected
+info: you may opt out with `RUSTUP_AUTO_INSTALL=0` or `rustup set auto-install disable`
+CMake Warning:
+  Manually-specified variables were not used by the project:
+
+    HTTP_ONLY
+
+
+	libcurl.so.4 => /lib/x86_64-linux-gnu/libcurl.so.4 (0x000072096e470000)
+	libcurl.so.4 => /opt/curl/lib/libcurl.so.4 (0x0000795f1aa56000)
+0

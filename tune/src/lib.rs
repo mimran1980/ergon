@@ -1,0 +1,77 @@
+#![doc = include_str!("../README.md")]
+//!
+//! ## The checks
+//!
+//! | Check | Function | Called by |
+//! |---|---|---|
+//! | T1 | [`t1_isolation`] | io, md, rt |
+//! | T2 | [`t2_nic_irqs`] | io (egress NIC), md (data NICs, DPDK ports) |
+//! | T3 | [`t3_thp`] | md, rt (warn); io (info) |
+//! | T4 | [`t4_aeron_dir`] | md, rt |
+//! | T5 | [`t5_numa_balancing`] | md, rt |
+//! | T6 | [`t6_nic_node`] | md |
+//! | T7 | [`t7_sched_policy`] | io, md, rt |
+//! | T8 | [`t8_smt_siblings`] | io, md, rt |
+//! | T9 | [`t9_cpu_quota`] at start; [`ThrottleWatch`] while running | io, md, rt (start); rt (housekeeping) |
+//! | T10 | [`t10_smt_on`] | io, md, rt |
+//! | K1-K7 | [`k8s_checks`] (with T7 and T9), inside a pod only | io, rt |
+//! | N1 (`nic`) | `n1_adaptive_rx` | io, md (kernel sockets) |
+//! | N2 (`nic`) | `n2_deferred_irqs` | io, md |
+//! | N3 (`nic`) | `n3_azure_vf` | io |
+//! | N4 (`nic`) | `n4_rx_ring` | md (socket transport with busy polling) |
+//!
+//! - **Callers** ([`Component`]): io is ergon-io, md the ergon-md-dpdk media
+//!   driver, rt an application's busy-spinning runtime.
+//! - **Results**: each is a [`Finding`]. Its [`Status`] says whether the check
+//!   fired; its [`Severity`] says how to log it.
+//! - **Cost**: file reads and allocations. T7 reads `/proc/thread-self` (no
+//!   system call); T2 reads one directory and two files per interrupt; N1 and
+//!   N4 make one netlink query that waits at most 100 ms.
+//!   [`ThrottleWatch::check`] reads one open file (`cpu.stat` too once
+//!   throttling shows) and allocates only when it reports.
+//! - **Evidence**: this repository's measurements (`md-dpdk/BENCHMARKS.md`,
+//!   `io/benches/BENCHMARK.md`, the settings-matrix runs under
+//!   `io/benches/results/`), or the kernel's and vendors' documentation where
+//!   nothing was measured. Each finding names its source.
+//! - **The switch**: every host-check warning line ends with how to silence
+//!   it. [`HOST_CHECKS_ENV`] is `off` (no warning line, the results are
+//!   still returned), `on` (the default) or `require` (a warning is an error
+//!   at start). See [`HostCheckPolicy`] and [`host_check_line`].
+
+mod cpu;
+mod cpuset;
+mod finding;
+mod host;
+mod k8s;
+mod mem;
+mod net;
+#[cfg(feature = "nic")]
+mod nic;
+mod platform;
+mod quota;
+mod report;
+
+pub use cpu::{
+    SchedPolicy, Thread, t1_isolation, t7_sched_policy, t8_smt_siblings, t10_smt_on,
+    thread_affinity, thread_policy,
+};
+pub use cpuset::{CPU_LIMIT, CpuSet, CpuSetError};
+pub use finding::{CheckId, Component, Finding, HotCpu, HotSet, Role, Severity, Status};
+pub use host::{Host, ReadError};
+pub use k8s::{Needs, in_pod, k8s_checks};
+pub use mem::{FsMagic, fs_magic, t3_thp, t4_aeron_dir, t4_from, t5_numa_balancing};
+pub use net::{
+    BusyPoll, Nic, NicIrq, busy_poll_sysctls, carrier_changes, nic_irqs, t2_nic_irqs, t6_nic_node,
+};
+#[cfg(feature = "nic")]
+pub use nic::{
+    Coalesce, Ethtool, EthtoolCache, EthtoolError, Netlink, Rings, n1_adaptive_rx,
+    n2_deferred_irqs, n3_azure_vf, n4_rx_ring,
+};
+pub use platform::{Arch, Cloud, Platform};
+pub use quota::{
+    CgroupVersion, CpuCgroup, CpuQuota, ThrottleWatch, Throttling, cpu_cgroup, t9_cpu_quota,
+};
+pub use report::{
+    HOST_CHECKS_ENV, HostCheckError, HostCheckPolicy, SILENCE, host_check_line, warn_line,
+};

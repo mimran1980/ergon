@@ -1,0 +1,4 @@
+driver VmLck: 0 kB VmRSS: 45000 kB 
+thread media_driver/100 cpus=0 vcsw=1 nvcsw=1
+thread receiver/105 cpus=3 vcsw=0 nvcsw=1
+cpu 2 irqs=24229 timer=14696 steal=0

@@ -1,6 +1,317 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.30] — 2026-10-20
+
+### Added
+
+- `ergon-clock` (first release): a hardware-counter clock for low-latency
+  threads. `calibrate` once at start-up returns a `Clock` (`rdtsc` or
+  `CNTVCT_EL0`, else `CLOCK_MONOTONIC` with the reason), a `Follower` for
+  other threads, and a `Report` with time-sync findings. `now_ns` is UTC
+  nanoseconds by default (`Domain::Monotonic` is since boot).
+- `ergon-tune` (first release): pure-function checks of a host's low-latency
+  settings (CPU isolation, interrupts off busy CPUs, hugepages, Aeron
+  directory, cgroup CPU quota, NIC settings). Each finding names its
+  effect and the exact fix. `ThrottleWatch` warns when a cgroup throttles.
+- `ergon-io` (first release) gains a complete WebSocket client
+  (close handshake, pings,
+  subprotocols, `Reconnect` with backoff), TCP keepalive on every
+  connection, a quick-ACK route check per connection
+  (`Config::quickack_check`), request outcomes (`ClientHandler::on_error`,
+  `outcome::Verdict`), connect gates for venue limits
+  (`Reconnect::poll_gated`, `defer`) and a send budget
+  (`ergon_io::limit::Budget`).
+- `ergon-md-dpdk` (first release): an experimental DPDK ENA kernel-bypass UDP
+  transport for the Aeron media driver (Linux, `libdpdk >= 23.11`,
+  `dpdk` feature), selected by `RUSTERON_MEDIA_DRIVER_TRANSPORT=dpdk-ena`
+  or `DpdkTransport::install`. It interoperates with kernel peers. A
+  proof of concept, not for production.
+- `ergon-md-dpdk`: `RUSTERON_DPDK_GAP_ATTRIB=1` splits each agent loop gap
+  into work and descheduling, by the thread's own CPU time across it against
+  its wall length (half or more on the CPU is work). Four counters —
+  `poll-cycle-gaps-work`, `poll-cycle-gaps-desched` and their two maxima —
+  answer whether a receiver's long gaps are the agent working or the host
+  descheduling its vCPU. Off by default, so the hot path never reads the CPU
+  clock for it.
+- ergo-sbe: generated mappings between SBE and application types
+  (`with_enum_mapping`, `with_composite_mapping`) with exhaustive
+  `TryFromSbe` / `TryToSbe` matches and `sbe_rt::MappingError`.
+- ergo-sbe: send helpers that claim, encode, check and commit one frame
+  (`Claim`, `OfferClaim`, `send`, `send_frame`, `SendError`).
+- ergo-sbe: `with_source_traits(true)` generates a `{Message}Source` trait
+  per message and `encode_from(&src)` to encode from an application type.
+- The book gains parts for `ergon-io`, `ergon-clock`, `ergon-tune` and
+  `ergon-md-dpdk`, and a Deployment part (AWS, Azure, Kubernetes).
+
+- Generate an opt-in cross-schema `AnySchemaMessage` dispatcher
+  (`Generator::generate_schema_dispatch`) with typed errors and borrowed
+  frames, including unknown schemas and templates.
+- `SessionBuilder::aeron`, `client_name` and `error_handler`.
+- `AeronCluster::offer_vectors` gathers a session header plus up to seven
+  payload slices with no heap allocation.
+- `IngressSessionDecorator` prepends a session header on a raw publication.
+  `ClusterEvent` is the logged cluster event. Egress listeners gain
+  `on_message_with_reserved_value` and `on_extension_message`.
+- Report the cluster client's ingress limits, so a client can refuse to start
+  when its largest message would not fit:
+  `AeronCluster::ingress_max_message_length()`, `ingress_max_payload_length()`
+  and `AeronCluster::SESSION_HEADER_LENGTH`.
+- Report the egress image a cluster session is bound to:
+  `AeronCluster::egress_image_correlation_id()` and `egress_image_session_id()`.
+  As in Java, the session binds to the image that delivered its
+  `SessionEvent(OK)` or latest `NewLeaderEvent`.
+- Read a fixed text array (any `char` array, or a `uint8` array whose
+  `characterEncoding` is ASCII or UTF-8) as text: `<field>_as_str()` returns
+  `Result<&str, DecodeError>` with trailing NUL padding removed, at message
+  and group-entry level. Group-entry encoders gain the `<field>_str(&str)`
+  setter message encoders already had. Both use the new public
+  `sbe_rt::encode_fixed_text` and `sbe_rt::decode_fixed_text`.
+
+### Changed
+
+- The workspace toolchain is Rust 1.99.0.
+- Breaking (generated API): a domain DTO's `encode` reports a refused
+  domain conversion as `EncodeError::Conversion` (field path and the
+  conversion's error) instead of `DomainConversionFailed`, and refuses
+  `Some` of an optional field's null value with `EncodeError::SomeNullValue`.
+- Breaking (WebSocket): a complete data frame inside a fragmented message
+  closes the connection (RFC 6455); it used to be delivered as a message.
+- Breaking (libcurl): methods libcurl may send again (POST, PUT, PATCH)
+  are refused unless `HttpClientConfig::curl_allow_non_idempotent_methods`
+  is set.
+- Aeron Archive and Cluster run on Java 25 (Temurin 25). The cluster
+  harness checks the Java version and starts every Java process with
+  tested JVM options. `ClusterLauncher` is compiled with
+  `javac --release 17`.
+- The release publishes `ergon-clock`, `ergon-tune` and `ergon-io` before
+  `ergon-md-dpdk`; `just release-check` dry-runs them together.
+
+- Breaking (generated API): drop `try_` from the per-field and closure
+  methods.
+  - A domain-typed field's getter and setter take the plain field name
+    (`price()?`, `price(v)?`); the raw accessor stays `price_wire`. A field
+    named after a reserved method takes the same `_field` rename its raw
+    accessor would.
+  - The decoder's boolean getter is `{field}_bool()` again, reversing
+    0.1.24's `try_{field}_bool()`.
+  - The `Ordered` lane's `try_fixed`, `try_<group>`, `try_<data>` and
+    `try_<data>_as_str` twins are removed; their plain forms return
+    `DecodeError`, so map a custom error into it inside the closure.
+  - The raw stages' `try_<data>(f)` and `try_<data>_as_message(f)`
+    callbacks are removed; use `into_<data>()` / `into_<data>_as_message()`,
+    or `.ordered()`.
+- Breaking (cluster API): `SessionBuilder` is no longer `Send` or `Sync`,
+  because it can hold a shared Aeron client (`SessionBuilder::aeron`), and
+  `EgressEvent::SessionEvent` gains `leader_heartbeat_timeout_ns`, so code
+  that builds or destructures that variant must name the field.
+- Depend on rusteron 0.2.11 from crates.io, which bundles Aeron 1.53.3.
+- Pin the `aeron` submodule and the vendored cluster session schema to 1.53.3.
+  Session schema id 111 is SBE version 17. `ServiceTerminationPosition` gains
+  `ackRequired`.
+- Check ergo-sbe's wire bytes against sbe-tool 1.40.2, up from a pre-1.40.0
+  snapshot, and add its `issue1116`, `issue1118`,
+  `floating-point-infinity-schema` and five more test schemas to the parity
+  suite.
+- Reject a float or double `nullValue`, `minValue`, `maxValue` or constant
+  spelled `inf`, `infinity` or `nan` in any case other than `Infinity` and
+  `NaN` (with an optional sign), as sbe-tool does. A malformed float constant
+  now fails at parse time, not in the generated module.
+- Reject `presence="constant"` on a set or composite field, and a constant
+  enum field given by `constantValue` rather than `valueRef`, as sbe-tool
+  does for the enum form.
+- Stop blocking in the cluster client's polls. `AsyncClusterConnect::poll`
+  and `poll_egress` add publications and subscriptions with Aeron's async add
+  and pick them up on later polls; each add used to wait up to 5 s. Only the
+  first `poll`, which creates the Aeron client, can still wait.
+- Follow a new cluster leader as Java's client does: after a `NewLeaderEvent`
+  the session stays `AwaitingNewLeader` until the new leader's ingress
+  publication has connected, within `message_timeout`. The `Disconnected`
+  reason names what the session was waiting for.
+- Detect cluster leader loss from the session's own egress image:
+  `AeronCluster::is_egress_connected()` is false once that image closes, even
+  while a replacement image is open.
+- Return `PayloadTooLarge` from `AeronCluster::try_claim` for a claim over the
+  ingress publication's max payload length. `connect` and `finish` fail when
+  the publication's limits cannot be read.
+- Align the cluster client's connect, failover and egress handling with the
+  Java client: open an ingress publication to every member when ingress
+  endpoints are set, send protocol version 0.3.0, accept a `SessionEvent` or
+  `Challenge` only for the request in flight, and wait for a new leader on
+  `NOT_CONNECTED` and `CLOSED`. `MAX_POSITION_EXCEEDED` closes the session.
+  An unset new-leader timeout is twice the leader heartbeat, or 20 s. UDP
+  egress subscriptions set `rejoin=false`, and an egress channel of
+  `endpoint=localhost:0` is resolved to the bound port before connecting.
+  `poll_egress` no longer sends keep-alives.
+  `EgressEvent::SessionEvent` carries `leader_heartbeat_timeout_ns`.
+
+### Fixed
+
+- Supply chain: `rustls-webpki` 0.103.15 → 0.103.16, closing
+  [RUSTSEC-2026-0382](https://rustsec.org/advisories/RUSTSEC-2026-0382).
+  0.103.15 accepted certificate paths containing distrusted emSign
+  intermediates whose private keys are public. `ergon-io` depends on `rustls`
+  directly, so this shipped in a published crate. `cargo deny` and
+  `cargo audit` block the release on a live advisory; they are what caught it.
+- ergo-sbe: a domain DTO's `encode` writes `NullVal` for a `None`
+  domain-typed enum field instead of leaving whatever the buffer held.
+- Benchmark validity: SBE parity arms pay the same validation class and the
+  same observation barriers. Gated body-wrap decode pairs and body-only
+  encode pairs time `wrap_unchecked` against sbe-tool's zero-check wrap, with
+  the extent proved once in an untimed preflight; `ergo-sbe_try_from` is a
+  separate informational arm the gate does not read. Every value one arm
+  makes opaque, its partner makes opaque at the same number of barriers and
+  the same program points. `fairness_policy_test` enforces both.
+- Benchmark accounting: `Work::from_meta` rejects a malformed count instead
+  of treating it as missing, and reconciles `work.completed` against the
+  records on disk before any warm-up is dropped. `analyse` refuses to
+  publish latency rows or exit 0 on a contradictory count. The benchmark
+  binaries sample both endpoint clocks before any of the run's own file I/O,
+  so the schedule's span no longer absorbs disk time.
+- Benchmark gate: a calculation that produced no verdict can no longer
+  certify a ratio. A ratio above its ceiling whose ratio CI overlaps a
+  measured A/A null band is inconclusive, not a breach; a pair with no
+  measured control still fails closed. Ceilings are unchanged. The gate
+  reads Criterion's `typical()` estimator — the mean when `slope` is null,
+  never the median.
+- Benchmark gate: a pair is graded on the **envelope of every independent
+  invocation** the runner took, and against a **repeated** A/A control, not
+  on one invocation's confidence interval. Identical code walked 3.5 % across
+  three invocations (`cluster_decode_session_message_header` measured 1.0236,
+  0.9916, 0.9887) while each run's own ratio CI was ±0.5 %, so a single run
+  reported a rotating set of "resolved breach" verdicts on unchanged code.
+  `just bench-cluster` and `run-sbe-bench.sh` now take BENCH_REPEATS
+  invocations (default 5) and snapshot each under `repeats/<k>/`; the gate
+  resolves a pair only where the envelope clears the ceiling and the control's
+  envelope in every invocation, and otherwise establishes no winner. A
+  manifest declaring more invocations than are on disk is refused. Ceilings
+  are unchanged and no exception was added.
+- Benchmark gate: a repeat snapshot keeps only estimates its own invocation
+  produced. The Criterion home is shared with other bench binaries and
+  Criterion leaves `new/` in place for groups a run does not touch, so a
+  snapshot of the whole home folded foreign keys into the envelope and widened
+  it with evidence the run never produced. The runner marks the invocation
+  with `.bench-since`; a snapshot with no marker is refused. The graded line
+  now shows the envelope the verdict is based on — it used to print the last
+  invocation's ratio beside a label decided by the maximum, which read as
+  `0.9941 (max 1.00) above ceiling`.
+- Benchmark gate: an over-ceiling pair is non-blocking only when a **measured**
+  A/A null band reaches it. Without a band, or outside it, it is a resolved
+  breach or **unproven**, and unproven blocks. A wide confidence interval is
+  not evidence: a 2× slowdown (200 ns against 100 ns, ratio CI 50–400) with
+  no control used to exit 0. "The measurement could not resolve it" is not
+  "the ceiling was met".
+- Benchmark gate: every estimate is parsed before any is used. A malformed,
+  non-finite or non-positive repetition refuses the whole key and prints
+  nothing; it used to be dropped, so a key with one good repetition and one
+  truncated `estimates.json` graded on the good one and passed. `NaN`, `0`
+  and negative counts are refused, not read as numbers.
+- Benchmark gate: every declared repetition must carry every consumed pair,
+  matched by repetition ID. Removing both arms of one comparison from
+  repetition two used to still report "2 independent invocations" and grade
+  that pair on one. A repetition missing a pair is incomplete evidence.
+- Benchmark gate: a consumed A/A control is provenance-checked against the
+  run manifest like the pairs it grades. A control stamped by another run
+  used to excuse a tightly measured 2× regression as harness noise. A missing
+  control is still reported as "A/A null not measured", not as a provenance
+  failure.
+- Benchmark manifests record the host CPU. `aarch64-apple-darwin` does not
+  distinguish an M1 from an M4, and 0.1.30's local figures are M1 where
+  0.1.29's were M4, so absolute figures are not comparable across the two
+  releases. Ceilings are host-independent ratios and are unchanged.
+- Fair comparison reports carry the sender's schedule beside the work counts,
+  and name the rows whose sender was not the planned traffic. `Work::late`
+  counts paced **order slots**; the sender's `late_100us` counts **batches**
+  across all traffic, and the two were published as one number. Six of 144
+  points in the Graviton fair run `20261019T175248Z` slipped over 1 % of
+  batches; every one is interior on p50 and p99 within its family, and the
+  two published endpoints a slipped row sets are now printed with and without
+  it. A `latest µs` over 100× the median of its column is named beside the
+  table as a stall, not offered as a ranking.
+- The work-counts extractor fails closed on the evidence it reads. A present
+  but partial sender schedule, a minus count or an unreadable value names the
+  key and value and writes nothing; it used to drop the point or copy the
+  figure through (`late_100us=-80` reported `-8.00% … ok`, exit 0). Its
+  parsing is `u64::from_str`, and its completeness rule is the Rust loader's:
+  a sender schedule is all or none. A run that wrote none of it is still an
+  honest hole, not a failure.
+- Release artifacts: a cluster archive carries only the run's own evidence.
+  The cluster Criterion home is shared with other bench binaries and Criterion
+  leaves `new/` in place for groups a run does not touch, so one run packaged
+  53 "estimates" of which 35 belonged to `ergon-clock-bench` and the historic
+  bench. The archive and its estimate count now come from `repeats/<k>/` — the
+  tree the runner snapshotted and the gate grades.
+- Clock bench: `the_gap_pass_takes_no_page_faults_while_it_times` asserted a
+  zero fault count that off Linux is the whole process's
+  (`getrusage(RUSAGE_SELF)`; Darwin has no `RUSAGE_THREAD`), so another
+  thread's faults failed the test, and its gap assertion could not see a
+  fault at all because the read under test is a counter. The pass now proves
+  its buffer is resident with `mincore` — scoped to the buffer, and counted
+  as pages are touched — and only asserts the fault count where the kernel
+  scopes it to the thread.
+- Cluster codec benches: `encode/session_keep_alive` and
+  `encode/claim_shaped_header_plus_app` measured unequal mechanisms. Both
+  arms now carry the controls `encode/session_message_header` already used —
+  `.p2align 6` on both loop headers, `wrap_unchecked` on the ergon arm, field
+  values opaque and slice length visible on both arms. The pre-fix closures
+  are kept as a diagnostic probe pair in `cluster_perf_probe`, which shows
+  what the checked `wrap` costs when the slice length is opaque. All three
+  maintained encode pairs are now instruction-identical on x86-64 (80/80,
+  75/75, 72/72) with byte-identical stores.
+
+- Leave constant fields out of a group entry's `blockLength`. Frames ergo-sbe
+  encoded for schemas with a constant ending an entry change width to match
+  sbe-tool.
+- Return a constant enum in a group entry from its `valueRef`, as message
+  level does; its wire-reading entry accessors and setters are removed.
+- Count a group entry's DTO `encoded_length()` from the stride the encoder
+  writes, including a group's declared `blockLength` padding.
+- Take an enum's null from its `encodingType` typedef's `nullValue` when the
+  enum declares none, as sbe-tool does. `NullVal`, the `From` conversions and
+  an optional enum's `None` now write that value (254 for `nullValue="254"`),
+  where they wrote the primitive default.
+- Generate float and double constants written `Infinity`, `-Infinity`,
+  `+Infinity` or `NaN`; they did not compile. A negative constant such as
+  `-1.5` is no longer mistaken for an `Enum.value` reference.
+- Decode an optional float or double whose `nullValue` is not NaN as `None`
+  when it holds that value, at every level.
+- Let fixed-text decoder helpers yield to schema field names at every depth.
+- Emit generated doc comments one `#[doc]` line at a time. A multi-paragraph
+  doc was rendered as a `/** … */` block whose indented prose rustdoc ran as a
+  failing doctest when the generated module was checked into `src/`.
+- Stop the cluster crate enabling ergo-sbe's default `fancy` feature, which
+  pulled miette's graphical renderer into the cluster build.
+- Walk `verify` at the dimension header's block length and the frame's acting
+  version, so an extended group block is accepted and a short nested block is
+  rejected.
+- Reject a nested group block shorter than its fields when reached through a
+  warm parent entry; `bulk_decode_into` could panic or read past the buffer.
+- Rescale a `rust_decimal::Decimal` to a decimal composite's constant
+  exponent instead of passing its mantissa through. A value that cannot be
+  represented exactly is an error, never rounded.
+- Honour a `UTCTimestamp` field's `timeUnit` in the built-in
+  `chrono::DateTime<Utc>` conversion, at every level and in domain DTOs. A
+  value more precise than the field holds is an error.
+- Reject an invalid `valueRef` at parse time, as sbe-tool does.
+- Reject an included file whose root is `<message>`; it was dropped silently.
+- Keep the ingress channel's settings when the cluster client follows a
+  REDIRECT or a new leader; only a unicast endpoint is replaced.
+- Apply a cluster `SessionEvent(CLOSED)` that arrives with or after a
+  `NewLeaderEvent`; it was dropped.
+- Refuse cluster channel URIs over Aeron's 4096-byte limit; Aeron's printer
+  wrote past a fixed 512- or 256-byte buffer.
+
+### Removed
+
+- The recommended JVM options drop `-XX:+TrustFinalNonStaticFields`,
+  `-XX:GuaranteedSafepointInterval=300000` and `-XX:+DebugNonSafepoints`,
+  and the two `-XX:+Unlock{Experimental,Diagnostic}VMOptions` that existed
+  only to admit them. All three came from Aeron's scripts and benchmarks;
+  their effect on the recommended JDK was never measured, and two of them
+  are experimental or diagnostic, so the JVM is free to change them.
+  Every option left in `cluster-test-harness/jvm/aeron.jvm` is either
+  required to start or has a measured reason.
+- Moved the runtime, its server, the wire and bridge crates, the log printer
+  and the ClickHouse lab to a private repository.
 
 ## [0.1.29] — 2026-09-19
 
