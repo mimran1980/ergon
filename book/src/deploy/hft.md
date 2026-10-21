@@ -215,7 +215,10 @@ grep Cpus_allowed_list /proc/self/status
 
 `ERGON_HOST_CHECKS=require` (media driver alias
 `RUSTERON_MEDIA_DRIVER_HOST_CHECK`) refuses to start while any check warns
-([ergon-tune](../tune/overview.md#where-the-checks-run)).
+or a proof check stays unproven
+([ergon-tune](../tune/overview.md#where-the-checks-run)). In a stock
+static-CPU-manager pod ergon-io's K2 stays unproven, so `require` refuses
+it ([checks inside a pod](kubernetes.md#checks-inside-a-pod)).
 
 ## Open
 

@@ -49,7 +49,8 @@ compared metal with a VM, so no measured benefit backs that price.
 DPDK at both ends, the media driver as a DaemonSet pod, round trips between
 the two nodes' pods, run `eks-20261014-195824`
 ([rows](https://github.com/mimran1980/ergon/blob/main/md-dpdk/benches/cloud/results/eks-20261014-195824.txt)):
-p50 28.37 (28.02–29.60), p99.99 63.33 (57.79–71.81), max 126 (112–148) µs.
+p50 28.37 (28.02–29.60), p99.99 63.33 (57.79–71.81) µs; max 148 µs (the
+median of the five reps' maxima 126, range 112–148).
 No NAK or retransmit; 4 short sends. One arm, so nothing is compared. Setup:
 [Kubernetes](kubernetes.md).
 
