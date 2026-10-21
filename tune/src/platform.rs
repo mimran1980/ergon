@@ -78,7 +78,7 @@ impl Platform {
     }
 }
 
-fn arch_of(cpuinfo: &str) -> Arch {
+pub fn arch_of(cpuinfo: &str) -> Arch {
     for line in cpuinfo.lines() {
         let key = line.split(':').next().unwrap_or_default().trim();
         match key {

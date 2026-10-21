@@ -14,6 +14,8 @@
 //! | T8 | [`t8_smt_siblings`] | io, md, rt |
 //! | T9 | [`t9_cpu_quota`] at start; [`ThrottleWatch`] while running | io, md, rt (start); rt (housekeeping) |
 //! | T10 | [`t10_smt_on`] | io, md, rt |
+//! | T11 | [`t11_time_sync`] at start; [`ClockWatch`] while running | rt (start, housekeeping) |
+//! | T12 | [`t12_clocksource`] at start; [`ClockWatch`] while running | rt (start, housekeeping) |
 //! | K1-K7 | [`k8s_checks`] (with T7 and T9), inside a pod only | io, rt |
 //! | N1 (`nic`) | `n1_adaptive_rx` | io, md (kernel sockets) |
 //! | N2 (`nic`) | `n2_deferred_irqs` | io, md |
@@ -28,7 +30,9 @@
 //!   system call); T2 reads one directory and two files per interrupt; N1 and
 //!   N4 make one netlink query that waits at most 100 ms.
 //!   [`ThrottleWatch::check`] reads one open file (`cpu.stat` too once
-//!   throttling shows) and allocates only when it reports.
+//!   throttling shows) and allocates only when it reports. T11 scans
+//!   `/proc` and waits at most 50 ms for chronyd; [`ClockWatch::check`]
+//!   never waits and allocates only when a finding changes.
 //! - **Evidence**: this repository's measurements (`md-dpdk/BENCHMARKS.md`,
 //!   `io/benches/BENCHMARK.md`, the settings-matrix runs under
 //!   `io/benches/results/`), or the kernel's and vendors' documentation where
@@ -50,6 +54,7 @@ mod nic;
 mod platform;
 mod quota;
 mod report;
+mod time;
 
 pub use cpu::{
     SchedPolicy, Thread, t1_isolation, t7_sched_policy, t8_smt_siblings, t10_smt_on,
@@ -74,4 +79,11 @@ pub use quota::{
 };
 pub use report::{
     HOST_CHECKS_ENV, HostCheckError, HostCheckPolicy, SILENCE, host_check_line, warn_line,
+};
+pub use time::{
+    Bound, BoundSource, ChronyAnswer, ChronyError, ChronyReference, ChronyTracking,
+    ClockBoundAnswer, ClockBoundError, ClockBoundReading, ClockBoundStatus, ClockSample,
+    ClockWatch, Clocksource, ClocksourceKind, ClocksourceName, KernelSync, Observed, PtpClock,
+    RefclockId, SyncVerdict, TimeDaemon, TimeSync, TimeSyncLimits, TimeSyncProbe, t11_time_sync,
+    t12_clocksource, time_sync,
 };

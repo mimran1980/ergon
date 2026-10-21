@@ -454,7 +454,7 @@ fn parse_local(text: &str) -> Result<Option<u64>, &'static str> {
 /// Reads `file` from its start into `buf` (`pread` at offset 0: no seek,
 /// no allocation); the bytes read.
 #[cfg(unix)]
-fn read_from_start(file: &File, buf: &mut [u8]) -> std::io::Result<usize> {
+pub fn read_from_start(file: &File, buf: &mut [u8]) -> std::io::Result<usize> {
     use std::os::unix::fs::FileExt;
     let mut n = 0;
     while n < buf.len() {
@@ -470,7 +470,7 @@ fn read_from_start(file: &File, buf: &mut [u8]) -> std::io::Result<usize> {
 }
 
 #[cfg(not(unix))]
-fn read_from_start(file: &File, buf: &mut [u8]) -> std::io::Result<usize> {
+pub fn read_from_start(file: &File, buf: &mut [u8]) -> std::io::Result<usize> {
     use std::io::{Read, Seek, SeekFrom};
     let mut file = file;
     file.seek(SeekFrom::Start(0))?;
