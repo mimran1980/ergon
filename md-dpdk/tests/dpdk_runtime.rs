@@ -688,20 +688,21 @@ fn housekeeping_threads_join_the_conductor_and_avoid_spinning_agents() {
         let _bad = EnvGuard::set("RUSTERON_DPDK_HOUSEKEEPING_CPU", "x");
         assert_eq!(affinity().0, -1);
     }
+    let cpu_list = |l: &str| -> Vec<usize> {
+        l.trim()
+            .split(',')
+            .flat_map(|r| {
+                let mut ends = r.split('-').map(|n| n.parse::<usize>().unwrap());
+                let a = ends.next().unwrap();
+                a..=ends.next().unwrap_or(a)
+            })
+            .collect()
+    };
     let allowed: Vec<usize> = std::fs::read_to_string("/proc/self/status")
         .unwrap()
         .lines()
         .find_map(|l| l.strip_prefix("Cpus_allowed_list:"))
-        .map(|l| {
-            l.trim()
-                .split(',')
-                .flat_map(|r| {
-                    let mut ends = r.split('-').map(|n| n.parse::<usize>().unwrap());
-                    let a = ends.next().unwrap();
-                    a..=ends.next().unwrap_or(a)
-                })
-                .collect()
-        })
+        .map(cpu_list)
         .unwrap();
     let conductor = *allowed.last().unwrap();
     let _conductor = EnvGuard::set("AERON_CONDUCTOR_CPU_AFFINITY", &conductor.to_string());
@@ -710,15 +711,30 @@ fn housekeeping_threads_join_the_conductor_and_avoid_spinning_agents() {
     let sender = allowed[0];
     let _sender = EnvGuard::set("AERON_SENDER_CPU_AFFINITY", &sender.to_string());
     let _spins = EnvGuard::set("AERON_CONDUCTOR_IDLE_STRATEGY", "spin");
+    // A spinning agent owns its whole core, SMT siblings included, so what is
+    // left depends on the host's topology, not on the CPU count: a 4-vCPU
+    // host of two cores has no CPU off the sender's and conductor's cores.
+    let core = |cpu: usize| -> Vec<usize> {
+        std::fs::read_to_string(format!(
+            "/sys/devices/system/cpu/cpu{cpu}/topology/thread_siblings_list"
+        ))
+        .map_or_else(|_| vec![cpu], |l| cpu_list(&l))
+    };
+    let owned: Vec<usize> = core(sender).into_iter().chain(core(conductor)).collect();
+    let free: Vec<usize> = allowed.iter().copied().filter(|c| !owned.contains(c)).collect();
     let (rc, cpus) = affinity();
-    if allowed.len() > 2 {
-        assert_eq!(rc, 1);
-        assert!(
-            !cpus.contains(&conductor) && !cpus.contains(&sender),
-            "{cpus:?} avoids the spinners"
+    if free.is_empty() {
+        assert_eq!(
+            (rc, cpus),
+            (0, vec![]),
+            "no CPU off the spinners' cores {owned:?}: left unpinned"
         );
     } else {
-        assert!(rc == 0 || !cpus.contains(&sender));
+        assert_eq!(rc, 1);
+        assert!(
+            !cpus.is_empty() && cpus.iter().all(|c| free.contains(c)),
+            "{cpus:?} avoids the spinners' cores {owned:?}"
+        );
     }
 }
 

@@ -376,21 +376,36 @@ fn housekeeping(native: *const c_void) -> (c_int, Vec<usize>) {
     (rc, cpus_of(&set))
 }
 
-/// The CPUs the thread named `name` may run on.
+/// The CPUs the thread named `name` may run on. A thread of that name from an
+/// earlier install can still be listed for a moment after it was joined (the
+/// kernel wakes the joiner before it reaps the task), so this waits, at most
+/// two seconds, until exactly one is listed.
 fn thread_cpus(name: &str) -> Vec<usize> {
-    for task in std::fs::read_dir("/proc/self/task").unwrap() {
-        let task = task.unwrap().path();
-        if std::fs::read_to_string(task.join("comm")).is_ok_and(|c| c.trim() == name) {
-            let status = std::fs::read_to_string(task.join("status")).unwrap();
-            return cpu_list(
-                status
-                    .lines()
-                    .find_map(|l| l.strip_prefix("Cpus_allowed_list:"))
-                    .unwrap(),
-            );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        let mut found: Vec<Vec<usize>> = std::fs::read_dir("/proc/self/task")
+            .unwrap()
+            .filter_map(|task| {
+                let task = task.ok()?.path();
+                if std::fs::read_to_string(task.join("comm")).ok()?.trim() != name {
+                    return None;
+                }
+                let status = std::fs::read_to_string(task.join("status")).ok()?;
+                Some(cpu_list(
+                    status.lines().find_map(|l| l.strip_prefix("Cpus_allowed_list:"))?,
+                ))
+            })
+            .collect();
+        if found.len() == 1 {
+            return found.remove(0);
         }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{} threads named {name}, not one: {found:?}",
+            found.len()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
     }
-    panic!("no thread named {name}");
 }
 
 /// Before install, from the environment: the agent that spins in each mode
@@ -426,9 +441,16 @@ fn housekeeping_from_the_environment_avoids_each_modes_spinning_core() {
         "SHARED_NETWORK: with the conductor"
     );
     let _spins = EnvGuard::set("AERON_CONDUCTOR_IDLE_STRATEGY", "noop");
+    // Both spin now, each owning its whole core: what is left depends on the
+    // host's cores, not its CPU count (two cores of two CPUs leave none).
+    let owned: Vec<usize> = core_of(first).into_iter().chain(core_of(last)).collect();
+    let free: Vec<usize> = cpus.iter().copied().filter(|c| !owned.contains(c)).collect();
     let (rc, on) = housekeeping(std::ptr::null());
-    assert_eq!(rc, i32::from(cpus.len() > 2), "SHARED_NETWORK: {on:?}");
-    assert!(!on.contains(&first) && !on.contains(&last), "SHARED_NETWORK: {on:?}");
+    assert_eq!(rc, i32::from(!free.is_empty()), "SHARED_NETWORK: {on:?}, free {free:?}");
+    assert!(
+        on.iter().all(|c| free.contains(c)),
+        "SHARED_NETWORK: {on:?}, free {free:?}"
+    );
 }
 
 /// `RUSTERON_DPDK_HOUSEKEEPING_CPU` is an override, not an exemption: a CPU a
@@ -681,12 +703,23 @@ fn core_of(cpu: usize) -> Vec<usize> {
 #[serial]
 fn a_dedicated_agent_spinning_on_the_eal_main_lcores_core_is_refused() {
     let cpus = allowed_cpus();
-    let (sender, receiver) = (cpus[cpus.len() - 1], cpus[cpus.len() - 2]);
-    let busy: Vec<usize> = core_of(sender).into_iter().chain(core_of(receiver)).collect();
-    let off = *cpus
+    let sender = cpus[cpus.len() - 1];
+    let off_both = |receiver: usize| {
+        cpus.iter()
+            .copied()
+            .find(|c| !core_of(sender).contains(c) && !core_of(receiver).contains(c))
+    };
+    // The receiver on a core of its own when a third core remains for the
+    // main lcore; else beside the sender (its SMT sibling), leaving the other
+    // core for it, as on a 4-vCPU host of two cores.
+    let receiver = cpus
         .iter()
-        .find(|c| !busy.contains(c))
-        .expect("a CPU off the sender's and the receiver's cores (three cores are needed)");
+        .rev()
+        .copied()
+        .find(|c| !core_of(sender).contains(c) && off_both(*c).is_some())
+        .or_else(|| core_of(sender).into_iter().find(|c| *c != sender && cpus.contains(c)))
+        .expect("a CPU for the receiver off the sender's core, or its SMT sibling");
+    let off = off_both(receiver).expect("a CPU off the sender's and the receiver's cores");
     let _elsewhere = EnvGuard::set("RUSTERON_DPDK_HOUSEKEEPING_CPU", &off.to_string());
     let ctx = bare_context(DEDICATED);
     ctx.set_sender_cpu_affinity(sender as i32).unwrap();
@@ -712,12 +745,19 @@ fn a_dedicated_agent_spinning_on_the_eal_main_lcores_core_is_refused() {
                 "DEDICATED: the {agent} spinning on the EAL main lcore's CPU {cpu} accepted"
             ))
             .to_string();
+        // The first agent, sender then receiver, whose core holds the main
+        // lcore: the sender for the receiver's CPU when they share a core.
+        let named = if core_of(sender).contains(&cpu) {
+            "sender"
+        } else {
+            "receiver"
+        };
         assert!(
             text.contains("main lcore")
-                && text.contains(agent)
+                && text.contains(named)
                 && text.contains("RUSTERON_DPDK_EAL_ARGS")
                 && text.contains("DEDICATED"),
-            "{agent}: {text}"
+            "{agent} on {cpu}, {named} named: {text}"
         );
     }
 }

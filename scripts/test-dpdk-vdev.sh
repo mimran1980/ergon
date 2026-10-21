@@ -163,6 +163,49 @@ attach_tap() {
 # Environment for a harness process
 # ---------------------------------------------------------------------------
 
+# The CPUs of one CPU's core: its SMT siblings, itself included.
+core_of() {
+    local list
+    list=$(cat "/sys/devices/system/cpu/cpu$1/topology/thread_siblings_list" 2>/dev/null || echo "$1")
+    expand_cpus "$list"
+}
+
+# "0-2,5" -> "0 1 2 5"
+expand_cpus() {
+    local part a b out=()
+    IFS=, read -ra parts <<<"$1"
+    for part in "${parts[@]}"; do
+        a=${part%-*}; b=${part#*-}
+        for ((c = a; c <= b; c++)); do out+=("$c"); done
+    done
+    echo "${out[@]}"
+}
+
+# The transport refuses DEDICATED when the EAL's main lcore (its interrupt and
+# alarm threads) shares a core with the busy-spinning sender or receiver, SMT
+# siblings included. Plan from this host's topology: the main lcore on the
+# first allowed CPU, the sender and the receiver on the last two CPUs off its
+# core (siblings of each other on a 2-core runner, which is allowed).
+# RUSTERON_HARNESS_{SENDER,RECEIVER}_CPU and RUSTERON_DPDK_EAL_ARGS override.
+plan_cpus() {
+    local allowed main off=() c
+    allowed=$(expand_cpus "$(awk '/^Cpus_allowed_list:/ {print $2}' /proc/self/status)")
+    read -ra cpus <<<"$allowed"
+    main=${cpus[0]}
+    local main_core
+    main_core=" $(core_of "$main") "
+    for c in "${cpus[@]}"; do
+        [[ "$main_core" == *" $c "* ]] || off+=("$c")
+    done
+    if (( ${#off[@]} < 2 )); then
+        die "need two CPUs off the EAL main lcore's core (CPU $main, core $main_core) for the sender and the receiver; allowed: $allowed"
+    fi
+    PLAN_MAIN_LCORE=$main
+    PLAN_SENDER_CPU=${off[${#off[@]}-1]}
+    PLAN_RECEIVER_CPU=${off[${#off[@]}-2]}
+    log "CPU plan: EAL main lcore $PLAN_MAIN_LCORE, sender $PLAN_SENDER_CPU, receiver $PLAN_RECEIVER_CPU (allowed $allowed)"
+}
+
 dpdk_env() {
     local role=$1 suffix s_ip r_ip
     suffix=rusteron-vdev-p
@@ -199,6 +242,9 @@ dpdk_env() {
     echo "RUSTERON_DPDK_MEMPOOL_CACHE=256"
     echo "RUSTERON_DPDK_BURST_SIZE=32"
     echo "RUSTERON_DPDK_MAX_AERON_MTU=1408"
+    # One word: run_one passes this file through `env $(cat ...)`, which
+    # splits on spaces, so the lcore list is attached (`-l3`, not `-l 3`).
+    echo "RUSTERON_DPDK_EAL_ARGS=${RUSTERON_DPDK_EAL_ARGS:--l$PLAN_MAIN_LCORE}"
 }
 
 harness_common_env() {
@@ -207,8 +253,8 @@ harness_common_env() {
     echo "RUSTERON_HARNESS_STREAM=32931"
     echo "RUSTERON_HARNESS_TIMEOUT_SECS=40"
     echo "RUSTERON_HARNESS_MTU=1408"
-    echo "RUSTERON_HARNESS_SENDER_CPU=${RUSTERON_HARNESS_SENDER_CPU:-1}"
-    echo "RUSTERON_HARNESS_RECEIVER_CPU=${RUSTERON_HARNESS_RECEIVER_CPU:-2}"
+    echo "RUSTERON_HARNESS_SENDER_CPU=${RUSTERON_HARNESS_SENDER_CPU:-$PLAN_SENDER_CPU}"
+    echo "RUSTERON_HARNESS_RECEIVER_CPU=${RUSTERON_HARNESS_RECEIVER_CPU:-$PLAN_RECEIVER_CPU}"
 }
 
 # run_one <role> <scenario> <run-id> <envfile> [extra args...]
@@ -552,6 +598,7 @@ build_harness
 # find them at runtime. Export the dirs so the launched harness resolves them.
 export LD_LIBRARY_PATH="$(find target -name 'libaeron*.so' -printf '%h\n' 2>/dev/null | sort -u | tr '\n' ':' | sed 's/:$//' || true)"
 
+plan_cpus
 bridge_up
 
 run_one_scenario() {

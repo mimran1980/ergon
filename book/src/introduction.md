@@ -90,5 +90,5 @@ Quote a bench result by run id, not a number copied here. See
 How to set up hosts and Kubernetes for these crates on AWS and Azure, x86 and
 Graviton, with the measurements behind it: [Deployment](deploy/overview.md).
 
-Rust 1.88+. Clone setup, `just` recipes, and project boundaries:
+Rust 1.99+. Clone setup, `just` recipes, and project boundaries:
 [repository README](https://github.com/mimran1980/ergon/blob/main/README.md).

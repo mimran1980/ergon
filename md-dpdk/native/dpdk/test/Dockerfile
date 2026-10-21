@@ -13,7 +13,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake clang pkg-config make gcc g++ \
         curl ca-certificates git uuid-dev libbsd-dev \
-        openjdk-17-jre-headless \
+        openjdk-25-jre-headless \
         python3-pip \
         libdpdk-dev \
     && rm -rf /var/lib/apt/lists/*

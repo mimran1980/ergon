@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- MSRV raised from 1.88 to 1.99, the pinned toolchain. `serial_test` 4.0.1,
+  a dev-dependency, needs 1.93.1.
+
 ## [0.1.30] — 2026-10-20
 
 ### Added

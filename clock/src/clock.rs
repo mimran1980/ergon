@@ -200,10 +200,12 @@ impl OrderedRead {
         #[cfg(target_arch = "x86_64")]
         {
             let _ = self;
-            return arch::ticks_ordered_fenced();
+            arch::ticks_ordered_fenced()
         }
         #[cfg(not(target_arch = "x86_64"))]
-        self.read()
+        {
+            self.read()
+        }
     }
 }
 

@@ -173,7 +173,7 @@ pub trait ClientHandler {
     /// nothing to open.
     ///
     /// Lives here, not in a closure passed to [`HttpClient::poll_gated`],
-    /// so the gate can share this handler's [`Budget`] (the same one
+    /// so the gate can share this handler's [`Budget`](crate::limit::Budget) (the same one
     /// [`on_response`](ClientHandler::on_response) charges for requests):
     ///
     /// ```text
@@ -416,7 +416,7 @@ impl HttpClient {
     /// [`HttpClient::poll`], but a pool connect starts only when
     /// [`ClientHandler::connect_gate`] passes it: a venue's limit on
     /// connects per IP. The gate is the handler's, so it can share the
-    /// handler's [`Budget`] (see [`ClientHandler::connect_gate`]).
+    /// handler's [`Budget`](crate::limit::Budget) (see [`ClientHandler::connect_gate`]).
     ///
     /// # Errors
     /// As [`HttpClient::poll`]; [`Error::Unsupported`] for libcurl, which
