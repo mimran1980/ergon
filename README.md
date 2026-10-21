@@ -57,7 +57,7 @@ handling and performance for your own schemas. Criteria for lifting that:
 | [`md-dpdk/harness/`](md-dpdk/harness/), [`md-dpdk/device-plugin/`](md-dpdk/device-plugin/) | unpublished | DPDK interop harness and kubelet device plugin |
 | [`samples/`](samples/) | seven teaching crates | Unpublished integration playgrounds |
 
-The workspace requires Rust 1.88 or newer. The sample crates are intentionally
+The workspace requires Rust 1.99 or newer. The sample crates are intentionally
 excluded from the Cargo workspace and remain `publish = false`.
 
 ## Set up

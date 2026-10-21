@@ -220,14 +220,15 @@ jobs:
         with:
           submodules: recursive
 
-      # MSRV 1.88 (edition 2024 + let-chains). Gate the publishable pure-Rust crate;
+      # MSRV 1.99, the pinned toolchain (serial_test 4, a dev-dependency, needs
+      # 1.93.1). Gate the publishable pure-Rust crate;
       # cluster (rusteron native build) is exercised on the primary toolchain.
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.88.0"
+          toolchain: "1.99.0"
 
-      - run: cargo +1.88.0 check -p ergo-sbe --all-targets --all-features
-      - run: cargo +1.88.0 test -p ergo-sbe --lib --all-features
+      - run: cargo +1.99.0 check -p ergo-sbe --all-targets --all-features
+      - run: cargo +1.99.0 test -p ergo-sbe --lib --all-features
 
   aeron-cluster-integration:
     needs: gate
@@ -419,20 +420,15 @@ jobs:
   nri-shared-cpus:
     needs: policy
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: k8s/nri-shared-cpus
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: k8s/nri-shared-cpus/go.mod
-
-      - name: gofmt
-        run: test -z "$(gofmt -l .)"
-
-      - run: go vet ./...
-      - run: go test -race -count=1 ./...
-      - run: CGO_ENABLED=0 go build ./cmd/...
+      # gofmt, go vet, go test -race and the amd64/arm64 static builds, in a
+      # golang container with CAP_SYS_NICE: the hook tests write another
+      # process's /proc/PID/timerslack_ns, which the runner user cannot.
+      - name: unit lane (scripts/check.sh --unit)
+        run: scripts/check.sh --unit

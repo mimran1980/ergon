@@ -8,7 +8,7 @@
 | Aeron Cluster Java | 1.53.3 | clustered service container |
 | rusteron (Rust bindings) | 0.2.11+ | `rusteron-client`, `rusteron-media-driver`; bundles Aeron C 1.53.3 (the tutorial sample also uses `rusteron-archive`) |
 | ergo-sbe (codec generator) | 0.1.x | schema 111 session + mark codecs |
-| Rust | 1.88+ | MSRV, edition 2024 |
+| Rust | 1.99+ | MSRV, edition 2024 |
 | OS | Linux x86-64, macOS aarch64 | CI-tested |
 | Java | 25 (17+) | Archive and Cluster; the test harness runs Temurin 25 in CI (17 for the Aeron 1.46.8 compatibility job). [Java for Archive and Cluster](../deploy/java.md) |
 
