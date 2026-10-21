@@ -17,8 +17,8 @@ Terms: [deployment glossary](overview.md#glossary),
 | finding | scope | Kubernetes |
 |---|---|---|
 | DPDK had a lower p50 than the best kernel arm in every run with both, at idle and under load; its max was lower at 288 B 1 M msgs/s | `c9g.2xlarge`, `c7i.4xlarge`, `c7i.metal-24xl`, one run each | DPDK needs node setup: [Kubernetes](kubernetes.md) |
-| Graviton kernel UDP with interrupt moderation off: put the data NICs' IRQs on a core of their own. The other two placements lost at 1 M msgs/s of 288 B | `c9g.2xlarge`, one run | node-level: IRQ affinity is host-wide |
-| One AWS flow carried at most 7.75–7.77 Gbit/s of Aeron frames, kernel and DPDK alike. Spread a heavier stream over several channels | `c7i.4xlarge`; `c9g.2xlarge` reached at most 685,572 msgs/s at 1,344 B | application config, in the pod |
+| Graviton kernel UDP with interrupt moderation off: put the data NICs' IRQs on a core of their own. The other two placements lost at 1 M msgs/s of 288 B | `c9g.2xlarge`, G1; on a second pair (G2) this arm lost in 1 of 5 reps | node-level: IRQ affinity is host-wide |
+| One AWS flow carried at most 7.75–7.77 Gbit/s of Aeron frames, kernel and DPDK alike. Spread a heavier stream over several channels | `c7i.4xlarge`; `c9g.2xlarge` reached at most 685,574 msgs/s at 1,344 B | application config, in the pod |
 | Not compared: Graviton against x86, metal against a VM, interrupts against busy polling | different pairs and builds, or arms that differ in several settings | |
 
 Figures, rows and every setting that did not separate:

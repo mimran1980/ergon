@@ -26,16 +26,16 @@ printed before its directory was deleted, so each is partial.
 | `aws-20261016-072005` (G1) | `c9g.2xlarge` pair | DPDK knobs; kernel interrupt placement; kernel busy polling |
 | `aws-20261016-135004` (G2) | `c9g.2xlarge` pair | DPDK knobs, jumbo frames, transmit moderation |
 | `aws-20261015-185813` (round 7) | `c7i.4xlarge` pair | DPDK, kernel busy polling, plain kernel UDP |
-| `aws-20261015-174836` (round 6) | `c7i.4xlarge` pair | DPDK RX descriptors 1,024 against 4,096 |
+| `aws-20261015-174836` (round 6) | `c7i.4xlarge` pair | DPDK RX descriptors 1,024 against 4,096; DPDK transmit pacing |
 | `aws-20261015-012400` (round 4) | `c7i.metal-24xl` pair | DPDK, kernel busy polling, kernel UDP, C-state cap |
 | `aws-20261014-160247` | `c7i.2xlarge` pair | kernel arms, 1 rep: no conclusion drawn |
-| `aws-20261014-113947` | not recorded | receiver IO vectors, transparent hugepages |
-| `aws-20261014-220612` | not recorded | DPDK knobs (its base arm is not in the recovered rows) |
+| `aws-20261014-113947` | not recorded (an EC2 listing during the run showed two `c7i.2xlarge`) | receiver IO vectors, transparent hugepages |
+| `aws-20261014-220612` | not recorded (an EC2 listing during the run showed two `c7i.4xlarge`) | DPDK knobs (its base arm is not in the recovered rows) |
 | `eks-20261014-195824` | EKS, `c7i.4xlarge` | DPDK pods: [book](https://mimran1980.github.io/ergon/deploy/benchmarks.html#kubernetes-eks-on-c7i4xlarge) |
 
 The last two ids' directories had no `aws-` prefix. `aws/lab.sh:396` names its
 runs `aws-<stamp>`; `azure/lab.sh:138` names them `<stamp>` alone. Their
-platform is not in the recovered rows.
+platform is in neither directory nor rows; only the EC2 listing in each file's header points to AWS.
 
 ## Conclusions
 
@@ -64,7 +64,8 @@ G3 summary.md lines 5, 32–46 and the kernel idle row; round 7 lines 6, 8,
 149, 151, 173, 175; round 4 lines 6–7, 55, 60.
 
 Loss in G3: no NAK or retransmit at any point in any arm. The timestamps arm
-had 630,837 short sends at 1,344 B bursts (G3 lines 32–46).
+had 630,837 short sends at 1,344 B bursts, which the lab counts as loss: 1 of
+5 reps lossy (G3 lines 32–46 and its loss-by-point table).
 
 ### Graviton kernel UDP: where the data NICs' interrupts go
 
@@ -79,24 +80,27 @@ G1, one run, interrupt moderation off in all three arms
 
 With moderation off on `c9g.2xlarge`, a core of their own was the only
 placement without loss at 1 M/s. Rows: G1 summary.md lines 102, 110, 118,
-145, 147, 149.
+145, 147, 149. The same spare-core arm on two other `c9g.2xlarge` pairs: G2
+lost in 1 of 5 reps at 288 B 1 M/s (63 NAKs; max 121 (105–1,944), G2 line 94
+and its loss-by-point table); G3 in 0 of 5 (max 204 (122–211)).
 
 ### Measured, but no setting recommended
 
 | change | run | result |
 | --- | --- | --- |
-| kernel busy polling (4,096 ring) against moderation off + spare-core IRQs, `c9g` | G1 lines 10, 14, 86, 118, 141 | busy polling had the lower idle p50 (16.98 (16.89–16.99) against 18.54 (18.53–18.56)) but lost at 288 B 1 M/s in 5 of 5 reps (61,488 NAKs; p50 4,973, max 9,175 (8,544–102,826)) against 0 of 5. The arms differ in three settings (busy poll, ring, moderation), so polling itself is not isolated |
+| kernel busy polling (4,096 ring) against moderation off + spare-core IRQs, `c9g` | G1 lines 10, 14, 86, 118, 141 | busy polling had the lower idle p50 (16.98 (16.89–16.99) against 18.54 (18.53–18.56)) but lost at 288 B 1 M/s in 5 of 5 reps (61,488 NAKs; p50 4,973, max 9,175 (8,544–102,826)) against 0 of 5. The arms differ in four settings (busy poll, ring, moderation, IRQ placement), so polling itself is not isolated |
 | kernel busy polling (4,096 ring) against plain kernel UDP, `c7i.4xlarge` | round 7 lines 5, 8, 137, 173 | busy polling lower at 288 B 100 k/s: p50 27.79 (26.72–28.88) against 94.02 (89.79–95.87), max 382 (372–389) against 469 (448–578). Two settings differ; moderation was ENA's default in both |
 | DPDK RX descriptors 4,096 against 1,024 | round 6 results.csv lines 220–238; G1 lines 5, 9 | idle not separated: round 6 max 107 (88–517) against 125 (94–142), G1 73 (60–88) against 75 (68–155). The default arm's loss rows are not in round 6's recovered output |
 | DPDK sender and receiver on one thread (`SHARED_NETWORK`) | G1 lines 51, 75 | 1,344 B bursts p50 522.24 (520.96–527.87) against 233.60 (232.83–345.34); max 748 (723–886) against 493 (465–745). Not the default |
 | DPDK: conductor on its own core, mempool cache 512, sender IO vectors 2 | G2 lines 5–9 | idle p50 13.70–13.79 in every arm, max ranges overlap |
 | jumbo frames (`AERON_MTU_LENGTH=8192`) | G2 lines 51, 75 | DPDK 1,344 B bursts p50 209.66 (207.23–248.83) against 242.05 (239.10–295.17); max 561 (455–1,533) against 664 (466–954), overlapping. One run |
 | transmit moderation 64 µs (`COALESCE=0/64`) against off | G2 lines 86, 94 | 288 B 1 M/s p50 47.84 (46.91–66.94) against 45.82 (44.83–79.42); max 289 (178–569) against 121 (105–1,944). Not separated |
-| media receive timestamps (`media-rcv-ts-offset=reserved`) | G3 lines 5–6, 32–41 | p50 within 0.07 at idle and steady rates (bursts 122.75 against 122.43 and 245.12 against 245.89); idle max 74 (62–153) against 75 (73–79). Not separated. One run |
-| conductor park 20 µs with a 256 KiB window, DPDK | round 7 lines 6–7, 150, 162 | idle not separated; 288 B 500 k/s p99.9 1,795 (37.79–2,527) against 38.11 (36.00–58.27) |
+| media receive timestamps (`media-rcv-ts-offset=reserved`) | G3 lines 5–6, 32–41 | p50 within 0.07 at idle and steady rates (bursts 122.75 against 122.43 and 245.12 against 245.89); idle max 74 (62–153) against 75 (73–79). At 1,344 B bursts max 1,134 (484–1,595) against 501 (491–1,819), and 1 of 5 reps lossy (short sends) against 0. Not separated. One run |
+| DPDK transmit pacing 7,900 Mbit/s (`RUSTERON_DPDK_TX_RATE_MBPS=7900`, `TX_PACE_SPIN_US=0`) | round 6 results.csv lines 220–238 | idle p50 29.58 (29.04–29.98) against 28.70 (28.58–28.93), ranges apart; max 150 (114–296) against 125 (94–142). One run |
+| conductor park 20 µs with a 256 KiB window, DPDK | round 7 lines 6–7, 150, 162 | idle not separated (max 105 (93–114) against 109 (52–116)); 288 B 500 k/s p99.9 1,795 (37.79–2,527) against 38.11 (36.00–58.27), max 5,140 (135–5,247) against 135 (132–278) |
 | receiver IO vectors 16, DPDK | `aws-20261014-113947` lines 88, 124 | 1,344 B at 600 k/s: 16,247 NAKs over 5 reps against none; max 142 (134–259) against 1,130 (132–3,424,649). Platform not recorded. The lab baseline now sets 16 (`vm.sh:126`) |
 | transparent hugepages off | `aws-20261014-113947` lines 6, 11 | idle p99.99 53.15 (51.81–82.24) against 67.01 (51.84–87.23); max 90 (77–1,180) against 94 (80–498). Not separated. The lab baseline sets `never` (`vm.sh:125`) |
-| C-states capped at C1, metal | round 4 lines 5–6, 11–12, 80, 85 | idle p50 not separated (37.18 (36.48–38.34) against 35.13 (34.49–38.62)); at 288 B 1 M/s at least one rep per capped arm had p50 above 4 ms (ranges 42.17–4,042.75 busy, 57.05–31,719 plain) |
+| C-states capped at C1, metal | round 4 lines 5–6, 11–12, 80, 85 | idle p50 not separated (37.18 (36.48–38.34) against 35.13 (34.49–38.62); max 66 (57–107) against 127 (68–514)); at 288 B 1 M/s at least one rep per capped arm had p50 above 4 ms (ranges 42.17–4,042.75 busy, max 132 (108–8,380); 57.05–31,719 plain, max 289 (109–32,129)) |
 | threaded NAPI busy polling (`NAPI_BUSY=spare`) | G2 lines 13, 108–113 | the run failed: p50 up to 72 ms idle, most load points returned no echo. Not a measurement of the setting |
 
 ### One flow's ceiling on AWS
@@ -105,7 +109,7 @@ One flow carried at most 15.17 M msgs/s at 32 B, 3.03 M at 288 B and 0.71 M
 at 1,344 B on `c7i.4xlarge`, kernel UDP and DPDK alike. DPDK sent those as 0.690,
 0.757 and 0.706 M frames/s of 1,408, 1,280 and 1,376 B: 7.75–7.77 Gbit/s of
 Aeron frames (round 7 lines 16–17, 27–32, 51–85). On `c9g.2xlarge`, 1,344 B
-offered at 1 M/s achieved at most 685,572 msgs/s in any arm with the default
+offered at 1 M/s achieved at most 685,574 msgs/s in any arm with the default
 MTU (G1 lines 50–122, G2 lines 50–98). AWS documents a per-flow bandwidth limit:
 [EC2 network bandwidth](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-network-bandwidth.html).
 An Aeron channel is one flow, so a heavier stream needs several channels.
@@ -135,7 +139,7 @@ streams bounds that wait. Its effect is not measured here.
 - Kernel polling against interrupts: no single-setting A/B.
 - 4,096 RX descriptors (the code default, `src/config.rs:81`): no separating
   result in the recovered rows.
-- CPU isolation, hugetlbfs, quiet-core pinning, pacing: not measured in the
+- CPU isolation, hugetlbfs, quiet-core pinning: not measured in the
   committed runs.
 - Azure: no run output is committed, so no Azure figure is kept.
 - Idle maxima: the runs' own attribution labels most of them unexplained.
