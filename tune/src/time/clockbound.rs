@@ -1,5 +1,5 @@
 //! AWS `ClockBound` 2.0's shared memory segment: the daemon's bound on
-//! `CLOCK_REALTIME`'s error, read from its file (no `mmap`, no `unsafe`).
+//! `CLOCK_REALTIME`'s error, read from its file (no `mmap`).
 //!
 //! The layout is `clock-bound-shm` 2.0.3's (`shm_header.rs`, `lib.rs`), at
 //! `/var/run/clockbound/shm0` (`clock-bound-client` 2.0.3's
@@ -19,7 +19,13 @@
 //! a synchronised or free-running status stands for 5 s after `as_of`, is
 //! free-running until `void_after`, and unknown after. `ClockBound` 3.0
 //! (which disciplines the clock itself) is another layout, not read here.
+//!
+//! Reading allocates nothing: the segment is read into a buffer on the
+//! stack, and every error is a plain value.
 
+use std::fmt;
+use std::fs::File;
+use std::io;
 use std::path::Path;
 
 /// Where `ClockBound` 2.0 writes its segment.
@@ -29,7 +35,7 @@ const MAGIC: [u32; 2] = [0x414D_5A4E, 0x4342_0200];
 /// The layout version read.
 const VERSION: u16 = 2;
 /// The header and the bound.
-pub const SEGMENT_LEN: usize = 80;
+const SEGMENT_LEN: usize = 80;
 /// How long after `as_of` the daemon's status stands (`CLOCKBOUND_RESTART_GRACE_PERIOD`).
 const GRACE_NS: u64 = 5_000_000_000;
 /// `ClockErrorBound::compute_bound_at`'s allowance for `as_of` read a
@@ -50,7 +56,7 @@ pub enum ClockBoundStatus {
 }
 
 impl ClockBoundStatus {
-    /// The name the report prints.
+    /// Its name.
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
@@ -81,6 +87,42 @@ pub struct ClockBoundReading {
     pub max_drift_ppb: u32,
 }
 
+/// Why `ClockBound`'s segment could not be used. A plain value: making one
+/// allocates nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClockBoundError {
+    /// The file could not be opened or read.
+    Io(io::ErrorKind),
+    /// The file holds fewer bytes than a segment (this many).
+    Short(usize),
+    /// Two reads never agreed on a settled copy, in four tries.
+    NeverSettled,
+    /// The segment did not parse: what was wrong.
+    Malformed(&'static str),
+    /// No `CLOCK_MONOTONIC_COARSE` reading to judge it against: a tree
+    /// standing for a host, with no
+    /// [`clockbound_now_ns`](crate::TimeSyncProbe::clockbound_now_ns) given.
+    NoClock,
+}
+
+impl fmt::Display for ClockBoundError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{DEFAULT_PATH}: ")?;
+        match self {
+            Self::Io(kind) => write!(f, "{kind}"),
+            Self::Short(n) => write!(f, "{n} bytes, shorter than a ClockBound 2.0 segment"),
+            Self::NeverSettled => f.write_str("never settled in four reads"),
+            Self::Malformed(why) => f.write_str(why),
+            Self::NoClock => f.write_str(
+                "no CLOCK_MONOTONIC_COARSE reading to judge it against (a tree standing for a \
+                 host: set TimeSyncProbe::clockbound_now_ns)",
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ClockBoundError {}
+
 /// A native-endian integer of `N` bytes at `at` (the caller checked the
 /// length).
 fn ne<const N: usize>(bytes: &[u8], at: usize) -> [u8; N] {
@@ -102,8 +144,7 @@ fn timespec_ns(bytes: &[u8], at: usize) -> Option<u64> {
 }
 
 /// The generation in a segment's header (0 where it is too short).
-#[must_use]
-pub fn generation(segment: &[u8]) -> u16 {
+fn generation(segment: &[u8]) -> u16 {
     if segment.len() < 16 {
         return 0;
     }
@@ -185,51 +226,38 @@ pub fn parse(segment: &[u8], now_coarse_ns: u64) -> Result<ClockBoundReading, &'
     })
 }
 
-/// The segment at `path`, read whole into a buffer on the stack until two
-/// reads agree on an even generation (the writer updates it in place, about
-/// once a second), at most four tries: `Ok(None)` where there is no such
-/// file.
+/// The segment at `path`: opened once (so a daemon started or restarted
+/// since the last read is seen), then read whole from its start into a
+/// buffer on the stack until two reads agree on an even generation (the
+/// writer updates it in place, about once a second), at most four tries.
+/// `Ok(None)` where there is no such file. Allocates nothing for a path
+/// under a few hundred bytes (std converts it on the stack).
 ///
 /// # Errors
-/// The file could not be read, or never held a settled copy.
-pub fn read(path: &Path) -> Result<Option<[u8; SEGMENT_LEN]>, String> {
-    use std::io::Read;
-    let read_once = || -> Result<Option<[u8; SEGMENT_LEN]>, String> {
-        let mut file = match std::fs::File::open(path) {
-            Ok(f) => f,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(format!("{}: {e}", path.display())),
-        };
+/// The file could not be read, is short, or never held a settled copy.
+pub fn read(path: &Path) -> Result<Option<[u8; SEGMENT_LEN]>, ClockBoundError> {
+    let file = match File::open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(ClockBoundError::Io(e.kind())),
+    };
+    let read_once = || -> Result<[u8; SEGMENT_LEN], ClockBoundError> {
         let mut buf = [0_u8; SEGMENT_LEN];
-        let mut filled = 0;
-        while filled < SEGMENT_LEN {
-            match file.read(buf.get_mut(filled..).unwrap_or_default()) {
-                Ok(0) => break,
-                Ok(n) => filled += n,
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(e) => return Err(format!("{}: {e}", path.display())),
-            }
-        }
+        let filled = crate::quota::read_from_start(&file, &mut buf)
+            .map_err(|e| ClockBoundError::Io(e.kind()))?;
         if filled < SEGMENT_LEN {
-            return Err(format!(
-                "{}: {filled} bytes, shorter than a ClockBound 2.0 segment",
-                path.display()
-            ));
+            return Err(ClockBoundError::Short(filled));
         }
-        Ok(Some(buf))
+        Ok(buf)
     };
     for _ in 0..4 {
-        let Some(first) = read_once()? else {
-            return Ok(None);
-        };
-        let Some(second) = read_once()? else {
-            return Ok(None);
-        };
+        let first = read_once()?;
+        let second = read_once()?;
         if first == second && generation(&first).is_multiple_of(2) {
             return Ok(Some(first));
         }
     }
-    Err(format!("{}: never settled in four reads", path.display()))
+    Err(ClockBoundError::NeverSettled)
 }
 
 #[cfg(test)]
@@ -339,5 +367,24 @@ mod tests {
         let mut nanos = good;
         nanos[24..32].copy_from_slice(&1_000_000_000_i64.to_ne_bytes());
         assert_eq!(parse(&nanos, 100 * S), Err("as_of out of range"));
+    }
+
+    /// The file: none is `None`, a settled one is its bytes, a short one
+    /// says how short.
+    #[test]
+    fn the_segment_is_read_from_its_file() -> Result<(), Box<dyn std::error::Error>> {
+        let dir =
+            std::env::temp_dir().join(format!("ergon-tune-clockbound-{}", std::process::id()));
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join("shm0");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(read(&path), Ok(None));
+        let s = segment(2, 100 * S, 110 * S, 30_000, 50_000, 1);
+        std::fs::write(&path, s)?;
+        assert_eq!(read(&path), Ok(Some(s)));
+        std::fs::write(&path, &s[..40])?;
+        assert_eq!(read(&path), Err(ClockBoundError::Short(40)));
+        std::fs::remove_dir_all(&dir)?;
+        Ok(())
     }
 }

@@ -34,5 +34,7 @@ book-test: book-ci
 # Build and test the book as CI does
 book-ci: policy book-deps
     cargo test -p ergo-sbe --test docs_validation_test --all-features -- --test-threads=2
+    # mdbook builds dead links silently: every relative link and include must resolve
+    ./scripts/check-book-content.sh
     cd book && mdbook build
     @echo "book-ci: docs validated, book built"

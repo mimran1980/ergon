@@ -634,16 +634,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ctor"
-version = "0.1.26"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d2301688392eb071b0bf1a37be05c469d3cc4dbbd95df672fe28ab021e6a096"
-dependencies = [
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
 name = "ctrlc"
 version = "3.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -818,7 +808,7 @@ checksum = "00d174d5400e5e8fd687ad1049e2f578285fa914201b1af7e8b112a4546bd826"
 
 [[package]]
 name = "ergo-aeron-cluster"
-version = "0.1.30"
+version = "0.1.31"
 dependencies = [
  "criterion",
  "ergo-sbe",
@@ -832,7 +822,7 @@ dependencies = [
 
 [[package]]
 name = "ergo-aeron-cluster-test-harness"
-version = "0.1.30"
+version = "0.1.31"
 dependencies = [
  "ergo-aeron-cluster",
  "rusteron-client",
@@ -842,7 +832,7 @@ dependencies = [
 
 [[package]]
 name = "ergo-sbe"
-version = "0.1.30"
+version = "0.1.31"
 dependencies = [
  "bytes",
  "chrono",
@@ -864,7 +854,7 @@ dependencies = [
 
 [[package]]
 name = "ergo-sbe-benchmarks"
-version = "0.1.30"
+version = "0.1.31"
 dependencies = [
  "bytes",
  "chrono",
@@ -880,26 +870,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "ergon-clock"
-version = "0.1.30"
-dependencies = [
- "libc",
-]
-
-[[package]]
-name = "ergon-clock-bench"
-version = "0.1.30"
-dependencies = [
- "criterion",
- "ergon-clock",
- "libc",
- "minstant",
- "quanta",
-]
-
-[[package]]
 name = "ergon-io"
-version = "0.1.30"
+version = "0.1.31"
 dependencies = [
  "base64 0.23.1",
  "curl",
@@ -918,16 +890,14 @@ dependencies = [
 
 [[package]]
 name = "ergon-md-dpdk"
-version = "0.1.30"
+version = "0.1.31"
 dependencies = [
  "cc",
  "criterion",
  "ctrlc",
- "ergon-clock",
  "ergon-tune",
  "libc",
  "log",
- "minstant",
  "pkg-config",
  "rusteron-media-driver",
  "rustix",
@@ -936,7 +906,7 @@ dependencies = [
 
 [[package]]
 name = "ergon-md-dpdk-device-plugin"
-version = "0.1.30"
+version = "0.1.31"
 dependencies = [
  "env_logger",
  "hyper-util",
@@ -955,22 +925,21 @@ dependencies = [
 
 [[package]]
 name = "ergon-md-dpdk-harness"
-version = "0.1.30"
+version = "0.1.31"
 dependencies = [
  "env_logger",
- "ergon-clock",
  "ergon-md-dpdk",
  "hdrhistogram",
  "libc",
  "log",
- "minstant",
+ "quanta",
  "rusteron-client",
  "rusteron-media-driver",
 ]
 
 [[package]]
 name = "ergon-tune"
-version = "0.1.30"
+version = "0.1.31"
 dependencies = [
  "rustix",
 ]
@@ -1696,16 +1665,6 @@ checksum = "b63fbc4a50860e98e7b2aa7804ded1db5cbc3aff9193adaff57a6931bf7c4b4c"
 dependencies = [
  "adler2",
  "simd-adler32",
-]
-
-[[package]]
-name = "minstant"
-version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fb9b5c752f145ac5046bccc3c4f62892e3c950c1d1eab80c5949cd68a2078db"
-dependencies = [
- "ctor",
- "web-time",
 ]
 
 [[package]]
@@ -2786,17 +2745,6 @@ checksum = "b7401a30af6cb5818bb64852270bb722533397edcfc7344954a38f420819ece2"
 
 [[package]]
 name = "syn"
-version = "1.0.109"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72b64191b275b66ffe2469e8af2c1cfe3bafa67b529ead792a6d0160888b4237"
-dependencies = [
- "proc-macro2",
- "quote",
- "unicode-ident",
-]
-
-[[package]]
-name = "syn"
 version = "2.0.119"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "872831b642d1a07999a962a351ed35b955ea2cfc8f3862091e2a240a84f17297"
@@ -3378,16 +3326,6 @@ name = "web-sys"
 version = "0.3.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "88261b9deccee56594c11a3460c462c41f58d148598fe70ad77070126a68aba4"
-dependencies = [
- "js-sys",
- "wasm-bindgen",
-]
-
-[[package]]
-name = "web-time"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",

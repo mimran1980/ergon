@@ -241,8 +241,8 @@ means the layout is doing its job. Run it with and without the plugin.
   `resizePolicy: RestartContainer` for `cpu`.
 - Not verified on a real EKS node: the NRI socket, nodeadm TOML merge,
   `/opt` writable, `system-node-critical` outside kube-system.
-- Not measured: latency of helpers on shared CPUs. A wake-up there can wait
-  milliseconds under node load.
+- Not measured: latency of helpers on shared CPUs, and of the exclusive
+  cores with the plugin on.
 
 ## Prior art
 

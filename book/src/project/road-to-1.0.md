@@ -1,8 +1,8 @@
 # Road to 1.0
 
-Today both crates carry an honest **not production-ready** disclaimer. That
-is correct for a 0.1.x series with a still-open API freeze. This page is the
-published **exit path** from that disclaimer — criteria, not a date.
+Every published crate is 0.x and **not production-ready**. This page gives
+the exit criteria for `ergo-sbe` and `ergo-aeron-cluster`: criteria, not a
+date.
 
 ## ergo-sbe (reaches 1.0 first)
 
@@ -11,10 +11,11 @@ Ship a **1.0.0** of `ergo-sbe` only when **all** of the following hold:
 1. **API freeze audit complete** — decisions in
    [API freeze](../sbe/design-notes/api-freeze.md) are stable; no pending
    renames of generated stage / wrap / FixedFields surface without a major.
-2. **Parity gate** — every maintained ergon vs sbe-tool comparison stays at
-   or below the `1.00` ceiling under the published LTO matrix for **at least
-   three consecutive released minors** (e.g. 0.1.9 → 0.1.10 → 0.1.11) with
-   recorded Criterion runs in release notes or CI artifacts.
+2. **Parity gate** — every maintained ergon vs sbe-tool comparison passes
+   the benchmark gate in both LTO profiles for **three consecutive
+   releases**, with the gate output attached to each release. Ceilings and
+   the inconclusive rule:
+   [`sbe/BENCHMARKS.md`](https://github.com/mimran1980/ergon/blob/main/sbe/BENCHMARKS.md#the-gate).
 3. **Wire compatibility** — dual-encode parity tests and golden API shape
    remain green; no deliberate wire break without a major.
 4. **Trust boundary** — fuzz corpus on decode entry stays green in CI;
@@ -73,8 +74,8 @@ A claimed 1.0 streak tag must be an ancestor of `main`
 | Criterion | Status |
 |-----------|--------|
 | 1. API-freeze audit | Manifest exists; cargo-semver-checks and generated-API fixture diffs (`api/generated/`) are enforced. |
-| 2. Parity gate at ≤1.00 | **Open.** Need three consecutive released minors on `main` with recorded Criterion runs. |
-| 3. Wire compatibility | Dual-encode parity tests and FIX SBE conformance are green. |
+| 2. Parity gate | **Open.** Needs three consecutive releases on `main` with gate output attached. |
+| 3. Wire compatibility | Dual-encode parity tests run in CI. FIX SBE conformance: suite tests 1–3 run in CI; the RLValidator leg does not ([External pilot](external-pilot.md)). |
 | 4. Trust boundary | Fuzz + Miri fixtures exist; any open P0 is blocking. |
 | 5. Docs | Book + migration pages published. |
 | 6. External signal | **Open.** In-repo FIX SBE is internal evidence, not an external user. See [external-pilot.md](external-pilot.md). |

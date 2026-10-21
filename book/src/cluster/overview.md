@@ -9,53 +9,15 @@ protocol.
 
 ## Scope
 
-The crate implements client-side operations:
-
-- synchronous and poll-driven connection;
-- ingress `offer` and explicit `try_claim`;
-- regular and controlled egress polling;
-- authentication challenges and credentials;
-- keep-alives and close requests;
-- session events, administrative responses, and leader changes.
-
-The Java Aeron process still provides the media driver, archive, consensus
-module, clustered services, election, recovery, and operational tooling. This
-crate implements none of those server-side components.
+{{#include ../../../cluster/README.md:scope}}
 
 ## Features and harness
 
-The published crate has no extra features. Java Cluster launch support lives in
-the unpublished workspace crate `ergo-aeron-cluster-test-harness` and requires
-a JDK (17 or newer; CI runs Temurin 25) plus locally built Aeron artifacts. See
-[Java for Archive and Cluster](../deploy/java.md) for which Java to run the
-cluster on and the recommended JVM and Aeron settings:
-
-```sh
-just build-aeron-jars
-just test-aeron-cluster-harness
-```
-
-The harness, examples, integration tests, reference codecs, and benchmarks are
-excluded from the published crate package.
-
-## Verify the crate
-
-```sh
-cargo test -p ergo-aeron-cluster
-cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
-RUSTDOCFLAGS="-D warnings" cargo doc -p ergo-aeron-cluster --no-deps
-cargo bench -p ergo-aeron-cluster --no-run
-cargo package -p ergo-aeron-cluster --list --allow-dirty
-```
-
-Run `just bench-cluster` for the maintained codec comparisons. See
-[sbe/BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/sbe/BENCHMARKS.md)
-for the common benchmark rules.
+{{#include ../../../cluster/README.md:harness}}
 
 ## Limitations
 
-Limitations, Aeron/rusteron versions, schema identities, failure modes, and
-the CI multi-node matrix: [Compatibility](./compatibility.md). Java
-interoperability depends on the local Aeron harness.
+Limitations, Aeron and rusteron versions, schema identities, failure modes and
+what CI runs against a live cluster: [Compatibility](./compatibility.md).
 
 Apache-2.0.

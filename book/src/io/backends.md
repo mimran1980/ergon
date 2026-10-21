@@ -35,14 +35,14 @@ every platform.)*
 | key | default | meaning |
 |---|---|---|
 | `loop_cpu` | unset | the loop's CPU, for the host checks; unset: the CPU the calling thread is pinned to (ergon-io never pins it) |
-| `sqpoll_cpu` | unset | the SQPOLL kernel thread's CPU; unset: the first housekeeping CPU. Put it on the loop's SMT sibling or another CPU the pod already has — never a second isolated full core just for SQPOLL |
+| `sqpoll_cpu` | unset | the SQPOLL kernel thread's CPU; unset: the first helper CPU ([placement](kubernetes.md#why-a-pod-has-no-housekeeping-cpus)). A core of its own or the loop's SMT sibling: [what the sibling costs](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#smt-sibling-cost) |
 | `sqpoll_idle_ms` | 600,000 | idle time before the SQPOLL thread sleeps; NIC polling does not count as work, so keep it long |
 | `ring_entries` | 256 | `io_uring` submission queue size |
 | `busy_poll_us` | 1 (`recv-busy`, `uring-sqpoll`), 50 (`epoll-busy`, `uring-napi`) | NIC busy polling in µs: how long `epoll-busy` and `uring-napi` poll before sleeping; `recv-busy` and `uring-sqpoll` need it non-zero |
 | `wait_us` | 0, or 100 (`epoll-busy`, `uring-napi`) | the longest `epoll-busy` and `uring-napi` wait in the kernel |
 | `per_queue` | `false` | `recv-busy` only: one busy-polled read per NIC queue, then the sockets epoll reports ready |
-| `prefer_busy_poll` | `false` | the kernel leaves the NIC queue to the polling loop (with `recv-busy`, `SO_PREFER_BUSY_POLL`: needs `CAP_NET_ADMIN`); NIC-polling backends only |
-| `busy_poll_budget` | 0 (kernel: 8) | packets per busy-poll pass; `recv-busy` and `epoll-busy` only; raising it needs `CAP_NET_ADMIN` |
+| `prefer_busy_poll` | `false` | the kernel leaves the NIC queue to the polling loop (with `recv-busy`, `SO_PREFER_BUSY_POLL`: needs `CAP_NET_ADMIN`); NIC-polling backends only; effect not measured here |
+| `busy_poll_budget` | 0 (kernel: 8) | packets per busy-poll pass; `recv-busy` and `epoll-busy` only; raising it needs `CAP_NET_ADMIN`; effect not measured here |
 | `connect_cpu` | unset | the `connect_background` helper thread's CPU; unset: the housekeeping CPUs |
 | `connect_timeout_ms` | 10,000 | the longest connection set-up |
 | `rcvbuf` | 4 MiB | `SO_RCVBUF` for every socket; needs `net.core.rmem_max` at least as large (warned at start-up); 0: the kernel's autotuning |
@@ -57,10 +57,12 @@ An unknown key, a bad value or a setting the backend cannot use is an error
 
 ## The four one-core backends
 
-`recv-busy`, `recv-busy,per_queue`, `epoll-spin` and `uring-spin` each cost
-**one core**. No second core, no SMT sibling, no `SQPOLL` kernel thread.
-`uring-sqpoll` is the only backend that needs another CPU; it is not in this
-section.
+`recv-busy`, `recv-busy,per_queue`, `epoll-spin` and `uring-spin` run on
+the loop's CPU alone: no `SQPOLL` kernel thread. `uring-sqpoll` is the only
+backend that needs another CPU; it is not in this section. The interrupt
+backends (`epoll-spin`, `uring-spin`) were measured with the NIC's
+interrupts on a core of their own; on the loop's CPU their p99 rose from 4
+sockets ([fair run](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton)).
 
 ```rust,ignore
 {{#include ../../../io/tests/backend_config.rs:one_core_backends}}
@@ -77,24 +79,7 @@ What one poll does:
 | `epoll-spin` | `epoll_wait(0)`, then `recvmsg` on the ready sockets | only the ready sockets |
 | `uring-spin` | `IORING_OP_RECVMSG` with `DEFER_TASKRUN` | few |
 
-Latency and cost tables live in
-[`io/benches/BENCHMARK.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md).
-`epoll-spin` and `uring-spin` are not fairly ranked against the polling
-backends there yet: every AWS comparison left ENA's adaptive moderation on.
-Do not pick against the polling backends on those numbers.
-
-Which one to take, all at one core:
-
-| sockets on the loop | pick |
-|---|---|
-| 1–4 | `recv-busy` |
-| 5–16 | `recv-busy,per_queue=true` |
-| 17–256 | `recv-busy,per_queue=true` |
-| few sockets, and the core must stay out of the kernel | `uring-spin` |
-| few sockets, and the interrupt path is acceptable | `epoll-spin` |
-
-At one or two connections — a WebSocket feed or one HTTP pool — take
-`recv-busy`.
+Which one to take: [choosing a backend](overview.md#choosing-a-backend).
 
 ## `per_queue`: one read per NIC queue
 
@@ -134,9 +119,8 @@ io_bench lab --variants recv-busy --per-queue --cpus 2 --busy-poll 1 --wait-us 0
 $B/analyse --warmup-s 2 res/c100-*
 ```
 
-Measured against plain `recv-busy`: level at 1 and 10 connections, and
-ahead at 100 on the whole path. Figures:
-[`io/benches/BENCHMARK.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#limits).
+Measured against plain `recv-busy` and `uring-sqpoll` at 1–256
+connections: [polling backends](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#polling-backends-by-socket-count-x86).
 
 ## Kernel
 
@@ -158,8 +142,8 @@ missing at start-up.
 
 ## Cost per poll
 
-One poll is 1 ÷ the loop's polls per second. Tables:
-[`io/benches/BENCHMARK.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#aws-tokyo).
+One poll is 1 ÷ the loop's polls per second. Measured poll times:
+[polling backends](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#polling-backends-by-socket-count-x86).
 
 One poll per backend. Where the NIC's NAPI pass runs is what separates
 them:
@@ -201,8 +185,8 @@ only the ready sockets. Its cost stops at the queue count.
 - **`per_queue`** reads one socket per NIC queue (which polls that queue),
   then only the ready sockets. Its poll stops growing at the queue count.
 - **`epoll-spin` and `uring-spin`** do not scan idle sockets; they wait for
-  the NIC interrupt instead. Their latency against the polling backends is
-  not yet measured fairly.
+  the NIC interrupt instead. Against the polling backends:
+  [fair run](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton).
 - Where each polling backend stops winning:
   [choosing a backend](overview.md#choosing-a-backend).
 
@@ -232,10 +216,10 @@ $B/analyse --warmup-s 2 res/c20-*
 
 - Compare the backends' sender → decoded p50, p99 and max within the same
   session, and repeat in reversed order: the two clocks drift.
-- On AWS, give each family its own best NIC setting, as in production.
-  Polling runs: `ethtool -C <nic> adaptive-rx off`. The `epoll-spin` run:
-  `adaptive-rx off rx-usecs 0 tx-usecs 0`, with the NIC's interrupts on a
-  core of their own ([ergon-tune N1](../tune/overview.md)). Otherwise the
-  interrupt waits for moderation and `epoll-spin` looks slower than it is.
+- On AWS, set the NIC on the node before each run (node-level):
+  `ethtool -C <nic> adaptive-rx off rx-usecs 0`, with the NIC's interrupts
+  on a core of their own, as in the
+  [fair run](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton).
+  Otherwise the interrupt backends wait for moderation.
 - HTTP with a pool: [HTTP with many connections](http-client.md#many-connections).
 - Everything about the method: [`io/benches/BENCHMARK.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md).

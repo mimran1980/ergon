@@ -115,9 +115,11 @@ pub trait Ethtool {
     fn rings(&mut self, host: &Host, ifindex: u32) -> Result<Rings, EthtoolError>;
 }
 
-/// Ethtool over generic netlink: one request and its reply on a fresh
-/// `NETLINK_GENERIC` socket per query, waiting at most 100 ms. Resolves the
-/// `ethtool` family once and keeps its id. Unprivileged.
+/// Ethtool over generic netlink, unprivileged.
+///
+/// One request and its reply on a fresh `NETLINK_GENERIC` socket per
+/// query, with 100 ms send and receive timeouts on each exchange. Resolves
+/// the `ethtool` family once, in an exchange of its own, and keeps its id.
 #[derive(Clone, Debug, Default)]
 pub struct Netlink {
     family: Option<u16>,
@@ -402,9 +404,14 @@ fn driver_of(
     }
 }
 
-const N1_EVIDENCE: &str = "io/benches/BENCHMARK.md (Host and NIC settings on AWS; runs 062428Z, \
-     070339Z); md-dpdk/BENCHMARKS.md (Graviton G1–G3; the withdrawn c7i 100 k/s pair and its \
-     correction, 2026-10-15); AWS Graviton performance runbook";
+const N1_EVIDENCE: &str = "git show \
+     128747b9^:io/benches/results/flags-aws-20261015T070339Z/tables.md (c1/c2-base, -nodim, \
+     -nocoalesce: lines 22-29, 50-57, 63-70; loop counters lines 386, 598, 1232, 1450; \
+     pre-empting worker kworker/2:1, lines 186 and 190): AWS c7i, recv-busy, two 8-minute \
+     reps each; io/benches/results/flags-aws-20261019T175248Z/env-rcv.txt \
+     (lines 81-82, 146-149: on with rx-usecs 20 as found, back on after a reset); Linux \
+     drivers/net/ethernet/amazon/ena/ena_netdev.c (ena_up enables adaptive moderation); \
+     aws-graviton-getting-started perfrunbook (adaptive-rx off for latency-sensitive work)";
 
 /// N1: ENA's adaptive RX interrupt moderation is off on `interface`. For
 /// the kernel-socket paths (ergon-io, the media driver's socket transport)
@@ -436,23 +443,27 @@ pub fn n1_adaptive_rx<E: Ethtool>(
             ..
         }) => {
             let platform = if Platform::detect(host).is_graviton() {
-                " On Graviton, G1–G3 lost nothing to 1 M msgs/s of 288 B with it off; AWS's \
-                 Graviton performance runbook gives the same advice."
+                " On Graviton it is not A/B'd here; AWS's Graviton performance runbook says to \
+                 turn it off for latency-sensitive work."
             } else {
-                " The cost of leaving it on at 100 k msgs/s is not measured."
+                " Its cost with an interrupt-driven socket is not measured here."
             };
             Finding::found(
                 id,
                 sev,
                 N1_EVIDENCE,
                 format!(
-                    "{interface}: adaptive RX interrupt moderation is on (ENA's default since Linux \
-                     6.9): its work item (ena_dim_work) pre-empts a busy-polling loop about 40 times \
-                     a second. Turned off, the round trip's p99.99 fell 43–47 µs and the median about \
-                     3 µs (runs 062428Z, 070339Z).{platform} Fix: `ethtool -C {interface} adaptive-rx \
-                     off` (leave rx-usecs at ENA's 20: moderation fully off made busy polling \
-                     worse); ENA turns it back on at every reset, so apply it again after one (when \
-                     carrier_changes moves)"
+                    "{interface}: adaptive RX interrupt moderation is on: on AWS c7i a kernel \
+                     worker pre-empted a busy-polling loop 8,841–8,906 times in 8 minutes (about 18 a \
+                     second), and 0 times with it off. Off, the WebSocket round trip's p99.99 was \
+                     72–76 against 117–119 µs (max 354–970 against 259–1,024 µs); the HTTP round \
+                     trip's p99.99 was 83–116 against 77–119 µs (max 202–981 against 433–446 µs); \
+                     market data's p99 rose to 9.3–12.9 from 6.5 µs (max 25–29 against 34 µs). \
+                     With rx-usecs 0 as well: WebSocket p99.99 78–80 µs (max 233–344), HTTP 74–81 µs \
+                     (max 202–227), market-data p99 7.9–8.6 µs (max 34–41). One run, two reps \
+                     each.{platform} Fix: `ethtool -C {interface} adaptive-rx off rx-usecs 0`; ENA \
+                     turns adaptive moderation back on at every reset, so apply it again after one \
+                     (when carrier_changes moves)"
                 ),
             )
         }
@@ -488,7 +499,7 @@ pub fn n1_adaptive_rx<E: Ethtool>(
 }
 
 const N2_EVIDENCE: &str = "Linux Documentation/networking/napi.rst; the lab sets them only with busy \
-     polling (md-dpdk/benches/cloud/vm.sh); md-dpdk/BENCHMARKS.md (AWS Graviton5, round G1)";
+     polling (md-dpdk/benches/cloud/vm.sh); not measured here";
 
 /// One sysfs NAPI setting: absent (an older kernel) is 0.
 fn napi_setting(host: &Host, interface: &str, name: &str) -> Result<u64, ReadError> {
@@ -580,9 +591,7 @@ pub fn n2_deferred_irqs(host: &Host, interface: &str, busy_polls: Option<bool>) 
             format!("{timeout} ns")
         };
         let alternative = if graviton {
-            " (on Graviton keep busy polling off: it collapsed at 1 M msgs/s of 288 B on c9g, where \
-             moderation off with the NIC's interrupts on a core of their own was the best kernel \
-             configuration)"
+            " (on Graviton, busy polling is not suggested: no archived run supports it there)"
         } else {
             ", or turn busy polling on"
         };
@@ -609,8 +618,7 @@ pub fn n2_deferred_irqs(host: &Host, interface: &str, busy_polls: Option<bool>) 
     out
 }
 
-const N3_EVIDENCE: &str = "Azure's accelerated networking documentation; md-dpdk/BENCHMARKS.md \
-     (Method: a run whose traffic left the VF was invalid); not timed";
+const N3_EVIDENCE: &str = "Azure's accelerated networking documentation; not measured here";
 
 /// N3: an Azure `hv_netvsc` interface has an accelerated-networking VF
 /// (`lower_*`) that is up. Other drivers are not checked.
@@ -662,13 +670,13 @@ pub fn n3_azure_vf(host: &Host, interface: &str) -> Finding {
             "{interface} has {detail}: its traffic takes the synthetic VMBus path. Fix: enable \
              accelerated networking on the NIC with the VM stopped or deallocated (`az vm \
              deallocate`, then `az network nic update --name <NIC> --resource-group <resource \
-             group> --accelerated-networking true`, then `az vm start`)"
+             group> --accelerated-networking true`, then `az vm start`; node-level: on AKS, a node \
+             pool VM size with accelerated networking)"
         ),
     )
 }
 
-const N4_EVIDENCE: &str = "md-dpdk/BENCHMARKS.md (Round 5, Under load; Recommended configuration); \
-     one round only";
+const N4_EVIDENCE: &str = "ethtool(8) (-G rx); not measured with archived data";
 
 /// N4: the kernel RX ring of `interface` (on Azure its VF) holds at least
 /// min(4096, its maximum) entries. For the media driver's socket transport
@@ -738,10 +746,10 @@ pub fn n4_rx_ring<E: Ethtool>(
                 sev,
                 N4_EVIDENCE,
                 format!(
-                    "{target}{via}: RX ring {rx} of at most {max}: kernel busy polling dropped 64 \
-                     frames at the NIC, with 3 NAKs, at 1 M msgs/s of 288 B where a 4,096-entry ring \
-                     lost nothing in 5 reps (Azure; it removes loss, not the tail: max 15.0 ms \
-                     against 21.2 ms). Fix: `ethtool -G {target} rx {want}`{reset}"
+                    "{target}{via}: RX ring {rx} of at most {max}: a burst larger than the ring is \
+                     dropped at the NIC, and an Aeron receiver asks for it again with a NAK (not \
+                     measured here). Fix: `ethtool \
+                     -G {target} rx {want}`{reset}"
                 ),
             )
         }

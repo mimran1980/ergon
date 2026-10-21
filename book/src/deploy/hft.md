@@ -1,54 +1,162 @@
 # Kubernetes HFT tuning
 
-Bold µs rows are measured; the rest are required for whole cores or fail
-closed. `X (a–b)` = median of five per-rep maxima
-([how to read a number](benchmarks.md#how-to-read-a-number)).
-Scan the tables, copy the two blocks, run the three checks.
+Every latency setting in this guide, where it goes, and its evidence.
+**Measured** links to a committed run below. **Not measured here** means
+the setting rests on kernel, vendor or Kubernetes documentation only.
+**Node** needs node-level access (boot line, kubelet, root on the host); a
+pod cannot set it. **Pod** works from the pod spec or the app.
 
 Terms: [deployment glossary](overview.md#glossary).
 
-## Do this
+## Settings
 
-| where | setting | value | effect |
-|---|---|---|---|
-| node | CPU isolation | `isolcpus=nohz,domain,managed_irq,1-N nohz_full=1-N rcu_nocbs=1-N irqaffinity=0` | Azure DPDK idle median of rep maxima **216 (69–663) → 71 (65–447)** µs. Biggest single win |
-| node | transparent hugepages | `never` | Azure idle p99.99 **67.01 (51.84–87.23) → 53.15 (51.81–82.24)** (round 4); idle median of rep maxima **545.79 (82.37–632.32) → 106.50 (98.11–286.21)** (round 6), absolute idle max **632 → 286** |
-| node | SMT off (x86) | `ThreadsPerCore: 1`, or `nosmt` | one Kubernetes CPU is one physical core, as on Graviton. A busy sibling of the loop costs **+0.5 µs p50 at 1 connection, +2.3–2.7 µs p50 and +9–12 µs p99 at 10–100** ([data](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#smt-sibling-cost)) |
-| node | static CPU manager | `cpuManagerPolicy: static`, `full-pcpus-only: "true"` | a Guaranteed pod gets whole cores, never one hyperthread shared with another pod |
-| node | topology manager | `topologyManagerPolicy: single-numa-node` | a pod's CPUs and devices stay on one NUMA node |
-| node | reserved CPUs | `reservedSystemCPUs` = the housekeeping cores | interrupts and system daemons stay off the pods' cores |
-| node | hugepages | `hugepagesz=2M hugepages=<n>` on the boot line | no 4 KiB page faults. An **unsized** hugetlbfs fails Aeron's storage check |
-| node | `rmem_max`, `wmem_max` | 16 MiB | the kernel will not grant Aeron's 2 MiB socket buffers without it |
-| node | KSM, NUMA balancing, `irqbalance` | off | each can stop a busy thread with a page fault, or move interrupts onto a busy core |
-| pod | QoS | requests = limits, whole-number `cpu` | only these get cores of their own |
-| pod | each busy thread | pinned to one CPU of the pod's cpuset | a thread outside the cpuset never starts (`EINVAL`) |
-| pod | Aeron directory | hugetlbfs `hostPath`, `AERON_FILE_PAGE_SIZE=2097152`, `AERON_TERM_BUFFER_SPARSE_FILE=false` | no first-write page faults on the log buffers |
-| pod | SIGTERM | handled | a PID 1 with no handler is SIGKILLed, closing nothing |
-| app | ENA adaptive moderation | `ethtool -C <if> adaptive-rx off rx-usecs 0` | **Polling backends:** `recv-busy` p99.99 falls **43–47 µs** (runs `062428Z`, `070339Z`). **Interrupt backends:** with this and the queue IRQs on a core of their own, the interrupt family is within **1.7–3.3 µs** of NIC polling at 1 connection and level with it from 4 sockets, and unlike plain `recv-busy` it does not collapse at 64 (fair run `20261019T175248Z`). Cost of leaving it on, x86: not measured |
-| app | NIC queue IRQ placement | the queues' IRQs on a spare core, never on the loop's CPU | Graviton WebSocket round trip, p99 / max (fair run `20261019T175248Z`): IRQs on the loop's CPU **45.9–47.2 / 135–161 µs** at 1 connection, **52.3–86.5 / 129–641 µs** at 4–64; IRQs on a spare core **47.0–53.9 / 108–425 µs** throughout. Placement costs tail, not median |
-| app | ENA RX ring | `ethtool -G <if> rx 4096` | Azure: no NIC drop or NAK, where the default ring dropped at 1 M msgs/s of 288 B |
-| app | keep-alive | about 1 kHz on sparse, latency-critical streams | a lost frame is noticed only at Aeron's next heartbeat: one lost ping cost **134 ms** |
-| app | quiet cores only | two-minute spin at pod start; pin to cores that never stalled 300 µs | some Azure vCPUs stop for up to **3.7 ms** once a minute |
+| setting | what it does | where | evidence | apply |
+|---|---|---|---|---|
+| CPU isolation | keeps tasks, the timer tick, RCU callbacks and new interrupts off the busy CPUs | node | measured: [isolation](#isolation) | boot line `isolcpus=managed_irq,domain,<busy> nohz_full=<busy> rcu_nocbs=<busy> irqaffinity=<housekeeping>` ([hosts](hosts.md#kernel-command-line)) |
+| NIC queue interrupts off the loop's CPU, `irqbalance` off, re-pinned after every NIC reset | the interrupt handler does not run on the loop's CPU | node | measured: [interrupt placement](#interrupt-placement) | [hosts](hosts.md#interrupts-and-the-nic); EKS: `node/irq-affinity.sh watch` |
+| ENA moderation off: `adaptive-rx off rx-usecs 0` | one interrupt per packet; no adaptive-moderation work on the polling CPU | node | measured, x86, polling backend: [moderation](#interrupt-moderation) | `ethtool -C <if> adaptive-rx off rx-usecs 0`, again after every NIC reset |
+| SMT off (x86) | one Kubernetes CPU is one physical core | node | measured, one case (SQPOLL on the loop's sibling): [SMT sibling](#smt-sibling) | EC2 `CpuOptions` `ThreadsPerCore: 1`, or `nosmt` ([SMT off](kubernetes.md#smt-off)) |
+| static CPU manager, `full-pcpus-only` | Guaranteed whole-CPU containers get CPUs of their own | node | [Kubernetes CPU management](https://kubernetes.io/docs/tasks/administer-cluster/cpu-management-policies/); not measured here | [kubelet block](#copy-paste) |
+| `reservedSystemCPUs` = the housekeeping CPUs | system daemons stay off the exclusive CPUs | node | same Kubernetes page; not measured here | [kubelet block](#copy-paste) |
+| no CPU quota on a busy container | the kernel never stops the container mid-period | node + pod | [sched-bwc](https://docs.kernel.org/scheduler/sched-bwc.html), Kubernetes PR #127525 (kubelet 1.33+); not measured here (`tune/src/quota.rs` T9) | kubelet 1.33+, static CPU manager, Guaranteed pod, whole-number `cpu`. Not `cpuCFSQuota: false` ([why](kubernetes.md#no-cpu-quota)) |
+| Guaranteed QoS, whole-number `cpu` | the only pods the static CPU manager gives exclusive CPUs | pod | Kubernetes CPU management page; not measured here | [pod block](#copy-paste) |
+| each busy thread pinned to one CPU of the pod's cpuset | the thread stays on its exclusive CPU | pod | the isolation runs pinned every loop; pinning alone is not measured | `sched_setaffinity` from `Cpus_allowed_list` ([io: Kubernetes](../io/kubernetes.md#pin-the-loop-thread-inside-the-pod)) |
+| `uring-sqpoll`: the SQPOLL thread on its own CPU | the kernel's polling thread does not share the loop's core | pod | measured at 10 and 100 connections: [SMT sibling](#smt-sibling) | ergon-io picks a CPU of the pod's own outside the shared CPUs ([shared CPUs](shared-cpus.md#pinning-by-index)) |
+| transparent hugepages `never` | no `khugepaged` merging under busy threads | node | [transhuge](https://docs.kernel.org/admin-guide/mm/transhuge.html); not measured here | `transparent_hugepage=never` on the boot line |
+| Aeron directory on a sized 2 MiB hugetlbfs, `AERON_FILE_PAGE_SIZE=2097152`, `AERON_TERM_BUFFER_SPARSE_FILE=false` | no 4 KiB page faults on the log buffers | node (pool, mount) + driver pod | [hugetlbpage](https://docs.kernel.org/admin-guide/mm/hugetlbpage.html); not measured here. An unsized hugetlbfs reports no free space, which Aeron's storage check refuses (`aeron_fileutil.c:952-959` in rusteron-media-driver 0.2.11) | [hosts](hosts.md#memory); driver env as in `md-dpdk/deploy/aws-eks/media-driver-config.yaml` |
+| `AERON_CLIENT_PRE_TOUCH_MAPPED_MEMORY=true` | a client faults its mapped terms in at start | pod (client) | `aeronc.h:170` (rusteron-client 0.2.11); not measured here | [pod block](#copy-paste) |
+| `net.core.rmem_max`, `wmem_max` ≥ Aeron's socket buffers | lets the kernel grant `AERON_SOCKET_SO_RCVBUF` | node | functional, not latency: the driver refuses a window larger than the granted `SO_RCVBUF` (`aeron_driver.c:407-456`, rusteron-media-driver 0.2.11). Aeron's default is 128 KiB (`aeron_driver_context.c:191`); only a raised buffer, such as the EKS ConfigMap's 2 MiB, needs it | `sysctl -w net.core.rmem_max=16777216 net.core.wmem_max=16777216` |
+| automatic NUMA balancing off | no balancing page faults on pinned threads | node | not measured here (every lab host had one NUMA node) | `sysctl -w kernel.numa_balancing=0` |
+| topology manager `single-numa-node` | a pod's CPUs and devices on one NUMA node | node | Kubernetes topology manager docs; not measured here (one-node lab hosts) | [kubelet block](#copy-paste) |
+| C-states capped at C1 (x86) | an idle housekeeping core wakes faster | node | VM: measured, **mixed** ([C-states](#c-states)); metal: no gain ([hosts](hosts.md#c-states)). Not recommended on this evidence | leave unset (the EKS node sets no cap) |
+| `SCHED_FIFO` on the loop | real-time priority | pod | measured, **mixed**: [SCHED_FIFO](#sched_fifo). Off by default | `ergon-cpus --fifo` ([latency pods](latency-pods.md#real-time-scheduling-built-default-off)) |
+| ENA receive ring `rx 4096` | room for bursts | node | not measured here | `ethtool -G <if> rx 4096` |
+| global busy polling (`net.core.busy_read`, `busy_poll`) | every socket read on the host spins | node | ergon-io: not measured as a global sysctl; `recv-busy` sets `SO_BUSY_POLL` per socket instead ([fair run](#interrupt-placement)). Aeron's media driver, kernel UDP: measured, polling not isolated. x86 round 7, with a 4,096 ring, lower p50 than plain kernel UDP (two settings differ); Graviton G1 lost at 1 M msgs/s in 5 of 5 reps (four settings differ) ([BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#measured-but-no-setting-recommended)) | not recommended on this evidence: leave unset. `ergon-md-dpdk` check M4 reports the state as information |
+| quiet-core spin test | finds CPUs the platform stalls | node | not measured here: the cloud lab skips CPUs that stalled 300 µs in a 120 s spin (`md-dpdk/benches/cloud/vm.sh:2022-2029`). A pod cannot choose its cores | run it on new nodes; cordon or replace noisy ones |
+| no exec probes, no `restartPolicy: Always` sidecars on hot pods | no probe process lands on the loop's CPU | pod | an exec starts on any CPU of the cpuset (`k8s/nri-shared-cpus/README.md`, Limits); not measured here | `httpGet`/`tcpSocket`/`grpc` probes; the [admission policy](latency-pods.md#4-admission) enforces it |
+| both hosts in one cluster placement group | shorter network path between the pair | node (cloud) | AWS docs; not measured here | the node group's placement group |
+| build for the CPU (`-mcpu`, `target-cpu`) | Graviton: inline atomics instead of gcc's outline helpers | build | not measured here | [hosts](hosts.md#build-for-the-cpu) |
+| chrony on a PTP clock | `CLOCK_REALTIME` stays close to UTC | node | vendor docs; not a latency setting ([Clocks](clocks.md)) | [time sync](clocks.md#set-up-time-sync) |
 
-Figures: [md-dpdk/BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md)
-(SMT: [io/benches/BENCHMARK.md](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md);
-the two `app` rows: fair run
-[`20261019T175248Z`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/flags-aws-20261019T175248Z/fair.md),
-whose top note names the six points whose sender fell behind).
+## Evidence
 
-## Never do this
+Every row: one run, arms compared only with the same run's baseline. µs.
+Raw tables: `git show <commit>:<path>` as named. Hosts: AWS `c7i.2xlarge`
+receiver (SMT on), `c7i.xlarge` sender, kernel 7.0; Azure
+`Standard_D8ds_v6`, kernel 6.17; Graviton `c8g.2xlarge`
+([io/benches/BENCHMARK.md](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md)).
+Boot lines and NIC settings per run are in the committed `env-rcv*.txt`
+next to each run id under `io/benches/results/`.
 
-| setting | why not | measured |
+### Isolation
+
+A loop that only reads the CPU counter, on the CPU the busy loop uses,
+records every gap. One sample per boot line; the loop sends nothing.
+Sources: `git show 2517309d:io/benches/results/flags-aws-20261014T163114Z/tables.md`
+and `…/flags-azure-20261014T144146Z/tables.md`, "Platform noise".
+
+| host | boot line | gaps >5 µs /min | >20 µs /min | >100 µs /min | longest gap (max) |
+|---|---|---|---|---|---|
+| AWS c7i | none | 60,120 | 120.0 | 34.5 | 146.95 |
+| AWS c7i | `isolcpus=managed_irq,domain` + `irqaffinity` | 60,063.5 | 4.0 | 0.0 | 52.30 |
+| AWS c7i | + `nohz_full`, `rcu_nocbs` | 50.0 | 4.5 | 1.0 | 133.90 |
+| Azure | none | 17,189 | 120.0 | 3.0 | 612.94 |
+| Azure | `isolcpus=managed_irq,domain` + `irqaffinity` | 10,656 | 47.0 | 0.0 | 58.94 |
+| Azure | + `nohz_full`, `rcu_nocbs` | 239.5 | 37.0 | 0.0 | 67.82 |
+
+`isolcpus` cut gaps over 20 µs. Adding `nohz_full` cut gaps over 5 µs
+(about 1,000 a second before it, the tick rate it stops:
+[NO_HZ](https://docs.kernel.org/timers/no_hz.html)) by 97.7 % (Azure) and
+99.9 % (AWS). The longest gap is one event per sample and does not rank the
+two isolated lines.
+
+### Interrupt placement
+
+**Graviton** (fair run, `io/benches/results/flags-aws-20261019T175248Z/fair.md`,
+committed): WebSocket round trip, interrupt-driven backends (`epoll-spin`,
+`mio`, `uring-spin`), moderation off everywhere, two rounds. Six points'
+senders fell behind; the file's top note names them.
+
+| connections | queue IRQs on the loop's CPU: p99 / max | on a core of their own: p99 / max |
 |---|---|---|
-| `cpuCFSQuota: false` | node-wide: every pod loses its CPU limit, including log collectors | a busy-spinning container that hits the quota is stopped for the rest of the 100 ms period |
-| plain kernel UDP with no isolation | interrupts and the tick land on the busy cores | Azure idle median of rep maxima **354.81 (272.13–2,203.65)** (absolute 2,203.65), 39 spikes ≥200 µs a rep — against **57.89 (49.47–64.22)** (absolute 64.22) isolated DPDK |
-| `SHARED_NETWORK` (driver sender+receiver on one thread) | saves a core, costs the tail | Graviton 1,344 B bursts p50 **522 vs 234**, median of rep maxima **748 (723–886) vs 493 (465–745)**, absolute **886 vs 745** |
-| busy polling on Graviton at 288 B, 1 M/s | collapses | p50 **4,973 µs**, median of rep maxima **9,175 (8,544–102,826)** (absolute 102,826), **61,488 NAKs** |
-| `mlockall`, pacing, an RX burst of 64, a 1 MiB receive window, C-states at C1 on metal | each lost its A/B | see [not recommended](../md-dpdk/overview.md) |
-| `AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD` = the conductor's park | the counter includes the park, so it fires on every idle `nanosleep` | the lab now derives it from the park and refuses a bad value |
-| `rcv-wnd=80k` on a 288 B channel | a rate cap, not a loss fix | flat-out falls **6.5–6.8×**, and the 288 B loss-free ceiling **drops** 157 k → 121 k msgs/s |
+| 1 | 45.87–47.17 / 134.98–161.30 | 46.97–48.37 / 107.72–145.15 |
+| 4–64 | 52.31–86.46 / 128.56–640.75 | 49.15–53.85 / 135.64–425.45 |
 
-Figures in this table: [md-dpdk/BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md).
+Same file, own-core IRQs, p50: at 1 connection the interrupt backends
+read 38.78–39.33 against 36.01–37.04 for NIC polling; at 4 connections the
+two families overlap. From 16 connections `recv-busy` (48.98–49.63 at 16,
+78.14–78.29 at 64, from-due p99 9.7 s) and `recv-busy-pq` (44.26–44.73) sit
+above the interrupt backends (39.27–40.42); `uring-sqpoll` stays level.
+
+**x86** (`git show 2517309d:io/benches/results/flags-aws-20261015T062428Z/tables.md`,
+`irqlocal` arm: every queue IRQ on the loop's CPU), `recv-busy` market data,
+kernel arrival → decoded:
+
+| arm | p50 | p99 | max |
+|---|---|---|---|
+| baseline, rounds 1 / 2 | 3.42 / 2.86 | 7.87 / 8.05 | 36.31 / 47.96 |
+| IRQs on the loop's CPU, rounds 1 / 2 | 6.49 / 4.68 | 26.09 / 20.11 | 98.61 / 73.64 |
+
+The WebSocket round trip in that run showed no consistent change.
+
+### Interrupt moderation
+
+`git show 2517309d:io/benches/results/flags-aws-20261015T070339Z/tables.md`,
+AWS c7i, `recv-busy`, 10,000 round trips a second. Baseline: adaptive-rx on
+(`io/benches/scripts/vm-setup.sh` `nodim`). Rounds 1 / 2.
+
+| arm | WebSocket p50 | p99.99 | max | HTTP p99.99 | max |
+|---|---|---|---|---|---|
+| baseline | 43.90 / 40.65 | 118.85 / 116.53 | 1,023.80 / 259.23 | 118.88 / 77.06 | 445.88 / 432.70 |
+| `adaptive-rx off` | 40.88 / 40.93 | 71.89 / 76.02 | 354.05 / 970.07 | 116.06 / 83.44 | 980.65 / 201.50 |
+| `adaptive-rx off rx-usecs 0` | 41.90 / 41.55 | 78.50 / 80.41 | 233.02 / 343.68 | 80.99 / 73.78 | 201.65 / 226.79 |
+
+WebSocket p99.99 fell 36–47 µs in both rounds. HTTP p99.99 moved no more
+than the 42 µs gap between its own two baselines. One run. The interrupt path with
+moderation on is not measured.
+
+### SMT sibling
+
+`git show 2517309d:io/benches/results/flags-aws-20261015T122127Z/tables.md`,
+AWS c7i, `uring-sqpoll` market data, kernel arrival → decoded, three rounds:
+the SQPOLL kernel thread on its own core against the loop's SMT sibling.
+
+| connections | own core: p50 / p99 / max | loop's sibling: p50 / p99 / max |
+|---|---|---|
+| 1 | 3.46–3.79 / 8.42–12.92 / 31.57–118.34 | 4.01–4.30 / 6.99–11.69 / 34.72–45.83 |
+| 10 | 5.18–6.04 / 20.41–23.81 / 77.03–109.42 | 7.53–8.37 / 29.46–32.77 / 95.85–349.01 |
+| 100 | 5.00–5.28 / 20.56–21.98 / 76.01–301.08 | 7.46–7.81 / 32.46–34.17 / 94.51–111.56 |
+
+At 1 connection the own core is lower at p50 and the sibling at p99. At 10
+and 100 connections the own core is
+lower at p50 and p99 in every round. This is one busy sibling (SQPOLL);
+other sibling loads are not measured.
+
+### C-states
+
+`…/flags-aws-20261015T062428Z/tables.md`, `cstate` arm: every idle state
+deeper than C1 off, AWS c7i VM. Rounds 1 / 2.
+
+| arm | WebSocket p50 | p99.99 | max | HTTP p99.99 | max |
+|---|---|---|---|---|---|
+| baseline | 36.92 / 37.69 | 115.88 / 104.24 | 454.17 / 967.90 | 112.84 / 106.21 | 1,009.61 / 1,049.79 |
+| C1 cap | 39.86 / 39.78 | 133.30 / 128.17 | 464.79 / 1,035.66 | 106.05 / 90.25 | 492.76 / 227.01 |
+
+WebSocket worse at p50 and p99.99, HTTP better at p99.99: no consistent
+gain.
+
+### SCHED_FIFO
+
+`…/flags-aws-20261015T070339Z/tables.md`, `rt` arm: the loop under
+`chrt -f 50`, `kernel.sched_rt_runtime_us=-1`. Rounds 1 / 2.
+
+| arm | WebSocket p99.99 | max | HTTP p99.99 | max | loop CPU timer interrupts /s |
+|---|---|---|---|---|---|
+| baseline | 118.85 / 116.53 | 1,023.80 / 259.23 | 118.88 / 77.06 | 445.88 / 432.70 | 11–23 |
+| `SCHED_FIFO` | 119.81 / 73.87 | 579.59 / 1,008.92 | 75.62 / 75.47 | 982.27 / 229.95 | 533–947 |
+
+Mixed. Under the policy the loop's `nohz_full` CPU took 533–947 timer
+interrupts a second, against 11–23 without it.
 
 ## Copy-paste
 
@@ -65,7 +173,9 @@ topologyManagerPolicy: single-numa-node
 # cpuCFSQuota stays true: the kubelet drops it for exclusive CPUs (1.33+)
 ```
 
-**Pod** — Guaranteed, whole cores, pinned:
+**App pod**: Guaranteed, whole cores, Aeron's directory on the node's
+hugetlbfs. `AERON_FILE_PAGE_SIZE` and `AERON_TERM_BUFFER_SPARSE_FILE` are
+read only by the media driver: set them on the driver's pod.
 
 ```yaml
 apiVersion: v1
@@ -78,8 +188,6 @@ spec:
       requests: { cpu: "2", memory: 1Gi, hugepages-2Mi: 1Gi }
       limits:   { cpu: "2", memory: 1Gi, hugepages-2Mi: 1Gi }
     env:
-    - { name: AERON_FILE_PAGE_SIZE, value: "2097152" }
-    - { name: AERON_TERM_BUFFER_SPARSE_FILE, value: "false" }
     - { name: AERON_CLIENT_PRE_TOUCH_MAPPED_MEMORY, value: "true" }
     volumeMounts:
     - { name: huge, mountPath: /mnt/huge-aeron }
@@ -95,43 +203,35 @@ Pin each busy thread to one CPU of the pod's cpuset before the loop starts
 
 ```sh
 # 1. no CPU quota on the busy container
-cat /sys/fs/cgroup/cpu.max            # must read: max 100000
-grep throttled /sys/fs/cgroup/cpu.stat   # nr_throttled must not grow
+cat /sys/fs/cgroup/cpu.max               # expect: max 100000
+grep throttled /sys/fs/cgroup/cpu.stat   # nr_throttled stays flat
 
 # 2. the pod got whole cores of its own
 grep Cpus_allowed_list /proc/self/status
 
-# 3. the host is set up — ergon-tune names every missing setting and its fix
+# 3. the host: ergon-tune names each missing setting and its fix
 #    (runs at start-up in ergon-io's Driver::new and the media driver)
 ```
 
-`RUSTERON_MEDIA_DRIVER_HOST_CHECK=require` refuses to start the driver
-while any check warns.
+`ERGON_HOST_CHECKS=require` (media driver alias
+`RUSTERON_MEDIA_DRIVER_HOST_CHECK`) refuses to start while any check warns
+or a proof check stays unproven
+([ergon-tune](../tune/overview.md#where-the-checks-run)). In a stock
+static-CPU-manager pod ergon-io's K2 stays unproven, so `require` refuses
+it ([checks inside a pod](kubernetes.md#checks-inside-a-pod)).
 
-## Platform notes
+## Open
 
-| platform | pick | note |
-|---|---|---|
-| Graviton5 (`c9g`) | kernel UDP: moderation off, data NIC interrupts on a spare core, **no** busy polling | lowest latency measured. Idle p50 **18.93**, median of rep maxima **79 (76–168)**; 288 B at 1 M/s p50 **44.83**, median of rep maxima **204 (122–211)** |
-| AWS x86 (`c7i`) | kernel UDP: busy polling, 4,096-entry ring | idle p50 **28.22**, median of rep maxima **1,938 (349–4,846)**. Moderation off with its interrupts on a core of their own is not measured on x86 |
-| Azure | kernel UDP: busy polling, 4,096-entry ring | idle p50 **21.15**, median of rep maxima **99.52 (73.86–209.41)**. Some vCPUs stall once a minute — spin-test first |
-| any, both ends on one host | localhost | isolated DPDK idle p50 **9.81**, median of rep maxima **31.60 (29.92–32.80)**: a 3 µs spread across five reps |
-
-Figures in this table: [md-dpdk/BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md).
-
-- **One AWS flow tops out at 7.8–8.0 Gbit/s.** A channel is one flow; spread
-  a heavier stream over several channels.
-- **Run below the loss-free rate,** never at flat-out. Flat-out always loses.
-- **Latency figures come with their max.** Every absolute maximum above (a
-  bracket's upper end) was investigated; the ones still open are listed in
-  [`md-dpdk/BENCHMARKS.md`](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md).
+- No committed run measures THP, hugepages, the RX ring, NUMA settings or
+  the CPU quota on latency.
+- Most maxima above are not traced to a cause.
 
 ## More
 
 | page | for |
 |---|---|
 | [Kubernetes](kubernetes.md) | the EKS manifests, `No CPU quota`, `SMT off`, keeping other pods off the node |
-| [Hosts](hosts.md) | the same settings on a VM outside Kubernetes |
+| [Hosts](hosts.md) | the same settings on a VM, and how to apply each |
 | [Benchmarks](benchmarks.md) | platform and cost side by side |
 | [Shared CPUs](shared-cpus.md) | helper threads on the node's housekeeping CPUs (`k8s/nri-shared-cpus`) |
 | [Latency pods](latency-pods.md) | hugepages, io_uring, PHC devices on a pod (`k8s/nri-latency-pods`) |

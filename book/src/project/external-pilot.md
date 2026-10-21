@@ -15,10 +15,16 @@ from outside this repository.
 Treat this page as the checklist for that missing signal, not a completed
 exit item.
 
-### Schema
+### What the conformance suite covers here
 
-FIX SBE baseline (v1-0-STANDARD + extension schemas) — the industry standard
-for financial exchange binary encoding.
+| Part | Runs in CI | Source |
+|---|---|---|
+| Byte-identity of ergon responses against Real Logic's goldens, suite tests 1–3 | yes (`cargo test -p ergo-sbe`) | `sbe/tests/fix_sbe_conformance_test.rs` |
+| Official RLValidator over ergon's responses | no: the test returns `Ok` when `FIX_SBE_CONFORMANCE_HOME` is unset, and no workflow sets it | `optional_java_rlvalidator_accepts_ergon_equivalent_responses` |
+
+`scripts/run-fix-sbe-conformance.sh` builds the suite, sets
+`FIX_SBE_CONFORMANCE_HOME` and runs that test by its full name. Inside the
+test, a suite that is built but cannot give its classpath still returns `Ok`.
 
 ### Commands
 
@@ -26,6 +32,7 @@ for financial exchange binary encoding.
 # Run the conformance suite
 cargo test -p ergo-sbe --test fix_sbe_conformance_test --all-features
 
-# Optional: run the Java RL Validator (requires built suite)
-./scripts/run-fix-sbe-conformance.sh
+# RLValidator leg: needs FIX_SBE_CONFORMANCE_HOME and the built Java suite
+FIX_SBE_CONFORMANCE_HOME=/path/to/suite cargo test -p ergo-sbe --all-features \
+  --test fix_sbe_conformance_test optional_java_rlvalidator_accepts_ergon_equivalent_responses
 ```

@@ -156,32 +156,13 @@ A refused handshake, in `on_closed`:
 
 ## Measured results
 
-Order round trip: a 64-byte echo, one message in flight, **1 connection**.
-More sockets on the same loop: not measured (see the last bullet). One copy
-of every figure, with its max:
-[`io/benches/BENCHMARK.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md).
+Order round trip: a 64-byte echo, one message in flight. Every figure, with
+its max:
 
-- **AWS, polling against interrupt-driven: no conclusion.** The
-  interrupt-driven runs had ENA's adaptive moderation on; a fair rerun is
-  planned.
-- **On Azure, NIC polling was ahead** of `epoll-spin` at the median and at
-  p99, with no lower max. That run did not record the NIC's interrupt
-  settings and is not published here, so treat it as **unquantified** until
-  the fair rerun.
-- **The max is not lower with polling.** On AWS a rare round trip takes
-  about a millisecond on every backend and on bare metal too. Neither loop
-  stalled: the network path or the sender VM
-  ([worst cases on AWS](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#worst-cases-on-aws)).
-  Azure's traced runs put every maximum in a once-a-minute hypervisor stall
-  ([settings matrix](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#settings-matrix)).
-- **mio** (the usual Rust way) is level with `epoll-spin` at the median.
-- **The SQPOLL thread on the loop's sibling** costs a little at the median
-  against a core of its own. Never a second isolated full core just for
-  SQPOLL.
-- **More sockets on the loop: not measured.** Each extra socket adds a
-  little to every poll of plain `recv-busy`
-  ([cost per poll](backends.md#cost-per-poll)); expect the poll cost to
-  scale with the sockets, plus the time on their messages. Past 4 sockets
-  in all, use `recv-busy,per_queue=true` or `uring-sqpoll`.
-- **Feeds** (market data, 1 to 256 connections):
-  [by number of connections](overview.md#by-workload).
+- [Fair run, Graviton](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton):
+  all six backends with 1, 4, 16 and 64 sockets on the loop.
+- [Round trips on x86](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#round-trips-on-x86-1-connection):
+  1 connection.
+
+Pick the backend by the total socket count on the loop, feeds included:
+[choosing a backend](overview.md#choosing-a-backend).

@@ -1,174 +1,148 @@
 # Contributing
 
-ergon is experimental, but changes must still be reproducible, wire-compatible,
-and honest about what has been verified.
+Changes must be reproducible, wire-compatible and honest about what was
+verified.
 
-## Work from behavior
+## Work from behaviour
 
-For generator or protocol changes:
+For a generator or protocol change:
 
-1. Add a focused behavioral, compile-fail, wire-parity, or allocation test.
-2. Run it and confirm the expected failure.
-3. Make the smallest coherent implementation change.
-4. Run the focused test and the affected crate's complete checks.
-5. Run the maintained benchmark gate when a generated or Cluster hot path
-   changes.
+1. Add a focused behavioural, compile-fail, wire-parity or allocation test.
+2. Run it and see it fail.
+3. Make the smallest coherent change.
+4. Run the focused test and the affected crate's full checks.
+5. Run the benchmark gate when a generated or cluster hot path changes.
 
-Generated-source substring tests can supplement behavior tests, but do not prove
-wire correctness, type-state ordering, error propagation, or allocation
-behavior by themselves.
+A substring test on generated source can supplement a behaviour test. It does
+not prove wire correctness, type-state order, error propagation or allocation
+behaviour.
 
-## Product checks
+## Checks
+
+| Command | What it runs |
+|---|---|
+| `just policy` | test-lane ownership and the suppression rules below, plus their self-tests |
+| `just preflight` | fmt, clippy, policy self-tests, book fences, golden and reference `--check` |
+| `just check-products` | `ergo-sbe` and `ergo-aeron-cluster` only |
+| `just check-local` | repository hygiene, fmt, clippy, the tests that need no Java, and the `exchange-example` sample |
+| `just test` | the full suite: builds the Aeron Java jars and runs the Java cluster lifecycle, recovery and HA lanes. A missing dependency fails |
+| `just test-all` | `just test` plus Miri and fuzz replay |
+| `just check-coverage` | coverage against the checked-in baseline |
+| `just check-mutation` | mutation testing over parser, resolver, sizing and dynamic-tail code |
 
 ```sh
-just policy
-just check-products
 RUSTDOCFLAGS="-D warnings" cargo doc -p ergo-sbe --all-features --no-deps
 RUSTDOCFLAGS="-D warnings" cargo doc -p ergo-aeron-cluster --no-deps
 ```
 
-`test-lanes.tsv` assigns every tracked test-bearing Rust source to exactly one
-executable lane. `just policy` self-tests that enforcement and rejects ignored
-tests, ignored Rust fences, runtime `SKIP` reporting, test-selection bypasses,
-conditional test execution, failure-to-success wrappers, and custom skip-CI
-conditions.
+### Test policy
 
-A failure observed while changing the repository is not a pass because it
-appears pre-existing or unrelated. Reproduce and fix it, or stop the change
-with the failure recorded as a blocker. Never make the lane green by filtering,
-ignoring, conditionally bypassing, or merely logging the failed case.
+`test-lanes.tsv` assigns every tracked test-bearing Rust file to exactly one
+lane. `scripts/check-test-policy.sh` rejects:
 
-`just check` adds repository hygiene and established sample checks. The
-complete required suite is:
+| Pattern | Where it looks |
+|---|---|
+| `#[ignore]` | `.rs` files |
+| an `ignore` doc fence | `.rs` doc comments (Markdown `rust,ignore` is allowed) |
+| a test printing `SKIP` or `Skipped:` | `.rs` files |
+| `--skip`, `--ignored`, `--include-ignored` | `justfile`, `just/*.just`, `scripts/*.sh`, workflows |
+| `if … cargo test/bench` | the same control files |
+| `cargo test … \|\| true`, `; exit 0` | the same control files |
+| `[skip ci]`-style markers, `continue-on-error: true`, any `if:` other than `always()` | workflows |
 
-```sh
-just test
-```
+The policy cannot see a test that returns `Ok` early without printing those
+words. Known case: `optional_java_rlvalidator_accepts_ergon_equivalent_responses`
+(`sbe/tests/fix_sbe_conformance_test.rs`) returns `Ok` when
+`FIX_SBE_CONFORMANCE_HOME` is unset, and no workflow sets it.
 
-It builds the Aeron Java artifacts and runs the Java lifecycle/recovery and HA
-sample lanes. A missing dependency is a failure, not a passing partial run.
-Use `just test-all` to add Miri and deterministic fuzz replay.
+A failure seen while changing the repository is not a pass because it looks
+pre-existing. Fix it, or stop and report it as a blocker. Never make a lane
+green by filtering, ignoring, conditionally bypassing or only logging the
+failure.
 
-Quality ratchets are explicit commands, not test-count targets:
+### CI
 
-```sh
-just check-coverage
-just check-mutation
-```
+| Workflow | What it runs |
+|---|---|
+| `ci.yml` | policy; lint, test and DPDK jobs on `ubuntu-24.04` (x86_64) and `ubuntu-24.04-arm` (arm64); Rust 1.99.0; Java 25 for the Aeron jobs; the coverage ratchet; the fixture crate as ordinary tests; benches compiled with `--no-run`, none run |
+| `cluster-compatibility.yml` | the cluster harness against Aeron 1.46.8 on Java 21, when `cluster/` or `sbe/src/` changes |
+| `nightly.yml` | weekly (Sunday): every fuzz target for 600 s, and the fixture crate under Miri |
+| `release.yml` | `just release-check`, then `just bench` and `just bench-cluster` on `ubuntu-latest`, blocking |
 
-Coverage runs on every pull request and may not fall below the checked-in
-region/function/line baseline. Mutation testing is manual (`just check-mutation`)
-over parser, resolver, sizing, and dynamic-tail code; CI enforces only the
-mutation configuration, and the ratchet fails when mutation output is missing or
-empty. A weekly schedule (Sundays) runs every fuzz target for ten minutes and
-executes the LE/BE/nested fixture crate under Miri. Pull requests execute that
-fixture crate as ordinary tests. Codec tests on 32-bit x86 and big-endian s390x
-are not run in CI.
+Mutation testing is manual; CI checks only its configuration, and the ratchet
+fails when mutation output is missing or empty. 32-bit x86 and big-endian
+s390x codec tests are not run in CI.
 
 ## Performance
 
-Run the SBE parity gate after any change that can affect generated hot paths:
-
 ```sh
-just bench
+just bench           # after a change that can affect generated hot paths
+just bench-cluster   # after a cluster session codec, offer, claim or egress change
 ```
 
-Run the Cluster gate after session codec, offer, claim, or egress hot-path
-changes:
+The target is ergon / sbe-tool ≤ `1.00` on equal work. Ceilings, the gate's
+pass/inconclusive/fail rules and the fairness rules:
+[`sbe/BENCHMARKS.md`](sbe/BENCHMARKS.md). Do not raise a ceiling. Do not copy
+benchmark numbers into docs. A docs-only change needs no benchmark run.
 
-```sh
-just bench-cluster
-```
-
-The project target is `1.00` (ergon / sbe-tool) under equal-work inputs.
-`scripts/check-bench-gate.sh` already ships these documented exceptions — do
-not raise them further:
-
-| Comparison | no-LTO | LTO |
-|---|---:|---:|
-| Cluster session-message-header decode | 1.01 | 1.01 |
-| Cluster session-event decode | 1.05 | 1.01 |
-| All other maintained comparisons, including SBE `optional_enum_nullify` | 1.00 | 1.00 |
-
-A gate pass is not literal `1.00` everywhere. A ceiling above `1.00` records a
-repeatable sbe-tool win on a placement-sensitive micro-op; it is not permission
-to add overhead. Record fresh measurements instead of copying old numbers into
-documentation. Documentation-only changes do not require a benchmark run.
-
-CI compiles both benchmark suites (`cargo bench --no-run`) and runs no
-benchmark: it executes neither profile and publishes no Criterion diagnostics.
-Run the strict ratio gate locally or on a dedicated stable benchmark runner.
-
-`fairness_policy_test` mechanically requires the maintained SBE and Cluster
-parity suites to use `std::hint::black_box`, assert correctness before timing,
-and preserve the sceptical benchmark disclosure. Exact wire/value assertions
-remain part of each benchmark setup; a large result is presumed suspect until
-the benchmark is re-audited.
+`fairness_policy_test` requires the SBE and cluster parity suites to use
+`std::hint::black_box`, assert correctness before timing, and keep the
+benchmark disclosure. Treat a large result as suspect until the benchmark is
+re-audited.
 
 ## Error and example style
 
 - Public library APIs use crate-specific typed errors.
 - Tests and binaries may return `Result<(), Box<dyn std::error::Error>>`.
-- Prefer `?` to avoidable `unwrap` or `expect`.
+- Prefer `?` to `unwrap` or `expect`.
 - Treat schema-declared text strictly; keep binary fields as bytes.
-- Size generated-message buffers from generated constants or length helpers.
-- Use the high-level Cluster facade in consumer examples.
+- Size message buffers from generated constants or length helpers.
+- Use the high-level cluster facade in consumer examples.
 
 ## Documentation
 
-- Keep the root README focused on repository orientation.
-- Put crate usage in that crate's README.
-- Keep one sample inventory in `samples/README.md`; do not add per-sample
-  READMEs.
-- Describe current, verified behavior. Do not commit dated implementation
-  plans, completion ledgers, or archived task trees.
-- Use Git history as the archive for superseded design material.
-- Keep benchmark results out of permanent docs unless a release record needs an
-  immutable, reproducible snapshot.
+- The root README orients; crate usage goes in that crate's README.
+- One sample inventory: `samples/README.md`. No per-sample READMEs.
+- Describe current, verified behaviour. No dated plans, completion ledgers or
+  archived task trees: git history is the archive.
+- One page owns a fact; other pages link to it.
 
 ## Package boundaries
 
-Only `ergo-sbe`, `ergo-aeron-cluster`, `ergon-clock`, `ergon-tune`, `ergon-io`
-and `ergon-md-dpdk` are publication candidates; `ergon-io` depends on
-`ergon-tune`, and `ergon-md-dpdk` on `ergon-clock` and `ergon-tune`, so the
-release publishes those two first.
+The publication candidates are `ergo-sbe`, `ergo-aeron-cluster`, `ergon-tune`,
+`ergon-io` and `ergon-md-dpdk` (`api/public-api-baseline.toml`). `ergon-io` and
+`ergon-md-dpdk` depend on `ergon-tune`, so the release publishes it first.
 `scripts/check-publish-set.sh` (in `just policy`) fails when a published crate
-depends on an unpublished one, on a path without a version or on an older
-version than a published sibling's own, or when the release recipe, the
-release workflow, the dry runs or the public-API gate leave a published crate
-out or publish it before its dependencies. A version bump therefore updates
-every `version` beside a workspace `path` with `[workspace.package]`:
-`ergo-sbe` in `[workspace.dependencies]`, and the `ergon-clock` and
-`ergon-tune` lines in `md-dpdk/`, `io/` and `clock/bench/Cargo.toml`.
-Inspect their payloads before any release:
+depends on an unpublished one, on a path without a version, or on an older
+version than a published sibling's, or when the release recipe, workflow, dry
+runs or public-API gate leave a crate out or publish it before its
+dependencies. A version bump therefore updates every `version` beside a
+workspace `path` with `[workspace.package]`: `ergo-sbe` in
+`[workspace.dependencies]` and the `ergon-tune` lines in `md-dpdk/` and `io/`.
+
+Inspect the payloads before a release:
 
 ```sh
 cargo package -p ergo-sbe --list --allow-dirty
 cargo package -p ergo-aeron-cluster --list --allow-dirty
-cargo package -p ergon-clock --list --allow-dirty
 cargo package -p ergon-tune --list --allow-dirty
 cargo package -p ergon-io --list --allow-dirty
 cargo package -p ergon-md-dpdk --list --allow-dirty
 ```
 
-Packages must exclude repository integration tests, fixtures not required at
-build time, benchmarks, Java harness code, application protocols, samples, and
-internal plans. `ergon-clock`, `ergon-tune` and `ergon-io` ship their library
-sources and README only (not `ergon-clock-bench`, `io/benches`, the tests,
-the example or their fixture trees).
-`ergon-md-dpdk` ships its native C (including the test fakes its own build
-compiles) but not its interop harness, device plugin or deployment assets.
+Packages exclude integration tests, fixtures not needed at build time,
+benchmarks, Java harness code, application protocols, samples and internal
+plans. `ergon-tune` and `ergon-io` ship their library sources and README only.
+`ergon-md-dpdk` ships its native C, including the test fakes its build
+compiles, but not its harness, device plugin or deployment assets.
 
-Publishing, tagging, and announcing a release require explicit maintainer
-authorization.
-
-Before an authorised release, run `just release-check`. The release workflow
-runs the same command before `cargo release`; it cannot substitute a partial
-workspace-only test command.
+Publishing, tagging and announcing a release need explicit maintainer
+authorisation. Before an authorised release, run `just release-check`; the
+release workflow runs the same command before `cargo release`.
 
 ## Git hygiene
 
 - Preserve unrelated working-tree changes and dirty submodules.
 - Stage paths explicitly; do not use `git add -A`.
-- Do not rename the `sbe`, `cluster`, or `samples` directories.
+- Do not rename the `sbe`, `cluster` or `samples` directories.
 - Use a short one-line conventional commit subject.

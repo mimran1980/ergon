@@ -52,7 +52,13 @@ jobs:
 
   lint:
     needs: policy
-    runs-on: ubuntu-24.04
+    # x86_64 and aarch64 (Graviton): tune, io and md-dpdk have code
+    # for each architecture, and only the runner's architecture is compiled.
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -69,8 +75,10 @@ jobs:
       - run: cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
       # ergon-md-dpdk without its Linux-only `dpdk` feature; the `dpdk` job lints the rest.
       - run: cargo clippy -p ergon-md-dpdk -p ergon-md-dpdk-harness --all-targets -- -D warnings
-      # rusteron's bundled Aeron and the aeron submodule pin are one release
-      # (offline: after clippy, cargo has fetched rusteron's sources).
+      # rusteron's bundled Aeron and the aeron submodule pin are one release.
+      # The check runs cargo metadata offline, which needs every platform's
+      # crates (clippy fetches only this host's), so fetch them all first.
+      - run: cargo fetch --locked
       - run: ./scripts/check-aeron-version.sh
       - run: cargo check --manifest-path sbe/fuzz/Cargo.toml --bins
       - run: cargo test --manifest-path sbe/miri-fixtures/Cargo.toml
@@ -78,7 +86,7 @@ jobs:
       - run: RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-aeron-cluster --no-deps
       - run: RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-md-dpdk --no-deps
       # Each crate page is the crate's README (`#![doc = include_str!]`).
-      - run: RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-clock -p ergon-tune -p ergon-io --all-features --no-deps
+      - run: RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-tune -p ergon-io --all-features --no-deps
       # Prebuilt binary — check-public-api.sh only `cargo install`s from source
       # as a fallback if this isn't already on PATH. A from-source build took
       # 4m32s alone and regularly blew the job's timeout (2026-08-19).
@@ -106,12 +114,22 @@ jobs:
 
   test:
     needs: policy
-    runs-on: ubuntu-24.04
-    # Was 45, then 90; the workspace suite keeps growing (sbe_tool_multi_schema_wire_parity_test.rs
-    # alone is 52 compile-and-run cases at ~30s each) and this job was
-    # cancelled mid-suite at 90m on 2026-09-06 with several test files still
-    # to go — same "cancelled, not failed" pattern as the 2026-08-18 bump.
-    # Bump this again when it recurs; do not shrink it back down.
+    # x86_64 and aarch64 (Graviton): tune, io and md-dpdk have code
+    # for each architecture, and only the runner's architecture is compiled.
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        # Three ergo-sbe shards split by measured time
+        # (scripts/ci-test-weights.tsv) and everything else. Unsharded,
+        # x86_64 took 2 h 54 min for the workspace step alone and hit this
+        # timeout in the cluster tests.
+        suite:
+          - scripts/ci-test-shard.sh 1 3
+          - scripts/ci-test-shard.sh 2 3
+          - scripts/ci-test-shard.sh 3 3
+          - scripts/ci-test-rest.sh
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
@@ -122,20 +140,17 @@ jobs:
         with:
           toolchain: "1.99.0"
 
+      # Java 25 (LTS): the newest in Aeron 1.53.3's CI matrix (17, 21, 25);
+      # its Gradle 9.7.1 fails on 27 ("Unsupported class file major version 71").
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "25"
 
       - name: Install native build dependencies
         run: sudo apt-get update && sudo apt-get install -y libbsd-dev uuid-dev curl
 
-      - run: ./scripts/regenerate-sbe-tool-reference.sh --check
-      - run: ./scripts/regenerate-golden.sh --check
-      - run: ./scripts/regenerate-codegen-matrix-fixture.py --check
-      - run: cargo test --workspace --all-features --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness -- --test-threads=2
-      - run: cargo test -p ergo-aeron-cluster -- --test-threads=1
-      - run: cargo test --doc --workspace --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness
+      - run: ${{ matrix.suite }}
 
   # ergon-md-dpdk: the DPDK ENA kernel-bypass transport. The `dpdk` feature
   # needs Linux x86_64 or aarch64 and libdpdk >= 23.11, which Ubuntu 24.04
@@ -145,7 +160,13 @@ jobs:
   # bridge, which need root.
   dpdk:
     needs: policy
-    runs-on: ubuntu-24.04
+    # x86_64 and aarch64 (Graviton): tune, io and md-dpdk have code
+    # for each architecture, and only the runner's architecture is compiled.
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -220,14 +241,15 @@ jobs:
         with:
           submodules: recursive
 
-      # MSRV 1.88 (edition 2024 + let-chains). Gate the publishable pure-Rust crate;
+      # MSRV 1.99, the pinned toolchain (serial_test 4, a dev-dependency, needs
+      # 1.93.1). Gate the publishable pure-Rust crate;
       # cluster (rusteron native build) is exercised on the primary toolchain.
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.88.0"
+          toolchain: "1.99.0"
 
-      - run: cargo +1.88.0 check -p ergo-sbe --all-targets --all-features
-      - run: cargo +1.88.0 test -p ergo-sbe --lib --all-features
+      - run: cargo +1.99.0 check -p ergo-sbe --all-targets --all-features
+      - run: cargo +1.99.0 test -p ergo-sbe --lib --all-features
 
   aeron-cluster-integration:
     needs: gate
@@ -387,7 +409,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
-          java-version: '21'
+          java-version: '25'
 
       - name: Check ergo-sbe semver
         uses: obi1kenobi/cargo-semver-checks-action@v2
@@ -419,20 +441,15 @@ jobs:
   nri-shared-cpus:
     needs: policy
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: k8s/nri-shared-cpus
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: k8s/nri-shared-cpus/go.mod
-
-      - name: gofmt
-        run: test -z "$(gofmt -l .)"
-
-      - run: go vet ./...
-      - run: go test -race -count=1 ./...
-      - run: CGO_ENABLED=0 go build ./cmd/...
+      # gofmt, go vet, go test -race and the amd64/arm64 static builds, in a
+      # golang container with CAP_SYS_NICE: the hook tests write another
+      # process's /proc/PID/timerslack_ns, which the runner user cannot.
+      - name: unit lane (scripts/check.sh --unit)
+        run: scripts/check.sh --unit

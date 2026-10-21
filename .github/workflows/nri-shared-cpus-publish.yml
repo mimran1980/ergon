@@ -55,9 +55,12 @@ jobs:
         working-directory: k8s/nri-shared-cpus
         run: go vet ./...
 
-      - name: go test -race
+      # gofmt, go vet, go test -race and the amd64/arm64 static builds, in a
+      # golang container with CAP_SYS_NICE: the hook tests write another
+      # process's /proc/PID/timerslack_ns, which the runner user cannot.
+      - name: unit lane (scripts/check.sh --unit)
         working-directory: k8s/nri-shared-cpus
-        run: go test -race ./...
+        run: scripts/check.sh --unit
 
       - name: static build, amd64 and arm64
         working-directory: k8s/nri-shared-cpus

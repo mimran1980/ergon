@@ -27,6 +27,7 @@ API reference: [docs.rs/ergo-aeron-cluster](https://docs.rs/ergo-aeron-cluster/)
 
 ## Scope
 
+<!-- ANCHOR: scope -->
 The crate implements client-side operations:
 
 - synchronous and poll-driven connection;
@@ -39,6 +40,7 @@ The crate implements client-side operations:
 The Java Aeron process still provides the media driver, archive, consensus
 module, clustered services, election, recovery, and operational tooling. This
 crate implements none of those server-side components.
+<!-- ANCHOR_END: scope -->
 
 ## Configure a client
 
@@ -104,6 +106,7 @@ multicast channels stay as they are), so the limits hold across failover.
 
 ## Egress and errors
 
+<!-- ANCHOR: egress -->
 Implement `EgressListener` and pass it through `EgressAdapter` to
 `AeronCluster::poll_egress`. Use `ControlledEgressListener` and
 `ControlledEgressAdapter` when callbacks must return Aeron controlled-poll
@@ -120,6 +123,7 @@ reachable, for advanced direct encode/decode, through the `cluster_codec_types`
 module — but that module is `#[doc(hidden)]` and **not** a stable API: it exists
 for repository tests and low-level experimentation, and its shape may change
 without a semver bump. Normal applications should use `AeronCluster`.
+<!-- ANCHOR_END: egress -->
 
 ## Decoding chained session messages (advanced)
 
@@ -177,6 +181,7 @@ fn decode_chained() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Features and harness
 
+<!-- ANCHOR: harness -->
 The published crate has no extra features. Java Cluster launch support lives in
 the unpublished workspace crate `ergo-aeron-cluster-test-harness` and requires
 a JDK (17 or newer; CI runs Temurin 25) plus locally built Aeron artifacts. See
@@ -204,6 +209,7 @@ cargo package -p ergo-aeron-cluster --list --allow-dirty
 Run `just bench-cluster` for the maintained codec comparisons. See
 [sbe/BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/sbe/BENCHMARKS.md)
 for the common benchmark rules.
+<!-- ANCHOR_END: harness -->
 
 ## Limitations
 

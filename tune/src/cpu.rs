@@ -143,18 +143,21 @@ pub fn housekeeping(host: &Host, busy: &CpuSet) -> String {
     spare(host, busy).map_or_else(|| "<housekeeping CPUs>".to_owned(), |s| s.to_string())
 }
 
-const T1_EVIDENCE: &str = "md-dpdk/BENCHMARKS.md (Summary; UDP round trip between the two hosts); \
-     io/benches/results/flags-aws-20261014T163114Z (boot-stock, boot-isolcpus, boot-full); \
-     io/benches/BENCHMARK.md (Host and network (AWS))";
+const T1_EVIDENCE: &str = "git show \
+     128747b9^:io/benches/results/flags-aws-20261014T163114Z/tables-local.md (noise table, \
+     lines 27-30; interrupts table, lines 332-335) and \
+     128747b9^:io/benches/results/flags-aws-20261015T045527Z/tables-local.md (lines 146-149, \
+     403-406): AWS c7i, one 120 s gap-spinner sample per boot profile; Linux \
+     Documentation/timers/no_hz.rst and admin-guide/kernel-parameters.txt (isolcpus, nohz_full, \
+     rcu_nocbs, irqaffinity)";
 
 /// What T1 reads and the boot line it recommends.
 struct T1<'a> {
     cpus: &'a HotSet,
     spinning: CpuSet,
     /// The spinning CPUs asked to be `nohz_full`: all but those that hold
-    /// only ergon-io's SQPOLL thread, for which `nohz_full` made no
-    /// measured difference (io/benches/BENCHMARK.md, Host and NIC settings
-    /// on AWS: "SQPOLL CPU out of `nohz_full`").
+    /// only ergon-io's SQPOLL thread (`nohz_full` there is not measured
+    /// here).
     tickless: CpuSet,
     /// The spinning CPUs, described.
     all: String,
@@ -187,10 +190,9 @@ impl T1<'_> {
         };
         for cpu in self.spinning.difference(isolated).iter() {
             out.push(Self::finding(format!(
-                "{} is not isolated: the scheduler balances other tasks onto it. Isolated, DPDK's \
-                 round-trip p99.99 went 69 → 30 µs (max 216 → 71 µs) and kernel busy polling's \
-                 96 → 34 µs (max 280 → 82 µs) on Azure; on AWS the stock boot had a 5.2 ms maximum \
-                 round trip. Fix: {}",
+                "{} is not isolated: the scheduler balances other tasks onto it. On AWS c7i, `isolcpus` \
+                 took a gap-spinner's gaps over 20 µs from 120 and 162 a minute to 4 and 0.5 (longest \
+                 gap 147 → 52 µs and 150 → 30 µs; two runs, one 120 s sample per boot). Fix: {}",
                 self.cpus.describe(cpu),
                 self.boot
             )));
@@ -224,9 +226,11 @@ impl T1<'_> {
         for cpu in missing.iter() {
             out.push(Self::finding(format!(
                 "{} is not nohz_full: {kernel}its scheduler tick keeps firing, CONFIG_HZ times a \
-                 second (1,003/s against 18/s with nohz_full on AWS's kernel), and the stock boot \
-                 had 60,120 loop gaps over 5 µs a minute against 50 (longest 147 against 134 µs); \
-                 isolcpus alone still had 60,063. Fix: {fix}",
+                 second. On AWS c7i a gap-spinner's CPU took 1,002 local-timer interrupts a second \
+                 without nohz_full and 0 with it, and had 60,120 and 60,130 gaps over 5 µs a minute \
+                 on the stock boot, 60,063 and 60,046 with isolcpus alone, 50 and 21 with nohz_full \
+                 too (longest gap 147/150, 52/30 and 134/30 µs; two runs, one 120 s sample per \
+                 boot). Fix: {fix}",
                 self.cpus.describe(cpu)
             )));
         }
@@ -247,7 +251,7 @@ impl T1<'_> {
         } else {
             format!(
                 "{}: isolated and outside default_smp_affinity; nohz_full but for {}, which \
-                 holds only the SQPOLL thread (nohz_full made no measured difference there)",
+                 holds only the SQPOLL thread (not asked there; not measured)",
                 self.all,
                 self.cpus.describe_all(&ticking)
             )
@@ -297,8 +301,8 @@ impl T1<'_> {
 ///
 /// Isolation and `nohz_full` are reported separately, per CPU: `isolcpus`
 /// alone left the tick running. A CPU that holds only ergon-io's SQPOLL
-/// thread ([`Role::SqPoll`]) is not asked to be `nohz_full`: ergon-io
-/// measured no difference with it out.
+/// thread ([`Role::SqPoll`]) is not asked to be `nohz_full` (not measured
+/// here).
 #[must_use]
 pub fn t1_isolation(host: &Host, cpus: &HotSet) -> Vec<Finding> {
     let spinning = cpus.spinning();
@@ -349,10 +353,10 @@ pub fn t1_isolation(host: &Host, cpus: &HotSet) -> Vec<Finding> {
     out
 }
 
-const T7_EVIDENCE: &str = "io/benches/BENCHMARK.md (Host and network on AWS); \
-     io/benches/results/flags-aws-20261014T163114Z (r1-rt — flagged in that \
-     file's lab notes as inflated by a sleeping sender, so the deltas are \
-     directional); Linux Documentation/scheduler/sched-rt-group.rst";
+const T7_EVIDENCE: &str = "git show \
+     128747b9^:io/benches/results/flags-aws-20261015T070339Z/tables.md (c1-rt, c2-rt: HTTP \
+     lines 22-29; WebSocket lines 63-70; interrupts lines 87-124): AWS c7i, two 8-minute \
+     reps; Linux Documentation/scheduler/sched-rt-group.rst";
 
 /// T7: `thread`, in `role`, is not under `SCHED_FIFO` or `SCHED_RR`. The
 /// media driver checks its process before the agents start.
@@ -380,10 +384,12 @@ pub fn t7_sched_policy(host: &Host, thread: Thread, role: Role) -> Finding {
                 sev,
                 T7_EVIDENCE,
                 format!(
-                    "{who} runs {}: no gain was measured (AWS, 8-minute A/B: p50 +0.5/−1.8 µs, \
-                     p99.99 +1/−45 µs), its CPU's tick stayed at 550/s against 18/s, and RT \
-                     throttling can take the CPU away{throttle}. Fix: run it SCHED_OTHER on an \
-                     isolated CPU (`chrt --other -p 0 <tid>`)",
+                    "{who} runs {}: its CPU's tick stays on (AWS c7i: 533–947 local-timer \
+                     interrupts a second against 11–23), and RT throttling can take the CPU \
+                     away{throttle}. The latency A/B was inconclusive: two 8-minute reps moved \
+                     p99.99 by +1 to −45 µs and the max by −444 to +536 µs, while the two HTTP \
+                     baselines alone differed by 42 µs at p99.99. Fix: run it SCHED_OTHER on an isolated CPU \
+                     (`chrt --other -p 0 <tid>`)",
                     p.name()
                 ),
             )
@@ -399,8 +405,11 @@ pub fn t7_sched_policy(host: &Host, thread: Thread, role: Role) -> Finding {
     }
 }
 
-const T8_EVIDENCE: &str = "io/benches/BENCHMARK.md (Which backend; Host and network (AWS); Many connections); \
-     md-dpdk/BENCHMARKS.md (Summary); the measured effect of a busy sibling was weak";
+const T8_EVIDENCE: &str = "git show \
+     128747b9^:io/benches/results/flags-aws-20261015T122127Z/tables.md (lab-uring-sqpoll-c* \
+     against lab-uring-sqpoll-sib-c*, lines 174-279): ergon-io's SQPOLL thread on the loop's \
+     sibling, AWS c7i, three rounds; other sibling loads and two threads on one CPU not \
+     measured here";
 
 /// What T8 has seen so far.
 struct T8<'a> {
@@ -430,8 +439,9 @@ impl T8<'_> {
             self.push(
                 Severity::Warn,
                 format!(
-                    "the {} are both on CPU {cpu}: two busy threads take turns on one CPU (with the \
-                     agents on one core a round trip took 2.8 ms). Fix: pin them to separate cores",
+                    "the {} are both on CPU {cpu}: two busy threads take turns on one CPU, so each \
+                     waits for the other's time slice (not measured here). Fix: pin them to separate \
+                     cores",
                     roles.join(" and ")
                 ),
             );
@@ -469,8 +479,8 @@ impl T8<'_> {
                 Severity::Info,
                 format!(
                     "{me} shares its core with {them}: what runs there takes the core's execution \
-                     units from it (the lab leaves a busy thread's sibling idle; the measured effect \
-                     was weak). Fix: keep CPU {s} idle, or give it a core of its own"
+                     units from it (measured only for ergon-io's SQPOLL thread there: T10). Fix: \
+                     keep CPU {s} idle, or give it a core of its own"
                 ),
             );
         } else {
@@ -480,9 +490,9 @@ impl T8<'_> {
                     Severity::Info,
                     format!(
                         "{me} shares its core with CPU {s}, which is not isolated: other tasks run \
-                         there and take the core's execution units from it (the lab leaves a busy \
-                         thread's sibling idle; the measured effect was weak). Fix: isolate CPU {s} \
-                         and leave it idle"
+                         there and take the core's execution units from it (measured only for \
+                         ergon-io's SQPOLL thread there: T10). Fix: isolate CPU {s} and leave it \
+                         idle"
                     ),
                 ),
                 Err(e) => {
@@ -507,7 +517,8 @@ impl T8<'_> {
 /// busy-spinner, the conductor or an EAL lcore, except ergon-io's SQPOLL
 /// thread on its loop's sibling (the recommended one-core layout); an
 /// information line when the sibling is the component's housekeeping or is
-/// not isolated. Without SMT (Graviton, c7a) it never fires.
+/// not isolated. Without SMT (Graviton, c7a) it fires only when two
+/// busy-spinning roles share one CPU.
 #[must_use]
 pub fn t8_smt_siblings(host: &Host, cpus: &HotSet) -> Vec<Finding> {
     let spinning = cpus.spinning();
@@ -543,7 +554,7 @@ pub fn t8_smt_siblings(host: &Host, cpus: &HotSet) -> Vec<Finding> {
         } else if t8.smt {
             format!("{all}: no other busy thread on their cores, and their siblings are isolated")
         } else if Platform::detect(host).is_graviton() {
-            format!("{all}: one thread per core (Graviton has no SMT, so T8 never fires there)")
+            format!("{all}: one thread per core (Graviton has no SMT)")
         } else {
             format!("{all}: one thread per core (no SMT sibling)")
         };
@@ -557,16 +568,17 @@ pub fn t8_smt_siblings(host: &Host, cpus: &HotSet) -> Vec<Finding> {
     t8.out
 }
 
-/// ergon-io's SQPOLL thread on its loop's SMT sibling: the recommended
-/// one-core layout (+1.5 µs at p50, +7 µs at p99 against a core of its own).
+/// ergon-io's SQPOLL thread on its loop's SMT sibling: the one-core layout
+/// ergon-io documents. Its cost against a core of its own is T10's figure.
 fn sqpoll_with_loop(cpus: &HotSet, a: u32, b: u32) -> bool {
     let (ra, rb) = (cpus.roles(a), cpus.roles(b));
     (ra.contains(&Role::Loop) && rb.contains(&Role::SqPoll) && !rb.contains(&Role::Loop))
         || (rb.contains(&Role::Loop) && ra.contains(&Role::SqPoll) && !ra.contains(&Role::Loop))
 }
 
-const T10_EVIDENCE: &str = "io/benches/BENCHMARK.md (SMT sibling cost; run \
-     flags-aws-20261015T122127Z); \
+const T10_EVIDENCE: &str = "git show \
+     128747b9^:io/benches/results/flags-aws-20261015T122127Z/tables.md (lines 174-279, \
+     arrival → decoded, three rounds); \
      AWS instance-optimize-cpu and instance-specify-cpu-options (CpuOptions ThreadsPerCore); \
      kernel-parameters.txt (nosmt); ABI/testing/sysfs-devices-system-cpu (smt/active, smt/control); \
      Azure compute-optimized Fasv6/Falsv6/Famsv6 and general-purpose Dpsv6/Dplsv6 (no SMT)";
@@ -643,10 +655,14 @@ pub fn t10_smt_on(host: &Host) -> Finding {
             sev,
             T10_EVIDENCE,
             "SMT is on: on x86 a Kubernetes `cpu: 2` is one physical core, not two, and a busy \
-             sibling slows the loop (SQPOLL on the loop's sibling cost +0.5 µs p50 at 1 connection, \
-             +2.3–2.7 µs p50 and +9–12 µs p99 at 10–100, arrival → decoded). Turn it off on the \
-             NODE. EKS/EC2: launch template `\"CpuOptions\": {\"CoreCount\": 4, \"ThreadsPerCore\": 1}` \
-             (no extra charge; not possible on T2, C7a, M7a, R7a, Mac or Graviton). Self-managed: \
+             sibling slows the loop. Measured for ergon-io's SQPOLL thread on the loop's sibling \
+             against a core of its own (AWS c7i, arrival → decoded, p50 / p99 / max over three \
+             rounds): 1 connection 4.0–4.3 / 7.0–11.7 / 35–46 µs against 3.5–3.8 / 8.4–12.9 / \
+             32–118; 10 connections 7.5–8.4 / 29–33 / 96–349 against 5.2–6.0 / 20–24 / 77–109; \
+             100 connections 7.5–7.8 / 32–34 / 95–112 against 5.0–5.3 / 21–22 / 76–301. Other \
+             sibling loads are not measured. Turn SMT off on the NODE. EKS/EC2: launch template \
+             `\"CpuOptions\": {\"CoreCount\": <the type's cores>, \"ThreadsPerCore\": 1}` (not \
+             possible on T2, C7a, M7a, R7a, Mac or Graviton). Self-managed: \
              boot with `nosmt` (`nosmt=force` cannot be undone at runtime), or `echo off > \
              /sys/devices/system/cpu/smt/control` before the kubelet starts, then delete its \
              cpu_manager_state so it re-pins. Azure: a size without SMT (Fasv6, Falsv6, Famsv6, \

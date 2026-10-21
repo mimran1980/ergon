@@ -62,6 +62,13 @@ pub enum CheckId {
     /// Kernel busy polling for the media driver's socket transport
     /// (`ergon-md-dpdk`).
     M4,
+    // Added after 0.1.30: last, so the variants before keep their order.
+    /// How `CLOCK_REALTIME` is kept: the time daemon, PTP-grade or NTP, its
+    /// error bound, an unsettled correction, a pending leap second.
+    T11,
+    /// The kernel's clock source: the hardware counter, a hypervisor's view
+    /// of it, or one read by a system call (hpet, `acpi_pm`).
+    T12,
 }
 
 impl CheckId {
@@ -79,6 +86,8 @@ impl CheckId {
             Self::T8 => "T8",
             Self::T9 => "T9",
             Self::T10 => "T10",
+            Self::T11 => "T11",
+            Self::T12 => "T12",
             Self::K1 => "K1",
             Self::K2 => "K2",
             Self::K3 => "K3",
@@ -125,6 +134,7 @@ impl CheckId {
             | Self::T8
             | Self::T9
             | Self::T10
+            | Self::T12
             | Self::K1
             | Self::K2
             | Self::K3
@@ -134,8 +144,11 @@ impl CheckId {
             | Self::M2
             | Self::M3 => true,
             // A subsystem the node may not have. Absent evidence is not a
-            // gap in the proof; it is a host without that subsystem.
+            // gap in the proof; it is a host without that subsystem. T11:
+            // a pod normally sees neither the time daemons (another PID
+            // namespace) nor chronyd's port (another network namespace).
             Self::T3
+            | Self::T11
             | Self::T4
             | Self::T5
             | Self::T6

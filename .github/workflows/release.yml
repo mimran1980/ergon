@@ -99,13 +99,12 @@ jobs:
 
       # At the version cargo-release committed above. Cargo publishes them in
       # dependency order and waits for crates.io to list ergon-tune before it
-      # publishes ergon-io, and ergon-clock and ergon-tune before it publishes
-      # ergon-md-dpdk.
-      - name: Publish ergon-clock, ergon-tune, ergon-io and ergon-md-dpdk
+      # publishes ergon-io and ergon-md-dpdk.
+      - name: Publish ergon-tune, ergon-io and ergon-md-dpdk
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
           CARGO_HTTP_MULTIPLEXING: false
-        run: cargo publish -p ergon-clock -p ergon-tune -p ergon-io -p ergon-md-dpdk
+        run: cargo publish -p ergon-tune -p ergon-io -p ergon-md-dpdk
 
       - name: Push to GitHub
         uses: ad-m/github-push-action@v0.8.0

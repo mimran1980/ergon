@@ -2,23 +2,17 @@
 
 Five things a normal Kubernetes pod cannot do, and what to use instead.
 They live in `k8s/nri-latency-pods` (node setup and the admission policy) and
-`k8s/nri-shared-cpus` (the NRI plugin). This page is the contract; the
-numbers are in [Benchmarks](benchmarks.md).
+`k8s/nri-shared-cpus` (the NRI plugin). This page is the contract.
 
-**In short:** a busy-spin loop on a dedicated core can lose its tail to
-4 KiB page faults, to cgroup wake-ups on its own core, to io_uring being
-blocked by the default seccomp profile, to an exec probe resetting its
-CPU affinity, and to idle wake-up. Five small grants target each of
-those. A sixth thing people ask for — `SCHED_FIFO` — is built in the
-shared-cpus plugin and left off by default, because it was measured to
-give no gain on an isolated CPU on AWS. This page's own admission policy
-never takes a scheduler policy.
+**In short:** five opt-in grants: a sized hugetlbfs for Aeron's directory,
+an isolated cpuset partition, an io_uring seccomp profile, an admission
+policy against exec probes and sidecars, and device grants (the NIC's PHC).
+Each is a mechanism; none has a measured latency effect. `SCHED_FIFO` is
+built in the shared-cpus plugin and off by default
+([evidence: mixed](hft.md#sched_fifo)).
 
-Status: experimental and unpublished. The five extensions are covered by
-a kind e2e (one check per extension). Their latency effect is **not yet
-measured**: two EKS spot labs reached no capacity. The DPDK pods
-themselves were measured on EKS, without these extensions; see
-[Benchmarks](benchmarks.md#kubernetes-eks-on-c7i4xlarge).
+Status: experimental and unpublished. A kind e2e covers the five (one check
+per extension).
 
 ## The five
 
@@ -31,7 +25,7 @@ facts.
 | # | extension | mechanism | pod opt-in | env the app sees |
 |---|---|---|---|---|
 | 1 | sized hugetlbfs for `AERON_DIR` | NRI `AddMount` `type: hugetlbfs` with `pagesize=2M,size=N`, plus `AddLinuxHugepageLimit`; N is the container's `hugepages-2Mi` limit | `hugepages.ergon.io/<ctr>: "2M"` and a `hugepages-2Mi` resource (requests = limits) | `ERGON_HUGEPAGES_DIR`, `ERGON_HUGEPAGE_SIZE` |
-| 2 | `cpuset.cpus.partition=isolated` on the exclusive CPUs | a `createRuntime` hook makes a **child** cgroup holding only those CPUs, unions them into the ancestors' `cpuset.cpus.exclusive`, then writes `cpuset.cpus.partition=isolated`, and reads every write back. Takes whole processes, not one thread (see below) | `cpu-partition.ergon.io/<ctr>: "isolated"` | `ERGON_ISOLATED_CGROUP`, `ERGON_ISOLATED_CPUS`, `ERGON_SHARED_CPUS` |
+| 2 | `cpuset.cpus.partition=isolated` on the exclusive CPUs | a `createRuntime` hook makes a threaded **child** cgroup holding only those CPUs, unions them into the ancestors' `cpuset.cpus.exclusive`, then writes `cpuset.cpus.partition=isolated`, and reads every write back. Takes a process, then single threads (see below) | `cpu-partition.ergon.io/<ctr>: "isolated"` | `ERGON_ISOLATED_CGROUP`, `ERGON_ISOLATED_CPUS`, `ERGON_SHARED_CPUS` |
 | 3 | io_uring seccomp profile | (a) NRI `SetLinuxSeccompPolicy`: the request's profile plus the `io_uring_*` allow rules; (b) fallback, pod field `seccompProfile: Localhost` | `seccomp.ergon.io/<ctr>: "io-uring"` (or the Localhost fallback) | `ERGON_SECCOMP` |
 | 4 | no exec probes, no always-restart sidecars | `ValidatingAdmissionPolicy` (CEL, GA 1.30) | pod label `ergon.io/latency: "hot"` | — |
 | 5 | device grants | NRI `AddDevice`, plus a read-only bind of the node facts file | `ptp.ergon.io/<ctr>: "auto"` (the NIC PHC); `cpuqos.ergon.io/<ctr>` (`/dev/cpu_dma_latency`, x86 only) | `ERGON_PTP_DEVICE`, `ERGON_NODE_FACTS`, `ERGON_CPU_DMA_LATENCY` |
@@ -49,8 +43,8 @@ with several nodes and no NIC node. A binding is never dropped in silence.
 
 The five grants on one pod. Everything stays inside the pod's own cpuset:
 exclusive CPUs from the kubelet's static CPU manager, shared CPUs from
-`ergon.io/shared-millicpus`. Helpers and SQPOLL never get a second
-isolated full core.
+`ergon.io/shared-millicpus`. Helpers go on the shared CPUs; SQPOLL takes an
+exclusive CPU of the pod's own ([SMT sibling](hft.md#smt-sibling)).
 
 ```mermaid
 flowchart TD
@@ -65,7 +59,7 @@ flowchart TD
     C --> C1["seccomp + io_uring_* rules"]
     D --> D1["no exec probes, no Always sidecars"]
     E --> E1["PHC, cpu_dma_latency, node facts"]
-    SQ["helpers and SQPOLL on shared CPUs"] -.-> POD
+    SQ["helpers on shared CPUs"] -.-> POD
 ```
 
 ### 1. The app owns `AERON_DIR`
@@ -73,37 +67,32 @@ flowchart TD
 The plugin mounts a **sized** hugetlbfs at `/dev/hugepages` and exports
 `ERGON_HUGEPAGES_DIR` and `ERGON_HUGEPAGE_SIZE`. It does **not** set
 `AERON_DIR`. The app creates `$ERGON_HUGEPAGES_DIR/aeron`, points
-`AERON_DIR` there, sets `AERON_FILE_PAGE_SIZE=$ERGON_HUGEPAGE_SIZE`, and
-mlockalls.
+`AERON_DIR` there, and, if it runs the media driver, sets
+`AERON_FILE_PAGE_SIZE=$ERGON_HUGEPAGE_SIZE`.
 
 Why: an unsized hugetlbfs is what an emptyDir `medium: HugePages` gives
-you, and Aeron refuses it. A 4 KiB `AERON_DIR` costs page faults on the
-hot path. Turning THP off on the node cut the idle **max** hard (the p99
-moved far less; the max is what matters).
+you, and Aeron refuses it. A 4 KiB `AERON_DIR` takes a page fault on each
+first touch of a page. Latency effect not measured here.
 
 ### 2. Isolated partition
 
-The loop's core must not be woken by the scheduler.
 `cpuset.cpus.partition=isolated` makes the kernel treat the set as
-isolated: no load balancing into it, and wake-ups of other tasks do not
-run on it. The grant is applied to a **child** cgroup so the pod's own
-cgroup keeps its shared CPUs.
+isolated: no load balancing into it
+([cgroup-v2](https://docs.kernel.org/admin-guide/cgroup-v2.html)). The
+grant is applied to a **child** cgroup so the pod's own cgroup keeps its
+shared CPUs. Latency effect not measured here.
 
-**What moves into the child: whole processes, not one thread.** A
-domain cgroup takes a thread group through `cgroup.procs`;
-`cgroup.threads` only exists in a threaded subtree, and a threaded
-subtree cannot use cpuset partitions. So:
+**The child is threaded**, and a threaded child is a legal partition root
+(`k8s/nri-shared-cpus/internal/cpuset/partition.go`). So:
 
 | app shape | how the exclusive CPUs are used |
 |---|---|
 | one process whose threads all belong on the exclusive CPUs | write the pid to `$ERGON_ISOLATED_CGROUP/cgroup.procs`, then pin each thread to `ERGON_ISOLATED_CPUS` |
-| one hot thread in a multi-threaded process (a media driver: sender, receiver, conductor) | the thread stays in the container cgroup and is placed with `sched_setaffinity`. The partition cannot take it alone. Isolation then comes from the boot line: `isolcpus=managed_irq,domain,E nohz_full=E rcu_nocbs=E` |
+| hot threads in a multi-threaded process | write the pid to `$ERGON_ISOLATED_CGROUP/cgroup.procs` first, then move each helper thread back to the container cgroup through its `cgroup.threads`. The kernel confines the hot threads to the exclusive CPUs and the helpers to the shared ones (kernel lane: `test/cgroup/kernel_test.go`, `TestOneThreadCanLiveInThePartition`) |
 
-The second row is the common case, and it is why the worked example in
-[Shared CPUs](shared-cpus.md#worked-example-an-aeron-media-driver) uses
-the boot line rather than this annotation. On a managed node where the
-boot line cannot be changed there is currently no way to isolate the
-exclusive CPUs of only some threads of a process.
+A program that does not make these moves itself, such as Aeron's C media
+driver, keeps the boot line's isolation and `sched_setaffinity`: see the
+[worked example](shared-cpus.md#worked-example-an-aeron-media-driver).
 
 `cpuset.cpus.exclusive` is a **replace**, not a union, so every directory
 the new partition shares with an already-running pod has to be updated
@@ -120,11 +109,11 @@ never `Unconfined`, which the plugin refuses.
 
 ### 4. Admission
 
-An exec probe runs inside the container and resets the busy-spin loop's
-CPU affinity (the NRI `createRuntime` hook state is per-container, and
-the exec lands on the hot cpuset). A container with
+An exec probe starts a process inside the container on any CPU of its
+cpuset, the loop's exclusive CPU included
+(`k8s/nri-shared-cpus/README.md`, Limits). A container with
 `restartPolicy: Always` is an injected sidecar: it shares the pod's CPU
-budget and wakes on the hot core.
+budget and can run on the hot core.
 
 The policy refuses both on pods labelled `ergon.io/latency: "hot"`. It
 also requires a `priorityClassName` (eviction and preemption stop a hot
@@ -138,9 +127,9 @@ from outside the container.
 
 The NIC's PHC (`/dev/ptp*`) for clock work, and on x86
 `/dev/cpu_dma_latency` so a pod can cap C-states. The cap's measured effect
-is mixed on a VM and worse on metal ([C-states](hosts.md#c-states)), so
-treat the grant as access, not a latency win. Graviton (c8g) has no
-`cpu_dma_latency` node, so that grant is x86 only.
+is mixed ([C-states](hft.md#c-states)), and a spinning core never idles, so
+treat the grant as access, not a latency win. On arm64 the plugin ignores
+the `cpuqos` annotation (`k8s/nri-latency-pods/README.md`, item 5).
 
 ## Real-time scheduling: built, default off
 
@@ -152,10 +141,11 @@ treat the grant as access, not a latency win. Graviton (c8g) has no
 | `ergon-cpus --fifo <prio>` | the exec wrapper takes `SCHED_FIFO` on the thread before it execs the command | off (no flag) |
 | `sched-fifo.ergon.io/<container>: "thread"` | the NRI plugin grants `RLIMIT_RTPRIO` and `ERGON_SCHED_FIFO`; the app or `prelock` takes the policy on the hot thread only | `schedFifo: "off"` — the node refuses the annotation |
 
-Why it is off: no gain on an isolated CPU on AWS ([data](../io/overview.md));
-the RT throttle and RT group scheduling bite it. The one A/B that measured
-it is directional only (a sleeping sender inflated it), so the "no gain"
-direction is what `ergon-tune` T7 checks.
+Why it is off: its one committed A/B is mixed, and under it the loop's
+`nohz_full` CPU took timer interrupts again ([SCHED_FIFO](hft.md#sched_fifo)). RT throttling
+(`kernel.sched_rt_runtime_us`, 950,000 of 1,000,000 µs by default,
+[sched-rt-group](https://docs.kernel.org/scheduler/sched-rt-group.html)) can
+take the CPU away. `ergon-tune` T7 warns on a real-time policy.
 
 ## Deliberately not built
 
@@ -163,7 +153,7 @@ direction is what `ergon-tune` T7 checks.
 |---|---|
 | SR-IOV VF per pod | Nitro guests have one ENA per ENI; there are no in-guest VFs |
 | a netns-sysctl writer pretending the knobs are per-netns | `busy_poll`/`busy_read` are global; `gro_flush_timeout` and `napi_defer_hard_irqs` are per-netdev sysfs; `rmem_max` is not writable in a non-init netns. The node sets them (`node-checks.md`) |
-| an IRQ DaemonSet that pins the latency pod's NIC IRQs to the **shared** CPUs | our Graviton data: IRQs on a busy housekeeping CPU cost the tail and lose frames. The kept-CPU default stays |
+| an IRQ DaemonSet that pins the latency pod's NIC IRQs to the **shared** CPUs | IRQs on a CPU that also runs other work are not measured here; IRQs on a core of their own are ([interrupt placement](hft.md#interrupt-placement)). The kept-CPU default stays |
 
 `RTPRIO` is granted as a **limit only** on the latency-pods path. That
 plugin never changes a scheduler policy, and the e2e asserts PID 1 stays
@@ -175,13 +165,13 @@ The full check list is `k8s/nri-latency-pods/node-checks.md`. The short version:
 
 | setting | value |
 |---|---|
-| Kubernetes | >= 1.33 (1.36 recommended) |
+| Kubernetes | >= 1.33 (the labs ran 1.36) |
 | kubelet | `cpuManagerPolicy: static`; `reservedSystemCPUs` = the IRQ CPU(s) plus the shared CPUs; x86 `full-pcpus-only` |
 | `strict-cpu-reservation` | **off** (on, it empties the shared pool) |
 | kernel | >= 6.7, cgroup v2 (`cpuset.cpus.exclusive` is what the partition writes, and it is 6.7; a vendor backport of that file also works — the plugin reads the file, not the version). Also `nohz_full`, `rcu_nocbs`, `isolcpus=managed_irq` on the exclusive CPUs, never the shared ones. 6.2 is enough for the shared CPUs only |
 | `transparent_hugepage` | `never` |
-| `net.core.rmem_max` / `wmem_max` | 4–16 MiB |
-| `net.core.busy_poll` / `busy_read` | **off** on Graviton (busy polling there was catastrophic) |
+| `net.core.rmem_max` / `wmem_max` | at least Aeron's `AERON_SOCKET_SO_RCVBUF` / `SNDBUF` when raised ([hft](hft.md#settings)) |
+| `net.core.busy_poll` / `busy_read` | unset (global; not measured here). ergon-io busy-polls per socket |
 | containerd | >= 2.2, NRI on, the default validator on |
 
 **Why not AKS:** it has no supported way to change containerd (so an NRI
@@ -201,4 +191,4 @@ They are different on purpose.
 
 - [Shared CPUs for Helper Threads](shared-cpus.md) — the plugin that grants the shared housekeeping CPUs
 - [Kubernetes](kubernetes.md) — deployment
-- [Benchmarks: x86 and Graviton](benchmarks.md) — what these cost and buy
+- [Kubernetes HFT tuning](hft.md) — every setting and its evidence

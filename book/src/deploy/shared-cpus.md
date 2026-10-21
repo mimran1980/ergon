@@ -43,7 +43,9 @@ start. The OCI hook runs as root, so it can write
 `/proc/<tid>/timerslack_ns`; a program can always set its own slack with
 `prctl(PR_SET_TIMERSLACK)`.
 
-What the 1 ns slack is worth in latency is **not yet measured**.
+What the 1 ns slack is worth in latency is **not measured**. The loop
+spins and never sleeps; the slack applies to sleeping helpers such as
+Aeron's conductor.
 
 ## Node setup
 
@@ -52,7 +54,7 @@ of the node checklist is [Latency Pods: node setup](latency-pods.md#node-setup).
 
 | setting | value |
 |---|---|
-| Kubernetes | >= 1.33 (1.36 recommended): no CPU quota on exclusive containers |
+| Kubernetes | >= 1.33: no CPU quota on exclusive containers (the labs ran 1.36) |
 | kubelet | `cpuManagerPolicy: static`; x86 `full-pcpus-only`; `reservedSystemCPUs` = the IRQ CPU(s) + the shared CPUs |
 | kernel | >= 6.2, cgroup v2. Boot line: `nohz_full`, `rcu_nocbs`, `isolcpus=managed_irq` on the exclusive CPUs, never on the shared ones. A `cpu-partition` opt-in also needs `cpuset.cpus.exclusive`: Linux 6.7, or a vendor kernel that backported that file. The plugin reads the file, not the version |
 | containerd | >= 2.2, NRI on, default validator on |
@@ -108,20 +110,22 @@ oversubscription: 1
 namespaces: ["trading"]  # who may opt in. Empty refuses every pod
 defaultAffinity: shared
 annotationOptIn: false
+devRoot: /host/dev       # where the DaemonSet mounts the host's /dev; without
+                         # it the plugin finds no PHC and refuses ptp grants
 
 # These three are "off" by default. A latency node turns the first two on.
 # Each one is a node-level permission: the pod still opts in by annotation,
 # and a pod that asks for a grant this field does not allow is refused.
-seccomp.ioUring: "allow"  # default "off". Without it, a pod asking for
-                          # seccomp.ergon.io/<ctr>: "io-uring" is refused.
-                          # For apps that use io_uring (ergon-io's uring
-                          # backends). Aeron's C media driver does not use it
-ptp: "auto"               # default "off". Without it, a pod asking for
-                          # ptp.ergon.io/<ctr>: "auto" is refused, and the app
-                          # has no NIC hardware clock. Use "auto" for the NIC's
-                          # PHC, or a /dev/ptp* path the node has
-schedFifo: "off"          # keep off: no gain measured on an isolated CPU (see
-                          # Latency Pods)
+seccomp:
+  ioUring: "allow"       # default "off". Without it, a pod asking for
+                         # seccomp.ergon.io/<ctr>: "io-uring" is refused.
+                         # For apps that use io_uring (ergon-io's uring
+                         # backends). Aeron's C media driver does not use it
+ptp: "auto"              # default "off". Without it, a pod asking for
+                         # ptp.ergon.io/<ctr>: "auto" is refused. "auto" is
+                         # the NIC's PHC, or give a /dev/ptp* path the node has
+schedFifo: "off"         # off by default; its one A/B was mixed (see
+                         # Kubernetes HFT tuning, SCHED_FIFO)
 ```
 
 Rules:
@@ -229,7 +233,7 @@ restart the DaemonSet.
 | `annotationOptIn` | `false` | allow the pod annotation `cpu-shared.ergon.io/<container>` as a fallback when the device plugin is not used |
 | `metricsAddress` | `:9466` | serves `/metrics`, `/healthz` and `/readyz` |
 | `rlimits.memlock`, `.nofile`, `.rtPrio`, `.nice` | unset | the ceiling a pod may ask for by kind. `"inf"` or a positive count. The pod asks for kinds, never values |
-| `seccomp.ioUring` | `off` | `allow` widens the container's seccomp profile for `io_uring_*`. See [Latency Pods](latency-pods.md) |
+| `seccomp.ioUring` (nested: `seccomp:` then `ioUring:`) | `off` | `allow` widens the container's seccomp profile for `io_uring_*`. See [Latency Pods](latency-pods.md) |
 | `seccompProfilePath` | `/etc/ergon-shared-cpus/ergon-io-uring.json` | the shipped io_uring profile on the node, the fallback for a pod that cannot take the NRI grant |
 | `devRoot` | `/dev` | where this process sees the host's `/dev`. The DaemonSet mounts it read-only at `/host/dev` so the plugin can stat the PHC and PM QoS nodes; granted paths stay `/dev/...` |
 | `cgroupRoot` | `/sys/fs/cgroup` | the cgroup v2 mount point. The DaemonSet mounts the host tree read-only at exactly this path: it is also the node-space prefix the createRuntime hook matches against `/proc/<pid>/cgroup`, so it must stay `/sys/fs/cgroup` |
@@ -337,11 +341,10 @@ nohz_full=2-3 rcu_nocbs=2-3 isolcpus=managed_irq,domain,2-3 hugepagesz=2M hugepa
 
 **Pod.** Three grants on top of the shared CPU: a sized hugetlbfs for
 `AERON_DIR`, io_uring seccomp, and the NIC PHC. The isolation of CPUs 2-3
-comes from the **boot line**, not from a grant: a media driver is one
-process with three threads, and a cpuset partition takes whole processes,
-so `cpu-partition` cannot take the sender and receiver while the
-conductor stays on the shared CPU. See
-[Latency Pods](latency-pods.md#2-isolated-partition).
+comes from the **boot line**, not from a grant: `cpu-partition` needs the
+program to move its own threads between cgroups
+([Latency Pods](latency-pods.md#2-isolated-partition)), and `aeronmd` does
+not.
 
 ```yaml
 apiVersion: v1
@@ -357,7 +360,7 @@ metadata:
     ptp.ergon.io/app: "auto"              # the NIC's PHC
 spec:
   nodeSelector: { ergon.io/shared-cpus: "true" }
-  priorityClassName: system-node-critical
+  priorityClassName: ergon-hot              # k8s/nri-latency-pods/admission/priority-class.yaml
   containers:
   - name: app
     image: ergon-media-driver:dev
@@ -386,9 +389,9 @@ spec:
 | `hugepages.ergon.io/app: "2M"` + `hugepages-2Mi` | a **sized** hugetlbfs mounted at `/dev/hugepages` |
 | `AERON_DIR` on that hugetlbfs | the CnC file and the terms are 2 MiB pages, not 4 KiB |
 | `seccomp.ergon.io/app: "io-uring"` | the profile gains the `io_uring_*` calls an app's uring backend needs; never `Unconfined` |
-| `ptp.ergon.io/app: "auto"` | the NIC's PHC, for clock work. x86 also gets `cpuqos` (`/dev/cpu_dma_latency`) to cap C-states |
+| `ptp.ergon.io/app: "auto"` | the NIC's PHC, for clock work |
 | `ergon.io/latency: "hot"` (pod label) | the admission policy refuses exec probes and `restartPolicy: Always` sidecars |
-| `isolcpus=managed_irq,domain,2-3` on the boot line | CPUs 2-3 leave the scheduler's load-balancing domains. This is what keeps the sender's and receiver's cores quiet; a cpuset partition cannot do it per-thread |
+| `isolcpus=managed_irq,domain,2-3` on the boot line | CPUs 2-3 leave the scheduler's load-balancing domains ([isolation](hft.md#isolation)) |
 
 **The app sets `AERON_DIR` itself.** The plugin exports
 `ERGON_HUGEPAGES_DIR` and `ERGON_HUGEPAGE_SIZE` and does not set `AERON_DIR`,
@@ -451,9 +454,11 @@ kubectl exec aeron-driver -- sh -c 'ps -L -o pid,tid,psr,comm | head'
 
 ## Limits and what is not verified
 
-- **The plugin is root on the node.** It mounts only `/var/run/nri`,
-  `/var/lib/kubelet/device-plugins` and `/opt/ergon/bin`: no `hostPID`, no
-  `hostNetwork`, not privileged, `capabilities.drop: [ALL]`,
+- **The plugin is root on the node.** It mounts five host paths:
+  `/var/run/nri`, `/var/lib/kubelet/device-plugins` and `/opt/ergon/bin`
+  read-write, the host's `/dev` at `/host/dev` and `/sys/fs/cgroup`
+  read-only. No `hostPID`, no `hostNetwork`, not privileged,
+  `capabilities.drop: [ALL]`,
   `readOnlyRootFilesystem: true`, seccomp `RuntimeDefault`, no API access.
   Only namespaces in the allowlist may opt in.
 - **AKS** has no supported way to enable containerd NRI plugins and no
@@ -469,10 +474,8 @@ kubectl exec aeron-driver -- sh -c 'ps -L -o pid,tid,psr,comm | head'
   `resizePolicy: RestartContainer` for `cpu`.
 - **Not measured / not verified:** the latency cost of helpers on shared
   CPUs, and a real EKS node (the NRI socket, nodeadm TOML merge, `/opt`
-  writable, `system-node-critical` outside kube-system). Two EKS spot lab
-  attempts found no capacity and tore down cleanly.
+  writable).
 
 **Decision.** Use it on kind or a self-managed node where you can set
-`reservedSystemCPUs` and enable NRI. Do not claim the exclusive cores stay
-quiet until the latency benchmarks are run: that is a design claim, not a
-measurement. Do not use it on AKS or CRI-O.
+`reservedSystemCPUs` and enable NRI. That the exclusive cores stay quiet
+with it is a design claim, not a measurement. Not for AKS or CRI-O.

@@ -27,8 +27,8 @@ cargo test --manifest-path samples/exchange-example/Cargo.toml
 
 **Rule of thumb:** one conversion style per schema type
 (`with_domain_type` *or* `with_conversion`, not both for the same selector).
-See the main [ergo-sbe README](https://github.com/mimran1980/ergon/blob/main/sbe/README.md)
-configuration section.
+See the book's
+[with_conversion vs with_domain_type](https://mimran1980.github.io/ergon/sbe/configuration/conversion-vs-domain.html).
 
 ## `ergo-sbe`: build dependency vs application dependency
 
@@ -90,8 +90,9 @@ mod messages;
   then encode into a claim/slot of that exact length — avoid oversize
   `vec![0u8; 4096]` “guess” buffers
 
-See the main README [buffer sizing](https://github.com/mimran1980/ergon/blob/main/sbe/README.md#buffer-sizing)
-section and feature-tour `demo_car_size_and_encode`.
+See the book's
+[Buffer Sizing](https://mimran1980.github.io/ergon/sbe/core-concepts/buffer-sizing.html)
+and feature-tour `demo_car_size_and_encode`.
 
 ## Domain DTOs & var-data
 

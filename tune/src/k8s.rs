@@ -12,9 +12,10 @@ use crate::host::{Host, ReadError};
 use crate::net::Nic;
 use crate::quota::{CpuCgroup, cpu_cgroup, t9_cpu_quota};
 
-const K_EVIDENCE: &str = "io/benches/BENCHMARK.md (Which backend; SMT sibling cost); \
-     Kubernetes documentation (Pod QoS, CPU Management Policies, Topology Management, \
-     Linux capabilities); Linux kernel ABI (cgroup v2 memory.high, PSI)";
+const K_EVIDENCE: &str = "Kubernetes documentation (Pod QoS, CPU Management Policies, Topology \
+     Management, Linux capabilities); Linux Documentation/admin-guide/cgroup-v2.rst (memory.high, \
+     cpuset partitions) and accounting/psi.rst; K3's figures are T10's; otherwise not measured \
+     here";
 
 /// What the caller does in the pod, so the checks warn only about the
 /// privileges and the layout it needs.
@@ -400,9 +401,8 @@ fn k3_smt_sibling(host: &Host, cpus: &HotSet, cg: Option<&CpuCgroup>) -> Finding
         K_EVIDENCE,
         format!(
             "outside this pod's cpuset are the SMT siblings of the busy CPUs ({}): whatever runs \
-             there (another pod, the kubelet) takes the core's execution units from the loop (a \
-             busy sibling cost +0.5 µs p50 at 1 connection, +2.3–2.7 µs p50 and +9–12 µs p99 at \
-             10–100). Fix (node): turn SMT off (T10). Fix (pod spec): ask for both threads of the \
+             there (another pod, the kubelet) takes the core's execution units from the loop \
+             (measured only for ergon-io's SQPOLL thread on the sibling: T10's figures). Fix (node): turn SMT off (T10). Fix (pod spec): ask for both threads of the \
              core (cpu: 2 with `full-pcpus-only`), so this pod owns its siblings",
             pairs.join(", ")
         ),
@@ -654,12 +654,13 @@ fn k6_pressure(host: &Host, cg: Option<&CpuCgroup>) -> Finding {
     if let Some(h) = high {
         problems.push(format!(
             "{h}: the kernel reclaims this cgroup's memory once its working set reaches it, and \
-             reclaim stalls the loop"
+             throttles the cgroup's threads while it does (cgroup-v2.rst; not measured here)"
         ));
     }
     for p in pressure {
         problems.push(format!(
-            "{p}: the CPU or the memory was under pressure recently"
+            "{p}: the CPU or the memory was under pressure recently (any non-zero reading \
+             warns; no threshold is measured)"
         ));
     }
     if problems.is_empty() {

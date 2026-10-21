@@ -37,35 +37,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: k8s/nri-shared-cpus/go.mod
-          cache-dependency-path: k8s/nri-shared-cpus/go.sum
-
-      - name: gofmt
-        run: |
-          unformatted=$(gofmt -l .)
-          if [ -n "$unformatted" ]; then
-            echo "gofmt: these files need formatting:" >&2
-            echo "$unformatted" >&2
-            exit 1
-          fi
-
-      - name: go vet
-        run: go vet ./...
-
-      - name: go test -race
-        run: go test -race -count=1 ./...
-
-      - name: static build, amd64 and arm64
-        env:
-          GOFLAGS: -buildvcs=false
-        run: |
-          out=$(mktemp -d)
-          for arch in amd64 arm64; do
-            CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -o "$out/$arch/" ./cmd/...
-          done
-          rm -rf "$out"
+      # gofmt, go vet, go test -race and the amd64/arm64 static builds, in a
+      # golang container with CAP_SYS_NICE: the hook tests write another
+      # process's /proc/PID/timerslack_ns, which the runner user cannot.
+      - name: unit lane (scripts/check.sh --unit)
+        run: scripts/check.sh --unit
 
   chart:
     name: lint and template the chart

@@ -39,7 +39,7 @@ under [deployment: Kubernetes](../deploy/kubernetes.md#latency-checklist).
 
 | pod | the loop | the helpers (dial, warnings, SQPOLL) | what to configure |
 |---|---|---|---|
-| [`cpu: 1`](#cpu-1) | the only CPU | none: they would time-slice the loop | `Driver::connect`, or `connect_background` with `inline_connect_fallback=true`; `recv-busy` or `epoll-spin` |
+| [`cpu: 1`](#cpu-1) | the only CPU | none: they would share the loop's CPU | `Driver::connect`, or `connect_background` with `inline_connect_fallback=true`; `recv-busy` (`per_queue=true` past 4 sockets) |
 | [x86 with SMT, `cpu: 2`](#x86-with-smt-cpu-2-one-physical-core) | one hyperthread | the other hyperthread (the loop's SMT sibling) | nothing |
 | [Graviton, `cpu: 2`](#graviton-cpu-2-two-cores) | one core | the other core | nothing |
 | [shared CPUs](#shared-cpus-from-the-node) | one exclusive CPU | dial and warnings on the shared CPUs the node added; `SQPOLL` on a CPU of the pod's own outside them (never a spinner on shared CPUs) | `helper_cpus` or `ERGON_HELPER_CPUS`; `sqpoll_cpu` only to override that default |
@@ -69,12 +69,11 @@ until there is work. One warning line at start says all this.
 {{#include ../../../io/tests/placement_book.rs:one_cpu}}
 ```
 
-- **This is not a hidden latency cost.** A helper on the loop's core
-  would time-slice the polling thread: worse than the handshake. With
-  `inline_connect_fallback=true` `connect_background` connects as
-  `Driver::connect` does: the TLS handshake runs on the loop, once per
-  connect or reconnect. Figures:
-  [`io/benches/BENCHMARK.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md).
+- With `inline_connect_fallback=true`, `connect_background` connects as
+  `Driver::connect` does: the TLS handshake runs on the loop, a long poll
+  per connect or reconnect
+  ([connection set-up](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#connection-set-up)). A helper
+  thread sharing the loop's CPU was not measured.
 - **For production, give the pod 2 CPUs** (the warning line ends with
   that). `ERGON_HOST_CHECKS=off` silences the line; the typed refusals
   stay.
@@ -89,17 +88,12 @@ warning thread take the other. Nothing to configure.
 {{#include ../../../io/tests/placement_book.rs:x86_two_cpus}}
 ```
 
-What a busy sibling costs against a core of its own (arrival → decoded,
-run `flags-aws-20261015T122127Z`, three rounds, AWS Tokyo `c7i.2xlarge`):
-about **+0.5 µs p50 at 1 connection, +2.3–2.7 µs p50 and +9–12 µs p99 at
-10–100 connections**. At 100 connections it still beat every single-vCPU
-option by about 8 µs at the median. The maxima are not in that summary —
-the full tables with them are in git history at `2517309d`. Deltas only:
-no absolute latency figure is claimed here. Tables:
-[`io/benches/BENCHMARK.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#smt-sibling-cost).
+What the SQPOLL thread on the sibling costs against a core of its own:
+[SMT sibling cost](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#smt-sibling-cost).
 
 - It needs both hyperthreads and nothing else on the sibling.
-- Never a second isolated full core just for SQPOLL.
+- For a core of its own instead: a `cpu: 4` pod (two physical cores) with
+  `sqpoll_cpu` on the second core, or SMT off on the node.
 
 ### Graviton, `cpu: 2`: two cores
 
@@ -134,8 +128,9 @@ env:
 
 - A CPU outside the pod's cpuset is refused (`Error::Cpu`, `Outside`),
   never used. `Config::helper_cpus` wins over the variable.
-- **Never `uring-sqpoll` on shared CPUs**: `SQPOLL` spins. The default
-  never puts it there: with no `sqpoll_cpu` it takes the lowest CPU of the
+- **Keep `uring-sqpoll` off shared CPUs:** its `SQPOLL` thread spins
+  ([io_uring_setup(2)](https://man7.org/linux/man-pages/man2/io_uring_setup.2.html),
+  `IORING_SETUP_SQPOLL`). The default never puts it there: with no `sqpoll_cpu` it takes the lowest CPU of the
   pod's own outside that list, and refuses (`Error::Cpu`,
   `NoExclusiveCpu`) when the list holds every CPU but the loop's. Then set
   `sqpoll_cpu` to an exclusive CPU of the pod, or pick a single-CPU backend

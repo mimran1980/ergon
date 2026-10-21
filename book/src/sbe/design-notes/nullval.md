@@ -39,8 +39,8 @@ This was rejected for three reasons:
    reflects that intent directly in the Rust type.
 
 The chosen design adds a `NullVal` variant to every generated enum. It is the
-same size as any other variant, wire-compatible with sbe-tool, and bears no
-runtime cost:
+same size as any other variant and wire-compatible with sbe-tool. Its runtime
+cost is not measured here:
 
 ```rust,ignore
 // ergo-sbe generated (conceptual)

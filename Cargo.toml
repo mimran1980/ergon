@@ -5,10 +5,6 @@ members = [
     "cluster",
     "cluster-test-harness",
     "io",
-    # Calibrated hardware-counter clock, and its benchmarks against quanta,
-    # minstant, std and the kernel's clocks (clockbench, Criterion).
-    "clock",
-    "clock/bench",
     # Low-latency host and NIC checks (pure functions returning findings),
     # called by ergon-io, the media driver and downstream runtimes.
     "tune",
@@ -37,9 +33,9 @@ exclude = ["samples", "sbe/fuzz", "sbe/miri-fixtures", "io/benches"]
 resolver = "3"
 
 [workspace.package]
-version = "0.1.30"
+version = "0.1.31"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.99"
 license = "Apache-2.0"
 repository = "https://github.com/mimran1980/ergon"
 homepage = "https://github.com/mimran1980/ergon"
@@ -49,7 +45,7 @@ authors = ["Mohammed Imran"]
 # Inherited by the cluster crate for both edges. Cargo 1.95 rejects
 # overriding default-features on an inherited dependency, so fancy is
 # disabled here.
-ergo-sbe = { version = "0.1.30", path = "sbe", default-features = false }
+ergo-sbe = { version = "0.1.31", path = "sbe", default-features = false }
 # rusteron 0.2.11 or newer 0.2. Each crate needs `rusteron-code-gen` at exactly its
 # own version, so both resolve to one, and `cargo update` moves them together.
 rusteron-client = "0.2.13"
@@ -74,10 +70,3 @@ codegen-units = 1
 [profile.release]
 lto = true
 codegen-units = 1
-
-# ergon-clock's tests optimised in every debug build (debug assertions and
-# overflow checks stay on): its seqlock stress test (share.rs) only meets the
-# reorderings a missing fence allows when reads are as tight as a release
-# build's, and its discipline property tests run 20,000 trajectories.
-[profile.dev.package.ergon-clock]
-opt-level = 3

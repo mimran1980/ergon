@@ -1,6 +1,5 @@
 //! What kind of host this is, for the wording that differs per platform
-//! (Graviton has no SMT and no OS idle states, and busy polling collapsed on
-//! it under load).
+//! (Graviton has no SMT).
 
 use crate::host::{Host, first_line};
 
@@ -71,14 +70,14 @@ impl Platform {
     }
 
     /// An AWS Graviton instance: 64-bit Arm on EC2. One thread per core
-    /// (no SMT) and no OS idle states.
+    /// (no SMT).
     #[must_use]
     pub fn is_graviton(&self) -> bool {
         self.arch == Arch::Aarch64 && self.cloud == Cloud::Aws
     }
 }
 
-fn arch_of(cpuinfo: &str) -> Arch {
+pub fn arch_of(cpuinfo: &str) -> Arch {
     for line in cpuinfo.lines() {
         let key = line.split(':').next().unwrap_or_default().trim();
         match key {

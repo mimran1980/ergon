@@ -10,8 +10,8 @@ use crate::host::{Host, ReadError};
 
 const THP: &str = "/sys/kernel/mm/transparent_hugepage";
 
-const T3_EVIDENCE: &str = "md-dpdk/BENCHMARKS.md (Round 6; Recommended configuration; \
-     Experiment log 2026-10-14, where the agents are preempted)";
+const T3_EVIDENCE: &str = "Linux Documentation/admin-guide/mm/transhuge.rst (khugepaged, \
+     enabled: always/madvise/never); not measured with archived data";
 
 /// The selected value of a sysfs choice (`always [madvise] never`).
 fn selected(text: &str) -> Option<&str> {
@@ -128,12 +128,12 @@ pub fn t3_thp(host: &Host, component: Component) -> Vec<Finding> {
         ", or boot with `transparent_hugepage=never`"
     };
     let madvise = if on.iter().any(|(_, v)| v == "madvise") {
-        "; `madvise` was not measured on its own, and khugepaged still runs under it"
+        "; under `madvise` khugepaged still collapses the regions that asked for it"
     } else {
         ""
     };
     let io = if component == Component::Io {
-        "; ergon-io's own benchmarks ran under `madvise` with nothing traced to it"
+        "; ergon-io's own benchmarks ran under `madvise`"
     } else {
         ""
     };
@@ -142,10 +142,9 @@ pub fn t3_thp(host: &Host, component: Component) -> Vec<Finding> {
         sev,
         T3_EVIDENCE,
         format!(
-            "transparent hugepages are {}: khugepaged's LRU drains pre-empted busy-spinning agents \
-             for 8–22 µs every 10.24 s; with THP `never` the receiver agent's longest stall fell \
-             from about 670 to 120–277 µs, and under load the maxima fell (288 B bursts 632 → \
-             272 µs, 1,344 B at 1 M msgs/s 1,148 → 149 µs; Azure){madvise}{io}. Fix: `{}`{boot}",
+            "transparent hugepages are {}: the kernel thread khugepaged scans and collapses \
+             pages in the background, and its work can run on a busy-spinning thread's CPU (not \
+             measured with archived data){madvise}{io}. Fix: `{}`{boot}",
             what.join(", "),
             fixes.join("; ")
         ),
@@ -249,7 +248,7 @@ const fn statfs_magic(path: &Path) -> Result<FsMagic, ReadError> {
 }
 
 const T4_EVIDENCE: &str = "Aeron's documentation (AERON_DIR on /dev/shm on Linux); \
-     md-dpdk/BENCHMARKS.md (Method; Recommended configuration); tmpfs and hugetlbfs not A/B'd";
+     k8s/nri-latency-pods/README.md (hugepages in a pod); not measured here";
 
 /// T4: the Aeron directory is on a memory-backed filesystem (tmpfs,
 /// hugetlbfs or ramfs). The media driver checks its own directory, a
@@ -279,8 +278,10 @@ pub fn t4_from(aeron_dir: &Path, fs: Result<FsMagic, ReadError>) -> Finding {
             format!(
                 "the Aeron directory {dir} is on {fs}: its log buffers are page-cache backed and \
                  written back to disk; Aeron puts it on /dev/shm on Linux. Fix: put it on tmpfs \
-                 (/dev/shm) or a sized 2 MiB hugetlbfs mount (`mount -t hugetlbfs -o \
-                 pagesize=2M,size=1G none /mnt/huge` with `AERON_FILE_PAGE_SIZE=2097152`)"
+                 (/dev/shm, or in a pod a memory-backed emptyDir sized for Aeron's files), or a \
+                 sized 2 MiB hugetlbfs: on the node `mount -t hugetlbfs -o pagesize=2M,size=1G \
+                 none /mnt/huge`, in a pod the nri-latency-pods plugin's $ERGON_HUGEPAGES_DIR; \
+                 with `AERON_FILE_PAGE_SIZE=2097152`"
             ),
         ),
         Err(e) => Finding::unknown(
@@ -349,7 +350,8 @@ pub fn t5_numa_balancing(host: &Host) -> Finding {
                     "automatic NUMA balancing is on (kernel.numa_balancing {v}) on a host with {} \
                      NUMA nodes ({nodes}): it unmaps pages to take hinting faults, pinned threads' \
                      pages included; the kernel's documentation says to turn it off for \
-                     node-bound workloads. Fix: `sysctl -w kernel.numa_balancing=0`",
+                     node-bound workloads. Fix (node; kernel.* sysctls are not set from a pod): \
+                     `sysctl -w kernel.numa_balancing=0`",
                     nodes.len()
                 ),
             ),

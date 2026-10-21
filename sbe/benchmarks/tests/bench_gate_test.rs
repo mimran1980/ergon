@@ -1967,8 +1967,14 @@ fn run_snapshot(dir: &Path, k: usize) -> Result<Output, Box<dyn std::error::Erro
     )
 }
 
-/// `target/criterion` is shared: `ergon-clock-bench` writes `clock_*` into the
-/// same Criterion home, and Criterion leaves `new/` in place for groups a run
+/// A group another bench binary (ergon-md-dpdk's `benches/clock.rs`) writes
+/// into the shared Criterion home.
+const FOREIGN_GROUP: &str = "clock_read";
+/// The function inside [`FOREIGN_GROUP`].
+const FOREIGN_BENCH: &str = "std_instant";
+
+/// `target/criterion` is shared: `ergon-md-dpdk`'s clock bench writes
+/// `clock_read` into the same Criterion home, and Criterion leaves `new/` in place for groups a run
 /// does not touch. A snapshot of "everything under the home" therefore folds
 /// another binary's estimates into this run's envelope and widens it with
 /// evidence the invocation never produced. The runner marks the start of the
@@ -1978,7 +1984,7 @@ fn a_snapshot_keeps_only_estimates_this_invocation_produced()
 -> Result<(), Box<dyn std::error::Error>> {
     let criterion = TempCriterion::new()?;
     let now = SystemTime::now();
-    write_stale_estimate(&criterion.0, "clock_mono_read", "ergon-clock")?;
+    write_stale_estimate(&criterion.0, FOREIGN_GROUP, FOREIGN_BENCH)?;
     write_stale_estimate(
         &criterion.0,
         "cluster_encode_session_message_header",
@@ -1991,7 +1997,9 @@ fn a_snapshot_keeps_only_estimates_this_invocation_produced()
     set_mtime(
         &criterion
             .0
-            .join("clock_mono_read/ergon-clock/new/estimates.json"),
+            .join(FOREIGN_GROUP)
+            .join(FOREIGN_BENCH)
+            .join("new/estimates.json"),
         now - Duration::from_secs(600),
     )?;
     set_mtime(
@@ -2017,7 +2025,7 @@ fn a_snapshot_keeps_only_estimates_this_invocation_produced()
         describe(&output)
     );
     assert!(
-        !criterion.0.join("repeats/1/clock_mono_read").exists(),
+        !criterion.0.join("repeats/1").join(FOREIGN_GROUP).exists(),
         "a group left behind by a different bench binary must not enter this run's \
          envelope — it is not evidence this invocation produced:\n{}",
         describe(&output)
