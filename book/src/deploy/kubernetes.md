@@ -14,7 +14,7 @@ Terms: [deployment glossary](overview.md#glossary),
 | | x86 (`c7i`) | Graviton |
 |---|---|---|
 | manifests and node bootstrap | yes: Amazon Linux 2023, self-managed nodes | none: the bootstrap refuses non-Intel CPUs and the images are `linux/amd64` |
-| measured | DPDK pods on two `c7i.4xlarge`, with its max ([benchmarks](benchmarks.md#kubernetes-eks-on-c7i4xlarge)) | not measured |
+| measured | no committed data: the one EKS lab run kept no raw output, and it ran the driver pod on 4 CPUs through an overlay (`md-dpdk/deploy/aws-eks/README.md`, live test) | not measured |
 
 The kubelet and pod settings are not x86-specific, but no Graviton node has
 been built with them. For Graviton's kernel arguments see [hosts](hosts.md).
@@ -34,9 +34,9 @@ Use a dedicated node pool, tainted so only latency pods land there
    boot line leaves out of isolation.
 4. `topologyManagerPolicy: single-numa-node`: a pod's CPUs and devices on one
    NUMA node.
-5. No CPU quota on the latency containers: kubelet 1.36 or later (1.33 is
-   the minimum for this), `cpuCFSQuota` left at its default `true`. Do NOT
-   set `cpuCFSQuota: false`: it removes every pod's CPU limit on the node
+5. No CPU quota on the latency containers: kubelet 1.33 or later (the labs
+   ran 1.36), `cpuCFSQuota` left at its default `true`. Do not set
+   `cpuCFSQuota: false`: it removes every pod's CPU limit on the node
    ([why](#no-cpu-quota)).
 6. The host settings under the kubelet: isolated cores, interrupts on
    housekeeping, transparent hugepages off, hugepages ([hosts](hosts.md)).
@@ -47,8 +47,8 @@ Use a dedicated node pool, tainted so only latency pods land there
    container.
 8. A whole-number CPU request on every busy-spinning container. With SMT
    off, one CPU is one core.
-9. Each busy thread pinned to its own core from the pod's cpuset, and not
-   `SCHED_FIFO` (T7).
+9. Each busy thread pinned to its own core from the pod's cpuset, under
+   `SCHED_OTHER` (`SCHED_FIFO` was mixed: [evidence](hft.md#sched_fifo)).
 10. On CRI-O only: the annotations in [No CPU quota](#no-cpu-quota).
     containerd (EKS, AKS, k3s) ignores them.
 
@@ -57,8 +57,8 @@ Use a dedicated node pool, tainted so only latency pods land there
 11. At start: ergon-io and the media driver run
     [ergon-tune](../tune/overview.md), and T9 warns about a CPU quota. In
     your own loop, call `t9_cpu_quota` before it.
-12. While it runs: `nr_throttled` must not grow ([verify](#verify)). In your
-    own loop, call `ThrottleWatch::check` from housekeeping.
+12. While it runs: `nr_throttled` stays flat ([verify](#verify)). In your
+    own loop, call ergon-tune's `ThrottleWatch::check` from housekeeping.
 
 ## Nodes
 
@@ -76,8 +76,8 @@ off):
   another pod. With SMT off it is a safety net.
 - `kubeReservedCgroup` and `systemReservedCgroup` are emptied because kubelet
   rejects `reservedSystemCPUs` while they are set.
-- `memoryManagerPolicy: None`: every `c7i` below `metal-48xl` has one NUMA
-  node.
+- `memoryManagerPolicy: None`: the deployed `c7i.4xlarge` has one NUMA node
+  (`node/userdata.sh`). On a multi-socket type, revisit it.
 - `cpuCFSQuota` is not set: it stays `true`, so every pod keeps its CPU
   limit. The kubelet drops the quota itself on a container with exclusive
   CPUs ([No CPU quota](#no-cpu-quota)).
@@ -86,7 +86,7 @@ The node scripts (tested against fixtures by `just test-dpdk-bootstrap`):
 
 | script | when | what it does |
 |---|---|---|
-| `node/provision-node.sh` | once, then one reboot before kubelet | kernel command line: every CPU but the reserved core isolated, interrupts on that core, C-states C1 on a VM, `iommu=pt`, `transparent_hugepage=never`, 2 MiB hugepages, so kubelet's first start advertises `hugepages-2Mi` |
+| `node/provision-node.sh` | once, then one reboot before kubelet | kernel command line: `nosmt`, every CPU but the reserved core isolated, interrupts on that core, C-states C1 on a VM ([mixed evidence](hft.md#c-states)), `iommu=pt`, `transparent_hugepage=never`, 2 MiB hugepages, so kubelet's first start advertises `hugepages-2Mi` |
 | `node/bootstrap-dpdk-ena.sh` | every boot, before kubelet | interrupts on housekeeping with a watcher that re-pins on each link event; `irqbalance`, KSM, NUMA balancing off; THP off; `rmem_max`/`wmem_max` 16 MiB; Aeron's directory on a sized hugetlbfs at `/mnt/huge-aeron`; for DPDK the two spare ENAs on `igb_uio`. On failure the node still runs kernel UDP and advertises no DPDK pair |
 
 Clocksource is left to the kernel. A forced `clocksource=tsc tsc=reliable`
@@ -102,9 +102,9 @@ labelled `rusteron-dpdk/ena=true` and tainted `rusteron-dpdk:NoSchedule`.
 
 SMT (hyper-threading) runs two logical CPUs on one physical core. They share
 the core's execution resources: a pod with `cpu: 1` shares a core with its
-twin, and its latency follows whatever the twin does. Turn SMT off on every
-x86 latency node, so one Kubernetes CPU is one physical core — the same as
-on Graviton, which has no SMT.
+twin, and its latency follows what the twin does
+([SMT sibling](hft.md#smt-sibling)). Turn SMT off on x86 latency nodes, so
+one Kubernetes CPU is one physical core, as on Graviton, which has no SMT.
 
 | where | how |
 |---|---|
@@ -155,8 +155,8 @@ A dedicated node pool only works if nothing else lands there.
   collectors, a metrics agent): a limit keeps a burst off the latency
   cores. Give both; a limit with no request still lets them burst up to it.
 - **`PriorityClass`:** one high class for latency pods, a low one for the
-  rest. A latency pod then preempts, never the other way round.
-- **Kubelet 1.36 or later** with the static CPU manager: only a Guaranteed
+  rest. A latency pod then preempts, not the other way round.
+- **Kubelet 1.33 or later** with the static CPU manager: only a Guaranteed
   whole-CPU container loses its quota; everything else keeps its CPU limit
   ([No CPU quota](#no-cpu-quota)).
 
@@ -167,9 +167,8 @@ fractional sidecar can run on the reserved CPUs. `strict-cpu-reservation:
 when nothing but the system (and threads you pin there yourself) may use
 them: it breaks anything that needs the shared pool by default, such as a
 fractional sidecar in a latency pod or ergon-stack's host-stats thread. The
-shared-CPU NRI plugin (`k8s/nri-shared-cpus`; kind e2e green 2026-10-18, EKS
-and the latency benchmarks open — `RELEASE.md`) lends shared
-CPUs from `reservedSystemCPUs` to a pod's helper threads and expects the
+shared-CPU NRI plugin (`k8s/nri-shared-cpus`; status in its `RELEASE.md`)
+lends shared CPUs from `reservedSystemCPUs` to a pod's helper threads and expects the
 default, so leave `strict-cpu-reservation` off while using it.
 
 ## No CPU quota
@@ -194,15 +193,13 @@ What the kubelet writes:
 
 - **Exclusive CPUs** need all three: `cpuManagerPolicy: static`, a
   Guaranteed pod, and a whole-number CPU request on the container. Kubelet
-  1.33 is the first that then drops the quota; use 1.36 or later on a
-  latency node.
-- **Do NOT set `cpuCFSQuota: false`.** It is node-wide: it removes the CPU
+  1.33 is the first that then drops the quota.
+- **Do not set `cpuCFSQuota: false`.** It is node-wide: it removes the CPU
   limit of every pod there, log collectors and system pods too, and they
   then run unlimited on the shared CPUs. The kubelet's own behaviour above
   is enough, and it only touches the containers with exclusive CPUs.
 - **Kubelet 1.31 and 1.32** (EKS extended support, AKS) always set the
-  quota. Use 1.33 or later, 1.36 or later for a latency node (the lab's k3s
-  and the EKS deployment are 1.36).
+  quota. Use 1.33 or later (the lab's k3s and the EKS deployment run 1.36).
 - **Changing `cpuManagerPolicy`:** drain the node, stop the kubelet, delete
   `/var/lib/kubelet/cpu_manager_state`, start the kubelet. Without the
   delete, the kubelet crash-loops.
@@ -284,12 +281,12 @@ spec:
 On the node:
 
 ```sh
-kubectl get node <node> -o jsonpath='{.status.nodeInfo.kubeletVersion}'   # 1.36 or later (1.33 minimum)
+kubectl get node <node> -o jsonpath='{.status.nodeInfo.kubeletVersion}'   # 1.33 or later
 kubectl get --raw /api/v1/nodes/<node>/proxy/configz \
   | jq '.kubeletconfig | {cpuCFSQuota, cpuManagerPolicy, cpuManagerPolicyOptions, reservedSystemCPUs}'
 ```
 
-`cpuCFSQuota` must read `true` (or be absent: that is the default).
+`cpuCFSQuota` reads `true` (or is absent: that is the default).
 
 In the pod:
 
@@ -299,18 +296,21 @@ grep throttled /sys/fs/cgroup/cpu.stat
 cat /sys/fs/cgroup/cpu.stat.local     # Linux 6.6+: counts the pod's quota too
 ```
 
-- `nr_throttled` and `throttled_usec` must not grow while the pod runs. Read
+- `nr_throttled` and `throttled_usec` stay flat while the pod runs. Read
   them twice, a minute apart.
-- In Prometheus, cAdvisor's `container_cpu_cfs_throttled_periods_total` must
-  stay flat.
-- [ergon-tune](../tune/overview.md) does both: T9 at start, and
-  `ThrottleWatch` while the loop runs.
+- In Prometheus, cAdvisor's `container_cpu_cfs_throttled_periods_total`
+  stays flat.
+- [ergon-tune](../tune/overview.md): T9 runs at start in ergon-io and the
+  media driver. `ThrottleWatch` is for your own loop's housekeeping; nothing
+  in this repository calls it yet.
 
 ## The media driver DaemonSet
 
 One driver pod per DPDK node: one ENA pair from the device plugin, six CPUs
-(housekeeping, sender, receiver and three spare; one CPU is one core), memory
-and hugepages, requests equal to limits.
+(one CPU is one core), memory and hugepages, requests equal to limits. The
+entrypoint uses three (housekeeping, sender, receiver) and leaves the rest
+for a client in the same pod (`entrypoint.sh:13-14`). The EKS lab ran the
+pod on four.
 
 ```yaml
 {{#include ../../../md-dpdk/deploy/aws-eks/media-driver-daemonset.yaml}}
