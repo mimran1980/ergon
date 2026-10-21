@@ -1,0 +1,284 @@
+# Recovered raw output of run aws-20261015-174836
+# instances.txt: type a c7i.4xlarge b c7i.4xlarge
+# The run directory target/md-dpdk-bench/aws-20261015-174836/ (summary.md, results.csv, logs) was
+# deleted. These lines are what commands printed from that directory before it was deleted,
+# recovered from that printed output. PARTIAL: only what was printed survives; nothing here
+# was recomputed. Lines are de-duplicated. A line printed cut short (cut -c) is kept only
+# where no full copy was printed; such summary.md rows are marked. summary.md rows may come
+# from more than one analyse.py version run over the same results.csv.
+# results.csv columns: see md-dpdk/benches/cloud/analyse.py. Clock rows for this period are in
+# clockbench-aws-20261016.txt.
+
+==== summary.md: 185 lines ====
+---- printed with their line numbers, in file order (line: text)
+1: ## Spikes of 200 us or more by cause, isolated
+8: | isolated-dpdk-1344-burst | 446386 | 0 | 0 | 0 | 0 | 250 | 446136 |
+9: | isolated-dpdk-1344-r200000 | 120 | 0 | 0 | 0 | 0 | 78 | 42 |
+10: | isolated-dpdk-1344-r400000 | 7840 | 0 | 0 | 0 | 0 | 150 | 7690 |
+11: | isolated-dpdk-1344-r600000 | 26340 | 0 | 0 | 0 | 0 | 200 | 26140 |
+12: | isolated-dpdk-288-burst | 206024 | 0 | 0 | 0 | 0 | 250 | 205774 |
+13: | isolated-dpdk-288-r1000000 | 107216 | 0 | 0 | 0 | 0 | 250 | 106966 |
+14: | isolated-dpdk-288-r1250000 | 243252 | 0 | 0 | 0 | 0 | 250 | 243002 |
+15: | isolated-dpdk-288-r250000 | 483 | 0 | 0 | 0 | 0 | 110 | 373 |
+16: | isolated-dpdk-288-r500000 | 3377 | 0 | 0 | 0 | 0 | 200 | 3177 |
+18: | isolated-dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096-1344-burst | 432124 | 0 | 0 | 0 | 0 | 250 | 431874 |
+19: | isolated-dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096-1344-r200000 | 506 | 0 | 0 | 0 | 0 | 56 | 450 |
+20: | isolated-dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096-1344-r400000 | 1392 | 0 | 0 | 0 | 0 | 100 | 1292 |
+21: | isolated-dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096-1344-r600000 | 20828 | 0 | 0 | 0 | 0 | 250 | 20578 |
+22: | isolated-dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096-288-burst | 201423 | 0 | 0 | 0 | 0 | 250 | 201173 |
+23: | isolated-dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096-288-r1000000 | 90117 | 0 | 0 | 0 | 0 | 250 | 89867 |
+24: | isolated-dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096-288-r1250000 | 268096 | 0 | 0 | 0 | 100 | 150 | 267846 |
+25: | isolated-dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096-288-r250000 | 75 | 0 | 0 | 0 | 0 | 50 | 25 |
+26: | isolated-dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096-288-r500000 | 10487 | 0 | 0 | 0 | 0 | 200 | 10287 |
+27: | isolated-dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096-rtt | 3 | 0 | 1 | 0 | 0 | 2 | 0 |
+28: | isolated-dpdk@RUSTERON_DPDK_TX_RATE_MBPS=7900@RUSTERON_DPDK_TX_PACE_SPIN_US=0-1344-burst | 451817 | 0 | 0 | 0 | 0 | 250 | 451567 |
+29: | isolated-dpdk@RUSTERON_DPDK_TX_RATE_MBPS=7900@RUSTERON_DPDK_TX_PACE_SPIN_US=0-1344-r200000 | 319 | 0 | 0 | 0 | 0 | 100 | 219 |
+30: | isolated-dpdk@RUSTERON_DPDK_TX_RATE_MBPS=7900@RUSTERON_DPDK_TX_PACE_SPIN_US=0-1344-r400000 | 3682 | 0 | 0 | 0 | 0 | 151 | 3531 |
+31: | isolated-dpdk@RUSTERON_DPDK_TX_RATE_MBPS=7900@RUSTERON_DPDK_TX_PACE_SPIN_US=0-1344-r600000 | 9446 | 0 | 0 | 0 | 0 | 100 | 9346 |
+32: | isolated-dpdk@RUSTERON_DPDK_TX_RATE_MBPS=7900@RUSTERON_DPDK_TX_PACE_SPIN_US=0-288-burst | 223895 | 0 | 0 | 0 | 0 | 250 | 223645 |
+33: | isolated-dpdk@RUSTERON_DPDK_TX_RATE_MBPS=7900@RUSTERON_DPDK_TX_PACE_SPIN_US=0-288-r1000000 | 170869 | 0 | 0 | 0 | 50 | 200 | 170619 |
+34: | isolated-dpdk@RUSTERON_DPDK_TX_RATE_MBPS=7900@RUSTERON_DPDK_TX_PACE_SPIN_US=0-288-r1250000 | 172607 | 0 | 0 | 0 | 0 | 250 | 172357 |
+35: | isolated-dpdk@RUSTERON_DPDK_TX_RATE_MBPS=7900@RUSTERON_DPDK_TX_PACE_SPIN_US=0-288-r250000 | 745 | 0 | 0 | 0 | 0 | 55 | 690 |
+36: | isolated-dpdk@RUSTERON_DPDK_TX_RATE_MBPS=7900@RUSTERON_DPDK_TX_PACE_SPIN_US=0-288-r500000 | 5702 | 0 | 0 | 0 | 0 | 100 | 5602 |
+38: | isolated-kernel-1344-burst | 474974 | 0 | 0 | 0 | 0 | 250 | 474724 |
+39: | isolated-kernel-1344-r200000 | 961 | 0 | 0 | 0 | 0 | 250 | 711 |
+40: | isolated-kernel-1344-r400000 | 2222 | 0 | 0 | 0 | 0 | 200 | 2022 |
+41: | isolated-kernel-1344-r600000 | 159412 | 0 | 0 | 0 | 0 | 250 | 159162 |
+42: | isolated-kernel-288-burst | 397551 | 0 | 0 | 0 | 0 | 250 | 397301 |
+43: | isolated-kernel-288-r1000000 | 12993 | 0 | 0 | 0 | 0 | 250 | 12743 |
+44: | isolated-kernel-288-r1250000 | 1698 | 0 | 0 | 0 | 0 | 150 | 1548 |
+45: | isolated-kernel-288-r250000 | 1094 | 0 | 0 | 0 | 0 | 250 | 844 |
+46: | isolated-kernel-288-r500000 | 1608 | 0 | 0 | 0 | 0 | 250 | 1358 |
+47: | isolated-kernel-busy@RX_RING=4096-1344-burst | 473618 | 0 | 0 | 0 | 0 | 250 | 473368 |
+48: | isolated-kernel-busy@RX_RING=4096-1344-r200000 | 2921 | 0 | 0 | 0 | 0 | 250 | 2671 |
+49: | isolated-kernel-busy@RX_RING=4096-1344-r400000 | 91816 | 0 | 0 | 0 | 0 | 250 | 91566 |
+50: | isolated-kernel-busy@RX_RING=4096-1344-r600000 | 173034 | 0 | 0 | 0 | 0 | 150 | 172884 |
+51: | isolated-kernel-busy@RX_RING=4096-288-burst | 401239 | 0 | 0 | 0 | 0 | 250 | 400989 |
+52: | isolated-kernel-busy@RX_RING=4096-288-r1000000 | 50842 | 0 | 0 | 0 | 0 | 250 | 50592 |
+53: | isolated-kernel-busy@RX_RING=4096-288-r1250000 | 41357 | 0 | 0 | 0 | 0 | 250 | 41107 |
+54: | isolated-kernel-busy@RX_RING=4096-288-r250000 | 5099 | 0 | 0 | 0 | 0 | 250 | 4849 |
+55: | isolated-kernel-busy@RX_RING=4096-288-r500000 | 11973 | 0 | 0 | 0 | 0 | 250 | 11723 |
+56: | isolated-kernel-busy@RX_RING=4096-rtt | 108 | 0 | 0 | 0 | 0 | 108 | 0 |
+57: | isolated-kernel-busy@RX_RING=4096@COALESCE=20,64-rtt | 116 | 0 | 0 | 0 | 0 | 116 | 0 |
+59: | isolated-kernel@CSTATE=1-1344-burst | 472015 | 0 | 0 | 0 | 0 | 250 | 471765 |
+60: | isolated-kernel@CSTATE=1-1344-r200000 | 933 | 0 | 0 | 0 | 0 | 250 | 683 |
+61: | isolated-kernel@CSTATE=1-1344-r400000 | 1749 | 0 | 0 | 0 | 0 | 237 | 1512 |
+62: | isolated-kernel@CSTATE=1-1344-r600000 | 125792 | 0 | 0 | 0 | 0 | 250 | 125542 |
+63: | isolated-kernel@CSTATE=1-288-burst | 400444 | 0 | 0 | 0 | 0 | 250 | 400194 |
+64: | isolated-kernel@CSTATE=1-288-r1000000 | 5541 | 0 | 0 | 0 | 0 | 225 | 5316 |
+65: | isolated-kernel@CSTATE=1-288-r1250000 | 3283 | 0 | 0 | 0 | 0 | 150 | 3133 |
+66: | isolated-kernel@CSTATE=1-288-r250000 | 848 | 0 | 0 | 0 | 0 | 250 | 598 |
+67: | isolated-kernel@CSTATE=1-288-r500000 | 1966 | 0 | 0 | 0 | 0 | 250 | 1716 |
+68: | isolated-kernel@CSTATE=1-rtt | 144 | 0 | 0 | 0 | 0 | 144 | 0 |
+70: | isolated-local-dpdk-1344-r200000 | 1472 | 0 | 0 | 0 | 0 | 50 | 1422 |
+146: isolated-kernel@CSTATE=1-1344-burst: 9,467,832 more round trips over the client's spike threshold were counted but not written (past capacity, nearly every message queues).
+148: isolated-kernel@CSTATE=1-1344-r200000: 1,757,046 more round trips over the client's spike threshold were counted but not written (past capacity, nearly every message queues).
+150: isolated-kernel@CSTATE=1-1344-r400000: 4,056,851 more round trips over the client's spike threshold were counted but not written (past capacity, nearly every message queues).
+152: isolated-kernel@CSTATE=1-1344-r600000: 12,550,603 more round trips over the client's spike threshold were counted but not written (past capacity, nearly every message queues).
+154: isolated-kernel@CSTATE=1-288-burst: 11,870,948 more round trips over the client's spike threshold were counted but not written (past capacity, nearly every message queues).
+156: isolated-kernel@CSTATE=1-288-r1000000: 13,818,120 more round trips over the client's spike threshold were counted but not written (past capacity, nearly every message queues).
+158: isolated-kernel@CSTATE=1-288-r1250000: 16,285,216 more round trips over the client's spike threshold were counted but not written (past capacity, nearly every message queues).
+160: isolated-kernel@CSTATE=1-288-r250000: 1,668,145 more round trips over the client's spike threshold were counted but not written (past capacity, nearly every message queues).
+162: isolated-kernel@CSTATE=1-288-r500000: 3,294,645 more round trips over the client's spike threshold were counted but not written (past capacity, nearly every message queues).
+168: ## Each rep's max round trip and its cause, isolated
+172: | isolated-dpdk-1344-burst | 1017: unexplained; 1886: recurring host event (:52.2 each minute); 1407: unexplained; 949: unexplained; 890: unexplained |
+180: | isolated-dpdk-288-r500000 | 247: unexplained; 386: unexplained; 601: unexplained; 262: unexplained; 131: unexplained |
+197: | isolated-dpdk@RUSTERON_DPDK_TX_RATE_MBPS=7900@RUSTERON_DPDK_TX_PACE_SPIN_US=0-288-r1000000 | 1067: unexplained; 36671: driver errors (b: loss report x21); 1084: unexplained; 501: unexplained; 825: unexplained |
+200: | isolated-dpdk@RUSTERON_DPDK_TX_RATE_MBPS=7900@RUSTERON_DPDK_TX_PACE_SPIN_US=0-288-r500000 | 608: unexplained; 474: unexplained; 178: unexplained; 144: unexplained; 165: unexplained |
+203: | isolated-kernel-1344-r200000 | 462: unexplained; 460: unexplained; 503: unexplained; 474: unexplained; 466: unexplained |
+204: | isolated-kernel-1344-r400000 | 472: unexplained; 199: unexplained; 482: unexplained; 468: unexplained; 443: unexplained |
+207: | isolated-kernel-288-r1000000 | 455: unexplained; 464: unexplained; 647: unexplained; 463: unexplained; 440: unexplained |
+209: | isolated-kernel-288-r250000 | 487: unexplained; 452: unexplained; 471: unexplained; 429: unexplained; 458: unexplained |
+210: | isolated-kernel-288-r500000 | 504: unexplained; 423: unexplained; 458: unexplained; 469: unexplained; 478: unexplained |
+211: | isolated-kernel-busy@RX_RING=4096-1344-burst | 1967: unexplained; 2125: unexplained; 2952: unexplained; 2074: unexplained; 1837: unexplained |
+212: | isolated-kernel-busy@RX_RING=4096-1344-r200000 | 537: unexplained; 477: unexplained; 398: unexplained; 407: unexplained; 444: unexplained |
+216: | isolated-kernel-busy@RX_RING=4096-288-r1000000 | 4889: unexplained; 438: unexplained; 1548: unexplained; 549: unexplained; 478: unexplained |
+218: | isolated-kernel-busy@RX_RING=4096-288-r250000 | 407: unexplained; 4469: unexplained; 471: unexplained; 409: unexplained; 390: unexplained |
+221: | isolated-kernel-busy@RX_RING=4096@COALESCE=20,64-rtt | 5730: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 370: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 386: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 371: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 377: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a) |
+223: | isolated-kernel@CSTATE=1-1344-burst | 4455: unexplained; 1591: unexplained; 1838: unexplained; 1517: unexplained; 1571: unexplained |
+224: | isolated-kernel@CSTATE=1-1344-r200000 | 452: unexplained; 448: unexplained; 459: unexplained; 493: unexplained; 448: unexplained |
+225: | isolated-kernel@CSTATE=1-1344-r400000 | 461: unexplained; 253: unexplained; 437: unexplained; 468: unexplained; 480: unexplained |
+226: | isolated-kernel@CSTATE=1-1344-r600000 | 9803: unexplained; 279: unexplained; 516: unexplained; 219: unexplained; 488: unexplained |
+227: | isolated-kernel@CSTATE=1-288-burst | 703: unexplained; 818: unexplained; 589: unexplained; 563: unexplained; 507: unexplained |
+228: | isolated-kernel@CSTATE=1-288-r1000000 | 232: unexplained; 437: unexplained; 211: unexplained; 445: unexplained; 2675: unexplained |
+229: | isolated-kernel@CSTATE=1-288-r1250000 | 882: recurring host event (:52.2 each minute); 287: unexplained; 165: unexplained; 170: unexplained; 244: unexplained |
+230: | isolated-kernel@CSTATE=1-288-r250000 | 451: unexplained; 433: unexplained; 448: unexplained; 440: unexplained; 441: unexplained |
+231: | isolated-kernel@CSTATE=1-288-r500000 | 453: unexplained; 524: unexplained; 447: unexplained; 428: unexplained; 452: unexplained |
+232: | isolated-kernel@CSTATE=1-rtt | 3945: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 6522: recurring host event (:52.2 each minute) (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 4517: recurring host event (:52.2 each minute) (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 9544: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 395: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a) |
+237: | isolated-local-dpdk-288-burst | 869: unexplained; 883: recurring host event (:52.2 each minute); 850: unexplained; 871: unexplained; 860: unexplained |
+254: ## Round trips of 100-250 us per rep, isolated
+258: | isolated-dpdk-rtt | 3, 10, 4, 2, 0 | none |
+259: | isolated-dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096-rtt | 0, 10, 2, 0, 3 | none |
+260: | isolated-dpdk@RUSTERON_DPDK_TX_RATE_MBPS=7900@RUSTERON_DPDK_TX_PACE_SPIN_US=0-rtt | 22, 2, 6, 11, 28 | none |
+261: | isolated-kernel-busy@RX_RING=4096-rtt | 20, 15, 5, 12, 12 | none |
+262: | isolated-kernel-busy@RX_RING=4096@COALESCE=20,64-rtt | 28, 9, 11, 1, 0 | rep 1 (28) |
+263: | isolated-kernel-rtt | 36, 66, 37, 12, 63 | none |
+264: | isolated-kernel@CSTATE=1-rtt | 40, 104, 6, 20, 28 | rep 2 (104) |
+---- printed without line numbers, in the order first printed
+| run | spikes | client stall | host stall | guest preemption | driver errors | unexplained | not attributed |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| isolated-dpdk-rtt | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| isolated-dpdk@RUSTERON_DPDK_TX_RATE_MBPS=7900@RUSTERON_DPDK_TX_PACE_SPIN_US=0-rtt | 2 | 0 | 0 | 0 | 0 | 2 | 0 |
+| isolated-kernel-rtt | 167 | 0 | 0 | 0 | 0 | 167 | 0 |
+| isolated-local-dpdk-1344-burst | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| isolated-local-dpdk-1344-r400000 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| isolated-local-dpdk-1344-r600000 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| isolated-local-dpdk-288-burst | 432216 | 0 | 0 | 0 | 0 | 250 | 431966 |
+| isolated-local-dpdk-288-r1000000 | 5 | 0 | 0 | 0 | 0 | 5 | 0 |
+| isolated-local-dpdk-288-r1250000 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| isolated-local-dpdk-288-r250000 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| isolated-local-dpdk-288-r500000 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| isolated-local-dpdk-rtt | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| isolated-local-kernel-1344-burst | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| isolated-local-kernel-1344-r200000 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| isolated-local-kernel-1344-r400000 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| isolated-local-kernel-1344-r600000 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| isolated-local-kernel-288-burst | 434408 | 0 | 0 | 0 | 0 | 250 | 434158 |
+| isolated-local-kernel-288-r1000000 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| isolated-local-kernel-288-r1250000 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| isolated-local-kernel-288-r250000 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| isolated-local-kernel-288-r500000 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| isolated-local-kernel-rtt | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| run | max per rep (us): cause |
+| isolated-dpdk-1344-r200000 | 242: unexplained; 335: unexplained; 168: unexplained; 134: unexplained; 159: unexplained |
+| isolated-dpdk-1344-r400000 | 287: unexplained; 629: unexplained; 234: unexplained; 143: unexplained; 182: unexplained |
+| isolated-dpdk-1344-r600000 | 343: unexplained; past capacity (queueing); 684: unexplained; 5984: unexplained; 1238: unexplained |
+| isolated-dpdk-288-burst | 367: unexplained; 376: unexplained; 569: unexplained; 355: unexplained; 314: unexplained |
+| isolated-dpdk-288-r1000000 | 725: unexplained; 542: unexplained; 679: unexplained; 460: unexplained; 506: unexplained |
+| isolated-dpdk-288-r1250000 | 654: unexplained; 737: unexplained; 699: unexplained; 561: unexplained; 489: unexplained |
+| isolated-dpdk-288-r250000 | 229: unexplained; 488: unexplained; 291: unexplained; 109: unexplained; 161: unexplained |
+| isolated-dpdk-rtt | 129: unexplained (agent loop gaps 20-50/50-100/100+ us: a 0/0/0, b 2/0/3); 142: unexplained (agent loop gaps 20-50/50-100/100+ us: a 0/0/0, b 3/0/2); 125: unexplained (agent loop gaps 20-50/50-100/100+ us: a 0/0/0, b 3/0/1); 125: unexplained (agent loop gaps 20-50/50-100/100+ us: a 2/0/0, b 5/0/0); under 100 us (agent loop gaps 20-50/50-100/100+ us: a 0/0/0, b 0/1/0) |
+| isolated-dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096-1344-burst | 1189: unexplained; 1118: unexplained; 1140: unexplained; 934: unexplained; 1037: unexplained |
+| isolated-dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096-1344-r200000 | 175: unexplained; 221: unexplained; 488: unexplained; 119: unexplained; 162: unexplained |
+| isolated-dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096-1344-r400000 | 165: unexplained; 244: unexplained; 416: unexplained; 172: unexplained; 170: unexplained |
+| isolated-dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096-1344-r600000 | 821: unexplained; 550: unexplained; 1039: unexplained; 565: unexplained; 556: unexplained |
+| isolated-dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096-288-burst | 312: unexplained; 359: unexplained; 417: unexplained; 386: unexplained; 322: unexplained |
+| isolated-dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096-288-r1000000 | 426: unexplained; 334: unexplained; 799: unexplained; 502: unexplained; 568: unexplained |
+| isolated-dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096-288-r1250000 | 673: unexplained; 969: unexplained; 938: driver errors (b: loss report x26); 703: unexplained; 12435: driver errors (b: loss report x29) |
+| isolated-dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096-288-r250000 | 257: unexplained; 184: unexplained; 145: unexplained; 113: unexplained; 155: unexplained |
+| isolated-dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096-288-r500000 | 955: unexplained; 667: unexplained; 278: unexplained; 141: unexplained; 254: unexplained |
+| isolated-dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096-rtt | under 100 us (agent loop gaps 20-50/50-100/100+ us: a 1/0/0, b 2/0/0); 517: recurring host event (:52.2 each minute) (agent loop gaps 20-50/50-100/100+ us: a 0/0/2, b 2/0/3); 142: unexplained (agent loop gaps 20-50/50-100/100+ us: a 0/0/0, b 5/0/2); under 100 us (agent loop gaps 20-50/50-100/100+ us: a 1/1/0, b 3/0/1); 107: unexplained (agent loop gaps 20-50/50-100/100+ us: a 0/0/0, b 3/0/3) |
+| isolated-dpdk@RUSTERON_DPDK_TX_RATE_MBPS=7900@RUSTERON_DPDK_TX_PACE_SPIN_US=0-1344-burst | 1527: unexplained; 2156: unexplained; 1444: unexplained; 1436: unexplained; 1485: unexplained |
+| isolated-dpdk@RUSTERON_DPDK_TX_RATE_MBPS=7900@RUSTERON_DPDK_TX_PACE_SPIN_US=0-1344-r200000 | 144: unexplained; 117: unexplained; 354: unexplained; 667: unexplained; 151: unexplained |
+| isolated-dpdk@RUSTERON_DPDK_TX_RATE_MBPS=7900@RUSTERON_DPDK_TX_PACE_SPIN_US=0-1344-r400000 | 171: unexplained; 429: unexplained; 261: unexplained; 201: unexplained; 231: unexplained |
+| isolated-dpdk@RUSTERON_DPDK_TX_RATE_MBPS=7900@RUSTERON_DPDK_TX_PACE_SPIN_US=0-1344-r600000 | past capacity (queueing); 1194: unexplained; 240: unexplained; 181: unexplained; 200: unexplained |
+| isolated-dpdk@RUSTERON_DPDK_TX_RATE_MBPS=7900@RUSTERON_DPDK_TX_PACE_SPIN_US=0-288-burst | 515: unexplained; 408: unexplained; 404: unexplained; 348: unexplained; 366: unexplained |
+| isolated-dpdk@RUSTERON_DPDK_TX_RATE_MBPS=7900@RUSTERON_DPDK_TX_PACE_SPIN_US=0-288-r1250000 | 562: unexplained; 607: unexplained; 906: unexplained; 454: unexplained; 418: unexplained |
+| isolated-dpdk@RUSTERON_DPDK_TX_RATE_MBPS=7900@RUSTERON_DPDK_TX_PACE_SPIN_US=0-288-r250000 | 134: unexplained; 206: unexplained; 513: unexplained; 118: unexplained; 127: unexplained |
+| isolated-dpdk@RUSTERON_DPDK_TX_RATE_MBPS=7900@RUSTERON_DPDK_TX_PACE_SPIN_US=0-rtt | 193: unexplained (agent loop gaps 20-50/50-100/100+ us: a 0/0/0, b 0/0/1); 114: unexplained (agent loop gaps 20-50/50-100/100+ us: a 0/1/0, b 1/0/0); 150: unexplained (agent loop gaps 20-50/50-100/100+ us: a 0/0/0, b 4/0/2); 136: unexplained (agent loop gaps 20-50/50-100/100+ us: a 0/0/0, b 2/0/1); 296: unexplained (agent loop gaps 20-50/50-100/100+ us: a 0/0/0, b 3/1/0) |
+| isolated-kernel-1344-burst | 1597: unexplained; 1827: unexplained; 1887: unexplained; 3035: unexplained; 2129: unexplained |
+| isolated-kernel-1344-r600000 | 469: unexplained; 623: unexplained; 10807: unexplained; 1212: unexplained; 459: unexplained |
+| isolated-kernel-288-burst | 639: unexplained; 553: unexplained; 548: unexplained; 671: unexplained; 517: unexplained |
+| isolated-kernel-288-r1250000 | 176: unexplained; 257: unexplained; 512: unexplained; 448: unexplained; 187: unexplained |
+| isolated-kernel-busy@RX_RING=4096-1344-r400000 | 459: unexplained; 4287: unexplained; 9169: unexplained; 481: unexplained; 8980: unexplained |
+| isolated-kernel-busy@RX_RING=4096-1344-r600000 | 5691: unexplained; past capacity (queueing); past capacity (queueing); 6556: unexplained; 382: unexplained |
+| isolated-kernel-busy@RX_RING=4096-288-burst | 682: unexplained; 613: unexplained; 703: unexplained; 605: unexplained; 556: unexplained |
+| isolated-kernel-busy@RX_RING=4096-288-r1250000 | 481: unexplained; 2050: unexplained; 311: unexplained; 443: unexplained; 1520: unexplained |
+| isolated-kernel-busy@RX_RING=4096-288-r500000 | 437: unexplained; 402: unexplained; 460: unexplained; 439: unexplained; 440: unexplained |
+| isolated-kernel-busy@RX_RING=4096-rtt | 380: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 3292: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 5082: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 4944: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 4943: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a) |
+| isolated-kernel-rtt | 4767: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 424: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 4077: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 4344: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 5281: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a) |
+| isolated-local-dpdk-1344-burst | past capacity (queueing); past capacity (queueing); past capacity (queueing); past capacity (queueing); past capacity (queueing) |
+| isolated-local-dpdk-1344-r200000 | 138: unexplained; under 100 us; under 100 us; 3325: unexplained; under 100 us |
+| isolated-local-dpdk-1344-r400000 | past capacity (queueing); past capacity (queueing); past capacity (queueing); past capacity (queueing); past capacity (queueing) |
+| isolated-local-dpdk-1344-r600000 | past capacity (queueing); past capacity (queueing); past capacity (queueing); past capacity (queueing); past capacity (queueing) |
+| isolated-local-dpdk-288-r1000000 | 117: unexplained; 203: unexplained; under 100 us; under 100 us; under 100 us |
+| isolated-local-dpdk-288-r1250000 | past capacity (queueing); past capacity (queueing); past capacity (queueing); past capacity (queueing); past capacity (queueing) |
+| isolated-local-dpdk-288-r250000 | under 100 us; under 100 us; under 100 us; under 100 us; under 100 us |
+| isolated-local-dpdk-288-r500000 | under 100 us; 110: unexplained; under 100 us; under 100 us; under 100 us |
+| isolated-local-dpdk-rtt | under 100 us (agent loop gaps 20-50/50-100/100+ us: a 8/1/0, b n/a); under 100 us (agent loop gaps 20-50/50-100/100+ us: a 7/0/1, b n/a); under 100 us (agent loop gaps 20-50/50-100/100+ us: a 3/0/1, b n/a); under 100 us (agent loop gaps 20-50/50-100/100+ us: a 5/0/0, b n/a); under 100 us (agent loop gaps 20-50/50-100/100+ us: a 4/0/2, b n/a) |
+| isolated-local-kernel-1344-burst | past capacity (queueing); past capacity (queueing); past capacity (queueing); past capacity (queueing); past capacity (queueing) |
+| isolated-local-kernel-1344-r200000 | under 100 us; under 100 us; under 100 us; under 100 us; under 100 us |
+| isolated-local-kernel-1344-r400000 | past capacity (queueing); past capacity (queueing); past capacity (queueing); past capacity (queueing); past capacity (queueing) |
+| isolated-local-kernel-1344-r600000 | past capacity (queueing); past capacity (queueing); past capacity (queueing); past capacity (queueing); past capacity (queueing) |
+| isolated-local-kernel-288-burst | 905: unexplained; 905: unexplained; 904: unexplained; 885: unexplained; 889: unexplained |
+| isolated-local-kernel-288-r1000000 | under 100 us; under 100 us; under 100 us; under 100 us; under 100 us |
+| isolated-local-kernel-288-r1250000 | past capacity (queueing); past capacity (queueing); past capacity (queueing); past capacity (queueing); past capacity (queueing) |
+| isolated-local-kernel-288-r250000 | under 100 us; under 100 us; under 100 us; under 100 us; under 100 us |
+| isolated-local-kernel-288-r500000 | under 100 us; under 100 us; under 100 us; under 100 us; under 100 us |
+| isolated-local-kernel-rtt | under 100 us (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); under 100 us (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); under 100 us (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); under 100 us (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); under 100 us (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a) |
+| run | per rep | possible slow-path episode |
+
+==== results.csv: 78 lines ====
+---- printed without line numbers, in the order first printed
+1,tputmax,isolated:kernel-busy@RX_RING=4096@COALESCE=20/64,288,udp,2687892,2671448
+1,tputmax,isolated:kernel-busy@RX_RING=4096@COALESCE=20/64,1344,udp,705105,0
+2,tputmax,isolated:kernel-busy@RX_RING=4096@COALESCE=20/64,288,udp,3005728,0
+1,tputmax,isolated:dpdk,288,3025652,0,3025696
+1,tputflows,isolated:kernel-busy@RX_RING=4096@COALESCE=20,64,32,2,0,0,0,0.001
+1,tputflows,isolated:kernel-busy@RX_RING=4096@COALESCE=20,64,288,2,0,0,0,0.001
+1,tputflows,isolated:kernel-busy@RX_RING=4096@COALESCE=20,64,1344,2,0,0,0,0.001
+1,tputflows,isolated:dpdk,32,2,23718970,11877258,11841712,0.996
+1,tputflows,isolated:dpdk,288,2,4730196,2363576,2366620,0.993
+1,tputflows,isolated:dpdk,1344,2,1102491,551053,551438,0.993
+1,tputflows,isolated:kernel-busy@RX_RING=4096,32,2,15682614,7836850,7845764,0.995
+1,tputflows,isolated:kernel-busy@RX_RING=4096,288,2,2753531,1372707,1380824,0.996
+1,rtt,isolated:kernel-busy@RX_RING=4096@COALESCE=20,64,udp,36191,39775,45727,59711,181759,5730303,36662,300000,0
+1,loss,isolated:kernel-busy@RX_RING=4096@COALESCE=20,64:rtt,a,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=0;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=0;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=3
+1,loss,isolated:kernel-busy@RX_RING=4096@COALESCE=20,64:rtt,b,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=0;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=0;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=4
+1,tput,isolated:kernel-busy@RX_RING=4096@COALESCE=20,64,udp,12665237,12639622,12712697,63378974,0,1792084061258401294,1792084066258404580
+1,loss,isolated:kernel-busy@RX_RING=4096@COALESCE=20,64,a,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=0;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=0;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=3
+1,rtt,isolated:dpdk,udp,28719,31391,36095,48223,61855,129535,29055,300000,0
+2,rtt,isolated:dpdk,udp,28607,31407,41631,55327,81151,141823,29108,300000,0
+3,rtt,isolated:dpdk,udp,28927,31935,40959,53279,69759,125183,29437,300000,0
+4,rtt,isolated:dpdk,udp,28703,31327,34943,44991,58239,124671,28991,300000,0
+5,rtt,isolated:dpdk,udp,28575,31199,34719,45119,57695,93503,28876,300000,0
+1,rtt,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096,udp,28623,31359,36479,48543,59583,89535,28989,300000,0
+1,rtt,isolated:dpdk@RUSTERON_DPDK_TX_RATE_MBPS=7900@RUSTERON_DPDK_TX_PACE_SPIN_US=0,udp,29503,33279,40511,55455,86783,193279,30055,300000,0
+1,rtt,isolated:local-dpdk,udp,4979,5627,6279,9031,11607,14183,5136,300000,0
+2,rtt,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096,udp,28687,31407,37503,51391,72703,516863,29097,300000,0
+2,rtt,isolated:dpdk@RUSTERON_DPDK_TX_RATE_MBPS=7900@RUSTERON_DPDK_TX_PACE_SPIN_US=0,udp,29983,32799,38047,51391,66111,113791,30325,300000,0
+2,rtt,isolated:local-dpdk,udp,4967,5643,6339,8839,11591,14055,5131,300000,0
+3,rtt,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096,udp,28639,31327,35391,45151,58751,141951,28957,300000,0
+3,rtt,isolated:dpdk@RUSTERON_DPDK_TX_RATE_MBPS=7900@RUSTERON_DPDK_TX_PACE_SPIN_US=0,udp,29039,32175,39551,53791,72447,150143,29527,300000,0
+3,rtt,isolated:local-dpdk,udp,4959,5591,6319,8871,11039,24095,5097,300000,0
+4,rtt,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096,udp,28511,31215,35455,45119,57471,87551,28839,300000,0
+4,rtt,isolated:dpdk@RUSTERON_DPDK_TX_RATE_MBPS=7900@RUSTERON_DPDK_TX_PACE_SPIN_US=0,udp,29583,33151,37471,46879,62527,136063,30003,300000,0
+4,rtt,isolated:local-dpdk,udp,5571,6251,6579,9447,10975,14607,5679,300000,0
+5,rtt,isolated:dpdk@RUSTERON_DPDK_TX_RATE_MBPS=7900@RUSTERON_DPDK_TX_PACE_SPIN_US=0,udp,29855,33695,39135,51487,99007,296447,30367,300000,0
+5,rtt,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096,udp,28783,31711,36991,48223,59903,107135,29182,300000,0
+5,rtt,isolated:local-dpdk,udp,6095,6331,6679,9671,10855,12759,5900,300000,0
+1,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:max,a,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=18553916;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=19051502;dpdk-arp-miss=0;noport-dpdk-queue-drop=0;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=0;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=1357333;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+1,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:max,b,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=0;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=0;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+1,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:r200000,a,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=29;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=1;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+1,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:r200000,b,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=51;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=1;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+1,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:r400000,a,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=30;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=1;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+1,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:r400000,b,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=0;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=0;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+1,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:r600000,a,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=30;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=1;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+1,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:r600000,b,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=0;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=0;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+1,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:burst,a,naks-sent=4;naks-received=0;retransmits-sent=0;short-sends=53691;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=54602;dpdk-arp-miss=0;noport-dpdk-queue-drop=29;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=5;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=2198;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+1,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:burst,b,naks-sent=0;naks-received=4;retransmits-sent=1;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=0;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=0;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+1,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:flows2,a,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=14640025;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=15292895;dpdk-arp-miss=0;noport-dpdk-queue-drop=0;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=0;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=1675311;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+1,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:flows2,b,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=90;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=1;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+2,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:max,a,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=17816811;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=18322771;dpdk-arp-miss=0;noport-dpdk-queue-drop=0;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=0;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=1380531;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+2,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:max,b,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=0;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=0;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+2,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:r200000,a,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=30;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=1;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+2,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:r200000,b,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=51;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=1;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+2,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:r400000,a,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=30;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=1;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+2,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:r400000,b,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=0;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=0;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+2,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:r600000,a,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=30;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=1;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+2,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:r600000,b,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=0;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=0;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+2,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:burst,a,naks-sent=5;naks-received=0;retransmits-sent=0;short-sends=34792;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=35505;dpdk-arp-miss=0;noport-dpdk-queue-drop=29;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=5;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=1725;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+2,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:burst,b,naks-sent=0;naks-received=5;retransmits-sent=1;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=0;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=0;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+2,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:flows2,a,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=15716076;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=16033254;dpdk-arp-miss=0;noport-dpdk-queue-drop=0;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=0;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=806568;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+2,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:flows2,b,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=100;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=1;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+3,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:max,a,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=18472653;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=18995008;dpdk-arp-miss=0;noport-dpdk-queue-drop=0;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=0;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=1389814;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+3,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:max,b,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=0;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=0;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+3,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:r200000,a,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=30;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=1;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+3,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:r200000,b,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=50;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=1;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+3,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:r400000,a,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=30;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=1;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+3,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:r400000,b,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=0;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=0;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+3,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:r600000,a,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=30;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=1;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+3,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:r600000,b,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=0;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=0;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+3,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:burst,a,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=21679;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=22181;dpdk-arp-miss=0;noport-dpdk-queue-drop=30;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=2;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=1277;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+3,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:burst,b,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=0;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=2;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+3,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:flows2,a,naks-sent=0;naks-received=520;retransmits-sent=24;short-sends=16412289;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=16736826;dpdk-arp-miss=0;noport-dpdk-queue-drop=0;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=0;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=832027;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+3,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:flows2,b,naks-sent=520;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=101;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=2;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+4,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:max,a,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=19041306;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=19592509;dpdk-arp-miss=0;noport-dpdk-queue-drop=0;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=0;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=1503513;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+4,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:max,b,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=0;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=0;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+4,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:r200000,a,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=30;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=1;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+4,loss,isolated:dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096:1344:r200000,b,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=0;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=0;dpdk-arp-miss=0;noport-dpdk-queue-drop=50;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=1;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=0;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+1,loss,isolated:dpdk,a,naks-sent=0;naks-received=0;retransmits-sent=0;short-sends=8122406;loss-gap-fills=0;invalid-packets=0;errors=0;failed-receiver-offers=0;dpdk-nobufs=0;dpdk-tx-eagain=8595651;dpdk-arp-miss=2;noport-dpdk-queue-drop=0;dpdk-checksum-failure=0;dpdk-multi-segment=0;dpdk-nic-rx-errors=0;dpdk-nic-rx-missed=0;dpdk-nic-rx-nombuf=0;dpdk-peer-mtu-too-large=0;sat-dpdk-rx-burst-full=0;sat-dpdk-tx-paced=0;sat-dpdk-tx-queued=1344470;sat-dpdk-rx-ring-full-suspected=0;kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0;isolated-nic-irqs=0
+
+==== instances.txt: 1 lines ====
+---- printed with their line numbers, in file order (line: text)
+1: type a c7i.4xlarge b c7i.4xlarge
