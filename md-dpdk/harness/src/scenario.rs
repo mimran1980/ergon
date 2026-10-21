@@ -395,10 +395,12 @@ fn symmetric_unicast(cfg: &ScenarioCfg, aeron: &Aeron) -> ScenarioResult {
 /// receives both batches across its two subscriptions. The first batch must
 /// not be corrupted by the reconnect, and the second must land on the new
 /// transport — no caller-pointer retention in the copied remote address.
-/// How long the reconnect primary keeps its last publication up after its
-/// final offer, so the receiver's NAKs for any lost frame are answered before
-/// the driver stops. Aeron's NAK delay and retransmit are well under this.
-const RECONNECT_TAIL: Duration = Duration::from_secs(3);
+/// How long a primary that only sends keeps its publication up after its
+/// final offer. Until its driver stops, the sender's heartbeats tell each
+/// receiver how far the stream goes, so a lost frame, including the last one,
+/// is NAKed and retransmitted. Aeron's NAK delay and retransmit are well
+/// under this.
+const SENDER_TAIL: Duration = Duration::from_secs(3);
 
 fn reconnect(cfg: &ScenarioCfg, aeron: &Aeron) -> ScenarioResult {
     let mut res = ScenarioResult::default();
@@ -418,7 +420,7 @@ fn reconnect(cfg: &ScenarioCfg, aeron: &Aeron) -> ScenarioResult {
             // frame lost on the way could no longer be retransmitted. Keep the
             // publication (and the driver) up for a tail so NAKs are answered.
             // pub1 needs no tail: closing it leaves the driver lingering it.
-            sleep(RECONNECT_TAIL);
+            sleep(SENDER_TAIL);
             drop(pub2);
             res.sent = cfg.msgs;
             res.push(format!(
@@ -507,6 +509,10 @@ fn multi_endpoint(cfg: &ScenarioCfg, aeron: &Aeron) -> ScenarioResult {
                 sent += 1;
                 sleep(Duration::from_millis(1));
             }
+            // Only sends: keep the publication up so a lost last frame is
+            // repaired (each subscriber missed exactly its last message
+            // without this).
+            sleep(SENDER_TAIL);
             res.sent = sent;
             if sent != total {
                 return Err(format!(
