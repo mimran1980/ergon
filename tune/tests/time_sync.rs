@@ -1382,6 +1382,29 @@ fn the_clocksource_finding_follows_the_source() {
     assert_eq!(ClocksourceKind::of("jiffies"), ClocksourceKind::Other);
 }
 
+/// T12 knows the counter of x86-64 and 64-bit Arm only. Elsewhere (RISC-V's
+/// `riscv_clocksource`, PowerPC's `timebase`, both read through the vDSO),
+/// or with no `/proc/cpuinfo` to tell, a source it does not know is unknown,
+/// never a warning; the counter's own names stay ok.
+#[test]
+fn t12_on_an_architecture_it_does_not_know_is_unknown() {
+    let other = |name: &str| Clocksource {
+        name: Ok(name.to_owned()),
+        arch: Arch::Unknown,
+        invariant_tsc: None,
+    };
+    for name in ["riscv_clocksource", "timebase", "hpet"] {
+        let f = other(name).finding();
+        assert_eq!(f.id, CheckId::T12);
+        assert!(f.is_unknown() && !f.is_warning(), "{f}");
+        assert!(
+            matches!(&f.status, Status::Unknown(why) if why.contains(name)),
+            "{f}"
+        );
+    }
+    assert_eq!(other("tsc").finding().status, Status::Ok);
+}
+
 /// T12 reads the tree: the clock source and, for the fix, `/proc/cpuinfo`'s
 /// architecture and `constant_tsc nonstop_tsc`; no clock source file is
 /// unknown.

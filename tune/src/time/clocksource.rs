@@ -94,8 +94,10 @@ impl Clocksource {
     }
 
     /// T12: ok for the counter; info for a hypervisor's view of it; a
-    /// warning for any other source, with the fix for the architecture;
-    /// unknown where the name could not be read.
+    /// warning for any other source on x86-64 or 64-bit Arm, with the fix
+    /// for the architecture; unknown where the name could not be read, or
+    /// for another source on an architecture this check does not know
+    /// (RISC-V and PowerPC have counter sources of their own).
     #[must_use]
     pub fn finding(&self) -> Finding {
         let name = match &self.name {
@@ -124,6 +126,17 @@ impl Clocksource {
                 format!(
                     "clocksource {name} is a hypervisor's scaled view of the counter, read \
                      through the vDSO where the hypervisor marks it stable"
+                ),
+            ),
+            ClocksourceKind::Other if self.arch == Arch::Unknown => Finding::unknown(
+                CheckId::T12,
+                Severity::Warn,
+                T12_EVIDENCE,
+                "the kernel's clock source".to_owned(),
+                format!(
+                    "clocksource {name} on an architecture other than x86-64 or 64-bit Arm, or \
+                     with no /proc/cpuinfo to tell: whether it is read through the vDSO is not \
+                     known here"
                 ),
             ),
             ClocksourceKind::Other => Finding::found(
