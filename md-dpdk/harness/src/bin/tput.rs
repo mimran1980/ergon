@@ -150,9 +150,6 @@ impl Measured {
 fn measure(subscription: &impl Poll, seconds: usize) -> Measured {
     const SECOND_NS: u64 = 1_000_000_000;
     let clock = Clock::calibrate();
-    if !clock.is_counter() {
-        eprintln!("tput: no hardware counter (or BENCH_CLOCK=monotonic), timing with CLOCK_MONOTONIC");
-    }
     let mut count = 0u64;
     // sequence numbers seen while measuring: the first, the highest, how many
     let (mut first, mut highest, mut received) = (u64::MAX, 0u64, 0u64);

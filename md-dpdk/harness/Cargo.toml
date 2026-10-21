@@ -37,13 +37,13 @@ path = "src/bin/counters.rs"
 
 [dependencies]
 env_logger = "0.11"
-# The clients' clock (src/lab.rs): every latency stamp is its ordered read.
-ergon-clock = { path = "../../clock" }
 ergon-md-dpdk = { path = ".." }
 hdrhistogram = "7.5"
 libc = "0.2"
 log = "0.4"
-minstant = "0.1"
+# The clients' clock (src/lab.rs): every latency stamp is its read after a
+# fence. No `mock` override, so no thread-local check on a read.
+quanta = { version = "0.13", default-features = false }
 rusteron-client = { workspace = true }
 rusteron-media-driver = { workspace = true }
 

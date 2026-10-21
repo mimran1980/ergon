@@ -479,84 +479,138 @@ pub fn lock_memory() {
     );
 }
 
-/// The clients' clock: ergon-clock's calibrated hardware counter, in
-/// nanoseconds (`rdtsc` on x86-64, `CNTVCT_EL0` on aarch64, scaled by its
-/// 32.32 factor; clock/src), so the clients, the transport and the stack
-/// stamp on one implementation.
+/// The clients' clock, in nanoseconds since [`Clock::calibrate`]: quanta's
+/// (the CPU counter, `rdtsc` on x86-64 or `CNTVCT_EL0` on aarch64, scaled by
+/// quanta's calibration against `CLOCK_MONOTONIC`, where quanta finds a
+/// counter it trusts: an invariant TSC with `rdtscp`, or any aarch64; else
+/// `CLOCK_MONOTONIC`), or `CLOCK_MONOTONIC` through [`Instant`] under
+/// `BENCH_CLOCK=monotonic`, to compare the two.
 ///
 /// - [`stamp`](Self::stamp), every latency stamp (a round trip's send and
-///   echo, a load message's arrival, its send lag): ergon-clock's ordered
-///   read, taken after every earlier instruction (`rdtscp`; on Arm
-///   `CNTVCTSS_EL0` where the CPU has `FEAT_ECV`, else `isb` then
-///   `CNTVCT_EL0`), as the harness's own clock read every stamp before.
+///   echo, a load message's arrival, its send lag): the ordered read, taken
+///   after every earlier instruction (`lfence` then the counter on x86-64,
+///   `isb` then the counter on aarch64).
 /// - [`now`](Self::now), pacing, deadlines, loop gaps and throughput
 ///   windows: the unordered read.
 ///
-/// Calibrated at [`clock_config`]: the counter wherever ergon-clock's own
-/// measurement and verification against `CLOCK_MONOTONIC_RAW` accept it
-/// (`Trust::CrossCheck`: also under `kvm-clock` and Azure's TSC page, where
-/// the kernel keeps time with a hypervisor's view of the same counter, as
-/// the harness's clock did on every lab host), else ergon-clock's
-/// `CLOCK_MONOTONIC` fallback, said so. `BENCH_CLOCK=monotonic` forces the
-/// fallback, to compare the two. Its report goes to stderr as one
-/// `harness clock:` line. Output units are nanoseconds as ever, so results
-/// compare with runs of the harness's own clock.
-#[derive(Clone, Copy, Debug)]
-pub struct Clock(ergon_clock::advanced::Clock);
+/// Every stamp a client compares is its own process's (an echo returns the
+/// sender's stamp), so one origin a process is enough; stamps from two
+/// processes do not compare. Output units are nanoseconds, as ever. The
+/// choice goes to stderr as one `harness clock:` line.
+#[derive(Clone, Debug)]
+pub struct Clock(Inner);
 
-/// The harness's calibration: ergon-clock's defaults at cross-check trust
-/// (see [`Clock`]), nanoseconds since boot (the monotonic domain),
-/// `Policy::Monotonic` under `BENCH_CLOCK=monotonic`, and no probe of how
-/// `CLOCK_REALTIME` is kept (the lab records chrony's view itself; a
-/// client's stamps are on one host's counter).
-pub fn clock_config() -> ergon_clock::Config {
-    let monotonic = std::env::var("BENCH_CLOCK").is_ok_and(|c| c == "monotonic");
-    ergon_clock::Config {
-        policy: if monotonic {
-            ergon_clock::advanced::Policy::Monotonic
+#[derive(Clone, Debug)]
+enum Inner {
+    /// quanta's clock and its raw read at calibration.
+    Quanta { clock: quanta::Clock, origin: u64 },
+    /// `CLOCK_MONOTONIC`, from calibration.
+    Monotonic(Instant),
+}
+
+/// Which clock the clients stamp with (`BENCH_CLOCK`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClockKind {
+    /// quanta's: the CPU counter where quanta trusts one, else
+    /// `CLOCK_MONOTONIC`.
+    Quanta,
+    /// `CLOCK_MONOTONIC` ([`Instant`]).
+    Monotonic,
+}
+
+impl ClockKind {
+    /// `BENCH_CLOCK`'s value: `monotonic` is [`ClockKind::Monotonic`];
+    /// anything else, or unset (the lab passes `tsc`), [`ClockKind::Quanta`].
+    pub fn from_bench_clock(value: Option<&str>) -> Self {
+        if value == Some("monotonic") {
+            Self::Monotonic
         } else {
-            ergon_clock::advanced::Policy::Auto
-        },
-        trust: ergon_clock::advanced::Trust::CrossCheck,
-        domain: ergon_clock::Domain::Monotonic,
-        time_sync: ergon_clock::advanced::TimeSyncPolicy::Off,
-        ..ergon_clock::Config::default()
+            Self::Quanta
+        }
     }
 }
 
 impl Clock {
-    /// Calibrates (tens of milliseconds); call before the measured loop.
-    /// Prints ergon-clock's report on stderr (`harness clock: ...`). Panics
-    /// only where a kernel clock cannot be read at all.
+    /// The clock `BENCH_CLOCK` chooses ([`ClockKind::from_bench_clock`]),
+    /// calibrated (quanta's calibration is once a process, up to 200 ms);
+    /// call before the measured loop. Prints a `harness clock:` line on
+    /// stderr.
     pub fn calibrate() -> Self {
-        let calibrated =
-            ergon_clock::advanced::calibrate(&clock_config()).unwrap_or_else(|e| panic!("ergon-clock: {e}"));
-        eprintln!("harness clock: {}", calibrated.report);
-        Self(calibrated.clock)
+        let kind = ClockKind::from_bench_clock(std::env::var("BENCH_CLOCK").ok().as_deref());
+        let clock = Self::new(kind);
+        eprintln!(
+            "harness clock: {}",
+            match kind {
+                ClockKind::Quanta =>
+                    "quanta (the CPU counter where quanta trusts one, else CLOCK_MONOTONIC), ordered stamps",
+                ClockKind::Monotonic => "CLOCK_MONOTONIC (BENCH_CLOCK=monotonic)",
+            }
+        );
+        clock
     }
 
-    /// Whether it reads the hardware counter (`false`: ergon-clock's
-    /// monotonic fallback).
-    pub fn is_counter(&self) -> bool {
-        self.0.is_counter()
+    /// The clock of `kind`, its time 0 now.
+    pub fn new(kind: ClockKind) -> Self {
+        match kind {
+            ClockKind::Quanta => {
+                let clock = quanta::Clock::new();
+                let origin = clock.raw();
+                Self(Inner::Quanta { clock, origin })
+            }
+            ClockKind::Monotonic => Self(Inner::Monotonic(Instant::now())),
+        }
+    }
+
+    /// Which clock it is.
+    #[allow(dead_code)] // the clients' and clockcheck's
+    pub fn kind(&self) -> ClockKind {
+        match self.0 {
+            Inner::Quanta { .. } => ClockKind::Quanta,
+            Inner::Monotonic(_) => ClockKind::Monotonic,
+        }
     }
 
     /// A latency stamp, ns: the ordered read.
     #[allow(dead_code)] // rtt's and load's; tput times windows alone
     #[inline(always)]
     pub fn stamp(&self) -> u64 {
-        self.0.now_ns_ordered()
+        match &self.0 {
+            Inner::Quanta { clock, origin } => {
+                ordering_fence();
+                clock.delta_as_nanos(*origin, clock.raw())
+            }
+            Inner::Monotonic(origin) => elapsed_ns(*origin),
+        }
     }
 
     /// The time now, ns, unordered: pacing, deadlines, loop gaps.
     #[inline(always)]
     pub fn now(&self) -> u64 {
-        self.0.now_ns()
+        match &self.0 {
+            Inner::Quanta { clock, origin } => clock.delta_as_nanos(*origin, clock.raw()),
+            Inner::Monotonic(origin) => elapsed_ns(*origin),
+        }
     }
+}
 
-    /// ergon-clock's clock itself (clockcheck's comparisons).
-    #[allow(dead_code)] // clockcheck's
-    pub fn inner(&self) -> ergon_clock::advanced::Clock {
-        self.0
-    }
+/// Nanoseconds since `origin`.
+#[inline(always)]
+fn elapsed_ns(origin: Instant) -> u64 {
+    u64::try_from(origin.elapsed().as_nanos()).unwrap_or(u64::MAX)
+}
+
+/// Holds the counter read that follows until every earlier instruction has
+/// completed: quanta's raw read is unordered.
+#[inline(always)]
+fn ordering_fence() {
+    #[cfg(target_arch = "x86_64")]
+    // SAFETY: `lfence` is SSE2, part of every x86-64 CPU; it touches no memory.
+    unsafe {
+        core::arch::x86_64::_mm_lfence()
+    };
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: `isb` only flushes the pipeline; it touches no memory or stack.
+    unsafe {
+        core::arch::asm!("isb", options(nostack, preserves_flags))
+    };
 }

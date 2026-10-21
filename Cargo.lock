@@ -956,12 +956,11 @@ name = "ergon-md-dpdk-harness"
 version = "0.1.31"
 dependencies = [
  "env_logger",
- "ergon-clock",
  "ergon-md-dpdk",
  "hdrhistogram",
  "libc",
  "log",
- "minstant",
+ "quanta",
  "rusteron-client",
  "rusteron-media-driver",
 ]

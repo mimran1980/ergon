@@ -58,7 +58,7 @@
 #                            telemetry, never loss (info-: the agents' longest cycles and cycles over
 #                            threshold, back-pressure, status messages, flow control; host.sh
 #                            aeron_telemetry), which lib.sh writes as aeron rows
-#   vm.sh clockcheck [secs]  the clocks' read cost and the TSC's drift, on the app CPU
+#   vm.sh clockcheck [secs]  the clocks' read cost and the clients' clock's (quanta's) drift, on the app CPU
 #   vm.sh criterion          the clock Criterion bench (benches/clock.rs), on the app CPU
 #   vm.sh clockbench [quick|full] [<state>]  ergon-clock's benchmark (clock/bench, clockbench) against
 #                            quanta, minstant, std and the kernel's clocks, on the app CPU and the receiver
