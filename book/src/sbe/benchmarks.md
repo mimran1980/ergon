@@ -1,33 +1,25 @@
 # Benchmarks
 
-Methodology, fairness rules, measured results, and how to run the suite live
-in the repository page
+The maintained benchmarks show ergo-sbe is not slower than official sbe-tool
+on equal work. They are not a speed claim. Method, fairness rules, ceilings
+and the gate:
 [`sbe/BENCHMARKS.md`](https://github.com/mimran1980/ergon/blob/main/sbe/BENCHMARKS.md).
-This book page keeps the gate ceilings only.
 
-Ratios are ergon / sbe-tool. Target is **`1.00`**.
-`check-bench-gate.sh` fails on `ratio > ceiling` with zero tolerance.
+| Question | Answer |
+|---|---|
+| Run it | `just bench` (SBE), `just bench-cluster` (cluster) |
+| What is graded | ergon / sbe-tool, Criterion's mean, highest ratio over 5 repeats, both LTO profiles |
+| Pass | Highest ratio ≤ ceiling (1.00 for most pairs) |
+| Inconclusive (also passes) | Above the ceiling, but its confidence range overlaps the A/A control's noise band |
+| Fail | Above the ceiling and outside the A/A band |
+| Tolerance | none (zero tolerance): no slack is added to a ceiling |
+| Where results go | `target/bench-runs/<run-id>/` (`just bench`); `target/criterion` and `target/bench-no-lto/criterion` (`just bench-cluster`, overwritten) |
 
-| Comparison | no-LTO | LTO |
-|---|---:|---:|
-| Cluster session-message-header decode | 1.01 | 1.01 |
-| Cluster session-event decode | 1.05 | 1.01 |
-| All other maintained comparisons, including SBE `optional_enum_nullify` | 1.00 | 1.00 |
+This book records no benchmark result. Quote a ratio with its run id, commit,
+host, rustc and profile, or do not quote it.
 
-A gate pass is not literal `1.00` everywhere. Read the printed ratios. A
-ceiling above `1.00` records a repeatable sbe-tool win on a placement-sensitive
-micro-op — a noise floor, not a real win (`NOISE_FLOOR_CEILING_EXCEPTIONS` in
-`sbe/benchmarks/tests/bench_gate_test.rs`). It is not permission to add
-overhead.
+Build your own code with `lto = true` and `codegen-units = 1`. Generated
+hot-path methods carry `#[inline]`, so a non-LTO build can inline them too.
 
-Both LTO profiles are blocking. Consumers should still build with
-`lto = true` and `codegen-units = 1`. Generated hot-path methods carry
-`#[inline]` so non-LTO crates can inline too. Missing `#[inline]` is the
-defect LTO-off exists to catch.
-
-Do **not** copy point estimates into this file. Current results live in
-`target/bench-runs/<run-id>/`. Quote a result by run id, commit, host, rustc,
-profile, and manifest hash — or do not quote it.
-
-Full method, pair-modes table, measured numbers, diagnostics, regression
-policy, and review red flags: [`sbe/BENCHMARKS.md`](https://github.com/mimran1980/ergon/blob/main/sbe/BENCHMARKS.md).
+Also compare against your own previous release: see
+[Methodology](benchmarks/methodology.md).
