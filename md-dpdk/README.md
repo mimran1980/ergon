@@ -210,7 +210,7 @@ cannot read, such as from a pod's network namespace).
 | M1 | The network agents busy-spin on pinned CPUs of their own, off the conductor's | socket transport: warn; DPDK: the install refuses otherwise |
 | M2 | Non-sparse term buffers (`AERON_TERM_BUFFER_SPARSE_FILE=false`) | warn |
 | M3 | `AERON_SOCKET_SO_RCVBUF`/`SNDBUF` granted as asked (a probe socket) | socket transport: warn; DPDK: info |
-| M4 | Kernel busy polling (`net.core.busy_read`, `busy_poll`) | socket transport: warn on x86, info on Graviton |
+| M4 | Kernel busy polling (`net.core.busy_read`, `busy_poll`): its state and what was measured; no setting recommended ([BENCHMARKS.md](BENCHMARKS.md#measured-but-no-setting-recommended)) | socket transport: info |
 | M-host | T1 and T8 on the agents' CPUs, T7, T3, T4 (`AERON_DIR`), T5, T9 (no CPU quota on the driver's cgroup), T10 (SMT on) | as `ergon-tune` gives them |
 | M-nic | T2 and T6 on the data NICs; N1, N2, and N4 with busy polling, for the socket transport | as `ergon-tune` gives them |
 

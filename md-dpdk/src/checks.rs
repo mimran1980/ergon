@@ -12,7 +12,7 @@
 //! | **M1** | The network agents busy-spin, are pinned, and have cores of their own (off the conductor's CPU outside `SHARED` and `INVOKER`) | socket transport: warn; DPDK: the install refuses to start otherwise |
 //! | **M2** | Term buffers are not sparse | warn |
 //! | **M3** | `AERON_SOCKET_SO_RCVBUF`/`SNDBUF` granted as asked (a probe socket) | socket transport: warn; DPDK (host-local channels only): info |
-//! | **M4** | Kernel busy polling for the socket transport | warn on x86, info on Graviton |
+//! | **M4** | Kernel busy polling for the socket transport: its state and what was measured, no setting recommended | info |
 //! | **M-host** | T1 and T8 on the agents' CPUs (and the conductor's and EAL main lcore's for T8), T3, T4 (the driver's own directory), T5, T7, T9 (no CPU quota on the driver's cgroup) | as ergon-tune gives them |
 //! | **M-nic** | T2 and T6 on the data NICs; for the socket transport also N1, N2, and N4 with busy polling | as ergon-tune gives them |
 //! | **M-run** | N1 and T2 again for a socket-transport data NIC once its `carrier_changes` moved and settled | warn |
@@ -56,10 +56,10 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use ergon_tune::{
-    BusyPoll, CheckId, Component, CpuSet, Ethtool, EthtoolCache, Finding, Host, HotSet, Netlink, Nic, Platform, Role,
-    Severity, Status, Thread, busy_poll_sysctls, carrier_changes, host_check_line, n1_adaptive_rx, n2_deferred_irqs,
-    n4_rx_ring, t1_isolation, t2_nic_irqs, t3_thp, t4_aeron_dir, t5_numa_balancing, t6_nic_node, t7_sched_policy,
-    t8_smt_siblings, t9_cpu_quota, t10_smt_on, thread_affinity,
+    BusyPoll, CheckId, Component, CpuSet, Ethtool, EthtoolCache, Finding, Host, HotSet, Netlink, Nic, Role, Severity,
+    Status, Thread, busy_poll_sysctls, carrier_changes, host_check_line, n1_adaptive_rx, n2_deferred_irqs, n4_rx_ring,
+    t1_isolation, t2_nic_irqs, t3_thp, t4_aeron_dir, t5_numa_balancing, t6_nic_node, t7_sched_policy, t8_smt_siblings,
+    t9_cpu_quota, t10_smt_on, thread_affinity,
 };
 use rusteron_media_driver::AeronDriverContext;
 use rusteron_media_driver::bindings::aeron_threading_mode_t;
@@ -615,53 +615,38 @@ pub fn m3_socket_buffers(buffers: &SocketBuffers, dpdk: bool) -> Vec<Finding> {
     .collect()
 }
 
-const M4_EVIDENCE: &str = "md-dpdk/BENCHMARKS.md (Conclusions: Graviton kernel UDP, where the data NICs' interrupts \
-     go; Measured, but no setting recommended): c7i.4xlarge round 7 (benches/cloud/results/aws-20261015-185813.txt \
-     lines 5, 8) and c9g.2xlarge rounds G1–G3 (aws-20261016-072005, -135004, -223251)";
+const M4_EVIDENCE: &str = "md-dpdk/BENCHMARKS.md (Measured, but no setting recommended): c9g.2xlarge G1 \
+     (benches/cloud/results/aws-20261016-072005.txt, summary.md lines 10, 14, 86, 118, 141) and c7i.4xlarge \
+     round 7 (aws-20261015-185813.txt, summary.md lines 5, 8, 137, 173)";
 
-/// M4: kernel busy polling is on for the socket transport.
+/// What was measured with kernel busy polling, and why no setting follows.
+const M4_MEASURED: &str = "measured, but no setting is recommended (md-dpdk/BENCHMARKS.md): on c9g.2xlarge (G1) \
+     busy polling with a 4,096-entry ring lost at 288 B 1 M msgs/s in 5 of 5 reps (61,488 NAKs; p50 4,973 µs, \
+     max 9,175 (8,544–102,826) µs) against 0 of 5 for interrupt moderation off with the data NICs' interrupts on a \
+     core of their own, the arms differing in four settings; on c7i.4xlarge (round 7) it had p50 27.79 against \
+     94.02 µs at 288 B 100 k msgs/s against plain kernel UDP (max 382 (372–389) against 469 (448–578) µs), the \
+     arms differing in two settings. Neither isolates busy polling";
+
+/// M4: whether kernel busy polling is on for the socket transport.
 ///
-/// On is `net.core.busy_read` or `busy_poll` above 0. A warning on x86,
-/// information on Graviton (where it collapsed under load); unknown where
-/// the sysctls cannot be read (they exist only in the host's network
-/// namespace).
+/// On is `net.core.busy_read` or `busy_poll` above 0. Information either
+/// way, with what was measured: the committed runs do not isolate busy
+/// polling, so no setting is recommended or warned about. Unknown where the
+/// sysctls cannot be read (they exist only in the host's network namespace).
 #[must_use]
 pub fn m4_busy_polling(host: &Host) -> Finding {
-    let (severity, status, message) = match busy_poll_sysctls(host) {
-        Ok(BusyPoll { busy_read, busy_poll }) if busy_read > 0 || busy_poll > 0 => (
-            Severity::Warn,
-            Status::Ok,
-            format!("kernel busy polling is on (net.core.busy_read {busy_read}, busy_poll {busy_poll})"),
-        ),
-        Ok(_) if Platform::detect(host).is_graviton() => (
-            Severity::Info,
-            Status::Finding,
-            "the socket transport runs without kernel busy polling (net.core.busy_read 0, busy_poll 0), which \
-             on Graviton is the better kernel setting: on a c9g.2xlarge pair busy polling collapsed at 1 M \
-             msgs/s of 288 B (p50 5.0 ms, 61,488 NAKs), and interrupt moderation off with the data NICs' \
-             interrupts on a core of their own was the best kernel configuration measured (288 B at 1 M \
-             msgs/s: no lossy rep in G1 and G3, one of five in G2; max 122 (111–216) µs in G1, 121 \
-             (105–1,944) µs in G2, 204 (122–211) µs in G3, each the median of the five reps' maxima with \
-             their range). Fix: none needed; keep busy polling off, moderation off and the data NICs' \
-             interrupts on a core of their own (N1, T2)"
-                .to_owned(),
-        ),
-        Ok(_) => (
-            Severity::Warn,
-            Status::Finding,
-            "the socket transport runs without kernel busy polling (net.core.busy_read 0, busy_poll 0): on \
-             AWS (c7i.4xlarge, round 7, one run, idle round trip) busy polling with a 4,096-entry receive \
-             ring against plain kernel UDP had p50 38.8 → 28.2 µs and p99.99 106 → 56 µs (max 4,612 → \
-             1,938 µs, median of the reps' maxima, the ranges overlapping); the two arms differ in two \
-             settings, and Graviton collapsed under load with it (M4 on Graviton). Fix: \
-             `sysctl -w net.core.busy_read=50 net.core.busy_poll=50` with N2's values on the data NICs \
-             (`echo 2 > /sys/class/net/<if>/napi_defer_hard_irqs; echo 200000 > \
-             /sys/class/net/<if>/gro_flush_timeout`); busy_read makes every blocking socket read on the host \
-             busy-poll"
-                .to_owned(),
-        ),
+    let (status, message) = match busy_poll_sysctls(host) {
+        Ok(BusyPoll { busy_read, busy_poll }) => {
+            let state = if busy_read > 0 || busy_poll > 0 { "on" } else { "off" };
+            (
+                Status::Finding,
+                format!(
+                    "kernel busy polling is {state} (net.core.busy_read {busy_read}, busy_poll {busy_poll}): \
+                     {M4_MEASURED}"
+                ),
+            )
+        }
         Err(e) => (
-            Severity::Warn,
             Status::Unknown(e.to_string()),
             "cannot tell whether kernel busy polling is on (net.core.busy_read and busy_poll exist only in \
              the host's network namespace)"
@@ -670,7 +655,7 @@ pub fn m4_busy_polling(host: &Host) -> Finding {
     };
     Finding {
         id: CheckId::M4,
-        severity,
+        severity: Severity::Info,
         status,
         message,
         evidence: M4_EVIDENCE,

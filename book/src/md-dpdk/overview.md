@@ -48,7 +48,7 @@ Terms this chapter uses. Host, Kubernetes and Java terms:
 | `igb_uio`, `uio_hv_generic`, `vfio-pci` | kernel modules that hand a NIC to a user-space process | node-level, as root: `igb_uio` on AWS, `uio_hv_generic` on Azure. The kernel's tools then lose that NIC |
 | interrupt | a NIC's signal that packets are waiting; the CPU stops its work to handle it | DPDK polls instead |
 | [interrupt moderation](../deploy/hosts.md#interrupts-and-the-nic) | the NIC waits to batch several packets into one interrupt. Adaptive: the driver re-tunes the wait itself | off on Graviton in the best kernel path measured; its cost on x86 is not measured here |
-| busy polling (kernel) | a socket read spins on the NIC's queue instead of sleeping (`net.core.busy_read`, `busy_poll`) | the best kernel mode tried on x86; collapsed on Graviton at 1 M msgs/s. A node-wide sysctl ([kernel docs](https://docs.kernel.org/admin-guide/sysctl/net.html)) |
+| busy polling (kernel) | a socket read spins on the NIC's queue instead of sleeping (`net.core.busy_read`, `busy_poll`) | measured, never isolated: no setting recommended ([below](#tuning-kernel-udp-first)). A node-wide sysctl ([kernel docs](https://docs.kernel.org/admin-guide/sysctl/net.html)) |
 | busy-spin | a thread checks for work in a loop and never sleeps | no wake-up delay; a whole core at 100%, idle or not |
 | pin, CPU affinity | pin: tie a thread to one CPU. Affinity: the CPUs a thread may run on (`AERON_*_CPU_AFFINITY`) | the crate pins the agents ([threads and cores](configuration.md#threads-and-cores)) |
 | housekeeping core | the core for interrupts, the conductor and every thread that does not spin | keeps that work off the busy cores |
@@ -114,7 +114,7 @@ All four are node-level settings
 | --- | --- | --- |
 | interrupt moderation off | the NIC interrupts for each packet instead of waiting to batch several | Graviton G1–G3: part of the best kernel path; no lossy rep to 1 M msgs/s in G1 and G3. x86: not measured here |
 | NIC interrupts on a core of their own | the kernel's receive work runs on a core with nothing else to do | Graviton G1, one A/B: on the housekeeping core 1 M msgs/s lost in 5 of 5 reps; on the receiver's core it collapsed from 500 k msgs/s. x86: not measured here |
-| busy polling | a socket read spins on the NIC's queue instead of sleeping until an interrupt | x86: the best kernel mode tried. Graviton G1: at 1 M msgs/s of 288 B, p50 4,973 µs, max 102,826 µs |
+| busy polling | a socket read spins on the NIC's queue instead of sleeping until an interrupt | not recommended: never isolated. x86 round 7: the best kernel arm tried, with a 4,096 ring (two settings differ). Graviton G1: at 1 M msgs/s of 288 B, p50 4,973 µs, max 9,175 (8,544–102,826) µs (four settings differ) |
 | 4,096-entry receive ring | the NIC's receive queue holds a burst while the reader catches up | used with busy polling in the x86 rows below; not A/B'd alone here |
 
 Source:
@@ -141,7 +141,7 @@ pair [below](#measured-between-two-hosts) DPDK's median was lower: by
 | --- | --- |
 | both ends on one host | kernel UDP, or Aeron IPC (shared memory, no network); DPDK gives no bypass there |
 | between hosts, Graviton | kernel UDP, moderation off, the NIC's interrupts on a core of their own: the best kernel path measured (no lossy rep at 1 M msgs/s in G1 and G3, one in G2) |
-| between hosts, x86 | kernel UDP with busy polling and a 4,096-entry ring: the best kernel mode tried. The Graviton settings are not measured on x86. On `c7i.4xlarge` at 1 M msgs/s its max was 6,664 µs, with 4 NAKs and 849 short sends over 5 reps |
+| between hosts, x86 | kernel UDP. No kernel setting is recommended on x86: busy polling with a 4,096-entry ring was the best kernel arm tried, but it changes two settings at once, and the Graviton settings are not measured on x86. On `c7i.4xlarge` at 1 M msgs/s that arm's max was 6,664 µs, with 4 NAKs and 849 short sends over 5 reps |
 | between hosts, the kernel's median or tail is not good enough | kernel bypass with [Aeron Premium](https://aeron.io/) |
 | learning how a transport binding works, or reproducing these numbers | this crate, in a lab |
 

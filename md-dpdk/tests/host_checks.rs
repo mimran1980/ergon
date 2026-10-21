@@ -757,60 +757,78 @@ fn m3_probes_the_running_kernel() {
 
 // --- M4 ---------------------------------------------------------------------------
 
-/// Kernel busy polling off for the socket transport: a warning on x86 with
-/// the measured gains and their maxima, information on Graviton (where it
-/// collapsed under load); on, ok; unreadable (a pod), unknown; not run under
-/// DPDK.
+/// Kernel busy polling is reported, never warned about or recommended:
+/// md-dpdk/BENCHMARKS.md lists it under "Measured, but no setting
+/// recommended" (G1 and round 7 each change several settings at once, so
+/// polling itself is not isolated). On or off, x86 or Graviton: information
+/// with the measured rows and their maxima; unreadable (a pod), unknown at
+/// information severity; not run under DPDK.
 #[test]
-fn m4_warns_without_busy_polling_on_x86_and_informs_on_graviton() {
+fn m4_reports_busy_polling_as_information_and_recommends_no_setting() {
     let x86 = Fixture::x86("m4-x86");
-    let m4 = m4_busy_polling(&x86.host());
-    assert!(m4.is_warning(), "{m4:?}");
-    for needle in ["38.8 → 28.2 µs", "106 → 56 µs", "max", "two settings", "busy_read=50"] {
-        assert!(m4.message.contains(needle), "{needle:?} in {}", m4.message);
-    }
-    // ergon-md-dpdk is a proof of concept: no check sends an operator to it.
-    // Azure's figures had no committed run output, so none is quoted.
-    for absent in ["dpdk-ena", "Azure"] {
-        assert!(!m4.message.contains(absent), "{absent:?} in {}", m4.message);
-    }
-    // The max it quotes overlaps across reps (round 7, aws-20261015-185813.txt
-    // lines 5 and 8: 4,612 (381–5,378) against 1,938 (349–4,846)): said so
-    // beside it, so it does not read as a measured gain.
-    let maxima: Vec<&str> = m4.message.split("(max ").skip(1).collect();
-    assert_eq!(maxima.len(), 1, "{}", m4.message);
-    for max in maxima {
-        let quoted = max.split(')').next().unwrap();
-        assert!(quoted.ends_with("the ranges overlapping"), "(max {quoted})");
-    }
-
     let arm = Fixture::graviton("m4-graviton");
+    for fixture in [&x86, &arm] {
+        let m4 = m4_busy_polling(&fixture.host());
+        assert_eq!(
+            (m4.id, &m4.status, m4.severity),
+            (CheckId::M4, &Status::Finding, Severity::Info),
+            "{m4:?}"
+        );
+        assert!(m4.message.contains("kernel busy polling is off"), "{}", m4.message);
+    }
+    for (read, poll) in [("50", "0"), ("0", "50")] {
+        x86.busy_poll(read, poll);
+        let m4 = m4_busy_polling(&x86.host());
+        assert_eq!(
+            (&m4.status, m4.severity),
+            (&Status::Finding, Severity::Info),
+            "{read} {poll}"
+        );
+        assert!(
+            m4.message.contains(&format!(
+                "kernel busy polling is on (net.core.busy_read {read}, busy_poll {poll})"
+            )),
+            "{}",
+            m4.message
+        );
+    }
     let m4 = m4_busy_polling(&arm.host());
-    assert_eq!(
-        (m4.id, &m4.status, m4.severity),
-        (CheckId::M4, &Status::Finding, Severity::Info)
-    );
-    assert!(m4.message.contains("collapsed"), "{}", m4.message);
-    // the kernel's best arm's maxima at 288 B 1 M msgs/s from every Graviton
-    // round that ran it (BENCHMARKS.md, Graviton kernel UDP: G1–G3) and G2's
-    // one lossy rep: none left out
+    // the two committed rows, each latency figure with its max
+    // (BENCHMARKS.md, Measured, but no setting recommended)
     for needle in [
-        "122 (111–216) µs in G1",
-        "121 (105–1,944) µs in G2",
-        "204 (122–211) µs in G3",
-        "one of five in G2",
+        "no setting is recommended",
+        "5 of 5 reps",
+        "max 9,175 (8,544–102,826) µs",
+        "four settings",
+        "max 382 (372–389) against 469 (448–578) µs",
+        "two settings",
     ] {
         assert!(m4.message.contains(needle), "{needle:?} in {}", m4.message);
     }
-    assert!(!m4.message.contains("dpdk-ena"), "{}", m4.message);
-    assert!(m4.evidence.contains("rounds G1–G3"), "{}", m4.evidence);
-
-    for (read, poll) in [("50", "0"), ("0", "50")] {
-        x86.busy_poll(read, poll);
-        assert_eq!(m4_busy_polling(&x86.host()).status, Status::Ok, "{read} {poll}");
+    // nothing tells the operator to turn it on (or off)
+    for absent in [
+        "sysctl -w",
+        "busy_read=50",
+        "napi_defer_hard_irqs",
+        "gro_flush_timeout",
+        "Fix:",
+        "dpdk-ena",
+        "Azure",
+    ] {
+        assert!(!m4.message.contains(absent), "{absent:?} in {}", m4.message);
     }
+    assert!(
+        m4.evidence.contains("Measured, but no setting recommended"),
+        "{}",
+        m4.evidence
+    );
+
     x86.remove("/proc/sys/net/core/busy_read");
-    assert!(m4_busy_polling(&x86.host()).is_unknown());
+    let unknown = m4_busy_polling(&x86.host());
+    assert!(
+        unknown.is_unknown() && unknown.severity == Severity::Info,
+        "{unknown:?}"
+    );
 
     let f = Fixture::x86("m4-dpdk");
     let mut inputs = socket(tuned());
@@ -1130,11 +1148,11 @@ fn require_refuses_on_one_warning_and_never_on_information_or_unknown() {
         findings: vec![
             m2_term_buffers(false),
             m4_busy_polling(&arm.host()), // information
-            m4_busy_polling(&x86.host()), // unknown, at warning severity
+            m4_busy_polling(&x86.host()), // unknown
         ],
     };
     assert_eq!(quiet.findings[1].severity, Severity::Info);
-    assert!(quiet.findings[2].is_unknown() && quiet.findings[2].severity == Severity::Warn);
+    assert!(quiet.findings[2].is_unknown());
     assert!(quiet.warnings().is_empty(), "{:?}", quiet.findings);
     assert_eq!(quiet.require(), Ok(()));
 
