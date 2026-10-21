@@ -417,6 +417,60 @@ fn the_kernels_state_is_judged_by_the_start_up_rules() -> R {
     Ok(())
 }
 
+/// The kernel's `maxerror` grows by 500 µs a second between a daemon's
+/// updates, so a bound kept by ntpd or a silent chronyd crosses the limit
+/// back and forth. Under a verdict that warns already (NTP-disciplined) that
+/// changes no finding, so the watch reports nothing while the bound follows;
+/// under one that does not (unknown), the wide-bound warning comes and goes.
+#[test]
+fn a_bound_crossing_the_limit_reports_only_where_it_is_its_own_warning() -> R {
+    const fn kernel(maxerror_us: i64) -> KernelSync {
+        KernelSync {
+            state: 0,
+            status: 0x0001,
+            maxerror_us,
+            esterror_us: 0,
+            offset_ns: 0,
+            freq_ppm: 0.0,
+        }
+    }
+    let f = host_tree("watch-maxerror")?;
+    let (mut watch, _) = ClockWatch::open(&f.host(), &probe(None));
+    let found = watch.update(ClockSample {
+        kernel: Some(kernel(800)),
+        ..watch.last()
+    });
+    assert_eq!(watch.verdict(), SyncVerdict::NtpDisciplined);
+    assert!(found.iter().any(Finding::is_warning), "{found:?}");
+    for maxerror_us in [20_800_u32, 900, 32_000, 600] {
+        let found = watch.update(ClockSample {
+            kernel: Some(kernel(i64::from(maxerror_us))),
+            ..watch.last()
+        });
+        assert_eq!(found, [], "maxerror {maxerror_us} µs");
+        assert_eq!(
+            watch.bound().map(|b| (b.source, b.ns)),
+            Some((BoundSource::KernelMaxerror, u64::from(maxerror_us) * 1_000))
+        );
+    }
+    // a PTP hardware clock present: chronyd silent is unknown, not a warning
+    let f = host_tree("watch-maxerror-phc")?;
+    f.file("/sys/class/ptp/ptp0/clock_name", "ena-ptp-00\n")?;
+    let (mut watch, _) = ClockWatch::open(&f.host(), &probe(None));
+    let mut wide = Vec::new();
+    for maxerror_us in [800, 20_800, 900] {
+        let found = watch.update(ClockSample {
+            kernel: Some(kernel(maxerror_us)),
+            ..watch.last()
+        });
+        assert_eq!(watch.verdict(), SyncVerdict::Unknown);
+        assert!(found.first().is_some_and(Finding::is_unknown), "{found:?}");
+        wide.push(found.iter().any(Finding::is_warning));
+    }
+    assert_eq!(wide, [false, true, false]);
+    Ok(())
+}
+
 /// On the running host (`adjtimex` and the coarse clock too, on Linux;
 /// nothing is read elsewhere) a check allocates only when it reports, and
 /// each returns at once.

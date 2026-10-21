@@ -167,7 +167,7 @@ fn main() {
     }
     // From housekeeping, every few seconds; never inside the hot path:
     for f in watch.check() {
-        eprintln!("{f}"); // only what changed: a lost source, a clock source switch
+        eprintln!("{f}"); // none unless T11's judgement or the clock source changed
     }
     let _ = (watch.verdict(), watch.bound(), watch.leap_pending());
 }

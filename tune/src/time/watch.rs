@@ -11,7 +11,7 @@ use super::kernel::KernelSync;
 use super::probe::{TimeSyncProbe, clockbound_at, coarse_now, sequence};
 use super::sync::{
     Bound, BoundSource, ChronyAnswer, ClockBoundAnswer, Observed, SyncVerdict, TimeSync, Why,
-    bound, judge, leap_pending, unsettled,
+    bound, bound_warns, judge, leap_pending, unsettled,
 };
 use crate::finding::Finding;
 use crate::host::{Host, ReadError};
@@ -35,11 +35,15 @@ pub struct ClockSample {
 
 /// What a change is judged by: the verdict's rule and every input to a
 /// T11 or T12 finding, as plain values (numbers that only drift, like a
-/// bound's size, count only as over or under the limit).
+/// bound's size, count only as whether they make a warning of their own:
+/// the kernel's `maxerror` grows 500 µs a second between a daemon's
+/// updates, so under a verdict that warns already its crossing the limit
+/// changes nothing).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Key {
     why: Why,
     chrony_ref: Option<u32>,
+    /// The bound's source, and whether it is its own warning.
     bound: Option<(BoundSource, bool)>,
     unsettled: bool,
     leap: Option<&'static str>,
@@ -250,7 +254,9 @@ impl ClockWatch {
                 ChronyAnswer::Tracking(t) => Some(t.ref_id),
                 _ => None,
             },
-            bound: self.bound.map(|b| (b.source, b.ns > limit)),
+            bound: self
+                .bound
+                .map(|b| (b.source, bound_warns(self.verdict, b, limit))),
             unsettled: unsettled(o, limit).is_some(),
             leap: leap_pending(o),
         }

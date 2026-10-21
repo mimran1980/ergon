@@ -304,8 +304,9 @@ impl TimeSync {
         if self.verdict != SyncVerdict::Unsynchronised {
             if let Some(u) = unsettled(o, limits.warn_over_ns) {
                 out.push(u.finding());
-            } else if let Some(b) = self.bound.filter(|b| b.ns > limits.warn_over_ns)
-                && self.verdict != SyncVerdict::NtpDisciplined
+            } else if let Some(b) = self
+                .bound
+                .filter(|b| bound_warns(self.verdict, *b, limits.warn_over_ns))
             {
                 out.push(Finding::found(
                     CheckId::T11,
@@ -825,6 +826,14 @@ pub fn bound(o: &Observed, verdict: SyncVerdict) -> Option<Bound> {
         }
         _ => None,
     }
+}
+
+/// Whether `bound` is a T11 warning of its own under `verdict`: wider than
+/// `limit_ns` where the verdict's finding does not warn already (PTP-grade,
+/// unknown; an NTP-disciplined warning names its bound, and an
+/// unsynchronised clock has none). Allocates nothing.
+pub const fn bound_warns(verdict: SyncVerdict, bound: Bound, limit_ns: u64) -> bool {
+    bound.ns > limit_ns && matches!(verdict, SyncVerdict::PtpGrade | SyncVerdict::Unknown)
 }
 
 /// The clock still being corrected by more than the limit, or moved by
