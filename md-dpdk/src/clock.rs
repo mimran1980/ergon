@@ -1,15 +1,20 @@
-//! The transport's clock: the CPU counter at the rate DPDK gives it, or
-//! `CLOCK_MONOTONIC`.
+//! The transport's clock: the CPU counter at the rate DPDK gives it (or the
+//! one measured at start, where DPDK's is off), or `CLOCK_MONOTONIC`.
 //!
 //! The native transport reads the time on every send and poll (ARP
 //! freshness, the transmit pacer, receive-poll gaps). Its hot path reads the
 //! counter inline, `rdtsc` on `x86_64` and `mrs cntvct_el0` on `aarch64`, and
-//! converts it with a 32.32 factor made from DPDK's rate (`rte_get_tsc_hz()`)
-//! when the transport starts:
+//! converts it with a 32.32 factor made when the transport starts:
 //!
 //! ```text
 //! ns = base_ns + (int64_t)(((__int128)(int64_t)(ticks - base_ticks) * (int64_t)mult) >> 32)
 //! ```
+//!
+//! The factor's rate is DPDK's (`rte_get_tsc_hz()`) unless it is more than
+//! 100 ppm off the counter's rate measured against `CLOCK_MONOTONIC_RAW` at
+//! start (25 ms, before the transport's threads start); then it is the
+//! measurement ([`RateSource`]). DPDK 23.11 rounds its own x86 measurement to
+//! 10 MHz, up to 0.2% off.
 //!
 //! The fallback is `CLOCK_MONOTONIC` through the same formula (a factor of
 //! one). Either way the time is nanoseconds since boot, for intervals only:
@@ -75,14 +80,32 @@ impl ClockChoice {
 pub enum TransportClock {
     /// The CPU counter: the TSC on `x86_64`, `CNTVCT_EL0` on `aarch64`.
     Counter {
-        /// Its rate, ticks a second, as DPDK gave it (`rte_get_tsc_hz()`).
+        /// The rate the transport converts it with, ticks a second:
+        /// `eal_hz` or `measured_hz`, as `rate` says.
         hz: u64,
+        /// Which rate `hz` is.
+        rate: RateSource,
+        /// DPDK's rate for it (`rte_get_tsc_hz()`).
+        eal_hz: u64,
+        /// Its rate measured against `CLOCK_MONOTONIC_RAW` when the
+        /// transport started.
+        measured_hz: u64,
     },
     /// `CLOCK_MONOTONIC`.
     Monotonic {
         /// Why not the counter.
         reason: MonotonicReason,
     },
+}
+
+/// Which rate the transport converts the counter with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RateSource {
+    /// DPDK's (`rte_get_tsc_hz()`): the start-up measurement agrees with it
+    /// within 100 ppm.
+    Eal,
+    /// The start-up measurement: DPDK's rate is more than 100 ppm off it.
+    Measured,
 }
 
 /// Why the transport reads `CLOCK_MONOTONIC` and not the counter.
@@ -138,7 +161,21 @@ impl fmt::Display for MonotonicReason {
 impl fmt::Display for TransportClock {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Counter { hz } => write!(f, "the CPU counter at {hz} Hz"),
+            Self::Counter {
+                hz,
+                rate: RateSource::Eal,
+                measured_hz,
+                ..
+            } => write!(f, "the CPU counter at {hz} Hz, DPDK's rate (measured {measured_hz} Hz)"),
+            Self::Counter {
+                hz,
+                rate: RateSource::Measured,
+                eal_hz,
+                ..
+            } => write!(
+                f,
+                "the CPU counter at {hz} Hz, as measured (DPDK's {eal_hz} Hz is more than 100 ppm off)"
+            ),
             Self::Monotonic { reason } => write!(f, "CLOCK_MONOTONIC: {reason}"),
         }
     }

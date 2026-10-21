@@ -48,9 +48,10 @@ void rusteron_dpdk_test_set_eal_mode(int mode)
 }
 
 /* Transport clock: started at create (rusteron_dpdk_clock_start) from the
- * rate DPDK's EAL gives the counter. The hot path (rusteron_dpdk_clock_now)
- * reads the counter and converts it inline; CLOCK_MONOTONIC and a test pin go
- * through the slow path. Until a transport starts it the clock is
+ * rate DPDK's EAL gives the counter, checked against a measurement of the
+ * counter at start (rusteron_dpdk_clock_choose_rate). The hot path
+ * (rusteron_dpdk_clock_now) reads the counter and converts it inline;
+ * CLOCK_MONOTONIC and a test pin go through the slow path. Until a transport starts it the clock is
  * CLOCK_MONOTONIC with a factor of one: CLOCK_MONOTONIC as it reads. */
 #define RUSTERON_DPDK_CLOCK_BOOT \
     { .mode = RUSTERON_DPDK_CLOCK_MONOTONIC, .base_ticks = 0, .base_ns = 0, .mult = 1ULL << 32 }
@@ -60,6 +61,8 @@ rusteron_dpdk_clock_t rusteron_dpdk_clock = RUSTERON_DPDK_CLOCK_BOOT;
 static int rusteron_dpdk_clock_started_mode = RUSTERON_DPDK_CLOCK_MONOTONIC;
 static rusteron_dpdk_clock_report_t rusteron_dpdk_clock_found = { .why = RUSTERON_DPDK_CLOCK_WHY_NOT_STARTED };
 static uint64_t rusteron_dpdk_test_clock_ns_value = 0;
+/* The rate a test has the clock start take as measured (0: measure). */
+static uint64_t rusteron_dpdk_test_measured_counter_hz = 0;
 /* How far each of this thread's reads moves a pinned clock on: the test's
  * own, so the local-I/O thread's reads never move it under the test. */
 static _Thread_local uint64_t rusteron_dpdk_test_clock_step_ns = 0;
@@ -72,11 +75,16 @@ static int rusteron_dpdk_test_thread_cpu_pinned = 0;
  * path never reads it. */
 static int rusteron_dpdk_gap_attrib = 0;
 
-static uint64_t rusteron_dpdk_monotonic_ns(void)
+static uint64_t rusteron_dpdk_clock_read_ns(clockid_t id)
 {
     struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
+    clock_gettime(id, &ts);
     return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+}
+
+static uint64_t rusteron_dpdk_monotonic_ns(void)
+{
+    return rusteron_dpdk_clock_read_ns(CLOCK_MONOTONIC);
 }
 
 int rusteron_dpdk_clock_rule(int source, const rusteron_dpdk_counter_rate_t *rate)
@@ -96,16 +104,16 @@ int rusteron_dpdk_clock_rule(int source, const rusteron_dpdk_counter_rate_t *rat
     return RUSTERON_DPDK_CLOCK_WHY_COUNTER;
 }
 
-/* The counter and CLOCK_MONOTONIC at one instant: the tightest of a few
+/* The counter and clock `id` at one instant: the tightest of `reads`
  * bracketed reads, the counter against the bracket's midpoint. */
-static void rusteron_dpdk_clock_anchor(uint64_t *ticks, uint64_t *ns)
+static void rusteron_dpdk_clock_bracket(clockid_t id, int reads, uint64_t *ticks, uint64_t *ns)
 {
     uint64_t best = UINT64_MAX;
-    for (int i = 0; i < 8; i++)
+    for (int i = 0; i < reads; i++)
     {
-        const uint64_t before = rusteron_dpdk_monotonic_ns();
+        const uint64_t before = rusteron_dpdk_clock_read_ns(id);
         const uint64_t t = rusteron_dpdk_counter();
-        const uint64_t after = rusteron_dpdk_monotonic_ns();
+        const uint64_t after = rusteron_dpdk_clock_read_ns(id);
         if (after - before < best)
         {
             best = after - before;
@@ -113,6 +121,54 @@ static void rusteron_dpdk_clock_anchor(uint64_t *ticks, uint64_t *ns)
             *ns = before + (after - before) / 2;
         }
     }
+}
+
+int rusteron_dpdk_clock_choose_rate(uint64_t eal_hz, uint64_t measured_hz, uint64_t *hz)
+{
+    *hz = eal_hz;
+    if (measured_hz < RUSTERON_DPDK_CLOCK_MIN_HZ || measured_hz > RUSTERON_DPDK_CLOCK_MAX_HZ)
+    {
+        return RUSTERON_DPDK_CLOCK_RATE_EAL;
+    }
+    const uint64_t off = eal_hz > measured_hz ? eal_hz - measured_hz : measured_hz - eal_hz;
+    /* off / measured <= tolerance / 1e6, in integers: both sides stay below
+     * 2^64 over the range above. */
+    if (off <= measured_hz && off * 1000000u <= measured_hz * RUSTERON_DPDK_CLOCK_RATE_TOLERANCE_PPM)
+    {
+        return RUSTERON_DPDK_CLOCK_RATE_EAL;
+    }
+    *hz = measured_hz;
+    return RUSTERON_DPDK_CLOCK_RATE_MEASURED;
+}
+
+/* The counter's rate against CLOCK_MONOTONIC_RAW, which no NTP slew bends:
+ * its ticks over RUSTERON_DPDK_CLOCK_MEASURE_NS, each end the tightest of 16
+ * bracketed reads; 0 when no time passed. Spins for that long, so only the
+ * clock start calls it, before the transport's threads and loop exist. */
+static uint64_t rusteron_dpdk_clock_measure_hz(void)
+{
+    if (0 != rusteron_dpdk_test_measured_counter_hz)
+    {
+        return rusteron_dpdk_test_measured_counter_hz;
+    }
+    uint64_t t0 = 0, n0 = 0, t1 = 0, n1 = 0;
+    rusteron_dpdk_clock_bracket(CLOCK_MONOTONIC_RAW, 16, &t0, &n0);
+    while (rusteron_dpdk_clock_read_ns(CLOCK_MONOTONIC_RAW) - n0 < RUSTERON_DPDK_CLOCK_MEASURE_NS)
+    {
+        rusteron_dpdk_spin_hint();
+    }
+    rusteron_dpdk_clock_bracket(CLOCK_MONOTONIC_RAW, 16, &t1, &n1);
+    const uint64_t ns = n1 - n0;
+    if (0 == ns || n1 < n0)
+    {
+        return 0;
+    }
+    return (uint64_t)(((unsigned __int128)(t1 - t0) * 1000000000u + ns / 2) / ns);
+}
+
+void rusteron_dpdk_test_set_measured_counter_hz(uint64_t hz)
+{
+    rusteron_dpdk_test_measured_counter_hz = hz;
 }
 
 void rusteron_dpdk_clock_start(int choice)
@@ -124,13 +180,17 @@ void rusteron_dpdk_clock_start(int choice)
         : rusteron_dpdk_clock_rule(RUSTERON_DPDK_CLOCK_COUNTER, &rate);
     rusteron_dpdk_clock_t clock = RUSTERON_DPDK_CLOCK_BOOT;
     uint64_t hz = 0;
+    uint64_t measured_hz = 0;
+    int rate_from = RUSTERON_DPDK_CLOCK_RATE_EAL;
     if (RUSTERON_DPDK_CLOCK_WHY_COUNTER == why)
     {
-        hz = rate.eal_hz;
+        measured_hz = rusteron_dpdk_clock_measure_hz();
+        rate_from = rusteron_dpdk_clock_choose_rate(rate.eal_hz, measured_hz, &hz);
         /* ns per tick in 32.32, to the nearest: in (0, 2^63) over the rule's
-         * range. Anchored on CLOCK_MONOTONIC, so the time stays ns since boot. */
+         * range, which both rates choose_rate takes are in. Anchored on
+         * CLOCK_MONOTONIC, so the time stays ns since boot. */
         clock.mult = (uint64_t)((((unsigned __int128)1000000000u << 32) + hz / 2) / hz);
-        rusteron_dpdk_clock_anchor(&clock.base_ticks, &clock.base_ns);
+        rusteron_dpdk_clock_bracket(CLOCK_MONOTONIC, 8, &clock.base_ticks, &clock.base_ns);
         clock.mode = RUSTERON_DPDK_CLOCK_COUNTER;
     }
     rusteron_dpdk_clock.base_ticks = clock.base_ticks;
@@ -140,9 +200,11 @@ void rusteron_dpdk_clock_start(int choice)
         .hz = hz,
         .eal_hz = rate.eal_hz,
         .cntfrq = rate.cntfrq,
+        .measured_hz = measured_hz,
         .source = clock.mode,
         .why = why,
         .invariant = rate.invariant,
+        .rate = rate_from,
     };
     rusteron_dpdk_clock_started_mode = clock.mode;
     if (RUSTERON_DPDK_CLOCK_PINNED != rusteron_dpdk_clock.mode)
@@ -330,6 +392,7 @@ static void rusteron_dpdk_test_clock_reset(void)
     rusteron_dpdk_clock_started_mode = RUSTERON_DPDK_CLOCK_MONOTONIC;
     rusteron_dpdk_clock_found = (rusteron_dpdk_clock_report_t){ .why = RUSTERON_DPDK_CLOCK_WHY_NOT_STARTED };
     rusteron_dpdk_test_clock_ns_value = 0;
+    rusteron_dpdk_test_measured_counter_hz = 0;
     rusteron_dpdk_test_clock_step_ns = 0;
     rusteron_dpdk_test_realtime_ns_value = 0;
     rusteron_dpdk_test_realtime_step_ns = 0;
@@ -2135,7 +2198,8 @@ int rusteron_dpdk_runtime_init(rusteron_dpdk_transport_t *native)
      * started once the EAL is up, so rte_get_tsc_hz() holds its rate, and
      * only once the EAL guard has passed, so a second transport refused while
      * one runs never touches the clock its agents read. Before the ports and
-     * the threads below, which read it. */
+     * the threads below, which read it; its start-up measurement of the
+     * counter (25 ms) spins here, before any of them run. */
     rusteron_dpdk_clock_start(native->config.clock);
 
     if (rusteron_dpdk_init_port(native, &native->sender) < 0)

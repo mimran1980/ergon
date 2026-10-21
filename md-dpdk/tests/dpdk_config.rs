@@ -888,22 +888,30 @@ fn install_succeeds_on_configured_context() {
 /// The install hands the native transport the clock `RUSTERON_DPDK_CLOCK`
 /// chooses and reports the clock it started: unset, `counter` or `tsc` is
 /// the counter at the EAL's rate (unless this host's kernel clock source
-/// rules it out, as `kernel_refuses_counter` says), `monotonic` is
-/// `CLOCK_MONOTONIC`, and with no rate from the EAL the counter falls back,
-/// saying why. Counter type 80's source agrees. Any other value refuses
-/// before any native work.
+/// rules it out, as `kernel_refuses_counter` says), or at the rate measured
+/// at start where the EAL's is 0.2% off; `monotonic` is `CLOCK_MONOTONIC`,
+/// and with no rate from the EAL the counter falls back, saying why. Counter
+/// type 80's source agrees. Any other value refuses before any native work.
 #[cfg(feature = "dpdk")]
 #[serial]
 #[test]
 fn install_reports_the_clock_the_native_transport_reads() {
-    use ergon_md_dpdk::clock::{CLOCKSOURCE_PATH, MonotonicReason, TransportClock, kernel_refuses_counter};
+    use ergon_md_dpdk::clock::{CLOCKSOURCE_PATH, MonotonicReason, RateSource, TransportClock, kernel_refuses_counter};
     let hz = common::measured_counter_hz();
+    let off = hz + hz / 500;
     let kernel = std::fs::read_to_string(CLOCKSOURCE_PATH)
         .ok()
         .and_then(|source| kernel_refuses_counter(&source));
-    let counter = |hz: u64| match &kernel {
+    // The counter, its start-up measurement read as this test's own (the
+    // two agree to 100 ppm, checked below).
+    let counter = |eal_hz: u64, rate: RateSource| match &kernel {
         Some(reason) => TransportClock::Monotonic { reason: reason.clone() },
-        None => TransportClock::Counter { hz },
+        None => TransportClock::Counter {
+            hz: if rate == RateSource::Eal { eal_hz } else { hz },
+            rate,
+            eal_hz,
+            measured_hz: hz,
+        },
     };
     let no_rate = match &kernel {
         Some(reason) => TransportClock::Monotonic { reason: reason.clone() },
@@ -915,10 +923,11 @@ fn install_reports_the_clock_the_native_transport_reads() {
         reason: MonotonicReason::Chosen,
     };
     for (value, rate, expected) in [
-        (None, hz, counter(hz)),
-        (Some("counter"), hz, counter(hz)),
-        (Some("tsc"), hz, counter(hz)),
-        (Some(""), hz, counter(hz)),
+        (None, hz, counter(hz, RateSource::Eal)),
+        (Some("counter"), hz, counter(hz, RateSource::Eal)),
+        (Some("tsc"), hz, counter(hz, RateSource::Eal)),
+        (Some(""), hz, counter(hz, RateSource::Eal)),
+        (None, off, counter(off, RateSource::Measured)),
         (Some("monotonic"), hz, chosen.clone()),
         (None, 0, no_rate.clone()),
         (Some("monotonic"), 0, chosen.clone()),
@@ -933,7 +942,28 @@ fn install_reports_the_clock_the_native_transport_reads() {
         let guard = DpdkTransport::install(&configured_context(), &canonical());
         remove_var("RUSTERON_DPDK_CLOCK");
         let guard = guard.unwrap_or_else(|e| panic!("{value:?} at {rate} Hz: {e}"));
-        assert_eq!(guard.clock(), &expected, "{value:?} at {rate} Hz");
+        let clock = match guard.clock().clone() {
+            TransportClock::Counter {
+                hz: used,
+                rate,
+                eal_hz,
+                measured_hz,
+            } => {
+                assert!(
+                    measured_hz.abs_diff(hz) * 10_000 <= hz,
+                    "{value:?} at {rate:?}: measured {measured_hz} Hz at start, {hz} Hz here"
+                );
+                let used = if used == measured_hz { hz } else { used };
+                TransportClock::Counter {
+                    hz: used,
+                    rate,
+                    eal_hz,
+                    measured_hz: hz,
+                }
+            }
+            other => other,
+        };
+        assert_eq!(clock, expected, "{value:?} at {rate} Hz: {}", guard.clock());
         let source = match guard.clock() {
             TransportClock::Counter { .. } => common::COUNTER_SOURCE,
             _ => common::SOURCE_MONOTONIC,

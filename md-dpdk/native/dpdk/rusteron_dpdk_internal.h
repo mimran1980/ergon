@@ -707,15 +707,16 @@ void rusteron_dpdk_transport_test_reset(void);
 /* Monotonic nanosecond clock (runtime.c), started at create
  * (rusteron_dpdk_clock_start, with the config's choice): the CPU counter (the
  * TSC on x86_64, the generic timer's virtual counter CNTVCT_EL0 on aarch64) at
- * the rate DPDK's EAL measured or read (rte_get_tsc_hz), converted with a
- * 32.32 factor; or CLOCK_MONOTONIC through the same formula with a factor of
- * one. The counter is used only where the EAL's rate can be trusted
- * (rusteron_dpdk_clock_rule); otherwise, and until a transport starts it, the
- * clock is CLOCK_MONOTONIC. Either way, nanoseconds since boot. Tests pin it
- * with the setter so ARP rate limiting, expiry and the counter sample gate are
- * deterministic; reset clears the pin and returns the clock to its boot
- * default. The source values are what counter type 80 reports, so they never
- * change: 0 CLOCK_MONOTONIC, 1 the TSC, 2 CNTVCT_EL0. */
+ * the rate DPDK's EAL measured or read (rte_get_tsc_hz), or at the clock
+ * start's own measurement where the EAL's is more than 100 ppm off it,
+ * converted with a 32.32 factor; or CLOCK_MONOTONIC through the same formula
+ * with a factor of one. The counter is used only where the EAL's rate can be
+ * trusted (rusteron_dpdk_clock_rule); otherwise, and until a transport starts
+ * it, the clock is CLOCK_MONOTONIC. Either way, nanoseconds since boot. Tests
+ * pin it with the setter so ARP rate limiting, expiry and the counter sample
+ * gate are deterministic; reset clears the pin and returns the clock to its
+ * boot default. The source values are what counter type 80 reports, so they
+ * never change: 0 CLOCK_MONOTONIC, 1 the TSC, 2 CNTVCT_EL0. */
 #define RUSTERON_DPDK_CLOCK_MONOTONIC 0
 #define RUSTERON_DPDK_CLOCK_TSC 1
 #define RUSTERON_DPDK_CLOCK_CNTVCT 2
@@ -801,12 +802,28 @@ void rusteron_dpdk_eal_counter_rate(rusteron_dpdk_counter_rate_t *rate);
  * invariant; _NOT_CNTFRQ: an EAL rate that is not CNTFRQ_EL0, a DPDK built to
  * time with the PMU's cycle counter, RTE_ARM_EAL_RDTSC_USE_PMU). Pure. */
 int rusteron_dpdk_clock_rule(int source, const rusteron_dpdk_counter_rate_t *rate);
+/* How far, in parts per million of the measurement, DPDK's rate may be from
+ * the one the clock start measures before the measurement replaces it. */
+#define RUSTERON_DPDK_CLOCK_RATE_TOLERANCE_PPM 100u
+/* The rate the counter is converted at, into *hz: DPDK's (`eal_hz`, in the
+ * rule's range) where the start-up measurement (`measured_hz`) agrees with it
+ * within the tolerance above, or is no rate the transport converts (0: none);
+ * else the measurement. RUSTERON_DPDK_CLOCK_RATE_EAL or _MEASURED. Pure. */
+int rusteron_dpdk_clock_choose_rate(uint64_t eal_hz, uint64_t measured_hz, uint64_t *hz);
+/* How long the clock start measures the counter against CLOCK_MONOTONIC_RAW:
+ * each end the tightest of 16 bracketed reads, so a bracket of 100 ns is
+ * 4 ppm of it. */
+#define RUSTERON_DPDK_CLOCK_MEASURE_NS 25000000ULL
 /* Start the transport's clock for the process with the config's `choice`
- * (RUSTERON_DPDK_CLOCK_CHOICE_*): the counter at the EAL's rate where the
- * rule allows it, anchored on CLOCK_MONOTONIC, else CLOCK_MONOTONIC with a
- * factor of one. A test pin stays in force. Create calls it once the EAL is
- * up. */
+ * (RUSTERON_DPDK_CLOCK_CHOICE_*): where the rule allows the counter, measure
+ * its rate (above), choose the rate (rusteron_dpdk_clock_choose_rate) and
+ * anchor the counter on CLOCK_MONOTONIC; else CLOCK_MONOTONIC with a factor of
+ * one. A test pin stays in force. Create calls it once the EAL is up, before
+ * the ports and threads. */
 void rusteron_dpdk_clock_start(int choice);
+/* Tests: the rate the clock start takes as measured, in place of measuring
+ * (0: measure); the reset clears it. */
+void rusteron_dpdk_test_set_measured_counter_hz(uint64_t hz);
 /* RUSTERON_DPDK_CLOCK_COUNTER or RUSTERON_DPDK_CLOCK_MONOTONIC: the started
  * clock's (a pin aside). */
 int rusteron_dpdk_clock_source(void);

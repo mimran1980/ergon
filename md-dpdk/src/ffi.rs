@@ -360,10 +360,11 @@ struct rusteron_dpdk_clock_report_t {
     hz: u64,
     eal_hz: u64,
     cntfrq: u64,
+    measured_hz: u64,
     source: i32,
     why: i32,
     invariant: i32,
-    reserved: i32,
+    rate: i32,
 }
 
 // The C layout (asserted in native/dpdk/rusteron_dpdk_transport.c too).
@@ -374,22 +375,42 @@ const _: () = {
     assert!(offset_of!(R, hz) == 0);
     assert!(offset_of!(R, eal_hz) == 8);
     assert!(offset_of!(R, cntfrq) == 16);
-    assert!(offset_of!(R, source) == 24);
-    assert!(offset_of!(R, why) == 28);
-    assert!(offset_of!(R, invariant) == 32);
-    assert!(offset_of!(R, reserved) == 36);
-    assert!(size_of::<R>() == 40);
+    assert!(offset_of!(R, measured_hz) == 24);
+    assert!(offset_of!(R, source) == 32);
+    assert!(offset_of!(R, why) == 36);
+    assert!(offset_of!(R, invariant) == 40);
+    assert!(offset_of!(R, rate) == 44);
+    assert!(size_of::<R>() == 48);
 };
 
 /// The clock the native transport started, from its report.
 #[cfg(feature = "dpdk")]
 fn native_clock() -> Result<TransportClock, DpdkError> {
-    use crate::clock::MonotonicReason;
+    use crate::clock::{MonotonicReason, RateSource};
     let mut report = rusteron_dpdk_clock_report_t::default();
     // SAFETY: the C side fills the struct it is given and keeps no pointer.
     unsafe { rusteron_dpdk_clock_report(&raw mut report) };
+    let nonsense = |report: &rusteron_dpdk_clock_report_t| {
+        DpdkError::Native(format!(
+            "the transport's clock report makes no sense (source {}, hz {}, eal_hz {}, measured_hz {}, rate {}, why {})",
+            report.source, report.hz, report.eal_hz, report.measured_hz, report.rate, report.why
+        ))
+    };
     let reason = match report.why {
-        0 if report.source != 0 && report.hz != 0 => return Ok(TransportClock::Counter { hz: report.hz }),
+        0 if report.source != 0 && report.hz != 0 => {
+            // RUSTERON_DPDK_CLOCK_RATE_*: which of the two rates hz is.
+            let rate = match report.rate {
+                0 if report.hz == report.eal_hz => RateSource::Eal,
+                1 if report.hz == report.measured_hz => RateSource::Measured,
+                _ => return Err(nonsense(&report)),
+            };
+            return Ok(TransportClock::Counter {
+                hz: report.hz,
+                rate,
+                eal_hz: report.eal_hz,
+                measured_hz: report.measured_hz,
+            });
+        }
         1 => MonotonicReason::Chosen,
         2 => MonotonicReason::NoCounterRate { eal_hz: report.eal_hz },
         3 => MonotonicReason::TscNotInvariant,
@@ -397,12 +418,7 @@ fn native_clock() -> Result<TransportClock, DpdkError> {
             eal_hz: report.eal_hz,
             cntfrq: report.cntfrq,
         },
-        why => {
-            return Err(DpdkError::Native(format!(
-                "the transport's clock report makes no sense (source {}, hz {}, why {why})",
-                report.source, report.hz
-            )));
-        }
+        _ => return Err(nonsense(&report)),
     };
     Ok(TransportClock::Monotonic { reason })
 }

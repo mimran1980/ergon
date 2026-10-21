@@ -142,11 +142,12 @@ _Static_assert(sizeof(rusteron_dpdk_config_t) == 4328, "config size changed: upd
 RUSTERON_DPDK_CLOCK_REPORT_AT(hz, 0);
 RUSTERON_DPDK_CLOCK_REPORT_AT(eal_hz, 8);
 RUSTERON_DPDK_CLOCK_REPORT_AT(cntfrq, 16);
-RUSTERON_DPDK_CLOCK_REPORT_AT(source, 24);
-RUSTERON_DPDK_CLOCK_REPORT_AT(why, 28);
-RUSTERON_DPDK_CLOCK_REPORT_AT(invariant, 32);
-RUSTERON_DPDK_CLOCK_REPORT_AT(reserved, 36);
-_Static_assert(sizeof(rusteron_dpdk_clock_report_t) == 40, "clock report size changed: update src/ffi.rs");
+RUSTERON_DPDK_CLOCK_REPORT_AT(measured_hz, 24);
+RUSTERON_DPDK_CLOCK_REPORT_AT(source, 32);
+RUSTERON_DPDK_CLOCK_REPORT_AT(why, 36);
+RUSTERON_DPDK_CLOCK_REPORT_AT(invariant, 40);
+RUSTERON_DPDK_CLOCK_REPORT_AT(rate, 44);
+_Static_assert(sizeof(rusteron_dpdk_clock_report_t) == 48, "clock report size changed: update src/ffi.rs");
 
 /* The threading modes the runtime keys housekeeping and pacing on are Aeron's. */
 _Static_assert(RUSTERON_DPDK_THREADING_DEDICATED == (int)AERON_THREADING_MODE_DEDICATED, "Aeron's DEDICATED moved");

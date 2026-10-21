@@ -390,7 +390,7 @@ read `CLOCK_REALTIME`.
 
 | `RUSTERON_DPDK_CLOCK` | The transport reads |
 |---|---|
-| `counter` (default; `tsc` too) | The CPU counter inline (TSC on x86_64, `CNTVCT_EL0` on aarch64), scaled by DPDK's rate for it (`rte_get_tsc_hz()`), when all of the checks below pass; else `CLOCK_MONOTONIC` |
+| `counter` (default; `tsc` too) | The CPU counter inline (TSC on x86_64, `CNTVCT_EL0` on aarch64), scaled by its rate (below), when all of the checks below pass; else `CLOCK_MONOTONIC` |
 | `monotonic` | `CLOCK_MONOTONIC` |
 
 The counter is used only when:
@@ -403,15 +403,29 @@ The counter is used only when:
 - aarch64: DPDK's rate is `CNTFRQ_EL0` (a DPDK built to time with the PMU
   reports another).
 
-The rate is DPDK's and nothing re-measures it. On aarch64 it is
-`CNTFRQ_EL0`'s, or the counter is not used. On x86_64 it is the CPU's stated
-rate or one 100 ms measurement DPDK makes at start, depending on the DPDK
-version and the CPU. DPDK rounds a measurement to the nearest 10 MHz on
-23.11 (up to 0.2% off at 2.5 GHz) and to the nearest 100 kHz from 24.11.
+**The rate.** When the transport starts, before its threads, it measures
+the counter against `CLOCK_MONOTONIC_RAW` for 25 ms (each end the tightest of
+16 bracketed reads), then converts at:
+
+| DPDK's rate (`rte_get_tsc_hz()`) against the measurement | Rate used |
+|---|---|
+| within 100 ppm | DPDK's |
+| more than 100 ppm off | the measurement |
+
+DPDK's rate is not always exact. On x86_64 it is the CPU's stated rate or
+one 100 ms measurement DPDK makes at start, depending on the DPDK version and
+the CPU. DPDK rounds that measurement to the nearest 10 MHz on 23.11 (up to
+0.2% off at 2.5 GHz) and to the nearest 100 kHz from 24.11. On aarch64 it
+must be `CNTFRQ_EL0` (above), the generic timer's stated rate.
 
 **Which one ran:** each port's `clock` counter (type 80) reads 1 TSC,
 2 `CNTVCT_EL0`, 0 `CLOCK_MONOTONIC`. `DpdkTransport::clock()` returns a
-`TransportClock`: `Counter { hz }`, or `Monotonic { reason }`.
+`TransportClock`:
+
+| Variant | Fields |
+|---|---|
+| `Counter` | `hz` (the rate used), `rate` (`Eal` or `Measured`), `eal_hz`, `measured_hz` |
+| `Monotonic` | `reason` (`MonotonicReason`) |
 
 ## Receive timestamps
 

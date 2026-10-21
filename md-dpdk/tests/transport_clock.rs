@@ -5,6 +5,7 @@
 //! every platform. With the `dpdk` feature (Linux x86_64 or aarch64, against
 //! the DPDK-free fakes, whose EAL reports a rate a test sets: none after the
 //! reset) the native side is checked: the counter path at the EAL's rate, the
+//! start-up measurement that replaces a rate more than 100 ppm off, the
 //! conversion against the 32.32 arithmetic, the rule for a rate the CPU does
 //! not vouch for, the fallback, the configuration's check and the test pin.
 #![allow(
@@ -158,12 +159,13 @@ mod native {
         (base_ticks, base_ns, mult)
     }
 
-    /// The counter path: with the EAL giving the counter's own rate, the
-    /// transport reads the counter (counter type 80's source for this
-    /// architecture) at that rate, in nanoseconds since boot (its first read
-    /// within 50 us of `CLOCK_MONOTONIC`), advancing as `CLOCK_MONOTONIC`
-    /// does to 0.1% over 100 ms; a read is never more than a microsecond
-    /// behind the one before it on one thread (the reads are unordered).
+    /// The counter path: with the EAL giving the counter's own rate, which
+    /// the start-up measurement confirms to 100 ppm, the transport reads the
+    /// counter (counter type 80's source for this architecture) at that
+    /// rate, in nanoseconds since boot (its first read within 50 us of
+    /// `CLOCK_MONOTONIC`), advancing as `CLOCK_MONOTONIC` does to 0.1% over
+    /// 100 ms; a read is never more than a microsecond behind the one before
+    /// it on one thread (the reads are unordered).
     #[test]
     #[serial]
     fn the_counter_path_runs_at_the_eal_rate() {
@@ -175,9 +177,14 @@ mod native {
         let report = clock_report();
         assert_eq!(unsafe { rusteron_dpdk_clock_source() }, COUNTER_SOURCE, "{report:?}");
         assert_eq!(
-            (report.source, report.why, report.hz, report.eal_hz),
-            (COUNTER_SOURCE, WHY_COUNTER, hz, hz),
+            (report.source, report.why, report.rate, report.hz, report.eal_hz),
+            (COUNTER_SOURCE, WHY_COUNTER, RATE_EAL, hz, hz),
             "{report:?}"
+        );
+        assert!(
+            report.measured_hz.abs_diff(hz) * 10_000 <= hz,
+            "measured {} Hz at start, {hz} Hz here: {report:?}",
+            report.measured_hz
         );
 
         let (native, mono, width) = bracketed();
@@ -217,8 +224,11 @@ mod native {
     #[serial]
     fn the_counter_conversion_is_the_eal_rate() {
         for hz in [2_400_000_000u64, 1_000_000_000, 121_875_000, 24_000_000] {
-            let _env = start(&rusteron_dpdk_config_t::valid(), |env| env.set_counter_rate(hz));
-            assert_eq!(clock_report().hz, hz);
+            let _env = start(&rusteron_dpdk_config_t::valid(), |env| {
+                env.set_counter_rate(hz);
+                env.set_measured_counter_rate(hz);
+            });
+            assert_eq!((clock_report().hz, clock_report().rate), (hz, RATE_EAL));
             let (base_ticks, base_ns, mult) = params();
             assert_eq!(mult, mult_for(hz), "{hz} Hz");
             let ns_at = |t: u64| unsafe { rusteron_dpdk_test_clock_ns_at(t) };
@@ -277,6 +287,119 @@ mod native {
         }
     }
 
+    /// The rate the counter is converted at: DPDK's where the start-up
+    /// measurement agrees with it to 100 ppm of the measurement, in either
+    /// direction; else the measurement (DPDK 23.11 rounds its own x86
+    /// measurement to 10 MHz, 0.2% at 2.5 GHz). A measurement that is no rate
+    /// the transport converts (none, or outside 1 MHz..=20 GHz) keeps DPDK's.
+    #[test]
+    #[serial]
+    fn the_measured_rate_replaces_a_dpdk_rate_more_than_100_ppm_off() {
+        let choose = |eal_hz: u64, measured_hz: u64| {
+            let mut hz = 0;
+            let rate = unsafe { rusteron_dpdk_clock_choose_rate(eal_hz, measured_hz, &mut hz) };
+            (rate, hz)
+        };
+        let ghz = 1_000_000_000u64;
+        // DPDK 23.11's 10 MHz rounding: 2.5 GHz for a 2.495 GHz TSC, and back.
+        assert_eq!(choose(2_500_000_000, 2_495_000_000), (RATE_MEASURED, 2_495_000_000));
+        assert_eq!(choose(2_490_000_000, 2_495_000_000), (RATE_MEASURED, 2_495_000_000));
+        for measured in [ghz, 24_000_000, 2_495_000_000] {
+            let ppm = measured / 1_000_000; // 100 ppm is 100 * ppm Hz
+            for (eal, rate) in [
+                (measured, RATE_EAL),
+                (measured + 100 * ppm, RATE_EAL),
+                (measured - 100 * ppm, RATE_EAL),
+                (measured + 100 * ppm + 1, RATE_MEASURED),
+                (measured - 100 * ppm - 1, RATE_MEASURED),
+                (measured + measured / 500, RATE_MEASURED),
+            ] {
+                let hz = if rate == RATE_EAL { eal } else { measured };
+                assert_eq!(
+                    choose(eal, measured),
+                    (rate, hz),
+                    "DPDK {eal} Hz, measured {measured} Hz"
+                );
+            }
+        }
+        for measured in [0, 999_999, 20 * ghz + 1, u64::MAX] {
+            assert_eq!(choose(3 * ghz, measured), (RATE_EAL, 3 * ghz), "measured {measured} Hz");
+        }
+
+        // Through the start: the rate chosen is the one the clock converts at.
+        for (eal, measured, rate, hz) in [
+            (2_400_000_000, 2_405_000_000, RATE_MEASURED, 2_405_000_000),
+            (2_400_000_000, 2_400_100_000, RATE_EAL, 2_400_000_000),
+        ] {
+            let _env = start(&rusteron_dpdk_config_t::valid(), |env| {
+                env.set_counter_rate(eal);
+                env.set_measured_counter_rate(measured);
+            });
+            let report = clock_report();
+            assert_eq!(
+                (
+                    report.source,
+                    report.why,
+                    report.rate,
+                    report.hz,
+                    report.eal_hz,
+                    report.measured_hz
+                ),
+                (COUNTER_SOURCE, WHY_COUNTER, rate, hz, eal, measured),
+                "{report:?}"
+            );
+            assert_eq!(params().2, mult_for(hz), "DPDK {eal} Hz, measured {measured} Hz");
+        }
+    }
+
+    /// DPDK's rate deliberately 0.2% off the counter's, either way: the
+    /// transport measures the counter against `CLOCK_MONOTONIC_RAW` at start,
+    /// converts at its measurement and so tracks `CLOCK_MONOTONIC` to 0.01%
+    /// over 50 ms, reporting both rates. 50 ppm off, it keeps DPDK's.
+    #[test]
+    #[serial]
+    fn the_started_clock_measures_a_dpdk_rate_that_is_off() {
+        let hz = measured_counter_hz();
+        for (eal, rate) in [
+            (hz + hz / 500, RATE_MEASURED),
+            (hz - hz / 500, RATE_MEASURED),
+            (hz + hz / 20_000, RATE_EAL),
+        ] {
+            let env = TestEnv::new();
+            env.eal_skip();
+            env.set_counter_rate(eal);
+            let t = create(&rusteron_dpdk_config_t::valid()).unwrap_or_else(|e| panic!("{e}"));
+            let report = clock_report();
+            assert_eq!(
+                (report.source, report.why, report.rate, report.eal_hz),
+                (COUNTER_SOURCE, WHY_COUNTER, rate, eal),
+                "{report:?}"
+            );
+            let used = if rate == RATE_EAL { eal } else { report.measured_hz };
+            assert_eq!(report.hz, used, "{report:?}");
+            assert!(
+                report.measured_hz.abs_diff(hz) * 10_000 <= hz,
+                "measured {} Hz at start, {hz} Hz here: {report:?}",
+                report.measured_hz
+            );
+
+            if rate == RATE_MEASURED {
+                let (n0, m0, _) = bracketed();
+                while monotonic_ns() - m0 < 50_000_000 {
+                    std::hint::spin_loop();
+                }
+                let (n1, m1, _) = bracketed();
+                let (native, mono) = (n1 - n0, m1 - m0);
+                assert!(
+                    native.abs_diff(mono) * 10_000 <= mono,
+                    "DPDK {eal} Hz: native advanced {native} ns against {mono} ns of CLOCK_MONOTONIC (more than 0.01% apart): {report:?}"
+                );
+            }
+            assert_eq!(close(t), 0);
+            drop(env);
+        }
+    }
+
     /// No rate from the EAL (the fakes' default, and what the real EAL
     /// reports before it is up): the transport reads `CLOCK_MONOTONIC`,
     /// reported as source 0 with no rate, and every read is `CLOCK_MONOTONIC`
@@ -287,8 +410,8 @@ mod native {
         let _env = start(&rusteron_dpdk_config_t::valid(), |_| {});
         let report = clock_report();
         assert_eq!(
-            (report.source, report.why, report.hz, report.eal_hz),
-            (SOURCE_MONOTONIC, WHY_NO_RATE, 0, 0),
+            (report.source, report.why, report.hz, report.eal_hz, report.measured_hz),
+            (SOURCE_MONOTONIC, WHY_NO_RATE, 0, 0, 0),
             "{report:?}"
         );
         assert_eq!(unsafe { rusteron_dpdk_clock_source() }, SOURCE_MONOTONIC);
@@ -297,7 +420,8 @@ mod native {
     }
 
     /// The configuration's `monotonic` (`RUSTERON_DPDK_CLOCK=monotonic`, read
-    /// in Rust) wins over any rate the EAL gives.
+    /// in Rust) wins over any rate the EAL gives, and nothing measures the
+    /// counter.
     #[test]
     #[serial]
     fn the_monotonic_choice_forces_the_fallback_whatever_the_eal_rate() {
@@ -306,8 +430,8 @@ mod native {
         let _env = start(&config, TestEnv::use_counter);
         let report = clock_report();
         assert_eq!(
-            (report.source, report.why, report.hz),
-            (SOURCE_MONOTONIC, WHY_CHOSEN, 0),
+            (report.source, report.why, report.hz, report.measured_hz),
+            (SOURCE_MONOTONIC, WHY_CHOSEN, 0, 0),
             "{report:?}"
         );
         assert_eq!(report.eal_hz, measured_counter_hz(), "what the EAL said, reported");
@@ -393,10 +517,12 @@ mod native {
         let env = TestEnv::new();
         env.eal_skip();
         env.set_counter_rate(2_400_000_000);
+        env.set_measured_counter_rate(2_400_000_000);
         let config = rusteron_dpdk_config_t::valid();
         let first = create(&config).unwrap_or_else(|e| panic!("{e}"));
         let live = (clock_report(), params());
         env.set_counter_rate(1_000_000_000);
+        env.set_measured_counter_rate(1_000_000_000);
         let err = create(&config).unwrap_err();
         assert!(err.contains("already initialized"), "{err}");
         assert_eq!((clock_report(), params()), live);

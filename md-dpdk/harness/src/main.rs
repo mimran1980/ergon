@@ -12,7 +12,7 @@ mod scenario;
 use std::error::Error;
 use std::time::Duration;
 
-use ergon_md_dpdk::clock::TransportClock;
+use ergon_md_dpdk::clock::{RateSource, TransportClock};
 use ergon_md_dpdk::configure_media_transport_from_env;
 use log::info;
 use rusteron_client::{Aeron, AeronContext, IntoCString};
@@ -203,9 +203,21 @@ fn run(args: &Args) -> Result<Report, Box<dyn Error>> {
             // script asserts the counter, at CNTFRQ_EL0's rate on aarch64).
             info!("[transport] clock: {}", transport.clock());
             match transport.clock() {
-                TransportClock::Counter { hz } => {
+                TransportClock::Counter {
+                    hz,
+                    rate,
+                    eal_hz,
+                    measured_hz,
+                } => {
                     report.clock = "counter".to_string();
                     report.clock_hz = *hz;
+                    report.clock_rate = match rate {
+                        RateSource::Eal => "eal",
+                        RateSource::Measured => "measured",
+                    }
+                    .to_string();
+                    report.clock_eal_hz = *eal_hz;
+                    report.clock_measured_hz = *measured_hz;
                 }
                 TransportClock::Monotonic { reason } => {
                     report.clock = "monotonic".to_string();

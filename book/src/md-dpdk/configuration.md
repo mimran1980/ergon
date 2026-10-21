@@ -64,7 +64,7 @@ Each returns `Result<_, DpdkError>`, except `clock()`.
 | `DpdkTransport::install(&context, &config)` | a `DpdkTransport`, from a typed `DpdkTransportConfig` | you want no environment variables ([example](https://github.com/mimran1980/ergon/blob/main/md-dpdk/examples/embedded_dpdk.rs), built by `just check-dpdk`) |
 | `pin_agents_to_configured_cpus(&context)` | nothing | your own driver on the kernel transport: Aeron's C driver reads `AERON_*_CPU_AFFINITY`, but only `aeronmd` applies it |
 | `lock_memory_from_env()` | `true` if it locked memory | **Not recommended.** `RUSTERON_MEDIA_DRIVER_MLOCKALL=1`; measured no gain on AWS or Azure, and a worse idle max. A sized hugetlbfs already removes the page faults it targets |
-| `DpdkTransport::clock()` | the `TransportClock` the transport reads: `Counter { hz }` or `Monotonic { reason }` | you check whether the transport reads the CPU counter, and if not, why |
+| `DpdkTransport::clock()` | the `TransportClock` the transport reads: `Counter { hz, rate, eal_hz, measured_hz }` or `Monotonic { reason }` | you check whether the transport reads the CPU counter, at which rate, and if not, why |
 
 **Keep the `DpdkTransport` alive until the driver has stopped.** The driver's
 threads call into memory it owns, and rusteron's context cannot hold it for
@@ -172,10 +172,12 @@ several channels on different ports
 
 - **Clock:** the transport times intervals in nanoseconds since boot. By
   default (`RUSTERON_DPDK_CLOCK=counter`) it reads the CPU counter inline at
-  the rate DPDK gives it (`rte_get_tsc_hz()`): no system call, no call into
-  Rust. It falls back to `CLOCK_MONOTONIC` when the kernel's clock source is
-  not the counter or a hypervisor's view of it, the TSC is not invariant
-  (x86_64), or DPDK's rate is not `CNTFRQ_EL0` (aarch64).
+  the rate DPDK gives it (`rte_get_tsc_hz()`), or at the rate it measures
+  against `CLOCK_MONOTONIC_RAW` at start where DPDK's is more than 100 ppm
+  off: no system call, no call into Rust. It falls back to
+  `CLOCK_MONOTONIC` when the kernel's clock source is not the counter or a
+  hypervisor's view of it, the TSC is not invariant (x86_64), or DPDK's rate
+  is not `CNTFRQ_EL0` (aarch64).
   `RUSTERON_DPDK_CLOCK=monotonic` forces it. Counter type 80 and
   `DpdkTransport::clock()` say which, and why.
 - **NIC receive timestamps:** `RUSTERON_DPDK_RX_HW_TIMESTAMP=1`. Only AWS ENA

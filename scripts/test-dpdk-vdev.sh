@@ -305,8 +305,10 @@ assert_report() {
 }
 
 # assert_clock <report> <label>: an embedded DPDK transport reads the CPU
-# counter at the rate the real EAL gives it (rte_get_tsc_hz), which on aarch64
-# is the generic timer's own (CNTFRQ_EL0, as the harness reads it). A fallback
+# counter at the rate the real EAL gives it (rte_get_tsc_hz) or, where that is
+# more than 100 ppm off the rate the transport measures at start, at the
+# measured rate. On aarch64 it is the generic timer's own (CNTFRQ_EL0, as the
+# harness reads it). A fallback
 # to CLOCK_MONOTONIC fails the run and prints the transport's reason: a host
 # whose kernel clock source or CPU rules the counter out says so there;
 # otherwise the real EAL path is broken.
@@ -316,8 +318,11 @@ assert_clock() {
     local clock; clock=$(report_field "$report" clock)
     local hz; hz=$(report_field "$report" clock_hz)
     local cntfrq; cntfrq=$(report_field "$report" cntfrq_hz)
+    local rate; rate=$(report_field "$report" clock_rate)
+    local eal_hz; eal_hz=$(report_field "$report" clock_eal_hz)
+    local measured_hz; measured_hz=$(report_field "$report" clock_measured_hz)
     local reason; reason=$(grep -o '"clock_reason": "[^"]*"' "$report" | head -1 | cut -d'"' -f4)
-    log "assert $label: clock=$clock clock_hz=$hz cntfrq_hz=$cntfrq ${reason:+reason=$reason}"
+    log "assert $label: clock=$clock clock_hz=$hz rate=$rate eal_hz=$eal_hz measured_hz=$measured_hz cntfrq_hz=$cntfrq ${reason:+reason=$reason}"
     [[ "$clock" == '"counter"' ]] || die "$label: the transport reads CLOCK_MONOTONIC, not the counter: $reason"
     (( hz > 0 )) || die "$label: the counter's rate is $hz"
     if [[ "$(uname -m)" == aarch64 ]]; then

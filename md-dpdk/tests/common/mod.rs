@@ -108,11 +108,24 @@ pub struct ClockReport {
     pub hz: u64,
     pub eal_hz: u64,
     pub cntfrq: u64,
+    pub measured_hz: u64,
     pub source: c_int,
     pub why: c_int,
     pub invariant: c_int,
-    pub reserved: c_int,
+    pub rate: c_int,
 }
+
+const _: () = {
+    use std::mem::{offset_of, size_of};
+    assert!(offset_of!(ClockReport, measured_hz) == 24);
+    assert!(offset_of!(ClockReport, source) == 32);
+    assert!(offset_of!(ClockReport, rate) == 44);
+    assert!(size_of::<ClockReport>() == 48);
+};
+
+/// `RUSTERON_DPDK_CLOCK_RATE_*`: which rate the counter is converted at.
+pub const RATE_EAL: c_int = 0;
+pub const RATE_MEASURED: c_int = 1;
 
 /// `RUSTERON_DPDK_CLOCK_WHY_*`: why the transport's clock is what it is.
 pub const WHY_COUNTER: c_int = 0;
@@ -316,6 +329,12 @@ impl TestEnv {
     /// clock as the real EAL gives it on a trusted host.
     pub fn use_counter(&self) {
         self.set_counter_rate(measured_counter_hz());
+    }
+
+    /// The rate the clock start takes as its measurement of the counter, in
+    /// place of measuring it (0, and after reset: it measures).
+    pub fn set_measured_counter_rate(&self, hz: u64) {
+        unsafe { rusteron_dpdk_test_set_measured_counter_hz(hz) };
     }
 
     /// The kernel driver every PCI port reads as bound to (its sysfs driver
@@ -527,6 +546,10 @@ unsafe extern "C" {
     /// Whether the counter `source` can run at the rate `rate` gives:
     /// `WHY_COUNTER` or why not. Pure.
     pub fn rusteron_dpdk_clock_rule(source: c_int, rate: *const CounterRate) -> c_int;
+    /// The rate the counter is converted at, given DPDK's and the start-up
+    /// measurement: `RATE_EAL` or `RATE_MEASURED`, the rate in `hz`. Pure.
+    pub fn rusteron_dpdk_clock_choose_rate(eal_hz: u64, measured_hz: u64, hz: *mut u64) -> c_int;
+    fn rusteron_dpdk_test_set_measured_counter_hz(hz: u64);
     /// The started conversion applied to `ticks`: what the hot path computes
     /// from a counter read (or, for the fallback, from a `CLOCK_MONOTONIC` read).
     pub fn rusteron_dpdk_test_clock_ns_at(ticks: u64) -> u64;
@@ -572,25 +595,32 @@ pub fn clock_report() -> ClockReport {
 
 /// `CLOCK_MONOTONIC`, ns.
 pub fn monotonic_ns() -> u64 {
+    clock_ns(libc::CLOCK_MONOTONIC)
+}
+
+/// `clock`, ns.
+fn clock_ns(clock: libc::clockid_t) -> u64 {
     let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-    let rc = unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) };
-    assert_eq!(rc, 0, "clock_gettime(CLOCK_MONOTONIC)");
+    let rc = unsafe { libc::clock_gettime(clock, &mut ts) };
+    assert_eq!(rc, 0, "clock_gettime({clock})");
     ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
 }
 
 /// The counter's rate, measured once a test binary: its ticks against
-/// `CLOCK_MONOTONIC` over 100 ms, each end the tightest of 16 bracketed
-/// reads, so the rate is good to a few ppm on a quiet CPU (the clock tests
-/// allow 0.1%).
+/// `CLOCK_MONOTONIC_RAW` (what the transport measures it against at start)
+/// over 100 ms, each end the tightest of 16 bracketed reads, so the rate is
+/// good to a few ppm on a quiet CPU (the transport keeps DPDK's rate within
+/// 100 ppm of its own measurement).
 pub fn measured_counter_hz() -> u64 {
     static HZ: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *HZ.get_or_init(|| {
+        let raw = || clock_ns(libc::CLOCK_MONOTONIC_RAW);
         let sample = || {
             let mut best = (u64::MAX, 0u64, 0u64);
             for _ in 0..16 {
-                let m0 = monotonic_ns();
+                let m0 = raw();
                 let ticks = unsafe { rusteron_dpdk_test_counter() };
-                let m1 = monotonic_ns();
+                let m1 = raw();
                 if m1 - m0 < best.0 {
                     best = (m1 - m0, ticks, m0 + (m1 - m0) / 2);
                 }
@@ -598,7 +628,7 @@ pub fn measured_counter_hz() -> u64 {
             (best.1, best.2)
         };
         let (t0, m0) = sample();
-        while monotonic_ns() - m0 < 100_000_000 {
+        while raw() - m0 < 100_000_000 {
             std::hint::spin_loop();
         }
         let (t1, m1) = sample();
