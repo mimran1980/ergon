@@ -121,7 +121,7 @@ Over the wire, one order with the pooled client:
   the bucket is marked full for one window (the local count was wrong).
 - **A ClockSkew that repeats is the host clock.** Re-signing with a new
   timestamp fixes one; if they keep coming, the clock is off: fix the host
-  clock (see ergon-clock), not the re-send.
+  clock (chrony; see [Clocks](../deploy/clocks.md)), not the re-send.
 
 ## Rules
 

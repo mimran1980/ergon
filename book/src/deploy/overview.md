@@ -34,8 +34,8 @@ A busy-spinning thread is only as fast as its host.
    2 MiB hugetlbfs, non-sparse term buffers, clients that pre-touch.
 6. **Quiet cores:** spin on every core for two minutes and keep busy threads
    off any that stalled. Azure vCPUs stall for milliseconds once a minute.
-7. **A disciplined wall clock:** chrony, on PTP where you can; stamp with
-   [ergon-clock](../clock/overview.md).
+7. **A synchronised wall clock:** chrony, on PTP where you can; stamp with
+   `CLOCK_REALTIME`, time durations with quanta ([Clocks](clocks.md)).
 8. **Let the code check:** [ergon-tune](../tune/overview.md) runs at start-up
    in ergon-io's driver and the media driver, and names each missing setting
    with its fix.
@@ -61,8 +61,8 @@ Kubernetes and Java terms:
 | KSM, NUMA balancing | kernel background work: merging identical pages; moving pages nearer the CPU that uses them | either can stop a busy thread with a page fault; the EKS node turns both off |
 | [spin test](hosts.md#cpu-layout) | spin on every CPU for two minutes; note any that stall 300 µs or more | keep busy threads off those: Azure vCPUs stall for milliseconds once a minute |
 | [`-march`, `-mcpu`, `target-cpu`](hosts.md#build-for-the-cpu) | compiler options that build for one CPU: `-march`, `-mcpu` (C), `target-cpu` (Rust). On AArch64 only `-mcpu` sets the core | Graviton: without them, gcc calls a library helper for each atomic add |
-| `clocksource=tsc`, `tsc=reliable` | boot options: the kernel keeps time with the CPU counter, and `tsc=reliable` turns its runtime checks off | only on hardware measured as the same TSC across cores against a PTP/PHC reference, and never on a VM. The EKS node takes it with `RUSTERON_FORCE_TSC=1` and records the choice ([ergon-clock](../clock/overview.md)) |
-| [wall clock, NTP, PTP](../clock/wall-clock.md) | the time of day (UTC), kept right by chrony over the network (NTP) or from a hardware clock (PTP) | pro: matches other hosts and NIC stamps. Con: a correction can step it back; time intervals with the CPU counter |
+| `clocksource=tsc`, `tsc=reliable` | boot options: the kernel keeps time with the CPU counter, and `tsc=reliable` turns its runtime checks off | only on hardware measured as the same TSC across cores against a PTP/PHC reference, and never on a VM. The EKS node takes it with `RUSTERON_FORCE_TSC=1` and records the choice ([Clocks](clocks.md)) |
+| [wall clock, NTP, PTP](clocks.md#set-up-time-sync) | the time of day (UTC), kept right by chrony over the network (NTP) or from a hardware clock (PTP) | pro: matches other hosts and NIC stamps. Con: a correction can step it back; time intervals with the CPU counter |
 | [kubelet](kubernetes.md#nodes) | the agent on each Kubernetes node that starts pods and gives them CPUs, memory and devices | it must be told to give whole cores |
 | Guaranteed QoS | a pod whose requests equal its limits on every resource | only these, with whole CPUs, get cores of their own from the static CPU manager |
 | [SMT (hyper-threading)](kubernetes.md#smt-off) | two logical CPUs on one physical core, sharing its execution resources | a pod with `cpu: 1` shares the core with its twin. Turn SMT off on x86 latency nodes: one CPU is then one core, as on Graviton |

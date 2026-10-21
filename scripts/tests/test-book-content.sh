@@ -3,6 +3,7 @@
 # a fence, including when it is not on the line after the opening fence.
 # Prose that only mentions the call must pass. A line-oriented grep of the
 # old pattern does not see this fixture, so putting that grep back fails here.
+# Missing {{#include}} files and anchors, and dangling relative links, fail.
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -86,6 +87,49 @@ for case in anchor file; do
 done
 grep -F -q "anchor 'renamed' not found" "$fixture/include-anchor.out"
 grep -F -q 'moved.yaml' "$fixture/include-file.out"
+
+# A relative link to a page or file that is gone, or to a heading that is
+# not on the page, must fail: mdbook builds both without a warning. A link
+# inside code, an absolute URL and a repeated heading's -1 id pass.
+for case in ok file anchor ref; do
+    mkdir -p "$fixture/links/$case/deploy"
+    printf '# Clocks\n\n## Set up time sync\n\n## Set up time sync\n' >"$fixture/links/$case/deploy/clocks.md"
+done
+cat > "$fixture/links/ok/deploy/page.md" <<'EOF'
+[time sync](clocks.md#set-up-time-sync), [again](clocks.md#set-up-time-sync-1),
+[html](clocks.html), [here](#same-page), [web](https://example.com/clock/overview.md)
+
+## Same page
+
+`[in code](../clock/overview.md)`
+
+```text
+[in a fence](../clock/wall-clock.md)
+```
+EOF
+cat > "$fixture/links/file/deploy/page.md" <<'EOF'
+Configuration: [time sync](../clock/wall-clock.md).
+EOF
+cat > "$fixture/links/anchor/deploy/page.md" <<'EOF'
+[time sync](clocks.md#keep-the-wall-clock-right)
+EOF
+cat > "$fixture/links/ref/deploy/page.md" <<'EOF'
+See [the clock][clock].
+
+[clock]: ../clock/overview.md
+EOF
+BOOK_CONTENT_ROOT="$fixture/links/ok" "$checker" >"$fixture/links-ok.out"
+grep -F -q 'check-book-content: PASS' "$fixture/links-ok.out"
+for case in file anchor ref; do
+    if BOOK_CONTENT_ROOT="$fixture/links/$case" "$checker" >"$fixture/links-$case.out" 2>&1; then
+        echo "expected a dangling link ($case) to fail" >&2
+        cat "$fixture/links-$case.out" >&2
+        exit 1
+    fi
+done
+grep -F -q 'link ../clock/wall-clock.md' "$fixture/links-file.out"
+grep -F -q 'no heading #keep-the-wall-clock-right' "$fixture/links-anchor.out"
+grep -F -q 'link ../clock/overview.md' "$fixture/links-ref.out"
 
 "$checker" >"$fixture/real.out"
 grep -F -q 'check-book-content: PASS' "$fixture/real.out"

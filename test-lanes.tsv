@@ -18,10 +18,6 @@ io/src/placement.rs	pr	cargo test -p ergon-io --lib -- --test-threads=1
 io/tests/*.rs	pr	cargo test -p ergon-io -- --test-threads=1
 io/benches/src/*.rs	benchmark	cd io/benches && cargo build --release --bins
 io/benches/tests/*.rs	samples	cd io/benches && cargo test
-clock/src/*.rs	pr	cargo test -p ergon-clock --all-features --lib -- --test-threads=1 && cargo test -p ergon-clock --all-features --doc
-clock/tests/*.rs	pr	cargo test -p ergon-clock --all-features -- --test-threads=1
-clock/bench/src/*.rs	pr	cargo test -p ergon-clock-bench -- --test-threads=1
-clock/bench/benches/*.rs	benchmark	cargo bench -p ergon-clock-bench --no-run
 tune/src/*.rs	pr	cargo test -p ergon-tune --all-features --lib -- --test-threads=1 && cargo test -p ergon-tune --all-features --doc
 tune/tests/*.rs	pr	cargo test -p ergon-tune --all-features -- --test-threads=1 && cargo test -p ergon-tune -- --test-threads=1
 samples/exchange-example/src/*.rs	samples	cd samples/exchange-example && cargo test

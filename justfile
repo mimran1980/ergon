@@ -191,14 +191,13 @@ release-check: test check-coverage check-generated-rustdoc
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-aeron-cluster --no-deps
     cargo publish -p ergo-sbe --dry-run --allow-dirty
     ./scripts/check-publish-set.sh
-    RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-clock --no-deps
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-tune --all-features --no-deps
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-io --features webpki-roots --no-deps
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-md-dpdk --no-deps
     # One multi-package dry run, so ergon-io and ergon-md-dpdk verify against
-    # the packaged ergon-tune: none of the four is on crates.io at this
+    # the packaged ergon-tune: none of the three is on crates.io at this
     # version until the release publishes them.
-    cargo publish -p ergon-clock -p ergon-tune -p ergon-io -p ergon-md-dpdk --dry-run --allow-dirty
+    cargo publish -p ergon-tune -p ergon-io -p ergon-md-dpdk --dry-run --allow-dirty
     bash scripts/check-packaged-cluster-features.sh --list
     bash scripts/check-packaged-cluster-features.sh --unpack --package ergo-sbe
     # ergo-aeron-cluster unpack-and-build waits until ergo-sbe is on crates.io (publish step below).
@@ -295,10 +294,10 @@ _release-post:
     bash scripts/check-packaged-cluster-features.sh --unpack
     @echo "=== publish ergo-aeron-cluster ==="
     cargo publish -p ergo-aeron-cluster
-    @echo "=== publish ergon-clock, ergon-tune, ergon-io, ergon-md-dpdk ==="
+    @echo "=== publish ergon-tune, ergon-io, ergon-md-dpdk ==="
     # Cargo publishes them in dependency order and waits for crates.io to
     # list ergon-tune before it publishes ergon-io and ergon-md-dpdk.
-    cargo publish -p ergon-clock -p ergon-tune -p ergon-io -p ergon-md-dpdk
+    cargo publish -p ergon-tune -p ergon-io -p ergon-md-dpdk
     @echo "=== tag ==="
     just _tag
     @echo "=== GitHub release (with bench archives) ==="
@@ -546,7 +545,7 @@ bench-cluster:
     # LTO-on (release profile: lto=true, codegen-units=1)
     for k in $(seq 1 "$repeats"); do
         echo "=== cluster LTO — invocation $k/$repeats ==="
-        # The Criterion home is shared with ergon-clock-bench, and Criterion
+        # The Criterion home is shared with other bench binaries, and Criterion
         # leaves `new/` in place for groups this binary does not touch. The
         # marker bounds the snapshot to what this invocation is about to write.
         touch "$lto_crit/.bench-since"

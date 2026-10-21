@@ -52,7 +52,7 @@ jobs:
 
   lint:
     needs: policy
-    # x86_64 and aarch64 (Graviton): clock, tune, io and md-dpdk have code
+    # x86_64 and aarch64 (Graviton): tune, io and md-dpdk have code
     # for each architecture, and only the runner's architecture is compiled.
     strategy:
       fail-fast: false
@@ -86,7 +86,7 @@ jobs:
       - run: RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-aeron-cluster --no-deps
       - run: RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-md-dpdk --no-deps
       # Each crate page is the crate's README (`#![doc = include_str!]`).
-      - run: RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-clock -p ergon-tune -p ergon-io --all-features --no-deps
+      - run: RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-tune -p ergon-io --all-features --no-deps
       # Prebuilt binary — check-public-api.sh only `cargo install`s from source
       # as a fallback if this isn't already on PATH. A from-source build took
       # 4m32s alone and regularly blew the job's timeout (2026-08-19).
@@ -114,7 +114,7 @@ jobs:
 
   test:
     needs: policy
-    # x86_64 and aarch64 (Graviton): clock, tune, io and md-dpdk have code
+    # x86_64 and aarch64 (Graviton): tune, io and md-dpdk have code
     # for each architecture, and only the runner's architecture is compiled.
     strategy:
       fail-fast: false
@@ -161,7 +161,7 @@ jobs:
   # bridge, which need root.
   dpdk:
     needs: policy
-    # x86_64 and aarch64 (Graviton): clock, tune, io and md-dpdk have code
+    # x86_64 and aarch64 (Graviton): tune, io and md-dpdk have code
     # for each architecture, and only the runner's architecture is compiled.
     strategy:
       fail-fast: false

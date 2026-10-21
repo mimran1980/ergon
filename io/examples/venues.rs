@@ -96,8 +96,8 @@ fn rolling(name: impl Into<String>, limit: u32, window_ms: u64, sub_ms: u64) -> 
     Ok(BucketSpec::rolling(name, limit, window, slots))
 }
 
-/// The server's time as best known, ms: this host's UTC (ergon-clock keeps
-/// it disciplined). A wait the server states as a time is measured on the
+/// The server's time as best known, ms: this host's UTC (`CLOCK_REALTIME`,
+/// kept by chrony). A wait the server states as a time is measured on the
 /// response's own clock instead, where it has one (Bybit's `time`).
 const fn utc_ms(now: Now) -> i64 {
     now.real_ns.div_euclid(1_000_000)

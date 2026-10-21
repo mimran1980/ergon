@@ -9,7 +9,6 @@ and upstream reference trees. Those live on GitHub.
 |-------|-----------|
 | `ergo-sbe` | generator |
 | `ergo-aeron-cluster` | Cluster client |
-| `ergon-clock` | hardware-counter clock |
 | `ergon-tune` | host and NIC checks |
 | `ergon-io` | busy-spin network I/O (WebSocket, HTTP/1.1, TLS 1.3) |
 | `ergon-md-dpdk` | DPDK transport for the media driver, with its native C |

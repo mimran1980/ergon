@@ -88,7 +88,7 @@ later. The wake delay is the vendor's C-state exit latency, not measured here.
 
 chrony on the Amazon Time Sync Service (`169.254.169.123`), or on the ENA's
 PTP clock in a `precision-time` placement group. Azure's image already runs
-chrony on `ptp_hyperv`. Configuration: [time sync](../clock/wall-clock.md).
+chrony on `ptp_hyperv`. Configuration: [time sync](clocks.md#set-up-time-sync).
 
 ## CPU layout
 

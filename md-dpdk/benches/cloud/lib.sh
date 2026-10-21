@@ -16,12 +16,7 @@
 # maximum, no several flows; the load sweep runs its ladder alone), max_hours
 # (LAB_MAX_HOURS: the instances' deadline, how long a state is waited for),
 # warmup_seconds and warmup_rate (LAB_WARMUP_SECONDS, LAB_WARMUP_RATE: a
-# warm-up load before each mode's first ladder, recorded nowhere) and
-# clock_only (aws/lab.sh LAB_CLOCK_ONLY=1: prepare_vms builds clockbench alone,
-# and run_clock_bench, not run_bench, runs the clock benchmarks in each state)
-# and discipline_seconds (aws/lab.sh LAB_DISCIPLINE_SECONDS: that long of
-# ergon-clock's discipline on both hosts after each state's timesync gate,
-# discipline_both; 0 or unset, none).
+# warm-up load before each mode's first ladder, recorded nowhere).
 # The functions run the benchmark on both VMs in lockstep; teardown stays with
 # the caller's trap.
 
@@ -182,39 +177,6 @@ both() {
     local rc=0
     wait $p1 || { rc=1; log "a: vm.sh $* failed ($out/a-$what.log)"; tail -20 "$out/a-$what.log" >&2; }
     wait $p2 || { rc=1; log "b: vm.sh $* failed ($out/b-$what.log)"; tail -20 "$out/b-$what.log" >&2; }
-    return $rc
-}
-
-# clockbench_both <tag> [quick|full]: vm.sh clockbench on both VMs at once,
-# labelled <tag>: each one's CSV (its stdout) to
-# $out/<node>-clockbench-<tag>.csv, its table and build (stderr) to
-# $out/<node>-clockbench-<tag>.log
-clockbench_both() {
-    local tag=$1 variant=${2:-quick} rc=0
-    on "$A" "$vm clockbench $variant $tag" >"$out/a-clockbench-$tag.csv" 2>"$out/a-clockbench-$tag.log" & local p1=$!
-    on "$B" "$vm clockbench $variant $tag" >"$out/b-clockbench-$tag.csv" 2>"$out/b-clockbench-$tag.log" & local p2=$!
-    wait $p1 || { rc=1; log "a: vm.sh clockbench failed ($out/a-clockbench-$tag.log)"; tail -5 "$out/a-clockbench-$tag.log" >&2; }
-    wait $p2 || { rc=1; log "b: vm.sh clockbench failed ($out/b-clockbench-$tag.log)"; tail -5 "$out/b-clockbench-$tag.log" >&2; }
-    return $rc
-}
-
-# discipline_both <state>: with discipline_seconds (LAB_DISCIPLINE_SECONDS)
-# over 0, ergon-clock's discipline of the counter to CLOCK_REALTIME for that
-# long on both VMs at once (vm.sh discipline: clockbench --discipline,
-# pinned as clockbench is), labelled <state>: each one's CSV (its stdout) to
-# $out/<node>-discipline-<state>.csv, its table and chrony's tracking before
-# and after it (stderr) to $out/<node>-discipline-<state>.log, for
-# clockbench.py. Run after the state's timesync gate, before its diagnostics
-# and benchmarks, so chrony has settled and nothing else runs on the CPUs.
-# Nothing without it.
-discipline_both() {
-    local state=$1 secs=${discipline_seconds:-0} rc=0
-    ((10#$secs > 0)) || return 0
-    log "state $state: ergon-clock's discipline to CLOCK_REALTIME, $secs s on both hosts"
-    on "$A" "$vm discipline $secs $state" >"$out/a-discipline-$state.csv" 2>"$out/a-discipline-$state.log" & local p1=$!
-    on "$B" "$vm discipline $secs $state" >"$out/b-discipline-$state.csv" 2>"$out/b-discipline-$state.log" & local p2=$!
-    wait $p1 || { rc=1; log "a: vm.sh discipline failed ($out/a-discipline-$state.log)"; tail -5 "$out/a-discipline-$state.log" >&2; }
-    wait $p2 || { rc=1; log "b: vm.sh discipline failed ($out/b-discipline-$state.log)"; tail -5 "$out/b-discipline-$state.log" >&2; }
     return $rc
 }
 
@@ -412,14 +374,9 @@ prepare_vms() {
     detached bootstrap bootstrap || die "bootstrap failed"
     reboot_both
     log "build"
-    if [[ -n ${clock_only:-} ]]; then
-        # LAB_CLOCK_ONLY=1: clockbench alone, so nothing a mode needs to check
-        detached build-clock build-clock || die "build failed"
-    else
-        detached build build || die "build failed"
-        dpdk_ready
-        modes_ready
-    fi
+    detached build build || die "build failed"
+    dpdk_ready
+    modes_ready
     if [[ -n ${base:-} ]]; then
         log "build LAB_BASE $base ($(cat "$out/base-commit")) into ~/bin-base"
         detached build-base build-base || die "LAB_BASE build failed"
@@ -439,15 +396,9 @@ prepare_vms() {
         fi
     done
     record_market
-    # LAB_CLOCK_ONLY=1: no media driver, so no network round trip, clockcheck
-    # or Criterion; its clock benchmarks run in each state (run_clock_bench)
-    if [[ -n ${clock_only:-} ]]; then
-        return 0
-    fi
     record_base_rtt
     both clockcheck-boot clockcheck 120 || log "WARNING: clockcheck failed"
     both criterion-boot criterion || log "WARNING: criterion failed"
-    clockbench_both boot || log "WARNING: clockbench failed"
 }
 
 # the benchmark: every state in $states, each state's reps run on VM a by
@@ -474,7 +425,6 @@ run_bench() {
             both "tune-$state" tune || die "tune failed"
             both "clockcheck-$state" clockcheck 120 || log "WARNING: clockcheck failed"
             both "criterion-$state" criterion || log "WARNING: criterion failed"
-            clockbench_both "$state" || log "WARNING: clockbench failed"
         fi
         # a host that stalls the VM shows up here, before hours are spent on it
         both "preflight-$state" preflight 120 || log "WARNING: preflight failed"
@@ -485,7 +435,6 @@ run_bench() {
         # chrony anew. Spikes are matched across the hosts' clocks.
         both "timesync-$state" timesync-wait ||
             die "state $state: chrony did not synchronise both hosts' clocks (vm.sh timesync-wait; $out/{a,b}-timesync-$state.log)"
-        discipline_both "$state" || log "WARNING: the discipline failed"
         both "diag-start-$state" diag-start || log "WARNING: diagnostics did not start"
         remote_state "$state" || die "$state benchmark failed"
         both "diag-$state" diag-fetch || log "WARNING: diagnostics not fetched"
@@ -496,48 +445,7 @@ run_bench() {
     for state in "${states[@]}"; do
         python3 "$repo/md-dpdk/benches/cloud/spikes.py" "$out/$state" >>"$out/summary.md" 2>&1 || true
     done
-    # the discipline's residuals (LAB_DISCIPLINE_SECONDS), with the run's
-    # clockbench runs, as a LAB_CLOCK_ONLY=1 run reports them
-    if ((10#${discipline_seconds:-0} > 0)); then
-        python3 "$repo/md-dpdk/benches/cloud/clockbench.py" "$out" >"$out/clock-summary.md" ||
-            log "WARNING: clockbench.py failed"
-    fi
     cat "$out/summary.md"
-}
-
-# run_clock_bench (LAB_CLOCK_ONLY=1, in place of run_bench): in each state in
-# $states, booted as run_bench boots it (isolated and isolated-poll: the
-# kernel command line, a reboot, tune), after the timesync gate and any
-# discipline (discipline_both), the clock benchmarks alone on both VMs
-# (vm.sh clockbench full: 120 s of drift, then the build without LTO) with the
-# diagnostics around them (vm.sh diag-start, diag-fetch: the gap spinner and
-# the trace, against which clockbench.py attributes each clock's long gaps).
-# The hosts' comparison to $out/clock-summary.md.
-run_clock_bench() {
-    local state variant
-    for state in "${states[@]}"; do
-        if [[ $state == isolated || $state == isolated-poll ]]; then
-            variant=
-            [[ $state == isolated-poll ]] && variant=poll
-            log "state $state: kernel command line, reboot"
-            both "isolate${variant:+-$variant}" isolate $variant || die "isolate failed"
-            reboot_both
-            both "tune-$state" tune || die "tune failed"
-        fi
-        # the clocks settled first (vm.sh timesync-wait): chrony slewing the
-        # clock would show as the monotonic clock's drift
-        both "timesync-$state" timesync-wait ||
-            die "state $state: chrony did not synchronise both hosts' clocks (vm.sh timesync-wait; $out/{a,b}-timesync-$state.log)"
-        discipline_both "$state" || log "WARNING: the discipline failed"
-        log "state $state: clock benchmarks"
-        both "diag-start-$state" diag-start || log "WARNING: diagnostics did not start"
-        clockbench_both "$state" full || log "WARNING: clockbench failed"
-        both "diag-$state" diag-fetch || log "WARNING: diagnostics not fetched"
-        both "diag-stop-$state" diag-stop || true
-    done
-    python3 "$repo/md-dpdk/benches/cloud/clockbench.py" "$out" >"$out/clock-summary.md" ||
-        log "WARNING: clockbench.py failed"
-    cat "$out/clock-summary.md"
 }
 
 # VM a's own key, authorised on both VMs, for remote.sh

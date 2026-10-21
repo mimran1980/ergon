@@ -5,10 +5,6 @@ members = [
     "cluster",
     "cluster-test-harness",
     "io",
-    # Calibrated hardware-counter clock, and its benchmarks against quanta,
-    # minstant, std and the kernel's clocks (clockbench, Criterion).
-    "clock",
-    "clock/bench",
     # Low-latency host and NIC checks (pure functions returning findings),
     # called by ergon-io, the media driver and downstream runtimes.
     "tune",
@@ -74,10 +70,3 @@ codegen-units = 1
 [profile.release]
 lto = true
 codegen-units = 1
-
-# ergon-clock's tests optimised in every debug build (debug assertions and
-# overflow checks stay on): its seqlock stress test (share.rs) only meets the
-# reorderings a missing fence allows when reads are as tight as a release
-# build's, and its discipline property tests run 20,000 trajectories.
-[profile.dev.package.ergon-clock]
-opt-level = 3

@@ -11,7 +11,6 @@
 #   LAB_PLACEMENT=cross-az LAB_NO_FLATOUT=1 LAB_LOAD_SIZES=288 LAB_LOAD_LADDER=288:10000 ...
 #   LAB_PLACEMENT=cross-region LAB_REGION2=eu-west-1 LAB_NO_FLATOUT=1 ...
 #   LAB_ESTIMATE=1 <any of the above>                                   its cost, nothing created
-#   LAB_CLOCK_ONLY=1 LAB_SPOT=1 LAB_TYPE=c8g.xlarge LAB_ALLOW_ARM=1 ...    the clock benchmarks alone
 #
 # Creates, in $LAB_REGION, a VPC of its own (10.30.0.0/16) with a management
 # subnet (10.30.0.0/24, an internet gateway, SSH from this machine's address
@@ -116,21 +115,6 @@
 #   up), adds the sustained maximum over two flows at once, which shows whether two carry
 #   twice that, up to the instance's own bandwidth: 12.5 Gbit/s on c7i.4xlarge, 37.5 on
 #   c7i.metal-24xl. Unset, 0 or 1, it does not run)
-#   LAB_CLOCK_ONLY=1: the clock benchmarks alone: the pair launched, bootstrapped and
-#   built with clockbench only (vm.sh build-clock: no media driver, no DPDK), then in
-#   each of LAB_STATES (isolated booted as ever) ergon-clock's benchmark against quanta,
-#   minstant, std and the kernel's clocks on both hosts (vm.sh clockbench full: 120 s of
-#   drift, the build without LTO too) with the gap spinner and trace around it, its CSV
-#   in <node>-clockbench-<state>.csv and the hosts' comparison in clock-summary.md
-#   (../clockbench.py), then the same teardown and verification. LAB_MODES and the
-#   load, mix and flow options are not used; cluster placement only, no LAB_BASE
-#   LAB_DISCIPLINE_SECONDS (0: none; up to 86400): in each state, after its chrony
-#   timesync gate and before its diagnostics and benchmarks, that long of
-#   ergon-clock's discipline of the counter to CLOCK_REALTIME on both hosts at once
-#   (vm.sh discipline: clockbench --discipline, pinned as clockbench is), each
-#   host's CSV in <node>-discipline-<state>.csv and chrony's tracking around it in
-#   <node>-discipline-<state>.log, the residual per host in clock-summary.md
-#   (../clockbench.py); with LAB_CLOCK_ONLY=1 or in a run. LAB_ESTIMATE=1 counts it
 #   LAB_KEEP=1 keeps everything (delete it with LAB_DELETE=<stamp> lab.sh);
 #   LAB_MAX_HOURS (8): each instance terminates itself that long after launch,
 #   should this machine never delete it (asleep, offline), LAB_KEEP or not; a plan
@@ -217,10 +201,6 @@ region2=${LAB_REGION2:-}
 azs=${LAB_AZS:-}
 # the cost guard: no phase that sends as fast as it can (lib.sh)
 no_flatout=${LAB_NO_FLATOUT:-}
-# the clock benchmarks alone (lib.sh run_clock_bench)
-clock_only=${LAB_CLOCK_ONLY:-}
-# ergon-clock's discipline after each state's timesync gate (lib.sh discipline_both)
-discipline_seconds=${LAB_DISCIPLINE_SECONDS:-0}
 threads_per_core=${LAB_THREADS_PER_CORE:-}
 # one-time spot instances (LAB_SPOT=1), or on demand
 spot=${LAB_SPOT:-}
@@ -327,15 +307,9 @@ if [[ -z ${LAB_DELETE:-} ]]; then
     # two regions is billed per GB, so those placements run nothing flat out
     [[ -z $no_flatout || $no_flatout == 1 ]] || die "LAB_NO_FLATOUT is 1 or unset"
     [[ -z $spot || $spot == 1 ]] || die "LAB_SPOT is 1 (one-time spot instances) or unset"
-    [[ -z $clock_only || $clock_only == 1 ]] || die "LAB_CLOCK_ONLY is 1 (the clock benchmarks alone) or unset"
-    [[ $discipline_seconds =~ ^[0-9]{1,5}$ ]] && ((10#$discipline_seconds <= 86400)) ||
-        die "LAB_DISCIPLINE_SECONDS is a whole number of seconds from 0 (none) to 86400, not $discipline_seconds"
-    discipline_seconds=$((10#$discipline_seconds))
-    if [[ $clock_only == 1 ]]; then
-        [[ $placement == cluster ]] ||
-            die "LAB_CLOCK_ONLY=1: the clock benchmarks need one host's counters, not LAB_PLACEMENT=$placement: cluster only"
-        [[ -z $base ]] || die "LAB_CLOCK_ONLY=1 builds no media driver, so no LAB_BASE"
-    fi
+    # removed with the clock benchmarks: refused, never a full run in their place
+    [[ -z ${LAB_CLOCK_ONLY:-}${LAB_DISCIPLINE_SECONDS:-} ]] ||
+        die "LAB_CLOCK_ONLY and LAB_DISCIPLINE_SECONDS were removed with the clock benchmarks: unset them"
     [[ $max_hours =~ ^[1-9][0-9]*$ ]] || die "LAB_MAX_HOURS is a whole number of hours, from 1 (the instances' deadline), not $max_hours"
     if [[ $placement == cross-az || $placement == cross-region ]] && [[ $no_flatout != 1 ]]; then
         die "LAB_PLACEMENT=$placement: the traffic between the hosts is billed per GB, so no flat-out phases: set LAB_NO_FLATOUT=1 (LAB_ESTIMATE=1 prints the cost)"
@@ -395,8 +369,7 @@ plan=(--type-a "$type_a" --type-b "$type_b" --placement "$placement" --reps "$re
     --load-fractions "$load_fractions" --load-ladder "$load_ladder" --load-seconds "$load_seconds" --mix "$mix"
     --mix-seconds "$mix_seconds" --tput-seconds "$tput_seconds" --tput-flows "${tput_flows:-0}"
     --rtt-messages "$rtt_messages" --rtt-warmup "$rtt_warmup" --no-flatout "$no_flatout" --max-hours "$max_hours"
-    --market "$market" --clock-only "$clock_only" --warmup-seconds "$warmup_seconds" --warmup-rate "$warmup_rate"
-    --discipline-seconds "$discipline_seconds")
+    --market "$market" --warmup-seconds "$warmup_seconds" --warmup-rate "$warmup_rate")
 if [[ ${LAB_ESTIMATE:-} == 1 && -z ${LAB_DELETE:-} ]]; then
     python3 "$here/../estimate.py" "${plan[@]}"
     exit $?
@@ -1050,8 +1023,4 @@ log "a=$A b=$B"
 
 . "$here/../lib.sh"
 prepare_vms
-if [[ $clock_only == 1 ]]; then
-    run_clock_bench
-else
-    run_bench
-fi
+run_bench

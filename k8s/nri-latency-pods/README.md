@@ -121,8 +121,8 @@ config's `devRoot: /host/dev` is where the plugin stats the nodes; granted
 paths stay the container's `/dev/...` names.
 
 - **PHC** (`ptp.ergon.io`): read-only `/dev/ptp*`, plus a read-only bind of
-  `/run/ergon/node.json` so `RequirePtp` can read the NIC's node and PHC name.
-  The node keeps chrony + PHC discipline. Do not run a PTP daemon in a pod: a
+  `/run/ergon/node.json` so the app can read the NIC's node and PHC name.
+  The node keeps chrony on the PHC. Do not run a PTP daemon in a pod: a
   pod that steps the NIC clock affects every tenant.
 - **PM QoS** (`cpuqos.ergon.io`, x86 only, default-off): writable
   `/dev/cpu_dma_latency`. The app writes the µs value and keeps the fd; the

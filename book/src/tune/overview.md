@@ -153,7 +153,6 @@ the kernel's, chrony's or the vendor's documentation.
 | ergon-io's `Driver` | T2, N1, N2 (interrupt-driven backends only), N3 on each connection's egress NIC | after the first route lookup to it; again after a NIC reset | `quickack_check=off` skips them |
 | the ergon-md-dpdk media driver (`Component::Md`) | T1, T3, T4, T5, T7, T8, T9, T10; T2 and T6 on the data NICs; on the socket transport also N1, N2, and N4 with busy polling | before the driver starts; N1 and T2 again after a NIC reset, on its `md-host-checks` thread | `ERGON_HOST_CHECKS`, alias `RUSTERON_MEDIA_DRIVER_HOST_CHECK`: `on`/`warn` (default), `off` (no check runs at all) or `require` (any warning or unproven proof stops the start) |
 | your own busy loop (`Component::Rt`) | T1, T3, T4 (the directory it connects to), T5, T7, T8, T9, T10, T11, T12; K1–K7 inside a pod; on a kernel NIC also T2, N1, N2, N3; `ThrottleWatch`, `ClockWatch` | before the loop; the NIC checks again when the NIC's `carrier_changes` moves; `ThrottleWatch::check` and `ClockWatch::check` every few seconds from housekeeping | do not call them |
-| [ergon-clock](../clock/overview.md)'s `calibrate` | the clock source and `CLOCK_REALTIME`'s keeping (`Report::warnings`) | at calibration | `ERGON_HOST_CHECKS`: `off` or `0` silences the print (a typo leaves it on) |
 
 Every printed warning line ends with `(ERGON_HOST_CHECKS=off silences host-check
 warnings)`. The K checks run only inside a pod (the `kubepods` cgroup path, the

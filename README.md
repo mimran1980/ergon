@@ -16,12 +16,11 @@ One line per module: what it is for, and the call you make.
 | module | what it does | how you use it |
 |---|---|---|
 | [`ergo-sbe`](sbe/) | schema XML → Rust SBE codecs | in `build.rs`: `ergo_sbe::generate_to_out_dir(...)`, then `ergo_sbe::sbe_mod!(name)` |
-| [`ergon-clock`](clock/) | UTC nanoseconds from the CPU counter | `calibrate()` once at start-up, then `now_ns()` |
 | [`ergon-tune`](tune/) | reads the host and names what will wreck your tail latency, and the fix | call at start-up; it changes nothing |
 | [`ergon-io`](io/) | WebSocket and HTTP/TLS on one busy-spinning thread | `poll()` from your loop; epoll or `io_uring` is configuration |
 | [`ergo-aeron-cluster`](cluster/) | Aeron Cluster client | only if you need cluster; experimental, not a production substitute |
 | [`ergon-md-dpdk`](md-dpdk/) | DPDK transport for the Aeron media driver | Linux only; proof of concept — use [Aeron Premium](https://aeron.io/) for kernel bypass |
-| `md-dpdk/harness`, `md-dpdk/device-plugin`, `sbe/benchmarks`, `clock/bench`, `cluster-test-harness` | benchmarks and test support | you do not call these from an app |
+| `md-dpdk/harness`, `md-dpdk/device-plugin`, `sbe/benchmarks`, `cluster-test-harness` | benchmarks and test support | you do not call these from an app |
 
 Kubernetes, if you deploy there:
 
@@ -34,8 +33,9 @@ blocks. Start there.
 | [`k8s/nri-shared-cpus`](k8s/nri-shared-cpus/) | gives a pod its exclusive CPUs **and** the node's shared housekeeping CPUs, and starts every thread on the shared ones so the busy-spin loop keeps its core | deploy its Helm chart on a containerd node with NRI on; ask for `ergon.io/shared-millicpus` |
 | [`k8s/nri-latency-pods`](k8s/nri-latency-pods/) | the latency-pod setup: node tuning, an admission policy that refuses exec probes and always-restart sidecars, and the pod annotations for hugepages, CPU isolation, io_uring and PHC devices | apply the node and admission halves on **EKS AL2023** only. A pod author sets annotations and labels, nothing more. Not a crate — nothing to import |
 
-Start with `ergo-sbe` + `ergon-clock` + `ergon-tune`. Add `ergon-io` if you talk
-to an exchange. The rest is optional.
+Start with `ergo-sbe` + `ergon-tune`. Add `ergon-io` if you talk to an
+exchange. The rest is optional. Which clock to read for timestamps and
+durations: **[Clocks](https://mimran1980.github.io/ergon/deploy/clocks.html)**.
 
 Not production-ready: APIs may change. Verify wire compatibility, failure
 handling and performance for your own schemas. Criteria for lifting that:
@@ -50,8 +50,6 @@ handling and performance for your own schemas. Criteria for lifting that:
 | [`cluster/`](cluster/) | `ergo-aeron-cluster` | Experimental Aeron Cluster client |
 | [`io/`](io/) | `ergon-io` | Busy-spin network I/O: switchable epoll / `io_uring` backends, in-place TLS 1.3, WebSocket, HTTP/1.1 with request signing, optional libcurl fallback |
 | [`io/benches/`](io/benches/) | `ergon-io-bench` | Standalone latency benchmark for the `ergon-io` backends; write-up in `io/benches/BENCHMARK.md` |
-| [`clock/`](clock/) | `ergon-clock` | Hardware-counter clock for low-latency threads: `rdtsc` or `CNTVCT_EL0` scaled to UTC nanoseconds by one multiply, calibrated once at start-up, kept on `CLOCK_REALTIME` by one cheap update a second (rate-capped, never back); unordered and ordered reads; warns at start-up when it falls back to `CLOCK_MONOTONIC` or the host's clock is not on UTC |
-| [`clock/bench/`](clock/bench/) | `ergon-clock-bench` | Unpublished benchmarks of `ergon-clock` against quanta, minstant, std and the kernel's clocks (`clockbench`, Criterion); results in `clock/BENCHMARKS.md` |
 | [`tune/`](tune/) | `ergon-tune` | Start-up and housekeeping checks of a host's low-latency settings (CPU isolation, NIC interrupts, THP, the Aeron directory, NUMA, scheduling policy, SMT siblings; with `nic`, ENA moderation, NAPI deferral, the Azure VF and the RX ring): pure functions returning findings, read through a root path so they run against fixture trees |
 | [`md-dpdk/`](md-dpdk/) | `ergon-md-dpdk` | DPDK ENA kernel-bypass transport for the media driver (Linux x86_64) |
 | [`md-dpdk/harness/`](md-dpdk/harness/), [`md-dpdk/device-plugin/`](md-dpdk/device-plugin/) | unpublished | DPDK interop harness and kubelet device plugin |

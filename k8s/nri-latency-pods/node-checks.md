@@ -2,8 +2,7 @@
 
 Every setting a latency node needs, what it is for, and the one line to check
 it. A node service writes `/run/ergon/node.json` with these facts so the NRI
-plugin and the pod can read them (`RequirePtp` uses the NIC's node and PHC
-name). The table's own "how to check" column is how to verify a node.
+plugin and the pod can read them (the NIC's node and PHC name among them). The table's own "how to check" column is how to verify a node.
 **A normal pod cannot change any of these** — they are node settings.
 
 ## Checklist
@@ -29,7 +28,7 @@ name). The table's own "how to check" column is how to verify a node.
 | NIC IRQ CPU | CPU 1 (kept), **not** a shared CPU | IRQs on a busy housekeeping CPU lose frames at 1 M/s, max **10.8 ms** ([data](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md), Graviton only) | `md-dpdk/deploy/aws-eks/node/irq-affinity.sh` status |
 | `gro_flush_timeout`, `napi_defer_hard_irqs` | node unit writes `/sys/class/net/<dev>/…` | per-netdev sysfs, not a sysctl | `cat /sys/class/net/eth0/gro_flush_timeout` |
 | `/dev/ptp*` | present or not | a clock source only; ENA has no hardware packet stamps | `ls /dev/ptp*` |
-| chrony | running, synced | the clock discipline owner is the busy loop; the node keeps the PHC | `chronyc tracking` |
+| chrony | running, synced | pods read the node's `CLOCK_REALTIME`; chrony on the node keeps it on the PHC ([Clocks](https://mimran1980.github.io/ergon/deploy/clocks.html)) | `chronyc tracking` |
 | containerd | `>= 2.2`, NRI on | the plugin's socket | `containerd --version`; `ls /var/run/nri` |
 | runc | `>= 1.3.1` | earlier runc passes systemd `CPUAffinity` on to containers | `runc --version` |
 | `CONFIG_RT_GROUP_SCHED` | `n` if possible | `y` gates container real-time scheduling; we take no real-time policy (ergon-tune T7 checks nothing is under one) | `zcat /proc/config.gz \| grep RT_GROUP_SCHED` |

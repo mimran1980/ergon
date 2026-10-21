@@ -9,7 +9,7 @@
 # next one starts. The gate grades the envelope of those copies.
 #
 # Only estimates this invocation produced are kept. The Criterion home is
-# shared (`target/criterion` also holds `ergon-clock-bench`'s `clock_*` groups)
+# shared (`target/criterion` also holds `ergon-md-dpdk`'s `clock_read` groups)
 # and Criterion leaves `new/` in place for groups a run does not touch, so
 # "everything under the home" would fold another binary's leftovers into this
 # run's envelope and widen it with evidence the invocation never produced.

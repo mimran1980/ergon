@@ -10,9 +10,30 @@
   hypervisor's view of it, or `hpet`/`acpi_pm`, read by system call).
   `ClockWatch` checks both again from housekeeping without waiting
   (chronyd's answer is read one check late) and allocates only when a
-  finding changes. Ported from `ergon-clock`'s time-sync probe, which stays
-  in this release. T11 makes the crate's one `unsafe` call, a read-only
-  `adjtimex`, until rustix wraps it.
+  finding changes. Ported from `ergon-clock`'s time-sync probe. T11 makes
+  the crate's one `unsafe` call, a read-only `adjtimex`, until rustix wraps
+  it.
+- Book: Deployment → [Clocks](https://mimran1980.github.io/ergon/deploy/clocks.html),
+  which clock to read for what, and the chrony set-up for AWS and Azure.
+
+### Removed
+
+- `ergon-clock` and its unpublished `ergon-clock-bench` leave the workspace
+  and the release. 0.1.30 stays on crates.io and will be yanked, with
+  `ergon-md-dpdk` 0.1.30, which depends on it. Replacements:
+
+  | need | use |
+  |---|---|
+  | timestamps (wire, logs, storage) | `CLOCK_REALTIME`: `std::time::SystemTime` |
+  | durations and timers in one process | `quanta` |
+  | is the host's clock right | `ergon-tune` T11, T12 and `ClockWatch` |
+  | the DPDK transport's stamps | its own clock (`RUSTERON_DPDK_CLOCK`) |
+
+  The book's `ergon-clock` part is replaced by Deployment → Clocks. The
+  md-dpdk AWS lab loses `LAB_CLOCK_ONLY`, `LAB_DISCIPLINE_SECONDS` and
+  `vm.sh` `clockbench`, `build-clock` and `discipline`; `aws/lab.sh` refuses
+  the two variables. The surviving raw benchmark rows are in
+  `md-dpdk/benches/cloud/results/clockbench-aws-20261016.txt`.
 
 ### Changed
 

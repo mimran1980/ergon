@@ -54,8 +54,8 @@ Runs: `c7i.4xlarge` round 7 `aws-20261015-185813`; `c7i.metal-24xl` round 4
 `-mcpu=native`. Full data and method:
 [`md-dpdk/BENCHMARKS.md`](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md).
 
-ergon-io's and ergon-clock's x86 and Graviton results are in their own
-chapters: [io](../io/overview.md), [clock](../clock/overview.md).
+ergon-io's x86 and Graviton results are in its chapter:
+[io](../io/overview.md).
 
 ## Cost per hour
 
@@ -69,7 +69,7 @@ holds them. Spot moves by the hour and the zone.
 | `c7i.2xlarge` | 4 (8 vCPUs) | 0.714 | 0.400 | AWS rounds 1–2, the kernel moderation A/B |
 | `c7i.4xlarge` | 8 (16 vCPUs) | 1.428 | not recorded | rounds 3 and 5–7, EKS |
 | `c7i.metal-24xl` | 48 (96 vCPUs) | 8.568 | not recorded | round 4 |
-| `c8g.xlarge` | 4 | 0.319 | 0.154 | the clock runs |
+| `c8g.xlarge` | 4 | 0.319 | 0.154 | the clock runs (raw rows: `md-dpdk/benches/cloud/results/`) |
 | `c9g.xlarge` | 4 | 0.348 | not recorded | the earlier Graviton5 pair |
 | `c9g.2xlarge` | 8 | 0.696 | 0.306 | rounds G1–G3 |
 
@@ -100,15 +100,14 @@ client's own loop, not the driver's. Setup: [Kubernetes](kubernetes.md).
 
 ## How to read a number
 
-Six things are called "a number" in this book. They are never compared to each
+Five things are called "a number" in this book. They are never compared to each
 other, and a table cell names which one it is.
 
 | aggregation | what one value is | how it is summarised |
 |---|---|---|
 | batch throughput | messages or operations completed in a timed window | the window's rate; a mean of windows, never a percentile |
 | individual latency | one round trip or one call | percentiles of the individuals, and the absolute maximum |
-| sampled clock residual | one sample's offset from a reference clock | percentiles of the samples; the sample rate and window are part of the figure |
-| UTC accuracy | one stamp's error against the wall clock | percentiles of the errors, with the discipline interval named |
+| UTC accuracy | one stamp's error against the wall clock | percentiles of the errors, with the time-sync source named |
 | median of repetition maxima | the worst value in one rep, then the middle rep | a summary of the reps' worst, **not** a worst case |
 | absolute observed maximum | the single worst value in any rep | one number; the per-rep spread goes in a note beside it |
 

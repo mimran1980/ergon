@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # check-book-content.sh — grep book code fences for known stale/incorrect API
-# patterns that the allowlist alone doesn't catch. Called from release-check.
+# patterns that the allowlist alone doesn't catch, and check every relative
+# link and {{#include}} resolves. Called from release-check, CI and book-ci.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -96,6 +97,98 @@ for page in sorted(root.rglob("*.md")):
                 failed = True
             elif not [e for e in end if e > start[0]]:
                 print(f"  FAIL: {where}: anchor '{anchor}' has no ANCHOR_END after it in {source}")
+                failed = True
+sys.exit(1 if failed else 0)
+PY
+then
+    rc=1
+fi
+
+# Every relative link must name a file that exists and, with a #fragment into
+# a page, a heading (or explicit id) on it. mdbook builds a link to a deleted
+# page or a renamed heading without a warning, so a removed chapter would
+# otherwise leave dead links behind. Links in code, absolute URLs and
+# {{#include}} (checked above) are not links.
+if ! python3 - "$book_src" <<'PY'
+import html, pathlib, re, sys
+from urllib.parse import unquote
+
+root = pathlib.Path(sys.argv[1])
+inline = re.compile(r"!?\[(?:[^\[\]]|\[[^\]]*\])*\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)")
+refdef = re.compile(r"^\s{0,3}\[[^\]]+\]:\s*<?(\S+?)>?(?:\s|$)")
+html_href = re.compile(r"""(?:href|src)\s*=\s*["']([^"']+)["']""")
+scheme = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*:")
+fence_mark = ("```", "~~~")
+
+
+def slug(text):
+    """mdbook's heading id: markup dropped, lower case, alphanumerics, '-'
+    and '_' kept, whitespace to '-'."""
+    text = re.sub(r"<[^>]+>", "", text).replace("`", "")
+    text = html.unescape(re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text))
+    return "".join(c if c.isalnum() or c in "-_" else "-" if c.isspace() else ""
+                   for c in text.strip().lower())
+
+
+ids_of = {}
+
+
+def ids(page):
+    """Every id a link can name on <page>: its headings' (a repeat gets -1,
+    -2, ...), explicit {#id}s and HTML id/name attributes."""
+    if page not in ids_of:
+        found, seen, fence = set(), {}, False
+        for line in page.read_text(errors="replace").splitlines():
+            if line.lstrip().startswith(fence_mark):
+                fence = not fence
+                continue
+            if fence:
+                continue
+            heading = re.match(r"^\s{0,3}#{1,6}\s+(.*?)\s*#*\s*$", line)
+            if heading:
+                text = heading.group(1)
+                explicit = re.search(r"\{#([^}\s]+)[^}]*\}\s*$", text)
+                if explicit:
+                    found.add(explicit.group(1))
+                    text = text[: explicit.start()]
+                base = slug(text)
+                n = seen.get(base, 0)
+                found.add(base if n == 0 else f"{base}-{n}")
+                seen[base] = n + 1
+            found.update(re.findall(r"""\b(?:id|name)\s*=\s*["']([^"']+)["']""", line))
+        ids_of[page] = found
+    return ids_of[page]
+
+
+failed = False
+for page in sorted(root.rglob("*.md")):
+    fence = False
+    for number, raw in enumerate(page.read_text(errors="replace").splitlines(), 1):
+        if raw.lstrip().startswith(fence_mark):
+            fence = not fence
+            continue
+        if fence:
+            continue
+        line = re.sub(r"(`+)(?:(?!\1).)*?\1", "", raw)
+        targets = [m.group(1) for pattern in (inline, refdef, html_href) for m in pattern.finditer(line)]
+        for target in targets:
+            if scheme.match(target) or target.startswith(("//", "{{")):
+                continue
+            path, _, fragment = target.partition("#")
+            path = unquote(path)
+            where = f"{page}:{number}: link {target}"
+            if path.startswith("/"):
+                print(f"  FAIL: {where}: absolute path; link relative to the page")
+                failed = True
+                continue
+            dest = page.parent / path if path else page
+            if path.endswith(".html") and dest.with_suffix(".md").is_file():
+                dest = dest.with_suffix(".md")
+            if not dest.exists():
+                print(f"  FAIL: {where}: {dest} does not exist")
+                failed = True
+            elif fragment and dest.suffix == ".md" and fragment not in ids(dest):
+                print(f"  FAIL: {where}: no heading #{fragment} in {dest}")
                 failed = True
 sys.exit(1 if failed else 0)
 PY

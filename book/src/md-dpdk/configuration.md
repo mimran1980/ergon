@@ -183,7 +183,7 @@ several channels on different ports
 - **NIC receive timestamps:** `RUSTERON_DPDK_RX_HW_TIMESTAMP=1`. Only AWS ENA
   offers them (Gen7+ instances in a `precision-time` placement group, DPDK
   25.11+); Azure MANA does not. They mean something only while chrony keeps
-  the host on the NIC's clock ([time sync](../clock/wall-clock.md)).
+  the host on the NIC's clock ([time sync](../deploy/clocks.md#set-up-time-sync)).
 - **Media receive timestamps** (`media-rcv-ts-offset=reserved` on a
   subscription): no measurable cost on Graviton DPDK. One run: repeat it
   before making them a default.

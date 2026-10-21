@@ -1,6 +1,6 @@
 # latency-pods lab: devices mode (M4). Item 5 of the build set.
-# NRI AddDevice grants /dev/ptp* (NIC PHC) read-only. The node keeps chrony +
-# PHC discipline; the pod gets read-only use for clock reads and RequirePtp.
+# NRI AddDevice grants /dev/ptp* (NIC PHC) read-only. The node keeps chrony on
+# the PHC; the pod gets read-only use for clock reads.
 # Do not let a pod run a PTP daemon: a pod that can step the NIC clock affects
 # every tenant. The plugin also AddMounts /run/ergon/node.json read-only.
 # cpuqos.ergon.io (x86 only, /dev/cpu_dma_latency) is off on Graviton: the

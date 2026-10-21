@@ -107,6 +107,8 @@ identical code, which is larger than that pair's own 0.63% spread. Every
 maintained ratio difference (0.01%–1.1%) sits at or below that, so no
 maintained cluster pair is resolvable on `aarch64-apple-darwin` today.
 
+**Status, 2026-10-21.** The clock recommendation closed on 2026-10-20 (below) was wrong: the `ergon-clock` crate, its benchmarks and its book part are removed, so every `clock/` and `book/src/clock/` row in this record is closed by deletion; the surviving raw rows are in `md-dpdk/benches/cloud/results/clockbench-aws-20261016.txt`.
+
 **Landed and re-verified since the first entry.** The clock rows
 `clock/README.md:44` and `book/src/clock/overview.md:59` (the read-rate
 cutoff and the mandatory recommendation): the cutoff is gone and the page

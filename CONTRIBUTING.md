@@ -128,8 +128,8 @@ the benchmark is re-audited.
 
 ## Package boundaries
 
-Only `ergo-sbe`, `ergo-aeron-cluster`, `ergon-clock`, `ergon-tune`, `ergon-io`
-and `ergon-md-dpdk` are publication candidates; `ergon-io` and
+Only `ergo-sbe`, `ergo-aeron-cluster`, `ergon-tune`, `ergon-io` and
+`ergon-md-dpdk` are publication candidates; `ergon-io` and
 `ergon-md-dpdk` depend on `ergon-tune`, so the release publishes it first.
 `scripts/check-publish-set.sh` (in `just policy`) fails when a published crate
 depends on an unpublished one, on a path without a version or on an older
@@ -137,14 +137,13 @@ version than a published sibling's own, or when the release recipe, the
 release workflow, the dry runs or the public-API gate leave a published crate
 out or publish it before its dependencies. A version bump therefore updates
 every `version` beside a workspace `path` with `[workspace.package]`:
-`ergo-sbe` in `[workspace.dependencies]`, the `ergon-tune` lines in
-`md-dpdk/` and `io/`, and the `ergon-clock` line in `clock/bench/Cargo.toml`.
+`ergo-sbe` in `[workspace.dependencies]` and the `ergon-tune` lines in
+`md-dpdk/` and `io/`.
 Inspect their payloads before any release:
 
 ```sh
 cargo package -p ergo-sbe --list --allow-dirty
 cargo package -p ergo-aeron-cluster --list --allow-dirty
-cargo package -p ergon-clock --list --allow-dirty
 cargo package -p ergon-tune --list --allow-dirty
 cargo package -p ergon-io --list --allow-dirty
 cargo package -p ergon-md-dpdk --list --allow-dirty
@@ -152,9 +151,9 @@ cargo package -p ergon-md-dpdk --list --allow-dirty
 
 Packages must exclude repository integration tests, fixtures not required at
 build time, benchmarks, Java harness code, application protocols, samples, and
-internal plans. `ergon-clock`, `ergon-tune` and `ergon-io` ship their library
-sources and README only (not `ergon-clock-bench`, `io/benches`, the tests,
-the example or their fixture trees).
+internal plans. `ergon-tune` and `ergon-io` ship their library sources and
+README only (not `io/benches`, the tests, the examples or their fixture
+trees).
 `ergon-md-dpdk` ships its native C (including the test fakes its own build
 compiles) but not its interop harness, device plugin or deployment assets.
 

@@ -61,7 +61,7 @@ snapshot = "api/generated/domain_mapping.txt"
 
 [metadata]
 baseline_tag = "v0.1.26"
-packages = ["ergo-sbe", "ergo-aeron-cluster", "ergon-clock", "ergon-tune", "ergon-io", "ergon-md-dpdk"]
+packages = ["ergo-sbe", "ergo-aeron-cluster", "ergon-tune", "ergon-io", "ergon-md-dpdk"]
 # Each crate's first crates.io release, where it is newer than baseline_tag:
 # until the baseline reaches it there is no published API to compare, and
 # from then on the crate is compared like the others.
@@ -69,4 +69,4 @@ packages = ["ergo-sbe", "ergo-aeron-cluster", "ergon-clock", "ergon-tune", "ergo
 # DpdkError::Clock, clock::clock_config and clock::transport_clock removed,
 # DpdkTransport::clock returns clock::TransportClock), so a baseline of
 # v0.1.30 fails it: move baseline_tag from v0.1.26 to v0.1.31 or later.
-first_release = { ergon-clock = "0.1.30", ergon-tune = "0.1.30", ergon-io = "0.1.30", ergon-md-dpdk = "0.1.30" }
+first_release = { ergon-tune = "0.1.30", ergon-io = "0.1.30", ergon-md-dpdk = "0.1.30" }
