@@ -15,7 +15,7 @@ Terms: [deployment glossary](overview.md#glossary),
 | Run Archive and Cluster | **25**: Eclipse Temurin 25 (LTS) | The newest LTS in Aeron 1.53.3's CI (17, 21, 25); ergon's cluster harness runs on it in CI. `eclipse-temurin:25-jre` covers amd64 and arm64 (Graviton); Debian 13 ships `openjdk-25-jre-headless`. |
 | Oldest that works | 17 | Aeron compiles its classes with `--release 17`. |
 | Newest GA release, 27 | Runs, but not recommended | 27 is not an LTS release and is not in Aeron's test matrix. |
-| Build Aeron's jars from source | JDK 17 to 26 | Aeron's Gradle (9.7.1) fails on 27 with `Unsupported class file major version 71`. Any JDK makes Java 17 bytecode. Or skip Gradle: `aeron-all-1.53.3.jar` on Maven Central holds Archive, Cluster and the samples. |
+| Build Aeron's jars from source | **JDK 25** (17 to 26 work) | CI builds them on 25. Aeron's Gradle (9.7.1) fails on 27 with `Unsupported class file major version 71`. Any JDK makes Java 17 bytecode. Or skip Gradle: `aeron-all-1.53.3.jar` on Maven Central holds Archive, Cluster and the samples. |
 
 The `eclipse-temurin:25-jre` image has neither `wget` nor `curl`. Fetch the
 jar with a checksummed `ADD`:
