@@ -21,6 +21,18 @@ use ergon_io::{
 };
 use support::{Lab, R, one_cpu};
 
+/// Held by every test here. The route-lookup counters, the warning thread and
+/// the host report are per process, and tests in one binary may run in
+/// parallel (`--test-threads`): a test that compares a counter before and
+/// after must not see another test's lookups.
+static PROCESS_STATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn process_state() -> std::sync::MutexGuard<'static, ()> {
+    PROCESS_STATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 const WAIT: Duration = Duration::from_secs(10);
 
 #[derive(Default)]
@@ -129,6 +141,7 @@ fn route_of(d: &Driver<HttpConn>, id: ConnId) -> R<RouteCheck> {
 
 #[test]
 fn warn_looks_the_route_up_on_the_warning_thread() -> R {
+    let _state = process_state();
     for how in [How::Connect, How::Add] {
         let here = route::lookups_here();
         with_conn(cfg(QuickAckCheck::Warn), how, |d, id| {
@@ -157,6 +170,7 @@ fn warn_looks_the_route_up_on_the_warning_thread() -> R {
 
 #[test]
 fn a_pending_check_reads_as_pending() {
+    let _state = process_state();
     let p = RouteCheck::Pending;
     assert_eq!(p.quickack(), QuickAck::Unknown);
     assert_eq!(p.route(), None);
@@ -165,6 +179,7 @@ fn a_pending_check_reads_as_pending() {
 
 #[test]
 fn require_decides_where_the_connection_is_set_up() -> R {
+    let _state = process_state();
     for (how, on_loop) in [(How::Connect, 1), (How::Add, 1), (How::Background, 0)] {
         if how == How::Background && one_cpu()? {
             // No core for the helper: it refuses typed instead of looking
@@ -207,6 +222,7 @@ fn silent_server() -> R<(std::net::TcpListener, ergon_io::Target)> {
 
 #[test]
 fn require_checks_the_route_before_the_handshake() -> R {
+    let _state = process_state();
     let lab = Lab::new()?;
     let (listener, target) = silent_server()?;
     // Driver::connect: on the polling thread, at TCP connect, and the
@@ -271,6 +287,7 @@ fn require_checks_the_route_before_the_handshake() -> R {
 
 #[test]
 fn off_looks_nothing_up_anywhere() -> R {
+    let _state = process_state();
     for how in [How::Connect, How::Background, How::Add] {
         if how == How::Background && one_cpu()? {
             // No core for the helper: the typed refusal looks nothing up
@@ -324,6 +341,7 @@ fn set_tcp_opt(fd: i32, name: libc::c_int, v: libc::c_int) -> R {
 
 #[test]
 fn add_sets_tcp_nodelay_and_reports_tcp_cork() -> R {
+    let _state = process_state();
     warnings::keep_lines();
     let lab = Lab::new()?;
     let mut d: Driver<HttpConn> = Driver::new(cfg(QuickAckCheck::Off))?;
@@ -364,6 +382,7 @@ fn add_sets_tcp_nodelay_and_reports_tcp_cork() -> R {
 
 #[test]
 fn driver_new_reports_the_host_once_per_process() -> R {
+    let _state = process_state();
     warnings::keep_lines();
     // Earlier tests in this binary already reported their host lines (once
     // per process). Forget those, so this driver's report is printed and its
@@ -403,6 +422,7 @@ fn driver_new_reports_the_host_once_per_process() -> R {
 
 #[test]
 fn the_receive_buffer_the_kernel_grants_is_checked() -> R {
+    let _state = process_state();
     warnings::keep_lines();
     // A size no other test asks for.
     let asked: u32 = (64 << 20) + 4096;
