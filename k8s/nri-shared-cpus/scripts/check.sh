@@ -25,8 +25,12 @@ if [[ "$mode" != "--local" ]]; then
     # capability, because containerd runs hooks as root with full
     # capabilities. The tests must run where the write can succeed.
     # shellcheck disable=SC2086 # CHECK_DOCKER_ARGS is a list of arguments
+    # The admission policy lives in the sibling nri-latency-pods module.
+    # Mount that directory outside /src: a file mount inside the module
+    # bind cannot be created on this Docker. The unit test reads it there.
+    admission="$here/../nri-latency-pods/admission"
     docker run --rm --name "ergon-nri-check-$$" --cap-add=SYS_NICE \
-        -v "$here":/src -w /src ${CHECK_DOCKER_ARGS:-} \
+        -v "$here":/src -v "$admission":/admission:ro -w /src ${CHECK_DOCKER_ARGS:-} \
         "$image" bash scripts/check.sh --local
     [[ "$mode" == "--unit" ]] && exit 0
     # The cgroup kernel lane needs a privileged container with the host's
@@ -36,6 +40,19 @@ fi
 
 cd "$here"
 export GOFLAGS=-buildvcs=false
+
+if ! command -v helm >/dev/null 2>&1; then
+    echo "== helm (chart render test)"
+    arch=$(uname -m)
+    case "$arch" in
+        x86_64) ha=amd64 ;;
+        aarch64 | arm64) ha=arm64 ;;
+        *) echo "helm: no binary for $arch" >&2; exit 1 ;;
+    esac
+    curl -fsSL "https://get.helm.sh/helm-v3.17.4-linux-${ha}.tar.gz" | tar -xz -C /tmp
+    install -m 755 "/tmp/linux-${ha}/helm" /usr/local/bin/helm
+    rm -rf "/tmp/linux-${ha}"
+fi
 
 echo "== gofmt"
 unformatted=$(gofmt -l .)

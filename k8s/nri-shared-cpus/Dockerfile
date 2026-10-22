@@ -6,8 +6,8 @@
 #   docker build -t ergon-shared-cpus:dev .
 #   docker buildx build --platform linux/amd64,linux/arm64 -t ergon-shared-cpus:dev .
 #
-# Not published. See RELEASE.md for what must be true before the first push
-# to ghcr.io.
+# Published as ghcr.io/mimran1980/ergon-shared-cpus:0.1.0.
+# See RELEASE.md for what is still not verified.
 
 FROM golang:1.27-trixie AS build
 WORKDIR /src

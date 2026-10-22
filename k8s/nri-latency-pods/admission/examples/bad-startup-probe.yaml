@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+# A hot pod the validating policy REJECTS: a startupProbe of type exec.
+# Every other rule is satisfied, so the rejection names the startup probe.
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: latency-bad-startup-probe
+  namespace: ergon-latency-pods
+  labels:
+    ergon.io/latency: "hot"
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus"]'
+spec:
+  priorityClassName: ergon-hot
+  containers:
+    - name: app
+      image: ergon-latency-pods-demo:e2e
+      command: ["sleep", "3600"]
+      resources:
+        requests: { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250" }
+        limits:   { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250" }
+      resizePolicy:
+        - resourceName: cpu
+          restartPolicy: RestartContainer
+      startupProbe:
+        exec: { command: ["true"] }
+        periodSeconds: 1

@@ -13,7 +13,11 @@ venue schema.”
 - Header composite members (`blockLength`, `templateId`, `schemaId`, `version`)
   match the schema-declared types and order.
 - Version-aware presence (`sinceVersion`) and optional null sentinels follow the
-  schema.
+  schema. A set choice with `sinceVersion` greater than 0 reads false from a
+  message or group field when the acting version is lower. The buffer keeps
+  the bit, and a group entry's `raw_<field>()` returns that wire word. A set
+  member of a composite is read as the wire word, as sbe-tool's Java codec
+  does when the set sits inside a composite.
 
 ## Null values and float literals
 
@@ -26,7 +30,7 @@ venue schema.”
   sign. Rust also parses `inf`, `infinity` and `nan` in any case; ergon rejects
   those, as sbe-tool's Java parser does, so a schema one accepts the other
   accepts. A NaN null, `-NaN` included, is the canonical quiet NaN Java writes.
-- The parity suite checks these against sbe-tool 1.40.2's own Rust codecs for
+- The parity suite checks these against sbe-tool 1.41.0's own Rust codecs for
   its `issue1116` and `floating-point-infinity-schema` schemas.
 
 ## Generated mappings, source traits and send helpers

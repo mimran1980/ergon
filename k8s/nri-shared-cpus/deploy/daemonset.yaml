@@ -25,7 +25,11 @@ spec:
         - name: plugin
           image: ergon-shared-cpus:dev
           imagePullPolicy: IfNotPresent
-          args: ["--config", "/etc/ergon-shared-cpus/config.yaml"]
+          args:
+            - --config
+            - /etc/ergon-shared-cpus/config.yaml
+            - --kubelet-config
+            - /host/kubelet-config
           securityContext:
             runAsUser: 0
             runAsGroup: 0
@@ -70,6 +74,9 @@ spec:
             - name: host-cgroup
               mountPath: /sys/fs/cgroup
               readOnly: true
+            - name: host-kubelet-config
+              mountPath: /host/kubelet-config
+              readOnly: true
       volumes:
         - name: nri
           hostPath:
@@ -98,12 +105,22 @@ spec:
         # /sys/fs/cgroup is this pod's cgroup namespace root, not the node's
         # hierarchy, so the pod cgroup's hugepage limit and the
         # cpuset.cpus.exclusive probe cannot be read there. The host's cgroup v2
-        # is mounted read-only at /sys/fs/cgroup — the node's own path, which
-        # config.cgroupRoot names and the createRuntime hook matches against
-        # /proc/<pid>/cgroup — because the plugin never writes this tree from
+        # is mounted read-only at /sys/fs/cgroup. That path is the binary's
+        # derived cgroup root, not a YAML field (the parser rejects
+        # cgroupRoot). The createRuntime hook matches it against
+        # /proc/<pid>/cgroup. The plugin never writes this tree from
         # inside the pod: the cpu-partition writes are the ergon-cpus hook's,
         # and runc runs that hook on the node against the node's own mount.
         - name: host-cgroup
           hostPath:
             path: /sys/fs/cgroup
             type: Directory
+        # Hot creates read cpuManagerPolicy and reservedSystemCPUs from this
+        # file. An empty --kubelet-config refuses those creates. File, not
+        # FileOrCreate: a missing path fails the pod instead of mounting an
+        # empty file the plugin would trust. This manifest is the :dev image.
+        # Chart 0.1.0 leaves the mount off because image 0.1.0 rejects the flag.
+        - name: host-kubelet-config
+          hostPath:
+            path: /var/lib/kubelet/config.yaml
+            type: File

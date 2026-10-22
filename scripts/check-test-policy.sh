@@ -70,6 +70,7 @@ documentation_files=()
 control_files=()
 workflow_files=()
 while IFS= read -r file; do
+    [[ -f "$root/$file" ]] || continue
     case "$file" in
         *.rs)
             rust_source_files+=("$file")

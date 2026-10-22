@@ -192,27 +192,10 @@ only the ready sockets. Its cost stops at the queue count.
 
 ## Find the crossover on your own host
 
-The crossover depends on the NIC, its queue count, the interrupt path and
-the traffic. Measure it with the lab tools in `io/benches`, on two hosts:
-the many-connection market-data test the tables above come from, once per
-backend, at your socket count (here 20).
+The crossover depends on the NIC, queue count, interrupt path and traffic.
+Compare two hosts using the same message stream and your target socket
+count; run each backend separately.
 
-```sh
-cargo build --release --manifest-path io/benches/Cargo.toml --bin replay_server --bin io_bench --bin analyse
-B=io/benches/target/release
-
-# sender: one stream per connection; restart it before each run, copy cert-many.pem to the receiver
-sudo $B/replay_server --listen 0.0.0.0:9447 --cert-out cert-many.pem --clients 20 --mode mixed --cpu 1 --duration 120 \
-  --trickle-min-us 1000 --trickle-max-us 10000 --burst-every-us 2000 --burst-slots 10 --burst 10 --seed 42
-
-# receiver, loop on isolated CPU 2
-sudo $B/io_bench lab --variants recv-busy --cpus 2 --busy-poll 1 --wait-us 0 --server SENDER:9447 \
-  --ca cert-many.pem --sni lab.local --conns 20 --capacity 8000000 --duration 60 --out res/c20-recv-busy
-# then the same with --variants recv-busy --per-queue (out res/c20-per-queue),
-# --variants epoll-spin (res/c20-epoll-spin), --variants uring-sqpoll --sqpoll-cpu 3 (res/c20-sqpoll)
-
-$B/analyse --warmup-s 2 res/c20-*
-```
 
 - Compare the backends' sender → decoded p50, p99 and max within the same
   session, and repeat in reversed order: the two clocks drift.

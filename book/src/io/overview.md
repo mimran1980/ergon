@@ -65,15 +65,15 @@ Terms this chapter uses. Each links to the section that explains it.
 | [HTTP/1.1 keep-alive](http-client.md#rules) | One connection reused for many requests. | No handshake per request. One request in flight per connection; a timed-out request closes its connection. |
 | [connection pool](http-client.md#many-connections) | The warm keep-alive connections an `HttpClient` keeps. | All busy: `Error::Busy`. Each one is one more socket the loop polls. |
 | [libcurl](http-client.md) | The common C HTTP library: `HttpImpl::Curl` (feature `curl`). | Pro: redirects, proxies, HTTP/2, compression. Con: slower than native at the median on the same interrupt path. |
-| [rate limit](rate-limits.md#what-venues-do) | A venue's cap on requests, orders or connects per window: per IP, account, instrument or connection. | Break it: refused (429). Keep going: your IP is banned. |
+| [rate limit](rate-limits.md#what-ergon-io-gives-you) | A venue's cap on requests, orders or connects per window: per IP, account, instrument or connection. | Break it: refused (429). Keep going: your IP is banned. |
 | [budget, bucket](rate-limits.md#what-ergon-io-gives-you) | `limit::Budget`: one bucket per venue limit, checked before each request. | Never sleeps or queues: a refusal says when to try again. Sees only this process. |
 | [rolling window](rate-limits.md#what-ergon-io-gives-you) | A count of what went out in the last window, kept in sub-windows. | Safe whatever window edges the venue uses; costs at most one sub-window of budget. |
-| [draining counter (GCRA)](rate-limits.md#what-ergon-io-gives-you) | A level that drains at a fixed rate (Kraken, Deribit). | Wrong for window limits: it lets twice the limit through in one window. |
+| [draining counter (GCRA)](rate-limits.md#what-ergon-io-gives-you) | A level that drains at a fixed rate. | Wrong for window limits: it lets twice the limit through in one window. |
 | [reserve](rate-limits.md#what-ergon-io-gives-you) | Units only cancels and reduce-only orders may use. | Keeps cancels possible when a bucket is nearly full; not during a hold. |
-| [hold, halt](rate-limits.md#rules) | Hold: a bucket refuses everything until the venue's wait ends (a 429). Halt: until a person clears it (a ban). | A halt never ends by itself: alert on `Budget::halted()`. |
-| [verdict](rate-limits.md#error-policy) | What became of a request: done, rejected, not run, throttled, banned, clock skew, unknown. | Only the "did not run" kinds may be sent again, inside their deadline. |
-| [`Sent::No`, `Sent::Maybe`](rate-limits.md#error-policy) | For a request with no answer: it never left, or it may have run. | Only the transport knows. `Maybe`: look the order up. |
-| [client order id](rate-limits.md#rules) | Your unique id on each order. | The only way to find out what became of an order with an unknown outcome. |
+| [hold, halt](rate-limits.md#limits) | Hold: a bucket refuses everything until the venue's wait ends (a 429). Halt: until a person clears it (a ban). | A halt never ends by itself: alert on `Budget::halted()`. |
+| [verdict](rate-limits.md#outcomes-and-http) | What became of a request: done, rejected, not run, throttled, banned, clock skew, unknown. | Only the "did not run" kinds may be sent again, inside their deadline. |
+| [`Sent::No`, `Sent::Maybe`](rate-limits.md#outcomes-and-http) | For a request with no answer: it never left, or it may have run. | Only the transport knows. `Maybe`: look the order up. |
+| [client order id](rate-limits.md#limits) | Your unique id on each order. | The only way to find out what became of an order with an unknown outcome. |
 | [connect gate](websocket.md#connect-limits-and-the-servers-wait) | A bucket every connect attempt must pass. | Keeps 50 links reconnecting at once inside a venue's connect limit. |
 | [round trip](websocket.md#measured-results) | Request sent to answer received, on one clock. | x86: 1 connection. Graviton: 1–64 sockets on the loop and an HTTP pool of 20. |
 | p50 / p99 / max | pN: N % of samples are at or below it (p50: the median). max: the worst. | In µs. Every figure in `BENCHMARK.md` keeps its max. |

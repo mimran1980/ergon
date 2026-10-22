@@ -70,6 +70,50 @@ type File struct {
 	Ptp string `json:"ptp,omitempty"`
 	// HugepagesAeronDir is the AERON_DIR on hugetlbfs when the pod mounts one.
 	HugepagesAeronDir string `json:"hugepagesAeronDir,omitempty"`
+	// Profiles is a set of complete named configurations. It cannot be
+	// combined with the legacy fields above. The process picks one at
+	// start from a node label. It does not watch the node or change labels.
+	Profiles map[string]Profile `json:"profiles,omitempty"`
+	// NodeProfileLabel is the label whose value is the profile name.
+	NodeProfileLabel string `json:"nodeProfileLabel,omitempty"`
+}
+
+// Profile is one named configuration. It has the operator fields of File
+// and cannot nest another profile map.
+type Profile struct {
+	SharedCPUs         *string      `json:"sharedCpus"`
+	Oversubscription   *int         `json:"oversubscription,omitempty"`
+	Namespaces         []string     `json:"namespaces,omitempty"`
+	DefaultAffinity    string       `json:"defaultAffinity,omitempty"`
+	HookPath           string       `json:"hookPath,omitempty"`
+	AnnotationOptIn    bool         `json:"annotationOptIn,omitempty"`
+	MetricsAddress     string       `json:"metricsAddress,omitempty"`
+	Rlimits            *RlimitsFile `json:"rlimits,omitempty"`
+	Seccomp            *SeccompFile `json:"seccomp,omitempty"`
+	SeccompProfilePath string       `json:"seccompProfilePath,omitempty"`
+	DevRoot            string       `json:"devRoot,omitempty"`
+	SchedFifo          string       `json:"schedFifo,omitempty"`
+	Ptp                string       `json:"ptp,omitempty"`
+	HugepagesAeronDir  string       `json:"hugepagesAeronDir,omitempty"`
+}
+
+func (p Profile) asFile() File {
+	return File{
+		SharedCPUs:         p.SharedCPUs,
+		Oversubscription:   p.Oversubscription,
+		Namespaces:         p.Namespaces,
+		DefaultAffinity:    p.DefaultAffinity,
+		HookPath:           p.HookPath,
+		AnnotationOptIn:    p.AnnotationOptIn,
+		MetricsAddress:     p.MetricsAddress,
+		Rlimits:            p.Rlimits,
+		Seccomp:            p.Seccomp,
+		SeccompProfilePath: p.SeccompProfilePath,
+		DevRoot:            p.DevRoot,
+		SchedFifo:          p.SchedFifo,
+		Ptp:                p.Ptp,
+		HugepagesAeronDir:  p.HugepagesAeronDir,
+	}
 }
 
 // RlimitsFile is the YAML rlimits block. "inf" or a positive count.
@@ -155,6 +199,13 @@ func Parse(data []byte) (*Config, error) {
 	var f File
 	if err := yaml.UnmarshalStrict(data, &f); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
+	}
+	profiles, err := checkMode(f)
+	if err != nil {
+		return nil, err
+	}
+	if profiles {
+		return nil, errors.New("config: profiles need Resolve")
 	}
 	c := &Config{
 		Oversubscription:   1,

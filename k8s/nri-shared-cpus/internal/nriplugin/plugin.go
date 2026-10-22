@@ -53,6 +53,9 @@ type Plugin struct {
 	resend    Resender
 	onSynced  func()
 	onConnect func()
+	// contract is re-read on every hot create. Nil refuses hot creates and
+	// leaves every other create alone.
+	contract func(shared, exclusive cpuset.Set) error
 	// touched holds the containers whose state moved on after a Synchronize.
 	// Synchronize sends its re-widen updates again after ResendDelay against a
 	// copy taken at sync time; a container that was resized, stopped or removed
@@ -87,6 +90,15 @@ func (p *Plugin) SetResender(r Resender) {
 func (p *Plugin) OnSynchronized(f func()) {
 	p.mu.Lock()
 	p.onSynced = f
+	p.mu.Unlock()
+}
+
+// SetHostContract installs the hot-create node check. The function is called
+// with the configured helper set and the container's exclusive cpuset. A nil
+// function refuses hot creates. It does not affect pods without the hot label.
+func (p *Plugin) SetHostContract(fn func(shared, exclusive cpuset.Set) error) {
+	p.mu.Lock()
+	p.contract = fn
 	p.mu.Unlock()
 }
 
@@ -134,6 +146,7 @@ func requestFrom(pod *api.PodSandbox, ctr *api.Container) Request {
 		Cpus:               cpu.GetCpus(),
 		SeccompPolicy:      requestSeccomp(ctr),
 		HugepageLimitBytes: requestHugepageLimitBytes(ctr),
+		Hot:                pod.GetLabels()[names.LatencyLabel] == names.LatencyHot,
 	}
 	if q := cpu.GetQuota(); q != nil {
 		v := q.GetValue()
@@ -144,6 +157,26 @@ func requestFrom(pod *api.PodSandbox, ctr *api.Container) Request {
 		r.Shares = &v
 	}
 	return r
+}
+
+// hotContract runs the mounted-fact check for one hot container. The plugin
+// stays up either way: the caller returns the refusal to this create only.
+func (p *Plugin) hotContract(r Request) error {
+	p.mu.Lock()
+	fn := p.contract
+	p.mu.Unlock()
+	if fn == nil {
+		return errors.New("node contract is not configured")
+	}
+	exclusive := cpuset.Set{}
+	if r.Cpus != "" {
+		e, err := cpuset.Parse(r.Cpus)
+		if err != nil {
+			return fmt.Errorf("exclusive cpuset: %w", err)
+		}
+		exclusive = e
+	}
+	return fn(p.cfg.Shared, exclusive)
 }
 
 // marker is the opt-in marker of a container: the device plugin's container
@@ -233,6 +266,16 @@ func (p *Plugin) publishTable() {
 // created.
 func (p *Plugin) CreateContainer(_ context.Context, pod *api.PodSandbox, ctr *api.Container) (*api.ContainerAdjustment, []*api.ContainerUpdate, error) {
 	r := requestFrom(pod, ctr)
+	if pod.GetLabels()[names.LatencyLabel] == names.LatencyHot {
+		if err := p.hotContract(r); err != nil {
+			p.metrics.SetContractOK(false)
+			p.metrics.Refused("node-contract")
+			p.log.Warn("create refused", "pod", r.Namespace+"/"+r.PodName, "container", r.Container,
+				"reason", "node-contract", "error", err.Error())
+			return nil, nil, refuse(9, "node-contract", "%v", err)
+		}
+		p.metrics.SetContractOK(true)
+	}
 	// Kubernetes writes the hugepages-2Mi limit on the pod cgroup and never
 	// on the OCI/NRI container, so read it from there when NRI has none.
 	if r.HugepageLimitBytes == 0 {
@@ -729,11 +772,17 @@ func (p *Plugin) Synchronize(_ context.Context, pods []*api.PodSandbox, ctrs []*
 // failed update, so the ones that are still right are worth the second try.
 func (p *Plugin) resendUpdates(resend Resender, updates []*api.ContainerUpdate) {
 	live := make([]*api.ContainerUpdate, 0, len(updates))
+	// Membership is observed only while p.mu is held. Copying the map header
+	// and indexing it after Unlock races with markTouched: StopContainer and
+	// RemoveContainer write that map, and a delayed resend runs beside them.
+	skip := make([]bool, len(updates))
 	p.mu.Lock()
-	touched := p.touched
+	for i, u := range updates {
+		skip[i] = p.touched[u.GetContainerId()]
+	}
 	p.mu.Unlock()
-	for _, u := range updates {
-		if touched[u.GetContainerId()] {
+	for i, u := range updates {
+		if skip[i] {
 			p.log.Info("sync resend: skipped, the container moved on",
 				"container_id", u.GetContainerId(),
 				"cpuset", u.GetLinux().GetResources().GetCpu().GetCpus())

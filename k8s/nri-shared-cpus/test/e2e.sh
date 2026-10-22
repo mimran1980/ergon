@@ -455,7 +455,7 @@ step5_hook_effect() {
     step_failed=0
     need_layout || return 1
     must wait_for 30 "hold startup lines" \
-        bash -c "docker exec $NODE kubectl --kubeconfig /etc/kubernetes/admin.conf logs a -n $NS --tail=-1 | grep -q '^samples='" || return 1
+        bash -c "docker exec $NODE kubectl --kubeconfig /etc/kubernetes/admin.conf logs a -n $NS --tail=-1 | grep -q '^hotchild.affinity='" || return 1
     local logs init pthread samples s
     logs=$(kube logs a -n "$NS" --tail=-1) || return 1
     printf '%s\n' "$logs" | sed 's/^/  | /'
@@ -467,6 +467,14 @@ step5_hook_effect() {
     check "PID 1 affinity = S ($s)" test "$init" = "$s"
     check "new pthread affinity = S" test "$pthread" = "$s"
     check "1000 sched_getcpu() samples all on S" bash -c "grep -q 'off_shared=0' <<<\"$samples\""
+
+    local helper_aff hotchild e0
+    helper_aff=$(printf '%s\n' "$logs" | awk -F= '/^helper.affinity=/{print $2; exit}')
+    hotchild=$(printf '%s\n' "$logs" | awk -F= '/^hotchild.affinity=/{print $2; exit}')
+    e0=$(cpus_of </tmp/e.txt | sed -n 1p)
+    say "  helper.affinity=$helper_aff  hotchild.affinity=$hotchild  hot=$e0"
+    check "helper created before the hot pin keeps S" test "$helper_aff" = "$s"
+    check "helper created by the pinned hot thread inherits the hot mask" test "$hotchild" = "$e0"
 
     local tself tpthread
     tself=$(printf '%s\n' "$logs" | awk -F= '/^timerslack\.self=/{print $2; exit}')
@@ -572,6 +580,11 @@ step8_kubelet_restart() {
 step9_plugin_down() {
     step_failed=0
     need_layout || return 1
+    # Demonstrated limitation, not a passing isolation claim. While the
+    # plugin is down the kubelet rewrites the cpuset to the exclusive CPUs
+    # and helpers run there. Recovery does not prove the contract held
+    # during the outage. required-plugins protects creation, not a pod that
+    # is already running.
     # Park the DaemonSet on a nodeSelector that matches nothing. The node
     # label stays on, so the test pods below still schedule; only the plugin
     # goes away. (Removing the node label would unschedulable every pod that

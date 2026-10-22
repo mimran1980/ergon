@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -103,24 +104,15 @@ func runHook(args []string, stdin *os.File, stderr *os.File) int {
 	return 0
 }
 
+// affinityRule is the guarantee the createRuntime hook actually gives.
+// It is not a promise about threads the program creates afterwards.
+const affinityRule = "The hook pins threads that exist at create onto the shared CPUs. A later thread inherits its creator's mask. A helper created by a pinned hot thread inherits the hot mask. The application can change affinity."
+
 func runShow(env []string, stdout, stderr *os.File) int {
-	plan, err := wrap.FromEnv(env, wrap.CgroupCPUs, "/sys")
+	out, err := buildShow(env, wrap.CgroupCPUs)
 	if err != nil {
 		fmt.Fprintf(stderr, "ergon-cpus show: %v\n", err)
 		return 1
-	}
-	self, err := wrap.SelfAffinity()
-	if err != nil {
-		fmt.Fprintf(stderr, "ergon-cpus show: own affinity: %v\n", err)
-		return 1
-	}
-	out := map[string]any{
-		"isolated":              plan.Isolated.List(),
-		"shared":                plan.Shared.List(),
-		"isolated_cores":        cpuset.FormatCores(plan.Cores),
-		"shared_millicpus":      plan.Milli,
-		"cpuset_cpus_effective": plan.Allowed.String(),
-		"own_affinity":          self.List(),
 	}
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
@@ -129,6 +121,60 @@ func runShow(env []string, stdout, stderr *os.File) int {
 		return 1
 	}
 	return 0
+}
+
+func buildShow(env []string, cgroupCPUs string) (map[string]any, error) {
+	plan, err := wrap.FromEnv(env, cgroupCPUs, "/sys")
+	if err != nil {
+		return nil, err
+	}
+	self, err := wrap.SelfAffinity()
+	if err != nil {
+		return nil, fmt.Errorf("own affinity: %w", err)
+	}
+	return map[string]any{
+		"isolated":              plan.Isolated.List(),
+		"shared":                plan.Shared.List(),
+		"isolated_cores":        cpuset.FormatCores(plan.Cores),
+		"shared_millicpus":      plan.Milli,
+		"cpuset_cpus_effective": plan.Allowed.String(),
+		"own_affinity":          self.List(),
+		"cpu_max":               readCPUMax(cgroupCPUs),
+		"threads":               threadAllowed(),
+		"affinity_rule":         affinityRule,
+		"config_identity":       fmt.Sprintf("isolated=%s shared=%s milli=%d", plan.Isolated.List(), plan.Shared.List(), plan.Milli),
+	}, nil
+}
+
+func readCPUMax(cgroupCPUs string) string {
+	b, err := os.ReadFile(filepath.Join(filepath.Dir(cgroupCPUs), "cpu.max"))
+	if err != nil {
+		return "unreadable"
+	}
+	return strings.TrimSpace(string(b))
+}
+
+func threadAllowed() []map[string]string {
+	const dir = "/proc/self/task"
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return []map[string]string{{"tid": "unreadable", "cpus_allowed": "unreadable"}}
+	}
+	out := make([]map[string]string, 0, len(entries))
+	for _, e := range entries {
+		allowed := "unreadable"
+		b, err := os.ReadFile(filepath.Join(dir, e.Name(), "status"))
+		if err == nil {
+			for _, line := range strings.Split(string(b), "\n") {
+				if strings.HasPrefix(line, "Cpus_allowed_list:") {
+					allowed = strings.TrimSpace(strings.TrimPrefix(line, "Cpus_allowed_list:"))
+					break
+				}
+			}
+		}
+		out = append(out, map[string]string{"tid": e.Name(), "cpus_allowed": allowed})
+	}
+	return out
 }
 
 func runWrap(args []string, env []string, stderr *os.File) int {

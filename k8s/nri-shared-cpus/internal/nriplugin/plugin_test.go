@@ -6,7 +6,9 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -41,6 +43,9 @@ func testPluginSiblings(t *testing.T, shared string, siblings map[int]cpuset.Set
 	f := &config.File{SharedCPUs: &shared, Namespaces: []string{"trading"}}
 	for _, o := range opts {
 		o(f)
+	}
+	if f.Oversubscription != nil {
+		text += "oversubscription: " + strconv.Itoa(*f.Oversubscription) + "\n"
 	}
 	if f.AnnotationOptIn {
 		text += "annotationOptIn: true\n"
@@ -423,6 +428,144 @@ func TestSynchronizeUnhandled(t *testing.T) {
 	if got := p.m.Counter("unhandled"); got != 1 {
 		t.Errorf("unhandled = %d, want 1", got)
 	}
+}
+
+func TestFullSetMillicpuGrant(t *testing.T) {
+	one := 1
+	p := testPlugin(t, "0,4", func(f *config.File) { f.Oversubscription = &one })
+	c := ctr("ctr-full", "1,5", nil, map[string]string{names.MilliAnnotation: "2000"})
+	adj, _, err := p.CreateContainer(context.Background(), pod(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := adj.GetLinux().GetResources().GetCpu().GetCpus()
+	if !sameCPUs(t, got, "0,1,4,5") {
+		t.Fatalf("cpuset %q, want the exclusive CPUs plus the whole helper set 0,4", got)
+	}
+	env := map[string]string{}
+	for _, e := range adj.GetEnv() {
+		env[e.Key] = e.Value
+	}
+	if env[names.EnvShared] != "0,4" {
+		t.Fatalf("%s = %q, want 0,4 (M = 1000 * |S| grants every helper CPU)", names.EnvShared, env[names.EnvShared])
+	}
+	if adj.GetLinux().GetResources().GetCpu().GetQuota() != nil {
+		t.Fatal("create wrote a CPU quota; the plugin must not clear or set one")
+	}
+	t.Log("full-set millicpu grant")
+}
+
+func TestReconnectKeepsRecordedHelperCPUs(t *testing.T) {
+	p := testPlugin(t, "0,4")
+	recorded := ctr("ctr-old", "1,5,4", map[string]string{
+		names.EnvIsolated: "1,5",
+		names.EnvShared:   "4",
+		names.EnvMilli:    "250",
+	}, map[string]string{names.MilliAnnotation: "250"})
+	recorded.State = api.ContainerState_CONTAINER_RUNNING
+	if _, err := p.Synchronize(context.Background(), []*api.PodSandbox{pod()}, []*api.Container{recorded}); err != nil {
+		t.Fatal(err)
+	}
+	freshPod := pod()
+	freshPod.Id = "sandbox-2"
+	freshPod.Uid = "uid-2"
+	fresh := ctr("ctr-new", "2,6", nil, map[string]string{names.MilliAnnotation: "250"})
+	fresh.PodSandboxId = freshPod.Id
+	adj, _, err := p.CreateContainer(context.Background(), freshPod, fresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{}
+	for _, e := range adj.GetEnv() {
+		env[e.Key] = e.Value
+	}
+	if env[names.EnvShared] != "0" {
+		t.Fatalf("new container got shared %q, want the least-loaded CPU 0, not the recorded helper 4", env[names.EnvShared])
+	}
+	load, _ := p.Table()
+	if load[4] != 250 {
+		t.Fatalf("recorded helper CPU 4 has load %d, want 250 (reconnect must not replace it)", load[4])
+	}
+	t.Log("reconnect keeps recorded helper CPUs")
+}
+
+func TestProfileChangeKeepsRunningGrant(t *testing.T) {
+	data := []byte(`
+nodeProfileLabel: ergon.io/node-profile
+profiles:
+  wide:
+    sharedCpus: "0,4"
+    namespaces: [trading]
+  moved:
+    sharedCpus: "0"
+    namespaces: [trading]
+`)
+	moved, err := config.Resolve(data, "moved")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := metrics.New()
+	p := New(moved, testSiblings(), slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})), m)
+	recorded := ctr("ctr-old", "1,5,4", map[string]string{
+		names.EnvIsolated: "1,5",
+		names.EnvShared:   "4",
+		names.EnvMilli:    "250",
+	}, map[string]string{names.MilliAnnotation: "250"})
+	recorded.State = api.ContainerState_CONTAINER_RUNNING
+	updates, err := p.Synchronize(context.Background(), []*api.PodSandbox{pod()}, []*api.Container{recorded})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updates) != 0 {
+		t.Fatalf("profile change rewrote a running cpuset: %+v", updates)
+	}
+	load, _ := p.Table()
+	if load[4] != 250 {
+		t.Fatalf("recorded helper CPU 4 has load %d after the profile changed", load[4])
+	}
+	freshPod := pod()
+	freshPod.Id = "sandbox-2"
+	freshPod.Uid = "uid-2"
+	fresh := ctr("ctr-new", "2,6", nil, map[string]string{names.MilliAnnotation: "250"})
+	fresh.PodSandboxId = freshPod.Id
+	adj, _, err := p.CreateContainer(context.Background(), freshPod, fresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{}
+	for _, e := range adj.GetEnv() {
+		env[e.Key] = e.Value
+	}
+	if env[names.EnvShared] != "0" {
+		t.Fatalf("new container shared %q, want the new profile's CPU 0", env[names.EnvShared])
+	}
+	t.Log("profile change does not alter grants of already-running containers")
+}
+
+func TestUpdatePreservesQuota(t *testing.T) {
+	p := testPlugin(t, "0,4")
+	c := ctr("ctr-1", "1,5", map[string]string{
+		names.EnvIsolated: "1,5",
+		names.EnvShared:   "4",
+		names.EnvMilli:    "250",
+	}, map[string]string{names.MilliAnnotation: "250"})
+	c.State = api.ContainerState_CONTAINER_RUNNING
+	res := c.GetLinux().GetResources()
+	updates, err := p.UpdateContainer(context.Background(), pod(), c, res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updates) != 1 {
+		t.Fatalf("got %d updates, want the shared CPU added back", len(updates))
+	}
+	cpu := updates[0].GetLinux().GetResources().GetCpu()
+	if cpu.GetQuota() != nil || cpu.GetShares() != nil {
+		t.Fatalf("update wrote quota/shares (%v / %v); the plugin must not clear a quota", cpu.GetQuota(), cpu.GetShares())
+	}
+	if !sameCPUs(t, cpu.GetCpus(), "1,4,5") {
+		t.Fatalf("cpuset %q, want 1,4,5", cpu.GetCpus())
+	}
+	t.Log("quota-preserving update")
 }
 
 func TestSynchronizeKeepsOwnShared(t *testing.T) {
@@ -1249,6 +1392,61 @@ func TestSynchronizeResendIsNotReplayedAfterStop(t *testing.T) {
 	case got := <-resent:
 		t.Fatalf("the widen was replayed for a stopped container: %v",
 			got[0].GetLinux().GetResources().GetCpu().GetCpus())
+	default:
+	}
+}
+
+// resendUpdates used to publish the touched map header under the lock and
+// index it after Unlock. StopContainer writes that same map. The race
+// detector reports it when a delayed resend overlaps a stop. Run this test
+// with -race: without the detector the bad read often still returns.
+func TestResendUpdatesDoesNotRaceStopContainer(t *testing.T) {
+	p := testPlugin(t, "0,4")
+	c := ctr("ctr-1", "1,5", map[string]string{
+		names.EnvIsolated: "1,5",
+		names.EnvShared:   "0",
+		names.EnvMilli:    "250",
+	}, map[string]string{names.MilliAnnotation: "250"})
+	c.State = api.ContainerState_CONTAINER_RUNNING
+
+	var pending []func()
+	p.After = func(_ time.Duration, fn func()) { pending = append(pending, fn) }
+	p.SetResender(func(updates []*api.ContainerUpdate) ([]*api.ContainerUpdate, error) {
+		return nil, nil
+	})
+	if _, err := p.Synchronize(context.Background(), []*api.PodSandbox{pod()}, []*api.Container{c}); err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 1 {
+		t.Fatalf("Synchronize queued %d resends, want 1", len(pending))
+	}
+
+	const n = 200
+	var wg sync.WaitGroup
+	errCh := make(chan error, 1)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < n; i++ {
+			pending[0]()
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < n; i++ {
+			if _, err := p.StopContainer(context.Background(), pod(), c); err != nil {
+				select {
+				case errCh <- err:
+				default:
+				}
+				return
+			}
+		}
+	}()
+	wg.Wait()
+	select {
+	case err := <-errCh:
+		t.Fatal(err)
 	default:
 	}
 }

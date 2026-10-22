@@ -14,6 +14,10 @@ git-repository-url = "https://github.com/mimran1980/ergon"
 edit-url-template = "https://github.com/mimran1980/ergon/edit/main/book/{path}"
 additional-js = ["mermaid.min.js", "mermaid-init.js"]
 
+[output.html.fold]
+enable = true
+level = 0
+
 [output.html.search]
 enable = true
 limit-results = 30

@@ -108,7 +108,7 @@ one Kubernetes CPU is one physical core, as on Graviton, which has no SMT.
 
 | where | how |
 |---|---|
-| EC2, virtual machine | the node group's launch template: `CpuOptions` with `CoreCount` (the type's default core count) and `ThreadsPerCore: 1`. Both fields are required; there is no extra charge. Not on bare metal, and not on T2, C7a, M7a, R7a or Apple silicon Macs (EC2 will not change them; C7a, M7a and R7a already run one thread per core) |
+| EC2, virtual machine | the node group's launch template: `CpuOptions` with `CoreCount` (the type's default core count) and `ThreadsPerCore: 1`. Both fields are required; there is no extra charge. Not on bare metal (EC2 takes no CPU options there). EC2 will not change threads per core on T2, C7a, M7a, R7a, Apple silicon Mac or Graviton. C7a, M7a, R7a and Graviton already run one thread per core |
 | EC2 bare metal, self-managed | the kernel's `nosmt` on the boot line. Before the kubelet's first start, writing `off` to `/sys/devices/system/cpu/smt/control` works too: write it, then delete `/var/lib/kubelet/cpu_manager_state` (the CPU manager state lists the old CPUs, and the kubelet crash-loops without the delete) |
 | Azure | a size without SMT: `Fasv6`, `Falsv6`, `Famsv6` (AMD) or `Dpsv6`, `Dplsv6` (Cobalt) |
 | self-managed, k3s | `nosmt` on the kernel command line |
@@ -167,7 +167,7 @@ fractional sidecar can run on the reserved CPUs. `strict-cpu-reservation:
 when nothing but the system (and threads you pin there yourself) may use
 them: it breaks anything that needs the shared pool by default, such as a
 fractional sidecar in a latency pod or ergon-stack's host-stats thread. The
-shared-CPU NRI plugin (`k8s/nri-shared-cpus`; status in its `RELEASE.md`)
+shared-CPU NRI plugin (`ghcr.io/mimran1980/ergon-shared-cpus:0.1.1`; chart `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.1`)
 lends shared CPUs from `reservedSystemCPUs` to a pod's helper threads and expects the
 default, so leave `strict-cpu-reservation` off while using it.
 

@@ -8,6 +8,19 @@ pod cannot set it. **Pod** works from the pod spec or the app.
 
 Terms: [deployment glossary](overview.md#glossary).
 
+This chapter is the list. It is not an image and it is not a second chart.
+The shared-CPU grant is [Shared CPUs](shared-cpus.md): public image
+`ghcr.io/mimran1980/ergon-shared-cpus:0.1.1` and chart
+`oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.1`.
+The refusal of an exec probe on a pod labelled `ergon.io/latency: hot` is
+the admission policy in [Latency Pods](latency-pods.md). Hugepages, the
+isolated cpuset partition, io_uring seccomp and the NIC PHC are opt-in
+grants in that same image. Chart 0.1.1 writes `seccomp`, `ptp` and
+`schedFifo` as `"off"`. Chart 0.1.0 does not write those keys. The kind sample
+`k8s/nri-shared-cpus/examples/try` installs the public chart, prints the
+shared-CPU grant, and shows the admission denial. It does not measure the
+rows below.
+
 ## Settings
 
 | setting | what it does | where | evidence | apply |

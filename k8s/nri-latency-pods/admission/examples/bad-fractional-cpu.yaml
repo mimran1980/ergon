@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+# A hot pod the validating policy REJECTS: cpu is fractional, so it is not an
+# exclusive whole CPU. Every other rule is satisfied.
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: latency-bad-fractional-cpu
+  namespace: ergon-latency-pods
+  labels:
+    ergon.io/latency: "hot"
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus"]'
+spec:
+  priorityClassName: ergon-hot
+  containers:
+    - name: app
+      image: ergon-latency-pods-demo:e2e
+      command: ["sleep", "3600"]
+      resources:
+        requests: { cpu: "500m", memory: 1Gi, ergon.io/shared-millicpus: "250" }
+        limits:   { cpu: "500m", memory: 1Gi, ergon.io/shared-millicpus: "250" }
+      resizePolicy:
+        - resourceName: cpu
+          restartPolicy: RestartContainer

@@ -8,7 +8,22 @@ Latency-pod extensions for Kubernetes. One directory, three kinds of thing:
 | plugin | things an NRI plugin can grant on opt-in | `k8s/nri-shared-cpus` |
 | admission | things a policy should refuse or strip | `admission/` here (ValidatingAdmissionPolicy) |
 
-Experimental and unpublished. Nothing is pushed to a registry.
+The grants are in the published `ergon-shared-cpus` image
+(`ghcr.io/mimran1980/ergon-shared-cpus:0.1.1`). This directory is not a
+second image. Its admission YAML and node units stay in the repo. Experimental.
+EKS is not verified. Latency figures are not measured.
+
+Kubernetes HFT tuning
+([book](https://mimran1980.github.io/ergon/deploy/hft.html)) is the list of
+node and pod settings. This directory is the admission half and the node
+units. The shared-CPU half is the public chart. Apply only
+`admission/priority-class.yaml` and
+`admission/validating-admission-policy.yaml`. The kind sample
+`k8s/nri-shared-cpus/examples/try` installs the chart, accepts one hot pod,
+and shows this policy denying an exec probe. It does not grant hugepages,
+an isolated cpuset partition, io_uring seccomp, or a PHC. Chart 0.1.1
+writes `seccomp`, `ptp` and `schedFifo` as `"off"`. Chart 0.1.0 does
+not write those keys.
 
 ## Why not AKS
 
@@ -104,13 +119,18 @@ containerd 2.x `RuntimeDefault` blocks `io_uring_*` (containerd PR #9320).
 For pods labelled `ergon.io/latency: "hot"` (a **pod** label, not a namespace
 label):
 
-- no `livenessProbe`/`readinessProbe` of type `exec`/`command` (an exec probe
-  starts a process on any CPU of the container's cpuset, the loop's
-  included; `httpGet`/`tcpSocket`/`grpc` run from outside and are fine);
+- no `livenessProbe`, `readinessProbe` or `startupProbe` of type `exec`/`command`,
+  and no lifecycle `postStart`/`preStop` exec handler (an exec starts a process
+  on any CPU of the container's cpuset, the loop's included;
+  `httpGet`/`tcpSocket`/`grpc` run from outside and are fine). Admission of
+  the Pod does not control a later `kubectl exec` session;
 - no container and no init container with `restartPolicy: Always` (an injected
   sidecar shares the pod's CPU budget and wakes on the hot core);
-- `ergon.io/shared-millicpus` requested, and
-  `required-plugins.noderesource.dev: '["ergon-shared-cpus"]'` present;
+- `ergon.io/shared-millicpus` requested on every application container, and
+  `required-plugins.noderesource.dev` listing the exact token
+  `"ergon-shared-cpus"` (a substring does not count);
+- a whole-number `cpu` request equal to its limit, and `resizePolicy:
+  RestartContainer` for `cpu`;
 - a `priorityClassName` set (`admission/priority-class.yaml` has `ergon-hot`
   and `ergon-helper` with `preemptionPolicy: Never`).
 
@@ -236,9 +256,20 @@ test/e2e.sh
    Ship `admission/profiles/ergon-io-uring.json` to
    `/var/lib/kubelet/seccomp/` (and to the plugin config's
    `seccompProfilePath`) if the Localhost fallback is wanted.
-2. `kubectl apply -f ../nri-shared-cpus/deploy/namespace.yaml -f ../nri-shared-cpus/deploy/configmap.yaml -f ../nri-shared-cpus/deploy/daemonset.yaml`
-   The config must set `devRoot` to where the DaemonSet mounts the host's
-   `/dev` (the shipped DaemonSet uses `/host/dev`).
+2. Install the public plugin. No pull secret. `sharedCpus` is this node's
+   housekeeping CPU (inside `reservedSystemCPUs`, not the IRQ CPU).
+
+   ```sh
+   helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus \
+     --version 0.1.1 \
+     --namespace ergon-system --create-namespace \
+     --set-string config.sharedCpus=0 \
+     --set 'config.namespaces={trading}'
+   ```
+
+   Image: `ghcr.io/mimran1980/ergon-shared-cpus:0.1.1`. The chart writes
+   `seccomp.ioUring` and `ptp` as `"off"`. A node that grants those writes them
+   into the ConfigMap; the keys are in `k8s/nri-shared-cpus/README.md`.
 3. `kubectl apply -f admission/priority-class.yaml -f admission/validating-admission-policy.yaml`
 4. Label the node `ergon.io/shared-cpus=true`, and give every latency pod the
    label `ergon.io/latency: "hot"` (that is what the admission policy matches).

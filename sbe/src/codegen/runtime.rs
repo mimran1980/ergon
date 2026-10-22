@@ -1895,6 +1895,70 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
     src.push('\n');
 }
 
+/// Clear bits of set choices whose `sinceVersion` is newer than
+/// `self.acting_version`, then return that word.
+///
+/// Java and C++ do this inside the set's instance getter
+/// (`actingVersion < sinceVersion` returns false; `sinceVersion` 0 emits
+/// no check). ergo-sbe sets are plain words, so the message and group
+/// decoders apply the mask when they build the value. The buffer is left
+/// as it arrived. A group `raw_<field>()` accessor stays the wire word.
+/// A set nested in a composite is not masked: Java passes no acting
+/// version into a composite's set, so those getters keep the current
+/// schema version and still report the bit.
+///
+/// Returns `raw_word` unchanged when every choice is `sinceVersion` 0.
+pub(crate) fn apply_set_choice_version_mask(
+    elements: &SchemaElements,
+    set_name: &str,
+    word_ty: &syn::Type,
+    raw_word: TokenStream,
+) -> TokenStream {
+    let Some(set) = elements
+        .sets
+        .iter()
+        .find(|tokens| tokens.first().is_some_and(|token| token.name == set_name))
+    else {
+        return raw_word;
+    };
+
+    let mut clears = Vec::new();
+    for token in set.iter().filter(|token| token.signal == Signal::Encoding) {
+        if token.encoding.since_version == 0 {
+            continue;
+        }
+        let Some(bit_text) = token.encoding.constant_value.as_deref() else {
+            continue;
+        };
+        let Ok(bit) = bit_text.parse::<u8>() else {
+            continue;
+        };
+        let since_lit = syn::LitInt::new(
+            &token.encoding.since_version.to_string(),
+            proc_macro2::Span::call_site(),
+        );
+        let bit_lit = syn::LitInt::new(&bit.to_string(), proc_macro2::Span::call_site());
+        // `(1 as T)` so bit 63 of a `u64` is a typed shift, not an `i32` overflow.
+        clears.push(quote::quote! {
+            if self.acting_version < #since_lit {
+                clear |= (1 as #word_ty) << #bit_lit;
+            }
+        });
+    }
+
+    if clears.is_empty() {
+        return raw_word;
+    }
+
+    quote::quote! {
+        (#raw_word) & !{
+            let mut clear: #word_ty = 0;
+            #(#clears)*
+            clear
+        }
+    }
+}
+
 pub(crate) fn generate_set(src: &mut String, tokens: &[Token]) {
     let raw_name = &tokens[0].name;
     let name = to_pascal_case(raw_name);

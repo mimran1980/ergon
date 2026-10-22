@@ -71,6 +71,60 @@ check() {
     local desc=$1; shift
     if "$@"; then say "  ok:   $desc"; else say "  FAIL: $desc"; step_failed=1; fi
 }
+# admit_apply is a positive admission apply: kubectl must exit 0, print
+# created, configured or unchanged, and must not say denied or forbidden.
+# reject_apply is a negative one: kubectl must exit non-zero, the output must
+# be an admission denial, and it must contain the intended message. A
+# connection failure is neither. An unrelated validation error is not the
+# intended rejection.
+admit_apply() {
+    local desc=$1
+    shift
+    local out status
+    status=0
+    out=$("$@" 2>&1) || status=$?
+    say "  $out"
+    if [[ "$status" -ne 0 ]]; then
+        say "  FAIL: $desc (kubectl exited $status)"
+        step_failed=1
+        return 0
+    fi
+    if grep -Eqi 'denied|forbidden' <<<"$out"; then
+        say "  FAIL: $desc (output contains denied or forbidden)"
+        step_failed=1
+        return 0
+    fi
+    if ! grep -Eqi 'created|configured|unchanged' <<<"$out"; then
+        say "  FAIL: $desc (no created, configured, or unchanged)"
+        step_failed=1
+        return 0
+    fi
+    say "  ok:   $desc"
+}
+reject_apply() {
+    local desc=$1 pattern=$2
+    shift 2
+    local out status
+    status=0
+    out=$("$@" 2>&1) || status=$?
+    say "  $out"
+    if [[ "$status" -eq 0 ]]; then
+        say "  FAIL: $desc (kubectl exited 0)"
+        step_failed=1
+        return 0
+    fi
+    if ! grep -Eqi 'denied|forbidden' <<<"$out"; then
+        say "  FAIL: $desc (exit $status is not an admission denial)"
+        step_failed=1
+        return 0
+    fi
+    if ! grep -Eqi -- "$pattern" <<<"$out"; then
+        say "  FAIL: $desc (denial does not match /$pattern/)"
+        step_failed=1
+        return 0
+    fi
+    say "  ok:   $desc"
+}
 pod_phase() { kube get pod "$1" -n "$2" -o jsonpath='{.status.phase}' 2>/dev/null || echo Missing; }
 # kubectl jsonpath cannot parse the hyphen in hugepages-2Mi, so pull it out of
 # the JSON. Empty means the node does not advertise 2Mi pages.
@@ -145,10 +199,6 @@ wait_containerd() {
 
 # ---------------------------------------------------------------- teardown
 
-pre_images=$(docker images --format '{{.Repository}}:{{.Tag}}')
-pre_containers=$(docker ps -a --format '{{.Names}}')
-pre_volumes=$(docker volume ls --format '{{.Name}}')
-
 cleanup() {
     local rc=$?
     # Run once. `exit` at the end of this function re-fires the EXIT trap,
@@ -193,7 +243,6 @@ cleanup() {
     say "--- docker volume ls ---"; docker volume ls --format '{{.Name}}'
     exit $rc
 }
-trap cleanup EXIT INT TERM HUP
 
 # The node is usable when it is Ready and containerd answers.
 node_ready() {
@@ -597,40 +646,47 @@ step6_admission() {
         "$KIT/admission/validating-admission-policy.yaml" vap.yaml \
         "$KIT/admission/priority-class.yaml" priority-class.yaml \
         "$KIT/admission/examples/bad-probe.yaml" bad-probe.yaml \
+        "$KIT/admission/examples/bad-startup-probe.yaml" bad-startup-probe.yaml \
+        "$KIT/admission/examples/bad-readiness.yaml" bad-readiness.yaml \
+        "$KIT/admission/examples/bad-lifecycle.yaml" bad-lifecycle.yaml \
         "$KIT/admission/examples/bad-sidecar.yaml" bad-sidecar.yaml \
         "$KIT/admission/examples/bad-no-priority.yaml" bad-no-priority.yaml \
         "$KIT/admission/examples/bad-no-required-plugins.yaml" bad-no-required-plugins.yaml \
+        "$KIT/admission/examples/bad-plugin-substring.yaml" bad-plugin-substring.yaml \
+        "$KIT/admission/examples/bad-shared-one-container.yaml" bad-shared-one-container.yaml \
+        "$KIT/admission/examples/bad-fractional-cpu.yaml" bad-fractional-cpu.yaml \
         "$KIT/admission/examples/good-pod.yaml" good-pod.yaml \
+        "$KIT/admission/examples/ordinary-pod.yaml" ordinary-pod.yaml \
         "$HERE/manifests/probe-in-other-ns.yaml" probe-other.yaml || return 1
     must kube apply -f /root/priority-class.yaml || return 1
     must kube apply -f /root/vap.yaml || return 1
     sleep 3
 
-    local out
-    out=$(kube apply -f /root/bad-probe.yaml 2>&1 || true)
-    say "  $out"
-    check "livenessProbe.exec pod rejected" grep -qi "livenessProbe" <<<"$out"
+    reject_apply "livenessProbe.exec pod rejected" "livenessProbe" \
+        kube apply -f /root/bad-probe.yaml
+    reject_apply "startupProbe.exec pod rejected" "startupProbe" \
+        kube apply -f /root/bad-startup-probe.yaml
+    reject_apply "readinessProbe.exec pod rejected" "readinessProbe" \
+        kube apply -f /root/bad-readiness.yaml
+    reject_apply "lifecycle exec handler rejected" "lifecycle" \
+        kube apply -f /root/bad-lifecycle.yaml
+    reject_apply "restartPolicy: Always sidecar rejected" "sidecar|restartPolicy" \
+        kube apply -f /root/bad-sidecar.yaml
+    reject_apply "pod without priorityClassName rejected" "priorityClassName" \
+        kube apply -f /root/bad-no-priority.yaml
+    reject_apply "pod without required-plugins rejected" "required-plugins" \
+        kube apply -f /root/bad-no-required-plugins.yaml
+    reject_apply "plugin name substring rejected" "exact plugin" \
+        kube apply -f /root/bad-plugin-substring.yaml
+    reject_apply "shared resource required on each container" "each application container" \
+        kube apply -f /root/bad-shared-one-container.yaml
+    reject_apply "fractional cpu rejected" "whole-number" \
+        kube apply -f /root/bad-fractional-cpu.yaml
 
-    out=$(kube apply -f /root/bad-sidecar.yaml 2>&1 || true)
-    say "  $out"
-    check "restartPolicy: Always sidecar rejected" grep -qi "sidecar\|restartPolicy" <<<"$out"
-
-    out=$(kube apply -f /root/bad-no-priority.yaml 2>&1 || true)
-    say "  $out"
-    check "pod without priorityClassName rejected" grep -qi "priorityClassName" <<<"$out"
-
-    out=$(kube apply -f /root/bad-no-required-plugins.yaml 2>&1 || true)
-    say "  $out"
-    check "pod without required-plugins rejected" grep -qi "required-plugins" <<<"$out"
-
-    out=$(kube apply -f /root/good-pod.yaml 2>&1 || true)
-    say "  $out"
-    check "good pod admitted" bash -c "! grep -qi 'denied\|forbidden' <<<'$out'"
-
-    out=$(kube apply -f /root/probe-other.yaml 2>&1 || true)
-    say "  $out"
-    check "unlabelled pod untouched (exec probe fine outside a hot pod)" \
-        bash -c "! grep -qi 'denied\|forbidden' <<<'$out'"
+    admit_apply "good pod admitted" kube apply -f /root/good-pod.yaml
+    admit_apply "unlabelled pod untouched (exec probe fine outside a hot pod)" \
+        kube apply -f /root/probe-other.yaml
+    admit_apply "ordinary pod admitted" kube apply -f /root/ordinary-pod.yaml
     return $step_failed
 }
 
@@ -746,6 +802,18 @@ step8_rlimits() {
 }
 
 # ---------------------------------------------------------------- main
+
+# E2E_LIB_ONLY=1 sources the assertion helpers and stops before any cluster.
+# The snapshot and the trap stay below this guard: sourcing the helpers must
+# not record Docker state or delete a cluster on exit.
+if [[ "${E2E_LIB_ONLY:-}" == 1 ]]; then
+    return 0 2>/dev/null || exit 0
+fi
+
+pre_images=$(docker images --format '{{.Repository}}:{{.Tag}}')
+pre_containers=$(docker ps -a --format '{{.Names}}')
+pre_volumes=$(docker volume ls --format '{{.Name}}')
+trap cleanup EXIT INT TERM HUP
 
 cpus=$(docker info --format '{{.NCPU}}' 2>/dev/null || echo 0)
 if (( cpus < 6 )); then

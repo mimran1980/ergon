@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The two named admission files, not the rest of that directory:
+# validating-admission-policy.yaml (policy and binding) and
+# priority-class.yaml (ergon-hot and ergon-helper).
+# admission.create defaults to false so an install whose cluster-scoped
+# objects already have an owner does not adopt them. That mode renders a
+# namespaced marker instead.
+{{- if .Values.admission.create }}
+{{ .Files.Get "files/validating-admission-policy.yaml" }}
+---
+{{ .Files.Get "files/priority-class.yaml" }}
+{{- else }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ergon-shared-cpus.fullname" . }}-admission-owner
+  namespace: {{ include "ergon-shared-cpus.namespace" . }}
+  labels:
+    {{- include "ergon-shared-cpus.labels" . | nindent 4 }}
+data:
+  owner: external
+  policy: k8s/nri-latency-pods/admission/validating-admission-policy.yaml
+  priorityClasses: k8s/nri-latency-pods/admission/priority-class.yaml
+{{- end }}

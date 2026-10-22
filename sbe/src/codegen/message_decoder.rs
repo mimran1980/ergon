@@ -22,8 +22,8 @@ use super::decoder_display::generate_decoder_display;
 use super::domain_cluster::generate_domain_objects;
 use super::group_decoder::generate_group_decoder;
 use super::runtime::{
-    constant_value_expr, deprecated_attr_tokens, doc_attr_tokens, emit_field_consts,
-    float_null_check, schema_marker_ident, to_pascal_case, to_snake_case,
+    apply_set_choice_version_mask, constant_value_expr, deprecated_attr_tokens, doc_attr_tokens,
+    emit_field_consts, float_null_check, schema_marker_ident, to_pascal_case, to_snake_case,
 };
 use super::tail_stages::generate_decoder_consuming_stages;
 
@@ -1109,30 +1109,39 @@ pub(crate) fn generate_message_decoder(
                             .expect("constant set/bool field accessor"),
                         );
                     }
-                } else if since > 0 {
-                    let since_lit =
-                        syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
-                    let offset_end = offset + prim_size;
-                    let offset_end_lit =
-                        syn::LitInt::new(&offset_end.to_string(), proc_macro2::Span::call_site());
-                    impl_body.extend(quote::quote! {
-                        #mu
-                        #[inline]
-                        pub fn #fname_ident(&self) -> Option<#target_ident> {
-                            if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
-                                return None;
-                            }
-                            Some(#target_ident(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit) })))
-                        }
-                    });
                 } else {
-                    impl_body.extend(quote::quote! {
-                        #mu
-                        #[inline]
-                        pub fn #fname_ident(&self) -> #target_ident {
-                            #target_ident(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit) }))
-                        }
-                    });
+                    let raw_word = quote::quote! {
+                        #r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, self.offset + #offset_lit) })
+                    };
+                    let word =
+                        apply_set_choice_version_mask(elements, set_name, &r_type_ty, raw_word);
+                    if since > 0 {
+                        let since_lit =
+                            syn::LitInt::new(&since.to_string(), proc_macro2::Span::call_site());
+                        let offset_end = offset + prim_size;
+                        let offset_end_lit = syn::LitInt::new(
+                            &offset_end.to_string(),
+                            proc_macro2::Span::call_site(),
+                        );
+                        impl_body.extend(quote::quote! {
+                            #mu
+                            #[inline]
+                            pub fn #fname_ident(&self) -> Option<#target_ident> {
+                                if self.acting_version < #since_lit || #offset_end_lit > self.acting_block_length {
+                                    return None;
+                                }
+                                Some(#target_ident(#word))
+                            }
+                        });
+                    } else {
+                        impl_body.extend(quote::quote! {
+                            #mu
+                            #[inline]
+                            pub fn #fname_ident(&self) -> #target_ident {
+                                #target_ident(#word)
+                            }
+                        });
+                    }
                 }
             }
         }

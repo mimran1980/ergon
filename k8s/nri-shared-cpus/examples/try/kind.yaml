@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Throwaway kind cluster for examples/try/run.sh.
+# One schedulable control-plane node. The kubelet reserves CPUs 0 and 1.
+# The sample tells the public chart that CPU 0 is the shared housekeeping CPU.
+# This is not an EKS node: no boot-line isolation, no NIC IRQ pin, no hugepage
+# pool, and no PHC.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: ergon-shared-cpus-try
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.33.0
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ergon.io/shared-cpus=true"
+      - |
+        kind: KubeletConfiguration
+        apiVersion: kubelet.config.k8s.io/v1beta1
+        cpuManagerPolicy: static
+        reservedSystemCPUs: "0,1"
+        cpuManagerReconcilePeriod: "2s"
+        nodeStatusUpdateFrequency: "5s"
+        nodeStatusReportFrequency: "5s"
+containerdConfigPatches:
+  - |
+    [plugins."io.containerd.nri.v1.nri".default_validator]
+      enable = true
+  - |
+    [plugins."io.containerd.nri.v1.nri"]
+      disable = false

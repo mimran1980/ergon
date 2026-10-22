@@ -17,8 +17,8 @@ Kubernetes, if you deploy there. Tuning a node and pod for HFT:
 
 | module | what it does | how you use it |
 |---|---|---|
-| `k8s/nri-shared-cpus` | gives a pod its exclusive CPUs **and** the node's shared housekeeping CPUs, and starts every thread on the shared ones so the busy-spin loop keeps its core | deploy its Helm chart on a containerd node with NRI on; ask for `ergon.io/shared-millicpus` ([chapter](deploy/shared-cpus.md)) |
-| `k8s/nri-latency-pods` | the latency-pod setup: node tuning, an admission policy that refuses exec probes and always-restart sidecars, and the pod annotations for hugepages, CPU isolation, io_uring and PHC devices | apply the node and admission halves on **EKS AL2023** only. A pod author sets annotations and labels, nothing more. Not a crate — nothing to import ([chapter](deploy/latency-pods.md)) |
+| `k8s/nri-shared-cpus` | gives a pod its exclusive CPUs **and** the node's shared housekeeping CPUs, and starts every thread on the shared ones so the busy-spin loop keeps its core | `helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus --version 0.1.1`. Image `ghcr.io/mimran1980/ergon-shared-cpus:0.1.1`. Prepare the node first. Sample: `k8s/nri-shared-cpus/examples/try` ([chapter](deploy/shared-cpus.md)) |
+| `k8s/nri-latency-pods` | node tuning and the hot-pod admission policy (no exec probes, no always-restart sidecars). The grants live in the shared-cpus image. This directory is the YAML and the node units | apply `admission/priority-class.yaml` and `admission/validating-admission-policy.yaml` after the chart. Pod authors set annotations and the `ergon.io/latency: hot` label ([chapter](deploy/latency-pods.md)) |
 
 Start with `ergo-sbe`. Add another crate only for a need you have:
 `ergon-io` for exchange I/O, `ergon-tune` to check a latency host's settings.

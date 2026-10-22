@@ -12,12 +12,14 @@ media driver. 0.x and not production-ready: APIs may change. Exit criteria:
 
 > **AI assistance.** This repository was developed with heavy AI assistance.
 > Process notes for `ergo-sbe`:
-> [AI-ASSISTANCE.md](https://github.com/mimran1980/ergon/blob/main/AI-ASSISTANCE.md).
+> [AI assistance disclosure](https://mimran1980.github.io/ergon/project/ai-assistance.html).
 
 **Tuning Kubernetes for HFT?
 [Kubernetes HFT tuning](https://mimran1980.github.io/ergon/deploy/hft.html)
 — start there.** It lists each setting, marks which ones were measured, and
 has the copy-paste blocks.
+
+The [NRI plugin README](k8s/nri-shared-cpus/README.md) covers installation and configuration for Kubernetes shared CPUs.
 
 ## Crates
 
@@ -28,7 +30,7 @@ has the copy-paste blocks.
 | [`io/`](io/) | `ergon-io` | WebSocket and HTTP/1.1 over TLS 1.3 on one busy-spin thread; epoll or `io_uring` |
 | [`tune/`](tune/) | `ergon-tune` | Reads the host's low-latency settings and reports findings; changes nothing |
 | [`md-dpdk/`](md-dpdk/) | `ergon-md-dpdk` | DPDK transport for the Aeron media driver, Linux x86_64 and aarch64. Proof of concept |
-| [`k8s/nri-shared-cpus`](k8s/nri-shared-cpus/) | Helm chart | Gives a pod its exclusive CPUs plus the node's shared CPUs, and starts its threads on the shared ones |
+| [`k8s/nri-shared-cpus`](k8s/nri-shared-cpus/README.md) | Helm chart | Gives a pod its exclusive CPUs plus the node's shared CPUs. |
 | [`k8s/nri-latency-pods`](k8s/nri-latency-pods/) | node and admission setup | Node tuning, an admission policy and pod annotations for latency pods (EKS AL2023) |
 
 Unpublished support: `sbe/benchmarks`, `cluster-test-harness`,
