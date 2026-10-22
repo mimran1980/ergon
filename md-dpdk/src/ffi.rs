@@ -128,6 +128,25 @@ impl DpdkTransport {
         &self.clock
     }
 
+    /// Whether a NIC has asked for a device reset since this transport started.
+    ///
+    /// Always false without the `dpdk` feature, and until a PMD raises
+    /// `RTE_ETH_EVENT_INTR_RESET`. The native side does not reset the device.
+    // Not const: the dpdk build loads an atomic in the native runtime.
+    #[must_use]
+    #[cfg_attr(not(feature = "dpdk"), allow(clippy::missing_const_for_fn))]
+    pub fn nic_reset_exit(&self) -> bool {
+        #[cfg(feature = "dpdk")]
+        {
+            // SAFETY: `ptr` is the live native runtime. The call loads one atomic.
+            unsafe { rusteron_dpdk_transport_nic_reset_exit(self.inner.ptr) != 0 }
+        }
+        #[cfg(not(feature = "dpdk"))]
+        {
+            false
+        }
+    }
+
     /// Free the native runtime: the EAL, both ports and their mempools.
     ///
     /// Dropping does not do this — see the type. Nothing is freed while other
@@ -212,6 +231,16 @@ impl CloseOnDrop {
     #[must_use]
     pub const fn is_some(&self) -> bool {
         self.0.is_some()
+    }
+
+    /// Whether a NIC has asked for a device reset since this transport started.
+    ///
+    /// The native side does not reset the device. The caller stops the driver
+    /// (which joins the agents) and then exits, so the queues are not reset
+    /// while an agent is still polling them.
+    #[must_use]
+    pub fn nic_reset_exit(&self) -> bool {
+        self.0.as_ref().is_some_and(DpdkTransport::nic_reset_exit)
     }
 
     /// The transport it will free.
@@ -423,6 +452,7 @@ unsafe extern "C" {
         context: *mut rusteron_media_driver::bindings::aeron_driver_context_t,
     ) -> c_int;
     fn rusteron_dpdk_transport_close(transport: *mut c_void) -> c_int;
+    fn rusteron_dpdk_transport_nic_reset_exit(transport: *mut c_void) -> c_int;
     fn rusteron_dpdk_last_error() -> *const c_char;
     fn rusteron_dpdk_eal_main_cpu() -> c_int;
     fn rusteron_dpdk_clock_report(report: *mut rusteron_dpdk_clock_report_t);

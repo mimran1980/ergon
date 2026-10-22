@@ -53,20 +53,32 @@ var (
 func main() {
 	configPath := flag.String("config", "/etc/ergon-shared-cpus/config.yaml", "config file")
 	showVersion := flag.Bool("version", false, "print the version and exit")
+	kubeletConfig := flag.String("kubelet-config", "", "read-only final kubelet configuration; empty refuses hot creates")
+	hostSys := flag.String("host-sys", "/sys", "sysfs root for the node contract")
+	hostProc := flag.String("host-proc", "/proc", "proc root for the node contract")
+	kubeletConfigZ := flag.String("kubelet-configz", "", "optional effective kubelet /configz document")
+	kubeletOverrides := flag.String("kubelet-overrides", "", "optional kubelet argv file or drop-in directory")
 	flag.Parse()
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	if *showVersion {
 		fmt.Printf("ergon-shared-cpus %s %s nri=%s\n", version, gitDescribe, nriModuleVersion)
 		return
 	}
-	if err := run(*configPath, log); err != nil {
+	sources := config.Sources{
+		SysRoot:       *hostSys,
+		ProcRoot:      *hostProc,
+		KubeletConfig: *kubeletConfig,
+		ConfigZ:       *kubeletConfigZ,
+		Overrides:     *kubeletOverrides,
+	}
+	if err := run(*configPath, os.Getenv("NODE_NAME"), config.InClusterNodeLabels, sources, log); err != nil {
 		log.Error("exit", "error", err.Error())
 		os.Exit(1)
 	}
 }
 
-func run(configPath string, log *slog.Logger) error {
-	cfg, err := config.Load(configPath)
+func run(configPath, nodeName string, nodes func(context.Context, string) (map[string]string, error), sources config.Sources, log *slog.Logger) error {
+	cfg, err := loadConfig(configPath, nodeName, nodes)
 	if err != nil {
 		return err
 	}
@@ -117,6 +129,19 @@ func run(configPath string, log *slog.Logger) error {
 	}
 	m := metrics.New()
 	p := nriplugin.New(cfg, siblings, log, m)
+	// Hot creates re-read the mounted facts. A failure is logged and remembered
+	// on the contract gauge. It is not a process exit and not a liveness failure:
+	// restarting the plugin would drop the NRI connection that reconciles
+	// cpusets of containers that are already running.
+	p.SetHostContract(func(shared, exclusive cpuset.Set) error {
+		return config.CheckContract(sources, shared, exclusive)
+	})
+	if err := config.CheckContract(sources, cfg.Shared, cpuset.Set{}); err != nil {
+		log.Warn("node contract", "error", err.Error())
+		m.SetContractOK(false)
+	} else {
+		m.SetContractOK(true)
+	}
 	dp := deviceplugin.New(cfg.Capacity(), log)
 	// Readiness and device health follow the two connections: the kubelet
 	// registration opens /readyz's registered half and keeps it open across
@@ -131,6 +156,16 @@ func run(configPath string, log *slog.Logger) error {
 
 	go serveHTTP(ctx, cfg.MetricsAddress, m, log)
 	return runNRI(ctx, cfg, p, dp, m, log)
+}
+
+// loadConfig reads one file. A profiles file selects exactly one named
+// configuration from a single Node GET. Legacy files ignore the node.
+func loadConfig(path, nodeName string, nodes func(context.Context, string) (map[string]string, error)) (*config.Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("config: %w", err)
+	}
+	return config.SelectFromGetter(context.Background(), data, nodeName, nodes)
 }
 
 // runNRI connects to the NRI socket, reconnects on a drop and serves the

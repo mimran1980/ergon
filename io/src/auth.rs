@@ -1,15 +1,15 @@
-//! Request signing for exchange REST APIs, Binance style: the parameters, a
+//! Query-parameter request signing: the parameters, a
 //! millisecond `timestamp`, and a `signature` over exactly those bytes,
 //! appended as `&signature=…`.
 //!
 //! | [`Signer`] | Signature | Encoding | Use it for |
 //! |---|---|---|---|
 //! | [`Signer::hmac_sha256`] | HMAC-SHA256 with the API secret | 64 hex digits | signed REST requests |
-//! | [`Signer::ed25519_pkcs8`] | Ed25519 with a key whose public half is registered with the exchange | base64, percent-encoded | REST or WebSocket API log-on; the secret never leaves this machine |
+//! | [`Signer::ed25519_pkcs8`] | Ed25519 with a key whose public half is registered with the server | base64, percent-encoded | REST or WebSocket API log-on; the secret never leaves this machine |
 //!
 //! - Chosen at run time: one branch per request.
 //! - No allocation: the signature is written into the request buffer.
-//! - The API key is a plain header (`X-MBX-APIKEY`), set once with
+//! - The API key is an application-defined header, set once with
 //!   `Target::with_header`. Bearer or Basic authorisation is a header too.
 
 use base64::Engine as _;
@@ -94,7 +94,7 @@ impl Signer {
         }
     }
 
-    /// The Ed25519 public key (to register with the exchange), if any.
+    /// The Ed25519 public key (to register with the server), if any.
     #[must_use]
     pub fn ed25519_public_key(&self) -> Option<&[u8]> {
         match &self.imp {

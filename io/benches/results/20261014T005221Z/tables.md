@@ -842,7 +842,7 @@ Diagnostics: Δrx = kernel-arrival difference; Δstack = Δuser − Δrx over me
 
 epoll-busy: 285821 paired messages; decoded before uring-sqpoll on 28.5 % (uncorrected).
 
-## live-aa-epoll-busy: binance (A/A control), 300 s (first 10 s dropped), 3 connection(s) per variant, kernel 6.17.0-1022-azure
+## live-aa-epoll-busy: live-feed (A/A control), 300 s (first 10 s dropped), 3 connection(s) per variant, kernel 6.17.0-1022-azure
 
 busy_poll_us=50 wait_us=100 mlockall=true BusyPollRxPackets during run=4066 clocksource=tsc
 
@@ -882,28 +882,28 @@ The kernel stamps a read with its newest segment, so multi-message reads are exc
 | epoll-busy #0 (37436 of 129598 in 1-msg reads) | 37436 | 13.64 | 13.27 | 16.11 | 26.05 | 29.74 | 43.26 |
 | epoll-busy #1 (37540 of 129597 in 1-msg reads) | 37540 | 13.18 | 13.04 | 14.87 | 23.83 | 28.45 | 40.77 |
 
-### Binance event time → kernel rx (`rx_sw − E`)
+### upstream feed event time → kernel rx (`rx_sw − E`)
 
-Includes Binance's publish delay, the Azure→AWS path and the clock offset; context only, not a loop comparison.
+Includes the upstream feed's publish delay, the Azure→AWS path and the clock offset; context only, not a loop comparison.
 
 | | n | mean µs | p50 µs | p90 µs | p99 µs | p99.9 µs | max µs |
 |---|---|---|---|---|---|---|---|
-| btcusdt@trade epoll-busy #0 | 4890 | 42525.97 | 41507.39 | 43557.79 | 78243.21 | 85129.58 | 87905.58 |
-| btcusdt@trade epoll-busy #1 | 4890 | 42247.51 | 41151.52 | 43390.96 | 78284.62 | 85251.03 | 87960.71 |
-| ethusdt@trade epoll-busy #0 | 5403 | 44339.72 | 41728.94 | 42878.25 | 90058.23 | 90110.58 | 90112.58 |
-| ethusdt@trade epoll-busy #1 | 5403 | 44573.76 | 41559.02 | 42712.64 | 90113.72 | 90165.71 | 90167.71 |
-| solusdt@trade epoll-busy #0 | 811 | 41251.56 | 41115.62 | 42245.98 | 67041.41 | 67044.41 | 67044.41 |
-| solusdt@trade epoll-busy #1 | 811 | 41058.52 | 40892.97 | 42092.14 | 67167.40 | 67170.40 | 67170.40 |
-| btcusdt@bookTicker epoll-busy #0 | 61002 | 40904.56 | 40686.95 | 42047.61 | 52103.53 | 60502.67 | 66868.36 |
-| btcusdt@bookTicker epoll-busy #1 | 61002 | 41608.48 | 41261.54 | 42727.65 | 52910.73 | 64437.74 | 67370.17 |
-| ethusdt@bookTicker epoll-busy #0 | 55767 | 41013.99 | 41093.08 | 41983.36 | 52179.57 | 60747.98 | 64029.36 |
-| ethusdt@bookTicker epoll-busy #1 | 55766 | 41733.94 | 41712.74 | 42618.37 | 53947.14 | 64507.59 | 65240.27 |
-| btcusdt@aggTrade epoll-busy #0 | 1725 | 40757.28 | 40647.93 | 42172.85 | 49224.40 | 50224.40 | 50224.40 |
-| btcusdt@aggTrade epoll-busy #1 | 1725 | 41243.55 | 41189.46 | 42541.32 | 49492.63 | 50492.63 | 50492.63 |
+| instrument-a@trade epoll-busy #0 | 4890 | 42525.97 | 41507.39 | 43557.79 | 78243.21 | 85129.58 | 87905.58 |
+| instrument-a@trade epoll-busy #1 | 4890 | 42247.51 | 41151.52 | 43390.96 | 78284.62 | 85251.03 | 87960.71 |
+| instrument-b@trade epoll-busy #0 | 5403 | 44339.72 | 41728.94 | 42878.25 | 90058.23 | 90110.58 | 90112.58 |
+| instrument-b@trade epoll-busy #1 | 5403 | 44573.76 | 41559.02 | 42712.64 | 90113.72 | 90165.71 | 90167.71 |
+| instrument-c@trade epoll-busy #0 | 811 | 41251.56 | 41115.62 | 42245.98 | 67041.41 | 67044.41 | 67044.41 |
+| instrument-c@trade epoll-busy #1 | 811 | 41058.52 | 40892.97 | 42092.14 | 67167.40 | 67170.40 | 67170.40 |
+| instrument-a@bookTicker epoll-busy #0 | 61002 | 40904.56 | 40686.95 | 42047.61 | 52103.53 | 60502.67 | 66868.36 |
+| instrument-a@bookTicker epoll-busy #1 | 61002 | 41608.48 | 41261.54 | 42727.65 | 52910.73 | 64437.74 | 67370.17 |
+| instrument-b@bookTicker epoll-busy #0 | 55767 | 41013.99 | 41093.08 | 41983.36 | 52179.57 | 60747.98 | 64029.36 |
+| instrument-b@bookTicker epoll-busy #1 | 55766 | 41733.94 | 41712.74 | 42618.37 | 53947.14 | 64507.59 | 65240.27 |
+| instrument-a@aggTrade epoll-busy #0 | 1725 | 40757.28 | 40647.93 | 42172.85 | 49224.40 | 50224.40 | 50224.40 |
+| instrument-a@aggTrade epoll-busy #1 | 1725 | 41243.55 | 41189.46 | 42541.32 | 49492.63 | 50492.63 | 50492.63 |
 
 ### Paired by message, relative to epoll-busy (A/A: any difference is noise, core or connection bias)
 
-**Δuser** = decoded-time difference for the same message (negative: this variant decoded first). Live: each variant has its own Binance connection, so Δuser also contains Binance's per-connection send skew; use it as confirmation of the lab result, not as a verdict.
+**Δuser** = decoded-time difference for the same message (negative: this variant decoded first). Live: each variant has its own upstream feed connection, so Δuser also contains the upstream feed's per-connection send skew; use it as confirmation of the lab result, not as a verdict.
 Diagnostics: Δrx = kernel-arrival difference; Δstack = Δuser − Δrx over messages that were alone in their read on both sides.
 
 | | n | mean µs | p50 µs | p90 µs | p99 µs | p99.9 µs | max µs |
@@ -914,7 +914,7 @@ Diagnostics: Δrx = kernel-arrival difference; Δstack = Δuser − Δrx over me
 
 epoll-busy #1: 129597 paired messages; decoded before epoll-busy on 8.1 % (uncorrected).
 
-## live-epoll-busy-vs-uring-napi: binance, 300 s (first 10 s dropped), 3 connection(s) per variant, kernel 6.17.0-1022-azure
+## live-epoll-busy-vs-uring-napi: live-feed, 300 s (first 10 s dropped), 3 connection(s) per variant, kernel 6.17.0-1022-azure
 
 busy_poll_us=50 wait_us=100 mlockall=true BusyPollRxPackets during run=47225 clocksource=tsc
 
@@ -954,28 +954,28 @@ The kernel stamps a read with its newest segment, so multi-message reads are exc
 | epoll-busy (49398 of 241457 in 1-msg reads) | 49398 | 13.57 | 13.23 | 16.18 | 25.36 | 30.38 | 686.16 |
 | uring-napi (50162 of 241456 in 1-msg reads) | 50162 | 8.71 | 6.50 | 13.88 | 17.83 | 26.58 | 46.71 |
 
-### Binance event time → kernel rx (`rx_sw − E`)
+### upstream feed event time → kernel rx (`rx_sw − E`)
 
-Includes Binance's publish delay, the Azure→AWS path and the clock offset; context only, not a loop comparison.
+Includes the upstream feed's publish delay, the Azure→AWS path and the clock offset; context only, not a loop comparison.
 
 | | n | mean µs | p50 µs | p90 µs | p99 µs | p99.9 µs | max µs |
 |---|---|---|---|---|---|---|---|
-| btcusdt@trade epoll-busy | 10187 | 39036.49 | 38510.52 | 39836.02 | 71348.11 | 72496.52 | 76923.97 |
-| btcusdt@trade uring-napi | 10187 | 39318.96 | 38704.29 | 40107.57 | 70481.91 | 71309.10 | 75891.10 |
-| ethusdt@trade epoll-busy | 7920 | 38609.40 | 38335.80 | 39926.87 | 40655.51 | 72032.52 | 72034.52 |
-| ethusdt@trade uring-napi | 7920 | 38907.86 | 38706.57 | 40234.96 | 40935.04 | 70949.10 | 76665.79 |
-| solusdt@trade epoll-busy | 1732 | 38498.33 | 38110.01 | 39517.67 | 40399.69 | 75284.52 | 75285.52 |
-| solusdt@trade uring-napi | 1732 | 38791.78 | 38492.09 | 39851.00 | 40462.30 | 74209.10 | 74210.10 |
-| btcusdt@bookTicker epoll-busy | 123801 | 40415.34 | 38426.43 | 45066.40 | 73580.80 | 112668.15 | 118059.55 |
-| btcusdt@bookTicker uring-napi | 123801 | 39724.32 | 38841.63 | 42543.81 | 55007.06 | 72900.77 | 82555.98 |
-| ethusdt@bookTicker epoll-busy | 91569 | 41706.09 | 38756.68 | 50379.43 | 87044.83 | 115004.15 | 117059.55 |
-| ethusdt@bookTicker uring-napi | 91568 | 40440.43 | 39139.76 | 44818.29 | 68334.60 | 73926.68 | 82555.98 |
-| btcusdt@aggTrade epoll-busy | 6248 | 40352.97 | 38645.72 | 43026.08 | 79329.62 | 85578.15 | 85578.15 |
-| btcusdt@aggTrade uring-napi | 6248 | 40289.29 | 38618.71 | 43131.07 | 80212.33 | 87357.91 | 87357.91 |
+| instrument-a@trade epoll-busy | 10187 | 39036.49 | 38510.52 | 39836.02 | 71348.11 | 72496.52 | 76923.97 |
+| instrument-a@trade uring-napi | 10187 | 39318.96 | 38704.29 | 40107.57 | 70481.91 | 71309.10 | 75891.10 |
+| instrument-b@trade epoll-busy | 7920 | 38609.40 | 38335.80 | 39926.87 | 40655.51 | 72032.52 | 72034.52 |
+| instrument-b@trade uring-napi | 7920 | 38907.86 | 38706.57 | 40234.96 | 40935.04 | 70949.10 | 76665.79 |
+| instrument-c@trade epoll-busy | 1732 | 38498.33 | 38110.01 | 39517.67 | 40399.69 | 75284.52 | 75285.52 |
+| instrument-c@trade uring-napi | 1732 | 38791.78 | 38492.09 | 39851.00 | 40462.30 | 74209.10 | 74210.10 |
+| instrument-a@bookTicker epoll-busy | 123801 | 40415.34 | 38426.43 | 45066.40 | 73580.80 | 112668.15 | 118059.55 |
+| instrument-a@bookTicker uring-napi | 123801 | 39724.32 | 38841.63 | 42543.81 | 55007.06 | 72900.77 | 82555.98 |
+| instrument-b@bookTicker epoll-busy | 91569 | 41706.09 | 38756.68 | 50379.43 | 87044.83 | 115004.15 | 117059.55 |
+| instrument-b@bookTicker uring-napi | 91568 | 40440.43 | 39139.76 | 44818.29 | 68334.60 | 73926.68 | 82555.98 |
+| instrument-a@aggTrade epoll-busy | 6248 | 40352.97 | 38645.72 | 43026.08 | 79329.62 | 85578.15 | 85578.15 |
+| instrument-a@aggTrade uring-napi | 6248 | 40289.29 | 38618.71 | 43131.07 | 80212.33 | 87357.91 | 87357.91 |
 
 ### Paired by message, relative to epoll-busy
 
-**Δuser** = decoded-time difference for the same message (negative: this variant decoded first). Live: each variant has its own Binance connection, so Δuser also contains Binance's per-connection send skew; use it as confirmation of the lab result, not as a verdict.
+**Δuser** = decoded-time difference for the same message (negative: this variant decoded first). Live: each variant has its own upstream feed connection, so Δuser also contains the upstream feed's per-connection send skew; use it as confirmation of the lab result, not as a verdict.
 Diagnostics: Δrx = kernel-arrival difference; Δstack = Δuser − Δrx over messages that were alone in their read on both sides.
 
 | | n | mean µs | p50 µs | p90 µs | p99 µs | p99.9 µs | max µs |
@@ -986,7 +986,7 @@ Diagnostics: Δrx = kernel-arrival difference; Δstack = Δuser − Δrx over me
 
 uring-napi: 241456 paired messages; decoded before epoll-busy on 20.2 % (uncorrected).
 
-## live-epoll-busy-vs-uring-sqpoll: binance, 300 s (first 10 s dropped), 3 connection(s) per variant, kernel 6.17.0-1022-azure
+## live-epoll-busy-vs-uring-sqpoll: live-feed, 300 s (first 10 s dropped), 3 connection(s) per variant, kernel 6.17.0-1022-azure
 
 busy_poll_us=50 wait_us=100 mlockall=true BusyPollRxPackets during run=136280 clocksource=tsc
 
@@ -1026,28 +1026,28 @@ The kernel stamps a read with its newest segment, so multi-message reads are exc
 | epoll-busy (47199 of 181558 in 1-msg reads) | 47199 | 13.68 | 13.53 | 15.48 | 24.63 | 30.24 | 384.85 |
 | uring-sqpoll (47599 of 181558 in 1-msg reads) | 47599 | 5.47 | 4.99 | 7.15 | 11.23 | 15.13 | 34.73 |
 
-### Binance event time → kernel rx (`rx_sw − E`)
+### upstream feed event time → kernel rx (`rx_sw − E`)
 
-Includes Binance's publish delay, the Azure→AWS path and the clock offset; context only, not a loop comparison.
+Includes the upstream feed's publish delay, the Azure→AWS path and the clock offset; context only, not a loop comparison.
 
 | | n | mean µs | p50 µs | p90 µs | p99 µs | p99.9 µs | max µs |
 |---|---|---|---|---|---|---|---|
-| btcusdt@trade epoll-busy | 10905 | 37635.57 | 36506.40 | 38548.40 | 86224.87 | 89167.49 | 89172.49 |
-| btcusdt@trade uring-sqpoll | 10905 | 37662.07 | 37042.25 | 39016.17 | 40456.82 | 88269.84 | 88274.84 |
-| ethusdt@trade epoll-busy | 5299 | 36561.69 | 36524.37 | 37502.38 | 39489.52 | 39842.50 | 40030.93 |
-| ethusdt@trade uring-sqpoll | 5299 | 37346.85 | 37040.39 | 38408.97 | 40517.35 | 52388.45 | 52390.45 |
-| solusdt@trade epoll-busy | 1132 | 36485.91 | 36106.13 | 38193.47 | 42248.18 | 42295.18 | 42296.18 |
-| solusdt@trade uring-sqpoll | 1132 | 37086.96 | 36779.91 | 38438.09 | 40101.78 | 40448.98 | 40458.17 |
-| btcusdt@bookTicker epoll-busy | 98694 | 37287.02 | 36896.40 | 39115.05 | 43700.71 | 56991.05 | 63754.13 |
-| btcusdt@bookTicker uring-sqpoll | 98694 | 37061.87 | 36684.15 | 39065.71 | 43111.94 | 51484.44 | 63603.84 |
-| ethusdt@bookTicker epoll-busy | 61794 | 37096.87 | 36790.78 | 38525.71 | 41837.77 | 50066.61 | 63242.91 |
-| ethusdt@bookTicker uring-sqpoll | 61794 | 36900.61 | 36531.99 | 38518.40 | 43014.26 | 51270.78 | 63060.17 |
-| btcusdt@aggTrade epoll-busy | 3734 | 37773.91 | 37025.70 | 40244.44 | 48267.82 | 61896.98 | 63434.47 |
-| btcusdt@aggTrade uring-sqpoll | 3734 | 37473.86 | 37155.14 | 38688.16 | 43523.41 | 73813.69 | 76078.94 |
+| instrument-a@trade epoll-busy | 10905 | 37635.57 | 36506.40 | 38548.40 | 86224.87 | 89167.49 | 89172.49 |
+| instrument-a@trade uring-sqpoll | 10905 | 37662.07 | 37042.25 | 39016.17 | 40456.82 | 88269.84 | 88274.84 |
+| instrument-b@trade epoll-busy | 5299 | 36561.69 | 36524.37 | 37502.38 | 39489.52 | 39842.50 | 40030.93 |
+| instrument-b@trade uring-sqpoll | 5299 | 37346.85 | 37040.39 | 38408.97 | 40517.35 | 52388.45 | 52390.45 |
+| instrument-c@trade epoll-busy | 1132 | 36485.91 | 36106.13 | 38193.47 | 42248.18 | 42295.18 | 42296.18 |
+| instrument-c@trade uring-sqpoll | 1132 | 37086.96 | 36779.91 | 38438.09 | 40101.78 | 40448.98 | 40458.17 |
+| instrument-a@bookTicker epoll-busy | 98694 | 37287.02 | 36896.40 | 39115.05 | 43700.71 | 56991.05 | 63754.13 |
+| instrument-a@bookTicker uring-sqpoll | 98694 | 37061.87 | 36684.15 | 39065.71 | 43111.94 | 51484.44 | 63603.84 |
+| instrument-b@bookTicker epoll-busy | 61794 | 37096.87 | 36790.78 | 38525.71 | 41837.77 | 50066.61 | 63242.91 |
+| instrument-b@bookTicker uring-sqpoll | 61794 | 36900.61 | 36531.99 | 38518.40 | 43014.26 | 51270.78 | 63060.17 |
+| instrument-a@aggTrade epoll-busy | 3734 | 37773.91 | 37025.70 | 40244.44 | 48267.82 | 61896.98 | 63434.47 |
+| instrument-a@aggTrade uring-sqpoll | 3734 | 37473.86 | 37155.14 | 38688.16 | 43523.41 | 73813.69 | 76078.94 |
 
 ### Paired by message, relative to epoll-busy
 
-**Δuser** = decoded-time difference for the same message (negative: this variant decoded first). Live: each variant has its own Binance connection, so Δuser also contains Binance's per-connection send skew; use it as confirmation of the lab result, not as a verdict.
+**Δuser** = decoded-time difference for the same message (negative: this variant decoded first). Live: each variant has its own upstream feed connection, so Δuser also contains the upstream feed's per-connection send skew; use it as confirmation of the lab result, not as a verdict.
 Diagnostics: Δrx = kernel-arrival difference; Δstack = Δuser − Δrx over messages that were alone in their read on both sides.
 
 | | n | mean µs | p50 µs | p90 µs | p99 µs | p99.9 µs | max µs |
@@ -1058,7 +1058,7 @@ Diagnostics: Δrx = kernel-arrival difference; Δstack = Δuser − Δrx over me
 
 uring-sqpoll: 181558 paired messages; decoded before epoll-busy on 78.9 % (uncorrected).
 
-## live-epoll-spin-vs-uring-spin: binance, 300 s (first 10 s dropped), 3 connection(s) per variant, kernel 6.17.0-1022-azure
+## live-epoll-spin-vs-uring-spin: live-feed, 300 s (first 10 s dropped), 3 connection(s) per variant, kernel 6.17.0-1022-azure
 
 busy_poll_us=50 wait_us=100 mlockall=true BusyPollRxPackets during run=0 clocksource=tsc
 
@@ -1098,28 +1098,28 @@ The kernel stamps a read with its newest segment, so multi-message reads are exc
 | epoll-spin (50886 of 206197 in 1-msg reads) | 50886 | 4.36 | 4.13 | 5.01 | 8.63 | 16.48 | 53.14 |
 | uring-spin (50426 of 206197 in 1-msg reads) | 50426 | 4.95 | 4.50 | 6.20 | 11.80 | 20.93 | 41.04 |
 
-### Binance event time → kernel rx (`rx_sw − E`)
+### upstream feed event time → kernel rx (`rx_sw − E`)
 
-Includes Binance's publish delay, the Azure→AWS path and the clock offset; context only, not a loop comparison.
+Includes the upstream feed's publish delay, the Azure→AWS path and the clock offset; context only, not a loop comparison.
 
 | | n | mean µs | p50 µs | p90 µs | p99 µs | p99.9 µs | max µs |
 |---|---|---|---|---|---|---|---|
-| btcusdt@trade epoll-spin | 9423 | 40820.00 | 41178.49 | 43015.89 | 43419.49 | 43481.63 | 43483.63 |
-| btcusdt@trade uring-spin | 9423 | 40775.81 | 41083.81 | 43059.27 | 45086.60 | 66016.90 | 68508.90 |
-| ethusdt@trade epoll-spin | 10397 | 40826.77 | 41415.00 | 43023.86 | 44440.86 | 44457.86 | 44459.86 |
-| ethusdt@trade uring-spin | 10397 | 40786.03 | 41356.31 | 43063.48 | 43689.71 | 52856.43 | 75070.74 |
-| solusdt@trade epoll-spin | 1853 | 40692.91 | 41189.22 | 42739.42 | 43523.77 | 45010.86 | 50167.82 |
-| solusdt@trade uring-spin | 1853 | 40753.54 | 41129.52 | 42628.78 | 45017.60 | 57085.90 | 57086.90 |
-| btcusdt@bookTicker epoll-spin | 95379 | 41572.87 | 41896.89 | 43655.71 | 45375.02 | 56240.55 | 72129.70 |
-| btcusdt@bookTicker uring-spin | 95379 | 41080.05 | 41347.63 | 43137.41 | 45906.86 | 65477.43 | 110114.57 |
-| ethusdt@bookTicker epoll-spin | 84091 | 41338.06 | 41887.35 | 43485.96 | 44895.91 | 47903.31 | 67361.64 |
-| ethusdt@bookTicker uring-spin | 84091 | 40852.56 | 41360.86 | 42973.74 | 45365.61 | 50741.82 | 102114.57 |
-| btcusdt@aggTrade epoll-spin | 5054 | 40317.50 | 40566.12 | 42451.96 | 43238.42 | 80912.72 | 85912.72 |
-| btcusdt@aggTrade uring-spin | 5054 | 40352.03 | 40577.20 | 42482.92 | 43963.58 | 81844.05 | 86844.05 |
+| instrument-a@trade epoll-spin | 9423 | 40820.00 | 41178.49 | 43015.89 | 43419.49 | 43481.63 | 43483.63 |
+| instrument-a@trade uring-spin | 9423 | 40775.81 | 41083.81 | 43059.27 | 45086.60 | 66016.90 | 68508.90 |
+| instrument-b@trade epoll-spin | 10397 | 40826.77 | 41415.00 | 43023.86 | 44440.86 | 44457.86 | 44459.86 |
+| instrument-b@trade uring-spin | 10397 | 40786.03 | 41356.31 | 43063.48 | 43689.71 | 52856.43 | 75070.74 |
+| instrument-c@trade epoll-spin | 1853 | 40692.91 | 41189.22 | 42739.42 | 43523.77 | 45010.86 | 50167.82 |
+| instrument-c@trade uring-spin | 1853 | 40753.54 | 41129.52 | 42628.78 | 45017.60 | 57085.90 | 57086.90 |
+| instrument-a@bookTicker epoll-spin | 95379 | 41572.87 | 41896.89 | 43655.71 | 45375.02 | 56240.55 | 72129.70 |
+| instrument-a@bookTicker uring-spin | 95379 | 41080.05 | 41347.63 | 43137.41 | 45906.86 | 65477.43 | 110114.57 |
+| instrument-b@bookTicker epoll-spin | 84091 | 41338.06 | 41887.35 | 43485.96 | 44895.91 | 47903.31 | 67361.64 |
+| instrument-b@bookTicker uring-spin | 84091 | 40852.56 | 41360.86 | 42973.74 | 45365.61 | 50741.82 | 102114.57 |
+| instrument-a@aggTrade epoll-spin | 5054 | 40317.50 | 40566.12 | 42451.96 | 43238.42 | 80912.72 | 85912.72 |
+| instrument-a@aggTrade uring-spin | 5054 | 40352.03 | 40577.20 | 42482.92 | 43963.58 | 81844.05 | 86844.05 |
 
 ### Paired by message, relative to epoll-spin
 
-**Δuser** = decoded-time difference for the same message (negative: this variant decoded first). Live: each variant has its own Binance connection, so Δuser also contains Binance's per-connection send skew; use it as confirmation of the lab result, not as a verdict.
+**Δuser** = decoded-time difference for the same message (negative: this variant decoded first). Live: each variant has its own upstream feed connection, so Δuser also contains the upstream feed's per-connection send skew; use it as confirmation of the lab result, not as a verdict.
 Diagnostics: Δrx = kernel-arrival difference; Δstack = Δuser − Δrx over messages that were alone in their read on both sides.
 
 | | n | mean µs | p50 µs | p90 µs | p99 µs | p99.9 µs | max µs |
@@ -1130,7 +1130,7 @@ Diagnostics: Δrx = kernel-arrival difference; Δstack = Δuser − Δrx over me
 
 uring-spin: 206197 paired messages; decoded before epoll-spin on 90.4 % (uncorrected).
 
-## live-uring-napi-vs-epoll-busy: binance, 300 s (first 10 s dropped), 3 connection(s) per variant, kernel 6.17.0-1022-azure
+## live-uring-napi-vs-epoll-busy: live-feed, 300 s (first 10 s dropped), 3 connection(s) per variant, kernel 6.17.0-1022-azure
 
 busy_poll_us=50 wait_us=100 mlockall=true BusyPollRxPackets during run=34277 clocksource=tsc
 
@@ -1170,28 +1170,28 @@ The kernel stamps a read with its newest segment, so multi-message reads are exc
 | uring-napi (41445 of 161827 in 1-msg reads) | 41445 | 9.58 | 7.82 | 14.62 | 25.49 | 29.18 | 39.85 |
 | epoll-busy (41034 of 161827 in 1-msg reads) | 41034 | 13.85 | 13.45 | 16.55 | 26.60 | 30.76 | 58.05 |
 
-### Binance event time → kernel rx (`rx_sw − E`)
+### upstream feed event time → kernel rx (`rx_sw − E`)
 
-Includes Binance's publish delay, the Azure→AWS path and the clock offset; context only, not a loop comparison.
+Includes the upstream feed's publish delay, the Azure→AWS path and the clock offset; context only, not a loop comparison.
 
 | | n | mean µs | p50 µs | p90 µs | p99 µs | p99.9 µs | max µs |
 |---|---|---|---|---|---|---|---|
-| btcusdt@trade uring-napi | 8506 | 42902.42 | 42761.61 | 44491.23 | 51281.97 | 56645.04 | 56647.04 |
-| btcusdt@trade epoll-busy | 8506 | 42810.80 | 42652.86 | 44545.22 | 50074.59 | 55409.03 | 55411.03 |
-| ethusdt@trade uring-napi | 5629 | 42885.00 | 42349.19 | 43948.00 | 68620.51 | 68717.44 | 68718.44 |
-| ethusdt@trade epoll-busy | 5629 | 42851.26 | 42300.42 | 43932.51 | 67448.95 | 67455.95 | 67457.08 |
-| solusdt@trade uring-napi | 1039 | 42454.88 | 42462.94 | 44285.19 | 45739.17 | 45743.17 | 45745.17 |
-| solusdt@trade epoll-busy | 1039 | 42445.10 | 42405.01 | 44234.14 | 47981.58 | 47985.58 | 47989.58 |
-| btcusdt@bookTicker uring-napi | 76171 | 42252.91 | 41923.14 | 43952.22 | 52078.59 | 58672.65 | 69817.98 |
-| btcusdt@bookTicker epoll-busy | 76171 | 42284.54 | 41921.79 | 43884.51 | 50909.21 | 80935.27 | 88935.27 |
-| ethusdt@bookTicker uring-napi | 67996 | 42313.16 | 41924.80 | 43961.86 | 53891.59 | 58684.79 | 68737.53 |
-| ethusdt@bookTicker epoll-busy | 67996 | 42088.66 | 41883.56 | 43751.86 | 49936.48 | 60107.93 | 88935.27 |
-| btcusdt@aggTrade uring-napi | 2486 | 45245.80 | 43211.90 | 49334.99 | 78379.51 | 81673.94 | 81673.94 |
-| btcusdt@aggTrade epoll-busy | 2486 | 44016.17 | 42964.02 | 46830.64 | 61590.18 | 85505.01 | 90692.29 |
+| instrument-a@trade uring-napi | 8506 | 42902.42 | 42761.61 | 44491.23 | 51281.97 | 56645.04 | 56647.04 |
+| instrument-a@trade epoll-busy | 8506 | 42810.80 | 42652.86 | 44545.22 | 50074.59 | 55409.03 | 55411.03 |
+| instrument-b@trade uring-napi | 5629 | 42885.00 | 42349.19 | 43948.00 | 68620.51 | 68717.44 | 68718.44 |
+| instrument-b@trade epoll-busy | 5629 | 42851.26 | 42300.42 | 43932.51 | 67448.95 | 67455.95 | 67457.08 |
+| instrument-c@trade uring-napi | 1039 | 42454.88 | 42462.94 | 44285.19 | 45739.17 | 45743.17 | 45745.17 |
+| instrument-c@trade epoll-busy | 1039 | 42445.10 | 42405.01 | 44234.14 | 47981.58 | 47985.58 | 47989.58 |
+| instrument-a@bookTicker uring-napi | 76171 | 42252.91 | 41923.14 | 43952.22 | 52078.59 | 58672.65 | 69817.98 |
+| instrument-a@bookTicker epoll-busy | 76171 | 42284.54 | 41921.79 | 43884.51 | 50909.21 | 80935.27 | 88935.27 |
+| instrument-b@bookTicker uring-napi | 67996 | 42313.16 | 41924.80 | 43961.86 | 53891.59 | 58684.79 | 68737.53 |
+| instrument-b@bookTicker epoll-busy | 67996 | 42088.66 | 41883.56 | 43751.86 | 49936.48 | 60107.93 | 88935.27 |
+| instrument-a@aggTrade uring-napi | 2486 | 45245.80 | 43211.90 | 49334.99 | 78379.51 | 81673.94 | 81673.94 |
+| instrument-a@aggTrade epoll-busy | 2486 | 44016.17 | 42964.02 | 46830.64 | 61590.18 | 85505.01 | 90692.29 |
 
 ### Paired by message, relative to uring-napi
 
-**Δuser** = decoded-time difference for the same message (negative: this variant decoded first). Live: each variant has its own Binance connection, so Δuser also contains Binance's per-connection send skew; use it as confirmation of the lab result, not as a verdict.
+**Δuser** = decoded-time difference for the same message (negative: this variant decoded first). Live: each variant has its own upstream feed connection, so Δuser also contains the upstream feed's per-connection send skew; use it as confirmation of the lab result, not as a verdict.
 Diagnostics: Δrx = kernel-arrival difference; Δstack = Δuser − Δrx over messages that were alone in their read on both sides.
 
 | | n | mean µs | p50 µs | p90 µs | p99 µs | p99.9 µs | max µs |
@@ -1202,7 +1202,7 @@ Diagnostics: Δrx = kernel-arrival difference; Δstack = Δuser − Δrx over me
 
 epoll-busy: 161827 paired messages; decoded before uring-napi on 58.2 % (uncorrected).
 
-## live-uring-spin-vs-epoll-spin: binance, 300 s (first 10 s dropped), 3 connection(s) per variant, kernel 6.17.0-1022-azure
+## live-uring-spin-vs-epoll-spin: live-feed, 300 s (first 10 s dropped), 3 connection(s) per variant, kernel 6.17.0-1022-azure
 
 busy_poll_us=50 wait_us=100 mlockall=true BusyPollRxPackets during run=0 clocksource=tsc
 
@@ -1242,28 +1242,28 @@ The kernel stamps a read with its newest segment, so multi-message reads are exc
 | uring-spin (56747 of 267539 in 1-msg reads) | 56747 | 5.05 | 4.50 | 6.21 | 18.33 | 21.14 | 38.97 |
 | epoll-spin (54775 of 267539 in 1-msg reads) | 54775 | 4.47 | 4.19 | 5.09 | 10.54 | 19.13 | 43.41 |
 
-### Binance event time → kernel rx (`rx_sw − E`)
+### upstream feed event time → kernel rx (`rx_sw − E`)
 
-Includes Binance's publish delay, the Azure→AWS path and the clock offset; context only, not a loop comparison.
+Includes the upstream feed's publish delay, the Azure→AWS path and the clock offset; context only, not a loop comparison.
 
 | | n | mean µs | p50 µs | p90 µs | p99 µs | p99.9 µs | max µs |
 |---|---|---|---|---|---|---|---|
-| btcusdt@trade uring-spin | 10654 | 36562.90 | 36340.02 | 37179.36 | 38354.22 | 72824.06 | 72829.06 |
-| btcusdt@trade epoll-spin | 10654 | 36691.57 | 36553.66 | 37067.28 | 37718.85 | 73287.85 | 73290.85 |
-| ethusdt@trade uring-spin | 9128 | 36569.13 | 36342.56 | 36926.24 | 37591.22 | 72530.06 | 76553.45 |
-| ethusdt@trade epoll-spin | 9128 | 36721.36 | 36431.98 | 37095.85 | 37786.15 | 72965.85 | 77069.71 |
-| solusdt@trade uring-spin | 1857 | 36770.59 | 36205.27 | 36783.11 | 72595.06 | 72604.06 | 72606.06 |
-| solusdt@trade epoll-spin | 1857 | 36933.39 | 36327.51 | 36973.79 | 73070.85 | 73074.85 | 73075.85 |
-| btcusdt@bookTicker uring-spin | 134960 | 37209.02 | 36127.37 | 37490.25 | 72237.77 | 86078.01 | 96071.56 |
-| btcusdt@bookTicker epoll-spin | 134960 | 38223.08 | 36698.60 | 38493.47 | 77121.99 | 115211.95 | 123343.07 |
-| ethusdt@bookTicker uring-spin | 104753 | 37535.88 | 36072.55 | 39335.92 | 73237.77 | 90128.91 | 96071.56 |
-| ethusdt@bookTicker epoll-spin | 104753 | 39007.64 | 36648.63 | 40726.68 | 85959.09 | 112548.86 | 123343.07 |
-| btcusdt@aggTrade uring-spin | 6187 | 39007.74 | 37027.73 | 41188.20 | 77489.54 | 109934.68 | 110934.68 |
-| btcusdt@aggTrade epoll-spin | 6187 | 37580.64 | 36671.75 | 39299.24 | 59016.51 | 79442.30 | 97326.60 |
+| instrument-a@trade uring-spin | 10654 | 36562.90 | 36340.02 | 37179.36 | 38354.22 | 72824.06 | 72829.06 |
+| instrument-a@trade epoll-spin | 10654 | 36691.57 | 36553.66 | 37067.28 | 37718.85 | 73287.85 | 73290.85 |
+| instrument-b@trade uring-spin | 9128 | 36569.13 | 36342.56 | 36926.24 | 37591.22 | 72530.06 | 76553.45 |
+| instrument-b@trade epoll-spin | 9128 | 36721.36 | 36431.98 | 37095.85 | 37786.15 | 72965.85 | 77069.71 |
+| instrument-c@trade uring-spin | 1857 | 36770.59 | 36205.27 | 36783.11 | 72595.06 | 72604.06 | 72606.06 |
+| instrument-c@trade epoll-spin | 1857 | 36933.39 | 36327.51 | 36973.79 | 73070.85 | 73074.85 | 73075.85 |
+| instrument-a@bookTicker uring-spin | 134960 | 37209.02 | 36127.37 | 37490.25 | 72237.77 | 86078.01 | 96071.56 |
+| instrument-a@bookTicker epoll-spin | 134960 | 38223.08 | 36698.60 | 38493.47 | 77121.99 | 115211.95 | 123343.07 |
+| instrument-b@bookTicker uring-spin | 104753 | 37535.88 | 36072.55 | 39335.92 | 73237.77 | 90128.91 | 96071.56 |
+| instrument-b@bookTicker epoll-spin | 104753 | 39007.64 | 36648.63 | 40726.68 | 85959.09 | 112548.86 | 123343.07 |
+| instrument-a@aggTrade uring-spin | 6187 | 39007.74 | 37027.73 | 41188.20 | 77489.54 | 109934.68 | 110934.68 |
+| instrument-a@aggTrade epoll-spin | 6187 | 37580.64 | 36671.75 | 39299.24 | 59016.51 | 79442.30 | 97326.60 |
 
 ### Paired by message, relative to uring-spin
 
-**Δuser** = decoded-time difference for the same message (negative: this variant decoded first). Live: each variant has its own Binance connection, so Δuser also contains Binance's per-connection send skew; use it as confirmation of the lab result, not as a verdict.
+**Δuser** = decoded-time difference for the same message (negative: this variant decoded first). Live: each variant has its own upstream feed connection, so Δuser also contains the upstream feed's per-connection send skew; use it as confirmation of the lab result, not as a verdict.
 Diagnostics: Δrx = kernel-arrival difference; Δstack = Δuser − Δrx over messages that were alone in their read on both sides.
 
 | | n | mean µs | p50 µs | p90 µs | p99 µs | p99.9 µs | max µs |
@@ -1274,7 +1274,7 @@ Diagnostics: Δrx = kernel-arrival difference; Δstack = Δuser − Δrx over me
 
 epoll-spin: 267539 paired messages; decoded before uring-spin on 10.6 % (uncorrected).
 
-## live-uring-sqpoll-vs-epoll-busy: binance, 300 s (first 10 s dropped), 3 connection(s) per variant, kernel 6.17.0-1022-azure
+## live-uring-sqpoll-vs-epoll-busy: live-feed, 300 s (first 10 s dropped), 3 connection(s) per variant, kernel 6.17.0-1022-azure
 
 busy_poll_us=50 wait_us=100 mlockall=true BusyPollRxPackets during run=67770 clocksource=tsc
 
@@ -1314,28 +1314,28 @@ The kernel stamps a read with its newest segment, so multi-message reads are exc
 | uring-sqpoll (43686 of 172489 in 1-msg reads) | 43686 | 5.16 | 4.71 | 6.77 | 10.49 | 13.44 | 18.13 |
 | epoll-busy (43666 of 172489 in 1-msg reads) | 43666 | 14.11 | 13.46 | 17.72 | 27.65 | 33.90 | 50.98 |
 
-### Binance event time → kernel rx (`rx_sw − E`)
+### upstream feed event time → kernel rx (`rx_sw − E`)
 
-Includes Binance's publish delay, the Azure→AWS path and the clock offset; context only, not a loop comparison.
+Includes the upstream feed's publish delay, the Azure→AWS path and the clock offset; context only, not a loop comparison.
 
 | | n | mean µs | p50 µs | p90 µs | p99 µs | p99.9 µs | max µs |
 |---|---|---|---|---|---|---|---|
-| btcusdt@trade uring-sqpoll | 7486 | 37988.92 | 36992.22 | 38743.71 | 69368.52 | 73429.76 | 73434.76 |
-| btcusdt@trade epoll-busy | 7486 | 37631.77 | 36678.45 | 38131.84 | 69238.46 | 73370.65 | 73372.65 |
-| ethusdt@trade uring-sqpoll | 7484 | 37260.48 | 36752.12 | 38112.84 | 55314.62 | 62428.06 | 62682.06 |
-| ethusdt@trade epoll-busy | 7484 | 37070.67 | 36489.20 | 37840.32 | 58068.58 | 65840.71 | 67545.31 |
-| solusdt@trade uring-sqpoll | 1311 | 37286.78 | 37071.06 | 38405.98 | 49617.98 | 56415.43 | 56417.43 |
-| solusdt@trade epoll-busy | 1311 | 36915.50 | 36840.42 | 37666.98 | 48964.62 | 56280.46 | 56280.46 |
-| btcusdt@bookTicker uring-sqpoll | 72237 | 37383.87 | 37105.32 | 38468.53 | 44180.90 | 56337.96 | 63578.31 |
-| btcusdt@bookTicker epoll-busy | 72237 | 37580.14 | 37155.15 | 38616.54 | 46741.43 | 63377.69 | 71222.36 |
-| ethusdt@bookTicker uring-sqpoll | 81504 | 37441.03 | 37185.76 | 38400.89 | 45890.27 | 57548.41 | 60441.49 |
-| ethusdt@bookTicker epoll-busy | 81504 | 37638.70 | 37249.94 | 38522.56 | 50222.36 | 63993.25 | 95222.36 |
-| btcusdt@aggTrade uring-sqpoll | 2467 | 42142.75 | 36981.63 | 58845.11 | 89947.16 | 91061.60 | 92166.70 |
-| btcusdt@aggTrade epoll-busy | 2467 | 52064.71 | 37760.62 | 83463.85 | 195820.29 | 217820.29 | 227820.29 |
+| instrument-a@trade uring-sqpoll | 7486 | 37988.92 | 36992.22 | 38743.71 | 69368.52 | 73429.76 | 73434.76 |
+| instrument-a@trade epoll-busy | 7486 | 37631.77 | 36678.45 | 38131.84 | 69238.46 | 73370.65 | 73372.65 |
+| instrument-b@trade uring-sqpoll | 7484 | 37260.48 | 36752.12 | 38112.84 | 55314.62 | 62428.06 | 62682.06 |
+| instrument-b@trade epoll-busy | 7484 | 37070.67 | 36489.20 | 37840.32 | 58068.58 | 65840.71 | 67545.31 |
+| instrument-c@trade uring-sqpoll | 1311 | 37286.78 | 37071.06 | 38405.98 | 49617.98 | 56415.43 | 56417.43 |
+| instrument-c@trade epoll-busy | 1311 | 36915.50 | 36840.42 | 37666.98 | 48964.62 | 56280.46 | 56280.46 |
+| instrument-a@bookTicker uring-sqpoll | 72237 | 37383.87 | 37105.32 | 38468.53 | 44180.90 | 56337.96 | 63578.31 |
+| instrument-a@bookTicker epoll-busy | 72237 | 37580.14 | 37155.15 | 38616.54 | 46741.43 | 63377.69 | 71222.36 |
+| instrument-b@bookTicker uring-sqpoll | 81504 | 37441.03 | 37185.76 | 38400.89 | 45890.27 | 57548.41 | 60441.49 |
+| instrument-b@bookTicker epoll-busy | 81504 | 37638.70 | 37249.94 | 38522.56 | 50222.36 | 63993.25 | 95222.36 |
+| instrument-a@aggTrade uring-sqpoll | 2467 | 42142.75 | 36981.63 | 58845.11 | 89947.16 | 91061.60 | 92166.70 |
+| instrument-a@aggTrade epoll-busy | 2467 | 52064.71 | 37760.62 | 83463.85 | 195820.29 | 217820.29 | 227820.29 |
 
 ### Paired by message, relative to uring-sqpoll
 
-**Δuser** = decoded-time difference for the same message (negative: this variant decoded first). Live: each variant has its own Binance connection, so Δuser also contains Binance's per-connection send skew; use it as confirmation of the lab result, not as a verdict.
+**Δuser** = decoded-time difference for the same message (negative: this variant decoded first). Live: each variant has its own upstream feed connection, so Δuser also contains the upstream feed's per-connection send skew; use it as confirmation of the lab result, not as a verdict.
 Diagnostics: Δrx = kernel-arrival difference; Δstack = Δuser − Δrx over messages that were alone in their read on both sides.
 
 | | n | mean µs | p50 µs | p90 µs | p99 µs | p99.9 µs | max µs |
@@ -1370,4 +1370,3 @@ epoll-busy: 172489 paired messages; decoded before uring-sqpoll on 32.2 % (uncor
 | uring-sqpoll @ 100/s | 2899 | 58.03 | 60.36 | 63.60 | 69.89 | 88.23 | 92.88 |
 | uring-sqpoll @ 1000/s | 28998 | 54.66 | 57.77 | 60.42 | 64.14 | 71.13 | 420.25 |
 | uring-sqpoll @ 10000/s | 289929 | 54.28 | 57.37 | 59.90 | 64.37 | 70.56 | 124.02 |
-

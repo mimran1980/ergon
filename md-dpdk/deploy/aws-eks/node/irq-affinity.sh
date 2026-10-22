@@ -1,29 +1,21 @@
 #!/usr/bin/env bash
-# Keeps every IRQ that can move on the housekeeping CPUs
-# (RUSTERON_HOUSEKEEPING_CPUS, the kernel's irqaffinity; default cpu0's
-# physical core), off the isolated CPUs where the DPDK agents busy-spin:
-#
-#   pin    One pass: move every IRQ whose affinity reaches past the
-#          housekeeping CPUs onto them, then report each IRQ whose effective
-#          affinity still includes an isolated CPU. Exits 1 on one that can
-#          move but whose requested affinity is not the housekeeping CPUs
-#          after the pass. One the kernel refuses to move (a managed IRQ,
-#          such as an NVMe queue's, or a per-CPU one) is the kernel's to
-#          keep, and one it moves only at its next interrupt (an EC2 VM: no
-#          interrupt remapping) is on its way: both only reported.
-#          bootstrap-dpdk-ena.sh runs it at every boot; run it again after
-#          handing a data ENA back to the kernel's ena driver.
-#   watch  A pass, then one after every network link event, until stopped
-#          (rusteron-irq-affinity.service). It sleeps in the kernel between
-#          events: nothing periodic.
-#
-# Testable against fixtures: set RUSTERON_PROC_ROOT (and RUSTERON_SYSFS_ROOT,
-# for the default housekeeping CPUs) to fixture trees, and
-# RUSTERON_LINK_MONITOR to a command that prints a line per event (default
-# "ip -o monitor link"). See node/test/test-bootstrap.sh.
-#
+# Pins movable IRQs on RUSTERON_IRQ_CPUS (default RUSTERON_HOUSEKEEPING_CPUS),
+# off helper CPUs and off isolated CPUs where the DPDK agents busy-spin.
 # usage: irq-affinity.sh pin|watch
 set -euo pipefail
+# pin: one pass moves every IRQ whose affinity reaches past the IRQ
+# destination onto it, then reports each IRQ whose effective affinity still
+# includes an isolated CPU. Exits 1 on one that can move but whose requested
+# affinity is not the destination after the pass. One the kernel refuses to
+# move (a managed IRQ, such as an NVMe queue's, or a per-CPU one) is the
+# kernel's to keep, and one it moves only at its next interrupt (an EC2 VM:
+# no interrupt remapping) is on its way: both only reported.
+# bootstrap-dpdk-ena.sh runs it at every boot; run it again after handing a
+# data ENA back to the kernel's ena driver.
+# watch: a pass, then one after every network link event, until stopped
+# (rusteron-irq-affinity.service). It sleeps in the kernel between events.
+# Fixtures: RUSTERON_PROC_ROOT, RUSTERON_SYSFS_ROOT, RUSTERON_LINK_MONITOR.
+# See node/test/test-bootstrap.sh.
 
 # Why a link monitor. The kernel's ENA driver sets each queue IRQ's affinity
 # to its hint (queue i on CPU i) whenever it brings an interface up: after a
@@ -62,6 +54,7 @@ set -euo pipefail
 RUSTERON_SYSFS_ROOT="${RUSTERON_SYSFS_ROOT:-/sys}"
 RUSTERON_PROC_ROOT="${RUSTERON_PROC_ROOT:-/proc}"
 RUSTERON_HOUSEKEEPING_CPUS="${RUSTERON_HOUSEKEEPING_CPUS:-}"
+RUSTERON_IRQ_CPUS="${RUSTERON_IRQ_CPUS:-}"
 RUSTERON_LINK_MONITOR="${RUSTERON_LINK_MONITOR:-ip -o monitor link}"
 
 fail() { echo "irq-affinity FAIL: $*" >&2; exit 1; }
@@ -89,6 +82,19 @@ for part in "${parts[@]}"; do
     for ((c = ${part%-*}; c <= ${part#*-}; c++)); do hk[c]=1; done
 done
 
+# The IRQ destination defaults to the housekeeping list, so a one-CPU node
+# keeps today's behaviour. A helper CPU is in housekeeping and not here.
+DEST="${RUSTERON_IRQ_CPUS:-$HK}"
+[[ "$DEST" =~ $CPULIST ]] || fail "RUSTERON_IRQ_CPUS='$DEST': a CPU list such as 0"
+dest=()
+IFS=, read -r -a parts <<<"$DEST"
+for part in "${parts[@]}"; do
+    for ((c = ${part%-*}; c <= ${part#*-}; c++)); do
+        [[ -n "${hk[c]:-}" ]] || fail "IRQ CPU $c is not a housekeeping CPU ($HK)"
+        dest[c]=1
+    done
+done
+
 # 0 when every CPU in a list is a housekeeping CPU; an empty list too (an IRQ
 # with no effective CPU fires nowhere).
 on_hk() {
@@ -98,6 +104,18 @@ on_hk() {
     for part in $1; do
         for ((c = ${part%-*}; c <= ${part#*-}; c++)); do
             [[ -n "${hk[c]:-}" ]] || return 1
+        done
+    done
+}
+
+# 0 when every CPU in a list is an IRQ-destination CPU. Same empty-list rule.
+on_dest() {
+    local part c IFS=,
+    [[ -n "$1" ]] || return 0
+    [[ "$1" =~ $CPULIST ]] || return 1
+    for part in $1; do
+        for ((c = ${part%-*}; c <= ${part#*-}; c++)); do
+            [[ -n "${dest[c]:-}" ]] || return 1
         done
     done
 }
@@ -138,13 +156,13 @@ pass() {
         [[ -d "$d" ]] || continue
         f="${d}smp_affinity_list"
         cur=""
-        if { read -r cur < "$f"; } 2>/dev/null && on_hk "$cur"; then continue; fi
+        if { read -r cur < "$f"; } 2>/dev/null && on_dest "$cur"; then continue; fi
         irq="${d%/}" && irq="${irq##*/}"
-        if { printf '%s\n' "$HK" > "$f"; } 2>/dev/null; then
+        if { printf '%s\n' "$DEST" > "$f"; } 2>/dev/null; then
             moved+=("$irq")
             if [[ "$mode" == watch ]]; then
                 name_irq "$d"
-                ok "moved IRQ $irq (${label:-no handler}) from CPUs ${cur:-unknown} to $HK"
+                ok "moved IRQ $irq (${label:-no handler}) from CPUs ${cur:-unknown} to $DEST"
             fi
         else
             refused+=("$irq")
@@ -155,16 +173,21 @@ pass() {
         f="${d}effective_affinity_list"
         [[ -e "$f" ]] || f="${d}smp_affinity_list"
         { read -r eff < "$f"; } 2>/dev/null || continue
-        on_hk "$eff" && continue
+        on_dest "$eff" && continue
         name_irq "$d"
         [[ -n "$label" ]] || continue
         irq="${d%/}" && irq="${irq##*/}"
         # An empty or unreadable requested affinity places nothing: stray.
+        # An IRQ the kernel will not move off a helper CPU (inside
+        # housekeeping, outside the destination) fails pin: leaving it would
+        # let interrupts run on a shared CPU.
         cur=""
         { read -r cur < "${d}smp_affinity_list"; } 2>/dev/null || true
-        if [[ " ${refused[*]} " == *" $irq "* ]]; then
+        if [[ " ${refused[*]} " == *" $irq "* ]] && on_hk "$eff" && ! on_dest "$eff"; then
+            stray+=("IRQ $irq ($label) on CPUs $eff, outside the IRQ destination $DEST")
+        elif [[ " ${refused[*]} " == *" $irq "* ]]; then
             kept+=("IRQ $irq ($label) on isolated CPUs $eff")
-        elif [[ -n "$cur" ]] && on_hk "$cur"; then
+        elif [[ -n "$cur" ]] && on_dest "$cur"; then
             moving+=("IRQ $irq ($label) on isolated CPUs $eff")
         else
             stray+=("IRQ $irq ($label) on CPUs $eff")
@@ -183,12 +206,12 @@ report() {
         return 0
     fi
     for k in "${kept[@]}"; do warn "$k: the kernel refuses to move it (a managed or per-CPU IRQ)"; done
-    for k in "${moving[@]}"; do warn "$k until its next interrupt, in which the kernel moves it to $HK"; done
+    for k in "${moving[@]}"; do warn "$k until its next interrupt, in which the kernel moves it to $DEST"; done
     if ((${#stray[@]})); then
         printf -v list '%s; ' "${stray[@]}"
         fail "IRQs still on isolated CPUs after the pass: ${list%; }"
     fi
-    ok "IRQs on CPUs $HK (${#moved[@]} moved, ${#refused[@]} refused by the kernel)"
+    ok "IRQs on CPUs $DEST (${#moved[@]} moved, ${#refused[@]} refused by the kernel)"
 }
 
 # The monitor subscribes before the first pass (it has a second to print its

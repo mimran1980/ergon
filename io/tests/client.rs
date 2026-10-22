@@ -95,10 +95,10 @@ fn one_get_through_each_implementation() -> R {
         let result = (|| -> R {
             let _stop = StopOnDrop(&stop); // a failed assertion fails, never hangs
             // The test server answers with the request's path.
-            let want = (200, "/api/v3/time".to_owned());
-            assert_eq!(get(&mut native(&lab)?, "/api/v3/time")?, want);
+            let want = (200, "/time".to_owned());
+            assert_eq!(get(&mut native(&lab)?, "/time")?, want);
             if cfg!(feature = "curl") {
-                assert_eq!(get(&mut curl(&lab)?, "/api/v3/time")?, want);
+                assert_eq!(get(&mut curl(&lab)?, "/time")?, want);
             } else {
                 assert!(curl(&lab).is_err_and(|e| e.to_string().contains("unsupported")));
             }
@@ -128,7 +128,7 @@ fn exercise(lab: &Lab, cfg: &HttpClientConfig) -> R {
         let srv = s.spawn(|| lab.serve_http(&stop, None).map_err(|e| e.to_string()));
         let result = (|| -> R {
             let _stop = StopOnDrop(&stop);
-            let target = lab.target("")?.with_header("X-MBX-APIKEY", "k");
+            let target = lab.target("")?.with_header("X-API-Key", "k");
             let mut c = HttpClient::new(cfg, target, lab.client_cfg.clone())?;
             assert_eq!(c.implementation(), cfg.implementation);
             let mut h = Seen::default();
@@ -147,11 +147,11 @@ fn exercise(lab: &Lab, cfg: &HttpClientConfig) -> R {
                 assert_eq!((got.1, got.2.as_str()), (200, format!("/r{i}").as_str()));
             }
             let signer = Signer::hmac_sha256(b"secret");
-            let sid = c.signed_request("POST", "/api/v3/order", "symbol=BTCUSDT", &[], &signer)?;
+            let sid = c.signed_request("POST", "/operation", "resource=example", &[], &signer)?;
             poll_until(&mut c, &mut h, |_, h| h.ok.iter().any(|r| r.0 == sid))?;
             let body = &h.ok.iter().find(|r| r.0 == sid).ok_or("missing")?.2;
             assert!(
-                body.starts_with("/api/v3/order?symbol=BTCUSDT&timestamp="),
+                body.starts_with("/operation?resource=example&timestamp="),
                 "{body}"
             );
             assert!(body.contains("&signature="));
@@ -435,7 +435,7 @@ fn a_request_the_kernel_never_took_is_sent_no() -> R {
             go.send(())?;
             wait_gone.recv_timeout(Duration::from_secs(10))?;
             std::thread::sleep(Duration::from_millis(50));
-            let id = c.request("POST", "/api/v3/order", &[], b"x")?;
+            let id = c.request("POST", "/operation", &[], b"x")?;
             poll_until(&mut c, &mut h, |_, h| !h.errors.is_empty())?;
             assert_eq!(
                 (h.errors[0].0, h.errors[0].1),
@@ -465,11 +465,11 @@ fn a_request_the_server_read_but_never_answered_is_sent_maybe() -> R {
             let r = one(
                 &mut client(&lab, imp, 1, 5_000, true)?,
                 "POST",
-                "/api/v3/order",
+                "/operation",
             );
             let path = srv.join().map_err(|_| "server panicked")??;
             let (id, h) = r?;
-            assert_eq!(path, "/api/v3/order");
+            assert_eq!(path, "/operation");
             assert_eq!(h.errors.len(), 1, "{imp:?}: {:?}", h.errors);
             assert_eq!((h.errors[0].0, h.errors[0].1), (id, Sent::Maybe), "{imp:?}");
             assert_eq!(h.ok, vec![]);
@@ -554,8 +554,8 @@ fn signed_request_at_signs_the_callers_timestamp() -> R {
                 let signer = Signer::hmac_sha256(b"secret");
                 let id = c.signed_request_at(
                     "GET",
-                    "/api/v3/order",
-                    "symbol=X",
+                    "/operation",
+                    "resource=X",
                     &[],
                     &signer,
                     1_234_567,
@@ -569,7 +569,7 @@ fn signed_request_at_signs_the_callers_timestamp() -> R {
                         .ok_or_else(|| format!("{:?}", h.errors))?;
                 assert!(
                     got.2
-                        .starts_with("/api/v3/order?symbol=X&timestamp=1234567&signature="),
+                        .starts_with("/operation?resource=X&timestamp=1234567&signature="),
                     "{imp:?}: {}",
                     got.2
                 );
@@ -589,14 +589,14 @@ fn curl_refuses_methods_it_could_send_twice_unless_allowed() -> R {
     let lab = Lab::new()?;
     let mut c = client(&lab, HttpImpl::Curl, 8, 5_000, false)?;
     for m in ["POST", "PUT", "PATCH", "post", "PURGE"] {
-        match c.request(m, "/api/v3/order", &[], b"x") {
+        match c.request(m, "/operation", &[], b"x") {
             Err(Error::CurlResend { ref method }) if method == m => {}
             other => return Err(format!("{m}: {other:?}").into()),
         }
     }
     let signer = Signer::hmac_sha256(b"secret");
     assert!(matches!(
-        c.signed_request("POST", "/api/v3/order", "symbol=X", &[], &signer),
+        c.signed_request("POST", "/operation", "resource=X", &[], &signer),
         Err(Error::CurlResend { .. })
     ));
     // Methods a second copy cannot harm go out without opting in.
@@ -605,7 +605,7 @@ fn curl_refuses_methods_it_could_send_twice_unless_allowed() -> R {
     }
     // Opted in: the caller accepts the risk.
     let mut c = client(&lab, HttpImpl::Curl, 1, 5_000, true)?;
-    c.request("POST", "/api/v3/order", &[], b"x")?;
+    c.request("POST", "/operation", &[], b"x")?;
     Ok(())
 }
 
@@ -636,7 +636,7 @@ fn libcurl_sends_a_post_again_when_its_reused_connection_dies() -> R {
         let result = (|| -> R<Vec<(u16, String)>> {
             let mut c = client(&lab, HttpImpl::Curl, 1, 5_000, true)?;
             let (_, warm) = one(&mut c, "GET", "/warm")?;
-            let (_, order) = one(&mut c, "POST", "/api/v3/order")?;
+            let (_, order) = one(&mut c, "POST", "/operation")?;
             assert!(
                 warm.errors.is_empty() && order.errors.is_empty(),
                 "{:?}",
@@ -654,7 +654,7 @@ fn libcurl_sends_a_post_again_when_its_reused_connection_dies() -> R {
             result?,
             vec![(200, "warm".to_owned()), (200, "placed".to_owned())]
         );
-        let post = |c| (c, "POST".to_owned(), "/api/v3/order".to_owned());
+        let post = |c| (c, "POST".to_owned(), "/operation".to_owned());
         assert_eq!(
             seen,
             vec![(1, "GET".to_owned(), "/warm".to_owned()), post(1), post(2)]
@@ -674,7 +674,7 @@ fn curl_reports_a_refused_connect_as_sent_no() -> R {
     cfg.curl_allow_non_idempotent_methods = true;
     let target = ergon_io::Target::new("localhost", closed.port(), "").with_addr(closed);
     let mut c = HttpClient::new(&cfg, target, lab.client_cfg)?;
-    let (id, h) = one(&mut c, "POST", "/api/v3/order")?;
+    let (id, h) = one(&mut c, "POST", "/operation")?;
     assert_eq!(h.errors.len(), 1, "{:?}", h.errors);
     assert_eq!(
         (h.errors[0].0, h.errors[0].1),

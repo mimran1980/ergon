@@ -9,7 +9,9 @@
 //! `RUSTERON_MEDIA_DRIVER_DIR` pins the Aeron directory, and
 //! `RUSTERON_MEDIA_DRIVER_MLOCKALL=1` locks the process's memory, present and
 //! future, before the driver starts. SIGINT, SIGTERM and SIGHUP stop it
-//! cleanly. The configuration is the library's
+//! cleanly. A NIC reset request (`RTE_ETH_EVENT_INTR_RESET`) does not reset
+//! the device under the polling agents: the process stops the driver, then
+//! exits non-zero so the pod can be restarted. The configuration is the library's
 //! ([`ergon_md_dpdk::driver::ConfiguredDriver`]), which a process embedding
 //! the driver shares, host checks included: one stderr line for each
 //! low-latency setting that is not fine, and under
@@ -54,13 +56,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("media driver started");
     info!("Aeron media driver started successfully. Stop it with SIGINT or SIGTERM.");
 
-    // Poll for work until a stop signal arrives
+    // Poll for work until a stop signal arrives, or a NIC asks for a device
+    // reset. The reset flag is read before the drop: the drop joins the
+    // agents and only then closes the transport, so the device is not reset
+    // while an agent is still polling its queues.
+    let mut nic_reset = false;
     while running.load(Ordering::Acquire) {
         driver.idle(driver.do_work()?);
+        if driver.nic_reset_exit() {
+            nic_reset = true;
+            break;
+        }
     }
+    nic_reset |= driver.nic_reset_exit();
     info!("Received signal to stop the media driver.");
     // The driver, then its context, then the transport its bindings point into.
     drop(driver);
+    if nic_reset {
+        return Err(
+            "a NIC asked for a device reset (nic-reset-requested); the agents were stopped and the process is exiting so it can be restarted. The device was not reset."
+                .into(),
+        );
+    }
     info!("Aeron media driver stopped successfully.");
     Ok(())
 }

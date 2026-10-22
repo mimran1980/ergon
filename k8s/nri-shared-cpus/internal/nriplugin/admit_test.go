@@ -219,6 +219,27 @@ func TestAdmitRule7EnvByHand(t *testing.T) {
 	wantRefusal(t, err, 7, "is set by hand")
 }
 
+func TestAdmitHotCannotOptOutHook(t *testing.T) {
+	cfg := testConfig(t, "4")
+	r := baseRequest()
+	r.Hot = true
+	r.PodAnnotations = map[string]string{names.AffinityPrefix + "app": "all"}
+	_, err := Admit(cfg, r)
+	wantRefusal(t, err, 0, "hot containers cannot select")
+	t.Log("hot containers cannot select hook opt-out")
+
+	cfg = testConfig(t, "4", func(f *config.File) { f.DefaultAffinity = config.AffinityAll })
+	r = baseRequest()
+	r.Hot = true
+	d, err := Admit(cfg, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !d.Hook {
+		t.Fatal("hot container lost the start-affinity hook when defaultAffinity is all")
+	}
+}
+
 func TestAdmitOptOutAnnotation(t *testing.T) {
 	cfg := testConfig(t, "4")
 	r := baseRequest()

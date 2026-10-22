@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+# A hot pod the validating policy REJECTS: required-plugins names a different
+# plugin that only contains the substring ergon-shared-cpus.
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: latency-bad-plugin-substring
+  namespace: ergon-latency-pods
+  labels:
+    ergon.io/latency: "hot"
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus-extra"]'
+spec:
+  priorityClassName: ergon-hot
+  containers:
+    - name: app
+      image: ergon-latency-pods-demo:e2e
+      command: ["sleep", "3600"]
+      resources:
+        requests: { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250" }
+        limits:   { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250" }
+      resizePolicy:
+        - resourceName: cpu
+          restartPolicy: RestartContainer

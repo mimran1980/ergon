@@ -215,6 +215,16 @@ for cpu in $hk_list; do
     fi
 done
 HK="$(cpulist_compress <<<"$hk_list")"
+if [[ -z "${RUSTERON_IRQ_CPUS:-}" ]]; then
+    IRQ="$HK"
+else
+    irq_list="$(cpulist_expand "$RUSTERON_IRQ_CPUS")" \
+        || fail "RUSTERON_IRQ_CPUS='$RUSTERON_IRQ_CPUS': a CPU list such as 0"
+    for cpu in $irq_list; do
+        grep -qx "$cpu" <<<"$hk_list" || fail "IRQ CPU $cpu is not a housekeeping CPU ($HK)"
+    done
+    IRQ="$(cpulist_compress <<<"$irq_list")"
+fi
 iso_list="$(comm -23 <(sort <<<"$live") <(sort <<<"$hk_list") | sort -n)"
 ISO="$(cpulist_compress <<<"$iso_list")"
 iso_cores="$(for cpu in $iso_list; do siblings_of "$cpu"; done | sort -u | wc -l | tr -d ' ')" \
@@ -306,7 +316,7 @@ ok "$UNIT and $IRQ_UNIT enabled from the next boot"
 # nosmt keeps SMT off on every later boot (a VM's launch template turned it
 # off already with CpuOptions ThreadsPerCore=1; bare metal needs this).
 # The isolation flags are the VM lab's (vm.sh isolate).
-args="nosmt isolcpus=nohz,domain,managed_irq,$ISO nohz_full=$ISO rcu_nocbs=$ISO irqaffinity=$HK"
+args="nosmt isolcpus=nohz,domain,managed_irq,$ISO nohz_full=$ISO rcu_nocbs=$ISO irqaffinity=$IRQ"
 # No C-state cap (intel_idle.max_cstate), on a VM or bare metal: no committed
 # A/B showed a gain. VM (io/benches/BENCHMARK.md, run
 # flags-aws-20261015T062428Z, cstate): mixed, WebSocket worse, HTTP better at

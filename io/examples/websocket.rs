@@ -5,7 +5,7 @@
 //! - Run: `cargo run -p ergon-io --features webpki-roots --example websocket -- 20 recv-busy`
 //! - Arguments: messages to print before closing (default 20), then the
 //!   backend configuration (default `recv-busy`, the pick for a few sockets).
-//! - The feed is Binance's public spot stream; any public feed will do.
+//! - Then supply host, port and path for your TLS WebSocket service.
 //! - `io/tests/example_websocket.rs` runs this file against a local server,
 //!   on every backend.
 #![cfg_attr(
@@ -18,7 +18,7 @@ use ergon_io::reconnect::{Closed, LinkId, LinkState, Retry};
 use ergon_io::{ConnId, Error, Handler, Reconnect, RxMeta, WsDial, WsHandler};
 
 /// Sent on every connect and reconnect.
-pub const SUBSCRIBE: &str = r#"{"method":"SUBSCRIBE","params":["btcusdt@bookTicker"],"id":1}"#;
+pub const SUBSCRIBE: &str = r#"{"action":"subscribe","channel":"updates"}"#;
 
 /// The application. `Driver::poll` calls it.
 pub struct App {
@@ -141,7 +141,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::parse(&args.next().unwrap_or_else(|| "recv-busy".into()))?;
     // In production, pin this thread to an isolated core first.
     let tls = tls::client_config(tls::webpki_roots())?;
-    let target = Target::new("stream.binance.com", 9443, "/ws");
+    let host = args.next().ok_or("missing WebSocket host")?;
+    let port = args.next().ok_or("missing WebSocket port")?.parse()?;
+    let path = args.next().ok_or("missing WebSocket path")?;
+    let target = Target::new(host, port, path);
     // Limits, pings and timeouts: WsOptions.
     let dial = move || WsDial::with_options(target.clone(), tls.clone(), WsOptions::default());
     let mut app = App::new(Retry::default(), dial, limit)?;

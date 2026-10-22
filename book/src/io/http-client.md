@@ -41,7 +41,7 @@ One request, the same code for both:
 *(From `io/tests/client.rs`. `cargo test -p ergon-io` runs `get` through
 the native client against a local TLS server on Linux; with
 `--features curl`, through libcurl too. `lab` is that server: in your code
-use `Target::new("api.binance.com", 443, "")` and
+use `Target::new("api.example.com", 443, "")` and
 `tls::client_config(tls::webpki_roots())?`.)*
 
 ## Rules
@@ -92,28 +92,11 @@ use `Target::new("api.binance.com", 443, "")` and
 
 ## Signing
 
-`Signer` signs request parameters as Binance's signed endpoints expect,
-without allocating. `HttpClient::signed_request` appends the timestamp and
-the signature itself; `signed_request_at` takes the timestamp from you
-(your clock, or replay time).
-
-| signer | use it for |
-|---|---|
-| `Signer::hmac_sha256` | signed REST requests |
-| `Signer::ed25519_pkcs8` | log-on, once per session; the private key never leaves the machine. About 80 times HMAC's cost: measure before putting it on a hot path |
-
-Cost per signature: [request signing](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#request-signing-and-tls-records).
-
-Checked against Binance's documented example:
-
-```rust,ignore
-{{#include ../../../io/tests/auth.rs:signing}}
-```
-*(From `io/tests/auth.rs`; `cargo test -p ergon-io` runs it on every
-platform.)*
-
-- Set the API key once as a header:
-  `Target::with_header("X-MBX-APIKEY", key)`.
+`Signer` supports HMAC-SHA256 and Ed25519 signatures without allocating.
+`HttpClient::signed_request` appends `timestamp` and `signature` query
+parameters; `signed_request_at` uses the caller's timestamp. Use these
+helpers only when your service expects that query format. API-key and
+other authentication headers are supplied with `Target::with_header`.
 
 ## Measured results
 
@@ -142,25 +125,9 @@ and plain `recv-busy` further behind.
 - **Set it** with `HttpClientConfig::driver`, for example
   `Config::parse("recv-busy,per_queue=true")?`.
 
-Measure it on your own two hosts with `io/benches`: one run per backend,
-and `--pool 1` as the reference.
+Measure on two hosts with your target pool size, using a pool of one as
+the reference. The executable harness lives in the downstream stack.
 
-```sh
-cargo build --release --manifest-path io/benches/Cargo.toml --bin replay_server --bin http_bench --bin analyse
-B=io/benches/target/release
-
-# sender: a keep-alive HTTP server; copy cert-http.pem to the receiver.
-# It spins one thread per connection: run it unpinned, with more free CPUs than connections.
-sudo $B/replay_server --listen 0.0.0.0:9445 --cert-out cert-http.pem --mode http --busy-poll 50
-
-# receiver, loop on isolated CPU 2: 20 pooled connections, one request in flight, 10,000/s
-sudo $B/http_bench --client client --backend recv-busy --pool 20 --server SENDER:9445 --ca cert-http.pem \
-  --sni lab.local --cpu 2 --rate 10000 --duration 60 --out res/http20-recv-busy
-# then the same with: --backend recv-busy --per-queue (out res/http20-per-queue),
-# --backend epoll-spin (res/http20-epoll-spin), --backend uring-sqpoll --sqpoll-cpu 3 (res/http20-sqpoll)
-
-$B/analyse --warmup-s 2 res/http20-*
-```
 
 - On AWS, set the NIC on the node first (node-level):
   `ethtool -C <nic> adaptive-rx off rx-usecs 0`, with the NIC's interrupts

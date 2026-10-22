@@ -598,6 +598,25 @@ static int rusteron_dpdk_init_port(rusteron_dpdk_transport_t *native, rusteron_d
         return -1;
     }
 
+    /* One NUMA node for both ENAs. A node the PMD does not report (-1) does
+     * not contradict the other port. Queues and the pool use the reported
+     * node; a hardcoded 0 would place them on the wrong node when the only
+     * node is not 0. */
+    p->socket_id = NULL != ops->socket_id ? ops->socket_id(p->port_id) : -1;
+    p->socket_known = 1;
+    {
+        const rusteron_dpdk_port_t *peer = (p == &native->sender) ? &native->receiver : &native->sender;
+        if (p->socket_id >= 0 && peer->socket_known && peer->socket_id >= 0 && peer->socket_id != p->socket_id)
+        {
+            snprintf(message, sizeof(message),
+                     "sender %s is on NUMA node %d and receiver %s is on NUMA node %d; both ENAs must be on one "
+                     "NUMA node (this driver does not place queues across nodes)",
+                     native->sender.pci, native->sender.socket_id, native->receiver.pci, p->socket_id);
+            rusteron_dpdk_set_error(message);
+            return -1;
+        }
+    }
+
     char driver[64] = "";
     uint16_t desc_lim[4] = { 0, 0, 0, 0 };
     if (ops->dev_info(p->port_id, p->pci, p->mac, driver, sizeof(driver),
@@ -793,7 +812,7 @@ static int rusteron_dpdk_init_port(rusteron_dpdk_transport_t *native, rusteron_d
     {
         data_room = 2048;
     }
-    p->mempool = ops->mempool_create(pool_name, cfg->mbufs_per_port, cfg->mempool_cache, data_room);
+    p->mempool = ops->mempool_create(pool_name, cfg->mbufs_per_port, cfg->mempool_cache, data_room, p->socket_id);
     if (NULL == p->mempool)
     {
         /* The port op records the underlying rte error (rte_strerror); only
@@ -825,7 +844,7 @@ static int rusteron_dpdk_init_port(rusteron_dpdk_transport_t *native, rusteron_d
         return -1;
     }
 
-    if (ops->rx_queue_setup(p->port_id, 0, p->rx_descriptors, p->mempool) < 0)
+    if (ops->rx_queue_setup(p->port_id, 0, p->rx_descriptors, p->mempool, p->socket_id) < 0)
     {
         snprintf(message, sizeof(message), "rx queue setup failed on %s", p->pci);
         rusteron_dpdk_set_error(message);
@@ -833,7 +852,7 @@ static int rusteron_dpdk_init_port(rusteron_dpdk_transport_t *native, rusteron_d
     }
     p->rx_queue_id = 0;
 
-    if (ops->tx_queue_setup(p->port_id, 0, cfg->tx_descriptors) < 0)
+    if (ops->tx_queue_setup(p->port_id, 0, cfg->tx_descriptors, p->socket_id) < 0)
     {
         snprintf(message, sizeof(message), "tx queue setup failed on %s", p->pci);
         rusteron_dpdk_set_error(message);
@@ -1765,7 +1784,8 @@ static void rusteron_dpdk_timer_service(rusteron_dpdk_transport_t *native, uint6
  * counter (while a transport is open) and in the driver's distinct error log,
  * and returned for logging once the lock is released. Caller holds
  * housekeeping_lock. The transport does not reset the device: its agents
- * poll the queues a reset would rebuild. */
+ * poll the queues a reset would rebuild. The caller sets nic_reset_exit so
+ * the media driver stops those agents and exits. */
 static uint64_t rusteron_dpdk_reset_requests(rusteron_dpdk_port_t *p, char *message, size_t len)
 {
     const uint64_t resets = __atomic_load_n(&p->nic_resets, __ATOMIC_RELAXED);
@@ -1782,8 +1802,8 @@ static uint64_t rusteron_dpdk_reset_requests(rusteron_dpdk_port_t *p, char *mess
     snprintf(message, len,
              "DPDK transport: NIC %s (port %u, %s) asked for a device reset (RTE_ETH_EVENT_INTR_RESET): its PMD's "
              "health checks failed (ENA: device keep-alive, admin queue or missing transmit completions) and its "
-             "queues may have stopped; the transport does not reset it: restart the media driver "
-             "(counter nic-reset-requested)",
+             "queues may have stopped; the transport does not reset the device under its polling agents; the media "
+             "driver stops them and exits so it can be restarted (counter nic-reset-requested)",
              p->pci, (unsigned)p->port_id, '\0' != p->driver[0] ? p->driver : "-");
     if (p->open_transports > 0 && NULL != p->error_log && NULL != aeron_distinct_error_log_record)
     {
@@ -1810,6 +1830,10 @@ void rusteron_dpdk_housekeeping_tick(rusteron_dpdk_transport_t *native, uint64_t
     {
         rusteron_dpdk_counters_sample(&native->receiver.counters, &native->receiver, native->ops, now_ns, native->nic_stats_ns);
     }
+    if (0 != fresh[0] || 0 != fresh[1])
+    {
+        __atomic_store_n(&native->nic_reset_exit, 1, __ATOMIC_RELEASE);
+    }
     pthread_mutex_unlock(&native->housekeeping_lock);
     for (int i = 0; i < 2; i++)
     {
@@ -1818,6 +1842,15 @@ void rusteron_dpdk_housekeeping_tick(rusteron_dpdk_transport_t *native, uint64_t
             fprintf(stderr, RUSTERON_DPDK_LOG_ERROR "%s [%llu new]\n", messages[i], (unsigned long long)fresh[i]);
         }
     }
+}
+
+int rusteron_dpdk_transport_nic_reset_exit(rusteron_dpdk_transport_t *transport)
+{
+    if (NULL == transport)
+    {
+        return 0;
+    }
+    return __atomic_load_n(&transport->nic_reset_exit, __ATOMIC_ACQUIRE) ? 1 : 0;
 }
 
 void rusteron_dpdk_test_housekeeping_tick(rusteron_dpdk_transport_t *native)

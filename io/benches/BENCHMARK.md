@@ -1,8 +1,6 @@
 # ergon-io benchmarks
 
-The longer write-up removed on 2026-10-18 is
-[BENCHMARK-2026-10-18.md](BENCHMARK-2026-10-18.md). Quote this page when the
-two disagree.
+Earlier measurement details are retained in the [2026-10-18 snapshot](BENCHMARK-2026-10-18.md). This page takes precedence where conclusions differ.
 
 Every ergon-io latency figure lives here, once. Each row names the committed file that holds it, under `io/benches/results/<run>/`. Figures are µs, p50 / p99 / max, a range across rounds, unless a column says otherwise. `max` is the absolute maximum of each round.
 
@@ -238,20 +236,20 @@ Not measured here: `prefer_busy_poll`, `busy_poll_budget`, route `quickack` and 
 
 ## Reproduce
 
+The generic rate-limit and TLS record tools are in this checkout:
+
 ```sh
-cargo test -p ergon-io --all-features -- --test-threads=1
+cargo test --manifest-path io/benches/Cargo.toml
 cargo build --release --manifest-path io/benches/Cargo.toml --bins
+io/benches/target/release/limit_bench --samples 200000 --batch 64
+io/benches/target/release/tls_bench --sizes 200,1000,4000,16000 --mib 64 --reps 5
 ```
 
-Lab runs create and delete their own cloud resources (each script's header lists them):
+TLS implementation comparisons optionally enable `aws-lc` and `openssl`.
+These tools measure CPU cost and allocations; the TLS benchmark decrypts
+ciphertext already in memory. They do not establish whole-network latency.
 
-```sh
-io/benches/scripts/aws-flags.sh                      # AWS settings matrix (MODE=… picks the set)
-MODE=fair RCV_TYPE=c8g.2xlarge SND_TYPE=c8g.xlarge io/benches/scripts/aws-flags.sh   # the fair run
-io/benches/scripts/azure-run.sh                      # Azure paired replay
-io/benches/scripts/azure-http.sh                     # Azure HTTP clients
-io/benches/scripts/azure-confirm.sh                  # Azure confirmation and connect cost
-io/benches/scripts/azure-tls-bench.sh                # TLS record and signing microbenchmarks
-```
-
-Two hosts by hand: [find the crossover on your own host](https://mimran1980.github.io/ergon/io/backends.html#find-the-crossover-on-your-own-host).
+The two-host replay and live-feed harness lives in the downstream stack's
+`io/benches` crate. Transport measurements and their recorded evidence stay
+here. Compare the same workload and socket counts on two hosts, repeat in
+reverse order, and report work counts alongside p50, p99 and maxima.

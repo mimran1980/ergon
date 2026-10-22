@@ -167,9 +167,63 @@ static void *affinity_probe(void *arg)
     return NULL;
 }
 
+/* Allowed mask of this thread, from its own task status. */
+static void report_allowed(const char *tag)
+{
+    long tid = syscall(SYS_gettid);
+    char path[64];
+    snprintf(path, sizeof path, "/proc/%ld/status", tid);
+    FILE *f = fopen(path, "r");
+    if (!f) {
+        printf("%s.allowed=ERR%d\n", tag, errno);
+        return;
+    }
+    char line[256];
+    while (fgets(line, sizeof line, f)) {
+        if (strncmp(line, "Cpus_allowed_list:", 18) == 0) {
+            char *v = line + 18;
+            while (*v == '\t' || *v == ' ') v++;
+            v[strcspn(v, "\n")] = '\0';
+            printf("%s.allowed=%s\n", tag, v);
+            fclose(f);
+            return;
+        }
+    }
+    fclose(f);
+    printf("%s.allowed=MISSING\n", tag);
+}
+
+struct captured {
+    char tag[32];
+    char affinity[512];
+    char allowed[256];
+};
+
+static void *capture_mask(void *arg)
+{
+    struct captured *c = arg;
+    format_affinity(c->affinity, sizeof c->affinity);
+    printf("%s.affinity=%s\n", c->tag, c->affinity);
+    report_allowed(c->tag);
+    return NULL;
+}
+
+static void *report_tag(void *arg)
+{
+    const char *tag = (const char *)arg;
+    report_affinity(tag);
+    report_allowed(tag);
+    return NULL;
+}
+
 static void *helper_main(void *arg)
 {
     const char *sh = (const char *)arg;
+    /* Created while the caller is still on the shared mask, so this mask is
+     * the shared set. Printed once; the loop below only checks where it runs. */
+    report_affinity("helper");
+    report_allowed("helper");
+    fflush(stdout);
     while (running) {
         int now = sched_getcpu();
         checks++;
@@ -375,6 +429,14 @@ static int do_hold(void)
     }
     printf("pin-test: hot thread pinned to isolated index 0 = cpu %d\n", hot);
     printf("pin-test: shared list is %s\n", sh);
+    /* A thread created by this now-hot thread copies this mask, not the
+     * shared mask the hook set on the threads that existed at create. */
+    pthread_t hotchild;
+    if (pthread_create(&hotchild, NULL, report_tag, "hotchild") != 0) {
+        perror("pin-test: pthread_create(hotchild)");
+        return 1;
+    }
+    pthread_join(hotchild, NULL);
     fflush(stdout);
 
     int hot_violations = 0;
@@ -393,14 +455,81 @@ static int do_hold(void)
     return (violations == 0 && hot_violations == 0) ? 0 : 1;
 }
 
+/* masks: one-shot of the hold startup. The helper is created on the current
+ * mask. The hot child is created after this thread pins to isolated index 0.
+ * Exits 0 only when those two masks are the creator's mask at each create. */
+static int do_masks(void)
+{
+    const char *iso = getenv("ERGON_ISOLATED_CPUS");
+    const char *sh = getenv("ERGON_SHARED_CPUS");
+    if (!iso || !sh) {
+        fprintf(stderr, "pin-test masks: ERGON_ISOLATED_CPUS and ERGON_SHARED_CPUS must be set\n");
+        return 1;
+    }
+    int hot = nth_cpu(iso, 0);
+    if (hot < 0) {
+        fprintf(stderr, "pin-test masks: no isolated CPU in %s\n", iso);
+        return 1;
+    }
+    char before[512];
+    format_affinity(before, sizeof before);
+    printf("init.affinity=%s\n", before);
+    report_allowed("init");
+
+    struct captured helper = {.tag = "helper"};
+    pthread_t helper_th;
+    if (pthread_create(&helper_th, NULL, capture_mask, &helper) != 0) {
+        perror("pin-test: pthread_create(helper)");
+        return 1;
+    }
+    pthread_join(helper_th, NULL);
+    if (strcmp(helper.affinity, before) != 0) {
+        fprintf(stderr, "pin-test masks: helper affinity %s, want creator mask %s\n",
+                helper.affinity, before);
+        return 1;
+    }
+
+    if (pin_cpu(hot) != 0) {
+        perror("pin-test: sched_setaffinity");
+        return 1;
+    }
+    char hotmask[512];
+    format_affinity(hotmask, sizeof hotmask);
+    printf("hot.affinity=%s\n", hotmask);
+
+    struct captured child = {.tag = "hotchild"};
+    pthread_t hotchild;
+    if (pthread_create(&hotchild, NULL, capture_mask, &child) != 0) {
+        perror("pin-test: pthread_create(hotchild)");
+        return 1;
+    }
+    pthread_join(hotchild, NULL);
+    fflush(stdout);
+
+    char want_hot[32];
+    snprintf(want_hot, sizeof want_hot, "%d", hot);
+    if (strcmp(hotmask, want_hot) != 0) {
+        fprintf(stderr, "pin-test masks: hot affinity %s, want %s\n", hotmask, want_hot);
+        return 1;
+    }
+    if (strcmp(child.affinity, want_hot) != 0) {
+        fprintf(stderr, "pin-test masks: hotchild affinity %s, want %s\n",
+                child.affinity, want_hot);
+        return 1;
+    }
+    printf("masks: helper kept the creator mask and the hot child inherited the hot mask\n");
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 2) {
-        fprintf(stderr, "usage: pin-test probe|hold|sample <index> <seconds>\n");
+        fprintf(stderr, "usage: pin-test probe|hold|masks|sample <index> <seconds>\n");
         return 2;
     }
     if (strcmp(argv[1], "probe") == 0) return do_probe();
     if (strcmp(argv[1], "hold") == 0) return do_hold();
+    if (strcmp(argv[1], "masks") == 0) return do_masks();
     if (strcmp(argv[1], "sample") == 0) {
         if (argc < 4) {
             fprintf(stderr, "usage: pin-test sample <index> <seconds>\n");

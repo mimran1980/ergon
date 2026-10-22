@@ -37,6 +37,9 @@ type Request struct {
 	// (0 when it asks for none). The sized hugetlbfs mount is exactly this
 	// size.
 	HugepageLimitBytes int64
+	// Hot is true when the pod is labelled ergon.io/latency=hot. A hot
+	// container cannot turn the start-affinity hook off.
+	Hot bool
 }
 
 // Refusal is why a container may not be created. The kubelet shows Error()
@@ -217,12 +220,18 @@ func Admit(cfg *config.Config, r Request) (*Decision, error) {
 	if v, ok := r.PodAnnotations[names.AffinityPrefix+r.Container]; ok {
 		switch v {
 		case config.AffinityAll:
+			if r.Hot {
+				return nil, refuse(0, "hook-opt-out", "hot containers cannot select %s%s: all; the start-affinity hook is required", names.AffinityPrefix, r.Container)
+			}
 			d.Hook = false
 		case config.AffinityShared:
 			d.Hook = true
 		default:
 			return nil, refuse(0, "bad-annotation", "pod annotation %s%s is %q; use %q or %q", names.AffinityPrefix, r.Container, v, config.AffinityShared, config.AffinityAll)
 		}
+	}
+	if r.Hot {
+		d.Hook = true
 	}
 	for _, k := range []string{names.EnvIsolated, names.EnvIsolatedCores, names.EnvShared, names.EnvHelper, names.EnvOpenShiftIsolated, names.EnvOpenShiftShared} {
 		if v, ok := r.Env[k]; ok {

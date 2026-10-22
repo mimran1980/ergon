@@ -171,11 +171,24 @@ static int rusteron_dpdk_port_dev_configure(
     return rc;
 }
 
-/* `cache_size` as configured: 0 is no per-core cache, a valid choice. */
-static void *rusteron_dpdk_port_mempool_create(const char *name, uint32_t n, uint16_t cache_size, uint16_t data_room)
+/* The port's NUMA node, or SOCKET_ID_ANY when the PMD reports none. */
+static int rusteron_dpdk_port_socket(int socket_id)
+{
+    return socket_id < 0 ? SOCKET_ID_ANY : socket_id;
+}
+
+static int rusteron_dpdk_port_socket_id(uint16_t port_id)
+{
+    return rte_eth_dev_socket_id(port_id);
+}
+
+/* `cache_size` as configured: 0 is no per-core cache, a valid choice.
+ * `socket_id` is the port's NUMA node, or -1 when the PMD reports none. */
+static void *rusteron_dpdk_port_mempool_create(
+    const char *name, uint32_t n, uint16_t cache_size, uint16_t data_room, int socket_id)
 {
     void *pool = rte_pktmbuf_pool_create(
-        name, n, cache_size, 0, (uint16_t)(RTE_PKTMBUF_HEADROOM + data_room), SOCKET_ID_ANY);
+        name, n, cache_size, 0, (uint16_t)(RTE_PKTMBUF_HEADROOM + data_room), rusteron_dpdk_port_socket(socket_id));
     if (NULL == pool)
     {
         /* Surface the underlying rte error (e.g. ENOMEM on hugepage
@@ -199,15 +212,17 @@ static uint32_t rusteron_dpdk_port_mbuf_room(void *mempool)
 }
 
 static int rusteron_dpdk_port_rx_queue_setup(
-    uint16_t port_id, uint16_t queue_id, uint16_t nb_desc, void *mempool)
+    uint16_t port_id, uint16_t queue_id, uint16_t nb_desc, void *mempool, int socket_id)
 {
-    return rte_eth_rx_queue_setup(port_id, queue_id, nb_desc, 0, NULL, mempool);
+    return rte_eth_rx_queue_setup(
+        port_id, queue_id, nb_desc, (unsigned int)rusteron_dpdk_port_socket(socket_id), NULL, mempool);
 }
 
 static int rusteron_dpdk_port_tx_queue_setup(
-    uint16_t port_id, uint16_t queue_id, uint16_t nb_desc)
+    uint16_t port_id, uint16_t queue_id, uint16_t nb_desc, int socket_id)
 {
-    return rte_eth_tx_queue_setup(port_id, queue_id, nb_desc, 0, NULL);
+    return rte_eth_tx_queue_setup(
+        port_id, queue_id, nb_desc, (unsigned int)rusteron_dpdk_port_socket(socket_id), NULL);
 }
 
 static int rusteron_dpdk_port_dev_set_mtu(uint16_t port_id, uint16_t mtu)
@@ -532,6 +547,7 @@ rusteron_dpdk_port_ops_t *rusteron_dpdk_port_ops_real(void)
         .probe_port = rusteron_dpdk_port_probe_port,
         .dev_info = rusteron_dpdk_port_dev_info,
         .dev_configure = rusteron_dpdk_port_dev_configure,
+        .socket_id = rusteron_dpdk_port_socket_id,
         .mempool_create = rusteron_dpdk_port_mempool_create,
         .mbuf_room = rusteron_dpdk_port_mbuf_room,
         .rx_queue_setup = rusteron_dpdk_port_rx_queue_setup,

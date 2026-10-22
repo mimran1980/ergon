@@ -38,6 +38,9 @@ data:
   RUSTERON_DPDK_VFIO_WC: "1"
   RUSTERON_DPDK_MEMPOOL_CACHE: "256"
   RUSTERON_DPDK_BURST_SIZE: "32"
+  # RUSTERON_MEDIA_DRIVER_MLOCKALL is left unset. AWS rounds found mlockall
+  # within noise and did not keep it (BENCHMARKS-ROUNDS-2026-10-18.md, "Not
+  # recommended"). The binary still locks when the variable is 1.
   # The Aeron directory on the node's own 1 GiB hugetlbfs for it (the
   # DaemonSet's /mnt/huge-aeron hostPath, mounted by the node bootstrap), so
   # clients on the node can map it and the term buffers sit on hugepages, as in

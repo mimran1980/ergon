@@ -15,7 +15,7 @@ HTTP/1.1 over TLS 1.3.
 
 > **AI assistance.** Like the rest of ergon, this crate was written **with heavy
 > AI assistance**. See
-> [AI-ASSISTANCE.md](https://github.com/mimran1980/ergon/blob/main/AI-ASSISTANCE.md).
+> [AI assistance disclosure](https://mimran1980.github.io/ergon/project/ai-assistance.html).
 > It is not production-ready.
 
 ```sh
@@ -42,7 +42,7 @@ Which features to pick: see Features, below.
 | `Reconnect` | Optional. Reopens closed connections with backoff; you resubscribe. |
 | `HttpClient` | A pool of warm HTTP connections behind one API: native (fast) or libcurl (feature `curl`). |
 | `HttpConn` | One HTTP/1.1 keep-alive connection. |
-| `Signer` | Binance-style request signing (HMAC-SHA256 or Ed25519), no allocation. |
+| `Signer` | Query-parameter request signing (HMAC-SHA256 or Ed25519), no allocation. |
 
 ## Example: a WebSocket feed
 
@@ -83,7 +83,7 @@ fn main() -> ergon_io::Result<()> {
     use ergon_io::{Config, Driver, Target, WsConn, tls};
 
     let tls = tls::client_config(tls::webpki_roots())?;
-    let target = Target::new("stream.binance.com", 9443, "/ws");
+    let target = Target::new("ws.example.com", 443, "/updates");
     let mut app = App { links: Reconnect::new(Retry::default())?, opened: Vec::new() };
     app.links.add(move || WsDial::new(target.clone(), tls.clone(), 1 << 20));
 
@@ -96,7 +96,7 @@ fn main() -> ergon_io::Result<()> {
             if let Some(mut ws) = driver.get_mut(id)
                 && !ws.is_closing()
             {
-                ws.send_text(r#"{"method":"SUBSCRIBE","params":["btcusdt@trade"],"id":1}"#)?;
+                ws.send_text(r#"{"action":"subscribe","channel":"updates"}"#)?;
             }
         }
     }
@@ -110,7 +110,7 @@ fn main() {}
   [io/examples/websocket.rs](https://github.com/mimran1980/ergon/blob/main/io/examples/websocket.rs).
   A test runs it against a local server on every backend.
 - Run it from a checkout of the repository:
-  `cargo run -p ergon-io --features webpki-roots --example websocket`.
+  `cargo run -p ergon-io --features webpki-roots --example websocket -- 20 recv-busy HOST 443 /updates`.
 
 ## Defaults
 
@@ -173,8 +173,8 @@ The full table, the evidence and the node settings: the book's
 - Send again only what did not run, inside its deadline
   (`Budget::try_resend`); look up an unknown order by its client order id.
 - One sending process per account and IP: the budget cannot see others.
-- Binance, Bybit and OKX adapters: `io/examples/venues.rs` (repository
-  only). Venue limits, the error policy and the cost: the book's
+- Configure limits and classify application-specific errors in your adapter.
+  The generic mechanisms are described in the book's
   [rate limits and errors](https://mimran1980.github.io/ergon/io/rate-limits.html).
 
 ## Features

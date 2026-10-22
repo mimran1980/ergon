@@ -1006,3 +1006,148 @@ fn a_constant_only_message_round_trips_through_an_empty_body()
     );
     Ok(())
 }
+
+/// A set choice added at `sinceVersion` 2 reads false when the acting
+/// version is older, even if that bit is set in the word. sbe-tool 1.41.0
+/// Java and C++ do this in the instance getter (issue #1035). The buffer
+/// and a group `raw_*` accessor keep the bit. A set inside a composite is
+/// not gated. A choice with `sinceVersion` 0 emits no version check.
+#[test]
+fn set_choice_since_version_reads_false_below_that_version()
+-> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+    package="choice_since" id="1" version="2" semanticVersion="1" byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="groupSizeEncoding">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="numInGroup" primitiveType="uint16"/>
+        </composite>
+        <set name="Flags" encodingType="uint8">
+            <choice name="oldBit">0</choice>
+            <choice name="newBit" sinceVersion="2">1</choice>
+        </set>
+        <set name="Wide" encodingType="uint64">
+            <choice name="lowBit">0</choice>
+            <choice name="highBit" sinceVersion="2">63</choice>
+        </set>
+        <set name="Plain" encodingType="uint8">
+            <choice name="only">0</choice>
+        </set>
+        <composite name="Widget">
+            <type name="flags" type="Flags"/>
+        </composite>
+    </types>
+    <sbe:message name="Msg" id="1">
+        <field name="flags" id="1" type="Flags"/>
+        <field name="wide" id="2" type="Wide"/>
+        <field name="plain" id="3" type="Plain"/>
+        <field name="widget" id="4" type="Widget"/>
+        <group name="rows" id="5">
+            <field name="flags" id="1" type="Flags"/>
+        </group>
+    </sbe:message>
+</sbe:messageSchema>"#;
+    let schema = ergo_sbe::Schema::from_ir(ergo_sbe::parse(xml)?);
+    let src = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("choice_since"))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .ok_or("no module")?
+        .source
+        .clone();
+    assert!(
+        src.contains("acting_version < 2"),
+        "a choice added at version 2 must be checked against the acting version"
+    );
+    assert!(
+        !src.contains("acting_version < 0"),
+        "sinceVersion 0 emits no version check"
+    );
+
+    compile_and_run(
+        "choice_since",
+        &src,
+        r#"
+        fn flags_both() -> Flags {
+            let mut flags = Flags::default();
+            flags.old_bit(true);
+            flags.new_bit(true);
+            flags
+        }
+        fn wide_both() -> Wide {
+            let mut wide = Wide::default();
+            wide.low_bit(true);
+            wide.high_bit(true);
+            wide
+        }
+        fn plain_on() -> Plain {
+            let mut plain = Plain::default();
+            plain.only(true);
+            plain
+        }
+
+        assert_eq!(MsgEncoder::BLOCK_LENGTH, 11);
+        let mut buf = [0u8; 64];
+        let len = MsgEncoder::try_wrap_and_apply_header(&mut buf, 0)?
+            .fixed(&MsgFixedFields {
+                flags: flags_both(),
+                wide: wide_both(),
+                plain: plain_on(),
+                widget: Widget::new(flags_both()),
+            })
+            .rows(1, |group| group.add_struct(&RowsEntry { flags: flags_both() }))?
+            .encoded_length_with_header();
+
+        assert_eq!(buf[6], 2, "encoder stamps schema version 2");
+        assert_eq!(buf[8], 0b11, "message flags word");
+        assert_eq!(buf[9], 1, "wide low byte");
+        assert_eq!(buf[16], 0x80, "wide bit 63");
+        assert_eq!(buf[18], 0b11, "composite flags word");
+
+        let current = MsgDecoder::try_from(&buf[..len])?;
+        assert!(current.flags().is_old_bit());
+        assert!(current.flags().is_new_bit());
+        assert_eq!(current.flags().raw(), 0b11);
+        assert_eq!(format!("{}", current.flags()), "oldBit|newBit");
+        assert!(current.wide().is_high_bit());
+        assert_eq!(current.wide().raw(), 1 | (1u64 << 63));
+
+        buf[6] = 0;
+        let older = MsgDecoder::try_from(&buf[..len])?;
+        assert!(older.flags().is_old_bit());
+        assert!(!older.flags().is_new_bit());
+        assert_eq!(older.flags().raw(), 0b01);
+        assert_eq!(format!("{}", older.flags()), "oldBit");
+        assert!(older.wide().is_low_bit());
+        assert!(!older.wide().is_high_bit());
+        assert_eq!(older.wide().raw(), 1);
+        assert!(older.plain().is_only());
+        assert_eq!(older.plain().raw(), 1);
+        assert!(older.widget().flags().is_new_bit(), "a composite set is not version-gated");
+        assert_eq!(older.widget().flags().raw(), 0b11);
+        let row = older.rows()?.next().unwrap();
+        assert!(row.flags().is_old_bit());
+        assert!(!row.flags().is_new_bit());
+        assert_eq!(row.flags().raw(), 0b01);
+        assert_eq!(row.raw_flags(), 0b11, "raw_* keeps the wire word");
+        assert_eq!(buf[8], 0b11, "the buffer is not rewritten");
+        assert_eq!(buf[16], 0x80);
+
+        buf[6] = 1;
+        let one = MsgDecoder::try_from(&buf[..len])?;
+        assert!(!one.flags().is_new_bit());
+        buf[6] = 2;
+        let back = MsgDecoder::try_from(&buf[..len])?;
+        assert!(back.flags().is_new_bit());
+        assert!(back.wide().is_high_bit());
+        "#,
+    );
+    Ok(())
+}

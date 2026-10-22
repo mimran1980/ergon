@@ -39,7 +39,6 @@ policy:
     bash scripts/tests/test-test-policy.sh
     bash scripts/tests/test-quality-ratchets.sh
     bash scripts/tests/test-repository-hygiene.sh
-    bash scripts/tests/test-lab-snapshot.sh
     bash scripts/tests/test-public-api.sh
     bash scripts/tests/test-packaged-cluster-features.sh
     bash scripts/tests/test-bench-historic.sh
@@ -87,7 +86,6 @@ preflight:
     bash scripts/tests/test-test-policy.sh
     bash scripts/tests/test-quality-ratchets.sh
     bash scripts/tests/test-repository-hygiene.sh
-    bash scripts/tests/test-lab-snapshot.sh
     bash scripts/tests/test-public-api.sh
     bash scripts/tests/test-generated-public-api.sh
     bash scripts/tests/test-instruction-probe-pairs.sh

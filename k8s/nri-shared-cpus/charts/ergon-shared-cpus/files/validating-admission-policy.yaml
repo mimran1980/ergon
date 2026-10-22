@@ -1,0 +1,181 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# ValidatingAdmissionPolicy for latency pods (item 4 of the latency-pod extension set).
+# Scope: pods labelled ergon.io/latency: "hot". Built in to Kubernetes 1.30+,
+# so no webhook and no fork.
+#
+# Rules (each names its fix in the message):
+#   1. no liveness, readiness or startup probe of type exec/command, and no
+#      lifecycle postStart/preStop exec handler (an exec starts a process on
+#      any CPU of the container's cpuset, the busy-spin loop's included).
+#      httpGet, tcpSocket and grpc run from outside the container and are fine.
+#      Admission does not control a later kubectl exec session.
+#   2. no injected sidecar: no container and no init container with
+#      restartPolicy: Always.
+#   3. every application container requests ergon.io/shared-millicpus (the
+#      plugin is the only thing that can widen the cpuset). One container
+#      holding the resource does not cover the others.
+#   4. required-plugins.noderesource.dev lists the exact token
+#      "ergon-shared-cpus". A substring (not-ergon-shared-cpus,
+#      ergon-shared-cpus-extra) does not count.
+#   5. a priorityClassName is set (preemption and eviction stop a hot pod
+#      mid-trade; a PriorityClass is the no-fork answer).
+#   6. each application container is Guaranteed with a whole-number cpu
+#      request equal to its limit (cpu: "2", not "500m" or "2.5").
+#   7. each application container sets resizePolicy RestartContainer for cpu,
+#      so an in-place CPU change recreates the container instead of leaving
+#      the create-time env stale.
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: ergon-latency-pods
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  matchConditions:
+    - name: latency-pod
+      # Kubernetes CEL has no `??`. Guard the map and the key first: a missing
+      # key is a runtime error, and a matchCondition error is a rejection.
+      expression: >-
+        has(object.metadata.labels) &&
+        'ergon.io/latency' in object.metadata.labels &&
+        object.metadata.labels['ergon.io/latency'] == 'hot'
+  validations:
+    # v1 validations have no name field (strict decoding rejects it). Each rule
+    # is identified by its message.
+    - expression: >-
+        !has(object.spec.containers) ||
+        object.spec.containers.all(c,
+          !has(c.livenessProbe) ||
+          !(has(c.livenessProbe.exec) || has(c.livenessProbe.command)))
+      message: >-
+        livenessProbe must not be exec/command on a hot pod. An exec probe
+        starts a process on any CPU of the container's cpuset, the busy-spin
+        loop's included. Use httpGet, tcpSocket or grpc, or drop the probe.
+      reason: Forbidden
+    - expression: >-
+        !has(object.spec.containers) ||
+        object.spec.containers.all(c,
+          !has(c.readinessProbe) ||
+          !(has(c.readinessProbe.exec) || has(c.readinessProbe.command)))
+      message: >-
+        readinessProbe must not be exec/command on a hot pod. An exec probe
+        starts a process on any CPU of the container's cpuset, the busy-spin
+        loop's included. Use httpGet, tcpSocket or grpc, or drop the probe.
+      reason: Forbidden
+    - expression: >-
+        (!has(object.spec.containers) ||
+         object.spec.containers.all(c,
+           !has(c.startupProbe) ||
+           !(has(c.startupProbe.exec) || has(c.startupProbe.command)))) &&
+        (!has(object.spec.initContainers) ||
+         object.spec.initContainers.all(c,
+           !has(c.startupProbe) ||
+           !(has(c.startupProbe.exec) || has(c.startupProbe.command))))
+      message: >-
+        startupProbe must not be exec/command on a hot pod. An exec probe
+        starts a process on any CPU of the container's cpuset, the busy-spin
+        loop's included. Use httpGet, tcpSocket or grpc, or drop the probe.
+      reason: Forbidden
+    - expression: >-
+        (!has(object.spec.containers) ||
+         object.spec.containers.all(c, !has(c.lifecycle) || (
+           (!has(c.lifecycle.postStart) ||
+            !(has(c.lifecycle.postStart.exec) || has(c.lifecycle.postStart.command))) &&
+           (!has(c.lifecycle.preStop) ||
+            !(has(c.lifecycle.preStop.exec) || has(c.lifecycle.preStop.command)))))) &&
+        (!has(object.spec.initContainers) ||
+         object.spec.initContainers.all(c, !has(c.lifecycle) || (
+           (!has(c.lifecycle.postStart) ||
+            !(has(c.lifecycle.postStart.exec) || has(c.lifecycle.postStart.command))) &&
+           (!has(c.lifecycle.preStop) ||
+            !(has(c.lifecycle.preStop.exec) || has(c.lifecycle.preStop.command))))))
+      message: >-
+        lifecycle postStart and preStop must not be exec/command on a hot pod.
+        A lifecycle exec starts a process on any CPU of the container's cpuset.
+        Use an httpGet or sleep handler, or drop the handler. Admission of the
+        Pod does not control a later kubectl exec session.
+      reason: Forbidden
+    - expression: >-
+        (!has(object.spec.containers) ||
+         object.spec.containers.all(c, !has(c.restartPolicy) || c.restartPolicy != "Always")) &&
+        (!has(object.spec.initContainers) ||
+         object.spec.initContainers.all(c, !has(c.restartPolicy) || c.restartPolicy != "Always"))
+      message: >-
+        a container with restartPolicy: Always is an injected sidecar and is not
+        allowed on a hot pod (it shares the pod's CPU budget and wakes on the hot
+        core). Run sidecars in their own pod on the shared CPUs.
+      reason: Forbidden
+    - expression: >-
+        has(object.spec.containers) &&
+        object.spec.containers.all(c,
+          has(c.resources) && has(c.resources.requests) && has(c.resources.limits) &&
+          'ergon.io/shared-millicpus' in c.resources.requests &&
+          'ergon.io/shared-millicpus' in c.resources.limits)
+      message: >-
+        each application container on a hot pod must request
+        ergon.io/shared-millicpus in both requests and limits. One container
+        holding the resource does not cover the others. That resource is what
+        asks the ergon-shared-cpus plugin to widen the cpuset. Add it on every
+        container, or drop the ergon.io/latency label.
+      reason: Forbidden
+    - expression: >-
+        has(object.metadata.annotations) &&
+        'required-plugins.noderesource.dev' in object.metadata.annotations &&
+        object.metadata.annotations['required-plugins.noderesource.dev'].matches('(^|\\[|,)\\s*"ergon-shared-cpus"\\s*(,|\\]|$)')
+      message: >-
+        a hot pod must carry required-plugins.noderesource.dev listing the
+        exact plugin "ergon-shared-cpus" (for example '["ergon-shared-cpus"]').
+        A substring such as not-ergon-shared-cpus or ergon-shared-cpus-extra
+        does not count. Without the exact token the kubelet creates the pod
+        with no plugin grants, which is a silent latency bug.
+      reason: Forbidden
+    - expression: >-
+        has(object.spec.containers) &&
+        object.spec.containers.all(c,
+          has(c.resources) && has(c.resources.requests) && has(c.resources.limits) &&
+          'cpu' in c.resources.requests && 'cpu' in c.resources.limits &&
+          quantity(c.resources.requests['cpu']).isInteger() &&
+          quantity(c.resources.requests['cpu']).isGreaterThan(quantity('0')) &&
+          quantity(c.resources.requests['cpu']).compareTo(quantity(c.resources.limits['cpu'])) == 0 &&
+          c.resources.requests.all(k, k in c.resources.limits &&
+            quantity(c.resources.requests[k]).compareTo(quantity(c.resources.limits[k])) == 0) &&
+          c.resources.limits.all(k, k in c.resources.requests))
+      message: >-
+        each application container on a hot pod must be Guaranteed with a
+        whole-number cpu request equal to its limit (cpu: "2", not "500m" or
+        "2.5"), and every other request equal to its limit. A fractional CPU
+        is not an exclusive CPU.
+      reason: Forbidden
+    - expression: >-
+        has(object.spec.containers) &&
+        object.spec.containers.all(c,
+          has(c.resizePolicy) &&
+          c.resizePolicy.exists(p,
+            p.resourceName == 'cpu' && p.restartPolicy == 'RestartContainer'))
+      message: >-
+        each application container on a hot pod must set resizePolicy
+        RestartContainer for cpu. An in-place CPU change otherwise leaves the
+        create-time CPU environment stale. Recreate the container.
+      reason: Forbidden
+    - expression: >-
+        has(object.spec.priorityClassName) && object.spec.priorityClassName != ""
+      message: >-
+        a hot pod must set priorityClassName. Eviction and preemption stop a hot
+        pod mid-trade. Point it at a dedicated high-priority class for hot pods
+        (helpers use a class with preemptionPolicy: Never).
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: ergon-latency-pods
+spec:
+  policyName: ergon-latency-pods
+  validationActions: ["Deny"]

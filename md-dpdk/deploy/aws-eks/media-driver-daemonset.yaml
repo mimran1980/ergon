@@ -43,6 +43,9 @@
 #
 # kubelet stops the pod with SIGTERM, on which the driver stops and then
 # releases the DPDK transport, as on SIGINT; the grace period bounds that.
+# A NIC reset request does not reset the device under the polling agents:
+# the process stops them and exits non-zero, and kubelet restarts the
+# container. There is no probe for that.
 #
 # Nodes are picked by the rusteron-dpdk/ena=true label and taint; the VPC CNI
 # keeps the primary ENA for pod networking, while the two secondary ENAs stay

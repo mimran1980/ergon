@@ -14,6 +14,12 @@ spec:
     metadata:
       labels:
         {{- include "ergon-shared-cpus.selectorLabels" . | nindent 8 }}
+      {{- if .Values.layoutRevision }}
+      # Operator-controlled replacement. A ConfigMap edit does not set this,
+      # so it does not roll pods or migrate a live CPU layout.
+      annotations:
+        ergon.io/layout-revision: {{ .Values.layoutRevision | quote }}
+      {{- end }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -26,12 +32,46 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       priorityClassName: system-node-critical
+      {{- if .Values.config.profiles }}
+      serviceAccountName: {{ include "ergon-shared-cpus.fullname" . }}
+      automountServiceAccountToken: true
+      {{- else }}
       automountServiceAccountToken: false
+      {{- end }}
       containers:
         - name: plugin
           image: {{ include "ergon-shared-cpus.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          args: ["--config", "/etc/ergon-shared-cpus/config.yaml"]
+          {{- if .Values.config.profiles }}
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          {{- end }}
+          args:
+            - --config
+            - /etc/ergon-shared-cpus/config.yaml
+            {{- if .Values.hostContract.kubeletConfig.enabled }}
+            - --kubelet-config
+            - /host/kubelet-config
+            {{- end }}
+            {{- if .Values.hostContract.kubeletConfigZ.enabled }}
+            - --kubelet-configz
+            - /host/kubelet-configz
+            {{- end }}
+            {{- if .Values.hostContract.kubeletOverrides.enabled }}
+            - --kubelet-overrides
+            - /host/kubelet-overrides
+            {{- end }}
+            {{- if .Values.hostContract.sys.enabled }}
+            - --host-sys
+            - /host/sys
+            {{- end }}
+            {{- if .Values.hostContract.proc.enabled }}
+            - --host-proc
+            - /host/proc
+            {{- end }}
           securityContext:
             runAsUser: 0
             runAsGroup: 0
@@ -72,6 +112,31 @@ spec:
             - name: host-cgroup
               mountPath: /sys/fs/cgroup
               readOnly: true
+            {{- if .Values.hostContract.kubeletConfig.enabled }}
+            - name: host-kubelet-config
+              mountPath: /host/kubelet-config
+              readOnly: true
+            {{- end }}
+            {{- if .Values.hostContract.kubeletConfigZ.enabled }}
+            - name: host-kubelet-configz
+              mountPath: /host/kubelet-configz
+              readOnly: true
+            {{- end }}
+            {{- if .Values.hostContract.kubeletOverrides.enabled }}
+            - name: host-kubelet-overrides
+              mountPath: /host/kubelet-overrides
+              readOnly: true
+            {{- end }}
+            {{- if .Values.hostContract.sys.enabled }}
+            - name: host-sys
+              mountPath: /host/sys
+              readOnly: true
+            {{- end }}
+            {{- if .Values.hostContract.proc.enabled }}
+            - name: host-proc
+              mountPath: /host/proc
+              readOnly: true
+            {{- end }}
             {{- range .Values.extraHostPaths }}
             - name: {{ .name }}
               mountPath: {{ .mountPath }}
@@ -105,15 +170,46 @@ spec:
         # /sys/fs/cgroup is this pod's cgroup namespace root, not the node's
         # hierarchy, so the pod cgroup's hugepage limit and the
         # cpuset.cpus.exclusive probe cannot be read there. The host's cgroup v2
-        # is mounted read-only at /sys/fs/cgroup — the node's own path, which
-        # config.cgroupRoot names and the createRuntime hook matches against
-        # /proc/<pid>/cgroup — because the plugin never writes this tree from
-        # inside the pod: the cpu-partition writes are the ergon-cpus hook's,
-        # and runc runs that hook on the node against the node's own mount.
+        # is mounted read-only at /sys/fs/cgroup. That path is the binary's
+        # derived cgroup root, not a YAML field (the parser rejects
+        # cgroupRoot). The createRuntime hook matches it against
+        # /proc/<pid>/cgroup. The plugin never writes this tree from inside
+        # the pod: the cpu-partition writes are the ergon-cpus hook's, and
+        # runc runs that hook on the node against the node's own mount.
         - name: host-cgroup
           hostPath:
             path: /sys/fs/cgroup
             type: Directory
+        {{- if .Values.hostContract.kubeletConfig.enabled }}
+        - name: host-kubelet-config
+          hostPath:
+            path: {{ .Values.hostContract.kubeletConfig.path }}
+            type: File
+        {{- end }}
+        {{- if .Values.hostContract.kubeletConfigZ.enabled }}
+        - name: host-kubelet-configz
+          hostPath:
+            path: {{ .Values.hostContract.kubeletConfigZ.path }}
+            type: File
+        {{- end }}
+        {{- if .Values.hostContract.kubeletOverrides.enabled }}
+        - name: host-kubelet-overrides
+          hostPath:
+            path: {{ .Values.hostContract.kubeletOverrides.path }}
+            type: {{ include "ergon-shared-cpus.hostPathType" .Values.hostContract.kubeletOverrides.type | trim }}
+        {{- end }}
+        {{- if .Values.hostContract.sys.enabled }}
+        - name: host-sys
+          hostPath:
+            path: {{ .Values.hostContract.sys.path }}
+            type: Directory
+        {{- end }}
+        {{- if .Values.hostContract.proc.enabled }}
+        - name: host-proc
+          hostPath:
+            path: {{ .Values.hostContract.proc.path }}
+            type: Directory
+        {{- end }}
         {{- range .Values.extraHostPaths }}
         - name: {{ .name }}
           hostPath:

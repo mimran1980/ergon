@@ -1,4 +1,4 @@
-//! Request signing against Binance's documented example and round-trip checks.
+//! Generic signature round-trip, key validation and query validation checks.
 #![allow(missing_docs)]
 
 use base64::Engine as _;
@@ -7,25 +7,9 @@ use ring::signature::{ED25519, Ed25519KeyPair, UnparsedPublicKey};
 
 type R = Result<(), Box<dyn std::error::Error>>;
 
-// ANCHOR: signing
-/// Binance "SIGNED endpoint" example (HMAC-SHA256, parameters in the query).
-const SECRET: &str = "NhqPtmdSJYdKjVHjA7PZj4Mge3R5YNiP1e3UZjInClVN65XAbvqqM6A7H5fATj0j";
-const PARAMS: &str =
-    "symbol=LTCBTC&side=BUY&type=LIMIT&timeInForce=GTC&quantity=1&price=0.1&recvWindow=5000";
+const SECRET: &str = "test-secret";
+const PARAMS: &str = "resource=example&action=create";
 const TS: u64 = 1_499_827_319_559;
-const SIGNATURE: &str = "c8db56825ae71d6d79447849e617115f4a920fa2acdcab2b053c4b2838bd6b71";
-
-#[test]
-fn hmac_matches_binance_documented_example() -> R {
-    let signer = Signer::hmac_sha256(SECRET.as_bytes());
-    assert_eq!(signer.kind(), SignatureKind::HmacSha256);
-    let mut out = Vec::new();
-    auth::append_signed_params(&mut out, PARAMS, TS, &signer);
-    let expected = format!("{PARAMS}&timestamp={TS}&signature={SIGNATURE}");
-    assert_eq!(String::from_utf8(out)?, expected);
-    Ok(())
-}
-// ANCHOR_END: signing
 
 #[test]
 fn ed25519_signature_verifies() -> R {

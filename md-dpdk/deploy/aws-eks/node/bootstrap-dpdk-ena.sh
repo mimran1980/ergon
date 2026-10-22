@@ -168,6 +168,14 @@ if [[ -z "$RUSTERON_HOUSEKEEPING_CPUS" ]]; then
 fi
 hk_expanded="$(cpulist_expand "$RUSTERON_HOUSEKEEPING_CPUS")" \
     || fail "RUSTERON_HOUSEKEEPING_CPUS='$RUSTERON_HOUSEKEEPING_CPUS': a CPU list such as 0,8"
+# IRQ destination defaults to housekeeping. It must be inside that set: a
+# helper CPU is reserved for shared threads and must not take interrupts.
+irq_cpus="${RUSTERON_IRQ_CPUS:-$RUSTERON_HOUSEKEEPING_CPUS}"
+irq_expanded="$(cpulist_expand "$irq_cpus")" \
+    || fail "RUSTERON_IRQ_CPUS='$irq_cpus': a CPU list such as 0"
+for cpu in $irq_expanded; do
+    case " $hk_expanded" in *" $cpu "*) ;; *) fail "IRQ CPU $cpu is not a housekeeping CPU ($RUSTERON_HOUSEKEEPING_CPUS)" ;; esac
+done
 
 check_kernel_cmdline() {
     local cmdline w missing=() irqaff="" words=(isolcpus= nohz_full= rcu_nocbs= irqaffinity=)
@@ -187,9 +195,9 @@ check_kernel_cmdline() {
     for w in $cmdline; do
         [[ "$w" != irqaffinity=* ]] || irqaff="${w#irqaffinity=}"
     done
-    [[ "$(cpulist_expand "$irqaff" || true)" == "$hk_expanded" ]] \
-        || fail "irqaffinity=$irqaff does not match the housekeeping CPUs $RUSTERON_HOUSEKEEPING_CPUS (RUSTERON_HOUSEKEEPING_CPUS)"
-    ok "kernel command line isolates every CPU but $RUSTERON_HOUSEKEEPING_CPUS"
+    [[ "$(cpulist_expand "$irqaff" || true)" == "$irq_expanded" ]] \
+        || fail "irqaffinity=$irqaff does not match the IRQ CPUs $irq_cpus (RUSTERON_IRQ_CPUS)"
+    ok "kernel command line isolates every CPU but $RUSTERON_HOUSEKEEPING_CPUS; IRQs on $irq_cpus"
 }
 check_kernel_cmdline
 
@@ -332,6 +340,7 @@ check_aeron_huge_size() {
 
 tune_host() {
     local hk="$RUSTERON_HOUSEKEEPING_CPUS" f mem_kb min_free="the kernel's"
+    local dest="${RUSTERON_IRQ_CPUS:-$hk}"
     # irqbalance stays off: irq-affinity.sh is the one writer of IRQ affinity,
     # and its comments say why irqbalance does not keep the ENA's queue IRQs
     # off the isolated CPUs.
@@ -351,8 +360,8 @@ tune_host() {
     # to move (a managed or per-CPU IRQ), which is the kernel's to keep, and
     # one the kernel moves only at its next interrupt (an EC2 VM, without
     # interrupt remapping), which an idle queue's IRQ may not take for minutes.
-    write_value "$RUSTERON_PROC_ROOT/irq/default_smp_affinity" "$(cpulist_to_mask "$hk")"
-    RUSTERON_PROC_ROOT="$RUSTERON_PROC_ROOT" RUSTERON_HOUSEKEEPING_CPUS="$hk" "$NODE_DIR/irq-affinity.sh" pin \
+    write_value "$RUSTERON_PROC_ROOT/irq/default_smp_affinity" "$(cpulist_to_mask "$dest")"
+    RUSTERON_PROC_ROOT="$RUSTERON_PROC_ROOT" RUSTERON_HOUSEKEEPING_CPUS="$hk" RUSTERON_IRQ_CPUS="$dest" "$NODE_DIR/irq-affinity.sh" pin \
         || fail "IRQs left on the isolated CPUs (above)"
     # ...and after boot: the ENA driver puts its queue IRQs back on their hints
     # whenever it brings an interface up (a device reset, a queue or ring

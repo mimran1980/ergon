@@ -137,7 +137,7 @@ fn keep_alive_requests_on_every_backend() -> R {
             poll_until(&mut d, &mut h, |h| !h.opened.is_empty())?;
             for i in 0..100u64 {
                 let body = format!("{{\"order\":{i}}}");
-                let path = format!("/api/v3/order?n={i}");
+                let path = format!("/operation?n={i}");
                 let rid = d.get_mut(id).ok_or("gone")?.request(
                     "POST",
                     &path,
@@ -593,11 +593,11 @@ fn signed_request_reaches_the_server_with_a_valid_signature() -> R {
             let mut p = lab.accept_tls()?;
             let req = p.read_request()?;
             assert_eq!(req.method, "POST");
-            assert_eq!(req.header("x-mbx-apikey"), Some("key-1"));
+            assert_eq!(req.header("x-api-key"), Some("key-1"));
             let (path, query) = req.path.split_once('?').ok_or("no query")?;
-            assert_eq!(path, "/api/v3/order");
+            assert_eq!(path, "/operation");
             let (payload, sig) = query.split_once("&signature=").ok_or("no signature")?;
-            assert!(payload.starts_with("symbol=BTCUSDT&side=BUY&timestamp="));
+            assert!(payload.starts_with("resource=example&action=create&timestamp="));
             let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, secret);
             let tag = ring::hmac::sign(&key, payload.as_bytes());
             let hex = tag.as_ref().iter().fold(String::new(), |mut h, b| {
@@ -610,7 +610,7 @@ fn signed_request_reaches_the_server_with_a_valid_signature() -> R {
             Ok(())
         });
         let mut h = Collect::default();
-        let target = lab.target("")?.with_header("X-MBX-APIKEY", "key-1");
+        let target = lab.target("")?.with_header("X-API-Key", "key-1");
         let id = d.connect(HttpDial::new(
             target,
             lab.client_cfg.clone(),
@@ -620,17 +620,17 @@ fn signed_request_reaches_the_server_with_a_valid_signature() -> R {
         let signer = ergon_io::Signer::hmac_sha256(secret);
         let mut c = d.get_mut(id).ok_or("gone")?;
         assert!(
-            c.signed_request("POST", "/api/v3/order?x=1", "a=1", &[], &signer)
+            c.signed_request("POST", "/operation?x=1", "a=1", &[], &signer)
                 .is_err()
         );
         assert!(
-            c.signed_request("POST", "/api/v3/order", "a=b c", &[], &signer)
+            c.signed_request("POST", "/operation", "a=b c", &[], &signer)
                 .is_err()
         );
         c.signed_request(
             "POST",
-            "/api/v3/order",
-            "symbol=BTCUSDT&side=BUY",
+            "/operation",
+            "resource=example&action=create",
             &[],
             &signer,
         )?;

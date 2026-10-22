@@ -3,8 +3,7 @@
 # Push the ergon-shared-cpus image and chart to GHCR. THE ONLY STEP THAT
 # WRITES TO A REGISTRY.
 #
-# This is a separate workflow from nri-shared-cpus-image.yml on purpose. The
-# test policy forbids a workflow `if:`, because a condition can silently
+# The test policy forbids a workflow `if:`, because a condition can silently
 # suppress a test lane. Gating a publish is not that, but a gate built from an
 # `if:` is indistinguishable from one. So the gate here is the dispatch itself
 # plus a first step that refuses to continue unless the operator typed

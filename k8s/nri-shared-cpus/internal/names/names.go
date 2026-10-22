@@ -5,6 +5,19 @@
 // breaking change.
 package names
 
+import "regexp"
+
+// requiredPluginToken is the RE2 match the validating policy uses. A
+// substring of the plugin name (not-ergon-shared-cpus, ergon-shared-cpus-extra)
+// does not count. The annotation value is a JSON list of quoted names.
+var requiredPluginToken = regexp.MustCompile(`(^|\[|,)\s*"` + PluginName + `"\s*(,|\]|$)`)
+
+// RequiredPluginListed reports whether annotation, the
+// required-plugins.noderesource.dev value, names this plugin as one token.
+func RequiredPluginListed(annotation string) bool {
+	return requiredPluginToken.MatchString(annotation)
+}
+
 const (
 	// PluginName is the NRI plugin name. Pods list it in the
 	// required-plugins.noderesource.dev annotation.
@@ -22,9 +35,14 @@ const (
 	OptInPrefix = "cpu-shared.ergon.io/"
 	// AffinityPrefix + container name is the pod annotation that turns the
 	// start-affinity hook off for one container ("all") or keeps it ("shared").
+	// A hot container cannot select "all": the hook stays on.
 	AffinityPrefix = "default-affinity.ergon.io/"
 	// RequiredPluginsAnnotation is containerd's default validator annotation.
 	RequiredPluginsAnnotation = "required-plugins.noderesource.dev"
+	// LatencyLabel marks a pod that must meet the hot-node contract.
+	LatencyLabel = "ergon.io/latency"
+	// LatencyHot is the LatencyLabel value for a trading container.
+	LatencyHot = "hot"
 
 	// RlimitsPrefix + container name is the pod annotation that asks for
 	// rlimits: a comma list of memlock, nofile, rt-prio, nice. Values come

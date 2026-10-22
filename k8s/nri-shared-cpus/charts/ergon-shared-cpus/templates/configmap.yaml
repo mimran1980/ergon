@@ -7,16 +7,25 @@ metadata:
   labels:
     {{- include "ergon-shared-cpus.labels" . | nindent 4 }}
 data:
+  # cgroupRoot is not a key. The binary derives /sys/fs/cgroup. The parser
+  # rejects an unknown field, so this file must not name it.
   config.yaml: |
-    sharedCpus: {{ .Values.config.sharedCpus | quote }}
-    oversubscription: {{ .Values.config.oversubscription }}
-    namespaces: [{{ range $i, $n := .Values.config.namespaces }}{{ if $i }}, {{ end }}{{ $n | quote }}{{ end }}]
-    defaultAffinity: {{ .Values.config.defaultAffinity | quote }}
-    hookPath: {{ .Values.config.hookPath | quote }}
-    annotationOptIn: {{ .Values.config.annotationOptIn }}
-    metricsAddress: {{ .Values.config.metricsAddress | quote }}
-    # Where this process can see the host's /dev. The DaemonSet mounts it
-    # read-only so the plugin can stat the PHC and PM QoS nodes and grant
-    # them (NRI AddDevice needs the major/minor). Granted paths stay the
-    # container's /dev/... names.
-    devRoot: {{ .Values.config.devRoot | quote }}
+{{- if .Values.config.profiles }}
+{{- if not .Values.config.nodeProfileLabel }}
+{{- fail "config.nodeProfileLabel is required when config.profiles is set" }}
+{{- end }}
+    nodeProfileLabel: {{ .Values.config.nodeProfileLabel | quote }}
+    profiles:
+{{- range $name, $p := .Values.config.profiles }}
+{{- if not $p.sharedCpus }}
+{{- fail (printf "profile %s needs sharedCpus" $name) }}
+{{- end }}
+      {{ $name }}:
+{{- include "ergon-shared-cpus.configBody" $p | nindent 8 }}
+{{- end }}
+{{- else }}
+{{- if .Values.config.nodeProfileLabel }}
+{{- fail "config.profiles is required when config.nodeProfileLabel is set" }}
+{{- end }}
+{{- include "ergon-shared-cpus.configBody" .Values.config | nindent 4 }}
+{{- end }}

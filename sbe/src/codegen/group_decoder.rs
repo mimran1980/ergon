@@ -18,8 +18,8 @@ use super::conversion_helpers::{
 use super::field_type::field_type_ident;
 use super::generate_entry_consuming_stages;
 use super::runtime::{
-    constant_value_expr, doc_attr_tokens, emit_field_consts, float_null_check, to_pascal_case,
-    to_snake_case,
+    apply_set_choice_version_mask, constant_value_expr, doc_attr_tokens, emit_field_consts,
+    float_null_check, to_pascal_case, to_snake_case,
 };
 
 /// Pure flyweight observers — discarding the return is almost always a mistake.
@@ -1408,6 +1408,10 @@ pub(crate) fn generate_group_decoder(
                 );
                 let since_lit =
                     syn::LitInt::new(&f.since_version.to_string(), proc_macro2::Span::call_site());
+                let raw_word = quote::quote! {
+                    #r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) })
+                };
+                let word = apply_set_choice_version_mask(elements, set_name, &r_type_ty, raw_word);
                 if f.since_version > 0 {
                     entry_body.extend(quote::quote! {
                         #mu
@@ -1419,9 +1423,7 @@ pub(crate) fn generate_group_decoder(
                                 return None;
                             }
                             let offset = self.offset + #offset_lit;
-                            Some(#target_ident(#r_type_ty::#order_fn(
-                                unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) }
-                            )))
+                            Some(#target_ident(#word))
                         }
 
                         #mu
@@ -1444,7 +1446,7 @@ pub(crate) fn generate_group_decoder(
                         #[inline]
                         pub fn #f_name_ident(&self) -> #target_ident {
                             let offset = self.offset + #offset_lit;
-                            #target_ident(#r_type_ty::#order_fn(unsafe { read_bytes_unchecked::<#prim_size_lit>(self.buf, offset) }))
+                            #target_ident(#word)
                         }
 
                         #mu

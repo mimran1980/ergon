@@ -20,3 +20,6 @@ spec:
       resources:
         requests: { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250" }
         limits:   { cpu: "2", memory: 1Gi, ergon.io/shared-millicpus: "250" }
+      resizePolicy:
+        - resourceName: cpu
+          restartPolicy: RestartContainer

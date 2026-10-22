@@ -337,6 +337,16 @@ impl EnvMediaDriver {
         self.memory_locked
     }
 
+    /// Whether a NIC has asked for a device reset since the transport started.
+    ///
+    /// The transport does not reset the device. Stop this driver (drop it, so
+    /// its agents are joined) and exit the process. A socket transport returns
+    /// false. The bundled `media_driver` binary does that each turn.
+    #[must_use]
+    pub fn nic_reset_exit(&self) -> bool {
+        self.transport.as_ref().is_some_and(CloseOnDrop::nic_reset_exit)
+    }
+
     /// What the host checks found before the driver started; `None` under
     /// `RUSTERON_MEDIA_DRIVER_HOST_CHECK=off`.
     #[must_use]

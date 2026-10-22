@@ -9,11 +9,11 @@ is the one to quote.
 
 # ergon-io benchmarks: busy-spin loops, HTTP clients and connection set-up
 
-Azure runs: `Standard_D8ds_v6` receiver and `Standard_D2ds_v6` sender, Intel Xeon Platinum 8573C, MANA NIC, kernel `6.17.0-1022-azure`; busy-spin and confirmation runs in East Asia (Hong Kong), the HTTP comparison in West US 3. AWS runs: `c7i.2xlarge` receiver and `c7i.xlarge` sender in Tokyo (ap-northeast-1, where Binance's matching engine is), Intel Xeon Platinum 8488C, ENA, kernel `7.0.0-1014-aws` ([AWS Tokyo](#aws-tokyo)).
+Azure runs: `Standard_D8ds_v6` receiver and `Standard_D2ds_v6` sender, Intel Xeon Platinum 8573C, MANA NIC, kernel `6.17.0-1022-azure`; busy-spin and confirmation runs in East Asia (Hong Kong), the HTTP comparison in West US 3. AWS runs: `c7i.2xlarge` receiver and `c7i.xlarge` sender in Tokyo (ap-northeast-1), Intel Xeon Platinum 8488C, ENA, kernel `7.0.0-1014-aws` ([AWS Tokyo](#aws-tokyo)).
 
 | run | what | tables |
 |---|---|---|
-| `20261014T060634Z` | busy-spin loops: paired lab replay, ping-pong, live Binance | [`results/20261014T060634Z/tables.md`](results/20261014T060634Z/tables.md) |
+| `20261014T060634Z` | busy-spin loops: paired lab replay, ping-pong, live upstream feed | [`results/20261014T060634Z/tables.md`](results/20261014T060634Z/tables.md) |
 | `http-20261014T074036Z` | HTTP clients: ergon-io, libcurl (three builds), reqwest | [`results/http-20261014T074036Z/tables.md`](results/http-20261014T074036Z/tables.md) |
 | `confirm-20261014T085509Z` | the final `ergon-io` library: ping-pong, HTTP, reconnect cost | [`results/confirm-20261014T085509Z/tables.md`](results/confirm-20261014T085509Z/tables.md) |
 | `confirm-20261014T093250Z` | `HttpClient`: native against libcurl through one API; reconnect cost after the SQPOLL fix | [`results/confirm-20261014T093250Z/tables.md`](results/confirm-20261014T093250Z/tables.md) |
@@ -143,7 +143,7 @@ What decides it: **how many sockets the loop thread polls** and **whether a seco
 - Keep a small pool of warm connections, one request in flight each; send each request on an idle connection (`in_flight() == 0`). A timed-out request closes its connection.
 - Each pooled connection is one more socket the loop polls: with plain `recv-busy`, about 0.6 µs more on every poll. Count the pool with every other socket on the thread and pick the backend by the total ([which backend](#which-backend)). A pool larger than 1 was not measured ([HTTP with many connections](#http-with-many-connections)).
 - Sign with **HMAC-SHA256** (`Signer::hmac_sha256`, built once at start-up) and `HttpConn::signed_request`: the timestamp and signature are written into the request's TLS record without allocating. Ed25519 costs about 80× more per request on x86, 21.6 µs against 0.26 µs (see [Request signing](#8-request-signing)); keep it for once-per-session uses such as a WebSocket API log-on, where the private key never leaving the machine is worth it.
-- Set the API key once as a connection header (`Target::with_header("X-MBX-APIKEY", key)`).
+- Set the API key once as a connection header (`Target::with_header("X-API-Key", key)`).
 - Consider the exchange's WebSocket API for many requests over one connection.
 
 **Connections:**
@@ -168,7 +168,7 @@ What decides it: **how many sockets the loop thread polls** and **whether a seco
 | Memory | `mlockall(MCL_CURRENT \| MCL_FUTURE)`; receive buffers pre-faulted |
 | Clock reads | `clock_gettime(CLOCK_REALTIME)` 18.9 ns (vDSO), `rdtsc` 9.0 ns |
 | TLS | TLS 1.3, AES-128-GCM |
-| Binance | spot `stream.binance.com:9443` (`@trade` ×3, `timeUnit=MICROSECOND`); futures `fstream.binance.com` `/public` (`@bookTicker` ×2) and `/market` (`@aggTrade`). Reachable from Hong Kong; blocked (HTTP 451) from West US 3 |
+| Live feed | six public market-data streams over three connections per variant; reachable from Hong Kong, provider blocked access from West US 3 (HTTP 451) |
 
 ## Method
 
@@ -195,7 +195,7 @@ How these were established:
 - **TLS:** rustls 0.23 performs the handshake; the traffic keys are then taken with `dangerous_into_kernel_connection` and records are decrypted **in place** with ring in the one receive buffer the kernel wrote into. Session tickets and key updates still go through rustls's `KernelConnection`. See [TLS](#tls-in-place-record-layer-vs-stock-implementations).
 - **WebSocket, HTTP and JSON:** frames and responses are parsed in place; a payload or `Content-Length` body is a slice of the receive buffer.
 - **io_uring:** single-shot `RECVMSG` into the same buffer tail; a provided-buffer ring would need a copy to stitch TLS records that straddle buffers.
-- **Measured copies** beyond kernel→buffer: 0 in the lab; 0.37–0.50 % of bytes on live Binance (WebSocket frames split across two TLS records).
+- **Measured copies** beyond kernel→buffer: 0 in the lab; 0.37–0.50 % of bytes on live upstream feed (WebSocket frames split across two TLS records).
 
 ### Timestamps
 
@@ -206,11 +206,11 @@ How these were established:
 ### Pairing, controls and traffic
 
 - **Paired runs:** two loops run at the same time on their own isolated cores, each with its own connection, receiving the same messages. **Δuser** = decoded time of B − decoded time of A for the same message, on one clock, so the exchange's and the network's jitter cancel. Δrx is the arrival difference; Δstack = Δuser − Δrx on single-message reads.
-- **Lab traffic:** the sender replays a 5-minute Binance capture at original speed (1×, about 800 msg/s) and as bursts of 50 messages every millisecond (50 k msg/s), writing each message to both connections back to back, alternating which goes first (the reported Δuser removes that offset).
+- **Lab traffic:** the sender replays a 5-minute upstream feed capture at original speed (1×, about 800 msg/s) and as bursts of 50 messages every millisecond (50 k msg/s), writing each message to both connections back to back, alternating which goes first (the reported Δuser removes that offset).
 - **Controls:** every pair runs in both core orders; A/A runs show the noise floor.
-- **Live:** the same pairs on Binance. Each loop has its own Binance connection, so live Δuser contains Binance's per-connection send skew (hundreds of µs); only live Δstack is a loop comparison.
+- **Live:** the same pairs on upstream feed. Each loop has its own upstream feed connection, so live Δuser contains the upstream feed's per-connection send skew (hundreds of µs); only live Δstack is a loop comparison.
 - **WebSocket round trip:** **1 connection**, an echo server on the sender, one 64-byte message in flight, at 100, 1k and 10k msg/s and back to back; loops measured one after another.
-- **HTTP:** **1 connection** (`HttpConn`; `HttpClient` with a pool of 1 where a row says so). `replay_server --mode http` answers every request with a 300-byte JSON body (the size of a Binance order acknowledgement), keep-alive, `Content-Length`. Every client sends the same `POST /api/v3/order` (form-encoded parameters, signature, `X-MBX-APIKEY`, `Content-Type`), one request in flight, 30 s per run, two rounds interleaved by client.
+- **HTTP:** **1 connection** (`HttpConn`; `HttpClient` with a pool of 1 where a row says so). `replay_server --mode http` answers every request with a 300-byte JSON body (the size of a upstream feed order acknowledgement), keep-alive, `Content-Length`. Every client sends the same `POST` operation request (form-encoded parameters, signature, an API-key header, `Content-Type`), one request in flight, 30 s per run, two rounds interleaved by client.
 - **Warm-up:** the first 10 s of every lab and live run (1 s for round trips) are dropped.
 
 ## Results (Azure)
@@ -304,11 +304,11 @@ Two fixes followed from the background numbers, and the confirmation run measure
 - The helper thread inherited the polling thread's single-CPU affinity and ran the handshake on the loop's own core. It now moves itself to the housekeeping CPUs (online, not isolated, not the polling CPU), or to `Config::connect_cpu`.
 - The first `SO_TIMESTAMPING` in a process flips a kernel static key (code patched on every CPU, about 100 µs). Socket options are now set on the helper thread before the connection is handed over.
 
-### 6. Live Binance
+### 6. Live upstream feed
 
-- **Δuser** is dominated by Binance's per-connection send skew (the A/A run differs by 42 µs at the median and 1.3 ms at p90), so it is not a loop comparison.
+- **Δuser** is dominated by the upstream feed's per-connection send skew (the A/A run differs by 42 µs at the median and 1.3 ms at p90), so it is not a loop comparison.
 - **Stack share** on live traffic, p50: `recv-busy` 3.8–5.9 µs, `uring-sqpoll` 6.1–6.3 µs; `uring-spin` 5.4–6.7 µs and `epoll-spin` 4.9–5.9 µs start after the interrupt, so they are not comparable with the polled loops (a diagnostic only, as above).
-- **Context:** Binance event time `E` to kernel arrival is about 41 ms at the median from Hong Kong, with an unsynchronised clock (chrony had not yet selected the Azure PTP source). Context only.
+- **Context:** upstream feed event time `E` to kernel arrival is about 41 ms at the median from Hong Kong, with an unsynchronised clock (chrony had not yet selected the Azure PTP source). Context only.
 
 ### 7. Syscall census
 
@@ -316,14 +316,14 @@ Two fixes followed from the background numbers, and the confirmation run measure
 
 ### 8. Request signing
 
-`sign_bench`: one signed request's parameters, `&timestamp=…` and `&signature=…` appended to a reused buffer, exactly as `HttpConn::signed_request` builds them (a 143-byte Binance new-order parameter string), best of 7 × 200,000.
+`sign_bench`: one signed request's parameters, `&timestamp=…` and `&signature=…` appended to a reused buffer, exactly as `HttpConn::signed_request` builds them (a 143-byte upstream feed new-order parameter string), best of 7 × 200,000.
 
 | signer | ns per signed request, x86 (D8ds_v6) | ns, Apple M-series (indicative) |
 |---|---|---|
 | HMAC-SHA256 (ring), hex | 262 | 176 |
 | Ed25519 (ring), base64 | 21,558 | 11,842 |
 
-On x86 Ed25519 costs about 80× HMAC per request (21.6 µs against 0.26 µs). The HMAC signer reproduces Binance's documented example signature (`tests/auth.rs`). Run `tls-20261014T091942Z` (`sign_bench`, West US 3, same VM size and CPU model).
+On x86 Ed25519 costs about 80× HMAC per request (21.6 µs against 0.26 µs). Run `tls-20261014T091942Z` (`sign_bench`, West US 3, same VM size and CPU model).
 
 ## Confirmation run (final library)
 
@@ -423,12 +423,12 @@ From the earlier run `20261014T005221Z` and its sensitivity run `…-sens`. Thes
 
 Values are ns per message. † OpenSSL allocates through its own `malloc`, which the counting allocator does not see.
 
-- In place saves 76–82 ns per typical Binance message (200 B–1 KB) against rustls's fastest API and removes its allocation and copy per record. The receive stack is several µs, so this is a CPU and allocation-free-steady-state win, not a latency lever. The figure is decrypt only, in memory, best of five; the effect on a whole request is not yet measured.
+- In place saves 76–82 ns per typical upstream feed message (200 B–1 KB) against rustls's fastest API and removes its allocation and copy per record. The receive stack is several µs, so this is a CPU and allocation-free-steady-state win, not a latency lever. The figure is decrypt only, in memory, best of five; the effect on a whole request is not yet measured.
 - **Recommendation: stock rustls by default.** The in-place path is this crate's code for the record cryptography, the same duty kTLS or rustls takes on: per-direction sequence numbers and nonces, key updates in both directions, and the AES-GCM confidentiality limit. Those obligations are implemented and tested (`io/tests/tls_records.rs`), so the layer is wire-correct, but keep it only while a fair whole-path A/B shows a material win over stock rustls. Aeron and DPDK need no TLS; none should be added there.
 
 ## AWS Tokyo
 
-Runs on 15 October 2026 in ap-northeast-1, the region Binance's matching engine is in. Every table keeps the maximum; each run's tables list its five slowest samples with what the traces show for each, and the worst cases no trace explains are summarised under [worst cases](#worst-cases-on-aws).
+Runs on 15 October 2026 in ap-northeast-1, the region the upstream feed's matching engine is in. Every table keeps the maximum; each run's tables list its five slowest samples with what the traces show for each, and the worst cases no trace explains are summarised under [worst cases](#worst-cases-on-aws).
 
 | | |
 |---|---|
@@ -552,7 +552,7 @@ Arrival → decoded in the same run, p50 / p99 / max, µs:
 
 ### Many streams on combined connections
 
-The same question from the other side: 1,024 streams (each with its own trickle of 5–50 ms, bursts as above, about 85,000 messages a second), spread over 1, 4, 16, 64 or 256 connections as on Binance's combined-stream sockets (up to 1,024 streams each). Two rounds (`flags-aws-20261015T101949Z`).
+The same question from the other side: 1,024 streams (each with its own trickle of 5–50 ms, bursts as above, about 85,000 messages a second), spread over 1, 4, 16, 64 or 256 connections as on the upstream feed's combined-stream sockets (up to 1,024 streams each). Two rounds (`flags-aws-20261015T101949Z`).
 
 Arrival → decoded, p50 / p99 / max, range over the two rounds, µs:
 
@@ -765,60 +765,11 @@ Every host, kernel, NIC and socket setting under test, measured the same way (pl
 - **Software receive timestamps only.**
 - **Round trips and HTTP clients** were measured one after another, not paired, so path drift between runs is included; HTTP ran two interleaved rounds to expose it.
 - **SQPOLL** uses one more core than any other loop; comparing it with a single-core loop is a cost/benefit comparison.
-- **Live Binance HTTP** was not measured: West US 3 is blocked (HTTP 451).
+- **Live upstream feed HTTP** was not measured: West US 3 is blocked (HTTP 451).
 - **Bursts:** some polled-pair burst medians depend on the core slot; burst numbers are reported but the verdicts rest on 1× replay and round trips.
 
 ## Reproduce
 
-```sh
-# local checks (the curl feature needs libcurl and OpenSSL headers)
-cargo test -p ergon-io --all-features -- --test-threads=1
-cargo test --manifest-path io/benches/Cargo.toml
-
-# the same on arm64 Linux (native on Apple Silicon); Docker's default seccomp profile blocks io_uring
-docker run --rm --platform linux/arm64 --security-opt seccomp=unconfined -v "$PWD":/src -w /src \
-  -e CARGO_TARGET_DIR=/target -v ergon-io-arm64-target:/target rust:1.99.0-bookworm sh -c \
-  'apt-get update -qq && apt-get install -y -qq libcurl4-openssl-dev > /dev/null &&
-   cargo test -p ergon-io --all-features -- --test-threads=1 && cd io/benches && cargo test'
-
-# AWS and Azure lab (a dedicated, tagged pair of VMs per run, deleted on every exit and verified gone):
-#   MODE=matrix | base | confirm | diagnose | sqtick | http | md | many
-io/benches/scripts/aws-flags.sh        # Tokyo by default; RCV_TYPE / SND_TYPE pick the instance types
-io/benches/scripts/azure-flags.sh      # East Asia by default
-MODE=many MANY_CONNS="1 10 100" io/benches/scripts/aws-flags.sh               # many connections
-MODE=many MANY_STREAMS=1024 MANY_CONNS="1 4 16 64 256" io/benches/scripts/aws-flags.sh   # combined streams
-NIC=tuned MODE=base-many RCV_TYPE=c8g.2xlarge SND_TYPE=c7i.xlarge io/benches/scripts/aws-flags.sh   # Graviton (see Graviton)
-# results come back as tables and logs; KEEP_RECORDS=1 also copies the raw records and traces
-
-# Azure runs (Azure CLI logged in; each creates and deletes one ergon-lab-* resource group)
-io/benches/scripts/azure-run.sh        # busy-spin loops: paired lab, round trips, live Binance
-io/benches/scripts/azure-http.sh       # HTTP clients (LOC=westus3 by default)
-io/benches/scripts/azure-confirm.sh    # final library: round trips, HTTP, reconnect cost
-ONLY=client io/benches/scripts/azure-confirm.sh   # HttpClient: native against libcurl
-io/benches/scripts/azure-tls-bench.sh  # TLS record decryption and request signing (SKIP_TLS=1: signing only)
-
-# on your own two hosts, no cloud scripts: which backend wins at N connections (here 20)
-cargo build --release --manifest-path io/benches/Cargo.toml --bin replay_server --bin io_bench --bin http_bench --bin analyse
-B=io/benches/target/release
-#   sender (restart it before each run; copy cert-many.pem to the receiver):
-sudo $B/replay_server --listen 0.0.0.0:9447 --cert-out cert-many.pem --clients 20 --mode mixed --cpu 1 --duration 120 \
-  --trickle-min-us 1000 --trickle-max-us 10000 --burst-every-us 2000 --burst-slots 10 --burst 10 --seed 42
-#   receiver, loop on isolated CPU 2; repeat with: --variants recv-busy --per-queue | --variants epoll-spin |
-#   --variants uring-sqpoll --sqpoll-cpu 3
-#   AWS NIC, each family on its own best setting: polling runs `ethtool -C <nic> adaptive-rx off`;
-#   epoll-spin (and mio) `adaptive-rx off rx-usecs 0 tx-usecs 0`, NIC interrupts on a core of their own
-sudo $B/io_bench lab --variants recv-busy --cpus 2 --busy-poll 1 --wait-us 0 --server SENDER:9447 --ca cert-many.pem \
-  --sni lab.local --conns 20 --capacity 8000000 --duration 60 --out res/c20-recv-busy
-# HTTP with a pool of 20, one request in flight; repeat per backend as above, and with --pool 1 as the reference.
-#   The HTTP server spins one thread per connection: run it unpinned, with more free CPUs than connections.
-sudo $B/replay_server --listen 0.0.0.0:9445 --cert-out cert-http.pem --mode http --busy-poll 50
-sudo $B/http_bench --client client --backend recv-busy --pool 20 --server SENDER:9445 --ca cert-http.pem \
-  --sni lab.local --cpu 2 --rate 10000 --duration 60 --out res/http-pool20-recv-busy
-$B/analyse --warmup-s 2 res/c20-* res/http-pool20-*
-
-# analysis
-cargo run --release --manifest-path io/benches/Cargo.toml --bin analyse -- results/<stamp>/res/<run>...
-cargo run --release --manifest-path io/benches/Cargo.toml --bin analyse -- --matrix results/<stamp>/res   # lab runs (reads .zst copies)
-```
-
-Every script snapshots the source at start, runs on the VMs detached, records the environment (`env-rcv.txt`), analyses on the receiver, downloads the tables (and, with `KEEP_RECORDS=1`, the raw records and traces, compressed), and deletes its cloud resources on every exit path, then verifies they are gone.
+Generic rate-limit and TLS microbenchmarks live in this directory. The
+recorded market-data and two-host lab workloads are maintained in the
+downstream stack. See [the current report](BENCHMARK.md#reproduce) for commands.

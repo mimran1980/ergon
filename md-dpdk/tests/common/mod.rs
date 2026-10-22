@@ -291,6 +291,12 @@ impl TestEnv {
         unsafe { rusteron_dpdk_fake_set_driver(c.as_ptr()) };
     }
 
+    /// The NUMA node fake port `port_id` reports (the sender is 0, the
+    /// receiver 1). Unset: the PMD reports none.
+    pub fn set_socket(&self, port_id: u16, socket_id: i32) {
+        unsafe { rusteron_dpdk_fake_set_socket(port_id, socket_id) };
+    }
+
     pub fn set_csum_ok(&self, ok: bool) {
         unsafe { rusteron_dpdk_fake_set_csum_ok(ok as c_int) };
     }
@@ -521,6 +527,10 @@ unsafe extern "C" {
     pub fn rusteron_dpdk_fake_set_timer_service_rc(rc: c_int);
     /// A device-reset request (`RTE_ETH_EVENT_INTR_RESET`) from the port's PMD.
     pub fn rusteron_dpdk_fake_raise_reset(port_id: u16);
+    /// The NUMA node fake `port_id` reports, or none until this is called.
+    pub fn rusteron_dpdk_fake_set_socket(port_id: u16, socket_id: i32);
+    /// 1 once a port's PMD has asked for a device reset. Stays set.
+    pub fn rusteron_dpdk_transport_nic_reset_exit(transport: *mut c_void) -> c_int;
     /// The descriptor limits the fake ports report (0: none).
     pub fn rusteron_dpdk_fake_set_desc_limits(rx_min: u16, rx_max: u16, tx_min: u16, tx_max: u16);
     pub fn rusteron_dpdk_fake_set_basic_stats(ierrors: u64, imissed: u64, rx_nombuf: u64);

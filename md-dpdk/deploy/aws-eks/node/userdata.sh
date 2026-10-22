@@ -13,13 +13,16 @@
 #     between stay in the repo;
 #   * the nodeadm NodeConfig: the cluster, and kubelet's low-latency settings.
 #
-# usage: userdata.sh <cluster> <apiServerEndpoint> <ca-b64> <service-cidr> <reserved-cpus> > userdata.gz
+# usage: userdata.sh <cluster> <apiServerEndpoint> <ca-b64> <service-cidr> <reserved-cpus> [irq-cpus] > userdata.gz
 #
-#   <reserved-cpus>  kubelet's reservedSystemCPUs, which provision-node.sh also
-#                    makes the kernel's housekeeping CPUs (irqaffinity; every
-#                    other CPU is isolated): whole physical cores, one CPU
-#                    each with SMT off (the launch template's CpuOptions
+#   <reserved-cpus>  kubelet's reservedSystemCPUs and the kernel's housekeeping
+#                    CPUs (every other CPU is isolated): whole physical cores,
+#                    one CPU each with SMT off (the launch template's CpuOptions
 #                    ThreadsPerCore=1), e.g. "0" on a c7i.4xlarge.
+#   [irq-cpus]       IRQ destination, a subset of <reserved-cpus>. Default is
+#                    <reserved-cpus> (or RUSTERON_IRQ_CPUS when that is set),
+#                    so a one-CPU reservation still takes interrupts. Set it to
+#                    one reserved CPU when the others are shared helpers.
 #
 # The output is binary: pass it as `--user-data fileb://userdata.gz`. EC2
 # limits raw user data to 16384 bytes, and cloud-init and nodeadm both
@@ -56,11 +59,12 @@
 set -euo pipefail
 
 fail() { echo "userdata FAIL: $*" >&2; exit 1; }
-if (($# != 5)); then
-    echo "usage: $0 <cluster> <apiServerEndpoint> <ca-b64> <service-cidr> <reserved-cpus> > userdata.gz" >&2
+if (($# < 5 || $# > 6)); then
+    echo "usage: $0 <cluster> <apiServerEndpoint> <ca-b64> <service-cidr> <reserved-cpus> [irq-cpus] > userdata.gz" >&2
     exit 2
 fi
 cluster="$1" endpoint="$2" ca="$3" cidr="$4" reserved="$5"
+irq="${6:-${RUSTERON_IRQ_CPUS:-$reserved}}"
 device_numbers="${RUSTERON_DPDK_DEVICE_NUMBERS:-1 2}"
 hugepages="${RUSTERON_HUGEPAGES:-2048}"
 
@@ -69,6 +73,7 @@ hugepages="${RUSTERON_HUGEPAGES:-2048}"
 [[ "$ca" =~ ^[A-Za-z0-9+/=]+$ ]] || fail "certificate authority: base64 data"
 [[ "$cidr" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$ ]] || fail "service CIDR '$cidr'"
 [[ "$reserved" =~ ^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$ ]] || fail "reserved CPUs '$reserved': a CPU list such as 0"
+[[ "$irq" =~ ^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$ ]] || fail "IRQ CPUs '$irq': a CPU list such as 0"
 [[ "$device_numbers" =~ ^[1-9][0-9]*\ [1-9][0-9]*$ ]] || fail "RUSTERON_DPDK_DEVICE_NUMBERS='$device_numbers': two device numbers"
 [[ "$hugepages" =~ ^[1-9][0-9]*$ ]] || fail "RUSTERON_HUGEPAGES='$hugepages': a positive count"
 
@@ -105,6 +110,7 @@ install -d -m 0755 /etc/rusteron-dpdk /opt/rusteron-dpdk/node
 cat > /etc/rusteron-dpdk/node.env <<'ENV'
 RUSTERON_DPDK_DRIVER=igb_uio
 RUSTERON_HOUSEKEEPING_CPUS=$reserved
+RUSTERON_IRQ_CPUS=$irq
 RUSTERON_DPDK_DEVICE_NUMBERS="$device_numbers"
 RUSTERON_HUGEPAGES=$hugepages
 ENV

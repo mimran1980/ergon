@@ -437,6 +437,29 @@ expect_fail "irq-affinity without a mode" "usage" fixture_env "$IRQ_AFFINITY"
 expect_fail "irq-affinity, housekeeping CPUs unparsed" "RUSTERON_HOUSEKEEPING_CPUS" \
     fixture_env RUSTERON_HOUSEKEEPING_CPUS="0;8" "$IRQ_AFFINITY" pin
 rm -rf "$PROC/irq/26" "$PROC/irq/27" "$PROC/irq/29" "$PROC/irq/30"
+
+# Housekeeping is 0-2 and the IRQ destination is CPU 2. An IRQ on helper CPU 0
+# is inside housekeeping; pin must still move it. Leaving it would put
+# interrupts on a shared CPU. CPU 2 is already the destination. CPU 5 is isolated.
+make_irq 42 0 0 eth0-Tx-Rx-0
+make_irq 43 2 2 ena-mgmnt
+make_irq 44 5 5 eth0-Tx-Rx-5
+fixture_env RUSTERON_HOUSEKEEPING_CPUS=0-2 RUSTERON_IRQ_CPUS=2 "$IRQ_AFFINITY" pin 2>"$TMP/irq.err" \
+    || { cat "$TMP/irq.err" >&2; die "irq-affinity left a helper CPU in the IRQ set"; }
+assert_file "$PROC/irq/42/smp_affinity_list" "2"
+assert_file "$PROC/irq/43/smp_affinity_list" "2"
+assert_file "$PROC/irq/44/smp_affinity_list" "2"
+assert_grep "IRQs on CPUs 2" "$TMP/irq.err"
+# The kernel refuses the write, and the IRQ stays on helper CPU 0. That is not
+# a managed IRQ on an isolated CPU: pin fails.
+mkdir -p "$PROC/irq/45/eth0-Tx-Rx-1"
+ln -s "$TMP/no-such-dir/smp_affinity_list" "$PROC/irq/45/smp_affinity_list"
+echo 0 > "$PROC/irq/45/effective_affinity_list"
+expect_fail "irq-affinity, helper CPU kept an IRQ" "outside the IRQ destination" \
+    fixture_env RUSTERON_HOUSEKEEPING_CPUS=0-2 RUSTERON_IRQ_CPUS=2 "$IRQ_AFFINITY" pin
+expect_fail "irq-affinity, IRQ CPU outside housekeeping" "not a housekeeping CPU" \
+    fixture_env RUSTERON_HOUSEKEEPING_CPUS=0-2 RUSTERON_IRQ_CPUS=5 "$IRQ_AFFINITY" pin
+rm -rf "$PROC/irq/42" "$PROC/irq/43" "$PROC/irq/44" "$PROC/irq/45"
 echo "IRQ placement assertions PASSED"
 
 # --- 3. idempotent rerun: the ENAs are bound and their netdevs are gone ----
@@ -479,6 +502,16 @@ echo "BOOT_IMAGE=/boot/vmlinuz ro" > "$PROC/cmdline"
 expect_fail "bootstrap unprovisioned kernel" "isolcpus" fixture_env RUSTERON_DRY_RUN=1 "$BOOTSTRAP"
 echo "${PROVISIONED_CMDLINE/irqaffinity=0/irqaffinity=1}" > "$PROC/cmdline"
 expect_fail "bootstrap irqaffinity mismatch" "irqaffinity" fixture_env RUSTERON_DRY_RUN=1 "$BOOTSTRAP"
+# Three reserved CPUs, interrupts on CPU 2 only. irqaffinity=0-2 would include
+# the helper CPUs and must fail. irqaffinity=2 matches RUSTERON_IRQ_CPUS.
+echo "${PROVISIONED_CMDLINE/irqaffinity=0/irqaffinity=0-2}" > "$PROC/cmdline"
+expect_fail "bootstrap irqaffinity includes helper CPUs" "irqaffinity" \
+    fixture_env RUSTERON_HOUSEKEEPING_CPUS=0-2 RUSTERON_IRQ_CPUS=2 RUSTERON_DRY_RUN=1 "$BOOTSTRAP"
+echo "${PROVISIONED_CMDLINE/irqaffinity=0/irqaffinity=2}" > "$PROC/cmdline"
+fixture_env RUSTERON_HOUSEKEEPING_CPUS=0-2 RUSTERON_IRQ_CPUS=2 RUSTERON_DRY_RUN=1 "$BOOTSTRAP" 2>"$TMP/irqdest.err" \
+    || { cat "$TMP/irqdest.err" >&2; die "bootstrap rejected IRQ destination CPU 2"; }
+assert_grep "IRQs on 2" "$TMP/irqdest.err"
+assert_file "$PROC/irq/default_smp_affinity" "4"
 # No node needs a C-state cap: a VM and bare metal both pass without one.
 echo "$METAL_CMDLINE" > "$PROC/cmdline"
 fixture_env RUSTERON_DRY_RUN=1 "$BOOTSTRAP" 2>"$TMP/vm.err" \
@@ -577,6 +610,14 @@ expect_fail "provision housekeeping CPU not online" "not online" \
 assert_grep "dry-run: would hold kubelet back" "$TMP/err"
 expect_fail "provision too few cores" "physical cores" \
     fixture_env RUSTERON_HOUSEKEEPING_CPUS=0-4 RUSTERON_DRY_RUN=1 "$PROVISION"
+# Helpers 0-1 stay in the reserved set (isolated list still starts at 3) and
+# IRQs go only to CPU 2.
+fixture_env RUSTERON_HOUSEKEEPING_CPUS=0-2 RUSTERON_IRQ_CPUS=2 RUSTERON_DRY_RUN=1 "$PROVISION" 2>"$TMP/provision.err" \
+    || { cat "$TMP/provision.err" >&2; die "provision with a separate IRQ destination failed"; }
+assert_grep "irqaffinity=2 " "$TMP/provision.err"
+assert_grep "isolcpus=nohz,domain,managed_irq,3-7 " "$TMP/provision.err"
+expect_fail "provision IRQ CPU outside housekeeping" "not a housekeeping CPU" \
+    fixture_env RUSTERON_HOUSEKEEPING_CPUS=0-2 RUSTERON_IRQ_CPUS=5 RUSTERON_DRY_RUN=1 "$PROVISION"
 expect_fail "provision dry run on the host's /sys" "RUSTERON_DRY_RUN" \
     fixture_env RUSTERON_SYSFS_ROOT=/sys RUSTERON_DRY_RUN=1 "$PROVISION"
 cp "$PROC/cpuinfo" "$TMP/cpuinfo.intel"
@@ -665,6 +706,7 @@ for needle in \
     '--node-labels=rusteron-dpdk/ena=true' \
     '--register-with-taints=rusteron-dpdk=true:NoSchedule' \
     'RUSTERON_HOUSEKEEPING_CPUS=0' \
+    'RUSTERON_IRQ_CPUS=0' \
     'RUSTERON_DPDK_DEVICE_NUMBERS="1 2"' \
     'RUSTERON_HUGEPAGES=2048' \
     'exec ./provision-node.sh' \
@@ -714,7 +756,18 @@ fixture_env RUSTERON_DRY_RUN=1 "$TMP/unpacked/bootstrap-dpdk-ena.sh" 2>"$TMP/unp
 assert_grep "wrote $INVENTORY atomically" "$TMP/unpacked.err"
 expect_fail "userdata bad reserved CPUs" "reserved" \
     "$USERDATA" ergon-lab-test https://x "$CA_B64" 172.20.0.0/16 "0;8"
+expect_fail "userdata bad IRQ CPUs" "IRQ" \
+    "$USERDATA" ergon-lab-test https://x "$CA_B64" 172.20.0.0/16 0-2 "2;8"
 expect_fail "userdata missing arguments" "usage" "$USERDATA" ergon-lab-test
+# Optional sixth argument: housekeeping 0-2, interrupts only on CPU 2.
+"$USERDATA" ergon-lab-test https://ABC.gr7.us-east-1.eks.amazonaws.com "$CA_B64" 172.20.0.0/16 0-2 2 > "$TMP/userdata-irq.gz"
+gzip -dc "$TMP/userdata-irq.gz" > "$TMP/userdata-irq.mime" || die "IRQ user data is not gzip"
+assert_grep 'RUSTERON_HOUSEKEEPING_CPUS=0-2' "$TMP/userdata-irq.mime"
+assert_grep 'RUSTERON_IRQ_CPUS=2' "$TMP/userdata-irq.mime"
+assert_grep 'reservedSystemCPUs: "0-2"' "$TMP/userdata-irq.mime"
+irq_size="$(wc -c < "$TMP/userdata-irq.gz" | tr -d ' ')"
+echo "user data with an IRQ destination: $irq_size bytes gzipped"
+((irq_size <= 16384)) || die "IRQ user data is $irq_size bytes, over EC2's 16384"
 echo "userdata assertions PASSED"
 
 # --- 6b. launch-template.py --------------------------------------------------

@@ -1,5 +1,88 @@
 # Changelog
 
+## Unreleased
+
+## [0.1.33] — 2026-10-23
+
+### Changed
+
+- `tokio` 1.54.1. 1.54.0 is yanked (`RUSTSEC-2026-0384`, a race in
+  `Interval` on the multi-thread runtime).
+- `ergon-md-dpdk` stops its agents and exits non-zero when a NIC asks for a
+  device reset, so a DaemonSet can restart it. The transport does not reset
+  the device under polling agents. Sender and receiver ENAs that report two
+  different NUMA nodes are refused before the second pool is created, and
+  the device plugin does not advertise that pair. An unknown socket does not
+  fail the pair. `RUSTERON_MEDIA_DRIVER_MLOCKALL` stays unset on EKS.
+- Pin `simple-binary-encoding` to sbe-tool 1.41.0
+  (`5f4d6e2152a007918d638d4736106e2978012200`). A set choice with
+  `sinceVersion` greater than 0 reads false from a message or group field
+  when the acting version is lower, matching the Java and C++ codecs
+  (sbe-tool issue 1035). The buffer is left as it arrived. A group
+  `raw_<field>()` accessor still returns that wire word. A set member of a
+  composite is not gated. The official Rust generator is unchanged in
+  1.41.0, so the checked-in reference codecs were left in place. The
+  comparator provenance record names 1.41.0.
+- `ergon-shared-cpus` checks the mounted kubelet config, NIC IRQ affinity
+  and isolated exclusive CPUs before a hot create. A failure refuses that
+  create and leaves the plugin connected. Node bootstrap takes a separate
+  IRQ destination (`RUSTERON_IRQ_CPUS`), which must be inside the
+  housekeeping set. A hot container cannot turn the start-affinity hook
+  off. The validating policy denies startup, readiness and liveness exec
+  probes, lifecycle exec handlers, a shared-millicpu request missing from
+  any application container, and a `required-plugins` value that is not the
+  exact plugin token. Request `M = 1000 × |S|` with oversubscription 1 to
+  receive the whole helper set. A reconnect keeps the recorded helper CPUs.
+  `ergon-cpus show` prints `cpu_max`, per-thread allowed masks and the
+  affinity rule. Admission of a Pod does not control a later `kubectl exec`.
+  Chart `0.1.0` is not republished. Chart `0.1.1` is on GHCR. It renders
+  every config field, `repository@digest` when `image.digest` is set, and
+  the two admission files only when `admission.create` is true. It can
+  select one named CPU profile from a node label at startup. Its NOTES
+  still say the chart is not published. That text was packed with the
+  push, and the tag is not republished to change it. EKS is not verified.
+  Latency figures are not measured.
+- `ergon-shared-cpus` reads the sync resend skip-set only while its lock
+  is held, so a delayed re-widen cannot race `StopContainer`. The hot-pod
+  admission rule converts resource strings with `quantity(...)` before
+  calling quantity methods. Kubernetes 1.33 rejects
+  `isInteger(string)` (`no such overload`). The try sample uses pod
+  `restartPolicy: OnFailure` with container `resizePolicy: RestartContainer`,
+  and deletes its kind cluster only after that run's `kind create` succeeds.
+  If containerd on that kind node crash-loops with
+  `failed to get metadata for stored sandbox`, the sample wipes that node's
+  containerd state once and keeps waiting. It does not wipe a node whose
+  containerd is up.
+  The `:dev` DaemonSet mounts `/var/lib/kubelet/config.yaml` and passes
+  `--kubelet-config`. Image `0.1.0` still rejects `nodeProfileLabel` and
+  `--kubelet-config`. Chart `0.1.0` is not republished. EKS is not
+  verified. Latency figures are not measured.
+- `k8s/nri-shared-cpus/examples/try` installs the public chart on a
+  throwaway kind cluster and checks the shared-CPU grant and the hot-pod
+  admission denial. A run on 2026-10-22 (chart `0.1.0`,
+  `kindest/node:v1.33.0`) printed `ERGON_ISOLATED_CPUS=2,3`,
+  `ERGON_SHARED_CPUS=0`, `cpuset.cpus.effective=0,2-3`, `nproc=1`, and the
+  admission policy denied the exec probe. A later run the same day, with
+  the containerd recovery in the script, printed the same grant and the
+  same denial. Containerd stayed up, so the wipe did not run. Chart 0.1.0
+  still prints a stale "not released" note and does not emit `seccomp`,
+  `ptp` or `schedFifo`.
+- `ergon-shared-cpus` 0.1.0 is on GHCR. Image
+  `ghcr.io/mimran1980/ergon-shared-cpus:0.1.0` (digest
+  `sha256:d28fea2f95ebce3e53d33f8770f3ba69be75c76ec7437ea2b92c1329759e07e9`)
+  and chart `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version
+  `0.1.0`. Anyone can pull them. EKS is not verified. Latency figures are
+  not measured.
+- `ergon-shared-cpus` 0.1.1 is on GHCR. Image
+  `ghcr.io/mimran1980/ergon-shared-cpus:0.1.1` and `:latest` (digest
+  `sha256:69893e0c23ec6c3656053c0d6c4a06c676e33b726d56f362a30ce760908796c0`).
+  Chart version `0.1.1` digest
+  `sha256:77a65305a45ea1b376ce80f9b1d5234b9061f4066a8c5baf5efdb892854fc0d8`.
+  `--version` on linux/amd64 and linux/arm64 printed
+  `ergon-shared-cpus 0.1.1 515846b0201b5fd70a7a6cf3a88839b6180fa9c1`.
+  Actions run 39853440732. A kind install of this tag was not run.
+  EKS is not verified. Latency figures are not measured.
+
 ## [0.1.32] — 2026-10-21
 
 ### Changed

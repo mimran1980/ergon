@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["image", "config", "admission", "hostContract"],
+  "properties": {
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string" },
+        "digest": {
+          "type": "string",
+          "pattern": "^$|^sha256:[a-f0-9]{64}$"
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": ["Always", "IfNotPresent", "Never"]
+        }
+      }
+    },
+    "layoutRevision": { "type": "string" },
+    "admission": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["create"],
+      "properties": {
+        "create": {
+          "type": "boolean",
+          "description": "true installs the two named admission files. false renders data.owner external and does not create them."
+        }
+      }
+    },
+    "imagePullSecrets": { "type": "array" },
+    "nameOverride": { "type": "string" },
+    "fullnameOverride": { "type": "string" },
+    "namespace": { "type": "string", "minLength": 1 },
+    "nodeSelector": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "tolerations": { "type": "array" },
+    "tolerationsRaw": { "type": "array" },
+    "resources": { "type": "object" },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sharedCpus"],
+      "properties": {
+        "sharedCpus": { "type": "string", "minLength": 1 },
+        "oversubscription": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "namespaces": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" }
+        },
+        "defaultAffinity": { "type": "string", "enum": ["shared", "all"] },
+        "hookPath": { "type": "string" },
+        "annotationOptIn": { "type": "boolean" },
+        "metricsAddress": { "type": "string" },
+        "devRoot": { "type": "string" },
+        "rlimits": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "memlock": { "type": "string" },
+            "nofile": { "type": "string" },
+            "rtPrio": { "type": "string" },
+            "nice": { "type": "string" }
+          }
+        },
+        "seccomp": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "ioUring": { "type": "string", "enum": ["off", "allow"] }
+          }
+        },
+        "seccompProfilePath": { "type": "string" },
+        "schedFifo": { "type": "string", "enum": ["off", "thread"] },
+        "ptp": {
+          "type": "string",
+          "pattern": "^(off|auto|/dev/ptp[^/]*)$"
+        },
+        "hugepagesAeronDir": { "type": "string", "pattern": "^$|^/" },
+        "nodeProfileLabel": { "type": "string" },
+        "profiles": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/definitions/profile" }
+        }
+      }
+    },
+    "hostContract": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sys": { "$ref": "#/definitions/hostDir" },
+        "proc": { "$ref": "#/definitions/hostDir" },
+        "kubeletConfig": { "$ref": "#/definitions/hostFile" },
+        "kubeletConfigZ": { "$ref": "#/definitions/hostFile" },
+        "kubeletOverrides": { "$ref": "#/definitions/hostTyped" }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+          }
+        }
+      }
+    },
+    "extraHostPaths": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "path", "mountPath"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "path": { "type": "string", "minLength": 1 },
+          "type": { "type": "string" },
+          "mountPath": { "type": "string", "minLength": 1 },
+          "readOnly": { "type": "boolean" }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sharedCpus"],
+      "properties": {
+        "sharedCpus": { "type": "string", "minLength": 1 },
+        "oversubscription": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "namespaces": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" }
+        },
+        "defaultAffinity": { "type": "string", "enum": ["shared", "all"] },
+        "hookPath": { "type": "string" },
+        "annotationOptIn": { "type": "boolean" },
+        "metricsAddress": { "type": "string" },
+        "devRoot": { "type": "string" },
+        "rlimits": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "memlock": { "type": "string" },
+            "nofile": { "type": "string" },
+            "rtPrio": { "type": "string" },
+            "nice": { "type": "string" }
+          }
+        },
+        "seccomp": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "ioUring": { "type": "string", "enum": ["off", "allow"] }
+          }
+        },
+        "seccompProfilePath": { "type": "string" },
+        "schedFifo": { "type": "string", "enum": ["off", "thread"] },
+        "ptp": { "type": "string", "pattern": "^(off|auto|/dev/ptp[^/]*)$" },
+        "hugepagesAeronDir": { "type": "string", "pattern": "^$|^/" }
+      }
+    },
+    "hostDir": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "path": { "type": "string", "minLength": 1 }
+      }
+    },
+    "hostFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "path": { "type": "string", "minLength": 1 }
+      }
+    },
+    "hostTyped": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "path": { "type": "string", "minLength": 1 },
+        "type": { "type": "string", "enum": ["File", "Directory"] }
+      }
+    }
+  }
+}

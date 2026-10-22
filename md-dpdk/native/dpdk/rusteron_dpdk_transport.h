@@ -117,6 +117,13 @@ int rusteron_dpdk_transport_install(
 /* Destroy the native runtime. Idempotent: a NULL transport is a no-op. */
 int rusteron_dpdk_transport_close(rusteron_dpdk_transport_t *transport);
 
+/*
+ * 1 once a port's PMD has asked for a device reset (RTE_ETH_EVENT_INTR_RESET).
+ * The transport does not reset the device. The media driver stops its agents
+ * and exits; a NULL transport returns 0. The flag stays set.
+ */
+int rusteron_dpdk_transport_nic_reset_exit(rusteron_dpdk_transport_t *transport);
+
 /* The populated Aeron transport binding table (static, process-lifetime). */
 aeron_udp_channel_transport_bindings_t *rusteron_dpdk_transport_bindings(void);
 

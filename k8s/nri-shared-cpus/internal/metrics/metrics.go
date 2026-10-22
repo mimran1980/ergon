@@ -27,11 +27,14 @@ type Metrics struct {
 	stalePart    uint64
 	ineligible   uint64
 	grants       map[string]uint64
+	// contractOK is 1 until a hot-create check fails. Health probes do not
+	// read it: a contract failure must not restart the plugin.
+	contractOK bool
 }
 
 // New returns zeroed metrics.
 func New() *Metrics {
-	return &Metrics{load: map[int]int{}, refused: map[string]uint64{}, rewidened: map[string]uint64{"update": 0, "sync": 0}, grants: map[string]uint64{}}
+	return &Metrics{load: map[int]int{}, refused: map[string]uint64{}, rewidened: map[string]uint64{"update": 0, "sync": 0}, grants: map[string]uint64{}, contractOK: true}
 }
 
 // SetNRIConnected sets the NRI connection gauge.
@@ -39,6 +42,10 @@ func (m *Metrics) SetNRIConnected(v bool) { m.mu.Lock(); m.nriConnected = v; m.m
 
 // SetRegistered sets the device plugin registration gauge.
 func (m *Metrics) SetRegistered(v bool) { m.mu.Lock(); m.registered = v; m.mu.Unlock() }
+
+// SetContractOK records the last hot-node contract evaluation. False refuses
+// further hot creates at the call site; it does not change /healthz.
+func (m *Metrics) SetContractOK(v bool) { m.mu.Lock(); m.contractOK = v; m.mu.Unlock() }
 
 // Ready reports whether NRI is connected and the device plugin registered.
 func (m *Metrics) Ready() bool {
@@ -134,6 +141,8 @@ func (m *Metrics) Write(w io.Writer) error {
 	p("# TYPE ergon_shared_cpus_nri_connected gauge\nergon_shared_cpus_nri_connected %d\n", b2i(m.nriConnected))
 	p("# HELP ergon_shared_cpus_device_plugin_registered 1 while registered with the kubelet.\n")
 	p("# TYPE ergon_shared_cpus_device_plugin_registered gauge\nergon_shared_cpus_device_plugin_registered %d\n", b2i(m.registered))
+	p("# HELP ergon_shared_cpus_contract_ok 1 while the node contract last evaluated clean.\n")
+	p("# TYPE ergon_shared_cpus_contract_ok gauge\nergon_shared_cpus_contract_ok %d\n", b2i(m.contractOK))
 	p("# HELP ergon_shared_cpus_containers Containers holding shared CPUs.\n")
 	p("# TYPE ergon_shared_cpus_containers gauge\nergon_shared_cpus_containers %d\n", m.containers)
 	p("# HELP ergon_shared_cpus_cpu_load_millicpus Millicpus asked for on each shared CPU.\n")

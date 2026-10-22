@@ -47,6 +47,13 @@ expect_failure() {
 write_valid_fixture
 "$checker" --root "$fixture" --manifest test-lanes.tsv
 
+# Git continues listing unstaged deletions; removed sources must not be scanned.
+printf '%s\n' '#[test]' 'fn removed_test() {}' >"$fixture/tests/removed.rs"
+git -C "$fixture" add tests/removed.rs
+rm "$fixture/tests/removed.rs"
+"$checker" --root "$fixture" --manifest test-lanes.tsv
+git -C "$fixture" rm -q tests/removed.rs
+
 printf '%s\n' \
     '#[test]' \
     '#[ignore = "later"]' \

@@ -12,12 +12,125 @@ housekeeping CPUs as well, and start every thread there.
 The busy-spin loop keeps its exclusive core. Only sleepy helpers go to the
 shared CPUs. Never a spinner or SQPOLL there.
 
-Source: `k8s/nri-shared-cpus/`. The install steps below are the ones the
-`k8s/nri-shared-cpus/test/e2e.sh` kind run executes.
+Source: `k8s/nri-shared-cpus/`.
 
-Status: experimental and unpublished. Tested on kind; **not yet on a real EKS
-node** (see [Limits](#limits-and-what-is-not-verified)). AKS cannot run it.
+Status: published as tag `0.1.0`. Anyone can pull the image and the chart.
+Tested on kind; **not yet on a real EKS node** (see
+[Limits](#limits-and-what-is-not-verified)). The latency numbers are not
+measured. AKS cannot run it.
 Prior art: `k8s/nri-shared-cpus/README.md`.
+
+## Use the public chart
+
+Do these in order. The chart installs the DaemonSet. It does not prepare
+the node, and it does not install the hot-pod admission policy.
+
+1. Prepare the node. [Node setup](#node-setup) below. Label it
+   `ergon.io/shared-cpus=true`.
+2. Install. `config.sharedCpus` is the housekeeping CPU, inside
+   `reservedSystemCPUs`, and not the IRQ CPU. For the 8-CPU split in that
+   section the value is `0`. One Helm release per shared-CPU layout.
+
+```sh
+helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus \
+  --version 0.1.1 \
+  --namespace ergon-system --create-namespace \
+  --set-string config.sharedCpus=0 \
+  --set 'config.namespaces={trading}'
+```
+
+Check the pulled image. This prints the index digest
+`sha256:69893e0c23ec6c3656053c0d6c4a06c676e33b726d56f362a30ce760908796c0`:
+
+```sh
+docker buildx imagetools inspect ghcr.io/mimran1980/ergon-shared-cpus:0.1.1
+```
+
+The published chart's image helper is `repository:tag`. `image.tag` cannot
+be `@sha256:…` on that package. Chart 0.1.1 digest
+`sha256:77a65305a45ea1b376ce80f9b1d5234b9061f4066a8c5baf5efdb892854fc0d8`.
+Chart 0.1.0 digest
+`sha256:7347131d7d87caee5cf6de11b2a11e2b62454da59c41092b3805bc2834795dbd`.
+
+`helm install` of the 0.1.0 package prints "This chart is NOT released".
+That note was packed before the push. The tag is the public chart. It is
+not republished to change the note.
+
+Chart 0.1.0 writes `sharedCpus`, `oversubscription`, `namespaces`,
+`defaultAffinity`, `hookPath`, `annotationOptIn`, `metricsAddress` and
+`devRoot`. It does not write `seccomp`, `ptp` or `schedFifo`. `--set` of
+those keys does nothing on this package. The plugin leaves them off.
+A later edit of the ConfigMap can turn a key on, and the pod still has to
+opt in. Aeron's C media driver does not use io_uring. `SCHED_FIFO` stays off.
+
+Chart 0.1.1 is published. It renders every field `config.File`
+accepts, with `seccomp.ioUring`, `ptp` and `schedFifo` quoted `"off"`.
+`image.digest` renders `repository@digest`; an empty digest keeps
+`repository:tag`, and the default tag is image `0.1.1`.
+`admission.create` defaults to false and renders a ConfigMap whose
+`data.owner` is `external`. Set it true to install the two named admission
+files (the policy, its binding, and the `ergon-hot` and `ergon-helper`
+PriorityClasses). A ConfigMap edit does not roll the DaemonSet. Drain
+first, then set `layoutRevision`. `helm install` of the pushed 0.1.1
+package prints a NOTES text that still says the chart is not published.
+That text was packed with the push. The tag is not republished to change it.
+Tag 0.1.0 remains, and its install note is stale in the same way.
+
+3. Apply the hot-pod policy. These two files only, from
+   `k8s/nri-latency-pods/admission/`:
+
+```sh
+kubectl apply -f priority-class.yaml -f validating-admission-policy.yaml
+```
+
+Leave `examples/` and `mutating-admission-policy.yaml` unapplied.
+A pod labelled `ergon.io/latency: hot` is refused when it has an exec
+probe, a container with `restartPolicy: Always`, no
+`ergon.io/shared-millicpus` request, no
+`required-plugins.noderesource.dev` annotation naming `ergon-shared-cpus`,
+or no `priorityClassName`.
+
+4. Run a Guaranteed pod in an allowlisted namespace. Whole-number `cpu`,
+   requests equal limits, `ergon.io/shared-millicpus`. The pod spec is
+   under [Pod](#pod). Inside it, `ERGON_SHARED_CPUS` is the housekeeping
+   list, `ERGON_ISOLATED_CPUS` is the exclusive list, PID 1
+   `Cpus_allowed_list` is the shared CPUs only, and
+   `cpuset.cpus.effective` is the union.
+
+Flux: a `HelmRepository` of type `oci` at
+`oci://ghcr.io/mimran1980/charts`, chart `ergon-shared-cpus` version
+`0.1.0`, `targetNamespace: ergon-system`, and the same `config` values.
+Copy the two admission files into the Git repo Flux already applies.
+Do not point Flux at the whole `admission/` directory: that directory
+also holds pods the policy is meant to refuse.
+
+### See it on kind
+
+`k8s/nri-shared-cpus/examples/try/run.sh` creates a throwaway kind cluster
+(`kindest/node:v1.33.0`, static CPU manager, `reservedSystemCPUs: "0,1"`),
+installs this public chart with `sharedCpus: "0"`, applies the two
+admission files, and runs one hot pod. The pod's log must show
+`ERGON_SHARED_CPUS=0`, a non-empty `ERGON_ISOLATED_CPUS`, PID 1
+`Cpus_allowed_list` of `0`, and `nproc=1`. A second pod with an exec
+liveness probe must be denied. The script deletes the cluster on the way
+out and uses a kubeconfig under `/tmp`.
+
+That run shows the shared-CPU grant and the HFT admission check. It does
+not measure latency. Kind on Docker Desktop has no hugepage pool, no NIC
+PHC and no `cpuset.cpus.exclusive` partition to demonstrate, and this
+sample does not ask for those grants.
+
+One run of that script on 2026-10-22, chart `0.1.0`,
+`kindest/node:v1.33.0`, Docker Desktop linux aarch64 with 10 CPUs, printed
+`ERGON_ISOLATED_CPUS=2,3`, `ERGON_SHARED_CPUS=0`,
+`cpuset.cpus.effective=0,2-3`, PID 1 `Cpus_allowed_list` `0`, `nproc=1`.
+Node allocatable `ergon.io/shared-millicpus` was `1k`. The exec-probe pod
+was denied by `ValidatingAdmissionPolicy` `ergon-latency-pods`. The
+cluster was deleted afterwards. The log lines are in
+`k8s/nri-shared-cpus/examples/try/README.md`.
+
+The 18-step `test/e2e.sh` is a different run. It builds
+`ergon-shared-cpus:dev` from this tree. It does not pull the public chart.
 
 ## What it gives
 
@@ -25,7 +138,7 @@ Prior art: `k8s/nri-shared-cpus/README.md`.
 |---|---|
 | exclusive CPUs | the kubelet's static CPU manager, `cpu: N` |
 | shared CPUs | `ergon.io/shared-millicpus: M` adds `ceil(M/1000)` shared CPUs |
-| start affinity | PID 1 and every new thread start on the shared CPUs |
+| start affinity | the hook pins threads that exist at create onto the shared CPUs. A later thread inherits its creator's mask. A helper created by a pinned hot thread inherits the hot mask. The application can change affinity. A C `pthread_create` did that on linuxkit with no `isolcpus`. A Go 1.27 OS thread started from the hot thread stayed on the shared CPU. JVM and Aeron were not run |
 | timer slack | 1 ns on every thread, inherited by every thread and child the program makes |
 | pinning | the app pins hot threads by index into `ERGON_ISOLATED_CPUS` |
 
@@ -86,8 +199,33 @@ pods and the plugin's own pod while it is down.
 
 ## Install on Kubernetes
 
-Six steps, from the `k8s/nri-shared-cpus` directory. Nothing is pushed to a
-registry: build the image and load it onto each node.
+The plugin is public. No image pull secret.
+
+| what | address |
+|---|---|
+| image | `ghcr.io/mimran1980/ergon-shared-cpus:0.1.1` (and `:latest`) |
+| digest of `0.1.1` and `latest` | `sha256:69893e0c23ec6c3656053c0d6c4a06c676e33b726d56f362a30ce760908796c0` |
+| chart | `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.1` |
+
+```sh
+helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus \
+  --version 0.1.1 \
+  --namespace ergon-system --create-namespace \
+  --set-string config.sharedCpus=0 \
+  --set 'config.namespaces={trading}'
+```
+
+`config.sharedCpus` is this node's shared CPU. For the 8-CPU split above
+that is `0`: inside `reservedSystemCPUs`, and not the IRQ CPU. The chart
+creates `ergon-system` with the privileged Pod Security labels and selects
+nodes labelled `ergon.io/shared-cpus=true`. It does not label nodes, and it
+does not set the boot line, the kubelet, or containerd.
+
+Do the node setup above first, then the steps below. The public install is
+[Use the public chart](#use-the-public-chart). Chart 0.1.0 does not emit
+`seccomp`, `ptp` or `schedFifo`. Step 4 below is the local image
+`ergon-shared-cpus:dev`. The kind sample that pulls the public chart is
+[See it on kind](#see-it-on-kind).
 
 ### 1. Label the nodes that take the plugin
 
@@ -140,49 +278,22 @@ Rules:
   a grant the ConfigMap does not allow does not start: the kubelet shows
   `CreateContainerError` and the text names the field to change.
 
-### 3. Build and load the image
+### 3. Install the public chart
 
-**Not released.** Nothing is on a registry yet; `k8s/nri-shared-cpus/RELEASE.md`
-is the gate. Open before a first push: the EKS lane and the latency
-benchmarks. The chart, the Dockerfile and the image workflow are ready.
+Use the `helm install` at the top of this section. One Helm release per
+shared-CPU layout: the chart has one ConfigMap.
 
-**Do not make this image public.** The plugin is root on the node and
-installs an executable at `/opt/ergon/bin`. A public image is a root shell on
-every node that pulls it, for whoever can push.
+The plugin is root on the node and installs an executable at
+`/opt/ergon/bin/ergon-cpus`. Only this repository's publish workflow pushes.
 
-- **kind or one node:** `docker build -t ergon-shared-cpus:dev .` then
-  `kind load docker-image ergon-shared-cpus:dev`
-  (or `docker save … | ctr -n k8s.io images import -`).
-- **A real cluster:** push to a private registry your nodes can read, pin
-  the DaemonSet image to the digest (`@sha256:…`), `imagePullPolicy:
-  IfNotPresent`, and give `ergon-system` an `imagePullSecret`. When it is
-  released the image is `ghcr.io/mimran1980/ergon-shared-cpus`; keep the
-  package private and pin the digest.
-- **No registry:** `imagePullPolicy: Never` and the image already on the
-  node (AMI or config management).
-
-The DaemonSet ships `image: ergon-shared-cpus:dev` with
-`imagePullPolicy: IfNotPresent`. Change the image field to match.
-
-### 3b. Or install the chart
-
-`k8s/nri-shared-cpus/charts/ergon-shared-cpus` renders the same three
-manifests, with the config in `values.yaml` instead of a hand-edited
-ConfigMap. Use it when more than one cluster or node group has to agree:
-
-```sh
-helm install ergon-shared-cpus k8s/nri-shared-cpus/charts/ergon-shared-cpus \
-  --namespace ergon-system --create-namespace \
-  --set config.sharedCpus=4 \
-  --set 'config.namespaces={trading}'
-```
-
-The chart creates the namespace with the privileged Pod Security labels and
-sets `ergon.io/shared-cpus: "true"` as its node selector. Node settings
-(`reservedSystemCPUs`, `cpuManagerPolicy`, the containerd NRI validator) are
-not chart-managed; they are the node section above.
+Kind, or a node with no registry: `docker build -t ergon-shared-cpus:dev .`
+from `k8s/nri-shared-cpus`, load that image, and apply the three manifests
+in the next step. `deploy/daemonset.yaml` ships
+`image: ergon-shared-cpus:dev` with `imagePullPolicy: IfNotPresent`.
 
 ### 4. Apply the three manifests
+
+Skip this when the Helm release above is installed. It is the kind path.
 
 ```sh
 kubectl apply -f deploy/namespace.yaml \
@@ -190,12 +301,16 @@ kubectl apply -f deploy/namespace.yaml \
               -f deploy/daemonset.yaml
 ```
 
-The DaemonSet needs five host paths: `/var/run/nri`,
+The `:dev` DaemonSet needs six host paths: `/var/run/nri`,
 `/var/lib/kubelet/device-plugins` and `/opt/ergon/bin` read-write, plus
-`/dev` at `/host/dev` and the host cgroup v2 tree at `/sys/fs/cgroup`, both
-read-only. The namespace is labelled Pod Security `privileged` for that
-reason. The plugin is root on the node: anything on the NRI socket can
-change any container.
+`/dev` at `/host/dev`, the host cgroup v2 tree at `/sys/fs/cgroup`, and
+`/var/lib/kubelet/config.yaml` at `/host/kubelet-config`, the last three
+read-only. The kubelet file is a `File` mount. The pod does not start when
+that path is missing, and the `:dev` process refuses a hot create without
+it. Chart 0.1.0 does not mount it: image 0.1.0 rejects `--kubelet-config`.
+The namespace is labelled Pod Security `privileged` for that reason. The
+plugin is root on the node: anything on the NRI socket can change any
+container.
 
 ### 5. Verify the plugin before any workload
 
@@ -220,8 +335,10 @@ the plugin.
 ## Config
 
 `/etc/ergon-shared-cpus/config.yaml`, from the ConfigMap. Strict YAML: an
-unknown field is an error at start. No hot reload — edit the ConfigMap and
-restart the DaemonSet.
+unknown field is an error at start. No hot reload. A ConfigMap edit does
+not roll the DaemonSet. Drain trading workloads, then set `layoutRevision`
+(or restart the pods), before a new CPU layout is used. Running grants
+stay as they were at create.
 
 | field | default | what it is |
 |---|---|---|
@@ -236,10 +353,24 @@ restart the DaemonSet.
 | `seccomp.ioUring` (nested: `seccomp:` then `ioUring:`) | `off` | `allow` widens the container's seccomp profile for `io_uring_*`. See [Latency Pods](latency-pods.md) |
 | `seccompProfilePath` | `/etc/ergon-shared-cpus/ergon-io-uring.json` | the shipped io_uring profile on the node, the fallback for a pod that cannot take the NRI grant |
 | `devRoot` | `/dev` | where this process sees the host's `/dev`. The DaemonSet mounts it read-only at `/host/dev` so the plugin can stat the PHC and PM QoS nodes; granted paths stay `/dev/...` |
-| `cgroupRoot` | `/sys/fs/cgroup` | the cgroup v2 mount point. The DaemonSet mounts the host tree read-only at exactly this path: it is also the node-space prefix the createRuntime hook matches against `/proc/<pid>/cgroup`, so it must stay `/sys/fs/cgroup` |
 | `schedFifo` | `off` | `off`, or `thread` (the hot thread only, never the container). Quote the value: unquoted `off` is a YAML boolean |
 | `ptp` | `off` | `off`, `auto`, or a `/dev/ptp*` path the node has. `auto` grants the NIC's PHC |
 | `hugepagesAeronDir` | unset | absolute `AERON_DIR` to export when the pod mounts a sized hugetlbfs |
+
+`cgroupRoot` is not a field. The parser rejects it. The binary uses
+`/sys/fs/cgroup`, and the DaemonSet mounts the host cgroup tree read-only
+at that path. The createRuntime hook matches the same path against
+`/proc/<pid>/cgroup`.
+
+Chart 0.1.1 can also write `profiles` and `nodeProfileLabel` instead of
+the flat fields. Image 0.1.0 rejects `nodeProfileLabel` and exits with
+`unknown field "nodeProfileLabel"`. At startup the binary from this tree
+reads its node once and uses the label's value as the profile name. A missing or unknown label stops the
+process. It does not watch the node and it does not change the label.
+Setting `sharedCpus` and `profiles` in the same file is rejected. Drain
+before changing a label or a profile. Containers that are already running
+keep the helper CPUs recorded at create. This selection was not run on a
+multi-node cluster.
 
 Quote `off`, `on`, `yes` and `no` in this file. YAML 1.1 turns unquoted ones
 into booleans.
@@ -434,7 +565,11 @@ kubectl exec aeron-driver -- sh -c 'ps -L -o pid,tid,psr,comm | head'
 
 - Extended resources are whole numbers and requests must equal limits, so
   the unit is millicpus: `250` = a quarter.
-- The plugin adds `ceil(M/1000)` shared CPUs, at least one.
+- The plugin adds `ceil(M/1000)` shared CPUs, at least one. It does not
+  grant the whole helper set unless `M = 1000 × |S|`. With `oversubscription: 1`
+  that request takes every configured helper CPU, using the same allocator.
+- A reconnect keeps the helper CPUs recorded at create. It does not pick
+  replacements for a container that is already running.
 - The fraction is scheduler accounting only. With 2 shared CPUs and
   oversubscription 2, a node offers 4000; sixteen pods at 250 fit.
 - There is no hard cap. Helpers may use the whole shared CPU, shared with
@@ -449,16 +584,18 @@ kubectl exec aeron-driver -- sh -c 'ps -L -o pid,tid,psr,comm | head'
 |---|---|---|
 | plugin down at create | NRI makes no change | `required-plugins.noderesource.dev` makes the create fail; the wrapper refuses without `ERGON_SHARED_CPUS`; the resource does not allocate |
 | kubelet restart, plugin up | the re-write keeps the union | the plugin re-widens in `UpdateContainer` |
-| kubelet restart, plugin down | cpuset shrinks to the exclusive CPUs; helpers fall onto them | the plugin re-widens on return; helpers self-check meanwhile |
+| kubelet restart, plugin down | cpuset shrinks to the exclusive CPUs; helpers fall onto them | demonstrated by `test/e2e.sh` step 9. Recovery does not prove the contract held during the outage |
+| host drift | a new hot create is refused | the plugin stays connected. `/healthz` stays up. This is not a liveness restart |
 | hook binary missing | the create fails | the DaemonSet installs the binary before it connects |
 
 ## Limits and what is not verified
 
-- **The plugin is root on the node.** It mounts five host paths:
+- **The plugin is root on the node.** Chart 0.1.0 mounts five host paths:
   `/var/run/nri`, `/var/lib/kubelet/device-plugins` and `/opt/ergon/bin`
   read-write, the host's `/dev` at `/host/dev` and `/sys/fs/cgroup`
-  read-only. No `hostPID`, no `hostNetwork`, not privileged,
-  `capabilities.drop: [ALL]`,
+  read-only. The `:dev` manifest adds `/var/lib/kubelet/config.yaml` at
+  `/host/kubelet-config`, also read-only. No `hostPID`, no `hostNetwork`,
+  not privileged, `capabilities.drop: [ALL]`,
   `readOnlyRootFilesystem: true`, seccomp `RuntimeDefault`, no API access.
   Only namespaces in the allowlist may opt in.
 - **AKS** has no supported way to enable containerd NRI plugins and no

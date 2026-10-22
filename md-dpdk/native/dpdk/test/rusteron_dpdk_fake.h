@@ -98,6 +98,10 @@ void rusteron_dpdk_fake_set_timer_service_rc(int rc);
  * its event callback raises it: the transport's count for the port goes up. */
 void rusteron_dpdk_fake_raise_reset(uint16_t port_id);
 
+/* The NUMA node `port_id` reports (rte_eth_dev_socket_id). Unset: -1, the
+ * PMD reports none. The sender is port 0 and the receiver port 1. */
+void rusteron_dpdk_fake_set_socket(uint16_t port_id, int socket_id);
+
 /* Fake EAL seam reset (rusteron_dpdk_fake_eal.c). */
 void rusteron_dpdk_fake_eal_reset(void);
 /* The DPDK version the fake EAL reports (rusteron_dpdk_eal_version), which

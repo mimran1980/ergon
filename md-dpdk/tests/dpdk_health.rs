@@ -175,19 +175,30 @@ fn a_failing_timer_service_is_reported_once() {
 /// A device-reset request from a NIC's PMD (RTE_ETH_EVENT_INTR_RESET: ENA's
 /// keep-alive, admin queue or missing-completion check failed) is counted on
 /// that port's nic-reset-requested counter and logged at error level, naming
-/// the NIC, once per request, never silently; the transport does not reset
-/// the device itself. A request while no transport is open is counted from
+/// the NIC, once per request, never silently. The transport does not reset
+/// the device. It sets the flag the media driver reads so it can stop its
+/// agents and exit. A request while no transport is open is counted from
 /// the next one's registration.
 #[test]
 #[serial]
 fn a_reset_request_is_counted_and_logged() {
     let mut h = Harness::new();
+    assert_eq!(unsafe { rusteron_dpdk_transport_nic_reset_exit(h.native) }, 0);
     pin_clock_ms(1_000);
     unsafe { rusteron_dpdk_fake_raise_reset(RECEIVER_PORT) };
     let log = stderr_of(|| tick(&h));
     assert!(
         log.contains("ERROR") && log.contains("0000:00:02.0") && log.contains("RTE_ETH_EVENT_INTR_RESET"),
         "logged, naming the NIC: {log:?}"
+    );
+    assert!(
+        log.contains("does not reset the device"),
+        "the device is not reset under the agents: {log:?}"
+    );
+    assert_eq!(
+        unsafe { rusteron_dpdk_transport_nic_reset_exit(h.native) },
+        1,
+        "the media driver exits on this flag"
     );
     assert!(!log.contains("0000:00:01.0"), "only that NIC: {log:?}");
 
@@ -202,6 +213,11 @@ fn a_reset_request_is_counted_and_logged() {
 
     pin_clock_ms(2_000);
     assert!(stderr_of(|| tick(&h)).is_empty(), "nothing new, nothing logged");
+    assert_eq!(
+        unsafe { rusteron_dpdk_transport_nic_reset_exit(h.native) },
+        1,
+        "the flag stays set"
+    );
 
     unsafe {
         rusteron_dpdk_fake_raise_reset(RECEIVER_PORT);

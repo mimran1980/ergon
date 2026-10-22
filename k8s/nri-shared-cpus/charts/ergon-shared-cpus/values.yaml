@@ -4,13 +4,31 @@
 # the nodes the DaemonSet runs on. It must be inside the kubelet's
 # reservedSystemCPUs, minus the CPU(s) kept for NIC IRQs.
 
-# The image is not published yet. Set repository/tag to a local build to try
-# the chart before RELEASE.md is signed off.
+# Published image tag 0.1.1. Empty tag means the chart appVersion.
+# image.digest, when set, wins and the pod uses repository@digest.
+# Image 0.1.1 accepts --kubelet-config and the other host flags.
+# hostContract stays off in this chart. Image 0.1.0 rejects those flags.
 image:
   repository: ghcr.io/mimran1980/ergon-shared-cpus
-  # Empty means appVersion.
+  # Empty means appVersion. Ignored when digest is set.
   tag: ""
+  # sha256:... or empty. Empty keeps repository:tag.
+  digest: ""
   pullPolicy: IfNotPresent
+
+# Bump this to replace DaemonSet pods after a CPU-layout change. Empty
+# leaves the pod template free of a config checksum, so a ConfigMap edit
+# does not roll pods and does not migrate a live layout. Drain trading
+# workloads before changing sharedCpus, then set a new revision.
+layoutRevision: ""
+
+# Cluster-scoped admission. false: those objects already have an owner.
+# The chart renders a namespaced ConfigMap with data.owner: external and
+# does not create the policy, the binding, or the PriorityClasses.
+# true: install the two named files (policy + binding, ergon-hot and
+# ergon-helper). Not the mutating policy and not admission/examples.
+admission:
+  create: false
 
 imagePullSecrets: []
 nameOverride: ""
@@ -35,7 +53,8 @@ resources:
     memory: 64Mi
 
 # /etc/ergon-shared-cpus/config.yaml, written from a ConfigMap. Strict YAML,
-# no hot reload. Every key here maps 1:1 to that file.
+# no hot reload. These keys are the fields config.File accepts. Empty rlimits
+# are omitted. cgroupRoot is not a field.
 config:
   # Required. The housekeeping CPUs. Inside reservedSystemCPUs.
   sharedCpus: "4"
@@ -56,6 +75,63 @@ config:
   # (NRI AddDevice needs the major/minor). Granted paths stay /dev/...
   # names.
   devRoot: /host/dev
+  # Ceilings a pod may ask for by kind. Empty omits the block. "inf" or a
+  # positive count. Quote values that YAML 1.1 would turn into booleans.
+  rlimits:
+    memlock: ""
+    nofile: ""
+    rtPrio: ""
+    nice: ""
+  # Quote off. Unquoted off is a YAML 1.1 boolean. Kept off.
+  seccomp:
+    ioUring: "off"
+  seccompProfilePath: /etc/ergon-shared-cpus/ergon-io-uring.json
+  # off or thread. Kept off. Quote off.
+  schedFifo: "off"
+  # off, auto, or a /dev/ptp* path. Kept off. Quote off.
+  ptp: "off"
+  # Absolute AERON_DIR, or empty to omit a directory.
+  hugepagesAeronDir: ""
+  # Named layouts. Leave this unset for the legacy single sharedCpus file.
+  # Image 0.1.0 rejects nodeProfileLabel (unknown field) and exits. Image
+  # 0.1.1 accepts these keys. When profiles is set, the chart
+  # writes profiles and nodeProfileLabel and omits the flat sharedCpus key.
+  # That process reads the node once
+  # (NODE_NAME, a get-only Role) and fails if the label is missing or names
+  # an unknown profile. It does not watch the node or change labels.
+  # Drain before changing a label or a profile. Running grants stay until
+  # those containers are recreated. Do not set this and a hand-edited
+  # sharedCpus in the same file: the binary rejects both.
+  # nodeProfileLabel: ergon.io/node-profile
+  # profiles:
+  #   small:
+  #     sharedCpus: "0,1"
+  #     namespaces: ["trading"]
+
+# Read-only host facts for the hot-create contract. Off by default, and
+# never FileOrCreate: a created file would be a kubelet config the plugin
+# would trust. Image 0.1.1 accepts --kubelet-config, --kubelet-configz,
+# --kubelet-overrides, --host-sys and --host-proc. Leave these off: the
+# chart does not pass them unless a value below is enabled. Image 0.1.0
+# rejects the flags.
+hostContract:
+  sys:
+    enabled: false
+    path: /sys
+  proc:
+    enabled: false
+    path: /proc
+  kubeletConfig:
+    enabled: false
+    path: /var/lib/kubelet/config.yaml
+  kubeletConfigZ:
+    enabled: false
+    path: /var/lib/kubelet/configz.json
+  kubeletOverrides:
+    enabled: false
+    path: /etc/kubernetes/kubelet.conf.d
+    # File or Directory. FileOrCreate and DirectoryOrCreate are refused.
+    type: Directory
 
 metrics:
   port: 9466
@@ -65,11 +141,10 @@ metrics:
     enabled: false
     port: 9466
 
-# Extra host paths, if a deployment needs more than the three the plugin
-# writes and the two it reads (host /dev at /host/dev, host cgroup v2 at
-# /sys/fs/cgroup — both read-only). The cgroup mount path is not configurable:
-# it must be the node's own /sys/fs/cgroup, because that is the path
-# config.cgroupRoot names and the createRuntime hook resolves on the node.
+# Extra host paths, if a deployment needs more than the mounts above.
+# The cgroup mount path is not a config field. The binary uses
+# /sys/fs/cgroup, and the DaemonSet mounts the host tree read-only there.
+# Do not add cgroupRoot to the config file: the parser rejects it.
 extraHostPaths: []
 #  - name: example
 #    path: /opt/example

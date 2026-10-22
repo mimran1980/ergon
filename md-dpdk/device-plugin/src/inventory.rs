@@ -164,6 +164,15 @@ impl Inventory {
                     )));
                 }
             }
+            if pair.sender.numa_node >= 0
+                && pair.receiver.numa_node >= 0
+                && pair.sender.numa_node != pair.receiver.numa_node
+            {
+                return Err(InventoryError::Validation(format!(
+                    "pair {i} sender NUMA node {} and receiver NUMA node {} differ; both ENAs must be on one NUMA node",
+                    pair.sender.numa_node, pair.receiver.numa_node
+                )));
+            }
         }
         Ok(())
     }
@@ -456,6 +465,22 @@ mod tests {
     #[test]
     fn accepts_valid_igb_uio_inventory() {
         uio_fixture().validate().unwrap();
+    }
+
+    #[test]
+    fn a_pair_on_two_numa_nodes_is_rejected() {
+        let mut inv = fixture();
+        inv.pairs[0].sender.numa_node = 0;
+        inv.pairs[0].receiver.numa_node = 1;
+        let err = inv.validate().unwrap_err().to_string();
+        assert!(err.contains("NUMA node 0") && err.contains("NUMA node 1"), "{err}");
+    }
+
+    #[test]
+    fn an_unknown_numa_node_does_not_reject_the_pair() {
+        let mut inv = fixture();
+        inv.pairs[0].receiver.numa_node = -1;
+        inv.validate().unwrap();
     }
 
     #[test]

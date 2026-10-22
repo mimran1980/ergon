@@ -86,6 +86,9 @@ The Memory Manager stays at `None`: every
 c7i size below `metal-48xl` has one NUMA node, so `Static` would pin nothing,
 and kubelet refuses to start under `Static` unless `reservedMemory` exactly
 equals kubeReserved, systemReserved and the hard eviction threshold together.
+The driver refuses to start when the two ENAs report different NUMA nodes,
+and the device plugin does not advertise that pair. Queues and mbuf pools
+use the node the PMD reports, not a hardcoded node 0.
 `userdata.sh` fails if its gzipped output exceeds EC2's 16384-byte user-data
 limit.
 
@@ -99,9 +102,11 @@ number of cores with no twin sharing its execution resources.
   `node/launch-template.py` puts `CpuOptions` `ThreadsPerCore=1` and the
   `CoreCount` EC2 requires alongside it in the node group's launch template,
   so the node boots with half the type's vCPUs and no SMT. There is no extra
-  charge. EC2 takes no CPU options on bare metal, none on T2/C7a/M7a/R7a
-  (EC2 will not change them; C7a/M7a/R7a already run one thread per core) and
-  none on Graviton (arm64, likewise).
+  charge. EC2 takes no CPU options on bare metal. It will not change the
+  number of threads per core on T2, C7a, M7a, R7a or Graviton. C7a, M7a, R7a
+  and Graviton already run one thread per core. Those virtual-machine types
+  remain in the supported CPU options table, with a core count and threads
+  per core fixed at 1.
 - **Bare metal** (no CPU options): `provision-node.sh` turns SMT off on the
   first boot — the sysfs `smt/control` write is the last resort before kubelet
   starts, and `nosmt` on the kernel command line holds every later boot. It

@@ -11,8 +11,7 @@
 //! - [`retry_after_ms`], [`header_u64`], [`ms_until_epoch`]: the header
 //!   parsing an adapter needs. No allocation; malformed input is an error,
 //!   never a default.
-//! - [`refused_upgrade`]: a refused WebSocket handshake (429, 418) held or
-//!   halted on the connect gate's bucket.
+//! - [`refused_upgrade`]: a refused WebSocket handshake (429) held on the connect gate's bucket.
 //!
 //! | Verdict | Ran? | What to do |
 //! |---|---|---|
@@ -25,12 +24,10 @@
 //! | `Unknown` | maybe | reconcile by client order id; never re-send an order |
 //!
 //! A 408 is `Unknown`: the server may have run the request before the wait
-//! timed out. A 418 is `Banned` (how Binance bans an IP).
+//! timed out. Application adapters classify service-specific ban statuses.
 //!
 //! Re-send through [`Budget::try_resend`], which drops a request whose own
 //! deadline has passed.
-
-use std::num::NonZeroU64;
 
 use crate::error::{Error, Result};
 use crate::http::Response;
@@ -65,7 +62,7 @@ pub enum Verdict {
         /// End of the hold.
         until_ns: i64,
     },
-    /// It did not run: the venue banned the scope (Binance 418, Bybit 403).
+    /// It did not run: the application identified a ban on the scope.
     /// The budget halts `bucket` until the application clears it
     /// ([`Budget::clear_halt`], a person's action); alert a person.
     Banned {
@@ -154,8 +151,7 @@ pub(crate) fn retry_after_in(
     Ok(Some(ms_until_epoch(at, reference)))
 }
 
-/// A decimal-integer header, such as a usage header
-/// (`X-MBX-USED-WEIGHT-1M`). `Ok(None)`: absent. Names are ASCII
+/// A decimal-integer header, such as a usage header. `Ok(None)`: absent. Names are ASCII
 /// case-insensitive.
 ///
 /// # Errors
@@ -170,8 +166,7 @@ pub fn header_u64(resp: &Response<'_>, name: &str) -> Result<Option<u64>> {
         .ok_or_else(|| malformed(name, value))
 }
 
-/// The wait until a server epoch time in ms (Binance WebSocket
-/// `retryAfter`, Bybit's reset time): 0 if past. Pass the server's time as
+/// The wait until a server epoch time in ms: 0 if past. Pass the server's time as
 /// best known (your UTC clock), never a clock of another epoch.
 #[must_use]
 pub const fn ms_until_epoch(epoch_ms: i64, server_now_ms: i64) -> u64 {
@@ -182,13 +177,6 @@ pub const fn ms_until_epoch(epoch_ms: i64, server_now_ms: i64) -> u64 {
     }
 }
 
-/// The shortest ban this function assumes when the server gives no wait:
-/// 2 minutes, Binance's documented minimum ("from 2 minutes to 3 days").
-///
-/// A venue adapter that knows a longer one (Bybit: 10 minutes) calls
-/// [`Budget::banned`] itself before falling through here.
-pub const BAN_MIN_MS: NonZeroU64 = NonZeroU64::MIN.saturating_add(119_999);
-
 /// The verdict from the status and `Retry-After` alone, with no venue
 /// knowledge.
 ///
@@ -196,25 +184,18 @@ pub const BAN_MIN_MS: NonZeroU64 = NonZeroU64::MIN.saturating_add(119_999);
 /// |---|---|
 /// | 2xx | `Done` |
 /// | 408 | `Unknown` (see below) |
-/// | 418 | `Banned`: `scope` halted until a person clears it |
 /// | 429 | `Throttled`: `scope` held for the server's wait, or the bucket's backoff without one |
 /// | 3xx (no redirect is followed), other 4xx | `Rejected` |
 /// | 5xx, 0, anything else | `Unknown` |
 ///
-/// - **408 is Unknown, not `NotRun`.** Binance USDⓈ-M futures documents 408 as
-///   "a timeout has occurred while waiting for a response from the backend
-///   server": the order may have run. A safe re-send would place it twice.
-///   Reconcile by client order id.
-/// - **418 halts.** It is how Binance bans an IP, and the same treatment as
-///   a refused WebSocket handshake ([`refused_upgrade`]): a ban stays stopped
-///   until a person clears it ([`Budget::clear_halt`]). A venue adapter that
-///   knows a 418 is not a ban handles the status itself before calling this.
+/// A timeout does not prove that an operation did not run. Reconcile an
+/// unknown result before retrying a non-idempotent request. Service-specific
+/// body codes and ban statuses belong in application adapters.
 ///
 /// # Errors
 /// - A 429 whose `Retry-After` (or the `Date` it needs) is malformed
 ///   ([`Error::Http`]). `scope` is held for the bucket's backoff first: a
-///   429 always holds. A 418 whose wait is malformed halts on
-///   [`BAN_MIN_MS`] first: a ban always halts.
+///   429 always holds.
 /// - `scope` is not a bucket of `budget` (from `Budget::throttled`).
 pub fn generic(
     resp: &Response<'_>,
@@ -225,22 +206,6 @@ pub fn generic(
     Ok(match resp.status {
         200..=299 => Verdict::Done,
         408 => Verdict::Unknown,
-        418 => {
-            let wait = retry_after_ms(resp, now.real_ns.div_euclid(1_000_000));
-            let ms = wait
-                .as_ref()
-                .ok()
-                .copied()
-                .flatten()
-                .and_then(NonZeroU64::new)
-                .unwrap_or(BAN_MIN_MS);
-            let until_ns = budget.banned(scope, ms, now.ns)?;
-            wait?;
-            Verdict::Banned {
-                bucket: scope,
-                until_ns,
-            }
-        }
         429 => {
             let wait = retry_after_ms(resp, now.real_ns.div_euclid(1_000_000));
             let until_ns =
@@ -262,26 +227,24 @@ pub fn generic(
 /// | Refusal | Budget | Verdict |
 /// |---|---|---|
 /// | 429 | [`Budget::throttled`]: held for `Retry-After`, or the bucket's backoff without one | `Throttled` |
-/// | 418 | [`Budget::banned`]: halted until a person clears it. The server's wait is `Retry-After`, or `ban_wait_ms` (the venue's documented minimum) without one or with 0 | `Banned` |
 /// | anything else | untouched | `None` |
 ///
 /// - Then `Reconnect::defer(link, until_ns - now.ns)` keeps the refused
 ///   link from trying before the wait ends, and the gate keeps every link
 ///   on `scope` from trying until the hold ends or the halt is cleared.
-/// - A 418 is how Binance bans an IP. A ban sent as a 403 (Binance's WAF,
-///   Bybit) is venue knowledge: the venue adapter calls
-///   [`Budget::banned`] itself.
+///
+/// Other refusal statuses are application policy; this helper leaves them
+/// untouched.
 ///
 /// # Errors
 /// - [`Error::Http`]: the refusal's `Retry-After` could not be read
-///   (`retry_after_invalid`). `scope` is held (429) or halted (418) on the
+///   (`retry_after_invalid`). `scope` is held on the
 ///   fallback wait first: a refusal always holds.
 /// - [`Error::Config`]: `scope` is not a bucket of `budget`.
 pub fn refused_upgrade(
     error: &Error,
     scope: BucketId,
     budget: &mut Budget,
-    ban_wait_ms: NonZeroU64,
     now: Now,
 ) -> Result<Option<Verdict>> {
     let (status, retry_after_ms, invalid) = match error {
@@ -298,15 +261,6 @@ pub fn refused_upgrade(
             bucket: scope,
             until_ns: budget.throttled(scope, retry_after_ms, now.ns)?,
         },
-        418 => {
-            let wait = retry_after_ms
-                .and_then(NonZeroU64::new)
-                .unwrap_or(ban_wait_ms);
-            Verdict::Banned {
-                bucket: scope,
-                until_ns: budget.banned(scope, wait, now.ns)?,
-            }
-        }
         _ => return Ok(None),
     };
     if invalid {

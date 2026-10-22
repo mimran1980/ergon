@@ -69,6 +69,12 @@ static pthread_t rusteron_dpdk_fake_timer_caller;
 static int rusteron_dpdk_fake_timer_rc = 0;
 /* Each port's reset-request count, as registered (watch_reset). */
 static uint64_t *rusteron_dpdk_fake_resets[4];
+/* NUMA node a test assigns to a port id (-1 until set: the PMD reports none). */
+static int rusteron_dpdk_fake_socket_of[4];
+static int rusteron_dpdk_fake_socket_known[4];
+/* Socket arguments of the pool and queues for the port currently being set up. */
+static int rusteron_dpdk_fake_last_pool_socket = -1;
+static int rusteron_dpdk_fake_last_rx_socket = -1;
 static int rusteron_dpdk_fake_log_len = 0;
 static char rusteron_dpdk_fake_log[RUSTERON_DPDK_FAKE_LOG_MAX][RUSTERON_DPDK_FAKE_LOG_ENTRY_LEN];
 
@@ -151,6 +157,10 @@ void rusteron_dpdk_fake_reset(void)
     rusteron_dpdk_fake_timer_unregistered = 0;
     rusteron_dpdk_fake_timer_rc = 0;
     memset(rusteron_dpdk_fake_resets, 0, sizeof(rusteron_dpdk_fake_resets));
+    memset(rusteron_dpdk_fake_socket_of, 0, sizeof(rusteron_dpdk_fake_socket_of));
+    memset(rusteron_dpdk_fake_socket_known, 0, sizeof(rusteron_dpdk_fake_socket_known));
+    rusteron_dpdk_fake_last_pool_socket = -1;
+    rusteron_dpdk_fake_last_rx_socket = -1;
 
     memset(rusteron_dpdk_fake_buffers, 0, sizeof(rusteron_dpdk_fake_buffers));
     rusteron_dpdk_fake_pool_avail = RUSTERON_DPDK_FAKE_POOL_AVAIL_DEFAULT;
@@ -442,9 +452,29 @@ static int rusteron_dpdk_fake_dev_configure(
     return rusteron_dpdk_fake_step();
 }
 
-static void *rusteron_dpdk_fake_mempool_create(const char *name, uint32_t n, uint16_t cache_size, uint16_t data_room)
+static int rusteron_dpdk_fake_socket_id(uint16_t port_id)
+{
+    if (port_id < 4 && rusteron_dpdk_fake_socket_known[port_id])
+    {
+        return rusteron_dpdk_fake_socket_of[port_id];
+    }
+    return -1;
+}
+
+void rusteron_dpdk_fake_set_socket(uint16_t port_id, int socket_id)
+{
+    if (port_id < 4)
+    {
+        rusteron_dpdk_fake_socket_of[port_id] = socket_id;
+        rusteron_dpdk_fake_socket_known[port_id] = 1;
+    }
+}
+
+static void *rusteron_dpdk_fake_mempool_create(
+    const char *name, uint32_t n, uint16_t cache_size, uint16_t data_room, int socket_id)
 {
     (void)cache_size;
+    rusteron_dpdk_fake_last_pool_socket = socket_id;
     rusteron_dpdk_fake_logf("pool %s (%u, room %u)", name, n, data_room);
     if (rusteron_dpdk_fake_step() < 0)
     {
@@ -476,8 +506,9 @@ static uint32_t rusteron_dpdk_fake_mbuf_room(void *mempool)
 }
 
 static int rusteron_dpdk_fake_rx_queue_setup(
-    uint16_t port_id, uint16_t queue_id, uint16_t nb_desc, void *mempool)
+    uint16_t port_id, uint16_t queue_id, uint16_t nb_desc, void *mempool, int socket_id)
 {
+    rusteron_dpdk_fake_last_rx_socket = socket_id;
     rusteron_dpdk_fake_logf("rx %u (q=%u desc=%u)", port_id, queue_id, nb_desc);
     if (port_id < 4)
     {
@@ -487,9 +518,11 @@ static int rusteron_dpdk_fake_rx_queue_setup(
 }
 
 static int rusteron_dpdk_fake_tx_queue_setup(
-    uint16_t port_id, uint16_t queue_id, uint16_t nb_desc)
+    uint16_t port_id, uint16_t queue_id, uint16_t nb_desc, int socket_id)
 {
     rusteron_dpdk_fake_logf("tx %u (q=%u desc=%u)", port_id, queue_id, nb_desc);
+    rusteron_dpdk_fake_logf("numa-socket port %u pool %d rx %d tx %d", port_id, rusteron_dpdk_fake_last_pool_socket,
+                            rusteron_dpdk_fake_last_rx_socket, socket_id);
     return rusteron_dpdk_fake_step();
 }
 
@@ -747,6 +780,7 @@ rusteron_dpdk_port_ops_t *rusteron_dpdk_port_ops_real(void)
         .probe_port = rusteron_dpdk_fake_probe_port,
         .dev_info = rusteron_dpdk_fake_dev_info,
         .dev_configure = rusteron_dpdk_fake_dev_configure,
+        .socket_id = rusteron_dpdk_fake_socket_id,
         .mempool_create = rusteron_dpdk_fake_mempool_create,
         .mbuf_room = rusteron_dpdk_fake_mbuf_room,
         .rx_queue_setup = rusteron_dpdk_fake_rx_queue_setup,

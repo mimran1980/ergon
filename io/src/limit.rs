@@ -24,12 +24,10 @@
 //!
 //! # Models
 //!
-//! - [`Model::Rolling`] for every window limit (Binance weight and orders,
-//!   Bybit per second, OKX per 2 s, WebSocket messages, subscribes, connect
-//!   attempts). It never lets more than `limit` units through in any span of
+//! - [`Model::Rolling`] for every window limit (request counts, weighted requests,
+//!   WebSocket messages, subscribes and connect attempts). It never lets more than `limit` units through in any span of
 //!   `window + guard`, whatever window alignment the server uses.
-//! - [`Model::Decay`] (GCRA) only for counters that drain (Kraken, Deribit
-//!   credits, Coinbase Exchange). A GCRA with burst L and rate L per W lets
+//! - [`Model::Decay`] (GCRA) only for counters that drain continuously. A GCRA with burst L and rate L per W lets
 //!   2L through in one window W, so it is wrong for window limits.
 //! - [`Model::Gate`]: no count, only holds (an IP scope with no known limit).
 //!
@@ -39,11 +37,9 @@
 //!   server's wait plus the guard, or for a doubling backoff, and marks it
 //!   full: the local count was wrong, so it is not trusted for one window.
 //!   Hold the narrowest bucket the error names.
-//! - A hold blocks every [`Class`], cancels included: on Binance a request
-//!   sent into a 429 hold risks a 418 ban. Arm the venue's cancel-on-disconnect
-//!   before trading; it is the only cancel path during a hold.
-//! - [`Budget::banned`] (Binance 418, Binance WAF 403, Bybit 403 "access too
-//!   frequent") does the same and **halts** the bucket. A halted bucket stays
+//! - A hold blocks every [`Class`], including reserved work. Application
+//!   policy decides which bucket to hold and how to recover.
+//! - [`Budget::banned`] does the same and **halts** the bucket. A halted bucket stays
 //!   stopped after the server's wait ends, until a person clears it with
 //!   [`Budget::clear_halt`]. [`BucketStats::halted`] and [`Budget::halted`]
 //!   show it, so the application can alert.
@@ -62,7 +58,7 @@
 //!
 //! # fn main() -> ergon_io::Result<()> {
 //! let mut budget = Budget::new(vec![
-//!     // Binance spot: IP weight per minute, orders per 10 s.
+//!     // Illustrative service limits, configured by the application.
 //!     BucketSpec::rolling("ip-weight", 6_000, 60_000, 60).with_reserve(100),
 //!     BucketSpec::rolling("orders-10s", 100, 10_000, 10),
 //! ])?;
@@ -90,8 +86,8 @@ use crate::outcome::Verdict;
 
 /// The most buckets one charge may name.
 ///
-/// A Binance spot order already needs 4 (IP weight, raw requests, orders per
-/// 10 s, orders per day); an OKX batch needs one per instrument plus the
+/// A request may charge an IP count, a weighted count, an account count
+/// and a per-resource count; a batch needs one per resource plus the
 /// sub-account. Split a batch that needs more.
 pub const MAX_CHARGES: usize = 8;
 
@@ -142,7 +138,7 @@ pub enum Model {
         slots: u16,
     },
     /// A level that drains at `drain` and may not pass `max` (GCRA). Only for
-    /// counters that drain: Kraken, Deribit credits, Coinbase Exchange.
+    /// counters that drain continuously.
     Decay {
         /// The highest level, units (at least 1).
         max: u32,
@@ -753,8 +749,7 @@ impl Budget {
         self.buckets.get(bucket.index()).map(|b| b.name.as_str())
     }
 
-    /// Adds a bucket, e.g. for an instrument listed after start (OKX limits
-    /// orders per instrument).
+    /// Adds a bucket, e.g. for a resource discovered after start.
     ///
     /// Allocates: not for the send path.
     ///
@@ -1276,8 +1271,7 @@ impl Budget {
         Ok(())
     }
 
-    /// The server's current limit (Bybit `X-Bapi-Limit`, Hyperliquid
-    /// `userRateLimit`). The reserve and guard stay.
+    /// The server's current limit, supplied by the application adapter. The reserve and guard stay.
     ///
     /// # Errors
     /// [`Error::Config`]: a bucket this budget does not have, a gate, a zero
@@ -1351,13 +1345,13 @@ impl Budget {
         Ok(b.hold_end)
     }
 
-    /// A ban (Binance 418, Binance WAF 403, Bybit 403 "access too frequent"):
+    /// An application-identified ban:
     /// as [`Budget::throttled`], and the bucket is **halted**.
     ///
     /// A halted bucket refuses every charge ([`Why::Banned`]) after the
     /// server's wait too, until [`Budget::clear_halt`]: a person decides when
     /// sending resumes. Pass the server's wait, or the venue's documented
-    /// minimum (Bybit: 10 min).
+    /// minimum.
     ///
     /// Returns when the server's wait (plus the guard) ends.
     ///

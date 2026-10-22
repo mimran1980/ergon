@@ -14,7 +14,7 @@ dual-encode parity suite exercises — see the normative
 
 > **AI assistance.** Large parts of this project were written **with heavy AI
 > assistance**. Humans directed the work, approved designs, and ran verification.
-> Details: [AI-ASSISTANCE.md](https://github.com/mimran1980/ergon/blob/main/AI-ASSISTANCE.md).
+> Details: [AI assistance disclosure](https://mimran1980.github.io/ergon/project/ai-assistance.html).
 
 ## Full documentation
 

@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: Apache-2.0
+# An ordinary pod. It is not labelled hot, so the validating policy does not
+# apply: an exec probe and a fractional CPU are allowed.
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: latency-ordinary
+  namespace: ergon-latency-pods
+spec:
+  containers:
+    - name: app
+      image: ergon-latency-pods-demo:e2e
+      command: ["sleep", "3600"]
+      resources:
+        requests: { cpu: "100m", memory: 32Mi }
+        limits:   { cpu: "200m", memory: 64Mi }
+      livenessProbe:
+        exec: { command: ["true"] }

@@ -236,13 +236,13 @@ fn repeated_headers_must_agree() -> R {
 #[test]
 fn integer_headers() -> R {
     let hs = [
-        h("X-MBX-USED-WEIGHT-1M", "1200"),
-        h("X-Bapi-Limit-Status", " 42 "),
+        h("X-Used-Units", "1200"),
+        h("X-Units-Left", " 42 "),
         h("X-Max", "18446744073709551615"),
     ];
     let r = resp(&hs);
-    assert_eq!(outcome::header_u64(&r, "x-mbx-used-weight-1m")?, Some(1200));
-    assert_eq!(outcome::header_u64(&r, "X-Bapi-Limit-Status")?, Some(42));
+    assert_eq!(outcome::header_u64(&r, "x-used-units")?, Some(1200));
+    assert_eq!(outcome::header_u64(&r, "X-Units-Left")?, Some(42));
     assert_eq!(outcome::header_u64(&r, "X-Max")?, Some(u64::MAX));
     assert_eq!(outcome::header_u64(&r, "X-Absent")?, None);
     for bad in ["", "12a", "-1", "+1", "1 2", "0x10", "18446744073709551616"] {
@@ -257,7 +257,7 @@ fn integer_headers() -> R {
 
 #[test]
 fn waits_until_a_server_epoch_are_measured_on_the_server_clock() {
-    // A venue's own epoch ms (Binance WS `retryAfter`, Bybit's reset): the
+    // A server's own epoch ms (a reset timestamp): the
     // wait counts from the server time passed in, whatever the host says.
     let server_now = 1_792_238_400_000;
     assert_eq!(
@@ -343,28 +343,25 @@ fn generic_sorts_statuses_alone() -> R {
             "{code}"
         );
     }
-    assert_eq!(b.held_until(ip, now.ns)?, None, "429 and 418 only");
+    assert_eq!(
+        b.held_until(ip, now.ns)?,
+        None,
+        "ordinary responses do not hold the scope"
+    );
     Ok(())
 }
 
 #[test]
-fn generic_halts_the_scope_on_a_418_until_a_person_clears_it() -> R {
-    let mut b = Budget::new(vec![BucketSpec::rolling("ip", 1_200, 60_000, 60)])?;
-    let ip = b.id("ip").ok_or("no bucket")?;
-    let now = Now {
-        ns: 1_000_000_000,
-        real_ns: T0_MS * 1_000_000,
-    };
-    match outcome::generic(&status(418), ip, &mut b, now)? {
-        Verdict::Banned { bucket, until_ns } => {
-            assert_eq!(bucket, ip);
-            // BAN_MIN_MS = 2 min, guard = one sub-window = 1 s.
-            assert_eq!(until_ns, now.ns + 121_000 * 1_000_000);
-            assert_eq!(b.held_until(ip, now.ns)?, Some(i64::MAX), "halted");
-        }
-        v => return Err(format!("{v:?}").into()),
+fn generic_does_not_interpret_service_specific_statuses_as_bans() -> R {
+    let mut budget = Budget::new(vec![BucketSpec::gate("service")])?;
+    let scope = budget.id("service").ok_or("no bucket")?;
+    for code in [403, 418] {
+        assert_eq!(
+            outcome::generic(&status(code), scope, &mut budget, Now::default())?,
+            Verdict::Rejected
+        );
+        assert!(!budget.stats(scope, 0)?.halted);
     }
-    assert!(b.clear_halt(ip)?);
     Ok(())
 }
 
@@ -400,89 +397,5 @@ fn generic_holds_the_scope_even_when_retry_after_is_unreadable() -> R {
     assert!(outcome::generic(&resp(&hs), ip, &mut b, now).is_err());
     // Reported, and nothing may be sent into the 429 meanwhile.
     assert!(b.held_until(ip, now.ns)?.is_some());
-    Ok(())
-}
-
-/// A refused WebSocket handshake: 429 holds the connect scope, 418 halts it.
-#[test]
-fn a_refused_upgrade_holds_or_halts_the_scope() -> R {
-    const MS: i64 = 1_000_000;
-    // Binance's documented minimum for a 418: 2 minutes.
-    let ban_min = std::num::NonZeroU64::new(120_000).ok_or("zero")?;
-    let refusal = |status, retry_after_ms, retry_after_invalid| ergon_io::Error::Upgrade {
-        status,
-        body: String::new(),
-        retry_after_ms,
-        retry_after_invalid,
-    };
-    let t0 = 7 * MS;
-    let now = Now {
-        ns: t0,
-        real_ns: t0,
-    };
-    // (refusal, verdict's kind and hold end, halted). Guard 100 ms.
-    for (error, banned, until_ns) in [
-        (refusal(429, Some(5_000), false), false, t0 + 5_100 * MS),
-        // No wait given: the bucket's backoff, 1 s first.
-        (refusal(429, None, false), false, t0 + 1_100 * MS),
-        (refusal(418, Some(120_000), false), true, t0 + 120_100 * MS),
-        // No wait, or a zero one: the venue's minimum.
-        (refusal(418, None, false), true, t0 + 120_100 * MS),
-        (refusal(418, Some(0), false), true, t0 + 120_100 * MS),
-    ] {
-        let mut b = Budget::new(vec![BucketSpec::rolling("ws-connects", 5, 1_000, 10)])?;
-        let c = b.id("ws-connects").ok_or("no bucket")?;
-        let v = outcome::refused_upgrade(&error, c, &mut b, ban_min, now)?;
-        let want = if banned {
-            Verdict::Banned {
-                bucket: c,
-                until_ns,
-            }
-        } else {
-            Verdict::Throttled {
-                bucket: c,
-                until_ns,
-            }
-        };
-        assert_eq!(v, Some(want), "{error:?}");
-        let st = b.stats(c, t0)?;
-        assert_eq!(
-            (st.halted, st.bans, st.throttles),
-            (banned, u64::from(banned), u64::from(!banned))
-        );
-        // Halted: refused even long after the server's wait.
-        let later = until_ns + 3_600_000 * MS;
-        assert_eq!(b.held_until(c, later)?.is_some(), banned, "{error:?}");
-    }
-    // An unreadable Retry-After is an error, after the scope is held (429)
-    // or halted (418) on the fallback wait.
-    for (status, halted) in [(429, false), (418, true)] {
-        let mut b = Budget::new(vec![BucketSpec::rolling("ws-connects", 5, 1_000, 10)])?;
-        let c = b.id("ws-connects").ok_or("no bucket")?;
-        let r = outcome::refused_upgrade(&refusal(status, None, true), c, &mut b, ban_min, now);
-        assert!(matches!(r, Err(ergon_io::Error::Http(_))), "{r:?}");
-        assert!(b.held_until(c, t0)?.is_some(), "{status}");
-        assert_eq!(b.stats(c, t0)?.halted, halted);
-    }
-    // Anything else is not the budget's business.
-    let mut b = Budget::new(vec![BucketSpec::rolling("ws-connects", 5, 1_000, 10)])?;
-    let c = b.id("ws-connects").ok_or("no bucket")?;
-    for error in [
-        refusal(503, Some(5_000), false),
-        refusal(403, None, false),
-        ergon_io::Error::Closed,
-        ergon_io::Error::Timeout("websocket connect"),
-    ] {
-        assert_eq!(
-            outcome::refused_upgrade(&error, c, &mut b, ban_min, now)?,
-            None
-        );
-    }
-    assert_eq!(b.held_until(c, t0)?, None);
-    // A scope the budget does not have.
-    let other = Budget::new(vec![BucketSpec::gate("a"), BucketSpec::gate("b")])?;
-    let missing = other.id("b").ok_or("no bucket")?;
-    let r = outcome::refused_upgrade(&refusal(429, None, false), missing, &mut b, ban_min, now);
-    assert!(matches!(r, Err(ergon_io::Error::Config(_))), "{r:?}");
     Ok(())
 }

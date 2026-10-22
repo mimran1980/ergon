@@ -161,6 +161,10 @@ typedef struct rusteron_dpdk_port_stct
     uint8_t prefix_len;           /* 1..=32 */
     char gateway_ipv4[16];        /* dotted quad */
     uint16_t port_id;             /* DPDK port id once probed */
+    /* NUMA node the PMD reported, or -1 when it reported none. socket_known
+     * distinguishes that read from a zeroed struct (node 0 is a real node). */
+    int socket_id;
+    int socket_known;
     void *mempool;                /* opaque rte_mempool* (or fake handle) */
     uint16_t rx_queue_id;
     uint16_t tx_queue_id;
@@ -382,6 +386,9 @@ struct rusteron_dpdk_transport_stct
     pthread_t housekeeping_thread;
     int housekeeping_running;
     volatile int housekeeping_stop;
+    /* A PMD asked for a device reset. The transport does not reset the NIC.
+     * The media driver reads this, stops its agents, and exits. */
+    int nic_reset_exit;
     uint64_t timer_service_ns;           /* the PMDs' timer service last ran (0: never; housekeeping) */
     int timer_service_failing;           /* it failed last time, which was reported (housekeeping) */
 

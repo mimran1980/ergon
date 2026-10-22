@@ -3,40 +3,22 @@ name = "ergon-io-bench"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "Latency benchmark for the ergon-io backends (live Binance + two-host lab)"
+description = "Generic rate-limit and TLS record benchmarks for ergon-io"
 
 [lib]
 name = "io_bench"
 
 [dependencies]
-ergon-io = { path = "..", features = ["webpki-roots"] }
+ergon-io = { path = ".." }
 rustls = { version = "0.23.46", default-features = false, features = ["std", "ring"] }
-ring = "0.17"
 libc = "0.2"
 rcgen = "0.14"
-httparse = "1.10"
-# Results are compressed on the VM before they are copied back.
-zstd = { version = "0.14", default-features = false }
-# mio_bench: the baseline written the usual way (mio + rustls's buffered API).
-mio = { version = "1", features = ["os-poll", "net"] }
-curl = { version = "0.4.51", optional = true, default-features = false, features = ["ssl"] }
-reqwest = { version = "0.13", optional = true, default-features = false, features = ["rustls"] }
-tokio = { version = "1", optional = true, features = ["rt", "time", "macros"] }
 aws-lc-rs = { version = "1.18", optional = true }
 openssl = { version = "0.10", optional = true }
 
 [features]
-# Extra TLS implementations for the tls_bench comparison.
 aws-lc = ["dep:aws-lc-rs", "rustls/aws_lc_rs"]
 openssl = ["dep:openssl"]
-# HTTP client comparison (http_bench). `curl` links the system libcurl through
-# pkg-config (the distro library, or a source build via PKG_CONFIG_PATH);
-# `curl-static` builds curl-sys's vendored curl with vendored OpenSSL.
-curl = ["dep:curl", "ergon-io/curl"]
-curl-static = ["curl", "curl/static-curl", "curl/static-ssl"]
-reqwest = ["dep:reqwest", "dep:tokio"]
-
-
 
 [profile.release]
 debug = 1
@@ -44,5 +26,4 @@ codegen-units = 1
 lto = "fat"
 panic = "abort"
 
-# Standalone: not a member of the ergon workspace (own lock file, relaxed lints).
 [workspace]

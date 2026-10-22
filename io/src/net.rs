@@ -21,9 +21,9 @@ pub struct Target {
     pub host: String,
     /// TCP port.
     pub port: u16,
-    /// Request path including the query (`/ws`, `/api/v3/ticker?...`).
+    /// Request path including the query (`/ws`, `/resource?...`).
     pub path: String,
-    /// Extra request headers, e.g. `X-MBX-APIKEY`.
+    /// Extra request headers, e.g. `X-API-Key`.
     pub headers: Vec<(String, String)>,
     /// A fixed address: skips DNS (the host is still used for TLS and `Host`).
     pub addr: Option<SocketAddr>,

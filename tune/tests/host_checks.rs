@@ -8,10 +8,11 @@ use std::path::Path;
 
 use common::{Fixture, azure, c7i_tuned, c9g_tuned, debian_default, irq, pod};
 use ergon_tune::{
-    Arch, CheckId, Cloud, Component, CpuSet, Finding, FsMagic, HotSet, Nic, Platform, ReadError,
-    Role, SchedPolicy, Severity, Status, Thread, busy_poll_sysctls, carrier_changes, nic_irqs,
-    t1_isolation, t2_nic_irqs, t3_thp, t4_aeron_dir, t4_from, t5_numa_balancing, t6_nic_node,
-    t7_sched_policy, t8_smt_siblings, t10_smt_on, thread_affinity, thread_policy,
+    Arch, CheckId, Cloud, Component, CpuSet, Finding, FsMagic, HostCheckPolicy, HotSet, Nic,
+    Platform, ReadError, Role, SchedPolicy, Severity, Status, Thread, busy_poll_sysctls,
+    carrier_changes, nic_irqs, t1_isolation, t2_nic_irqs, t3_thp, t4_aeron_dir, t4_from,
+    t5_numa_balancing, t6_nic_node, t7_sched_policy, t8_smt_siblings, t10_smt_on, thread_affinity,
+    thread_policy,
 };
 
 type R = Result<(), Box<dyn std::error::Error>>;
@@ -936,6 +937,13 @@ fn t10_warns_when_smt_is_on_and_names_every_way_to_turn_it_off() -> R {
     f.file("/sys/devices/system/cpu/smt/active", "1\n")?;
     let v = t10_smt_on(&f.host());
     assert!(v.is_warning(), "{v:#?}");
+    let refused = HostCheckPolicy::Require
+        .refusal(std::slice::from_ref(&v))
+        .ok_or("T10 under require refuses every SMT-on x86 host")?;
+    assert!(
+        refused.to_string().contains("T10"),
+        "require refusal must name T10: {refused}"
+    );
     let m = &v.message;
     // What it means in Kubernetes, with the measured numbers.
     assert!(m.contains("`cpu: 2` is one physical core"), "{m}");

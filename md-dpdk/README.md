@@ -28,10 +28,13 @@ on AWS (ENA) and Azure (MANA), Linux x86_64 and aarch64 (Graviton).
 Measurements against kernel UDP: [BENCHMARKS.md](BENCHMARKS.md). A plain-English
 guide, with which transport to use when:
 [the book](https://mimran1980.github.io/ergon/md-dpdk/overview.html).
+A Kubernetes pod shape for two exclusive CPUs and one shared helper CPU
+is [deploy/low-latency](deploy/low-latency/README.md). It states no latency
+figure.
 
 > **AI assistance.** Like the rest of ergon, this crate was written **with heavy
 > AI assistance**. See
-> [AI-ASSISTANCE.md](https://github.com/mimran1980/ergon/blob/main/AI-ASSISTANCE.md).
+> [AI assistance disclosure](https://mimran1980.github.io/ergon/project/ai-assistance.html).
 > It is not production-ready.
 
 - Aeron's C media driver sends and receives through a table of function
@@ -260,7 +263,9 @@ periodic runs on them.
 - **NIC health.** Housekeeping runs DPDK's timer service once a second, which
   drives the ENA PMD's keep-alive and transmit-completion watchdog. A failed
   check is counted (`nic-reset-requested`, type 79) and logged at error
-  level; the transport never resets the device: restart the media driver.
+  level. The transport does not reset the device under the polling agents.
+  The `media_driver` process stops them and exits non-zero, so a DaemonSet
+  restarts it.
   Under `uio_pci_generic` the keep-alive needs ENA's
   `control_path_poll_interval` devarg (DPDK 24.11+), or the watchdog fires.
 - **Receive drain.** A poll takes up to `RUSTERON_DPDK_BURST_SIZE` frames a

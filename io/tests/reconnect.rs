@@ -4,8 +4,6 @@
 //! driver on every backend (Linux).
 #![allow(missing_docs)]
 
-use std::num::NonZeroU64;
-
 use ergon_io::limit::{BucketId, BucketSpec, Budget, Charge, Class};
 use ergon_io::outcome::{self, Now, Verdict};
 use ergon_io::reconnect::{Closed, Connector, LinkState, Opened, Reconnect, Retry};
@@ -400,7 +398,7 @@ fn gated(
 #[test]
 fn a_gate_paces_fifty_links_and_starts_every_one() -> R {
     // ANCHOR: gate
-    // Connect attempts per IP: 3 per second (OKX). One bucket, the gate of
+    // Connect attempts per IP: 3 per second (an illustrative service limit). One bucket, the gate of
     // every WebSocket link on that IP.
     let mut budget = Budget::new(vec![BucketSpec::rolling("ws-connects", 3, 1_000, 10)])?;
     let connects = budget.id("ws-connects").ok_or("no bucket")?;
@@ -622,10 +620,8 @@ fn a_refused_upgrade_holds_every_link_on_its_gate() -> R {
     let ids = [f.started[0].2, f.started[1].2];
 
     // ANCHOR: refused
-    // Binance's documented minimum for a 418: 2 minutes.
-    let ban_min = NonZeroU64::new(120_000).ok_or("zero")?;
     // In `Handler::on_closed(id, error)`: a refused handshake holds the
-    // connect bucket (429) or halts it (418), and the link waits it out.
+    // connect bucket (429), and the link waits it out.
     let on_closed = |rc: &mut Reconnect<u32>, budget: &mut Budget, id, error: &Error, now| -> R {
         let link = rc.link_of(id).ok_or("not a link")?;
         if let Some(Verdict::Throttled { until_ns, .. } | Verdict::Banned { until_ns, .. }) =
@@ -633,7 +629,6 @@ fn a_refused_upgrade_holds_every_link_on_its_gate() -> R {
                 error,
                 connects,
                 budget,
-                ban_min,
                 Now {
                     ns: now,
                     real_ns: now,
@@ -670,16 +665,14 @@ fn a_refused_upgrade_holds_every_link_on_its_gate() -> R {
         now += MS;
     }
 
-    // A 418: halted. No link starts after the server's wait either, until
-    // a person clears it.
+    // Application policy can halt the shared gate independently of HTTP.
     let ids = [f.started[2].2, f.started[3].2];
-    let banned = Error::Upgrade {
-        status: 418,
-        body: String::new(),
-        retry_after_ms: Some(120_000),
-        retry_after_invalid: false,
-    };
-    on_closed(&mut rc, &mut budget, ids[0], &banned, now)?;
+    budget.banned(
+        connects,
+        std::num::NonZeroU64::new(120_000).ok_or("zero")?,
+        now,
+    )?;
+    on_closed(&mut rc, &mut budget, ids[0], &Error::Closed, now)?;
     on_closed(&mut rc, &mut budget, ids[1], &Error::Closed, now)?;
     assert!(budget.stats(connects, now)?.halted);
     let hour = now + 3_600_000 * MS;

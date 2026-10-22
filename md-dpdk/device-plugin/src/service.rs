@@ -102,14 +102,12 @@ impl DevicePluginService {
         inventory
             .pairs
             .iter()
-            .filter(|p| (self.health)(&self.roots, p))
+            .filter(|p| (self.health)(&self.roots, p) && pair_numa_ok(p))
             .map(|p| Device {
                 id: p.id.clone(),
                 health: "Healthy".into(),
-                topology: (p.sender.numa_node >= 0).then(|| TopologyInfo {
-                    nodes: vec![NumaNode {
-                        id: p.sender.numa_node as i64,
-                    }],
+                topology: pair_numa_node(p).map(|id| TopologyInfo {
+                    nodes: vec![NumaNode { id }],
                 }),
             })
             .collect()
@@ -196,6 +194,31 @@ impl device_plugin_server::DevicePlugin for DevicePluginService {
     ) -> Result<Response<PreStartContainerResponse>, Status> {
         Ok(Response::new(PreStartContainerResponse {}))
     }
+}
+
+/// Both ports on one known node, or one known and the other unknown (`-1`).
+/// Two different nodes are not one node: the topology manager would otherwise
+/// place the pod from the sender's node alone.
+fn pair_numa_ok(pair: &Pair) -> bool {
+    let sender = pair.sender.numa_node;
+    let receiver = pair.receiver.numa_node;
+    sender < 0 || receiver < 0 || sender == receiver
+}
+
+/// The NUMA node to advertise for `pair`.
+///
+/// The known node when only one port reports one, that node when both report
+/// the same, and none when both are unknown or they disagree.
+fn pair_numa_node(pair: &Pair) -> Option<i64> {
+    if !pair_numa_ok(pair) {
+        return None;
+    }
+    let node = if pair.sender.numa_node >= 0 {
+        pair.sender.numa_node
+    } else {
+        pair.receiver.numa_node
+    };
+    (node >= 0).then_some(i64::from(node))
 }
 
 /// Build the Allocate response for one pair: both roles' DPDK env plus the
@@ -339,6 +362,41 @@ mod tests {
         let dev = service(always_healthy).healthy_devices().remove(0);
         assert_eq!(dev.id, "dpdk-pair-0");
         assert_eq!(dev.health, "Healthy");
+        assert_eq!(dev.topology.unwrap().nodes[0].id, 0);
+    }
+
+    fn devices_of(inventory: Inventory) -> Vec<Device> {
+        DevicePluginService::new(
+            InventoryFile::fixed(inventory),
+            SysfsRoots {
+                sys_root: PathBuf::from("/sys"),
+                vfio_root: PathBuf::from("/dev/vfio"),
+            },
+            always_healthy,
+            Duration::from_secs(5),
+        )
+        .healthy_devices()
+    }
+
+    #[test]
+    fn topology_uses_the_one_reported_numa_node() {
+        let mut inventory = fixture();
+        inventory.pairs[0].sender.numa_node = -1;
+        inventory.pairs[0].receiver.numa_node = 1;
+        let dev = devices_of(inventory).remove(0);
+        assert_eq!(dev.topology.unwrap().nodes[0].id, 1);
+
+        let mut same = fixture();
+        same.pairs[0].sender.numa_node = 1;
+        same.pairs[0].receiver.numa_node = 1;
+        assert_eq!(devices_of(same).remove(0).topology.unwrap().nodes[0].id, 1);
+    }
+
+    #[test]
+    fn a_split_numa_pair_is_not_advertised() {
+        let mut inventory = fixture();
+        inventory.pairs[0].receiver.numa_node = 1;
+        assert!(devices_of(inventory).is_empty());
     }
 
     fn uio_nodes(resp: &ContainerAllocateResponse) -> Vec<&str> {

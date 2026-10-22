@@ -250,7 +250,18 @@ oidc_left() {
 cluster_left() { eks list-clusters --query "clusters[?@=='$N']" --output text; }
 repos_left() { ecr describe-repositories --query "repositories[?starts_with(repositoryName, '$N/')].repositoryName" --output text; }
 fleets_left() {
-    ec2 describe-fleets --filters "$(tagged)" --query 'Fleets[].FleetId' --output text
+    # describe-fleets does not list an instant fleet unless asked by id, and a
+    # tag filter therefore reports none while the fleet is still active.
+    local id state
+    if [[ -f $out/fleet-ids ]]; then
+        while read -r id; do
+            [[ -z $id ]] && continue
+            state=$(ec2 describe-fleets --fleet-ids "$id" --query 'Fleets[0].FleetState' --output text 2>/dev/null || true)
+            case $state in
+                active|deleted_running|deleted_terminating) printf '%s\n' "$id" ;;
+            esac
+        done <"$out/fleet-ids"
+    fi
 }
 log_groups_left() {
     aws logs describe-log-groups --region "$region" --log-group-name-prefix "/aws/eks/$N/" --query 'logGroups[].logGroupName' --output text
@@ -835,6 +846,8 @@ for pass in 1 2 3 4; do
             --launch-template-config "LaunchTemplateSpecification={LaunchTemplateName=$lt,Version=1},Overrides=[{SubnetId=$nodes_subnet}]" \
             --tag-specifications "$(tags fleet fleet)" \
             --output json >"$fleet_json" 2>"$out/create-fleet-$pass-$zone.log"; then
+            fleet_id=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("FleetId") or "")' "$fleet_json" 2>/dev/null || true)
+            [[ -n $fleet_id ]] && printf '%s\n' "$fleet_id" >>"$out/fleet-ids"
             ids=$(python3 -c '
 import json, sys
 f = json.load(open(sys.argv[1]))
@@ -845,6 +858,12 @@ print("\n".join(i["InstanceId"] for inst in f.get("Instances", []) for i in inst
                 break
             fi
             log "pass $pass zone $zone gave $n of 2 spot instances"
+            # A failed instant fleet stays active and holds its spot vCPUs.
+            # Delete it before the next zone, or a few misses exhaust the quota.
+            if [[ -n $fleet_id ]]; then
+                ec2 delete-fleets --fleet-ids "$fleet_id" --terminate-instances >/dev/null 2>&1 ||
+                    log "pass $pass zone $zone: could not delete fleet $fleet_id"
+            fi
         else
             log "pass $pass zone $zone: $(tail -1 "$out/create-fleet-$pass-$zone.log" 2>/dev/null)"
         fi

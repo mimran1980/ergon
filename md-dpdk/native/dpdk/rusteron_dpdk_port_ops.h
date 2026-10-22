@@ -73,20 +73,27 @@ typedef struct rusteron_dpdk_port_ops_stct
         uint16_t port_id, uint16_t rx_rings, uint16_t tx_rings,
         uint64_t rx_offloads, uint64_t tx_offloads);
 
-    /* Create a packet mbuf pool; returns an opaque handle (NULL on failure). */
+    /* NUMA node the PMD reports for the port, or -1 when it reports none.
+     * The runtime places that port's pool and queues there, and refuses a
+     * pair whose two ports report different nodes. */
+    int (*socket_id)(uint16_t port_id);
+
+    /* Create a packet mbuf pool on `socket_id` (-1: no NUMA node); returns an
+     * opaque handle (NULL on failure). */
     /* Each mbuf holds `data_room` bytes after the headroom, so a frame of the
      * configured MTU always fits one segment. */
-    void *(*mempool_create)(const char *name, uint32_t n, uint16_t cache_size, uint16_t data_room);
+    void *(*mempool_create)(const char *name, uint32_t n, uint16_t cache_size, uint16_t data_room, int socket_id);
     /* The bytes of frame one of the pool's mbufs holds (its data room after
      * the headroom), read from the pool: no mbuf is taken, as one taken and
      * returned by the creating thread would leave a cache's worth in that
      * lcore's mempool cache, out of the agents' reach. */
     uint32_t (*mbuf_room)(void *mempool);
 
-    /* Queue 0 on each direction, backed by the role mempool for RX. */
+    /* Queue 0 on each direction, backed by the role mempool for RX.
+     * `socket_id` is the port's NUMA node, or -1 when it has none. */
     int (*rx_queue_setup)(
-        uint16_t port_id, uint16_t queue_id, uint16_t nb_desc, void *mempool);
-    int (*tx_queue_setup)(uint16_t port_id, uint16_t queue_id, uint16_t nb_desc);
+        uint16_t port_id, uint16_t queue_id, uint16_t nb_desc, void *mempool, int socket_id);
+    int (*tx_queue_setup)(uint16_t port_id, uint16_t queue_id, uint16_t nb_desc, int socket_id);
 
     /* Apply the L3 MTU (payload + IPv4 + UDP). */
     int (*dev_set_mtu)(uint16_t port_id, uint16_t mtu);

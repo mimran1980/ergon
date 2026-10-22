@@ -17,7 +17,7 @@
 
 ## AI-assisted contributions
 
-Per [AI-ASSISTANCE.md's AI-assisted contributions section](../AI-ASSISTANCE.md#ai-assisted-contributions):
+Per [AI-ASSISTANCE.md's AI-assisted contributions section](../book/src/project/ai-assistance/ai-assisted-contributions.md):
 AI assistance is not disqualifying, but you must be able to explain the SBE
 or Cluster protocol invariant this change relies on, and what evidence would
 fail if it were wrong. "The agent's tests passed" is not sufficient

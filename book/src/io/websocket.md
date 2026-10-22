@@ -25,12 +25,12 @@ close.)*
 Run it (Linux):
 
 ```sh
-cargo run -p ergon-io --features webpki-roots --example websocket -- 20 recv-busy
+cargo run -p ergon-io --features webpki-roots --example websocket -- 20 recv-busy HOST 443 /updates
 ```
 
 - Arguments: messages to print before closing, then the backend
   configuration.
-- The feed is Binance's public spot stream; any public feed will do.
+- Supply your service's host, port and path; adapt `SUBSCRIBE` to its protocol.
 
 ## Options
 
@@ -86,8 +86,7 @@ and feed it every open and close.
 
 ### Connect limits and the server's wait
 
-Venues limit connect attempts per IP (Binance: 300 per 5 minutes; OKX: 3
-per second). One `Budget` bucket is the gate of every link on that IP:
+Services may limit connect attempts per IP. One `Budget` bucket is the gate of every link on that IP:
 
 ```rust,ignore
 {{#include ../../../io/tests/reconnect.rs:gate}}
@@ -116,8 +115,8 @@ A refused handshake, in `on_closed`:
 ```
 
 - 429: the bucket is held for `Retry-After` (or its backoff without one).
-- 418: the bucket is halted. No link on that IP connects again until a
-  person calls `Budget::clear_halt`, even after the server's wait.
+- Application-specific ban statuses are interpreted by the application
+  adapter, which can halt a bucket with `Budget::banned`.
 - Give the HTTP pool a bucket of its own ([HTTP client](http-client.md)):
   venues count WebSocket connects.
 
@@ -131,14 +130,14 @@ A refused handshake, in `on_closed`:
   `poll` returns (as the example does).
 - `stats().auto_frames` counts the frames the connection sends by itself:
   Pongs, Pings on a quiet connection, the echo of a server Close. A venue
-  that limits messages per connection may count them (Binance spot does):
+  that limits messages per connection may count them:
   charge the change each pass with `Budget::force`.
 
 ## Handshake
 
 - Checks status 101, `Upgrade`, `Connection` and `Sec-WebSocket-Accept`.
 - Any other status is `Error::Upgrade { status, retry_after_ms, .. }`: a
-  429 or 418 can be told apart, and `retry_after_ms` is the server's
+  refusal retains its status, and `retry_after_ms` is the server's
   `Retry-After` (seconds or a date). Wait at least that long before
   connecting again: `outcome::refused_upgrade` and `Reconnect::defer`
   (see [Reconnect](#connect-limits-and-the-servers-wait)).

@@ -10,7 +10,6 @@ results/**/*.tgz
 results/**/*.bin
 results/**/run.log
 results/**/job-*.log
-results/**/binance-args.txt
 results/**/replay_server
 results/**/relay.*
 results/**/records/

@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+# The PriorityClass the validating policy requires on hot pods. Eviction and
+# preemption stop a hot pod mid-trade; this class is the no-fork answer. Helpers
+# get their own class with preemptionPolicy: Never so they never steal a hot
+# pod's CPU.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: ergon-hot
+value: 1000000
+globalDefault: false
+description: "Latency pods (ergon.io/latency: hot). Never preempt these."
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: ergon-helper
+value: 100
+globalDefault: false
+preemptionPolicy: Never
+description: "Helper pods on the shared CPUs. Never preempt anything."
