@@ -285,8 +285,24 @@ typedef struct rusteron_dpdk_port_stct
      * At most one vector waits: while any frame does, a new vector is refused
      * whole before anything of it is built. */
     uint16_t tx_queued_count;
+    /* Idle TX cleanup (RUSTERON_DPDK_TX_IDLE_CLEAN): the descriptors an idle
+     * poll may reclaim (0: off, or the PMD lacks rte_eth_tx_done_cleanup),
+     * the frames handed to the NIC since the last reclaim, and the clock at
+     * the last data send. Written only while on. */
+    uint32_t tx_idle_clean;
+    uint32_t tx_unreaped;
+    uint64_t last_tx_ns;
+    uint32_t tx_idle_clean_asked; /* the budget asked for (port-info: unsupported when tx_idle_clean is 0) */
     rusteron_dpdk_mbuf_t tx_queued[RUSTERON_DPDK_TX_VECTOR_MAX];
 } rusteron_dpdk_port_t;
+
+/* An idle poll reclaims sent descriptors only once the last data send is
+ * this old: the NIC has posted its completions by then. */
+#define RUSTERON_DPDK_TX_IDLE_CLEAN_AGE_NS 5000ULL
+/* The most descriptors RUSTERON_DPDK_TX_IDLE_CLEAN may ask a poll for (an
+ * ENA's TX ring is at most 1024). */
+#define RUSTERON_DPDK_TX_IDLE_CLEAN_MAX 1024
+
 
 /* The UDP ports bound on one NIC, exclusively as a kernel socket would. Cold:
  * touched only at transport init/close, under the runtime's port_table_lock. */
@@ -412,7 +428,9 @@ struct rusteron_dpdk_transport_stct
     int local_unwatch;                   /* adaptive: hot sockets come off the epoll (RUSTERON_DPDK_LOCAL_UNWATCH) */
     uint64_t tx_retry_ns;                /* RUSTERON_DPDK_TX_RETRY_US: re-offer a refused tail this long */
     uint64_t nic_stats_ns;               /* RUSTERON_DPDK_NIC_STATS_MS: housekeeping's NIC statistics reads, 0 never */
+    uint64_t nic_slow_stats_ns;          /* RUSTERON_DPDK_NIC_SLOW_STATS_MS: the full reads once split (UNSPLIT: not split), 0 never */
     uint32_t rx_max_bursts;              /* RUSTERON_DPDK_RX_MAX_BURSTS: bursts one poll drains while they come back full */
+    uint32_t tx_idle_clean;              /* RUSTERON_DPDK_TX_IDLE_CLEAN: descriptors an idle poll reclaims, 0 off */
     int ena_llq_required;                /* RUSTERON_DPDK_ENA_LLQ_REQUIRED: an ENA without verified LLQ fails start */
     int vfio_wc;                         /* RUSTERON_DPDK_VFIO_WC=1: a vfio-pci port's unseen LLQ BAR is write-combined */
     uint64_t tx_pace_spin_ns;            /* RUSTERON_DPDK_TX_PACE_SPIN_US: longest wait to repay pacing debt */
@@ -936,13 +954,23 @@ uint64_t rusteron_dpdk_test_clock_reads(void);
 uint64_t rusteron_dpdk_thread_cpu_ns(void);
 /* Pin the thread CPU clock at `ns`; reset clears the pin. */
 void rusteron_dpdk_test_set_thread_cpu_ns(uint64_t ns);
-/* Whether RUSTERON_DPDK_GAP_ATTRIB=1 turned poll-gap attribution on (0 default). */
+/* RUSTERON_DPDK_GAP_ATTRIB's two parts: time the PMD bursts (1 or `burst`),
+ * and split poll gaps by the thread CPU clock (1 only). */
+#define RUSTERON_DPDK_GAP_ATTRIB_BURST 1
+#define RUSTERON_DPDK_GAP_ATTRIB_CPU 2
+/* Which of them RUSTERON_DPDK_GAP_ATTRIB turned on (0 default). */
 int rusteron_dpdk_gap_attributing(void);
 /* The same, read inline on the agents' paths (runtime.c sets it at create). */
 extern int rusteron_dpdk_gap_attrib __attribute__((visibility("hidden")));
+/* PMD burst timing (two transport clock reads a burst). */
 static inline int rusteron_dpdk_gap_attrib_on(void)
 {
-    return __builtin_expect(rusteron_dpdk_gap_attrib, 0);
+    return __builtin_expect(0 != (rusteron_dpdk_gap_attrib & RUSTERON_DPDK_GAP_ATTRIB_BURST), 0);
+}
+/* The work/descheduling split (a thread CPU clock read, a system call, a poll). */
+static inline int rusteron_dpdk_gap_cpu_on(void)
+{
+    return __builtin_expect(0 != (rusteron_dpdk_gap_attrib & RUSTERON_DPDK_GAP_ATTRIB_CPU), 0);
 }
 
 /* The lab event log (rusteron_dpdk_events.c). Open it when

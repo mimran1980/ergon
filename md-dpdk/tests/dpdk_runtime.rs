@@ -918,9 +918,80 @@ fn nic_stats_interval_is_validated() {
     }
 }
 
-/// RUSTERON_DPDK_GAP_ATTRIB splits poll-cycle gaps into work and descheduling;
-/// it takes 0 (off, the default) or 1, and anything else fails creation
+/// RUSTERON_DPDK_NIC_SLOW_STATS_MS, how often housekeeping reads the NIC's
+/// basic statistics and every xstat once the reads are split, takes 0 (never)
+/// or whole milliseconds from a second to an hour, as RUSTERON_DPDK_NIC_STATS_MS;
+/// anything else fails creation, naming the variable.
+#[test]
+#[serial]
+fn nic_slow_stats_interval_is_validated() {
+    let env = TestEnv::new();
+    env.eal_skip();
+    for (value, ok) in [
+        ("", true),
+        ("0", true),
+        ("1000", true),
+        ("3600000", true),
+        ("999", false),
+        ("3600001", false),
+        ("10s", false),
+        ("-1", false),
+    ] {
+        let _stats = EnvGuard::set("RUSTERON_DPDK_NIC_SLOW_STATS_MS", value);
+        match create(&rusteron_dpdk_config_t::valid()) {
+            Ok(native) => {
+                assert!(ok, "{value:?} accepted");
+                close(native);
+            }
+            Err(e) => {
+                assert!(!ok, "{value:?}: {e}");
+                assert!(e.contains("RUSTERON_DPDK_NIC_SLOW_STATS_MS"), "{e}");
+            }
+        }
+        env.reset();
+        env.eal_skip();
+    }
+}
+
+/// RUSTERON_DPDK_TX_IDLE_CLEAN, the sent descriptors an idle poll reclaims,
+/// takes 0 (off, the default) or 1 to 1024; anything else fails creation,
 /// naming the variable.
+#[test]
+#[serial]
+fn tx_idle_clean_is_validated() {
+    let env = TestEnv::new();
+    env.eal_skip();
+    for (value, ok) in [
+        ("", true),
+        ("0", true),
+        ("1", true),
+        ("32", true),
+        ("1024", true),
+        ("1025", false),
+        ("-1", false),
+        ("on", false),
+        ("32x", false),
+    ] {
+        let _clean = EnvGuard::set("RUSTERON_DPDK_TX_IDLE_CLEAN", value);
+        match create(&rusteron_dpdk_config_t::valid()) {
+            Ok(native) => {
+                assert!(ok, "{value:?} accepted");
+                close(native);
+            }
+            Err(e) => {
+                assert!(!ok, "{value:?}: {e}");
+                assert!(e.contains("RUSTERON_DPDK_TX_IDLE_CLEAN"), "{e}");
+            }
+        }
+        env.reset();
+        env.eal_skip();
+    }
+}
+
+/// RUSTERON_DPDK_GAP_ATTRIB times the PMD bursts and splits poll-cycle gaps
+/// into work and descheduling; it takes 0 (off, the default), 1 (both) or
+/// `burst` (the burst timing alone), and anything else fails creation naming
+/// the variable.
 #[test]
 #[serial]
 fn gap_attribution_is_validated() {
@@ -930,8 +1001,11 @@ fn gap_attribution_is_validated() {
         ("", true),
         ("0", true),
         ("1", true),
+        ("burst", true),
         ("2", false),
         ("on", false),
+        ("Burst", false),
+        ("bursts", false),
         ("-1", false),
     ] {
         let _attrib = EnvGuard::set("RUSTERON_DPDK_GAP_ATTRIB", value);

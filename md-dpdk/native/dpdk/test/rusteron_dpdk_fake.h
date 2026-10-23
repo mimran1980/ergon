@@ -70,6 +70,23 @@ void rusteron_dpdk_fake_raise_lsc(uint16_t port_id);
  * after the reset): the reply is queued for the port's next rx_burst. */
 void rusteron_dpdk_fake_set_arp_responder(uint16_t port_id, int on);
 
+/* tx_done_cleanup: the cleanups asked for on `port_id`, the budget of the
+ * last, the frames the port sent since its last cleanup, and whether the PMD
+ * lacks the op (-ENOTSUP; 0 after the reset). */
+int rusteron_dpdk_fake_tx_cleanup_calls(uint16_t port_id);
+uint32_t rusteron_dpdk_fake_tx_cleanup_last_budget(void);
+uint32_t rusteron_dpdk_fake_tx_unreaped_count(uint16_t port_id);
+void rusteron_dpdk_fake_set_tx_cleanup_unsupported(int unsupported);
+/* Make tx_done_cleanup return `rc` (a negative errno other than -ENOTSUP),
+ * 0 to stop; 0 after the reset. */
+void rusteron_dpdk_fake_set_tx_cleanup_error(int rc);
+
+/* Extended-statistics reads since the reset: of every xstat and by id; and
+ * the ids the last by-id read asked for (its count returned, at most `max`
+ * copied). */
+void rusteron_dpdk_fake_xstats_reads(int *full, int *by_id);
+uint32_t rusteron_dpdk_fake_xstats_last_ids(uint64_t *ids, uint32_t max);
+
 /* The fake's call log, for reverse-teardown ordering assertions. */
 int rusteron_dpdk_fake_log_count(void);
 void rusteron_dpdk_fake_log_at(int index, char *buf, size_t buflen);

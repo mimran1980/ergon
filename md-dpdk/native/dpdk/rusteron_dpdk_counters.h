@@ -7,8 +7,10 @@
  * DPDK port, queue and direction so a cluster-admin dashboard can attribute a
  * value to a specific ENA without extra state.
  *
- * Hot path: `rusteron_dpdk_counters_add` is a single relaxed atomic add into a
- * value address resolved at registration — no lookup, no allocation, no syscall.
+ * Hot path: `rusteron_dpdk_counters_add` is one add into a value address
+ * resolved at registration — no lookup, no allocation, no syscall: a relaxed
+ * load and a release store for a kind only its port's agent writes, a relaxed
+ * atomic add for the few others write too (rusteron_dpdk_counter_shared).
  * Allocations happen only at registration (one pass over the PMD xstats) and on
  * the 1 Hz extended-statistics sample, which reads the PMD's values into the
  * pre-resolved slots.
@@ -130,6 +132,7 @@ enum rusteron_dpdk_counter_kind
     RD_COUNTER_TX_BURSTS_1US,        /* 87   tx_bursts of 1 µs or more */
     RD_COUNTER_TX_BURSTS_5US,        /* 87   tx_bursts of 5 µs or more */
     RD_COUNTER_NIC_LINK_CHANGES,     /* 79   link-status changes (RTE_ETH_EVENT_INTR_LSC, where the NIC raises it; housekeeping) */
+    RD_COUNTER_TX_IDLE_CLEANED,      /* 87   sent descriptors reclaimed on idle polls (RUSTERON_DPDK_TX_IDLE_CLEAN) */
     RD_COUNTER_COUNT
 };
 
@@ -167,7 +170,15 @@ typedef struct rusteron_dpdk_counters_stct
      * size rounds up to whole lines, so nothing after it shares it either). */
     uint64_t last_sample_ns __attribute__((aligned(64)));
     uint64_t last_nic_sample_ns; /* the last read of the NIC's own statistics */
+    uint64_t last_slow_sample_ns; /* the last full read, once RUSTERON_DPDK_NIC_SLOW_STATS_MS splits them */
+    /* The xstats the PMD keeps in software (ENA: its queue stats, wd_expired,
+     * dev_start, dev_stop, tx_drops), by id: what a split read takes. */
+    uint32_t software_xstat_count;
+    uint16_t *software_xstats;    /* allocated with xstats; housekeeping only */
 } rusteron_dpdk_counters_t;
+
+/* RUSTERON_DPDK_NIC_SLOW_STATS_MS unset: every NIC read is a full one. */
+#define RUSTERON_DPDK_NIC_STATS_UNSPLIT UINT64_MAX
 
 /* Housekeeping writes last_sample_ns and last_nic_sample_ns once a second;
  * the agents read addr[] on every counter bump. On one cache line, each of
@@ -178,14 +189,41 @@ _Static_assert(offsetof(rusteron_dpdk_counters_t, last_sample_ns) / 64 >
                    (offsetof(rusteron_dpdk_counters_t, addr) + sizeof(((rusteron_dpdk_counters_t *)0)->addr) - 1) / 64,
                "housekeeping's sample times share no cache line with the agents' addr[]");
 
-/* Hot-path bump: a single relaxed atomic add into a pre-resolved value slot.
- * NULL-safe so a port without a counters manager (e.g. a NULL-context test) is
- * a no-op. */
+/* Whether a thread other than the port's agent also bumps `kind`, so its add
+ * must stay an atomic read-modify-write. Each port's poller and TX queue are
+ * one agent's (DEDICATED's sender or receiver; the one network agent
+ * otherwise), so every kind bumped on the send and receive paths has that one
+ * writer. tests/dpdk_counter_writers.rs derives each bump's threads from these
+ * sources and fails unless this lists exactly the kinds another thread writes:
+ *   - the open transports, which the conductor's init and close move. */
+static inline int rusteron_dpdk_counter_shared(int kind)
+{
+    switch (kind)
+    {
+        case RD_COUNTER_TRANSPORT:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+/* Hot-path bump into a pre-resolved value slot: for a kind with one writer
+ * (rusteron_dpdk_counter_shared), a relaxed load and a release store, which no
+ * reader can see torn; for a shared one, a relaxed atomic add. `kind` is a
+ * constant at every call, so the choice folds away. NULL-safe so a port
+ * without a counters manager (e.g. a NULL-context test) is a no-op. */
 static inline void rusteron_dpdk_counters_add(rusteron_dpdk_counters_t *c, int kind, int64_t n)
 {
     if (NULL != c && NULL != c->addr[kind])
     {
-        __atomic_add_fetch(c->addr[kind], n, __ATOMIC_RELAXED);
+        if (rusteron_dpdk_counter_shared(kind))
+        {
+            __atomic_add_fetch(c->addr[kind], n, __ATOMIC_RELAXED);
+        }
+        else
+        {
+            __atomic_store_n(c->addr[kind], __atomic_load_n(c->addr[kind], __ATOMIC_RELAXED) + n, __ATOMIC_RELEASE);
+        }
     }
 }
 
@@ -253,9 +291,14 @@ typedef struct rusteron_dpdk_nic_sample_stct
     uint16_t port_id;
     uint32_t xstat_count;        /* the set's PMD xstats when it was copied */
     uint32_t generation;         /* the set's generation then */
+    /* A full read (basic statistics and every xstat), or, split, only the
+     * `id_count` software xstats `ids` names, by id. */
+    int full;
+    uint32_t id_count;
+    uint64_t ids[RUSTERON_DPDK_MAX_XSTATS];
     int basic_ok;                /* basic_stats answered */
     uint64_t ierrors, imissed, rx_nombuf;
-    int xstats_ok;               /* xstats_get answered */
+    int xstats_ok;               /* xstats_get answered (split: xstats_get_by_id, into values[ids[i]]) */
     uint64_t values[RUSTERON_DPDK_MAX_XSTATS];
 } rusteron_dpdk_nic_sample_t;
 
@@ -263,12 +306,15 @@ typedef struct rusteron_dpdk_nic_sample_stct
  * in `nic` whether the NIC's own statistics (basic stats and the PMD xstat
  * mirrors) are due, at most once every `nic_stats_ns` (0: never; on ENA each
  * read is an admin command to the device), copying what the read needs.
+ * With `nic_slow_ns` other than RUSTERON_DPDK_NIC_STATS_UNSPLIT the reads
+ * split: every `nic_stats_ns` only the PMD's software xstats, by id; every
+ * `nic_slow_ns` (0: never) everything.
  * Called by the housekeeping thread under its lock, never the agents' hot
  * path; with the event log open (`events`, housekeeping's ring; else NULL)
  * the mempool read is logged with how long it took. */
 void rusteron_dpdk_counters_sample(
     rusteron_dpdk_counters_t *c, const struct rusteron_dpdk_port_stct *port,
-    const struct rusteron_dpdk_port_ops_stct *ops, uint64_t now_ns, uint64_t nic_stats_ns,
+    const struct rusteron_dpdk_port_ops_stct *ops, uint64_t now_ns, uint64_t nic_stats_ns, uint64_t nic_slow_ns,
     struct rusteron_dpdk_event_ring_stct *events, rusteron_dpdk_nic_sample_t *nic);
 
 /* Read the NIC statistics `nic` says are due, into `nic`: housekeeping,

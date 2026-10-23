@@ -180,6 +180,7 @@ Pod env, read at start. Unset, each queue keeps the PMD's defaults.
 | `RUSTERON_DPDK_RX_FREE_THRESH` | PMD's (ENA: 256 at 4096 descriptors) | Descriptors used before the PMD refills them, inside the `rx_burst` that crosses it. 1 to the ring less 1. |
 | `RUSTERON_DPDK_TX_FREE_THRESH` | PMD's (ENA: 448 at 512 descriptors) | ENA reclaims every completed descriptor inside the send that finds fewer than this free. 1 to `RUSTERON_DPDK_TX_DESCRIPTORS` less 1. |
 | `RUSTERON_DPDK_TX_FAST_FREE` | off | `RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE`: sent mbufs freed in bulk. Configured only where the NIC offers it (ENA does). |
+| `RUSTERON_DPDK_TX_IDLE_CLEAN` | off (`0`) | Sent descriptors the agent reclaims on a poll that received nothing, at most this many a poll (1 to 1024), once the last send is 5 µs old (`rte_eth_tx_done_cleanup`), so the PMD rarely reaches its free threshold inside a send. Counted as `tx-idle-cleaned` (type 87). |
 
 - **Validation:** a threshold of 0 or at least its ring is refused, naming
   the variable: in Rust against the configured ring (4096 unset), and at start
@@ -190,6 +191,8 @@ Pod env, read at start. Unset, each queue keeps the PMD's defaults.
 - **FAST_FREE soundness:** every frame sent (data, ARP, ICMP) is one segment
   from the port's own pool, held by nothing else. `tests/dpdk_queue_conf.rs`
   sends through each path with the fake checking all three.
+- **`port-info` label:** `tx-idle-clean=<n>`, or `tx-idle-clean=unsupported`
+  where the PMD lacks the op (found at start, left off and logged).
 - No setting is recommended yet: none has been measured.
 
 ## ENA low-latency queues
@@ -294,7 +297,14 @@ periodic runs on them.
   (`nic-rx-errors`, `nic-rx-missed`, `nic-rx-nombuf`), PMD extended
   statistics (on ENA an admin command each) and the mempool.
   `RUSTERON_DPDK_NIC_STATS_MS` sets the interval (1000 to 3600000; `0` stops
-  the reads). The latency effect of the reads is not measured here.
+  the reads). `RUSTERON_DPDK_NIC_SLOW_STATS_MS` (same range, unset by
+  default) splits them: every `NIC_STATS_MS` only the PMD's software xstats
+  (on ENA its queue statistics, `wd_expired`, `dev_start`, `dev_stop`,
+  `tx_drops`) by id, no admin command; the basic drop counters and every
+  xstat (ENI allowances, SRD) every `NIC_SLOW_STATS_MS`, checked on the
+  1 Hz tick (`0`: never). Once split, `NIC_STATS_MS=0` stops only the
+  software reads. The latency effect of the reads is not measured
+  here.
   Housekeeping holds its lock only to copy a port's state and to store what
   it read, never across the read, so a transport's close never waits for an
   ENA admin command.
@@ -334,11 +344,14 @@ periodic runs on them.
   reads the CPU clock for it. Both agents are covered: the sender agent's
   control poll times the sender port (`role=sender ... dir=rx`), so a stall
   in its sends lands there.
-- **PMD call timing.** With `RUSTERON_DPDK_GAP_ATTRIB=1`, each `rx_burst`
+- **PMD call timing.** With `RUSTERON_DPDK_GAP_ATTRIB=1` or `burst`, each `rx_burst`
   that returns frames and each `tx_burst` is timed: `rx-burst-max-ns`,
   `rx-bursts-over-1us`, `rx-bursts-over-5us` and the `tx-` three (type 87).
   ENA refills its receive ring and reclaims sent descriptors inside these
   calls. Two clock reads a burst while on; one predictable branch while off.
+  `burst` times the bursts without the loop-gap split: `1` also reads the
+  thread CPU clock every poll, a system call (no vDSO path; about 280 ns a
+  poll in the fake-port bench), so a latency run should use `burst`.
 - **Event log.** `RUSTERON_DPDK_EVENT_LOG=<file>` (pod env, lab only) writes
   stamped events so a latency maximum can be matched to what the driver did:
 

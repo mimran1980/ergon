@@ -13,6 +13,7 @@
 
 #include "rusteron_dpdk_fake.h"
 
+#include <errno.h>
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -141,6 +142,20 @@ static int rusteron_dpdk_fake_arp_responder[4];
 /* A NIC statistics read that takes this long, and how many have begun. */
 static uint32_t rusteron_dpdk_fake_stats_delay = 0;
 static int rusteron_dpdk_fake_stats_started = 0;
+/* tx_done_cleanup: each port's frames the "NIC" took since its last
+ * cleanup (what a cleanup can reap), the cleanups asked for, the budget of
+ * the last, and whether the PMD lacks the op (-ENOTSUP). */
+static uint32_t rusteron_dpdk_fake_tx_unreaped[4];
+static int rusteron_dpdk_fake_tx_cleanups[4];
+static uint32_t rusteron_dpdk_fake_tx_cleanup_budget = 0;
+static int rusteron_dpdk_fake_tx_cleanup_unsupported = 0;
+static int rusteron_dpdk_fake_tx_cleanup_error = 0;
+/* Extended-statistics reads: every xstat (xstats_get) and by id
+ * (xstats_get_by_id), with the ids the last by-id read asked for. */
+static int rusteron_dpdk_fake_xstats_full_reads = 0;
+static int rusteron_dpdk_fake_xstats_id_reads = 0;
+static uint32_t rusteron_dpdk_fake_xstats_last_id_count = 0;
+static uint64_t rusteron_dpdk_fake_xstats_last_id_list[RUSTERON_DPDK_FAKE_XSTAT_MAX];
 
 static void rusteron_dpdk_fake_logf(const char *fmt, ...)
 {
@@ -216,6 +231,52 @@ void rusteron_dpdk_fake_reset(void)
     memset(rusteron_dpdk_fake_rx_tail, 0, sizeof(rusteron_dpdk_fake_rx_tail));
     memset(rusteron_dpdk_fake_rx_q, 0, sizeof(rusteron_dpdk_fake_rx_q));
     rusteron_dpdk_fake_xstat_count = 0;
+    memset(rusteron_dpdk_fake_tx_unreaped, 0, sizeof(rusteron_dpdk_fake_tx_unreaped));
+    memset(rusteron_dpdk_fake_tx_cleanups, 0, sizeof(rusteron_dpdk_fake_tx_cleanups));
+    rusteron_dpdk_fake_tx_cleanup_budget = 0;
+    rusteron_dpdk_fake_tx_cleanup_unsupported = 0;
+    rusteron_dpdk_fake_tx_cleanup_error = 0;
+    rusteron_dpdk_fake_xstats_full_reads = 0;
+    rusteron_dpdk_fake_xstats_id_reads = 0;
+    rusteron_dpdk_fake_xstats_last_id_count = 0;
+}
+
+int rusteron_dpdk_fake_tx_cleanup_calls(uint16_t port_id)
+{
+    return port_id < 4 ? rusteron_dpdk_fake_tx_cleanups[port_id] : 0;
+}
+
+uint32_t rusteron_dpdk_fake_tx_cleanup_last_budget(void)
+{
+    return rusteron_dpdk_fake_tx_cleanup_budget;
+}
+
+uint32_t rusteron_dpdk_fake_tx_unreaped_count(uint16_t port_id)
+{
+    return port_id < 4 ? rusteron_dpdk_fake_tx_unreaped[port_id] : 0;
+}
+
+void rusteron_dpdk_fake_set_tx_cleanup_unsupported(int unsupported)
+{
+    rusteron_dpdk_fake_tx_cleanup_unsupported = unsupported;
+}
+
+void rusteron_dpdk_fake_set_tx_cleanup_error(int rc)
+{
+    rusteron_dpdk_fake_tx_cleanup_error = rc;
+}
+
+void rusteron_dpdk_fake_xstats_reads(int *full, int *by_id)
+{
+    *full = rusteron_dpdk_fake_xstats_full_reads;
+    *by_id = rusteron_dpdk_fake_xstats_id_reads;
+}
+
+uint32_t rusteron_dpdk_fake_xstats_last_ids(uint64_t *ids, uint32_t max)
+{
+    const uint32_t n = rusteron_dpdk_fake_xstats_last_id_count < max ? rusteron_dpdk_fake_xstats_last_id_count : max;
+    memcpy(ids, rusteron_dpdk_fake_xstats_last_id_list, n * sizeof(ids[0]));
+    return rusteron_dpdk_fake_xstats_last_id_count;
 }
 
 void rusteron_dpdk_fake_set_tx_burst_cap(uint16_t n)
@@ -852,7 +913,39 @@ static uint16_t rusteron_dpdk_fake_tx_burst(
         }
         rusteron_dpdk_fake_release_buffer(m);
     }
+    if (port_id < 4)
+    {
+        rusteron_dpdk_fake_tx_unreaped[port_id] += accepted;
+    }
     return accepted;
+}
+
+/* rte_eth_tx_done_cleanup: reap up to `budget` of what the port sent since
+ * its last cleanup (0: all), or -ENOTSUP when the PMD lacks the op. */
+static int rusteron_dpdk_fake_tx_done_cleanup(uint16_t port_id, uint16_t queue_id, uint32_t budget)
+{
+    (void)queue_id;
+    if (port_id >= 4)
+    {
+        return -EINVAL;
+    }
+    rusteron_dpdk_fake_tx_cleanups[port_id]++;
+    rusteron_dpdk_fake_tx_cleanup_budget = budget;
+    if (rusteron_dpdk_fake_tx_cleanup_unsupported)
+    {
+        return -ENOTSUP;
+    }
+    if (0 != rusteron_dpdk_fake_tx_cleanup_error)
+    {
+        return rusteron_dpdk_fake_tx_cleanup_error;
+    }
+    uint32_t n = rusteron_dpdk_fake_tx_unreaped[port_id];
+    if (0 != budget && n > budget)
+    {
+        n = budget;
+    }
+    rusteron_dpdk_fake_tx_unreaped[port_id] -= n;
+    return (int)n;
 }
 
 int rusteron_dpdk_fake_rx_inject_hw_ts(
@@ -990,9 +1083,30 @@ static int rusteron_dpdk_fake_xstats_get(uint16_t port_id, uint64_t *values, uin
     {
         return -1;
     }
+    rusteron_dpdk_fake_xstats_full_reads++;
     for (uint32_t i = 0; i < count; i++)
     {
         values[i] = rusteron_dpdk_fake_xstat_values[i];
+    }
+    return 0;
+}
+
+static int rusteron_dpdk_fake_xstats_get_by_id(uint16_t port_id, const uint64_t *ids, uint64_t *values, uint32_t count)
+{
+    (void)port_id;
+    rusteron_dpdk_fake_xstats_id_reads++;
+    rusteron_dpdk_fake_xstats_last_id_count = count;
+    for (uint32_t i = 0; i < count; i++)
+    {
+        if (ids[i] >= rusteron_dpdk_fake_xstat_count)
+        {
+            return -1;
+        }
+        if (i < RUSTERON_DPDK_FAKE_XSTAT_MAX)
+        {
+            rusteron_dpdk_fake_xstats_last_id_list[i] = ids[i];
+        }
+        values[i] = rusteron_dpdk_fake_xstat_values[ids[i]];
     }
     return 0;
 }
@@ -1030,6 +1144,8 @@ rusteron_dpdk_port_ops_t *rusteron_dpdk_port_ops_real(void)
         .xstats_count = rusteron_dpdk_fake_xstats_count,
         .xstats_names = rusteron_dpdk_fake_xstats_names,
         .xstats_get = rusteron_dpdk_fake_xstats_get,
+        .xstats_get_by_id = rusteron_dpdk_fake_xstats_get_by_id,
+        .tx_done_cleanup = rusteron_dpdk_fake_tx_done_cleanup,
         .mempool_avail = rusteron_dpdk_fake_mempool_avail,
         .basic_stats = rusteron_dpdk_fake_basic_stats,
         .timer_service = rusteron_dpdk_fake_timer_service,

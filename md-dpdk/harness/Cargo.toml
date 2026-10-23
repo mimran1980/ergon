@@ -27,6 +27,12 @@ path = "src/bin/load.rs"
 name = "tput"
 path = "src/bin/tput.rs"
 
+# The raw floor: rtt's round trip with no Aeron, over kernel UDP or the DPDK
+# transport's bindings alone (the lab's kernel-raw and dpdk-raw modes).
+[[bin]]
+name = "floor"
+path = "src/bin/floor.rs"
+
 [[bin]]
 name = "clockcheck"
 path = "src/bin/clockcheck.rs"

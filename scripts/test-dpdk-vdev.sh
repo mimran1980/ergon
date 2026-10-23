@@ -4,8 +4,9 @@
 # Runs the dpdk-harness scenarios over DPDK tap devices on a Linux bridge,
 # exercising DPDK-to-DPDK, DPDK-to-default-UDP in both directions, reconnect,
 # multiple endpoints, loss recovery, restart cleanup, ICMP echo, a peer whose
-# MAC moves mid-stream, a gateway that never answers ARP and the largest MTU
-# the port takes. The new scenarios assert on the reports' counters and
+# MAC moves mid-stream, a gateway that never answers ARP, the largest MTU
+# the port takes, and the lab's raw floor client (floor: the transport's
+# bindings with no Aeron driver or client) round tripping. The new scenarios assert on the reports' counters and
 # logs only.
 #
 # This requires a Linux x86_64 or aarch64 host and:
@@ -62,7 +63,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-ALL_SCENARIOS="bidirectional_unicast dpdk_to_udp udp_to_dpdk reconnect multi_endpoint loss_recovery restart icmp_ping peer_mac_move silent_gateway largest_mtu"
+ALL_SCENARIOS="bidirectional_unicast dpdk_to_udp udp_to_dpdk reconnect multi_endpoint loss_recovery restart icmp_ping peer_mac_move silent_gateway largest_mtu raw_floor"
 # RUSTERON_VDEV_NO_HUGE=1: EAL without hugepages (--no-huge, this much memory
 # in MiB, no PCI scan), for an unprivileged run (test-dpdk-vdev-rootless.sh).
 NO_HUGE="${RUSTERON_VDEV_NO_HUGE:-0}"
@@ -822,6 +823,100 @@ RUSTERON_HARNESS_PAYLOAD=$((mtu - 32 - 16))"
     log "scenario largest_mtu PASSED"
 }
 
+# The lab's raw floor (md-dpdk/harness/src/bin/floor.rs, its dpdk-raw mode):
+# ergon-md-dpdk's bindings driven directly, no Aeron driver or client. The
+# secondary pongs (10.9.0.4 in, 10.9.0.2 out), the primary pings (10.9.0.3
+# in, 10.9.0.1 out), each on one thread pinned off the EAL main lcore's core.
+# Asserted on what the lab reads: the ping's one rtt line (every round trip
+# measured, none lost), its histogram, its spikes (LOAD_SPIKE_NS=1: every
+# round trip one), both loop-stall files, and the pong ending on SIGTERM.
+scenario_raw_floor() {
+    local scenario=raw_floor out=$WORK_DIR/raw_floor
+    local floor=${RUSTERON_FLOOR_BIN:-$(dirname "$HARNESS_BIN")/floor}
+    [[ -x $floor ]] || die "$scenario: no floor client at $floor (cargo build -p ergon-md-dpdk-harness --features dpdk builds it; RUSTERON_FLOOR_BIN names another)"
+    rm -rf "$out"; mkdir -p "$out"
+    local penv=$WORK_DIR/$scenario-p.env senv=$WORK_DIR/$scenario-s.env
+    { dpdk_env primary
+      echo "LABEL=$scenario"
+      echo "RTT_SECONDS=30"
+      # the tap PMD loses nothing: a stall of the emulated host is not a loss
+      echo "RTT_LOST_TIMEOUT_US=10000000"
+      echo "RTT_HISTOGRAM=$out/histogram.csv"
+      echo "LOAD_SPIKES=$out/spikes.csv"
+      echo "LOAD_SPIKE_NS=1"
+      echo "LOOP_STALLS_DIR=$out"
+      echo "RUSTERON_HARNESS_START_FILE=$(start_file primary)"; } > "$penv"
+    { dpdk_env secondary
+      echo "LOOP_STALLS_DIR=$out"
+      echo "RUSTERON_HARNESS_START_FILE=$(start_file secondary)"; } > "$senv"
+    local ping_ep=10.9.0.4:40130 pong_ep=10.9.0.3:40131 vars
+    rm -f "$(start_file primary)" "$(start_file secondary)"
+
+    local before; before=$(snapshot_taps)
+    mapfile -t vars < "$senv"
+    env "${vars[@]}" "$floor" xpong "$ping_ep" "$pong_ep" "$PLAN_RECEIVER_CPU" \
+        >"$WORK_DIR/$scenario-pong.out" 2>"$WORK_DIR/$scenario-pong.log" &
+    local pong_pid=$!
+    local taps; taps=$(discover_taps "$before" "$pong_pid" 2) || die "$scenario: the pong's taps did not appear"
+    taps=( $taps )
+    attach_tap "${taps[0]}" 10.9.0.2
+    attach_tap "${taps[1]}" 10.9.0.4
+
+    before=$(snapshot_taps)
+    mapfile -t vars < "$penv"
+    env "${vars[@]}" "$floor" xping "$ping_ep" "$pong_ep" "$MSGS" 100 "$PLAN_SENDER_CPU" \
+        >"$WORK_DIR/$scenario-ping.out" 2>"$WORK_DIR/$scenario-ping.log" &
+    local ping_pid=$!
+    taps=$(discover_taps "$before" "$ping_pid" 2) || die "$scenario: the ping's taps did not appear"
+    taps=( $taps )
+    attach_tap "${taps[0]}" 10.9.0.1
+    attach_tap "${taps[1]}" 10.9.0.3
+
+    local deadline=$((SECONDS + 120)) rc=0
+    while kill -0 "$ping_pid" 2>/dev/null && ((SECONDS < deadline)); do sleep 0.5; done
+    kill -0 "$ping_pid" 2>/dev/null && die "$scenario: the ping still running after 120 s"
+    wait "$ping_pid" || rc=$?
+    kill -TERM "$pong_pid" 2>/dev/null || true
+    local prc=0
+    wait "$pong_pid" || prc=$?
+    ((rc == 0)) || die "$scenario: the ping failed ($rc)"
+    ((prc == 0)) || die "$scenario: the pong failed ($prc)"
+    grep -q "^floor: ergon-md-dpdk's packet path, no Aeron driver or client" "$WORK_DIR/$scenario-ping.log" ||
+        die "$scenario: the ping did not run on the DPDK wire"
+    grep -q '^floor: pong ended: SIGTERM$' "$WORK_DIR/$scenario-pong.log" || die "$scenario: the pong did not say it ended on SIGTERM"
+
+    # rtt,<label>,udp,p50,p90,p99,p99.9,p99.99,max,mean,samples,lost: one line
+    local line fields
+    line=$(cat "$WORK_DIR/$scenario-ping.out")
+    log "assert $scenario: $line"
+    [[ $(wc -l <"$WORK_DIR/$scenario-ping.out") -eq 1 && $line == "rtt,$scenario,udp,"* ]] ||
+        die "$scenario: not one rtt line on stdout: $line"
+    IFS=, read -ra fields <<<"$line"
+    ((${#fields[@]} == 12)) || die "$scenario: ${#fields[@]} fields, not 12: $line"
+    [[ ${fields[10]} == "$MSGS" && ${fields[11]} == 0 ]] ||
+        die "$scenario: ${fields[10]} round trips and ${fields[11]} lost, want $MSGS and 0"
+    ((fields[3] > 0 && fields[3] <= fields[8])) || die "$scenario: p50 ${fields[3]} and max ${fields[8]}"
+    local counted
+    counted=$(awk -F, 'NR > 1 {n += $2} END {print n + 0}' "$out/histogram.csv")
+    [[ $(head -1 "$out/histogram.csv") == value_ns,count && $counted == "$MSGS" ]] ||
+        die "$scenario: the histogram holds $counted round trips, want $MSGS"
+    grep -qx "# spikes_total=$MSGS" "$out/spikes.csv" || die "$scenario: spikes_total is not $MSGS"
+    [[ $(grep -v '^#' "$out/spikes.csv" | head -1) == stream,due_ns,latency_ns,ping ]] ||
+        die "$scenario: the spikes file's header"
+    [[ $(grep -c '^1002,' "$out/spikes.csv") == "$MSGS" ]] || die "$scenario: not $MSGS spike rows"
+    local f
+    for f in stalls-ping.csv stalls-pong.csv; do
+        grep -q '^# start_realtime_ns=' "$out/$f" && grep -qx 'end_ns,gap_ns' "$out/$f" ||
+            die "$scenario: $f missing or malformed"
+    done
+
+    local linger; linger=$(snapshot_taps)
+    for t in $linger; do
+        ip link del "$t" 2>/dev/null || true
+    done
+    log "scenario $scenario PASSED"
+}
+
 # ---------------------------------------------------------------------------
 # Cleanup + main
 # ---------------------------------------------------------------------------
@@ -829,6 +924,7 @@ RUSTERON_HARNESS_PAYLOAD=$((mtu - 32 - 16))"
 cleanup() {
     [[ -n "${CLEANUP_ON_EXIT:-}" ]] || return 0
     pkill -f 'dpdk-harness' 2>/dev/null || true
+    pkill -x floor 2>/dev/null || true
     sleep 1
     ip link del "$BRIDGE" 2>/dev/null || true
     for t in $(snapshot_taps); do
@@ -875,6 +971,7 @@ run_one_scenario() {
         peer_mac_move)        scenario_peer_mac_move ;;
         silent_gateway)       scenario_silent_gateway ;;
         largest_mtu)          scenario_largest_mtu ;;
+        raw_floor)            scenario_raw_floor ;;
         *) die "unknown scenario $1" ;;
     esac
 }

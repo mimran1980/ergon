@@ -507,6 +507,24 @@ static int rusteron_dpdk_port_xstats_get(uint16_t port_id, uint64_t *values, uin
     return 0;
 }
 
+/* The xstats `ids` asks for. With only driver ids asked, ethdev calls the
+ * PMD's xstats_get_by_id directly, which on ENA reads its software queue
+ * stats without an admin command. */
+static int rusteron_dpdk_port_xstats_get_by_id(uint16_t port_id, const uint64_t *ids, uint64_t *values, uint32_t count)
+{
+    if (0 == count)
+    {
+        return 0;
+    }
+    const int got = rte_eth_xstats_get_by_id(port_id, ids, values, count);
+    return got == (int)count ? 0 : -1;
+}
+
+static int rusteron_dpdk_port_tx_done_cleanup(uint16_t port_id, uint16_t queue_id, uint32_t budget)
+{
+    return rte_eth_tx_done_cleanup(port_id, queue_id, budget);
+}
+
 static uint32_t rusteron_dpdk_port_mempool_avail(void *mempool)
 {
     return rte_mempool_avail_count(mempool);
@@ -639,6 +657,8 @@ rusteron_dpdk_port_ops_t *rusteron_dpdk_port_ops_real(void)
         .xstats_count = rusteron_dpdk_port_xstats_count,
         .xstats_names = rusteron_dpdk_port_xstats_names,
         .xstats_get = rusteron_dpdk_port_xstats_get,
+        .xstats_get_by_id = rusteron_dpdk_port_xstats_get_by_id,
+        .tx_done_cleanup = rusteron_dpdk_port_tx_done_cleanup,
         .mempool_avail = rusteron_dpdk_port_mempool_avail,
         .basic_stats = rusteron_dpdk_port_basic_stats,
         .timer_service = rusteron_dpdk_port_timer_service,

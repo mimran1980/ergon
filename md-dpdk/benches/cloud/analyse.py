@@ -65,11 +65,12 @@ from types import SimpleNamespace
 
 from spikes import agent_gaps, open_spikes, pmd_bursts, spike_files
 
-ORDER = ["kernel", "kernel-mono", "kernel-busy", "kernel-busy-mono", "dpdk", "dpdk-mono", "dpdk+idle",
-         "dpdk-spin", "dpdk-spin+idle", "dpdk-adaptive+idle", "local-kernel", "local-dpdk",
-         "local-dpdk-adaptive", "local-dpdk-spin"]
-# isolated-poll: isolated, with idle CPUs polling (lib.sh run_bench)
-STATES = ["", "pinned", "isolated", "isolated-poll"]
+ORDER = ["kernel", "kernel-mono", "kernel-busy", "kernel-busy-mono", "kernel-raw", "kernel-raw-mono", "dpdk",
+         "dpdk-mono", "dpdk+idle", "dpdk-spin", "dpdk-spin+idle", "dpdk-adaptive+idle", "dpdk-raw", "dpdk-raw-mono",
+         "local-kernel", "local-dpdk", "local-dpdk-adaptive", "local-dpdk-spin"]
+# isolated-poll: isolated, with idle CPUs polling; -nodiag: the state without
+# the diagnostics (lib.sh run_bench)
+STATES = ["", "pinned", "pinned-nodiag", "isolated", "isolated-nodiag", "isolated-poll", "isolated-poll-nodiag"]
 NAMES = {
     "kernel": "kernel UDP",
     "kernel-busy": "kernel UDP, busy polling",
@@ -84,6 +85,9 @@ NAMES = {
     "local-dpdk-adaptive": "localhost, DPDK driver, adaptive local-I/O",
     "local-dpdk-epoll": "localhost, DPDK driver, epoll local-I/O",
     "dpdk-adaptive+idle": "DPDK, idle localhost subscription, adaptive local-I/O",
+    # the raw floor (modes.sh mode_raw): the floor client, rtt's round trip with no Aeron
+    "kernel-raw": "kernel UDP, no Aeron (raw floor)",
+    "dpdk-raw": "DPDK packet path, no Aeron (raw floor)",
 }
 # a -mono mode: the transport and the clients clock with CLOCK_MONOTONIC, not TSC
 NAMES.update({f"{m}-mono": f"{n}, monotonic clock" for m, n in list(NAMES.items())})
@@ -488,6 +492,7 @@ def main():
               + ", ".join(f"{name(m)} {min(v):,}–{max(v):,} of {min(samples[m]) + min(v):,}" for m, v in lost_rtt.items()) + ".\n")
 
     above_network(r, modes)
+    above_floor(r, modes)
 
     print("## UDP throughput, 32-byte messages (M msgs/s)\n")
     def dropped(m):
@@ -822,6 +827,49 @@ def above_network(r, modes):
           "minimum, per rep: the median across reps, the range in brackets; what the transport, the driver and the "
           "clients add over the wire's own round trip, whatever the distance.\n")
     print(table(["state, transport", "network min/avg/max", "reps", "p50", "p99", "p99.99", "max"], rows) + "\n")
+
+
+def floor_of(mode):
+    """The raw floor a cross-host Aeron mode's transport has (kernel-raw for
+    the kernel's, dpdk-raw for DPDK's, -mono for -mono), or None: a floor
+    mode itself, or a localhost one."""
+    transport = mode.split("@")[0].removesuffix("+idle")
+    mono = "-mono" if transport.endswith("-mono") else ""
+    transport = transport.removesuffix("-mono")
+    if transport.endswith("-raw") or mode.startswith("local-"):
+        return None
+    if transport.startswith("kernel"):
+        return f"kernel-raw{mono}"
+    return f"dpdk-raw{mono}" if transport.startswith("dpdk") else None
+
+
+def above_floor(r, modes):
+    """Each cross-host Aeron mode's round trip less its transport's raw floor
+    (the floor client, no Aeron) in the same state, rep by rep where both ran:
+    what Aeron's driver and client add over the NIC, PMD or kernel, host and
+    fabric beneath them."""
+    rows = []
+    for m in modes:
+        state, _, mode = m.rpartition(":")
+        floor = floor_of(mode)
+        base = f"{state}:{floor}" if state else floor
+        if floor is None or not r.rtt.get(m) or not r.rtt.get(base):
+            continue
+        reps = sorted({rep for (label, rep) in r.rtt_rep if label == m} &
+                      {rep for (label, rep) in r.rtt_rep if label == base}, key=rep_key)
+        if not reps:
+            continue
+        diff = lambda i: cell([r.rtt_rep[(m, rep)][i] - r.rtt_rep[(base, rep)][i] for rep in reps], 1000, 2)
+        rows.append([name(m), mode_name(floor), str(len(reps))] + [diff(i) for i in (0, 2, 4, 5)])
+    if not rows:
+        return
+    print("## UDP round trip above the raw floor (µs)\n")
+    print("The raw floor is the floor client's round trip in the same state (md-dpdk/harness/src/bin/floor.rs: rtt's "
+          "pacing, warm-up, clock, CPUs and 64-byte datagrams, with no Aeron driver or client: kernel UDP sockets "
+          "for the kernel's modes, the DPDK transport's bindings alone for DPDK's). Each Aeron mode's round trip less "
+          "its floor's, rep by rep where both ran: the median across reps, the range in brackets; what Aeron's "
+          "driver and client add. A max no higher than the floor's lies beneath Aeron.\n")
+    print(table(["state, transport", "floor", "reps", "p50", "p99", "p99.99", "max"], rows) + "\n")
 
 
 def one_flow(r, m, size, rep):

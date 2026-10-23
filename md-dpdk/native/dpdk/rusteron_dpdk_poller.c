@@ -628,6 +628,40 @@ static __attribute__((cold, noinline)) void rusteron_dpdk_poller_controls(
     }
 }
 
+/* RUSTERON_DPDK_TX_IDLE_CLEAN: on a poll that received nothing, reclaim up
+ * to the budget of what the NIC sent, once the last data send is old enough
+ * for its completions to be posted, so the PMD does not do it inside a later
+ * send (ENA: every completed descriptor, once fewer than its free threshold
+ * are left). The agent owns the port's TX queue, as it does its sends. A
+ * PMD found to lack the op at start never gets here; one that answers
+ * -ENOTSUP later turns it off. Called only with sends unreaped and the last
+ * one old enough (checked inline at its one call), so
+ * an idle poll with nothing outstanding makes no call. */
+static __attribute__((cold, noinline)) void rusteron_dpdk_tx_idle_clean(
+    const rusteron_dpdk_port_ops_t *ops, rusteron_dpdk_port_t *port)
+{
+    const int rc = ops->tx_done_cleanup(port->port_id, port->tx_queue_id, port->tx_idle_clean);
+    if (rc < 0)
+    {
+        if (-ENOTSUP == rc)
+        {
+            port->tx_idle_clean = 0;
+        }
+        /* Any other error: no retry on every idle poll; the PMD reclaims
+         * these in a later tx_burst, and the next send arms it again. */
+        port->tx_unreaped = 0;
+        return;
+    }
+    const uint32_t cleaned = (uint32_t)rc;
+    /* Fewer than the budget: none completed is left (any still in flight
+     * is reclaimed by the PMD's next send, as without this). */
+    port->tx_unreaped = cleaned >= port->tx_idle_clean && port->tx_unreaped > cleaned ? port->tx_unreaped - cleaned : 0;
+    if (0 != cleaned)
+    {
+        rusteron_dpdk_counters_add(&port->counters, RD_COUNTER_TX_IDLE_CLEANED, (int64_t)cleaned);
+    }
+}
+
 int rusteron_dpdk_poller_receive(
     rusteron_dpdk_client_t *client,
     aeron_udp_channel_transport_t *only_transport,
@@ -656,8 +690,9 @@ int rusteron_dpdk_poller_receive(
     rusteron_dpdk_transport_t *native = client->runtime;
     rusteron_dpdk_port_t *port = client->port;
     const rusteron_dpdk_port_ops_t *ops = native->ops;
-    /* RUSTERON_DPDK_GAP_ATTRIB=1: time each burst that returns frames (two
-     * clock reads) and split the loop gap (the thread CPU clock). */
+    /* RUSTERON_DPDK_GAP_ATTRIB=1 or burst: time each burst that returns
+     * frames (two clock reads); 1 also splits the loop gap (the thread CPU
+     * clock). */
     const int attrib = rusteron_dpdk_gap_attrib_on();
 
     /* Up to the configured burst size a burst, whatever Aeron's vlen: every
@@ -865,7 +900,7 @@ int rusteron_dpdk_poller_receive(
     /* The agent's own loop: any gap since the port's last poll of 20 µs or
      * more is the agent not running (preempted, or its vCPU descheduled), so
      * a latency spike can be matched to it. The clock is read here anyway. */
-    const uint64_t now_cpu_ns = attrib ? rusteron_dpdk_thread_cpu_ns() : 0;
+    const uint64_t now_cpu_ns = rusteron_dpdk_gap_cpu_on() ? rusteron_dpdk_thread_cpu_ns() : 0;
     rusteron_dpdk_poll_cycle(port, now_ns, now_cpu_ns);
     if (total > 0 && 0 != port->last_poll_ns)
     {
@@ -879,6 +914,11 @@ int rusteron_dpdk_poller_receive(
     if (full)
     {
         rusteron_dpdk_counters_add(&port->counters, RD_COUNTER_RX_BURST_FULL, 1);
+    }
+    if (__builtin_expect(0 != port->tx_idle_clean, 0) && 0 == total && 0 != port->tx_unreaped &&
+        now_ns - port->last_tx_ns >= RUSTERON_DPDK_TX_IDLE_CLEAN_AGE_NS)
+    {
+        rusteron_dpdk_tx_idle_clean(ops, port);
     }
     port->last_poll_ns = now_ns;
     port->last_poll_cpu_ns = now_cpu_ns;
@@ -1184,7 +1224,7 @@ int rusteron_dpdk_poller_poll(
         if (NULL != first && NULL != first->port)
         {
             const uint64_t now = rusteron_dpdk_clock_now();
-            const uint64_t now_cpu = rusteron_dpdk_gap_attrib_on() ? rusteron_dpdk_thread_cpu_ns() : 0;
+            const uint64_t now_cpu = rusteron_dpdk_gap_cpu_on() ? rusteron_dpdk_thread_cpu_ns() : 0;
             rusteron_dpdk_poll_cycle(first->port, now, now_cpu);
             first->port->last_poll_ns = now;
             first->port->last_poll_cpu_ns = now_cpu;

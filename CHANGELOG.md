@@ -88,6 +88,39 @@
 - `ergon-md-dpdk`: `nic-link-changes` (type 79) counts link-status changes
   where the NIC raises them (`RTE_ETH_DEV_INTR_LSC`); `port-info` says
   `lsc=off` otherwise.
+- `ergon-md-dpdk`: `RUSTERON_DPDK_GAP_ATTRIB=burst` times the PMD's
+  `rx_burst` and `tx_burst` calls without the work/descheduling split. `1`
+  also reads the thread CPU clock on every poll, a system call with no vDSO
+  path (about 270 ns a poll in the fake-port bench); a latency run should use
+  `burst`.
+- `ergon-md-dpdk`: `RUSTERON_DPDK_TX_IDLE_CLEAN=<1..1024>` (off by default).
+  On a poll that received nothing, the agent reclaims up to that many sent
+  descriptors (`rte_eth_tx_done_cleanup`) once the last send is 5 µs old, so
+  the PMD rarely reaches its free threshold inside a send. An idle poll with
+  nothing outstanding makes no call. New counter `tx-idle-cleaned` (type 87);
+  `port-info` shows `tx-idle-clean=<n>`, or `tx-idle-clean=unsupported` where
+  the PMD lacks the op (found at start, left off and logged). Latency effect
+  not measured.
+- `ergon-md-dpdk`: `RUSTERON_DPDK_NIC_SLOW_STATS_MS` (unset by default: no
+  change) splits the NIC statistics reads. Every `RUSTERON_DPDK_NIC_STATS_MS`
+  only the PMD's software xstats are read, by id (on ENA the queue stats,
+  `wd_expired`, `dev_start`, `dev_stop` and `tx_drops`, with no admin
+  command); the basic drop counters and every xstat (ENI allowances, SRD) are
+  read every `NIC_SLOW_STATS_MS`, `0` meaning never. Latency effect not
+  measured.
+- Cloud lab: raw floor modes `kernel-raw` and `dpdk-raw`. The new `floor`
+  client does `rtt`'s round trip with no Aeron, over kernel UDP or the DPDK
+  transport's bindings alone, with the same output files; `analyse.py`
+  reports each Aeron mode above its floor. Under precision-time, `rtt` splits
+  each spike one way by both hosts' NIC receive timestamps (`RTT_ONE_WAY`),
+  and `spikes.py` prints the split. `LAB_STATES` accepts a `-nodiag` suffix
+  (no tracepoints, kprobes, KNOISE or gapspin). A mode's
+  `@RUSTERON_DPDK_ENA_DEVARGS` joins several device arguments with `+`.
+  `estimate.py` prices `c8g.2xlarge`. Each run records the DPDK build
+  (`dpdk-build`), and the jitter snapshots record `sw-checksum-verified` and
+  `tx-idle-cleaned`.
+- `ergon-md-dpdk` bench: `clock.rs` overhead adds a `poll_idle` path and
+  per-call p99.99 and max.
 - `ergon-md-dpdk`: `ConfiguredDriver::from_env` asks each port's gateway for
   its MAC before the agents start (up to 1 s). A silent gateway is a warning
   line; `ERGON_HOST_CHECKS=require` refuses to start on it.
@@ -228,6 +261,14 @@
 - `ergon-md-dpdk`: an ARP refresh request goes out after the data frames of
   the send that found it due, and ARP/ICMP replies after a receive burst's
   data frames, never before them.
+- `ergon-md-dpdk`: counters that only their port's agent writes are bumped
+  with a relaxed load and a release store instead of an atomic add (about
+  −3.5 ns per send and −8 ns per poll in the arm64 fake-port bench).
+  `tests/dpdk_counter_writers.rs` derives each counter's writer threads from
+  the native sources and fails unless the shared kinds are listed.
+- `ergon-md-dpdk`: the `tx bytes` counter (type 83) counted the caller's
+  running total instead of each send's bytes, over-counting on Aeron's
+  multi-destination path. Fixed.
 - `ergon-md-dpdk`: a SETUP whose MTU exceeds ours and an ICMP
   fragmentation-needed are formatted and recorded by housekeeping (a stderr
   line; one distinct-error-log entry per kind), not on the receiver agent.

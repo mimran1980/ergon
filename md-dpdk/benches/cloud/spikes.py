@@ -43,6 +43,12 @@ circularly by a random offset within the run (its round trips' sum, from the
 histogram), 1,000 times with a fixed seed, how many overlap then; p is the
 share of shifts overlapping at least as many.
 
+Under precision-time, each rep's largest round trips split one way first
+(oneway-<state>-<mode>-<rep>.csv, rtt's RTT_ONE_WAY: both hosts' NIC
+receive timestamps, the clocks on the PTP hardware clock): out (sent to the
+pong's NIC), back (the pong's NIC to the ping's) and the ping's host (its NIC
+to the echo's arrival), so a spike is placed on one direction or one host.
+
 The match across hosts is on their wall clocks: where chrony's tracking was
 logged around each mode (vm.sh timesync, <host>-timesync-*.log), a note gives
 each host's largest offset from its source and that source's own bound
@@ -62,7 +68,7 @@ import sys
 # network agent ("[sender, receiver]", which the kernel cuts to 15 characters),
 # SHARED's one agent (the media driver's main thread; under the other modes the
 # conductor, on the untraced housekeeping CPU) and the clients
-BUSY = re.compile(r"^(sender|receiver|\[sender, |\[conductor, |media_driver|rtt|load|tput)")
+BUSY = re.compile(r"^(sender|receiver|\[sender, |\[conductor, |media_driver|rtt|load|tput|floor)")
 EVENT = re.compile(r"\[(\d+)\].*?\s(\d+\.\d+): (\w+): (.*)")
 # a thread name may hold spaces ("[sender, receiv")
 SWITCH = re.compile(r"prev_comm=(.+?) prev_pid=\d+ prev_prio=\d+ prev_state=(\S+) ==> next_comm=(.+?) next_pid=")
@@ -365,7 +371,7 @@ BURSTS = ("rx-burst-max-ns", "rx-bursts-over-1us", "rx-bursts-over-5us",
 
 def pmd_bursts(dirs, run_tag):
     """The PMD burst timing during a round trip run, per host
-    (RUSTERON_DPDK_GAP_ATTRIB=1), in BURSTS order, from the same jitter
+    (RUSTERON_DPDK_GAP_ATTRIB=1 or burst), in BURSTS order, from the same jitter
     snapshots as agent_gaps: each max-ns is the after-snapshot's largest over
     the ports (a lifetime max, not differenced); each over-1us/5us count is
     summed over the ports and differenced against the before-snapshot. None
@@ -448,11 +454,46 @@ def clocks_note(offsets):
             f"{total * 1e6:.1f} µs (the sum).")
 
 
+ONE_WAY_TOP = 10  # a rep's largest round trips split one way
+
+
+def one_way(folder, state):
+    """Each rep's ONE_WAY_TOP largest round trips split one way (rtt's
+    RTT_ONE_WAY files), largest first: µs out, back and on the ping's host."""
+    rows = []
+    for path in sorted(glob.glob(os.path.join(folder, f"oneway-{state}-*.csv"))):
+        stem = os.path.basename(path)[len("oneway-"):].removesuffix(".csv")
+        m = re.match(r"^(.*)-(\d+)$", stem)
+        if not m:
+            continue
+        run, rep = m.group(1), int(m.group(2))
+        trips = []
+        with open(path, newline="") as f:
+            for row in csv.reader(f):
+                if len(row) == 5 and all(v.isdigit() for v in row):
+                    ping, sent, pong_rx, ping_rx, echoed = (int(v) for v in row)
+                    trips.append((echoed - sent, ping, pong_rx - sent, ping_rx - pong_rx, echoed - ping_rx))
+        for rtt, ping, out, back, host in sorted(trips, reverse=True)[:ONE_WAY_TOP]:
+            rows.append((run, rep, -rtt, ping, rtt, out, back, host))
+    if not rows:
+        return
+    print(f"\n## One-way split of the largest round trips, {state}\n")
+    print("Each rep's largest round trips (rtt's RTT_ONE_WAY, the hosts' NIC receive timestamps on CLOCK_REALTIME, "
+          "both on the PTP hardware clock): out is the ping's send to the pong host's NIC, back the pong host's NIC "
+          "to the ping host's (the pong's host and the way back), the ping's host its NIC to the echo's arrival. The "
+          "two hosts' clocks may differ by their sync error (timesync logs), which moves between out and back.\n")
+    print("| run | rep | ping | round trip (µs) | out (µs) | back (µs) | ping's host (µs) |")
+    print("| --- | --- | --- | --- | --- | --- | --- |")
+    for run, rep, _, ping, rtt, out, back, host in sorted(rows):
+        print(f"| {run} | {rep} | {ping} | {rtt / 1e3:.1f} | {out / 1e3:.1f} | {back / 1e3:.1f} | {host / 1e3:.1f} |")
+
+
 def main():
     folder = sys.argv[1]
     threshold = float(sys.argv[2]) if len(sys.argv) > 2 else 200.0
     state = os.path.basename(os.path.normpath(folder))
     run_dir = os.path.dirname(os.path.normpath(folder))
+    one_way(folder, state)
     diag, blind, knoise = {}, {}, {}
     for host in "ab":
         for path in (os.path.join(run_dir, f"{host}-diag-{state}.log"), os.path.join(folder, f"{host}-diag-{state}.log")):

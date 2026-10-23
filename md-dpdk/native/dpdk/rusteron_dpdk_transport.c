@@ -1085,19 +1085,23 @@ static int rusteron_dpdk_transport_send_local(
     return rc;
 }
 
-/* One tx_burst; with RUSTERON_DPDK_GAP_ATTRIB=1 timed (two clock reads):
- * ENA reclaims sent descriptors inside the call once fewer than its free
- * threshold are left, ahead of the frames given it. */
+/* One tx_burst; with RUSTERON_DPDK_GAP_ATTRIB=1 or burst timed (two clock
+ * reads): ENA reclaims sent descriptors inside the call once fewer than its
+ * free threshold are left, ahead of the frames given it. */
 static inline uint16_t rusteron_dpdk_tx_burst(
     const rusteron_dpdk_port_ops_t *ops, rusteron_dpdk_port_t *port, rusteron_dpdk_mbuf_t **pkts, uint16_t nb)
 {
+    uint16_t sent;
     if (!rusteron_dpdk_gap_attrib_on())
     {
-        return ops->tx_burst(port->port_id, port->tx_queue_id, pkts, nb);
+        sent = ops->tx_burst(port->port_id, port->tx_queue_id, pkts, nb);
     }
-    const uint64_t start_ns = rusteron_dpdk_clock_now();
-    const uint16_t sent = ops->tx_burst(port->port_id, port->tx_queue_id, pkts, nb);
-    rusteron_dpdk_counters_burst(&port->counters, RD_COUNTER_TX_BURST_MAX, rusteron_dpdk_clock_now() - start_ns);
+    else
+    {
+        const uint64_t start_ns = rusteron_dpdk_clock_now();
+        sent = ops->tx_burst(port->port_id, port->tx_queue_id, pkts, nb);
+        rusteron_dpdk_counters_burst(&port->counters, RD_COUNTER_TX_BURST_MAX, rusteron_dpdk_clock_now() - start_ns);
+    }
     return sent;
 }
 
@@ -1394,6 +1398,14 @@ static inline __attribute__((always_inline)) int rusteron_dpdk_transport_send_re
     }
     /* Sent or queued: either way Aeron's to forget. */
     const size_t sent = built;
+    /* Idle TX cleanup: the data frames the NIC took, for the agent's idle
+     * poll to reclaim once their completions are posted (ARP and ICMP
+     * replies, and frames sent off the queue, are left to the PMD). */
+    if (__builtin_expect(0 != port->tx_idle_clean, 0) && 0 != accepted)
+    {
+        port->tx_unreaped += (uint32_t)accepted;
+        port->last_tx_ns = now_ns;
+    }
 
     /* Frames charged to the allowances above but neither sent nor queued
      * (no mbufs, an oversized datagram and those after it): refund them, as
@@ -1415,13 +1427,17 @@ static inline __attribute__((always_inline)) int rusteron_dpdk_transport_send_re
         }
     }
 
-    /* bytes_sent accrues for the datagrams sent or queued (plan §7.4). */
+    /* bytes_sent accrues for the datagrams sent or queued (plan §7.4). The
+     * counter takes this send's bytes alone: Aeron's multi-destination path
+     * presets *bytes_sent and sends to each destination on the same total. */
+    int64_t sent_bytes = 0;
     for (size_t i = 0; i < sent; i++)
     {
-        *bytes_sent += iov[i].iov_len;
+        sent_bytes += (int64_t)iov[i].iov_len;
     }
+    *bytes_sent += sent_bytes;
     rusteron_dpdk_counters_add(counters, RD_COUNTER_TX_PKTS, (int64_t)sent);
-    rusteron_dpdk_counters_add(counters, RD_COUNTER_TX_BYTES, *bytes_sent);
+    rusteron_dpdk_counters_add(counters, RD_COUNTER_TX_BYTES, sent_bytes);
 
     if (oversized)
     {

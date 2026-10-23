@@ -283,6 +283,35 @@ fn tx_pkts_and_bytes_monotonic_and_attributed() {
     assert_no_leak();
 }
 
+/// tx bytes counts what each send sent, never what the caller's running total
+/// already held. Aeron's multi-destination path presets `*bytes_sent` to the
+/// datagram's length and calls send once per destination on the same pointer
+/// (aeron_udp_destination_tracker.c), so the total it passes in is not this
+/// send's.
+#[test]
+#[serial]
+fn tx_bytes_counts_this_send_not_the_callers_running_total() {
+    let mut h = Harness::new();
+    h.init_tx(SENDER_IP, 40000, None, 1472);
+    h.arp_seed(PEER_IP, PEER_MAC);
+    let payload = [7u8; 32];
+    let mut iov = [iovec {
+        iov_base: payload.as_ptr() as *mut c_void,
+        iov_len: payload.len(),
+    }];
+    // As the destination tracker: preset to the datagram, then one send per
+    // destination on the same running total.
+    let mut bytes_sent = payload.len() as i64;
+    for (n, port) in [(1, 40123), (2, 40124), (3, 40125)] {
+        let mut dst = SockAddrIn::new(PEER_IP, port);
+        assert_eq!(h.send_iov(&mut dst, &mut iov, &mut bytes_sent), 1, "{}", last_error());
+        assert_eq!(h.counter(TYPE_PKTS, "dir=tx"), n, "one datagram a destination");
+        assert_eq!(h.counter(TYPE_BYTES, "dir=tx"), 32 * n, "32 bytes a destination");
+    }
+    assert_eq!(bytes_sent, 32 * 4, "the caller's total still accrues each send");
+    assert_no_leak();
+}
+
 /// Oversized datagrams: the accepted prefix is still counted (pkts/bytes) and
 /// the oversized datagram bumps the error counter.
 #[test]
@@ -925,7 +954,7 @@ fn burst_timing_is_off_without_gap_attrib() {
 #[serial]
 fn burst_timing_reads_the_clock_only_when_on() {
     let mut costs = Vec::new();
-    for attrib in ["0", "1"] {
+    for attrib in ["0", "1", "burst"] {
         let _attrib = EnvGuard::set("RUSTERON_DPDK_GAP_ATTRIB", attrib);
         let mut h = Harness::new();
         h.init_tx(SENDER_IP, 40000, None, 1472);
@@ -948,6 +977,7 @@ fn burst_timing_reads_the_clock_only_when_on() {
     }
     assert_eq!(costs[0], (POLL_CLOCK_READS, SEND_CLOCK_READS), "off: as before");
     assert_eq!(costs[1], (POLL_CLOCK_READS + 2, SEND_CLOCK_READS + 2), "on");
+    assert_eq!(costs[2], costs[1], "burst: the same transport clock reads as 1");
 }
 
 /// The clock reads of a poll that receives one frame (its loop-gap stamp) and
@@ -1116,6 +1146,41 @@ fn each_class_keeps_its_own_longest_gap() {
         200_000,
         "the undivided maximum is still the longest gap of either class"
     );
+    assert_no_leak();
+}
+
+/// RUSTERON_DPDK_GAP_ATTRIB=burst times the PMD bursts as 1 does but never
+/// reads the thread CPU clock (CLOCK_THREAD_CPUTIME_ID has no vDSO path: a
+/// system call every poll), so a run measuring burst times measures the
+/// production loop. The pinned CPU clock below would make the gap work if it
+/// were read.
+#[test]
+#[serial]
+fn burst_only_attribution_times_bursts_without_the_cpu_clock() {
+    const RX: &str = "role=receiver bdf=0000:00:02.0 port=1 q=0 dir=rx";
+    let _attrib = EnvGuard::set("RUSTERON_DPDK_GAP_ATTRIB", "burst");
+    let mut h = Harness::new();
+    h.init_rx(RECEIVER_IP, 60000, 1472);
+    let mut p = h.poller();
+    p.add(&mut *h.rx);
+    let mut bytes = 0i64;
+    let clientd = &mut h.rx_dgrams as *mut Vec<RxDatagram> as *mut c_void;
+    pin_clock_ns(1_000_000);
+    pin_thread_cpu_ns(1_000_000);
+    p.poll(16, clientd, &mut bytes); // the reference
+    pin_clock_ns(1_100_000);
+    pin_thread_cpu_ns(1_100_000);
+    p.poll(16, clientd, &mut bytes);
+    assert_eq!(attrib_read(&h, RX), (0, 0, 0, 0), "no CPU split without the CPU clock");
+    assert_eq!(
+        h.counter(TYPE_POLLER, &format!("{RX} poll-cycle-gap-max-ns")),
+        100_000,
+        "the undivided gap is still counted"
+    );
+    unsafe { rusteron_dpdk_fake_set_burst_ns(6_000, 0) };
+    assert_eq!(inject_and_poll(&mut h, &mut p, &frame_to_receiver(60000, b"x")), 1);
+    assert_eq!(burst_read(&h, RX, "rx"), (6_000, 1, 1), "the burst is timed");
+    drop(p);
     assert_no_leak();
 }
 
@@ -1960,4 +2025,360 @@ fn nic_stats_interval_is_configurable_and_0_turns_it_off() {
         drop(h);
         assert_no_leak();
     }
+}
+
+// ---------------------------------------------------------------------------
+// TX idle cleanup (RUSTERON_DPDK_TX_IDLE_CLEAN)
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    fn rusteron_dpdk_fake_tx_cleanup_calls(port_id: u16) -> c_int;
+    fn rusteron_dpdk_fake_tx_cleanup_last_budget() -> u32;
+    fn rusteron_dpdk_fake_tx_unreaped_count(port_id: u16) -> u32;
+    fn rusteron_dpdk_fake_set_tx_cleanup_unsupported(unsupported: c_int);
+    fn rusteron_dpdk_fake_set_tx_cleanup_error(rc: c_int);
+}
+
+const SENDER_PORT: u16 = 0;
+const TX_DIR: &str = "role=sender bdf=0000:00:01.0 port=0 q=0 dir=tx";
+
+/// A sender with its agent's control poll on the sender port, ARP seeded on
+/// the pinned clock at 1 ms; `unsupported`: its PMD lacks tx_done_cleanup.
+fn idle_clean_sender(unsupported: bool) -> (Harness, Poller) {
+    let env = TestEnv::new();
+    unsafe { rusteron_dpdk_fake_set_tx_cleanup_unsupported(c_int::from(unsupported)) };
+    let mut h = Harness::build_after(env, rusteron_dpdk_config_t::valid());
+    h.init_tx(SENDER_IP, 40000, None, 1472);
+    pin_clock_ns(1_000_000);
+    h.arp_seed(PEER_IP, PEER_MAC);
+    let mut p = h.poller();
+    p.add(&mut *h.tx);
+    (h, p)
+}
+
+/// One poll of the sender port: the frames it received.
+fn sender_poll(h: &mut Harness, p: &mut Poller) -> c_int {
+    let mut bytes = 0i64;
+    let clientd = &mut h.rx_dgrams as *mut Vec<RxDatagram> as *mut c_void;
+    p.poll(16, clientd, &mut bytes)
+}
+
+/// Off by default: an idle poll never reclaims sent descriptors, however long
+/// ago the send was (the PMD does it inside a later tx_burst, as before).
+#[test]
+#[serial]
+fn tx_idle_clean_is_off_by_default() {
+    let (mut h, mut p) = idle_clean_sender(false);
+    let calls = unsafe { rusteron_dpdk_fake_tx_cleanup_calls(SENDER_PORT) };
+    assert_eq!(calls, 0, "no probe at start while off");
+    assert_eq!(
+        h.send_to((PEER_IP, 40123), &[b"a", b"b", b"c"]).0,
+        3,
+        "{}",
+        last_error()
+    );
+    pin_clock_ns(2_000_000);
+    sender_poll(&mut h, &mut p);
+    assert_eq!(unsafe { rusteron_dpdk_fake_tx_cleanup_calls(SENDER_PORT) }, 0);
+    assert_eq!(h.counter(TYPE_POLLER, &format!("{TX_DIR} tx-idle-cleaned")), 0);
+    drop(p);
+    assert_no_leak();
+}
+
+/// With RUSTERON_DPDK_TX_IDLE_CLEAN=<budget> the agent's poll reclaims what
+/// the NIC sent, up to the budget a poll, but only on a poll that received
+/// nothing and once the last send is 5 µs old (its completions posted), and
+/// never with nothing outstanding. tx-idle-cleaned counts what it reclaimed.
+#[test]
+#[serial]
+fn tx_idle_clean_reclaims_on_idle_polls_once_the_send_has_aged() {
+    let _clean = EnvGuard::set("RUSTERON_DPDK_TX_IDLE_CLEAN", "32");
+    let (mut h, mut p) = idle_clean_sender(false);
+    let probe = unsafe { rusteron_dpdk_fake_tx_cleanup_calls(SENDER_PORT) };
+    assert_eq!(probe, 1, "start probes the op once");
+    let calls = || unsafe { rusteron_dpdk_fake_tx_cleanup_calls(SENDER_PORT) } - probe;
+    let cleaned = |h: &Harness| h.counter(TYPE_POLLER, &format!("{TX_DIR} tx-idle-cleaned"));
+
+    assert_eq!(
+        h.send_to((PEER_IP, 40123), &[b"a", b"b", b"c"]).0,
+        3,
+        "{}",
+        last_error()
+    );
+    sender_poll(&mut h, &mut p);
+    assert_eq!(calls(), 0, "the send is not 5 µs old yet");
+    pin_clock_ns(1_004_999);
+    sender_poll(&mut h, &mut p);
+    assert_eq!(calls(), 0, "4.999 µs");
+
+    // A poll that receives frames leaves the ring alone, however old the send.
+    pin_clock_ns(1_005_000);
+    let junk = [0u8; 60]; // ethertype 0: dropped, but received
+    assert_eq!(
+        unsafe { rusteron_dpdk_fake_rx_inject(SENDER_PORT, junk.as_ptr(), junk.len(), RX_GOOD, 1) },
+        0
+    );
+    sender_poll(&mut h, &mut p);
+    assert_eq!(calls(), 0, "not on a poll that received");
+
+    sender_poll(&mut h, &mut p);
+    assert_eq!(calls(), 1, "the next idle poll reclaims");
+    assert_eq!(unsafe { rusteron_dpdk_fake_tx_cleanup_last_budget() }, 32);
+    assert_eq!(unsafe { rusteron_dpdk_fake_tx_unreaped_count(SENDER_PORT) }, 0);
+    assert_eq!(cleaned(&h), 3);
+
+    pin_clock_ns(2_000_000);
+    sender_poll(&mut h, &mut p);
+    assert_eq!(calls(), 1, "nothing outstanding: no call");
+
+    // More than a budget outstanding: a budget a poll until none is left.
+    let payload = [b"x"; 40].map(|x| &x[..]);
+    for chunk in payload.chunks(8) {
+        assert_eq!(h.send_to((PEER_IP, 40123), chunk).0, 8, "{}", last_error());
+    }
+    pin_clock_ns(3_000_000);
+    sender_poll(&mut h, &mut p);
+    assert_eq!(
+        (calls(), unsafe { rusteron_dpdk_fake_tx_unreaped_count(SENDER_PORT) }),
+        (2, 8)
+    );
+    sender_poll(&mut h, &mut p);
+    assert_eq!(
+        (calls(), unsafe { rusteron_dpdk_fake_tx_unreaped_count(SENDER_PORT) }),
+        (3, 0)
+    );
+    sender_poll(&mut h, &mut p);
+    assert_eq!(calls(), 3, "all reclaimed: no call");
+    assert_eq!(cleaned(&h), 43);
+    drop(p);
+    assert_no_leak();
+}
+
+/// A PMD without the op (rte_eth_tx_done_cleanup: -ENOTSUP) is found at
+/// start: idle cleanup is left off on that port, port-info says so, and the
+/// agent never calls it.
+#[test]
+#[serial]
+fn tx_idle_clean_is_left_off_where_the_pmd_lacks_it() {
+    let _clean = EnvGuard::set("RUSTERON_DPDK_TX_IDLE_CLEAN", "32");
+    let (mut h, mut p) = idle_clean_sender(true);
+    let probe = unsafe { rusteron_dpdk_fake_tx_cleanup_calls(SENDER_PORT) };
+    assert_eq!(probe, 1);
+    let (_, _, label) = h.counters.find(TYPE_PORT_INFO, "role=sender").expect("port-info");
+    assert!(label.contains(" tx-idle-clean=unsupported"), "label: {label}");
+    assert_eq!(h.send_to((PEER_IP, 40123), &[b"a"]).0, 1, "{}", last_error());
+    pin_clock_ns(2_000_000);
+    sender_poll(&mut h, &mut p);
+    assert_eq!(
+        unsafe { rusteron_dpdk_fake_tx_cleanup_calls(SENDER_PORT) },
+        probe,
+        "never from the agent"
+    );
+    drop(p);
+    assert_no_leak();
+}
+
+/// A cleanup that fails with an error other than -ENOTSUP drops what the
+/// agent thought outstanding, so idle polls do not call the op again until
+/// the next send (the PMD reclaims those frames in a later tx_burst, as with
+/// idle cleanup off); the knob stays on and the next send's frames are
+/// reclaimed as usual.
+#[test]
+#[serial]
+fn tx_idle_clean_failure_waits_for_the_next_send() {
+    const EIO: c_int = 5;
+    let _clean = EnvGuard::set("RUSTERON_DPDK_TX_IDLE_CLEAN", "32");
+    let (mut h, mut p) = idle_clean_sender(false);
+    let probe = unsafe { rusteron_dpdk_fake_tx_cleanup_calls(SENDER_PORT) };
+    let calls = || unsafe { rusteron_dpdk_fake_tx_cleanup_calls(SENDER_PORT) } - probe;
+    unsafe { rusteron_dpdk_fake_set_tx_cleanup_error(-EIO) };
+    assert_eq!(h.send_to((PEER_IP, 40123), &[b"a", b"b"]).0, 2, "{}", last_error());
+    pin_clock_ns(2_000_000);
+    sender_poll(&mut h, &mut p);
+    assert_eq!(calls(), 1, "the aged send is reclaimed: the op fails");
+    sender_poll(&mut h, &mut p);
+    sender_poll(&mut h, &mut p);
+    assert_eq!(calls(), 1, "no retry on every idle poll after a failure");
+
+    unsafe { rusteron_dpdk_fake_set_tx_cleanup_error(0) };
+    assert_eq!(h.send_to((PEER_IP, 40123), &[b"c"]).0, 1, "{}", last_error());
+    pin_clock_ns(3_000_000);
+    sender_poll(&mut h, &mut p);
+    assert_eq!(calls(), 2, "still on: the next send's frames are reclaimed");
+    assert_eq!(unsafe { rusteron_dpdk_fake_tx_unreaped_count(SENDER_PORT) }, 0);
+    assert_eq!(h.counter(TYPE_POLLER, &format!("{TX_DIR} tx-idle-cleaned")), 3);
+    drop(p);
+    assert_no_leak();
+}
+
+/// port-info names the budget where idle cleanup is on.
+#[test]
+#[serial]
+fn tx_idle_clean_budget_is_in_port_info() {
+    let _clean = EnvGuard::set("RUSTERON_DPDK_TX_IDLE_CLEAN", "64");
+    let (h, p) = idle_clean_sender(false);
+    let (_, _, label) = h.counters.find(TYPE_PORT_INFO, "role=sender").expect("port-info");
+    assert!(label.contains(" tx-idle-clean=64"), "label: {label}");
+    drop(p);
+    assert_no_leak();
+}
+
+// ---------------------------------------------------------------------------
+// NIC statistics split (RUSTERON_DPDK_NIC_SLOW_STATS_MS)
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    fn rusteron_dpdk_fake_xstats_reads(full: *mut c_int, by_id: *mut c_int);
+    fn rusteron_dpdk_fake_xstats_last_ids(ids: *mut u64, max: u32) -> u32;
+}
+
+/// (reads of every xstat, reads by id) since the fake's reset.
+fn xstats_reads() -> (c_int, c_int) {
+    let (mut full, mut by_id) = (0, 0);
+    unsafe { rusteron_dpdk_fake_xstats_reads(&mut full, &mut by_id) };
+    (full, by_id)
+}
+
+fn xstats_last_ids() -> Vec<u64> {
+    let mut ids = [0u64; 64];
+    let n = unsafe { rusteron_dpdk_fake_xstats_last_ids(ids.as_mut_ptr(), 64) };
+    ids[..n as usize].to_vec()
+}
+
+/// An ENA-shaped xstat table: ethdev's basic statistics lead (rte_eth_stats,
+/// an admin command on ENA; their per-queue names look like a PMD's), then
+/// ENA's own: software (wd_expired, tx_drops, the rx_q/tx_q queue stats) and
+/// device ones read by admin command (ENI allowances, SRD).
+const SPLIT_XSTATS: [&str; 9] = [
+    "rx_good_packets",
+    "rx_q0_packets",
+    "rx_q0_errors",
+    "wd_expired",
+    "bw_out_allowance_exceeded",
+    "ena_srd_mode",
+    "rx_q0_cnt",
+    "tx_q0_cnt",
+    "tx_drops",
+];
+/// The software ones, by id.
+const SPLIT_SOFTWARE: [u64; 4] = [3, 6, 7, 8];
+
+/// With RUSTERON_DPDK_NIC_SLOW_STATS_MS set, the reads every
+/// RUSTERON_DPDK_NIC_STATS_MS take only the PMD's software statistics, by id
+/// (no admin command on ENA); the basic statistics and every xstat are read
+/// every RUSTERON_DPDK_NIC_SLOW_STATS_MS instead.
+#[test]
+#[serial]
+fn nic_slow_stats_split_reads_software_xstats_by_id_and_the_rest_slowly() {
+    let _fast = EnvGuard::set("RUSTERON_DPDK_NIC_STATS_MS", "1000");
+    let _slow = EnvGuard::set("RUSTERON_DPDK_NIC_SLOW_STATS_MS", "10000");
+    let mut h = Harness::new();
+    install_xstats(&SPLIT_XSTATS, &[1; 9]);
+    pin_clock_ms(1_000);
+    h.init_rx(RECEIVER_IP, 60000, 1472);
+    let (full0, id0) = xstats_reads();
+    install_xstats(&SPLIT_XSTATS, &[2; 9]);
+    unsafe { rusteron_dpdk_fake_set_basic_stats(5, 6, 7) };
+    let values = |h: &Harness| -> Vec<i64> { SPLIT_XSTATS.iter().map(|n| h.counter(TYPE_EXTENDED_STATS, n)).collect() };
+
+    pin_clock_ms(2_000);
+    unsafe { rusteron_dpdk_test_housekeeping_tick(h.native) };
+    assert_eq!(xstats_reads(), (full0, id0 + 1), "one read by id, none of everything");
+    assert_eq!(xstats_last_ids(), SPLIT_SOFTWARE.to_vec());
+    assert_eq!(
+        values(&h),
+        vec![1, 1, 1, 2, 1, 1, 2, 2, 2],
+        "only the software stats move"
+    );
+    assert_eq!(
+        h.counter(TYPE_MISSED_PACKETS, "nic-rx-errors"),
+        0,
+        "no basic statistics read"
+    );
+
+    pin_clock_ms(10_000);
+    unsafe { rusteron_dpdk_test_housekeeping_tick(h.native) };
+    assert_eq!(
+        h.counter(TYPE_MISSED_PACKETS, "nic-rx-errors"),
+        0,
+        "the slow read is not due"
+    );
+    assert_eq!(xstats_reads(), (full0, id0 + 2), "a second read by id");
+
+    pin_clock_ms(11_000);
+    unsafe { rusteron_dpdk_test_housekeeping_tick(h.native) };
+    assert_eq!(xstats_reads().0, full0 + 1, "the slow read takes every xstat");
+    assert_eq!(values(&h), vec![2; 9]);
+    assert_eq!(
+        h.counter(TYPE_MISSED_PACKETS, "nic-rx-errors"),
+        5,
+        "and the basic statistics"
+    );
+    drop(h);
+    assert_no_leak();
+}
+
+/// Unset, every NIC read is a full one, as before the split: basic
+/// statistics and every xstat, never by id. 0 never reads the slow part.
+#[test]
+#[serial]
+fn nic_slow_stats_unset_reads_everything_and_0_never_reads_the_slow_part() {
+    for slow in [None, Some("0")] {
+        let _fast = EnvGuard::set("RUSTERON_DPDK_NIC_STATS_MS", "1000");
+        let _slow = match slow {
+            Some(v) => EnvGuard::set("RUSTERON_DPDK_NIC_SLOW_STATS_MS", v),
+            None => EnvGuard::unset("RUSTERON_DPDK_NIC_SLOW_STATS_MS"),
+        };
+        let mut h = Harness::new();
+        install_xstats(&SPLIT_XSTATS, &[1; 9]);
+        pin_clock_ms(1_000);
+        h.init_rx(RECEIVER_IP, 60000, 1472);
+        let (full0, id0) = xstats_reads();
+        install_xstats(&SPLIT_XSTATS, &[2; 9]);
+        unsafe { rusteron_dpdk_fake_set_basic_stats(5, 6, 7) };
+        for at in [2_000u64, 3_600_000] {
+            pin_clock_ms(at);
+            unsafe { rusteron_dpdk_test_housekeeping_tick(h.native) };
+        }
+        let errors = h.counter(TYPE_MISSED_PACKETS, "nic-rx-errors");
+        let wd = h.counter(TYPE_EXTENDED_STATS, "wd_expired");
+        let bw = h.counter(TYPE_EXTENDED_STATS, "bw_out_allowance_exceeded");
+        match slow {
+            None => {
+                assert_eq!(xstats_reads(), (full0 + 2, id0), "unset: full reads only");
+                assert_eq!((errors, wd, bw), (5, 2, 2));
+            }
+            Some(_) => {
+                assert_eq!(xstats_reads(), (full0, id0 + 2), "0: by id only");
+                assert_eq!((errors, wd, bw), (0, 2, 1));
+            }
+        }
+        drop(h);
+        assert_no_leak();
+    }
+}
+
+/// Split, RUSTERON_DPDK_NIC_STATS_MS=0 stops only the software reads by id:
+/// the full reads still come every RUSTERON_DPDK_NIC_SLOW_STATS_MS.
+#[test]
+#[serial]
+fn nic_stats_0_once_split_keeps_the_slow_full_reads() {
+    let _fast = EnvGuard::set("RUSTERON_DPDK_NIC_STATS_MS", "0");
+    let _slow = EnvGuard::set("RUSTERON_DPDK_NIC_SLOW_STATS_MS", "1000");
+    let mut h = Harness::new();
+    install_xstats(&SPLIT_XSTATS, &[1; 9]);
+    pin_clock_ms(1_000);
+    h.init_rx(RECEIVER_IP, 60000, 1472);
+    let (full0, id0) = xstats_reads();
+    install_xstats(&SPLIT_XSTATS, &[2; 9]);
+    unsafe { rusteron_dpdk_fake_set_basic_stats(5, 6, 7) };
+    for at in [2_000u64, 3_000] {
+        pin_clock_ms(at);
+        unsafe { rusteron_dpdk_test_housekeeping_tick(h.native) };
+    }
+    assert_eq!(xstats_reads(), (full0 + 2, id0), "full reads only, none by id");
+    assert_eq!(h.counter(TYPE_MISSED_PACKETS, "nic-rx-errors"), 5);
+    assert_eq!(h.counter(TYPE_EXTENDED_STATS, "bw_out_allowance_exceeded"), 2);
+    drop(h);
+    assert_no_leak();
 }

@@ -37,6 +37,18 @@
 //! publication has been not connected for over a second; xping fails, its
 //! pong gone, on the last two. xpong says on stderr why it ended.
 //!
+//! With a receive timestamp in each data frame header's reserved value
+//! (`SUB_CHANNEL_PARAMS=media-rcv-ts-offset=reserved`: under the DPDK
+//! transport's NIC RX timestamps, the NIC's arrival on `CLOCK_REALTIME`),
+//! xpong echoes the ping's in the echo's bytes 16 to 23, and with
+//! `RTT_ONE_WAY=<path>` xping writes there, for each spike (as `LOAD_SPIKES`
+//! counts one), `ping,sent_realtime_ns,pong_rx_realtime_ns,ping_rx_realtime_ns,echoed_realtime_ns`
+//! (the first 100,000, under `# start_realtime_ns=`): when it sent (its clock
+//! taken onto `CLOCK_REALTIME` from the run's start), when the pong's host
+//! and then its own received, and when the echo reached it. Two hosts'
+//! clocks, so the lab's precision-time placement only (both on the PTP
+//! hardware clock); a round trip without both stamps is not written.
+//!
 //! `HARNESS_DRIVER=invoker` embeds the media driver instead (`lab.rs`): the
 //! measuring thread then also runs the client's conductor and the driver,
 //! every pass of its loop. `rtt idle` measures an external driver's agents, so
@@ -45,9 +57,11 @@
 
 #[path = "../lab.rs"]
 mod lab;
+#[path = "../roundtrip.rs"]
+mod roundtrip;
 
-use hdrhistogram::Histogram;
-use lab::{Clock, Duty, External, Halt, Lab, Retry, STOP, cpu_arg, label, pin, sub_channel};
+use lab::{Clock, Duty, External, Halt, Lab, Retry, STOP, cpu_arg, pin, sub_channel};
+use roundtrip::{Results, Stalls, realtime_ns};
 use rusteron_client::*;
 use std::ffi::{CStr, CString};
 use std::hint::spin_loop;
@@ -58,54 +72,70 @@ const PING_STREAM_ID: i32 = 1002;
 const PONG_STREAM_ID: i32 = 1003;
 const MESSAGE_LENGTH: usize = 32;
 const FRAGMENT_COUNT_LIMIT: usize = 10;
-const SPIKE_CAPACITY: usize = 100_000;
-const STALL_CAPACITY: usize = 1_000_000;
+/// Where the pong puts the ping's receive timestamp in its echo: past the
+/// send stamp and the sequence the ping reads.
+const PONG_RX: usize = 16;
+const ONE_WAY_CAPACITY: usize = 100_000;
 
-/// Gaps in the calling loop of at least a threshold, each with when it ended:
-/// time this client did not run. Preallocated, so recording never allocates.
-struct Stalls {
-    threshold: u64, // ns
-    last: u64,
-    t0: u64,
-    t0_realtime: u128,
-    rows: Vec<(u64, u64)>, // (end, gap) in ns
+/// What the ping knows of one echo: its send and echo stamps (the clients'
+/// clock), and the receive timestamps of the ping on the pong's host and of
+/// the echo on its own (`CLOCK_REALTIME` ns, 0 where none).
+struct Echo {
+    sent: u64,
+    echoed: u64,
+    pong_rx: i64,
+    ping_rx: i64,
 }
 
-impl Stalls {
-    /// `None` unless `LOOP_STALLS_DIR` is set.
+/// `RTT_ONE_WAY`: each spike's one-way split, preallocated.
+struct OneWay {
+    path: String,
+    spike_ns: u64,
+    t0: u64,
+    t0_realtime: u128,
+    rows: Vec<(usize, u128, i64, i64, u128)>,
+}
+
+impl OneWay {
+    /// `None` unless `RTT_ONE_WAY` is set; starts the run's clock mapping.
     fn new(clock: &Clock) -> Option<Self> {
-        std::env::var("LOOP_STALLS_DIR").ok().filter(|d| !d.is_empty())?;
-        let threshold: u64 = std::env::var("LOOP_STALL_NS").map_or(20_000, |v| v.parse().expect("LOOP_STALL_NS"));
-        let t0 = clock.now();
+        let path = std::env::var("RTT_ONE_WAY").ok().filter(|p| !p.is_empty())?;
+        let spike_ns: u64 = std::env::var("LOAD_SPIKE_NS").map_or(100_000, |v| v.parse().expect("LOAD_SPIKE_NS"));
         Some(Self {
-            threshold,
-            last: t0,
-            t0,
+            path,
+            spike_ns,
+            t0: clock.now(),
             t0_realtime: realtime_ns(),
-            rows: Vec::with_capacity(STALL_CAPACITY),
+            rows: Vec::with_capacity(ONE_WAY_CAPACITY),
         })
     }
 
-    /// One pass of the loop, at `now`.
-    #[inline(always)]
-    fn pass(&mut self, now: u64) {
-        let gap = now.wrapping_sub(self.last);
-        if gap >= self.threshold && self.rows.len() < self.rows.capacity() {
-            self.rows.push((now.wrapping_sub(self.t0), gap));
-        }
-        self.last = now;
+    /// A stamp of the clients' clock on `CLOCK_REALTIME`.
+    fn realtime(&self, stamp: u64) -> u128 {
+        self.t0_realtime + u128::from(stamp.saturating_sub(self.t0))
     }
 
-    fn write(&self, name: &str) {
-        let Some(dir) = std::env::var("LOOP_STALLS_DIR").ok() else {
-            return;
-        };
-        let mut rows = format!("# start_realtime_ns={}\nend_ns,gap_ns\n", self.t0_realtime);
-        for (end, gap) in &self.rows {
-            rows.push_str(&format!("{end},{gap}\n"));
+    #[inline]
+    fn record(&mut self, ping: usize, echo: &Echo) {
+        if echo.echoed.wrapping_sub(echo.sent) >= self.spike_ns
+            && echo.pong_rx != 0
+            && echo.ping_rx != 0
+            && self.rows.len() < self.rows.capacity()
+        {
+            let (sent, echoed) = (self.realtime(echo.sent), self.realtime(echo.echoed));
+            self.rows.push((ping, sent, echo.pong_rx, echo.ping_rx, echoed));
         }
-        let path = format!("{dir}/{name}");
-        std::fs::write(&path, rows).unwrap_or_else(|e| panic!("LOOP_STALLS_DIR {path}: {e}"));
+    }
+
+    fn write(&self) {
+        let mut rows = format!(
+            "# start_realtime_ns={}\nping,sent_realtime_ns,pong_rx_realtime_ns,ping_rx_realtime_ns,echoed_realtime_ns\n",
+            self.t0_realtime
+        );
+        for (ping, sent, pong_rx, ping_rx, echoed) in &self.rows {
+            rows.push_str(&format!("{ping},{sent},{pong_rx},{ping_rx},{echoed}\n"));
+        }
+        std::fs::write(&self.path, rows).unwrap_or_else(|e| panic!("RTT_ONE_WAY {}: {e}", self.path));
     }
 }
 
@@ -164,7 +194,7 @@ fn run_ping(
     let clock = Clock::calibrate();
 
     let budget = Duration::from_secs(std::env::var("RTT_SECONDS").map_or(20, |s| s.parse().unwrap()));
-    let mut histogram = Histogram::<u64>::new_with_bounds(1, 60_000_000_000, 3).unwrap();
+    let mut results = Results::new();
     let mut buffer = [0u8; MESSAGE_LENGTH];
     // RTT_LOST_TIMEOUT_US: on an unreliable channel a lost ping or echo is
     // never repaired, so after this long it is counted lost and the next sent
@@ -183,20 +213,15 @@ fn run_ping(
             &mut None,
             seq,
             timeout_ns,
-            |_| {},
+            |_: &Echo| {},
         );
         if i % 64 == 0 && start.elapsed() > budget / 4 {
             break;
         }
     }
-    // spikes, preallocated so recording never allocates
-    let spikes_path = std::env::var("LOAD_SPIKES").ok().filter(|p| !p.is_empty());
-    let spike_ns: u64 = std::env::var("LOAD_SPIKE_NS").map_or(100_000, |v| v.parse().expect("LOAD_SPIKE_NS"));
-    let mut spikes: Vec<(u64, u64, usize)> = Vec::with_capacity(if spikes_path.is_some() { SPIKE_CAPACITY } else { 0 });
-    let mut spikes_total = 0_u64;
     let start = Instant::now();
-    let t0 = clock.now();
-    let t0_realtime = realtime_ns();
+    results.start(&clock);
+    let mut one_way = OneWay::new(&clock);
     let mut stalls = Stalls::new(&clock);
     let mut lost = 0_u64;
     for i in 0..messages {
@@ -210,13 +235,10 @@ fn run_ping(
             &mut stalls,
             seq,
             timeout_ns,
-            |rtt| {
-                histogram.saturating_record(rtt);
-                if rtt >= spike_ns {
-                    spikes_total += 1;
-                    if spikes.len() < spikes.capacity() {
-                        spikes.push((clock.now().wrapping_sub(t0).saturating_sub(rtt), rtt, i));
-                    }
+            |echo: &Echo| {
+                results.record(&clock, echo.echoed.wrapping_sub(echo.sent), i);
+                if let Some(one_way) = one_way.as_mut() {
+                    one_way.record(i, echo);
                 }
             },
         );
@@ -228,47 +250,13 @@ fn run_ping(
         }
     }
 
-    let q = |quantile| histogram.value_at_quantile(quantile);
-    println!(
-        "rtt,{},udp,{},{},{},{},{},{},{:.0},{},{lost}",
-        label(),
-        q(0.5),
-        q(0.9),
-        q(0.99),
-        q(0.999),
-        q(0.9999),
-        histogram.max(),
-        histogram.mean(),
-        histogram.len()
-    );
-
-    if let Some(path) = std::env::var("RTT_HISTOGRAM").ok().filter(|p| !p.is_empty()) {
-        let mut rows = String::from("value_ns,count\n");
-        for v in histogram.iter_recorded() {
-            rows.push_str(&format!("{},{}\n", v.value_iterated_to(), v.count_at_value()));
-        }
-        std::fs::write(&path, rows).unwrap_or_else(|e| panic!("RTT_HISTOGRAM {path}: {e}"));
-    }
-    if let Some(path) = spikes_path {
-        // the wall-clock time due_ns counts from, to line spikes up with traces
-        let mut rows = format!(
-            "# start_realtime_ns={t0_realtime}\n# spikes_total={spikes_total}\nstream,due_ns,latency_ns,ping\n"
-        );
-        for (due, latency, ping) in &spikes {
-            rows.push_str(&format!("{PING_STREAM_ID},{due},{latency},{ping}\n"));
-        }
-        std::fs::write(&path, rows).unwrap_or_else(|e| panic!("LOAD_SPIKES {path}: {e}"));
+    results.report(lost, PING_STREAM_ID);
+    if let Some(one_way) = &one_way {
+        one_way.write();
     }
     if let Some(stalls) = &stalls {
         stalls.write("stalls-ping.csv");
     }
-}
-
-/// `CLOCK_REALTIME` now, in nanoseconds since the epoch.
-fn realtime_ns() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_nanos())
 }
 
 /// Sends one stamped ping and polls until pong's echo of it is back.
@@ -288,7 +276,7 @@ fn round_trip(
     stalls: &mut Option<Stalls>,
     seq: u64,
     timeout_ns: u64,
-    mut record: impl FnMut(u64),
+    mut record: impl FnMut(&Echo),
 ) -> bool {
     if let Some(s) = stalls.as_mut() {
         s.pass(clock.now());
@@ -320,10 +308,16 @@ fn round_trip(
         let work = duty.run();
         let fragments = image
             .poll_fn(
-                |reply, _header| {
+                |reply, header| {
                     if u64::from_le_bytes(reply[8..16].try_into().unwrap()) == seq {
                         let sent = u64::from_le_bytes(reply[..8].try_into().unwrap());
-                        record(clock.stamp().wrapping_sub(sent));
+                        let at = clock.stamp();
+                        record(&Echo {
+                            sent,
+                            echoed: at,
+                            pong_rx: i64::from_le_bytes(reply[PONG_RX..PONG_RX + 8].try_into().unwrap()),
+                            ping_rx: header.reserved_value().unwrap_or(0),
+                        });
                         echoed = true;
                     }
                 },
@@ -362,6 +356,7 @@ fn run_pong(lab: &Lab, duty: &impl Duty, ping_channel: &CStr, pong_channel: &CSt
     let clock = Clock::calibrate();
     let mut stalls = Stalls::new(&clock);
     let mut halt = None;
+    let mut stamped = [0u8; MESSAGE_LENGTH];
     while halt.is_none() && !image.is_closed() && !STOP.load(Ordering::Relaxed) {
         if let Some(s) = stalls.as_mut() {
             s.pass(clock.now());
@@ -369,9 +364,19 @@ fn run_pong(lab: &Lab, duty: &impl Duty, ping_channel: &CStr, pong_channel: &CSt
         let work = duty.run();
         let fragments = image
             .poll_fn(
-                |ping, _header| {
+                |ping, header| {
+                    // the ping's receive timestamp, where its frame has one,
+                    // into the echo (xping's one-way split)
+                    let echo = match header.reserved_value() {
+                        Some(rx) if rx != 0 && ping.len() == MESSAGE_LENGTH => {
+                            stamped.copy_from_slice(ping);
+                            stamped[PONG_RX..PONG_RX + 8].copy_from_slice(&rx.to_le_bytes());
+                            &stamped[..]
+                        }
+                        _ => ping,
+                    };
                     if halt.is_none()
-                        && let Err(why) = lab::echo(duty, &publication, &image, ping)
+                        && let Err(why) = lab::echo(duty, &publication, &image, echo)
                     {
                         halt = Some(why);
                     }

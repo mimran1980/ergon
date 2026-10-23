@@ -4,6 +4,14 @@
 # localhost subscription held throughout). Functions only, so test/test-lab.sh
 # calls them directly.
 #
+# The raw floor's transports, kernel-raw and dpdk-raw (-mono too), run no
+# Aeron at all: the harness's floor client (md-dpdk/harness/src/bin/floor.rs)
+# does rtt's round trip over kernel UDP sockets or the DPDK transport's
+# bindings alone, on kernel-busy's or dpdk's host set-up (raw_base), so a
+# state's idle round trip splits into what is under Aeron and Aeron's own.
+# Cross-host only, the round trip alone (lib.sh), with host settings and
+# RUSTERON_* ones; anything only Aeron reads is refused (mode_check).
+#
 # The settings here (the rest are vm.sh host_setting's, or the driver's
 # environment):
 #   AERON_THREADING_MODE=DEDICATED|SHARED_NETWORK|SHARED|INVOKER  the driver's
@@ -146,6 +154,30 @@ mode_pairs() {
     set +f
     shift
     for p in "$@"; do printf '%s\n' "$p"; done
+}
+
+# mode_raw <mode>: 0 for the raw floor's modes (kernel-raw, dpdk-raw, -mono)
+mode_raw() {
+    local t=${1%+idle}
+    t=${t%%@*}
+    t=${t%-mono}
+    [[ $t == kernel-raw || $t == dpdk-raw ]]
+}
+
+# mode_client <mode>: the round trip's client: floor for a raw floor mode,
+# else rtt
+mode_client() {
+    if mode_raw "$1"; then echo floor; else echo rtt; fi
+}
+
+# raw_base <mode>: the transport whose host set-up a raw floor mode runs on
+# (vm.sh driver): kernel-busy's (busy_read and busy_poll, NAPI deferral) for
+# kernel-raw, dpdk's (igb_uio, the ports' environment) for dpdk-raw; nothing
+# for any other mode
+raw_base() {
+    mode_raw "$1" || return 0
+    local t=${1%%@*}
+    if [[ ${t%-mono} == kernel-raw ]]; then echo kernel-busy; else echo dpdk; fi
 }
 
 # mode_get <mode> <KEY>: the value of KEY's last override; 1 when it has none
@@ -546,8 +578,23 @@ mode_check() {
     # the transport, as vm.sh driver takes it (any other stops the run there)
     transport=${m%+idle}
     transport=${transport%%@*}
-    [[ $transport =~ ^(kernel|kernel-busy|dpdk|dpdk-spin|dpdk-adaptive|dpdk-epoll)(-mono)?$ ]] ||
-        { echo "mode $m: transport $transport: kernel, kernel-busy, dpdk, dpdk-spin, dpdk-adaptive or dpdk-epoll, optionally -mono (vm.sh refuses any other at the driver's start)" >&2; return 2; }
+    [[ $transport =~ ^(kernel|kernel-busy|dpdk|dpdk-spin|dpdk-adaptive|dpdk-epoll|kernel-raw|dpdk-raw)(-mono)?$ ]] ||
+        { echo "mode $m: transport $transport: kernel, kernel-busy, dpdk, dpdk-spin, dpdk-adaptive, dpdk-epoll, or the raw floor's kernel-raw or dpdk-raw, optionally -mono (vm.sh refuses any other at the driver's start)" >&2; return 2; }
+    # the raw floor: no Aeron, so nothing only Aeron reads, and its round trip
+    # alone, cross-host (floor.rs)
+    if mode_raw "$m"; then
+        [[ $m != *+idle ]] || { echo "mode $m: the raw floor runs no Aeron, so no idle subscription (+idle)" >&2; return 2; }
+        [[ $where != local ]] || { echo "mode $m: the raw floor is cross-host only: its round trip between the hosts' data NICs" >&2; return 2; }
+        while IFS= read -r p; do
+            key=${p%%=*}
+            case $key in
+            AERON_* | PUB_PARAMS | SUB_PARAMS | RELIABLE | CONDUCTOR)
+                echo "mode $m: $key is Aeron's, and the raw floor runs no Aeron (no media driver, no client): it would measure its baseline under another name" >&2
+                return 2
+                ;;
+            esac
+        done < <(mode_pairs "$m")
+    fi
     settings=${LAB_SETTINGS# }
     settings=${settings% }
     while IFS= read -r p; do

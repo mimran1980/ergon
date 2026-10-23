@@ -73,10 +73,11 @@ static _Thread_local uint64_t rusteron_dpdk_test_clock_step_ns = 0;
  * descheduling is deterministic (0: it is not pinned). */
 static uint64_t rusteron_dpdk_test_thread_cpu_ns_value = 0;
 static int rusteron_dpdk_test_thread_cpu_pinned = 0;
-/* RUSTERON_DPDK_GAP_ATTRIB=1: read the thread CPU clock every receive poll and
- * split each poll gap into work and descheduling, and time each PMD burst.
- * Off by default, so the hot path never reads either. Hidden and read inline
- * (rusteron_dpdk_gap_attrib_on). */
+/* RUSTERON_DPDK_GAP_ATTRIB: RUSTERON_DPDK_GAP_ATTRIB_BURST times each PMD
+ * burst; RUSTERON_DPDK_GAP_ATTRIB_CPU reads the thread CPU clock every receive
+ * poll and splits each poll gap into work and descheduling. 1 sets both,
+ * `burst` the first. Off by default, so the hot path never reads either.
+ * Hidden and read inline (rusteron_dpdk_gap_attrib_on, _cpu_on). */
 int rusteron_dpdk_gap_attrib = 0;
 
 static uint64_t rusteron_dpdk_clock_read_ns(clockid_t id)
@@ -1052,6 +1053,29 @@ static int rusteron_dpdk_init_port(rusteron_dpdk_transport_t *native, rusteron_d
     {
         return -1;
     }
+
+    /* Idle TX cleanup: one call on the empty ring, before any agent owns the
+     * queue, finds whether the PMD has the op. */
+    p->tx_idle_clean = 0;
+    p->tx_unreaped = 0;
+    p->last_tx_ns = 0;
+    p->tx_idle_clean_asked = native->tx_idle_clean;
+    if (0 != native->tx_idle_clean)
+    {
+        const int rc = NULL != ops->tx_done_cleanup ? ops->tx_done_cleanup(p->port_id, p->tx_queue_id, native->tx_idle_clean)
+                                                    : -ENOTSUP;
+        if (-ENOTSUP == rc)
+        {
+            fprintf(stderr,
+                    "WARNING ergon-md-dpdk: %s (driver %s) cannot reclaim sent descriptors on demand "
+                    "(rte_eth_tx_done_cleanup): RUSTERON_DPDK_TX_IDLE_CLEAN left off on it\n",
+                    p->pci, p->driver);
+        }
+        else
+        {
+            p->tx_idle_clean = native->tx_idle_clean;
+        }
+    }
     return 0;
 }
 
@@ -1636,21 +1660,62 @@ static int rusteron_dpdk_runtime_net_init(rusteron_dpdk_transport_t *native)
         }
         native->nic_stats_ns = ms * 1000000ULL;
     }
-    /* Split poll-cycle gaps into work and descheduling: off by default, so
-     * the hot path never reads the thread CPU clock for it. */
+    /* Split the NIC reads: every RUSTERON_DPDK_NIC_STATS_MS only the PMD's
+     * software xstats (no admin command on ENA), and everything (basic
+     * statistics, every xstat) every RUSTERON_DPDK_NIC_SLOW_STATS_MS, 0
+     * never. Unset: every read is a full one. */
+    native->nic_slow_stats_ns = RUSTERON_DPDK_NIC_STATS_UNSPLIT;
+    const char *nic_slow = getenv("RUSTERON_DPDK_NIC_SLOW_STATS_MS");
+    if (NULL != nic_slow && '\0' != nic_slow[0])
+    {
+        char *end = NULL;
+        const unsigned long long ms = strtoull(nic_slow, &end, 10);
+        if ('\0' != *end || '-' == nic_slow[0] || (0 != ms && (ms < 1000ULL || ms > 3600000ULL)))
+        {
+            rusteron_dpdk_set_error(
+                "RUSTERON_DPDK_NIC_SLOW_STATS_MS must be 0 (never) or milliseconds from 1000 to 3600000");
+            return -1;
+        }
+        native->nic_slow_stats_ns = ms * 1000000ULL;
+    }
+    /* Time the PMD bursts and split poll-cycle gaps into work and
+     * descheduling: off by default, so the hot path never reads the thread
+     * CPU clock for it. `burst` times the bursts alone: the CPU clock is a
+     * system call every poll (no vDSO path), which changes the loop. */
     rusteron_dpdk_gap_attrib = 0;
     const char *gap_attrib = getenv("RUSTERON_DPDK_GAP_ATTRIB");
     if (NULL != gap_attrib && '\0' != gap_attrib[0])
     {
         if (0 == strcmp(gap_attrib, "1"))
         {
-            rusteron_dpdk_gap_attrib = 1;
+            rusteron_dpdk_gap_attrib = RUSTERON_DPDK_GAP_ATTRIB_BURST | RUSTERON_DPDK_GAP_ATTRIB_CPU;
+        }
+        else if (0 == strcmp(gap_attrib, "burst"))
+        {
+            rusteron_dpdk_gap_attrib = RUSTERON_DPDK_GAP_ATTRIB_BURST;
         }
         else if (0 != strcmp(gap_attrib, "0"))
         {
-            rusteron_dpdk_set_error("RUSTERON_DPDK_GAP_ATTRIB must be 0 or 1");
+            rusteron_dpdk_set_error("RUSTERON_DPDK_GAP_ATTRIB must be 0, 1 or burst");
             return -1;
         }
+    }
+    /* Reclaim sent descriptors on an idle poll, at most this many a poll,
+     * instead of inside the send that crosses the PMD's free threshold: off
+     * by default. */
+    native->tx_idle_clean = 0;
+    const char *idle_clean = getenv("RUSTERON_DPDK_TX_IDLE_CLEAN");
+    if (NULL != idle_clean && '\0' != idle_clean[0])
+    {
+        char *end = NULL;
+        const unsigned long long n = strtoull(idle_clean, &end, 10);
+        if ('\0' != *end || '-' == idle_clean[0] || n > RUSTERON_DPDK_TX_IDLE_CLEAN_MAX)
+        {
+            rusteron_dpdk_set_error(
+                "RUSTERON_DPDK_TX_IDLE_CLEAN must be 0 (off) or the descriptors an idle poll reclaims, 1 to 1024");
+            return -1;
+        }
+        native->tx_idle_clean = (uint32_t)n;
     }
     /* How many bursts one poll drains while they come back full: by default
      * as many as fill the receive ring, at most 8, so a backlog a stall left
@@ -2152,7 +2217,7 @@ void rusteron_dpdk_housekeeping_tick(rusteron_dpdk_transport_t *native, uint64_t
         if (p->open_transports > 0)
         {
             rusteron_dpdk_counters_sample(&p->counters, p, native->ops, now_ns, native->nic_stats_ns,
-                                          native->housekeeping_events, &nic[i]);
+                                          native->nic_slow_stats_ns, native->housekeeping_events, &nic[i]);
         }
     }
     if (0 != fresh[0] || 0 != fresh[1])

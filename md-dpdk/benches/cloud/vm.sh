@@ -37,8 +37,12 @@
 #                            @AERON_THREADING_MODE=INVOKER starts none (on Graviton under DPDK one
 #                            for its LLQ check, then stops it): everything else is set up, and
 #                            each client embeds the driver (vm.sh client); the kernel modes name
-#                            the data NICs (RUSTERON_MEDIA_DRIVER_DATA_NICS) for its NIC checks
-#   vm.sh client <label> <rtt|tput> <args>   a benchmark client against the running driver, ended at
+#                            the data NICs (RUSTERON_MEDIA_DRIVER_DATA_NICS) for its NIC checks;
+#                            the raw floor's kernel-raw and dpdk-raw start none either: kernel-busy's
+#                            or dpdk's set-up under INVOKER's threading (one thread sends and
+#                            receives), for the floor client (no Aeron), its wire in ~/bench/floor
+#   vm.sh client <label> <rtt|tput|load|floor> <args>   a benchmark client against the running driver
+#                            (floor: the raw floor's, on the wire vm.sh driver set up), ended at
 #                            its deadline (LAB_CLIENT_DEADLINE seconds, an hour without it; SIGKILL
 #                            LAB_CLIENT_GRACE, 10 s, after SIGTERM): exit 124 then
 #   vm.sh stop               stop the media driver and give the data NICs back to the kernel
@@ -321,6 +325,18 @@ conductor_cycle_threshold() {
 # the threshold has to clear the park of whatever idle strategy those
 # overrides left in play. An explicit threshold that does not is refused
 # before the driver starts, naming both values and the one to use.
+# override_export <KEY=value>: a mode's override as the driver environment's
+# export line. A mode's name cannot hold a comma (it would split its
+# results.csv rows: modes.sh mode_check), so RUSTERON_DPDK_ENA_DEVARGS, a
+# comma-separated list of ENA device arguments, is written with + between
+# them, as SUB_PARAMS and PUB_PARAMS are: @RUSTERON_DPDK_ENA_DEVARGS=
+# miss_txc_to=0+control_path_poll_interval=1000.
+override_export() {
+    local key=${1%%=*} value=${1#*=}
+    [[ $key == RUSTERON_DPDK_ENA_DEVARGS ]] && value=${value//+/,}
+    echo "export $key='$value'"
+}
+
 conductor_cycle_threshold_apply() {
     local env_file=${1-} got strategy args threshold park want have
     [[ -f $env_file ]] || return 2
@@ -1277,7 +1293,7 @@ build)
     precision_time && "$self" build-ptp
     build_driver "$run/dpdk_unavailable"
     cargo build --release -p ergon-md-dpdk-harness --features "$(client_features "$run/dpdk_unavailable")" \
-        --bin rtt --bin load --bin tput --bin counters --bin clockcheck
+        --bin rtt --bin load --bin tput --bin floor --bin counters --bin clockcheck
     if [[ $CLOUD == aws ]]; then
         # No IOMMU on virtualised EC2 and no write-combining in mainline
         # vfio-pci, which ENA's low-latency queues need: Amazon's documented
@@ -1350,14 +1366,14 @@ build-base)
     fi
     build_driver "$run/dpdk_unavailable-base"
     clients=()
-    for c in rtt load tput; do
+    for c in rtt load tput floor; do
         if [[ -f md-dpdk/harness/src/bin/$c.rs ]]; then clients+=(--bin "$c"); fi
     done
     if ((${#clients[@]})); then
         cargo build --release -p ergon-md-dpdk-harness --features "$(client_features "$run/dpdk_unavailable-base")" "${clients[@]}"
     fi
     rm -rf "$HOME/bin-base" && mkdir -p "$HOME/bin-base"
-    for b in media_driver rtt load tput; do
+    for b in media_driver rtt load tput floor; do
         if [[ -x target/release/$b ]]; then cp "target/release/$b" "$HOME/bin-base/"; fi
     done
     echo "bin-base $(ls "$HOME/bin-base" | tr '\n' ' ')"
@@ -1570,9 +1586,18 @@ driver)
     # CPUs (host.sh threading_env), set before the other overrides, which can
     # then change an idle strategy
     threading=$(threading_of "$overrides") || exit 2
+    # kernel-raw, dpdk-raw: the raw floor (the floor client, no Aeron) on
+    # kernel-busy's or dpdk's set-up (modes.sh raw_base), its one thread
+    # sending and receiving as INVOKER's does (threading_env); no media
+    # driver, as under INVOKER (below)
+    raw=$(raw_base "$mode") floor_wire=
+    if [[ -n $raw ]]; then
+        threading=INVOKER floor_wire=${raw%-busy}
+    fi
     common_env "${threading:-DEDICATED}" >"$env_file" || exit 2
     clock=tsc
     if [[ $mode == *-mono ]]; then clock=monotonic; mode=${mode%-mono}; fi
+    [[ -n $raw ]] && mode=$raw
     echo "export RUSTERON_DPDK_CLOCK='$clock'" >>"$env_file"
     echo "$clock" >"$run/bench_clock"
     # dpdk-spin: the DPDK driver with its agents reading host-local kernel
@@ -1680,7 +1705,7 @@ driver)
             # a host setting (host_setting) for this run, which `stop` undoes;
             # anything else is the driver's environment
             host_setting "${pair%%=*}" "${pair#*=}" "$mode" && continue
-            echo "export ${pair%%=*}='${pair#*=}'" >>"$env_file"
+            override_export "$pair" >>"$env_file"
         done
     fi
     # The conductor's duty-cycle threshold, derived from whatever idle
@@ -1732,8 +1757,13 @@ driver)
     # the driver with it (`client`), and `loss` keeps a ledger of the embedded
     # drivers' counters (host.sh invoker_ledger_total)
     if [[ $threading == INVOKER ]]; then
-        echo invoker >"$run/harness_driver"
-        rm -rf "$run/invoker-ledger"
+        if [[ -n $floor_wire ]]; then
+            # the floor client's wire (`client`, `stop`): no embedded driver
+            echo "${floor_wire}" >"$run/floor"
+        else
+            echo invoker >"$run/harness_driver"
+            rm -rf "$run/invoker-ledger"
+        fi
         : >"$run/driver.log"
         # Graviton, DPDK: ENA's low-latency queues and write-combining, as
         # below, checked on a driver started once with the embedded drivers'
@@ -1751,6 +1781,11 @@ driver)
         fi
         # no driver log of its own (`pmd-log` reads this, after the probe's
         # lines if any): each client's output has its driver's
+        if [[ -n $floor_wire ]]; then
+            echo "raw floor: no media driver process; each floor client logs its transport's lines to its output" >>"$run/driver.log"
+            log "driver: raw floor ($floor_wire): no media driver process; the floor clients run with driver.env, no Aeron"
+            exit 0
+        fi
         echo "INVOKER: no media driver process; each client's embedded driver logs to the client's output" >>"$run/driver.log"
         log "driver: INVOKER: no media driver process; each client embeds the driver (HARNESS_DRIVER=invoker) with driver.env"
         exit 0
@@ -1789,7 +1824,7 @@ driver)
     fi
     ;;
 client)
-    # vm.sh client <label> <rtt|tput|load> <args...>: a benchmark client against the running driver
+    # vm.sh client <label> <rtt|tput|load|floor> <args...>: a benchmark client against the running driver (floor: the raw floor's)
     label=${2:?label}
     prog=${3:?rtt or tput}
     shift 3
@@ -1800,11 +1835,11 @@ client)
     trap 'termed=1' TERM
     # the last run's spikes and histogram: a client that writes none this time
     # must leave none to fetch (lib.sh takes each load point's histogram)
-    if [[ $prog == rtt && ${1:-} == xping || $prog == load && ${1:-} != xecho ]]; then
+    if [[ $prog =~ ^(rtt|floor)$ && ${1:-} == xping || $prog == load && ${1:-} != xecho ]]; then
         rm -f "$run/load-spikes.csv" "$run/rtt-histogram.csv"
     fi
-    [[ $prog == rtt && ${1:-} == xping ]] && rm -f "$run/stalls-ping.csv"
-    [[ $prog == rtt && ${1:-} == xpong ]] && rm -f "$run/stalls-pong.csv"
+    [[ $prog =~ ^(rtt|floor)$ && ${1:-} == xping ]] && rm -f "$run/stalls-ping.csv" "$run/one-way.csv"
+    [[ $prog =~ ^(rtt|floor)$ && ${1:-} == xpong ]] && rm -f "$run/stalls-pong.csv"
     # a build under BIN without this client: this checkout's, said in its log
     exe=$bin/$prog
     if [[ ! -x $exe ]]; then
@@ -1816,7 +1851,7 @@ client)
     # the mode's channel parameters (RELIABLE, PUB_PARAMS, SUB_PARAMS), and an
     # unreliable channel's lost-round-trip timeout, stretched by a long
     # network round trip (lib.sh measures it: ~/bench/base_rtt_us)
-    sub_params=$(cat "$run/sub_channel_params" 2>/dev/null || true)
+    sub_params=$(cat "$run/sub_channel_params" 2>/dev/null || true) lost_params=
     # INVOKER: the client embeds the driver, configured from driver.env as the
     # media driver would be (AERON_*, RUSTERON_DPDK_*, the transport), with
     # HARNESS_DRIVER=invoker; refused while the last client's embedded driver
@@ -1825,6 +1860,18 @@ client)
     if invoker; then
         if id=$(cnc_now); then invoker_client_ready "$run/cnc.head" "$run/invoker-ledger" || exit 2; fi
         launch=(bash -c '. "$1"; shift; exec "$@"' _ "$run/driver.env" env HARNESS_DRIVER=invoker)
+    fi
+    # the raw floor: only on the wire `driver` set up (kernel-raw, dpdk-raw),
+    # with its environment (the DPDK transport's, the kernel's selector
+    # absent); raw UDP repairs nothing, so a lost round trip times out as an
+    # unreliable channel's does
+    if [[ $prog == floor ]]; then
+        if [[ ! -s $run/floor ]]; then
+            log "client: floor: no raw floor set up here (vm.sh driver kernel-raw or dpdk-raw first)"
+            exit 2
+        fi
+        launch=(bash -c '. "$1"; shift; exec "$@"' _ "$run/driver.env" env)
+        lost_params="reliable=false"
     fi
     # The lab's deadline for the client (LAB_CLIENT_DEADLINE, seconds from
     # here; an hour unless lib.sh gives one): GNU timeout, as root beside it,
@@ -1845,10 +1892,14 @@ client)
         log "client: $prog ${1:-}: SIGTERM before it started: not started"
         exit 143
     fi
+    # precision-time: rtt's ping splits each spike one way by both hosts' NIC
+    # receive timestamps (the PTP hardware clock's), where its mode stamps them
+    one_way=
+    precision_time && one_way=$run/one-way.csv
     rc=0 started=$SECONDS
-    sudo ${launch[@]+"${launch[@]}"} env AERON_DIR="$AERON_DIR" LABEL="$label" RTT_SECONDS="${RTT_SECONDS:-20}" \
+    sudo ${launch[@]+"${launch[@]}"} env AERON_DIR="$AERON_DIR" LABEL="$label" RTT_SECONDS="${RTT_SECONDS:-20}" RTT_ONE_WAY="$one_way" \
         SUB_CHANNEL_PARAMS="$sub_params" PUB_CHANNEL_PARAMS="$(cat "$run/pub_channel_params" 2>/dev/null || true)" \
-        RTT_LOST_TIMEOUT_US="$(rtt_lost_timeout_us "$sub_params" "$(cat "$run/base_rtt_us" 2>/dev/null || true)")" \
+        RTT_LOST_TIMEOUT_US="$(rtt_lost_timeout_us "${lost_params:-$sub_params}" "$(cat "$run/base_rtt_us" 2>/dev/null || true)")" \
         RTT_HISTOGRAM="$run/rtt-histogram.csv" LOOP_STALLS_DIR="$run" LOAD_SPIKES="$run/load-spikes.csv" LOAD_SPIKE_NS="${LOAD_SPIKE_NS:-100000}" LOOP_STALL_NS="${LOOP_STALL_NS:-20000}" BENCH_CLOCK="$(cat "$run/bench_clock" 2>/dev/null || echo tsc)" AERON_TERM_BUFFER_SPARSE_FILE=false AERON_CLIENT_PRE_TOUCH_MAPPED_MEMORY=true \
         taskset -c "$HK_CPU" timeout --kill-after="$grace" "$deadline" "$exe" "$@" || rc=$?
     what="$prog ${1:-}"
@@ -1882,6 +1933,12 @@ stop)
         for c in rtt load tput; do sudo pkill -x "$c" 2>/dev/null || true; done
         for _ in $(seq 40); do pgrep -x 'rtt|load|tput' >/dev/null || break; sleep 0.25; done
         rm -rf "$run/harness_driver" "$run/invoker-ledger"
+    fi
+    # the raw floor: a floor client still running holds the NICs (DPDK's)
+    if [[ -s $run/floor ]]; then
+        sudo pkill -x floor 2>/dev/null || true
+        for _ in $(seq 40); do pgrep -x floor >/dev/null || break; sleep 0.25; done
+        rm -f "$run/floor"
     fi
     data_return_to_kernel
     restore_host
@@ -2001,13 +2058,14 @@ counters)
     # Frames per message (lib.sh snapshots these around each flat-out run):
     # under DPDK the transport's own frames (pkts) and bytes, its sends a full
     # ring refused back to Aeron (tx-eagain) or queued to go first
-    # (tx-queued), and the ENA's per-queue TX statistics (type 92, named by
+    # (tx-queued), sent descriptors reclaimed on idle polls (tx-idle-cleaned,
+    # RUSTERON_DPDK_TX_IDLE_CLEAN), and the ENA's per-queue TX statistics (type 92, named by
     # the PMD: packets, doorbells, completion polls, free descriptors); in a
     # kernel mode the data NICs' packet counts. On receive: frames whose UDP
     # checksum the transport verified in software (the NIC did not), the
     # deepest backlog one poll drained, and the polls that nearly emptied a
     # full ring.
-    pattern=' (vf_)?(rx|tx)_good_packets$|allowance_exceeded$|dir=- clock$| dir=(rx|tx) pkts$| dir=tx (bytes|tx-eagain|tx-queued)$| dir=rx (sw-checksum-verified|rx-backlog-max|rx-ring-full-suspected)$| tx_q[0-9]+_(cnt|doorbells|tx_poll|available_desc)$'
+    pattern=' (vf_)?(rx|tx)_good_packets$|allowance_exceeded$|dir=- clock$| dir=(rx|tx) pkts$| dir=tx (bytes|tx-eagain|tx-queued|tx-idle-cleaned)$| dir=rx (sw-checksum-verified|rx-backlog-max|rx-ring-full-suspected)$| tx_q[0-9]+_(cnt|doorbells|tx_poll|available_desc)$'
     if driver_cnc && dpdk_active; then
         # under INVOKER, whose driver's CnC this is (analyse.py counts a run's
         # frames from zero over another embedded driver's snapshot)
@@ -2026,6 +2084,12 @@ counters)
         # (ethtool has nothing): no driver named, which analyse.py counts as
         # zero, the next client's driver starting from zero too
         echo "cnc none"
+        echo
+    elif [[ -s $run/floor ]] && dpdk_active; then
+        # the raw floor under DPDK: its clients register the transport's
+        # counters privately (no CnC), and the NICs are DPDK's (ethtool has
+        # nothing)
+        echo "floor: no CnC"
         echo
     elif [[ $CLOUD == azure ]]; then
         # netvsc's own stats split the VF path (vf_*) from the synthetic one (per queue)
@@ -2063,8 +2127,13 @@ jitter)
     # not under INVOKER, whose CnC between clients is the last one's
     if [[ -n $pid ]] && dpdk_active && ! invoker; then
         sudo env AERON_DIR="$AERON_DIR" timeout 20 "$tools/counters" -gap 2>/dev/null | sed 's/^/counter /'
-        # PMD burst timing (RUSTERON_DPDK_GAP_ATTRIB=1; zero otherwise)
+        # PMD burst timing (RUSTERON_DPDK_GAP_ATTRIB=1 or burst; zero otherwise)
         sudo env AERON_DIR="$AERON_DIR" timeout 20 "$tools/counters" -burst 2>/dev/null | sed 's/^/counter /'
+        # receive checksums the transport verified in software (the NIC did
+        # not), and sent descriptors reclaimed on idle polls
+        # (RUSTERON_DPDK_TX_IDLE_CLEAN; zero otherwise)
+        sudo env AERON_DIR="$AERON_DIR" timeout 20 "$tools/counters" sw-checksum-verified 2>/dev/null | sed 's/^/counter /'
+        sudo env AERON_DIR="$AERON_DIR" timeout 20 "$tools/counters" tx-idle-cleaned 2>/dev/null | sed 's/^/counter /'
     fi
     for cpu in $HK_CPU $APP_CPU $SENDER_CPU $RECEIVER_CPU $APP2_CPU; do
         # its interrupts, local timer and IPIs from its own column (irqs.sh
@@ -2123,7 +2192,7 @@ diag-start)
     # Only before reps: a trace, a tracer or a kprobe set up flips static keys,
     # an IPI to every CPU, agents included; refused while a rep runs (a media
     # driver, or a client: INVOKER's embed the driver)
-    if running=$(pgrep -x 'media_driver|rtt|load|tput'); then
+    if running=$(pgrep -x 'media_driver|rtt|load|tput|floor'); then
         log "diag-start: a rep is running (pid $(echo $running)): diagnostics are set up only before reps (enabling them flips static keys, an IPI to every CPU)"
         exit 2
     fi

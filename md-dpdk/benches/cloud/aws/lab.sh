@@ -80,7 +80,11 @@
 #   LAB_THREADS_PER_CORE=1: SMT off from launch, every core of the type at one thread
 #   (run-instances --cpu-options); refused for Graviton, bare metal, C7a, M7a, R7a, T2.
 #   Per mode instead: <mode>@SMT=off (x86; vm.sh)
-#   LAB_MODES ("kernel kernel-busy dpdk"; <mode>@AERON_THREADING_MODE=SHARED_NETWORK or
+#   LAB_MODES ("kernel kernel-busy dpdk"; the raw floor's kernel-raw and dpdk-raw run
+#   rtt's round trip with no Aeron, over kernel UDP or the DPDK transport's
+#   bindings alone, on kernel-busy's or dpdk's set-up: the round trip only,
+#   cross-host, host and RUSTERON_* settings only (../modes.sh);
+#   <mode>@AERON_THREADING_MODE=SHARED_NETWORK or
 #   SHARED runs the driver's agents that way, each busy one on a core of its own:
 #   ../host.sh threading_env; INVOKER runs no media driver: each client embeds it
 #   (HARNESS_DRIVER=invoker), cross-host only; DEDICATED otherwise. Also @JUMBO=1
@@ -107,7 +111,8 @@
 #   the load client's own warm-up is its first second at each point's rate); refused
 #   without LAB_LOAD_SIZES, where it would never run
 #   LAB_STATES ("pinned isolated"; isolated-poll: isolated, and idle CPUs poll rather
-#   than halt, x86 idle=poll, Graviton nohlt)
+#   than halt, x86 idle=poll, Graviton nohlt; any of them ending -nodiag: that state
+#   without the diagnostics, vm.sh diag-start, for an A/A that bounds their effect)
 #   LAB_LOCAL_MODES, LAB_LOAD_SIZES, LAB_LOAD_FRACTIONS, LAB_LOAD_SECONDS,
 #   LAB_LOAD_LADDER, LAB_MIX, LAB_MIX_SECONDS, LAB_RTT_ALIGN, LAB_RTT_SPIKE_NS, LAB_RTT_STALL_NS, LAB_BASE, LAB_TPUT_FLOWS: as azure/lab.sh
 #   (LAB_TPUT_FLOWS: one UDP flow carries at most 8.0 Gbit/s of frames here, on every size
@@ -285,7 +290,8 @@ if [[ -z ${LAB_DELETE:-} ]]; then
         why=$(mode_check "$m" local "$arch" aws "$threads_per_core" "$placement" 2>&1) || die "$why"
     done
     for s in "${states[@]}"; do
-        [[ $s =~ ^(pinned|isolated|isolated-poll)$ ]] || die "LAB_STATES $s: pinned, isolated or isolated-poll"
+        [[ $s =~ ^(pinned|isolated|isolated-poll)(-nodiag)?$ ]] ||
+            die "LAB_STATES $s: pinned, isolated or isolated-poll, optionally ending -nodiag"
     done
     # precision-time: a PTP hardware clock on both types (chrony's reference,
     # and the NIC's RX timestamps), and the DPDK modes' timestamp pair

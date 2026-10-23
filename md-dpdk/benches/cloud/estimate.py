@@ -10,7 +10,9 @@ its files' times), per step:
                       isolated-poll 450 s (kernel command line, reboot, tune,
                       clockcheck 120 s, Criterion, pre-flight 120 s: 7.3 minutes)
   mode and rep 12 s (drivers started and stopped, counters, loss reads) plus the
-                      round trip's 85 s (RTT_SECONDS 20, its warm-up, the pong's start)
+                      round trip's 85 s (RTT_SECONDS 20, its warm-up, the pong's start);
+                      a raw floor mode (kernel-raw, dpdk-raw: no Aeron) only that, its
+                      round trip alone
   32 B flat out          tput_seconds + 9 s (14 s at 5)
   sustained maximum      tput_seconds + 11 s a size (16 s at 5)
   several flows at once  tput_seconds + 11 s a size
@@ -60,7 +62,7 @@ import sys
 
 PRICES = {
     "c7i.2xlarge": 0.357, "c7i.4xlarge": 0.714, "c7i.metal-24xl": 4.284,
-    "c8g.xlarge": 0.15952, "c9g.xlarge": 0.17388,
+    "c8g.xlarge": 0.15952, "c8g.2xlarge": 0.31904, "c9g.xlarge": 0.17388,
     "c7g.4xlarge": 0.58, "c8g.4xlarge": 0.63808, "c8g.metal-24xl": 3.82848,
     "c7gn.4xlarge": 0.9984, "c8gn.4xlarge": 0.948, "c9g.4xlarge": 0.69552,
     "c8i.4xlarge": 0.74968,
@@ -69,10 +71,12 @@ PRICES = {
 # us-east-1 Linux spot prices ($/h) for the types the final rounds use, as
 # of SPOT_AS_OF (instances.vantage.sh, its data of 2026-10-15 16:35): spot
 # moves by the hour and the zone, so refresh them before a round
-SPOT_PRICES = {"c9g.2xlarge": 0.153, "c8g.xlarge": 0.077, "c7i.2xlarge": 0.200}
+# (c8g.2xlarge: its page of 2026-10-23 16:36)
+SPOT_PRICES = {"c9g.2xlarge": 0.153, "c8g.xlarge": 0.077, "c8g.2xlarge": 0.147, "c7i.2xlarge": 0.200}
 SPOT_AS_OF, SPOT_SOURCE = "2026-10-15", "instances.vantage.sh"
 SETUP_S, TEARDOWN_S = 600, 180
-STATE_S = {"pinned": 150, "isolated": 450, "isolated-poll": 450}
+STATE_S = {"pinned": 150, "isolated": 450, "isolated-poll": 450,
+           "pinned-nodiag": 150, "isolated-nodiag": 450, "isolated-poll-nodiag": 450}
 MODE_S, RTT_S = 12, 85
 POINT_EXTRA_S, MIX_EXTRA_S, TPUT_EXTRA_S, MAX_EXTRA_S = 7, 7, 9, 11
 WIRE_OVERHEAD = 32 + 28  # Aeron's data header, IPv4 and UDP
@@ -81,6 +85,8 @@ WIRE_OVERHEAD = 32 + 28  # Aeron's data header, IPv4 and UDP
 # flat-out phase's bytes at 8.0 are an upper bound.
 FLOW_CAP_BYTES_S = 8.0e9 / 8
 RTT_SIZE = 32
+# the raw floor's transports (modes.sh mode_raw): the round trip alone
+RAW = ("kernel-raw", "dpdk-raw")
 TRANSFER_USD_GB = {"cluster": 0.0, "precision-time": 0.0, "cross-az": 0.02, "cross-region": 0.02}
 
 
@@ -114,6 +120,10 @@ def estimate(type_a, type_b, placement, reps, modes, local_modes, states, load_s
             if not local:
                 rtt = (rtt_messages + rtt_warmup) * (RTT_SIZE + WIRE_OVERHEAD)
                 to_b, to_a = rtt, rtt
+            if mode.split("@")[0].removesuffix("-mono") in RAW:
+                per_mode += secs
+                ab, ba = ab + to_b, ba + to_a
+                continue
             if flat:
                 secs += tput_seconds + TPUT_EXTRA_S
                 if not local:

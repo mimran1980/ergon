@@ -158,6 +158,11 @@ typedef struct rusteron_dpdk_port_ops_stct
     uint32_t (*xstats_count)(uint16_t port_id);
     int (*xstats_names)(uint16_t port_id, char *names, uint32_t count);
     int (*xstats_get)(uint16_t port_id, uint64_t *values, uint32_t count);
+    /* The xstats with the given ids (indexes in xstats_names' order) into
+     * `values[0..count)`, without reading the others: on ENA only the ids in
+     * its ENI, SRD and customer-metric ranges cost an admin command. 0 on
+     * success. */
+    int (*xstats_get_by_id)(uint16_t port_id, const uint64_t *ids, uint64_t *values, uint32_t count);
     uint32_t (*mempool_avail)(void *mempool);
     /* The NIC's basic receive drop counters (rte_eth_stats: ierrors, imissed,
      * rx_nombuf), read by the housekeeping thread. 0 on success. */
@@ -178,6 +183,13 @@ typedef struct rusteron_dpdk_port_ops_stct
      * the port closes. 0 on success. */
     int (*watch_lsc)(uint16_t port_id, uint64_t *changes);
     void (*unwatch_lsc)(uint16_t port_id, uint64_t *changes);
+
+    /* Reclaim up to `budget` sent descriptors of the TX queue whose
+     * completions the NIC has posted (rte_eth_tx_done_cleanup; 0: all), as
+     * the PMD otherwise does inside a later tx_burst. Only the queue's own
+     * thread (the agent owning the port) may call it. The number reclaimed,
+     * or a negative errno: -ENOTSUP when the PMD lacks the op. */
+    int (*tx_done_cleanup)(uint16_t port_id, uint16_t queue_id, uint32_t budget);
 } rusteron_dpdk_port_ops_t;
 
 /*

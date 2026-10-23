@@ -92,6 +92,7 @@ static const rusteron_dpdk_counter_spec_t rusteron_dpdk_counter_specs[RD_COUNTER
     [RD_COUNTER_TX_BURSTS_1US] = { RUSTERON_DPDK_TYPE_POLLER, "tx-bursts-over-1us", "tx" },
     [RD_COUNTER_TX_BURSTS_5US] = { RUSTERON_DPDK_TYPE_POLLER, "tx-bursts-over-5us", "tx" },
     [RD_COUNTER_NIC_LINK_CHANGES] = { RUSTERON_DPDK_TYPE_ERROR, "nic-link-changes", "-" },
+    [RD_COUNTER_TX_IDLE_CLEANED] = { RUSTERON_DPDK_TYPE_POLLER, "tx-idle-cleaned", "tx" },
 };
 _Static_assert(RD_COUNTER_RX_BURSTS_1US == RD_COUNTER_RX_BURST_MAX + 1 &&
                    RD_COUNTER_RX_BURSTS_5US == RD_COUNTER_RX_BURST_MAX + 2 &&
@@ -108,6 +109,92 @@ static void rusteron_dpdk_counters_label(
     snprintf(
         label, label_len, "rusteron-dpdk role=%s bdf=%s port=%u q=%" PRId32 " dir=%s %s",
         role, port->pci, (unsigned)port->port_id, queue, dir, name);
+}
+
+/* One of ethdev's basic statistics as xstats (rte_eth_stats_get, on ENA an
+ * admin command): the eight fixed ones and the per-queue rx_q<n>_packets,
+ * _bytes, _errors and tx_q<n>_packets, _bytes. */
+static int rusteron_dpdk_xstat_is_basic(const char *name)
+{
+    static const char *const fixed[] = {
+        "rx_good_packets", "tx_good_packets", "rx_good_bytes", "tx_good_bytes",
+        "rx_missed_errors", "rx_errors", "tx_errors", "rx_mbuf_allocation_errors",
+    };
+    for (size_t i = 0; i < sizeof(fixed) / sizeof(fixed[0]); i++)
+    {
+        if (0 == strcmp(name, fixed[i]))
+        {
+            return 1;
+        }
+    }
+    const int rx = 0 == strncmp(name, "rx_q", 4);
+    if (!rx && 0 != strncmp(name, "tx_q", 4))
+    {
+        return 0;
+    }
+    const char *p = name + 4;
+    if (*p < '0' || *p > '9')
+    {
+        return 0;
+    }
+    while (*p >= '0' && *p <= '9')
+    {
+        p++;
+    }
+    return 0 == strcmp(p, "_packets") || 0 == strcmp(p, "_bytes") || (rx && 0 == strcmp(p, "_errors"));
+}
+
+/* A PMD xstat kept in software, read without a device command: ENA's queue
+ * stats (rx_q<n>_*, tx_q<n>_*) and its global ones. Its ENI allowances, SRD
+ * and customer metrics are admin commands. */
+static int rusteron_dpdk_xstat_is_software(const char *name)
+{
+    static const char *const global[] = { "wd_expired", "dev_start", "dev_stop", "tx_drops" };
+    for (size_t i = 0; i < sizeof(global) / sizeof(global[0]); i++)
+    {
+        if (0 == strcmp(name, global[i]))
+        {
+            return 1;
+        }
+    }
+    if (0 != strncmp(name, "rx_q", 4) && 0 != strncmp(name, "tx_q", 4))
+    {
+        return 0;
+    }
+    const char *p = name + 4;
+    if (*p < '0' || *p > '9')
+    {
+        return 0;
+    }
+    while (*p >= '0' && *p <= '9')
+    {
+        p++;
+    }
+    return '_' == *p;
+}
+
+/* The software xstats among `n` names: past ethdev's basic block, which
+ * leads (rte_eth_xstats_get_names lists it first), so its per-queue names,
+ * which look like a PMD's, are never taken for one. */
+static void rusteron_dpdk_counters_software_xstats(rusteron_dpdk_counters_t *c, const char *names, uint32_t n)
+{
+    uint32_t i = 0;
+    while (i < n && rusteron_dpdk_xstat_is_basic(names + ((size_t)i * RUSTERON_DPDK_XSTAT_NAME_LEN)))
+    {
+        i++;
+    }
+    c->software_xstat_count = 0;
+    if (NULL == c->software_xstats)
+    {
+        return;
+    }
+    for (; i < n; i++)
+    {
+        if (rusteron_dpdk_xstat_is_software(names + ((size_t)i * RUSTERON_DPDK_XSTAT_NAME_LEN)))
+        {
+            c->software_xstats[c->software_xstat_count++] = (uint16_t)i;
+        }
+    }
 }
 
 /* Cache the PMD's extended stats: one Aeron counter (type 92) per xstat, names
@@ -180,6 +267,12 @@ static void rusteron_dpdk_counters_cache_xstats(
     c->xstat_count = n;
     c->xstats = xstats;
     c->xstat_names = names;
+    /* best effort: without it the reads are never split (all full) */
+    if (aeron_alloc((void **)&c->software_xstats, (size_t)n * sizeof(uint16_t)) < 0)
+    {
+        c->software_xstats = NULL;
+    }
+    rusteron_dpdk_counters_software_xstats(c, names, n);
 }
 
 /* Registration ids for this process's counter sets: unique across drivers
@@ -300,6 +393,19 @@ int rusteron_dpdk_counters_register(
                 snprintf(label + off, sizeof(label) - off, " rx-free-thresh=%u tx-free-thresh=%u",
                          (unsigned)port->rx_free_thresh, (unsigned)port->tx_free_thresh);
             }
+            /* idle TX cleanup: its budget, or that the PMD lacks the op */
+            if (0 != port->tx_idle_clean_asked)
+            {
+                off = strlen(label);
+                if (0 != port->tx_idle_clean)
+                {
+                    snprintf(label + off, sizeof(label) - off, " tx-idle-clean=%u", (unsigned)port->tx_idle_clean);
+                }
+                else
+                {
+                    snprintf(label + off, sizeof(label) - off, " tx-idle-clean=unsupported");
+                }
+            }
             /* nic-link-changes stays 0 on a NIC that cannot raise them */
             if (!port->lsc_on)
             {
@@ -358,6 +464,7 @@ int rusteron_dpdk_counters_register(
 
     c->last_sample_ns = rusteron_dpdk_clock_now();
     c->last_nic_sample_ns = c->last_sample_ns;
+    c->last_slow_sample_ns = c->last_sample_ns;
     c->registered = 1;
     c->dormant = 0;
     return 0;
@@ -365,7 +472,7 @@ int rusteron_dpdk_counters_register(
 
 void rusteron_dpdk_counters_sample(
     rusteron_dpdk_counters_t *c, const rusteron_dpdk_port_t *port,
-    const rusteron_dpdk_port_ops_t *ops, uint64_t now_ns, uint64_t nic_stats_ns,
+    const rusteron_dpdk_port_ops_t *ops, uint64_t now_ns, uint64_t nic_stats_ns, uint64_t nic_slow_ns,
     rusteron_dpdk_event_ring_t *events, rusteron_dpdk_nic_sample_t *nic)
 {
     nic->due = 0;
@@ -394,12 +501,40 @@ void rusteron_dpdk_counters_sample(
     }
 
     /* The NIC's own statistics: on ENA each read is an admin command to the
-     * device, so as often as RUSTERON_DPDK_NIC_STATS_MS says (0: never). */
-    if (0 == nic_stats_ns || now_ns < c->last_nic_sample_ns || now_ns - c->last_nic_sample_ns < nic_stats_ns)
+     * device, so as often as RUSTERON_DPDK_NIC_STATS_MS says (0: never). Split
+     * (RUSTERON_DPDK_NIC_SLOW_STATS_MS), those reads take only the PMD's
+     * software xstats, and the full read comes as often as it says. */
+    const int fast_due =
+        0 != nic_stats_ns && now_ns >= c->last_nic_sample_ns && now_ns - c->last_nic_sample_ns >= nic_stats_ns;
+    const int split = RUSTERON_DPDK_NIC_STATS_UNSPLIT != nic_slow_ns;
+    const int slow_due = split && 0 != nic_slow_ns && now_ns >= c->last_slow_sample_ns &&
+        now_ns - c->last_slow_sample_ns >= nic_slow_ns;
+    if (!fast_due && !slow_due)
     {
         return;
     }
-    c->last_nic_sample_ns = now_ns;
+    if (fast_due)
+    {
+        c->last_nic_sample_ns = now_ns;
+    }
+    nic->full = !split || slow_due;
+    if (slow_due)
+    {
+        c->last_slow_sample_ns = now_ns;
+    }
+    nic->id_count = 0;
+    if (!nic->full)
+    {
+        if (NULL == ops->xstats_get_by_id || 0 == c->software_xstat_count)
+        {
+            return; /* nothing a split read could take */
+        }
+        nic->id_count = c->software_xstat_count;
+        for (uint32_t i = 0; i < c->software_xstat_count; i++)
+        {
+            nic->ids[i] = c->software_xstats[i];
+        }
+    }
     nic->due = 1;
     nic->port_id = port->port_id;
     nic->xstat_count = NULL != ops->xstats_get ? c->xstat_count : 0;
@@ -414,9 +549,25 @@ void rusteron_dpdk_counters_read_nic(
         return;
     }
     const uint64_t start_ns = NULL != events ? rusteron_dpdk_clock_now() : 0;
-    nic->basic_ok = NULL != ops->basic_stats &&
-        0 == ops->basic_stats(nic->port_id, &nic->ierrors, &nic->imissed, &nic->rx_nombuf);
-    nic->xstats_ok = nic->xstat_count > 0 && 0 == ops->xstats_get(nic->port_id, nic->values, nic->xstat_count);
+    if (!nic->full)
+    {
+        /* Split: the software xstats alone, by id, scattered to their slots. */
+        uint64_t got[RUSTERON_DPDK_MAX_XSTATS];
+        nic->basic_ok = 0;
+        nic->xstats_ok = nic->xstat_count > 0 &&
+            0 == ops->xstats_get_by_id(nic->port_id, nic->ids, got, nic->id_count);
+        for (uint32_t i = 0; nic->xstats_ok && i < nic->id_count; i++)
+        {
+            nic->values[nic->ids[i]] = got[i];
+        }
+    }
+    else
+    {
+        nic->basic_ok = NULL != ops->basic_stats &&
+            0 == ops->basic_stats(nic->port_id, &nic->ierrors, &nic->imissed, &nic->rx_nombuf);
+        nic->xstats_ok =
+            nic->xstat_count > 0 && 0 == ops->xstats_get(nic->port_id, nic->values, nic->xstat_count);
+    }
     if (NULL != events)
     {
         rusteron_dpdk_event_record(
@@ -445,7 +596,22 @@ void rusteron_dpdk_counters_store_nic(rusteron_dpdk_counters_t *c, const rustero
             __atomic_store_n(c->addr[RD_COUNTER_NIC_RX_NOMBUF], (int64_t)nic->rx_nombuf, __ATOMIC_RELAXED);
         }
     }
-    if (nic->xstats_ok && nic->xstat_count == c->xstat_count)
+    if (nic->xstats_ok && nic->xstat_count == c->xstat_count && !nic->full)
+    {
+        for (uint32_t i = 0; i < nic->id_count; i++)
+        {
+            const uint64_t id = nic->ids[i];
+            if (NULL != c->xstats[id].addr)
+            {
+                __atomic_store_n(c->xstats[id].addr, (int64_t)nic->values[id], __ATOMIC_RELAXED);
+            }
+            if (id == c->missed_xstat_index && NULL != c->addr[RD_COUNTER_MISSED_PACKETS])
+            {
+                __atomic_store_n(c->addr[RD_COUNTER_MISSED_PACKETS], (int64_t)nic->values[id], __ATOMIC_RELAXED);
+            }
+        }
+    }
+    else if (nic->xstats_ok && nic->xstat_count == c->xstat_count)
     {
         for (uint32_t i = 0; i < c->xstat_count; i++)
         {
@@ -476,9 +642,12 @@ void rusteron_dpdk_counters_forget(rusteron_dpdk_counters_t *c)
     }
     aeron_free(c->xstats);
     aeron_free(c->xstat_names);
+    aeron_free(c->software_xstats);
     c->xstats = NULL;
     c->xstat_names = NULL;
+    c->software_xstats = NULL;
     c->xstat_count = 0;
+    c->software_xstat_count = 0;
     c->missed_xstat_index = UINT32_MAX;
     c->registered = 0;
     c->dormant = 0;
