@@ -53,8 +53,8 @@ not control a later `kubectl exec`.
 
 ## crates.io
 
-Pin the crates this repository publishes. `0.1.31` is on crates.io.
-`0.1.32` is the previous crates.io release. This workspace is `0.1.33`.
+Pin the crates this repository publishes. `0.1.33` is the crates.io release.
+This workspace is `0.1.34`.
 
 ```toml
 ergon-md-dpdk = "=0.1.31"
