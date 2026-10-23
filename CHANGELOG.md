@@ -152,6 +152,27 @@
   in dev and test. `cargo test -p ergo-sbe --all-features` drops from about
   3.75 h to about 2 min warm on a 10-core Mac; every test and assertion is
   unchanged.
+- Release path faster, every gate as strong. `just release` runs `just test`
+  once: `release-check` is `test` plus `_release-check-extras` (coverage, book
+  checks, publish dry runs, packaged checks, codegen cold path), and the
+  release runs only the extras after its own `just test`;
+  `check-publish-set.sh` fails if either path stops reaching the tests or the
+  dry runs. `just release` starts with `_reset-sources` (submodules at their
+  pins, `git clean -fdx`, sample codecs regenerated) instead of `just clean`,
+  so warm target directories are kept; run `just clean` first for a cold
+  build. The sbe-tool reference check is one Gradle run instead of 47 (33 s
+  to 11 s). `just policy` and `just preflight` run independent scripts at the
+  same time (`scripts/run-parallel.sh`: every script runs to the end, any
+  failure fails; scripts that share a file stay in one command): policy 27 s
+  to 7 s, preflight 76 s to 19 s warm. Fuzz replay builds once and runs the
+  six targets at once, 30 s each (`scripts/run-fuzz-replay.sh`; about 4.8 min
+  to 35 s). The coverage ratchet runs at default threads (618 s to 182 s,
+  same TOTAL, same 1,219 tests). Gated benches pass `--noplot` (sampling
+  unchanged); the LTO parity benches reuse the binaries `just test` built;
+  `bench-historic` deletes its old estimates first and reads Criterion's
+  output under `CARGO_TARGET_DIR`, so a stale estimate can no longer pass.
+  `just test` no longer reruns ergo-sbe's doctests and `docs_validation_test`.
+  `measure-codegen-cold-path.sh` works with `CARGO_TARGET_DIR` set.
 - Breaking: `ergo-sbe` conversion selectors fail closed. A `field_path` or
   `semantic_type` that matches no field, a second `with_domain_type` /
   `with_manual_domain_type` type for one selector, and a domain-type

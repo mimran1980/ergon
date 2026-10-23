@@ -35,25 +35,29 @@ build:
 # ── check ─────────────────────────────────────────────────────────────────
 
 # Enforce test ownership and prove the policy checker catches every bypass.
+#
+# The scripts are independent (each works in its own mktemp directory), so they
+# run at the same time; every one runs to the end and any failure fails the recipe.
 policy:
-    bash scripts/tests/test-test-policy.sh
-    bash scripts/tests/test-quality-ratchets.sh
-    bash scripts/tests/test-repository-hygiene.sh
-    bash scripts/tests/test-packaged-cluster-features.sh
-    bash scripts/tests/test-bench-historic.sh
-    bash scripts/tests/test-stale-deny-ignores.sh
-    bash scripts/tests/test-cluster-ergo-sbe-features.sh
-    bash scripts/tests/test-book-content.sh
-    bash scripts/tests/test-rerun-if-changed.sh
-    bash scripts/tests/test-aeron-version.sh
-    bash scripts/tests/test-publish-set.sh
-    bash scripts/tests/test-dpdk-vdev-rootless.sh
-    ./scripts/check-test-policy.sh
-    ./scripts/check-mutation-config.sh
-    ./scripts/check-stale-deny-ignores.sh
-    ./scripts/check-cluster-ergo-sbe-features.sh
-    ./scripts/check-rerun-if-changed.sh
-    ./scripts/check-publish-set.sh
+    bash scripts/run-parallel.sh \
+        'bash scripts/tests/test-test-policy.sh' \
+        'bash scripts/tests/test-quality-ratchets.sh' \
+        'bash scripts/tests/test-repository-hygiene.sh' \
+        'bash scripts/tests/test-packaged-cluster-features.sh' \
+        'bash scripts/tests/test-bench-historic.sh' \
+        'bash scripts/tests/test-stale-deny-ignores.sh' \
+        'bash scripts/tests/test-cluster-ergo-sbe-features.sh' \
+        'bash scripts/tests/test-book-content.sh' \
+        'bash scripts/tests/test-rerun-if-changed.sh' \
+        'bash scripts/tests/test-aeron-version.sh' \
+        'bash scripts/tests/test-publish-set.sh' \
+        'bash scripts/tests/test-dpdk-vdev-rootless.sh' \
+        './scripts/check-test-policy.sh' \
+        './scripts/check-mutation-config.sh' \
+        './scripts/check-stale-deny-ignores.sh' \
+        './scripts/check-cluster-ergo-sbe-features.sh' \
+        './scripts/check-rerun-if-changed.sh' \
+        './scripts/check-publish-set.sh'
 
 # Every cheap correctness gate in one pass — the ones that otherwise only run
 # inside `just release`.
@@ -82,40 +86,42 @@ preflight:
     cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster-test-harness --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
     cargo clippy -p ergon-md-dpdk -p ergon-md-dpdk-harness --all-targets -- -D warnings
-    @echo "=== policy + ratchet self-tests (prove the checkers can fail) ==="
-    bash scripts/tests/test-test-policy.sh
-    bash scripts/tests/test-quality-ratchets.sh
-    bash scripts/tests/test-repository-hygiene.sh
-    bash scripts/tests/test-generated-public-api.sh
-    bash scripts/tests/test-instruction-probe-pairs.sh
-    bash scripts/tests/test-packaged-cluster-features.sh
-    bash scripts/tests/test-bench-historic.sh
-    bash scripts/tests/test-stale-deny-ignores.sh
-    bash scripts/tests/test-cluster-ergo-sbe-features.sh
-    bash scripts/tests/test-book-content.sh
-    bash scripts/tests/test-rerun-if-changed.sh
-    bash scripts/tests/test-aeron-version.sh
-    bash scripts/tests/test-publish-set.sh
-    bash scripts/tests/test-dpdk-vdev-rootless.sh
-    bash scripts/test-package-bench-artifacts.sh
-    @echo "=== repository + docs ==="
-    ./scripts/check-repository-hygiene.sh
-    ./scripts/check-book-fences.sh
-    ./scripts/check-book-content.sh
-    ./scripts/check-generated-public-api.sh
-    bash scripts/check-packaged-cluster-features.sh --list
-    @echo "=== checked-in generated artifacts still match their source ==="
-    ./scripts/regenerate-golden.sh --check
-    ./scripts/regenerate-sbe-tool-reference.sh --check
-    ./scripts/regenerate-sbe-benchmark-reference.sh --check
-    ./scripts/regenerate-codegen-matrix-fixture.py --check
-    @echo "=== config ==="
-    ./scripts/check-mutation-config.sh
-    ./scripts/check-stale-deny-ignores.sh
-    ./scripts/check-cluster-ergo-sbe-features.sh
-    ./scripts/check-rerun-if-changed.sh
-    ./scripts/check-aeron-version.sh
-    ./scripts/check-publish-set.sh
+    # The rest are independent (own mktemp directories; cargo's lock orders the
+    # ones that build; the two sbe-tool checks share one Gradle project, and
+    # test-generated-public-api.sh plants a change in api/generated/car_lean.txt
+    # that check-generated-public-api.sh reads, so each pair stays in one
+    # command), so they run at the same time. Each runs to the end, its
+    # output is printed whole, and any failure fails the recipe.
+    @echo "=== policy self-tests, repository + docs, generated artifacts, config ==="
+    bash scripts/run-parallel.sh \
+        'bash scripts/tests/test-test-policy.sh' \
+        'bash scripts/tests/test-quality-ratchets.sh' \
+        'bash scripts/tests/test-repository-hygiene.sh' \
+        'bash scripts/tests/test-instruction-probe-pairs.sh' \
+        'bash scripts/tests/test-packaged-cluster-features.sh' \
+        'bash scripts/tests/test-bench-historic.sh' \
+        'bash scripts/tests/test-stale-deny-ignores.sh' \
+        'bash scripts/tests/test-cluster-ergo-sbe-features.sh' \
+        'bash scripts/tests/test-book-content.sh' \
+        'bash scripts/tests/test-rerun-if-changed.sh' \
+        'bash scripts/tests/test-aeron-version.sh' \
+        'bash scripts/tests/test-publish-set.sh' \
+        'bash scripts/tests/test-dpdk-vdev-rootless.sh' \
+        'bash scripts/test-package-bench-artifacts.sh' \
+        './scripts/check-repository-hygiene.sh' \
+        './scripts/check-book-fences.sh' \
+        './scripts/check-book-content.sh' \
+        'bash scripts/tests/test-generated-public-api.sh && ./scripts/check-generated-public-api.sh' \
+        'bash scripts/check-packaged-cluster-features.sh --list' \
+        './scripts/regenerate-golden.sh --check' \
+        './scripts/regenerate-sbe-tool-reference.sh --check && ./scripts/regenerate-sbe-benchmark-reference.sh --check' \
+        './scripts/regenerate-codegen-matrix-fixture.py --check' \
+        './scripts/check-mutation-config.sh' \
+        './scripts/check-stale-deny-ignores.sh' \
+        './scripts/check-cluster-ergo-sbe-features.sh' \
+        './scripts/check-rerun-if-changed.sh' \
+        './scripts/check-aeron-version.sh' \
+        './scripts/check-publish-set.sh'
     @echo ""
     @echo "audit: all cheap gates pass"
 
@@ -151,9 +157,8 @@ check-products: policy
     ./scripts/regenerate-sbe-tool-reference.sh --check
     cargo check --manifest-path sbe/fuzz/Cargo.toml --bins
     cargo test --manifest-path sbe/miri-fixtures/Cargo.toml
+    # runs the ergo-sbe doctests and docs_validation_test too
     cargo test -p ergo-sbe --all-features
-    cargo test -p ergo-sbe --doc --all-features
-    cargo test -p ergo-sbe --test docs_validation_test --all-features
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-sbe --all-features --no-deps
     # runs the cluster doctests too — no separate `--doc` pass needed
     cargo test -p ergo-aeron-cluster -- --test-threads=1
@@ -183,15 +188,17 @@ check-samples: policy check-generated-rustdoc
     cd samples/cluster-rfq && cargo clippy --all-targets -- -D warnings
 
 # Pre-release check: comprehensive suite + coverage + bench compile + dry-run publish.
-release-check: test check-coverage check-generated-rustdoc
-    cargo bench -p ergo-sbe-benchmarks --no-run
-    cargo bench -p ergo-aeron-cluster --no-run
+release-check: test _release-check-extras
+    @echo "release-check: product crates pass, benches compile, dry-run publishes OK"
+
+# What release-check adds to `just test`. The release runs it after its own
+# `just test` on the same commit, so nothing here repeats a gate `test`
+# already ran: bench compilation (`--no-run`), ergo-sbe and cluster rustdoc
+# and check-publish-set (in `policy`) are in `test`.
+_release-check-extras: check-coverage check-generated-rustdoc
     ./scripts/check-book-fences.sh
     ./scripts/check-book-content.sh
-    RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-sbe --all-features --no-deps
-    RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-aeron-cluster --no-deps
     cargo publish -p ergo-sbe --dry-run --allow-dirty
-    ./scripts/check-publish-set.sh
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-tune --all-features --no-deps
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-io --features webpki-roots --no-deps
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-md-dpdk --no-deps
@@ -204,7 +211,6 @@ release-check: test check-coverage check-generated-rustdoc
     # ergo-aeron-cluster unpack-and-build waits until ergo-sbe is on crates.io (publish step below).
     @echo "=== bench-cold (generated-size + compile-time diagnostic) ==="
     bash scripts/measure-codegen-cold-path.sh
-    @echo "release-check: product crates pass, benches compile, dry-run publishes OK"
 
 # Release when the benchmark gates were already proven on a QUIET machine.
 #
@@ -236,12 +242,19 @@ release-verified: _check-release-notes
 # The LLM must bump the version + write changelog + write release notes before
 # calling this. The version is read from workspace Cargo.toml.
 #
+# Starts from pristine sources (`_reset-sources`: submodules reset to their
+# pins, generated sample codecs removed) but keeps the cargo target
+# directories: cargo fingerprints source, flags and toolchain, build scripts
+# declare rerun-if-changed (check-rerun-if-changed.sh), and the publish dry
+# runs and the packaged --unpack check build from the packaged sources. Run
+# `just clean` first for a cold build.
+#
 # Runs the benchmark gates inline, ~40 min in, on a machine hot from the test
 # suite. If the tightest maintained ratio fails there, re-measure on an idle
 # machine before believing it, then use `just release-verified`.
 # Full release: test, bench, publish, tag, GitHub release, version bump
 release: _check-release-notes
-    just clean
+    just _reset-sources
     just _release-pre
     @echo "=== 5/8 benchmark gates (cluster + parity + historic) ==="
     just bench-cluster
@@ -264,12 +277,7 @@ _release-pre:
     @echo "=== 3/8 miri UB detection ==="
     cargo +nightly miri test --manifest-path sbe/miri-fixtures/Cargo.toml
     @echo "=== 4/8 fuzz corpus replay ==="
-    cd sbe/fuzz && cargo +nightly fuzz run generated_verify -- -max_total_time=30
-    cd sbe/fuzz && cargo +nightly fuzz run nested_group_decode -- -max_total_time=30
-    cd sbe/fuzz && cargo +nightly fuzz run bulk_decode -- -max_total_time=30
-    cd sbe/fuzz && cargo +nightly fuzz run flat_group_decode -- -max_total_time=30
-    cd sbe/fuzz && cargo +nightly fuzz run any_message_frame_cursor -- -max_total_time=30
-    cd sbe/fuzz && cargo +nightly fuzz run schema_parse -- -max_total_time=30
+    bash scripts/run-fuzz-replay.sh
 
 # Gates 6-9 plus publish/tag/release. Shared by both release paths.
 _release-post:
@@ -281,10 +289,10 @@ _release-post:
     @echo "=== 6/8 mutation configuration (config only; full run is manual) ==="
     ./scripts/check-mutation-config.sh
     @echo "=== 7/8 reference reproducibility ==="
-    just check-sbe-references
+    # The sbe-tool reference check already ran in step 2 (`just test`) on this commit.
     just check-bench-reference
-    @echo "=== 8/9 release check ==="
-    just release-check
+    @echo "=== 8/9 release check (what step 2 did not already run) ==="
+    just _release-check-extras
     @echo "=== 9/9 package benchmark evidence (fail-closed) ==="
     mkdir -p release-assets
     bash scripts/package-bench-artifacts.sh release-assets
@@ -341,9 +349,9 @@ test: policy
     cargo test --workspace --all-features --exclude ergo-sbe --exclude ergo-sbe-benchmarks --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness -- --test-threads=1
     cargo test -p ergon-md-dpdk -- --test-threads=1
     cargo test -p ergo-aeron-cluster -- --test-threads=1
-    @echo "=== 4/7 product doctests + rustdoc (-D warnings) + docs_validation ==="
-    cargo test -p ergo-sbe --doc --all-features
-    cargo test -p ergo-sbe --test docs_validation_test --all-features
+    @echo "=== 4/7 product rustdoc (-D warnings) ==="
+    # ergo-sbe's doctests and docs_validation_test already ran in 3/7 via
+    # `cargo test -p ergo-sbe --all-features`
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-sbe --all-features --no-deps
     # cluster doctests already ran in 3/7 via `cargo test -p ergo-aeron-cluster`
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-aeron-cluster --no-deps
@@ -379,12 +387,7 @@ test-all: policy test
     @echo "=== 8/9 miri (UB detection) ==="
     cargo +nightly miri test --manifest-path sbe/miri-fixtures/Cargo.toml
     @echo "=== 9/9 fuzz corpus replay ==="
-    cd sbe/fuzz && cargo +nightly fuzz run generated_verify -- -max_total_time=30
-    cd sbe/fuzz && cargo +nightly fuzz run nested_group_decode -- -max_total_time=30
-    cd sbe/fuzz && cargo +nightly fuzz run bulk_decode -- -max_total_time=30
-    cd sbe/fuzz && cargo +nightly fuzz run flat_group_decode -- -max_total_time=30
-    cd sbe/fuzz && cargo +nightly fuzz run any_message_frame_cursor -- -max_total_time=30
-    cd sbe/fuzz && cargo +nightly fuzz run schema_parse -- -max_total_time=30
+    bash scripts/run-fuzz-replay.sh
     @echo ""
     @echo "=== test-all: complete ==="
 
@@ -464,9 +467,18 @@ bench-groups:
 
 # Historic ergo-only benchmarks — null-as-option, converters, bulk_add.
 # Gate: compares against stored baselines to detect silent regressions.
+# `--noplot`: the gate reads only Criterion's JSON estimates.
+# The gate reads the directory the bench writes to (CARGO_TARGET_DIR moves it),
+# and the historic estimates are removed first: `just release` keeps target
+# directories, so an estimate left by an earlier run of a since-renamed bench
+# must not stand in for one this run did not produce.
 bench-historic:
-    cargo bench -p ergo-sbe-benchmarks --bench ergo_historic_bench
-    ./scripts/check-bench-historic.sh
+    #!/usr/bin/env bash
+    set -euo pipefail
+    crit="${CARGO_TARGET_DIR:-$PWD/target}/criterion"
+    rm -rf "$crit"/ergo_historic_*
+    CRITERION_HOME="$crit" cargo bench -p ergo-sbe-benchmarks --bench ergo_historic_bench -- --noplot
+    ./scripts/check-bench-historic.sh "$crit"
 
 # Regenerate historic baselines after verifying no regressions.
 bench-historic-update:
@@ -525,6 +537,10 @@ check-bench-reference:
 #   LTO    → <repo>/target/criterion
 #   no-LTO → <repo>/target/bench-no-lto/criterion
 #
+# `--noplot`: the gate and the release archives read only Criterion's JSON
+# estimates, so the HTML/SVG reports (about 10% of each run) are not drawn.
+# Sampling is unchanged.
+#
 # Each profile is measured BENCH_REPEATS times (default 5), and every
 # invocation is snapshotted under `repeats/<k>/`. One invocation's confidence
 # interval is not the harness's resolution: identical code walked 3.5 % across
@@ -557,7 +573,7 @@ bench-cluster:
         # leaves `new/` in place for groups this binary does not touch. The
         # marker bounds the snapshot to what this invocation is about to write.
         touch "$lto_crit/.bench-since"
-        CRITERION_HOME="$lto_crit" cargo bench -p ergo-aeron-cluster
+        CRITERION_HOME="$lto_crit" cargo bench -p ergo-aeron-cluster --bench cluster_codec_bench -- --noplot
         "$snap" "$lto_crit" "$k"
     done
     "$stamp" "$lto_crit" lto "$run_id" "$commit" "$rustc_v" "$target"
@@ -569,7 +585,7 @@ bench-cluster:
           CARGO_PROFILE_BENCH_LTO=false \
           CARGO_PROFILE_BENCH_CODEGEN_UNITS=1 \
           CRITERION_HOME="$no_lto_crit" \
-          cargo bench -p ergo-aeron-cluster
+          cargo bench -p ergo-aeron-cluster --bench cluster_codec_bench -- --noplot
         "$snap" "$no_lto_crit" "$k"
     done
     "$stamp" "$no_lto_crit" no-lto "$run_id" "$commit" "$rustc_v" "$target"

@@ -22,7 +22,10 @@ criterion_dir_for() { printf '%s/%s/criterion' "$(run_root_for "$1")" "$2"; }
 # the Criterion output (run manifest + per-estimate run id), so a shared target
 # directory cannot weaken the gate — while a per-run one would leave a full
 # multi-gigabyte build tree behind on every invocation and force a cold rebuild
-# each time.
+# each time. The LTO profile is the ordinary bench profile, so it builds in the
+# ordinary target directory (CARGO_TARGET_DIR, else target/), where `just test`
+# has already compiled these benches with the same flags; only no-LTO, whose
+# profile overrides differ, needs a directory of its own.
 cargo_target_dir_for() { printf '%s/target/bench-shared/%s/target' "$REPO_ROOT" "$2"; }
 
 # Keep the disk bounded: retain only the most recent run roots. Results older
@@ -158,17 +161,20 @@ failures=0
 
 for profile in "${PROFILES[@]}"; do
     criterion_dir="$(criterion_dir_for "$RUN_ID" "$profile")"
-    target_dir="$(cargo_target_dir_for "$RUN_ID" "$profile")"
-    mkdir -p "$criterion_dir" "$target_dir"
+    mkdir -p "$criterion_dir"
 
     echo ""
     echo "=== SBE perf parity — $profile ==="
     # The profile selects environment, never whether the benchmark runs: both
     # profiles execute the same unconditional command, so neither can be
     # quietly skipped (and the test-policy checker can see that).
-    profile_env=(CARGO_TARGET_DIR="$target_dir" CRITERION_HOME="$criterion_dir")
+    profile_env=(CRITERION_HOME="$criterion_dir")
     case "$profile" in
-    no-lto) profile_env+=(CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH_CODEGEN_UNITS=1) ;;
+    no-lto)
+        target_dir="$(cargo_target_dir_for "$RUN_ID" "$profile")"
+        mkdir -p "$target_dir"
+        profile_env+=(CARGO_TARGET_DIR="$target_dir" CARGO_PROFILE_BENCH_LTO=false CARGO_PROFILE_BENCH_CODEGEN_UNITS=1)
+        ;;
     lto) ;;
     *)
         echo "unknown profile: $profile" >&2
@@ -190,8 +196,10 @@ for profile in "${PROFILES[@]}"; do
         # Criterion home can also hold other benches' groups, and Criterion
         # leaves `new/` in place for groups a run does not touch.
         touch "$criterion_dir/.bench-since"
-        env "${profile_env[@]}" cargo bench -p ergo-sbe-benchmarks --bench perf_parity_bench
-        env "${profile_env[@]}" cargo bench -p ergo-sbe-benchmarks --bench perf_parity_extended_bench
+        # `--noplot`: the gate and the release archives read only the JSON
+        # estimates, so the HTML/SVG reports are not drawn. Sampling is unchanged.
+        env "${profile_env[@]}" cargo bench -p ergo-sbe-benchmarks --bench perf_parity_bench -- --noplot
+        env "${profile_env[@]}" cargo bench -p ergo-sbe-benchmarks --bench perf_parity_extended_bench -- --noplot
         "$REPO_ROOT/scripts/snapshot-bench-repeat.sh" "$criterion_dir" "$k"
     done
 

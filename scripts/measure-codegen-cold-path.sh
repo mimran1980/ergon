@@ -5,6 +5,9 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 scratch="$(mktemp -d)"
 trap 'rm -rf "${scratch}"' EXIT
 mkdir -p "${scratch}/src"
+# The repository's pinned toolchain: outside the repository rustup would pick
+# its default, which may be older than ergo-sbe's MSRV.
+cp "${repo_root}/rust-toolchain.toml" "${scratch}/"
 
 cat >"${scratch}/Cargo.toml" <<EOF
 [package]
@@ -42,7 +45,9 @@ EOF
 
 (
   cd "${scratch}"
-  /usr/bin/time -p -o compile-time.txt cargo build --release
+  # Its own target directory, even when CARGO_TARGET_DIR is set: the
+  # measurement is a fresh compile, and the paths below read it from here.
+  CARGO_TARGET_DIR="${scratch}/target" /usr/bin/time -p -o compile-time.txt cargo build --release
 )
 
 generated="$(find "${scratch}/target/release/build" -path '*/out/messages.rs' -print -quit)"

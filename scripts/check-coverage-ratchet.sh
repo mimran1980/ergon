@@ -23,7 +23,9 @@ if [[ -z "$summary" ]]; then
     summary=$temporary_summary
     (
         cd "$repo_root"
-        cargo llvm-cov -p ergo-sbe --all-features --summary-only -- --test-threads=1
+        # Default test threads, as in every other ergo-sbe lane: the TOTAL row
+        # (regions, functions, lines) matched the one-thread run exactly.
+        cargo llvm-cov -p ergo-sbe --all-features --summary-only
     ) | tee "$summary"
 fi
 

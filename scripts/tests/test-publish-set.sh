@@ -51,11 +51,19 @@ PY
 
 write_justfile() {
     local dry=$1 publish=$2
+    local check_head=${3:-'release-check: test _release-check-extras'}
+    local post_check=${4:-'    just _release-check-extras'}
+    local pre_test=${5:-'    just test'}
+    local release_body=${6:-$'    just _release-pre\n    just _release-post'}
     {
-        printf '%s\n' 'release-check: test'
+        printf '%s\n' 'release:' "$release_body" ''
+        printf '%s\n' 'release-verified:' '    just _release-pre' '    just _release-post' ''
+        printf '%s\n' '_release-pre:' "$pre_test" ''
+        printf '%s\n' "$check_head" '    @echo ok' ''
+        printf '%s\n' '_release-check-extras: check-coverage'
         printf '%s\n' "$dry" | sed 's/^/    /'
         printf '%s\n' '    @echo ok' ''
-        printf '%s\n' '_release-post:' '    just release-check'
+        printf '%s\n' '_release-post:' "$post_check"
         printf '%s\n' "$publish" | sed 's/^/    /'
         printf '%s\n' '    just _tag' '' '_tag:' '    cargo publish -p tool'
     } > "$fixture/justfile"
@@ -162,6 +170,20 @@ expect_failure 'util has no dry run in release-check'
 # Separate invocations do not help: util is not on crates.io when app's runs.
 reset; write_justfile $'cargo publish -p core -p util --dry-run\ncargo publish -p app --dry-run' "$good_publish"
 expect_failure 'dry run of app without its dependency util'
+
+# Both release paths reach the recipe that holds the dry runs.
+reset; write_justfile "$good_dry" "$good_publish" 'release-check: test'
+expect_failure 'release-check does not depend on _release-check-extras'
+reset; write_justfile "$good_dry" "$good_publish" '' '    just release-check'
+expect_failure '_release-post does not run just _release-check-extras'
+# The release's one `just test` is in `_release-pre`, which both release
+# recipes run before `_release-post`.
+reset; write_justfile "$good_dry" "$good_publish" '' '' '    just fmt'
+expect_failure '_release-pre does not run just test'
+reset; write_justfile "$good_dry" "$good_publish" '' '' '' $'    just _release-post\n    just _release-pre'
+expect_failure 'release does not run just _release-pre before just _release-post'
+reset; write_justfile "$good_dry" "$good_publish" '' '' '' '    just _release-post'
+expect_failure 'release does not run just _release-pre before just _release-post'
 
 # The API manifest lists every published crate and nothing else.
 reset; write_api '"core", "app"'
