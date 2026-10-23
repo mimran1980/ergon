@@ -21,10 +21,10 @@
 //! `RTT_HISTOGRAM=<path>` xping also writes the full histogram there, one
 //! `value_ns,count` row per recorded value. With `LOAD_SPIKES=<path>` it writes
 //! every measured round trip of at least `LOAD_SPIKE_NS` (default 100000) as
-//! `stream,due_ns,latency_ns` (`due_ns`: when it was sent, from the start of the
+//! `stream,due_ns,latency_ns,ping` (`due_ns`: when it was sent, from the start of the
 //! measured run, whose `CLOCK_REALTIME` the first line gives as
-//! `# start_realtime_ns=`), the first 100,000 of them with `# spikes_total=`,
-//! as `load` does.
+//! `# start_realtime_ns=`; `ping`: its index in the measured run, from 0), the
+//! first 100,000 of them with `# spikes_total=`, as `load` does.
 //! With `LOOP_STALLS_DIR=<dir>`, xping and xpong also write there every stall
 //! of their own polling loop of at least `LOOP_STALL_NS` (default 20000), as
 //! `stalls-ping.csv` / `stalls-pong.csv` (`end_ns,gap_ns` from the line
@@ -192,7 +192,7 @@ fn run_ping(
     // spikes, preallocated so recording never allocates
     let spikes_path = std::env::var("LOAD_SPIKES").ok().filter(|p| !p.is_empty());
     let spike_ns: u64 = std::env::var("LOAD_SPIKE_NS").map_or(100_000, |v| v.parse().expect("LOAD_SPIKE_NS"));
-    let mut spikes: Vec<(u64, u64)> = Vec::with_capacity(if spikes_path.is_some() { SPIKE_CAPACITY } else { 0 });
+    let mut spikes: Vec<(u64, u64, usize)> = Vec::with_capacity(if spikes_path.is_some() { SPIKE_CAPACITY } else { 0 });
     let mut spikes_total = 0_u64;
     let start = Instant::now();
     let t0 = clock.now();
@@ -215,7 +215,7 @@ fn run_ping(
                 if rtt >= spike_ns {
                     spikes_total += 1;
                     if spikes.len() < spikes.capacity() {
-                        spikes.push((clock.now().wrapping_sub(t0).saturating_sub(rtt), rtt));
+                        spikes.push((clock.now().wrapping_sub(t0).saturating_sub(rtt), rtt, i));
                     }
                 }
             },
@@ -251,10 +251,11 @@ fn run_ping(
     }
     if let Some(path) = spikes_path {
         // the wall-clock time due_ns counts from, to line spikes up with traces
-        let mut rows =
-            format!("# start_realtime_ns={t0_realtime}\n# spikes_total={spikes_total}\nstream,due_ns,latency_ns\n");
-        for (due, latency) in &spikes {
-            rows.push_str(&format!("{PING_STREAM_ID},{due},{latency}\n"));
+        let mut rows = format!(
+            "# start_realtime_ns={t0_realtime}\n# spikes_total={spikes_total}\nstream,due_ns,latency_ns,ping\n"
+        );
+        for (due, latency, ping) in &spikes {
+            rows.push_str(&format!("{PING_STREAM_ID},{due},{latency},{ping}\n"));
         }
         std::fs::write(&path, rows).unwrap_or_else(|e| panic!("LOAD_SPIKES {path}: {e}"));
     }

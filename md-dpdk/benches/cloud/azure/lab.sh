@@ -48,6 +48,10 @@
 #   refused without LAB_LOAD_SIZES, where it would never run
 #   LAB_RTT_ALIGN (none; e.g. 58): start each round-trip run at that second of the
 #   minute, so every mode misses (or meets) a host event recurring once a minute alike
+#   LAB_RTT_SPIKE_NS (30000) and LAB_RTT_STALL_NS (10000): the cross-host round trip's
+#   clients stamp every round trip, and every stall of their own loop, of at least that
+#   many ns (spikes.py gives each rep's 10 largest every event overlapping them; on
+#   Kubernetes the client pods' LOAD_SPIKE_NS and LOOP_STALL_NS, pod environment)
 #   LAB_BASE (none; a git revision of this checkout): also built on both VMs, into
 #   ~/bin-base, for modes with @BIN=bin-base: LAB_MODES="dpdk dpdk@BIN=bin-base" A/Bs
 #   that build against this one (analyse.py --ab dpdk dpdk@BIN=bin-base <results.csv>).
@@ -126,6 +130,10 @@ read -ra states <<<"${LAB_STATES:-pinned isolated}"
 rtt_messages=${RTT_MESSAGES:-300000}
 rtt_warmup=${RTT_WARMUP:-50000}
 rtt_align=${LAB_RTT_ALIGN:-}
+# the cross-host round trip's stamps: every round trip and every loop stall of
+# at least that many ns (lib.sh)
+rtt_spike_ns=${LAB_RTT_SPIKE_NS:-30000}
+rtt_stall_ns=${LAB_RTT_STALL_NS:-10000}
 base=${LAB_BASE:-}
 # both VMs deallocate themselves this long after creation (hours)
 max_hours=${LAB_MAX_HOURS:-8}
@@ -165,6 +173,8 @@ for m in ${local_modes:-}; do
     why=$(mode_check "$m" local x86_64 azure "" 2>&1) || die "$why"
 done
 [[ -z $no_flatout || $no_flatout == 1 ]] || die "LAB_NO_FLATOUT is 1 or unset"
+[[ $rtt_spike_ns =~ ^[1-9][0-9]{0,9}$ ]] || die "LAB_RTT_SPIKE_NS is a whole number of nanoseconds, from 1 (the round trips stamped), not $rtt_spike_ns"
+[[ $rtt_stall_ns =~ ^[1-9][0-9]{0,9}$ ]] || die "LAB_RTT_STALL_NS is a whole number of nanoseconds, from 1 (the client loop stalls stamped), not $rtt_stall_ns"
 [[ $warmup_seconds =~ ^[0-9]{1,6}$ ]] || die "LAB_WARMUP_SECONDS is a whole number of seconds (0: no warm-up), not $warmup_seconds"
 [[ $warmup_rate =~ ^[0-9]{1,9}$ ]] || die "LAB_WARMUP_RATE is a whole number of messages a second, not $warmup_rate"
 ((10#$warmup_seconds == 0 || 10#$warmup_rate > 0)) ||

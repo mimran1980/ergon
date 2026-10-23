@@ -77,8 +77,8 @@
 //! that is not fine ([`checks`]): the agents' placement and idling, sparse
 //! term buffers, socket buffers, kernel busy polling, CPU isolation, SMT
 //! siblings, transparent hugepages, the Aeron directory, and the data NICs'
-//! interrupts and settings. `RUSTERON_MEDIA_DRIVER_HOST_CHECK` is `warn`
-//! (default), `off` or `require` (refuse to start on a warning), and
+//! interrupts and settings. `ERGON_HOST_CHECKS` is `warn` (default), `off`
+//! (no check runs) or `require` (refuse to start on a warning), and
 //! `RUSTERON_MEDIA_DRIVER_DATA_NICS` names the socket transport's data NICs.
 
 // The DPDK transport targets Linux on x86_64 (Intel and AMD instances) and

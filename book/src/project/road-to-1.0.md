@@ -1,8 +1,17 @@
 # Road to 1.0
 
-Every published crate is 0.x and **not production-ready**. This page gives
-the exit criteria for `ergo-sbe` and `ergo-aeron-cluster`: criteria, not a
-date.
+Every published crate is 0.x alpha and **not production-ready**. This page
+gives the exit criteria for `ergo-sbe` and `ergo-aeron-cluster`: criteria, not
+a date.
+
+## Breaking changes on 0.x
+
+| Rule | 0.x |
+|---|---|
+| API breaks | Allowed in any release |
+| Deprecation period | None: an item is removed or changed in place |
+| Record | `CHANGELOG.md` lists every break |
+| Wire format | Not covered: official SBE wire compatibility still holds |
 
 ## ergo-sbe (reaches 1.0 first)
 
@@ -54,12 +63,9 @@ Cluster may remain `0.x` after sbe 1.0.
 - Changelog: repository root `CHANGELOG.md`.
 - External pilot: [External Schema Pilot](external-pilot.md).
 - Cluster compatibility: [Cluster Compatibility](../cluster/compatibility.md).
-- API baseline manifest: `api/public-api-baseline.toml`. `scripts/check-public-api.sh`
-  runs cargo-semver-checks on each published crate it lists (`ergo-aeron-cluster`
-  only with `CLUSTER_SEMVER_CHECKS=1`; a crate first published after the
-  baseline once the baseline reaches that release).
-  `scripts/check-generated-public-api.sh` diffs generated codec surfaces
-  against `api/generated/*.txt`.
+- Generated API snapshots: `scripts/check-generated-public-api.sh` diffs
+  generated codec surfaces against `api/generated/*.txt`, so every surface
+  change is reviewed. It tracks changes; it does not forbid them.
 - Benchmark evidence: `just bench` + `just bench-cluster` write
   provenance-stamped Criterion trees; `scripts/package-bench-artifacts.sh`
   attaches them to a GitHub release. A number without a matching run-id /
@@ -73,29 +79,10 @@ A claimed 1.0 streak tag must be an ancestor of `main`
 
 | Criterion | Status |
 |-----------|--------|
-| 1. API-freeze audit | Manifest exists; cargo-semver-checks and generated-API fixture diffs (`api/generated/`) are enforced. |
+| 1. API-freeze audit | **Open.** Generated-API snapshot diffs (`api/generated/`) track every surface change. |
 | 2. Parity gate | **Open.** Needs three consecutive releases on `main` with gate output attached. |
 | 3. Wire compatibility | Dual-encode parity tests run in CI. FIX SBE conformance: suite tests 1–3 run in CI; the RLValidator leg does not ([External pilot](external-pilot.md)). |
 | 4. Trust boundary | Fuzz + Miri fixtures exist; any open P0 is blocking. |
 | 5. Docs | Book + migration pages published. |
 | 6. External signal | **Open.** In-repo FIX SBE is internal evidence, not an external user. See [external-pilot.md](external-pilot.md). |
 | Cluster 1.0 | Separate clock; [compatibility](../cluster/compatibility.md) + `just bench-cluster` exist. |
-
-## 1.0 API migrations (still 1.0-only)
-
-These remain scheduled for 1.0 and are **not** shipped on 0.x. `cargo
-semver-checks` against the `v0.1.26` baseline (the `baseline_tag` in
-`api/public-api-baseline.toml`) must stay green.
-
-- `Schema` identity as one private `Ir` (no duplicate public
-  `package`/`id`/`version` beside `ir`). 0.x keeps the public fields.
-- XML `deprecated` as `Option<u16>` through `Encoding`, `FieldInfo`, and
-  `ItemContext`. 0.x keeps `deprecated: bool` on those public types.
-- Removal of `GenerationConfig::with_error_from_impls`. 0.x keeps the
-  deprecated helper; prefer a typed `From<generated::sbe_rt::{EncodeError,
-  DecodeError}>` so `needed`/`available` survive `?`.
-
-Shipped on this 0.x line:
-
-- `ergo-aeron-cluster` has no `test-harness` feature. Repository Java
-  launch support is `ergo-aeron-cluster-test-harness`.

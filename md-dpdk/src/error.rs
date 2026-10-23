@@ -25,7 +25,7 @@ pub enum DpdkError {
     Native(String),
     /// Installation through the Aeron context failed.
     Aeron(String),
-    /// Under `RUSTERON_MEDIA_DRIVER_HOST_CHECK=require`, a host check warned
+    /// Under `ERGON_HOST_CHECKS=require`, a host check warned
     /// ([`crate::checks`]): the driver was not started. Names the warnings,
     /// which were printed in full.
     HostCheck(String),

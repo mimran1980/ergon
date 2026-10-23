@@ -6,7 +6,7 @@
 #   docker build -t ergon-shared-cpus:dev .
 #   docker buildx build --platform linux/amd64,linux/arm64 -t ergon-shared-cpus:dev .
 #
-# Published as ghcr.io/mimran1980/ergon-shared-cpus:0.1.0.
+# Published as ghcr.io/mimran1980/ergon-shared-cpus:0.1.1.
 # See RELEASE.md for what is still not verified.
 
 FROM golang:1.27-trixie AS build
@@ -32,7 +32,7 @@ ARG GIT_DESCRIBE=""
 LABEL org.opencontainers.image.title="ergon-shared-cpus" \
       org.opencontainers.image.description="NRI plugin and kubelet device plugin that give a pod its exclusive CPUs and the node's shared housekeeping CPUs" \
       org.opencontainers.image.licenses="Apache-2.0" \
-      org.opencontainers.image.source="https://github.com/mimran1980/ergon/tree/main/k8s/nri-shared-cpus" \
+      org.opencontainers.image.source="https://github.com/mimran1980/ergon" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${GIT_DESCRIBE}"
 COPY --from=build /out/ergon-shared-cpus /ergon-shared-cpus

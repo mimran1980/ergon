@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Diff generated codec public surfaces against api/generated/*.txt.
+# Diff generated codec public surfaces against api/generated/*.txt. This
+# tracks API changes for review; it does not forbid them.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 manifest="$root/api/public-api-baseline.toml"
@@ -16,10 +17,6 @@ for field in name schema profile generated_module; do
         exit 1
     fi
 done
-if ! grep -q 'baseline_tag' "$manifest"; then
-    echo "FAIL: manifest missing baseline provenance"
-    exit 1
-fi
 
 if [[ "${1:-}" == "--update" ]]; then
     export UPDATE_GENERATED_PUBLIC_API=1

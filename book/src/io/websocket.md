@@ -125,7 +125,8 @@ A refused handshake, in `on_closed`:
 - `send_text`, `send_binary`, `ping`, or `send_frame(opcode, payload)`.
 - A message larger than one TLS record goes out over several.
 - On a driver-owned connection: `driver.get_mut(id)`, then the same methods.
-- Sends go out on the next `poll`, or at once with `Driver::flush`.
+- Sends go out at the start of the next `poll`, before it reads anything,
+  or at once with `Driver::flush`.
 - Handlers cannot send (they have no driver): remember the id, send after
   `poll` returns (as the example does).
 - `stats().auto_frames` counts the frames the connection sends by itself:

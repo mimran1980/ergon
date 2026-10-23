@@ -13,6 +13,7 @@ Every ergon-io latency figure lives here, once. Each row names the committed fil
 | SQPOLL on the loop's hyperthread sibling? | Works; about +2.3–2.5 µs p50 and +9–12 µs p99 at 10–100 connections against a core of its own. | [SMT sibling cost](#smt-sibling-cost) |
 | ergon-io or libcurl for HTTP? | ergon-io is 5–12 µs ahead at the median on the same interrupt path. Its p99 and max are lower on Azure, not on AWS. | [HTTP clients](#http-clients) |
 | `connect_background` or `Driver::connect`? | Background: the loop's worst poll per connect is 6–12 µs p50 (max 98–102) against about 105 µs inline (max 775, the first connect). | [Connection set-up](#connection-set-up) |
+| mio as a backend? | No. On Linux it is epoll: level with `epoll-spin` on round trips, with 2.0× the `recvmsg` calls. Its market-data arm was confounded. Reasons and its maxima without a cause: the book's [mio: measured, not a backend](https://mimran1980.github.io/ergon/io/backends.html#mio-measured-not-a-backend). | [Fair run](#interrupt-against-nic-polling-the-fair-run-graviton), [loop pass](#loop-pass-by-socket-count-graviton) |
 | ENA adaptive moderation? | Off stopped the polling loop's involuntary preemptions (about 8,900 in 8 min to 0) and cut WebSocket p99.99 from 117–119 to 72–76 µs. HTTP p99.99 did not move. | [Host and NIC settings](#host-and-nic-settings-aws-x86) |
 
 ## Hosts and runs
@@ -89,6 +90,22 @@ What the run shows:
 - The interrupt backends hold 38.8–40.4 µs p50 from 1 to 64 sockets. `uring-sqpoll` goes from 36.5–37.0 at 1 socket to 40.0–40.1 at 64. `per_queue` holds 44 µs from 16. Plain `recv-busy` reaches 78 µs at 64.
 - With the interrupts on the loop's CPU, the interrupt backends keep their median and lose tail: p99 62–87 µs at 16 and 64 sockets against 50–54 on a core of their own.
 - The maxima overlap across all backends and placements.
+
+### Loop pass by socket count (Graviton)
+
+Market data, `irqcore`, the same run. Pass = 1 ÷ the loop's passes per second (a mean). Longest pass: the loop's longest iteration, not attributed to a cause; mio's harness does not record it. Data: [`loop-counters.md`](results/flags-aws-20261019T175248Z/loop-counters.md).
+
+| backend | pass, 1 socket | pass, 256 sockets | longest pass, 256 sockets |
+|---|---|---|---|
+| `epoll-spin` | 342–343 ns | 601–617 ns | 612–690 µs |
+| mio | 348 ns | 359 ns | not recorded |
+| `uring-spin` | 29 ns | 393–395 ns | 1,015–1,199 µs |
+| `uring-sqpoll` (the loop's thread) | 27 ns | 368 ns | 231–246 µs |
+| `recv-busy,per_queue` | 933–934 ns | 5.56–5.58 µs | 804–897 µs |
+| `recv-busy` | 574–588 ns | 149.3–149.4 µs | 1,910–2,187 µs |
+
+- Every backend's pass grows with sockets, idle ones included: the `Driver` checks each connection for queued sends on every pass. `uring-sqpoll`'s kernel thread polls NIC queues, but the loop's own pass still grows.
+- mio makes 2.0× the `recvmsg` calls of `epoll-spin` (WebSocket round trip, N = 1: 1,200,000 against 600,000), from reading until `WouldBlock`.
 
 ## Polling backends by socket count (x86)
 
@@ -230,7 +247,7 @@ Not measured here: `prefer_busy_poll`, `busy_poll_budget`, route `quickack` and 
 ## Open
 
 - Graviton against x86: not compared. x86 interrupt against polling: no fair run.
-- The fair run's `md-mio-c1` points show a sender batch up to 40 ms late on 0.07 % of batches, mio at one connection only (`work-counts.md`). Not traced.
+- The fair run's `md-mio-c1` points show a sender batch up to 40 ms late on 0.07 % of batches, mio at one connection only (`work-counts.md`). No cause yet. It is listed with mio's other maxima still without a cause in the book's [mio: measured, not a backend](https://mimran1980.github.io/ergon/io/backends.html#mio-measured-not-a-backend).
 - Whether `epoll-busy` and `uring-napi` save CPU at low load.
 - Azure's once-a-minute stall: no kernel event explains it.
 

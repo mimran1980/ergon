@@ -92,9 +92,9 @@ DPDK's own threads.
 | `RUSTERON_DPDK_EAL_ARGS` | extra EAL options, such as `-l <cpu>` to keep the EAL's main thread on a housekeeping CPU from the pod's cpuset |
 | `RUSTERON_DPDK_HOUSEKEEPING_CPU` | the CPU for the transport's housekeeping and local-I/O threads |
 | `RUSTERON_DPDK_HUGE_DIR` | the hugetlbfs mount DPDK uses, an absolute path; `/dev/hugepages` by default |
+| `RUSTERON_DPDK_EAL_IN_MEMORY` | `1`: the EAL runs `--in-memory` (no hugepage files, none left after an OOM kill; no multi-process channel thread). The pod keeps its `hugepages-2Mi` limit. EAL options that contradict it fail start. Default `0`; latency effect not measured |
 | `RUSTERON_MEDIA_DRIVER_DIR` | the Aeron directory `ConfiguredDriver` sets |
-| `ERGON_HOST_CHECKS` | `on`/`warn` (default), `off` (no check runs), or `require`: refuse to start while any [host check](../tune/overview.md) warns. Wins over its alias below when both are set |
-| `RUSTERON_MEDIA_DRIVER_HOST_CHECK` | alias of `ERGON_HOST_CHECKS`, read only when that is unset |
+| `ERGON_HOST_CHECKS` | `on`/`warn` (default), `off` (no check runs), or `require`: refuse to start while any [host check](../tune/overview.md) warns, or while a port's gateway does not answer ARP within 1 s at start |
 | `RUSTERON_MEDIA_DRIVER_MLOCKALL` | `1`: `mlockall` before the driver starts (needs `CAP_IPC_LOCK` in the pod). **Not recommended**: see the entry-point table above |
 
 Every other knob (rate caps, host-local channels, ENA device arguments,
@@ -162,7 +162,7 @@ the pod spec or the channel URI; **node** needs node-level access.
 
 | setting | where | what it does | evidence |
 |---|---|---|---|
-| `AERON_RECEIVER_IO_VECTOR_CAPACITY=16` (the default under `dpdk-ena`) | pod | up to 16 frames a receive, Aeron's maximum (`md-dpdk/src/driver.rs`) | measured before the DPDK poll drained whole bursts itself; it now sizes host-local socket reads. One run (`aws-20261014-113947`, platform not recorded), DPDK, 1,344 B at 600 k msgs/s: no NAK against 16,247 NAKs without it, max 142 against 1,130 µs ([BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#measured-but-no-setting-recommended)) |
+| `AERON_RECEIVER_IO_VECTOR_CAPACITY=16` (the default under `dpdk-ena`) | pod | up to 16 frames a receive, Aeron's maximum (`md-dpdk/src/driver.rs`) | under DPDK the poll drains whole bursts itself, so this sizes host-local socket reads; the A/B predates that. One run (`aws-20261014-113947`, platform not recorded), DPDK, 1,344 B at 600 k msgs/s: no NAK against 16,247 NAKs without it, max 142 against 1,130 µs ([BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#measured-but-no-setting-recommended)) |
 | `AERON_DIR` on a *sized* 2 MiB hugetlbfs, `AERON_FILE_PAGE_SIZE=2097152`, `AERON_TERM_BUFFER_SPARSE_FILE=false` | node mount, pod env | the log buffers sit on hugepages, allocated up front | required, not A/B'd: an unsized hugetlbfs reports no free space, and Aeron refuses every log buffer |
 | `AERON_CLIENT_PRE_TOUCH_MAPPED_MEMORY=true` on clients | pod | clients fault their mappings in before the first message | not measured here |
 | `AERON_MTU_LENGTH=1408` (at most `RUSTERON_DPDK_MAX_AERON_MTU`, 1,408 by default) | pod | every frame fits one packet buffer | jumbo frames, Graviton G2, **one run**: 1,344 B bursts p50 242 → 210 µs, max 954 → 1,533 µs; idle unchanged. A candidate for bulk or bursty channels only |

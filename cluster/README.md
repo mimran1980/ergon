@@ -122,7 +122,7 @@ types are the consumer-facing surface. The generated protocol codecs are also
 reachable, for advanced direct encode/decode, through the `cluster_codec_types`
 module — but that module is `#[doc(hidden)]` and **not** a stable API: it exists
 for repository tests and low-level experimentation, and its shape may change
-without a semver bump. Normal applications should use `AeronCluster`.
+in any release. Normal applications should use `AeronCluster`.
 <!-- ANCHOR_END: egress -->
 
 ## Decoding chained session messages (advanced)

@@ -137,6 +137,202 @@ pub fn set_tcp_user_timeout(fd: RawFd, ms: u32) -> io::Result<()> {
     setsockopt_int(fd, libc::IPPROTO_TCP, libc::TCP_USER_TIMEOUT, to_int(ms)?)
 }
 
+/// A per-socket TCP timer added in Linux 6.15.
+///
+/// Commits f38805c5d26f and 9552f90835ef. The kernel keeps it in ticks (`usecs_to_jiffies`, rounding
+/// up) and takes 2 ticks (`TCP_TIMEOUT_MIN`) to `HZ / 5` ticks (200 ms):
+/// outside that, `EINVAL`. An older kernel answers `ENOPROTOOPT`. No
+/// capability is needed, so a pod sets it in its own spec.
+///
+/// User space cannot read `CONFIG_HZ`: `sysconf(_SC_CLK_TCK)` is `USER_HZ`
+/// (always 100 on Linux). So [`set_tcp_timer`] reads the value back and
+/// refuses one the kernel rounded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TcpTimer {
+    /// `TCP_RTO_MIN_US`: the retransmission timeout's floor.
+    RtoMin,
+    /// `TCP_DELACK_MAX_US`: the longest delayed ACK.
+    DelackMax,
+}
+
+impl TcpTimer {
+    /// The option number, `include/uapi/linux/tcp.h` (Linux 6.15):
+    /// `#define TCP_RTO_MIN_US 45`, `#define TCP_DELACK_MAX_US 46`. The libc
+    /// crate does not define them.
+    const fn opt(self) -> libc::c_int {
+        match self {
+            Self::RtoMin => 45,
+            Self::DelackMax => 46,
+        }
+    }
+
+    /// The socket option's name.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::RtoMin => "TCP_RTO_MIN_US",
+            Self::DelackMax => "TCP_DELACK_MAX_US",
+        }
+    }
+
+    /// The `Config` key.
+    #[must_use]
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::RtoMin => "tcp_rto_min_us",
+            Self::DelackMax => "tcp_delack_max_us",
+        }
+    }
+
+    const fn needs(self) -> &'static str {
+        match self {
+            Self::RtoMin => "TCP_RTO_MIN_US (tcp_rto_min_us) needs Linux 6.15 or newer",
+            Self::DelackMax => "TCP_DELACK_MAX_US (tcp_delack_max_us) needs Linux 6.15 or newer",
+        }
+    }
+}
+
+/// Sets a [`TcpTimer`] to `us` and reads it back.
+///
+/// # Errors
+/// [`crate::Error::Unsupported`] naming the option and Linux 6.15 when the
+/// kernel does not know it; [`crate::Error::Config`] when it knows it but
+/// refuses `us` (below two of its ticks) or keeps a rounded value (`us` is
+/// not whole ticks); [`crate::Error::Io`] for any other failure.
+pub fn set_tcp_timer(fd: RawFd, timer: TcpTimer, us: u32) -> crate::Result<()> {
+    if let Err(e) = setsockopt_int(fd, libc::IPPROTO_TCP, timer.opt(), to_int(us)?) {
+        // A kernel that knows the option can also read it: EINVAL is then
+        // the range check, not a missing option.
+        let known = getsockopt_int(fd, libc::IPPROTO_TCP, timer.opt()).is_ok();
+        return Err(timer_error(timer, us, &e, known).unwrap_or(crate::Error::Io(e)));
+    }
+    let kept = tcp_timer(fd, timer)?;
+    if kept != us {
+        return Err(crate::Error::Config(format!(
+            "{} {us} µs: this kernel keeps {kept} µs ({} rounds up to its timer tick, \
+             CONFIG_HZ); set {kept}",
+            timer.key(),
+            timer.name()
+        )));
+    }
+    Ok(())
+}
+
+/// The typed error for a failed [`set_tcp_timer`], given whether the kernel
+/// can read the option (`known`); `None` for an error that is neither.
+pub(crate) fn timer_error(
+    timer: TcpTimer,
+    us: u32,
+    e: &io::Error,
+    known: bool,
+) -> Option<crate::Error> {
+    match e.raw_os_error() {
+        Some(libc::EINVAL) if known => Some(crate::Error::Config(format!(
+            "{} {us} µs: this kernel takes {} from 2 timer ticks (2 ms at CONFIG_HZ=1000, \
+             8 ms at 250, 20 ms at 100) to 200 ms",
+            timer.key(),
+            timer.name()
+        ))),
+        Some(libc::ENOPROTOOPT | libc::EINVAL) => Some(crate::Error::Unsupported(timer.needs())),
+        _ => None,
+    }
+}
+
+/// Reads a [`TcpTimer`], µs.
+///
+/// # Errors
+/// `getsockopt` fails (`ENOPROTOOPT` before Linux 6.15).
+pub fn tcp_timer(fd: RawFd, timer: TcpTimer) -> io::Result<u32> {
+    getsockopt_int(fd, libc::IPPROTO_TCP, timer.opt())
+        .and_then(|v| u32::try_from(v).map_err(|_| io::Error::from(io::ErrorKind::InvalidData)))
+}
+
+/// Sets `TCP_RTO_MIN_US` and `TCP_DELACK_MAX_US` on a fresh TCP socket, so
+/// a value this kernel refuses or rounds fails at start-up, not at the first
+/// connection.
+///
+/// # Errors
+/// As [`set_tcp_timer`]; or the probe socket cannot be created.
+pub fn probe_tcp_timers(rto_min_us: Option<u32>, delack_max_us: Option<u32>) -> crate::Result<()> {
+    if rto_min_us.is_none() && delack_max_us.is_none() {
+        return Ok(());
+    }
+    let s = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None)?;
+    apply_tcp_timers(s.as_raw_fd(), rto_min_us, delack_max_us)
+}
+
+/// [`set_tcp_timer`] for each timer that is set.
+///
+/// # Errors
+/// As [`set_tcp_timer`].
+pub fn apply_tcp_timers(
+    fd: RawFd,
+    rto_min_us: Option<u32>,
+    delack_max_us: Option<u32>,
+) -> crate::Result<()> {
+    if let Some(us) = rto_min_us {
+        set_tcp_timer(fd, TcpTimer::RtoMin, us)?;
+    }
+    if let Some(us) = delack_max_us {
+        set_tcp_timer(fd, TcpTimer::DelackMax, us)?;
+    }
+    Ok(())
+}
+
+/// Offsets into `struct tcp_info` (`include/uapi/linux/tcp.h`): eight `__u8`
+/// fields, then `__u32` fields from `tcpi_rto`.
+pub(crate) mod tcpi {
+    pub const RTO: usize = 8;
+    pub const LOST: usize = 32;
+    pub const RTT: usize = 68;
+    pub const RTTVAR: usize = 72;
+    pub const TOTAL_RETRANS: usize = 100;
+    /// After four `__u64` and three `__u32` fields (Linux 4.6+).
+    pub const MIN_RTT: usize = 148;
+}
+
+/// Reads `TCP_INFO`: one `getsockopt`, which takes the socket's lock briefly
+/// (`lock_sock_fast`), so a softirq delivering to the socket at that moment
+/// waits for it. `at_ns` is left 0 for the caller.
+///
+/// # Errors
+/// `getsockopt` fails, or the kernel's `tcp_info` stops before
+/// `tcpi_total_retrans`.
+pub fn tcp_info(fd: RawFd) -> io::Result<crate::TcpInfo> {
+    let mut b = [0u8; 256];
+    let mut len = libc::socklen_t::try_from(b.len()).map_err(io::Error::other)?;
+    // SAFETY: `b` and `len` are valid for the call; the kernel writes at
+    // most `len` bytes.
+    let rc = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::IPPROTO_TCP,
+            libc::TCP_INFO,
+            b.as_mut_ptr().cast(),
+            &raw mut len,
+        )
+    };
+    if rc != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let got = usize::try_from(len).map_err(io::Error::other)?;
+    let field = |at: usize| -> Option<u32> {
+        let bytes = b.get(at..at + 4).filter(|_| at + 4 <= got)?;
+        Some(u32::from_ne_bytes(bytes.try_into().ok()?))
+    };
+    let short = || io::Error::new(io::ErrorKind::InvalidData, "tcp_info too short");
+    Ok(crate::TcpInfo {
+        at_ns: 0,
+        rtt_us: field(tcpi::RTT).ok_or_else(short)?,
+        rttvar_us: field(tcpi::RTTVAR).ok_or_else(short)?,
+        // `~0U` until the first RTT sample.
+        min_rtt_us: field(tcpi::MIN_RTT).filter(|&v| v != u32::MAX),
+        total_retrans: field(tcpi::TOTAL_RETRANS).ok_or_else(short)?,
+        lost: field(tcpi::LOST).ok_or_else(short)?,
+        rto_us: field(tcpi::RTO).ok_or_else(short)?,
+    })
+}
+
 /// Reads a socket's keepalive settings and `TCP_USER_TIMEOUT`.
 ///
 /// # Errors

@@ -109,7 +109,7 @@
 #   LAB_STATES ("pinned isolated"; isolated-poll: isolated, and idle CPUs poll rather
 #   than halt, x86 idle=poll, Graviton nohlt)
 #   LAB_LOCAL_MODES, LAB_LOAD_SIZES, LAB_LOAD_FRACTIONS, LAB_LOAD_SECONDS,
-#   LAB_LOAD_LADDER, LAB_MIX, LAB_MIX_SECONDS, LAB_RTT_ALIGN, LAB_BASE, LAB_TPUT_FLOWS: as azure/lab.sh
+#   LAB_LOAD_LADDER, LAB_MIX, LAB_MIX_SECONDS, LAB_RTT_ALIGN, LAB_RTT_SPIKE_NS, LAB_RTT_STALL_NS, LAB_BASE, LAB_TPUT_FLOWS: as azure/lab.sh
 #   (LAB_TPUT_FLOWS: one UDP flow carries at most 8.0 Gbit/s of frames here, on every size
 #   measured; LAB_TPUT_FLOWS=2, where both instances have a fifth core (c7i.4xlarge and
 #   up), adds the sustained maximum over two flows at once, which shows whether two carry
@@ -220,6 +220,10 @@ tput_flows=${LAB_TPUT_FLOWS:-}
 rtt_messages=${RTT_MESSAGES:-300000}
 rtt_warmup=${RTT_WARMUP:-50000}
 rtt_align=${LAB_RTT_ALIGN:-}
+# the cross-host round trip's stamps: every round trip and every loop stall of
+# at least that many ns (lib.sh)
+rtt_spike_ns=${LAB_RTT_SPIKE_NS:-30000}
+rtt_stall_ns=${LAB_RTT_STALL_NS:-10000}
 base=${LAB_BASE:-}
 # the instances' own deadline (hours from launch), in case this machine never
 # gets to delete them (it slept, lost its network): see deadline-userdata.sh
@@ -311,6 +315,8 @@ if [[ -z ${LAB_DELETE:-} ]]; then
     [[ -z ${LAB_CLOCK_ONLY:-}${LAB_DISCIPLINE_SECONDS:-} ]] ||
         die "LAB_CLOCK_ONLY and LAB_DISCIPLINE_SECONDS were removed with the clock benchmarks: unset them"
     [[ $max_hours =~ ^[1-9][0-9]*$ ]] || die "LAB_MAX_HOURS is a whole number of hours, from 1 (the instances' deadline), not $max_hours"
+    [[ $rtt_spike_ns =~ ^[1-9][0-9]{0,9}$ ]] || die "LAB_RTT_SPIKE_NS is a whole number of nanoseconds, from 1 (the round trips stamped), not $rtt_spike_ns"
+    [[ $rtt_stall_ns =~ ^[1-9][0-9]{0,9}$ ]] || die "LAB_RTT_STALL_NS is a whole number of nanoseconds, from 1 (the client loop stalls stamped), not $rtt_stall_ns"
     if [[ $placement == cross-az || $placement == cross-region ]] && [[ $no_flatout != 1 ]]; then
         die "LAB_PLACEMENT=$placement: the traffic between the hosts is billed per GB, so no flat-out phases: set LAB_NO_FLATOUT=1 (LAB_ESTIMATE=1 prints the cost)"
     fi

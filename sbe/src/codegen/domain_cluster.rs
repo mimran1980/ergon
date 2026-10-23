@@ -316,8 +316,13 @@ fn push_named_type_cell(
     }
 }
 
-/// Emit a domain-object range check against schema min/max for integer wire types.
-/// Floats/doubles are skipped (IEEE null sentinels are not simple min/max ranges).
+/// Emit the encode-side range check of an integer or `char` scalar: only the
+/// `minValue` / `maxValue` the schema declares, as `validate()` checks.
+/// An undeclared side (where resolve filled the SBE default) and a declared
+/// bound equal to the Rust type's own limit check nothing, so any value the
+/// type holds is written, as sbe-tool's flyweight setters write it.
+/// Floats/doubles are skipped (IEEE null sentinels are not simple min/max
+/// ranges). The error reports the effective bounds, as `ValidateError` does.
 pub(crate) fn dto_range_check_tokens(
     f: &MessageField,
     prim: PrimitiveType,
@@ -330,35 +335,24 @@ pub(crate) fn dto_range_check_tokens(
     let (Some(min), Some(max)) = (f.min_value, f.max_value) else {
         return quote::quote! {};
     };
-    let to_i128 = |v: u64| -> i128 {
-        match prim {
-            PrimitiveType::Int8 => (v as i8) as i128,
-            PrimitiveType::Int16 => (v as i16) as i128,
-            PrimitiveType::Int32 => (v as i32) as i128,
-            PrimitiveType::Int64 => (v as i64) as i128,
-            PrimitiveType::Char | PrimitiveType::UInt8 => v as u8 as i128,
-            PrimitiveType::UInt16 => v as u16 as i128,
-            PrimitiveType::UInt32 => v as u32 as i128,
-            PrimitiveType::UInt64 => v as i128,
-            PrimitiveType::Float | PrimitiveType::Double => 0,
-        }
-    };
-    let min_i = to_i128(min);
-    let max_i = to_i128(max);
-    // Skip no-op ranges that cover the full native type width.
-    if min_i == to_i128(0)
-        && max_i >= (i128::from(u64::MAX) - 1)
-        && matches!(prim, PrimitiveType::UInt64)
-    {
-        // still check — MAX is often max-1 for null reserved
-    }
+    let (type_min, type_max) = super::validate::type_range(prim);
+    let min_i = super::validate::to_i128(prim, min);
+    let max_i = super::validate::to_i128(prim, max);
+    let check_min = f.min_value_declared && min_i > type_min;
+    let check_max = f.max_value_declared && max_i < type_max;
     let min_lit = syn::LitInt::new(&format!("{min_i}"), span);
     let max_lit = syn::LitInt::new(&format!("{max_i}"), span);
+    let out_of_range = match (check_min, check_max) {
+        (true, true) => quote::quote! { __v < #min_lit || __v > #max_lit },
+        (true, false) => quote::quote! { __v < #min_lit },
+        (false, true) => quote::quote! { __v > #max_lit },
+        (false, false) => return quote::quote! {},
+    };
     let field_lit = syn::LitStr::new(&f.name, span);
     quote::quote! {
         {
             let __v = #value_expr as i128;
-            if __v < #min_lit || __v > #max_lit {
+            if #out_of_range {
                 return Err(sbe_rt::EncodeError::ValueOutOfRange {
                     field: #field_lit,
                     min: #min_lit,
@@ -2034,7 +2028,7 @@ pub(crate) fn generate_source_traits(
          field's null value (NaN for a float), `Conversion` for a value its \
          domain conversion refused (with the field's path and the \
          conversion's error), and `ValueOutOfRange` for a group longer than \
-         its count type or a value outside the schema range.",
+         its count type or a value outside a `minValue` / `maxValue` the schema declares.",
     );
     let length_doc = super::runtime::doc_lines_tokens(&if encode_from_ident.is_some() {
         format!(

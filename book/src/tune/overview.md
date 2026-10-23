@@ -22,7 +22,7 @@ In brackets: the check (T1–N4). Times are in µs.
 
 | term | what it is | pros / cons, or when it matters |
 |---|---|---|
-| [check](#what-it-checks), [finding](#read-a-finding) | A check tests one host (T1–T12, K1–K7) or NIC (N1–N4) setting. A finding is a check that fired, with its fix. | Data it cannot read gives *unknown*, never a warning. |
+| [check](#what-it-checks), [finding](#read-a-finding) | A check tests one host (T1–T19, K1–K7) or NIC (N1–N4) setting. A finding is a check that fired, with its fix. | Data it cannot read gives *unknown*, never a warning. |
 | busy-spinning thread | A thread that loops on one CPU and never sleeps. | Never waits to wake up, but takes a whole CPU. Anything else that runs there pauses it. |
 | [hot, housekeeping CPU](../deploy/hosts.md#cpu-layout) | Hot: a CPU a thread busy-spins on. Housekeeping: any other CPU. | Move the kernel's work and interrupts to housekeeping CPUs. |
 | p50, p99, p99.9, p99.99, max | The median; the slowest 1 in 100, 1,000 or 10,000; the slowest of all. The high ones are the *tail*. | Host noise shows in the tail and max; the p50 often hardly moves. |
@@ -63,6 +63,12 @@ In brackets: the check (T1–N4). Times are in µs.
 | open loop | Each message is timed from when it was due, not when it was sent. | A stall counts against every message it delays. |
 | `CLOCK_REALTIME` | The kernel's wall clock: UTC stamps, kernel and NIC timestamps. A time daemon disciplines it. | A pod shares the node's: fix time sync on the node (T11). |
 | PTP hardware clock (PHC) | A NIC's or hypervisor's clock (`/dev/ptp0`; ENA's `ptp_ena`, Hyper-V's `ptp_hyperv`) that chrony can lock `CLOCK_REALTIME` to (`refclock PHC`). | Tighter than NTP over the network; needs the device on the node (T11). |
+| unbound workqueue | Kernel work not tied to one CPU (writeback, reclaim, driver work), run by `kworker/u` threads on the CPUs in `/sys/devices/virtual/workqueue/cpumask`. | On a hot CPU it pauses the loop (T13). |
+| memory compaction | The kernel moves pages to make large free blocks: on demand, or in the background (`kcompactd`, `vm.compaction_proactiveness`). | A moved page faults on its next touch, locked pages too unless `vm.compact_unevictable_allowed` is 0 (T14). |
+| kprobe, ftrace hook, BPF program | Code the kernel runs at a function or event: a probe's handler, a tracer, a loaded BPF program. | Runs on whichever CPU calls the function, hot ones included (T16). |
+| KSM | Kernel same-page merging: `ksmd` merges identical pages of memory that asked for it. | A write to a merged page takes a copy-on-write fault (T17). |
+| steal | Time the hypervisor ran something else while a vCPU had work (`/proc/stat`). | The loop stands still; the fix is outside the guest (T18). |
+| page fault | The thread touched a page the kernel has not mapped: *minor* (no I/O) or *major* (waits for I/O). | Each stops the thread; a warmed, locked loop takes none (T19, `FaultWatch`). |
 | clock source | The counter the kernel keeps time with (`current_clocksource`): `tsc`, `arch_sys_counter`, or `hpet`, `acpi_pm`. | Only the counter (or a hypervisor's view of it) is read without a system call (T12). |
 
 ## Why check the host
@@ -90,6 +96,13 @@ In brackets: the check (T1–N4). Times are in µs.
 | T10 | SMT (hyperthreading) on, x86 | One Kubernetes `cpu: 2` is one physical core, not two. A busy sibling slows the loop. Turn SMT off on the node: EKS/EC2 `"CpuOptions": {"CoreCount": <the type's cores>, "ThreadsPerCore": 1}` (not on bare metal, or on T2, C7a, M7a, R7a, Apple silicon Mac or Graviton), self-managed `nosmt` or `echo off > /sys/devices/system/cpu/smt/control` before the kubelet (then delete its `cpu_manager_state`), or an Azure size without SMT (Fasv6, Falsv6, Famsv6, Dpsv6, Dplsv6). Graviton and arm64 pass: one vCPU is one physical core. |
 | T11 | how `CLOCK_REALTIME` is kept | UTC stamps are only as good as `CLOCK_REALTIME`, and `CLOCK_MONOTONIC` is slewed with it. PTP-grade (chronyd locked to a PHC, or phc2sys) is ok. NTP-disciplined or unsynchronised warns with the `refclock PHC` line for the host's PHC; so do a correction still being slewed out, an error bound over 1 ms and a pending leap second. In a pod the daemons and chronyd's port are usually out of sight: what cannot be seen is unknown, never a warning, but the kernel's own state (`adjtimex`) is read there too. |
 | T12 | the kernel's clock source | `tsc` or `arch_sys_counter` is read through the vDSO; `kvm-clock` and Hyper-V's TSC page are too, where the hypervisor marks them stable (info). `hpet` or `acpi_pm` has no vDSO read: every UTC stamp and Aeron clock read is a system call. |
+| T13 | the unbound workqueue cpumask | `kworker/u` threads run unbound kernel work on any CPU in `/sys/devices/virtual/workqueue/cpumask`. `nohz_full` keeps hot CPUs out of it at boot; a boot without it, or a later write, puts them back. Warn. |
+| T14 | memory compaction | `vm.compaction_proactiveness` above 0 compacts in the background; `vm.compact_unevictable_allowed` 1 moves locked pages too, so `mlockall` does not pin them. A moved page faults on its next touch. Info: compaction on demand still runs. |
+| T15 | other processes' tasks on hot CPUs | A task of another process whose `Cpus_allowed_list` includes a hot CPU can be woken there. This process's threads, zombies and kernel threads are not asked. In a pod's own PID namespace the node's tasks cannot be seen: unknown, unless one it can see fires. Warn. |
+| T16 | kprobes, ftrace hooks, BPF programs | Each runs inline on the CPU that calls what it is attached to. Read from debugfs, tracefs and `/proc/kallsyms`; unprivileged, or with `bpf_jit_harden` on, these are unreadable or hide BPF programs: unknown. Info. |
+| T17 | KSM | `/sys/kernel/mm/ksm/run` 1: `ksmd` merges pages, and a write to a merged page takes a copy-on-write fault. Warn. |
+| T18 | steal on hot CPUs | `/proc/stat`'s steal since boot: the hypervisor ran something else while the vCPU had work. 0 also when the hypervisor does not report steal. Info. |
+| T19 | page faults on a hot thread | `FaultWatch` reads the thread's `minflt` and `majflt` again while it runs. Any fault since the last check warns. |
 | K1 | the pod's `QoS` class | Anything but Guaranteed gets a CPU limit and shares CPUs; the loop runs at the cap or with a neighbour. Fix (pod spec): `resources.requests` = `resources.limits`. |
 | K2 | exclusive CPUs | The shared pool means other pods land on the loop's CPU. Fix (node): kubelet `cpuManagerPolicy: static` (with `full-pcpus-only` on x86); fix (pod spec): whole-CPU requests in a Guaranteed pod. |
 | K3 | the loop's SMT sibling | A sibling in another pod is a busy neighbour (the T10 numbers). Fix (node): turn SMT off; fix (pod spec): ask for whole cores so both siblings come together. |
@@ -126,6 +139,10 @@ Not checked: CPU idle states and frequency.
 | fine after boot, worse later | T2, N1 | an ENA reset undid them: re-apply from a link-event hook |
 | cross-host one-way latencies drift or jump | T11 | on the node: chrony `refclock PHC /dev/ptp_ena poll 0 delay 0.000010 prefer` (AWS, ENA PHC enabled) or `refclock PHC /dev/ptp_hyperv poll 3 dpoll -2 offset 0` (Azure) |
 | clock reads slow; `current_clocksource` is `hpet` | T12 | find why the kernel left the counter: `dmesg \| grep -i clocksource`. Force `tsc=reliable` only on hardware qualified across cores, never on a VM |
+| `kworker/u` threads on the loop's CPU | T13 | on the node: `echo <housekeeping mask> > /sys/devices/virtual/workqueue/cpumask`, or boot with `nohz_full` |
+| page faults on a pinned, locked thread | T14, T17, T19 | on the node: `sysctl -w vm.compaction_proactiveness=0 vm.compact_unevictable_allowed=0`; `echo 2 > /sys/kernel/mm/ksm/run`; in the process: `mlockall` and touch every buffer before the loop |
+| another program's threads on the loop's CPU | T15 | boot with `isolcpus=domain,<hot>`; systemd `CPUAffinity=<housekeeping>`; `taskset -apc <housekeeping> <pid>`; kubelet `reservedSystemCPUs` |
+| stalls no host setting explains | T16, T18 | `bpftool prog show` and `/sys/kernel/debug/kprobes/list` (root) for the owners of instrumentation; for steal, an instance whose vCPUs are not shared, or bare metal |
 
 Each finding carries the fix for that host, with its real CPU lists and IRQ
 numbers. T1 with the loop on CPU 2 of 8:
@@ -133,10 +150,9 @@ numbers. T1 with the loop on CPU 2 of 8:
 
 ## Evidence per check
 
-Each finding's `evidence` field names its source. The A/B tables are in git
-history: `git show 128747b9^:io/benches/results/<run>/tables.md` (or
-`tables-local.md`). All are AWS `c7i` in Tokyo; each figure in a finding keeps
-its max.
+Each finding's `evidence` field names its source. The A/B tables are in
+`io/benches/results/<run>/tables.md` (or `tables-local.md`). All are AWS
+`c7i` in Tokyo; each figure in a finding keeps its max.
 
 | check | evidence | status |
 |---|---|---|
@@ -146,7 +162,7 @@ its max.
 | T8 | two threads on one CPU: not measured here; a busy sibling: T10's run | partly measured |
 | T10, K3 | run `flags-aws-20261015T122127Z` (SQPOLL on the loop's sibling, three rounds); other sibling loads not measured | measured |
 | N1 | runs `flags-aws-20261015T070339Z` (`base`, `nodim`, `nocoalesce`, two reps each) | measured, x86 busy polling only |
-| T3, T4, T5, T6, T9, T11, T12, K1, K2, K4–K7, N2, N3, N4 | kernel, Kubernetes, Aeron, chrony, AWS or Azure documentation | not measured here |
+| T3, T4, T5, T6, T9, T11–T19, K1, K2, K4–K7, N2, N3, N4 | kernel, Kubernetes, Aeron, chrony, AWS or Azure documentation | not measured here |
 
 ## Where the checks run
 
@@ -154,8 +170,11 @@ its max.
 |---|---|---|---|
 | ergon-io's `Driver` (`Component::Io`) | T1 and T8 on the loop's CPU (and `sqpoll_cpu`); T7 on the calling thread; T9, T10; T3 as info; K1–K6 inside a pod (K7 needs a named NIC, which ergon-io does not pass) | `Driver::new`; read them back with `Driver::host_report()` | `ERGON_HOST_CHECKS`: `on` (default), `off` (no warning line; the results stay) or `require` (a warning, or an unproven proof check, stops the start) |
 | ergon-io's `Driver` | T2, N1, N2 (interrupt-driven backends only), N3 on each connection's egress NIC | after the first route lookup to it; again after a NIC reset | `quickack_check=off` skips them |
-| the ergon-md-dpdk media driver (`Component::Md`) | T1, T3, T4, T5, T7, T8, T9, T10; T2 and T6 on the data NICs; on the socket transport also N1, N2, and N4 with busy polling | before the driver starts; N1 and T2 again after a NIC reset, on its `md-host-checks` thread | `ERGON_HOST_CHECKS`, alias `RUSTERON_MEDIA_DRIVER_HOST_CHECK`: `on`/`warn` (default), `off` (no check runs at all) or `require` (any warning or unproven proof stops the start) |
-| your own busy loop (`Component::Rt`) | any of them: T1, T3, T4 (the directory it connects to), T5, T7, T8, T9, T10, T11, T12; K1–K7 inside a pod; on a kernel NIC also T2, N1, N2, N3; `ThrottleWatch`, `ClockWatch` | before the loop; the NIC checks again when the NIC's `carrier_changes` moves; `ThrottleWatch::check` and `ClockWatch::check` every few seconds from housekeeping | none: skip a check by not calling it |
+| ergon-io's `Driver` | T19 on the thread creating the driver (taken to be the polling thread, once per thread) | every 5 s, from its warning thread | `ERGON_HOST_CHECKS=off` drops the warning lines |
+| the ergon-md-dpdk media driver (`Component::Md`) | T1, T3, T4, T5, T7, T8, T9, T10; T2 and T6 on the data NICs; on the socket transport also N1, N2, and N4 with busy polling | before the driver starts; N1 and T2 again after a NIC reset, on its `md-host-checks` thread | `ERGON_HOST_CHECKS`: `on`/`warn` (default), `off` (no check runs at all) or `require` (any warning or unproven proof stops the start) |
+| your own busy loop (`Component::Rt`) | any of them: T1, T3, T4 (the directory it connects to), T5, T7, T8, T9, T10, T11, T12, T13–T18; K1–K7 inside a pod; on a kernel NIC also T2, N1, N2, N3; `ThrottleWatch`, `ClockWatch`, `FaultWatch` | before the loop; the NIC checks again when the NIC's `carrier_changes` moves; `ThrottleWatch::check`, `ClockWatch::check` and `FaultWatch::check` every few seconds from housekeeping | none: skip a check by not calling it |
+
+Neither ergon-io nor the media driver runs T13–T18 yet: call them yourself.
 
 Every printed warning line ends with `(ERGON_HOST_CHECKS=off silences host-check
 warnings)`. The K checks run only inside a pod (the `kubepods` cgroup path, the
@@ -240,6 +259,13 @@ on: `cargo test -p ergon-tune --all-features`.)*
 | `t11_time_sync(&host, &probe)` | the verdict's finding, plus one each for an unsettled clock, a wide bound, a pending leap second | `adjtimex`, a `/proc` scan, `/sys/class/ptp`, ClockBound's segment, and a chronyd query of at most 50 ms; the pure step is `TimeSync::from_observed` |
 | `t12_clocksource(&host)` | one finding | two file reads |
 | `ClockWatch::open(&host, &probe)`, then `.check()` | `open`: T11 and T12, and the watch, before the loop; `check`: T11's findings again when its judgement changed, T12's when the clock source did, else none | `check`: one `adjtimex`, one non-blocking receive and send to chronyd (its answer used one check late), ClockBound's segment and the clock source read again; never waits; no allocation unless a finding changed; `update(sample)` judges an injected sample |
+| `t13_workqueue_cpumask(&host, &hot)` | one finding | one sysfs read |
+| `t14_compaction(&host)` | one finding | two `/proc/sys` reads |
+| `t15_host_tasks(&host, &hot)` | one finding, naming up to six processes | a `/proc` scan: two files per task on the host |
+| `t16_instrumentation(&host)` | one finding | debugfs, tracefs and `/proc/kallsyms` (a few MB) |
+| `t17_ksm(&host)` | one finding | one or two sysfs reads |
+| `t18_steal(&host, &hot)` | one finding | one read of `/proc/stat`; `cpu_steal(&host)` gives each CPU's counts, to diff two readings |
+| `FaultWatch::open(&host, thread, role)` (or `open_task(&host, pid, tid, role)`), then `.check()` | `open`: the watch, before the loop; `check`: a warning when the thread faulted since the last check | `check`: one `pread` of the thread's `stat`, which `open` opened; no allocation unless it reports. Open it with `Thread::Current` on the hot thread itself, or by thread id from anywhere |
 
 A `Nic` is `Nic::Interface("ens5")` or a DPDK port, `Nic::Pci("0000:00:06.0")`.
 The readers underneath (`thread_affinity`, `carrier_changes`, `nic_irqs`,

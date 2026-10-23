@@ -8,6 +8,10 @@
 //! - Extracts and compiles every `rust` / `rust,no_run` fence from the ergo-sbe book
 //!   (resolves `{{#include}}` directives and compiles against generated codecs)
 
+#[path = "common/scratch.rs"]
+mod scratch;
+
+use scratch::{Mode, ScratchCrate, parallel_map};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -292,6 +296,7 @@ fn compile_snippet_with_deps(
     extra_deps: &str,
     extra_imports: &str,
 ) -> Result<(), String> {
+    let krate = ScratchCrate::new(name, false);
     let crate_dir = tmp_root.join(name);
     fs::create_dir_all(crate_dir.join("src")).map_err(|e| e.to_string())?;
     let ergo_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -303,7 +308,7 @@ edition = "2021"
 [dependencies]
 ergo-sbe = {{ path = "{ergo}", features = ["compact_str", "smol_str", "bytes", "chrono"] }}
 {extra_deps}"#,
-        name = name,
+        name = krate.name(),
         ergo = ergo_path.display()
     );
     fs::write(crate_dir.join("Cargo.toml"), cargo_toml).map_err(|e| e.to_string())?;
@@ -317,30 +322,13 @@ ergo-sbe = {{ path = "{ergo}", features = ["compact_str", "smol_str", "bytes", "
         wrap_snippet_with_imports(body, module_name, extra_imports),
     )
     .map_err(|e| e.to_string())?;
-    let target_dir = tmp_root.join("target");
-    // Fetch optional/transitive crates (e.g. rust_decimal → ahash) and
-    // clear inherited CARGO_NET_OFFLINE so llvm-cov / CI harnesses cannot
-    // force the scratch crate offline.
-    let fetch = Command::new("cargo")
-        .args(["fetch", "--quiet", "--manifest-path"])
-        .arg(crate_dir.join("Cargo.toml"))
-        .env_remove("CARGO_NET_OFFLINE")
-        .output()
-        .map_err(|e| format!("spawn cargo fetch: {e}"))?;
-    if !fetch.status.success() {
-        return Err(format!(
-            "cargo fetch failed:\n{}\n{}",
-            String::from_utf8_lossy(&fetch.stdout),
-            String::from_utf8_lossy(&fetch.stderr)
-        ));
-    }
-    let out = Command::new("cargo")
-        .args(["check", "--quiet", "--manifest-path"])
-        .arg(crate_dir.join("Cargo.toml"))
-        .arg("--target-dir")
-        .arg(&target_dir)
-        .env_remove("CARGO_NET_OFFLINE")
-        .output()
+    krate.write_lockfile(&crate_dir);
+    // `exec` builds a template crate of this shape through cargo first, which
+    // fetches optional/transitive crates (e.g. rust_decimal → ahash) with
+    // CARGO_NET_OFFLINE cleared, so llvm-cov / CI harnesses cannot force the
+    // scratch crate offline.
+    let out = krate
+        .exec(&crate_dir, Mode::Check)
         .map_err(|e| format!("spawn cargo: {e}"))?;
     if out.status.success() {
         Ok(())
@@ -376,9 +364,13 @@ fn readme_rust_fences_compile() -> Result<(), Box<dyn std::error::Error>> {
     let fences = extract_rust_fences(&md);
     let docs_codec = docs_codec_source()?;
     let tmp = tempfile::tempdir()?;
-    for (i, (line, body)) in fences.iter().enumerate() {
-        let name = format!("readme_snip_{i}");
-        compile_snippet(tmp.path(), &name, body, &docs_codec).map_err(|e| {
+    // Every fence compiles in parallel; the first failing fence in README
+    // order is reported, exactly as a one-by-one loop would.
+    let results = parallel_map(&fences, |i, (_, body)| {
+        compile_snippet(tmp.path(), &format!("readme_snip_{i}"), body, &docs_codec)
+    });
+    for ((line, body), result) in fences.iter().zip(results) {
+        result.map_err(|e| {
             format!(
                 "README.md rust fence near line {line} failed to compile:\n{e}\n--- body ---\n{body}"
             )
@@ -445,6 +437,7 @@ fn documented_encode_decode_smoke() -> Result<(), Box<dyn std::error::Error>> {
             .clone();
 
     let tmp = tempfile::tempdir()?;
+    let krate = ScratchCrate::new("docs_run", false);
     let crate_dir = tmp.path().join("docs_run");
     fs::create_dir_all(crate_dir.join("src"))?;
     let ergo = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -452,15 +445,17 @@ fn documented_encode_decode_smoke() -> Result<(), Box<dyn std::error::Error>> {
         crate_dir.join("Cargo.toml"),
         format!(
             r#"[package]
-name = "docs_run"
+name = "{}"
 version = "0.0.0"
 edition = "2021"
 [dependencies]
 ergo-sbe = {{ path = "{}", features = ["compact_str", "smol_str", "bytes", "chrono"] }}
 "#,
+            krate.name(),
             ergo.display()
         ),
     )?;
+    krate.write_lockfile(&crate_dir);
     fs::write(crate_dir.join("src/gen.rs"), src)?;
     fs::write(
         crate_dir.join("src/main.rs"),
@@ -533,12 +528,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .env_remove("CARGO_NET_OFFLINE")
         .status()?;
     assert!(fetch.success(), "docs_run cargo fetch failed");
-    let status = Command::new("cargo")
+    let status = krate
+        .cargo()
         .args(["run", "--quiet", "--manifest-path"])
         .arg(crate_dir.join("Cargo.toml"))
-        .arg("--target-dir")
-        .arg(tmp.path().join("target"))
-        .env_remove("CARGO_NET_OFFLINE")
         .status()?;
     assert!(status.success(), "docs_run smoke failed");
     Ok(())
@@ -601,6 +594,9 @@ fn book_fences_compile() -> Result<(), Box<dyn std::error::Error>> {
     let md_files = book_md_files()?;
     assert!(!md_files.is_empty(), "no book markdown files found");
 
+    // Collect every fence first, compile them all in parallel, then report
+    // the first failure in book order, exactly as a one-by-one loop would.
+    let mut jobs = Vec::new();
     for md_path in &md_files {
         // Cluster pages need `ergo-aeron-cluster` (Aeron/rusteron). This
         // harness compiles fences against ergo-sbe only; cluster recipes are
@@ -627,25 +623,26 @@ fn book_fences_compile() -> Result<(), Box<dyn std::error::Error>> {
             let name = format!(
                 "book_{}_{}",
                 md_path.file_stem().unwrap_or_default().to_string_lossy(),
-                compiled
+                jobs.len()
             );
-            match compile_snippet_with_deps(
-                tmp.path(),
-                &name,
-                &resolved,
-                module,
-                codec,
-                deps,
-                imports,
-            ) {
-                Ok(()) => compiled += 1,
-                Err(e) => {
-                    let msg = format!(
-                        "Book fence in {} failed to compile:\n{e}\n--- body ---\n{resolved}",
-                        md_path.display()
-                    );
-                    return Err(msg.into());
-                }
+            jobs.push((md_path, name, resolved, module, codec, deps, imports));
+        }
+    }
+    let results = parallel_map(
+        &jobs,
+        |_, (_, name, resolved, module, codec, deps, imports)| {
+            compile_snippet_with_deps(tmp.path(), name, resolved, module, codec, deps, imports)
+        },
+    );
+    for ((md_path, _, resolved, ..), result) in jobs.iter().zip(results) {
+        match result {
+            Ok(()) => compiled += 1,
+            Err(e) => {
+                let msg = format!(
+                    "Book fence in {} failed to compile:\n{e}\n--- body ---\n{resolved}",
+                    md_path.display()
+                );
+                return Err(msg.into());
             }
         }
     }

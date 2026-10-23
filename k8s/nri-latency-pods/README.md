@@ -19,11 +19,11 @@ node and pod settings. This directory is the admission half and the node
 units. The shared-CPU half is the public chart. Apply only
 `admission/priority-class.yaml` and
 `admission/validating-admission-policy.yaml`. The kind sample
-`k8s/nri-shared-cpus/examples/try` installs the chart, accepts one hot pod,
-and shows this policy denying an exec probe. It does not grant hugepages,
-an isolated cpuset partition, io_uring seccomp, or a PHC. Chart 0.1.1
-writes `seccomp`, `ptp` and `schedFifo` as `"off"`. Chart 0.1.0 does
-not write those keys.
+`k8s/nri-shared-cpus/examples/try` installs the chart, runs an unlabelled
+pod that gets the shared CPU, shows the plugin refusing a hot pod (a kind
+node has no `isolcpus`), and shows this policy denying an exec probe. It
+does not grant hugepages, an isolated cpuset partition, io_uring seccomp,
+or a PHC. Not yet run on kind. The chart writes `seccomp`, `ptp` and `schedFifo` as `"off"`.
 
 ## Why not AKS
 
@@ -261,18 +261,34 @@ test/e2e.sh
 
    ```sh
    helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus \
-     --version 0.1.1 \
+     --version 0.1.2 \
      --namespace ergon-system --create-namespace \
      --set-string config.sharedCpus=0 \
-     --set 'config.namespaces={trading}'
+     --set 'config.namespaces={trading}' \
+     --set hostContract.kubeletConfig.enabled=true \
+     --set hostContract.kubeletConfig.path=/etc/kubernetes/kubelet/config.json \
+     --set hostContract.kubeletConfigDir.enabled=true \
+     --set hostContract.sys.enabled=true \
+     --set hostContract.proc.enabled=true
    ```
 
-   Image: `ghcr.io/mimran1980/ergon-shared-cpus:0.1.1`. The chart writes
+   Needs chart 0.1.2 (image 0.1.2), not yet published. nodeadm writes the
+   base `/etc/kubernetes/kubelet/config.json` and the `NodeConfig` kubelet
+   settings as the drop-in `config.json.d/40-nodeadm.conf`;
+   `kubeletConfigDir` mounts that directory and the hot-pod check merges
+   it as the kubelet does. Chart 0.1.1 rejects `kubeletConfigDir`; without
+   it every hot pod is refused on AL2023 and unlabelled pods still get the
+   grants.
+
+   Image: `ghcr.io/mimran1980/ergon-shared-cpus:0.1.2` (the chart's
+   `appVersion`). The chart writes
    `seccomp.ioUring` and `ptp` as `"off"`. A node that grants those writes them
    into the ConfigMap; the keys are in `k8s/nri-shared-cpus/README.md`.
 3. `kubectl apply -f admission/priority-class.yaml -f admission/validating-admission-policy.yaml`
-4. Label the node `ergon.io/shared-cpus=true`, and give every latency pod the
-   label `ergon.io/latency: "hot"` (that is what the admission policy matches).
+4. Label the node `ergon.io/shared-cpus=true`. The label
+   `ergon.io/latency: "hot"` is what the admission policy and the plugin's
+   hot-pod check match; with chart 0.1.1 that check refuses the pod on
+   AL2023 (step 2).
 5. Read `node-checks.md` and run those checks on every node before a run.
 
 ## Security cost, plainly

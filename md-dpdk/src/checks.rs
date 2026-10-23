@@ -34,12 +34,11 @@
 //! check runs on an agent's thread. Under DPDK the ports have no kernel
 //! interface and nothing is re-checked.
 //!
-//! `ERGON_HOST_CHECKS` is the one switch (every ergon component's), with
-//! `RUSTERON_MEDIA_DRIVER_HOST_CHECK` as its alias: `on`/`warn` (the
-//! default), `off` (no check and no thread, said in one information line,
+//! `ERGON_HOST_CHECKS` is the one switch (every ergon component's): `on`/`warn`
+//! (the default), `off` (no check and no thread, said in one information line,
 //! [`OFF_NOTE`]) or `require`, the strict opt-in: any warning then refuses to
 //! start the driver ([`DpdkError::HostCheck`]). Any other value refuses to
-//! start, naming the variable that was set. Here `off` is the stronger one:
+//! start, naming the variable. Here `off` is the stronger one:
 //! no check runs at all, rather than only the warning lines being dropped.
 //! Strict by default is only what already was:
 //! the DPDK transport's agent rules. Information lines and checks that cannot
@@ -56,10 +55,10 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use ergon_tune::{
-    BusyPoll, CheckId, Component, CpuSet, Ethtool, EthtoolCache, Finding, Host, HotSet, Netlink, Nic, Role, Severity,
-    Status, Thread, busy_poll_sysctls, carrier_changes, host_check_line, n1_adaptive_rx, n2_deferred_irqs, n4_rx_ring,
-    t1_isolation, t2_nic_irqs, t3_thp, t4_aeron_dir, t5_numa_balancing, t6_nic_node, t7_sched_policy, t8_smt_siblings,
-    t9_cpu_quota, t10_smt_on, thread_affinity,
+    BusyPoll, CheckId, Component, CpuSet, Ethtool, EthtoolCache, Finding, HOST_CHECKS_ENV, Host, HotSet, Netlink, Nic,
+    Role, Severity, Status, Thread, busy_poll_sysctls, carrier_changes, host_check_line, n1_adaptive_rx,
+    n2_deferred_irqs, n4_rx_ring, t1_isolation, t2_nic_irqs, t3_thp, t4_aeron_dir, t5_numa_balancing, t6_nic_node,
+    t7_sched_policy, t8_smt_siblings, t9_cpu_quota, t10_smt_on, thread_affinity,
 };
 use rusteron_media_driver::AeronDriverContext;
 use rusteron_media_driver::bindings::aeron_threading_mode_t;
@@ -67,16 +66,12 @@ use rusteron_media_driver::bindings::aeron_threading_mode_t;
 use crate::error::DpdkError;
 use crate::ffi::{effective_idle_strategy, is_busy_idle_strategy};
 
-/// The alias of `ERGON_HOST_CHECKS` for the media driver's host checks:
-/// `off`, `on`/`warn` (the default) or `require`.
-pub const HOST_CHECK_ENV: &str = "RUSTERON_MEDIA_DRIVER_HOST_CHECK";
-
 /// The variable naming the socket transport's data NICs, the kernel
 /// interfaces its channels use (comma- or space-separated).
 pub const DATA_NICS_ENV: &str = "RUSTERON_MEDIA_DRIVER_DATA_NICS";
 
 /// The one line printed under [`HostCheckPolicy::Off`].
-pub const OFF_NOTE: &str = "ergon-md-dpdk info: ERGON_HOST_CHECKS=off (or RUSTERON_MEDIA_DRIVER_HOST_CHECK=off): no host check runs (the \
+pub const OFF_NOTE: &str = "ergon-md-dpdk info: ERGON_HOST_CHECKS=off: no host check runs (the \
      agents' placement and idling, term buffers, socket buffers, busy polling, CPU isolation, SMT siblings, \
      hugepages, the Aeron directory, the CPU quota, the data NICs) and nothing is re-checked; warn (the default) prints what is not \
      set up for low latency";
@@ -90,7 +85,7 @@ pub const OFF_NOTE: &str = "ergon-md-dpdk info: ERGON_HOST_CHECKS=off (or RUSTER
 /// about to fix itself.
 pub const SETTLE_READS: u8 = 2;
 
-/// How the host checks report ([`HOST_CHECK_ENV`]).
+/// How the host checks report ([`ergon_tune::HOST_CHECKS_ENV`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum HostCheckPolicy {
     /// No check runs, and no re-check thread starts.
@@ -103,9 +98,8 @@ pub enum HostCheckPolicy {
 }
 
 impl HostCheckPolicy {
-    /// Reads `ERGON_HOST_CHECKS` (every ergon component's one switch), then
-    /// [`HOST_CHECK_ENV`] as its alias: `Warn` when neither is set. `off`,
-    /// `on`/`warn` or `require`, any case.
+    /// Reads `ERGON_HOST_CHECKS` (every ergon component's one switch): `Warn`
+    /// when it is unset. `off`, `on`/`warn` or `require`, any case.
     ///
     /// Here `off` is the stronger one: no check runs at all ([`OFF_NOTE`]),
     /// rather than only the warning lines being dropped.
@@ -113,10 +107,10 @@ impl HostCheckPolicy {
     /// # Errors
     ///
     /// [`DpdkError::InvalidEnvironment`] for a value other than `off`,
-    /// `on`, `warn` or `require`, naming the variable that was set.
+    /// `on`, `warn` or `require`, naming the variable.
     pub fn from_env() -> Result<Self, DpdkError> {
-        let policy = ergon_tune::HostCheckPolicy::from_env_or(HOST_CHECK_ENV)
-            .map_err(|e| DpdkError::InvalidEnvironment(e.to_string()))?;
+        let policy =
+            ergon_tune::HostCheckPolicy::from_env().map_err(|e| DpdkError::InvalidEnvironment(e.to_string()))?;
         Ok(match policy {
             ergon_tune::HostCheckPolicy::Off => Self::Off,
             ergon_tune::HostCheckPolicy::On => Self::Warn,
@@ -778,8 +772,8 @@ impl HostReport {
             return Ok(());
         }
         Err(DpdkError::HostCheck(format!(
-            "{HOST_CHECK_ENV}=require and {} host check warning(s) ({}), printed above: fix them, or set \
-             {HOST_CHECK_ENV}=warn (or ERGON_HOST_CHECKS=off) to start anyway",
+            "{HOST_CHECKS_ENV}=require and {} host check warning(s) ({}), printed above: fix them, or set \
+             {HOST_CHECKS_ENV}=warn or off to start anyway",
             warnings.len(),
             warnings.join(", ")
         )))

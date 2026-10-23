@@ -50,11 +50,12 @@ typedef struct rusteron_dpdk_port_ops_stct
     int (*probe_port)(const char *pci_bdf, const uint8_t *mac, uint16_t *port_id);
 
     /*
-     * Read the device MAC, driver name, whether IPv4/UDP checksum offloads
-     * and RX hardware timestamps are supported, how an ENA's LLQ BAR is
-     * mapped (RUSTERON_DPDK_ENA_LLQ_*; NA for any other driver), and the
-     * descriptor counts a queue may have: desc_lim is RX minimum, RX maximum,
-     * TX minimum, TX maximum (0: no limit reported). 0 on success.
+     * Read the device MAC, driver name, whether IPv4/UDP checksum offloads,
+     * RX hardware timestamps and TX MBUF_FAST_FREE are supported, how an
+     * ENA's LLQ BAR is mapped (RUSTERON_DPDK_ENA_LLQ_*; NA for any other
+     * driver), and the descriptor counts a queue may have: desc_lim is RX
+     * minimum, RX maximum, TX minimum, TX maximum (0: no limit reported). 0 on
+     * success.
      */
     int (*dev_info)(
         uint16_t port_id,
@@ -64,14 +65,21 @@ typedef struct rusteron_dpdk_port_ops_stct
         int *csum_offload_ok,
         int *ena_llq,
         int *rx_timestamp_ok,
+        int *tx_fast_free_ok,
         uint16_t *max_mtu,
         uint16_t desc_lim[4]);
 
     /* Configure one RX and one TX queue plus the requested offloads. With
-     * RUSTERON_DPDK_RX_OFFLOAD_TIMESTAMP, rx_burst fills hw_rx_ns. */
+     * RUSTERON_DPDK_RX_OFFLOAD_TIMESTAMP, rx_burst fills hw_rx_ns. `lsc`
+     * asks for link-status-change interrupts (only where lsc_capable). */
     int (*dev_configure)(
         uint16_t port_id, uint16_t rx_rings, uint16_t tx_rings,
-        uint64_t rx_offloads, uint64_t tx_offloads);
+        uint64_t rx_offloads, uint64_t tx_offloads, int lsc);
+
+    /* Whether the port can raise link-status-change interrupts
+     * (RTE_ETH_DEV_INTR_LSC in its dev_flags): a PMD refuses a configuration
+     * that asks for them otherwise. 1 or 0. */
+    int (*lsc_capable)(uint16_t port_id);
 
     /* NUMA node the PMD reports for the port, or -1 when it reports none.
      * The runtime places that port's pool and queues there, and refuses a
@@ -90,10 +98,13 @@ typedef struct rusteron_dpdk_port_ops_stct
     uint32_t (*mbuf_room)(void *mempool);
 
     /* Queue 0 on each direction, backed by the role mempool for RX.
-     * `socket_id` is the port's NUMA node, or -1 when it has none. */
+     * `socket_id` is the port's NUMA node, or -1 when it has none. Each queue
+     * starts from the PMD's default queue configuration (dev_info's
+     * default_rxconf / default_txconf); `free_thresh` non-zero replaces its
+     * rx_free_thresh / tx_free_thresh, 0 keeps the PMD's. */
     int (*rx_queue_setup)(
-        uint16_t port_id, uint16_t queue_id, uint16_t nb_desc, void *mempool, int socket_id);
-    int (*tx_queue_setup)(uint16_t port_id, uint16_t queue_id, uint16_t nb_desc, int socket_id);
+        uint16_t port_id, uint16_t queue_id, uint16_t nb_desc, void *mempool, int socket_id, uint16_t free_thresh);
+    int (*tx_queue_setup)(uint16_t port_id, uint16_t queue_id, uint16_t nb_desc, int socket_id, uint16_t free_thresh);
 
     /* Apply the L3 MTU (payload + IPv4 + UDP). */
     int (*dev_set_mtu)(uint16_t port_id, uint16_t mtu);
@@ -162,6 +173,11 @@ typedef struct rusteron_dpdk_port_ops_stct
      * unwatch_reset stops it before the port closes. 0 on success. */
     int (*watch_reset)(uint16_t port_id, uint64_t *resets);
     void (*unwatch_reset)(uint16_t port_id, uint64_t *resets);
+    /* Count the port's link-status changes (RTE_ETH_EVENT_INTR_LSC) into
+     * *changes, atomically, as watch_reset does; unwatch_lsc stops it before
+     * the port closes. 0 on success. */
+    int (*watch_lsc)(uint16_t port_id, uint64_t *changes);
+    void (*unwatch_lsc)(uint16_t port_id, uint64_t *changes);
 } rusteron_dpdk_port_ops_t;
 
 /*

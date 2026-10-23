@@ -36,7 +36,6 @@ jobs:
           bash scripts/tests/test-quality-ratchets.sh
           bash scripts/tests/test-ci-network-and-coverage.sh
           bash scripts/tests/test-repository-hygiene.sh
-          bash scripts/tests/test-public-api.sh
           bash scripts/tests/test-bench-historic.sh
           bash scripts/tests/test-stale-deny-ignores.sh
           bash scripts/tests/test-cluster-ergo-sbe-features.sh
@@ -87,11 +86,8 @@ jobs:
       - run: RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-md-dpdk --no-deps
       # Each crate page is the crate's README (`#![doc = include_str!]`).
       - run: RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-tune -p ergon-io --all-features --no-deps
-      # Prebuilt binary — check-public-api.sh only `cargo install`s from source
-      # as a fallback if this isn't already on PATH. A from-source build took
-      # 4m32s alone and regularly blew the job's timeout (2026-08-19).
-      - uses: taiki-e/install-action@cargo-semver-checks
-      - run: ./scripts/check-public-api.sh
+      # Generated codec surfaces match api/generated/*.txt (change tracking).
+      - run: ./scripts/check-generated-public-api.sh
 
       # Gates that previously lived ONLY inside `just release`. Because a full
       # release takes hours and is rarely completed, breakage in these went
@@ -193,6 +189,18 @@ jobs:
       - run: cargo test -p ergon-md-dpdk --features static,dpdk -- --test-threads=1
       - run: cargo test -p ergon-md-dpdk-harness -- --test-threads=1
       - run: bash md-dpdk/deploy/aws-eks/node/test/test-bootstrap.sh
+      # The rootless lane runs every vdev scenario as the runner user, in a
+      # user, network and mount namespace of its own (no root, hugetlbfs or
+      # host network changes). It runs before the sudo lane, whose root-owned
+      # build outputs would otherwise block this user's build in target/.
+      - run: bash scripts/tests/test-dpdk-vdev-rootless.sh
+      - name: Host settings for the rootless lane (root, once, as an administrator would)
+        # Ubuntu 24.04's AppArmor refuses unprivileged user namespaces, and a
+        # namespace cannot load modules (tun, bridge, sch_netem for
+        # loss_recovery's tc netem).
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 && sudo modprobe -a tun bridge sch_netem
+      - name: DPDK virtual-device interop (rootless)
+        run: scripts/test-dpdk-vdev-rootless.sh
       - name: DPDK virtual-device interop (root)
         # `sudo env "PATH=$PATH"` keeps the runner's cargo on root's PATH: the
         # vdev script builds ergon-md-dpdk-harness itself.
@@ -396,32 +404,6 @@ jobs:
 
       - run: cargo package -p ergo-sbe
       - run: cargo publish -p ergo-sbe --dry-run
-
-  semver:
-    needs: gate
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - uses: actions/setup-java@v6
-        with:
-          distribution: 'temurin'
-          java-version: '25'
-
-      - name: Check ergo-sbe semver
-        uses: obi1kenobi/cargo-semver-checks-action@v2
-        with:
-          manifest-path: Cargo.toml
-          package: ergo-sbe
-
-      - name: Check ergo-aeron-cluster semver
-        uses: obi1kenobi/cargo-semver-checks-action@v2
-        with:
-          manifest-path: Cargo.toml
-          package: ergo-aeron-cluster
 
   audit:
     needs: gate

@@ -1064,3 +1064,126 @@ fn route_allowances_are_validated() {
         env.eal_skip();
     }
 }
+
+// ---------------------------------------------------------------------------
+// ENA queue tuning: free thresholds and MBUF_FAST_FREE (ENA-QCONF)
+// ---------------------------------------------------------------------------
+
+unsafe extern "C" {
+    fn rusteron_dpdk_fake_set_tx_fast_free_capa(ok: c_int);
+    fn rusteron_dpdk_fake_queue_conf(
+        port_id: u16,
+        rx_free_thresh: *mut u16,
+        tx_free_thresh: *mut u16,
+        tx_offloads: *mut u64,
+    ) -> c_int;
+}
+
+/// RUSTERON_DPDK_TX_OFFLOAD_MBUF_FAST_FREE (rusteron_dpdk_internal.h).
+const TX_OFFLOAD_MBUF_FAST_FREE: u64 = 1 << 2;
+
+/// (rx free threshold, tx free threshold, tx offloads) `port` was set up with.
+fn queue_conf(port: u16) -> (u16, u16, u64) {
+    let (mut rx, mut tx, mut off) = (0u16, 0u16, 0u64);
+    assert_eq!(
+        unsafe { rusteron_dpdk_fake_queue_conf(port, &mut rx, &mut tx, &mut off) },
+        0
+    );
+    (rx, tx, off)
+}
+
+/// Unset, both queues keep the PMD's thresholds and FAST_FREE stays off, on a
+/// NIC that offers it: the defaults are what they were before the knobs.
+#[serial]
+#[test]
+fn queue_conf_defaults_are_the_pmds() {
+    let env = TestEnv::new();
+    env.eal_skip();
+    let t = create(&rusteron_dpdk_config_t::valid()).unwrap_or_else(|e| panic!("{e}"));
+    for port in 0..2 {
+        let (rx, tx, off) = queue_conf(port);
+        assert_eq!((rx, tx), (0, 0), "port {port}: the PMD's thresholds");
+        assert_eq!(
+            off & TX_OFFLOAD_MBUF_FAST_FREE,
+            0,
+            "port {port}: no FAST_FREE unless asked"
+        );
+    }
+    assert_eq!(close(t), 0);
+}
+
+/// Set thresholds reach each port's queue setup.
+#[serial]
+#[test]
+fn queue_free_thresholds_reach_the_queues() {
+    let env = TestEnv::new();
+    env.eal_skip();
+    let mut config = rusteron_dpdk_config_t::valid();
+    config.rx_free_thresh = 64;
+    config.tx_free_thresh = 1016;
+    let t = create(&config).unwrap_or_else(|e| panic!("{e}"));
+    for port in 0..2 {
+        let (rx, tx, _) = queue_conf(port);
+        assert_eq!((rx, tx), (64, 1016), "port {port}");
+    }
+    assert_eq!(close(t), 0);
+}
+
+/// FAST_FREE asked for is configured on a NIC that offers it, and left off on
+/// one that does not (the port then still starts, and says so in its
+/// port-info label).
+#[serial]
+#[test]
+fn fast_free_is_configured_only_where_offered() {
+    for (offered, expected) in [(1, TX_OFFLOAD_MBUF_FAST_FREE), (0, 0)] {
+        let env = TestEnv::new();
+        env.eal_skip();
+        unsafe { rusteron_dpdk_fake_set_tx_fast_free_capa(offered) };
+        let mut config = rusteron_dpdk_config_t::valid();
+        config.tx_fast_free = 1;
+        let t = create(&config).unwrap_or_else(|e| panic!("offered={offered}: {e}"));
+        for port in 0..2 {
+            let (_, _, off) = queue_conf(port);
+            assert_eq!(
+                off & TX_OFFLOAD_MBUF_FAST_FREE,
+                expected,
+                "offered={offered} port {port}"
+            );
+        }
+        assert_eq!(close(t), 0);
+    }
+}
+
+/// A threshold at or above its ring fails start, naming the variable and the
+/// ring: the receive ring as the port takes it (here the NIC's 512, with
+/// RUSTERON_DPDK_RX_DESCRIPTORS unset), so a value the Rust check let through
+/// for a 4096 ring is still refused on a smaller NIC. tx_fast_free is a flag.
+#[serial]
+#[test]
+fn native_refuses_thresholds_at_or_above_the_ring() {
+    let env = TestEnv::new();
+    env.eal_skip();
+    unsafe { rusteron_dpdk_fake_set_desc_limits(64, 512, 64, 4096) };
+    let mut config = rusteron_dpdk_config_t::valid();
+    config.rx_descriptors = 0;
+    config.rx_free_thresh = 512;
+    let err = create(&config).unwrap_err();
+    assert!(
+        err.contains("RUSTERON_DPDK_RX_FREE_THRESH") && err.contains("512"),
+        "got: {err}"
+    );
+
+    env.reset();
+    env.eal_skip();
+    let mut config = rusteron_dpdk_config_t::valid();
+    config.tx_free_thresh = config.tx_descriptors;
+    let err = create(&config).unwrap_err();
+    assert!(err.contains("RUSTERON_DPDK_TX_FREE_THRESH"), "got: {err}");
+
+    env.reset();
+    env.eal_skip();
+    let mut config = rusteron_dpdk_config_t::valid();
+    config.tx_fast_free = 2;
+    let err = create(&config).unwrap_err();
+    assert!(err.contains("tx_fast_free"), "got: {err}");
+}

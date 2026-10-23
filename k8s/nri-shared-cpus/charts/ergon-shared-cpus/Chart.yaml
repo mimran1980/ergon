@@ -5,12 +5,11 @@ description: >-
   Give a Kubernetes pod its exclusive CPUs and the node's shared housekeeping
   CPUs. Containerd NRI plugin and kubelet device plugin in one daemon.
 type: application
-# Chart version in git. OCI chart 0.1.1 is published. EKS is not verified.
-# Latency is not measured. The 0.1.1 package NOTES still say the chart is
-# not published; that tag is not republished to change the note.
-version: 0.1.1
-# Default image tag for a render from this git tree.
-appVersion: "0.1.1"
+# OCI chart 0.1.1 is published; 0.1.2 is not yet. EKS is not verified.
+# Latency is not measured.
+version: 0.1.2
+# Default image tag. Image 0.1.2 adds --kubelet-config-dir.
+appVersion: "0.1.2"
 home: https://github.com/mimran1980/ergon/tree/main/k8s/nri-shared-cpus
 sources:
   - https://github.com/mimran1980/ergon/tree/main/k8s/nri-shared-cpus
@@ -25,8 +24,17 @@ maintainers:
 annotations:
   artifacthub.io/license: Apache-2.0
   artifacthub.io/changes: |
+    - kind: changed
+      description: >-
+        hostContract kubeletConfig, sys and proc are on by default, so a pod
+        labelled ergon.io/latency: hot is checked against the node instead
+        of refused with "kubelet configuration is not mounted". The kubelet
+        file defaults to /var/lib/kubelet/config.yaml; the plugin pod does
+        not start on a node without it.
     - kind: added
       description: >-
-        Chart 0.1.1 renders every config.File field, repository@digest
-        when image.digest is set, and an admission ownership switch.
-        EKS is not verified. Latency figures are not measured.
+        hostContract.kubeletConfigDir (off by default) mounts the kubelet's
+        --config-dir read-only and passes --kubelet-config-dir, so the
+        hot-pod check merges the drop-ins as the kubelet does (EKS AL2023:
+        /etc/kubernetes/kubelet/config.json.d). Needs image 0.1.2, the
+        default.

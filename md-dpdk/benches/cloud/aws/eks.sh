@@ -5,13 +5,15 @@
 # or Linux with the aws CLI signed in (`aws login`), kubectl, docker (buildx)
 # and python3; no eksctl or helm.
 #
-#   md-dpdk/benches/cloud/aws/eks.sh                          2 x c7i.4xlarge, Kubernetes 1.36
+#   md-dpdk/benches/cloud/aws/eks.sh                          2 x c8g.2xlarge (Graviton4), Kubernetes 1.36
+#   EKS_TYPE=c7i.4xlarge md-dpdk/benches/cloud/aws/eks.sh      2 x c7i.4xlarge (Intel x86), the comparison
 #   EKS_KEEP=1 EKS_REPS=0 md-dpdk/benches/cloud/aws/eks.sh     deploy and check, then keep it for work by hand
 #   EKS_DELETE=eks-<stamp> md-dpdk/benches/cloud/aws/eks.sh    delete a run (a kept one, or one whose
 #                                                              teardown never ran: the laptop slept)
 #
-# Before anything is created: the two images (docker buildx, linux/amd64, from
-# md-dpdk/deploy/aws-eks/Dockerfile.*; reused while the checkout is unchanged),
+# Before anything is created: the two images (docker buildx, linux/arm64 for a
+# Graviton type, linux/amd64 for x86, from md-dpdk/deploy/aws-eks/Dockerfile.*;
+# reused while the checkout is unchanged),
 # a sweep of every region for ergon-lab leftovers, and the on-demand standard
 # vCPU quota (L-1216C47A), which must hold both nodes on top of what runs.
 #
@@ -48,8 +50,10 @@
 # security group EKS creates, IAM, the OIDC provider (none is created), ECR,
 # CloudWatch log groups (logging is off), the launch template.
 #
-#   EKS_REGION (us-east-1) EKS_TYPE (c7i.4xlarge; x86, 5+ cores; *.metal too, e.g.
-#   c7i.metal-24xl: igb_uio through iommu=pt, a longer join wait)
+#   EKS_REGION (us-east-1) EKS_TYPE (c8g.2xlarge; 5+ cores; Graviton4/5 (c8g,
+#   c9g) or Intel x86 (c7i); Intel *.metal too, e.g. c7i.metal-24xl: igb_uio
+#   through iommu=pt, a longer join wait; not Graviton metal, whose per-boot
+#   bootstrap still wants iommu=pt)
 #   EKS_K8S (1.36; 1.36 or later: the kubelet sets no CPU quota on a container
 #   with exclusive CPUs from 1.33, and 1.36 is the floor for latency nodes)
 #   EKS_REPS (5) EKS_MAX_MINUTES (150) EKS_HUGEPAGES (2048 2 MiB pages a node)
@@ -77,7 +81,7 @@ fi
 deploy=$EKS_SNAPSHOT/aws-eks
 self=$repo/md-dpdk/benches/cloud/aws/eks.sh # for messages: the checkout's path, not the snapshot's
 region=${EKS_REGION:-us-east-1}
-type=${EKS_TYPE:-c7i.4xlarge}
+type=${EKS_TYPE:-c8g.2xlarge}
 k8s=${EKS_K8S:-1.36}
 reps=${EKS_REPS:-5}
 max_minutes=${EKS_MAX_MINUTES:-150}
@@ -88,11 +92,14 @@ delete=${EKS_DELETE:-}
 rtt_messages=${RTT_MESSAGES:-300000}
 rtt_warmup=${RTT_WARMUP:-50000}
 rtt_seconds=${RTT_SECONDS:-20}
-# x86 only: production runs on x86. Graviton families carry a `g` after the
-# generation (c7g, c7gn, m8g, ...). Bare metal runs the same node path: its
-# IOMMU passes igb_uio's DMA through (iommu=pt), as in the metal lab.
-if [[ ${type%%.*} =~ ^[a-z]+[0-9]+g ]]; then
-    echo "EKS_TYPE $type is a Graviton (Arm) type: the benchmarks run on x86 only" >&2
+# Graviton4/5 or Intel x86: provision-node.sh refuses any other CPU (an older
+# Graviton, AMD), so the nodes would never join. Intel bare metal runs the
+# same node path: its IOMMU passes igb_uio's DMA through (iommu=pt), as in the
+# metal lab. Graviton metal does not yet: provision sets iommu.passthrough=1,
+# but bootstrap-dpdk-ena.sh checks for iommu=pt on every boot. (Graviton
+# families carry a `g` after the generation: c8g, c9g.)
+if [[ $type =~ ^[a-z]+[0-9]+g[a-z]*\.metal ]]; then
+    echo "EKS_TYPE $type: Graviton bare metal is not supported yet (bootstrap-dpdk-ena.sh wants iommu=pt): use a Graviton VM type" >&2
     exit 2
 fi
 # Kubernetes 1.36 or later. The node keeps kubelet's CPU quota setting on, so
@@ -501,7 +508,12 @@ read -r vcpus cores tpc arch <<<"$(ec2 describe-instance-types --instance-types 
     'InstanceTypes[0].[VCpuInfo.DefaultVCpus,VCpuInfo.DefaultCores,VCpuInfo.DefaultThreadsPerCore,ProcessorInfo.SupportedArchitectures[0]]' \
     --output text 2>/dev/null)"
 [[ -n ${arch:-} && $arch != None ]] || die "cannot describe $type in $region"
-[[ $arch == x86_64 ]] || die "$type is $arch: the benchmarks run on x86 only"
+# The images and the AMI follow the nodes' architecture.
+case $arch in
+x86_64) platform=linux/amd64 ami_arch=x86_64 ;;
+arm64) platform=linux/arm64 ami_arch=arm64 ;;
+*) die "$type is $arch: the node path takes x86_64 (Intel) or arm64 (Graviton4/5)" ;;
+esac
 # SMT (hyper-threading) is off on every latency node: CpuOptions
 # ThreadsPerCore=1 in the launch template (node/launch-template.py) where EC2
 # accepts it, and nosmt with provision-node.sh on bare metal (no CPU options
@@ -585,15 +597,16 @@ fi
 log "vCPU quota $quota, $used in use, this run $need"
 
 ami=$(aws ssm get-parameter --region "$region" \
-    --name "/aws/service/eks/optimized-ami/$k8s/amazon-linux-2023/x86_64/standard/recommended/image_id" \
-    --query Parameter.Value --output text 2>/dev/null) || die "no EKS AL2023 x86_64 AMI for Kubernetes $k8s in $region"
+    --name "/aws/service/eks/optimized-ami/$k8s/amazon-linux-2023/$ami_arch/standard/recommended/image_id" \
+    --query Parameter.Value --output text 2>/dev/null) || die "no EKS AL2023 $ami_arch AMI for Kubernetes $k8s in $region"
 [[ -f $deploy/node/userdata.sh ]] || die "no $deploy/node/userdata.sh"
 
 # The images, tagged by commit and a hash of the uncommitted changes, built
-# once per checkout state (amd64: under emulation on an Arm Mac this is slow).
+# once per checkout state and architecture (native on an Arm Mac for Graviton;
+# amd64 there runs under emulation, which is slow).
 commit=$(git -C "$repo" rev-parse --short=12 HEAD) || die "$repo is not a git checkout"
 dirty=$(cd "$repo" && { git diff HEAD; git ls-files -o --exclude-standard; git ls-files -o --exclude-standard -z | xargs -0 cat 2>/dev/null; } | sha)
-tag=$commit-$dirty
+tag=$commit-$dirty-${platform#linux/}
 git -C "$repo" rev-parse HEAD >"$out/commit"
 git -C "$repo" status --porcelain >"$out/dirty"
 build_image() { # <name> <Dockerfile>
@@ -602,16 +615,20 @@ build_image() { # <name> <Dockerfile>
         log "image $img: built already"
         return 0
     fi
-    log "building $img (linux/amd64), log $out/build-$1.log"
-    docker buildx build --platform linux/amd64 --load -f "$repo/md-dpdk/deploy/aws-eks/$2" -t "$img" "$repo" \
+    log "building $img ($platform), log $out/build-$1.log"
+    docker buildx build --platform "$platform" --load -f "$repo/md-dpdk/deploy/aws-eks/$2" -t "$img" "$repo" \
         >"$out/build-$1.log" 2>&1 || { tail -30 "$out/build-$1.log" >&2; die "image $1 did not build"; }
 }
 build_image media-driver Dockerfile.media-driver
 build_image device-plugin Dockerfile.device-plugin
 # the driver image also serves the clients and the host probe
-docker run --rm --platform linux/amd64 --entrypoint bash "ergon-md-dpdk/media-driver:$tag" -c \
+docker run --rm --platform "$platform" --entrypoint bash "ergon-md-dpdk/media-driver:$tag" -c \
     'for t in media_driver rtt counters taskset nsenter pkill timeout sleep; do command -v $t >/dev/null || { echo "missing $t"; exit 1; }; done' ||
     die "the media-driver image lacks a tool the run needs (above)"
+# (its own step: a failure inside log's argument would not stop the run)
+version=$(docker run --rm --platform "$platform" --entrypoint /usr/local/bin/media_driver "ergon-md-dpdk/media-driver:$tag" --version) ||
+    die "media_driver --version failed in the image"
+log "image: $version"
 
 # What this costs: on-demand Linux, from the price list.
 price() {
@@ -1022,8 +1039,13 @@ cmdline=" $(cat /proc/cmdline) "
 # and provision-node.sh on bare metal).
 v=$(cat /sys/devices/system/cpu/smt/active 2>/dev/null || echo 0)
 if [[ $v == 0 ]]; then ok "SMT off (smt/active=0)"; else bad "smt/active=$v (want 0: one CPU is one physical core)"; fi
-# no C-state cap on any node (provision-node.sh): no committed A/B showed a gain
+# no C-state cap on any node (provision-node.sh): no committed A/B showed a gain.
+# Graviton: no SMT (so no nosmt) and iommu.passthrough=1 (arm64 ignores iommu=pt).
+arch=$(uname -m)
 args="nosmt isolcpus= nohz_full= rcu_nocbs= irqaffinity= iommu=pt transparent_hugepage=never hugepagesz=2M hugepages="
+if [[ $arch == aarch64 ]]; then
+    args="isolcpus= nohz_full= rcu_nocbs= irqaffinity= iommu.passthrough=1 transparent_hugepage=never hugepagesz=2M hugepages="
+fi
 for arg in $args; do
     if [[ $cmdline == *" $arg"* ]]; then ok "cmdline has $arg"; else bad "cmdline lacks $arg"; fi
 done
@@ -1045,7 +1067,9 @@ else
     if ((translating == 0)); then ok "IOMMU passthrough: all $groups groups identity"; else bad "$translating of $groups IOMMU groups translate (igb_uio needs iommu=pt)"; fi
 fi
 v=$(cat /sys/devices/system/clocksource/clocksource0/current_clocksource)
-if [[ $v == tsc ]]; then ok "clocksource tsc"; else bad "clocksource $v"; fi
+want=tsc
+[[ $arch == aarch64 ]] && want=arch_sys_counter
+if [[ $v == "$want" ]]; then ok "clocksource $v"; else bad "clocksource $v (want $want)"; fi
 v=$(cat /sys/kernel/mm/transparent_hugepage/enabled)
 if [[ $v == *"[never]"* ]]; then ok "THP never"; else bad "THP $v"; fi
 v=$(cat /sys/kernel/mm/ksm/run 2>/dev/null || echo 0)
@@ -1074,7 +1098,16 @@ for bdf in $bdfs; do
     drv=$(basename "$(readlink /sys/bus/pci/devices/$bdf/driver 2>/dev/null)")
     if [[ $drv == igb_uio ]]; then ok "$bdf on igb_uio"; else bad "$bdf on '${drv}', not igb_uio"; fi
     start=$(sed -n 3p /sys/bus/pci/devices/$bdf/resource | awk '{print $1}')
-    if grep -F "[mem $start-" /sys/kernel/debug/x86/pat_memtype_list 2>/dev/null | grep -q write-combining; then
+    if [[ $arch == aarch64 ]]; then
+        # arm64 has no PAT: the driver's mapping of resource2_wc (Normal-NC)
+        # is the evidence, as the VM lab's wc-check reads it.
+        pid=$(pgrep -x media_driver | head -1)
+        if [[ -n $pid ]] && grep -qF "$bdf/resource2_wc" /proc/$pid/maps; then
+            ok "$bdf BAR2 mapped through resource2_wc (write-combining)"
+        else
+            bad "$bdf BAR2: no media_driver mapping of resource2_wc (pid '${pid}')"
+        fi
+    elif grep -F "[mem $start-" /sys/kernel/debug/x86/pat_memtype_list 2>/dev/null | grep -q write-combining; then
         ok "$bdf BAR2 $start write-combining"
     else
         bad "$bdf BAR2 $start not write-combining ($(grep -F "[mem $start-" /sys/kernel/debug/x86/pat_memtype_list 2>&1 | head -1))"

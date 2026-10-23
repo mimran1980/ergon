@@ -1,7 +1,7 @@
 # Verification & Release
 
 ```sh
-cargo test -p ergo-sbe --all-features -- --test-threads=1
+cargo test -p ergo-sbe --all-features
 cargo test -p ergo-sbe --doc --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc -p ergo-sbe --all-features --no-deps
 cargo clippy -p ergo-sbe --all-targets --all-features -- -D warnings

@@ -1138,6 +1138,81 @@ client_features() {
     fi
 }
 
+# KNOISE: guest-kernel noise on the agent and app CPUs, with durations, in a
+# tracefs instance of its own (knoise: its own buffer and cpumask, every CPU,
+# apart from diag-start's trace). knoise_start <cpus> (a list: 1,2,3,4), as
+# root, against $LAB_SYS_ROOT/kernel/tracing:
+#   * the osnoise tracer with NO_OSNOISE_WORKLOAD on <cpus>: no workload
+#     thread, it times what else runs there (irq_noise, softirq_noise,
+#     thread_noise, nmi_noise: each a start and a net duration);
+#   * who sends IPIs, with their callsite (ipi_send_cpumask, ipi_send_cpu:
+#     spikes.py keeps those to <cpus>), compaction (mm_compaction_begin) and
+#     page migration (mm_migrate_pages), on every CPU;
+#   * cpumasks printed as lists where the kernel has the option (bitmask-list).
+# Enabling a tracer or event flips static keys, an IPI to every CPU (arm64:
+# kick_all_cpus_sync), so diag-start runs it only before reps. Prints one
+# "osnoise ..." line, "osnoise unavailable: <why>" where the kernel lacks
+# the tracer (a limit of the run's diagnostics, recorded: lib.sh
+# record_knoise; also where NO_OSNOISE_WORKLOAD cannot be set, before Linux
+# 6.3), and "knoise events missing: ..." for events it lacks.
+# On Kubernetes this is node configuration (root on the node's tracefs: a
+# privileged node DaemonSet), never the app pod's.
+knoise_start() {
+    local cpus=$1 t=$LAB_SYS_ROOT/kernel/tracing i e missing= old_cpus got
+    i=$t/instances/knoise
+    if [[ ! -d $t ]]; then
+        echo "osnoise unavailable: no tracefs at $t"
+        return 0
+    fi
+    mkdir -p "$i" || { echo "osnoise unavailable: cannot create the tracefs instance $i"; return 0; }
+    echo 0 >"$i/tracing_on"
+    { echo nop >"$i/current_tracer"; } 2>/dev/null
+    : >"$i/trace"
+    echo 8192 >"$i/buffer_size_kb"
+    [[ -e $i/options/bitmask-list ]] && echo 1 >"$i/options/bitmask-list"
+    for e in ipi/ipi_send_cpumask ipi/ipi_send_cpu compaction/mm_compaction_begin migrate/mm_migrate_pages; do
+        if [[ -e $i/events/$e/enable ]]; then echo 1 >"$i/events/$e/enable"; else missing+=" $e"; fi
+    done
+    if ! grep -qw osnoise "$t/available_tracers" 2>/dev/null; then
+        echo "osnoise unavailable: the kernel has no osnoise tracer (available_tracers: $(cat "$t/available_tracers" 2>/dev/null))"
+    elif ! { echo NO_OSNOISE_WORKLOAD >"$t/osnoise/options"; } 2>/dev/null ||
+        ! grep -qw NO_OSNOISE_WORKLOAD "$t/osnoise/options" 2>/dev/null; then
+        # Before Linux 6.3 osnoise has no options: the tracer would start its
+        # workload threads, a CPU hog on every agent CPU, so it stays off
+        echo "osnoise unavailable: this osnoise tracer has no NO_OSNOISE_WORKLOAD option (Linux 6.3 and later), so it would run its workload on the agent CPUs"
+    else
+        old_cpus=$(cat "$t/osnoise/cpus")
+        echo "$cpus" >"$t/osnoise/cpus"
+        { echo osnoise >"$i/current_tracer"; } 2>/dev/null
+        got=$(cat "$i/current_tracer" 2>/dev/null) || got=unreadable
+        if [[ $got == osnoise ]]; then
+            for e in irq_noise softirq_noise thread_noise nmi_noise; do
+                if [[ -e $i/events/osnoise/$e/enable ]]; then echo 1 >"$i/events/osnoise/$e/enable"; else missing+=" osnoise/$e"; fi
+            done
+            echo "osnoise on cpus $cpus (NO_OSNOISE_WORKLOAD: noise timed on them, no workload)"
+        else
+            # (a kernel whose instances cannot run it): its settings put back
+            echo OSNOISE_WORKLOAD >"$t/osnoise/options"
+            echo "$old_cpus" >"$t/osnoise/cpus"
+            echo "osnoise unavailable: the knoise instance did not take the osnoise tracer (it has $got)"
+        fi
+    fi
+    [[ -z $missing ]] || echo "knoise events missing:$missing"
+    echo 1 >"$i/tracing_on"
+}
+
+# knoise_stop: KNOISE off (diag-stop, after the reps): the instance's tracing
+# and tracer, the osnoise workload option back to its default, the instance
+# removed where the kernel lets it
+knoise_stop() {
+    local t=$LAB_SYS_ROOT/kernel/tracing
+    [[ -d $t/instances/knoise ]] || return 0
+    echo 0 >"$t/instances/knoise/tracing_on"
+    echo nop >"$t/instances/knoise/current_tracer"
+    [[ -f $t/osnoise/options ]] && echo OSNOISE_WORKLOAD >"$t/osnoise/options"
+    rmdir "$t/instances/knoise" 2>/dev/null || true
+}
+
 case ${1:-} in
 bootstrap)
     # x86_64; aarch64 (Graviton) only with lab.sh's LAB_ALLOW_ARM=1, which
@@ -1480,6 +1555,9 @@ driver)
     "$self" stop
     # `stop` removed any earlier run's BIN: this run's own, if any, follows
     bin=${BENCH_BIN:-$tools}
+    # the last run's DPDK event log (a mode's @RUSTERON_DPDK_EVENT_LOG=
+    # <home>/bench/events.csv): a run without it must leave none to fetch
+    rm -f "$run/events.csv"
     env_file=$run/driver.env
     # <mode>@KEY=value@...: environment overrides for one experiment, applied
     # last so they win (e.g. dpdk@RUSTERON_DPDK_BURST_SIZE=32)
@@ -1771,7 +1849,7 @@ client)
     sudo ${launch[@]+"${launch[@]}"} env AERON_DIR="$AERON_DIR" LABEL="$label" RTT_SECONDS="${RTT_SECONDS:-20}" \
         SUB_CHANNEL_PARAMS="$sub_params" PUB_CHANNEL_PARAMS="$(cat "$run/pub_channel_params" 2>/dev/null || true)" \
         RTT_LOST_TIMEOUT_US="$(rtt_lost_timeout_us "$sub_params" "$(cat "$run/base_rtt_us" 2>/dev/null || true)")" \
-        RTT_HISTOGRAM="$run/rtt-histogram.csv" LOOP_STALLS_DIR="$run" LOAD_SPIKES="$run/load-spikes.csv" LOAD_SPIKE_NS="${LOAD_SPIKE_NS:-100000}" BENCH_CLOCK="$(cat "$run/bench_clock" 2>/dev/null || echo tsc)" AERON_TERM_BUFFER_SPARSE_FILE=false AERON_CLIENT_PRE_TOUCH_MAPPED_MEMORY=true \
+        RTT_HISTOGRAM="$run/rtt-histogram.csv" LOOP_STALLS_DIR="$run" LOAD_SPIKES="$run/load-spikes.csv" LOAD_SPIKE_NS="${LOAD_SPIKE_NS:-100000}" LOOP_STALL_NS="${LOOP_STALL_NS:-20000}" BENCH_CLOCK="$(cat "$run/bench_clock" 2>/dev/null || echo tsc)" AERON_TERM_BUFFER_SPARSE_FILE=false AERON_CLIENT_PRE_TOUCH_MAPPED_MEMORY=true \
         taskset -c "$HK_CPU" timeout --kill-after="$grace" "$deadline" "$exe" "$@" || rc=$?
     what="$prog ${1:-}"
     if ((rc == 124 || rc == 137)) && ((SECONDS - started >= deadline)); then
@@ -1985,6 +2063,8 @@ jitter)
     # not under INVOKER, whose CnC between clients is the last one's
     if [[ -n $pid ]] && dpdk_active && ! invoker; then
         sudo env AERON_DIR="$AERON_DIR" timeout 20 "$tools/counters" -gap 2>/dev/null | sed 's/^/counter /'
+        # PMD burst timing (RUSTERON_DPDK_GAP_ATTRIB=1; zero otherwise)
+        sudo env AERON_DIR="$AERON_DIR" timeout 20 "$tools/counters" -burst 2>/dev/null | sed 's/^/counter /'
     fi
     for cpu in $HK_CPU $APP_CPU $SENDER_CPU $RECEIVER_CPU $APP2_CPU; do
         # its interrupts, local timer and IPIs from its own column (irqs.sh
@@ -2040,6 +2120,13 @@ print(f"preflight stalls100={len(gaps)} on_several_cpus={shared}")
 PY
     ;;
 diag-start)
+    # Only before reps: a trace, a tracer or a kprobe set up flips static keys,
+    # an IPI to every CPU, agents included; refused while a rep runs (a media
+    # driver, or a client: INVOKER's embed the driver)
+    if running=$(pgrep -x 'media_driver|rtt|load|tput'); then
+        log "diag-start: a rep is running (pid $(echo $running)): diagnostics are set up only before reps (enabling them flips static keys, an IPI to every CPU)"
+        exit 2
+    fi
     # For the whole state: the gap spinner on a spare CPU (the first core
     # outside the layout, else housekeeping's SMT twin, else none: host.sh
     # diag_spare_cpu; a four-core Graviton has neither, and a spinner on a
@@ -2079,6 +2166,11 @@ diag-start)
         mkdir -p instances/drain && echo 1 > instances/drain/events/kprobes/enable && echo 1 > instances/drain/options/stacktrace &&
         echo 1 > tracing_on"
     echo "diag spinner cpu ${spare:-none (no CPU outside the layout: host stalls go unattributed)}, traced cpus $(printf '%x' $mask)"
+    # KNOISE on the agent and app CPUs (the spare keeps the spinner)
+    # shellcheck disable=SC2086
+    cpus=$(echo $APP_CPU $SENDER_CPU $RECEIVER_CPU ${APP2_CPU:-} | tr ' ' ',')
+    echo "$cpus" >"$run/knoise-cpus"
+    sudo env LAB_SYS_ROOT="$LAB_SYS_ROOT" bash -c "$(declare -f knoise_start); knoise_start $cpus"
     ;;
 diag-fetch)
     # the spinner's gaps, then the trace with the uptime and wall clock it
@@ -2094,12 +2186,19 @@ diag-fetch)
     sudo grep -v '^#' /sys/kernel/tracing/instances/drain/trace 2>/dev/null
     echo "== ipmon"
     cat "$run/diag-ipmon.log" 2>/dev/null
+    # KNOISE's events (knoise_start), on the trace's clock: the agent and app
+    # CPUs it timed, and how its cpumasks print
+    echo "== knoise"
+    echo "# cpus $(cat "$run/knoise-cpus" 2>/dev/null)"
+    echo "# cpumask $([[ $(sudo cat "$LAB_SYS_ROOT/kernel/tracing/instances/knoise/options/bitmask-list" 2>/dev/null) == 1 ]] && echo list || echo hex)"
+    sudo grep -v '^#' "$LAB_SYS_ROOT/kernel/tracing/instances/knoise/trace" 2>/dev/null
     ;;
 diag-stop)
     pkill -x gapspin 2>/dev/null || true
     rm -f "$run/diag-paused"
     if [[ -s $run/diag-ipmon.pid ]]; then kill "$(cat "$run/diag-ipmon.pid")" 2>/dev/null || true; rm -f "$run/diag-ipmon.pid"; fi
     echo 0 | sudo tee /sys/kernel/tracing/tracing_on >/dev/null
+    sudo env LAB_SYS_ROOT="$LAB_SYS_ROOT" bash -c "$(declare -f knoise_stop); knoise_stop"
     ;;
 hostchecks)
     # vm.sh hostchecks: the media driver's start-up host checks

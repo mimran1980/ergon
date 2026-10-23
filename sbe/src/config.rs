@@ -32,9 +32,8 @@
 //! | [`with_domain_objects`](GenerationConfig::with_domain_objects) | `CarDomain` DTOs; pass [`DomainVarData`] for var-data shape |
 //! | [`with_shared_module`](GenerationConfig::with_shared_module) | Multi-schema: shared types in one module, `pub use super::common::*` |
 //! | [`with_external_sbe_rt`](GenerationConfig::with_external_sbe_rt) | `pub use path::sbe_rt as sbe_rt` instead of inlining runtime |
-//! | [`with_error_from_impls`](GenerationConfig::with_error_from_impls) | `From<EncodeError> for YourError` so `?` works |
 //! | [`with_keyword_append_token`](GenerationConfig::with_keyword_append_token) | Schema field `type` → `type_` (default `"_"`) |
-//! | [`with_deprecated_attrs`](GenerationConfig::with_deprecated_attrs) | `#[deprecated]` on schema-deprecated items |
+//! | [`with_deprecated_attrs`](GenerationConfig::with_deprecated_attrs) | `#[deprecated(note = "deprecated since schema version N")]` on decoder getters of schema-deprecated fields |
 
 /// Selects which fields receive conversion / domain-type methods.
 ///
@@ -360,8 +359,8 @@ pub struct FieldInfo {
     pub presence: &'static str,
     /// Null sentinel value (optional fields only).
     pub null_value: Option<u64>,
-    /// Whether the field is schema-deprecated.
-    pub deprecated: bool,
+    /// Schema version the field was deprecated in; `None` when not deprecated.
+    pub deprecated: Option<u16>,
     /// Schema description on the field, if present.
     pub description: Option<String>,
 }
@@ -527,6 +526,11 @@ pub struct GenerationConfig {
     /// Domain-type mappings: `(selector, rust_type_path)`.
     /// Implicitly enables conversion for the same selector.
     pub(crate) domain_types: Vec<(ConversionSelector, String)>,
+    /// `(selector, earlier type, later type)` for each `with_domain_type` /
+    /// `with_manual_domain_type` call that gave a mapped selector a different
+    /// type. Reported as [`crate::GenerateError::InvalidConversion`] at
+    /// generation time; the builder itself cannot fail.
+    pub(crate) domain_type_conflicts: Vec<(ConversionSelector, String, String)>,
     /// Selectors passed to [`Self::with_manual_domain_type`]:
     /// get the same concrete domain accessor signatures as any other `domain_types`
     /// entry, but the built-in `TryFromSbe`/`TryToSbe` impl (for `bool` /
@@ -535,8 +539,6 @@ pub struct GenerationConfig {
     pub(crate) manual_impl_selectors: Vec<ConversionSelector>,
     /// When set, emit `pub use <path> as sbe_rt;` instead of inlining runtime.
     pub(crate) external_sbe_rt_path: Option<String>,
-    /// Emit `From<EncodeError/DecodeError>` for this error type path.
-    pub(crate) error_from_path: Option<String>,
     /// Map enum/boolean NullVal → `Option<T>`. Matched selectors produce
     /// `Option<EventCode>` accessors instead of bare enum types.
     /// Wire is byte-identical: `None` writes the `NullVal` discriminant.
@@ -577,6 +579,9 @@ pub struct GenerationConfig {
     /// Emit a `{Message}Source` trait per message (and `…EntrySource` per
     /// group) with `encode_from` / `encoded_length_with_header_from`.
     pub(crate) source_traits: bool,
+    /// Emit opt-in `validate()` on message decoders, group entry decoders
+    /// and `AnyMessage`.
+    pub(crate) validate: bool,
 }
 
 impl std::fmt::Debug for GenerationConfig {
@@ -588,9 +593,9 @@ impl std::fmt::Debug for GenerationConfig {
             .field("domain_var_data", &self.domain_var_data)
             .field("conversions", &self.conversions)
             .field("domain_types", &self.domain_types)
+            .field("domain_type_conflicts", &self.domain_type_conflicts)
             .field("manual_impl_selectors", &self.manual_impl_selectors)
             .field("external_sbe_rt_path", &self.external_sbe_rt_path)
-            .field("error_from_path", &self.error_from_path)
             .field("null_as_option", &self.null_as_option)
             .field("all_enums_as_option", &self.all_enums_as_option)
             .field("auto_bool_domain", &self.auto_bool_domain)
@@ -604,6 +609,7 @@ impl std::fmt::Debug for GenerationConfig {
             .field("enum_mappings", &self.enum_mappings)
             .field("composite_mappings", &self.composite_mappings)
             .field("source_traits", &self.source_traits)
+            .field("validate", &self.validate)
             .finish()
     }
 }
@@ -625,9 +631,9 @@ impl GenerationConfig {
             domain_var_data: DomainVarData::Bytes,
             conversions: Vec::new(),
             domain_types: Vec::new(),
+            domain_type_conflicts: Vec::new(),
             manual_impl_selectors: Vec::new(),
             external_sbe_rt_path: None,
-            error_from_path: None,
             keyword_append_token: "_".into(),
             deprecated_attrs: false,
             null_as_option: Vec::new(),
@@ -641,6 +647,7 @@ impl GenerationConfig {
             enum_mappings: Vec::new(),
             composite_mappings: Vec::new(),
             source_traits: false,
+            validate: false,
         }
     }
 
@@ -748,7 +755,9 @@ impl GenerationConfig {
     /// → [`sbe/tests/comprehensive_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/comprehensive_test.rs)
     ///
     /// Prefer [`Self::with_domain_type`] when one concrete Rust type is enough.
-    /// Duplicate selectors are ignored; selectors matching nothing error at
+    /// Duplicate selectors are ignored. A selector that matches no field (or,
+    /// for [`ConversionSelector::NamedType`], names no type) is
+    /// [`crate::GenerateError::InvalidConversion`] at
     /// [`crate::Generator::generate`] time.
     #[must_use]
     pub fn with_conversion(mut self, selector: ConversionSelector) -> Self {
@@ -762,6 +771,10 @@ impl GenerationConfig {
     ///
     /// Wire encoding is byte-identical: `None` writes the `NullVal`
     /// discriminant, `Some(v)` writes `v`. Zero runtime cost.
+    ///
+    /// Only [`ConversionSelector::named_type`] naming an enum is applied. Any
+    /// other selector, or a name that is not an enum of the schema, is
+    /// [`crate::GenerateError::InvalidConfiguration`] at generation time.
     ///
     /// ```rust
     /// use ergo_sbe::{ConversionSelector, GenerationConfig};
@@ -823,13 +836,18 @@ impl GenerationConfig {
     /// ```
     ///
     /// Do **not** also call [`Self::with_conversion`] for the same selector.
+    ///
+    /// Generation fails closed with [`crate::GenerateError::InvalidConversion`]
+    /// when the selector matches no field, when a second call gives the same
+    /// selector a different type, or when a higher-precedence selector takes
+    /// every field this one matches.
     #[must_use]
     pub fn with_domain_type(
         self,
         selector: ConversionSelector,
         rust_type: impl Into<String>,
     ) -> Self {
-        self.apply_domain_type(selector, rust_type, DomainImpl::Generated)
+        self.apply_domain_type(selector, rust_type, DomainImpl::Generated, false)
     }
 
     /// Like [`Self::with_domain_type`], but you write `impl TryFromSbe<Wire>`
@@ -860,14 +878,19 @@ impl GenerationConfig {
         selector: ConversionSelector,
         rust_type: impl Into<String>,
     ) -> Self {
-        self.apply_domain_type(selector, rust_type, DomainImpl::Manual)
+        self.apply_domain_type(selector, rust_type, DomainImpl::Manual, false)
     }
 
+    /// Register `rust_type` for `selector`. `replaces` is true for the
+    /// enum/composite mappings, whose later call replaces an earlier one by
+    /// design; otherwise a different type for an already-mapped selector is
+    /// recorded as a conflict and fails generation.
     fn apply_domain_type(
         mut self,
         selector: ConversionSelector,
         rust_type: impl Into<String>,
         impl_kind: DomainImpl,
+        replaces: bool,
     ) -> Self {
         let sel = selector;
         let ty = rust_type.into();
@@ -882,9 +905,11 @@ impl GenerationConfig {
                 }
             }
         }
-        // Last-write-wins: calling with_domain_type(sel, "B") after
-        // with_domain_type(sel, "A") replaces the mapping.
         if let Some(existing) = self.domain_types.iter_mut().find(|(s, _)| s == &sel) {
+            if !replaces && existing.1 != ty {
+                self.domain_type_conflicts
+                    .push((sel.clone(), existing.1.clone(), ty.clone()));
+            }
             existing.1 = ty;
         } else {
             self.domain_types.push((sel, ty));
@@ -937,7 +962,7 @@ impl GenerationConfig {
         self.enum_mappings
             .retain(|m| m.sbe_enum != mapping.sbe_enum);
         self.enum_mappings.push(mapping);
-        self.apply_domain_type(selector, rust_type, DomainImpl::Generated)
+        self.apply_domain_type(selector, rust_type, DomainImpl::Generated, true)
     }
 
     /// Generate the mapping between an SBE composite and an application
@@ -972,7 +997,7 @@ impl GenerationConfig {
         self.composite_mappings
             .retain(|m| m.composite != mapping.composite);
         self.composite_mappings.push(mapping);
-        self.apply_domain_type(selector, rust_type, DomainImpl::Generated)
+        self.apply_domain_type(selector, rust_type, DomainImpl::Generated, true)
     }
 
     /// Generate a `{Message}Source` trait per message, so an application
@@ -997,7 +1022,10 @@ impl GenerationConfig {
     /// another `nullValue`), which would read back as `None`, is
     /// `EncodeError::SomeNullValue`; a value its domain conversion refuses is
     /// `EncodeError::Conversion`. Both carry the field's path, with the
-    /// entry index in each group on the way (`sbe_rt::FieldPath`).
+    /// entry index in each group on the way (`sbe_rt::FieldPath`). An
+    /// integer or char scalar outside a `minValue` / `maxValue` the schema
+    /// declares is `EncodeError::ValueOutOfRange`; a bound the schema does
+    /// not declare is not checked, so any value of the Rust type is written.
     /// A message whose own field, or first group or var-data, is named
     /// `encode_from` or `encoded_length_with_header_from` keeps that
     /// accessor unchanged and has no helper of that name (both would be
@@ -1010,26 +1038,29 @@ impl GenerationConfig {
         self
     }
 
-    /// Emit `From<sbe_rt::EncodeError>` / `From<sbe_rt::DecodeError>` for your error type.
+    /// Emit `validate(&self) -> Result<(), sbe_rt::ValidateError>` on every
+    /// message decoder, group entry decoder and `AnyMessage` (**off by
+    /// default**).
     ///
-    /// In build.rs: `.with_error_from_impls("crate::AppError")`.
-    /// Application code: `enc.group(...)?;` — `EncodeError` auto-converts via `From`.
+    /// `try_decode` proves bounds only and is unchanged. `validate()` is a
+    /// separate, opt-in pass for frames from older or foreign producers. It
+    /// walks the fixed block and every group entry and returns the first of:
     ///
-    /// **Note:** The generated `From` impl uses `format!("sbe encode: {err}")` —
-    /// stringifying the typed error through its `Display` form, then calling
-    /// `YourType::from(String)`. This means (1) your error type must implement
-    /// `From<String>`, and (2) field-level error details (e.g.
-    /// `EncodeError::BufferTooShort { field, needed, available }`) are lost in
-    /// the conversion. Implement `From<generated::sbe_rt::EncodeError>` and
-    /// `From<generated::sbe_rt::DecodeError>` on your error type so those
-    /// fields survive. Removal is scheduled for 1.0.
+    /// | Wire problem | Error |
+    /// |---|---|
+    /// | integer or char scalar (or integer array element) outside a declared `minValue` / `maxValue` | `ValueOutOfRange` |
+    /// | enum discriminant that is neither a `validValue` nor the enum's null | `UnknownEnum` |
+    /// | set bit no `choice` declares | `UnknownSetBits` |
+    /// | `AnyMessage::Unknown` | `UnknownTemplate` |
+    /// | malformed group or var-data tail | `Decode` |
+    ///
+    /// An optional field's null value passes. Not checked: bounds the schema
+    /// does not declare, floats, fixed char arrays (NUL padding is valid
+    /// SBE) and var-data contents. A message, group, entry field or
+    /// var-data named `validate` is `GenerateError::InvalidConfiguration`.
     #[must_use]
-    #[deprecated(
-        since = "0.1.20",
-        note = "implement From<generated::sbe_rt::EncodeError> and From<generated::sbe_rt::DecodeError> on your error type so wire fields (needed/available) are preserved; this helper formats through String and will be removed in 1.0"
-    )]
-    pub fn with_error_from_impls(mut self, path: impl Into<String>) -> Self {
-        self.error_from_path = Some(path.into());
+    pub fn with_validate(mut self, enable: bool) -> Self {
+        self.validate = enable;
         self
     }
 
@@ -1106,7 +1137,8 @@ impl GenerationConfig {
         self
     }
 
-    /// Emit `#[deprecated]` on schema-deprecated fields/types/messages.
+    /// Emit `#[deprecated(note = "deprecated since schema version N")]` on
+    /// decoder getters of fields the schema marks `deprecated="N"`.
     #[must_use]
     pub fn with_deprecated_attrs(mut self, enable: bool) -> Self {
         self.deprecated_attrs = enable;

@@ -56,8 +56,9 @@ func main() {
 	kubeletConfig := flag.String("kubelet-config", "", "read-only final kubelet configuration; empty refuses hot creates")
 	hostSys := flag.String("host-sys", "/sys", "sysfs root for the node contract")
 	hostProc := flag.String("host-proc", "/proc", "proc root for the node contract")
+	kubeletConfigDir := flag.String("kubelet-config-dir", "", "optional kubelet --config-dir; its *.conf drop-ins are merged over --kubelet-config as the kubelet merges them")
 	kubeletConfigZ := flag.String("kubelet-configz", "", "optional effective kubelet /configz document")
-	kubeletOverrides := flag.String("kubelet-overrides", "", "optional kubelet argv file or drop-in directory")
+	kubeletOverrides := flag.String("kubelet-overrides", "", "optional kubelet argv file or directory of argv files; a checked flag that differs from the merged config is refused, not merged")
 	flag.Parse()
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	if *showVersion {
@@ -65,11 +66,12 @@ func main() {
 		return
 	}
 	sources := config.Sources{
-		SysRoot:       *hostSys,
-		ProcRoot:      *hostProc,
-		KubeletConfig: *kubeletConfig,
-		ConfigZ:       *kubeletConfigZ,
-		Overrides:     *kubeletOverrides,
+		SysRoot:          *hostSys,
+		ProcRoot:         *hostProc,
+		KubeletConfig:    *kubeletConfig,
+		KubeletConfigDir: *kubeletConfigDir,
+		ConfigZ:          *kubeletConfigZ,
+		Overrides:        *kubeletOverrides,
 	}
 	if err := run(*configPath, os.Getenv("NODE_NAME"), config.InClusterNodeLabels, sources, log); err != nil {
 		log.Error("exit", "error", err.Error())

@@ -81,14 +81,17 @@ impl Checked {
     }
 }
 
-/// TCP keepalive and `TCP_USER_TIMEOUT` for libcurl's sockets: the same
-/// settings the driver gives its connections.
+/// TCP keepalive, `TCP_USER_TIMEOUT` and the per-socket TCP timers for
+/// libcurl's sockets: the same settings the driver gives its connections.
 #[derive(Debug, Clone, Copy, Default)]
 struct TcpOpts {
     /// Idle, interval and count; idle 0 leaves keepalive off.
     keepalive: (u32, u32, u32),
     /// 0 leaves the kernel default.
     user_timeout_ms: u32,
+    /// `TCP_RTO_MIN_US` and `TCP_DELACK_MAX_US` (`None`: left alone).
+    rto_min_us: Option<u32>,
+    delack_max_us: Option<u32>,
 }
 
 impl TcpOpts {
@@ -100,6 +103,8 @@ impl TcpOpts {
                 cfg.keepalive_count,
             ),
             user_timeout_ms: cfg.tcp_user_timeout_ms,
+            rto_min_us: cfg.tcp_rto_min_us,
+            delack_max_us: cfg.tcp_delack_max_us,
         }
     }
 
@@ -111,6 +116,8 @@ impl TcpOpts {
         if self.user_timeout_ms > 0 {
             crate::sys::set_tcp_user_timeout(fd, self.user_timeout_ms)?;
         }
+        crate::sys::apply_tcp_timers(fd, self.rto_min_us, self.delack_max_us)
+            .map_err(std::io::Error::other)?;
         Ok(())
     }
 }
@@ -288,6 +295,9 @@ impl CurlClient {
     pub(crate) fn new(cfg: &HttpClientConfig, target: &Target) -> Result<Self> {
         // Its keepalive settings apply here too: refused, never ignored.
         cfg.driver.validate()?;
+        // As `Driver::new`: a TCP timer this kernel lacks or would round is
+        // refused here, typed, not at libcurl's first socket.
+        crate::sys::probe_tcp_timers(cfg.driver.tcp_rto_min_us, cfg.driver.tcp_delack_max_us)?;
         curl::init();
         let mut multi = Multi::new();
         multi

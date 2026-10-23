@@ -64,6 +64,9 @@ pub struct rusteron_dpdk_config_t {
     /// `RUSTERON_DPDK_CLOCK_CHOICE_*`: 0 the counter ([`CLOCK_CHOICE_COUNTER`]),
     /// 1 `CLOCK_MONOTONIC` ([`CLOCK_CHOICE_MONOTONIC`]).
     pub clock: u8,
+    pub tx_fast_free: u8,
+    pub rx_free_thresh: u16,
+    pub tx_free_thresh: u16,
 }
 
 // The C layout, field by field (asserted in native/dpdk/rusteron_dpdk_transport.c
@@ -93,7 +96,10 @@ const _: () = {
     assert!(offset_of!(C, receiver_mac) == 4306);
     assert!(offset_of!(C, rx_hw_timestamp) == 4324);
     assert!(offset_of!(C, clock) == 4325);
-    assert!(size_of::<C>() == 4328);
+    assert!(offset_of!(C, tx_fast_free) == 4326);
+    assert!(offset_of!(C, rx_free_thresh) == 4328);
+    assert!(offset_of!(C, tx_free_thresh) == 4330);
+    assert!(size_of::<C>() == 4336);
 };
 
 /// The config's clock choices (`RUSTERON_DPDK_CLOCK_CHOICE_*`).
@@ -180,6 +186,9 @@ impl rusteron_dpdk_config_t {
             receiver_mac: [0; 18],
             rx_hw_timestamp: 0,
             clock: CLOCK_CHOICE_COUNTER,
+            tx_fast_free: 0,
+            rx_free_thresh: 0,
+            tx_free_thresh: 0,
         };
         fill_cstr(&mut c.file_prefix, "rusteron-ena");
         fill_cstr(&mut c.hugepage_dir, "/dev/hugepages");

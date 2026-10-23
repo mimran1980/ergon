@@ -214,7 +214,32 @@ pub struct Config {
     /// connection (and it bounds keepalive). `0` leaves the kernel default
     /// (about 15 minutes of retransmissions).
     pub tcp_user_timeout_ms: u32,
+    /// `TCP_RTO_MIN_US` (Linux 6.15+), µs: the floor of the retransmission
+    /// timeout on each socket, so a lost segment that needs a timeout is
+    /// sent again after `max(floor, srtt + 4 × rttvar)` instead of at least
+    /// 200 ms. Only this side's retransmissions; a route `rto_min` that is
+    /// locked still wins. `None` (the default) leaves the kernel's. 2 000 to
+    /// 200 000, and whole ticks of the running kernel (`Driver::new` sets it
+    /// on a probe socket and refuses a value the kernel would round). Too
+    /// low a floor sends spurious retransmissions.
+    pub tcp_rto_min_us: Option<u32>,
+    /// `TCP_DELACK_MAX_US` (Linux 6.15+), µs: the longest this socket delays
+    /// an ACK (the kernel default is 200 ms, and never above the RTO floor
+    /// less one tick). `None` (the default) leaves the kernel's. Same range
+    /// and checks as `tcp_rto_min_us`.
+    pub tcp_delack_max_us: Option<u32>,
+    /// Passive `TCP_INFO` sampling, ms between two samples of a connection
+    /// (`Driver::tcp_info`); `0` (the default) is off. The polling thread
+    /// reads one connection per deadline check (every 250 µs) while a round
+    /// is due: one `getsockopt` per poll at most, which takes the socket's
+    /// lock briefly.
+    pub tcp_info_interval_ms: u32,
 }
+
+/// The kernel's bounds for `TCP_RTO_MIN_US` and `TCP_DELACK_MAX_US`, µs: two
+/// ticks at the finest `CONFIG_HZ` (1000; `TCP_TIMEOUT_MIN_US`), and `HZ / 5`
+/// ticks (200 ms on every `CONFIG_HZ`), `include/net/tcp.h`.
+const TCP_TIMER_US: std::ops::RangeInclusive<u32> = 2_000..=200_000;
 
 impl Config {
     /// Defaults for `backend`.
@@ -248,6 +273,9 @@ impl Config {
             keepalive_count: 3,
             // Idle plus every probe: the same deadline for unacknowledged data.
             tcp_user_timeout_ms: 25_000,
+            tcp_rto_min_us: None,
+            tcp_delack_max_us: None,
+            tcp_info_interval_ms: 0,
         }
     }
 
@@ -257,8 +285,24 @@ impl Config {
     /// `busy_poll_us` or `tcp_user_timeout_ms` above `i32::MAX`,
     /// `prefer_busy_poll` on a backend that does not poll the NIC,
     /// `busy_poll_budget` on one that does not poll through the socket or
-    /// epoll, or keepalive settings outside the kernel's limits.
+    /// epoll, keepalive settings outside the kernel's limits, or
+    /// `tcp_rto_min_us` / `tcp_delack_max_us` outside 2 000 to 200 000 µs
+    /// (what no kernel accepts; the running kernel's tick is checked at
+    /// `Driver::new`).
     pub fn validate(&self) -> Result<()> {
+        for (key, v) in [
+            ("tcp_rto_min_us", self.tcp_rto_min_us),
+            ("tcp_delack_max_us", self.tcp_delack_max_us),
+        ] {
+            if let Some(us) = v.filter(|us| !TCP_TIMER_US.contains(us)) {
+                return Err(Error::Config(format!(
+                    "{key} {us} µs: the kernel takes {} to {} µs (two ticks at CONFIG_HZ=1000 \
+                     up to HZ/5)",
+                    TCP_TIMER_US.start(),
+                    TCP_TIMER_US.end()
+                )));
+            }
+        }
         if i32::try_from(self.tcp_user_timeout_ms).is_err() {
             return Err(Error::Config(format!(
                 "tcp_user_timeout_ms {} is above {}",
@@ -316,7 +360,9 @@ impl Config {
     /// (`true`/`false`), `busy_poll_budget` (0 keeps the kernel default),
     /// `quickack_check` (`off`, `warn` or `require`), `keepalive_idle_s` (0:
     /// off), `keepalive_interval_s`, `keepalive_count`, `tcp_user_timeout_ms`
-    /// (0: the kernel default), `helper_cpus` (a kernel CPU list:
+    /// (0: the kernel default), `tcp_rto_min_us` and `tcp_delack_max_us` (0:
+    /// the kernel's), `tcp_info_interval_ms` (0: off), `helper_cpus` (a
+    /// kernel CPU list:
     /// `helper_cpus=1,3-4` keeps the parts after its commas that have no
     /// `=`).
     ///
@@ -373,6 +419,9 @@ impl Config {
                 "keepalive_interval_s" => cfg.keepalive_interval_s = num()?,
                 "keepalive_count" => cfg.keepalive_count = num()?,
                 "tcp_user_timeout_ms" => cfg.tcp_user_timeout_ms = num()?,
+                "tcp_rto_min_us" => cfg.tcp_rto_min_us = Some(num()?).filter(|&us| us > 0),
+                "tcp_delack_max_us" => cfg.tcp_delack_max_us = Some(num()?).filter(|&us| us > 0),
+                "tcp_info_interval_ms" => cfg.tcp_info_interval_ms = num()?,
                 "busy_poll_budget" => {
                     let b = u16::try_from(num()?)
                         .map_err(|_| Error::Config(format!("{k}: above 65535: {v:?}")))?;

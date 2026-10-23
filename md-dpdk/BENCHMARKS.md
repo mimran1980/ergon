@@ -1,6 +1,6 @@
 # ergon-md-dpdk: kernel UDP against DPDK on AWS
 
-The round-by-round write-up that was removed on 2026-10-18 is
+Round-by-round write-up:
 [BENCHMARKS-ROUNDS-2026-10-18.md](BENCHMARKS-ROUNDS-2026-10-18.md). Quote
 this page when the two disagree.
 

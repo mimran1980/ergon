@@ -247,3 +247,47 @@ fn helper_cpus_and_the_inline_connect_fallback_parse() -> R {
     }
     Ok(())
 }
+
+/// The per-socket TCP timers (`TCP_RTO_MIN_US`, `TCP_DELACK_MAX_US`, Linux
+/// 6.15+) and passive `TCP_INFO` sampling: all off by default, and a value
+/// no kernel accepts is refused here, before any socket. The floor is 2 ms:
+/// two timer ticks at `CONFIG_HZ=1000`, the finest tick there is (a coarser
+/// tick is checked against the running kernel at `Driver::new`); the
+/// ceiling is the kernel's own 200 ms (`HZ / 5` on every `CONFIG_HZ`).
+#[test]
+fn tcp_timers_and_tcp_info_are_off_by_default_and_bounded() -> R {
+    for b in Backend::ALL {
+        let c = Config::new(b);
+        assert_eq!(c.tcp_rto_min_us, None, "{b}");
+        assert_eq!(c.tcp_delack_max_us, None, "{b}");
+        assert_eq!(c.tcp_info_interval_ms, 0, "{b}");
+    }
+    let c = Config::parse(
+        "recv-busy,tcp_rto_min_us=5000,tcp_delack_max_us=2000,tcp_info_interval_ms=1000",
+    )?;
+    assert_eq!(c.tcp_rto_min_us, Some(5_000));
+    assert_eq!(c.tcp_delack_max_us, Some(2_000));
+    assert_eq!(c.tcp_info_interval_ms, 1_000);
+    // 0 leaves the kernel's own value (200 ms, or a route's `rto_min`).
+    let c = Config::parse("uring-spin,tcp_rto_min_us=0,tcp_delack_max_us=0")?;
+    assert_eq!((c.tcp_rto_min_us, c.tcp_delack_max_us), (None, None));
+    assert!(Config::parse("epoll-spin,tcp_rto_min_us=200000,tcp_delack_max_us=200000").is_ok());
+    for bad in [
+        "recv-busy,tcp_rto_min_us=1999",
+        "recv-busy,tcp_rto_min_us=200001",
+        "recv-busy,tcp_delack_max_us=1",
+        "recv-busy,tcp_delack_max_us=200001",
+        "recv-busy,tcp_rto_min_us=x",
+        "recv-busy,tcp_info_interval_ms=-1",
+    ] {
+        let e = Config::parse(bad)
+            .err()
+            .ok_or_else(|| format!("{bad:?} accepted"))?;
+        assert!(matches!(e, ergon_io::Error::Config(_)), "{bad:?}: {e}");
+    }
+    // A struct-built config is checked the same way.
+    let mut c = Config::new(Backend::EpollSpin);
+    c.tcp_rto_min_us = Some(1_000);
+    assert!(c.validate().is_err(), "a floor below 2 ms validated");
+    Ok(())
+}

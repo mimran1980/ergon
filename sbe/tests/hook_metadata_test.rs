@@ -439,15 +439,15 @@ const DEP_SCHEMA_XML: &str = r#"<?xml version="1.0"?>
   </message>
 </messageSchema>"#;
 
-fn field_deprecated(fields: &[ergo_sbe::FieldInfo], name: &str) -> bool {
+fn field_deprecated(fields: &[ergo_sbe::FieldInfo], name: &str) -> Option<u16> {
     fields
         .iter()
         .find(|f| f.name == name)
-        .is_some_and(|f| f.deprecated)
+        .and_then(|f| f.deprecated)
 }
 
 /// Hooks see schema-deprecated flags for types, messages, fields, groups,
-/// and var-data. Exact version numbers are a 1.0 FieldInfo/ItemContext change.
+/// and var-data; `FieldInfo::deprecated` carries the schema version.
 #[test]
 fn hooks_expose_deprecated_flags() -> Result<(), Box<dyn std::error::Error>> {
     let seen = Arc::new(Mutex::new(DepFlags::default()));
@@ -460,13 +460,13 @@ fn hooks_expose_deprecated_flags() -> Result<(), Box<dyn std::error::Error>> {
             ItemContext::Composite { name, .. } if name == "OldComp" => s.items.push("composite"),
             ItemContext::MessageDecoder { fields, .. } => {
                 s.items.push("message");
-                if field_deprecated(fields, "legacy") {
+                if field_deprecated(fields, "legacy") == Some(2) {
                     s.items.push("field");
                 }
-                if field_deprecated(fields, "rows") {
+                if field_deprecated(fields, "rows") == Some(7) {
                     s.items.push("group");
                 }
-                if field_deprecated(fields, "note") {
+                if field_deprecated(fields, "note") == Some(8) {
                     s.items.push("data");
                 }
             }

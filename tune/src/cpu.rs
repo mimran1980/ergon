@@ -18,7 +18,7 @@ pub enum Thread {
 }
 
 impl Thread {
-    fn file(self, name: &str) -> String {
+    pub(crate) fn file(self, name: &str) -> String {
         match self {
             Self::Current => format!("/proc/thread-self/{name}"),
             Self::Task(tid) => format!("/proc/self/task/{tid}/{name}"),
@@ -130,7 +130,7 @@ pub fn isolated_cpus(host: &Host) -> Result<CpuSet, ReadError> {
 }
 
 /// The online CPUs outside `busy`, if any.
-fn spare(host: &Host, busy: &CpuSet) -> Option<CpuSet> {
+pub fn spare(host: &Host, busy: &CpuSet) -> Option<CpuSet> {
     host.read_cpu_list("/sys/devices/system/cpu/online")
         .map(|online| online.difference(busy))
         .ok()

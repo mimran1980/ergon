@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 ./scripts/regenerate-sbe-tool-reference.sh --check
 ./scripts/regenerate-golden.sh --check
 ./scripts/regenerate-codegen-matrix-fixture.py --check
-cargo test -p ergo-sbe --all-features --lib -- --test-threads=2
+cargo test -p ergo-sbe --all-features --lib
 cargo test --workspace --all-features \
     --exclude ergo-sbe --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness \
     --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness -- --test-threads=2

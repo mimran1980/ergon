@@ -27,16 +27,34 @@ spinner on a spare CPU, a trace of the app and agent CPUs). A spike of at least
   stall there cannot be ruled out: such a spike's cause says so, and a note
   names the host.
 
+Then, for every round trip run, each rep's 10 largest round trips (at any
+size: the clients stamp idle round trips from LOAD_SPIKE_NS, 30 us cross-host)
+with every event whose interval overlaps it ([sent, echoed]), its ping index
+in the measured run and its echo's phase in the second and in 30 s. Events:
+either client's loop stalls, the gap spinner and traced preemptions as above,
+the DPDK transport's event log where a mode turned it on
+(RUSTERON_DPDK_EVENT_LOG, saved per round trip run as <host>-rings-<run>.log:
+the agents' loop gaps of 10 us or more, ARP, the housekeeping thread's 1 Hz
+sample, NIC statistics read and PMD timers, each with its length), and KNOISE (diag-fetch's knoise section: osnoise's irq,
+softirq, thread and NMI noise on the agent and app CPUs with their durations,
+IPIs sent to those CPUs by callsite, compaction and page migration). Each
+source's overlaps are set against chance: the rep's round trips shifted
+circularly by a random offset within the run (its round trips' sum, from the
+histogram), 1,000 times with a fixed seed, how many overlap then; p is the
+share of shifts overlapping at least as many.
+
 The match across hosts is on their wall clocks: where chrony's tracking was
 logged around each mode (vm.sh timesync, <host>-timesync-*.log), a note gives
 each host's largest offset from its source and that source's own bound
 against UTC, and their sum, how far apart the two clocks may be.
 """
+import bisect
 import collections
 import csv
 import glob
 import gzip
 import os
+import random
 import re
 import sys
 
@@ -127,6 +145,189 @@ def spinner_blind(path):
     return blind
 
 
+# osnoise's noise events (Linux include/trace/events/osnoise.h): the source
+# (a thread's "comm:pid", an IRQ's "desc:vector", a softirq's "NAME:vector";
+# none for an NMI), its start on the trace clock and its net duration
+NOISE = re.compile(r"^\s*(?:(.*):(\d+) )?start (\d+)\.(\d+) duration (\d+) ns")
+IPI_MASK = re.compile(r"cpumask=(\S+) callsite=(\S+)")
+IPI_CPU = re.compile(r"cpu=(\d+) callsite=(\S+)")
+
+
+def cpu_list(text):
+    """{cpu} of a CPU list ("1-3,5")."""
+    out = set()
+    for part in text.split(","):
+        if part.strip():
+            lo, _, hi = part.partition("-")
+            out.update(range(int(lo), int(hi or lo) + 1))
+    return out
+
+
+def cpu_mask(text, form):
+    """{cpu} of a trace's cpumask: a list where the instance prints one
+    (its bitmask-list option), else hex in 32-bit groups, the highest first."""
+    if form == "list":
+        return cpu_list(text)
+    bits = int(text.replace(",", ""), 16)
+    return {c for c in range(bits.bit_length()) if bits >> c & 1}
+
+
+def read_knoise(path, host):
+    """KNOISE's events in a host's diagnostics (vm.sh diag-fetch's knoise
+    section) on the wall clock: [(start_s, end_s, source, label)]. Noise has
+    its duration; an IPI, a compaction or a page migration is an instant. The
+    busy threads' own runs (an agent, a client) are not noise, nor an IPI to
+    none of the agent and app CPUs (the section's "# cpus")."""
+    anchor, section, lines, cpus, form = None, None, [], set(), "hex"
+    for line in open(path, errors="replace"):
+        line = line.rstrip("\n")
+        if line.startswith("== "):
+            section = line[3:]
+        elif section == "trace" and line.startswith("UPTIME"):
+            f = line.split()
+            anchor = (float(f[1]), float(f[3]))
+        elif section == "knoise":
+            if line.startswith("# cpus "):
+                cpus = cpu_list(line[len("# cpus "):])
+            elif line.startswith("# cpumask "):
+                form = line.split()[2]
+            elif not line.startswith("#"):
+                lines.append(line)
+    if anchor is None:
+        return []
+    wall = lambda ts: anchor[1] - (anchor[0] - ts)
+    out = []
+    for line in lines:
+        m = EVENT.search(line)
+        if not m:
+            continue
+        cpu, ts, event, rest = int(m.group(1)), float(m.group(2)), m.group(3), m.group(4)
+        if event.endswith("_noise"):
+            n = NOISE.match(rest)
+            if not n:
+                continue
+            who = (n.group(1) or "").strip()
+            if event == "thread_noise" and (BUSY.match(who) or who.startswith("swapper")):
+                continue
+            t0 = wall(int(n.group(3)) + int(n.group(4).ljust(9, "0")[:9]) / 1e9)
+            dur = int(n.group(5)) / 1e9
+            name = f"{event} {who}:{n.group(2)}" if who else event
+            out.append((t0, t0 + dur, event, f"{name} {dur * 1e6:.1f} µs ({host} cpu {cpu})"))
+        elif event in ("ipi_send_cpumask", "ipi_send_cpu"):
+            i = IPI_MASK.search(rest) if event == "ipi_send_cpumask" else IPI_CPU.search(rest)
+            if not i:
+                continue
+            to = cpu_mask(i.group(1), form) if event == "ipi_send_cpumask" else {int(i.group(1))}
+            hit = to & cpus if cpus else to
+            if hit:
+                t = wall(ts)
+                out.append((t, t, "IPI", f"IPI {i.group(2).split('+')[0]} to {','.join(map(str, sorted(hit)))} ({host})"))
+        elif event == "mm_compaction_begin":
+            out.append((wall(ts), wall(ts), "compaction", f"compaction ({host})"))
+        elif event == "mm_migrate_pages":
+            # (include/trace/events/migrate.h: nr_succeeded=, older kernels succeeded=)
+            f = dict(kv.split("=", 1) for kv in rest.split() if "=" in kv)
+            done = f.get("nr_succeeded", f.get("succeeded", "?"))
+            out.append((wall(ts), wall(ts), "page migration",
+                        f"page migration succeeded={done} reason={f.get('reason', '?')} ({host})"))
+    return sorted(out)
+
+
+# the DPDK transport's event log's housekeeping kinds (rusteron_dpdk_events.h)
+RING_SOURCES = {"sample": "1 Hz sample", "nic-stats": "1 Hz NIC stats", "timers": "PMD timers"}
+
+
+def read_rings(path, host):
+    """The DPDK transport's event log for a run (RUSTERON_DPDK_EVENT_LOG,
+    saved as <host>-rings-<run>.log; rows kind,tsc,realtime_ns,value_ns,port,
+    agent, realtime_ns when the event ended, value_ns its length) on the wall
+    clock: ([(start_s, end_s, source, label)], events the rings dropped). An
+    agent's loop gap, a housekeeping call (the 1 Hz sample, the NIC
+    statistics read, the PMDs' timers) over its length; ARP an instant."""
+    out, dropped = [], 0
+    for row in csv.reader(open(path, errors="replace")):
+        if len(row) != 6 or row[0].startswith("#") or not (row[2].isdigit() and row[3].isdigit()):
+            continue
+        kind, end, value, port, agent = row[0], int(row[2]), int(row[3]), row[4], row[5]
+        on_port = f" port {port}" if port != "-" else ""
+        if kind == "drops":
+            dropped += value
+        elif kind == "gap":
+            out.append(((end - value) / 1e9, end / 1e9, "agent gap", f"agent gap{on_port} {value / 1e3:.1f} µs ({host} tid {agent})"))
+        elif kind.startswith("arp-"):
+            out.append((end / 1e9, end / 1e9, "ARP", f"ARP {kind[4:]}{on_port} ({host})"))
+        else:
+            source = RING_SOURCES.get(kind, kind)
+            out.append(((end - value) / 1e9, end / 1e9, source, f"{source} {value / 1e3:.1f} µs ({host}{on_port})"))
+    return sorted(out), dropped
+
+
+TOP_RTT = 10  # each rep's largest round trips labelled with every overlapping event
+SHIFTS = 1000  # circular shifts for the chance baseline
+SEED = 1
+
+
+def overlaps(events, t0, t1):
+    """The events of [(start, end, ...)] sorted by start, `longest` their
+    longest duration, that overlap [t0, t1]."""
+    starts, longest, rows = events
+    lo = bisect.bisect_left(starts, t0 - longest)
+    hi = bisect.bisect_right(starts, t1)
+    return [r for r in rows[lo:hi] if r[1] >= t0]
+
+
+def by_source(events):
+    """{source: (starts, longest, rows)} of [(start, end, source, label)]."""
+    groups = collections.defaultdict(list)
+    for e in events:
+        groups[e[2]].append(e)
+    out = {}
+    for source, rows in groups.items():
+        rows.sort()
+        out[source] = ([r[0] for r in rows], max(r[1] - r[0] for r in rows), rows)
+    return out
+
+
+def chance(reps, sources, shifts=SHIFTS, seed=SEED):
+    """Per source: (observed, of, expected, p) over `reps`, each (round trips
+    [(t0, t1)], run start, run length s, its events by_source): how many round
+    trips an event of the source overlaps, and the same with each rep's round
+    trips shifted circularly by a random offset within its run, `shifts` times."""
+    rng = random.Random(seed)
+    offsets = [[rng.uniform(0, length) for _ in range(shifts)] for _, _, length, _ in reps]
+    out = {}
+    for source in sources:
+        def hits(shift_of):
+            n = 0
+            for r, (trips, start, length, events) in enumerate(reps):
+                if source not in events:
+                    continue
+                for t0, t1 in trips:
+                    s0 = start + (t0 - start + shift_of(r)) % length if shift_of else t0
+                    if overlaps(events[source], s0, s0 + (t1 - t0)):
+                        n += 1
+            return n
+        observed = hits(None)
+        counts = [hits(lambda r, k=k: offsets[r][k]) for k in range(shifts)]
+        out[source] = (observed, sum(len(t) for t, _, _, _ in reps), sum(counts) / shifts,
+                       (1 + sum(c >= observed for c in counts)) / (1 + shifts))
+    return out
+
+
+def run_length(folder, run_tag, start, last):
+    """A round trip run's measured length in seconds: its round trips' sum
+    (histogram-<run>.csv, value_ns,count), else to its last event seen."""
+    path = os.path.join(folder, f"histogram-{run_tag}.csv")
+    if os.path.exists(path):
+        total = 0
+        for row in csv.reader(open(path)):
+            if len(row) == 2 and row[0].isdigit():
+                total += int(row[0]) * int(row[1])
+        if total:
+            return total / 1e9
+    return max(last - start, 1.0)
+
+
 BUCKETS = ("poll-cycle-gaps-20-50us", "poll-cycle-gaps-50-100us", "poll-cycle-gaps-over-100us")
 
 
@@ -156,6 +357,51 @@ def agent_gaps(dirs, run_tag):
         out[host] = [a - b for b, a in zip(snaps["before"], snaps["after"])] if len(snaps) == 2 else None
     return out
 
+
+
+BURSTS = ("rx-burst-max-ns", "rx-bursts-over-1us", "rx-bursts-over-5us",
+          "tx-burst-max-ns", "tx-bursts-over-1us", "tx-bursts-over-5us")
+
+
+def pmd_bursts(dirs, run_tag):
+    """The PMD burst timing during a round trip run, per host
+    (RUSTERON_DPDK_GAP_ATTRIB=1), in BURSTS order, from the same jitter
+    snapshots as agent_gaps: each max-ns is the after-snapshot's largest over
+    the ports (a lifetime max, not differenced); each over-1us/5us count is
+    summed over the ports and differenced against the before-snapshot. None
+    where missing or all zero (GAP_ATTRIB off). Counter names are matched as
+    whole words: nic-arrival-to-rx-burst-max-ns is another counter."""
+    out = {}
+    for host in "ab":
+        snaps = {}
+        for when in ("before", "after"):
+            path = next((p for p in (os.path.join(d, f"{host}-jitter-{when}-rtt-{run_tag}.log") for d in dirs)
+                         if os.path.exists(p)), None)
+            if path is None:
+                break
+            values = {b: [] for b in BURSTS}
+            for line in open(path).read().splitlines():
+                words = line.split()
+                if line.startswith("counter ") and len(words) > 1 and words[1].lstrip("-").isdigit():
+                    for b in BURSTS:
+                        if b in words[2:]:
+                            values[b].append(int(words[1]))
+            if any(values.values()):
+                snaps[when] = values
+        if "after" not in snaps:
+            out[host] = None
+            continue
+        after, before = snaps["after"], snaps.get("before")
+        row = []
+        for b in BURSTS:
+            if b.endswith("-max-ns"):
+                row.append(max(after[b], default=0))
+            elif before is not None:
+                row.append(sum(after[b]) - sum(before[b]))
+            else:
+                row.append(None)
+        out[host] = None if all(v in (0, None) for v in row) else row
+    return out
 
 TRACKING = re.compile(r"^(System time|Root delay|Root dispersion)\s*:\s*([0-9.]+) seconds( (fast|slow))?")
 
@@ -207,19 +453,19 @@ def main():
     threshold = float(sys.argv[2]) if len(sys.argv) > 2 else 200.0
     state = os.path.basename(os.path.normpath(folder))
     run_dir = os.path.dirname(os.path.normpath(folder))
-    diag, blind = {}, {}
+    diag, blind, knoise = {}, {}, {}
     for host in "ab":
         for path in (os.path.join(run_dir, f"{host}-diag-{state}.log"), os.path.join(folder, f"{host}-diag-{state}.log")):
             if os.path.exists(path):
                 diag[host] = read_diag(path)
                 blind[host] = spinner_blind(path)
+                knoise[host] = read_knoise(path, host)
                 break
     if not diag:
         sys.exit(f"no {state} diagnostics (a-diag-{state}.log) next to {folder}")
     # intervals sorted by start, for a binary search: anything overlapping
     # [t0, t1] starts before t1 and, as none here lasts over a second, after
     # t0 - 1 s
-    import bisect
     gap_idx = {h: sorted(g) for h, (g, _) in diag.items()}
     pre_idx = {h: sorted(p) for h, (_, p) in diag.items()}
 
@@ -332,7 +578,7 @@ def main():
                     recorded_total = int(line.split("=", 1)[1])
                     continue
                 parts = line.rstrip().split(",")
-                if len(parts) == 3 and parts[1].isdigit():
+                if len(parts) in (3, 4) and parts[1].isdigit():
                     rows.append((int(parts[2]) / 1e3, int(parts[1])))
         if start is None:
             continue
@@ -454,6 +700,111 @@ def main():
         print("\nMaxima of 500 us or more cluster at second " + ", ".join(f":{s:04.1f}" for s in sorted(recurring))
               + " of the minute: a host event recurring once a minute. A run catches it only if it spans that second "
               "(LAB_RTT_ALIGN starts every round trip just after it).")
+
+    largest(folder, state, run_dir, diag, knoise)
+
+
+def stall_events(path, who):
+    """A client's loop stalls (stalls-<who>-<run>.csv) as [(start_s, end_s,
+    source, label)] on the wall clock, each labelled with its exact length."""
+    if not os.path.exists(path):
+        return []
+    with open(path) as f:
+        first = f.readline()
+        if not first.startswith("# start_realtime_ns="):
+            return []
+        base = int(first.split("=", 1)[1])
+        out = []
+        for line in f:
+            parts = line.strip().split(",")
+            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                end, gap = base + int(parts[0]), int(parts[1])
+                out.append(((end - gap) / 1e9, end / 1e9, f"{who} stall", f"{who} stall {gap / 1e3:.1f} µs"))
+    return sorted(out)
+
+
+def largest(folder, state, run_dir, diag, knoise):
+    """Each round trip run's TOP_RTT largest round trips per rep, every event
+    overlapping each, and each source's overlaps against chance."""
+    # the state's events on either host, whatever the run: spinner gaps,
+    # traced preemptions, KNOISE
+    host_events = []
+    for host, (gaps, preempted) in sorted(diag.items()):
+        # (their sources stamp whole microseconds)
+        host_events += [(g0, g1, "host stall", f"host stall {(g1 - g0) * 1e6:.0f} µs ({host})") for g0, g1 in gaps]
+        host_events += [(t0, t1, "guest preemption", f"{who} preempted by {by} {(t1 - t0) * 1e6:.0f} µs ({host} cpu {cpu})")
+                        for t0, t1, cpu, who, by in preempted]
+        host_events += knoise.get(host, [])
+    table = []  # (run, rep, ping, latency ns, end ns, labels)
+    reps = collections.defaultdict(list)  # run: [(round trips, start, length, events by source)]
+    drops = []
+    for path, stem in spike_files(folder):
+        rt = re.match(rf"^({re.escape(state)}-.*)-rtt-(\d+)$", stem)
+        if not rt:
+            continue
+        run, rep = f"{rt.group(1)}-rtt", int(rt.group(2))
+        tag = f"{rt.group(1)}-{rep}"
+        start_ns, rows = None, []
+        with open_spikes(path) as f:
+            for line in f:
+                if line.startswith("# start_realtime_ns="):
+                    start_ns = int(line.split("=", 1)[1])
+                    continue
+                parts = line.rstrip().split(",")
+                if len(parts) in (3, 4) and parts[1].isdigit() and parts[2].isdigit():
+                    ping = parts[3] if len(parts) == 4 else "-"
+                    rows.append((int(parts[2]), int(parts[1]), ping))
+        if start_ns is None:
+            continue
+        rows.sort(key=lambda r: -r[0])
+        top = rows[:TOP_RTT]
+        events = []
+        for who in ("ping", "pong"):
+            events += stall_events(os.path.join(folder, f"stalls-{who}-{tag}.csv"), who)
+        for host in "ab":
+            for base in (folder, run_dir):
+                ring = os.path.join(base, f"{host}-rings-{tag}.log")
+                if os.path.exists(ring):
+                    ring_events, dropped = read_rings(ring, host)
+                    events += ring_events
+                    if dropped:
+                        drops.append(f"{host}'s event log dropped {dropped:,} events in {tag} (full rings): an overlap there may be missing")
+                    break
+        start = start_ns / 1e9
+        last = max([start + (due + lat) / 1e9 for lat, due, _ in rows] + [e[1] for e in events if e[1] >= start] + [start])
+        length = run_length(folder, tag, start, last)
+        # what the run's window holds, for the baseline
+        window = [e for e in events + host_events if e[1] >= start and e[0] <= start + length]
+        sources = by_source(window)
+        trips = []
+        for lat, due, ping in top:
+            t0, t1 = start + due / 1e9, start + (due + lat) / 1e9
+            trips.append((t0, t1))
+            labels = sorted({e[3] for src in sources.values() for e in overlaps(src, t0, t1)})
+            table.append((run, rep, ping, lat, start_ns + due + lat, labels))
+        reps[run].append((trips, start, length, sources))
+    if not table:
+        return
+    print(f"\n## The {TOP_RTT} largest round trips of each rep and every event overlapping them, {state}\n")
+    print("A round trip is [sent, echoed] on the wall clock; an event overlaps it if its interval does (an IPI, a")
+    print("compaction or a page migration is an instant). Its phase is its echo's, in the second and in 30 s.\n")
+    print("| run | rep | ping | round trip (µs) | mod 1 s (ms) | mod 30 s (s) | overlapping events |")
+    print("| --- | --- | --- | --- | --- | --- | --- |")
+    for run, rep, ping, lat, end_ns, labels in sorted(table, key=lambda r: (r[0], r[1], -r[3])):
+        print(f"| {run} | {rep} | {ping} | {lat / 1e3:.1f} | {end_ns % 1_000_000_000 / 1e6:.3f} | "
+              f"{end_ns % 30_000_000_000 / 1e9:.3f} | {'; '.join(labels) or 'none'} |")
+    for note in drops:
+        print(f"\n{note}.")
+    print(f"\n## Overlaps against chance ({SHIFTS:,} circular shifts of each rep's round trips, seed {SEED}), {state}\n")
+    print("Each rep's round trips shifted together by a random offset within its run (its round trips' sum), so")
+    print("their spacing and every source's own timing stay; p is the share of shifts overlapping at least as many.\n")
+    print("| run | source | of the largest round trips | expected by chance | p |")
+    print("| --- | --- | --- | --- | --- |")
+    for run, run_reps in sorted(reps.items()):
+        names = sorted({src for _, _, _, sources in run_reps for src in sources})
+        for src, (observed, of, expected, p) in sorted(chance(run_reps, names).items(), key=lambda kv: (kv[1][3], kv[0])):
+            print(f"| {run} | {src} | {observed} of {of} | {expected:.2f} | {p:.3f} |")
+
 
 if __name__ == "__main__":
     main()

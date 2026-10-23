@@ -111,7 +111,10 @@ returns the terminal stage, so it is the whole `send` closure:
 `encode_from` refuses what would not read back: `Some` of an optional
 field's null value (NaN for a float) is `EncodeError::SomeNullValue`, and a
 value a domain conversion refuses is `EncodeError::Conversion`, each with the
-field's path and entry indices (`fills[1].allocs[0].px`). In a hand-written
+field's path and entry indices (`fills[1].allocs[0].px`). An integer or
+`char` scalar outside a `minValue` / `maxValue` the schema declares is
+`EncodeError::ValueOutOfRange`; a bound the schema does not declare is not
+checked, so `u64::MAX` in a plain `uint64` is written as given. In a hand-written
 closure, the setter of a field under `with_enum_mapping` or
 `with_composite_mapping` returns `sbe_rt::MappingError`, which converts into
 `EncodeError`, so `enc.side(side)?` works there too.

@@ -15,6 +15,11 @@
 //!   again once the counter has moved and then held for
 //!   [`checks::SETTLE_READS`] reads. Otherwise it is parked until something
 //!   is queued.
+//! - While it watches a polling thread's page faults (T19, opened by
+//!   `Driver::new` on the thread creating the driver) it reads that
+//!   thread's `stat` every [`FAULTS_EVERY`] from a file opened once
+//!   ([`ergon_tune::FaultWatch`]), and writes a line when the thread took a
+//!   fault since the last read.
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
@@ -22,7 +27,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SendError, Sender};
 use std::sync::{Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
-use ergon_tune::{Host, HostCheckPolicy};
+use ergon_tune::{FaultWatch, Host, HostCheckPolicy};
 
 use crate::checks::{self, DevChecks};
 use crate::clock::monotonic_ns;
@@ -35,6 +40,9 @@ static WRITER: OnceLock<Option<Sender<Msg>>> = OnceLock::new();
 
 /// How often watched devices' `carrier_changes` are read.
 const RECHECK: Duration = Duration::from_secs(1);
+
+/// How often watched polling threads' page faults are read (T19).
+pub const FAULTS_EVERY: Duration = Duration::from_secs(5);
 
 /// Work for the warning thread.
 pub type Job = Box<dyn FnOnce(&mut State) + Send>;
@@ -55,6 +63,8 @@ pub struct State {
     dev: DevChecks,
     seen: HashSet<String>,
     last_recheck: Instant,
+    faults: Vec<FaultWatch>,
+    last_faults: Instant,
     policy: HostCheckPolicy,
 }
 
@@ -74,6 +84,8 @@ impl State {
             dev: DevChecks::new(),
             seen: HashSet::new(),
             last_recheck: Instant::now(),
+            faults: Vec::new(),
+            last_faults: Instant::now(),
             policy: HostCheckPolicy::On,
         }
     }
@@ -106,6 +118,24 @@ impl State {
         }
     }
 
+    /// Watches a polling thread's page faults (T19) from now on, read every
+    /// [`FAULTS_EVERY`].
+    pub fn watch_faults(&mut self, watch: FaultWatch) {
+        self.faults.push(watch);
+    }
+
+    /// How long the thread may park before its next due read: `None` when
+    /// nothing is watched.
+    const fn wake_every(&self) -> Option<Duration> {
+        if self.dev.watching() {
+            Some(RECHECK)
+        } else if self.faults.is_empty() {
+            None
+        } else {
+            Some(FAULTS_EVERY)
+        }
+    }
+
     fn handle(&mut self, m: Msg) {
         match m {
             Msg::Line(l) => self.print(l),
@@ -118,11 +148,28 @@ impl State {
     /// finding written again (an ENA reset undoes the fixes), what could not
     /// be read only once.
     fn recheck_if_due(&mut self) {
-        if !self.dev.watching() || self.last_recheck.elapsed() < RECHECK {
-            return;
+        if self.dev.watching() && self.last_recheck.elapsed() >= RECHECK {
+            self.last_recheck = Instant::now();
+            self.recheck_now();
         }
-        self.last_recheck = Instant::now();
-        self.recheck_now();
+        if !self.faults.is_empty() && self.last_faults.elapsed() >= FAULTS_EVERY {
+            self.last_faults = Instant::now();
+            self.check_faults_now();
+        }
+    }
+
+    /// [`FaultWatch::check`] of every watched thread now: a line for each
+    /// that took a fault since the last read, one for a read that fails
+    /// (under `ERGON_HOST_CHECKS`: `off` drops the warning lines).
+    pub(crate) fn check_faults_now(&mut self) {
+        let found: Vec<_> = self
+            .faults
+            .iter_mut()
+            .filter_map(FaultWatch::check)
+            .collect();
+        for l in self.policy.lines("ergon-io", &found) {
+            self.print(l);
+        }
     }
 
     /// [`DevChecks::recheck`] now, its findings written (under
@@ -268,8 +315,8 @@ fn start_with(masks: &[Vec<usize>], spawn: &mut Spawn<'_>) -> Option<(Sender<Msg
 fn serve(rx: &Receiver<Msg>) {
     let mut st = State::new();
     loop {
-        let msg = if st.dev.watching() {
-            match rx.recv_timeout(RECHECK) {
+        let msg = if let Some(every) = st.wake_every() {
+            match rx.recv_timeout(every) {
                 Ok(m) => Some(m),
                 Err(RecvTimeoutError::Timeout) => None,
                 Err(RecvTimeoutError::Disconnected) => return,
@@ -427,6 +474,8 @@ mod tests {
     use std::time::Duration;
 
     use super::{Msg, deliver, start_with, writer_masks};
+    #[cfg(target_os = "linux")]
+    use super::{State, keep_lines, take_lines};
 
     type R = Result<(), Box<dyn std::error::Error>>;
 
@@ -511,5 +560,41 @@ mod tests {
             Msg::Run(Box::new(move |_| r.store(true, Ordering::Relaxed))),
         );
         assert!(!ran.load(Ordering::Relaxed));
+    }
+
+    /// T19: a polling thread that takes page faults while watched gets a
+    /// line from the warning thread's next read, naming the role and the
+    /// counts.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_watched_thread_that_faults_gets_a_t19_line() -> R {
+        let host = ergon_tune::Host::system();
+        let watch = ergon_tune::FaultWatch::open(
+            &host,
+            ergon_tune::Thread::Current,
+            ergon_tune::Role::Loop,
+        )?;
+        let mut st = State::at(host);
+        st.watch_faults(watch);
+        keep_lines();
+        let _ = take_lines();
+        // 4 MiB of fresh pages, each touched once: minor faults on this thread.
+        let mut fresh = vec![0u8; 4 << 20];
+        for b in fresh.iter_mut().step_by(4096) {
+            *b = 1;
+        }
+        std::hint::black_box(&fresh);
+        st.check_faults_now();
+        let lines: Vec<String> = take_lines()
+            .into_iter()
+            .filter(|l| l.contains("T19"))
+            .collect();
+        assert_eq!(lines.len(), 1, "one T19 line, got {lines:?}");
+        assert!(
+            lines[0].contains("loop") && lines[0].contains("minor"),
+            "{}",
+            lines[0]
+        );
+        Ok(())
     }
 }

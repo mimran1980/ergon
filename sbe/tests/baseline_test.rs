@@ -1239,11 +1239,8 @@ fn composite_default_is_flyweight_value_is_eager_copy() -> Result<(), Box<dyn st
         assert_eq!(fly.capacity(), eager.capacity());
         assert_eq!(fly.num_cylinders(), eager.num_cylinders());
 
-        #[allow(deprecated)]
-        {
-            let old: EngineDecoder = car2.engine();
-            assert_eq!(old.capacity(), 2000);
-        }
+        let old: EngineDecoder = car2.engine();
+        assert_eq!(old.capacity(), 2000);
     "#,
     );
     Ok(())

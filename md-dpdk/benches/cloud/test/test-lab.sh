@@ -223,6 +223,21 @@
 #   * the final round's plan (G3): accepted before any cloud call,
 #     and LAB_ESTIMATE=1's hours, bytes and dollars at the lab's spot prices
 #     beside the on-demand ceiling (estimate.py's spot table);
+#   * ATTR-LAB: the idle cross-host round trip's clients stamp round trips of
+#     30 us and loop stalls of 10 us or more (LAB_RTT_SPIKE_NS,
+#     LAB_RTT_STALL_NS; refused unless whole nanoseconds), vm.sh client hands
+#     both through sudo, each host's DPDK event log saved with the round trip;
+#     spikes.py gives each rep's 10 largest round trips every overlapping
+#     event (client stalls, the event log's agent gaps, ARP and housekeeping
+#     calls, spinner gaps, KNOISE's), each label proven by mutation, their
+#     ping index and phase in 1 s and 30 s, and each source against chance
+#     (1,000 circular shifts, a fixed seed); analyse.py reads the ping column;
+#   * KNOISE: vm.sh knoise_start against a fake tracefs (osnoise with
+#     NO_OSNOISE_WORKLOAD on exactly the agent and app CPUs, its noise events,
+#     IPI senders, compaction and migration; "osnoise unavailable" said, and
+#     the tracer kept off where NO_OSNOISE_WORKLOAD cannot be set; a missing
+#     event named), knoise_stop, diag-start refusing while a rep runs
+#     and handing knoise_start the layout's CPUs, lib.sh record_knoise;
 #   * vm.sh, irqs.sh, host.sh, modes.sh, lib.sh, remote.sh and both lab.sh
 #     parse (bash -n), and analyse.py, spikes.py, estimate.py and
 #     fake_aws.py compile.
@@ -919,6 +934,68 @@ else
     fail "lib.sh: VM a's environment: $(cat "$tmp/dry-env/env-written" 2>/dev/null | tr '\n' ' ')"
 fi
 
+# ATTR-LAB: the idle cross-host round trip stamps every round trip of 30 us or
+# more (LOAD_SPIKE_NS=30000, the client's own default 100 us would leave every
+# idle max of 72-79 us unstamped) and every stall of either client's loop of
+# 10 us or more (LOOP_STALL_NS=10000) in the dry run above, with
+# LAB_RTT_SPIKE_NS and LAB_RTT_STALL_NS unset; the localhost round trip keeps
+# its 25 us; given, both knobs reach VM a's environment (remote.sh) and the
+# clients' command lines. Each host's DPDK event log (a mode's
+# @RUSTERON_DPDK_EVENT_LOG=<home>/bench/events.csv) is saved with the round
+# trip as <node>-rings-<run>.log for spikes.py; a host without one leaves none
+# (the round trip's ports, 20123-20124: a load point's echo is an xpong too)
+xping=$(grep -E ' rtt xping 10\.[0-9.]+:20123 ' "$dry/calls" || true)
+xpong=$(grep -E ' rtt xpong 10\.[0-9.]+:20123 ' "$dry/calls" || true)
+local_ping=$(grep ' rtt xping 127\.' "$dry/calls" || true)
+(
+    set +e
+    out=$tmp/dry-knobs known=$tmp/dry-knobs/known_hosts user=admin A=192.0.2.1 B=192.0.2.2
+    mkdir -p "$out"
+    log() { :; }
+    . "$cloud/lib.sh"
+    on() { [[ $2 == *"/env" ]] && cat >"$out/env-written"; [[ $2 == *"/rc 2>/dev/null" ]] && echo 0; return 0; }
+    sleep() { :; }
+    reps=1 modes=(dpdk) rtt_messages=1 rtt_warmup=1 tput_seconds=5 a_private=10.30.0.10 b_private=10.30.0.11
+    rtt_spike_ns=40000 rtt_stall_ns=12000
+    results=$out/results.csv
+    remote_state isolated >/dev/null 2>&1
+) || true
+# (VM b's DPDK event log holds a row, VM a has none: b's saved with the
+# round trip, a's not at all)
+python3 - "$tmp/dry.sh" "$tmp/dry-knobs.sh" <<'PY' || fail "lib.sh dry with the spike and stall knobs: the dry script was not set up"
+import sys
+s = open(sys.argv[1]).read()
+for old, new in (("tput_seconds=5 rtt_messages=10 rtt_warmup=1 rtt_align=\n",
+                  "tput_seconds=5 rtt_messages=10 rtt_warmup=1 rtt_align= rtt_spike_ns=40000 rtt_stall_ns=12000\n"),
+                 ('    *"/env") cat >"$out/env-written" ;;\n',
+                  '    *"cat bench/events.csv") [[ $host == "$B" ]] && echo "gap,1,1792032878000000000,30000,1,4242" ;;\n'
+                  '    *"/env") cat >"$out/env-written" ;;\n')):
+    assert s.count(old) == 1, old
+    s = s.replace(old, new)
+open(sys.argv[2], "w").write(s)
+PY
+mkdir -p "$tmp/dry-knobs-run"
+bash "$tmp/dry-knobs.sh" "$cloud" "$tmp/dry-knobs-run" unset </dev/null 2>"$tmp/dry-knobs-run/stderr" || fail "lib.sh dry run with the spike and stall knobs exited $?"
+knob_ping=$(grep -E ' rtt xping 10\.[0-9.]+:20123 ' "$tmp/dry-knobs-run/calls" || true)
+knob_pong=$(grep -E ' rtt xpong 10\.[0-9.]+:20123 ' "$tmp/dry-knobs-run/calls" || true)
+if [[ -z $xping || $(grep -vc ' LOAD_SPIKE_NS=30000 LOOP_STALL_NS=10000 ' <<<"$xping") != 0 ]]; then
+    fail "lib.sh dry: the cross-host round trip's ping without LOAD_SPIKE_NS=30000 LOOP_STALL_NS=10000: $xping"
+elif [[ -z $xpong || $(grep -vc ' LOOP_STALL_NS=10000 ' <<<"$xpong") != 0 ]]; then
+    fail "lib.sh dry: the cross-host round trip's pong without LOOP_STALL_NS=10000: $xpong"
+elif [[ -z $local_ping || $(grep -vc ' LOAD_SPIKE_NS=25000 ' <<<"$local_ping") != 0 ]]; then
+    fail "lib.sh dry: the localhost round trip's ping lost its LOAD_SPIKE_NS=25000: $local_ping"
+elif ! grep -qx "rtt_spike_ns='40000'" "$tmp/dry-knobs/env-written" 2>/dev/null || ! grep -qx "rtt_stall_ns='12000'" "$tmp/dry-knobs/env-written"; then
+    fail "lib.sh: the spike and stall knobs do not reach VM a's environment: $(tr '\n' ' ' <"$tmp/dry-knobs/env-written" 2>/dev/null)"
+elif ! grep -q 'cat bench/events.csv' "$tmp/dry-knobs.sh" || [[ $(cat "$tmp/dry-knobs-run/b-rings-isolated-dpdk-1.log" 2>/dev/null) != "gap,1,1792032878000000000,30000,1,4242" ]] ||
+    compgen -G "$tmp/dry-knobs-run/a-rings-*" >/dev/null; then
+    fail "lib.sh dry: the DPDK event log not saved with the round trip (b's) or an empty one kept (a's): $(ls "$tmp/dry-knobs-run" | grep rings)"
+elif [[ -z $knob_ping || $(grep -vc ' LOAD_SPIKE_NS=40000 LOOP_STALL_NS=12000 ' <<<"$knob_ping") != 0 || -z $knob_pong ||
+    $(grep -vc ' LOOP_STALL_NS=12000 ' <<<"$knob_pong") != 0 ]]; then
+    fail "lib.sh dry with the spike and stall knobs: $knob_ping / $knob_pong"
+else
+    pass "lib.sh: the idle cross-host round trip stamps round trips of 30 us and loop stalls of 10 us or more (LAB_RTT_SPIKE_NS, LAB_RTT_STALL_NS), localhost's 25 us kept"
+fi
+
 # LAB_ESTIMATE=1 (aws/lab.sh's, below): estimate.py's arithmetic, against a
 # plan worked by hand: two c7i.4xlarge across zones, one isolated state, two modes, two reps,
 # 288 B at a ladder of 1000 and 2000/s (the burst at the median, 1000/s),
@@ -1495,7 +1572,8 @@ fi
 # azure/lab.sh checks every mode as aws/lab.sh does (modes.sh), before any
 # az call: AWS-only settings (jumbo frames) and INVOKER on one host refused
 for refused in "LAB_MODES=kernel@JUMBO=1|AWS only" "LAB_MODES=kernel@IRQ=receiver|AWS only" "LAB_LOCAL_MODES=kernel@AERON_THREADING_MODE=INVOKER|out of scope" \
-    "LAB_MODES=kernel@SUB_PARAMS=rcv-wnd=1m+bogus=1|bogus is not an Aeron URI parameter" "LAB_NO_FLATOUT=1 LAB_TPUT_FLOWS=2|flat out"; do
+    "LAB_MODES=kernel@SUB_PARAMS=rcv-wnd=1m+bogus=1|bogus is not an Aeron URI parameter" "LAB_NO_FLATOUT=1 LAB_TPUT_FLOWS=2|flat out" \
+    "LAB_RTT_SPIKE_NS=-1|LAB_RTT_SPIKE_NS is a whole number of nanoseconds" "LAB_RTT_STALL_NS=10k|LAB_RTT_STALL_NS is a whole number of nanoseconds"; do
     # shellcheck disable=SC2086
     if env PATH="$tmp/fakebin:$PATH" HOME="$tmp/commahome" TMPDIR="$tmp/commatmp" LAB_REPO="$tmp/commarepo" \
         ${refused%|*} bash "$cloud/azure/lab.sh" >"$tmp/az.out" 2>&1; then
@@ -1597,7 +1675,8 @@ for refused in "LAB_TYPE=c8g.4xlarge|LAB_ALLOW_ARM=1" "LAB_TYPE_B=c7gn.4xlarge|L
     "LAB_MODES=dpdk@IRQ=receiver|kernel modes only" "LAB_LOCAL_MODES=kernel@IRQ=spare|fifth core" \
     "LAB_MODES=kernel@IRQ=all|hk, receiver or spare" "LAB_MODES=kernel@NAPI_DEFER=2|<n>/<ns>" \
     "LAB_MODES=dpdk@NAPI_BUSY=spare|kernel modes only" "LAB_LOCAL_MODES=kernel@NAPI_BUSY=spare|fifth core" \
-    "LAB_STATES=isolate|pinned, isolated or isolated-poll"; do
+    "LAB_STATES=isolate|pinned, isolated or isolated-poll" \
+    "LAB_RTT_SPIKE_NS=30us|LAB_RTT_SPIKE_NS is a whole number of nanoseconds" "LAB_RTT_STALL_NS=0|LAB_RTT_STALL_NS is a whole number of nanoseconds"; do
     # shellcheck disable=SC2086
     if lab_aws "$tmp/arm-refused" ${refused%|*}; then
         fail "aws/lab.sh ran with ${refused%|*}"
@@ -3445,6 +3524,160 @@ elif [[ $invoker != *"$sbc/home/bench/driver.env"* || $invoker != *" HARNESS_DRI
     fail "vm.sh client under INVOKER: $invoker $(tail -2 "$sbc/out")"
 else
     pass "vm.sh client: the mode's publication and subscription parameters, the lost-round-trip timeout by the network's round trip; under INVOKER the driver's environment and HARNESS_DRIVER=invoker"
+fi
+# vm.sh client hands LOAD_SPIKE_NS and LOOP_STALL_NS to the client through
+# sudo, which drops the caller's environment (lib.sh sets them on the round
+# trip's command line): 100 us and 20 us, the clients' own, without them
+stall_client() { # <environment>...: the client's command line vm.sh client hands sudo
+    : >"$sbc/log"
+    env -i PATH="$sbc/bin:$PATH" HOME="$sbc/home" FAKE_LOG="$sbc/log" FAKE_ARCH=x86_64 LAB_SYS_ROOT="$sys/aws-x86" "$@" \
+        bash "$cloud/vm.sh" client isolated:kernel rtt xping 10.30.1.7:20123 10.30.1.5:20124 10 1 2 >"$sbc/out" 2>&1
+    grep '^sudo ' "$sbc/log" | tail -1
+}
+stall_given=$(stall_client LOAD_SPIKE_NS=30000 LOOP_STALL_NS=10000)
+stall_default=$(stall_client)
+if [[ $stall_given != *" LOAD_SPIKE_NS=30000 "* || $stall_given != *" LOOP_STALL_NS=10000 "* ]]; then
+    fail "vm.sh client: LOAD_SPIKE_NS and LOOP_STALL_NS given do not reach the client: $stall_given"
+elif [[ $stall_default != *" LOAD_SPIKE_NS=100000 "* || $stall_default != *" LOOP_STALL_NS=20000 "* ]]; then
+    fail "vm.sh client without them: $stall_default"
+else
+    pass "vm.sh client: LOAD_SPIKE_NS and LOOP_STALL_NS reach the client through sudo (100 us and 20 us without them)"
+fi
+# KNOISE: vm.sh knoise_start against a fake tracefs ($LAB_SYS_ROOT/kernel/tracing,
+# the instance knoise as mkdir leaves it): the osnoise tracer in that
+# instance with NO_OSNOISE_WORKLOAD and exactly the agent and app CPUs given,
+# its irq, softirq, thread and NMI noise events, the IPI senders, compaction
+# and page migration on, the instance's cpumask printed as a list where the
+# kernel has the option; without osnoise in available_tracers, "osnoise
+# unavailable" said (a reported limit, never silent), its files untouched,
+# the other events on all the same, as where the instance refuses the tracer
+# (its options put back); an event the kernel lacks named, the rest
+# on. knoise_stop puts the tracer and the workload option back. diag-start
+# refuses while a rep runs (a media driver or a client), before it writes
+# anything, and otherwise hands knoise_start the layout's agent and app CPUs
+knoise_tree() { # <root> <tracers>: a fake tracefs
+    local t=$1/kernel/tracing e
+    mkdir -p "$t/osnoise" "$t/instances/knoise/options"
+    echo "$2" >"$t/available_tracers"
+    echo "OSNOISE_WORKLOAD" >"$t/osnoise/options"
+    echo "0-7" >"$t/osnoise/cpus"
+    echo nop >"$t/instances/knoise/current_tracer"
+    echo 1 >"$t/instances/knoise/tracing_on"
+    echo 1408 >"$t/instances/knoise/buffer_size_kb"
+    echo 0 >"$t/instances/knoise/options/bitmask-list"
+    : >"$t/instances/knoise/trace"
+    for e in osnoise/irq_noise osnoise/softirq_noise osnoise/thread_noise osnoise/nmi_noise ipi/ipi_send_cpumask ipi/ipi_send_cpu \
+        compaction/mm_compaction_begin migrate/mm_migrate_pages; do
+        mkdir -p "$t/instances/knoise/events/$e"
+        echo 0 >"$t/instances/knoise/events/$e/enable"
+    done
+}
+knoise_state() { # <root>: what the fake tracefs holds now, one line
+    local t=$1/kernel/tracing i=$1/kernel/tracing/instances/knoise e
+    printf 'options=%s cpus=%s tracer=%s on=%s buffer=%s list=%s events=' "$(cat "$t/osnoise/options" 2>/dev/null || echo -)" "$(cat "$t/osnoise/cpus")" \
+        "$(cat "$i/current_tracer" 2>/dev/null || echo -)" "$(cat "$i/tracing_on")" "$(cat "$i/buffer_size_kb")" "$(cat "$i/options/bitmask-list" 2>/dev/null)"
+    for e in "$i"/events/*/*/enable; do
+        [[ $(cat "$e") == 1 ]] && printf '%s,' "$(basename "$(dirname "$e")")"
+    done
+    echo
+}
+kn=$tmp/knoise
+knoise_tree "$kn/full" "hwlat osnoise timerlat function nop"
+knoise_tree "$kn/none" "function nop"
+knoise_tree "$kn/old" "hwlat osnoise nop"
+# a kernel whose instances take no osnoise tracer: its write refused (a
+# directory in its place, which refuses root too)
+knoise_tree "$kn/refused" "hwlat osnoise nop"
+rm "$kn/refused/kernel/tracing/instances/knoise/current_tracer"
+mkdir "$kn/refused/kernel/tracing/instances/knoise/current_tracer"
+# a kernel with the osnoise tracer but no osnoise/options (before Linux 6.3,
+# such as 6.1): NO_OSNOISE_WORKLOAD cannot be set, so the tracer would start
+# its workload threads on the agent CPUs; it must stay off (a directory in the
+# options file's place refuses the write, as tracefs refuses a new file)
+knoise_tree "$kn/noopt" "hwlat osnoise nop"
+rm "$kn/noopt/kernel/tracing/osnoise/options"
+mkdir "$kn/noopt/kernel/tracing/osnoise/options"
+rm -r "$kn/old/kernel/tracing/instances/knoise/events/compaction" "$kn/old/kernel/tracing/instances/knoise/events/ipi/ipi_send_cpumask" \
+    "$kn/old/kernel/tracing/instances/knoise/options/bitmask-list"
+knoised=$(
+    set +e
+    exec 2>&1
+    eval "$(vm_fn knoise_start; vm_fn knoise_stop)"
+    for tree in full none old refused noopt; do
+        echo "$tree: $(LAB_SYS_ROOT=$kn/$tree knoise_start 1,2,3,4 | tr '\n' '|')"
+        echo "$tree now: $(knoise_state "$kn/$tree")"
+    done
+    LAB_SYS_ROOT=$kn/full knoise_stop
+    echo "full stopped: $(knoise_state "$kn/full")"
+)
+want_knoise='full: osnoise on cpus 1,2,3,4 (NO_OSNOISE_WORKLOAD: noise timed on them, no workload)|
+full now: options=NO_OSNOISE_WORKLOAD cpus=1,2,3,4 tracer=osnoise on=1 buffer=8192 list=1 events=mm_compaction_begin,ipi_send_cpu,ipi_send_cpumask,mm_migrate_pages,irq_noise,nmi_noise,softirq_noise,thread_noise,
+none: osnoise unavailable: the kernel has no osnoise tracer (available_tracers: function nop)|
+none now: options=OSNOISE_WORKLOAD cpus=0-7 tracer=nop on=1 buffer=8192 list=1 events=mm_compaction_begin,ipi_send_cpu,ipi_send_cpumask,mm_migrate_pages,
+old: osnoise on cpus 1,2,3,4 (NO_OSNOISE_WORKLOAD: noise timed on them, no workload)|knoise events missing: ipi/ipi_send_cpumask compaction/mm_compaction_begin|
+old now: options=NO_OSNOISE_WORKLOAD cpus=1,2,3,4 tracer=osnoise on=1 buffer=8192 list= events=ipi_send_cpu,mm_migrate_pages,irq_noise,nmi_noise,softirq_noise,thread_noise,
+refused: osnoise unavailable: the knoise instance did not take the osnoise tracer (it has unreadable)|
+refused now: options=OSNOISE_WORKLOAD cpus=0-7 tracer=- on=1 buffer=8192 list=1 events=mm_compaction_begin,ipi_send_cpu,ipi_send_cpumask,mm_migrate_pages,
+noopt: osnoise unavailable: this osnoise tracer has no NO_OSNOISE_WORKLOAD option (Linux 6.3 and later), so it would run its workload on the agent CPUs|
+noopt now: options=- cpus=0-7 tracer=nop on=1 buffer=8192 list=1 events=mm_compaction_begin,ipi_send_cpu,ipi_send_cpumask,mm_migrate_pages,
+full stopped: options=OSNOISE_WORKLOAD cpus=1,2,3,4 tracer=nop on=0 buffer=8192 list=1 events=mm_compaction_begin,ipi_send_cpu,ipi_send_cpumask,mm_migrate_pages,irq_noise,nmi_noise,softirq_noise,thread_noise,'
+# diag-start in a sandbox: a fake pgrep says a rep runs (a media driver, or
+# none), gcc, ip and pkill do nothing, sudo logs
+ks=$tmp/vm-knoise
+mkdir -p "$ks/bin" "$ks/home/ergon" "$ks/home/bench"
+cp "$sb/bin/"* "$ks/bin/"
+echo aws >"$ks/home/bench/cloud"
+# shellcheck disable=SC2016
+{
+    printf '#!/bin/sh\n[ -n "$FAKE_RUNNING" ] && { echo "$FAKE_RUNNING"; exit 0; }\nexit 1\n' >"$ks/bin/pgrep"
+    printf '#!/bin/sh\necho "gcc $*" >>"$FAKE_LOG"\nwhile [ "$1" != -o ]; do shift; done\nprintf "#!/bin/sh\\n" >"$2"; chmod +x "$2"\n' >"$ks/bin/gcc"
+    printf '#!/bin/sh\nexit 0\n' >"$ks/bin/ip"
+    printf '#!/bin/sh\nexit 1\n' >"$ks/bin/pkill"
+}
+chmod +x "$ks/bin/"*
+diag_sb() { # <running>: "<rc> <sudo and gcc calls> <the CPUs knoise_start was given>"
+    : >"$ks/log"
+    local rc=0
+    env -i PATH="$ks/bin:$PATH" HOME="$ks/home" FAKE_LOG="$ks/log" FAKE_ARCH=x86_64 FAKE_RUNNING="$1" LAB_SYS_ROOT="$sys/aws-x86" \
+        bash "$cloud/vm.sh" diag-start >"$ks/out" 2>&1 || rc=$?
+    echo "$rc $(grep -cE '^(sudo|gcc) ' "$ks/log") [$(sed -n 's/.*knoise_start \([0-9,]*\)$/\1/p' "$ks/log")] [$(cat "$ks/home/bench/knoise-cpus" 2>/dev/null)]"
+}
+running=$(diag_sb 4242)
+running_said=$(cat "$ks/out")
+idle=$(diag_sb "")
+layout_cpus=$(env -i PATH="$ks/bin:$PATH" HOME="$ks/home" FAKE_LOG=/dev/null FAKE_ARCH=x86_64 LAB_SYS_ROOT="$sys/aws-x86" bash "$cloud/vm.sh" layout | awk '{$1 = ""; print substr($0, 2)}' | tr ' ' ',')
+if [[ $knoised != "$want_knoise" ]]; then
+    fail "vm.sh knoise_start and knoise_stop against a fake tracefs"
+    diff -u <(echo "$want_knoise") <(echo "$knoised") >&2 || true
+elif [[ $running != "2 0 [] []" || $running_said != *"a rep is running"* ]]; then
+    fail "vm.sh diag-start while a rep runs: $running: $running_said"
+elif [[ -z $layout_cpus || $idle != "0 "*" [$layout_cpus] [$layout_cpus]" ]]; then
+    fail "vm.sh diag-start: knoise_start not given the agent and app CPUs ($layout_cpus): $idle $(tail -3 "$ks/out")"
+else
+    pass "vm.sh: KNOISE (osnoise with NO_OSNOISE_WORKLOAD on exactly the agent and app CPUs, its noise events, IPI senders, compaction and migration; 'osnoise unavailable' said; a missing event named), put back by knoise_stop; diag-start refuses while a rep runs"
+fi
+# lib.sh record_knoise: each host's KNOISE lines from its diag-start log in
+# its environment record (env-<host>.txt) with the state, "osnoise
+# unavailable" included; a host whose log has none says so
+(
+    set +e
+    out=$tmp/knoise-env known=$tmp/knoise-env/known_hosts user=admin A=192.0.2.1 B=192.0.2.2
+    mkdir -p "$out"
+    log() { :; }
+    . "$cloud/lib.sh"
+    printf 'diag spinner cpu 5, traced cpus 3e\nosnoise unavailable: the kernel has no osnoise tracer (available_tracers: function nop)\n' >"$out/a-diag-start-isolated.log"
+    printf 'osnoise on cpus 1,2,3,4 (NO_OSNOISE_WORKLOAD: noise timed on them, no workload)\nknoise events missing: compaction/mm_compaction_begin\n' >"$out/b-diag-start-isolated.log"
+    record_knoise isolated
+    record_knoise pinned
+) || true
+if [[ $(cat "$tmp/knoise-env/env-192.0.2.1.txt" 2>/dev/null) != "isolated: osnoise unavailable: the kernel has no osnoise tracer (available_tracers: function nop)
+pinned: knoise not recorded (no diag-start log)" ||
+    $(cat "$tmp/knoise-env/env-192.0.2.2.txt" 2>/dev/null) != "isolated: osnoise on cpus 1,2,3,4 (NO_OSNOISE_WORKLOAD: noise timed on them, no workload)
+isolated: knoise events missing: compaction/mm_compaction_begin
+pinned: knoise not recorded (no diag-start log)" ]]; then
+    fail "lib.sh record_knoise: $(cat "$tmp/knoise-env/env-"*.txt 2>/dev/null | tr '\n' '|')"
+else
+    pass "lib.sh record_knoise: each host's KNOISE state per state in its environment record, 'osnoise unavailable' included"
 fi
 # The media-receive-timestamp mode's way to the clients: its
 # @SUB_PARAMS=media-rcv-ts-offset=reserved applied as `driver` applies a
@@ -5425,6 +5658,179 @@ note = ("Host clocks, from chrony's tracking around each mode (vm.sh timesync): 
         "clocks, which may differ by up to 424.5 µs (the sum).")
 assert note in after, after
 assert "Host clocks" not in before and after.replace("\n\n" + note, "") == before, (before, after)
+PY
+
+# ATTR-LAB and KNOISE in spikes.py: each round trip run's 10 largest round
+# trips per rep, each with every event whose interval overlaps it ([sent,
+# echoed] on the wall clock), its ping index and its echo's phase in the
+# second and in 30 s; and how often each source overlaps them against chance
+# (1,000 circular shifts of the rep's round trips within its run, a fixed
+# seed). Sources: either client's loop stalls, the DPDK transport's event log
+# (RUSTERON_DPDK_EVENT_LOG, saved as <host>-rings-<run>.log: rows
+# kind,tsc,realtime_ns,value_ns,port,agent, ended at realtime_ns: agent loop
+# gaps, ARP, the housekeeping thread's 1 Hz sample, NIC statistics read and
+# PMD timers; the events its full rings dropped noted), the
+# gap spinner, and diag-fetch's knoise section (osnoise's irq, softirq,
+# thread and NMI noise with their durations, IPIs sent to the agent and app
+# CPUs by callsite, compaction and page migration). One fixture spike for
+# each label, one with none, an 11th smaller spike left out; each label
+# proven by mutation (its event moved 100 s away removes it and only it).
+# The agents' and clients' own busy threads are never thread noise; an IPI
+# to no agent or app CPU is never labelled. Rows with no ping index (files
+# from before it) read as before, in analyse.py too
+python3 - "$cloud" "$tmp/attr" <<'PY' && pass "spikes.py: every event overlapping each rep's 10 largest round trips, labelled (each proven by mutation), phases, ping index, a permutation baseline" || fail "spikes.py: the 10 largest round trips and their overlapping events"
+import os, re, shutil, subprocess, sys
+cloud, d = sys.argv[1], sys.argv[2]
+sys.path.insert(0, cloud)
+START = 1792032877_000_000_000  # the measured run's CLOCK_REALTIME start (ns): 7 s into a 30 s period
+UP0 = 1000.0  # the trace clock (uptime) at START
+S = 1_000_000_000
+
+def up(sec):  # the trace clock at START + sec
+    return f"{UP0 + sec:.6f}"
+
+def start_of(sec):  # osnoise's "start" field
+    return f"{UP0 + sec:.9f}"
+
+def fixture(name, moved=()):
+    """A run directory with one isolated round trip rep; each event named in
+    `moved` placed 100 s later, out of every spike."""
+    off = lambda key: 100.0 if key in moved else 0.0
+    root = os.path.join(d, name)
+    state = os.path.join(root, "isolated")
+    os.makedirs(state)
+    spikes = [(i, 76_000 - 1_000 * i, 1000 * i) for i in range(1, 11)]  # (second, latency ns, ping)
+    with open(os.path.join(state, "spikes-isolated-dpdk-rtt-1.csv"), "w") as f:
+        f.write(f"# start_realtime_ns={START}\n# spikes_total=11\nstream,due_ns,latency_ns,ping\n")
+        for sec, lat, ping in spikes:
+            f.write(f"1002,{sec * S},{lat},{ping}\n")
+        f.write(f"1002,{11 * S},31000,11000\n")  # the 11th, overlapping a stall: left out
+    # 20 s measured (histogram: the run's round trips' sum)
+    with open(os.path.join(state, "histogram-isolated-dpdk-1.csv"), "w") as f:
+        f.write("value_ns,count\n50000,400000\n")
+    with open(os.path.join(state, "stalls-ping-isolated-dpdk-1.csv"), "w") as f:
+        f.write(f"# start_realtime_ns={START}\nend_ns,gap_ns\n{int((1.00007 + off('stall')) * S)},60000\n{int(11.00002 * S)},15000\n")
+    with open(os.path.join(state, "stalls-pong-isolated-dpdk-1.csv"), "w") as f:
+        f.write(f"# start_realtime_ns={START}\nend_ns,gap_ns\n")
+    with open(os.path.join(state, "b-rings-isolated-dpdk-1.log"), "w") as f:
+        f.write("# kind,tsc,realtime_ns,value_ns,port,agent\n")
+        f.write(f"gap,77001,{START + int((2.00005 + off('gap')) * S)},30000,1,4242\n")
+    with open(os.path.join(state, "a-rings-isolated-dpdk-1.log"), "w") as f:
+        f.write("# kind,tsc,realtime_ns,value_ns,port,agent\n")
+        f.write(f"arp-request,77002,{START + int((2.00004 + off('arp')) * S)},0,0,4300\n")
+        f.write(f"nic-stats,77003,{START + int((3.00003 + off('hk')) * S)},40000,0,4100\n")
+        f.write(f"drops,77004,{START + 19 * S},5,0,4100\n")
+    knoise = {
+        "a": [
+            f"  ksoftirqd/2-20     [002] d.h1.  {up(4.00004 + off('irq'))}: irq_noise: ena-mgmnt:24 start {start_of(4.00001 + off('irq'))} duration 20000 ns",
+            f"      <idle>-0       [002] ..s1.  {up(6.00002 + off('softirq'))}: softirq_noise:    TIMER:1 start {start_of(6.00001 + off('softirq'))} duration 5000 ns",
+            f"      <idle>-0       [002] d.Z1.  {up(7.00002 + off('nmi'))}: nmi_noise: start {start_of(7.00001 + off('nmi'))} duration 3000 ns",
+            f"     kworker/0:1-30   [000] d..1.  {up(7.00003 + off('ipi1'))}: ipi_send_cpu: cpu=2 callsite=generic_exec_single+0x30/0x160 callback=nohz_csd_func+0x0/0x90",
+            f"     kworker/0:1-30   [000] d..1.  {up(10.00003)}: ipi_send_cpu: cpu=0 callsite=generic_exec_single+0x30/0x160 callback=nohz_csd_func+0x0/0x90",
+            f"    kcompactd0-40    [000] .....  {up(9.00001 + off('compaction'))}: mm_compaction_begin: zone_start=0x1000 migrate_pfn=0x1000 free_pfn=0x2000 zone_end=0x3000, mode=async",
+            f"    kcompactd0-40    [000] .....  {up(9.00002 + off('migration'))}: mm_migrate_pages: nr_succeeded=3 nr_failed=0 nr_thp_succeeded=0 nr_thp_failed=0 nr_thp_split=0 nr_split=0 mode=MIGRATE_ASYNC reason=compaction",
+            # the agent's own thread: busy, never noise
+            f"      sender-4242    [002] d..2.  {up(19.0)}: thread_noise:   sender:4242 start {start_of(0.5)} duration 18000000000 ns",
+        ],
+        "b": [
+            f"     kworker/3:1-77   [003] d..2.  {up(5.00003 + off('thread'))}: thread_noise: kworker/3:1:77 start {start_of(5.00001 + off('thread'))} duration 15000 ns",
+            f"     kworker/0:1-30   [000] d..1.  {up(8.00002 + off('ipi'))}: ipi_send_cpumask: cpumask={'0c' if 'ipi-mask' not in moved else '01'} callsite=smp_call_function_many_cond+0x1a4/0x5c0 callback=do_sync_core+0x0/0x30",
+            # to CPU 0 only (housekeeping): never labelled
+            f"     kworker/0:1-30   [000] d..1.  {up(8.00003)}: ipi_send_cpumask: cpumask=01 callsite=on_each_cpu_cond_mask+0x20/0x40 callback=do_flush_tlb_all+0x0/0x30",
+        ],
+    }
+    gapspin = {"a": "", "b": f"{START / S + 6.00003 + off('host'):.6f} 20\n"}
+    for host in "ab":
+        with open(os.path.join(root, f"{host}-diag-isolated.log"), "w") as f:
+            f.write("== gapspin\n" + gapspin[host] + "== trace\n")
+            f.write(f"UPTIME {UP0} REALTIME {START / S}\n== drains\n== ipmon\n== knoise\n# cpus 1,2,3,4\n# cpumask hex\n")
+            f.write("\n".join(knoise[host]) + "\n")
+    return state
+
+def run(state):
+    return subprocess.run([sys.executable, os.path.join(cloud, "spikes.py"), state], capture_output=True, text=True, check=True).stdout
+
+def table(out, heading):
+    lines = out.split("\n")
+    i = lines.index(heading)
+    rows = []
+    for line in lines[i + 1:]:
+        if line.startswith("## "):
+            break
+        if line.startswith("| ") and not line.startswith("| ---") and not line.startswith("| run "):
+            rows.append([c.strip() for c in line.strip("|").split("|")])
+    return rows
+
+TOP = "## The 10 largest round trips of each rep and every event overlapping them, isolated"
+BASE = "## Overlaps against chance (1,000 circular shifts of each rep's round trips, seed 1), isolated"
+want = {
+    1000: "ping stall 60.0 µs",
+    2000: "ARP request port 0 (a); agent gap port 1 30.0 µs (b tid 4242)",
+    3000: "1 Hz NIC stats 40.0 µs (a port 0)",
+    4000: "irq_noise ena-mgmnt:24 20.0 µs (a cpu 2)",
+    5000: "thread_noise kworker/3:1:77 15.0 µs (b cpu 3)",
+    6000: "host stall 20 µs (b); softirq_noise TIMER:1 5.0 µs (a cpu 2)",
+    7000: "IPI generic_exec_single to 2 (a); nmi_noise 3.0 µs (a cpu 2)",
+    8000: "IPI smp_call_function_many_cond to 2,3 (b)",
+    9000: "compaction (a); page migration succeeded=3 reason=compaction (a)",
+    10000: "none",
+}
+out = run(fixture("all"))
+rows = table(out, TOP)
+assert len(rows) == 10, out
+got = {int(r[2]): r[6] for r in rows}
+assert got == want, (got, out)
+# the largest first; its round trip, its echo's phase in the second (ms) and in 30 s (s)
+assert rows[0][:6] == ["isolated-dpdk-rtt", "1", "1000", "75.0", "0.075", "8.000"], rows[0]
+assert rows[9][:6] == ["isolated-dpdk-rtt", "1", "10000", "66.0", "0.066", "17.000"], rows[9]
+# the baseline: deterministic, one row a source, the observed count of 10
+base = table(out, BASE)
+assert out == run(fixture("again")), "the baseline is not deterministic"
+sources = {r[1]: r for r in base}
+assert "a's event log dropped 5 events in isolated-dpdk-1 (full rings): an overlap there may be missing." in out, out
+assert set(sources) == {"ping stall", "agent gap", "ARP", "1 Hz NIC stats", "irq_noise", "thread_noise", "host stall", "softirq_noise",
+                        "IPI", "nmi_noise", "compaction", "page migration"}, base
+assert sources["IPI"][2] == "2 of 10" and sources["ping stall"][2] == "1 of 10", base
+for r in base:
+    assert float(r[3]) < 0.1 and 0 < float(r[4]) <= 1, r
+# each label proven by mutation: its event moved away, it alone goes
+for moved, ping, gone in (("stall", 1000, "ping stall 60.0 µs"), ("gap", 2000, "agent gap port 1 30.0 µs (b tid 4242)"),
+                          ("arp", 2000, "ARP request port 0 (a)"), ("hk", 3000, "1 Hz NIC stats 40.0 µs (a port 0)"), ("irq", 4000, "irq_noise ena-mgmnt:24 20.0 µs (a cpu 2)"),
+                          ("thread", 5000, "thread_noise kworker/3:1:77 15.0 µs (b cpu 3)"), ("host", 6000, "host stall 20 µs (b)"),
+                          ("softirq", 6000, "softirq_noise TIMER:1 5.0 µs (a cpu 2)"), ("nmi", 7000, "nmi_noise 3.0 µs (a cpu 2)"),
+                          ("ipi1", 7000, "IPI generic_exec_single to 2 (a)"), ("ipi", 8000, "IPI smp_call_function_many_cond to 2,3 (b)"),
+                          ("ipi-mask", 8000, "IPI smp_call_function_many_cond to 2,3 (b)"), ("compaction", 9000, "compaction (a)"),
+                          ("migration", 9000, "page migration succeeded=3 reason=compaction (a)")):
+    mutated = {int(r[2]): r[6] for r in table(run(fixture(f"moved-{moved}", (moved,))), TOP)}
+    left = "; ".join(l for l in want[ping].split("; ") if l != gone) or "none"
+    assert mutated == {**want, ping: left}, (moved, mutated[ping], left)
+# chance: a source at every one of the 10 spikes, spread over 20 s, is far
+# above chance (p at its floor, 1/1001): the 1 Hz sample overlapping each
+state = fixture("periodic")
+with open(os.path.join(state, "a-rings-isolated-dpdk-1.log"), "w") as f:
+    for sec in range(1, 11):
+        f.write(f"sample,1,{START + int((sec + 0.00002) * S)},10000,0,4100\n")
+periodic = {r[1]: r for r in table(run(state), BASE)}
+assert periodic["1 Hz sample"][2] == "10 of 10" and periodic["1 Hz sample"][4] == "0.001", periodic["1 Hz sample"]
+# a spike file without the ping index (before it): read as before, "-" for its ping
+state = fixture("noindex")
+path = os.path.join(state, "spikes-isolated-dpdk-rtt-1.csv")
+text = open(path).read().replace(",ping\n", "\n")
+open(path, "w").write(re.sub(r"^(1002,\d+,\d+),\d+$", r"\1", text, flags=re.M))
+old = table(run(state), TOP)
+assert [r[2] for r in old] == ["-"] * 10 and [r[6] for r in old] == [want[p] for p in sorted(want)], old
+# analyse.py counts both alike (round trips of 100 us or more: none here at
+# 66-76 us, so a copy at 150 us)
+import analyse, io, contextlib
+for name in ("all", "noindex"):
+    src = os.path.join(d, name, "isolated", "spikes-isolated-dpdk-rtt-1.csv")
+    big = os.path.join(d, name, "isolated", "spikes-isolated-dpdk-rtt-2.csv")
+    open(big, "w").write(re.sub(r"^(1002,\d+,)\d+", r"\g<1>150000", open(src).read(), flags=re.M))
+    os.remove(src)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        analyse.spikes(os.path.join(d, name, "isolated"))
+    assert re.search(r"isolated-dpdk-rtt +\| 1 +\| 11 ", buf.getvalue()), (name, buf.getvalue())
 PY
 
 # every aws/lab.sh run above (refused, estimated, run end to end, failed,

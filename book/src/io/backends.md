@@ -19,8 +19,8 @@ configuration, so one binary can run with each. Which to pick:
   adds a little to every poll. `per_queue` reads one socket per NIC
   queue instead: see [cost per poll](#cost-per-poll).
 - **`uring-sqpoll` costs a spinning kernel thread per ring.** Rings in one
-  process can share one; other processes cannot. Its kernel thread polls
-  each NIC queue once per pass, so it has no per-socket scan.
+  process can share one; other processes cannot. Its kernel thread polls each
+  NIC queue, not each socket; the loop's pass still grows ([cost per poll](#cost-per-poll)).
 
 ## Configuration strings
 
@@ -51,6 +51,9 @@ every platform.)*
 | `keepalive_idle_s` | 10 | TCP keepalive: idle seconds before the first probe; 0: off |
 | `keepalive_interval_s`, `keepalive_count` | 5, 3 | seconds between probes, probes before the drop |
 | `tcp_user_timeout_ms` | 25,000 | `TCP_USER_TIMEOUT`; 0: the kernel default |
+| `tcp_rto_min_us` | 0 (kernel: 200 ms) | `TCP_RTO_MIN_US`, Linux 6.15+: the retransmission timeout's floor; 2,000 to 200,000 µs in whole kernel ticks; refused, typed, at `Driver::new` ([Kubernetes](kubernetes.md#tcp-timers-and-tcp_info)) |
+| `tcp_delack_max_us` | 0 (kernel: 200 ms) | `TCP_DELACK_MAX_US`, Linux 6.15+: the longest delayed ACK; same range and checks |
+| `tcp_info_interval_ms` | 0 (off) | passive `TCP_INFO` per connection (`Driver::tcp_info`); at most one `getsockopt` per poll, from the 250 µs deadline check |
 
 An unknown key, a bad value or a setting the backend cannot use is an error
 (`Config::validate`), never ignored.
@@ -90,7 +93,7 @@ waits for its socket's turn, half a poll on average and up to a whole one.
 
 `per_queue` changes the scan. It reads **one socket per NIC queue** (that
 read polls the queue), then calls `epoll_wait(0)` and reads only the sockets
-that are ready. The cost stops growing at the queue count.
+that are ready. Its NIC polling stops growing at the queue count.
 
 As struct fields, for when more than one setting changes:
 
@@ -175,7 +178,7 @@ flowchart TD
 
 `recv-busy,per_queue` sits between the first two: one busy-polled read
 per NIC queue (so one NAPI pass per queue), then `epoll_wait(0)` and
-only the ready sockets. Its cost stops at the queue count.
+only the ready sockets. Its NIC polling stops at the queue count.
 
 - **Plain `recv-busy` grows with sockets:** each non-blocking `recvmsg` runs
   one NIC busy-poll pass even on an idle socket, so most reads return
@@ -183,12 +186,28 @@ only the ready sockets. Its cost stops at the queue count.
 - **What it costs in latency:** a message waits for its socket's turn, half
   a poll on average and up to a whole poll.
 - **`per_queue`** reads one socket per NIC queue (which polls that queue),
-  then only the ready sockets. Its poll stops growing at the queue count.
-- **`epoll-spin` and `uring-spin`** do not scan idle sockets; they wait for
+  then only the ready sockets. Its NIC polling stops growing at the queue
+  count.
+- **`epoll-spin` and `uring-spin`** do not read idle sockets; they wait for
   the NIC interrupt instead. Against the polling backends:
   [fair run](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton).
+- **Every backend checks each connection for queued sends on every pass**,
+  so the loop's pass grows with sockets even when they are idle.
 - Where each polling backend stops winning:
   [choosing a backend](overview.md#choosing-a-backend).
+
+Graviton fair run, market data, `irqcore`. Pass = 1 ÷ the loop's passes per
+second (a mean), two rounds. The longest pass is not attributed to a cause.
+
+| backend | pass, 1 socket | pass, 256 sockets | longest pass, 256 sockets |
+|---|---|---|---|
+| `epoll-spin` | 342–343 ns | 601–617 ns | 612–690 µs |
+| `uring-spin` | 29 ns | 393–395 ns | 1,015–1,199 µs |
+| `uring-sqpoll` (the loop's thread) | 27 ns | 368 ns | 231–246 µs |
+| `recv-busy,per_queue` | 933–934 ns | 5.56–5.58 µs | 804–897 µs |
+| `recv-busy` | 574–588 ns | 149.3–149.4 µs | 1,910–2,187 µs |
+
+Data: [`loop-counters.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/flags-aws-20261019T175248Z/loop-counters.md).
 
 ## Find the crossover on your own host
 
@@ -206,3 +225,65 @@ count; run each backend separately.
   Otherwise the interrupt backends wait for moderation.
 - HTTP with a pool: [HTTP with many connections](http-client.md#many-connections).
 - Everything about the method: [`io/benches/BENCHMARK.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md).
+
+## mio: measured, not a backend
+
+mio was benchmarked beside ergon-io's backends. It is not one of them.
+
+**What ran.** ergon-stack's `mio_bench`: mio 1.2.4, edge-triggered, reads
+until `WouldBlock`, rustls's buffered `ClientConnection`, and `Poll::poll`
+with a zero timeout in a spin loop. Graviton fair run
+`flags-aws-20261019T175248Z`: `c8g.2xlarge` / `c8g.xlarge`, moderation off,
+the NIC's interrupts on a core of their own (`irqcore`). µs, p50 / p99 /
+max, ranges over 2 rounds, no A/A control.
+
+| | mio | `epoll-spin` | `recv-busy` | `uring-sqpoll` |
+|---|---|---|---|---|
+| WebSocket N = 1 | 39.1–39.3 / 47.0–48.4 / 108–133 | 38.9–39.2 / 47.0–47.4 / 131–145 | 36.0–36.2 / 43.9–46.0 / 148–284 | 36.5–37.0 / 45.4–45.5 / 122–262 |
+| WebSocket N = 64 | 39.9–40.1 / 52.3–53.1 / 178–425 | 40.2–40.4 / 51.9–53.9 / 143–146 | 78.1–78.3 / 118.7–119.5 / 197–265 ‡ | 40.0–40.1 / 53.7–54.8 / 110–131 |
+| HTTP pool of 1 | 41.1 / 50.8–51.4 / 127–225 | 40.2–40.4 / 50.2–51.2 / 136–158 | 38.5–38.6 / 47.6–48.2 / 129–133 | 38.7–39.0 / 47.6–48.6 / 123–140 |
+| HTTP pool of 20 | 42.3–42.9 / 53.0–55.0 / 157–1,478 | 42.3–42.9 / 52.8–54.9 / 137–285 | 56.5–57.2 / 68.9–70.2 / 164–308 | 42.9–43.1 / 53.5–54.4 / 139–248 |
+
+‡ Could not hold 10,000/s. Every row and footnote:
+[fair run](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton).
+
+Loop counters
+([`loop-counters.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/flags-aws-20261019T175248Z/loop-counters.md)):
+
+- mio makes 2.0× the `recvmsg` calls: 1.20 M against `epoll-spin`'s 0.60 M
+  on the WebSocket round trip at N = 1.
+- Its mean pass at 256 sockets is 359 ns against `epoll-spin`'s 601–617 ns
+  (longest mio pass not recorded).
+
+Why it is not a backend:
+
+1. **On Linux mio is epoll.** It is level with `epoll-spin` and behind the
+   polling backends at 1 socket. The 2× `recvmsg` calls come from edge
+   triggering.
+2. **Its one edge is not mio's.** Its pass is cheaper at many sockets
+   because the `Driver` checks every connection for queued sends on each
+   pass and `mio_bench` does not. That cost is the `Driver`'s, paid by every
+   backend ([cost per poll](#cost-per-poll)), not epoll's.
+3. **Off Linux it would lose what ergon-io is for.** macOS and Windows have
+   no `SO_BUSY_POLL`, `io_uring`, `TCP_QUICKACK`, `SO_TIMESTAMPING` or
+   netlink route checks. Latency verdicts come from Linux only.
+4. **Its maxima have no cause yet:**
+
+   | max | where | what the data rules out |
+   |---|---|---|
+   | 1,478 µs | HTTP pool of 20, `irqcore`, round 2 | a stall of either loop; a TCP retransmit on either host |
+   | 640.75 µs | WebSocket N = 16, `irqlocal`, round 2 | a stall of either loop |
+   | 425 µs | WebSocket N = 64, `irqcore`, round 2 | a stall of either loop. It falls at 60.0 s, the run's final instant |
+   | 36,059–40,180 µs sender lateness | market data, 1 connection, every placement, 0.07 % of batches | no latency sample saw it, so the `md-mio-c1` latency figures stand |
+
+   Data: the last section of `loop-counters.md` (above); the sender
+   lateness is in
+   [`fair.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/flags-aws-20261019T175248Z/fair.md).
+
+5. **The market-data arm was confounded.** The default `SO_RCVBUF` gave
+   receive-window pressure (`TCPWantZeroWindowAdv` up to 2,862 per point)
+   that no ergon-io arm showed. So mio is not ranked on market data. Data:
+   `loop-counters.md`, "mio receive-window pressure".
+
+**Revisit if** someone needs the `Driver` on macOS or Windows for its own
+sake, not for latency.

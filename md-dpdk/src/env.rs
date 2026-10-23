@@ -51,12 +51,15 @@ pub fn selector() -> Result<Selector, DpdkError> {
 /// `RUSTERON_DPDK_WILDCARD_LOCAL`, `RUSTERON_DPDK_LOCAL_IO`, `RUSTERON_DPDK_LOCAL_HOT_US`, `RUSTERON_DPDK_LOCAL_UNWATCH`, `RUSTERON_DPDK_TX_RETRY_US`, `RUSTERON_DPDK_NIC_STATS_MS`, `RUSTERON_DPDK_RX_MAX_BURSTS`, `RUSTERON_DPDK_GAP_ATTRIB`, `RUSTERON_DPDK_TX_RATE_MBPS`, `RUSTERON_DPDK_TX_ROUTE_MBPS`,
 /// `RUSTERON_DPDK_TX_BUCKET_BYTES`, `RUSTERON_DPDK_TX_PACE_SPIN_US`, `RUSTERON_DPDK_TX_LOW_STREAMS`,
 /// `RUSTERON_DPDK_TX_LOW_RESERVE_BYTES`, `RUSTERON_DPDK_HOUSEKEEPING_CPU`,
-/// `RUSTERON_DPDK_ENA_DEVARGS`, `RUSTERON_DPDK_ENA_LLQ_REQUIRED` and
+/// `RUSTERON_DPDK_ENA_DEVARGS`, `RUSTERON_DPDK_ENA_LLQ_REQUIRED`,
+/// `RUSTERON_DPDK_EAL_IN_MEMORY`, `RUSTERON_DPDK_EVENT_LOG` and
 /// `RUSTERON_DPDK_VFIO_WC`. `RUSTERON_DPDK_CLOCK` is read by the install
 /// ([`crate::clock`]), whatever made the configuration.
 /// `RUSTERON_DPDK_RX_DESCRIPTORS` unset leaves
 /// [`DpdkTransportConfig::rx_descriptors`] `None`: each port then takes
-/// min(4096, the NIC's maximum) at start.
+/// min(4096, the NIC's maximum) at start. `RUSTERON_DPDK_RX_FREE_THRESH` and
+/// `RUSTERON_DPDK_TX_FREE_THRESH` unset keep the PMD's queue defaults, and
+/// `RUSTERON_DPDK_TX_FAST_FREE` (0/1/true/false) is off unless set.
 ///
 /// `RUSTERON_DPDK_TEST_VDEV=1` enables the test-only virtual-device mode: sender/receiver PCI may then be DPDK vdev names (e.g. `net_tap0`)
 /// instead of ENA PCI BDFs. Production configurations never set it.
@@ -104,6 +107,9 @@ pub fn config_from_env() -> Result<DpdkTransportConfig, DpdkError> {
         burst_size: num_or("RUSTERON_DPDK_BURST_SIZE", 32)?,
         max_aeron_mtu: num_or("RUSTERON_DPDK_MAX_AERON_MTU", 1408)?,
         rx_hw_timestamp: flag_or("RUSTERON_DPDK_RX_HW_TIMESTAMP", false)?,
+        rx_free_thresh: num_opt("RUSTERON_DPDK_RX_FREE_THRESH")?, // unset: the PMD's default
+        tx_free_thresh: num_opt("RUSTERON_DPDK_TX_FREE_THRESH")?,
+        tx_fast_free: flag_or("RUSTERON_DPDK_TX_FAST_FREE", false)?,
     })
 }
 

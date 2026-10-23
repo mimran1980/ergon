@@ -74,7 +74,7 @@ pub use backend::{Backend, Config};
 pub use client::{ClientHandler, CurlDrive, HttpClient, HttpClientConfig, HttpImpl};
 #[cfg(target_os = "linux")]
 pub use driver::Driver;
-pub use endpoint::{ConnId, ConnMut, Dial, DriverStats, Endpoint, Handler, Receive};
+pub use endpoint::{ConnId, ConnMut, Dial, DriverStats, Endpoint, Handler, Receive, TcpInfo};
 pub use error::{Error, Result};
 pub use http::{HttpConn, HttpDial, HttpHandler, HttpOptions, HttpStats, Response};
 pub use limit::{

@@ -16,6 +16,10 @@ check-dpdk:
 test-dpdk-vdev *args:
     sudo env "PATH=$PATH" scripts/test-dpdk-vdev.sh {{args}}
 
+# The vdev scenarios without root: user namespaces, net_tap, EAL --no-huge (Linux; scripts/test-dpdk-vdev-rootless.sh says what the host needs)
+test-dpdk-vdev-rootless *args:
+    scripts/test-dpdk-vdev-rootless.sh {{args}}
+
 # Node bootstrap and preflight against fake sysfs and IMDS trees
 test-dpdk-bootstrap:
     bash md-dpdk/deploy/aws-eks/node/test/test-bootstrap.sh
@@ -24,6 +28,6 @@ test-dpdk-bootstrap:
 test-dpdk-lab:
     bash md-dpdk/benches/cloud/test/test-lab.sh
 
-# The DPDK tests in Docker, amd64 emulation or `--arm64` (Graviton's architecture, native on Apple silicon); `--build` the image, `--all` for check-dpdk, else a test filter
+# The DPDK tests in Docker, amd64 emulation or `--arm64` (Graviton's architecture, native on Apple silicon); `--build` the image, `--all` for check-dpdk, `--rootless` for the vdev scenarios as a non-root user, else a test filter
 verify-dpdk-docker *args:
     bash md-dpdk/native/dpdk/test/verify-dpdk.sh {{args}}

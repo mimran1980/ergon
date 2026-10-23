@@ -20,8 +20,8 @@ affinity.
 
 ## Public image and chart
 
-Anyone can pull these. No image pull secret. They are version 0.1.1.
-Tag 0.1.0 remains.
+Anyone can pull these. No image pull secret. Version 0.1.1 is not yet run
+on kind.
 
 | what | address |
 |---|---|
@@ -30,21 +30,39 @@ Tag 0.1.0 remains.
 | chart | `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.1` |
 | chart digest | `sha256:77a65305a45ea1b376ce80f9b1d5234b9061f4066a8c5baf5efdb892854fc0d8` |
 
+The pod is labelled `ergon.io/latency: hot`, so the plugin checks it
+against the node's kubelet config, `/sys` and `/proc` at create; without
+the `hostContract` values it is refused. EKS AL2023 (needs chart 0.1.2,
+not yet published): nodeadm writes `/etc/kubernetes/kubelet/config.json`
+and the `NodeConfig` kubelet settings as the drop-in
+`config.json.d/40-nodeadm.conf`, which `kubeletConfigDir` mounts and the
+check merges as the kubelet does.
+
 ```sh
 helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus \
-  --version 0.1.1 \
+  --version 0.1.2 \
   --namespace ergon-system --create-namespace \
   --set-string config.sharedCpus=0 \
-  --set 'config.namespaces={trading}'
+  --set 'config.namespaces={trading}' \
+  --set hostContract.kubeletConfig.enabled=true \
+  --set hostContract.kubeletConfig.path=/etc/kubernetes/kubelet/config.json \
+  --set hostContract.kubeletConfigDir.enabled=true \
+  --set hostContract.sys.enabled=true \
+  --set hostContract.proc.enabled=true
 ```
+
+A kubeadm node (kubelet file `/var/lib/kubelet/config.yaml`, no drop-in
+directory) works with chart 0.1.1: `--version 0.1.1` and drop the
+`kubeletConfig.path` and `kubeletConfigDir` lines. Chart 0.1.1 rejects
+`kubeletConfigDir`; without it every hot create on EKS AL2023 is refused.
 
 `config.sharedCpus` is the operator's helper list. It has to sit inside
 `reservedSystemCPUs` and off the IRQ destination. Do not infer the CPU
 numbers from an instance size. Label the node `ergon.io/shared-cpus=true`.
 
-Published chart 0.1.1 writes the flat config keys and records
-`repository:tag`. Chart 0.1.0 remains on GHCR and does not write
-`seccomp`, `ptp` or `schedFifo`.
+The chart writes every config key, including `seccomp.ioUring`, `ptp` and
+`schedFifo`. The pod uses `repository:tag`, or `repository@digest` when
+`image.digest` is set.
 
 Apply the two admission files from `k8s/nri-latency-pods/admission/`:
 `priority-class.yaml` and `validating-admission-policy.yaml`. Leave
@@ -54,11 +72,11 @@ not control a later `kubectl exec`.
 ## crates.io
 
 Pin the crates this repository publishes. `0.1.33` is the crates.io release.
-This workspace is `0.1.34`.
+This workspace is `0.1.34`, not yet on crates.io.
 
 ```toml
-ergon-md-dpdk = "=0.1.31"
-ergon-tune = "=0.1.31"
+ergon-md-dpdk = "=0.1.33"
+ergon-tune = "=0.1.33"
 ```
 
 See [Cargo.toml.sample](Cargo.toml.sample). The crates.io name `ergon` is
@@ -85,8 +103,8 @@ Also: `irqbalance` off, NIC interrupts re-pinned after a reset,
 `transparent_hugepage=never`, a sized 2 MiB hugetlbfs for `AERON_DIR`,
 `kernel.numa_balancing=0`, and socket buffers at least as large as Aeron's
 window. `SCHED_FIFO`, io_uring seccomp and PTP stay off unless you opt in
-on a binary that has those grants. Chart 0.1.1 writes those keys as
-`"off"`. Chart 0.1.0 does not write them.
+on a binary that has those grants. The chart writes those keys as
+`"off"`.
 
 The repository states a single-NUMA premise for the EKS notes. The driver
 refuses two ENAs that report different NUMA nodes, and the device plugin

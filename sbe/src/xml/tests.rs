@@ -2780,7 +2780,7 @@ fn deprecated_on_type() -> Result<(), Box<dyn std::error::Error>> {
         .filter(|t| t.name == "f" && t.signal == Signal::BeginField)
         .collect();
     assert_eq!(old_tokens.len(), 1);
-    assert!(old_tokens[0].encoding.deprecated);
+    assert_eq!(old_tokens[0].encoding.deprecated, Some(1));
 
     Ok(())
 }
@@ -2807,7 +2807,7 @@ fn deprecated_on_message() -> Result<(), Box<dyn std::error::Error>> {
         .iter()
         .find(|t| t.signal == Signal::BeginMessage && t.name == "M");
     assert!(msg_token.is_some());
-    assert!(msg_token.unwrap().encoding.deprecated);
+    assert_eq!(msg_token.unwrap().encoding.deprecated, Some(1));
 
     Ok(())
 }
@@ -2835,7 +2835,7 @@ fn deprecated_on_field() -> Result<(), Box<dyn std::error::Error>> {
         .filter(|t| t.name == "f" && t.signal == Signal::BeginField)
         .collect();
     assert_eq!(f_tokens.len(), 1);
-    assert!(f_tokens[0].encoding.deprecated);
+    assert_eq!(f_tokens[0].encoding.deprecated, Some(1));
 
     Ok(())
 }
@@ -2868,7 +2868,7 @@ fn deprecated_on_group() -> Result<(), Box<dyn std::error::Error>> {
         .iter()
         .find(|t| t.signal == Signal::BeginGroup && t.name == "g");
     assert!(g_token.is_some());
-    assert!(g_token.unwrap().encoding.deprecated);
+    assert_eq!(g_token.unwrap().encoding.deprecated, Some(1));
 
     Ok(())
 }
@@ -2899,7 +2899,7 @@ fn deprecated_on_data() -> Result<(), Box<dyn std::error::Error>> {
         .iter()
         .find(|t| t.signal == Signal::BeginVarData && t.name == "d");
     assert!(d_token.is_some());
-    assert!(d_token.unwrap().encoding.deprecated);
+    assert_eq!(d_token.unwrap().encoding.deprecated, Some(1));
 
     Ok(())
 }
@@ -2929,7 +2929,7 @@ fn deprecated_on_composite() -> Result<(), Box<dyn std::error::Error>> {
         .iter()
         .find(|t| t.signal == Signal::BeginComposite && t.name == "OldComposite");
     assert!(c_token.is_some());
-    assert!(c_token.unwrap().encoding.deprecated);
+    assert_eq!(c_token.unwrap().encoding.deprecated, Some(1));
 
     Ok(())
 }
@@ -2959,7 +2959,7 @@ fn deprecated_on_enum() -> Result<(), Box<dyn std::error::Error>> {
         .iter()
         .find(|t| t.signal == Signal::BeginEnum && t.name == "OldEnum");
     assert!(e_token.is_some());
-    assert!(e_token.unwrap().encoding.deprecated);
+    assert_eq!(e_token.unwrap().encoding.deprecated, Some(1));
 
     Ok(())
 }
@@ -2989,7 +2989,7 @@ fn deprecated_on_set() -> Result<(), Box<dyn std::error::Error>> {
         .iter()
         .find(|t| t.signal == Signal::BeginSet && t.name == "OldSet");
     assert!(s_token.is_some());
-    assert!(s_token.unwrap().encoding.deprecated);
+    assert_eq!(s_token.unwrap().encoding.deprecated, Some(1));
 
     Ok(())
 }
@@ -3017,7 +3017,7 @@ fn deprecated_version_zero_is_preserved() -> Result<(), Box<dyn std::error::Erro
         .iter()
         .find(|t| t.name == "f" && t.signal == Signal::BeginField)
         .ok_or("field f")?;
-    assert!(field.encoding.deprecated);
+    assert_eq!(field.encoding.deprecated, Some(0));
     Ok(())
 }
 
@@ -3044,7 +3044,7 @@ fn deprecated_ordinary_version_is_preserved() -> Result<(), Box<dyn std::error::
         .iter()
         .find(|t| t.name == "f" && t.signal == Signal::BeginField)
         .ok_or("field f")?;
-    assert!(field.encoding.deprecated);
+    assert_eq!(field.encoding.deprecated, Some(7));
     Ok(())
 }
 
@@ -3071,7 +3071,7 @@ fn field_inherits_type_deprecation_version() -> Result<(), Box<dyn std::error::E
         .iter()
         .find(|t| t.name == "f" && t.signal == Signal::BeginField)
         .ok_or("field f")?;
-    assert!(field.encoding.deprecated);
+    assert_eq!(field.encoding.deprecated, Some(4));
     Ok(())
 }
 
@@ -3105,8 +3105,8 @@ fn field_and_type_deprecation_keep_the_earliest_version() -> Result<(), Box<dyn 
         .iter()
         .find(|t| t.name == "earlier_on_type" && t.signal == Signal::BeginField)
         .ok_or("earlier_on_type")?;
-    assert!(earlier_on_field.encoding.deprecated);
-    assert!(earlier_on_type.encoding.deprecated);
+    assert_eq!(earlier_on_field.encoding.deprecated, Some(2));
+    assert_eq!(earlier_on_type.encoding.deprecated, Some(5));
     Ok(())
 }
 

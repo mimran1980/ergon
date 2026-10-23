@@ -7,9 +7,11 @@
 use std::path::Path;
 
 use ergon_tune::{
-    Component, Finding, Host, HotSet, Needs, Nic, ReadError, Role, Thread, k8s_checks,
+    Component, FaultWatch, Finding, Host, HotSet, Needs, Nic, ReadError, Role, Thread, k8s_checks,
     t1_isolation, t2_nic_irqs, t3_thp, t4_aeron_dir, t5_numa_balancing, t6_nic_node,
-    t7_sched_policy, t8_smt_siblings, t9_cpu_quota, t10_smt_on, thread_affinity, thread_policy,
+    t7_sched_policy, t8_smt_siblings, t9_cpu_quota, t10_smt_on, t13_workqueue_cpumask,
+    t14_compaction, t15_host_tasks, t16_instrumentation, t17_ksm, t18_steal, thread_affinity,
+    thread_policy,
 };
 
 // ANCHOR: run_all
@@ -29,6 +31,12 @@ fn run_all(host: &Host, cpus: &HotSet, interfaces: &[String]) -> Vec<Finding> {
     all.extend(t8_smt_siblings(host, cpus));
     all.push(t9_cpu_quota(host));
     all.push(t10_smt_on(host));
+    all.push(t13_workqueue_cpumask(host, cpus));
+    all.push(t14_compaction(host));
+    all.push(t15_host_tasks(host, cpus));
+    all.push(t16_instrumentation(host));
+    all.push(t17_ksm(host));
+    all.push(t18_steal(host, cpus));
     all.extend(k8s_checks(
         host,
         cpus,
@@ -47,7 +55,7 @@ fn run_all(host: &Host, cpus: &HotSet, interfaces: &[String]) -> Vec<Finding> {
 mod linux {
     use super::*;
 
-    use ergon_tune::CheckId::{T1, T3, T4, T5, T7, T8, T9, T10};
+    use ergon_tune::CheckId::{T1, T3, T4, T5, T7, T8, T9, T10, T13, T14, T17, T18, T19};
 
     type R = Result<(), Box<dyn std::error::Error>>;
     use ergon_tune::{
@@ -127,7 +135,7 @@ mod linux {
         // The files every Linux has: no unknown for these.
         for f in all
             .iter()
-            .filter(|f| [T1, T3, T5, T8, T9, T10].contains(&f.id))
+            .filter(|f| [T1, T3, T5, T8, T9, T10, T13, T14, T17, T18].contains(&f.id))
         {
             assert!(!f.is_unknown(), "{f}");
         }
@@ -179,6 +187,30 @@ mod linux {
             assert_eq!(f.id, T9);
             println!("{f}");
         }
+        Ok(())
+    }
+
+    /// The fault watch against the kernel's own counters: touching fresh
+    /// pages on the watched thread shows as minor faults, and the open file
+    /// is read again (`pread` from the start) with the new values.
+    #[test]
+    fn the_fault_watch_sees_this_threads_new_pages() -> R {
+        let host = Host::system();
+        let mut watch = FaultWatch::open(&host, Thread::Current, Role::Loop)?;
+        let before = watch.last();
+        // 64 MiB is above glibc's largest mmap threshold (32 MiB), so the
+        // pages come fresh from the kernel, never reused from an earlier
+        // test's freed heap: writing to 64 of them faults at least once.
+        let mut pages = vec![0_u8; 64 << 20];
+        for i in (0..64 * 4096).step_by(4096) {
+            pages[i] = 1;
+        }
+        std::hint::black_box(&pages);
+        let f = watch.check().ok_or("no fault seen")?;
+        assert_eq!(f.id, T19);
+        assert!(f.is_warning(), "{f}");
+        assert!(watch.last().minor > before.minor, "{f}");
+        println!("{f}");
         Ok(())
     }
 
@@ -251,6 +283,7 @@ fn elsewhere_every_reader_is_unknown_and_nothing_fires() {
         Err(ReadError::NotLinux("the host's /sys and /proc"))
     );
     assert!(thread_affinity(&host, Thread::Current).is_err());
+    assert!(FaultWatch::open(&host, Thread::Current, Role::Loop).is_err());
     let cpus = HotSet::new().with(0, Role::Loop);
     let all = run_all(&host, &cpus, &["lo".to_owned(), "en0".to_owned()]);
     assert_ne!(all.len(), 0);

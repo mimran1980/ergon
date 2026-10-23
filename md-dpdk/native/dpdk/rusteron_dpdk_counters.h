@@ -27,6 +27,7 @@
 typedef struct aeron_counters_manager_stct aeron_counters_manager_t;
 struct rusteron_dpdk_port_stct; /* defined in rusteron_dpdk_internal.h, which
                                    includes this header first */
+struct rusteron_dpdk_event_ring_stct; /* rusteron_dpdk_events.h */
 
 #ifdef __cplusplus
 extern "C" {
@@ -118,6 +119,17 @@ enum rusteron_dpdk_counter_kind
     RD_COUNTER_NIC_RESET_REQUESTED,  /* 79   device resets the PMD asked for (RTE_ETH_EVENT_INTR_RESET; housekeeping) */
     RD_COUNTER_RX_HW_DELAY_MIN,      /* 81   min NIC arrival -> the burst that carried the frame, ns (meaningless while the count is 0) */
     RD_COUNTER_RX_HW_DELAY_NEGATIVE, /* 81   NIC stamps later than the host clock read at that burst: PHC/host clock skew */
+    /* RUSTERON_DPDK_GAP_ATTRIB=1: how long the PMD's burst calls took (an
+     * rx_burst that returned frames, every tx_burst). ENA refills its receive
+     * ring and reclaims sent descriptors inside them. 0 while off. Each
+     * direction's two counts follow its max (rusteron_dpdk_counters_burst). */
+    RD_COUNTER_RX_BURST_MAX,         /* 87   longest rx_burst that returned frames, ns */
+    RD_COUNTER_RX_BURSTS_1US,        /* 87   such bursts of 1 µs or more */
+    RD_COUNTER_RX_BURSTS_5US,        /* 87   such bursts of 5 µs or more */
+    RD_COUNTER_TX_BURST_MAX,         /* 87   longest tx_burst, ns */
+    RD_COUNTER_TX_BURSTS_1US,        /* 87   tx_bursts of 1 µs or more */
+    RD_COUNTER_TX_BURSTS_5US,        /* 87   tx_bursts of 5 µs or more */
+    RD_COUNTER_NIC_LINK_CHANGES,     /* 79   link-status changes (RTE_ETH_EVENT_INTR_LSC, where the NIC raises it; housekeeping) */
     RD_COUNTER_COUNT
 };
 
@@ -135,9 +147,14 @@ typedef struct rusteron_dpdk_counters_stct
     int registered;              /* counters allocated for this port */
     int64_t token;               /* process-unique registration id stamped on them */
     int dormant;                 /* the port's last transport closed: kept, never written */
+    /* Moves on whenever the set goes dormant or is forgotten (housekeeping_lock):
+     * a NIC read begun before cannot be stored into what it has become. */
+    uint32_t generation;
     aeron_counters_manager_t *manager; /* borrowed; read only to check a set is still held */
     int32_t id[RD_COUNTER_COUNT];
-    int64_t *addr[RD_COUNTER_COUNT];
+    /* Read by the agents on every bump: on lines of their own, away from the
+     * fields the conductor writes at registration and close above. */
+    int64_t *addr[RD_COUNTER_COUNT] __attribute__((aligned(64)));
 
     /* Extended statistics (type 92): one Aeron counter per PMD xstat, cached at
      * registration so the 1 Hz sample is a plain store into pre-resolved
@@ -146,9 +163,20 @@ typedef struct rusteron_dpdk_counters_stct
     rusteron_dpdk_xstat_t *xstats;
     char *xstat_names;           /* backing store for name pointers */
     uint32_t missed_xstat_index; /* xstat whose name contains "missed" (UINT32_MAX = none) */
-    uint64_t last_sample_ns;
+    /* Written by housekeeping once a second: a line of its own (the set's
+     * size rounds up to whole lines, so nothing after it shares it either). */
+    uint64_t last_sample_ns __attribute__((aligned(64)));
     uint64_t last_nic_sample_ns; /* the last read of the NIC's own statistics */
 } rusteron_dpdk_counters_t;
+
+/* Housekeeping writes last_sample_ns and last_nic_sample_ns once a second;
+ * the agents read addr[] on every counter bump. On one cache line, each of
+ * those writes would cost the agents a miss: the two never share one, the set
+ * aligned so the offsets are the lines. */
+_Static_assert(_Alignof(rusteron_dpdk_counters_t) >= 64, "the counter set starts a cache line");
+_Static_assert(offsetof(rusteron_dpdk_counters_t, last_sample_ns) / 64 >
+                   (offsetof(rusteron_dpdk_counters_t, addr) + sizeof(((rusteron_dpdk_counters_t *)0)->addr) - 1) / 64,
+               "housekeeping's sample times share no cache line with the agents' addr[]");
 
 /* Hot-path bump: a single relaxed atomic add into a pre-resolved value slot.
  * NULL-safe so a port without a counters manager (e.g. a NULL-context test) is
@@ -168,6 +196,22 @@ static inline void rusteron_dpdk_counters_max(rusteron_dpdk_counters_t *c, int k
     if (NULL != c && NULL != c->addr[kind] && v > __atomic_load_n(c->addr[kind], __ATOMIC_RELAXED))
     {
         __atomic_store_n(c->addr[kind], v, __ATOMIC_RELAXED);
+    }
+}
+
+/* A PMD burst call of `ns` (RUSTERON_DPDK_GAP_ATTRIB=1): the direction's
+ * longest, and its counts of 1 µs or more and 5 µs or more, the two kinds
+ * after `max_kind`. */
+static inline void rusteron_dpdk_counters_burst(rusteron_dpdk_counters_t *c, int max_kind, uint64_t ns)
+{
+    rusteron_dpdk_counters_max(c, max_kind, (int64_t)ns);
+    if (ns >= 1000)
+    {
+        rusteron_dpdk_counters_add(c, max_kind + 1, 1);
+        if (ns >= 5000)
+        {
+            rusteron_dpdk_counters_add(c, max_kind + 2, 1);
+        }
     }
 }
 
@@ -199,13 +243,43 @@ int rusteron_dpdk_counters_register(
  * already be gone with the driver): every later bump and sample is a no-op. */
 void rusteron_dpdk_counters_forget(rusteron_dpdk_counters_t *c);
 
-/* Refresh the mempool-availability counter at most once per second, and the
- * NIC's own statistics (basic stats and the PMD xstat mirrors) at most once
- * every `nic_stats_ns` (0: never; on ENA each read is an admin command to the
- * device). Called by the housekeeping thread, never the agents' hot path. */
+/* One read of a NIC's own statistics, carried between housekeeping's two
+ * short holds of its lock: the read itself, on ENA admin commands to the
+ * device, runs with the lock released, so closing a transport never waits
+ * behind it. */
+typedef struct rusteron_dpdk_nic_sample_stct
+{
+    int due;                     /* a read is due: the rest is set */
+    uint16_t port_id;
+    uint32_t xstat_count;        /* the set's PMD xstats when it was copied */
+    uint32_t generation;         /* the set's generation then */
+    int basic_ok;                /* basic_stats answered */
+    uint64_t ierrors, imissed, rx_nombuf;
+    int xstats_ok;               /* xstats_get answered */
+    uint64_t values[RUSTERON_DPDK_MAX_XSTATS];
+} rusteron_dpdk_nic_sample_t;
+
+/* Refresh the mempool-availability counter at most once per second, and say
+ * in `nic` whether the NIC's own statistics (basic stats and the PMD xstat
+ * mirrors) are due, at most once every `nic_stats_ns` (0: never; on ENA each
+ * read is an admin command to the device), copying what the read needs.
+ * Called by the housekeeping thread under its lock, never the agents' hot
+ * path; with the event log open (`events`, housekeeping's ring; else NULL)
+ * the mempool read is logged with how long it took. */
 void rusteron_dpdk_counters_sample(
     rusteron_dpdk_counters_t *c, const struct rusteron_dpdk_port_stct *port,
-    const struct rusteron_dpdk_port_ops_stct *ops, uint64_t now_ns, uint64_t nic_stats_ns);
+    const struct rusteron_dpdk_port_ops_stct *ops, uint64_t now_ns, uint64_t nic_stats_ns,
+    struct rusteron_dpdk_event_ring_stct *events, rusteron_dpdk_nic_sample_t *nic);
+
+/* Read the NIC statistics `nic` says are due, into `nic`: housekeeping,
+ * without its lock. Logged with how long it took when `events` is open. */
+void rusteron_dpdk_counters_read_nic(
+    const struct rusteron_dpdk_port_ops_stct *ops, rusteron_dpdk_nic_sample_t *nic,
+    struct rusteron_dpdk_event_ring_stct *events);
+
+/* Store what `nic` read into the set, under housekeeping's lock, unless the
+ * set went dormant or was replaced since it was copied (its generation). */
+void rusteron_dpdk_counters_store_nic(rusteron_dpdk_counters_t *c, const rusteron_dpdk_nic_sample_t *nic);
 
 #ifdef __cplusplus
 }

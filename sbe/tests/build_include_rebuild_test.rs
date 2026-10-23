@@ -1,9 +1,11 @@
 //! Cargo rebuilds generated codecs when only an included schema file changes.
 
+#[path = "common/scratch.rs"]
+mod scratch;
+
+use scratch::ScratchCrate;
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 fn write_types(path: &std::path::Path, primitive: &str) -> Result<(), Box<dyn std::error::Error>> {
     fs::write(
@@ -29,11 +31,11 @@ fn write_types(path: &std::path::Path, primitive: &str) -> Result<(), Box<dyn st
 fn cargo_rebuilds_generated_source_after_include_only_edit()
 -> Result<(), Box<dyn std::error::Error>> {
     let sbe_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "ergo_sbe_include_rebuild_{}_{stamp}",
-        std::process::id()
-    ));
+    // A unique package in the shared scratch target dir: its first build is a
+    // fresh build of this crate, so the second proves the include edit alone
+    // reruns the build script.
+    let krate = ScratchCrate::new("include_rebuild", true);
+    let dir = std::env::temp_dir().join(krate.name());
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("schemas"))?;
     fs::create_dir_all(dir.join("src/generated"))?;
@@ -75,7 +77,7 @@ pub use ping::*;
         dir.join("Cargo.toml"),
         format!(
             r#"[package]
-name = "include_rebuild"
+name = "{name}"
 version = "0.1.0"
 edition = "2024"
 build = "build.rs"
@@ -86,23 +88,15 @@ ergo-sbe = {{ path = "{sbe}" }}
 [build-dependencies]
 ergo-sbe = {{ path = "{sbe}" }}
 "#,
+            name = krate.name(),
             sbe = sbe_dir.display()
         ),
     )?;
+    krate.write_lockfile(&dir);
 
-    let target = dir.join("target_ci");
-    let cargo = |dir: &std::path::Path, target: &std::path::Path| {
-        Command::new("cargo")
-            .args(["build"])
-            .current_dir(dir)
-            .env("CARGO_TARGET_DIR", target)
-            .env_remove("CARGO_NET_OFFLINE")
-            .env_remove("RUSTFLAGS")
-            .env_remove("CARGO_ENCODED_RUSTFLAGS")
-            .output()
-    };
+    let cargo = |dir: &std::path::Path| krate.cargo().current_dir(dir).args(["build"]).output();
 
-    let first = cargo(&dir, &target)?;
+    let first = cargo(&dir)?;
     assert!(
         first.status.success(),
         "first cargo build failed:\n{}\n{}",
@@ -117,7 +111,7 @@ ergo-sbe = {{ path = "{sbe}" }}
     );
 
     write_types(&dir.join("schemas/types.xml"), "uint64")?;
-    let second = cargo(&dir, &target)?;
+    let second = cargo(&dir)?;
     assert!(
         second.status.success(),
         "second cargo build failed:\n{}\n{}",

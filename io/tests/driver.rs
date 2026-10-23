@@ -180,6 +180,138 @@ fn sends_and_receives_echo() -> R {
 }
 // ANCHOR_END: echo
 
+/// Records, at the first message, whether the server already had the order
+/// the application queued before that `poll`.
+struct OrderFirst {
+    server: std::net::TcpStream,
+    /// `Some(true)`: the order was on the server's socket when the message
+    /// was delivered; `Some(false)`: not within a second of waiting.
+    sent_first: Option<bool>,
+}
+
+impl Handler for OrderFirst {}
+
+impl WsHandler for OrderFirst {
+    fn on_message(&mut self, _: ConnId, _: u8, _: &[u8], _: &RxMeta, _: u16) {
+        if self.sent_first.is_some() {
+            return;
+        }
+        // `uring-sqpoll` sends from its kernel thread: allow it a moment.
+        // Without the send before the receive pass the order is still only
+        // queued here, so the wait runs out.
+        let end = Instant::now() + Duration::from_secs(1);
+        let fd = std::os::fd::AsRawFd::as_raw_fd(&self.server);
+        let mut b = [0u8; 1];
+        let seen = loop {
+            // MSG_DONTWAIT: the server's own reads on this socket block.
+            // SAFETY: `b` is valid for one byte.
+            #[allow(unsafe_code)]
+            let n = unsafe {
+                libc::recv(
+                    fd,
+                    b.as_mut_ptr().cast(),
+                    1,
+                    libc::MSG_PEEK | libc::MSG_DONTWAIT,
+                )
+            };
+            if n > 0 {
+                break true;
+            }
+            if Instant::now() > end {
+                break false;
+            }
+            std::hint::spin_loop();
+        };
+        self.sent_first = Some(seen);
+    }
+}
+
+/// Waits until `fd` has bytes to read (the feed's message reached the
+/// client's socket).
+fn readable(fd: std::os::fd::RawFd) -> R {
+    let mut p = libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    // SAFETY: one valid pollfd for the duration of the call.
+    #[allow(unsafe_code)]
+    let n = unsafe { libc::poll(&raw mut p, 1, 5_000) };
+    if n == 1 {
+        Ok(())
+    } else {
+        Err(format!("socket never became readable: {n}").into())
+    }
+}
+
+/// An order queued between polls (in the application's idle work) leaves
+/// before the next `poll` decodes and delivers what arrived meanwhile: it
+/// does not wait behind the receive pass.
+#[test]
+fn an_order_queued_before_poll_leaves_before_the_receive_pass() -> R {
+    each_backend(|b| {
+        let lab = Lab::new()?;
+        let lab = &lab;
+        let mut d = driver(b)?;
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (go_tx, go) = std::sync::mpsc::channel::<()>();
+        let (read_tx, read) = std::sync::mpsc::channel::<()>();
+        std::thread::scope(|s| -> R {
+            let srv = s.spawn(move || -> R<Vec<u8>> {
+                let mut p = lab.accept()?;
+                p.sock.set_read_timeout(Some(Duration::from_secs(10)))?;
+                // The handshake and upgrade are done: nothing else arrives
+                // from the client until the order.
+                tx.send(p.sock.try_clone()?)?;
+                // Once the driver holds the connection, so the message is
+                // read by a poll, not with the upgrade response.
+                go.recv_timeout(Duration::from_secs(10))?;
+                p.send(ws::OP_TEXT, true, b"tick")?;
+                // Read only once the handler has looked: a read here would
+                // take the order off the socket before its peek.
+                read.recv_timeout(Duration::from_secs(20))?;
+                let (op, body) = p.recv()?;
+                assert_eq!(op, ws::OP_TEXT);
+                Ok(body)
+            });
+            let id = d.add(WsConn::connect(
+                &lab.target("/")?,
+                lab.client_cfg.clone(),
+                1 << 20,
+            )?)?;
+            let server = rx.recv_timeout(Duration::from_secs(10))?;
+            go_tx.send(())?;
+            readable(d.get(id).ok_or("conn gone")?.raw_fd())?;
+            // `io_uring` with DEFER_TASKRUN posts the receive's completion
+            // only on a kernel entry: make that entry now, sending nothing,
+            // so the next poll has the message to deliver.
+            d.flush()?;
+            d.get_mut(id)
+                .ok_or("conn gone")?
+                .send_frame(ws::OP_TEXT, b"order")?;
+            let mut h = OrderFirst {
+                server,
+                sent_first: None,
+            };
+            let end = Instant::now() + Duration::from_secs(10);
+            while h.sent_first.is_none() {
+                d.poll(&mut h)?;
+                if Instant::now() > end {
+                    return Err(format!("no message: {:?}", d.stats()).into());
+                }
+            }
+            read_tx.send(())?;
+            assert_eq!(
+                h.sent_first,
+                Some(true),
+                "{b}: the order waited behind the receive pass"
+            );
+            assert_eq!(srv.join().map_err(|_| "server panicked")??, b"order");
+            Ok(())
+        })
+    })
+}
+
 #[test]
 fn protocol_error_closes_only_that_connection() -> R {
     each_backend(|b| {

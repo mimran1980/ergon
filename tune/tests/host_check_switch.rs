@@ -52,26 +52,20 @@ fn unknown(id: CheckId) -> Finding {
 
 #[test]
 fn the_policy_parses_off_on_warn_and_require() -> R {
+    assert_eq!(HostCheckPolicy::parse("off"), Ok(HostCheckPolicy::Off));
+    assert_eq!(HostCheckPolicy::parse("on"), Ok(HostCheckPolicy::On));
     assert_eq!(
-        HostCheckPolicy::parse(HOST_CHECKS_ENV, "off"),
-        Ok(HostCheckPolicy::Off)
-    );
-    assert_eq!(
-        HostCheckPolicy::parse(HOST_CHECKS_ENV, "on"),
-        Ok(HostCheckPolicy::On)
-    );
-    assert_eq!(
-        HostCheckPolicy::parse(HOST_CHECKS_ENV, "warn"),
+        HostCheckPolicy::parse("warn"),
         Ok(HostCheckPolicy::On),
         "warn is the media driver's word for on"
     );
     assert_eq!(
-        HostCheckPolicy::parse(HOST_CHECKS_ENV, "REQUIRE"),
+        HostCheckPolicy::parse("REQUIRE"),
         Ok(HostCheckPolicy::Require)
     );
     assert_eq!(HostCheckPolicy::default(), HostCheckPolicy::On);
     for bad in ["", "strict", "no", "0"] {
-        let Err(e) = HostCheckPolicy::parse(HOST_CHECKS_ENV, bad) else {
+        let Err(e) = HostCheckPolicy::parse(bad) else {
             return Err(format!("{bad} parsed").into());
         };
         let text = e.to_string();
@@ -81,32 +75,27 @@ fn the_policy_parses_off_on_warn_and_require() -> R {
     Ok(())
 }
 
+/// `ERGON_HOST_CHECKS` is the only variable: unset is `on`, and a bad value
+/// is an error naming it.
 #[test]
-fn the_primary_variable_wins_and_the_alias_is_next() -> R {
+fn the_switch_is_one_variable_and_unset_is_on() -> R {
+    assert_eq!(HostCheckPolicy::from_var(None)?, HostCheckPolicy::On);
     assert_eq!(
-        HostCheckPolicy::from_vars(
-            Some("require"),
-            "RUSTERON_MEDIA_DRIVER_HOST_CHECK",
-            Some("off")
-        )?,
-        HostCheckPolicy::Require
-    );
-    assert_eq!(
-        HostCheckPolicy::from_vars(None, "RUSTERON_MEDIA_DRIVER_HOST_CHECK", Some("off"))?,
+        HostCheckPolicy::from_var(Some("off"))?,
         HostCheckPolicy::Off
     );
     assert_eq!(
-        HostCheckPolicy::from_vars(None, "RUSTERON_MEDIA_DRIVER_HOST_CHECK", None)?,
-        HostCheckPolicy::On
+        HostCheckPolicy::from_var(Some("Require"))?,
+        HostCheckPolicy::Require
     );
-    let Err(e) =
-        HostCheckPolicy::from_vars(None, "RUSTERON_MEDIA_DRIVER_HOST_CHECK", Some("strict"))
-    else {
+    let Err(e) = HostCheckPolicy::from_var(Some("strict")) else {
         return Err("strict parsed".into());
     };
-    assert!(
-        e.to_string().contains("RUSTERON_MEDIA_DRIVER_HOST_CHECK"),
-        "{e}"
+    assert_eq!(
+        e,
+        HostCheckError::Invalid {
+            value: "strict".to_owned(),
+        }
     );
     Ok(())
 }

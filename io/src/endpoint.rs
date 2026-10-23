@@ -292,6 +292,37 @@ pub struct DriverStats {
     pub route_check_ns: u64,
     /// The longest single one of those, in nanoseconds.
     pub route_check_max_ns: u64,
+    /// Passive `TCP_INFO` samples taken (`Config::tcp_info_interval_ms`).
+    pub tcp_info_samples: u64,
+    /// The longest single one of those `getsockopt` calls on the polling
+    /// thread, in nanoseconds.
+    pub tcp_info_max_ns: u64,
+}
+
+/// One connection's passive `TCP_INFO` sample.
+///
+/// Taken every `Config::tcp_info_interval_ms`, read with
+/// `Driver::tcp_info`: what the kernel's TCP state said at `at_ns`. Fields
+/// follow `struct tcp_info` (`include/uapi/linux/tcp.h`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TcpInfo {
+    /// When it was read, `CLOCK_MONOTONIC` ns.
+    pub at_ns: i64,
+    /// Smoothed round-trip time, µs (`tcpi_rtt`).
+    pub rtt_us: u32,
+    /// Round-trip time variation, µs (`tcpi_rttvar`).
+    pub rttvar_us: u32,
+    /// The lowest round-trip time seen over the kernel's window, µs
+    /// (`tcpi_min_rtt`); `None` before the first sample, or on a kernel
+    /// whose `tcp_info` stops short of it (before 4.6).
+    pub min_rtt_us: Option<u32>,
+    /// Segments retransmitted over the connection's life
+    /// (`tcpi_total_retrans`).
+    pub total_retrans: u32,
+    /// Segments the kernel currently counts as lost (`tcpi_lost`).
+    pub lost: u32,
+    /// The current retransmission timeout, µs (`tcpi_rto`).
+    pub rto_us: u32,
 }
 
 impl DriverStats {

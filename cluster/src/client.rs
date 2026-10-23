@@ -1805,8 +1805,8 @@ impl AsyncClusterConnect {
     /// ```
     ///
     /// Always include a wildcard (`_`) arm — the enum is
-    /// [`#[non_exhaustive]`](ConnectStep) so future releases may add steps
-    /// without a semver break.
+    /// [`#[non_exhaustive]`](ConnectStep) so a release can add steps without
+    /// breaking your `match`.
     #[must_use = "the connect-step decision is the point of calling this"]
     pub fn step(&self) -> ConnectStep {
         self.step

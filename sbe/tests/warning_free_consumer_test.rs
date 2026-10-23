@@ -5,23 +5,34 @@ use std::error::Error;
 use std::fs;
 
 mod common;
-use common::{Paths, generate, scratch_cargo};
+use common::scratch::ScratchCrate;
+use common::{Paths, generate};
 use ergo_sbe::{GenerationConfig, GenerationProfile, Generator, Schema};
 
-/// Compile a minimal Lean + Full consumer with `-D warnings`.
+/// Compile a minimal Lean + Full (+ opt-in `validate()`) consumer with
+/// `-D warnings`.
 #[test]
 fn generated_lean_and_full_consumers_are_warning_free() -> Result<(), Box<dyn Error>> {
-    for (label, profile) in [
-        ("wf_lean", GenerationProfile::Lean),
-        ("wf_full", GenerationProfile::Full),
+    for (label, profile, validate) in [
+        ("wf_lean", GenerationProfile::Lean, false),
+        ("wf_full", GenerationProfile::Full, false),
+        ("wf_validate", GenerationProfile::Full, true),
     ] {
         let ir = ergo_sbe::parse_file(&Paths::example_schema())?;
         let schema = Schema::from_ir(ir);
-        let config = GenerationConfig::new(label).profile(profile);
+        let config = GenerationConfig::new(label)
+            .profile(profile)
+            .with_validate(validate);
+        let validate_call = if validate { "dec.validate()?;" } else { "" };
         let modules = Generator::new(config).generate(&schema)?;
         let src = &modules.modules().next().ok_or("no module")?.source;
 
-        let dir = std::env::temp_dir().join(format!("ergo_soundness_{label}"));
+        // The fixture asserts warning-freedom via its own `#![deny(warnings)]`.
+        // Ambient RUSTFLAGS (e.g. `cargo mutants` with cap_lints = true) would
+        // cap those lints to `allow` and turn this into a no-op that always
+        // passes, so the scratch build clears them (`true`).
+        let krate = ScratchCrate::new(&format!("{label}_consumer"), true);
+        let dir = std::env::temp_dir().join(krate.name());
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("src"))?;
         fs::write(dir.join(format!("src/{label}.rs")), src)?;
@@ -81,6 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
     let len = done.encoded_length_with_header();
     let dec = CarDecoder::try_decode(&buf[..len], 0)?;
     assert_eq!(dec.serial_number(), 1);
+    {validate_call}
     Ok(())
 }}
 "#
@@ -94,29 +106,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {{
             dir.join("Cargo.toml"),
             format!(
                 r#"[package]
-name = "{label}_consumer"
+name = "{name}"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 ergo-sbe = {{ path = "{sbe_path}", features = ["compact_str", "smol_str", "bytes", "chrono"] }}
-"#
+"#,
+                name = krate.name(),
             ),
         )?;
-        let target = dir.join("target_ci");
+        krate.write_lockfile(&dir);
         // No RUSTFLAGS=-D warnings here: the crate itself has #![deny(warnings)]
         // with an explicit allowlist for unused/dead_code (supported lint set).
-        let out = scratch_cargo()
-            .args(["build"])
-            .current_dir(&dir)
-            .env("CARGO_TARGET_DIR", &target)
-            // The fixture asserts warning-freedom via its own `#![deny(warnings)]`.
-            // Ambient RUSTFLAGS (e.g. `cargo mutants` with cap_lints = true) would
-            // cap those lints to `allow` and turn this into a no-op that always
-            // passes. Let the fixture's attributes decide.
-            .env_remove("RUSTFLAGS")
-            .env_remove("CARGO_ENCODED_RUSTFLAGS")
-            .output()?;
+        let out = krate.cargo().current_dir(&dir).args(["build"]).output()?;
         let stderr = String::from_utf8_lossy(&out.stderr);
         let _ = fs::remove_dir_all(&dir);
         assert!(

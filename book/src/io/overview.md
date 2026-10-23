@@ -26,7 +26,7 @@ Terms this chapter uses. Each links to the section that explains it.
 | term | what it is | pros / cons, when it matters |
 |---|---|---|
 | [busy-spin thread](#when-to-use-it) | A thread that loops on its own core and never sleeps. | Pro: no wake-up delay. Con: uses a whole core all the time. |
-| [poll](backends.md#cost-per-poll) | One non-blocking pass of `Driver::poll`: receive, decrypt, decode, deliver, send. | A message can wait up to one whole poll for its turn. |
+| [poll](backends.md#cost-per-poll) | One non-blocking pass of `Driver::poll`: send what was queued, receive, decrypt, decode, deliver, send. | A message can wait up to one whole poll for its turn. |
 | [isolated core](#best-practice) | A CPU the kernel keeps other work off. The rest are housekeeping CPUs. | Pin the loop to one. Helper threads (`connect_background`) run on housekeeping CPUs — in a pod, on its other CPUs ([Kubernetes](kubernetes.md)). |
 | [hyperthread (SMT) sibling](#choosing-a-backend) | The other logical CPU on the same physical core. | Can host the SQPOLL thread, at a cost in p50 and p99 against a core of its own ([data](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#smt-sibling-cost)). |
 | [cpuset](kubernetes.md#why-a-pod-has-no-housekeeping-cpus) | The CPUs a process may run on: its cgroup's `cpuset.cpus.effective`. A pod's is what the kubelet gave it. | Helper threads and SQPOLL must land inside it; the kernel refuses a mask outside (`EINVAL`). |
@@ -37,16 +37,16 @@ Terms this chapter uses. Each links to the section that explains it.
 | [interrupt](#choosing-a-backend) | The NIC's signal to the CPU that packets arrived. | `epoll-spin`, `uring-spin` and mio wait for it. Compared fairly with NIC polling on Graviton only. |
 | [NIC polling (busy polling)](backends.md) | The reading thread checks the NIC queue itself instead of waiting for an interrupt. | Pro: skips the interrupt path. Con: CPU; plain `recv-busy` pays it per socket. |
 | [NAPI](backends.md#kernel) | The kernel code that takes packets off a NIC queue; busy polling calls it directly. | `uring-sqpoll` and `uring-napi` register their queues with it: Linux 6.9+. |
-| [NIC queue](backends.md#cost-per-poll) | One of the NIC's receive queues (`c7i.2xlarge`: 8); each connection lands on one. | `per_queue` and the SQPOLL thread poll queues, not sockets, so their cost stops growing with sockets. |
+| [NIC queue](backends.md#cost-per-poll) | One of the NIC's receive queues (`c7i.2xlarge`: 8); each connection lands on one. | `per_queue` and the SQPOLL thread poll queues, not sockets, so their NIC polling stops growing with sockets. The loop's pass still grows ([cost per poll](backends.md#cost-per-poll)). |
 | [adaptive RX](#best-practice) | ENA (the AWS NIC) re-tunes how long it delays interrupts to batch packets (adaptive receive moderation). | On by default. Set on the node: `ethtool -C <nic> adaptive-rx off`. |
 | [backend](backends.md) | How the `Driver` waits for and reads data; set in config: `Config::parse("recv-busy")`. | Pick by socket count and spare CPUs: [choosing a backend](#choosing-a-backend). |
-| [`epoll-spin`](backends.md) | Asks epoll (the kernel's list of ready sockets) every poll, without waiting; reads only those. | Pro: a cheap poll even at 256 sockets. Con: waits for the interrupt. |
-| [mio, tokio](backends.md) | Rust's usual async I/O. On Linux both use epoll, so they wait for the interrupt. | reqwest on tokio parks its thread between requests. |
+| [`epoll-spin`](backends.md) | Asks epoll (the kernel's list of ready sockets) every poll, without waiting; reads only those. | Pro: reads only ready sockets, so its pass grows far less with sockets than `recv-busy`'s ([cost per poll](backends.md#cost-per-poll)). Con: waits for the interrupt. |
+| [mio, tokio](backends.md#mio-measured-not-a-backend) | Rust's usual async I/O. On Linux both use epoll, so they wait for the interrupt. | mio was measured: level with `epoll-spin`, not a backend. reqwest on tokio parks its thread between requests. |
 | [`recv-busy`](backends.md) | Reads every socket every poll; `SO_BUSY_POLL` makes each read poll the NIC too. | The pick at 1–4 sockets. Each socket adds to every poll. |
-| [`per_queue`](backends.md#per_queue-one-read-per-nic-queue) | A `recv-busy` option: one read per NIC queue, then only the ready sockets. | Poll cost stops at the queue count. The one-CPU pick past 4 sockets. |
+| [`per_queue`](backends.md#per_queue-one-read-per-nic-queue) | A `recv-busy` option: one read per NIC queue, then only the ready sockets. | Its NIC polling stops growing at the queue count. The one-CPU pick past 4 sockets. |
 | [`io_uring`](backends.md#kernel) | A Linux interface: requests and results pass through rings shared with the kernel. | Needs feature `uring` (on by default) and Linux 6.1+ (6.9+ for NAPI). |
 | [`uring-spin`](backends.md) | `io_uring` with `DEFER_TASKRUN`: enters the kernel only when it flags work. | Pro: few syscalls, low CPU. Con: waits for the interrupt, like `epoll-spin`. |
-| [`uring-sqpoll`](backends.md) | A kernel thread (SQPOLL) spins for the ring: submits, completes, polls the NIC. | No per-socket scan, so its cost does not grow with sockets. Needs a second CPU or the loop's sibling. |
+| [`uring-sqpoll`](backends.md) | A kernel thread (SQPOLL) spins for the ring: submits, completes, polls the NIC. | Its kernel thread polls NIC queues, not sockets; the loop's own pass still grows with sockets ([cost per poll](backends.md#cost-per-poll)). Needs a second CPU or the loop's sibling. |
 | [`uring-napi`, `epoll-busy`](backends.md) | Wait in the kernel up to `wait_us` (100 µs): poll the NIC up to `busy_poll_us` (50 µs), then sleep. | No run shows them saving CPU. |
 | [crossover](backends.md#find-the-crossover-on-your-own-host) | The socket count where one backend stops beating another. | Depends on the NIC, its queue count, the interrupt path and the traffic: measure it on your host. |
 | [`TCP_NODELAY`](#defaults) | Turns off Nagle's algorithm, which holds a small send until earlier data is ACKed. | On for every socket: each send goes out at once. |
@@ -92,7 +92,8 @@ Terms this chapter uses. Each links to the section that explains it.
 ## How it works
 
 - **`Driver<E>`** owns the connections. `Driver::poll` makes one
-  non-blocking pass (receive, decrypt, decode, deliver, send) and returns.
+  non-blocking pass (send what was queued, receive, decrypt, decode, deliver,
+  send) and returns.
 - **Your handler** gets `Handler::on_open`, `on_closed`, and the protocol's
   callback, such as `WsHandler::on_message`. A payload is a slice of the
   receive buffer, valid during the call.
@@ -130,8 +131,8 @@ Evidence:
   with sockets, so a message waits longer for its socket's turn. It leads
   at 1 socket and falls behind from about 16.
 - **`per_queue`** reads one socket per NIC queue, then the ready ones. Its
-  poll stops growing at the queue count. It trails `uring-sqpoll` at 16–64
-  sockets. Not the default: set it when the count can pass 4.
+  NIC polling stops growing at the queue count. It trails `uring-sqpoll` at
+  16–64 sockets. Not the default: set it when the count can pass 4.
 - **The interrupt backends** (`epoll-spin`, `uring-spin`, mio) matched
   `uring-sqpoll` from 4 sockets in the fair run, which had moderation off
   and their interrupts on a core of their own. Both are node settings; a
@@ -184,14 +185,16 @@ The loop's worst poll per connect, both ways:
 | `TCP_NODELAY` | on, every socket | always on |
 | TCP keepalive | on: 10 s idle, then a probe every 5 s, 3 probes | `keepalive_idle_s` (0: off), `keepalive_interval_s`, `keepalive_count` |
 | `TCP_USER_TIMEOUT` | 25 s | `tcp_user_timeout_ms` (0: kernel default, about 15 minutes) |
+| `TCP_RTO_MIN_US`, `TCP_DELACK_MAX_US` | the kernel's (200 ms each) | `tcp_rto_min_us`, `tcp_delack_max_us` (Linux 6.15+; [Kubernetes](kubernetes.md#tcp-timers-and-tcp_info)) |
+| `TCP_INFO` sampling | off | `tcp_info_interval_ms` (`Driver::tcp_info`) |
 | `SO_RCVBUF` | 4 MiB, fixed; needs `net.core.rmem_max` ≥ 4 MiB (warned at start-up) | `rcvbuf` (0: kernel autotuning) |
 | TCP quick ACK | assumed: `quickack 1` on each route | checked once per route (below) |
 | WebSocket timers | Ping after 10 s quiet, Pong timeout 5 s, idle timeout off, close wait 1 s | `WsOptions` ([WebSocket](websocket.md)) |
 | Reconnect | off | `Reconnect` ([WebSocket](websocket.md#reconnect)) |
 
 - TCP settings apply on `Driver::connect`, `connect_background` and `add`.
-  `HttpClient`'s libcurl connections get `TCP_NODELAY`, keepalive and
-  `TCP_USER_TIMEOUT` too.
+  `HttpClient`'s libcurl connections get `TCP_NODELAY`, keepalive,
+  `TCP_USER_TIMEOUT` and the TCP timers too.
 - Keepalive adds one kernel timer per socket. For a WebSocket-only loop,
   Pings already find a dead server: `keepalive_idle_s=0` is an option.
 

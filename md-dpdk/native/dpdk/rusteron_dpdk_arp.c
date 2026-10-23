@@ -93,6 +93,10 @@ static void rusteron_dpdk_arp_send_request(
         return;
     }
     rusteron_dpdk_arp_send_frame(runtime, port, &m);
+    if (NULL != port->events)
+    {
+        rusteron_dpdk_event_record(port->events, RUSTERON_DPDK_EVENT_ARP_REQUEST, port->port_id, 0);
+    }
 }
 
 static void rusteron_dpdk_arp_send_reply(
@@ -111,6 +115,10 @@ static void rusteron_dpdk_arp_send_reply(
         return;
     }
     rusteron_dpdk_arp_send_frame(runtime, port, &m);
+    if (NULL != port->events)
+    {
+        rusteron_dpdk_event_record(port->events, RUSTERON_DPDK_EVENT_ARP_REPLY, port->port_id, 0);
+    }
 }
 
 int rusteron_dpdk_arp_resolve(
@@ -145,13 +153,17 @@ int rusteron_dpdk_arp_resolve(
     if (RUSTERON_DPDK_ARP_REACHABLE == e->state)
     {
         /* Never withdraw a learned next hop from the send path: refresh in
-         * the background, keep sending to the cached MAC meanwhile. */
+         * the background, keep sending to the cached MAC meanwhile. The
+         * request goes after the caller's data frames
+         * (rusteron_dpdk_arp_send_due), so they wait for no ARP build or
+         * transmit. */
         if ((e->stale || now_ns - e->since_ns >= RUSTERON_DPDK_ARP_REFRESH_NS) &&
             (!e->refreshing || now_ns - e->last_request_ns >= RUSTERON_DPDK_ARP_REFRESH_RETRY_NS))
         {
             e->refreshing = 1;
             e->last_request_ns = now_ns;
-            rusteron_dpdk_arp_send_request(runtime, port, next_hop_ip);
+            table->refresh_due = 1;
+            table->refresh_ip = next_hop_ip;
         }
         memcpy(out_mac, e->mac, RUSTERON_DPDK_ETH_ADDR_LEN);
         return 1;
@@ -192,6 +204,31 @@ int rusteron_dpdk_arp_resolve(
         rusteron_dpdk_arp_send_request(runtime, port, next_hop_ip);
     }
     return 0;
+}
+
+void rusteron_dpdk_arp_send_due(
+    rusteron_dpdk_arp_table_t *table, rusteron_dpdk_transport_t *runtime, rusteron_dpdk_port_t *port)
+{
+    if (table->refresh_due)
+    {
+        table->refresh_due = 0;
+        rusteron_dpdk_arp_send_request(runtime, port, table->refresh_ip);
+    }
+}
+
+void rusteron_dpdk_arp_forget(rusteron_dpdk_arp_table_t *table, uint32_t ip)
+{
+    rusteron_dpdk_arp_entry_t *e = rusteron_dpdk_arp_slot_for(table, ip);
+    if (NULL == e || e->ip != ip || RUSTERON_DPDK_ARP_EMPTY == e->state || RUSTERON_DPDK_ARP_REACHABLE == e->state)
+    {
+        return;
+    }
+    const size_t mask = RUSTERON_DPDK_ARP_TABLE_SIZE - 1;
+    const rusteron_dpdk_arp_entry_t *next = &table->entries[((size_t)(e - table->entries) + 1) & mask];
+    if (RUSTERON_DPDK_ARP_EMPTY == next->state)
+    {
+        memset(e, 0, sizeof(*e));
+    }
 }
 
 int rusteron_dpdk_arp_seed(
@@ -311,6 +348,10 @@ int rusteron_dpdk_arp_handle_frame(
                 e->stale = 0;
                 e->reported = 0;
                 e->since_ns = rusteron_dpdk_clock_now();
+                if (NULL != rx_port->events)
+                {
+                    rusteron_dpdk_event_record(rx_port->events, RUSTERON_DPDK_EVENT_ARP_LEARNED, rx_port->port_id, 0);
+                }
                 return 1;
             }
         }

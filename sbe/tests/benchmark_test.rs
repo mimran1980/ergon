@@ -11,10 +11,12 @@
 //! 3. Assert that even in debug mode the round-trip completes promptly
 //!
 //! **Known trap — the nested build's scratch directory can vanish mid-run.**
-//! `compile_and_run` spawns a *nested* cargo build under the system temp dir
-//! (`/var/folders/.../T/ergo_test_<name>/target_ci` on macOS). That tree is not
-//! owned by cargo's usual locking, and it can be reclaimed or truncated while a
-//! build is in flight. Observed 2026-09-14 across a whole `just test` run:
+//! `compile_and_run` used to spawn a *nested* cargo build into a per-call
+//! target under the system temp dir (`/var/folders/.../T/ergo_test_<name>/target_ci`
+//! on macOS), which could be reclaimed or truncated while a build was in
+//! flight. Nested builds now share `<target>/ergon-scratch` under cargo's
+//! build-directory lock (`common/scratch.rs`); only the crate sources stay in
+//! the temp dir. Observed 2026-09-14 across a whole `just test` run:
 //!
 //! ```text
 //! error: extern location for miette does not exist: .../target_ci/.../libmiette-*.rmeta

@@ -42,11 +42,9 @@ pub enum HostCheckPolicy {
 /// What a caller does with a host-check policy or its report.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HostCheckError {
-    /// The variable is set to something other than `off`, `on`/`warn` or
-    /// `require`.
+    /// [`HOST_CHECKS_ENV`] is set to something other than `off`, `on`/`warn`
+    /// or `require`.
     Invalid {
-        /// Which variable (`ERGON_HOST_CHECKS`, or the media driver's).
-        variable: String,
         /// The value it is set to.
         value: String,
     },
@@ -63,11 +61,11 @@ pub enum HostCheckError {
 impl fmt::Display for HostCheckError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Invalid { variable, value } => write!(
+            Self::Invalid { value } => write!(
                 f,
-                "{variable}={value}: set {variable} to off, on or require (off prints no host-check \
-                 warning line; require refuses to start on a warning, or on a check that could not \
-                 be proven)"
+                "{HOST_CHECKS_ENV}={value}: set {HOST_CHECKS_ENV} to off, on or require (off prints \
+                 no host-check warning line; require refuses to start on a warning, or on a check \
+                 that could not be proven)"
             ),
             Self::Warnings { count, ids } => write!(
                 f,
@@ -82,77 +80,48 @@ impl fmt::Display for HostCheckError {
 impl std::error::Error for HostCheckError {}
 
 impl HostCheckPolicy {
-    /// `off`, `on` (or `warn`, the same as `on`) or `require`. Anything else
-    /// is [`HostCheckError::Invalid`], naming `variable`.
+    /// `off`, `on` (or `warn`, the same as `on`) or `require`, any case.
     ///
     /// # Errors
     ///
     /// [`HostCheckError::Invalid`] when `value` is none of those.
-    pub fn parse(variable: &str, value: &str) -> Result<Self, HostCheckError> {
+    pub fn parse(value: &str) -> Result<Self, HostCheckError> {
         match value.trim().to_ascii_lowercase().as_str() {
             "off" => Ok(Self::Off),
             "on" | "warn" => Ok(Self::On),
             "require" => Ok(Self::Require),
             _ => Err(HostCheckError::Invalid {
-                variable: variable.to_owned(),
                 value: value.to_owned(),
             }),
         }
     }
 
-    /// From two variable values: `primary` (always named
-    /// [`HOST_CHECKS_ENV`]) wins, else `alias` (named `alias_name`, the media
-    /// driver's old variable), else [`Self::On`].
+    /// From [`HOST_CHECKS_ENV`]'s value: [`Self::On`] when it is unset
+    /// (`None`), else [`Self::parse`].
     ///
     /// # Errors
     ///
-    /// [`HostCheckError::Invalid`] when a value that is read is none of
-    /// `off`, `on`, `warn` or `require`.
-    pub fn from_vars(
-        primary: Option<&str>,
-        alias_name: &str,
-        alias: Option<&str>,
-    ) -> Result<Self, HostCheckError> {
-        match (primary, alias) {
-            (Some(v), _) => Self::parse(HOST_CHECKS_ENV, v),
-            (None, Some(v)) => Self::parse(alias_name, v),
-            (None, None) => Ok(Self::On),
-        }
+    /// [`HostCheckError::Invalid`] when it is set to none of `off`, `on`,
+    /// `warn` or `require`.
+    pub fn from_var(value: Option<&str>) -> Result<Self, HostCheckError> {
+        value.map_or(Ok(Self::On), Self::parse)
     }
 
-    /// From the process environment: [`HOST_CHECKS_ENV`], the default
-    /// [`Self::On`] when it is unset. `alias`, when set, is read when
-    /// [`HOST_CHECKS_ENV`] is not (the media driver's old variable).
-    ///
-    /// # Errors
-    ///
-    /// [`HostCheckError::Invalid`] when a variable that is set holds none of
-    /// `off`, `on`, `warn` or `require`, or is not valid Unicode.
-    pub fn from_env_or(alias: &str) -> Result<Self, HostCheckError> {
-        let primary = std::env::var(HOST_CHECKS_ENV);
-        let alt = if alias.is_empty() {
-            None
-        } else {
-            std::env::var(alias).ok()
-        };
-        match primary {
-            Ok(v) => Self::from_vars(Some(&v), alias, alt.as_deref()),
-            Err(std::env::VarError::NotUnicode(_)) => Err(HostCheckError::Invalid {
-                variable: HOST_CHECKS_ENV.to_owned(),
-                value: "not valid Unicode".to_owned(),
-            }),
-            Err(std::env::VarError::NotPresent) => Self::from_vars(None, alias, alt.as_deref()),
-        }
-    }
-
-    /// From the process environment, [`HOST_CHECKS_ENV`] only.
+    /// From the process environment: [`HOST_CHECKS_ENV`], [`Self::On`] when
+    /// it is unset. No other variable is read.
     ///
     /// # Errors
     ///
     /// [`HostCheckError::Invalid`] when it is set to none of `off`, `on`,
     /// `warn` or `require`, or is not valid Unicode.
     pub fn from_env() -> Result<Self, HostCheckError> {
-        Self::from_env_or("")
+        match std::env::var(HOST_CHECKS_ENV) {
+            Ok(v) => Self::from_var(Some(&v)),
+            Err(std::env::VarError::NotPresent) => Self::from_var(None),
+            Err(std::env::VarError::NotUnicode(_)) => Err(HostCheckError::Invalid {
+                value: "not valid Unicode".to_owned(),
+            }),
+        }
     }
 
     /// The warning lines of `findings` under this policy, as the caller

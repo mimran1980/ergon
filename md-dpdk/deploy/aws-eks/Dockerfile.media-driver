@@ -1,6 +1,8 @@
 # Amazon Linux 2023 runtime image for the ergon-md-dpdk DPDK ENA
-# kernel-bypass transport. Built on AL2023 x86_64 so the image records the
-# exact distro/DPDK/ENA versions; uses `--features static,dpdk` so both the
+# kernel-bypass transport, for linux/amd64 (Intel x86, c7i) or linux/arm64
+# (Graviton4/5, c8g/c9g): the platform buildx is asked for, native or
+# emulated. Built on AL2023 so the image records the exact distro/DPDK/ENA
+# versions; uses `--features static,dpdk` so both the
 # Aeron driver C and the DPDK native transport are compiled from the workspace
 # (rusteron-media-driver builds the Aeron C from its crates.io sources). The
 # node's secondary ENAs are bound to igb_uio (loaded with wc_activate=1) by
@@ -13,11 +15,22 @@
 # `counters` (ergon-md-dpdk-harness), which run inside the driver's pod against
 # its Aeron directory, and taskset/nsenter (util-linux) and pkill (procps-ng).
 #
-# Build (from the ergon repo root):
-#   docker build -f md-dpdk/deploy/aws-eks/Dockerfile.media-driver -t rusteron-media-driver:dpdk .
+# Build (from the ergon repo root; --platform linux/amd64 or linux/arm64):
+#   docker buildx build --platform linux/arm64 --load -f md-dpdk/deploy/aws-eks/Dockerfile.media-driver -t rusteron-media-driver:dpdk .
 # Verify:
 #   docker run --rm rusteron-media-driver:dpdk ldd /usr/local/bin/media_driver
-FROM --platform=linux/amd64 public.ecr.aws/amazonlinux/amazonlinux:2023 AS builder
+#
+# Build arguments:
+#   RUST_TARGET_CPU   empty (default): generic code, runs on every CPU of the
+#                     architecture. A CPU name (neoverse-v2 for Graviton4 only)
+#                     becomes -Ctarget-cpu, and md-dpdk's build.rs gives the
+#                     native C the same -mcpu/-march: the image then runs only
+#                     on that CPU family (SIGILL elsewhere), so select its
+#                     nodes by instance family. AL2023's gcc must know the
+#                     name, or the build stops (build.rs checks it).
+#   CARGO_BUILD_JOBS  empty (default): cargo's own; a number caps the build's
+#                     parallel jobs (a small Docker VM).
+FROM public.ecr.aws/amazonlinux/amazonlinux:2023 AS builder
 
 # Build deps. cmake + pyelftools come via pip (no AL2023 packages).
 RUN dnf install -y \
@@ -35,9 +48,11 @@ RUN dnf install -y \
 # tests, shared libs to /usr/local/lib64. The stable tarball unpacks to
 # dpdk-stable-<version>, so it is unpacked into a fixed directory instead.
 # -Dplatform=generic, as Debian's package (the DPDK the lab measured) is
-# built: meson's default, native, would tune DPDK to whichever CPU builds the
-# image (or the emulator's, on an Arm Mac), not to the nodes'. The versions
-# file records the instruction set it chose.
+# built, on both architectures (armv8-a on arm64, corei7 on x86_64): meson's
+# default, native, would tune DPDK to whichever CPU builds the image (or the
+# emulator's), not to the nodes'. -Dplatform=graviton4 is avoided: it caps
+# lcores at 96 and NUMA nodes at one (benches/cloud/vm.sh). The versions file
+# records the instruction set it chose.
 ARG DPDK_VERSION=24.11.4
 ARG DPDK_SHA256=5c387f19f0df9d38d417f7bd0e7d10920d432a14f2414914854a9f2e781d3453
 RUN curl -fsSLO "https://fast.dpdk.org/rel/dpdk-${DPDK_VERSION}.tar.xz" \
@@ -69,26 +84,30 @@ ENV CMAKE_TOOLCHAIN_FILE="/usr/local/share/rusteron-pic.cmake"
 WORKDIR /src
 COPY . .
 
-# The DPDK ENA transport requires Linux x86_64; this image is amd64-only.
-# `static` implies `build-from-source`; the libdpdk pkg-config probe resolves
-# against the source-built DPDK. The benchmark clients need no DPDK: they talk
-# to the driver through its Aeron directory (as benches/cloud/vm.sh builds them).
-RUN cargo build -p ergon-md-dpdk --release --features static,dpdk --bin media_driver
-RUN cargo build -p ergon-md-dpdk-harness --release --features static --bin rtt --bin counters
+# The DPDK ENA transport requires Linux x86_64 or aarch64. `static` implies
+# `build-from-source`; the libdpdk pkg-config probe resolves against the
+# source-built DPDK. The benchmark clients need no DPDK: they talk to the
+# driver through its Aeron directory (as benches/cloud/vm.sh builds them).
+ARG RUST_TARGET_CPU=
+ARG CARGO_BUILD_JOBS=
+RUN export RUSTFLAGS="${RUST_TARGET_CPU:+-Ctarget-cpu=$RUST_TARGET_CPU}" \
+    && cargo build ${CARGO_BUILD_JOBS:+-j $CARGO_BUILD_JOBS} -p ergon-md-dpdk --release --features static,dpdk --bin media_driver \
+    && cargo build ${CARGO_BUILD_JOBS:+-j $CARGO_BUILD_JOBS} -p ergon-md-dpdk-harness --release --features static --bin rtt --bin counters
 
 # Record the exact DPDK/ENA versions the image was built against (plan §9:
 # "Build on AL2023 and record exact DPDK/ENA versions").
 RUN { \
-        echo "distro: Amazon Linux 2023 ($(cat /etc/system-release))"; \
+        echo "distro: Amazon Linux 2023 ($(cat /etc/system-release)), $(uname -m)"; \
         echo "kernel: $(uname -r)"; \
         echo "dpdk: $(pkg-config --modversion libdpdk 2>/dev/null || echo unknown) (source-built dpdk-${DPDK_VERSION}.tar.xz)"; \
         echo "dpdk-isa: platform generic, RTE_MACHINE $(sed -n 's/^#define RTE_MACHINE "*\([^"]*\)"*$/\1/p' /usr/local/include/rte_build_config.h 2>/dev/null | head -1), $(pkg-config --cflags libdpdk 2>/dev/null | tr ' ' '\n' | grep -E '^-m(arch|cpu)=' | head -1)"; \
         echo "ena-driver: $(modinfo -F version ena 2>/dev/null || echo not-loaded-in-container)"; \
         echo "rusteron-media-driver: $(cargo pkgid rusteron-media-driver 2>/dev/null || echo unknown)"; \
+        echo "rust-target-cpu: ${RUST_TARGET_CPU:-generic} (md-dpdk's C: the same, via build.rs)"; \
     } > /etc/rusteron-dpdk-versions.txt
 
 # ---- runtime ----
-FROM --platform=linux/amd64 public.ecr.aws/amazonlinux/amazonlinux:2023
+FROM public.ecr.aws/amazonlinux/amazonlinux:2023
 
 # Runtime libs for the statically-linked media_driver: libnuma (DPDK EAL) and
 # libbsd/libuuid (Aeron driver); the librte_* shared libs come from the builder.

@@ -11,15 +11,18 @@ Terms: [deployment glossary](overview.md#glossary).
 This chapter is the list. It is not an image and it is not a second chart.
 The shared-CPU grant is [Shared CPUs](shared-cpus.md): public image
 `ghcr.io/mimran1980/ergon-shared-cpus:0.1.1` and chart
-`oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.1`.
+`oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.1`
+(EKS AL2023 hot pods need chart 0.1.2:
+[EKS install](shared-cpus.md#use-the-public-chart)).
 The refusal of an exec probe on a pod labelled `ergon.io/latency: hot` is
 the admission policy in [Latency Pods](latency-pods.md). Hugepages, the
 isolated cpuset partition, io_uring seccomp and the NIC PHC are opt-in
-grants in that same image. Chart 0.1.1 writes `seccomp`, `ptp` and
-`schedFifo` as `"off"`. Chart 0.1.0 does not write those keys. The kind sample
+grants in that same image. The chart writes `seccomp`, `ptp` and
+`schedFifo` as `"off"`. The kind sample
 `k8s/nri-shared-cpus/examples/try` installs the public chart, prints the
-shared-CPU grant, and shows the admission denial. It does not measure the
-rows below.
+shared-CPU grant on an unlabelled pod, and shows the two hot-pod refusals:
+the plugin's (no `isolcpus` on kind) and the admission policy's. Not yet
+run on kind. It does not measure the rows below.
 
 ## Settings
 
@@ -226,8 +229,8 @@ grep Cpus_allowed_list /proc/self/status
 #    (runs at start-up in ergon-io's Driver::new and the media driver)
 ```
 
-`ERGON_HOST_CHECKS=require` (media driver alias
-`RUSTERON_MEDIA_DRIVER_HOST_CHECK`) refuses to start while any check warns
+`ERGON_HOST_CHECKS=require` (ergon-io and the media driver) refuses to
+start while any check warns
 or a proof check stays unproven
 ([ergon-tune](../tune/overview.md#where-the-checks-run)). In a stock
 static-CPU-manager pod ergon-io's K2 stays unproven, so `require` refuses

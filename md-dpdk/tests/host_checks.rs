@@ -3,8 +3,7 @@
 //! ergon-tune host checks on the agents' CPUs (M-host), the data NICs'
 //! (M-nic) and their re-check after a reset (M-run), and how
 //! `ConfiguredDriver::from_env` and the bundled binary report them: one line
-//! each, and under `RUSTERON_MEDIA_DRIVER_HOST_CHECK=require` no start while
-//! one warns.
+//! each, and under `ERGON_HOST_CHECKS=require` no start while one warns.
 //!
 //! Every check reads a host tree (a fixture standing for `/sys` and `/proc`),
 //! so they run on every platform; what needs the running kernel (the probe
@@ -307,55 +306,50 @@ impl Drop for EnvGuard {
 
 // --- The environment ----------------------------------------------------------
 
-/// `ERGON_HOST_CHECKS` is the one switch, with
-/// `RUSTERON_MEDIA_DRIVER_HOST_CHECK` as its alias: `warn`/`on` when
-/// unset, `off`, `warn`/`on` or `require` (any case); anything else fails
-/// start, naming the variable that was set. The primary wins over the
-/// alias.
+/// `ERGON_HOST_CHECKS` is the one switch: `warn`/`on` when unset, `off`,
+/// `warn`/`on` or `require` (any case); anything else fails start, naming
+/// it.
 #[test]
 #[serial]
 fn the_host_check_policy_is_read_from_the_environment() {
+    let _a = EnvGuard::unset("RUSTERON_MEDIA_DRIVER_HOST_CHECK");
     {
-        let _a = EnvGuard::unset("RUSTERON_MEDIA_DRIVER_HOST_CHECK");
         let _p = EnvGuard::unset("ERGON_HOST_CHECKS");
         assert_eq!(HostCheckPolicy::from_env().unwrap(), HostCheckPolicy::Warn);
     }
+    for (value, want) in [
+        ("off", HostCheckPolicy::Off),
+        ("warn", HostCheckPolicy::Warn),
+        ("on", HostCheckPolicy::Warn),
+        ("Require", HostCheckPolicy::Require),
+    ] {
+        let _p = EnvGuard::set("ERGON_HOST_CHECKS", value);
+        assert_eq!(HostCheckPolicy::from_env().unwrap(), want, "{value}");
+    }
+    for bad in ["", "strict", "no"] {
+        let _p = EnvGuard::set("ERGON_HOST_CHECKS", bad);
+        let e = HostCheckPolicy::from_env().unwrap_err();
+        assert!(matches!(e, DpdkError::InvalidEnvironment(_)), "{bad:?}: {e:?}");
+        assert!(e.to_string().contains("ERGON_HOST_CHECKS"), "{e}");
+    }
+}
+
+/// `RUSTERON_MEDIA_DRIVER_HOST_CHECK`, the old alias, is no switch: set
+/// alone, whatever its value, the policy is the default `warn`, and it never
+/// overrides `ERGON_HOST_CHECKS`.
+#[test]
+#[serial]
+fn the_old_alias_is_ignored() {
     {
         let _p = EnvGuard::unset("ERGON_HOST_CHECKS");
-        for (value, want) in [
-            ("off", HostCheckPolicy::Off),
-            ("warn", HostCheckPolicy::Warn),
-            ("on", HostCheckPolicy::Warn),
-            ("Require", HostCheckPolicy::Require),
-        ] {
-            let _v = EnvGuard::set("RUSTERON_MEDIA_DRIVER_HOST_CHECK", value);
-            assert_eq!(HostCheckPolicy::from_env().unwrap(), want, "{value}");
-        }
-        for bad in ["", "strict", "no"] {
-            let _v = EnvGuard::set("RUSTERON_MEDIA_DRIVER_HOST_CHECK", bad);
-            let e = HostCheckPolicy::from_env().unwrap_err();
-            assert!(matches!(e, DpdkError::InvalidEnvironment(_)), "{bad:?}: {e:?}");
-            assert!(e.to_string().contains("RUSTERON_MEDIA_DRIVER_HOST_CHECK"), "{e}");
+        for value in ["require", "off", "strict"] {
+            let _a = EnvGuard::set("RUSTERON_MEDIA_DRIVER_HOST_CHECK", value);
+            assert_eq!(HostCheckPolicy::from_env().unwrap(), HostCheckPolicy::Warn, "{value}");
         }
     }
-    {
-        let _a = EnvGuard::set("RUSTERON_MEDIA_DRIVER_HOST_CHECK", "off");
-        let _p = EnvGuard::set("ERGON_HOST_CHECKS", "require");
-        assert_eq!(
-            HostCheckPolicy::from_env().unwrap(),
-            HostCheckPolicy::Require,
-            "the primary wins over the alias"
-        );
-    }
-    {
-        let _a = EnvGuard::set("RUSTERON_MEDIA_DRIVER_HOST_CHECK", "strict");
-        let _p = EnvGuard::set("ERGON_HOST_CHECKS", "on");
-        assert_eq!(
-            HostCheckPolicy::from_env().unwrap(),
-            HostCheckPolicy::Warn,
-            "the primary wins over a bad alias"
-        );
-    }
+    let _a = EnvGuard::set("RUSTERON_MEDIA_DRIVER_HOST_CHECK", "require");
+    let _p = EnvGuard::set("ERGON_HOST_CHECKS", "off");
+    assert_eq!(HostCheckPolicy::from_env().unwrap(), HostCheckPolicy::Off);
 }
 
 /// `RUSTERON_MEDIA_DRIVER_DATA_NICS` names the socket transport's data NICs,
@@ -412,8 +406,7 @@ fn the_agents_layout_reads_idle_strategies_from_the_environment() {
 /// Every check runs for every driver, at its own severity: a driver left at
 /// Aeron's defaults (agents floating, idling with `backoff`, sparse term
 /// buffers) gets M1 for each network agent of its mode and M2, as warnings,
-/// and no note excusing them. `RUSTERON_MEDIA_DRIVER_HOST_CHECK=off` is the
-/// one switch.
+/// and no note excusing them. `ERGON_HOST_CHECKS=off` is the one switch.
 #[test]
 fn every_driver_gets_m1_and_m2_at_warning_severity() {
     let f = Fixture::x86("every-driver");
@@ -1134,7 +1127,7 @@ fn findings_are_printed_one_line_each() {
     );
 }
 
-/// `RUSTERON_MEDIA_DRIVER_HOST_CHECK=require` refuses on any one warning,
+/// `ERGON_HOST_CHECKS=require` refuses on any one warning,
 /// naming it, and never on an information line or on what could not be read
 /// (a pod's namespace, a system other than Linux).
 #[test]
@@ -1173,9 +1166,9 @@ fn require_refuses_on_one_warning_and_never_on_information_or_unknown() {
     assert!(matches!(e, DpdkError::HostCheck(_)), "{e:?}");
     let text = e.to_string();
     assert!(
-        text.contains("1 host check warning(s) (M2)")
-            && text.contains("RUSTERON_MEDIA_DRIVER_HOST_CHECK=warn")
-            && text.contains("ERGON_HOST_CHECKS=off"),
+        text.contains("ERGON_HOST_CHECKS=require and 1 host check warning(s) (M2)")
+            && text.contains("set ERGON_HOST_CHECKS=warn or off to start anyway")
+            && !text.contains("RUSTERON_MEDIA_DRIVER_HOST_CHECK"),
         "{text}"
     );
 }
@@ -1263,7 +1256,18 @@ fn from_env_reports_and_require_refuses_a_warning() {
     let _cpu = EnvGuard::set("AERON_SENDER_CPU_AFFINITY", "0");
     let _idle = EnvGuard::unset("AERON_SENDER_IDLE_STRATEGY");
 
-    let _policy = EnvGuard::set("RUSTERON_MEDIA_DRIVER_HOST_CHECK", "warn");
+    // The old alias alone changes nothing: the checks run and warn, and the
+    // driver may start.
+    let _policy = EnvGuard::unset("ERGON_HOST_CHECKS");
+    let _alias = EnvGuard::set("RUSTERON_MEDIA_DRIVER_HOST_CHECK", "require");
+    let configured = ConfiguredDriver::from_env(AeronDriverContext::new().unwrap())
+        .expect("RUSTERON_MEDIA_DRIVER_HOST_CHECK=require alone is ignored");
+    let report = configured.host_report().expect("the checks ran");
+    assert!(!warnings(&report.findings, CheckId::M1).is_empty());
+    drop(configured);
+    let _alias = EnvGuard::unset("RUSTERON_MEDIA_DRIVER_HOST_CHECK");
+
+    let _policy = EnvGuard::set("ERGON_HOST_CHECKS", "warn");
     let configured = ConfiguredDriver::from_env(AeronDriverContext::new().unwrap()).unwrap();
     let report = configured.host_report().expect("the checks ran");
     let m1 = warnings(&report.findings, CheckId::M1);
@@ -1275,22 +1279,22 @@ fn from_env_reports_and_require_refuses_a_warning() {
     assert!(!configured.rechecking(), "no data NIC named");
     drop(configured);
 
-    let _policy = EnvGuard::set("RUSTERON_MEDIA_DRIVER_HOST_CHECK", "require");
+    let _policy = EnvGuard::set("ERGON_HOST_CHECKS", "require");
     let e = ConfiguredDriver::from_env(AeronDriverContext::new().unwrap())
         .err()
         .expect("require refuses a warning");
     assert!(matches!(e, DpdkError::HostCheck(_)), "{e:?}");
     let text = e.to_string();
     assert!(
-        text.contains("M1") && text.contains("RUSTERON_MEDIA_DRIVER_HOST_CHECK"),
+        text.contains("M1") && text.contains("ERGON_HOST_CHECKS=require"),
         "{text}"
     );
 
-    let _policy = EnvGuard::set("RUSTERON_MEDIA_DRIVER_HOST_CHECK", "off");
+    let _policy = EnvGuard::set("ERGON_HOST_CHECKS", "off");
     let configured = ConfiguredDriver::from_env(AeronDriverContext::new().unwrap()).unwrap();
     assert!(configured.host_report().is_none(), "off runs no check");
 
-    let _policy = EnvGuard::set("RUSTERON_MEDIA_DRIVER_HOST_CHECK", "loud");
+    let _policy = EnvGuard::set("ERGON_HOST_CHECKS", "loud");
     assert!(matches!(
         ConfiguredDriver::from_env(AeronDriverContext::new().unwrap()),
         Err(DpdkError::InvalidEnvironment(_))
@@ -1311,7 +1315,7 @@ fn the_binary_prints_the_lines_and_require_exits_before_starting() {
         .env("AERON_SENDER_CPU_AFFINITY", "0")
         .env_remove("AERON_SENDER_IDLE_STRATEGY")
         .env_remove("RUSTERON_MEDIA_DRIVER_TRANSPORT")
-        .env("RUSTERON_MEDIA_DRIVER_HOST_CHECK", "require")
+        .env("ERGON_HOST_CHECKS", "require")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1371,6 +1375,8 @@ fn run_binary(envs: &[(&str, &str)]) -> (Option<std::process::ExitStatus>, Strin
         .env("AERON_DIR_DELETE_ON_SHUTDOWN", "true")
         .env_remove("RUSTERON_MEDIA_DRIVER_TRANSPORT")
         .env_remove("RUSTERON_MEDIA_DRIVER_DATA_NICS")
+        .env_remove("ERGON_HOST_CHECKS")
+        .env_remove("RUSTERON_MEDIA_DRIVER_HOST_CHECK")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -1405,16 +1411,17 @@ fn run_binary(envs: &[(&str, &str)]) -> (Option<std::process::ExitStatus>, Strin
     (status, out.join().unwrap(), err.join().unwrap())
 }
 
-/// `RUSTERON_MEDIA_DRIVER_HOST_CHECK=off` runs no check and says so in one
-/// information line, whatever the driver (here one at Aeron's defaults,
-/// which `warn` would warn about); a value other than off, warn or require
-/// refuses to start, naming the variable. (`RUSTERON_MEDIA_DRIVER_MLOCKALL`
-/// set wrong stops the driver after the checks, before it is created.)
+/// `ERGON_HOST_CHECKS=off` runs no check and says so in one information
+/// line, whatever the driver (here one at Aeron's defaults, which `warn`
+/// would warn about); a value other than off, on, warn or require refuses to
+/// start, naming the variable. The old alias `RUSTERON_MEDIA_DRIVER_HOST_CHECK`
+/// is ignored, whatever it holds. (`RUSTERON_MEDIA_DRIVER_MLOCKALL` set wrong
+/// stops the driver after the checks, before it is created.)
 #[test]
 #[serial]
 fn the_binary_says_once_that_the_checks_are_off_and_refuses_an_unknown_policy() {
     let (status, stdout, stderr) = run_binary(&[
-        ("RUSTERON_MEDIA_DRIVER_HOST_CHECK", "off"),
+        ("ERGON_HOST_CHECKS", "off"),
         ("RUSTERON_MEDIA_DRIVER_MLOCKALL", "sometimes"),
         ("AERON_TERM_BUFFER_SPARSE_FILE", "true"),
     ]);
@@ -1424,7 +1431,7 @@ fn the_binary_says_once_that_the_checks_are_off_and_refuses_an_unknown_policy() 
     let ours: Vec<&str> = stderr.lines().filter(|l| l.starts_with("ergon-md-dpdk ")).collect();
     assert_eq!(ours.len(), 1, "{stderr}");
     assert!(
-        ours[0].starts_with("ergon-md-dpdk info: ") && ours[0].contains("RUSTERON_MEDIA_DRIVER_HOST_CHECK=off"),
+        ours[0].starts_with("ergon-md-dpdk info: ERGON_HOST_CHECKS=off: no host check runs"),
         "{}",
         ours[0]
     );
@@ -1436,18 +1443,40 @@ fn the_binary_says_once_that_the_checks_are_off_and_refuses_an_unknown_policy() 
     ]);
     assert!(stderr.contains("ergon-md-dpdk warning: M1 warn: "), "{stderr}");
     assert!(stderr.contains("ergon-md-dpdk warning: M2 warn: "), "{stderr}");
-    assert!(!stderr.contains("HOST_CHECK=off"), "{stderr}");
+    assert!(!stderr.contains("no host check runs"), "{stderr}");
+
+    // The old alias is ignored: `off` still warns, and `require` or a bad
+    // value neither refuses nor stops the start (MLOCKALL stops it later).
+    for value in ["off", "require", "loud"] {
+        let (status, stdout, stderr) = run_binary(&[
+            ("RUSTERON_MEDIA_DRIVER_HOST_CHECK", value),
+            ("RUSTERON_MEDIA_DRIVER_MLOCKALL", "sometimes"),
+            ("AERON_TERM_BUFFER_SPARSE_FILE", "true"),
+        ]);
+        let status = status.unwrap_or_else(|| panic!("{value:?}: a driver started: {stdout}\n{stderr}"));
+        assert_ne!(status.code(), Some(0), "{value:?}: {stderr}");
+        assert!(
+            stderr.contains("ergon-md-dpdk warning: M1 warn: "),
+            "{value:?}: {stderr}"
+        );
+        assert!(stderr.contains("RUSTERON_MEDIA_DRIVER_MLOCKALL"), "{value:?}: {stderr}");
+        assert!(!stderr.contains("HostCheck"), "{value:?}: {stderr}");
+        assert!(
+            !stderr.contains("RUSTERON_MEDIA_DRIVER_HOST_CHECK"),
+            "{value:?}: {stderr}"
+        );
+    }
 
     // Any case works: `OFF` is `off`. What is not one of the words is refused.
     for bad in ["loud", "", "strict", "sometimes"] {
-        let (status, stdout, stderr) = run_binary(&[("RUSTERON_MEDIA_DRIVER_HOST_CHECK", bad)]);
+        let (status, stdout, stderr) = run_binary(&[("ERGON_HOST_CHECKS", bad)]);
         let status = status.unwrap_or_else(|| panic!("{bad:?}: a driver started: {stdout}\n{stderr}"));
         assert_ne!(status.code(), Some(0), "{bad:?}: {stderr}");
-        assert!(stderr.contains("RUSTERON_MEDIA_DRIVER_HOST_CHECK"), "{bad:?}: {stderr}");
+        assert!(stderr.contains("ERGON_HOST_CHECKS"), "{bad:?}: {stderr}");
         assert!(!stdout.contains("media driver started"), "{bad:?}: {stdout}");
     }
     let (status, stdout, stderr) = run_binary(&[
-        ("RUSTERON_MEDIA_DRIVER_HOST_CHECK", "OFF"),
+        ("ERGON_HOST_CHECKS", "OFF"),
         ("RUSTERON_MEDIA_DRIVER_MLOCKALL", "sometimes"),
     ]);
     let status = status.unwrap_or_else(|| panic!("a driver started: {stdout}\n{stderr}"));
@@ -1463,7 +1492,7 @@ fn the_binary_says_once_that_the_checks_are_off_and_refuses_an_unknown_policy() 
 #[serial]
 fn the_recheck_thread_starts_for_named_nics_and_stops_with_the_driver() {
     let _transport = EnvGuard::unset("RUSTERON_MEDIA_DRIVER_TRANSPORT");
-    let _policy = EnvGuard::set("RUSTERON_MEDIA_DRIVER_HOST_CHECK", "warn");
+    let _policy = EnvGuard::set("ERGON_HOST_CHECKS", "warn");
     let _nics = EnvGuard::set("RUSTERON_MEDIA_DRIVER_DATA_NICS", "lo");
     let cpus = allowed_cpus();
     let spinner = *cpus.last().unwrap();

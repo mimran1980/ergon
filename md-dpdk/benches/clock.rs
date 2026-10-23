@@ -160,6 +160,104 @@ mod bench {
         }
         g.finish();
     }
+
+    /// p50, p99 and max of `samples` (sorted in place).
+    fn percentiles(samples: &mut [f64]) -> (f64, f64, f64) {
+        samples.sort_by(f64::total_cmp);
+        let at = |q: f64| samples[((samples.len() - 1) as f64 * q).round() as usize];
+        (at(0.5), at(0.99), samples[samples.len() - 1])
+    }
+
+    /// ns per call of `one`, per batch of `per`, over `batches` batches.
+    fn batch_ns(batches: usize, per: u32, mut one: impl FnMut() -> c_int) -> Vec<f64> {
+        (0..batches)
+            .map(|_| {
+                let start = Instant::now();
+                for _ in 0..per {
+                    black_box(one());
+                }
+                start.elapsed().as_nanos() as f64 / f64::from(per)
+            })
+            .collect()
+    }
+
+    /// What the diagnostics cost the send and poll paths, on the counter
+    /// clock: off (twice, first and last, for the A/A spread), with
+    /// RUSTERON_DPDK_GAP_ATTRIB=1 (burst timing: two clock reads a burst), and
+    /// with the event log open as well. Each row is the p50, p99 and max of
+    /// the mean ns per call over 2,000 batches of 1,000 calls, printed (not a
+    /// criterion estimate): the gate is off within the A/A spread, on adding
+    /// at most about 12 ns.
+    pub fn overhead(_c: &mut Criterion) {
+        const BATCHES: usize = 2000;
+        const PER: u32 = 1000;
+        let log = std::env::temp_dir().join(format!("ergon-md-dpdk-bench-events-{}.csv", std::process::id()));
+        let log = log.to_string_lossy().into_owned();
+        // gap-attrib also reads the thread CPU clock once a poll (a syscall,
+        // the gap split that predates burst timing); "+cpu-pinned" pins that
+        // clock so the row shows the burst timing's own cost.
+        let arms: [(&str, &[(&'static str, &str)]); 5] = [
+            ("off", &[]),
+            ("gap-attrib", &[("RUSTERON_DPDK_GAP_ATTRIB", "1")]),
+            ("gap-attrib+cpu-pinned", &[("RUSTERON_DPDK_GAP_ATTRIB", "1")]),
+            (
+                "gap-attrib+event-log",
+                &[
+                    ("RUSTERON_DPDK_GAP_ATTRIB", "1"),
+                    ("RUSTERON_DPDK_EVENT_LOG", log.as_str()),
+                ],
+            ),
+            ("off-again", &[]),
+        ];
+        let hz = measured_counter_hz();
+        println!("overhead (ns per call, per batch of {PER}; p50 / p99 / max over {BATCHES} batches)");
+        for (path, label) in [(0, "send_32b"), (1, "poll_32b")] {
+            for (arm, vars) in arms {
+                let _unset = (
+                    EnvGuard::unset("RUSTERON_DPDK_GAP_ATTRIB"),
+                    EnvGuard::unset("RUSTERON_DPDK_EVENT_LOG"),
+                );
+                let _set: Vec<EnvGuard> = vars.iter().map(|(k, v)| EnvGuard::set(k, v)).collect();
+                let mut h = Harness::build_after(env_at(hz), rusteron_dpdk_config_t::valid());
+                assert_clock(COUNTER_ROW, hz);
+                if arm.ends_with("cpu-pinned") {
+                    pin_thread_cpu_ns(1);
+                }
+                let mut samples = if path == 0 {
+                    h.init_tx(SENDER_IP, 40000, None, 1472);
+                    h.arp_seed(PEER_IP, PEER_MAC);
+                    let payload = [7u8; 32];
+                    let mut dst = SockAddrIn::new(PEER_IP, 40123);
+                    let mut iov = [iovec {
+                        iov_base: payload.as_ptr() as *mut c_void,
+                        iov_len: payload.len(),
+                    }];
+                    let mut bytes = 0i64;
+                    assert_eq!(h.send_iov(&mut dst, &mut iov, &mut bytes), 1, "send: {}", last_error());
+                    batch_ns(BATCHES, PER, || h.send_iov(&mut dst, &mut iov, &mut bytes))
+                } else {
+                    h.init_rx(RECEIVER_IP, 60000, 1472);
+                    let mut p = h.poller();
+                    p.add(&mut *h.rx);
+                    let frame = build_udp_frame(RECEIVER_MAC, PEER_MAC, PEER_IP, RECEIVER_IP, 7000, 60000, &[7u8; 32]);
+                    let mut msgvec = vec![unsafe { std::mem::zeroed::<RealMmsghdr>() }; 16];
+                    let mut count = 0u64;
+                    let clientd = &mut count as *mut u64 as *mut c_void;
+                    let mut bytes = 0i64;
+                    let mut one = || {
+                        unsafe { rusteron_dpdk_fake_rx_inject(RECEIVER_PORT, frame.as_ptr(), frame.len(), RX_GOOD, 1) };
+                        p.poll_into(&mut msgvec, Some(count_cb), clientd, &mut bytes)
+                    };
+                    assert_eq!(one(), 1, "poll: {}", last_error());
+                    batch_ns(BATCHES, PER, one)
+                };
+                let (p50, p99, max) = percentiles(&mut samples);
+                println!("{label:<9} {arm:<22} {p50:>7.1} / {p99:>7.1} / {max:>8.1}");
+                assert_no_leak();
+            }
+        }
+        let _ = std::fs::remove_file(&log);
+    }
 }
 
 #[cfg(all(
@@ -167,7 +265,7 @@ mod bench {
     target_os = "linux",
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
-criterion::criterion_group!(benches, bench::reads, bench::send, bench::poll);
+criterion::criterion_group!(benches, bench::reads, bench::send, bench::poll, bench::overhead);
 #[cfg(all(
     feature = "dpdk",
     target_os = "linux",

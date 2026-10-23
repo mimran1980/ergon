@@ -16,7 +16,12 @@
 # maximum, no several flows; the load sweep runs its ladder alone), max_hours
 # (LAB_MAX_HOURS: the instances' deadline, how long a state is waited for),
 # warmup_seconds and warmup_rate (LAB_WARMUP_SECONDS, LAB_WARMUP_RATE: a
-# warm-up load before each mode's first ladder, recorded nowhere).
+# warm-up load before each mode's first ladder, recorded nowhere),
+# rtt_spike_ns and rtt_stall_ns (LAB_RTT_SPIKE_NS, 30000, and
+# LAB_RTT_STALL_NS, 10000: the cross-host round trip's clients stamp every
+# round trip and every stall of their own loop of at least that many ns, so
+# each idle max, 72-79 us in G3, gets a cause; the clients' own defaults,
+# 100 and 20 us, would leave it unstamped).
 # The functions run the benchmark on both VMs in lockstep; teardown stays with
 # the caller's trap.
 
@@ -315,6 +320,24 @@ record_market() {
     for host in "$A" "$B"; do echo "$line" >>"$out/env-$host.txt"; done
 }
 
+# record_knoise <state>: what each host's diag-start said of KNOISE (vm.sh
+# knoise_start: osnoise on the agent and app CPUs, or "osnoise unavailable:
+# <why>", a limit of the run's diagnostics, and any event its kernel lacks)
+# in its environment record (env-<host>.txt), with the state
+record_knoise() {
+    local state=$1 node host lines
+    for node in a b; do
+        [[ $node == a ]] && host=$A || host=$B
+        if [[ ! -e $out/$node-diag-start-$state.log ]]; then
+            lines="knoise not recorded (no diag-start log)"
+        else
+            lines=$(grep -E '^(osnoise|knoise) ' "$out/$node-diag-start-$state.log") ||
+                lines="knoise not recorded (diag-start said nothing of it)"
+        fi
+        awk -v s="$state" '{print s ": " $0}' <<<"$lines" >>"$out/env-$host.txt"
+    done
+}
+
 # reboot both VMs and wait for them to come back
 reboot_both() {
     local host
@@ -436,6 +459,7 @@ run_bench() {
         both "timesync-$state" timesync-wait ||
             die "state $state: chrony did not synchronise both hosts' clocks (vm.sh timesync-wait; $out/{a,b}-timesync-$state.log)"
         both "diag-start-$state" diag-start || log "WARNING: diagnostics did not start"
+        record_knoise "$state"
         remote_state "$state" || die "$state benchmark failed"
         both "diag-$state" diag-fetch || log "WARNING: diagnostics not fetched"
         both "diag-stop-$state" diag-stop || true
@@ -517,6 +541,8 @@ no_flatout='${no_flatout:-}'
 placement='${placement:-}'
 warmup_seconds=${warmup_seconds:-0}
 warmup_rate=${warmup_rate:-0}
+rtt_spike_ns='${rtt_spike_ns:-30000}'
+rtt_stall_ns='${rtt_stall_ns:-10000}'
 ENV
     on "$A" "nohup bash ergon/md-dpdk/benches/cloud/remote.sh $1 >$dir/run.log 2>&1 </dev/null &" || return 1
     log "state $state: running on VM a ($dir)"
@@ -1037,11 +1063,13 @@ bench_state() {
             # round trip: B pongs, A pings (ping's endpoint on B, pong's on A),
             # the ping started at second $rtt_align of the minute when set
             align_rtt
-            on "$B" "LAB_CLIENT_DEADLINE=$(answer_deadline 25) $vm client $label rtt xpong $b_rcv:20123 $a_rcv:20124 $app_b" \
+            # every round trip of rtt_spike_ns or more stamped, every loop stall
+            # of rtt_stall_ns or more (LAB_RTT_SPIKE_NS, LAB_RTT_STALL_NS)
+            on "$B" "LOOP_STALL_NS=${rtt_stall_ns:-10000} LAB_CLIENT_DEADLINE=$(answer_deadline 25) $vm client $label rtt xpong $b_rcv:20123 $a_rcv:20124 $app_b" \
                 >"$out/pong-$state-$fm-$rep.log" 2>&1 & pong=$!
             sleep 2
             # (RTT_SECONDS=20: 20 s measured after up to 5 s of warm-up)
-            on "$A" "RTT_SECONDS=20 LAB_CLIENT_DEADLINE=$(client_deadline 25) $vm client $label rtt xping $b_rcv:20123 $a_rcv:20124 $rtt_messages $rtt_warmup $app_a" \
+            on "$A" "RTT_SECONDS=20 LOAD_SPIKE_NS=${rtt_spike_ns:-30000} LOOP_STALL_NS=${rtt_stall_ns:-10000} LAB_CLIENT_DEADLINE=$(client_deadline 25) $vm client $label rtt xping $b_rcv:20123 $a_rcv:20124 $rtt_messages $rtt_warmup $app_a" \
                 2>"$out/ping-$state-$fm-$rep.log" | sed "s/^/$rep,/" | tee -a "$results" >&2
             client_rc "$label rep $rep: the round trip's ping" "${PIPESTATUS[0]}"
             end_client "$B" rtt xpong
@@ -1055,6 +1083,16 @@ bench_state() {
             on "$A" 'cat bench/load-spikes.csv' >"$out/spikes-$state-$fm-rtt-$rep.csv" 2>/dev/null || true
             on "$A" 'cat bench/stalls-ping.csv' >"$out/stalls-ping-$state-$fm-$rep.csv" 2>/dev/null || true
             on "$B" 'cat bench/stalls-pong.csv' >"$out/stalls-pong-$state-$fm-$rep.csv" 2>/dev/null || true
+            # each host's DPDK event log, where the mode turned it on
+            # (@RUSTERON_DPDK_EVENT_LOG=<home>/bench/events.csv: the agents' loop
+            # gaps, ARP and housekeeping's calls, each timed; vm.sh driver
+            # removes the last one): its events so far, the round trip's among
+            # them, for spikes.py; none kept where a host has none
+            for n in a b; do
+                [[ $n == a ]] && host=$A || host=$B
+                on "$host" 'cat bench/events.csv' >"$out/$n-rings-$state-$fm-$rep.log" 2>/dev/null || true
+                [[ -s $out/$n-rings-$state-$fm-$rep.log ]] || rm -f "$out/$n-rings-$state-$fm-$rep.log"
+            done
             both "jitter-after-rtt-$state-$fm-$rep" jitter || true
             # NIC arrival -> the receive burst on each receiver port (DPDK with NIC RX timestamps only)
             for host in "$A" "$B"; do

@@ -15,7 +15,7 @@ use std::time::Duration;
 use ergon_md_dpdk::clock::{RateSource, TransportClock};
 use ergon_md_dpdk::configure_media_transport_from_env;
 use log::info;
-use rusteron_client::{Aeron, AeronContext, IntoCString};
+use rusteron_client::{Aeron, AeronCnc, AeronContext, IntoCString};
 use rusteron_media_driver::{AeronDriver, AeronDriverContext, AeronIdleStrategyKind};
 
 use report::Report;
@@ -140,6 +140,14 @@ fn run(args: &Args) -> Result<Report, Box<dyn Error>> {
             let p = env_str("RUSTERON_HARNESS_LATENCY_SAMPLES", "");
             if p.is_empty() { None } else { Some(p) }
         },
+        hold_dir: {
+            let p = env_str("RUSTERON_HARNESS_HOLD_DIR", "");
+            if p.is_empty() { None } else { Some(p.into()) }
+        },
+        pause_at: std::env::var("RUSTERON_HARNESS_PAUSE_AT")
+            .ok()
+            .and_then(|v| v.parse().ok()),
+        hold_secs: Duration::from_secs(env_u64("RUSTERON_HARNESS_HOLD_SECS", 6)),
     };
 
     let mut report = Report {
@@ -153,7 +161,7 @@ fn run(args: &Args) -> Result<Report, Box<dyn Error>> {
     // DPDK transport must outlive the driver (its agents poll the transport's
     // ports until they join). Bindings from one pattern drop in reverse, which
     // would close the transport first, so the order is explicit at the end.
-    let (driver, client_ctx, transport) = if args.standalone {
+    let (driver, client_ctx, transport, driver_dir) = if args.standalone {
         // A separate `media_driver` process owns the DPDK transport
         // and the Aeron dir (pinned via RUSTERON_MEDIA_DRIVER_DIR); this
         // process is only a client.
@@ -167,8 +175,8 @@ fn run(args: &Args) -> Result<Report, Box<dyn Error>> {
             "standalone-udp".to_string()
         };
         let ctx = AeronContext::new()?;
-        ctx.set_dir(&dir.into_c_string())?;
-        (None, ctx, None)
+        ctx.set_dir(&dir.clone().into_c_string())?;
+        (None, ctx, None, dir)
     } else {
         // --- media driver context (§6.4 required state) ---
         let driver_ctx = AeronDriverContext::new()?;
@@ -236,13 +244,25 @@ fn run(args: &Args) -> Result<Report, Box<dyn Error>> {
         let driver = AeronDriver::launch_embedded_guard(driver_ctx.clone(), false);
         let dir = driver_ctx.get_dir().to_string();
         let ctx = AeronContext::new()?;
-        ctx.set_dir(&dir.into_c_string())?;
-        (Some(driver), ctx, transport)
+        ctx.set_dir(&dir.clone().into_c_string())?;
+        (Some(driver), ctx, transport, dir)
     };
 
     // --- client to the (embedded or standalone) driver ---
     let aeron = Aeron::new(&client_ctx)?;
     aeron.start()?;
+
+    // --- the script's go: its taps are bridged (RUSTERON_HARNESS_START_FILE) ---
+    let start_file = env_str("RUSTERON_HARNESS_START_FILE", "");
+    if !start_file.is_empty() {
+        let started = std::time::Instant::now();
+        while !std::path::Path::new(&start_file).exists() {
+            if started.elapsed() >= cfg.timeout {
+                return Err(format!("{start_file} did not appear within {:?}", cfg.timeout).into());
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
 
     // --- run the scenario and fold the result into the report ---
     let res = scenario::run(&cfg, &aeron);
@@ -260,6 +280,15 @@ fn run(args: &Args) -> Result<Report, Box<dyn Error>> {
     report.gaps = res.gaps;
     report.detail = res.detail;
     report.error = res.error;
+    // The driver's counters and error log, while it still runs: the vdev
+    // scenarios assert on them (ICMP echoes, ARP misses, MTU refusals).
+    match snapshot_driver(&driver_dir) {
+        Ok((counters, errors)) => {
+            report.dpdk_counters = counters;
+            report.driver_errors = errors;
+        }
+        Err(e) => report.detail.push(format!("driver counters unreadable: {e}")),
+    }
 
     // Client, then the driver (stops and joins its agents), then the transport.
     drop(aeron);
@@ -267,6 +296,27 @@ fn run(args: &Args) -> Result<Report, Box<dyn Error>> {
     drop(client_ctx);
     drop(transport);
     Ok(report)
+}
+
+/// The DPDK transport's counters, summed by `<role>.<dir>.<name>`, and the
+/// driver's distinct error log, read from the driver's `CnC` file.
+fn snapshot_driver(dir: &str) -> Result<(String, String), Box<dyn Error>> {
+    let cnc = AeronCnc::open(&dir.into_c_string())?;
+    let mut values = Vec::new();
+    cnc.counters_reader()
+        .foreach_counter_fn(|value, _id, _type_id, _key, label| {
+            if let Some(key) = report::dpdk_counter_key(label) {
+                values.push((key, value));
+            }
+        });
+    let mut errors = Vec::new();
+    cnc.error_log_read_fn(
+        |count: i32, _first_ns: i64, _last_ns: i64, error: &str| {
+            errors.push(format!("{count}x {}", error.replace('\n', " ")));
+        },
+        0,
+    );
+    Ok((report::sum_counters(values), errors.join(" | ")))
 }
 
 /// The generic timer's rate, `CNTFRQ_EL0`, read here (0 off aarch64): what

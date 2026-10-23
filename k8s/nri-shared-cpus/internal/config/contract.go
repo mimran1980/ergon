@@ -3,6 +3,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -25,13 +26,21 @@ type Sources struct {
 	SysRoot string
 	// ProcRoot is a proc root (irq/<n>/smp_affinity_list).
 	ProcRoot string
-	// KubeletConfig is the final kubelet configuration file.
+	// KubeletConfig is the kubelet's --config file (the final configuration
+	// when the kubelet runs without --config-dir).
 	KubeletConfig string
+	// KubeletConfigDir is the kubelet's --config-dir. When set, its *.conf
+	// drop-ins are merged over KubeletConfig the way the kubelet merges them
+	// (lexical walk, JSON merge patch). A missing or unreadable directory, or
+	// a drop-in the kubelet would reject, refuses hot creates.
+	KubeletConfigDir string
 	// ConfigZ is an optional copy of the effective /configz document.
-	// When the path is set, the document must exist and agree with the file.
+	// When the path is set, the document must exist and agree with the
+	// merged configuration.
 	ConfigZ string
-	// Overrides is an optional kubelet argv file or a directory of drop-ins.
-	// A checked flag that disagrees with the file is a conflicting override.
+	// Overrides is an optional kubelet argv file or a directory of them. It is
+	// a conflict check, not a merge: a checked flag (or field) that disagrees
+	// with the merged configuration refuses. Drop-ins go in KubeletConfigDir.
 	Overrides string
 }
 
@@ -96,7 +105,7 @@ func Evaluate(src Sources, shared cpuset.Set) (Report, error) {
 		rep.Refusals = append(rep.Refusals, fmt.Sprintf("shared/nohz overlap: %s", both))
 	}
 
-	body, reserved, kubeErr := loadKubelet(src.KubeletConfig)
+	body, reserved, kubeErr := loadKubelet(src.KubeletConfig, src.KubeletConfigDir)
 	if kubeErr != "" {
 		rep.Refusals = append(rep.Refusals, kubeErr)
 	} else {
@@ -137,11 +146,17 @@ func CheckContract(src Sources, shared, exclusive cpuset.Set) error {
 	return rep.Err()
 }
 
-func loadKubelet(path string) (kubeletBody, cpuset.Set, string) {
+func loadKubelet(path, dir string) (kubeletBody, cpuset.Set, string) {
 	if path == "" {
 		return kubeletBody{}, cpuset.Set{}, "kubelet configuration is not mounted"
 	}
-	body, err := readKubeletFile(path)
+	var body kubeletBody
+	var err error
+	if dir == "" {
+		body, err = readKubeletFile(path)
+	} else {
+		body, err = readKubeletMerged(path, dir)
+	}
 	if err != nil {
 		return kubeletBody{}, cpuset.Set{}, fmt.Sprintf("kubelet configuration: %v", err)
 	}
@@ -152,22 +167,165 @@ func loadKubelet(path string) (kubeletBody, cpuset.Set, string) {
 	return body, reserved, ""
 }
 
+// dropInSuffix is the only suffix the kubelet reads from --config-dir.
+const dropInSuffix = ".conf"
+
+// readKubeletMerged is the kubelet's --config plus --config-dir merge
+// (cmd/kubelet/app/server.go mergeKubeletConfigurations): walk dir in
+// lexical order, descending into subdirectories; skip every file whose
+// extension is not .conf; refuse an empty drop-in, one that is not a
+// kubelet.config.k8s.io/v1beta1 KubeletConfiguration, and one that does not
+// parse; apply each as a JSON merge patch (RFC 7386: later fields replace
+// earlier ones, lists are replaced whole, maps merge key by key, null
+// deletes). JSON and YAML both parse. A missing or unreadable dir is an
+// error, as it is for the kubelet.
+func readKubeletMerged(path, dir string) (kubeletBody, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return kubeletBody{}, err
+	}
+	merged, err := yamlObject(data)
+	if err != nil {
+		return kubeletBody{}, fmt.Errorf("%s: %w", path, err)
+	}
+	if inner, ok := merged["kubeletconfig"].(map[string]any); ok {
+		merged = inner
+	}
+	// Only the base: the kubelet keeps drop-ins as raw maps and decodes the
+	// merge with encoding/json, which takes a mis-cased key.
+	dropMiscasedFields(merged)
+	info, err := os.Stat(dir)
+	if err != nil {
+		return kubeletBody{}, fmt.Errorf("drop-in directory: %w", err)
+	}
+	if !info.IsDir() {
+		return kubeletBody{}, fmt.Errorf("drop-in directory %s: not a directory", dir)
+	}
+	walkErr := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || filepath.Ext(d.Name()) != dropInSuffix {
+			return nil
+		}
+		patch, err := readDropIn(p)
+		if err != nil {
+			return fmt.Errorf("drop-in %s: %w", p, err)
+		}
+		merged = mergePatch(merged, patch).(map[string]any)
+		return nil
+	})
+	if walkErr != nil {
+		return kubeletBody{}, walkErr
+	}
+	return decodeBody(merged)
+}
+
+// kubeletGroupVersion and kubeletKind are the type metadata the kubelet
+// requires on every drop-in.
+const (
+	kubeletGroupVersion = "kubelet.config.k8s.io/v1beta1"
+	kubeletKind         = "KubeletConfiguration"
+)
+
+func readDropIn(path string) (map[string]any, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 {
+		return nil, errors.New("empty")
+	}
+	obj, err := yamlObject(data)
+	if err != nil {
+		return nil, err
+	}
+	if obj["apiVersion"] != kubeletGroupVersion || obj["kind"] != kubeletKind {
+		return nil, fmt.Errorf("apiVersion/kind %v/%v, want %s/%s", obj["apiVersion"], obj["kind"], kubeletGroupVersion, kubeletKind)
+	}
+	return obj, nil
+}
+
+// yamlObject parses JSON or YAML into a JSON object. Duplicate keys are
+// refused: which value the kubelet's strict decoder would keep is not a
+// question this check answers.
+func yamlObject(data []byte) (map[string]any, error) {
+	js, err := yaml.YAMLToJSONStrict(data)
+	if err != nil {
+		return nil, err
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(js, &obj); err != nil {
+		return nil, err
+	}
+	if obj == nil {
+		return nil, errors.New("not a configuration object")
+	}
+	return obj, nil
+}
+
+// mergePatch applies patch to target as RFC 7386 JSON merge patch.
+func mergePatch(target, patch any) any {
+	p, ok := patch.(map[string]any)
+	if !ok {
+		return patch
+	}
+	t, ok := target.(map[string]any)
+	if !ok {
+		t = map[string]any{}
+	}
+	for k, v := range p {
+		if v == nil {
+			delete(t, k)
+			continue
+		}
+		t[k] = mergePatch(t[k], v)
+	}
+	return t
+}
+
 func readKubeletFile(path string) (kubeletBody, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return kubeletBody{}, err
 	}
-	var wrapped struct {
-		KubeletConfig *kubeletBody `json:"kubeletconfig"`
-	}
-	if err := yaml.Unmarshal(data, &wrapped); err != nil {
+	var obj map[string]any
+	if err := yaml.Unmarshal(data, &obj); err != nil {
 		return kubeletBody{}, err
 	}
-	if wrapped.KubeletConfig != nil {
-		return *wrapped.KubeletConfig, nil
+	if inner, ok := obj["kubeletconfig"].(map[string]any); ok {
+		obj = inner
+	}
+	dropMiscasedFields(obj)
+	return decodeBody(obj)
+}
+
+// checkedFields are the json names kubeletBody reads.
+var checkedFields = []string{"cpuManagerPolicy", "cpuCFSQuota", "reservedSystemCPUs", "featureGates"}
+
+// dropMiscasedFields deletes keys that match a checked field only when case
+// is ignored. The kubelet decodes its --config file case-sensitively
+// (apimachinery UnmarshalCaseSensitivePreserveInts), so such a key is an
+// unknown field it ignores; encoding/json would otherwise take it.
+func dropMiscasedFields(obj map[string]any) {
+	for k := range obj {
+		for _, f := range checkedFields {
+			if k != f && strings.EqualFold(k, f) {
+				delete(obj, k)
+			}
+		}
+	}
+}
+
+// decodeBody decodes the checked fields with encoding/json, as the kubelet
+// decodes its merged --config-dir result.
+func decodeBody(obj map[string]any) (kubeletBody, error) {
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return kubeletBody{}, err
 	}
 	var body kubeletBody
-	if err := yaml.Unmarshal(data, &body); err != nil {
+	if err := json.Unmarshal(out, &body); err != nil {
 		return kubeletBody{}, err
 	}
 	return body, nil

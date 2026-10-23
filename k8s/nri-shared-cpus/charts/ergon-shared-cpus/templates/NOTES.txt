@@ -31,3 +31,17 @@ Node requirements (not set by this chart):
     cpuset.cpus.exclusive) for the cpu-partition opt-in
   - containerd >= 2.2 with the NRI default validator on
   - node label ergon.io/shared-cpus=true
+{{- if .Values.hostContract.kubeletConfig.enabled }}
+  - kubelet config at {{ .Values.hostContract.kubeletConfig.path }}; the plugin
+    pod does not start without it
+{{- if .Values.hostContract.kubeletConfigDir.enabled }}
+  - kubelet --config-dir at {{ .Values.hostContract.kubeletConfigDir.path }}
+    (the kubelet must run with it); the plugin pod does not start without it
+{{- end }}
+  - pods labelled ergon.io/latency: hot: every exclusive CPU in isolcpus,
+    no shared CPU isolated or in nohz_full, cpuCFSQuota not false, and NIC
+    IRQs on reservedSystemCPUs minus sharedCpus, or the create is refused
+{{- else }}
+  - hostContract.kubeletConfig is off: every pod labelled
+    ergon.io/latency: hot is refused at create
+{{- end }}

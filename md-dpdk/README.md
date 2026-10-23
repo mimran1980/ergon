@@ -88,6 +88,15 @@ RUSTERON_MEDIA_DRIVER_TRANSPORT=dpdk-ena cargo run -p ergon-md-dpdk --features d
   so deployments for rusteron's DPDK branch work unchanged.
 - **`RUSTERON_DPDK_EAL_ARGS`** appends EAL options (log levels, `-l <cpu>`),
   at most 1 KiB with the device arguments.
+- **`RUSTERON_DPDK_EAL_IN_MEMORY=1`** (pod env; default `0`) starts the EAL
+  `--in-memory` instead of with `--huge-dir`: no shared configuration, no
+  multi-process channel thread, and no hugepage files left in hugetlbfs after
+  an OOM kill. The pod still needs its `hugepages-2Mi` limit; the hugetlbfs
+  mount is then only Aeron's. EAL options that contradict the choice
+  (`--huge-dir`, `--no-huge`, a `--proc-type` other than `primary` or
+  `--huge-unlink=never` with it; `--in-memory` or `--no-shconf` without it)
+  fail start with `DpdkError::InvalidEnvironment` naming both variables. Its
+  latency effect is not measured here.
 - **`RUSTERON_DPDK_HUGE_DIR`**: the hugetlbfs mount DPDK uses, an absolute
   path; `/dev/hugepages` by default.
 - **`RUSTERON_MEDIA_DRIVER_DIR`**: the Aeron directory `ConfiguredDriver`
@@ -162,6 +171,27 @@ mode. Running unpinned is not measured here.
 - **Hugepages:** the pool's size does not depend on the ring: about 37 MiB a
   port at the default MTU (2,048-byte mbufs), 145 MiB at 8960.
 
+## Queue tuning
+
+Pod env, read at start. Unset, each queue keeps the PMD's defaults.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `RUSTERON_DPDK_RX_FREE_THRESH` | PMD's (ENA: 256 at 4096 descriptors) | Descriptors used before the PMD refills them, inside the `rx_burst` that crosses it. 1 to the ring less 1. |
+| `RUSTERON_DPDK_TX_FREE_THRESH` | PMD's (ENA: 448 at 512 descriptors) | ENA reclaims every completed descriptor inside the send that finds fewer than this free. 1 to `RUSTERON_DPDK_TX_DESCRIPTORS` less 1. |
+| `RUSTERON_DPDK_TX_FAST_FREE` | off | `RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE`: sent mbufs freed in bulk. Configured only where the NIC offers it (ENA does). |
+
+- **Validation:** a threshold of 0 or at least its ring is refused, naming
+  the variable: in Rust against the configured ring (4096 unset), and at start
+  against the ring the port took (MANA's 256).
+- **`port-info` label:** `tx-fast-free=on`, `tx-fast-free=unsupported`
+  (asked for, NIC lacks it, left off and logged), and
+  `rx-free-thresh=… tx-free-thresh=…` when set.
+- **FAST_FREE soundness:** every frame sent (data, ARP, ICMP) is one segment
+  from the port's own pool, held by nothing else. `tests/dpdk_queue_conf.rs`
+  sends through each path with the fake checking all three.
+- No setting is recommended yet: none has been measured.
+
 ## ENA low-latency queues
 
 ENA's transmit path needs its low-latency queue (LLQ), which writes into the
@@ -227,10 +257,13 @@ cannot read, such as from a pod's network namespace).
   after a reset, which on ENA re-places interrupts and turns adaptive
   moderation back on. It only prints; it never stops the driver. Nothing is
   re-checked under `dpdk-ena`.
-- **`ERGON_HOST_CHECKS`**, alias `RUSTERON_MEDIA_DRIVER_HOST_CHECK` (read only
-  when `ERGON_HOST_CHECKS` is unset): `on`/`warn` (default), `off` (no check
-  runs), or `require`, which refuses to start while any check warns
-  (`DpdkError::HostCheck`). Any other value refuses to start.
+- **Gateways.** Under `dpdk-ena` the creating thread asks each port's
+  gateway for its MAC before the agents start, waiting up to 1 s. An answer
+  is learned, so the first send through it does not wait; a silent gateway
+  is one warning line naming the port and its `*_GATEWAY` variable.
+- **`ERGON_HOST_CHECKS`**: `on`/`warn` (default), `off` (no check runs), or
+  `require`, which refuses to start while any check warns, a silent gateway
+  included (`DpdkError::HostCheck`). Any other value refuses to start.
 
 ## No pauses on the hot path
 
@@ -244,16 +277,27 @@ periodic runs on them.
   - Up to 1024 next hops a NIC, at most 16 slots examined a lookup; a new one
     replaces the least recently used next hop idle for 60 s, else its
     datagrams drop (`ENOBUFS`, reported at most once a minute).
-  - A refresh request goes out at 30 s, alongside the traffic; an unanswered
-    refresh keeps the cached MAC. A frame from a peer's IP with a new MAC triggers a
-    refresh at once; only a solicited answer changes the MAC.
+  - A refresh request goes out at 30 s, after the data frames of the send
+    that found it due, never before them; an unanswered refresh keeps the
+    cached MAC. A frame from a peer's IP with a new MAC triggers a refresh at
+    once; only a solicited answer changes the MAC.
   - ARP requests for the NIC's addresses are answered at most 1000 times a
-    second.
+    second. ARP and ICMP replies are built after the receive burst's data
+    frames are dispatched, so a datagram never waits behind one.
+- **Error reports.** A SETUP from a peer whose MTU is above ours and an ICMP
+  fragmentation-needed are counted on the agent (`peer-mtu-too-large`,
+  `icmp-frag-needed`), which queues a fixed-size record at most once a second
+  per NIC. Housekeeping formats it: one line on stderr with the address, and
+  one entry per kind in the driver's distinct error log. The agent never
+  formats an address or takes that log's mutex, which the conductor shares.
 - **Statistics** run once a second on a housekeeping thread: NIC drop counters
   (`nic-rx-errors`, `nic-rx-missed`, `nic-rx-nombuf`), PMD extended
   statistics (on ENA an admin command each) and the mempool.
   `RUSTERON_DPDK_NIC_STATS_MS` sets the interval (1000 to 3600000; `0` stops
   the reads). The latency effect of the reads is not measured here.
+  Housekeeping holds its lock only to copy a port's state and to store what
+  it read, never across the read, so a transport's close never waits for an
+  ENA admin command.
 - **Housekeeping placement:** `RUSTERON_DPDK_HOUSEKEEPING_CPU`, else the
   conductor's CPU unless the conductor spins, else the EAL main lcore's CPU;
   not a busy agent's core or its SMT sibling. The EAL's own threads are
@@ -265,7 +309,11 @@ periodic runs on them.
   check is counted (`nic-reset-requested`, type 79) and logged at error
   level. The transport does not reset the device under the polling agents.
   The `media_driver` process stops them and exits non-zero, so a DaemonSet
-  restarts it.
+  restarts it. Where the NIC can raise link-status-change interrupts
+  (`RTE_ETH_DEV_INTR_LSC`; ENA does), each change is counted
+  (`nic-link-changes`, type 79) and logged as a warning; the transport does
+  nothing else about it. Otherwise none is asked for and `port-info` says
+  `lsc=off`.
   Under `uio_pci_generic` the keep-alive needs ENA's
   `control_path_poll_interval` devarg (DPDK 24.11+), or the watchdog fires.
 - **Receive drain.** A poll takes up to `RUSTERON_DPDK_BURST_SIZE` frames a
@@ -283,7 +331,31 @@ periodic runs on them.
   length is work (`poll-cycle-gaps-work`, `poll-cycle-gap-work-max-ns`), less
   is the host descheduling the vCPU (`poll-cycle-gaps-desched`,
   `poll-cycle-gap-desched-max-ns`). Off by default, so the hot path never
-  reads the CPU clock for it.
+  reads the CPU clock for it. Both agents are covered: the sender agent's
+  control poll times the sender port (`role=sender ... dir=rx`), so a stall
+  in its sends lands there.
+- **PMD call timing.** With `RUSTERON_DPDK_GAP_ATTRIB=1`, each `rx_burst`
+  that returns frames and each `tx_burst` is timed: `rx-burst-max-ns`,
+  `rx-bursts-over-1us`, `rx-bursts-over-5us` and the `tx-` three (type 87).
+  ENA refills its receive ring and reclaims sent descriptors inside these
+  calls. Two clock reads a burst while on; one predictable branch while off.
+- **Event log.** `RUSTERON_DPDK_EVENT_LOG=<file>` (pod env, lab only) writes
+  stamped events so a latency maximum can be matched to what the driver did:
+
+  | Kind | Written by | `value_ns` |
+  |---|---|---|
+  | `gap` | the port's agent: a loop gap of 10 µs or more | its length |
+  | `arp-request`, `arp-reply`, `arp-learned` | the port's agent | 0 |
+  | `timers` | housekeeping: DPDK's timer service (ENA watchdog) | its duration |
+  | `sample`, `nic-stats` | housekeeping: a port's 1 Hz sample, its NIC statistics read | its duration |
+  | `drops` | housekeeping: events a full ring dropped | how many |
+
+  Rows are `kind,tsc,realtime_ns,value_ns,port,agent`: the CPU counter and
+  `CLOCK_REALTIME` when the event ended, the DPDK port (`-` for `timers`) and
+  the thread's kernel id. Each writer has its own preallocated ring of 4096
+  events; it never locks, allocates or writes the file, and a full ring drops
+  the newest event. Housekeeping writes the file every 100 ms; close writes
+  the rest. Start fails, naming the variable, if the file cannot be opened.
 
 ## Kernel socket semantics
 
@@ -318,13 +390,23 @@ kernel UDP sockets.
   the largest workable value, when the NIC cannot carry it. A peer announcing
   a larger MTU is dropped and reported (`peer-mtu-too-large`), so its
   publication shows as not connected rather than stalling.
+- **ENA Express.** UDP over SRD carries IP packets of at most 8900 bytes. An
+  ENA whose `ena_srd_mode` xstat has UDP on (bit 1) fails start with
+  `DpdkError::InvalidConfiguration` when `max_aeron_mtu` + 28 is above that,
+  naming the largest MTU that fits (8864). ENA Express is set on the ENI
+  (infrastructure), not in the pod.
 
 ## Bandwidth allowance
 
-Clouds drop traffic over a VM's allowance before any counter here sees it;
-Aeron then retransmits and throughput collapses. MANA counts no drop of its
-own; `rx-ring-full-suspected` is a heuristic for it
-(`native/dpdk/rusteron_dpdk_runtime.c`). No Azure run output is committed.
+Clouds drop traffic over a VM's allowance; Aeron then retransmits and
+throughput collapses. On ENA the drops are counted by the PMD's ENI xstats,
+which the transport mirrors as type-92 counters named by the PMD
+(`bw_in_allowance_exceeded`, `bw_out_allowance_exceeded`,
+`pps_allowance_exceeded`, `conntrack_allowance_exceeded`,
+`linklocal_allowance_exceeded`), read every `RUSTERON_DPDK_NIC_STATS_MS`.
+MANA counts none, nor its own ring overflow; `rx-ring-full-suspected` is a
+heuristic for the latter (`native/dpdk/rusteron_dpdk_runtime.c`). No Azure
+run output is committed.
 
 | variable | meaning |
 |---|---|
@@ -490,7 +572,24 @@ just verify-dpdk-docker --build --all             # the same in Docker amd64 emu
 just verify-dpdk-docker --arm64 --build --all     # and in Docker arm64 (native on Apple silicon)
 just test-dpdk-bootstrap                          # node scripts against fixtures
 just test-dpdk-vdev                               # tap-device interop (root)
+scripts/test-dpdk-vdev-rootless.sh                # the same scenarios, unprivileged (below)
+just verify-dpdk-docker --arm64 --build --rootless  # and those in Docker, as a non-root user
 ```
+
+The vdev scenarios run the real tap PMD, EAL and mempools, and assert on the
+reports' counters and logs: interop both ways with kernel UDP, reconnect,
+three endpoints, loss recovery, restart, ICMP echo, a peer MAC that moves
+mid-stream, a gateway that never answers ARP, and full frames at the largest
+Aeron MTU (8960; 8992 refused at start).
+
+| Lane | Needs | Memory |
+|---|---|---|
+| `test-dpdk-vdev.sh` (sudo) | root, `/dev/net/tun`, hugetlbfs | 2 MiB hugepages |
+| `test-dpdk-vdev-rootless.sh` | unprivileged user namespaces (`kernel.apparmor_restrict_unprivileged_userns=0` on Ubuntu 23.10+, set once by root), `/dev/net/tun`, `sch_netem` loaded; Docker: `--security-opt seccomp=unconfined --security-opt apparmor=unconfined --device /dev/net/tun` | EAL `--no-huge -m 512` |
+
+The rootless runner fails, naming the sysctl, when the namespace is refused;
+it never skips. It is a CI and developer-box tool: nothing here goes into a pod
+or onto a node.
 
 ## License
 

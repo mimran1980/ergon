@@ -28,7 +28,7 @@ Which features to pick: see Features, below.
 
 | Use it for | Use something else for |
 |---|---|
-| A Linux thread that spins on its own core and owns 1 to a few hundred exchange connections (pick the backend by count: below) | An async application: tokio or mio |
+| A Linux thread that spins on its own core and owns 1 to a few hundred exchange connections (pick the backend by count: below) | An async application: tokio or mio (mio [was measured](https://mimran1980.github.io/ergon/io/backends.html#mio-measured-not-a-backend): level with `epoll-spin` on Linux) |
 | A loop that must never sleep in the kernel | Production on macOS or Windows: the driver is Linux-only |
 | Fixed endpoints: HTTP/1.1 keep-alive, TLS 1.3 | HTTP/2 or 3, proxies, redirects, cookies, compression: the `curl` feature or a general client |
 
@@ -36,7 +36,7 @@ Which features to pick: see Features, below.
 
 | Part | What it does |
 |---|---|
-| `Driver` | Owns the connections. Each `poll` makes one pass (receive, decrypt, decode, deliver, send) and returns. |
+| `Driver` | Owns the connections. Each `poll` makes one pass (send what you queued, receive, decrypt, decode, deliver, send replies) and returns. |
 | `WsConn` | WebSocket client. `WsHandler::on_message` gets a slice of the receive buffer. |
 | `WsOptions` | WebSocket limits and timers. |
 | `Reconnect` | Optional. Reopens closed connections with backoff; you resubscribe. |
@@ -128,8 +128,9 @@ how to change it: the book's
 - **Connecting does not block.** `Driver::connect` takes a step per poll,
   but the TLS handshake makes one poll long; `Driver::connect_background`
   runs it on a helper thread.
-- **Timers stay off the hot path.** Pings and timeouts run on the driver's
-  deadline check (every 250 µs), never on the read or send path.
+- **Timers stay off the hot path.** Pings, timeouts and the opt-in
+  `TCP_INFO` sampling run on the driver's deadline check (every 250 µs),
+  never on the read or send path.
 - **TLS 1.3 only.** TLS 1.2 is refused with a clear error.
 - **Client side only.** No listener.
 - **WebSocket, not supported:** compression (`permessage-deflate`), other
@@ -139,7 +140,8 @@ how to change it: the book's
 - **Kernel.** `uring-spin` needs Linux 6.1+; `uring-sqpoll`, `uring-napi`
   and `epoll-busy` need 6.9+. The `io_uring` backends need the `uring`
   feature (on by default). `prefer_busy_poll` on `recv-busy` and a raised
-  `busy_poll_budget` need `CAP_NET_ADMIN`.
+  `busy_poll_budget` need `CAP_NET_ADMIN`. The opt-in `tcp_rto_min_us` and
+  `tcp_delack_max_us` need 6.15+ (refused, typed, at `Driver::new`).
 - **Host checks at start-up** ([ergon-tune](https://github.com/mimran1980/ergon/tree/main/tune)):
   the loop's CPU, the receive buffer, each route's quick ACK and each egress
   NIC. Each finding goes to stderr once, with its fix, from a warning thread.

@@ -188,8 +188,8 @@ struct Variant {
     /// Whether the scratch crate needs the domain impls and `rust_decimal`.
     domain_impls: bool,
     build: fn(GenerationConfig) -> GenerationConfig,
-    /// Appended to the generated module: items a knob's output names (an error
-    /// type) or that prove its output exists (a hook's item).
+    /// Appended to the generated module: items that prove a knob's output
+    /// exists (a hook's item, a renamed accessor).
     module_suffix: &'static str,
     /// Fragments the knob must put in the generated source. For a knob whose
     /// output is an attribute, compiling proves nothing on its own — a missing
@@ -312,24 +312,6 @@ const VARIANTS: &[Variant] = &[
         expect_src: &[],
     },
     Variant {
-        name: "domain_objects_error_from_impls",
-        domain_impls: true,
-        #[allow(deprecated)]
-        build: |c| {
-            with_matrix_domain_types(c.with_domain_objects(DomainVarData::Bytes))
-                .with_error_from_impls("self::MatrixError")
-        },
-        module_suffix: r#"
-            #[derive(Debug)]
-            pub struct MatrixError(pub String);
-            impl From<String> for MatrixError {
-                fn from(s: String) -> Self { Self(s) }
-            }
-            const _: fn(sbe_rt::DecodeError) -> MatrixError = MatrixError::from;
-        "#,
-        expect_src: &[],
-    },
-    Variant {
         name: "flyweight_deprecated_attrs_keyword_token",
         domain_impls: false,
         build: |c| {
@@ -341,7 +323,10 @@ const VARIANTS: &[Variant] = &[
             fn _keyword_renamed_row(d: &NestedRowsEntryDecoder<'_>) -> u8 { d.type_kw() }
             fn _keyword_renamed_cell(d: &NestedRowsCellsEntryDecoder<'_>) -> u8 { d.type_kw() }
         "#,
-        expect_src: &["#[deprecated", "pub fn type_kw("],
+        expect_src: &[
+            r#"#[deprecated(note = "deprecated since schema version 2")]"#,
+            "pub fn type_kw(",
+        ],
     },
     Variant {
         name: "domain_objects_hook",
@@ -654,7 +639,8 @@ fn module_set_knobs_compile() -> Result<(), Box<dyn std::error::Error>> {
 /// module that does not compile cannot pass, however good its source looks.
 #[test]
 fn every_config_variant_compiles() -> Result<(), Box<dyn std::error::Error>> {
-    for v in VARIANTS {
+    // Independent variants: run in parallel, fail with the first failing one.
+    common::parallel_map(VARIANTS, |_, v| {
         let module = format!("cm_{}", v.name);
         let (_s, src) = generate_domain_with(&matrix_schema(), &module, |c| (v.build)(c));
         for fragment in v.expect_src {
@@ -681,7 +667,7 @@ fn every_config_variant_compiles() -> Result<(), Box<dyn std::error::Error>> {
             ),
             deps,
         );
-    }
+    });
     Ok(())
 }
 

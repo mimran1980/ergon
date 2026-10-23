@@ -1,4 +1,4 @@
-//! Normalised schema handle for codegen: package identity + resolved [`Ir`].
+//! Schema handle for codegen: the resolved [`Ir`], which carries the package identity.
 //!
 //! ```rust
 //! use ergo_sbe::{parse, Schema};
@@ -17,8 +17,8 @@
 //! </messageSchema>"#).unwrap();
 //!
 //! let schema = Schema::from_ir(ir);
-//! assert_eq!(schema.package, "example");
-//! assert_eq!(schema.id, 1);
+//! assert_eq!(schema.ir.package, "example");
+//! assert_eq!(schema.ir.id, 1);
 //! // Generator::new(config).generate(&schema)
 //! ```
 
@@ -28,16 +28,10 @@ use crate::ir::{ByteOrder, Ir};
 ///
 /// Built with [`Schema::from_ir`] after [`crate::parse`] / [`crate::parse_file`].
 ///
-/// Package, id, and version are copied from the IR at construction. A single
-/// identity source (`Ir` only) is a 1.0 migration and is not shipped on 0.x.
+/// Package, id and version live only on [`Ir`]: read `schema.ir.package`,
+/// `schema.ir.id` and `schema.ir.version`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Schema {
-    /// SBE package name from the XML schema (e.g. `"fix.sbe"`, `"baseline"`).
-    pub package: String,
-    /// SBE schema id — identifies this schema on the wire.
-    pub id: u16,
-    /// SBE schema version — incremented when the schema evolves.
-    pub version: u16,
     /// Resolved token IR ready for code generation.
     pub ir: Ir,
 }
@@ -49,13 +43,9 @@ impl Schema {
     /// plan to set the tokens manually, or for testing.
     #[must_use]
     pub(crate) fn new(package: impl Into<String>, id: u16, version: u16) -> Self {
-        let package_str = package.into();
         Self {
-            package: package_str.clone(),
-            id,
-            version,
             ir: Ir {
-                package: package_str,
+                package: package.into(),
                 id,
                 version,
                 byte_order: ByteOrder::LittleEndian,
@@ -79,33 +69,17 @@ impl Schema {
     /// # <type name="version" primitiveType="uint16"/>
     /// # </composite></types></messageSchema>"#;
     /// let schema = Schema::from_ir(parse(xml).unwrap());
-    /// assert_eq!(schema.version, 0);
+    /// assert_eq!(schema.ir.version, 0);
     /// ```
     #[must_use]
     pub fn from_ir(ir: Ir) -> Self {
-        Self {
-            package: ir.package.clone(),
-            id: ir.id,
-            version: ir.version,
-            ir,
-        }
+        Self { ir }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::Schema;
-
-    #[test]
-    fn schema_metadata_preserves_identity_fields() -> Result<(), Box<dyn std::error::Error>> {
-        let schema = Schema::new("fix.sbe", 42, 7);
-
-        assert_eq!(schema.package, "fix.sbe");
-        assert_eq!(schema.id, 42);
-        assert_eq!(schema.version, 7);
-
-        Ok(())
-    }
 
     #[test]
     fn schema_from_ir_preserves_metadata() -> Result<(), Box<dyn std::error::Error>> {
@@ -121,9 +95,9 @@ mod tests {
             tokens: Vec::new(),
         };
         let schema = Schema::from_ir(ir);
-        assert_eq!(schema.package, "test_pkg");
-        assert_eq!(schema.id, 99);
-        assert_eq!(schema.version, 3);
+        assert_eq!(schema.ir.package, "test_pkg");
+        assert_eq!(schema.ir.id, 99);
+        assert_eq!(schema.ir.version, 3);
         assert_eq!(schema.ir.header_type, "customHeader");
 
         Ok(())

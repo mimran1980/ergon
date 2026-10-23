@@ -67,4 +67,4 @@ names=$(sed -n "${shard}p" <<<"$plan" | cut -d' ' -f2-)
 args=()
 for n in $names; do args+=(--test "$n"); done
 echo "ci-test-shard $shard/$shards: ergo-sbe ${names}"
-exec cargo test -p ergo-sbe --all-features "${args[@]}" -- --test-threads=2
+exec cargo test -p ergo-sbe --all-features "${args[@]}"

@@ -112,35 +112,32 @@ fn flat_group_domain_bulk_encode_matches_wire_bulk_and_automatic_dto_encode()
         }
         assert_eq!(i, levels.len());
 
-        let invalid_levels = [BookSnapshotLevelsEntryDomain {
+        // `numOrders` declares no bound, so `u32::MAX` (the SBE default
+        // range's excluded null) is written as given by both paths; declared
+        // bounds are covered in source_trait_test.
+        let max_levels = [BookSnapshotLevelsEntryDomain {
             price: 10_003,
             qty: 1,
             num_orders: u32::MAX,
         }];
-        let mut invalid_buf = [0u8; BookSnapshotEncoder::compute_length_with_header(1)];
-        let err = BookSnapshotEncoder::try_wrap_and_apply_header(&mut invalid_buf, 0).unwrap()
+        let mut max_bulk_buf = [0u8; BookSnapshotEncoder::compute_length_with_header(1)];
+        let max_bulk_len = BookSnapshotEncoder::try_wrap_and_apply_header(&mut max_bulk_buf, 0).unwrap()
             .fixed(&BookSnapshotFixedFields {})
-            .levels(1, |group| group.bulk_add_domain(&invalid_levels))
-            .unwrap_err();
-        assert!(matches!(
-            err,
-            sbe_rt::EncodeError::ValueOutOfRange {
-                field: "numOrders",
-                ..
-            }
-        ));
+            .levels(1, |group| group.bulk_add_domain(&max_levels))?
+            .encoded_length_with_header();
 
-        let invalid_dto = BookSnapshotDomain {
-            levels: invalid_levels.to_vec(),
+        let max_dto = BookSnapshotDomain {
+            levels: max_levels.to_vec(),
         };
-        let err = invalid_dto.encode(&mut invalid_buf).unwrap_err();
-        assert!(matches!(
-            err,
-            sbe_rt::EncodeError::ValueOutOfRange {
-                field: "numOrders",
-                ..
-            }
-        ));
+        let mut max_dto_buf = [0u8; BookSnapshotEncoder::compute_length_with_header(1)];
+        let max_dto_len = max_dto.encode(&mut max_dto_buf)?;
+        assert_eq!(&max_dto_buf[..max_dto_len], &max_bulk_buf[..max_bulk_len]);
+        let mut back = BookSnapshotDecoder::try_from(&max_dto_buf[..max_dto_len])?.into_levels()?;
+        let mut read = Vec::new();
+        for level in &mut back {
+            read.push(level.num_orders());
+        }
+        assert_eq!(read, [u32::MAX]);
         "#,
     );
 

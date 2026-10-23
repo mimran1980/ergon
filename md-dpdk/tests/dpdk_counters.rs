@@ -798,6 +798,164 @@ fn a_host_local_channel_away_from_its_poller_is_not_a_loop_gap() {
     assert_no_leak();
 }
 
+unsafe extern "C" {
+    fn rusteron_dpdk_fake_set_burst_ns(rx_ns: u64, tx_ns: u64);
+    fn rusteron_dpdk_test_clock_reads() -> u64;
+}
+
+/// The sender agent polls its NIC too (Aeron's control poll: status
+/// messages and NAKs), so its loop is timed on the sender port's own
+/// poll-cycle counters: a stall in its send between two polls (here a
+/// tx_burst that takes 30 µs) lands in the sender's 20-50 µs bucket, not the
+/// receiver's.
+#[test]
+#[serial]
+fn a_stall_in_the_sender_agents_send_is_its_loop_gap() {
+    const TX_PORT: &str = "role=sender bdf=0000:00:01.0 port=0 q=0 dir=rx";
+    const RX_PORT: &str = "role=receiver bdf=0000:00:02.0 port=1 q=0 dir=rx";
+    let mut h = Harness::new();
+    h.init_tx(SENDER_IP, 40000, None, 1472);
+    h.init_rx(RECEIVER_IP, 60000, 1472);
+    pin_clock_ns(1_000_000);
+    h.arp_seed(PEER_IP, PEER_MAC); // fresh on the pinned clock: no refresh request
+    let mut p = h.poller();
+    p.add(&mut *h.tx); // the sender agent's control poll
+    let mut bytes = 0i64;
+    let clientd = &mut h.rx_dgrams as *mut Vec<RxDatagram> as *mut c_void;
+    p.poll(16, clientd, &mut bytes); // the reference
+    unsafe { rusteron_dpdk_fake_set_burst_ns(0, 30_000) };
+    assert_eq!(h.send_to((PEER_IP, 40123), &[b"x"]).0, 1, "{}", last_error());
+    p.poll(16, clientd, &mut bytes);
+    assert_eq!(
+        (
+            h.counter(TYPE_POLLER, &format!("{TX_PORT} poll-cycle-gap-max-ns")),
+            h.counter(TYPE_POLLER, &format!("{TX_PORT} poll-cycle-gaps-20-50us")),
+        ),
+        (30_000, 1),
+        "the sender agent's stall"
+    );
+    assert_eq!(h.counter(TYPE_POLLER, &format!("{RX_PORT} poll-cycle-gaps-20-50us")), 0);
+    drop(p);
+    assert_no_leak();
+}
+
+/// (max ns, 1 µs or more, 5 µs or more) of `dir`'s bursts on `port`.
+fn burst_read(h: &Harness, port: &str, dir: &str) -> (i64, i64, i64) {
+    (
+        h.counter(TYPE_POLLER, &format!("{port} {dir}-burst-max-ns")),
+        h.counter(TYPE_POLLER, &format!("{port} {dir}-bursts-over-1us")),
+        h.counter(TYPE_POLLER, &format!("{port} {dir}-bursts-over-5us")),
+    )
+}
+
+/// With RUSTERON_DPDK_GAP_ATTRIB=1 each rx_burst that returns frames is
+/// timed: the longest, and how many took 1 µs or more and 5 µs or more (ENA
+/// refills its ring inside the call, so a slow one is that refill).
+#[test]
+#[serial]
+fn rx_burst_durations_are_timed_with_gap_attrib() {
+    const RX: &str = "role=receiver bdf=0000:00:02.0 port=1 q=0 dir=rx";
+    let _attrib = EnvGuard::set("RUSTERON_DPDK_GAP_ATTRIB", "1");
+    let mut h = Harness::new();
+    h.init_rx(RECEIVER_IP, 60000, 1472);
+    let mut p = h.poller();
+    p.add(&mut *h.rx);
+    pin_clock_ns(1_000_000);
+    let frame = frame_to_receiver(60000, b"x");
+    for (ns, expected) in [
+        (700, (700, 0, 0)),
+        (1_000, (1_000, 1, 0)),
+        (3_000, (3_000, 2, 0)),
+        (6_000, (6_000, 3, 1)),
+        (2_000, (6_000, 4, 1)),
+    ] {
+        unsafe { rusteron_dpdk_fake_set_burst_ns(ns, 0) };
+        assert_eq!(inject_and_poll(&mut h, &mut p, &frame), 1);
+        assert_eq!(burst_read(&h, RX, "rx"), expected, "a burst of {ns} ns");
+    }
+    drop(p);
+    assert_no_leak();
+}
+
+/// The same for each tx_burst of a send, on the sender port.
+#[test]
+#[serial]
+fn tx_burst_durations_are_timed_with_gap_attrib() {
+    const TX: &str = "role=sender bdf=0000:00:01.0 port=0 q=0 dir=tx";
+    let _attrib = EnvGuard::set("RUSTERON_DPDK_GAP_ATTRIB", "1");
+    let mut h = Harness::new();
+    h.init_tx(SENDER_IP, 40000, None, 1472);
+    pin_clock_ns(1_000_000);
+    h.arp_seed(PEER_IP, PEER_MAC);
+    for (ns, expected) in [(400, (400, 0, 0)), (5_000, (5_000, 1, 1)), (1_500, (5_000, 2, 1))] {
+        unsafe { rusteron_dpdk_fake_set_burst_ns(0, ns) };
+        assert_eq!(h.send_to((PEER_IP, 40123), &[b"x"]).0, 1, "{}", last_error());
+        assert_eq!(burst_read(&h, TX, "tx"), expected, "a burst of {ns} ns");
+    }
+    assert_no_leak();
+}
+
+/// Off by default: nothing is timed, however long the bursts take.
+#[test]
+#[serial]
+fn burst_timing_is_off_without_gap_attrib() {
+    const RX: &str = "role=receiver bdf=0000:00:02.0 port=1 q=0 dir=rx";
+    const TX: &str = "role=sender bdf=0000:00:01.0 port=0 q=0 dir=tx";
+    let mut h = Harness::new();
+    h.init_tx(SENDER_IP, 40000, None, 1472);
+    h.init_rx(RECEIVER_IP, 60000, 1472);
+    pin_clock_ns(1_000_000);
+    h.arp_seed(PEER_IP, PEER_MAC);
+    let mut p = h.poller();
+    p.add(&mut *h.rx);
+    unsafe { rusteron_dpdk_fake_set_burst_ns(6_000, 6_000) };
+    assert_eq!(inject_and_poll(&mut h, &mut p, &frame_to_receiver(60000, b"x")), 1);
+    assert_eq!(h.send_to((PEER_IP, 40123), &[b"x"]).0, 1, "{}", last_error());
+    assert_eq!(burst_read(&h, RX, "rx"), (0, 0, 0));
+    assert_eq!(burst_read(&h, TX, "tx"), (0, 0, 0));
+    drop(p);
+    assert_no_leak();
+}
+
+/// What the timing costs: with RUSTERON_DPDK_GAP_ATTRIB off a poll that
+/// receives one frame and a send of one read the transport clock exactly as
+/// often as before it existed; on, each reads it twice more (either side of
+/// its one burst).
+#[test]
+#[serial]
+fn burst_timing_reads_the_clock_only_when_on() {
+    let mut costs = Vec::new();
+    for attrib in ["0", "1"] {
+        let _attrib = EnvGuard::set("RUSTERON_DPDK_GAP_ATTRIB", attrib);
+        let mut h = Harness::new();
+        h.init_tx(SENDER_IP, 40000, None, 1472);
+        h.init_rx(RECEIVER_IP, 60000, 1472);
+        pin_clock_ns(1_000_000);
+        h.arp_seed(PEER_IP, PEER_MAC);
+        let mut p = h.poller();
+        p.add(&mut *h.rx);
+        let frame = frame_to_receiver(60000, b"x");
+        assert_eq!(inject_and_poll(&mut h, &mut p, &frame), 1); // first-time paths
+        assert_eq!(h.send_to((PEER_IP, 40123), &[b"x"]).0, 1);
+        let r0 = unsafe { rusteron_dpdk_test_clock_reads() };
+        assert_eq!(inject_and_poll(&mut h, &mut p, &frame), 1);
+        let r1 = unsafe { rusteron_dpdk_test_clock_reads() };
+        assert_eq!(h.send_to((PEER_IP, 40123), &[b"x"]).0, 1);
+        let r2 = unsafe { rusteron_dpdk_test_clock_reads() };
+        costs.push((r1 - r0, r2 - r1));
+        drop(p);
+        assert_no_leak();
+    }
+    assert_eq!(costs[0], (POLL_CLOCK_READS, SEND_CLOCK_READS), "off: as before");
+    assert_eq!(costs[1], (POLL_CLOCK_READS + 2, SEND_CLOCK_READS + 2), "on");
+}
+
+/// The clock reads of a poll that receives one frame (its loop-gap stamp) and
+/// of a send of one (ARP freshness), before burst timing existed: measured on
+/// that code.
+const POLL_CLOCK_READS: u64 = 1;
+const SEND_CLOCK_READS: u64 = 1;
+
 // ---------------------------------------------------------------------------
 // Poll-cycle gap attribution: work or descheduling
 // ---------------------------------------------------------------------------

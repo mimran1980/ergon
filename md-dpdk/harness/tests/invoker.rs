@@ -517,3 +517,55 @@ fn an_unknown_harness_driver_is_refused() {
     assert!(refused.stderr.contains("HARNESS_DRIVER"), "{}", refused.stderr);
     assert!(refused.stdout.is_empty(), "{}", refused.stdout);
 }
+
+/// Every spike row `rtt xping` writes (`LOAD_SPIKES`) carries the ping's index
+/// in the measured run, so the lab can place a spike in the run (a term
+/// rotation, the n-th ping after warm-up): at `LOAD_SPIKE_NS=1` every
+/// measured round trip is a spike, so the rows are pings 0, 1, 2, ... in
+/// order, one each, as many as `# spikes_total=` counts.
+#[test]
+fn rtt_spike_rows_carry_their_ping_index() {
+    let (ping, pong) = (
+        format!("127.0.0.1:{}", free_port()),
+        format!("127.0.0.1:{}", free_port()),
+    );
+    let (ping_dir, pong_dir) = (aeron_dir("index-ping"), aeron_dir("index-pong"));
+    let spikes = format!("{ping_dir}-spikes.csv");
+    let _ = std::fs::remove_file(&spikes);
+    let rtt = env!("CARGO_BIN_EXE_rtt");
+    let ponger = start(rtt, &["xpong", &ping, &pong, "-"], Some("invoker"), &pong_dir, &[]);
+    let pinged = start(
+        rtt,
+        &["xping", &ping, &pong, "2000", "200", "-"],
+        Some("invoker"),
+        &ping_dir,
+        &[("LOAD_SPIKES", spikes.as_str()), ("LOAD_SPIKE_NS", "1")],
+    )
+    .finish(90);
+    let ponged = ponger.terminate(30);
+    pinged.assert_ok("xping", EMBEDDED);
+    ponged.assert_ok("xpong", EMBEDDED);
+    let samples: usize = pinged.result("rtt,invoker-test,udp,")[10].parse().expect("samples");
+    let text = std::fs::read_to_string(&spikes).unwrap_or_else(|e| panic!("{spikes}: {e}"));
+    let mut lines = text.lines();
+    assert!(
+        lines.next().is_some_and(|l| l.starts_with("# start_realtime_ns=")),
+        "{text}"
+    );
+    assert_eq!(
+        lines.next(),
+        Some(format!("# spikes_total={samples}").as_str()),
+        "{text}"
+    );
+    assert_eq!(lines.next(), Some("stream,due_ns,latency_ns,ping"), "{text}");
+    let rows: Vec<Vec<&str>> = lines.map(|l| l.split(',').collect()).collect();
+    assert_eq!(rows.len(), samples, "one row a measured round trip");
+    for (i, row) in rows.iter().enumerate() {
+        assert_eq!(row.len(), 4, "row {i}: {row:?}");
+        assert_eq!(row[3], i.to_string(), "row {i}: {row:?}");
+    }
+    let _ = std::fs::remove_file(&spikes);
+    for dir in [ping_dir, pong_dir] {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}

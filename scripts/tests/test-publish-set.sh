@@ -3,8 +3,8 @@
 # crate, on each way a release can break: a published crate depending on an
 # unpublished one, on a path without a version or on an older version of a
 # published sibling, a crate published before its dependency or not at all, a
-# dry run that leaves a dependency out, and a published crate missing from the
-# public-API gate.
+# dry run that leaves a dependency out, and a published crate missing from
+# api/public-api-baseline.toml.
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -74,7 +74,7 @@ write_workflow() {
 }
 
 write_api() {
-    printf '[metadata]\nbaseline_tag = "v0.1.26"\npackages = [%s]\n' "$1" \
+    printf '[metadata]\npackages = [%s]\n' "$1" \
         > "$fixture/api.toml"
 }
 
@@ -163,7 +163,7 @@ expect_failure 'util has no dry run in release-check'
 reset; write_justfile $'cargo publish -p core -p util --dry-run\ncargo publish -p app --dry-run' "$good_publish"
 expect_failure 'dry run of app without its dependency util'
 
-# The public-API gate lists every published crate and nothing else.
+# The API manifest lists every published crate and nothing else.
 reset; write_api '"core", "app"'
 expect_failure 'util is published but not in api/public-api-baseline.toml'
 reset; write_api '"core", "util", "app", "tool"'

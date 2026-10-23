@@ -24,6 +24,54 @@ fn generate_versioned_l3(sbe_root: &Path) -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
+/// Extended parity schemas (test fixtures with sbe-tool reference crates).
+fn generate_extended_parity(sbe_root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let oe_schema = sbe_root.join("tests/fixtures/schemas/optional_enum_nullify.xml");
+    ergo_sbe::generate_to_out_dir(
+        &oe_schema,
+        ergo_sbe::GenerationConfig::new("parity_optional_enum_nullify_bench"),
+    )?;
+    let ext_schema = sbe_root.join("tests/fixtures/schemas/example-extension-schema.xml");
+    ergo_sbe::generate_to_out_dir(
+        &ext_schema,
+        ergo_sbe::GenerationConfig::new("parity_extension_bench"),
+    )?;
+    let gwd_schema = sbe_root.join("tests/fixtures/schemas/group-with-data-schema.xml");
+    ergo_sbe::generate_to_out_dir(
+        &gwd_schema,
+        ergo_sbe::GenerationConfig::new("parity_group_with_data_bench"),
+    )?;
+    println!("cargo:rerun-if-changed=../tests/fixtures/schemas/optional_enum_nullify.xml");
+    println!("cargo:rerun-if-changed=../tests/fixtures/schemas/example-extension-schema.xml");
+    println!("cargo:rerun-if-changed=../tests/fixtures/schemas/group-with-data-schema.xml");
+    Ok(())
+}
+
+/// `NewOrder` twice: with source traits (`fixed()` + setters against
+/// `encode_from`), and with `Side` / `Decimal9` mapped to application types
+/// (mapped accessors against raw).
+fn generate_new_order(manifest: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let schema = manifest.join("schemas/bench-new-order.xml");
+    ergo_sbe::generate_to_out_dir(
+        &schema,
+        ergo_sbe::GenerationConfig::new("new_order_bench").with_source_traits(true),
+    )?;
+    ergo_sbe::generate_to_out_dir(
+        &schema,
+        ergo_sbe::GenerationConfig::new("new_order_mapped_bench")
+            .with_enum_mapping(ergo_sbe::EnumMapping::new(
+                "Side",
+                "crate::new_order_fixture::AppSide",
+            ))
+            .with_composite_mapping(ergo_sbe::CompositeMapping::new(
+                "Decimal9",
+                "crate::new_order_fixture::AppPrice",
+            )),
+    )?;
+    println!("cargo:rerun-if-changed=schemas/bench-new-order.xml");
+    Ok(())
+}
+
 /// Generate the codecs the Criterion benches compile against.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -117,30 +165,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ),
     )?;
 
-    // Extended parity schemas (test fixtures with sbe-tool reference crates).
-    let oe_schema = sbe_root.join("tests/fixtures/schemas/optional_enum_nullify.xml");
-    ergo_sbe::generate_to_out_dir(
-        &oe_schema,
-        ergo_sbe::GenerationConfig::new("parity_optional_enum_nullify_bench"),
-    )?;
-    let ext_schema = sbe_root.join("tests/fixtures/schemas/example-extension-schema.xml");
-    ergo_sbe::generate_to_out_dir(
-        &ext_schema,
-        ergo_sbe::GenerationConfig::new("parity_extension_bench"),
-    )?;
-    let gwd_schema = sbe_root.join("tests/fixtures/schemas/group-with-data-schema.xml");
-    ergo_sbe::generate_to_out_dir(
-        &gwd_schema,
-        ergo_sbe::GenerationConfig::new("parity_group_with_data_bench"),
-    )?;
+    generate_extended_parity(sbe_root)?;
+    generate_new_order(&manifest)?;
 
     println!("cargo:rerun-if-changed=schemas/orderbook.xml");
     println!("cargo:rerun-if-changed=schemas/orderbook-decimal.xml");
     println!("cargo:rerun-if-changed=schemas/l2-book.xml");
     println!("cargo:rerun-if-changed=schemas/bench-null-option.xml");
     println!("cargo:rerun-if-changed=schemas/bench-converters.xml");
-    println!("cargo:rerun-if-changed=../tests/fixtures/schemas/optional_enum_nullify.xml");
-    println!("cargo:rerun-if-changed=../tests/fixtures/schemas/example-extension-schema.xml");
-    println!("cargo:rerun-if-changed=../tests/fixtures/schemas/group-with-data-schema.xml");
     Ok(())
 }

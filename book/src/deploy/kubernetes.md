@@ -217,10 +217,16 @@ topologyManagerPolicy: single-numa-node
 # cpuCFSQuota is not set: it stays true, so every pod keeps its CPU limit.
 ```
 
-**EKS, Amazon Linux 2023:** nodeadm merges `spec.kubelet.config` into its
-defaults. Put the `NodeConfig` in the launch template's user data, as a MIME
-part with `Content-Type: application/node.eks.aws`. The full one, with the
-cluster fields, is in [Nodes](#nodes).
+**EKS, Amazon Linux 2023:** nodeadm writes its defaults to
+`/etc/kubernetes/kubelet/config.json` and `spec.kubelet.config` to the
+drop-in `/etc/kubernetes/kubelet/config.json.d/40-nodeadm.conf`, and runs
+the kubelet with `--config-dir` on that directory, so the kubelet merges
+the drop-in over the file. Put the `NodeConfig` in the launch template's
+user data, as a MIME part with `Content-Type: application/node.eks.aws`.
+The full one, with the cluster fields, is in [Nodes](#nodes). The
+shared-CPU plugin reads both for its hot-pod check with
+`hostContract.kubeletConfigDir` (needs chart 0.1.2):
+[EKS install](shared-cpus.md#use-the-public-chart).
 
 ```yaml
 apiVersion: node.eks.aws/v1alpha1

@@ -6,6 +6,8 @@
 **/.git
 target
 **/target
+# Per-task target directories (CARGO_TARGET_DIR=target-<name>) in worktrees.
+/target-*
 /aeron
 /simple-binary-encoding
 *.key

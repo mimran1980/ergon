@@ -63,6 +63,9 @@ const ENV_VARS: &[&str] = &[
     "RUSTERON_DPDK_SENDER_MAC",
     "RUSTERON_DPDK_RECEIVER_MAC",
     "RUSTERON_DPDK_RX_HW_TIMESTAMP",
+    "RUSTERON_DPDK_RX_FREE_THRESH",
+    "RUSTERON_DPDK_TX_FREE_THRESH",
+    "RUSTERON_DPDK_TX_FAST_FREE",
 ];
 
 fn clear_env() {
@@ -98,6 +101,9 @@ fn canonical() -> DpdkTransportConfig {
         burst_size: 32,
         max_aeron_mtu: 1408,
         rx_hw_timestamp: false,
+        rx_free_thresh: None,
+        tx_free_thresh: None,
+        tx_fast_free: false,
     }
 }
 
@@ -330,6 +336,90 @@ fn env_rejects_malformed_rx_hw_timestamp() {
     assert!(matches!(err, DpdkError::InvalidEnvironment(_)), "got {err:?}");
     assert!(err.to_string().contains("RUSTERON_DPDK_RX_HW_TIMESTAMP"), "got {err}");
     clear_env();
+}
+
+/// The ENA queue knobs: unset, each queue keeps the PMD's default
+/// configuration and FAST_FREE stays off, as before the knobs existed.
+#[serial]
+#[test]
+fn env_queue_knobs_default_to_the_pmds() {
+    clear_env();
+    set_env_from_canonical();
+    let c = env::config_from_env().unwrap();
+    assert_eq!(c.rx_free_thresh, None);
+    assert_eq!(c.tx_free_thresh, None);
+    assert!(!c.tx_fast_free);
+    clear_env();
+}
+
+/// `RUSTERON_DPDK_RX_FREE_THRESH`, `RUSTERON_DPDK_TX_FREE_THRESH` and
+/// `RUSTERON_DPDK_TX_FAST_FREE` reach the configuration.
+#[serial]
+#[test]
+fn env_reads_queue_knobs() {
+    clear_env();
+    set_env_from_canonical();
+    set_var("RUSTERON_DPDK_RX_FREE_THRESH", "64");
+    set_var("RUSTERON_DPDK_TX_FREE_THRESH", "511");
+    set_var("RUSTERON_DPDK_TX_FAST_FREE", "1");
+    let c = env::config_from_env().unwrap();
+    assert_eq!(c.rx_free_thresh, Some(64));
+    assert_eq!(c.tx_free_thresh, Some(511));
+    assert!(c.tx_fast_free);
+    set_var("RUSTERON_DPDK_TX_FAST_FREE", "false");
+    assert!(!env::config_from_env().unwrap().tx_fast_free);
+    clear_env();
+}
+
+/// A queue knob that does not parse is an environment error naming it.
+#[serial]
+#[test]
+fn env_rejects_malformed_queue_knobs() {
+    for (var, bad) in [
+        ("RUSTERON_DPDK_RX_FREE_THRESH", "lots"),
+        ("RUSTERON_DPDK_RX_FREE_THRESH", "-1"),
+        ("RUSTERON_DPDK_TX_FREE_THRESH", "70000"),
+        ("RUSTERON_DPDK_TX_FAST_FREE", "yes"),
+    ] {
+        clear_env();
+        set_env_from_canonical();
+        set_var(var, bad);
+        let err = env::config_from_env().unwrap_err();
+        assert!(
+            matches!(err, DpdkError::InvalidEnvironment(_)),
+            "{var}={bad}: got {err:?}"
+        );
+        assert!(err.to_string().contains(var), "{var}={bad}: got {err}");
+    }
+    clear_env();
+}
+
+/// A free threshold must be at least 1 (unset is the PMD's default) and below
+/// its ring: the receive ring as configured (4096 unset), the transmit ring
+/// for TX. Anything else is refused before the NIC sees it.
+#[test]
+fn queue_free_thresholds_are_validated() {
+    let mut c = canonical();
+    c.rx_free_thresh = Some(1023);
+    c.tx_free_thresh = Some(1023);
+    c.validate().unwrap();
+
+    c.rx_free_thresh = Some(0);
+    assert_invalid_config(&c, "rx_free_thresh");
+    c.rx_free_thresh = Some(1024);
+    assert_invalid_config(&c, "rx_free_thresh");
+    c.rx_descriptors = None;
+    c.mbufs_per_port = 65536;
+    c.rx_free_thresh = Some(4095);
+    c.validate().unwrap();
+    c.rx_free_thresh = Some(4096);
+    assert_invalid_config(&c, "rx_free_thresh");
+
+    let mut c = canonical();
+    c.tx_free_thresh = Some(0);
+    assert_invalid_config(&c, "tx_free_thresh");
+    c.tx_free_thresh = Some(1024);
+    assert_invalid_config(&c, "tx_free_thresh");
 }
 
 #[serial]

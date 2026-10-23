@@ -40,7 +40,7 @@ results.csv rows (lab.sh prefixes the rep):
 Next to results.csv, each load point's histograms (histogram-<state>-<mode>-<size>-<rep>-<point>.csv,
 value_ns,count) are merged over its reps into percentiles of every sample.
 
-Next to results.csv, spikes-*.csv (stream,due_ns,latency_ns: round trips of 100 µs
+Next to results.csv, spikes-*.csv (stream,due_ns,latency_ns[,ping]: round trips of 100 µs
 or more) are summarised: whether spikes recur at one phase of each second, the
 signature of once-a-second work. Where lib.sh saved the counters around the
 flat-out runs (<host>-counters-{tput,max,flows}-{before,after}-*.log, in the run
@@ -63,7 +63,7 @@ import sys
 from collections import defaultdict
 from types import SimpleNamespace
 
-from spikes import agent_gaps, open_spikes, spike_files
+from spikes import agent_gaps, open_spikes, pmd_bursts, spike_files
 
 ORDER = ["kernel", "kernel-mono", "kernel-busy", "kernel-busy-mono", "dpdk", "dpdk-mono", "dpdk+idle",
          "dpdk-spin", "dpdk-spin+idle", "dpdk-adaptive+idle", "local-kernel", "local-dpdk",
@@ -1149,6 +1149,20 @@ def ab_pair(r, la, lb, dirs):
             return ", ".join(f"{h} {'/'.join(map(str, g)) if g is not None else 'n/a'}" for h, g in sorted(hosts.items()))
         print("\n### Agent poll-cycle gaps during the idle round trip, per rep (20–50/50–100/over 100 µs, both ports)\n")
         print(table(["rep", "A", "B"], [[str(rep), side(gaps[la, rep]), side(gaps[lb, rep])] for rep in reps]))
+    bursts = {(l, rep): pmd_bursts(dirs, f"{file_name(l)}-{rep}") for l in (la, lb) for rep in reps}
+    if any(b is not None for hosts in bursts.values() for b in hosts.values()):
+        def burst_side(hosts):
+            def one(b):
+                if b is None:
+                    return "n/a"
+                f = ["n/a" if v is None else str(v) for v in b]
+                return f"rx {'/'.join(f[:3])}, tx {'/'.join(f[3:])}"
+            if all(b is None for b in hosts.values()):
+                return "n/a"
+            return "; ".join(f"{h} {one(b)}" for h, b in sorted(hosts.items()))
+        print("\n### PMD burst timing during the idle round trip, per rep "
+              "(RUSTERON_DPDK_GAP_ATTRIB=1: max ns / ≥1 µs / ≥5 µs)\n")
+        print(table(["rep", "A", "B"], [[str(rep), burst_side(bursts[la, rep]), burst_side(bursts[lb, rep])] for rep in reps]))
 
 
 def spikes(folder):
@@ -1164,7 +1178,7 @@ def spikes(folder):
         g[2] += 1
         with open_spikes(path) as f:
             for row in csv.reader(f):
-                if len(row) == 3 and row[1].isdigit():
+                if len(row) in (3, 4) and row[1].isdigit():
                     g[0] += 1
                     g[1][int(row[1]) % 1_000_000_000 // 10_000_000] += 1
     if not groups:

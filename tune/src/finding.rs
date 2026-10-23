@@ -69,6 +69,23 @@ pub enum CheckId {
     /// The kernel's clock source: the hardware counter, a hypervisor's view
     /// of it, or one read by a system call (hpet, `acpi_pm`).
     T12,
+    // Added after 0.1.33: last, so the variants before keep their order.
+    /// Unbound workqueues may run on a busy-spinning CPU
+    /// (`/sys/devices/virtual/workqueue/cpumask`).
+    T13,
+    /// Memory compaction may move a hot thread's pages: proactive
+    /// compaction, or compaction of locked pages (vm sysctls).
+    T14,
+    /// Another process's task may run on a busy-spinning CPU.
+    T15,
+    /// Kernel instrumentation: kprobes, ftrace hooks, BPF programs.
+    T16,
+    /// Kernel same-page merging (KSM) runs.
+    T17,
+    /// Steal time on a busy-spinning CPU: the hypervisor ran something else.
+    T18,
+    /// A hot thread took page faults while it ran (`FaultWatch`).
+    T19,
 }
 
 impl CheckId {
@@ -88,6 +105,13 @@ impl CheckId {
             Self::T10 => "T10",
             Self::T11 => "T11",
             Self::T12 => "T12",
+            Self::T13 => "T13",
+            Self::T14 => "T14",
+            Self::T15 => "T15",
+            Self::T16 => "T16",
+            Self::T17 => "T17",
+            Self::T18 => "T18",
+            Self::T19 => "T19",
             Self::K1 => "K1",
             Self::K2 => "K2",
             Self::K3 => "K3",
@@ -147,8 +171,18 @@ impl CheckId {
             // gap in the proof; it is a host without that subsystem. T11:
             // a pod normally sees neither the time daemons (another PID
             // namespace) nor chronyd's port (another network namespace).
+            // T13-T19: node-wide noise, read where the node lets a process
+            // read it (debugfs, other PID namespaces and steal accounting
+            // may be out of sight); none proves a property of this pod.
             Self::T3
             | Self::T11
+            | Self::T13
+            | Self::T14
+            | Self::T15
+            | Self::T16
+            | Self::T17
+            | Self::T18
+            | Self::T19
             | Self::T4
             | Self::T5
             | Self::T6

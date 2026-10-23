@@ -4,7 +4,7 @@
 use std::error::Error;
 
 mod common;
-use common::{Paths, compile_and_run, scratch_cargo};
+use common::{Paths, compile_and_run};
 use ergo_sbe::{GenerationConfig, GenerationProfile, Generator, Schema};
 
 fn generate_with(
@@ -215,47 +215,8 @@ fn with_module_name_renames_the_generated_module() -> Result<(), Box<dyn Error>>
     Ok(())
 }
 
-/// `with_error_from_impls` emits `From<EncodeError>` / `From<DecodeError>` for
-/// the caller's error type.
-#[test]
-#[allow(deprecated)]
-fn with_error_from_impls_emits_conversions() -> Result<(), Box<dyn Error>> {
-    let src = generate_with(&Paths::example_schema(), "cfg_errfrom", |c| {
-        c.with_error_from_impls("crate::MyError")
-    })?;
-    assert!(
-        src.contains("impl From<sbe_rt::EncodeError> for crate::MyError"),
-        "encode error conversion must be generated"
-    );
-    assert!(
-        src.contains("impl From<sbe_rt::DecodeError> for crate::MyError"),
-        "decode error conversion must be generated"
-    );
-    Ok(())
-}
-
-/// A malformed error path is rejected at generation time rather than emitting
-/// source that cannot compile.
-#[test]
-#[allow(deprecated)]
-fn with_error_from_impls_rejects_a_non_type_path() -> Result<(), Box<dyn Error>> {
-    let ir = ergo_sbe::parse_file(&Paths::example_schema())?;
-    let schema = Schema::from_ir(ir);
-    let err = Generator::new(
-        GenerationConfig::new("cfg_errbad").with_error_from_impls("not a rust type!"),
-    )
-    .generate(&schema)
-    .expect_err("a non-type error path must fail generation");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("error-from path") || msg.contains("error_from_path"),
-        "error must name the offending option, got: {msg}"
-    );
-    Ok(())
-}
-
 /// Field-preserving `From<EncodeError>` / `From<DecodeError>` compiles against
-/// the generated `sbe_rt` types (the 1.0 replacement for the lossy bridge).
+/// the generated `sbe_rt` types.
 #[test]
 fn typed_error_from_impls_preserve_buffer_fields() -> Result<(), Box<dyn Error>> {
     let src = generate_with(&Paths::example_schema(), "cfg_errtyped", |c| c)?;
@@ -298,60 +259,6 @@ fn typed_error_from_impls_preserve_buffer_fields() -> Result<(), Box<dyn Error>>
             other => panic!("fields lost: {other:?}"),
         }
         "#,
-    );
-    Ok(())
-}
-
-/// Callers that `#![deny(deprecated)]` must migrate off `with_error_from_impls`.
-#[test]
-fn with_error_from_impls_deprecation_fires() -> Result<(), Box<dyn Error>> {
-    use std::fs;
-
-    let sbe_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let dir = std::env::temp_dir().join(format!(
-        "ergo_sbe_errfrom_deprecated_{}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&dir);
-    fs::create_dir_all(dir.join("src"))?;
-    fs::write(
-        dir.join("Cargo.toml"),
-        format!(
-            r#"[package]
-name = "errfrom_deprecated"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-ergo-sbe = {{ path = "{}" }}
-"#,
-            sbe_dir.display()
-        ),
-    )?;
-    fs::write(
-        dir.join("src/main.rs"),
-        r#"#![deny(deprecated)]
-fn main() {
-    let _ = ergo_sbe::GenerationConfig::new("x").with_error_from_impls("crate::E");
-}
-"#,
-    )?;
-    let out = scratch_cargo()
-        .args(["build"])
-        .current_dir(&dir)
-        .env("CARGO_TARGET_DIR", dir.join("target_ci"))
-        .env_remove("RUSTFLAGS")
-        .env_remove("CARGO_ENCODED_RUSTFLAGS")
-        .output()?;
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    let _ = fs::remove_dir_all(&dir);
-    assert!(
-        !out.status.success(),
-        "deny(deprecated) must fail, stderr:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("deprecated") && stderr.contains("with_error_from_impls"),
-        "expected deprecation diagnostic, stderr:\n{stderr}"
     );
     Ok(())
 }

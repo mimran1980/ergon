@@ -39,7 +39,6 @@ policy:
     bash scripts/tests/test-test-policy.sh
     bash scripts/tests/test-quality-ratchets.sh
     bash scripts/tests/test-repository-hygiene.sh
-    bash scripts/tests/test-public-api.sh
     bash scripts/tests/test-packaged-cluster-features.sh
     bash scripts/tests/test-bench-historic.sh
     bash scripts/tests/test-stale-deny-ignores.sh
@@ -48,6 +47,7 @@ policy:
     bash scripts/tests/test-rerun-if-changed.sh
     bash scripts/tests/test-aeron-version.sh
     bash scripts/tests/test-publish-set.sh
+    bash scripts/tests/test-dpdk-vdev-rootless.sh
     ./scripts/check-test-policy.sh
     ./scripts/check-mutation-config.sh
     ./scripts/check-stale-deny-ignores.sh
@@ -86,7 +86,6 @@ preflight:
     bash scripts/tests/test-test-policy.sh
     bash scripts/tests/test-quality-ratchets.sh
     bash scripts/tests/test-repository-hygiene.sh
-    bash scripts/tests/test-public-api.sh
     bash scripts/tests/test-generated-public-api.sh
     bash scripts/tests/test-instruction-probe-pairs.sh
     bash scripts/tests/test-packaged-cluster-features.sh
@@ -97,6 +96,7 @@ preflight:
     bash scripts/tests/test-rerun-if-changed.sh
     bash scripts/tests/test-aeron-version.sh
     bash scripts/tests/test-publish-set.sh
+    bash scripts/tests/test-dpdk-vdev-rootless.sh
     bash scripts/test-package-bench-artifacts.sh
     @echo "=== repository + docs ==="
     ./scripts/check-repository-hygiene.sh
@@ -126,7 +126,10 @@ check-local: policy
     cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster-test-harness --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
     cargo clippy -p ergon-md-dpdk -p ergon-md-dpdk-harness --all-targets -- -D warnings
-    cargo test --workspace --all-features --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness -- --test-threads=1
+    # ergo-sbe and its benchmarks crate run tests in parallel (scratch crates
+    # compile outside cargo's lock: sbe/tests/common/scratch.rs); the rest keep one thread.
+    cargo test -p ergo-sbe -p ergo-sbe-benchmarks --all-features
+    cargo test --workspace --all-features --exclude ergo-sbe --exclude ergo-sbe-benchmarks --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness -- --test-threads=1
     cargo test -p ergon-md-dpdk -- --test-threads=1
     # runs the cluster doctests too — no separate `--doc` pass needed
     cargo test -p ergo-aeron-cluster -- --test-threads=1
@@ -148,9 +151,9 @@ check-products: policy
     ./scripts/regenerate-sbe-tool-reference.sh --check
     cargo check --manifest-path sbe/fuzz/Cargo.toml --bins
     cargo test --manifest-path sbe/miri-fixtures/Cargo.toml
-    cargo test -p ergo-sbe --all-features -- --test-threads=1
-    cargo test -p ergo-sbe --doc --all-features -- --test-threads=1
-    cargo test -p ergo-sbe --test docs_validation_test --all-features -- --test-threads=1
+    cargo test -p ergo-sbe --all-features
+    cargo test -p ergo-sbe --doc --all-features
+    cargo test -p ergo-sbe --test docs_validation_test --all-features
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-sbe --all-features --no-deps
     # runs the cluster doctests too — no separate `--doc` pass needed
     cargo test -p ergo-aeron-cluster -- --test-threads=1
@@ -332,12 +335,15 @@ test: policy
     ./scripts/regenerate-codegen-matrix-fixture.py --check
     cargo check --manifest-path sbe/fuzz/Cargo.toml --bins
     cargo test --manifest-path sbe/miri-fixtures/Cargo.toml
-    cargo test --workspace --all-features --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness -- --test-threads=1
+    # ergo-sbe and its benchmarks crate run tests in parallel (scratch crates
+    # compile outside cargo's lock: sbe/tests/common/scratch.rs); the rest keep one thread.
+    cargo test -p ergo-sbe -p ergo-sbe-benchmarks --all-features
+    cargo test --workspace --all-features --exclude ergo-sbe --exclude ergo-sbe-benchmarks --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness -- --test-threads=1
     cargo test -p ergon-md-dpdk -- --test-threads=1
     cargo test -p ergo-aeron-cluster -- --test-threads=1
     @echo "=== 4/7 product doctests + rustdoc (-D warnings) + docs_validation ==="
-    cargo test -p ergo-sbe --doc --all-features -- --test-threads=1
-    cargo test -p ergo-sbe --test docs_validation_test --all-features -- --test-threads=1
+    cargo test -p ergo-sbe --doc --all-features
+    cargo test -p ergo-sbe --test docs_validation_test --all-features
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-sbe --all-features --no-deps
     # cluster doctests already ran in 3/7 via `cargo test -p ergo-aeron-cluster`
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-aeron-cluster --no-deps
@@ -360,7 +366,10 @@ test: policy
 
 # Workspace unit tests only.
 test-unit: policy
-    cargo test --workspace --all-features --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness -- --test-threads=1
+    # ergo-sbe and its benchmarks crate run tests in parallel (scratch crates
+    # compile outside cargo's lock: sbe/tests/common/scratch.rs); the rest keep one thread.
+    cargo test -p ergo-sbe -p ergo-sbe-benchmarks --all-features
+    cargo test --workspace --all-features --exclude ergo-sbe --exclude ergo-sbe-benchmarks --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness -- --test-threads=1
     cargo test -p ergon-md-dpdk -- --test-threads=1
     cargo test -p ergo-aeron-cluster -- --test-threads=1
 

@@ -19,8 +19,8 @@
 //! let mut app = App;
 //! loop {
 //!     driver.poll(&mut app)?; // receive, decode, deliver, flush
-//!     // ... the rest of the duty cycle; sends queued here go out on the next
-//!     // poll, or call driver.flush() to send now.
+//!     // ... the rest of the duty cycle; sends queued here go out first on
+//!     // the next poll (before it reads), or call driver.flush() to send now.
 //! #   break;
 //! }
 //! # Ok(()) }
@@ -39,7 +39,7 @@ use crate::checks::{self, DevContext, HostReport};
 use crate::clock::{monotonic_ns, rdtsc, ticks_per_us};
 use crate::dns::{DnsConfig, Lookup, Resolver};
 use crate::endpoint::sealed::RouteSlot;
-use crate::endpoint::{ConnId, ConnMut, Dial, DriverStats, Endpoint, Handler, Receive};
+use crate::endpoint::{ConnId, ConnMut, Dial, DriverStats, Endpoint, Handler, Receive, TcpInfo};
 use crate::error::{Error, Result};
 use crate::placement::{self, CpuError};
 use crate::route::{self, Flow, QuickAckCheck, QuickAckError, RouteCheck};
@@ -228,6 +228,9 @@ struct SockOpts {
     /// `TCP_USER_TIMEOUT` (0: left alone).
     keepalive: (u32, u32, u32),
     user_timeout_ms: u32,
+    /// `TCP_RTO_MIN_US` and `TCP_DELACK_MAX_US` (`None`: left alone).
+    rto_min_us: Option<u32>,
+    delack_max_us: Option<u32>,
     /// The egress-device checks' context (the driver's hot CPUs).
     ctx: Arc<DevContext>,
 }
@@ -262,6 +265,8 @@ impl SockOpts {
                 cfg.keepalive_count,
             ),
             user_timeout_ms: cfg.tcp_user_timeout_ms,
+            rto_min_us: cfg.tcp_rto_min_us,
+            delack_max_us: cfg.tcp_delack_max_us,
             ctx: Arc::clone(ctx),
         }
     }
@@ -281,6 +286,7 @@ impl SockOpts {
         if self.user_timeout_ms > 0 {
             sys::set_tcp_user_timeout(fd, self.user_timeout_ms)?;
         }
+        sys::apply_tcp_timers(fd, self.rto_min_us, self.delack_max_us)?;
         let privileged = |what: &str, e: std::io::Error| {
             if e.kind() == std::io::ErrorKind::PermissionDenied {
                 Error::Config(format!("{what} needs CAP_NET_ADMIN"))
@@ -374,6 +380,25 @@ fn require_route(fd: RawFd) -> std::result::Result<RouteCheck, QuickAckError> {
     route::check_socket(QuickAckCheck::Require, fd)
 }
 
+/// Hands the calling thread's page-fault counters to the warning thread
+/// (T19, [`crate::warn::State::watch_faults`]), once per thread: a second
+/// driver on the same thread adds nothing. A `stat` that cannot be opened
+/// is one info line.
+fn watch_faults(host: &ergon_tune::Host) {
+    thread_local! {
+        static WATCHED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+    if WATCHED.with(|w| w.replace(true)) {
+        return;
+    }
+    match ergon_tune::FaultWatch::open(host, ergon_tune::Thread::Current, ergon_tune::Role::Loop) {
+        Ok(watch) => crate::warn::run(move |st| st.watch_faults(watch)),
+        Err(e) => crate::warn::once(format!(
+            "ergon-io info: T19 unknown: cannot watch the polling thread's page faults: {e}"
+        )),
+    }
+}
+
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -418,6 +443,19 @@ pub struct Driver<E> {
     expiry_polls: u32,
     /// Counter value at which connection set-up is next advanced.
     next_setup: u64,
+    /// `get_mut` handed out a connection (or one was installed) since the
+    /// last send pass: `poll` sends before its receive pass. One flag for
+    /// now; a per-slot dirty set (marked here and after `on_received`) can
+    /// replace it and the post-receive scan together.
+    tx_dirty: bool,
+    /// Per slot: the last passive `TCP_INFO` sample.
+    tcp_info: Vec<Option<TcpInfo>>,
+    /// Counter ticks between two sampling rounds (0: off), the counter
+    /// value at which the next round starts, and the next slot of the
+    /// current round (past the end: no round running).
+    tcp_info_ticks: u64,
+    next_tcp_info: u64,
+    tcp_info_cursor: usize,
     setup_ticks: u64,
     /// The background connect thread, started by the first `connect_background`.
     /// It also frees closed connections.
@@ -453,6 +491,10 @@ impl<E: Endpoint> Driver<E> {
     /// [`Error::HostCheck`]: `ERGON_HOST_CHECKS` is set to something other
     /// than `off`, `on` or `require`, or it is `require` and a host check
     /// warned (after its lines were printed).
+    /// [`Error::Unsupported`]: `tcp_rto_min_us` or `tcp_delack_max_us` on a
+    /// kernel before 6.15. [`Error::Config`]: one of them below two ticks of
+    /// this kernel, or not whole ticks (checked on a probe socket: user space
+    /// cannot read `CONFIG_HZ`).
     pub fn new(cfg: Config) -> Result<Self> {
         Self::with_dns(cfg, DnsConfig::system())
     }
@@ -474,6 +516,9 @@ impl<E: Endpoint> Driver<E> {
         host: &ergon_tune::Host,
     ) -> Result<Self> {
         cfg.validate()?;
+        // A timer this kernel lacks, refuses or would round fails now, not
+        // at the first connection.
+        sys::probe_tcp_timers(cfg.tcp_rto_min_us, cfg.tcp_delack_max_us)?;
         // The one switch over every host-check warning (`ERGON_HOST_CHECKS`).
         let policy = ergon_tune::HostCheckPolicy::from_env()?;
         // I-host and I3 (see `crate::checks`), and where the helper threads
@@ -493,6 +538,10 @@ impl<E: Endpoint> Driver<E> {
             &helpers,
             &placement::thread_cpus(&helpers, placement::sqpoll_of(&cfg)),
         );
+        // T19: the polling thread's page faults, read by the warning thread.
+        // Opened here, on the thread creating the driver (the polling thread,
+        // as for the other hot-thread checks), once per thread.
+        watch_faults(host);
         // Each line once per process, under the switch (`off` drops the
         // warning lines).
         for l in report
@@ -555,6 +604,16 @@ impl<E: Endpoint> Driver<E> {
                 EXPIRY_POLLS
             },
             next_setup: 0,
+            tx_dirty: false,
+            tcp_info: Vec::new(),
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            tcp_info_ticks: if cfg.tcp_info_interval_ms == 0 {
+                0
+            } else {
+                ((f64::from(cfg.tcp_info_interval_ms) * 1000.0 * tpu) as u64).max(1)
+            },
+            next_tcp_info: 0,
+            tcp_info_cursor: usize::MAX,
             background: None,
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             setup_ticks: (f64::from(SETUP_STEP_US) * tpu) as u64,
@@ -584,7 +643,8 @@ impl<E: Endpoint> Driver<E> {
 
     /// Takes over a connected, non-blocking endpoint. Sets its socket options
     /// (receive timestamps, `SO_RCVBUF`, `SO_BUSY_POLL`, `TCP_NODELAY`, TCP
-    /// keepalive and `TCP_USER_TIMEOUT`; `TCP_CORK` left on is reported),
+    /// keepalive, `TCP_USER_TIMEOUT`, and `TCP_RTO_MIN_US` /
+    /// `TCP_DELACK_MAX_US` when configured; `TCP_CORK` left on is reported),
     /// checks its route for quick ACK
     /// (`Config::quickack_check`, see [`crate::route`]: under `warn` on
     /// ergon-io's warning thread, under `require` here) and starts
@@ -848,6 +908,15 @@ impl<E: Endpoint> Driver<E> {
             return Err(e);
         }
         self.buffered |= ep.has_buffered_input();
+        // It may hold sends queued before it was handed over.
+        self.tx_dirty = true;
+        // Sized here, where the slots grow, not in the sampling (polling) pass.
+        if self.tcp_info_ticks != 0 && self.tcp_info.len() <= i {
+            self.tcp_info.resize(i + 1, None);
+        }
+        if let Some(t) = self.tcp_info.get_mut(i) {
+            *t = None;
+        }
         self.conns.install(i, ep);
         Ok(())
     }
@@ -905,6 +974,8 @@ impl<E: Endpoint> Driver<E> {
     /// The connection, if `id` is still open, for queuing sends. The handle
     /// offers the connection's methods but cannot replace or move it.
     pub fn get_mut(&mut self, id: ConnId) -> Option<ConnMut<'_, E>> {
+        // The caller may queue a send: the next `poll` sends first.
+        self.tx_dirty = true;
         self.conns
             .lookup(id)
             .and_then(|i| self.conns.at(i))
@@ -963,9 +1034,17 @@ impl<E: Endpoint> Driver<E> {
                 .all(|(_, c)| sys::incoming_napi_id(c.fd()).unwrap_or(0) != 0)
     }
 
-    /// One iteration: receive whatever the kernel has, decode and deliver it,
-    /// then send queued bytes. Returns messages delivered. Never sleeps unless
-    /// the backend is [`Backend::EpollBusy`] or [`Backend::UringNapi`].
+    /// One iteration: send what was queued since the last poll (through
+    /// [`Driver::get_mut`]), receive whatever the kernel has, decode and
+    /// deliver it, then send what that queued. Returns messages delivered.
+    /// Never sleeps unless the backend is [`Backend::EpollBusy`] or
+    /// [`Backend::UringNapi`].
+    ///
+    /// An order queued between polls goes out before this poll's receive
+    /// pass, not behind `epoll_wait` and every ready feed's decoding. That
+    /// costs one more scan of the connections (and, on `uring-spin` and
+    /// `uring-napi`, one more `io_uring_enter` when completions are also
+    /// waiting), only in a poll after a `get_mut`.
     ///
     /// # Errors
     /// The backend itself failed. Connection errors close that connection and
@@ -1001,26 +1080,38 @@ impl<E: Endpoint> Driver<E> {
             self.buffered = false;
             self.deliver_buffered(handler);
         }
-        let mut r = match &mut self.imp {
-            Imp::Epoll(e) => e.poll(
-                &mut self.conns,
-                handler,
-                &mut self.stats,
-                &mut self.read_seq,
-            ),
-            // Receives, sends and the kernel entry in one pass, so re-arms and
-            // sends share one io_uring_enter.
-            #[cfg(feature = "uring")]
-            Imp::Uring(u) => u.poll(
-                &mut self.conns,
-                handler,
-                &mut self.stats,
-                &mut self.read_seq,
-            ),
+        // Sends queued since the last poll leave before the receive pass.
+        let mut r = if self.tx_dirty {
+            self.send_queued(handler)
+        } else {
+            Ok(())
         };
+        if r.is_ok() {
+            r = match &mut self.imp {
+                Imp::Epoll(e) => e.poll(
+                    &mut self.conns,
+                    handler,
+                    &mut self.stats,
+                    &mut self.read_seq,
+                ),
+                // Receives, sends and the kernel entry in one pass, so re-arms
+                // and sends share one io_uring_enter.
+                #[cfg(feature = "uring")]
+                Imp::Uring(u) => u.poll(
+                    &mut self.conns,
+                    handler,
+                    &mut self.stats,
+                    &mut self.read_seq,
+                ),
+            };
+        }
+        // What the receive pass queued (replies, pongs) goes out now: a full
+        // scan, as anything left unsent (a full socket, a send in flight) is
+        // retried here on every poll.
         if r.is_ok() && matches!(self.imp, Imp::Epoll(_)) {
             r = self.send_queued(handler);
         }
+        self.tx_dirty = false;
         // After receiving, so a response already in the socket is not timed out.
         self.check_deadlines(handler);
         if !self.conns.closed.is_empty() {
@@ -1042,9 +1133,59 @@ impl<E: Endpoint> Driver<E> {
                 if t >= self.next_expiry {
                     self.next_expiry = t.wrapping_add(self.expiry_ticks);
                     self.expire_all(handler);
+                    if self.tcp_info_ticks != 0 {
+                        self.sample_tcp_info(t);
+                    }
                 }
             }
         }
+    }
+
+    /// Passive `TCP_INFO`: at most one connection per deadline check, so a
+    /// round over many connections never puts their `getsockopt` calls in
+    /// one poll. A round starts every `tcp_info_ticks`; a failed read leaves
+    /// the previous sample.
+    #[cold]
+    fn sample_tcp_info(&mut self, t: u64) {
+        let n = self.conns.len_slots();
+        if self.tcp_info_cursor >= n {
+            if t < self.next_tcp_info {
+                return;
+            }
+            self.next_tcp_info = t.wrapping_add(self.tcp_info_ticks);
+            self.tcp_info_cursor = 0;
+        }
+        while self.tcp_info_cursor < n {
+            let i = self.tcp_info_cursor;
+            self.tcp_info_cursor += 1;
+            if !self.conns.is_open(i) {
+                continue;
+            }
+            let Some(fd) = self.conns.at(i).map(|c| c.fd()) else {
+                continue;
+            };
+            let t0 = rdtsc();
+            let read = sys::tcp_info(fd);
+            let ns = ticks_ns(rdtsc().wrapping_sub(t0), self.ticks_per_us);
+            self.stats.tcp_info_samples += 1;
+            self.stats.tcp_info_max_ns = self.stats.tcp_info_max_ns.max(ns);
+            if let (Ok(mut info), Some(slot)) = (read, self.tcp_info.get_mut(i)) {
+                info.at_ns = monotonic_ns();
+                *slot = Some(info);
+            }
+            return;
+        }
+    }
+
+    /// The last passive `TCP_INFO` sample of `id`
+    /// (`Config::tcp_info_interval_ms`): `None` while sampling is off,
+    /// before the connection's first sample, or once `id` is closed.
+    #[must_use]
+    pub fn tcp_info(&self, id: ConnId) -> Option<&TcpInfo> {
+        self.conns
+            .lookup(id)
+            .and_then(|i| self.tcp_info.get(i))
+            .and_then(Option::as_ref)
     }
 
     /// Closes connections whose deadlines passed.
@@ -1140,6 +1281,7 @@ impl<E: Endpoint> Driver<E> {
     #[inline]
     #[cfg_attr(not(feature = "uring"), allow(clippy::unnecessary_wraps))]
     fn send_queued<H: Handler>(&mut self, handler: &mut H) -> Result<()> {
+        self.tx_dirty = false;
         match &mut self.imp {
             Imp::Epoll(e) => {
                 for i in 0..self.conns.len_slots() {
@@ -1338,6 +1480,55 @@ mod tests {
                 return Err(format!("no progress: {stats:?}").into());
             }
         }
+    }
+
+    /// The `struct tcp_info` offsets `sys::tcp_info` reads, against the libc
+    /// crate's layout of the same struct (which stops before `tcpi_min_rtt`;
+    /// that one is checked against the uapi header's order: after
+    /// `tcpi_total_retrans`, four `__u64` and three `__u32`).
+    #[test]
+    fn tcp_info_offsets_match_the_kernel_struct() {
+        use std::mem::offset_of;
+        use sys::tcpi;
+        assert_eq!(tcpi::RTO, offset_of!(libc::tcp_info, tcpi_rto));
+        assert_eq!(tcpi::LOST, offset_of!(libc::tcp_info, tcpi_lost));
+        assert_eq!(tcpi::RTT, offset_of!(libc::tcp_info, tcpi_rtt));
+        assert_eq!(tcpi::RTTVAR, offset_of!(libc::tcp_info, tcpi_rttvar));
+        assert_eq!(
+            tcpi::TOTAL_RETRANS,
+            offset_of!(libc::tcp_info, tcpi_total_retrans)
+        );
+        let after_total_retrans = offset_of!(libc::tcp_info, tcpi_total_retrans) + 4;
+        // `tcpi_pacing_rate` is 8-aligned: no padding after the u32 at 100.
+        assert_eq!(tcpi::MIN_RTT, after_total_retrans + 4 * 8 + 3 * 4);
+    }
+
+    /// `ENOPROTOOPT` (a kernel before 6.15), or `EINVAL` from a kernel that
+    /// cannot even read the option, is `Unsupported` naming the option and
+    /// the kernel; `EINVAL` from one that can is the range check, a config
+    /// error naming the key; anything else is left to the caller.
+    #[test]
+    fn tcp_timer_errors_are_typed() -> R {
+        use sys::{TcpTimer, timer_error};
+        let errno = std::io::Error::from_raw_os_error;
+        for t in [TcpTimer::RtoMin, TcpTimer::DelackMax] {
+            for (e, known) in [
+                (libc::ENOPROTOOPT, false),
+                (libc::ENOPROTOOPT, true),
+                (libc::EINVAL, false),
+            ] {
+                let Some(Error::Unsupported(why)) = timer_error(t, 5_000, &errno(e), known) else {
+                    return Err(format!("{t:?} errno {e} known {known}: not Unsupported").into());
+                };
+                assert!(why.contains(t.name()) && why.contains("6.15"), "{why}");
+            }
+            let Some(Error::Config(why)) = timer_error(t, 5_000, &errno(libc::EINVAL), true) else {
+                return Err(format!("{t:?}: EINVAL from a kernel that knows it").into());
+            };
+            assert!(why.contains(t.key()) && why.contains("5000"), "{why}");
+            assert!(timer_error(t, 5_000, &errno(libc::EBADF), true).is_none());
+        }
+        Ok(())
     }
 
     #[test]

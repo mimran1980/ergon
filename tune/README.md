@@ -39,6 +39,13 @@ Checks of a Linux host's low-latency settings, for start-up and housekeeping.
 | K1-K7 | inside a Kubernetes pod only, with T7 and T9: Guaranteed `QoS`, exclusive CPUs (the static CPU manager, not the shared pool), the loop's SMT sibling inside the pod's cpuset, a CPU for the helper threads (`ERGON_SHARED_CPUS`/`ERGON_HELPER_CPUS`), the capabilities the caller says it uses (`Needs`: busy polling, `SCHED_FIFO`, `mlockall`), no `memory.high` and no CPU/memory pressure (any non-zero reading; no threshold is measured), and, when the caller names the NIC (`Needs::with_nic`), its NUMA node. Each finding says whether the fix goes in the pod spec or on the node, with the exact setting |
 | T11 | how `CLOCK_REALTIME` is kept: PTP-grade (chronyd locked to a PTP hardware clock, or phc2sys) is ok; NTP-disciplined or unsynchronised warns, with the chrony `refclock PHC` line for the host's PHC (a node setting); a correction still being slewed out, an error bound wider than 1 ms or a pending leap second warns. What the process cannot see (in a pod: the daemons and chronyd's port) is unknown, never a warning |
 | T12 | the kernel's clock source: the counter (`tsc`, `arch_sys_counter`) is ok; a hypervisor's view of it (`kvm-clock`, Hyper-V's TSC page) is info; anything else (`hpet`, `acpi_pm`) on x86-64 or 64-bit Arm warns: every `CLOCK_REALTIME` and `CLOCK_MONOTONIC` read is a system call. On another architecture a source other than `tsc` or `arch_sys_counter` is unknown |
+| T13 | the unbound workqueue cpumask (`/sys/devices/virtual/workqueue/cpumask`) leaves out the busy-spinning CPUs |
+| T14 | memory compaction leaves a hot thread's pages in place: `vm.compaction_proactiveness` 0 and `vm.compact_unevictable_allowed` 0 (info) |
+| T15 | no task of another process may run on a busy-spinning CPU (`Cpus_allowed_list` from `/proc`; kernel threads are T1's and T13's) |
+| T16 | no kprobe, ftrace hook or BPF program loaded (info; unprivileged, usually unknown) |
+| T17 | KSM not running (`/sys/kernel/mm/ksm/run` 0 or 2) |
+| T18 | no steal on the busy-spinning CPUs since boot (`/proc/stat`; info) |
+| T19 | `FaultWatch`: a hot thread takes no page fault while it runs |
 | N1-N4 (`nic`) | ENA adaptive RX moderation, deferred interrupts without a busy poller, the Azure accelerated-networking VF, the kernel RX ring |
 
 A finding names its fix. T1 on a stock host with its loop on CPU 2 of 8
@@ -68,17 +75,16 @@ stock static-CPU-manager pod: it proves exclusive CPUs only from an isolated
 or root cpuset partition (Linux 6.7+, as the nri-latency-pods plugin sets).
 
 Every printed warning line ends with `(ERGON_HOST_CHECKS=off silences host-check
-warnings)`. The media driver takes `RUSTERON_MEDIA_DRIVER_HOST_CHECK` as its
-alias (`ERGON_HOST_CHECKS` wins); there `off` is stronger and runs no check at
-all. ergon-io's `Driver::new` and the media driver read the switch; the checks
-stay pure functions over a `Host`.
+warnings)`. In the media driver `off` is stronger and runs no check at all.
+ergon-io's `Driver::new` and the media driver read the switch; the checks stay
+pure functions over a `Host`.
 
 ## When to use it
 
 | Use it for | Not for |
 |---|---|
 | start-up, before a latency-sensitive loop | the hot path: checks read files and allocate; N1 and N4 make netlink exchanges with 100 ms send and receive timeouts each |
-| housekeeping: an ENA reset turns adaptive moderation back on and moves queue interrupts; `ThrottleWatch::check` sees a CPU quota stopping the container; `ClockWatch::check` sees time sync or the clock source change | tuning a host: it only reads |
+| housekeeping: an ENA reset turns adaptive moderation back on and moves queue interrupts; `ThrottleWatch::check` sees a CPU quota stopping the container; `ClockWatch::check` sees time sync or the clock source change; `FaultWatch::check` sees a hot thread fault | tuning a host: it only reads |
 | CI or review, against a captured or hand-made `/sys` and `/proc` tree | hosts other than Linux: every reader reports unknown |
 
 ## Guarantees and limits
@@ -103,8 +109,8 @@ stay pure functions over a `Host`.
   Kernel queries (T4's `statfs`, T11's `adjtimex`, N1's and N4's ethtool)
   reach only the running host; on a tree they report unknown.
 - **Evidence named.** Each finding's `evidence` names its source: an AWS
-  `c7i` A/B table in git history (T1, T2, T7, T10, N1), or documentation and
-  "not measured here". Hosts differ: measure yours.
+  `c7i` A/B table in `io/benches/results/` (T1, T2, T7, T10, N1), or
+  documentation and "not measured here". Hosts differ: measure yours.
 - **Only what the table lists.** CPU idle states and frequency are not
   checked.
 

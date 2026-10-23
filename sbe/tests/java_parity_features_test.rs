@@ -624,6 +624,47 @@ fn deprecated_field_marks_getter() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// The generated `#[deprecated]` names the schema version from the XML
+/// `deprecated` attribute.
+#[test]
+fn deprecated_getter_note_names_schema_version() -> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<?xml version="1.0"?>
+        <messageSchema package="dep" id="1" version="4" byteOrder="littleEndian">
+          <types>
+            <composite name="messageHeader">
+              <type name="blockLength" primitiveType="uint16"/>
+              <type name="templateId" primitiveType="uint16"/>
+              <type name="schemaId" primitiveType="uint16"/>
+              <type name="version" primitiveType="uint16"/>
+            </composite>
+            <type name="u8" primitiveType="uint8"/>
+          </types>
+          <message name="M" id="1" blockLength="1">
+            <field name="legacy" id="1" type="u8" offset="0" deprecated="3"/>
+          </message>
+        </messageSchema>"#;
+    let schema = Schema::from_ir(parse(xml)?);
+    let out = Generator::new(GenerationConfig::new("m").with_deprecated_attrs(true))
+        .generate(&schema)?
+        .modules()
+        .next()
+        .ok_or("no module")?
+        .source
+        .clone();
+    let legacy = out
+        .find("pub fn legacy(&self)")
+        .ok_or_else(|| format!("legacy getter missing in:\n{out}"))?;
+    let attr = out[..legacy]
+        .rfind("#[deprecated")
+        .ok_or_else(|| format!("no #[deprecated] before legacy getter in:\n{out}"))?;
+    let window = &out[attr..legacy];
+    assert!(
+        window.starts_with(r#"#[deprecated(note = "deprecated since schema version 3")]"#),
+        "deprecated attr must name schema version 3, got:\n{window}"
+    );
+    Ok(())
+}
+
 // ── Debug / Display inspection tests ───────────────────────────────────
 // These encode real messages and inspect the rendered Debug/Display strings
 // to catch regressions like the set-field-silently-dropped bug.

@@ -71,3 +71,10 @@ codegen-units = 1
 [profile.release]
 lto = true
 codegen-units = 1
+
+# Optimised dependencies in dev and test builds. Tests run ergo-sbe's code
+# generator in process, and debug syn/prettyplease/proc-macro2 made that 5x
+# slower. Workspace crates stay at opt-level 0, so their rebuilds stay quick
+# and debug assertions and overflow checks are unchanged everywhere.
+[profile.dev.package."*"]
+opt-level = 2
