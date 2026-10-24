@@ -955,15 +955,20 @@ fn spin_backends_never_sleep_when_idle() -> R {
 /// What the polling thread did during one connect to a slow server.
 struct SlowConnect {
     /// Voluntary context switches (the thread slept in the kernel), except
-    /// in a short poll that took a page fault.
+    /// in a poll that took a page fault and slept under `FAULT_SLEEP`.
     slept: u64,
-    /// Voluntary context switches in short polls that took a page fault.
+    /// Voluntary context switches in polls that took a page fault and slept
+    /// under `FAULT_SLEEP`, and the longest such sleep.
     slept_faulting: u64,
+    longest_fault_sleep: Duration,
     /// Polls that took a page fault, and their faults (minor + major).
     faulting_polls: u64,
     faults: u64,
     /// The slowest `poll`.
     slowest: Duration,
+    /// Each poll that slept and was not put down to a fault: its index,
+    /// faults, time asleep and wall time.
+    sleeps: Vec<(usize, u64, Duration, Duration)>,
 }
 
 /// Page faults of the calling thread so far, minor plus major (fields 10
@@ -978,17 +983,52 @@ fn thread_page_faults() -> R<u64> {
     Ok(minor + major)
 }
 
-/// The longest a poll that took a page fault may run and still have its
-/// sleeps put down to the fault: a page fault sleeps for microseconds, the
-/// server's delay is 150 ms.
-const FAULT_POLL: Duration = Duration::from_millis(20);
+/// The calling thread's CPU time (`CLOCK_THREAD_CPUTIME_ID`, exact to the
+/// call) plus its time waiting on a run queue (field 2 of
+/// `/proc/thread-self/schedstat`, settled each time it is switched back
+/// in): over a poll, the poll's wall time minus this is the time it slept.
+fn thread_busy() -> R<Duration> {
+    let cpu = rustix::time::clock_gettime(rustix::time::ClockId::ThreadCPUTime);
+    let cpu = Duration::new(u64::try_from(cpu.tv_sec)?, u32::try_from(cpu.tv_nsec)?);
+    let stat = std::fs::read_to_string("/proc/thread-self/schedstat")?;
+    let queued: u64 = stat
+        .split_whitespace()
+        .nth(1)
+        .ok_or("short schedstat")?
+        .parse()?;
+    Ok(cpu + Duration::from_nanos(queued))
+}
+
+/// The longest a poll that took a page fault may sleep and still have its
+/// sleeps put down to the fault. Seen on Linux arm64 (debug build, 80 runs
+/// of the six backends): at most 145 µs. A 2 ms sleep added to the poll that
+/// faults fails the test.
+const FAULT_SLEEP: Duration = Duration::from_millis(1);
 
 /// Connects `d` to a server that waits 150 ms before the TLS handshake even
 /// starts, and polls until its first message arrives, counting per poll.
 fn connect_to_a_slow_server(d: &mut Driver<WsConn>, lab: &Lab) -> R<SlowConnect> {
     std::thread::scope(|s| -> R<SlowConnect> {
+        // The server gives up after 10 s with no client or no data, so a
+        // failing check below ends the test instead of hanging the scope.
         let srv = s.spawn(|| -> R {
-            let (sock, _) = lab.listener.accept()?;
+            let wait = Duration::from_secs(10);
+            lab.listener.set_nonblocking(true)?;
+            let give_up = Instant::now() + wait;
+            let sock = loop {
+                match lab.listener.accept() {
+                    Ok((sock, _)) => break sock,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        if Instant::now() > give_up {
+                            return Err("no client connected".into());
+                        }
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+            };
+            sock.set_nonblocking(false)?;
+            sock.set_read_timeout(Some(wait))?;
             std::thread::sleep(Duration::from_millis(150));
             let mut p = support::Peer::serve(lab, sock)?;
             p.send(ws::OP_TEXT, true, b"hi")?;
@@ -1001,42 +1041,58 @@ fn connect_to_a_slow_server(d: &mut Driver<WsConn>, lab: &Lab) -> R<SlowConnect>
             lab.client_cfg.clone(),
             1 << 20,
         )?)?;
+        // A connect that waited for the handshake would take the server's
+        // 150 ms; 50 ms leaves room for a debug build on a loaded host.
+        let took = t0.elapsed();
         assert!(
-            t0.elapsed() < Duration::from_millis(5),
-            "connect returned late"
+            took < Duration::from_millis(50),
+            "connect returned late: {took:?}"
         );
         assert!(d.get(id).is_none(), "not open yet");
         let mut h = Collect::default();
         let mut c = SlowConnect {
             slept: 0,
             slept_faulting: 0,
+            longest_fault_sleep: Duration::ZERO,
             faulting_polls: 0,
             faults: 0,
             slowest: Duration::ZERO,
+            sleeps: Vec::new(),
         };
         let end = Instant::now() + Duration::from_secs(10);
+        let mut polls = 0;
         while h.msgs.is_empty() {
+            // Only the poll is inside the switch count; the /proc reads
+            // around it are not.
             let f0 = thread_page_faults()?;
+            let busy0 = thread_busy()?;
             let (v0, _) = ergon_io::clock::thread_ctx_switches();
             let t = Instant::now();
             d.poll(&mut h)?;
             let took = t.elapsed();
-            c.slowest = c.slowest.max(took);
             let (v1, _) = ergon_io::clock::thread_ctx_switches();
+            let asleep = took.saturating_sub(thread_busy()?.saturating_sub(busy0));
+            c.slowest = c.slowest.max(took);
             let faults = thread_page_faults()? - f0;
             if faults > 0 {
                 c.faulting_polls += 1;
                 c.faults += faults;
             }
-            if faults > 0 && took < FAULT_POLL {
+            if faults > 0 && asleep < FAULT_SLEEP {
                 c.slept_faulting += v1 - v0;
-            } else {
+                if v1 > v0 {
+                    c.longest_fault_sleep = c.longest_fault_sleep.max(asleep);
+                }
+            } else if v1 > v0 {
                 c.slept += v1 - v0;
+                c.sleeps.push((polls, faults, asleep, took));
             }
+            polls += 1;
             assert!(Instant::now() < end, "never opened: {:?}", h.closed);
         }
         assert_eq!(h.opened, vec![id]);
         assert_eq!(h.msgs[0].0, id);
+        assert!(d.get(id).is_some());
         // Closed at once (with `io_uring` the socket goes on a later poll):
         // the server sees it and ends.
         d.close(id);
@@ -1063,11 +1119,12 @@ fn connect_to_a_slow_server(d: &mut Driver<WsConn>, lab: &Lab) -> R<SlowConnect>
 /// (`prefault`, about 256 minor faults); a fault can sleep on the kernel's
 /// memory locks, shared here with the server thread in the same process
 /// (seen on Linux arm64: one switch in that poll, +273 faults, in 12 of 40
-/// runs). A sleep in a poll that faulted and took under `FAULT_POLL` is
-/// counted apart; any other poll never sleeps. A driver that blocks on the
-/// network sleeps in a poll that waits out the 150 ms (whether or not it
-/// faults too), so it fails both the sleep and the poll-time check; a short
-/// blocking wait sleeps in polls that fault nothing.
+/// runs). A sleep in a poll that faulted is counted apart when that poll
+/// slept under `FAULT_SLEEP` in all (wall time minus CPU and run-queue
+/// time); any other poll never sleeps. A driver that blocks on the network
+/// sleeps out the 150 ms, so it fails both the sleep and the poll-time
+/// check; a short blocking wait fails the sleep check unless it is under
+/// 1 ms and lands in one of the few polls that fault.
 #[test]
 fn connect_never_blocks_the_poll_loop() -> R {
     each_backend(|b| {
@@ -1080,8 +1137,9 @@ fn connect_never_blocks_the_poll_loop() -> R {
         if !b.may_sleep() {
             assert_eq!(
                 c.slept, 0,
-                "{b}: the polling thread slept ({} more sleeps in faulting polls)",
-                c.slept_faulting
+                "{b}: the polling thread slept, (poll, faults, asleep, took): {:?} \
+                 ({} more sleeps in faulting polls, the longest {:?})",
+                c.sleeps, c.slept_faulting, c.longest_fault_sleep
             );
         }
         assert!(

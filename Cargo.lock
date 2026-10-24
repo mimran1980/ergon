@@ -905,6 +905,7 @@ dependencies = [
  "proptest",
  "rcgen",
  "ring",
+ "rustix",
  "rustls",
  "socket2",
  "tokio",
