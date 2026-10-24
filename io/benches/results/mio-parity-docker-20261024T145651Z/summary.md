@@ -1,7 +1,9 @@
 # mio parity gate: spread on the Docker Linux lane
 
-The runs that set the gate's tolerance (`io/benches/parity/rule.rs`,
-`TOL_ABS_NS` and `TOL_PCT`).
+The runs that set the gate's first tolerance, max(1 µs, 10 %). Superseded
+by `../mio-parity-docker-20261024T154626Z/summary.md`: at a 10 µs round
+trip that tolerance equals a 10 % slowdown, so the gate did not reliably
+fail one; the gate now takes turns per round trip and fails beyond 5 %.
 
 | | |
 |---|---|

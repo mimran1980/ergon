@@ -18,9 +18,10 @@
 //!   and once through a minimal mio loop doing the same work: the same TLS
 //!   record layer (`ergon_io::tls::RecordLayer`), the same WebSocket framing
 //!   (`ergon_io::ws`), `TCP_NODELAY` and a 4 MiB `SO_RCVBUF` on both, the
-//!   same echo peer on its own CPU. Interleaved A/B pairs, alternating order,
-//!   each echo checked byte for byte; the verdict is `rule::verdict`. Either
-//!   side ahead fails: a large `epoll-spin` win is a suspected defect too.
+//!   same echo peer on its own CPU. In each A/B pair the two loops take
+//!   turns round trip by round trip, each echo checked byte for byte; the
+//!   verdict is `rule::verdict`. Either side ahead fails: a large
+//!   `epoll-spin` win is a suspected defect too.
 //!
 //! Run (release, one thread):
 //! `cargo test --release --manifest-path io/benches/Cargo.toml --test mio_parity -- --test-threads=1 --nocapture`.
@@ -46,7 +47,8 @@ mod linux {
     use rustls::{ClientConfig, RootCertStore, ServerConfig, ServerConnection};
 
     use super::rule::{
-        PAIRS, Pair, Pct, Verdict, paired_diff_ns, percentiles, tolerance_ns, verdict,
+        BLOCK_SLOTS, PAIRS, Pair, Pct, Side, TOL_PCT, Verdict, block_p50s, paired_diff_ns,
+        percentiles, tolerance_ns, verdict,
     };
 
     type R<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -59,8 +61,6 @@ mod linux {
     const WARMUP: usize = 2_000;
     /// Timed round trips per pair and arm.
     const TIMED: usize = 10_000;
-    /// Blocks per pair, half per arm: 1,000 round trips (0.1 s) each.
-    const BLOCKS: usize = 20;
     /// `SO_RCVBUF` on both sides: the `Driver`'s default (`Config::rcvbuf`).
     const RCVBUF: usize = 4 << 20;
     /// Events per `Poll::poll`: the `Driver`'s `epoll_wait` batch
@@ -597,41 +597,46 @@ mod linux {
         }
     }
 
+    /// One paced round trip on `arm`: its loop spins until `next`, as a live
+    /// one does between orders, then sends `seq` and spins until the echo,
+    /// which must match byte for byte. Returns send to decoded, ns.
+    fn round_trip<M: Arm>(arm: &mut M, payload: &mut [u8; PAYLOAD], seq: u64, next: i64) -> R<u64> {
+        fill(payload, seq);
+        loop {
+            if arm.pass()?.is_some() {
+                return Err(format!("{}: an echo nobody asked for", M::NAME).into());
+            }
+            if monotonic_ns() >= next {
+                break;
+            }
+        }
+        let t0 = monotonic_ns();
+        arm.send(black_box(&payload[..]))?;
+        let give_up = t0 + 1_000_000_000;
+        let t1 = loop {
+            if let Some(t) = arm.pass()? {
+                break t;
+            }
+            if monotonic_ns() > give_up {
+                return Err(format!("{}: no echo of {seq} within 1 s", M::NAME).into());
+            }
+        };
+        if black_box(arm.echo()) != payload {
+            return Err(format!("{}: echo {seq} differs from what was sent", M::NAME).into());
+        }
+        Ok(u64::try_from(t1 - t0)?)
+    }
+
     /// `warm + timed` paced round trips on the order connection; every echo
-    /// is checked byte for byte, and the timed ones' round trips (send to
-    /// decoded, ns) are returned.
+    /// is checked byte for byte, and the timed ones' round trips are returned.
     fn run<M: Arm>(arm: &mut M, warm: usize, timed: usize) -> R<Vec<u64>> {
         let mut samples = Vec::with_capacity(timed);
         let mut payload = [0u8; PAYLOAD];
         let mut next = monotonic_ns();
         for i in 0..warm + timed {
-            let seq = i as u64;
-            fill(&mut payload, seq);
-            // The loop spins between round trips, as a live one does.
-            loop {
-                if arm.pass()?.is_some() {
-                    return Err(format!("{}: an echo nobody asked for", M::NAME).into());
-                }
-                if monotonic_ns() >= next {
-                    break;
-                }
-            }
-            let t0 = monotonic_ns();
-            arm.send(black_box(&payload))?;
-            let give_up = t0 + 1_000_000_000;
-            let t1 = loop {
-                if let Some(t) = arm.pass()? {
-                    break t;
-                }
-                if monotonic_ns() > give_up {
-                    return Err(format!("{}: no echo of {seq} within 1 s", M::NAME).into());
-                }
-            };
-            if black_box(arm.echo()) != &payload {
-                return Err(format!("{}: echo {seq} differs from what was sent", M::NAME).into());
-            }
+            let rt = round_trip(arm, &mut payload, i as u64, next)?;
             if i >= warm {
-                samples.push(u64::try_from(t1 - t0)?);
+                samples.push(rt);
             }
             next += INTERVAL_NS;
         }
@@ -677,55 +682,52 @@ mod linux {
         })
     }
 
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-    enum Kind {
-        EpollSpin,
-        Mio,
-    }
-
-    /// Which arm runs block `b` of a pair: A B B A A B B A ..., starting
-    /// with `first`. Short alternating blocks put both arms through the same
-    /// host state; a whole round per arm let a VM's CPU frequency or core
-    /// type change between them.
-    const fn block_kind(first: Kind, b: usize) -> Kind {
-        let a = matches!(b % 4, 0 | 3);
+    /// Which loop runs round trip `s` of a pair: A B B A A B B A ...,
+    /// starting with `first`. Turn by turn, both loops go through the same
+    /// host state; whole rounds or long blocks per loop let a VM's CPU
+    /// change core type or clock speed between them.
+    const fn side(first: Side, s: usize) -> Side {
+        let a = matches!(s % 4, 0 | 3);
         match (first, a) {
-            (Kind::EpollSpin, true) | (Kind::Mio, false) => Kind::EpollSpin,
-            (Kind::EpollSpin, false) | (Kind::Mio, true) => Kind::Mio,
+            (Side::Epoll, true) | (Side::Mio, false) => Side::Epoll,
+            (Side::Epoll, false) | (Side::Mio, true) => Side::Mio,
         }
     }
 
-    /// One A/B pair: both arms open `n` connections each to one echo peer
-    /// (the `Driver`'s first, then mio's), warm up, then take turns in
-    /// `BLOCKS` blocks of `TIMED / (BLOCKS / 2)` round trips. Returns each
-    /// arm's pooled percentiles and the paired difference (`rule`).
-    fn pair(n: usize, echo_cpu: usize, first: Kind) -> R<(Pct, Pct, i64)> {
+    /// One A/B pair: both loops open `n` connections each to one echo peer
+    /// (the `Driver`'s first, then mio's), then take turns (`side`) for
+    /// `WARMUP` and then `TIMED` round trips each. Returns each side's
+    /// pooled percentiles and the paired difference (`rule`).
+    fn pair(n: usize, echo_cpu: usize, first: Side) -> R<(Pct, Pct, i64)> {
         let lab = lab()?;
-        let per_block = TIMED / (BLOCKS / 2);
         std::thread::scope(|s| {
             let peer = s.spawn(|| echo(&lab, 2 * n, &[0, n], Some(echo_cpu)));
             let out = (|| -> R<(Pct, Pct, i64)> {
                 let mut d = DriverArm::new(&lab, n)?;
                 let mut m = MioArm::new(&lab, n)?;
-                run(&mut d, WARMUP, 0)?;
-                run(&mut m, WARMUP, 0)?;
-                let (mut es, mut ms) = (Vec::with_capacity(TIMED), Vec::with_capacity(TIMED));
-                let (mut eb, mut mb) = (
-                    Vec::with_capacity(BLOCKS / 2),
-                    Vec::with_capacity(BLOCKS / 2),
-                );
-                for b in 0..BLOCKS {
-                    let (mut block, all, p50s) = match block_kind(first, b) {
-                        Kind::EpollSpin => (run(&mut d, 0, per_block)?, &mut es, &mut eb),
-                        Kind::Mio => (run(&mut m, 0, per_block)?, &mut ms, &mut mb),
+                let mut payload = [0u8; PAYLOAD];
+                let mut next = monotonic_ns();
+                let mut slots = Vec::with_capacity(2 * TIMED);
+                for s in 0..2 * (WARMUP + TIMED) {
+                    let k = side(first, s);
+                    let seq = s as u64;
+                    let rt = match k {
+                        Side::Epoll => round_trip(&mut d, &mut payload, seq, next)?,
+                        Side::Mio => round_trip(&mut m, &mut payload, seq, next)?,
                     };
-                    all.extend_from_slice(&block);
-                    p50s.push(percentiles(&mut block).ok_or("empty block")?.p50);
+                    if s >= 2 * WARMUP {
+                        slots.push((k, rt));
+                    }
+                    next += INTERVAL_NS;
                 }
+                let (eb, mb) = block_p50s(&slots).ok_or("a block without both loops")?;
+                let pooled = |want: Side| -> Vec<u64> {
+                    slots.iter().filter(|x| x.0 == want).map(|x| x.1).collect()
+                };
                 Ok((
-                    percentiles(&mut es).ok_or("no samples")?,
-                    percentiles(&mut ms).ok_or("no samples")?,
-                    paired_diff_ns(&eb, &mb).ok_or("no sub-pairs")?,
+                    percentiles(&mut pooled(Side::Epoll)).ok_or("no samples")?,
+                    percentiles(&mut pooled(Side::Mio)).ok_or("no samples")?,
+                    paired_diff_ns(&eb, &mb).ok_or("no blocks")?,
                 ))
             })();
             // Both arms are gone: the peer sees EOF and returns.
@@ -749,24 +751,19 @@ mod linux {
         )?;
         pin_current_thread(client)?;
         println!(
-            "mio parity, N = {n}: {PAIRS} pairs; per pair and arm {WARMUP} warm-up + {TIMED} timed round trips \
-             in {} alternating blocks; {PAYLOAD} B at {}/s, client CPU {client}, echo CPU {echo_cpu}; \
-             µs p50 / p99 / max",
-            BLOCKS / 2,
+            "mio parity, N = {n}: {PAIRS} pairs; per pair and arm {WARMUP} warm-up + {TIMED} timed round trips, \
+             the arms taking turns, blocks of {BLOCK_SLOTS}; {PAYLOAD} B at {}/s, client CPU {client}, \
+             echo CPU {echo_cpu}; tolerance {TOL_PCT} % of p50; µs p50 / p99 / max",
             1_000_000_000 / INTERVAL_NS
         );
         let mut pairs = Vec::with_capacity(PAIRS);
         for i in 0..PAIRS {
-            let first = if i % 2 == 0 {
-                Kind::EpollSpin
-            } else {
-                Kind::Mio
-            };
+            let first = if i % 2 == 0 { Side::Epoll } else { Side::Mio };
             let (e, m, diff) = pair(n, echo_cpu, first)?;
             let tol = tolerance_ns(e.p50, m.p50);
             println!(
                 "pair {i} ({}): epoll-spin {:.2} / {:.2} / {:.1}  mio {:.2} / {:.2} / {:.1}  \
-                 mio - epoll-spin p50, paired {:+.2} (pooled {:+.2}, tolerance {:.2})",
+                 mio - epoll-spin p50, paired {:+.2} ({:+.1} %; pooled {:+.2}, tolerance {:.2})",
                 if i % 2 == 0 {
                     "epoll-spin first"
                 } else {
@@ -779,6 +776,7 @@ mod linux {
                 us(m.p99),
                 us(m.max),
                 diff as f64 / 1_000.0,
+                diff as f64 * 200.0 / (e.p50 + m.p50) as f64,
                 (m.p50 as f64 - e.p50 as f64) / 1_000.0,
                 us(tol),
             );

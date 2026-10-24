@@ -2,14 +2,11 @@
 //! one A/B pair, and the verdict over the pairs. Pure functions, tested on
 //! every platform.
 //!
-//! A pair is `BLOCKS` short blocks, the two arms alternating A B B A ...
-//! Each adjacent (A, B) blocks form a sub-pair. The pair's difference is the
-//! median over its sub-pairs of (mio block p50 - `epoll-spin` block p50): a
-//! change in the host (a VM's CPU moving between core types or clock
-//! speeds) lasting longer than a block moves both blocks of a sub-pair, so
-//! it cancels in the difference. A pooled p50 over a pair does not: when the
-//! host spends near half the pair in each of two speeds, the pooled median
-//! jumps between them.
+//! Within a pair the two loops take turns round trip by round trip,
+//! A B B A ..., so both see the same host state: a VM's CPU moving between
+//! core types or clock speeds moves both. The round trips, in the order they
+//! ran, are cut into blocks of `BLOCK_SLOTS`; the pair's difference is the
+//! median over its blocks of (mio block p50 - `epoll-spin` block p50).
 
 /// A/B pairs per socket count. Seven is the smallest count for which the sign
 /// test below can reach a one-sided p below 0.07 (8 / 128 = 0.0625).
@@ -21,23 +18,21 @@ pub const PAIRS: usize = 7;
 /// a pair only counts when it clears `tolerance_ns`.
 pub const SIGN_MIN: usize = 6;
 
-/// Absolute floor of the tolerance, ns.
-///
-/// Set from the spread of the paired difference on the Docker Linux lane
-/// (`io/benches/results/mio-parity-docker-20261024T145651Z/summary.md`:
-/// arm64 and amd64 under Docker Desktop on Apple silicon, 10 runs, 140
-/// pairs at 5.5-14.4 µs p50). Its median was +0.19 to +0.27 µs (mio
-/// slower: its read to `WouldBlock` is in the timed path) and its standard
-/// deviation 0.51-0.85 µs. At 0.5 µs up to 10 of 35 pairs lay beyond it on
-/// one side: 6 of 7 by chance about once in 350 tests, too often for CI.
-/// At 1.0 µs up to 4 of 35: about once in 70,000.
-pub const TOL_ABS_NS: u64 = 1_000;
+/// Round trips per block, both loops together (100 each, 20 ms).
+pub const BLOCK_SLOTS: usize = 200;
 
-/// Relative tolerance, percent of the pair's mean p50: the spread grew with
-/// the round trip (standard deviation 4-8 % of p50 in the runs above),
-/// so a slower host (a CI runner's loopback) gets a proportionally wider
-/// band. At the Docker lane's 10 µs it equals the floor.
-pub const TOL_PCT: u64 = 10;
+/// Tolerance, percent of the pair's mean p50. A 10 % slowdown of either loop
+/// must fail, and the measured level must pass.
+///
+/// Set from `io/benches/results/mio-parity-docker-20261024T154626Z/summary.md`
+/// (Docker on Apple silicon, arm64 native and amd64 under Rosetta). Nothing
+/// injected, 140 pairs: −0.5 % to +6.2 % (median +2.1 to +3.1 %, mio slower
+/// by its timed read to `WouldBlock`), 3 beyond 5 %, never more than 1 of 7
+/// in a test. 10 % added to one loop's round trips, 56 pairs: every one
+/// beyond 5 % on that side (closest −5.4 %), every test failed 7 of 7.
+/// Relative, with no absolute floor: the earlier floor of 1 µs was 10 % of
+/// a 10 µs round trip, so a 10 % slowdown sat on the tolerance.
+pub const TOL_PCT: u64 = 5;
 
 /// Percentiles of one round's round trips, ns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -62,15 +57,13 @@ pub fn percentiles(samples: &mut [u64]) -> Option<Pct> {
     })
 }
 
-/// The tolerance for one pair: the larger of `TOL_ABS_NS` and `TOL_PCT` of
-/// the two arms' mean p50.
+/// The tolerance for one pair: `TOL_PCT` of the two sides' mean p50.
 #[must_use]
 pub const fn tolerance_ns(a: u64, b: u64) -> u64 {
-    let pct = (a / 2 + b / 2) * TOL_PCT / 100;
-    if pct > TOL_ABS_NS { pct } else { TOL_ABS_NS }
+    (a / 2 + b / 2) * TOL_PCT / 100
 }
 
-/// The median over sub-pairs of `mio[j] - epoll[j]` (block p50s, ns): what
+/// The median over blocks of `mio[j] - epoll[j]` (block p50s, ns): what
 /// the verdict reads as "mio's p50 minus `epoll-spin`'s" for one pair.
 /// `None` when empty or the lengths differ.
 #[must_use]
@@ -92,6 +85,32 @@ pub fn paired_diff_ns(epoll: &[u64], mio: &[u64]) -> Option<i64> {
     } else {
         Some(i64::midpoint(d[n / 2 - 1], d[n / 2]))
     }
+}
+
+/// Which loop ran a round trip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    /// The `Driver` with `Backend::EpollSpin`.
+    Epoll,
+    /// The minimal mio loop.
+    Mio,
+}
+
+/// Each side's p50 per block of `BLOCK_SLOTS` round trips, from the round
+/// trips in the order they ran. `None` when a block lacks either side.
+#[must_use]
+pub fn block_p50s(slots: &[(Side, u64)]) -> Option<(Vec<u64>, Vec<u64>)> {
+    if slots.is_empty() {
+        return None;
+    }
+    let (mut eb, mut mb) = (Vec::new(), Vec::new());
+    for block in slots.chunks(BLOCK_SLOTS) {
+        let side =
+            |s: Side| -> Vec<u64> { block.iter().filter(|x| x.0 == s).map(|x| x.1).collect() };
+        eb.push(percentiles(&mut side(Side::Epoll))?.p50);
+        mb.push(percentiles(&mut side(Side::Mio))?.p50);
+    }
+    Some((eb, mb))
 }
 
 /// What the pairs show.
@@ -167,11 +186,10 @@ mod tests {
     }
 
     #[test]
-    fn tolerance_is_the_floor_or_the_percentage_whichever_is_larger() {
-        assert_eq!(tolerance_ns(1_000, 1_000), TOL_ABS_NS);
-        let big = 100 * TOL_ABS_NS; // far above the floor
-        assert_eq!(tolerance_ns(big, big), big * TOL_PCT / 100);
-        const { assert!(TOL_ABS_NS > 0 && TOL_PCT > 0) };
+    fn tolerance_is_a_percentage_of_the_mean_p50() {
+        assert_eq!(tolerance_ns(10_000, 10_000), 10_000 * TOL_PCT / 100);
+        assert_eq!(tolerance_ns(9_000, 11_000), 10_000 * TOL_PCT / 100);
+        const { assert!(TOL_PCT > 0 && TOL_PCT < 10) };
     }
 
     fn pairs(diffs: &[i64]) -> Vec<Pair> {
@@ -188,13 +206,13 @@ mod tests {
     }
 
     #[test]
-    fn the_pair_difference_is_the_median_of_its_sub_pairs() {
-        // Sub-pairs in two host speeds (6 and 10 µs), mio 200 ns slower in
+    fn the_pair_difference_is_the_median_of_its_blocks() {
+        // Blocks in two host speeds (6 and 10 µs), mio 200 ns slower in
         // every one: the pooled p50s would differ by 4 µs either way.
         let e = [6_000, 6_000, 10_000, 10_000, 10_000];
         let m = [6_200, 6_200, 10_200, 10_200, 10_200];
         assert_eq!(paired_diff_ns(&e, &m), Some(200));
-        // One outlying sub-pair does not move it.
+        // One outlying block does not move it.
         let m2 = [6_200, 6_200, 10_200, 10_200, 2_000];
         assert_eq!(paired_diff_ns(&e, &m2), Some(200));
         // An even count: the mean of the middle two.
@@ -213,7 +231,70 @@ mod tests {
         assert_eq!(verdict(&pairs(&six)), Verdict::EpollAhead(6));
         let six_neg: Vec<i64> = six.iter().map(|d| -d).collect();
         assert_eq!(verdict(&pairs(&six_neg)), Verdict::MioAhead(6));
-        assert_eq!(verdict(&pairs(&[t; 7])), Verdict::EpollAhead(7));
+        assert_eq!(verdict(&pairs(&[t; PAIRS])), Verdict::EpollAhead(7));
+    }
+
+    fn at_10us(diffs_ns: &[i64]) -> Vec<Pair> {
+        diffs_ns
+            .iter()
+            .map(|&d| Pair {
+                mio_minus_epoll: d,
+                epoll_p50: 10_000,
+                mio_p50: 10_000,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_ten_percent_slowdown_of_either_side_fails() {
+        // The recorded bias: mio about 2 % slower (its read to WouldBlock).
+        // The `Driver` 10 % slower on top of it: mio - epoll = 0.2 - 1.0 µs.
+        assert_eq!(verdict(&at_10us(&[-800; PAIRS])), Verdict::MioAhead(7));
+        // mio 10 % slower on top of it.
+        assert_eq!(verdict(&at_10us(&[1_200; PAIRS])), Verdict::EpollAhead(7));
+    }
+
+    #[test]
+    fn the_recorded_spread_passes() {
+        // The worst recorded test: one pair at +6.2 %, the rest at the
+        // median +3.1 %.
+        let mut d = vec![310; PAIRS];
+        d[0] = 620;
+        assert_eq!(
+            verdict(&at_10us(&d)),
+            Verdict::Level {
+                epoll_ahead: 1,
+                mio_ahead: 0
+            }
+        );
+    }
+
+    #[test]
+    fn blocks_take_each_sides_p50_in_run_order() {
+        use Side::{Epoll, Mio};
+        // Two blocks; in each the sides alternate, as the gate runs them.
+        let mut slots = Vec::new();
+        for b in 0..2u64 {
+            for i in 0..(BLOCK_SLOTS as u64) {
+                let side = if i % 2 == 0 { Epoll } else { Mio };
+                let base = if side == Epoll { 1_000 } else { 1_100 };
+                slots.push((side, base * (b + 1) + i % 3));
+            }
+        }
+        let (e, m) = block_p50s(&slots).unwrap_or_default();
+        assert_eq!(e.len(), 2);
+        assert_eq!(m.len(), 2);
+        assert!(
+            e[0] >= 1_000 && e[0] <= 1_002 && e[1] >= 2_000 && e[1] <= 2_002,
+            "{e:?}"
+        );
+        assert!(
+            m[0] >= 1_100 && m[0] <= 1_102 && m[1] >= 2_200 && m[1] <= 2_202,
+            "{m:?}"
+        );
+        // A block with one side missing is refused, not read as level.
+        assert_eq!(block_p50s(&[(Epoll, 1); BLOCK_SLOTS]), None);
+        assert_eq!(block_p50s(&[]), None);
     }
 
     #[test]
@@ -229,7 +310,7 @@ mod tests {
         );
         // One side ahead in every pair, but never by more than the tolerance.
         assert_eq!(
-            verdict(&pairs(&[t; 7])),
+            verdict(&pairs(&[t; PAIRS])),
             Verdict::Level {
                 epoll_ahead: 0,
                 mio_ahead: 0
