@@ -34,6 +34,11 @@
   `config.json.d/40-nodeadm.conf`) install with
   `--set hostContract.kubeletConfig.path=/etc/kubernetes/kubelet/config.json
   --set hostContract.kubeletConfigDir.enabled=true`. Not verified on EKS.
+- `ergon-shared-cpus` 0.1.2 (not yet published): the hot-pod NIC check reads
+  a Hyper-V synthetic NIC (Azure `hv_netvsc`, which has no PCI interrupt)
+  by its VMBus channels: each `device/channels/<relid>/cpu` must be an IRQ
+  CPU, and an unreadable one refuses. Before, every hot pod on an Azure VM
+  was refused with `no NIC interrupt found`.
 - `ergon-io`: opt-in `tcp_rto_min_us` and `tcp_delack_max_us`
   (`TCP_RTO_MIN_US`, `TCP_DELACK_MAX_US`, Linux 6.15+) on every connection
   and libcurl socket, 2,000 to 200,000 µs. `Driver::new` and
