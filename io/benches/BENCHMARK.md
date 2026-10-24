@@ -104,7 +104,7 @@ Market data, `irqcore`, the same run. Pass = 1 ÷ the loop's passes per second (
 | `recv-busy,per_queue` | 933–934 ns | 5.56–5.58 µs | 804–897 µs |
 | `recv-busy` | 574–588 ns | 149.3–149.4 µs | 1,910–2,187 µs |
 
-- Every backend's pass grows with sockets, idle ones included: the `Driver` checks each connection for queued sends on every pass. `uring-sqpoll`'s kernel thread polls NIC queues, but the loop's own pass still grows.
+- Every backend's pass grows with sockets, idle ones included: the `Driver` of this run checked each connection for queued sends on every pass. `uring-sqpoll`'s kernel thread polls NIC queues, but the loop's own pass still grows. The send pass now visits only connections with bytes queued (the send set); not re-measured.
 - mio makes 2.0× the `recvmsg` calls of `epoll-spin` (WebSocket round trip, N = 1: 1,200,000 against 600,000), from reading until `WouldBlock`.
 
 ## Polling backends by socket count (x86)
