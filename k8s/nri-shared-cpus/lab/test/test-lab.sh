@@ -448,7 +448,15 @@ for e in sched/sched_switch sched/sched_wakeup ipi/ipi_send_cpu ipi/ipi_send_cpu
 done
 printf '#!/bin/sh\n[ "$1" = clocks ] && echo "1700000000000000500 1000"\n' >"$work/fake-gapprobe"
 chmod +x "$work/fake-gapprobe"
-tv() { LAB_TRACEFS=$tfs LAB_GAPPROBE=$work/fake-gapprobe "$@"; }
+# tracefs is root-only (700 root): only sudo may look inside it
+tv() {
+    local rc
+    chmod 000 "$tfs"
+    LAB_TRACEFS=$tfs LAB_GAPPROBE=$work/fake-gapprobe FAKE_ROOT_ONLY=$tfs "$@"
+    rc=$?
+    chmod 755 "$tfs"
+    return $rc
+}
 echo "line one" >"$tfs/trace"
 tv trace_start 3 "$work/tr" >"$work/tr.out" 2>&1
 check "trace_start succeeds" test $? -eq 0

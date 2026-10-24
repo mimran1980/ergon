@@ -1,3 +1,12 @@
 #!/bin/sh
 # Fake sudo for test-lab.sh: runs the command as this user.
+# FAKE_ROOT_ONLY=<dir>: a directory only root may enter (mode 000 for this
+# user, as tracefs is 700 root): opened for the command alone.
+if [ -n "${FAKE_ROOT_ONLY:-}" ]; then
+    chmod 755 "$FAKE_ROOT_ONLY"
+    "$@"
+    rc=$?
+    chmod 000 "$FAKE_ROOT_ONLY"
+    exit $rc
+fi
 exec "$@"

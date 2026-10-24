@@ -151,6 +151,8 @@ cpumask() { lab_cpumask_hex "$1"; }
 
 # tset <tracefs file> <value>: writes it; fails when the kernel refuses.
 tset() { printf '%s\n' "$2" | sudo tee "$LAB_TRACEFS/$1" >/dev/null 2>&1; }
+# tdir <tracefs dir>: whether it exists (tracefs is 700 root: ask as root).
+tdir() { sudo test -d "$LAB_TRACEFS/$1"; }
 
 # trace_start <cpu> <prefix>: tracefs ready for the traced rep: the buffer
 # cleared, the mono clock, 16 MiB a CPU, every event of lab_trace_events
@@ -161,9 +163,9 @@ tset() { printf '%s\n' "$2" | sudo tee "$LAB_TRACEFS/$1" >/dev/null 2>&1; }
 # clocks) and <prefix>.cpu, then turns tracing on. Every event of interest is filtered in the
 # kernel, so the buffers hold only what concerns that CPU.
 trace_start() {
-    local cpu=$1 p=$2 ev filter stack d rel rt mono
-    [[ -d $LAB_TRACEFS/events ]] || sudo mount -t tracefs nodev "$LAB_TRACEFS" >/dev/null 2>&1
-    [[ -d $LAB_TRACEFS/events ]] || { echo "no tracefs at $LAB_TRACEFS"; return 1; }
+    local cpu=$1 p=$2 ev filter stack rel rt mono
+    tdir events || sudo mount -t tracefs nodev "$LAB_TRACEFS" >/dev/null 2>&1
+    tdir events || { echo "no tracefs at $LAB_TRACEFS"; return 1; }
     tset tracing_on 0 || { echo "tracefs: cannot write tracing_on"; return 1; }
     tset current_tracer nop
     tset set_event ""
@@ -175,8 +177,7 @@ trace_start() {
     echo "$cpu" >"$p.cpu"
     while IFS=';' read -r ev filter stack; do
         rel=events/${ev%%:*}/${ev#*:}
-        d=$LAB_TRACEFS/$rel
-        if [[ ! -d $d ]]; then
+        if ! tdir "$rel"; then
             echo "$ev" >>"$p.missing"
             continue
         fi
@@ -207,13 +208,13 @@ trace_stop() {
     read -r rt mono < <("$LAB_GAPPROBE" clocks) && [[ -n $rt && -n $mono ]] && echo $((rt - mono)) >"$p.offset.end"
     sudo cat "$LAB_TRACEFS/trace" >"$p.trace.txt" || { echo "cannot read $LAB_TRACEFS/trace"; return 1; }
     : >"$p.stats"
-    for c in "$LAB_TRACEFS"/per_cpu/cpu*; do
-        [[ -e $c/stats ]] || continue
-        echo "${c##*/} $(grep -m1 '^overrun:' "$c/stats")" >>"$p.stats"
+    for c in $(sudo ls "$LAB_TRACEFS/per_cpu" 2>/dev/null); do
+        sudo test -e "$LAB_TRACEFS/per_cpu/$c/stats" || continue
+        echo "$c $(sudo grep -m1 '^overrun:' "$LAB_TRACEFS/per_cpu/$c/stats")" >>"$p.stats"
     done
     while IFS=';' read -r ev filter stack; do
         rel=events/${ev%%:*}/${ev#*:}
-        [[ -d $LAB_TRACEFS/$rel ]] || continue
+        tdir "$rel" || continue
         tset "$rel/enable" 0
         [[ -n $stack ]] && tset "$rel/trigger" "!stacktrace if $filter"
         tset "$rel/filter" 0
