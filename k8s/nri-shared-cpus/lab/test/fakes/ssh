@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Fake ssh for test-lab.sh: the last argument is the remote command. Logs it
+# to $FAKE_DIR/ssh.log. FAKE_SSH=down: every connection fails; =hang: each
+# sleeps 3 s, then fails. Otherwise vm.sh steps "run" at once: each is
+# recorded in steps.log, and with the boot it ran in in steps-boot.log, and
+# exits 0 (1 for FAKE_FAIL_STEP). The boot id is boot-1 until a reboot, then
+# boot-2; FAKE_REBOOT_LAG=n: the old boot answers n more connections first.
+# FAKE_SSH_DOWN_AT=<step>: every connection after that step starts fails.
+cmd=${!#}
+echo "$cmd" >>"$FAKE_DIR/ssh.log"
+case ${FAKE_SSH:-up} in
+down) exit 255 ;;
+hang) sleep 3; exit 255 ;;
+esac
+[[ -e $FAKE_DIR/ssh-down ]] && exit 255
+boot="boot-1"
+[[ -e $FAKE_DIR/boot ]] && boot=$(cat "$FAKE_DIR/boot")
+if [[ -e $FAKE_DIR/reboot-lag ]]; then
+    lag=$(cat "$FAKE_DIR/reboot-lag")
+    if ((lag > 0)); then echo $((lag - 1)) >"$FAKE_DIR/reboot-lag"; else
+        rm -f "$FAKE_DIR/reboot-lag"
+        boot="boot-2"
+        echo "$boot" >"$FAKE_DIR/boot"
+    fi
+fi
+case $cmd in
+*"nohup bash -c 'bash ~/lab/k8s/nri-shared-cpus/lab/vm.sh "*)
+    name=${cmd#*lab/vm.sh }
+    name=${name%%;*}
+    echo "$name" >>"$FAKE_DIR/steps.log"
+    echo "$name@$boot" >>"$FAKE_DIR/steps-boot.log"
+    rc=0
+    [[ $name == "${FAKE_FAIL_STEP:-}" ]] && rc=1
+    echo "$rc" >"$FAKE_DIR/rc-$name"
+    [[ $name == "${FAKE_SSH_DOWN_AT:-}" ]] && touch "$FAKE_DIR/ssh-down"
+    ;;
+"cat ~/step-"*".rc 2>/dev/null")
+    name=${cmd#"cat ~/step-"}
+    cat "$FAKE_DIR/rc-${name%%.rc*}" 2>/dev/null
+    ;;
+"cat /proc/sys/kernel/random/boot_id") echo "$boot" ;;
+"tail -c "*) ;;
+*"cat >~/lab/lab.env"*) cat >"$FAKE_DIR/lab.env" ;;
+"sudo systemctl reboot")
+    echo reboot >>"$FAKE_DIR/steps.log"
+    echo "${FAKE_REBOOT_LAG:-0}" >"$FAKE_DIR/reboot-lag"
+    ;;
+esac
+exit 0

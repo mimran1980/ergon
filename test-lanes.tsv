@@ -35,3 +35,4 @@ md-dpdk/benches/*.rs	benchmark	cargo bench -p ergon-md-dpdk --no-run && cargo be
 md-dpdk/harness/src/*.rs	dpdk	cargo test -p ergon-md-dpdk-harness -- --test-threads=1
 md-dpdk/harness/tests/*.rs	dpdk	cargo test -p ergon-md-dpdk-harness -- --test-threads=1
 md-dpdk/device-plugin/src/*.rs	pr	cargo test -p ergon-md-dpdk-device-plugin -- --test-threads=1
+k8s/nri-shared-cpus/lab/gapprobe/src/*.rs	samples	cargo test --manifest-path k8s/nri-shared-cpus/lab/gapprobe/Cargo.toml

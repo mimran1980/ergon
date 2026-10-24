@@ -467,7 +467,8 @@ mode_spare() {
 # over the family's threads a core: two for Intel's (c5, c6i, c7i, c8i and
 # kin) and AMD's before C7a, one for Graviton's (every vCPU a core) and AMD's
 # from C7a on. Azure: the D, E and F series' v5 and v6 sizes
-# (Standard_D8s_v6: 8 vCPUs), two threads a core. Anything else unknown.
+# (Standard_D8s_v6: 8 vCPUs), two threads a core, but one on AMD's Fasv6
+# and Cobalt 100's Arm v6 sizes (Dpsv6, Dplsv6, Epsv6). Anything else unknown.
 AWS_TWO_THREADS=" c5 c5a c5ad c5d c5n c6a c6i c6id c6in c7i c7i-flex c8i c8i-flex m5 m5n m6a m6i m6in m7i m7i-flex m8i r5 r6a r6i r7i r8i "
 AWS_ONE_THREAD=" c7a m7a r7a c8a m8a r8a "
 
@@ -509,6 +510,9 @@ type_cores() {
         [[ $type =~ ^Standard_[DEF]([1-9][0-9]{0,2})[a-z]*_v[56]$ ]] ||
             { echo "$type: no core count for it in modes.sh's table (the D, E and F series' v5 and v6 sizes)" >&2; return 1; }
         vcpus=${BASH_REMATCH[1]} threads=2
+        # no SMT: AMD's Fasv6 (Falsv6, Famsv6) and Cobalt 100's Arm sizes
+        # (a p after the vCPUs: Dpsv6, Dplsv6, Dpdsv6, Epsv6), each vCPU a core
+        if [[ $type =~ ^Standard_F[0-9]+a[a-z]*_v6$ || $type =~ ^Standard_[DE][0-9]+p[a-z]*_v6$ ]]; then threads=1; fi
         ;;
     *)
         echo "type_cores: aws or azure, not $cloud" >&2
@@ -528,7 +532,7 @@ spare_types_check() {
     takers=$(spare_takers "$m")
     [[ -n $takers ]] || return 0
     more="c7i.4xlarge, c8g.2xlarge and up have five or more"
-    [[ $cloud == azure ]] && more="Standard_D16s_v6 and up have five or more"
+    [[ $cloud == azure ]] && more="Standard_D16s_v6, Standard_D8ps_v6, Standard_F8as_v6 and up have five or more"
     for t in "$@"; do
         if ! cores=$(type_cores "$cloud" "$t" 2>&1); then
             echo "mode $m takes the layout's fifth core ($takers): $cores" >&2

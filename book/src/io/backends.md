@@ -20,7 +20,7 @@ configuration, so one binary can run with each. Which to pick:
   queue instead: see [cost per poll](#cost-per-poll).
 - **`uring-sqpoll` costs a spinning kernel thread per ring.** Rings in one
   process can share one; other processes cannot. Its kernel thread polls each
-  NIC queue, not each socket; the loop's pass still grows ([cost per poll](#cost-per-poll)).
+  NIC queue, not each socket ([cost per poll](#cost-per-poll)).
 
 ## Configuration strings
 
@@ -191,8 +191,11 @@ only the ready sockets. Its NIC polling stops at the queue count.
 - **`epoll-spin` and `uring-spin`** do not read idle sockets; they wait for
   the NIC interrupt instead. Against the polling backends:
   [fair run](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton).
-- **Every backend checks each connection for queued sends on every pass**,
-  so the loop's pass grows with sockets even when they are idle.
+- **A send pass visits only the connections with bytes queued** (the
+  driver's send set), so idle connections add nothing to it. The passes
+  measured below predate the send set: each also checked every connection
+  for queued sends, which grew the pass with idle sockets (not re-measured
+  since).
 - Where each polling backend stops winning:
   [choosing a backend](overview.md#choosing-a-backend).
 
@@ -288,11 +291,11 @@ Why it is not a backend:
 
 1. **It would duplicate `epoll-spin`:** the same two syscalls, plus one
    empty read per message.
-2. **Its one edge is not mio's.** Its mean pass at 256 sockets is 359 ns
-   against `epoll-spin`'s 601–617 ns because the `Driver` checks every
+2. **Its one edge was not mio's.** Its mean pass at 256 sockets was 359 ns
+   against `epoll-spin`'s 601–617 ns because the `Driver` then checked every
    connection for queued sends on each pass and `mio_bench` does not. That
-   cost is the `Driver`'s, paid by every backend
-   ([cost per poll](#cost-per-poll)), not epoll's.
+   cost was the `Driver`'s, paid by every backend, not epoll's; the send set
+   has removed it (not re-measured: [cost per poll](#cost-per-poll)).
 3. **Off Linux it would lose what ergon-io is for.** macOS and Windows have
    no `SO_BUSY_POLL`, `io_uring`, `TCP_QUICKACK`, `SO_TIMESTAMPING` or
    netlink route checks. Latency verdicts come from Linux only.

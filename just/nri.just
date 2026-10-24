@@ -35,5 +35,15 @@ build-nri-image-multiarch:
     docker buildx build --platform linux/amd64,linux/arm64 \
         -t ergon-shared-cpus:dev k8s/nri-shared-cpus
 
+# The Azure latency lab without a cloud: the script against fake az/ssh, the
+# lab's functions on fixtures, and the gap probe's unit tests. Needs ruby, jq
+test-nri-lab:
+    bash k8s/nri-shared-cpus/lab/test/test-lab.sh
+    cargo test --manifest-path k8s/nri-shared-cpus/lab/gapprobe/Cargo.toml
+
+# The latency lab's plan, size and price: no cloud call
+plan-nri-lab:
+    DRY_RUN=1 bash k8s/nri-shared-cpus/lab/azure-vm.sh
+
 # The full local gate before anything is published: units, cgroup lane, chart, image
 check-nri-all: check-nri check-nri-chart build-nri-image
