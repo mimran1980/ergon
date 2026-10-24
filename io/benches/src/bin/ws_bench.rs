@@ -10,7 +10,8 @@
 //! messages (untimed: the kernel's copy), then times one
 //! `WsConn::deliver_staged` with the raw counter (`rdtsc` / `cntvct_el0`):
 //! parse, decide, copy where the case copies, check UTF-8 where it checks,
-//! deliver. The figure is that sample's ticks / K, in ns.
+//! deliver. The figure is that sample's ticks / K, in ns. The two paths of
+//! a row run interleaved on the same window, alternating which goes first.
 //!
 //! | axis | values |
 //! |---|---|
@@ -196,30 +197,26 @@ fn id() -> ConnId {
     ConnId::from_parts(0, 0)
 }
 
-#[allow(clippy::cast_precision_loss)]
-fn run_case(
-    conn: &mut WsConn,
-    shape: Shape,
-    size: usize,
-    keep: bool,
-    path: Path,
-    samples: usize,
-) -> BoxResult<Row> {
-    let k = (512 * 1024 / size).clamp(1, 64);
-    let l = load_for(shape, size, k)?;
-    let meta = RxMeta::default();
-    let mut app = App {
+const fn app(path: Path, keep: bool) -> App {
+    App {
         path,
         keep,
         verify: true,
         got: Vec::new(),
         delivered: 0,
         sink: 0,
-    };
-    // Correctness first.
+    }
+}
+
+/// Checks one path's delivery of `l` before anything is timed: payloads,
+/// counts and the copy counters the case implies.
+fn verify(conn: &mut WsConn, shape: Shape, l: &Load, path: Path, keep: bool) -> BoxResult<()> {
+    let k = l.msgs.len();
+    let size = l.msgs.first().map_or(0, Vec::len);
+    let mut a = app(path, keep);
     let s0 = conn.stats();
-    put(conn, shape, &l)?;
-    let n = conn.deliver_staged(id(), &meta, &mut app)?;
+    put(conn, shape, l)?;
+    let n = conn.deliver_staged(id(), &RxMeta::default(), &mut a)?;
     let s1 = conn.stats();
     let delivered_expected = if !keep && path == Path::New { 0 } else { k };
     assert_eq!(
@@ -228,11 +225,11 @@ fn run_case(
     );
     assert_eq!(conn.buffered(), 0, "the window is consumed");
     if keep {
-        assert_eq!(app.got, l.msgs, "{shape:?} {size} {path:?}: payloads");
+        assert_eq!(a.got, l.msgs, "{shape:?} {size} {path:?}: payloads");
     }
     let frag_copy = s1.frag_copy_bytes - s0.frag_copy_bytes;
-    match (shape, path, keep) {
-        (Shape::Frag4, Path::Old, _) => assert_eq!(frag_copy, (k * size) as u64),
+    match (shape, path) {
+        (Shape::Frag4, Path::Old) => assert_eq!(frag_copy, (k * size) as u64),
         _ => assert_eq!(
             frag_copy, 0,
             "{shape:?} {path:?} {keep}: no reassembly copy"
@@ -242,45 +239,109 @@ fn run_case(
         assert_eq!(s1.skipped - s0.skipped, k as u64);
     }
     assert_eq!(s1.frag_fallbacks, s0.frag_fallbacks, "no fallback");
-    app.verify = false;
-    app.got = Vec::new();
+    Ok(())
+}
 
-    let tpu = ticks_per_us();
-    let mut h = Histogram::<u64>::new_with_bounds(1, 100_000_000_000, 3)?;
+/// Timing state of one path.
+struct Side {
+    app: App,
+    h: Histogram<u64>,
+    worst: u64,
+    worst_preempted: bool,
+    frag_copy: u64,
+    span_copy: u64,
+}
+
+fn side(path: Path, keep: bool) -> BoxResult<Side> {
+    let mut a = app(path, keep);
+    a.verify = false;
+    Ok(Side {
+        app: a,
+        h: Histogram::<u64>::new_with_bounds(1, 100_000_000_000, 3)?,
+        worst: 0,
+        worst_preempted: false,
+        frag_copy: 0,
+        span_copy: 0,
+    })
+}
+
+/// Loads `l`, then times one `deliver_staged` of it for `side`.
+#[allow(clippy::cast_precision_loss)]
+fn sample(
+    conn: &mut WsConn,
+    shape: Shape,
+    l: &Load,
+    side: &mut Side,
+    record: bool,
+    ns_per_tick_per_msg: f64,
+) -> BoxResult<()> {
+    let meta = RxMeta::default();
+    put(conn, shape, l)?;
+    let s0 = conn.stats();
+    let (_, iv0) = thread_ctx_switches();
+    let t0 = rdtsc();
+    let n = conn.deliver_staged(id(), &meta, &mut side.app)?;
+    let t1 = rdtsc();
+    let (_, iv1) = thread_ctx_switches();
+    black_box(n);
+    if !record {
+        return Ok(());
+    }
+    let s1 = conn.stats();
+    side.frag_copy += s1.frag_copy_bytes - s0.frag_copy_bytes;
+    side.span_copy += s1.span_copy_bytes - s0.span_copy_bytes;
+    let ns = t1.wrapping_sub(t0) as f64 * ns_per_tick_per_msg;
+    let v = ((ns * SCALE) as u64).max(1);
+    side.h.record(v)?;
+    if v > side.worst {
+        side.worst = v;
+        side.worst_preempted = iv1 != iv0;
+    }
+    Ok(())
+}
+
+/// Both paths over the same window, interleaved sample by sample (the
+/// order alternates), on one connection.
+#[allow(clippy::cast_precision_loss)]
+fn run_pair(
+    conn: &mut WsConn,
+    shape: Shape,
+    size: usize,
+    keep: bool,
+    samples: usize,
+) -> BoxResult<[Row; 2]> {
+    let k = (512 * 1024 / size).clamp(1, 64);
+    let l = load_for(shape, size, k)?;
+    // Correctness first.
+    for path in [Path::Old, Path::New] {
+        verify(conn, shape, &l, path, keep)?;
+    }
+    let mut old = side(Path::Old, keep)?;
+    let mut new = side(Path::New, keep)?;
+    let per = 1000.0 / ticks_per_us() / k as f64;
     let warm = samples / 10;
-    let mut worst = 0u64;
-    let mut worst_preempted = false;
-    let before = conn.stats();
     for i in 0..warm + samples {
-        put(conn, shape, &l)?;
-        let (_, iv0) = thread_ctx_switches();
-        let t0 = rdtsc();
-        let n = conn.deliver_staged(id(), &meta, &mut app)?;
-        let t1 = rdtsc();
-        let (_, iv1) = thread_ctx_switches();
-        black_box(n);
-        if i < warm {
-            continue;
-        }
-        let ns = t1.wrapping_sub(t0) as f64 / tpu * 1000.0 / k as f64;
-        let v = ((ns * SCALE) as u64).max(1);
-        h.record(v)?;
-        if v > worst {
-            worst = v;
-            worst_preempted = iv1 != iv0;
+        let record = i >= warm;
+        if i % 2 == 0 {
+            sample(conn, shape, &l, &mut old, record, per)?;
+            sample(conn, shape, &l, &mut new, record, per)?;
+        } else {
+            sample(conn, shape, &l, &mut new, record, per)?;
+            sample(conn, shape, &l, &mut old, record, per)?;
         }
     }
-    let after = conn.stats();
-    black_box(app.sink);
-    let msgs = ((warm + samples) * k) as f64;
-    Ok(Row {
-        p50: h.value_at_quantile(0.50) as f64 / SCALE,
-        p99: h.value_at_quantile(0.99) as f64 / SCALE,
-        max: h.max() as f64 / SCALE,
-        frag_copy: (after.frag_copy_bytes - before.frag_copy_bytes) as f64 / msgs,
-        span_copy: (after.span_copy_bytes - before.span_copy_bytes) as f64 / msgs,
-        max_preempted: worst_preempted,
-    })
+    let msgs = (samples * k) as f64;
+    Ok([old, new].map(|s| {
+        black_box(s.app.sink);
+        Row {
+            p50: s.h.value_at_quantile(0.50) as f64 / SCALE,
+            p99: s.h.value_at_quantile(0.99) as f64 / SCALE,
+            max: s.h.max() as f64 / SCALE,
+            frag_copy: s.frag_copy as f64 / msgs,
+            span_copy: s.span_copy as f64 / msgs,
+            max_preempted: s.worst_preempted,
+        }
+    }))
 }
 
 /// A connection whose keys come from a real handshake on loopback.
@@ -343,8 +404,8 @@ fn main() -> BoxResult<()> {
     for &size in &sizes {
         for shape in [Shape::Whole, Shape::Frag4, Shape::Split] {
             for keep in [true, false] {
-                for path in [Path::Old, Path::New] {
-                    let r = run_case(&mut conn, shape, size, keep, path, samples)?;
+                let rows = run_pair(&mut conn, shape, size, keep, samples)?;
+                for (path, r) in [Path::Old, Path::New].into_iter().zip(rows) {
                     let k = (512 * 1024 / size).clamp(1, 64);
                     let line = format!(
                         "| {size} | {} | {} | {} | {k} | {:.1} | {:.1} | {:.1} | {} | {:.0} | {:.0} |\n",
