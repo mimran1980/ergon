@@ -673,6 +673,14 @@ impl WsConn {
         Ok(delivered)
     }
 
+    /// Bench lever: join a frame split across records as before 0.1.35,
+    /// always moving the new record back next to the leftover, for an
+    /// interleaved comparison with the default (move the smaller side).
+    #[doc(hidden)]
+    pub const fn set_span_back_only(&mut self, on: bool) {
+        self.stream.set_span_back_only(on);
+    }
+
     /// Test lever: drops the queued frames, as a send would.
     #[doc(hidden)]
     pub fn clear_tx(&mut self) {
@@ -1287,8 +1295,8 @@ impl WsConn {
     }
 
     /// Queues a frame without the checks of [`WsConn::send_frame`]. The
-    /// header comes from the stack and the payload is masked as it is
-    /// copied into the record: one pass over it, no zero fill.
+    /// header comes from the stack; the payload is copied into the record
+    /// and masked there ([`ws::push_masked`]): no zero fill.
     #[inline]
     fn queue(&mut self, opcode: u8, payload: &[u8]) -> Result<()> {
         if payload.len() > ONE_RECORD {
@@ -1306,10 +1314,10 @@ impl WsConn {
     #[cold]
     fn queue_large(&mut self, opcode: u8, payload: &[u8]) -> Result<()> {
         let mask = self.next_mask();
-        let (h, hl) = ws::header_bytes(opcode, payload.len(), Some(mask));
+        let hl = ws::header_len(payload.len(), true);
         let (first, mut rest) = payload.split_at(((1 << 14) - hl).min(payload.len()));
         self.stream.seal_build(|out| {
-            out.extend_from_slice(&h[..hl]);
+            ws::push_header(out, opcode, payload.len(), Some(mask));
             ws::push_masked(out, first, mask, 0);
             Ok(())
         })?;

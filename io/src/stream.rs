@@ -60,6 +60,9 @@ pub struct TlsStream {
     /// while `holding`. `hold <= p_start`.
     hold: usize,
     holding: bool,
+    /// Bench lever: always move the new record back (the join before
+    /// 0.1.35), for an interleaved comparison.
+    span_back_only: bool,
     tls: RecordLayer,
     txq: TxQueue,
     stats: StreamStats,
@@ -87,6 +90,7 @@ impl TlsStream {
             p_end: plain,
             hold: 0,
             holding: false,
+            span_back_only: false,
             tls,
             txq,
             stats: StreamStats {
@@ -211,7 +215,7 @@ impl TlsStream {
         }
         let live = self.live_start();
         let left = self.p_end - live;
-        if left < plen {
+        if left < plen && !self.span_back_only {
             let to = src - left;
             self.buf.copy_within(live..self.p_end, to);
             self.p_start = to + (self.p_start - live);
@@ -324,6 +328,12 @@ impl TlsStream {
         build: impl FnOnce(&mut Vec<u8>) -> Result<()>,
     ) -> Result<()> {
         self.tls.seal_build(self.txq.tail(), build)
+    }
+
+    /// Bench lever: join split frames as before 0.1.35 (always move the new
+    /// record back next to the leftover).
+    pub(crate) const fn set_span_back_only(&mut self, on: bool) {
+        self.span_back_only = on;
     }
 
     /// Bench and test lever: puts `plain` into the window as if a record had

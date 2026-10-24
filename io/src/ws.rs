@@ -330,34 +330,31 @@ pub fn header_bytes(opcode: u8, payload_len: usize, mask: Option<[u8; 4]>) -> ([
     (h, pos)
 }
 
+/// Appends a FIN frame header for `payload_len` bytes ([`header_bytes`]).
+#[inline]
+pub fn push_header(out: &mut Vec<u8>, opcode: u8, payload_len: usize, mask: Option<[u8; 4]>) {
+    let (h, hl) = header_bytes(opcode, payload_len, mask);
+    // All 14 bytes (one fixed-size store), then the unused tail is dropped.
+    out.extend_from_slice(&h);
+    out.truncate(out.len() - (h.len() - hl));
+}
+
 /// Appends `data` XOR-ed with the masking key, starting at key offset
-/// `offset`, in one pass: each 16-byte block is read, masked and appended
-/// as one word; no zero fill, no second pass over the output.
+/// `offset`: one copy into the vector's spare capacity, then the XOR in
+/// place over the bytes just written (still in L1). No zero fill.
 #[inline]
 pub fn push_masked(out: &mut Vec<u8>, data: &[u8], mask: [u8; 4], offset: usize) {
-    let mut key = mask;
-    key.rotate_left(offset % 4);
-    let k32 = u32::from_ne_bytes(key);
-    let k128 = u128::from(k32) * 0x0000_0001_0000_0001_0000_0001_0000_0001;
-    out.reserve(data.len());
-    let (blocks, rest) = data.as_chunks::<16>();
-    for b in blocks {
-        out.extend_from_slice(&(u128::from_ne_bytes(*b) ^ k128).to_ne_bytes());
-    }
-    let mut last = [0u8; 16];
-    last[..rest.len()].copy_from_slice(rest);
-    let last = (u128::from_ne_bytes(last) ^ k128).to_ne_bytes();
-    out.extend_from_slice(&last[..rest.len()]);
+    let start = out.len();
+    out.extend_from_slice(data);
+    apply_mask_at(&mut out[start..], mask, offset);
 }
 
 /// Appends one masked FIN frame: the header from the stack, then the
-/// payload masked as it is copied ([`push_masked`]). The bytes equal
+/// payload copied and masked ([`push_masked`]). The bytes equal
 /// [`encode_frame`]'s with the same mask.
 #[inline]
 pub fn push_frame(out: &mut Vec<u8>, opcode: u8, payload: &[u8], mask: [u8; 4]) {
-    let (h, hl) = header_bytes(opcode, payload.len(), Some(mask));
-    out.reserve(hl + payload.len());
-    out.extend_from_slice(&h[..hl]);
+    push_header(out, opcode, payload.len(), Some(mask));
     push_masked(out, payload, mask, 0);
 }
 
