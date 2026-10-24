@@ -48,7 +48,7 @@ use crate::endpoint::sealed::{Deliver, DialIo, Io};
 use crate::endpoint::{ConnId, ConnMut, Handler};
 use crate::error::{Error, Result};
 use crate::net::{Target, TlsDial};
-use crate::stream::TlsStream;
+use crate::stream::{TlsStream, TxQueue};
 use crate::tls::MAX_RECORD;
 
 /// Largest request (line, headers and body) [`HttpConn::request`] accepts: one
@@ -1531,10 +1531,8 @@ impl Dechunk {
 /// A 64 KiB send queue with every page written once, so the first requests
 /// take no page fault on the hot path (fresh memory is mapped lazily, on
 /// first write).
-fn send_queue() -> Vec<u8> {
-    let mut q = vec![1u8; 1 << 16];
-    q.clear();
-    q
+fn send_queue() -> TxQueue {
+    TxQueue::prefaulted(1 << 16)
 }
 
 /// Seals one request (`build` writes its plaintext) into one TLS record at
