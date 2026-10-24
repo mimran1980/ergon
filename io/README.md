@@ -28,7 +28,7 @@ Which features to pick: see Features, below.
 
 | Use it for | Use something else for |
 |---|---|
-| A Linux thread that spins on its own core and owns 1 to a few hundred exchange connections (pick the backend by count: below) | An async application: tokio or mio (mio [was measured](https://mimran1980.github.io/ergon/io/backends.html#mio-measured-not-a-backend): level with `epoll-spin` on Linux) |
+| A Linux thread that spins on its own core and owns 1 to a few hundred exchange connections (pick the backend by count: below) | An async application: tokio or mio. On Linux both use `epoll-spin`'s mechanism (`epoll_wait`, then read the ready sockets; tokio blocks in it when idle), [measured level and gated in CI](https://mimran1980.github.io/ergon/io/backends.html#mio-measured-not-a-backend); ergon-io adds the busy-spin loop, TLS, WebSocket, HTTP and the other backends |
 | A loop that must never sleep in the kernel | Production on macOS or Windows: the driver is Linux-only |
 | Fixed endpoints: HTTP/1.1 keep-alive, TLS 1.3 | HTTP/2 or 3, proxies, redirects, cookies, compression: the `curl` feature or a general client |
 
@@ -161,6 +161,10 @@ thread polls (feeds, order connections, `HttpClient` pool connections):
 - The interrupt backends (`epoll-spin`, `uring-spin`) were level with
   `uring-sqpoll` from 4 sockets with node-level NIC settings: moderation
   off and the NIC's interrupts on a core of their own.
+- `epoll-spin` is mio's mechanism (and so tokio's): `epoll_wait(0)` every
+  poll, then one read per ready socket where mio, edge-triggered, makes
+  two. Level with mio in the fair run, and a CI gate fails if either pulls
+  ahead: [mio](https://mimran1980.github.io/ergon/io/backends.html#mio-measured-not-a-backend).
 
 The full table, the evidence and the node settings: the book's
 [choosing a backend](https://mimran1980.github.io/ergon/io/overview.html#choosing-a-backend).

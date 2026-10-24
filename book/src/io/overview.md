@@ -40,8 +40,8 @@ Terms this chapter uses. Each links to the section that explains it.
 | [NIC queue](backends.md#cost-per-poll) | One of the NIC's receive queues (`c7i.2xlarge`: 8); each connection lands on one. | `per_queue` and the SQPOLL thread poll queues, not sockets, so their NIC polling stops growing with sockets. The loop's pass still grows ([cost per poll](backends.md#cost-per-poll)). |
 | [adaptive RX](#best-practice) | ENA (the AWS NIC) re-tunes how long it delays interrupts to batch packets (adaptive receive moderation). | On by default. Set on the node: `ethtool -C <nic> adaptive-rx off`. |
 | [backend](backends.md) | How the `Driver` waits for and reads data; set in config: `Config::parse("recv-busy")`. | Pick by socket count and spare CPUs: [choosing a backend](#choosing-a-backend). |
-| [`epoll-spin`](backends.md) | Asks epoll (the kernel's list of ready sockets) every poll, without waiting; reads only those. | Pro: reads only ready sockets, so its pass grows far less with sockets than `recv-busy`'s ([cost per poll](backends.md#cost-per-poll)). Con: waits for the interrupt. |
-| [mio, tokio](backends.md#mio-measured-not-a-backend) | Rust's usual async I/O. On Linux both use epoll, so they wait for the interrupt. | mio was measured: level with `epoll-spin`, not a backend. reqwest on tokio parks its thread between requests. |
+| [`epoll-spin`](backends.md) | Asks epoll (the kernel's list of ready sockets) every poll, without waiting; reads only those. mio's mechanism, so tokio's. | Pro: reads only ready sockets, so its pass grows far less with sockets than `recv-busy`'s ([cost per poll](backends.md#cost-per-poll)). Con: waits for the interrupt. |
+| [mio, tokio](backends.md#mio-measured-not-a-backend) | Rust's usual async I/O. On Linux both wait in `epoll_wait` and read the ready sockets: `epoll-spin`'s mechanism, edge- rather than level-triggered (two reads per message, not one). mio polled with a zero timeout never blocks, as `epoll-spin`; tokio blocks when idle. | Level with `epoll-spin` in the fair run, and gated in CI both ways; as a backend it would duplicate `epoll-spin`. reqwest on tokio parks its thread between requests. |
 | [`recv-busy`](backends.md) | Reads every socket every poll; `SO_BUSY_POLL` makes each read poll the NIC too. | The pick at 1–4 sockets. Each socket adds to every poll. |
 | [`per_queue`](backends.md#per_queue-one-read-per-nic-queue) | A `recv-busy` option: one read per NIC queue, then only the ready sockets. | Its NIC polling stops growing at the queue count. The one-CPU pick past 4 sockets. |
 | [`io_uring`](backends.md#kernel) | A Linux interface: requests and results pass through rings shared with the kernel. | Needs feature `uring` (on by default) and Linux 6.1+ (6.9+ for NAPI). |
@@ -138,6 +138,10 @@ Evidence:
   and their interrupts on a core of their own. Both are node settings; a
   pod cannot set them. With the interrupts on the loop's CPU their p99
   rose from 4 sockets.
+- **mio or tokio in place of `epoll-spin`** gains nothing on Linux: the
+  same epoll wait and reads, level in the fair run and gated in CI
+  ([mio](backends.md#mio-measured-not-a-backend)). ergon-io's part is the
+  protocol stack and the other backends.
 - **One physical core with two hyperthreads:** `uring-sqpoll` with the
   SQPOLL thread on the loop's sibling (the default in a `cpu: 2` x86 pod:
   [Kubernetes](kubernetes.md#x86-with-smt-cpu-2-one-physical-core)).

@@ -1,0 +1,54 @@
+Linux 7.0.14-linuxkit x86_64
+10
+
+running 12 tests
+test linux::epoll_spin_waits_with_a_zero_timeout_and_reads_once_per_ready_socket ... ergon-io warning: T1 warn: CPU 9 (loop) is not isolated: the scheduler balances other tasks onto it. On AWS c7i, `isolcpus` took a gap-spinner's gaps over 20 µs from 120 and 162 a minute to 4 and 0.5 (longest gap 147 → 52 µs and 150 → 30 µs; two runs, one 120 s sample per boot). Fix: boot with `isolcpus=nohz,domain,managed_irq,9 nohz_full=9 rcu_nocbs=9 irqaffinity=0-8` (evidence: git show 128747b9^:io/benches/results/flags-aws-20261014T163114Z/tables-local.md (noise table, lines 27-30; interrupts table, lines 332-335) and 128747b9^:io/benches/results/flags-aws-20261015T045527Z/tables-local.md (lines 146-149, 403-406): AWS c7i, one 120 s gap-spinner sample per boot profile; Linux Documentation/timers/no_hz.rst and admin-guide/kernel-parameters.txt (isolcpus, nohz_full, rcu_nocbs, irqaffinity)) (ERGON_HOST_CHECKS=off silences host-check warnings)
+ergon-io warning: T1 warn: CPU 9 (loop) is not nohz_full: this kernel has no NO_HZ_FULL (no /sys/devices/system/cpu/nohz_full), so its scheduler tick keeps firing, CONFIG_HZ times a second. On AWS c7i a gap-spinner's CPU took 1,002 local-timer interrupts a second without nohz_full and 0 with it, and had 60,120 and 60,130 gaps over 5 µs a minute on the stock boot, 60,063 and 60,046 with isolcpus alone, 50 and 21 with nohz_full too (longest gap 147/150, 52/30 and 134/30 µs; two runs, one 120 s sample per boot). Fix: use a kernel built with CONFIG_NO_HZ_FULL=y and boot with `isolcpus=nohz,domain,managed_irq,9 nohz_full=9 rcu_nocbs=9 irqaffinity=0-8` (evidence: git show 128747b9^:io/benches/results/flags-aws-20261014T163114Z/tables-local.md (noise table, lines 27-30; interrupts table, lines 332-335) and 128747b9^:io/benches/results/flags-aws-20261015T045527Z/tables-local.md (lines 146-149, 403-406): AWS c7i, one 120 s gap-spinner sample per boot profile; Linux Documentation/timers/no_hz.rst and admin-guide/kernel-parameters.txt (isolcpus, nohz_full, rcu_nocbs, irqaffinity)) (ERGON_HOST_CHECKS=off silences host-check warnings)
+ergon-io info: T3 info: transparent hugepages are `always`: the kernel thread khugepaged scans and collapses pages in the background, and its work can run on a busy-spinning thread's CPU (not measured with archived data); ergon-io's own benchmarks ran under `madvise`. Fix: `echo never > /sys/kernel/mm/transparent_hugepage/enabled`, or boot with `transparent_hugepage=never` (evidence: Linux Documentation/admin-guide/mm/transhuge.rst (khugepaged, enabled: always/madvise/never); not measured with archived data)
+ergon-io info: connect_background's dial helper and the warning thread go on CPUs 0-8: the process's CPUs the host does not isolate. This process may use CPUs 0-9 (its cgroup cpuset, /sys/fs/cgroup/cpuset.cpus.effective); the polling CPU is 9.
+epoll-spin N = 1: 2000 round trips, 201908 polls, 201908 epoll_wait, 2000 recvmsg (0 EAGAIN)
+epoll-spin N = 1: 20000 idle polls in 10.878208ms, 20000 epoll_wait, 0 recvmsg
+epoll-spin N = 16: 2000 round trips, 206549 polls, 206549 epoll_wait, 2000 recvmsg (0 EAGAIN)
+epoll-spin N = 16: 20000 idle polls in 10.930625ms, 20000 epoll_wait, 0 recvmsg
+ok
+test linux::mio_reads_twice_per_event_data_then_would_block ... mio N = 1: 2000 round trips, 4000 reads (2000 WouldBlock): 2.0x epoll-spin's
+mio N = 16: 2000 round trips, 4000 reads (2000 WouldBlock): 2.0x epoll-spin's
+ok
+test linux::round_trip_parity_one_socket ... mio parity, N = 1: 7 pairs; per pair and arm 2000 warm-up + 10000 timed round trips, the arms taking turns, blocks of 200; 64 B at 10000/s, client CPU 9, echo CPU 8; tolerance 5 % of p50; µs p50 / p99 / max
+pair 0 (epoll-spin first): epoll-spin 7.62 / 38.12 / 271.0  mio 7.54 / 43.75 / 118.5  mio - epoll-spin p50, paired +0.08 (+1.1 %; pooled -0.08, tolerance 0.38)
+pair 1 (mio first): epoll-spin 8.46 / 44.42 / 145.7  mio 8.62 / 39.46 / 6036.5  mio - epoll-spin p50, paired +0.25 (+2.9 %; pooled +0.17, tolerance 0.43)
+ergon-io info: T19 unknown: cannot read the loop thread's page faults: /proc/thread-self/stat: uncategorized error
+ergon-io warning: T19 warn: the loop thread (/proc/thread-self/stat) took 226 minor and 0 major page faults since the last check (minflt 6 → 232, majflt 0 → 0): each stops the thread while the kernel maps the page in, and a major one waits for I/O too (not measured here). Fix: touch and lock its memory before the loop (`mlockall(MCL_CURRENT | MCL_FUTURE)`, every buffer written once), and keep the kernel from moving its pages: T3 (THP), T5 (NUMA balancing), T14 (compaction), T17 (KSM) (evidence: Linux proc(5) (/proc/<pid>/task/<tid>/stat: minflt, field 10; majflt, field 12); not measured here) (ERGON_HOST_CHECKS=off silences host-check warnings)
+pair 2 (epoll-spin first): epoll-spin 5.79 / 38.96 / 6049.7  mio 5.88 / 48.21 / 6064.0  mio - epoll-spin p50, paired +0.12 (+2.1 %; pooled +0.08, tolerance 0.29)
+pair 3 (mio first): epoll-spin 5.46 / 48.17 / 17155.5  mio 5.71 / 43.71 / 9953.6  mio - epoll-spin p50, paired +0.29 (+5.2 %; pooled +0.25, tolerance 0.28)
+pair 4 (epoll-spin first): epoll-spin 6.33 / 6004.96 / 7034.5  mio 6.71 / 6007.12 / 7043.5  mio - epoll-spin p50, paired +0.21 (+3.2 %; pooled +0.37, tolerance 0.33)
+ergon-io warning: T19 warn: the loop thread (/proc/thread-self/stat) took 36 minor and 0 major page faults since the last check (minflt 232 → 268, majflt 0 → 0): each stops the thread while the kernel maps the page in, and a major one waits for I/O too (not measured here). Fix: touch and lock its memory before the loop (`mlockall(MCL_CURRENT | MCL_FUTURE)`, every buffer written once), and keep the kernel from moving its pages: T3 (THP), T5 (NUMA balancing), T14 (compaction), T17 (KSM) (evidence: Linux proc(5) (/proc/<pid>/task/<tid>/stat: minflt, field 10; majflt, field 12); not measured here) (ERGON_HOST_CHECKS=off silences host-check warnings)
+pair 5 (mio first): epoll-spin 5.83 / 46.96 / 6041.0  mio 6.17 / 44.83 / 6172.0  mio - epoll-spin p50, paired +0.25 (+4.2 %; pooled +0.33, tolerance 0.30)
+pair 6 (epoll-spin first): epoll-spin 6.04 / 64.88 / 8014.0  mio 6.42 / 67.75 / 7022.4  mio - epoll-spin p50, paired +0.25 (+4.0 %; pooled +0.37, tolerance 0.31)
+N = 1: Level { epoll_ahead: 1, mio_ahead: 0 }
+ok
+test linux::round_trip_parity_sixteen_sockets ... mio parity, N = 16: 7 pairs; per pair and arm 2000 warm-up + 10000 timed round trips, the arms taking turns, blocks of 200; 64 B at 10000/s, client CPU 9, echo CPU 8; tolerance 5 % of p50; µs p50 / p99 / max
+pair 0 (epoll-spin first): epoll-spin 7.83 / 39.75 / 6065.4  mio 8.12 / 43.88 / 116.2  mio - epoll-spin p50, paired +0.12 (+1.6 %; pooled +0.29, tolerance 0.40)
+ergon-io info: T19 unknown: cannot read the loop thread's page faults: /proc/thread-self/stat: uncategorized error
+ergon-io warning: T19 warn: the loop thread (/proc/thread-self/stat) took 1957 minor and 0 major page faults since the last check (minflt 5 → 1962, majflt 0 → 0): each stops the thread while the kernel maps the page in, and a major one waits for I/O too (not measured here). Fix: touch and lock its memory before the loop (`mlockall(MCL_CURRENT | MCL_FUTURE)`, every buffer written once), and keep the kernel from moving its pages: T3 (THP), T5 (NUMA balancing), T14 (compaction), T17 (KSM) (evidence: Linux proc(5) (/proc/<pid>/task/<tid>/stat: minflt, field 10; majflt, field 12); not measured here) (ERGON_HOST_CHECKS=off silences host-check warnings)
+pair 1 (mio first): epoll-spin 7.88 / 51.75 / 145.8  mio 8.00 / 47.46 / 6091.5  mio - epoll-spin p50, paired +0.17 (+2.1 %; pooled +0.12, tolerance 0.40)
+pair 2 (epoll-spin first): epoll-spin 5.71 / 41.58 / 6072.0  mio 5.88 / 47.08 / 6039.2  mio - epoll-spin p50, paired +0.12 (+2.2 %; pooled +0.17, tolerance 0.29)
+ergon-io warning: T19 warn: the loop thread (/proc/thread-self/stat) took 1275 minor and 0 major page faults since the last check (minflt 1962 → 3237, majflt 0 → 0): each stops the thread while the kernel maps the page in, and a major one waits for I/O too (not measured here). Fix: touch and lock its memory before the loop (`mlockall(MCL_CURRENT | MCL_FUTURE)`, every buffer written once), and keep the kernel from moving its pages: T3 (THP), T5 (NUMA balancing), T14 (compaction), T17 (KSM) (evidence: Linux proc(5) (/proc/<pid>/task/<tid>/stat: minflt, field 10; majflt, field 12); not measured here) (ERGON_HOST_CHECKS=off silences host-check warnings)
+pair 3 (mio first): epoll-spin 8.17 / 52.00 / 6162.8  mio 8.29 / 53.17 / 6113.8  mio - epoll-spin p50, paired +0.12 (+1.5 %; pooled +0.12, tolerance 0.41)
+pair 4 (epoll-spin first): epoll-spin 5.67 / 45.71 / 11134.2  mio 5.88 / 43.62 / 315.0  mio - epoll-spin p50, paired +0.21 (+3.6 %; pooled +0.21, tolerance 0.29)
+ergon-io warning: T19 warn: the loop thread (/proc/thread-self/stat) took 1049 minor and 0 major page faults since the last check (minflt 3237 → 4286, majflt 0 → 0): each stops the thread while the kernel maps the page in, and a major one waits for I/O too (not measured here). Fix: touch and lock its memory before the loop (`mlockall(MCL_CURRENT | MCL_FUTURE)`, every buffer written once), and keep the kernel from moving its pages: T3 (THP), T5 (NUMA balancing), T14 (compaction), T17 (KSM) (evidence: Linux proc(5) (/proc/<pid>/task/<tid>/stat: minflt, field 10; majflt, field 12); not measured here) (ERGON_HOST_CHECKS=off silences host-check warnings)
+pair 5 (mio first): epoll-spin 5.75 / 50.96 / 8034.5  mio 6.00 / 50.04 / 6053.7  mio - epoll-spin p50, paired +0.25 (+4.3 %; pooled +0.25, tolerance 0.29)
+pair 6 (epoll-spin first): epoll-spin 6.96 / 104.21 / 13821.7  mio 7.50 / 103.75 / 15386.1  mio - epoll-spin p50, paired +0.29 (+4.0 %; pooled +0.54, tolerance 0.36)
+N = 16: Level { epoll_ahead: 0, mio_ahead: 0 }
+ok
+test rule::tests::a_ten_percent_slowdown_of_either_side_fails ... ok
+test rule::tests::blocks_take_each_sides_p50_in_run_order ... ok
+test rule::tests::five_of_seven_or_wins_inside_the_tolerance_pass ... ok
+test rule::tests::percentiles_are_nearest_rank_over_the_sorted_round ... ok
+test rule::tests::six_of_seven_beyond_the_tolerance_fails_either_way ... ok
+test rule::tests::the_pair_difference_is_the_median_of_its_blocks ... ok
+test rule::tests::the_recorded_spread_passes ... ok
+test rule::tests::tolerance_is_a_percentage_of_the_mean_p50 ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 35.81s
+

@@ -349,6 +349,7 @@ test: policy
     cargo test --workspace --all-features --exclude ergo-sbe --exclude ergo-sbe-benchmarks --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness -- --test-threads=1
     cargo test -p ergon-md-dpdk -- --test-threads=1
     cargo test -p ergo-aeron-cluster -- --test-threads=1
+    just io-parity
     @echo "=== 4/7 product rustdoc (-D warnings) ==="
     # ergo-sbe's doctests and docs_validation_test already ran in 3/7 via
     # `cargo test -p ergo-sbe --all-features`
@@ -455,6 +456,15 @@ fix:
 # Head-to-head ergon vs sbe-tool benches; every ratio gated against its ceiling in both LTO profiles
 bench:
     ./scripts/run-sbe-bench.sh
+
+# ergon-io's `epoll-spin` against a minimal mio loop (io/benches/parity):
+# the structural tests (one epoll_wait(0) per poll, one recvmsg per ready
+# socket; mio two reads per event) and the two-sided round-trip parity gate.
+# Linux runs all of it, in release; elsewhere only the decision rule's tests
+# compile. About 40 s of tests on Linux, after the build.
+# epoll-spin against mio: structure and the two-sided latency parity gate
+io-parity:
+    cargo test --release --manifest-path io/benches/Cargo.toml --test mio_parity -- --test-threads=1 --nocapture
 
 # Group-codegen comparison under both optimization profiles. sbe-tool is
 # intentionally measured in both: the audit found it stable without LTO while

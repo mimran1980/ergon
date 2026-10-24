@@ -4,6 +4,17 @@
 
 ### Added
 
+- `ergon-io` (repo only): a two-sided mio parity gate,
+  `io/benches/parity/mio_parity.rs` (`just io-parity`, CI on Linux x86_64
+  and aarch64, lane `io-parity`). Structural tests assert from the
+  `Driver`'s counters that `epoll-spin` makes one `epoll_wait` per poll with
+  a zero timeout and one `recvmsg` per ready socket, and that a mio loop
+  makes two reads per event. A loopback TLS WebSocket round trip through
+  the `Driver` and through a minimal mio loop doing the same work, the two
+  taking turns round trip by round trip, fails if either side's p50 is
+  ahead by more than 5 % in 6 of 7 pairs; 10 % added to either loop fails
+  it. The docs now state that `epoll-spin` is mio's (and so
+  tokio's) mechanism on Linux.
 - `ergo-sbe`: `GenerationConfig::with_validate(true)` (off by default) emits
   `validate()` on every message decoder, group entry decoder and
   `AnyMessage`: an opt-in second pass after `try_decode` (unchanged) for
