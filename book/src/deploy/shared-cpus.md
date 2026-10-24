@@ -12,7 +12,10 @@ housekeeping CPUs as well, and start every thread there.
 The busy-spin loop keeps its exclusive core. Only sleepy helpers go to the
 shared CPUs. Never a spinner or SQPOLL there.
 
-Source: `k8s/nri-shared-cpus/`.
+Source: `k8s/nri-shared-cpus/`. A full example on this plugin (a DPDK
+media driver and an Aeron ping/pong, with a verifier that proves where
+every thread ran) is the
+[`low-latency-k8s` sample](https://github.com/mimran1980/ergon/blob/main/samples/README.md#low-latency-k8s).
 
 Status: published as tag `0.1.1`. Anyone can pull the image and the chart.
 Not yet run on kind; **not verified on a real EKS node** (see
@@ -161,7 +164,7 @@ The 18-step `test/e2e.sh` is a different run. It builds
 |---|---|
 | exclusive CPUs | the kubelet's static CPU manager, `cpu: N` |
 | shared CPUs | `ergon.io/shared-millicpus: M` adds `ceil(M/1000)` shared CPUs |
-| start affinity | the hook pins threads that exist at create onto the shared CPUs. A later thread inherits its creator's mask. A helper created by a pinned hot thread inherits the hot mask. The application can change affinity. A C `pthread_create` did that on linuxkit with no `isolcpus`. A Go 1.27 OS thread started from the hot thread stayed on the shared CPU. JVM and Aeron were not run |
+| start affinity | the hook pins threads that exist at create onto the shared CPUs. A later thread inherits its creator's mask. A helper created by a pinned hot thread inherits the hot mask. The application can change affinity. A C `pthread_create` did that on linuxkit with no `isolcpus`. A Go 1.27 OS thread started from the hot thread stayed on the shared CPU. Aeron: `aeron-client`, created by a thread before it pinned, kept that thread's mask (`samples/low-latency-k8s/tests/placement_aeron.rs`, Docker, without the plugin's hook); under the hook on a node, not run. JVM not run |
 | timer slack | 1 ns on every thread, inherited by every thread and child the program makes |
 | pinning | the app pins hot threads by index into `ERGON_ISOLATED_CPUS` |
 

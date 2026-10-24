@@ -8,6 +8,11 @@ media driver,
 Its node and pod settings apply to any low-latency pod; its DPDK parts are a
 [proof of concept](../md-dpdk/overview.md), not for production.
 
+The whole stack in one place (this page's node and pod settings, the
+[shared-CPU plugin](shared-cpus.md), the DPDK driver, an Aeron ping/pong
+that prints its own latency, and a verifier for the thread layout) is the
+[`low-latency-k8s` sample](https://github.com/mimran1980/ergon/blob/main/samples/README.md#low-latency-k8s).
+
 Terms: [deployment glossary](overview.md#glossary),
 [network and DPDK glossary](../md-dpdk/overview.md#glossary).
 

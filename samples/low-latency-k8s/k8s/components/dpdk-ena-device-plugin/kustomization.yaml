@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: Apache-2.0
+# md-dpdk's device plugin (advertises rusteron.io/dpdk-ena-pair), without
+# that kustomization's own media driver and its ConfigMap: this sample runs
+# its own driver (k8s/base/driver-daemonset.yaml).
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - ../../../../../md-dpdk/deploy/aws-eks
+patches:
+  - patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: DaemonSet
+      metadata:
+        name: rusteron-media-driver
+  - patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: rusteron-media-driver

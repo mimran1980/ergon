@@ -1,0 +1,108 @@
+# scripts/e2e-vdev.sh --docker --tag baseline, 2026-10-24T17:23Z
+ll-verify	v1	contract=placement	node=docker-vdev	window_s=30.1	samples=294
+ll-verify	pod=e2e/ll-media-driver	P1.env	pid/15	PASS	isolated=2-3 shared=1 helpers=1
+ll-verify	pod=e2e/ll-media-driver	P1.cpuset	pid/15	NOT-IN-CONTRACT	effective=0-9 expected=1-3
+ll-verify	pod=e2e/ll-media-driver	P3.cores	sender,receiver	PASS	sender=2 receiver=3 sender_core=2
+ll-verify	pod=e2e/ll-media-driver	F5.cpu_quota	pid/15	NOT-IN-CONTRACT	cpu.max=max 100000 nr_throttled_delta=0
+ll-verify	pod=e2e/ll-media-driver	P1.env	pid/30	PASS	isolated=2-3 shared=1 helpers=1
+ll-verify	pod=e2e/ll-media-driver	P1.cpuset	pid/30	NOT-IN-CONTRACT	effective=0-9 expected=1-3
+ll-verify	pod=e2e/ll-media-driver	P3.cores	sender,receiver	PASS	sender=2 receiver=3 sender_core=2
+ll-verify	pod=e2e/ll-media-driver	F5.cpu_quota	pid/30	NOT-IN-CONTRACT	cpu.max=max 100000 nr_throttled_delta=0
+ll-verify	pod=e2e/ll-media-driver	P2.present	sender	PASS	role=driver
+ll-verify	pod=e2e/ll-media-driver	P2.present	receiver	PASS	role=driver
+ll-verify	pod=e2e/ll-ping	P1.env	pid/61	PASS	isolated=4 shared=1 helpers=1
+ll-verify	pod=e2e/ll-ping	P1.cpuset	pid/61	NOT-IN-CONTRACT	effective=0-9 expected=1,4
+ll-verify	pod=e2e/ll-ping	F5.cpu_quota	pid/61	NOT-IN-CONTRACT	cpu.max=max 100000 nr_throttled_delta=0
+ll-verify	pod=e2e/ll-ping	P2.present	ll-hot	PASS	role=app
+ll-verify	pod=e2e/ll-pong	P1.env	pid/60	PASS	isolated=5 shared=1 helpers=1
+ll-verify	pod=e2e/ll-pong	P1.cpuset	pid/60	NOT-IN-CONTRACT	effective=0-9 expected=1,5
+ll-verify	pod=e2e/ll-pong	F5.cpu_quota	pid/60	NOT-IN-CONTRACT	cpu.max=max 100000 nr_throttled_delta=0
+ll-verify	pod=e2e/ll-pong	P2.present	ll-hot	PASS	role=app
+ll-verify	pod=e2e/ll-media-driver	P5.affinity	bash/15	PASS	allowed=1 expected=shared(1)
+ll-verify	pod=e2e/ll-media-driver	P6.ran_on	bash/15	PASS	ran_on=1 samples=294 bad=0 expected=shared(1)
+ll-verify	pod=e2e/ll-media-driver	P5.affinity	media_driver/30	PASS	allowed=1 expected=shared(1)
+ll-verify	pod=e2e/ll-media-driver	P6.ran_on	media_driver/30	PASS	ran_on=1 samples=294 bad=0 expected=shared(1)
+ll-verify	pod=e2e/ll-media-driver	P5.affinity	ctrl-c/33	PASS	allowed=1 expected=shared(1)
+ll-verify	pod=e2e/ll-media-driver	P6.ran_on	ctrl-c/33	PASS	ran_on=1 samples=294 bad=0 expected=shared(1)
+ll-verify	pod=e2e/ll-media-driver	P5.affinity	dpdk-intr/35	PASS	allowed=1 expected=shared(1)
+ll-verify	pod=e2e/ll-media-driver	P6.ran_on	dpdk-intr/35	PASS	ran_on=1 samples=294 bad=0 expected=shared(1)
+ll-verify	pod=e2e/ll-media-driver	P5.affinity	dpdk-mp-msg/36	PASS	allowed=1 expected=shared(1)
+ll-verify	pod=e2e/ll-media-driver	P6.ran_on	dpdk-mp-msg/36	PASS	ran_on=1 samples=294 bad=0 expected=shared(1)
+ll-verify	pod=e2e/ll-media-driver	P5.affinity	dpdk-housekeep/37	PASS	allowed=1 expected=shared(1)
+ll-verify	pod=e2e/ll-media-driver	P6.ran_on	dpdk-housekeep/37	PASS	ran_on=1 samples=294 bad=0 expected=shared(1)
+ll-verify	pod=e2e/ll-media-driver	P5.affinity	dpdk-local-io/38	PASS	allowed=1 expected=shared(1)
+ll-verify	pod=e2e/ll-media-driver	P6.ran_on	dpdk-local-io/38	PASS	ran_on=1 samples=294 bad=0 expected=shared(1)
+ll-verify	pod=e2e/ll-media-driver	P3.affinity	sender/55	PASS	allowed=2 expected=2
+ll-verify	pod=e2e/ll-media-driver	P4.ran_on	sender/55	PASS	ran_on=2 samples=294 bad=0 expected=2
+ll-verify	pod=e2e/ll-media-driver	P3.affinity	receiver/56	PASS	allowed=3 expected=3
+ll-verify	pod=e2e/ll-media-driver	P4.ran_on	receiver/56	PASS	ran_on=3 samples=294 bad=0 expected=3
+ll-verify	pod=e2e/ll-media-driver	P5.affinity	aeron-md-nra/57	PASS	allowed=1 expected=shared(1)
+ll-verify	pod=e2e/ll-media-driver	P6.ran_on	aeron-md-nra/57	PASS	ran_on=1 samples=294 bad=0 expected=shared(1)
+ll-verify	pod=e2e/ll-ping	P5.affinity	ll-app/61	PASS	allowed=1 expected=shared(1)
+ll-verify	pod=e2e/ll-ping	P6.ran_on	ll-app/61	PASS	ran_on=1 samples=294 bad=0 expected=shared(1)
+ll-verify	pod=e2e/ll-ping	P5.affinity	ll-log/70	PASS	allowed=1 expected=shared(1)
+ll-verify	pod=e2e/ll-ping	P6.ran_on	ll-log/70	PASS	ran_on=1 samples=294 bad=0 expected=shared(1)
+ll-verify	pod=e2e/ll-ping	P5.affinity	ctrl-c/71	PASS	allowed=1 expected=shared(1)
+ll-verify	pod=e2e/ll-ping	P6.ran_on	ctrl-c/71	PASS	ran_on=1 samples=294 bad=0 expected=shared(1)
+ll-verify	pod=e2e/ll-ping	P5.affinity	ll-stats/72	PASS	allowed=1 expected=shared(1)
+ll-verify	pod=e2e/ll-ping	P6.ran_on	ll-stats/72	PASS	ran_on=1 samples=294 bad=0 expected=shared(1)
+ll-verify	pod=e2e/ll-ping	P3.affinity	ll-hot/73	PASS	allowed=4 expected=4
+ll-verify	pod=e2e/ll-ping	P4.ran_on	ll-hot/73	PASS	ran_on=4 samples=294 bad=0 expected=4
+ll-verify	pod=e2e/ll-ping	P5.affinity	aeron-client/74	PASS	allowed=1 expected=shared(1)
+ll-verify	pod=e2e/ll-ping	P6.ran_on	aeron-client/74	PASS	ran_on=1 samples=294 bad=0 expected=shared(1)
+ll-verify	pod=e2e/ll-pong	P5.affinity	ll-app/60	PASS	allowed=1 expected=shared(1)
+ll-verify	pod=e2e/ll-pong	P6.ran_on	ll-app/60	PASS	ran_on=1 samples=294 bad=0 expected=shared(1)
+ll-verify	pod=e2e/ll-pong	P5.affinity	ll-log/65	PASS	allowed=1 expected=shared(1)
+ll-verify	pod=e2e/ll-pong	P6.ran_on	ll-log/65	PASS	ran_on=1 samples=294 bad=0 expected=shared(1)
+ll-verify	pod=e2e/ll-pong	P5.affinity	ctrl-c/66	PASS	allowed=1 expected=shared(1)
+ll-verify	pod=e2e/ll-pong	P6.ran_on	ctrl-c/66	PASS	ran_on=1 samples=294 bad=0 expected=shared(1)
+ll-verify	pod=e2e/ll-pong	P5.affinity	ll-stats/67	PASS	allowed=1 expected=shared(1)
+ll-verify	pod=e2e/ll-pong	P6.ran_on	ll-stats/67	PASS	ran_on=1 samples=294 bad=0 expected=shared(1)
+ll-verify	pod=e2e/ll-pong	P3.affinity	ll-hot/68	PASS	allowed=5 expected=5
+ll-verify	pod=e2e/ll-pong	P4.ran_on	ll-hot/68	PASS	ran_on=5 samples=294 bad=0 expected=5
+ll-verify	pod=e2e/ll-pong	P5.affinity	aeron-client/69	PASS	allowed=1 expected=shared(1)
+ll-verify	pod=e2e/ll-pong	P6.ran_on	aeron-client/69	PASS	ran_on=1 samples=294 bad=0 expected=shared(1)
+ll-verify	node=docker-vdev	F0.isolated	-	NOT-IN-CONTRACT	isolated= exclusive=2-5
+ll-verify	node=docker-vdev	F0.nohz_full	-	NOT-IN-CONTRACT	nohz_full=unreadable exclusive=2-5
+ll-verify	node=docker-vdev	F1.other_tasks	cpu=2	NOT-IN-CONTRACT	others=0 kthreads=0 scans=30 seen=-
+ll-verify	node=docker-vdev	F2.device_irqs	cpu=2	NOT-IN-CONTRACT	delta=0 rows=-
+ll-verify	node=docker-vdev	F3.timer	cpu=2	NOT-IN-CONTRACT	rows=11:29894 delta=29894 per_s=994.02 limit=2.00
+ll-verify	node=docker-vdev	F3.ipis	cpu=2	INFO	IPI0:9,IPI1:74
+ll-verify	node=docker-vdev	F3.softirqs	cpu=2	INFO	TIMER:1107,NET_RX:33,SCHED:33,RCU:2162
+ll-verify	node=docker-vdev	F1.other_tasks	cpu=3	NOT-IN-CONTRACT	others=0 kthreads=0 scans=30 seen=-
+ll-verify	node=docker-vdev	F2.device_irqs	cpu=3	NOT-IN-CONTRACT	delta=0 rows=-
+ll-verify	node=docker-vdev	F3.timer	cpu=3	NOT-IN-CONTRACT	rows=11:29902 delta=29902 per_s=994.29 limit=2.00
+ll-verify	node=docker-vdev	F3.ipis	cpu=3	INFO	IPI0:6164,IPI1:79
+ll-verify	node=docker-vdev	F3.softirqs	cpu=3	INFO	TIMER:15,NET_RX:21,SCHED:34,RCU:2226
+ll-verify	node=docker-vdev	F1.other_tasks	cpu=4	NOT-IN-CONTRACT	others=0 kthreads=0 scans=30 seen=-
+ll-verify	node=docker-vdev	F2.device_irqs	cpu=4	NOT-IN-CONTRACT	delta=0 rows=-
+ll-verify	node=docker-vdev	F3.timer	cpu=4	NOT-IN-CONTRACT	rows=11:29916 delta=29916 per_s=994.75 limit=2.00
+ll-verify	node=docker-vdev	F3.ipis	cpu=4	INFO	IPI1:76
+ll-verify	node=docker-vdev	F3.softirqs	cpu=4	INFO	TIMER:34,NET_RX:14,SCHED:33,RCU:2299
+ll-verify	node=docker-vdev	F1.other_tasks	cpu=5	NOT-IN-CONTRACT	others=0 kthreads=0 scans=30 seen=-
+ll-verify	node=docker-vdev	F2.device_irqs	cpu=5	NOT-IN-CONTRACT	delta=0 rows=-
+ll-verify	node=docker-vdev	F3.timer	cpu=5	NOT-IN-CONTRACT	rows=11:29877 delta=29877 per_s=993.46 limit=2.00
+ll-verify	node=docker-vdev	F3.ipis	cpu=5	INFO	IPI1:69
+ll-verify	node=docker-vdev	F3.softirqs	cpu=5	INFO	TIMER:12,NET_RX:99,SCHED:34,RCU:2289
+ll-verify	pod=e2e/ll-media-driver	F4.ctxt_switches	sender/55	NOT-IN-CONTRACT	voluntary=0 nonvoluntary=191
+ll-verify	pod=e2e/ll-media-driver	F4.ctxt_switches	receiver/56	NOT-IN-CONTRACT	voluntary=0 nonvoluntary=28
+ll-verify	pod=e2e/ll-ping	F4.ctxt_switches	ll-hot/73	NOT-IN-CONTRACT	voluntary=0 nonvoluntary=64
+ll-verify	pod=e2e/ll-pong	F4.ctxt_switches	ll-hot/68	NOT-IN-CONTRACT	voluntary=0 nonvoluntary=71
+ll-verify	RESULT	PASS	checks=54	failed=0
+ll-latency	v2	role=ping	arch=aarch64	cpu_build=baseline	counter_hz=23999981	transport=dpdk-ena	nic=vdev-tap	overlay=docker-vdev	msg_bytes=32	mode=closed	warmup=20000	samples=1738149	lost=0
+ll-latency	rtt_ns	p50=18511	p90=25343	p99=146303	p99.9=1192959	p99.99=5758975	max=19814051	mean=25851
+ll-latency	rtt_max_top10	1792862567479704229:19814051,1792862610381860053:19085968,1792862567360240046:18156134,1792862573251459548:16509467,1792862567526303961:14913799,1792862610197896505:14582508,1792862608718253907:14477382,1792862567047382352:14323632,1792862609929072790:14113965,1792862607180584406:13912798
+ll-latency	loop_gap_ns	max=16177342	over_5us=52014	over_20us=21113	over_100us=4292
+ll-latency	hot	cpu=4	ran_on=4	voluntary_ctxt_switches=0	nonvoluntary_ctxt_switches=87
+ll-latency	log	dropped_lines=0	write_errors=0	hot_warn_events=0	suppressed=0
+ll-latency	v2	role=pong	arch=aarch64	cpu_build=baseline	counter_hz=23999999	transport=dpdk-ena	nic=vdev-tap	overlay=docker-vdev	msg_bytes=32	mode=closed	warmup=0	samples=1758149	lost=0
+ll-latency	loop_gap_ns	max=15141621	over_5us=52023	over_20us=21395	over_100us=4481
+ll-latency	hot	cpu=5	ran_on=5	voluntary_ctxt_switches=0	nonvoluntary_ctxt_switches=109
+ll-latency	log	dropped_lines=0	write_errors=0	hot_warn_events=0	suppressed=0
+ll-selfcheck PASS thread=ll-app tid=61 allowed=1 ran_on=1 expected=shared(1)
+ll-selfcheck PASS thread=ll-log tid=70 allowed=1 ran_on=1 expected=shared(1)
+ll-selfcheck PASS thread=ctrl-c tid=71 allowed=1 ran_on=1 expected=shared(1)
+ll-selfcheck PASS thread=ll-stats tid=72 allowed=1 ran_on=1 expected=shared(1)
+ll-selfcheck PASS thread=ll-hot tid=73 allowed=4 ran_on=4 expected=4
+ll-selfcheck PASS thread=aeron-client tid=74 allowed=1 ran_on=1 expected=shared(1)
+ll-selfcheck RESULT PASS threads=6 failed=0
