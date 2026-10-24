@@ -178,6 +178,7 @@ lab only.
 | macOS (this repo's host) | unit, property, logger, manifest tests; entrypoint and `verify.sh` fixtures (bash 5 and macOS's bash 3.2); `node/eks-userdata.sh` output; bench smoke | code, renders, schemas, the verifier's pod discovery |
 | Docker linux/arm64 and linux/amd64 (`scripts/test-docker.sh`) | the same Rust tests, plus the placement tests against an embedded driver and `hot_stdout` | the worker and the Aeron conductor stay on their creator's CPU, the loops allocate nothing but one allocation per warning line, a pinned thread never sleeps on a wedged stdout |
 | Docker linux/arm64, Apple silicon (`scripts/e2e-vdev.sh --docker`, image `baseline`) | the driver on two DPDK taps, ping and pong, `ll-probe` for 30 s | the thread layout over a real DPDK data path. Not isolation: the Docker VM has no `isolcpus`. The script plays the plugin's part (sets `ERGON_*`, pins each process's first thread) |
+| Docker linux/amd64 emulated on Apple silicon (`scripts/e2e-inside.sh` in the amd64 half of `baseline`) | the same e2e: `RESULT PASS checks=54` (`tests/fixtures/e2e-docker-baseline-amd64-emulated.txt`) | the amd64 image builds (x86-64-v2, DPDK, Aeron) and the layout holds; its latency is the emulator's |
 | kind (`e2e-vdev.sh --kind`, overlay `vdev-local`) | written, **not run** (needs kind, 8 Docker CPUs, containerd ≥ 2.2 in the node image) | the plugin's grant |
 | a Linux VM with `isolcpus` (overlay `vdev-isolated`, `node/linux-vm-prep.sh`) | **not run** (Azure Cobalt `D8ps_v6` and `F8as_v6` later) | the `full` contract |
 | EKS ENA (overlays `eks-ena-arm64`, `eks-ena-x86`) | render and lint only | arm64: blocked until AL2023 has containerd ≥ 2.2 (`node/eks-nodeconfig.yaml`); x86: c7i.4xlarge, which needs the user's approval to run |
@@ -461,13 +462,14 @@ measuring: neither app's publication connected within
 
 | tag | platforms | `-Ctarget-cpu` (Rust, md-dpdk C) | Aeron C `-march` | nodes | built |
 |---|---|---|---|---|---|
-| `baseline` | linux/amd64, linux/arm64 | `x86-64-v2` / `neoverse-n1` | `x86-64-v2` / `armv8.2-a` | any x86-64-v2 or Neoverse N1-or-later arm64 node | see below |
+| `baseline` | linux/amd64, linux/arm64 | `x86-64-v2` / `neoverse-n1` | `x86-64-v2` / `armv8.2-a` | any x86-64-v2 or Neoverse N1-or-later arm64 node | each half built and run (e2e) on its own (`LL_PLATFORMS=`); the one-call two-platform build and the pushed manifest list not run |
 | `amd64-v3` | linux/amd64 | `x86-64-v3` | `x86-64-v3` | c7i, AMD Zen 4 (F8as_v6) | no |
 | `arm64-n2` | linux/arm64 | `neoverse-n2` | `armv8.5-a` | Azure Cobalt 100 | no |
 | `arm64-v3` | linux/arm64 | `neoverse-v3` | `armv8.6-a` | c9g (Graviton5) | no |
 
-AL2023's gcc 11.5 accepts `-mcpu=neoverse-n1`, `-n2`, `-v2` and `-v3`, but
-has no `armv9-a`, so the Aeron C levels are the highest Armv8 ones the CPU
+AL2023's gcc 11.5 accepts `-mcpu=neoverse-n1`, `-n2` and `-v3`,
+`-march=armv8.5-a`, `armv8.6-a` and `x86-64-v3`, and refuses `armv9-a`
+(checked in an AL2023 container), so the Aeron C levels are the highest Armv8 ones the CPU
 implements. A CPU tag runs only on that CPU family (SIGILL elsewhere). A CPU
 tag's latency effect is not measured.
 
