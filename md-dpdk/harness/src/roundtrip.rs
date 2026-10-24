@@ -17,7 +17,7 @@
 //! allocates.
 //!
 //! `RTT_GAP_US=<us>` paces the pings ([`Pace`]): one every that many
-//! microseconds, send to send (the warm-up's too), instead of each as soon as
+//! microseconds, on a fixed schedule (the warm-up's too), instead of each as soon as
 //! the last one's echo is back. The client spins meanwhile, polling as it
 //! does waiting for an echo, so only the network goes quiet: a sparse flow.
 //! A paced run checks `RTT_SECONDS` before every ping.
@@ -60,10 +60,19 @@ impl Pace {
         self.gap == 0 || now >= self.next
     }
 
-    /// A ping went at `at`: the next may go a gap later.
+    /// A ping went at `at`: the next is due a gap after this one was due,
+    /// so the loop's own latency between pings never adds up (a run of
+    /// `RTT_SECONDS` holds its seconds over the gap of pings); a ping half
+    /// a gap late or more (a lost one's timeout, a stall) starts the
+    /// schedule again a gap after it, never a burst to catch up.
     #[inline(always)]
     pub fn sent(&mut self, at: u64) {
-        self.next = at.wrapping_add(self.gap);
+        let due = self.next;
+        self.next = if due != 0 && at.wrapping_sub(due) < self.gap / 2 {
+            due.wrapping_add(self.gap)
+        } else {
+            at.wrapping_add(self.gap)
+        };
     }
 }
 
@@ -212,5 +221,55 @@ impl Results {
             }
             std::fs::write(path, rows).unwrap_or_else(|e| panic!("LOAD_SPIKES {path}: {e}"));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Pace;
+
+    const GAP: u64 = 1_000_000; // 1 ms
+
+    /// Each ping sent 3 µs after it was due (the loop's own latency): the
+    /// schedule stays a gap apart from the first, so 20,000 pings at 1 ms
+    /// take 20 s, not 20 s and 60 ms (which `RTT_SECONDS=20` would cut 60
+    /// pings short of).
+    #[test]
+    fn a_paced_schedule_does_not_drift_by_the_loops_latency() {
+        let mut pace = Pace { gap: GAP, next: 0 };
+        let mut at = 5_000;
+        for _ in 0..20_000 {
+            assert!(pace.ready(at));
+            pace.sent(at);
+            at = pace.next + 3_000;
+        }
+        assert_eq!(pace.next, 5_000 + 20_000 * GAP);
+    }
+
+    /// A ping half a gap late or more (a lost one's timeout, a stall): the
+    /// schedule starts again a gap after it, no burst of pings to catch up;
+    /// one a little late keeps it.
+    #[test]
+    fn a_late_ping_restarts_the_schedule_without_a_burst() {
+        let mut pace = Pace { gap: GAP, next: 0 };
+        pace.sent(1_000);
+        assert_eq!(pace.next, 1_000 + GAP);
+        let late = pace.next + 50 * GAP;
+        assert!(pace.ready(late));
+        pace.sent(late);
+        assert_eq!(pace.next, late + GAP);
+        assert!(!pace.ready(late + GAP - 1));
+        let a_little = pace.next + GAP / 4;
+        pace.sent(a_little);
+        assert_eq!(pace.next, late + 2 * GAP);
+    }
+
+    /// Unpaced (`RTT_GAP_US` 0 or unset): every ping may go at once.
+    #[test]
+    fn unpaced_is_always_ready() {
+        let mut pace = Pace { gap: 0, next: 0 };
+        pace.sent(10);
+        assert!(!pace.paced());
+        assert!(pace.ready(0) && pace.ready(10));
     }
 }

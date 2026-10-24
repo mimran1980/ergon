@@ -335,7 +335,7 @@ fn floor_without_a_pong_fails_saying_so() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// `RTT_GAP_US`: one ping every that many microseconds, send to send, the
+/// `RTT_GAP_US`: one ping every that many microseconds on a fixed schedule, the
 /// warm-up's too, the client spinning (its wire polled, its loop's stall
 /// tracker passed) in between: the run takes the pings times the gap, its
 /// round trips are each ping's alone (not the wait before it), no wait is a
