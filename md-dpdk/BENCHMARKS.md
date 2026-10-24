@@ -26,6 +26,7 @@ printed before its directory was deleted, so each is partial.
 
 | run | instances | what it ran |
 | --- | --- | --- |
+| `aws-20261024-131544` (G6) | `c9g.2xlarge` spot pair | pure DPDK floor (no ergon-md-dpdk); same-host hairpin; sparse round trips at 1 ms to 1 s gaps; ENA deferred-refill patch against stock DPDK 25.11, with an A/A |
 | `aws-20261024-111303` (G5) | `c9g.2xlarge` spot pair, precision-time placement | large LLQ against `llq_policy=1` again, with an A/A; the one-way split of the largest round trips; agent loop gaps against a 10 µs gap spinner |
 | `aws-20261023-231150` (G4) | `c9g.2xlarge` spot pair | DPDK knobs against an A/A control (same code built twice), with and without diagnostics; raw floor without Aeron; kernel busy polling |
 | `aws-20261016-223251` (G3) | `c9g.2xlarge` pair | DPDK, DPDK with media receive timestamps, kernel UDP (moderation off, IRQs on a spare core) |
@@ -135,11 +136,14 @@ other; `aws-20261024-111303.txt` line 170 on).
 | --- | --- |
 | The extra 40–75 µs of a 60–90 µs round trip is on one leg; the other leg stays at its usual ~12 µs, and the ping's host adds about 1 µs | reps 1–4, 40 round trips; rep 5's split is unusable (negative legs: the clocks moved) |
 | It falls on either leg | outbound in 24 of the 40, return in 15, split in 1 |
-| Not the transport or Aeron | the raw floor without Aeron has the same max (G4, G5) |
+| Not Aeron | the raw floor without Aeron has the same max (G4, G5) |
+| Not ergon-md-dpdk's packet path | DPDK alone (the pure floor: a C ping and 5-tuple reflector, no transport) max 79 (72–85) against the raw floor's 88 (86–91); the transport adds 0.40 (0.26–0.50) µs p50, 1.63 (0.64–2.03) p99 (G6 lines 11–14, 60) |
+| Partly on one host | the same-host hairpin (host a's sender ENI to its receiver ENI) has p50 12.38 (12.38–12.39) against 24.73 cross-host, so it turns round before host b; its max is 62 (39–76) against 88 (86–91) (G6 lines 80–81) |
 | Not a guest stall | the agents' loop gaps are at most 31 µs, shorter than the extra, and spikes.py finds no overlapping host event |
 
-So the idle maxima are in flight: the Nitro cards or the fabric between the
-hosts. No host setting changes them.
+So the idle maxima are in flight, beneath ergon-md-dpdk: one host's own
+path already reaches 76 µs, and the full 85–90 µs cluster needs both hosts.
+No host or transport setting changes them.
 
 **Agent loop gaps (the 20–50 µs ones) are the hypervisor's.** With a 10 µs
 gap spinner on a spare CPU (G5, lines 780 on): 84% of the agent gaps on the
@@ -147,6 +151,25 @@ noisier host coincide with a spinner gap, so the whole VM paused; 4 of
 about 4,500 overlap an interrupt; the rest have nothing in the guest. Which
 host is noisy follows the instance's placement: host b in G4, host a in G5
 (58,643 spinner gaps against b's 3,818).
+
+### Sparse flows: a quiet path is slower
+
+One ping per gap, the clients spinning in between (G6 lines 89–98, p50 with
+rep ranges):
+
+| gap | raw floor, no Aeron | DPDK (Aeron) |
+| --- | --- | --- |
+| none | 24.73 (24.57–24.80) | 25.52 (25.26–25.79) |
+| 1 ms | 26.05 (25.98–26.06) | 26.77 (26.64–26.82) |
+| 50 ms | 29.10 (28.99–29.14) | 29.95 (29.47–30.09) |
+| 200 ms | 30.22 (30.11–30.27) | 30.78 (30.46–31.07) |
+| 1 s | 31.45 (31.38–31.52) | 30.37 (30.30–30.38) |
+
+Maxima: 35–41 µs at 50 ms and above (60–1,200 round trips a rep, so the max
+is near p99); 57 (52–83) and 68 (41–78) at 1 ms. The slowdown is beneath
+Aeron (the raw floor shows it), and Aeron's 100 ms heartbeats do not prevent
+it. Whether the NIC, the network or the hosts' cold caches cause it is not
+split: the pure floor was not paced.
 
 ### Measured, but no setting recommended
 
@@ -165,6 +188,7 @@ host is noisy follows the instance's placement: host b in G4, host a in G5
 | receiver IO vectors 16, DPDK | `aws-20261014-113947` lines 88, 124 | 1,344 B at 600 k/s: no NAK against 16,247 over 5 reps; max 142 (134–259) against 1,130 (132–3,424,649). Platform not recorded. The one row here that separated: listed under the recommended configuration; the lab baseline sets 16 (`vm.sh:126`) |
 | transparent hugepages off | `aws-20261014-113947` lines 6, 11 | idle p99.99 53.15 (51.81–82.24) against 67.01 (51.84–87.23); max 90 (77–1,180) against 94 (80–498). Not separated. The lab baseline sets `never` (`vm.sh:125`) |
 | C-states capped at C1, metal | round 4 lines 5–6, 11–12, 80, 85 | idle p50 not separated (37.18 (36.48–38.34) against 35.13 (34.49–38.62); max 66 (57–107) against 127 (68–514)); at 288 B 1 M/s at least one rep per capped arm had p50 above 4 ms (ranges 42.17–4,042.75 busy, max 132 (108–8,380); 57.05–31,719 plain, max 289 (109–32,129)) |
+| ENA PMD deferring RX refill out of bursts that return frames (lab patch, DPDK 25.11) against stock 25.11 | G6 lines 20–22, 66–68, 241 | p99 29.42 (29.39–29.49) against 30.77 (29.68–31.15) and the A/A's 30.64 (29.74–30.73): apart by 0.2 µs, 3 reps. p50 25.28 (25.20–25.39) against 25.65 (25.38–25.76), A/A 25.34 (25.34–25.38): not separated. Max 86 (84–88) against 165 (87–167), A/A 87 (86–152). Every refill deferred (1,367 a rep, none forced by the floor). A shipped PMD patch needs a clearer result: not adopted |
 | threaded NAPI busy polling (`NAPI_BUSY=spare`) | G2 lines 13, 108–113 | the run failed: p50 up to 72 ms idle, most load points returned no echo. Not a measurement of the setting |
 
 ### One flow's ceiling on AWS
@@ -193,7 +217,9 @@ separating result above are listed.
 A lost frame on a quiet stream is noticed at Aeron's next heartbeat, 100 ms
 in the C driver (`aeron_network_publication.h:38` in the locked
 rusteron-media-driver 0.2.13). A keep-alive on sparse, latency-critical
-streams bounds that wait. Its effect is not measured here.
+streams bounds that wait, and keeps the path from slowing when quiet (up to
+6.7 µs p50 at 1 s gaps, 1.3 µs at 1 ms: sparse flows above). The keep-alive
+itself is not measured.
 
 ## Open
 
@@ -207,8 +233,13 @@ streams bounds that wait. Its effect is not measured here.
 - CPU isolation, hugetlbfs, quiet-core pinning: not measured in the
   committed runs.
 - Azure: no run output is committed, so no Azure figure is kept.
-- Idle maxima: placed in flight (above), not split between the local Nitro
-  card and the fabric.
+- Idle maxima: placed in flight and beneath the transport (above); one
+  host's path reaches 76 µs, but the local card is not split from the
+  hypervisor.
+- Sparse flows: the slowdown is not split between the NIC, the network and
+  cold caches; a keep-alive's effect is not measured.
+- ENA deferred refill: p99 apart by 0.2 µs in one 3-rep run; needs 5 reps
+  and load points before any decision.
 
 ## How to run
 
