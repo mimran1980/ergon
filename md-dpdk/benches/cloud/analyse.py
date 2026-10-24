@@ -113,14 +113,15 @@ def gap_name(us):
 
 def gap_of(mode):
     """A mode's @RTT_GAP_US (µs), or None: unpaced."""
-    gaps = [p.partition("=")[2] for p in mode.split("@")[1:] if p.startswith("RTT_GAP_US=")]
+    gaps = [p.partition("=")[2] for p in mode.removesuffix("+idle").split("@")[1:] if p.startswith("RTT_GAP_US=")]
     return int(gaps[-1]) if gaps and gaps[-1].isdigit() else None
 
 
 def without(mode, key):
-    """A mode with its @<key>=... overrides taken out."""
-    parts = mode.split("@")
-    return "@".join([parts[0]] + [p for p in parts[1:] if not p.startswith(key + "=")])
+    """A mode with its @<key>=... overrides taken out (a +idle kept)."""
+    idle = "+idle" if mode.endswith("+idle") else ""
+    parts = mode.removesuffix("+idle").split("@")
+    return "@".join([parts[0]] + [p for p in parts[1:] if not p.startswith(key + "=")]) + idle
 
 
 def mode_name(mode):
@@ -930,10 +931,11 @@ def hairpin(r, modes):
         return
     print("## Same-host hairpin against the cross-host round trip (µs)\n")
     print("The hairpin (@HAIRPIN=1) is the same mode's round trip on host a alone, from its sender NIC to its "
-          "receiver NIC and back through the host's own Nitro card, never between the hosts; the cross-host one is "
-          "host a to host b. Medians across reps, the range in brackets. Maxima in the hairpin as large as across "
-          "the hosts lie beneath the fabric (the host, its card, the guest); maxima across the hosts alone are the "
-          "fabric's.\n")
+          "receiver NIC and back, never to host b; the cross-host one is host a to host b. Where AWS turns the "
+          "hairpin round is not documented: a hairpin p50 well under the cross-host one puts it in host a's own "
+          "card. Medians across reps, the range in brackets. Maxima in the hairpin as large as across the hosts "
+          "come from host a (its card, the hypervisor, the guest); maxima across the hosts alone come from the "
+          "fabric or host b.\n")
     print(table(["state, transport", "reps hairpin", "reps cross-host", "p50 hairpin", "p50 cross-host",
                  "p99.99 hairpin", "p99.99 cross-host", "max hairpin", "max cross-host"], rows) + "\n")
 
@@ -962,7 +964,7 @@ def sparse(r, modes):
                          cell([x[0] for x in reps], 1000, 2), cell([x[2] for x in reps], 1000, 2), tail,
                          cell([x[5] for x in reps], 1000, 2)])
     print("## Sparse round trips by gap (µs)\n")
-    print("A paced mode (@RTT_GAP_US) sends one ping every gap, send to send, the clients spinning in between, so "
+    print("A paced mode (@RTT_GAP_US) sends one ping every gap on a fixed schedule, the clients spinning in between, so "
           "only the network goes quiet; `none` is the same mode unpaced, each ping as the last one's echo is back. "
           "Aeron's heartbeats are 100 ms apart on an idle channel. Medians across reps, the range in brackets; a "
           "rep is 20 to 60 s (modes.sh rtt_plan), so a sparse one holds few round trips: p99.99 only from 10,000 "

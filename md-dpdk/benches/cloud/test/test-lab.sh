@@ -1695,6 +1695,7 @@ for refused in "LAB_TYPE=c8g.4xlarge|LAB_ALLOW_ARM=1" "LAB_TYPE_B=c7gn.4xlarge|L
     "LAB_STATES=isolated-nodiags|optionally ending -nodiag" \
     "LAB_RTT_SPIKE_NS=30us|LAB_RTT_SPIKE_NS is a whole number of nanoseconds" "LAB_RTT_STALL_NS=0|LAB_RTT_STALL_NS is a whole number of nanoseconds" \
     "LAB_MODES=dpdk@HAIRPIN=1|the raw floor" "LAB_ALLOW_ARM=1 LAB_TYPE=c9g.large LAB_MODES=dpdk-raw@HAIRPIN=1|four cores" \
+    "LAB_ALLOW_ARM=1 LAB_TYPE_A=c9g.xlarge LAB_TYPE_B=c9g.large LAB_MODES=dpdk-raw@HAIRPIN=1|on host b too" \
     "LAB_MODES=dpdk@RTT_GAP_US=5ms|1 to 1000000" "LAB_LOCAL_MODES=kernel@RTT_GAP_US=1000|cross-host"; do
     # shellcheck disable=SC2086
     if lab_aws "$tmp/arm-refused" ${refused%|*}; then
@@ -6208,6 +6209,9 @@ hsmodes=$(
     done
     why=$(hairpin_types_check dpdk-raw@HAIRPIN=1 aws c9g.large 2>&1)
     echo "said $(grep -c 'four' <<<"$why")"
+    # host b sets the mode up too (vm.sh driver, ready): its type checked as well
+    hairpin_types_check dpdk-raw@HAIRPIN=1 aws c9g.xlarge c9g.large >/dev/null 2>&1
+    echo "type b $?"
     hairpin_types_check dpdk-raw aws c9g.large
     echo "cross $?"
 )
@@ -6240,6 +6244,7 @@ type c9g.xlarge 0
 type c9g.large 2
 type c8g.medium 2
 said 1
+type b 2
 cross 0"
 if [[ $hsmodes == "$want" ]]; then
     pass "modes.sh: @HAIRPIN=1 on the raw floor's modes only (AWS, cross-host lists, once) and @RTT_GAP_US=1 to 1000000 (once, not localhost), each refusal said; a paced rep's seconds, round trips and warm-up; four cores on host a for a hairpin"
@@ -6411,6 +6416,38 @@ else
     pass "vm.sh host_setting HAIRPIN=1: the pong on the receiver core; on the kernel wire each end routed out of its own NIC, checked both ways (fail closed, put back), restored local table first; refused off the raw floor, off AWS, without a receiver core"
 fi
 
+# vm.sh data_kernel_up after HAIRPIN=1 (a later @RX_RING= in the same mode
+# brings the NICs up again): it removes an address's stale plain rule (the
+# NICs back in another order), never the hairpin's from/to rules, which would
+# put the round trip back over loopback unseen
+dku=$(
+    set +e
+    exec 2>&1
+    eval "$(vm_fn data_kernel_up)"
+    : >"$hs/dku-calls"
+    data_unmanaged() { :; }
+    nics() { printf 'sender ens6 ens6 0c 10.30.1.4 24 0000:00:06.0\nreceiver ens7 ens7 0d 10.30.1.5 24 0000:00:07.0\n'; }
+    policy_routes() { :; }
+    pin_irqs() { :; }
+    data_routes_missing() { echo 0; }
+    sudo() { echo "$*" >>"$hs/dku-calls"; }
+    ip() {
+        [[ $1 == rule && $2 == show ]] && printf '%s\n' "0:	from all lookup local" \
+            "10:	from 10.30.1.4 to 10.30.1.5 iif lo lookup 100" "11:	from 10.30.1.5 to 10.30.1.4 iif lo lookup 101" \
+            "50:	from all lookup local" "100:	from 10.30.1.4 lookup 100" "101:	from 10.30.1.5 lookup 101" \
+            "102:	from 10.30.1.5 lookup 100"
+        return 0
+    }
+    ARCH=x86_64 PEER_SUBNET=
+    data_kernel_up || echo "rc $?"
+    grep 'rule' "$hs/dku-calls" | tr '\n' ';'
+)
+if [[ $dku != "ip rule del priority 102 from 10.30.1.5 lookup 100;" ]]; then
+    fail "vm.sh data_kernel_up after HAIRPIN=1: rules changed: [$dku]"
+else
+    pass "vm.sh data_kernel_up: a stale plain rule removed, the hairpin's from/to rules kept"
+fi
+
 # vm.sh ready: a hairpin needs the layout's receiver core on host a (a
 # two-core host has none)
 # shellcheck disable=SC2016
@@ -6468,6 +6505,24 @@ elif [[ $net != *"| isolated, DPDK packet path, no Aeron (raw floor) "* || $net 
 else
     pass "analyse.py: the hairpin and paced modes named; the hairpin beside its cross-host floor; round trips by gap beside unpaced (p99.99 from 10,000 a rep); a paced mode above its floor paced alike"
 fi
+# a paced mode with an idle localhost subscription (<mode>@RTT_GAP_US=<us>+idle,
+# which modes.sh takes): its gap read, named, and set beside the same +idle
+# mode unpaced
+cat >"$tmp/hs-idle.csv" <<'CSV'
+0,netrtt,isolated,40000,50000,60000,5000,200/200
+1,rtt,isolated:dpdk+idle,udp,25000,26000,30000,35000,45000,72000,25500,300000,0
+1,rtt,isolated:dpdk@RTT_GAP_US=1000+idle,udp,26000,27000,31000,36000,46000,90000,26500,20000,0
+CSV
+hs_idle=$(python3 "$cloud/analyse.py" "$tmp/hs-idle.csv" 2>&1 || true)
+sp_idle=$(section "## Sparse round trips by gap (µs)" <<<"$hs_idle" | tr -s ' ')
+if [[ $sp_idle != *"| isolated, DPDK, idle localhost subscription | none | 1 | 300,000 |"* ||
+    $sp_idle != *"| isolated, DPDK, idle localhost subscription | 1 ms | 1 | 20,000 |"* ||
+    $hs_idle != *"| isolated, DPDK, idle localhost subscription, one round trip every 1 ms (RTT_GAP_US=1000) "* ]]; then
+    fail "analyse.py: a paced +idle mode"
+    echo "$sp_idle" >&2
+else
+    pass "analyse.py: a paced +idle mode named, beside the same +idle mode unpaced"
+fi
 
 # spikes.py: a hairpin's spikes are host a's alone (b plays no part: its
 # spinner's gap at that moment is no cause), and a paced run's length for the
@@ -6488,17 +6543,19 @@ for mode in ("dpdk-raw@HAIRPIN=1", "dpdk-raw"):
     with open(os.path.join(d, f"spikes-isolated-{mode}-rtt-1.csv"), "w") as f:
         f.write(f"# start_realtime_ns={W0 * 1_000_000_000}\n# spikes_total=1\nstream,due_ns,latency_ns,ping\n")
         f.write("1002,1000000000,500000,7\n")
-with open(os.path.join(d, "histogram-isolated-dpdk-raw@RTT_GAP_US=50000-1.csv"), "w") as f:
-    f.write("value_ns,count\n20000,1000\n30000,200\n")
+for m in ("dpdk-raw@RTT_GAP_US=50000", "dpdk@RTT_GAP_US=50000+idle"):
+    with open(os.path.join(d, f"histogram-isolated-{m}-1.csv"), "w") as f:
+        f.write("value_ns,count\n20000,1000\n30000,200\n")
 EOF
 hs_out=$(python3 "$cloud/spikes.py" "$hsd" 2>&1 || true)
 hs_len=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import spikes
-print(spikes.run_length(sys.argv[2], "isolated-dpdk-raw@RTT_GAP_US=50000-1", 0.0, 1.0))' "$cloud" "$hsd")
+print(spikes.run_length(sys.argv[2], "isolated-dpdk-raw@RTT_GAP_US=50000-1", 0.0, 1.0),
+      spikes.run_length(sys.argv[2], "isolated-dpdk@RTT_GAP_US=50000+idle-1", 0.0, 1.0))' "$cloud" "$hsd")
 if [[ $hs_out != *"| isolated-dpdk-raw-rtt | 500: host stall (b)"* || $hs_out != *"| isolated-dpdk-raw@HAIRPIN=1-rtt | 500: unexplained"* ]]; then
     fail "spikes.py: a hairpin's spikes judged on host a alone"
     grep 'isolated-dpdk' <<<"$hs_out" >&2 || echo "$hs_out" >&2
-elif [[ $hs_len != 60.0 ]]; then
-    fail "spikes.py run_length of a paced run: $hs_len, not 1,200 pings x 50 ms = 60.0 s"
+elif [[ $hs_len != "60.0 60.0" ]]; then
+    fail "spikes.py run_length of a paced run (and a paced +idle one): $hs_len, not 1,200 pings x 50 ms = 60.0 s each"
 else
     pass "spikes.py: a hairpin's spikes judged on host a alone; a paced run's length its pings times the gap"
 fi

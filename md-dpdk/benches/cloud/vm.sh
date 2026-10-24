@@ -543,7 +543,9 @@ data_kernel_up() {
         fi
         # NICs can come back in another order after a DPDK run: any other rule
         # left for this address goes, now that its current one is in place
-        ip rule show | awk -v ip="$ip" -v t="$table" '$2 == "from" && $3 == ip && !($1 == t":" && $5 == t) {sub(":", "", $1); print $1, $5}' |
+        # (plain "from <ip> lookup <table>" rules only: HAIRPIN's from/to
+        # rules stay)
+        ip rule show | awk -v ip="$ip" -v t="$table" '$2 == "from" && $3 == ip && $4 == "lookup" && !($1 == t":" && $5 == t) {sub(":", "", $1); print $1, $5}' |
             while read -r prio tbl; do sudo ip rule del priority "$prio" from "$ip" lookup "$tbl"; done
         table=$((table + 1))
     done

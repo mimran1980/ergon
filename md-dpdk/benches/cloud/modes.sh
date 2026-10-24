@@ -58,15 +58,18 @@
 #        client's xhairpin, ping and pong in one process, the ping on the app
 #        core and its sender NIC, the pong on the receiver core (which the
 #        raw floor leaves free) and its receiver NIC, so a packet leaves by
-#        one NIC and comes back by the other through the host's own Nitro
-#        card, never between hosts: host b idles. Against the cross-host
-#        floor of the same mode it tells the local card's path from the
-#        fabric. Host a needs four cores (hairpin_types_check). On the kernel
-#        wire vm.sh routes each end's sends out of its own NIC (the kernel
+#        one NIC and comes back by the other, never to host b, which idles.
+#        Whether AWS turns it round in host a's own card or further out is
+#        not documented: a hairpin p50 well under the cross-host one says
+#        the former. Against the cross-host floor of the same mode it tells
+#        host a's part of the maxima from the rest (the fabric, host b).
+#        Both hosts need four cores (hairpin_types_check: host b sets the
+#        mode up too). On the kernel wire vm.sh routes each end's sends out of its own NIC (the kernel
 #        would deliver its own address over loopback), checked fail closed
 #   RTT_GAP_US=<us>  (1 to 1000000) one ping every that many microseconds,
-#        send to send, the warm-up's too, the clients spinning in between
-#        (rtt's and floor's Pace): a sparse flow, the network quiet between
+#        on a fixed schedule (a ping half a gap late restarts it), the
+#        warm-up's too, the clients spinning in between (rtt's and
+#        floor's Pace): a sparse flow, the network quiet between
 #        round trips, as an idle Aeron channel is between its 100 ms
 #        heartbeats. A rep then runs 20 to 60 s, about 10,000 round trips
 #        where a minute holds them (rtt_plan): 20 s and 20,000 at 1 ms, 60 s
@@ -207,16 +210,20 @@ rtt_plan() {
     echo "$seconds $messages $warmup"
 }
 
-# hairpin_types_check <mode> <aws|azure> <type a>: 0, or 2 saying why, for a
-# hairpin (@HAIRPIN=1) on a type a with fewer than four physical cores (the
-# layout's housekeeping, app (ping), sender and receiver (pong) cores); 0
-# for any other mode
+# hairpin_types_check <mode> <aws|azure> <type>...: 0, or 2 saying why, for a
+# hairpin (@HAIRPIN=1) on a type with fewer than four physical cores (the
+# layout's housekeeping, app (ping), sender and receiver (pong) cores): host
+# a's, and host b's too, which sets the mode up as well (vm.sh driver and
+# ready refuse it there without a receiver core); 0 for any other mode
 hairpin_types_check() {
-    local cores
-    mode_hairpin "$1" || return 0
-    cores=$(type_cores "$2" "$3" 2>&1) || { echo "mode $1: $cores" >&2; return 2; }
-    ((cores >= 4)) ||
-        { echo "mode $1: $3 has $cores physical cores: a hairpin's ping and pong need the layout's four cores on host a (housekeeping, app, sender, receiver: c9g.xlarge and up)" >&2; return 2; }
+    local m=$1 cloud=$2 t cores
+    shift 2
+    mode_hairpin "$m" || return 0
+    for t in "$@"; do
+        cores=$(type_cores "$cloud" "$t" 2>&1) || { echo "mode $m: $cores" >&2; return 2; }
+        ((cores >= 4)) ||
+            { echo "mode $m: $t has $cores physical cores: a hairpin's ping and pong need the layout's four cores (housekeeping, app, sender, receiver: c9g.xlarge and up), on host b too, which sets the mode up as well" >&2; return 2; }
+    done
 }
 
 # mode_client <mode>: the round trip's client: floor for a raw floor mode,

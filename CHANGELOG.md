@@ -114,7 +114,8 @@
   one process, one port each; on the kernel wire vm.sh routes the host's own
   addresses out of their NICs, checked fail closed). `@RTT_GAP_US=<us>`
   (1 to 1000000) paces `rtt` and `floor` to one ping every that many
-  microseconds (`RTT_GAP_US`), a rep of 20 to 60 s. `analyse.py` adds a
+  microseconds (`RTT_GAP_US`) on a fixed schedule, a rep of 20 to 60 s.
+  A hairpin needs four cores on both hosts. `analyse.py` adds a
   hairpin-against-cross-host table and a round-trips-by-gap table; a paced
   Aeron mode's floor is the floor paced alike.
 - Cloud lab: raw floor modes `kernel-raw` and `dpdk-raw`. The new `floor`

@@ -358,7 +358,7 @@ def chance(reps, sources, shifts=SHIFTS, seed=SEED):
 def hosts_of(stem):
     """The hosts a run's spikes can come from: a hairpin's (@HAIRPIN=1) are
     host a's alone, every other run's both."""
-    return "a" if re.search(r"@HAIRPIN=1(?=[@-]|$)", stem) else "ab"
+    return "a" if re.search(r"@HAIRPIN=1(?=[@+-]|$)", stem) else "ab"
 
 
 def run_length(folder, run_tag, start, last):
@@ -367,7 +367,7 @@ def run_length(folder, run_tag, start, last):
     its round trips times the gap where that is longer; else to its last
     event seen."""
     path = os.path.join(folder, f"histogram-{run_tag}.csv")
-    gap = re.search(r"@RTT_GAP_US=(\d+)(?=[@-]|$)", run_tag)
+    gap = re.search(r"@RTT_GAP_US=(\d+)(?=[@+-]|$)", run_tag)
     if os.path.exists(path):
         total = count = 0
         for row in csv.reader(open(path)):

@@ -99,7 +99,7 @@
 #   @CONDUCTOR=own (the driver's conductor alone on the fifth core, spinning; not
 #   beside the other two on it). @HAIRPIN=1 (the raw floor's modes): the round
 #   trip on host a alone, from its sender ENI to its receiver ENI and back
-#   (../modes.sh), host a of four cores or more; @RTT_GAP_US=<us> (1 to 1000000,
+#   (../modes.sh), both hosts of four cores or more; @RTT_GAP_US=<us> (1 to 1000000,
 #   cross-host): one ping every that many microseconds, a rep of 20 to 60 s
 #   (../modes.sh rtt_plan: 20,000 round trips at 1 ms, 1,200 at 50 ms, 300 at
 #   200 ms, 60 at 1 s; p99.99 means something from 10,000). The fifth core is not on a four-core type
@@ -292,8 +292,9 @@ if [[ -z ${LAB_DELETE:-} ]]; then
         # the layout's fifth core on both types (vm.sh ready would find it
         # missing only after the build)
         why=$(spare_types_check "$m" aws "$type_a" "$type_b" 2>&1) || die "$why"
-        # a hairpin's ping and pong on host a's own cores
-        why=$(hairpin_types_check "$m" aws "$type_a" 2>&1) || die "$why"
+        # a hairpin's ping and pong on host a's own cores (host b sets the
+        # mode up too, so its type is checked as well)
+        why=$(hairpin_types_check "$m" aws "$type_a" "$type_b" 2>&1) || die "$why"
     done
     for m in ${local_modes:-}; do
         why=$(mode_check "$m" local "$arch" aws "$threads_per_core" "$placement" 2>&1) || die "$why"
