@@ -124,6 +124,8 @@ buffer: no socket, no AEAD. Text messages, `validate_utf8` on; the handler
 reads each kept message's length and end bytes. Each sample is one call over
 K messages (64; 8 at 64 KiB), 20,000 samples per row, payloads checked
 before timing. A figure is one sample's time divided by K, the max too.
+The old and new paths of a row run interleaved on the same window,
+alternating which goes first.
 
 - shape: `whole`: unfragmented, one window; `frag4`: four fragments per
   message; `split`: unfragmented, every message cut across two records at
@@ -134,58 +136,65 @@ before timing. A figure is one sample's time divided by K, the max too.
   columns use the same ASCII-first UTF-8 check.
 - new: `Interest::Fragments` for kept messages, `Interest::Skip` for
   skipped ones.
+- The counter is `cntvct_el0` at 24 MHz: one tick is 0.65 ns per message
+  at K = 64 and 5.2 ns at K = 8.
 
 ns per message, p50 / p99 / max, native macOS, Apple M1 Pro
-([`ws_bench.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-rx-macos-20261024T160148Z/ws_bench.md), [`env.txt`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-rx-macos-20261024T160148Z/env.txt)):
+([`ws_bench.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-rx-macos-20261024T161808Z/ws_bench.md), [`env.txt`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-rx-macos-20261024T161808Z/env.txt)):
 
 | message | shape | decision | old (`Keep`) | new (`Fragments` / `Skip`) |
 |---|---|---|---|---|
-| 100 B | whole | kept | 7.8 / 10.4 / 1289.5 | 7.8 / 9.1 / 871.1 |
-| 100 B | whole | skipped | 7.1 / 7.8 / 585.5 | 3.9 / 9.1 / 1056.7 |
-| 100 B | frag4 | kept | 31.9 / 35.8 / 1819.1 | 39.0 / 46.8 / 1273.5 |
-| 100 B | frag4 | skipped | 31.2 / 34.5 / 1583.1 | 15.6 / 16.9 / 1675.1 |
-| 100 B | split | kept | 16.2 / 17.5 / 1212.7 | 16.9 / 20.1 / 1486.3 |
-| 100 B | split | skipped | 15.6 / 17.5 / 2537.5 | 13.0 / 14.3 / 1204.7 |
-| 300 B | whole | kept | 11.7 / 13.6 / 2707.1 | 11.7 / 13.0 / 5462.3 |
-| 300 B | whole | skipped | 11.0 / 30.5 / 1244.7 | 3.9 / 9.7 / 2238.3 |
-| 300 B | frag4 | kept | 30.5 / 44.2 / 3385.5 | 52.0 / 63.8 / 2374.3 |
-| 300 B | frag4 | skipped | 29.9 / 32.5 / 2174.3 | 15.6 / 39.0 / 14540.7 |
-| 300 B | split | kept | 23.4 / 33.8 / 3201.5 | 23.4 / 69.6 / 6511.9 |
-| 300 B | split | skipped | 22.1 / 30.5 / 3897.5 | 15.6 / 20.8 / 3475.1 |
-| 4 KiB | whole | kept | 55.3 / 151.0 / 5558.3 | 54.6 / 100.9 / 2956.7 |
-| 4 KiB | whole | skipped | 54.0 / 500.3 / 21567.9 | 5.8 / 13.0 / 3571.1 |
-| 4 KiB | frag4 | kept | 112.6 / 958.3 / 13542.3 | 78.1 / 98.9 / 4662.3 |
-| 4 KiB | frag4 | skipped | 110.0 / 330.7 / 5532.7 | 19.5 / 22.7 / 5958.3 |
-| 4 KiB | split | kept | 126.3 / 351.5 / 24473.5 | 126.3 / 399.1 / 9798.3 |
-| 4 KiB | split | skipped | 126.9 / 893.5 / 47155.1 | 90.4 / 716.3 / 32435.1 |
-| 64 KiB | whole | kept | 823.1 / 5116.7 / 314777.5 | 812.7 / 1463.9 / 36403.1 |
-| 64 KiB | whole | skipped | 807.5 / 1161.5 / 8870.3 | 10.4 / 15.6 / 286.5 |
-| 64 KiB | frag4 | kept | 1875.1 / 4105.5 / 90060.7 | 839.1 / 963.9 / 147763.1 |
-| 64 KiB | frag4 | skipped | 1860.7 / 3407.9 / 138239.9 | 36.4 / 46.8 / 32844.7 |
-| 64 KiB | split | kept | 1891.1 / 3721.5 / 136499.1 | 1902.3 / 3507.1 / 127385.5 |
-| 64 KiB | split | skipped | 1907.1 / 6815.9 / 80947.1 | 1307.9 / 3974.3 / 94003.1 |
+| 100 B | whole | kept | 7.8 / 22.1 / 12870.3 | 7.8 / 22.7 / 6975.9 |
+| 100 B | whole | skipped | 7.1 / 20.1 / 9715.1 | 3.9 / 10.4 / 7020.7 |
+| 100 B | frag4 | kept | 32.5 / 77.4 / 481279.9 | 34.5 / 94.4 / 311705.5 |
+| 100 B | frag4 | skipped | 31.2 / 76.1 / 252108.7 | 15.6 / 39.0 / 50252.7 |
+| 100 B | split | kept | 18.8 / 52.7 / 87807.9 | 18.8 / 52.7 / 285491.1 |
+| 100 B | split | skipped | 15.6 / 47.5 / 309247.9 | 13.0 / 39.0 / 76799.9 |
+| 300 B | whole | kept | 11.7 / 35.1 / 184934.3 | 11.7 / 34.5 / 58316.7 |
+| 300 B | whole | skipped | 11.0 / 30.5 / 47052.7 | 3.9 / 9.1 / 73932.7 |
+| 300 B | frag4 | kept | 30.5 / 93.0 / 240025.5 | 35.8 / 103.5 / 191897.5 |
+| 300 B | frag4 | skipped | 30.5 / 91.1 / 248627.1 | 15.6 / 39.7 / 151551.9 |
+| 300 B | split | kept | 24.7 / 70.3 / 165580.7 | 24.7 / 70.9 / 493158.3 |
+| 300 B | split | skipped | 22.1 / 67.0 / 94361.5 | 14.9 / 44.2 / 105369.5 |
+| 4 KiB | whole | kept | 55.3 / 184.2 / 232243.1 | 55.3 / 161.4 / 246579.1 |
+| 4 KiB | whole | skipped | 54.0 / 153.6 / 372121.5 | 6.5 / 14.3 / 80486.3 |
+| 4 KiB | frag4 | kept | 109.3 / 925.5 / 279756.7 | 76.1 / 368.5 / 184319.9 |
+| 4 KiB | frag4 | skipped | 109.3 / 1007.9 / 425164.7 | 20.1 / 186.1 / 111513.5 |
+| 4 KiB | split | kept | 126.3 / 1249.5 / 387276.7 | 126.3 / 1739.1 / 630783.9 |
+| 4 KiB | split | skipped | 124.3 / 335.9 / 38604.7 | 89.8 / 220.1 / 46259.1 |
+| 64 KiB | whole | kept | 817.9 / 3022.3 / 337305.5 | 817.9 / 3052.7 / 643481.5 |
+| 64 KiB | whole | skipped | 812.7 / 4252.7 / 1762918.3 | 10.4 / 93.7 / 266239.9 |
+| 64 KiB | frag4 | kept | 1844.7 / 6204.7 / 881459.1 | 891.1 / 2667.1 / 422707.1 |
+| 64 KiB | frag4 | skipped | 1927.9 / 32742.3 / 2051276.7 | 52.0 / 380.3 / 387481.5 |
+| 64 KiB | split | kept | 1911.9 / 12275.1 / 9286451.1 | 1911.9 / 13811.1 / 5000396.7 |
+| 64 KiB | split | skipped | 1907.1 / 20287.9 / 1232076.7 | 1307.9 / 11743.9 / 5727846.3 |
 
-- A skipped message costs 3.9–10.4 ns at p50 unfragmented and 15.6–36.4
+- A skipped message costs 3.9–10.4 ns at p50 unfragmented and 15.6–52
   ns in four fragments, whatever its size, unless a frame was cut across
   records: the later part is still moved (`split`).
-- `Fragments` pays off from a few KiB: 78 against 113 ns at 4 KiB, 839
-  against 1,875 ns at 64 KiB. At 100 and 300 B it is slower than the copy
-  (39 against 32 ns, 52 against 30.5 ns): four slices and four UTF-8 scans
-  cost more than copying a few hundred bytes. Use `Keep` for small
-  fragmented messages.
-- Unfragmented kept messages cost the same on both paths.
-- Maxima (up to 0.31 ms) are single samples and are not attributed: macOS
-  cannot pin the thread, and the host's 1-minute load average was 33–35 during the
-  run (other builds).
+- `Fragments` pays off from a few KiB: 76 against 109 ns at 4 KiB, 891
+  against 1,845 ns at 64 KiB. At 100 and 300 B it is slightly slower than
+  the copy (34.5 against 32.5 ns, 35.8 against 30.5 ns): four slices cost
+  more than copying a few hundred bytes. Use `Keep` for small fragmented
+  messages.
+- Unfragmented kept messages cost the same on both paths. With
+  `validate_utf8` off ([`ws_bench-utf8-off.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-rx-macos-20261024T161808Z/ws_bench-utf8-off.md))
+  an unfragmented skipped message costs the same on both paths too (4.5
+  against 3.9 ns at 100 B, 5.8 against 5.8 at 4 KiB): the win above is the
+  UTF-8 scan the skip avoids.
+- Maxima (up to 9.3 ms) and p99s are not attributed: macOS cannot pin
+  the thread, and the host's 1-minute load average was 75–79 during the
+  run (other agents' builds and containers).
 
-The same cases on Linux arm64 in a Docker VM on the same host
-([`ws_bench.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-rx-linux-arm64-20261024T155417Z/ws_bench.md), [`env.txt`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-rx-linux-arm64-20261024T155417Z/env.txt))
-keep the same order, except that `Fragments` already wins at 300 B (79
-against 127 ns). Copies and the UTF-8 scan run up to 10–17 times slower in
-that VM than natively, measured by a separate probe of `memcpy` and
-`is_ascii` recorded in its `env.txt`; the cause is not established, so take
-absolute figures from the native run. Most of its maxima fell in a sample
-during which the thread was preempted (column `max preempted`).
+The same cases on Linux arm64 in a Docker VM on the same host, pinned to
+CPU 9 ([`ws_bench.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-rx-linux-arm64-20261024T162426Z/ws_bench.md), [`env.txt`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-rx-linux-arm64-20261024T162426Z/env.txt))
+keep the same order, except that `Fragments` already wins at 300 B (60.5
+against 131.5 ns). Copies and the UTF-8 scan run 11–18 times slower in
+that VM than natively (64 KiB scanned in 14.7 µs against 0.82 µs); scalar
+work does not. The cause is not established, so take absolute figures from
+the native run. Its maxima are not explained by the thread's own context
+switches (column `max sample preempted`, almost all `no`); vCPU
+descheduling by the host is invisible to the guest.
 
 ## Close
 
