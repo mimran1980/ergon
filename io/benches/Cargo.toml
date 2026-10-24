@@ -16,6 +16,19 @@ rcgen = "0.14"
 aws-lc-rs = { version = "1.18", optional = true }
 openssl = { version = "0.10", optional = true }
 
+[dev-dependencies]
+# The mio parity gate (parity/mio_parity.rs): the same round trip through a
+# minimal mio loop. `os-poll` and `net` are mio's Poll and its TcpStream.
+mio = { version = "1", features = ["os-poll", "net"] }
+socket2 = "0.6"
+
+# The mio parity gate: a timed benchmark test, so it runs in release on its
+# own lane (test-lanes.tsv, `just io-parity`), never in the debug test runs.
+[[test]]
+name = "mio_parity"
+path = "parity/mio_parity.rs"
+test = false
+
 [features]
 aws-lc = ["dep:aws-lc-rs", "rustls/aws_lc_rs"]
 openssl = ["dep:openssl"]
