@@ -323,19 +323,20 @@ fn framing(headers: &[httparse::Header<'_>], status: u16) -> BoxResult<Framing> 
             length = Some(v);
         }
     }
-    Ok(Framing::Length(length.ok_or("response without Content-Length")?))
+    Ok(Framing::Length(
+        length.ok_or("response without Content-Length")?,
+    ))
 }
 
 fn dechunk(data: &[u8], out: &mut Vec<u8>, limit: usize) -> BoxResult<Option<usize>> {
     out.clear();
     let mut pos = 0;
     loop {
-        let (hdr, size) = match httparse::parse_chunk_size(&data[pos..])
-            .map_err(|_| "bad chunk size")?
-        {
-            httparse::Status::Partial => return Ok(None),
-            httparse::Status::Complete(v) => v,
-        };
+        let (hdr, size) =
+            match httparse::parse_chunk_size(&data[pos..]).map_err(|_| "bad chunk size")? {
+                httparse::Status::Partial => return Ok(None),
+                httparse::Status::Complete(v) => v,
+            };
         let size = usize::try_from(size)
             .ok()
             .filter(|&s| s <= limit)
@@ -564,8 +565,17 @@ fn side() -> BoxResult<Side> {
     })
 }
 
-#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-fn record_sample(side: &mut Side, ticks: u64, preempted: bool, ns_per_tick_per: f64) -> BoxResult<()> {
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss
+)]
+fn record_sample(
+    side: &mut Side,
+    ticks: u64,
+    preempted: bool,
+    ns_per_tick_per: f64,
+) -> BoxResult<()> {
     let ns = ticks as f64 * ns_per_tick_per;
     let v = ((ns * SCALE) as u64).max(1);
     side.h.record(v)?;
@@ -583,7 +593,14 @@ struct Rx {
     app: App,
 }
 
-fn rx_sample(rx: &mut Rx, path: Path, l: &Load, side: &mut Side, record: bool, per: f64) -> BoxResult<()> {
+fn rx_sample(
+    rx: &mut Rx,
+    path: Path,
+    l: &Load,
+    side: &mut Side,
+    record: bool,
+    per: f64,
+) -> BoxResult<()> {
     let meta = RxMeta::default();
     let mut ticks = 0u64;
     let (_, iv0) = thread_ctx_switches();
@@ -599,7 +616,9 @@ fn rx_sample(rx: &mut Rx, path: Path, l: &Load, side: &mut Side, record: bool, p
                 for r in &l.records {
                     rx.new.stage_plain_record(r)?;
                     let t0 = rdtsc();
-                    let n = rx.new.deliver_staged(ConnId::from_parts(0, 0), &meta, &mut rx.app)?;
+                    let n = rx
+                        .new
+                        .deliver_staged(ConnId::from_parts(0, 0), &meta, &mut rx.app)?;
                     ticks += rdtsc().wrapping_sub(t0);
                     black_box(n);
                 }
@@ -639,7 +658,12 @@ fn rx_sample(rx: &mut Rx, path: Path, l: &Load, side: &mut Side, record: bool, p
     }
     let (_, iv1) = thread_ctx_switches();
     if rx.app.responses - before != l.k as u64 {
-        return Err(format!("{}: {path:?} delivered {}", l.name, rx.app.responses - before).into());
+        return Err(format!(
+            "{}: {path:?} delivered {}",
+            l.name,
+            rx.app.responses - before
+        )
+        .into());
     }
     if record {
         record_sample(side, ticks, iv1 != iv0, per)?;
@@ -768,7 +792,11 @@ fn build_sample(
 
 #[allow(clippy::cast_precision_loss)]
 fn run_build(b: &Build, samples: usize) -> BoxResult<[Row; 2]> {
-    let hdrs: Vec<(&str, &str)> = b.headers.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let hdrs: Vec<(&str, &str)> = b
+        .headers
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
     // Correctness first: the same bytes.
     let mut want = Vec::new();
     old_build(&mut want, &b.fixed, "POST", "/api/order", &hdrs, &b.body)?;
@@ -784,7 +812,11 @@ fn run_build(b: &Build, samples: usize) -> BoxResult<[Row; 2]> {
     let warm = samples / 10;
     for i in 0..warm + samples {
         let record = i >= warm;
-        let order = if i % 2 == 0 { [Path::Old, Path::New] } else { [Path::New, Path::Old] };
+        let order = if i % 2 == 0 {
+            [Path::Old, Path::New]
+        } else {
+            [Path::New, Path::Old]
+        };
         for p in order {
             let s = if p == Path::Old { &mut old } else { &mut new };
             build_sample(b, &hdrs, p, &mut out, s, record, per)?;
@@ -841,7 +873,8 @@ fn main() -> BoxResult<()> {
     if let Ok(cpu) = a.req("cpu") {
         pin_current_thread(cpu.parse()?)?;
     }
-    let target = Target::new("api.example.com", 443, "").with_header("X-API-Key", "0123456789abcdef");
+    let target =
+        Target::new("api.example.com", 443, "").with_header("X-API-Key", "0123456789abcdef");
     let opts = HttpOptions {
         buf_size: BUF,
         max_in_flight: 64,
@@ -863,7 +896,9 @@ fn main() -> BoxResult<()> {
         loads.push(load(format!("chunked {len}"), &chunked(len), &[], k)?);
     }
     let body = body_of(4096);
-    let mut split = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 4096\r\n\r\n".to_vec();
+    let mut split =
+        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 4096\r\n\r\n"
+            .to_vec();
     let head = split.len();
     split.extend_from_slice(&body);
     loads.push(load("split 4096".into(), &split, &[head], 32)?);
@@ -890,7 +925,9 @@ fn main() -> BoxResult<()> {
         print!("{line}");
         out.push_str(&line);
     }
-    out.push_str("\n| row | path | K | ns/request p50 | p99 | max | max sample preempted (Linux) |\n");
+    out.push_str(
+        "\n| row | path | K | ns/request p50 | p99 | max | max sample preempted (Linux) |\n",
+    );
     out.push_str("|---|---|---|---|---|---|---|\n");
     for n in [3usize, 20] {
         let headers: Vec<(String, String)> = (0..n)
