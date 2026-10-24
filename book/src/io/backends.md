@@ -6,15 +6,15 @@ configuration, so one binary can run with each. Which to pick:
 
 | backend | how it waits | polls the NIC | sleeps in the kernel | extra core |
 |---|---|---|---|---|
-| `epoll-spin` | `epoll_wait(0)` every poll, then `recvmsg` on ready sockets | no (interrupts) | never | no |
+| `epoll-spin` | `epoll_wait(0)` every poll, then one `recvmsg` per ready socket: [mio's mechanism](#mio-measured-not-a-backend) | no (interrupts) | never | no |
 | `recv-busy` | non-blocking `recvmsg` on every socket every poll, with `SO_BUSY_POLL` (with `per_queue`: one read per NIC queue, then the sockets epoll reports ready) | yes, one pass per socket (or queue) per poll | never | no |
 | `uring-spin` | `IORING_OP_RECVMSG` with `DEFER_TASKRUN`; enters the kernel only when it flags work | no (interrupts) | never | no |
 | `uring-sqpoll` | an `SQPOLL` kernel thread submits, completes and polls the NIC | yes, on the kernel thread | never (the application's thread) | yes |
 | `epoll-busy` | `epoll_pwait2(wait_us)` with epoll busy polling for `busy_poll_us` | yes, inside the wait | up to `wait_us` | no |
 | `uring-napi` | `io_uring_enter(GETEVENTS, 1, wait_us)` with NAPI busy polling | yes, inside the wait | up to `wait_us`, and on every idle poll | no |
 
-- **`epoll_wait(0)` never blocks, but never polls the NIC either.** mio,
-  and so tokio, is this path too.
+- **`epoll-spin` is [mio's mechanism](#mio-measured-not-a-backend), and so tokio's.**
+  `epoll_wait(0)` never blocks, but never polls the NIC either.
 - **Plain `recv-busy` reads every socket on every poll**, so each socket
   adds a little to every poll. `per_queue` reads one socket per NIC
   queue instead: see [cost per poll](#cost-per-poll).
@@ -228,46 +228,75 @@ count; run each backend separately.
 
 ## mio: measured, not a backend
 
-mio was benchmarked beside ergon-io's backends. It is not one of them.
+**On Linux `epoll-spin` is mio's mechanism.** mio's `Poll::poll` with a zero
+timeout is `epoll_wait(timeout = 0)`, and the loop then reads the sockets it
+reports ready. tokio's I/O driver is mio (it passes a timeout and blocks
+when it has no work). `epoll-spin` makes the same two calls every poll. The
+differences:
 
-**What ran.** ergon-stack's `mio_bench`: mio 1.2.4, edge-triggered, reads
-until `WouldBlock`, rustls's buffered `ClientConnection`, and `Poll::poll`
-with a zero timeout in a spin loop. Graviton fair run
-`flags-aws-20261019T175248Z`: `c8g.2xlarge` / `c8g.xlarge`, moderation off,
-the NIC's interrupts on a core of their own (`irqcore`). µs, p50 / p99 /
-max, ranges over 2 rounds, no A/A control.
+| | mio | `epoll-spin` |
+|---|---|---|
+| wait | `epoll_wait(0)` | `epoll_wait(0)` |
+| readiness | edge-triggered: read until `WouldBlock` | level-triggered: one `recvmsg` per ready socket |
+| reads per message | 2 (the data, then the empty read) | 1 |
+| on top | nothing | TLS 1.3 records, WebSocket, HTTP, queued sends, background connect, receive timestamps, host checks, and the other backends behind the same API |
 
-| | mio | `epoll-spin` | `recv-busy` | `uring-sqpoll` |
-|---|---|---|---|---|
-| WebSocket N = 1 | 39.1–39.3 / 47.0–48.4 / 108–133 | 38.9–39.2 / 47.0–47.4 / 131–145 | 36.0–36.2 / 43.9–46.0 / 148–284 | 36.5–37.0 / 45.4–45.5 / 122–262 |
-| WebSocket N = 64 | 39.9–40.1 / 52.3–53.1 / 178–425 | 40.2–40.4 / 51.9–53.9 / 143–146 | 78.1–78.3 / 118.7–119.5 / 197–265 ‡ | 40.0–40.1 / 53.7–54.8 / 110–131 |
-| HTTP pool of 1 | 41.1 / 50.8–51.4 / 127–225 | 40.2–40.4 / 50.2–51.2 / 136–158 | 38.5–38.6 / 47.6–48.2 / 129–133 | 38.7–39.0 / 47.6–48.6 / 123–140 |
-| HTTP pool of 20 | 42.3–42.9 / 53.0–55.0 / 157–1,478 | 42.3–42.9 / 52.8–54.9 / 137–285 | 56.5–57.2 / 68.9–70.2 / 164–308 | 42.9–43.1 / 53.5–54.4 / 139–248 |
+**Measured level.** Graviton fair run `flags-aws-20261019T175248Z`
+(`c8g.2xlarge` / `c8g.xlarge`, moderation off, NIC interrupts on a core of
+their own). mio arm: ergon-stack's `mio_bench`, mio 1.2.4, rustls's buffered
+`ClientConnection`, `Poll::poll(0)` in a spin loop. µs, p50 / p99 / max,
+ranges over 2 rounds:
 
-‡ Could not hold 10,000/s. Every row and footnote:
+| | mio | `epoll-spin` |
+|---|---|---|
+| WebSocket N = 1 | 39.1–39.3 / 47.0–48.4 / 108–133 | 38.9–39.2 / 47.0–47.4 / 131–145 |
+| WebSocket N = 16 | 39.7–40.1 / 49.9–51.5 / 156–168 | 39.6–40.0 / 50.0–51.6 / 158–193 |
+| WebSocket N = 64 | 39.9–40.1 / 52.3–53.1 / 178–425 | 40.2–40.4 / 51.9–53.9 / 143–146 |
+| HTTP pool of 1 | 41.1 / 50.8–51.4 / 127–225 | 40.2–40.4 / 50.2–51.2 / 136–158 |
+| HTTP pool of 20 | 42.3–42.9 / 53.0–55.0 / 157–1,478 | 42.3–42.9 / 52.8–54.9 / 137–285 |
+
+Every row, the polling backends beside them, and the work counts:
 [fair run](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton).
+mio makes 2.0× the `recvmsg` calls (WebSocket N = 1: 1.20 M against 0.60 M,
+[`loop-counters.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/flags-aws-20261019T175248Z/loop-counters.md)).
 
-Loop counters
-([`loop-counters.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/flags-aws-20261019T175248Z/loop-counters.md)):
+**Gated.** [`io/benches/parity/mio_parity.rs`](https://github.com/mimran1980/ergon/blob/main/io/benches/parity/mio_parity.rs)
+runs in CI on Linux x86_64 and aarch64 (`just io-parity`, release):
 
-- mio makes 2.0× the `recvmsg` calls: 1.20 M against `epoll-spin`'s 0.60 M
-  on the WebSocket round trip at N = 1.
-- Its mean pass at 256 sockets is 359 ns against `epoll-spin`'s 601–617 ns
-  (longest mio pass not recorded).
+- **Structure**, exact counts from the `Driver`'s counters: one
+  `epoll_wait` per poll; 20,000 idle polls return in milliseconds, so the
+  timeout is 0 (at 1 ms, the shortest that blocks, they would take 20 s);
+  one `recvmsg` per echo and none to `EAGAIN`, at 1 and 16 sockets. The
+  mio loop makes exactly two reads per echo.
+- **Latency**, two-sided: a loopback TLS 1.3 WebSocket round trip, 64 B
+  at 10,000/s, through the `Driver` and through a minimal mio loop doing
+  the same work (ergon-io's TLS record layer and WebSocket framing, the
+  same echo peer on its own CPU, `TCP_NODELAY`, 4 MiB `SO_RCVBUF`, 64
+  events per wait, each echo checked byte for byte). 7 pairs at 1 and 16
+  sockets; each pair alternates the two loops in 20 blocks of 1,000 round
+  trips. It fails if either side's p50 is ahead by more than
+  max(1 µs, 10 %) in 6 of 7 pairs: an `epoll-spin` win that large is a
+  suspected defect too.
+
+The tolerance comes from 10 runs, 140 pairs, in Docker on Apple silicon
+(arm64 and amd64; [`summary.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/mio-parity-docker-20261024T145651Z/summary.md)):
+p50 5.5–14.4 µs, the paired difference +0.19 to +0.27 µs at the median (mio
+slower: its read to `WouldBlock` is timed), standard deviation 0.51–0.85
+µs. Every run passed.
 
 Why it is not a backend:
 
-1. **On Linux mio is epoll.** It is level with `epoll-spin` and behind the
-   polling backends at 1 socket. The 2× `recvmsg` calls come from edge
-   triggering.
-2. **Its one edge is not mio's.** Its pass is cheaper at many sockets
-   because the `Driver` checks every connection for queued sends on each
-   pass and `mio_bench` does not. That cost is the `Driver`'s, paid by every
-   backend ([cost per poll](#cost-per-poll)), not epoll's.
+1. **It would duplicate `epoll-spin`:** the same two syscalls, plus one
+   empty read per message.
+2. **Its one edge is not mio's.** Its mean pass at 256 sockets is 359 ns
+   against `epoll-spin`'s 601–617 ns because the `Driver` checks every
+   connection for queued sends on each pass and `mio_bench` does not. That
+   cost is the `Driver`'s, paid by every backend
+   ([cost per poll](#cost-per-poll)), not epoll's.
 3. **Off Linux it would lose what ergon-io is for.** macOS and Windows have
    no `SO_BUSY_POLL`, `io_uring`, `TCP_QUICKACK`, `SO_TIMESTAMPING` or
    netlink route checks. Latency verdicts come from Linux only.
-4. **Its maxima have no cause yet:**
+4. **Its fair-run maxima have no cause yet:**
 
    | max | where | what the data rules out |
    |---|---|---|
@@ -279,7 +308,6 @@ Why it is not a backend:
    Data: the last section of `loop-counters.md` (above); the sender
    lateness is in
    [`fair.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/flags-aws-20261019T175248Z/fair.md).
-
 5. **The market-data arm was confounded.** The default `SO_RCVBUF` gave
    receive-window pressure (`TCPWantZeroWindowAdv` up to 2,862 per point)
    that no ergon-io arm showed. So mio is not ranked on market data. Data:
