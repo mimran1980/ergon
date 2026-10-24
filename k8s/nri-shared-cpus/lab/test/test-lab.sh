@@ -263,6 +263,7 @@ check "NIC check: no NIC fails" bash -c "VM_LIB_ONLY=1 . '$lab/vm.sh'; ! LAB_SYS
 check "cpumask 0-1" test "$(cpumask 0-1)" = 3
 check "cpumask 0,2-3" test "$(cpumask 0,2-3)" = d
 check "cpu_count 1,4-6" test "$(cpu_count 1,4-6)" = 4
+check "qty 1k" test "$(qty 1k) $(qty 2M) $(qty 250)" = "1000 2000000 250"
 check "field" test "$(field 'gapprobe: label=x cpu=2 ERGON_SHARED_CPUS=1 main_affinity=[0, 1]' cpu)" = 2
 
 echo

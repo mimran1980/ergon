@@ -144,13 +144,17 @@ pod_threads() {
 
 kube() { kubectl --context kind-ergon-lab "$@"; }
 
-plugin_installed() { helm status ergon-shared-cpus -n ergon-system >/dev/null 2>&1; }
+# The chart creates its namespace (templates/namespace.yaml, Pod Security
+# privileged), so helm's --create-namespace collides with it ("namespaces
+# ergon-system already exists"): the release record lives in default, the
+# objects in ergon-system.
+plugin_installed() { helm status ergon-shared-cpus -n default --kube-context kind-ergon-lab >/dev/null 2>&1; }
 
 plugin_install() {
     plugin_installed && return 0
     say "installing the chart from the checkout (sharedCpus $SHARED_CPUS, the VM's /sys at /vm-sys)"
     helm install ergon-shared-cpus "$nri/charts/ergon-shared-cpus" --kube-context kind-ergon-lab \
-        --namespace ergon-system --create-namespace \
+        --namespace default \
         --set image.repository=ergon-shared-cpus --set image.tag=dev --set image.pullPolicy=Never \
         --set-string config.sharedCpus="$SHARED_CPUS" \
         --set 'config.namespaces={trading}' \
@@ -160,7 +164,7 @@ plugin_install() {
     local i ready alloc
     for ((i = 0; i < 90; i++)); do
         ready=$(kube -n ergon-system get ds ergon-shared-cpus -o jsonpath='{.status.numberReady}' 2>/dev/null)
-        alloc=$(kube get node ergon-lab-control-plane -o go-template='{{index .status.allocatable "ergon.io/shared-millicpus"}}' 2>/dev/null)
+        alloc=$(qty "$(kube get node ergon-lab-control-plane -o go-template='{{index .status.allocatable "ergon.io/shared-millicpus"}}' 2>/dev/null)")
         [[ $ready == 1 && $alloc == "$((1000 * $(cpu_count "$SHARED_CPUS")))" ]] && { say "plugin ready, allocatable $alloc"; return 0; }
         sleep 2
     done
@@ -172,8 +176,17 @@ plugin_install() {
 plugin_uninstall() {
     plugin_installed || return 0
     say "uninstalling the chart (plugin-off: the plain static CPU manager)"
-    helm uninstall ergon-shared-cpus -n ergon-system --kube-context kind-ergon-lab --wait --timeout 120s || return 1
+    helm uninstall ergon-shared-cpus -n default --kube-context kind-ergon-lab --wait --timeout 120s || return 1
     kube -n ergon-system wait --for=delete pod -l app=ergon-shared-cpus --timeout=120s >/dev/null 2>&1 || true
+}
+
+# qty <quantity>: Kubernetes prints 1000 as 1k; plain decimal out.
+qty() {
+    case ${1:-0} in
+    *M) echo $((${1%M} * 1000000)) ;;
+    *k) echo $((${1%k} * 1000)) ;;
+    *) echo "${1:-0}" ;;
+    esac
 }
 
 # cpu_count <cpulist>
@@ -202,12 +215,16 @@ pod_failure() {
 }
 
 step_e2e() {
-    local bad=0 line cpu iso shr pid out i deny
+    local bad=0 line cpu iso shr pid out i deny why
     plugin_install || fail "the plugin did not come up"
     kube -n trading delete pod e2e-hot --ignore-not-found --wait=true >/dev/null 2>&1
     lab_pod plugin-on e2e-hot 0 120 5 "$UDP_RATE" "$STRESS" | kube apply -f - || fail "the hot pod was not admitted"
     say "hot pod e2e-hot admitted"
-    line=$(wait_log e2e-hot 120) || fail "the hot pod did not start: $(pod_failure e2e-hot)"
+    if ! line=$(wait_log e2e-hot 120); then
+        why=$(pod_failure e2e-hot)
+        kube -n trading delete pod e2e-hot --wait=true >/dev/null 2>&1
+        fail "the hot pod did not start: $why"
+    fi
     say "hot pod started: $line"
     cpu=$(field "$line" cpu) iso=$(field "$line" ERGON_ISOLATED_CPUS) shr=$(field "$line" ERGON_SHARED_CPUS)
     out=$results/e2e.txt
@@ -305,7 +322,7 @@ step_report() {
         echo "|---|---|"
         echo "| VM | ${LAB_SIZE:-?} ($(nproc) vCPUs, $(uname -m)), $(. /etc/os-release && echo "$PRETTY_NAME"), kernel $(uname -r) |"
         echo "| boot line | \`$(cat /proc/cmdline)\` |"
-        echo "| isolated / nohz_full | $(cat /sys/devices/system/cpu/isolated) / $(cat /sys/devices/system/cpu/nohz_full) |"
+        echo "| isolated / nohz_full | $(cat /sys/devices/system/cpu/isolated 2>/dev/null || echo none) / $(cat /sys/devices/system/cpu/nohz_full 2>/dev/null || echo none) |"
         echo "| IRQ CPU / shared CPU / reservedSystemCPUs | $IRQ_CPU / $SHARED_CPUS / $RESERVED_CPUS |"
         echo "| runs | $REPS reps x 2 arms, ${SECONDS_PER_RUN} s of spin each, after ${DELAY_SECONDS} s of helpers |"
         echo "| helper load | \`stress-ng $STRESS\` and a loopback UDP reader fed $UDP_RATE datagrams/s, from the pod's main thread |"
