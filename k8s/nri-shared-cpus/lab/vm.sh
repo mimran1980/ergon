@@ -399,7 +399,27 @@ cluster)
     docker rm "$id" >/dev/null
     lab_kind_config "$RESERVED_CPUS" >~/lab/kind.yaml
     kind create cluster --config ~/lab/kind.yaml --wait 180s
-    kind load docker-image ergon-shared-cpus:dev ergon-gapprobe:lab --name ergon-lab
+    # containerd in the node can still be restarting just after Ready: wait
+    # for its socket, retry the load once, and keep its journal if it fails
+    node_containerd_up() {
+        local i
+        for i in $(seq 1 60); do
+            docker exec ergon-lab-control-plane ctr --namespace=k8s.io version >/dev/null 2>&1 && return 0
+            sleep 1
+        done
+        return 1
+    }
+    loaded=0
+    for attempt in 1 2; do
+        node_containerd_up || say "containerd in the node not answering (attempt $attempt)"
+        if kind load docker-image ergon-shared-cpus:dev ergon-gapprobe:lab --name ergon-lab; then loaded=1; break; fi
+    done
+    if ((loaded == 0)); then
+        say "kind load failed twice; the node's containerd journal:"
+        docker exec ergon-lab-control-plane journalctl -u containerd --no-pager -n 80 2>&1 | sed 's/^/  containerd| /' || true
+        docker exec ergon-lab-control-plane systemctl status containerd --no-pager 2>&1 | sed 's/^/  containerd| /' || true
+        exit 1
+    fi
     docker exec ergon-lab-control-plane grep -q "reservedSystemCPUs: \"\?$RESERVED_CPUS\"\?" /var/lib/kubelet/config.yaml ||
         fail "the kind kubelet has no reservedSystemCPUs $RESERVED_CPUS"
     kube create namespace trading
