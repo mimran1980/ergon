@@ -602,3 +602,74 @@ fn any_fragmentation_keeps_text_and_flags_it_correctly() -> R {
         .map_err(|e| e.to_string())?;
     Ok(())
 }
+
+// ANCHOR: stream
+/// Reads only the messages it needs from a feed of large fragmented ones:
+/// the kind is in the first fragment, so every other message is dropped
+/// there (`SkipRest`: its other fragments are never copied or checked).
+/// With `TextCheck::Ascii`, `meta.text` says each fragment is ASCII: any
+/// byte index is a character boundary.
+#[derive(Default)]
+struct FillReader {
+    fills: usize,
+    bytes: usize,
+    stopped: usize,
+    unchecked: usize,
+}
+
+impl Handler for FillReader {}
+
+impl WsHandler for FillReader {
+    // Unfragmented messages arrive whole.
+    fn on_message(&mut self, _: ConnId, _: u8, payload: &[u8], _: &RxMeta, _: u16) {
+        if payload.starts_with(br#"{"kind":"fill""#) {
+            self.fills += 1;
+            self.bytes += payload.len();
+        }
+    }
+
+    fn on_message_start(&mut self, _: ConnId, _: u8, _: &[u8], _: bool, _: &RxMeta) -> Interest {
+        Interest::Stream
+    }
+
+    // Fragmented ones arrive a fragment at a time, nothing held.
+    fn on_fragment(
+        &mut self,
+        _: ConnId,
+        _: u8,
+        part: &[u8],
+        index: u32,
+        fin: bool,
+        meta: &RxMeta,
+    ) -> Flow {
+        if index == 0 && !part.starts_with(br#"{"kind":"fill""#) {
+            self.stopped += 1;
+            return Flow::SkipRest;
+        }
+        if meta.text != TextStatus::Ascii {
+            self.unchecked += 1;
+        }
+        self.bytes += part.len();
+        self.fills += usize::from(fin);
+        Flow::Continue
+    }
+}
+// ANCHOR_END: stream
+
+#[test]
+fn the_book_example_streams_only_what_it_needs() -> R {
+    let lab = Lab::new()?;
+    let mut r = WsRig::new(&lab, &opts(DELIVER))?;
+    let mut h = FillReader::default();
+    let fill = format!(r#"{{"kind":"fill","rows":"{}"}}"#, "x".repeat(5000));
+    let other = format!(r#"{{"kind":"book","rows":"{}"}}"#, "y".repeat(5000));
+    let mut s = fragmented(OP_TEXT, fill.as_bytes(), 4)?;
+    s.extend_from_slice(&fragmented(OP_TEXT, other.as_bytes(), 4)?);
+    s.extend_from_slice(&frame(OP_TEXT, true, fill.as_bytes())?);
+    r.feed_records(&s, &[], &mut h)?;
+    assert_eq!((h.fills, h.bytes), (2, 2 * fill.len()));
+    assert_eq!((h.stopped, h.unchecked), (1, 0));
+    let st = stats(&r);
+    assert_eq!((st.skipped, st.frag_copy_bytes, st.messages), (1, 0, 2));
+    Ok(())
+}

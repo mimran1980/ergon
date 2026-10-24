@@ -211,6 +211,18 @@ fn a_frame_split_across_records_moves_the_smaller_side() -> R {
             );
             assert_eq!((s.frag_copy_bytes, s.frag_fallbacks), (0, 0));
         }
+        // The bench lever restores the join before 0.1.35: the new record
+        // always moves back.
+        let mut r = rig(&lab, &opts())?;
+        r.conn.set_span_back_only(true);
+        let mut h = App::new(Interest::Keep);
+        r.feed_records(&f, &[cut], &mut h)?;
+        assert_eq!(h.got.len(), 1, "cut {cut}");
+        assert_eq!(
+            stats(&r).span_copy_bytes,
+            (f.len() - cut) as u64,
+            "cut {cut}"
+        );
     }
     Ok(())
 }
