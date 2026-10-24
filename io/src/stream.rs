@@ -516,6 +516,11 @@ impl TxQueue {
         std::mem::take(&mut self.head)
     }
 
+    /// The queue's allocation, as (address, capacity) (test lever).
+    pub(crate) fn allocation(&self) -> (usize, usize) {
+        (self.buf.as_ptr().addr(), self.buf.capacity())
+    }
+
     /// Where the unsent bytes start (test lever).
     #[cfg(test)]
     pub(crate) const fn head(&self) -> usize {

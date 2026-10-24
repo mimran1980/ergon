@@ -626,6 +626,7 @@ fn deliver<H: ClientHandler>(id: u64, e: &Easy2<Collector>, handler: &mut H) {
                 status,
                 headers: resp.headers,
                 body: &c.body,
+                head_ascii: c.head.is_ascii(),
             },
         ),
         Err(why) => handler.on_error(

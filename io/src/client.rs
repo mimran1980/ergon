@@ -478,6 +478,7 @@ impl Native {
                 request_timeout_ms: cfg.request_timeout_ms,
                 max_in_flight: 1,
                 buf_size: cfg.buf_size,
+                ..HttpOptions::default()
             },
             background: cfg.background_connect,
             slots: (0..cfg.pool)

@@ -81,7 +81,15 @@ use `Target::new("api.example.com", 443, "")` and
 - **`buf_size`** (1 MiB) is each native connection's receive buffer: it
   must hold the largest response.
 - **Responses:** `Content-Length` or chunked bodies. The body in
-  `on_response` borrows the client's buffer: copy what you keep.
+  `on_response` borrows the client's buffer: copy what you keep. Copies
+  per case: [receive costs](#receive-costs).
+- **Response heads are ASCII** (RFC 9112). A head with a byte above 0x7F
+  is delivered with `Response::head_ascii` false and counted in
+  `HttpStats::non_ascii_heads` (`NonAsciiHead::Flag`, the default); with
+  `NonAsciiHead::Reject` it closes the connection. Never dropped silently.
+- **Bodies are not checked** by default: HTTP has no text rule for them.
+  `HttpOptions::body_check` takes `TextCheck::Ascii` or `TextCheck::Utf8`;
+  a body that fails closes the connection with `Error::Http`.
 - **libcurl:** `curl_drive` picks `curl_multi_perform` on every poll
   (default) or `curl_multi_socket_action`; both never block. Compared once
   on Azure at 1,000/s: `curl_multi_perform` was 1–6 µs ahead at the
@@ -89,6 +97,70 @@ use `Target::new("api.example.com", 443, "")` and
   ([data](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#http-clients)).
   Trust comes from `curl_ca_file` or the system store, not from the rustls
   configuration.
+
+## Request templates
+
+On a raw `HttpConn`, a `RequestTemplate` holds the request line around
+the path and the endpoint's fixed headers (`Host`, `Target::headers`),
+built and checked once. `request_with` then writes only the target suffix,
+per-request headers, `Content-Length` and the body:
+
+```rust,ignore
+{{#include ../../../io/tests/http_request.rs:template}}
+```
+*(From `io/tests/http_request.rs`.)*
+
+- The bytes on the wire equal `request`'s: the tests compare the
+  ciphertext at every request size up to one TLS record.
+- A template built for another target is refused (`Error::Http`).
+- `signed_request_with` is `signed_request_at` from a template whose path
+  has no query.
+- The send queue's pages are written once at connect: the first requests
+  take no page fault.
+
+## Receive costs
+
+| Response | Body in `on_response` | Body bytes copied | Head parses |
+|---|---|---|---|
+| `Content-Length` | slice of the receive buffer | 0 | 1 |
+| chunked, one chunk, whole in the buffer | slice of the receive buffer | 0 | 1 |
+| chunked, several chunks, whole in the buffer | the connection's de-chunk buffer | each byte once | 1 |
+| chunked, still arriving | the de-chunk buffer (the head is copied there too) | each byte once, as its record arrives | 1 |
+
+- A head cut across two records is parsed twice (the first try is
+  partial).
+- A chunked body still arriving leaves the receive buffer chunk by chunk,
+  so later records are read in place. A `Content-Length` body that spans
+  records is moved next to the part before it (`span_copy_bytes`).
+- The de-chunk buffer is allocated on first use, at `buf_size` minus two
+  records.
+- Counters: `HttpStats::chunk_copy_bytes`, `span_copy_bytes`,
+  `compact_bytes`, `head_parses`.
+
+`http_bench` (in `io/benches`) times the previous path (commit a003bf60)
+and the current one interleaved on the same input, per response or
+request, ns. Native macOS, M1 Pro, loaded host, no pinning
+([data](https://github.com/mimran1980/ergon/blob/main/io/benches/results/http-copy-macos-20261024T170936Z/http_bench.md)):
+
+| Row | Previous p50 / p99 / max | Current p50 / p99 / max | De-chunk copy B, previous → current |
+|---|---|---|---|
+| chunked 4 KiB (one chunk) | 177 / 206 / 20,173 | 130 / 165 / 34,253 | 4,096 → 0 |
+| chunked 64 KiB, 4 KiB chunks | 4,701 / 31,232 / 2,202,010 | 1,720 / 7,949 / 9,889,382 | 212,992 → 65,615 |
+| chunked 1 MiB, 4 KiB chunks | 670,106 / 3,065,446 / 217,474,662 | 28,006 / 91,034 / 35,835,085 | 34,865,152 → 1,048,655 |
+| `Content-Length` 4 KiB, head and body in two records | 288 / 328 / 45,696 | 234 / 285 / 147,968 | 0 → 0 |
+| build, 3 headers | 115 / 124 / 728 | 73 / 79 / 833 | |
+| build, 20 headers | 546 / 737 / 17,882 | 331 / 440 / 16,051 | |
+
+- The chunked gains follow the copy counts: the previous path de-chunked
+  the whole body again on every record (65 head parses for 1 MiB).
+- The build gain is mostly the faster header checks, which `request`
+  shares; the template saves the line and fixed-header writes.
+- The maxes are millisecond stalls on a host running other builds; macOS
+  cannot say whether the thread was preempted, so no cause is established.
+- In a Linux arm64 Docker VM on the same host, pinned, the order is the
+  same; bulk copies run several times slower in that VM, so its absolute
+  figures are not comparable
+  ([data](https://github.com/mimran1980/ergon/blob/main/io/benches/results/http-copy-linux-arm64-20261024T171012Z/http_bench.md)).
 
 ## Signing
 

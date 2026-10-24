@@ -76,7 +76,10 @@ pub use client::{ClientHandler, CurlDrive, HttpClient, HttpClientConfig, HttpImp
 pub use driver::Driver;
 pub use endpoint::{ConnId, ConnMut, Dial, DriverStats, Endpoint, Handler, Receive, TcpInfo};
 pub use error::{Error, Result};
-pub use http::{HttpConn, HttpDial, HttpHandler, HttpOptions, HttpStats, Response};
+pub use http::{
+    HttpConn, HttpDial, HttpHandler, HttpOptions, HttpStats, NonAsciiHead, RequestTemplate,
+    Response,
+};
 pub use limit::{
     BucketId, BucketSpec, BucketStats, Budget, Charge, Class, Limited, Resend, Ticket, Why,
 };
