@@ -2,7 +2,10 @@
 //! logging (lossy non-blocking writer): to a pipe that is drained (the
 //! worker keeps up), to `/dev/null`, and to a pipe nobody reads (the worker
 //! is blocked in `write(2)` and every line is dropped). Prints p50, p90,
-//! p99, p99.9 and max in ns.
+//! p99, p99.9, p99.99 and max in ns (quanta's counter), then the window's
+//! page faults, context switches, steal and interrupts on the bench CPU and
+//! the CPU's idle stall over the same wall time, and the max's cause from
+//! them (`low_latency_k8s::costs`), or "unexplained".
 //!
 //! It checks first that every event was either written or counted as
 //! dropped, and passes the fields through `black_box`. `--smoke` runs 1,000
@@ -11,25 +14,17 @@
 
 use std::hint::black_box;
 use std::io::Write;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use low_latency_k8s::costs::{Counters, Spread, Window, idle_gaps, idle_window_ns, snapshot};
 use low_latency_k8s::logging::{LogConfig, non_blocking, subscriber};
 use tracing_appender::non_blocking::WorkerGuard;
 
 type BenchResult<T> = Result<T, Box<dyn std::error::Error>>;
 
-fn pct(sorted: &[u64], q: f64) -> u64 {
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::cast_precision_loss
-    )]
-    let i = ((sorted.len() as f64 - 1.0) * q).round() as usize;
-    sorted[i.min(sorted.len() - 1)]
-}
-
 struct Run {
-    costs: Vec<u64>,
+    spread: Spread,
+    window: Window,
     dropped: usize,
     guard: WorkerGuard,
 }
@@ -47,53 +42,72 @@ fn run<W: Write + Send + 'static>(
         thread_name: "ll-log-bench".to_owned(),
         ..LogConfig::default()
     };
-    let (nb, guard, counter) = non_blocking(sink, &cfg);
+    let a = non_blocking(sink, &cfg);
+    let (nb, guard, counter) = (a.writer, a.guard, a.dropped);
     let probe = counter;
     let hot = std::thread::Builder::new()
         .name("ll-hot".to_owned())
         .spawn(move || {
             let _default = tracing::subscriber::set_default(subscriber(nb, &cfg));
             let pad = "x".repeat(160);
+            // paced, so the worker writes until the pipe is full whatever
+            // the timing
             for i in 0..prefill {
                 tracing::warn!(i, pad = %pad, "fill");
+                if i % 100 == 99 {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
             }
             if prefill > 0 {
                 // the worker blocks in write(2) once the pipe is full
                 std::thread::sleep(Duration::from_millis(200));
             }
             let before = probe.dropped_lines();
-            let mut costs = Vec::with_capacity(n);
-            for seq in 0..n as u64 {
-                let t = Instant::now();
+            let cpu = low_latency_k8s::cpus::current_cpu().unwrap_or(0);
+            let snap0 = snapshot(cpu).ok();
+            let clock = quanta::Clock::new();
+            // written once first: an untouched page would fault inside the window
+            let mut costs = vec![u64::MAX; n];
+            let t_start = clock.raw();
+            for (k, seq) in (0..n as u64).enumerate() {
+                let t0 = clock.raw();
                 tracing::warn!(
                     seq = black_box(seq),
                     waited_ns = black_box(1_234_u64),
                     "offer held back"
                 );
-                costs.push(u64::try_from(t.elapsed().as_nanos()).unwrap_or(u64::MAX));
+                costs[k] = clock.delta_as_nanos(t0, clock.raw());
             }
-            (costs, probe.dropped_lines() - before)
+            let wall = clock.delta_as_nanos(t_start, clock.raw());
+            let snap1 = snapshot(cpu).ok();
+            let dropped = probe.dropped_lines() - before;
+            let (idle_gap_max, idle_gaps_over_10us) = idle_gaps(&clock, idle_window_ns(wall));
+            let window = Window {
+                counters: snap0.zip(snap1).map(|(a, b)| Counters::between(&a, &b)),
+                idle_gap_max,
+                idle_gaps_over_10us,
+            };
+            (Spread::of(&mut costs), window, dropped)
         })?;
-    let (mut costs, dropped) = hot.join().map_err(|_| "the bench thread panicked")?;
-    costs.sort_unstable();
+    let (spread, window, dropped) = hot.join().map_err(|_| "the bench thread panicked")?;
     Ok(Run {
-        costs,
+        spread,
+        window,
         dropped,
         guard,
     })
 }
 
 fn report(label: &str, r: &Run) {
-    let c = &r.costs;
     println!(
-        "log_event\t{label}\tn={}\tdropped={}\tp50={}\tp90={}\tp99={}\tp99.9={}\tmax={}",
-        c.len(),
+        "log_event\t{label}\tdropped={}\t{}",
         r.dropped,
-        pct(c, 0.50),
-        pct(c, 0.90),
-        pct(c, 0.99),
-        pct(c, 0.999),
-        c[c.len() - 1]
+        r.spread.fields()
+    );
+    println!("log_event\t{label}\twindow\t{}", r.window.fields());
+    println!(
+        "log_event\t{label}\tmax_cause\t{}",
+        r.window.cause(&r.spread)
     );
 }
 
@@ -132,7 +146,7 @@ fn main() -> BenchResult<()> {
 
     // A pipe nobody reads: the queue is full, every timed event is dropped.
     let (reader, writer) = std::io::pipe()?;
-    let blocked = run(writer, n, 256, 2_000)?;
+    let blocked = run(writer, n, 256, 4_000)?;
     report("blocked_pipe", &blocked);
     if blocked.dropped != n {
         return Err(format!("{} of {n} dropped with the worker blocked", blocked.dropped).into());

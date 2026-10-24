@@ -21,6 +21,10 @@ tracing-subscriber = { version = "=0.3.23", default-features = false, features =
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { version = "=1.1.5", default-features = false, features = ["std", "thread", "process", "fs"] }
 
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# tests/hot_stdout.rs swaps fd 1
+rustix = { version = "=1.1.5", default-features = false, features = ["std", "stdio", "pipe"] }
+
 [dev-dependencies]
 proptest = { version = "=1.12.0", default-features = false, features = ["std"] }
 rusteron-media-driver = { version = "=0.2.13", features = ["static"] }
@@ -50,6 +54,10 @@ path = "tests/placement_threads.rs"
 [[test]]
 name = "placement_aeron"
 path = "tests/placement_aeron.rs"
+
+[[test]]
+name = "hot_stdout"
+path = "tests/hot_stdout.rs"
 
 [[test]]
 name = "manifests"

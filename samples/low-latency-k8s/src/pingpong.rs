@@ -27,7 +27,8 @@ use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use rusteron_client::{
-    Aeron, AeronContext, AeronExclusivePublication, AeronImage, AeronSubscription, Handlers,
+    Aeron, AeronContext, AeronExclusivePublication, AeronImage, AeronOfferError, AeronSubscription,
+    Handlers,
 };
 use tracing::level_filters::LevelFilter;
 
@@ -559,46 +560,83 @@ impl Warnings {
     }
 }
 
-/// Offers `msg` until it goes, back-pressure warned past the threshold:
-/// `false` on stop or a fatal error (`fatal` set).
+/// How an offer ended.
+#[derive(Debug, PartialEq, Eq)]
+enum Offered {
+    /// It went.
+    Sent,
+    /// `shared.stop` was set.
+    Stop,
+    /// The peer's image closed: the peer is gone.
+    PeerClosed,
+    /// Not connected for longer than `not_connected_ns`: the message is
+    /// given up (the ping counts it lost).
+    NotConnected,
+    /// A fatal offer error.
+    Fatal(String),
+}
+
+/// When [`offer_until`] warns and when it gives up.
+#[derive(Clone, Copy, Debug)]
+struct OfferLimits {
+    /// Held back longer than this warns (`LL_BACKPRESSURE_WARN_NS`).
+    warn_ns: u64,
+    /// Not connected longer than this gives up (`LL_ECHO_TIMEOUT_MS`).
+    not_connected_ns: u64,
+}
+
+/// Retries `try_offer` until it goes. Back-pressure and admin actions retry
+/// until a stop or until the peer's image closes; "not connected" also gives
+/// up after `limits.not_connected_ns`, so a dead UDP peer cannot hold the
+/// loop past its echo timeout and duration budget. One warning per offer
+/// held back longer than `limits.warn_ns`, rate-limited per site.
 #[inline]
-fn offer(
-    publication: &AeronExclusivePublication,
-    msg: &[u8],
-    clock: &Clock,
+fn offer_until(
+    mut try_offer: impl FnMut() -> Result<i64, AeronOfferError>,
+    peer_closed: impl Fn() -> bool,
+    now: impl Fn() -> u64,
     shared: &Shared,
     warn: &mut Warnings,
-    warn_ns: u64,
-    fatal: &mut Option<LlError>,
-) -> bool {
-    let start = clock.now();
+    limits: OfferLimits,
+) -> Offered {
+    let start = now();
     let mut warned = false;
+    let mut not_connected_since = None;
     loop {
-        match publication.offer(msg) {
-            Ok(_) => return true,
+        match try_offer() {
+            Ok(_) => return Offered::Sent,
             Err(e) if e.is_retryable() => {
-                let now = clock.now();
-                if !warned && now.saturating_sub(start) > warn_ns {
+                let t = now();
+                let not_connected = matches!(e, AeronOfferError::NotConnected);
+                if !warned && t.saturating_sub(start) > limits.warn_ns {
                     warned = true;
-                    let site = if matches!(e, rusteron_client::AeronOfferError::NotConnected) {
+                    let site = if not_connected {
                         &mut warn.not_connected
                     } else {
                         &mut warn.backpressure
                     };
-                    if let Some(suppressed) = site.check(now) {
-                        tracing::warn!(error = %e, waited_ns = now - start, suppressed, "offer held back");
+                    if let Some(suppressed) = site.check(t) {
+                        tracing::warn!(error = %e, waited_ns = t - start, suppressed, "offer held back");
                         Counters::bump(&shared.counters.warn_events);
                     }
                 }
+                if not_connected {
+                    let since = *not_connected_since.get_or_insert(t);
+                    if t.saturating_sub(since) > limits.not_connected_ns {
+                        return Offered::NotConnected;
+                    }
+                } else {
+                    not_connected_since = None;
+                }
                 if shared.stopping() {
-                    return false;
+                    return Offered::Stop;
+                }
+                if peer_closed() {
+                    return Offered::PeerClosed;
                 }
                 spin_loop();
             }
-            Err(e) => {
-                *fatal = Some(aeron_err("offer", e));
-                return false;
-            }
+            Err(e) => return Offered::Fatal(format!("offer: {e:?}")),
         }
     }
 }
@@ -624,7 +662,10 @@ fn run_ping(
         1_000_000_000 / cfg.rate.max(1)
     };
     let total = cfg.warmup + cfg.samples;
-    let mut fatal = None;
+    let limits = OfferLimits {
+        warn_ns: cfg.backpressure_warn_ns,
+        not_connected_ns: timeout_ns,
+    };
     let (mut seq, mut lost, mut measured, mut warmed) = (0_u64, 0_u64, 0_u64, 0_u64);
     let mut measure_start = 0_u64;
     let budget_ns = u64::try_from(cfg.duration.as_nanos()).unwrap_or(u64::MAX);
@@ -667,17 +708,29 @@ fn run_ping(
         let t0 = if period_ns == 0 { sent } else { due };
         msg[..8].copy_from_slice(&seq.to_le_bytes());
         msg[8..16].copy_from_slice(&t0.to_le_bytes());
-        if !offer(
-            &session.publication,
-            &msg,
-            clock,
+        match offer_until(
+            || session.publication.offer(&msg),
+            || image.is_closed(),
+            || clock.now(),
             shared,
             &mut warn,
-            cfg.backpressure_warn_ns,
-            &mut fatal,
+            limits,
         ) {
-            ended = "stop";
-            break;
+            Offered::Sent => {}
+            Offered::NotConnected => {
+                lost += 1;
+                Counters::bump(&shared.counters.lost);
+                continue;
+            }
+            Offered::Stop => {
+                ended = "stop";
+                break;
+            }
+            Offered::PeerClosed => {
+                ended = "peer closed";
+                break;
+            }
+            Offered::Fatal(e) => return Err(LlError::Aeron(e)),
         }
         let mut echoed = None;
         while echoed.is_none() {
@@ -722,9 +775,6 @@ fn run_ping(
             }
         }
     }
-    if let Some(e) = fatal {
-        return Err(e);
-    }
     Ok(HotOutcome {
         messages: measured,
         warmed,
@@ -749,8 +799,11 @@ fn run_pong(
     let mut gap = LoopGap::default();
     let mut warn = Warnings::new();
     let mut echo = vec![0_u8; MAX_MSG_BYTES];
-    let mut fatal = None;
-    let mut echoed = 0_u64;
+    let limits = OfferLimits {
+        warn_ns: cfg.backpressure_warn_ns,
+        not_connected_ns: u64::try_from(cfg.echo_timeout.as_nanos()).unwrap_or(u64::MAX),
+    };
+    let (mut echoed, mut lost) = (0_u64, 0_u64);
     let ended;
     loop {
         if shared.stopping() {
@@ -776,27 +829,38 @@ fn run_pong(
             spin_loop();
             continue;
         }
-        if !offer(
-            &session.publication,
-            &echo[..len],
-            clock,
+        match offer_until(
+            || session.publication.offer(&echo[..len]),
+            || image.is_closed(),
+            || clock.now(),
             shared,
             &mut warn,
-            cfg.backpressure_warn_ns,
-            &mut fatal,
+            limits,
         ) {
-            ended = "stop";
-            break;
+            Offered::Sent => {}
+            Offered::NotConnected => {
+                // the echo is given up; the ping counts it lost too
+                lost += 1;
+                Counters::bump(&shared.counters.lost);
+                continue;
+            }
+            Offered::Stop => {
+                ended = "stop";
+                break;
+            }
+            Offered::PeerClosed => {
+                ended = "peer closed";
+                break;
+            }
+            Offered::Fatal(e) => return Err(LlError::Aeron(e)),
         }
         echoed += 1;
         Counters::bump(&shared.counters.messages);
         Counters::set(&shared.counters.max_gap_ns, gap.max_ns);
     }
-    if let Some(e) = fatal {
-        return Err(e);
-    }
     Ok(HotOutcome {
         messages: echoed,
+        lost,
         gap,
         warn_events: warn.emitted(),
         suppressed: warn.suppressed(),
@@ -866,6 +930,111 @@ mod tests {
             vars.push((k, v));
             assert!(cfg(&vars).is_err(), "{k}={v} accepted");
         }
+    }
+
+    /// A clock that moves `step` ns each time it is read.
+    fn ticking(step: u64) -> impl Fn() -> u64 {
+        let t = std::cell::Cell::new(0_u64);
+        move || {
+            t.set(t.get() + step);
+            t.get()
+        }
+    }
+
+    const LIMITS: OfferLimits = OfferLimits {
+        warn_ns: 1_000,
+        not_connected_ns: 1_000_000,
+    };
+
+    #[test]
+    fn an_offer_that_stays_not_connected_gives_up_after_the_echo_timeout() {
+        let shared = Shared::default();
+        let mut warn = Warnings::new();
+        let mut tries = 0_u64;
+        let got = offer_until(
+            || {
+                tries += 1;
+                Err(AeronOfferError::NotConnected)
+            },
+            || false,
+            ticking(100),
+            &shared,
+            &mut warn,
+            LIMITS,
+        );
+        assert_eq!(got, Offered::NotConnected);
+        // 1 ms at 100 ns a read, one read a try: about 10,000 tries, not forever
+        assert!((9_000..=11_000).contains(&tries), "{tries} tries");
+        assert_eq!(warn.not_connected.emitted(), 1);
+        assert_eq!(Counters::get(&shared.counters.warn_events), 1);
+    }
+
+    #[test]
+    fn an_offer_leaves_when_the_peer_image_closes() {
+        let shared = Shared::default();
+        let mut warn = Warnings::new();
+        let closed = std::cell::Cell::new(0_u32);
+        let got = offer_until(
+            || Err(AeronOfferError::BackPressured),
+            || {
+                closed.set(closed.get() + 1);
+                closed.get() > 3
+            },
+            ticking(1),
+            &shared,
+            &mut warn,
+            LIMITS,
+        );
+        assert_eq!(got, Offered::PeerClosed);
+    }
+
+    #[test]
+    fn an_offer_retries_back_pressure_until_it_goes_or_stops() {
+        let shared = Shared::default();
+        let mut warn = Warnings::new();
+        let mut left = 3;
+        let got = offer_until(
+            || {
+                left -= 1;
+                if left == 0 {
+                    Ok(64)
+                } else {
+                    Err(AeronOfferError::BackPressured)
+                }
+            },
+            || false,
+            ticking(10),
+            &shared,
+            &mut warn,
+            LIMITS,
+        );
+        assert_eq!(got, Offered::Sent);
+        // back-pressure has no give-up time: only a stop ends it
+        shared.stop.store(true, Ordering::Relaxed);
+        let got = offer_until(
+            || Err(AeronOfferError::BackPressured),
+            || false,
+            ticking(1_000_000),
+            &shared,
+            &mut warn,
+            LIMITS,
+        );
+        assert_eq!(got, Offered::Stop);
+    }
+
+    #[test]
+    fn a_closed_publication_is_fatal() {
+        let shared = Shared::default();
+        let mut warn = Warnings::new();
+        let got = offer_until(
+            || Err(AeronOfferError::Closed),
+            || false,
+            ticking(1),
+            &shared,
+            &mut warn,
+            LIMITS,
+        );
+        assert!(matches!(got, Offered::Fatal(_)), "{got:?}");
     }
 
     #[test]

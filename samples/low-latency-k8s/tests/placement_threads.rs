@@ -27,7 +27,7 @@ fn a_worker_inherits_its_creators_mask() -> TestResult {
             thread_name: "ll-log-inherit".to_owned(),
             ..LogConfig::default()
         };
-        let (_nb, guard, _dropped) = non_blocking(std::io::sink(), &cfg);
+        let guard = non_blocking(std::io::sink(), &cfg).guard;
         let placed = place_worker("ll-log-inherit", &CpuList::one(x)).map_err(|e| e.to_string())?;
         drop(guard);
         Ok(placed)
@@ -49,7 +49,7 @@ fn a_worker_off_the_helpers_is_moved_onto_them() -> TestResult {
             thread_name: "ll-log-repin".to_owned(),
             ..LogConfig::default()
         };
-        let (_nb, guard, _dropped) = non_blocking(std::io::sink(), &cfg);
+        let guard = non_blocking(std::io::sink(), &cfg).guard;
         let placed = place_worker("ll-log-repin", &CpuList::one(x)).map_err(|e| e.to_string())?;
         let mask = thread_affinity(placed.tid).map_err(|e| e.to_string())?;
         drop(guard);

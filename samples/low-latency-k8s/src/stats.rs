@@ -115,7 +115,7 @@ pub struct Percentiles {
     pub p999: u64,
     /// 99.99th.
     pub p9999: u64,
-    /// The largest.
+    /// The largest, exact (not rounded to a histogram bucket).
     pub max: u64,
     /// The mean, rounded.
     pub mean: u64,
@@ -123,11 +123,15 @@ pub struct Percentiles {
     pub count: u64,
 }
 
-/// Round-trip latency: a histogram from 1 ns to 10 s at 3 significant
-/// figures, and the [`TOP`] largest with their `CLOCK_REALTIME`.
+/// Round-trip latency, recorded without allocating.
+///
+/// A histogram from 1 ns to 10 s at 3 significant figures for the
+/// percentiles, the exact largest value (the histogram's own max is its
+/// bucket's upper edge), and the [`TOP`] largest with their `CLOCK_REALTIME`.
 #[derive(Clone, Debug)]
 pub struct Latency {
     hist: Histogram<u64>,
+    max: u64,
     top: [(u64, u64); TOP],
 }
 
@@ -143,6 +147,7 @@ impl Latency {
             .map_err(|e| LlError::bad("histogram", "1..10s/3", e.to_string()))?;
         Ok(Self {
             hist,
+            max: 0,
             top: [(0, 0); TOP],
         })
     }
@@ -153,6 +158,9 @@ impl Latency {
     pub fn record(&mut self, rtt_ns: u64, realtime_ns: impl FnOnce() -> u64) {
         // saturate rather than fail: a value past 10 s is still a value
         self.hist.saturating_record(rtt_ns.max(1));
+        if rtt_ns > self.max {
+            self.max = rtt_ns;
+        }
         // the smallest of the kept ten; slots with rtt 0 are empty
         let mut min_i = 0;
         for i in 1..TOP {
@@ -178,7 +186,7 @@ impl Latency {
             p99: h.value_at_quantile(0.99),
             p999: h.value_at_quantile(0.999),
             p9999: h.value_at_quantile(0.9999),
-            max: h.max(),
+            max: self.max,
             mean,
             count: h.len(),
         }
@@ -235,6 +243,18 @@ mod tests {
         assert_eq!(top.len(), TOP);
         assert_eq!(top[0], (1_000, 1_000_000));
         assert_eq!(top[9], (991, 991_000));
+        Ok(())
+    }
+
+    #[test]
+    fn max_is_the_measured_value_not_a_bucket_edge() -> Result<(), LlError> {
+        // From tests/fixtures/e2e-docker-arm64-generic.txt: hdr reported
+        // 14696447 (its bucket's edge) for a measured 14695216.
+        let mut lat = Latency::new()?;
+        lat.record(20_000, || 1);
+        lat.record(14_695_216, || 2);
+        assert_eq!(lat.percentiles().max, 14_695_216);
+        assert_eq!(Latency::new()?.percentiles().max, 0);
         Ok(())
     }
 

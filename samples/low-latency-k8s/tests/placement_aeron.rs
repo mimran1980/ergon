@@ -4,19 +4,23 @@
 //!   mask; `ll-hot` ends on its own CPU. (The plugin's README lists Aeron as
 //!   "not run" for that inheritance; this is the evidence.)
 //! - The ping/pong loops allocate nothing per round trip: a run of 10 times
-//!   the round trips makes as many allocations as the short one, plus at
-//!   most one per extra warning.
+//!   the round trips makes as many allocations as the short one, plus
+//!   exactly one per extra warning line. The app's subscriber is installed
+//!   (non-blocking writer to `io::sink`), so a warning in the loop really
+//!   formats and enqueues, as in the app; its one allocation is the line's
+//!   copy into the queue (`src/logging.rs`).
 //!
 //! Linux with at least two CPUs (three keep the ping and the pong apart).
 #![cfg(target_os = "linux")]
 #![allow(clippy::similar_names)] // ping and pong are the names of the two sides
 
 use std::alloc::System;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use low_latency_k8s::cpus::{CpuList, current_affinity, pin_current};
+use low_latency_k8s::logging::{Appender, LogConfig, non_blocking, subscriber};
 use low_latency_k8s::pingpong::{AppConfig, HotHandle, HotOutcome, Pinned, Shared, spawn_hot};
 use low_latency_k8s::selfcheck::observe;
 use rusteron_media_driver::testing::EmbeddedDriver;
@@ -26,6 +30,26 @@ use stats_alloc::{INSTRUMENTED_SYSTEM, Region, StatsAlloc};
 static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+/// The app's logging, process-wide (the hot threads are spawned, so a
+/// thread-local default would not reach them): `fmt` through the lossy
+/// non-blocking writer into `io::sink`. The guard lives as long as the
+/// process.
+fn install_logging() -> Result<(), String> {
+    static GUARD: OnceLock<Result<tracing_appender::non_blocking::WorkerGuard, String>> =
+        OnceLock::new();
+    GUARD
+        .get_or_init(|| {
+            let cfg = LogConfig::default();
+            let Appender { writer, guard, .. } = non_blocking(std::io::sink(), &cfg);
+            tracing::subscriber::set_global_default(subscriber(writer, &cfg))
+                .map_err(|e| e.to_string())?;
+            Ok(guard)
+        })
+        .as_ref()
+        .map(|_| ())
+        .map_err(Clone::clone)
+}
 
 fn config(
     dir: &str,
@@ -137,6 +161,7 @@ fn run_pair(pair: Pair) -> Result<(HotOutcome, HotOutcome, usize), Box<dyn std::
 
 #[test]
 fn the_client_conductor_keeps_the_creators_cpu() -> TestResult {
+    install_logging()?;
     let driver = EmbeddedDriver::launch()?;
     let (helper, ping_cpu, pong_cpu) = cpus()?;
     let pair = start_pair(driver.dir(), 100, 1_000, 2001)?;
@@ -177,14 +202,13 @@ fn the_client_conductor_keeps_the_creators_cpu() -> TestResult {
 
 #[test]
 fn the_loops_allocate_nothing_per_round_trip() -> TestResult {
+    install_logging()?;
     let driver = EmbeddedDriver::launch()?;
     let (short, short_pong, short_allocs) =
         run_pair(start_pair(driver.dir(), 1_000, 10_000, 3001)?)?;
     let (long, long_pong, long_allocs) = run_pair(start_pair(driver.dir(), 1_000, 100_000, 3003)?)?;
     // A warning is an abnormal pass (back-pressure or a lost echo, which an
-    // emulated amd64 run hits) and may allocate (one amd64 run made one
-    // allocation more with one warning; its cause was not pinned down).
-    // Extra allocations beyond the extra warnings fail.
+    // emulated amd64 run hits); each line it lets through allocates once.
     let short_warns = short.warn_events + short_pong.warn_events;
     let long_warns = long.warn_events + long_pong.warn_events;
     println!(
@@ -203,11 +227,13 @@ fn the_loops_allocate_nothing_per_round_trip() -> TestResult {
         long.ended
     );
     assert_eq!((short.lost, long.lost), (0, 0));
-    let extra = long_allocs.saturating_sub(short_allocs);
-    assert!(
-        long_allocs >= short_allocs
-            && u64::try_from(extra)? <= long_warns.saturating_sub(short_warns),
-        "the longer run allocated {extra} more with {long_warns} warnings against {short_warns}: the loop allocates"
+    // allocations not explained by a warning line: the same for both runs
+    let unexplained =
+        |allocs: usize, warns: u64| i128::try_from(allocs).unwrap_or(i128::MAX) - i128::from(warns);
+    assert_eq!(
+        unexplained(long_allocs, long_warns),
+        unexplained(short_allocs, short_warns),
+        "the longer run allocated {long_allocs} with {long_warns} warnings against {short_allocs} with {short_warns}: the loop allocates"
     );
     Ok(())
 }

@@ -238,6 +238,7 @@ fn build_report(
             cpu_build: env_or("LL_CPU_BUILD", "-"),
             counter_hz: Clock::new().counter_hz(Duration::from_millis(50)),
             transport: env_or("RUSTERON_MEDIA_DRIVER_TRANSPORT", "-"),
+            nic: env_or("LL_NIC", "-"),
             overlay: env_or("LL_OVERLAY", "-"),
             msg_bytes: cfg.msg_bytes,
             rate: cfg.rate,
@@ -260,6 +261,7 @@ fn build_report(
         },
         log: LogInfo {
             dropped_lines: logging.dropped_lines(),
+            write_errors: logging.write_errors(),
             hot_warn_events: out.warn_events,
             suppressed: out.suppressed,
         },
@@ -278,16 +280,9 @@ fn finish(report: &LatencyReport, logging: &mut Logging) -> Result<(), LlError> 
             .map_err(|e| LlError::io(format!("write {path}"), e))?;
     }
     logging.shutdown();
-    let dropped = logging.dropped_lines();
-    let mut lines = report.lines();
-    if let Some(log) = lines.last_mut()
-        && dropped != report.log.dropped_lines
-    {
-        // lines dropped after the report was built, during the shutdown
-        *log = log.replace(
-            &format!("dropped_lines={}", report.log.dropped_lines),
-            &format!("dropped_lines={dropped}"),
-        );
-    }
-    evidence(&lines)
+    // lines lost after the report was built, during the shutdown
+    let mut late = report.clone();
+    late.log.dropped_lines = logging.dropped_lines();
+    late.log.write_errors = logging.write_errors();
+    evidence(&late.lines())
 }

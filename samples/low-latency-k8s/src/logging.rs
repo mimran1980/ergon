@@ -21,6 +21,11 @@
 //!
 //! - It never blocks on stdout: a full queue drops the line and counts it
 //!   ([`Logging::dropped_lines`]); only `ll-log` blocks in `write(2)`.
+//! - A write that fails on `ll-log` (EPIPE, EIO) loses its line too.
+//!   tracing-appender 0.2.5 discards that error without counting it, so the
+//!   sink is wrapped in [`CountingWriter`] and the loss is reported apart
+//!   ([`Logging::write_errors`]); `dropped_lines` counts only queue-full
+//!   drops.
 //! - It still pays to format the event, one allocation and the channel's
 //!   atomics, and sometimes a futex wake (an IPI to the shared CPU). So the
 //!   hot loop logs only rare events: rate-limited warnings
@@ -43,6 +48,8 @@
 //! be lost, the report is not.
 
 use std::io::Write;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tracing::level_filters::LevelFilter;
 use tracing_appender::non_blocking::{ErrorCounter, NonBlocking, NonBlockingBuilder, WorkerGuard};
@@ -88,20 +95,84 @@ pub fn parse_level(text: &str) -> Result<LevelFilter, LlError> {
     })
 }
 
-/// The lossy, bounded non-blocking writer over `sink`, its guard and its
-/// drop counter. Spawns the worker thread, named `cfg.thread_name`, from
-/// the calling thread (it inherits the caller's affinity).
-pub fn non_blocking<W: Write + Send + 'static>(
-    sink: W,
-    cfg: &LogConfig,
-) -> (NonBlocking, WorkerGuard, ErrorCounter) {
+/// Failed writes and flushes on the worker, shared with whoever reports
+/// them.
+#[derive(Clone, Debug, Default)]
+pub struct WriteErrors(Arc<AtomicU64>);
+
+impl WriteErrors {
+    /// How many so far.
+    #[must_use]
+    pub fn get(&self) -> u64 {
+        self.0.load(Ordering::Relaxed)
+    }
+
+    fn bump(&self) {
+        self.0.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// `inner`, counting each failed `write_all` (one log line lost) and each
+/// failed `flush` in [`WriteErrors`]. Runs on the worker, never on the
+/// caller.
+#[derive(Debug)]
+pub struct CountingWriter<W> {
+    inner: W,
+    errors: WriteErrors,
+}
+
+impl<W: Write> CountingWriter<W> {
+    /// Wraps `inner`.
+    pub const fn new(inner: W, errors: WriteErrors) -> Self {
+        Self { inner, errors }
+    }
+}
+
+impl<W: Write> Write for CountingWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.inner.write(buf)
+    }
+
+    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        self.inner
+            .write_all(buf)
+            .inspect_err(|_| self.errors.bump())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush().inspect_err(|_| self.errors.bump())
+    }
+}
+
+/// The non-blocking writer, its guard and its two loss counters.
+pub struct Appender {
+    /// The writer `fmt` writes to (cheap to clone).
+    pub writer: NonBlocking,
+    /// Keeps the worker alive; dropping it flushes (see the module docs).
+    pub guard: WorkerGuard,
+    /// Lines dropped because the queue was full.
+    pub dropped: ErrorCounter,
+    /// Lines (and flushes) lost to a failed write on the worker.
+    pub write_errors: WriteErrors,
+}
+
+/// The lossy, bounded non-blocking writer over `sink` (wrapped in
+/// [`CountingWriter`]). Spawns the worker thread, named `cfg.thread_name`,
+/// from the calling thread (it inherits the caller's affinity).
+pub fn non_blocking<W: Write + Send + 'static>(sink: W, cfg: &LogConfig) -> Appender {
+    let write_errors = WriteErrors::default();
     let (writer, guard) = NonBlockingBuilder::default()
         .lossy(true)
         .buffered_lines_limit(cfg.queue_lines)
         .thread_name(&cfg.thread_name)
-        .finish(sink);
+        .finish(CountingWriter::new(sink, write_errors.clone()));
     let dropped = writer.error_counter();
-    (writer, guard, dropped)
+    Appender {
+        writer,
+        guard,
+        dropped,
+        write_errors,
+    }
 }
 
 /// The `fmt` subscriber over `writer`: no ANSI, thread names, no target, the
@@ -189,6 +260,7 @@ pub fn find_thread(name: &str) -> Result<u32, LlError> {
 pub struct Logging {
     guard: Option<WorkerGuard>,
     dropped: ErrorCounter,
+    write_errors: WriteErrors,
     /// Where `ll-log` runs (Linux).
     pub placement: Option<WorkerPlacement>,
 }
@@ -198,6 +270,12 @@ impl Logging {
     #[must_use]
     pub fn dropped_lines(&self) -> u64 {
         self.dropped.dropped_lines() as u64
+    }
+
+    /// Lines (and flushes) lost so far to a failed write on `ll-log`.
+    #[must_use]
+    pub fn write_errors(&self) -> u64 {
+        self.write_errors.get()
     }
 
     /// Drops the guard: queues the shutdown (up to 100 ms) and waits for
@@ -215,7 +293,12 @@ impl Logging {
 /// [`LlError::Logging`] when a global subscriber is already set, and the
 /// errors of [`place_worker`].
 pub fn init_stdout(cfg: &LogConfig, helpers: Option<&CpuList>) -> Result<Logging, LlError> {
-    let (writer, guard, dropped) = non_blocking(std::io::stdout(), cfg);
+    let Appender {
+        writer,
+        guard,
+        dropped,
+        write_errors,
+    } = non_blocking(std::io::stdout(), cfg);
     tracing::subscriber::set_global_default(subscriber(writer, cfg))
         .map_err(|e| LlError::Logging(e.to_string()))?;
     let placement = match helpers {
@@ -225,6 +308,7 @@ pub fn init_stdout(cfg: &LogConfig, helpers: Option<&CpuList>) -> Result<Logging
     Ok(Logging {
         guard: Some(guard),
         dropped,
+        write_errors,
         placement,
     })
 }

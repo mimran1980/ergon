@@ -22,6 +22,7 @@
 //! and test everywhere; pinning and `/proc` reads report
 //! [`LlError::Unsupported`] elsewhere.
 
+pub mod costs;
 pub mod cpus;
 pub mod error;
 pub mod logging;

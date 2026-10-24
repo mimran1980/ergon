@@ -28,7 +28,8 @@ fn one_warm_event_allocates_once_and_a_disabled_one_never() -> Result<(), Box<dy
         thread_name: "ll-log-alloc".to_owned(),
         ..LogConfig::default()
     };
-    let (nb, guard, dropped) = non_blocking(std::io::sink(), &cfg);
+    let a = non_blocking(std::io::sink(), &cfg);
+    let (nb, guard, dropped) = (a.writer, a.guard, a.dropped);
     let hot = std::thread::Builder::new()
         .name("ll-hot".to_owned())
         .spawn(move || {

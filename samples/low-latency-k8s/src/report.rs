@@ -7,13 +7,17 @@
 //! Fields are tab-separated (two spaces here):
 //!
 //! ```text
-//! ll-latency  v1  role=ping  arch=aarch64  cpu_build=generic  counter_hz=1000000000  transport=dpdk-ena  overlay=vdev-local  msg_bytes=32  mode=closed  warmup=100000  samples=1000000  lost=0
+//! ll-latency  v2  role=ping  arch=aarch64  cpu_build=baseline  counter_hz=1000000000  transport=dpdk-ena  nic=vdev-tap  overlay=vdev-local  msg_bytes=32  mode=closed  warmup=100000  samples=1000000  lost=0
 //! ll-latency  rtt_ns  p50=…  p90=…  p99=…  p99.9=…  p99.99=…  max=…  mean=…
 //! ll-latency  rtt_max_top10  <realtime_ns>:<rtt_ns>,…
 //! ll-latency  loop_gap_ns  max=…  over_5us=…  over_20us=…  over_100us=…
 //! ll-latency  hot  cpu=…  ran_on=…  voluntary_ctxt_switches=…  nonvoluntary_ctxt_switches=…
-//! ll-latency  log  dropped_lines=…  hot_warn_events=…  suppressed=…
+//! ll-latency  log  dropped_lines=…  write_errors=…  hot_warn_events=…  suppressed=…
 //! ```
+//!
+//! `transport` is the driver's Aeron transport (`dpdk-ena` for both the ENA
+//! and the vdev overlays: the same DPDK code path); `nic` tells them apart
+//! (`LL_NIC`: `ena`, or `vdev-tap`, whose numbers say nothing about ENA).
 //!
 //! The pong prints every line but the two `rtt_*` ones: it measures no
 //! round trip. A run proves the tuning only together with an `ll-verify`
@@ -36,6 +40,9 @@ pub struct RunInfo {
     pub counter_hz: u64,
     /// `RUSTERON_MEDIA_DRIVER_TRANSPORT` as the app saw it, `-` when unset.
     pub transport: String,
+    /// `LL_NIC`: the port under the transport (`ena`, `vdev-tap`), `-` when
+    /// unset.
+    pub nic: String,
     /// `LL_OVERLAY`, `-` when unset.
     pub overlay: String,
     /// Message length, bytes.
@@ -66,8 +73,11 @@ pub struct HotInfo {
 /// What logging dropped and what the hot thread logged.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LogInfo {
-    /// Lines the lossy writer dropped (`ErrorCounter::dropped_lines`).
+    /// Lines the lossy writer dropped because its queue was full
+    /// (`ErrorCounter::dropped_lines`).
     pub dropped_lines: u64,
+    /// Lines (and flushes) lost to a failed write on the log worker.
+    pub write_errors: u64,
     /// Warning lines the hot thread emitted.
     pub hot_warn_events: u64,
     /// Warning events its rate limits suppressed.
@@ -102,12 +112,13 @@ impl LatencyReport {
             format!("open:{}/s", r.rate)
         };
         let mut lines = vec![format!(
-            "ll-latency\tv1\trole={}\tarch={}\tcpu_build={}\tcounter_hz={}\ttransport={}\toverlay={}\tmsg_bytes={}\tmode={mode}\twarmup={}\tsamples={}\tlost={}",
+            "ll-latency\tv2\trole={}\tarch={}\tcpu_build={}\tcounter_hz={}\ttransport={}\tnic={}\toverlay={}\tmsg_bytes={}\tmode={mode}\twarmup={}\tsamples={}\tlost={}",
             r.role,
             r.arch,
             r.cpu_build,
             r.counter_hz,
             r.transport,
+            r.nic,
             r.overlay,
             r.msg_bytes,
             r.warmup,
@@ -138,8 +149,8 @@ impl LatencyReport {
         ));
         let l = &self.log;
         lines.push(format!(
-            "ll-latency\tlog\tdropped_lines={}\thot_warn_events={}\tsuppressed={}",
-            l.dropped_lines, l.hot_warn_events, l.suppressed
+            "ll-latency\tlog\tdropped_lines={}\twrite_errors={}\thot_warn_events={}\tsuppressed={}",
+            l.dropped_lines, l.write_errors, l.hot_warn_events, l.suppressed
         ));
         lines
     }
@@ -167,6 +178,7 @@ mod tests {
                 cpu_build: "generic".into(),
                 counter_hz: 1_000_000_000,
                 transport: "dpdk-ena".into(),
+                nic: "vdev-tap".into(),
                 overlay: "vdev-local".into(),
                 msg_bytes: 32,
                 rate: 0,
@@ -201,6 +213,7 @@ mod tests {
             },
             log: LogInfo {
                 dropped_lines: 0,
+                write_errors: 0,
                 hot_warn_events: 1,
                 suppressed: 3,
             },
@@ -210,12 +223,12 @@ mod tests {
     #[test]
     fn ping_report_golden() {
         let want = "\
-ll-latency\tv1\trole=ping\tarch=aarch64\tcpu_build=generic\tcounter_hz=1000000000\ttransport=dpdk-ena\toverlay=vdev-local\tmsg_bytes=32\tmode=closed\twarmup=10\tsamples=100\tlost=0
+ll-latency\tv2\trole=ping\tarch=aarch64\tcpu_build=generic\tcounter_hz=1000000000\ttransport=dpdk-ena\tnic=vdev-tap\toverlay=vdev-local\tmsg_bytes=32\tmode=closed\twarmup=10\tsamples=100\tlost=0
 ll-latency\trtt_ns\tp50=20000\tp90=21000\tp99=25000\tp99.9=40000\tp99.99=60000\tmax=90000\tmean=20400
 ll-latency\trtt_max_top10\t1700000000000000002:90000,1700000000000000001:60000
 ll-latency\tloop_gap_ns\tmax=3000\tover_5us=0\tover_20us=0\tover_100us=0
 ll-latency\thot\tcpu=4\tran_on=4\tvoluntary_ctxt_switches=1\tnonvoluntary_ctxt_switches=0
-ll-latency\tlog\tdropped_lines=0\thot_warn_events=1\tsuppressed=3
+ll-latency\tlog\tdropped_lines=0\twrite_errors=0\thot_warn_events=1\tsuppressed=3
 ";
         assert_eq!(sample().text(), want);
     }

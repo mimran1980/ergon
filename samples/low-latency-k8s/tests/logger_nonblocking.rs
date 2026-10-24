@@ -1,13 +1,17 @@
-//! The non-blocking writer under a stdout that never drains: the caller
-//! never stalls, the lines past the queue are dropped and counted, and the
-//! cost of one event stays bounded. Also: lines reach an unblocked writer
-//! whole and in order, with the thread's name.
+//! The non-blocking writer under a stdout that never drains: the lines past
+//! the queue are dropped and counted, and the caller makes no voluntary
+//! context switch (Linux). The cost of one event is printed p50 to max with
+//! what explains the max (`low_latency_k8s::costs`). The pinned, real-fd-1
+//! proof is `tests/hot_stdout.rs`. Also: lines reach an unblocked writer
+//! whole and in order, with the thread's name, and failed writes are
+//! counted.
 
 use std::io::Read;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use low_latency_k8s::costs::{Counters, Spread, Window, idle_gaps, idle_window_ns};
 use low_latency_k8s::logging::{LogConfig, non_blocking, subscriber};
 use tracing::level_filters::LevelFilter;
 
@@ -30,16 +34,6 @@ fn watchdog(limit: Duration) -> Arc<AtomicBool> {
         std::process::exit(101);
     });
     done
-}
-
-fn percentile(sorted: &[u64], q: f64) -> u64 {
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::cast_precision_loss
-    )]
-    let i = ((sorted.len() as f64 - 1.0) * q).round() as usize;
-    sorted[i.min(sorted.len() - 1)]
 }
 
 /// The worker's state letter from `/proc/self/task/<tid>/stat`.
@@ -70,12 +64,18 @@ fn a_blocked_stdout_never_stalls_the_caller() -> TestResult {
         queue_lines: LIMIT,
         thread_name: "ll-log-blocked".to_owned(),
     };
-    let (nb, guard, dropped) = non_blocking(writer, &cfg);
+    let a = non_blocking(writer, &cfg);
+    let (nb, guard, dropped) = (a.writer, a.guard, a.dropped);
     let _default = tracing::subscriber::set_default(subscriber(nb, &cfg));
     // Fill the pipe and the queue: ~200-byte lines, well past 64 KiB.
     let pad = "x".repeat(160);
-    for i in 0..2_000 {
+    // paced, so the worker writes until the pipe is full whatever the
+    // timing: 40 x 100 lines, ~800 KiB, past the pipe and the queue
+    for i in 0..4_000 {
         tracing::warn!(i, pad = %pad, "fill");
+        if i % 100 == 99 {
+            std::thread::sleep(Duration::from_millis(2));
+        }
     }
     std::thread::sleep(Duration::from_millis(300));
     #[cfg(target_os = "linux")]
@@ -85,12 +85,19 @@ fn a_blocked_stdout_never_stalls_the_caller() -> TestResult {
         "the worker should be asleep in write(2)"
     );
     let before = dropped.dropped_lines();
-    let mut costs = Vec::with_capacity(N);
-    for i in 0..N {
-        let t = Instant::now();
+    let cpu = low_latency_k8s::cpus::current_cpu().unwrap_or(0);
+    let snap0 = low_latency_k8s::costs::snapshot(cpu).ok();
+    let clock = quanta::Clock::new();
+    // written once first: an untouched page would fault inside the window
+    let mut costs = vec![u64::MAX; N];
+    let t_start = clock.raw();
+    for (k, i) in (0..N).enumerate() {
+        let t0 = clock.raw();
         tracing::warn!(i, pad = %pad, "blocked");
-        costs.push(u64::try_from(t.elapsed().as_nanos())?);
+        costs[k] = clock.delta_as_nanos(t0, clock.raw());
     }
+    let wall = clock.delta_as_nanos(t_start, clock.raw());
+    let snap1 = low_latency_k8s::costs::snapshot(cpu).ok();
     let lost = dropped.dropped_lines() - before;
     // At most the queue's worth gets through. macOS grows a pipe's buffer
     // (16 to 64 KiB) while a writer waits, so a few more lines can drain
@@ -104,17 +111,23 @@ fn a_blocked_stdout_never_stalls_the_caller() -> TestResult {
         lost >= N - slack,
         "dropped {lost} of {N} with the worker blocked"
     );
-    costs.sort_unstable();
-    let max = costs[costs.len() - 1];
+    let spread = Spread::of(&mut costs);
+    let (idle_gap_max, idle_gaps_over_10us) = idle_gaps(&clock, idle_window_ns(wall));
+    let window = Window {
+        counters: snap0.zip(snap1).map(|(a, b)| Counters::between(&a, &b)),
+        idle_gap_max,
+        idle_gaps_over_10us,
+    };
     println!(
-        "logger: one warn! with stdout blocked: p50={} p99={} p99.9={} max={} ns (n={N}, dropped={lost})",
-        percentile(&costs, 0.50),
-        percentile(&costs, 0.99),
-        percentile(&costs, 0.999),
-        max
+        "logger: one warn! with stdout blocked (unpinned caller): {} dropped={lost}\nlogger: window {}\nlogger: max cause: {}",
+        spread.fields(),
+        window.fields(),
+        window.cause(&spread)
     );
-    // A stall guard, not a performance claim.
-    assert!(max < 10_000_000, "one event took {max} ns");
+    // Linux: the caller never slept (the pinned proof: tests/hot_stdout.rs)
+    if let Some(c) = &window.counters {
+        assert_eq!(c.voluntary, 0, "the caller slept while logging");
+    }
     done.store(true, Ordering::Relaxed);
     // Unblock the worker before the guard waits on it.
     drop(reader);
@@ -134,7 +147,8 @@ fn lines_reach_stdout_whole_and_in_order() -> TestResult {
         thread_name: "ll-log-order".to_owned(),
         ..LogConfig::default()
     };
-    let (nb, guard, dropped) = non_blocking(writer, &cfg);
+    let a = non_blocking(writer, &cfg);
+    let (nb, guard, dropped) = (a.writer, a.guard, a.dropped);
     let named = std::thread::Builder::new()
         .name("ll-hot".to_owned())
         .spawn(move || {
@@ -159,4 +173,46 @@ fn lines_reach_stdout_whole_and_in_order() -> TestResult {
     assert_eq!(dropped.dropped_lines(), 0);
     done.store(true, Ordering::Relaxed);
     Ok(())
+}
+
+/// A stdout whose every write fails, as a closed pipe (EPIPE) or a dead
+/// terminal (EIO) would.
+struct Broken;
+
+impl std::io::Write for Broken {
+    fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn failed_writes_are_counted_apart_from_queue_drops() {
+    let done = watchdog(Duration::from_secs(30));
+    let cfg = LogConfig {
+        thread_name: "ll-log-broken".to_owned(),
+        ..LogConfig::default()
+    };
+    let appender = non_blocking(Broken, &cfg);
+    let (dropped, write_errors) = (appender.dropped.clone(), appender.write_errors.clone());
+    {
+        let _default = tracing::subscriber::set_default(subscriber(appender.writer, &cfg));
+        for i in 0..50 {
+            tracing::warn!(i, "lost to a broken stdout");
+        }
+    }
+    // the guard's drop waits for the worker to drain the queue
+    drop(appender.guard);
+    println!(
+        "logger: broken stdout: write_errors={} dropped_lines={}",
+        write_errors.get(),
+        dropped.dropped_lines()
+    );
+    // tracing-appender discards a failed write; the wrapper counts it
+    assert_eq!(write_errors.get(), 50);
+    assert_eq!(dropped.dropped_lines(), 0, "the queue never filled");
+    done.store(true, Ordering::Relaxed);
 }

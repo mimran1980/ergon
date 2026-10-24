@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # The sample's Linux lanes in Docker: fmt, clippy -D warnings, every test
-# (unit, logger, placement, manifests excluded: they need kubectl, helm and
-# kubeconform, and run on the host) and the bench smoke, on linux/arm64
+# (unit, logger, placement, hot_stdout in release; manifests excluded: they
+# need kubectl, helm and kubeconform, and run on the host) and the bench
+# smoke, on linux/arm64
 # (native on Apple silicon) or linux/amd64 (emulated there).
 #
 #   samples/low-latency-k8s/scripts/test-docker.sh [--arch arm64|amd64] [--build]
@@ -58,5 +59,6 @@ docker run --rm --platform "linux/$ARCH" \
     cargo test --locked --lib -- --test-threads=1
     cargo test --locked --test logger_nonblocking --test logger_alloc -- --test-threads=1 --nocapture
     cargo test --locked --test placement_threads --test placement_aeron -- --test-threads=1 --nocapture
+    cargo test --locked --release --test hot_stdout -- --test-threads=1 --nocapture
     cargo bench --locked --bench log_event -- --smoke
     echo "== PASS $(uname -m)"'
