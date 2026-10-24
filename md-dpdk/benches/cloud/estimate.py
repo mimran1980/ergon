@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
-"""What a run of aws/lab.sh would cost, before it creates anything
+"""What a run of aws/lab.sh or azure/lab.sh would cost, before it creates anything
 (LAB_ESTIMATE=1: lab.sh prints this and exits, with no cloud call).
+
+Azure (--cloud azure): the same steps and timings (measured on AWS), the
+VMs' pay-as-you-go Linux prices in northcentralus (AZURE_PRICES, from the
+Azure Retail Prices API on AZURE_AS_OF), no data transfer charge (both VMs
+in one VNet and proximity placement group: placement ppg), and the deadline
+the backstop's (it deletes the resource group LAB_MAX_HOURS after creation).
 
 Wall time, from the run of 2026-10-15 on two c7i.4xlarge (aws-20261015-185813:
 its files' times), per step:
@@ -78,6 +84,15 @@ PRICES = {
 # (c8g.2xlarge: its page of 2026-10-23 16:36)
 SPOT_PRICES = {"c9g.2xlarge": 0.153, "c8g.xlarge": 0.077, "c8g.2xlarge": 0.147, "c7i.2xlarge": 0.200}
 SPOT_AS_OF, SPOT_SOURCE = "2026-10-15", "instances.vantage.sh"
+# Azure pay-as-you-go Linux prices ($/h) in northcentralus, the lab's
+# default region (prices.azure.com/api/retail/prices on AZURE_AS_OF)
+AZURE_PRICES = {
+    "Standard_D4s_v6": 0.202, "Standard_D8s_v6": 0.403, "Standard_D16s_v6": 0.806,
+    "Standard_D4ps_v6": 0.14, "Standard_D8ps_v6": 0.281, "Standard_D16ps_v6": 0.562,
+    "Standard_D8pls_v6": 0.248, "Standard_D16pls_v6": 0.496, "Standard_E8ps_v6": 0.369,
+    "Standard_F8as_v6": 0.546, "Standard_F16as_v6": 1.093,
+}
+AZURE_AS_OF, AZURE_REGION = "2026-10-24", "northcentralus"
 SETUP_S, TEARDOWN_S = 600, 180
 STATE_S = {"pinned": 150, "isolated": 450, "isolated-poll": 450,
            "pinned-nodiag": 150, "isolated-nodiag": 450, "isolated-poll-nodiag": 450}
@@ -91,7 +106,7 @@ FLOW_CAP_BYTES_S = 8.0e9 / 8
 RTT_SIZE = 32
 # the raw floor's transports (modes.sh mode_raw): the round trip alone
 RAW = ("kernel-raw", "dpdk-raw", "dpdk-pure")
-TRANSFER_USD_GB = {"cluster": 0.0, "precision-time": 0.0, "cross-az": 0.02, "cross-region": 0.02}
+TRANSFER_USD_GB = {"cluster": 0.0, "precision-time": 0.0, "cross-az": 0.02, "cross-region": 0.02, "ppg": 0.0}
 
 
 def rtt_plan(mode, messages, warmup):
@@ -121,7 +136,7 @@ def points(size, fractions, ladder):
 
 def estimate(type_a, type_b, placement, reps, modes, local_modes, states, load_sizes, load_fractions, load_ladder,
              load_seconds, mix, mix_seconds, tput_seconds, tput_flows, rtt_messages, rtt_warmup, no_flatout, max_hours,
-             warmup_seconds=0, warmup_rate=0):
+             warmup_seconds=0, warmup_rate=0, prices=None):
     """The plan's wall time (s), instance-hours, dollars (on demand, and at
     the lab's spot prices where it has them) and bytes each way.
     mix: [[(rate, size), ...] a profile]; load_ladder: {size: [rates]};
@@ -180,8 +195,9 @@ def estimate(type_a, type_b, placement, reps, modes, local_modes, states, load_s
             ab, ba = ab + to_b, ba + to_a
     wall = SETUP_S + TEARDOWN_S + sum(STATE_S.get(s, 450) + reps * per_mode for s in states)
     n = reps * len(states)
-    unknown = [t for t in (type_a, type_b) if t not in PRICES]
-    hourly = None if unknown else PRICES[type_a] + PRICES[type_b]
+    prices = PRICES if prices is None else prices
+    unknown = [t for t in (type_a, type_b) if t not in prices]
+    hourly = None if unknown else prices[type_a] + prices[type_b]
     spot_hourly = (SPOT_PRICES[type_a] + SPOT_PRICES[type_b]
                    if type_a in SPOT_PRICES and type_b in SPOT_PRICES else None)
     bytes_ab, bytes_ba = ab * n, ba * n
@@ -210,6 +226,8 @@ def main():
     p.add_argument("--no-flatout", default="")
     p.add_argument("--market", choices=("on-demand", "spot"), default="on-demand")
     p.add_argument("--refuse-over-deadline", action="store_true")
+    p.add_argument("--cloud", choices=("aws", "azure"), default="aws")
+    p.add_argument("--print-hours", action="store_true", help="the wall time alone, in hours")
     a = p.parse_args()
     ladder = {}
     for entry in a.load_ladder.split():
@@ -225,7 +243,12 @@ def main():
                  [int(s) for s in a.load_sizes.split()], [int(f) for f in a.load_fractions.split()], ladder,
                  a.load_seconds, mix, a.mix_seconds, a.tput_seconds, a.tput_flows, a.rtt_messages, a.rtt_warmup,
                  a.no_flatout == "1", a.max_hours, warmup_seconds=a.warmup_seconds,
-                 warmup_rate=a.warmup_rate)
+                 warmup_rate=a.warmup_rate, prices=AZURE_PRICES if a.cloud == "azure" else PRICES)
+    if a.print_hours:
+        print(f"{e['wall_s'] / 3600:.2f}")
+        return 0
+    if a.cloud == "azure":
+        return azure_report(a, e)
     over = (f"about {e['wall_s'] / 3600:.2f} h, longer than LAB_MAX_HOURS={a.max_hours}: each instance powers off "
             f"(and so terminates) {a.max_hours} h after launch, cutting the run short: give LAB_MAX_HOURS="
             f"{e['hours_needed']} (the estimate and a fifth more) or trim the plan (fewer modes, reps or states)")
@@ -275,6 +298,34 @@ def main():
               f"spot is lower)")
     else:
         print(f"total about ${e['instance_usd'] + e['transfer_usd']:.2f}")
+
+
+def azure_report(a, e):
+    """azure/lab.sh's LAB_ESTIMATE=1 and its deadline check."""
+    over = (f"about {e['wall_s'] / 3600:.2f} h, longer than LAB_MAX_HOURS={a.max_hours}: the backstop deletes the "
+            f"resource group {a.max_hours} h after creation, cutting the run short: give LAB_MAX_HOURS="
+            f"{e['hours_needed']} (the estimate and a fifth more) or trim the plan (fewer modes, reps or states)")
+    if a.refuse_over_deadline:
+        if e["over_deadline"]:
+            print(f"the plan takes {over}", file=sys.stderr)
+            return 3
+        return 0
+    print(f"LAB_ESTIMATE: nothing created, no cloud call made. One VNet and proximity placement group, "
+          f"a {a.type_a}, b {a.type_b}")
+    print(f"wall time about {e['wall_s'] / 3600:.2f} h: {2 * e['wall_s'] / 3600:.2f} VM-hours"
+          f"{' (over 2 h: lab.sh detaches it)' if e['wall_s'] > 7200 else ''}")
+    if e["over_deadline"]:
+        print(f"WARNING: {over}")
+    if e["unknown"]:
+        print(f"VMs: no price for {', '.join(e['unknown'])} in estimate.py's AZURE_PRICES: their dollars unknown")
+        return 0
+    pa, pb = AZURE_PRICES[a.type_a], AZURE_PRICES[a.type_b]
+    print(f"VMs about ${e['instance_usd']:.2f} (pay-as-you-go Linux, {AZURE_REGION} on {AZURE_AS_OF}: "
+          f"{a.type_a} ${pa:.3f}/h, {a.type_b} ${pb:.3f}/h); at most ${e['deadline_usd']:.2f} should they run to "
+          f"LAB_MAX_HOURS={a.max_hours}; disks and public addresses extra, cents an hour")
+    print("data transfer none (one VNet, one proximity placement group)")
+    print(f"total about ${e['instance_usd']:.2f}")
+    return 0
 
 
 if __name__ == "__main__":

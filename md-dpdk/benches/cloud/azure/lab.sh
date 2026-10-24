@@ -6,16 +6,21 @@
 #   md-dpdk/benches/cloud/azure/lab.sh
 #
 # Creates resource group $LAB_GROUP (refusing one that exists) in $LAB_REGION:
-# a proximity placement group, a VNet with a management subnet (10.20.0.0/24,
+# every resource tagged owner=ergon-lab run=<stamp> (the results directory's
+# name), a proximity placement group, a VNet with a management subnet (10.20.0.0/24,
 # SSH from this machine's address only) and a data subnet (10.20.1.0/24), and
-# two $LAB_SIZE VMs (Debian 13), each with an accelerated management NIC and two
+# two $LAB_SIZE VMs (Debian 13: amd64, or arm64 on Cobalt 100's Arm sizes,
+# Standard_D8ps_v6 and kin, a p after the vCPUs), each with an accelerated management NIC and two
 # accelerated data NICs: the media driver's sender port (A .4, B .6) and
 # receiver port (A .5, B .7). Then, on both VMs at once (../vm.sh, ../lib.sh): bootstrap, a
 # reboot into the backports kernel, vm.sh build. Then $LAB_REPS reps of every
 # mode in $LAB_MODES (a fresh random order each rep): both drivers started in
 # the mode, a round-trip run (A pings, B pongs) and a throughput run (A
 # publishes, B subscribes). Results go to target/md-dpdk-bench/<stamp>/ and the
-# tables to its summary.md (../analyse.py). The group is deleted on any exit.
+# tables to its summary.md (../analyse.py). The group is deleted on any exit,
+# and every 15 minutes the log lists what is in it. Before any az call the plan
+# is estimated (../estimate.py); one over 2 h detaches (a nohup subshell, its
+# log $out/lab.log), so it outlives the shell or session that started it.
 #
 #   LAB_REGION (northcentralus) LAB_SIZE (Standard_D8s_v6; LAB_SIZE_A, LAB_SIZE_B per VM) LAB_REPS (5)
 #   LAB_MODES ("kernel kernel-busy dpdk"; also dpdk-spin, and a +idle suffix
@@ -40,8 +45,18 @@
 #   INVOKER cross-host only, PUB_PARAMS and SUB_PARAMS, CONDUCTOR=own and NAPI_BUSY=spare
 #   on sizes with a fifth core, Standard_D16s_v6 and up, the DPDK transport's values
 #   within MANA's 256-descriptor rings); JUMBO and IRQ are AWS's only
-#   LAB_MAX_HOURS (8): Azure deallocates both VMs that long after creation,
-#   should this machine never delete the group (asleep, offline)
+#   LAB_MAX_HOURS (8): a backstop process of its own (nohup) deletes the whole
+#   group that long after creation, should this script's teardown never run
+#   (killed), LAB_KEEP or not; only while the group carries this run's tag, so
+#   never a later run's of the same name. It runs on this machine: asleep or
+#   offline, nothing deletes the group, so check after a run. Under a day, each
+#   VM's Azure auto-shutdown at the same deadline deallocates it, which stops
+#   its compute billing even then (its disks and addresses bill until deleted).
+#   A plan estimated to take longer is refused before any az call, with the
+#   hours to give it
+#   LAB_ESTIMATE=1: the plan's hours and dollars (../estimate.py: pay-as-you-go
+#   Linux prices in northcentralus), then exit, with no az call
+#   LAB_DETACH (unset: detach a plan estimated over 2 h; 1 always; 0 never)
 #   LAB_WARMUP_SECONDS (0: none) and LAB_WARMUP_RATE: a warm-up load of that many
 #   seconds at that rate before each mode's first load ladder, in each rep, at its
 #   first size, recorded nowhere (Aeron's own harness warms 30 s at 25,000 msgs/s);
@@ -101,15 +116,22 @@ size=${LAB_SIZE:-Standard_D8s_v6}
 # per-VM overrides: VM a hosts the localhost runs (LAB_LOCAL_MODES), which need five cores
 size_a=${LAB_SIZE_A:-$size}
 size_b=${LAB_SIZE_B:-$size}
-# x86 only: production runs on x86. Azure's Arm sizes carry a `p` after the
-# family letters (Standard_D2ps_v6, Standard_E4pds_v6, ...).
-for s in "$size_a" "$size_b"; do
-    if [[ $s =~ ^Standard_[A-Z]+[0-9]+[a-z]*p[a-z]*_ ]]; then
-        echo "LAB_SIZE $s is an Arm size: the benchmarks run on x86 only" >&2
-        exit 2
-    fi
-done
-image=${LAB_IMAGE:-Debian:debian-13:13-gen2:latest}
+# what the lab asks of Azure (az.sh)
+. "$here/az.sh"
+# x86_64, or arm64 on Cobalt 100's Arm sizes (a `p` after the vCPUs:
+# Standard_D8ps_v6, Standard_D8pls_v6, Standard_E8ps_v6): both VMs one, for
+# one image and one build. DPDK 24.11 and 25.11 build the MANA and netvsc
+# PMDs on arm64 too (drivers/net/mana/meson.build: x86 or arm64 Linux), and
+# Debian ships librte_net_mana for arm64, so the DPDK modes run on both.
+arch=$(azure_arch "$size_a")
+if [[ $(azure_arch "$size_b") != "$arch" ]]; then
+    echo "LAB_SIZE_A $size_a ($arch) and LAB_SIZE_B $size_b ($(azure_arch "$size_b")): one architecture for both VMs (one image, one build)" >&2
+    exit 2
+fi
+image=${LAB_IMAGE:-$(azure_image "$arch")}
+# vm.sh bootstraps an aarch64 host only with it (lib.sh: bench/allow_arm)
+allow_arm=
+[[ $arch == arm64 ]] && allow_arm=1
 reps=${LAB_REPS:-5}
 read -ra modes <<<"${LAB_MODES:-kernel kernel-busy dpdk}"
 local_modes=${LAB_LOCAL_MODES:-}
@@ -140,15 +162,20 @@ rtt_stall_ns=${LAB_RTT_STALL_NS:-10000}
 # the gap spinner's threshold, us (lib.sh, vm.sh diag-start)
 gapspin_us=${LAB_GAPSPIN_US:-50}
 base=${LAB_BASE:-}
-# both VMs deallocate themselves this long after creation (hours)
+# the backstop deletes the group this long after creation (hours)
 max_hours=${LAB_MAX_HOURS:-8}
+detach=${LAB_DETACH:-}
 # a warm-up load before each mode's first ladder, unrecorded (lib.sh
 # load_sweep): its seconds and messages a second; none by default
 warmup_seconds=${LAB_WARMUP_SECONDS:-0}
 warmup_rate=${LAB_WARMUP_RATE:-0}
 tput_seconds=${TPUT_SECONDS:-5}
 user=azureuser
-out=$repo/target/md-dpdk-bench/$(date +%Y%m%d-%H%M%S)
+# a detached run's directory is its parent's (LAB_RUN_OUT, set only there)
+out=${LAB_RUN_OUT:-$repo/target/md-dpdk-bench/$(date +%Y%m%d-%H%M%S)}
+stamp=${out##*/}
+# on every resource, so one listing finds whatever a run left
+tags=(owner=ergon-lab "run=$stamp")
 known=$out/known_hosts
 created=0
 
@@ -169,13 +196,13 @@ fi
 # cannot run on one host, jumbo frames are AWS's), before any az call
 . "$here/../modes.sh"
 for m in "${modes[@]}"; do
-    why=$(mode_check "$m" remote x86_64 azure "" 2>&1) || die "$why"
+    why=$(mode_check "$m" remote "$arch" azure "" 2>&1) || die "$why"
     # the layout's fifth core on both sizes (vm.sh ready would find it missing
     # only after the build)
     why=$(spare_types_check "$m" azure "$size_a" "$size_b" 2>&1) || die "$why"
 done
 for m in ${local_modes:-}; do
-    why=$(mode_check "$m" local x86_64 azure "" 2>&1) || die "$why"
+    why=$(mode_check "$m" local "$arch" azure "" 2>&1) || die "$why"
 done
 [[ -z $no_flatout || $no_flatout == 1 ]] || die "LAB_NO_FLATOUT is 1 or unset"
 [[ $rtt_spike_ns =~ ^[1-9][0-9]{0,9}$ ]] || die "LAB_RTT_SPIKE_NS is a whole number of nanoseconds, from 1 (the round trips stamped), not $rtt_spike_ns"
@@ -196,8 +223,37 @@ if [[ $no_flatout == 1 ]]; then
             die "LAB_NO_FLATOUT=1: size $size has no LAB_LOAD_LADDER rates (LAB_LOAD_FRACTIONS are fractions of the flat-out maximum, which does not run)"
     done
 fi
+[[ $max_hours =~ ^[1-9][0-9]{0,2}$ ]] || die "LAB_MAX_HOURS is a whole number of hours, 1 to 999, not $max_hours"
+[[ -z $detach || $detach == 0 || $detach == 1 ]] || die "LAB_DETACH is 0, 1 or unset, not $detach"
+# the plan's hours and dollars (estimate.py, the timings aws/lab.sh's runs
+# measured: the same steps), before any az call
+plan=(--cloud azure --type-a "$size_a" --type-b "$size_b" --placement ppg --reps "$reps"
+    --modes "${modes[*]}" --local-modes "$local_modes" --states "${states[*]}" --load-sizes "$load_sizes"
+    --load-fractions "$load_fractions" --load-ladder "$load_ladder" --load-seconds "$load_seconds" --mix "$mix"
+    --mix-seconds "$mix_seconds" --tput-seconds "$tput_seconds" --tput-flows "${tput_flows:-0}"
+    --rtt-messages "$rtt_messages" --rtt-warmup "$rtt_warmup" --no-flatout "$no_flatout" --max-hours "$max_hours"
+    --warmup-seconds "$warmup_seconds" --warmup-rate "$warmup_rate")
+if [[ ${LAB_ESTIMATE:-} == 1 ]]; then
+    python3 "$here/../estimate.py" "${plan[@]}"
+    exit $?
+fi
+# a plan longer than the backstop's deadline would lose its group hours in
+why=$(python3 "$here/../estimate.py" "${plan[@]}" --refuse-over-deadline 2>&1) || die "$why"
+hours=$(python3 "$here/../estimate.py" "${plan[@]}" --print-hours) || die "estimate.py: $hours"
+# before detaching, so a run that cannot start says so here, not in its log
 command -v az >/dev/null || die "az is not on PATH"
 az account show -o none 2>/dev/null || die "az is not logged in (az login)"
+# Detach a plan over 2 h: a nohup subshell, parented to init, running this
+# snapshot again with this run's directory, so it outlives the shell or
+# session that started it (a harness's background task dies at 2 h, mid-run
+# or mid-teardown). The snapshot becomes the detached run's: it removes it.
+if [[ -z ${LAB_DETACHED:-} ]] && { [[ $detach == 1 ]] || { [[ -z $detach ]] && awk -v h="$hours" 'BEGIN {exit !(h > 2)}'; }; }; then
+    mkdir -p "$out" || die "cannot make $out"
+    (LAB_DETACHED=1 LAB_RUN_OUT=$out nohup bash "$0" "$@" >"$out/lab.log" 2>&1 </dev/null & echo $! >"$out/lab.pid")
+    log "detached: about $hours h: pid $(cat "$out/lab.pid"), log $out/lab.log (stop it with kill -TERM $(cat "$out/lab.pid"); LAB_DETACH=0 runs in the foreground)"
+    trap - EXIT
+    exit 0
+fi
 mkdir -p "$out"
 
 teardown() {
@@ -205,6 +261,7 @@ teardown() {
     # an interrupt must not abort the delete, nor a create still running race it
     trap '' INT TERM
     [[ -n ${follow:-} ]] && kill "$follow" 2>/dev/null
+    [[ -n ${watch:-} ]] && kill "$watch" 2>/dev/null
     [[ -n ${pa:-} ]] && kill "$pa" "${pb:-}" 2>/dev/null
     if ((created)) && [[ -z ${LAB_KEEP:-} ]]; then
         log "deleting resource group $group"
@@ -213,11 +270,21 @@ teardown() {
             log "WARNING: delete $group by hand: az group delete -n $group --yes"
         if [[ $(az group exists -n "$group") == false ]]; then
             log "verified: resource group $group no longer exists"
+            [[ -n ${reaper:-} ]] && kill "$reaper" 2>/dev/null && log "backstop (pid $reaper) stopped: nothing left for it"
         else
-            log "WARNING: resource group $group still exists: az group delete -n $group --yes"
+            log "WARNING: resource group $group still exists: az group delete -n $group --yes${reaper:+ (the backstop, pid $reaper, deletes it $max_hours h after creation)}"
+        fi
+        left=$(az resource list --tag run="$stamp" --query 'length(@)' -o tsv 2>&1 | az_words)
+        if [[ $left == 0 ]]; then
+            log "left tagged run=$stamp: 0"
+        else
+            log "WARNING: $left resource(s) still tagged run=$stamp (or the listing failed): az resource list --tag run=$stamp -o table"
         fi
     elif ((created)); then
-        log "LAB_KEEP: resource group $group kept; delete it with: az group delete -n $group --yes"
+        log "LAB_KEEP: resource group $group kept; delete it with: az group delete -n $group --yes${reaper:+ (the backstop, pid $reaper, deletes it $max_hours h after creation)}"
+    elif [[ -n ${reaper:-} ]]; then
+        # no group was created: nothing for it to delete
+        kill "$reaper" 2>/dev/null
     fi
     log "results: $out"
     # last: the snapshot this ran from
@@ -236,15 +303,41 @@ fi
 me=${LAB_SSH_FROM:-$(curl -fsS https://api.ipify.org)} || die "cannot find this machine's public address"
 me=$(printf '%s\n' $me | sort -u | tr '\n' ' ') # a repeated address is an error to Azure
 read -ra me_cidrs <<<"$(printf '%s/32 ' $me)"
-log "creating $group in $region: a $size_a, b $size_b, SSH from $me"
-az group create -n "$group" -l "$region" -o none || die "group create failed"
+# both VMs' vCPUs within their quota families' and the region's (az.sh)
+quota=$(azure_quota_check "$region" "$size_a" "$size_b" 2>&1) || die "$quota"
+log "$quota"
+# The backstop (az.sh): the whole group deleted LAB_MAX_HOURS from now,
+# should the teardown never run. Started, and seen running, before the group
+# exists, so no moment has a group and no backstop. Deleting, never
+# deallocating: a deallocated VM still bills for its disks and public addresses.
+reaper=$(azure_reaper "$group" "$stamp" $((max_hours * 3600)) "$out/reaper.log")
+sleep 0.5
+[[ $reaper =~ ^[0-9]+$ ]] && kill -0 "$reaper" 2>/dev/null ||
+    die "the backstop did not start (pid [$reaper]): $(cat "$out/reaper.log" 2>/dev/null)"
+log "backstop: resource group $group deleted $max_hours h from now at the latest (pid $reaper); its log $out/reaper.log"
+# Each VM's auto-shutdown at the same deadline: Azure's own, so it runs with
+# this machine asleep or offline, which the backstop does not. It only
+# deallocates (compute stops billing; disks and addresses do not), so it
+# caps the cost and the backstop or teardown still deletes. A daily schedule:
+# at a deadline a day or more away it would fire first, so none then.
+off=
+if ((max_hours < 24)); then
+    off=$(date -u -v+"${max_hours}"H +%H%M 2>/dev/null || date -u -d "+${max_hours} hours" +%H%M)
+else
+    log "no auto-shutdown: LAB_MAX_HOURS=$max_hours is a day or more (a daily schedule would fire first): only the backstop and teardown end this run"
+fi
+log "creating $group in $region: a $size_a, b $size_b ($arch, $image), SSH from $me, tagged ${tags[*]}"
+# before the call: a create that fails having made the group is deleted too
 created=1
-az ppg create -g "$group" -n ppg -l "$region" --intent-vm-sizes $(printf "%s\n" "$size_a" "$size_b" | sort -u) -o none || die "ppg create failed"
+az group create -n "$group" -l "$region" --tags "${tags[@]}" -o none || die "group create failed"
+# every 15 minutes, what is in the group
+azure_watch "$group" 900 & watch=$!
+az ppg create -g "$group" -n ppg -l "$region" --intent-vm-sizes $(printf "%s\n" "$size_a" "$size_b" | sort -u) --tags "${tags[@]}" -o none || die "ppg create failed"
 az network vnet create -g "$group" -n vnet --address-prefixes 10.20.0.0/16 \
-    --subnet-name mgmt --subnet-prefixes 10.20.0.0/24 -o none || die "vnet create failed"
+    --subnet-name mgmt --subnet-prefixes 10.20.0.0/24 --tags "${tags[@]}" -o none || die "vnet create failed"
 az network vnet subnet create -g "$group" --vnet-name vnet -n data --address-prefixes 10.20.1.0/24 -o none ||
     die "data subnet create failed"
-az network nsg create -g "$group" -n nsg -o none || die "nsg create failed"
+az network nsg create -g "$group" -n nsg --tags "${tags[@]}" -o none || die "nsg create failed"
 az network nsg rule create -g "$group" --nsg-name nsg -n ssh --priority 100 --source-address-prefixes "${me_cidrs[@]}" \
     --destination-port-ranges 22 --protocol Tcp --access Allow -o none || die "nsg rule create failed"
 
@@ -266,34 +359,31 @@ follow_address & follow=$!
 
 declare_node() { # name sender-ip receiver-ip size
     local n=$1
-    az network public-ip create -g "$group" -n "$n-ip" --sku Standard -o none &&
+    az network public-ip create -g "$group" -n "$n-ip" --sku Standard --tags "${tags[@]}" -o none &&
         az network nic create -g "$group" -n "$n-mgmt" --vnet-name vnet --subnet mgmt --network-security-group nsg \
-            --public-ip-address "$n-ip" --accelerated-networking true -o none &&
+            --public-ip-address "$n-ip" --accelerated-networking true --tags "${tags[@]}" -o none &&
         az network nic create -g "$group" -n "$n-snd" --vnet-name vnet --subnet data --private-ip-address "$2" \
-            --accelerated-networking true -o none &&
+            --accelerated-networking true --tags "${tags[@]}" -o none &&
         az network nic create -g "$group" -n "$n-rcv" --vnet-name vnet --subnet data --private-ip-address "$3" \
-            --accelerated-networking true -o none &&
+            --accelerated-networking true --tags "${tags[@]}" -o none &&
         az vm create -g "$group" -n "$n" --size "$4" --image "$image" --ppg ppg \
             --nics "$n-mgmt" "$n-snd" "$n-rcv" --admin-username "$user" --ssh-key-values "$key" \
-            --os-disk-size-gb 64 -o none
+            --os-disk-name "$n-os" --os-disk-size-gb 64 --tags "${tags[@]}" -o none &&
+        { [[ -z $off ]] || az vm auto-shutdown -g "$group" -n "$n" --time "$off" -o none ||
+            log "WARNING: no auto-shutdown on $n: only the backstop and teardown end it"; } &&
+        # a VM's tags do not reach its OS disk
+        az resource tag -g "$group" -n "$n-os" --resource-type Microsoft.Compute/disks \
+            --tags "${tags[@]}" --is-incremental -o none
 }
 declare_node a 10.20.1.4 10.20.1.5 "$size_a" & pa=$!
 declare_node b 10.20.1.6 10.20.1.7 "$size_b" & pb=$!
 wait $pa || die "node a create failed"
 wait $pb || die "node b create failed"
-A=$(az network public-ip show -g "$group" -n a-ip --query ipAddress -o tsv)
-B=$(az network public-ip show -g "$group" -n b-ip --query ipAddress -o tsv)
+A=$(az network public-ip show -g "$group" -n a-ip --query ipAddress -o tsv) && [[ -n $A ]] || die "no public address for a"
+B=$(az network public-ip show -g "$group" -n b-ip --query ipAddress -o tsv) && [[ -n $B ]] || die "no public address for b"
 a_private=$(az network nic show -g "$group" -n a-mgmt --query 'ipConfigurations[0].privateIPAddress' -o tsv)
 b_private=$(az network nic show -g "$group" -n b-mgmt --query 'ipConfigurations[0].privateIPAddress' -o tsv)
 log "a=$A b=$B (private $a_private $b_private)"
-# The dead-man's switch: Azure deallocates both VMs (their compute stops
-# billing) LAB_MAX_HOURS after creation, should this machine never delete the
-# group (asleep, offline). A schedule in the group, so it goes with the group.
-off=$(date -u -v+"${max_hours}"H +%H%M 2>/dev/null || date -u -d "+${max_hours} hours" +%H%M)
-for n in a b; do
-    az vm auto-shutdown -g "$group" -n "$n" --time "$off" -o none ||
-        log "WARNING: no auto-shutdown on $n: only this machine's teardown will delete it"
-done
 
 data_subnet=10.20.1.0/24
 . "$here/../lib.sh"
