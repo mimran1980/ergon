@@ -473,6 +473,36 @@ fn utf8_is_checked_across_streamed_fragments() -> R {
     Ok(())
 }
 
+/// A character cut by a fragment's end is checked as far as it goes: a
+/// fragment whose first bytes cannot continue it is refused before it is
+/// handed over flagged UTF-8, not one fragment later.
+#[test]
+fn a_bad_continuation_of_a_cut_character_is_refused_at_once() -> R {
+    let lab = Lab::new()?;
+    // (piece ending in a cut lead, the next piece, both never valid)
+    let cases: [(&[u8], &[u8]); 4] = [
+        (b"a\xe2", b"A"),
+        (b"a\xf0\x9f", b"Z"),
+        // Overlong and surrogate starts: the second byte is out of range.
+        (b"a\xe0", b"\x80"),
+        (b"a\xed", b"\xa0"),
+    ];
+    for (first, second) in cases {
+        let mut s = frame(OP_TEXT, false, first)?;
+        s.extend_from_slice(&frame(OP_CONT, false, second)?);
+        s.extend_from_slice(&frame(OP_CONT, true, b"never")?);
+        let mut r = WsRig::new(&lab, &opts(TextCheck::Utf8))?;
+        let mut h = App::new(Interest::Stream);
+        let e = r.feed_records(&s, &[], &mut h).err().map(|e| e.to_string());
+        assert!(
+            e.is_some_and(|e| e.contains("not UTF-8")),
+            "{first:?} {second:?}"
+        );
+        assert_eq!(h.got.len(), 1, "{first:?} {second:?}: delivered as UTF-8");
+    }
+    Ok(())
+}
+
 // ---- Defaults keep what a handler did not take ----------------------------
 
 /// Implements only `on_message` and asks for `Stream`.
@@ -508,6 +538,22 @@ fn stream_without_on_fragment_arrives_through_on_message() -> R {
         (s.messages, s.unhandled, s.frag_copy_bytes),
         (1, 1, msg.len() as u64)
     );
+    Ok(())
+}
+
+/// `Stream` without `on_fragment` on text that is not ASCII: the message
+/// is counted once in `non_ascii`, not once by the streamed first fragment
+/// and again by the joined message.
+#[test]
+fn an_unhandled_stream_counts_a_non_ascii_message_once() -> R {
+    let lab = Lab::new()?;
+    let msg = "x€".repeat(500).into_bytes();
+    let mut r = WsRig::new(&lab, &opts(DELIVER))?;
+    let mut h = OnlyMessages::default();
+    r.feed_records(&fragmented(OP_TEXT, &msg, 4)?, &[], &mut h)?;
+    assert_eq!(h.got, vec![(msg, TextStatus::NotAscii)]);
+    let s = stats(&r);
+    assert_eq!((s.messages, s.unhandled, s.non_ascii), (1, 1, 1));
     Ok(())
 }
 

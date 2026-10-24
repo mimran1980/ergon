@@ -1054,7 +1054,11 @@ impl WsConn {
                 }
             }
             Flow::Unhandled if index == 0 => {
-                // The default: join by copy, deliver whole, checked then.
+                // The default: join by copy, deliver whole, checked then
+                // (and counted then: this fragment's count is undone).
+                if self.stream_non_ascii {
+                    self.non_ascii -= 1;
+                }
                 self.frag_mode = FragMode::Copy;
                 self.frag.clear();
                 self.frag.extend_from_slice(payload);
@@ -1505,6 +1509,15 @@ impl Utf8Carry {
             self.have += take;
             s = &s[take..];
             if self.have < need {
+                // Still cut: the bytes so far must start a character. The
+                // lead was checked when it was carried; a second byte may
+                // have a narrower range than 0x80..=0xBF, later ones never,
+                // so completing with 0x80 checks the prefix exactly.
+                if self.have >= 2 {
+                    let mut probe = self.buf;
+                    probe[self.have..need].fill(0x80);
+                    check_utf8(&probe[..need])?;
+                }
                 return Ok(());
             }
             check_utf8(&self.buf[..need])?;
