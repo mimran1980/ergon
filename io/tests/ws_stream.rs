@@ -323,11 +323,7 @@ fn trusted_ascii_delivers_any_bytes_unchanged() -> R {
                 );
             }
             let s = stats(&r);
-            assert_eq!(
-                (s.messages, s.non_ascii, s.skipped),
-                (2, 0, 0),
-                "{what}"
-            );
+            assert_eq!((s.messages, s.non_ascii, s.skipped), (2, 0, 0), "{what}");
         }
     }
     // `Stream` without `on_fragment`: joined, still unread.

@@ -346,7 +346,10 @@ mod tests {
         assert!(t.starts_with(b"key"));
         assert!(!t.starts_with(b"value"));
         let (k, v) = t.split_at(3).unwrap_or_default();
-        assert_eq!((k.as_bytes(), v.as_bytes()), (&b"key"[..], &b"=value;x"[..]));
+        assert_eq!(
+            (k.as_bytes(), v.as_bytes()),
+            (&b"key"[..], &b"=value;x"[..])
+        );
         assert_eq!(t.split_at(12), None);
         assert_eq!(t.slice(4..9).map(|s| s.as_bytes()), Some(&b"value"[..]));
         assert_eq!(t.slice(4..=8).map(|s| s.as_bytes()), Some(&b"value"[..]));

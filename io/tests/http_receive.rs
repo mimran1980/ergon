@@ -328,7 +328,11 @@ fn the_body_check_is_off_by_default_and_flags_or_closes() -> R {
         (close, ascii, Some(TextStatus::Ascii)),
         (flag, latin, Some(TextStatus::NotAscii)),
         (flag, ascii, Some(TextStatus::Ascii)),
-        (TextCheck::Ascii, &broken[..], Some(TextStatus::AssumedAscii)),
+        (
+            TextCheck::Ascii,
+            &broken[..],
+            Some(TextStatus::AssumedAscii),
+        ),
         (TextCheck::Ascii, latin, Some(TextStatus::AssumedAscii)),
         (TextCheck::Ascii, ascii, Some(TextStatus::AssumedAscii)),
     ] {

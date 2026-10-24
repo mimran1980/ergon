@@ -952,61 +952,153 @@ fn spin_backends_never_sleep_when_idle() -> R {
     Ok(())
 }
 
+/// What the polling thread did during one connect to a slow server.
+struct SlowConnect {
+    /// Voluntary context switches (the thread slept in the kernel), except
+    /// in a short poll that took a page fault.
+    slept: u64,
+    /// Voluntary context switches in short polls that took a page fault.
+    slept_faulting: u64,
+    /// Polls that took a page fault, and their faults (minor + major).
+    faulting_polls: u64,
+    faults: u64,
+    /// The slowest `poll`.
+    slowest: Duration,
+}
+
+/// Page faults of the calling thread so far, minor plus major (fields 10
+/// and 12 of `/proc/thread-self/stat`).
+fn thread_page_faults() -> R<u64> {
+    let stat = std::fs::read_to_string("/proc/thread-self/stat")?;
+    let after = stat.rfind(')').ok_or("no comm in stat")?;
+    // The fields after the comm start at field 3 (state).
+    let mut fields = stat[after + 1..].split_whitespace().skip(10 - 3);
+    let minor: u64 = fields.next().ok_or("short stat")?.parse()?;
+    let major: u64 = fields.nth(1).ok_or("short stat")?.parse()?;
+    Ok(minor + major)
+}
+
+/// The longest a poll that took a page fault may run and still have its
+/// sleeps put down to the fault: a page fault sleeps for microseconds, the
+/// server's delay is 150 ms.
+const FAULT_POLL: Duration = Duration::from_millis(20);
+
+/// Connects `d` to a server that waits 150 ms before the TLS handshake even
+/// starts, and polls until its first message arrives, counting per poll.
+fn connect_to_a_slow_server(d: &mut Driver<WsConn>, lab: &Lab) -> R<SlowConnect> {
+    std::thread::scope(|s| -> R<SlowConnect> {
+        let srv = s.spawn(|| -> R {
+            let (sock, _) = lab.listener.accept()?;
+            std::thread::sleep(Duration::from_millis(150));
+            let mut p = support::Peer::serve(lab, sock)?;
+            p.send(ws::OP_TEXT, true, b"hi")?;
+            assert!(p.client_closed()?);
+            Ok(())
+        });
+        let t0 = Instant::now();
+        let id = d.connect(WsDial::new(
+            lab.target("/")?,
+            lab.client_cfg.clone(),
+            1 << 20,
+        )?)?;
+        assert!(
+            t0.elapsed() < Duration::from_millis(5),
+            "connect returned late"
+        );
+        assert!(d.get(id).is_none(), "not open yet");
+        let mut h = Collect::default();
+        let mut c = SlowConnect {
+            slept: 0,
+            slept_faulting: 0,
+            faulting_polls: 0,
+            faults: 0,
+            slowest: Duration::ZERO,
+        };
+        let end = Instant::now() + Duration::from_secs(10);
+        while h.msgs.is_empty() {
+            let f0 = thread_page_faults()?;
+            let (v0, _) = ergon_io::clock::thread_ctx_switches();
+            let t = Instant::now();
+            d.poll(&mut h)?;
+            let took = t.elapsed();
+            c.slowest = c.slowest.max(took);
+            let (v1, _) = ergon_io::clock::thread_ctx_switches();
+            let faults = thread_page_faults()? - f0;
+            if faults > 0 {
+                c.faulting_polls += 1;
+                c.faults += faults;
+            }
+            if faults > 0 && took < FAULT_POLL {
+                c.slept_faulting += v1 - v0;
+            } else {
+                c.slept += v1 - v0;
+            }
+            assert!(Instant::now() < end, "never opened: {:?}", h.closed);
+        }
+        assert_eq!(h.opened, vec![id]);
+        assert_eq!(h.msgs[0].0, id);
+        // Closed at once (with `io_uring` the socket goes on a later poll):
+        // the server sees it and ends.
+        d.close(id);
+        while !srv.is_finished() {
+            d.poll(&mut h)?;
+            assert!(Instant::now() < end, "the server never saw the close");
+        }
+        srv.join().map_err(|_| "server panicked")??;
+        Ok(c)
+    })
+}
+
+/// A connect never makes the polling thread wait for the network: while
+/// the server holds the handshake back for 150 ms, no poll sleeps and none
+/// comes near that delay.
+///
+/// Two things sleep the thread that are not the network, and both are
+/// page faults. The first connect in a process runs the TLS and upgrade
+/// code for the first time; paging it in can take a major fault (seen run
+/// alone: majflt 20 -> 21 and one voluntary switch in the first poll; in
+/// the full suite an earlier test had paged it in). So a warm-up connect
+/// runs first, unmeasured: the claim is about a warm loop. And every
+/// connect's poll that finishes TLS touches its new 1 MiB receive buffer
+/// (`prefault`, about 256 minor faults); a fault can sleep on the kernel's
+/// memory locks, shared here with the server thread in the same process
+/// (seen on Linux arm64: one switch in that poll, +273 faults, in 12 of 40
+/// runs). A sleep in a poll that faulted and took under `FAULT_POLL` is
+/// counted apart; any other poll never sleeps. A driver that blocks on the
+/// network sleeps in a poll that waits out the 150 ms (whether or not it
+/// faults too), so it fails both the sleep and the poll-time check; a short
+/// blocking wait sleeps in polls that fault nothing.
 #[test]
 fn connect_never_blocks_the_poll_loop() -> R {
     each_backend(|b| {
         let lab = Lab::new()?;
         let mut d = driver(b)?;
-        std::thread::scope(|s| -> R {
-            let srv = s.spawn(|| -> R {
-                // A slow server: 150 ms before the handshake even starts.
-                let (sock, _) = lab.listener.accept()?;
-                std::thread::sleep(Duration::from_millis(150));
-                let mut p = support::Peer::serve(&lab, sock)?;
-                p.send(ws::OP_TEXT, true, b"hi")?;
-                assert!(p.client_closed()?);
-                Ok(())
-            });
-            let t0 = Instant::now();
-            let id = d.connect(WsDial::new(
-                lab.target("/")?,
-                lab.client_cfg.clone(),
-                1 << 20,
-            )?)?;
-            assert!(
-                t0.elapsed() < Duration::from_millis(5),
-                "connect returned late"
+        connect_to_a_slow_server(&mut d, &lab)?;
+        let c = connect_to_a_slow_server(&mut d, &lab)?;
+        // The worst poll is one handshake step's CPU (slow in a debug build
+        // on a shared host), never the server's 150 ms.
+        if !b.may_sleep() {
+            assert_eq!(
+                c.slept, 0,
+                "{b}: the polling thread slept ({} more sleeps in faulting polls)",
+                c.slept_faulting
             );
-            assert!(d.get(id).is_none(), "not open yet");
-            let mut h = Collect::default();
-            let mut slowest = Duration::ZERO;
-            let end = Instant::now() + Duration::from_secs(10);
-            let (slept0, _) = ergon_io::clock::thread_ctx_switches();
-            while h.msgs.is_empty() {
-                let t = Instant::now();
-                d.poll(&mut h)?;
-                slowest = slowest.max(t.elapsed());
-                assert!(Instant::now() < end, "never opened: {:?}", h.closed);
-            }
-            let (slept1, _) = ergon_io::clock::thread_ctx_switches();
-            assert_eq!(h.opened, vec![id]);
-            assert_eq!(h.msgs[0].0, id);
-            assert!(d.get(id).is_some());
-            // Never waiting for the network: the thread never slept, and no
-            // poll came near the server's 150 ms delay (the worst is one
-            // handshake step's CPU, slow in a debug build on a shared host).
-            if !b.may_sleep() {
-                assert_eq!(slept1 - slept0, 0, "{b}: the polling thread slept");
-            }
-            assert!(
-                slowest < Duration::from_millis(100),
-                "{b}: a poll took {slowest:?}"
-            );
-            assert_eq!(d.stats().connects, 1);
-            drop(d);
-            srv.join().map_err(|_| "server panicked")??;
-            Ok(())
-        })
+        }
+        assert!(
+            c.slowest < Duration::from_millis(100),
+            "{b}: a poll took {:?}",
+            c.slowest
+        );
+        // Only the few polls that set up the connection fault.
+        assert!(
+            c.faulting_polls <= 4,
+            "{b}: {} polls faulted ({} faults, {} sleeps)",
+            c.faulting_polls,
+            c.faults,
+            c.slept_faulting
+        );
+        assert_eq!(d.stats().connects, 2);
+        Ok(())
     })
 }
 
