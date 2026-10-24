@@ -249,10 +249,11 @@ check "the teardown finishes: verified" has "$d/out" "verified: group"
 
 echo "== nothing outlives the runs"
 # A watchdog exits within its poll after its run ends; a slow runner needs
-# more than a second, and one still there after 20 s is a leak.
-for _ in $(seq 1 200); do pgrep -f 'ergon-lab-nri-20261024000000' >/dev/null || break; sleep 0.1; done
-pgrep -fl 'ergon-lab-nri-20261024000000' || true
-check "no watchdog left" bash -c "! pgrep -f 'ergon-lab-nri-20261024000000' >/dev/null"
+# more than a second, and one still there after 20 s is a leak. The [e]
+# keeps pgrep -f from matching the command line that runs it (Linux).
+for _ in $(seq 1 200); do pgrep -f '[e]rgon-lab-nri-20261024000000' >/dev/null || break; sleep 0.1; done
+pgrep -fl '[e]rgon-lab-nri-20261024000000' || true
+check "no watchdog left" bash -c "! pgrep -f '[e]rgon-lab-nri-20261024000000' >/dev/null"
 check "no snapshot left" test -z "$(find "$work"/*/tmp -mindepth 1 -maxdepth 1 2>/dev/null)"
 
 echo "== lib.sh"
