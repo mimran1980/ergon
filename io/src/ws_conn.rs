@@ -30,13 +30,193 @@ use crate::tls::{self, MAX_RECORD, Opened, RecordLayer};
 use crate::ws::{self, Close};
 
 /// Receives decoded WebSocket messages.
+///
+/// Only [`WsHandler::on_message`] is required. The two other methods let a
+/// handler skip messages it does not want and take fragmented messages
+/// without a copy:
+///
+/// | first frame's [`Interest`] | unfragmented message | fragmented message |
+/// |---|---|---|
+/// | [`Interest::Keep`] (default) | `on_message`, a slice of the receive buffer | `on_message`, reassembled by copy ([`WsStats::frag_copy_bytes`]) |
+/// | [`Interest::Fragments`] | `on_message`, a slice of the receive buffer | `on_fragments`, one slice of the receive buffer per fragment |
+/// | [`Interest::Skip`] | dropped | every fragment dropped, never copied |
+///
+/// [`WsOptions::validate_utf8`] checks a text message only once it is kept,
+/// just before delivery.
 pub trait WsHandler: Handler {
     /// One complete data message (`opcode` is [`ws::OP_TEXT`] or
     /// [`ws::OP_BINARY`]). `payload` borrows the receive buffer: it is valid only
     /// during the call. `pos` is its index among the messages decoded from the
     /// same read.
     fn on_message(&mut self, conn: ConnId, opcode: u8, payload: &[u8], meta: &RxMeta, pos: u16);
+
+    /// Decides what to do with a data message from its first frame: `first`
+    /// is that frame's payload (the whole message when `fin`), not yet
+    /// checked for UTF-8. Called once per data message, before any delivery.
+    /// The default keeps every message.
+    #[inline]
+    fn on_message_start(
+        &mut self,
+        conn: ConnId,
+        opcode: u8,
+        first: &[u8],
+        fin: bool,
+        meta: &RxMeta,
+    ) -> Interest {
+        let _ = (conn, opcode, first, fin, meta);
+        Interest::Keep
+    }
+
+    /// One complete fragmented message whose first frame returned
+    /// [`Interest::Fragments`]: its fragments' payloads, in order, borrowed
+    /// from the receive buffer and valid only during the call. When the
+    /// message could not stay in the buffer it arrives as one copied slice
+    /// ([`WsStats::frag_fallbacks`]). A handler that returns
+    /// [`Interest::Fragments`] implements this; the default drops the
+    /// message.
+    #[inline]
+    fn on_fragments(
+        &mut self,
+        conn: ConnId,
+        opcode: u8,
+        message: &Fragments<'_>,
+        meta: &RxMeta,
+        pos: u16,
+    ) {
+        let _ = (conn, opcode, message, meta, pos);
+    }
 }
+
+/// What [`WsHandler::on_message_start`] wants done with a data message.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Interest {
+    /// Deliver to [`WsHandler::on_message`] as one slice; a fragmented
+    /// message is reassembled by copy.
+    #[default]
+    Keep,
+    /// Like `Keep` for an unfragmented message. A fragmented message goes to
+    /// [`WsHandler::on_fragments`] as its fragments' payloads in the receive
+    /// buffer, with no copy.
+    Fragments,
+    /// Drop the message: no copy, no UTF-8 check, no delivery
+    /// ([`WsStats::skipped`]). Control frames inside it are still answered.
+    Skip,
+}
+
+/// Most fragments a message keeps in the receive buffer; a message with
+/// more falls back to one copy ([`WsStats::frag_fallbacks`]).
+pub const MAX_FRAGMENTS: usize = 32;
+
+/// One fragment's payload inside the held bytes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Part {
+    start: usize,
+    len: usize,
+}
+
+/// A fragmented message as its fragments' payloads, in order
+/// ([`WsHandler::on_fragments`]). It borrows the receive buffer: no copy, no
+/// allocation.
+#[derive(Debug, Clone, Copy)]
+pub struct Fragments<'a> {
+    base: &'a [u8],
+    parts: &'a [Part],
+    len: usize,
+}
+
+impl<'a> Fragments<'a> {
+    /// Payload bytes, all fragments together.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Whether the message has no payload.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Number of slices.
+    #[must_use]
+    pub const fn count(&self) -> usize {
+        self.parts.len()
+    }
+
+    /// Slice `i`, in order.
+    #[must_use]
+    pub fn get(&self, i: usize) -> Option<&'a [u8]> {
+        self.parts
+            .get(i)
+            .and_then(|p| self.base.get(p.start..p.start + p.len))
+    }
+
+    /// The slices, in order.
+    #[must_use]
+    pub fn iter(&self) -> FragmentIter<'a> {
+        FragmentIter {
+            base: self.base,
+            parts: self.parts.iter(),
+        }
+    }
+
+    /// The payload as one slice, when it is one (a single fragment, or a
+    /// message that fell back to a copy).
+    #[must_use]
+    pub fn contiguous(&self) -> Option<&'a [u8]> {
+        if self.parts.len() == 1 {
+            self.get(0)
+        } else {
+            None
+        }
+    }
+
+    /// Copies the payload into the front of `out`; `None` when `out` is
+    /// shorter than [`Fragments::len`] (nothing is copied then).
+    #[must_use]
+    pub fn copy_to(&self, out: &mut [u8]) -> Option<usize> {
+        if out.len() < self.len {
+            return None;
+        }
+        let mut at = 0;
+        for s in self {
+            out[at..at + s.len()].copy_from_slice(s);
+            at += s.len();
+        }
+        Some(at)
+    }
+}
+
+impl<'a> IntoIterator for &Fragments<'a> {
+    type Item = &'a [u8];
+    type IntoIter = FragmentIter<'a>;
+
+    fn into_iter(self) -> FragmentIter<'a> {
+        self.iter()
+    }
+}
+
+/// The slices of a [`Fragments`], in order.
+#[derive(Debug, Clone)]
+pub struct FragmentIter<'a> {
+    base: &'a [u8],
+    parts: std::slice::Iter<'a, Part>,
+}
+
+impl<'a> Iterator for FragmentIter<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<&'a [u8]> {
+        let p = self.parts.next()?;
+        self.base.get(p.start..p.start + p.len)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.parts.size_hint()
+    }
+}
+
+impl ExactSizeIterator for FragmentIter<'_> {}
 
 /// Per-connection counters.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -51,8 +231,15 @@ pub struct WsStats {
     pub span_copy_bytes: u64,
     /// Bytes moved by buffer compaction.
     pub compact_bytes: u64,
-    /// Bytes copied to reassemble fragmented messages.
+    /// Bytes copied to reassemble fragmented messages: those kept with
+    /// [`Interest::Keep`], and those [`WsStats::frag_fallbacks`] counts.
     pub frag_copy_bytes: u64,
+    /// Fragmented messages that asked for [`Interest::Fragments`] but were
+    /// copied: more than [`MAX_FRAGMENTS`] fragments, or more bytes than the
+    /// buffer holds behind the window.
+    pub frag_fallbacks: u64,
+    /// Data messages dropped by [`Interest::Skip`].
+    pub skipped: u64,
     /// Server Pings answered.
     pub pings: u64,
     /// Pings sent on a quiet connection ([`WsOptions::ping_interval_ms`]).
@@ -88,7 +275,11 @@ pub struct WsOptions {
     pub close_timeout_ms: u32,
     /// Check that text messages are UTF-8 (RFC 6455 requires it); invalid
     /// text closes the connection. Off by default: it reads every text byte
-    /// once more (`str::from_utf8`).
+    /// once more (`str::from_utf8`). Only kept messages are checked, after
+    /// [`WsHandler::on_message_start`] and before delivery: a message it
+    /// skips is never read, so invalid UTF-8 in a skipped message does not
+    /// close the connection (a deliberate relaxation of RFC 6455 §8.1).
+    /// Leave it off for a parser that checks text itself.
     pub validate_utf8: bool,
     /// Subprotocols to offer (`Sec-WebSocket-Protocol`), most preferred
     /// first. [`WsConn::protocol`] is the server's pick.
@@ -133,6 +324,16 @@ pub struct WsConn {
     frag: Vec<u8>,
     /// Opcode of the fragmented message in progress, 0 when none.
     frag_op: u8,
+    /// How the fragmented message in progress is taken (when `frag_op != 0`).
+    frag_mode: FragMode,
+    /// Its payload bytes so far.
+    frag_len: usize,
+    /// Its fragments in the held bytes ([`FragMode::Hold`]).
+    /// Boxed (once per connection) to keep `WsConn` near `HttpConn`'s size.
+    parts: Box<[Part; MAX_FRAGMENTS]>,
+    nparts: usize,
+    /// Most bytes a held message may span: what a single frame may.
+    hold_limit: usize,
     /// A Close was sent or received: nothing more may be sent.
     closing: bool,
     /// The server's Close arrived: further input is dropped.
@@ -146,12 +347,28 @@ pub struct WsConn {
     rng: u64,
     messages: u64,
     frag_copy_bytes: u64,
+    frag_fallbacks: u64,
+    skipped: u64,
     pings: u64,
     pongs: u64,
     /// Frames queued by the connection itself ([`WsStats::auto_frames`]).
     auto_frames: u64,
     timers: Timers,
     protocol: Option<String>,
+}
+
+/// How a fragmented message is taken.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FragMode {
+    /// [`Interest::Keep`]: copied into `frag`, delivered by `on_message`.
+    Copy,
+    /// [`Interest::Fragments`]: left in the receive buffer, which holds it.
+    Hold,
+    /// [`Interest::Fragments`] that could not be held: copied into `frag`,
+    /// delivered by `on_fragments` as one slice.
+    Copied,
+    /// [`Interest::Skip`]: dropped.
+    Skip,
 }
 
 /// The connection's timers, read only by [`Io::expire`].
@@ -206,6 +423,129 @@ pub const MIN_BUF: usize = 8 * MAX_RECORD;
 const ONE_RECORD: usize = (1 << 14) - 8;
 
 impl WsConn {
+    /// A connection over an upgraded stream.
+    fn build(stream: TlsStream, opts: &WsOptions, rng: u64, protocol: Option<String>) -> Self {
+        let buf_len = stream.capacity();
+        let max_message = match opts.max_message {
+            0 => max_frame(buf_len),
+            m => m,
+        };
+        Self {
+            stream,
+            frag: Vec::with_capacity(1 << 20),
+            frag_op: 0,
+            frag_mode: FragMode::Copy,
+            frag_len: 0,
+            parts: Box::new([Part::default(); MAX_FRAGMENTS]),
+            nparts: 0,
+            hold_limit: max_frame(buf_len),
+            closing: false,
+            discard: false,
+            validate_utf8: opts.validate_utf8,
+            frame_limit: max_message.min(max_frame(buf_len)),
+            max_message,
+            rng,
+            messages: 0,
+            frag_copy_bytes: 0,
+            frag_fallbacks: 0,
+            skipped: 0,
+            pings: 0,
+            pongs: 0,
+            auto_frames: 0,
+            timers: Timers::new(opts),
+            protocol,
+        }
+    }
+
+    /// Test and bench lever: a connection over `sock` whose upgrade is
+    /// already done and whose TLS keys are `tls`. Nothing is read from or
+    /// written to `sock`: [`WsConn::feed`] and [`WsConn::deliver_staged`]
+    /// stand in for the kernel.
+    ///
+    /// # Errors
+    /// Bad options.
+    #[doc(hidden)]
+    pub fn from_record_layer(sock: TcpStream, tls: RecordLayer, opts: &WsOptions) -> Result<Self> {
+        opts.check()?;
+        let buf = vec![1u8; opts.buf_size].into_boxed_slice();
+        let stream = TlsStream::new(sock, buf, 0, 0, tls, Vec::with_capacity(1 << 16));
+        Ok(Self::build(stream, opts, 0x9E37_79B9_7F4A_7C15, None))
+    }
+
+    /// Test lever: `cipher` arrives as if the kernel wrote it, then every
+    /// complete record is opened and every complete message delivered.
+    ///
+    /// # Errors
+    /// `cipher` does not fit the free buffer, or as a read would fail.
+    #[doc(hidden)]
+    pub fn feed<H: WsHandler>(
+        &mut self,
+        id: ConnId,
+        cipher: &[u8],
+        meta: &RxMeta,
+        handler: &mut H,
+    ) -> Result<usize> {
+        let space = self.stream.rx_space();
+        if cipher.len() > space.len() {
+            return Err(Error::Config("feed larger than the free buffer".into()));
+        }
+        space[..cipher.len()].copy_from_slice(cipher);
+        self.deliver(id, cipher.len(), meta, handler)
+    }
+
+    /// Bench lever: puts `plain` into the empty window, as an opened record.
+    ///
+    /// # Errors
+    /// The buffer is not empty or too small.
+    #[doc(hidden)]
+    pub fn preload_plain(&mut self, plain: &[u8]) -> Result<()> {
+        self.stream.preload_window(plain)
+    }
+
+    /// Bench lever: queues one unencrypted stand-in record of `plain` (at
+    /// most 16 KiB) for [`WsConn::deliver_staged`].
+    ///
+    /// # Errors
+    /// `plain` is too large or does not fit.
+    #[doc(hidden)]
+    pub fn stage_plain_record(&mut self, plain: &[u8]) -> Result<()> {
+        self.stream.stage_plain_record(plain)
+    }
+
+    /// Bench lever: [`WsConn::feed`]'s path minus the kernel copy and the
+    /// AEAD: parses the window, then opens each staged stand-in record and
+    /// parses again, then compacts.
+    ///
+    /// # Errors
+    /// As a read would fail.
+    #[doc(hidden)]
+    pub fn deliver_staged<H: WsHandler>(
+        &mut self,
+        id: ConnId,
+        meta: &RxMeta,
+        handler: &mut H,
+    ) -> Result<usize> {
+        let mut delivered = self.parse_frames(id, meta, handler, 0)?;
+        while self.stream.open_next_plain()? {
+            delivered += self.parse_frames(id, meta, handler, delivered)?;
+        }
+        self.stream.compact();
+        Ok(delivered)
+    }
+
+    /// Test lever: drops the queued frames, as a send would.
+    #[doc(hidden)]
+    pub fn clear_tx(&mut self) {
+        self.stream.tx_queue().clear();
+    }
+
+    /// Test lever: the encrypted frames queued to send.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn queued_tx(&self) -> &[u8] {
+        self.stream.queued_tx()
+    }
+
     /// [`WsConn::connect_with`] with default options and this receive buffer.
     ///
     /// # Errors
@@ -262,6 +602,8 @@ impl WsConn {
             span_copy_bytes: s.span_copy_bytes,
             compact_bytes: s.compact_bytes,
             frag_copy_bytes: self.frag_copy_bytes,
+            frag_fallbacks: self.frag_fallbacks,
+            skipped: self.skipped,
             pings: self.pings,
             pings_sent: self.timers.pings_sent,
             pongs: self.pongs,
@@ -334,8 +676,7 @@ impl WsConn {
         let mut pos = already;
         let mut count = 0;
         loop {
-            let window = self.stream.window();
-            let Some(h) = ws::parse_header(window)? else {
+            let Some(h) = ws::parse_header(self.stream.window())? else {
                 break;
             };
             if h.mask.is_some() {
@@ -346,59 +687,57 @@ impl WsConn {
             if h.payload_len > self.frame_limit {
                 return Err(self.too_large(h.payload_len));
             }
+            // A held message must leave the buffer room for the rest: one
+            // that would outgrow it, or the slice list, is copied out before
+            // waiting for this frame.
+            if self.frag_mode == FragMode::Hold
+                && self.frag_op != 0
+                && (self.stream.held_len() + h.frame_len() > self.hold_limit
+                    || (h.opcode == ws::OP_CONT && self.nparts == MAX_FRAGMENTS))
+            {
+                self.spill();
+            }
+            let window = self.stream.window();
             if window.len() < h.frame_len() {
                 break;
             }
             let payload = &window[h.header_len..h.frame_len()];
+            let plen = payload.len();
             match h.opcode {
                 // Inside a fragmented message the arm below refuses it.
                 ws::OP_TEXT | ws::OP_BINARY if h.fin && self.frag_op == 0 => {
-                    if self.validate_utf8 && h.opcode == ws::OP_TEXT {
-                        check_utf8(payload)?;
-                    }
-                    handler.on_message(id, h.opcode, payload, meta, pos16(pos));
-                    pos += 1;
-                    count += 1;
-                    self.messages += 1;
-                }
-                ws::OP_TEXT | ws::OP_BINARY => {
-                    if self.frag_op != 0 {
-                        return Err(Error::Ws("new message inside a fragmented one"));
-                    }
-                    self.frag.clear();
-                    self.frag.extend_from_slice(payload);
-                    self.frag_op = h.opcode;
-                    self.frag_copy_bytes += payload.len() as u64;
-                }
-                ws::OP_CONT => {
-                    if self.frag_op == 0 {
-                        return Err(Error::Ws("continuation without a first fragment"));
-                    }
-                    if self.frag.len() + payload.len() > self.max_message {
-                        return Err(Error::Ws("message too large"));
-                    }
-                    self.frag.extend_from_slice(payload);
-                    self.frag_copy_bytes += payload.len() as u64;
-                    if h.fin {
-                        if self.validate_utf8 && self.frag_op == ws::OP_TEXT {
-                            check_utf8(&self.frag)?;
+                    if handler.on_message_start(id, h.opcode, payload, true, meta) == Interest::Skip
+                    {
+                        self.skipped += 1;
+                    } else {
+                        if self.validate_utf8 && h.opcode == ws::OP_TEXT {
+                            check_utf8(payload)?;
                         }
-                        handler.on_message(id, self.frag_op, &self.frag, meta, pos16(pos));
-                        self.frag_op = 0;
+                        handler.on_message(id, h.opcode, payload, meta, pos16(pos));
                         pos += 1;
                         count += 1;
                         self.messages += 1;
                     }
                 }
+                ws::OP_TEXT | ws::OP_BINARY => self.first_fragment(id, &h, meta, handler)?,
+                ws::OP_CONT => {
+                    if self.continuation(&h)? {
+                        self.stream.consume(h.frame_len());
+                        if self.end_message(id, meta, handler, pos16(pos))? {
+                            pos += 1;
+                            count += 1;
+                        }
+                        continue;
+                    }
+                }
                 ws::OP_PING => {
                     let mut body = [0u8; ws::MAX_CONTROL];
-                    let len = payload.len();
-                    body[..len].copy_from_slice(payload);
+                    body[..plen].copy_from_slice(payload);
                     self.stream.consume(h.frame_len());
                     self.pings += 1;
                     // Nothing may follow our Close.
                     if !self.closing {
-                        self.queue(ws::OP_PONG, &body[..len])?;
+                        self.queue(ws::OP_PONG, &body[..plen])?;
                         self.auto_frames += 1;
                     }
                     continue;
@@ -406,10 +745,9 @@ impl WsConn {
                 ws::OP_PONG => self.pongs += 1,
                 ws::OP_CLOSE => {
                     let mut body = [0u8; ws::MAX_CONTROL];
-                    let len = payload.len();
-                    body[..len].copy_from_slice(payload);
+                    body[..plen].copy_from_slice(payload);
                     self.stream.consume(h.frame_len());
-                    self.on_close(&body[..len])?;
+                    self.on_close(&body[..plen])?;
                     return Ok(count);
                 }
                 _ => return Err(Error::Ws("unexpected opcode")),
@@ -419,9 +757,158 @@ impl WsConn {
         Ok(count)
     }
 
-    /// Drops the plaintext not yet parsed (input after the server's Close).
+    /// The first frame of a fragmented message (the frame is complete in
+    /// the window): the handler decides how it is taken.
+    #[inline]
+    fn first_fragment<H: WsHandler>(
+        &mut self,
+        id: ConnId,
+        h: &ws::FrameHeader,
+        meta: &RxMeta,
+        handler: &mut H,
+    ) -> Result<()> {
+        if self.frag_op != 0 {
+            return Err(Error::Ws("new message inside a fragmented one"));
+        }
+        let payload = &self.stream.window()[h.header_len..h.frame_len()];
+        let interest = handler.on_message_start(id, h.opcode, payload, false, meta);
+        self.frag_op = h.opcode;
+        self.frag_len = payload.len();
+        match interest {
+            Interest::Keep => {
+                self.frag_mode = FragMode::Copy;
+                self.frag.clear();
+                self.frag.extend_from_slice(payload);
+                self.frag_copy_bytes += payload.len() as u64;
+            }
+            Interest::Skip => self.frag_mode = FragMode::Skip,
+            Interest::Fragments => {
+                self.frag_mode = FragMode::Hold;
+                self.parts[0] = Part {
+                    start: h.header_len,
+                    len: payload.len(),
+                };
+                self.nparts = 1;
+                self.stream.hold();
+            }
+        }
+        Ok(())
+    }
+
+    /// A continuation frame (complete in the window), taken as the first
+    /// frame decided. `true` when it ends the message.
+    #[inline]
+    fn continuation(&mut self, h: &ws::FrameHeader) -> Result<bool> {
+        if self.frag_op == 0 {
+            return Err(Error::Ws("continuation without a first fragment"));
+        }
+        let payload = &self.stream.window()[h.header_len..h.frame_len()];
+        if self.frag_len + payload.len() > self.max_message {
+            return Err(Error::Ws("message too large"));
+        }
+        self.frag_len += payload.len();
+        match self.frag_mode {
+            FragMode::Skip => {}
+            FragMode::Copy | FragMode::Copied => {
+                self.frag.extend_from_slice(payload);
+                self.frag_copy_bytes += payload.len() as u64;
+            }
+            FragMode::Hold => {
+                let part = Part {
+                    start: self.stream.held_len() + h.header_len,
+                    len: payload.len(),
+                };
+                // The spill check before the frame keeps a free slot.
+                let Some(p) = self.parts.get_mut(self.nparts) else {
+                    return Err(Error::Ws("fragment list overflow"));
+                };
+                *p = part;
+                self.nparts += 1;
+            }
+        }
+        Ok(h.fin)
+    }
+
+    /// The last fragment is in: deliver the message as its first frame
+    /// asked, checking text first. `true` when delivered.
+    #[inline]
+    fn end_message<H: WsHandler>(
+        &mut self,
+        id: ConnId,
+        meta: &RxMeta,
+        handler: &mut H,
+        pos: u16,
+    ) -> Result<bool> {
+        let op = self.frag_op;
+        self.frag_op = 0;
+        let check = self.validate_utf8 && op == ws::OP_TEXT;
+        match self.frag_mode {
+            FragMode::Skip => {
+                self.skipped += 1;
+                return Ok(false);
+            }
+            FragMode::Copy => {
+                if check {
+                    check_utf8(&self.frag)?;
+                }
+                handler.on_message(id, op, &self.frag, meta, pos);
+            }
+            FragMode::Copied => {
+                if check {
+                    check_utf8(&self.frag)?;
+                }
+                let one = [Part {
+                    start: 0,
+                    len: self.frag.len(),
+                }];
+                let m = Fragments {
+                    base: &self.frag,
+                    parts: &one,
+                    len: self.frag.len(),
+                };
+                handler.on_fragments(id, op, &m, meta, pos);
+            }
+            FragMode::Hold => {
+                let m = Fragments {
+                    base: self.stream.held(),
+                    parts: &self.parts[..self.nparts],
+                    len: self.frag_len,
+                };
+                if check {
+                    check_utf8_parts(&m)?;
+                }
+                handler.on_fragments(id, op, &m, meta, pos);
+                self.nparts = 0;
+                self.stream.release();
+            }
+        }
+        self.messages += 1;
+        Ok(true)
+    }
+
+    /// A held message cannot stay in the buffer: copy its fragments so far
+    /// into `frag` and release them; the rest is copied as it arrives.
+    #[cold]
+    fn spill(&mut self) {
+        let held = self.stream.held();
+        self.frag.clear();
+        for p in &self.parts[..self.nparts] {
+            self.frag.extend_from_slice(&held[p.start..p.start + p.len]);
+        }
+        self.frag_copy_bytes += self.frag.len() as u64;
+        self.stream.release();
+        self.nparts = 0;
+        self.frag_mode = FragMode::Copied;
+        self.frag_fallbacks += 1;
+    }
+
+    /// Drops the plaintext not yet parsed (input after the server's Close),
+    /// and any fragmented message in progress with its held bytes.
     #[cold]
     fn drop_window(&mut self) {
+        self.frag_op = 0;
+        self.nparts = 0;
+        self.stream.release();
         let n = self.stream.window().len();
         self.stream.consume(n);
     }
@@ -641,7 +1128,56 @@ const fn bad_send() -> Error {
 fn check_utf8(text: &[u8]) -> Result<()> {
     std::str::from_utf8(text)
         .map(|_| ())
-        .map_err(|_| Error::Ws("text message is not UTF-8"))
+        .map_err(|_| not_utf8())
+}
+
+#[cold]
+const fn not_utf8() -> Error {
+    Error::Ws("text message is not UTF-8")
+}
+
+/// [`check_utf8`] over a message's fragments without joining them: a
+/// character cut between two fragments is completed from the next.
+fn check_utf8_parts(m: &Fragments<'_>) -> Result<()> {
+    let mut carry = [0u8; 4];
+    let mut have = 0usize;
+    for mut s in m {
+        if have > 0 {
+            let need = utf8_width(carry[0]);
+            let take = need.saturating_sub(have).min(s.len());
+            carry[have..have + take].copy_from_slice(&s[..take]);
+            have += take;
+            s = &s[take..];
+            if have < need {
+                continue;
+            }
+            check_utf8(&carry[..need])?;
+            have = 0;
+        }
+        if let Err(e) = std::str::from_utf8(s) {
+            // A character cut by the end of this fragment: carry its start.
+            if e.error_len().is_some() {
+                return Err(not_utf8());
+            }
+            let rest = &s[e.valid_up_to()..];
+            carry[..rest.len()].copy_from_slice(rest);
+            have = rest.len();
+        }
+    }
+    if have > 0 {
+        return Err(not_utf8());
+    }
+    Ok(())
+}
+
+/// Bytes in the UTF-8 sequence that `lead` starts. A lead byte that
+/// `from_utf8` reports as cut short is always one of these.
+const fn utf8_width(lead: u8) -> usize {
+    match lead {
+        0xE0..=0xEF => 3,
+        0xF0..=0xF7 => 4,
+        _ => 2,
+    }
 }
 
 /// A driver-owned [`WsConn`]: the same send and close methods.
@@ -940,29 +1476,8 @@ impl Upgrade {
         }
         buf.copy_within(head..tail, l);
         buf[..l].copy_from_slice(leftover);
-        let buf_len = buf.len();
-        let max_message = match opts.max_message {
-            0 => max_frame(buf_len),
-            m => m,
-        };
-        Ok(WsConn {
-            stream: TlsStream::new(sock, buf, l, ct, tls, txq),
-            frag: Vec::with_capacity(1 << 20),
-            frag_op: 0,
-            closing: false,
-            discard: false,
-            validate_utf8: opts.validate_utf8,
-            frame_limit: max_message.min(max_frame(buf_len)),
-            max_message,
-            rng,
-            messages: 0,
-            frag_copy_bytes: 0,
-            pings: 0,
-            pongs: 0,
-            auto_frames: 0,
-            timers: Timers::new(opts),
-            protocol: up.protocol,
-        })
+        let stream = TlsStream::new(sock, buf, l, ct, tls, txq);
+        Ok(WsConn::build(stream, opts, rng, up.protocol))
     }
 }
 

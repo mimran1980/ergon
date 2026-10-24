@@ -83,7 +83,9 @@ pub use limit::{
 pub use net::Target;
 pub use outcome::{Now, Sent, Verdict};
 pub use reconnect::{Reconnect, Retry};
-pub use ws_conn::{WsConn, WsDial, WsHandler, WsOptions, WsStats};
+pub use ws_conn::{
+    FragmentIter, Fragments, Interest, MAX_FRAGMENTS, WsConn, WsDial, WsHandler, WsOptions, WsStats,
+};
 
 /// Receive metadata for one read.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
