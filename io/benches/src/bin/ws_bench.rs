@@ -338,7 +338,7 @@ fn main() -> BoxResult<()> {
     let mut out = String::new();
     out.push_str(&counter_meta());
     out.push_str(&format!("samples={samples}\nvalidate_utf8={utf8}\n\n"));
-    out.push_str("| size B | shape | decision | path | K | ns/message p50 | p99 | max | max preempted | reassembly copy B/msg | span copy B/msg |\n");
+    out.push_str("| size B | shape | decision | path | K | ns/message p50 | p99 | max | max sample preempted (Linux) | reassembly copy B/msg | span copy B/msg |\n");
     out.push_str("|---|---|---|---|---|---|---|---|---|---|---|\n");
     for &size in &sizes {
         for shape in [Shape::Whole, Shape::Frag4, Shape::Split] {
@@ -354,7 +354,13 @@ fn main() -> BoxResult<()> {
                         r.p50,
                         r.p99,
                         r.max,
-                        if r.max_preempted { "yes" } else { "no" },
+                        if !cfg!(target_os = "linux") {
+                            "n/a"
+                        } else if r.max_preempted {
+                            "yes"
+                        } else {
+                            "no"
+                        },
                         r.frag_copy,
                         r.span_copy,
                     );
