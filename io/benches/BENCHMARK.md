@@ -2,7 +2,7 @@
 
 Earlier measurement details are retained in the [2026-10-18 snapshot](BENCHMARK-2026-10-18.md). This page takes precedence where conclusions differ.
 
-Every ergon-io latency figure lives here, once. Each row names the committed file that holds it, under `io/benches/results/<run>/`. Figures are µs, p50 / p99 / max, a range across rounds, unless a column says otherwise. `max` is the absolute maximum of each round.
+Every ergon-io latency figure lives here, once, except the in-memory WebSocket receive-path microbenchmark (`ws_bench`), whose table is in the book's [WebSocket page](https://mimran1980.github.io/ergon/io/websocket.html#receive-cost). Each row names the committed file that holds it, under `io/benches/results/<run>/`. Figures are µs, p50 / p99 / max, a range across rounds, unless a column says otherwise. `max` is the absolute maximum of each round.
 
 ## Answers
 

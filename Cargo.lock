@@ -902,6 +902,7 @@ dependencies = [
  "io-uring",
  "libc",
  "mio",
+ "proptest",
  "rcgen",
  "ring",
  "rustls",

@@ -59,7 +59,7 @@ Terms this chapter uses. Each links to the section that explains it.
 | [TLS record](#when-to-use-it) | TLS's unit of encrypted data. | A native HTTP request is one record; a large WebSocket message goes out over several. |
 | [in place](#how-it-works) | Decrypted and parsed in the buffer the kernel wrote into: one copy per byte. | Pro: no extra copy. Con: the slice lives only during the call; copy what you keep. |
 | [WebSocket](websocket.md) | A two-way message stream over one TCP connection, opened by an HTTP upgrade (status 101). | No compression here: it would break in-place parsing. |
-| [frame](websocket.md#options) | WebSocket's unit on the wire; a message is one frame or several (fragmented). | Every frame must fit `buf_size` (1 MiB). Fragmented messages are received, never sent. |
+| [frame](websocket.md#options) | WebSocket's unit on the wire; a message is one frame or several (fragmented). | Every frame must fit `buf_size` (1 MiB). Fragmented messages are received, never sent; the handler can take one as slices of the buffer or skip it ([receiving](websocket.md#receiving)). |
 | [Ping / Pong](websocket.md#options) | Control frames that check the other side is alive. | Ping after 10 s with nothing received; nothing back in 5 s: timeout. Any byte received counts as the answer. |
 | [close handshake](websocket.md#close) | Each side sends a Close frame, then TCP closes. | Waits up to 1 s (`close_timeout_ms`). `Driver::close` skips it. |
 | [HTTP/1.1 keep-alive](http-client.md#rules) | One connection reused for many requests. | No handshake per request. One request in flight per connection; a timed-out request closes its connection. |

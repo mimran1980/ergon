@@ -218,6 +218,17 @@
   snapshots keep the PMD burst counters, and `analyse.py --ab` prints them
   per rep.
 
+- `ergon-io`: `WsHandler::on_message_start` (default `Interest::Keep`)
+  decides from a data message's first frame whether to keep it.
+  `Interest::Skip` drops it without a copy, a UTF-8 check or a delivery;
+  `Interest::Fragments` delivers a fragmented message to the new
+  `WsHandler::on_fragments` as `Fragments`, one slice of the receive buffer
+  per fragment (up to `MAX_FRAGMENTS`, 32), instead of copying it. A message
+  the buffer cannot hold that way falls back to one copy, counted in the new
+  `WsStats::frag_fallbacks`; `WsStats::skipped` counts dropped messages.
+  New types: `Interest`, `Fragments`, `FragmentIter`. `ws_bench` (in
+  `io/benches`) times parse-and-deliver per message for each case.
+
 ### Changed
 
 - Breaking: `ergon-md-dpdk` asks every ENA port for large LLQ entries
@@ -376,6 +387,14 @@
   against `encode_from`. `decode_bench` times mapped `Side` / `Decimal9`
   accessors against the wire enum, `raw_side()` and the mantissas. Both
   check bytes or values equal before timing. Neither is gated.
+
+- Breaking: `ergon-io` `WsStats` has two more fields, `frag_fallbacks`
+  and `skipped`: a struct literal of it no longer compiles.
+- `ergon-io`: `WsOptions::validate_utf8` checks a text message only once
+  the handler keeps it, after `on_message_start` and before delivery. Invalid
+  UTF-8 in a skipped message no longer closes the connection (a deliberate
+  relaxation of RFC 6455 §8.1). The check scans for ASCII first, then runs
+  `str::from_utf8`.
 
 ### Removed
 

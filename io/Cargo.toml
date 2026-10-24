@@ -53,6 +53,8 @@ curl = { version = "0.4.51", optional = true, default-features = false, features
 
 [dev-dependencies]
 rcgen = "0.14"
+# `ws_receive.rs`: random fragmentation and record splits, fixed seed.
+proptest = "=1.12.0"
 # TLS 1.2 only in tests: proves a TLS 1.2 handshake is refused clearly.
 rustls = { version = "0.23.46", default-features = false, features = ["std", "ring", "tls12"] }
 # Test-only: the docs say mio is the interrupt path and so is tokio's I/O.

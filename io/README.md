@@ -37,7 +37,7 @@ Which features to pick: see Features, below.
 | Part | What it does |
 |---|---|
 | `Driver` | Owns the connections. Each `poll` makes one pass (send what you queued, receive, decrypt, decode, deliver, send replies) and returns. |
-| `WsConn` | WebSocket client. `WsHandler::on_message` gets a slice of the receive buffer. |
+| `WsConn` | WebSocket client. `WsHandler::on_message` gets a slice of the receive buffer; `on_message_start` can skip a message or take a fragmented one as slices. |
 | `WsOptions` | WebSocket limits and timers. |
 | `Reconnect` | Optional. Reopens closed connections with backoff; you resubscribe. |
 | `HttpClient` | A pool of warm HTTP connections behind one API: native (fast) or libcurl (feature `curl`). |
