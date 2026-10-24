@@ -15,6 +15,7 @@ cluster-test-harness/tests/*.rs	java-harness	cargo test -p ergo-aeron-cluster-te
 io/src/driver/*.rs	pr	cargo test -p ergon-io --lib -- --test-threads=1 && cargo test -p ergon-io --doc
 io/src/warn.rs	pr	cargo test -p ergon-io --lib -- --test-threads=1
 io/src/placement.rs	pr	cargo test -p ergon-io --lib -- --test-threads=1
+io/src/stream.rs	pr	cargo test -p ergon-io --lib -- --test-threads=1
 io/tests/*.rs	pr	cargo test -p ergon-io -- --test-threads=1
 io/benches/src/*.rs	benchmark	cargo build --release --manifest-path io/benches/Cargo.toml --bins
 io/benches/tests/*.rs	samples	cargo test --manifest-path io/benches/Cargo.toml

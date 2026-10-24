@@ -23,6 +23,18 @@ pub struct WsRig {
     key: LessSafeKey,
     iv: [u8; 12],
     seq: u64,
+    /// The client's sending key, to read back what it queued.
+    tx_key: LessSafeKey,
+    tx_iv: [u8; 12],
+    tx_seq: u64,
+}
+
+fn nonce(iv: [u8; 12], seq: u64) -> Nonce {
+    let mut n = iv;
+    for (b, s) in n[4..].iter_mut().zip(seq.to_be_bytes()) {
+        *b ^= s;
+    }
+    Nonce::assume_unique_for_key(n)
 }
 
 fn key_of(s: &ConnectionTrafficSecrets) -> R<(LessSafeKey, [u8; 12])> {
@@ -59,6 +71,8 @@ impl WsRig {
                 tls::handshake_raw(&mut sock, lab.client_cfg.clone(), "localhost")?;
             let (key, iv) = key_of(&secrets.rx.1)?;
             let seq = secrets.rx.0;
+            let (tx_key, tx_iv) = key_of(&secrets.tx.1)?;
+            let tx_seq = secrets.tx.0;
             let layer = RecordLayer::from_parts(&secrets, kconn)?;
             srv.join().map_err(|_| "server panicked")??;
             Ok(Self {
@@ -66,8 +80,42 @@ impl WsRig {
                 key,
                 iv,
                 seq,
+                tx_key,
+                tx_iv,
+                tx_seq,
             })
         })
+    }
+
+    /// The records the connection queued to send, decrypted with its
+    /// sending key: each record's plaintext (inner content type removed),
+    /// in order. The queue is cleared.
+    pub fn sent_records(&mut self) -> R<Vec<Vec<u8>>> {
+        let mut q = self.conn.queued_tx().to_vec();
+        self.conn.clear_tx();
+        let mut out = Vec::new();
+        let mut at = 0;
+        while at < q.len() {
+            let hdr: [u8; 5] = q.get(at..at + 5).ok_or("short header")?.try_into()?;
+            if hdr[..3] != [23, 3, 3] {
+                return Err(format!("not an application-data record: {hdr:?}").into());
+            }
+            let len = usize::from(u16::from_be_bytes([hdr[3], hdr[4]]));
+            let body = q.get_mut(at + 5..at + 5 + len).ok_or("short record")?;
+            let n = nonce(self.tx_iv, self.tx_seq);
+            self.tx_seq += 1;
+            let plain = self
+                .tx_key
+                .open_in_place(n, Aad::from(hdr), body)
+                .map_err(|e| e.to_string())?;
+            let (&ct, data) = plain.split_last().ok_or("empty record")?;
+            if ct != 23 {
+                return Err(format!("inner content type {ct}").into());
+            }
+            out.push(data.to_vec());
+            at += 5 + len;
+        }
+        Ok(out)
     }
 
     /// One application-data record of `plain` (at most [`RECORD`] bytes),
@@ -82,18 +130,11 @@ impl WsRig {
         out.extend_from_slice(plain);
         out.push(23);
         let aad: [u8; 5] = out[..5].try_into()?;
-        let mut n = self.iv;
-        for (b, s) in n[4..].iter_mut().zip(self.seq.to_be_bytes()) {
-            *b ^= s;
-        }
+        let n = nonce(self.iv, self.seq);
         self.seq += 1;
         let tag = self
             .key
-            .seal_in_place_separate_tag(
-                Nonce::assume_unique_for_key(n),
-                Aad::from(aad),
-                &mut out[5..],
-            )
+            .seal_in_place_separate_tag(n, Aad::from(aad), &mut out[5..])
             .map_err(|e| e.to_string())?;
         out.extend_from_slice(tag.as_ref());
         Ok(out)

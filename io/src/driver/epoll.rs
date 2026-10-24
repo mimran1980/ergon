@@ -354,7 +354,7 @@ mod tests {
     struct Stub {
         fd: OwnedFd,
         rx: Vec<u8>,
-        tx: Vec<u8>,
+        tx: crate::stream::TxQueue,
         route: RouteSlot,
     }
 
@@ -380,7 +380,7 @@ mod tests {
             Ok(Self {
                 fd,
                 rx: Vec::new(),
-                tx: Vec::new(),
+                tx: crate::stream::TxQueue::default(),
                 route: RouteSlot::default(),
             })
         }
@@ -393,7 +393,7 @@ mod tests {
         fn rx_space(&mut self) -> &mut [u8] {
             &mut self.rx
         }
-        fn tx_queue(&mut self) -> &mut Vec<u8> {
+        fn tx_queue(&mut self) -> &mut crate::stream::TxQueue {
             &mut self.tx
         }
         fn has_buffered_input(&self) -> bool {

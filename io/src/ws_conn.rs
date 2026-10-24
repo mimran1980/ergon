@@ -28,7 +28,7 @@ use crate::endpoint::{ConnId, ConnMut, Handler};
 use crate::error::{Error, Result};
 pub use crate::net::Target;
 use crate::net::{TlsDial, flush_nonblocking};
-use crate::stream::TlsStream;
+use crate::stream::{TlsStream, TxQueue, prefault};
 use crate::tls::{self, MAX_RECORD, Opened, RecordLayer};
 use crate::ws::{self, Close};
 
@@ -471,7 +471,7 @@ impl WsConn {
     pub fn from_record_layer(sock: TcpStream, tls: RecordLayer, opts: &WsOptions) -> Result<Self> {
         opts.check()?;
         let buf = vec![1u8; opts.buf_size].into_boxed_slice();
-        let stream = TlsStream::new(sock, buf, 0, 0, tls, Vec::with_capacity(1 << 16));
+        let stream = TlsStream::new(sock, buf, 0, 0, tls, TxQueue::prefaulted(1 << 16));
         Ok(Self::build(stream, opts, 0x9E37_79B9_7F4A_7C15, None))
     }
 
@@ -1019,7 +1019,9 @@ impl WsConn {
         Ok(())
     }
 
-    /// Queues a frame without the checks of [`WsConn::send_frame`].
+    /// Queues a frame without the checks of [`WsConn::send_frame`]. The
+    /// header comes from the stack and the payload is masked as it is
+    /// copied into the record: one pass over it, no zero fill.
     #[inline]
     fn queue(&mut self, opcode: u8, payload: &[u8]) -> Result<()> {
         if payload.len() > ONE_RECORD {
@@ -1027,10 +1029,7 @@ impl WsConn {
         }
         let mask = self.next_mask();
         self.stream.seal_build(|out| {
-            let start = out.len();
-            let hl = ws::header_len(payload.len(), true);
-            out.resize(start + hl + payload.len(), 0);
-            ws::encode_frame(opcode, payload, Some(mask), &mut out[start..])?;
+            ws::push_frame(out, opcode, payload, mask);
             Ok(())
         })
     }
@@ -1040,24 +1039,18 @@ impl WsConn {
     #[cold]
     fn queue_large(&mut self, opcode: u8, payload: &[u8]) -> Result<()> {
         let mask = self.next_mask();
-        let hl = ws::header_len(payload.len(), true);
+        let (h, hl) = ws::header_bytes(opcode, payload.len(), Some(mask));
         let (first, mut rest) = payload.split_at(((1 << 14) - hl).min(payload.len()));
         self.stream.seal_build(|out| {
-            let start = out.len();
-            out.resize(start + hl, 0);
-            ws::encode_header(opcode, payload.len(), Some(mask), &mut out[start..])?;
-            let body = out.len();
-            out.extend_from_slice(first);
-            ws::apply_mask(&mut out[body..], mask);
+            out.extend_from_slice(&h[..hl]);
+            ws::push_masked(out, first, mask, 0);
             Ok(())
         })?;
         let mut offset = first.len();
         while !rest.is_empty() {
             let (part, tail) = rest.split_at(rest.len().min(1 << 14));
             self.stream.seal_build(|out| {
-                let start = out.len();
-                out.extend_from_slice(part);
-                ws::apply_mask_at(&mut out[start..], mask, offset);
+                ws::push_masked(out, part, mask, offset);
                 Ok(())
             })?;
             offset += part.len();
@@ -1417,7 +1410,10 @@ impl Upgrade {
             headers.push(("Sec-WebSocket-Protocol", &offered));
         }
         let req = ws::client_request(&target.host_header(), &target.path, &key, &headers);
+        // Every page of the send queue is written now, as the receive
+        // buffer's are below: the first sends take no page faults.
         let mut txq = Vec::with_capacity(1 << 16);
+        prefault(&mut txq);
         tls.seal_app(&req, &mut txq)?;
         // Non-zero fill writes every page now (zeroed memory is mapped lazily),
         // so the first receives do not take page faults.
@@ -1523,7 +1519,7 @@ impl Io for WsConn {
         self.stream.rx_space()
     }
     #[inline]
-    fn tx_queue(&mut self) -> &mut Vec<u8> {
+    fn tx_queue(&mut self) -> &mut crate::stream::TxQueue {
         self.stream.tx_queue()
     }
     fn has_buffered_input(&self) -> bool {

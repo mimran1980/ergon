@@ -78,7 +78,7 @@ impl Io for AnyConn {
         }
     }
     #[inline]
-    fn tx_queue(&mut self) -> &mut Vec<u8> {
+    fn tx_queue(&mut self) -> &mut crate::stream::TxQueue {
         match self {
             Self::Ws(c) => c.tx_queue(),
             Self::Http(c) => c.tx_queue(),

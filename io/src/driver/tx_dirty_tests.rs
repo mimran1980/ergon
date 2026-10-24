@@ -24,7 +24,7 @@ type R<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 struct Stub {
     sock: TcpStream,
     rx: Box<[u8]>,
-    tx: Vec<u8>,
+    tx: crate::stream::TxQueue,
     route: RouteSlot,
     /// Input held from before it was added: decoding it queues a `pong`.
     buffered: bool,
@@ -48,7 +48,7 @@ impl Io for Stub {
         // front and never moves (io_uring writes into it later).
         &mut self.rx
     }
-    fn tx_queue(&mut self) -> &mut Vec<u8> {
+    fn tx_queue(&mut self) -> &mut crate::stream::TxQueue {
         &mut self.tx
     }
     fn has_buffered_input(&self) -> bool {
@@ -113,7 +113,7 @@ fn pair(l: &TcpListener) -> R<(Stub, Peer)> {
     let stub = Stub {
         sock: c,
         rx: vec![0; 4096].into_boxed_slice(),
-        tx: Vec::new(),
+        tx: crate::stream::TxQueue::default(),
         route: RouteSlot::default(),
         buffered: false,
         ping_due: false,
@@ -426,6 +426,54 @@ fn sends_queued_without_get_mut_go_out() -> R {
         }
         let others: usize = peers.iter().take(8).map(|p| p.got.len()).sum();
         assert_eq!(others, 0, "{b}: bytes reached an idle connection");
+        assert!(closed.0.is_empty(), "{b}: {:?}", closed.0);
+    }
+    assert!(ran >= backends_needed(), "only {ran} backends ran");
+    Ok(())
+}
+
+/// A queue the socket takes only part of: the epoll send path moves the
+/// queue's head and copies nothing (the unsent tail stays where it is);
+/// every backend still delivers every byte in order.
+#[test]
+fn a_partial_send_leaves_the_unsent_tail_in_place() -> R {
+    let mut ran = 0;
+    for b in Backend::ALL {
+        let Some(mut d) = driver(b)? else {
+            eprintln!("backend {b}: not on this host");
+            continue;
+        };
+        ran += 1;
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let (stub, peer) = pair(&listener)?;
+        let id = d.add(stub)?;
+        let mut peers = vec![peer];
+        let mut closed = Closed::default();
+        let big: Vec<u8> = (0..8 << 20).map(|i: u32| i.to_le_bytes()[1]).collect();
+        queue(&mut d, id, &big)?;
+        // One pass without the peer reading: the socket takes a part.
+        d.poll(&mut closed)?;
+        {
+            let mut c = d.get_mut(id).ok_or("connection gone")?;
+            let q = &c.inner().tx;
+            if !b.name().starts_with("uring") {
+                assert!(
+                    q.head() > 0 && q.len() < big.len(),
+                    "{b}: expected a partial send, head {} len {}",
+                    q.head(),
+                    q.len()
+                );
+            }
+            assert_eq!(q.moved(), 0, "{b}: the unsent tail was moved");
+        }
+        poll_until(&mut d, &mut peers, &mut closed, |p| {
+            p[0].got.len() >= big.len()
+        })
+        .map_err(|e| format!("{b}: {e}"))?;
+        assert!(peers[0].got == big, "{b}: bytes out of order or lost");
+        let mut c = d.get_mut(id).ok_or("connection gone")?;
+        let q = &c.inner().tx;
+        assert_eq!((q.head(), q.len(), q.moved()), (0, 0, 0), "{b}");
         assert!(closed.0.is_empty(), "{b}: {:?}", closed.0);
     }
     assert!(ran >= backends_needed(), "only {ran} backends ran");

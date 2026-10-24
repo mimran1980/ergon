@@ -1402,9 +1402,10 @@ impl<E: Endpoint> Driver<E> {
                     self.stats.send_calls += 1;
                     self.stats.sends += 1;
                     let fd = c.fd();
-                    match sys::send(fd, c.tx_queue()) {
+                    match sys::send(fd, c.tx_queue().pending()) {
                         Ok(n) => {
-                            c.tx_queue().drain(..n);
+                            // Moves the head only: the unsent tail stays put.
+                            c.tx_queue().sent(n);
                             c.on_handed(n);
                             if c.tx_queue().is_empty() {
                                 self.conns.unlist_tx(k);

@@ -150,30 +150,89 @@ fn an_unfragmented_message_is_one_slice_with_no_copy() -> R {
 
 // (b) one frame split across records.
 #[test]
-fn a_frame_split_across_records_moves_only_the_later_part() -> R {
+fn a_frame_split_across_records_moves_the_smaller_side() -> R {
     let lab = Lab::new()?;
-    for one_read in [false, true] {
-        let mut r = rig(&lab, &opts())?;
-        let mut h = App::new(Interest::Fragments);
-        let msg = binary(4000);
-        let f = frame(OP_BINARY, true, &msg)?;
-        let cut = 1500;
-        if one_read {
-            r.feed_one_read(&f, &[cut], &mut h)?;
-        } else {
-            r.feed_records(&f, &[cut], &mut h)?;
+    let msg = binary(4000);
+    let f = frame(OP_BINARY, true, &msg)?;
+    // Cut early (the leftover is smaller: it moves forward) and late (the
+    // new record is smaller: it moves back).
+    for cut in [10, 1500, f.len() - 1500, f.len() - 10] {
+        for one_read in [false, true] {
+            let mut r = rig(&lab, &opts())?;
+            let mut h = App::new(Interest::Fragments);
+            if one_read {
+                r.feed_one_read(&f, &[cut], &mut h)?;
+            } else {
+                r.feed_records(&f, &[cut], &mut h)?;
+            }
+            assert_eq!(
+                h.got,
+                vec![Got {
+                    op: OP_BINARY,
+                    data: msg.clone(),
+                    slices: 0
+                }],
+                "cut {cut}"
+            );
+            let s = stats(&r);
+            assert_eq!(
+                s.span_copy_bytes,
+                cut.min(f.len() - cut) as u64,
+                "cut {cut} one read {one_read}"
+            );
+            assert_eq!((s.frag_copy_bytes, s.frag_fallbacks), (0, 0));
         }
-        assert_eq!(
-            h.got,
-            vec![Got {
-                op: OP_BINARY,
-                data: msg,
-                slices: 0
-            }]
-        );
-        let s = stats(&r);
-        assert_eq!(s.span_copy_bytes, (f.len() - cut) as u64);
-        assert_eq!((s.frag_copy_bytes, s.frag_fallbacks), (0, 0));
+    }
+    Ok(())
+}
+
+/// A held message whose next frame is cut across records: the held bytes
+/// and the partial frame move forward as one block when they are the
+/// smaller side, and the slices still point at the right bytes.
+#[test]
+fn a_held_message_moves_forward_as_one_block() -> R {
+    let lab = Lab::new()?;
+    let parts = [binary(20), binary(12_000), binary(20)];
+    let msg = parts.concat();
+    let mut stream = frame(OP_BINARY, false, &parts[0])?;
+    let first = stream.len();
+    stream.extend_from_slice(&frame(OP_CONT, false, &parts[1])?);
+    stream.extend_from_slice(&frame(OP_CONT, true, &parts[2])?);
+    for into_second in [1usize, 3, 40, 200] {
+        for lead in [false, true] {
+            let mut r = rig(&lab, &opts())?;
+            let mut h = App::new(Interest::Fragments);
+            // An optional short message first, so the hold starts mid-window.
+            let mut s = if lead {
+                frame(OP_BINARY, true, &binary(50))?
+            } else {
+                Vec::new()
+            };
+            let at = s.len();
+            s.extend_from_slice(&stream);
+            // Record 1 ends `into_second` bytes into the second frame;
+            // record 2 is the rest (under 16 KiB).
+            r.feed_records(&s, &[at + first + into_second], &mut h)?;
+            assert_eq!(
+                h.got.last(),
+                Some(&Got {
+                    op: OP_BINARY,
+                    data: msg.clone(),
+                    slices: 3
+                }),
+                "{into_second} {lead}"
+            );
+            let st = stats(&r);
+            assert_eq!((st.frag_copy_bytes, st.frag_fallbacks), (0, 0));
+            // Held first frame plus the partial second moved forward, not
+            // the 12 KB record back.
+            assert_eq!(
+                st.span_copy_bytes,
+                (first + into_second) as u64,
+                "{into_second} {lead}"
+            );
+            assert_eq!(r.conn.buffered(), 0);
+        }
     }
     Ok(())
 }
