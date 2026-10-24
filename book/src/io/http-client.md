@@ -210,8 +210,14 @@ first macOS run, ns per response, p50 / p99 / max
   on Linux, at most about three counter ticks (one tick is 0.65 ns per
   response at K = 64, 2.6 ns at K = 16), while `None`'s own p50 moved by
   up to 4 ns (macOS) and 29 ns (Linux) between runs.
-- `AsciiChecked` adds one scan (38 ns at 4 KiB, 161 at 16 KiB); `Utf8`
-  more, and far more on mixed text.
+- On macOS `AsciiChecked` adds one scan (38 ns at 4 KiB, 161 at 16 KiB);
+  `Utf8` more, and far more on mixed text. In the Linux VM the order
+  flips on ASCII bodies: `AsciiChecked` adds 577 ns at 4 KiB and `Utf8`
+  143 ns: the word scan runs about 11 times slower there than on macOS
+  ([Text check cost](websocket.md#text-check-cost)) while `str::from_utf8`
+  costs about the same on both (131 and 143 ns); the cause is not
+  established, so measure on the target host before choosing between
+  them.
 - The maxes (up to 1.1 ms) come from a host running other agents' builds
   (load average 10–11); macOS cannot say whether the thread was
   preempted, so no cause is established. In the VM, 9 of 320 row maxima
