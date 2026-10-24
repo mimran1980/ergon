@@ -207,9 +207,9 @@ first macOS run, ns per response, p50 / p99 / max
 
 - `Ascii` costs what `None` does. `Ascii` minus `None` at the p50, per
   run, over the five runs: −1.4 to +2.6 ns on macOS and −1.2 to +5.6 ns
-  on Linux, at most two counter ticks (one tick is 0.65 ns per response at
-  K = 64, 2.6 ns at K = 16), while `None`'s own p50 moved by up to 4 ns
-  (macOS) and 29 ns (Linux) between runs.
+  on Linux, at most about three counter ticks (one tick is 0.65 ns per
+  response at K = 64, 2.6 ns at K = 16), while `None`'s own p50 moved by
+  up to 4 ns (macOS) and 29 ns (Linux) between runs.
 - `AsciiChecked` adds one scan (38 ns at 4 KiB, 161 at 16 KiB); `Utf8`
   more, and far more on mixed text.
 - The maxes (up to 1.1 ms) come from a host running other agents' builds

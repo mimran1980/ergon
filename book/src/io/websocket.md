@@ -288,12 +288,13 @@ K = 64 (16 at 16 KiB).
 
 - `Ascii` costs what `None` does. `Ascii` minus `None` at the p50, per
   run, over the five runs: 0.0 to +0.7 ns on macOS and −1.9 to +0.7 ns
-  on Linux, at every size and text. One counter tick is 0.65 ns per
-  message at K = 64.
+  on Linux, at every size and text: at most about three counter ticks
+  (one tick is 0.65 ns per message at K = 64), and no more than `None`'s
+  own p50 moved between runs (0.7 ns macOS, 1.9 ns Linux).
 - `AsciiChecked` and `Utf8` cost the same on ASCII text (one scan,
   52.7 ns at 4 KiB on macOS). On mixed text `AsciiChecked` stays one scan
   while `Utf8` decodes (634.3 ns at 4 KiB, 2,547.1 at 16 KiB).
-- The Linux VM scans several times slower (572 ns at 4 KiB) on the same
+- The Linux VM scans about 11 times slower (572–578 ns at 4 KiB) on the same
   host; `None` and `Ascii` are 5.8–10.4 ns there too.
 - Maxima are not attributed: macOS cannot say whether the thread was
   preempted, and its load average was 10–11 (other agents' builds and

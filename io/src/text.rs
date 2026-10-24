@@ -239,8 +239,9 @@ impl<'a> AsciiText<'a> {
     /// under [`TextCheck::Ascii`], or one checked otherwise). Calling it on
     /// bytes that are not ASCII breaks this contract and is undefined
     /// behaviour: a `&str` must be UTF-8, and nothing here checks. Under
-    /// [`TextStatus::Ascii`] or [`TextStatus::Utf8`] use the safe
-    /// [`core::str::from_utf8`] instead: it cannot fail there.
+    /// [`TextStatus::Ascii`], or [`TextStatus::Utf8`] on a whole message,
+    /// use the safe [`core::str::from_utf8`] instead: it cannot fail there
+    /// (a streamed `Utf8` fragment may start or end inside a character).
     #[inline]
     #[must_use]
     pub unsafe fn as_str_unchecked(&self) -> &'a str {
