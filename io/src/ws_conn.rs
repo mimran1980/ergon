@@ -3,7 +3,10 @@
 //! - [`WsDial`] sets it up without blocking: TCP, TLS, then the upgrade.
 //!   [`WsOptions`] holds its limits and timers.
 //! - [`WsConn`] parses server frames in place in the receive buffer: a
-//!   payload is a slice of the bytes the kernel wrote.
+//!   payload is a slice of the bytes the kernel wrote. The handler decides
+//!   from a message's first frame ([`WsHandler::on_message_start`]) whether
+//!   to keep it, skip it (no copy, no UTF-8 check), or take a fragmented
+//!   message as slices of the buffer ([`Fragments`]) instead of a copy.
 //! - Close handshake both ways ([`WsConn::close`]; a server Close is answered
 //!   with its code). On a quiet connection, Pings and a Pong timeout; an idle
 //!   timeout. The timers run on the driver's deadline check (every 250 µs),

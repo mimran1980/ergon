@@ -609,6 +609,74 @@ fn a_new_message_inside_a_held_one_is_refused() -> R {
     Ok(())
 }
 
+// ANCHOR: skip
+/// Keeps one channel of a feed. Every other message is dropped on its first
+/// frame: never copied, never checked for UTF-8. A fragmented trade arrives
+/// as slices of the receive buffer.
+#[derive(Default)]
+struct Trades {
+    bytes: usize,
+    messages: usize,
+}
+
+impl Handler for Trades {}
+
+impl WsHandler for Trades {
+    fn on_message_start(
+        &mut self,
+        _: ConnId,
+        _: u8,
+        first: &[u8],
+        _: bool,
+        _: &RxMeta,
+    ) -> Interest {
+        if first.starts_with(br#"{"ch":"trades""#) {
+            Interest::Fragments
+        } else {
+            Interest::Skip
+        }
+    }
+
+    // Unfragmented: one slice.
+    fn on_message(&mut self, _: ConnId, _: u8, payload: &[u8], _: &RxMeta, _: u16) {
+        self.messages += 1;
+        self.bytes += payload.len();
+    }
+
+    // Fragmented: one slice per fragment, in order (`copy_to` joins them).
+    fn on_fragments(&mut self, _: ConnId, _: u8, m: &Fragments<'_>, _: &RxMeta, _: u16) {
+        self.messages += 1;
+        for part in m {
+            self.bytes += part.len();
+        }
+    }
+}
+// ANCHOR_END: skip
+
+#[test]
+fn the_book_example_keeps_one_channel() -> R {
+    let lab = Lab::new()?;
+    let mut r = rig(
+        &lab,
+        &WsOptions {
+            validate_utf8: true,
+            ..opts()
+        },
+    )?;
+    let mut h = Trades::default();
+    let trade = br#"{"ch":"trades","p":"67012.1","q":"0.003"}"#;
+    let book = br#"{"ch":"book","bids":[["67012.0","1.2"]]}"#;
+    let mut stream = frame(OP_TEXT, true, trade)?;
+    stream.extend_from_slice(&frame(OP_TEXT, true, book)?);
+    stream.extend_from_slice(&fragmented(OP_TEXT, trade, 3)?);
+    stream.extend_from_slice(&fragmented(OP_TEXT, book, 3)?);
+    r.feed_records(&stream, &[], &mut h)?;
+    assert_eq!((h.messages, h.bytes), (2, 2 * trade.len()));
+    let s = stats(&r);
+    assert_eq!((s.skipped, s.frag_copy_bytes), (2, 0));
+    Ok(())
+}
+
 /// One generated message: payload, fragment count, decision, and whether a
 /// Ping follows its first fragment.
 #[derive(Debug, Clone)]

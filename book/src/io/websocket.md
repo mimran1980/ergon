@@ -4,6 +4,9 @@
 
 - Frames are parsed in place: `WsHandler::on_message` gets a slice of the
   buffer the kernel wrote into (one copy per byte).
+- The handler decides from a message's first frame whether it wants it:
+  a skipped message is never copied or checked
+  ([Receiving](#receiving)).
 - `RxMeta` carries the read's kernel receive timestamp and, where the NIC
   has one, its hardware timestamp.
 - Timers (Pings, timeouts, the close wait) run on the driver's deadline
@@ -44,11 +47,78 @@ cargo run -p ergon-io --features webpki-roots --example websocket -- 20 recv-bus
 | `pong_timeout_ms` | 5,000 | nothing received this long after a Ping: `Error::Timeout("websocket pong")`; 0: off |
 | `idle_timeout_ms` | 0 (off) | nothing received this long: `Error::Timeout("websocket idle")` |
 | `close_timeout_ms` | 1,000 | longest wait for the other side of a close handshake; 0: no wait |
-| `validate_utf8` | off | invalid text closes the connection; costs one more pass over each text message |
+| `validate_utf8` | off | invalid text in a kept message closes the connection; a skipped message is not checked ([UTF-8](#utf-8)) |
 | `protocols` | none | subprotocols offered; `WsConn::protocol` is the server's pick |
 
 - Any byte received after a Ping counts as the answer, not only a Pong.
 - Server Pings are answered at once.
+
+## Receiving
+
+`WsHandler` has one required method, `on_message`, and two with defaults:
+
+| method | default | called |
+|---|---|---|
+| `on_message_start(conn, opcode, first, fin, meta) -> Interest` | `Interest::Keep` | once per data message, on its first frame; `first` is that frame's payload (the whole message when `fin`), not yet checked for UTF-8 |
+| `on_message(conn, opcode, payload, meta, pos)` | required | a kept message as one slice |
+| `on_fragments(conn, opcode, &Fragments, meta, pos)` | drops the message | a fragmented message whose first frame returned `Interest::Fragments` |
+
+| `Interest` | unfragmented message | fragmented message |
+|---|---|---|
+| `Keep` | `on_message`, a slice of the receive buffer | `on_message`, reassembled by copy |
+| `Fragments` | `on_message`, a slice of the receive buffer | `on_fragments`: one slice of the receive buffer per fragment |
+| `Skip` | dropped | every fragment dropped |
+
+Control frames inside a fragmented message are handled whatever the
+decision: a Ping is answered, a Close ends the message undelivered.
+
+Keep one channel, skip the rest:
+
+```rust,ignore
+{{#include ../../../io/tests/ws_receive.rs:skip}}
+```
+*(From `io/tests/ws_receive.rs`, which `cargo test -p ergon-io` runs on
+every platform; the test feeds it TLS records sealed with a real
+handshake's key.)*
+
+`Fragments`: `len()` (payload bytes), `count()` (slices), `iter()` /
+`for part in &m`, `get(i)`, `contiguous()` (`Some` with one slice), and
+`copy_to(&mut buf)` for one contiguous copy into a buffer of yours. It
+borrows the receive buffer: valid during the call only, no allocation.
+
+### What each case copies
+
+The kernel's write into the receive buffer is always the first copy. Beyond it:
+
+| case | `Keep` | `Fragments` | `Skip` |
+|---|---|---|---|
+| unfragmented, in one record | none | none | none |
+| a frame cut across TLS records | the later part moved next to the earlier (`span_copy_bytes`) | same | same |
+| fragmented, records end on frame boundaries | every payload byte, once (`frag_copy_bytes`) | none | none |
+| fragmented, frames cut across records | both of the above | `span_copy_bytes` only | `span_copy_bytes` only |
+| fragmented, more than `MAX_FRAGMENTS` (32) fragments, or spanning more than `buf_size` − 33,290 bytes (headers, control frames and record gaps included) | every payload byte, once | every payload byte, once; delivered as one slice; `frag_fallbacks` | none |
+
+- A held message's bytes stay in the buffer until it is delivered or
+  dropped. A compaction (the free tail ran short) moves them with the
+  window, counted in `compact_bytes`, as it does any unfinished frame.
+- `max_message` holds for every decision, skipped messages included.
+- `stats()`: `skipped` counts dropped messages; `messages` counts
+  delivered ones.
+
+### UTF-8
+
+- `validate_utf8` (off by default) checks a text message only once it is
+  kept, just before delivery: an ASCII scan, then `str::from_utf8` if a
+  byte is not ASCII. Fragments are checked in place; a character cut
+  between two fragments is joined from both.
+- RFC 6455 §8.1 requires invalid UTF-8 to fail the connection. A skipped
+  message is never read, so invalid UTF-8 in it does not close the
+  connection. This relaxation is deliberate.
+- Leave `validate_utf8` off when your parser checks text itself.
+
+### Receive cost
+
+<!-- ws-bench-table -->
 
 ## Close
 
@@ -153,6 +223,9 @@ A refused handshake, in `on_closed`:
   breaks in-place parsing and costs CPU per message.
 - Proxies.
 - Sending fragmented messages (receiving them works).
+- Dropping a skipped frame before all of it has arrived: a skipped frame
+  cut across records is still moved next to its first part
+  (`span_copy_bytes`) before it is dropped.
 
 ## Measured results
 
