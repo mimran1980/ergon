@@ -11,7 +11,7 @@ its files' times), per step:
                       clockcheck 120 s, Criterion, pre-flight 120 s: 7.3 minutes)
   mode and rep 12 s (drivers started and stopped, counters, loss reads) plus the
                       round trip's 85 s (RTT_SECONDS 20, its warm-up, the pong's start);
-                      a raw floor mode (kernel-raw, dpdk-raw: no Aeron) only that, its
+                      a raw floor mode (kernel-raw, dpdk-raw, dpdk-pure: no Aeron) only that, its
                       round trip alone; a paced mode (@RTT_GAP_US) its round trip's
                       rtt_plan seconds (20 to 60) and a quarter more of warm-up in
                       place of the 20 and 5
@@ -90,7 +90,7 @@ WIRE_OVERHEAD = 32 + 28  # Aeron's data header, IPv4 and UDP
 FLOW_CAP_BYTES_S = 8.0e9 / 8
 RTT_SIZE = 32
 # the raw floor's transports (modes.sh mode_raw): the round trip alone
-RAW = ("kernel-raw", "dpdk-raw")
+RAW = ("kernel-raw", "dpdk-raw", "dpdk-pure")
 TRANSFER_USD_GB = {"cluster": 0.0, "precision-time": 0.0, "cross-az": 0.02, "cross-region": 0.02}
 
 

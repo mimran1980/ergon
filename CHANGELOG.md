@@ -129,6 +129,16 @@
   `estimate.py` prices `c8g.2xlarge`. Each run records the DPDK build
   (`dpdk-build`), and the jitter snapshots record `sw-checksum-verified` and
   `tx-idle-cleaned`.
+- Cloud lab: pure floor mode `dpdk-pure` (AWS, cross-host). The new
+  `purefloor` C client (`benches/cloud/purefloor.c`, built on the host by
+  `vm.sh build`) does the floor client's round trip over DPDK alone, without
+  ergon-md-dpdk: `rte_eth_rx_burst` and `rte_eth_tx_burst` on the receiver
+  port, ARP to the next hop, and a pong that swaps the 5-tuple and sends the
+  frame back. The port's rings, pool, LLQ policy, checksum offloads,
+  link-change interrupts and RX timestamps are set as the transport sets
+  them. It times with the TSC or `CNTVCT_EL0` and writes the same output
+  files. `analyse.py` reports `dpdk-raw` above it, and sets a mode with
+  overrides against the floor with the same overrides where that ran.
 - `ergon-md-dpdk` bench: `clock.rs` overhead adds a `poll_idle` path and
   per-call p99.99 and max.
 - EKS lab (`eks-nri.sh`): when no zone of `EKS_REGION` can place two spot

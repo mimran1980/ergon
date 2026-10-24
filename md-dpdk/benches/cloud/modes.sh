@@ -13,6 +13,15 @@
 # round trip alone (lib.sh), with host settings and RUSTERON_* ones; anything
 # only Aeron reads is refused (mode_check).
 #
+# The pure floor, dpdk-pure (AWS), runs none of ergon-md-dpdk either:
+# purefloor.c, DPDK's rte_eth_rx_burst and rte_eth_tx_burst on the receiver
+# port, its pong a 5-tuple-swapping reflector, on dpdk's host set-up, the
+# port's rings, pool, offloads and interrupts as the transport sets them, with
+# the floor client's arguments and outputs. dpdk-raw less dpdk-pure is what
+# ergon-md-dpdk's packet path adds, and dpdk-raw's second port (it sends on
+# the sender port). Its clock is the CPU's counter alone (no -mono), and it
+# reads only the RUSTERON_DPDK_* settings in PURE_KEYS.
+#
 # The settings here (the rest are vm.sh host_setting's, or the driver's
 # environment):
 #   AERON_THREADING_MODE=DEDICATED|SHARED_NETWORK|SHARED|INVOKER  the driver's
@@ -179,11 +188,12 @@ mode_pairs() {
 }
 
 # mode_raw <mode>: 0 for the raw floor's modes (kernel-raw, dpdk-raw, -mono)
+# and the pure floor's (dpdk-pure)
 mode_raw() {
     local t=${1%+idle}
     t=${t%%@*}
     t=${t%-mono}
-    [[ $t == kernel-raw || $t == dpdk-raw ]]
+    [[ $t == kernel-raw || $t == dpdk-raw || $t == dpdk-pure ]]
 }
 
 # mode_hairpin <mode>: 0 for a same-host hairpin (@HAIRPIN=1)
@@ -226,16 +236,34 @@ hairpin_types_check() {
     done
 }
 
-# mode_client <mode>: the round trip's client: floor for a raw floor mode,
-# else rtt
-mode_client() {
-    if mode_raw "$1"; then echo floor; else echo rtt; fi
+# mode_pure <mode>: 0 for the pure floor's mode (dpdk-pure, -mono too: which
+# mode_check refuses)
+mode_pure() {
+    local t=${1%+idle}
+    t=${t%%@*}
+    [[ ${t%-mono} == dpdk-pure ]]
 }
+
+# mode_client <mode>: the round trip's client: purefloor for the pure floor,
+# floor for a raw floor mode, else rtt
+mode_client() {
+    if mode_pure "$1"; then
+        echo purefloor
+    elif mode_raw "$1"; then
+        echo floor
+    else
+        echo rtt
+    fi
+}
+
+# The RUSTERON_DPDK_* settings purefloor.c reads (the rest of the transport's
+# it never does)
+PURE_KEYS=" RX_DESCRIPTORS TX_DESCRIPTORS MBUFS_PER_PORT MEMPOOL_CACHE BURST_SIZE RX_HW_TIMESTAMP ENA_DEVARGS EAL_IN_MEMORY "
 
 # raw_base <mode>: the transport whose host set-up a raw floor mode runs on
 # (vm.sh driver): kernel-busy's (busy_read and busy_poll, NAPI deferral) for
-# kernel-raw, dpdk's (igb_uio, the ports' environment) for dpdk-raw; nothing
-# for any other mode
+# kernel-raw, dpdk's (igb_uio, the ports' environment) for dpdk-raw and
+# dpdk-pure; nothing for any other mode
 raw_base() {
     mode_raw "$1" || return 0
     local t=${1%%@*}
@@ -646,8 +674,8 @@ mode_check() {
     # the transport, as vm.sh driver takes it (any other stops the run there)
     transport=${m%+idle}
     transport=${transport%%@*}
-    [[ $transport =~ ^(kernel|kernel-busy|dpdk|dpdk-spin|dpdk-adaptive|dpdk-epoll|kernel-raw|dpdk-raw)(-mono)?$ ]] ||
-        { echo "mode $m: transport $transport: kernel, kernel-busy, dpdk, dpdk-spin, dpdk-adaptive, dpdk-epoll, or the raw floor's kernel-raw or dpdk-raw, optionally -mono (vm.sh refuses any other at the driver's start)" >&2; return 2; }
+    [[ $transport =~ ^(kernel|kernel-busy|dpdk|dpdk-spin|dpdk-adaptive|dpdk-epoll|kernel-raw|dpdk-raw|dpdk-pure)(-mono)?$ ]] ||
+        { echo "mode $m: transport $transport: kernel, kernel-busy, dpdk, dpdk-spin, dpdk-adaptive, dpdk-epoll, the raw floor's kernel-raw or dpdk-raw, optionally -mono, or the pure floor's dpdk-pure (vm.sh refuses any other at the driver's start)" >&2; return 2; }
     # the raw floor: no Aeron, so nothing only Aeron reads, and its round trip
     # alone, cross-host (floor.rs)
     if mode_raw "$m"; then
@@ -661,6 +689,20 @@ mode_check() {
                 return 2
                 ;;
             esac
+        done < <(mode_pairs "$m")
+    fi
+    # the pure floor: purefloor.c, on AWS's ENA ports, its clock the CPU's
+    # counter, and only the transport's settings it reads
+    if mode_pure "$m"; then
+        [[ $transport != *-mono ]] ||
+            { echo "mode $m: the pure floor clocks with the CPU's counter alone (purefloor.c: the TSC or CNTVCT_EL0): no -mono, no monotonic clock" >&2; return 2; }
+        [[ $cloud == aws ]] || { echo "mode $m: the pure floor is AWS only (purefloor.c takes an ENA port by PCI address)" >&2; return 2; }
+        while IFS= read -r p; do
+            key=${p%%=*}
+            if [[ $key == RUSTERON_* && ( $key != RUSTERON_DPDK_* || $PURE_KEYS != *" ${key#RUSTERON_DPDK_} "* ) ]]; then
+                echo "mode $m: $key is not one purefloor reads (RUSTERON_DPDK_ and one of$PURE_KEYS): it would measure its baseline under another name" >&2
+                return 2
+            fi
         done < <(mode_pairs "$m")
     fi
     settings=${LAB_SETTINGS# }
@@ -718,6 +760,8 @@ mode_check() {
             [[ $value == 1 ]] || { echo "mode $m: HAIRPIN=1 or nothing" >&2; return 2; }
             mode_raw "$m" ||
                 { echo "mode $m: HAIRPIN is the raw floor's (kernel-raw, dpdk-raw): the floor client runs both ends in one process; Aeron's would need two clients on one driver" >&2; return 2; }
+            ! mode_pure "$m" ||
+                { echo "mode $m: HAIRPIN is not the pure floor's: purefloor has no hairpin client (one port per host)" >&2; return 2; }
             [[ $cloud == aws ]] || { echo "mode $m: HAIRPIN is AWS only (two ENIs on the data subnet)" >&2; return 2; }
             ;;
         RTT_GAP_US)
@@ -725,6 +769,8 @@ mode_check() {
                 { echo "mode $m: RTT_GAP_US=$value: whole microseconds between pings, 1 to 1000000 (a rep of at most 60 s holds 60 round trips at 1 s)" >&2; return 2; }
             [[ $where != local ]] ||
                 { echo "mode $m: RTT_GAP_US is cross-host only: a sparse flow is the network's (lib.sh paces only the cross-host round trip)" >&2; return 2; }
+            ! mode_pure "$m" ||
+                { echo "mode $m: RTT_GAP_US is not the pure floor's: purefloor does not pace its pings" >&2; return 2; }
             ;;
         JUMBO)
             [[ $value == 1 ]] || { echo "mode $m: JUMBO=1 or nothing" >&2; return 2; }
