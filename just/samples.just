@@ -25,7 +25,7 @@ samples-ll:
     cd samples/low-latency-k8s && cargo test --test manifests -- --test-threads=1
     bash samples/low-latency-k8s/scripts/test-entrypoint.sh
     bash samples/low-latency-k8s/scripts/test-verify.sh
-    docker run --rm -v "$PWD/samples/low-latency-k8s:/mnt:ro" -w /mnt koalaman/shellcheck:v0.10.0 -S warning docker/*.sh scripts/*.sh node/*.sh
+    cd samples/low-latency-k8s && docker run --rm -v "$PWD:/mnt:ro" -w /mnt koalaman/shellcheck:v0.10.0 -S warning docker/*.sh scripts/*.sh node/*.sh
 
 # The sample's Linux lanes in Docker (placement tests included), arm64 and amd64
 samples-ll-docker:
