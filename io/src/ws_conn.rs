@@ -33,6 +33,7 @@ use crate::error::{Error, Result};
 pub use crate::net::Target;
 use crate::net::{TlsDial, flush_nonblocking};
 use crate::stream::{TlsStream, TxQueue, prefault};
+use crate::text::{NonAscii, TextCheck, TextStatus};
 use crate::tls::{self, MAX_RECORD, Opened, RecordLayer};
 use crate::ws::{self, Close};
 
@@ -167,55 +168,6 @@ pub enum Flow {
     /// copy and delivers it to [`WsHandler::on_message`]
     /// ([`WsStats::unhandled`]).
     Unhandled,
-}
-
-/// How kept text messages are checked before delivery
-/// ([`WsOptions::text_check`]). Binary messages are never checked.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum TextCheck {
-    /// No check: [`RxMeta::text`] is [`TextStatus::Unchecked`].
-    #[default]
-    None,
-    /// UTF-8, as RFC 6455 requires: invalid text closes the connection. An
-    /// ASCII scan first, then `str::from_utf8` only if a byte is not ASCII.
-    Utf8,
-    /// One pass checking that every byte is below 0x80. An ASCII message is
-    /// delivered as [`TextStatus::Ascii`]: every byte is one character, so
-    /// any byte index is a character boundary. A message with another byte
-    /// is handled as the policy says ([`WsStats::non_ascii`]).
-    Ascii(NonAscii),
-}
-
-/// What [`TextCheck::Ascii`] does with a text message that has a byte at or
-/// above 0x80.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum NonAscii {
-    /// Close the connection ([`Error::Ws`]), as an invalid message would.
-    Close,
-    /// Drop the message ([`WsStats::skipped`]); the connection stays up.
-    Skip,
-    /// Deliver it as plain bytes, flagged [`TextStatus::NotAscii`]: a
-    /// stray byte never drops a feed.
-    #[default]
-    DeliverUnchecked,
-}
-
-/// What the text check found for a delivered payload ([`RxMeta::text`]).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum TextStatus {
-    /// Not checked: binary, [`TextCheck::None`], or not yet checked
-    /// ([`WsHandler::on_message_start`]).
-    #[default]
-    Unchecked,
-    /// Valid UTF-8 ([`TextCheck::Utf8`]); a streamed fragment may start or
-    /// end inside a character.
-    Utf8,
-    /// Every byte is below 0x80 ([`TextCheck::Ascii`]): each byte is one
-    /// character, so a parser may index it without boundary checks.
-    Ascii,
-    /// At least one byte is at or above 0x80, delivered under
-    /// [`NonAscii::DeliverUnchecked`]: neither ASCII nor checked UTF-8.
-    NotAscii,
 }
 
 /// Most fragments a message keeps in the receive buffer; a message with

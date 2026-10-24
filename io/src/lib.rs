@@ -9,6 +9,8 @@
 //! - [`reconnect`]: [`Reconnect`] and its backoff policy, [`Retry`].
 //! - [`http`]: [`HttpConn`], [`HttpDial`], [`HttpHandler`]. On Linux,
 //!   `client` pools connections as `HttpClient`.
+//! - [`text`]: the text check on WebSocket text and HTTP bodies
+//!   ([`TextCheck`], [`TextStatus`]).
 //! - [`tls`]: the TLS 1.3 client configuration ([`tls::client_config`]).
 //! - [`auth`]: request signing ([`Signer`]).
 //! - [`endpoint`]: [`Handler`] (`on_open`, `on_closed`), [`ConnId`], and
@@ -42,6 +44,7 @@ pub mod placement;
 pub mod reconnect;
 pub mod route;
 mod stream;
+pub mod text;
 pub mod tls;
 pub mod ws;
 pub mod ws_conn;
@@ -86,9 +89,10 @@ pub use limit::{
 pub use net::Target;
 pub use outcome::{Now, Sent, Verdict};
 pub use reconnect::{Reconnect, Retry};
+pub use text::{NonAscii, TextCheck, TextStatus};
 pub use ws_conn::{
-    Flow, FragmentIter, Fragments, Interest, MAX_FRAGMENTS, NonAscii, TextCheck, TextStatus,
-    WsConn, WsDial, WsHandler, WsOptions, WsStats,
+    Flow, FragmentIter, Fragments, Interest, MAX_FRAGMENTS, WsConn, WsDial, WsHandler, WsOptions,
+    WsStats,
 };
 
 /// Receive metadata for one read, and for each WebSocket payload what its
@@ -101,8 +105,10 @@ pub struct RxMeta {
     pub rx_hw_ns: i64,
     /// Sequence number of this read within its driver.
     pub read_seq: u64,
-    /// WebSocket: what [`WsOptions::text_check`] found for the payload
-    /// being delivered ([`TextStatus::Ascii`]: every byte is one
-    /// character). [`TextStatus::Unchecked`] everywhere else.
+    /// What the text check ([`text`]) found for the payload being
+    /// delivered: a WebSocket message under [`WsOptions::text_check`], an
+    /// HTTP body under [`HttpOptions::body_check`]
+    /// ([`TextStatus::Ascii`]: every byte is one character).
+    /// [`TextStatus::Unchecked`] everywhere else.
     pub text: TextStatus,
 }

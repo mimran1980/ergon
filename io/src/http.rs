@@ -17,7 +17,8 @@
 //!   is delivered with [`Response::head_ascii`] false
 //!   ([`NonAsciiHead::Flag`], the default) or closes the connection
 //!   ([`NonAsciiHead::Reject`]). Bodies are not checked unless
-//!   [`HttpOptions::body_check`] asks ([`TextCheck`]).
+//!   [`HttpOptions::body_check`] asks: the WebSocket text check
+//!   ([`TextCheck`]), its result in [`RxMeta::text`].
 //! - One request in flight by default ([`HttpOptions::max_in_flight`] 1). A
 //!   second [`HttpConn::request`] before the response returns
 //!   [`Error::Busy`]: no hidden queue.
@@ -49,6 +50,7 @@ use crate::endpoint::{ConnId, ConnMut, Handler};
 use crate::error::{Error, Result};
 use crate::net::{Target, TlsDial};
 use crate::stream::{TlsStream, TxQueue};
+use crate::text::{NonAscii, TextCheck, TextStatus};
 use crate::tls::MAX_RECORD;
 
 /// Largest request (line, headers and body) [`HttpConn::request`] accepts: one
@@ -361,7 +363,9 @@ pub struct HttpOptions {
     pub buf_size: usize,
     /// What a response head with a non-ASCII byte does.
     pub non_ascii_head: NonAsciiHead,
-    /// The check on every response body.
+    /// The check on every response body ([`TextCheck::None`] by default:
+    /// HTTP has no text rule for bodies); [`RxMeta::text`] says what it
+    /// found. [`NonAscii::Skip`] is refused.
     pub body_check: TextCheck,
 }
 
@@ -412,19 +416,6 @@ pub enum NonAsciiHead {
     Flag,
     /// Close the connection with [`Error::Http`].
     Reject,
-}
-
-/// A check on every response body. HTTP has no text rule for bodies, so the
-/// default is none.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum TextCheck {
-    /// No check.
-    #[default]
-    None,
-    /// Every byte is ASCII, else the connection closes with [`Error::Http`].
-    Ascii,
-    /// The body is UTF-8, else the connection closes with [`Error::Http`].
-    Utf8,
 }
 
 struct InFlight {
@@ -1052,23 +1043,34 @@ fn reserve_body(body: &mut Vec<u8>, limit: usize) {
     }
 }
 
-/// Checks `response`'s body against the body check, then hands it over.
+/// Checks `response`'s body against the body check, then hands it over with
+/// what the check found in [`RxMeta::text`].
 #[inline]
 fn emit<H: HttpHandler>(handler: &mut H, at: &At<'_>, response: &Response<'_>) -> Result<()> {
-    match at.check {
-        TextCheck::None => {}
-        TextCheck::Ascii => {
-            if !response.body.is_ascii() {
-                return Err(Error::Http("non-ASCII byte in the response body".into()));
-            }
-        }
+    let text = match at.check {
+        TextCheck::None => TextStatus::Unchecked,
         TextCheck::Utf8 => {
             if std::str::from_utf8(response.body).is_err() {
                 return Err(Error::Http("response body is not UTF-8".into()));
             }
+            TextStatus::Utf8
         }
-    }
-    handler.on_response(at.conn, at.request, response, at.meta);
+        TextCheck::Ascii(policy) => {
+            if response.body.is_ascii() {
+                TextStatus::Ascii
+            } else {
+                match policy {
+                    NonAscii::DeliverUnchecked => TextStatus::NotAscii,
+                    // `Skip` is refused when the options are checked.
+                    NonAscii::Close | NonAscii::Skip => {
+                        return Err(Error::Http("non-ASCII byte in the response body".into()));
+                    }
+                }
+            }
+        }
+    };
+    let meta = RxMeta { text, ..*at.meta };
+    handler.on_response(at.conn, at.request, response, &meta);
     Ok(())
 }
 
@@ -1607,6 +1609,11 @@ fn check_options(opts: &HttpOptions) -> Result<()> {
         return Err(Error::Config(format!(
             "max_in_flight above {MAX_IN_FLIGHT}"
         )));
+    }
+    if opts.body_check == TextCheck::Ascii(NonAscii::Skip) {
+        return Err(Error::Config(
+            "body_check: NonAscii::Skip would leave a request unanswered".into(),
+        ));
     }
     Ok(())
 }

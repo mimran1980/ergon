@@ -7,8 +7,10 @@
 mod http_rig;
 mod support;
 
-use ergon_io::http::TextCheck;
-use ergon_io::{ConnId, Error, Handler, HttpHandler, HttpOptions, NonAsciiHead, Response, RxMeta};
+use ergon_io::{
+    ConnId, Error, Handler, HttpHandler, HttpOptions, NonAscii, NonAsciiHead, Response, RxMeta,
+    TextCheck, TextStatus,
+};
 use http_rig::HttpRig;
 use support::{Lab, R};
 
@@ -18,12 +20,15 @@ type Seen = (u16, Vec<u8>, Vec<(String, Vec<u8>)>, bool);
 #[derive(Default)]
 struct Collect {
     responses: Vec<Seen>,
+    /// What the body check found for each response (`RxMeta::text`).
+    text: Vec<TextStatus>,
 }
 
 impl Handler for Collect {}
 
 impl HttpHandler for Collect {
-    fn on_response(&mut self, _: ConnId, _: u64, r: &Response<'_>, _: &RxMeta) {
+    fn on_response(&mut self, _: ConnId, _: u64, r: &Response<'_>, meta: &RxMeta) {
+        self.text.push(meta.text);
         self.responses.push((
             r.status,
             r.body.to_vec(),
@@ -300,23 +305,28 @@ fn a_non_ascii_head_is_flagged_by_default_and_rejected_on_request() -> R {
     Ok(())
 }
 
-/// `body_check` holds bodies to UTF-8 or ASCII; off by default.
+/// `body_check` takes the WebSocket text check: off by default; UTF-8 and
+/// ASCII under `NonAscii::Close` close on a failure; ASCII under
+/// `NonAscii::DeliverUnchecked` delivers the body flagged. `RxMeta::text`
+/// says what the check found.
 #[test]
-fn the_body_check_is_off_by_default_and_closes_on_a_failure() -> R {
+fn the_body_check_is_off_by_default_and_flags_or_closes() -> R {
     let lab = Lab::new()?;
+    assert_eq!(HttpOptions::default().body_check, TextCheck::None);
     let latin = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n\u{e9}".as_bytes();
     let broken = b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n\xe9";
-    // (check, body, delivered)
-    for (check, resp, ok) in [
-        (TextCheck::None, &broken[..], true),
-        (TextCheck::Utf8, latin, true),
-        (TextCheck::Utf8, &broken[..], false),
-        (TextCheck::Ascii, latin, false),
-        (
-            TextCheck::Ascii,
-            b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\na",
-            true,
-        ),
+    let ascii = b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\na";
+    let close = TextCheck::Ascii(NonAscii::Close);
+    let flag = TextCheck::Ascii(NonAscii::DeliverUnchecked);
+    // (check, response, what a delivered body is flagged; None: closed)
+    for (check, resp, want) in [
+        (TextCheck::None, &broken[..], Some(TextStatus::Unchecked)),
+        (TextCheck::Utf8, latin, Some(TextStatus::Utf8)),
+        (TextCheck::Utf8, &broken[..], None),
+        (close, latin, None),
+        (close, ascii, Some(TextStatus::Ascii)),
+        (flag, latin, Some(TextStatus::NotAscii)),
+        (flag, ascii, Some(TextStatus::Ascii)),
     ] {
         let mut r = HttpRig::new(
             &lab,
@@ -331,12 +341,29 @@ fn the_body_check_is_off_by_default_and_closes_on_a_failure() -> R {
         let got = r
             .conn
             .feed(ConnId::from_parts(0, 0), &rec, &RxMeta::default(), &mut h);
-        assert_eq!(got.is_ok(), ok, "{check:?} {got:?}");
-        assert_eq!(h.responses.len(), usize::from(ok), "{check:?}");
-        if !ok {
+        assert_eq!(got.is_ok(), want.is_some(), "{check:?} {got:?}");
+        assert_eq!(h.text, want.into_iter().collect::<Vec<_>>(), "{check:?}");
+        if want.is_none() {
             assert!(matches!(got, Err(Error::Http(_))), "{got:?}");
         }
     }
+    Ok(())
+}
+
+/// Dropping a response would leave its request unanswered on a live
+/// connection: `NonAscii::Skip` is a WebSocket policy, refused for bodies.
+#[test]
+fn the_body_check_refuses_skip() -> R {
+    let lab = Lab::new()?;
+    let got = HttpRig::new(
+        &lab,
+        HttpOptions {
+            body_check: TextCheck::Ascii(NonAscii::Skip),
+            ..HttpOptions::default()
+        },
+    );
+    let e = got.err().ok_or("Skip accepted")?;
+    assert!(e.to_string().contains("Skip"), "{e}");
     Ok(())
 }
 

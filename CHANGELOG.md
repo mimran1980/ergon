@@ -256,20 +256,21 @@
   default, or `Reject`): a response head with a byte above 0x7F is delivered
   with the new `Response::head_ascii` false and counted in
   `HttpStats::non_ascii_heads`, or closes the connection.
-  `HttpOptions::body_check` (`http::TextCheck`: `None`, the default, `Ascii`
-  or `Utf8`) checks every body and closes the connection on a failure.
   `HttpStats::head_parses` counts head parses. `http_bench` (in
   `io/benches`) times the previous and current HTTP paths interleaved.
-
-- `ergon-io`: `WsOptions::text_check: TextCheck` replaces `validate_utf8`:
-  `None` (default), `Utf8` (RFC 6455; invalid text closes) or
-  `Ascii(NonAscii)`, one pass checking every byte is below 0x80. Under
-  `Ascii` a message with another byte is closed on (`NonAscii::Close`),
-  dropped (`Skip`) or delivered flagged (`DeliverUnchecked`, the default).
-  The new `RxMeta::text: TextStatus` (`Unchecked`, `Utf8`, `Ascii`,
-  `NotAscii`) says what was found; `Ascii` means every byte index is a
-  character boundary. Only kept messages are checked. `WsStats::non_ascii`
-  counts non-ASCII text under `Ascii`.
+- `ergon-io`: one text check for WebSocket text and HTTP bodies, in the new
+  `text` module (re-exported at the crate root). `TextCheck` is `None` (the
+  default on both), `Utf8` (invalid text closes the connection) or
+  `Ascii(NonAscii)`: one pass checking every byte is below 0x80, a payload
+  with another byte closed on (`NonAscii::Close`), dropped (`Skip`,
+  WebSocket only: `HttpOptions` refuses it with `Error::Config`) or
+  delivered flagged (`DeliverUnchecked`, the default policy). The new
+  `RxMeta::text: TextStatus` (`Unchecked`, `Utf8`, `Ascii`, `NotAscii`)
+  says what was found; `Ascii` means every byte index is a character
+  boundary. `WsOptions::text_check` replaces `validate_utf8` and checks
+  kept messages only (`WsStats::non_ascii` counts non-ASCII text under
+  `Ascii`); `HttpOptions::body_check` checks every response body. A
+  response head keeps its own rule (`non_ascii_head`).
 - `ergon-io`: `Interest::Stream` hands each fragment of a fragmented
   message to the new `WsHandler::on_fragment(conn, opcode, part, index,
   fin, meta) -> Flow` as soon as it is complete, borrowed from the receive
@@ -488,13 +489,13 @@
   chunk, whole in the buffer, is borrowed (no copy). A head is parsed once:
   a response whose body arrives in later records keeps its head as offsets.
   `HttpStats::chunk_copy_bytes` now counts every byte the de-chunking moved,
-  a streamed response's head included (it counted only the last pass's body). The de-chunk buffer is allocated
-  on first use, at `buf_size` minus two records, instead of 64 KiB at
-  connect.
-- `ergon-io`: `HttpConn`'s 64 KiB send queue is written once at connect,
-  so the first requests take no page fault. Header checks are faster (a
-  token table, CR/LF/NUL scanned eight bytes at a time); what they accept is
-  unchanged.
+  a streamed response's head included (it counted only the last pass's
+  body). The de-chunk buffer is allocated on first use, at `buf_size` minus
+  two records, instead of 64 KiB at connect.
+- `ergon-io`: `HttpConn`'s 64 KiB send queue is written once at connect
+  (as `WsConn`'s is), so the first requests take no page fault. Header
+  checks are faster (a token table, CR/LF/NUL scanned eight bytes at a
+  time); what they accept is unchanged.
 
 ### Removed
 

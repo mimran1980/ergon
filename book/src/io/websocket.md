@@ -143,7 +143,9 @@ The kernel's write into the receive buffer is always the first copy. Beyond it:
 
 `text_check` runs on a text message only once it is kept, just before
 delivery; `meta.text` (`TextStatus`) says what it found. Binary is never
-checked.
+checked. The same `TextCheck` checks HTTP bodies
+([`body_check`](http-client.md#rules)), where `Skip` is
+refused.
 
 | `TextCheck` | one pass that | `meta.text` | invalid or non-ASCII text |
 |---|---|---|---|

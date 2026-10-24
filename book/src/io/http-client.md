@@ -88,8 +88,13 @@ use `Target::new("api.example.com", 443, "")` and
   `HttpStats::non_ascii_heads` (`NonAsciiHead::Flag`, the default); with
   `NonAsciiHead::Reject` it closes the connection. Never dropped silently.
 - **Bodies are not checked** by default: HTTP has no text rule for them.
-  `HttpOptions::body_check` takes `TextCheck::Ascii` or `TextCheck::Utf8`;
-  a body that fails closes the connection with `Error::Http`.
+  `HttpOptions::body_check` takes the WebSocket text check (`TextCheck`,
+  [Text checks](websocket.md#text-checks)) and `meta.text` says what it
+  found. `Utf8` and `Ascii(NonAscii::Close)` close the connection with
+  `Error::Http` on a failing body; `Ascii(NonAscii::DeliverUnchecked)`
+  delivers it flagged `NotAscii`. `Ascii(NonAscii::Skip)` is refused
+  (`Error::Config`): a dropped response would leave its request
+  unanswered.
 - **libcurl:** `curl_drive` picks `curl_multi_perform` on every poll
   (default) or `curl_multi_socket_action`; both never block. Compared once
   on Azure at 1,000/s: `curl_multi_perform` was 1–6 µs ahead at the
