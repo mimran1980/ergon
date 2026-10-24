@@ -157,7 +157,7 @@ if "$KIND" get clusters 2>/dev/null | grep -qx "$CLUSTER"; then
   fail "cluster ${CLUSTER} already exists; delete it before running this sample"
 fi
 
-say "creating ${CLUSTER} (kindest/node:v1.33.0)"
+say "creating ${CLUSTER} (kindest/node:v1.35.1, containerd 2.2.1)"
 "$KIND" create cluster \
   --name "$CLUSTER" \
   --config "$TRY/kind.yaml" \

@@ -42,7 +42,7 @@ nri=$(cd "$here/.." && pwd)
 admission=$(cd "$nri/.." && pwd)/nri-latency-pods/admission
 results=/var/lib/ergon-lab/results
 KIND_VERSION=v0.33.0
-KUBECTL_VERSION=v1.33.0
+KUBECTL_VERSION=v1.35.1
 HELM_VERSION=v3.17.4
 
 say() { echo "[$(date -u +%T)] $*"; }

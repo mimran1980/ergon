@@ -22,7 +22,7 @@ Docker Desktop can crash-loop containerd in this kind node with
 containerd state once and keeps waiting. It does not wipe a node whose
 containerd is answering, and it does not touch any other cluster.
 
-The kind node is `kindest/node:v1.33.0` with the static CPU manager,
+The kind node is `kindest/node:v1.35.1` (containerd 2.2.1: NRI with the default validator) with the static CPU manager,
 `reservedSystemCPUs: "0,1"`, NRI on, and the label
 `ergon.io/shared-cpus=true`. The chart is installed with `sharedCpus: "0"`,
 namespace allowlist `trading`, and `hostContract.kubeletConfig`, `sys` and

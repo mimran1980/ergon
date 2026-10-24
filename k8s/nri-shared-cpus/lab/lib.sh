@@ -80,7 +80,7 @@ apiVersion: kind.x-k8s.io/v1alpha4
 name: ergon-lab
 nodes:
   - role: control-plane
-    image: kindest/node:v1.33.0
+    image: kindest/node:v1.35.1@sha256:05d7bcdefbda08b4e038f644c4df690cdac3fba8b06f8289f30e10026720a1ab
     extraMounts:
       - hostPath: /sys
         containerPath: /vm-sys
