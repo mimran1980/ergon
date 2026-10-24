@@ -171,6 +171,11 @@ check "says why" has "$work/nossh/out" "no SSH to 203.0.113.10"
 check "group deleted" has "$work/nossh/fake/az.log" "az group delete -n ergon-lab-nri-20261024000000 --yes --no-wait"
 check "verified" has "$work/nossh/out" "verified: group"
 
+echo "== sshd answers before cloud-init has enabled the backstop timer"
+run_lab cloudinit FAKE_CLOUD_INIT_LAG=2 LAB_SSH_WAIT_SECONDS=5
+check "waits for cloud-init, then runs" test "$(rc_of cloudinit)" -eq 0
+check "checks the timer after cloud-init" test "$(grep -n 'cloud-init status --wait' "$work/cloudinit/fake/ssh.log" | tail -1 | cut -d: -f1)" -lt "$(grep -n 'is-enabled ergon-lab-backstop' "$work/cloudinit/fake/ssh.log" | head -1 | cut -d: -f1)"
+
 echo "== teardown on a failed step"
 run_lab stepfail FAKE_FAIL_STEP=e2e LAB_SSH_WAIT_SECONDS=5
 check "fails" test "$(rc_of stepfail)" -ne 0

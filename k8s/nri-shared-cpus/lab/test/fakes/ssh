@@ -6,6 +6,8 @@
 # exits 0 (1 for FAKE_FAIL_STEP). The boot id is boot-1 until a reboot, then
 # boot-2; FAKE_REBOOT_LAG=n: the old boot answers n more connections first.
 # FAKE_SSH_DOWN_AT=<step>: every connection after that step starts fails.
+# FAKE_CLOUD_INIT_LAG=n: cloud-init's runcmd (which enables the backstop
+# timer) has not run for the first n connections.
 cmd=${!#}
 echo "$cmd" >>"$FAKE_DIR/ssh.log"
 case ${FAKE_SSH:-up} in
@@ -21,6 +23,17 @@ if [[ -e $FAKE_DIR/reboot-lag ]]; then
         rm -f "$FAKE_DIR/reboot-lag"
         boot="boot-2"
         echo "$boot" >"$FAKE_DIR/boot"
+    fi
+fi
+if [[ -n ${FAKE_CLOUD_INIT_LAG:-} ]]; then
+    n=0
+    [[ -e $FAKE_DIR/conns ]] && n=$(cat "$FAKE_DIR/conns")
+    echo $((n + 1)) >"$FAKE_DIR/conns"
+    if ((n < FAKE_CLOUD_INIT_LAG)); then
+        case $cmd in
+        "cloud-init status --wait") exit 1 ;;
+        "systemctl is-enabled ergon-lab-backstop.timer") echo disabled; exit 1 ;;
+        esac
     fi
 fi
 case $cmd in

@@ -412,6 +412,13 @@ step() {
 }
 
 wait_ssh || die "no SSH to $ip in $ssh_wait s"
+# sshd answers before cloud-init's runcmd enables the timer: wait for
+# cloud-init to finish (retrying an SSH drop) before checking it
+until=$(($(date +%s) + ssh_wait))
+until on "cloud-init status --wait" >/dev/null 2>&1; do
+    (($(date +%s) < until)) || die "cloud-init did not finish on $ip in $ssh_wait s"
+    sleep "$poll"
+done
 on "systemctl is-enabled ergon-lab-backstop.timer" >/dev/null || die "the VM's backstop timer is not enabled"
 # the identity's role takes minutes to reach ARM: the backstop must be able
 # to read the group before anything else runs
