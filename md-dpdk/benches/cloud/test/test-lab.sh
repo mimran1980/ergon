@@ -4664,7 +4664,7 @@ pre=$(
 want="keys: 2 2 2 2 2 0 0 0 0
 transports: 2 2 0 0 0 0
 mode dpdk@CONDUCTUR=own: CONDUCTUR is neither a setting the lab knows (THP BIN CSTATE BUSY_POLL COALESCE RX_RING MIN_FREE_PCT CLOCKSOURCE RELIABLE AGENTS SMT JUMBO PUB_PARAMS SUB_PARAMS IRQ NAPI_DEFER NAPI_BUSY CONDUCTOR) nor an AERON_* or RUSTERON_* variable: vm.sh would export it to a driver that never reads it, and the mode would measure its baseline under another name
-mode kernal: transport kernal: kernel, kernel-busy, dpdk, dpdk-spin, dpdk-adaptive, dpdk-epoll, or the raw floor's kernel-raw or dpdk-raw, optionally -mono (vm.sh refuses any other at the driver's start)
+mode kernal: transport kernal: kernel, kernel-busy, dpdk, dpdk-spin, dpdk-adaptive, dpdk-epoll, the raw floor's kernel-raw or dpdk-raw, optionally -mono, or the pure floor's dpdk-pure (vm.sh refuses any other at the driver's start)
 rx: 0 0 2 2 2 2 0 2 0
 tx: 0 2 0 0 2 2 2 0 2 2
 cache, burst: 0 0 2 0 2 2
@@ -5973,7 +5973,7 @@ on() {
     *"vm.sh nics") echo "receiver ens7 ens7 0d $([[ $host == "$A" ]] && echo 10.30.1.5 || echo 10.30.1.7) 24 0000:00:07.0" ;;
     *"vm.sh layout") echo "0 2 1 3 4" ;;
     *"vm.sh loss") echo "kernel-udp-InErrors=0;nic-kernel-drops=0" ;;
-    *" floor xping "* | *" rtt xping "*) echo "rtt,$(label "$cmd"),udp,20000,21000,25000,30000,40000,75000,20500,1000,0" ;;
+    *" floor xping "* | *" purefloor xping "* | *" rtt xping "*) echo "rtt,$(label "$cmd"),udp,20000,21000,25000,30000,40000,75000,20500,1000,0" ;;
     *" tput xsub "*) echo "tput,$(label "$cmd"),udp,1000,1,2,3,0,1,2" ;;
     *"cat bench/load-spikes.csv") printf '# start_realtime_ns=1\n# spikes_total=0\nstream,due_ns,latency_ns,ping\n' ;;
     esac
@@ -5981,7 +5981,7 @@ on() {
 }
 reps=1 local_modes= load_sizes=288 load_fractions=50 load_seconds=1 load_ladder= mix='p=s:3001:1000:32' mix_seconds=1
 tput_seconds=5 rtt_messages=1000 rtt_warmup=100 rtt_align= tput_flows=2
-modes=(kernel-raw dpdk-raw dpdk)
+modes=(kernel-raw dpdk-raw dpdk dpdk-pure)
 bench_state isolated
 SH
 dfl=$tmp/dry-floor
@@ -6078,7 +6078,7 @@ elif [[ $before_start != *'echo "${floor_wire}" >"$run/floor"'* || $before_start
     fail "vm.sh driver: a floor mode's wire not recorded, or a media driver started"
 elif [[ $stop_branch != *'pkill -x floor'* || $stop_branch != *'rm -f "$run/floor"'* ]]; then
     fail "vm.sh stop: a floor client not ended, or its wire kept"
-elif ! grep -q -- '--bin floor' "$cloud/vm.sh" || ! grep -q "pgrep -x 'media_driver|rtt|load|tput|floor'" "$cloud/vm.sh"; then
+elif ! grep -q -- '--bin floor' "$cloud/vm.sh" || ! grep -q "pgrep -x 'media_driver|rtt|load|tput|floor|" "$cloud/vm.sh"; then
     fail "vm.sh: the floor client not built, or diag-start blind to it"
 else
     pass "vm.sh driver: a floor mode set up as kernel-busy or dpdk under INVOKER's threading, its wire recorded, no media driver; stop ends its client; build builds it"
@@ -6137,6 +6137,219 @@ else
     pass "analyse.py: the floor modes named, and what each Aeron mode adds over its transport's floor in the same state (none without one); spikes.py counts the floor client busy"
 fi
 
+# The pure floor, dpdk-pure: DPDK alone (purefloor.c: rte_eth_rx_burst and
+# rte_eth_tx_burst on the receiver port, a 5-tuple-swapping reflector at the
+# pong), none of ergon-md-dpdk or Aeron. modes.sh: a raw floor mode on dpdk's
+# set-up, its client purefloor; cross-host on AWS only; refused with -mono
+# (the CPU's counter is its only clock), +idle, anything only Aeron reads,
+# and any RUSTERON_* purefloor does not read; the transport's ring and pool
+# limits still apply (they are the NIC's)
+puremodes=$(
+    set +e
+    exec 2>&1
+    # shellcheck source=../modes.sh
+    . "$cloud/modes.sh" || exit 1
+    for m in dpdk-pure dpdk-pure@RUSTERON_DPDK_RX_DESCRIPTORS=1024@RUSTERON_DPDK_BURST_SIZE=16 dpdk-pure@THP=always@JUMBO=1; do
+        mode_check "$m" remote arm64 aws '' cluster >/dev/null
+        echo "$m $? $(mode_client "$m") $(raw_base "$m") $(mode_raw "$m" && echo raw)"
+    done
+    for m in dpdk-pure-mono:monotonic dpdk-pure+idle:'no Aeron' dpdk-pure@AERON_MTU_LENGTH=4096:'no Aeron' \
+        dpdk-pure@RUSTERON_DPDK_LOCAL_IO=spin:'not one purefloor reads' dpdk-pure@RUSTERON_DPDK_RX_DESCRIPTORS=16384:'8192 at most'; do
+        why=$(mode_check "${m%%:*}" remote arm64 aws '' cluster 2>&1)
+        echo "${m%%:*} $? $(grep -c -- "${m#*:}" <<<"$why")"
+    done
+    why=$(mode_check dpdk-pure local arm64 aws '' cluster 2>&1)
+    echo "local $? $(grep -c 'cross-host only' <<<"$why")"
+    why=$(mode_check dpdk-pure remote x86_64 azure '' cluster 2>&1)
+    echo "azure $? $(grep -c 'AWS only' <<<"$why")"
+    echo "dpdk-raw: $(mode_client dpdk-raw)"
+)
+want="dpdk-pure 0 purefloor dpdk raw
+dpdk-pure@RUSTERON_DPDK_RX_DESCRIPTORS=1024@RUSTERON_DPDK_BURST_SIZE=16 0 purefloor dpdk raw
+dpdk-pure@THP=always@JUMBO=1 0 purefloor dpdk raw
+dpdk-pure-mono 2 1
+dpdk-pure+idle 2 1
+dpdk-pure@AERON_MTU_LENGTH=4096 2 1
+dpdk-pure@RUSTERON_DPDK_LOCAL_IO=spin 2 1
+dpdk-pure@RUSTERON_DPDK_RX_DESCRIPTORS=16384 2 1
+local 2 1
+azure 2 1
+dpdk-raw: floor"
+if [[ $puremodes == "$want" ]]; then
+    pass "modes.sh: the pure floor, dpdk-pure: a raw floor mode on dpdk's set-up, its client purefloor; refused with -mono, +idle, Aeron's settings, a RUSTERON_* purefloor does not read, past the NIC's rings, on one host or off AWS"
+else
+    fail "modes.sh: the pure floor's mode"
+    diff -u <(echo "$want") <(echo "$puremodes") >&2 || true
+fi
+
+# vm.sh build compiles purefloor on the host, as gapspin, against the DPDK
+# the media driver links (pkg-config libdpdk: Debian's, or precision-time's
+# 25.11), with -Wall -Wextra -Werror and the architecture's CFLAGS; one that
+# does not compile leaves why in ~/bench/purefloor_unavailable and no
+# purefloor, and the build goes on (the other modes need none)
+# shellcheck disable=SC2016
+{
+    printf '#!/bin/sh\necho "gcc $*" >>"$FAKE_LOG"\n[ -z "$FAKE_GCC_FAIL" ] || { echo "purefloor.c:1:1: error: boom" >&2; exit 1; }\nwhile [ "$1" != -o ]; do shift; done\nprintf "#!/bin/sh\\n" >"$2"; chmod +x "$2"\n' >"$sbb/bin/gcc"
+    printf '#!/bin/sh\ncase "$*" in *--cflags*) echo "-I/usr/include/dpdk -include rte_config.h" ;; *--libs*) echo "-lrte_ethdev -lrte_eal" ;; esac\n' >"$sbb/bin/pkg-config"
+}
+chmod +x "$sbb/bin/gcc" "$sbb/bin/pkg-config"
+pure_build() { # <arch> [FAKE_GCC_FAIL]: the gcc line, then whether purefloor and its marker are there
+    rm -f "$sbb/home/bench/purefloor"
+    : >"$sbb/log"
+    env -i PATH="$sbb/bin:$PATH" HOME="$sbb/home" FAKE_LOG="$sbb/log" FAKE_ARCH="$1" FAKE_NO_DPDK= FAKE_GCC_FAIL="${2:-}" \
+        LAB_SYS_ROOT="$sys/$([[ $1 == aarch64 ]] && echo graviton || echo aws-x86)" \
+        bash "$cloud/vm.sh" build >"$sbb/out" 2>&1 || echo "exit $?"
+    grep '^gcc .*purefloor' "$sbb/log"
+    echo "purefloor $([[ -x $sbb/home/bench/purefloor ]] && echo built || echo none), unavailable: $(cat "$sbb/home/bench/purefloor_unavailable" 2>/dev/null)"
+}
+echo "an earlier build's" >"$sbb/home/bench/purefloor_unavailable"
+got="x86:
+$(pure_build x86_64)
+arm:
+$(pure_build aarch64)
+fails:
+$(pure_build x86_64 1)"
+want="x86:
+gcc -O2 -Wall -Wextra -Werror -I/usr/include/dpdk -include rte_config.h -o $sbb/home/bench/purefloor $cloud/purefloor.c -lrte_ethdev -lrte_eal
+purefloor built, unavailable: 
+arm:
+gcc -O2 -Wall -Wextra -Werror -mcpu=native -I/usr/include/dpdk -include rte_config.h -o $sbb/home/bench/purefloor $cloud/purefloor.c -lrte_ethdev -lrte_eal
+purefloor built, unavailable: 
+fails:
+gcc -O2 -Wall -Wextra -Werror -I/usr/include/dpdk -include rte_config.h -o $sbb/home/bench/purefloor $cloud/purefloor.c -lrte_ethdev -lrte_eal
+purefloor none, unavailable: purefloor.c did not compile: purefloor.c:1:1: error: boom"
+if [[ $got != "$want" ]]; then
+    fail "vm.sh build: purefloor"
+    diff -u <(echo "$want") <(echo "$got") >&2 || true
+else
+    pass "vm.sh build: purefloor compiled on the host against pkg-config's libdpdk with -Wall -Wextra -Werror and the architecture's CFLAGS; a failure said in purefloor_unavailable, the build going on"
+fi
+
+# vm.sh ready: a dpdk-pure mode where purefloor did not build is refused
+# before any state, saying why; with purefloor there, taken
+rm -f "$sbr/home/bench/purefloor"
+echo "purefloor.c did not compile: boom" >"$sbr/home/bench/purefloor_unavailable"
+got="none: $(ready_sb aws-x86 7.2.6+deb13-cloud-amd64 dpdk dpdk-pure@THP=always)"
+rm -f "$sbr/home/bench/purefloor_unavailable"
+printf '#!/bin/sh\n' >"$sbr/home/bench/purefloor"
+chmod +x "$sbr/home/bench/purefloor"
+got+="
+built: $(ready_sb aws-x86 7.2.6+deb13-cloud-amd64 dpdk dpdk-pure)"
+rm -f "$sbr/home/bench/purefloor"
+want="none: 2 mode dpdk-pure@THP=always: purefloor did not build here (vm.sh build): purefloor.c did not compile: boom
+built: 0"
+if [[ $got != "$want" ]]; then
+    fail "vm.sh ready: dpdk-pure without purefloor"
+    diff -u <(echo "$want") <(echo "$got") >&2 || true
+else
+    pass "vm.sh ready: a dpdk-pure mode refused where purefloor did not build, saying why"
+fi
+
+# vm.sh client purefloor: only on the pure floor's wire (vm.sh driver
+# dpdk-pure: ~/bench/floor is pure), the build's ~/bench/purefloor with the
+# driver's environment and an unreliable channel's lost-round-trip timeout,
+# never HARNESS_DRIVER; the floor client never on that wire, nor purefloor
+# on dpdk-raw's
+pure_client() { # <prog>
+    : >"$sbc/log"
+    env -i PATH="$sbc/bin:$PATH" HOME="$sbc/home" FAKE_LOG="$sbc/log" FAKE_ARCH=x86_64 LAB_SYS_ROOT="$sys/aws-x86" \
+        bash "$cloud/vm.sh" client isolated:dpdk-pure "$1" xping 10.30.1.7:20123 10.30.1.5:20124 10 1 2 >"$sbc/out" 2>&1
+    echo "rc $? $(grep '^sudo ' "$sbc/log" | tail -1)"
+}
+echo 70000 >"$sbc/home/bench/base_rtt_us"
+printf '#!/bin/sh\n' >"$sbc/home/bench/purefloor"
+chmod +x "$sbc/home/bench/purefloor"
+rm -f "$sbc/home/bench/floor"
+p_none=$(pure_client purefloor)
+echo dpdk >"$sbc/home/bench/floor"
+p_raw=$(pure_client purefloor)
+p_raw_said=$(cat "$sbc/out")
+echo pure >"$sbc/home/bench/floor"
+p_pure=$(pure_client purefloor)
+f_pure=$(pure_client floor)
+f_pure_said=$(cat "$sbc/out")
+rm -f "$sbc/home/bench/floor" "$sbc/home/bench/purefloor"
+if [[ $p_none != "rc 2 " || $p_raw != "rc 2 " || $p_raw_said != *"vm.sh driver dpdk-pure"* ]]; then
+    fail "vm.sh client purefloor off the pure floor's wire: [$p_none] [$p_raw] $p_raw_said"
+elif [[ $f_pure != "rc 2 " || $f_pure_said != *"vm.sh driver kernel-raw or dpdk-raw"* ]]; then
+    fail "vm.sh client floor on the pure floor's wire: $f_pure $f_pure_said"
+elif [[ $p_pure != "rc 0 sudo bash -c "*"$sbc/home/bench/driver.env"* || $p_pure != *" RTT_LOST_TIMEOUT_US=280000 "* ||
+    $p_pure != *" $sbc/home/bench/purefloor xping 10.30.1.7:20123 10.30.1.5:20124 10 1 2" || $p_pure == *HARNESS_DRIVER* ]]; then
+    fail "vm.sh client purefloor: $p_pure $(tail -2 "$sbc/out")"
+else
+    pass "vm.sh client purefloor: only on the pure floor's wire, the build's purefloor with the driver's environment and an unreliable channel's timeout; the floor client never there"
+fi
+
+# vm.sh driver dpdk-pure: dpdk's set-up, the wire recorded as pure, refused
+# without purefloor; stop ends a purefloor client; diag-start sees it busy
+if [[ $before_start != *'floor_wire=pure'* || $before_start != *'purefloor did not build here'* ]]; then
+    fail "vm.sh driver: the pure floor's wire, or its refusal without purefloor"
+elif [[ $stop_branch != *'pkill -x purefloor'* ]] || ! grep -q "pgrep -x 'media_driver|rtt|load|tput|floor|purefloor'" "$cloud/vm.sh"; then
+    fail "vm.sh stop or diag-start: blind to purefloor"
+else
+    pass "vm.sh driver dpdk-pure: dpdk's set-up, its wire pure, refused without purefloor; stop ends purefloor, diag-start sees it"
+fi
+
+# lib.sh dry (the floor modes' run above, dpdk-pure among them): its rep is
+# purefloor's round trip alone, pong on b, ping on a, the pong ended by its
+# path ("/purefloor xpong"), its rtt row; no throughput or load
+got=$(grep "client isolated:dpdk-pure " "$dfl/calls" | sort |
+    sed -E 's/LAB_CLIENT_DEADLINE=[0-9]+ //; s/LOAD_SPIKE_NS=[0-9]+ //; s/LOOP_STALL_NS=[0-9]+ //; s/RTT_SECONDS=[0-9]+ //'
+    echo "then $(awk 'index($0, "client isolated:dpdk-pure purefloor xping ") {on = 1; next} on && /pkill -f/ {print; exit}' "$dfl/calls")"
+    grep 'client isolated:dpdk-pure ' "$dfl/calls" | grep -c ' tput \| load ' || true
+    grep -c '^1,rtt,isolated:dpdk-pure,udp,20000,' "$dfl/results.csv")
+want="192.0.2.1 ergon/md-dpdk/benches/cloud/vm.sh client isolated:dpdk-pure purefloor xping 10.30.1.7:20123 10.30.1.5:20124 1000 100 2
+192.0.2.2 ergon/md-dpdk/benches/cloud/vm.sh client isolated:dpdk-pure purefloor xpong 10.30.1.7:20123 10.30.1.5:20124 2
+then 192.0.2.2 sudo pkill -f '/[p]urefloor xpong'
+0
+1"
+if [[ $got != "$want" ]]; then
+    fail "lib.sh dry: the pure floor's rep"
+    diff -u <(echo "$want") <(echo "$got") >&2 || true
+else
+    pass "lib.sh dry: the pure floor's rep is purefloor's round trip alone (pong on b, ping on a, ended by its path), its rtt row"
+fi
+
+# analyse.py: dpdk-pure named for what it is, after dpdk-raw, and dpdk-raw
+# beside it in the table above the floor (what ergon-md-dpdk's packet path
+# adds over DPDK alone), the Aeron DPDK mode still beside dpdk-raw;
+# estimate.py: its rep the round trip alone; spikes.py: purefloor busy
+cat >"$tmp/pure-results.csv" <<'CSV'
+1,rtt,isolated:dpdk,udp,25000,26000,30000,35000,45000,72000,25500,1000,0
+1,rtt,isolated:dpdk-raw,udp,15000,16000,20000,25000,35000,71000,15500,1000,0
+1,rtt,isolated:dpdk-pure,udp,12000,13000,16000,20000,30000,85000,12500,1000,0
+CSV
+pure_md=$(python3 "$cloud/analyse.py" "$tmp/pure-results.csv" 2>&1 || true)
+above=$(section "## UDP round trip above the raw floor (µs)" <<<"$pure_md" | tr -s ' ')
+rtt_order=$(grep -o '^| isolated, [^|]*' <<<"$pure_md" | head -3 | tr -s ' ' | tr '\n' ';')
+est=$(python3 - "$cloud" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import estimate as e
+args = dict(type_a="c8g.xlarge", type_b="c8g.xlarge", placement="cluster", reps=2, local_modes=[], states=["pinned"],
+            load_sizes=[288], load_fractions=[50], load_ladder={}, load_seconds=5, mix=[[(1000, 32)]], mix_seconds=5,
+            tput_seconds=5, tput_flows=2, rtt_messages=1000, rtt_warmup=100, no_flatout=False, max_hours=8)
+pure = e.estimate(modes=["dpdk-pure@RUSTERON_DPDK_RX_DESCRIPTORS=1024"], **args)
+fixed = e.SETUP_S + e.TEARDOWN_S + e.STATE_S["pinned"]
+print(pure["wall_s"] == fixed + 2 * (e.MODE_S + e.RTT_S), pure["bound"])
+PY
+)
+busy=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import spikes; print(bool(spikes.BUSY.match("purefloor")))' "$cloud")
+if [[ $pure_md != *"| isolated, DPDK alone, no ergon-md-dpdk or Aeron (pure floor) "* ]]; then
+    fail "analyse.py: the pure floor's name: $(grep -m3 'pure' <<<"$pure_md")"
+elif [[ $(grep -c '^| isolated, ' <<<"$above") != 2 ||
+    $above != *"| isolated, DPDK | DPDK packet path, no Aeron (raw floor) | 1 | 10.00 (10.00–10.00) "* ||
+    $above != *"| isolated, DPDK packet path, no Aeron (raw floor) | DPDK alone, no ergon-md-dpdk or Aeron (pure floor) | 1 | 3.00 (3.00–3.00) | 4.00 (4.00–4.00) | 5.00 (5.00–5.00) | -14.00 (-14.00–-14.00) |"* ]]; then
+    fail "analyse.py: dpdk-raw above the pure floor"
+    echo "$above" >&2
+elif [[ $rtt_order != *"DPDK packet path, no Aeron (raw floor) ;| isolated, DPDK alone, no ergon-md-dpdk or Aeron (pure floor) "* ]]; then
+    fail "analyse.py: the pure floor not after dpdk-raw: $rtt_order"
+elif [[ $est != "True False" || $busy != True ]]; then
+    fail "estimate.py or spikes.py with the pure floor: $est $busy"
+else
+    pass "analyse.py: the pure floor named, after dpdk-raw, and dpdk-raw above it (ergon-md-dpdk's packet path over DPDK alone); estimate.py: its round trip alone; spikes.py: purefloor busy"
+fi
+
 # spikes.py: each rep's largest round trips split one way (rtt's RTT_ONE_WAY,
 # precision-time: oneway-<state>-<mode>-<rep>.csv): out (sent to the pong's
 # NIC), back (the pong's NIC to the ping's) and the ping's host (its NIC to
@@ -6157,7 +6370,7 @@ else
     pass "spikes.py: each rep's largest round trips split one way (out, back, the ping's host), largest first, without diagnostics too"
 fi
 
-for script in vm.sh irqs.sh host.sh modes.sh lib.sh remote.sh azure/lab.sh aws/lab.sh; do
+for script in vm.sh irqs.sh host.sh modes.sh lib.sh remote.sh azure/lab.sh aws/lab.sh test/purefloor-docker.sh; do
     bash -n "$cloud/$script" && pass "bash -n $script" || fail "bash -n $script"
 done
 # spikes.py's agent gap table: every agent loop gap the DPDK event log

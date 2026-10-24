@@ -68,7 +68,7 @@ import sys
 # network agent ("[sender, receiver]", which the kernel cuts to 15 characters),
 # SHARED's one agent (the media driver's main thread; under the other modes the
 # conductor, on the untraced housekeeping CPU) and the clients
-BUSY = re.compile(r"^(sender|receiver|\[sender, |\[conductor, |media_driver|rtt|load|tput|floor)")
+BUSY = re.compile(r"^(sender|receiver|\[sender, |\[conductor, |media_driver|rtt|load|tput|floor|purefloor)")
 EVENT = re.compile(r"\[(\d+)\].*?\s(\d+\.\d+): (\w+): (.*)")
 # a thread name may hold spaces ("[sender, receiv")
 SWITCH = re.compile(r"prev_comm=(.+?) prev_pid=\d+ prev_prio=\d+ prev_state=(\S+) ==> next_comm=(.+?) next_pid=")

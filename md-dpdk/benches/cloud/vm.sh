@@ -7,7 +7,9 @@
 #                            on AWS chrony in systemd-timesyncd's place (timesync_setup)
 #                            (x86_64; aarch64, AWS Graviton, only with lab.sh's LAB_ALLOW_ARM=1)
 #   vm.sh build              the media driver (static, dpdk), the rtt/load/tput/counters clients with
-#                            the driver's features (INVOKER embeds it), igb_uio (AWS); on aarch64,
+#                            the driver's features (INVOKER embeds it), igb_uio (AWS), purefloor
+#                            (purefloor.c, against pkg-config's libdpdk; why not in
+#                            ~/bench/purefloor_unavailable, never fatal); on aarch64,
 #                            should md-dpdk's dpdk feature not build there, both without dpdk
 #                            (DPDK modes then refuse to start, saying so)
 #   vm.sh build-ynl          (build, where lib.sh's bench/want_ynl is 1: a mode with @NAPI_BUSY) the
@@ -40,9 +42,11 @@
 #                            the data NICs (RUSTERON_MEDIA_DRIVER_DATA_NICS) for its NIC checks;
 #                            the raw floor's kernel-raw and dpdk-raw start none either: kernel-busy's
 #                            or dpdk's set-up under INVOKER's threading (one thread sends and
-#                            receives), for the floor client (no Aeron), its wire in ~/bench/floor
-#   vm.sh client <label> <rtt|tput|load|floor> <args>   a benchmark client against the running driver
-#                            (floor: the raw floor's, on the wire vm.sh driver set up), ended at
+#                            receives), for the floor client (no Aeron), its wire in ~/bench/floor;
+#                            the pure floor's dpdk-pure dpdk's set-up, its wire pure, for purefloor
+#   vm.sh client <label> <rtt|tput|load|floor|purefloor> <args>   a benchmark client against the running
+#                            driver (floor, purefloor: the raw or pure floor's, on the wire vm.sh driver
+#                            set up), ended at
 #                            its deadline (LAB_CLIENT_DEADLINE seconds, an hour without it; SIGKILL
 #                            LAB_CLIENT_GRACE, 10 s, after SIGTERM): exit 124 then
 #   vm.sh stop               stop the media driver and give the data NICs back to the kernel
@@ -1327,6 +1331,17 @@ build)
     if [[ $(cat "$run/want_ynl" 2>/dev/null) == 1 ]]; then
         "$self" build-ynl || echo "build: no ynl ($(cat "$run/ynl_unavailable" 2>/dev/null)): @NAPI_BUSY modes are refused (vm.sh ready)" >&2
     fi
+    # the pure floor's client (dpdk-pure), against the DPDK the media driver
+    # links (pkg-config's libdpdk: Debian's, or build-ptp's); never fatal
+    # here: vm.sh ready refuses a dpdk-pure mode without it, saying why
+    rm -f "$run/purefloor" "$run/purefloor_unavailable"
+    # shellcheck disable=SC2046,SC2086
+    if ! gcc -O2 -Wall -Wextra -Werror ${CFLAGS:-} $(pkg-config --cflags libdpdk) -o "$run/purefloor" "$(dirname "$self")/purefloor.c" \
+        $(pkg-config --libs libdpdk) 2>"$run/purefloor.err"; then
+        rm -f "$run/purefloor"
+        echo "purefloor.c did not compile: $(grep -m1 'error' "$run/purefloor.err" || tail -1 "$run/purefloor.err")" >"$run/purefloor_unavailable"
+        echo "build: $(cat "$run/purefloor_unavailable"): dpdk-pure modes are refused (vm.sh ready)" >&2
+    fi
     ;;
 build-ynl)
     # @NAPI_BUSY's tool: ynl, the kernel's own (tools/net/ynl), and its
@@ -1574,6 +1589,11 @@ ready)
             rc=2
             continue
         fi
+        if mode_pure "$m" && [[ ! -x $run/purefloor ]]; then
+            echo "mode $m: purefloor did not build here (vm.sh build): $(cat "$run/purefloor_unavailable" 2>/dev/null || echo "no $run/purefloor")"
+            rc=2
+            continue
+        fi
         mode_get "$m" NAPI_BUSY >/dev/null || continue
         if ! kernel_at_least "$(uname -r)" 6 17; then
             echo "mode $m: threaded NAPI busy polling needs Linux 6.17 or later (this is $(uname -r))"
@@ -1613,6 +1633,13 @@ driver)
     raw=$(raw_base "$mode") floor_wire=
     if [[ -n $raw ]]; then
         threading=INVOKER floor_wire=${raw%-busy}
+    fi
+    # dpdk-pure: dpdk's set-up for purefloor (DPDK alone), its wire pure,
+    # which only purefloor takes
+    if mode_pure "$mode"; then
+        [[ -x $run/purefloor ]] ||
+            { echo "dpdk-pure: purefloor did not build here (vm.sh build): $(cat "$run/purefloor_unavailable" 2>/dev/null || echo "no $run/purefloor")" >&2; exit 2; }
+        floor_wire=pure
     fi
     common_env "${threading:-DEDICATED}" >"$env_file" || exit 2
     clock=tsc
@@ -1844,7 +1871,7 @@ driver)
     fi
     ;;
 client)
-    # vm.sh client <label> <rtt|tput|load|floor> <args...>: a benchmark client against the running driver (floor: the raw floor's)
+    # vm.sh client <label> <rtt|tput|load|floor|purefloor> <args...>: a benchmark client against the running driver (floor, purefloor: the raw or pure floor's)
     label=${2:?label}
     prog=${3:?rtt or tput}
     shift 3
@@ -1855,14 +1882,17 @@ client)
     trap 'termed=1' TERM
     # the last run's spikes and histogram: a client that writes none this time
     # must leave none to fetch (lib.sh takes each load point's histogram)
-    if [[ $prog =~ ^(rtt|floor)$ && ${1:-} == xping || $prog == load && ${1:-} != xecho ]]; then
+    if [[ $prog =~ ^(rtt|floor|purefloor)$ && ${1:-} == xping || $prog == load && ${1:-} != xecho ]]; then
         rm -f "$run/load-spikes.csv" "$run/rtt-histogram.csv"
     fi
-    [[ $prog =~ ^(rtt|floor)$ && ${1:-} == xping ]] && rm -f "$run/stalls-ping.csv" "$run/one-way.csv"
-    [[ $prog =~ ^(rtt|floor)$ && ${1:-} == xpong ]] && rm -f "$run/stalls-pong.csv"
+    [[ $prog =~ ^(rtt|floor|purefloor)$ && ${1:-} == xping ]] && rm -f "$run/stalls-ping.csv" "$run/one-way.csv"
+    [[ $prog =~ ^(rtt|floor|purefloor)$ && ${1:-} == xpong ]] && rm -f "$run/stalls-pong.csv"
     # a build under BIN without this client: this checkout's, said in its log
+    # (purefloor: vm.sh build's, on this host)
     exe=$bin/$prog
-    if [[ ! -x $exe ]]; then
+    if [[ $prog == purefloor ]]; then
+        exe=$run/purefloor
+    elif [[ ! -x $exe ]]; then
         log "client: no $prog in $bin: this checkout's"
         exe=$tools/$prog
     fi
@@ -1885,9 +1915,17 @@ client)
     # with its environment (the DPDK transport's, the kernel's selector
     # absent); raw UDP repairs nothing, so a lost round trip times out as an
     # unreliable channel's does
-    if [[ $prog == floor ]]; then
-        if [[ ! -s $run/floor ]]; then
+    if [[ $prog == floor || $prog == purefloor ]]; then
+        if [[ $prog == floor && ( ! -s $run/floor || $(cat "$run/floor") == pure ) ]]; then
             log "client: floor: no raw floor set up here (vm.sh driver kernel-raw or dpdk-raw first)"
+            exit 2
+        fi
+        if [[ $prog == purefloor && $(cat "$run/floor" 2>/dev/null) != pure ]]; then
+            log "client: purefloor: no pure floor set up here (vm.sh driver dpdk-pure first)"
+            exit 2
+        fi
+        if [[ $prog == purefloor && ! -x $exe ]]; then
+            log "client: purefloor: not built here (vm.sh build): $(cat "$run/purefloor_unavailable" 2>/dev/null)"
             exit 2
         fi
         launch=(bash -c '. "$1"; shift; exec "$@"' _ "$run/driver.env" env)
@@ -1957,7 +1995,8 @@ stop)
     # the raw floor: a floor client still running holds the NICs (DPDK's)
     if [[ -s $run/floor ]]; then
         sudo pkill -x floor 2>/dev/null || true
-        for _ in $(seq 40); do pgrep -x floor >/dev/null || break; sleep 0.25; done
+        sudo pkill -x purefloor 2>/dev/null || true
+        for _ in $(seq 40); do pgrep -x 'floor|purefloor' >/dev/null || break; sleep 0.25; done
         rm -f "$run/floor"
     fi
     data_return_to_kernel
@@ -2212,7 +2251,7 @@ diag-start)
     # Only before reps: a trace, a tracer or a kprobe set up flips static keys,
     # an IPI to every CPU, agents included; refused while a rep runs (a media
     # driver, or a client: INVOKER's embed the driver)
-    if running=$(pgrep -x 'media_driver|rtt|load|tput|floor'); then
+    if running=$(pgrep -x 'media_driver|rtt|load|tput|floor|purefloor'); then
         log "diag-start: a rep is running (pid $(echo $running)): diagnostics are set up only before reps (enabling them flips static keys, an IPI to every CPU)"
         exit 2
     fi

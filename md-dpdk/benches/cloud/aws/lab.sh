@@ -83,7 +83,9 @@
 #   LAB_MODES ("kernel kernel-busy dpdk"; the raw floor's kernel-raw and dpdk-raw run
 #   rtt's round trip with no Aeron, over kernel UDP or the DPDK transport's
 #   bindings alone, on kernel-busy's or dpdk's set-up: the round trip only,
-#   cross-host, host and RUSTERON_* settings only (../modes.sh);
+#   cross-host, host and RUSTERON_* settings only (../modes.sh); the pure
+#   floor's dpdk-pure runs it over DPDK alone, none of ergon-md-dpdk
+#   (../purefloor.c, on dpdk's set-up, no -mono);
 #   <mode>@AERON_THREADING_MODE=SHARED_NETWORK or
 #   SHARED runs the driver's agents that way, each busy one on a core of its own:
 #   ../host.sh threading_env; INVOKER runs no media driver: each client embeds it

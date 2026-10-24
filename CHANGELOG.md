@@ -116,6 +116,13 @@
   and `spikes.py` prints the split. `LAB_STATES` accepts a `-nodiag` suffix
   (no tracepoints, kprobes, KNOISE or gapspin). A mode's
   `@RUSTERON_DPDK_ENA_DEVARGS` joins several device arguments with `+`.
+- Cloud lab: pure floor mode `dpdk-pure` (AWS, cross-host). The new
+  `purefloor` C client (`benches/cloud/purefloor.c`, built on the host by
+  `vm.sh build`) does the floor client's round trip over DPDK alone, without
+  ergon-md-dpdk: `rte_eth_rx_burst` and `rte_eth_tx_burst` on the receiver
+  port, ARP to the next hop, and a pong that swaps the 5-tuple and sends the
+  frame back. It times with the TSC or `CNTVCT_EL0` and writes the same
+  output files. `analyse.py` reports `dpdk-raw` above it.
   `estimate.py` prices `c8g.2xlarge`. Each run records the DPDK build
   (`dpdk-build`), and the jitter snapshots record `sw-checksum-verified` and
   `tx-idle-cleaned`.

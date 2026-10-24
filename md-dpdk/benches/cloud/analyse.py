@@ -67,7 +67,7 @@ from spikes import agent_gaps, open_spikes, pmd_bursts, spike_files
 
 ORDER = ["kernel", "kernel-mono", "kernel-busy", "kernel-busy-mono", "kernel-raw", "kernel-raw-mono", "dpdk",
          "dpdk-mono", "dpdk+idle", "dpdk-spin", "dpdk-spin+idle", "dpdk-adaptive+idle", "dpdk-raw", "dpdk-raw-mono",
-         "local-kernel", "local-dpdk", "local-dpdk-adaptive", "local-dpdk-spin"]
+         "dpdk-pure", "local-kernel", "local-dpdk", "local-dpdk-adaptive", "local-dpdk-spin"]
 # isolated-poll: isolated, with idle CPUs polling; -nodiag: the state without
 # the diagnostics (lib.sh run_bench)
 STATES = ["", "pinned", "pinned-nodiag", "isolated", "isolated-nodiag", "isolated-poll", "isolated-poll-nodiag"]
@@ -88,6 +88,8 @@ NAMES = {
     # the raw floor (modes.sh mode_raw): the floor client, rtt's round trip with no Aeron
     "kernel-raw": "kernel UDP, no Aeron (raw floor)",
     "dpdk-raw": "DPDK packet path, no Aeron (raw floor)",
+    # the pure floor (modes.sh mode_pure): purefloor.c, DPDK alone
+    "dpdk-pure": "DPDK alone, no ergon-md-dpdk or Aeron (pure floor)",
 }
 # a -mono mode: the transport and the clients clock with CLOCK_MONOTONIC, not TSC
 NAMES.update({f"{m}-mono": f"{n}, monotonic clock" for m, n in list(NAMES.items())})
@@ -830,13 +832,16 @@ def above_network(r, modes):
 
 
 def floor_of(mode):
-    """The raw floor a cross-host Aeron mode's transport has (kernel-raw for
-    the kernel's, dpdk-raw for DPDK's, -mono for -mono), or None: a floor
-    mode itself, or a localhost one."""
+    """The floor beneath a cross-host mode's transport: kernel-raw for the
+    kernel's Aeron modes, dpdk-raw for DPDK's (-mono for -mono), the pure
+    floor dpdk-pure for dpdk-raw itself; None for the other floors and
+    localhost modes."""
     transport = mode.split("@")[0].removesuffix("+idle")
+    if transport == "dpdk-raw":
+        return "dpdk-pure"
     mono = "-mono" if transport.endswith("-mono") else ""
     transport = transport.removesuffix("-mono")
-    if transport.endswith("-raw") or mode.startswith("local-"):
+    if transport.endswith("-raw") or transport == "dpdk-pure" or mode.startswith("local-"):
         return None
     if transport.startswith("kernel"):
         return f"kernel-raw{mono}"
@@ -868,7 +873,9 @@ def above_floor(r, modes):
           "pacing, warm-up, clock, CPUs and 64-byte datagrams, with no Aeron driver or client: kernel UDP sockets "
           "for the kernel's modes, the DPDK transport's bindings alone for DPDK's). Each Aeron mode's round trip less "
           "its floor's, rep by rep where both ran: the median across reps, the range in brackets; what Aeron's "
-          "driver and client add. A max no higher than the floor's lies beneath Aeron.\n")
+          "driver and client add. A max no higher than the floor's lies beneath Aeron. dpdk-raw is set against the "
+          "pure floor (purefloor.c: DPDK alone, a 5-tuple-swapping reflector at the pong): what ergon-md-dpdk's "
+          "packet path adds; a max no higher than the pure floor's lies beneath the transport.\n")
     print(table(["state, transport", "floor", "reps", "p50", "p99", "p99.99", "max"], rows) + "\n")
 
 
