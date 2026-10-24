@@ -16,22 +16,33 @@
 # the VM (vm.sh): bootstrap (docker, kind, kubectl, helm, the boot line),
 # a reboot into
 #   isolcpus=managed_irq,domain,<exclusive> nohz_full=<exclusive> rcu_nocbs=<exclusive> irqaffinity=0
-# where <exclusive> is CPUs 2 to the last (the ones the kind node's kubelet
-# hands out: static CPU manager, reservedSystemCPUs 0-1: CPU 0 the IRQ CPU,
-# CPU 1 the shared one), tune (every NIC IRQ and VMBus channel on CPU 0),
-# cluster (both images built on the VM from this checkout, uploaded as a
-# tarball: uncommitted changes included), e2e (a hot pod admitted and
-# started, its spin on its isolated CPU, its helpers on the shared CPU, an
-# exec-probe hot pod denied), bench ($LAB_REPS reps of plugin-on and
-# plugin-off) and report. Results go to target/nri-lab/<stamp>/ (report.md
-# first). The group is deleted on every exit, then checked gone.
+# where <exclusive> is CPUs 3 to the last (the ones the kind node's kubelet
+# hands out: static CPU manager, reservedSystemCPUs 0-2: CPU 0 the IRQ CPU,
+# CPUs 1-2 housekeeping, of which the chart's sharedCpus is 1 for e2e and
+# bench and 1-2 for scale: lib.sh lab_layout), tune (every NIC IRQ and
+# VMBus channel on CPU 0; with LAB_QUIET=1 the node settings of lib.sh
+# lab_quiet_settings), cluster (both images built on the VM from this
+# checkout, uploaded as a tarball: uncommitted changes included), e2e (a
+# hot pod admitted and started, its spin on its isolated CPU, its helpers
+# on the shared CPU, an exec-probe hot pod denied), scale (how much of two
+# shared CPUs a pod's helpers get: results/scale.md), bench ($LAB_REPS reps
+# of each of $LAB_ARMS, then one traced rep: results/trace-cpu<N>.md) and
+# report. Results go to target/nri-lab/<stamp>/ (report.md first). The
+# group is deleted on every exit, then checked gone.
 #
-#   LAB_REGION (eastus) LAB_SIZE (Standard_D8ps_v6; Arm sizes only, 4 vCPUs
+#   LAB_REGION (eastus) LAB_SIZE (Standard_D8ps_v6; Arm sizes only, 6 vCPUs
 #   or more) LAB_IMAGE (Debian:debian-13:13-arm64:latest; or
 #   Canonical:ubuntu-24_04-lts:server-arm64:latest) LAB_GROUP
 #   (ergon-lab-nri-<stamp>) LAB_REPS (5) LAB_SECONDS (60: spin seconds per run)
 #   LAB_DELAY (5: helper seconds before each spin) LAB_UDP_RATE (20000
 #   datagrams/s) LAB_STRESS ("--cpu 1 --vm 1 --vm-bytes 128M")
+#   LAB_ARMS ("plugin-on"; "plugin-on plugin-off" adds the plain static CPU
+#   manager arm) LAB_HELPERS (process: the probe's UDP helpers in a child
+#   process; thread: threads of the probe, as run 20261024212712 did)
+#   LAB_BENCH (1; 0 skips bench and its trace) LAB_TRACE (1: one more
+#   plugin-on rep under kernel ftrace) LAB_SCALE (1: the scale step)
+#   LAB_SCALE_SECONDS (30: each scale case's window) LAB_SCALE_THREADS (4:
+#   busy helper threads a scale pod) LAB_QUIET (1: the node settings)
 #   LAB_MAX_HOURS (4): the deleting backstop. A systemd timer on the VM
 #   (cloud-init, so from first boot, surviving the reboot) deletes the
 #   group through the VM's identity at that deadline; a watchdog on this
@@ -65,6 +76,14 @@ seconds=${LAB_SECONDS:-60}
 delay=${LAB_DELAY:-5}
 udp_rate=${LAB_UDP_RATE:-20000}
 stress=${LAB_STRESS:---cpu 1 --vm 1 --vm-bytes 128M}
+arms=${LAB_ARMS-plugin-on}
+helpers=${LAB_HELPERS:-process}
+bench=${LAB_BENCH:-1}
+trace=${LAB_TRACE:-1}
+scale=${LAB_SCALE:-1}
+scale_seconds=${LAB_SCALE_SECONDS:-30}
+scale_threads=${LAB_SCALE_THREADS:-4}
+quiet=${LAB_QUIET:-1}
 max_hours=${LAB_MAX_HOURS:-4}
 poll=${LAB_POLL_SECONDS:-20}
 ssh_wait=${LAB_SSH_WAIT_SECONDS:-900}
@@ -84,19 +103,32 @@ die() { log "ERROR: $*"; exit 1; }
 # ---------------------------------------------------------------- the plan
 
 vcpus=$(lab_size_vcpus "$size") || die "LAB_SIZE $size: not an Azure Arm (Cobalt) size such as Standard_D8ps_v6"
-read -r irq_cpu shared_cpus exclusive_cpus reserved_cpus <<<"$(lab_layout "$vcpus")" ||
-    die "LAB_SIZE $size: $vcpus vCPUs; the lab needs 4 or more (IRQ, shared, two exclusive)"
-[[ -n $irq_cpu ]] || die "LAB_SIZE $size: $vcpus vCPUs; the lab needs 4 or more (IRQ, shared, two exclusive)"
-for v in reps seconds delay udp_rate max_hours; do
+read -r irq_cpu shared_cpus exclusive_cpus reserved_cpus <<<"$(lab_layout "$vcpus" 1)" ||
+    die "LAB_SIZE $size: $vcpus vCPUs; the lab needs 6 or more (IRQ, two shared, three exclusive)"
+[[ -n $irq_cpu ]] || die "LAB_SIZE $size: $vcpus vCPUs; the lab needs 6 or more (IRQ, two shared, three exclusive)"
+read -r _ scale_shared_cpus _ _ <<<"$(lab_layout "$vcpus" 2)"
+for v in reps seconds delay udp_rate max_hours scale_seconds scale_threads; do
     [[ ${!v} =~ ^[0-9]+$ ]] || die "LAB_${v^^} is a whole number, not ${!v}"
+done
+for v in bench trace scale quiet; do
+    [[ ${!v} == 0 || ${!v} == 1 ]] || die "LAB_${v^^} is 0 or 1, not ${!v}"
 done
 ((reps >= 1)) || die "LAB_REPS is 1 or more"
 ((seconds >= 10)) || die "LAB_SECONDS is 10 or more"
+((scale_seconds >= 10)) || die "LAB_SCALE_SECONDS is 10 or more"
+[[ $helpers == process || $helpers == thread ]] || die "LAB_HELPERS: process or thread, not $helpers"
+read -ra arm_list <<<"$arms"
+((${#arm_list[@]})) || die "LAB_ARMS: plugin-on and/or plugin-off, not empty"
+for a in "${arm_list[@]}"; do
+    [[ $a == plugin-on || $a == plugin-off ]] || die "LAB_ARMS: plugin-on and/or plugin-off, not $a"
+done
+arms=${arm_list[*]}
+((bench)) || trace=0
 ((max_hours >= 1 && max_hours <= 23)) || die "LAB_MAX_HOURS is 1 to 23 (auto-shutdown takes a time of day, 30 min after the deadline)"
 [[ $stress =~ ^[-a-zA-Z0-9\ ]+$ ]] || die "LAB_STRESS: stress-ng flags only (letters, digits, dashes, spaces)"
 boot=$(lab_boot_args "$exclusive_cpus" "$irq_cpu")
 price=${LAB_PRICE_PER_HOUR:-$(lab_price_per_hour "$size")}
-minutes=$(lab_estimate_minutes "$reps" "$seconds" "$delay")
+minutes=$(lab_estimate_minutes "$reps" "$seconds" "$delay" $((bench * ${#arm_list[@]})) "$trace" "$scale" "$scale_seconds")
 ((minutes <= max_hours * 60 - 15)) ||
     die "the plan takes about $minutes minutes, more than LAB_MAX_HOURS=$max_hours less 15: fewer reps or seconds, or more hours"
 cost=$(lab_cost "$price" "$minutes")
@@ -111,13 +143,41 @@ off_hhmm=$(date -u -r "$off" +%H%M 2>/dev/null || date -u -d "@$off" +%H%M)
 detach=${LAB_DETACH:-auto}
 [[ $detach == auto ]] && { ((minutes > 120)) && detach=1 || detach=0; }
 
+vm_steps="e2e"
+((scale)) && vm_steps+=", scale"
+((bench)) && vm_steps+=", bench"
+vm_steps+=", report"
+helpers_said="a child process"
+[[ $helpers == thread ]] && helpers_said="threads of the probe"
+if ((bench)); then
+    bench_said="$reps reps x ${arms// /, }; ${seconds} s spin after ${delay} s helpers ($helpers_said); stress-ng $stress; UDP $udp_rate/s"
+else
+    bench_said="off (LAB_BENCH=0)"
+fi
+if ((trace)); then
+    trace_said="one more ${seconds} s plugin-on rep under kernel ftrace, filtered to its spin CPU: results/trace-cpu<N>.md"
+else
+    trace_said="off (LAB_TRACE=0)"
+fi
+if ((scale)); then
+    scale_said="sharedCpus $scale_shared_cpus: burst, idle, contention ($scale_threads helper threads a pod, ${scale_seconds} s each), accounting: results/scale.md"
+else
+    scale_said="off (LAB_SCALE=0)"
+fi
+if ((quiet)); then quiet_said="the quiet settings (LAB_QUIET=1): $(lab_quiet_settings "$reserved_cpus" | cut -d'|' -f1 | sed 's|^/proc/sys/||; s|^/sys/||' | paste -sd, - | sed 's/,/, /g')"; else
+    quiet_said="as booted (LAB_QUIET=0)"
+fi
+
 cat >&2 <<EOF
 ergon-shared-cpus latency lab, run $stamp
   group     $group in $region, every resource tagged ${tags[*]}
   VM        $size ($vcpus vCPUs, Arm), $image, 64 GB OS disk, one Standard public IP
-  layout    IRQ CPU $irq_cpu, shared CPU $shared_cpus, exclusive (isolated) $exclusive_cpus, reservedSystemCPUs $reserved_cpus
+  layout    IRQ CPU $irq_cpu, shared CPU $shared_cpus (e2e, bench) or $scale_shared_cpus (scale), exclusive (isolated) $exclusive_cpus, reservedSystemCPUs $reserved_cpus
   boot line $boot
-  runs      $reps reps x plugin-on, plugin-off; ${seconds} s spin after ${delay} s helpers; stress-ng $stress; UDP $udp_rate/s
+  node      $quiet_said
+  bench     $bench_said
+  trace     $trace_said
+  scale     $scale_said
   time      about $minutes minutes$( ((detach)) && echo ", detached")
   price     about \$$price/h for the VM (+\$0.02/h IP and disk): about \$$cost for the run, at most \$$cap to the backstop
   backstop  $deadline_utc UTC (LAB_MAX_HOURS=$max_hours): the VM deletes the group; auto-shutdown deallocates it 30 min later
@@ -138,8 +198,8 @@ DRY_RUN: the az calls a run makes, in order (nothing called):
   az tag update --resource-id <each resource in $group> --operation merge --tags ${tags[*]}
   az vm auto-shutdown -g $group -n vm --time $off_hhmm
   az vm show -d -g $group -n vm --query publicIps -o tsv
-  then over SSH: the backstop timer enabled and its identity able to read the group, vm.sh bootstrap,
-  a reboot, vm.sh tune, cluster, e2e, bench, report; the results copied back
+  then over SSH: the backstop timer enabled and its identity able to read the group,
+  vm.sh bootstrap, a reboot, vm.sh tune, cluster, $vm_steps; the results copied back
   ... every $((900 / 60)) minutes: az resource list -g $group
   on exit: az group delete -n $group --yes --no-wait; az group wait -n $group --deleted (up to 3 tries)
            az group exists -n $group; az resource list --tag run=$stamp
@@ -375,6 +435,13 @@ SECONDS_PER_RUN=$seconds
 DELAY_SECONDS=$delay
 UDP_RATE=$udp_rate
 STRESS="$stress"
+SCALE_SHARED_CPUS=$scale_shared_cpus
+ARMS="$arms"
+HELPERS=$helpers
+TRACE=$trace
+QUIET=$quiet
+SCALE_SECONDS=$scale_seconds
+SCALE_THREADS=$scale_threads
 EOF
 step bootstrap
 log "rebooting into the isolation boot line"
@@ -392,12 +459,15 @@ done
 step tune
 step cluster
 step e2e
-bench_rc=0
-( step bench ) || bench_rc=1
+scale_rc=0 bench_rc=0
+if ((scale)); then ( step scale ) || scale_rc=1; fi
+if ((bench)); then ( step bench ) || bench_rc=1; fi
 step report
 check_resources now
 mkdir -p "$out/results"
 scp "${ssh_opts[@]}" -q -r "$user@$ip:/var/lib/ergon-lab/results/." "$out/results/" || log "WARNING: results not copied"
 scp "${ssh_opts[@]}" -q "$user@$ip:step-*.log" "$out/" || true
 log "report: $out/results/report.md"
-((bench_rc == 0)) || die "bench had failures (results/failures.txt)"
+((scale_rc == 0)) || log "ERROR: scale had failures (results/scale.md)"
+((bench_rc == 0)) || log "ERROR: bench had failures (results/failures.txt)"
+((scale_rc == 0 && bench_rc == 0)) || exit 1
