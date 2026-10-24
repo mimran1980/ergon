@@ -11,8 +11,8 @@ use std::collections::VecDeque;
 
 use ergon_io::ws::{self, OP_BINARY, OP_CONT, OP_PING, OP_TEXT};
 use ergon_io::{
-    ConnId, Fragments, Handler, Interest, MAX_FRAGMENTS, RxMeta, WsHandler, WsOptions, WsStats,
-    ws_conn::MIN_BUF,
+    ConnId, Flow, Fragments, Handler, Interest, MAX_FRAGMENTS, RxMeta, TextCheck, WsHandler,
+    WsOptions, WsStats, ws_conn::MIN_BUF,
 };
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
@@ -36,6 +36,8 @@ struct App {
     got: Vec<Got>,
     /// What `on_message_start` saw: opcode, first payload, fin.
     starts: Vec<(u8, Vec<u8>, bool)>,
+    /// The streamed message in progress: opcode, bytes so far, fragments.
+    open: Option<(u8, Vec<u8>, u32)>,
 }
 
 impl App {
@@ -45,6 +47,7 @@ impl App {
             default,
             got: Vec::new(),
             starts: Vec::new(),
+            open: None,
         }
     }
 
@@ -76,10 +79,35 @@ impl WsHandler for App {
         _: &RxMeta,
     ) -> Interest {
         self.starts.push((op, first.to_vec(), fin));
+        // A message abandoned mid-stream never got its last fragment.
+        self.open = None;
         self.plan.pop_front().unwrap_or(self.default)
     }
 
-    fn on_fragments(&mut self, _: ConnId, op: u8, m: &Fragments<'_>, _: &RxMeta, _: u16) {
+    fn on_fragment(
+        &mut self,
+        _: ConnId,
+        op: u8,
+        part: &[u8],
+        index: u32,
+        fin: bool,
+        _: &RxMeta,
+    ) -> Flow {
+        let (o, data, n) = self.open.get_or_insert_with(|| (op, Vec::new(), 0));
+        assert_eq!((*o, *n), (op, index), "fragments out of order");
+        data.extend_from_slice(part);
+        *n += 1;
+        if fin && let Some((op, data, n)) = self.open.take() {
+            self.got.push(Got {
+                op,
+                data,
+                slices: n as usize,
+            });
+        }
+        Flow::Continue
+    }
+
+    fn on_fragments(&mut self, _: ConnId, op: u8, m: &Fragments<'_>, _: &RxMeta, _: u16) -> Flow {
         let mut data = vec![0u8; m.len()];
         let copied = m.copy_to(&mut data);
         let joined: Vec<u8> = m.iter().flatten().copied().collect();
@@ -92,6 +120,7 @@ impl WsHandler for App {
             data,
             slices: m.count(),
         });
+        Flow::Continue
     }
 }
 
@@ -150,30 +179,101 @@ fn an_unfragmented_message_is_one_slice_with_no_copy() -> R {
 
 // (b) one frame split across records.
 #[test]
-fn a_frame_split_across_records_moves_only_the_later_part() -> R {
+fn a_frame_split_across_records_moves_the_smaller_side() -> R {
     let lab = Lab::new()?;
-    for one_read in [false, true] {
-        let mut r = rig(&lab, &opts())?;
-        let mut h = App::new(Interest::Fragments);
-        let msg = binary(4000);
-        let f = frame(OP_BINARY, true, &msg)?;
-        let cut = 1500;
-        if one_read {
-            r.feed_one_read(&f, &[cut], &mut h)?;
-        } else {
-            r.feed_records(&f, &[cut], &mut h)?;
+    let msg = binary(4000);
+    let f = frame(OP_BINARY, true, &msg)?;
+    // Cut early (the leftover is smaller: it moves forward) and late (the
+    // new record is smaller: it moves back).
+    for cut in [10, 1500, f.len() - 1500, f.len() - 10] {
+        for one_read in [false, true] {
+            let mut r = rig(&lab, &opts())?;
+            let mut h = App::new(Interest::Fragments);
+            if one_read {
+                r.feed_one_read(&f, &[cut], &mut h)?;
+            } else {
+                r.feed_records(&f, &[cut], &mut h)?;
+            }
+            assert_eq!(
+                h.got,
+                vec![Got {
+                    op: OP_BINARY,
+                    data: msg.clone(),
+                    slices: 0
+                }],
+                "cut {cut}"
+            );
+            let s = stats(&r);
+            assert_eq!(
+                s.span_copy_bytes,
+                cut.min(f.len() - cut) as u64,
+                "cut {cut} one read {one_read}"
+            );
+            assert_eq!((s.frag_copy_bytes, s.frag_fallbacks), (0, 0));
         }
+        // The bench lever restores the join before 0.1.35: the new record
+        // always moves back.
+        let mut r = rig(&lab, &opts())?;
+        r.conn.set_span_back_only(true);
+        let mut h = App::new(Interest::Keep);
+        r.feed_records(&f, &[cut], &mut h)?;
+        assert_eq!(h.got.len(), 1, "cut {cut}");
         assert_eq!(
-            h.got,
-            vec![Got {
-                op: OP_BINARY,
-                data: msg,
-                slices: 0
-            }]
+            stats(&r).span_copy_bytes,
+            (f.len() - cut) as u64,
+            "cut {cut}"
         );
-        let s = stats(&r);
-        assert_eq!(s.span_copy_bytes, (f.len() - cut) as u64);
-        assert_eq!((s.frag_copy_bytes, s.frag_fallbacks), (0, 0));
+    }
+    Ok(())
+}
+
+/// A held message whose next frame is cut across records: the held bytes
+/// and the partial frame move forward as one block when they are the
+/// smaller side, and the slices still point at the right bytes.
+#[test]
+fn a_held_message_moves_forward_as_one_block() -> R {
+    let lab = Lab::new()?;
+    let parts = [binary(20), binary(12_000), binary(20)];
+    let msg = parts.concat();
+    let mut stream = frame(OP_BINARY, false, &parts[0])?;
+    let first = stream.len();
+    stream.extend_from_slice(&frame(OP_CONT, false, &parts[1])?);
+    stream.extend_from_slice(&frame(OP_CONT, true, &parts[2])?);
+    for into_second in [1usize, 3, 40, 200] {
+        for lead in [false, true] {
+            let mut r = rig(&lab, &opts())?;
+            let mut h = App::new(Interest::Fragments);
+            // An optional short message first, so the hold starts mid-window.
+            let mut s = if lead {
+                frame(OP_BINARY, true, &binary(50))?
+            } else {
+                Vec::new()
+            };
+            let at = s.len();
+            s.extend_from_slice(&stream);
+            // Record 1 ends `into_second` bytes into the second frame;
+            // record 2 is the rest (under 16 KiB).
+            r.feed_records(&s, &[at + first + into_second], &mut h)?;
+            assert_eq!(
+                h.got.last(),
+                Some(&Got {
+                    op: OP_BINARY,
+                    data: msg.clone(),
+                    slices: 3
+                }),
+                "{into_second} {lead}"
+            );
+            let st = stats(&r);
+            assert_eq!((st.frag_copy_bytes, st.frag_fallbacks), (0, 0));
+            // Held first frame plus the partial second moved forward, not
+            // the 12 KB record back.
+            assert_eq!(
+                st.span_copy_bytes,
+                (first + into_second) as u64,
+                "{into_second} {lead}"
+            );
+            assert_eq!(r.conn.buffered(), 0);
+        }
     }
     Ok(())
 }
@@ -265,7 +365,12 @@ fn with_ping(op: u8, msg: &[u8]) -> R<Vec<u8>> {
 #[test]
 fn a_ping_inside_a_held_or_skipped_message_is_answered() -> R {
     let lab = Lab::new()?;
-    for mode in [Interest::Fragments, Interest::Skip, Interest::Keep] {
+    for mode in [
+        Interest::Fragments,
+        Interest::Stream,
+        Interest::Skip,
+        Interest::Keep,
+    ] {
         for cut in [None, Some(40)] {
             let mut r = rig(&lab, &opts())?;
             let mut h = App::new(mode);
@@ -280,7 +385,7 @@ fn a_ping_inside_a_held_or_skipped_message_is_answered() -> R {
                     assert_eq!(h.got, []);
                     assert_eq!(s.skipped, 1);
                 }
-                Interest::Fragments => {
+                Interest::Fragments | Interest::Stream => {
                     assert_eq!(
                         h.got,
                         vec![Got {
@@ -518,7 +623,7 @@ fn a_skipped_message_is_neither_copied_nor_delivered() -> R {
 fn invalid_utf8_closes_only_when_the_message_is_kept() -> R {
     let lab = Lab::new()?;
     let check = WsOptions {
-        validate_utf8: true,
+        text_check: TextCheck::Utf8,
         ..opts()
     };
     let bad = b"price \xff\xfe".to_vec();
@@ -556,7 +661,7 @@ fn invalid_utf8_closes_only_when_the_message_is_kept() -> R {
 fn a_character_split_between_fragments_is_valid_utf8() -> R {
     let lab = Lab::new()?;
     let check = WsOptions {
-        validate_utf8: true,
+        text_check: TextCheck::Utf8,
         ..opts()
     };
     // "€" is three bytes, "😀" four: cut every way between fragments.
@@ -596,7 +701,7 @@ fn a_character_split_between_fragments_is_valid_utf8() -> R {
 fn a_non_ascii_byte_anywhere_in_the_fragments_is_checked() -> R {
     let lab = Lab::new()?;
     let check = WsOptions {
-        validate_utf8: true,
+        text_check: TextCheck::Utf8,
         ..opts()
     };
     let len = 3 * 37;
@@ -714,11 +819,12 @@ impl WsHandler for Trades {
     }
 
     // Fragmented: one slice per fragment, in order (`copy_to` joins them).
-    fn on_fragments(&mut self, _: ConnId, _: u8, m: &Fragments<'_>, _: &RxMeta, _: u16) {
+    fn on_fragments(&mut self, _: ConnId, _: u8, m: &Fragments<'_>, _: &RxMeta, _: u16) -> Flow {
         self.messages += 1;
         for part in m {
             self.bytes += part.len();
         }
+        Flow::Continue
     }
 }
 // ANCHOR_END: skip
@@ -729,7 +835,7 @@ fn the_book_example_keeps_one_channel() -> R {
     let mut r = rig(
         &lab,
         &WsOptions {
-            validate_utf8: true,
+            text_check: TextCheck::Utf8,
             ..opts()
         },
     )?;
@@ -766,6 +872,7 @@ fn msg_strategy() -> impl Strategy<Value = Msg> {
         prop_oneof![
             Just(Interest::Keep),
             Just(Interest::Fragments),
+            Just(Interest::Stream),
             Just(Interest::Skip)
         ],
         prop::bool::weighted(0.2),
@@ -816,7 +923,8 @@ fn any_fragmentation_and_record_split_delivers_the_original_messages() -> R {
         prop::collection::vec(msg_strategy(), 1..12),
         prop::collection::vec(any::<prop::sample::Index>(), 0..24),
         prop::collection::vec(any::<prop::sample::Index>(), 0..6),
-        prop::bool::ANY,
+        // Mostly the smallest buffer: it compacts.
+        prop::bool::weighted(0.75),
     );
     let compacted = std::cell::Cell::new(0u32);
     let mut runner = TestRunner::new(prop_config());
@@ -825,7 +933,7 @@ fn any_fragmentation_and_record_split_delivers_the_original_messages() -> R {
             let o = WsOptions {
                 buf_size: if small { MIN_BUF } else { 1 << 20 },
                 max_message: 1 << 20,
-                validate_utf8: true,
+                text_check: TextCheck::Utf8,
                 ..opts()
             };
             let stream = stream_of(&msgs).map_err(|e| TestCaseError::fail(e.to_string()))?;
@@ -870,6 +978,13 @@ fn any_fragmentation_and_record_split_delivers_the_original_messages() -> R {
                 prop_assert_eq!(g.slices, expect);
             }
             let s = r.conn.stats();
+            // Only `Keep` copies; `Fragments` and `Stream` never do.
+            let copied: usize = msgs
+                .iter()
+                .filter(|m| m.interest == Interest::Keep && m.parts > 1)
+                .map(|m| m.data.len())
+                .sum();
+            prop_assert_eq!(s.frag_copy_bytes, copied as u64);
             let skipped = msgs.iter().filter(|m| m.interest == Interest::Skip).count() as u64;
             prop_assert_eq!(s.skipped, skipped);
             prop_assert_eq!(s.frag_fallbacks, 0);
@@ -889,7 +1004,7 @@ fn any_fragmentation_and_record_split_delivers_the_original_messages() -> R {
 #[test]
 fn the_generator_produces_every_decision_and_fragmentation() -> R {
     let mut runner = TestRunner::new(prop_config());
-    let mut seen = [false; 3];
+    let mut seen = [false; 4];
     let mut fragmented_msgs = 0;
     for _ in 0..64 {
         let m = msg_strategy()
@@ -899,7 +1014,53 @@ fn the_generator_produces_every_decision_and_fragmentation() -> R {
         seen[m.interest as usize] = true;
         fragmented_msgs += usize::from(m.parts > 1);
     }
-    assert_eq!(seen, [true; 3]);
+    assert_eq!(seen, [true; 4]);
     assert!(fragmented_msgs > 10);
+    Ok(())
+}
+
+/// Asks for fragments but implements only `on_message`.
+#[derive(Default)]
+struct NoFragments {
+    got: Vec<Vec<u8>>,
+}
+
+impl Handler for NoFragments {}
+
+impl WsHandler for NoFragments {
+    fn on_message(&mut self, _: ConnId, _: u8, payload: &[u8], _: &RxMeta, _: u16) {
+        self.got.push(payload.to_vec());
+    }
+
+    fn on_message_start(&mut self, _: ConnId, _: u8, _: &[u8], _: bool, _: &RxMeta) -> Interest {
+        Interest::Fragments
+    }
+}
+
+/// A handler that returns `Interest::Fragments` without implementing
+/// `on_fragments` still gets every message, joined, through `on_message`:
+/// nothing is dropped, and the copy is counted.
+#[test]
+fn fragments_without_on_fragments_arrive_through_on_message() -> R {
+    let lab = Lab::new()?;
+    let o = WsOptions {
+        buf_size: MIN_BUF,
+        max_message: 1 << 20,
+        ..opts()
+    };
+    // Held in the buffer, and one that falls back to a copy.
+    for (len, parts) in [(3000, 3), (300 * 1024, 10)] {
+        let mut r = rig(&lab, &o)?;
+        let mut h = NoFragments::default();
+        let msg = binary(len);
+        r.feed_records(&fragmented(OP_BINARY, &msg, parts)?, &[], &mut h)?;
+        assert!(h.got == vec![msg], "{len} B: {} messages", h.got.len());
+        let s = stats(&r);
+        assert_eq!((s.messages, s.unhandled), (1, 1), "{len} B");
+        assert_eq!(
+            s.frag_copy_bytes, len as u64,
+            "{len} B: the copy is counted"
+        );
+    }
     Ok(())
 }

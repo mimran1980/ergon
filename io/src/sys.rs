@@ -820,6 +820,7 @@ impl MsgSlot {
             rx_sw_ns,
             rx_hw_ns,
             read_seq,
+            ..RxMeta::default()
         }
     }
 }

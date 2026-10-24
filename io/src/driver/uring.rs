@@ -174,9 +174,13 @@ impl Uring {
 
     pub(super) fn add<E: Endpoint>(&mut self, ep: &mut E, i: usize) -> Result<()> {
         while self.slots.len() <= i {
+            // Written once now: swapped with the connection's queue on every
+            // send, so its pages must not fault on the first one.
+            let mut send_buf = Vec::with_capacity(1 << 16);
+            crate::stream::prefault(&mut send_buf);
             self.slots.push(Slot {
                 msg: MsgSlot::new(),
-                send_buf: Vec::with_capacity(1 << 16),
+                send_buf,
                 send_off: 0,
                 recv_armed: false,
                 send_active: false,
@@ -496,8 +500,7 @@ impl Uring {
                 continue;
             }
             let len = queue.len();
-            std::mem::swap(&mut slot.send_buf, queue);
-            slot.send_off = 0;
+            slot.send_off = queue.swap_out(&mut slot.send_buf);
             // Counted as handed once queued for the kernel: an upper bound,
             // so a close before the kernel takes it errs towards "maybe sent".
             conn.on_handed(len);

@@ -583,7 +583,7 @@ fn invalid_utf8_split_over_fragments_is_refused_when_checked() -> R {
             Ok(())
         });
         let opts = WsOptions {
-            validate_utf8: true,
+            text_check: ergon_io::TextCheck::Utf8,
             ..quiet()
         };
         connect(&lab, &mut d, opts)?;
@@ -618,7 +618,11 @@ fn invalid_utf8_is_refused_only_when_checked() -> R {
                 Ok(())
             });
             let opts = WsOptions {
-                validate_utf8: validate,
+                text_check: if validate {
+                    ergon_io::TextCheck::Utf8
+                } else {
+                    ergon_io::TextCheck::None
+                },
                 ..quiet()
             };
             let id = connect(&lab, &mut d, opts)?;

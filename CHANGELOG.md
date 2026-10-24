@@ -229,6 +229,33 @@
   New types: `Interest`, `Fragments`, `FragmentIter`. `ws_bench` (in
   `io/benches`) times parse-and-deliver per message for each case.
 
+- `ergon-io`: `WsOptions::text_check: TextCheck` replaces `validate_utf8`:
+  `None` (default), `Utf8` (RFC 6455; invalid text closes) or
+  `Ascii(NonAscii)`, one pass checking every byte is below 0x80. Under
+  `Ascii` a message with another byte is closed on (`NonAscii::Close`),
+  dropped (`Skip`) or delivered flagged (`DeliverUnchecked`, the default).
+  The new `RxMeta::text: TextStatus` (`Unchecked`, `Utf8`, `Ascii`,
+  `NotAscii`) says what was found; `Ascii` means every byte index is a
+  character boundary. Only kept messages are checked. `WsStats::non_ascii`
+  counts non-ASCII text under `Ascii`.
+- `ergon-io`: `Interest::Stream` hands each fragment of a fragmented
+  message to the new `WsHandler::on_fragment(conn, opcode, part, index,
+  fin, meta) -> Flow` as soon as it is complete, borrowed from the receive
+  buffer: no copy, nothing held, no fragment or size limit but
+  `max_message`. `Flow::SkipRest` drops the remaining fragments uncopied
+  and unchecked. Text checks run per fragment, a character cut between
+  fragments carried across (at most 3 bytes). Pings and Close inside are
+  handled as before.
+- `ergon-io`: `ws::push_frame`, `ws::push_header`, `ws::push_masked` and
+  `ws::header_bytes` build masked client frames onto a `Vec` without a
+  zero fill; `WsConn` sends with them, byte-identical to `encode_frame`
+  (`io/tests/ws_send.rs` compares every length from 1 to 16 KiB and frames
+  over several records).
+- `ergon-io` (repo only): `ws_bench --suite tx|text|frag|span`: send cost
+  per message old against new, `TextCheck` modes on ASCII and mixed text,
+  `Stream` against `Fragments` and `Keep`, and the split-frame join old
+  against new, each interleaved on the same input.
+
 ### Changed
 
 - Breaking: `ergon-md-dpdk` asks every ENA port for large LLQ entries
@@ -395,6 +422,29 @@
   UTF-8 in a skipped message no longer closes the connection (a deliberate
   relaxation of RFC 6455 §8.1). The check scans for ASCII first, then runs
   `str::from_utf8`.
+- Breaking: `ergon-io` `WsOptions::validate_utf8` is gone: set
+  `text_check: TextCheck::Utf8` for `true`. `RxMeta` has a new field
+  `text`, and `WsStats` two more, `non_ascii` and `unhandled`: struct
+  literals of them no longer compile. `WsHandler::on_fragments` returns
+  `Flow`.
+- `ergon-io`: a handler that returns `Interest::Fragments` or
+  `Interest::Stream` without implementing `on_fragments` or `on_fragment`
+  (whose defaults return `Flow::Unhandled`) gets the message joined by copy
+  through `on_message`, counted in `WsStats::unhandled` and
+  `frag_copy_bytes`. It used to be dropped.
+- `ergon-io`: a frame cut across two TLS records is joined by moving the
+  smaller side: the leftover (held fragments included, as one block)
+  forward to the new plaintext when it is shorter, else the new plaintext
+  back. `span_copy_bytes` counts the bytes moved.
+- `ergon-io`: the send queue is drained from a head offset: a partial
+  `epoll` send no longer moves the unsent bytes; the queue is compacted
+  when it empties or its spare capacity runs low. A `WsConn`'s send queue
+  and each `io_uring` send buffer are written once at setup, so the first
+  sends take no page faults.
+- `ergon-io`: `recv-busy` with `per_queue` looks a socket's NAPI id up after
+  its first data and on the look-again every 4096 polls, no longer every
+  poll while an id is unknown (loopback, a plain veth: one `getsockopt` per
+  socket and an allocation per poll before).
 
 ### Removed
 

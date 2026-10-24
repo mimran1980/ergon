@@ -4,9 +4,12 @@
 
 - Frames are parsed in place: `WsHandler::on_message` gets a slice of the
   buffer the kernel wrote into (one copy per byte).
-- The handler decides from a message's first frame whether it wants it:
-  a skipped message is never copied or checked
-  ([Receiving](#receiving)).
+- The handler decides from a message's first frame whether it wants it,
+  and how: a skipped message is never copied or checked; a fragmented one
+  can arrive as slices of the buffer, or fragment by fragment as each
+  arrives ([Receiving](#receiving)).
+- Text is checked only when asked, and only on kept messages: UTF-8, or
+  one cheaper ASCII pass ([Text checks](#text-checks)).
 - `RxMeta` carries the read's kernel receive timestamp and, where the NIC
   has one, its hardware timestamp.
 - Timers (Pings, timeouts, the close wait) run on the driver's deadline
@@ -47,7 +50,7 @@ cargo run -p ergon-io --features webpki-roots --example websocket -- 20 recv-bus
 | `pong_timeout_ms` | 5,000 | nothing received this long after a Ping: `Error::Timeout("websocket pong")`; 0: off |
 | `idle_timeout_ms` | 0 (off) | nothing received this long: `Error::Timeout("websocket idle")` |
 | `close_timeout_ms` | 1,000 | longest wait for the other side of a close handshake; 0: no wait |
-| `validate_utf8` | off | invalid text in a kept message closes the connection; a skipped message is not checked ([UTF-8](#utf-8)) |
+| `text_check` | `TextCheck::None` | `Utf8`: invalid text closes the connection; `Ascii(policy)`: every byte below 0x80, else the policy; only kept messages are checked ([Text checks](#text-checks)) |
 | `protocols` | none | subprotocols offered; `WsConn::protocol` is the server's pick |
 
 - Any byte received after a Ping counts as the answer, not only a Pong.
@@ -55,22 +58,43 @@ cargo run -p ergon-io --features webpki-roots --example websocket -- 20 recv-bus
 
 ## Receiving
 
-`WsHandler` has one required method, `on_message`, and two with defaults:
+`WsHandler` has one required method, `on_message`, and three with defaults:
 
 | method | default | called |
 |---|---|---|
-| `on_message_start(conn, opcode, first, fin, meta) -> Interest` | `Interest::Keep` | once per data message, on its first frame; `first` is that frame's payload (the whole message when `fin`), not yet checked for UTF-8 |
+| `on_message_start(conn, opcode, first, fin, meta) -> Interest` | `Interest::Keep` | once per data message, on its first frame; `first` is that frame's payload (the whole message when `fin`), not yet checked as text |
 | `on_message(conn, opcode, payload, meta, pos)` | required | a kept message as one slice |
-| `on_fragments(conn, opcode, &Fragments, meta, pos)` | drops the message | a fragmented message whose first frame returned `Interest::Fragments` |
+| `on_fragments(conn, opcode, &Fragments, meta, pos) -> Flow` | `Flow::Unhandled` | a fragmented message whose first frame returned `Interest::Fragments`, once all of it has arrived |
+| `on_fragment(conn, opcode, part, index, fin, meta) -> Flow` | `Flow::Unhandled` | each fragment of a message whose first frame returned `Interest::Stream`, as soon as it is complete |
 
 | `Interest` | unfragmented message | fragmented message |
 |---|---|---|
 | `Keep` | `on_message`, a slice of the receive buffer | `on_message`, reassembled by copy |
-| `Fragments` | `on_message`, a slice of the receive buffer | `on_fragments`: one slice of the receive buffer per fragment |
+| `Fragments` | `on_message`, a slice of the receive buffer | `on_fragments`: one slice of the receive buffer per fragment, held until the last arrives |
+| `Stream` | `on_message`, a slice of the receive buffer | `on_fragment`: each fragment as it arrives, borrowed, never held |
 | `Skip` | dropped | every fragment dropped |
 
-Control frames inside a fragmented message are handled whatever the
-decision: a Ping is answered, a Close ends the message undelivered.
+| `Flow` | from `on_fragment` | from `on_fragments` |
+|---|---|---|
+| `Continue` | send the next fragment | taken |
+| `SkipRest` | drop the rest: never copied, checked or delivered (`skipped`) | taken |
+| `Unhandled` (the defaults) | on fragment 0: the message is copied as it arrives and delivered whole to `on_message`; later: closes the connection | the message is copied and delivered to `on_message` |
+
+- Nothing is dropped by a default: a handler that asks for `Fragments` or
+  `Stream` without implementing the method gets `on_message`, counted in
+  `stats().unhandled` and `frag_copy_bytes`.
+- Control frames inside a fragmented message are handled whatever the
+  decision: a Ping is answered, a Close ends the message undelivered (a
+  streamed message then has no `fin` fragment).
+- `max_message` holds for every decision, skipped and streamed messages
+  included.
+
+| choose | when |
+|---|---|
+| `Keep` | small messages, or a parser that needs one contiguous slice |
+| `Fragments` | a parser that takes several slices, for messages that fit the buffer |
+| `Stream` | a resumable parser; messages of any size; deciding mid-message to stop (`SkipRest`) |
+| `Skip` | messages the first frame shows are not wanted |
 
 Keep one channel, skip the rest:
 
@@ -81,6 +105,13 @@ Keep one channel, skip the rest:
 every platform; the test feeds it TLS records sealed with a real
 handshake's key.)*
 
+Stream large messages and stop early on the ones not needed:
+
+```rust,ignore
+{{#include ../../../io/tests/ws_stream.rs:stream}}
+```
+*(From `io/tests/ws_stream.rs`, run the same way.)*
+
 `Fragments`: `len()` (payload bytes), `count()` (slices), `iter()` /
 `for part in &m`, `get(i)`, `contiguous()` (`Some` with one slice), and
 `copy_to(&mut buf)` for one contiguous copy into a buffer of yours. It
@@ -90,111 +121,211 @@ borrows the receive buffer: valid during the call only, no allocation.
 
 The kernel's write into the receive buffer is always the first copy. Beyond it:
 
-| case | `Keep` | `Fragments` | `Skip` |
-|---|---|---|---|
-| unfragmented, in one record | none | none | none |
-| a frame cut across TLS records | the later part moved next to the earlier (`span_copy_bytes`) | same | same |
-| fragmented, records end on frame boundaries | every payload byte, once (`frag_copy_bytes`) | none | none |
-| fragmented, frames cut across records | both of the above | `span_copy_bytes` only | `span_copy_bytes` only |
-| fragmented, more than `MAX_FRAGMENTS` (32) fragments, or spanning more than `buf_size` − 33,290 bytes (headers, control frames and record gaps included) | every payload byte, once | every payload byte, once; delivered as one slice; `frag_fallbacks` | none |
+| case | `Keep` | `Fragments` | `Stream` | `Skip` |
+|---|---|---|---|---|
+| unfragmented, in one record | none | none | none | none |
+| a frame cut across TLS records | the smaller side moved: the leftover forward, or the new record back (`span_copy_bytes`) | same | same | same |
+| fragmented, records end on frame boundaries | every payload byte, once (`frag_copy_bytes`) | none | none | none |
+| fragmented, frames cut across records | both of the above | `span_copy_bytes` only | `span_copy_bytes` only | `span_copy_bytes` only |
+| fragmented, more than `MAX_FRAGMENTS` (32) fragments, or spanning more than `buf_size` − 33,290 bytes (headers, control frames and record gaps included) | every payload byte, once | every payload byte, once; delivered as one slice; `frag_fallbacks` | none | none |
 
 - A held message's bytes stay in the buffer until it is delivered or
   dropped. A compaction (the free tail ran short) moves them with the
   window, counted in `compact_bytes`, as it does any unfinished frame.
-- `max_message` holds for every decision, skipped messages included.
+  When a frame is cut across records, held bytes move with the leftover as
+  one block.
+- A streamed fragment is handed over while its frame is in the window;
+  nothing stays in the buffer between fragments.
 - `stats()`: `skipped` counts dropped messages; `messages` counts
   delivered ones.
 
-### UTF-8
+### Text checks
 
-- `validate_utf8` (off by default) checks a text message only once it is
-  kept, just before delivery: an ASCII scan, then `str::from_utf8` if a
-  byte is not ASCII. Fragments are checked in place; a character cut
-  between two fragments is joined from both.
+`text_check` runs on a text message only once it is kept, just before
+delivery; `meta.text` (`TextStatus`) says what it found. Binary is never
+checked.
+
+| `TextCheck` | one pass that | `meta.text` | invalid or non-ASCII text |
+|---|---|---|---|
+| `None` (default) | none | `Unchecked` | delivered as is |
+| `Utf8` | scans for ASCII, then runs `str::from_utf8` if a byte is not | `Utf8` | closes the connection (RFC 6455) |
+| `Ascii(NonAscii::DeliverUnchecked)` | checks every byte is below 0x80 | `Ascii`, or `NotAscii` | delivered flagged `NotAscii` |
+| `Ascii(NonAscii::Skip)` | same | `Ascii` | dropped (`skipped`) |
+| `Ascii(NonAscii::Close)` | same | `Ascii` | closes the connection |
+
+| choose | when |
+|---|---|
+| `None` | your parser checks text itself, or trusts the source |
+| `Utf8` | RFC 6455 conformance; text may hold any character |
+| `Ascii(DeliverUnchecked)` | the protocol is ASCII (most JSON feeds): `Ascii` lets a parser index bytes as characters with no boundary checks; a stray byte is flagged, never drops the feed |
+| `Ascii(Skip)` / `Ascii(Close)` | a non-ASCII message is useless (`Skip`) or a protocol error (`Close`) |
+
+- On ASCII text `Utf8` and `Ascii` cost the same (the same scan); on text
+  with other characters `Ascii` stays one scan while `Utf8` decodes
+  ([cost](#text-check-cost)).
+- `Stream` checks each fragment: `meta.text` is that fragment's status.
+  Under `Utf8` a character cut between fragments is carried across (at
+  most 3 bytes); invalid text closes before the fragment holding it is
+  delivered. Under `Ascii(Skip)` the message ends at the first non-ASCII
+  fragment, with no `fin` fragment.
 - RFC 6455 §8.1 requires invalid UTF-8 to fail the connection. A skipped
-  message is never read, so invalid UTF-8 in it does not close the
+  message is never read, so invalid text in it does not close the
   connection. This relaxation is deliberate.
-- Leave `validate_utf8` off when your parser checks text itself.
+- `stats().non_ascii` counts non-ASCII text messages under `Ascii`.
 
 ### Receive cost
 
-`ws_bench` (`io/benches/src/bin/ws_bench.rs`) times parse, decide, copy,
-UTF-8 check and delivery per message, on plaintext already in the receive
-buffer: no socket, no AEAD. Text messages, `validate_utf8` on; the handler
-reads each kept message's length and end bytes. Each sample is one call over
-K messages (64; 8 at 64 KiB), 20,000 samples per row, payloads checked
-before timing. A figure is one sample's time divided by K, the max too.
-The old and new paths of a row run interleaved on the same window,
-alternating which goes first.
+`ws_bench` (`io/benches/src/bin/ws_bench.rs`) times the receive path per
+message on plaintext already in the receive buffer: no socket, no AEAD
+(`--suite rx`, `text`, `frag`, `span`). The handler reads each delivered
+payload's length and end bytes only, so a figure is the connection's cost,
+not a parser's. Each sample is one call over K messages (64; 8 at 64 KiB,
+16 at 16 KiB), 20,000 samples per row, payloads checked before timing. A
+figure is one sample's time divided by K, the max too. The paths of a
+table row run interleaved on the same input, rotating which goes first.
+The counter is `cntvct_el0` at 24 MHz: one tick is 0.65 ns per message at
+K = 64 and 5.2 ns at K = 8.
+
+All figures: ns per message, p50 / p99 / max, native macOS, Apple M1 Pro
+([results](https://github.com/mimran1980/ergon/tree/main/io/benches/results/ws-copy-macos-20261024T172501Z), [`env.txt`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-copy-macos-20261024T172501Z/env.txt)). Maxima are not attributed:
+macOS cannot pin the thread, and the host's 1-minute load average was
+27–35 during the run (other agents' builds and containers).
+
+**Keep against Fragments and Skip** ([`ws_bench-rx.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-copy-macos-20261024T172501Z/ws_bench-rx.md);
+`TextCheck::Utf8`):
 
 - shape: `whole`: unfragmented, one window; `frag4`: four fragments per
   message; `split`: unfragmented, every message cut across two records at
   its middle, records at most 16 KiB.
-- old: `Interest::Keep` for every message, the path before this change: a
-  fragmented message is copied, every text message is checked, a message
-  the handler ignores is still copied and checked. Same build, so both
-  columns use the same ASCII-first UTF-8 check.
+- old: `Interest::Keep` for every message: a fragmented message is copied,
+  every text message is checked, a message the handler ignores is still
+  copied and checked.
 - new: `Interest::Fragments` for kept messages, `Interest::Skip` for
   skipped ones.
-- The counter is `cntvct_el0` at 24 MHz: one tick is 0.65 ns per message
-  at K = 64 and 5.2 ns at K = 8.
-
-ns per message, p50 / p99 / max, native macOS, Apple M1 Pro
-([`ws_bench.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-rx-macos-20261024T161808Z/ws_bench.md), [`env.txt`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-rx-macos-20261024T161808Z/env.txt)):
 
 | message | shape | decision | old (`Keep`) | new (`Fragments` / `Skip`) |
 |---|---|---|---|---|
-| 100 B | whole | kept | 7.8 / 22.1 / 12870.3 | 7.8 / 22.7 / 6975.9 |
-| 100 B | whole | skipped | 7.1 / 20.1 / 9715.1 | 3.9 / 10.4 / 7020.7 |
-| 100 B | frag4 | kept | 32.5 / 77.4 / 481279.9 | 34.5 / 94.4 / 311705.5 |
-| 100 B | frag4 | skipped | 31.2 / 76.1 / 252108.7 | 15.6 / 39.0 / 50252.7 |
-| 100 B | split | kept | 18.8 / 52.7 / 87807.9 | 18.8 / 52.7 / 285491.1 |
-| 100 B | split | skipped | 15.6 / 47.5 / 309247.9 | 13.0 / 39.0 / 76799.9 |
-| 300 B | whole | kept | 11.7 / 35.1 / 184934.3 | 11.7 / 34.5 / 58316.7 |
-| 300 B | whole | skipped | 11.0 / 30.5 / 47052.7 | 3.9 / 9.1 / 73932.7 |
-| 300 B | frag4 | kept | 30.5 / 93.0 / 240025.5 | 35.8 / 103.5 / 191897.5 |
-| 300 B | frag4 | skipped | 30.5 / 91.1 / 248627.1 | 15.6 / 39.7 / 151551.9 |
-| 300 B | split | kept | 24.7 / 70.3 / 165580.7 | 24.7 / 70.9 / 493158.3 |
-| 300 B | split | skipped | 22.1 / 67.0 / 94361.5 | 14.9 / 44.2 / 105369.5 |
-| 4 KiB | whole | kept | 55.3 / 184.2 / 232243.1 | 55.3 / 161.4 / 246579.1 |
-| 4 KiB | whole | skipped | 54.0 / 153.6 / 372121.5 | 6.5 / 14.3 / 80486.3 |
-| 4 KiB | frag4 | kept | 109.3 / 925.5 / 279756.7 | 76.1 / 368.5 / 184319.9 |
-| 4 KiB | frag4 | skipped | 109.3 / 1007.9 / 425164.7 | 20.1 / 186.1 / 111513.5 |
-| 4 KiB | split | kept | 126.3 / 1249.5 / 387276.7 | 126.3 / 1739.1 / 630783.9 |
-| 4 KiB | split | skipped | 124.3 / 335.9 / 38604.7 | 89.8 / 220.1 / 46259.1 |
-| 64 KiB | whole | kept | 817.9 / 3022.3 / 337305.5 | 817.9 / 3052.7 / 643481.5 |
-| 64 KiB | whole | skipped | 812.7 / 4252.7 / 1762918.3 | 10.4 / 93.7 / 266239.9 |
-| 64 KiB | frag4 | kept | 1844.7 / 6204.7 / 881459.1 | 891.1 / 2667.1 / 422707.1 |
-| 64 KiB | frag4 | skipped | 1927.9 / 32742.3 / 2051276.7 | 52.0 / 380.3 / 387481.5 |
-| 64 KiB | split | kept | 1911.9 / 12275.1 / 9286451.1 | 1911.9 / 13811.1 / 5000396.7 |
-| 64 KiB | split | skipped | 1907.1 / 20287.9 / 1232076.7 | 1307.9 / 11743.9 / 5727846.3 |
+| 100 B | whole | kept | 9.1 / 11.0 / 333.3 | 9.1 / 11.0 / 381.5 |
+| 100 B | whole | skipped | 8.4 / 9.1 / 201.1 | 3.9 / 4.5 / 103.5 |
+| 100 B | frag4 | kept | 34.5 / 37.1 / 1021.5 | 35.8 / 38.4 / 559.9 |
+| 100 B | frag4 | skipped | 32.5 / 36.4 / 292.9 | 15.6 / 17.5 / 399.1 |
+| 100 B | split | kept | 23.4 / 26.0 / 785.9 | 23.4 / 26.0 / 288.5 |
+| 100 B | split | skipped | 22.7 / 24.7 / 655.1 | 18.2 / 20.1 / 406.9 |
+| 300 B | whole | kept | 10.4 / 11.7 / 170.5 | 10.4 / 11.7 / 269.5 |
+| 300 B | whole | skipped | 9.7 / 11.7 / 311.1 | 4.5 / 5.2 / 194.0 |
+| 300 B | frag4 | kept | 29.9 / 33.8 / 987.1 | 36.4 / 40.3 / 585.5 |
+| 300 B | frag4 | skipped | 29.2 / 32.5 / 445.9 | 16.2 / 18.2 / 506.7 |
+| 300 B | split | kept | 26.0 / 29.2 / 350.3 | 26.0 / 29.2 / 337.9 |
+| 300 B | split | skipped | 23.4 / 26.6 / 425.9 | 16.9 / 19.5 / 211.5 |
+| 4 KiB | whole | kept | 55.9 / 60.5 / 489.5 | 55.9 / 60.5 / 494.3 |
+| 4 KiB | whole | skipped | 54.6 / 60.5 / 549.5 | 6.5 / 8.4 / 202.4 |
+| 4 KiB | frag4 | kept | 117.8 / 131.5 / 3641.5 | 87.8 / 100.2 / 2071.9 |
+| 4 KiB | frag4 | skipped | 115.2 / 134.7 / 2659.1 | 23.4 / 37.7 / 1016.7 |
+| 4 KiB | split | kept | 102.2 / 115.2 / 13036.7 | 102.2 / 117.8 / 1910.3 |
+| 4 KiB | split | skipped | 101.5 / 109.3 / 723.9 | 59.8 / 65.7 / 477.5 |
+| 64 KiB | whole | kept | 812.7 / 916.7 / 7679.9 | 812.7 / 932.7 / 5964.7 |
+| 64 KiB | whole | skipped | 812.7 / 1073.5 / 123187.1 | 15.6 / 26.0 / 203.1 |
+| 64 KiB | frag4 | kept | 1937.5 / 2255.9 / 10502.3 | 864.7 / 1213.5 / 7129.5 |
+| 64 KiB | frag4 | skipped | 1964.7 / 2308.7 / 23027.1 | 36.4 / 88.5 / 1171.9 |
+| 64 KiB | split | kept | 1985.5 / 2219.1 / 27622.3 | 1990.3 / 2219.1 / 18329.5 |
+| 64 KiB | split | skipped | 1990.3 / 2167.9 / 30284.7 | 1203.1 / 1312.7 / 28211.1 |
 
-- A skipped message costs 3.9–10.4 ns at p50 unfragmented and 15.6–52
-  ns in four fragments, whatever its size, unless a frame was cut across
-  records: the later part is still moved (`split`).
-- `Fragments` pays off from a few KiB: 76 against 109 ns at 4 KiB, 891
-  against 1,845 ns at 64 KiB. At 100 and 300 B it is slightly slower than
-  the copy (34.5 against 32.5 ns, 35.8 against 30.5 ns): four slices cost
+- A skipped message costs 3.9–15.6 ns unfragmented and 15.6–36.4 ns in
+  four fragments, whatever its size, unless a frame was cut across records
+  (`split`): its smaller side is still moved.
+- `Fragments` pays off from a few KiB (87.8 against 117.8 ns at 4 KiB,
+  864.7 against 1,937.5 ns at 64 KiB). At 100 and 300 B it is slower than
+  the copy (35.8 against 34.5 ns, 36.4 against 29.9 ns): four slices cost
   more than copying a few hundred bytes. Use `Keep` for small fragmented
   messages.
-- Unfragmented kept messages cost the same on both paths. With
-  `validate_utf8` off ([`ws_bench-utf8-off.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-rx-macos-20261024T161808Z/ws_bench-utf8-off.md))
-  an unfragmented skipped message costs the same on both paths too (4.5
-  against 3.9 ns at 100 B, 5.8 against 5.8 at 4 KiB): the win above is the
-  UTF-8 scan the skip avoids.
-- Maxima (up to 9.3 ms) and p99s are not attributed: macOS cannot pin
-  the thread, and the host's 1-minute load average was 75–79 during the
-  run (other agents' builds and containers).
+- With `TextCheck::None` ([`ws_bench-rx-utf8-off.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-copy-macos-20261024T172501Z/ws_bench-rx-utf8-off.md))
+  an unfragmented skipped message costs about the same on both paths (5.2
+  against 3.9 ns at 100 B, 7.1 against 7.1 at 4 KiB): the win above is the
+  text scan the skip avoids.
 
-The same cases on Linux arm64 in a Docker VM on the same host, pinned to
-CPU 9 ([`ws_bench.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-rx-linux-arm64-20261024T162426Z/ws_bench.md), [`env.txt`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-rx-linux-arm64-20261024T162426Z/env.txt))
-keep the same order, except that `Fragments` already wins at 300 B (60.5
-against 131.5 ns). Copies and the UTF-8 scan run 11–18 times slower in
-that VM than natively (64 KiB scanned in 14.7 µs against 0.82 µs); scalar
-work does not. The cause is not established, so take absolute figures from
-the native run. Its maxima are not explained by the thread's own context
-switches (column `max sample preempted`, almost all `no`); vCPU
-descheduling by the host is invisible to the guest.
+#### Text check cost
+
+One unfragmented kept text message per row, `Keep`, the three checks
+interleaved ([`ws_bench-text.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-copy-macos-20261024T172501Z/ws_bench-text.md)). `ascii`: pure
+ASCII; `mixed`: a two-byte character every 64 bytes, delivered as `Utf8`
+or `NotAscii`.
+
+| message | text | `None` | `Utf8` | `Ascii` |
+|---|---|---|---|---|
+| 100 B | ascii | 5.8 / 7.8 / 2631.9 | 9.1 / 11.7 / 2249.5 | 9.1 / 11.7 / 678.3 |
+| 100 B | mixed | 5.8 / 7.1 / 298.9 | 33.2 / 36.4 / 1115.9 | 9.7 / 11.7 / 605.1 |
+| 300 B | ascii | 5.8 / 7.1 / 171.8 | 10.4 / 17.5 / 443.5 | 10.4 / 20.1 / 220.1 |
+| 300 B | mixed | 5.8 / 7.8 / 299.5 | 67.7 / 73.5 / 54527.9 | 11.0 / 13.6 / 2350.3 |
+| 4 KiB | ascii | 7.8 / 10.4 / 67.0 | 54.6 / 59.8 / 733.9 | 54.6 / 59.8 / 653.1 |
+| 4 KiB | mixed | 8.4 / 12.3 / 367.9 | 674.7 / 812.7 / 2366.3 | 54.6 / 68.3 / 581.5 |
+| 16 KiB | ascii | 10.4 / 15.6 / 187.5 | 208.3 / 229.1 / 2388.7 | 208.3 / 229.1 / 2542.3 |
+| 16 KiB | mixed | 10.4 / 70.3 / 3756.7 | 2711.9 / 3667.1 / 24550.3 | 208.3 / 294.3 / 3107.1 |
+
+- On ASCII text `Utf8` and `Ascii` cost the same: one scan, 54.6 ns at
+  4 KiB over `None`'s 7.8.
+- On mixed text `Ascii` stays one scan (54.6 ns at 4 KiB) while `Utf8`
+  decodes (674.7 ns at 4 KiB, 2,711.9 at 16 KiB).
+
+#### Fragmented messages: Keep, Fragments, Stream
+
+Four fragments per message, `TextCheck::None`, the three interests
+interleaved ([`ws_bench-frag.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-copy-macos-20261024T172501Z/ws_bench-frag.md)):
+
+| message | `Keep` | `Fragments` | `Stream` |
+|---|---|---|---|
+| 100 B | 31.9 / 39.0 / 3702.3 | 26.6 / 31.2 / 2345.5 | 29.2 / 34.5 / 5430.3 |
+| 300 B | 26.0 / 29.9 / 519.1 | 26.6 / 30.5 / 713.5 | 29.2 / 33.2 / 673.9 |
+| 4 KiB | 89.8 / 320.9 / 26444.7 | 28.6 / 87.2 / 8614.3 | 32.5 / 229.1 / 11827.1 |
+| 16 KiB | 317.7 / 421.9 / 15423.9 | 31.2 / 41.6 / 6150.3 | 33.8 / 44.2 / 3395.1 |
+
+- `Stream` costs 2–4 ns per message more than `Fragments` (one handler
+  call per fragment instead of one per message) and holds nothing.
+- Both avoid the copy that `Keep` pays: 89.8 ns at 4 KiB and 317.7 at
+  16 KiB, against 28.6–33.8 ns. A parser that reads every byte adds its
+  own pass in every column.
+
+#### A frame cut across records
+
+Messages back to back, stand-in records of 16 KiB cut wherever they fall,
+so almost every record ends inside a frame. old: the new record is always
+moved back next to the leftover (`WsConn::set_span_back_only`, the join
+before this change); new: the smaller side moves
+([`ws_bench-span.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-copy-macos-20261024T172501Z/ws_bench-span.md)):
+
+| message | old: new record moved back | new: smaller side moved | bytes moved per message, old / new |
+|---|---|---|---|
+| 100 B | 7.4 / 16.1 / 153.4 | 5.6 / 8.0 / 143.6 | 95 / 0 |
+| 300 B | 11.6 / 12.8 / 204.2 | 9.7 / 10.8 / 71.9 | 285 / 3 |
+| 4 KiB | 82.0 / 91.9 / 2187.1 | 31.0 / 35.7 / 463.9 | 3840 / 946 |
+| 16 KiB | 313.9 / 350.1 / 9894.3 | 308.3 / 344.5 / 23129.5 | 15296 / 15271 |
+
+- With messages shorter than a record the leftover is the smaller side:
+  82.0 → 31.0 ns at 4 KiB, 3,840 → 946 bytes moved per message.
+- At 16 KiB the two sides are about equal, and so is the cost.
+
+#### Linux arm64
+
+The same suites on Linux arm64 in a Docker VM on the same host, pinned to
+CPU 9 ([results](https://github.com/mimran1980/ergon/tree/main/io/benches/results/ws-copy-linux-arm64-20261024T172616Z), [`env.txt`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-copy-linux-arm64-20261024T172616Z/env.txt)),
+keep the same order, with bulk byte work (copies, scans) several times
+slower in that VM than natively, as in earlier runs there; the cause is
+not established, so take absolute figures from the native run:
+
+- skip: 3.9 against 20.1 ns at 100 B unfragmented, 41.6 against 9,721.5
+  at 64 KiB ([`ws_bench-rx.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-copy-linux-arm64-20261024T172616Z/ws_bench-rx.md));
+- `Fragments` 31.2 and `Stream` 35.1 against `Keep` 861.5 ns at 4 KiB in
+  four fragments ([`ws_bench-frag.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-copy-linux-arm64-20261024T172616Z/ws_bench-frag.md));
+- on mixed text `Ascii` 619.9 against `Utf8` 1,276.7 ns at 4 KiB, equal on
+  ASCII ([`ws_bench-text.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-copy-linux-arm64-20261024T172616Z/ws_bench-text.md));
+- the split-frame join 828.7 → 203.0 ns at 4 KiB
+  ([`ws_bench-span.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-copy-linux-arm64-20261024T172616Z/ws_bench-span.md));
+- sending: within 2.1 % either way at every size (2,075.1 → 2,031.9 ns
+  built at 4 KiB): there the copy, not the zero fill, dominates
+  ([`ws_bench-tx.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-copy-linux-arm64-20261024T172616Z/ws_bench-tx.md)).
+
+Its maxima are not explained by the thread's own context switches (column
+`max sample preempted`, `no` in all but 14 rows); vCPU descheduling by the
+host is invisible to the guest.
 
 ## Close
 
@@ -271,14 +402,54 @@ A refused handshake, in `on_closed`:
 - `send_text`, `send_binary`, `ping`, or `send_frame(opcode, payload)`.
 - A message larger than one TLS record goes out over several.
 - On a driver-owned connection: `driver.get_mut(id)`, then the same methods.
-- Sends go out at the start of the next `poll`, before it reads anything,
-  or at once with `Driver::flush`.
+- A send is queued: it leaves at the start of the next `poll`, before it
+  reads anything. For a latency-critical send, call `Driver::flush()`
+  right after it: one `send` syscall then (with `io_uring`, one submit).
+  Keep bursts batched: queue them all, then flush once (or let the next
+  `poll` send them), which is one syscall for the lot.
 - Handlers cannot send (they have no driver): remember the id, send after
   `poll` returns (as the example does).
 - `stats().auto_frames` counts the frames the connection sends by itself:
   Pongs, Pings on a quiet connection, the echo of a server Close. A venue
   that limits messages per connection may count them:
   charge the change each pass with `Budget::force`.
+
+What a send costs before the kernel:
+
+- The frame header is written from the stack and the payload copied
+  straight into the TLS record being built, then masked there: no zero
+  fill (`ws::push_frame`). The record is encrypted in place.
+- The send queue's pages, and each `io_uring` send buffer's, are written
+  once when the connection is made: the first sends take no page faults.
+- A partial send (a full socket) moves nothing: the queue keeps a head
+  offset and is compacted only when it empties or its spare capacity runs
+  low.
+
+`ws_bench --suite tx`: one masked frame per message, built alone
+(`build`) and inside a sealed record (`sealed`, AES-GCM in place). old:
+zeroed resize, copy, then XOR (`ws::encode_frame`), the path before this
+change; new: `ws::push_frame`. Both build the same bytes, checked before
+timing; `io/tests/ws_send.rs` checks `WsConn`'s output against the old
+encoder for every length from 1 to 16 KiB and over several records. ns per
+message, p50 / p99 / max, same host and run as above
+([`ws_bench-tx.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-copy-macos-20261024T172501Z/ws_bench-tx.md)):
+
+| message | stage | old | new |
+|---|---|---|---|
+| 100 B | build | 14.3 / 16.9 / 324.3 | 13.6 / 15.6 / 199.2 |
+| 100 B | sealed | 130.8 / 213.5 / 18009.5 | 131.5 / 186.1 / 10988.7 |
+| 300 B | build | 23.4 / 26.6 / 1967.9 | 20.1 / 24.0 / 1157.5 |
+| 300 B | sealed | 175.7 / 197.9 / 961.5 | 173.1 / 190.7 / 630.3 |
+| 4 KiB | build | 222.1 / 357.5 / 3302.3 | 180.3 / 250.1 / 4502.3 |
+| 4 KiB | sealed | 1070.3 / 1300.7 / 5580.7 | 1029.5 / 1246.3 / 13375.9 |
+| 16 KiB | build | 671.9 / 783.9 / 2503.9 | 674.7 / 783.9 / 5295.9 |
+| 16 KiB | sealed | 3916.7 / 5263.9 / 105369.5 | 3919.9 / 5331.1 / 410623.9 |
+
+- Building gets 0.7–42 ns cheaper up to 4 KiB (222.1 → 180.3 ns at
+  4 KiB). At 16 KiB the frame spans two records, a path that already had
+  no zero fill: the same cost.
+- Sealed, the AEAD dominates: from 0.5 % more at 100 B (130.8 → 131.5
+  ns) to 3.8 % less at 4 KiB (1,070.3 → 1,029.5 ns).
 
 ## Handshake
 
@@ -299,8 +470,8 @@ A refused handshake, in `on_closed`:
   breaks in-place parsing and costs CPU per message.
 - Proxies.
 - Sending fragmented messages (receiving them works).
-- Dropping a skipped frame before all of it has arrived: a skipped frame
-  cut across records is still moved next to its first part
+- Dropping a skipped frame before all of it has arrived: when a skipped
+  frame is cut across records, the smaller side is still moved
   (`span_copy_bytes`) before it is dropped.
 
 ## Measured results

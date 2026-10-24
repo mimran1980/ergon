@@ -10,10 +10,16 @@
 //! - The kernel writes into the free tail: the only copy.
 //! - `open_next` decrypts the record at `head` in place. With an empty
 //!   window, the record's plaintext becomes the window: no copy.
-//! - A message that spans two records moves the new plaintext next to the
-//!   leftover (counted in `span_copy_bytes`).
+//! - A message that spans two records joins the leftover and the new
+//!   plaintext by moving the smaller of the two (counted in
+//!   `span_copy_bytes`): the new record back next to the leftover, or the
+//!   leftover (held bytes included, as one block) forward to just before
+//!   the new plaintext.
 //! - The buffer is compacted only when the free tail runs low (counted in
 //!   `compact_bytes`).
+//! - The send queue ([`TxQueue`]) is drained from a head offset: a partial
+//!   send moves nothing; the queue is compacted when it empties or its
+//!   spare capacity runs low.
 //! - [`TlsStream::hold`] keeps parsed plaintext alive (a fragmented message
 //!   delivered as slices): the bytes from the hold point on are neither
 //!   released nor overwritten until [`TlsStream::release`]. While held, a
@@ -54,8 +60,11 @@ pub struct TlsStream {
     /// while `holding`. `hold <= p_start`.
     hold: usize,
     holding: bool,
+    /// Bench lever: always move the new record back (the join before
+    /// 0.1.35), for an interleaved comparison.
+    span_back_only: bool,
     tls: RecordLayer,
-    txq: Vec<u8>,
+    txq: TxQueue,
     stats: StreamStats,
     route: RouteSlot,
 }
@@ -63,14 +72,15 @@ pub struct TlsStream {
 impl TlsStream {
     /// A stream whose buffer holds `plain` bytes of plaintext at the front,
     /// followed by `cipher` bytes of ciphertext.
-    pub(crate) const fn new(
+    pub(crate) fn new(
         sock: TcpStream,
         buf: Box<[u8]>,
         plain: usize,
         cipher: usize,
         tls: RecordLayer,
-        txq: Vec<u8>,
+        txq: impl Into<TxQueue>,
     ) -> Self {
+        let txq = txq.into();
         Self {
             sock,
             buf,
@@ -80,6 +90,7 @@ impl TlsStream {
             p_end: plain,
             hold: 0,
             holding: false,
+            span_back_only: false,
             tls,
             txq,
             stats: StreamStats {
@@ -97,9 +108,9 @@ impl TlsStream {
         self.buf.len()
     }
 
-    /// The send queue (test lever).
+    /// The send queue's unsent bytes (test lever).
     pub(crate) fn queued_tx(&self) -> &[u8] {
-        &self.txq
+        self.txq.pending()
     }
 
     pub(crate) fn fd(&self) -> RawFd {
@@ -130,7 +141,7 @@ impl TlsStream {
     }
 
     #[inline]
-    pub(crate) const fn tx_queue(&mut self) -> &mut Vec<u8> {
+    pub(crate) const fn tx_queue(&mut self) -> &mut TxQueue {
         &mut self.txq
     }
 
@@ -173,7 +184,7 @@ impl TlsStream {
         let rec_start = self.head;
         let opened = self
             .tls
-            .open_in_place(&mut self.buf[rec_start..rec_start + len], &mut self.txq)?;
+            .open_in_place(&mut self.buf[rec_start..rec_start + len], self.txq.tail())?;
         self.head += len;
         self.stats.records += 1;
         if let Opened::AppData(plen) = opened {
@@ -183,14 +194,34 @@ impl TlsStream {
     }
 
     /// Appends `plen` bytes of plaintext at `src` (inside the record just
-    /// opened) to the window: in place when the window is empty, else moved
-    /// next to the leftover. Held bytes lie before `p_start` and are never
-    /// touched: the record sits behind every byte of the window.
+    /// opened) to the window: in place when the window is empty (held bytes
+    /// included: the gap joins the held span), else by moving the smaller
+    /// side. The record sits behind every live byte, and
+    /// everything between the window's end and the record is dead (record
+    /// headers, content types and tags), so either move lands on dead bytes:
+    ///
+    /// - the leftover (from the hold point when holding, else the window's
+    ///   start; one block, so offsets from the hold point are unchanged) is
+    ///   at most `plen` bytes: it moves forward to end just before `src`;
+    /// - else the new plaintext moves back to the window's end.
     #[inline]
     fn place(&mut self, src: usize, plen: usize) {
         if self.p_start == self.p_end {
+            // Held bytes stay where they are: the gap up to `src` becomes
+            // part of the held span.
             self.p_start = src;
             self.p_end = src + plen;
+            return;
+        }
+        let live = self.live_start();
+        let left = self.p_end - live;
+        if left < plen && !self.span_back_only {
+            let to = src - left;
+            self.buf.copy_within(live..self.p_end, to);
+            self.p_start = to + (self.p_start - live);
+            self.hold = to;
+            self.p_end = src + plen;
+            self.stats.span_copy_bytes += left as u64;
         } else {
             self.buf.copy_within(src..src + plen, self.p_end);
             self.p_end += plen;
@@ -296,7 +327,13 @@ impl TlsStream {
         &mut self,
         build: impl FnOnce(&mut Vec<u8>) -> Result<()>,
     ) -> Result<()> {
-        self.tls.seal_build(&mut self.txq, build)
+        self.tls.seal_build(self.txq.tail(), build)
+    }
+
+    /// Bench lever: join split frames as before 0.1.35 (always move the new
+    /// record back next to the leftover).
+    pub(crate) const fn set_span_back_only(&mut self, on: bool) {
+        self.span_back_only = on;
     }
 
     /// Bench and test lever: puts `plain` into the window as if a record had
@@ -365,5 +402,205 @@ impl TlsStream {
         self.stats.records += 1;
         self.place(rec_start + tls::HEADER_LEN, plen);
         Ok(true)
+    }
+}
+
+/// Spare capacity below which an append first compacts the sent bytes
+/// away: room for two full records and their overhead.
+const TX_LOW: usize = 2 * MAX_RECORD;
+
+/// A connection's send queue: the bytes from `head` on are unsent.
+///
+/// The driver sends from the front ([`TxQueue::pending`]) and marks what
+/// the kernel took ([`TxQueue::sent`]): a partial send only moves `head`,
+/// it moves no bytes. The sent prefix is dropped when the queue empties
+/// (no copy), or by one compaction when an append finds the spare capacity
+/// low ([`TxQueue::tail`]).
+#[derive(Debug, Default)]
+pub struct TxQueue {
+    buf: Vec<u8>,
+    head: usize,
+    /// Bytes moved by compaction (test lever).
+    moved: u64,
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+impl TxQueue {
+    /// A queue over `buf`, all of it unsent.
+    pub(crate) const fn new(buf: Vec<u8>) -> Self {
+        Self {
+            buf,
+            head: 0,
+            moved: 0,
+        }
+    }
+
+    /// An empty queue of `cap` bytes whose every page is written once now,
+    /// so the first sends take no page faults (fresh memory is mapped on
+    /// first touch).
+    pub(crate) fn prefaulted(cap: usize) -> Self {
+        let mut buf = Vec::with_capacity(cap);
+        prefault(&mut buf);
+        Self::new(buf)
+    }
+
+    /// The unsent bytes.
+    #[inline]
+    pub(crate) fn pending(&self) -> &[u8] {
+        &self.buf[self.head..]
+    }
+
+    /// Unsent bytes.
+    #[inline]
+    pub(crate) const fn len(&self) -> usize {
+        self.buf.len() - self.head
+    }
+
+    /// Whether nothing is waiting to be sent.
+    #[inline]
+    pub(crate) const fn is_empty(&self) -> bool {
+        self.head == self.buf.len()
+    }
+
+    /// The kernel took the first `n` unsent bytes.
+    #[inline]
+    pub(crate) fn sent(&mut self, n: usize) {
+        self.head = (self.head + n).min(self.buf.len());
+        if self.head == self.buf.len() {
+            self.buf.clear();
+            self.head = 0;
+        }
+    }
+
+    /// Drops everything queued.
+    #[inline]
+    pub(crate) fn clear(&mut self) {
+        self.buf.clear();
+        self.head = 0;
+    }
+
+    /// The vector to append to. When sent bytes are still at the front and
+    /// the spare capacity is low, they are compacted away first (one move of
+    /// the unsent bytes), so the append does not reallocate around dead
+    /// bytes.
+    #[inline]
+    pub(crate) fn tail(&mut self) -> &mut Vec<u8> {
+        if self.head > 0 && self.buf.capacity() - self.buf.len() < TX_LOW {
+            self.compact();
+        }
+        &mut self.buf
+    }
+
+    /// Appends `bytes` (tests and stand-ins).
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn extend_from_slice(&mut self, bytes: &[u8]) {
+        self.tail().extend_from_slice(bytes);
+    }
+
+    #[cold]
+    fn compact(&mut self) {
+        self.moved += self.len() as u64;
+        self.buf.drain(..self.head);
+        self.head = 0;
+    }
+
+    /// Swaps the queue's vector with `other` (`io_uring`: the in-flight
+    /// send buffer, no copy). Returns where the unsent bytes start in the
+    /// vector now in `other`; the queue is left over the old `other`,
+    /// cleared.
+    #[inline]
+    pub(crate) fn swap_out(&mut self, other: &mut Vec<u8>) -> usize {
+        std::mem::swap(&mut self.buf, other);
+        self.buf.clear();
+        std::mem::take(&mut self.head)
+    }
+
+    /// Where the unsent bytes start (test lever).
+    #[cfg(test)]
+    pub(crate) const fn head(&self) -> usize {
+        self.head
+    }
+
+    /// Bytes moved by compaction so far (test lever).
+    #[cfg(test)]
+    pub(crate) const fn moved(&self) -> u64 {
+        self.moved
+    }
+}
+
+impl From<Vec<u8>> for TxQueue {
+    fn from(buf: Vec<u8>) -> Self {
+        Self::new(buf)
+    }
+}
+
+/// Writes every page of `v`'s spare capacity once (a non-zero byte, then
+/// the length is restored): fresh pages are mapped on first touch, so this
+/// moves those faults to setup, off the send path.
+pub fn prefault(v: &mut Vec<u8>) {
+    let len = v.len();
+    v.resize(v.capacity(), 1);
+    std::hint::black_box(v.as_slice());
+    v.truncate(len);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TxQueue;
+
+    #[test]
+    fn a_partial_send_moves_no_bytes() {
+        let mut q = TxQueue::new(Vec::with_capacity(1 << 20));
+        q.extend_from_slice(&[7u8; 1000]);
+        q.sent(300);
+        assert_eq!((q.head(), q.len(), q.moved()), (300, 700, 0));
+        assert_eq!(q.pending(), &[7u8; 700][..]);
+        q.extend_from_slice(b"next");
+        assert_eq!((q.len(), q.moved()), (704, 0), "plenty of room: no move");
+        q.sent(704);
+        assert_eq!((q.head(), q.len(), q.moved()), (0, 0, 0), "drained: reset");
+    }
+
+    #[test]
+    fn an_append_with_low_capacity_compacts_once() {
+        let cap = 3 * super::MAX_RECORD;
+        let mut q = TxQueue::new(Vec::with_capacity(cap));
+        let first: Vec<u8> = (0..cap - 100)
+            .map(|i| u8::try_from(i % 251).unwrap_or(0))
+            .collect();
+        q.extend_from_slice(&first);
+        q.sent(first.len() - 10);
+        q.extend_from_slice(b"tail");
+        assert_eq!(
+            (q.head(), q.moved()),
+            (0, 10),
+            "only the unsent bytes moved"
+        );
+        let mut want = first[first.len() - 10..].to_vec();
+        want.extend_from_slice(b"tail");
+        assert_eq!(q.pending(), &want[..]);
+    }
+
+    #[test]
+    fn swap_out_hands_over_the_unsent_offset() {
+        let mut q = TxQueue::new(Vec::new());
+        q.extend_from_slice(b"abcdef");
+        q.sent(2);
+        let mut other = Vec::with_capacity(64);
+        other.extend_from_slice(b"old");
+        let off = q.swap_out(&mut other);
+        assert_eq!(&other[off..], b"cdef");
+        assert!(q.is_empty());
+        assert_eq!(q.head(), 0);
+    }
+
+    #[test]
+    fn prefault_keeps_the_length_and_capacity() {
+        let mut v = Vec::with_capacity(1 << 16);
+        v.extend_from_slice(b"keep");
+        let cap = v.capacity();
+        super::prefault(&mut v);
+        assert_eq!((v.as_slice(), v.capacity()), (&b"keep"[..], cap));
     }
 }

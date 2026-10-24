@@ -80,8 +80,9 @@ pub(crate) mod sealed {
         /// writes into it after the call returns, so it must stay at the same
         /// address until `on_received`.
         fn rx_space(&mut self) -> &mut [u8];
-        /// Bytes waiting to be sent; the driver drains from the front.
-        fn tx_queue(&mut self) -> &mut Vec<u8>;
+        /// Bytes waiting to be sent; the driver sends from the front and
+        /// marks what the kernel took ([`crate::stream::TxQueue::sent`]).
+        fn tx_queue(&mut self) -> &mut crate::stream::TxQueue;
         /// Input received before the endpoint was added, not yet decoded.
         fn has_buffered_input(&self) -> bool;
         /// Records what the quick-ACK route check found, or the cell

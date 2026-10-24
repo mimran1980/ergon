@@ -395,6 +395,10 @@ fn ws_option_defaults() {
     assert_eq!(d.pong_timeout_ms, 5_000);
     assert_eq!(d.idle_timeout_ms, 0, "idle timeout off");
     assert_eq!(d.close_timeout_ms, 1_000);
-    assert!(!d.validate_utf8, "UTF-8 checks cost time per text message");
+    assert_eq!(
+        d.text_check,
+        ergon_io::TextCheck::None,
+        "a text check costs time per text message"
+    );
     assert_eq!(d.protocols, Vec::<String>::new());
 }

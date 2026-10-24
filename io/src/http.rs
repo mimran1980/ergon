@@ -772,7 +772,7 @@ impl Io for HttpConn {
         self.stream.rx_space()
     }
     #[inline]
-    fn tx_queue(&mut self) -> &mut Vec<u8> {
+    fn tx_queue(&mut self) -> &mut crate::stream::TxQueue {
         self.stream.tx_queue()
     }
     fn has_buffered_input(&self) -> bool {
