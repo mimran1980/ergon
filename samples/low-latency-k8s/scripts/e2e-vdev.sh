@@ -5,8 +5,12 @@
 # and a ping through it, the thread layout proven by ll-probe, the latency
 # table printed.
 #
-#   samples/low-latency-k8s/scripts/e2e-vdev.sh [--docker | --kind] [--tag arm64-generic]
+#   samples/low-latency-k8s/scripts/e2e-vdev.sh [--docker | --kind] [--tag baseline]
 #       [--overlay vdev-local|vdev-isolated] [--local-chart] [--capture]
+#
+# --tag: an image tag of docker/build.sh (built when missing). `baseline` is
+#   multi-arch; a CPU tag (amd64-v3, arm64-n2, arm64-v3) must match this
+#   machine's architecture, or the run stops before starting anything.
 #
 # --docker (default; the lane that has run): one privileged container of the
 #   sample image runs scripts/e2e-inside.sh. No Kubernetes and no plugin: the
@@ -14,7 +18,8 @@
 #   CPU as the plugin's hook would. Needs Docker with >= 6 CPUs.
 # --kind (written, not yet run): a one-node kind cluster from
 #   node/kind-ll.yaml, the ergon-shared-cpus chart (GHCR 0.1.1, or the chart
-#   in git with --local-chart), the admission policy, the overlay, then
+#   in git with --local-chart), the admission policy, the overlay with its
+#   image set to ll:<tag> (and, for a CPU tag, kubernetes.io/arch), then
 #   scripts/verify.sh. Needs kind, helm, kubectl, Docker with >= 8 CPUs, no
 #   SMT, and containerd >= 2.2 in the node image. The cluster is deleted on
 #   success, failure and interrupt.
@@ -24,7 +29,7 @@ set -uo pipefail
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)
 MODE=docker
-TAG=arm64-generic
+TAG=baseline
 OVERLAY=vdev-local
 LOCAL_CHART=0
 CAPTURE=0
@@ -43,6 +48,16 @@ IMAGE=ll:$TAG
 say() { echo "e2e-vdev: $*" >&2; }
 die() { say "FAIL: $*"; exit 1; }
 command -v docker >/dev/null || die "docker is not on PATH"
+case $(docker info --format '{{.Architecture}}') in
+  x86_64 | amd64) ARCH=amd64 ;;
+  aarch64 | arm64) ARCH=arm64 ;;
+  *) die "Docker's architecture $(docker info --format '{{.Architecture}}'): amd64 or arm64" ;;
+esac
+case $TAG in
+  baseline) ;;
+  "$ARCH"-*) ;;
+  *) die "tag $TAG is not for this $ARCH machine: use baseline or an $ARCH-* tag" ;;
+esac
 docker image inspect "$IMAGE" >/dev/null 2>&1 || bash "$HERE/docker/build.sh" "$TAG" || die "cannot build $IMAGE"
 OUT=$(mktemp -d)
 
@@ -75,7 +90,7 @@ tpc=$(docker run --rm alpine cat /sys/devices/system/cpu/cpu0/topology/thread_si
 [[ $tpc =~ ^[0-9]+$ ]] || die "SMT is on (cpu0 siblings $tpc): full-pcpus-only refuses cpu: \"1\""
 "$KIND" get clusters 2>/dev/null | grep -qx "$CLUSTER" && die "cluster $CLUSTER exists; delete it first"
 created=0
-trap '[[ $created == 1 ]] && "$KIND" delete cluster --name "$CLUSTER" >/dev/null 2>&1; rm -rf "$OUT" "$KUBECONFIG"' EXIT
+trap '[[ $created == 1 ]] && "$KIND" delete cluster --name "$CLUSTER" >/dev/null 2>&1; rm -rf "$OUT" "$KUBECONFIG" "$HERE/k8s/.e2e-$$"' EXIT
 "$KIND" create cluster --name "$CLUSTER" --config "$HERE/node/kind-ll.yaml" --wait 300s || die "kind create failed"
 created=1
 node=$CLUSTER-control-plane
@@ -100,7 +115,22 @@ helm install ergon-shared-cpus "${chart[@]}" -n ergon-system --create-namespace 
 kubectl apply -f "$ROOT/k8s/nri-latency-pods/admission/priority-class.yaml" \
   -f "$ROOT/k8s/nri-latency-pods/admission/validating-admission-policy.yaml" || die "admission"
 kubectl label node "$node" ergon.io/shared-cpus=true ergon.io/ll-driver=true ergon.io/ll-app=true --overwrite
-kubectl apply -k "$HERE/k8s/overlays/$OVERLAY" || die "apply $OVERLAY"
+# the overlay with the image set to this run's tag (kustomize takes no
+# absolute resource path: a scratch dir beside the overlays, removed on exit)
+deploy=$HERE/k8s/.e2e-$$
+mkdir -p "$deploy"
+{
+  echo "apiVersion: kustomize.config.k8s.io/v1beta1"
+  echo "kind: Kustomization"
+  echo "resources: [../overlays/$OVERLAY]"
+  echo "images: [{name: ll, newName: ll, newTag: $TAG}]"
+  if [[ $TAG != baseline ]]; then
+    echo "patches:"
+    echo "  - target: {kind: DaemonSet|Deployment|Job}"
+    echo "    patch: '[{\"op\": \"add\", \"path\": \"/spec/template/spec/nodeSelector/kubernetes.io~1arch\", \"value\": \"$ARCH\"}]'"
+  fi
+} >"$deploy/kustomization.yaml"
+kubectl apply -k "$deploy" || die "apply $OVERLAY with $IMAGE"
 contract=placement
 [[ $OVERLAY == vdev-isolated ]] && contract=full
 bash "$HERE/scripts/verify.sh" --contract "$contract" --image "$IMAGE" | tee "$OUT/verify.txt"
@@ -108,7 +138,7 @@ rc=${PIPESTATUS[0]}
 kubectl -n trading wait --for=condition=complete job/ll-ping --timeout=300s || rc=1
 kubectl -n trading logs job/ll-ping | grep -E $'^ll-latency\t' | tee "$OUT/latency.txt"
 grep -q $'\tlost=0$' "$OUT/latency.txt" || rc=1
-grep -q $'^ll-latency\tlog\tdropped_lines=0\t' "$OUT/latency.txt" || rc=1
+grep -q $'^ll-latency\tlog\tdropped_lines=0\twrite_errors=0\t' "$OUT/latency.txt" || rc=1
 if [[ $CAPTURE == 1 && $rc == 0 ]]; then
   cat "$OUT/verify.txt" "$OUT/latency.txt" >"$HERE/tests/fixtures/e2e-kind-$OVERLAY-$TAG.txt"
 fi

@@ -3,9 +3,13 @@
 # sample (c9g.2xlarge: 8 CPUs, no SMT): md-dpdk/deploy/aws-eks/node/userdata.sh's
 # kubelet settings with reservedSystemCPUs 0-1, plus what that file lacks:
 # containerd's NRI with the default validator, and the ergon.io labels.
-# Use it in place of userdata.sh's NodeConfig part; its other parts (the
-# boot line, hugepages, the ENA binding: provision-node.sh,
-# bootstrap-dpdk-ena.sh) stay as they are.
+#
+# Do not paste it by hand: node/eks-userdata.sh builds the whole user data,
+# running userdata.sh as
+#   userdata.sh <cluster> <endpoint> <ca> <cidr> 0-1 0
+# (housekeeping CPUs 0-1, IRQs on 0, so the shared CPU 1 is not isolated)
+# and swapping its NodeConfig part for this one with the placeholders
+# filled in. userdata.sh's own example ("0") would isolate CPU 1.
 #
 # Not run. Blocked until a node passes `containerd --version` >= 2.2 (the
 # plugin's required-plugins annotation needs it) and the plugin's /readyz;

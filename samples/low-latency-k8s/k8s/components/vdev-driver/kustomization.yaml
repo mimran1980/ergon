@@ -6,6 +6,12 @@
 # run says nothing about ENA latency.
 apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
+configMapGenerator:
+  # the report's nic= (the transport= field says dpdk-ena either way)
+  - name: ll-app
+    namespace: trading
+    behavior: merge
+    literals: [LL_NIC=vdev-tap]
 patches:
   - target: {kind: DaemonSet, name: ll-media-driver}
     patch: |-

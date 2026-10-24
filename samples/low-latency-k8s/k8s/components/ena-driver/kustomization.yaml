@@ -4,6 +4,12 @@
 # Lab only (md-dpdk/BENCHMARKS.md: kernel UDP in production).
 apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component
+configMapGenerator:
+  # the report's nic=
+  - name: ll-app
+    namespace: trading
+    behavior: merge
+    literals: [LL_NIC=ena]
 patches:
   - target: {kind: DaemonSet, name: ll-media-driver}
     patch: |-

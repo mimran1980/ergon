@@ -8,8 +8,6 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources: [../../base]
 components: [../../components/vdev-driver]
-images:
-  - {name: ll, newName: ll, newTag: arm64-generic}
 configMapGenerator:
   - name: ll-driver
     namespace: trading-driver
@@ -18,7 +16,7 @@ configMapGenerator:
   - name: ll-app
     namespace: trading
     behavior: merge
-    literals: [LL_OVERLAY=vdev-local, LL_SAMPLES=200000, LL_WARMUP=20000]
+    literals: [LL_OVERLAY=vdev-local, LL_WARMUP=20000]
 patches:
   - target: {kind: DaemonSet, name: ll-media-driver}
     patch: |-

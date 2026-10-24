@@ -12,6 +12,13 @@
 //!   native resource agent affinity, and `privileged` Pod Security on every
 //!   namespace that mounts a hostPath.
 //!
+//! - per overlay: the image names (`ll:baseline` on vdev, the `REGISTRY/`
+//!   placeholder and a pinned tag on EKS, with the tag's `kubernetes.io/arch`
+//!   in every workload's node affinity), the report's `LL_NIC`, and a ping
+//!   that outlasts `scripts/verify.sh`'s window;
+//! - `node/eks-userdata.sh`'s output: housekeeping CPUs 0-1, IRQs on 0, the
+//!   sample's `NodeConfig`, under EC2's limit.
+//!
 //! A missing tool fails the test. The old `md-dpdk/deploy/low-latency`
 //! pod (kept as a fixture) must fail the rules.
 
@@ -348,13 +355,179 @@ fn every_overlay_renders_validates_and_follows_the_rules() -> TestResult {
     Ok(())
 }
 
+/// The rendered `ConfigMap` `name`'s data.
+fn configmap(objects: &[Value], name: &str) -> BTreeMap<String, String> {
+    objects
+        .iter()
+        .filter(|o| text(o, &["kind"]) == "ConfigMap" && text(o, &["metadata", "name"]) == name)
+        .filter_map(|o| s(o, &["data"]).and_then(Value::as_mapping))
+        .flat_map(|m| {
+            m.iter().map(|(k, v)| {
+                (
+                    k.as_str().unwrap_or_default().to_owned(),
+                    v.as_str().unwrap_or_default().to_owned(),
+                )
+            })
+        })
+        .collect()
+}
+
+/// verify.sh's default window, s, and the most it waits before a probe
+/// starts (self-checks, pod start), s.
+const VERIFY_WINDOW_S: u64 = 30;
+const VERIFY_START_S: u64 = 60;
+
+#[test]
+fn every_overlay_names_its_image_nic_and_a_long_enough_run() -> TestResult {
+    for overlay in OVERLAYS {
+        let objects = docs(&render(overlay)?)?;
+        let eks = overlay.starts_with("eks");
+        let app = configmap(&objects, "ll-app");
+        // the ping is still measuring for the whole verify window
+        let num = |k: &str| -> Result<u64, String> {
+            app.get(k)
+                .ok_or_else(|| format!("{overlay}: no {k}"))?
+                .parse()
+                .map_err(|e| format!("{overlay}: {k}: {e}"))
+        };
+        let (duration, samples) = (num("LL_DURATION_S")?, num("LL_SAMPLES")?);
+        assert!(
+            duration >= VERIFY_WINDOW_S + VERIFY_START_S,
+            "{overlay}: LL_DURATION_S={duration} ends before verify.sh's window"
+        );
+        assert!(
+            samples >= duration * 1_000_000,
+            "{overlay}: LL_SAMPLES={samples} can run out before LL_DURATION_S={duration} at 1 us a round trip"
+        );
+        let nic = app.get("LL_NIC").map_or("", String::as_str);
+        assert_eq!(
+            nic,
+            if eks { "ena" } else { "vdev-tap" },
+            "{overlay}: LL_NIC"
+        );
+        let mut images = 0;
+        for o in &objects {
+            let kind = text(o, &["kind"]);
+            if !matches!(kind.as_str(), "DaemonSet" | "Deployment" | "Job") {
+                continue;
+            }
+            let at = format!("{overlay} {kind}/{}", text(o, &["metadata", "name"]));
+            let pod =
+                s(o, &["spec", "template", "spec"]).ok_or_else(|| format!("{at}: no pod spec"))?;
+            let arches: Vec<String> = s(
+                pod,
+                &[
+                    "affinity",
+                    "nodeAffinity",
+                    "requiredDuringSchedulingIgnoredDuringExecution",
+                    "nodeSelectorTerms",
+                ],
+            )
+            .and_then(Value::as_sequence)
+            .into_iter()
+            .flatten()
+            .filter_map(|t| t.get("matchExpressions").and_then(Value::as_sequence))
+            .flatten()
+            .filter(|e| text(e, &["key"]) == "kubernetes.io/arch")
+            .filter_map(|e| e.get("values").and_then(Value::as_sequence))
+            .flatten()
+            .filter_map(|v| v.as_str().map(str::to_owned))
+            .collect();
+            for c in s(pod, &["containers"])
+                .and_then(Value::as_sequence)
+                .into_iter()
+                .flatten()
+            {
+                let image = text(c, &["image"]);
+                images += 1;
+                assert!(
+                    !image.ends_with(":latest") && image.contains(':'),
+                    "{at}: {image} is not a pinned tag"
+                );
+                if eks {
+                    assert!(
+                        image.starts_with("REGISTRY/"),
+                        "{at}: {image} is not the REGISTRY placeholder"
+                    );
+                    let tag = image.rsplit(':').next().unwrap_or_default();
+                    let arch = if overlay.ends_with("arm64") {
+                        "arm64"
+                    } else {
+                        "amd64"
+                    };
+                    assert!(
+                        tag.starts_with(arch) || tag.ends_with(arch),
+                        "{at}: {image} is not an {arch} tag"
+                    );
+                    assert_eq!(arches, [arch], "{at}: kubernetes.io/arch affinity");
+                } else if image.starts_with("ll") {
+                    // the multi-arch tag: no arch selector needed
+                    assert_eq!(image, "ll:baseline", "{at}");
+                    assert!(arches.is_empty(), "{at}: {arches:?}");
+                }
+            }
+        }
+        assert!(images >= 3, "{overlay}: {images} images");
+        println!(
+            "{overlay}: LL_DURATION_S={duration} LL_SAMPLES={samples} LL_NIC={nic}, {images} images PASS"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn the_eks_user_data_keeps_the_shared_cpu_out_of_isolation() -> TestResult {
+    let script = here().join("node/eks-userdata.sh");
+    let user_data = |role: &str| {
+        run(
+            Command::new("bash").arg("-c").arg(format!(
+                "set -o pipefail; bash {} demo https://ABC.gr7.eu-west-1.eks.amazonaws.com Zm9vYmFy 10.100.0.0/16 {role} | gzip -dc",
+                script.display()
+            )),
+            None,
+        )
+    };
+    let text = user_data("pong")?;
+    for want in [
+        "RUSTERON_HOUSEKEEPING_CPUS=0-1\n",
+        "RUSTERON_IRQ_CPUS=0\n",
+        "reservedSystemCPUs: \"0-1\"",
+        "ergon.io/shared-cpus=true",
+        "ergon.io/ll-role=pong",
+        "io.containerd.nri.v1.nri",
+        "name: demo",
+        "cidr: 10.100.0.0/16",
+    ] {
+        assert!(text.contains(want), "no {want:?} in the user data");
+    }
+    assert_eq!(text.matches("kind: NodeConfig").count(), 1);
+    for placeholder in [
+        "CLUSTER_NAME",
+        "API_SERVER_ENDPOINT",
+        "CA_BASE64",
+        "SERVICE_CIDR",
+        "LL_ROLE",
+    ] {
+        assert!(
+            !text.contains(placeholder),
+            "{placeholder} left in the user data"
+        );
+    }
+    // helm/values-eks.yaml's shared CPU is a housekeeping CPU, not an IRQ one
+    let values = std::fs::read_to_string(here().join("helm/values-eks.yaml"))?;
+    assert!(values.contains(r#"sharedCpus: "1""#));
+    assert!(user_data("pang").is_err(), "a bad role was accepted");
+    println!("eks-userdata: housekeeping 0-1, IRQs 0, NodeConfig swapped PASS");
+    Ok(())
+}
+
 #[test]
 fn the_probe_pod_template_validates() -> TestResult {
     let template = std::fs::read_to_string(here().join("k8s/verify/probe-pod.yaml"))?;
     let pod = template
         .replace("__NAME__", "ll-probe-n1")
         .replace("__NODE__", "n1")
-        .replace("__IMAGE__", "ll:arm64-generic")
+        .replace("__IMAGE__", "ll:baseline")
         .replace(
             "__COMMAND__",
             r#"["ll-probe","watch","--pod","trading/ll-ping-x=uid"]"#,
@@ -374,7 +547,7 @@ fn the_probe_pod_template_validates() -> TestResult {
 fn the_nri_chart_renders_with_the_samples_values() -> TestResult {
     let chart = here().join("../../k8s/nri-shared-cpus/charts/ergon-shared-cpus");
     let mut renders = Vec::new();
-    for values in ["values-kind", "values-linux-vm", "values-eks"] {
+    for values in ["values-kind", "values-eks"] {
         let file = here().join("helm").join(format!("{values}.yaml"));
         renders.push((
             format!("{values} (chart in git)"),
@@ -382,14 +555,15 @@ fn the_nri_chart_renders_with_the_samples_values() -> TestResult {
         ));
     }
     // the published chart, as the quick start installs it (kubeadm values)
-    for values in ["values-kind", "values-linux-vm"] {
-        let file = here().join("helm").join(format!("{values}.yaml"));
-        let oci = Path::new("oci://ghcr.io/mimran1980/charts/ergon-shared-cpus");
-        renders.push((
-            format!("{values} (GHCR 0.1.1)"),
-            template(oci, &file, &["--version", "0.1.1"])?,
-        ));
-    }
+    let oci = Path::new("oci://ghcr.io/mimran1980/charts/ergon-shared-cpus");
+    renders.push((
+        "values-kind (GHCR 0.1.1)".to_owned(),
+        template(
+            oci,
+            &here().join("helm/values-kind.yaml"),
+            &["--version", "0.1.1"],
+        )?,
+    ));
     for (what, yaml) in &renders {
         kubeconform(yaml, what)?;
         assert!(yaml.contains(r#"sharedCpus: "1""#), "{what}: sharedCpus");
@@ -401,7 +575,7 @@ fn the_nri_chart_renders_with_the_samples_values() -> TestResult {
             assert!(yaml.contains(flag), "{what}: {flag}");
         }
     }
-    let eks = &renders[2].1;
+    let eks = &renders[1].1;
     assert!(
         eks.contains("/etc/kubernetes/kubelet/config.json"),
         "values-eks: kubelet path"

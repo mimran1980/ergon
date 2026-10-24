@@ -22,7 +22,10 @@ configMapGenerator:
   - name: ll-endpoints
     namespace: trading
     envs: [endpoints.env]
+# baseline: the multi-arch image (linux/amd64 x86-64-v2, linux/arm64
+# Neoverse N1), which runs on any node of either; the EKS overlays name a
+# CPU tag in their registry instead (docker/build.sh).
 images:
   - name: ll
     newName: ll
-    newTag: arm64-generic
+    newTag: baseline

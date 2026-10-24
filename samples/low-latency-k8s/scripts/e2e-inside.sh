@@ -32,7 +32,7 @@ n=$(nproc)
 taskset -cp 0 $$ >/dev/null
 SHARED=1
 export AERON_DIR=/dev/shm/aeron
-COMMON=(AERON_DIR="$AERON_DIR" AERON_TERM_BUFFER_SPARSE_FILE=false RUSTERON_MEDIA_DRIVER_TRANSPORT=dpdk-ena ERGON_HOST_CHECKS=on LL_OVERLAY=docker-vdev
+COMMON=(AERON_DIR="$AERON_DIR" AERON_TERM_BUFFER_SPARSE_FILE=false RUSTERON_MEDIA_DRIVER_TRANSPORT=dpdk-ena LL_NIC=vdev-tap ERGON_HOST_CHECKS=on LL_OVERLAY=docker-vdev
   "ERGON_SHARED_CPUS=$SHARED" "ERGON_HELPER_CPUS=$SHARED" ERGON_SHARED_MILLICPUS=100)
 
 say "$(cat /etc/ll-build.txt | tr '\n' ' ')"
@@ -111,9 +111,9 @@ grep -h "^ll-selfcheck" "$OUT/ping.log" >"$OUT/selfcheck-ping.txt"
 [[ $probe_rc == 0 ]] || die "ll-probe: exit $probe_rc ($(cat "$OUT/probe.err"))"
 grep -q $'^ll-verify\tRESULT\tPASS' "$OUT/verify.txt" || die "no RESULT PASS"
 [[ $ping_rc == 0 ]] || die "the ping exited $ping_rc"
-for field in v1 rtt_ns rtt_max_top10 loop_gap_ns hot log; do
+for field in v2 rtt_ns rtt_max_top10 loop_gap_ns hot log; do
   grep -q $'^ll-latency\t'"$field"$'\t' "$OUT/ping.log" || die "the ping printed no ll-latency $field line"
 done
-grep -q $'^ll-latency\tv1\t.*\tlost=0$' "$OUT/ping.log" || die "the ping lost echoes"
-grep -q $'^ll-latency\tlog\tdropped_lines=0\t' "$OUT/ping.log" || die "the ping dropped log lines"
+grep -q $'^ll-latency\tv2\t.*\tlost=0$' "$OUT/ping.log" || die "the ping lost echoes"
+grep -q $'^ll-latency\tlog\tdropped_lines=0\twrite_errors=0\t' "$OUT/ping.log" || die "the ping lost log lines"
 say "PASS"

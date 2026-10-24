@@ -5,25 +5,31 @@
 # (ll-app) and the probe (ll-probe), plus ergon-cpus from the published
 # ergon-shared-cpus image. Amazon Linux 2023, as md-dpdk's EKS image.
 #
-# Build from the ergon repository root (docker/build.sh picks the flags per
-# tag):
-#   docker buildx build --platform linux/arm64 --load \
+# Build from the ergon repository root with docker/build.sh, which picks the
+# flags per tag and builds one platform per tag, or both for `baseline`:
+#   docker buildx build --platform linux/amd64,linux/arm64 --load \
 #     -f samples/low-latency-k8s/docker/Dockerfile \
-#     --build-arg RUSTERON_C_MARCH=armv8.2-a --build-arg RUST_TARGET_CPU=neoverse-n1 \
-#     --build-arg LL_CPU_BUILD=arm64-generic -t ll:arm64-generic .
+#     --build-arg RUST_TARGET_CPU_AMD64=x86-64-v2 --build-arg RUSTERON_C_MARCH_AMD64=x86-64-v2 \
+#     --build-arg RUST_TARGET_CPU_ARM64=neoverse-n1 --build-arg RUSTERON_C_MARCH_ARM64=armv8.2-a \
+#     --build-arg LL_CPU_BUILD=baseline -t ll:baseline .
 #
-# Build arguments:
-#   RUST_TARGET_CPU    empty: rustc's generic CPU. A name becomes -Ctarget-cpu,
-#                      and md-dpdk's build.rs gives its C the same -mcpu/-march
-#                      (it stops when gcc does not know the name).
-#   RUSTERON_C_MARCH   -march for rusteron's Aeron C. Always set: unset, rusteron
-#                      builds it -march=native for the builder's CPU (or the
-#                      emulator's under buildx).
-#   LL_CPU_BUILD       the tag's name, recorded in /etc/ll-build.txt and in
-#                      every ll-latency report (LL_CPU_BUILD).
-#   CARGO_BUILD_JOBS   empty: cargo's own; a number caps the parallel jobs.
+# Build arguments, per target architecture (TARGETARCH picks the pair):
+#   RUST_TARGET_CPU_<ARCH>    empty: rustc's generic CPU. A name becomes
+#                             -Ctarget-cpu, and md-dpdk's build.rs gives its C
+#                             the same -mcpu/-march (it stops when gcc does
+#                             not know the name).
+#   RUSTERON_C_MARCH_<ARCH>   -march for rusteron's Aeron C. Required: unset,
+#                             rusteron builds it -march=native for the
+#                             builder's CPU (or the emulator's under buildx).
+#   LL_CPU_BUILD              the tag's name, recorded in /etc/ll-build.txt
+#                             and in every ll-latency report (LL_CPU_BUILD).
+#   CARGO_BUILD_JOBS          empty: cargo's own; a number caps the jobs.
 
-# ergon-cpus: the same version as the plugin's hook (k8s/nri-shared-cpus).
+# ergon-cpus from the published 0.1.1 image. The checkout's chart and hook
+# are 0.1.2, but cmd/ergon-cpus and the packages it imports (cpuset, hook,
+# names, wrap) are unchanged from 0.1.1 to 0.1.2 (`git diff 515846b0 HEAD`
+# touches only internal/config), so this binary is the 0.1.2 one apart from
+# its --version string. Not run against the 0.1.2 hook on a node.
 FROM ghcr.io/mimran1980/ergon-shared-cpus:0.1.1@sha256:69893e0c23ec6c3656053c0d6c4a06c676e33b726d56f362a30ce760908796c0 AS ergon-cpus
 
 FROM public.ecr.aws/amazonlinux/amazonlinux:2023 AS builder
@@ -63,12 +69,21 @@ ENV CMAKE_TOOLCHAIN_FILE="/usr/local/share/rusteron-pic.cmake"
 
 WORKDIR /src
 COPY . .
-ARG RUST_TARGET_CPU=
-ARG RUSTERON_C_MARCH=
+ARG TARGETARCH
+ARG RUST_TARGET_CPU_AMD64=
+ARG RUST_TARGET_CPU_ARM64=
+ARG RUSTERON_C_MARCH_AMD64=
+ARG RUSTERON_C_MARCH_ARM64=
 ARG LL_CPU_BUILD=unset
 ARG CARGO_BUILD_JOBS=
 # One layer that builds, copies the binaries out and drops the target dirs.
-RUN test -n "$RUSTERON_C_MARCH" || { echo "RUSTERON_C_MARCH must be set (docker/build.sh)" >&2; exit 1; } \
+RUN case "$TARGETARCH" in \
+        amd64) RUST_TARGET_CPU=$RUST_TARGET_CPU_AMD64 RUSTERON_C_MARCH=$RUSTERON_C_MARCH_AMD64 ;; \
+        arm64) RUST_TARGET_CPU=$RUST_TARGET_CPU_ARM64 RUSTERON_C_MARCH=$RUSTERON_C_MARCH_ARM64 ;; \
+        *) echo "TARGETARCH $TARGETARCH: amd64 or arm64" >&2; exit 1 ;; \
+    esac \
+    && { test -n "$RUSTERON_C_MARCH" || { echo "RUSTERON_C_MARCH_${TARGETARCH} must be set (docker/build.sh)" >&2; exit 1; }; } \
+    && echo 'int main(void){return 0;}' > /tmp/m.c && gcc -march="$RUSTERON_C_MARCH" -c /tmp/m.c -o /tmp/m.o \
     && export RUSTERON_C_MARCH RUSTFLAGS="${RUST_TARGET_CPU:+-Ctarget-cpu=$RUST_TARGET_CPU}" \
     && cargo build ${CARGO_BUILD_JOBS:+-j $CARGO_BUILD_JOBS} --locked -p ergon-md-dpdk --release --features static,dpdk --bin media_driver \
     && (cd samples/low-latency-k8s && cargo build ${CARGO_BUILD_JOBS:+-j $CARGO_BUILD_JOBS} --locked --release --bins --target-dir /src/target) \
