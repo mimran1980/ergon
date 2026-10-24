@@ -489,7 +489,21 @@ precision_modes_check() {
 # The settings vm.sh host_setting takes (a mode's @KEY=value for the host, the
 # clients or the driver's placement); any other key must be an environment
 # variable the driver reads, AERON_* (Aeron's) or RUSTERON_* (the transport's)
-LAB_SETTINGS=" THP BIN CSTATE BUSY_POLL COALESCE RX_RING MIN_FREE_PCT CLOCKSOURCE RELIABLE AGENTS SMT JUMBO PUB_PARAMS SUB_PARAMS IRQ NAPI_DEFER NAPI_BUSY CONDUCTOR "
+LAB_SETTINGS=" THP BIN CSTATE BUSY_POLL COALESCE RX_RING MIN_FREE_PCT CLOCKSOURCE RELIABLE AGENTS SMT JUMBO PUB_PARAMS SUB_PARAMS IRQ NAPI_DEFER NAPI_BUSY CONDUCTOR DPDK "
+
+# @DPDK=<build>: the media driver and clients linked against DPDK 25.11 built
+# from source for the mode (vm.sh build-dpdk, into ~/bin-dpdk-<build>): stock,
+# or patched-refill (dpdk-ena-deferred-refill.patch on ENA's PMD)
+DPDK_BUILDS=" stock patched-refill "
+
+# modes_want_dpdk <mode>...: the @DPDK= builds the modes ask for, each once,
+# on one line (lib.sh writes it to bench/want_dpdk; vm.sh build builds each)
+modes_want_dpdk() {
+    local m v
+    for m in "$@"; do
+        if v=$(mode_get "$m" DPDK); then echo "$v"; fi
+    done | sort -u | tr '\n' ' ' | sed 's/ $//'
+}
 
 # dpdk_setting <mode> <name> <default> <least> <most> <why> [pow2]: the
 # mode's RUSTERON_DPDK_<name>, else <default>, when a whole number from
@@ -619,7 +633,7 @@ mode_check() {
             ;;
         esac
         case $key in
-        IRQ | NAPI_DEFER | NAPI_BUSY | CONDUCTOR)
+        IRQ | NAPI_DEFER | NAPI_BUSY | CONDUCTOR | DPDK)
             [[ $seen != *" $key "* ]] || { echo "mode $m: one $key at most" >&2; return 2; }
             seen+="$key "
             ;;
@@ -660,6 +674,15 @@ mode_check() {
             [[ $value == off ]] || { echo "mode $m: SMT=off or nothing" >&2; return 2; }
             [[ $arch != arm64 ]] || { echo "mode $m: SMT=off on Graviton, which has no SMT (each CPU a core)" >&2; return 2; }
             [[ $tpc != 1 ]] || { echo "mode $m: SMT=off with LAB_THREADS_PER_CORE=1: the instances have no SMT to turn off" >&2; return 2; }
+            ;;
+        DPDK)
+            [[ $DPDK_BUILDS == *" $value "* ]] ||
+                { echo "mode $m: DPDK=$value: stock (DPDK 25.11 from source) or patched-refill (with dpdk-ena-deferred-refill.patch on ENA's PMD)" >&2; return 2; }
+            [[ $transport == dpdk* ]] ||
+                { echo "mode $m: DPDK=$value is for DPDK modes only (the media driver and clients linked against that DPDK build)" >&2; return 2; }
+            [[ $cloud == aws ]] || { echo "mode $m: DPDK=$value is AWS only (a build of ENA's PMD)" >&2; return 2; }
+            mode_get "$m" BIN >/dev/null &&
+                { echo "mode $m: DPDK=$value with BIN=: one build a mode (DPDK= is its own, in ~/bin-dpdk-$value)" >&2; return 2; }
             ;;
         PUB_PARAMS) channel_params pub "$value" >/dev/null || { echo "mode $m: see above" >&2; return 2; } ;;
         SUB_PARAMS) channel_params sub "$value" >/dev/null || { echo "mode $m: see above" >&2; return 2; } ;;

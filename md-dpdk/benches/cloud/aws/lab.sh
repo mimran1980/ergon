@@ -97,7 +97,10 @@
 #   (napi_defer_hard_irqs, gro_flush_timeout) and @NAPI_BUSY=spare (threaded NAPI
 #   busy polling, its kthreads on the fifth core; Linux 6.17 and up); in any mode,
 #   @CONDUCTOR=own (the driver's conductor alone on the fifth core, spinning; not
-#   beside the other two on it). The fifth core is not on a four-core type
+#   beside the other two on it); DPDK modes only, @DPDK=stock|patched-refill (the
+#   driver and clients linked against DPDK 25.11 built from source on each VM,
+#   patched-refill with ../dpdk-ena-deferred-refill.patch: vm.sh build-dpdk, any
+#   placement; not beside @BIN=). The fifth core is not on a four-core type
 #   (c7i.2xlarge, c8g.xlarge, c9g.xlarge): refused here, before any cloud call, by
 #   the types' physical cores (../modes.sh type_cores: a type its table lacks is
 #   refused too, said so), as NAPI_BUSY is after the build on a kernel or host that

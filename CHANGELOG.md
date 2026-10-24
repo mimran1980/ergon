@@ -108,6 +108,15 @@
   command); the basic drop counters and every xstat (ENI allowances, SRD) are
   read every `NIC_SLOW_STATS_MS`, `0` meaning never. Latency effect not
   measured.
+- Cloud lab: `@DPDK=stock|patched-refill` (AWS, DPDK modes) runs the media
+  driver and clients linked against DPDK 25.11 built from source on each VM
+  (`vm.sh build-dpdk`, any placement). `patched-refill` applies
+  `benches/cloud/dpdk-ena-deferred-refill.patch` (lab only, never shipped):
+  ENA's `rx_burst` stops refilling the RX ring in a burst that returns frames
+  until two thresholds are owed; the next empty burst refills. `vm.sh driver`
+  stops unless the driver log shows the PMD the build should load. New ENA
+  counters `rx_q<n>_refill_deferred` and `rx_q<n>_refill_floor`. Latency
+  effect not measured.
 - Cloud lab: raw floor modes `kernel-raw` and `dpdk-raw`. The new `floor`
   client does `rtt`'s round trip with no Aeron, over kernel UDP or the DPDK
   transport's bindings alone, with the same output files; `analyse.py`

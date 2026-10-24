@@ -372,10 +372,13 @@ prepare_vms() {
         git -C "$repo" archive --format=tar "$base" >"$out/ergon-base.tar" || die "cannot pack LAB_BASE $base"
         tars+=(ergon-base.tar)
     fi
-    local host tar own peer want_ynl=
+    local host tar own peer want_ynl= want_dpdk
     # a mode busy-polling its NAPIs (NAPI_BUSY) needs the kernel's ynl: vm.sh
     # build fetches it (build-ynl) only where bench/want_ynl says 1
     if modes_want_ynl "${modes[@]}" ${local_modes:-}; then want_ynl=1; fi
+    # the DPDK builds the modes' @DPDK= ask for: vm.sh build builds each
+    # (build-dpdk) that bench/want_dpdk names
+    want_dpdk=$(modes_want_dpdk "${modes[@]}" ${local_modes:-})
     for host in "$A" "$B"; do
         read -r own peer <<<"$(host_subnets "$host")"
         for tar in "${tars[@]}"; do
@@ -386,7 +389,7 @@ prepare_vms() {
             done
             [[ -n $copied ]] || die "copy of $tar to $host failed"
         done
-        on "$host" "rm -rf ergon bench && mkdir -p ergon bench && echo $own >bench/data_subnet${peer:+ && echo $peer >bench/peer_subnet} && echo ${placement:-} >bench/placement && echo ${allow_arm:-} >bench/allow_arm && echo ${gapspin_us:-50} >bench/gapspin_us && echo $want_ynl >bench/want_ynl && tar -xf ergon.tar -C ergon && rm ergon.tar" ||
+        on "$host" "rm -rf ergon bench && mkdir -p ergon bench && echo $own >bench/data_subnet${peer:+ && echo $peer >bench/peer_subnet} && echo ${placement:-} >bench/placement && echo ${allow_arm:-} >bench/allow_arm && echo ${gapspin_us:-50} >bench/gapspin_us && echo $want_ynl >bench/want_ynl && echo $want_dpdk >bench/want_dpdk && tar -xf ergon.tar -C ergon && rm ergon.tar" ||
             die "unpack on $host failed"
         if [[ -n ${base:-} ]]; then
             on "$host" "rm -rf ergon-base bin-base && mkdir -p ergon-base && tar -xf ergon-base.tar -C ergon-base && rm ergon-base.tar" ||

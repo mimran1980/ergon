@@ -187,12 +187,23 @@ LAB_MODES="dpdk dpdk@AERON_RECEIVER_IO_VECTOR_CAPACITY=4 kernel-busy@RX_RING=409
 LAB_LOAD_LADDER="288:250000,500000,1000000" LAB_LOAD_SIZES=288 md-dpdk/benches/cloud/aws/lab.sh
 LAB_BASE=HEAD~1 LAB_MODES="dpdk dpdk@BIN=bin-base" md-dpdk/benches/cloud/aws/lab.sh   # against an earlier revision
 md-dpdk/benches/cloud/analyse.py --ab dpdk dpdk@BIN=bin-base target/md-dpdk-bench/<stamp>/results.csv
+LAB_MODES="dpdk@DPDK=stock dpdk@DPDK=patched-refill" md-dpdk/benches/cloud/aws/lab.sh   # ENA PMD patched against stock
 md-dpdk/benches/cloud/azure/lab.sh                           # the same on Azure
 just test-dpdk-lab                                           # the analysis against its fixture, no cloud
 ```
 
 A mode's `@KEY=value` is a driver environment variable or a `vm.sh` host
-setting (`modes.sh` lists them). Results land in
+setting (`modes.sh` lists them). `@DPDK=<build>` (AWS, DPDK modes) runs the driver
+and clients linked against DPDK 25.11 built from source on each VM
+(`vm.sh build-dpdk`, any placement):
+
+| build | ENA PMD |
+| --- | --- |
+| `stock` | unpatched |
+| `patched-refill` | `benches/cloud/dpdk-ena-deferred-refill.patch`: an `rx_burst` that returns frames skips the RX refill until `min(2 × rx_free_thresh, ring − 1)` descriptors are free; the next empty burst refills. Proof it loaded: one `ergon-lab deferred-refill ENA PMD` line per RX queue in `driver.log` (`vm.sh driver` stops without it) and the `rx_q<n>_refill_deferred` / `rx_q<n>_refill_floor` counters |
+
+Compare `@DPDK=` builds with each other, not with plain `dpdk`: outside
+precision-time plain `dpdk` links Debian's DPDK 24.11. Results land in
 `target/md-dpdk-bench/<stamp>/`; copy `results.csv` and `summary.md` into
 `benches/cloud/results/` to keep them. On Azure the lab moves each data NIC's
 VMBus device to `uio_hv_generic`, selects ports by MAC
