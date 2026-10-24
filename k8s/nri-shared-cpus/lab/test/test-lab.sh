@@ -15,8 +15,8 @@
 #     bench, report), writes lab.env, then deletes the group and checks it
 #     gone and nothing tagged with the run left ("verified");
 #   * the teardown runs on a failure (no SSH), a failed step (no later step
-#     runs) and an interrupt (TERM), and says "still billing" and fails when
-#     the group outlives the delete;
+#     runs) and an interrupt (TERM), and says "not verified" and fails when
+#     the group outlives the delete or the check cannot read (expired login);
 #   * a group that exists already, or one an earlier run left, is refused
 #     and nothing is created or deleted;
 #   * no snapshot directory and no watchdog process outlive a run;
@@ -161,8 +161,14 @@ check "verified" has "$d/out" "verified: group"
 echo "== the group outlives the delete"
 run_lab still FAKE_SSH=down FAKE_STILL_EXISTS=1
 check "fails" test "$(rc_of still)" -ne 0
-check "says still billing, with the command" has "$work/still/out" "WARNING: still billing"
+check "says it may still bill, with the commands" has "$work/still/out" "WARNING: not verified, may still bill: group exists=true"
 check "no verified line" bash -c "! grep -q 'verified:' '$work/still/out'"
+
+echo "== the teardown's listing fails (an expired login)"
+run_lab listfail FAKE_SSH=down FAKE_LIST_FAIL=1
+check "fails" test "$(rc_of listfail)" -ne 0
+check "says unread, never verified" has "$work/listfail/out" "tagged run=20261024000000: unread"
+check "no verified line" bash -c "! grep -q 'verified:' '$work/listfail/out'"
 
 echo "== refusals at the cloud"
 run_lab exists FAKE_EXISTS=1

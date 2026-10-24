@@ -2,7 +2,8 @@
 # Fake az for test-lab.sh: logs every call to $FAKE_DIR/az.log and answers
 # from the state files there. FAKE_EXISTS=1: the group exists before the run;
 # FAKE_STILL_EXISTS=1: it outlives the delete; FAKE_LEFTOVER: a group name
-# tagged owner=ergon-lab from an earlier run.
+# tagged owner=ergon-lab from an earlier run; FAKE_LIST_FAIL=1: the
+# teardown's tag listing fails (an expired login).
 echo "az $*" >>"$FAKE_DIR/az.log"
 d=$FAKE_DIR
 case "$1 $2" in
@@ -16,6 +17,7 @@ case "$1 $2" in
 "group delete") touch "$d/deleted" ;;
 "resource list")
     if [[ " $* " == *" --tag "* ]]; then
+        [[ ${FAKE_LIST_FAIL:-} == 1 ]] && { echo "ERROR: login expired" >&2; exit 1; }
         [[ ${FAKE_STILL_EXISTS:-} == 1 ]] && echo "/subscriptions/x/resourceGroups/g/providers/Microsoft.Compute/virtualMachines/vm"
     elif [[ " $* " == *"length(@)"* ]]; then echo 3
     else printf '%s\n' /fake/vm /fake/nic /fake/disk; fi ;;

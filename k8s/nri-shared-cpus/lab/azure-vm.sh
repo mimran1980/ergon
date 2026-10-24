@@ -184,15 +184,20 @@ teardown() {
     [[ -n ${watchdog:-} ]] && kill "$watchdog" 2>/dev/null
     if ((created)); then
         log "deleting resource group $group"
-        az group delete -n "$group" --yes --no-wait -o none || log "WARNING: az group delete failed"
-        az group wait -n "$group" --deleted --timeout 3600 -o none || log "WARNING: az group wait failed"
-        local exists left
+        if az group delete -n "$group" --yes --no-wait -o none; then
+            az group wait -n "$group" --deleted --timeout 3600 -o none || log "WARNING: az group wait failed"
+        else
+            log "WARNING: az group delete failed"
+        fi
+        # every read must succeed for "verified": an expired login reads as
+        # nothing left, and that is not a check
+        local exists left listed=1
         exists=$(az group exists -n "$group" 2>/dev/null)
-        left=$(az resource list --tag "run=$stamp" --query '[].id' -o tsv 2>/dev/null)
-        if [[ $exists == false && -z $left ]]; then
+        left=$(az resource list --tag "run=$stamp" --query '[].id' -o tsv 2>/dev/null) || listed=0
+        if [[ $exists == false && $listed == 1 && -z $left ]]; then
             log "verified: group $group is gone and no resource is tagged run=$stamp"
         else
-            log "WARNING: still billing: group exists=$exists, tagged run=$stamp: ${left:-none}. Delete by hand: az group delete -n $group --yes"
+            log "WARNING: not verified, may still bill: group exists=${exists:-unread}, tagged run=$stamp: $( ((listed)) && echo "${left:-none}" || echo unread). Check and delete by hand: az group delete -n $group --yes; az resource list --tag run=$stamp"
             ((rc)) || rc=1
         fi
     fi
