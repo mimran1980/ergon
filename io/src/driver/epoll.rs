@@ -16,7 +16,9 @@
 //! - `recv-busy` with `Config::per_queue`: one read per NIC queue (one
 //!   socket per NAPI id; sockets whose queue is not known yet are all read),
 //!   which polls every queue once, then `epoll_wait(0)` for the sockets those
-//!   passes (or interrupts) made ready.
+//!   passes (or interrupts) made ready. A socket's queue is looked up after
+//!   its first data and on a look-again every 4096 polls; a socket with no
+//!   NAPI id (loopback, a plain veth) costs no lookup in between.
 #![allow(unsafe_code)]
 
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
@@ -42,6 +44,15 @@ pub(super) struct Epoll {
     per_queue: bool,
     /// Per slot: the socket's NAPI id once known (0 until then).
     napi: Vec<u32>,
+    /// Per slot: its id was looked up once after data arrived. A socket
+    /// still at 0 then has no NAPI id (loopback, a plain veth): it is asked
+    /// again only on the periodic look-again.
+    asked: Vec<bool>,
+    /// The NAPI ids seen while picking (scratch space, kept to avoid an
+    /// allocation per rebuild).
+    seen: Vec<u32>,
+    /// Rebuilds of the representatives (test lever).
+    picks: u64,
     /// Per slot: read every poll (one per NIC queue, plus unknown queues).
     polled: Vec<bool>,
     /// The slots in `polled`, in order.
@@ -86,6 +97,9 @@ impl Epoll {
             mode,
             per_queue,
             napi: Vec::new(),
+            asked: Vec::new(),
+            seen: Vec::with_capacity(16),
+            picks: 0,
             polled: Vec::new(),
             reps: Vec::new(),
             dirty: true,
@@ -108,6 +122,9 @@ impl Epoll {
         self.rebind = true;
         if let Some(n) = self.napi.get_mut(id.index()) {
             *n = 0;
+        }
+        if let Some(a) = self.asked.get_mut(id.index()) {
+            *a = false;
         }
         let Some(ep) = &self.ep else {
             return Ok(());
@@ -157,18 +174,7 @@ impl Epoll {
                 self.recv_index(conns, i, handler, stats, read_seq);
             }
         } else if self.per_queue {
-            // Queues are learnt from each socket's first packets: look again
-            // now and then until every socket's is known.
-            self.polls += 1;
-            if self.dirty || self.polls.is_multiple_of(4096) {
-                // A socket coming or going, and the periodic look-again, both
-                // refresh every id: a NIC can move a queue under a live
-                // socket (RSS remap), and a reused slot can hold the previous
-                // connection's queue. A rebuild only to fill ids that are
-                // still unknown reads nothing new.
-                let refresh_all = self.rebind || self.polls.is_multiple_of(4096);
-                self.pick_reps(conns, refresh_all);
-            }
+            self.refresh_reps(conns);
             for k in 0..self.reps.len() {
                 let i = self.reps[k];
                 self.recv_index(conns, i, handler, stats, read_seq);
@@ -190,6 +196,24 @@ impl Epoll {
             }
         }
         Ok(())
+    }
+
+    /// Rebuilds the representatives when due: a socket came or went, an
+    /// unknown socket's first data arrived (its queue is learnt from it), or
+    /// the periodic look-again (every 4096 polls). Otherwise one branch.
+    #[inline]
+    fn refresh_reps<E: Endpoint>(&mut self, conns: &mut Conns<E>) {
+        self.polls += 1;
+        let periodic = self.polls.is_multiple_of(4096);
+        if self.dirty || periodic {
+            // A socket coming or going, and the periodic look-again, both
+            // refresh every id: a NIC can move a queue under a live socket
+            // (RSS remap), and a reused slot can hold the previous
+            // connection's queue. A rebuild only to fill ids that are still
+            // unknown reads nothing new.
+            let refresh_all = self.rebind || periodic;
+            self.pick_reps(conns, refresh_all);
+        }
     }
 
     #[inline]
@@ -215,6 +239,15 @@ impl Epoll {
                 if !conn.tx_queue().is_empty() {
                     conns.mark_tx(i);
                 }
+                // Data arrived on a socket whose queue is unknown: look it
+                // up once now (the next poll), not every poll.
+                if self.per_queue
+                    && self.napi.get(i) == Some(&0)
+                    && self.asked.get(i) == Some(&false)
+                {
+                    self.asked[i] = true;
+                    self.dirty = true;
+                }
             }
             Err(e) => {
                 let e = conn.close_reason(e);
@@ -232,8 +265,10 @@ impl Epoll {
     /// asked again which queue it is on. Without it only ids that are still
     /// unknown are read, which never corrects an id that has gone stale.
     fn pick_reps<E: Endpoint>(&mut self, conns: &mut Conns<E>, refresh_all: bool) {
+        self.picks += 1;
         let n = conns.len_slots();
         self.napi.resize(n, 0);
+        self.asked.resize(n, false);
         if refresh_all {
             self.rebind = false;
             self.napi.fill(0);
@@ -241,28 +276,30 @@ impl Epoll {
         self.polled.clear();
         self.polled.resize(n, false);
         self.reps.clear();
-        let mut seen: Vec<u32> = Vec::new();
-        let mut unknown = false;
+        self.seen.clear();
         for i in 0..n {
             let Some(c) = conns.at(i) else {
                 self.napi[i] = 0;
+                self.asked[i] = false;
                 continue;
             };
             if self.napi[i] == 0 {
                 self.napi[i] = sys::incoming_napi_id(c.fd()).unwrap_or(0);
             }
             let id = self.napi[i];
-            if id == 0 {
-                unknown = true;
-            } else if seen.contains(&id) {
-                continue;
-            } else {
-                seen.push(id);
+            if id != 0 {
+                if self.seen.contains(&id) {
+                    continue;
+                }
+                self.seen.push(id);
             }
+            // Unknown queues are all read: nothing is missed meanwhile.
             self.polled[i] = true;
             self.reps.push(i);
         }
-        self.dirty = unknown;
+        // Unknown ids wait for their socket's first data or the periodic
+        // look-again, not the next poll.
+        self.dirty = false;
     }
 
     fn wait(&mut self, stats: &mut DriverStats) -> Result<usize> {
@@ -451,6 +488,29 @@ mod tests {
             "the replacement is never a polling representative: {:?}",
             ep.reps
         );
+        Ok(())
+    }
+
+    /// Sockets with no NAPI id (loopback, a plain veth) never learn one:
+    /// the representatives are not rebuilt every poll (one getsockopt per
+    /// socket and an allocation each time), only on the periodic
+    /// look-again, and the rebuild reuses its scratch space.
+    #[test]
+    fn unknown_queues_are_looked_up_again_only_now_and_then() -> R {
+        let (mut ep, mut conns) = per_queue()?;
+        install(&mut ep, &mut conns)?;
+        install(&mut ep, &mut conns)?;
+        for _ in 0..10_000 {
+            ep.refresh_reps(&mut conns);
+        }
+        // The first poll after the adds, then the look-again at 4096 and 8192.
+        assert_eq!(ep.picks, 3, "picks over 10,000 polls");
+        assert_eq!(ep.reps, [0, 1], "unknown queues are all still read");
+        let cap = ep.seen.capacity();
+        for _ in 0..10_000 {
+            ep.refresh_reps(&mut conns);
+        }
+        assert_eq!(ep.seen.capacity(), cap, "the scratch space grew");
         Ok(())
     }
 
