@@ -3452,14 +3452,15 @@ on() {
 }
 modes=(kernel@IRQ=spare dpdk) local_modes=kernel market=spot
 if [[ -n ${YNL:-} ]]; then modes+=(kernel@NAPI_BUSY=spare); fi
+if [[ -n ${DPDKB:-} ]]; then modes+=(dpdk@DPDK=patched-refill dpdk@DPDK=stock@RUSTERON_DPDK_RX_FREE_THRESH=32); fi
 prepare_vms
 echo "rc $?" >>"$out/calls"
 SH
-for case in ynl plain fail; do
+for case in ynl plain fail dpdk; do
     dp=$tmp/dry-prepare-$case
     mkdir -p "$dp/repo"
     git -C "$dp/repo" init -q && echo x >"$dp/repo/f"
-    env YNL="$([[ $case == ynl ]] && echo 1)" FAIL_READY="$([[ $case == fail ]] && echo 1)" \
+    env YNL="$([[ $case == ynl ]] && echo 1)" FAIL_READY="$([[ $case == fail ]] && echo 1)" DPDKB="$([[ $case == dpdk ]] && echo 1)" \
         bash "$tmp/dry-prepare.sh" "$cloud" "$dp" </dev/null 2>"$dp/stderr" || true
 done
 order() { grep -nE 'vm.sh (ready|tune)$|vm.sh ready |cat bench/build.rc' "$1" | sed -E 's/^([0-9]+):[^ ]* .*vm.sh (ready|tune).*/\1 \2/; s/^([0-9]+):.*build.rc.*/\1 build/' | sort -n | awk '{print $2}' | uniq | tr '\n' ' '; }
@@ -3468,6 +3469,8 @@ if grep -E 'unbound variable|command not found|syntax error' "$dp"-*/stderr; the
     fail "lib.sh prepare_vms dry: shell errors"
 elif ! grep -q 'echo 1 >bench/want_ynl' "$dp-ynl/calls" || grep -q 'echo 1 >bench/want_ynl' "$dp-plain/calls"; then
     fail "lib.sh prepare_vms dry: want_ynl: $(grep -o 'echo[^&]*want_ynl' "$dp"-{ynl,plain}/calls | sort -u)"
+elif [[ $(grep -c 'echo patched-refill stock >bench/want_dpdk' "$dp-dpdk/calls") != 2 || $(grep -c 'echo  >bench/want_dpdk' "$dp-plain/calls") != 2 ]]; then
+    fail "lib.sh prepare_vms dry: want_dpdk: $(grep -o 'echo[^&]*want_dpdk' "$dp"-{dpdk,plain}/calls | sort -u)"
 elif [[ $(grep -c 'vm.sh ready kernel@IRQ=spare dpdk kernel@NAPI_BUSY=spare kernel$' "$dp-ynl/calls") != 2 ]] ||
     [[ $(order "$dp-ynl/calls") != "build ready tune " ]] || ! grep -q '^rc 0' "$dp-ynl/calls"; then
     fail "lib.sh prepare_vms dry: the hosts' readiness: $(grep 'vm.sh ready' "$dp-ynl/calls"); order $(order "$dp-ynl/calls"); $(tail -2 "$dp-ynl/log")"
@@ -3478,7 +3481,7 @@ elif ! grep -qx 'market spot (AWS spot instances: AWS may reclaim them mid-run)'
     ! grep -qx 'market spot (AWS spot instances: AWS may reclaim them mid-run)' "$dp-plain/env-192.0.2.2.txt"; then
     fail "lib.sh prepare_vms dry: the market not recorded: $(cat "$dp-plain"/env-*.txt)"
 else
-    pass "lib.sh prepare_vms dry: ynl fetched for NAPI_BUSY only, each host's readiness for every mode checked after the build (stopping the run before tune), the market recorded"
+    pass "lib.sh prepare_vms dry: ynl fetched for NAPI_BUSY only, the @DPDK= builds asked for (bench/want_dpdk), each host's readiness for every mode checked after the build (stopping the run before tune), the market recorded"
 fi
 
 # lib.sh remote_state, dry: a state that never finishes (VM a writes no rc)
@@ -4123,6 +4126,117 @@ else
     pass "vm.sh build and build-base: the clients built with the media driver's features, DPDK's wherever it has them (INVOKER embeds it)"
 fi
 
+# vm.sh build-dpdk <build> in a sandbox (vm.sh build runs it for each build
+# bench/want_dpdk names: lib.sh, from the modes' @DPDK=): DPDK 25.11 from
+# fast.dpdk.org, unpacked afresh; patched-refill with
+# dpdk-ena-deferred-refill.patch applied exactly (patch -p1, no fuzz), each
+# under its own prefix (stock's the precision-time build's), built as
+# build-ptp builds it (meson: the ENA path only), never put in ld.so.conf;
+# then the media driver and every benchmark client linked against it in a
+# target directory of their own, its library directory their RPATH
+# (DT_RPATH, which their transitive libraries and the PMDs the EAL loads
+# follow too), every librte_* checked to load from it (fail closed: the build
+# directory removed), into ~/bin-dpdk-<build>. Again with the same patch:
+# DPDK not rebuilt; with another patch: rebuilt. Only those two builds, on
+# AWS only.
+sbp=$tmp/vm-build-dpdk
+mkdir -p "$sbp/bin" "$sbp/home/ergon/md-dpdk/harness" "$sbp/home/bench" "$sbp/home/dpdk-kmods" "$sbp/opt" "$sbp/tarball/dpdk-25.11"
+cp "$sb/bin/uname" "$sb/bin/nproc" "$sbp/bin/"
+cp "$cloud/../../harness/Cargo.toml" "$sbp/home/ergon/md-dpdk/harness/Cargo.toml"
+echo 'project dpdk' >"$sbp/tarball/dpdk-25.11/meson.build"
+(cd "$sbp/tarball" && tar -cJf ../dpdk-25.11.tar.xz dpdk-25.11)
+# shellcheck disable=SC2016
+{
+    printf '#!/usr/bin/env bash\necho "sudo $*" >>"$FAKE_LOG"\ncase $1 in ninja) "$@" ;; tee) case $2 in "$LAB_OPT_ROOT"/*) "$@" >/dev/null ;; *) cat >/dev/null ;; esac ;; esac\nexit 0\n' >"$sbp/bin/sudo"
+    printf '#!/bin/sh\necho "curl $*" >>"$FAKE_LOG"\ncat "$FAKE_TARBALL"\n' >"$sbp/bin/curl"
+    printf '#!/bin/sh\nif cmp -s - "$FAKE_PATCH"; then p=the-patch; else p=other; fi\necho "patch $* in ${PWD##*/} <$p" >>"$FAKE_LOG"\n' >"$sbp/bin/patch"
+    printf '#!/bin/sh\necho "meson $* in ${PWD##*/}" >>"$FAKE_LOG"\nmkdir -p build\nfor a; do case $a in -Dprefix=*) echo "${a#-Dprefix=}" >build/prefix ;; esac; done\n' >"$sbp/bin/meson"
+    printf '#!/bin/sh\necho "ninja $*" >>"$FAKE_LOG"\nif [ "$3" = install ]; then d=$(cat build/prefix)/lib/x86_64-linux-gnu; mkdir -p "$d/pkgconfig"; : >"$d/pkgconfig/libdpdk.pc"; fi\n' >"$sbp/bin/ninja"
+    printf '#!/bin/sh\necho "cargo $* [PKG_CONFIG_PATH=$PKG_CONFIG_PATH CARGO_TARGET_DIR=$CARGO_TARGET_DIR]" >>"$FAKE_LOG"\nb=; n=; for a; do [ "$n" = 1 ] && b=$a; n=; [ "$a" = --bin ] && n=1; done\nd=${CARGO_TARGET_DIR:-target}/release; mkdir -p "$d"; [ -z "$b" ] || { : >"$d/$b"; chmod +x "$d/$b"; }\nexit 0\n' >"$sbp/bin/cargo"
+    printf '#!/bin/sh\nprintf "\\tlinux-vdso.so.1 (0x0)\\n\\tlibrte_eal.so.26 => %%s/librte_eal.so.26 (0x0)\\n\\tlibrte_kvargs.so.26 => %%s/librte_kvargs.so.26 (0x0)\\n\\tlibc.so.6 => /lib/libc.so.6 (0x0)\\n" "$FAKE_EAL_DIR" "${FAKE_KVARGS_DIR:-$FAKE_EAL_DIR}"\n' >"$sbp/bin/ldd"
+    printf '#!/bin/sh\nexit 0\n' >"$sbp/bin/make"
+    printf '#!/bin/sh\nexit 0\n' >"$sbp/bin/rustup"
+}
+chmod +x "$sbp/bin/"*
+dpdk_sb() { # <cloud> <placement> <eal dir> <vm.sh args>...: "<rc> | <the calls, one a line>" with the sandbox's path as <sb>
+    local rc=0
+    : >"$sbp/log"
+    echo "$1" >"$sbp/home/bench/cloud"
+    echo "$2" >"$sbp/home/bench/placement"
+    env -i PATH="$sbp/bin:$PATH" HOME="$sbp/home" FAKE_LOG="$sbp/log" FAKE_ARCH=x86_64 FAKE_TARBALL="$sbp/dpdk-25.11.tar.xz" \
+        FAKE_PATCH="$cloud/dpdk-ena-deferred-refill.patch" FAKE_EAL_DIR="$3" FAKE_KVARGS_DIR="${FAKE_KVARGS_DIR:-}" \
+        LAB_OPT_ROOT="$sbp/opt" LAB_SYS_ROOT="$sys/aws-x86" bash "$cloud/vm.sh" "${@:4}" >"$sbp/out" 2>&1 || rc=$?
+    echo "rc $rc$( ((rc)) && echo " ($(tail -1 "$sbp/out"))")"
+    sed "s|$sbp|<sb>|g" "$sbp/log"
+}
+lib=$sbp/opt/dpdk-25.11-patched-refill/lib/x86_64-linux-gnu
+patch_sum=$(sha256sum "$cloud/dpdk-ena-deferred-refill.patch" | cut -d' ' -f1)
+got="patched:
+$(dpdk_sb aws cluster "$lib" build-dpdk patched-refill)
+bins: $(ls "$sbp/home/bin-dpdk-patched-refill" 2>/dev/null | tr '\n' ' ')ld.so.conf: $(grep -c ld.so.conf "$sbp/log" || true)
+again:
+$(dpdk_sb aws cluster "$lib" build-dpdk patched-refill | grep -cE '^(curl|patch|meson|ninja|sudo ninja) ' || true) DPDK steps, $(grep -c '^cargo rustc' "$sbp/log" || true) links"
+echo stale >"$sbp/opt/dpdk-25.11-patched-refill/ergon-lab-patch.sha256"
+got+="
+another patch: $(dpdk_sb aws cluster "$lib" build-dpdk patched-refill | grep -cE '^(curl|patch|meson) ' || true) DPDK steps
+stock:
+$(dpdk_sb aws cluster "$sbp/opt/dpdk-25.11/lib/x86_64-linux-gnu" build-dpdk stock | grep -vE '^cargo rustc --release -p ergon-md-dpdk-harness ' || true)
+host: $(dpdk_sb aws cluster "$lib" host >/dev/null; grep '^dpdk-build ' "$sbp/out" | tr '\n' ';')
+bad kvargs: $(FAKE_KVARGS_DIR=/opt/dpdk-25.11/lib/x86_64-linux-gnu dpdk_sb aws cluster "$lib" build-dpdk patched-refill | head -1) $( (ls -d "$sbp/home/bin-dpdk-patched-refill" 2>/dev/null || true) | wc -l | tr -d ' ') bin dir
+host after it: $(dpdk_sb aws cluster "$lib" host >/dev/null; grep '^dpdk-build ' "$sbp/out" | tr '\n' ';')
+unknown: $(dpdk_sb aws cluster "$lib" build-dpdk refill | head -1)
+azure: $(dpdk_sb azure '' "$lib" build-dpdk patched-refill | head -1)"
+echo patched-refill >"$sbp/home/bench/want_dpdk"
+got+="
+build: $(dpdk_sb aws cluster "$lib" build | sed -nE 's/^cargo (build|rustc) --release -p ([^ ]+) .*--bin ([a-z_]+).*/\1 \2 \3/p' | tr '\n' ';')"
+rm "$sbp/home/bench/want_dpdk"
+got+="
+build, none wanted: $(dpdk_sb aws cluster "$lib" build | grep -c '^cargo rustc' || true)"
+want="patched:
+rc 0
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq meson ninja-build python3-pyelftools libnuma-dev
+curl -fsSL https://fast.dpdk.org/rel/dpdk-25.11.tar.xz
+patch -p1 --forward --fuzz=0 in dpdk-25.11-patched-refill <the-patch
+sudo rm -rf <sb>/opt/dpdk-25.11-patched-refill
+meson setup -Dprefix=<sb>/opt/dpdk-25.11-patched-refill -Dtests=false -Ddisable_apps=* -Denable_drivers=bus/pci,bus/vdev,mempool/ring,net/ena build in dpdk-25.11-patched-refill
+ninja -C build
+sudo ninja -C build install
+ninja -C build install
+sudo tee <sb>/opt/dpdk-25.11-patched-refill/ergon-lab-patch.sha256
+cargo rustc --release -p ergon-md-dpdk --features static,dpdk --bin media_driver -- -C link-arg=-Wl,--disable-new-dtags,-rpath,<sb>/opt/dpdk-25.11-patched-refill/lib/x86_64-linux-gnu [PKG_CONFIG_PATH=<sb>/opt/dpdk-25.11-patched-refill/lib/x86_64-linux-gnu/pkgconfig CARGO_TARGET_DIR=<sb>/home/ergon/target-dpdk]
+cargo rustc --release -p ergon-md-dpdk-harness --features static,dpdk --bin rtt -- -C link-arg=-Wl,--disable-new-dtags,-rpath,<sb>/opt/dpdk-25.11-patched-refill/lib/x86_64-linux-gnu [PKG_CONFIG_PATH=<sb>/opt/dpdk-25.11-patched-refill/lib/x86_64-linux-gnu/pkgconfig CARGO_TARGET_DIR=<sb>/home/ergon/target-dpdk]
+cargo rustc --release -p ergon-md-dpdk-harness --features static,dpdk --bin load -- -C link-arg=-Wl,--disable-new-dtags,-rpath,<sb>/opt/dpdk-25.11-patched-refill/lib/x86_64-linux-gnu [PKG_CONFIG_PATH=<sb>/opt/dpdk-25.11-patched-refill/lib/x86_64-linux-gnu/pkgconfig CARGO_TARGET_DIR=<sb>/home/ergon/target-dpdk]
+cargo rustc --release -p ergon-md-dpdk-harness --features static,dpdk --bin tput -- -C link-arg=-Wl,--disable-new-dtags,-rpath,<sb>/opt/dpdk-25.11-patched-refill/lib/x86_64-linux-gnu [PKG_CONFIG_PATH=<sb>/opt/dpdk-25.11-patched-refill/lib/x86_64-linux-gnu/pkgconfig CARGO_TARGET_DIR=<sb>/home/ergon/target-dpdk]
+cargo rustc --release -p ergon-md-dpdk-harness --features static,dpdk --bin floor -- -C link-arg=-Wl,--disable-new-dtags,-rpath,<sb>/opt/dpdk-25.11-patched-refill/lib/x86_64-linux-gnu [PKG_CONFIG_PATH=<sb>/opt/dpdk-25.11-patched-refill/lib/x86_64-linux-gnu/pkgconfig CARGO_TARGET_DIR=<sb>/home/ergon/target-dpdk]
+bins: floor load media_driver rtt tput ld.so.conf: 0
+again:
+0 DPDK steps, 5 links
+another patch: 3 DPDK steps
+stock:
+rc 0
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq meson ninja-build python3-pyelftools libnuma-dev
+curl -fsSL https://fast.dpdk.org/rel/dpdk-25.11.tar.xz
+sudo rm -rf <sb>/opt/dpdk-25.11
+meson setup -Dprefix=<sb>/opt/dpdk-25.11 -Dtests=false -Ddisable_apps=* -Denable_drivers=bus/pci,bus/vdev,mempool/ring,net/ena build in dpdk-25.11
+ninja -C build
+sudo ninja -C build install
+ninja -C build install
+cargo rustc --release -p ergon-md-dpdk --features static,dpdk --bin media_driver -- -C link-arg=-Wl,--disable-new-dtags,-rpath,<sb>/opt/dpdk-25.11/lib/x86_64-linux-gnu [PKG_CONFIG_PATH=<sb>/opt/dpdk-25.11/lib/x86_64-linux-gnu/pkgconfig CARGO_TARGET_DIR=<sb>/home/ergon/target-dpdk]
+host: dpdk-build patched-refill: DPDK 25.11 in <sb>/opt/dpdk-25.11-patched-refill, dpdk-ena-deferred-refill.patch sha256 $patch_sum: <sb>/home/bin-dpdk-patched-refill;dpdk-build stock: DPDK 25.11 in <sb>/opt/dpdk-25.11: <sb>/home/bin-dpdk-stock;
+bad kvargs: rc 1 (build-dpdk patched-refill: <sb>/home/bin-dpdk-patched-refill/floor loads librte_kvargs.so.26 from /opt/dpdk-25.11/lib/x86_64-linux-gnu/librte_kvargs.so.26, not <sb>/opt/dpdk-25.11-patched-refill/lib/x86_64-linux-gnu: removed) 0 bin dir
+host after it: dpdk-build stock: DPDK 25.11 in <sb>/opt/dpdk-25.11: <sb>/home/bin-dpdk-stock;
+unknown: rc 2 (build-dpdk refill: stock (DPDK 25.11 from source) or patched-refill (with dpdk-ena-deferred-refill.patch on ENA's PMD))
+azure: rc 2 (build-dpdk patched-refill: AWS only (a build of ENA's PMD))
+build: build ergon-md-dpdk media_driver;build ergon-md-dpdk-harness clockcheck;rustc ergon-md-dpdk media_driver;rustc ergon-md-dpdk-harness rtt;rustc ergon-md-dpdk-harness load;rustc ergon-md-dpdk-harness tput;rustc ergon-md-dpdk-harness floor;
+build, none wanted: 0"
+got=${got//$sbp/<sb>}
+if [[ $got != "$want" ]]; then
+    fail "vm.sh build-dpdk: DPDK 25.11 from source, patched or stock, and the driver and clients linked against it"
+    diff -u <(echo "$want") <(echo "$got") >&2 || true
+else
+    pass "vm.sh build-dpdk: DPDK 25.11 from source (patched-refill: the patch applied exactly), its own prefix, never in ld.so.conf, idempotent by the patch's hash; the driver and every client linked with its RPATH, each librte_* checked to load from it (fail closed); each build's DPDK and patch in vm.sh host (the env file); run by build for each wanted build, AWS only"
+fi
+
 # vm.sh ready <mode>... in a sandbox (lib.sh asks it after the build, before
 # any state): what each mode's settings need of the host, refused with why:
 # @IRQ=spare and @NAPI_BUSY=spare a fifth core (not c8g.xlarge's four);
@@ -4153,17 +4267,107 @@ chmod +x "$sbr/home/bench/ynl"
 got+="
 busy: $(ready_sb aws-x86 7.2.6+deb13-cloud-amd64 kernel-busy@NAPI_BUSY=spare kernel)
 none: $(ready_sb c8g-xl 6.12.43+deb13-cloud-arm64 kernel dpdk kernel@IRQ=receiver)"
+got+="
+dpdk build missing: $(ready_sb aws-x86 7.2.6+deb13-cloud-amd64 dpdk@DPDK=patched-refill dpdk)"
+mkdir -p "$sbr/home/bin-dpdk-patched-refill"
+printf '#!/bin/sh\nexit 0\n' >"$sbr/home/bin-dpdk-patched-refill/media_driver"
+chmod +x "$sbr/home/bin-dpdk-patched-refill/media_driver"
+got+="
+dpdk build: $(ready_sb aws-x86 7.2.6+deb13-cloud-amd64 dpdk@DPDK=patched-refill+idle dpdk)"
 want="four cores: 2 mode kernel@IRQ=spare: spare: no fifth core on this host (its layout 0 1 2 3: four cores), so no spare one: a host with five cores or more (c7i.4xlarge, c8g.2xlarge and up)
 five cores: 0
 busy, 6.12: 2 mode kernel@NAPI_BUSY=spare: threaded NAPI busy polling needs Linux 6.17 or later (this is 6.12.43+deb13-cloud-amd64)
 busy, no ynl: 2 mode kernel@NAPI_BUSY=spare: no ynl, the kernel's netlink tool (vm.sh build-ynl): linux-source-7.2 has no 7.2.6 in the archive (only 7.2.5-1~bpo13+1)
 busy: 0
-none: 0"
+none: 0
+dpdk build missing: 2 mode dpdk@DPDK=patched-refill: no DPDK=patched-refill build: no media_driver in $sbr/home/bin-dpdk-patched-refill (vm.sh build-dpdk patched-refill, which vm.sh build runs for each build bench/want_dpdk names)
+dpdk build: 0"
 if [[ $got != "$want" ]]; then
     fail "vm.sh ready: each mode's needs of the host"
     diff -u <(echo "$want") <(echo "$got") >&2 || true
 else
-    pass "vm.sh ready: a fifth core for the spare core's modes, Linux 6.17 and the kernel's ynl for NAPI_BUSY, said before any state"
+    pass "vm.sh ready: a fifth core for the spare core's modes, Linux 6.17 and the kernel's ynl for NAPI_BUSY, a @DPDK= mode's build, said before any state"
+fi
+
+# vm.sh driver's @DPDK=<build> (host_setting): the media driver and clients
+# from ~/bin-dpdk-<build> (as @BIN= would take them; `stop` forgets both),
+# in DPDK modes only, never beside @BIN=, refused without the build; and
+# once the driver has started (dpdk_variant_check), its log shows the ENA
+# PMD it loaded: patched-refill's line on its RX queues, or none of them
+# under stock, else the run stops (fail closed); nothing asked without
+# @DPDK=
+dv=$tmp/vm-dpdk-setting
+mkdir -p "$dv/home/bench" "$dv/home/bin-dpdk-patched-refill"
+printf '#!/bin/sh\nexit 0\n' >"$dv/home/bin-dpdk-patched-refill/media_driver"
+chmod +x "$dv/home/bin-dpdk-patched-refill/media_driver"
+printf 'ENA_INIT: ena_rx_queue_setup(): ergon-lab deferred-refill ENA PMD: Rx queue 0 refills after a burst that returns frames only at 512 free descriptors (threshold 256)\nENA_INIT: ena_rx_queue_setup(): ergon-lab deferred-refill ENA PMD: Rx queue 0 refills after a burst that returns frames only at 512 free descriptors (threshold 256)\nmedia driver started\n' >"$dv/patched.log"
+printf 'ENA_DRIVER: ena_set_queues_placement_policy(): Placement policy: Low latency\nmedia driver started\n' >"$dv/stock.log"
+setv=$(
+    set +e
+    exec 2>&1
+    # shellcheck source=../host.sh
+    . "$cloud/host.sh" || exit 1
+    eval "$(for f in save_host host_setting restore_host dpdk_variant_check; do vm_fn "$f"; done)"
+    HOME=$dv/home run=$dv/home/bench CLOUD=aws ARCH=x86_64
+    log() { echo "log: $*" >&2; }
+    sudo() { :; }
+    for case in "patched-refill dpdk patched.log" "patched-refill dpdk stock.log" "stock dpdk stock.log" "patched-refill kernel -" "refill dpdk -"; do
+        read -r v mode logf <<<"$case"
+        [[ $v == stock && $logf == stock.log ]] && { mkdir -p "$dv/home/bin-dpdk-stock"; cp "$dv/home/bin-dpdk-patched-refill/media_driver" "$dv/home/bin-dpdk-stock/"; }
+        out=$( (host_setting DPDK "$v" "$mode" && { [[ $logf == - ]] || dpdk_variant_check "$dv/$logf"; }) 2>&1)
+        rc=$?
+        echo "$v $mode $logf: rc $rc bin [$(cat "$run/bin" 2>/dev/null)] build [$(cat "$run/dpdk_variant" 2>/dev/null)] | $(tr '\n' ' ' <<<"$out")"
+        restore_host >/dev/null 2>&1
+        echo "  undone: [$(cd "$run" && ls bin dpdk_variant restore/* 2>/dev/null | tr '\n' ' ')]"
+    done
+    echo "stock on the patched PMD: $( (printf 'stock\n' >"$run/dpdk_variant"; dpdk_variant_check "$dv/patched.log") 2>&1; echo "rc $?")"
+    rm -f "$run/dpdk_variant"
+    echo "none: $(dpdk_variant_check "$dv/patched.log" 2>&1; echo "rc $?")"
+    rm -rf "$dv/home/bin-dpdk-stock"
+    echo "no build: $( (host_setting DPDK stock dpdk) 2>&1; echo "rc $?")"
+    echo "$dv/home/bin-base" >"$run/bin"
+    echo "with BIN: $( (host_setting DPDK patched-refill dpdk) 2>&1; echo "rc $?")"
+    rm -f "$run/bin"
+)
+setv=${setv//$dv/<dv>}
+want="patched-refill dpdk patched.log: rc 0 bin [<dv>/home/bin-dpdk-patched-refill] build [patched-refill] | log: DPDK=patched-refill: the media driver and clients from <dv>/home/bin-dpdk-patched-refill log: DPDK=patched-refill: the patched ENA PMD on 2 RX queues (<dv>/patched.log) 
+  undone: []
+patched-refill dpdk stock.log: rc 1 bin [<dv>/home/bin-dpdk-patched-refill] build [patched-refill] | log: DPDK=patched-refill: the media driver and clients from <dv>/home/bin-dpdk-patched-refill DPDK=patched-refill: no RX queue on the patched ENA PMD (no 'ergon-lab deferred-refill ENA PMD' line in <dv>/stock.log): stopping 
+  undone: []
+stock dpdk stock.log: rc 0 bin [<dv>/home/bin-dpdk-stock] build [stock] | log: DPDK=stock: the media driver and clients from <dv>/home/bin-dpdk-stock log: DPDK=stock: the stock ENA PMD (no patched RX queue in <dv>/stock.log) 
+  undone: []
+patched-refill kernel -: rc 2 bin [] build [] | DPDK=patched-refill: DPDK modes only (the media driver and clients linked against that DPDK build) 
+  undone: []
+refill dpdk -: rc 2 bin [] build [] | DPDK=refill: stock or patched-refill 
+  undone: []
+stock on the patched PMD: DPDK=stock: 2 RX queues on the patched ENA PMD in <dv>/patched.log, not stock's: stopping
+rc 1
+none: rc 0
+no build: DPDK=stock: no media_driver in <dv>/home/bin-dpdk-stock (vm.sh build-dpdk stock)
+rc 2
+with BIN: DPDK=patched-refill with BIN=: one build a mode
+rc 2"
+if [[ $setv != "$want" ]]; then
+    fail "vm.sh: @DPDK= takes its build's binaries and checks the PMD loaded"
+    diff -u <(echo "$want") <(echo "$setv") >&2 || true
+else
+    pass "vm.sh: @DPDK= runs its build's driver and clients (DPDK modes only, not beside @BIN=, refused without the build), undone by stop; the PMD the driver's log shows is checked against it (fail closed)"
+fi
+# ...and what a run keeps of it: vm.sh pmd-log lists the patched PMD's line
+# with ENA's others, and vm.sh counters keeps its two RX queue counters
+# (rx_q<n>_refill_deferred, rx_q<n>_refill_floor; type 92, the PMD's xstats
+# the transport mirrors), not ENA's other RX queue counters
+cp "$dv/patched.log" "$sbr/home/bench/driver.log"
+pmdlog=$(env -i PATH="$sbr/bin:$PATH" HOME="$sbr/home" FAKE_LOG="$sbr/log" FAKE_ARCH=x86_64 FAKE_KREL=7.2.6+deb13-cloud-amd64 \
+    LAB_SYS_ROOT="$sys/aws-x86" bash "$cloud/vm.sh" pmd-log 2>&1 | grep -c 'ergon-lab deferred-refill ENA PMD' || true)
+rm -f "$sbr/home/bench/driver.log"
+pattern=$(sed -n '/^counters)$/,/^    ;;$/s/^    pattern=//p' "$cloud/vm.sh" || true)
+eval "pattern=$pattern"
+kept=$(printf '%s\n' '  12: 41 92 role=receiver rx_q0_refill_deferred' '  13: 2 92 role=receiver rx_q0_refill_floor' '  14: 0 92 role=receiver rx_q0_refill_partial' '  15: 900 92 role=receiver rx_q0_cnt' | awk -v pat="$pattern" '$0 ~ pat {print $NF}' | tr '\n' ' ' || true)
+if [[ $pmdlog != 2 || $kept != "rx_q0_refill_deferred rx_q0_refill_floor " ]]; then
+    fail "vm.sh pmd-log and counters: the patched PMD's line ($pmdlog) and counters ($kept)"
+else
+    pass "vm.sh pmd-log lists the patched PMD's line; counters keeps its RX queue counters (refill_deferred, refill_floor) and no other RX queue counter"
 fi
 
 # vm.sh build-ynl in a sandbox (vm.sh build runs it where bench/want_ynl is
@@ -4676,7 +4880,7 @@ pre=$(
 ) || true
 want="keys: 2 2 2 2 2 0 0 0 0
 transports: 2 2 0 0 0 0
-mode dpdk@CONDUCTUR=own: CONDUCTUR is neither a setting the lab knows (THP BIN CSTATE BUSY_POLL COALESCE RX_RING MIN_FREE_PCT CLOCKSOURCE RELIABLE AGENTS SMT JUMBO PUB_PARAMS SUB_PARAMS IRQ NAPI_DEFER NAPI_BUSY CONDUCTOR HAIRPIN RTT_GAP_US) nor an AERON_* or RUSTERON_* variable: vm.sh would export it to a driver that never reads it, and the mode would measure its baseline under another name
+mode dpdk@CONDUCTUR=own: CONDUCTUR is neither a setting the lab knows (THP BIN CSTATE BUSY_POLL COALESCE RX_RING MIN_FREE_PCT CLOCKSOURCE RELIABLE AGENTS SMT JUMBO PUB_PARAMS SUB_PARAMS IRQ NAPI_DEFER NAPI_BUSY CONDUCTOR HAIRPIN RTT_GAP_US DPDK) nor an AERON_* or RUSTERON_* variable: vm.sh would export it to a driver that never reads it, and the mode would measure its baseline under another name
 mode kernal: transport kernal: kernel, kernel-busy, dpdk, dpdk-spin, dpdk-adaptive, dpdk-epoll, the raw floor's kernel-raw or dpdk-raw, optionally -mono, or the pure floor's dpdk-pure (vm.sh refuses any other at the driver's start)
 rx: 0 0 2 2 2 2 0 2 0
 tx: 0 2 0 0 2 2 2 0 2 2
@@ -4708,6 +4912,50 @@ if [[ $pre != "$want" ]]; then
     diff -u <(echo "$want") <(echo "$pre") >&2 || true
 else
     pass "modes.sh pre-flight: unknown keys and transports, the DPDK transport's values and the NIC's rings, CONDUCTOR=own's rules, each type's cores for the fifth core, the PHC families and precision-time's timestamp pair"
+fi
+
+# @DPDK=<build> (modes.sh, before any cloud call): the media driver and
+# clients linked against a DPDK 25.11 built from source for the mode (vm.sh
+# build-dpdk): stock, or patched-refill (dpdk-ena-deferred-refill.patch on
+# ENA's PMD); in DPDK modes only (the raw floor's dpdk-raw too), on AWS only
+# (ENA), in any placement, once, never beside @BIN= (one build a mode); and
+# the builds the modes ask for, each once, for bench/want_dpdk
+dpdkb=$(
+    set +e
+    exec 2>&1
+    # shellcheck source=../modes.sh
+    . "$cloud/modes.sh" || exit 1
+    rc() { "$@" >/dev/null 2>&1; echo -n " $?"; }
+    mc() { rc mode_check "$1" remote x86_64 "${2:-aws}" '' "${3:-cluster}"; }
+    echo "builds:$(mc dpdk@DPDK=patched-refill)$(mc dpdk@DPDK=stock)$(mc dpdk@DPDK=patched-refill aws precision-time)$(mc dpdk-spin@DPDK=patched-refill@RUSTERON_DPDK_RX_FREE_THRESH=32)$(mc dpdk-raw@DPDK=stock)$(mc dpdk@DPDK=patched-refill+idle)"
+    echo "refused:$(mc kernel@DPDK=patched-refill)$(mc kernel-raw@DPDK=stock)$(mc dpdk@DPDK=refill)$(mc dpdk@DPDK=patched-refill azure '')$(mc dpdk@DPDK=stock@BIN=bin-base)$(mc dpdk@DPDK=stock@DPDK=patched-refill)$(mc dpdk-pure@DPDK=stock)"
+    mode_check kernel@DPDK=patched-refill remote x86_64 aws '' cluster
+    mode_check dpdk@DPDK=refill remote x86_64 aws '' cluster
+    mode_check dpdk@DPDK=patched-refill remote x86_64 azure '' ''
+    mode_check dpdk@BIN=bin-base@DPDK=stock remote x86_64 aws '' cluster
+    mode_check dpdk@DPDK=stock@DPDK=patched-refill remote x86_64 aws '' cluster
+    # patched-refill's floor, min(2 x rx_free_thresh, ring - 1): a threshold
+    # of half the ring or more would let bursts that return frames drain the
+    # ring; stock is not refused (its own refill at the threshold)
+    echo "floor:$(mc dpdk@DPDK=patched-refill@RUSTERON_DPDK_RX_FREE_THRESH=2047)$(mc dpdk@DPDK=stock@RUSTERON_DPDK_RX_FREE_THRESH=2048)$(mc dpdk@DPDK=patched-refill@RUSTERON_DPDK_RX_DESCRIPTORS=1024@RUSTERON_DPDK_RX_FREE_THRESH=511)$(mc dpdk@DPDK=patched-refill@RUSTERON_DPDK_RX_DESCRIPTORS=1024)$(mc dpdk@DPDK=patched-refill@RUSTERON_DPDK_RX_FREE_THRESH=2048)$(mc dpdk@DPDK=patched-refill@RUSTERON_DPDK_RX_DESCRIPTORS=1024@RUSTERON_DPDK_RX_FREE_THRESH=512)"
+    mode_check dpdk@DPDK=patched-refill@RUSTERON_DPDK_RX_DESCRIPTORS=1024@RUSTERON_DPDK_RX_FREE_THRESH=512 remote x86_64 aws '' cluster
+    echo "want: [$(modes_want_dpdk kernel dpdk@DPDK=patched-refill dpdk@DPDK=stock+idle dpdk-spin@DPDK=patched-refill@RUSTERON_DPDK_RX_FREE_THRESH=32)] [$(modes_want_dpdk kernel dpdk)] [$(modes_want_dpdk)]"
+) || true
+want="builds: 0 0 0 0 0 0
+refused: 2 2 2 2 2 2 2
+mode kernel@DPDK=patched-refill: DPDK=patched-refill is for DPDK modes only (the media driver and clients linked against that DPDK build)
+mode dpdk@DPDK=refill: DPDK=refill: stock (DPDK 25.11 from source) or patched-refill (with dpdk-ena-deferred-refill.patch on ENA's PMD)
+mode dpdk@DPDK=patched-refill: DPDK=patched-refill is AWS only (a build of ENA's PMD)
+mode dpdk@BIN=bin-base@DPDK=stock: DPDK=stock with BIN=: one build a mode (DPDK= is its own, in ~/bin-dpdk-stock)
+mode dpdk@DPDK=stock@DPDK=patched-refill: one DPDK at most
+floor: 0 0 0 0 2 2
+mode dpdk@DPDK=patched-refill@RUSTERON_DPDK_RX_DESCRIPTORS=1024@RUSTERON_DPDK_RX_FREE_THRESH=512: DPDK=patched-refill with RUSTERON_DPDK_RX_FREE_THRESH=512: below half the receive ring (1024) only: the patch's floor, min(2 x 512, 1023), would let bursts that return frames drain the ring before any refill
+want: [patched-refill stock] [] []"
+if [[ $dpdkb != "$want" ]]; then
+    fail "modes.sh: @DPDK= builds"
+    diff -u <(echo "$want") <(echo "$dpdkb") >&2 || true
+else
+    pass "modes.sh: @DPDK=stock|patched-refill in AWS DPDK modes only, once, never beside @BIN=, patched-refill's threshold below half the receive ring; the builds the modes want, each once"
 fi
 
 # both lab.sh apply that pre-flight before any cloud call: aws/lab.sh refuses

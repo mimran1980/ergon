@@ -579,7 +579,21 @@ precision_modes_check() {
 # The settings vm.sh host_setting takes (a mode's @KEY=value for the host, the
 # clients or the driver's placement); any other key must be an environment
 # variable the driver reads, AERON_* (Aeron's) or RUSTERON_* (the transport's)
-LAB_SETTINGS=" THP BIN CSTATE BUSY_POLL COALESCE RX_RING MIN_FREE_PCT CLOCKSOURCE RELIABLE AGENTS SMT JUMBO PUB_PARAMS SUB_PARAMS IRQ NAPI_DEFER NAPI_BUSY CONDUCTOR HAIRPIN RTT_GAP_US "
+LAB_SETTINGS=" THP BIN CSTATE BUSY_POLL COALESCE RX_RING MIN_FREE_PCT CLOCKSOURCE RELIABLE AGENTS SMT JUMBO PUB_PARAMS SUB_PARAMS IRQ NAPI_DEFER NAPI_BUSY CONDUCTOR HAIRPIN RTT_GAP_US DPDK "
+
+# @DPDK=<build>: the media driver and clients linked against DPDK 25.11 built
+# from source for the mode (vm.sh build-dpdk, into ~/bin-dpdk-<build>): stock,
+# or patched-refill (dpdk-ena-deferred-refill.patch on ENA's PMD)
+DPDK_BUILDS=" stock patched-refill "
+
+# modes_want_dpdk <mode>...: the @DPDK= builds the modes ask for, each once,
+# on one line (lib.sh writes it to bench/want_dpdk; vm.sh build builds each)
+modes_want_dpdk() {
+    local m v
+    for m in "$@"; do
+        if v=$(mode_get "$m" DPDK); then echo "$v"; fi
+    done | sort -u | tr '\n' ' ' | sed 's/ $//'
+}
 
 # dpdk_setting <mode> <name> <default> <least> <most> <why> [pow2]: the
 # mode's RUSTERON_DPDK_<name>, else <default>, when a whole number from
@@ -617,6 +631,15 @@ dpdk_values_check() {
     fi
     if [[ $cloud == azure ]]; then nic=MANA rx_most=256 tx_most=256 rx_default=256 tx_default=256 ring="MANA's transmit ring holds 256 at most"; fi
     rx=$(dpdk_setting "$m" RX_DESCRIPTORS "$rx_default" 64 "$rx_most" "$nic's receive ring holds $rx_most at most: the transport refuses more at start" pow2) || return 2
+    # @DPDK=patched-refill: a burst that returns frames refills only at
+    # min(2 x rx_free_thresh, ring - 1) free descriptors; a threshold of half
+    # the ring or more makes that ring - 1, an empty ring (the PMD's default
+    # threshold, min(ring / 8, 256), is always below half)
+    if [[ $(mode_get "$m" DPDK) == patched-refill ]] && v=$(mode_get "$m" RUSTERON_DPDK_RX_FREE_THRESH) &&
+        [[ $v =~ ^[0-9]{1,10}$ ]] && ((2 * 10#$v >= rx)); then
+        echo "mode $m: DPDK=patched-refill with RUSTERON_DPDK_RX_FREE_THRESH=$v: below half the receive ring ($rx) only: the patch's floor, min(2 x $((10#$v)), $((rx - 1))), would let bursts that return frames drain the ring before any refill" >&2
+        return 2
+    fi
     tx=$(dpdk_setting "$m" TX_DESCRIPTORS "$tx_default" 64 "$tx_most" "$ring: the transport refuses more at start" pow2) || return 2
     cache=$(dpdk_setting "$m" MEMPOOL_CACHE 256 0 512 "DPDK's per-lcore mempool cache: the transport's configuration refuses more") || return 2
     burst=$(dpdk_setting "$m" BURST_SIZE 32 1 256 "packets a receive or transmit burst, as the transport's configuration takes them") || return 2
@@ -723,7 +746,7 @@ mode_check() {
             ;;
         esac
         case $key in
-        IRQ | NAPI_DEFER | NAPI_BUSY | CONDUCTOR | HAIRPIN | RTT_GAP_US)
+        IRQ | NAPI_DEFER | NAPI_BUSY | CONDUCTOR | HAIRPIN | RTT_GAP_US | DPDK)
             [[ $seen != *" $key "* ]] || { echo "mode $m: one $key at most" >&2; return 2; }
             seen+="$key "
             ;;
@@ -780,6 +803,17 @@ mode_check() {
             [[ $value == off ]] || { echo "mode $m: SMT=off or nothing" >&2; return 2; }
             [[ $arch != arm64 ]] || { echo "mode $m: SMT=off on Graviton, which has no SMT (each CPU a core)" >&2; return 2; }
             [[ $tpc != 1 ]] || { echo "mode $m: SMT=off with LAB_THREADS_PER_CORE=1: the instances have no SMT to turn off" >&2; return 2; }
+            ;;
+        DPDK)
+            [[ $DPDK_BUILDS == *" $value "* ]] ||
+                { echo "mode $m: DPDK=$value: stock (DPDK 25.11 from source) or patched-refill (with dpdk-ena-deferred-refill.patch on ENA's PMD)" >&2; return 2; }
+            [[ $transport == dpdk* ]] ||
+                { echo "mode $m: DPDK=$value is for DPDK modes only (the media driver and clients linked against that DPDK build)" >&2; return 2; }
+            [[ $cloud == aws ]] || { echo "mode $m: DPDK=$value is AWS only (a build of ENA's PMD)" >&2; return 2; }
+            ! mode_pure "$m" ||
+                { echo "mode $m: DPDK=$value is not the pure floor's: purefloor links the DPDK vm.sh build compiles it against" >&2; return 2; }
+            mode_get "$m" BIN >/dev/null &&
+                { echo "mode $m: DPDK=$value with BIN=: one build a mode (DPDK= is its own, in ~/bin-dpdk-$value)" >&2; return 2; }
             ;;
         PUB_PARAMS) channel_params pub "$value" >/dev/null || { echo "mode $m: see above" >&2; return 2; } ;;
         SUB_PARAMS) channel_params sub "$value" >/dev/null || { echo "mode $m: see above" >&2; return 2; } ;;

@@ -18,6 +18,11 @@
 #                            the reason in ~/bench/ynl_unavailable
 #   vm.sh build-base         the revision lib.sh unpacked in ~/ergon-base (LAB_BASE): its media
 #                            driver and benchmark clients into ~/bin-base, for modes with @BIN=bin-base
+#   vm.sh build-dpdk <build> (build, for each build lib.sh's bench/want_dpdk names: the modes'
+#                            @DPDK=) DPDK 25.11 from source, stock or patched-refill
+#                            (dpdk-ena-deferred-refill.patch on ENA's PMD), under a prefix of its
+#                            own, and the media driver and benchmark clients linked against it
+#                            (its library directory their RPATH) into ~/bin-dpdk-<build>; AWS only
 #   vm.sh isolate [poll]     CPU isolation on the kernel command line (takes effect at the next boot);
 #                            poll (the isolated-poll state): idle CPUs poll rather than halt
 #   vm.sh tune               after each boot: irqbalance off, every IRQ on the housekeeping CPU, hugetlbfs
@@ -29,8 +34,8 @@
 #                            four cores, and of a fifth where the host has one (every Graviton CPU is a core)
 #   vm.sh ready <mode>...    what each mode's settings need of this host (lib.sh asks after the build):
 #                            a fifth core for @IRQ=spare, @NAPI_BUSY=spare and @CONDUCTOR=own, Linux 6.17
-#                            and the kernel's ynl for @NAPI_BUSY; a line for each mode that cannot run
-#                            here, exit 2
+#                            and the kernel's ynl for @NAPI_BUSY, its build for @DPDK= (build-dpdk);
+#                            a line for each mode that cannot run here, exit 2
 #   vm.sh host               the architecture and the host settings in effect (lib.sh's env file,
 #                            each boot's tune log), and what was skipped as x86-only
 #   vm.sh nics               the data NICs from the cloud's metadata: one line per role
@@ -156,7 +161,8 @@ PLACEMENT=$(cat "$run/placement" 2>/dev/null || true)
 precision_time() { [[ $CLOUD == aws && $PLACEMENT == precision-time ]]; }
 # DPDK 25.11, the first with ENA RX timestamps (Debian 13 has 24.11)
 DPDK_VERSION=25.11
-DPDK_PREFIX=/opt/dpdk-$DPDK_VERSION
+# (LAB_OPT_ROOT: /opt; test/test-lab.sh's fake)
+DPDK_PREFIX=${LAB_OPT_ROOT:-/opt}/dpdk-$DPDK_VERSION
 if precision_time; then
     export PKG_CONFIG_PATH=$DPDK_PREFIX/lib/$ARCH-linux-gnu/pkgconfig
 fi
@@ -670,6 +676,13 @@ ethtool_set() {
 #        checkout's build: dpdk@BIN=bin-base A/Bs an older build (lab.sh
 #        LAB_BASE builds one there) against the current one. A client <dir>
 #        lacks is this checkout's, and the client says so
+#   DPDK=stock|patched-refill  (DPDK modes) the media driver and every
+#        client from ~/bin-dpdk-<build> (vm.sh build-dpdk: linked against
+#        DPDK 25.11 from source; patched-refill with
+#        dpdk-ena-deferred-refill.patch on ENA's PMD), as BIN= takes a
+#        build, never beside it; once the driver starts, its log shows the
+#        PMD the build loads (dpdk_variant_check, fail closed); `stop`
+#        forgets it
 #   CSTATE=<n>        no idle state deeper than the n-th on any CPU
 #        (intel_idle.max_cstate=n at run time; 1 = C1, 0 = poll only). x86
 #        only: arm64 has no C-states the OS controls, so it is refused there
@@ -755,6 +768,19 @@ host_setting() {
         save_host bin set
         bin=$dir
         log "BIN=$value: the media driver and clients from $dir ($(ls "$dir" | tr '\n' ' '))"
+        ;;
+    DPDK)
+        [[ $DPDK_BUILDS == *" $value "* ]] || { echo "DPDK=$value: stock or patched-refill" >&2; exit 2; }
+        [[ $mode == dpdk ]] || { echo "DPDK=$value: DPDK modes only (the media driver and clients linked against that DPDK build)" >&2; exit 2; }
+        [[ ! -s $run/bin ]] || { echo "DPDK=$value with BIN=: one build a mode" >&2; exit 2; }
+        local dir=$HOME/bin-dpdk-$value
+        [[ -x $dir/media_driver ]] || { echo "DPDK=$value: no media_driver in $dir (vm.sh build-dpdk $value)" >&2; exit 2; }
+        printf '%s\n' "$dir" >"$run/bin"
+        save_host bin set
+        bin=$dir
+        printf '%s\n' "$value" >"$run/dpdk_variant"
+        save_host dpdk_variant set
+        log "DPDK=$value: the media driver and clients from $dir"
         ;;
     CSTATE)
         [[ $value =~ ^[0-9]$ ]] || { echo "CSTATE=$value: an idle state index" >&2; exit 2; }
@@ -1021,6 +1047,26 @@ host_setting() {
     esac
 }
 
+# dpdk_variant_check <driver log>: under a mode's @DPDK=<build>, the ENA PMD
+# the log shows loaded is that build's: patched-refill's line
+# (dpdk-ena-deferred-refill.patch's, one per RX queue) there, or under stock
+# none; 1, saying why, when not. 0 without @DPDK=.
+dpdk_variant_check() {
+    local v n
+    v=$(cat "$run/dpdk_variant" 2>/dev/null) || return 0
+    n=$(grep -c 'ergon-lab deferred-refill ENA PMD' "$1" 2>/dev/null) || n=0
+    case $v in
+    patched-refill)
+        ((n > 0)) || { echo "DPDK=patched-refill: no RX queue on the patched ENA PMD (no 'ergon-lab deferred-refill ENA PMD' line in $1): stopping" >&2; return 1; }
+        log "DPDK=patched-refill: the patched ENA PMD on $n RX queues ($1)"
+        ;;
+    *)
+        ((n == 0)) || { echo "DPDK=$v: $n RX queues on the patched ENA PMD in $1, not $v's: stopping" >&2; return 1; }
+        log "DPDK=$v: the $v ENA PMD (no patched RX queue in $1)"
+        ;;
+    esac
+}
+
 # Every host setting an experiment changed goes back (`stop`), the data NICs'
 # once the kernel has them again (a ring or interrupt moderation put back
 # resets them: `stop`'s data_kernel_up then pins their IRQs again).
@@ -1046,6 +1092,7 @@ restore_host() {
         # shellcheck disable=SC2015
         mtu-*) [[ -e /sys/class/net/${key#mtu-} ]] && sudo ip link set dev "${key#mtu-}" mtu "$(cat "$f")" || true ;;
         bin) rm -f "$run/bin" ;;
+        dpdk_variant) rm -f "$run/dpdk_variant" ;;
         clocksource) sudo tee /sys/devices/system/clocksource/clocksource0/current_clocksource <"$f" >/dev/null ;;
         smt)
             sudo tee "$LAB_SYS_ROOT/devices/system/cpu/smt/control" <"$f" >/dev/null
@@ -1186,6 +1233,42 @@ agents_placed() {
         ((ok)) || { cat "$run/agent-check" >&2; return 2; }
         log "driver: the conductor alone on CPU $cpu"
     fi
+}
+
+# build_dpdk <prefix> [<patch>]: DPDK $DPDK_VERSION from fast.dpdk.org,
+# unpacked afresh in ~/<prefix's name> (<patch> applied exactly: -p1, no
+# fuzz), only what the ENA path needs, installed under <prefix>; nothing when
+# <prefix> has it already, built from the same patch (its SHA-256 in
+# <prefix>/ergon-lab-patch.sha256). Never put in ld.so.conf here: build-ptp
+# does that for its own; build-dpdk links against its builds by RPATH.
+# Graviton: for the core it is built on (-Dplatform=native, DPDK's default:
+# the Neoverse's flags), with this host's lcores and NUMA nodes rather than
+# DPDK's table's (native Neoverse V2's 144 lcores, or -Dplatform=graviton4's
+# 96 and one node, would not cover c8g.metal-48xl's 192 CPUs on two sockets)
+build_dpdk() {
+    local prefix=$1 patch=${2:-} src sum= blog platform=()
+    if [[ -n $patch ]]; then sum=$(sha256sum "$patch" | cut -d' ' -f1); fi
+    if [[ -f $prefix/lib/$ARCH-linux-gnu/pkgconfig/libdpdk.pc ]] &&
+        [[ -z $patch || $(cat "$prefix/ergon-lab-patch.sha256" 2>/dev/null) == "$sum" ]]; then
+        return 0
+    fi
+    if [[ $ARCH == aarch64 ]]; then platform=(-Dplatform=native -Dmax_lcores=detect -Dmax_numa_nodes=detect); fi
+    src=$HOME/${prefix##*/}
+    rm -rf "$src" && mkdir -p "$src"
+    curl -fsSL "https://fast.dpdk.org/rel/dpdk-$DPDK_VERSION.tar.xz" | tar -xJ -C "$src" --strip-components=1
+    if [[ -n $patch ]]; then
+        (cd "$src" && patch -p1 --forward --fuzz=0 <"$patch") ||
+            { echo "build_dpdk: $patch does not apply to DPDK $DPDK_VERSION" >&2; return 1; }
+    fi
+    sudo rm -rf "$prefix"
+    # meson's and ninja's output in $run/dpdk-build-<prefix's name>.log
+    blog=$run/dpdk-build-${prefix##*/}.log
+    (cd "$src" &&
+        meson setup -Dprefix="$prefix" -Dtests=false -Ddisable_apps='*' ${platform[@]+"${platform[@]}"} \
+            -Denable_drivers=bus/pci,bus/vdev,mempool/ring,net/ena build &&
+        ninja -C build && sudo ninja -C build install) >"$blog" 2>&1 ||
+        { echo "build_dpdk: DPDK $DPDK_VERSION did not build under $prefix ($blog): $(grep -m1 -E 'ERROR|error:' "$blog" || tail -1 "$blog")" >&2; return 1; }
+    if [[ -n $patch ]]; then echo "$sum" | sudo tee "$prefix/ergon-lab-patch.sha256" >/dev/null; fi
 }
 
 # build_driver <marker>: the media driver, with the DPDK transport (static,
@@ -1411,6 +1494,8 @@ build)
         echo "purefloor.c did not compile: $(grep -m1 'error' "$run/purefloor.err" || tail -1 "$run/purefloor.err")" >"$run/purefloor_unavailable"
         echo "build: $(cat "$run/purefloor_unavailable"): dpdk-pure modes are refused (vm.sh ready)" >&2
     fi
+    # the DPDK builds the modes' @DPDK= ask for, where lib.sh named them
+    for b in $(cat "$run/want_dpdk" 2>/dev/null); do "$self" build-dpdk "$b"; done
     ;;
 build-ynl)
     # @NAPI_BUSY's tool: ynl, the kernel's own (tools/net/ynl), and its
@@ -1482,22 +1567,60 @@ build-base)
     done
     echo "bin-base $(ls "$HOME/bin-base" | tr '\n' ' ')"
     ;;
+build-dpdk)
+    # vm.sh build-dpdk <build>: a mode's @DPDK=<build> (modes.sh DPDK_BUILDS),
+    # built where lib.sh's bench/want_dpdk names it (`build`): DPDK 25.11 from
+    # source (build_dpdk; patched-refill with dpdk-ena-deferred-refill.patch
+    # applied, under its own prefix; stock under $DPDK_PREFIX, precision-time's
+    # build-ptp's), in any placement; then this checkout's media driver and
+    # every benchmark client (under INVOKER each embeds the driver) linked
+    # against it, in a target directory of their own (this checkout's build
+    # stays as it was), the build's library directory their DT_RPATH
+    # (--disable-new-dtags: unlike DT_RUNPATH, their libraries' own
+    # dependencies and the PMDs the EAL loads are found there too, ahead of
+    # ld.so.conf's), and only at the link (cargo rustc: every crate compiled
+    # as this checkout's), into ~/bin-dpdk-<build>. Fail closed: every
+    # librte_* each binary loads from that directory, or the build is removed.
+    build=${2:-}
+    [[ $DPDK_BUILDS == *" $build "* && -n $build ]] ||
+        { echo "build-dpdk ${build:-(none)}: stock (DPDK 25.11 from source) or patched-refill (with dpdk-ena-deferred-refill.patch on ENA's PMD)" >&2; exit 2; }
+    [[ $CLOUD == aws ]] || { echo "build-dpdk $build: AWS only (a build of ENA's PMD)" >&2; exit 2; }
+    export PATH=$HOME/.cargo/bin:$PATH
+    # what `host` (the env file) records of this build: only once it passed
+    rm -f "$run/bin-dpdk-$build.txt"
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq meson ninja-build python3-pyelftools libnuma-dev
+    prefix=$DPDK_PREFIX patch=
+    if [[ $build == patched-refill ]]; then
+        prefix=$DPDK_PREFIX-$build patch=$(dirname "$self")/dpdk-ena-deferred-refill.patch
+    fi
+    build_dpdk "$prefix" "$patch" || { echo "build-dpdk $build: DPDK $DPDK_VERSION did not build" >&2; exit 1; }
+    libdir=$prefix/lib/$ARCH-linux-gnu
+    export PKG_CONFIG_PATH=$libdir/pkgconfig CARGO_TARGET_DIR=$HOME/ergon/target-dpdk
+    link=(-- -C "link-arg=-Wl,--disable-new-dtags,-rpath,$libdir")
+    cargo rustc --release -p ergon-md-dpdk --features static,dpdk --bin media_driver "${link[@]}"
+    for c in rtt load tput floor; do
+        cargo rustc --release -p ergon-md-dpdk-harness --features static,dpdk --bin "$c" "${link[@]}"
+    done
+    out=$HOME/bin-dpdk-$build
+    rm -rf "$out" && mkdir -p "$out"
+    for c in media_driver rtt load tput floor; do cp "$CARGO_TARGET_DIR/release/$c" "$out/"; done
+    for c in "$out"/*; do
+        loads=$(ldd "$c" | awk '$1 ~ /^librte_/ {print $1, ($3 == "not" ? "nowhere" : $3)}')
+        [[ -n $loads ]] || { rm -rf "$out"; echo "build-dpdk $build: $c loads no librte_* library: removed" >&2; exit 1; }
+        while read -r lib path; do
+            [[ $path == "$libdir/"* ]] ||
+                { rm -rf "$out"; echo "build-dpdk $build: $c loads $lib from $path, not $libdir: removed" >&2; exit 1; }
+        done <<<"$loads"
+    done
+    echo "dpdk-build $build: DPDK $DPDK_VERSION in $prefix${patch:+, ${patch##*/} sha256 $(cat "$prefix/ergon-lab-patch.sha256")}: $out" >"$run/bin-dpdk-$build.txt"
+    echo "bin-dpdk-$build: $(ls "$out" | tr '\n' ' ')against DPDK $DPDK_VERSION in $prefix${patch:+ (${patch##*/})}"
+    ;;
 build-ptp)
     # precision-time only, run by `build` before the media driver.
-    # DPDK 25.11: only what the ENA path needs, installed under $DPDK_PREFIX.
+    # DPDK 25.11: only what the ENA path needs, installed under $DPDK_PREFIX
+    # (build_dpdk), on the loader's path: this checkout's build links it.
     if [[ ! -f $DPDK_PREFIX/lib/$ARCH-linux-gnu/pkgconfig/libdpdk.pc ]]; then
-        # Graviton: for the core it is built on (-Dplatform=native, DPDK's
-        # default: the Neoverse's flags), with this host's lcores and NUMA
-        # nodes rather than DPDK's table's (native Neoverse V2's 144 lcores,
-        # or -Dplatform=graviton4's 96 and one node, would not cover
-        # c8g.metal-48xl's 192 CPUs on two sockets)
-        platform=()
-        if [[ $ARCH == aarch64 ]]; then platform=(-Dplatform=native -Dmax_lcores=detect -Dmax_numa_nodes=detect); fi
-        curl -fsSL "https://fast.dpdk.org/rel/dpdk-$DPDK_VERSION.tar.xz" | tar -xJ -C "$HOME"
-        (cd "$HOME/dpdk-$DPDK_VERSION" &&
-            meson setup -Dprefix="$DPDK_PREFIX" -Dtests=false -Ddisable_apps='*' "${platform[@]}" \
-                -Denable_drivers=bus/pci,bus/vdev,mempool/ring,net/ena build >/dev/null &&
-            ninja -C build >/dev/null && sudo ninja -C build install >/dev/null)
+        build_dpdk "$DPDK_PREFIX"
         echo "$DPDK_PREFIX/lib/$ARCH-linux-gnu" | sudo tee /etc/ld.so.conf.d/dpdk-$DPDK_VERSION.conf >/dev/null
         sudo ldconfig
     fi
@@ -1634,6 +1757,9 @@ host)
     done
     echo "ena $(for p in rx_queue_size enable_bql force_large_llq_header lpc_size phc_enable; do printf '%s=%s ' "$p" "$(cat "/sys/module/ena/parameters/$p" 2>/dev/null || echo -)"; done)"
     echo "dpdk $(pkg-config --modversion libdpdk 2>/dev/null || echo none)$([[ -s $run/dpdk_unavailable ]] && echo ", not in the media driver: $(cat "$run/dpdk_unavailable")")"
+    # each @DPDK= build's DPDK (build-dpdk): the modes with it link that one
+    # rather than the line above's
+    for f in "$run"/bin-dpdk-*.txt; do if [[ -f $f ]]; then cat "$f"; fi; done
     echo "ynl $(cat "$run/ynl.version" 2>/dev/null || cat "$run/ynl_unavailable" 2>/dev/null || echo 'not built (no @NAPI_BUSY mode)')"
     echo "build CFLAGS=${CFLAGS:-} RUSTFLAGS=${RUSTFLAGS:-}"
     if [[ $ARCH == aarch64 ]]; then
@@ -1648,13 +1774,19 @@ ready)
     # asked by lib.sh after the build, before any state (a mode that cannot
     # run here would fail at its first driver start, hours in): a fifth core
     # for @IRQ=spare, @NAPI_BUSY=spare and @CONDUCTOR=own; Linux 6.17 or later and the
-    # kernel's ynl (build-ynl) for @NAPI_BUSY. A line for each mode that
-    # cannot run here, then exit 2; nothing, exit 0, when all can
+    # kernel's ynl (build-ynl) for @NAPI_BUSY; its build (build-dpdk) for
+    # @DPDK=. A line for each mode that cannot run here, then exit 2;
+    # nothing, exit 0, when all can
     shift
     rc=0
     for m in "$@"; do
         if mode_hairpin "$m" && [[ -z ${RECEIVER_CPU:-} ]]; then
             echo "mode $m: no receiver core on this host (its layout $(layout)): the hairpin's pong runs there; four cores (c9g.xlarge and up)"
+            rc=2
+            continue
+        fi
+        if b=$(mode_get "$m" DPDK) && [[ ! -x $HOME/bin-dpdk-$b/media_driver ]]; then
+            echo "mode $m: no DPDK=$b build: no media_driver in $HOME/bin-dpdk-$b (vm.sh build-dpdk $b, which vm.sh build runs for each build bench/want_dpdk names)"
             rc=2
             continue
         fi
@@ -1898,6 +2030,11 @@ driver)
                 "$self" stop >/dev/null 2>&1 || true
                 exit 1
             fi
+            # @DPDK=: the probe's driver loaded the build's PMD
+            if ! dpdk_variant_check "$run/driver.log"; then
+                "$self" stop >/dev/null 2>&1 || true
+                exit 1
+            fi
             sudo rm -rf "$AERON_DIR"
         fi
         # no driver log of its own (`pmd-log` reads this, after the probe's
@@ -1922,6 +2059,11 @@ driver)
     done
     grep -q "media driver started" "$run/driver.log" || { cat "$run/driver.log" >&2; exit 1; }
     grep "transport backend" "$run/driver.log" >&2
+    # @DPDK=: the driver loaded that build's ENA PMD, fail closed
+    if ! dpdk_variant_check "$run/driver.log"; then
+        "$self" stop >/dev/null 2>&1 || true
+        exit 1
+    fi
     # SHARED's and SHARED_NETWORK's one busy agent, and @CONDUCTOR=own's
     # conductor, where they were put, fail closed: a run measured with one
     # elsewhere would be another mode's (agents_placed)
@@ -2144,8 +2286,9 @@ pmd-log)
     # After a DPDK run: the PMD's and EAL's lines on how the NIC was set up
     # (on AWS at info, `driver`'s EAL arguments): ENA's placement policy (its
     # low-latency queues or host memory), LLQ, the queue sizes, and whether
-    # its BAR could be mapped write-combining
-    grep -E 'Placement policy|LLQ|tx queue size|cannot be mapped|write combin|WC' "$run/driver.log" 2>/dev/null ||
+    # its BAR could be mapped write-combining; under @DPDK=patched-refill the
+    # patched PMD's line for each RX queue
+    grep -E 'Placement policy|LLQ|tx queue size|cannot be mapped|write combin|WC|ergon-lab deferred-refill' "$run/driver.log" 2>/dev/null ||
         echo "pmd-log: no such line in the driver's log"
     ;;
 wc-check)
@@ -2199,8 +2342,11 @@ counters)
     # kernel mode the data NICs' packet counts. On receive: frames whose UDP
     # checksum the transport verified in software (the NIC did not), the
     # deepest backlog one poll drained, and the polls that nearly emptied a
-    # full ring.
-    pattern=' (vf_)?(rx|tx)_good_packets$|allowance_exceeded$|dir=- clock$| dir=(rx|tx) pkts$| dir=tx (bytes|tx-eagain|tx-queued|tx-idle-cleaned)$| dir=rx (sw-checksum-verified|rx-backlog-max|rx-ring-full-suspected)$| tx_q[0-9]+_(cnt|doorbells|tx_poll|available_desc)$'
+    # full ring. Under @DPDK=patched-refill, the patched PMD's RX queue
+    # counters: bursts that returned frames and left a due refill
+    # (rx_q<n>_refill_deferred), and those that refilled at its floor
+    # (rx_q<n>_refill_floor).
+    pattern=' (vf_)?(rx|tx)_good_packets$|allowance_exceeded$|dir=- clock$| dir=(rx|tx) pkts$| dir=tx (bytes|tx-eagain|tx-queued|tx-idle-cleaned)$| dir=rx (sw-checksum-verified|rx-backlog-max|rx-ring-full-suspected)$| tx_q[0-9]+_(cnt|doorbells|tx_poll|available_desc)$| rx_q[0-9]+_refill_(deferred|floor)$'
     if driver_cnc && dpdk_active; then
         # under INVOKER, whose driver's CnC this is (analyse.py counts a run's
         # frames from zero over another embedded driver's snapshot)

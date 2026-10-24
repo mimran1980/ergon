@@ -104,7 +104,10 @@
 #   (../modes.sh), both hosts of four cores or more; @RTT_GAP_US=<us> (1 to 1000000,
 #   cross-host): one ping every that many microseconds, a rep of 20 to 60 s
 #   (../modes.sh rtt_plan: 20,000 round trips at 1 ms, 1,200 at 50 ms, 300 at
-#   200 ms, 60 at 1 s; p99.99 means something from 10,000). The fifth core is not on a four-core type
+#   200 ms, 60 at 1 s; p99.99 means something from 10,000); DPDK modes only,
+#   @DPDK=stock|patched-refill (the driver and clients linked against DPDK 25.11
+#   built from source on each VM, patched-refill with ../dpdk-ena-deferred-refill.patch:
+#   vm.sh build-dpdk, any placement; not beside @BIN=). The fifth core is not on a four-core type
 #   (c7i.2xlarge, c8g.xlarge, c9g.xlarge): refused here, before any cloud call, by
 #   the types' physical cores (../modes.sh type_cores: a type its table lacks is
 #   refused too, said so), as NAPI_BUSY is after the build on a kernel or host that
