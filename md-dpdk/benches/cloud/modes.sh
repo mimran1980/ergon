@@ -14,10 +14,12 @@
 #
 # The pure floor, dpdk-pure (AWS), runs none of ergon-md-dpdk either:
 # purefloor.c, DPDK's rte_eth_rx_burst and rte_eth_tx_burst on the receiver
-# port, its pong a 5-tuple-swapping reflector, on dpdk's host set-up, with the
-# floor client's arguments and outputs. dpdk-raw less dpdk-pure is what
-# ergon-md-dpdk's packet path adds. Its clock is the CPU's counter alone (no
-# -mono), and it reads only the RUSTERON_DPDK_* settings in PURE_KEYS.
+# port, its pong a 5-tuple-swapping reflector, on dpdk's host set-up, the
+# port's rings, pool, offloads and interrupts as the transport sets them, with
+# the floor client's arguments and outputs. dpdk-raw less dpdk-pure is what
+# ergon-md-dpdk's packet path adds, and dpdk-raw's second port (it sends on
+# the sender port). Its clock is the CPU's counter alone (no -mono), and it
+# reads only the RUSTERON_DPDK_* settings in PURE_KEYS.
 #
 # The settings here (the rest are vm.sh host_setting's, or the driver's
 # environment):

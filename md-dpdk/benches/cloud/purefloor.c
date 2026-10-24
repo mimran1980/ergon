@@ -35,8 +35,12 @@
  * _TX_DESCRIPTORS (256), _MBUFS_PER_PORT (16384), _MEMPOOL_CACHE (256),
  * _BURST_SIZE (32), _RX_HW_TIMESTAMP (the offload on, its stamps unread: the
  * ENA's RX descriptors as the transport's). An ENA port whose LLQ BAR is not
- * mapped write-combined stops it. No checksum offloads: the IPv4 checksum in
- * software, the UDP checksum 0. */
+ * mapped write-combined stops it. The port's offloads and interrupts as the
+ * transport's (rusteron_dpdk_runtime.c): IPv4 and UDP checksum offloads, RX
+ * and TX, where the NIC offers both (else the IPv4 checksum in software and
+ * the UDP checksum 0), a datagram the NIC flags with a bad checksum dropped;
+ * link-change interrupts where the NIC raises them, counted; no TX fast free
+ * (the transport's default). */
 #define _GNU_SOURCE
 #include <arpa/inet.h>
 #include <inttypes.h>
@@ -493,8 +497,44 @@ struct wire
     struct rte_ether_addr mac, next_mac;
     struct endpoint listen, peer;
     uint32_t next_hop; /* network order */
+    int csum;          /* checksum offloads on */
+    uint64_t bad;      /* datagrams to this side dropped for a bad checksum */
     uint8_t template[FRAME];
 };
+
+/* Link changes the NIC raised (the EAL's interrupt thread) */
+static uint64_t link_changes;
+
+static int on_link_change(uint16_t port, enum rte_eth_event_type event, void *arg, void *ret)
+{
+    (void)port;
+    (void)event;
+    (void)arg;
+    (void)ret;
+    __atomic_fetch_add(&link_changes, 1, __ATOMIC_RELAXED);
+    return 0;
+}
+
+#define TX_CSUM_FLAGS (RTE_MBUF_F_TX_IPV4 | RTE_MBUF_F_TX_IP_CKSUM | RTE_MBUF_F_TX_UDP_CKSUM)
+
+/* A frame of <m> about to go out: the NIC to fill in its IPv4 and UDP
+ * checksums (the UDP one seeded with the pseudo-header's) when offloaded, as
+ * the transport's frames; else no offload asked of it */
+static inline void tx_offload(const struct wire *w, struct rte_mbuf *m, struct rte_ipv4_hdr *ip,
+                              struct rte_udp_hdr *udp)
+{
+    if (!w->csum)
+    {
+        m->ol_flags = 0;
+        return;
+    }
+    m->ol_flags = TX_CSUM_FLAGS;
+    m->l2_len = sizeof(struct rte_ether_hdr);
+    m->l3_len = sizeof(struct rte_ipv4_hdr);
+    m->l4_len = sizeof(struct rte_udp_hdr);
+    ip->hdr_checksum = 0;
+    udp->dgram_cksum = rte_ipv4_phdr_cksum(ip, m->ol_flags);
+}
 
 /* The EAL's arguments as the transport builds them (rusteron_dpdk_eal.c,
  * rusteron_dpdk_runtime.c's ENA device arguments) */
@@ -617,6 +657,16 @@ static void port_open(struct wire *w, const char *pci)
     w->burst = (uint16_t)env_u64("RUSTERON_DPDK_BURST_SIZE", 32, 1, MAX_BURST);
     struct rte_eth_conf conf;
     memset(&conf, 0, sizeof(conf));
+    const uint64_t tx_need = RTE_ETH_TX_OFFLOAD_IPV4_CKSUM | RTE_ETH_TX_OFFLOAD_UDP_CKSUM;
+    const uint64_t rx_need = RTE_ETH_RX_OFFLOAD_IPV4_CKSUM | RTE_ETH_RX_OFFLOAD_UDP_CKSUM;
+    w->csum = tx_need == (info.tx_offload_capa & tx_need) && rx_need == (info.rx_offload_capa & rx_need);
+    if (w->csum)
+    {
+        conf.rxmode.offloads |= rx_need;
+        conf.txmode.offloads |= tx_need;
+    }
+    const int lsc = NULL != info.dev_flags && 0 != (*info.dev_flags & RTE_ETH_DEV_INTR_LSC);
+    conf.intr_conf.lsc = lsc ? 1 : 0;
     const int stamps = env_true("RUSTERON_DPDK_RX_HW_TIMESTAMP");
     if (stamps)
     {
@@ -636,6 +686,18 @@ static void port_open(struct wire *w, const char *pci)
     if (0 != rc)
     {
         die("rte_eth_dev_configure failed: %s", rte_strerror(-rc));
+    }
+    /* the mbuf's RX timestamp field, registered as the transport does (its
+     * stamps never read here) */
+    int ts_offset;
+    uint64_t ts_flag;
+    if (stamps && rte_mbuf_dyn_rx_timestamp_register(&ts_offset, &ts_flag) < 0)
+    {
+        die("cannot register the mbuf RX timestamp field: %s", rte_strerror(rte_errno));
+    }
+    if (lsc && 0 != (rc = rte_eth_dev_callback_register(port, RTE_ETH_EVENT_INTR_LSC, on_link_change, NULL)))
+    {
+        die("rte_eth_dev_callback_register(link changes) failed: %s", rte_strerror(-rc));
     }
     if (0 != rte_eth_dev_adjust_nb_rx_tx_desc(port, &rx, &tx))
     {
@@ -681,9 +743,10 @@ static void port_open(struct wire *w, const char *pci)
     rte_ether_format_addr(mac, sizeof(mac), &w->mac);
     fprintf(stderr,
             "purefloor: %s alone, no ergon-md-dpdk or Aeron: port %s (%s, %s), %u RX and %u TX descriptors, "
-            "%u mbufs (cache %u), bursts of %u, RX timestamps %s, link %s\n",
+            "%u mbufs (cache %u), bursts of %u, RX timestamps %s, checksum offloads %s, link-change interrupts %s, "
+            "link %s\n",
             rte_version(), pci, info.driver_name, mac, rx, tx, mbufs, cache, w->burst, stamps ? "on" : "off",
-            link.link_status ? "up" : "down at start");
+            w->csum ? "on" : "off (in software)", lsc ? "on" : "off", link.link_status ? "up" : "down at start");
 }
 
 static int is_arp(const struct rte_mbuf *m)
@@ -720,6 +783,7 @@ static int other_frame(struct wire *w, struct rte_mbuf *m, uint32_t from, struct
         arp->arp_data.arp_tip = arp->arp_data.arp_sip;
         rte_ether_addr_copy(&w->mac, &arp->arp_data.arp_sha);
         arp->arp_data.arp_sip = w->listen.ip;
+        m->ol_flags = 0; /* its RX flags: no offload asked of the NIC */
         if (1 == rte_eth_tx_burst(w->port, 0, &m, 1))
         {
             return 0;
@@ -729,8 +793,10 @@ static int other_frame(struct wire *w, struct rte_mbuf *m, uint32_t from, struct
     return replied;
 }
 
-/* A UDP datagram of at least DATAGRAM bytes to this side's endpoint: its payload */
-static uint8_t *datagram(const struct wire *w, struct rte_mbuf *m)
+/* A UDP datagram of at least DATAGRAM bytes to this side's endpoint: its
+ * payload; NULL for any other frame, and for one the NIC flags with a bad
+ * IPv4 or UDP checksum (counted, then freed as any other frame is) */
+static uint8_t *datagram(struct wire *w, struct rte_mbuf *m)
 {
     if (m->data_len < FRAME)
     {
@@ -742,6 +808,12 @@ static uint8_t *datagram(const struct wire *w, struct rte_mbuf *m)
     if (rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4) != eth->ether_type || 0x45 != ip->version_ihl ||
         IPPROTO_UDP != ip->next_proto_id || ip->dst_addr != w->listen.ip || udp->dst_port != w->listen.port)
     {
+        return NULL;
+    }
+    if (RTE_MBUF_F_RX_IP_CKSUM_BAD == (m->ol_flags & RTE_MBUF_F_RX_IP_CKSUM_MASK) ||
+        RTE_MBUF_F_RX_L4_CKSUM_BAD == (m->ol_flags & RTE_MBUF_F_RX_L4_CKSUM_MASK))
+    {
+        w->bad++;
         return NULL;
     }
     return (uint8_t *)(udp + 1);
@@ -796,11 +868,20 @@ static void build_template(struct wire *w)
     ip->next_proto_id = IPPROTO_UDP;
     ip->src_addr = w->listen.ip;
     ip->dst_addr = w->peer.ip;
-    ip->hdr_checksum = rte_ipv4_cksum(ip);
     udp->src_port = w->listen.port;
     udp->dst_port = w->peer.port;
     udp->dgram_len = rte_cpu_to_be_16(sizeof(*udp) + DATAGRAM);
-    udp->dgram_cksum = 0;
+    if (w->csum)
+    {
+        /* the NIC's to fill in; the UDP one from the pseudo-header's sum */
+        ip->hdr_checksum = 0;
+        udp->dgram_cksum = rte_ipv4_phdr_cksum(ip, TX_CSUM_FLAGS);
+    }
+    else
+    {
+        ip->hdr_checksum = rte_ipv4_cksum(ip);
+        udp->dgram_cksum = 0;
+    }
 }
 
 /* Sends datagram <seq> stamped <stamp> now: 0 when the TX ring is full */
@@ -819,6 +900,13 @@ static inline int send_ping(struct wire *w, uint64_t seq, uint64_t stamp)
     memcpy(p, w->template, FRAME);
     memcpy(p + HDRS + STAMP, &stamp, sizeof(stamp));
     memcpy(p + HDRS + SEQ, &seq, sizeof(seq));
+    if (w->csum)
+    {
+        m->ol_flags = TX_CSUM_FLAGS;
+        m->l2_len = sizeof(struct rte_ether_hdr);
+        m->l3_len = sizeof(struct rte_ipv4_hdr);
+        m->l4_len = sizeof(struct rte_udp_hdr);
+    }
     if (1 == rte_eth_tx_burst(w->port, 0, &m, 1))
     {
         return 1;
@@ -977,6 +1065,8 @@ static void run_ping(struct wire *w, size_t messages, size_t warmup, int cpu)
     }
     results_report(&r, lost);
     stalls_write(s, "stalls-ping.csv");
+    fprintf(stderr, "purefloor: ping ended: %" PRIu64 " datagrams with a bad checksum dropped, %" PRIu64 " link changes\n",
+            w->bad, __atomic_load_n(&link_changes, __ATOMIC_RELAXED));
 }
 
 /* The reflector: each datagram to this side's endpoint back to its sender,
@@ -1017,6 +1107,7 @@ static void run_pong(struct wire *w, int cpu)
             const uint16_t port = udp->src_port;
             udp->src_port = udp->dst_port;
             udp->dst_port = port;
+            tx_offload(w, bufs[i], ip, udp);
             out[k++] = bufs[i];
         }
         uint16_t sent = 0;
@@ -1035,7 +1126,10 @@ static void run_pong(struct wire *w, int cpu)
         echoed += sent;
     }
     stalls_write(s, "stalls-pong.csv");
-    fprintf(stderr, "purefloor: pong ended: SIGTERM (%" PRIu64 " echoed)\n", echoed);
+    fprintf(stderr,
+            "purefloor: pong ended: SIGTERM (%" PRIu64 " echoed, %" PRIu64 " datagrams with a bad checksum dropped, %" PRIu64
+            " link changes)\n",
+            echoed, w->bad, __atomic_load_n(&link_changes, __ATOMIC_RELAXED));
 }
 
 int main(int argc, char **argv)
