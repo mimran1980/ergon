@@ -49,8 +49,11 @@
 #   group that long after creation, should this script's teardown never run
 #   (killed), LAB_KEEP or not; only while the group carries this run's tag, so
 #   never a later run's of the same name. It runs on this machine: asleep or
-#   offline, nothing deletes the group, so check after a run. A plan estimated
-#   to take longer is refused before any az call, with the hours to give it
+#   offline, nothing deletes the group, so check after a run. Under a day, each
+#   VM's Azure auto-shutdown at the same deadline deallocates it, which stops
+#   its compute billing even then (its disks and addresses bill until deleted).
+#   A plan estimated to take longer is refused before any az call, with the
+#   hours to give it
 #   LAB_ESTIMATE=1: the plan's hours and dollars (../estimate.py: pay-as-you-go
 #   Linux prices in northcentralus), then exit, with no az call
 #   LAB_DETACH (unset: detach a plan estimated over 2 h; 1 always; 0 never)
@@ -237,6 +240,9 @@ fi
 # a plan longer than the backstop's deadline would lose its group hours in
 why=$(python3 "$here/../estimate.py" "${plan[@]}" --refuse-over-deadline 2>&1) || die "$why"
 hours=$(python3 "$here/../estimate.py" "${plan[@]}" --print-hours) || die "estimate.py: $hours"
+# before detaching, so a run that cannot start says so here, not in its log
+command -v az >/dev/null || die "az is not on PATH"
+az account show -o none 2>/dev/null || die "az is not logged in (az login)"
 # Detach a plan over 2 h: a nohup subshell, parented to init, running this
 # snapshot again with this run's directory, so it outlives the shell or
 # session that started it (a harness's background task dies at 2 h, mid-run
@@ -248,8 +254,6 @@ if [[ -z ${LAB_DETACHED:-} ]] && { [[ $detach == 1 ]] || { [[ -z $detach ]] && a
     trap - EXIT
     exit 0
 fi
-command -v az >/dev/null || die "az is not on PATH"
-az account show -o none 2>/dev/null || die "az is not logged in (az login)"
 mkdir -p "$out"
 
 teardown() {
@@ -270,9 +274,17 @@ teardown() {
         else
             log "WARNING: resource group $group still exists: az group delete -n $group --yes${reaper:+ (the backstop, pid $reaper, deletes it $max_hours h after creation)}"
         fi
-        log "left tagged run=$stamp: $(az resource list --tag run="$stamp" --query 'length(@)' -o tsv 2>&1 | az_words)"
+        left=$(az resource list --tag run="$stamp" --query 'length(@)' -o tsv 2>&1 | az_words)
+        if [[ $left == 0 ]]; then
+            log "left tagged run=$stamp: 0"
+        else
+            log "WARNING: $left resource(s) still tagged run=$stamp (or the listing failed): az resource list --tag run=$stamp -o table"
+        fi
     elif ((created)); then
         log "LAB_KEEP: resource group $group kept; delete it with: az group delete -n $group --yes${reaper:+ (the backstop, pid $reaper, deletes it $max_hours h after creation)}"
+    elif [[ -n ${reaper:-} ]]; then
+        # no group was created: nothing for it to delete
+        kill "$reaper" 2>/dev/null
     fi
     log "results: $out"
     # last: the snapshot this ran from
@@ -294,14 +306,30 @@ read -ra me_cidrs <<<"$(printf '%s/32 ' $me)"
 # both VMs' vCPUs within their quota families' and the region's (az.sh)
 quota=$(azure_quota_check "$region" "$size_a" "$size_b" 2>&1) || die "$quota"
 log "$quota"
-log "creating $group in $region: a $size_a, b $size_b ($arch, $image), SSH from $me, tagged ${tags[*]}"
-az group create -n "$group" -l "$region" --tags "${tags[@]}" -o none || die "group create failed"
-created=1
-# The backstop (az.sh): the whole group deleted LAB_MAX_HOURS after creation,
-# should the teardown below never run. Deleting, never deallocating: a
-# deallocated VM still bills for its disks and public addresses.
+# The backstop (az.sh): the whole group deleted LAB_MAX_HOURS from now,
+# should the teardown never run. Started, and seen running, before the group
+# exists, so no moment has a group and no backstop. Deleting, never
+# deallocating: a deallocated VM still bills for its disks and public addresses.
 reaper=$(azure_reaper "$group" "$stamp" $((max_hours * 3600)) "$out/reaper.log")
+sleep 0.5
+[[ $reaper =~ ^[0-9]+$ ]] && kill -0 "$reaper" 2>/dev/null ||
+    die "the backstop did not start (pid [$reaper]): $(cat "$out/reaper.log" 2>/dev/null)"
 log "backstop: resource group $group deleted $max_hours h from now at the latest (pid $reaper); its log $out/reaper.log"
+# Each VM's auto-shutdown at the same deadline: Azure's own, so it runs with
+# this machine asleep or offline, which the backstop does not. It only
+# deallocates (compute stops billing; disks and addresses do not), so it
+# caps the cost and the backstop or teardown still deletes. A daily schedule:
+# at a deadline a day or more away it would fire first, so none then.
+off=
+if ((max_hours < 24)); then
+    off=$(date -u -v+"${max_hours}"H +%H%M 2>/dev/null || date -u -d "+${max_hours} hours" +%H%M)
+else
+    log "no auto-shutdown: LAB_MAX_HOURS=$max_hours is a day or more (a daily schedule would fire first): only the backstop and teardown end this run"
+fi
+log "creating $group in $region: a $size_a, b $size_b ($arch, $image), SSH from $me, tagged ${tags[*]}"
+# before the call: a create that fails having made the group is deleted too
+created=1
+az group create -n "$group" -l "$region" --tags "${tags[@]}" -o none || die "group create failed"
 # every 15 minutes, what is in the group
 azure_watch "$group" 900 & watch=$!
 az ppg create -g "$group" -n ppg -l "$region" --intent-vm-sizes $(printf "%s\n" "$size_a" "$size_b" | sort -u) --tags "${tags[@]}" -o none || die "ppg create failed"
@@ -341,6 +369,8 @@ declare_node() { # name sender-ip receiver-ip size
         az vm create -g "$group" -n "$n" --size "$4" --image "$image" --ppg ppg \
             --nics "$n-mgmt" "$n-snd" "$n-rcv" --admin-username "$user" --ssh-key-values "$key" \
             --os-disk-name "$n-os" --os-disk-size-gb 64 --tags "${tags[@]}" -o none &&
+        { [[ -z $off ]] || az vm auto-shutdown -g "$group" -n "$n" --time "$off" -o none ||
+            log "WARNING: no auto-shutdown on $n: only the backstop and teardown end it"; } &&
         # a VM's tags do not reach its OS disk
         az resource tag -g "$group" -n "$n-os" --resource-type Microsoft.Compute/disks \
             --tags "${tags[@]}" --is-incremental -o none

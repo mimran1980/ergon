@@ -7073,7 +7073,7 @@ emit() { if [[ ${FAKE_AZ_TABS:-} == 1 ]]; then (IFS=$'\t'; echo "$*"); else prin
 case "$*" in
 "account show"*) exit 0 ;;
 "group exists"*) [[ -f $st/group ]] && echo true || echo false ;;
-"group create"*) touch "$st/group"; [[ $* =~ run=([^ ]+) ]] && echo "${BASH_REMATCH[1]}" >"$st/run" ;;
+"group create"*) touch "$st/group"; [[ $* =~ run=([^ ]+) ]] && echo "${BASH_REMATCH[1]}" >"$st/run"; exit "${FAKE_AZ_CREATE_RC:-0}" ;;
 "group delete"*) rm -f "$st/group" ;;
 "group wait"*) ;;
 "group show"*) [[ -f $st/group ]] || exit 3; cat "$st/run" ;;
@@ -7088,6 +7088,7 @@ case "$*" in
     *standardDPSv6Family*) emit ${FAKE_AZ_FAMILY:-4 100} ;;
     *standardDSv6Family*) emit 0 100 ;;
     esac ;;
+"resource list --tag"*) if [[ -f $st/group ]]; then echo 2; else echo "${FAKE_AZ_LEFT:-0}"; fi ;;
 "resource list"*) [[ -f $st/group ]] && printf 'Microsoft.Network/virtualNetworks\tvnet\nMicrosoft.Compute/virtualMachines\ta\n' ;;
 "network public-ip show"*) exit "${FAKE_AZ_IP_RC:-1}" ;;
 esac
@@ -7144,6 +7145,9 @@ fi
 
 # the backstop deletes the group at its deadline only while the group is
 # this run's (its run tag); the watch logs the group's resources each period
+mkdir -p "$tmp/fakedate"
+printf '#!/bin/sh\nif [ "$1" = +%%s ]; then n=$(cat "%s/date-calls" 2>/dev/null || echo 0); echo $((n + 1)) >"%s/date-calls"; s=$(/bin/date +%%s); [ "$n" -gt 0 ] && s=$((s + 100000)); echo "$s"; else exec /bin/date "$@"; fi\n' "$tmp" "$tmp" >"$tmp/fakedate/date"
+chmod +x "$tmp/fakedate/date"
 reap=$(
     . "$cloud/azure/az.sh"
     : >"$FAKE_AZ_LOG"
@@ -7154,7 +7158,16 @@ reap=$(
     azure_reaper g1 s1 1 "$tmp/reaper-own.log" >/dev/null
     for _ in $(seq 40); do [[ -f $FAKE_AZ_STATE/group ]] || break; sleep 0.25; done
     echo -n "; own: $([[ -f $FAKE_AZ_STATE/group ]] && echo kept || echo deleted)"
-    pid=$(azure_reaper g9 s9 3600 "$tmp/reaper-killed.log")
+    echo -n "$(grep -q 'resource group g1 verified gone' "$tmp/reaper-own.log" && echo ', verified' || echo ', unverified')"
+    # a deadline in wall-clock time: a Mac asleep stops sleep's clock, so a
+    # sleep of the whole period would delete hours late. Here every date +%s
+    # after the first is 100000 s later, as after a night asleep.
+    touch "$FAKE_AZ_STATE/group"; echo s5 >"$FAKE_AZ_STATE/run"; rm -f "$tmp/date-calls"
+    pid=$(PATH="$tmp/fakedate:$PATH" AZ_REAPER_POLL=1 azure_reaper g5 s5 3600 "$tmp/reaper-asleep.log")
+    for _ in $(seq 40); do [[ -f $FAKE_AZ_STATE/group ]] || break; sleep 0.25; done
+    echo -n "; asleep: $([[ -f $FAKE_AZ_STATE/group ]] && echo kept || echo deleted)"
+    kill -TERM "$pid" 2>/dev/null
+    pid=$(AZ_REAPER_POLL=7200 azure_reaper g9 s9 3600 "$tmp/reaper-killed.log")
     kill -TERM "$pid"; sleep 0.5
     echo -n "; killed: $(pgrep -f 'ergon-lab-reaper 3600 g9' >/dev/null && echo alive || echo gone)$(pgrep -fx 'sleep 3600' >/dev/null && echo ', its sleep alive' || true)"
     touch "$FAKE_AZ_STATE/group"
@@ -7165,8 +7178,8 @@ reap=$(
     echo "; watch: $(grep -c 'resources in g1: 2: Microsoft.Network/virtualNetworks/vnet Microsoft.Compute/virtualMachines/a$' "$tmp/watch.log")"
     rm -f "$FAKE_AZ_STATE/group" "$FAKE_AZ_STATE/run"
 ) || true
-if [[ $reap == "other: kept; own: deleted; killed: gone; watch: 1" ]]; then
-    pass "azure/az.sh: the backstop deletes only its own run's group at the deadline, and dies with its sleep when killed; the watch lists the group's resources"
+if [[ $reap == "other: kept; own: deleted, verified; asleep: deleted; killed: gone; watch: 1" ]]; then
+    pass "azure/az.sh: the backstop deletes only its own run's group at the deadline, checks it gone, keeps its deadline in wall-clock time (through a sleep), and dies with its sleep when killed; the watch lists the group's resources"
 else
     fail "azure/az.sh backstop and watch: $reap ($(cat "$tmp"/reaper-*.log 2>/dev/null))"
 fi
@@ -7174,9 +7187,11 @@ fi
 # a whole run on Cobalt 100 (arm64), to the point its VMs exist: the quota
 # read before the group, every resource tagged owner=ergon-lab run=<stamp>
 # (the OS disks after their VMs), the arm64 Debian 13 image, a DPDK mode
-# accepted on arm64 (DPDK builds the MANA and netvsc PMDs for arm64 too), no
-# auto-shutdown (it deallocates and keeps billing), the backstop started and,
-# once the group is verified gone, stopped
+# accepted on arm64 (DPDK builds the MANA and netvsc PMDs for arm64 too),
+# each VM's auto-shutdown at the deadline (Azure's own: it stops the compute
+# billing with this machine asleep; the group's deletion is the backstop's),
+# the backstop started before the group and, once the group is verified gone,
+# stopped
 : >"$FAKE_AZ_LOG"
 rm -rf "$tmp/azrepo/target"
 env PATH="$tmp/fakeaz:$PATH" HOME="$tmp/commahome" TMPDIR="$tmp/commatmp" LAB_REPO="$tmp/azrepo" \
@@ -7191,16 +7206,52 @@ why=
 [[ -n $stamp && $(grep -c . <<<"$creates") -ge 12 && -z $untagged ]] || why+=" untagged: [$untagged];"
 grep -q -- '-n a-os ' "$FAKE_AZ_LOG" && grep -q -- '-n b-os ' "$FAKE_AZ_LOG" || why+=" OS disks not tagged;"
 grep -q 'vm create.*--image Debian:debian-13:13-arm64:latest' "$FAKE_AZ_LOG" || why+=" no arm64 image;"
-! grep -q 'auto-shutdown' "$FAKE_AZ_LOG" || why+=" auto-shutdown;"
+off=$(date -u -v+8H +%H 2>/dev/null || date -u -d '+8 hours' +%H)
+grep -q "vm auto-shutdown -g ergon-lab-test -n a --time $off" "$FAKE_AZ_LOG" && grep -q "vm auto-shutdown -g ergon-lab-test -n b --time $off" "$FAKE_AZ_LOG" || why+=" no auto-shutdown at the deadline;"
+[[ -s $tmp/azrepo/target/md-dpdk-bench/$stamp/reaper.log || -f $tmp/azrepo/target/md-dpdk-bench/$stamp/reaper.log ]] || why+=" no backstop log;"
+[[ $(grep -n 'backstop:' "$tmp/azrun.out" | head -1 | cut -d: -f1) -lt $(grep -n 'creating ergon-lab-test' "$tmp/azrun.out" | cut -d: -f1) ]] 2>/dev/null || why+=" backstop not started before the group;"
+grep -q 'left tagged run=.*: 0$' "$tmp/azrun.out" || why+=" tagged leftovers not counted;"
 [[ $(grep -n 'vm list-usage' "$FAKE_AZ_LOG" | head -1 | cut -d: -f1) -lt $(grep -n 'group create' "$FAKE_AZ_LOG" | cut -d: -f1) ]] 2>/dev/null || why+=" quota not read before the group;"
 grep -q 'az group delete -n ergon-lab-test' "$FAKE_AZ_LOG" && grep -q 'verified: resource group ergon-lab-test no longer exists' "$tmp/azrun.out" || why+=" no verified delete;"
 [[ -n $reaper_pid ]] && ! kill -0 "$reaper_pid" 2>/dev/null || why+=" backstop [$reaper_pid] not started or left running;"
 ! pgrep -f 'ergon-lab-reaper .* ergon-lab-test' >/dev/null || why+=" a backstop left running;"
 grep -q 'no public address' "$tmp/azrun.out" || why+=" no refusal of the missing address;"
 if [[ -z $why ]]; then
-    pass "azure/lab.sh on Cobalt 100: quota read first, every resource tagged owner=ergon-lab run=<stamp>, the arm64 image, a DPDK mode accepted, no auto-shutdown, the backstop started and stopped once the group is verified gone"
+    pass "azure/lab.sh on Cobalt 100: quota read first, every resource tagged owner=ergon-lab run=<stamp>, the arm64 image, a DPDK mode accepted, auto-shutdown at the deadline, the backstop started before the group and stopped once the group is verified gone"
 else
     fail "azure/lab.sh run:$why $(tail -4 "$tmp/azrun.out")"
+fi
+rm -rf "$tmp/azrepo/target" "$FAKE_AZ_STATE"/*
+
+# fail closed: a group create that fails after making the group is still
+# deleted; resources still tagged run=<stamp> after it a WARNING; no backstop
+# (nohup fails) refused before the group exists; LAB_MAX_HOURS of a day or
+# more no auto-shutdown (a daily schedule would fire before the deadline)
+azrun() { # out-file vars...
+    local o=$1
+    shift
+    : >"$FAKE_AZ_LOG"
+    rm -rf "$tmp/azrepo/target" "$FAKE_AZ_STATE"/*
+    env PATH="$tmp/fakeaz:$PATH" HOME="$tmp/commahome" TMPDIR="$tmp/commatmp" LAB_REPO="$tmp/azrepo" \
+        LAB_GROUP=ergon-lab-test LAB_SIZE=Standard_D8s_v6 LAB_MODES=kernel LAB_STATES=pinned LAB_REPS=1 \
+        LAB_SSH_FROM=203.0.113.9 LAB_DETACH=0 "$@" bash "$cloud/azure/lab.sh" >"$o" 2>&1
+}
+why=
+azrun "$tmp/azrun-create.out" FAKE_AZ_CREATE_RC=1 FAKE_AZ_LEFT=1 && why+=" create failure exit 0;"
+grep -q 'az group delete -n ergon-lab-test' "$FAKE_AZ_LOG" && grep -q 'verified: resource group ergon-lab-test no longer exists' "$tmp/azrun-create.out" ||
+    why+=" a failed create not deleted;"
+grep -q 'WARNING: 1 resource(s) still tagged run=' "$tmp/azrun-create.out" || why+=" tagged leftovers not a WARNING;"
+mkdir -p "$tmp/fakenohup"
+printf '#!/bin/sh\nexit 1\n' >"$tmp/fakenohup/nohup"
+chmod +x "$tmp/fakenohup/nohup"
+azrun "$tmp/azrun-nohup.out" PATH="$tmp/fakenohup:$tmp/fakeaz:$PATH" && why+=" no backstop exit 0;"
+grep -q 'backstop' "$tmp/azrun-nohup.out" && ! grep -q 'group create' "$FAKE_AZ_LOG" || why+=" no backstop not refused before the group: $(tail -1 "$tmp/azrun-nohup.out");"
+azrun "$tmp/azrun-day.out" LAB_MAX_HOURS=30 || true
+! grep -q 'auto-shutdown' "$FAKE_AZ_LOG" && grep -q 'no auto-shutdown: LAB_MAX_HOURS=30' "$tmp/azrun-day.out" || why+=" auto-shutdown with LAB_MAX_HOURS=30;"
+if [[ -z $why ]]; then
+    pass "azure/lab.sh fails closed: a group whose create failed deleted, tagged leftovers a WARNING, no backstop refused before the group, no daily auto-shutdown before a deadline a day or more away"
+else
+    fail "azure/lab.sh fail-closed:$why"
 fi
 rm -rf "$tmp/azrepo/target" "$FAKE_AZ_STATE"/*
 
@@ -7230,22 +7281,30 @@ fi
 rm -f "$tmp/cloud-calls"
 
 # a plan estimated over 2 h detaches (a nohup subshell, its parent 1, its
-# log in the run directory) and returns; LAB_DETACH=0 keeps it in the
-# foreground. Here both stop at az's sign-in check, the detached one in its log.
-rm -rf "$tmp/commarepo/target"
-det=$(env PATH="$tmp/fakebin:$PATH" HOME="$tmp/commahome" TMPDIR="$tmp/commatmp" LAB_REPO="$tmp/commarepo" \
-    LAB_REPS=12 LAB_MAX_HOURS=24 bash "$cloud/azure/lab.sh" 2>&1) && detrc=0 || detrc=$?
+# log in the run directory) and returns; here the detached run goes to its
+# teardown in its log (the fake az's missing address). az's sign-in is
+# checked before detaching, so a run that cannot start says so here, not in
+# a log nobody reads; LAB_DETACH=0 keeps it in the foreground.
+rm -rf "$tmp/commarepo/target" "$FAKE_AZ_STATE"/*
+det=$(env PATH="$tmp/fakeaz:$PATH" HOME="$tmp/commahome" TMPDIR="$tmp/commatmp" LAB_REPO="$tmp/commarepo" \
+    LAB_GROUP=ergon-lab-test LAB_SSH_FROM=203.0.113.9 LAB_REPS=12 LAB_MAX_HOURS=24 bash "$cloud/azure/lab.sh" 2>&1) && detrc=0 || detrc=$?
 detlog=$(ls "$tmp"/commarepo/target/md-dpdk-bench/*/lab.log 2>/dev/null | head -1 || true)
-for _ in $(seq 80); do [[ -n $detlog ]] && grep -q 'not logged in' "$detlog" && break; sleep 0.25; done
+for _ in $(seq 80); do [[ -n $detlog ]] && grep -q 'results:' "$detlog" && break; sleep 0.25; done
 for _ in $(seq 40); do [[ -z $(find "$tmp/commatmp" -mindepth 1 -maxdepth 1 -name 'ergon-lab.*') ]] && break; sleep 0.25; done
+detout=$(cat "$detlog" 2>/dev/null || true)
+rm -rf "$tmp/commarepo/target"
+nolog=$(env PATH="$tmp/fakebin:$PATH" HOME="$tmp/commahome" TMPDIR="$tmp/commatmp" LAB_REPO="$tmp/commarepo" \
+    LAB_REPS=12 LAB_MAX_HOURS=24 bash "$cloud/azure/lab.sh" 2>&1) && nologrc=0 || nologrc=$?
 fg=$(env PATH="$tmp/fakebin:$PATH" HOME="$tmp/commahome" TMPDIR="$tmp/commatmp" LAB_REPO="$tmp/commarepo" \
     LAB_REPS=12 LAB_MAX_HOURS=24 LAB_DETACH=0 bash "$cloud/azure/lab.sh" 2>&1) && fgrc=0 || fgrc=$?
-if [[ $detrc == 0 && $det == *"detached"*"lab.log"* && -n $detlog ]] && grep -q 'not logged in' "$detlog" &&
-    [[ -z $(find "$tmp/commatmp" -mindepth 1 -maxdepth 1 -name 'ergon-lab.*') && $fgrc != 0 && $fg == *'not logged in'* ]]; then
-    pass "azure/lab.sh detaches a plan over 2 h into a nohup subshell logging to the run directory (its snapshot removed as it exits); LAB_DETACH=0 runs it in the foreground"
+if [[ $detrc == 0 && $det == *"detached"*"lab.log"* && -n $detlog && $detout == *'verified: resource group ergon-lab-test no longer exists'* &&
+    -z $(find "$tmp/commatmp" -mindepth 1 -maxdepth 1 -name 'ergon-lab.*') && $nologrc != 0 && $nolog == *'not logged in'* && $nolog != *detached* &&
+    -z $(ls "$tmp"/commarepo/target/md-dpdk-bench/*/lab.log 2>/dev/null) && $fgrc != 0 && $fg == *'not logged in'* ]]; then
+    pass "azure/lab.sh detaches a plan over 2 h into a nohup subshell logging to the run directory (its snapshot removed as it exits), after checking az's sign-in; LAB_DETACH=0 runs it in the foreground"
 else
-    fail "azure/lab.sh detach (exit $detrc): $det; log [$detlog] $(cat "$detlog" 2>/dev/null | tail -2); foreground (exit $fgrc): $(tail -1 <<<"$fg")"
+    fail "azure/lab.sh detach (exit $detrc): $det; log [$detlog] $(tail -2 <<<"$detout"); not signed in (exit $nologrc): $(tail -1 <<<"$nolog"); foreground (exit $fgrc): $(tail -1 <<<"$fg")"
 fi
+rm -rf "$tmp/commarepo/target" "$FAKE_AZ_STATE"/*
 rm -f "$tmp/cloud-calls"
 unset FAKE_AZ_STATE FAKE_AZ_LOG
 export PATH=$saved_path

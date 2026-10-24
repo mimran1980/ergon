@@ -64,22 +64,39 @@ azure_quota_check() {
 }
 
 # azure_reaper <group> <stamp> <seconds> <log>: the backstop, should this
-# machine's teardown never run (killed, asleep, offline): a process of its own
-# (nohup, so it outlives this shell) deleting the whole group <seconds> from
-# now, only while the group still carries this run's tag (run=<stamp>), so it
-# never deletes a later run's group of the same name. Prints its pid; TERM
-# stops it and its sleep.
+# machine's teardown never run (killed): a process of its own (nohup, so it
+# outlives this shell) deleting the whole group <seconds> from now, only
+# while the group still carries this run's tag (run=<stamp>), so it never
+# deletes a later run's group of the same name, then checking it gone. Its
+# deadline is wall-clock time, polled every AZ_REAPER_POLL seconds (60): a
+# Mac asleep stops sleep's clock, so one sleep of the whole period would
+# delete as many hours late as the Mac slept. Prints its pid; TERM stops it
+# and its sleep.
 azure_reaper() {
     # shellcheck disable=SC2016
     nohup bash -c 'trap '\''kill "$s" 2>/dev/null; exit 0'\'' TERM
-        sleep "$1" & s=$!; wait "$s"
+        deadline=$(($(date +%s) + $1)) poll=$4
+        while now=$(date +%s) && ((now < deadline)); do
+            sleep $((deadline - now < poll ? deadline - now : poll)) & s=$!
+            wait "$s"
+        done
         run=$(az group show -n "$2" --query tags.run -o tsv 2>/dev/null)
-        if [[ $run == "$3" ]]; then
-            echo "$(date +%T) backstop: deleting resource group $2 (run=$3)"
-            az group delete -n "$2" --yes --no-wait -o none
-        else
+        if [[ $run != "$3" ]]; then
             echo "$(date +%T) backstop: resource group $2 is gone or not run=$3 ([$run]): nothing deleted"
-        fi' ergon-lab-reaper "$3" "$1" "$2" >"$4" 2>&1 </dev/null &
+            exit 0
+        fi
+        for try in 1 2 3; do
+            echo "$(date +%T) backstop: deleting resource group $2 (run=$3), try $try"
+            az group delete -n "$2" --yes -o none
+            if [[ $(az group exists -n "$2" 2>/dev/null) == false ]]; then
+                echo "$(date +%T) backstop: resource group $2 verified gone"
+                exit 0
+            fi
+            sleep 60 & s=$!
+            wait "$s"
+        done
+        echo "$(date +%T) backstop: ERROR: resource group $2 still exists: az group delete -n $2 --yes"
+        exit 1' ergon-lab-reaper "$3" "$1" "$2" "${AZ_REAPER_POLL:-60}" >"$4" 2>&1 </dev/null &
     echo $!
 }
 

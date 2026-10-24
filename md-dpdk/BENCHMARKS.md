@@ -40,8 +40,8 @@ printed before its directory was deleted, so each is partial.
 | `aws-20261014-220612` | not recorded (an EC2 listing during the run showed two `c7i.4xlarge`) | DPDK knobs (its base arm is not in the recovered rows) |
 | `eks-20261014-195824` | EKS, `c7i.4xlarge` | DPDK pods: [book](https://mimran1980.github.io/ergon/deploy/benchmarks.html#kubernetes-eks-on-c7i4xlarge) |
 
-The last two ids' directories had no `aws-` prefix. `aws/lab.sh:396` names its
-runs `aws-<stamp>`; `azure/lab.sh:138` names them `<stamp>` alone. Their
+The last two ids' directories had no `aws-` prefix. `aws/lab.sh` names its
+runs `aws-<stamp>`; `azure/lab.sh` names them `<stamp>` alone. Their
 platform is in neither directory nor rows; only the EC2 listing in each file's header points to AWS.
 
 ## Conclusions
