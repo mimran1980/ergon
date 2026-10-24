@@ -6312,12 +6312,17 @@ fi
 
 # analyse.py: dpdk-pure named for what it is, after dpdk-raw, and dpdk-raw
 # beside it in the table above the floor (what ergon-md-dpdk's packet path
-# adds over DPDK alone), the Aeron DPDK mode still beside dpdk-raw;
+# adds over DPDK alone), the Aeron DPDK mode still beside dpdk-raw; a mode
+# with overrides set against the floor with the same ones where that ran
+# (precision-time's timestamps-off baselines), else the bare floor;
 # estimate.py: its rep the round trip alone; spikes.py: purefloor busy
 cat >"$tmp/pure-results.csv" <<'CSV'
 1,rtt,isolated:dpdk,udp,25000,26000,30000,35000,45000,72000,25500,1000,0
 1,rtt,isolated:dpdk-raw,udp,15000,16000,20000,25000,35000,71000,15500,1000,0
 1,rtt,isolated:dpdk-pure,udp,12000,13000,16000,20000,30000,85000,12500,1000,0
+1,rtt,isolated:dpdk-raw@RUSTERON_DPDK_RX_HW_TIMESTAMP=0,udp,14000,15000,19000,24000,34000,70000,14500,1000,0
+1,rtt,isolated:dpdk-pure@RUSTERON_DPDK_RX_HW_TIMESTAMP=0,udp,12500,13000,17000,21000,31000,90000,12600,1000,0
+1,rtt,isolated:dpdk-raw@RUSTERON_DPDK_BURST_SIZE=16,udp,16000,17000,21000,26000,36000,72000,16500,1000,0
 CSV
 pure_md=$(python3 "$cloud/analyse.py" "$tmp/pure-results.csv" 2>&1 || true)
 above=$(section "## UDP round trip above the raw floor (µs)" <<<"$pure_md" | tr -s ' ')
@@ -6337,7 +6342,9 @@ PY
 busy=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import spikes; print(bool(spikes.BUSY.match("purefloor")))' "$cloud")
 if [[ $pure_md != *"| isolated, DPDK alone, no ergon-md-dpdk or Aeron (pure floor) "* ]]; then
     fail "analyse.py: the pure floor's name: $(grep -m3 'pure' <<<"$pure_md")"
-elif [[ $(grep -c '^| isolated, ' <<<"$above") != 2 ||
+elif [[ $(grep -c '^| isolated, ' <<<"$above") != 4 ||
+    $above != *"| isolated, dpdk-raw@RUSTERON_DPDK_RX_HW_TIMESTAMP=0 | dpdk-pure@RUSTERON_DPDK_RX_HW_TIMESTAMP=0 | 1 | 1.50 (1.50–1.50) | 2.00 (2.00–2.00) | 3.00 (3.00–3.00) | -20.00 (-20.00–-20.00) |"* ||
+    $above != *"| isolated, dpdk-raw@RUSTERON_DPDK_BURST_SIZE=16 | DPDK alone, no ergon-md-dpdk or Aeron (pure floor) | 1 | 4.00 (4.00–4.00) | 5.00 (5.00–5.00) | 6.00 (6.00–6.00) | -13.00 (-13.00–-13.00) |"* ||
     $above != *"| isolated, DPDK | DPDK packet path, no Aeron (raw floor) | 1 | 10.00 (10.00–10.00) "* ||
     $above != *"| isolated, DPDK packet path, no Aeron (raw floor) | DPDK alone, no ergon-md-dpdk or Aeron (pure floor) | 1 | 3.00 (3.00–3.00) | 4.00 (4.00–4.00) | 5.00 (5.00–5.00) | -14.00 (-14.00–-14.00) |"* ]]; then
     fail "analyse.py: dpdk-raw above the pure floor"

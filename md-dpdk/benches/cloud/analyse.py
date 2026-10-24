@@ -857,8 +857,16 @@ def above_floor(r, modes):
     for m in modes:
         state, _, mode = m.rpartition(":")
         floor = floor_of(mode)
+        if floor is None or not r.rtt.get(m):
+            continue
+        # the floor with the mode's own overrides where that ran (under
+        # precision-time, a timestamps-off baseline against the floor's),
+        # else the bare floor
+        overrides = mode.partition("@")[2]
+        if overrides and r.rtt.get(f"{state}:{floor}@{overrides}" if state else f"{floor}@{overrides}"):
+            floor = f"{floor}@{overrides}"
         base = f"{state}:{floor}" if state else floor
-        if floor is None or not r.rtt.get(m) or not r.rtt.get(base):
+        if not r.rtt.get(base):
             continue
         reps = sorted({rep for (label, rep) in r.rtt_rep if label == m} &
                       {rep for (label, rep) in r.rtt_rep if label == base}, key=rep_key)
@@ -874,8 +882,11 @@ def above_floor(r, modes):
           "for the kernel's modes, the DPDK transport's bindings alone for DPDK's). Each Aeron mode's round trip less "
           "its floor's, rep by rep where both ran: the median across reps, the range in brackets; what Aeron's "
           "driver and client add. A max no higher than the floor's lies beneath Aeron. dpdk-raw is set against the "
-          "pure floor (purefloor.c: DPDK alone, a 5-tuple-swapping reflector at the pong): what ergon-md-dpdk's "
-          "packet path adds; a max no higher than the pure floor's lies beneath the transport.\n")
+          "pure floor (purefloor.c: DPDK alone, a 5-tuple-swapping reflector at the pong, the port set up as the "
+          "transport's): what ergon-md-dpdk's packet path adds; a max no higher than the pure floor's lies beneath "
+          "the transport. The pure floor sends and receives on each host's receiver port alone, dpdk-raw sends on "
+          "the sender port. A mode with overrides is set against the floor with the same overrides where that "
+          "ran, else the bare floor.\n")
     print(table(["state, transport", "floor", "reps", "p50", "p99", "p99.99", "max"], rows) + "\n")
 
 
