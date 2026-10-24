@@ -52,7 +52,7 @@ admission policy, not another image:
    | `reservedSystemCPUs` | the IRQ CPU(s) plus the shared CPUs | kubelet config |
    | `cpuCFSQuota` | not `false`; feature gate `DisableCPUQuotaWithExclusiveCPUs` not `false` | kubelet config |
    | kubelet config file | `/var/lib/kubelet/config.yaml` (kubeadm, kind). The plugin pod does not start without it. Another path: `--set hostContract.kubeletConfig.path=<file>`. A kubelet started with `--config-dir` also needs `hostContract.kubeletConfigDir` (chart 0.1.2). EKS AL2023: [below](#eks-al2023) | node |
-   | NIC IRQs | every hardware NIC IRQ, requested and effective affinity, on the IRQ CPU(s): `reservedSystemCPUs` minus `sharedCpus` | node (IRQ pinning) |
+   | NIC IRQs | every hardware NIC IRQ, requested and effective affinity, on the IRQ CPU(s): `reservedSystemCPUs` minus `sharedCpus`. A Hyper-V synthetic NIC (Azure `hv_netvsc`) has no IRQ: each VMBus channel's `device/channels/<relid>/cpu` must be one of those CPUs | node (IRQ pinning) |
    | containerd | >= 2.2, NRI default validator on (block below) | containerd TOML |
    | `ergon.io/shared-cpus=true` | the DaemonSet schedules only on labelled nodes | node label |
 
