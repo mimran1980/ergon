@@ -369,3 +369,24 @@ fn chunk_framing_is_accepted_and_refused_as_before() -> R {
     }
     Ok(())
 }
+
+/// A non-ASCII byte anywhere in a header value is flagged, at every offset
+/// of a 40-byte value (the ASCII scan reads 16 bytes per step).
+#[test]
+fn a_non_ascii_byte_at_any_offset_of_the_head_is_flagged() -> R {
+    let lab = Lab::new()?;
+    let mut r = rig(&lab, 1 << 20)?;
+    let mut h = Collect::default();
+    for at in 0..40 {
+        let mut value = vec![b'v'; 40];
+        value[at] = 0x80;
+        let mut resp = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nX-V: ".to_vec();
+        resp.extend_from_slice(&value);
+        resp.extend_from_slice(b"\r\n\r\n");
+        ask(&mut r)?;
+        r.feed_records(&resp, &[], &mut h)?;
+    }
+    assert!(h.responses.iter().all(|g| !g.3));
+    assert_eq!(r.conn.stats().non_ascii_heads, 40);
+    Ok(())
+}

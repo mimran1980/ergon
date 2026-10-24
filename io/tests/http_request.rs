@@ -276,3 +276,59 @@ fn a_signed_template_request_equals_the_signed_request() -> R {
     );
     Ok(())
 }
+
+/// Header checks refuse CR, LF and NUL at every offset of a value, and a
+/// non-token byte at every offset of a name; tab, space and obs-text pass.
+#[test]
+fn header_checks_hold_at_every_offset() -> R {
+    let target = Target::new("h", 443, "");
+    let tpl = RequestTemplate::new(&target, "GET", "/")?;
+    let mut out = Vec::new();
+    for len in 1..40usize {
+        for at in 0..len {
+            for bad in ['\r', '\n', '\0'] {
+                let mut v: Vec<char> = "abcdefghij\tklmnop qrstuvwxyz0123456789!~"
+                    .chars()
+                    .collect();
+                v.truncate(len);
+                v[at] = bad;
+                let v: String = v.into_iter().collect();
+                assert!(
+                    tpl.write(&mut out, "", &[("X-V", &v)], &[]).is_err(),
+                    "{v:?}"
+                );
+            }
+            let mut name: Vec<char> = "X-Abcdefghijklmnopqrstuvwxyz0123456789!#$"
+                .chars()
+                .collect();
+            name.truncate(len);
+            for bad in [' ', ':', '(', '\u{e9}', '"'] {
+                let mut n = name.clone();
+                n[at] = bad;
+                let n: String = n.into_iter().collect();
+                assert!(tpl.write(&mut out, "", &[(&n, "1")], &[]).is_err(), "{n:?}");
+            }
+        }
+        let ok: String = "a\t \u{e9}\u{7f}~".chars().cycle().take(len).collect();
+        tpl.write(&mut out, "", &[("X-Ok", &ok)], &[])?;
+    }
+    for name in [
+        "TE",
+        "host",
+        "Connection",
+        "Expect",
+        "Upgrade",
+        "Trailer",
+        "CONTENT-LENGTH",
+        "Transfer-Encoding",
+    ] {
+        assert!(
+            tpl.write(&mut out, "", &[(name, "1")], &[]).is_err(),
+            "{name}"
+        );
+    }
+    for name in ["Hosts", "T", "Content-Lengths", "X-Host"] {
+        tpl.write(&mut out, "", &[(name, "1")], &[])?;
+    }
+    Ok(())
+}

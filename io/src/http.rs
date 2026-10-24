@@ -79,15 +79,67 @@ pub(crate) const fn is_tchar(b: u8) -> bool {
         )
 }
 
+/// [`is_tchar`] as a table: one load per byte.
+static TCHAR: [bool; 256] = {
+    let mut t = [false; 256];
+    let mut i = 0;
+    while i < 256 {
+        #[allow(clippy::cast_possible_truncation)]
+        {
+            t[i] = is_tchar(i as u8);
+        }
+        i += 1;
+    }
+    t
+};
+
+/// Every byte of `b` is below 0x80: sixteen bytes per step, no branch per
+/// word.
+#[inline]
+fn all_ascii(b: &[u8]) -> bool {
+    let (words, rest) = b.as_chunks::<16>();
+    let mut acc = 0u128;
+    for w in words {
+        acc |= u128::from_ne_bytes(*w);
+    }
+    let mut tail = 0u8;
+    for &x in rest {
+        tail |= x;
+    }
+    acc & 0x8080_8080_8080_8080_8080_8080_8080_8080 == 0 && tail < 0x80
+}
+
+/// A byte of `x` is zero.
+const fn has_zero(x: u64) -> bool {
+    x.wrapping_sub(0x0101_0101_0101_0101) & !x & 0x8080_8080_8080_8080 != 0
+}
+
+/// No CR, LF or NUL in `v`: eight bytes per step.
+fn clean_value(v: &[u8]) -> bool {
+    const CR: u64 = 0x0D0D_0D0D_0D0D_0D0D;
+    const LF: u64 = 0x0A0A_0A0A_0A0A_0A0A;
+    let (words, rest) = v.as_chunks::<8>();
+    for w in words {
+        let x = u64::from_ne_bytes(*w);
+        if has_zero(x) || has_zero(x ^ CR) || has_zero(x ^ LF) {
+            return false;
+        }
+    }
+    !rest.iter().any(|&b| b == b'\r' || b == b'\n' || b == 0)
+}
+
 fn validate_header(name: &str, value: &str) -> Result<()> {
-    if name.is_empty() || !name.bytes().all(is_tchar) {
+    if name.is_empty() || !name.bytes().all(|b| TCHAR[usize::from(b)]) {
         return Err(Error::Http(format!("invalid header name {name:?}")));
     }
-    if RESERVED.iter().any(|r| name.eq_ignore_ascii_case(r)) {
+    // Only names as long as a reserved one are compared.
+    if matches!(name.len(), 2 | 4 | 6 | 7 | 10 | 14 | 17)
+        && RESERVED.iter().any(|r| name.eq_ignore_ascii_case(r))
+    {
         return Err(Error::Http(format!("header {name} is set by the client")));
     }
     // Field values: visible ASCII, space, tab, or obs-text; never CR, LF or NUL.
-    if value.bytes().any(|b| b == b'\r' || b == b'\n' || b == 0) {
+    if !clean_value(value.as_bytes()) {
         return Err(Error::Http(format!("invalid value for header {name}")));
     }
     Ok(())
@@ -883,7 +935,7 @@ impl HttpConn {
         }
         // Status line and headers are ASCII by spec; httparse lets obs-text
         // (0x80-0xFF) through.
-        let ascii = window[..hl].is_ascii();
+        let ascii = all_ascii(&window[..hl]);
         if !ascii {
             if self.opts.non_ascii_head == NonAsciiHead::Reject {
                 return Err(Error::Http("non-ASCII byte in the response head".into()));
@@ -1286,6 +1338,34 @@ impl Dechunk {
                     };
                 }
                 Chunk::Done => break,
+                // Whole size lines, data CRLFs and an empty trailer section
+                // are read in one step; the byte machine below takes a cut
+                // one.
+                SIZE_LINE => {
+                    match httparse::parse_chunk_size(&input[pos..])
+                        .map_err(|_| Error::Http("bad chunk size".into()))?
+                    {
+                        httparse::Status::Complete((n, size)) => {
+                            pos += n;
+                            self.state = self.size_line(size, limit)?;
+                            if self.chunks == 1 && matches!(self.state, Chunk::Data(_)) {
+                                self.first = pos;
+                            }
+                        }
+                        httparse::Status::Partial => self.bytes(&input[pos..], &mut pos, limit)?,
+                    }
+                }
+                Chunk::DataCr if input.len() - pos >= 2 => {
+                    if &input[pos..pos + 2] != b"\r\n" {
+                        return Err(Error::Http("chunk without CRLF".into()));
+                    }
+                    pos += 2;
+                    self.state = SIZE_LINE;
+                }
+                Chunk::Trailer(2) if input[pos..].starts_with(b"\r\n") => {
+                    pos += 2;
+                    self.state = Chunk::Done;
+                }
                 state => {
                     let b = input[pos];
                     pos += 1;
@@ -1297,6 +1377,21 @@ impl Dechunk {
             }
         }
         Ok(pos)
+    }
+
+    /// Feeds `rest` (a cut size line) through the byte machine; `pos`
+    /// advances past it.
+    #[cold]
+    fn bytes(&mut self, rest: &[u8], pos: &mut usize, limit: usize) -> Result<()> {
+        for &b in rest {
+            *pos += 1;
+            self.state = self.byte(self.state, b, limit)?;
+            if !matches!(self.state, Chunk::Size { .. }) {
+                // httparse said partial: the line cannot end in `rest`.
+                return Err(Error::Http("bad chunk size".into()));
+            }
+        }
+        Ok(())
     }
 
     /// One framing byte.
