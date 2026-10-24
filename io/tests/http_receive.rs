@@ -306,9 +306,10 @@ fn a_non_ascii_head_is_flagged_by_default_and_rejected_on_request() -> R {
 }
 
 /// `body_check` takes the WebSocket text check: off by default; UTF-8 and
-/// ASCII under `NonAscii::Close` close on a failure; ASCII under
-/// `NonAscii::DeliverUnchecked` delivers the body flagged. `RxMeta::text`
-/// says what the check found.
+/// checked ASCII under `NonAscii::Close` close on a failure; checked ASCII
+/// under `NonAscii::DeliverUnchecked` delivers the body flagged; trusted
+/// ASCII reads nothing and delivers any body unchanged as `AssumedAscii`.
+/// `RxMeta::text` says what the check found.
 #[test]
 fn the_body_check_is_off_by_default_and_flags_or_closes() -> R {
     let lab = Lab::new()?;
@@ -316,8 +317,8 @@ fn the_body_check_is_off_by_default_and_flags_or_closes() -> R {
     let latin = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n\u{e9}".as_bytes();
     let broken = b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n\xe9";
     let ascii = b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\na";
-    let close = TextCheck::Ascii(NonAscii::Close);
-    let flag = TextCheck::Ascii(NonAscii::DeliverUnchecked);
+    let close = TextCheck::AsciiChecked(NonAscii::Close);
+    let flag = TextCheck::AsciiChecked(NonAscii::DeliverUnchecked);
     // (check, response, what a delivered body is flagged; None: closed)
     for (check, resp, want) in [
         (TextCheck::None, &broken[..], Some(TextStatus::Unchecked)),
@@ -327,6 +328,9 @@ fn the_body_check_is_off_by_default_and_flags_or_closes() -> R {
         (close, ascii, Some(TextStatus::Ascii)),
         (flag, latin, Some(TextStatus::NotAscii)),
         (flag, ascii, Some(TextStatus::Ascii)),
+        (TextCheck::Ascii, &broken[..], Some(TextStatus::AssumedAscii)),
+        (TextCheck::Ascii, latin, Some(TextStatus::AssumedAscii)),
+        (TextCheck::Ascii, ascii, Some(TextStatus::AssumedAscii)),
     ] {
         let mut r = HttpRig::new(
             &lab,
@@ -345,6 +349,10 @@ fn the_body_check_is_off_by_default_and_flags_or_closes() -> R {
         assert_eq!(h.text, want.into_iter().collect::<Vec<_>>(), "{check:?}");
         if want.is_none() {
             assert!(matches!(got, Err(Error::Http(_))), "{got:?}");
+        } else {
+            let body = &resp[resp.len() - h.responses[0].1.len()..];
+            assert_eq!(h.responses[0].1, body, "{check:?}: delivered unchanged");
+            assert!(!body.is_empty(), "{check:?}");
         }
     }
     Ok(())
@@ -358,7 +366,7 @@ fn the_body_check_refuses_skip() -> R {
     let got = HttpRig::new(
         &lab,
         HttpOptions {
-            body_check: TextCheck::Ascii(NonAscii::Skip),
+            body_check: TextCheck::AsciiChecked(NonAscii::Skip),
             ..HttpOptions::default()
         },
     );

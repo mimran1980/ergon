@@ -183,8 +183,9 @@ fn streaming_and_every_text_check_do_not_allocate() -> R {
     let checks = [
         TextCheck::None,
         TextCheck::Utf8,
-        TextCheck::Ascii(NonAscii::DeliverUnchecked),
-        TextCheck::Ascii(NonAscii::Skip),
+        TextCheck::Ascii,
+        TextCheck::AsciiChecked(NonAscii::DeliverUnchecked),
+        TextCheck::AsciiChecked(NonAscii::Skip),
     ];
     for check in checks {
         let o = WsOptions {

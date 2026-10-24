@@ -50,7 +50,7 @@ use crate::endpoint::{ConnId, ConnMut, Handler};
 use crate::error::{Error, Result};
 use crate::net::{Target, TlsDial};
 use crate::stream::{TlsStream, TxQueue};
-use crate::text::{NonAscii, TextCheck, TextStatus};
+use crate::text::{NonAscii, Scan, TextCheck, TextStatus};
 use crate::tls::MAX_RECORD;
 
 /// Largest request (line, headers and body) [`HttpConn::request`] accepts: one
@@ -365,7 +365,8 @@ pub struct HttpOptions {
     pub non_ascii_head: NonAsciiHead,
     /// The check on every response body ([`TextCheck::None`] by default:
     /// HTTP has no text rule for bodies); [`RxMeta::text`] says what it
-    /// found. [`NonAscii::Skip`] is refused.
+    /// found. [`NonAscii::Skip`] is refused. [`TextCheck::Ascii`] reads
+    /// nothing.
     pub body_check: TextCheck,
 }
 
@@ -1047,26 +1048,18 @@ fn reserve_body(body: &mut Vec<u8>, limit: usize) {
 /// what the check found in [`RxMeta::text`].
 #[inline]
 fn emit<H: HttpHandler>(handler: &mut H, at: &At<'_>, response: &Response<'_>) -> Result<()> {
-    let text = match at.check {
-        TextCheck::None => TextStatus::Unchecked,
-        TextCheck::Utf8 => {
+    let text = match at.check.scan([response.body]) {
+        Scan::Status(text) => text,
+        Scan::Utf8 => {
             if std::str::from_utf8(response.body).is_err() {
                 return Err(Error::Http("response body is not UTF-8".into()));
             }
             TextStatus::Utf8
         }
-        TextCheck::Ascii(policy) => {
-            if response.body.is_ascii() {
-                TextStatus::Ascii
-            } else {
-                match policy {
-                    NonAscii::DeliverUnchecked => TextStatus::NotAscii,
-                    // `Skip` is refused when the options are checked.
-                    NonAscii::Close | NonAscii::Skip => {
-                        return Err(Error::Http("non-ASCII byte in the response body".into()));
-                    }
-                }
-            }
+        Scan::NotAscii(NonAscii::DeliverUnchecked) => TextStatus::NotAscii,
+        // `Skip` is refused when the options are checked.
+        Scan::NotAscii(NonAscii::Close | NonAscii::Skip) => {
+            return Err(Error::Http("non-ASCII byte in the response body".into()));
         }
     };
     let meta = RxMeta { text, ..*at.meta };
@@ -1610,7 +1603,7 @@ fn check_options(opts: &HttpOptions) -> Result<()> {
             "max_in_flight above {MAX_IN_FLIGHT}"
         )));
     }
-    if opts.body_check == TextCheck::Ascii(NonAscii::Skip) {
+    if opts.body_check == TextCheck::AsciiChecked(NonAscii::Skip) {
         return Err(Error::Config(
             "body_check: NonAscii::Skip would leave a request unanswered".into(),
         ));

@@ -854,7 +854,7 @@ fn text_suite(sizes: &[usize], samples: usize, out: &mut String) -> BoxResult<()
     let checks = [
         TextCheck::None,
         TextCheck::Utf8,
-        TextCheck::Ascii(NonAscii::DeliverUnchecked),
+        TextCheck::AsciiChecked(NonAscii::DeliverUnchecked),
     ];
     let mut conns = Vec::new();
     for c in checks {
@@ -884,7 +884,7 @@ fn text_suite(sizes: &[usize], samples: usize, out: &mut String) -> BoxResult<()
                     match c {
                         TextCheck::None => "none",
                         TextCheck::Utf8 => "utf8",
-                        TextCheck::Ascii(_) => "ascii",
+                        TextCheck::AsciiChecked(_) => "ascii",
                     },
                     s.last,
                     hist.cells()

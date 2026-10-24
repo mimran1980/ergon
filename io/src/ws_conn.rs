@@ -9,8 +9,9 @@
 //!   message as slices of the buffer ([`Fragments`]) instead of a copy, or
 //!   stream its fragments one by one as they arrive
 //!   ([`WsHandler::on_fragment`]).
-//! - Text is checked as [`WsOptions::text_check`] says (none, UTF-8, or
-//!   ASCII), only on kept messages; [`RxMeta::text`] says what was found.
+//! - Text is checked as [`WsOptions::text_check`] says (none, UTF-8,
+//!   trusted ASCII that reads nothing, or checked ASCII), only on kept
+//!   messages; [`RxMeta::text`] says what was found.
 //! - Close handshake both ways ([`WsConn::close`]; a server Close is answered
 //!   with its code). On a quiet connection, Pings and a Pong timeout; an idle
 //!   timeout. The timers run on the driver's deadline check (every 250 µs),
@@ -33,7 +34,7 @@ use crate::error::{Error, Result};
 pub use crate::net::Target;
 use crate::net::{TlsDial, flush_nonblocking};
 use crate::stream::{TlsStream, TxQueue, prefault};
-use crate::text::{NonAscii, TextCheck, TextStatus};
+use crate::text::{NonAscii, Scan, TextCheck, TextStatus, high_bits};
 use crate::tls::{self, MAX_RECORD, Opened, RecordLayer};
 use crate::ws::{self, Close};
 
@@ -309,7 +310,8 @@ pub struct WsStats {
     /// before their last fragment, and under [`NonAscii::Skip`].
     pub skipped: u64,
     /// Text messages with a byte at or above 0x80 under
-    /// [`TextCheck::Ascii`], whatever the policy did with them.
+    /// [`TextCheck::AsciiChecked`], whatever the policy did with them
+    /// ([`TextCheck::Ascii`] reads nothing, so never counts).
     pub non_ascii: u64,
     /// Fragmented messages joined by copy because the handler asked for
     /// fragments but returned [`Flow::Unhandled`] (did not implement
@@ -352,8 +354,9 @@ pub struct WsOptions {
     /// How text messages are checked ([`TextCheck`]); [`RxMeta::text`]
     /// says what was found. [`TextCheck::None`] by default: a check reads
     /// every text byte once more. [`TextCheck::Utf8`] is what RFC 6455
-    /// requires; [`TextCheck::Ascii`] is one cheaper pass whose result lets
-    /// a parser index text freely. Only kept messages are checked, after
+    /// requires; [`TextCheck::AsciiChecked`] is one cheaper pass whose
+    /// result lets a parser index text freely; [`TextCheck::Ascii`] trusts
+    /// the source and reads nothing. Only kept messages are checked, after
     /// [`WsHandler::on_message_start`] and before delivery: a message it
     /// skips is never read, so invalid text in a skipped message does not
     /// close the connection (a deliberate relaxation of RFC 6455 §8.1).
@@ -963,33 +966,29 @@ impl WsConn {
         let op = self.frag_op;
         let payload = &self.stream.window()[h.header_len..h.frame_len()];
         let text = if op == ws::OP_TEXT {
-            match self.text_check {
-                TextCheck::None => TextStatus::Unchecked,
-                TextCheck::Utf8 => {
+            match self.text_check.scan([payload]) {
+                Scan::Status(text) => text,
+                Scan::Utf8 => {
                     self.carry.push(payload)?;
                     if h.fin {
                         self.carry.finish()?;
                     }
                     TextStatus::Utf8
                 }
-                TextCheck::Ascii(policy) => {
-                    if high_bits(payload) == 0 {
-                        TextStatus::Ascii
-                    } else {
-                        if !self.stream_non_ascii {
-                            self.stream_non_ascii = true;
-                            self.non_ascii += 1;
+                Scan::NotAscii(policy) => {
+                    if !self.stream_non_ascii {
+                        self.stream_non_ascii = true;
+                        self.non_ascii += 1;
+                    }
+                    match policy {
+                        NonAscii::Close => return Err(not_ascii()),
+                        NonAscii::Skip => {
+                            // The rest is dropped; the message ends
+                            // without a `fin` fragment.
+                            self.frag_mode = FragMode::Skip;
+                            return Ok(());
                         }
-                        match policy {
-                            NonAscii::Close => return Err(not_ascii()),
-                            NonAscii::Skip => {
-                                // The rest is dropped; the message ends
-                                // without a `fin` fragment.
-                                self.frag_mode = FragMode::Skip;
-                                return Ok(());
-                            }
-                            NonAscii::DeliverUnchecked => TextStatus::NotAscii,
-                        }
+                        NonAscii::DeliverUnchecked => TextStatus::NotAscii,
                     }
                 }
             }
@@ -1379,7 +1378,7 @@ const fn not_ascii() -> Error {
 ///
 /// # Errors
 /// Invalid UTF-8 under [`TextCheck::Utf8`]; a non-ASCII byte under
-/// [`NonAscii::Close`].
+/// [`NonAscii::Close`]. [`TextCheck::Ascii`] reads nothing.
 #[inline]
 fn check_kept<'a>(
     check: TextCheck,
@@ -1391,16 +1390,13 @@ fn check_kept<'a>(
     if op != ws::OP_TEXT {
         return Ok(Some(TextStatus::Unchecked));
     }
-    match check {
-        TextCheck::None => Ok(Some(TextStatus::Unchecked)),
-        TextCheck::Utf8 => {
+    match check.scan(parts.clone()) {
+        Scan::Status(text) => Ok(Some(text)),
+        Scan::Utf8 => {
             check_utf8_parts(parts)?;
             Ok(Some(TextStatus::Utf8))
         }
-        TextCheck::Ascii(policy) => {
-            if parts.into_iter().fold(0, |acc, s| acc | high_bits(s)) == 0 {
-                return Ok(Some(TextStatus::Ascii));
-            }
+        Scan::NotAscii(policy) => {
             *non_ascii += 1;
             match policy {
                 NonAscii::Close => Err(not_ascii()),
@@ -1497,18 +1493,6 @@ impl Utf8Carry {
         self.have = 0;
         if open { Err(not_utf8()) } else { Ok(()) }
     }
-}
-
-/// The top bit of every byte of `s`, OR-ed together: 0 when `s` is ASCII.
-#[inline]
-fn high_bits(s: &[u8]) -> u64 {
-    const HIGH: u64 = 0x8080_8080_8080_8080;
-    let (words, tail) = s.as_chunks::<8>();
-    let mut acc = words.iter().fold(0, |acc, w| acc | u64::from_ne_bytes(*w));
-    for &b in tail {
-        acc |= u64::from(b);
-    }
-    acc & HIGH
 }
 
 /// Bytes in the UTF-8 sequence that `lead` starts. A lead byte that

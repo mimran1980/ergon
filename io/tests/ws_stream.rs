@@ -1,4 +1,5 @@
-//! Text checks (`TextCheck`: none, UTF-8, ASCII with its non-ASCII policy)
+//! Text checks (`TextCheck`: none, UTF-8, trusted ASCII, checked ASCII with
+//! its non-ASCII policy)
 //! and streamed fragments (`Interest::Stream`), fed record by record without
 //! a driver: what each mode delivers and flags in `RxMeta::text`, that a
 //! streamed fragment is handed over as it arrives with nothing held or
@@ -11,8 +12,8 @@ mod ws_rig;
 
 use ergon_io::ws::{OP_BINARY, OP_CLOSE, OP_CONT, OP_PING, OP_TEXT};
 use ergon_io::{
-    ConnId, Flow, Fragments, Handler, Interest, NonAscii, RxMeta, TextCheck, TextStatus, WsHandler,
-    WsOptions, WsStats,
+    AsciiText, ConnId, Flow, Fragments, Handler, Interest, NonAscii, RxMeta, TextCheck, TextStatus,
+    WsHandler, WsOptions, WsStats,
 };
 use proptest::prelude::*;
 use proptest::test_runner::{Config, RngSeed, TestRunner};
@@ -150,7 +151,7 @@ const fn stats(r: &WsRig) -> WsStats {
     r.conn.stats()
 }
 
-const DELIVER: TextCheck = TextCheck::Ascii(NonAscii::DeliverUnchecked);
+const DELIVER: TextCheck = TextCheck::AsciiChecked(NonAscii::DeliverUnchecked);
 
 // ---- TextCheck ------------------------------------------------------------
 
@@ -166,6 +167,11 @@ fn each_text_mode_flags_what_it_checked() -> R {
             TextStatus::Unchecked,
         ),
         (TextCheck::Utf8, TextStatus::Utf8, TextStatus::Utf8),
+        (
+            TextCheck::Ascii,
+            TextStatus::AssumedAscii,
+            TextStatus::AssumedAscii,
+        ),
         (DELIVER, TextStatus::Ascii, TextStatus::NotAscii),
     ];
     let pure = ascii(500);
@@ -227,7 +233,7 @@ fn a_non_ascii_byte_meets_the_policy() -> R {
             then.extend_from_slice(&frame(OP_TEXT, true, &next)?);
             let what = format!("{interest:?} byte at {at}");
 
-            let mut r = WsRig::new(&lab, &opts(TextCheck::Ascii(NonAscii::Close)))?;
+            let mut r = WsRig::new(&lab, &opts(TextCheck::AsciiChecked(NonAscii::Close)))?;
             let mut h = App::new(interest);
             let e = r
                 .feed_records(&then, &[], &mut h)
@@ -239,7 +245,7 @@ fn a_non_ascii_byte_meets_the_policy() -> R {
                 "{what}: the message was delivered"
             );
 
-            let mut r = WsRig::new(&lab, &opts(TextCheck::Ascii(NonAscii::Skip)))?;
+            let mut r = WsRig::new(&lab, &opts(TextCheck::AsciiChecked(NonAscii::Skip)))?;
             let mut h = App::new(interest);
             r.feed_records(&then, &[], &mut h)?;
             let got = h.messages();
@@ -271,7 +277,7 @@ fn a_non_ascii_byte_meets_the_policy() -> R {
 fn a_skipped_message_is_never_checked() -> R {
     let lab = Lab::new()?;
     let bad = b"price \xff\xfe".to_vec();
-    for check in [TextCheck::Utf8, TextCheck::Ascii(NonAscii::Close)] {
+    for check in [TextCheck::Utf8, TextCheck::AsciiChecked(NonAscii::Close)] {
         for parts in [1, 3] {
             let mut r = WsRig::new(&lab, &opts(check))?;
             let mut h = App::new(Interest::Skip);
@@ -284,6 +290,84 @@ fn a_skipped_message_is_never_checked() -> R {
             );
         }
     }
+    Ok(())
+}
+
+/// `Ascii` is trust, not a check: bytes that are not ASCII (not even
+/// UTF-8) are delivered unchanged, flagged `AssumedAscii`, under every
+/// interest and fragmentation; nothing closes, drops or counts them.
+#[test]
+fn trusted_ascii_delivers_any_bytes_unchanged() -> R {
+    let lab = Lab::new()?;
+    let mut bad = ascii(300);
+    bad[17] = 0xFF;
+    bad[150..152].copy_from_slice("\u{e9}".as_bytes());
+    bad[299] = 0x80;
+    let next = ascii(64);
+    for interest in [Interest::Keep, Interest::Fragments, Interest::Stream] {
+        for parts in [1, 3] {
+            let what = format!("{interest:?} {parts} parts");
+            let mut stream = fragmented(OP_TEXT, &bad, parts)?;
+            stream.extend_from_slice(&frame(OP_TEXT, true, &next)?);
+            let mut r = WsRig::new(&lab, &opts(TextCheck::Ascii))?;
+            let mut h = App::new(interest);
+            r.feed_records(&stream, &[], &mut h)?;
+            let got = h.messages();
+            assert_eq!(got.len(), 2, "{what}");
+            assert_eq!(got[0].0, bad, "{what}: delivered unchanged");
+            assert_eq!(got[1].0, next, "{what}");
+            for (_, texts) in &got {
+                assert!(
+                    texts.iter().all(|&t| t == TextStatus::AssumedAscii),
+                    "{what}: {texts:?}"
+                );
+            }
+            let s = stats(&r);
+            assert_eq!(
+                (s.messages, s.non_ascii, s.skipped),
+                (2, 0, 0),
+                "{what}"
+            );
+        }
+    }
+    // `Stream` without `on_fragment`: joined, still unread.
+    let mut r = WsRig::new(&lab, &opts(TextCheck::Ascii))?;
+    let mut h = OnlyMessages::default();
+    r.feed_records(&fragmented(OP_TEXT, &bad, 4)?, &[], &mut h)?;
+    assert_eq!(h.got, vec![(bad, TextStatus::AssumedAscii)]);
+    assert_eq!(stats(&r).non_ascii, 0);
+    Ok(())
+}
+
+// ANCHOR: trusted
+/// A feed known to send ASCII, under `TextCheck::Ascii`: the payload is
+/// never scanned; the handler reads it by byte through `AsciiText`.
+#[derive(Default)]
+struct Prices {
+    last: Vec<u8>,
+}
+
+impl Handler for Prices {}
+
+impl WsHandler for Prices {
+    fn on_message(&mut self, _: ConnId, _: u8, payload: &[u8], _: &RxMeta, _: u16) {
+        let t = AsciiText::new(payload);
+        let Some(at) = t.find(b'=') else { return };
+        if let Some(price) = t.slice(at + 1..) {
+            self.last.clear();
+            self.last.extend_from_slice(price.as_bytes());
+        }
+    }
+}
+// ANCHOR_END: trusted
+
+#[test]
+fn the_book_trusted_example_reads_by_byte() -> R {
+    let lab = Lab::new()?;
+    let mut r = WsRig::new(&lab, &opts(TextCheck::Ascii))?;
+    let mut h = Prices::default();
+    r.feed_records(&frame(OP_TEXT, true, b"px=101.25")?, &[], &mut h)?;
+    assert_eq!(h.last, b"101.25");
     Ok(())
 }
 
@@ -304,7 +388,7 @@ fn a_streamed_fragment_is_handed_over_as_it_arrives() -> R {
         at += h.frame_len();
         ends.push(at);
     }
-    for check in [TextCheck::None, TextCheck::Utf8, DELIVER] {
+    for check in [TextCheck::None, TextCheck::Utf8, TextCheck::Ascii, DELIVER] {
         let mut r = WsRig::new(&lab, &opts(check))?;
         let mut h = App::new(Interest::Stream);
         let mut from = 0;
@@ -321,7 +405,8 @@ fn a_streamed_fragment_is_handed_over_as_it_arrives() -> R {
         let want = match check {
             TextCheck::None => TextStatus::Unchecked,
             TextCheck::Utf8 => TextStatus::Utf8,
-            TextCheck::Ascii(_) => TextStatus::Ascii,
+            TextCheck::Ascii => TextStatus::AssumedAscii,
+            TextCheck::AsciiChecked(_) => TextStatus::Ascii,
         };
         assert_eq!(h.messages(), vec![(msg.clone(), vec![want; 10])]);
         let s = stats(&r);
@@ -587,7 +672,7 @@ fn any_fragmentation_keeps_text_and_flags_it_correctly() -> R {
     let strategy = (
         prop::collection::vec(text_strategy(), 1..6),
         prop::collection::vec(any::<prop::sample::Index>(), 0..12),
-        0usize..3,
+        0usize..4,
         prop_oneof![
             Just(Interest::Keep),
             Just(Interest::Fragments),
@@ -603,7 +688,7 @@ fn any_fragmentation_keeps_text_and_flags_it_correctly() -> R {
     let fail = |e: Box<dyn std::error::Error + Send + Sync>| TestCaseError::fail(e.to_string());
     runner
         .run(&strategy, |(msgs, cuts, mode, interest)| {
-            let check = [TextCheck::None, TextCheck::Utf8, DELIVER][mode];
+            let check = [TextCheck::None, TextCheck::Utf8, TextCheck::Ascii, DELIVER][mode];
             let mut stream = Vec::new();
             for (m, parts, _) in &msgs {
                 stream.extend_from_slice(&fragmented(OP_TEXT, m, *parts).map_err(fail)?);
@@ -624,11 +709,14 @@ fn any_fragmentation_keeps_text_and_flags_it_correctly() -> R {
                     TextCheck::Utf8 => {
                         prop_assert!(texts.iter().all(|&t| t == TextStatus::Utf8));
                     }
-                    TextCheck::Ascii(_) if streamed => {
+                    TextCheck::Ascii => {
+                        prop_assert!(texts.iter().all(|&t| t == TextStatus::AssumedAscii));
+                    }
+                    TextCheck::AsciiChecked(_) if streamed => {
                         // Per fragment: Ascii exactly when its bytes are.
                         prop_assert_eq!(texts.contains(&TextStatus::NotAscii), !is_ascii);
                     }
-                    TextCheck::Ascii(_) => {
+                    TextCheck::AsciiChecked(_) => {
                         let want = if *is_ascii {
                             TextStatus::Ascii
                         } else {
@@ -653,7 +741,7 @@ fn any_fragmentation_keeps_text_and_flags_it_correctly() -> R {
 /// Reads only the messages it needs from a feed of large fragmented ones:
 /// the kind is in the first fragment, so every other message is dropped
 /// there (`SkipRest`: its other fragments are never copied or checked).
-/// With `TextCheck::Ascii`, `meta.text` says each fragment is ASCII: any
+/// With `TextCheck::AsciiChecked`, `meta.text` says each fragment is ASCII: any
 /// byte index is a character boundary.
 #[derive(Default)]
 struct FillReader {

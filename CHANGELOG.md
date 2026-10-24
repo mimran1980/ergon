@@ -260,17 +260,26 @@
   `io/benches`) times the previous and current HTTP paths interleaved.
 - `ergon-io`: one text check for WebSocket text and HTTP bodies, in the new
   `text` module (re-exported at the crate root). `TextCheck` is `None` (the
-  default on both), `Utf8` (invalid text closes the connection) or
-  `Ascii(NonAscii)`: one pass checking every byte is below 0x80, a payload
-  with another byte closed on (`NonAscii::Close`), dropped (`Skip`,
-  WebSocket only: `HttpOptions` refuses it with `Error::Config`) or
-  delivered flagged (`DeliverUnchecked`, the default policy). The new
-  `RxMeta::text: TextStatus` (`Unchecked`, `Utf8`, `Ascii`, `NotAscii`)
+  default on both), `Utf8` (invalid text closes the connection), `Ascii`
+  or `AsciiChecked(NonAscii)`. `Ascii` is a trust declaration: the payload
+  is never read, costs the same as `None`, and is delivered unchanged as
+  `TextStatus::AssumedAscii`, whatever its bytes. `AsciiChecked` is one
+  pass checking every byte is below 0x80, a payload with another byte
+  closed on (`NonAscii::Close`), dropped (`Skip`, WebSocket only:
+  `HttpOptions` refuses it with `Error::Config`) or delivered flagged
+  (`DeliverUnchecked`, the default policy). The new `RxMeta::text:
+  TextStatus` (`Unchecked`, `Utf8`, `Ascii`, `AssumedAscii`, `NotAscii`)
   says what was found; `Ascii` means every byte index is a character
   boundary. `WsOptions::text_check` replaces `validate_utf8` and checks
   kept messages only (`WsStats::non_ascii` counts non-ASCII text under
-  `Ascii`); `HttpOptions::body_check` checks every response body. A
+  `AsciiChecked`); `HttpOptions::body_check` checks every response body. A
   response head keeps its own rule (`non_ascii_head`).
+- `ergon-io`: `AsciiText<'a>`, a `Copy` byte view over `&'a [u8]` built
+  from a payload at no cost: `as_bytes`, `len`, `is_empty`, `get` and
+  `Index` by byte, `slice` by byte range, `find`, `position`,
+  `starts_with`, `split_at`; nothing allocates. The `unsafe`
+  `as_str_unchecked` returns a `&str` without a check (the caller vouches
+  the bytes are ASCII; debug builds assert it).
 - `ergon-io`: `Interest::Stream` hands each fragment of a fragmented
   message to the new `WsHandler::on_fragment(conn, opcode, part, index,
   fin, meta) -> Flow` as soon as it is complete, borrowed from the receive
