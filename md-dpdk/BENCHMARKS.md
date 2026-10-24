@@ -26,6 +26,7 @@ printed before its directory was deleted, so each is partial.
 
 | run | instances | what it ran |
 | --- | --- | --- |
+| `aws-20261024-111303` (G5) | `c9g.2xlarge` spot pair, precision-time placement | large LLQ against `llq_policy=1` again, with an A/A; the one-way split of the largest round trips; agent loop gaps against a 10 µs gap spinner |
 | `aws-20261023-231150` (G4) | `c9g.2xlarge` spot pair | DPDK knobs against an A/A control (same code built twice), with and without diagnostics; raw floor without Aeron; kernel busy polling |
 | `aws-20261016-223251` (G3) | `c9g.2xlarge` pair | DPDK, DPDK with media receive timestamps, kernel UDP (moderation off, IRQs on a spare core) |
 | `aws-20261016-072005` (G1) | `c9g.2xlarge` pair | DPDK knobs; kernel interrupt placement; kernel busy polling |
@@ -107,7 +108,13 @@ so the 256-ring arm alone is the control for the ring size.
 - p50 and p99 ranges are apart from both controls in both states; the max is
   not. The ring size alone did not separate, so the gain is the entry size:
   a 32 B message is a 106 B frame, pushed whole with a 256 B entry.
-- One run on one pair. This pair's network was slower than G3's (ping
+- G5, a second pair (precision-time placement, NIC RX timestamps on and
+  off), confirms it: p50 25.12 (24.96–25.14) against 25.63 (25.44–26.13)
+  with `llq_policy=1`, ranges apart; timestamps off 25.09 (24.67–25.21)
+  against 25.58 (25.36–25.73). p99 28.53 against 29.33, ranges touching.
+  The A/A was 24.98 (24.80–25.28). Rows: `aws-20261024-111303.txt` lines
+  12, 14–16, 18.
+- G4's pair had a slower network than G3's (ping
   between the data NICs 55 µs minimum; DPDK p50 26 against 14 µs), so G4 is
   not compared with G3.
 - Not separated from the A/A in G4: `TX_FREE_THRESH=511`, `TX_FAST_FREE=1`,
@@ -117,6 +124,29 @@ so the 256-ring arm alone is the control for the ring size.
 - Rows: `aws-20261023-231150.txt` lines 13, 15, 20, 21, 27, 35. Without Aeron
   (the raw floor, line 14) DPDK's p50 was 25.63 and its max 87: the idle
   maxima are below Aeron.
+
+### Graviton DPDK idle maxima: where they are
+
+G5 split each rep's 10 largest idle round trips one way with both hosts'
+NIC receive timestamps (PHC-disciplined clocks, within about 1 µs of each
+other; `aws-20261024-111303.txt` line 170 on).
+
+| finding | evidence |
+| --- | --- |
+| The extra 40–75 µs of a 60–90 µs round trip is on one leg; the other leg stays at its usual ~12 µs, and the ping's host adds about 1 µs | reps 1–4, 40 round trips; rep 5's split is unusable (negative legs: the clocks moved) |
+| It falls on either leg | outbound in 24 of the 40, return in 15, split in 1 |
+| Not the transport or Aeron | the raw floor without Aeron has the same max (G4, G5) |
+| Not a guest stall | the agents' loop gaps are at most 31 µs, shorter than the extra, and spikes.py finds no overlapping host event |
+
+So the idle maxima are in flight: the Nitro cards or the fabric between the
+hosts. No host setting changes them.
+
+**Agent loop gaps (the 20–50 µs ones) are the hypervisor's.** With a 10 µs
+gap spinner on a spare CPU (G5, lines 780 on): 84% of the agent gaps on the
+noisier host coincide with a spinner gap, so the whole VM paused; 4 of
+about 4,500 overlap an interrupt; the rest have nothing in the guest. Which
+host is noisy follows the instance's placement: host b in G4, host a in G5
+(58,643 spinner gaps against b's 3,818).
 
 ### Measured, but no setting recommended
 
@@ -177,7 +207,8 @@ streams bounds that wait. Its effect is not measured here.
 - CPU isolation, hugetlbfs, quiet-core pinning: not measured in the
   committed runs.
 - Azure: no run output is committed, so no Azure figure is kept.
-- Idle maxima: the runs' own attribution labels most of them unexplained.
+- Idle maxima: placed in flight (above), not split between the local Nitro
+  card and the fabric.
 
 ## How to run
 
