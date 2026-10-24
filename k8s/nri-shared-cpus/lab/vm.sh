@@ -360,7 +360,10 @@ bootstrap)
     tar -xzf "$tmp/helm.tgz" -C "$tmp"
     sudo install -m 755 "$tmp/kind" "$tmp/kubectl" "$tmp/linux-$arch/helm" /usr/local/bin/
     rm -rf "$tmp"
-    sudo mkdir -p "$results" ~/bin
+    sudo mkdir -p "$results"
+    # the lab user's own: `vm.sh cluster` copies gapprobe in without sudo
+    mkdir -p ~/bin
+    [[ -O ~/bin ]] || sudo chown "$(id -u):$(id -g)" ~/bin
     sudo chown "$USER" "$results"
     # kind's node runs systemd and many watchers
     printf 'fs.inotify.max_user_instances = 512\nfs.inotify.max_user_watches = 524288\n' | sudo tee /etc/sysctl.d/90-kind.conf >/dev/null
