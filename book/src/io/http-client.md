@@ -90,11 +90,7 @@ use `Target::new("api.example.com", 443, "")` and
 - **Bodies are not checked** by default: HTTP has no text rule for them.
   `HttpOptions::body_check` takes the WebSocket text check (`TextCheck`,
   [Text checks](websocket.md#text-checks)) and `meta.text` says what it
-  found. `Utf8` and `Ascii(NonAscii::Close)` close the connection with
-  `Error::Http` on a failing body; `Ascii(NonAscii::DeliverUnchecked)`
-  delivers it flagged `NotAscii`. `Ascii(NonAscii::Skip)` is refused
-  (`Error::Config`): a dropped response would leave its request
-  unanswered.
+  found ([which mode](#body-checks)).
 - **libcurl:** `curl_drive` picks `curl_multi_perform` on every poll
   (default) or `curl_multi_socket_action`; both never block. Compared once
   on Azure at 1,000/s: `curl_multi_perform` was 1–6 µs ahead at the
@@ -173,6 +169,53 @@ request, ns. Native macOS, M1 Pro, loaded host, no pinning
   preempted; the other maxes show no context switch, and a host-side vCPU
   stall is invisible to the guest, so their cause is not established
   ([data](https://github.com/mimran1980/ergon/blob/main/io/benches/results/http-merge-linux-arm64-20261024T184332Z/http_bench.md)).
+
+## Body checks
+
+A parser that works on `&[u8]` needs no mode at all: leave `None`.
+
+| `body_check` | when | reads the body | `meta.text` | a failing body |
+|---|---|---|---|---|
+| `None` (default) | you parse bytes | no | `Unchecked` | delivered unchanged |
+| `Ascii` | the API is trusted to send ASCII: raw bytes, `AsciiText`, or a `&str` through the `unsafe` `AsciiText::as_str_unchecked` | no: costs the same as `None` | `AssumedAscii` | delivered unchanged (nothing is checked) |
+| `AsciiChecked(DeliverUnchecked)` | you want a safe `&str` from ASCII bodies | one scan | `Ascii`, or `NotAscii` | delivered flagged `NotAscii` |
+| `AsciiChecked(Close)` | a non-ASCII body is a protocol error | one scan | `Ascii` | `Error::Http`, connection closed |
+| `Utf8` | bodies may hold any character | one `str::from_utf8` | `Utf8` | `Error::Http`, connection closed |
+
+`AsciiChecked(Skip)` is refused (`Error::Config`): a dropped response
+would leave its request unanswered.
+
+`http_bench --suite body` times one `Content-Length` response per row
+through four connections that differ only in `body_check`, interleaved,
+five runs. Bodies are pure ASCII or mixed (a two-byte character every 64
+bytes); K = 64 responses per sample (16 at 16 KiB). The table is the
+first macOS run, ns per response, p50 / p99 / max
+([`http_bench-body-r1.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/text-trusted-macos-20261024T192059Z/http_bench-body-r1.md);
+[all runs](https://github.com/mimran1980/ergon/tree/main/io/benches/results/text-trusted-macos-20261024T192059Z),
+[Linux arm64 VM](https://github.com/mimran1980/ergon/tree/main/io/benches/results/text-trusted-linux-arm64-20261024T192258Z)):
+
+| body | text | `None` | `Ascii` | `AsciiChecked` | `Utf8` |
+|---|---|---|---|---|---|
+| 100 B | ascii | 123.0 / 137.3 / 4,790 | 123.0 / 138.0 / 1,386 | 126.3 / 141.9 / 1,337 | 128.2 / 142.5 / 8,595 |
+| 100 B | mixed | 121.7 / 143.8 / 1,382 | 122.3 / 143.8 / 2,213 | 125.6 / 148.4 / 1,837 | 144.5 / 175.7 / 6,499 |
+| 300 B | ascii | 121.7 / 140.6 / 12,742 | 122.3 / 141.9 / 2,666 | 126.9 / 145.8 / 1,734 | 133.4 / 154.2 / 3,680 |
+| 300 B | mixed | 123.0 / 141.9 / 1,028 | 123.6 / 141.9 / 1,172 | 127.6 / 147.7 / 882 | 179.6 / 228.5 / 1,342 |
+| 4 KiB | ascii | 125.0 / 141.2 / 957 | 123.6 / 139.3 / 1,179 | 162.7 / 183.5 / 1,678 | 255.9 / 312.5 / 1,620 |
+| 4 KiB | mixed | 125.6 / 142.5 / 2,000 | 124.3 / 141.2 / 1,574 | 163.4 / 187.5 / 789 | 675.1 / 896.7 / 6,186 |
+| 16 KiB | ascii | 200.5 / 398.5 / 152,166 | 203.1 / 380.3 / 1,134,592 | 361.9 / 755.5 / 575,488 | 721.5 / 1,633.5 / 303,309 |
+| 16 KiB | mixed | 200.5 / 239.5 / 6,618 | 203.1 / 242.1 / 115,917 | 361.9 / 421.9 / 7,546 | 2,239.9 / 3,078.3 / 593,510 |
+
+- `Ascii` costs what `None` does. `Ascii` minus `None` at the p50, per
+  run, over the five runs: −1.4 to +2.6 ns on macOS and −1.2 to +5.6 ns
+  on Linux, at most two counter ticks (one tick is 0.65 ns per response at
+  K = 64, 2.6 ns at K = 16), while `None`'s own p50 moved by up to 4 ns
+  (macOS) and 29 ns (Linux) between runs.
+- `AsciiChecked` adds one scan (38 ns at 4 KiB, 161 at 16 KiB); `Utf8`
+  more, and far more on mixed text.
+- The maxes (up to 1.1 ms) come from a host running other agents' builds
+  (load average 10–11); macOS cannot say whether the thread was
+  preempted, so no cause is established. In the VM, 9 of 320 row maxima
+  were preempted and a host-side vCPU stall is invisible to the guest.
 
 ## Signing
 

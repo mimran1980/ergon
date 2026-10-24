@@ -50,7 +50,7 @@ cargo run -p ergon-io --features webpki-roots --example websocket -- 20 recv-bus
 | `pong_timeout_ms` | 5,000 | nothing received this long after a Ping: `Error::Timeout("websocket pong")`; 0: off |
 | `idle_timeout_ms` | 0 (off) | nothing received this long: `Error::Timeout("websocket idle")` |
 | `close_timeout_ms` | 1,000 | longest wait for the other side of a close handshake; 0: no wait |
-| `text_check` | `TextCheck::None` | `Utf8`: invalid text closes the connection; `Ascii(policy)`: every byte below 0x80, else the policy; only kept messages are checked ([Text checks](#text-checks)) |
+| `text_check` | `TextCheck::None` | `Ascii`: trusted, never read; `AsciiChecked(policy)`: every byte below 0x80, else the policy; `Utf8`: invalid text closes the connection; only kept messages are checked ([Text checks](#text-checks)) |
 | `protocols` | none | subprotocols offered; `WsConn::protocol` is the server's pick |
 
 - Any byte received after a Ping counts as the answer, not only a Pong.
@@ -147,33 +147,50 @@ checked. The same `TextCheck` checks HTTP bodies
 ([`body_check`](http-client.md#rules)), where `Skip` is
 refused.
 
-| `TextCheck` | one pass that | `meta.text` | invalid or non-ASCII text |
-|---|---|---|---|
-| `None` (default) | none | `Unchecked` | delivered as is |
-| `Utf8` | scans for ASCII, then runs `str::from_utf8` if a byte is not | `Utf8` | closes the connection (RFC 6455) |
-| `Ascii(NonAscii::DeliverUnchecked)` | checks every byte is below 0x80 | `Ascii`, or `NotAscii` | delivered flagged `NotAscii` |
-| `Ascii(NonAscii::Skip)` | same | `Ascii` | dropped (`skipped`) |
-| `Ascii(NonAscii::Close)` | same | `Ascii` | closes the connection |
+A parser that works on `&[u8]` needs no mode at all: leave `None`.
 
-| choose | when |
+| choose | when | reads the payload | `meta.text` | you get |
+|---|---|---|---|---|
+| `None` (default) | you parse bytes | no | `Unchecked` | `&[u8]` |
+| `Ascii` | the source is trusted to send ASCII | no: costs the same as `None` | `AssumedAscii` | `&[u8]`, wrapped as `AsciiText` for byte-indexed text, or a `&str` through the `unsafe` `AsciiText::as_str_unchecked` |
+| `AsciiChecked(policy)` | you want a safe `&str` from ASCII text | one scan | `Ascii`, or `NotAscii` | `&[u8]` that `str::from_utf8` cannot fail on under `Ascii` |
+| `Utf8` | RFC 6455 conformance; text may hold any character | one scan, plus a decode if a byte is not ASCII | `Utf8` | `&[u8]` that `str::from_utf8` cannot fail on |
+
+What a byte at or above 0x80 does:
+
+| mode | non-ASCII or invalid text |
 |---|---|
-| `None` | your parser checks text itself, or trusts the source |
-| `Utf8` | RFC 6455 conformance; text may hold any character |
-| `Ascii(DeliverUnchecked)` | the protocol is ASCII (most JSON feeds): `Ascii` lets a parser index bytes as characters with no boundary checks; a stray byte is flagged, never drops the feed |
-| `Ascii(Skip)` / `Ascii(Close)` | a non-ASCII message is useless (`Skip`) or a protocol error (`Close`) |
+| `None`, `Ascii` | delivered unchanged; nothing is counted |
+| `AsciiChecked(NonAscii::DeliverUnchecked)` | delivered flagged `NotAscii` |
+| `AsciiChecked(NonAscii::Skip)` | dropped (`skipped`) |
+| `AsciiChecked(NonAscii::Close)` | closes the connection |
+| `Utf8` | invalid UTF-8 closes the connection (RFC 6455) |
 
-- On ASCII text `Utf8` and `Ascii` cost the same (the same scan); on text
-  with other characters `Ascii` stays one scan while `Utf8` decodes
-  ([cost](#text-check-cost)).
+`Ascii` is a promise, not a check. `AsciiText` (`ergon_io::text`) is a
+`Copy` view over the payload, built at no cost: `get`, indexing,
+`slice`, `find`, `position`, `starts_with` and `split_at` are byte
+operations, safe whatever the bytes are, and none allocates. Only
+`as_str_unchecked` relies on the promise: non-ASCII bytes there are
+undefined behaviour (debug builds assert; release builds read nothing).
+
+```rust,ignore
+{{#include ../../../io/tests/ws_stream.rs:trusted}}
+```
+*(From `io/tests/ws_stream.rs`.)*
+
+- On ASCII text `AsciiChecked` and `Utf8` cost the same (the same scan);
+  on text with other characters `AsciiChecked` stays one scan while
+  `Utf8` decodes ([cost](#text-check-cost)).
 - `Stream` checks each fragment: `meta.text` is that fragment's status.
   Under `Utf8` a character cut between fragments is carried across (at
   most 3 bytes); invalid text closes before the fragment holding it is
-  delivered. Under `Ascii(Skip)` the message ends at the first non-ASCII
+  delivered. Under `AsciiChecked(Skip)` the message ends at the first non-ASCII
   fragment, with no `fin` fragment.
 - RFC 6455 §8.1 requires invalid UTF-8 to fail the connection. A skipped
   message is never read, so invalid text in it does not close the
   connection. This relaxation is deliberate.
-- `stats().non_ascii` counts non-ASCII text messages under `Ascii`.
+- `stats().non_ascii` counts non-ASCII text messages under
+  `AsciiChecked`; `Ascii` reads nothing, so it never counts.
 
 ### Receive cost
 
@@ -247,26 +264,41 @@ macOS cannot pin the thread, and the host's 1-minute load average was
 
 #### Text check cost
 
-One unfragmented kept text message per row, `Keep`, the three checks
-interleaved ([`ws_bench-text.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-copy-macos-20261024T172501Z/ws_bench-text.md)). `ascii`: pure
-ASCII; `mixed`: a two-byte character every 64 bytes, delivered as `Utf8`
-or `NotAscii`.
+One unfragmented kept text message per row, `Keep`, the four modes
+interleaved, five runs
+([macOS](https://github.com/mimran1980/ergon/tree/main/io/benches/results/text-trusted-macos-20261024T192059Z),
+[`env.txt`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/text-trusted-macos-20261024T192059Z/env.txt);
+[Linux arm64 VM](https://github.com/mimran1980/ergon/tree/main/io/benches/results/text-trusted-linux-arm64-20261024T192258Z),
+[`env.txt`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/text-trusted-linux-arm64-20261024T192258Z/env.txt)).
+`ascii`: pure ASCII; `mixed`: a two-byte character every 64 bytes. The
+table is the first macOS run
+([`ws_bench-text-r1.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/text-trusted-macos-20261024T192059Z/ws_bench-text-r1.md)),
+K = 64 (16 at 16 KiB).
 
-| message | text | `None` | `Utf8` | `Ascii` |
-|---|---|---|---|---|
-| 100 B | ascii | 5.8 / 7.8 / 2631.9 | 9.1 / 11.7 / 2249.5 | 9.1 / 11.7 / 678.3 |
-| 100 B | mixed | 5.8 / 7.1 / 298.9 | 33.2 / 36.4 / 1115.9 | 9.7 / 11.7 / 605.1 |
-| 300 B | ascii | 5.8 / 7.1 / 171.8 | 10.4 / 17.5 / 443.5 | 10.4 / 20.1 / 220.1 |
-| 300 B | mixed | 5.8 / 7.8 / 299.5 | 67.7 / 73.5 / 54527.9 | 11.0 / 13.6 / 2350.3 |
-| 4 KiB | ascii | 7.8 / 10.4 / 67.0 | 54.6 / 59.8 / 733.9 | 54.6 / 59.8 / 653.1 |
-| 4 KiB | mixed | 8.4 / 12.3 / 367.9 | 674.7 / 812.7 / 2366.3 | 54.6 / 68.3 / 581.5 |
-| 16 KiB | ascii | 10.4 / 15.6 / 187.5 | 208.3 / 229.1 / 2388.7 | 208.3 / 229.1 / 2542.3 |
-| 16 KiB | mixed | 10.4 / 70.3 / 3756.7 | 2711.9 / 3667.1 / 24550.3 | 208.3 / 294.3 / 3107.1 |
+| message | text | `None` | `Ascii` | `AsciiChecked` | `Utf8` |
+|---|---|---|---|---|---|
+| 100 B | ascii | 6.5 / 8.4 / 562.7 | 6.5 / 8.4 / 72.9 | 9.1 / 12.3 / 567.1 | 9.1 / 12.3 / 404.3 |
+| 100 B | mixed | 5.8 / 7.1 / 127.6 | 6.5 / 7.1 / 155.5 | 9.1 / 10.4 / 246.1 | 31.2 / 36.4 / 312.5 |
+| 300 B | ascii | 6.5 / 7.8 / 590.7 | 6.5 / 8.4 / 107.4 | 11.0 / 12.3 / 321.7 | 10.4 / 13.0 / 236.3 |
+| 300 B | mixed | 6.5 / 7.1 / 233.1 | 6.5 / 7.8 / 608.3 | 11.0 / 13.0 / 527.5 | 63.8 / 72.2 / 685.1 |
+| 4 KiB | ascii | 7.8 / 9.7 / 731.1 | 7.8 / 9.7 / 179.0 | 52.7 / 58.5 / 662.7 | 52.7 / 58.5 / 838.3 |
+| 4 KiB | mixed | 7.8 / 9.7 / 107.4 | 7.8 / 9.7 / 302.7 | 52.7 / 56.6 / 2196.7 | 634.3 / 712.3 / 1854.3 |
+| 16 KiB | ascii | 10.4 / 13.0 / 101.5 | 10.4 / 13.0 / 427.1 | 200.5 / 216.1 / 1208.7 | 200.5 / 218.7 / 1466.3 |
+| 16 KiB | mixed | 10.4 / 13.0 / 755.5 | 10.4 / 13.0 / 401.1 | 197.9 / 213.5 / 1515.9 | 2547.1 / 2953.5 / 8716.7 |
 
-- On ASCII text `Utf8` and `Ascii` cost the same: one scan, 54.6 ns at
-  4 KiB over `None`'s 7.8.
-- On mixed text `Ascii` stays one scan (54.6 ns at 4 KiB) while `Utf8`
-  decodes (674.7 ns at 4 KiB, 2,711.9 at 16 KiB).
+- `Ascii` costs what `None` does. `Ascii` minus `None` at the p50, per
+  run, over the five runs: 0.0 to +0.7 ns on macOS and −1.9 to +0.7 ns
+  on Linux, at every size and text. One counter tick is 0.65 ns per
+  message at K = 64.
+- `AsciiChecked` and `Utf8` cost the same on ASCII text (one scan,
+  52.7 ns at 4 KiB on macOS). On mixed text `AsciiChecked` stays one scan
+  while `Utf8` decodes (634.3 ns at 4 KiB, 2,547.1 at 16 KiB).
+- The Linux VM scans several times slower (572 ns at 4 KiB) on the same
+  host; `None` and `Ascii` are 5.8–10.4 ns there too.
+- Maxima are not attributed: macOS cannot say whether the thread was
+  preempted, and its load average was 10–11 (other agents' builds and
+  containers); in the VM, 9 of 320 row maxima were preempted and a
+  host-side vCPU stall is invisible to the guest.
 
 #### Fragmented messages: Keep, Fragments, Stream
 

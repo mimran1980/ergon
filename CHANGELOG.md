@@ -297,6 +297,9 @@
   per message old against new, `TextCheck` modes on ASCII and mixed text,
   `Stream` against `Fragments` and `Keep`, and the split-frame join old
   against new, each interleaved on the same input.
+- `ergon-io` (repo only): `http_bench --suite body` times one response per
+  row through the four `body_check` modes interleaved, on ASCII and mixed
+  bodies, each mode's flag checked first.
 
 ### Changed
 
