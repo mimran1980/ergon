@@ -136,7 +136,9 @@ per-request headers, `Content-Length` and the body:
   partial).
 - A chunked body still arriving leaves the receive buffer chunk by chunk,
   so later records are read in place. A `Content-Length` body that spans
-  records is moved next to the part before it (`span_copy_bytes`).
+  records is joined by moving the smaller side: the part before it forward,
+  or the new part back (`span_copy_bytes`; 73 B instead of 4,096 B for a
+  head and a 4 KiB body in two records).
 - The de-chunk buffer is allocated on first use, at `buf_size` minus two
   records.
 - Counters: `HttpStats::chunk_copy_bytes`, `span_copy_bytes`,
@@ -145,27 +147,32 @@ per-request headers, `Content-Length` and the body:
 `http_bench` (in `io/benches`) times the previous path (commit a003bf60)
 and the current one interleaved on the same input, per response or
 request, ns. Native macOS, M1 Pro, loaded host, no pinning
-([data](https://github.com/mimran1980/ergon/blob/main/io/benches/results/http-copy-macos-20261024T170936Z/http_bench.md)):
+([data](https://github.com/mimran1980/ergon/blob/main/io/benches/results/http-merge-macos-20261024T184305Z/http_bench.md)):
 
 | Row | Previous p50 / p99 / max | Current p50 / p99 / max | De-chunk copy B, previous → current |
 |---|---|---|---|
-| chunked 4 KiB (one chunk) | 177 / 206 / 20,173 | 130 / 165 / 34,253 | 4,096 → 0 |
-| chunked 64 KiB, 4 KiB chunks | 4,701 / 31,232 / 2,202,010 | 1,720 / 7,949 / 9,889,382 | 212,992 → 65,615 |
-| chunked 1 MiB, 4 KiB chunks | 670,106 / 3,065,446 / 217,474,662 | 28,006 / 91,034 / 35,835,085 | 34,865,152 → 1,048,655 |
-| `Content-Length` 4 KiB, head and body in two records | 288 / 328 / 45,696 | 234 / 285 / 147,968 | 0 → 0 |
-| build, 3 headers | 115 / 124 / 728 | 73 / 79 / 833 | |
-| build, 20 headers | 546 / 737 / 17,882 | 331 / 440 / 16,051 | |
+| chunked 4 KiB (one chunk) | 173 / 202 / 1,410 | 122 / 138 / 1,499 | 4,096 → 0 |
+| chunked 64 KiB, 4 KiB chunks | 4,381 / 5,376 / 22,234 | 1,615 / 1,896 / 6,848 | 212,992 → 65,615 |
+| chunked 1 MiB, 4 KiB chunks | 596,378 / 705,741 / 2,695,168 | 26,010 / 30,310 / 123,085 | 34,865,152 → 1,048,655 |
+| `Content-Length` 4 KiB, head and body in two records | 296 / 330 / 1,666 | 173 / 202 / 784 | 0 → 0 (span copy 4,096 → 73) |
+| build, 3 headers | 113 / 125 / 440 | 72 / 81 / 404 | |
+| build, 20 headers | 527 / 694 / 2,027 | 326 / 425 / 1,592 | |
 
 - The chunked gains follow the copy counts: the previous path de-chunked
   the whole body again on every record (65 head parses for 1 MiB).
 - The build gain is mostly the faster header checks, which `request`
   shares; the template saves the line and fixed-header writes.
-- The maxes are millisecond stalls on a host running other builds; macOS
-  cannot say whether the thread was preempted, so no cause is established.
+- The split row's gain is the smaller-side join: the 73-byte head moves,
+  not the 4 KiB body.
+- The maxes (up to 2.7 ms, the previous path's 1 MiB row) come from a host
+  running other builds; macOS cannot say whether the thread was preempted,
+  so no cause is established.
 - In a Linux arm64 Docker VM on the same host, pinned, the order is the
   same; bulk copies run several times slower in that VM, so its absolute
-  figures are not comparable
-  ([data](https://github.com/mimran1980/ergon/blob/main/io/benches/results/http-copy-linux-arm64-20261024T171012Z/http_bench.md)).
+  figures are not comparable. Only the previous path's 1 MiB max was
+  preempted; the other maxes show no context switch, and a host-side vCPU
+  stall is invisible to the guest, so their cause is not established
+  ([data](https://github.com/mimran1980/ergon/blob/main/io/benches/results/http-merge-linux-arm64-20261024T184332Z/http_bench.md)).
 
 ## Signing
 
