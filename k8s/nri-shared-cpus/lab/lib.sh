@@ -54,25 +54,40 @@ lab_price_per_hour() {
     esac
 }
 
+# lab_scale_spin <window> <pods>: a scale case's spin seconds: the window
+# plus 10 s, and 30 s more for each pod after the first, since the pods
+# start one after the other and the first pod's spin (its helpers stop
+# with it) must outlast the window that opens once the last one runs.
+lab_scale_spin() {
+    echo $(($1 + 10 + 30 * ($2 - 1)))
+}
+
 # lab_scale_seconds <window>: the scale step: three one-pod cases (two
-# bursts and idle: each its 5 s delay, a spin of the window plus 10 s, 60 s
-# of start and teardown), contention (three pods started one after the
-# other: 120 s of start and teardown), accounting (two pods, scheduled or
-# not: 120 s) and two chart reinstalls (60 s each).
+# bursts and idle: each its 5 s delay, its spin, 60 s of start and
+# teardown), contention (three pods started one after the other: its
+# longer spin, 120 s of start and teardown), accounting (two pods,
+# scheduled or not: 120 s) and two chart reinstalls (60 s each).
 lab_scale_seconds() {
     local w=$1
-    echo $((3 * (5 + w + 10 + 60) + (5 + w + 10 + 120) + 120 + 120))
+    echo $((3 * (5 + $(lab_scale_spin "$w" 1) + 60) + (5 + $(lab_scale_spin "$w" 3) + 120) + 120 + 120))
+}
+
+# lab_trace_delay <delay>: the traced rep's helper seconds before its spin:
+# 20 s more than the bench's, so the tracefs setup (each enable patches
+# kernel text, which interrupts every CPU) is done before the spin starts.
+lab_trace_delay() {
+    echo $(($1 + 20))
 }
 
 # lab_estimate_minutes <reps> <seconds> <delay> [arms 1] [trace 1] [scale 1]
 # [scale window 30]: wall time of a run: 35 minutes of create, boot, reboot,
 # image builds, kind and e2e; the scale step; per rep each arm, its spin
 # plus the delay plus 90 s of chart toggle, pod start and teardown; the
-# trace rep, one more spin plus 150 s (tracefs setup, the trace's copy and
-# its report); then 10 minutes of fetch and delete.
+# trace rep, one more spin after its longer delay plus 150 s (the trace's
+# copy and its report); then 10 minutes of fetch and delete.
 lab_estimate_minutes() {
     local reps=$1 seconds=$2 delay=$3 arms=${4:-1} trace=${5:-1} scale=${6:-1} window=${7:-30} s
-    s=$((reps * arms * (seconds + delay + 90) + trace * (seconds + delay + 150)))
+    s=$((reps * arms * (seconds + delay + 90) + trace * (seconds + $(lab_trace_delay "$delay") + 150)))
     ((scale)) && s=$((s + $(lab_scale_seconds "$window")))
     echo $((35 + (s + 59) / 60 + 10))
 }

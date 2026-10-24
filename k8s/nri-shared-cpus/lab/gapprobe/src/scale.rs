@@ -8,9 +8,12 @@
 //! ```text
 //! meta.txt                  case= title= shared= exclusive= window_ns= expect=
 //! proc.stat.before/.after   /proc/stat on the VM around the window
-//! <pod>.meta                cpu= millicpus= threads= duty=
+//! <pod>.meta                cpu= millicpus= threads= duty= shared_cpus=
+//!                           isolated_cpus= (the last two as its probe saw them)
 //! <pod>.cpu.stat.before/.after, <pod>.cpu.weight, <pod>.cpu.max
 //!                           the container's cgroup; <pod>.pod.cpu.* the pod's
+//!                           (a pod-level quota throttles there, not in the
+//!                           container's cpu.stat)
 //! <pod>.hot.schedstat.before/.after   the spin thread's schedstat
 //! <pod>.psr.tsv             "t tid psr allowed comm" every second
 //! <pod>.summary.tsv         the spin's summary (gapprobe spin)
@@ -64,8 +67,13 @@ pub struct Pod {
     pub usage_ns: u64,
     /// the spin thread's CPU time over the window, ns
     pub hot_ns: u64,
-    /// `nr_periods`, `nr_throttled`, `throttled_usec` grown over the window
+    /// `nr_periods`, `nr_throttled`, `throttled_usec` grown over the window,
+    /// the container's cgroup
     pub throttle: (u64, u64, u64),
+    /// the same for the pod's cgroup
+    pub pod_throttle: (u64, u64, u64),
+    /// `ok`, or what ran where it should not (see [`placement`])
+    pub placement: String,
     /// the spin's summary
     pub run: Option<Run>,
     /// CPUs each helper thread was seen on: (cpu, samples)
@@ -174,36 +182,111 @@ pub fn psr(text: &str) -> (Seen, Seen, u64) {
     (hot, helpers, ts.len() as u64)
 }
 
+/// The verdict on a pod's `psr.tsv` samples: `ok` when every spin-thread
+/// (`gp-hot`) sample ran on the first of `isolated` with exactly that CPU
+/// allowed, and every other thread's sample ran on one of `shared` with
+/// exactly `shared` allowed; else `FAIL: ...` naming the first rule broken.
+#[must_use]
+pub fn placement(text: &str, shared: &str, isolated: &str) -> String {
+    let set = |l: &str| {
+        let mut v = cpus(l);
+        v.sort_unstable();
+        v.dedup();
+        v
+    };
+    let want_shared = set(shared);
+    if want_shared.is_empty() {
+        return "FAIL: its shared CPUs are unknown".into();
+    }
+    let Some(&hot_cpu) = cpus(isolated).first() else {
+        return "FAIL: its isolated CPUs are unknown".into();
+    };
+    let (mut hot, mut hot_bad, mut other, mut other_bad) = (0_u64, 0_u64, 0_u64, 0_u64);
+    for l in text.lines() {
+        let f: Vec<&str> = l.split_whitespace().collect();
+        let (Some(cpu), Some(allowed), Some(comm)) = (
+            f.get(2).and_then(|c| c.parse::<usize>().ok()),
+            f.get(3),
+            f.get(4),
+        ) else {
+            continue;
+        };
+        if *comm == "gp-hot" {
+            hot += 1;
+            hot_bad += u64::from(cpu != hot_cpu || set(allowed) != [hot_cpu]);
+        } else {
+            other += 1;
+            other_bad += u64::from(!want_shared.contains(&cpu) || set(allowed) != want_shared);
+        }
+    }
+    if hot + other == 0 {
+        "FAIL: no samples".into()
+    } else if hot_bad > 0 {
+        format!("FAIL: {hot_bad} of {hot} spin samples not on CPU {hot_cpu} alone")
+    } else if other_bad > 0 {
+        format!("FAIL: {other_bad} of {other} other-thread samples off its shared CPUs {shared}")
+    } else if hot == 0 {
+        "FAIL: no spin-thread sample".into()
+    } else {
+        "ok".into()
+    }
+}
+
+/// `nr_periods`, `nr_throttled`, `throttled_usec` and `usage_usec` grown
+/// between two `cpu.stat` reads.
+fn cpu_stat_grown(name: &str, s0: &str, s1: &str) -> Result<[u64; 4], ParseError> {
+    let grown = |k: &str| -> Result<u64, ParseError> {
+        match (procfs::keyed(s0, k), procfs::keyed(s1, k)) {
+            (Some(a), Some(b)) => Ok(b.saturating_sub(a)),
+            _ => Err(ParseError(format!("{name}: cpu.stat has no {k}"))),
+        }
+    };
+    Ok([
+        grown("nr_periods")?,
+        grown("nr_throttled")?,
+        grown("throttled_usec")?,
+        grown("usage_usec")?,
+    ])
+}
+
 /// Reads one pod's files.
 ///
 /// # Errors
 /// A cgroup or schedstat file missing or malformed.
 pub fn read_pod(dir: &Path, name: &str) -> Result<Pod, ParseError> {
     let meta = read(dir, &format!("{name}.meta"))?;
-    let s0 = read(dir, &format!("{name}.cpu.stat.before"))?;
-    let s1 = read(dir, &format!("{name}.cpu.stat.after"))?;
-    let grown = |k: &str| -> Result<u64, ParseError> {
-        match (procfs::keyed(&s0, k), procfs::keyed(&s1, k)) {
-            (Some(a), Some(b)) => Ok(b.saturating_sub(a)),
-            _ => Err(ParseError(format!("{name}: cpu.stat has no {k}"))),
-        }
-    };
+    let c = cpu_stat_grown(
+        name,
+        &read(dir, &format!("{name}.cpu.stat.before"))?,
+        &read(dir, &format!("{name}.cpu.stat.after"))?,
+    )?;
+    let p = cpu_stat_grown(
+        &format!("{name} (pod)"),
+        &read(dir, &format!("{name}.pod.cpu.stat.before"))?,
+        &read(dir, &format!("{name}.pod.cpu.stat.after"))?,
+    )?;
     let h0 = procfs::schedstat_ns(&read(dir, &format!("{name}.hot.schedstat.before"))?)?;
     let h1 = procfs::schedstat_ns(&read(dir, &format!("{name}.hot.schedstat.after"))?)?;
     let run = fs::read_to_string(dir.join(format!("{name}.summary.tsv")))
         .ok()
         .and_then(|t| t.lines().nth(1).and_then(|r| Run::from_row(r).ok()));
-    let (hot_cpus, helper_cpus, samples) =
-        psr(&fs::read_to_string(dir.join(format!("{name}.psr.tsv"))).unwrap_or_default());
+    let psr_text = fs::read_to_string(dir.join(format!("{name}.psr.tsv"))).unwrap_or_default();
+    let (hot_cpus, helper_cpus, samples) = psr(&psr_text);
+    let shared_cpus = kv(&meta, "shared_cpus")
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "?".into());
+    let placement = placement(
+        &psr_text,
+        &shared_cpus,
+        &kv(&meta, "isolated_cpus").unwrap_or_default(),
+    );
     Ok(Pod {
         name: name.to_string(),
         cpu: kv(&meta, "cpu").unwrap_or_default(),
         millicpus: kv(&meta, "millicpus").unwrap_or_default(),
         threads: kv(&meta, "threads").unwrap_or_default(),
         duty: kv(&meta, "duty").unwrap_or_default(),
-        shared_cpus: kv(&meta, "shared_cpus")
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "?".into()),
+        shared_cpus,
         weight: (
             opt(dir, &format!("{name}.cpu.weight")),
             opt(dir, &format!("{name}.pod.cpu.weight")),
@@ -212,13 +295,11 @@ pub fn read_pod(dir: &Path, name: &str) -> Result<Pod, ParseError> {
             opt(dir, &format!("{name}.cpu.max")),
             opt(dir, &format!("{name}.pod.cpu.max")),
         ),
-        usage_ns: grown("usage_usec")? * 1000,
+        usage_ns: c[3] * 1000,
         hot_ns: h1.saturating_sub(h0),
-        throttle: (
-            grown("nr_periods")?,
-            grown("nr_throttled")?,
-            grown("throttled_usec")?,
-        ),
+        throttle: (c[0], c[1], c[2]),
+        pod_throttle: (p[0], p[1], p[2]),
+        placement,
         run,
         helper_cpus,
         hot_cpus,
@@ -311,11 +392,11 @@ pub fn render_case(c: &Case) -> String {
     );
     let _ = writeln!(
         out,
-        "| pod | exclusive cpu | shared-millicpus | its shared CPUs | helper threads x duty % | cpu.weight container / pod | cpu.max container / pod | helpers' CPU, cores | share of the shared CPUs' busy time | nr_periods / nr_throttled / throttled_usec grown | spin max µs | spin involuntary switches | spin thread's CPUs (samples) | its other threads' CPUs (samples) |"
+        "| pod | exclusive cpu | shared-millicpus | its shared CPUs | helper threads x duty % | cpu.weight container / pod | cpu.max container / pod | helpers' CPU, cores | share of the shared CPUs' busy time | nr_periods / nr_throttled / throttled_usec grown, container | the same, pod | spin max µs | spin involuntary switches | spin thread's CPUs (samples) | its other threads' CPUs (samples) | placement |"
     );
     let _ = writeln!(
         out,
-        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
     );
     for p in &c.pods {
         let helpers_milli = (p.helpers_ns() * 1000)
@@ -326,7 +407,7 @@ pub fn render_case(c: &Case) -> String {
             .map_or_else(|| "-".to_string(), |s| format!("{s} %"));
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} x {} | {} / {} | {} / {} | {} | {share} | {} / {} / {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} x {} | {} / {} | {} / {} | {} | {share} | {} / {} / {} | {} / {} / {} | {} | {} | {} | {} | {} |",
             p.name,
             p.cpu,
             p.millicpus,
@@ -341,6 +422,9 @@ pub fn render_case(c: &Case) -> String {
             p.throttle.0,
             p.throttle.1,
             p.throttle.2,
+            p.pod_throttle.0,
+            p.pod_throttle.1,
+            p.pod_throttle.2,
             p.run.as_ref().map_or_else(
                 || "no summary".into(),
                 |r| format!(
@@ -354,6 +438,7 @@ pub fn render_case(c: &Case) -> String {
                 .map_or_else(|| "-".into(), |r| r.nivcsw.to_string()),
             seen(&p.hot_cpus),
             seen(&p.helper_cpus),
+            p.placement,
         );
     }
     out
@@ -440,7 +525,7 @@ mod tests {
         write(
             &c,
             "scale-a.meta",
-            "cpu=1\nmillicpus=100\nthreads=4\nduty=100\nshared_cpus=1\n",
+            "cpu=1\nmillicpus=100\nthreads=4\nduty=100\nshared_cpus=1-2\nisolated_cpus=3\n",
         );
         write(
             &c,
@@ -451,6 +536,16 @@ mod tests {
             &c,
             "scale-a.cpu.stat.after",
             "usage_usec 90000000\nnr_periods 0\nnr_throttled 0\nthrottled_usec 0\n",
+        );
+        write(
+            &c,
+            "scale-a.pod.cpu.stat.before",
+            "usage_usec 1000000\nnr_periods 10\nnr_throttled 1\nthrottled_usec 50\n",
+        );
+        write(
+            &c,
+            "scale-a.pod.cpu.stat.after",
+            "usage_usec 90000000\nnr_periods 310\nnr_throttled 4\nthrottled_usec 950\n",
         );
         write(&c, "scale-a.cpu.weight", "39\n");
         write(&c, "scale-a.pod.cpu.weight", "39\n");
@@ -485,11 +580,32 @@ mod tests {
         assert!(!md.contains("\n| 0 | "), "{md}");
         assert!(md.contains("Shared CPUs busy: 1.97 of 2 cores."), "{md}");
         // 89 s of usage less 30 s of spin over 30 s: 1.96 cores, 99 % of 1.97
-        assert!(md.contains("| scale-a | 1 | 100 | 1 | 4 x 100 | 39 / 39 | max 100000 / ? | 1.96 | 99 % | 0 / 0 / 0 | 5.12 | 0 | 3 (1) | 1 (1), 2 (1) |"), "{md}");
+        // the pod's own throttling is shown next to the container's
+        assert!(md.contains("| scale-a | 1 | 100 | 1-2 | 4 x 100 | 39 / 39 | max 100000 / ? | 1.96 | 99 % | 0 / 0 / 0 | 300 / 3 / 900 | 5.12 | 0 | 3 (1) | 1 (1), 2 (1) | ok |"), "{md}");
         assert!(
             md.contains("- ok:   allocatable ergon.io/shared-millicpus 2000"),
             "{md}"
         );
+    }
+
+    #[test]
+    fn placement_checks_each_sample_against_the_pods_cpus() {
+        let ok = "1 10 3 3 gp-hot\n1 11 1 1-2 gp-burn\n1 12 2 1-2 sh\n";
+        assert_eq!(placement(ok, "1-2", "3,4"), "ok");
+        // a helper on the pod's second exclusive CPU, and one allowed more
+        let bad = "1 10 3 3 gp-hot\n1 11 4 1-2,4 gp-burn\n2 11 1 1-2 gp-burn\n";
+        assert_eq!(
+            placement(bad, "1-2", "3,4"),
+            "FAIL: 1 of 2 other-thread samples off its shared CPUs 1-2"
+        );
+        // the spin thread allowed more than its CPU
+        let hot = "1 10 3 3-4 gp-hot\n1 11 1 1-2 gp-burn\n";
+        assert_eq!(
+            placement(hot, "1-2", "3,4"),
+            "FAIL: 1 of 1 spin samples not on CPU 3 alone"
+        );
+        assert_eq!(placement("", "1-2", "3"), "FAIL: no samples");
+        assert_eq!(placement(ok, "?", "3"), "FAIL: its shared CPUs are unknown");
     }
 
     #[test]

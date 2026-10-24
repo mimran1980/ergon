@@ -156,7 +156,7 @@ else
     bench_said="off (LAB_BENCH=0)"
 fi
 if ((trace)); then
-    trace_said="one more ${seconds} s plugin-on rep under kernel ftrace, filtered to its spin CPU: results/trace-cpu<N>.md"
+    trace_said="one more ${seconds} s plugin-on rep under kernel ftrace, filtered to its spin CPU, after $(lab_trace_delay "$delay") s helpers (the tracefs setup done first): results/trace-cpu<N>.md"
 else
     trace_said="off (LAB_TRACE=0)"
 fi

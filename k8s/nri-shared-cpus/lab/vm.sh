@@ -223,6 +223,14 @@ trace_stop() {
     tset trace_clock local
 }
 
+# armed_before_spin <armed realtime ns> <summary.tsv>: whether tracing was
+# on (trace_start done) before the run's spin started (its start_ns).
+armed_before_spin() {
+    local start
+    start=$(awk -F'\t' 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == "start_ns") c = i; next } NR == 2 && c { print $c }' "$2" 2>/dev/null)
+    [[ $start =~ ^[0-9]+$ ]] && (($1 < start))
+}
+
 # cgroup_dir <pid>: the cgroup v2 directory of a process (its container's).
 cgroup_dir() {
     local rel
@@ -358,8 +366,12 @@ wait_done() {
 # field <line> <key>: the value of key=value in a probe line.
 field() { tr ' ' '\n' <<<"$1" | sed -n "s/^$2=//p" | head -1; }
 
+# pod_failure <pod>: its phase, the container's waiting reason and message,
+# and the scheduler's message when it is not scheduled (the contention case
+# needs 4 of the 5 exclusive CPUs' allocatable cpu, next to the control
+# plane's requests).
 pod_failure() {
-    kube -n trading get pod "$1" -o jsonpath='{.status.phase} {.status.containerStatuses[0].state.waiting.reason} {.status.containerStatuses[0].state.waiting.message}' 2>/dev/null
+    kube -n trading get pod "$1" -o jsonpath='{.status.phase} {.status.containerStatuses[0].state.waiting.reason} {.status.containerStatuses[0].state.waiting.message} {.status.conditions[?(@.type=="PodScheduled")].message}' 2>/dev/null
 }
 
 step_e2e() {
@@ -407,7 +419,8 @@ step_e2e() {
 
 # run_arm <arm> <rep>: one run; arm trace is a plugin-on run under ftrace.
 run_arm() {
-    local arm=$1 rep=$2 label=$1-$2 line cpu sampler phase restarts pid tid
+    local arm=$1 rep=$2 label=$1-$2 line cpu sampler phase restarts pid tid delay=$DELAY_SECONDS armed=
+    [[ $arm == trace ]] && delay=$(lab_trace_delay "$DELAY_SECONDS")
     case $arm in
     plugin-on | trace) plugin_install || { echo "$label: the plugin did not come up" >>"$results/failures.txt"; return 1; } ;;
     plugin-off) plugin_uninstall || { echo "$label: the chart did not uninstall" >>"$results/failures.txt"; return 1; } ;;
@@ -418,20 +431,24 @@ run_arm() {
         nic_check "$IRQ_CPU" >"$results/$label.nic.txt" || echo "$label: NIC interrupts off CPU $IRQ_CPU (see $label.nic.txt)" >>"$results/failures.txt"
     fi
     cat "$LAB_PROC_ROOT/interrupts" >"$results/$label.interrupts.before"
-    lab_pod "$arm" "$label" "$rep" "$SECONDS_PER_RUN" "$DELAY_SECONDS" "$UDP_RATE" "$STRESS" "$HELPERS" | kube apply -f - ||
+    lab_pod "$arm" "$label" "$rep" "$SECONDS_PER_RUN" "$delay" "$UDP_RATE" "$STRESS" "$HELPERS" | kube apply -f - ||
         { echo "$label: pod refused" >>"$results/failures.txt"; return 1; }
     line=$(wait_log "$label" 120) || { echo "$label: did not start: $(pod_failure "$label")" >>"$results/failures.txt"; kube -n trading delete pod "$label" --wait=true >/dev/null 2>&1; return 1; }
     cpu=$(field "$line" cpu)
     say "$label: spin on CPU $cpu; sampler on CPU $IRQ_CPU"
     if [[ $arm == trace ]]; then
-        # within the delay: tracing is on before the spin starts
-        trace_start "$cpu" "$results/$label" >"$results/$label.trace-setup.txt" 2>&1 ||
+        # within the (longer) delay: tracing is on before the spin starts,
+        # checked against the spin's start once it has run
+        if trace_start "$cpu" "$results/$label" >"$results/$label.trace-setup.txt" 2>&1; then
+            armed=$(date +%s%N)
+        else
             echo "$label: trace_start failed (see $label.trace-setup.txt)" >>"$results/failures.txt"
+        fi
     fi
-    taskset -c "$IRQ_CPU" "$LAB_GAPPROBE" irqsample --cpu "$cpu" --seconds $((DELAY_SECONDS + SECONDS_PER_RUN + 15)) \
+    taskset -c "$IRQ_CPU" "$LAB_GAPPROBE" irqsample --cpu "$cpu" --seconds $((delay + SECONDS_PER_RUN + 15)) \
         --out "$results/$label.irq.tsv" --pin "$IRQ_CPU" &
     sampler=$!
-    sleep $((DELAY_SECONDS + SECONDS_PER_RUN / 2))
+    sleep $((delay + SECONDS_PER_RUN / 2))
     pid=$(probe_pid "$label") && tid=$(hot_tid "$pid")
     {
         echo "$label placement, mid-run:"
@@ -449,6 +466,9 @@ run_arm() {
     cat "$LAB_PROC_ROOT/interrupts" >"$results/$label.interrupts.after"
     [[ $phase == Succeeded && ${restarts:-0} == 0 ]] || echo "$label: phase $phase, restarts ${restarts:-?}" >>"$results/failures.txt"
     [[ -s $results/$label.summary.tsv ]] || echo "$label: no summary" >>"$results/failures.txt"
+    if [[ -n $armed ]] && ! armed_before_spin "$armed" "$results/$label.summary.tsv"; then
+        echo "$label: tracing was armed after the spin started: its setup's interrupts are inside the run" >>"$results/failures.txt"
+    fi
     if [[ $arm == trace && -s $results/$label.trace.txt ]]; then
         "$LAB_GAPPROBE" trace-report --trace "$results/$label.trace.txt" --cpu "$cpu" ${tid:+--tid "$tid"} \
             --offset-ns "$(cat "$results/$label.offset")" --offset-end-ns "$(cat "$results/$label.offset.end" 2>/dev/null || cat "$results/$label.offset")" --summary "$results/$label.summary.tsv" \
@@ -479,12 +499,14 @@ step_bench() {
 }
 
 # scale_snapshot <dir> <when>: /proc/stat, and for every pod of the case its
-# container cgroup's cpu.stat and its spin thread's schedstat.
+# container cgroup's cpu.stat, its pod cgroup's (a pod-level quota
+# throttles there, not in the container's) and its spin thread's schedstat.
 scale_snapshot() {
     local d=$1 w=$2 name
     cat "$LAB_PROC_ROOT/stat" >"$d/proc.stat.$w"
     for name in "${!scale_cg[@]}"; do
         cat "${scale_cg[$name]}/cpu.stat" >"$d/$name.cpu.stat.$w" 2>/dev/null
+        cat "$(dirname "${scale_cg[$name]}")/cpu.stat" >"$d/$name.pod.cpu.stat.$w" 2>/dev/null
         cat "$LAB_PROC_ROOT/${scale_pid[$name]}/task/${scale_tid[$name]}/schedstat" >"$d/$name.hot.schedstat.$w" 2>/dev/null
     done
 }
@@ -492,7 +514,8 @@ scale_snapshot() {
 # scale_case <case> <title> <expect> <name:cpu:millicpus:threads:duty>...:
 # the pods started one after the other (each once the one before it runs:
 # the plugin gives each the least-loaded shared CPUs at its start, so the
-# order fixes who shares with whom); once every spin runs, a SCALE_SECONDS
+# order fixes who shares with whom), each spinning lab_scale_spin seconds
+# (longer with more pods); once every spin runs, a SCALE_SECONDS
 # window with snapshots around it and every thread's CPU each second; then
 # the pods' end. Files: gapprobe/src/scale.rs's layout, under
 # results/scale/<case>; each pod's .meta also has the ERGON_SHARED_CPUS and
@@ -500,7 +523,8 @@ scale_snapshot() {
 scale_case() {
     local case=$1 title=$2 expect=$3 spec name cpu milli threads duty line pid t0 t1 i bad=0 phase f
     shift 3
-    local d=$results/scale/$case spin=$((SCALE_SECONDS + 10)) started=0
+    local d=$results/scale/$case spin started=0
+    spin=$(lab_scale_spin "$SCALE_SECONDS" $#)
     declare -gA scale_cg=() scale_pid=() scale_tid=()
     mkdir -p "$d"
     for spec in "$@"; do
@@ -589,6 +613,9 @@ scale_accounting() {
 
 step_scale() {
     local h=${SCALE_THREADS:-4} rc=0 n
+    # this step's own sampling (ps, awk, kubectl every second) on the IRQ
+    # CPU, not on the shared CPUs it measures
+    taskset -cp "$IRQ_CPU" $$ >/dev/null 2>&1 || say "scale: could not move this step to CPU $IRQ_CPU; its sampling runs on the housekeeping CPUs"
     SHARED_CPUS=$SCALE_SHARED_CPUS
     n=$(cpu_count "$SHARED_CPUS")
     : >"$results/scale-failures.txt"
@@ -611,6 +638,7 @@ step_scale() {
         "A and C share one shared CPU, split by their cgroups' cpu.weight (from the cpu request: C's twice A's), not by their equal millicpus; B alone on the other" \
         "scale-a:1:100:$h:100" "scale-b:1:100:$h:100" "scale-c:2:100:$h:100" || rc=1
     "$LAB_GAPPROBE" scale-report "$results/scale" >"$results/scale.md" || { echo "scale-report failed" >>"$results/scale-failures.txt"; rc=1; }
+    grep -q '| FAIL: ' "$results/scale.md" && echo "placement: a thread ran off its CPUs (see the placement column of scale.md)" >>"$results/scale-failures.txt"
     cat "$results/scale.md"
     plugin_uninstall
     if [[ -s $results/scale-failures.txt ]]; then
@@ -633,7 +661,7 @@ step_report() {
         echo "| isolated / nohz_full | $(cat /sys/devices/system/cpu/isolated 2>/dev/null || echo none) / $(cat /sys/devices/system/cpu/nohz_full 2>/dev/null || echo none) |"
         echo "| IRQ CPU / shared CPU (scale) / reservedSystemCPUs | $IRQ_CPU / $SHARED_CPUS ($SCALE_SHARED_CPUS) / $RESERVED_CPUS |"
         echo "| node settings | $([[ ${QUIET:-0} == 1 ]] && echo "quiet.txt (LAB_QUIET=1)" || echo "as booted (LAB_QUIET=0)") |"
-        echo "| runs | $REPS reps x ${ARMS// /, }, ${SECONDS_PER_RUN} s of spin each, after ${DELAY_SECONDS} s of helpers$([[ ${TRACE:-0} == 1 ]] && echo "; trace-1: one more plugin-on run under ftrace") |"
+        echo "| runs | $REPS reps x ${ARMS// /, }, ${SECONDS_PER_RUN} s of spin each, after ${DELAY_SECONDS} s of helpers$([[ ${TRACE:-0} == 1 ]] && echo "; trace-1: one more plugin-on run under ftrace, after $(lab_trace_delay "$DELAY_SECONDS") s of helpers") |"
         echo "| helper load | \`stress-ng $STRESS\` and a loopback UDP reader fed $UDP_RATE datagrams/s ($([[ ${HELPERS:-process} == thread ]] && echo "threads of the probe" || echo "a child process of the probe")), from the pod's main thread |"
         echo "| counter | $(grep -h -m1 -o 'counter_hz=[0-9]*' "$results"/*.log 2>/dev/null | head -1) (a percentile below one tick reads 0) |"
         echo "| sampler | /proc/interrupts and /proc/softirqs every 10 ms from CPU $IRQ_CPU: what overlaps a max sat within 10 ms of it |"

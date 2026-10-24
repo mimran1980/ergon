@@ -84,10 +84,10 @@ for want in "Standard_D8ps_v6 (8 vCPUs, Arm)" "Debian:debian-13:13-arm64:latest"
     "IRQ CPU 0, shared CPU 1 (e2e, bench) or 1-2 (scale), exclusive (isolated) 3-7, reservedSystemCPUs 0-2" \
     "boot line isolcpus=managed_irq,domain,3-7 nohz_full=3-7 rcu_nocbs=3-7 irqaffinity=0" \
     "bench     5 reps x plugin-on; 60 s spin after 5 s helpers (a child process)" \
-    "trace     one more 60 s plugin-on rep under kernel ftrace, filtered to its spin CPU" \
+    "trace     one more 60 s plugin-on rep under kernel ftrace, filtered to its spin CPU, after 25 s helpers (the tracefs setup done first)" \
     "scale     sharedCpus 1-2: bursts at 100 and 1001 millicpus, idle, contention (4 helper threads a pod, 30 s each), accounting" \
     "node      the quiet settings (LAB_QUIET=1)" \
-    "about 74 minutes" "about \$0.330/h" "about \$0.43 for the run" \
+    "about 75 minutes" "about \$0.330/h" "about \$0.44 for the run" \
     "at most \$1.40 to the backstop" "(LAB_MAX_HOURS=4)" "tagged owner=ergon-lab run=20261024000000" \
     "az group create -n ergon-lab-nri-20261024000000 -l eastus --tags owner=ergon-lab run=20261024000000" \
     "--assign-identity [system] --role Contributor --scope <group id>" "az vm auto-shutdown" \
@@ -104,7 +104,7 @@ dryplan() { # dryplan <name> [VAR=value...]: the dry plan's stderr in $work/<nam
 }
 dryplan both "LAB_ARMS=plugin-on plugin-off"
 check "LAB_ARMS both: two arms" has "$work/both.plan" "bench     5 reps x plugin-on, plugin-off; 60 s spin"
-check "LAB_ARMS both: 87 minutes" has "$work/both.plan" "about 87 minutes"
+check "LAB_ARMS both: 88 minutes" has "$work/both.plan" "about 88 minutes"
 dryplan lean LAB_TRACE=0 LAB_SCALE=0 LAB_HELPERS=thread LAB_QUIET=0
 check "no trace, no scale: 58 minutes" has "$work/lean.plan" "about 58 minutes"
 check "no trace: said" has "$work/lean.plan" "trace     off (LAB_TRACE=0)"
@@ -115,7 +115,7 @@ check "no scale step in the SSH steps" has "$work/lean.plan" "vm.sh bootstrap, a
 dryplan nobench LAB_BENCH=0
 check "LAB_BENCH=0: no bench step, no trace" has "$work/nobench.plan" "vm.sh bootstrap, a reboot, vm.sh tune, cluster, e2e, scale, report"
 check "LAB_BENCH=0: bench off" has "$work/nobench.plan" "bench     off (LAB_BENCH=0)"
-check "LAB_BENCH=0: 57 minutes" has "$work/nobench.plan" "about 57 minutes"
+check "LAB_BENCH=0: 58 minutes" has "$work/nobench.plan" "about 58 minutes"
 
 echo "== refusals before anything"
 for c in "LAB_SIZE=Standard_D8s_v6|not an Azure Arm" "LAB_SIZE=Standard_D2ps_v6|the lab needs 7 or more" \
@@ -315,9 +315,12 @@ check "layout of 16, two shared" test "$(lab_layout 16 2)" = "0 1-2 3-15 0-2"
 check "no layout under 7" bash -c ". '$lab/lib.sh'; ! lab_layout 6"
 check "no layout with 3 shared" bash -c ". '$lab/lib.sh'; ! lab_layout 8 3"
 check "boot line" test "$(lab_boot_args 3-7 0)" = "isolcpus=managed_irq,domain,3-7 nohz_full=3-7 rcu_nocbs=3-7 irqaffinity=0"
-check "scale step seconds" test "$(lab_scale_seconds 30)" = 720
-check "estimate: one arm, trace, scale" test "$(lab_estimate_minutes 5 60 5)" = 74
-check "estimate: both arms" test "$(lab_estimate_minutes 5 60 5 2 1 1)" = 87
+check "scale spin: one pod" test "$(lab_scale_spin 30 1)" = 40
+check "scale spin: three pods started in turn, 30 s more each after the first" test "$(lab_scale_spin 30 3)" = 100
+check "scale step seconds" test "$(lab_scale_seconds 30)" = 780
+check "trace delay: 20 s more than the bench's, for the tracefs setup" test "$(lab_trace_delay 5)" = 25
+check "estimate: one arm, trace, scale" test "$(lab_estimate_minutes 5 60 5)" = 75
+check "estimate: both arms" test "$(lab_estimate_minutes 5 60 5 2 1 1)" = 88
 check "estimate: one arm alone" test "$(lab_estimate_minutes 5 60 5 1 0 0)" = 58
 check "cost" test "$(lab_cost 0.330 60)" = 0.35
 check "unknown price" test "$(lab_cost '?' 60)" = "?"
@@ -490,6 +493,28 @@ mkdir -p "$work/cg/proc/42" "$work/cg/fs/kubelet.slice/pod1.slice/cri-1.scope"
 echo "0::/kubelet.slice/pod1.slice/cri-1.scope" >"$work/cg/proc/42/cgroup"
 check "cgroup_dir" test "$(LAB_PROC_ROOT=$work/cg/proc LAB_CGROUP_ROOT=$work/cg/fs cgroup_dir 42)" = "$work/cg/fs/kubelet.slice/pod1.slice/cri-1.scope"
 check "cgroup_dir: none" bash -c "VM_LIB_ONLY=1 . '$lab/vm.sh'; ! LAB_PROC_ROOT='$work/cg/proc' cgroup_dir 43 >/dev/null 2>&1"
+
+# a scale snapshot: /proc/stat, the container's and the pod's cpu.stat, the spin's schedstat
+ss=$work/ss
+mkdir -p "$ss/proc/42/task/43" "$ss/fs/pod1.slice/cri-1.scope" "$ss/out"
+echo "cpu1 1 0 0 9 0 0 0 0 0 0" >"$ss/proc/stat"
+echo "usage_usec 5" >"$ss/fs/pod1.slice/cri-1.scope/cpu.stat"
+echo "usage_usec 7" >"$ss/fs/pod1.slice/cpu.stat"
+echo "100 0 0" >"$ss/proc/42/task/43/schedstat"
+(
+    declare -A scale_cg=([p]=$ss/fs/pod1.slice/cri-1.scope) scale_pid=([p]=42) scale_tid=([p]=43)
+    LAB_PROC_ROOT=$ss/proc scale_snapshot "$ss/out" before
+)
+check "scale snapshot: /proc/stat" test -s "$ss/out/proc.stat.before"
+check "scale snapshot: the container's cpu.stat" test "$(cat "$ss/out/p.cpu.stat.before")" = "usage_usec 5"
+check "scale snapshot: the pod's cpu.stat (a pod-level quota throttles there)" test "$(cat "$ss/out/p.pod.cpu.stat.before" 2>/dev/null)" = "usage_usec 7"
+check "scale snapshot: the spin's schedstat" test "$(cat "$ss/out/p.hot.schedstat.before")" = "100 0 0"
+
+# the traced rep's tracefs must be armed before its spin starts
+printf 'label\tarm\trep\tcpu\tsamples\tp50_ns\tp90_ns\tp99_ns\tp999_ns\tp9999_ns\tmax_ns\tmax_end_ns\tgaps\tdropped\tnvcsw\tnivcsw\tstart_ns\tend_ns\tminflt\tmajflt\nt\ttrace\t1\t3\t1\t1\t1\t1\t1\t1\t1\t1\t0\t0\t0\t0\t2000\t9000\t0\t0\n' >"$work/armed.summary.tsv"
+check "armed before the spin: ok" bash -c "VM_LIB_ONLY=1 . '$lab/vm.sh'; armed_before_spin 1999 '$work/armed.summary.tsv'"
+check "armed after the spin started: refused" bash -c "VM_LIB_ONLY=1 . '$lab/vm.sh'; ! armed_before_spin 2001 '$work/armed.summary.tsv'"
+check "armed, no summary: refused" bash -c "VM_LIB_ONLY=1 . '$lab/vm.sh'; ! armed_before_spin 1 '$work/none.tsv'"
 
 echo
 if ((fails)); then
