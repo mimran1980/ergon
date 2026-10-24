@@ -101,7 +101,7 @@ pub fn config_from_env() -> Result<DpdkTransportConfig, DpdkError> {
         test_vdev, // production selectors are PCI-only unless the test lever is set
         hugepage_dir: PathBuf::from(env::var("RUSTERON_DPDK_HUGE_DIR").unwrap_or_else(|_| "/dev/hugepages".into())),
         rx_descriptors: num_opt("RUSTERON_DPDK_RX_DESCRIPTORS")?, // unset: min(4096, the NIC's maximum) at start
-        tx_descriptors: num_or("RUSTERON_DPDK_TX_DESCRIPTORS", 512)?, // an ENA's maximum
+        tx_descriptors: num_or("RUSTERON_DPDK_TX_DESCRIPTORS", 256)?, // an ENA's maximum under large LLQ
         mbufs_per_port: num_or("RUSTERON_DPDK_MBUFS_PER_PORT", 16384)?, // as the lab measured
         mempool_cache: num_or("RUSTERON_DPDK_MEMPOOL_CACHE", 256)?,
         burst_size: num_or("RUSTERON_DPDK_BURST_SIZE", 32)?,

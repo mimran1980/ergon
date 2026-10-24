@@ -188,7 +188,7 @@ fn eal_allow_list_for_ena_is_one_pci_address_per_role() {
     let _env = TestEnv::new();
     assert_eq!(
         eal_allow_args(&rusteron_dpdk_config_t::valid()).unwrap(),
-        "-a 0000:00:01.0,llq_policy=1 -a 0000:00:02.0,llq_policy=1"
+        "-a 0000:00:01.0,llq_policy=3 -a 0000:00:02.0,llq_policy=3"
     );
 }
 
@@ -229,7 +229,7 @@ fn eal_args_append_the_operator_options() {
     unsafe { std::env::remove_var("RUSTERON_DPDK_EAL_ARGS") };
     assert_eq!(
         args.unwrap(),
-        "-a 0000:00:01.0,llq_policy=1 -a 0000:00:02.0,llq_policy=1 --log-level=pmd.net.netvsc:debug -l 0"
+        "-a 0000:00:01.0,llq_policy=3 -a 0000:00:02.0,llq_policy=3 --log-level=pmd.net.netvsc:debug -l 0"
     );
 }
 
@@ -246,7 +246,7 @@ fn eal_args_are_never_cut_short() {
     };
     assert_eq!(
         whole.unwrap(),
-        format!("-a 0000:00:01.0,llq_policy=1 -a 0000:00:02.0,llq_policy=1{long}")
+        format!("-a 0000:00:01.0,llq_policy=3 -a 0000:00:02.0,llq_policy=3{long}")
     );
     let refused = {
         let _args = EnvGuard::set("RUSTERON_DPDK_EAL_ARGS", &long.repeat(2)); // past the EAL's 1024

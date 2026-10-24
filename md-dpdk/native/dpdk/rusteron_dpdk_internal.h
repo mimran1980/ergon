@@ -738,8 +738,8 @@ void rusteron_dpdk_eal_version(int *year, int *month);
 
 /* The ENA device arguments every ENA port gets (`-a <bdf>,<these>`): the
  * operator's RUSTERON_DPDK_ENA_DEVARGS, and the PMD's LLQ setting unless
- * those name it (`llq_policy=1`, the device's recommended LLQ policy, from
- * DPDK 24.11, whose 24.11.0 and .1 otherwise disable LLQ; `enable_llq=1`
+ * those name it (`llq_policy=3`, large 256-byte entries, from DPDK 24.11,
+ * whose 24.11.0 and .1 otherwise disable LLQ; `enable_llq=1`
  * before). *llq_off is set when the operator's arguments turn LLQ off. 0 on
  * success; -1 (error set, naming the variable) when they are malformed,
  * the LLQ key's value included unless a decimal in the PMD's range. */

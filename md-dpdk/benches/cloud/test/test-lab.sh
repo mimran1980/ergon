@@ -2848,7 +2848,7 @@ smt=$(
     . "$cloud/host.sh" || exit 1
     # shellcheck source=../irqs.sh
     . "$cloud/irqs.sh" || exit 1
-    eval "$(for f in layout save_host pin_irqs host_setting restore_host; do vm_fn "$f"; done)"
+    eval "$(for f in layout save_host pin_irqs host_setting restore_host gapspin_us; do vm_fn "$f"; done)"
     run=$st/home/bench CLOUD=aws ARCH=x86_64 HK_CPU=0 smt_calls=$st/calls
     sudo() { [[ $1 == systemctl ]] && return 0; [[ $* == *"$tmp/"* ]] || { echo "sudo $*" >>"$tmp/sudo-outside"; return 1; }; "$@"; }
     log() { :; }
@@ -4636,14 +4636,16 @@ pre=$(
     mode_check dpdk@CONDUCTUR=own remote x86_64 aws '' cluster
     mode_check kernal remote x86_64 aws '' cluster
     echo "rx:$(mc dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096)$(mc dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=8192)$(mc dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=16384)$(mc dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=32)$(mc dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=3000)$(mc dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=many)$(mc dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=256 remote azure '')$(mc dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=512 remote azure '')$(mc kernel@RUSTERON_DPDK_RX_DESCRIPTORS=99999)"
-    echo "tx:$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=512)$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=1024)$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=256 remote azure '')$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=512 remote azure '')$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=384)"
+    echo "tx:$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=256)$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=512)$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=512@RUSTERON_DPDK_ENA_DEVARGS=llq_policy=1)$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=512@RUSTERON_DPDK_ENA_DEVARGS=miss_txc_to=0+llq_policy=2)$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=1024@RUSTERON_DPDK_ENA_DEVARGS=llq_policy=1)$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=512@RUSTERON_DPDK_ENA_DEVARGS=llq_policy=3)$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=1024)$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=256 remote azure '')$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=512 remote azure '')$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=384)"
     echo "cache, burst:$(mc dpdk@RUSTERON_DPDK_MEMPOOL_CACHE=512)$(mc dpdk@RUSTERON_DPDK_MEMPOOL_CACHE=0)$(mc dpdk@RUSTERON_DPDK_MEMPOOL_CACHE=513)$(mc dpdk@RUSTERON_DPDK_BURST_SIZE=256)$(mc dpdk@RUSTERON_DPDK_BURST_SIZE=0)$(mc dpdk@RUSTERON_DPDK_BURST_SIZE=257)"
-    echo "mbufs:$(mc dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=8192@RUSTERON_DPDK_MEMPOOL_CACHE=512)$(mc dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=5504)$(mc dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=5503)$(mc dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=9600@RUSTERON_DPDK_RX_DESCRIPTORS=8192)$(mc dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=9599@RUSTERON_DPDK_RX_DESCRIPTORS=8192)$(mc dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=1408 remote azure '')$(mc dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=1407 remote azure '')"
+    echo "mbufs:$(mc dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=8192@RUSTERON_DPDK_MEMPOOL_CACHE=512)$(mc dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=5248)$(mc dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=5247)$(mc dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=9344@RUSTERON_DPDK_RX_DESCRIPTORS=8192)$(mc dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=9343@RUSTERON_DPDK_RX_DESCRIPTORS=8192)$(mc dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=1408 remote azure '')$(mc dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=1407 remote azure '')"
     echo "aeron mtu:$(mc dpdk@RUSTERON_DPDK_MAX_AERON_MTU=1500)$(mc dpdk@RUSTERON_DPDK_MAX_AERON_MTU=9024@JUMBO=1)$(mc dpdk@RUSTERON_DPDK_MAX_AERON_MTU=4096)"
     echo "timestamps:$(mc dpdk@RUSTERON_DPDK_RX_HW_TIMESTAMP=1)$(mc dpdk@RUSTERON_DPDK_RX_HW_TIMESTAMP=1 remote aws precision-time)$(mc dpdk@RUSTERON_DPDK_RX_HW_TIMESTAMP=TRUE remote aws precision-time)$(mc dpdk@RUSTERON_DPDK_RX_HW_TIMESTAMP=0)$(mc dpdk@RUSTERON_DPDK_RX_HW_TIMESTAMP=False)$(mc dpdk@RUSTERON_DPDK_RX_HW_TIMESTAMP=yes remote aws precision-time)$(mc dpdk@RUSTERON_DPDK_RX_HW_TIMESTAMP=1 remote azure '')"
     mode_check dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=1024 remote x86_64 aws '' cluster
     mode_check dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=512 remote x86_64 azure '' ''
-    mode_check dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=5503 remote x86_64 aws '' cluster
+    mode_check dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=512 remote x86_64 aws '' cluster
+    mode_check dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=1024@RUSTERON_DPDK_ENA_DEVARGS=llq_policy=1 remote x86_64 aws '' cluster
+    mode_check dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=5247 remote x86_64 aws '' cluster
     mode_check dpdk@RUSTERON_DPDK_RX_HW_TIMESTAMP=1 remote x86_64 aws '' cluster
     echo "conductor:$(mc dpdk@CONDUCTOR=own)$(mc kernel@CONDUCTOR=own@AERON_THREADING_MODE=SHARED_NETWORK)$(mc dpdk@CONDUCTOR=own@AERON_THREADING_MODE=SHARED)$(mc dpdk@CONDUCTOR=own@AERON_THREADING_MODE=INVOKER)$(mc dpdk@CONDUCTOR=own local)$(mc kernel@CONDUCTOR=own@IRQ=spare)$(mc kernel-busy@NAPI_BUSY=spare@CONDUCTOR=own)$(mc dpdk@CONDUCTOR=fast)$(mc dpdk@CONDUCTOR=own@CONDUCTOR=own)$(mc kernel@CONDUCTOR=own@IRQ=receiver)$(mc dpdk@CONDUCTOR=own remote azure '')"
     mode_check kernel@CONDUCTOR=own@IRQ=spare remote x86_64 aws '' cluster
@@ -4664,14 +4666,16 @@ transports: 2 2 0 0 0 0
 mode dpdk@CONDUCTUR=own: CONDUCTUR is neither a setting the lab knows (THP BIN CSTATE BUSY_POLL COALESCE RX_RING MIN_FREE_PCT CLOCKSOURCE RELIABLE AGENTS SMT JUMBO PUB_PARAMS SUB_PARAMS IRQ NAPI_DEFER NAPI_BUSY CONDUCTOR) nor an AERON_* or RUSTERON_* variable: vm.sh would export it to a driver that never reads it, and the mode would measure its baseline under another name
 mode kernal: transport kernal: kernel, kernel-busy, dpdk, dpdk-spin, dpdk-adaptive, dpdk-epoll, or the raw floor's kernel-raw or dpdk-raw, optionally -mono (vm.sh refuses any other at the driver's start)
 rx: 0 0 2 2 2 2 0 2 0
-tx: 0 2 0 2 2
+tx: 0 2 0 0 2 2 2 0 2 2
 cache, burst: 0 0 2 0 2 2
 mbufs: 0 0 2 0 2 0 2
 aeron mtu: 2 2 0
 timestamps: 2 0 0 0 0 2 2
-mode dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=1024: RUSTERON_DPDK_TX_DESCRIPTORS=1024: 64 to 512, a power of two (ENA's transmit ring holds 512 at most: the transport refuses more at start)
+mode dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=1024: RUSTERON_DPDK_TX_DESCRIPTORS=1024: 64 to 256, a power of two (ENA's transmit ring holds 256 at most under large LLQ entries (the transport's llq_policy=3; llq_policy=1 takes 512): the transport refuses more at start)
 mode dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=512: RUSTERON_DPDK_RX_DESCRIPTORS=512: 64 to 256, a power of two (MANA's receive ring holds 256 at most: the transport refuses more at start)
-mode dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=5503: RUSTERON_DPDK_MBUFS_PER_PORT=5503 is below the 5504 the transport needs: a receive ring of 4096, a transmit ring of 512, four bursts of 32 and two mempool caches of up to 384 each
+mode dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=512: RUSTERON_DPDK_TX_DESCRIPTORS=512: 64 to 256, a power of two (ENA's transmit ring holds 256 at most under large LLQ entries (the transport's llq_policy=3; llq_policy=1 takes 512): the transport refuses more at start)
+mode dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=1024@RUSTERON_DPDK_ENA_DEVARGS=llq_policy=1: RUSTERON_DPDK_TX_DESCRIPTORS=1024: 64 to 512, a power of two (ENA's transmit ring holds 512 at most under llq_policy=1: the transport refuses more at start)
+mode dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=5247: RUSTERON_DPDK_MBUFS_PER_PORT=5247 is below the 5248 the transport needs: a receive ring of 4096, a transmit ring of 256, four bursts of 32 and two mempool caches of up to 384 each
 mode dpdk@RUSTERON_DPDK_RX_HW_TIMESTAMP=1: RUSTERON_DPDK_RX_HW_TIMESTAMP=1: NIC RX timestamps only in AWS's precision-time placement (LAB_PLACEMENT=precision-time): elsewhere the NIC offers none, and the transport refuses to start
 conductor: 0 0 2 2 2 2 2 2 2 0 0
 mode kernel@CONDUCTOR=own@IRQ=spare: CONDUCTOR=own with IRQ=spare: both take the layout's fifth core
@@ -6156,6 +6160,99 @@ fi
 for script in vm.sh irqs.sh host.sh modes.sh lib.sh remote.sh azure/lab.sh aws/lab.sh; do
     bash -n "$cloud/$script" && pass "bash -n $script" || fail "bash -n $script"
 done
+# spikes.py's agent gap table: every agent loop gap the DPDK event log
+# stamped (<host>-rings-<run>.log), on its agent's CPU as the trace shows it
+# (its tid), labelled by a traced preemption, else the interrupts there (each
+# entry to its exit; their time inside the gap), else the spare CPU's spinner
+# gap on that host, else nothing the guest saw; a gap of a tid the trace never
+# showed not classed. The trace put on the wall clock through its two
+# ergon-anchor markers (1 ppm apart here: an offset alone would place the
+# second half 50 µs late), not /proc/uptime's line. Then the spinner's gaps
+# by size. vm.sh gapspin_us: bench/gapspin_us, else 50.
+gt=$tmp/gapcause/isolated
+mkdir -p "$gt"
+python3 - "$gt" <<'EOF'
+import os, sys
+root = sys.argv[1]
+S = 1_000_000_000
+W0 = 2_000_000_000  # the wall clock at trace time 1000 s
+def tr(wall):
+    """the trace's clock for a wall-clock second (1 ppm slow against it)"""
+    return f"{1000.0 + (wall - W0) / (1 + 1e-6):.6f}"
+def ns(wall):
+    return int(round(wall * S))
+trace = [
+    f"     python3-900     [001] .....  {tr(W0)}: tracing_mark_write: ergon-anchor {W0 * S}",
+    # receiver, tid 4242, on CPU 3: a timer tick of 3 µs, an IPI of 2 µs
+    f"    receiver-4242    [003] d.h1.  {tr(W0 + 10.000010)}: irq_handler_entry: irq=11 name=arch_timer",
+    f"    receiver-4242    [003] d.h1.  {tr(W0 + 10.000013)}: irq_handler_exit: irq=11 ret=handled",
+    f"    receiver-4242    [003] d.h1.  {tr(W0 + 60.000010)}: ipi_entry: (Function call interrupts)",
+    f"    receiver-4242    [003] d.h1.  {tr(W0 + 60.000012)}: ipi_exit: (Function call interrupts)",
+    # a kworker preempts it for 25 µs
+    f"    receiver-4242    [003] d..2.  {tr(W0 + 20.000005)}: sched_switch: prev_comm=receiver prev_pid=4242 prev_prio=120 prev_state=R+ ==> next_comm=kworker/3:1 next_pid=77 next_prio=120",
+    f" kworker/3:1-77      [003] d..2.  {tr(W0 + 20.000030)}: sched_switch: prev_comm=kworker/3:1 prev_pid=77 prev_prio=120 prev_state=I ==> next_comm=receiver next_pid=4242 next_prio=120",
+    f"     python3-901     [001] .....  {tr(W0 + 100.0)}: tracing_mark_write: ergon-anchor {(W0 + 100) * S}",
+]
+with open(os.path.join(root, "..", "a-diag-isolated.log"), "w") as f:
+    # spinner gaps: 15 µs, 30 µs (with the 40-µs agent gap at 40 s), 120 µs
+    f.write("== gapspin\n# cpu=5 ns_per_tick=1.000000 threshold_us=10 counter_hz=1000000000\n")
+    f.write(f"{W0 + 5.000015:.6f} 15\n{W0 + 40.000035:.6f} 30\n{W0 + 70.000120:.6f} 120\n")
+    # the uptime line 1 s off: used, every event would miss its gap
+    f.write("== trace\n" + "\n".join(trace) + f"\nUPTIME 1001.0 REALTIME {W0 + 0.0}\n== drains\n== ipmon\n== knoise\n")
+gaps = [
+    (W0 + 10.000020, 20000),  # [10.000000, 10.000020]: the tick
+    (W0 + 20.000040, 40000),  # [20.000000, 20.000040]: the preemption
+    (W0 + 40.000040, 40000),  # [40.000000, 40.000040]: the spinner's 30-µs gap
+    (W0 + 50.000025, 25000),  # nothing
+    (W0 + 60.000030, 30000),  # the IPI, 2 µs of it: an anchor's offset alone puts it 60 µs late
+]
+with open(os.path.join(root, "a-rings-isolated-dpdk@RUSTERON_DPDK_EVENT_LOG=x-1.log"), "w") as f:
+    f.write("# kind,tsc,realtime_ns,value_ns,port,agent\n")
+    for end, v in gaps:
+        f.write(f"gap,1,{ns(end)},{v},1,4242\n")
+    f.write(f"gap,1,{ns(W0 + 80.0)},22000,0,5555\n")  # a tid the trace never showed
+    f.write(f"arp-request,1,{ns(W0 + 30.0)},0,0,4242\n")
+EOF
+gapcause=$(python3 "$cloud/spikes.py" "$gt" 2>&1 | awk '/^## Agent loop gaps/{on=1} on')
+want='## Agent loop gaps by what overlapped them, isolated
+
+Every gap of an agent'"'"'s loop the DPDK event log stamped (modes with @RUSTERON_DPDK_EVENT_LOG), on the
+agent'"'"'s CPU: a traced preemption; else interrupts there (their time inside the gap); else a gap of the
+spare CPU'"'"'s spinner on the same host (the whole VM paused); else nothing the guest saw: the agent'"'"'s own
+work, or the hypervisor taking this vCPU alone. Lengths in µs: median (largest).
+
+| host | class | gaps | length | interrupt time inside | what |
+| --- | --- | --- | --- | --- | --- |
+| a | guest preemption | 1 | 40.0 (40.0) | 0.0 (0.0) | kworker/3:1 (1) |
+| a | interrupts | 2 | 30.0 (30.0) | 3.1 (3.1) | arch_timer (1), Function call interrupts (1) |
+| a | VM paused | 1 | 40.0 (40.0) | 0.0 (0.0) | spinner gap (1) |
+| a | nothing in the guest | 1 | 25.0 (25.0) | 0.0 (0.0) | - |
+
+a: 1 gaps of an agent the trace never showed (no CPU known): not classed.
+
+The spare CPU'"'"'s gap spinner, each host, the whole state (vm.sh diag-start; its threshold is the
+diag log'"'"'s threshold_us):
+
+| host | gaps | 10-20 µs | 20-50 µs | 50-100 µs | 100 µs or more | largest |
+| --- | --- | --- | --- | --- | --- | --- |
+| a | 3 | 1 | 1 | 0 | 1 | 120 |'
+spin_us=$(
+    run=$tmp/gapcause
+    eval "$(vm_fn gapspin_us)"
+    echo -n "$(gapspin_us)"
+    echo 10 >"$run/gapspin_us"; echo -n " $(gapspin_us)"
+    echo 0 >"$run/gapspin_us"; echo -n " $(gapspin_us)"
+    echo x >"$run/gapspin_us"; echo -n " $(gapspin_us)"
+)
+if [[ $gapcause != "$want" ]]; then
+    fail "spikes.py: agent loop gaps by cause"
+    diff -u <(echo "$want") <(echo "$gapcause") >&2 || true
+elif [[ $spin_us != "50 10 50 50" ]]; then
+    fail "vm.sh gapspin_us: $spin_us, not 50 10 50 50"
+else
+    pass "spikes.py: each agent loop gap labelled on its agent's CPU (preemption, interrupts timed entry to exit, the spinner's VM pause, nothing), the trace on the wall clock through its two anchors; the spinner's gaps by size; vm.sh gapspin_us"
+fi
+
 for script in analyse.py spikes.py estimate.py test/fake_aws.py; do
     python3 -c 'import ast, sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' "$cloud/$script" &&
         pass "$script compiles" || fail "$script does not compile"

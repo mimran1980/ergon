@@ -836,7 +836,8 @@ static int rusteron_dpdk_init_port(rusteron_dpdk_transport_t *native, rusteron_d
         rusteron_dpdk_set_error(message);
         return -1;
     }
-    /* Queue sizes the NIC takes (an ENA at most 512 TX descriptors), checked
+    /* Queue sizes the NIC takes (an ENA at most 256 TX descriptors under
+     * large LLQ entries, the transport's default, 512 otherwise), checked
      * before anything is configured: DPDK refuses a queue outside them, and
      * the port it leaves half set up cannot be closed (see port_teardown). */
     for (int tx = 0; tx < 2; tx++)
@@ -1136,8 +1137,11 @@ int rusteron_dpdk_ena_devargs(char *out, size_t len, int *llq_off)
 {
     /* DPDK 24.11 replaced ENA's enable_llq (on by default) with llq_policy,
      * whose default 24.11.0 and .1 left at 0, disabled ("net/ena: fix missing
-     * default LLQ policy", 24.11.2): so the transport always names it, as the
-     * device's recommended policy (1). */
+     * default LLQ policy", 24.11.2): so the transport always names it, as
+     * large 256-byte entries (3), which push a whole small frame's headers
+     * with the descriptor (c9g: -0.7 us p50, -1.0 us p99 against 1, the
+     * device's recommendation; BENCHMARKS.md). They halve the TX ring an ENA
+     * takes, to 256 (RUSTERON_DPDK_TX_DESCRIPTORS' default). */
     int year = 0, month = 0;
     rusteron_dpdk_eal_version(&year, &month);
     const int policy = year > 24 || (24 == year && month >= 11);
@@ -1193,7 +1197,7 @@ int rusteron_dpdk_ena_devargs(char *out, size_t len, int *llq_off)
         return -1;
     }
     const int n = named ? snprintf(out, len, "%s", extra)
-                        : snprintf(out, len, "%s=1%s%s", key, '\0' != extra[0] ? "," : "", extra);
+                        : snprintf(out, len, "%s=%u%s%s", key, policy ? 3U : 1U, '\0' != extra[0] ? "," : "", extra);
     if (n < 0 || (size_t)n >= len)
     {
         rusteron_dpdk_set_error("RUSTERON_DPDK_ENA_DEVARGS does not fit the EAL argument buffer");

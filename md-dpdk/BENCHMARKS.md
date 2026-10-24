@@ -26,6 +26,7 @@ printed before its directory was deleted, so each is partial.
 
 | run | instances | what it ran |
 | --- | --- | --- |
+| `aws-20261023-231150` (G4) | `c9g.2xlarge` spot pair | DPDK knobs against an A/A control (same code built twice), with and without diagnostics; raw floor without Aeron; kernel busy polling |
 | `aws-20261016-223251` (G3) | `c9g.2xlarge` pair | DPDK, DPDK with media receive timestamps, kernel UDP (moderation off, IRQs on a spare core) |
 | `aws-20261016-072005` (G1) | `c9g.2xlarge` pair | DPDK knobs; kernel interrupt placement; kernel busy polling |
 | `aws-20261016-135004` (G2) | `c9g.2xlarge` pair | DPDK knobs, jumbo frames, transmit moderation |
@@ -88,6 +89,35 @@ placement without loss at 1 M/s. Rows: G1 summary.md lines 102, 110, 118,
 lost in 1 of 5 reps at 288 B 1 M/s (63 NAKs; max 121 (105–1,944), G2 line 94
 and its loss-by-point table); G3 in 0 of 5 (max 204 (122–211)).
 
+### Graviton DPDK: large LLQ entries (the default)
+
+G4, idle 32 B, 5 reps, each arm against the A/A control in the same state.
+`llq_policy=3` gives 256-byte LLQ entries and halves the ENA TX ring to 256,
+so the 256-ring arm alone is the control for the ring size.
+
+| arm | p50 | p99 | max |
+| --- | --- | --- | --- |
+| DPDK, `llq_policy=1` (the old default), 512 descriptors | 26.11 (26.02–26.35) | 31.74 (31.68–32.62) | 87 (83–97) |
+| the same, built separately (A/A) | 26.18 (26.00–26.45) | 31.98 (31.52–32.41) | 87 (87–89) |
+| `llq_policy=1`, 256 descriptors | 26.30 (26.13–26.40) | 31.92 (31.34–32.51) | 85 (84–90) |
+| **`llq_policy=3`, 256 descriptors** | **25.42 (25.38–25.76)** | **30.73 (30.62–31.33)** | 87 (79–101) |
+| `llq_policy=3`, 256, no diagnostics | 25.54 (25.44–25.60) | 31.18 (30.75–31.45) | 84 (75–88) |
+| DPDK, no diagnostics | 26.34 (25.95–26.50) | 31.98 (31.25–32.61) | 87 (86–173) |
+
+- p50 and p99 ranges are apart from both controls in both states; the max is
+  not. The ring size alone did not separate, so the gain is the entry size:
+  a 32 B message is a 106 B frame, pushed whole with a 256 B entry.
+- One run on one pair. This pair's network was slower than G3's (ping
+  between the data NICs 55 µs minimum; DPDK p50 26 against 14 µs), so G4 is
+  not compared with G3.
+- Not separated from the A/A in G4: `TX_FREE_THRESH=511`, `TX_FAST_FREE=1`,
+  `RX_FREE_THRESH=32`, `TX_IDLE_CLEAN=32`, `NIC_SLOW_STATS_MS=60000`, and the
+  ENA control path quietened (`NIC_STATS_MS=0`,
+  `miss_txc_to=0,control_path_poll_interval=1000`).
+- Rows: `aws-20261023-231150.txt` lines 13, 15, 20, 21, 27, 35. Without Aeron
+  (the raw floor, line 14) DPDK's p50 was 25.63 and its max 87: the idle
+  maxima are below Aeron.
+
 ### Measured, but no setting recommended
 
 | change | run | result |
@@ -128,6 +158,7 @@ separating result above are listed.
 | Graviton kernel UDP with moderation off: the data NICs' IRQs on a core of their own | G1 placement table | node: IRQ affinity is host-wide ([kernel IRQ affinity](https://docs.kernel.org/core-api/irq/irq-affinity.html)); a pod needs node access |
 | each channel under one flow's ceiling; a heavier stream over several channels | flow ceiling above | application config, in the pod |
 | DPDK (lab only): receiver IO vectors 16 | `aws-20261014-113947`, platform not recorded | pod env `AERON_RECEIVER_IO_VECTOR_CAPACITY` |
+| DPDK (lab only): large ENA LLQ entries, 256 TX descriptors | G4 table above | the transport's default (`llq_policy=3`) |
 
 A lost frame on a quiet stream is noticed at Aeron's next heartbeat, 100 ms
 in the C driver (`aeron_network_publication.h:38` in the locked

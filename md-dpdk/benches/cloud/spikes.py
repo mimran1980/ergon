@@ -87,6 +87,36 @@ def open_spikes(path):
     return gzip.open(path, "rt", newline="") if path.endswith(".gz") else open(path, newline="")
 
 
+# vm.sh diag-start and diag-fetch write "ergon-anchor <CLOCK_REALTIME ns>" to
+# the trace (trace_marker, on a traced CPU, the trace on CLOCK_MONOTONIC):
+# each a pair of the trace's clock and the wall clock, a few µs apart
+ANCHOR = re.compile(r"\s(\d+\.\d+): tracing_mark_write: ergon-anchor (\d+)")
+TASK = re.compile(r"^\s*(.+?)-(\d+)\s+\[(\d+)\]")
+
+
+def trace_clock(lines, uptime):
+    """The trace's clock onto the wall clock (seconds): through the first and
+    last of the trace's ergon-anchor markers (a line between them, so drift
+    between the two clocks cancels), one marker an offset; without one,
+    diag-fetch's UPTIME line (/proc/uptime, 10 ms resolution), an offset;
+    None with neither."""
+    anchors = []
+    for line in lines:
+        m = ANCHOR.search(line)
+        if m:
+            anchors.append((float(m.group(1)), int(m.group(2)) / 1e9))
+    if len(anchors) >= 2 and anchors[-1][0] > anchors[0][0]:
+        (t0, w0), (t1, w1) = anchors[0], anchors[-1]
+        rate = (w1 - w0) / (t1 - t0)
+        return lambda ts: w0 + (ts - t0) * rate
+    if anchors:
+        t0, w0 = anchors[0]
+        return lambda ts: w0 + (ts - t0)
+    if uptime:
+        return lambda ts: uptime[1] - (uptime[0] - ts)
+    return None
+
+
 def read_diag(path):
     """(spinner gaps [(start_s, end_s)], preemptions [(start_s, end_s, cpu, who, by)]) on the wall clock."""
     gaps, lines, anchor, section = [], [], None, None
@@ -105,14 +135,15 @@ def read_diag(path):
             else:
                 lines.append(line)
     preempted, away, spinner_out = [], {}, []
-    for line in lines if anchor else []:
+    wall = trace_clock(lines, anchor)
+    for line in lines if wall else []:
         m = EVENT.search(line)
         if not m or m.group(3) != "sched_switch":
             continue
         s = SWITCH.search(m.group(4))
         if not s:
             continue
-        cpu, ts = int(m.group(1)), anchor[1] - (anchor[0] - float(m.group(2)))
+        cpu, ts = int(m.group(1)), wall(float(m.group(2)))
         prev, state, nxt = s.groups()
         # the spinner itself taken off its CPU by the guest: not a host stall
         if prev == "gapspin" and state.startswith("R"):
@@ -743,6 +774,13 @@ def main():
               "(LAB_RTT_ALIGN starts every round trip just after it).")
 
     largest(folder, state, run_dir, diag, knoise)
+    traces = {}
+    for host in "ab":
+        for path in (os.path.join(run_dir, f"{host}-diag-{state}.log"), os.path.join(folder, f"{host}-diag-{state}.log")):
+            if os.path.exists(path):
+                traces[host] = read_trace(path)
+                break
+    agent_gap_causes(folder, state, run_dir, diag, traces)
 
 
 def stall_events(path, who):
@@ -762,6 +800,134 @@ def stall_events(path, who):
                 end, gap = base + int(parts[0]), int(parts[1])
                 out.append(((end - gap) / 1e9, end / 1e9, f"{who} stall", f"{who} stall {gap / 1e3:.1f} µs"))
     return sorted(out)
+
+
+def read_trace(path):
+    """A host's trace on the wall clock (diag-fetch's trace section):
+    ({pid: the CPU it ran on most}, {cpu: sorted [(start_s, end_s, name)]}
+    of its interrupts: each irq_handler_entry to its CPU's next
+    irq_handler_exit, each ipi_entry to its ipi_exit, an instant where the
+    exit is missing), or None without a trace clock."""
+    lines, uptime, section = [], None, None
+    for line in open(path, errors="replace"):
+        line = line.rstrip("\n")
+        if line.startswith("== "):
+            section = line[3:]
+        elif section == "trace":
+            if line.startswith("UPTIME"):
+                f = line.split()
+                uptime = (float(f[1]), float(f[3]))
+            else:
+                lines.append(line)
+    wall = trace_clock(lines, uptime)
+    if wall is None:
+        return None
+    seen = collections.defaultdict(collections.Counter)
+    irqs, open_irq = collections.defaultdict(list), {}
+    for line in lines:
+        m = EVENT.search(line)
+        if not m:
+            continue
+        cpu, ts, kind, rest = int(m.group(1)), wall(float(m.group(2))), m.group(3), m.group(4)
+        t = TASK.match(line)
+        if t and t.group(2) != "0":
+            seen[t.group(2)][cpu] += 1
+        if kind in ("irq_handler_entry", "ipi_entry"):
+            name = re.search(r"name=(\S+)", rest)
+            name = name.group(1) if name else rest.strip("() ")
+            if (cpu, kind) in open_irq:  # its exit never traced: an instant
+                t0, n = open_irq.pop((cpu, kind))
+                irqs[cpu].append((t0, t0, n))
+            open_irq[(cpu, kind)] = (ts, name)
+        elif kind in ("irq_handler_exit", "ipi_exit"):
+            entry = "irq_handler_entry" if kind == "irq_handler_exit" else "ipi_entry"
+            if (cpu, entry) in open_irq:
+                t0, n = open_irq.pop((cpu, entry))
+                irqs[cpu].append((t0, ts, n))
+    for (cpu, _), (t0, n) in open_irq.items():
+        irqs[cpu].append((t0, t0, n))
+    return ({pid: c.most_common(1)[0][0] for pid, c in seen.items()},
+            {cpu: sorted(v) for cpu, v in irqs.items()})
+
+
+GAP_CLASSES = ("guest preemption", "interrupts", "VM paused", "nothing in the guest")
+
+
+def agent_gap_causes(folder, state, run_dir, diag, traces):
+    """Every agent loop gap the DPDK event log stamped (<host>-rings-*.log,
+    10 us or more), on its agent's CPU, labelled by what overlapped it: a
+    traced preemption of the agent; interrupts on its CPU (their time inside
+    the gap); a gap of the spare CPU's spinner on the same host (the whole VM
+    paused); else nothing the guest saw (the agent's own work, or the
+    hypervisor taking this vCPU alone). Then each host's spinner gaps by
+    size."""
+    rows = collections.defaultdict(lambda: collections.defaultdict(list))  # host: class: [(len us, irq us, label)]
+    unmapped = collections.Counter()
+    for host in "ab":
+        paths = sorted(set(glob.glob(os.path.join(folder, f"{host}-rings-{state}-*.log"))
+                           + glob.glob(os.path.join(run_dir, f"{host}-rings-{state}-*.log"))))
+        if not paths or host not in diag:
+            continue
+        spin = sorted(diag[host][0])
+        pre = collections.defaultdict(list)
+        for t0, t1, cpu, who, by in diag[host][1]:
+            pre[cpu].append((t0, t1, by))
+        trace = traces.get(host)
+        cpu_of, irqs = trace if trace else ({}, {})
+        for path in paths:
+            for row in csv.reader(open(path, errors="replace")):
+                if len(row) != 6 or row[0] != "gap" or not (row[2].isdigit() and row[3].isdigit()):
+                    continue
+                end, value, tid = int(row[2]) / 1e9, int(row[3]), row[5]
+                start = end - value / 1e9
+                cpu = cpu_of.get(tid)
+                if cpu is None:
+                    unmapped[host] += 1
+                    continue
+                by = [b for t0, t1, b in pre.get(cpu, []) if t0 < end and t1 > start]
+                hit = [(max(t0, start), min(t1, end), n) for t0, t1, n in irqs.get(cpu, [])
+                       if t0 <= end and t1 >= start]
+                irq_us = sum(t1 - t0 for t0, t1, _ in hit) * 1e6
+                if by:
+                    cls, label = "guest preemption", by[0]
+                elif hit:
+                    cls = "interrupts"
+                    label = ", ".join(sorted(collections.Counter(n for _, _, n in hit)))
+                elif any(g0 < end and g1 > start for g0, g1 in spin):
+                    cls, label = "VM paused", "spinner gap"
+                else:
+                    cls, label = "nothing in the guest", ""
+                rows[host][cls].append((value / 1e3, irq_us, label))
+    spinner = {h: [(g1 - g0) * 1e6 for g0, g1 in g] for h, (g, _) in diag.items()}
+    if not rows and not any(spinner.values()):
+        return
+    print(f"\n## Agent loop gaps by what overlapped them, {state}\n")
+    print("Every gap of an agent's loop the DPDK event log stamped (modes with @RUSTERON_DPDK_EVENT_LOG), on the")
+    print("agent's CPU: a traced preemption; else interrupts there (their time inside the gap); else a gap of the")
+    print("spare CPU's spinner on the same host (the whole VM paused); else nothing the guest saw: the agent's own")
+    print("work, or the hypervisor taking this vCPU alone. Lengths in µs: median (largest).\n")
+    print("| host | class | gaps | length | interrupt time inside | what |")
+    print("| --- | --- | --- | --- | --- | --- |")
+    for host in sorted(rows):
+        for cls in GAP_CLASSES:
+            g = rows[host].get(cls)
+            if not g:
+                continue
+            lens = sorted(x[0] for x in g)
+            irq = sorted(x[1] for x in g)
+            what = collections.Counter(x[2] for x in g if x[2]).most_common(3)
+            print(f"| {host} | {cls} | {len(g):,} | {lens[len(lens) // 2]:.1f} ({lens[-1]:.1f}) | "
+                  f"{irq[len(irq) // 2]:.1f} ({irq[-1]:.1f}) | {', '.join(f'{n} ({c})' for n, c in what) or '-'} |")
+    for host, n in sorted(unmapped.items()):
+        print(f"\n{host}: {n:,} gaps of an agent the trace never showed (no CPU known): not classed.")
+    print("\nThe spare CPU's gap spinner, each host, the whole state (vm.sh diag-start; its threshold is the")
+    print("diag log's threshold_us):\n")
+    print("| host | gaps | 10-20 µs | 20-50 µs | 50-100 µs | 100 µs or more | largest |")
+    print("| --- | --- | --- | --- | --- | --- | --- |")
+    for host, g in sorted(spinner.items()):
+        b = [sum(1 for x in g if lo <= x < hi) for lo, hi in ((10, 20), (20, 50), (50, 100), (100, float("inf")))]
+        print(f"| {host} | {len(g):,} | {' | '.join(f'{n:,}' for n in b)} | {max(g):.0f} |" if g else
+              f"| {host} | 0 | 0 | 0 | 0 | 0 | - |")
 
 
 def largest(folder, state, run_dir, diag, knoise):

@@ -164,7 +164,7 @@ mode. Running unpinned is not measured here.
   ([BENCHMARKS.md](BENCHMARKS.md#measured-but-no-setting-recommended)).
 - **`RUSTERON_DPDK_MBUFS_PER_PORT`** (default 16384) must hold both rings,
   four bursts and two lcores' mempool caches (1.5 ×
-  `RUSTERON_DPDK_MEMPOOL_CACHE` each): 5,504 with the defaults. Start fails,
+  `RUSTERON_DPDK_MEMPOOL_CACHE` each): 5,248 with the defaults. Start fails,
   naming both variables, when it falls short. On MANA with the ring unset, a
   pool sized for 256 fails validation (which assumes 4096): set
   `RUSTERON_DPDK_RX_DESCRIPTORS=256` or enlarge the pool.
@@ -178,7 +178,7 @@ Pod env, read at start. Unset, each queue keeps the PMD's defaults.
 | Variable | Default | Effect |
 |---|---|---|
 | `RUSTERON_DPDK_RX_FREE_THRESH` | PMD's (ENA: 256 at 4096 descriptors) | Descriptors used before the PMD refills them, inside the `rx_burst` that crosses it. 1 to the ring less 1. |
-| `RUSTERON_DPDK_TX_FREE_THRESH` | PMD's (ENA: 448 at 512 descriptors) | ENA reclaims every completed descriptor inside the send that finds fewer than this free. 1 to `RUSTERON_DPDK_TX_DESCRIPTORS` less 1. |
+| `RUSTERON_DPDK_TX_FREE_THRESH` | PMD's (ENA: 224 at 256 descriptors) | ENA reclaims every completed descriptor inside the send that finds fewer than this free. 1 to `RUSTERON_DPDK_TX_DESCRIPTORS` less 1. |
 | `RUSTERON_DPDK_TX_FAST_FREE` | off | `RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE`: sent mbufs freed in bulk. Configured only where the NIC offers it (ENA does). |
 | `RUSTERON_DPDK_TX_IDLE_CLEAN` | off (`0`) | Sent descriptors the agent reclaims on a poll that received nothing, at most this many a poll (1 to 1024), once the last send is 5 µs old (`rte_eth_tx_done_cleanup`), so the PMD rarely reaches its free threshold inside a send. Counted as `tx-idle-cleaned` (type 87). |
 
@@ -193,7 +193,8 @@ Pod env, read at start. Unset, each queue keeps the PMD's defaults.
   sends through each path with the fake checking all three.
 - **`port-info` label:** `tx-idle-clean=<n>`, or `tx-idle-clean=unsupported`
   where the PMD lacks the op (found at start, left off and logged).
-- No setting is recommended yet: none has been measured.
+- No setting here is recommended: none separated from the A/A control on
+  `c9g.2xlarge` (`BENCHMARKS.md`).
 
 ## ENA low-latency queues
 
@@ -201,8 +202,15 @@ ENA's transmit path needs its low-latency queue (LLQ), which writes into the
 device's BAR 2; the transport needs that BAR mapped write-combined, and
 start fails otherwise (`tests/dpdk_ena_llq.rs`).
 
-- **Every ENA port asks for LLQ:** `llq_policy=1` with DPDK 24.11+,
-  `enable_llq=1` before.
+- **Every ENA port asks for large LLQ entries:** `llq_policy=3` with DPDK
+  24.11+ (256-byte entries: a small frame's headers go with the descriptor),
+  `enable_llq=1` before. On `c9g.2xlarge` they cut idle p50 by 0.7 µs and
+  p99 by 1.0 µs against `llq_policy=1`, the device's recommendation
+  (`BENCHMARKS.md`).
+- **They halve an ENA's TX ring to 256**, the default
+  `RUSTERON_DPDK_TX_DESCRIPTORS`. A larger ring needs another policy
+  (`RUSTERON_DPDK_ENA_DEVARGS=llq_policy=1` takes 512); start fails otherwise,
+  naming the variable.
 - **`RUSTERON_DPDK_ENA_DEVARGS="<key>=<value>,..."`** adds device arguments
   to every ENA port (`miss_txc_to=5`, `control_path_poll_interval=500`); an
   LLQ key in it (`llq_policy=3`) replaces the transport's. Keys and values
@@ -229,8 +237,8 @@ start fails otherwise (`tests/dpdk_ena_llq.rs`).
 - **Move each data NIC's VMBus device to `uio_hv_generic`** (its kernel
   interface and VF down), so the netvsc PMD takes it and keeps the VF data
   path. `benches/cloud/vm.sh driver dpdk` shows the steps.
-- **Set `RUSTERON_DPDK_TX_DESCRIPTORS=256`:** MANA queues hold at most 256
-  and the default is ENA's 512. A count outside a NIC's limits fails start.
+- **TX descriptors:** MANA queues hold at most 256, the default. A count
+  outside a NIC's limits fails start.
 - **The transport stops DPDK's automatic vdev_netvsc fail-safe device,**
   which would otherwise take the ports.
 

@@ -52,6 +52,9 @@
 #   clients stamp every round trip, and every stall of their own loop, of at least that
 #   many ns (spikes.py gives each rep's 10 largest every event overlapping them; on
 #   Kubernetes the client pods' LOAD_SPIKE_NS and LOOP_STALL_NS, pod environment)
+#   LAB_GAPSPIN_US (50): the diagnostics' gap spinner, on a spare CPU, records every gap
+#   of its loop of at least that many us (vm.sh diag-start): 10 sees the 20-50 us agent
+#   loop gaps' size, whether the whole VM paused (spikes.py's agent gap table)
 #   LAB_BASE (none; a git revision of this checkout): also built on both VMs, into
 #   ~/bin-base, for modes with @BIN=bin-base: LAB_MODES="dpdk dpdk@BIN=bin-base" A/Bs
 #   that build against this one (analyse.py --ab dpdk dpdk@BIN=bin-base <results.csv>).
@@ -134,6 +137,8 @@ rtt_align=${LAB_RTT_ALIGN:-}
 # at least that many ns (lib.sh)
 rtt_spike_ns=${LAB_RTT_SPIKE_NS:-30000}
 rtt_stall_ns=${LAB_RTT_STALL_NS:-10000}
+# the gap spinner's threshold, us (lib.sh, vm.sh diag-start)
+gapspin_us=${LAB_GAPSPIN_US:-50}
 base=${LAB_BASE:-}
 # both VMs deallocate themselves this long after creation (hours)
 max_hours=${LAB_MAX_HOURS:-8}
@@ -175,6 +180,7 @@ done
 [[ -z $no_flatout || $no_flatout == 1 ]] || die "LAB_NO_FLATOUT is 1 or unset"
 [[ $rtt_spike_ns =~ ^[1-9][0-9]{0,9}$ ]] || die "LAB_RTT_SPIKE_NS is a whole number of nanoseconds, from 1 (the round trips stamped), not $rtt_spike_ns"
 [[ $rtt_stall_ns =~ ^[1-9][0-9]{0,9}$ ]] || die "LAB_RTT_STALL_NS is a whole number of nanoseconds, from 1 (the client loop stalls stamped), not $rtt_stall_ns"
+[[ $gapspin_us =~ ^[1-9][0-9]{0,5}$ ]] || die "LAB_GAPSPIN_US is a whole number of microseconds, 1 to 999999 (the gap spinner's threshold), not $gapspin_us"
 [[ $warmup_seconds =~ ^[0-9]{1,6}$ ]] || die "LAB_WARMUP_SECONDS is a whole number of seconds (0: no warm-up), not $warmup_seconds"
 [[ $warmup_rate =~ ^[0-9]{1,9}$ ]] || die "LAB_WARMUP_RATE is a whole number of messages a second, not $warmup_rate"
 ((10#$warmup_seconds == 0 || 10#$warmup_rate > 0)) ||

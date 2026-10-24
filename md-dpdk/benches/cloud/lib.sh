@@ -21,7 +21,9 @@
 # LAB_RTT_STALL_NS, 10000: the cross-host round trip's clients stamp every
 # round trip and every stall of their own loop of at least that many ns, so
 # each idle max, 72-79 us in G3, gets a cause; the clients' own defaults,
-# 100 and 20 us, would leave it unstamped).
+# 100 and 20 us, would leave it unstamped), gapspin_us (LAB_GAPSPIN_US, 50:
+# the diagnostics' gap spinner records its loop's gaps of at least that many
+# us; vm.sh diag-start reads it from bench/gapspin_us).
 # The functions run the benchmark on both VMs in lockstep; teardown stays with
 # the caller's trap.
 
@@ -384,7 +386,7 @@ prepare_vms() {
             done
             [[ -n $copied ]] || die "copy of $tar to $host failed"
         done
-        on "$host" "rm -rf ergon bench && mkdir -p ergon bench && echo $own >bench/data_subnet${peer:+ && echo $peer >bench/peer_subnet} && echo ${placement:-} >bench/placement && echo ${allow_arm:-} >bench/allow_arm && echo $want_ynl >bench/want_ynl && tar -xf ergon.tar -C ergon && rm ergon.tar" ||
+        on "$host" "rm -rf ergon bench && mkdir -p ergon bench && echo $own >bench/data_subnet${peer:+ && echo $peer >bench/peer_subnet} && echo ${placement:-} >bench/placement && echo ${allow_arm:-} >bench/allow_arm && echo ${gapspin_us:-50} >bench/gapspin_us && echo $want_ynl >bench/want_ynl && tar -xf ergon.tar -C ergon && rm ergon.tar" ||
             die "unpack on $host failed"
         if [[ -n ${base:-} ]]; then
             on "$host" "rm -rf ergon-base bin-base && mkdir -p ergon-base && tar -xf ergon-base.tar -C ergon-base && rm ergon-base.tar" ||

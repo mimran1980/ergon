@@ -994,7 +994,7 @@ restore_host() {
             if [[ -s $run/diag-paused ]]; then
                 spin=$(cat "$run/diag-paused")
                 echo "# resumed $(date +%s.%N)" >>"$run/diag-gapspin.log"
-                nohup "$run/gapspin" "$spin" 50 >>"$run/diag-gapspin.log" 2>&1 </dev/null &
+                nohup "$run/gapspin" "$spin" "$(gapspin_us)" >>"$run/diag-gapspin.log" 2>&1 </dev/null &
                 rm -f "$run/diag-paused"
             fi
             ;;
@@ -1152,6 +1152,26 @@ client_features() {
     else
         echo static
     fi
+}
+
+# trace_anchor: "ergon-anchor <CLOCK_REALTIME ns>" into the trace from the
+# app CPU (traced: tracing_cpumask drops a marker from any other), the clock
+# read just before the write, so spikes.py puts the trace's events on the
+# wall clock to a few us (/proc/uptime has 10 ms). Never fatal.
+trace_anchor() {
+    sudo taskset -c "$APP_CPU" python3 -c 'import os, time
+fd = os.open("/sys/kernel/tracing/trace_marker", os.O_WRONLY)
+t = time.time_ns()
+os.write(fd, b"ergon-anchor %d" % t)' 2>/dev/null || echo "trace_anchor: no marker written (the trace stays on /proc/uptime's 10 ms)" >&2
+}
+
+# gapspin_us: the diagnostics' gap spinner's threshold, us (lab.sh's
+# LAB_GAPSPIN_US, which lib.sh leaves in bench/gapspin_us; 50 without it)
+gapspin_us() {
+    local us
+    us=$(cat "$run/gapspin_us" 2>/dev/null) || us=
+    [[ $us =~ ^[1-9][0-9]{0,5}$ ]] || us=50
+    echo "$us"
 }
 
 # KNOISE: guest-kernel noise on the agent and app CPUs, with durations, in a
@@ -2200,7 +2220,9 @@ diag-start)
     # outside the layout, else housekeeping's SMT twin, else none: host.sh
     # diag_spare_cpu; a four-core Graviton has neither, and a spinner on a
     # core of the layout would take it from the run) and a trace of the app
-    # and agent CPUs (context switches, work items, IRQs), plus who calls
+    # and agent CPUs (context switches, work items, IRQs and IPIs with their
+    # exits, so each is timed; on CLOCK_MONOTONIC, anchored to the wall clock
+    # by trace_anchor at the start and at diag-fetch), plus who calls
     # lru_add_drain_all (every CPU), so each spike can be told apart:
     # a guest preemption (traced), a host stall (the spinner too), or neither.
     gcc -O2 -o "$run/gapspin" "$(dirname "$self")/gapspin.c" || exit 1
@@ -2210,7 +2232,7 @@ diag-start)
     rm -f "$run/diag-paused"
     printf '%s\n' "$spare" >"$run/diag-spare"
     if [[ -n $spare ]]; then
-        nohup "$run/gapspin" "$spare" 50 >"$run/diag-gapspin.log" 2>&1 </dev/null &
+        nohup "$run/gapspin" "$spare" "$(gapspin_us)" >"$run/diag-gapspin.log" 2>&1 </dev/null &
     else
         echo "# no spinner: no CPU outside the layout (no fifth core, no SMT twin)" >"$run/diag-gapspin.log"
     fi
@@ -2223,17 +2245,19 @@ diag-start)
     for cpu in $APP_CPU $SENDER_CPU $RECEIVER_CPU $APP2_CPU $spare; do mask=$((mask | (1 << cpu))); done
     # arm64's IPIs (x86's are the irq_vectors events below)
     ipi=
-    if [[ $ARCH == aarch64 ]]; then ipi='[ -d events/ipi/ipi_entry ] && echo 1 > events/ipi/ipi_entry/enable;'; fi
+    if [[ $ARCH == aarch64 ]]; then ipi='[ -d events/ipi/ipi_entry ] && echo 1 > events/ipi/ipi_entry/enable && echo 1 > events/ipi/ipi_exit/enable;'; fi
     sudo bash -c "cd /sys/kernel/tracing && echo 0 > tracing_on && echo > trace && printf '%x' $mask > tracing_cpumask &&
         echo 8192 > buffer_size_kb && echo 1 > events/sched/sched_switch/enable &&
-        echo 1 > events/workqueue/workqueue_execute_start/enable && echo 1 > events/irq/irq_handler_entry/enable &&
+        echo 1 > events/workqueue/workqueue_execute_start/enable && echo 1 > events/irq/irq_handler_entry/enable && echo 1 > events/irq/irq_handler_exit/enable &&
         for e in call_function_entry call_function_single_entry reschedule_entry; do
             [ -d events/irq_vectors/\$e ] && echo 1 > events/irq_vectors/\$e/enable; done; $ipi
         { grep -q drainall kprobe_events || echo 'p:drainall lru_add_drain_all' >> kprobe_events; } &&
         for k in text_poke_bp_batch synchronize_rcu_expedited; do
             grep -qw \$k available_filter_functions && { grep -q \"p:\$k \" kprobe_events || echo \"p:\$k \$k\" >> kprobe_events; }; done;
         mkdir -p instances/drain && echo 1 > instances/drain/events/kprobes/enable && echo 1 > instances/drain/options/stacktrace &&
+        { ! grep -qw mono trace_clock || echo mono > trace_clock; } &&
         echo 1 > tracing_on"
+    trace_anchor
     echo "diag spinner cpu ${spare:-none (no CPU outside the layout: host stalls go unattributed)}, traced cpus $(printf '%x' $mask)"
     # KNOISE on the agent and app CPUs (the spare keeps the spinner)
     # shellcheck disable=SC2086
@@ -2247,7 +2271,8 @@ diag-fetch)
     echo "== gapspin"
     cat "$run/diag-gapspin.log" 2>/dev/null
     echo "== trace"
-    sudo grep -E 'sched_switch|workqueue_execute_start|irq_handler_entry|call_function|reschedule_entry|ipi_entry' /sys/kernel/tracing/trace
+    trace_anchor
+    sudo grep -E 'sched_switch|workqueue_execute_start|irq_handler_(entry|exit)|call_function|reschedule_entry|ipi_(entry|exit)|ergon-anchor' /sys/kernel/tracing/trace
     echo "UPTIME $(cut -d' ' -f1 /proc/uptime) REALTIME $(date +%s.%N)"
     echo "== drains"
     # who drains LRU batches, patches kernel text (a static key flipped on

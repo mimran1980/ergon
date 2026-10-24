@@ -511,17 +511,23 @@ dpdk_setting() {
 # of 512 at most, bursts 1 to 256, mbufs for both rings, four bursts and two
 # caches, an Aeron MTU 32-aligned up to 8960; env.rs: a timestamp flag 0, 1,
 # true or false) or the NIC refuses at start (its PMD's ring limits, each a
-# power of two: ENA's receive 8192, its low-latency transmit queues 512, as
-# 1024 made DPDK refuse the queue; MANA's 256 each), and NIC RX timestamps
-# where the NIC offers none (anywhere but AWS's precision-time placement).
-# The defaults are vm.sh's (rings: min(4096, the NIC's) and 512 on AWS, 256
-# and 256 on Azure; 16384 mbufs a port) and config.rs's (bursts of 32, a
-# mempool cache of 256)
+# power of two: ENA's receive 8192, its low-latency transmit queues 256
+# under the transport's large LLQ entries and 512 under any other LLQ policy
+# (@RUSTERON_DPDK_ENA_DEVARGS=llq_policy=1 or 2), as 1024 made DPDK refuse the
+# queue; MANA's 256 each), and NIC RX timestamps where the NIC offers none
+# (anywhere but AWS's precision-time placement). The defaults are vm.sh's
+# and env.rs's (rings: min(4096, the NIC's) and 256 on AWS, 256 and 256 on
+# Azure; 16384 mbufs a port) and config.rs's (bursts of 32, a mempool cache
+# of 256)
 dpdk_values_check() {
-    local m=$1 cloud=$2 placement=${3:-} nic=ENA rx_most=8192 tx_most=512 rx_default=4096 tx_default=512 rx tx cache burst mbufs need v
-    if [[ $cloud == azure ]]; then nic=MANA rx_most=256 tx_most=256 rx_default=256 tx_default=256; fi
+    local m=$1 cloud=$2 placement=${3:-} nic=ENA rx_most=8192 tx_most=256 rx_default=4096 tx_default=256 rx tx cache burst mbufs need v
+    local ring="ENA's transmit ring holds 256 at most under large LLQ entries (the transport's llq_policy=3; llq_policy=1 takes 512)"
+    if v=$(mode_get "$m" RUSTERON_DPDK_ENA_DEVARGS) && [[ ,${v//+/,}, =~ ,llq_policy=0*([12]), ]]; then
+        tx_most=512 ring="ENA's transmit ring holds 512 at most under llq_policy=${BASH_REMATCH[1]}"
+    fi
+    if [[ $cloud == azure ]]; then nic=MANA rx_most=256 tx_most=256 rx_default=256 tx_default=256 ring="MANA's transmit ring holds 256 at most"; fi
     rx=$(dpdk_setting "$m" RX_DESCRIPTORS "$rx_default" 64 "$rx_most" "$nic's receive ring holds $rx_most at most: the transport refuses more at start" pow2) || return 2
-    tx=$(dpdk_setting "$m" TX_DESCRIPTORS "$tx_default" 64 "$tx_most" "$nic's transmit ring holds $tx_most at most: the transport refuses more at start" pow2) || return 2
+    tx=$(dpdk_setting "$m" TX_DESCRIPTORS "$tx_default" 64 "$tx_most" "$ring: the transport refuses more at start" pow2) || return 2
     cache=$(dpdk_setting "$m" MEMPOOL_CACHE 256 0 512 "DPDK's per-lcore mempool cache: the transport's configuration refuses more") || return 2
     burst=$(dpdk_setting "$m" BURST_SIZE 32 1 256 "packets a receive or transmit burst, as the transport's configuration takes them") || return 2
     mbufs=$(dpdk_setting "$m" MBUFS_PER_PORT 16384 1 4294967295 "mbufs in each port's pool") || return 2

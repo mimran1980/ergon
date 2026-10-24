@@ -121,6 +121,13 @@
   `tx-idle-cleaned`.
 - `ergon-md-dpdk` bench: `clock.rs` overhead adds a `poll_idle` path and
   per-call p99.99 and max.
+- Cloud lab: `LAB_GAPSPIN_US` (50 by default) sets the spare CPU's gap
+  spinner threshold. The diagnostics trace times each interrupt and IPI
+  (their exits too) on `CLOCK_MONOTONIC`, anchored to the wall clock by
+  trace markers. `spikes.py` labels every agent loop gap in the DPDK event
+  log by what overlapped it on the agent's CPU: a preemption, interrupts (with
+  their time inside the gap), a VM pause the spinner also saw, or nothing the
+  guest saw. It then counts each host's spinner gaps by size.
 - `ergon-md-dpdk`: `ConfiguredDriver::from_env` asks each port's gateway for
   its MAC before the agents start (up to 1 s). A silent gateway is a warning
   line; `ERGON_HOST_CHECKS=require` refuses to start on it.
@@ -159,6 +166,15 @@
 
 ### Changed
 
+- Breaking: `ergon-md-dpdk` asks every ENA port for large LLQ entries
+  (`llq_policy=3`, 256 bytes, from DPDK 24.11; before, `llq_policy=1`, the
+  device's recommendation), and `RUSTERON_DPDK_TX_DESCRIPTORS` defaults to
+  256 (was 512), the most an ENA TX ring takes under them. On a
+  `c9g.2xlarge` pair, idle 32 B round trips were 0.7 µs lower at p50 and
+  1.0 µs lower at p99, with rep ranges apart; max unchanged
+  (`aws-20261023-231150`). `RUSTERON_DPDK_ENA_DEVARGS=llq_policy=1` restores
+  the old policy, and with it a 512-descriptor ring. The EKS ConfigMap sets
+  256.
 - Breaking: `ergo-sbe` `encode_from`, DTO `encode` and `bulk_add_domain`
   check only the `minValue`/`maxValue` a schema declares, the same bounds
   `validate()` checks. An undeclared side is not checked, so any value of

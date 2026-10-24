@@ -842,7 +842,7 @@ fn env_defaults_match_plan() {
         c.rx_descriptors, None,
         "unset: min(4096, the NIC's maximum), per port at start"
     );
-    assert_eq!(c.tx_descriptors, 512); // an ENA's maximum
+    assert_eq!(c.tx_descriptors, 256); // an ENA's maximum under large LLQ
     assert_eq!(c.mbufs_per_port, 16384, "what the lab measured");
     assert_eq!(c.mempool_cache, 256);
     assert_eq!(c.burst_size, 32);

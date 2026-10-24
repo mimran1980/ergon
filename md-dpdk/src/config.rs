@@ -146,8 +146,8 @@ pub struct DpdkTransportConfig {
     pub rx_free_thresh: Option<u16>,
     /// The transmit queue's free threshold (`tx_conf.tx_free_thresh`): ENA
     /// reclaims every completed descriptor inside the send that finds fewer
-    /// than this free. `None` keeps the PMD's default (ENA: 448
-    /// at 512 descriptors); else `1..tx_descriptors`.
+    /// than this free. `None` keeps the PMD's default (ENA: 224
+    /// at 256 descriptors); else `1..tx_descriptors`.
     pub tx_free_thresh: Option<u16>,
     /// Ask for `RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE`, so the PMD frees sent mbufs
     /// in bulk. Configured only on a NIC that offers it (ENA does); the port's

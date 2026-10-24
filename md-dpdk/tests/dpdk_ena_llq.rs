@@ -3,8 +3,8 @@
 //! Without LLQ, or with its BAR mapped uncached, every ENA send costs about
 //! 100 times as much (Aeron Premium's DPDK notes; DPDK 24.11.0 and .1 turned
 //! LLQ off by default, fixed in 24.11.2). So every ENA port's device
-//! arguments name the LLQ policy (`llq_policy=1`, the device's recommended
-//! policy, from DPDK 24.11; `enable_llq=1` before) unless the operator's
+//! arguments name the LLQ policy (`llq_policy=3`, large 256-byte entries,
+//! from DPDK 24.11; `enable_llq=1` before) unless the operator's
 //! `RUSTERON_DPDK_ENA_DEVARGS` names it, and start fails, naming the port,
 //! when the operator turned LLQ off or the process does not map the port's
 //! LLQ BAR write-combined (`<bdf>/resource2_wc` in `/proc/self/maps`), unless
@@ -68,8 +68,8 @@ fn log_index_containing(env: &TestEnv, needle: &str) -> c_int {
 
 // --- The device arguments ------------------------------------------------------
 
-/// Every ENA port names the LLQ policy for the DPDK it runs on: `llq_policy=1`
-/// from 24.11 (whose 24.11.0 and .1 otherwise leave LLQ off), `enable_llq=1`
+/// Every ENA port names the LLQ policy for the DPDK it runs on: `llq_policy=3`
+/// (large entries) from 24.11 (whose 24.11.0 and .1 otherwise leave LLQ off), `enable_llq=1`
 /// before (23.11 and 24.07 know no `llq_policy`, and refuse the device).
 /// MANA ports and test vdevs get none.
 #[test]
@@ -77,9 +77,9 @@ fn log_index_containing(env: &TestEnv, needle: &str) -> c_int {
 fn ena_ports_name_the_llq_policy_for_their_dpdk() {
     let env = TestEnv::new();
     for (year, month, devarg) in [
-        (25, 11, "llq_policy=1"),
-        (24, 11, "llq_policy=1"),
-        (26, 3, "llq_policy=1"),
+        (25, 11, "llq_policy=3"),
+        (24, 11, "llq_policy=3"),
+        (26, 3, "llq_policy=3"),
         (24, 7, "enable_llq=1"),
         (23, 11, "enable_llq=1"),
     ] {
@@ -107,7 +107,8 @@ fn ena_ports_name_the_llq_policy_for_their_dpdk() {
 fn the_operators_ena_device_arguments_join_or_replace_the_llq_policy() {
     let env = TestEnv::new();
     for (year, extra, args) in [
-        (25, "miss_txc_to=5", "llq_policy=1,miss_txc_to=5"),
+        (25, "miss_txc_to=5", "llq_policy=3,miss_txc_to=5"),
+        (25, "llq_policy=1", "llq_policy=1"),
         (
             25,
             "llq_policy=3,control_path_poll_interval=500",
