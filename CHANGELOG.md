@@ -310,8 +310,15 @@
   the sender's stack on every wakeup, IPI, cross-call and work item sent
   there, and `gapprobe trace-report` names every switch, IPI, timer and
   work item and ties each to the gap log (`results/trace-cpu<N>.md`).
-  `LAB_QUIET=1` applies the node settings of `lab_quiet_settings`. Not
-  yet run on the lab VM.
+  `LAB_QUIET=1` applies the node settings of `lab_quiet_settings`. The
+  scale report also shows the pod cgroup's throttling (a pod-level quota
+  throttles there, not in the container's `cpu.stat`) and a placement
+  verdict per pod (every sample of the spin thread on its CPU alone, of
+  every other thread on that pod's shared CPUs); the step samples from the
+  IRQ CPU, and the contention pods spin 30 s longer each so the first one
+  outlasts the window. The traced rep waits 20 s more before its spin and
+  is a failure if tracing was armed after the spin started. Not yet run on
+  the lab VM.
 - `k8s/nri-shared-cpus/BENCHMARKS.md`: run 20261024212712's plugin-on
   result (p50 0.02 µs, p99.99 0.03 µs, max 17.40 to 25.34 µs over 5 reps,
   6 involuntary switches a 60 s rep) and e2e placement, its raw files under
@@ -325,7 +332,7 @@
   `reservedSystemCPUs: 0-2`, so the bench's spin moves from CPU 2 to 3 and
   the lab needs 7 vCPUs or more. The plugin-off arm runs only on request
   (`LAB_ARMS="plugin-on plugin-off"`; default `plugin-on`); the default
-  plan is about 74 minutes and $0.43. `gapprobe` writes its gap log and
+  plan is about 75 minutes and $0.44. `gapprobe` writes its gap log and
   histogram before the spin thread pins itself (filling the old log faulted
   one page in on the hot CPU per 256 gaps), counts the loop's page faults,
   and runs its UDP helpers in a child process by default (`--helpers

@@ -38,9 +38,10 @@ shared CPU, the plugin on. Five reps of 60 s.
 - Gaps of 5 µs or more: 59 to 60 a rep, about one a second. In each rep 58
   or 59 of them overlap an IPI0 and an IPI1 window, 43 to 47 an
   `arch_timer` one too.
-- Gaps of 9 µs or more: a pair in the spin's first second (17 to 20 µs,
-  then 12 to 13 µs 2 ms later), then one every 10.240 s (9 to 25 µs). The
-  max is one of these.
+- Gaps of 9 µs or more: a pair in the spin's first second (17.4 to 19.6
+  µs, then 11.9 to 13.4 µs 2 ms later), then about one every 10.240 s (9
+  to 25 µs; rep 4 has one more, 9.3 µs, 1 s after the pair). The max is
+  one of these.
 
 What sent those IPIs and what ran in those 6 switches is **not known from
 this run**: the sampler counts interrupts, it does not name their sender.
@@ -64,7 +65,7 @@ a named cause for every remaining max. The lab changed since run
 
 | change | why | where |
 |---|---|---|
-| a traced rep (`LAB_TRACE=1`, default): one more 60 s plugin-on rep under kernel ftrace | names every switch away from the spin thread (what ran, who woke it, the waker's kernel stack), every IPI and cross-call sent to its CPU (sender CPU, task, callsite, stack), every timer, tick, interrupt and work item there, and ties each to the gap log by `CLOCK_REALTIME`. Output `results/trace-cpu<N>.md` | `vm.sh` `trace_start`/`trace_stop`, `lib.sh` `lab_trace_events`, `gapprobe trace-report` |
+| a traced rep (`LAB_TRACE=1`, default): one more 60 s plugin-on rep under kernel ftrace | names every switch away from the spin thread (what ran, who woke it, the waker's kernel stack), every IPI and cross-call sent to its CPU (sender CPU, task, callsite, stack), every timer, tick, interrupt and work item there, and ties each to the gap log by `CLOCK_REALTIME`. Output `results/trace-cpu<N>.md`. Its helpers run 25 s before the spin so the tracefs setup (each event enabled patches kernel text, which interrupts every CPU) is done first; a rep armed after its spin started is a failure | `vm.sh` `trace_start`/`trace_stop`, `lib.sh` `lab_trace_events`, `gapprobe trace-report` |
 | the probe's gap log and histogram are written before the spin thread pins itself | the old log grew on the hot CPU: one first-touch page fault per 4 KiB (256 gaps), which leaves per-CPU memory state (charge cache, LRU batch, vmstat counters) the kernel settles with work queued on that CPU. The summary now counts the loop's page faults (`minflt`, `majflt`) | `gapprobe` `GapLog`, `Histogram::new` (a Linux unit test fails on 4,096 faults without it) |
 | the probe's UDP helpers run in a child process (`--helpers process`, default) | helpers that map or unmap memory in the spin thread's process can send it TLB-flush or membarrier IPIs; a separate process has its own address space | `gapprobe spin --helpers`; `LAB_HELPERS=thread` repeats the old layout |
 | node settings (`LAB_QUIET=1`, default) | `vm.stat_interval` 120, `kernel.watchdog_cpumask` the housekeeping CPUs, `kernel.nmi_watchdog` 0, `kernel.numa_balancing` 0, `vm.compaction_proactiveness` 0, `kernel.timer_migration` 1, the writeback workqueue on the housekeeping CPUs: each removes a per-CPU kernel worker or timer of `Documentation/admin-guide/kernel-per-CPU-kthreads.rst`. Which of them mattered is for the trace to show | `lib.sh` `lab_quiet_settings`, recorded in `results/quiet.txt` |
@@ -104,11 +105,16 @@ cgroup `cpu.weight`, which comes from their `cpu` request, not from M.
 | d-contention | A cpu 1, B cpu 1, C cpu 2, 100 m each, started in turn | A and B on different shared CPUs; C on A's; A and C split it by `cpu.weight` (C's about twice A's), B alone |
 
 Each case records per-CPU busy time of every shared and exclusive CPU
-(`/proc/stat`), each container cgroup's `cpu.stat` (`usage_usec`,
-`nr_periods`, `nr_throttled`, `throttled_usec`), `cpu.weight` and `cpu.max`
-(the container's and the pod's), the shared CPUs each pod got, every
-thread's CPU each second, and the spin thread's max. Output
-`results/scale.md`.
+(`/proc/stat`, every task on the VM), each pod's `cpu.stat` (`usage_usec`,
+`nr_periods`, `nr_throttled`, `throttled_usec`), `cpu.weight` and `cpu.max`,
+of the container's cgroup and of the pod's (a pod-level quota throttles
+there, not in the container's), the shared CPUs each pod got, every
+thread's CPU and `Cpus_allowed_list` each second with a verdict (the spin
+thread on its CPU alone, every other thread on that pod's shared CPUs),
+and the spin thread's max. A pod's helper time is its container's usage
+less the spin thread's. The step's own sampling runs on the IRQ CPU; the
+contention pods spin 30 s longer each, so the first one's helpers run
+through the whole window. Output `results/scale.md`.
 
 ## Not measured
 
@@ -120,7 +126,7 @@ thread's CPU each second, and the spin thread's max. Output
 
 ```sh
 DRY_RUN=1 k8s/nri-shared-cpus/lab/azure-vm.sh   # plan, time, price; no cloud call
-k8s/nri-shared-cpus/lab/azure-vm.sh             # about 74 minutes, about $0.43
+k8s/nri-shared-cpus/lab/azure-vm.sh             # about 75 minutes, about $0.44
 ```
 
 `LAB_ARMS="plugin-on plugin-off"` adds the plain static CPU manager arm.
