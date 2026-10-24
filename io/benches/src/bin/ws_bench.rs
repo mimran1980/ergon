@@ -4,7 +4,7 @@
 //! |---|---|---|
 //! | `rx` (default) | parse, decide, copy, check, deliver plaintext already in the receive buffer | `old` (`Interest::Keep`) against `new` (`Fragments` / `Skip`) |
 //! | `tx` | build one masked client frame into the send queue, alone (`build`) and inside a sealed TLS record (`sealed`) | `old`: zeroed resize, copy, separate XOR (`ws::encode_frame`), the path before 0.1.35; `new`: header from the stack, copy then XOR in place, no zero fill (`ws::push_frame`) |
-//! | `text` | deliver one unfragmented kept text message | `TextCheck::None`, `Utf8`, `Ascii` on pure-ASCII and on mixed text |
+//! | `text` | deliver one unfragmented kept text message | `TextCheck::None`, `Ascii` (trusted, reads nothing), `AsciiChecked`, `Utf8` on pure-ASCII and on mixed text |
 //! | `frag` | deliver one message in four fragments | `Interest::Keep`, `Fragments`, `Stream` |
 //! | `span` | deliver messages from 16 KiB stand-in records cut mid-frame | `old`: the new record always moved back (`set_span_back_only`); `new`: the smaller side moved |
 //!
@@ -853,8 +853,9 @@ fn deliver_paths(
 fn text_suite(sizes: &[usize], samples: usize, out: &mut String) -> BoxResult<()> {
     let checks = [
         TextCheck::None,
-        TextCheck::Utf8,
+        TextCheck::Ascii,
         TextCheck::AsciiChecked(NonAscii::DeliverUnchecked),
+        TextCheck::Utf8,
     ];
     let mut conns = Vec::new();
     for c in checks {
@@ -877,6 +878,19 @@ fn text_suite(sizes: &[usize], samples: usize, out: &mut String) -> BoxResult<()
                 l = load_with(Shape::Whole, (0..k).map(|i| mixed(i, size)).collect())?;
             }
             let h = deliver_paths(&mut conns, &mut sinks, Shape::Whole, &l, samples)?;
+            // Each mode flagged what it found (checked after timing too).
+            for (c, s) in checks.iter().zip(&sinks) {
+                let want = match c {
+                    TextCheck::None => TextStatus::Unchecked,
+                    TextCheck::Ascii => TextStatus::AssumedAscii,
+                    TextCheck::AsciiChecked(_) if is_mixed => TextStatus::NotAscii,
+                    TextCheck::AsciiChecked(_) => TextStatus::Ascii,
+                    TextCheck::Utf8 => TextStatus::Utf8,
+                };
+                if s.last != want {
+                    return Err(format!("{c:?}: delivered as {:?}", s.last).into());
+                }
+            }
             for ((c, s), hist) in checks.iter().zip(&sinks).zip(&h) {
                 let line = format!(
                     "| {size} | {} | {} | {:?} | {k} | {} |\n",
@@ -884,7 +898,8 @@ fn text_suite(sizes: &[usize], samples: usize, out: &mut String) -> BoxResult<()
                     match c {
                         TextCheck::None => "none",
                         TextCheck::Utf8 => "utf8",
-                        TextCheck::AsciiChecked(_) => "ascii",
+                        TextCheck::Ascii => "ascii",
+                        TextCheck::AsciiChecked(_) => "ascii-checked",
                     },
                     s.last,
                     hist.cells()

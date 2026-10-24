@@ -2,8 +2,15 @@
 //! the previous path against the current one.
 //!
 //! ```text
-//! http_bench [--samples 20000] [--cpu N] [--out FILE]
+//! http_bench [--suite rx|body] [--sizes 100,300,4096,16384] [--samples 20000] [--cpu N] [--out FILE]
 //! ```
+//!
+//! `--suite body` times the body check instead: one `Content-Length`
+//! response of each size, pure ASCII and mixed (a two-byte character every
+//! 64 bytes), delivered by four connections that differ only in
+//! `HttpOptions::body_check` (`None`, `Ascii`, `AsciiChecked`, `Utf8`),
+//! interleaved sample by sample, rotating which goes first. Each mode's
+//! delivered body and `RxMeta::text` are checked before timing.
 //!
 //! A real TLS 1.3 handshake on loopback builds the connection; after that
 //! nothing touches a socket or the AEAD. Response rows stage each record as
@@ -37,7 +44,8 @@ use std::sync::Arc;
 
 use ergon_io::tls::{self, RecordLayer};
 use ergon_io::{
-    ConnId, Handler, HttpConn, HttpHandler, HttpOptions, RequestTemplate, Response, RxMeta, Target,
+    ConnId, Handler, HttpConn, HttpHandler, HttpOptions, NonAscii, RequestTemplate, Response,
+    RxMeta, Target, TextCheck, TextStatus,
 };
 use hdrhistogram::Histogram;
 use io_bench::args::Args;
@@ -67,6 +75,8 @@ struct App {
     sink: u64,
     last_body: Vec<u8>,
     last_headers: Vec<(String, Vec<u8>)>,
+    /// What the body check found for the last response.
+    last_text: TextStatus,
     verify: bool,
 }
 
@@ -94,7 +104,8 @@ impl App {
 
 impl HttpHandler for App {
     #[inline]
-    fn on_response(&mut self, _: ConnId, _: u64, r: &Response<'_>, _: &RxMeta) {
+    fn on_response(&mut self, _: ConnId, _: u64, r: &Response<'_>, meta: &RxMeta) {
+        self.last_text = meta.text;
         self.see(r.headers, r.body);
     }
 }
@@ -867,6 +878,162 @@ fn fixed_of(t: &Target) -> Vec<u8> {
     f
 }
 
+// ---------------------------------------------------------------------------
+// The body check suite.
+// ---------------------------------------------------------------------------
+
+/// Feed-like text with a two-byte character every 64 bytes.
+fn mixed_body(len: usize) -> Vec<u8> {
+    let mut b = body_of(len);
+    let mut at = 31;
+    while at + 1 < len {
+        b[at..at + 2].copy_from_slice("\u{e9}".as_bytes());
+        at += 64;
+    }
+    b
+}
+
+/// Responses per sample: about 256 KiB of body, 1 to 64 responses.
+const fn k_for(size: usize) -> usize {
+    let k = 256 * 1024 / size;
+    if k < 1 {
+        1
+    } else if k > 64 {
+        64
+    } else {
+        k
+    }
+}
+
+/// One sample: `l.k` responses through `conn`. Ticks and whether an
+/// involuntary switch happened.
+fn body_sample(conn: &mut HttpConn, app: &mut App, l: &Load) -> BoxResult<(u64, bool)> {
+    let meta = RxMeta::default();
+    for _ in 0..l.k {
+        conn.request("GET", "/x", &[], &[])?;
+        conn.clear_tx();
+    }
+    let before = app.responses;
+    let (_, iv0) = thread_ctx_switches();
+    let mut ticks = 0u64;
+    for _ in 0..l.k {
+        for r in &l.records {
+            conn.stage_plain_record(r)?;
+            let t0 = rdtsc();
+            let n = conn.deliver_staged(ConnId::from_parts(0, 0), &meta, app)?;
+            ticks += rdtsc().wrapping_sub(t0);
+            black_box(n);
+        }
+    }
+    let (_, iv1) = thread_ctx_switches();
+    if app.responses - before != l.k as u64 {
+        return Err(format!("{}: delivered {}", l.name, app.responses - before).into());
+    }
+    Ok((ticks, iv1 != iv0))
+}
+
+/// What `c` flags a pure-ASCII or a mixed body as.
+const fn expected(c: TextCheck, is_mixed: bool) -> TextStatus {
+    match c {
+        TextCheck::None => TextStatus::Unchecked,
+        TextCheck::Ascii => TextStatus::AssumedAscii,
+        TextCheck::AsciiChecked(_) if is_mixed => TextStatus::NotAscii,
+        TextCheck::AsciiChecked(_) => TextStatus::Ascii,
+        TextCheck::Utf8 => TextStatus::Utf8,
+    }
+}
+
+const fn check_name(c: TextCheck) -> &'static str {
+    match c {
+        TextCheck::None => "none",
+        TextCheck::Ascii => "ascii",
+        TextCheck::AsciiChecked(_) => "ascii-checked",
+        TextCheck::Utf8 => "utf8",
+    }
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn body_suite(target: &Target, sizes: &[usize], samples: usize, out: &mut String) -> BoxResult<()> {
+    let checks = [
+        TextCheck::None,
+        TextCheck::Ascii,
+        TextCheck::AsciiChecked(NonAscii::DeliverUnchecked),
+        TextCheck::Utf8,
+    ];
+    let mut conns = Vec::new();
+    for c in checks {
+        conns.push(connect(
+            target,
+            HttpOptions {
+                buf_size: BUF,
+                max_in_flight: 64,
+                body_check: c,
+                ..HttpOptions::default()
+            },
+        )?);
+    }
+    let mut app = App::default();
+    out.push_str("| body B | text | check | delivered as | K | ns/response p50 | p99 | max | max sample preempted (Linux) |\n");
+    out.push_str("|---|---|---|---|---|---|---|---|---|\n");
+    for &size in sizes {
+        for is_mixed in [false, true] {
+            let body = if is_mixed {
+                mixed_body(size)
+            } else {
+                body_of(size)
+            };
+            let mut resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {size}\r\n\r\n"
+            )
+            .into_bytes();
+            resp.extend_from_slice(&body);
+            let text = if is_mixed { "mixed" } else { "ascii" };
+            let l = load(format!("body {size} {text}"), &resp, &[], k_for(size))?;
+            // Correctness first: every mode delivers the body intact and
+            // flags it as it should.
+            for (c, conn) in checks.iter().zip(conns.iter_mut()) {
+                app.verify = true;
+                let one = Load { k: 1, ..l.clone() };
+                body_sample(conn, &mut app, &one)?;
+                app.verify = false;
+                let want = expected(*c, is_mixed);
+                if app.last_body != body || app.last_text != want {
+                    return Err(format!("{}: {c:?} delivered {:?}", l.name, app.last_text).into());
+                }
+            }
+            let mut sides: Vec<Side> = checks.iter().map(|_| side()).collect::<BoxResult<_>>()?;
+            let per = 1000.0 / ticks_per_us() / l.k as f64;
+            let warm = samples / 10;
+            for i in 0..warm + samples {
+                for j in 0..checks.len() {
+                    let p = (i + j) % checks.len();
+                    let (t, pre) = body_sample(&mut conns[p], &mut app, &l)?;
+                    if i >= warm {
+                        record_sample(&mut sides[p], t, pre, per)?;
+                    }
+                }
+            }
+            for (c, s) in checks.iter().zip(&sides) {
+                let r = finish(&l.name, Path::New, l.k, samples, s);
+                let want = expected(*c, is_mixed);
+                let line = format!(
+                    "| {size} | {text} | {} | {want:?} | {} | {:.1} | {:.1} | {:.1} | {} |\n",
+                    check_name(*c),
+                    r.k,
+                    r.p50,
+                    r.p99,
+                    r.max,
+                    preempted(r.max_preempted),
+                );
+                print!("{line}");
+                out.push_str(&line);
+            }
+        }
+    }
+    black_box(app.sink);
+    Ok(())
+}
+
 fn main() -> BoxResult<()> {
     let a = Args::from_env();
     let samples: usize = a.num_or("samples", 20_000)?;
@@ -875,6 +1042,22 @@ fn main() -> BoxResult<()> {
     }
     let target =
         Target::new("api.example.com", 443, "").with_header("X-API-Key", "0123456789abcdef");
+    if a.str_or("suite", "rx") == "body" {
+        let sizes = a
+            .list("sizes", "100,300,4096,16384")
+            .iter()
+            .map(|s| s.parse())
+            .collect::<Result<Vec<usize>, _>>()?;
+        let _ = ticks_per_us();
+        let mut out = String::new();
+        out.push_str(&counter_meta());
+        out.push_str(&format!("suite=body\nsamples={samples}\n\n"));
+        body_suite(&target, &sizes, samples, &mut out)?;
+        if let Ok(path) = a.req("out") {
+            std::fs::write(path, out)?;
+        }
+        return Ok(());
+    }
     let opts = HttpOptions {
         buf_size: BUF,
         max_in_flight: 64,
