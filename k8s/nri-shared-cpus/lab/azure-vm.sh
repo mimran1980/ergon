@@ -165,7 +165,7 @@ if ((scale)); then
 else
     scale_said="off (LAB_SCALE=0)"
 fi
-if ((quiet)); then quiet_said="the quiet settings (LAB_QUIET=1): $(lab_quiet_settings "$reserved_cpus" | cut -d'|' -f1 | sed 's|^/proc/sys/||; s|^/sys/||' | paste -sd, - | sed 's/,/, /g')"; else
+if ((quiet)); then quiet_said="the quiet settings (LAB_QUIET=1): $(lab_quiet_settings "$reserved_cpus" "$exclusive_cpus" | cut -d'|' -f1 | sed 's|^/proc/sys/||; s|^/sys/||; s|kernel/debug/sched/fair_server/cpu[0-9]*/runtime|fair_server runtime|' | awk '!seen[$0]++' | paste -sd, - | sed 's/,/, /g')"; else
     quiet_said="as booted (LAB_QUIET=0)"
 fi
 
@@ -362,8 +362,13 @@ log "VM at $ip"
 
 # ---------------------------------------------------------------- the VM
 
+# one multiplexed connection: each new login JIT-compiles sshd's seccomp
+# filter, and the JIT patches kernel text with an IPI to every CPU, the
+# isolated ones too (the traced rep of run 20261024233129). The socket
+# path stays short (sun_path is 104 bytes on macOS).
 ssh_opts=(-o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$out/known_hosts" -o ConnectTimeout=10
-    -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o BatchMode=yes)
+    -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o BatchMode=yes
+    -o ControlMaster=auto -o "ControlPath=/tmp/ergon-lab-$stamp-%C" -o ControlPersist=120)
 on() { ssh "${ssh_opts[@]}" "$user@$ip" "$@"; }
 
 wait_ssh() {

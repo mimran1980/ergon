@@ -150,6 +150,8 @@ ci=$work/ok/out-dir/cloud-init.yaml
 check "backstop: a timer at the deadline" grep -qE 'OnCalendar=20[0-9]{2}-[0-9]{2}-[0-9]{2} [0-9:]{8} UTC' "$ci"
 check "backstop: deletes this group" has "$ci" "curl -fsS -X DELETE -H \"Authorization: Bearer \$tok\" 'https://management.azure.com/subscriptions/00000000-0000-0000-0000-00000000cafe/resourceGroups/ergon-lab-nri-20261024000000?api-version=2021-04-01'"
 check "backstop: enabled from first boot" has "$ci" "[systemctl, enable, --now, ergon-lab-backstop.timer]"
+check "ssh: one multiplexed connection (a new login JIT-compiles sshd's seccomp filter, which IPIs every CPU)" grep -qF "ControlMaster=auto" "$work/ok/fake/ssh-args.last"
+check "ssh: the connection persists between polls" grep -qF "ControlPersist=" "$work/ok/fake/ssh-args.last"
 check "backstop: checked before the steps" has "$work/ok/fake/ssh.log" "sudo /usr/local/sbin/ergon-lab-backstop check"
 for want in IRQ_CPU=0 SHARED_CPUS=1 SCALE_SHARED_CPUS=1-2 EXCLUSIVE_CPUS=3-7 RESERVED_CPUS=0-2 REPS=5 SECONDS_PER_RUN=60 \
     'STRESS="--cpu 1 --vm 1 --vm-bytes 128M"' 'ARMS="plugin-on"' TRACE=1 HELPERS=process QUIET=1 SCALE_SECONDS=30 SCALE_THREADS=4; do
@@ -374,6 +376,11 @@ check "trace: work queued for it" grep -qxF 'workqueue:workqueue_queue_work;cpu 
 qs=$(lab_quiet_settings 0-2)
 check "quiet: watchdog on the housekeeping CPUs" grep -qF '/proc/sys/kernel/watchdog_cpumask|0-2|' <<<"$qs"
 check "quiet: writeback work on them" grep -qF '/sys/bus/workqueue/devices/writeback/cpumask|7|' <<<"$qs"
+qx=$(lab_quiet_settings 0-2 3-4)
+check "quiet: no THP collapse daemon (khugepaged drains every CPU's LRU)" grep -qF '/sys/kernel/mm/transparent_hugepage/enabled|never|' <<<"$qx"
+check "quiet: no fair server on exclusive CPU 3" grep -qF '/sys/kernel/debug/sched/fair_server/cpu3/runtime|0|' <<<"$qx"
+check "quiet: no fair server on exclusive CPU 4" grep -qF '/sys/kernel/debug/sched/fair_server/cpu4/runtime|0|' <<<"$qx"
+check "quiet: the fair server kept on the housekeeping CPUs" test "$(grep -c 'fair_server/cpu[0-2]/' <<<"$qx")" = 0
 check "quiet: each setting says why" test "$(awk -F'|' 'NF == 3 && $3 != ""' <<<"$qs" | wc -l | tr -d ' ')" = "$(wc -l <<<"$qs" | tr -d ' ')"
 
 placement() { lab_placement_check "$@" >"$work/placement" 2>&1; }
@@ -495,7 +502,15 @@ echo 1 >"$q/proc/sys/kernel/nmi_watchdog"
 echo 20 >"$q/proc/sys/vm/compaction_proactiveness"
 echo 1 >"$q/proc/sys/kernel/timer_migration"
 echo ff >"$q/sys/bus/workqueue/devices/writeback/cpumask"
-LAB_PROC_ROOT=$q/proc LAB_SYS_ROOT=$q/sys quiet_node 0-2 >"$work/quiet.out" 2>&1
+mkdir -p "$q/sys/kernel/mm/transparent_hugepage" "$q/sys/kernel/debug/sched/fair_server/cpu3"
+echo "[always] madvise never" >"$q/sys/kernel/mm/transparent_hugepage/enabled"
+echo 50000000 >"$q/sys/kernel/debug/sched/fair_server/cpu3/runtime"
+chmod 000 "$q/sys/kernel/debug" # debugfs is 700 root
+FAKE_ROOT_ONLY=$q/sys/kernel/debug LAB_PROC_ROOT=$q/proc LAB_SYS_ROOT=$q/sys quiet_node 0-2 3 >"$work/quiet.out" 2>&1
+chmod 755 "$q/sys/kernel/debug"
+check "quiet: THP never" test "$(cat "$q/sys/kernel/mm/transparent_hugepage/enabled")" = never
+check "quiet: the fair server off on CPU 3, through root-only debugfs" test "$(cat "$q/sys/kernel/debug/sched/fair_server/cpu3/runtime")" = 0
+check "quiet: its before value read as root" grep -qF "kernel/debug/sched/fair_server/cpu3/runtime: 50000000 -> 0" "$work/quiet.out"
 check "quiet: stat_interval 1 -> 120" grep -qF "vm/stat_interval: 1 -> 120" "$work/quiet.out"
 check "quiet: written" test "$(cat "$q/proc/sys/vm/stat_interval")" = 120
 check "quiet: the writeback cpumask" test "$(cat "$q/sys/bus/workqueue/devices/writeback/cpumask")" = 7

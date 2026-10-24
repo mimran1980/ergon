@@ -122,9 +122,10 @@ pin_interrupts() {
     fi
 }
 
-# quiet_node <housekeeping CPUs>: every setting of lib.sh lab_quiet_settings
-# that this kernel has, written and printed "path: before -> after (why)";
-# one it lacks is printed "skip: path (not on this kernel)".
+# quiet_node <housekeeping CPUs> [<exclusive CPUs>]: every setting of lib.sh
+# lab_quiet_settings that this kernel has, written and printed "path: before
+# -> after (why)"; one it lacks is printed "skip: path (not on this kernel)".
+# Looked at as root: debugfs is 700 root.
 quiet_node() {
     local path value why f before
     while IFS='|' read -r path value why; do
@@ -133,17 +134,17 @@ quiet_node() {
         /sys/*) f=$LAB_SYS_ROOT/${path#/sys/} ;;
         *) continue ;;
         esac
-        if [[ ! -e $f ]]; then
+        if ! sudo test -e "$f"; then
             echo "skip: $path (not on this kernel)"
             continue
         fi
-        before=$(cat "$f" 2>/dev/null)
+        before=$(sudo cat "$f" 2>/dev/null)
         if echo "$value" | sudo tee "$f" >/dev/null 2>&1; then
-            echo "${path#/proc/sys/}: $before -> $(cat "$f" 2>/dev/null) ($why)"
+            echo "${path#/proc/sys/}: $before -> $(sudo cat "$f" 2>/dev/null) ($why)"
         else
             echo "refused: ${path#/proc/sys/} stays $before, wanted $value ($why)"
         fi
-    done < <(lab_quiet_settings "$1")
+    done < <(lab_quiet_settings "$1" "${2:-}")
 }
 
 # cpumask <cpulist>: as a hex mask (CPUs below 64).
@@ -726,7 +727,7 @@ tune)
     [[ $(cat "$LAB_SYS_ROOT/devices/system/cpu/nohz_full") == "$EXCLUSIVE_CPUS" ]] ||
         fail "nohz_full is $(cat "$LAB_SYS_ROOT/devices/system/cpu/nohz_full"), want $EXCLUSIVE_CPUS"
     pin_interrupts "$IRQ_CPU" "$RESERVED_CPUS"
-    if [[ ${QUIET:-0} == 1 ]]; then quiet_node "$RESERVED_CPUS" | tee "$results/quiet.txt"; fi
+    if [[ ${QUIET:-0} == 1 ]]; then quiet_node "$RESERVED_CPUS" "$EXCLUSIVE_CPUS" | tee "$results/quiet.txt"; fi
     {
         echo "cmdline $(cat /proc/cmdline)"
         echo "isolated $(cat "$LAB_SYS_ROOT/devices/system/cpu/isolated") nohz_full $(cat "$LAB_SYS_ROOT/devices/system/cpu/nohz_full")"

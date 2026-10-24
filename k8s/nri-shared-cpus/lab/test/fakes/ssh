@@ -10,6 +10,7 @@
 # timer) has not run for the first n connections.
 cmd=${!#}
 echo "$cmd" >>"$FAKE_DIR/ssh.log"
+printf '%s\n' "$*" >"$FAKE_DIR/ssh-args.last"
 case ${FAKE_SSH:-up} in
 down) exit 255 ;;
 hang) sleep 3; exit 255 ;;
