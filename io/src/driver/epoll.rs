@@ -216,6 +216,16 @@ impl Epoll {
         }
     }
 
+    /// Data arrived on slot `i`: when its queue is unknown, look it up once
+    /// (on the next poll), not every poll.
+    #[inline]
+    fn data_arrived(&mut self, i: usize) {
+        if self.per_queue && self.napi.get(i) == Some(&0) && self.asked.get(i) == Some(&false) {
+            self.asked[i] = true;
+            self.dirty = true;
+        }
+    }
+
     #[inline]
     fn recv_index<E, H>(
         &mut self,
@@ -239,15 +249,7 @@ impl Epoll {
                 if !conn.tx_queue().is_empty() {
                     conns.mark_tx(i);
                 }
-                // Data arrived on a socket whose queue is unknown: look it
-                // up once now (the next poll), not every poll.
-                if self.per_queue
-                    && self.napi.get(i) == Some(&0)
-                    && self.asked.get(i) == Some(&false)
-                {
-                    self.asked[i] = true;
-                    self.dirty = true;
-                }
+                self.data_arrived(i);
             }
             Err(e) => {
                 let e = conn.close_reason(e);
@@ -511,6 +513,27 @@ mod tests {
             ep.refresh_reps(&mut conns);
         }
         assert_eq!(ep.seen.capacity(), cap, "the scratch space grew");
+        Ok(())
+    }
+
+    /// A socket's first data asks for its queue once: the next poll looks it
+    /// up, and later data on a socket that still has no id (loopback, a
+    /// plain veth) asks nothing until the periodic look-again.
+    #[test]
+    fn first_data_looks_a_queue_up_once() -> R {
+        let (mut ep, mut conns) = per_queue()?;
+        install(&mut ep, &mut conns)?;
+        install(&mut ep, &mut conns)?;
+        ep.refresh_reps(&mut conns);
+        assert_eq!(ep.picks, 1, "the adds");
+        for _ in 0..100 {
+            ep.data_arrived(0);
+            ep.refresh_reps(&mut conns);
+        }
+        assert_eq!(ep.picks, 2, "one look-up after the first data");
+        ep.data_arrived(1);
+        ep.refresh_reps(&mut conns);
+        assert_eq!(ep.picks, 3, "the other socket's first data");
         Ok(())
     }
 
