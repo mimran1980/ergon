@@ -109,6 +109,16 @@
 #   * analyse.py names threading modes and isolated-poll readably, and sorts
 #     that state after isolated and before any it does not know; spikes.py
 #     attributes preemptions of the shared agents;
+#   * the same-host hairpin (@HAIRPIN=1) and sparse round trips
+#     (@RTT_GAP_US): modes.sh takes and refuses them (and rtt_plan's seconds,
+#     round trips and warm-up; four cores on host a), lib.sh runs a hairpin
+#     as one floor client on host a and hands a paced mode's clients its
+#     pacing and plan, vm.sh client passes RTT_GAP_US, vm.sh routes a kernel
+#     hairpin out of its NICs (fail closed, put back) and ready refuses a
+#     host without the receiver core, analyse.py tables both, spikes.py
+#     judges a hairpin on host a alone and a paced run's length by its gap,
+#     estimate.py times and sizes both, and aws/lab.sh refuses what cannot
+#     run before any cloud call;
 #   * aws/lab.sh end to end against a stateful fake aws (fake_aws.py): a
 #     cluster run, a precision-time run and LAB_DELETE make exactly the calls
 #     of expected-aws-calls.txt (the lab's before cross-AZ and cross-region,
@@ -1683,7 +1693,10 @@ for refused in "LAB_TYPE=c8g.4xlarge|LAB_ALLOW_ARM=1" "LAB_TYPE_B=c7gn.4xlarge|L
     "LAB_MODES=dpdk@NAPI_BUSY=spare|kernel modes only" "LAB_LOCAL_MODES=kernel@NAPI_BUSY=spare|fifth core" \
     "LAB_STATES=isolate|pinned, isolated or isolated-poll" \
     "LAB_STATES=isolated-nodiags|optionally ending -nodiag" \
-    "LAB_RTT_SPIKE_NS=30us|LAB_RTT_SPIKE_NS is a whole number of nanoseconds" "LAB_RTT_STALL_NS=0|LAB_RTT_STALL_NS is a whole number of nanoseconds"; do
+    "LAB_RTT_SPIKE_NS=30us|LAB_RTT_SPIKE_NS is a whole number of nanoseconds" "LAB_RTT_STALL_NS=0|LAB_RTT_STALL_NS is a whole number of nanoseconds" \
+    "LAB_MODES=dpdk@HAIRPIN=1|the raw floor" "LAB_ALLOW_ARM=1 LAB_TYPE=c9g.large LAB_MODES=dpdk-raw@HAIRPIN=1|four cores" \
+    "LAB_ALLOW_ARM=1 LAB_TYPE_A=c9g.xlarge LAB_TYPE_B=c9g.large LAB_MODES=dpdk-raw@HAIRPIN=1|on host b too" \
+    "LAB_MODES=dpdk@RTT_GAP_US=5ms|1 to 1000000" "LAB_LOCAL_MODES=kernel@RTT_GAP_US=1000|cross-host"; do
     # shellcheck disable=SC2086
     if lab_aws "$tmp/arm-refused" ${refused%|*}; then
         fail "aws/lab.sh ran with ${refused%|*}"
@@ -4663,7 +4676,7 @@ pre=$(
 ) || true
 want="keys: 2 2 2 2 2 0 0 0 0
 transports: 2 2 0 0 0 0
-mode dpdk@CONDUCTUR=own: CONDUCTUR is neither a setting the lab knows (THP BIN CSTATE BUSY_POLL COALESCE RX_RING MIN_FREE_PCT CLOCKSOURCE RELIABLE AGENTS SMT JUMBO PUB_PARAMS SUB_PARAMS IRQ NAPI_DEFER NAPI_BUSY CONDUCTOR) nor an AERON_* or RUSTERON_* variable: vm.sh would export it to a driver that never reads it, and the mode would measure its baseline under another name
+mode dpdk@CONDUCTUR=own: CONDUCTUR is neither a setting the lab knows (THP BIN CSTATE BUSY_POLL COALESCE RX_RING MIN_FREE_PCT CLOCKSOURCE RELIABLE AGENTS SMT JUMBO PUB_PARAMS SUB_PARAMS IRQ NAPI_DEFER NAPI_BUSY CONDUCTOR HAIRPIN RTT_GAP_US) nor an AERON_* or RUSTERON_* variable: vm.sh would export it to a driver that never reads it, and the mode would measure its baseline under another name
 mode kernal: transport kernal: kernel, kernel-busy, dpdk, dpdk-spin, dpdk-adaptive, dpdk-epoll, or the raw floor's kernel-raw or dpdk-raw, optionally -mono (vm.sh refuses any other at the driver's start)
 rx: 0 0 2 2 2 2 0 2 0
 tx: 0 2 0 0 2 2 2 0 2 2
@@ -6155,6 +6168,421 @@ if [[ $ow_table != *"| pinned-dpdk@SUB_PARAMS=media-rcv-ts-offset=reserved | 1 |
     echo "$ow_out" >&2
 else
     pass "spikes.py: each rep's largest round trips split one way (out, back, the ping's host), largest first, without diagnostics too"
+fi
+
+# The same-host hairpin (@HAIRPIN=1: the raw floor's round trip between host
+# a's own two data NICs, never between hosts) and sparse round trips
+# (@RTT_GAP_US=<us>: one ping every that many microseconds). modes.sh: HAIRPIN
+# taken on the raw floor's modes only (the floor client runs both ends), AWS,
+# cross-host lists only, once; RTT_GAP_US 1 to 1000000 us, once, not on
+# localhost; each refusal says why. rtt_plan: a paced rep's seconds (20 to 60:
+# 10,000 round trips where they fit), its round trips and its warm-up (about
+# 2 s of pings); an unpaced one's as before. hairpin_types_check: host a
+# needs four cores (housekeeping, ping, the sender's, the pong's)
+hsmodes=$(
+    set +e
+    exec 2>&1
+    # shellcheck source=../modes.sh
+    . "$cloud/modes.sh" || exit 1
+    for m in dpdk-raw@HAIRPIN=1 kernel-raw@HAIRPIN=1 dpdk-raw-mono@HAIRPIN=1 dpdk-raw@HAIRPIN=1@RTT_GAP_US=50000 \
+        dpdk@RTT_GAP_US=1000 kernel-raw@RTT_GAP_US=1000000 dpdk-raw; do
+        mode_check "$m" remote arm64 aws '' cluster >/dev/null
+        echo "$m $? $(mode_hairpin "$m" && echo hairpin || echo cross)"
+    done
+    for c in 'dpdk@HAIRPIN=1|the raw floor' 'kernel-busy@HAIRPIN=1|the raw floor' 'dpdk-raw@HAIRPIN=2|HAIRPIN=1 or nothing' \
+        'dpdk-raw@HAIRPIN=1@HAIRPIN=1|one HAIRPIN at most' 'dpdk@RTT_GAP_US=0|1 to 1000000' 'dpdk@RTT_GAP_US=1000001|1 to 1000000' \
+        'dpdk@RTT_GAP_US=5ms|1 to 1000000' 'dpdk@RTT_GAP_US=1000@RTT_GAP_US=2000|one RTT_GAP_US at most'; do
+        why=$(mode_check "${c%|*}" remote arm64 aws '' cluster 2>&1)
+        echo "${c%|*} $? $(grep -cF -- "${c#*|}" <<<"$why")"
+    done
+    why=$(mode_check dpdk-raw@HAIRPIN=1 remote x86_64 azure '' 2>&1)
+    echo "azure $? $(grep -c 'AWS only' <<<"$why")"
+    why=$(mode_check kernel@RTT_GAP_US=1000 local arm64 aws '' cluster 2>&1)
+    echo "local $? $(grep -c 'cross-host' <<<"$why")"
+    for m in dpdk dpdk@RTT_GAP_US=1000 dpdk@RTT_GAP_US=50000 kernel-raw@RTT_GAP_US=200000 dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000 dpdk@RTT_GAP_US=100; do
+        echo "plan $m $(rtt_plan "$m" 300000 50000)"
+    done
+    echo "plan few $(rtt_plan dpdk@RTT_GAP_US=50000 500 10)"
+    for t in c9g.2xlarge c9g.xlarge c9g.large c8g.medium; do
+        hairpin_types_check dpdk-raw@HAIRPIN=1 aws "$t" >/dev/null 2>&1
+        echo "type $t $?"
+    done
+    why=$(hairpin_types_check dpdk-raw@HAIRPIN=1 aws c9g.large 2>&1)
+    echo "said $(grep -c 'four' <<<"$why")"
+    # host b sets the mode up too (vm.sh driver, ready): its type checked as well
+    hairpin_types_check dpdk-raw@HAIRPIN=1 aws c9g.xlarge c9g.large >/dev/null 2>&1
+    echo "type b $?"
+    hairpin_types_check dpdk-raw aws c9g.large
+    echo "cross $?"
+)
+want="dpdk-raw@HAIRPIN=1 0 hairpin
+kernel-raw@HAIRPIN=1 0 hairpin
+dpdk-raw-mono@HAIRPIN=1 0 hairpin
+dpdk-raw@HAIRPIN=1@RTT_GAP_US=50000 0 hairpin
+dpdk@RTT_GAP_US=1000 0 cross
+kernel-raw@RTT_GAP_US=1000000 0 cross
+dpdk-raw 0 cross
+dpdk@HAIRPIN=1 2 1
+kernel-busy@HAIRPIN=1 2 1
+dpdk-raw@HAIRPIN=2 2 1
+dpdk-raw@HAIRPIN=1@HAIRPIN=1 2 1
+dpdk@RTT_GAP_US=0 2 1
+dpdk@RTT_GAP_US=1000001 2 1
+dpdk@RTT_GAP_US=5ms 2 1
+dpdk@RTT_GAP_US=1000@RTT_GAP_US=2000 2 1
+azure 2 1
+local 2 1
+plan dpdk 20 300000 50000
+plan dpdk@RTT_GAP_US=1000 20 20000 2000
+plan dpdk@RTT_GAP_US=50000 60 1200 40
+plan kernel-raw@RTT_GAP_US=200000 60 300 10
+plan dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000 60 60 2
+plan dpdk@RTT_GAP_US=100 20 200000 20000
+plan few 60 500 10
+type c9g.2xlarge 0
+type c9g.xlarge 0
+type c9g.large 2
+type c8g.medium 2
+said 1
+type b 2
+cross 0"
+if [[ $hsmodes == "$want" ]]; then
+    pass "modes.sh: @HAIRPIN=1 on the raw floor's modes only (AWS, cross-host lists, once) and @RTT_GAP_US=1 to 1000000 (once, not localhost), each refusal said; a paced rep's seconds, round trips and warm-up; four cores on host a for a hairpin"
+else
+    fail "modes.sh: the hairpin and sparse round trips"
+    diff -u <(echo "$want") <(echo "$hsmodes") >&2 || true
+fi
+
+# lib.sh dry with a hairpin and paced modes: a hairpin rep is one floor
+# client on VM a (floor xhairpin: the pong listens on a's receiver NIC, the
+# ping on a's sender NIC; ping on the app CPU, pong on the receiver's), no
+# client on b, both loop-stall files from a; a paced mode's clients get
+# RTT_GAP_US, RTT_SECONDS from rtt_plan (60 s at 50 ms), its round trips and
+# warm-up, and deadlines stretched to fit; an unpaced mode as before
+cat >"$tmp/dry-hs.sh" <<'SH'
+set -uo pipefail
+cloud=$1 out=$2
+known=$out/known_hosts user=admin A=192.0.2.1 B=192.0.2.2
+log() { echo "$*" >>"$out/log"; }
+die() { log "ERROR: $*"; exit 1; }
+. "$cloud/lib.sh"
+sleep() { :; }
+label() { local l=${1#*client }; echo "${l%% *}"; }
+on() {
+    local host=$1 cmd
+    shift
+    cmd=$*
+    printf '%s %s\n' "$host" "$cmd" >>"$out/calls"
+    case $cmd in
+    *"vm.sh nics")
+        if [[ $host == "$A" ]]; then
+            printf 'sender ens6 ens6 0c 10.30.1.4 24 0000:00:06.0\nreceiver ens7 ens7 0d 10.30.1.5 24 0000:00:07.0\n'
+        else
+            printf 'sender ens6 ens6 0e 10.30.1.6 24 0000:00:06.0\nreceiver ens7 ens7 0f 10.30.1.7 24 0000:00:07.0\n'
+        fi
+        ;;
+    *"vm.sh layout") echo "0 2 1 3 4" ;;
+    *"vm.sh loss") echo "kernel-udp-InErrors=0;nic-kernel-drops=0" ;;
+    *" floor xping "* | *" floor xhairpin "* | *" rtt xping "*) echo "rtt,$(label "$cmd"),udp,20000,21000,25000,30000,40000,75000,20500,1000,0" ;;
+    *" tput xsub "*) echo "tput,$(label "$cmd"),udp,1000,1,2,3,0,1,2" ;;
+    *"cat bench/load-spikes.csv") printf '# start_realtime_ns=1\n# spikes_total=0\nstream,due_ns,latency_ns,ping\n' ;;
+    *"cat bench/stalls-pong.csv") printf '# start_realtime_ns=1\nend_ns,gap_ns\n' ;;
+    esac
+    return 0
+}
+reps=1 local_modes= load_sizes= load_fractions= load_seconds=1 load_ladder= mix= mix_seconds=1
+tput_seconds=5 rtt_messages=1000 rtt_warmup=100 rtt_align= tput_flows=0 no_flatout=1
+modes=(dpdk-raw@HAIRPIN=1 kernel-raw@HAIRPIN=1@RTT_GAP_US=50000 dpdk@RTT_GAP_US=1000)
+bench_state isolated
+SH
+dhs=$tmp/dry-hs
+mkdir -p "$dhs"
+bash "$tmp/dry-hs.sh" "$cloud" "$dhs" </dev/null 2>"$dhs/stderr" || fail "lib.sh dry run with the hairpin and paced modes exited $?"
+hs_calls() { # <mode>: the clients its rep ran (sorted)
+    grep "client isolated:$1 " "$dhs/calls" | sort | sed -E 's/LOAD_SPIKE_NS=[0-9]+ //; s/LOOP_STALL_NS=[0-9]+ //'
+}
+got=$(hs_calls dpdk-raw@HAIRPIN=1; hs_calls kernel-raw@HAIRPIN=1@RTT_GAP_US=50000; hs_calls dpdk@RTT_GAP_US=1000)
+want="192.0.2.1 RTT_SECONDS=20 LAB_CLIENT_DEADLINE=112 ergon/md-dpdk/benches/cloud/vm.sh client isolated:dpdk-raw@HAIRPIN=1 floor xhairpin 10.30.1.5:20123 10.30.1.4:20124 1000 100 2 3
+192.0.2.1 RTT_GAP_US=50000 RTT_SECONDS=60 LAB_CLIENT_DEADLINE=212 ergon/md-dpdk/benches/cloud/vm.sh client isolated:kernel-raw@HAIRPIN=1@RTT_GAP_US=50000 floor xhairpin 10.30.1.5:20123 10.30.1.4:20124 1000 40 2 3
+192.0.2.1 RTT_GAP_US=1000 RTT_SECONDS=20 LAB_CLIENT_DEADLINE=112 ergon/md-dpdk/benches/cloud/vm.sh client isolated:dpdk@RTT_GAP_US=1000 rtt xping 10.30.1.7:20123 10.30.1.5:20124 1000 100 2
+192.0.2.2 LAB_CLIENT_DEADLINE=142 ergon/md-dpdk/benches/cloud/vm.sh client isolated:dpdk@RTT_GAP_US=1000 rtt xpong 10.30.1.7:20123 10.30.1.5:20124 2"
+hairpin_after=$(awk '/client isolated:dpdk-raw@HAIRPIN=1 floor xhairpin /{on = 1; next} on && /cat bench\/stalls-pong.csv/ {print $1; exit}' "$dhs/calls")
+if grep -E 'unbound variable|command not found|syntax error' "$dhs/stderr"; then
+    fail "lib.sh dry with the hairpin and paced modes: shell errors"
+elif [[ $got != "$want" ]]; then
+    fail "lib.sh dry with the hairpin and paced modes: the clients run"
+    diff -u <(echo "$want") <(echo "$got") >&2 || true
+elif grep -q ERROR "$dhs/log" || [[ $(grep -c '^1,rtt,isolated:' "$dhs/results.csv") != 3 ]]; then
+    fail "lib.sh dry with the hairpin and paced modes: their rtt rows: $(tail -2 "$dhs/log")"
+elif [[ $hairpin_after != 192.0.2.1 ]] || grep -q "192.0.2.2 sudo pkill -f '/\[f\]loor" "$dhs/calls" ||
+    [[ ! -s $dhs/stalls-pong-isolated-dpdk-raw@HAIRPIN=1-1.csv ]]; then
+    fail "lib.sh dry with a hairpin: the pong's stalls not from a, or a pong ended on b ($hairpin_after)"
+else
+    pass "lib.sh dry: a hairpin rep is one floor client on a over its own two NICs (pong on the receiver's CPU), its stalls from a; a paced mode's clients get RTT_GAP_US and rtt_plan's seconds, round trips, warm-up and deadlines"
+fi
+
+# vm.sh client: RTT_GAP_US reaches the client through sudo (0, unpaced,
+# without it); floor xhairpin takes the last run's spikes, histogram and
+# both loop-stall files away first, as xping and xpong do theirs
+gap_client() { # <environment>... -- <client args>...
+    local envs=()
+    while [[ $1 != -- ]]; do envs+=("$1"); shift; done
+    shift
+    : >"$sbc/log"
+    env -i PATH="$sbc/bin:$PATH" HOME="$sbc/home" FAKE_LOG="$sbc/log" FAKE_ARCH=x86_64 LAB_SYS_ROOT="$sys/aws-x86" ${envs[@]+"${envs[@]}"} \
+        bash "$cloud/vm.sh" client "$@" >"$sbc/out" 2>&1
+    echo "rc $? $(grep '^sudo ' "$sbc/log" | tail -1)"
+}
+rm -f "$sbc/home/bench/harness_driver" "$sbc/home/bench/driver.env"
+paced_client=$(gap_client RTT_GAP_US=50000 -- isolated:dpdk@RTT_GAP_US=50000 rtt xping 10.30.1.7:20123 10.30.1.5:20124 10 1 2)
+unpaced_client=$(gap_client -- isolated:dpdk rtt xping 10.30.1.7:20123 10.30.1.5:20124 10 1 2)
+echo dpdk >"$sbc/home/bench/floor"
+for f in stalls-ping.csv stalls-pong.csv load-spikes.csv rtt-histogram.csv; do : >"$sbc/home/bench/$f"; done
+hairpin_client=$(gap_client -- isolated:dpdk-raw@HAIRPIN=1 floor xhairpin 10.30.1.5:20123 10.30.1.4:20124 10 1 2 3)
+left=$(cd "$sbc/home/bench" && { ls stalls-ping.csv stalls-pong.csv load-spikes.csv rtt-histogram.csv 2>/dev/null || true; } | tr '\n' ' ')
+rm -f "$sbc/home/bench/floor"
+if [[ $paced_client != *" RTT_GAP_US=50000 "* || $unpaced_client != *" RTT_GAP_US=0 "* ]]; then
+    fail "vm.sh client: RTT_GAP_US: paced [$paced_client] unpaced [$unpaced_client]"
+elif [[ $hairpin_client != "rc 0 "*"/target/release/floor xhairpin 10.30.1.5:20123 10.30.1.4:20124 10 1 2 3" || -n $left ]]; then
+    fail "vm.sh client floor xhairpin: [$hairpin_client], left: $left"
+else
+    pass "vm.sh client: RTT_GAP_US through sudo (0 without it); floor xhairpin with the last run's files taken away"
+fi
+
+# vm.sh host_setting HAIRPIN=1 (vm.sh driver, a raw floor mode): the pong's
+# CPU is the layout's receiver core, which the raw floor leaves free
+# (recorded for the run); on the kernel wire the kernel would deliver a's
+# own address over loopback, so the mode routes each end's sends out of its
+# own NIC (a rule for each direction before the local table, which moves
+# from priority 0 to 50; accept_local and no reverse-path filter on the data
+# NICs, which then receive their own host's packets), checked by ip route
+# get both ways (fail closed, everything put back); restore_host puts the
+# local table back at 0 before its moved rule goes, the rules and sysctls
+# as they were. Refused off the raw floor, off AWS and without a receiver core
+hs=$tmp/hairpin-setting
+mkdir -p "$hs/bench"
+hairpin_sb() { # <floor wire> <cloud> <receiver cpu> <route get answer>: "<rc> | <calls> | <bench/hairpin>"
+    (
+        set +e
+        exec 2>&1
+        # shellcheck source=../modes.sh
+        . "$cloud/modes.sh" || exit 1
+        eval "$(for f in save_host host_setting restore_host; do vm_fn "$f"; done)"
+        run=$hs/bench CLOUD=$2 HK_CPU=0 APP_CPU=1 SENDER_CPU=2 RECEIVER_CPU=$3 APP2_CPU= threading=INVOKER floor_wire=$1
+        rm -rf "$run"/*
+        : >"$hs/calls"
+        nics() { printf 'sender ens6 ens6 0c 10.30.1.4 24 0000:00:06.0\nreceiver ens7 ens7 0d 10.30.1.5 24 0000:00:07.0\n'; }
+        sudo() { echo "$*" >>"$hs/calls"; }
+        sysctl() { echo 2; }
+        ip() {
+            if [[ $1 == route && $2 == get ]]; then
+                [[ $4 == from && $3 == 10.30.1.5 ]] && echo "${FAKE_FWD:-10.30.1.5 from 10.30.1.4 dev ens6 table 100 uid 0}"
+                [[ $4 == from && $3 == 10.30.1.4 ]] && echo "10.30.1.4 from 10.30.1.5 dev ens7 table 101 uid 0"
+            elif [[ $1 == rule && $2 == show ]]; then
+                echo "0:	from all lookup local"
+            fi
+        }
+        log() { :; }
+        rc=0
+        (FAKE_FWD=$4 host_setting HAIRPIN 1 kernel-busy) 2>"$hs/err" || rc=$?
+        echo "$rc | $(tr '\n' ';' <"$hs/calls") | $(cat "$run/hairpin" 2>/dev/null)"
+        : >"$hs/calls"
+        restore_host
+        echo "restored | $(tr '\n' ';' <"$hs/calls") | $(ls "$run/restore" 2>/dev/null | tr '\n' ' ')$(cat "$run/hairpin" 2>/dev/null)"
+        echo "said: $(tr '\n' ' ' <"$hs/err")"
+    )
+}
+kernel_on=$(hairpin_sb kernel aws 3 '')
+dpdk_on=$(hairpin_sb dpdk aws 3 '')
+looped=$(hairpin_sb kernel aws 3 'local 10.30.1.5 from 10.30.1.4 dev lo table local uid 0')
+off_floor=$(hairpin_sb '' aws 3 '')
+azure=$(hairpin_sb dpdk azure 3 '')
+no_cpu=$(hairpin_sb dpdk aws '' '')
+want_kernel="0 | sysctl -qw net.ipv4.conf.all.rp_filter=0 net.ipv4.conf.ens6.rp_filter=0 net.ipv4.conf.ens7.rp_filter=0 net.ipv4.conf.ens6.accept_local=1 net.ipv4.conf.ens7.accept_local=1;ip rule add priority 10 iif lo from 10.30.1.4 to 10.30.1.5 lookup 100;ip rule add priority 11 iif lo from 10.30.1.5 to 10.30.1.4 lookup 101;ip rule add priority 50 lookup local;ip rule del priority 0 lookup local; | 3
+restored | ip rule add priority 0 lookup local;ip rule del priority 50 lookup local;ip rule del priority 10;ip rule del priority 11;sysctl -qw net.ipv4.conf.all.rp_filter=2 net.ipv4.conf.ens6.rp_filter=2 net.ipv4.conf.ens7.rp_filter=2 net.ipv4.conf.ens6.accept_local=2 net.ipv4.conf.ens7.accept_local=2; | 
+said: "
+if [[ $kernel_on != "$want_kernel" ]]; then
+    fail "vm.sh host_setting HAIRPIN=1 on the kernel wire"
+    diff -u <(echo "$want_kernel") <(echo "$kernel_on") >&2 || true
+elif [[ $dpdk_on != "0 |  | 3
+restored |  | 
+said: " ]]; then
+    fail "vm.sh host_setting HAIRPIN=1 on the DPDK wire: $dpdk_on"
+elif [[ $looped != 1\ \|*"ip rule add priority 0 lookup local"*"| "$'\n'"restored |  | "* || $looped != *"over loopback"* ]]; then
+    fail "vm.sh host_setting HAIRPIN=1, a route still over loopback: $looped"
+elif [[ $off_floor != 2\ * || $off_floor != *"raw floor"* || $azure != 2\ * || $azure != *"AWS only"* || $no_cpu != 2\ * || $no_cpu != *"receiver core"* ]]; then
+    fail "vm.sh host_setting HAIRPIN=1 refusals: [$off_floor] [$azure] [$no_cpu]"
+else
+    pass "vm.sh host_setting HAIRPIN=1: the pong on the receiver core; on the kernel wire each end routed out of its own NIC, checked both ways (fail closed, put back), restored local table first; refused off the raw floor, off AWS, without a receiver core"
+fi
+
+# vm.sh data_kernel_up after HAIRPIN=1 (a later @RX_RING= in the same mode
+# brings the NICs up again): it removes an address's stale plain rule (the
+# NICs back in another order), never the hairpin's from/to rules, which would
+# put the round trip back over loopback unseen
+dku=$(
+    set +e
+    exec 2>&1
+    eval "$(vm_fn data_kernel_up)"
+    : >"$hs/dku-calls"
+    data_unmanaged() { :; }
+    nics() { printf 'sender ens6 ens6 0c 10.30.1.4 24 0000:00:06.0\nreceiver ens7 ens7 0d 10.30.1.5 24 0000:00:07.0\n'; }
+    policy_routes() { :; }
+    pin_irqs() { :; }
+    data_routes_missing() { echo 0; }
+    sudo() { echo "$*" >>"$hs/dku-calls"; }
+    ip() {
+        [[ $1 == rule && $2 == show ]] && printf '%s\n' "0:	from all lookup local" \
+            "10:	from 10.30.1.4 to 10.30.1.5 iif lo lookup 100" "11:	from 10.30.1.5 to 10.30.1.4 iif lo lookup 101" \
+            "50:	from all lookup local" "100:	from 10.30.1.4 lookup 100" "101:	from 10.30.1.5 lookup 101" \
+            "102:	from 10.30.1.5 lookup 100"
+        return 0
+    }
+    ARCH=x86_64 PEER_SUBNET=
+    data_kernel_up || echo "rc $?"
+    grep 'rule' "$hs/dku-calls" | tr '\n' ';'
+)
+if [[ $dku != "ip rule del priority 102 from 10.30.1.5 lookup 100;" ]]; then
+    fail "vm.sh data_kernel_up after HAIRPIN=1: rules changed: [$dku]"
+else
+    pass "vm.sh data_kernel_up: a stale plain rule removed, the hairpin's from/to rules kept"
+fi
+
+# vm.sh ready: a hairpin needs the layout's receiver core on host a (a
+# two-core host has none)
+# shellcheck disable=SC2016
+fake_cpus "$sys/c9g-l" 2 '$cpu'
+got="two cores: $(ready_sb c9g-l 7.2.6+deb13-cloud-arm64 dpdk-raw@HAIRPIN=1 dpdk-raw)
+four cores: $(ready_sb c8g-xl 7.2.6+deb13-cloud-arm64 dpdk-raw@HAIRPIN=1 kernel-raw@HAIRPIN=1)"
+if [[ $got != "two cores: 2 mode dpdk-raw@HAIRPIN=1: no receiver core on this host (its layout 0 1): the hairpin's pong runs there; four cores (c9g.xlarge and up)
+four cores: 0" ]]; then
+    fail "vm.sh ready with a hairpin: $got"
+else
+    pass "vm.sh ready: a hairpin refused on a host without the layout's receiver core, said before any state"
+fi
+
+# analyse.py: a hairpin and paced modes named for what they are; the hairpin
+# beside the cross-host floor of the same mode and state (its maxima there
+# too: below the fabric); round trips by gap, each beside the same mode
+# unpaced, p99.99 only from 10,000 round trips a rep; a paced Aeron mode's
+# floor is the floor paced alike; a hairpin is not set against the round
+# trip between the hosts, which it never crosses
+cat >"$tmp/hs-results.csv" <<'CSV'
+0,netrtt,isolated,40000,50000,60000,5000,200/200
+1,rtt,isolated:dpdk-raw,udp,15000,16000,20000,25000,35000,85000,15500,300000,0
+2,rtt,isolated:dpdk-raw,udp,15000,16000,20000,25000,35000,87000,15500,300000,0
+1,rtt,isolated:dpdk-raw@HAIRPIN=1,udp,9000,9500,11000,15000,30000,84000,9200,300000,0
+2,rtt,isolated:dpdk-raw@HAIRPIN=1,udp,9000,9500,11000,15000,30000,86000,9200,300000,0
+1,rtt,isolated:dpdk,udp,25000,26000,30000,35000,45000,72000,25500,300000,0
+1,rtt,isolated:dpdk@RTT_GAP_US=1000,udp,26000,27000,31000,36000,46000,90000,26500,20000,0
+1,rtt,isolated:dpdk@RTT_GAP_US=50000,udp,28000,29000,40000,50000,60000,100000,28500,1200,0
+1,rtt,isolated:dpdk-raw@RTT_GAP_US=50000,udp,18000,19000,30000,40000,50000,95000,18500,1200,0
+CSV
+hs_md=$(python3 "$cloud/analyse.py" "$tmp/hs-results.csv" 2>&1 || true)
+hp=$(section "## Same-host hairpin against the cross-host round trip (µs)" <<<"$hs_md" | tr -s ' ')
+sp=$(section "## Sparse round trips by gap (µs)" <<<"$hs_md" | tr -s ' ')
+fl=$(section "## UDP round trip above the raw floor (µs)" <<<"$hs_md" | tr -s ' ')
+net=$(section "## UDP round trip above the network's own (µs)" <<<"$hs_md")
+if [[ $hs_md != *"| isolated, DPDK packet path, no Aeron (raw floor), same-host hairpin (HAIRPIN=1) "* ||
+    $hs_md != *"| isolated, DPDK, one round trip every 50 ms (RTT_GAP_US=50000) "* ]]; then
+    fail "analyse.py: the hairpin's and paced modes' names: $(grep -m3 'HAIRPIN\|RTT_GAP' <<<"$hs_md")"
+elif [[ $hp != *"| isolated, DPDK packet path, no Aeron (raw floor) | 2 | 2 | 9.00 (9.00–9.00) | 15.00 (15.00–15.00) | 30.00 (30.00–30.00) | 35.00 (35.00–35.00) | 85.00 (84.00–86.00) | 86.00 (85.00–87.00) |"* ]]; then
+    fail "analyse.py: the hairpin table"
+    echo "$hp" >&2
+elif [[ $sp != *"| isolated, DPDK | none | 1 | 300,000 | 25.00 (25.00–25.00) | 30.00 (30.00–30.00) | 45.00 (45.00–45.00) | 72.00 (72.00–72.00) |"* ||
+    $sp != *"| isolated, DPDK | 1 ms | 1 | 20,000 | 26.00 (26.00–26.00) | 31.00 (31.00–31.00) | 46.00 (46.00–46.00) | 90.00 (90.00–90.00) |"* ||
+    $sp != *"| isolated, DPDK | 50 ms | 1 | 1,200 | 28.00 (28.00–28.00) | 40.00 (40.00–40.00) | n/a (under 10,000) | 100.00 (100.00–100.00) |"* ||
+    $sp != *"| isolated, DPDK packet path, no Aeron (raw floor) | 50 ms | 1 | 1,200 |"* || $sp == *HAIRPIN* ]]; then
+    fail "analyse.py: the sparse table"
+    echo "$sp" >&2
+elif [[ $fl != *"| isolated, DPDK, one round trip every 50 ms (RTT_GAP_US=50000) | DPDK packet path, no Aeron (raw floor), one round trip every 50 ms (RTT_GAP_US=50000) | 1 | 10.00 (10.00–10.00) "* ||
+    $fl == *"RTT_GAP_US=1000)"*"| 1 |"* || $fl == *"HAIRPIN"* ]]; then
+    fail "analyse.py: a paced mode's floor"
+    echo "$fl" >&2
+elif [[ $net != *"| isolated, DPDK packet path, no Aeron (raw floor) "* || $net == *HAIRPIN* ]]; then
+    fail "analyse.py: a hairpin above the network's own round trip between the hosts, which it never crosses"
+    echo "$net" >&2
+else
+    pass "analyse.py: the hairpin and paced modes named; the hairpin beside its cross-host floor; round trips by gap beside unpaced (p99.99 from 10,000 a rep); a paced mode above its floor paced alike"
+fi
+# a paced mode with an idle localhost subscription (<mode>@RTT_GAP_US=<us>+idle,
+# which modes.sh takes): its gap read, named, and set beside the same +idle
+# mode unpaced
+cat >"$tmp/hs-idle.csv" <<'CSV'
+0,netrtt,isolated,40000,50000,60000,5000,200/200
+1,rtt,isolated:dpdk+idle,udp,25000,26000,30000,35000,45000,72000,25500,300000,0
+1,rtt,isolated:dpdk@RTT_GAP_US=1000+idle,udp,26000,27000,31000,36000,46000,90000,26500,20000,0
+CSV
+hs_idle=$(python3 "$cloud/analyse.py" "$tmp/hs-idle.csv" 2>&1 || true)
+sp_idle=$(section "## Sparse round trips by gap (µs)" <<<"$hs_idle" | tr -s ' ')
+if [[ $sp_idle != *"| isolated, DPDK, idle localhost subscription | none | 1 | 300,000 |"* ||
+    $sp_idle != *"| isolated, DPDK, idle localhost subscription | 1 ms | 1 | 20,000 |"* ||
+    $hs_idle != *"| isolated, DPDK, idle localhost subscription, one round trip every 1 ms (RTT_GAP_US=1000) "* ]]; then
+    fail "analyse.py: a paced +idle mode"
+    echo "$sp_idle" >&2
+else
+    pass "analyse.py: a paced +idle mode named, beside the same +idle mode unpaced"
+fi
+
+# spikes.py: a hairpin's spikes are host a's alone (b plays no part: its
+# spinner's gap at that moment is no cause), and a paced run's length for the
+# chance baseline is its pings times the gap, not the sum of its round trips
+hsd=$tmp/hs-spikes/isolated
+mkdir -p "$hsd"
+python3 - "$hsd" <<'EOF'
+import os, sys
+d = sys.argv[1]
+W0 = 2_000_000_000
+for host in "ab":
+    with open(os.path.join(d, "..", f"{host}-diag-isolated.log"), "w") as f:
+        f.write("== gapspin\n# cpu=5 ns_per_tick=1.000000 threshold_us=10 counter_hz=1000000000\n")
+        if host == "b":
+            f.write(f"{W0 + 1.000400:.6f} 400\n")
+        f.write("== trace\n== drains\n== ipmon\n== knoise\n")
+for mode in ("dpdk-raw@HAIRPIN=1", "dpdk-raw"):
+    with open(os.path.join(d, f"spikes-isolated-{mode}-rtt-1.csv"), "w") as f:
+        f.write(f"# start_realtime_ns={W0 * 1_000_000_000}\n# spikes_total=1\nstream,due_ns,latency_ns,ping\n")
+        f.write("1002,1000000000,500000,7\n")
+for m in ("dpdk-raw@RTT_GAP_US=50000", "dpdk@RTT_GAP_US=50000+idle"):
+    with open(os.path.join(d, f"histogram-isolated-{m}-1.csv"), "w") as f:
+        f.write("value_ns,count\n20000,1000\n30000,200\n")
+EOF
+hs_out=$(python3 "$cloud/spikes.py" "$hsd" 2>&1 || true)
+hs_len=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import spikes
+print(spikes.run_length(sys.argv[2], "isolated-dpdk-raw@RTT_GAP_US=50000-1", 0.0, 1.0),
+      spikes.run_length(sys.argv[2], "isolated-dpdk@RTT_GAP_US=50000+idle-1", 0.0, 1.0))' "$cloud" "$hsd")
+if [[ $hs_out != *"| isolated-dpdk-raw-rtt | 500: host stall (b)"* || $hs_out != *"| isolated-dpdk-raw@HAIRPIN=1-rtt | 500: unexplained"* ]]; then
+    fail "spikes.py: a hairpin's spikes judged on host a alone"
+    grep 'isolated-dpdk' <<<"$hs_out" >&2 || echo "$hs_out" >&2
+elif [[ $hs_len != "60.0 60.0" ]]; then
+    fail "spikes.py run_length of a paced run (and a paced +idle one): $hs_len, not 1,200 pings x 50 ms = 60.0 s each"
+else
+    pass "spikes.py: a hairpin's spikes judged on host a alone; a paced run's length its pings times the gap"
+fi
+
+# estimate.py: a paced rep's round trip takes rtt_plan's seconds (60 s at
+# 50 ms: 40 s and its warm-up's 10 s more than an unpaced one's) and sends
+# its round trips and warm-up; a hairpin sends nothing between the hosts
+est=$(python3 - "$cloud" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import estimate as e
+args = dict(type_a="c9g.2xlarge", type_b="c9g.2xlarge", placement="cluster", reps=1, local_modes=[], states=["pinned"],
+            load_sizes=[], load_fractions=[], load_ladder={}, load_seconds=5, mix=[], mix_seconds=5,
+            tput_seconds=5, tput_flows=0, rtt_messages=300000, rtt_warmup=50000, no_flatout=True, max_hours=8)
+fixed = e.SETUP_S + e.TEARDOWN_S + e.STATE_S["pinned"]
+raw = e.estimate(modes=["dpdk-raw"], **args)
+paced = e.estimate(modes=["dpdk-raw@RTT_GAP_US=50000"], **args)
+hairpin = e.estimate(modes=["dpdk-raw@HAIRPIN=1@RTT_GAP_US=50000"], **args)
+print(e.rtt_plan("dpdk@RTT_GAP_US=50000", 300000, 50000), e.rtt_plan("dpdk", 300000, 50000),
+      paced["wall_s"] - raw["wall_s"], paced["bytes_ab"] == (1200 + 40) * (e.RTT_SIZE + e.WIRE_OVERHEAD),
+      hairpin["bytes_ab"], hairpin["bytes_ba"], hairpin["wall_s"] == paced["wall_s"])
+PY
+)
+if [[ $est == "(60, 1200, 40) (20, 300000, 50000) 50 True 0 0 True" ]]; then
+    pass "estimate.py: a paced rep's round trip by rtt_plan (seconds, round trips, warm-up); a hairpin sends nothing between the hosts"
+else
+    fail "estimate.py with the hairpin and paced modes: $est"
 fi
 
 for script in vm.sh irqs.sh host.sh modes.sh lib.sh remote.sh azure/lab.sh aws/lab.sh; do

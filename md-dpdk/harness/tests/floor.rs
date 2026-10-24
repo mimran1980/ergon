@@ -167,16 +167,41 @@ fn shape(path: &str) -> (Vec<String>, String, Vec<String>) {
 /// One round trip run of `bin` over 127.0.0.1 into `dir`: the ping's
 /// result line (and the pong's stderr).
 fn run(bin: &str, dir: &str, messages: &str, extra: &[(&str, &str)]) -> (Vec<String>, String) {
+    let (fields, pong_stderr, _) = run_timed(bin, dir, messages, "200", extra);
+    (fields, pong_stderr)
+}
+
+/// [`run`] with `warmup` pings first: also how long the ping ran.
+fn run_timed(
+    bin: &str,
+    dir: &str,
+    messages: &str,
+    warmup: &str,
+    extra: &[(&str, &str)],
+) -> (Vec<String>, String, Duration) {
     let (ping, pong) = (
         format!("127.0.0.1:{}", free_port()),
         format!("127.0.0.1:{}", free_port()),
     );
     let ponger = start(bin, &["xpong", &ping, &pong, "-"], dir, false, extra);
-    let pinged = start(bin, &["xping", &ping, &pong, messages, "200", "-"], dir, true, extra).finish(90);
+    let began = Instant::now();
+    let pinged = start(bin, &["xping", &ping, &pong, messages, warmup, "-"], dir, true, extra).finish(90);
+    let took = began.elapsed();
     let ponged = ponger.terminate(30);
     pinged.assert_ok("xping");
     ponged.assert_ok("xpong");
-    (pinged.result(), ponged.stderr)
+    (pinged.result(), ponged.stderr, took)
+}
+
+/// The numbers of a result line: p50, p90, p99, p99.9, p99.99, max, mean,
+/// samples, lost.
+fn numbers(fields: &[String]) -> Vec<u64> {
+    fields[3..].iter().map(|f| f.parse().expect("a number")).collect()
+}
+
+/// A loop-stall file's rows (`end_ns,gap_ns`).
+fn stall_rows(path: &str) -> Vec<String> {
+    shape(path).2
 }
 
 #[test]
@@ -307,5 +332,160 @@ fn floor_without_a_pong_fails_saying_so() {
         "no result line without a run:\n{}",
         pinged.stdout
     );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// `RTT_GAP_US`: one ping every that many microseconds on a fixed schedule, the
+/// warm-up's too, the client spinning (its wire polled, its loop's stall
+/// tracker passed) in between: the run takes the pings times the gap, its
+/// round trips are each ping's alone (not the wait before it), no wait is a
+/// loop stall, and the run still ends at `RTT_SECONDS` with fewer pings.
+#[test]
+fn floor_paces_its_pings_at_rtt_gap_us() {
+    let dir = scratch("gap");
+    let paced = [
+        ("RTT_GAP_US", "25000"),
+        ("RTT_LOST_TIMEOUT_US", "10000000"),
+        // a wait between pings unpassed would be a stall of 25 ms each
+        ("LOOP_STALL_NS", "15000000"),
+    ];
+    let (fields, _, took) = run_timed(FLOOR, &dir, "40", "4", &paced);
+    let n = numbers(&fields);
+    assert_eq!((n[7], n[8]), (40, 0), "every ping measured and echoed: {fields:?}");
+    assert!(
+        took >= Duration::from_millis(43 * 25),
+        "43 gaps of 25 ms (the warm-up's 4 too) took {took:?}"
+    );
+    assert!(
+        n[0] < 5_000_000,
+        "a round trip is the ping's alone, not the gap before it: p50 {} ns",
+        n[0]
+    );
+    let stalls = stall_rows(&format!("{dir}/stalls-ping.csv"));
+    assert!(
+        stalls.len() < 5,
+        "the waits between pings counted as loop stalls: {stalls:?}"
+    );
+
+    // a budget of 1 s at one ping every 100 ms: about 10 measured, not 1000
+    let budget = [
+        ("RTT_GAP_US", "100000"),
+        ("RTT_SECONDS", "1"),
+        ("RTT_LOST_TIMEOUT_US", "10000000"),
+    ];
+    let (fields, _, took) = run_timed(FLOOR, &dir, "1000", "1", &budget);
+    let n = numbers(&fields);
+    assert!(
+        (5..=12).contains(&n[7]),
+        "RTT_SECONDS ends a paced run: {} pings in {took:?}",
+        n[7]
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// `rtt` paces its pings at `RTT_GAP_US` as `floor` does (its embedded
+/// driver run in between, as every pass).
+#[test]
+fn rtt_paces_its_pings_at_rtt_gap_us() {
+    let dir = scratch("rtt-gap");
+    let ping_aeron = format!("{dir}/aeron-ping");
+    let pong_aeron = format!("{dir}/aeron-pong");
+    let common = [
+        ("HARNESS_DRIVER", "invoker"),
+        ("AERON_DIR_DELETE_ON_START", "true"),
+        ("AERON_TERM_BUFFER_LENGTH", "65536"),
+        ("RTT_GAP_US", "25000"),
+        ("LOOP_STALL_NS", "15000000"),
+    ];
+    let (ping, pong) = (
+        format!("127.0.0.1:{}", free_port()),
+        format!("127.0.0.1:{}", free_port()),
+    );
+    let ponger = start(
+        RTT,
+        &["xpong", &ping, &pong, "-"],
+        &dir,
+        false,
+        &[common.as_slice(), &[("AERON_DIR", pong_aeron.as_str())]].concat(),
+    );
+    let began = Instant::now();
+    let pinged = start(
+        RTT,
+        &["xping", &ping, &pong, "40", "4", "-"],
+        &dir,
+        true,
+        &[common.as_slice(), &[("AERON_DIR", ping_aeron.as_str())]].concat(),
+    )
+    .finish(90);
+    let took = began.elapsed();
+    ponger.terminate(30).assert_ok("rtt xpong");
+    pinged.assert_ok("rtt xping");
+    let n = numbers(&pinged.result());
+    assert_eq!((n[7], n[8]), (40, 0), "every ping measured: {:?}", pinged.stdout);
+    assert!(took >= Duration::from_millis(43 * 25), "43 gaps of 25 ms took {took:?}");
+    assert!(n[0] < 5_000_000, "p50 {} ns: the gap counted in the round trip", n[0]);
+    let stalls = stall_rows(&format!("{dir}/stalls-ping.csv"));
+    assert!(
+        stalls.len() < 5,
+        "the waits between pings counted as loop stalls: {stalls:?}"
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// `floor xhairpin`: ping and pong in one process, the pong on a thread of
+/// its own (its own CPU), each on its own endpoint (on a host, one data
+/// NIC each): one result line as `xping`'s, both loop-stall files, the pong
+/// ending with the ping's run. Over 127.0.0.1 here; one endpoint for both
+/// is refused (nothing would cross between two NICs).
+#[test]
+fn floor_hairpin_runs_ping_and_pong_in_one_process() {
+    let dir = scratch("hairpin");
+    let (ping, pong) = (
+        format!("127.0.0.1:{}", free_port()),
+        format!("127.0.0.1:{}", free_port()),
+    );
+    let done = start(
+        FLOOR,
+        &["xhairpin", &ping, &pong, "2000", "200", "-", "-"],
+        &dir,
+        true,
+        &[("RTT_LOST_TIMEOUT_US", "10000000")],
+    )
+    .finish(90);
+    done.assert_ok("xhairpin");
+    let n = numbers(&done.result());
+    assert_eq!(
+        (n[7], n[8]),
+        (2000, 0),
+        "every ping measured and echoed: {}",
+        done.stdout
+    );
+    assert!(n[0] > 0 && n[0] <= n[5], "{}", done.stdout);
+    assert!(
+        done.stderr.contains("floor: hairpin: ping and pong in one process"),
+        "it says what it runs:\n{}",
+        done.stderr
+    );
+    assert!(
+        done.stderr.contains("floor: pong ended: the ping's run done"),
+        "the pong says why it ended:\n{}",
+        done.stderr
+    );
+    for name in ["stalls-ping.csv", "stalls-pong.csv", "histogram.csv", "spikes.csv"] {
+        assert!(
+            std::path::Path::new(&format!("{dir}/{name}")).exists(),
+            "{name} not written"
+        );
+    }
+    let same = start(
+        FLOOR,
+        &["xhairpin", &ping, &ping, "10", "1", "-", "-"],
+        &dir,
+        false,
+        &[],
+    )
+    .finish(30);
+    assert!(!same.status.success(), "one endpoint for both ends must be refused");
+    assert!(same.stderr.contains("two endpoints"), "it says why:\n{}", same.stderr);
     let _ = std::fs::remove_dir_all(dir);
 }

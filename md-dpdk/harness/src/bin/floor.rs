@@ -17,12 +17,27 @@
 //!
 //! floor xpong <ping endpoint> <pong endpoint> <pong cpu|->
 //! floor xping <ping endpoint> <pong endpoint> <messages> <warmup> <ping cpu|->
+//! floor xhairpin <ping endpoint> <pong endpoint> <messages> <warmup> <ping cpu|-> <pong cpu|->
 //!
 //! The arguments, the pacing (each ping sent once the last one's echo is
-//! back), the warm-up, the clock (`lab::Clock`, its ordered read at both
-//! ends), the CPU pinning and every output are `rtt`'s (`roundtrip.rs`): the
-//! `rtt,...` line, `RTT_HISTOGRAM`, `LOAD_SPIKES`, `LOOP_STALLS_DIR`, under
-//! `LABEL`, `RTT_SECONDS`. A datagram is 64 bytes, what an Aeron data frame
+//! back, or one every `RTT_GAP_US`), the warm-up, the clock (`lab::Clock`,
+//! its ordered read at both ends), the CPU pinning and every output are
+//! `rtt`'s (`roundtrip.rs`): the `rtt,...` line, `RTT_HISTOGRAM`,
+//! `LOAD_SPIKES`, `LOOP_STALLS_DIR`, under `LABEL`, `RTT_SECONDS`.
+//!
+//! `xhairpin` runs both ends in one process on one host, the pong on a
+//! thread of its own (its CPU the last argument), each end on its own data
+//! NIC: the pong listens on the ping endpoint (the receiver NIC's address),
+//! the ping on the pong endpoint (the sender NIC's), and each sends from its
+//! own address, so a round trip leaves the host by one NIC and comes back
+//! by the other, never between hosts. On the kernel wire each end's send
+//! socket is bound to its own address (the host's policy routes then take
+//! it out of that NIC; the lab's vm.sh `HAIRPIN=1` routes a local
+//! destination so, which the kernel would otherwise deliver over loopback);
+//! on the DPDK wire the ping has the sender port's transport and the pong
+//! the receiver port's, each with a poller of its own, as an Aeron
+//! driver's sender and receiver threads have them. The pong ends when the
+//! ping's run does. A datagram is 64 bytes, what an Aeron data frame
 //! of `rtt`'s 32-byte message is on the wire: 32 bytes where Aeron's header
 //! would be, the send stamp and the sequence after it. Nothing repairs a lost
 //! one, so a ping whose echo has not come within `RTT_LOST_TIMEOUT_US`
@@ -41,10 +56,10 @@ mod lab;
 mod roundtrip;
 
 use lab::{Clock, STOP, cpu_arg, pin};
-use roundtrip::{Results, Stalls};
+use roundtrip::{Pace, Results, Stalls};
 use std::hint::spin_loop;
 use std::io;
-use std::net::{SocketAddrV4, UdpSocket};
+use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
@@ -75,21 +90,25 @@ fn endpoint(arg: Option<String>) -> SocketAddrV4 {
 fn main() {
     lab::lock_memory();
     let mut args = std::env::args().skip(1);
-    let mode = args.next().expect("xping|xpong");
+    let mode = args.next().expect("xping|xpong|xhairpin");
     let (ping, pong) = (endpoint(args.next()), endpoint(args.next()));
-    // each side listens on its own endpoint and sends to the other's
-    let (listen, peer) = match mode.as_str() {
-        "xpong" => (ping, pong),
-        "xping" => (pong, ping),
-        other => panic!("unknown mode {other}: xping or xpong"),
-    };
-    let (messages, warmup) = if mode == "xping" {
+    let (messages, warmup) = if mode == "xping" || mode == "xhairpin" {
         let number = |a: Option<String>| -> usize { a.expect("messages and warmup").parse().unwrap() };
         (number(args.next()), number(args.next()))
     } else {
         (0, 0)
     };
     let cpu = cpu_arg(args.next());
+    if mode == "xhairpin" {
+        hairpin(ping, pong, messages, warmup, cpu, cpu_arg(args.next()));
+        return;
+    }
+    // each side listens on its own endpoint and sends to the other's
+    let (listen, peer) = match mode.as_str() {
+        "xpong" => (ping, pong),
+        "xping" => (pong, ping),
+        other => panic!("unknown mode {other}: xping, xpong or xhairpin"),
+    };
     match ergon_md_dpdk::env::selector().unwrap_or_else(|e| panic!("floor: {e}")) {
         ergon_md_dpdk::Selector::Default => {
             let mut wire = KernelWire::open(listen, peer).unwrap_or_else(|e| panic!("floor: kernel UDP: {e}"));
@@ -99,10 +118,14 @@ fn main() {
         ergon_md_dpdk::Selector::DpdkEna => {
             #[cfg(all(feature = "dpdk", target_os = "linux"))]
             {
-                let mut wire = dpdk::DpdkWire::open(listen, peer, cpu).unwrap_or_else(|e| panic!("floor: DPDK: {e}"));
+                let mut shared = dpdk::DpdkShared::open(cpu).unwrap_or_else(|e| panic!("floor: DPDK: {e}"));
+                let mut wire = shared
+                    .cross(listen, peer)
+                    .unwrap_or_else(|e| panic!("floor: DPDK: {e}"));
                 run(&mode, &mut wire, peer, messages, warmup, cpu);
                 // the native runtime's threads may still read what it holds
                 std::mem::forget(wire);
+                std::mem::forget(shared);
             }
             #[cfg(not(all(feature = "dpdk", target_os = "linux")))]
             panic!(
@@ -118,6 +141,98 @@ fn run(mode: &str, wire: &mut impl Wire, peer: SocketAddrV4, messages: usize, wa
     } else {
         run_pong(wire, cpu);
     }
+}
+
+/// `xhairpin`: both ends here, each on its own endpoint (a data NIC each),
+/// the pong on a thread of its own.
+fn hairpin(
+    ping: SocketAddrV4,
+    pong: SocketAddrV4,
+    messages: usize,
+    warmup: usize,
+    ping_cpu: Option<usize>,
+    pong_cpu: Option<usize>,
+) {
+    assert!(
+        ping != pong,
+        "floor: xhairpin takes two endpoints, one on each data NIC (the pong's, then the ping's): {ping} twice would never leave the host"
+    );
+    eprintln!(
+        "floor: hairpin: ping and pong in one process (the pong listens on {ping}, the ping on {pong}; pong cpu {})",
+        pong_cpu.map_or("-".to_string(), |c| c.to_string())
+    );
+    match ergon_md_dpdk::env::selector().unwrap_or_else(|e| panic!("floor: {e}")) {
+        ergon_md_dpdk::Selector::Default => {
+            // each end sends from its own address: out of its own NIC
+            let ping_wire = KernelWire::open_from(pong, ping, Some(*pong.ip()))
+                .unwrap_or_else(|e| panic!("floor: kernel UDP, the ping's: {e}"));
+            let pong_wire = KernelWire::open_from(ping, pong, Some(*ping.ip()))
+                .unwrap_or_else(|e| panic!("floor: kernel UDP, the pong's: {e}"));
+            eprintln!("floor: kernel UDP sockets, no Aeron (each end bound to its own address)");
+            run_hairpin(ping_wire, pong_wire, ping, messages, warmup, ping_cpu, pong_cpu);
+        }
+        ergon_md_dpdk::Selector::DpdkEna => {
+            #[cfg(all(feature = "dpdk", target_os = "linux"))]
+            {
+                use rusteron_media_driver::bindings::aeron_udp_channel_transport_affinity_t as Affinity;
+                let mut shared = dpdk::DpdkShared::open(ping_cpu).unwrap_or_else(|e| panic!("floor: DPDK: {e}"));
+                let ping_wire = shared
+                    .port(pong, ping, Affinity::AERON_UDP_CHANNEL_TRANSPORT_AFFINITY_SENDER)
+                    .unwrap_or_else(|e| panic!("floor: DPDK, the ping's (sender) port: {e}"));
+                let pong_wire = shared
+                    .port(ping, pong, Affinity::AERON_UDP_CHANNEL_TRANSPORT_AFFINITY_RECEIVER)
+                    .unwrap_or_else(|e| panic!("floor: DPDK, the pong's (receiver) port: {e}"));
+                let wires = run_hairpin(ping_wire, pong_wire, ping, messages, warmup, ping_cpu, pong_cpu);
+                // the native runtime's threads may still read what it holds
+                std::mem::forget(wires);
+                std::mem::forget(shared);
+            }
+            #[cfg(not(all(feature = "dpdk", target_os = "linux")))]
+            panic!(
+                "floor: RUSTERON_MEDIA_DRIVER_TRANSPORT=dpdk-ena, but this build has no DPDK (the harness's dpdk feature, Linux)"
+            );
+        }
+    }
+    eprintln!("floor: pong ended: the ping's run done");
+}
+
+/// Sets [`STOP`] when dropped: the hairpin's pong ends with the ping's run,
+/// a failed one's too (the scope would otherwise wait for it for ever).
+struct StopOnDrop;
+
+impl Drop for StopOnDrop {
+    fn drop(&mut self) {
+        STOP.store(true, Ordering::Relaxed);
+    }
+}
+
+/// The ping here, the pong on a scoped thread until the ping is done; the
+/// wires back, for the caller to keep or drop.
+fn run_hairpin<W: Wire + Send>(
+    mut ping_wire: W,
+    mut pong_wire: W,
+    peer: SocketAddrV4,
+    messages: usize,
+    warmup: usize,
+    ping_cpu: Option<usize>,
+    pong_cpu: Option<usize>,
+) -> (W, W) {
+    std::thread::scope(|scope| {
+        let ponger = std::thread::Builder::new()
+            .name("floor-pong".into())
+            .spawn_scoped(scope, move || {
+                pong_loop(&mut pong_wire, pong_cpu);
+                pong_wire
+            })
+            .unwrap_or_else(|e| panic!("floor: the pong's thread: {e}"));
+        let stop = StopOnDrop;
+        run_ping(&mut ping_wire, peer, messages, warmup, ping_cpu);
+        drop(stop);
+        let pong_wire = ponger
+            .join()
+            .unwrap_or_else(|_| panic!("floor: the pong's thread failed"));
+        (ping_wire, pong_wire)
+    })
 }
 
 fn run_ping(wire: &mut impl Wire, peer: SocketAddrV4, messages: usize, warmup: usize, cpu: Option<usize>) {
@@ -136,11 +251,12 @@ fn run_ping(wire: &mut impl Wire, peer: SocketAddrV4, messages: usize, warmup: u
         _ => 50_000_000,
     };
     let mut seq = 0_u64;
+    let mut pace = Pace::from_env();
     let start = Instant::now();
     for i in 0..warmup {
         seq += 1;
-        round_trip(wire, &clock, &mut buffer, &mut None, seq, timeout_ns, |_| {});
-        if i % 64 == 0 && start.elapsed() > budget / 4 {
+        round_trip(wire, &clock, &mut buffer, &mut None, &mut pace, seq, timeout_ns, |_| {});
+        if (pace.paced() || i % 64 == 0) && start.elapsed() > budget / 4 {
             break;
         }
     }
@@ -150,13 +266,22 @@ fn run_ping(wire: &mut impl Wire, peer: SocketAddrV4, messages: usize, warmup: u
     let mut lost = 0_u64;
     for i in 0..messages {
         seq += 1;
-        let echoed = round_trip(wire, &clock, &mut buffer, &mut stalls, seq, timeout_ns, |rtt| {
-            results.record(&clock, rtt, i);
-        });
+        let echoed = round_trip(
+            wire,
+            &clock,
+            &mut buffer,
+            &mut stalls,
+            &mut pace,
+            seq,
+            timeout_ns,
+            |rtt| {
+                results.record(&clock, rtt, i);
+            },
+        );
         if !echoed {
             lost += 1;
         }
-        if i % 64 == 0 && start.elapsed() > budget {
+        if (pace.paced() || i % 64 == 0) && start.elapsed() > budget {
             break;
         }
     }
@@ -205,13 +330,16 @@ fn seq_of(datagram: &[u8]) -> u64 {
 /// back, `false` if none came within `timeout_ns`. An echo of an earlier,
 /// timed-out one is skipped. A send that cannot go yet (a full ring, an ARP
 /// answer awaited) is retried, the wire polled meanwhile, stamped again on
-/// each attempt.
+/// each attempt. A paced ping waits for its time (`pace`) first, polling the
+/// wire as it does for an echo.
 #[inline]
+#[allow(clippy::too_many_arguments)]
 fn round_trip(
     wire: &mut impl Wire,
     clock: &Clock,
     buffer: &mut [u8; DATAGRAM],
     stalls: &mut Option<Stalls>,
+    pace: &mut Pace,
     seq: u64,
     timeout_ns: u64,
     mut record: impl FnMut(u64),
@@ -219,12 +347,23 @@ fn round_trip(
     if let Some(s) = stalls.as_mut() {
         s.pass(clock.now());
     }
+    while !pace.ready(clock.now()) {
+        if let Some(s) = stalls.as_mut() {
+            s.pass(clock.now());
+        }
+        if wire.poll(|_| {}).unwrap_or_else(|e| wire_failed("poll", &e)) == 0 {
+            spin_loop();
+        }
+    }
     buffer[SEQ..SEQ + 8].copy_from_slice(&seq.to_le_bytes());
     let started = loop {
         let now = clock.stamp();
         buffer[STAMP..STAMP + 8].copy_from_slice(&now.to_le_bytes());
         match wire.send(buffer) {
-            Ok(true) => break now,
+            Ok(true) => {
+                pace.sent(now);
+                break now;
+            }
             Ok(false) => {
                 // nothing of this ping can be in flight yet
                 wire.poll(|_| {}).unwrap_or_else(|e| wire_failed("poll", &e));
@@ -265,8 +404,15 @@ fn wire_failed(what: &str, error: &io::Error) -> ! {
 
 /// Echoes every datagram until SIGTERM; says so on stderr.
 fn run_pong(wire: &mut impl Wire, cpu: Option<usize>) {
-    pin(cpu);
     lab::stop_on_sigterm();
+    pong_loop(wire, cpu);
+    eprintln!("floor: pong ended: SIGTERM");
+}
+
+/// Echoes every datagram, pinned to `cpu`, until [`STOP`]; then writes its
+/// loop's stalls.
+fn pong_loop(wire: &mut impl Wire, cpu: Option<usize>) {
+    pin(cpu);
     let clock = Clock::calibrate();
     let mut stalls = Stalls::new(&clock);
     let mut pending = [[0u8; DATAGRAM]; BURST];
@@ -303,11 +449,11 @@ fn run_pong(wire: &mut impl Wire, cpu: Option<usize>) {
     if let Some(stalls) = &stalls {
         stalls.write("stalls-pong.csv");
     }
-    eprintln!("floor: pong ended: SIGTERM");
 }
 
 /// Kernel UDP: a socket bound to this side's endpoint, read without
-/// blocking, and one connected to the peer's.
+/// blocking, and one connected to the peer's (bound to a source address of
+/// its own where given: the hairpin's).
 struct KernelWire {
     rx: UdpSocket,
     tx: UdpSocket,
@@ -316,9 +462,13 @@ struct KernelWire {
 
 impl KernelWire {
     fn open(listen: SocketAddrV4, peer: SocketAddrV4) -> io::Result<Self> {
+        Self::open_from(listen, peer, None)
+    }
+
+    fn open_from(listen: SocketAddrV4, peer: SocketAddrV4, source: Option<Ipv4Addr>) -> io::Result<Self> {
         let rx = UdpSocket::bind(listen)?;
         rx.set_nonblocking(true)?;
-        let tx = UdpSocket::bind("0.0.0.0:0")?;
+        let tx = UdpSocket::bind(SocketAddrV4::new(source.unwrap_or(Ipv4Addr::UNSPECIFIED), 0))?;
         tx.connect(peer)?;
         tx.set_nonblocking(true)?;
         Ok(Self {
@@ -442,27 +592,45 @@ mod dpdk {
         storage
     }
 
-    /// A sender-port transport to the peer and a receiver-port one on this
-    /// side's endpoint, one poller over both (the sender port's ARP answers
-    /// come in on it), the transport's whole state held for the process.
-    pub struct DpdkWire {
+    /// The transport's state for the process: its configuration, the
+    /// counters it registers into, and the context its bindings' calls see
+    /// (only its counters manager, as the transport's own tests give it).
+    /// Every wire is made from it, and it outlives them all.
+    pub struct DpdkShared {
         _context: AeronDriverContext,
         _transport: DpdkTransport,
         _counters: Counters,
-        _init_context: Box<aeron_driver_context_t>,
+        init_context: Box<aeron_driver_context_t>,
+        bindings: *mut aeron_udp_channel_transport_bindings_t,
+        mtu: usize,
+    }
+
+    /// What the wires send on and poll: the cross-host one a sender-port
+    /// transport to the peer and a receiver-port one on this side's
+    /// endpoint, one poller over both (the sender port's ARP answers come in
+    /// on it); a hairpin end one port's transport, which sends and receives,
+    /// and a poller of its own.
+    pub struct DpdkWire {
         bindings: *mut aeron_udp_channel_transport_bindings_t,
         tx: Box<aeron_udp_channel_transport_t>,
-        rx: Box<aeron_udp_channel_transport_t>,
+        /// The transport datagrams arrive on, where it is not `tx`.
+        rx: Option<Box<aeron_udp_channel_transport_t>>,
         poller: Box<aeron_udp_transport_poller_t>,
         data_paths: Box<aeron_udp_channel_data_paths_t>,
         peer: Box<libc::sockaddr_storage>,
         msgvec: Box<[libc::mmsghdr; BURST]>,
     }
 
-    impl DpdkWire {
-        /// The transport from the environment, as the driver's, on this thread
-        /// as an INVOKER driver's (its CPU `cpu`, never idling).
-        pub fn open(listen: SocketAddrV4, peer: SocketAddrV4, cpu: Option<usize>) -> io::Result<Self> {
+    // SAFETY: a wire's transports, poller and buffers are used by the one
+    // thread that holds it (a hairpin's pong takes its own to its thread),
+    // each port's queues by one thread, as an Aeron driver's sender and
+    // receiver threads use theirs; the shared state outlives every wire.
+    unsafe impl Send for DpdkWire {}
+
+    impl DpdkShared {
+        /// The transport from the environment, as the driver's, polled as an
+        /// INVOKER driver's is (its conductor CPU `cpu`, never idling).
+        pub fn open(cpu: Option<usize>) -> io::Result<Self> {
             let aeron = |what: &str, e: &dyn std::fmt::Debug| io::Error::other(format!("{what}: {e:?}"));
             let context = AeronDriverContext::new().map_err(|e| aeron("the driver context", &e))?;
             context
@@ -489,7 +657,7 @@ mod dpdk {
                 .map_err(|e| io::Error::other(e.to_string()))?
                 .ok_or_else(|| io::Error::other("RUSTERON_MEDIA_DRIVER_TRANSPORT does not select dpdk-ena"))?;
             eprintln!(
-                "floor: ergon-md-dpdk's packet path, no Aeron driver or client (listen {listen}, peer {peer}, clock {:?})",
+                "floor: ergon-md-dpdk's packet path, no Aeron driver or client (clock {:?})",
                 transport.clock()
             );
             // SAFETY: the context is live; install set its bindings.
@@ -498,85 +666,148 @@ mod dpdk {
                 return Err(io::Error::other("the transport installed no bindings"));
             }
             let mut counters = Counters::new()?;
-            // The context the bindings' calls see: only its counters manager,
-            // as the transport's own tests give it.
             // SAFETY: all zero is a valid aeron_driver_context_t for these calls.
             let mut init_context: Box<aeron_driver_context_t> = Box::new(unsafe { std::mem::zeroed() });
             init_context.counters_manager = &raw mut *counters.manager;
             wait_for_start_file()?;
+            Ok(Self {
+                _context: context,
+                _transport: transport,
+                _counters: counters,
+                init_context,
+                bindings,
+                mtu,
+            })
+        }
 
-            // SAFETY: zeroed C structs the init and poller calls fill.
-            let (mut tx, mut rx, mut poller, data_paths) = unsafe {
-                (
-                    Box::<aeron_udp_channel_transport_t>::new(std::mem::zeroed()),
-                    Box::<aeron_udp_channel_transport_t>::new(std::mem::zeroed()),
-                    Box::<aeron_udp_transport_poller_t>::new(std::mem::zeroed()),
-                    Box::<aeron_udp_channel_data_paths_t>::new(std::mem::zeroed()),
-                )
-            };
-            let mut peer_addr = sockaddr(peer);
+        /// A transport of `affinity`'s port bound to `bind`, connected to
+        /// `connect` where given.
+        fn transport(
+            &mut self,
+            bind: SocketAddrV4,
+            connect: Option<SocketAddrV4>,
+            affinity: aeron_udp_channel_transport_affinity_t,
+            what: &str,
+        ) -> io::Result<Box<aeron_udp_channel_transport_t>> {
+            // SAFETY: a zeroed C struct the init call fills.
+            let mut transport = Box::<aeron_udp_channel_transport_t>::new(unsafe { std::mem::zeroed() });
+            let mut bind = sockaddr(bind);
             let mut any = sockaddr(SocketAddrV4::new([0, 0, 0, 0].into(), 0));
-            let mut bind = sockaddr(listen);
+            let mut connect = connect.map(sockaddr);
             // SAFETY: bindings are the installed table; every pointer is live
-            // for the call and the transports live as long as the wire.
-            unsafe {
-                let b = &*bindings;
+            // for the call, and the init copies what it keeps.
+            let rc = unsafe {
                 // SAFETY: all zero is a valid parameter set; the MTU is the context's.
                 let mut params: aeron_udp_channel_transport_params_t = std::mem::zeroed();
-                params.mtu_length = mtu;
-                let rc = b.init_func.expect("init_func")(
-                    &mut *tx,
-                    (&raw mut *any).cast(),
-                    (&raw mut *any).cast(),
-                    (&raw mut *peer_addr).cast(),
-                    &mut params,
-                    &mut *init_context,
-                    aeron_udp_channel_transport_affinity_t::AERON_UDP_CHANNEL_TRANSPORT_AFFINITY_SENDER,
-                );
-                if rc < 0 {
-                    return Err(last_error("the sender-port transport"));
-                }
-                let rc = b.init_func.expect("init_func")(
-                    &mut *rx,
+                params.mtu_length = self.mtu;
+                (*self.bindings).init_func.expect("init_func")(
+                    &mut *transport,
                     (&raw mut *bind).cast(),
                     (&raw mut *any).cast(),
-                    ptr::null_mut(),
+                    connect.as_mut().map_or(ptr::null_mut(), |c| (&raw mut **c).cast()),
                     &mut params,
-                    &mut *init_context,
-                    aeron_udp_channel_transport_affinity_t::AERON_UDP_CHANNEL_TRANSPORT_AFFINITY_RECEIVER,
-                );
-                if rc < 0 {
-                    return Err(last_error(&format!("the receiver-port transport on {listen}")));
-                }
+                    &mut *self.init_context,
+                    affinity,
+                )
+            };
+            if rc < 0 {
+                return Err(last_error(what));
+            }
+            Ok(transport)
+        }
+
+        /// A receiver-affinity poller over `transports`.
+        fn poller(
+            &mut self,
+            transports: &mut [&mut aeron_udp_channel_transport_t],
+        ) -> io::Result<Box<aeron_udp_transport_poller_t>> {
+            // SAFETY: a zeroed C struct the init call fills.
+            let mut poller = Box::<aeron_udp_transport_poller_t>::new(unsafe { std::mem::zeroed() });
+            // SAFETY: the bindings are the installed table; the poller and
+            // the transports are live, and live as long as the wire.
+            unsafe {
+                let b = &*self.bindings;
                 if b.poller_init_func.expect("poller_init_func")(
                     &mut *poller,
-                    &mut *init_context,
+                    &mut *self.init_context,
                     aeron_udp_channel_transport_affinity_t::AERON_UDP_CHANNEL_TRANSPORT_AFFINITY_RECEIVER,
                 ) < 0
                 {
                     return Err(last_error("the poller"));
                 }
-                for t in [&mut *rx, &mut *tx] {
-                    if b.poller_add_func.expect("poller_add_func")(&mut *poller, t) < 0 {
+                for t in transports {
+                    if b.poller_add_func.expect("poller_add_func")(&mut *poller, &mut **t) < 0 {
                         return Err(last_error("adding a transport to the poller"));
                     }
                 }
             }
-            Ok(Self {
-                _context: context,
-                _transport: transport,
-                _counters: counters,
-                _init_context: init_context,
-                bindings,
+            Ok(poller)
+        }
+
+        fn wire(
+            &self,
+            tx: Box<aeron_udp_channel_transport_t>,
+            rx: Option<Box<aeron_udp_channel_transport_t>>,
+            poller: Box<aeron_udp_transport_poller_t>,
+            peer: SocketAddrV4,
+        ) -> DpdkWire {
+            DpdkWire {
+                bindings: self.bindings,
                 tx,
                 rx,
                 poller,
-                data_paths,
-                peer: peer_addr,
+                // SAFETY: a zeroed C struct, as the send call takes it.
+                data_paths: Box::new(unsafe { std::mem::zeroed() }),
+                peer: sockaddr(peer),
                 // SAFETY: all zero is a valid mmsghdr array (no names: the
                 // poller writes the source into its own storage then).
                 msgvec: Box::new(unsafe { std::mem::zeroed() }),
-            })
+            }
+        }
+
+        /// The cross-host wire: sends to `peer` from the sender port,
+        /// receives on `listen` at the receiver port.
+        pub fn cross(&mut self, listen: SocketAddrV4, peer: SocketAddrV4) -> io::Result<DpdkWire> {
+            let any = SocketAddrV4::new([0, 0, 0, 0].into(), 0);
+            let mut tx = self.transport(
+                any,
+                Some(peer),
+                aeron_udp_channel_transport_affinity_t::AERON_UDP_CHANNEL_TRANSPORT_AFFINITY_SENDER,
+                "the sender-port transport",
+            )?;
+            let mut rx = self.transport(
+                listen,
+                None,
+                aeron_udp_channel_transport_affinity_t::AERON_UDP_CHANNEL_TRANSPORT_AFFINITY_RECEIVER,
+                &format!("the receiver-port transport on {listen}"),
+            )?;
+            let poller = self.poller(&mut [&mut *rx, &mut *tx])?;
+            eprintln!("floor: DPDK wire: listen {listen}, peer {peer}");
+            Ok(self.wire(tx, Some(rx), poller, peer))
+        }
+
+        /// A hairpin end's wire: one port's transport (`affinity`'s: the
+        /// sender port's or the receiver port's), bound to `listen` (that
+        /// port's address), sending to `peer` (the other port's) and
+        /// receiving there, with a poller of its own.
+        pub fn port(
+            &mut self,
+            listen: SocketAddrV4,
+            peer: SocketAddrV4,
+            affinity: aeron_udp_channel_transport_affinity_t,
+        ) -> io::Result<DpdkWire> {
+            let sender =
+                affinity == aeron_udp_channel_transport_affinity_t::AERON_UDP_CHANNEL_TRANSPORT_AFFINITY_SENDER;
+            let what = if sender { "sender" } else { "receiver" };
+            let mut t = self.transport(
+                listen,
+                sender.then_some(peer),
+                affinity,
+                &format!("the {what}-port transport on {listen}"),
+            )?;
+            let poller = self.poller(&mut [&mut *t])?;
+            eprintln!("floor: DPDK wire on the {what} port: listen {listen}, peer {peer}");
+            Ok(self.wire(t, None, poller, peer))
         }
     }
 
@@ -653,11 +884,11 @@ mod dpdk {
 
         #[inline]
         fn poll<F: FnMut(&[u8])>(&mut self, on: F) -> io::Result<usize> {
-            let mut target = Target {
-                rx: &raw mut *self.rx,
-                on,
-                count: 0,
+            let rx: *mut aeron_udp_channel_transport_t = match self.rx.as_mut() {
+                Some(rx) => &raw mut **rx,
+                None => &raw mut *self.tx,
             };
+            let mut target = Target { rx, on, count: 0 };
             let mut bytes: i64 = 0;
             // SAFETY: the poller and its transports are live; the msgvec has
             // BURST entries; `target` outlives the call.

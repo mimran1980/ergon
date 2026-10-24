@@ -12,7 +12,9 @@ its files' times), per step:
   mode and rep 12 s (drivers started and stopped, counters, loss reads) plus the
                       round trip's 85 s (RTT_SECONDS 20, its warm-up, the pong's start);
                       a raw floor mode (kernel-raw, dpdk-raw: no Aeron) only that, its
-                      round trip alone
+                      round trip alone; a paced mode (@RTT_GAP_US) its round trip's
+                      rtt_plan seconds (20 to 60) and a quarter more of warm-up in
+                      place of the 20 and 5
   32 B flat out          tput_seconds + 9 s (14 s at 5)
   sustained maximum      tput_seconds + 11 s a size (16 s at 5)
   several flows at once  tput_seconds + 11 s a size
@@ -27,7 +29,9 @@ Both instances run the whole time: instance-hours are twice the wall time.
 Bytes between the hosts (cross-host modes only; a localhost run crosses no
 network), as IP packets: each message plus Aeron's 32-byte data header and 28
 bytes of IPv4 and UDP; Aeron's status messages, NAKs and heartbeats are left
-out. The round trip: its warm-up and messages of 32 bytes, each way. A load
+out. The round trip: its warm-up and messages of 32 bytes, each way (a paced
+mode's as rtt_plan has them; a same-host hairpin, @HAIRPIN=1, none: it stays on
+host a). A load
 point: (load_seconds + 1) s (the first second is warm-up) at its rate, echoed
 back the same size; a warm-up likewise, (warmup_seconds + 1) s at
 LAB_WARMUP_RATE, at the sweep's first size. A flat-out phase (none with LAB_NO_FLATOUT=1) is counted
@@ -90,6 +94,19 @@ RAW = ("kernel-raw", "dpdk-raw")
 TRANSFER_USD_GB = {"cluster": 0.0, "precision-time": 0.0, "cross-az": 0.02, "cross-region": 0.02}
 
 
+def rtt_plan(mode, messages, warmup):
+    """(seconds, round trips, warm-up) of a mode's round trip, as modes.sh
+    rtt_plan has them: 20 s and as given, or for a paced mode (@RTT_GAP_US) as
+    long as 10,000 round trips take, 20 to 60 s, the round trips that fit
+    (at most those given) and about 2 s of warm-up (at least one)."""
+    gaps = [p.partition("=")[2] for p in mode.removesuffix("+idle").split("@")[1:] if p.startswith("RTT_GAP_US=")]
+    if not gaps:
+        return 20, messages, warmup
+    gap = int(gaps[-1])
+    seconds = min(60, max(20, -(-10000 * gap // 1_000_000)))
+    return seconds, min(messages, seconds * 1_000_000 // gap), min(warmup, -(-2_000_000 // gap))
+
+
 def points(size, fractions, ladder):
     """The load sweep's points at <size>: (rate msgs/s, is it a bound) each,
     the burst's last: the ladder's rates and its median, or fractions of the
@@ -116,9 +133,10 @@ def estimate(type_a, type_b, placement, reps, modes, local_modes, states, load_s
     for local in (False, True):
         for mode in (local_modes if local else modes):
             idle = mode.endswith("+idle")
-            secs, to_b, to_a = MODE_S + RTT_S, 0, 0
-            if not local:
-                rtt = (rtt_messages + rtt_warmup) * (RTT_SIZE + WIRE_OVERHEAD)
+            seconds, messages, warmup = rtt_plan(mode, rtt_messages, rtt_warmup)
+            secs, to_b, to_a = MODE_S + RTT_S + (seconds - 20) + (-(-seconds // 4) - 5), 0, 0
+            if not local and "@HAIRPIN=1@" not in mode.removesuffix("+idle") + "@":
+                rtt = (messages + warmup) * (RTT_SIZE + WIRE_OVERHEAD)
                 to_b, to_a = rtt, rtt
             if mode.split("@")[0].removesuffix("-mono") in RAW:
                 per_mode += secs

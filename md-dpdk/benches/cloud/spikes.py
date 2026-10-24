@@ -43,6 +43,10 @@ circularly by a random offset within the run (its round trips' sum, from the
 histogram), 1,000 times with a fixed seed, how many overlap then; p is the
 share of shifts overlapping at least as many.
 
+A same-host hairpin's runs (a mode with @HAIRPIN=1: both ends on host a, host
+b idle) are judged on host a's events alone. A paced run's (@RTT_GAP_US) length
+for the chance baseline is its round trips times the gap.
+
 Under precision-time, each rep's largest round trips split one way first
 (oneway-<state>-<mode>-<rep>.csv, rtt's RTT_ONE_WAY: both hosts' NIC
 receive timestamps, the clocks on the PTP hardware clock): out (sent to the
@@ -351,15 +355,27 @@ def chance(reps, sources, shifts=SHIFTS, seed=SEED):
     return out
 
 
+def hosts_of(stem):
+    """The hosts a run's spikes can come from: a hairpin's (@HAIRPIN=1) are
+    host a's alone, every other run's both."""
+    return "a" if re.search(r"@HAIRPIN=1(?=[@+-]|$)", stem) else "ab"
+
+
 def run_length(folder, run_tag, start, last):
     """A round trip run's measured length in seconds: its round trips' sum
-    (histogram-<run>.csv, value_ns,count), else to its last event seen."""
+    (histogram-<run>.csv, value_ns,count), or for a paced run (@RTT_GAP_US)
+    its round trips times the gap where that is longer; else to its last
+    event seen."""
     path = os.path.join(folder, f"histogram-{run_tag}.csv")
+    gap = re.search(r"@RTT_GAP_US=(\d+)(?=[@+-]|$)", run_tag)
     if os.path.exists(path):
-        total = 0
+        total = count = 0
         for row in csv.reader(open(path)):
             if len(row) == 2 and row[0].isdigit():
                 total += int(row[0]) * int(row[1])
+                count += int(row[1])
+        if gap:
+            total = max(total, count * int(gap.group(1)) * 1000)
         if total:
             return total / 1e9
     return max(last - start, 1.0)
@@ -595,15 +611,16 @@ def main():
     clients = {}
     errors = []
 
-    def cause_of(t0, t1, base=BASE):
+    def cause_of(t0, t1, base=BASE, hosts="ab"):
         need = max(t1 - t0 - base, 0.0) / 2
         for who, stalls in clients.items():
             if any(g1 - g0 >= need for g0, g1 in overlapping(stalls, t0, t1)):
                 return f"{who} stall"
-        for host in diag:
+        seen = [h for h in diag if h in hosts]
+        for host in seen:
             if any(g1 - g0 >= need for g0, g1 in overlapping(gap_idx[host], t0, t1)):
                 return f"host stall ({host})"
-        for host in diag:
+        for host in seen:
             hit = [p for p in overlapping(pre_idx[host], t0, t1) if p[1] - p[0] >= need]
             if hit:
                 return f"guest preemption ({host}: {hit[0][3]} by {hit[0][4]})"
@@ -611,7 +628,7 @@ def main():
         if hit:
             return f"driver errors ({hit[0][2]}: {hit[0][3]} x{hit[0][4]:,})"
         # a host whose spinner did not run then: its stall not ruled out
-        unseen = [h for h in sorted(blind) if any(b0 < t1 and b1 > t0 for b0, b1 in blind[h])]
+        unseen = [h for h in sorted(blind) if h in hosts and any(b0 < t1 and b1 > t0 for b0, b1 in blind[h])]
         if unseen:
             return f"unexplained (no spinner on {', '.join(unseen)}: a host stall not ruled out)"
         return "unexplained"
@@ -680,11 +697,12 @@ def main():
             mid[run].append((int(rt.group(2)), sum(1 for lat, _ in rows if 100 <= lat < 250)))
         # a localhost round trip is ~6 us, not ~50: its causes are judged against that
         base = 6e-6 if f"{state}-local-" in stem else BASE
+        hosts = hosts_of(stem)
         over = sum(1 for lat, _ in rows if lat >= threshold)
         for lat, due in rows[:TOP]:
             if lat >= threshold:
                 t0 = start + due / 1e9
-                totals[run][cause_of(t0, t0 + lat / 1e6, base)] += 1
+                totals[run][cause_of(t0, t0 + lat / 1e6, base, hosts)] += 1
         if over > TOP:
             totals[run]["not attributed (past the largest 50)"] += over - TOP
         if recorded_total is not None and recorded_total > len(rows):
@@ -692,7 +710,7 @@ def main():
         if rows:
             lat, due = rows[0]
             t0 = start + due / 1e9
-            maxima[run].append((lat, cause_of(t0, t0 + lat / 1e6, base), gaps_note, t0, bool(rt)))
+            maxima[run].append((lat, cause_of(t0, t0 + lat / 1e6, base, hosts), gaps_note, t0, bool(rt)))
         else:
             maxima[run].append((0.0, "under 100 us", gaps_note, None, bool(rt)))
     print(f"## Spikes of {threshold:.0f} us or more by cause, {state}\n")
@@ -935,13 +953,13 @@ def largest(folder, state, run_dir, diag, knoise):
     overlapping each, and each source's overlaps against chance."""
     # the state's events on either host, whatever the run: spinner gaps,
     # traced preemptions, KNOISE
-    host_events = []
+    by_host = collections.defaultdict(list)
     for host, (gaps, preempted) in sorted(diag.items()):
         # (their sources stamp whole microseconds)
-        host_events += [(g0, g1, "host stall", f"host stall {(g1 - g0) * 1e6:.0f} µs ({host})") for g0, g1 in gaps]
-        host_events += [(t0, t1, "guest preemption", f"{who} preempted by {by} {(t1 - t0) * 1e6:.0f} µs ({host} cpu {cpu})")
-                        for t0, t1, cpu, who, by in preempted]
-        host_events += knoise.get(host, [])
+        by_host[host] += [(g0, g1, "host stall", f"host stall {(g1 - g0) * 1e6:.0f} µs ({host})") for g0, g1 in gaps]
+        by_host[host] += [(t0, t1, "guest preemption", f"{who} preempted by {by} {(t1 - t0) * 1e6:.0f} µs ({host} cpu {cpu})")
+                          for t0, t1, cpu, who, by in preempted]
+        by_host[host] += knoise.get(host, [])
     table = []  # (run, rep, ping, latency ns, end ns, labels)
     reps = collections.defaultdict(list)  # run: [(round trips, start, length, events by source)]
     drops = []
@@ -951,6 +969,8 @@ def largest(folder, state, run_dir, diag, knoise):
             continue
         run, rep = f"{rt.group(1)}-rtt", int(rt.group(2))
         tag = f"{rt.group(1)}-{rep}"
+        hosts = hosts_of(stem)
+        host_events = [e for h in hosts for e in by_host.get(h, [])]
         start_ns, rows = None, []
         with open_spikes(path) as f:
             for line in f:
@@ -968,7 +988,7 @@ def largest(folder, state, run_dir, diag, knoise):
         events = []
         for who in ("ping", "pong"):
             events += stall_events(os.path.join(folder, f"stalls-{who}-{tag}.csv"), who)
-        for host in "ab":
+        for host in hosts:
             for base in (folder, run_dir):
                 ring = os.path.join(base, f"{host}-rings-{tag}.log")
                 if os.path.exists(ring):

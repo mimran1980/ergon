@@ -6,7 +6,8 @@
 # multiple endpoints, loss recovery, restart cleanup, ICMP echo, a peer whose
 # MAC moves mid-stream, a gateway that never answers ARP, the largest MTU
 # the port takes, and the lab's raw floor client (floor: the transport's
-# bindings with no Aeron driver or client) round tripping. The new scenarios assert on the reports' counters and
+# bindings with no Aeron driver or client) round tripping, between two
+# processes and between one process's own two ports (its hairpin). The new scenarios assert on the reports' counters and
 # logs only.
 #
 # This requires a Linux x86_64 or aarch64 host and:
@@ -63,7 +64,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-ALL_SCENARIOS="bidirectional_unicast dpdk_to_udp udp_to_dpdk reconnect multi_endpoint loss_recovery restart icmp_ping peer_mac_move silent_gateway largest_mtu raw_floor"
+ALL_SCENARIOS="bidirectional_unicast dpdk_to_udp udp_to_dpdk reconnect multi_endpoint loss_recovery restart icmp_ping peer_mac_move silent_gateway largest_mtu raw_floor raw_floor_hairpin"
 # RUSTERON_VDEV_NO_HUGE=1: EAL without hugepages (--no-huge, this much memory
 # in MiB, no PCI scan), for an unprivileged run (test-dpdk-vdev-rootless.sh).
 NO_HUGE="${RUSTERON_VDEV_NO_HUGE:-0}"
@@ -917,6 +918,72 @@ scenario_raw_floor() {
     log "scenario $scenario PASSED"
 }
 
+# The lab's same-host hairpin (floor xhairpin, its @HAIRPIN=1 modes): one
+# process, both ends, the ping on its sender port (10.9.0.1 in and out) and
+# the pong on a thread of its own on its receiver port (10.9.0.3), each with
+# its own poller, so every datagram leaves one port and comes back on the
+# other over the bridge. Asserted as raw_floor: one rtt line (every round
+# trip measured, none lost), the histogram, the spikes, both loop-stall
+# files, and the pong ending with the ping's run.
+scenario_raw_floor_hairpin() {
+    local scenario=raw_floor_hairpin out=$WORK_DIR/raw_floor_hairpin
+    local floor=${RUSTERON_FLOOR_BIN:-$(dirname "$HARNESS_BIN")/floor}
+    [[ -x $floor ]] || die "$scenario: no floor client at $floor (cargo build -p ergon-md-dpdk-harness --features dpdk builds it; RUSTERON_FLOOR_BIN names another)"
+    rm -rf "$out"; mkdir -p "$out"
+    local penv=$WORK_DIR/$scenario-p.env
+    { dpdk_env primary
+      echo "LABEL=$scenario"
+      echo "RTT_SECONDS=30"
+      echo "RTT_LOST_TIMEOUT_US=10000000"
+      echo "RTT_HISTOGRAM=$out/histogram.csv"
+      echo "LOAD_SPIKES=$out/spikes.csv"
+      echo "LOAD_SPIKE_NS=1"
+      echo "LOOP_STALLS_DIR=$out"
+      echo "RUSTERON_HARNESS_START_FILE=$(start_file primary)"; } > "$penv"
+    local ping_ep=10.9.0.3:40132 pong_ep=10.9.0.1:40133 vars before taps
+    rm -f "$(start_file primary)"
+    before=$(snapshot_taps)
+    mapfile -t vars < "$penv"
+    env "${vars[@]}" "$floor" xhairpin "$ping_ep" "$pong_ep" "$MSGS" 100 "$PLAN_SENDER_CPU" "$PLAN_RECEIVER_CPU" \
+        >"$WORK_DIR/$scenario.out" 2>"$WORK_DIR/$scenario.log" &
+    local pid=$!
+    taps=$(discover_taps "$before" "$pid" 2) || die "$scenario: the taps did not appear"
+    taps=( $taps )
+    attach_tap "${taps[0]}" 10.9.0.1
+    attach_tap "${taps[1]}" 10.9.0.3
+
+    local deadline=$((SECONDS + 120)) rc=0
+    while kill -0 "$pid" 2>/dev/null && ((SECONDS < deadline)); do sleep 0.5; done
+    kill -0 "$pid" 2>/dev/null && die "$scenario: still running after 120 s"
+    wait "$pid" || rc=$?
+    ((rc == 0)) || die "$scenario: the hairpin failed ($rc): $(tail -3 "$WORK_DIR/$scenario.log" | tr '\n' ' ')"
+    grep -q "^floor: hairpin: ping and pong in one process" "$WORK_DIR/$scenario.log" || die "$scenario: not a hairpin run"
+    grep -q "^floor: DPDK wire on the sender port" "$WORK_DIR/$scenario.log" &&
+        grep -q "^floor: DPDK wire on the receiver port" "$WORK_DIR/$scenario.log" || die "$scenario: not one port each end"
+    grep -q "^floor: pong ended: the ping's run done$" "$WORK_DIR/$scenario.log" || die "$scenario: the pong did not end with the ping"
+
+    local line fields counted f
+    line=$(cat "$WORK_DIR/$scenario.out")
+    log "assert $scenario: $line"
+    [[ $(wc -l <"$WORK_DIR/$scenario.out") -eq 1 && $line == "rtt,$scenario,udp,"* ]] ||
+        die "$scenario: not one rtt line on stdout: $line"
+    IFS=, read -ra fields <<<"$line"
+    ((${#fields[@]} == 12)) || die "$scenario: ${#fields[@]} fields, not 12: $line"
+    [[ ${fields[10]} == "$MSGS" && ${fields[11]} == 0 ]] ||
+        die "$scenario: ${fields[10]} round trips and ${fields[11]} lost, want $MSGS and 0"
+    counted=$(awk -F, 'NR > 1 {n += $2} END {print n + 0}' "$out/histogram.csv")
+    [[ $counted == "$MSGS" ]] || die "$scenario: the histogram holds $counted round trips, want $MSGS"
+    grep -qx "# spikes_total=$MSGS" "$out/spikes.csv" || die "$scenario: spikes_total is not $MSGS"
+    for f in stalls-ping.csv stalls-pong.csv; do
+        grep -q '^# start_realtime_ns=' "$out/$f" && grep -qx 'end_ns,gap_ns' "$out/$f" ||
+            die "$scenario: $f missing or malformed"
+    done
+    for f in $(snapshot_taps); do
+        ip link del "$f" 2>/dev/null || true
+    done
+    log "scenario $scenario PASSED"
+}
+
 # ---------------------------------------------------------------------------
 # Cleanup + main
 # ---------------------------------------------------------------------------
@@ -972,6 +1039,7 @@ run_one_scenario() {
         silent_gateway)       scenario_silent_gateway ;;
         largest_mtu)          scenario_largest_mtu ;;
         raw_floor)            scenario_raw_floor ;;
+        raw_floor_hairpin)    scenario_raw_floor_hairpin ;;
         *) die "unknown scenario $1" ;;
     esac
 }
