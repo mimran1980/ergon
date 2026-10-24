@@ -418,6 +418,120 @@ fn requests_never_handed_to_the_kernel_are_named() -> R {
     Ok(())
 }
 
+/// Pipelined requests, a short send (the server reads nothing yet), then one
+/// more request queued behind the unsent tail; the requests time out. The
+/// close names the first request whose record the kernel never wholly took:
+/// with the server still not reading, the one the short send cut (or, on
+/// `io_uring`, which counts what it submitted, the request queued after);
+/// once the server has read everything, none.
+#[test]
+fn a_short_send_then_a_request_names_the_first_unsent_exactly() -> R {
+    for b in Backend::ALL {
+        for drain in [false, true] {
+            let lab = Lab::new()?;
+            let mut d = match http_driver(b) {
+                Ok(d) => d,
+                Err(e)
+                    if b == Backend::UringSqpoll && support::refused(&*e, HelperThread::SqPoll) =>
+                {
+                    continue;
+                }
+                Err(e) => return Err(format!("{b}: {e}").into()),
+            };
+            let (got, want) = short_send_then_close(&lab, &mut d, drain)
+                .map_err(|e| format!("{b} drain={drain}: {e}"))?;
+            assert_eq!(got, want, "{b} drain={drain}");
+        }
+    }
+    Ok(())
+}
+
+/// One run of [`a_short_send_then_a_request_names_the_first_unsent_exactly`]:
+/// the first unsent request the close named, and the one the bytes the
+/// kernel took say it must name.
+fn short_send_then_close(
+    lab: &Lab,
+    d: &mut Driver<HttpConn>,
+    drain: bool,
+) -> R<(Option<u64>, Option<u64>)> {
+    // 15 MB: more than the two loopback sockets hold, so a send is short.
+    const N: usize = 1_000;
+    let (go, wait_go) = std::sync::mpsc::channel::<()>();
+    let (done, wait_done) = std::sync::mpsc::channel::<()>();
+    std::thread::scope(|s| -> R<(Option<u64>, Option<u64>)> {
+        let srv = s.spawn(move || -> R {
+            let mut p = lab.accept_tls()?;
+            wait_go.recv_timeout(Duration::from_secs(20))?;
+            if drain {
+                for _ in 0..=N {
+                    p.read_request()?;
+                }
+            }
+            // Holds the socket open, unread, until the client has closed.
+            wait_done.recv_timeout(Duration::from_secs(20))?;
+            drop(p);
+            Ok(())
+        });
+        let result = (|| -> R<(Option<u64>, Option<u64>)> {
+            let mut h = Collect::default();
+            let opts = HttpOptions {
+                max_in_flight: N + 1,
+                request_timeout_ms: 4_000,
+                ..HttpOptions::default()
+            };
+            let id = d.connect(dial(lab, opts)?)?;
+            poll_until(d, &mut h, |h| !h.opened.is_empty())?;
+            let body = vec![b'x'; 15_000];
+            // Where each request's record ends in the bytes queued since
+            // connect (nothing is sent before the next poll).
+            let mut ends = Vec::with_capacity(N + 1);
+            for _ in 0..N {
+                let mut c = d.get_mut(id).ok_or("gone")?;
+                c.request("POST", "/", &[], &body)?;
+                ends.push(c.queued_tx().len());
+            }
+            let total = *ends.last().ok_or("no requests")?;
+            // Send until the kernel takes no more (the server reads nothing).
+            let mut unsent = total;
+            let mut still = Instant::now();
+            while still.elapsed() < Duration::from_millis(300) {
+                d.poll(&mut h)?;
+                let now = d.get(id).ok_or("gone")?.queued_tx().len();
+                if now != unsent {
+                    unsent = now;
+                    still = Instant::now();
+                }
+            }
+            if !d.config().backend.is_uring() {
+                assert!(
+                    unsent > 0 && unsent < total,
+                    "no short send: {unsent} of {total} unsent"
+                );
+            }
+            let handed = total - unsent;
+            let mut c = d.get_mut(id).ok_or("gone")?;
+            c.request("POST", "/", &[], b"last")?;
+            ends.push(total + c.queued_tx().len() - unsent);
+            go.send(())?;
+            poll_until(d, &mut h, |h| !h.closed.is_empty())?;
+            assert_eq!(h.unanswered.len(), 1, "{:?}", h.closed);
+            let got = h.unanswered[0].1;
+            let want = if drain {
+                None
+            } else {
+                ends.iter()
+                    .position(|&e| e > handed)
+                    .map(u64::try_from)
+                    .transpose()?
+            };
+            Ok((got, want))
+        })();
+        let _ = done.send(());
+        srv.join().map_err(|_| "server panicked")??;
+        result
+    })
+}
+
 #[test]
 fn connection_close_delivers_then_closes() -> R {
     let lab = Lab::new()?;

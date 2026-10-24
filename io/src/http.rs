@@ -578,6 +578,9 @@ impl HttpConn {
     fn push_in_flight(&mut self, head: bool) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
+        // The unsent bytes only (`TxQueue::len`, from the head offset): the
+        // sent prefix a short `epoll` send leaves at the front is already in
+        // `handed`, so the sum is where this record ends in the stream.
         let queued = self.stream.tx_queue().len() as u64;
         self.in_flight.push_back(InFlight {
             id,
