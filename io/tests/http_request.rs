@@ -332,3 +332,29 @@ fn header_checks_hold_at_every_offset() -> R {
     }
     Ok(())
 }
+
+/// The book's template example (`book/src/io/http-client.md`).
+#[test]
+fn the_book_template_example_runs() -> R {
+    let lab = Lab::new()?;
+    let mut r = HttpRig::new(&lab, HttpOptions::default())?;
+    let conn = &mut r.conn;
+    let target = lab.target("")?;
+    // ANCHOR: template
+    // Once per endpoint and request kind: the request line around the path,
+    // `Host` and the target's headers, checked once.
+    let order = RequestTemplate::new(&target, "POST", "/api/order")?;
+    // Per request: only what varies.
+    let body = br#"{"id":7,"qty":1}"#;
+    conn.request_with(
+        &order,
+        "?test=1",
+        &[("Content-Type", "application/json")],
+        body,
+    )?;
+    // ANCHOR_END: template
+    let plain = r.tx_open.open_all(r.conn.queued_tx())?;
+    assert!(plain[0].starts_with(b"POST /api/order?test=1 HTTP/1.1\r\nHost: localhost:"));
+    assert!(plain[0].ends_with(b"Content-Length: 16\r\n\r\n{\"id\":7,\"qty\":1}"));
+    Ok(())
+}

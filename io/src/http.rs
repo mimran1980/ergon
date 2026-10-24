@@ -2,9 +2,22 @@
 //!
 //! - [`HttpDial`] sets the connection up without blocking.
 //! - [`HttpConn::request`] writes a request straight into one TLS record: one
-//!   `send`, one TCP segment for a small request.
-//! - Responses are parsed in place: a `Content-Length` body is a slice of the
-//!   receive buffer. Responses match requests in order.
+//!   `send`, one TCP segment for a small request. A [`RequestTemplate`]
+//!   holds the request line and the endpoint's fixed headers, built and
+//!   checked once; [`HttpConn::request_with`] writes only what varies. The
+//!   send queue's pages are written once at connect, so the first requests
+//!   take no page fault.
+//! - Responses are parsed in place and each head once, even when the body
+//!   arrives in later records. A `Content-Length` body is a slice of the
+//!   receive buffer, and so is a chunked body sent as one chunk that is
+//!   whole in the buffer. Other chunked bodies are copied once: each chunk
+//!   leaves the buffer as it arrives, so later records are read in place.
+//!   Responses match requests in order.
+//! - Status lines and headers are ASCII by spec: a head with another byte
+//!   is delivered with [`Response::head_ascii`] false
+//!   ([`NonAsciiHead::Flag`], the default) or closes the connection
+//!   ([`NonAsciiHead::Reject`]). Bodies are not checked unless
+//!   [`HttpOptions::body_check`] asks ([`TextCheck`]).
 //! - One request in flight by default ([`HttpOptions::max_in_flight`] 1). A
 //!   second [`HttpConn::request`] before the response returns
 //!   [`Error::Busy`]: no hidden queue.
@@ -1187,6 +1200,36 @@ impl ConnMut<'_, HttpConn> {
         body: &[u8],
     ) -> Result<u64> {
         self.inner().request(method, path, headers, body)
+    }
+
+    /// [`HttpConn::request_with`].
+    ///
+    /// # Errors
+    /// As [`HttpConn::request_with`].
+    pub fn request_with(
+        &mut self,
+        template: &RequestTemplate,
+        suffix: &str,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> Result<u64> {
+        self.inner().request_with(template, suffix, headers, body)
+    }
+
+    /// [`HttpConn::signed_request_with`].
+    ///
+    /// # Errors
+    /// As [`HttpConn::signed_request_with`].
+    pub fn signed_request_with(
+        &mut self,
+        template: &RequestTemplate,
+        params: &str,
+        headers: &[(&str, &str)],
+        signer: &crate::auth::Signer,
+        timestamp_ms: u64,
+    ) -> Result<u64> {
+        self.inner()
+            .signed_request_with(template, params, headers, signer, timestamp_ms)
     }
 
     /// [`HttpConn::signed_request`].

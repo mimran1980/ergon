@@ -228,6 +228,22 @@
   `WsStats::frag_fallbacks`; `WsStats::skipped` counts dropped messages.
   New types: `Interest`, `Fragments`, `FragmentIter`. `ws_bench` (in
   `io/benches`) times parse-and-deliver per message for each case.
+- `ergon-io`: `RequestTemplate` holds a request's line around its path and
+  the endpoint's fixed headers (`Host`, `Target::headers`), built and
+  checked once. `HttpConn::request_with` and
+  `HttpConn::signed_request_with` (also on `ConnMut<HttpConn>`) write only
+  a target suffix, per-request headers, `Content-Length` and the body; the
+  bytes on the wire equal `HttpConn::request`'s (ciphertext compared at
+  every request size up to one record). A template from another target is
+  refused.
+- `ergon-io`: `HttpOptions::non_ascii_head` (`NonAsciiHead::Flag`, the
+  default, or `Reject`): a response head with a byte above 0x7F is delivered
+  with the new `Response::head_ascii` false and counted in
+  `HttpStats::non_ascii_heads`, or closes the connection.
+  `HttpOptions::body_check` (`http::TextCheck`: `None`, the default, `Ascii`
+  or `Utf8`) checks every body and closes the connection on a failure.
+  `HttpStats::head_parses` counts head parses. `http_bench` (in
+  `io/benches`) times the previous and current HTTP paths interleaved.
 
 ### Changed
 
@@ -395,6 +411,24 @@
   UTF-8 in a skipped message no longer closes the connection (a deliberate
   relaxation of RFC 6455 §8.1). The check scans for ASCII first, then runs
   `str::from_utf8`.
+- Breaking: `ergon-io` `Response` has a `head_ascii` field, `HttpOptions`
+  has `non_ascii_head` and `body_check`, and `HttpStats` has `head_parses`
+  and `non_ascii_heads`: struct literals of them no longer compile (add
+  `..HttpOptions::default()`).
+- `ergon-io` HTTP receive: a chunked body still arriving is copied out
+  chunk by chunk as records come (its head first), once per byte, instead
+  of being de-chunked again from the start on every record; the window
+  empties, so later records are read in place. A chunked body sent as one
+  chunk, whole in the buffer, is borrowed (no copy). A head is parsed once:
+  a response whose body arrives in later records keeps its head as offsets.
+  `HttpStats::chunk_copy_bytes` now counts every byte the de-chunking moved
+  (it counted only the last pass's body). The de-chunk buffer is allocated
+  on first use, at `buf_size` minus two records, instead of 64 KiB at
+  connect.
+- `ergon-io`: `HttpConn`'s 64 KiB send queue is written once at connect,
+  so the first requests take no page fault. Header checks are faster (a
+  token table, CR/LF/NUL scanned eight bytes at a time); what they accept is
+  unchanged.
 
 ### Removed
 
