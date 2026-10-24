@@ -34,9 +34,10 @@
 #   datagrams/s) LAB_STRESS ("--cpu 1 --vm 1 --vm-bytes 128M")
 #   LAB_MAX_HOURS (4): the deleting backstop. A systemd timer on the VM
 #   (cloud-init, so from first boot, surviving the reboot) deletes the
-#   group through the VM's identity at that deadline; Azure's auto-shutdown
-#   deallocates the VM then too; a watchdog on this machine deletes it as
-#   well; and this script stops its run 15 minutes before it.
+#   group through the VM's identity at that deadline; a watchdog on this
+#   machine deletes it as well; Azure's auto-shutdown deallocates the VM 30
+#   minutes later (not before: a deallocated VM cannot run its timer); and
+#   this script stops its run 15 minutes before the deadline.
 #   LAB_DETACH (auto): a run the plan puts over 2 hours re-runs itself
 #   detached (nohup, setsid, caffeinate on macOS) and returns at once;
 #   LAB_DETACH=1 always, 0 never. Its log is target/nri-lab/<stamp>/run.log;
@@ -91,7 +92,7 @@ for v in reps seconds delay udp_rate max_hours; do
 done
 ((reps >= 1)) || die "LAB_REPS is 1 or more"
 ((seconds >= 10)) || die "LAB_SECONDS is 10 or more"
-((max_hours >= 1 && max_hours <= 24)) || die "LAB_MAX_HOURS is 1 to 24 (auto-shutdown takes a time of day)"
+((max_hours >= 1 && max_hours <= 23)) || die "LAB_MAX_HOURS is 1 to 23 (auto-shutdown takes a time of day, 30 min after the deadline)"
 [[ $stress =~ ^[-a-zA-Z0-9\ ]+$ ]] || die "LAB_STRESS: stress-ng flags only (letters, digits, dashes, spaces)"
 boot=$(lab_boot_args "$exclusive_cpus" "$irq_cpu")
 price=${LAB_PRICE_PER_HOUR:-$(lab_price_per_hour "$size")}
@@ -103,7 +104,10 @@ cap=$(lab_cost "$price" $((max_hours * 60)))
 now=$(date -u +%s)
 deadline=$((now + max_hours * 3600))
 deadline_utc=$(date -u -r "$deadline" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -u -d "@$deadline" '+%Y-%m-%d %H:%M:%S')
-off_hhmm=$(date -u -r "$deadline" +%H%M 2>/dev/null || date -u -d "@$deadline" +%H%M)
+# auto-shutdown only deallocates, and a deallocated VM cannot run its
+# deleting timer: it comes 30 minutes after the timer, as a last stop
+off=$((deadline + 1800))
+off_hhmm=$(date -u -r "$off" +%H%M 2>/dev/null || date -u -d "@$off" +%H%M)
 detach=${LAB_DETACH:-auto}
 [[ $detach == auto ]] && { ((minutes > 120)) && detach=1 || detach=0; }
 
@@ -116,7 +120,7 @@ ergon-shared-cpus latency lab, run $stamp
   runs      $reps reps x plugin-on, plugin-off; ${seconds} s spin after ${delay} s helpers; stress-ng $stress; UDP $udp_rate/s
   time      about $minutes minutes$( ((detach)) && echo ", detached")
   price     about \$$price/h for the VM (+\$0.02/h IP and disk): about \$$cost for the run, at most \$$cap to the backstop
-  backstop  $deadline_utc UTC (LAB_MAX_HOURS=$max_hours): the VM deletes the group, auto-shutdown deallocates it
+  backstop  $deadline_utc UTC (LAB_MAX_HOURS=$max_hours): the VM deletes the group; auto-shutdown deallocates it 30 min later
   results   $out
 EOF
 
@@ -137,7 +141,7 @@ DRY_RUN: the az calls a run makes, in order (nothing called):
   then over SSH: the backstop timer enabled and its identity able to read the group, vm.sh bootstrap,
   a reboot, vm.sh tune, cluster, e2e, bench, report; the results copied back
   ... every $((900 / 60)) minutes: az resource list -g $group
-  on exit: az group delete -n $group --yes --no-wait; az group wait -n $group --deleted
+  on exit: az group delete -n $group --yes --no-wait; az group wait -n $group --deleted (up to 3 tries)
            az group exists -n $group; az resource list --tag run=$stamp
 EOF
     exit 0
@@ -180,19 +184,25 @@ remove_snapshot() {
 
 teardown() {
     local rc=$?
-    trap '' INT TERM
+    trap '' INT TERM HUP
     [[ -n ${watchdog:-} ]] && kill "$watchdog" 2>/dev/null
     if ((created)); then
-        log "deleting resource group $group"
-        if az group delete -n "$group" --yes --no-wait -o none; then
-            az group wait -n "$group" --deleted --timeout 3600 -o none || log "WARNING: az group wait failed"
-        else
-            log "WARNING: az group delete failed"
-        fi
+        # three tries: a failed or timed-out delete (a throttle, a reset
+        # connection) is sent again while the group still exists
+        local exists left listed=1 try
+        for try in 1 2 3; do
+            log "deleting resource group $group (try $try)"
+            if az group delete -n "$group" --yes --no-wait -o none; then
+                az group wait -n "$group" --deleted --timeout 3600 -o none || log "WARNING: az group wait failed"
+            else
+                log "WARNING: az group delete failed"
+            fi
+            exists=$(az group exists -n "$group" 2>/dev/null)
+            [[ $exists == true ]] || break
+            sleep "$poll"
+        done
         # every read must succeed for "verified": an expired login reads as
         # nothing left, and that is not a check
-        local exists left listed=1
-        exists=$(az group exists -n "$group" 2>/dev/null)
         left=$(az resource list --tag "run=$stamp" --query '[].id' -o tsv 2>/dev/null) || listed=0
         if [[ $exists == false && $listed == 1 && -z $left ]]; then
             log "verified: group $group is gone and no resource is tagged run=$stamp"
@@ -207,6 +217,7 @@ teardown() {
 }
 trap teardown EXIT
 trap 'exit 130' INT TERM
+trap 'exit 129' HUP
 
 # ---------------------------------------------------------------- create
 
@@ -220,8 +231,10 @@ me=${LAB_SSH_FROM:-$(curl -fsS -m 10 https://api.ipify.org)} || die "cannot find
 rgid=/subscriptions/$sub/resourceGroups/$group
 
 log "creating $group in $region"
-az group create -n "$group" -l "$region" --tags "${tags[@]}" -o none || die "group create failed"
+# set first: a create that reaches ARM and then fails or is interrupted
+# still leaves a group, and the teardown deletes it (the name was free)
 created=1
+az group create -n "$group" -l "$region" --tags "${tags[@]}" -o none || die "group create failed"
 # this machine's watchdog: the group goes at the deadline should this
 # script die without its trap (the VM's timer and auto-shutdown are the rest)
 nohup bash -c "trap 'kill \$s 2>/dev/null; exit 0' TERM; sleep $((deadline - $(date -u +%s))) & s=\$!; wait \$s; az group delete -n '$group' --yes --no-wait" >/dev/null 2>&1 </dev/null &
@@ -273,7 +286,9 @@ az vm create -g "$group" -n vm --size "$size" --image "$image" --admin-username 
     --assign-identity '[system]' --role Contributor --scope "$rgid" \
     --custom-data "$out/cloud-init.yaml" --tags "${tags[@]}" -o none || die "vm create failed"
 # every resource the group holds (NIC, IP, disk, VNet too), tagged
-for id in $(az resource list -g "$group" --query '[].id' -o tsv); do
+ids=$(az resource list -g "$group" --query '[].id' -o tsv) && [[ -n $ids ]] ||
+    die "cannot list the resources in $group to tag them"
+for id in $ids; do
     az resource tag --ids "$id" --tags "${tags[@]}" -i -o none || die "cannot tag $id"
 done
 az vm auto-shutdown -g "$group" -n vm --time "$off_hhmm" -o none ||
@@ -302,25 +317,31 @@ check_resources() {
     local n
     (($(date +%s) - last_check >= 900)) || [[ ${1:-} == now ]] || return 0
     last_check=$(date +%s)
-    n=$(az resource list -g "$group" --query 'length(@)' -o tsv 2>/dev/null) || n=?
+    n=$(az resource list -g "$group" --query 'length(@)' -o tsv 2>/dev/null) || n='?'
     log "resources in $group: $n (deleted on exit)"
 }
 
 # step <name>: vm.sh <name> on the VM, under nohup (an SSH drop does not
 # kill it), its log followed here, until it writes its exit code.
 step() {
-    local name=$1 off=0 rc chunk
+    local name=$1 off=0 rc chunk seen
     log "step $name"
     on "rm -f ~/step-$name.rc; nohup bash -c 'bash ~/lab/k8s/nri-shared-cpus/lab/vm.sh $name; echo \$? >~/step-$name.rc' >~/step-$name.log 2>&1 </dev/null &" ||
         die "step $name: cannot start it"
+    seen=$(date +%s)
     while :; do
         (($(date -u +%s) < deadline - 900)) || die "step $name: 15 minutes to the backstop deadline; stopping"
         check_resources
-        chunk=$(on "tail -c +$((off + 1)) ~/step-$name.log 2>/dev/null") && [[ -n $chunk ]] && {
-            printf '%s\n' "$chunk" | sed "s/^/  $name| /" >&3
-            off=$((off + $(printf '%s\n' "$chunk" | wc -c)))
-        }
+        if chunk=$(on "tail -c +$((off + 1)) ~/step-$name.log 2>/dev/null"); then
+            seen=$(date +%s)
+            [[ -n $chunk ]] && {
+                printf '%s\n' "$chunk" | sed "s/^/  $name| /" >&3
+                off=$((off + $(printf '%s\n' "$chunk" | wc -c)))
+            }
+        fi
         rc=$(on "cat ~/step-$name.rc 2>/dev/null") && [[ -n $rc ]] && break
+        # a VM that stops answering is not waited on until the deadline
+        (($(date +%s) - seen < ssh_wait)) || die "step $name: no SSH to $ip for $ssh_wait s"
         sleep "$poll"
     done
     [[ $rc == 0 ]] || die "step $name failed (exit $rc)"
@@ -354,9 +375,17 @@ STRESS="$stress"
 EOF
 step bootstrap
 log "rebooting into the isolation boot line"
+boot0=$(on "cat /proc/sys/kernel/random/boot_id") && [[ -n $boot0 ]] || die "cannot read the VM's boot id"
 on "sudo systemctl reboot" || true
 sleep "$reboot_wait"
-wait_ssh || die "no SSH to $ip after the reboot"
+# the old boot can answer SSH for a while after the reboot is asked for:
+# tune runs only once a new boot id answers
+until=$(($(date +%s) + ssh_wait))
+while :; do
+    boot1=$(on "cat /proc/sys/kernel/random/boot_id" 2>/dev/null) && [[ -n $boot1 && $boot1 != "$boot0" ]] && break
+    (($(date +%s) < until)) || die "no SSH to $ip in a new boot $ssh_wait s after the reboot"
+    sleep "$poll"
+done
 step tune
 step cluster
 step e2e

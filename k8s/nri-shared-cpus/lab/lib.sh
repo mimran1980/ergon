@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+# shellcheck shell=bash
 #
 # Sourced by azure-vm.sh (on this machine) and vm.sh (on the lab VM): the
 # CPU layout, the boot line, the plan's estimate, and the kind config and

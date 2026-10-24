@@ -19,6 +19,11 @@
 #     the group outlives the delete or the check cannot read (expired login);
 #   * a group that exists already, or one an earlier run left, is refused
 #     and nothing is created or deleted;
+#   * the group is deleted when its create fails after reaching ARM, a
+#     failed delete is retried, a failed resource listing stops the run,
+#     a hangup cannot cut the teardown short, auto-shutdown comes 30 min
+#     after the VM's deleting timer, tune waits for a new boot, and a step
+#     whose VM stops answering SSH is given up on;
 #   * no snapshot directory and no watchdog process outlive a run;
 #   * lib.sh: the size's vCPUs, the layout, the boot line, the estimate and
 #     cost; the kind config and both pods (parsed as YAML: ruby, jq); the
@@ -89,7 +94,7 @@ done
 echo "== refusals before anything"
 for c in "LAB_SIZE=Standard_D8s_v6|not an Azure Arm" "LAB_SIZE=Standard_D2ps_v6|the lab needs 4 or more" \
     "LAB_REPS=50|more than LAB_MAX_HOURS" "LAB_SECONDS=abc|LAB_SECONDS is a whole number" \
-    "LAB_MAX_HOURS=30|LAB_MAX_HOURS is 1 to 24" "LAB_STRESS=--cpu;rm|stress-ng flags only"; do
+    "LAB_MAX_HOURS=30|LAB_MAX_HOURS is 1 to 23" "LAB_MAX_HOURS=24|LAB_MAX_HOURS is 1 to 23" "LAB_STRESS=--cpu;rm|stress-ng flags only"; do
     var=${c%%|*} want=${c#*|}
     rm -f "$work/noaz/called"
     env -i PATH="$work/noaz:$PATH" HOME="$d" DRY_RUN=1 "$var" bash "$lab/azure-vm.sh" >/dev/null 2>"$d/refuse"
@@ -179,10 +184,73 @@ run_lab leftover FAKE_LEFTOVER=ergon-lab-nri-20261023000000
 check "an earlier run's group is refused" has "$work/leftover/out" "groups tagged owner=ergon-lab exist (an earlier run's?): ergon-lab-nri-20261023000000"
 check "nothing created" bash -c "! grep -q 'group create' '$work/leftover/fake/az.log'"
 
+echo "== the group create fails after reaching ARM"
+run_lab createfail FAKE_CREATE_FAIL=1
+check "fails" test "$(rc_of createfail)" -ne 0
+check "says why" has "$work/createfail/out" "group create failed"
+check "the group is deleted all the same" has "$work/createfail/fake/az.log" "az group delete -n ergon-lab-nri-20261024000000 --yes --no-wait"
+check "verified" has "$work/createfail/out" "verified: group"
+
+echo "== auto-shutdown only after the VM's deleting timer"
+# a deallocated VM cannot run its timer: the shutdown comes 30 min later
+t=$(sed -n 's/^ *OnCalendar=[0-9-]* \([0-9][0-9]\):\([0-9][0-9]\):.*/\1\2/p' "$work/ok/out-dir/cloud-init.yaml")
+s=$(sed -n 's/.*az vm auto-shutdown .* --time \([0-9]\{4\}\).*/\1/p' "$work/ok/fake/az.log")
+want=$(printf '%02d%02d' $(((10#${t:0:2} * 60 + 10#${t:2:2} + 30) / 60 % 24)) $(((10#${t:0:2} * 60 + 10#${t:2:2} + 30) % 60)))
+check "auto-shutdown $s is the timer $t plus 30 min ($want)" test -n "$t" -a "$s" = "$want"
+
+echo "== the first delete fails"
+run_lab delonce FAKE_SSH=down FAKE_DELETE_FAIL_ONCE=1
+check "the delete is retried" test "$(grep -c 'az group delete -n ergon-lab-nri-20261024000000' "$work/delonce/fake/az.log")" -ge 2
+check "verified" has "$work/delonce/out" "verified: group"
+
+echo "== listing the group's resources to tag them fails"
+run_lab rglistfail FAKE_RG_LIST_FAIL=1
+check "fails" test "$(rc_of rglistfail)" -ne 0
+check "says why" has "$work/rglistfail/out" "cannot list the resources in"
+check "no step runs" test ! -e "$work/rglistfail/fake/steps.log"
+check "verified" has "$work/rglistfail/out" "verified: group"
+
+echo "== the old boot still answers after the reboot"
+run_lab lag FAKE_REBOOT_LAG=3 LAB_SSH_WAIT_SECONDS=5
+check "run exits 0" test "$(rc_of lag)" -eq 0
+check "tune runs in the new boot" grep -qx 'tune@boot-2' "$work/lag/fake/steps-boot.log"
+
+echo "== SSH lost mid-step"
+d=$work/lost
+mkdir -p "$d/home/.ssh" "$d/tmp" "$d/fake"
+echo "ssh-ed25519 AAAA test" >"$d/home/.ssh/id_ed25519.pub"
+env -i PATH="$here/fakes:$PATH" HOME="$d/home" TMPDIR="$d/tmp" FAKE_DIR="$d/fake" FAKE_SSH_DOWN_AT=cluster \
+    LAB_OUT="$d/out-dir" LAB_STAMP=20261024000000 LAB_SSH_FROM=198.51.100.7 LAB_POLL_SECONDS=0 \
+    LAB_SSH_WAIT_SECONDS=2 LAB_REBOOT_SECONDS=0 LAB_DETACH=0 bash "$lab/azure-vm.sh" >"$d/stdout" 2>"$d/out" &
+pid=$!
+for _ in $(seq 1 300); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+if kill -0 "$pid" 2>/dev/null; then
+    kill -TERM "$pid"
+    bad "gives up within 30 s of losing SSH (still polling)"
+else
+    pass "gives up within 30 s of losing SSH"
+fi
+wait "$pid"
+check "says why" has "$d/out" "step cluster: no SSH to 203.0.113.10 for 2 s"
+check "verified" has "$d/out" "verified: group"
+
+echo "== a hangup during the teardown"
+d=$work/hup
+mkdir -p "$d/home/.ssh" "$d/tmp" "$d/fake"
+echo "ssh-ed25519 AAAA test" >"$d/home/.ssh/id_ed25519.pub"
+env -i PATH="$here/fakes:$PATH" HOME="$d/home" TMPDIR="$d/tmp" FAKE_DIR="$d/fake" FAKE_SSH=down FAKE_WAIT_SECONDS=2 \
+    LAB_OUT="$d/out-dir" LAB_STAMP=20261024000000 LAB_SSH_FROM=198.51.100.7 LAB_POLL_SECONDS=0 \
+    LAB_SSH_WAIT_SECONDS=1 LAB_DETACH=0 bash "$lab/azure-vm.sh" >"$d/stdout" 2>"$d/out" &
+pid=$!
+for _ in $(seq 1 100); do grep -q 'group wait' "$d/fake/az.log" 2>/dev/null && break; sleep 0.1; done
+kill -HUP "$pid"
+wait "$pid"
+check "the teardown finishes: verified" has "$d/out" "verified: group"
+
 echo "== nothing outlives the runs"
 sleep 1
 check "no watchdog left" bash -c "! pgrep -f 'ergon-lab-nri-20261024000000' >/dev/null"
-check "no snapshot left" test -z "$(ls "$work"/*/tmp 2>/dev/null | grep -v ':$' | grep .)"
+check "no snapshot left" test -z "$(find "$work"/*/tmp -mindepth 1 -maxdepth 1 2>/dev/null)"
 
 echo "== lib.sh"
 # shellcheck source=../lib.sh

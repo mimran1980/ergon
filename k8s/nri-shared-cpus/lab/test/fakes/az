@@ -3,7 +3,11 @@
 # from the state files there. FAKE_EXISTS=1: the group exists before the run;
 # FAKE_STILL_EXISTS=1: it outlives the delete; FAKE_LEFTOVER: a group name
 # tagged owner=ergon-lab from an earlier run; FAKE_LIST_FAIL=1: the
-# teardown's tag listing fails (an expired login).
+# teardown's tag listing fails (an expired login); FAKE_CREATE_FAIL=1: the
+# group create reaches ARM (the group exists) but the call fails;
+# FAKE_DELETE_FAIL_ONCE=1: the first group delete fails, deleting nothing;
+# FAKE_RG_LIST_FAIL=1: listing the group's resources to tag them fails;
+# FAKE_WAIT_SECONDS: the group wait takes that long.
 echo "az $*" >>"$FAKE_DIR/az.log"
 d=$FAKE_DIR
 case "$1 $2" in
@@ -13,14 +17,26 @@ case "$1 $2" in
     if [[ ${FAKE_EXISTS:-} == 1 || ${FAKE_STILL_EXISTS:-} == 1 && -e $d/created ]]; then echo true
     elif [[ -e $d/created && ! -e $d/deleted ]]; then echo true
     else echo false; fi ;;
-"group create") touch "$d/created" ;;
-"group delete") touch "$d/deleted" ;;
+"group create")
+    touch "$d/created"
+    [[ ${FAKE_CREATE_FAIL:-} == 1 ]] && { echo "ERROR: connection reset" >&2; exit 1; } ;;
+"group delete")
+    if [[ ${FAKE_DELETE_FAIL_ONCE:-} == 1 && ! -e $d/delete-failed ]]; then
+        touch "$d/delete-failed"
+        echo "ERROR: transient" >&2
+        exit 1
+    fi
+    touch "$d/deleted" ;;
+"group wait") sleep "${FAKE_WAIT_SECONDS:-0}" ;;
 "resource list")
     if [[ " $* " == *" --tag "* ]]; then
         [[ ${FAKE_LIST_FAIL:-} == 1 ]] && { echo "ERROR: login expired" >&2; exit 1; }
         [[ ${FAKE_STILL_EXISTS:-} == 1 ]] && echo "/subscriptions/x/resourceGroups/g/providers/Microsoft.Compute/virtualMachines/vm"
     elif [[ " $* " == *"length(@)"* ]]; then echo 3
-    else printf '%s\n' /fake/vm /fake/nic /fake/disk; fi ;;
+    else
+        [[ ${FAKE_RG_LIST_FAIL:-} == 1 ]] && { echo "ERROR: throttled" >&2; exit 1; }
+        printf '%s\n' /fake/vm /fake/nic /fake/disk
+    fi ;;
 "vm show") echo 203.0.113.10 ;;
 *) ;;
 esac

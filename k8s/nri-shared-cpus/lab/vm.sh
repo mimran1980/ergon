@@ -337,6 +337,7 @@ step_report() {
 
 [[ ${VM_LIB_ONLY:-} == 1 ]] && return 0
 
+# shellcheck source=/dev/null
 [[ -f ~/lab/lab.env ]] && . ~/lab/lab.env
 step=${1:-}
 case $step in

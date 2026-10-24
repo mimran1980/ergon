@@ -212,7 +212,7 @@ k8s/nri-shared-cpus/lab/azure-vm.sh             # the run; deletes its resource 
 | arms | plugin-on (hot pod, helpers on the shared CPU) and plugin-off (chart uninstalled, the plain static CPU manager: helpers on the pod's exclusive CPUs), 5 reps each, alternating |
 | each max | with the `/proc/interrupts` and `/proc/softirqs` growth on its CPU in the 10 ms windows that overlap it, and the spin thread's involuntary context switches |
 | results | `target/nri-lab/<stamp>/results/report.md` |
-| cost guard | every resource tagged `owner=ergon-lab run=<stamp>`; the group is deleted on every exit and checked gone; at `LAB_MAX_HOURS` (4) a timer on the VM deletes it through the VM's identity, auto-shutdown deallocates it and a watchdog here deletes it; runs over 2 hours detach |
+| cost guard | every resource tagged `owner=ergon-lab run=<stamp>`; the group is deleted on every exit and checked gone; at `LAB_MAX_HOURS` (4) a timer on the VM deletes it through the VM's identity, a watchdog here deletes it, and auto-shutdown deallocates it 30 minutes later (a deallocated VM cannot run its timer); runs over 2 hours detach |
 | tests | `just test-nri-lab` (fake `az`/`ssh`, fixtures, the probe's unit tests) |
 | status | not yet run |
 
