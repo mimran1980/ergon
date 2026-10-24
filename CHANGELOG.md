@@ -14,7 +14,10 @@
   `scripts/verify.sh` print PASS/FAIL per thread and per exclusive CPU.
   Also: the kustomize overlays `vdev-local`, `vdev-isolated`,
   `eks-ena-arm64` and `eks-ena-x86`, Helm values for `ergon-shared-cpus`,
-  node preparation, and a vdev e2e in Docker that has run on linux/arm64.
+  node preparation (`node/eks-userdata.sh` for EKS), a multi-arch
+  `baseline` image plus CPU tags, and a vdev e2e in Docker that has run on
+  linux/arm64. The `ll-latency` report is `v2` (`nic=`, `write_errors=`,
+  an exact `max`).
   `md-dpdk/deploy/low-latency/pod.yaml` is removed (no hugepages, no Aeron
   mount, no `ergon-cpus`); its README points at the sample.
 - `ergo-sbe`: `GenerationConfig::with_validate(true)` (off by default) emits

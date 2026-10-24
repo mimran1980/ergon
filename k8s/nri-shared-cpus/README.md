@@ -242,7 +242,12 @@ Why the second rule:
   kernel, which has no `isolcpus`.
 - A Go 1.27 OS thread started from the hot-pinned thread kept the shared CPU
   `PinProcess` had set; it did not inherit the hot mask.
-- JVM and Aeron were not run.
+- Aeron: the client conductor `aeron-client`, started by a thread before
+  that thread pinned itself, kept the creator's mask
+  (`samples/low-latency-k8s/tests/placement_aeron.rs`, in Docker without
+  this hook). Aeron under the hook on a node, and the JVM, were not run.
+  The sample that runs Aeron with this plugin is
+  [`samples/README.md#low-latency-k8s`](../../samples/README.md#low-latency-k8s).
 
 How the pool is granted:
 

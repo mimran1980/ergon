@@ -175,12 +175,12 @@ lab only.
 
 | where | what ran | proves |
 |---|---|---|
-| macOS (this repo's host) | unit, property, logger, manifest tests; entrypoint fixtures; bench smoke | code, renders, schemas |
-| Docker linux/arm64 and linux/amd64 (`scripts/test-docker.sh`) | the same, plus the placement tests against an embedded driver | the worker and the Aeron conductor stay on their creator's CPU, the loops allocate nothing |
-| Docker linux/arm64, Apple silicon (`scripts/e2e-vdev.sh --docker`) | the driver on two DPDK taps, ping and pong, `ll-probe` for 30 s | the thread layout over a real DPDK data path. Not isolation: the Docker VM has no `isolcpus`. The script plays the plugin's part (sets `ERGON_*`, pins each process's first thread) |
+| macOS (this repo's host) | unit, property, logger, manifest tests; entrypoint and `verify.sh` fixtures (bash 5 and macOS's bash 3.2); `node/eks-userdata.sh` output; bench smoke | code, renders, schemas, the verifier's pod discovery |
+| Docker linux/arm64 and linux/amd64 (`scripts/test-docker.sh`) | the same Rust tests, plus the placement tests against an embedded driver and `hot_stdout` | the worker and the Aeron conductor stay on their creator's CPU, the loops allocate nothing but one allocation per warning line, a pinned thread never sleeps on a wedged stdout |
+| Docker linux/arm64, Apple silicon (`scripts/e2e-vdev.sh --docker`, image `baseline`) | the driver on two DPDK taps, ping and pong, `ll-probe` for 30 s | the thread layout over a real DPDK data path. Not isolation: the Docker VM has no `isolcpus`. The script plays the plugin's part (sets `ERGON_*`, pins each process's first thread) |
 | kind (`e2e-vdev.sh --kind`, overlay `vdev-local`) | written, **not run** (needs kind, 8 Docker CPUs, containerd ≥ 2.2 in the node image) | the plugin's grant |
 | a Linux VM with `isolcpus` (overlay `vdev-isolated`, `node/linux-vm-prep.sh`) | **not run** (Azure Cobalt `D8ps_v6` and `F8as_v6` later) | the `full` contract |
-| EKS ENA (overlays `eks-ena-arm64`, `eks-ena-x86`) | render and lint only | arm64: blocked until AL2023 has containerd ≥ 2.2 (`node/eks-nodeconfig.yaml`); x86: needs c7i.4xlarge, not run |
+| EKS ENA (overlays `eks-ena-arm64`, `eks-ena-x86`) | render and lint only | arm64: blocked until AL2023 has containerd ≥ 2.2 (`node/eks-nodeconfig.yaml`); x86: c7i.4xlarge, which needs the user's approval to run |
 
 ### Quick start
 
@@ -204,8 +204,14 @@ lab only.
 
    ```sh
    kubectl label node <node> ergon.io/shared-cpus=true ergon.io/ll-driver=true ergon.io/ll-app=true
-   # EKS, two nodes: also ergon.io/ll-role=ping on one and ergon.io/ll-role=pong on the other
    ```
+
+   On EKS the nodes come up labelled: `node/eks-userdata.sh <cluster>
+   <endpoint> <ca-b64> <service-cidr> ping` (and `pong` for the second node)
+   prints the user data. It runs `md-dpdk/deploy/aws-eks/node/userdata.sh`
+   with reserved CPUs `0-1` and IRQ CPU `0`, so the kernel never isolates
+   the shared CPU 1, and swaps in `node/eks-nodeconfig.yaml` (NRI on, the
+   `ergon.io` labels, `ergon.io/ll-role`).
 
 3. **Install the plugin.** CPU 0 takes the IRQs, CPU 1 is shared, CPUs 2-7
    are exclusive.
@@ -215,10 +221,10 @@ lab only.
    helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus --version 0.1.1 \
      -n ergon-system --create-namespace -f samples/low-latency-k8s/helm/values-kind.yaml
    # from this checkout (chart 0.1.2; EKS AL2023 needs it for the kubelet drop-ins)
-   docker build -t <registry>/ergon-shared-cpus:dev k8s/nri-shared-cpus
+   docker buildx build --platform linux/arm64 --push -t $REG/ergon-shared-cpus:0.1.2 k8s/nri-shared-cpus
    helm install ergon-shared-cpus k8s/nri-shared-cpus/charts/ergon-shared-cpus \
      -n ergon-system --create-namespace -f samples/low-latency-k8s/helm/values-eks.yaml \
-     --set image.repository=<registry>/ergon-shared-cpus --set image.tag=dev
+     --set image.repository=$REG/ergon-shared-cpus --set image.tag=0.1.2
    kubectl apply -f k8s/nri-latency-pods/admission/priority-class.yaml \
                  -f k8s/nri-latency-pods/admission/validating-admission-policy.yaml
    ```
@@ -229,28 +235,46 @@ lab only.
    `k8s/overlays/eks-ena-<arch>/endpoints.env` with each node's receiver ENA
    IP first.
 
-5. **Build the image and deploy an overlay.**
+5. **Build the images and put them where the nodes pull.**
 
    ```sh
-   samples/low-latency-k8s/docker/build.sh arm64-generic      # or amd64-generic, arm64-v3, arm64-n2
+   # kind or a VM with the image in the local Docker: baseline holds linux/amd64 and linux/arm64
+   samples/low-latency-k8s/docker/build.sh baseline
+   kind load docker-image ll:baseline --name <cluster>   # kind only
+   # EKS: push the CPU tag and md-dpdk's device plugin, then point the overlay at the registry
+   samples/low-latency-k8s/docker/build.sh --push $REG arm64-v3          # amd64-v3 for eks-ena-x86
+   docker buildx build --platform linux/arm64 --push \
+     -f md-dpdk/deploy/aws-eks/Dockerfile.device-plugin -t $REG/rusteron-dpdk-device-plugin:0.1.34-arm64 .
+   sed -i.orig "s|REGISTRY/|$REG/|" samples/low-latency-k8s/k8s/overlays/eks-ena-arm64/kustomization.yaml
+   ```
+
+6. **Deploy an overlay.**
+
+   ```sh
    kubectl apply -k samples/low-latency-k8s/k8s/overlays/vdev-local   # vdev-isolated, eks-ena-arm64, eks-ena-x86
    ```
 
-   | overlay | driver | hot pods | image tag |
+   | overlay | driver | hot pods | image |
    |---|---|---|---|
-   | `vdev-local` | two DPDK taps, `--no-huge` | no (kind has no `isolcpus`) | `arm64-generic` |
-   | `vdev-isolated` | two DPDK taps, hugepages | yes | `arm64-n2` (Cobalt) or `amd64-generic` |
-   | `eks-ena-arm64` | ENA pair | yes | `arm64-v3` (c9g) |
-   | `eks-ena-x86` | ENA pair | yes | `amd64-generic` |
+   | `vdev-local` | two DPDK taps, `--no-huge` | no (kind has no `isolcpus`) | `ll:baseline` |
+   | `vdev-isolated` | two DPDK taps, hugepages | yes | `ll:baseline`; `e2e-vdev.sh --tag arm64-n2` (Cobalt) or `--tag amd64-v3` (F8as_v6) sets a CPU tag and its `kubernetes.io/arch` |
+   | `eks-ena-arm64` | ENA pair | yes | `$REG/ll:arm64-v3`, c9g.2xlarge, `kubernetes.io/arch: arm64` |
+   | `eks-ena-x86` | ENA pair | yes | `$REG/ll:amd64-v3`, c7i.4xlarge, `kubernetes.io/arch: amd64` |
 
-6. **Verify.**
+   The ping runs for `LL_DURATION_S=90` (`k8s/base/app.env`), so it is
+   still measuring through the verify window.
+
+7. **Verify.**
 
    ```sh
    samples/low-latency-k8s/scripts/verify.sh --contract placement --seconds 30   # full on an isolcpus node
    kubectl -n trading logs job/ll-ping | grep '^ll-latency'
    ```
 
-   Or run all of it in Docker, with no cluster: `just samples-ll-e2e`.
+   `verify.sh` probes every node that runs a ping or a pong, with that
+   node's driver (it fails when a node lacks its driver), using the image
+   the `ll-ping` pod runs. Or run all of it in Docker, with no cluster:
+   `just samples-ll-e2e`.
 
 ### Pinning a thread
 
@@ -302,14 +326,25 @@ shared CPU, and is re-pinned there if its mask is wider (`src/logging.rs`).
 | level check; formatting into a reused thread-local `String` (timestamp, fields) | `write(2)` to stdout |
 | a clone and drop of the writer (atomics on shared cache lines) | |
 | **1 allocation** per event (the line copied into a `Vec`, dropped or not); 2 on a thread's first event; 0 for a disabled level (`tests/logger_alloc.rs`) | |
-| `try_send`; a full queue drops the line and counts it; a futex wake when `ll-log` sleeps | |
+| `try_send`; a full queue drops the line and counts it (`dropped_lines`); a futex wake when `ll-log` sleeps | a failed write (EPIPE, EIO) loses its line: tracing-appender 0.2.5 does not count it, the sample's `CountingWriter` does (`write_errors`) |
 
-A blocked stdout (a pipe nobody reads) never stalls the caller: every event
-past the queue is dropped and counted (`tests/logger_nonblocking.rs`, with
-`ll-log` asleep in `write(2)`, and `benches/log_event.rs`, which prints
-p50 to max). So the hot loop logs only rate-limited warnings (one line a
-second per site, with `suppressed=`): echo timeout, back-pressure, not
-connected. Per-second progress comes from `ll-stats` on the shared CPU.
+A wedged stdout never stalls the caller. `tests/hot_stdout.rs` (Linux) pins
+`ll-hot` to one CPU and `ll-log` to another, swaps the real fd 1 for a pipe
+nobody reads, and asserts: `ll-log` asleep in `write(2)`, no voluntary
+context switch on `ll-hot` over 20,000 events, every event dropped and
+counted. It prints the cost of one event p50 to max (quanta's counter) and
+what explains the max: the window's page faults, context switches, steal,
+interrupts and softirqs on the CPU, and the CPU's own longest stall with no
+event at all (`src/costs.rs`); with nothing that explains it, it says
+"unexplained". `tests/logger_nonblocking.rs` and `benches/log_event.rs` print
+the same for an unpinned caller. In Docker on Apple silicon (arm64, and
+amd64 emulated) the idle CPU stalled as long as the max in most windows
+(the VM takes the vCPU); the rest print their candidates (page faults of
+the event's own allocation, softirqs). So the hot
+loop logs only rate-limited warnings (one line a second per site, with
+`suppressed=`): echo timeout, back-pressure, not connected. Each warning
+line costs one allocation in the loop (`tests/placement_aeron.rs` runs the
+loop with the app's subscriber and checks that). Per-second progress comes from `ll-stats` on the shared CPU.
 Shutdown: dropping the guard waits up to 1.1 s and does not join `ll-log`;
 when the queue is full it `println!`s, which blocks on a wedged stdout. So
 `ll-app` writes its report to `/dev/termination-log` first, then drops the
@@ -355,19 +390,19 @@ their own system calls (visible in `/proc/softirqs`), so a vdev `full` PASS
 proves placement and the absence of other tasks and IRQs, not a kernel-free
 path. The F3 and F4 limits are provisional.
 
-From the Docker e2e (`tests/fixtures/e2e-docker-arm64-generic.txt` holds all
-108 lines; tabs shown as spaces):
+From the Docker e2e on `ll:baseline` (`tests/fixtures/e2e-docker-baseline.txt`
+holds all 108 lines; tabs shown as spaces):
 
 ```text
-ll-verify  v1  contract=placement  node=docker-vdev  window_s=30.1  samples=298
+ll-verify  v1  contract=placement  node=docker-vdev  window_s=30.1  samples=294
 ll-verify  pod=e2e/ll-media-driver  P3.cores  sender,receiver  PASS  sender=2 receiver=3 sender_core=2
 ll-verify  pod=e2e/ll-media-driver  P3.affinity  sender/55  PASS  allowed=2 expected=2
-ll-verify  pod=e2e/ll-media-driver  P4.ran_on  sender/55  PASS  ran_on=2 samples=298 bad=0 expected=2
+ll-verify  pod=e2e/ll-media-driver  P4.ran_on  sender/55  PASS  ran_on=2 samples=294 bad=0 expected=2
 ll-verify  pod=e2e/ll-media-driver  P5.affinity  aeron-md-nra/57  PASS  allowed=1 expected=shared(1)
 ll-verify  pod=e2e/ll-ping  P3.affinity  ll-hot/73  PASS  allowed=4 expected=4
-ll-verify  pod=e2e/ll-ping  P4.ran_on  ll-hot/73  PASS  ran_on=4 samples=298 bad=0 expected=4
+ll-verify  pod=e2e/ll-ping  P4.ran_on  ll-hot/73  PASS  ran_on=4 samples=294 bad=0 expected=4
 ll-verify  pod=e2e/ll-ping  P5.affinity  aeron-client/74  PASS  allowed=1 expected=shared(1)
-ll-verify  pod=e2e/ll-ping  P6.ran_on  aeron-client/74  PASS  ran_on=1 samples=298 bad=0 expected=shared(1)
+ll-verify  pod=e2e/ll-ping  P6.ran_on  aeron-client/74  PASS  ran_on=1 samples=294 bad=0 expected=shared(1)
 ll-verify  node=docker-vdev  F2.device_irqs  cpu=4  NOT-IN-CONTRACT  delta=0 rows=-
 ll-verify  RESULT  PASS  checks=54  failed=0
 ```
@@ -381,19 +416,30 @@ proves the tuning only together with an `ll-verify` PASS from the same
 window. Docs carry no figures; real runs are in `tests/fixtures/`.
 
 ```text
-ll-latency  v1  role=ping  arch=…  cpu_build=…  counter_hz=…  transport=dpdk-ena  overlay=…  msg_bytes=32  mode=closed  warmup=…  samples=…  lost=…
+ll-latency  v2  role=ping  arch=…  cpu_build=…  counter_hz=…  transport=dpdk-ena  nic=vdev-tap  overlay=…  msg_bytes=32  mode=closed  warmup=…  samples=…  lost=…
 ll-latency  rtt_ns  p50=…  p90=…  p99=…  p99.9=…  p99.99=…  max=…  mean=…
 ll-latency  rtt_max_top10  <realtime_ns>:<rtt_ns>,…
 ll-latency  loop_gap_ns  max=…  over_5us=…  over_20us=…  over_100us=…
 ll-latency  hot  cpu=…  ran_on=…  voluntary_ctxt_switches=…  nonvoluntary_ctxt_switches=…
-ll-latency  log  dropped_lines=…  hot_warn_events=…  suppressed=…
+ll-latency  log  dropped_lines=…  write_errors=…  hot_warn_events=…  suppressed=…
 ```
+
+`max` is the largest measured round trip, exact; the percentiles come from
+an HDR histogram at 3 significant figures. `transport` is the driver's
+(`dpdk-ena` on the ENA and the vdev overlays alike); `nic` tells them apart
+(`ena` or `vdev-tap`, from `LL_NIC`). A message that stays "not connected"
+past `LL_ECHO_TIMEOUT_MS` counts as lost, and an offer stops when the peer's
+image closes, so a dead peer ends the run (`ended=peer closed`) instead of
+holding the hot loop.
 
 `counter_hz` shows how coarse the clock is (24 MHz on Apple silicon: 42 ns
 a tick). In the Docker e2e capture, the largest round trips match the ping's
 and pong's own loop gaps and their involuntary context switches: the hot
 threads were descheduled on Docker's VM, which has no isolated CPUs. vdev
-numbers go through a kernel tap and say nothing about ENA.
+numbers go through a kernel tap and say nothing about ENA (`nic=vdev-tap`).
+One earlier `e2e-vdev.sh --docker` run on the same image failed before
+measuring: neither app's publication connected within
+`LL_CONNECT_WAIT_S` (60 s), the next two passed; the cause was not found.
 
 ### Driver and Aeron settings (lab only)
 
@@ -411,19 +457,29 @@ numbers go through a kernel tap and say nothing about ENA.
 
 ### Image tags
 
-| tag | `-Ctarget-cpu` | Aeron C `-march` | built |
-|---|---|---|---|
-| `arm64-generic` | `neoverse-n1` | `armv8.2-a` | yes, and the e2e ran on it |
-| `amd64-generic` | generic | `x86-64-v2` | no |
-| `arm64-v3` (c9g) | `neoverse-v3` | `armv8.2-a` | no: AL2023's gcc 11.5 may not know the name, and md-dpdk's `build.rs` then stops |
-| `arm64-n2` (Cobalt 100) | `neoverse-n2` | `armv8.2-a` | no |
+`docker/build.sh` builds them on Amazon Linux 2023 (gcc 11.5), DPDK 24.11.4.
 
-A CPU tag's latency effect is not measured.
+| tag | platforms | `-Ctarget-cpu` (Rust, md-dpdk C) | Aeron C `-march` | nodes | built |
+|---|---|---|---|---|---|
+| `baseline` | linux/amd64, linux/arm64 | `x86-64-v2` / `neoverse-n1` | `x86-64-v2` / `armv8.2-a` | any x86-64-v2 or Neoverse N1-or-later arm64 node | see below |
+| `amd64-v3` | linux/amd64 | `x86-64-v3` | `x86-64-v3` | c7i, AMD Zen 4 (F8as_v6) | no |
+| `arm64-n2` | linux/arm64 | `neoverse-n2` | `armv8.5-a` | Azure Cobalt 100 | no |
+| `arm64-v3` | linux/arm64 | `neoverse-v3` | `armv8.6-a` | c9g (Graviton5) | no |
+
+AL2023's gcc 11.5 accepts `-mcpu=neoverse-n1`, `-n2`, `-v2` and `-v3`, but
+has no `armv9-a`, so the Aeron C levels are the highest Armv8 ones the CPU
+implements. A CPU tag runs only on that CPU family (SIGILL elsewhere). A CPU
+tag's latency effect is not measured.
 
 ### Not verified
 
 - kind, the Linux VM lane and EKS: chart 0.1.1 on kind; chart 0.1.2 and
-  nodeadm's containerd block on AL2023; AL2023's containerd version.
+  nodeadm's containerd block on AL2023; AL2023's containerd version;
+  `node/eks-userdata.sh`'s user data on EC2 (checked offline only).
+- The image's `ergon-cpus` comes from the published 0.1.1 image; its source
+  is unchanged in 0.1.2 (`docker/Dockerfile`), but it has not run under the
+  0.1.2 hook.
+- The CPU tags `amd64-v3`, `arm64-n2`, `arm64-v3`: not built.
 - A tap PMD and bridge inside a pod's network namespace (the Docker e2e ran
   them in a container's).
 - That a client pod with no hugepage request never faults a new hugetlb
@@ -435,7 +491,7 @@ A CPU tag's latency effect is not measured.
 ### Commands
 
 ```sh
-just samples-ll             # fmt, clippy, unit, logger and manifest tests, entrypoint fixtures (host)
+just samples-ll             # fmt, clippy, unit, logger and manifest tests, entrypoint and verify.sh fixtures (host)
 just samples-ll-docker      # the same plus placement tests, linux/arm64 and linux/amd64
 just samples-ll-e2e         # driver + ping + pong + ll-probe in Docker over DPDK taps
 ```

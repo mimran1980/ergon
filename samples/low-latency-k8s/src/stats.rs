@@ -248,7 +248,7 @@ mod tests {
 
     #[test]
     fn max_is_the_measured_value_not_a_bucket_edge() -> Result<(), LlError> {
-        // From tests/fixtures/e2e-docker-arm64-generic.txt: hdr reported
+        // From an earlier Docker e2e capture (arm64): hdr reported
         // 14696447 (its bucket's edge) for a measured 14695216.
         let mut lat = Latency::new()?;
         lat.record(20_000, || 1);

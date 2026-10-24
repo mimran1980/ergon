@@ -129,7 +129,7 @@ mod tests {
     /// every ll-verify line parses, and the run passed.
     #[test]
     fn the_captured_e2e_output_parses() {
-        let text = include_str!("../../tests/fixtures/e2e-docker-arm64-generic.txt");
+        let text = include_str!("../../tests/fixtures/e2e-docker-baseline.txt");
         let verify: Vec<&str> = text
             .lines()
             .filter(|l| l.starts_with("ll-verify\t"))
@@ -155,5 +155,26 @@ mod tests {
                 .any(|l| l.starts_with("ll-verify\tRESULT\tPASS\t"))
         );
         assert!(verify[0].starts_with("ll-verify\tv1\tcontract=placement\t"));
+        // the ping's report: v2, the NIC named, and max the exact largest
+        let field = |line: &str, key: &str| -> Option<u64> {
+            line.split('\t')
+                .find_map(|f| f.strip_prefix(key))
+                .and_then(|v| v.parse().ok())
+        };
+        let ping = text
+            .lines()
+            .find(|l| l.starts_with("ll-latency\tv2\trole=ping\t"));
+        assert!(ping.is_some_and(|l| l.contains("\tnic=vdev-tap\t") && l.ends_with("\tlost=0")));
+        let max = text
+            .lines()
+            .find(|l| l.starts_with("ll-latency\trtt_ns\t"))
+            .and_then(|l| field(l, "max="));
+        let top = text
+            .lines()
+            .find_map(|l| l.strip_prefix("ll-latency\trtt_max_top10\t"))
+            .and_then(|l| l.split(',').next())
+            .and_then(|e| e.split_once(':'))
+            .and_then(|(_, rtt)| rtt.parse::<u64>().ok());
+        assert!(max.is_some() && max == top, "max {max:?} top {top:?}");
     }
 }
