@@ -461,7 +461,7 @@ bench:
 # the structural tests (one epoll_wait(0) per poll, one recvmsg per ready
 # socket; mio two reads per event) and the two-sided round-trip parity gate.
 # Linux runs all of it, in release; elsewhere only the decision rule's tests
-# compile. About 90 s on Linux.
+# compile. About 40 s of tests on Linux, after the build.
 # epoll-spin against mio: structure and the two-sided latency parity gate
 io-parity:
     cargo test --release --manifest-path io/benches/Cargo.toml --test mio_parity -- --test-threads=1 --nocapture

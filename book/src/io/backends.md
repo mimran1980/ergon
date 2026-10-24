@@ -276,16 +276,15 @@ runs in CI on Linux x86_64 and aarch64 (`just io-parity`, release):
   the same work (ergon-io's TLS record layer and WebSocket framing, the
   same echo peer on its own CPU, `TCP_NODELAY`, 4 MiB `SO_RCVBUF`, 64
   events per wait, each echo checked byte for byte). 7 pairs at 1 and 16
-  sockets; each pair alternates the two loops in 20 blocks of 1,000 round
-  trips. It fails if either side's p50 is ahead by more than
-  max(1 µs, 10 %) in 6 of 7 pairs: an `epoll-spin` win that large is a
-  suspected defect too.
+  sockets; in each pair the two loops take turns round trip by round trip.
+  It fails if either side's p50 is ahead by more than 5 % in 6 of 7
+  pairs: an `epoll-spin` win that large is a suspected defect too.
 
 The tolerance comes from 10 runs, 140 pairs, in Docker on Apple silicon
-(arm64 and amd64; [`summary.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/mio-parity-docker-20261024T145651Z/summary.md)):
-p50 5.5–14.4 µs, the paired difference +0.19 to +0.27 µs at the median (mio
-slower: its read to `WouldBlock` is timed), standard deviation 0.51–0.85
-µs. Every run passed.
+(arm64 and amd64; [`summary.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/mio-parity-docker-20261024T154626Z/summary.md)):
+p50 5.3–15.3 µs, mio slower by +2.1 to +3.1 % at the median (its read to
+`WouldBlock` is timed), every run passed. With 10 % added to either loop's
+round trips every test failed, 7 of 7 pairs.
 
 Why it is not a backend:
 
