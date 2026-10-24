@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: Apache-2.0
+# The pong: one exclusive CPU for ll-hot, 100 millicpus of the shared CPU
+# for main, ll-log, ll-stats and the Aeron client conductor. Guaranteed, no
+# hugepage request (the driver pre-fills the log buffers:
+# AERON_TERM_BUFFER_SPARSE_FILE=false).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ll-pong
+  namespace: trading
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: ll-pong}
+  template:
+    metadata:
+      labels: {app: ll-pong}
+      annotations:
+        required-plugins.noderesource.dev: '["ergon-shared-cpus"]'
+    spec:
+      priorityClassName: ergon-hot
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 10
+      nodeSelector:
+        ergon.io/shared-cpus: "true"
+        ergon.io/ll-app: "true"
+      containers:
+        - name: app
+          image: ll
+          command: [/usr/local/bin/ll-app]
+          envFrom:
+            - configMapRef: {name: ll-app}
+          env:
+            - {name: LL_ROLE, value: pong}
+            - name: LL_PUB_CHANNEL
+              valueFrom: {configMapKeyRef: {name: ll-endpoints, key: LL_PONG_PUB_CHANNEL}}
+            - name: LL_SUB_CHANNEL
+              valueFrom: {configMapKeyRef: {name: ll-endpoints, key: LL_PONG_SUB_CHANNEL}}
+          resources:
+            requests: {cpu: "1", memory: 512Mi, ergon.io/shared-millicpus: "100"}
+            limits: {cpu: "1", memory: 512Mi, ergon.io/shared-millicpus: "100"}
+          resizePolicy:
+            - resourceName: cpu
+              restartPolicy: RestartContainer
+          volumeMounts:
+            - {name: aeron, mountPath: /mnt/huge-aeron}
+      volumes:
+        - name: aeron
+          hostPath: {path: /mnt/huge-aeron, type: Directory}

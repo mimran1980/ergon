@@ -28,9 +28,9 @@ on AWS (ENA) and Azure (MANA), Linux x86_64 and aarch64 (Graviton).
 Measurements against kernel UDP: [BENCHMARKS.md](BENCHMARKS.md). A plain-English
 guide, with which transport to use when:
 [the book](https://mimran1980.github.io/ergon/md-dpdk/overview.html).
-A Kubernetes pod shape for two exclusive CPUs and one shared helper CPU
-is [deploy/low-latency](deploy/low-latency/README.md). It states no latency
-figure.
+The Kubernetes reference (driver on two exclusive CPUs plus a shared one,
+Aeron apps, node settings, a layout verifier) is the
+[low-latency-k8s sample](../samples/README.md#low-latency-k8s).
 
 > **AI assistance.** Like the rest of ergon, this crate was written **with heavy
 > AI assistance**. See

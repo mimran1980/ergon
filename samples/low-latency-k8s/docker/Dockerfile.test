@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# The Linux test environment for the sample's crate (scripts/test-docker.sh):
+# Ubuntu 24.04, Rust 1.99.0, and what rusteron needs to build Aeron C from
+# source (CMake >= 3.30 from pip, clang, gcc, libbsd, libuuid). No DPDK: the
+# crate does not link it. linux/arm64 or linux/amd64; nothing in it names an
+# architecture.
+FROM ubuntu:24.04
+ENV DEBIAN_FRONTEND=noninteractive
+# Retries and no HTTP pipelining: an emulated amd64 build behind some proxies
+# got "400 Bad Request" on pipelined fetches.
+RUN printf 'Acquire::Retries "5";\nAcquire::http::Pipeline-Depth "0";\n' >/etc/apt/apt.conf.d/80-ll-retries \
+    && apt-get update && apt-get install -y --no-install-recommends \
+        build-essential clang pkg-config curl ca-certificates git uuid-dev libbsd-dev python3-pip \
+    && rm -rf /var/lib/apt/lists/* \
+    && python3 -m pip install --break-system-packages --no-cache-dir cmake
+ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo PATH=/usr/local/cargo/bin:$PATH
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --profile minimal --default-toolchain 1.99.0 --component rustfmt,clippy
+WORKDIR /src

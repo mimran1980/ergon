@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: Apache-2.0
+# One kind node for scripts/e2e-vdev.sh --kind (8 CPUs or more, no SMT).
+# The kubelet reserves CPUs 0-1 (0 for IRQs, 1 the shared CPU the plugin
+# hands out); the static CPU manager with full-pcpus-only gives the driver 2
+# and each app 1 exclusive CPU from 2-7. containerd's NRI is on with the
+# default validator, which required-plugins needs (containerd >= 2.2: the
+# script checks the node image's version and fails below it).
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: ll-vdev
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.34.0
+    kubeadmConfigPatches:
+      - |
+        kind: KubeletConfiguration
+        apiVersion: kubelet.config.k8s.io/v1beta1
+        cpuManagerPolicy: static
+        cpuManagerPolicyOptions:
+          full-pcpus-only: "true"
+        reservedSystemCPUs: "0-1"
+        topologyManagerPolicy: single-numa-node
+        topologyManagerScope: pod
+        cpuManagerReconcilePeriod: "2s"
+containerdConfigPatches:
+  - |
+    [plugins."io.containerd.nri.v1.nri"]
+      disable = false
+  - |
+    [plugins."io.containerd.nri.v1.nri".default_validator]
+      enable = true

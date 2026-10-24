@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: Apache-2.0
+# The driver on an ENA pair from md-dpdk's device plugin (rusteron.io/dpdk-ena-pair),
+# which injects the pair's PCI addresses, CIDRs and gateways at allocation.
+# Lab only (md-dpdk/BENCHMARKS.md: kernel UDP in production).
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+configMapGenerator:
+  # the report's nic=
+  - name: ll-app
+    namespace: trading
+    behavior: merge
+    literals: [LL_NIC=ena]
+patches:
+  - target: {kind: DaemonSet, name: ll-media-driver}
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/resources/requests/rusteron.io~1dpdk-ena-pair
+        value: "1"
+      - op: add
+        path: /spec/template/spec/containers/0/resources/limits/rusteron.io~1dpdk-ena-pair
+        value: "1"
+      - op: add
+        path: /spec/template/spec/nodeSelector/rusteron-dpdk~1ena
+        value: "true"
+      - op: add
+        path: /spec/template/spec/tolerations
+        value:
+          - {key: rusteron-dpdk, operator: Exists, effect: NoSchedule}
+      - op: add
+        path: /spec/template/spec/containers/0/env
+        value:
+          # vfio-pci's write-combining, as the node's preflight confirmed it
+          # (md-dpdk/deploy/aws-eks/media-driver-config.yaml)
+          - {name: RUSTERON_DPDK_VFIO_WC, value: "1"}

@@ -1,0 +1,85 @@
+[package]
+name = "low-latency-k8s"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+publish = false
+description = "Kubernetes sample: an Aeron ping/pong on exclusive CPUs, helpers and tracing on the shared CPUs, and a verifier that proves the layout"
+license = "Apache-2.0"
+
+# Every direct dependency is pinned exactly; Cargo.lock pins the rest.
+[dependencies]
+ctrlc = { version = "=3.5.2", features = ["termination"] }
+ergon-tune = { path = "../../tune" }
+hdrhistogram = { version = "=7.6.0", default-features = false }
+quanta = { version = "=0.13.0", default-features = false }
+rusteron-client = { version = "=0.2.13", features = ["static"] }
+tracing = { version = "=0.1.44", features = ["release_max_level_info"] }
+tracing-appender = "=0.2.5"
+tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["fmt", "std", "registry"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "=1.1.5", default-features = false, features = ["std", "thread", "process", "fs"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# tests/hot_stdout.rs swaps fd 1
+rustix = { version = "=1.1.5", default-features = false, features = ["std", "stdio", "pipe"] }
+
+[dev-dependencies]
+proptest = { version = "=1.12.0", default-features = false, features = ["std"] }
+rusteron-media-driver = { version = "=0.2.13", features = ["static"] }
+serde_yaml = "=0.9.34"
+stats_alloc = "=0.1.10"
+
+[[bin]]
+name = "ll-app"
+path = "src/bin/ll-app.rs"
+
+[[bin]]
+name = "ll-probe"
+path = "src/bin/ll-probe.rs"
+
+[[test]]
+name = "logger_nonblocking"
+path = "tests/logger_nonblocking.rs"
+
+[[test]]
+name = "logger_alloc"
+path = "tests/logger_alloc.rs"
+
+[[test]]
+name = "placement_threads"
+path = "tests/placement_threads.rs"
+
+[[test]]
+name = "placement_aeron"
+path = "tests/placement_aeron.rs"
+
+[[test]]
+name = "hot_stdout"
+path = "tests/hot_stdout.rs"
+
+[[test]]
+name = "manifests"
+path = "tests/manifests.rs"
+
+[[bench]]
+name = "log_event"
+path = "benches/log_event.rs"
+harness = false
+
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+
+[profile.release]
+lto = true
+codegen-units = 1

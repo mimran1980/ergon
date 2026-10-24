@@ -29,6 +29,12 @@ samples/l3-book/tests/*.rs	samples	cd samples/l3-book && cargo test
 samples/l3-book/benches/*.rs	benchmark	cd samples/l3-book && cargo bench --no-run
 samples/sbe-feature-tour/src/*.rs	samples	cd samples/sbe-feature-tour && cargo test
 samples/sbe-feature-tour/tests/*.rs	samples	cd samples/sbe-feature-tour && cargo test
+samples/low-latency-k8s/src/*.rs	samples	cd samples/low-latency-k8s && cargo test --lib -- --test-threads=1
+samples/low-latency-k8s/tests/logger_*.rs	samples	cd samples/low-latency-k8s && cargo test --test logger_nonblocking --test logger_alloc -- --test-threads=1
+samples/low-latency-k8s/tests/placement_*.rs	samples-linux	bash samples/low-latency-k8s/scripts/test-docker.sh --arch arm64 && bash samples/low-latency-k8s/scripts/test-docker.sh --arch amd64
+samples/low-latency-k8s/tests/hot_stdout.rs	samples-linux	bash samples/low-latency-k8s/scripts/test-docker.sh --arch arm64 && bash samples/low-latency-k8s/scripts/test-docker.sh --arch amd64
+samples/low-latency-k8s/tests/manifests.rs	k8s	cd samples/low-latency-k8s && cargo test --test manifests -- --test-threads=1
+samples/low-latency-k8s/benches/*.rs	benchmark	cd samples/low-latency-k8s && cargo bench --no-run
 md-dpdk/src/*.rs	dpdk	cargo test -p ergon-md-dpdk --lib -- --test-threads=1
 md-dpdk/tests/*.rs	dpdk	cargo test -p ergon-md-dpdk -- --test-threads=1 && cargo test -p ergon-md-dpdk --features dpdk -- --test-threads=1 && cargo test -p ergon-md-dpdk --features static,dpdk -- --test-threads=1
 md-dpdk/benches/*.rs	benchmark	cargo bench -p ergon-md-dpdk --no-run && cargo bench -p ergon-md-dpdk --features dpdk --no-run
