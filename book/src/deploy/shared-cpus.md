@@ -4,8 +4,11 @@ How to install and use `k8s/nri-shared-cpus` on a Kubernetes node.
 
 A busy-spinning pod gets whole cores of its own from the kubelet. Its
 helpers (dial, TLS, warnings, Aeron conductors) do not need a whole core,
-and running them on the loop's core is what this layout forbids (its
-latency cost is **not measured**). This is a containerd
+and running them on the loop's core is what this layout forbids. With the
+helpers on the shared CPU, one Azure Cobalt VM measured the loop at p50
+0.02 µs, p99.99 0.03 µs, max 17 to 25 µs, with 6 involuntary switches a
+minute ([benchmarks](https://github.com/mimran1980/ergon/blob/main/k8s/nri-shared-cpus/BENCHMARKS.md)); a helper's own wake-up wait is **not
+measured**. This is a containerd
 NRI plugin and a kubelet device plugin that give the pod the node's shared
 housekeeping CPUs as well, and start every thread there.
 
@@ -170,7 +173,11 @@ The 18-step `test/e2e.sh` is a different run. It builds
 
 `M` is millicpus because extended resources are whole numbers and requests
 must equal limits. `250` is a quarter core of **scheduler accounting only**:
-the plugin still adds one whole shared CPU, and there is no hard cap.
+the plugin still adds one whole shared CPU, and there is no hard cap. A pod
+asking 100 on a node with two shared CPUs gets one of them; 1,001 to 2,000
+gets both. Pods given the same shared CPU split it by their cgroups'
+`cpu.weight` (from the `cpu` request), not by `M`. The lab's scale step
+checks this; not yet run.
 
 ### Timer slack
 
@@ -653,10 +660,17 @@ kubectl exec aeron-driver -- sh -c 'ps -L -o pid,tid,psr,comm | head'
   the kubelet does not read (no `--config-dir`) makes the check trust
   drop-ins the kubelet ignores; `kubeletConfigZ` with a fresh `/configz`
   copy cross-checks.
-- **Not measured / not verified:** the latency cost of helpers on shared
-  CPUs, and a real EKS node (the NRI socket, nodeadm TOML merge, the
-  kubelet drop-in merge, `/opt` writable).
+- **Measured once:** the exclusive core with the plugin on and helpers on
+  the shared CPU, one Azure Cobalt VM: p50 0.02 µs, p99.99 0.03 µs, max 17
+  to 25 µs over 5 reps of 60 s, each max overlapping a rescheduling and a
+  function-call IPI, 6 involuntary switches a rep, cause not yet named
+  ([benchmarks](https://github.com/mimran1980/ergon/blob/main/k8s/nri-shared-cpus/BENCHMARKS.md)).
+- **Not measured / not verified:** a helper's wake-up wait on a shared
+  CPU, shared-CPU scaling (the lab's scale step, not yet run), and a real
+  EKS node (the NRI socket, nodeadm TOML merge, the kubelet drop-in merge,
+  `/opt` writable).
 
 **Decision.** Use it on kind or a self-managed node where you can set
-`reservedSystemCPUs` and enable NRI. That the exclusive cores stay quiet
-with it is a design claim, not a measurement. Not for AKS or CRI-O.
+`reservedSystemCPUs` and enable NRI. The exclusive cores are quiet to
+0.03 µs at p99.99 with it, but not yet free of context switches (6 a
+minute in the one run). Not for AKS or CRI-O.

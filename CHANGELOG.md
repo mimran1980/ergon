@@ -300,9 +300,37 @@
 - `ergon-io` (repo only): `http_bench --suite body` times one response per
   row through the four `body_check` modes interleaved, on ASCII and mixed
   bodies, each mode's flag checked first.
+- `ergon-shared-cpus` lab (repo only): a scale step (`vm.sh scale`,
+  `LAB_SCALE=1`) on two shared CPUs records per-CPU busy time, each
+  container cgroup's usage, `cpu.weight`, `cpu.max` and throttling, the
+  shared CPUs each pod got and where every thread ran, for pods at 100 and
+  1,001 millicpus, idle helpers and three pods started in turn, plus the
+  scheduler's accounting (`results/scale.md`). A traced plugin-on rep
+  (`LAB_TRACE=1`) enables ftrace events filtered to the spin's CPU, with
+  the sender's stack on every wakeup, IPI, cross-call and work item sent
+  there, and `gapprobe trace-report` names every switch, IPI, timer and
+  work item and ties each to the gap log (`results/trace-cpu<N>.md`).
+  `LAB_QUIET=1` applies the node settings of `lab_quiet_settings`. Not
+  yet run on the lab VM.
+- `k8s/nri-shared-cpus/BENCHMARKS.md`: run 20261024212712's plugin-on
+  result (p50 0.02 µs, p99.99 0.03 µs, max 17.40 to 25.34 µs over 5 reps,
+  6 involuntary switches a 60 s rep) and e2e placement, its raw files under
+  `lab/results/azure-20261024212712/`, and what the scale step and the
+  traced rep will measure.
 
 ### Changed
 
+- `ergon-shared-cpus` lab (repo only): one boot line serves one shared
+  CPU (e2e, bench) and two (scale): exclusive CPUs 3 to the last,
+  `reservedSystemCPUs: 0-2`, so the bench's spin moves from CPU 2 to 3 and
+  the lab needs 7 vCPUs or more. The plugin-off arm runs only on request
+  (`LAB_ARMS="plugin-on plugin-off"`; default `plugin-on`); the default
+  plan is about 74 minutes and $0.43. `gapprobe` writes its gap log and
+  histogram before the spin thread pins itself (filling the old log faulted
+  one page in on the hot CPU per 256 gaps), counts the loop's page faults,
+  and runs its UDP helpers in a child process by default (`--helpers
+  process`; `LAB_HELPERS=thread` for the old layout). Its summary row has
+  four more fields; `report` still reads the 16-field rows.
 - Breaking: `ergon-md-dpdk` asks every ENA port for large LLQ entries
   (`llq_policy=3`, 256 bytes, from DPDK 24.11; before, `llq_policy=1`, the
   device's recommendation), and `RUSTERON_DPDK_TX_DESCRIPTORS` defaults to

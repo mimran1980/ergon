@@ -1,0 +1,10 @@
+plugin-on-5 placement, mid-run:
+ok:   gapprobe 23490 on CPU 1, allowed 1
+ok:   gp-udp-sink 23491 on CPU 1, allowed 1
+ok:   gp-udp-src 23492 on CPU 1, allowed 1
+ok:   gp-hot 23581 on CPU 2, allowed 2
+ok:   stress-ng-cpu 23499 on CPU 1, allowed 1
+ok:   stress-ng-vm 23501 on CPU 1, allowed 1
+ok:   stress-ng 23489 on CPU 1, allowed 1
+ok:   stress-ng-vm 23500 on CPU 1, allowed 1
+ok:   sh 23462 on CPU 1, allowed 1

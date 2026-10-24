@@ -35,8 +35,11 @@ A Guaranteed pod gets its exclusive CPUs plus the node's shared housekeeping
 CPUs, and every new thread starts on the shared ones, so the busy-spin loop
 keeps its core. The `hostContract` flags let the plugin check a pod
 labelled `ergon.io/latency: hot` against the node (isolated exclusive CPUs,
-static CPU manager, NIC IRQs on the IRQ CPUs only). Not yet run on kind; not
-verified on EKS; latency not measured.
+static CPU manager, NIC IRQs on the IRQ CPUs only). Run on kind on one Azure
+Cobalt VM: the hot thread with helpers on the shared CPU held p50 0.02 µs,
+p99.99 0.03 µs, max 17 to 25 µs, with 6 involuntary switches a minute
+([benchmarks](k8s/nri-shared-cpus/BENCHMARKS.md)). Not verified on EKS; a
+helper's wake-up wait and shared-CPU scaling not measured.
 
 - Node setup, install, configuration: [k8s/nri-shared-cpus](k8s/nri-shared-cpus/README.md).
 - Node and pod tuning, each setting marked measured or not, with copy-paste

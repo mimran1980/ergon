@@ -1,0 +1,2 @@
+gapprobe: label=plugin-on-1 cpu=2 counter_hz=1000000000 threshold=1000ns seconds=60 udp_rate=20000 ERGON_ISOLATED_CPUS=2,3 ERGON_SHARED_CPUS=1 main_affinity=[1]
+gapprobe: plugin-on-1 cpu=2 samples=2498590505 p50=24 p90=24 p99=32 p99.9=32 p99.99=32 max=17400 ns max_end=1792877670347178875 gaps>=1000ns=6318 dropped=0 nvcsw=0 nivcsw=6 udp_received=800200

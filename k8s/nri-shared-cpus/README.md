@@ -28,7 +28,8 @@ feature gate, plus the pieces those leave out.
 | not run | 0.1.1 not yet run on kind |
 | in git, not published | 0.1.2, image and chart: `--kubelet-config-dir` / `hostContract.kubeletConfigDir` merge the kubelet's drop-in directory, so hot pods can pass on EKS AL2023 ([install](#eks-al2023)) |
 | not verified | EKS |
-| not measured | latency ([lab ready](#latency-lab-one-azure-vm), not run) |
+| measured | the hot thread with helpers on the shared CPU, one Azure Cobalt VM: p50 0.02 µs, p99.99 0.03 µs, max 17 to 25 µs over 5 reps of 60 s, 6 involuntary switches a rep ([BENCHMARKS.md](BENCHMARKS.md)) |
+| not measured | a helper's wake-up wait on a shared CPU, the pin's cost, shared-CPU scaling and the zero-switch changes ([lab ready](BENCHMARKS.md#shared-cpu-scaling-lab-ready-not-yet-run), not run) |
 | release gate | [`RELEASE.md`](RELEASE.md) |
 
 `helm install` prints NOTES that say the chart is not published. It is
@@ -205,16 +206,19 @@ k8s/nri-shared-cpus/lab/azure-vm.sh             # the run; deletes its resource 
 
 | item | value |
 |---|---|
-| layout | CPU 0: every NIC IRQ and VMBus channel. CPU 1: shared. CPUs 2 to the last: `isolcpus=managed_irq,domain` + `nohz_full` + `rcu_nocbs`, handed out as exclusive (`reservedSystemCPUs: 0-1`) |
-| e2e | a hot pod is admitted and starts; `ps -L` and `Cpus_allowed_list` show its spin thread on its isolated CPU alone and every helper on CPU 1 alone; an exec-probe hot pod is denied |
-| probe | [`lab/gapprobe`](lab/gapprobe): spins reading the CPU counter, a histogram of every iteration (p50 to p99.99, exact max), every gap of 1 µs or more with its `CLOCK_REALTIME` end |
-| load | `stress-ng --cpu 1 --vm 1` and a loopback UDP reader (20,000 datagrams/s), started from the pod's main thread |
-| arms | plugin-on (hot pod, helpers on the shared CPU) and plugin-off (chart uninstalled, the plain static CPU manager: helpers on the pod's exclusive CPUs), 5 reps each, alternating |
+| layout | CPU 0: every NIC IRQ and VMBus channel. CPUs 1-2: housekeeping; `sharedCpus` 1 (e2e, bench) or 1-2 (scale). CPUs 3 to the last: `isolcpus=managed_irq,domain` + `nohz_full` + `rcu_nocbs`, handed out as exclusive (`reservedSystemCPUs: 0-2`) |
+| node | with `LAB_QUIET=1` (default) the settings of `lib.sh` `lab_quiet_settings`, recorded in `results/quiet.txt` |
+| e2e | a hot pod is admitted and starts; `ps -L` and `Cpus_allowed_list` show its spin thread on its isolated CPU alone and every helper on the shared CPU alone; an exec-probe hot pod is denied |
+| probe | [`lab/gapprobe`](lab/gapprobe): spins reading the CPU counter, a histogram of every iteration (p50 to p99.99, exact max), every gap of 1 µs or more with its `CLOCK_REALTIME` end, the loop's context switches and page faults |
+| load | `stress-ng --cpu 1 --vm 1` and a loopback UDP reader (20,000 datagrams/s) in a child process of the probe, started from the pod's main thread |
+| bench | plugin-on (hot pod, helpers on the shared CPU), 5 reps. `LAB_ARMS="plugin-on plugin-off"` adds the plain static CPU manager arm (chart uninstalled: helpers on the pod's exclusive CPUs) |
 | each max | with the `/proc/interrupts` and `/proc/softirqs` growth on its CPU in the 10 ms windows that overlap it, and the spin thread's involuntary context switches |
-| results | `target/nri-lab/<stamp>/results/report.md` |
+| trace | `LAB_TRACE=1` (default): one more plugin-on rep under kernel ftrace filtered to its spin CPU; `results/trace-cpu<N>.md` names every switch, IPI, timer and work item there and ties each to a gap |
+| scale | `LAB_SCALE=1` (default): how much of two shared CPUs a pod's helpers get at 100 and 1,001 millicpus, idle, and when pods share one; `results/scale.md` ([cases](BENCHMARKS.md#shared-cpu-scaling-lab-ready-not-yet-run)) |
+| results | `target/nri-lab/<stamp>/results/report.md`; a committed run in [`lab/results`](lab/results), summarised in [BENCHMARKS.md](BENCHMARKS.md) |
 | cost guard | every resource tagged `owner=ergon-lab run=<stamp>`; the group is deleted on every exit and checked gone; at `LAB_MAX_HOURS` (4) a timer on the VM deletes it through the VM's identity, a watchdog here deletes it, and auto-shutdown deallocates it 30 minutes later (a deallocated VM cannot run its timer); runs over 2 hours detach |
 | tests | `just test-nri-lab` (fake `az`/`ssh`, fixtures, the probe's unit tests) |
-| status | not yet run |
+| status | run 20261024212712 (bench and e2e, before the scale step, the trace and the layout above): [BENCHMARKS.md](BENCHMARKS.md). The current lab is not yet run |
 
 ## What the app sees
 
@@ -235,6 +239,19 @@ For the pod in step 4, inside the container:
 `ceil(M/1000)` shared CPUs (here 1). There is no hard cap: helpers may use
 the whole shared CPU, shared with the kubelet, system daemons and other
 pods.
+
+### Shared CPUs: how much a pod gets
+
+A container asking for M `ergon.io/shared-millicpus` gets `ceil(M/1000)`
+shared CPUs (at least one), the least loaded at its start; its cpuset is
+its exclusive CPUs plus those. M is scheduler accounting only (allocatable
+is `len(sharedCpus) x 1000 x oversubscription`): no CPU quota is set, so
+its helpers may use all of those CPUs when nothing else wants them, and
+next to nothing when idle. A pod asking 100 on a node with two shared CPUs
+gets one of them, not both; asking 1,001 to 2,000 gets both. Pods given the
+same shared CPU split it by their cgroups' `cpu.weight`, which comes from
+their `cpu` request, not from M. The lab's scale step checks this; it has
+not run yet ([BENCHMARKS.md](BENCHMARKS.md#shared-cpu-scaling-lab-ready-not-yet-run)).
 
 ## Pinning
 
@@ -441,8 +458,11 @@ metricsAddress: ":9466"
   `kubeletConfigZ` with a fresh `/configz` copy to cross-check.
 - Not verified on a real EKS node: the NRI socket, nodeadm TOML merge,
   the kubelet drop-in merge, `/opt` writable, `system-node-critical` outside kube-system.
-- Not measured: latency of helpers on shared CPUs, and of the exclusive
-  cores with the plugin on.
+- Measured once, one Azure Cobalt VM: the exclusive core with the plugin on
+  and helpers on the shared CPU, p50 0.02 µs, p99.99 0.03 µs, max 17 to
+  25 µs, 6 involuntary switches a minute ([BENCHMARKS.md](BENCHMARKS.md)).
+  Not measured: a helper's wake-up wait on a shared CPU, shared-CPU
+  scaling, and whether the lab's zero-switch changes reach zero.
 
 ## Did the isolation actually hold?
 

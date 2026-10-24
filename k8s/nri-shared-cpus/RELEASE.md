@@ -14,12 +14,13 @@
 | not run | kind install of 0.1.1 |
 | pending publish | **0.1.2, image and chart.** Image: `--kubelet-config-dir` merges the kubelet's drop-in directory (EKS AL2023 `config.json.d`). Chart: `hostContract.kubeletConfig`, `sys` and `proc` on by default; `hostContract.kubeletConfigDir` (off); `appVersion` 0.1.2. The kubeadm install command works on either chart; the EKS AL2023 one needs chart 0.1.2 |
 | not verified | EKS |
-| not measured | latency |
+| measured | the hot thread with helpers on the shared CPU (the checkout, on kind on one Azure Cobalt VM): p50 0.02 µs, p99.99 0.03 µs, max 17 to 25 µs, 6 involuntary switches a 60 s rep ([BENCHMARKS.md](BENCHMARKS.md)) |
+| not measured | a helper's wake-up wait on a shared CPU, the pin's cost, shared-CPU scaling (lab ready) |
 
 The 0.1.1 package's install NOTES say the chart is not published. It is
 published; ignore that line.
 
-The EKS lane and the latency benchmarks below are open for 0.1.1. Do not
+The EKS lane and the open benchmarks below are open for 0.1.1. Do not
 invent their figures.
 
 ## 1. Code defects
@@ -66,7 +67,9 @@ quiet. A figure without its max is not a result.
 
 | claim | what must be measured | state |
 |---|---|---|
-| helpers on shared CPUs do not disturb the hot thread | hot-thread latency p50 / p90 / p99 / p99.9 / p99.99 / **max** with and without the plugin, same load, same host | not measured. `lab/azure-vm.sh` measures it (one Cobalt VM, kind, plugin-on against plugin-off, 5 reps, each max with what overlaps it); not yet run |
+| helpers on shared CPUs do not disturb the hot thread | hot-thread latency p50 / p90 / p99 / p99.9 / p99.99 / **max** with the plugin, helpers loaded | measured once (run 20261024212712, [BENCHMARKS.md](BENCHMARKS.md)): p50 0.02 µs, p99.99 0.03 µs, max 17.40 to 25.34 µs over 5 reps, each max overlapping a rescheduling and a function-call IPI, 6 involuntary switches a 60 s rep. Their cause is not named yet: the lab's traced rep names it (not yet run) |
+| the exclusive CPU takes no context switch | 0 involuntary switches of the hot thread a 60 s rep, every remaining max named | not reached: 6 a rep in run 20261024212712. Lab changes for it (prefaulted probe, helpers in another process, node settings, the trace) not yet run |
+| a pod's helpers scale to its shared CPUs and idle near zero | per-CPU busy time, cgroup usage and throttling at 100 and 1,001 millicpus, idle, and two pods on one shared CPU | not measured. `vm.sh scale` measures it; not yet run |
 | a wake-up on a shared CPU can wait milliseconds under node load | distribution of that wait under a load the node is meant to carry | not measured |
 | the CPU env and the pin do not cost the hot path | cost of `pin_isolated` and of reading `ERGON_*` | not measured |
 | capacity accounting is honest | scheduler sees `len(sharedCpus) x 1000 x oversubscription`, and a pod that asks for more is refused | covered by unit tests, not measured |

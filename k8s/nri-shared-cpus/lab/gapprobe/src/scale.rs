@@ -201,7 +201,9 @@ pub fn read_pod(dir: &Path, name: &str) -> Result<Pod, ParseError> {
         millicpus: kv(&meta, "millicpus").unwrap_or_default(),
         threads: kv(&meta, "threads").unwrap_or_default(),
         duty: kv(&meta, "duty").unwrap_or_default(),
-        shared_cpus: kv(&meta, "shared_cpus").unwrap_or_else(|| "?".into()),
+        shared_cpus: kv(&meta, "shared_cpus")
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "?".into()),
         weight: (
             opt(dir, &format!("{name}.cpu.weight")),
             opt(dir, &format!("{name}.pod.cpu.weight")),
