@@ -66,7 +66,7 @@ quiet. A figure without its max is not a result.
 
 | claim | what must be measured | state |
 |---|---|---|
-| helpers on shared CPUs do not disturb the hot thread | hot-thread latency p50 / p90 / p99 / p99.9 / p99.99 / **max** with and without the plugin, same load, same host | not measured |
+| helpers on shared CPUs do not disturb the hot thread | hot-thread latency p50 / p90 / p99 / p99.9 / p99.99 / **max** with and without the plugin, same load, same host | not measured. `lab/azure-vm.sh` measures it (one Cobalt VM, kind, plugin-on against plugin-off, 5 reps, each max with what overlaps it); not yet run |
 | a wake-up on a shared CPU can wait milliseconds under node load | distribution of that wait under a load the node is meant to carry | not measured |
 | the CPU env and the pin do not cost the hot path | cost of `pin_isolated` and of reading `ERGON_*` | not measured |
 | capacity accounting is honest | scheduler sees `len(sharedCpus) x 1000 x oversubscription`, and a pod that asks for more is refused | covered by unit tests, not measured |

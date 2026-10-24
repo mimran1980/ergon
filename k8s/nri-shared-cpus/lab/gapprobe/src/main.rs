@@ -3,6 +3,7 @@
 //! ```text
 //! gapprobe spin --label L --arm A --rep N --seconds S --out DIR
 //!               [--cpu auto|N] [--threshold-ns 1000] [--udp-rate 20000] [--gap-cap 1000000]
+//!               [--delay-seconds 0]
 //! gapprobe irqsample --cpu N --seconds S --out FILE [--interval-ms 10] [--pin 0]
 //! gapprobe report DIR [--top 6]
 //! ```
@@ -10,7 +11,9 @@
 //! `spin` starts its helpers first, from the main thread, so they keep the
 //! affinity the container started with (the shared CPUs under the plugin):
 //! a UDP socket reader on loopback and the sender feeding it `--udp-rate`
-//! datagrams a second. Then a thread pins itself to `--cpu` (`auto`: the
+//! datagrams a second. After `--delay-seconds` (helpers at their steady
+//! state, and time for the lab to start the sampler on the CPU the first
+//! line names) a thread pins itself to `--cpu` (`auto`: the
 //! first of `ERGON_ISOLATED_CPUS`, else the lowest CPU of its affinity) and
 //! spins `--seconds` reading the CPU's counter (aarch64 `CNTVCT_EL0` at
 //! `CNTFRQ_EL0`, x86 the TSC), every iteration into a histogram, every gap of
@@ -349,6 +352,7 @@ fn spin(f: &Flags) -> Res<()> {
     let threshold_ns = f.num("threshold-ns", Some(1000))?;
     let udp_rate = f.num("udp-rate", Some(20_000))?;
     let cap = usize::try_from(f.num("gap-cap", Some(1_000_000))?)?;
+    let delay = f.num("delay-seconds", Some(0))?;
     let cpu = pick_cpu(f.0.get("cpu").map_or("auto", String::as_str))?;
     let rate = counter_rate().ok_or("no counter rate")?;
     let threshold = rate.ticks(threshold_ns).max(1);
@@ -364,6 +368,7 @@ fn spin(f: &Flags) -> Res<()> {
     let stop = Arc::new(AtomicBool::new(false));
     let received = Arc::new(AtomicU64::new(0));
     let helpers = start_helpers(udp_rate, &stop, &received)?;
+    thread::sleep(Duration::from_secs(delay));
     let hot = thread::Builder::new()
         .name("gp-hot".into())
         .spawn(move || spin_loop(cpu, seconds, threshold, cap, rate).map_err(|e| e.to_string()))?;

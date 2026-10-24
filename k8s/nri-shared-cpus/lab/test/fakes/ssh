@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Fake ssh for test-lab.sh: the last argument is the remote command. Logs it
+# to $FAKE_DIR/ssh.log. FAKE_SSH=down: every connection fails; =hang: each
+# sleeps 3 s, then fails. Otherwise vm.sh steps "run" at once: each is
+# recorded in steps.log and exits 0 (1 for FAKE_FAIL_STEP).
+cmd=${!#}
+echo "$cmd" >>"$FAKE_DIR/ssh.log"
+case ${FAKE_SSH:-up} in
+down) exit 255 ;;
+hang) sleep 3; exit 255 ;;
+esac
+case $cmd in
+*"nohup bash -c 'bash ~/lab/k8s/nri-shared-cpus/lab/vm.sh "*)
+    name=${cmd#*lab/vm.sh }
+    name=${name%%;*}
+    echo "$name" >>"$FAKE_DIR/steps.log"
+    rc=0
+    [[ $name == "${FAKE_FAIL_STEP:-}" ]] && rc=1
+    echo "$rc" >"$FAKE_DIR/rc-$name"
+    ;;
+"cat ~/step-"*".rc 2>/dev/null")
+    name=${cmd#"cat ~/step-"}
+    cat "$FAKE_DIR/rc-${name%%.rc*}" 2>/dev/null
+    ;;
+"tail -c "*) ;;
+*"cat >~/lab/lab.env"*) cat >"$FAKE_DIR/lab.env" ;;
+"sudo systemctl reboot") echo reboot >>"$FAKE_DIR/steps.log" ;;
+esac
+exit 0

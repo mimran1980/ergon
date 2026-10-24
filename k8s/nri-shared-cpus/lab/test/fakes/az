@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Fake az for test-lab.sh: logs every call to $FAKE_DIR/az.log and answers
+# from the state files there. FAKE_EXISTS=1: the group exists before the run;
+# FAKE_STILL_EXISTS=1: it outlives the delete; FAKE_LEFTOVER: a group name
+# tagged owner=ergon-lab from an earlier run.
+echo "az $*" >>"$FAKE_DIR/az.log"
+d=$FAKE_DIR
+case "$1 $2" in
+"account show") echo 00000000-0000-0000-0000-00000000cafe ;;
+"group list") [[ -n ${FAKE_LEFTOVER:-} ]] && echo "$FAKE_LEFTOVER" ;;
+"group exists")
+    if [[ ${FAKE_EXISTS:-} == 1 || ${FAKE_STILL_EXISTS:-} == 1 && -e $d/created ]]; then echo true
+    elif [[ -e $d/created && ! -e $d/deleted ]]; then echo true
+    else echo false; fi ;;
+"group create") touch "$d/created" ;;
+"group delete") touch "$d/deleted" ;;
+"resource list")
+    if [[ " $* " == *" --tag "* ]]; then
+        [[ ${FAKE_STILL_EXISTS:-} == 1 ]] && echo "/subscriptions/x/resourceGroups/g/providers/Microsoft.Compute/virtualMachines/vm"
+    elif [[ " $* " == *"length(@)"* ]]; then echo 3
+    else printf '%s\n' /fake/vm /fake/nic /fake/disk; fi ;;
+"vm show") echo 203.0.113.10 ;;
+*) ;;
+esac
+exit 0
