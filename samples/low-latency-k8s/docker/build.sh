@@ -21,7 +21,7 @@ TAG=${1:?usage: build.sh <amd64-generic|arm64-generic|arm64-v3|arm64-n2> [image-
 NAME=${2:-ll}
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 case $TAG in
-  amd64-generic) PLATFORM=linux/amd64 CPU= MARCH=x86-64-v2 ;;
+  amd64-generic) PLATFORM=linux/amd64 CPU='' MARCH=x86-64-v2 ;;
   arm64-generic) PLATFORM=linux/arm64 CPU=neoverse-n1 MARCH=armv8.2-a ;;
   arm64-v3) PLATFORM=linux/arm64 CPU=neoverse-v3 MARCH=armv8.2-a ;;
   arm64-n2) PLATFORM=linux/arm64 CPU=neoverse-n2 MARCH=armv8.2-a ;;
