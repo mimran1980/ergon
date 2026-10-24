@@ -15,12 +15,57 @@
 //!
 //! Everything is preallocated before the measured run, so recording never
 //! allocates.
+//!
+//! `RTT_GAP_US=<us>` paces the pings ([`Pace`]): one every that many
+//! microseconds, send to send (the warm-up's too), instead of each as soon as
+//! the last one's echo is back. The client spins meanwhile, polling as it
+//! does waiting for an echo, so only the network goes quiet: a sparse flow.
+//! A paced run checks `RTT_SECONDS` before every ping.
 
 use crate::lab::{Clock, label};
 use hdrhistogram::Histogram;
 
 const SPIKE_CAPACITY: usize = 100_000;
 const STALL_CAPACITY: usize = 1_000_000;
+
+/// `RTT_GAP_US`: when the next ping may go. Unset or 0, every ping may go
+/// at once (the round trip's own pacing).
+pub struct Pace {
+    gap: u64, // ns
+    next: u64,
+}
+
+impl Pace {
+    /// From `RTT_GAP_US` (whole microseconds, up to 60 s).
+    pub fn from_env() -> Self {
+        let gap = match std::env::var("RTT_GAP_US") {
+            Err(_) => 0,
+            Ok(v) => match v.parse::<u64>() {
+                Ok(us) if us <= 60_000_000 => us * 1000,
+                _ => panic!("RTT_GAP_US={v}: whole microseconds, 0 to 60000000"),
+            },
+        };
+        Self { gap, next: 0 }
+    }
+
+    /// Whether pings are paced: the run's budget is then checked every ping.
+    #[inline(always)]
+    pub fn paced(&self) -> bool {
+        self.gap != 0
+    }
+
+    /// Whether the next ping may go at `now` (the clock's).
+    #[inline(always)]
+    pub fn ready(&self, now: u64) -> bool {
+        self.gap == 0 || now >= self.next
+    }
+
+    /// A ping went at `at`: the next may go a gap later.
+    #[inline(always)]
+    pub fn sent(&mut self, at: u64) {
+        self.next = at.wrapping_add(self.gap);
+    }
+}
 
 /// Gaps in the calling loop of at least a threshold, each with when it ended:
 /// time this client did not run. Preallocated, so recording never allocates.

@@ -14,7 +14,9 @@
 //! to measure what an idle host-local channel costs the driver's agents.
 //!
 //! A slow configuration stops early: warmup after a quarter of `RTT_SECONDS`
-//! (default 20) and the measured run after all of it.
+//! (default 20) and the measured run after all of it. `RTT_GAP_US=<us>` paces
+//! the pings, one every that many microseconds (`roundtrip::Pace`), the
+//! driver run and the echo's image polled in between.
 //!
 //! Round trips are stamped with quanta's clock, its ordered read at both ends
 //! (`lab::Clock::stamp`), in nanoseconds. With
@@ -61,7 +63,7 @@ mod lab;
 mod roundtrip;
 
 use lab::{Clock, Duty, External, Halt, Lab, Retry, STOP, cpu_arg, pin, sub_channel};
-use roundtrip::{Results, Stalls, realtime_ns};
+use roundtrip::{Pace, Results, Stalls, realtime_ns};
 use rusteron_client::*;
 use std::ffi::{CStr, CString};
 use std::hint::spin_loop;
@@ -201,6 +203,7 @@ fn run_ping(
     let timeout_ns: u64 =
         std::env::var("RTT_LOST_TIMEOUT_US").map_or(0, |v| v.parse::<u64>().expect("RTT_LOST_TIMEOUT_US") * 1000);
     let mut seq = 0_u64;
+    let mut pace = Pace::from_env();
     let start = Instant::now();
     for i in 0..warmup {
         seq += 1;
@@ -211,11 +214,12 @@ fn run_ping(
             &image,
             &mut buffer,
             &mut None,
+            &mut pace,
             seq,
             timeout_ns,
             |_: &Echo| {},
         );
-        if i % 64 == 0 && start.elapsed() > budget / 4 {
+        if (pace.paced() || i % 64 == 0) && start.elapsed() > budget / 4 {
             break;
         }
     }
@@ -233,6 +237,7 @@ fn run_ping(
             &image,
             &mut buffer,
             &mut stalls,
+            &mut pace,
             seq,
             timeout_ns,
             |echo: &Echo| {
@@ -245,7 +250,7 @@ fn run_ping(
         if !echoed {
             lost += 1;
         }
-        if i % 64 == 0 && start.elapsed() > budget {
+        if (pace.paced() || i % 64 == 0) && start.elapsed() > budget {
             break;
         }
     }
@@ -265,7 +270,8 @@ fn run_ping(
 /// none came within `timeout_ns` (0: wait for ever, as a reliable channel
 /// repairs any loss). An echo of an earlier, timed-out message is skipped.
 /// `duty` runs every pass (an embedded driver sends the ping and receives the
-/// echo in it).
+/// echo in it). A paced ping waits for its time (`pace`) first, the loop
+/// running as it does for an echo, anything the image has drained.
 #[allow(clippy::too_many_arguments)]
 fn round_trip(
     duty: &impl Duty,
@@ -274,12 +280,24 @@ fn round_trip(
     image: &AeronImage,
     buffer: &mut [u8; MESSAGE_LENGTH],
     stalls: &mut Option<Stalls>,
+    pace: &mut Pace,
     seq: u64,
     timeout_ns: u64,
     mut record: impl FnMut(&Echo),
 ) -> bool {
     if let Some(s) = stalls.as_mut() {
         s.pass(clock.now());
+    }
+    while !pace.ready(clock.now()) {
+        if let Some(s) = stalls.as_mut() {
+            s.pass(clock.now());
+        }
+        let work = duty.run();
+        let fragments = image.poll_fn(|_, _| {}, FRAGMENT_COUNT_LIMIT).unwrap();
+        if fragments == 0 && work == 0 {
+            assert!(!image.is_closed(), "pong went away");
+            spin_loop();
+        }
     }
     buffer[8..16].copy_from_slice(&seq.to_le_bytes());
     let mut retry = Retry::default();
@@ -288,7 +306,10 @@ fn round_trip(
         let now = clock.stamp();
         buffer[..8].copy_from_slice(&now.to_le_bytes());
         match publication.offer(buffer) {
-            Ok(_) => break now,
+            Ok(_) => {
+                pace.sent(now);
+                break now;
+            }
             Err(e) if e.is_retryable() => {
                 if let Err(halt) = retry.check(publication, image) {
                     pong_gone(halt);
