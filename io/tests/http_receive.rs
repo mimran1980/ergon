@@ -107,14 +107,26 @@ fn chunked_bodies_cut_at_every_offset_move_each_byte_at_most_once() -> R {
                 ],
                 "cut {cut}"
             );
+            // A whole head in the first record: the head, then each body
+            // byte, copied once as it streams in. A cut head: the response
+            // is whole when the head is, so one chunk is borrowed and
+            // several are copied once.
             let copied = s1.chunk_copy_bytes - s0.chunk_copy_bytes;
-            assert!(
-                copied <= (head + body.len()) as u64,
-                "sizes {sizes:?} cut {cut}: {copied} bytes copied for a {}-byte body",
+            let want = if cut >= head {
+                head + body.len()
+            } else if sizes.len() == 1 && sizes[0] >= body.len() {
+                0
+            } else {
                 body.len()
-            );
+            };
+            assert_eq!(copied, want as u64, "sizes {sizes:?} cut {cut}");
             let parses = s1.head_parses - s0.head_parses;
             assert_eq!(parses, if cut >= head { 1 } else { 2 }, "cut {cut}");
+            // A whole head lets the body stream out, so the window empties
+            // and the second record is read where it landed.
+            if cut >= head {
+                assert_eq!(s1.span_copy_bytes, s0.span_copy_bytes, "cut {cut}");
+            }
             assert_eq!(r.conn.in_flight(), 0);
         }
     }
@@ -137,12 +149,19 @@ fn large_chunked_bodies_in_full_records_copy_each_byte_once() -> R {
         let s1 = r.conn.stats();
         assert_eq!(h.responses.len(), 1);
         assert_eq!(h.responses[0].1, body, "{len}");
+        // One record holds the whole 4 KiB response (one chunk: borrowed);
+        // the others stream: the head and each body byte once.
         let copied = s1.chunk_copy_bytes - s0.chunk_copy_bytes;
-        assert!(
-            copied <= (head + len) as u64,
-            "{len}: {copied} bytes copied"
-        );
+        let want = if resp.len() <= http_rig::RECORD {
+            0
+        } else {
+            head + len
+        };
+        assert_eq!(copied, want as u64, "{len}");
         assert_eq!(s1.head_parses - s0.head_parses, 1, "{len}");
+        // Each record is read in place: nothing is left in the window for
+        // the next one to be moved next to.
+        assert_eq!(s1.span_copy_bytes, s0.span_copy_bytes, "{len}");
     }
     Ok(())
 }
@@ -246,16 +265,20 @@ fn a_non_ascii_head_is_flagged_by_default_and_rejected_on_request() -> R {
     let good = b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi";
     let mut r = rig(&lab, 1 << 20)?;
     let mut h = Collect::default();
-    for resp in [&bad[..], &good[..]] {
+    // The second time, the body comes in a later record: the flag is kept
+    // with the head parsed earlier.
+    let bad_head = bad.len() - 2;
+    for (resp, cut) in [(&bad[..], 0), (&bad[..], bad_head), (&good[..], 0)] {
         ask(&mut r)?;
-        r.feed_records(resp, &[], &mut h)?;
+        r.feed_records(resp, &[cut], &mut h)?;
     }
     assert_eq!(
         h.responses.iter().map(|g| g.3).collect::<Vec<_>>(),
-        vec![false, true]
+        vec![false, false, true]
     );
     assert_eq!(h.responses[0].2[1], ("X-V".to_owned(), vec![0xff]));
-    assert_eq!(r.conn.stats().non_ascii_heads, 1);
+    assert_eq!(h.responses[1].2[1], ("X-V".to_owned(), vec![0xff]));
+    assert_eq!(r.conn.stats().non_ascii_heads, 2);
 
     let mut r = HttpRig::new(
         &lab,
@@ -388,5 +411,54 @@ fn a_non_ascii_byte_at_any_offset_of_the_head_is_flagged() -> R {
     }
     assert!(h.responses.iter().all(|g| !g.3));
     assert_eq!(r.conn.stats().non_ascii_heads, 40);
+    Ok(())
+}
+
+/// Pipelined responses back to back: a chunked body still arriving ends
+/// mid-record and the next responses (a `Content-Length` one, a one-chunk
+/// one) follow in the same record. Cut into three records at many pairs of
+/// offsets, every response arrives whole, with its own headers, in order.
+#[test]
+fn a_streamed_chunked_body_followed_by_more_responses_in_the_same_record() -> R {
+    let lab = Lab::new()?;
+    let mut r = rig(&lab, 1 << 20)?;
+    let first = body_of(1500);
+    let (mut stream, _) = chunked(&first, &[700, 1, 300, 499], "X-Sum: 1\r\n");
+    let second = b"0123456789";
+    stream.extend_from_slice(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\nX-Kind: length\r\n\r\n");
+    stream.extend_from_slice(second);
+    let third = body_of(40);
+    let (single, _) = chunked(&third, &[40], "");
+    stream.extend_from_slice(&single);
+    let len = stream.len();
+    let mut cuts = Vec::new();
+    for x in 1..len {
+        cuts.push(vec![x]);
+    }
+    for x in (1..len).step_by(7) {
+        for y in (x + 1..len).step_by(11) {
+            cuts.push(vec![x, y]);
+        }
+    }
+    for cut in &cuts {
+        let mut h = Collect::default();
+        for _ in 0..3 {
+            ask(&mut r)?;
+        }
+        r.feed_records(&stream, cut, &mut h)?;
+        assert_eq!(h.responses.len(), 3, "cuts {cut:?}");
+        assert_eq!(h.responses[0].1, first, "cuts {cut:?}");
+        assert_eq!(
+            h.responses[0].2[1],
+            ("X-Kind".to_owned(), b"chunked".to_vec())
+        );
+        assert_eq!(h.responses[1].1, second, "cuts {cut:?}");
+        assert_eq!(
+            h.responses[1].2[1],
+            ("X-Kind".to_owned(), b"length".to_vec())
+        );
+        assert_eq!(h.responses[2].1, third, "cuts {cut:?}");
+        assert_eq!(r.conn.in_flight(), 0, "cuts {cut:?}");
+    }
     Ok(())
 }

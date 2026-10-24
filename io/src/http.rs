@@ -392,7 +392,8 @@ pub struct HttpStats {
     pub span_copy_bytes: u64,
     /// Bytes moved by buffer compaction.
     pub compact_bytes: u64,
-    /// Bytes copied to de-chunk bodies.
+    /// Bytes copied to de-chunk bodies: each body byte once, plus the head
+    /// of a chunked response whose body streams in over later records.
     pub chunk_copy_bytes: u64,
     /// Response heads parsed (each `httparse` parse call).
     pub head_parses: u64,

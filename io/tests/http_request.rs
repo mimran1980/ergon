@@ -70,8 +70,8 @@ fn table() -> Vec<Case<'static>> {
         .collect();
     vec![
         ("GET", "/", "", vec![], vec![]),
-        ("GET", "/api/v3/time", "", vec![], vec![]),
-        ("GET", "/api/v3/time", "?a=1&b=two", vec![], vec![]),
+        ("GET", "/v1/status", "", vec![], vec![]),
+        ("GET", "/v1/status", "?a=1&b=two", vec![], vec![]),
         ("HEAD", "/x", "", vec![("Accept", "*/*")], vec![]),
         ("DELETE", "/order", "/42", vec![], vec![]),
         ("POST", "/order", "", vec![], vec![]),

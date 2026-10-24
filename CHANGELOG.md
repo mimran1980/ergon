@@ -421,8 +421,8 @@
   empties, so later records are read in place. A chunked body sent as one
   chunk, whole in the buffer, is borrowed (no copy). A head is parsed once:
   a response whose body arrives in later records keeps its head as offsets.
-  `HttpStats::chunk_copy_bytes` now counts every byte the de-chunking moved
-  (it counted only the last pass's body). The de-chunk buffer is allocated
+  `HttpStats::chunk_copy_bytes` now counts every byte the de-chunking moved,
+  a streamed response's head included (it counted only the last pass's body). The de-chunk buffer is allocated
   on first use, at `buf_size` minus two records, instead of 64 KiB at
   connect.
 - `ergon-io`: `HttpConn`'s 64 KiB send queue is written once at connect,

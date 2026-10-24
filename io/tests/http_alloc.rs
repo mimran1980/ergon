@@ -7,19 +7,34 @@ mod http_rig;
 mod support;
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::cell::Cell;
 
 use ergon_io::{ConnId, Handler, HttpHandler, HttpOptions, RequestTemplate, Response, RxMeta};
 use http_rig::HttpRig;
 use support::{Lab, R};
 
 struct Counting;
-static ALLOCS: AtomicU64 = AtomicU64::new(0);
 
-// SAFETY: forwards to the system allocator; only adds a relaxed counter.
+thread_local! {
+    /// This thread's allocations: tests running in parallel do not count
+    /// each other's.
+    static ALLOCS: Cell<u64> = const { Cell::new(0) };
+}
+
+fn count() {
+    // A const-initialised `Cell` has no destructor, so this never fails;
+    // `try_with` keeps the allocator from panicking regardless.
+    let _ = ALLOCS.try_with(|c| c.set(c.get() + 1));
+}
+
+fn allocs() -> u64 {
+    ALLOCS.with(Cell::get)
+}
+
+// SAFETY: forwards to the system allocator; only adds a thread-local counter.
 unsafe impl GlobalAlloc for Counting {
     unsafe fn alloc(&self, l: Layout) -> *mut u8 {
-        ALLOCS.fetch_add(1, Ordering::Relaxed);
+        count();
         // SAFETY: same contract as the caller's.
         unsafe { System.alloc(l) }
     }
@@ -28,7 +43,7 @@ unsafe impl GlobalAlloc for Counting {
         unsafe { System.dealloc(p, l) }
     }
     unsafe fn realloc(&self, p: *mut u8, l: Layout, n: usize) -> *mut u8 {
-        ALLOCS.fetch_add(1, Ordering::Relaxed);
+        count();
         // SAFETY: same contract as the caller's.
         unsafe { System.realloc(p, l, n) }
     }
@@ -111,11 +126,11 @@ fn the_steady_state_request_and_response_paths_do_not_allocate() -> R {
     for recs in &reads[..warm] {
         run(&mut r, recs, &mut h)?;
     }
-    let before = ALLOCS.load(Ordering::Relaxed);
+    let before = allocs();
     for recs in &reads[warm..] {
         run(&mut r, recs, &mut h)?;
     }
-    let allocs = ALLOCS.load(Ordering::Relaxed) - before;
+    let allocs = allocs() - before;
     assert_eq!(h.responses, (rounds * shapes.len()) as u64);
     assert_eq!(
         allocs,
@@ -123,6 +138,30 @@ fn the_steady_state_request_and_response_paths_do_not_allocate() -> R {
         "{allocs} allocations over {} responses",
         reads.len() - warm
     );
+    Ok(())
+}
+
+/// The first chunked body that streams in over many records allocates the
+/// de-chunk buffer once, at its full size: no reallocation moves the body
+/// bytes already copied.
+#[test]
+fn a_streamed_body_allocates_its_buffer_once() -> R {
+    let lab = Lab::new()?;
+    let mut r = HttpRig::new(&lab, HttpOptions::default())?;
+    let body: Vec<u8> = (0..900_000usize).map(|i| b'a' + (i % 26) as u8).collect();
+    let recs = r.records(&chunked(&body, 4096), &[])?;
+    assert!(recs.len() > 50, "{}", recs.len());
+    r.conn.request("GET", "/big", &[], &[])?;
+    r.conn.clear_tx();
+    let mut h = Sum::default();
+    let before = allocs();
+    for rec in &recs {
+        r.feed(rec, &mut h)?;
+    }
+    let n = allocs() - before;
+    assert_eq!(h.responses, 1);
+    assert_eq!(h.bytes, body.len() as u64 + 1);
+    assert_eq!(n, 1, "{n} allocations for one streamed body");
     Ok(())
 }
 
