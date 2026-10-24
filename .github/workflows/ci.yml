@@ -435,3 +435,11 @@ jobs:
       # process's /proc/PID/timerslack_ns, which the runner user cannot.
       - name: unit lane (scripts/check.sh --unit)
         run: scripts/check.sh --unit
+
+      # The Azure latency lab with no cloud: azure-vm.sh against fake az and
+      # ssh (dry plan, teardown on every exit), lib.sh and vm.sh on fixtures,
+      # and the gap probe's statistics.
+      - name: latency lab tests (lab/test/test-lab.sh)
+        run: bash lab/test/test-lab.sh
+      - name: gap probe unit tests
+        run: cargo test --manifest-path lab/gapprobe/Cargo.toml

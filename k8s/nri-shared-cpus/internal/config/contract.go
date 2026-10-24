@@ -538,8 +538,11 @@ func parseMaybeCPUList(s string) (cpuset.Set, error) {
 
 // checkNICAffinity checks requested and effective affinity of every hardware
 // NIC under sys/class/net. Interfaces with no device directory (bridges,
-// veth, lo) are not NIC inventory. Missing inventory or an unreadable NIC
-// mask is a refusal. Other /proc/irq entries are notes.
+// veth, lo) are not NIC inventory. A Hyper-V synthetic NIC (hv_netvsc, Azure)
+// has no PCI interrupt: the host signals each VMBus channel on the CPU in its
+// channels/<relid>/cpu, so that CPU is the channel's affinity, requested and
+// effective. Missing inventory or an unreadable NIC mask is a refusal. Other
+// /proc/irq entries are notes.
 func checkNICAffinity(src Sources, allowed cpuset.Set) (refusals, notes []string, err error) {
 	nics, err := hardwareNICs(src.SysRoot)
 	if err != nil {
@@ -561,6 +564,17 @@ func checkNICAffinity(src Sources, allowed cpuset.Set) (refusals, notes []string
 					n.name, irq, req, eff, allowed))
 			}
 		}
+		for _, ch := range n.channels {
+			cpu, cpuErr := readChannelCPU(ch.path)
+			if cpuErr != nil {
+				refusals = append(refusals, fmt.Sprintf("NIC %s vmbus channel %d: unreadable cpu", n.name, ch.relid))
+				continue
+			}
+			if !allowed.Contains(cpu) {
+				refusals = append(refusals, fmt.Sprintf("NIC %s vmbus channel %d on CPU %d, allowed %s",
+					n.name, ch.relid, cpu, allowed))
+			}
+		}
 	}
 	notes, err = otherIRQNotes(src.ProcRoot, nicIRQs)
 	if err != nil {
@@ -570,8 +584,16 @@ func checkNICAffinity(src Sources, allowed cpuset.Set) (refusals, notes []string
 }
 
 type nicInfo struct {
-	name string
-	irqs []int
+	name     string
+	irqs     []int
+	channels []vmbusChannel
+}
+
+// vmbusChannel is one VMBus channel of a synthetic NIC: its relid and its
+// cpu file.
+type vmbusChannel struct {
+	relid int
+	path  string
 }
 
 func hardwareNICs(sysRoot string) ([]nicInfo, error) {
@@ -595,10 +617,17 @@ func hardwareNICs(sysRoot string) ([]nicInfo, error) {
 		if err != nil {
 			return nil, fmt.Errorf("NIC %s: %w", name, err)
 		}
+		var channels []vmbusChannel
 		if len(irqs) == 0 {
+			channels, err = vmbusChannels(dev)
+			if err != nil {
+				return nil, fmt.Errorf("NIC %s: %w", name, err)
+			}
+		}
+		if len(irqs) == 0 && len(channels) == 0 {
 			return nil, fmt.Errorf("NIC %s: no NIC interrupt found", name)
 		}
-		out = append(out, nicInfo{name: name, irqs: irqs})
+		out = append(out, nicInfo{name: name, irqs: irqs, channels: channels})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
 	if len(out) == 0 {
@@ -640,6 +669,45 @@ func ifaceIRQs(iface string) ([]int, error) {
 		return nil, nil
 	}
 	return []int{n}, nil
+}
+
+// vmbusChannels lists device/channels/<relid> of a VMBus device, sorted by
+// relid. A device without that directory has none.
+func vmbusChannels(dev string) ([]vmbusChannel, error) {
+	dir := filepath.Join(dev, "channels")
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []vmbusChannel
+	for _, e := range entries {
+		n, conv := strconv.Atoi(e.Name())
+		if conv != nil || n < 0 {
+			continue
+		}
+		out = append(out, vmbusChannel{relid: n, path: filepath.Join(dir, e.Name(), "cpu")})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].relid < out[j].relid })
+	return out, nil
+}
+
+// readChannelCPU reads a VMBus channel's target CPU.
+func readChannelCPU(path string) (int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", path, err)
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("%s: negative CPU %d", path, n)
+	}
+	return n, nil
 }
 
 func readIRQAffinity(procRoot string, irq int, effective bool) (cpuset.Set, error) {

@@ -28,7 +28,7 @@ feature gate, plus the pieces those leave out.
 | not run | 0.1.1 not yet run on kind |
 | in git, not published | 0.1.2, image and chart: `--kubelet-config-dir` / `hostContract.kubeletConfigDir` merge the kubelet's drop-in directory, so hot pods can pass on EKS AL2023 ([install](#eks-al2023)) |
 | not verified | EKS |
-| not measured | latency |
+| not measured | latency ([lab ready](#latency-lab-one-azure-vm), not run) |
 | release gate | [`RELEASE.md`](RELEASE.md) |
 
 `helm install` prints NOTES that say the chart is not published. It is
@@ -52,7 +52,7 @@ admission policy, not another image:
    | `reservedSystemCPUs` | the IRQ CPU(s) plus the shared CPUs | kubelet config |
    | `cpuCFSQuota` | not `false`; feature gate `DisableCPUQuotaWithExclusiveCPUs` not `false` | kubelet config |
    | kubelet config file | `/var/lib/kubelet/config.yaml` (kubeadm, kind). The plugin pod does not start without it. Another path: `--set hostContract.kubeletConfig.path=<file>`. A kubelet started with `--config-dir` also needs `hostContract.kubeletConfigDir` (chart 0.1.2). EKS AL2023: [below](#eks-al2023) | node |
-   | NIC IRQs | every hardware NIC IRQ, requested and effective affinity, on the IRQ CPU(s): `reservedSystemCPUs` minus `sharedCpus` | node (IRQ pinning) |
+   | NIC IRQs | every hardware NIC IRQ, requested and effective affinity, on the IRQ CPU(s): `reservedSystemCPUs` minus `sharedCpus`. A Hyper-V synthetic NIC (Azure `hv_netvsc`) has no IRQ: each VMBus channel's `device/channels/<relid>/cpu` must be one of those CPUs | node (IRQ pinning) |
    | containerd | >= 2.2, NRI default validator on (block below) | containerd TOML |
    | `ergon.io/shared-cpus=true` | the DaemonSet schedules only on labelled nodes | node label |
 
@@ -190,6 +190,31 @@ k8s/nri-shared-cpus/examples/try/run.sh
 | passes when | the unlabelled pod's log shows `ERGON_SHARED_CPUS=0`, a non-empty `ERGON_ISOLATED_CPUS`, PID 1 `Cpus_allowed_list` of `0` and `nproc=1`; a hot pod is refused at create with `exclusive CPU not isolated`; the exec-probe pod is denied |
 | does not | measure latency, or ask for hugepages, PTP or an isolated cpuset partition. A kind node shares the host kernel and has no `isolcpus`, so no hot pod can start there |
 | status | not yet run on kind |
+
+### Latency lab (one Azure VM)
+
+[`lab/azure-vm.sh`](lab/azure-vm.sh) measures the claim on one Cobalt VM
+(default `Standard_D8ps_v6`, Debian 13 arm64) with a real `isolcpus` boot
+line, so a hot pod can start: kind on the VM, the chart and both images
+built there from this checkout.
+
+```sh
+DRY_RUN=1 k8s/nri-shared-cpus/lab/azure-vm.sh   # plan, size, price; no cloud call
+k8s/nri-shared-cpus/lab/azure-vm.sh             # the run; deletes its resource group on every exit
+```
+
+| item | value |
+|---|---|
+| layout | CPU 0: every NIC IRQ and VMBus channel. CPU 1: shared. CPUs 2 to the last: `isolcpus=managed_irq,domain` + `nohz_full` + `rcu_nocbs`, handed out as exclusive (`reservedSystemCPUs: 0-1`) |
+| e2e | a hot pod is admitted and starts; `ps -L` and `Cpus_allowed_list` show its spin thread on its isolated CPU alone and every helper on CPU 1 alone; an exec-probe hot pod is denied |
+| probe | [`lab/gapprobe`](lab/gapprobe): spins reading the CPU counter, a histogram of every iteration (p50 to p99.99, exact max), every gap of 1 µs or more with its `CLOCK_REALTIME` end |
+| load | `stress-ng --cpu 1 --vm 1` and a loopback UDP reader (20,000 datagrams/s), started from the pod's main thread |
+| arms | plugin-on (hot pod, helpers on the shared CPU) and plugin-off (chart uninstalled, the plain static CPU manager: helpers on the pod's exclusive CPUs), 5 reps each, alternating |
+| each max | with the `/proc/interrupts` and `/proc/softirqs` growth on its CPU in the 10 ms windows that overlap it, and the spin thread's involuntary context switches |
+| results | `target/nri-lab/<stamp>/results/report.md` |
+| cost guard | every resource tagged `owner=ergon-lab run=<stamp>`; the group is deleted on every exit and checked gone; at `LAB_MAX_HOURS` (4) a timer on the VM deletes it through the VM's identity, a watchdog here deletes it, and auto-shutdown deallocates it 30 minutes later (a deallocated VM cannot run its timer); runs over 2 hours detach |
+| tests | `just test-nri-lab` (fake `az`/`ssh`, fixtures, the probe's unit tests) |
+| status | not yet run |
 
 ## What the app sees
 
