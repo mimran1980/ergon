@@ -1,7 +1,9 @@
 //! The send set (`Conns::tx_dirty`) against a full scan of the slots, on
 //! every backend, and the sends it must not lose: one queued on an idle
-//! connection among many, a reply queued by a receive, and a queue larger
-//! than the socket takes in one pass.
+//! connection among many, a reply queued by a receive, a queue larger than
+//! the socket takes in one pass, and the sends queued with no `get_mut` (an
+//! endpoint added with bytes queued, a reply to input buffered before it was
+//! added, a timer's Ping).
 
 use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -24,9 +26,20 @@ struct Stub {
     rx: Box<[u8]>,
     tx: Vec<u8>,
     route: RouteSlot,
+    /// Input held from before it was added: decoding it queues a `pong`.
+    buffered: bool,
+    /// A timer due: the next `expire` queues a `ping` (a WebSocket Ping).
+    ping_due: bool,
 }
 
 impl Io for Stub {
+    const DEADLINES: bool = true;
+    fn expire(&mut self, _: i64) -> Result<()> {
+        if std::mem::take(&mut self.ping_due) {
+            self.tx.extend_from_slice(b"ping");
+        }
+        Ok(())
+    }
     fn fd(&self) -> RawFd {
         self.sock.as_raw_fd()
     }
@@ -39,7 +52,7 @@ impl Io for Stub {
         &mut self.tx
     }
     fn has_buffered_input(&self) -> bool {
-        false
+        self.buffered
     }
     fn set_route(&mut self, route: RouteSlot) {
         self.route = route;
@@ -51,6 +64,9 @@ impl Io for Stub {
 
 impl<H: ?Sized> Deliver<H> for Stub {
     fn on_received(&mut self, _: ConnId, n: usize, _: &RxMeta, _: &mut H) -> Result<usize> {
+        if n == 0 && std::mem::take(&mut self.buffered) {
+            self.tx.extend_from_slice(b"pong");
+        }
         let replies = self.rx.get(..n).unwrap_or_default().iter();
         for _ in replies.filter(|&&b| b == b'r') {
             self.tx.extend_from_slice(b"pong");
@@ -99,6 +115,8 @@ fn pair(l: &TcpListener) -> R<(Stub, Peer)> {
         rx: vec![0; 4096].into_boxed_slice(),
         tx: Vec::new(),
         route: RouteSlot::default(),
+        buffered: false,
+        ping_due: false,
     };
     Ok((
         stub,
@@ -124,6 +142,19 @@ fn driver(b: Backend) -> R<Option<Driver<Stub>>> {
         }
         Err(Error::Cpu(_)) if b == Backend::UringSqpoll => Ok(None),
         Err(e) => Err(format!("{b}: {e}").into()),
+    }
+}
+
+/// Backends each test must run on: all but `uring-sqpoll` (refused on a
+/// one-CPU host); without the `uring` feature, the epoll ones.
+fn backends_needed() -> usize {
+    if cfg!(feature = "uring") {
+        Backend::ALL.len() - 1
+    } else {
+        Backend::ALL
+            .iter()
+            .filter(|b| !b.name().starts_with("uring"))
+            .count()
     }
 }
 
@@ -278,7 +309,7 @@ fn the_send_set_matches_a_full_scan() -> R {
             );
         }
     }
-    assert!(ran >= 2, "only {ran} backends ran");
+    assert!(ran >= backends_needed(), "only {ran} backends ran");
     Ok(())
 }
 
@@ -336,6 +367,67 @@ fn a_send_queued_on_an_idle_slot_still_goes_out() -> R {
         );
         assert!(closed.0.is_empty(), "{b}: {:?}", closed.0);
     }
-    assert!(ran >= 2, "only {ran} backends ran");
+    assert!(ran >= backends_needed(), "only {ran} backends ran");
+    Ok(())
+}
+
+/// A case of `sends_queued_without_get_mut_go_out`: its name, what it does to
+/// the endpoint before `add`, and what the peer must receive.
+type Case = (&'static str, fn(&mut Stub), &'static [u8]);
+
+/// Sends queued with no `get_mut` among idle connections: by an endpoint
+/// added with bytes already queued, by decoding input it held from before it
+/// was added, and by a timer (`expire`). Each goes out on the next polls, and
+/// the send set lists it at every step (a full scan).
+#[test]
+fn sends_queued_without_get_mut_go_out() -> R {
+    let mut ran = 0;
+    for b in Backend::ALL {
+        let Some(mut d) = driver(b)? else {
+            eprintln!("backend {b}: not on this host");
+            continue;
+        };
+        eprintln!("backend {b}");
+        ran += 1;
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let mut peers = Vec::new();
+        for _ in 0..8 {
+            let (stub, peer) = pair(&listener)?;
+            d.add(stub)?;
+            peers.push(peer);
+        }
+        let mut closed = Closed::default();
+        for _ in 0..100 {
+            d.poll(&mut closed)?;
+        }
+        let cases: [Case; 3] = [
+            (
+                "added with bytes queued",
+                |s| s.tx.extend_from_slice(b"early"),
+                b"early",
+            ),
+            ("buffered input's reply", |s| s.buffered = true, b"pong"),
+            ("timer", |s| s.ping_due = true, b"ping"),
+        ];
+        for (what, set, want) in cases {
+            let (mut stub, peer) = pair(&listener)?;
+            set(&mut stub);
+            d.add(stub)?;
+            d.conns
+                .tx_dirty_check(false)
+                .map_err(|e| format!("{b}: {what}: {e}"))?;
+            peers.push(peer);
+            let k = peers.len() - 1;
+            poll_until(&mut d, &mut peers, &mut closed, |p| {
+                p[k].got.len() >= want.len()
+            })
+            .map_err(|e| format!("{b}: {what}: {e}"))?;
+            assert_eq!(peers[k].got, want, "{b}: {what}");
+        }
+        let others: usize = peers.iter().take(8).map(|p| p.got.len()).sum();
+        assert_eq!(others, 0, "{b}: bytes reached an idle connection");
+        assert!(closed.0.is_empty(), "{b}: {:?}", closed.0);
+    }
+    assert!(ran >= backends_needed(), "only {ran} backends ran");
     Ok(())
 }
