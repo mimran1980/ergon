@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: Apache-2.0
+# The driver on two DPDK tap ports (net_tap0, net_tap1) that its entrypoint
+# bridges on br0 in the pod: no NIC needed (kind, a plain Linux VM). The
+# values are scripts/test-dpdk-vdev.sh's. Frames cross the kernel's tap and
+# bridge code inside the sender's and receiver's own system calls, so a vdev
+# run says nothing about ENA latency.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - target: {kind: DaemonSet, name: ll-media-driver}
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env
+        value:
+          - {name: LL_VDEV_BRIDGE, value: "1"}
+          - {name: RUSTERON_DPDK_TEST_VDEV, value: "1"}
+          - {name: RUSTERON_DPDK_HOST_LOCAL, value: loopback}
+          - {name: RUSTERON_DPDK_SENDER_PCI, value: net_tap0}
+          - {name: RUSTERON_DPDK_SENDER_IPV4_CIDR, value: 10.9.0.1/24}
+          - {name: RUSTERON_DPDK_SENDER_GATEWAY, value: 10.9.0.254}
+          - {name: RUSTERON_DPDK_RECEIVER_PCI, value: net_tap1}
+          - {name: RUSTERON_DPDK_RECEIVER_IPV4_CIDR, value: 10.9.0.3/24}
+          - {name: RUSTERON_DPDK_RECEIVER_GATEWAY, value: 10.9.0.254}
+          - {name: RUSTERON_DPDK_RX_DESCRIPTORS, value: "1024"}
+          - {name: RUSTERON_DPDK_TX_DESCRIPTORS, value: "1024"}
+          - {name: RUSTERON_DPDK_MBUFS_PER_PORT, value: "8192"}
+          - {name: RUSTERON_DPDK_MAX_AERON_MTU, value: "1408"}

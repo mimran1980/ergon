@@ -4,6 +4,19 @@
 
 ### Added
 
+- `samples/low-latency-k8s`: the Kubernetes reference for the low-latency
+  stack. The DPDK media driver runs Aeron `DEDICATED`, with sender and
+  receiver on two exclusive CPUs (`ergon-cpus isolated:0/1`) and everything
+  else on the shared CPU. An Aeron ping and pong each busy-spin on one
+  exclusive CPU, with 100 shared millicpus for the client conductor,
+  `ll-log` and `ll-stats`. Logging is `tracing-subscriber` fmt to stdout
+  through a lossy `tracing-appender` writer. `ll-probe` and
+  `scripts/verify.sh` print PASS/FAIL per thread and per exclusive CPU.
+  Also: the kustomize overlays `vdev-local`, `vdev-isolated`,
+  `eks-ena-arm64` and `eks-ena-x86`, Helm values for `ergon-shared-cpus`,
+  node preparation, and a vdev e2e in Docker that has run on linux/arm64.
+  `md-dpdk/deploy/low-latency/pod.yaml` is removed (no hugepages, no Aeron
+  mount, no `ergon-cpus`); its README points at the sample.
 - `ergo-sbe`: `GenerationConfig::with_validate(true)` (off by default) emits
   `validate()` on every message decoder, group entry decoder and
   `AnyMessage`: an opt-in second pass after `try_decode` (unchanged) for

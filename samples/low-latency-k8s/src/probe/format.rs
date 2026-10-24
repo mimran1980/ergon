@@ -124,4 +124,36 @@ mod tests {
         assert_eq!(parse_line(&header(Contract::Full, "n", 1.0, 1)), None);
         assert_eq!(parse_line("random"), None);
     }
+
+    /// The real capture the README shows (scripts/e2e-vdev.sh --capture):
+    /// every ll-verify line parses, and the run passed.
+    #[test]
+    fn the_captured_e2e_output_parses() {
+        let text = include_str!("../../tests/fixtures/e2e-docker-arm64-generic.txt");
+        let verify: Vec<&str> = text
+            .lines()
+            .filter(|l| l.starts_with("ll-verify\t"))
+            .collect();
+        assert!(verify.len() > 10);
+        let checks: Vec<Parsed> = verify.iter().filter_map(|l| parse_line(l)).collect();
+        // all but the header and the result line
+        assert_eq!(checks.len(), verify.len() - 2);
+        assert!(checks.iter().all(|c| c.outcome != "FAIL"));
+        for id in [
+            "P1.env",
+            "P2.present",
+            "P3.affinity",
+            "P4.ran_on",
+            "P5.affinity",
+            "P6.ran_on",
+        ] {
+            assert!(checks.iter().any(|c| c.id == id), "{id} missing");
+        }
+        assert!(
+            verify
+                .iter()
+                .any(|l| l.starts_with("ll-verify\tRESULT\tPASS\t"))
+        );
+        assert!(verify[0].starts_with("ll-verify\tv1\tcontract=placement\t"));
+    }
 }

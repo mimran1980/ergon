@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: Apache-2.0
+# The nodeadm NodeConfig part of an EKS AL2023 node's user data for this
+# sample (c9g.2xlarge: 8 CPUs, no SMT): md-dpdk/deploy/aws-eks/node/userdata.sh's
+# kubelet settings with reservedSystemCPUs 0-1, plus what that file lacks:
+# containerd's NRI with the default validator, and the ergon.io labels.
+# Use it in place of userdata.sh's NodeConfig part; its other parts (the
+# boot line, hugepages, the ENA binding: provision-node.sh,
+# bootstrap-dpdk-ena.sh) stay as they are.
+#
+# Not run. Blocked until a node passes `containerd --version` >= 2.2 (the
+# plugin's required-plugins annotation needs it) and the plugin's /readyz;
+# AL2023's containerd version and nodeadm's merge of the containerd block
+# below are not verified.
+---
+apiVersion: node.eks.aws/v1alpha1
+kind: NodeConfig
+spec:
+  cluster:
+    name: CLUSTER_NAME
+    apiServerEndpoint: API_SERVER_ENDPOINT
+    certificateAuthority: CA_BASE64
+    cidr: SERVICE_CIDR
+  containerd:
+    config: |
+      [plugins."io.containerd.nri.v1.nri"]
+        disable = false
+      [plugins."io.containerd.nri.v1.nri".default_validator]
+        enable = true
+  kubelet:
+    config:
+      cpuManagerPolicy: static
+      cpuManagerPolicyOptions:
+        full-pcpus-only: "true"
+      reservedSystemCPUs: "0-1"
+      kubeReservedCgroup: ""
+      systemReservedCgroup: ""
+      topologyManagerPolicy: single-numa-node
+      topologyManagerScope: pod
+      memoryManagerPolicy: None
+    flags:
+      # ll-role: ping on one node, pong on the other
+      - --node-labels=rusteron-dpdk/ena=true,ergon.io/shared-cpus=true,ergon.io/ll-driver=true,ergon.io/ll-app=true,ergon.io/ll-role=LL_ROLE
+      - --register-with-taints=rusteron-dpdk=true:NoSchedule

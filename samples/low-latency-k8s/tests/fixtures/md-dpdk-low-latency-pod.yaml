@@ -1,3 +1,5 @@
+# A copy of md-dpdk/deploy/low-latency/pod.yaml as it was before this sample
+# replaced it: tests/manifests.rs keeps it as the case the rules must refuse.
 # SPDX-License-Identifier: Apache-2.0
 #
 # md-dpdk on a hot node: two exclusive CPUs from the static CPU manager,

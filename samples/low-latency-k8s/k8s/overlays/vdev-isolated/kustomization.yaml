@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: Apache-2.0
+# kind on a Linux VM booted as node/linux-vm-prep.sh says (isolcpus,
+# nohz_full, IRQs on CPU 0): everything but the NIC, hot pods included.
+# Hugepages: scripts/e2e-vdev.sh --kind --overlay vdev-isolated mounts
+# hugetlbfs at /dev/hugepages and a 1 GiB one at /mnt/huge-aeron in the node.
+# Image: arm64-n2 on Azure Cobalt 100 (D8ps_v6); set amd64-generic on F8as_v6.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: [../../base]
+components: [../../components/hot, ../../components/vdev-driver]
+images:
+  - {name: ll, newName: ll, newTag: arm64-n2}
+configMapGenerator:
+  - name: ll-app
+    namespace: trading
+    behavior: merge
+    literals: [LL_OVERLAY=vdev-isolated]
+patches:
+  - target: {kind: DaemonSet, name: ll-media-driver}
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: LL_EAL_EXTRA, value: "--no-pci"}

@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: Apache-2.0
+# The media driver: sender and receiver on the pod's two exclusive CPUs
+# (ergon-cpus isolated:0 and isolated:1), everything else (conductor,
+# native resource agent, EAL, DPDK housekeeping) on its shared CPU.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ll-media-driver
+  namespace: trading-driver
+spec:
+  selector:
+    matchLabels: {app: ll-media-driver}
+  template:
+    metadata:
+      labels: {app: ll-media-driver}
+      annotations:
+        required-plugins.noderesource.dev: '["ergon-shared-cpus"]'
+    spec:
+      priorityClassName: ergon-hot
+      terminationGracePeriodSeconds: 15
+      nodeSelector:
+        ergon.io/shared-cpus: "true"
+        ergon.io/ll-driver: "true"
+      containers:
+        - name: media-driver
+          image: ll
+          command:
+            - ergon-cpus
+            - --env
+            - AERON_SENDER_CPU_AFFINITY=isolated:0
+            - --env
+            - AERON_RECEIVER_CPU_AFFINITY=isolated:1
+            - --env
+            - RUSTERON_DPDK_HOUSEKEEPING_CPU=shared:0
+            - --
+            - /usr/local/bin/driver-entrypoint.sh
+            - media_driver
+          envFrom:
+            - configMapRef: {name: ll-driver}
+          securityContext:
+            privileged: true
+          resources:
+            requests:
+              cpu: "2"
+              memory: 2Gi
+              hugepages-2Mi: 2Gi
+              ergon.io/shared-millicpus: "500"
+            limits:
+              cpu: "2"
+              memory: 2Gi
+              hugepages-2Mi: 2Gi
+              ergon.io/shared-millicpus: "500"
+          resizePolicy:
+            - resourceName: cpu
+              restartPolicy: RestartContainer
+          volumeMounts:
+            - {name: hugepages, mountPath: /dev/hugepages}
+            - {name: aeron, mountPath: /mnt/huge-aeron}
+      volumes:
+        - name: hugepages
+          hostPath: {path: /dev/hugepages, type: Directory}
+        - name: aeron
+          hostPath: {path: /mnt/huge-aeron, type: Directory}

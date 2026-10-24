@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: Apache-2.0
+# One kind node on Docker Desktop (>= 8 CPUs, no SMT, containerd >= 2.2):
+# the plugin's grant, the thread placement and the data path over taps.
+# Not isolation: the kind node has no isolcpus, so the pods are not hot.
+# No hugepages: EAL --no-huge, and the Aeron directory on a 1 GiB tmpfs that
+# scripts/e2e-vdev.sh --kind mounts at /mnt/huge-aeron in the node.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: [../../base]
+components: [../../components/vdev-driver]
+images:
+  - {name: ll, newName: ll, newTag: arm64-generic}
+configMapGenerator:
+  - name: ll-driver
+    namespace: trading-driver
+    behavior: merge
+    literals: [AERON_FILE_PAGE_SIZE=4096]
+  - name: ll-app
+    namespace: trading
+    behavior: merge
+    literals: [LL_OVERLAY=vdev-local, LL_SAMPLES=200000, LL_WARMUP=20000]
+patches:
+  - target: {kind: DaemonSet, name: ll-media-driver}
+    patch: |-
+      - op: remove
+        path: /spec/template/spec/containers/0/resources/requests/hugepages-2Mi
+      - op: remove
+        path: /spec/template/spec/containers/0/resources/limits/hugepages-2Mi
+      - op: remove
+        path: /spec/template/spec/containers/0/volumeMounts/0
+      - op: remove
+        path: /spec/template/spec/volumes/0
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value: {name: LL_EAL_EXTRA, value: "--no-huge -m 512 --no-pci"}

@@ -16,3 +16,24 @@ samples-cluster-ha:
 # Multi-node Java kill-leader never-stale book (needs Aeron jars + Java).
 samples-cluster-ha-kill-leader:
     cd samples/cluster-ha-orderbook && cargo test --features test-harness --test ha_kill_leader -- --test-threads=1 --nocapture
+
+# Low-latency Kubernetes sample: fmt, clippy, unit and logger tests, manifests (kubectl, helm, Docker for kubeconform), entrypoint fixtures
+samples-ll:
+    cd samples/low-latency-k8s && cargo fmt --check
+    cd samples/low-latency-k8s && cargo clippy --all-targets -- -D warnings
+    cd samples/low-latency-k8s && cargo test --lib --test logger_nonblocking --test logger_alloc -- --test-threads=1
+    cd samples/low-latency-k8s && cargo test --test manifests -- --test-threads=1
+    bash samples/low-latency-k8s/scripts/test-entrypoint.sh
+
+# The sample's Linux lanes in Docker (placement tests included), arm64 and amd64
+samples-ll-docker:
+    bash samples/low-latency-k8s/scripts/test-docker.sh --arch arm64
+    bash samples/low-latency-k8s/scripts/test-docker.sh --arch amd64
+
+# The vdev end-to-end run in Docker: driver, ping, pong, ll-probe (builds ll:arm64-generic if missing)
+samples-ll-e2e *args:
+    bash samples/low-latency-k8s/scripts/e2e-vdev.sh --docker {{args}}
+
+# The driver entrypoint against fixtures
+samples-ll-entrypoint:
+    bash samples/low-latency-k8s/scripts/test-entrypoint.sh

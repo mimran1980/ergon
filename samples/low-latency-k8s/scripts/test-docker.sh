@@ -8,8 +8,7 @@
 #
 #   samples/low-latency-k8s/scripts/test-docker.sh [--arch arm64|amd64] [--build]
 #
-# The image is md-dpdk's verification environment
-# (md-dpdk/native/dpdk/test/Dockerfile: Ubuntu 24.04, Rust 1.99.0, CMake,
+# The image is docker/Dockerfile.test (Ubuntu 24.04, Rust 1.99.0, CMake,
 # clang), tagged ll-sample-test:<arch>. --build (re)builds it. The worktree
 # is mounted read-only; the target dir and the cargo registry live in named
 # volumes (ll-sample-target-<arch>, ll-sample-rustup-<arch> for rustfmt and
@@ -39,7 +38,7 @@ if [[ $CLEAN == 1 ]]; then
   exit 0
 fi
 if [[ $BUILD == 1 ]] || ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-  docker build --platform "linux/$ARCH" -t "$IMAGE" "$REPO/md-dpdk/native/dpdk/test"
+  docker build --platform "linux/$ARCH" -t "$IMAGE" -f "$HERE/docker/Dockerfile.test" "$HERE/docker"
 fi
 # --shm-size: the embedded driver's IPC logs live in /dev/shm.
 # --cpus is not set: the placement tests need two CPUs, better three.

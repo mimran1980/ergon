@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: Apache-2.0
+# Pod Security "privileged" on all three, for these reasons only:
+#   trading         the apps mount the driver's Aeron directory (hostPath),
+#                   which "baseline" forbids. No capability is added.
+#   trading-driver  the driver binds NICs (igb_uio) or creates taps, and
+#                   maps hugepages: a privileged container.
+#   ll-verify       the probe reads every process of the node (hostPID).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: trading
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: trading-driver
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ll-verify
+  labels:
+    pod-security.kubernetes.io/enforce: privileged

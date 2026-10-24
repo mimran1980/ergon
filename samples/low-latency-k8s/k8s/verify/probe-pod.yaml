@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+# The probe pod scripts/verify.sh starts on each node (it fills the
+# __PLACEHOLDERS__). hostPID: it reads every process of the node. Privileged:
+# its /sys/fs/cgroup and /proc/<pid>/cgroup are then the host's, so it finds
+# the pods by UID and reads their cpusets. It pins itself to the IRQ CPU
+# (--pin) and never execs into a hot pod.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: __NAME__
+  namespace: ll-verify
+  labels: {app: ll-probe}
+spec:
+  nodeName: __NODE__
+  hostPID: true
+  restartPolicy: Never
+  containers:
+    - name: probe
+      image: __IMAGE__
+      command: __COMMAND__
+      securityContext:
+        privileged: true
+      resources:
+        requests: {cpu: 100m, memory: 64Mi}
+        limits: {memory: 128Mi}

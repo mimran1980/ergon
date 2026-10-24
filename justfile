@@ -430,6 +430,7 @@ fmt:
     cd samples/exchange-example && cargo fmt
     cd samples/cluster-ha-orderbook && cargo fmt
     cd samples/cluster-rfq && cargo fmt
+    cd samples/low-latency-k8s && cargo fmt
 
 # Auto-fix: fmt + clippy --fix (same feature split as check).
 fix:

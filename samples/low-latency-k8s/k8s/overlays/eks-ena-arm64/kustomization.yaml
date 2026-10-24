@@ -1,0 +1,52 @@
+# SPDX-License-Identifier: Apache-2.0
+# EKS on AL2023 with the ENA pair: 2 x c9g.2xlarge (Graviton5), the BENCHMARKS pair. Blocked until a node passes containerd --version >= 2.2 and the plugin's /readyz (node/eks-nodeconfig.yaml).
+# The image runs only on its CPU family (SIGILL elsewhere): the node affinity
+# keeps it on c9g.2xlarge. Fill endpoints.env with each node's receiver ENA IP
+# before applying: the ping publishes to the pong node's receiver and
+# subscribes on its own, the pong the other way round.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: [../../base]
+components:
+  - ../../components/hot
+  - ../../components/ena-driver
+  - ../../components/dpdk-ena-device-plugin
+images:
+  - {name: ll, newName: ll, newTag: arm64-v3}
+configMapGenerator:
+  - name: ll-endpoints
+    namespace: trading
+    behavior: replace
+    envs: [endpoints.env]
+  - name: ll-app
+    namespace: trading
+    behavior: merge
+    literals: [LL_OVERLAY=eks-ena-arm64]
+patches:
+  - target: {kind: Job, name: ll-ping}
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector/ergon.io~1ll-role
+        value: ping
+  - target: {kind: Deployment, name: ll-pong}
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector/ergon.io~1ll-role
+        value: pong
+  # the ENA nodes are tainted rusteron-dpdk (md-dpdk/deploy/aws-eks)
+  - target: {kind: Deployment|Job}
+    patch: |-
+      - op: add
+        path: /spec/template/spec/tolerations
+        value:
+          - {key: rusteron-dpdk, operator: Exists, effect: NoSchedule}
+  - target: {kind: DaemonSet|Deployment|Job}
+    patch: |-
+      - op: add
+        path: /spec/template/spec/affinity
+        value:
+          nodeAffinity:
+            requiredDuringSchedulingIgnoredDuringExecution:
+              nodeSelectorTerms:
+                - matchExpressions:
+                    - {key: node.kubernetes.io/instance-type, operator: In, values: [c9g.2xlarge]}
