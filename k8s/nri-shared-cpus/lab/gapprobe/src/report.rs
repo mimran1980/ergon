@@ -27,6 +27,14 @@ pub struct Run {
     pub nvcsw: u64,
     /// involuntary context switches of the loop's thread during the run
     pub nivcsw: u64,
+    /// `CLOCK_REALTIME` ns the loop started (0 in a file from before it was kept)
+    pub start_ns: u64,
+    /// `CLOCK_REALTIME` ns the loop ended (0 likewise)
+    pub end_ns: u64,
+    /// minor page faults of the loop's thread during the run (0 likewise)
+    pub minflt: u64,
+    /// major page faults of the loop's thread during the run (0 likewise)
+    pub majflt: u64,
 }
 
 /// A run's file had a field missing or not a number.
@@ -42,7 +50,10 @@ impl std::fmt::Display for RowError {
 impl std::error::Error for RowError {}
 
 /// The summary file's header.
-pub const RUN_HEADER: &str = "label\tarm\trep\tcpu\tsamples\tp50_ns\tp90_ns\tp99_ns\tp999_ns\tp9999_ns\tmax_ns\tmax_end_ns\tgaps\tdropped\tnvcsw\tnivcsw";
+pub const RUN_HEADER: &str = "label\tarm\trep\tcpu\tsamples\tp50_ns\tp90_ns\tp99_ns\tp999_ns\tp9999_ns\tmax_ns\tmax_end_ns\tgaps\tdropped\tnvcsw\tnivcsw\tstart_ns\tend_ns\tminflt\tmajflt";
+
+/// Fields of a row written before the run's start, end and faults were kept.
+const LEGACY_FIELDS: usize = 16;
 
 impl Run {
     /// The run as one tab-separated row under `RUN_HEADER`.
@@ -50,7 +61,7 @@ impl Run {
     pub fn to_row(&self) -> String {
         let s = &self.summary;
         format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             self.label,
             self.arm,
             self.rep,
@@ -66,22 +77,29 @@ impl Run {
             self.gaps,
             self.dropped,
             self.nvcsw,
-            self.nivcsw
+            self.nivcsw,
+            self.start_ns,
+            self.end_ns,
+            self.minflt,
+            self.majflt
         )
     }
 
-    /// Parses a row `to_row` wrote.
+    /// Parses a row `to_row` wrote, or one of the 16 fields written before
+    /// the start, end and faults were kept (those read 0).
     ///
     /// # Errors
     /// A field missing, extra, or not a number.
     pub fn from_row(row: &str) -> Result<Self, RowError> {
         let f: Vec<&str> = row.trim_end_matches(['\r', '\n']).split('\t').collect();
-        if f.len() != RUN_HEADER.split('\t').count() {
+        let want = RUN_HEADER.split('\t').count();
+        if f.len() != want && f.len() != LEGACY_FIELDS {
             return Err(RowError(format!(
-                "summary row: {} fields, want 16: {row}",
+                "summary row: {} fields, want {want} (or {LEGACY_FIELDS}): {row}",
                 f.len()
             )));
         }
+        let legacy = f.len() == LEGACY_FIELDS;
         let n = |i: usize| -> Result<u64, RowError> {
             f.get(i).and_then(|v| v.parse::<u64>().ok()).ok_or_else(|| {
                 RowError(format!("summary row field {}: not a number: {row}", i + 1))
@@ -106,6 +124,10 @@ impl Run {
             dropped: n(13)?,
             nvcsw: n(14)?,
             nivcsw: n(15)?,
+            start_ns: if legacy { 0 } else { n(16)? },
+            end_ns: if legacy { 0 } else { n(17)? },
+            minflt: if legacy { 0 } else { n(18)? },
+            majflt: if legacy { 0 } else { n(19)? },
         })
     }
 }
@@ -236,11 +258,11 @@ pub fn render(runs: &[(Run, Vec<(String, u64)>)], top: usize) -> String {
     let _ = writeln!(out, "\n## Per run\n");
     let _ = writeln!(
         out,
-        "| arm | rep | cpu | p50 µs | p90 µs | p99 µs | p99.9 µs | p99.99 µs | max µs | max ended (CLOCK_REALTIME ns) | gaps logged | gaps dropped | involuntary switches | overlapping the max (counter +growth on its CPU) |"
+        "| arm | rep | cpu | p50 µs | p90 µs | p99 µs | p99.9 µs | p99.99 µs | max µs | max ended (CLOCK_REALTIME ns) | gaps logged | gaps dropped | involuntary switches | page faults | overlapping the max (counter +growth on its CPU) |"
     );
     let _ = writeln!(
         out,
-        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
     );
     for (r, over) in runs {
         let s = &r.summary;
@@ -261,7 +283,7 @@ pub fn render(runs: &[(Run, Vec<(String, u64)>)], top: usize) -> String {
         };
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {what} |",
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {what} |",
             r.arm,
             r.rep,
             r.cpu,
@@ -275,6 +297,11 @@ pub fn render(runs: &[(Run, Vec<(String, u64)>)], top: usize) -> String {
             r.gaps,
             r.dropped,
             r.nivcsw,
+            if r.start_ns == 0 {
+                "not kept".to_string()
+            } else {
+                (r.minflt + r.majflt).to_string()
+            },
         );
     }
     out
@@ -304,6 +331,10 @@ mod tests {
             dropped: 0,
             nvcsw: 1,
             nivcsw: 2,
+            start_ns: 1_699_999_940_000_000_000,
+            end_ns: 1_700_000_000_000_000_000,
+            minflt: 4,
+            majflt: 0,
         }
     }
 
@@ -324,6 +355,18 @@ mod tests {
         assert!(Run::from_row(&row).is_err());
         let extra = format!("{}\t7", run("plugin-on", 1, 40, 99).to_row());
         assert!(Run::from_row(&extra).is_err());
+    }
+
+    #[test]
+    fn run_row_of_16_fields_reads_start_end_and_faults_as_0() {
+        // a summary.tsv row of run 20261024212712
+        let row = "plugin-on-1\tplugin-on\t1\t2\t2498590505\t24\t24\t32\t32\t32\t17400\t1792877670347178875\t6318\t0\t0\t6";
+        let r = Run::from_row(row).map_err(|e| e.0);
+        assert_eq!(
+            r.as_ref()
+                .map(|r| (r.nivcsw, r.summary.max, r.start_ns, r.minflt)),
+            Ok((6, 17_400, 0, 0))
+        );
     }
 
     #[test]
@@ -395,8 +438,8 @@ mod tests {
         ];
         let md = render(&runs, 2);
         // per run: the max with what overlapped it, at most two counters
-        assert!(md.contains("| plugin-on | 1 | 2 | 0.04 | 0.04 | 0.08 | 0.12 | 0.16 | 2.50 | 1700000000000000001 | 3 | 0 | 2 | 10 arch_timer +1 |"), "{md}");
-        assert!(md.contains("| plugin-on | 2 | 2 | 0.06 | 0.06 | 0.12 | 0.18 | 0.24 | 9.00 | 1700000000000000002 | 3 | 0 | 2 | nothing counted |"), "{md}");
+        assert!(md.contains("| plugin-on | 1 | 2 | 0.04 | 0.04 | 0.08 | 0.12 | 0.16 | 2.50 | 1700000000000000001 | 3 | 0 | 2 | 4 | 10 arch_timer +1 |"), "{md}");
+        assert!(md.contains("| plugin-on | 2 | 2 | 0.06 | 0.06 | 0.12 | 0.18 | 0.24 | 9.00 | 1700000000000000002 | 3 | 0 | 2 | 4 | nothing counted |"), "{md}");
         assert!(md.contains("| a +3, b +2 |"), "{md}");
         assert!(md.contains("| no sampler file |"), "{md}");
         // per arm: medians of the reps, max of the maxima

@@ -87,11 +87,16 @@ fn upper(i: usize) -> u64 {
 }
 
 impl Histogram {
-    /// An empty histogram.
+    /// An empty histogram, every page of its buckets written once: a
+    /// first `record` into a bucket never faults a page in on the hot CPU
+    /// (see `gaplog`).
     #[must_use]
     pub fn new() -> Self {
+        let mut counts = Vec::with_capacity(BUCKETS);
+        // an opaque zero: the writes cannot be folded into a calloc
+        counts.resize(BUCKETS, std::hint::black_box(0));
         Self {
-            counts: vec![0; BUCKETS],
+            counts: std::hint::black_box(counts),
             total: 0,
             max: 0,
         }
@@ -188,6 +193,29 @@ impl Histogram {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Recording into every bucket of a new histogram takes no page fault.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn recording_every_bucket_takes_no_page_fault() {
+        let minflt = || {
+            let s = std::fs::read_to_string("/proc/thread-self/stat").unwrap_or_default();
+            crate::procfs::faults(&s).map_or(u64::MAX, |f| f.0)
+        };
+        let mut h = Histogram::new();
+        let values: Vec<u64> = (0..BUCKETS).map(upper).collect();
+        let before = minflt();
+        for v in &values {
+            h.record(*v);
+        }
+        let after = minflt();
+        assert_eq!(h.total(), BUCKETS as u64);
+        assert_eq!(
+            after.saturating_sub(before),
+            0,
+            "minor faults while recording"
+        );
+    }
 
     #[test]
     fn empty_has_no_summary() {
