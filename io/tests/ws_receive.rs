@@ -589,6 +589,76 @@ fn a_character_split_between_fragments_is_valid_utf8() -> R {
     Ok(())
 }
 
+/// Long ASCII fragments with one non-ASCII byte at every offset: wherever
+/// it falls in the scan's words and tails, a stray byte closes the
+/// connection and a valid character is delivered.
+#[test]
+fn a_non_ascii_byte_anywhere_in_the_fragments_is_checked() -> R {
+    let lab = Lab::new()?;
+    let check = WsOptions {
+        validate_utf8: true,
+        ..opts()
+    };
+    let len = 3 * 37;
+    for mode in [Interest::Keep, Interest::Fragments] {
+        let mut good = rig(&lab, &check)?;
+        let mut h = App::new(mode);
+        for at in 0..len - 1 {
+            let mut msg = text(len);
+            msg[at..at + 2].copy_from_slice("é".as_bytes());
+            good.feed_records(&fragmented(OP_TEXT, &msg, 3)?, &[], &mut h)?;
+            assert_eq!(h.got.last().map(|g| &g.data), Some(&msg), "{mode:?} {at}");
+
+            let mut bad = text(len);
+            bad[at] = 0x80;
+            let mut r = rig(&lab, &check)?;
+            let mut hb = App::new(mode);
+            let e = r.feed_records(&fragmented(OP_TEXT, &bad, 3)?, &[], &mut hb);
+            assert!(
+                e.err().is_some_and(|e| e.to_string().contains("not UTF-8")),
+                "{mode:?} stray byte at {at}"
+            );
+            assert_eq!(hb.got, []);
+        }
+    }
+    Ok(())
+}
+
+/// A held message spanning more than `buf_size` − 2 records falls back to
+/// one copy before it can crowd out the next record; one under it stays in
+/// the buffer.
+#[test]
+fn the_hold_limit_is_the_buffer_less_two_records() -> R {
+    let lab = Lab::new()?;
+    let o = WsOptions {
+        buf_size: MIN_BUF,
+        max_message: 1 << 20,
+        ..opts()
+    };
+    // MIN_BUF is 8 records: the limit is 6 records, about 99.9 KB.
+    let record = MIN_BUF / 8;
+    for (total, held) in [(5 * record, true), (7 * record, false)] {
+        let mut r = rig(&lab, &o)?;
+        let mut h = App::new(Interest::Fragments);
+        let msg = binary(total);
+        let stream = fragmented(OP_BINARY, &msg, 10)?;
+        r.feed_records(&stream, &frame_ends(&stream)?, &mut h)?;
+        let slices = if held { 10 } else { 1 };
+        assert_eq!(
+            h.got,
+            vec![Got {
+                op: OP_BINARY,
+                data: msg,
+                slices
+            }],
+            "{total} B"
+        );
+        let s = stats(&r);
+        assert_eq!(s.frag_fallbacks, u64::from(!held), "{total} B: {s:?}");
+    }
+    Ok(())
+}
+
 #[test]
 fn a_new_message_inside_a_held_one_is_refused() -> R {
     let lab = Lab::new()?;

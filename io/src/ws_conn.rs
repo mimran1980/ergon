@@ -1148,6 +1148,11 @@ const fn not_utf8() -> Error {
 /// character cut between two fragments is completed from the next.
 #[inline]
 fn check_utf8_parts(m: &Fragments<'_>) -> Result<()> {
+    // Most feed text is ASCII: one pass over every fragment, no per-call
+    // setup (`is_ascii` per short fragment costs more than the bytes).
+    if m.iter().fold(0, |acc, s| acc | high_bits(s)) == 0 {
+        return Ok(());
+    }
     let mut carry = [0u8; 4];
     let mut have = 0usize;
     for mut s in m {
@@ -1181,6 +1186,18 @@ fn check_utf8_parts(m: &Fragments<'_>) -> Result<()> {
         return Err(not_utf8());
     }
     Ok(())
+}
+
+/// The top bit of every byte of `s`, OR-ed together: 0 when `s` is ASCII.
+#[inline]
+fn high_bits(s: &[u8]) -> u64 {
+    const HIGH: u64 = 0x8080_8080_8080_8080;
+    let (words, tail) = s.as_chunks::<8>();
+    let mut acc = words.iter().fold(0, |acc, w| acc | u64::from_ne_bytes(*w));
+    for &b in tail {
+        acc |= u64::from(b);
+    }
+    acc & HIGH
 }
 
 /// Bytes in the UTF-8 sequence that `lead` starts. A lead byte that
