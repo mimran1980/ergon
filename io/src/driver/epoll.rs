@@ -208,12 +208,21 @@ impl Epoll {
         let Some(conn) = conns.at(i) else {
             return;
         };
-        if let Err(e) = recv_one(conn, id, &mut self.slot, handler, stats, read_seq) {
-            let e = conn.close_reason(e);
-            self.remove(conn.fd());
-            conns.remove(i);
-            stats.closed += 1;
-            handler.on_closed(id, e);
+        match recv_one(conn, id, &mut self.slot, handler, stats, read_seq) {
+            Ok(false) => {}
+            // A reply (a Pong) may be queued: list it for the send pass.
+            Ok(true) => {
+                if !conn.tx_queue().is_empty() {
+                    conns.mark_tx(i);
+                }
+            }
+            Err(e) => {
+                let e = conn.close_reason(e);
+                self.remove(conn.fd());
+                conns.remove(i);
+                stats.closed += 1;
+                handler.on_closed(id, e);
+            }
         }
     }
 
@@ -401,7 +410,7 @@ mod tests {
     fn per_queue() -> R<(Epoll, Conns<Stub>)> {
         let mut cfg = Config::new(Backend::RecvBusy);
         cfg.per_queue = true;
-        Ok((Epoll::new(&cfg)?, Conns::new()))
+        Ok((Epoll::new(&cfg)?, Conns::with_capacity(0)))
     }
 
     fn install(ep: &mut Epoll, conns: &mut Conns<Stub>) -> R<usize> {

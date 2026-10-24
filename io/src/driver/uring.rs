@@ -408,14 +408,19 @@ impl Uring {
             return;
         };
         let napi_known = slot.napi_known;
+        let mut queued = false;
         let outcome = match usize::try_from(res) {
             Ok(0) => Err(Error::Closed),
             Ok(len) => {
                 *read_seq += 1;
                 stats.completions += 1;
                 let meta = slot.msg.meta(*read_seq);
-                conn.on_received(id, len, &meta, handler)
-                    .map(|m| stats.messages += m as u64)
+                let r = conn
+                    .on_received(id, len, &meta, handler)
+                    .map(|m| stats.messages += m as u64);
+                // A reply (a Pong) may be queued: list it for `push_sends`.
+                queued = !conn.tx_queue().is_empty();
+                r
             }
             Err(_) if res == -libc::EAGAIN || res == -libc::EINTR => Ok(()),
             Err(_) => Err(Error::Io(std::io::Error::from_raw_os_error(-res))),
@@ -430,8 +435,10 @@ impl Uring {
             Ok(())
         });
         let outcome = outcome.map(|()| self.arm_recv(conn, i));
-        if let Err(e) = outcome {
-            self.fail(conns, i, e, handler, stats);
+        match outcome {
+            Err(e) => self.fail(conns, i, e, handler, stats),
+            Ok(()) if queued => conns.mark_tx(i),
+            Ok(()) => {}
         }
     }
 
@@ -465,29 +472,37 @@ impl Uring {
         }
     }
 
-    /// Moves each idle connection's queued bytes into its in-flight send buffer
-    /// (a swap, no copy) and queues the send.
+    /// Moves the queued bytes of each connection in the send set with no send
+    /// in flight into its in-flight send buffer (a swap, no copy) and queues
+    /// the send. A connection whose send is still in flight stays listed
+    /// while it has bytes queued; the others leave the set.
     #[inline]
     fn push_sends<E: Endpoint>(&mut self, conns: &mut Conns<E>, stats: &mut DriverStats) {
-        for i in 0..conns.len_slots().min(self.slots.len()) {
-            if self.slots[i].send_active || !conns.is_open(i) {
-                continue;
-            }
-            let Some(c) = conns.at(i) else {
+        let mut k = 0;
+        while let Some(&i) = conns.tx_dirty.get(k) {
+            let open = conns.is_open(i);
+            let (Some(slot), Some(conn)) = (self.slots.get_mut(i), conns.at(i).filter(|_| open))
+            else {
+                conns.unlist_tx(k);
                 continue;
             };
-            let q = c.tx_queue();
-            if q.is_empty() {
+            let queue = conn.tx_queue();
+            if queue.is_empty() {
+                conns.unlist_tx(k);
                 continue;
             }
-            let n = q.len();
-            let s = &mut self.slots[i];
-            std::mem::swap(&mut s.send_buf, q);
-            s.send_off = 0;
+            if slot.send_active {
+                k += 1;
+                continue;
+            }
+            let len = queue.len();
+            std::mem::swap(&mut slot.send_buf, queue);
+            slot.send_off = 0;
             // Counted as handed once queued for the kernel: an upper bound,
             // so a close before the kernel takes it errs towards "maybe sent".
-            c.on_handed(n);
+            conn.on_handed(len);
             self.push_send(conns, i, stats);
+            conns.unlist_tx(k);
         }
     }
 

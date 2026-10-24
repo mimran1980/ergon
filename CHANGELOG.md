@@ -301,6 +301,16 @@
   one more scan of the connections in a poll after a `get_mut`, and on
   `uring-spin`/`uring-napi` one more `io_uring_enter` when completions are
   also waiting. Not measured.
+- `ergon-io`: the driver keeps a send set, the slots that may have bytes
+  queued, in place of one flag and a scan of every slot. `get_mut`, a
+  receive, a timer and an endpoint installed with bytes queued list a slot;
+  a send pass visits only the listed slots and keeps those with bytes left
+  (a full socket, an `io_uring` send in flight). A poll's send side costs
+  O(queued), not O(connections), on every backend; the receive side is
+  unchanged (`recv-busy` still reads every socket). The set is sized with
+  the slots in `add`/`connect`, so `poll` never allocates for it. The send
+  pass before the receive pass still runs only after a `get_mut` or an
+  install. Not re-measured.
 - `ergon-io` API break (struct literals of `Config` and `DriverStats`): new
   pub fields `Config::{tcp_rto_min_us, tcp_delack_max_us,
   tcp_info_interval_ms}`, `DriverStats::{tcp_info_samples,

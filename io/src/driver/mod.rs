@@ -52,6 +52,8 @@ mod conn_checks;
 mod epoll;
 #[cfg(test)]
 mod placement_tests;
+#[cfg(test)]
+mod tx_dirty_tests;
 #[cfg(feature = "uring")]
 mod uring;
 
@@ -67,16 +69,29 @@ struct Conns<E> {
     /// Closed endpoints the kernel no longer references, waiting to be freed
     /// (on the helper thread when there is one: `Driver::free_closed`).
     closed: Vec<E>,
+    /// The send set: slots that may hold queued sends, each listed once, so
+    /// a send pass visits these and not every slot. A slot is listed when a
+    /// send may have been queued (`Driver::get_mut`, a receive, a timer, an
+    /// endpoint installed with bytes queued) and leaves when a pass finds
+    /// its queue empty or the slot closed; one whose bytes did not all go
+    /// out (a full socket, a send in flight) stays. Its capacity grows with
+    /// the slots in `reserve`, so listing a slot never allocates in `poll`.
+    tx_dirty: Vec<usize>,
+    /// Per slot: listed in `tx_dirty`.
+    tx_listed: Vec<bool>,
 }
 
 impl<E> Conns<E> {
-    const fn new() -> Self {
+    /// Room for `n` slots before `reserve` grows anything.
+    fn with_capacity(n: usize) -> Self {
         Self {
-            slots: Vec::new(),
-            gens: Vec::new(),
-            closing: Vec::new(),
-            reserved: Vec::new(),
+            slots: Vec::with_capacity(n),
+            gens: Vec::with_capacity(n),
+            closing: Vec::with_capacity(n),
+            reserved: Vec::with_capacity(n),
             closed: Vec::new(),
+            tx_dirty: Vec::with_capacity(n),
+            tx_listed: Vec::with_capacity(n),
         }
     }
 
@@ -118,6 +133,10 @@ impl<E> Conns<E> {
                 self.gens.push(1);
                 self.closing.push(false);
                 self.reserved.push(false);
+                self.tx_listed.push(false);
+                // Every slot can be listed once: room for all of them.
+                self.tx_dirty
+                    .reserve(self.slots.len().saturating_sub(self.tx_dirty.len()));
                 self.slots.len() - 1
             });
         self.reserved[i] = true;
@@ -177,8 +196,30 @@ impl<E> Conns<E> {
         std::mem::forget(std::mem::take(&mut self.slots));
     }
 
+    /// Lists slot `i` in the send set (once).
+    fn mark_tx(&mut self, i: usize) {
+        if let Some(listed) = self.tx_listed.get_mut(i)
+            && !*listed
+        {
+            *listed = true;
+            self.tx_dirty.push(i);
+        }
+    }
+
+    /// Takes entry `k` (an index into `tx_dirty`) out of the send set; the
+    /// last entry moves into its place.
+    fn unlist_tx(&mut self, k: usize) {
+        if k < self.tx_dirty.len() {
+            let i = self.tx_dirty.swap_remove(k);
+            if let Some(listed) = self.tx_listed.get_mut(i) {
+                *listed = false;
+            }
+        }
+    }
+
     /// Removes slot `i` at once, invalidating its id; the endpoint is freed
-    /// later (see `closed`).
+    /// later (see `closed`). A send-set entry it leaves behind is dropped by
+    /// the next send pass.
     fn remove(&mut self, i: usize) {
         if self.is_closing(i) {
             return;
@@ -187,6 +228,54 @@ impl<E> Conns<E> {
             self.gens[i] = self.gens[i].wrapping_add(1);
             self.closed.push(e);
         }
+    }
+}
+
+impl<E: Endpoint> Conns<E> {
+    /// Lists slot `i` in the send set if it is open with bytes queued.
+    fn mark_tx_if_queued(&mut self, i: usize) {
+        if self.is_open(i) && self.at(i).is_some_and(|c| !c.tx_queue().is_empty()) {
+            self.mark_tx(i);
+        }
+    }
+
+    /// Test-only cross-check of the send set against a full scan: each
+    /// slot listed once and `tx_listed` agreeing with the list; every open
+    /// slot with bytes queued listed; with `exact`, no open slot listed
+    /// with an empty queue (what holds after a send pass).
+    #[cfg(test)]
+    fn tx_dirty_check(&mut self, exact: bool) -> std::result::Result<(), String> {
+        let mut seen = vec![false; self.slots.len()];
+        for &i in &self.tx_dirty {
+            match seen.get_mut(i) {
+                Some(s) if !*s => *s = true,
+                Some(_) => return Err(format!("slot {i} listed twice: {:?}", self.tx_dirty)),
+                None => return Err(format!("slot {i} listed but out of range")),
+            }
+        }
+        if seen != self.tx_listed {
+            return Err(format!(
+                "flags {:?} disagree with the list {:?}",
+                self.tx_listed, self.tx_dirty
+            ));
+        }
+        for (i, listed) in seen.into_iter().enumerate() {
+            if !self.is_open(i) {
+                continue;
+            }
+            let queued = self.at(i).map_or(0, |c| c.tx_queue().len());
+            if queued > 0 && !listed {
+                return Err(format!(
+                    "slot {i} has {queued} bytes queued but is not listed"
+                ));
+            }
+            if exact && queued == 0 && listed {
+                return Err(format!(
+                    "slot {i} is listed after a send pass with nothing queued"
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -207,6 +296,10 @@ const EXPIRY_CHECK_US: u32 = 250;
 /// sleep: a counter read costs more than a whole idle `uring-spin` poll, so
 /// most polls only count down.
 const EXPIRY_POLLS: u32 = 64;
+
+/// Slots `Driver::new` makes room for (the send set's included) before the
+/// first connection; more grow in `Driver::add` and `Driver::connect`.
+const INITIAL_SLOTS: usize = 64;
 
 /// How often connections being set up are advanced, in microseconds.
 const SETUP_STEP_US: u32 = 20;
@@ -443,11 +536,10 @@ pub struct Driver<E> {
     expiry_polls: u32,
     /// Counter value at which connection set-up is next advanced.
     next_setup: u64,
-    /// `get_mut` handed out a connection (or one was installed) since the
-    /// last send pass: `poll` sends before its receive pass. One flag for
-    /// now; a per-slot dirty set (marked here and after `on_received`) can
-    /// replace it and the post-receive scan together.
-    tx_dirty: bool,
+    /// `get_mut` handed out a connection (or one was installed with bytes
+    /// queued) since the last send pass: `poll` sends before its receive
+    /// pass. Which connections is the send set (`Conns::tx_dirty`).
+    tx_fresh: bool,
     /// Per slot: the last passive `TCP_INFO` sample.
     tcp_info: Vec<Option<TcpInfo>>,
     /// Counter ticks between two sampling rounds (0: off), the counter
@@ -580,7 +672,7 @@ impl<E: Endpoint> Driver<E> {
         };
         Ok(Self {
             imp,
-            conns: Conns::new(),
+            conns: Conns::with_capacity(INITIAL_SLOTS),
             stats: DriverStats::default(),
             read_seq: 0,
             buffered: false,
@@ -604,7 +696,7 @@ impl<E: Endpoint> Driver<E> {
                 EXPIRY_POLLS
             },
             next_setup: 0,
-            tx_dirty: false,
+            tx_fresh: false,
             tcp_info: Vec::new(),
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             tcp_info_ticks: if cfg.tcp_info_interval_ms == 0 {
@@ -908,8 +1000,6 @@ impl<E: Endpoint> Driver<E> {
             return Err(e);
         }
         self.buffered |= ep.has_buffered_input();
-        // It may hold sends queued before it was handed over.
-        self.tx_dirty = true;
         // Sized here, where the slots grow, not in the sampling (polling) pass.
         if self.tcp_info_ticks != 0 && self.tcp_info.len() <= i {
             self.tcp_info.resize(i + 1, None);
@@ -918,6 +1008,9 @@ impl<E: Endpoint> Driver<E> {
             *t = None;
         }
         self.conns.install(i, ep);
+        // It may hold sends queued before it was handed over.
+        self.conns.mark_tx_if_queued(i);
+        self.tx_fresh |= self.conns.tx_listed.get(i) == Some(&true);
         Ok(())
     }
 
@@ -974,12 +1067,11 @@ impl<E: Endpoint> Driver<E> {
     /// The connection, if `id` is still open, for queuing sends. The handle
     /// offers the connection's methods but cannot replace or move it.
     pub fn get_mut(&mut self, id: ConnId) -> Option<ConnMut<'_, E>> {
+        let i = self.conns.lookup(id)?;
         // The caller may queue a send: the next `poll` sends first.
-        self.tx_dirty = true;
-        self.conns
-            .lookup(id)
-            .and_then(|i| self.conns.at(i))
-            .map(ConnMut::new)
+        self.conns.mark_tx(i);
+        self.tx_fresh = true;
+        self.conns.at(i).map(ConnMut::new)
     }
 
     /// Open connections.
@@ -1042,9 +1134,11 @@ impl<E: Endpoint> Driver<E> {
     ///
     /// An order queued between polls goes out before this poll's receive
     /// pass, not behind `epoll_wait` and every ready feed's decoding. That
-    /// costs one more scan of the connections (and, on `uring-spin` and
-    /// `uring-napi`, one more `io_uring_enter` when completions are also
-    /// waiting), only in a poll after a `get_mut`.
+    /// costs one more send pass (and, on `uring-spin` and `uring-napi`, one
+    /// more `io_uring_enter` when completions are also waiting), only in a
+    /// poll after a `get_mut`. A send pass visits only the connections that
+    /// may have bytes queued (the send set), not every connection, so an
+    /// idle connection costs a poll nothing on the send side.
     ///
     /// # Errors
     /// The backend itself failed. Connection errors close that connection and
@@ -1081,7 +1175,7 @@ impl<E: Endpoint> Driver<E> {
             self.deliver_buffered(handler);
         }
         // Sends queued since the last poll leave before the receive pass.
-        let mut r = if self.tx_dirty {
+        let mut r = if self.tx_fresh {
             self.send_queued(handler)
         } else {
             Ok(())
@@ -1105,13 +1199,14 @@ impl<E: Endpoint> Driver<E> {
                 ),
             };
         }
-        // What the receive pass queued (replies, pongs) goes out now: a full
-        // scan, as anything left unsent (a full socket, a send in flight) is
-        // retried here on every poll.
-        if r.is_ok() && matches!(self.imp, Imp::Epoll(_)) {
+        // What the receive pass queued (replies, pongs) goes out now, and
+        // anything left unsent (a full socket) is retried here on every
+        // poll: both are in the send set. (`io_uring` sends inside its
+        // pass.)
+        if r.is_ok() && matches!(self.imp, Imp::Epoll(_)) && !self.conns.tx_dirty.is_empty() {
             r = self.send_queued(handler);
         }
-        self.tx_dirty = false;
+        self.tx_fresh = false;
         // After receiving, so a response already in the socket is not timed out.
         self.check_deadlines(handler);
         if !self.conns.closed.is_empty() {
@@ -1200,11 +1295,15 @@ impl<E: Endpoint> Driver<E> {
             let Some(c) = self.conns.at(i) else {
                 continue;
             };
-            if let Err(e) = c.expire(now) {
-                let e = c.close_reason(e);
-                close_index(&mut self.imp, &mut self.conns, i);
-                self.stats.closed += 1;
-                handler.on_closed(id, e);
+            match c.expire(now) {
+                // A timer may have queued a send (a WebSocket Ping).
+                Ok(()) => self.conns.mark_tx_if_queued(i),
+                Err(e) => {
+                    let e = c.close_reason(e);
+                    close_index(&mut self.imp, &mut self.conns, i);
+                    self.stats.closed += 1;
+                    handler.on_closed(id, e);
+                }
             }
         }
     }
@@ -1235,7 +1334,10 @@ impl<E: Endpoint> Driver<E> {
                 u.arm_initial(c, i);
             }
             match r {
-                Ok(n) => self.stats.messages += n as u64,
+                Ok(n) => {
+                    self.stats.messages += n as u64;
+                    self.conns.mark_tx_if_queued(i);
+                }
                 Err(e) => {
                     let e = c.close_reason(e);
                     close_index(&mut self.imp, &mut self.conns, i);
@@ -1281,14 +1383,20 @@ impl<E: Endpoint> Driver<E> {
     #[inline]
     #[cfg_attr(not(feature = "uring"), allow(clippy::unnecessary_wraps))]
     fn send_queued<H: Handler>(&mut self, handler: &mut H) -> Result<()> {
-        self.tx_dirty = false;
+        self.tx_fresh = false;
         match &mut self.imp {
             Imp::Epoll(e) => {
-                for i in 0..self.conns.len_slots() {
-                    let Some(c) = self.conns.at(i) else {
+                // The send set only: a connection stays listed while bytes
+                // are left (a full socket) and leaves once it has none.
+                let mut k = 0;
+                while let Some(&i) = self.conns.tx_dirty.get(k) {
+                    let open = self.conns.is_open(i);
+                    let Some(c) = self.conns.at(i).filter(|_| open) else {
+                        self.conns.unlist_tx(k);
                         continue;
                     };
                     if c.tx_queue().is_empty() {
+                        self.conns.unlist_tx(k);
                         continue;
                     }
                     self.stats.send_calls += 1;
@@ -1298,12 +1406,18 @@ impl<E: Endpoint> Driver<E> {
                         Ok(n) => {
                             c.tx_queue().drain(..n);
                             c.on_handed(n);
+                            if c.tx_queue().is_empty() {
+                                self.conns.unlist_tx(k);
+                            } else {
+                                k += 1;
+                            }
                         }
                         Err(err) => {
                             let err = c.close_reason(err.into());
                             let id = self.conns.id(i);
                             e.remove(fd);
                             self.conns.remove(i);
+                            self.conns.unlist_tx(k);
                             self.stats.closed += 1;
                             handler.on_closed(id, err);
                         }
@@ -1393,7 +1507,8 @@ fn advance_one<E: Endpoint>(
     r
 }
 
-/// Reads once from `conn` through `slot` and delivers what arrived.
+/// Reads once from `conn` through `slot` and delivers what arrived: `true`
+/// when bytes were delivered (which may have queued a send).
 fn recv_one<E, H>(
     conn: &mut E,
     id: ConnId,
@@ -1401,7 +1516,7 @@ fn recv_one<E, H>(
     handler: &mut H,
     stats: &mut DriverStats,
     read_seq: &mut u64,
-) -> Result<()>
+) -> Result<bool>
 where
     E: Receive<H>,
     H: Handler,
@@ -1411,7 +1526,7 @@ where
     match sys::recvmsg(conn.fd(), slot)? {
         None => {
             stats.recvmsg_eagain += 1;
-            Ok(())
+            Ok(false)
         }
         Some(0) => Err(Error::Closed),
         Some(n) => {
@@ -1419,7 +1534,7 @@ where
             stats.completions += 1;
             let meta = slot.meta(*read_seq);
             stats.messages += conn.on_received(id, n, &meta, handler)? as u64;
-            Ok(())
+            Ok(true)
         }
     }
 }
