@@ -204,7 +204,8 @@ fi
 # SCHED_FIFO is not built (inconclusive in the one AWS A/B); the hugepage mount
 # is the plugin's sized hugetlbfs, never an emptyDir medium (no size=); the
 # node never gets a node-wide cpuCFSQuota:false; the cost gate is $0.30/h and
-# 180 minutes; on-demand fallback is off.
+# 180 minutes. Spot requests keep OnDemandTargetCapacity=0. On-demand is a
+# logged fallback after spot cannot be placed, not a silent fleet setting.
 contract() { # <name> <ok-if-this-regex-is-absent> <why>
     local name=$1 re=$2 why=$3
     if grep -Eq "$re" "$script" "$aws_dir/eks-nri-userdata.sh" 2>/dev/null; then
@@ -216,10 +217,10 @@ contract() { # <name> <ok-if-this-regex-is-absent> <why>
 contract no-fifo '--fifo|sched_setscheduler|SCHED_FIFO mode' "no SCHED_FIFO path (plan: inconclusive A/B)"
 contract no-emptydir-hugepage 'medium:[[:space:]]*HugePages' "no emptyDir hugepage volume (Aeron needs a sized mount)"
 contract no-cfs-quota-false 'cpuCFSQuota:[[:space:]]*false|cpuCFSQuota=false' "no node-wide cpuCFSQuota:false"
-if grep -q 'OnDemandTargetCapacity=0' "$script"; then
-    ok "spot-only: OnDemandTargetCapacity=0 (never silently on-demand)"
+if grep -q 'OnDemandTargetCapacity=0' "$script" && grep -q 'on-demand fallback' "$script"; then
+    ok "spot requests set OnDemandTargetCapacity=0; on-demand is a logged fallback"
 else
-    bad "spot-only: OnDemandTargetCapacity=0 is missing"
+    bad "spot OnDemandTargetCapacity=0 or the on-demand fallback text is missing"
 fi
 if grep -q '0\.30/h gate' "$script" && grep -q 'cap is 180 minutes' "$script"; then
     ok "cost gate text: \$0.30/h and 180 minutes"

@@ -32,7 +32,9 @@ NRI plugin cannot be installed) and no `reservedSystemCPUs` list. Everything
 here needs one of those. **The target is EKS on AL2023**: containerd 2.3.5
 with NRI on by default. The cloud lab
 (`md-dpdk/benches/cloud/aws/eks-nri.sh`) runs on EKS with SPOT `c8g.xlarge`
-nodes.
+nodes. If no enabled region has Spot capacity for that shape, it tries
+`c9g.xlarge` and then `c7g.xlarge` (also 4 vCPU and no SMT, so the same CPU
+pins) and only then on-demand, and the results name the type that ran.
 
 ## The five extensions
 

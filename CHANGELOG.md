@@ -121,6 +121,13 @@
   `tx-idle-cleaned`.
 - `ergon-md-dpdk` bench: `clock.rs` overhead adds a `poll_idle` path and
   per-call p99.99 and max.
+- EKS lab (`eks-nri.sh`): when no zone of `EKS_REGION` can place two spot
+  nodes, it searches every enabled region, probing each candidate zone with
+  two instances it then deletes. Next it tries `c9g.xlarge` and
+  `c7g.xlarge`, which have the same 4-vCPU, no-SMT CPU pins, and only then
+  on-demand, capped by `EKS_ONDEMAND_MAX_HOURLY` (0.55). The market and type
+  that ran are logged and written to `instances.txt`. A failed instant fleet
+  is still deleted before the next zone.
 - Cloud lab: `LAB_GAPSPIN_US` (50 by default) sets the spare CPU's gap
   spinner threshold. The diagnostics trace times each interrupt and IPI
   (their exits too) on `CLOCK_MONOTONIC`, anchored to the wall clock by
