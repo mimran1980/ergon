@@ -445,6 +445,11 @@ fn keep(line: String) {
     }
 }
 
+/// Held by every unit test that reads the kept lines: they are one buffer
+/// for the process, and one test's `take_lines` would take another's.
+#[cfg(test)]
+pub static KEPT_LINES_TEST: Mutex<()> = Mutex::new(());
+
 /// Test lever: from now on, keep a copy of every line written.
 #[doc(hidden)]
 pub fn keep_lines() {
@@ -576,6 +581,9 @@ mod tests {
         )?;
         let mut st = State::at(host);
         st.watch_faults(watch);
+        let _kept = super::KEPT_LINES_TEST
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         keep_lines();
         let _ = take_lines();
         // 4 MiB of fresh pages, each touched once: minor faults on this thread.
