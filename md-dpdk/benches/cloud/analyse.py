@@ -102,9 +102,41 @@ THREADING = {
 RTT_COLUMNS = ["p50", "p90", "p99", "p99.9", "p99.99", "max"]
 
 
+def gap_name(us):
+    """RTT_GAP_US's microseconds as a duration: 100 µs, 50 ms, 1 s."""
+    if us % 1_000_000 == 0:
+        return f"{us // 1_000_000} s"
+    if us % 1000 == 0:
+        return f"{us // 1000} ms"
+    return f"{us} µs"
+
+
+def gap_of(mode):
+    """A mode's @RTT_GAP_US (µs), or None: unpaced."""
+    gaps = [p.partition("=")[2] for p in mode.split("@")[1:] if p.startswith("RTT_GAP_US=")]
+    return int(gaps[-1]) if gaps and gaps[-1].isdigit() else None
+
+
+def without(mode, key):
+    """A mode with its @<key>=... overrides taken out."""
+    parts = mode.split("@")
+    return "@".join([parts[0]] + [p for p in parts[1:] if not p.startswith(key + "=")])
+
+
 def mode_name(mode):
     """A mode as tables name it: its name, or the mode as given; a threading
-    mode override named after the rest, with Aeron's name for it."""
+    mode override named after the rest, with Aeron's name for it; a hairpin
+    (@HAIRPIN=1: the round trip on one host, between its own two NICs) and a
+    pacing (@RTT_GAP_US) after that."""
+    suffix = ""
+    if "@HAIRPIN=1@" in mode.split("+idle")[0] + "@":
+        mode, suffix = without(mode, "HAIRPIN"), suffix + ", same-host hairpin (HAIRPIN=1)"
+    gap = gap_of(mode)
+    if gap is not None:
+        mode = without(mode, "RTT_GAP_US")
+        suffix += f", one round trip every {gap_name(gap)} (RTT_GAP_US={gap})"
+    if suffix:
+        return mode_name(mode) + suffix
     parts = mode.split("@")
     threading = [p for p in parts[1:] if p.startswith("AERON_THREADING_MODE=")]
     if not threading:
@@ -493,6 +525,8 @@ def main():
 
     above_network(r, modes)
     above_floor(r, modes)
+    hairpin(r, modes)
+    sparse(r, modes)
 
     print("## UDP throughput, 32-byte messages (M msgs/s)\n")
     def dropped(m):
@@ -813,7 +847,8 @@ def above_network(r, modes):
     for m in modes:
         state, _, mode = m.rpartition(":")
         base = r.netrtt.get(state)
-        if not base or not r.rtt.get(m) or mode.startswith("local-"):
+        # a localhost run or a hairpin (@HAIRPIN=1, on host a alone) never crosses between the hosts
+        if not base or not r.rtt.get(m) or mode.startswith("local-") or "@HAIRPIN=1@" in mode + "@":
             continue
         low = min(b[0] for b in base)
         net = f"{low / 1000:.2f}/{statistics.mean(b[1] for b in base) / 1000:.2f}/{max(b[2] for b in base) / 1000:.2f}"
@@ -838,9 +873,12 @@ def floor_of(mode):
     transport = transport.removesuffix("-mono")
     if transport.endswith("-raw") or mode.startswith("local-"):
         return None
+    # a paced mode's floor is paced alike
+    gap = gap_of(mode)
+    paced = f"@RTT_GAP_US={gap}" if gap is not None else ""
     if transport.startswith("kernel"):
-        return f"kernel-raw{mono}"
-    return f"dpdk-raw{mono}" if transport.startswith("dpdk") else None
+        return f"kernel-raw{mono}{paced}"
+    return f"dpdk-raw{mono}{paced}" if transport.startswith("dpdk") else None
 
 
 def above_floor(r, modes):
@@ -870,6 +908,67 @@ def above_floor(r, modes):
           "its floor's, rep by rep where both ran: the median across reps, the range in brackets; what Aeron's "
           "driver and client add. A max no higher than the floor's lies beneath Aeron.\n")
     print(table(["state, transport", "floor", "reps", "p50", "p99", "p99.99", "max"], rows) + "\n")
+
+
+def hairpin(r, modes):
+    """Each same-host hairpin (@HAIRPIN=1) beside the cross-host round trip of
+    the same mode in the same state: whether the idle maxima come from the
+    fabric between the hosts or from beneath it on one host."""
+    rows = []
+    for m in modes:
+        if "@HAIRPIN=1@" not in m + "@" or not r.rtt.get(m):
+            continue
+        state, _, mode = m.rpartition(":")
+        cross = without(mode, "HAIRPIN")
+        base = f"{state}:{cross}" if state else cross
+        if not r.rtt.get(base):
+            continue
+        h, c = r.rtt[m], r.rtt[base]
+        rows.append([name(base), str(len(h)), str(len(c))]
+                    + [cell([x[i] for x in reps], 1000, 2) for i in (0, 4, 5) for reps in (h, c)])
+    if not rows:
+        return
+    print("## Same-host hairpin against the cross-host round trip (µs)\n")
+    print("The hairpin (@HAIRPIN=1) is the same mode's round trip on host a alone, from its sender NIC to its "
+          "receiver NIC and back through the host's own Nitro card, never between the hosts; the cross-host one is "
+          "host a to host b. Medians across reps, the range in brackets. Maxima in the hairpin as large as across "
+          "the hosts lie beneath the fabric (the host, its card, the guest); maxima across the hosts alone are the "
+          "fabric's.\n")
+    print(table(["state, transport", "reps hairpin", "reps cross-host", "p50 hairpin", "p50 cross-host",
+                 "p99.99 hairpin", "p99.99 cross-host", "max hairpin", "max cross-host"], rows) + "\n")
+
+
+def sparse(r, modes):
+    """Round trips by @RTT_GAP_US (one ping every that long), each mode beside
+    itself unpaced in the same state."""
+    groups = defaultdict(list)
+    for m in modes:
+        state, _, mode = m.rpartition(":")
+        gap = gap_of(mode)
+        if gap is not None and r.rtt.get(m):
+            base = without(mode, "RTT_GAP_US")
+            groups[f"{state}:{base}" if state else base].append((gap, m))
+    if not groups:
+        return
+    rows = []
+    for base in sorted(groups, key=key):
+        runs = ([(0, base)] if r.rtt.get(base) else []) + sorted(groups[base])
+        for gap, m in runs:
+            reps = r.rtt[m]
+            samples = [int(x[6]) for x in reps]
+            count = f"{min(samples):,}" if min(samples) == max(samples) else f"{min(samples):,}–{max(samples):,}"
+            tail = cell([x[4] for x in reps], 1000, 2) if min(samples) >= 10000 else "n/a (under 10,000)"
+            rows.append([name(base), gap_name(gap) if gap else "none", str(len(reps)), count,
+                         cell([x[0] for x in reps], 1000, 2), cell([x[2] for x in reps], 1000, 2), tail,
+                         cell([x[5] for x in reps], 1000, 2)])
+    print("## Sparse round trips by gap (µs)\n")
+    print("A paced mode (@RTT_GAP_US) sends one ping every gap, send to send, the clients spinning in between, so "
+          "only the network goes quiet; `none` is the same mode unpaced, each ping as the last one's echo is back. "
+          "Aeron's heartbeats are 100 ms apart on an idle channel. Medians across reps, the range in brackets; a "
+          "rep is 20 to 60 s (modes.sh rtt_plan), so a sparse one holds few round trips: p99.99 only from 10,000 "
+          "a rep, and at a few hundred p99 is near the max. A p50 or p99 that grows with the gap is the path "
+          "slowing for a flow that goes quiet.\n")
+    print(table(["state, transport", "gap", "reps", "round trips a rep", "p50", "p99", "p99.99", "max"], rows) + "\n")
 
 
 def one_flow(r, m, size, rep):

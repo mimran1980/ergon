@@ -108,6 +108,15 @@
   command); the basic drop counters and every xstat (ENI allowances, SRD) are
   read every `NIC_SLOW_STATS_MS`, `0` meaning never. Latency effect not
   measured.
+- Cloud lab: `@HAIRPIN=1` on a raw floor mode (`dpdk-raw@HAIRPIN=1`,
+  `kernel-raw@HAIRPIN=1`) runs the round trip on host a alone, from its
+  sender ENI to its receiver ENI and back (`floor xhairpin`: ping and pong in
+  one process, one port each; on the kernel wire vm.sh routes the host's own
+  addresses out of their NICs, checked fail closed). `@RTT_GAP_US=<us>`
+  (1 to 1000000) paces `rtt` and `floor` to one ping every that many
+  microseconds (`RTT_GAP_US`), a rep of 20 to 60 s. `analyse.py` adds a
+  hairpin-against-cross-host table and a round-trips-by-gap table; a paced
+  Aeron mode's floor is the floor paced alike.
 - Cloud lab: raw floor modes `kernel-raw` and `dpdk-raw`. The new `floor`
   client does `rtt`'s round trip with no Aeron, over kernel UDP or the DPDK
   transport's bindings alone, with the same output files; `analyse.py`

@@ -9,8 +9,9 @@
 # does rtt's round trip over kernel UDP sockets or the DPDK transport's
 # bindings alone, on kernel-busy's or dpdk's host set-up (raw_base), so a
 # state's idle round trip splits into what is under Aeron and Aeron's own.
-# Cross-host only, the round trip alone (lib.sh), with host settings and
-# RUSTERON_* ones; anything only Aeron reads is refused (mode_check).
+# Cross-host only (or, @HAIRPIN=1, on host a between its own two NICs), the
+# round trip alone (lib.sh), with host settings and RUSTERON_* ones; anything
+# only Aeron reads is refused (mode_check).
 #
 # The settings here (the rest are vm.sh host_setting's, or the driver's
 # environment):
@@ -52,6 +53,24 @@
 #        polling on every NAPI of the data NICs, their kthreads on the
 #        layout's fifth core, which they spin at 100% (vm.sh; the kernel's
 #        ynl, vm.sh build-ynl); threaded disabled again after the mode
+#   HAIRPIN=1 (the raw floor's modes, AWS) the round trip on host a alone,
+#        between its own two data NICs (ENIs on one subnet): the floor
+#        client's xhairpin, ping and pong in one process, the ping on the app
+#        core and its sender NIC, the pong on the receiver core (which the
+#        raw floor leaves free) and its receiver NIC, so a packet leaves by
+#        one NIC and comes back by the other through the host's own Nitro
+#        card, never between hosts: host b idles. Against the cross-host
+#        floor of the same mode it tells the local card's path from the
+#        fabric. Host a needs four cores (hairpin_types_check). On the kernel
+#        wire vm.sh routes each end's sends out of its own NIC (the kernel
+#        would deliver its own address over loopback), checked fail closed
+#   RTT_GAP_US=<us>  (1 to 1000000) one ping every that many microseconds,
+#        send to send, the warm-up's too, the clients spinning in between
+#        (rtt's and floor's Pace): a sparse flow, the network quiet between
+#        round trips, as an idle Aeron channel is between its 100 ms
+#        heartbeats. A rep then runs 20 to 60 s, about 10,000 round trips
+#        where a minute holds them (rtt_plan): 20 s and 20,000 at 1 ms, 60 s
+#        and 1,200 at 50 ms, 300 at 200 ms, 60 at 1 s. Cross-host only
 #   CONDUCTOR=own  the driver's conductor on the layout's fifth core, alone,
 #        spinning (AERON_CONDUCTOR_CPU_AFFINITY, AERON_CONDUCTOR_IDLE_STRATEGY
 #        =spin), the DPDK transport's housekeeping and local-I/O threads kept
@@ -162,6 +181,42 @@ mode_raw() {
     t=${t%%@*}
     t=${t%-mono}
     [[ $t == kernel-raw || $t == dpdk-raw ]]
+}
+
+# mode_hairpin <mode>: 0 for a same-host hairpin (@HAIRPIN=1)
+mode_hairpin() {
+    [[ $(mode_get "${1%+idle}" HAIRPIN) == 1 ]]
+}
+
+# rtt_plan <mode> <messages> <warmup>: "<seconds> <messages> <warmup>" for
+# its round trip (RTT_SECONDS, then the ping's round trips and warm-up): 20 s
+# and as given, unless the mode paces its pings (@RTT_GAP_US=<us>): then as
+# long as 10,000 round trips take (p99.99 needs them), from 20 s to 60 s; as
+# many round trips as fit in that (at most the messages given), and about
+# 2 s of warm-up pings (at least one, at most the warm-up given)
+rtt_plan() {
+    local gap seconds messages warmup
+    gap=$(mode_get "${1%+idle}" RTT_GAP_US) || { echo "20 $2 $3"; return 0; }
+    seconds=$(((10000 * gap + 999999) / 1000000))
+    ((seconds >= 20)) || seconds=20
+    ((seconds <= 60)) || seconds=60
+    messages=$((seconds * 1000000 / gap))
+    ((messages <= $2)) || messages=$2
+    warmup=$(((2000000 + gap - 1) / gap))
+    ((warmup <= $3)) || warmup=$3
+    echo "$seconds $messages $warmup"
+}
+
+# hairpin_types_check <mode> <aws|azure> <type a>: 0, or 2 saying why, for a
+# hairpin (@HAIRPIN=1) on a type a with fewer than four physical cores (the
+# layout's housekeeping, app (ping), sender and receiver (pong) cores); 0
+# for any other mode
+hairpin_types_check() {
+    local cores
+    mode_hairpin "$1" || return 0
+    cores=$(type_cores "$2" "$3" 2>&1) || { echo "mode $1: $cores" >&2; return 2; }
+    ((cores >= 4)) ||
+        { echo "mode $1: $3 has $cores physical cores: a hairpin's ping and pong need the layout's four cores on host a (housekeeping, app, sender, receiver: c9g.xlarge and up)" >&2; return 2; }
 }
 
 # mode_client <mode>: the round trip's client: floor for a raw floor mode,
@@ -489,7 +544,7 @@ precision_modes_check() {
 # The settings vm.sh host_setting takes (a mode's @KEY=value for the host, the
 # clients or the driver's placement); any other key must be an environment
 # variable the driver reads, AERON_* (Aeron's) or RUSTERON_* (the transport's)
-LAB_SETTINGS=" THP BIN CSTATE BUSY_POLL COALESCE RX_RING MIN_FREE_PCT CLOCKSOURCE RELIABLE AGENTS SMT JUMBO PUB_PARAMS SUB_PARAMS IRQ NAPI_DEFER NAPI_BUSY CONDUCTOR "
+LAB_SETTINGS=" THP BIN CSTATE BUSY_POLL COALESCE RX_RING MIN_FREE_PCT CLOCKSOURCE RELIABLE AGENTS SMT JUMBO PUB_PARAMS SUB_PARAMS IRQ NAPI_DEFER NAPI_BUSY CONDUCTOR HAIRPIN RTT_GAP_US "
 
 # dpdk_setting <mode> <name> <default> <least> <most> <why> [pow2]: the
 # mode's RUSTERON_DPDK_<name>, else <default>, when a whole number from
@@ -619,7 +674,7 @@ mode_check() {
             ;;
         esac
         case $key in
-        IRQ | NAPI_DEFER | NAPI_BUSY | CONDUCTOR)
+        IRQ | NAPI_DEFER | NAPI_BUSY | CONDUCTOR | HAIRPIN | RTT_GAP_US)
             [[ $seen != *" $key "* ]] || { echo "mode $m: one $key at most" >&2; return 2; }
             seen+="$key "
             ;;
@@ -651,6 +706,18 @@ mode_check() {
             [[ $value == own ]] || { echo "mode $m: CONDUCTOR=own (the conductor on the layout's fifth core, spinning) or nothing" >&2; return 2; }
             [[ $where != local ]] ||
                 { echo "mode $m: CONDUCTOR=own with both ends on one host (localhost): the run takes the fifth core for its second end" >&2; return 2; }
+            ;;
+        HAIRPIN)
+            [[ $value == 1 ]] || { echo "mode $m: HAIRPIN=1 or nothing" >&2; return 2; }
+            mode_raw "$m" ||
+                { echo "mode $m: HAIRPIN is the raw floor's (kernel-raw, dpdk-raw): the floor client runs both ends in one process; Aeron's would need two clients on one driver" >&2; return 2; }
+            [[ $cloud == aws ]] || { echo "mode $m: HAIRPIN is AWS only (two ENIs on the data subnet)" >&2; return 2; }
+            ;;
+        RTT_GAP_US)
+            [[ $value =~ ^[1-9][0-9]{0,6}$ ]] && ((value <= 1000000)) ||
+                { echo "mode $m: RTT_GAP_US=$value: whole microseconds between pings, 1 to 1000000 (a rep of at most 60 s holds 60 round trips at 1 s)" >&2; return 2; }
+            [[ $where != local ]] ||
+                { echo "mode $m: RTT_GAP_US is cross-host only: a sparse flow is the network's (lib.sh paces only the cross-host round trip)" >&2; return 2; }
             ;;
         JUMBO)
             [[ $value == 1 ]] || { echo "mode $m: JUMBO=1 or nothing" >&2; return 2; }

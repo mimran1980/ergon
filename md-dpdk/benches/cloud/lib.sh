@@ -996,7 +996,7 @@ mix_run() {
 # bench_state <state>, on VM a (remote.sh): $reps reps of every mode in a fresh
 # random order each rep, against VM a itself and VM b
 bench_state() {
-    local state=$1 rep mode fm label pong sub prog raw
+    local state=$1 rep mode fm label pong sub prog raw rtt_s rtt_n rtt_w rtt_d gap gap_env pong_host
     results=$out/results.csv
     local a_nics b_nics net us host
     a_nics=$(on "$A" "$vm nics" 2>>"$out/nics.log")
@@ -1004,6 +1004,8 @@ bench_state() {
     a_rcv=$(awk '$1 == "receiver" {print $5}' <<<"$a_nics")
     b_rcv=$(awk '$1 == "receiver" {print $5}' <<<"$b_nics")
     [[ -n $a_rcv && -n $b_rcv ]] || { cat "$out/nics.log" >&2; die "cannot read the data NICs"; }
+    # a's sender NIC: a hairpin's ping listens there (modes.sh HAIRPIN)
+    a_snd=$(awk '$1 == "sender" {print $5}' <<<"$a_nics")
     # every data address of each host (the path MTU check's peers)
     a_ips=$(awk '{printf "%s%s", sep, $5; sep = " "}' <<<"$a_nics")
     b_ips=$(awk '{printf "%s%s", sep, $5; sep = " "}' <<<"$b_nics")
@@ -1022,7 +1024,8 @@ bench_state() {
         log "WARNING: the network's own round trip not measured (${net:-nothing})"
     fi
     app_a=$(on "$A" "$vm layout" | awk '{print $2}')
-    app2_a=$(on "$A" "$vm layout" | awk '{print $5}')
+    # a's receiver core too: a hairpin's pong (the raw floor leaves it free)
+    read -r _ _ _ rcv_cpu_a app2_a <<<"$(on "$A" "$vm layout")"
     app_b=$(on "$B" "$vm layout" | awk '{print $2}')
     app2_b=$(on "$B" "$vm layout" | awk '{print $5}')
     log "receiver ports: a=$a_rcv b=$b_rcv; app CPUs: a=$app_a b=$app_b"
@@ -1081,21 +1084,41 @@ bench_state() {
             if [[ ${mode%%@*} == dpdk* ]]; then both "wc-$state-$fm-$rep" wc-check || true; fi
             both "jitter-before-rtt-$state-$fm-$rep" jitter || true
             loss_a=$(on "$A" "$vm loss" 2>/dev/null); loss_b=$(on "$B" "$vm loss" 2>/dev/null)
-            # round trip: B pongs, A pings (ping's endpoint on B, pong's on A),
+            # the round trip's seconds, round trips and warm-up (modes.sh
+            # rtt_plan: 20 s, RTT_MESSAGES and RTT_WARMUP, unless the mode paces
+            # its pings, @RTT_GAP_US), and the clients' deadline: those seconds
+            # and a quarter more of warm-up
+            read -r rtt_s rtt_n rtt_w <<<"$(rtt_plan "${mode%+idle}" "$rtt_messages" "$rtt_warmup")"
+            rtt_d=$((rtt_s + (rtt_s + 3) / 4))
+            gap=$(mode_get "${mode%+idle}" RTT_GAP_US) || gap=
+            gap_env=${gap:+RTT_GAP_US=$gap }
             # the ping started at second $rtt_align of the minute when set
             align_rtt
             # every round trip of rtt_spike_ns or more stamped, every loop stall
             # of rtt_stall_ns or more (LAB_RTT_SPIKE_NS, LAB_RTT_STALL_NS)
-            on "$B" "LOOP_STALL_NS=${rtt_stall_ns:-10000} LAB_CLIENT_DEADLINE=$(answer_deadline 25) $vm client $label $prog xpong $b_rcv:20123 $a_rcv:20124 $app_b" \
-                >"$out/pong-$state-$fm-$rep.log" 2>&1 & pong=$!
-            sleep 2
-            # (RTT_SECONDS=20: 20 s measured after up to 5 s of warm-up)
-            on "$A" "RTT_SECONDS=20 LOAD_SPIKE_NS=${rtt_spike_ns:-30000} LOOP_STALL_NS=${rtt_stall_ns:-10000} LAB_CLIENT_DEADLINE=$(client_deadline 25) $vm client $label $prog xping $b_rcv:20123 $a_rcv:20124 $rtt_messages $rtt_warmup $app_a" \
-                2>"$out/ping-$state-$fm-$rep.log" | sed "s/^/$rep,/" | tee -a "$results" >&2
-            client_rc "$label rep $rep: the round trip's ping" "${PIPESTATUS[0]}"
-            end_client "$B" "$prog" xpong
-            wait_bounded "$(client_bound "$(answer_deadline 25)")" "$label rep $rep: the round trip's pong" $pong || true
-            invoker_named "$mode" "$out/ping-$state-$fm-$rep.log" "$out/pong-$state-$fm-$rep.log"
+            if mode_hairpin "$mode"; then
+                # the hairpin (modes.sh HAIRPIN): both ends on A in one floor
+                # client, the pong on A's receiver NIC and core, the ping on its
+                # sender NIC and app core; B idles
+                [[ -n $a_snd && -n $rcv_cpu_a ]] || die "$mode: a hairpin needs host a's sender NIC and receiver core (vm.sh nics, layout)"
+                pong_host=$A
+                on "$A" "${gap_env}RTT_SECONDS=$rtt_s LOAD_SPIKE_NS=${rtt_spike_ns:-30000} LOOP_STALL_NS=${rtt_stall_ns:-10000} LAB_CLIENT_DEADLINE=$(client_deadline "$rtt_d") $vm client $label floor xhairpin $a_rcv:20123 $a_snd:20124 $rtt_n $rtt_w $app_a $rcv_cpu_a" \
+                    2>"$out/ping-$state-$fm-$rep.log" | sed "s/^/$rep,/" | tee -a "$results" >&2
+                client_rc "$label rep $rep: the hairpin" "${PIPESTATUS[0]}"
+            else
+                # B pongs, A pings (ping's endpoint on B, pong's on A)
+                pong_host=$B
+                on "$B" "LOOP_STALL_NS=${rtt_stall_ns:-10000} LAB_CLIENT_DEADLINE=$(answer_deadline "$rtt_d") $vm client $label $prog xpong $b_rcv:20123 $a_rcv:20124 $app_b" \
+                    >"$out/pong-$state-$fm-$rep.log" 2>&1 & pong=$!
+                sleep 2
+                # (RTT_SECONDS=20 unpaced: 20 s measured after up to 5 s of warm-up)
+                on "$A" "${gap_env}RTT_SECONDS=$rtt_s LOAD_SPIKE_NS=${rtt_spike_ns:-30000} LOOP_STALL_NS=${rtt_stall_ns:-10000} LAB_CLIENT_DEADLINE=$(client_deadline "$rtt_d") $vm client $label $prog xping $b_rcv:20123 $a_rcv:20124 $rtt_n $rtt_w $app_a" \
+                    2>"$out/ping-$state-$fm-$rep.log" | sed "s/^/$rep,/" | tee -a "$results" >&2
+                client_rc "$label rep $rep: the round trip's ping" "${PIPESTATUS[0]}"
+                end_client "$B" "$prog" xpong
+                wait_bounded "$(client_bound "$(answer_deadline "$rtt_d")")" "$label rep $rep: the round trip's pong" $pong || true
+                invoker_named "$mode" "$out/ping-$state-$fm-$rep.log" "$out/pong-$state-$fm-$rep.log"
+            fi
             if [[ $(mode_get "${mode%+idle}" AERON_THREADING_MODE) == INVOKER ]]; then
                 hostcheck_rows "$rep" "$label" a "$out/ping-$state-$fm-$rep.log"
                 hostcheck_rows "$rep" "$label" b "$out/pong-$state-$fm-$rep.log"
@@ -1103,7 +1126,7 @@ bench_state() {
             on "$A" 'cat bench/rtt-histogram.csv' >"$out/histogram-$state-$fm-$rep.csv" 2>/dev/null || true
             on "$A" 'cat bench/load-spikes.csv' >"$out/spikes-$state-$fm-rtt-$rep.csv" 2>/dev/null || true
             on "$A" 'cat bench/stalls-ping.csv' >"$out/stalls-ping-$state-$fm-$rep.csv" 2>/dev/null || true
-            on "$B" 'cat bench/stalls-pong.csv' >"$out/stalls-pong-$state-$fm-$rep.csv" 2>/dev/null || true
+            on "$pong_host" 'cat bench/stalls-pong.csv' >"$out/stalls-pong-$state-$fm-$rep.csv" 2>/dev/null || true
             # precision-time: each spike split one way (rtt's RTT_ONE_WAY,
             # vm.sh client), for spikes.py; none kept where the ping wrote none
             on "$A" 'cat bench/one-way.csv' >"$out/oneway-$state-$fm-$rep.csv" 2>/dev/null || true

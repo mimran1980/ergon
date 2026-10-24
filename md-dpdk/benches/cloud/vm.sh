@@ -724,6 +724,15 @@ ethtool_set() {
 #        beside @IRQ=spare or @NAPI_BUSY=spare (one core each); its thread
 #        checked on that core alone once the driver starts (agents_placed,
 #        fail closed); `stop` forgets it
+#   HAIRPIN=1  (the raw floor's modes, AWS) the round trip between this host's
+#        own two data NICs (the floor client's xhairpin): the pong on the
+#        receiver core (refused without one); on the kernel wire each end's
+#        sends routed out of its own NIC, not over loopback (rules before the
+#        local table's, accept_local, no reverse-path filter on the data
+#        NICs), checked by ip route get both ways (fail closed); `stop` puts
+#        the rules and sysctls back
+#   RTT_GAP_US=<us>  the ping's pacing (lib.sh hands it to the client):
+#        nothing for the host or the driver
 # Returns 1 when KEY is not a host setting.
 host_setting() {
     local key=$1 value=$2 mode=$3 st vf names=() cur
@@ -948,6 +957,54 @@ host_setting() {
         } >>"$env_file"
         log "CONDUCTOR=own: the conductor alone on CPU $cpu (the layout's fifth core), spinning; housekeeping and local I/O on $HK_CPU"
         ;;
+    RTT_GAP_US) ;;
+    HAIRPIN)
+        # the raw floor's round trip between this host's own two data NICs
+        # (modes.sh HAIRPIN; the floor client's xhairpin): its pong on the
+        # receiver core, which the raw floor leaves free (bench/hairpin for
+        # the run). The kernel delivers a packet for its own address over
+        # loopback, so on the kernel wire each end's sends (from its own
+        # address: floor binds them so) are routed out of its own NIC by a
+        # rule before the local table's, which moves from priority 0 to 50
+        # (its new rule in place first); the data NICs then take their own
+        # host's packets (accept_local, no reverse-path filter). Checked both
+        # ways by ip route get, fail closed; `stop` puts everything back
+        [[ $value == 1 ]] || { echo "HAIRPIN=$value: 1 or nothing" >&2; exit 2; }
+        [[ $CLOUD == aws ]] || { echo "HAIRPIN: AWS only (two ENIs on the data subnet)" >&2; exit 2; }
+        [[ -n ${floor_wire:-} ]] || { echo "HAIRPIN: the raw floor's modes only (kernel-raw, dpdk-raw): the floor client runs both ends" >&2; exit 2; }
+        [[ -n ${RECEIVER_CPU:-} ]] ||
+            { echo "HAIRPIN: no receiver core on this host (its layout $HK_CPU ${APP_CPU:-} ${SENDER_CPU:-}): the hairpin's pong runs there; four cores (c9g.xlarge and up)" >&2; exit 2; }
+        save_host hairpin set
+        echo "$RECEIVER_CPU" >"$run/hairpin"
+        if [[ $floor_wire == kernel ]]; then
+            local snd_if snd_ip rcv_if rcv_ip sysctls= k fwd back
+            # the tables data_kernel_up gives them: 100 the sender's, 101 the receiver's
+            read -r _ snd_if _ _ snd_ip _ < <(nics | sed -n 1p)
+            read -r _ rcv_if _ _ rcv_ip _ < <(nics | sed -n 2p)
+            [[ -n $snd_ip && -n $rcv_ip ]] || { echo "HAIRPIN: the data NICs not read" >&2; restore_host; exit 1; }
+            for k in all.rp_filter "$snd_if.rp_filter" "$rcv_if.rp_filter" "$snd_if.accept_local" "$rcv_if.accept_local"; do
+                sysctls+=" net.ipv4.conf.$k=$(sysctl -n "net.ipv4.conf.$k")"
+            done
+            save_host hairpin-sysctl "${sysctls# }"
+            save_host hairpin-routes set
+            sudo sysctl -qw net.ipv4.conf.all.rp_filter=0 "net.ipv4.conf.$snd_if.rp_filter=0" "net.ipv4.conf.$rcv_if.rp_filter=0" \
+                "net.ipv4.conf.$snd_if.accept_local=1" "net.ipv4.conf.$rcv_if.accept_local=1"
+            sudo ip rule add priority 10 iif lo from "$snd_ip" to "$rcv_ip" lookup 100
+            sudo ip rule add priority 11 iif lo from "$rcv_ip" to "$snd_ip" lookup 101
+            ip rule show | grep -q '^50:' || sudo ip rule add priority 50 lookup local
+            sudo ip rule del priority 0 lookup local
+            fwd=$(ip route get "$rcv_ip" from "$snd_ip" 2>&1 || true)
+            back=$(ip route get "$snd_ip" from "$rcv_ip" 2>&1 || true)
+            if [[ $fwd != *" dev $snd_if "* || $fwd == local* || $back != *" dev $rcv_if "* || $back == local* ]]; then
+                echo "HAIRPIN: this host's own addresses still routed over loopback, not out of their NICs ($fwd; $back): stopping" >&2
+                restore_host
+                exit 1
+            fi
+            log "HAIRPIN=1: $snd_if ($snd_ip) to $rcv_if ($rcv_ip) and back out of the NICs ($fwd; $back); the pong on CPU $RECEIVER_CPU"
+        else
+            log "HAIRPIN=1: the DPDK sender port to the receiver port and back; the pong on CPU $RECEIVER_CPU"
+        fi
+        ;;
     CLOCKSOURCE)
         local cs=/sys/devices/system/clocksource/clocksource0
         grep -qw -- "$value" "$cs/available_clocksource" || { echo "CLOCKSOURCE=$value: not among $(cat "$cs/available_clocksource")" >&2; exit 2; }
@@ -1003,6 +1060,16 @@ restore_host() {
             pin_irqs "after IRQ= back to housekeeping"
             ;;
         conductor) rm -f "$run/conductor_cpu" ;;
+        hairpin) rm -f "$run/hairpin" ;;
+        hairpin-routes)
+            # the local table back at 0 before its moved rule goes
+            sudo ip rule add priority 0 lookup local 2>/dev/null || true
+            sudo ip rule del priority 50 lookup local 2>/dev/null || true
+            sudo ip rule del priority 10 2>/dev/null || true
+            sudo ip rule del priority 11 2>/dev/null || true
+            ;;
+        # shellcheck disable=SC2046
+        hairpin-sysctl) sudo sysctl -qw $(cat "$f") || true ;;
         # shellcheck disable=SC2015
         napi-defer-*)
             if [[ -e $LAB_SYS_ROOT/class/net/${key#napi-defer-} ]]; then
@@ -1569,6 +1636,11 @@ ready)
     shift
     rc=0
     for m in "$@"; do
+        if mode_hairpin "$m" && [[ -z ${RECEIVER_CPU:-} ]]; then
+            echo "mode $m: no receiver core on this host (its layout $(layout)): the hairpin's pong runs there; four cores (c9g.xlarge and up)"
+            rc=2
+            continue
+        fi
         if mode_spare "$m" && ! why=$(setting_cpu spare DEDICATED "$HK_CPU" "$APP_CPU" "$SENDER_CPU" "$RECEIVER_CPU" "${APP2_CPU:-}" 2>&1 >/dev/null); then
             echo "mode $m: $why"
             rc=2
@@ -1855,11 +1927,12 @@ client)
     trap 'termed=1' TERM
     # the last run's spikes and histogram: a client that writes none this time
     # must leave none to fetch (lib.sh takes each load point's histogram)
-    if [[ $prog =~ ^(rtt|floor)$ && ${1:-} == xping || $prog == load && ${1:-} != xecho ]]; then
+    # (floor xhairpin: both ends here, so both loop-stall files)
+    if [[ $prog =~ ^(rtt|floor)$ && ${1:-} =~ ^x(ping|hairpin)$ || $prog == load && ${1:-} != xecho ]]; then
         rm -f "$run/load-spikes.csv" "$run/rtt-histogram.csv"
     fi
-    [[ $prog =~ ^(rtt|floor)$ && ${1:-} == xping ]] && rm -f "$run/stalls-ping.csv" "$run/one-way.csv"
-    [[ $prog =~ ^(rtt|floor)$ && ${1:-} == xpong ]] && rm -f "$run/stalls-pong.csv"
+    [[ $prog =~ ^(rtt|floor)$ && ${1:-} =~ ^x(ping|hairpin)$ ]] && rm -f "$run/stalls-ping.csv" "$run/one-way.csv"
+    [[ $prog =~ ^(rtt|floor)$ && ${1:-} =~ ^x(pong|hairpin)$ ]] && rm -f "$run/stalls-pong.csv"
     # a build under BIN without this client: this checkout's, said in its log
     exe=$bin/$prog
     if [[ ! -x $exe ]]; then
@@ -1917,7 +1990,8 @@ client)
     one_way=
     precision_time && one_way=$run/one-way.csv
     rc=0 started=$SECONDS
-    sudo ${launch[@]+"${launch[@]}"} env AERON_DIR="$AERON_DIR" LABEL="$label" RTT_SECONDS="${RTT_SECONDS:-20}" RTT_ONE_WAY="$one_way" \
+    # RTT_GAP_US (lib.sh, a mode's @RTT_GAP_US): the ping's pacing, 0 none
+    sudo ${launch[@]+"${launch[@]}"} env AERON_DIR="$AERON_DIR" LABEL="$label" RTT_SECONDS="${RTT_SECONDS:-20}" RTT_GAP_US="${RTT_GAP_US:-0}" RTT_ONE_WAY="$one_way" \
         SUB_CHANNEL_PARAMS="$sub_params" PUB_CHANNEL_PARAMS="$(cat "$run/pub_channel_params" 2>/dev/null || true)" \
         RTT_LOST_TIMEOUT_US="$(rtt_lost_timeout_us "${lost_params:-$sub_params}" "$(cat "$run/base_rtt_us" 2>/dev/null || true)")" \
         RTT_HISTOGRAM="$run/rtt-histogram.csv" LOOP_STALLS_DIR="$run" LOAD_SPIKES="$run/load-spikes.csv" LOAD_SPIKE_NS="${LOAD_SPIKE_NS:-100000}" LOOP_STALL_NS="${LOOP_STALL_NS:-20000}" BENCH_CLOCK="$(cat "$run/bench_clock" 2>/dev/null || echo tsc)" AERON_TERM_BUFFER_SPARSE_FILE=false AERON_CLIENT_PRE_TOUCH_MAPPED_MEMORY=true \
