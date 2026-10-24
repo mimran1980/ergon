@@ -203,7 +203,10 @@ and clients linked against DPDK 25.11 built from source on each VM
 | `patched-refill` | `benches/cloud/dpdk-ena-deferred-refill.patch`: an `rx_burst` that returns frames skips the RX refill until `min(2 × rx_free_thresh, ring − 1)` descriptors are free; the next empty burst refills. Proof it loaded: one `ergon-lab deferred-refill ENA PMD` line per RX queue in `driver.log` (`vm.sh driver` stops without it) and the `rx_q<n>_refill_deferred` / `rx_q<n>_refill_floor` counters |
 
 Compare `@DPDK=` builds with each other, not with plain `dpdk`: outside
-precision-time plain `dpdk` links Debian's DPDK 24.11. Results land in
+precision-time plain `dpdk` links Debian's DPDK 24.11. The env file's
+`dpdk-build` lines name each build's prefix and patch hash. `patched-refill`
+refuses `@RUSTERON_DPDK_RX_FREE_THRESH` of half the receive ring or more: its
+floor would then be an empty ring. Results land in
 `target/md-dpdk-bench/<stamp>/`; copy `results.csv` and `summary.md` into
 `benches/cloud/results/` to keep them. On Azure the lab moves each data NIC's
 VMBus device to `uio_hv_generic`, selects ports by MAC

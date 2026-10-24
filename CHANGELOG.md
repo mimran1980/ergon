@@ -115,8 +115,10 @@
   ENA's `rx_burst` stops refilling the RX ring in a burst that returns frames
   until two thresholds are owed; the next empty burst refills. `vm.sh driver`
   stops unless the driver log shows the PMD the build should load. New ENA
-  counters `rx_q<n>_refill_deferred` and `rx_q<n>_refill_floor`. Latency
-  effect not measured.
+  counters `rx_q<n>_refill_deferred` and `rx_q<n>_refill_floor`. `vm.sh host`
+  (the env file) records each build's DPDK prefix and patch hash.
+  `patched-refill` refuses an `RX_FREE_THRESH` of half the receive ring or
+  more. Latency effect not measured.
 - Cloud lab: raw floor modes `kernel-raw` and `dpdk-raw`. The new `floor`
   client does `rtt`'s round trip with no Aeron, over kernel UDP or the DPDK
   transport's bindings alone, with the same output files; `analyse.py`

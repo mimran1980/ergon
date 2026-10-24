@@ -541,6 +541,15 @@ dpdk_values_check() {
     fi
     if [[ $cloud == azure ]]; then nic=MANA rx_most=256 tx_most=256 rx_default=256 tx_default=256 ring="MANA's transmit ring holds 256 at most"; fi
     rx=$(dpdk_setting "$m" RX_DESCRIPTORS "$rx_default" 64 "$rx_most" "$nic's receive ring holds $rx_most at most: the transport refuses more at start" pow2) || return 2
+    # @DPDK=patched-refill: a burst that returns frames refills only at
+    # min(2 x rx_free_thresh, ring - 1) free descriptors; a threshold of half
+    # the ring or more makes that ring - 1, an empty ring (the PMD's default
+    # threshold, min(ring / 8, 256), is always below half)
+    if [[ $(mode_get "$m" DPDK) == patched-refill ]] && v=$(mode_get "$m" RUSTERON_DPDK_RX_FREE_THRESH) &&
+        [[ $v =~ ^[0-9]{1,10}$ ]] && ((2 * 10#$v >= rx)); then
+        echo "mode $m: DPDK=patched-refill with RUSTERON_DPDK_RX_FREE_THRESH=$v: below half the receive ring ($rx) only: the patch's floor, min(2 x $((10#$v)), $((rx - 1))), would let bursts that return frames drain the ring before any refill" >&2
+        return 2
+    fi
     tx=$(dpdk_setting "$m" TX_DESCRIPTORS "$tx_default" 64 "$tx_most" "$ring: the transport refuses more at start" pow2) || return 2
     cache=$(dpdk_setting "$m" MEMPOOL_CACHE 256 0 512 "DPDK's per-lcore mempool cache: the transport's configuration refuses more") || return 2
     burst=$(dpdk_setting "$m" BURST_SIZE 32 1 256 "packets a receive or transmit burst, as the transport's configuration takes them") || return 2

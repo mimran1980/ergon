@@ -1502,6 +1502,8 @@ build-dpdk)
         { echo "build-dpdk ${build:-(none)}: stock (DPDK 25.11 from source) or patched-refill (with dpdk-ena-deferred-refill.patch on ENA's PMD)" >&2; exit 2; }
     [[ $CLOUD == aws ]] || { echo "build-dpdk $build: AWS only (a build of ENA's PMD)" >&2; exit 2; }
     export PATH=$HOME/.cargo/bin:$PATH
+    # what `host` (the env file) records of this build: only once it passed
+    rm -f "$run/bin-dpdk-$build.txt"
     sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq meson ninja-build python3-pyelftools libnuma-dev
     prefix=$DPDK_PREFIX patch=
     if [[ $build == patched-refill ]]; then
@@ -1526,6 +1528,7 @@ build-dpdk)
                 { rm -rf "$out"; echo "build-dpdk $build: $c loads $lib from $path, not $libdir: removed" >&2; exit 1; }
         done <<<"$loads"
     done
+    echo "dpdk-build $build: DPDK $DPDK_VERSION in $prefix${patch:+, ${patch##*/} sha256 $(cat "$prefix/ergon-lab-patch.sha256")}: $out" >"$run/bin-dpdk-$build.txt"
     echo "bin-dpdk-$build: $(ls "$out" | tr '\n' ' ')against DPDK $DPDK_VERSION in $prefix${patch:+ (${patch##*/})}"
     ;;
 build-ptp)
@@ -1670,6 +1673,9 @@ host)
     done
     echo "ena $(for p in rx_queue_size enable_bql force_large_llq_header lpc_size phc_enable; do printf '%s=%s ' "$p" "$(cat "/sys/module/ena/parameters/$p" 2>/dev/null || echo -)"; done)"
     echo "dpdk $(pkg-config --modversion libdpdk 2>/dev/null || echo none)$([[ -s $run/dpdk_unavailable ]] && echo ", not in the media driver: $(cat "$run/dpdk_unavailable")")"
+    # each @DPDK= build's DPDK (build-dpdk): the modes with it link that one
+    # rather than the line above's
+    for f in "$run"/bin-dpdk-*.txt; do if [[ -f $f ]]; then cat "$f"; fi; done
     echo "ynl $(cat "$run/ynl.version" 2>/dev/null || cat "$run/ynl_unavailable" 2>/dev/null || echo 'not built (no @NAPI_BUSY mode)')"
     echo "build CFLAGS=${CFLAGS:-} RUSTFLAGS=${RUSTFLAGS:-}"
     if [[ $ARCH == aarch64 ]]; then

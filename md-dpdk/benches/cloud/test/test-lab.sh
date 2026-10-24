@@ -4157,6 +4157,7 @@ dpdk_sb() { # <cloud> <placement> <eal dir> <vm.sh args>...: "<rc> | <the calls,
     sed "s|$sbp|<sb>|g" "$sbp/log"
 }
 lib=$sbp/opt/dpdk-25.11-patched-refill/lib/x86_64-linux-gnu
+patch_sum=$(sha256sum "$cloud/dpdk-ena-deferred-refill.patch" | cut -d' ' -f1)
 got="patched:
 $(dpdk_sb aws cluster "$lib" build-dpdk patched-refill)
 bins: $(ls "$sbp/home/bin-dpdk-patched-refill" 2>/dev/null | tr '\n' ' ')ld.so.conf: $(grep -c ld.so.conf "$sbp/log" || true)
@@ -4167,7 +4168,9 @@ got+="
 another patch: $(dpdk_sb aws cluster "$lib" build-dpdk patched-refill | grep -cE '^(curl|patch|meson) ' || true) DPDK steps
 stock:
 $(dpdk_sb aws cluster "$sbp/opt/dpdk-25.11/lib/x86_64-linux-gnu" build-dpdk stock | grep -vE '^cargo rustc --release -p ergon-md-dpdk-harness ' || true)
+host: $(dpdk_sb aws cluster "$lib" host >/dev/null; grep '^dpdk-build ' "$sbp/out" | tr '\n' ';')
 bad kvargs: $(FAKE_KVARGS_DIR=/opt/dpdk-25.11/lib/x86_64-linux-gnu dpdk_sb aws cluster "$lib" build-dpdk patched-refill | head -1) $( (ls -d "$sbp/home/bin-dpdk-patched-refill" 2>/dev/null || true) | wc -l | tr -d ' ') bin dir
+host after it: $(dpdk_sb aws cluster "$lib" host >/dev/null; grep '^dpdk-build ' "$sbp/out" | tr '\n' ';')
 unknown: $(dpdk_sb aws cluster "$lib" build-dpdk refill | head -1)
 azure: $(dpdk_sb azure '' "$lib" build-dpdk patched-refill | head -1)"
 echo patched-refill >"$sbp/home/bench/want_dpdk"
@@ -4206,7 +4209,9 @@ ninja -C build
 sudo ninja -C build install
 ninja -C build install
 cargo rustc --release -p ergon-md-dpdk --features static,dpdk --bin media_driver -- -C link-arg=-Wl,--disable-new-dtags,-rpath,<sb>/opt/dpdk-25.11/lib/x86_64-linux-gnu [PKG_CONFIG_PATH=<sb>/opt/dpdk-25.11/lib/x86_64-linux-gnu/pkgconfig CARGO_TARGET_DIR=<sb>/home/ergon/target-dpdk]
+host: dpdk-build patched-refill: DPDK 25.11 in <sb>/opt/dpdk-25.11-patched-refill, dpdk-ena-deferred-refill.patch sha256 $patch_sum: <sb>/home/bin-dpdk-patched-refill;dpdk-build stock: DPDK 25.11 in <sb>/opt/dpdk-25.11: <sb>/home/bin-dpdk-stock;
 bad kvargs: rc 1 (build-dpdk patched-refill: <sb>/home/bin-dpdk-patched-refill/floor loads librte_kvargs.so.26 from /opt/dpdk-25.11/lib/x86_64-linux-gnu/librte_kvargs.so.26, not <sb>/opt/dpdk-25.11-patched-refill/lib/x86_64-linux-gnu: removed) 0 bin dir
+host after it: dpdk-build stock: DPDK 25.11 in <sb>/opt/dpdk-25.11: <sb>/home/bin-dpdk-stock;
 unknown: rc 2 (build-dpdk refill: stock (DPDK 25.11 from source) or patched-refill (with dpdk-ena-deferred-refill.patch on ENA's PMD))
 azure: rc 2 (build-dpdk patched-refill: AWS only (a build of ENA's PMD))
 build: build ergon-md-dpdk media_driver;build ergon-md-dpdk-harness clockcheck;rustc ergon-md-dpdk media_driver;rustc ergon-md-dpdk-harness rtt;rustc ergon-md-dpdk-harness load;rustc ergon-md-dpdk-harness tput;rustc ergon-md-dpdk-harness floor;
@@ -4216,7 +4221,7 @@ if [[ $got != "$want" ]]; then
     fail "vm.sh build-dpdk: DPDK 25.11 from source, patched or stock, and the driver and clients linked against it"
     diff -u <(echo "$want") <(echo "$got") >&2 || true
 else
-    pass "vm.sh build-dpdk: DPDK 25.11 from source (patched-refill: the patch applied exactly), its own prefix, never in ld.so.conf, idempotent by the patch's hash; the driver and every client linked with its RPATH, each librte_* checked to load from it (fail closed); run by build for each wanted build, AWS only"
+    pass "vm.sh build-dpdk: DPDK 25.11 from source (patched-refill: the patch applied exactly), its own prefix, never in ld.so.conf, idempotent by the patch's hash; the driver and every client linked with its RPATH, each librte_* checked to load from it (fail closed); each build's DPDK and patch in vm.sh host (the env file); run by build for each wanted build, AWS only"
 fi
 
 # vm.sh ready <mode>... in a sandbox (lib.sh asks it after the build, before
@@ -4916,6 +4921,11 @@ dpdkb=$(
     mode_check dpdk@DPDK=patched-refill remote x86_64 azure '' ''
     mode_check dpdk@BIN=bin-base@DPDK=stock remote x86_64 aws '' cluster
     mode_check dpdk@DPDK=stock@DPDK=patched-refill remote x86_64 aws '' cluster
+    # patched-refill's floor, min(2 x rx_free_thresh, ring - 1): a threshold
+    # of half the ring or more would let bursts that return frames drain the
+    # ring; stock is not refused (its own refill at the threshold)
+    echo "floor:$(mc dpdk@DPDK=patched-refill@RUSTERON_DPDK_RX_FREE_THRESH=2047)$(mc dpdk@DPDK=stock@RUSTERON_DPDK_RX_FREE_THRESH=2048)$(mc dpdk@DPDK=patched-refill@RUSTERON_DPDK_RX_DESCRIPTORS=1024@RUSTERON_DPDK_RX_FREE_THRESH=511)$(mc dpdk@DPDK=patched-refill@RUSTERON_DPDK_RX_DESCRIPTORS=1024)$(mc dpdk@DPDK=patched-refill@RUSTERON_DPDK_RX_FREE_THRESH=2048)$(mc dpdk@DPDK=patched-refill@RUSTERON_DPDK_RX_DESCRIPTORS=1024@RUSTERON_DPDK_RX_FREE_THRESH=512)"
+    mode_check dpdk@DPDK=patched-refill@RUSTERON_DPDK_RX_DESCRIPTORS=1024@RUSTERON_DPDK_RX_FREE_THRESH=512 remote x86_64 aws '' cluster
     echo "want: [$(modes_want_dpdk kernel dpdk@DPDK=patched-refill dpdk@DPDK=stock+idle dpdk-spin@DPDK=patched-refill@RUSTERON_DPDK_RX_FREE_THRESH=32)] [$(modes_want_dpdk kernel dpdk)] [$(modes_want_dpdk)]"
 ) || true
 want="builds: 0 0 0 0 0 0
@@ -4925,12 +4935,14 @@ mode dpdk@DPDK=refill: DPDK=refill: stock (DPDK 25.11 from source) or patched-re
 mode dpdk@DPDK=patched-refill: DPDK=patched-refill is AWS only (a build of ENA's PMD)
 mode dpdk@BIN=bin-base@DPDK=stock: DPDK=stock with BIN=: one build a mode (DPDK= is its own, in ~/bin-dpdk-stock)
 mode dpdk@DPDK=stock@DPDK=patched-refill: one DPDK at most
+floor: 0 0 0 0 2 2
+mode dpdk@DPDK=patched-refill@RUSTERON_DPDK_RX_DESCRIPTORS=1024@RUSTERON_DPDK_RX_FREE_THRESH=512: DPDK=patched-refill with RUSTERON_DPDK_RX_FREE_THRESH=512: below half the receive ring (1024) only: the patch's floor, min(2 x 512, 1023), would let bursts that return frames drain the ring before any refill
 want: [patched-refill stock] [] []"
 if [[ $dpdkb != "$want" ]]; then
     fail "modes.sh: @DPDK= builds"
     diff -u <(echo "$want") <(echo "$dpdkb") >&2 || true
 else
-    pass "modes.sh: @DPDK=stock|patched-refill in AWS DPDK modes only, once, never beside @BIN=; the builds the modes want, each once"
+    pass "modes.sh: @DPDK=stock|patched-refill in AWS DPDK modes only, once, never beside @BIN=, patched-refill's threshold below half the receive ring; the builds the modes want, each once"
 fi
 
 # both lab.sh apply that pre-flight before any cloud call: aws/lab.sh refuses
