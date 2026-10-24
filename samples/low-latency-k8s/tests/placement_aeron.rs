@@ -5,10 +5,12 @@
 //!   "not run" for that inheritance; this is the evidence.)
 //! - The ping/pong loops allocate nothing per round trip: a run of 10 times
 //!   the round trips makes as many allocations as the short one, plus
-//!   exactly one per extra warning line. The app's subscriber is installed
-//!   (non-blocking writer to `io::sink`), so a warning in the loop really
-//!   formats and enqueues, as in the app; its one allocation is the line's
-//!   copy into the queue (`src/logging.rs`).
+//!   exactly one per log line written meanwhile. The app's subscriber is
+//!   installed (non-blocking writer to a capture), so a warning in the loop
+//!   really formats and enqueues, as in the app; its one allocation is the
+//!   line's copy into the queue (`src/logging.rs`). Lines from other
+//!   threads (the embedded driver's wrapper) count the same way, and the
+//!   test prints every line.
 //!
 //! Linux with at least two CPUs (three keep the ping and the pong apart).
 #![cfg(target_os = "linux")]
@@ -16,7 +18,7 @@
 
 use std::alloc::System;
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use low_latency_k8s::cpus::{CpuList, current_affinity, pin_current};
@@ -31,23 +33,59 @@ static GLOBAL: &StatsAlloc<System> = &INSTRUMENTED_SYSTEM;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+/// Every line the subscriber wrote, from any thread (the embedded driver's
+/// wrapper logs too). Reserved up front: the worker's writes never
+/// allocate.
+#[derive(Clone)]
+struct Capture(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for Capture {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let mut v = self
+            .0
+            .lock()
+            .map_err(|_| std::io::Error::other("poisoned"))?;
+        if v.len() + buf.len() > v.capacity() {
+            return Err(std::io::Error::other("capture full"));
+        }
+        v.extend_from_slice(buf);
+        drop(v);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Capture {
+    /// The lines written so far.
+    fn text(&self) -> String {
+        self.0
+            .lock()
+            .map(|v| String::from_utf8_lossy(&v).into_owned())
+            .unwrap_or_default()
+    }
+}
+
 /// The app's logging, process-wide (the hot threads are spawned, so a
 /// thread-local default would not reach them): `fmt` through the lossy
-/// non-blocking writer into `io::sink`. The guard lives as long as the
+/// non-blocking writer into a [`Capture`]. The guard lives as long as the
 /// process.
-fn install_logging() -> Result<(), String> {
-    static GUARD: OnceLock<Result<tracing_appender::non_blocking::WorkerGuard, String>> =
-        OnceLock::new();
-    GUARD
+fn install_logging() -> Result<Capture, String> {
+    type Installed = Result<(tracing_appender::non_blocking::WorkerGuard, Capture), String>;
+    static INSTALLED: OnceLock<Installed> = OnceLock::new();
+    INSTALLED
         .get_or_init(|| {
             let cfg = LogConfig::default();
-            let Appender { writer, guard, .. } = non_blocking(std::io::sink(), &cfg);
+            let capture = Capture(Arc::new(Mutex::new(Vec::with_capacity(16 << 20))));
+            let Appender { writer, guard, .. } = non_blocking(capture.clone(), &cfg);
             tracing::subscriber::set_global_default(subscriber(writer, &cfg))
                 .map_err(|e| e.to_string())?;
-            Ok(guard)
+            Ok((guard, capture))
         })
         .as_ref()
-        .map(|_| ())
+        .map(|(_, c)| c.clone())
         .map_err(Clone::clone)
 }
 
@@ -138,30 +176,67 @@ fn start_pair(
     })
 }
 
-/// Runs both loops; returns the ping's outcome and the allocations made
-/// while they ran.
-fn run_pair(pair: Pair) -> Result<(HotOutcome, HotOutcome, usize), Box<dyn std::error::Error>> {
+/// What one pair's run made: both outcomes, the allocations from every
+/// thread while the loops ran, and the log lines written in that time.
+struct Ran {
+    ping: HotOutcome,
+    pong: HotOutcome,
+    allocations: usize,
+    lines: Vec<String>,
+}
+
+/// Runs both loops.
+fn run_pair(pair: Pair, capture: &Capture) -> Result<Ran, Box<dyn std::error::Error>> {
     pinned(&pair.pong)?;
     pinned(&pair.ping)?;
+    // the worker writes what was queued before; then the region opens
+    std::thread::sleep(Duration::from_millis(100));
+    let from = capture.text().len();
     let region = Region::new(GLOBAL);
     pair.pong.go.send(true)?;
     pair.ping.go.send(true)?;
     let ping = pair.ping.join.join().map_err(|_| "ping panicked")??;
     pair.pong_shared.stop.store(true, Ordering::Relaxed);
     let pong = pair.pong.join.join().map_err(|_| "pong panicked")??;
-    let allocations = region.change().allocations;
+    let change = region.change();
+    // the lines queued inside the region reach the capture
+    std::thread::sleep(Duration::from_millis(100));
+    let text = capture.text();
+    let lines: Vec<String> = text
+        .get(from..)
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    println!(
+        "region: allocations={} reallocations={} bytes_allocated={} log_lines={} (ping {} round trips, ended {})",
+        change.allocations,
+        change.reallocations,
+        change.bytes_allocated,
+        lines.len(),
+        ping.messages,
+        ping.ended
+    );
+    for line in &lines {
+        println!("region: logged: {line}");
+    }
     assert!(
         pong.messages >= ping.messages,
         "pong echoed {} of {}",
         pong.messages,
         ping.messages
     );
-    Ok((ping, pong, allocations))
+    Ok(Ran {
+        ping,
+        pong,
+        allocations: change.allocations,
+        lines,
+    })
 }
 
 #[test]
 fn the_client_conductor_keeps_the_creators_cpu() -> TestResult {
-    install_logging()?;
+    let _capture = install_logging()?;
     let driver = EmbeddedDriver::launch()?;
     let (helper, ping_cpu, pong_cpu) = cpus()?;
     let pair = start_pair(driver.dir(), 100, 1_000, 2001)?;
@@ -202,38 +277,56 @@ fn the_client_conductor_keeps_the_creators_cpu() -> TestResult {
 
 #[test]
 fn the_loops_allocate_nothing_per_round_trip() -> TestResult {
-    install_logging()?;
+    let capture = install_logging()?;
     let driver = EmbeddedDriver::launch()?;
-    let (short, short_pong, short_allocs) =
-        run_pair(start_pair(driver.dir(), 1_000, 10_000, 3001)?)?;
-    let (long, long_pong, long_allocs) = run_pair(start_pair(driver.dir(), 1_000, 100_000, 3003)?)?;
-    // A warning is an abnormal pass (back-pressure or a lost echo, which an
-    // emulated amd64 run hits); each line it lets through allocates once.
-    let short_warns = short.warn_events + short_pong.warn_events;
-    let long_warns = long.warn_events + long_pong.warn_events;
+    let short = run_pair(start_pair(driver.dir(), 1_000, 10_000, 3001)?, &capture)?;
+    let long = run_pair(start_pair(driver.dir(), 1_000, 100_000, 3003)?, &capture)?;
+    let warns = |r: &Ran| r.ping.warn_events + r.pong.warn_events;
     println!(
-        "allocations: {short_allocs} for {} round trips ({short_warns} warnings), {long_allocs} for {} \
-         ({long_warns} warnings); ping p50={} max={} ns",
-        short.messages,
-        long.messages,
-        long.rtt.map_or(0, |p| p.p50),
-        long.rtt.map_or(0, |p| p.max)
+        "allocations: {} for {} round trips ({} warnings, {} log lines), {} for {} ({} warnings, {} log lines); ping p50={} max={} ns",
+        short.allocations,
+        short.ping.messages,
+        warns(&short),
+        short.lines.len(),
+        long.allocations,
+        long.ping.messages,
+        warns(&long),
+        long.lines.len(),
+        long.ping.rtt.map_or(0, |p| p.p50),
+        long.ping.rtt.map_or(0, |p| p.max)
     );
     assert_eq!(
-        (short.messages, long.messages),
+        (short.ping.messages, long.ping.messages),
         (10_000, 100_000),
         "ended: {} / {}",
-        short.ended,
-        long.ended
+        short.ping.ended,
+        long.ping.ended
     );
-    assert_eq!((short.lost, long.lost), (0, 0));
-    // allocations not explained by a warning line: the same for both runs
-    let unexplained =
-        |allocs: usize, warns: u64| i128::try_from(allocs).unwrap_or(i128::MAX) - i128::from(warns);
+    assert_eq!((short.ping.lost, long.ping.lost), (0, 0));
+    // Each hot-loop warning is a log line; a line from any thread (the
+    // embedded driver's wrapper logs too) costs its caller one allocation.
+    for r in [&short, &long] {
+        let hot_lines = r.lines.iter().filter(|l| l.contains(" ll-hot ")).count();
+        assert_eq!(
+            u64::try_from(hot_lines)?,
+            warns(r),
+            "hot warnings against hot log lines: {:?}",
+            r.lines
+        );
+    }
+    // allocations not explained by a log line: the same for both runs
+    let unexplained = |r: &Ran| {
+        i128::try_from(r.allocations).unwrap_or(i128::MAX)
+            - i128::try_from(r.lines.len()).unwrap_or(0)
+    };
     assert_eq!(
-        unexplained(long_allocs, long_warns),
-        unexplained(short_allocs, short_warns),
-        "the longer run allocated {long_allocs} with {long_warns} warnings against {short_allocs} with {short_warns}: the loop allocates"
+        unexplained(&long),
+        unexplained(&short),
+        "the longer run allocated {} with {} log lines against {} with {}: the loop allocates",
+        long.allocations,
+        long.lines.len(),
+        short.allocations,
+        short.lines.len()
     );
     Ok(())
 }
