@@ -7091,6 +7091,7 @@ case "$*" in
 "resource list --tag"*) if [[ -f $st/group ]]; then echo 2; else echo "${FAKE_AZ_LEFT:-0}"; fi ;;
 "resource list"*) [[ -f $st/group ]] && printf 'Microsoft.Network/virtualNetworks\tvnet\nMicrosoft.Compute/virtualMachines\ta\n' ;;
 "network public-ip show"*) exit "${FAKE_AZ_IP_RC:-1}" ;;
+"disk show"*) [[ $* =~ -n\ ([^ ]+) ]] && echo "/subscriptions/0/resourceGroups/g/providers/Microsoft.Compute/disks/${BASH_REMATCH[1]}" ;;
 esac
 exit 0
 FAKEAZ
@@ -7198,13 +7199,13 @@ env PATH="$tmp/fakeaz:$PATH" HOME="$tmp/commahome" TMPDIR="$tmp/commatmp" LAB_RE
     LAB_GROUP=ergon-lab-test LAB_SIZE=Standard_D8ps_v6 LAB_MODES="kernel dpdk" LAB_STATES=pinned LAB_REPS=1 \
     LAB_SSH_FROM=203.0.113.9 LAB_DETACH=0 bash "$cloud/azure/lab.sh" >"$tmp/azrun.out" 2>&1 && azrc=0 || azrc=$?
 stamp=$(ls "$tmp/azrepo/target/md-dpdk-bench" 2>/dev/null | head -1 || true)
-creates=$(grep -E ' create |^az resource tag ' "$FAKE_AZ_LOG" | grep -vE 'subnet create|nsg rule create' || true)
+creates=$(grep -E ' create |^az tag update ' "$FAKE_AZ_LOG" | grep -vE 'subnet create|nsg rule create' || true)
 untagged=$(grep -vF -- "--tags owner=ergon-lab run=$stamp" <<<"$creates" || true)
 reaper_pid=$(sed -n 's/.*backstop.*(pid \([0-9]*\)).*/\1/p' "$tmp/azrun.out" | head -1 || true)
 why=
 [[ $azrc != 0 ]] || why+=" exit 0;"
 [[ -n $stamp && $(grep -c . <<<"$creates") -ge 12 && -z $untagged ]] || why+=" untagged: [$untagged];"
-grep -q -- '-n a-os ' "$FAKE_AZ_LOG" && grep -q -- '-n b-os ' "$FAKE_AZ_LOG" || why+=" OS disks not tagged;"
+grep -q -- 'tag update --resource-id .*/disks/a-os --operation merge' "$FAKE_AZ_LOG" && grep -q -- 'tag update --resource-id .*/disks/b-os --operation merge' "$FAKE_AZ_LOG" || why+=" OS disks not tagged;"
 grep -q 'vm create.*--image Debian:debian-13:13-arm64:latest' "$FAKE_AZ_LOG" || why+=" no arm64 image;"
 off=$(date -u -v+8H +%H 2>/dev/null || date -u -d '+8 hours' +%H)
 grep -q "vm auto-shutdown -g ergon-lab-test -n a --time $off" "$FAKE_AZ_LOG" && grep -q "vm auto-shutdown -g ergon-lab-test -n b --time $off" "$FAKE_AZ_LOG" || why+=" no auto-shutdown at the deadline;"

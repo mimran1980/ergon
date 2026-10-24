@@ -371,9 +371,11 @@ declare_node() { # name sender-ip receiver-ip size
             --os-disk-name "$n-os" --os-disk-size-gb 64 --tags "${tags[@]}" -o none &&
         { [[ -z $off ]] || az vm auto-shutdown -g "$group" -n "$n" --time "$off" -o none ||
             log "WARNING: no auto-shutdown on $n: only the backstop and teardown end it"; } &&
-        # a VM's tags do not reach its OS disk
-        az resource tag -g "$group" -n "$n-os" --resource-type Microsoft.Compute/disks \
-            --tags "${tags[@]}" --is-incremental -o none
+        # a VM's tags do not reach its OS disk; the Tags API, not `az
+        # resource tag`, which asks for the provider's newest API version and
+        # a region may not serve it yet
+        disk_id=$(az disk show -g "$group" -n "$n-os" --query id -o tsv) && [[ -n $disk_id ]] &&
+        az tag update --resource-id "$disk_id" --operation merge --tags "${tags[@]}" -o none
 }
 declare_node a 10.20.1.4 10.20.1.5 "$size_a" & pa=$!
 declare_node b 10.20.1.6 10.20.1.7 "$size_b" & pb=$!

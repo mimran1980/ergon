@@ -135,7 +135,7 @@ DRY_RUN: the az calls a run makes, in order (nothing called):
   az network nsg create -g $group -n nsg --tags ${tags[*]}
   az network nsg rule create -g $group --nsg-name nsg -n ssh --priority 100 --source-address-prefixes <this machine>/32 --destination-port-ranges 22 --protocol Tcp --access Allow
   az vm create -g $group -n vm --size $size --image $image --admin-username $user --ssh-key-values <key> --nsg nsg --public-ip-sku Standard --os-disk-size-gb 64 --accelerated-networking true --assign-identity [system] --role Contributor --scope <group id> --custom-data <backstop cloud-init> --tags ${tags[*]}
-  az resource tag --ids <each resource in $group> --tags ${tags[*]} -i
+  az tag update --resource-id <each resource in $group> --operation merge --tags ${tags[*]}
   az vm auto-shutdown -g $group -n vm --time $off_hhmm
   az vm show -d -g $group -n vm --query publicIps -o tsv
   then over SSH: the backstop timer enabled and its identity able to read the group, vm.sh bootstrap,
@@ -289,7 +289,10 @@ az vm create -g "$group" -n vm --size "$size" --image "$image" --admin-username 
 ids=$(az resource list -g "$group" --query '[].id' -o tsv) && [[ -n $ids ]] ||
     die "cannot list the resources in $group to tag them"
 for id in $ids; do
-    az resource tag --ids "$id" --tags "${tags[@]}" -i -o none || die "cannot tag $id"
+    # the Tags API, not `az resource tag`: that one asks each provider for its
+    # newest API version, which a region may not serve yet (eastus refused
+    # publicIPAddresses at 2026-07-01)
+    az tag update --resource-id "$id" --operation merge --tags "${tags[@]}" -o none || die "cannot tag $id"
 done
 az vm auto-shutdown -g "$group" -n vm --time "$off_hhmm" -o none ||
     log "WARNING: no auto-shutdown: the VM's timer and this machine's teardown remain"

@@ -114,7 +114,7 @@ check "the VM: identity on the group alone" has "$work/ok/fake/az.log" "--assign
 check "the VM: Arm size, image, cloud-init, tags" has "$work/ok/fake/az.log" "--size Standard_D8ps_v6 --image Debian:debian-13:13-arm64:latest"
 check "the VM carries the backstop cloud-init" has "$work/ok/fake/az.log" "--custom-data $work/ok/out-dir/cloud-init.yaml --tags owner=ergon-lab run=20261024000000"
 check "SSH only from this machine" has "$work/ok/fake/az.log" "--source-address-prefixes 198.51.100.7/32"
-check "every resource tagged" test "$(grep -c 'az resource tag --ids /fake/.* --tags owner=ergon-lab run=20261024000000 -i' "$work/ok/fake/az.log")" -eq 3
+check "every resource tagged" test "$(grep -c 'az tag update --resource-id /fake/.* --operation merge --tags owner=ergon-lab run=20261024000000' "$work/ok/fake/az.log")" -eq 3
 check "auto-shutdown set" has "$work/ok/fake/az.log" "az vm auto-shutdown -g ergon-lab-nri-20261024000000 -n vm --time"
 ci=$work/ok/out-dir/cloud-init.yaml
 check "backstop: a timer at the deadline" grep -qE 'OnCalendar=20[0-9]{2}-[0-9]{2}-[0-9]{2} [0-9:]{8} UTC' "$ci"
