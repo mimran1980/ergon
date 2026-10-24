@@ -17,8 +17,8 @@
 //!   is delivered with [`Response::head_ascii`] false
 //!   ([`NonAsciiHead::Flag`], the default) or closes the connection
 //!   ([`NonAsciiHead::Reject`]). Bodies are not checked unless
-//!   [`HttpOptions::body_check`] asks: the WebSocket text check
-//!   ([`TextCheck`]), its result in [`RxMeta::text`].
+//!   [`HttpOptions::body_check`] asks: the text check WebSocket shares
+//!   ([`crate::text`], [`TextCheck`]), its result in [`RxMeta::text`].
 //! - One request in flight by default ([`HttpOptions::max_in_flight`] 1). A
 //!   second [`HttpConn::request`] before the response returns
 //!   [`Error::Busy`]: no hidden queue.

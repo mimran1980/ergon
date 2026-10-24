@@ -95,8 +95,8 @@ pub use ws_conn::{
     WsStats,
 };
 
-/// Receive metadata for one read, and for each WebSocket payload what its
-/// text check found.
+/// Receive metadata for one read, and for each WebSocket message or HTTP
+/// body what its text check found.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RxMeta {
     /// Kernel software receive timestamp (`CLOCK_REALTIME` ns), 0 if absent.
