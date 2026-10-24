@@ -169,13 +169,13 @@ func TestHelmChartRender(t *testing.T) {
 	if cfg.Shared.List() != "4" || cfg.DevRoot != "/host/dev" || cfg.SeccompProfilePath != DefaultSeccompProfilePath {
 		t.Fatalf("defaults did not reach the parser: %+v", cfg)
 	}
-	if !strings.Contains(def, "ghcr.io/mimran1980/ergon-shared-cpus:0.1.0") {
-		t.Fatal("default image must stay the published 0.1.0 tag")
+	if !strings.Contains(def, "ghcr.io/mimran1980/ergon-shared-cpus:0.1.1") {
+		t.Fatal("default image must be the chart appVersion tag 0.1.1")
 	}
 	if strings.Contains(def, "@sha256:") {
 		t.Fatal("default render must not pin a digest")
 	}
-	t.Log("chart 0.1.1 is not published; image tag stays 0.1.0")
+	t.Log("default image is the appVersion tag 0.1.1")
 	objs := objects(t, def)
 	if kinds(objs)["ValidatingAdmissionPolicy"] != 0 || kinds(objs)["PriorityClass"] != 0 {
 		t.Fatal("default admission.create=false must not render the policy or PriorityClasses")
@@ -249,7 +249,7 @@ hostContract:
 	if !strings.Contains(full, "ghcr.io/mimran1980/ergon-shared-cpus@"+digest) {
 		t.Fatal("digest render must be repository@digest")
 	}
-	if strings.Contains(full, "ergon-shared-cpus:ignored") || strings.Contains(full, "ergon-shared-cpus:0.1.0") {
+	if strings.Contains(full, "ergon-shared-cpus:ignored") || strings.Contains(full, "ergon-shared-cpus:0.1.1") {
 		t.Fatal("digest render must not keep a tag")
 	}
 	t.Log("repository@digest")
