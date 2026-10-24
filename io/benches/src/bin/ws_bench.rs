@@ -29,7 +29,9 @@ use std::sync::Arc;
 
 use ergon_io::tls::{self, RecordLayer};
 use ergon_io::ws::{self, OP_CONT, OP_TEXT};
-use ergon_io::{ConnId, Fragments, Handler, Interest, RxMeta, WsConn, WsHandler, WsOptions};
+use ergon_io::{
+    ConnId, Flow, Fragments, Handler, Interest, RxMeta, TextCheck, WsConn, WsHandler, WsOptions,
+};
 use hdrhistogram::Histogram;
 use io_bench::args::Args;
 use io_bench::clock::{counter_meta, pin_current_thread, rdtsc, thread_ctx_switches, ticks_per_us};
@@ -99,7 +101,7 @@ impl WsHandler for App {
     }
 
     #[inline]
-    fn on_fragments(&mut self, _: ConnId, _: u8, m: &Fragments<'_>, _: &RxMeta, _: u16) {
+    fn on_fragments(&mut self, _: ConnId, _: u8, m: &Fragments<'_>, _: &RxMeta, _: u16) -> Flow {
         self.delivered += 1;
         for s in m {
             self.sink = fold(self.sink, s);
@@ -107,6 +109,7 @@ impl WsHandler for App {
         if self.verify {
             self.got.push(m.iter().flatten().copied().collect());
         }
+        Flow::Continue
     }
 }
 
@@ -390,7 +393,7 @@ fn main() -> BoxResult<()> {
     let opts = WsOptions {
         buf_size: 4 << 20,
         max_message: 1 << 20,
-        validate_utf8: utf8,
+        text_check: if utf8 { TextCheck::Utf8 } else { TextCheck::None },
         ping_interval_ms: 0,
         ..WsOptions::default()
     };

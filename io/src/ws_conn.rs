@@ -5,8 +5,12 @@
 //! - [`WsConn`] parses server frames in place in the receive buffer: a
 //!   payload is a slice of the bytes the kernel wrote. The handler decides
 //!   from a message's first frame ([`WsHandler::on_message_start`]) whether
-//!   to keep it, skip it (no copy, no UTF-8 check), or take a fragmented
-//!   message as slices of the buffer ([`Fragments`]) instead of a copy.
+//!   to keep it, skip it (no copy, no text check), take a fragmented
+//!   message as slices of the buffer ([`Fragments`]) instead of a copy, or
+//!   stream its fragments one by one as they arrive
+//!   ([`WsHandler::on_fragment`]).
+//! - Text is checked as [`WsOptions::text_check`] says (none, UTF-8, or
+//!   ASCII), only on kept messages; [`RxMeta::text`] says what was found.
 //! - Close handshake both ways ([`WsConn::close`]; a server Close is answered
 //!   with its code). On a quiet connection, Pings and a Pong timeout; an idle
 //!   timeout. The timers run on the driver's deadline check (every 250 µs),
@@ -34,28 +38,34 @@ use crate::ws::{self, Close};
 
 /// Receives decoded WebSocket messages.
 ///
-/// Only [`WsHandler::on_message`] is required. The two other methods let a
-/// handler skip messages it does not want and take fragmented messages
-/// without a copy:
+/// Only [`WsHandler::on_message`] is required. The others let a handler
+/// skip messages it does not want and take fragmented messages without a
+/// copy:
 ///
 /// | first frame's [`Interest`] | unfragmented message | fragmented message |
 /// |---|---|---|
 /// | [`Interest::Keep`] (default) | `on_message`, a slice of the receive buffer | `on_message`, reassembled by copy ([`WsStats::frag_copy_bytes`]) |
-/// | [`Interest::Fragments`] | `on_message`, a slice of the receive buffer | `on_fragments`, one slice of the receive buffer per fragment |
+/// | [`Interest::Fragments`] | `on_message`, a slice of the receive buffer | `on_fragments`, one slice of the receive buffer per fragment, once all have arrived |
+/// | [`Interest::Stream`] | `on_message`, a slice of the receive buffer | `on_fragment`, each fragment as it arrives, never held |
 /// | [`Interest::Skip`] | dropped | every fragment dropped, never copied |
 ///
-/// [`WsOptions::validate_utf8`] checks a text message only once it is kept,
-/// just before delivery.
+/// [`WsOptions::text_check`] checks a text message only once it is kept,
+/// just before delivery; [`RxMeta::text`] carries the outcome.
+///
+/// Nothing is dropped by a default: a handler that asks for
+/// [`Interest::Fragments`] or [`Interest::Stream`] without implementing
+/// `on_fragments` or `on_fragment` gets the message joined by copy through
+/// `on_message` ([`WsStats::unhandled`]).
 pub trait WsHandler: Handler {
     /// One complete data message (`opcode` is [`ws::OP_TEXT`] or
     /// [`ws::OP_BINARY`]). `payload` borrows the receive buffer: it is valid only
     /// during the call. `pos` is its index among the messages decoded from the
-    /// same read.
+    /// same read. `meta.text` says what the text check found.
     fn on_message(&mut self, conn: ConnId, opcode: u8, payload: &[u8], meta: &RxMeta, pos: u16);
 
     /// Decides what to do with a data message from its first frame: `first`
     /// is that frame's payload (the whole message when `fin`), not yet
-    /// checked for UTF-8. Called once per data message, before any delivery.
+    /// checked as text. Called once per data message, before any delivery.
     /// The default keeps every message.
     #[inline]
     fn on_message_start(
@@ -74,9 +84,10 @@ pub trait WsHandler: Handler {
     /// [`Interest::Fragments`]: its fragments' payloads, in order, borrowed
     /// from the receive buffer and valid only during the call. When the
     /// message could not stay in the buffer it arrives as one copied slice
-    /// ([`WsStats::frag_fallbacks`]). A handler that returns
-    /// [`Interest::Fragments`] implements this; the default drops the
-    /// message.
+    /// ([`WsStats::frag_fallbacks`]). Return [`Flow::Continue`] (or
+    /// [`Flow::SkipRest`]) once taken. The default returns
+    /// [`Flow::Unhandled`]: the message is joined by copy and delivered to
+    /// [`WsHandler::on_message`].
     #[inline]
     fn on_fragments(
         &mut self,
@@ -85,8 +96,39 @@ pub trait WsHandler: Handler {
         message: &Fragments<'_>,
         meta: &RxMeta,
         pos: u16,
-    ) {
+    ) -> Flow {
         let _ = (conn, opcode, message, meta, pos);
+        Flow::Unhandled
+    }
+
+    /// One fragment of a message whose first frame returned
+    /// [`Interest::Stream`], as soon as it is complete: `part` borrows the
+    /// receive buffer (valid only during the call; no copy, nothing held),
+    /// `index` counts the message's fragments from 0, and `fin` marks the
+    /// last. `meta.text` is this fragment's text check (under
+    /// [`TextCheck::Utf8`] a fragment may start or end inside a character;
+    /// the check carries it across). Control frames between fragments are
+    /// still answered.
+    ///
+    /// Return [`Flow::Continue`] for the next fragment, or
+    /// [`Flow::SkipRest`] to drop the rest of the message: later fragments
+    /// are neither copied, checked nor delivered ([`WsStats::skipped`]). The
+    /// default returns [`Flow::Unhandled`] on fragment 0: the message is
+    /// copied as it arrives and delivered whole to
+    /// [`WsHandler::on_message`]. `Unhandled` on a later fragment, whose
+    /// predecessors are gone, closes the connection.
+    #[inline]
+    fn on_fragment(
+        &mut self,
+        conn: ConnId,
+        opcode: u8,
+        part: &[u8],
+        index: u32,
+        fin: bool,
+        meta: &RxMeta,
+    ) -> Flow {
+        let _ = (conn, opcode, part, index, fin, meta);
+        Flow::Unhandled
     }
 }
 
@@ -99,11 +141,81 @@ pub enum Interest {
     Keep,
     /// Like `Keep` for an unfragmented message. A fragmented message goes to
     /// [`WsHandler::on_fragments`] as its fragments' payloads in the receive
-    /// buffer, with no copy.
+    /// buffer, with no copy, once its last fragment has arrived.
     Fragments,
-    /// Drop the message: no copy, no UTF-8 check, no delivery
+    /// Like `Keep` for an unfragmented message. A fragmented message goes to
+    /// [`WsHandler::on_fragment`] one fragment at a time as each arrives:
+    /// no copy and nothing held, so a message of any size within
+    /// `max_message` costs no buffer space.
+    Stream,
+    /// Drop the message: no copy, no text check, no delivery
     /// ([`WsStats::skipped`]). Control frames inside it are still answered.
     Skip,
+}
+
+/// What a handler did with fragments it was given
+/// ([`WsHandler::on_fragment`], [`WsHandler::on_fragments`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Flow {
+    /// Taken. For a streamed message: send the next fragment.
+    Continue,
+    /// Taken, and drop the rest of this message: its later fragments are
+    /// neither copied, checked nor delivered. The same as `Continue` for
+    /// the last fragment and for `on_fragments`.
+    SkipRest,
+    /// Not taken (the trait's default): the connection joins the message by
+    /// copy and delivers it to [`WsHandler::on_message`]
+    /// ([`WsStats::unhandled`]).
+    Unhandled,
+}
+
+/// How kept text messages are checked before delivery
+/// ([`WsOptions::text_check`]). Binary messages are never checked.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TextCheck {
+    /// No check: [`RxMeta::text`] is [`TextStatus::Unchecked`].
+    #[default]
+    None,
+    /// UTF-8, as RFC 6455 requires: invalid text closes the connection. An
+    /// ASCII scan first, then `str::from_utf8` only if a byte is not ASCII.
+    Utf8,
+    /// One pass checking that every byte is below 0x80. An ASCII message is
+    /// delivered as [`TextStatus::Ascii`]: every byte is one character, so
+    /// any byte index is a character boundary. A message with another byte
+    /// is handled as the policy says ([`WsStats::non_ascii`]).
+    Ascii(NonAscii),
+}
+
+/// What [`TextCheck::Ascii`] does with a text message that has a byte at or
+/// above 0x80.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum NonAscii {
+    /// Close the connection ([`Error::Ws`]), as an invalid message would.
+    Close,
+    /// Drop the message ([`WsStats::skipped`]); the connection stays up.
+    Skip,
+    /// Deliver it as plain bytes, flagged [`TextStatus::NotAscii`]: a
+    /// stray byte never drops a feed.
+    #[default]
+    DeliverUnchecked,
+}
+
+/// What the text check found for a delivered payload ([`RxMeta::text`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TextStatus {
+    /// Not checked: binary, [`TextCheck::None`], or not yet checked
+    /// ([`WsHandler::on_message_start`]).
+    #[default]
+    Unchecked,
+    /// Valid UTF-8 ([`TextCheck::Utf8`]); a streamed fragment may start or
+    /// end inside a character.
+    Utf8,
+    /// Every byte is below 0x80 ([`TextCheck::Ascii`]): each byte is one
+    /// character, so a parser may index it without boundary checks.
+    Ascii,
+    /// At least one byte is at or above 0x80, delivered under
+    /// [`NonAscii::DeliverUnchecked`]: neither ASCII nor checked UTF-8.
+    NotAscii,
 }
 
 /// Most fragments a message keeps in the receive buffer; a message with
@@ -241,8 +353,17 @@ pub struct WsStats {
     /// copied: more than [`MAX_FRAGMENTS`] fragments, or more bytes than the
     /// buffer holds behind the window.
     pub frag_fallbacks: u64,
-    /// Data messages dropped by [`Interest::Skip`].
+    /// Data messages dropped: by [`Interest::Skip`], by [`Flow::SkipRest`]
+    /// before their last fragment, and under [`NonAscii::Skip`].
     pub skipped: u64,
+    /// Text messages with a byte at or above 0x80 under
+    /// [`TextCheck::Ascii`], whatever the policy did with them.
+    pub non_ascii: u64,
+    /// Fragmented messages joined by copy because the handler asked for
+    /// fragments but returned [`Flow::Unhandled`] (did not implement
+    /// `on_fragments` or `on_fragment`); their bytes are in
+    /// [`WsStats::frag_copy_bytes`].
+    pub unhandled: u64,
     /// Server Pings answered.
     pub pings: u64,
     /// Pings sent on a quiet connection ([`WsOptions::ping_interval_ms`]).
@@ -276,14 +397,15 @@ pub struct WsOptions {
     /// Longest wait for the other side of a close handshake, ms; then the
     /// socket is closed anyway. `0`: no wait.
     pub close_timeout_ms: u32,
-    /// Check that text messages are UTF-8 (RFC 6455 requires it); invalid
-    /// text closes the connection. Off by default: it reads every text byte
-    /// once more (`str::from_utf8`). Only kept messages are checked, after
+    /// How text messages are checked ([`TextCheck`]); [`RxMeta::text`]
+    /// says what was found. [`TextCheck::None`] by default: a check reads
+    /// every text byte once more. [`TextCheck::Utf8`] is what RFC 6455
+    /// requires; [`TextCheck::Ascii`] is one cheaper pass whose result lets
+    /// a parser index text freely. Only kept messages are checked, after
     /// [`WsHandler::on_message_start`] and before delivery: a message it
-    /// skips is never read, so invalid UTF-8 in a skipped message does not
+    /// skips is never read, so invalid text in a skipped message does not
     /// close the connection (a deliberate relaxation of RFC 6455 §8.1).
-    /// Leave it off for a parser that checks text itself.
-    pub validate_utf8: bool,
+    pub text_check: TextCheck,
     /// Subprotocols to offer (`Sec-WebSocket-Protocol`), most preferred
     /// first. [`WsConn::protocol`] is the server's pick.
     pub protocols: Vec<String>,
@@ -298,7 +420,7 @@ impl Default for WsOptions {
             pong_timeout_ms: 5_000,
             idle_timeout_ms: 0,
             close_timeout_ms: 1_000,
-            validate_utf8: false,
+            text_check: TextCheck::None,
             protocols: Vec::new(),
         }
     }
@@ -341,7 +463,13 @@ pub struct WsConn {
     closing: bool,
     /// The server's Close arrived: further input is dropped.
     discard: bool,
-    validate_utf8: bool,
+    text_check: TextCheck,
+    /// The streamed message's next fragment index ([`FragMode::Stream`]).
+    frag_index: u32,
+    /// UTF-8 carried across a streamed message's fragments, and whether
+    /// one of its fragments was not ASCII.
+    carry: Utf8Carry,
+    stream_non_ascii: bool,
     /// Largest single frame: the configured message limit, capped by the
     /// buffer.
     frame_limit: usize,
@@ -352,6 +480,8 @@ pub struct WsConn {
     frag_copy_bytes: u64,
     frag_fallbacks: u64,
     skipped: u64,
+    non_ascii: u64,
+    unhandled: u64,
     pings: u64,
     pongs: u64,
     /// Frames queued by the connection itself ([`WsStats::auto_frames`]).
@@ -370,7 +500,9 @@ enum FragMode {
     /// [`Interest::Fragments`] that could not be held: copied into `frag`,
     /// delivered by `on_fragments` as one slice.
     Copied,
-    /// [`Interest::Skip`]: dropped.
+    /// [`Interest::Stream`]: each fragment delivered as it arrives.
+    Stream,
+    /// [`Interest::Skip`], [`Flow::SkipRest`] or [`NonAscii::Skip`]: dropped.
     Skip,
 }
 
@@ -444,7 +576,10 @@ impl WsConn {
             hold_limit: max_frame(buf_len),
             closing: false,
             discard: false,
-            validate_utf8: opts.validate_utf8,
+            text_check: opts.text_check,
+            frag_index: 0,
+            carry: Utf8Carry::default(),
+            stream_non_ascii: false,
             frame_limit: max_message.min(max_frame(buf_len)),
             max_message,
             rng,
@@ -452,6 +587,8 @@ impl WsConn {
             frag_copy_bytes: 0,
             frag_fallbacks: 0,
             skipped: 0,
+            non_ascii: 0,
+            unhandled: 0,
             pings: 0,
             pongs: 0,
             auto_frames: 0,
@@ -607,6 +744,8 @@ impl WsConn {
             frag_copy_bytes: self.frag_copy_bytes,
             frag_fallbacks: self.frag_fallbacks,
             skipped: self.skipped,
+            non_ascii: self.non_ascii,
+            unhandled: self.unhandled,
             pings: self.pings,
             pings_sent: self.timers.pings_sent,
             pongs: self.pongs,
@@ -712,11 +851,15 @@ impl WsConn {
                     if handler.on_message_start(id, h.opcode, payload, true, meta) == Interest::Skip
                     {
                         self.skipped += 1;
-                    } else {
-                        if self.validate_utf8 && h.opcode == ws::OP_TEXT {
-                            check_utf8(payload)?;
-                        }
-                        handler.on_message(id, h.opcode, payload, meta, pos16(pos));
+                    } else if let Some(text) = check_kept(
+                        self.text_check,
+                        h.opcode,
+                        [payload],
+                        &mut self.non_ascii,
+                        &mut self.skipped,
+                    )? {
+                        let m = RxMeta { text, ..*meta };
+                        handler.on_message(id, h.opcode, payload, &m, pos16(pos));
                         pos += 1;
                         count += 1;
                         self.messages += 1;
@@ -724,7 +867,7 @@ impl WsConn {
                 }
                 ws::OP_TEXT | ws::OP_BINARY => self.first_fragment(id, &h, meta, handler)?,
                 ws::OP_CONT => {
-                    if self.continuation(&h)? {
+                    if self.continuation(id, &h, meta, handler)? {
                         self.stream.consume(h.frame_len());
                         if self.end_message(id, meta, handler, pos16(pos))? {
                             pos += 1;
@@ -794,6 +937,13 @@ impl WsConn {
                 self.nparts = 1;
                 self.stream.hold();
             }
+            Interest::Stream => {
+                self.frag_mode = FragMode::Stream;
+                self.frag_index = 0;
+                self.carry = Utf8Carry::default();
+                self.stream_non_ascii = false;
+                self.stream_fragment(id, h, meta, handler)?;
+            }
         }
         Ok(())
     }
@@ -801,7 +951,13 @@ impl WsConn {
     /// A continuation frame (complete in the window), taken as the first
     /// frame decided. `true` when it ends the message.
     #[inline]
-    fn continuation(&mut self, h: &ws::FrameHeader) -> Result<bool> {
+    fn continuation<H: WsHandler>(
+        &mut self,
+        id: ConnId,
+        h: &ws::FrameHeader,
+        meta: &RxMeta,
+        handler: &mut H,
+    ) -> Result<bool> {
         if self.frag_op == 0 {
             return Err(Error::Ws("continuation without a first fragment"));
         }
@@ -828,8 +984,83 @@ impl WsConn {
                 *p = part;
                 self.nparts += 1;
             }
+            FragMode::Stream => self.stream_fragment(id, h, meta, handler)?,
         }
         Ok(h.fin)
+    }
+
+    /// One fragment of a streamed message (complete in the window): checked
+    /// as text with the state carried from the previous fragment, then
+    /// handed over in place.
+    #[inline]
+    fn stream_fragment<H: WsHandler>(
+        &mut self,
+        id: ConnId,
+        h: &ws::FrameHeader,
+        meta: &RxMeta,
+        handler: &mut H,
+    ) -> Result<()> {
+        let op = self.frag_op;
+        let payload = &self.stream.window()[h.header_len..h.frame_len()];
+        let text = if op == ws::OP_TEXT {
+            match self.text_check {
+                TextCheck::None => TextStatus::Unchecked,
+                TextCheck::Utf8 => {
+                    self.carry.push(payload)?;
+                    if h.fin {
+                        self.carry.finish()?;
+                    }
+                    TextStatus::Utf8
+                }
+                TextCheck::Ascii(policy) => {
+                    if high_bits(payload) == 0 {
+                        TextStatus::Ascii
+                    } else {
+                        if !self.stream_non_ascii {
+                            self.stream_non_ascii = true;
+                            self.non_ascii += 1;
+                        }
+                        match policy {
+                            NonAscii::Close => return Err(not_ascii()),
+                            NonAscii::Skip => {
+                                // The rest is dropped; the message ends
+                                // without a `fin` fragment.
+                                self.frag_mode = FragMode::Skip;
+                                return Ok(());
+                            }
+                            NonAscii::DeliverUnchecked => TextStatus::NotAscii,
+                        }
+                    }
+                }
+            }
+        } else {
+            TextStatus::Unchecked
+        };
+        let m = RxMeta { text, ..*meta };
+        let index = self.frag_index;
+        match handler.on_fragment(id, op, payload, index, h.fin, &m) {
+            Flow::Continue => {}
+            Flow::SkipRest => {
+                if !h.fin {
+                    self.frag_mode = FragMode::Skip;
+                }
+            }
+            Flow::Unhandled if index == 0 => {
+                // The default: join by copy, deliver whole, checked then.
+                self.frag_mode = FragMode::Copy;
+                self.frag.clear();
+                self.frag.extend_from_slice(payload);
+                self.frag_copy_bytes += payload.len() as u64;
+                self.unhandled += 1;
+            }
+            Flow::Unhandled => {
+                return Err(Error::Ws(
+                    "on_fragment returned Unhandled after the first fragment",
+                ));
+            }
+        }
+        self.frag_index = index.saturating_add(1);
+        Ok(())
     }
 
     /// The last fragment is in: deliver the message as its first frame
@@ -844,43 +1075,78 @@ impl WsConn {
     ) -> Result<bool> {
         let op = self.frag_op;
         self.frag_op = 0;
-        let check = self.validate_utf8 && op == ws::OP_TEXT;
         match self.frag_mode {
             FragMode::Skip => {
                 self.skipped += 1;
                 return Ok(false);
             }
-            FragMode::Copy => {
-                if check {
-                    check_utf8(&self.frag)?;
-                }
-                handler.on_message(id, op, &self.frag, meta, pos);
-            }
-            FragMode::Copied => {
-                if check {
-                    check_utf8(&self.frag)?;
-                }
-                let one = [Part {
-                    start: 0,
-                    len: self.frag.len(),
-                }];
-                let m = Fragments {
-                    base: &self.frag,
-                    parts: &one,
-                    len: self.frag.len(),
+            FragMode::Stream => {}
+            FragMode::Copy | FragMode::Copied => {
+                let Some(text) = check_kept(
+                    self.text_check,
+                    op,
+                    [self.frag.as_slice()],
+                    &mut self.non_ascii,
+                    &mut self.skipped,
+                )?
+                else {
+                    return Ok(false);
                 };
-                handler.on_fragments(id, op, &m, meta, pos);
+                let mm = RxMeta { text, ..*meta };
+                if self.frag_mode == FragMode::Copy {
+                    handler.on_message(id, op, &self.frag, &mm, pos);
+                } else {
+                    // Asked for fragments: one slice, else `on_message`.
+                    let one = [Part {
+                        start: 0,
+                        len: self.frag.len(),
+                    }];
+                    let m = Fragments {
+                        base: &self.frag,
+                        parts: &one,
+                        len: self.frag.len(),
+                    };
+                    if handler.on_fragments(id, op, &m, &mm, pos) == Flow::Unhandled {
+                        self.unhandled += 1;
+                        handler.on_message(id, op, &self.frag, &mm, pos);
+                    }
+                }
             }
             FragMode::Hold => {
+                let held = self.stream.held();
+                let parts = &self.parts[..self.nparts];
                 let m = Fragments {
-                    base: self.stream.held(),
-                    parts: &self.parts[..self.nparts],
+                    base: held,
+                    parts,
                     len: self.frag_len,
                 };
-                if check {
-                    check_utf8_parts(&m)?;
+                let checked = check_kept(
+                    self.text_check,
+                    op,
+                    m.iter(),
+                    &mut self.non_ascii,
+                    &mut self.skipped,
+                );
+                let text = match checked {
+                    Ok(Some(text)) => text,
+                    Ok(None) => {
+                        self.nparts = 0;
+                        self.stream.release();
+                        return Ok(false);
+                    }
+                    Err(e) => return Err(e),
+                };
+                let mm = RxMeta { text, ..*meta };
+                if handler.on_fragments(id, op, &m, &mm, pos) == Flow::Unhandled {
+                    // Not taken: join by copy and deliver whole.
+                    self.frag.clear();
+                    for p in parts {
+                        self.frag.extend_from_slice(&held[p.start..p.start + p.len]);
+                    }
+                    self.frag_copy_bytes += self.frag.len() as u64;
+                    self.unhandled += 1;
+                    handler.on_message(id, op, &self.frag, &mm, pos);
                 }
-                handler.on_fragments(id, op, &m, meta, pos);
                 self.nparts = 0;
                 self.stream.release();
             }
@@ -910,6 +1176,7 @@ impl WsConn {
     #[cold]
     fn drop_window(&mut self) {
         self.frag_op = 0;
+        self.carry = Utf8Carry::default();
         self.nparts = 0;
         self.stream.release();
         let n = self.stream.window().len();
@@ -1137,48 +1404,126 @@ const fn not_utf8() -> Error {
     Error::Ws("text message is not UTF-8")
 }
 
+#[cold]
+const fn not_ascii() -> Error {
+    Error::Ws("text message is not ASCII")
+}
+
+/// The text check of a kept message (its payload as `parts`): the status
+/// to deliver it with, or `None` to drop it ([`NonAscii::Skip`]). Counts
+/// non-ASCII and dropped messages.
+///
+/// # Errors
+/// Invalid UTF-8 under [`TextCheck::Utf8`]; a non-ASCII byte under
+/// [`NonAscii::Close`].
+#[inline]
+fn check_kept<'a>(
+    check: TextCheck,
+    op: u8,
+    parts: impl IntoIterator<Item = &'a [u8]> + Clone,
+    non_ascii: &mut u64,
+    skipped: &mut u64,
+) -> Result<Option<TextStatus>> {
+    if op != ws::OP_TEXT {
+        return Ok(Some(TextStatus::Unchecked));
+    }
+    match check {
+        TextCheck::None => Ok(Some(TextStatus::Unchecked)),
+        TextCheck::Utf8 => {
+            check_utf8_parts(parts)?;
+            Ok(Some(TextStatus::Utf8))
+        }
+        TextCheck::Ascii(policy) => {
+            if parts.into_iter().fold(0, |acc, s| acc | high_bits(s)) == 0 {
+                return Ok(Some(TextStatus::Ascii));
+            }
+            *non_ascii += 1;
+            match policy {
+                NonAscii::Close => Err(not_ascii()),
+                NonAscii::Skip => {
+                    *skipped += 1;
+                    Ok(None)
+                }
+                NonAscii::DeliverUnchecked => Ok(Some(TextStatus::NotAscii)),
+            }
+        }
+    }
+}
+
 /// [`check_utf8`] over a message's fragments without joining them: a
 /// character cut between two fragments is completed from the next.
 #[inline]
-fn check_utf8_parts(m: &Fragments<'_>) -> Result<()> {
+fn check_utf8_parts<'a>(parts: impl IntoIterator<Item = &'a [u8]> + Clone) -> Result<()> {
     // Most feed text is ASCII: one pass over every fragment, no per-call
     // setup (`is_ascii` per short fragment costs more than the bytes).
-    if m.iter().fold(0, |acc, s| acc | high_bits(s)) == 0 {
+    if parts
+        .clone()
+        .into_iter()
+        .fold(0, |acc, s| acc | high_bits(s))
+        == 0
+    {
         return Ok(());
     }
-    let mut carry = [0u8; 4];
-    let mut have = 0usize;
-    for mut s in m {
+    let mut carry = Utf8Carry::default();
+    for s in parts {
+        carry.push(s)?;
+    }
+    carry.finish()
+}
+
+/// UTF-8 checked piece by piece: at most 3 bytes of a character cut by the
+/// end of one piece are carried to the next.
+#[derive(Debug, Clone, Copy, Default)]
+struct Utf8Carry {
+    buf: [u8; 4],
+    have: usize,
+}
+
+impl Utf8Carry {
+    /// Checks the next piece.
+    ///
+    /// # Errors
+    /// The bytes so far are not a prefix of valid UTF-8.
+    #[inline]
+    fn push(&mut self, mut s: &[u8]) -> Result<()> {
         // Most feed text is ASCII: a word-at-a-time scan, no state.
-        if have == 0 && s.is_ascii() {
-            continue;
+        if self.have == 0 && s.is_ascii() {
+            return Ok(());
         }
-        if have > 0 {
-            let need = utf8_width(carry[0]);
-            let take = need.saturating_sub(have).min(s.len());
-            carry[have..have + take].copy_from_slice(&s[..take]);
-            have += take;
+        if self.have > 0 {
+            let need = utf8_width(self.buf[0]);
+            let take = need.saturating_sub(self.have).min(s.len());
+            self.buf[self.have..self.have + take].copy_from_slice(&s[..take]);
+            self.have += take;
             s = &s[take..];
-            if have < need {
-                continue;
+            if self.have < need {
+                return Ok(());
             }
-            check_utf8(&carry[..need])?;
-            have = 0;
+            check_utf8(&self.buf[..need])?;
+            self.have = 0;
         }
         if let Err(e) = std::str::from_utf8(s) {
-            // A character cut by the end of this fragment: carry its start.
+            // A character cut by the end of this piece: carry its start.
             if e.error_len().is_some() {
                 return Err(not_utf8());
             }
             let rest = &s[e.valid_up_to()..];
-            carry[..rest.len()].copy_from_slice(rest);
-            have = rest.len();
+            self.buf[..rest.len()].copy_from_slice(rest);
+            self.have = rest.len();
         }
+        Ok(())
     }
-    if have > 0 {
-        return Err(not_utf8());
+
+    /// The message ended: no character may be left open.
+    ///
+    /// # Errors
+    /// A character cut short at the end.
+    #[inline]
+    const fn finish(&mut self) -> Result<()> {
+        let open = self.have > 0;
+        self.have = 0;
+        if open { Err(not_utf8()) } else { Ok(()) }
     }
-    Ok(())
 }
 
 /// The top bit of every byte of `s`, OR-ed together: 0 when `s` is ASCII.

@@ -10,7 +10,9 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use ergon_io::ws::{OP_BINARY, OP_CONT, OP_PING, OP_TEXT};
-use ergon_io::{ConnId, Fragments, Handler, Interest, RxMeta, WsHandler, WsOptions};
+use ergon_io::{
+    ConnId, Flow, Fragments, Handler, Interest, NonAscii, RxMeta, TextCheck, WsHandler, WsOptions,
+};
 use support::{Lab, R, frame};
 use ws_rig::{WsRig, fragmented};
 
@@ -69,9 +71,10 @@ impl WsHandler for Sum {
         }
     }
 
-    fn on_fragments(&mut self, _: ConnId, _: u8, m: &Fragments<'_>, _: &RxMeta, _: u16) {
+    fn on_fragments(&mut self, _: ConnId, _: u8, m: &Fragments<'_>, _: &RxMeta, _: u16) -> Flow {
         self.messages += 1;
         self.bytes += m.iter().map(|s| s.len() as u64).sum::<u64>();
+        Flow::Continue
     }
 }
 
@@ -99,7 +102,7 @@ fn the_steady_state_receive_path_does_not_allocate() -> R {
     let lab = Lab::new()?;
     let o = WsOptions {
         ping_interval_ms: 0,
-        validate_utf8: true,
+        text_check: TextCheck::Utf8,
         ..WsOptions::default()
     };
     let mut r = WsRig::new(&lab, &o)?;
@@ -132,5 +135,93 @@ fn the_steady_state_receive_path_does_not_allocate() -> R {
         (s.skipped, s.frag_fallbacks, s.pings),
         (2 * rounds as u64, 0, rounds as u64)
     );
+    Ok(())
+}
+
+/// Streams every fragmented message and keeps the rest; sums without
+/// allocating.
+#[derive(Default)]
+struct StreamSum {
+    fragments: u64,
+    messages: u64,
+    bytes: u64,
+}
+
+impl Handler for StreamSum {}
+
+impl WsHandler for StreamSum {
+    fn on_message(&mut self, _: ConnId, _: u8, payload: &[u8], _: &RxMeta, _: u16) {
+        self.messages += 1;
+        self.bytes += payload.len() as u64;
+    }
+
+    fn on_message_start(&mut self, _: ConnId, _: u8, _: &[u8], _: bool, _: &RxMeta) -> Interest {
+        Interest::Stream
+    }
+
+    fn on_fragment(
+        &mut self,
+        _: ConnId,
+        _: u8,
+        part: &[u8],
+        _: u32,
+        fin: bool,
+        _: &RxMeta,
+    ) -> Flow {
+        self.fragments += 1;
+        self.messages += u64::from(fin);
+        self.bytes += part.len() as u64;
+        Flow::Continue
+    }
+}
+
+/// Streamed fragments under every text check, ASCII and not, with a Ping
+/// inside: no allocation once warm.
+#[test]
+fn streaming_and_every_text_check_do_not_allocate() -> R {
+    let lab = Lab::new()?;
+    let checks = [
+        TextCheck::None,
+        TextCheck::Utf8,
+        TextCheck::Ascii(NonAscii::DeliverUnchecked),
+        TextCheck::Ascii(NonAscii::Skip),
+    ];
+    for check in checks {
+        let o = WsOptions {
+            ping_interval_ms: 0,
+            text_check: check,
+            ..WsOptions::default()
+        };
+        let mut r = WsRig::new(&lab, &o)?;
+        let (stream, cuts) = round()?;
+        let mut mixed = stream.clone();
+        let text = "prix 3€ ".repeat(40);
+        mixed.extend_from_slice(&fragmented(OP_TEXT, text.as_bytes(), 5)?);
+        let rounds = 100;
+        let mut reads = Vec::new();
+        for _ in 0..rounds {
+            reads.extend(r.records(&mixed, &cuts)?);
+        }
+        let mut h = StreamSum::default();
+        let warm = reads.len() / rounds;
+        for rec in &reads[..warm] {
+            r.feed(rec, &mut h)?;
+        }
+        r.conn.clear_tx();
+        let before = ALLOCS.load(Ordering::Relaxed);
+        for (i, rec) in reads[warm..].iter().enumerate() {
+            r.feed(rec, &mut h)?;
+            if i % warm == 0 {
+                r.conn.clear_tx();
+            }
+        }
+        let after = ALLOCS.load(Ordering::Relaxed);
+        assert_eq!(
+            after - before,
+            0,
+            "{check:?}: allocations on the receive path"
+        );
+        assert!(h.fragments > 0 && h.messages > 0, "{check:?}");
+    }
     Ok(())
 }

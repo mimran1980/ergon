@@ -84,10 +84,12 @@ pub use net::Target;
 pub use outcome::{Now, Sent, Verdict};
 pub use reconnect::{Reconnect, Retry};
 pub use ws_conn::{
-    FragmentIter, Fragments, Interest, MAX_FRAGMENTS, WsConn, WsDial, WsHandler, WsOptions, WsStats,
+    Flow, FragmentIter, Fragments, Interest, MAX_FRAGMENTS, NonAscii, TextCheck, TextStatus,
+    WsConn, WsDial, WsHandler, WsOptions, WsStats,
 };
 
-/// Receive metadata for one read.
+/// Receive metadata for one read, and for each WebSocket payload what its
+/// text check found.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RxMeta {
     /// Kernel software receive timestamp (`CLOCK_REALTIME` ns), 0 if absent.
@@ -96,4 +98,8 @@ pub struct RxMeta {
     pub rx_hw_ns: i64,
     /// Sequence number of this read within its driver.
     pub read_seq: u64,
+    /// WebSocket: what [`WsOptions::text_check`] found for the payload
+    /// being delivered ([`TextStatus::Ascii`]: every byte is one
+    /// character). [`TextStatus::Unchecked`] everywhere else.
+    pub text: TextStatus,
 }
