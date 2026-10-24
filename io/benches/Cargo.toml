@@ -13,6 +13,7 @@ ergon-io = { path = ".." }
 rustls = { version = "0.23.46", default-features = false, features = ["std", "ring"] }
 libc = "0.2"
 rcgen = "0.14"
+hdrhistogram = "7"
 aws-lc-rs = { version = "1.18", optional = true }
 openssl = { version = "0.10", optional = true }
 

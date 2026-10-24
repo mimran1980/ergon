@@ -1124,8 +1124,13 @@ const fn bad_send() -> Error {
     Error::Ws("send_frame sends text, binary, or ping and pong up to 125 bytes; close with close()")
 }
 
+/// ASCII first (a word-at-a-time scan, the common case for feed text), then
+/// `str::from_utf8`.
 #[inline]
 fn check_utf8(text: &[u8]) -> Result<()> {
+    if text.is_ascii() {
+        return Ok(());
+    }
     std::str::from_utf8(text)
         .map(|_| ())
         .map_err(|_| not_utf8())
@@ -1138,10 +1143,15 @@ const fn not_utf8() -> Error {
 
 /// [`check_utf8`] over a message's fragments without joining them: a
 /// character cut between two fragments is completed from the next.
+#[inline]
 fn check_utf8_parts(m: &Fragments<'_>) -> Result<()> {
     let mut carry = [0u8; 4];
     let mut have = 0usize;
     for mut s in m {
+        // Most feed text is ASCII: a word-at-a-time scan, no state.
+        if have == 0 && s.is_ascii() {
+            continue;
+        }
         if have > 0 {
             let need = utf8_width(carry[0]);
             let take = need.saturating_sub(have).min(s.len());
