@@ -416,7 +416,13 @@ cluster)
     done
     if ((loaded == 0)); then
         say "kind load failed twice; the node's containerd journal:"
-        docker exec ergon-lab-control-plane journalctl -u containerd --no-pager -n 80 2>&1 | sed 's/^/  containerd| /' || true
+        # the first failure, not the restart loop it leaves behind
+        docker exec ergon-lab-control-plane journalctl -u containerd --no-pager 2>&1 |
+            grep -m3 -B25 -A5 -iE 'level=(fatal|error)|panic|SIGSEGV|signal: killed|Main process exited' |
+            head -120 | sed 's/^/  containerd-first| /' || true
+        docker exec ergon-lab-control-plane journalctl --no-pager -n 40 -u kubelet 2>&1 | sed 's/^/  kubelet| /' || true
+        sudo dmesg 2>&1 | grep -iE 'oom|killed process|segfault|cgroup|containerd' | tail -20 | sed 's/^/  vm-dmesg| /' || true
+        docker exec ergon-lab-control-plane journalctl -u containerd --no-pager -n 30 2>&1 | sed 's/^/  containerd| /' || true
         docker exec ergon-lab-control-plane systemctl status containerd --no-pager 2>&1 | sed 's/^/  containerd| /' || true
         exit 1
     fi
