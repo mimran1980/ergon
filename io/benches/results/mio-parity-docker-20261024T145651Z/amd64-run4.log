@@ -1,0 +1,41 @@
+Linux 7.0.14-linuxkit x86_64
+10
+
+running 9 tests
+test linux::epoll_spin_waits_with_a_zero_timeout_and_reads_once_per_ready_socket ... ergon-io info: T3 info: transparent hugepages are `always`: the kernel thread khugepaged scans and collapses pages in the background, and its work can run on a busy-spinning thread's CPU (not measured with archived data); ergon-io's own benchmarks ran under `madvise`. Fix: `echo never > /sys/kernel/mm/transparent_hugepage/enabled`, or boot with `transparent_hugepage=never` (evidence: Linux Documentation/admin-guide/mm/transhuge.rst (khugepaged, enabled: always/madvise/never); not measured with archived data)
+epoll-spin N = 1: 2000 round trips, 472852 polls, 472852 epoll_wait, 2000 recvmsg (0 EAGAIN)
+epoll-spin N = 1: 20000 idle polls in 10.635542ms, 20000 epoll_wait, 0 recvmsg
+epoll-spin N = 16: 2000 round trips, 480941 polls, 480941 epoll_wait, 2000 recvmsg (0 EAGAIN)
+epoll-spin N = 16: 20000 idle polls in 6.636167ms, 20000 epoll_wait, 0 recvmsg
+ok
+test linux::mio_reads_twice_per_event_data_then_would_block ... mio N = 1: 2000 round trips, 4000 reads (2000 WouldBlock): 2.0x epoll-spin's
+mio N = 16: 2000 round trips, 4000 reads (2000 WouldBlock): 2.0x epoll-spin's
+ok
+test linux::round_trip_parity_one_socket ... mio parity, N = 1: 7 pairs; per pair and arm 2000 warm-up + 10000 timed round trips in 10 alternating blocks; 64 B at 10000/s, client CPU 9, echo CPU 8; µs p50 / p99 / max
+pair 0 (epoll-spin first): epoll-spin 9.88 / 165.08 / 4010.5  mio 10.12 / 142.67 / 2864.7  mio - epoll-spin p50, paired +0.27 (pooled +0.25, tolerance 1.00)
+pair 1 (mio first): epoll-spin 9.83 / 115.25 / 3296.4  mio 10.21 / 161.96 / 2410.8  mio - epoll-spin p50, paired +0.31 (pooled +0.38, tolerance 1.00)
+pair 2 (epoll-spin first): epoll-spin 10.62 / 390.92 / 17898.2  mio 10.96 / 718.29 / 12126.4  mio - epoll-spin p50, paired +0.21 (pooled +0.33, tolerance 1.08)
+pair 3 (mio first): epoll-spin 9.67 / 96.12 / 5545.8  mio 9.83 / 105.96 / 1034.5  mio - epoll-spin p50, paired +0.21 (pooled +0.17, tolerance 1.00)
+pair 4 (epoll-spin first): epoll-spin 9.83 / 103.92 / 3511.2  mio 9.92 / 93.83 / 1289.9  mio - epoll-spin p50, paired +0.19 (pooled +0.08, tolerance 1.00)
+pair 5 (mio first): epoll-spin 9.17 / 57.29 / 302.0  mio 9.71 / 70.50 / 611.3  mio - epoll-spin p50, paired +0.69 (pooled +0.54, tolerance 1.00)
+pair 6 (epoll-spin first): epoll-spin 9.42 / 65.04 / 872.5  mio 9.42 / 79.17 / 518.8  mio - epoll-spin p50, paired +0.00 (pooled +0.00, tolerance 1.00)
+N = 1: Level { epoll_ahead: 0, mio_ahead: 0 }
+ok
+test linux::round_trip_parity_sixteen_sockets ... mio parity, N = 16: 7 pairs; per pair and arm 2000 warm-up + 10000 timed round trips in 10 alternating blocks; 64 B at 10000/s, client CPU 9, echo CPU 8; µs p50 / p99 / max
+pair 0 (epoll-spin first): epoll-spin 6.08 / 52.00 / 544.5  mio 9.12 / 58.46 / 443.6  mio - epoll-spin p50, paired +1.48 (pooled +3.04, tolerance 1.00)
+pair 1 (mio first): epoll-spin 9.25 / 79.17 / 720.3  mio 6.00 / 59.46 / 350.7  mio - epoll-spin p50, paired -0.08 (pooled -3.25, tolerance 1.00)
+pair 2 (epoll-spin first): epoll-spin 5.58 / 55.79 / 637.4  mio 6.42 / 59.92 / 493.7  mio - epoll-spin p50, paired +0.75 (pooled +0.83, tolerance 1.00)
+pair 3 (mio first): epoll-spin 5.71 / 75.83 / 17392.7  mio 9.46 / 70.62 / 870.7  mio - epoll-spin p50, paired +0.48 (pooled +3.75, tolerance 1.00)
+pair 4 (epoll-spin first): epoll-spin 9.79 / 84.25 / 939.8  mio 9.83 / 73.54 / 412.9  mio - epoll-spin p50, paired -0.29 (pooled +0.04, tolerance 1.00)
+pair 5 (mio first): epoll-spin 9.75 / 100.62 / 1680.9  mio 10.00 / 103.96 / 776.5  mio - epoll-spin p50, paired +0.31 (pooled +0.25, tolerance 1.00)
+pair 6 (epoll-spin first): epoll-spin 10.08 / 120.58 / 3076.0  mio 10.04 / 147.79 / 19115.0  mio - epoll-spin p50, paired +0.06 (pooled -0.04, tolerance 1.01)
+N = 16: Level { epoll_ahead: 1, mio_ahead: 0 }
+ok
+test rule::tests::five_of_seven_or_wins_inside_the_tolerance_pass ... ok
+test rule::tests::percentiles_are_nearest_rank_over_the_sorted_round ... ok
+test rule::tests::six_of_seven_beyond_the_tolerance_fails_either_way ... ok
+test rule::tests::the_pair_difference_is_the_median_of_its_sub_pairs ... ok
+test rule::tests::tolerance_is_the_floor_or_the_percentage_whichever_is_larger ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 35.36s
+
