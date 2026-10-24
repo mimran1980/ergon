@@ -25,13 +25,14 @@
 # checkout, uploaded as a tarball: uncommitted changes included), e2e (a
 # hot pod admitted and started, its spin on its isolated CPU, its helpers
 # on the shared CPU, an exec-probe hot pod denied), scale (how much of two
-# shared CPUs a pod's helpers get: results/scale.md), bench ($LAB_REPS reps
+# shared CPUs a pod's helpers get at 100 and 1001 millicpus, idle, and when
+# pods share one: results/scale.md), bench ($LAB_REPS reps
 # of each of $LAB_ARMS, then one traced rep: results/trace-cpu<N>.md) and
 # report. Results go to target/nri-lab/<stamp>/ (report.md first). The
 # group is deleted on every exit, then checked gone.
 #
-#   LAB_REGION (eastus) LAB_SIZE (Standard_D8ps_v6; Arm sizes only, 6 vCPUs
-#   or more) LAB_IMAGE (Debian:debian-13:13-arm64:latest; or
+#   LAB_REGION (eastus) LAB_SIZE (Standard_D8ps_v6; Arm sizes only, 7 vCPUs
+#   or more, so 8) LAB_IMAGE (Debian:debian-13:13-arm64:latest; or
 #   Canonical:ubuntu-24_04-lts:server-arm64:latest) LAB_GROUP
 #   (ergon-lab-nri-<stamp>) LAB_REPS (5) LAB_SECONDS (60: spin seconds per run)
 #   LAB_DELAY (5: helper seconds before each spin) LAB_UDP_RATE (20000
@@ -104,8 +105,8 @@ die() { log "ERROR: $*"; exit 1; }
 
 vcpus=$(lab_size_vcpus "$size") || die "LAB_SIZE $size: not an Azure Arm (Cobalt) size such as Standard_D8ps_v6"
 read -r irq_cpu shared_cpus exclusive_cpus reserved_cpus <<<"$(lab_layout "$vcpus" 1)" ||
-    die "LAB_SIZE $size: $vcpus vCPUs; the lab needs 6 or more (IRQ, two shared, three exclusive)"
-[[ -n $irq_cpu ]] || die "LAB_SIZE $size: $vcpus vCPUs; the lab needs 6 or more (IRQ, two shared, three exclusive)"
+    die "LAB_SIZE $size: $vcpus vCPUs; the lab needs 7 or more (IRQ, two shared, four exclusive)"
+[[ -n $irq_cpu ]] || die "LAB_SIZE $size: $vcpus vCPUs; the lab needs 7 or more (IRQ, two shared, four exclusive)"
 read -r _ scale_shared_cpus _ _ <<<"$(lab_layout "$vcpus" 2)"
 for v in reps seconds delay udp_rate max_hours scale_seconds scale_threads; do
     [[ ${!v} =~ ^[0-9]+$ ]] || die "LAB_${v^^} is a whole number, not ${!v}"
@@ -160,7 +161,7 @@ else
     trace_said="off (LAB_TRACE=0)"
 fi
 if ((scale)); then
-    scale_said="sharedCpus $scale_shared_cpus: burst, idle, contention ($scale_threads helper threads a pod, ${scale_seconds} s each), accounting: results/scale.md"
+    scale_said="sharedCpus $scale_shared_cpus: bursts at 100 and 1001 millicpus, idle, contention ($scale_threads helper threads a pod, ${scale_seconds} s each), accounting: results/scale.md"
 else
     scale_said="off (LAB_SCALE=0)"
 fi

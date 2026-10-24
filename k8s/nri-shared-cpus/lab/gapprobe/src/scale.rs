@@ -54,6 +54,8 @@ pub struct Pod {
     pub threads: String,
     /// percent of each period a helper is busy
     pub duty: String,
+    /// the `ERGON_SHARED_CPUS` its probe saw (the shared CPUs it was given)
+    pub shared_cpus: String,
     /// container and pod cgroup `cpu.weight`
     pub weight: (String, String),
     /// container and pod cgroup `cpu.max`
@@ -199,6 +201,7 @@ pub fn read_pod(dir: &Path, name: &str) -> Result<Pod, ParseError> {
         millicpus: kv(&meta, "millicpus").unwrap_or_default(),
         threads: kv(&meta, "threads").unwrap_or_default(),
         duty: kv(&meta, "duty").unwrap_or_default(),
+        shared_cpus: kv(&meta, "shared_cpus").unwrap_or_else(|| "?".into()),
         weight: (
             opt(dir, &format!("{name}.cpu.weight")),
             opt(dir, &format!("{name}.pod.cpu.weight")),
@@ -306,9 +309,12 @@ pub fn render_case(c: &Case) -> String {
     );
     let _ = writeln!(
         out,
-        "| pod | exclusive cpu | shared-millicpus | helper threads x duty % | cpu.weight container / pod | cpu.max container / pod | helpers' CPU, cores | share of the shared CPUs' busy time | nr_periods / nr_throttled / throttled_usec grown | spin max µs | spin involuntary switches | spin thread's CPUs (samples) | its other threads' CPUs (samples) |"
+        "| pod | exclusive cpu | shared-millicpus | its shared CPUs | helper threads x duty % | cpu.weight container / pod | cpu.max container / pod | helpers' CPU, cores | share of the shared CPUs' busy time | nr_periods / nr_throttled / throttled_usec grown | spin max µs | spin involuntary switches | spin thread's CPUs (samples) | its other threads' CPUs (samples) |"
     );
-    let _ = writeln!(out, "|---|---|---|---|---|---|---|---|---|---|---|---|---|");
+    let _ = writeln!(
+        out,
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"
+    );
     for p in &c.pods {
         let helpers_milli = (p.helpers_ns() * 1000)
             .checked_div(c.window_ns)
@@ -318,10 +324,11 @@ pub fn render_case(c: &Case) -> String {
             .map_or_else(|| "-".to_string(), |s| format!("{s} %"));
         let _ = writeln!(
             out,
-            "| {} | {} | {} | {} x {} | {} / {} | {} / {} | {} | {share} | {} / {} / {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} x {} | {} / {} | {} / {} | {} | {share} | {} / {} / {} | {} | {} | {} | {} |",
             p.name,
             p.cpu,
             p.millicpus,
+            p.shared_cpus,
             p.threads,
             p.duty,
             p.weight.0,
@@ -431,7 +438,7 @@ mod tests {
         write(
             &c,
             "scale-a.meta",
-            "cpu=1\nmillicpus=100\nthreads=4\nduty=100\n",
+            "cpu=1\nmillicpus=100\nthreads=4\nduty=100\nshared_cpus=1\n",
         );
         write(
             &c,
@@ -476,7 +483,7 @@ mod tests {
         assert!(!md.contains("\n| 0 | "), "{md}");
         assert!(md.contains("Shared CPUs busy: 1.97 of 2 cores."), "{md}");
         // 89 s of usage less 30 s of spin over 30 s: 1.96 cores, 99 % of 1.97
-        assert!(md.contains("| scale-a | 1 | 100 | 4 x 100 | 39 / 39 | max 100000 / ? | 1.96 | 99 % | 0 / 0 / 0 | 5.12 | 0 | 3 (1) | 1 (1), 2 (1) |"), "{md}");
+        assert!(md.contains("| scale-a | 1 | 100 | 1 | 4 x 100 | 39 / 39 | max 100000 / ? | 1.96 | 99 % | 0 / 0 / 0 | 5.12 | 0 | 3 (1) | 1 (1), 2 (1) |"), "{md}");
         assert!(
             md.contains("- ok:   allocatable ergon.io/shared-millicpus 2000"),
             "{md}"

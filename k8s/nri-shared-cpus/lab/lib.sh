@@ -23,11 +23,11 @@ lab_size_vcpus() {
 # 3 to the last are isolated and the kubelet hands them out as exclusive.
 # reservedSystemCPUs is 0-2 in both, so only the chart's sharedCpus changes
 # between them; with one shared CPU, CPU 2 is housekeeping no pod's helpers
-# get. Needs 6 vCPUs or more: IRQ, two shared, three exclusive (the
-# contention case's two pods take one and two).
+# get. Needs 7 vCPUs or more: IRQ, two shared, four exclusive (the
+# contention case's three pods take one, one and two).
 lab_layout() {
     local n=$1 k=${2:-1}
-    [[ $n =~ ^[0-9]+$ ]] && ((n >= 6)) || return 1
+    [[ $n =~ ^[0-9]+$ ]] && ((n >= 7)) || return 1
     case $k in
     1) echo "0 1 3-$((n - 1)) 0-2" ;;
     2) echo "0 1-2 3-$((n - 1)) 0-2" ;;
@@ -54,14 +54,14 @@ lab_price_per_hour() {
     esac
 }
 
-# lab_scale_seconds <window>: the scale step: cases burst and idle (one pod
-# each: its 5 s delay, a spin of the window plus 10 s, 60 s of start and
-# teardown), contention (two pods at once: 90 s of start and teardown),
-# accounting (two pods, scheduled or not: 120 s) and two chart reinstalls
-# (60 s each).
+# lab_scale_seconds <window>: the scale step: three one-pod cases (two
+# bursts and idle: each its 5 s delay, a spin of the window plus 10 s, 60 s
+# of start and teardown), contention (three pods started one after the
+# other: 120 s of start and teardown), accounting (two pods, scheduled or
+# not: 120 s) and two chart reinstalls (60 s each).
 lab_scale_seconds() {
     local w=$1
-    echo $((2 * (5 + w + 10 + 60) + (5 + w + 10 + 90) + 120 + 120))
+    echo $((3 * (5 + w + 10 + 60) + (5 + w + 10 + 120) + 120 + 120))
 }
 
 # lab_estimate_minutes <reps> <seconds> <delay> [arms 1] [trace 1] [scale 1]

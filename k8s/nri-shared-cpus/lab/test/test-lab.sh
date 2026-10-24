@@ -85,9 +85,9 @@ for want in "Standard_D8ps_v6 (8 vCPUs, Arm)" "Debian:debian-13:13-arm64:latest"
     "boot line isolcpus=managed_irq,domain,3-7 nohz_full=3-7 rcu_nocbs=3-7 irqaffinity=0" \
     "bench     5 reps x plugin-on; 60 s spin after 5 s helpers (a child process)" \
     "trace     one more 60 s plugin-on rep under kernel ftrace, filtered to its spin CPU" \
-    "scale     sharedCpus 1-2: burst, idle, contention (4 helper threads a pod, 30 s each), accounting" \
+    "scale     sharedCpus 1-2: bursts at 100 and 1001 millicpus, idle, contention (4 helper threads a pod, 30 s each), accounting" \
     "node      the quiet settings (LAB_QUIET=1)" \
-    "about 72 minutes" "about \$0.330/h" "about \$0.42 for the run" \
+    "about 74 minutes" "about \$0.330/h" "about \$0.43 for the run" \
     "at most \$1.40 to the backstop" "(LAB_MAX_HOURS=4)" "tagged owner=ergon-lab run=20261024000000" \
     "az group create -n ergon-lab-nri-20261024000000 -l eastus --tags owner=ergon-lab run=20261024000000" \
     "--assign-identity [system] --role Contributor --scope <group id>" "az vm auto-shutdown" \
@@ -104,7 +104,7 @@ dryplan() { # dryplan <name> [VAR=value...]: the dry plan's stderr in $work/<nam
 }
 dryplan both "LAB_ARMS=plugin-on plugin-off"
 check "LAB_ARMS both: two arms" has "$work/both.plan" "bench     5 reps x plugin-on, plugin-off; 60 s spin"
-check "LAB_ARMS both: 85 minutes" has "$work/both.plan" "about 85 minutes"
+check "LAB_ARMS both: 87 minutes" has "$work/both.plan" "about 87 minutes"
 dryplan lean LAB_TRACE=0 LAB_SCALE=0 LAB_HELPERS=thread LAB_QUIET=0
 check "no trace, no scale: 58 minutes" has "$work/lean.plan" "about 58 minutes"
 check "no trace: said" has "$work/lean.plan" "trace     off (LAB_TRACE=0)"
@@ -115,11 +115,11 @@ check "no scale step in the SSH steps" has "$work/lean.plan" "vm.sh bootstrap, a
 dryplan nobench LAB_BENCH=0
 check "LAB_BENCH=0: no bench step, no trace" has "$work/nobench.plan" "vm.sh bootstrap, a reboot, vm.sh tune, cluster, e2e, scale, report"
 check "LAB_BENCH=0: bench off" has "$work/nobench.plan" "bench     off (LAB_BENCH=0)"
-check "LAB_BENCH=0: 55 minutes" has "$work/nobench.plan" "about 55 minutes"
+check "LAB_BENCH=0: 57 minutes" has "$work/nobench.plan" "about 57 minutes"
 
 echo "== refusals before anything"
-for c in "LAB_SIZE=Standard_D8s_v6|not an Azure Arm" "LAB_SIZE=Standard_D2ps_v6|the lab needs 6 or more" \
-    "LAB_SIZE=Standard_D4ps_v6|the lab needs 6 or more" \
+for c in "LAB_SIZE=Standard_D8s_v6|not an Azure Arm" "LAB_SIZE=Standard_D2ps_v6|the lab needs 7 or more" \
+    "LAB_SIZE=Standard_D4ps_v6|the lab needs 7 or more" \
     "LAB_REPS=80|more than LAB_MAX_HOURS" "LAB_SECONDS=abc|LAB_SECONDS is a whole number" \
     "LAB_MAX_HOURS=30|LAB_MAX_HOURS is 1 to 23" "LAB_MAX_HOURS=24|LAB_MAX_HOURS is 1 to 23" "LAB_STRESS=--cpu;rm|stress-ng flags only" \
     "LAB_ARMS=plugin-x|LAB_ARMS: plugin-on and/or plugin-off" "LAB_ARMS=|LAB_ARMS: plugin-on and/or plugin-off" \
@@ -310,14 +310,14 @@ check "D16pds_v6 has 16" test "$(lab_size_vcpus Standard_D16pds_v6)" = 16
 check "D8s_v6 is not Arm" bash -c ". '$lab/lib.sh'; ! lab_size_vcpus Standard_D8s_v6"
 check "layout of 8: one shared CPU" test "$(lab_layout 8)" = "0 1 3-7 0-2"
 check "layout of 8: two shared CPUs, the same reserved and exclusive" test "$(lab_layout 8 2)" = "0 1-2 3-7 0-2"
-check "layout of 6" test "$(lab_layout 6)" = "0 1 3-5 0-2"
+check "layout of 7" test "$(lab_layout 7)" = "0 1 3-6 0-2"
 check "layout of 16, two shared" test "$(lab_layout 16 2)" = "0 1-2 3-15 0-2"
-check "no layout under 6" bash -c ". '$lab/lib.sh'; ! lab_layout 4"
+check "no layout under 7" bash -c ". '$lab/lib.sh'; ! lab_layout 6"
 check "no layout with 3 shared" bash -c ". '$lab/lib.sh'; ! lab_layout 8 3"
 check "boot line" test "$(lab_boot_args 3-7 0)" = "isolcpus=managed_irq,domain,3-7 nohz_full=3-7 rcu_nocbs=3-7 irqaffinity=0"
-check "scale step seconds" test "$(lab_scale_seconds 30)" = 585
-check "estimate: one arm, trace, scale" test "$(lab_estimate_minutes 5 60 5)" = 72
-check "estimate: both arms" test "$(lab_estimate_minutes 5 60 5 2 1 1)" = 85
+check "scale step seconds" test "$(lab_scale_seconds 30)" = 720
+check "estimate: one arm, trace, scale" test "$(lab_estimate_minutes 5 60 5)" = 74
+check "estimate: both arms" test "$(lab_estimate_minutes 5 60 5 2 1 1)" = 87
 check "estimate: one arm alone" test "$(lab_estimate_minutes 5 60 5 1 0 0)" = 58
 check "cost" test "$(lab_cost 0.330 60)" = 0.35
 check "unknown price" test "$(lab_cost '?' 60)" = "?"

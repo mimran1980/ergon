@@ -21,12 +21,13 @@
 #                     alone (ps -L and Cpus_allowed_list, three snapshots);
 #                     an exec-probe hot pod is denied
 #   vm.sh scale       the chart reinstalled with SCALE_SHARED_CPUS (two
-#                     shared CPUs); cases burst, idle, contention (hot pods
-#                     with 100 shared millicpus and busy or idle helper
-#                     threads: per-CPU busy time, each container's cgroup
-#                     usage, weight, quota and throttling, where each thread
-#                     ran, the spin's worst gap) and accounting (allocatable
-#                     millicpus, a pod over it Pending); results/scale.md
+#                     shared CPUs); accounting (allocatable millicpus, a pod
+#                     over it Pending, one at it scheduled), then cases
+#                     a-burst-100m, b-burst-1001m, c-idle, d-contention (hot
+#                     pods with busy or idle helper threads: per-CPU busy
+#                     time, each container's cgroup usage, weight, quota and
+#                     throttling, its shared CPUs, where each thread ran,
+#                     the spin's worst gap); results/scale.md
 #   vm.sh bench       REPS reps of each arm in ARMS (plugin-on: chart
 #                     installed, hot pod; plugin-off: chart uninstalled,
 #                     plain static CPU manager pod), alternating the order;
@@ -489,27 +490,33 @@ scale_snapshot() {
 }
 
 # scale_case <case> <title> <expect> <name:cpu:millicpus:threads:duty>...:
-# the pods started together; once every spin runs, a SCALE_SECONDS window
-# with snapshots around it and every thread's CPU each second; then the
-# pods' end. Files: lib/scale.rs's layout, under results/scale/<case>.
+# the pods started one after the other (each once the one before it runs:
+# the plugin gives each the least-loaded shared CPUs at its start, so the
+# order fixes who shares with whom); once every spin runs, a SCALE_SECONDS
+# window with snapshots around it and every thread's CPU each second; then
+# the pods' end. Files: gapprobe/src/scale.rs's layout, under
+# results/scale/<case>; each pod's .meta also has the ERGON_SHARED_CPUS and
+# ERGON_ISOLATED_CPUS its probe saw.
 scale_case() {
-    local case=$1 title=$2 expect=$3 spec name cpu milli threads duty line pid t0 t1 i bad=0 phase
+    local case=$1 title=$2 expect=$3 spec name cpu milli threads duty line pid t0 t1 i bad=0 phase f
     shift 3
-    local d=$results/scale/$case spin=$((SCALE_SECONDS + 10))
+    local d=$results/scale/$case spin=$((SCALE_SECONDS + 10)) started=0
     declare -gA scale_cg=() scale_pid=() scale_tid=()
     mkdir -p "$d"
     for spec in "$@"; do
         IFS=: read -r name cpu milli threads duty <<<"$spec"
         printf 'cpu=%s\nmillicpus=%s\nthreads=%s\nduty=%s\n' "$cpu" "$milli" "$threads" "$duty" >"$d/$name.meta"
         lab_scale_pod "$name" "$case" "$cpu" "$milli" "$threads" "$duty" "$spin" 5 | kube apply -f - ||
-            { echo "$case: $name refused" >>"$results/scale-failures.txt"; bad=1; }
-    done
-    for spec in "$@"; do
-        name=${spec%%:*}
+            { echo "$case: $name refused" >>"$results/scale-failures.txt"; bad=1; continue; }
         line=$(wait_log "$name" 120) || { echo "$case: $name did not start: $(pod_failure "$name")" >>"$results/scale-failures.txt"; bad=1; continue; }
+        printf 'shared_cpus=%s\nisolated_cpus=%s\n' "$(field "$line" ERGON_SHARED_CPUS)" "$(field "$line" ERGON_ISOLATED_CPUS)" >>"$d/$name.meta"
+        ((started == 0)) && started=$(date +%s)
         say "$case: $line"
     done
-    sleep 8 # the 5 s delay, then every spin
+    # the last pod's 5 s delay, then its spin; the first pod's spin must
+    # outlast the window
+    sleep 8
+    (($(date +%s) - started + SCALE_SECONDS < spin + 5)) || echo "$case: the pods took too long to start; the first spin ends inside the window" >>"$results/scale-failures.txt"
     for spec in "$@"; do
         name=${spec%%:*}
         pid=$(probe_pid "$name") || { echo "$case: no gapprobe for $name" >>"$results/scale-failures.txt"; bad=1; continue; }
@@ -581,22 +588,28 @@ scale_accounting() {
 }
 
 step_scale() {
-    local h=${SCALE_THREADS:-4} rc=0
+    local h=${SCALE_THREADS:-4} rc=0 n
     SHARED_CPUS=$SCALE_SHARED_CPUS
+    n=$(cpu_count "$SHARED_CPUS")
     : >"$results/scale-failures.txt"
     mkdir -p "$results/scale"
     plugin_install || fail "the plugin did not come up with sharedCpus $SHARED_CPUS"
     scale_accounting | tee "$results/scale/accounting.txt"
     grep -q '^FAIL' "$results/scale/accounting.txt" && echo "accounting: see scale/accounting.txt" >>"$results/scale-failures.txt"
-    scale_case a-burst "one pod (cpu 1 exclusive, 100 shared millicpus), $h busy helper threads" \
-        "the shared CPUs near $(cpu_count "$SHARED_CPUS") cores busy from that pod, nr_throttled 0, the spin's max as in bench" \
-        "scale-burst:1:100:$h:100" || rc=1
-    scale_case b-idle "the same pod, $h helper threads busy 1 % of each 10 ms" \
-        "the pod's share of the shared CPUs near zero" \
+    # the plugin gives a container ceil(millicpus/1000) shared CPUs (at
+    # least one), the least loaded; no CPU quota
+    scale_case a-burst-100m "one pod: cpu 1 exclusive, 100 shared millicpus, $h busy helper threads" \
+        "its helpers on 1 of the $n shared CPUs (ceil(100/1000) = 1), using up to all of it: about 1 core, nr_throttled 0, the other shared CPU idle" \
+        "scale-100m:1:100:$h:100" || rc=1
+    scale_case b-burst-1001m "one pod: cpu 1 exclusive, 1001 shared millicpus, $h busy helper threads" \
+        "its helpers on both shared CPUs (ceil(1001/1000) = 2): about $n cores, nr_throttled 0" \
+        "scale-1001m:1:1001:$h:100" || rc=1
+    scale_case c-idle "one pod: cpu 1 exclusive, 100 shared millicpus, $h helper threads busy 1 % of each 10 ms" \
+        "the pod's helpers near 0.04 cores" \
         "scale-idle:1:100:$h:1" || rc=1
-    scale_case c-contention "two pods, each 100 shared millicpus and $h busy helper threads: A cpu 1, B cpu 2" \
-        "the split follows each container's cgroup cpu.weight (from its cpu request), not the equal millicpu requests" \
-        "scale-a:1:100:$h:100" "scale-b:2:100:$h:100" || rc=1
+    scale_case d-contention "three pods, 100 shared millicpus and $h busy helper threads each, started in turn: A (cpu 1) and B (cpu 1) get the two shared CPUs, C (cpu 2) the least loaded, A's" \
+        "A and C share one shared CPU, split by their cgroups' cpu.weight (from the cpu request: C's twice A's), not by their equal millicpus; B alone on the other" \
+        "scale-a:1:100:$h:100" "scale-b:1:100:$h:100" "scale-c:2:100:$h:100" || rc=1
     "$LAB_GAPPROBE" scale-report "$results/scale" >"$results/scale.md" || { echo "scale-report failed" >>"$results/scale-failures.txt"; rc=1; }
     cat "$results/scale.md"
     plugin_uninstall
