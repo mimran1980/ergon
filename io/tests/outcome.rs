@@ -16,6 +16,7 @@ const fn resp<'a>(headers: &'a [httparse::Header<'a>]) -> Response<'a> {
         status: 429,
         headers,
         body: b"",
+        head_ascii: true,
     }
 }
 
@@ -311,6 +312,7 @@ const fn status(status: u16) -> Response<'static> {
         status,
         headers: &[],
         body: b"",
+        head_ascii: true,
     }
 }
 
