@@ -83,7 +83,7 @@ enum rusteron_dpdk_counter_kind
     RD_COUNTER_POLLER,               /* 87   frames processed per poll */
     RD_COUNTER_MEMPOOL_AVAILABLE,    /* 91   free mbufs (1 Hz) */
     RD_COUNTER_CLOCK,                /* 80   transport clock: 1 TSC, 2 CNTVCT_EL0, 0 monotonic */
-    RD_COUNTER_RX_HW_DELAY_MAX,      /* 81   max NIC arrival -> the burst that carried the frame, ns */
+    RD_COUNTER_RX_HW_DELAY_MAX,      /* 81   max NIC arrival -> the frame's dispatch, ns */
     RD_COUNTER_RX_HW_DELAY_SUM,      /* 81   sum of those delays, ns */
     RD_COUNTER_RX_HW_TIMESTAMPED,    /* 81   frames in that sum (NIC-stamped, not after dispatch) */
     RD_COUNTER_RX_POLL_GAP_MAX,      /* 87   longest gap before a poll that found frames, ns */
@@ -116,8 +116,8 @@ enum rusteron_dpdk_counter_kind
     RD_COUNTER_RX_BACKLOG_MAX,       /* 87   most frames one poll drained */
     RD_COUNTER_RX_RING_FULL_SUSPECTED, /* 87 polls that drained within a burst of a full ring */
     RD_COUNTER_NIC_RESET_REQUESTED,  /* 79   device resets the PMD asked for (RTE_ETH_EVENT_INTR_RESET; housekeeping) */
-    RD_COUNTER_RX_HW_DELAY_MIN,      /* 81   min NIC arrival -> the burst that carried the frame, ns (meaningless while the count is 0) */
-    RD_COUNTER_RX_HW_DELAY_NEGATIVE, /* 81   NIC stamps later than the host clock read at that burst: PHC/host clock skew */
+    RD_COUNTER_RX_HW_DELAY_MIN,      /* 81   min NIC arrival -> the frame's dispatch, ns (meaningless while the count is 0) */
+    RD_COUNTER_RX_HW_DELAY_NEGATIVE, /* 81   NIC stamps later than the host clock read at that dispatch: PHC/host clock skew */
     RD_COUNTER_COUNT
 };
 

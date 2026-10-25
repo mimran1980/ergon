@@ -1430,14 +1430,14 @@ fn wildcard_replies_leave_from_the_address_the_peer_used() {
     assert_no_leak();
 }
 
-/// The receiver port's NIC-arrival-to-rx-burst counters (type 81), by label.
-/// The endpoint is the start of the receive burst that carried the frame, not
-/// the frame's own dispatch: the host clock is read once a burst, before any
-/// frame of it is classified or handed to Aeron.
-const ARRIVAL: &str = "role=receiver bdf=0000:00:02.0 port=1 q=0 dir=rx nic-arrival-to-rx-burst";
+/// The receiver port's NIC-arrival-to-dispatch counters (type 81), by label.
+/// The endpoint is the frame's own dispatch: the host clock is read for each
+/// NIC-stamped frame after it is classified and just before it is handed to
+/// Aeron.
+const ARRIVAL: &str = "role=receiver bdf=0000:00:02.0 port=1 q=0 dir=rx nic-arrival-to-dispatch";
 
 /// (max, min, sum, count, negative) of the receiver port's NIC arrival to
-/// rx-burst counters.
+/// dispatch counters.
 fn arrival(h: &Harness) -> (i64, i64, i64, i64, i64) {
     let c = |what: &str| h.counter(TYPE_RX_HW_DELAY, &format!("{ARRIVAL}-{what}"));
     (c("max-ns"), c("min-ns"), c("sum-ns"), c("count"), c("negative"))
@@ -1450,15 +1450,15 @@ fn inject_stamped(frame: &[u8], hw_rx_ns: u64) {
 }
 
 /// With NIC RX timestamps on, each timestamped datagram adds its delay from
-/// NIC arrival to the receive burst that carried it (host `CLOCK_REALTIME` at
-/// the burst's start minus the NIC stamp) to the type-81 max, min, sum and
+/// NIC arrival to its dispatch (host `CLOCK_REALTIME` read just before the
+/// frame is handed to Aeron, minus the NIC stamp) to the type-81 max, min, sum and
 /// count; frames without a stamp are not counted. Within a poll the max and
 /// the min are its largest and smallest delays (the poll's last frame is
 /// neither here), and across polls the minimum is the first poll's until a
 /// smaller one comes.
 #[test]
 #[serial]
-fn nic_arrival_to_rx_burst_counted_for_timestamped_frames() {
+fn nic_arrival_to_dispatch_counted_for_timestamped_frames() {
     let mut h = Harness::with_rx_hw_timestamp();
     h.init_rx(RECEIVER_IP, 60000, 1472);
     let mut p = h.poller();
@@ -1494,19 +1494,15 @@ fn nic_arrival_to_rx_burst_counted_for_timestamped_frames() {
     assert_no_leak();
 }
 
-/// The host clock is read once a burst, after the NIC handed the burst over,
-/// never once a poll: a poll draining several bursts compares each burst's
-/// frames with a read taken after they arrived. Read once a poll, a frame of
-/// a later burst that arrived after that one read would show a negative
-/// delay.
-///
-/// That is why the endpoint is the burst and not the dispatch. Both frames of
-/// one burst share the one read, so the second frame's delay is measured
-/// before its own classify and dispatch and under-counts them: a lower bound
-/// on arrival to its dispatch, exact only for the first frame of the burst.
+/// The host clock is read for each NIC-stamped frame, just before its own
+/// dispatch: a frame later in a burst waits for the classify and dispatch of
+/// the frames before it, and that wait is in its delay. One read a burst
+/// would give every frame of it the first frame's endpoint and under-count
+/// the rest; one read a poll would show a later burst's frames, which
+/// arrived after that read, as negative.
 #[test]
 #[serial]
-fn nic_arrival_to_rx_burst_reads_the_host_clock_once_a_burst() {
+fn nic_arrival_to_dispatch_reads_the_host_clock_before_each_stamped_frame() {
     let env = TestEnv::new();
     env.set_rx_timestamp_ok(true);
     let mut config = rusteron_dpdk_config_t::valid();
@@ -1533,16 +1529,15 @@ fn nic_arrival_to_rx_burst_reads_the_host_clock_once_a_burst() {
     assert_eq!(p.poll(16, clientd, &mut bytes), 4);
     assert_eq!(
         unsafe { rusteron_dpdk_test_realtime_reads() } - before,
-        2,
-        "one read for each burst with stamped frames, none for the empty third"
+        4,
+        "one read for each stamped frame, none for the empty third burst"
     );
-    // The two frames of each burst share one delay although only the first is
-    // dispatched at the read: 1_000 + 1_000 + 500 + 500. That is the lower
-    // bound on arrival to dispatch, and the reason the endpoint is the burst.
+    // Each frame's own dispatch read: 1_000_000 - 999_000, 1_001_000 - 999_000,
+    // 1_002_000 - 1_000_500 and 1_003_000 - 1_000_500.
     assert_eq!(
         arrival(&h),
-        (1_000, 500, 3_000, 4, 0),
-        "no negative delay, and each burst's frames share its read"
+        (2_500, 1_000, 7_000, 4, 0),
+        "no negative delay, and each frame is measured to its own dispatch"
     );
     assert_no_leak();
 }

@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Changed
+
+- Breaking: `ergon-md-dpdk`'s type-81 counters are renamed
+  `nic-arrival-to-rx-burst-*` to `nic-arrival-to-dispatch-*` and now measure
+  each NIC-stamped frame to its own dispatch. The host clock is read once per
+  stamped frame instead of once a burst, so a frame later in a burst includes
+  its wait behind the earlier ones. Without `RUSTERON_DPDK_RX_HW_TIMESTAMP=1`
+  nothing is read.
+- The harness's `load` percentiles include every measured message that was
+  owed and due by the run's end. A message sent without an echo, or never
+  offered, is recorded at its lower bound (the run's end minus its due time)
+  and counted in `censored`. `samples` counts these as well as the echoes.
+- The EKS NRI lab (`eks-nri.sh`) moves a partition mode's measured
+  processes into the isolated child from the node through the privileged
+  probe, because containerd mounts `/sys/fs/cgroup` read-only in an
+  unprivileged pod. A pid that is not a task of that container's cgroup is
+  refused. `just test-dpdk-lab` runs the EKS runner shell tests.
+
 ## [0.1.33] — 2026-10-23
 
 ### Changed

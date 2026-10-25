@@ -53,9 +53,9 @@ static const rusteron_dpdk_counter_spec_t rusteron_dpdk_counter_specs[RD_COUNTER
     [RD_COUNTER_MEMPOOL_AVAILABLE] =
         { RUSTERON_DPDK_TYPE_MEMPOOL_AVAILABLE, "mempool-available", "-" },
     [RD_COUNTER_CLOCK] = { RUSTERON_DPDK_TYPE_CLOCK, "clock", "-" },
-    [RD_COUNTER_RX_HW_DELAY_MAX] = { RUSTERON_DPDK_TYPE_RX_HW_DELAY, "nic-arrival-to-rx-burst-max-ns", "rx" },
-    [RD_COUNTER_RX_HW_DELAY_SUM] = { RUSTERON_DPDK_TYPE_RX_HW_DELAY, "nic-arrival-to-rx-burst-sum-ns", "rx" },
-    [RD_COUNTER_RX_HW_TIMESTAMPED] = { RUSTERON_DPDK_TYPE_RX_HW_DELAY, "nic-arrival-to-rx-burst-count", "rx" },
+    [RD_COUNTER_RX_HW_DELAY_MAX] = { RUSTERON_DPDK_TYPE_RX_HW_DELAY, "nic-arrival-to-dispatch-max-ns", "rx" },
+    [RD_COUNTER_RX_HW_DELAY_SUM] = { RUSTERON_DPDK_TYPE_RX_HW_DELAY, "nic-arrival-to-dispatch-sum-ns", "rx" },
+    [RD_COUNTER_RX_HW_TIMESTAMPED] = { RUSTERON_DPDK_TYPE_RX_HW_DELAY, "nic-arrival-to-dispatch-count", "rx" },
     [RD_COUNTER_RX_POLL_GAP_MAX] = { RUSTERON_DPDK_TYPE_POLLER, "rx-poll-gap-max-ns", "rx" },
     [RD_COUNTER_RX_POLL_GAPS_100US] = { RUSTERON_DPDK_TYPE_POLLER, "rx-poll-gaps-over-100us", "rx" },
     [RD_COUNTER_RX_BURST_FULL] = { RUSTERON_DPDK_TYPE_POLLER, "rx-burst-full", "rx" },
@@ -83,8 +83,8 @@ static const rusteron_dpdk_counter_spec_t rusteron_dpdk_counter_specs[RD_COUNTER
     [RD_COUNTER_RX_BACKLOG_MAX] = { RUSTERON_DPDK_TYPE_POLLER, "rx-backlog-max", "rx" },
     [RD_COUNTER_RX_RING_FULL_SUSPECTED] = { RUSTERON_DPDK_TYPE_POLLER, "rx-ring-full-suspected", "rx" },
     [RD_COUNTER_NIC_RESET_REQUESTED] = { RUSTERON_DPDK_TYPE_ERROR, "nic-reset-requested", "-" },
-    [RD_COUNTER_RX_HW_DELAY_MIN] = { RUSTERON_DPDK_TYPE_RX_HW_DELAY, "nic-arrival-to-rx-burst-min-ns", "rx" },
-    [RD_COUNTER_RX_HW_DELAY_NEGATIVE] = { RUSTERON_DPDK_TYPE_RX_HW_DELAY, "nic-arrival-to-rx-burst-negative", "rx" },
+    [RD_COUNTER_RX_HW_DELAY_MIN] = { RUSTERON_DPDK_TYPE_RX_HW_DELAY, "nic-arrival-to-dispatch-min-ns", "rx" },
+    [RD_COUNTER_RX_HW_DELAY_NEGATIVE] = { RUSTERON_DPDK_TYPE_RX_HW_DELAY, "nic-arrival-to-dispatch-negative", "rx" },
 };
 
 static void rusteron_dpdk_counters_label(
