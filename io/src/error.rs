@@ -14,6 +14,10 @@ pub enum Error {
     Record(&'static str),
     /// WebSocket protocol violation.
     Ws(&'static str),
+    /// Length-prefixed frame violation ([`crate::frame`]): a frame longer
+    /// than `FrameOptions::max_frame`, received (the connection closes) or
+    /// offered to `FrameConn::send_frame`.
+    Frame(&'static str),
     /// HTTP failure (a malformed response or upgrade).
     Http(String),
     /// The server answered the WebSocket upgrade with `status`, not 101.
@@ -98,6 +102,7 @@ impl fmt::Display for Error {
             Self::Tls(e) => write!(f, "tls: {e}"),
             Self::Record(e) => write!(f, "tls record: {e}"),
             Self::Ws(e) => write!(f, "websocket: {e}"),
+            Self::Frame(e) => write!(f, "frame: {e}"),
             Self::Http(e) => write!(f, "http: {e}"),
             Self::Upgrade {
                 status,

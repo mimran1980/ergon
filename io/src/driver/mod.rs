@@ -38,7 +38,7 @@ use crate::backend::{Backend, Config};
 use crate::checks::{self, DevContext, HostReport};
 use crate::clock::{monotonic_ns, rdtsc, ticks_per_us};
 use crate::dns::{DnsConfig, Lookup, Resolver};
-use crate::endpoint::sealed::RouteSlot;
+use crate::endpoint::sealed::{Io, RouteSlot};
 use crate::endpoint::{ConnId, ConnMut, Dial, DriverStats, Endpoint, Handler, Receive, TcpInfo};
 use crate::error::{Error, Result};
 use crate::placement::{self, CpuError};
@@ -234,7 +234,7 @@ impl<E> Conns<E> {
 impl<E: Endpoint> Conns<E> {
     /// Lists slot `i` in the send set if it is open with bytes queued.
     fn mark_tx_if_queued(&mut self, i: usize) {
-        if self.is_open(i) && self.at(i).is_some_and(|c| !c.tx_queue().is_empty()) {
+        if self.is_open(i) && self.at(i).is_some_and(Io::has_tx) {
             self.mark_tx(i);
         }
     }
@@ -354,7 +354,9 @@ impl SockOpts {
         }
     }
 
-    fn apply(&self, fd: RawFd) -> Result<()> {
+    /// `datagram`: a UDP socket, which takes the socket-level options only
+    /// (timestamps, `SO_RCVBUF`, `SO_BUSY_POLL`), no TCP one.
+    fn apply(&self, fd: RawFd, datagram: bool) -> Result<()> {
         if self.timestamps {
             sys::enable_rx_timestamps(fd)?;
         }
@@ -362,6 +364,9 @@ impl SockOpts {
             sys::set_rcvbuf(fd, b)?;
         }
         sys::set_busy_poll(fd, self.busy_poll_us)?;
+        if datagram {
+            return Ok(());
+        }
         let (idle, interval, count) = self.keepalive;
         if idle > 0 {
             sys::set_tcp_keepalive(fd, idle, interval, count)?;
@@ -385,7 +390,8 @@ impl SockOpts {
     /// up here (`require`; `warn` off the polling thread), or under `warn` on
     /// the polling thread queued to the warning thread, which fills in the
     /// connection's [`RouteCheck`] later. Either way the warning thread then
-    /// checks the NAPI id and the egress device.
+    /// checks the NAPI id and the egress device. A datagram endpoint gets
+    /// the socket-level options and no route check (quick ACK is TCP's).
     fn prepare<E: Endpoint>(
         &self,
         ep: &mut E,
@@ -394,7 +400,10 @@ impl SockOpts {
         on_loop: bool,
     ) -> Result<RouteCost> {
         let fd = ep.fd();
-        self.apply(fd)?;
+        self.apply(fd, E::DATAGRAM)?;
+        if E::DATAGRAM {
+            return Ok(RouteCost::default());
+        }
         if added && sys::tcp_nodelay_and_cork(fd)? == Some(true) {
             crate::warn::emit(checks::cork_line(id));
         }
@@ -559,7 +568,8 @@ impl<E: Endpoint> Driver<E> {
     /// than `off`, `on` or `require`, or it is `require` and a host check
     /// warned (after its lines were printed).
     /// [`Error::Unsupported`]: `tcp_rto_min_us` or `tcp_delack_max_us` on a
-    /// kernel before 6.15. [`Error::Config`]: one of them below two ticks of
+    /// kernel before 6.15; a datagram endpoint (`UdpConn`) on a backend
+    /// other than `epoll-spin`. [`Error::Config`]: one of them below two ticks of
     /// this kernel, or not whole ticks (checked on a probe socket: user space
     /// cannot read `CONFIG_HZ`).
     pub fn new(cfg: Config) -> Result<Self> {
@@ -583,6 +593,11 @@ impl<E: Endpoint> Driver<E> {
         host: &ergon_tune::Host,
     ) -> Result<Self> {
         cfg.validate()?;
+        if E::DATAGRAM && cfg.backend != Backend::EpollSpin {
+            return Err(Error::Unsupported(
+                "UDP endpoints (UdpConn) run on the epoll-spin backend only",
+            ));
+        }
         // A timer this kernel lacks, refuses or would round fails now, not
         // at the first connection.
         sys::probe_tcp_timers(cfg.tcp_rto_min_us, cfg.tcp_delack_max_us)?;
@@ -704,7 +719,8 @@ impl<E: Endpoint> Driver<E> {
     /// Takes over a connected, non-blocking endpoint. Sets its socket options
     /// (receive timestamps, `SO_RCVBUF`, `SO_BUSY_POLL`, `TCP_NODELAY`, TCP
     /// keepalive, `TCP_USER_TIMEOUT`, and `TCP_RTO_MIN_US` /
-    /// `TCP_DELACK_MAX_US` when configured; `TCP_CORK` left on is reported),
+    /// `TCP_DELACK_MAX_US` when configured; `TCP_CORK` left on is reported;
+    /// a UDP socket gets the first three only, and no route check),
     /// checks its route for quick ACK
     /// (`Config::quickack_check`, see [`crate::route`]: under `warn` on
     /// ergon-io's warning thread, under `require` here) and starts
@@ -1340,6 +1356,10 @@ impl<E: Endpoint> Driver<E> {
     fn send_queued<H: Handler>(&mut self, handler: &mut H) -> Result<()> {
         self.tx_fresh = false;
         match &mut self.imp {
+            Imp::Epoll(e) if E::DATAGRAM => {
+                send_datagrams(e, &mut self.conns, &mut self.stats, handler);
+                Ok(())
+            }
             Imp::Epoll(e) => {
                 // The send set only: a connection stays listed while bytes
                 // are left (a full socket) and leaves once it has none.
@@ -1407,6 +1427,70 @@ fn timestamp_keeper() -> Option<socket2::Socket> {
     let s = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::DGRAM, None).ok()?;
     sys::enable_rx_timestamps(s.as_raw_fd()).ok()?;
     Some(s)
+}
+
+/// The send pass of datagram endpoints (`epoll-spin`): each datagram of a
+/// connection in the send set goes to the kernel whole, in order, until its
+/// ring is empty (it leaves the set) or the socket's send buffer is full
+/// (it stays). `ECONNREFUSED` is counted, not a close: it reports an
+/// earlier datagram's ICMP port unreachable, the kernel sent nothing, and
+/// the datagram is tried once more in this pass.
+fn send_datagrams<E: Endpoint, H: Handler>(
+    e: &mut epoll::Epoll,
+    conns: &mut Conns<E>,
+    stats: &mut DriverStats,
+    handler: &mut H,
+) {
+    let mut k = 0;
+    while let Some(&i) = conns.tx_dirty.get(k) {
+        let open = conns.is_open(i);
+        let Some(c) = conns.at(i).filter(|_| open) else {
+            conns.unlist_tx(k);
+            continue;
+        };
+        let fd = c.fd();
+        let mut retried = false;
+        let mut failed = None;
+        let mut drained = false;
+        loop {
+            let Some(d) = c.pending_tx() else {
+                drained = true;
+                break;
+            };
+            stats.send_calls += 1;
+            stats.sends += 1;
+            match sys::send_datagram(fd, d) {
+                Ok(true) => {
+                    c.sent_tx();
+                    retried = false;
+                }
+                Ok(false) => break,
+                Err(err) if err.raw_os_error() == Some(libc::ECONNREFUSED) => {
+                    c.on_refused();
+                    if retried {
+                        break;
+                    }
+                    retried = true;
+                }
+                Err(err) => {
+                    failed = Some(c.close_reason(err.into()));
+                    break;
+                }
+            }
+        }
+        if let Some(err) = failed {
+            let id = conns.id(i);
+            e.remove(fd);
+            conns.remove(i);
+            conns.unlist_tx(k);
+            stats.closed += 1;
+            handler.on_closed(id, err);
+        } else if drained {
+            conns.unlist_tx(k);
+        } else {
+            k += 1;
+        }
+    }
 }
 
 fn close_index<E: Endpoint>(imp: &mut Imp, conns: &mut Conns<E>, i: usize) {
@@ -1505,18 +1589,31 @@ where
 {
     slot.arm(conn.rx_space());
     stats.recvmsg_calls += 1;
-    match sys::recvmsg(conn.fd(), slot)? {
-        None => {
+    match sys::recvmsg(conn.fd(), slot) {
+        Ok(None) => {
             stats.recvmsg_eagain += 1;
             Ok(false)
         }
-        Some(0) => Err(Error::Closed),
-        Some(n) => {
+        // A stream's end; a datagram endpoint's empty datagram.
+        Ok(Some(0)) if !E::DATAGRAM => Err(Error::Closed),
+        // Longer than the buffer: the kernel cut it. Dropped, counted.
+        Ok(Some(_)) if E::DATAGRAM && slot.truncated() => {
+            conn.on_truncated();
+            Ok(true)
+        }
+        Ok(Some(n)) => {
             let meta = reads.next(slot);
             stats.completions += 1;
             stats.messages += conn.on_received(id, n, &meta, handler)? as u64;
             Ok(true)
         }
+        // An ICMP port unreachable for an earlier datagram: counted, the
+        // socket stays open.
+        Err(e) if E::DATAGRAM && e.raw_os_error() == Some(libc::ECONNREFUSED) => {
+            conn.on_refused();
+            Ok(true)
+        }
+        Err(e) => Err(e.into()),
     }
 }
 

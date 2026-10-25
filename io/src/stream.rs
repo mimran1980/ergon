@@ -491,6 +491,33 @@ impl TxQueue {
         &mut self.buf
     }
 
+    /// The vector to append `n` bytes to while the unsent bytes stay within
+    /// `limit`; `None` when they would not. Sent bytes at the front are
+    /// compacted away first when the spare capacity is short, and a vector
+    /// still too small grows once, to `limit` (`io_uring` hands the queue a
+    /// smaller in-flight buffer back): appending never reallocates again.
+    #[inline]
+    pub(crate) fn room_within(&mut self, n: usize, limit: usize) -> Option<&mut Vec<u8>> {
+        if self.len() + n > limit {
+            return None;
+        }
+        if self.buf.capacity() - self.buf.len() < n {
+            if self.head > 0 {
+                self.compact();
+            }
+            if self.buf.capacity() - self.buf.len() < n {
+                self.grow(limit);
+            }
+        }
+        Some(&mut self.buf)
+    }
+
+    #[cold]
+    fn grow(&mut self, limit: usize) {
+        self.buf.reserve_exact(limit.saturating_sub(self.buf.len()));
+        prefault(&mut self.buf);
+    }
+
     /// Appends `bytes` (tests and stand-ins).
     #[cfg(test)]
     #[inline]

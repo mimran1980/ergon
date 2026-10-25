@@ -284,3 +284,38 @@ fn the_unmeasured_busy_poll_keys_are_unknown() -> R {
     }
     Ok(())
 }
+
+/// The `epoll_wait` batch and the UDP read burst: defaults 64 and 16, keys
+/// on every backend, out-of-range values refused typed (`epoll_wait` takes
+/// a positive count; a burst of 0 would never read).
+#[test]
+fn epoll_events_and_datagram_burst_parse_and_are_bounded() -> R {
+    for b in Backend::ALL {
+        let c = Config::new(b);
+        assert_eq!((c.epoll_events, c.datagram_burst), (64, 16), "{b}");
+    }
+    let c = Config::parse("epoll-spin,epoll_events=256,datagram_burst=1")?;
+    assert_eq!((c.epoll_events, c.datagram_burst), (256, 1));
+    let c = Config::parse("epoll-spin,epoll_events=65536,datagram_burst=1024")?;
+    assert_eq!((c.epoll_events, c.datagram_burst), (65_536, 1_024));
+    for bad in [
+        "epoll-spin,epoll_events=0",
+        "epoll-spin,epoll_events=65537",
+        "epoll-spin,epoll_events=x",
+        "epoll-spin,datagram_burst=0",
+        "epoll-spin,datagram_burst=1025",
+        "epoll-spin,datagram_burst=-1",
+    ] {
+        let e = Config::parse(bad)
+            .err()
+            .ok_or_else(|| format!("{bad:?} accepted"))?;
+        assert!(matches!(e, ergon_io::Error::Config(_)), "{bad:?}: {e}");
+    }
+    let mut c = Config::new(Backend::EpollSpin);
+    c.epoll_events = 0;
+    assert!(c.validate().is_err(), "an empty epoll batch validated");
+    let mut c = Config::new(Backend::EpollSpin);
+    c.datagram_burst = 0;
+    assert!(c.validate().is_err(), "a zero burst validated");
+    Ok(())
+}

@@ -28,8 +28,6 @@ enum Mode {
     Recv,
 }
 
-const MAX_EVENTS: usize = 64;
-
 pub(super) struct Epoll {
     mode: Mode,
     /// `recv-busy` with `Config::per_queue`.
@@ -59,7 +57,10 @@ pub(super) struct Epoll {
     polls: u64,
     ep: Option<OwnedFd>,
     slot: Box<MsgSlot>,
-    events: Box<[libc::epoll_event; MAX_EVENTS]>,
+    /// `Config::epoll_events` entries.
+    events: Box<[libc::epoll_event]>,
+    /// `Config::datagram_burst`: reads per ready datagram socket per poll.
+    burst: u32,
 }
 
 impl Epoll {
@@ -95,7 +96,9 @@ impl Epoll {
             polls: 0,
             ep,
             slot: MsgSlot::new(),
-            events: Box::new([libc::epoll_event { events: 0, u64: 0 }; MAX_EVENTS]),
+            events: vec![libc::epoll_event { events: 0, u64: 0 }; cfg.epoll_events as usize]
+                .into_boxed_slice(),
+            burst: cfg.datagram_burst,
         })
     }
 
@@ -226,11 +229,21 @@ impl Epoll {
         let Some(conn) = conns.at(i) else {
             return;
         };
-        match recv_one(conn, id, &mut self.slot, handler, stats, reads) {
+        let mut r = recv_one(conn, id, &mut self.slot, handler, stats, reads);
+        if E::DATAGRAM {
+            // Up to `burst` datagrams from this socket, then the next one;
+            // what is left is reported again by the next `epoll_wait`.
+            let mut left = self.burst;
+            while matches!(r, Ok(true)) && left > 1 {
+                left -= 1;
+                r = recv_one(conn, id, &mut self.slot, handler, stats, reads);
+            }
+        }
+        match r {
             Ok(false) => {}
             // A reply (a Pong) may be queued: list it for the send pass.
             Ok(true) => {
-                if !conn.tx_queue().is_empty() {
+                if conn.has_tx() {
                     conns.mark_tx(i);
                 }
                 self.data_arrived(i);
@@ -293,9 +306,9 @@ impl Epoll {
             return Ok(0);
         };
         stats.epoll_wait_calls += 1;
-        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
-        let max = MAX_EVENTS as libc::c_int;
-        // SAFETY: `events` has room for MAX_EVENTS entries.
+        // At most 65 536 (`Config::validate`).
+        let max = libc::c_int::try_from(self.events.len()).unwrap_or(libc::c_int::MAX);
+        // SAFETY: `events` has room for `max` entries.
         let n = unsafe { libc::epoll_wait(ep.as_raw_fd(), self.events.as_mut_ptr(), max, 0) };
         if let Ok(n) = usize::try_from(n) {
             return Ok(n);
