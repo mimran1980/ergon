@@ -15,7 +15,7 @@ mod common;
 use common::{
     Paths, compile_and_run, compile_fails_with_diagnostics, generate, generate_domain_with,
 };
-use ergo_sbe::{GenerationConfig, GenerationProfile, Generator, Schema, parse};
+use ergo_sbe::{GenerationConfig, GenerationProfile, Generator, Schema, SchemaSource, parse};
 
 fn assert_mutable_ordered_lane_absent(src: &str) {
     assert!(
@@ -188,7 +188,7 @@ fn schema_field_named_ordered_yields_to_the_lane_conversion()
     </group>
   </message>
 </messageSchema>"#;
-    let schema = Schema::from_ir(parse(XML)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(XML))?);
     let src = Generator::new(GenerationConfig::new("ordclash"))
         .generate(&schema)?
         .modules()

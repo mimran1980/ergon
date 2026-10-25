@@ -4,7 +4,7 @@
 //! |------|---------|
 //! | [`SBE_XSD`] | Official FPL `sbe.xsd` text (for external tools / docs) |
 //! | [`validate_against_sbe_xsd`] | Pure-Rust checks: root, children, known attributes |
-//! | [`crate::parse_with_xsd_validation`] | Validate then [`crate::parse`] |
+//! | [`crate::SchemaSource::with_xsd_validation`] | Validate inside [`crate::parse`] |
 //!
 //! Semantic IR rules (offsets, types, duplicates) still come from the main
 //! parser / resolver.
@@ -97,7 +97,7 @@ fn local_name(tag: &str) -> &str {
 /// # Example
 ///
 /// ```rust
-/// use ergo_sbe::{validate_against_sbe_xsd, SBE_XSD};
+/// use ergo_sbe::{validate_against_sbe_xsd, SBE_XSD, SchemaSource};
 /// # let xml = r#"<?xml version="1.0"?><messageSchema package="t" id="1" version="0"
 /// # byteOrder="littleEndian"><types><composite name="messageHeader">
 /// # <type name="blockLength" primitiveType="uint16"/>
@@ -522,7 +522,7 @@ mod tests {
     fn accepts_unsigned_enum_null_value() -> Result<(), Box<dyn std::error::Error>> {
         let xml = enum_null_schema("uint8", "99");
         validate_against_sbe_xsd(&xml)?;
-        crate::parse_with_xsd_validation(&xml)?;
+        crate::parse(crate::SchemaSource::xml(&xml).with_xsd_validation())?;
         Ok(())
     }
 
@@ -530,7 +530,7 @@ mod tests {
     fn accepts_signed_enum_null_value() -> Result<(), Box<dyn std::error::Error>> {
         let xml = enum_null_schema("int8", "-1");
         validate_against_sbe_xsd(&xml)?;
-        crate::parse_with_xsd_validation(&xml)?;
+        crate::parse(crate::SchemaSource::xml(&xml).with_xsd_validation())?;
         Ok(())
     }
 

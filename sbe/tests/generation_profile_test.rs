@@ -12,7 +12,7 @@ fn generate_with(
     module: &str,
     f: impl FnOnce(GenerationConfig) -> GenerationConfig,
 ) -> Result<String, Box<dyn Error>> {
-    let ir = ergo_sbe::parse_file(path)?;
+    let ir = ergo_sbe::parse(ergo_sbe::SchemaSource::file(path))?;
     let schema = Schema::from_ir(ir);
     let config = f(GenerationConfig::new(module));
     let (modules, _warnings) = Generator::new(config).generate(&schema)?.into_parts();
@@ -202,7 +202,7 @@ fn with_module_name_renames_the_generated_module() -> Result<(), Box<dyn Error>>
         !src.is_empty(),
         "renamed module must still generate a source module"
     );
-    let ir = ergo_sbe::parse_file(&Paths::example_schema())?;
+    let ir = ergo_sbe::parse(ergo_sbe::SchemaSource::file(&Paths::example_schema()))?;
     let schema = Schema::from_ir(ir);
     let modules =
         Generator::new(GenerationConfig::new("cfg_before").with_module_name("cfg_renamed"))
@@ -239,7 +239,7 @@ fn with_error_from_impls_emits_conversions() -> Result<(), Box<dyn Error>> {
 #[test]
 #[allow(deprecated)]
 fn with_error_from_impls_rejects_a_non_type_path() -> Result<(), Box<dyn Error>> {
-    let ir = ergo_sbe::parse_file(&Paths::example_schema())?;
+    let ir = ergo_sbe::parse(ergo_sbe::SchemaSource::file(&Paths::example_schema()))?;
     let schema = Schema::from_ir(ir);
     let err = Generator::new(
         GenerationConfig::new("cfg_errbad").with_error_from_impls("not a rust type!"),

@@ -10,7 +10,7 @@
 
 mod common;
 use common::{Paths, compile_and_run, generate};
-use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
+use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
 use std::path::PathBuf;
 
 #[test]
@@ -31,7 +31,7 @@ fn optional_primitive_none_overwrites_dirty_buffer() -> Result<(), Box<dyn std::
         <field name="qty" id="1" type="u32null"/>
       </sbe:message>
     </sbe:messageSchema>"#;
-    let schema = Schema::from_ir(parse(schema_xml)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(schema_xml))?);
     let config = GenerationConfig::new("nullimg");
     let g = Generator::new(config);
     let modules = g.generate(&schema)?;
@@ -139,7 +139,7 @@ fn nested_optional_composite_null_uses_parent_member_offset()
         <field name="body" id="1" type="Outer" presence="optional"/>
       </sbe:message>
     </sbe:messageSchema>"#;
-    let schema = Schema::from_ir(parse(schema_xml)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(schema_xml))?);
     let config = GenerationConfig::new("nestednull");
     let g = Generator::new(config);
     let modules = g.generate(&schema)?;

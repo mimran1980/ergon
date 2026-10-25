@@ -1,6 +1,6 @@
 //! Smoke test: parse every real-world and test schema in `fixtures/schemas/`.
 //!
-//! For each schema we parse via `parse_file()` and count structural elements.
+//! For each schema we parse via `parse(ergo_sbe::SchemaSource::file())` and count structural elements.
 
 #![allow(clippy::all)]
 #![allow(clippy::pedantic)]
@@ -11,7 +11,7 @@ use std::fs;
 use std::path::Path;
 
 use ergo_sbe::ir::Signal;
-use ergo_sbe::parse_file;
+use ergo_sbe::parse;
 
 /// Schemas that are intentionally invalid — tested separately.
 const EXPECTED_PARSE_ERRORS: &[&str] = &[
@@ -84,7 +84,7 @@ fn all_schema_fixtures_have_the_expected_parse_outcome() -> Result<(), Box<dyn s
             || INCLUDE_FRAGMENTS.contains(&name.as_str())
             || ERROR_SCHEMAS.contains(&name.as_str());
 
-        match parse_file(path) {
+        match parse(ergo_sbe::SchemaSource::file(path)) {
             Ok(ir) => {
                 if expected_rejection {
                     failures.push(format!("{name}: unexpectedly parsed"));

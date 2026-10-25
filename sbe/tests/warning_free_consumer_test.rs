@@ -15,7 +15,7 @@ fn generated_lean_and_full_consumers_are_warning_free() -> Result<(), Box<dyn Er
         ("wf_lean", GenerationProfile::Lean),
         ("wf_full", GenerationProfile::Full),
     ] {
-        let ir = ergo_sbe::parse_file(&Paths::example_schema())?;
+        let ir = ergo_sbe::parse(ergo_sbe::SchemaSource::file(&Paths::example_schema()))?;
         let schema = Schema::from_ir(ir);
         let config = GenerationConfig::new(label).profile(profile);
         let modules = Generator::new(config).generate(&schema)?;

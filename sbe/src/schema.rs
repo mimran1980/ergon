@@ -1,9 +1,9 @@
 //! Normalised schema handle for codegen: package identity + resolved [`Ir`].
 //!
 //! ```rust
-//! use ergo_sbe::{parse, Schema};
+//! use ergo_sbe::{parse, Schema, SchemaSource};
 //!
-//! let ir = parse(r#"<?xml version="1.0"?>
+//! let ir = parse(SchemaSource::xml(r#"<?xml version="1.0"?>
 //! <messageSchema package="example" id="1" version="0"
 //!                byteOrder="littleEndian">
 //!   <types>
@@ -14,7 +14,7 @@
 //!       <type name="version"      primitiveType="uint16"/>
 //!     </composite>
 //!   </types>
-//! </messageSchema>"#).unwrap();
+//! </messageSchema>"#)).unwrap();
 //!
 //! let schema = Schema::from_ir(ir);
 //! assert_eq!(schema.package, "example");
@@ -26,7 +26,7 @@ use crate::ir::{ByteOrder, Ir};
 
 /// Parsed + resolved SBE schema ready for [`crate::Generator`].
 ///
-/// Built with [`Schema::from_ir`] after [`crate::parse`] / [`crate::parse_file`].
+/// Built with [`Schema::from_ir`] after [`crate::parse`].
 ///
 /// Package, id, and version are copied from the IR at construction. A single
 /// identity source (`Ir` only) is a 1.0 migration and is not shipped on 0.x.
@@ -63,6 +63,7 @@ impl Schema {
                 semantic_version: None,
                 header_type: "messageHeader".to_string(),
                 tokens: Vec::new(),
+                sources: Vec::new(),
             },
         }
     }
@@ -70,7 +71,7 @@ impl Schema {
     /// Wrap a resolved [`Ir`] as a [`Schema`] for codegen.
     ///
     /// ```rust
-    /// use ergo_sbe::{parse, Schema};
+    /// use ergo_sbe::{parse, Schema, SchemaSource};
     /// # let xml = r#"<?xml version="1.0"?><messageSchema package="t" id="1" version="0"
     /// # byteOrder="littleEndian"><types><composite name="messageHeader">
     /// # <type name="blockLength" primitiveType="uint16"/>
@@ -78,7 +79,7 @@ impl Schema {
     /// # <type name="schemaId" primitiveType="uint16"/>
     /// # <type name="version" primitiveType="uint16"/>
     /// # </composite></types></messageSchema>"#;
-    /// let schema = Schema::from_ir(parse(xml).unwrap());
+    /// let schema = Schema::from_ir(parse(SchemaSource::xml(xml)).unwrap());
     /// assert_eq!(schema.version, 0);
     /// ```
     #[must_use]
@@ -118,6 +119,7 @@ mod tests {
             description: Some("test".to_string()),
             semantic_version: Some("1.0".to_string()),
             header_type: "customHeader".to_string(),
+            sources: Vec::new(),
             tokens: Vec::new(),
         };
         let schema = Schema::from_ir(ir);

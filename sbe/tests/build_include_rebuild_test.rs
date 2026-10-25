@@ -55,11 +55,7 @@ fn cargo_rebuilds_generated_source_after_include_only_edit()
         dir.join("build.rs"),
         r#"fn main() -> ergo_sbe::miette::Result<()> {
     let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/generated");
-    ergo_sbe::generate_to_dir(
-        "schemas/root.xml",
-        ergo_sbe::GenerationConfig::new("ping"),
-        &out,
-    )?;
+    ergo_sbe::generate(ergo_sbe::SchemaSource::file("schemas/root.xml"), ergo_sbe::GenerationConfig::new("ping"))?.write_to(&out)?;
     Ok(())
 }
 "#,

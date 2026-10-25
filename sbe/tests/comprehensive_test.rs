@@ -1243,9 +1243,9 @@ fn generated_api_has_expected_public_items() -> Result<(), Box<dyn std::error::E
 
 #[test]
 fn deterministic_generation_produces_identical_output() -> Result<(), Box<dyn std::error::Error>> {
-    use ergo_sbe::{GenerationConfig, Generator, Schema, parse_file};
+    use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
 
-    let ir = parse_file(&common::Paths::example_schema()).expect("parse car schema");
+    let ir = parse(SchemaSource::file(&common::Paths::example_schema())).expect("parse car schema");
     let schema = Schema::from_ir(ir);
 
     let cfg_a = GenerationConfig::new("car_a");
@@ -1285,7 +1285,7 @@ fn three_timestamp_precisions_roundtrip_through_chrono() -> Result<(), Box<dyn s
             <field name="received_at" id="3" type="TimestampMillis"/>
           </sbe:message>
         </sbe:messageSchema>"#;
-    let ir = ergo_sbe::parse(xml)?;
+    let ir = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml))?;
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("ts_test")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("TimestampNanos"))

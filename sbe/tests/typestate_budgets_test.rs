@@ -206,7 +206,7 @@ fn generate_fixed_only(module: &str) -> Result<String, Box<dyn Error>> {
             <field name="clusterSessionId" id="2" type="int64"/>
           </sbe:message>
         </sbe:messageSchema>"#;
-    let schema = ergo_sbe::Schema::from_ir(ergo_sbe::parse(xml)?);
+    let schema = ergo_sbe::Schema::from_ir(ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml))?);
     let src = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new(module))
         .generate(&schema)?
         .modules()

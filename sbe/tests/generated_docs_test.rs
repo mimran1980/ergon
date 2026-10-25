@@ -4,7 +4,9 @@
 
 mod common;
 use common::{Paths, generate, scratch_cargo};
-use ergo_sbe::{DomainVarData, GenerationConfig, GenerationProfile, Generator, Schema, parse_file};
+use ergo_sbe::{
+    DomainVarData, GenerationConfig, GenerationProfile, Generator, Schema, SchemaSource, parse,
+};
 
 /// Walk public items and return `(path, has_doc)`.
 fn check_docs(source: &str) -> Vec<(String, bool)> {
@@ -198,7 +200,7 @@ fn generate_with(
     module: &str,
     f: impl FnOnce(GenerationConfig) -> GenerationConfig,
 ) -> String {
-    let ir = parse_file(path).unwrap();
+    let ir = parse(SchemaSource::file(path)).unwrap();
     let schema = Schema::from_ir(ir);
     let (modules, _) = Generator::new(f(GenerationConfig::new(module)))
         .generate(&schema)
@@ -241,8 +243,12 @@ fn domain_object_public_surface_is_documented() {
 
 #[test]
 fn multi_schema_public_surface_is_documented() -> Result<(), Box<dyn std::error::Error>> {
-    let a = parse_file(&Paths::sbe_tool_test_resource("multi-schema-a.xml"))?;
-    let b = parse_file(&Paths::sbe_tool_test_resource("multi-schema-b.xml"))?;
+    let a = parse(SchemaSource::file(&Paths::sbe_tool_test_resource(
+        "multi-schema-a.xml",
+    )))?;
+    let b = parse(SchemaSource::file(&Paths::sbe_tool_test_resource(
+        "multi-schema-b.xml",
+    )))?;
     let schema_a = Schema::from_ir(a);
     let schema_b = Schema::from_ir(b);
     let (modules, _) =

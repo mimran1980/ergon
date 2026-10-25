@@ -38,7 +38,7 @@ fn every_schema_fixture_and_deterministic_parser_mutation_is_panic_free()
         let xml = std::str::from_utf8(&bytes)?;
         assert!(
             catch_unwind(AssertUnwindSafe(|| {
-                let _ = ergo_sbe::parse(xml);
+                let _ = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml));
             }))
             .is_ok(),
             "parser panicked for complete fixture: {}",
@@ -50,7 +50,7 @@ fn every_schema_fixture_and_deterministic_parser_mutation_is_panic_free()
             let prefix = &bytes[..cut];
             let result = catch_unwind(AssertUnwindSafe(|| {
                 if let Ok(text) = std::str::from_utf8(prefix) {
-                    let _ = ergo_sbe::parse(text);
+                    let _ = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(text));
                 }
             }));
             assert!(

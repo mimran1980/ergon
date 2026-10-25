@@ -29,7 +29,9 @@
 )]
 mod common;
 use common::{compile_and_run_with_deps, generate_domain_with};
-use ergo_sbe::{ConversionSelector, DomainVarData, GenerationConfig, GenerationProfile};
+use ergo_sbe::{
+    ConversionSelector, DomainVarData, GenerationConfig, GenerationProfile, SchemaSource,
+};
 use std::path::PathBuf;
 
 fn matrix_schema() -> PathBuf {
@@ -598,9 +600,9 @@ const FIXED_BLOCK_OWNER: &str = r#"<messageSchema package="owner" id="1" version
 /// the same iterator surface as every row.
 #[test]
 fn module_set_knobs_compile() -> Result<(), Box<dyn std::error::Error>> {
-    use ergo_sbe::{Generator, Schema, parse, parse_file};
-    let owner_schema = Schema::from_ir(parse(FIXED_BLOCK_OWNER)?);
-    let matrix = Schema::from_ir(parse_file(&matrix_schema())?);
+    use ergo_sbe::{Generator, Schema, SchemaSource, parse};
+    let owner_schema = Schema::from_ir(parse(SchemaSource::xml(FIXED_BLOCK_OWNER))?);
+    let matrix = Schema::from_ir(parse(SchemaSource::file(&matrix_schema()))?);
     // The shared runtime must stay *one* runtime: a helper written against the
     // owner's `EntryInfo` has to accept the dependent module's.
     let body = |module: &str, owner: &str| {
@@ -974,7 +976,7 @@ fn short_nested_block_rejected_at_entry_and_nested_entry() -> Result<(), Box<dyn
     </group>
   </sbe:message>
 </sbe:messageSchema>"#;
-    let schema = ergo_sbe::Schema::from_ir(ergo_sbe::parse(xml)?);
+    let schema = ergo_sbe::Schema::from_ir(ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml))?);
     let src = ergo_sbe::Generator::new(GenerationConfig::new("short_block_loc"))
         .generate(&schema)?
         .modules()

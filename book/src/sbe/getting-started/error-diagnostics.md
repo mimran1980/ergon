@@ -83,9 +83,9 @@ offending attribute.
 to render the full diagnostic with source context:
 
 ```rust,ignore
-use ergo_sbe::parse_file;
+use ergo_sbe::{SchemaSource, parse};
 
-match parse_file("my-schema.xml") {
+match parse(SchemaSource::file("my-schema.xml")) {
     Ok(_) => { /* regenerate codec */ }
     Err(e) => {
         let report = miette::Report::new(e);
@@ -100,9 +100,9 @@ a plain enum, no downcast needed. Keep a wildcard so new variants are not
 a compile break:
 
 ```rust,no_run
-use ergo_sbe::{parse_file, ParseError};
+use ergo_sbe::{ParseError, SchemaSource, parse};
 
-match parse_file("my-schema.xml") {
+match parse(SchemaSource::file("my-schema.xml")) {
     Ok(_) => {}
     Err(ParseError::MalformedXml { message, .. }) => {
         eprintln!("malformed XML: {message}");

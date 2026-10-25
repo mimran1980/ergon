@@ -20,7 +20,7 @@ use common::{
     compile_and_run_modules, compile_fails_with_diagnostics,
     compile_fails_with_diagnostics_excluding,
 };
-use ergo_sbe::{GenerationConfig, Generator, Schema, parse, parse_file};
+use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
 
 fn schema_path() -> std::path::PathBuf {
     std::path::PathBuf::from(concat!(
@@ -30,7 +30,7 @@ fn schema_path() -> std::path::PathBuf {
 }
 
 fn generate(module: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let schema = Schema::from_ir(parse_file(schema_path())?);
+    let schema = Schema::from_ir(parse(SchemaSource::file(schema_path()))?);
     let set = Generator::new(GenerationConfig::new(module)).generate(&schema)?;
     Ok(set
         .modules()
@@ -272,7 +272,7 @@ const SEND_FIELDS_XML: &str = r#"<messageSchema package="ping" id="9" version="0
 </messageSchema>"#;
 
 fn send_fields_module() -> Result<String, Box<dyn std::error::Error>> {
-    let schema = Schema::from_ir(parse(SEND_FIELDS_XML)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(SEND_FIELDS_XML))?);
     let source = Generator::new(
         GenerationConfig::new("ping")
             .with_enum_mapping(ergo_sbe::EnumMapping::new("Venue", "venue::Venue")),
@@ -440,7 +440,7 @@ fn a_first_tail_named_send_keeps_its_path() -> Result<(), Box<dyn std::error::Er
     <data name="send" id="4" type="varDataEncoding"/>
   </message>
 </messageSchema>"#;
-    let schema = Schema::from_ir(parse(xml)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(xml))?);
     let tails = Generator::new(GenerationConfig::new("tails"))
         .generate(&schema)?
         .modules()
@@ -572,7 +572,7 @@ const PADDED_XML: &str = r#"<messageSchema package="padded" id="11" version="0" 
 #[test]
 fn offer_claims_zero_padding_and_try_claims_leave_it_untouched()
 -> Result<(), Box<dyn std::error::Error>> {
-    let schema = Schema::from_ir(parse(PADDED_XML)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(PADDED_XML))?);
     let padded = Generator::new(
         GenerationConfig::new("padded")
             .with_source_traits(true)

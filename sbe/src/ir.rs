@@ -210,4 +210,9 @@ pub struct Ir {
     pub header_type: String,
     /// Flat token stream.
     pub tokens: Vec<Token>,
+    /// Schema files read to build this IR: the root file first, then every
+    /// resolved include and shared-schema file once, sorted. Empty for inline
+    /// XML. [`crate::GeneratedModuleSet::write_to`] watches these with
+    /// `cargo::rerun-if-changed`.
+    pub sources: Vec<std::path::PathBuf>,
 }

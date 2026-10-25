@@ -6,6 +6,15 @@
 
 use std::path::{Path, PathBuf};
 
+/// Generate one schema's codec into `OUT_DIR`.
+fn write(
+    schema: &Path,
+    config: ergo_sbe::GenerationConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    ergo_sbe::generate(schema, config)?.write_to_out_dir()?;
+    Ok(())
+}
+
 fn generate_versioned_l3(sbe_root: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let schema = sbe_root.join("tests/fixtures/schemas/versioned-l3-v3.xml");
     for version in 0u16..=3 {
@@ -18,7 +27,7 @@ fn generate_versioned_l3(sbe_root: &Path) -> Result<(), Box<dyn std::error::Erro
         if version < 3 {
             cfg = cfg.with_encode_version(version);
         }
-        ergo_sbe::generate_to_out_dir(&schema, cfg)?;
+        write(&schema, cfg)?;
     }
     println!("cargo:rerun-if-changed=../tests/fixtures/schemas/versioned-l3-v3.xml");
     Ok(())
@@ -34,35 +43,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let car_schema = sbe_root.join("tests/fixtures/schemas/example-schema.xml");
     // Benchmarks measure flyweights only — no domain objects.
     // Enable unchecked companions for single-binary checked vs unchecked comparison.
-    ergo_sbe::generate_to_out_dir(&car_schema, ergo_sbe::GenerationConfig::new("car_bench"))?;
+    write(&car_schema, ergo_sbe::GenerationConfig::new("car_bench"))?;
 
     let large_schema = manifest.join("schemas/large-composite.xml");
-    ergo_sbe::generate_to_out_dir(
+    write(
         &large_schema,
         ergo_sbe::GenerationConfig::new("large_comp_bench"),
     )?;
 
     let large_be_schema = manifest.join("schemas/large-composite-be.xml");
-    ergo_sbe::generate_to_out_dir(
+    write(
         &large_be_schema,
         ergo_sbe::GenerationConfig::new("large_comp_be_bench"),
     )?;
 
     let matrix_schema = manifest.join("schemas/codec-matrix.xml");
-    ergo_sbe::generate_to_out_dir(
+    write(
         &matrix_schema,
         ergo_sbe::GenerationConfig::new("codec_matrix_bench")
             .with_domain_objects(ergo_sbe::DomainVarData::Bytes),
     )?;
 
     let matrix_be_schema = manifest.join("schemas/codec-matrix-be.xml");
-    ergo_sbe::generate_to_out_dir(
+    write(
         &matrix_be_schema,
         ergo_sbe::GenerationConfig::new("codec_matrix_be_bench"),
     )?;
 
     let matrix_custom_header_schema = manifest.join("schemas/codec-matrix-custom-header.xml");
-    ergo_sbe::generate_to_out_dir(
+    write(
         &matrix_custom_header_schema,
         ergo_sbe::GenerationConfig::new("codec_matrix_custom_header_bench"),
     )?;
@@ -80,20 +89,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=schemas/codec-matrix.xml");
     println!("cargo:rerun-if-changed=schemas/codec-matrix-be.xml");
     let orderbook_schema = manifest.join("schemas/orderbook.xml");
-    ergo_sbe::generate_to_out_dir(
+    write(
         &orderbook_schema,
         ergo_sbe::GenerationConfig::new("orderbook_bench")
             .with_domain_objects(ergo_sbe::DomainVarData::Bytes),
     )?;
 
     let ob_decimal_schema = manifest.join("schemas/orderbook-decimal.xml");
-    ergo_sbe::generate_to_out_dir(
+    write(
         &ob_decimal_schema,
         ergo_sbe::GenerationConfig::new("orderbook_decimal_bench"),
     )?;
 
     let l2book_schema = manifest.join("schemas/l2-book.xml");
-    ergo_sbe::generate_to_out_dir(
+    write(
         &l2book_schema,
         ergo_sbe::GenerationConfig::new("l2book_bench").with_domain_type(
             ergo_sbe::ConversionSelector::named_type("Decimal"),
@@ -103,13 +112,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("cargo:rerun-if-changed=schemas/codec-matrix-custom-header.xml");
     let null_option_schema = manifest.join("schemas/bench-null-option.xml");
-    ergo_sbe::generate_to_out_dir(
+    write(
         &null_option_schema,
         ergo_sbe::GenerationConfig::new("null_option_bench"),
     )?;
 
     let converters_schema = manifest.join("schemas/bench-converters.xml");
-    ergo_sbe::generate_to_out_dir(
+    write(
         &converters_schema,
         ergo_sbe::GenerationConfig::new("converters_bench").with_domain_type(
             ergo_sbe::ConversionSelector::named_type("Decimal"),
@@ -119,17 +128,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Extended parity schemas (test fixtures with sbe-tool reference crates).
     let oe_schema = sbe_root.join("tests/fixtures/schemas/optional_enum_nullify.xml");
-    ergo_sbe::generate_to_out_dir(
+    write(
         &oe_schema,
         ergo_sbe::GenerationConfig::new("parity_optional_enum_nullify_bench"),
     )?;
     let ext_schema = sbe_root.join("tests/fixtures/schemas/example-extension-schema.xml");
-    ergo_sbe::generate_to_out_dir(
+    write(
         &ext_schema,
         ergo_sbe::GenerationConfig::new("parity_extension_bench"),
     )?;
     let gwd_schema = sbe_root.join("tests/fixtures/schemas/group-with-data-schema.xml");
-    ergo_sbe::generate_to_out_dir(
+    write(
         &gwd_schema,
         ergo_sbe::GenerationConfig::new("parity_group_with_data_bench"),
     )?;

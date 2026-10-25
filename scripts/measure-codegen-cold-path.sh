@@ -20,10 +20,11 @@ EOF
 
 cat >"${scratch}/build.rs" <<EOF
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    ergo_sbe::generate_to_out_dir(
-        "${repo_root}/sbe/tests/fixtures/schemas/example-schema.xml",
+    ergo_sbe::generate(
+        ergo_sbe::SchemaSource::file("${repo_root}/sbe/tests/fixtures/schemas/example-schema.xml"),
         ergo_sbe::GenerationConfig::new("messages"),
-    )?;
+    )?
+    .write_to_out_dir()?;
     Ok(())
 }
 EOF
