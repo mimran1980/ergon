@@ -355,7 +355,14 @@ mod tests {
         // Fail-closed: any malformed entry rejects the whole map (validated
         // ingress parser), even when a well-formed leader entry is present.
         // An empty map is malformed too — there is no member to resolve.
-        for eps in ["garbage,1=localhost:9112,not-an-id=x,2", "1", "=,=foo", ""] {
+        for eps in [
+            "garbage,1=localhost:9112,not-an-id=x,2",
+            "1",
+            "=,=foo",
+            "",
+            "not-a-map",
+            "abc=def",
+        ] {
             assert!(
                 parse_leader_endpoint(eps, 1).is_err(),
                 "expected {eps:?} to be rejected, not silently treated as \"no leader\""
@@ -384,6 +391,53 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("leader member 1"), "{msg}");
         assert!(msg.contains(detail), "{msg}");
+        Ok(())
+    }
+}
+
+/// Redirect resolution after a decoded REDIRECT (T-16), moved from the
+/// integration tests when the parser became crate-private.
+#[cfg(test)]
+#[allow(clippy::panic)]
+mod fail_closed {
+    use super::*;
+    use crate::codecs::session::{EventCode, SessionEventEncoder};
+
+    /// T-16: a REDIRECT SessionEvent still decodes; resolution is a separate step.
+    #[test]
+    fn redirect_session_event_decodes_then_resolution_fails() -> Result<(), Box<dyn std::error::Error>> {
+        let detail = b"0=localhost:9012"; // leader 1 absent
+        let len = SessionEventEncoder::compute_encoded_length_with_message_header(detail.len());
+        let mut buf = vec![0u8; len];
+        let complete = SessionEventEncoder::wrap_and_apply_header(&mut buf, 0)
+            .fixed(&crate::codecs::session::SessionEventFixedFields {
+                cluster_session_id: 9,
+                correlation_id: 1,
+                leadership_term_id: 2,
+                leader_member_id: 1,
+                code: EventCode::REDIRECT,
+                version: Some(1),
+                leader_heartbeat_timeout_ns: None,
+            })
+            .detail(detail)?;
+        let bytes = complete.as_bytes_with_header();
+        match parse_event(bytes)? {
+            EgressEvent::SessionEvent {
+                code,
+                leader_member_id,
+                detail,
+                ..
+            } => {
+                assert_eq!(code, EventCode::REDIRECT);
+                assert_eq!(leader_member_id, 1);
+                assert_eq!(
+                    parse_leader_endpoint(&detail, leader_member_id)?,
+                    None,
+                    "leader 1 must be absent from {detail}"
+                );
+            }
+            other => panic!("expected REDIRECT SessionEvent, got {other:?}"),
+        }
         Ok(())
     }
 }

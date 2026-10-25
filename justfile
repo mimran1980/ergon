@@ -366,6 +366,9 @@ test: policy
     just build-aeron-jars
     cargo test -p ergo-aeron-cluster-test-harness -- --test-threads=1
     cd samples/cluster-ha-orderbook && cargo test --features test-harness -- --test-threads=1
+    cd samples/cluster-tutorial && cargo fmt --check
+    cd samples/cluster-tutorial && cargo clippy --all-targets -- -D warnings
+    cd samples/cluster-tutorial && cargo run --quiet
     @echo "=== 7/7 benchmark compilation ==="
     cargo bench -p ergo-sbe-benchmarks --no-run
     cargo bench -p ergo-aeron-cluster --no-run
@@ -431,6 +434,7 @@ fmt:
     cd samples/exchange-example && cargo fmt
     cd samples/cluster-ha-orderbook && cargo fmt
     cd samples/cluster-rfq && cargo fmt
+    cd samples/cluster-tutorial && cargo fmt
     cd samples/low-latency-k8s && cargo fmt
 
 # Auto-fix: fmt + clippy --fix (same feature split as check).

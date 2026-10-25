@@ -19,7 +19,6 @@ use ergo_aeron_cluster::SessionState;
 use serial_test::serial;
 
 use common::{Capture, await_echo, connect_own_driver, launch_own_driver};
-use ergo_aeron_cluster::egress::EgressAdapter;
 
 #[test]
 #[serial]
@@ -44,10 +43,10 @@ fn test_deterministic_own_driver_udp_failover() -> Result<(), Box<dyn std::error
     );
 
     // --- Pre-failover round trip over own-driver UDP ---
-    let mut adapter = EgressAdapter::new(Capture::new());
+    let mut listener = Capture::new();
     await_echo(
         &mut client,
-        &mut adapter,
+        &mut listener,
         b"PRE-FAILOVER",
         Duration::from_secs(15),
     )?;
@@ -59,25 +58,22 @@ fn test_deterministic_own_driver_udp_failover() -> Result<(), Box<dyn std::error
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         let _ = client.send_keep_alive();
-        client.poll_egress(&mut adapter, 10)?;
-        if adapter.listener().new_leader_member_id.is_some()
-            && client.state() == SessionState::Connected
-        {
+        client.poll(&mut listener, 10)?;
+        if listener.new_leader_member_id.is_some() && client.state() == SessionState::Connected {
             break;
         }
         if Instant::now() >= deadline {
             return Err(format!(
                 "no NewLeaderEvent + reconnect within 60s (state={:?}, saw_new_leader={:?})",
                 client.state(),
-                adapter.listener().new_leader_member_id
+                listener.new_leader_member_id
             )
             .into());
         }
         std::thread::sleep(Duration::from_millis(100));
     }
 
-    let new_leader = adapter
-        .listener()
+    let new_leader = listener
         .new_leader_member_id
         .expect("NewLeaderEvent observed");
     assert!(
@@ -100,7 +96,7 @@ fn test_deterministic_own_driver_udp_failover() -> Result<(), Box<dyn std::error
     //     leader would never echo). ---
     await_echo(
         &mut client,
-        &mut adapter,
+        &mut listener,
         b"POST-FAILOVER",
         Duration::from_secs(15),
     )?;

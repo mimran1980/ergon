@@ -7,9 +7,9 @@ mod common;
 
 use common::{Fixture, c9g_tuned, debian_default};
 use ergon_tune::{
-    CheckId, CpuSteal, FaultWatch, Faults, HostCheckPolicy, HotSet, Role, Severity, Status, Thread,
+    CpuSteal, FaultWatch, Faults, HostCheckPolicy, HotSet, Role, Severity, Status, Thread,
     cpu_steal, t13_workqueue_cpumask, t14_compaction, t15_host_tasks, t16_instrumentation, t17_ksm,
-    t18_steal,
+    t18_steal, unknown_stops_require,
 };
 
 type R = Result<(), Box<dyn std::error::Error>>;
@@ -57,7 +57,7 @@ fn t13_warns_when_unbound_workqueues_may_run_on_a_hot_cpu() -> R {
     let f = debian_default("t13-warn")?;
     f.file("/sys/devices/virtual/workqueue/cpumask", "ff\n")?;
     let v = t13_workqueue_cpumask(&f.host(), &loop_on(3));
-    assert_eq!(v.id, CheckId::T13);
+    assert_eq!(v.id, "T13");
     assert!(v.is_warning(), "{v}");
     for part in [
         "CPU 3 (loop)",
@@ -110,7 +110,7 @@ fn t14_informs_while_compaction_may_move_a_hot_threads_pages() -> R {
     f.file("/proc/sys/vm/compaction_proactiveness", "20\n")?
         .file("/proc/sys/vm/compact_unevictable_allowed", "1\n")?;
     let v = t14_compaction(&f.host());
-    assert_eq!(v.id, CheckId::T14);
+    assert_eq!(v.id, "T14");
     assert!(v.is_finding(), "{v}");
     assert_eq!(v.severity, Severity::Info);
     for part in [
@@ -173,7 +173,7 @@ fn t15_warns_for_another_processs_task_allowed_on_a_hot_cpu() -> R {
     task(&f, 900, 900, "app", 0, "0")?;
     task(&f, 900, 901, "app worker", 0, "2-4")?;
     let v = t15_host_tasks(&f.host(), &loop_on(3));
-    assert_eq!(v.id, CheckId::T15);
+    assert_eq!(v.id, "T15");
     assert!(v.is_warning(), "{v}");
     for part in [
         "2 processes",
@@ -275,7 +275,7 @@ fn instrumented(name: &str) -> Result<Fixture, Box<dyn std::error::Error>> {
 fn t16_informs_of_kprobes_ftrace_hooks_and_bpf_programs() -> R {
     let f = instrumented("t16-info")?;
     let v = t16_instrumentation(&f.host());
-    assert_eq!(v.id, CheckId::T16);
+    assert_eq!(v.id, "T16");
     assert!(v.is_finding(), "{v}");
     assert_eq!(v.severity, Severity::Info);
     for part in [
@@ -365,7 +365,7 @@ fn t17_warns_while_ksm_runs() -> R {
     f.file("/sys/kernel/mm/ksm/run", "1\n")?
         .file("/sys/kernel/mm/ksm/pages_sharing", "5120\n")?;
     let v = t17_ksm(&f.host());
-    assert_eq!(v.id, CheckId::T17);
+    assert_eq!(v.id, "T17");
     assert!(v.is_warning(), "{v}");
     for part in ["ksmd", "5120 pages", "echo 2 > /sys/kernel/mm/ksm/run"] {
         assert!(v.message.contains(part), "{part:?} not in {v}");
@@ -406,7 +406,7 @@ fn t18_informs_of_time_stolen_from_a_hot_cpu() -> R {
     let f = c9g_tuned("t18-info")?;
     f.file("/proc/stat", PROC_STAT)?;
     let v = t18_steal(&f.host(), &loop_on(3));
-    assert_eq!(v.id, CheckId::T18);
+    assert_eq!(v.id, "T18");
     assert!(v.is_finding(), "{v}");
     assert_eq!(v.severity, Severity::Info);
     for part in ["CPU 3 (loop)", "700 ms", "since boot", "0.3%"] {
@@ -461,7 +461,7 @@ fn fault_watch_warns_when_a_hot_thread_faults_and_is_silent_otherwise() -> R {
     assert_eq!(w.check(), None);
     f.file(path, &stat_line(4250, "ergon (loop) x", 'R', 0, 112, 3))?;
     let v = w.check().ok_or("no finding")?;
-    assert_eq!(v.id, CheckId::T19);
+    assert_eq!(v.id, "T19");
     assert!(v.is_warning(), "{v}");
     for part in [
         "loop thread",
@@ -514,20 +514,11 @@ fn fault_watch_reads_another_process_and_reports_a_lost_task_once() -> R {
 
 #[test]
 fn an_unknown_new_check_does_not_stop_a_require_start() {
-    for id in [
-        CheckId::T13,
-        CheckId::T14,
-        CheckId::T15,
-        CheckId::T16,
-        CheckId::T17,
-        CheckId::T18,
-        CheckId::T19,
-    ] {
-        assert!(!id.unknown_stops_require(), "{id}");
-        assert_eq!(id.to_string(), format!("{id:?}"));
+    for id in ["T13", "T14", "T15", "T16", "T17", "T18", "T19"] {
+        assert!(!unknown_stops_require(id), "{id}");
     }
     let f = ergon_tune::Finding {
-        id: CheckId::T16,
+        id: "T16",
         severity: Severity::Info,
         status: Status::Unknown("no debugfs".to_owned()),
         message: "cannot tell".to_owned(),

@@ -77,7 +77,7 @@ pub use cpu::{
 };
 pub use cpuset::{CPU_LIMIT, CpuSet, CpuSetError};
 pub use faults::{FaultWatch, Faults};
-pub use finding::{CheckId, Component, Finding, HotCpu, HotSet, Role, Severity, Status};
+pub use finding::{Component, Finding, HotCpu, HotSet, Role, Severity, Status};
 pub use host::{Host, ReadError};
 pub use k8s::{Needs, in_pod, k8s_checks};
 pub use mem::{FsMagic, fs_magic, t3_thp, t4_aeron_dir, t4_from, t5_numa_balancing};
@@ -98,7 +98,8 @@ pub use quota::{
     CgroupVersion, CpuCgroup, CpuQuota, ThrottleWatch, Throttling, cpu_cgroup, t9_cpu_quota,
 };
 pub use report::{
-    HOST_CHECKS_ENV, HostCheckError, HostCheckPolicy, SILENCE, host_check_line, warn_line,
+    HOST_CHECKS_ENV, HostCheckError, HostCheckPolicy, SILENCE, host_check_line,
+    unknown_stops_require, warn_line,
 };
 pub use time::{
     Bound, BoundSource, ChronyAnswer, ChronyError, ChronyReference, ChronyTracking,

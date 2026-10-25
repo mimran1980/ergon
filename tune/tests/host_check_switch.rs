@@ -4,15 +4,15 @@
 #![allow(missing_docs)]
 
 use ergon_tune::{
-    CheckId, Finding, HOST_CHECKS_ENV, HostCheckError, HostCheckPolicy, SILENCE, Severity, Status,
-    host_check_line, warn_line,
+    Finding, HOST_CHECKS_ENV, HostCheckError, HostCheckPolicy, SILENCE, Severity, Status,
+    host_check_line, unknown_stops_require, warn_line,
 };
 
 type R = Result<(), Box<dyn std::error::Error>>;
 
 fn warn() -> Finding {
     Finding {
-        id: CheckId::T1,
+        id: "T1",
         severity: Severity::Warn,
         status: Status::Finding,
         message: "a warning".to_owned(),
@@ -22,7 +22,7 @@ fn warn() -> Finding {
 
 fn info() -> Finding {
     Finding {
-        id: CheckId::T1,
+        id: "T1",
         severity: Severity::Info,
         status: Status::Finding,
         message: "just so you know".to_owned(),
@@ -32,7 +32,7 @@ fn info() -> Finding {
 
 fn ok() -> Finding {
     Finding {
-        id: CheckId::T1,
+        id: "T1",
         severity: Severity::Warn,
         status: Status::Ok,
         message: "all well".to_owned(),
@@ -40,7 +40,7 @@ fn ok() -> Finding {
     }
 }
 
-fn unknown(id: CheckId) -> Finding {
+fn unknown(id: &'static str) -> Finding {
     Finding {
         id,
         severity: Severity::Warn,
@@ -168,13 +168,7 @@ fn require_refuses_to_start_on_a_warning() -> R {
         "{text}"
     );
     // Two checks: both ids.
-    let findings = vec![
-        warn(),
-        Finding {
-            id: CheckId::K1,
-            ..warn()
-        },
-    ];
+    let findings = vec![warn(), Finding { id: "K1", ..warn() }];
     let e = HostCheckPolicy::Require
         .refusal(&findings)
         .ok_or("no refusal")?;
@@ -203,15 +197,15 @@ fn warn_line_is_none_for_everything_but_a_warning() {
 #[test]
 fn require_refuses_on_an_unproven_proof_but_not_on_a_missing_subsystem() -> R {
     assert!(
-        CheckId::K2.unknown_stops_require(),
+        unknown_stops_require("K2"),
         "K2 proves this pod owns its CPUs"
     );
     assert!(
-        !CheckId::K6.unknown_stops_require(),
+        !unknown_stops_require("K6"),
         "K6 reads PSI, which a kernel may not have"
     );
     // The proof: refused, and the ids are named.
-    let findings = vec![ok(), unknown(CheckId::K2)];
+    let findings = vec![ok(), unknown("K2")];
     let e = HostCheckPolicy::Require
         .refusal(&findings)
         .ok_or("an unproven K2 must stop a require start")?;
@@ -224,7 +218,7 @@ fn require_refuses_on_an_unproven_proof_but_not_on_a_missing_subsystem() -> R {
         "{e}"
     );
     // The missing subsystem: reported, not refused.
-    let findings = vec![ok(), unknown(CheckId::K6), unknown(CheckId::K7)];
+    let findings = vec![ok(), unknown("K6"), unknown("K7")];
     assert_eq!(
         HostCheckPolicy::Require.refusal(&findings),
         None,
@@ -237,8 +231,67 @@ fn require_refuses_on_an_unproven_proof_but_not_on_a_missing_subsystem() -> R {
         "{lines:#?}"
     );
     // Off and on never refuse, whatever the findings are.
-    let findings = vec![warn(), unknown(CheckId::K2)];
+    let findings = vec![warn(), unknown("K2")];
     assert_eq!(HostCheckPolicy::Off.refusal(&findings), None);
     assert_eq!(HostCheckPolicy::On.refusal(&findings), None);
     Ok(())
+}
+
+/// A check id is a string, so a caller adds its own checks (`X1`) beside
+/// the crate's. `require` fails closed on one it does not know: an unproven
+/// result of an unclassified check stops the start.
+#[test]
+fn require_fails_closed_on_an_unknown_result_of_a_callers_own_check() -> R {
+    assert!(
+        unknown_stops_require("X1"),
+        "an unclassified check must block"
+    );
+    let findings = vec![ok(), unknown("X1")];
+    let e = HostCheckPolicy::Require
+        .refusal(&findings)
+        .ok_or("an unproven caller check must stop a require start")?;
+    assert_eq!(
+        e,
+        HostCheckError::Warnings {
+            count: 1,
+            ids: "X1".to_owned(),
+        }
+    );
+    let line = host_check_line("app", &Finding { id: "X1", ..warn() }).ok_or("no line")?;
+    assert!(
+        line.starts_with("app warning: X1 warn: a warning"),
+        "{line}"
+    );
+    Ok(())
+}
+
+/// The whole classification, pinned: the exhaustive `match` that used to
+/// force it is gone, so a check dropped from (or added to) the subsystem
+/// list must fail here. T11 matters most: a pod normally cannot see the
+/// time daemon, and blocking on it would refuse every pod start.
+#[test]
+fn unknown_stops_require_classifies_every_built_in_check() {
+    let blocks = [
+        "T1", "T2", "T7", "T8", "T9", "T10", "T12", "K1", "K2", "K3", "K4", "K5", "M1", "M2", "M3",
+    ];
+    // T13-T19: node-wide noise, read where the node lets a process read it
+    // (debugfs, other PID namespaces, steal accounting); none proves a
+    // property of this pod.
+    let allowed = [
+        "T3", "T4", "T5", "T6", "T11", "T13", "T14", "T15", "T16", "T17", "T18", "T19", "K6", "K7",
+        "N1", "N2", "N3", "N4", "M4",
+    ];
+    for id in blocks {
+        assert!(unknown_stops_require(id), "{id} must block when unknown");
+    }
+    for id in allowed {
+        assert!(
+            !unknown_stops_require(id),
+            "{id} must not block when unknown"
+        );
+    }
+    // Ids are exact: no case folding or trimming lets a typo through.
+    for id in ["t3", " T3", "T3 ", "T03", ""] {
+        assert!(unknown_stops_require(id), "{id:?} is not T3");
+    }
 }

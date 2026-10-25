@@ -6,7 +6,7 @@
 use std::fs::File;
 
 use crate::cpu::Thread;
-use crate::finding::{CheckId, Finding, Role, Severity};
+use crate::finding::{Finding, Role, Severity};
 use crate::host::{Host, ReadError};
 use crate::quota::read_from_start;
 
@@ -153,7 +153,7 @@ impl FaultWatch {
                 }
                 self.failed = true;
                 return Some(Finding::unknown(
-                    CheckId::T19,
+                    "T19",
                     Severity::Warn,
                     T19_EVIDENCE,
                     format!("cannot read the {} thread's page faults", self.role.name()),
@@ -168,7 +168,7 @@ impl FaultWatch {
             return None;
         }
         Some(Finding::found(
-            CheckId::T19,
+            "T19",
             Severity::Warn,
             T19_EVIDENCE,
             format!(

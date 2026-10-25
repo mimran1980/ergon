@@ -5,204 +5,6 @@ use std::fmt;
 
 use crate::cpuset::CpuSet;
 
-/// A check, by its identifier in the low-latency specification.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-#[non_exhaustive]
-pub enum CheckId {
-    /// Hot CPUs isolated and tickless.
-    T1,
-    /// NIC interrupts off the hot CPUs.
-    T2,
-    /// Transparent hugepages.
-    T3,
-    /// The Aeron directory is memory-backed.
-    T4,
-    /// Automatic NUMA balancing.
-    T5,
-    /// The NIC on the hot CPUs' NUMA node.
-    T6,
-    /// A hot thread under `SCHED_FIFO` or `SCHED_RR`.
-    T7,
-    /// Two busy threads on one physical core.
-    T8,
-    /// A CPU quota (CFS bandwidth limit) on the process's cgroup.
-    T9,
-    /// SMT (hyperthreading) is active on this x86 host.
-    T10,
-    /// The pod is not Guaranteed `QoS`.
-    K1,
-    /// The pod's CPUs are not exclusive (the shared pool).
-    K2,
-    /// A hot CPU's SMT sibling is outside the pod's cpuset.
-    K3,
-    /// The pod has no CPU for helpers.
-    K4,
-    /// A capability the caller uses is missing.
-    K5,
-    /// `memory.high` or CPU/memory pressure on the pod's cgroup.
-    K6,
-    /// The pod's CPUs are not on the NIC's NUMA node.
-    K7,
-    /// ENA adaptive RX interrupt moderation (`nic`).
-    N1,
-    /// Deferred interrupts without a busy poller (`nic`).
-    N2,
-    /// An Azure accelerated-networking VF (`nic`).
-    N3,
-    /// The kernel RX ring (`nic`).
-    N4,
-    /// The media driver's agents busy-spin on pinned cores of their own
-    /// (checked by `ergon-md-dpdk`, which builds the finding).
-    M1,
-    /// The media driver's term buffers are not sparse (`ergon-md-dpdk`).
-    M2,
-    /// The media driver's socket buffers are granted as asked
-    /// (`ergon-md-dpdk`).
-    M3,
-    /// Kernel busy polling for the media driver's socket transport
-    /// (`ergon-md-dpdk`).
-    M4,
-    // Added after 0.1.30: last, so the variants before keep their order.
-    /// How `CLOCK_REALTIME` is kept: the time daemon, PTP-grade or NTP, its
-    /// error bound, an unsettled correction, a pending leap second.
-    T11,
-    /// The kernel's clock source: the hardware counter, a hypervisor's view
-    /// of it, or one read by a system call (hpet, `acpi_pm`).
-    T12,
-    // Added after 0.1.33: last, so the variants before keep their order.
-    /// Unbound workqueues may run on a busy-spinning CPU
-    /// (`/sys/devices/virtual/workqueue/cpumask`).
-    T13,
-    /// Memory compaction may move a hot thread's pages: proactive
-    /// compaction, or compaction of locked pages (vm sysctls).
-    T14,
-    /// Another process's task may run on a busy-spinning CPU.
-    T15,
-    /// Kernel instrumentation: kprobes, ftrace hooks, BPF programs.
-    T16,
-    /// Kernel same-page merging (KSM) runs.
-    T17,
-    /// Steal time on a busy-spinning CPU: the hypervisor ran something else.
-    T18,
-    /// A hot thread took page faults while it ran (`FaultWatch`).
-    T19,
-}
-
-impl CheckId {
-    /// The identifier (`T1`).
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::T1 => "T1",
-            Self::T2 => "T2",
-            Self::T3 => "T3",
-            Self::T4 => "T4",
-            Self::T5 => "T5",
-            Self::T6 => "T6",
-            Self::T7 => "T7",
-            Self::T8 => "T8",
-            Self::T9 => "T9",
-            Self::T10 => "T10",
-            Self::T11 => "T11",
-            Self::T12 => "T12",
-            Self::T13 => "T13",
-            Self::T14 => "T14",
-            Self::T15 => "T15",
-            Self::T16 => "T16",
-            Self::T17 => "T17",
-            Self::T18 => "T18",
-            Self::T19 => "T19",
-            Self::K1 => "K1",
-            Self::K2 => "K2",
-            Self::K3 => "K3",
-            Self::K4 => "K4",
-            Self::K5 => "K5",
-            Self::K6 => "K6",
-            Self::K7 => "K7",
-            Self::N1 => "N1",
-            Self::N2 => "N2",
-            Self::N3 => "N3",
-            Self::N4 => "N4",
-            Self::M1 => "M1",
-            Self::M2 => "M2",
-            Self::M3 => "M3",
-            Self::M4 => "M4",
-        }
-    }
-
-    /// Whether an unknown result of this check stops a
-    /// [`HostCheckPolicy::Require`](crate::HostCheckPolicy::Require) start.
-    ///
-    /// A check that proves a property of this pod or process — its CPUs are
-    /// its own, they are isolated, there is no CPU quota, its helpers have a
-    /// core — **blocks** when it cannot be answered: `require` must not start
-    /// on an unproven property, and the file is one this node always has.
-    /// Unproven is not "fine".
-    ///
-    /// A check of a subsystem the node may not have — PSI and `memory.high`,
-    /// a NUMA node, a NIC knob, THP — does **not** block: that is a real
-    /// host, and refusing to start there is not a readiness gate but a
-    /// refusal to run at all.
-    ///
-    /// The match is exhaustive on purpose: a new check has to be classified
-    /// here, and until it is, the build says so.
-    #[must_use]
-    pub const fn unknown_stops_require(self) -> bool {
-        match self {
-            // Proof about this pod or process. The evidence is node state
-            // this deployment provides, and a host that can run a busy loop
-            // always has the file.
-            Self::T1
-            | Self::T2
-            | Self::T7
-            | Self::T8
-            | Self::T9
-            | Self::T10
-            | Self::T12
-            | Self::K1
-            | Self::K2
-            | Self::K3
-            | Self::K4
-            | Self::K5
-            | Self::M1
-            | Self::M2
-            | Self::M3 => true,
-            // A subsystem the node may not have. Absent evidence is not a
-            // gap in the proof; it is a host without that subsystem. T11:
-            // a pod normally sees neither the time daemons (another PID
-            // namespace) nor chronyd's port (another network namespace).
-            // T13-T19: node-wide noise, read where the node lets a process
-            // read it (debugfs, other PID namespaces and steal accounting
-            // may be out of sight); none proves a property of this pod.
-            Self::T3
-            | Self::T11
-            | Self::T13
-            | Self::T14
-            | Self::T15
-            | Self::T16
-            | Self::T17
-            | Self::T18
-            | Self::T19
-            | Self::T4
-            | Self::T5
-            | Self::T6
-            | Self::K6
-            | Self::K7
-            | Self::N1
-            | Self::N2
-            | Self::N3
-            | Self::N4
-            | Self::M4 => false,
-        }
-    }
-}
-
-impl fmt::Display for CheckId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
 /// How a caller reports a [`Status::Finding`]: a warning line, or an
 /// informational one. Opt-in strict modes (refusing to start) are the
 /// caller's.
@@ -235,15 +37,16 @@ pub enum Status {
     Ok,
     /// The data could not be read (the reason): never a warning. It stops a
     /// `require` start only where the check must prove something —
-    /// [`CheckId::unknown_stops_require`].
+    /// [`unknown_stops_require`](crate::unknown_stops_require).
     Unknown(String),
 }
 
 /// One result of a check.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Finding {
-    /// The check.
-    pub id: CheckId,
+    /// The check's identifier in the low-latency specification (`T1`,
+    /// `K2`, `M1`), or a caller's own for a check it adds.
+    pub id: &'static str,
     /// How to report it when it is a [`Status::Finding`].
     pub severity: Severity,
     /// Finding, ok or unknown.
@@ -258,7 +61,7 @@ pub struct Finding {
 
 impl Finding {
     pub(crate) const fn found(
-        id: CheckId,
+        id: &'static str,
         severity: Severity,
         evidence: &'static str,
         message: String,
@@ -273,7 +76,7 @@ impl Finding {
     }
 
     pub(crate) const fn ok(
-        id: CheckId,
+        id: &'static str,
         severity: Severity,
         evidence: &'static str,
         message: String,
@@ -288,7 +91,7 @@ impl Finding {
     }
 
     pub(crate) fn unknown(
-        id: CheckId,
+        id: &'static str,
         severity: Severity,
         evidence: &'static str,
         message: String,

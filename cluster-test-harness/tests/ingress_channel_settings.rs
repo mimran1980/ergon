@@ -9,7 +9,6 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use ergo_aeron_cluster::egress::EgressAdapter;
 use ergo_aeron_cluster::{
     AeronCluster, ClusterError, SessionBuilder, SessionState, default_idle, poll_connect_until_done,
 };
@@ -81,10 +80,10 @@ fn failover_keeps_the_ingress_channel_settings() -> Result<(), Box<dyn std::erro
     )?;
     assert_limits(&mut client, "after connect")?;
 
-    let mut adapter = EgressAdapter::new(Capture::new());
+    let mut listener = Capture::new();
     await_echo(
         &mut client,
-        &mut adapter,
+        &mut listener,
         b"PRE-FAILOVER",
         Duration::from_secs(15),
     )?;
@@ -92,16 +91,14 @@ fn failover_keeps_the_ingress_channel_settings() -> Result<(), Box<dyn std::erro
     cluster.kill_node(usize::try_from(initial_leader)?);
 
     let deadline = Instant::now() + Duration::from_secs(60);
-    while adapter.listener().new_leader_member_id.is_none()
-        || client.state() != SessionState::Connected
-    {
+    while listener.new_leader_member_id.is_none() || client.state() != SessionState::Connected {
         let _ = client.send_keep_alive();
-        client.poll_egress(&mut adapter, 10)?;
+        client.poll(&mut listener, 10)?;
         if Instant::now() >= deadline {
             return Err(format!(
                 "no failover within 60s (state={:?}, new leader={:?})",
                 client.state(),
-                adapter.listener().new_leader_member_id
+                listener.new_leader_member_id
             )
             .into());
         }
@@ -112,7 +109,7 @@ fn failover_keeps_the_ingress_channel_settings() -> Result<(), Box<dyn std::erro
 
     await_echo(
         &mut client,
-        &mut adapter,
+        &mut listener,
         b"POST-FAILOVER",
         Duration::from_secs(15),
     )?;
