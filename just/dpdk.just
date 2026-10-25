@@ -32,6 +32,10 @@ test-dpdk-lab:
     bash md-dpdk/benches/cloud/aws/test/test-eks-nri.sh
     bash md-dpdk/benches/cloud/aws/test/test-latency-bench-podrun.sh
 
+# The transport suite end to end on one Linux box in Docker (--privileged: netem, sysctls; not CI): every non-DPDK arm, 1 rep, then fairness.py and analyse.py --transport into target/transport-smoke
+transport-smoke-docker *args:
+    bash md-dpdk/benches/cloud/test/transport-smoke-docker.sh {{args}}
+
 # The DPDK tests in Docker, amd64 emulation or `--arm64` (Graviton's architecture, native on Apple silicon); `--build` the image, `--all` for check-dpdk, `--rootless` for the vdev scenarios as a non-root user, else a test filter
 verify-dpdk-docker *args:
     bash md-dpdk/native/dpdk/test/verify-dpdk.sh {{args}}

@@ -2,7 +2,10 @@
 
 `analyse.py --transport`, `spikes.py --transport` and `fairness.py` read a
 transport run directory in this shape. The runner (`transport.sh`, `vm.sh`,
-`host.sh`) and the latency core (`ergon-latency-core`) write it. A field
+`host.sh`) and the latency core (`ergon-latency-core`) write what it keeps
+per point (`manifest/`, `points/`, `irq/`, `nstat/`, `netem/`, `samples/`,
+`settings/`); `transport_collect.py` lays that out as below when the session
+ends. A field
 this file does not list is ignored; a field it lists as required and that
 is missing is a fairness violation, never a default.
 
@@ -10,24 +13,27 @@ is missing is a fairness violation, never a default.
 
 ```
 <run>/results.csv                 every row, rep first (as lab.sh writes it)
-<run>/transport-settings.env      the settings each arm must run with
+<run>/transport-settings.env      the settings each arm must run with (transport_collect.py)
+<run>/transport-settings.tr.env   the TR_* file the session sourced
 <run>/<set>/manifest-<tag>.json   one per point
 <run>/<set>/spikes-<tag>.csv      the point's spikes and its max
 <run>/<set>/<host>-events-<tag>.csv  timed events on a host during the point
 <run>/<set>/<host>-diag-<set>.log    vm.sh diag: gapspin, trace, knoise
 <run>/<set>/<host>-rings-<tag>.log   DPDK event log (dpdk arms)
-<run>/<set>/<path from the manifest> hostcheck reports
+<run>/<set>/hostcheck-<a|b>.txt   each host's session hostcheck report
 ```
 
-`<set>` is the matrix set (`1`, `2a`, `2b`, `3a`, `3b`, `3c`, `fanin`).
+`<set>` is the matrix set (`1`, `2a`, `2b`, `3a`, `3b`, `3c`, `fan`).
+Manifest host keys: a two-host set's `a` and `b`; a one-host set's one host
+is `a` whichever VM it ran on (`hosts` in the manifest maps key to VM).
 `<tag>` is `<set>-<arm-mode>-<size>-<rep>-r<rate>`, the load point's name as
 lib.sh spells it (`file_name(label)-size-rep-point`); a one-way row's files
 add `-oneway`.
 
 ## Labels
 
-A row's label is `<set>:<arm>[@STREAMS=<n>][@NETEM=<pct>]`. `@STREAMS`
-absent is 1; `@NETEM` absent is no loss row. `@NETEM=0` is netem at 0 %,
+A row's label is `<set>:<arm>[@STREAMS=<n>][@NETEM=<pct>]`, the A/A arm's
+arm `aa`. The runner always writes `@STREAMS`; absent is 1; `@NETEM` absent is no loss row. `@NETEM=0` is netem at 0 %,
 `@NETEM=none` the 3c control with no qdisc. The point column is
 `<transport>-r<rate>` (for example `udp-r10000`, `tcp-r50000`, `ipc-r1000000`);
 the analysis reads the rate after `-r`.
@@ -58,7 +64,7 @@ after their due time.
 |---|---|---|
 | `format` | 1 | |
 | `set`, `arm`, `label`, `kind` (`load`/`oneway`) | string | |
-| `transport` | `mpsc`, `aeron-ipc`, `aeron-spy`, `aeron-udp`, `aeron-dpdk`, `udp`, `tcp` | loss accounting, no DPDK in loss rows |
+| `transport` | `mpsc`, `aeron-ipc`, `aeron-spy`, `aeron-udp`, `aeron-dpdk`, `udp`, `tcp`, or several joined by `+` (`udp+tcp`: every part's loss sources) | loss accounting, no DPDK in loss rows |
 | `round` | string | fairness groups points by it: one rep of one set, stream count, netem and rate, every arm |
 | `rep`, `rate`, `streams`, `size`, `duration_s`, `warmup_s` | int | same schedule |
 | `netem` | string or null | as the label's `@NETEM` |
@@ -87,7 +93,10 @@ sweep.<knob>=<arm>,<arm>,...   the arms swept for a per-arm knob
 ```
 
 An arm reporting a knob the file does not give it, or a different value,
-breaks the settings rule. The shared-knob rule: a per-arm knob needs a
+breaks the settings rule. transport_collect.py writes `shared.` lines alone:
+every transport sysctl (`host.sh transport_sysctls`) at its TR_* value, each
+host reading them back after every point (`vm.sh settings`); an optional one
+(kernel 6.15's) that no host had at any point is declared `absent`. The shared-knob rule: a per-arm knob needs a
 `sweep.` line naming that arm and every other arm of the round that reports
 the knob, and a knob is never both `shared.` and per-arm. The A/A arm is
 checked against `aa_of`'s settings.

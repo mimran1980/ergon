@@ -1371,7 +1371,7 @@ def spikes(folder):
 
 
 # The transport suite (transport-format.md): its sets in the plan's order
-TRANSPORT_SETS = ["1", "2a", "2b", "3a", "3b", "3c", "fanin"]
+TRANSPORT_SETS = ["1", "2a", "2b", "3a", "3b", "3c", "fan"]
 # (column, row field) a transport table and its verdicts compare
 TRANSPORT_METRICS = (("min", "min"), ("p50", "p50"), ("p99", "p99"), ("p99.99", "p99.99"), ("max", "max"))
 STREAM0 = (("stream 0 p50", "stream0_p50"), ("stream 0 p99", "stream0_p99"), ("stream 0 p99.99", "stream0_p99.99"),

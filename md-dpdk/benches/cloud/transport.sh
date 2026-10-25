@@ -6,14 +6,17 @@
 # session's seed and the round: transport_plan.py), the A/A arm (the set's
 # first arm again, @AA=1) among them. Each point is one run of the arm's
 # bench binary (transport-cli.md) at one load: for two-host arms its pong on
-# host b, then its ping on host a; one-host arms --role local. The first load
+# host b (the ping starts once it says ready), then its ping on host a;
+# one-host arms --role local. The first load
 # of an arm and stream count warms up 30 s, each later one 5 s (the switch).
 # Around every point, on each host it uses: the IRQ counts (deltas on the
 # isolated CPUs), a thread placement sample mid-window, and under netem the
 # qdisc's counters, checked against the binomial interval of its loss. Each
 # point gets a manifest (manifest/<point>.env, the binary's manifest.json as
-# manifest/<point>.json); its --out directory goes to points/<point>/ and its
-# rows (the rep in their first column) to results.csv.
+# manifest/<point>.json); its --out directories go to points/<point>/ and
+# its rows (the rep in their first column, the point column
+# <channel>-r<rate>) to results.csv. At the end transport_collect.py lays the
+# directory out as transport-format.md has it, for fairness.py and analyse.py.
 #
 #   transport.sh check <pair> [<arms file>]   the matrix and arms file parse, every mode a
 #                         point runs passes modes.sh mode_check, and so do the Aeron arms'
@@ -21,14 +24,21 @@
 #   transport.sh run <pair>   on VM a (transport_remote starts it): reads
 #                         ~/bench/transport-<pair>/env, writes results.csv, rounds.tsv,
 #                         order.csv, manifest/, points/, logs/, failures.csv there, then rc
+#   transport.sh smoke <dir>  the local end-to-end smoke (LAB_LOCAL_SMOKE=1): no az, no ssh;
+#                         hosts a and b are homes under <dir>/hosts on this one Linux box
+#                         (loopback addresses, local-vm.sh in place of vm.sh, one media
+#                         driver for both), transport-smoke.tsv's sets at 1 rep and short
+#                         durations; then transport_collect.py, fairness.py and
+#                         analyse.py --transport (test/transport-smoke-docker.sh runs it)
 #
 # Sourced (azure/lab.sh, the tests): functions only, among them
 # transport_prepare and transport_remote, the operator machine's side.
 #
 # Durations (env, else the plan's): TRANSPORT_WARMUP_S (30), TRANSPORT_POINT_S
-# (30), TRANSPORT_SWITCH_S (5), TRANSPORT_PONG_WAIT_S (2: the pong's time to bind
-# before the ping starts); TRANSPORT_MAX_FAILURES (3): that many failed runs
-# (an arm at a stream count) in a row stop the session.
+# (30), TRANSPORT_SWITCH_S (5), TRANSPORT_READY_TIMEOUT_S (60: the longest the
+# runner waits for a pong's one `ready` line before the point fails);
+# TRANSPORT_MAX_FAILURES (3): that many failed runs (an arm at a stream count)
+# in a row stop the session.
 set -uo pipefail
 
 tr_here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -37,8 +47,18 @@ tr_here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=modes.sh
 . "$tr_here/modes.sh"
 
-# tr_files [<arms file>]: the plan's files: the matrix, then the arms file
-tr_files() { printf '%s\n' "$tr_here/transport-matrix.tsv" ${1:+"$1"}; }
+# tr_files [<arms file>]: the plan's files: the matrix, then the arms file;
+# under LAB_LOCAL_SMOKE the matrix's arm rows alone, then transport-smoke.tsv's
+# sets (TRANSPORT_SMOKE_SETS), then the arms file
+tr_files() {
+    if [[ -n ${LAB_LOCAL_SMOKE:-} ]]; then
+        local arms=${LOCAL_SMOKE_ROOT:?}/matrix-arms.tsv
+        grep '^arm ' "$tr_here/transport-matrix.tsv" >"$arms"
+        printf '%s\n' "$arms" "${TRANSPORT_SMOKE_SETS:-$tr_here/transport-smoke.tsv}" ${1:+"$1"}
+        return
+    fi
+    printf '%s\n' "$tr_here/transport-matrix.tsv" ${1:+"$1"}
+}
 
 # tr_plan <command> <args>...: transport_plan.py over the matrix and the
 # session's arms file (tr_arms_file)
@@ -159,29 +179,87 @@ tr_now() {
     echo "$t"
 }
 
-# tr_bin_args <binary> <role> <own ip> <peer ip>: the binary's addresses
-# (transport-cli.md: base port TR_PORT_BASE, stream i on port + i; ping's
-# endpoint the peer, its reply its own address; pong's the other way round)
-# and its host settings, the same for every arm that runs it
-# (transport-settings.env)
+# tr_bin_args <binary> <role> <own ip> <peer ip> [<arm arguments>...]: the
+# binary's addresses and host settings, the same for every arm that runs it
+# (transport-cli.md, each binary's --help; transport-settings.env). Base port
+# TR_PORT_BASE, stream i on port + i. aeron_lat --mode udp: --endpoint is the
+# pong's address (ping: the peer; pong: its own), --reply the ping's, and
+# --interface this end's own; --mode ipc and spy take no address (the binary
+# refuses one). udp_lat: --local own, --peer the other end (local: the
+# receiver binds --peer). tcp_lat: the pong (and local's receiver) listens,
+# the ping connects. --busy-read-us is mio's alone (ergon-io's epoll-spin
+# refuses it: its SO_BUSY_POLL is 0).
 tr_bin_args() {
-    local b=$1 role=$2 own=$3 peer=$4 port=$TR_PORT_BASE
+    local b=$1 role=$2 own=$3 peer=$4 port=$TR_PORT_BASE out=
+    shift 4
+    local args=" $* " busy=
+    [[ $args == *" --impl mio "* ]] && busy="--busy-read-us $TR_BUSY_READ "
     case $b in
-    mpsc_lat) echo "--capacity $TR_MPSC_CAPACITY" ;;
+    mpsc_lat) out="--capacity $TR_MPSC_CAPACITY" ;;
     aeron_lat)
-        local ep=$peer rp=$own
-        [[ $role == pong ]] && ep=$own rp=$peer
-        echo "--endpoint $ep:$port --reply $rp:$port --interface $own --aeron-dir $TR_AERON_DIR --driver external" \
-            "--driver-busy-threads $TR_AERON_DRIVER_BUSY_THREADS --term-length $TR_TERM_LENGTH --mtu $TR_MTU"
+        out="--aeron-dir $TR_AERON_DIR --driver external --driver-busy-threads $TR_AERON_DRIVER_BUSY_THREADS --term-length $TR_TERM_LENGTH --mtu $TR_MTU"
+        if [[ $args == *" --mode udp "* ]]; then
+            local ep=$peer rp=$own
+            [[ $role == pong ]] && ep=$own rp=$peer
+            out="--endpoint $ep:$port --reply $rp:$port --interface $own $out"
+        fi
         ;;
-    udp_lat) echo "--local $own:$port --peer $peer:$port --busy-read-us $TR_BUSY_READ --rcvbuf $TR_SOCKBUF --sndbuf $TR_SOCKBUF" ;;
+    udp_lat) out="--local $own:$port --peer $peer:$port ${busy}--rcvbuf $TR_SOCKBUF --sndbuf $TR_SOCKBUF" ;;
     tcp_lat)
-        local a
-        if [[ $role == pong ]]; then a="--listen $own:$port"; else a="--connect $peer:$port"; fi
-        echo "$a --nodelay --quickack-per-read --rto-min-us $TR_TCP_RTO_MIN_US --delack-max-us $TR_TCP_DELACK_MAX_US --busy-read-us $TR_BUSY_READ --rcvbuf $TR_SOCKBUF --sndbuf $TR_SOCKBUF"
+        local a="--connect $peer:$port"
+        [[ $role == pong ]] && a="--listen $own:$port"
+        [[ $role == local ]] && a="--listen $peer:$port"
+        out="$a --nodelay --quickack-per-read $(tr_timer_args)${busy}--rcvbuf $TR_SOCKBUF --sndbuf $TR_SOCKBUF"
         ;;
-    *) echo "--local $own:$port --peer $peer:$port" ;;
+    *)
+        # an arms file's binary: its addresses, and on the kernel's path
+        # (setup sockets) every socket and TCP setting the built-in socket
+        # arms get, so it cannot run with other ones (transport-cli.md)
+        out="--local $own:$port --peer $peer:$port"
+        [[ ${setup:-} == sockets ]] && out+=" --busy-read-us $TR_BUSY_READ --rcvbuf $TR_SOCKBUF --sndbuf $TR_SOCKBUF --nodelay --quickack-per-read $(tr_timer_args)"
+        out=${out% }
+        ;;
     esac
+    echo "$out"
+}
+
+# tr_timer_args: "--rto-min-us N --delack-max-us N " for the timers both
+# hosts' kernels have (settings-<a|b>.txt, read as the session starts: the
+# sysctl present), each only where both have it; the binaries refuse one a
+# kernel lacks. An arm without one runs on the kernel's default, recorded in
+# its manifest (rto_min_us_asked kernel)
+tr_timer_args() {
+    local k v out=
+    for k in rto_min delack_max; do
+        grep -q "^net.ipv4.tcp_${k}_us=absent$" "$dir/settings-a.txt" "$dir/settings-b.txt" 2>/dev/null && continue
+        [[ $k == rto_min ]] && v=$TR_TCP_RTO_MIN_US || v=$TR_TCP_DELACK_MAX_US
+        out+="--${k//_/-}-us $v "
+    done
+    printf '%s' "$out"
+}
+
+# tr_role_cpus <role>: the --cpus of a run, from the arm's CPUs ($cpus,
+# transport_clients): one per busy thread, in each binary's thread order:
+# local two (sender and receiver, or ping and echo), ping and pong one.
+# Under LAB_LOCAL_SMOKE both ends share one box, so the pong takes the last.
+tr_role_cpus() {
+    local c
+    IFS=, read -ra c <<<"$cpus"
+    case $1 in
+    local) echo "${c[0]},${c[1]}" ;;
+    pong) if [[ -n ${LAB_LOCAL_SMOKE:-} ]]; then echo "${c[${#c[@]} - 1]}"; else echo "${c[0]}"; fi ;;
+    *) echo "${c[0]}" ;;
+    esac
+}
+
+# tr_label <set> <arm> <aa> <streams> <netem>: a row's label
+# (transport-format.md): <set>:<arm, or aa for the A/A>@STREAMS=<n>[@NETEM=<pct>]
+tr_label() {
+    local l="$1:$2"
+    (($3)) && l="$1:aa"
+    l+="@STREAMS=$4"
+    [[ $5 == - ]] || l+="@NETEM=$5"
+    echo "$l"
 }
 
 # tr_start <pid file> <out file> <binary> <args>...: the remote command that
@@ -200,6 +278,13 @@ tr_start() {
 tr_netem_line() {
     local pid=$1 h=$2 sent dropped verdict lo hi ok
     [[ $netem != - ]] || { echo none; return; }
+    if [[ $netem == none ]]; then
+        # the root qdiscs after the point: none netem
+        if ! [[ -s $dir/netem/$pid-$h-after ]]; then echo "unread FAIL"
+        elif grep -q ' netem$' "$dir/netem/$pid-$h-after"; then echo "netem present FAIL"
+        else echo "no qdisc: $(tr '\n' ' ' <"$dir/netem/$pid-$h-after")ok"; fi
+        return
+    fi
     read -r sent dropped < <(awk 'FNR == NR {s[$1] = $2; d[$1] = $3; next} ($1 in s) {ts += $2 - s[$1]; td += $3 - d[$1]; n++}
         END {if (n) print ts + td, td; else print "x x"}' "$dir/netem/$pid-$h-before" "$dir/netem/$pid-$h-after" 2>/dev/null)
     if [[ ${sent:-x} == x ]]; then echo "unread FAIL"; return; fi
@@ -208,13 +293,21 @@ tr_netem_line() {
     echo "$sent/$dropped p=$netem in [$lo,$hi] $ok"
 }
 
-# tr_snap <before|after> <pid>: each host the point uses: its IRQ counts and,
-# under netem, its qdisc counters
+# tr_snap <before|after> <pid>: each host the point uses: its IRQ counts, its
+# kernel counters (/proc/net/snmp and netstat: nstat's) and, under netem, its
+# qdisc counters; after the point also its settings read back (vm.sh
+# settings)
 tr_snap() {
     local h
     for h in "${run_hosts[@]}"; do
         on "$(tr_host "$h")" "$vm irqsnap" >"$dir/irq/$2-$h-$1" 2>/dev/null
-        [[ $netem == - ]] || on "$(tr_host "$h")" "$vm netem stats" >"$dir/netem/$2-$h-$1" 2>/dev/null
+        on "$(tr_host "$h")" "$vm nstat" >"$dir/nstat/$2-$h-$1" 2>/dev/null
+        case $netem in
+        -) ;;
+        none) on "$(tr_host "$h")" "$vm netem show" >"$dir/netem/$2-$h-$1" 2>/dev/null ;;
+        *) on "$(tr_host "$h")" "$vm netem stats" >"$dir/netem/$2-$h-$1" 2>/dev/null ;;
+        esac
+        [[ $1 == before ]] || on "$(tr_host "$h")" "$vm settings" >"$dir/settings/$2-$h" 2>/dev/null
     done
 }
 
@@ -229,6 +322,7 @@ tr_manifest() {
         echo "round=$sid-r$rep-netem$netem"
         echo "arm=$arm"
         echo "mode=$mode"
+        echo "label=$label"
         echo "streams=$n"
         echo "load=$2"
         echo "warmup_s=$3"
@@ -293,42 +387,59 @@ tr_arm_down() {
 }
 
 # tr_point <k>: one point at loads[k] (the round's variables: sid host rep
-# netem rseed order position arm aa bin setup kind args n loads), with the
-# snapshots around it, a placement sample half way through its window, its
-# rows (rep in their first column) into results.csv and its --out
-# directories into points/<point>/; 1 when it failed. A two-host arm's point
-# is one run: its pong on b, its ping on a (round trips). A one-host arm's is
-# two, one after the other: --role local (one way, the same TSC) and --role
-# local --round-trip. The first point of an arm and stream count warms up
-# TRANSPORT_WARMUP_S, each later one TRANSPORT_SWITCH_S (the new load,
+# netem rseed order position arm aa bin setup kind args n loads label), with
+# the snapshots around it, a placement sample half way through its window,
+# its rows (rep in their first column, the point column <channel>-r<rate>)
+# into results.csv and its --out directories into points/<point>/ (the
+# pong's as points/<point>/pong); 1 when it failed. A two-host arm's point is
+# one run: its pong on b, which must print one `ready` line within
+# TRANSPORT_READY_TIMEOUT_S, then its ping on a (round trips). A one-host
+# arm's is two, one after the other: --role local (one way, the same TSC) and
+# --role local --round-trip. The first point of an arm and stream count warms
+# up TRANSPORT_WARMUP_S, each later one TRANSPORT_SWITCH_S (the new load,
 # unrecorded).
 tr_point() {
-    local k=$1 load=${loads[$1]} warm pid rdir=bench/transport-$pair/run rc=0 meas log common pong= start end v runs=()
+    local k=$1 load=${loads[$1]} warm pid rdir=bench/transport-$pair/run-$sid rc=0 meas log common pong= start end v runs=()
     warm=$TRANSPORT_SWITCH_S
     ((k == 0)) && warm=$TRANSPORT_WARMUP_S
     pid="$tag-$load"
     log=$dir/logs/$pid
-    common="--streams $n --rate $load --warmup-s $warm --duration-s $TRANSPORT_POINT_S --size $TR_PAYLOAD --cpus $cpus"
-    common+=" --label set$sid:$mode --spike-ns $TR_SPIKE_NS --stall-ns $TR_STALL_NS"
+    common="--streams $n --rate $load --warmup-s $warm --duration-s $TRANSPORT_POINT_S --size $TR_PAYLOAD"
+    common+=" --label $label --spike-ns $TR_SPIKE_NS --stall-ns $TR_STALL_NS"
+    # Aeron: each run on stream ids of its own (ping and pong the same), so
+    # no publication of an earlier run, lingering in the driver, is the image
+    # a subscription takes (tr_stream_base)
+    local sid0= sid1=
+    if [[ $bin == aeron_lat ]]; then
+        sid0=" --stream-id $(tr_stream_base)" sid1=" --stream-id $(($(tr_stream_base) + 128))"
+        tr_stream_seq=$((tr_stream_seq + 1))
+    fi
     for h in "${run_hosts[@]}"; do on "$(tr_host "$h")" "rm -rf $rdir && mkdir -p $rdir" || return 1; done
     if [[ $kind == two ]]; then
         meas=a
-        # the pong first, on b; it has TRANSPORT_PONG_WAIT_S to bind (a simple
-        # background command: the SSH session ends as it returns)
-        on "$B" "nohup $(tr_start "$rdir/pong.pid" "$rdir/pong.out" "$bin --role pong $common --out $rdir/out-pong $(tr_bin_args "$bin" pong "$(tr_nic b receiver)" "$(tr_nic a sender)") ${args[*]}") 2>&1 </dev/null &" ||
+        # the pong first, on b (a simple background command: the SSH session
+        # ends as it returns); the ping starts once it says ready
+        on "$B" "nohup $(tr_start "$rdir/pong.pid" "$rdir/pong.out" "$bin --role pong $common$sid0 --cpus $(tr_role_cpus pong) --out $rdir/out-pong $(tr_bin_args "$bin" pong "$(tr_nic b receiver)" "$(tr_nic a sender)" "${args[@]}") ${args[*]}") 2>&1 </dev/null &" ||
             { log "point $pid: pong did not start on b"; return 1; }
         pong=1
-        sleep "${TRANSPORT_PONG_WAIT_S:-2}"
-        if ! on "$B" "kill -0 \$(cat $rdir/pong.pid)" 2>/dev/null; then
-            on "$B" "cat $rdir/pong.out" >"$log.pong" 2>&1
-            log "point $pid: pong exited before the ping started: $(tail -2 "$log.pong" | tr '\n' ' ')"
+        local why
+        tr_pong_ready "$rdir"
+        case $? in
+        0) why= ;;
+        2) why="the pong exited before it said ready" ;;
+        3) why="the pong said ready twice" ;;
+        *) why="the pong did not say ready within ${TRANSPORT_READY_TIMEOUT_S:-60} s" ;;
+        esac
+        if [[ -n $why ]]; then
+            on "$B" "kill -TERM \$(cat $rdir/pong.pid) 2>/dev/null; sleep 1; kill -KILL \$(cat $rdir/pong.pid) 2>/dev/null; cat $rdir/pong.out" >"$log.pong" 2>&1
+            log "point $pid: $why: $(tail -2 "$log.pong" | tr '\n' ' ')"
             return 1
         fi
-        runs=("--role ping $(tr_bin_args "$bin" ping "$(tr_nic a sender)" "$(tr_nic b receiver)")")
+        runs=("--role ping --cpus $(tr_role_cpus ping) $(tr_bin_args "$bin" ping "$(tr_nic a sender)" "$(tr_nic b receiver)" "${args[@]}")$sid0")
     else
         meas=$host
-        v=$(tr_bin_args "$bin" local "$(tr_nic "$host" sender)" "$(tr_nic "$host" receiver)")
-        runs=("--role local $v" "--role local --round-trip $v")
+        v=$(tr_bin_args "$bin" local "$(tr_nic "$host" sender)" "$(tr_nic "$host" receiver)" "${args[@]}")
+        runs=("--role local --cpus $(tr_role_cpus local) $v$sid0" "--role local --round-trip --cpus $(tr_role_cpus local) $v$sid1")
     fi
     tr_snap before "$pid"
     (
@@ -350,6 +461,8 @@ tr_point() {
     if [[ -n $pong ]]; then
         on "$B" "kill -TERM \$(cat $rdir/pong.pid) 2>/dev/null; for _ in \$(seq 50); do kill -0 \$(cat $rdir/pong.pid) 2>/dev/null || break; sleep 0.1; done; kill -KILL \$(cat $rdir/pong.pid) 2>/dev/null; true" >/dev/null 2>&1
         on "$B" "cat $rdir/pong.out" >"$log.pong" 2>&1
+        mkdir -p "$dir/points/$pid/pong"
+        on "$B" "tar -C $rdir/out-pong -cf - . 2>/dev/null" | tar -xf - -C "$dir/points/$pid/pong" 2>/dev/null
     fi
     tr_manifest "$pid" "$load" "$warm" "$start" "$end"
     local got=0
@@ -363,19 +476,42 @@ tr_point() {
         log "point $pid: $bin exit $rc, $got of ${#runs[@]} runs with a row: $(tail -2 "$log.err" 2>/dev/null | tr '\n' ' ')"
         return 1
     fi
-    for v in "${!runs[@]}"; do
-        awk -F, -v OFS=, -v rep="$rep" '{$1 = rep; print}' "$dir/points/$pid/$v/results.csv" >>"$dir/results.csv"
-    done
+    for v in "${!runs[@]}"; do tr_row "$rep" <"$dir/points/$pid/$v/results.csv" >>"$dir/results.csv"; done
+}
+
+# tr_stream_base: the next run's aeron_lat --stream-id: 1001 + 256 k for the
+# k-th Aeron point of a set (mod 4096), room for 128 streams and their
+# echoes (+10000) each, and never one an earlier point used while the
+# driver can still hold it. A one-host point's two runs differ too: its
+# round trip takes base + 128.
+tr_stream_seq=0
+tr_stream_base() {
+    echo $((1001 + (tr_stream_seq % 4096) * 256))
+}
+
+# tr_row <rep>: a binary's row (stdin) as results.csv takes it
+# (transport-format.md): the rep before it, its channel column (the third)
+# as <channel>-r<rate> (the rate is the fifth)
+tr_row() { awk -F, -v OFS=, -v rep="$1" 'NF {$3 = $3 "-r" $5; print rep, $0}'; }
+
+# tr_pong_ready <run dir>: 0 once the pong's output (stdout and stderr) holds
+# exactly one line `ready`; 1 when it exits first, says it twice, or
+# TRANSPORT_READY_TIMEOUT_S (60) passes. A pid file not yet written (the
+# pong's shell starting) is waited for, not taken for an exit
+tr_pong_ready() {
+    local tenths=$((${TRANSPORT_READY_TIMEOUT_S:-60} * 10))
+    on "$B" "for _ in \$(seq $tenths); do n=\$(grep -cx ready $1/pong.out 2>/dev/null); [ \"\$n\" = 1 ] && exit 0; [ \"\${n:-0}\" -gt 1 ] && exit 3; p=\$(cat $1/pong.pid 2>/dev/null); [ -z \"\$p\" ] || kill -0 \$p 2>/dev/null || exit 2; sleep 0.1; done; exit 1" >/dev/null 2>&1
 }
 
 # tr_invoke: an arm at one stream count: each load's point in order; 1 when
 # one failed (the rest still run)
 tr_invoke() {
-    local k rc=0 tag cpus roleargs
+    local k rc=0 tag cpus label
     mode="$arm@STREAMS=$n"
     [[ $netem == - ]] || mode+="@NETEM=$netem"
     ((aa)) && mode+="@AA=1"
     tag="$sid-r$rep-$(file_mode "$mode")"
+    label=$(tr_label "$sid" "$arm" "$aa" "$n" "$netem")
     if [[ $kind == two ]]; then run_hosts=(a b); else run_hosts=("$host"); fi
     cpus=$(transport_clients "$map" "$setup")
     for k in "${!loads[@]}"; do tr_point "$k" || rc=1; done
@@ -389,7 +525,7 @@ tr_netem_round() {
     local level=$1 h
     shift
     for h in "$@"; do
-        if [[ $level == - ]]; then
+        if [[ $level == - || $level == none ]]; then
             on "$(tr_host "$h")" "$vm netem check none" >>"$dir/logs/netem-$h.log" 2>&1 || { log "host $h: a netem qdisc where the round has none"; return 1; }
         else
             on "$(tr_host "$h")" "$vm netem set $level" >>"$dir/logs/netem-$h.log" 2>&1 || { log "host $h: netem $level% not set"; return 1; }
@@ -459,7 +595,9 @@ tr_run() {
     . "$tr_here/irqs.sh"
     # shellcheck source=host.sh
     . "$tr_here/host.sh"
-    mkdir -p "$dir/manifest" "$dir/points" "$dir/logs" "$dir/irq" "$dir/netem" "$dir/samples"
+    mkdir -p "$dir/manifest" "$dir/points" "$dir/logs" "$dir/irq" "$dir/netem" "$dir/samples" "$dir/nstat" "$dir/settings"
+    # LAB_LOCAL_SMOKE: both hosts homes on this box (tr_smoke_hooks)
+    [[ -z ${LAB_LOCAL_SMOKE:-} ]] || tr_smoke_hooks
     : >"$dir/failures.csv"
     TRANSPORT_ARMS=$(tr_plan arms) || die "the plan's arms do not parse"
     : >"$dir/arms.txt"
@@ -467,16 +605,22 @@ tr_run() {
     for a in $(sed 's/=[^ ]*//g' <<<"$TRANSPORT_ARMS"); do echo "$a $(tr_plan arm "$a")" >>"$dir/arms.txt"; done
     tr_plan rounds "$pair" "$seed" "$reps" >"$dir/rounds.tsv" || die "the plan's rounds do not parse"
     log "session $session pair $pair: seed $seed, $(tr_plan count "$pair" "$reps") points in $(grep -c . "$dir/rounds.tsv") rounds"
-    cp "$tr_here/transport-settings.env" "$dir/transport-settings.env"
-    settings_sha=$(sha256sum "$dir/transport-settings.env" 2>/dev/null | awk '{print $1}')
+    # the declared settings as sourced (TR_*); transport_collect.py writes
+    # transport-settings.env, fairness.py's form of them
+    cp "$tr_here/transport-settings.env" "$dir/transport-settings.tr.env"
+    transport_sysctls >"$dir/declared-sysctls.txt"
+    settings_sha=$(sha256sum "$dir/transport-settings.tr.env" 2>/dev/null | awk '{print $1}')
     # the map, the NICs, the binaries and the ergon-tune report of each host;
     # a report with any warning stops the session before its first point
     for h in a b; do
         on "$(tr_host "$h")" "$vm transport-map" >"$dir/map-$h.txt" 2>"$dir/logs/map-$h.err" || die "host $h: no transport map"
         on "$(tr_host "$h")" "$vm nics" >"$dir/nics-$h.txt" 2>/dev/null || die "host $h: data NICs not read"
+        on "$(tr_host "$h")" "$vm settings" >"$dir/settings-$h.txt" 2>/dev/null || die "host $h: settings not read"
         on "$(tr_host "$h")" "sha256sum ergon/target/release/* extra/bin/* 2>/dev/null" >"$dir/bins-$h.txt" 2>/dev/null
         on "$(tr_host "$h")" "$vm netem clear" >>"$dir/logs/netem-$h.log" 2>&1 || die "host $h: a netem qdisc not cleared before the session"
         if ! on "$(tr_host "$h")" "$vm hostcheck" >"$dir/hostcheck-$h.txt" 2>&1; then
+            # the smoke's box isolates nothing: its report stands, fairness.py flags it
+            [[ -n ${LAB_LOCAL_SMOKE:-} ]] && { log "smoke: host $h's hostcheck report is not clean (no isolated CPUs here): recorded, not stopping"; continue; }
             die "host $h: the hostcheck report is not clean ($dir/hostcheck-$h.txt): $(grep -E '^[^ ]+ (warn|unknown): ' "$dir/hostcheck-$h.txt" | head -3 | tr '\n' ';') stopping before the first point"
         fi
     done
@@ -498,13 +642,108 @@ tr_run() {
     done
     for h in a b; do on "$(tr_host "$h")" "$vm netem clear" >>"$dir/logs/netem-$h.log" 2>&1 || rc=1; done
     [[ ! -s $dir/failures.csv ]] || { log "failed runs: $(grep -c . "$dir/failures.csv") (failures.csv)"; rc=1; }
+    # the directory as transport-format.md has it, for fairness.py and analyse.py
+    python3 "$tr_here/transport_collect.py" "$dir" >"$dir/logs/collect.log" 2>&1 ||
+        { log "transport_collect.py failed ($dir/logs/collect.log): $(tail -2 "$dir/logs/collect.log" | tr '\n' ' ')"; rc=1; }
     log "session $session pair $pair: $(grep -c . "$dir/results.csv" 2>/dev/null || echo 0) rows, exit $rc"
     return $rc
+}
+
+# ---- LAB_LOCAL_SMOKE: the local end-to-end smoke (transport.sh smoke) ----
+
+# tr_smoke_hooks: under LAB_LOCAL_SMOKE, in place of lib.sh's: `on` runs a
+# command in the host's home on this box (A and B are host-a and host-b, under
+# LOCAL_SMOKE_ROOT/hosts), and vm.sh is local-vm.sh (loopback addresses, one
+# media driver for both hosts)
+tr_smoke_hooks() {
+    on() {
+        local h=$1
+        shift
+        HOME=$LOCAL_SMOKE_ROOT/hosts/${h#host-} bash -c "cd; $*"
+    }
+    vm=ergon/md-dpdk/benches/cloud/local-vm.sh
+    TR_AERON_DIR=${LOCAL_SMOKE_AERON_DIR:-/dev/shm/aeron-transport-smoke}
+}
+
+# tr_smoke <dir>: the smoke: hosts a and b as homes under <dir>/hosts (each
+# ~/ergon this checkout, its target the build's), the settings applied
+# (local-vm.sh transport-tune), transport.sh run a over transport-smoke.tsv
+# at 1 rep with short durations, then fairness.py and analyse.py --transport
+# into <dir>/fairness.txt and <dir>/tables.md; the run's rc
+tr_smoke() {
+    local root=$1 repo h e target rc
+    mkdir -p "$root" && root=$(cd "$root" && pwd) || return 2
+    repo=$(cd "$tr_here/../../.." && pwd)
+    target=${CARGO_TARGET_DIR:-$repo/target}
+    for b in aeron_lat mpsc_lat udp_lat tcp_lat hostcheck media_driver; do
+        [[ -x $target/release/$b ]] || { echo "smoke: no $target/release/$b (cargo build --release first: test/transport-smoke-docker.sh)" >&2; return 2; }
+    done
+    rm -rf "$root/hosts"
+    for h in a b; do
+        mkdir -p "$root/hosts/$h/ergon" "$root/hosts/$h/bench"
+        for e in "$repo"/*; do [[ ${e##*/} == target ]] || ln -s "$e" "$root/hosts/$h/ergon/${e##*/}"; done
+        ln -s "$target" "$root/hosts/$h/ergon/target"
+    done
+    export LAB_LOCAL_SMOKE=1 LOCAL_SMOKE_ROOT=$root
+    for h in a b; do
+        HOME=$root/hosts/$h bash "$tr_here/local-vm.sh" transport-tune >"$root/transport-tune-$h.log" 2>&1 ||
+            { echo "smoke: host $h's settings did not hold ($root/transport-tune-$h.log): $(tail -3 "$root/transport-tune-$h.log")" >&2; return 1; }
+    done
+    mkdir -p "$root/hosts/a/bench/transport-a"
+    cat >"$root/hosts/a/bench/transport-a/env" <<ENV
+A=host-a
+B=host-b
+user=$(id -un)
+pair=a
+session=smoke-$(date +%Y%m%d-%H%M%S)
+seed=${LAB_SEED:-$RANDOM}
+reps=1
+vm_a=smoke/a
+vm_b=smoke/b
+commit=$(git -C "$repo" rev-parse HEAD 2>/dev/null)
+dirty=$(git -C "$repo" status --porcelain 2>/dev/null | grep -c .)
+arms_file=
+TRANSPORT_WARMUP_S=${TRANSPORT_WARMUP_S:-2}
+TRANSPORT_POINT_S=${TRANSPORT_POINT_S:-3}
+TRANSPORT_SWITCH_S=${TRANSPORT_SWITCH_S:-1}
+ENV
+    HOME=$root/hosts/a bash "$tr_here/transport.sh" run a 2>&1 | tee "$root/run.log" >&2
+    rc=$(cat "$root/hosts/a/bench/transport-a/rc" 2>/dev/null || echo 1)
+    ln -sfn hosts/a/bench/transport-a "$root/run"
+    python3 "$tr_here/fairness.py" "$root/run" >"$root/fairness.txt" 2>&1
+    python3 "$tr_here/analyse.py" --transport --show-invalid "$root/run" >"$root/tables.md" 2>&1 || rc=1
+    tr_smoke_summary "$root" || rc=1
+    return "$rc"
+}
+
+# tr_smoke_summary <dir>: the smoke's verdict, into <dir>/summary.txt and
+# stdout: every point a row (a one-host point two: one way and the round
+# trip), no failed run, the collector's problems none, fairness.py's
+# violations counted by rule, the tables rendered; 1 when any but the
+# fairness count is off (the box isolates nothing: its fairness violations
+# are listed for a reader to explain)
+tr_smoke_summary() {
+    local root=$1 run=$1/run want got fails tables bad=0
+    want=$(awk -F'\t' '{split($7, l, ","); split($8, st, ","); split($9, a, ","); n += length(l) * length(st) * length(a) * ($3 == "ab" ? 1 : 2)} END {print n + 0}' "$run/rounds.tsv")
+    got=$(grep -c . "$run/results.csv" 2>/dev/null)
+    fails=$(grep -c . "$run/failures.csv" 2>/dev/null)
+    tables=$(grep -c '^### Set ' "$root/tables.md" 2>/dev/null)
+    got=${got:-0} fails=${fails:-0} tables=${tables:-0}
+    {
+        echo "smoke: $got rows of $want expected, $fails failed runs, $tables tables"
+        echo "collect: $(head -1 "$run/logs/collect.log" 2>/dev/null)"
+        echo "fairness: $(tail -1 "$root/fairness.txt"), by rule:"
+        sed -n 's/^\([a-z-]*\): .*/\1/p' "$root/fairness.txt" | sort | uniq -c | sed 's/^/  /'
+    } | tee "$root/summary.txt"
+    [[ $got == "$want" && $fails == 0 && $tables -gt 0 ]] || bad=1
+    grep -q ' 0 problems$' "$run/logs/collect.log" 2>/dev/null || bad=1
+    return $bad
 }
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
     case ${1:-} in
     check) tr_check "${2:?pair}" "${3:-}" ;;
+    smoke) tr_smoke "${2:?a directory for the smoke}" ;;
     run)
         log() { echo "[$(date +%T)] $*" >&2; }
         die() { log "ERROR: $*"; exit 1; }
@@ -514,7 +753,7 @@ if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
         # on any exit: the bench binaries this runner started (their PIDs, as
         # tr_start recorded them: never by name, which would stop another's),
         # netem and the media driver, on both VMs; then rc
-        trap 'rc=$?; for h in "${A:-}" "${B:-}"; do [[ -n $h ]] && on "$h" "for f in bench/transport-$tr_pair/run/*.pid; do [ -s \$f ] && kill -TERM \$(cat \$f) 2>/dev/null; done; ergon/md-dpdk/benches/cloud/vm.sh netem clear; ergon/md-dpdk/benches/cloud/vm.sh stop" >/dev/null 2>&1 </dev/null; done; kill $(jobs -p) 2>/dev/null; echo $rc >"$dir/rc"' EXIT
+        trap 'rc=$?; for h in "${A:-}" "${B:-}"; do [[ -n $h ]] && on "$h" "for f in bench/transport-$tr_pair/run-*/*.pid; do [ -s \$f ] && kill -TERM \$(cat \$f) 2>/dev/null; done; ${vm:-ergon/md-dpdk/benches/cloud/vm.sh} netem clear; ${vm:-ergon/md-dpdk/benches/cloud/vm.sh} stop" >/dev/null 2>&1 </dev/null; done; kill $(jobs -p) 2>/dev/null; echo $rc >"$dir/rc"' EXIT
         tr_run "$2"
         ;;
     *) awk 'NR > 1 && !/^#/ {exit} NR > 1 {print}' "$0" >&2; exit 2 ;;

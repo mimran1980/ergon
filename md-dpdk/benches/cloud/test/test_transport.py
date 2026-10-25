@@ -277,10 +277,30 @@ class FairnessTest(unittest.TestCase):
         run.rows(lambda r: r["label"] == "2a:mio-udp" and r["rep"] == "1", lambda r: r.__setitem__(24, ""))
         self.assertOnly(run, "loss-accounting")
 
+    def test_retrans_empty_where_the_transport_has_none(self):
+        # UDP and mpsc have no retransmit counter: an empty retrans is no
+        # violation there, and is one for TCP
+        run = Run(self)
+        run.rows(lambda r: r["label"] == "2a:mio-udp" and r["rep"] == "1", lambda r: r.__setitem__(27, ""))
+        self.assertEqual(fairness.check(run.run), [])
+        run.rows(lambda r: r["label"] == "3b:mio-tcp@NETEM=0.1" and r["rep"] == "1", lambda r: r.__setitem__(27, ""))
+        self.assertOnly(run, "loss-accounting")
+
     def test_tcp_without_tcp_info(self):
         run = Run(self)
         run.edit(lambda m: m["arm"] == "mio-tcp", lambda m: m["loss_counters"]["b"].pop("tcp_info"))
         self.assertOnly(run, "loss-accounting")
+
+    def test_joined_transport_takes_its_parts_loss_sources(self):
+        # a transport of several (udp+tcp) needs every part's sources: tcp's
+        # tcp_info and nstat, udp's nstat
+        run = Run(self)
+        run.edit(lambda m: m["arm"] == "mio-tcp", lambda m: m.update(transport="udp+tcp"), first=False)
+        self.assertEqual(fairness.check(run.run), [])
+        run.edit(lambda m: m["arm"] == "mio-tcp", lambda m: m["loss_counters"]["b"].pop("tcp_info"))
+        self.assertOnly(run, "loss-accounting")
+        self.assertEqual(fairness.loss_sources("udp+tcp"), ("nstat", "tcp_info"))
+        self.assertIsNone(fairness.loss_sources("udp+nosuch"))
 
     def test_lateness_not_counted(self):
         run = Run(self)

@@ -16,7 +16,7 @@ an arms file names. One run measures one point: one load at one stream count.
 | `--warmup-s S` | unrecorded warm-up at the rate |
 | `--duration-s S` | the measured window |
 | `--size 64` | message bytes, the same in every arm |
-| `--cpus CSV` | one isolated CPU per busy thread, in the binary's documented thread order. The binary is started on the housekeeping CPU (`taskset`): its Aeron client conductor keeps that affinity |
+| `--cpus CSV` | one isolated CPU per busy thread, in the binary's documented thread order: `local` two (sender, receiver; with `--round-trip` ping, echo), `ping` and `pong` one. The binary refuses any other count. The binary is started on the housekeeping CPU (`taskset`): its Aeron client conductor keeps that affinity |
 | `--label TEXT` | written into every row |
 | `--out DIR` | where its outputs go |
 | `--spike-ns N`, `--stall-ns N` | thresholds for the spike and stall files |
@@ -32,9 +32,9 @@ nonzero exit on any error. A partial row is never printed.
 | binary | flags |
 |---|---|
 | `mpsc_lat` | `--capacity N` (sync_channel); role `local` only, `--round-trip` for the round trip |
-| `aeron_lat` | `--mode <ipc\|spy\|udp>`, `--reliable <true\|false>`, `--endpoint HOST:PORT` (pings; stream i on PORT+i, stream id S+i), `--reply HOST:PORT` (echoes, stream id S+10000+i), `--interface IP`, `--aeron-dir PATH`, `--driver external\|embedded`, `--driver-busy-threads N` (the external driver's, as the runner starts it), `--term-length BYTES`, `--mtu BYTES`, `--stream-id S` (1001), `--connect-timeout-s N` (30), `--round-trip` (`local` only) |
-| `udp_lat` | `--impl <mio\|ergon>`, `--local IP:PORT`, `--peer IP:PORT` (base ports, stream i on +i), `--busy-read-us N` (mio), `--epoll-events N`, `--datagram-burst N` (ergon), `--rcvbuf`/`--sndbuf BYTES` |
-| `tcp_lat` | `--impl <mio\|ergon>`, `--listen IP:PORT` or `--connect IP:PORT` (stream i is connection i), `--nodelay` (always on), `--quickack-per-read`, `--rto-min-us N`, `--delack-max-us N`, `--busy-read-us N`, `--rcvbuf`/`--sndbuf BYTES` |
+| `aeron_lat` | `--mode <ipc\|spy\|udp>`, `--reliable <true\|false>` (`false` UDP only), `--endpoint HOST:PORT` (pings; stream i on PORT+i, stream id S+i), `--reply HOST:PORT` (echoes, stream id S+10000+i), `--interface IP` (the three UDP only: refused for ipc and spy), `--aeron-dir PATH`, `--driver external\|embedded`, `--driver-busy-threads N` (the external driver's, as the runner starts it), `--term-length BYTES`, `--mtu BYTES`, `--stream-id S` (1001), `--connect-timeout-s N` (30), `--round-trip` (`local` only) |
+| `udp_lat` | `--impl <mio\|ergon>`, `--local IP:PORT`, `--peer IP:PORT` (base ports, stream i on +i; `local`: the receiver binds `--peer`), `--busy-read-us N` (mio only: ergon-io refuses it), `--epoll-events N`, `--datagram-burst N` (ergon only), `--rcvbuf`/`--sndbuf BYTES` |
+| `tcp_lat` | `--impl <mio\|ergon>`, `--listen IP:PORT` (pong; `local` takes `--listen` alone) or `--connect IP:PORT` (ping; stream i is connection i), `--nodelay` (always on), `--quickack-per-read`, `--rto-min-us N`, `--delack-max-us N`, `--busy-read-us N` (mio only), `--rcvbuf`/`--sndbuf BYTES` |
 | `hostcheck` | `--hot-cpus CSV`, `--out FILE`, `--nic IFACE,...`, `--aeron-dir PATH`; one finding a line (`<id> ok:`, `info:`, `warn:`, `unknown:`); exit 0 clean, 2 not clean, 1 not run |
 
 ## What the runner passes
@@ -47,10 +47,10 @@ built by `transport.sh tr_bin_args`:
 | binary | runner's flags |
 |---|---|
 | `mpsc_lat` | `--capacity $TR_MPSC_CAPACITY` |
-| `aeron_lat` | `--endpoint <pong's data IP>:$TR_PORT_BASE --reply <ping's data IP>:$TR_PORT_BASE --interface <own data IP> --aeron-dir $TR_AERON_DIR --driver external --driver-busy-threads $TR_AERON_DRIVER_BUSY_THREADS --term-length $TR_TERM_LENGTH --mtu $TR_MTU` |
-| `udp_lat` | `--local <own>:$TR_PORT_BASE --peer <other end>:$TR_PORT_BASE --busy-read-us $TR_BUSY_READ --rcvbuf/--sndbuf $TR_SOCKBUF` |
-| `tcp_lat` | pong `--listen <own>:port`, ping `--connect <peer>:port`, then `--nodelay --quickack-per-read --rto-min-us --delack-max-us --busy-read-us --rcvbuf --sndbuf` |
-| other (arms file) | `--local <own>:port --peer <other end>:port` |
+| `aeron_lat` | `--aeron-dir $TR_AERON_DIR --driver external --driver-busy-threads $TR_AERON_DRIVER_BUSY_THREADS --term-length $TR_TERM_LENGTH --mtu $TR_MTU`; `--mode udp` arms also `--endpoint <pong's data IP>:$TR_PORT_BASE --reply <ping's data IP>:$TR_PORT_BASE --interface <own data IP>`; every run `--stream-id 1001+256k` (the k-th Aeron point of the set; a one-host point's round trip +128), ping and pong the same, so no lingering publication of an earlier run is the image a subscription takes |
+| `udp_lat` | `--local <own>:$TR_PORT_BASE --peer <other end>:$TR_PORT_BASE --rcvbuf/--sndbuf $TR_SOCKBUF`, and `--busy-read-us $TR_BUSY_READ` for `--impl mio` |
+| `tcp_lat` | pong (and `local`, on its receiver NIC) `--listen <own>:port`, ping `--connect <peer>:port`, then `--nodelay --quickack-per-read --rto-min-us --delack-max-us --rcvbuf --sndbuf`, and `--busy-read-us` for `--impl mio` |
+| other (arms file) | `--local <own>:port --peer <other end>:port`; setup `sockets` also `--busy-read-us $TR_BUSY_READ --rcvbuf/--sndbuf $TR_SOCKBUF --nodelay --quickack-per-read --rto-min-us $TR_TCP_RTO_MIN_US --delack-max-us $TR_TCP_DELACK_MAX_US`: every socket and TCP setting the built-in arms get. Such a binary must take them all, apply each it uses, and report them in its manifest |
 
 Addresses: ping binds host a's sender NIC and talks to host b's receiver NIC.
 Pong binds b's receiver NIC and talks to a's sender NIC. `local` binds its
@@ -58,8 +58,20 @@ host's sender NIC and talks to its receiver NIC.
 
 Ports: `TR_PORT_BASE` is 22000, and stream i uses base + i, within
 `TR_PORT_SPAN` (1024). That range stays clear of the media driver's wildcard
-ranges (20000-21999). `vm.sh transport-tune` checks it against each host's
-ephemeral range (`ip_local_port_range`), and fails if they meet.
+ranges (20000-21999), which `aeron_lat`, `udp_lat` and `tcp_lat` refuse.
+`vm.sh transport-tune` checks it against each host's ephemeral range
+(`ip_local_port_range`), and fails if they meet.
+
+Labels: `<set>:<arm>@STREAMS=<n>[@NETEM=<pct>]`, the A/A arm's arm `aa`
+(transport-format.md). `--cpus` comes from `host.sh transport_clients`: the
+first CPU (ping, pong) or two (local) of the arm's.
+
+Build (`vm.sh transport-build`): `aeron_lat` and `hostcheck` in the root
+workspace with io/benches's release profile (`panic = "abort"`, debug info),
+the socket and mpsc binaries by `--manifest-path io/benches/Cargo.toml
+--target-dir target` (io/benches is its own workspace), so all land in
+`target/release`. Under the transport map the media driver runs with umask
+0, so the user's bench binaries can map its files.
 
 A one-host arm's point is two runs, one after the other: `--role local` (one
 way, on one TSC) and `--role local --round-trip`. The point's snapshots
@@ -75,13 +87,20 @@ The runner's exit stops binaries by the PIDs recorded this way, never by
 name.
 
 1. The runner starts the pong on b (`nohup`).
-2. It waits `TRANSPORT_PONG_WAIT_S` (2 s) and checks the pong is still alive.
+2. It waits for the pong's one `ready` line on stdout: `udp_lat` once its
+   sockets are bound, `tcp_lat` once it listens, `aeron_lat` once its
+   subscriptions and publications are added. A pong that exits first, says
+   it twice, or says nothing within `TRANSPORT_READY_TIMEOUT_S` (60 s) fails
+   the point; the ping is not started.
 3. It runs the ping on a in the foreground.
-4. It sends SIGTERM to the pong, then SIGKILL after 5 s.
+4. It sends SIGTERM to the pong, then SIGKILL after 5 s, and keeps its
+   `--out` (its manifest: host b's TCP_INFO and Aeron counters) as
+   `points/<point>/pong`.
 
-The convention has no ready signal. A pong that binds slower than 2 s makes
-the ping fail, and the runner counts that point as failed. A `READY` line on
-the pong's stdout would let the runner wait exactly.
+Rows: the runner puts the rep before the binary's row and writes its
+channel column as `<channel>-r<rate>` (transport-format.md's point column).
+As the session ends `transport_collect.py` lays the directory out for
+fairness.py and analyse.py (transport-format.md).
 
 hostcheck runs once per session per host (`vm.sh hostcheck`, its report saved
 as `hostcheck-<a|b>.txt`). A nonzero exit, or any `warn:` line, stops the

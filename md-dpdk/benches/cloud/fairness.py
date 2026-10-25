@@ -23,8 +23,10 @@ concerns. Rules:
   order            a seed and the round's arms in its recorded order; seeds
                    distinct and orders not all the same across reps
   aa               an A/A arm in every round, repeating an arm of the round
-  loss-accounting  loss columns filled; counters from every host (TCP: tcp_info
-                   and nstat; Aeron: aeron; UDP: nstat)
+  loss-accounting  loss columns filled (retrans where the transport retransmits:
+                   TCP, Aeron); counters from every host (TCP: tcp_info
+                   and nstat; Aeron: aeron; UDP: nstat; a transport joined by +,
+                   such as udp+tcp, every part's)
   lateness         scheduled and late counted, as the manifest says
   max              every max labelled (spikes.py); unexplained blocks
   netem            a loss row's netem on every data NIC of every host at its
@@ -56,6 +58,23 @@ REQUIRED = ("set", "arm", "round", "rep", "rate", "streams", "size", "duration_s
             "loss_counters", "transport")
 LOSS_SOURCES = {"tcp": ("tcp_info", "nstat"), "udp": ("nstat",), "aeron-udp": ("aeron",), "aeron-dpdk": ("aeron",),
                 "aeron-ipc": ("aeron",), "aeron-spy": ("aeron",), "mpsc": ()}
+
+
+
+def loss_sources(transport):
+    """The counter sources a transport's loss rows need: LOSS_SOURCES', and
+    for one of several joined by + (udp+tcp) the union of its parts';
+    None for a transport LOSS_SOURCES does not know (or one part of it)."""
+    parts = (transport or "").split("+")
+    if not all(p in LOSS_SOURCES for p in parts):
+        return None
+    return tuple(sorted({s for p in parts for s in LOSS_SOURCES[p]}))
+
+
+def retransmits(transport):
+    """Whether a transport (or a part of a +-joined one) retransmits, so its
+    rows must count it: TCP and Aeron's."""
+    return any(p == "tcp" or p.startswith("aeron") for p in (transport or "").split("+"))
 
 
 def read_env(path):
@@ -277,12 +296,15 @@ def check(run_dir):
                     add("hostcheck", set_, [p.tag], f"{p.tag}: {host} hostcheck {rel}: {'; '.join(problems)}")
                 # loss counters
                 sources = (m["loss_counters"].get(host) or {})
-                for s in LOSS_SOURCES.get(m["transport"], ()):
+                for s in loss_sources(m["transport"]) or ():
                     if s not in sources:
                         add("loss-accounting", set_, [p.tag], f"{p.tag}: no {s} counters on {host}")
-            if m["transport"] not in LOSS_SOURCES:
+            if loss_sources(m["transport"]) is None:
                 add("loss-accounting", set_, [p.tag], f"{p.tag}: unknown transport {m['transport']!r}")
-            empty = [c for c in ("lost", "reordered", "dup", "retrans") if p.row[c] is None]
+            # retrans: a count only where the transport retransmits (TCP, Aeron);
+            # empty is the row's honest "no such counter" for UDP and mpsc
+            need = ("lost", "reordered", "dup") + (("retrans",) if retransmits(m["transport"]) else ())
+            empty = [c for c in need if p.row[c] is None]
             if empty:
                 add("loss-accounting", set_, [p.tag], f"{p.tag}: row has no {', '.join(empty)}")
             # lateness

@@ -1094,6 +1094,29 @@ transport_sysctls_apply() {
     return $rc
 }
 
+# transport_settings_read: each transport_sysctls knob as this host has it
+# now, "<knob>=<value>" a line, the knob dotted (net.ipv4.tcp_sack), a value
+# of several words single-spaced, and "absent" for one this kernel lacks:
+# what fairness.py checks every point against (vm.sh settings)
+transport_settings_read() {
+    local path words f
+    while read -r path words; do
+        f=${LAB_PROC_ROOT:-/proc}/sys/$path
+        if [[ -e $f ]]; then
+            echo "${path//\//.}=$(tr -s ' \t' '  ' <"$f" 2>/dev/null)"
+        else
+            echo "${path//\//.}=absent"
+        fi
+    done < <(transport_sysctls)
+}
+
+# transport_nstat: the kernel's protocol counters as nstat reads them
+# (/proc/net/snmp and /proc/net/netstat: a header line of names, then a line
+# of values, per protocol), for their growth over a point (transport_collect.py)
+transport_nstat() {
+    cat "${LAB_PROC_ROOT:-/proc}/net/snmp" "${LAB_PROC_ROOT:-/proc}/net/netstat" 2>/dev/null
+}
+
 # transport_quickack_routes <subnet>: an `ip route change` argument list a
 # line for every route to <subnet> in every table (ip -4 route show table
 # all), each with quickack 1: no ACK on the data subnet delayed
@@ -1185,6 +1208,15 @@ netem_check() {
     return $rc
 }
 
+# netem_show <iface>...: "<iface> <root qdisc>" a line (netem, mq, fq_codel...):
+# a no-qdisc round's proof that none is netem
+netem_show() {
+    local i
+    for i in "$@"; do
+        tc qdisc show dev "$i" 2>/dev/null | awk -v i="$i" '/ root / {print i, $2; exit}'
+    done
+}
+
 # netem_stats <iface>...: "<iface> <sent packets> <dropped>" a line from each
 # root netem qdisc's tc -s counters (nothing for one without netem)
 netem_stats() {
@@ -1196,8 +1228,36 @@ netem_stats() {
     done
 }
 
-# transport_placement <isolated cpulist>: `ps -eLo tid,psr,pcpu,comm` (no
-# header) on stdin; "ok <n> busy threads" when every busy thread (50 % of a
+# transport_threads [<seconds>]: every thread's CPU use over the next
+# <seconds> (1), "<tid> <cpu> <% of a CPU> <comm>" a line, as `ps -eLo
+# tid,psr,pcpu,comm` prints but over that window: ps's pcpu is a thread's
+# average since it started (and the process's total on its main thread's
+# line), which no busy thread's placement can be judged by. From
+# /proc/<pid>/task/<tid>/stat (utime and stime, in clock ticks; the CPU it
+# last ran on).
+transport_threads() {
+    local s=${1:-1} hz a b
+    hz=$(getconf CLK_TCK 2>/dev/null || echo 100)
+    a=$(transport_task_times)
+    sleep "$s"
+    b=$(transport_task_times)
+    awk -v hz="$hz" -v s="$s" 'FNR == NR {t[$1] = $2; next} ($1 in t) {printf "%7d %3d %5.1f %s\n", $1, $3, ($2 - t[$1]) * 100 / hz / s, $4}' \
+        <(echo "$a") <(echo "$b")
+}
+
+# transport_task_times: "<tid> <utime+stime> <cpu> <comm>" for every thread
+# now (comm's spaces as _)
+transport_task_times() {
+    cat "${LAB_PROC_ROOT:-/proc}"/[0-9]*/task/[0-9]*/stat 2>/dev/null | awk '{
+        i = index($0, " ("); j = length($0); while (j > 0 && substr($0, j, 1) != ")") j--
+        comm = substr($0, i + 2, j - i - 2); gsub(/ /, "_", comm)
+        n = split(substr($0, j + 2), f, " ")
+        if (n >= 37) print $1, f[12] + f[13], f[37], comm
+    }'
+}
+
+# transport_placement <isolated cpulist>: transport_threads' lines (or
+# `ps -eLo tid,psr,pcpu,comm`'s, no header) on stdin; "ok <n> busy threads" when every busy thread (50 % of a
 # CPU or more) ran on an isolated CPU, no two on one, else "FAIL <what>", 1
 transport_placement() {
     awk -v iso=",$1," '

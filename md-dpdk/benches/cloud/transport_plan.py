@@ -72,7 +72,7 @@ def load(paths):
                     loads = [int(v) for v in loads.split(",")]
                     streams = [int(v) for v in streams.split(",")]
                     levels = ["-"] if netem == "-" else [v for v in netem.split(",")]
-                    [float(v) for v in levels if v != "-"]
+                    [float(v) for v in levels if v not in ("-", "none")]
                 except ValueError:
                     raise PlanError(f"{where}: set {sid}: loads and streams are whole numbers, netem - or loss %") from None
                 names = names.split(",")
