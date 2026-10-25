@@ -82,6 +82,17 @@ impl Args {
             .collect()
     }
 
+    /// Every `--key` given, so a caller can refuse the ones it does not know.
+    pub fn keys(&self) -> impl Iterator<Item = &str> {
+        self.map.keys().map(String::as_str)
+    }
+
+    /// Whether `--k` was given at all.
+    #[must_use]
+    pub fn has(&self, k: &str) -> bool {
+        self.map.contains_key(k)
+    }
+
     /// Whether a flag is present.
     #[must_use]
     pub fn flag(&self, k: &str) -> bool {
