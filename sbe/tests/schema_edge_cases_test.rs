@@ -1054,7 +1054,7 @@ fn set_choice_since_version_reads_false_below_that_version()
         </group>
     </sbe:message>
 </sbe:messageSchema>"#;
-    let schema = ergo_sbe::Schema::from_ir(ergo_sbe::parse(xml)?);
+    let schema = ergo_sbe::Schema::from_ir(ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml))?);
     let src = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("choice_since"))
         .generate(&schema)?
         .modules()

@@ -15,9 +15,9 @@
 //! # Example
 //!
 //! ```rust
-//! use ergo_sbe::{parse, Generator, GenerationConfig, Schema};
+//! use ergo_sbe::{parse, Generator, GenerationConfig, Schema, SchemaSource};
 //!
-//! let ir = parse(r#"<?xml version="1.0"?>
+//! let ir = parse(SchemaSource::xml(r#"<?xml version="1.0"?>
 //! <messageSchema package="ex" id="1" version="0" byteOrder="littleEndian">
 //!   <types>
 //!     <composite name="messageHeader">
@@ -30,7 +30,7 @@
 //!   <message name="Ping" id="1">
 //!     <field name="seq" id="1" type="uint32" offset="0"/>
 //!   </message>
-//! </messageSchema>"#).unwrap();
+//! </messageSchema>"#)).unwrap();
 //! let schema = Schema::from_ir(ir);
 //! let set = Generator::new(GenerationConfig::new("ping"))
 //!     .generate(&schema)
@@ -45,6 +45,7 @@
 
 use std::collections::HashSet;
 use std::fmt::Write;
+use std::path::PathBuf;
 
 use crate::ir::{ByteOrder, Ir, Presence, PrimitiveType, Signal, Token};
 use crate::structured_ir::*;
@@ -101,26 +102,20 @@ pub struct GeneratedModule {
     pub source: String,
 }
 
-/// Set of modules from [`Generator::generate`] or [`Generator::generate_multi`].
+/// Set of modules from [`crate::generate`], [`Generator::generate`] or
+/// [`Generator::generate_multi`].
 ///
-/// ```rust
-/// # use std::path::Path;
-/// # fn example(generator: &mut ergo_sbe::Generator, schema: &ergo_sbe::Schema, out_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
-/// let set = generator.generate(schema)?;
-/// for m in set.modules() {
-///     std::fs::write(out_dir.join(&m.path), &m.source)?;
-/// }
-/// for w in set.warnings() {
-///     println!("cargo:warning={w}");
-/// }
-/// # Ok(())
-/// # }
-/// ```
+/// Write it with [`Self::write_to_out_dir`] (Cargo `build.rs`) or
+/// [`Self::write_to`]: both publish every module or none, watch every
+/// [`Self::sources`] file with `cargo::rerun-if-changed`, and print
+/// [`Self::warnings`] as `cargo::warning`.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct GeneratedModuleSet {
     modules: Vec<GeneratedModule>,
     /// Generation warnings (e.g. shared types with version-gated members).
     warnings: Vec<String>,
+    /// Schema files the modules were generated from (see [`Ir::sources`]).
+    sources: Vec<PathBuf>,
 }
 
 /// Errors returned by [`Generator::generate`] when the configuration
@@ -248,6 +243,10 @@ impl core::fmt::Display for GenerateError {
 
 impl core::error::Error for GenerateError {}
 
+/// Lets a `build.rs` returning `miette::Result` use `?` on
+/// [`Generator::generate_multi`] directly.
+impl miette::Diagnostic for GenerateError {}
+
 impl GeneratedModuleSet {
     pub(crate) fn push(&mut self, module: GeneratedModule) {
         self.modules.push(module);
@@ -256,6 +255,24 @@ impl GeneratedModuleSet {
     /// Iterate modules in a stable order (write each to `OUT_DIR`).
     pub fn modules(&self) -> impl ExactSizeIterator<Item = &GeneratedModule> {
         self.modules.iter()
+    }
+
+    /// Schema files the modules came from: every root, include and shared
+    /// schema file, each once. Empty when every schema was inline XML.
+    #[must_use]
+    pub fn sources(&self) -> &[PathBuf] {
+        &self.sources
+    }
+
+    fn with_sources<'s>(mut self, schemas: impl IntoIterator<Item = &'s Schema>) -> Self {
+        for schema in schemas {
+            for path in &schema.ir.sources {
+                if !self.sources.contains(path) {
+                    self.sources.push(path.clone());
+                }
+            }
+        }
+        self
     }
 
     /// Non-fatal warnings (e.g. shared types with `sinceVersion > 0`).
@@ -317,7 +334,7 @@ pub(crate) struct GenerationContext {
 /// [`Self::generate_multi`] when sharing types across schemas.
 ///
 /// ```rust
-/// use ergo_sbe::{parse, Generator, GenerationConfig, Schema};
+/// use ergo_sbe::{parse, Generator, GenerationConfig, Schema, SchemaSource};
 /// # let xml = r#"<?xml version="1.0"?><messageSchema package="t" id="1" version="0"
 /// # byteOrder="littleEndian"><types><composite name="messageHeader">
 /// # <type name="blockLength" primitiveType="uint16"/>
@@ -326,7 +343,7 @@ pub(crate) struct GenerationContext {
 /// # <type name="version" primitiveType="uint16"/>
 /// # </composite></types><message name="M" id="1">
 /// # <field name="x" id="1" type="uint8" offset="0"/></message></messageSchema>"#;
-/// let schema = Schema::from_ir(parse(xml).unwrap());
+/// let schema = Schema::from_ir(parse(SchemaSource::xml(xml)).unwrap());
 /// let modules = Generator::new(GenerationConfig::new("m"))
 ///     .generate(&schema)
 ///     .unwrap();
@@ -601,13 +618,14 @@ impl Generator {
                 path: format!("{}.rs", self.config.module_name),
                 source: src,
             });
-            Ok(modules)
+            Ok(modules.with_sources([schema]))
         })
     }
 
     /// Generate modules for several schemas, optionally deduplicating shared types.
     ///
-    /// When [`GenerationConfig::with_shared_module`] is set:
+    /// When [`GenerationConfig::with_shared_module`] is set (it must name the
+    /// first entry's module):
     /// - first entry owns shared enums/sets/composites (+ usually `sbe_rt`);
     /// - later entries emit `pub use super::<shared>::*;` and skip shared types.
     ///
@@ -628,7 +646,9 @@ impl Generator {
                 self.validate_source_traits(schema)?;
                 self.validate_validate_names(schema)?;
             }
-            self.generate_multi_inner(schemas, &effective)
+            Ok(self
+                .generate_multi_inner(schemas, &effective)?
+                .with_sources(schemas.iter().map(|(schema, _)| *schema)))
         })
     }
 
@@ -2089,7 +2109,7 @@ mod tests {
             </group>
           </message>
         </messageSchema>"#;
-        let schema = crate::Schema::from_ir(crate::parse(xml)?);
+        let schema = crate::Schema::from_ir(crate::parse(crate::SchemaSource::xml(xml))?);
         let mut generator = crate::Generator::new(crate::GenerationConfig::new("array_guard"));
         let modules = generator.generate(&schema)?;
         let source = &modules
@@ -2245,7 +2265,7 @@ mod tests {
             <field name="ts" id="1" type="uint64" semanticType="UTCTimestamp"/>
           </sbe:message>
         </sbe:messageSchema>"#;
-        let ir = crate::parse(xml)?;
+        let ir = crate::parse(crate::SchemaSource::xml(xml))?;
         let schema = crate::Schema::from_ir(ir);
         let config = crate::GenerationConfig::new("test_chrono").with_domain_type(
             crate::ConversionSelector::semantic_type("UTCTimestamp"),
@@ -2272,7 +2292,8 @@ mod tests {
     #[test]
     fn narrow_message_header_rejects_values_above_declared_field_maximum() {
         fn generate(xml: &str) -> Result<super::GeneratedModuleSet, super::GenerateError> {
-            let ir = crate::parse(xml).expect("schema should parse before codegen validation");
+            let ir = crate::parse(crate::SchemaSource::xml(xml))
+                .expect("schema should parse before codegen validation");
             let schema = crate::Schema::from_ir(ir);
             crate::Generator::new(crate::GenerationConfig::new("narrow")).generate(&schema)
         }
@@ -2326,7 +2347,7 @@ mod tests {
           </message>
         </messageSchema>"#;
 
-        let ir = crate::parse(xml).expect("schema should parse");
+        let ir = crate::parse(crate::SchemaSource::xml(xml)).expect("schema should parse");
         let schema = crate::Schema::from_ir(ir);
         let modules =
             crate::Generator::new(crate::GenerationConfig::new("test")).generate(&schema)?;
@@ -2454,7 +2475,7 @@ mod tests {
                 }
             });
 
-        let ir = crate::parse(xml).expect("schema should parse");
+        let ir = crate::parse(crate::SchemaSource::xml(xml)).expect("schema should parse");
         let schema = crate::Schema::from_ir(ir);
         let modules = crate::Generator::new(config).generate(&schema)?;
         let src = modules.modules().next().expect("one module").source.clone();
@@ -2531,8 +2552,8 @@ mod tests {
           </message>
         </messageSchema>"#;
 
-        let schema_a = Schema::from_ir(crate::parse(xml_a)?);
-        let schema_b = Schema::from_ir(crate::parse(xml_b)?);
+        let schema_a = Schema::from_ir(crate::parse(crate::SchemaSource::xml(xml_a))?);
+        let schema_b = Schema::from_ir(crate::parse(crate::SchemaSource::xml(xml_b))?);
         let mut generator = Generator::new(
             crate::GenerationConfig::new("common_types")
                 .with_shared_module("common_types")
@@ -2573,7 +2594,7 @@ mod tests {
     }
 
     fn generate_ping(config: GenerationConfig) -> Result<String, Box<dyn std::error::Error>> {
-        let schema = Schema::from_ir(crate::parse(ping_schema_xml())?);
+        let schema = Schema::from_ir(crate::parse(crate::SchemaSource::xml(ping_schema_xml()))?);
         let src = Generator::new(config)
             .generate(&schema)?
             .modules()

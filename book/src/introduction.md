@@ -6,7 +6,7 @@ One line per module: what it is for, and the call you make.
 
 | module | what it does | how you use it |
 |---|---|---|
-| `ergo-sbe` | schema XML → Rust SBE codecs | `ergo_sbe::generate_to_out_dir(...)` in `build.rs`; then plain `include!`, or `ergo_sbe::sbe_mod!(name)` in your crate, which also needs `ergo-sbe` in `[dependencies]` ([chapter](sbe/getting-started/depend.md)) |
+| `ergo-sbe` | schema XML → Rust SBE codecs | `ergo_sbe::generate(source, config)?.write_to_out_dir()?` in `build.rs`; then plain `include!`, or `ergo_sbe::sbe_mod!(name)` in your crate, which also needs `ergo-sbe` in `[dependencies]` ([chapter](sbe/getting-started/depend.md)) |
 | `ergon-tune` | reads the host and names what will wreck your tail latency, and the fix | call at start-up; it changes nothing ([chapter](tune/overview.md)) |
 | `ergon-io` | WebSocket and HTTP/TLS on one busy-spinning thread | `poll()` from your loop; epoll or `io_uring` is configuration ([chapter](io/overview.md)) |
 | `ergo-aeron-cluster` | Aeron Cluster client | only if you need cluster; experimental, not a production substitute ([chapter](cluster/overview.md)) |

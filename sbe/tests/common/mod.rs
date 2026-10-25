@@ -56,7 +56,7 @@ fn scratch_dir(krate: &ScratchCrate) -> PathBuf {
     std::env::temp_dir().join(krate.name())
 }
 
-use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse_file};
+use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, SchemaSource, parse};
 
 pub struct Paths;
 
@@ -202,7 +202,8 @@ impl Paths {
 }
 
 pub fn generate(xml_path: &Path, module_name: &str) -> (Schema, String) {
-    let ir = parse_file(xml_path).unwrap_or_else(|e| panic!("parse {xml_path:?}: {e}"));
+    let ir =
+        parse(SchemaSource::file(xml_path)).unwrap_or_else(|e| panic!("parse {xml_path:?}: {e}"));
     let schema = Schema::from_ir(ir);
     let mut g = Generator::new(GenerationConfig::new(module_name));
     let (modules, _warnings) = g.generate(&schema).unwrap().into_parts();
@@ -520,7 +521,7 @@ pub fn run_fixture_test(name: &str, schema: &Path, fixture: &Path, code: &str) {
 /// also requires `AnyMessage::validate()` to accept every sbe-tool frame, so
 /// the whole parity corpus guards `validate()` against false rejects.
 pub fn dual_encode_run(test_name: &str, schema: &Path, tool_key: &str, code: &str) {
-    let ir = parse_file(schema).unwrap_or_else(|e| panic!("parse {schema:?}: {e}"));
+    let ir = parse(SchemaSource::file(schema)).unwrap_or_else(|e| panic!("parse {schema:?}: {e}"));
     let generated = Generator::new(GenerationConfig::new("ergo").with_validate(true))
         .generate(&Schema::from_ir(ir))
         .unwrap_or_else(|e| panic!("generate {schema:?}: {e}"));
@@ -814,7 +815,8 @@ pub fn generate_domain_with(
     module_name: &str,
     configure: impl FnOnce(GenerationConfig) -> GenerationConfig,
 ) -> (Schema, String) {
-    let ir = parse_file(xml_path).unwrap_or_else(|e| panic!("parse {xml_path:?}: {e}"));
+    let ir =
+        parse(SchemaSource::file(xml_path)).unwrap_or_else(|e| panic!("parse {xml_path:?}: {e}"));
     let schema = Schema::from_ir(ir);
     let config = configure(GenerationConfig::new(module_name));
     let mut g = Generator::new(config);

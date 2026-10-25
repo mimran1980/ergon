@@ -1,17 +1,16 @@
 //! SBE XML → token [`Ir`].
 //!
-//! | Function | Use when |
-//! |----------|----------|
-//! | [`parse`] | Schema already in a string |
-//! | [`parse_file`] | Path on disk; resolves `xi:include` relative to the file |
-//! | [`parse_with_xsd_validation`] | Same as [`parse`], after structural XSD check |
+//! One entry point, [`parse`], takes a [`SchemaSource`]: a file
+//! ([`SchemaSource::file`], resolving `xi:include` relative to it) or inline
+//! XML ([`SchemaSource::xml`]), optionally seeded from a shared schema or
+//! XSD-checked first.
 //!
 //! After parse, wrap with [`crate::Schema::from_ir`] and pass to
-//! [`crate::Generator`].
+//! [`crate::Generator`], or skip both with [`crate::generate`].
 //!
 //! ```rust
-//! use ergo_sbe::{parse, Schema};
-//! let ir = parse(r#"<?xml version="1.0"?>
+//! use ergo_sbe::{parse, Schema, SchemaSource};
+//! let ir = parse(SchemaSource::xml(r#"<?xml version="1.0"?>
 //! <messageSchema package="t" id="1" version="0" byteOrder="littleEndian">
 //!   <types>
 //!     <composite name="messageHeader">
@@ -21,7 +20,7 @@
 //!       <type name="version" primitiveType="uint16"/>
 //!     </composite>
 //!   </types>
-//! </messageSchema>"#).unwrap();
+//! </messageSchema>"#)).unwrap();
 //! let schema = Schema::from_ir(ir);
 //! assert_eq!(schema.ir.id, 1);
 //! ```
@@ -40,10 +39,7 @@ mod warn;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use entry::{ParsedFile, parse_file_with_deps, parse_file_with_shared_deps};
-pub use entry::{
-    parse, parse_file, parse_file_with_shared, parse_with_shared, parse_with_xsd_validation,
-};
+pub use entry::{SchemaSource, parse};
 pub use error::{IncludeCause, ParseError};
 pub(crate) use registry::parse_sbe_float;
 

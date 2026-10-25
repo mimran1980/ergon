@@ -20,7 +20,7 @@
 
 mod common;
 use common::{compile_and_run_modules, impl_for_type_defines_method};
-use ergo_sbe::{GenerateError, GenerationConfig, Generator, Schema, parse};
+use ergo_sbe::{GenerateError, GenerationConfig, Generator, Schema, SchemaSource, parse};
 
 const SCHEMA: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="checks" id="91" version="1" byteOrder="littleEndian">
@@ -87,7 +87,7 @@ const SCHEMA: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 </sbe:messageSchema>"#;
 
 fn generate_from(xml: &str, config: GenerationConfig) -> Result<String, GenerateError> {
-    let schema = parse(xml)
+    let schema = parse(SchemaSource::xml(xml))
         .map(Schema::from_ir)
         .map_err(|e| GenerateError::InvalidConversion {
             selector: "fixture".into(),

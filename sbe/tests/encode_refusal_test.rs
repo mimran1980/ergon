@@ -21,7 +21,8 @@
 mod common;
 use common::compile_and_run_modules;
 use ergo_sbe::{
-    CompositeMapping, ConversionSelector, DomainVarData, GenerationConfig, Generator, Schema, parse,
+    CompositeMapping, ConversionSelector, DomainVarData, GenerationConfig, Generator, Schema,
+    SchemaSource, parse,
 };
 
 const REFUSAL_XML: &str = r#"<messageSchema package="refusal" id="21" version="0" byteOrder="littleEndian">
@@ -167,7 +168,7 @@ pub mod app {
 "#;
 
 fn refusal_module() -> Result<String, Box<dyn std::error::Error>> {
-    let schema = Schema::from_ir(parse(REFUSAL_XML)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(REFUSAL_XML))?);
     let source = Generator::new(
         GenerationConfig::new("rf")
             .with_domain_objects(DomainVarData::Strings)
@@ -472,7 +473,7 @@ const DEEP_XML: &str = r#"<messageSchema package="deep" id="22" version="0" byte
 #[test]
 fn a_path_deeper_than_its_entries_shows_the_rest_as_unknown()
 -> Result<(), Box<dyn std::error::Error>> {
-    let schema = Schema::from_ir(parse(DEEP_XML)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(DEEP_XML))?);
     let module = Generator::new(
         GenerationConfig::new("deep")
             .with_domain_objects(DomainVarData::Bytes)

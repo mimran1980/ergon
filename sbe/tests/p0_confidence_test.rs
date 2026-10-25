@@ -5,10 +5,10 @@ mod common;
 use std::path::PathBuf;
 
 use common::{Paths, compile_and_run, dual_encode_run, generate};
-use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
+use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
 
 fn generate_xml(xml: &str, module_name: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let schema = Schema::from_ir(parse(xml)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(xml))?);
     Ok(Generator::new(GenerationConfig::new(module_name))
         .generate(&schema)?
         .modules()

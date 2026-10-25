@@ -377,6 +377,37 @@
   (`"T1"`, `"K2"`, `"M1"`), so a caller can add checks of its own.
   `CheckId::unknown_stops_require` is now `unknown_stops_require(id)`, and an
   id it does not know blocks a `require` start when unknown (fails closed).
+- Breaking: `ergo-sbe` has one parse and one generate entry point.
+  `parse(source)` takes a `SchemaSource`: `SchemaSource::file(path)` (or a
+  `&Path` / `PathBuf`) or `SchemaSource::xml(text)`, with optional
+  `.with_shared(&ir)` and `.with_xsd_validation()`. `generate(source,
+  config)` parses and generates in memory; write the result with
+  `GeneratedModuleSet::write_to_out_dir()` or `write_to(dir)`. A bare
+  `&str` is no longer accepted, because it could be a path or XML.
+
+  | Removed | Use |
+  |---|---|
+  | `parse(xml)` | `parse(SchemaSource::xml(xml))` |
+  | `parse_file(path)` | `parse(SchemaSource::file(path))` |
+  | `parse_with_shared(xml, &ir)` / `parse_file_with_shared(path, &ir)` | `parse(SchemaSource::xml(xml).with_shared(&ir))` / `SchemaSource::file(path).with_shared(&ir)` |
+  | `parse_with_xsd_validation(xml)` | `parse(SchemaSource::xml(xml).with_xsd_validation())` |
+  | `generate_to_out_dir(path, config)` | `generate(SchemaSource::file(path), config)?.write_to_out_dir()` |
+  | `generate_to_dir(path, config, dir)` | `generate(SchemaSource::file(path), config)?.write_to(dir)` |
+  | `generate_str_to_out_dir` / `generate_str_to_dir` | `generate(SchemaSource::xml(xml), config)?` then a writer |
+  | `generate_multi_to_out_dir` / `generate_multi_to_dir`, `SchemaFile` | `parse` each consumer `with_shared`, `Generator::generate_multi` with `GenerationConfig::with_shared_module(name)` (the helper set it for you; without it each module emits its own copy of the shared types), then a writer |
+  | `out_dir()` | `write_to_out_dir()` reads `OUT_DIR` |
+
+- Breaking: `Ir` has a `sources` field: the schema file, every resolved
+  include and the shared schema's files. The writers print
+  `cargo::rerun-if-changed` for each, so multi-schema builds through
+  `Generator::generate_multi` watch every file too. A struct literal needs
+  `sources: Vec::new()`. The watched paths are canonical (absolute), not the
+  path as passed, and two `Ir`s parsed from the same text via a file and via
+  `SchemaSource::xml` are no longer `==`.
+- Breaking: a consumer parsed `with_shared` also carries the shared schema's
+  composites, enums and sets (not its messages), so it generates on its own.
+- `GenerateError` implements `miette::Diagnostic`, so a `build.rs` returning
+  `miette::Result` can use `?` on `Generator` results.
 - `ergon-shared-cpus`: `schedFifo` takes the same spellings as
   `seccomp.ioUring`: its mode word or a YAML boolean, any case
   (`true`/`yes`/`y`/`on`/`1` = `thread`; `false`/`no`/`n`/`off`/`0` = `off`).

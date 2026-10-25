@@ -89,9 +89,8 @@ book/src/sbe/getting-started/include.md:6 — deliberate; see page context
 book/src/sbe/getting-started/include.md:13 — deliberate; see page context
 book/src/sbe/getting-started/include.md:23 — deliberate; see page context
 book/src/sbe/getting-started/method-chaining.md:27 — deliberate; see page context
-book/src/sbe/getting-started/multi-schema.md:17 — deliberate; see page context
-book/src/sbe/getting-started/multi-schema.md:48 — deliberate; see page context
-book/src/sbe/getting-started/multi-schema.md:112 — deliberate; see page context
+book/src/sbe/getting-started/multi-schema.md:59 — deliberate; see page context
+book/src/sbe/getting-started/multi-schema.md:101 — deliberate; see page context
 book/src/sbe/recipes/aeron-try-claim.md:17 — deliberate; implements sbe_rt::Claim for rusteron's AeronClaim, which is outside the book harness
 book/src/sbe/recipes/aeron-try-claim.md:47 — deliberate; claims from a rusteron publication, which is outside the book harness (the OfferClaim fences below compile the same calls)
 book/src/sbe/recipes/aeron-try-claim.md:63 — deliberate; claims from a rusteron publication, which is outside the book harness (the OfferClaim fences below compile the same calls)
