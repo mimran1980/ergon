@@ -93,7 +93,10 @@ The child is threaded, so it can hold single threads. At start-up the app
 writes its pid to `$ERGON_ISOLATED_CGROUP/cgroup.procs`, moves each helper
 thread back through the container cgroup's `cgroup.threads`, then pins the
 hot threads to `$ERGON_ISOLATED_CPUS` (kernel lane:
-`../nri-shared-cpus/test/cgroup/kernel_test.go`). The partition file itself
+`../nri-shared-cpus/test/cgroup/kernel_test.go`). containerd mounts
+`/sys/fs/cgroup` read-only in an unprivileged container, so there the move
+has to come from the node, as the EKS lab's `partition_move_script` and the
+kind e2e lane do. The partition file itself
 is parent-owned and not delegatable, so the plugin writes it. Needs
 `cpuset.cpus.exclusive` (Linux 6.7 or a vendor backport); without it every
 `cpu-partition` opt-in is refused, naming the cause. Do **not** use

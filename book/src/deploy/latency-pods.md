@@ -105,6 +105,14 @@ shared CPUs. Latency effect not measured here.
 | one process whose threads all belong on the exclusive CPUs | write the pid to `$ERGON_ISOLATED_CGROUP/cgroup.procs`, then pin each thread to `ERGON_ISOLATED_CPUS` |
 | hot threads in a multi-threaded process | write the pid to `$ERGON_ISOLATED_CGROUP/cgroup.procs` first, then move each helper thread back to the container cgroup through its `cgroup.threads`. The kernel confines the hot threads to the exclusive CPUs and the helpers to the shared ones (kernel lane: `test/cgroup/kernel_test.go`, `TestOneThreadCanLiveInThePartition`) |
 
+These writes need a writable cgroup mount. containerd mounts
+`/sys/fs/cgroup` read-only in an unprivileged container, so there the
+`cgroup.procs` write fails and the move has to come from the node. The EKS
+lab does that (`md-dpdk/benches/cloud/aws/eks-nri.sh`,
+`partition_move_script`): the pod publishes its pid and waits; a privileged
+node agent moves it only if exactly one task of that container's cgroup has
+that pid. The kind e2e lane also moves from the node.
+
 A program that does not make these moves itself, such as Aeron's C media
 driver, keeps the boot line's isolation and `sched_setaffinity`: see the
 [worked example](shared-cpus.md#worked-example-an-aeron-media-driver).
