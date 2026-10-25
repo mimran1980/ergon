@@ -74,6 +74,34 @@ pub(crate) mod sealed {
         fn on_handed(&mut self, n: usize) {
             let _ = n;
         }
+        /// A datagram endpoint (UDP): every read is one whole message (a
+        /// 0-byte read is an empty datagram, not a close), sends go out one
+        /// datagram at a time ([`Io::pending_tx`]), and no TCP option or
+        /// route check applies. Only `epoll-spin` drives one. The driver's
+        /// datagram paths are compiled out when `false`.
+        const DATAGRAM: bool = false;
+        /// Datagram endpoints: the next whole datagram to send, if any.
+        #[inline]
+        fn pending_tx(&mut self) -> Option<&[u8]> {
+            None
+        }
+        /// Datagram endpoints: the kernel took the datagram
+        /// [`Io::pending_tx`] returned.
+        #[inline]
+        fn sent_tx(&mut self) {}
+        /// Whether anything waits to be sent.
+        #[inline]
+        fn has_tx(&mut self) -> bool {
+            !self.tx_queue().is_empty()
+        }
+        /// Datagram endpoints: a datagram longer than the receive buffer
+        /// arrived (`MSG_TRUNC`); it was dropped.
+        #[inline]
+        fn on_truncated(&mut self) {}
+        /// Datagram endpoints: the kernel reported `ECONNREFUSED` (an ICMP
+        /// port unreachable from the peer) on a read or a send.
+        #[inline]
+        fn on_refused(&mut self) {}
         /// The socket.
         fn fd(&self) -> RawFd;
         /// The free part of the receive buffer. With `io_uring` the kernel
@@ -174,7 +202,8 @@ pub(crate) mod sealed {
     }
 }
 
-/// A connection a driver can own: `WsConn`, `HttpConn` or `AnyConn`.
+/// A connection a driver can own: `WsConn`, `HttpConn`, `AnyConn`,
+/// `FrameConn` or `UdpConn`.
 ///
 /// Sealed: with `io_uring` the kernel writes into the receive buffer after the
 /// submitting call returns, so only this crate's types, whose buffers never move

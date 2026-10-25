@@ -4,6 +4,25 @@
 
 ### Added
 
+- `ergon-io`: UDP, `udp::UdpConn` (`UdpOptions`, `UdpHandler::on_datagram`,
+  `UdpStats`), on `epoll-spin` only: `Driver::<UdpConn>::new` on
+  `recv-busy` or `uring-sqpoll` is `Error::Unsupported`. Connected
+  (`UdpConn::connect`) and receive-only (`UdpConn::bind`) sockets; whole
+  datagrams sent from preallocated slots (`Error::Busy` when full); 0-byte
+  datagrams delivered; a datagram over `max_datagram` (`MSG_TRUNC`) and
+  `ECONNREFUSED` counted, not a close. No TCP option or route check on a
+  datagram socket.
+- `ergon-io`: framed TCP, `frame::FrameConn` (`FrameDial`,
+  `FrameOptions`, `FrameHandler::on_frame`, `FrameStats`): `u32`
+  little-endian length-prefixed frames over plain TCP, on every backend,
+  dialled or from an accepted socket (`FrameConn::from_stream`, then
+  `Driver::add`). A received frame over `max_frame`, or a peer close inside
+  a frame, closes with the new `Error::Frame`. `TCP_NODELAY` always;
+  `FrameOptions::quickack_per_read` sets `TCP_QUICKACK` after each read
+  with data.
+- `ergon-io`: `Config::epoll_events` (key `epoll_events`, default 64), the
+  `epoll_wait` batch, and `Config::datagram_burst` (key `datagram_burst`,
+  default 16), the most datagrams one poll reads from one ready UDP socket.
 - `ergon-io`: source-IP binding. `Target::source` (`with_source`) binds
   the socket to a local address before it connects, on every dial,
   `Driver::connect`, `connect_background`, `HttpClient` and libcurl
