@@ -88,6 +88,10 @@
 - [DPDK Transport: Proof of Concept](./md-dpdk/overview.md)
   - [Configuration](./md-dpdk/configuration.md)
 
+# Transports
+
+- [Transport Latency Comparison](./transports/comparison.md)
+
 # Deployment
 
 - [Low-Latency Hosts](./deploy/overview.md)

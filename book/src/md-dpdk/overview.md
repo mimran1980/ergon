@@ -220,5 +220,7 @@ are infrastructure.
   [Deployment: benchmarks](../deploy/benchmarks.md).
 - Running it in Kubernetes (node and pod settings, no CPU quota):
   [Kubernetes latency checklist](../deploy/kubernetes.md#latency-checklist).
+- Aeron kernel UDP and DPDK against mio, ergon-io and TCP:
+  [transport latency comparison](../transports/comparison.md).
 - Every run, setting and range:
   [`md-dpdk/BENCHMARKS.md`](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md).
