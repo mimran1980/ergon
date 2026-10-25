@@ -13,7 +13,8 @@
 # |---|---|---|
 # | isolation | isolcpus=nohz,domain,managed_irq,2-7 nohz_full=2-7 rcu_nocbs=2-7 irqaffinity=0 | md-dpdk/deploy/aws-eks/node/provision-node.sh; book/src/deploy/hft.md |
 # | IOMMU | x86 iommu=pt, arm64 iommu.passthrough=1 | provision-node.sh |
-# | THP | transparent_hugepage=never | md-dpdk/BENCHMARKS.md (not separated) |
+# | THP | transparent_hugepage=never, and never again at every boot (node/quiet-cpus.sh) | k8s/nri-shared-cpus/BENCHMARKS.md: khugepaged's LRU drain ran a kworker on an isolated CPU |
+# | fair server | runtime 0 on the isolated CPUs at every boot (node/quiet-cpus.sh, kernel 6.12+, debugfs) | k8s/nri-shared-cpus/BENCHMARKS.md: its 1 s timer IPIs isolated CPUs and keeps their tick on |
 # | hugepages | hugepagesz=2M hugepages=2048 | provision-node.sh |
 # | page size | 4 KiB only | md-dpdk/deploy/aws-eks/README.md |
 # | sysctl | kernel.numa_balancing=0, net.core.rmem_max/wmem_max=16 MiB | hft.md |
@@ -50,6 +51,12 @@ SYSCTL
   systemctl disable --now irqbalance 2>/dev/null || true
   for irq in /proc/irq/[0-9]*; do echo 0 >"$irq/smp_affinity_list" 2>/dev/null || true; done
   modprobe tun || true
+  install -m 0755 "$(dirname "$0")/quiet-cpus.sh" /usr/local/sbin/ergon-quiet-cpus.sh
+  install -m 0644 "$(dirname "$0")/ergon-quiet-cpus.service" /etc/systemd/system/ergon-quiet-cpus.service
+  systemctl daemon-reload
+  systemctl enable ergon-quiet-cpus.service
+  # after the reboot: the isolated CPUs exist only once the boot line took
+  if [[ -n $(cat /sys/devices/system/cpu/isolated) ]]; then systemctl restart ergon-quiet-cpus.service || true; fi
 fi
 
 want nproc '[[ $(nproc --all) -ge 8 ]]' "need 8 CPUs, have $(nproc --all)"
@@ -62,4 +69,6 @@ want thp '[[ $(cat /sys/kernel/mm/transparent_hugepage/enabled) == *"[never]"* ]
 want cgroup_v2 '[[ -f /sys/fs/cgroup/cgroup.controllers ]]' "cgroup v1"
 want numa_balancing '[[ $(sysctl -n kernel.numa_balancing 2>/dev/null || echo 0) == 0 ]]' "numa_balancing on"
 want tun '[[ -e /dev/net/tun ]]' "no /dev/net/tun"
+want quiet_unit '[[ $(systemctl is-enabled ergon-quiet-cpus.service 2>/dev/null) == enabled ]]' "ergon-quiet-cpus.service not enabled"
+want quiet_cpus 'bash "$(dirname "$0")/quiet-cpus.sh" --check' "THP or the fair server: see the FAIL lines above"
 exit $fail

@@ -175,7 +175,7 @@ lab only.
 
 | where | what ran | proves |
 |---|---|---|
-| macOS (this repo's host) | unit, property, logger, manifest tests; entrypoint and `verify.sh` fixtures (bash 5 and macOS's bash 3.2); `node/eks-userdata.sh` output; bench smoke | code, renders, schemas, the verifier's pod discovery |
+| macOS (this repo's host) | unit, property, logger, manifest tests; entrypoint and `verify.sh` fixtures (bash 5 and macOS's bash 3.2); `node/eks-userdata.sh` output; `node/quiet-cpus.sh` on a fake `/sys`; bench smoke | code, renders, schemas, the verifier's pod discovery |
 | Docker linux/arm64 and linux/amd64 (`scripts/test-docker.sh`) | the same Rust tests, plus the placement tests against an embedded driver and `hot_stdout` | the worker and the Aeron conductor stay on their creator's CPU, the loops allocate nothing but one allocation per warning line, a pinned thread never sleeps on a wedged stdout |
 | Docker linux/arm64, Apple silicon (`scripts/e2e-vdev.sh --docker`, image `baseline`) | the driver on two DPDK taps, ping and pong, `ll-probe` for 30 s | the thread layout over a real DPDK data path. Not isolation: the Docker VM has no `isolcpus`. The script plays the plugin's part (sets `ERGON_*`, pins each process's first thread) |
 | Docker linux/amd64 emulated on Apple silicon (`scripts/e2e-inside.sh` in the amd64 half of `baseline`) | the same e2e: `RESULT PASS checks=54` (`tests/fixtures/e2e-docker-baseline-amd64-emulated.txt`) | the amd64 image builds (x86-64-v2, DPDK, Aeron) and the layout holds; its latency is the emulator's |
@@ -197,6 +197,7 @@ lab only.
    | kubelet | `cpuManagerPolicy: static`, `full-pcpus-only`, `reservedSystemCPUs: "0-1"`, topology `single-numa-node` per pod, CFS quota left on | `node/kind-ll.yaml`, `node/eks-nodeconfig.yaml` |
    | containerd | NRI on, `default_validator` on | `k8s/nri-shared-cpus/README.md` |
    | sysctl | `kernel.numa_balancing=0`, `rmem_max`/`wmem_max` 16 MiB | `hft.md` |
+   | at every boot | THP `never` and `/sys/kernel/debug/sched/fair_server/cpu<N>/runtime` 0 on each isolated CPU (kernel 6.12+; debugfs, so not persistent; only where nothing real-time runs there): `node/quiet-cpus.sh`, run by `node/ergon-quiet-cpus.service` | `k8s/nri-shared-cpus/BENCHMARKS.md` (run 20261024234841) |
 
    On a plain VM, `sudo node/linux-vm-prep.sh` sets these; after the reboot,
    `node/linux-vm-prep.sh --check` prints PASS/FAIL per row.
@@ -211,8 +212,9 @@ lab only.
    <endpoint> <ca-b64> <service-cidr> ping` (and `pong` for the second node)
    prints the user data. It runs `md-dpdk/deploy/aws-eks/node/userdata.sh`
    with reserved CPUs `0-1` and IRQ CPU `0`, so the kernel never isolates
-   the shared CPU 1, and swaps in `node/eks-nodeconfig.yaml` (NRI on, the
-   `ergon.io` labels, `ergon.io/ll-role`).
+   the shared CPU 1, swaps in `node/eks-nodeconfig.yaml` (NRI on, the
+   `ergon.io` labels, `ergon.io/ll-role`), and installs and enables
+   `ergon-quiet-cpus.service` before the node's reboot.
 
 3. **Install the plugin.** CPU 0 takes the IRQs, CPU 1 is shared, CPUs 2-7
    are exclusive.

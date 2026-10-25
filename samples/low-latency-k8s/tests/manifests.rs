@@ -17,7 +17,10 @@
 //!   in every workload's node affinity), the report's `LL_NIC`, and a ping
 //!   that outlasts `scripts/verify.sh`'s window;
 //! - `node/eks-userdata.sh`'s output: housekeeping CPUs 0-1, IRQs on 0, the
-//!   sample's `NodeConfig`, under EC2's limit.
+//!   sample's `NodeConfig`, `node/quiet-cpus.sh` and its boot unit, under
+//!   EC2's limit;
+//! - `node/quiet-cpus.sh` on a fake `/sys`: THP `never`, the fair server's
+//!   runtime 0 on the isolated CPUs only, a read-only `--check`.
 //!
 //! A missing tool fails the test. The old `md-dpdk/deploy/low-latency`
 //! pod (kept as a fixture) must fail the rules.
@@ -501,6 +504,27 @@ fn the_eks_user_data_keeps_the_shared_cpu_out_of_isolation() -> TestResult {
         assert!(text.contains(want), "no {want:?} in the user data");
     }
     assert_eq!(text.matches("kind: NodeConfig").count(), 1);
+    // the boot unit that quiets the isolated CPUs, installed and enabled
+    // before provision-node.sh reboots the node
+    // (each file's code: its comment lines stay in the repo)
+    for file in ["node/quiet-cpus.sh", "node/ergon-quiet-cpus.service"] {
+        let body = std::fs::read_to_string(here().join(file))?;
+        let mut code = String::new();
+        for (i, line) in body.lines().enumerate() {
+            if (i == 0 && line.starts_with("#!")) || !line.trim_start().starts_with('#') {
+                code.push_str(line);
+                code.push('\n');
+            }
+        }
+        assert!(text.contains(&code), "{file}'s code not in the user data");
+    }
+    let enable = text
+        .find("systemctl enable ergon-quiet-cpus.service\n")
+        .ok_or("ergon-quiet-cpus.service not enabled")?;
+    let reboot = text
+        .find("exec ./provision-node.sh\n")
+        .ok_or("no provision-node.sh")?;
+    assert!(enable < reboot, "the unit is enabled after the reboot");
     for placeholder in [
         "CLUSTER_NAME",
         "API_SERVER_ENDPOINT",
@@ -518,6 +542,115 @@ fn the_eks_user_data_keeps_the_shared_cpu_out_of_isolation() -> TestResult {
     assert!(values.contains(r#"sharedCpus: "1""#));
     assert!(user_data("pang").is_err(), "a bad role was accepted");
     println!("eks-userdata: housekeeping 0-1, IRQs 0, NodeConfig swapped PASS");
+    Ok(())
+}
+
+/// A fake `/sys` for `node/quiet-cpus.sh`: isolated CPUs 2-3, THP
+/// `madvise`, and the fair server's default 50 ms runtime on every CPU
+/// when `fair_server` is set.
+fn fake_sys(root: &Path, fair_server: bool) -> TestResult {
+    let _ = std::fs::remove_dir_all(root);
+    std::fs::create_dir_all(root.join("devices/system/cpu"))?;
+    std::fs::write(root.join("devices/system/cpu/isolated"), "2-3\n")?;
+    std::fs::create_dir_all(root.join("kernel/mm/transparent_hugepage"))?;
+    std::fs::write(
+        root.join("kernel/mm/transparent_hugepage/enabled"),
+        "always [madvise] never\n",
+    )?;
+    std::fs::create_dir_all(root.join("kernel/debug/sched"))?;
+    if fair_server {
+        for cpu in 0..4 {
+            let dir = root.join(format!("kernel/debug/sched/fair_server/cpu{cpu}"));
+            std::fs::create_dir_all(&dir)?;
+            std::fs::write(dir.join("runtime"), "50000000\n")?;
+        }
+    }
+    Ok(())
+}
+
+fn quiet_cpus(root: &Path, args: &[&str]) -> (bool, String) {
+    let out = Command::new("bash")
+        .arg(here().join("node/quiet-cpus.sh"))
+        .args(args)
+        .env("LL_SYS_ROOT", root)
+        .output();
+    match out {
+        Ok(out) => (
+            out.status.success(),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        ),
+        Err(e) => (false, e.to_string()),
+    }
+}
+
+#[test]
+fn the_quiet_cpus_script_sets_thp_never_and_the_fair_server_off_on_isolated_cpus() -> TestResult {
+    let root = std::env::temp_dir().join(format!("ll-quiet-cpus-{}", std::process::id()));
+    fake_sys(&root, true)?;
+    let fair = |cpu: u32| {
+        std::fs::read_to_string(
+            root.join(format!("kernel/debug/sched/fair_server/cpu{cpu}/runtime")),
+        )
+    };
+    let thp = root.join("kernel/mm/transparent_hugepage/enabled");
+
+    // --check is read-only and names each miss
+    let (ok, out) = quiet_cpus(&root, &["--check"]);
+    assert!(!ok, "--check passed a stock node:\n{out}");
+    for want in [
+        "FAIL thp",
+        "FAIL fair_server cpu2 runtime 50000000",
+        "FAIL fair_server cpu3",
+    ] {
+        assert!(out.contains(want), "no {want:?} in:\n{out}");
+    }
+    assert_eq!(fair(2)?, "50000000\n", "--check wrote");
+
+    // apply: THP never, runtime 0 on the isolated CPUs 2-3 only
+    let _ = quiet_cpus(&root, &[]);
+    assert_eq!(std::fs::read_to_string(&thp)?, "never\n");
+    assert_eq!(fair(2)?, "0\n");
+    assert_eq!(fair(3)?, "0\n");
+    assert_eq!(
+        fair(0)?,
+        "50000000\n",
+        "a housekeeping CPU's fair server changed"
+    );
+    assert_eq!(
+        fair(1)?,
+        "50000000\n",
+        "a housekeeping CPU's fair server changed"
+    );
+
+    // the kernel shows the choice in brackets
+    std::fs::write(&thp, "always madvise [never]\n")?;
+    let (ok, out) = quiet_cpus(&root, &["--check"]);
+    assert!(ok, "--check failed a quiet node:\n{out}");
+    assert!(out.contains("PASS fair_server cpu3 runtime 0"), "{out}");
+
+    // a kernel before 6.12 has no fair server: nothing to do
+    fake_sys(&root, false)?;
+    std::fs::write(&thp, "always madvise [never]\n")?;
+    let (ok, out) = quiet_cpus(&root, &["--check"]);
+    assert!(ok, "{out}");
+    assert!(out.contains("has none"), "{out}");
+
+    // debugfs not mounted: the fair server cannot be read, a failure
+    std::fs::remove_dir_all(root.join("kernel/debug/sched"))?;
+    let (ok, out) = quiet_cpus(&root, &["--check"]);
+    assert!(!ok && out.contains("debugfs not mounted"), "{out}");
+
+    // no isolated CPUs: refused
+    std::fs::write(root.join("devices/system/cpu/isolated"), "\n")?;
+    let (ok, out) = quiet_cpus(&root, &[]);
+    assert!(!ok && out.contains("no isolated CPUs"), "{out}");
+
+    std::fs::remove_dir_all(&root)?;
+    println!("quiet-cpus: THP never, fair server 0 on isolated CPUs, read-only --check PASS");
     Ok(())
 }
 
