@@ -60,7 +60,8 @@
   cross-checks compare against the merged config. On EKS AL2023 (nodeadm's
   `config.json.d/40-nodeadm.conf`) install with
   `--set hostContract.kubeletConfig.path=/etc/kubernetes/kubelet/config.json
-  --set hostContract.kubeletConfigDir.enabled=true`. Not verified on EKS.
+  --set hostContract.kubeletConfigDir.enabled=true`. Verified on EKS 1.36
+  AL2023 `c8g.xlarge` (`k8s/nri-shared-cpus/RELEASE.md`).
 - `ergon-shared-cpus` 0.1.2: the hot-pod NIC check reads
   a Hyper-V synthetic NIC (Azure `hv_netvsc`, which has no PCI interrupt)
   by its VMBus channels: each `device/channels/<relid>/cpu` must be an IRQ

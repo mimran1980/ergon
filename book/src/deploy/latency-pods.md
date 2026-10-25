@@ -24,7 +24,8 @@ things on kind: the shared-CPU grant on an unlabelled pod, the plugin
 refusing a hot pod (a kind node has no `isolcpus`), and this page's
 admission policy denying an exec probe. Not yet run on kind. It does not
 exercise hugepages, the cpuset partition, io_uring seccomp, or the PHC. The
-five-grant kind e2e (`test/e2e.sh`) builds the plugin from source. Not verified on EKS. No latency figure is measured.
+five-grant kind e2e (`test/e2e.sh`) builds the plugin from source. On EKS the plugin's install is verified
+([Shared CPUs](shared-cpus.md#limits-and-what-is-not-verified)); the grants' latency modes have not run there. No latency figure is measured.
 
 ## The five
 

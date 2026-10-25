@@ -9,3 +9,13 @@
 | quiet-CPU boot unit | VERIFIED | VERIFIED | ergon-quiet-cpus.service enabled and active; quiet-cpus.sh --check rc 0 |
 
 User data: userdata: 3505 bytes gzipped, 12879 bytes under EC2's 16384-byte limit
+
+Correction (review): the script that wrote this table matched each metric
+as a substring, which also hits its `# HELP <name> 1 while ...` line, so the
+metric verdicts held whatever the value. The values in `plugin-metrics-*.txt`:
+`nri_connected` 1 and `device_plugin_registered` 1 on both nodes;
+`contract_ok` **0 on node a**, 1 on node b. Node a's only refusals were the
+late ENI's IRQs (`ens35` irqs 99-103 effective on CPU 0,
+`plugin-logs-start.txt`). The plugin checks NIC affinity only after the
+merged kubelet config loads and passes, so the kubelet drop-in merge stands
+on both nodes. The check is fixed in `eks-nri.sh`.

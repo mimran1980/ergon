@@ -152,9 +152,10 @@ cell.
 - **The 1 ns slack** (the hook's) takes 50 µs off every wake-up: p50 52.6
   to 2.6 µs idle, 54.5 to 4.6 µs loaded. That is the kernel's default slack,
   removed. It does not move the tail.
-- **Under one spinner** the wait stayed under 117 µs: the woken helper
-  preempts the spinner (EEVDF wake-up preemption). Milliseconds were not seen
-  under this load.
+- **Under one spinner** the wait stayed under 117 µs (one run, no A/A
+  repeat of the loaded cells). That the woken helper preempts the spinner
+  (EEVDF wake-up preemption) is the likely reason, not traced. Milliseconds
+  were not seen under this load.
 - **Idle maxima of 2.4 to 3.4 ms, unexplained.** Both idle A/A cells have
   them, the loaded cells do not. Ruled out: the slack (1 ns has it too), the
   probe's CPU (every wake-up was on CPU 0, `offshared` 0). Not ruled out:

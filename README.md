@@ -41,8 +41,8 @@ the hot thread with helpers on the shared CPU held p50 0.02 µs, p99.99
 0.03 µs, max 4.81 to 5.52 µs, 0 involuntary switches a minute; 3.5 to
 5.5 µs is the hypervisor's floor. Node events (systemd timers, pod starts,
 logins) still reach isolated CPUs
-([benchmarks](k8s/nri-shared-cpus/BENCHMARKS.md)). Not verified on EKS; a
-helper's wake-up wait not measured.
+([benchmarks](k8s/nri-shared-cpus/BENCHMARKS.md)). The install is verified on EKS
+AL2023; a helper's wake-up wait on the shared CPU is measured there.
 
 - Node setup, install, configuration: [k8s/nri-shared-cpus](k8s/nri-shared-cpus/README.md).
 - Node and pod tuning, each setting marked measured or not, with copy-paste
