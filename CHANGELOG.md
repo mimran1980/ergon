@@ -342,6 +342,12 @@
 
 ### Changed
 
+- `ergon-shared-cpus`: `schedFifo` takes the same spellings as
+  `seccomp.ioUring`: its mode word or a YAML boolean, any case
+  (`true`/`yes`/`y`/`on`/`1` = `thread`; `false`/`no`/`n`/`off`/`0` = `off`).
+  Unquoted `schedFifo: off` no longer fails at start. The chart schema
+  accepts a boolean, `0`/`1` or those words for both fields. Mode words are
+  now case-insensitive in both.
 - `ergon-shared-cpus` lab (repo only): one boot line serves one shared
   CPU (e2e, bench) and two (scale): exclusive CPUs 3 to the last,
   `reservedSystemCPUs: 0-2`, so the bench's spin moves from CPU 2 to 3 and

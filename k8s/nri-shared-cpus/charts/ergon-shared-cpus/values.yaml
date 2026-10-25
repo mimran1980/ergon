@@ -80,11 +80,11 @@ config:
     nofile: ""
     rtPrio: ""
     nice: ""
-  # Quote off. Unquoted off is a YAML 1.1 boolean. Kept off.
+  # off or allow, or a YAML boolean (true = allow). Kept off.
   seccomp:
     ioUring: "off"
   seccompProfilePath: /etc/ergon-shared-cpus/ergon-io-uring.json
-  # off or thread. Kept off. Quote off.
+  # off or thread, or a YAML boolean (true = thread). Kept off.
   schedFifo: "off"
   # off, auto, or a /dev/ptp* path. Kept off. Quote off.
   ptp: "off"

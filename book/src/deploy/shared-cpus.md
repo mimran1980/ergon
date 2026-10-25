@@ -341,7 +341,9 @@ Rules:
 - `sharedCpus` must sit inside the kubelet's `reservedSystemCPUs`, minus the
   IRQ CPU(s). In the table above that is `0`.
 - `namespaces` is an allowlist. Create those namespaces before applying.
-- Quote `off`, `on`, `yes`, `no`. YAML 1.1 turns unquoted ones into booleans.
+- Quote `off`, `on`, `yes`, `no` in `ptp` and the string fields. YAML 1.1
+  turns unquoted ones into booleans. `seccomp.ioUring` and `schedFifo` take
+  either form.
 - An unknown field or an out-of-range value stops the plugin at start, and
   the message names the field.
 - **`off` is not harmless.** It is a refusal. A pod whose annotation asks for
@@ -419,10 +421,10 @@ stay as they were at create.
 | `annotationOptIn` | `false` | allow the pod annotation `cpu-shared.ergon.io/<container>` as a fallback when the device plugin is not used |
 | `metricsAddress` | `:9466` | serves `/metrics`, `/healthz` and `/readyz` |
 | `rlimits.memlock`, `.nofile`, `.rtPrio`, `.nice` | unset | the ceiling a pod may ask for by kind. `"inf"` or a positive count. The pod asks for kinds, never values |
-| `seccomp.ioUring` (nested: `seccomp:` then `ioUring:`) | `off` | `allow` widens the container's seccomp profile for `io_uring_*`. See [Latency Pods](latency-pods.md) |
+| `seccomp.ioUring` (nested: `seccomp:` then `ioUring:`) | `off` | `off` or `allow`. `allow` widens the container's seccomp profile for `io_uring_*`. See [Latency Pods](latency-pods.md) |
 | `seccompProfilePath` | `/etc/ergon-shared-cpus/ergon-io-uring.json` | the shipped io_uring profile on the node, the fallback for a pod that cannot take the NRI grant |
 | `devRoot` | `/dev` | where this process sees the host's `/dev`. The DaemonSet mounts it read-only at `/host/dev` so the plugin can stat the PHC and PM QoS nodes; granted paths stay `/dev/...` |
-| `schedFifo` | `off` | `off`, or `thread` (the hot thread only, never the container). Quote the value: unquoted `off` is a YAML boolean |
+| `schedFifo` | `off` | `off`, or `thread` (the hot thread only, never the container) |
 | `ptp` | `off` | `off`, `auto`, or a `/dev/ptp*` path the node has. `auto` grants the NIC's PHC |
 | `hugepagesAeronDir` | unset | absolute `AERON_DIR` to export when the pod mounts a sized hugetlbfs |
 
@@ -440,8 +442,16 @@ before changing a label or a profile. Containers that are already running
 keep the helper CPUs recorded at create. This selection was not run on a
 multi-node cluster.
 
-Quote `off`, `on`, `yes` and `no` in this file. YAML 1.1 turns unquoted ones
-into booleans.
+`seccomp.ioUring` and `schedFifo` also take a YAML boolean, quoted or not,
+any case:
+
+| spelling | `seccomp.ioUring` | `schedFifo` |
+|---|---|---|
+| `false`, `no`, `n`, `off`, `0`, empty | `off` | `off` |
+| `true`, `yes`, `y`, `on`, `1` | `allow` | `thread` |
+
+Quote `off`, `on`, `yes` and `no` in the other fields. YAML 1.1 turns
+unquoted ones into booleans.
 
 Unknown fields and out-of-range values are refused at start, each naming its
 field: `oversubscription` outside 1–100, a `namespaces` entry that is not a
