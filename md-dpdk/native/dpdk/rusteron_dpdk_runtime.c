@@ -606,9 +606,9 @@ static int rusteron_dpdk_ena_llq_check(const rusteron_dpdk_transport_t *native, 
  * bytes (AWS: ENA Express's UDP mode needs an MTU of 8900 or less); the
  * ena_srd_mode xstat's bit 1 says its UDP mode is on (0 off, 1 SRD for TCP
  * only, 2 or 3 UDP too). A larger packet is not lost: measured on
- * c6gn.4xlarge (ENA 2.17.4g, 2026-10-25), UDP of 8,901 to 9,001 IP bytes
- * arrived whole, counted in ena_srd_eligible_tx_pkts but not in
- * ena_srd_tx_pkts: ENA sent it without SRD. */
+ * c6gn.4xlarge with kernel UDP (ENA driver 2.17.4g, 2026-10-25), UDP of
+ * 8,901 to 9,001 IP bytes arrived whole, counted in ena_srd_eligible_tx_pkts
+ * but not in ena_srd_tx_pkts: ENA sent it without SRD. */
 #define RUSTERON_DPDK_ENA_EXPRESS_UDP_MTU 8900
 #define RUSTERON_DPDK_ENA_SRD_MODE_UDP 0x2ULL
 

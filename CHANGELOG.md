@@ -135,7 +135,7 @@
 - `ergon-md-dpdk`: an ENA running ENA Express with UDP over SRD
   (`ena_srd_mode` bit 1) warns at start when `max_aeron_mtu` is above 8864:
   SRD carries IP packets of at most 8900 bytes, and ENA sends larger ones
-  without SRD (measured on c6gn.4xlarge: delivered, not dropped).
+  without SRD (measured with kernel UDP on c6gn.4xlarge: delivered, not dropped).
 - `ergon-md-dpdk`: `nic-link-changes` (type 79) counts link-status changes
   where the NIC raises them (`RTE_ETH_DEV_INTR_LSC`); `port-info` says
   `lsc=off` otherwise.

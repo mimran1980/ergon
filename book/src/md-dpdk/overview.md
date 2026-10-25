@@ -36,7 +36,7 @@ Terms this chapter uses. Host, Kubernetes and Java terms:
 | idle strategy, park | what an Aeron thread does with no work: `spin` and `noop` never sleep; `backoff` spins, yields, then parks (sleeps) ever longer | spinning needs a CPU of its own |
 | log buffer, term buffer | Aeron's memory-mapped file of one stream's messages, in three term buffers | [on hugepages, not sparse](configuration.md#aeron-settings) |
 | [receiver window, status message](configuration.md#aeron-settings) | window: the bytes a sender may have in flight. Status message: the receiver's "send more" | on MANA, sized to what the 256-entry ring holds (not measured here) |
-| heartbeat, keep-alive | heartbeat: Aeron's frame on a quiet stream. Keep-alive: your own small message | [why a keep-alive](configuration.md#aeron-settings): a quiet path is up to 9.8 µs slower at p50; one every 100 µs removes that |
+| heartbeat, keep-alive | heartbeat: Aeron's frame on a quiet stream. Keep-alive: your own small message | [why a keep-alive](configuration.md#aeron-settings): below Aeron (raw floor), a quiet path is up to 9.8 µs slower at p50; one every 100 µs removes that |
 | [kernel UDP](#what-it-is) | the normal path: NIC interrupt, the kernel's network stack, a system call | no setup, every tool works ([tuning](#tuning-kernel-udp-first)) |
 | [kernel bypass](#why-bypass-is-faster-and-what-it-costs) | one process takes a NIC from the kernel and reads and writes its queues itself | lower median and max in these runs; costs cores, NICs, root setup and upkeep |
 | DPDK | the Data Plane Development Kit: the kernel-bypass library this crate uses | |

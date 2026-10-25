@@ -186,16 +186,24 @@ then max:
 | 10 ms gap, a keep-alive every 100 µs (`@KEEPALIVE_US=100`) | 24.59 (24.22–24.73), max 55 (49–56) | |
 | 1 s gap, a keep-alive every 100 µs | 24.50 (24.13–24.83), max 28 (27–37) | |
 
-- **Mostly on the host.** The hairpin (host a's two NICs, no host b, no
-  fabric between hosts) slows by 6.8 µs at 1 s; the cross-host path by 9.8.
+- **Mostly on the host.** The hairpin (host a's two NICs, never host b)
+  slows by 6.8 µs at 1 s; the cross-host path by 9.8. Where AWS turns the
+  hairpin round is not documented; its p50, half the cross-host one, puts it
+  on host a's side of the network.
 - **CPU caches are a small share.** Cold caches at both ends add 1.8 µs at
-  10 ms gaps (ranges apart by 0.5 µs; G7b has no A/A). The rest is below the
-  CPU: the NIC or the hypervisor's path, not split further.
+  10 ms gaps (ranges apart by 0.5 µs). The rest is below the CPU: the NIC or
+  the hypervisor's path, not split further.
+- **No A/A in G7b.** The 1 s and 10 ms slowdowns and the keep-alive's effect
+  are 5–10 µs against rep spreads under 1.3 µs. The 1 ms gap's +0.8 µs (ranges
+  apart by 0.2 µs) and the cold caches' 1.8 µs are small enough that an A/A
+  is needed before relying on them.
 - **A keep-alive removes it.** One datagram every 100 µs, echoed and dropped,
   none within 50 µs of a ping, keeps the p50 in the unpaced range at both
   gaps.
 - **Maxima.** All unexplained by spikes.py (the raw floor has no agent
-  counters); the flush arm's are its own 64 MiB write (a ping loop stall).
+  counters). spikes.py tags the flush arm's as ping stalls; the ping writes
+  its 64 MiB after each round trip is recorded, so that the stall is the
+  write is not shown.
   At 1 s a rep holds 60 round trips, so its max is near its p99.
 
 ### Measured, but no setting recommended
@@ -215,14 +223,15 @@ then max:
 | receiver IO vectors 16, DPDK | `aws-20261014-113947` lines 88, 124 | 1,344 B at 600 k/s: no NAK against 16,247 over 5 reps; max 142 (134–259) against 1,130 (132–3,424,649). Platform not recorded. The one row here that separated: listed under the recommended configuration; the lab baseline sets 16 (`vm.sh:126`) |
 | transparent hugepages off | `aws-20261014-113947` lines 6, 11 | idle p99.99 53.15 (51.81–82.24) against 67.01 (51.84–87.23); max 90 (77–1,180) against 94 (80–498). Not separated. The lab baseline sets `never` (`vm.sh:125`) |
 | C-states capped at C1, metal | round 4 lines 5–6, 11–12, 80, 85 | idle p50 not separated (37.18 (36.48–38.34) against 35.13 (34.49–38.62); max 66 (57–107) against 127 (68–514)); at 288 B 1 M/s at least one rep per capped arm had p50 above 4 ms (ranges 42.17–4,042.75 busy, max 132 (108–8,380); 57.05–31,719 plain, max 289 (109–32,129)) |
-| opt-in TX pacer: `RUSTERON_DPDK_TX_RATE_MBPS=25000` (far above the 2.8 Gbit/s of frames offered) against unset, DPDK 25.11 | G7a lines 11–15, 42–61 | idle p50 23.86 (23.49–23.93) against 23.68 (23.47–23.76), A/A 23.76 (23.65–24.14); max 103 (97–105) against 101 (94–104): not separated, so a send's pacing cost is below what 5 reps resolve. At 288 B 1 M/s it held sends back (`tx-paced` 30–207 a rep on host b); max 1,132 (331–3,115) against 357 (314–1,490), A/A 422 (235–765), ranges overlapping |
+| opt-in TX pacer: `RUSTERON_DPDK_TX_RATE_MBPS=25000` (far above the 2.8 Gbit/s of frames offered) against unset, DPDK 25.11 | G7a lines 11–15, 42–61 | idle p50 23.86 (23.49–23.93) against 23.68 (23.47–23.76), A/A 23.76 (23.65–24.14); max 103 (97–105) against 101 (94–104): not separated, so a send's pacing cost is below what 5 reps resolve. At 288 B 1 M/s it held sends back (`tx-paced` 30–207 on host b in 4 of 5 reps); max 1,132 (331–3,115) against 357 (314–1,490), A/A 422 (235–765), ranges overlapping |
 | CPU isolation on the kernel command line (`isolated`) against pinning alone (`pinned`), DPDK, `c8g.2xlarge` | G7c lines 11–16, 106, 124 | idle p50 26.21 (25.68–26.21) against 25.82 (25.74–26.19), max 115 (112–116) against 112 (110–112); 288 B at 302 k/s p50 28.22 (27.49–28.27) against 27.71 (27.71–27.74). The A/A arms overlap both. Not separated |
 | threaded NAPI busy polling (`NAPI_BUSY=spare`) | G2 lines 13, 108–113 | the run failed: p50 up to 72 ms idle, most load points returned no echo. Not a measurement of the setting |
 
 ### ENA PMD deferred RX refill: not adopted
 
 G7a, 5 reps, the lab patch (`@DPDK=patched-refill`) against stock DPDK 25.11
-and an A/A (stock, built as a separate arm). p99, then max (lines 11–13,
+and an A/A (stock again, as `@AERON_RECEIVER_IO_VECTOR_CAPACITY=16`, the
+baseline's own value, `vm.sh:139`). p99, then max (lines 11–13,
 42–53, 96–98):
 
 | point | patched | stock | A/A |
@@ -254,13 +263,19 @@ Traced on a kept pair (`aws-20261025-065326-conductor.txt`):
 
 - **Shared CPU:** the conductor was runnable but off its CPU for 8.0 ms
   while the benchmark client started on that CPU (`sched_switch`,
-  `prev_state=R`). The 8–16 ms marks are scheduling delay on the
-  housekeeping CPU, not the conductor's own work.
-- **Alone:** its one long cycle (4.5 ms off CPU, blocked) is the first
-  channel's set-up. `rusteron_dpdk_counters_register` takes an initial
-  sample of the NIC's extended stats (`rte_eth_xstats_get`, on ENA an admin
-  command) as the send channel endpoint opens. A second connection on the
-  same driver added no cycle over 1 ms.
+  `prev_state=R`); that run's longest cycle was 8.4 ms. So the traced mark
+  is scheduling delay on the housekeeping CPU. G7a's 12–16 ms marks were not
+  traced.
+- **Alone:** its one long cycle was 4.8 ms, with one 4.5 ms spell off CPU,
+  blocked (probe 5, no call stack). On fresh drivers (probe 6), every
+  blocking switch-out outside its parks had one stack:
+  `rte_eth_xstats_get` ← `rusteron_dpdk_counters_register` ←
+  `aeron_send_channel_endpoint_create`. That is the initial sample of the
+  NIC's extended stats as the first send channel opens, waiting on a
+  condition variable inside the ENA PMD (its admin queue). The one system
+  call over 0.2 ms there was a 1.8 ms futex wait, so this cause is likely,
+  but the 4.5 ms was not timed under the same trace. A second connection
+  on the same driver added no cycle over 1 ms.
 - Not the log buffers: 1 MiB terms gave the same 8.0 ms on the shared CPU.
   Kernel UDP's first connection: 4.0 ms on the shared CPU, not traced.
 - No effect on the round trip: the conductor is off the data path. Idle p50
@@ -274,9 +289,9 @@ Traced on a kept pair (`aws-20261025-065326-conductor.txt`):
 Round 5 (`c7i`) counted 3–13 frames missed on host a's NIC at the first 288 B
 load point. On `c8g.2xlarge`, `nic-rx-missed` stayed 0 in every G7a and G7c
 row. That includes 1,024 RX descriptors after flat-out runs, 3 reps in each
-of two states. Host a's transport dropped 29–30 frames a load point to ports
-nobody listened on (`noport-dpdk-queue-drop`, G7a); what sends them is not
-identified.
+of two states. Frames to ports nobody listened on (`noport-dpdk-queue-drop`,
+G7a): host a 21–30 a rep at every load point from 500 k/s up, 0–9 at
+100 k/s; host b 0–1. What sends them is not identified.
 
 ### ENA Express: UDP above 8,900 bytes
 
@@ -289,7 +304,9 @@ UDP mode on both ENIs, MTU 9001, kernel UDP, 2,000 datagrams a size:
 | 8,901–9,001 B | 2,000 / 2,000 | `ena_srd_eligible_tx_pkts` +1,999, `ena_srd_tx_pkts` +0: sent without SRD |
 | 9,100 B | DF: refused at the sender (`EMSGSIZE`); clear: fragmented, 718 arrived | `pps_allowance_exceeded` +1,826 |
 
-So a packet above the limit is not lost; it skips SRD. The transport now
+So a packet above the limit is not lost; it skips SRD. This was kernel UDP
+(the ENA kernel driver), not DPDK's ENA PMD, at 2,000 datagrams a size; the
+same NIC path carries both, but the PMD was not sent above the limit. The transport now
 warns at start instead of refusing (`max_aeron_mtu` 8864 or less keeps
 every frame on SRD). Whether a flow that mixes both paths reorders is not
 measured.
@@ -305,9 +322,11 @@ MTU (G1 lines 50–122, G2 lines 50–98). AWS documents a per-flow bandwidth li
 [EC2 network bandwidth](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-network-bandwidth.html).
 An Aeron channel is one flow, so a heavier stream needs several channels.
 
-`c8g.2xlarge` runs out of packets first: 288 B lost from 1.51 M msgs/s in
-every arm and rep, with `pps_allowance_exceeded` growing on both hosts; flat
-out 3.03 M msgs/s (G7c lines 44 on, 186 on).
+On `c8g.2xlarge`, 288 B lost from 1.51 M msgs/s in every arm and rep, as
+short sends on host a's full TX ring (`dpdk-tx-eagain`), with NAKs in some
+arms; flat out 3.03 M msgs/s (G7c lines 44 on, 186 on). The VPC allowance
+counters (type 92) are not in G7c's committed output, so whether the
+packets-a-second allowance was the limit is not shown.
 
 ## Recommended configuration
 
@@ -327,9 +346,10 @@ in the C driver (`aeron_network_publication.h:38` in the locked
 rusteron-media-driver 0.2.13). A keep-alive on sparse, latency-critical
 streams bounds that wait and keeps the path from slowing when quiet. On the
 raw floor (G7b), one every 100 µs kept the p50 at 1 s gaps at 24.50
-(24.13–24.83) against 33.98 (32.99–34.24) without it (unpaced 24.21). One
-every 1 ms leaves what a 1 ms gap costs: +0.8 µs p50. It was measured below
-Aeron (a datagram on the same path), not as an Aeron message.
+(24.13–24.83) against 33.98 (32.99–34.24) without it (unpaced 24.21). A
+1 ms keep-alive is not measured; a 1 ms gap between pings costs +0.8 µs
+p50 (no A/A). It was measured below Aeron (a datagram on the same path),
+not as an Aeron message.
 
 ## Open
 
@@ -348,8 +368,11 @@ Aeron (a datagram on the same path), not as an Aeron message.
   hypervisor.
 - Sparse flows: the host-local part is not split between the NIC and the
   hypervisor.
-- The conductor's initial NIC-stats sample at channel set-up blocks it for
-  about 4.5 ms; moving it into housekeeping is not done.
+- The conductor's initial NIC-stats sample at channel set-up blocks it
+  (traced 1.8 ms; the 4.5 ms spell is likely the same call, not timed
+  under one trace); moving it into housekeeping is not done.
+- Sparse flows (G7b): no A/A arm; the 1 ms gap's +0.8 µs and the cold
+  caches' 1.8 µs need one.
 - What sends host a's frames to closed ports between load points
   (`noport-dpdk-queue-drop`).
 
