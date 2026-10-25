@@ -63,6 +63,66 @@ azure_quota_check() {
     echo "quota: $line; the region ${use% *} of ${use#* }, this run $total"
 }
 
+# azure_nic_check <region> <NICs> <size>...: 0, printing each size's
+# MaxNetworkInterfaces (az vm list-skus' capability), or 2 saying why on
+# stderr: unread, not a number (fail closed: a size that takes fewer would
+# fail at its VM's create, its group already billing), or fewer than <NICs>
+azure_nic_check() {
+    local region=$1 want=$2 s ans line=
+    shift 2
+    for s in "$@"; do
+        ans=$(az vm list-skus -l "$region" --size "$s" --resource-type virtualMachines \
+            --query "[?name=='$s'] | [0].capabilities[?name=='MaxNetworkInterfaces'].value | [0]" -o tsv 2>&1) ||
+            { echo "nics: cannot read $s's MaxNetworkInterfaces in $region: $ans" >&2; return 2; }
+        ans=$(az_words <<<"$ans")
+        [[ $ans =~ ^[0-9]+$ ]] ||
+            { echo "nics: $s's MaxNetworkInterfaces in $region reads [$ans], not a number: refused (fail closed)" >&2; return 2; }
+        ((ans >= want)) ||
+            { echo "nics: $s takes $ans NICs and the lab needs $want (management and two data NICs): pick a size that takes $want" >&2; return 2; }
+        line+="${line:+, }$s $ans"
+    done
+    echo "nics: MaxNetworkInterfaces $line; the lab needs $want"
+}
+
+# azure_priority_args <Regular|Spot>: az vm create's arguments for it: a
+# Spot VM deleted (never deallocated, which would leave its disk billing)
+# when Azure evicts it, at any price up to pay-as-you-go's; none for Regular
+azure_priority_args() {
+    if [[ $1 == Spot ]]; then echo "--priority Spot --eviction-policy Delete --max-price -1"; fi
+}
+
+# azure_eviction_watch <group> <seconds> <pid> <dir> <vm>...: every
+# <seconds>, each VM shown; one Azure no longer has (it deletes an evicted
+# Spot VM: ResourceNotFound, not a failed call) leaves <dir>/evicted-<vm>,
+# is logged, and TERMs <pid> (the run, whose teardown deletes the group);
+# then it returns. It also returns once <pid> is gone.
+azure_eviction_watch() {
+    local group=$1 every=$2 pid=$3 mark=$4 vm err
+    shift 4
+    while sleep "$every" && kill -0 "$pid" 2>/dev/null; do
+        for vm in "$@"; do
+            err=$(az vm show -g "$group" -n "$vm" --query name -o tsv 2>&1 >/dev/null) && continue
+            if [[ $err == *ResourceNotFound* || $err == *"was not found"* ]]; then
+                : >"$mark/evicted-$vm"
+                echo "[$(date +%T)] spot eviction: VM $vm of $group was evicted and deleted by Azure: ending the run (its teardown deletes $group)" >&2
+                kill -TERM "$pid" 2>/dev/null
+                return 0
+            fi
+        done
+    done
+}
+
+# azure_left <run> [<pair>]: how many resources still carry tag run=<run>
+# (and pair=<pair>: another pair of the same run is not this one's), or the
+# listing's error
+azure_left() {
+    if [[ -n ${2:-} ]]; then
+        az resource list --tag run="$1" --query "[?tags.pair=='$2'] | length(@)" -o tsv 2>&1 | az_words
+    else
+        az resource list --tag run="$1" --query 'length(@)' -o tsv 2>&1 | az_words
+    fi
+}
+
 # azure_reaper <group> <stamp> <seconds> <log>: the backstop, should this
 # machine's teardown never run (killed): a process of its own (nohup, so it
 # outlives this shell) deleting the whole group <seconds> from now, only

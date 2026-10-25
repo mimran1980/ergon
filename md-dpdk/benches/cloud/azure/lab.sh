@@ -79,6 +79,30 @@
 #   hugepages off, and in DPDK modes the receiver's IO vectors at 16); a mode's
 #   @THP=always or @AERON_RECEIVER_IO_VECTOR_CAPACITY=4 A/Bs the earlier state
 #   RTT_MESSAGES (300000) RTT_WARMUP (50000) TPUT_SECONDS (5)
+#
+#   The transport latency suite, LAB_SUITE=transport (latency: the above, by
+#   default): one pair session of ../transport-matrix.tsv (../transport.sh;
+#   the bench binaries' CLI ../transport-cli.md) in place of the modes and
+#   states. LAB_PAIR (a or b, required): the session, its own resource group
+#   (LAB_GROUP, ergon-lab-transport-<pair>-<stamp>) and run directory
+#   (target/md-dpdk-bench/<stamp>-transport-<pair>), every resource tagged
+#   owner=ergon-lab run=<stamp> pair=<pair>, so two pairs started together
+#   (LAB_RUN_STAMP: one stamp for both) never touch each other's resources
+#   or count them as their own leftovers. LAB_SIZE defaults to
+#   Standard_D16s_v6 (SMT off: 8 cores, the CPU map of vm.sh
+#   transport-isolate), LAB_MAX_HOURS to 10. LAB_SEED (random): the session's
+#   seed for every round's arm order, recorded. LAB_ARMS_FILE: more arm and
+#   set rows (transport-matrix.tsv's format), checked with the matrix before
+#   any az call; LAB_EXTRA_SRC: a source tree copied to ~/extra on both VMs
+#   and built there by its own lab-build.sh, whose binaries the arms file's
+#   arms may name. TRANSPORT_WARMUP_S (30), TRANSPORT_POINT_S (30) and
+#   TRANSPORT_SWITCH_S (5): the plan's durations
+#   LAB_PRIORITY (Regular; Spot for smoke and tuning runs only): Spot VMs
+#   with eviction policy Delete; each minute (LAB_EVICTION_POLL) both are
+#   looked for, and one Azure evicted ends the run through its teardown at
+#   once, exit 75
+#   Both suites check that each size takes the three NICs (az vm list-skus'
+#   MaxNetworkInterfaces) before creating anything, and refuse one unread
 #   To stop a run early: kill -TERM <its pid> (the one whose parent is 1). Bash
 #   ignores SIGINT while an ssh step runs that does not die of it, so Ctrl-C can
 #   take until that step ends; TERM runs the teardown as soon as the step returns.
@@ -110,9 +134,20 @@ remove_snapshot() {
 }
 # until the teardown's own trap (below) takes over, which calls it last
 trap remove_snapshot EXIT
-group=${LAB_GROUP:-ergon-lab-md-dpdk}
+# the suite: the Aeron transports' latency lab (the default), or the
+# transport latency suite (transport.sh), one pair session of it
+suite=${LAB_SUITE:-latency}
+pair=${LAB_PAIR:-}
+priority=${LAB_PRIORITY:-Regular}
+arms_file=${LAB_ARMS_FILE:-}
+extra_src=${LAB_EXTRA_SRC:-}
+case $suite in
+latency) default_size=Standard_D8s_v6 default_hours=8 ;;
+transport) default_size=Standard_D16s_v6 default_hours=10 ;;
+*) echo "LAB_SUITE $suite: latency (the default) or transport" >&2; exit 2 ;;
+esac
 region=${LAB_REGION:-northcentralus}
-size=${LAB_SIZE:-Standard_D8s_v6}
+size=${LAB_SIZE:-$default_size}
 # per-VM overrides: VM a hosts the localhost runs (LAB_LOCAL_MODES), which need five cores
 size_a=${LAB_SIZE_A:-$size}
 size_b=${LAB_SIZE_B:-$size}
@@ -163,7 +198,7 @@ rtt_stall_ns=${LAB_RTT_STALL_NS:-10000}
 gapspin_us=${LAB_GAPSPIN_US:-50}
 base=${LAB_BASE:-}
 # the backstop deletes the group this long after creation (hours)
-max_hours=${LAB_MAX_HOURS:-8}
+max_hours=${LAB_MAX_HOURS:-$default_hours}
 detach=${LAB_DETACH:-}
 # a warm-up load before each mode's first ladder, unrecorded (lib.sh
 # load_sweep): its seconds and messages a second; none by default
@@ -172,13 +207,27 @@ warmup_rate=${LAB_WARMUP_RATE:-0}
 tput_seconds=${TPUT_SECONDS:-5}
 user=azureuser
 # a detached run's directory is its parent's (LAB_RUN_OUT, set only there)
-out=${LAB_RUN_OUT:-$repo/target/md-dpdk-bench/$(date +%Y%m%d-%H%M%S)}
-stamp=${out##*/}
-# on every resource, so one listing finds whatever a run left
-tags=(owner=ergon-lab "run=$stamp")
+if [[ $suite == transport ]]; then
+    # one stamp for both pairs of a run (LAB_RUN_STAMP), each pair its own
+    # directory and group; the run tag the stamp, the pair tag its pair
+    run_stamp=${LAB_RUN_STAMP:-$(date +%Y%m%d-%H%M%S)}
+    out=${LAB_RUN_OUT:-$repo/target/md-dpdk-bench/$run_stamp-transport-$pair}
+    stamp=$run_stamp
+    group=${LAB_GROUP:-ergon-lab-transport-$pair-$run_stamp}
+    tags=(owner=ergon-lab "run=$stamp" "pair=$pair")
+else
+    out=${LAB_RUN_OUT:-$repo/target/md-dpdk-bench/$(date +%Y%m%d-%H%M%S)}
+    stamp=${out##*/}
+    group=${LAB_GROUP:-ergon-lab-md-dpdk}
+    # on every resource, so one listing finds whatever a run left
+    tags=(owner=ergon-lab "run=$stamp")
+fi
 known=$out/known_hosts
 created=0
 
+# the run's own stderr, kept on fd 8: the teardown logs there whatever
+# redirection the step it interrupted had (a TERM can land inside one)
+exec 8>&2
 log() { echo "[$(date +%T)] $*" >&2; }
 die() { log "ERROR: $*"; exit 1; }
 
@@ -195,15 +244,47 @@ fi
 # URI parameter Aeron does not know runs as if it were not there, INVOKER
 # cannot run on one host, jumbo frames are AWS's), before any az call
 . "$here/../modes.sh"
-for m in "${modes[@]}"; do
-    why=$(mode_check "$m" remote "$arch" azure "" 2>&1) || die "$why"
-    # the layout's fifth core on both sizes (vm.sh ready would find it missing
-    # only after the build)
-    why=$(spare_types_check "$m" azure "$size_a" "$size_b" 2>&1) || die "$why"
-done
-for m in ${local_modes:-}; do
-    why=$(mode_check "$m" local "$arch" azure "" 2>&1) || die "$why"
-done
+[[ $priority == Regular || $priority == Spot ]] || die "LAB_PRIORITY $priority: Regular (the default) or Spot (smoke and tuning runs: Azure may evict it)"
+if [[ $suite == transport ]]; then
+    # the pair, the arms file and the extra tree, and every point's mode
+    # (transport.sh check: modes.sh's arm settings, NETEM refused on DPDK
+    # arms), the Aeron arms' driver modes and their conductor's core on both
+    # sizes, before any az call
+    # LAB_ESTIMATE=1 without a pair: both pairs' estimates
+    [[ $pair == a || $pair == b || ( -z $pair && ${LAB_ESTIMATE:-} == 1 ) ]] ||
+        die "LAB_PAIR is a or b with LAB_SUITE=transport (the session of transport-matrix.tsv to run), not [${pair}]"
+    [[ $run_stamp =~ ^[0-9]{8}-[0-9]{6}$ ]] || die "LAB_RUN_STAMP is <yyyymmdd>-<hhmmss>, not $run_stamp"
+    [[ ${LAB_MODES:-}${LAB_LOCAL_MODES:-} == "" ]] || die "LAB_MODES and LAB_LOCAL_MODES are the latency suite's: LAB_SUITE=transport runs transport-matrix.tsv's arms"
+    if [[ -n $extra_src ]]; then
+        [[ -d $extra_src && -f $extra_src/lab-build.sh ]] || die "LAB_EXTRA_SRC $extra_src: a directory with a lab-build.sh (the VMs build it with: bash lab-build.sh <bin dir>)"
+        extra_src=$(cd "$extra_src" && pwd)
+    fi
+    [[ -z $arms_file ]] || arms_file=$(cd "$(dirname "$arms_file")" && pwd)/${arms_file##*/}
+    # shellcheck source=../transport.sh
+    . "$here/../transport.sh"
+    for p in ${pair:-a b}; do
+        points=$(tr_check "$p" "$arms_file" 2>&1) || die "$points"
+    done
+    for m in "kernel-busy$TR_AERON_MODE_SUFFIX" "dpdk$TR_AERON_MODE_SUFFIX"; do
+        why=$(spare_types_check "$m" azure "$size_a" "$size_b" 2>&1) || die "$why"
+    done
+    for v in TRANSPORT_WARMUP_S TRANSPORT_POINT_S TRANSPORT_SWITCH_S; do
+        [[ -z ${!v:-} || ${!v} =~ ^[0-9]{1,5}$ ]] || die "$v is a whole number of seconds, not ${!v}"
+    done
+    seed=${LAB_SEED:-$(od -An -N4 -tu4 /dev/urandom | tr -d ' ')}
+    [[ $seed =~ ^[0-9A-Za-z_-]{1,40}$ ]] || die "LAB_SEED is letters, digits, - and _ (the session's seed), not $seed"
+else
+    [[ -z $pair && -z $arms_file && -z $extra_src ]] || die "LAB_PAIR, LAB_ARMS_FILE and LAB_EXTRA_SRC are the transport suite's (LAB_SUITE=transport)"
+    for m in "${modes[@]}"; do
+        why=$(mode_check "$m" remote "$arch" azure "" 2>&1) || die "$why"
+        # the layout's fifth core on both sizes (vm.sh ready would find it missing
+        # only after the build)
+        why=$(spare_types_check "$m" azure "$size_a" "$size_b" 2>&1) || die "$why"
+    done
+    for m in ${local_modes:-}; do
+        why=$(mode_check "$m" local "$arch" azure "" 2>&1) || die "$why"
+    done
+fi
 [[ -z $no_flatout || $no_flatout == 1 ]] || die "LAB_NO_FLATOUT is 1 or unset"
 [[ $rtt_spike_ns =~ ^[1-9][0-9]{0,9}$ ]] || die "LAB_RTT_SPIKE_NS is a whole number of nanoseconds, from 1 (the round trips stamped), not $rtt_spike_ns"
 [[ $rtt_stall_ns =~ ^[1-9][0-9]{0,9}$ ]] || die "LAB_RTT_STALL_NS is a whole number of nanoseconds, from 1 (the client loop stalls stamped), not $rtt_stall_ns"
@@ -233,6 +314,14 @@ plan=(--cloud azure --type-a "$size_a" --type-b "$size_b" --placement ppg --reps
     --mix-seconds "$mix_seconds" --tput-seconds "$tput_seconds" --tput-flows "${tput_flows:-0}"
     --rtt-messages "$rtt_messages" --rtt-warmup "$rtt_warmup" --no-flatout "$no_flatout" --max-hours "$max_hours"
     --warmup-seconds "$warmup_seconds" --warmup-rate "$warmup_rate")
+if [[ $suite == transport ]]; then
+    # the pair's sets (both pairs' without one, LAB_ESTIMATE=1), timed as
+    # transport.sh runs them (estimate.py transport_estimate)
+    plan=(--cloud azure --suite transport --pair "$pair" --type-a "$size_a" --type-b "$size_b" --reps "$reps"
+        --max-hours "$max_hours" --priority "$priority" --transport-warmup-s "${TRANSPORT_WARMUP_S:-30}"
+        --transport-point-s "${TRANSPORT_POINT_S:-30}" --transport-switch-s "${TRANSPORT_SWITCH_S:-5}"
+        --matrix "$here/../transport-matrix.tsv" ${arms_file:+--matrix "$arms_file"})
+fi
 if [[ ${LAB_ESTIMATE:-} == 1 ]]; then
     python3 "$here/../estimate.py" "${plan[@]}"
     exit $?
@@ -249,7 +338,7 @@ az account show -o none 2>/dev/null || die "az is not logged in (az login)"
 # or mid-teardown). The snapshot becomes the detached run's: it removes it.
 if [[ -z ${LAB_DETACHED:-} ]] && { [[ $detach == 1 ]] || { [[ -z $detach ]] && awk -v h="$hours" 'BEGIN {exit !(h > 2)}'; }; }; then
     mkdir -p "$out" || die "cannot make $out"
-    (LAB_DETACHED=1 LAB_RUN_OUT=$out nohup bash "$0" "$@" >"$out/lab.log" 2>&1 </dev/null & echo $! >"$out/lab.pid")
+    (LAB_DETACHED=1 LAB_RUN_OUT=$out LAB_RUN_STAMP=${run_stamp:-} LAB_SEED=${seed:-} nohup bash "$0" "$@" >"$out/lab.log" 2>&1 </dev/null & echo $! >"$out/lab.pid")
     log "detached: about $hours h: pid $(cat "$out/lab.pid"), log $out/lab.log (stop it with kill -TERM $(cat "$out/lab.pid"); LAB_DETACH=0 runs in the foreground)"
     trap - EXIT
     exit 0
@@ -258,11 +347,22 @@ mkdir -p "$out"
 
 teardown() {
     local rc=$?
+    exec 2>&8
     # an interrupt must not abort the delete, nor a create still running race it
     trap '' INT TERM
     [[ -n ${follow:-} ]] && kill "$follow" 2>/dev/null
     [[ -n ${watch:-} ]] && kill "$watch" 2>/dev/null
     [[ -n ${pa:-} ]] && kill "$pa" "${pb:-}" 2>/dev/null
+    [[ -n ${evict:-} ]] && kill "$evict" 2>/dev/null
+    # a Spot VM Azure evicted: the run ends here, whatever it was doing
+    # (exit 75), and nothing of the broken pair is kept, LAB_KEEP or not
+    local evicted
+    evicted=$(cd "$out" 2>/dev/null && ls evicted-* 2>/dev/null | sed 's/^evicted-//' | tr '\n' ' ')
+    if [[ -n $evicted ]]; then
+        log "spot eviction: VM(s) $evicted evicted by Azure: the run ends (exit 75), its group deleted"
+        rc=75
+        unset LAB_KEEP
+    fi
     if ((created)) && [[ -z ${LAB_KEEP:-} ]]; then
         log "deleting resource group $group"
         { az group delete -n "$group" --yes --no-wait -o none &&
@@ -274,11 +374,13 @@ teardown() {
         else
             log "WARNING: resource group $group still exists: az group delete -n $group --yes${reaper:+ (the backstop, pid $reaper, deletes it $max_hours h after creation)}"
         fi
-        left=$(az resource list --tag run="$stamp" --query 'length(@)' -o tsv 2>&1 | az_words)
+        # this run's own: the transport suite's other pair shares its run
+        # tag, so only this pair's are counted
+        left=$(azure_left "$stamp" "$pair")
         if [[ $left == 0 ]]; then
-            log "left tagged run=$stamp: 0"
+            log "left tagged run=$stamp${pair:+ pair=$pair}: 0"
         else
-            log "WARNING: $left resource(s) still tagged run=$stamp (or the listing failed): az resource list --tag run=$stamp -o table"
+            log "WARNING: $left resource(s) still tagged run=$stamp${pair:+ pair=$pair} (or the listing failed): az resource list --tag run=$stamp -o table"
         fi
     elif ((created)); then
         log "LAB_KEEP: resource group $group kept; delete it with: az group delete -n $group --yes${reaper:+ (the backstop, pid $reaper, deletes it $max_hours h after creation)}"
@@ -306,6 +408,10 @@ read -ra me_cidrs <<<"$(printf '%s/32 ' $me)"
 # both VMs' vCPUs within their quota families' and the region's (az.sh)
 quota=$(azure_quota_check "$region" "$size_a" "$size_b" 2>&1) || die "$quota"
 log "$quota"
+# each size takes the management NIC and both data NICs (az.sh), or
+# nothing is created
+nic_cap=$(azure_nic_check "$region" 3 "$size_a" "$size_b" 2>&1) || die "$nic_cap"
+log "$nic_cap"
 # The backstop (az.sh): the whole group deleted LAB_MAX_HOURS from now,
 # should the teardown never run. Started, and seen running, before the group
 # exists, so no moment has a group and no backstop. Deleting, never
@@ -326,7 +432,8 @@ if ((max_hours < 24)); then
 else
     log "no auto-shutdown: LAB_MAX_HOURS=$max_hours is a day or more (a daily schedule would fire first): only the backstop and teardown end this run"
 fi
-log "creating $group in $region: a $size_a, b $size_b ($arch, $image), SSH from $me, tagged ${tags[*]}"
+read -ra priority_args <<<"$(azure_priority_args "$priority")"
+log "creating $group in $region: a $size_a, b $size_b ($arch, $image, $priority), SSH from $me, tagged ${tags[*]}"
 # before the call: a create that fails having made the group is deleted too
 created=1
 az group create -n "$group" -l "$region" --tags "${tags[@]}" -o none || die "group create failed"
@@ -368,7 +475,7 @@ declare_node() { # name sender-ip receiver-ip size
             --accelerated-networking true --tags "${tags[@]}" -o none &&
         az vm create -g "$group" -n "$n" --size "$4" --image "$image" --ppg ppg \
             --nics "$n-mgmt" "$n-snd" "$n-rcv" --admin-username "$user" --ssh-key-values "$key" \
-            --os-disk-name "$n-os" --os-disk-size-gb 64 --tags "${tags[@]}" -o none &&
+            --os-disk-name "$n-os" --os-disk-size-gb 64 ${priority_args[@]+"${priority_args[@]}"} --tags "${tags[@]}" -o none &&
         { [[ -z $off ]] || az vm auto-shutdown -g "$group" -n "$n" --time "$off" -o none ||
             log "WARNING: no auto-shutdown on $n: only the backstop and teardown end it"; } &&
         # a VM's tags do not reach its OS disk; the Tags API, not `az
@@ -383,6 +490,20 @@ wait $pa || die "node a create failed"
 wait $pb || die "node b create failed"
 A=$(az network public-ip show -g "$group" -n a-ip --query ipAddress -o tsv) && [[ -n $A ]] || die "no public address for a"
 B=$(az network public-ip show -g "$group" -n b-ip --query ipAddress -o tsv) && [[ -n $B ]] || die "no public address for b"
+# Spot: each minute both VMs looked for; one Azure evicted (and so deleted)
+# TERMs this run (az.sh), and every SSH session to the pair is ended and no
+# new one tried (lib.sh on(): lab_abandon), so the teardown, which deletes
+# the group, runs at once, not after an SSH session to a VM no longer there
+# times out
+lab_abandon=$out/abandon
+if [[ $priority == Spot ]]; then
+    {
+        azure_eviction_watch "$group" "${LAB_EVICTION_POLL:-60}" $$ "$out" a b &&
+            [[ -n $(cd "$out" && ls evicted-* 2>/dev/null) ]] && : >"$lab_abandon" &&
+            { pkill -f -- "$user@$A" 2>/dev/null; pkill -f -- "$user@$B" 2>/dev/null; true; }
+    } & evict=$!
+    log "spot: both VMs looked for every ${LAB_EVICTION_POLL:-60} s; an eviction ends the run (pid $evict)"
+fi
 a_private=$(az network nic show -g "$group" -n a-mgmt --query 'ipConfigurations[0].privateIPAddress' -o tsv)
 b_private=$(az network nic show -g "$group" -n b-mgmt --query 'ipConfigurations[0].privateIPAddress' -o tsv)
 log "a=$A b=$B (private $a_private $b_private)"
@@ -390,4 +511,12 @@ log "a=$A b=$B (private $a_private $b_private)"
 data_subnet=10.20.1.0/24
 . "$here/../lib.sh"
 prepare_vms
-run_bench
+if [[ $suite == transport ]]; then
+    vm_a=$group/a vm_b=$group/b
+    echo "$seed" >"$out/seed"
+    transport_prepare
+    transport_remote "$pair" || die "transport pair $pair failed ($out/transport)"
+    log "transport pair $pair: $(grep -c . "$out/transport/results.csv" 2>/dev/null || echo 0) rows in $out/transport/results.csv"
+else
+    run_bench
+fi

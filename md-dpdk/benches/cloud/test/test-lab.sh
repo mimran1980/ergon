@@ -7120,6 +7120,7 @@ case "$*" in
 "group delete"*) rm -f "$st/group" ;;
 "group wait"*) ;;
 "group show"*) [[ -f $st/group ]] || exit 3; cat "$st/run" ;;
+"vm list-skus"*MaxNetworkInterfaces*) echo "${FAKE_AZ_NICS:-8}" ;;
 "vm list-skus"*)
     case "$*" in
     *Standard_D8ps_v6* | *Standard_D16ps_v6*) echo standardDPSv6Family ;;
@@ -7353,7 +7354,7 @@ rm -f "$tmp/cloud-calls"
 unset FAKE_AZ_STATE FAKE_AZ_LOG
 export PATH=$saved_path
 
-for script in vm.sh irqs.sh host.sh modes.sh lib.sh remote.sh azure/lab.sh azure/az.sh aws/lab.sh test/purefloor-docker.sh; do
+for script in vm.sh irqs.sh host.sh modes.sh lib.sh remote.sh transport.sh azure/lab.sh azure/az.sh aws/lab.sh test/purefloor-docker.sh test/test-transport.sh test/test-transport-runner.sh; do
     bash -n "$cloud/$script" && pass "bash -n $script" || fail "bash -n $script"
 done
 # spikes.py's agent gap table: every agent loop gap the DPDK event log
@@ -7449,7 +7450,7 @@ else
     pass "spikes.py: each agent loop gap labelled on its agent's CPU (preemption, interrupts timed entry to exit, the spinner's VM pause, nothing), the trace on the wall clock through its two anchors; the spinner's gaps by size; vm.sh gapspin_us"
 fi
 
-for script in analyse.py spikes.py estimate.py test/fake_aws.py; do
+for script in analyse.py spikes.py estimate.py transport_plan.py test/fake_aws.py; do
     python3 -c 'import ast, sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' "$cloud/$script" &&
         pass "$script compiles" || fail "$script does not compile"
 done

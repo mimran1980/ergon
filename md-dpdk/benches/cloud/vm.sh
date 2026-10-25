@@ -89,6 +89,18 @@
 #   vm.sh base-rtt <peer ip> the network's own round trip, sender NIC to <peer ip> (ping, 200 a 10 ms):
 #                            "<min> <avg> <max> <mdev> (ns) <replies>/<sent>"
 #
+# The transport suite (transport.sh; settings from transport-settings.env):
+#   vm.sh transport-isolate  the CPU map (housekeeping, IRQ, isolated: host.sh transport_cpu_map),
+#                            the driver's layout under it, and its boot line from the next boot
+#   vm.sh transport-tune     after that boot: SMT off, the boot line checked, the quiet settings,
+#                            irqbalance off, the data NICs (rings, coalescing off, quickack routes,
+#                            every interrupt on the IRQ CPU) and the sysctls, each read back
+#   vm.sh transport-net [check]  a socket arm's kernel path (NAPI, busy poll, TCP), or only read back
+#   vm.sh transport-map      the map;  vm.sh transport-build  the bench binaries and LAB_EXTRA_SRC's
+#   vm.sh netem set <loss %>|clear|check <loss %|none>|stats   netem on every data NIC's egress
+#   vm.sh sample             every thread's CPU, judged against the isolated CPUs (first line)
+#   vm.sh irqsnap            /proc/interrupts;  vm.sh hostcheck  the ergon-tune report (1 unless clean)
+#
 # aarch64 (AWS Graviton, lab.sh LAB_ALLOW_ARM=1): Graviton's own settings where
 # they differ from x86's (host.sh): builds for the instance's own core,
 # iommu.passthrough=1 from bootstrap (metal's SMMU), nohlt for isolated-poll
@@ -117,6 +129,9 @@ self=$(readlink -f "$0")
 # arguments, the CPU layout, the agents' CPUs, the LLQ and IOMMU checks
 # shellcheck source=host.sh
 . "$(dirname "$self")/host.sh"
+# the transport suite's declared settings (TR_*: transport-* commands)
+# shellcheck source=transport-settings.env
+. "$(dirname "$self")/transport-settings.env"
 cd "$HOME/ergon"
 run=$HOME/bench
 mkdir -p "$run"
@@ -175,7 +190,13 @@ fi
 # SMT on (host_setting SMT keeps it): cpu_layout ranks a core by its twins'
 # pre-flight stalls, and an offline twin would rank it anew, moving the roles
 # off the cores the SMT-on baseline ran on
+# The transport suite's (transport-isolate writes it): its CPU map's layout,
+# whatever the cores' pre-flight said (host.sh transport_layout)
 layout() {
+    if [[ -s $run/layout-transport ]]; then
+        cat "$run/layout-transport"
+        return
+    fi
     if [[ -s $run/layout-smt-off && $(cat "$LAB_SYS_ROOT/devices/system/cpu/smt/control" 2>/dev/null) == off ]]; then
         cat "$run/layout-smt-off"
         return
@@ -508,6 +529,18 @@ data_unmanaged() {
 pin_irqs() {
     irqs_pin "$HK_CPU" "$1"
     local cpu
+    # the transport suite: every data-NIC interrupt on its map's IRQ CPU
+    # (irqs.sh irqs_pin_data), the NICs' interfaces and VFs
+    # (fail closed; none to move only while DPDK holds every NIC)
+    if [[ -s ${run:-}/transport-map ]]; then
+        local ifaces
+        ifaces=$(data_ifaces 2>/dev/null) || ifaces=
+        read -r _ cpu _ <"$run/transport-map"
+        [[ -n $ifaces ]] || { echo "irqs $1: no data NIC in the kernel's hands" >&2; return 0; }
+        # shellcheck disable=SC2086
+        irqs_pin_data "$cpu" "$1" $ifaces
+        return
+    fi
     cpu=$(cat "$run/irq_cpu" 2>/dev/null) || return 0
     [[ -n $cpu && $cpu != "$HK_CPU" ]] || return 0
     # shellcheck disable=SC2046
@@ -574,6 +607,32 @@ data_kernel_up() {
     local missing
     missing=$(data_routes_missing)
     [[ $missing == 0 ]] || { echo "data NICs: $missing policy route(s) missing after configuring them" >&2; return 1; }
+    # the transport suite: its NIC settings again, as a NIC brought up (or
+    # given back by DPDK) has its driver's own, and its routes just replaced
+    if [[ -s ${run:-}/transport-map ]]; then transport_nics; fi
+}
+
+# transport_nics: the transport suite's data-NIC settings (transport-settings.env),
+# each read back: every VF's rings and interrupt coalescing off, every route
+# to the data subnet with quickack 1, every data-NIC interrupt on the IRQ CPU;
+# 1, saying what, when one does not hold
+transport_nics() {
+    local vf rc=0 route cpu
+    for vf in $(nics | awk '{print $3}'); do
+        transport_ring "$vf" "$TR_RX_RING" "$TR_TX_RING" || rc=1
+        if [[ $TR_COALESCE_OFF == 1 ]]; then transport_coalesce_off "$vf" || rc=1; fi
+    done
+    if [[ $TR_QUICKACK_ROUTES == 1 ]]; then
+        while read -r route; do
+            # shellcheck disable=SC2086
+            [[ -n $route ]] && sudo ip route change $route
+        done < <(transport_quickack_routes "$DATA_SUBNET")
+        transport_quickack_check "$DATA_SUBNET" || rc=1
+    fi
+    read -r _ cpu _ <"$run/transport-map"
+    # shellcheck disable=SC2046
+    irqs_data_check "$cpu" $(data_ifaces) | tail -1 || rc=1
+    return $rc
 }
 
 # How many data NICs lack their policy rule or one of their table's routes
@@ -2630,6 +2689,122 @@ rx-hw-delay)
             if (n > 0) printf "%.0f,%d,%d,%s,%s\n", sum / n, max, n, min, neg
             else if (neg > 0) printf ",,0,,%d\n", neg
         }'
+    ;;
+transport-isolate)
+    # the transport suite's CPU map (host.sh transport_cpu_map), kept for
+    # every later command, its layout for the media driver, and its boot
+    # line (replacing `isolate`'s) from the next boot
+    map=$(transport_cpu_map) || exit 2
+    echo "$map" >"$run/transport-map"
+    transport_layout "$map" >"$run/layout-transport"
+    args=$(transport_boot_args "$map")
+    sudo mkdir -p /etc/default/grub.d
+    echo "GRUB_CMDLINE_LINUX_DEFAULT=\"\$GRUB_CMDLINE_LINUX_DEFAULT $args\"" |
+        sudo tee /etc/default/grub.d/99-ergon-isolation.cfg >/dev/null
+    sudo update-grub >/dev/null 2>&1
+    echo "transport-isolate: map $map (housekeeping, IRQ, isolated); layout $(cat "$run/layout-transport"); $args from the next boot"
+    ;;
+transport-tune)
+    # after the boot transport-isolate set up: SMT off, the boot line
+    # checked, the quiet settings, irqbalance off, the data NICs (rings,
+    # coalescing, quickack routes, every interrupt on the IRQ CPU) and the
+    # sysctls, each read back; its record bench/transport-tune.txt; 1 at the
+    # first setting that does not hold
+    [[ -s $run/transport-map ]] || { echo "transport-tune: no transport map (vm.sh transport-isolate first)" >&2; exit 2; }
+    map=$(cat "$run/transport-map")
+    read -r hk irq iso <<<"$map"
+    tune_steps() {
+        echo "map $map"
+        transport_smt_off || return 1
+        local now
+        now=$(transport_cpu_map) && [[ $now == "$map" ]] ||
+            { echo "transport-tune: the CPU map with SMT off is [$now], not [$map]" >&2; return 1; }
+        transport_boot_check "$map" || return 1
+        transport_quiet_apply "$hk,$irq" "$iso" || return 1
+        sudo systemctl disable --now irqbalance >/dev/null 2>&1 || true
+        if systemctl is-active --quiet irqbalance 2>/dev/null; then echo "transport-tune: irqbalance still running" >&2; return 1; fi
+        echo "irqbalance off"
+        data_kernel_up || return 1
+        transport_sysctls_apply || return 1
+        transport_ports_check "$TR_PORT_BASE" "$TR_PORT_SPAN" || return 1
+        echo "kernel $(uname -r) cmdline $(cat "${LAB_PROC_ROOT}/cmdline" 2>/dev/null)"
+    }
+    tune_steps >"$run/transport-tune.txt" 2>&1 && rc=0 || rc=$?
+    cat "$run/transport-tune.txt"
+    exit $rc
+    ;;
+transport-net)
+    # an arm on the kernel's data path, no media driver (the socket arms):
+    # the data NICs as transport-tune left them (data_kernel_up: rings,
+    # coalescing, quickack, IRQs), NAPI as kernel-busy has it, every sysctl;
+    # `check`: only read back (after a driver started on the kernel's path)
+    [[ -s $run/transport-map ]] || { echo "transport-net: no transport map" >&2; exit 2; }
+    if [[ ${2:-} == check ]]; then
+        transport_sysctls_apply check >/dev/null || exit 1
+        transport_nics >/dev/null || exit 1
+        echo "transport-net: settings hold"
+        exit 0
+    fi
+    data_kernel_up
+    nics | while read -r _ _ vf _; do
+        echo "$TR_NAPI_DEFER" | sudo tee "$LAB_SYS_ROOT/class/net/$vf/napi_defer_hard_irqs" >/dev/null
+        echo "$TR_GRO_FLUSH_NS" | sudo tee "$LAB_SYS_ROOT/class/net/$vf/gro_flush_timeout" >/dev/null
+    done
+    transport_sysctls_apply
+    ;;
+transport-map)
+    # "<housekeeping> <irq> <isolated,...>" as transport-isolate kept it
+    cat "$run/transport-map"
+    ;;
+transport-build)
+    # the transport suite's bench binaries (transport-cli.md), then
+    # LAB_EXTRA_SRC's tree (lib.sh copies it to ~/extra) by its own
+    # lab-build.sh into ~/extra/bin
+    export PATH=$HOME/.cargo/bin:$PATH
+    cargo build --release -p ergon-md-dpdk-harness --features "$(client_features "$run/dpdk_unavailable")" \
+        --bin aeron_lat --bin hostcheck
+    cargo build --release -p ergon-io-bench --bin mpsc_lat --bin udp_lat --bin tcp_lat
+    if [[ -f $HOME/extra/lab-build.sh ]]; then
+        mkdir -p "$HOME/extra/bin"
+        (cd "$HOME/extra" && bash lab-build.sh "$HOME/extra/bin")
+    fi
+    ;;
+netem)
+    # netem on every data NIC's egress (the interfaces the kernel sends on;
+    # under accelerated networking the VF below forwards what they send):
+    # netem set <loss %> | clear | check <loss %|none> | stats (host.sh)
+    mapfile -t ifaces < <(nics | awk '{print $2}')
+    ((${#ifaces[@]})) || { echo "netem: no data NIC in the kernel's hands" >&2; exit 1; }
+    case ${2:-} in
+    set) netem_set "${3:?loss %}" "${ifaces[@]}" && netem_check "$3" "${ifaces[@]}" ;;
+    clear) netem_clear "${ifaces[@]}" && netem_check none "${ifaces[@]}" ;;
+    check) netem_check "${3:?loss % or none}" "${ifaces[@]}" ;;
+    stats) netem_stats "${ifaces[@]}" ;;
+    *) echo "netem set <loss %> | clear | check <loss %|none> | stats" >&2; exit 2 ;;
+    esac
+    ;;
+sample)
+    # where every thread ran: the verdict on the map's isolated CPUs (host.sh
+    # transport_placement) on the first line, then ps's own lines
+    read -r _ _ iso <"$run/transport-map"
+    ps -eLo tid,psr,pcpu,comm --no-headers >"$run/sample.ps"
+    transport_placement "$iso" <"$run/sample.ps" || true
+    cat "$run/sample.ps"
+    ;;
+irqsnap) cat "$LAB_PROC_ROOT/interrupts" ;;
+hostcheck)
+    # the ergon-tune checks on the hot CPUs and data NICs (transport-cli.md),
+    # its report in bench/hostcheck.txt; 1 on any warning or error
+    read -r _ _ iso <"$run/transport-map"
+    rm -f "$run/hostcheck.txt"
+    # (exit 2 not clean, 1 not run: either stops the session; a warn line too)
+    PATH=$tools:$PATH hostcheck --hot-cpus "$iso" --nic "$(data_ifaces | paste -sd, -)" --aeron-dir "$TR_AERON_DIR" \
+        --out "$run/hostcheck.txt" && rc=0 || rc=$?
+    cat "$run/hostcheck.txt" 2>/dev/null
+    if ((rc)) || grep -qE '^[^ ]+ warn: ' "$run/hostcheck.txt" 2>/dev/null; then
+        echo "hostcheck: not clean (exit $rc)" >&2
+        exit 1
+    fi
     ;;
 *)
     awk 'NR > 1 && !/^#/ {exit} NR > 1 {print}' "$self" >&2

@@ -885,3 +885,330 @@ ExecStart=/usr/local/sbin/ergon-lab-phc
 WantedBy=multi-user.target
 UNIT
 }
+
+# ---- The transport suite (transport.sh; vm.sh transport-*, netem, sample) ----
+# Every function reads and writes under $LAB_SYS_ROOT and $LAB_PROC_ROOT, so
+# test/test-transport-runner.sh runs them against fake trees.
+
+# transport_cpu_map: "<housekeeping> <irq> <isolated,...>": the first thread
+# of each core in core order (an offline CPU, SMT off's twins, has no
+# topology and is no core): the first core housekeeping, the second every
+# data-NIC IRQ, the rest isolated. Standard_D16s_v6 with SMT off: 0 2
+# 4,6,8,10,12,14. 2 with fewer than six cores (an Aeron arm needs four
+# isolated ones: its sender, receiver and conductor, and a client thread).
+transport_cpu_map() {
+    local dir=$LAB_SYS_ROOT/devices/system/cpu cpu siblings cores=()
+    for cpu in $(printf '%s\n' "$dir"/cpu[0-9]* | sed 's/.*cpu//' | sort -n); do
+        [[ -r $dir/cpu$cpu/topology/thread_siblings_list ]] || continue
+        siblings=$(cat "$dir/cpu$cpu/topology/thread_siblings_list")
+        [[ ${siblings%%[,-]*} == "$cpu" ]] && cores+=("$cpu")
+    done
+    ((${#cores[@]} >= 6)) ||
+        { echo "transport: ${#cores[@]} cores: the map needs six (housekeeping, IRQ, an Aeron arm's four isolated)" >&2; return 2; }
+    local iso
+    iso=$(IFS=,; echo "${cores[*]:2}")
+    echo "${cores[0]} ${cores[1]} $iso"
+}
+
+# transport_layout <map>: vm.sh layout's "<housekeeping> <app> <sender>
+# <receiver> <app2>" for the media driver under the map: the sender, the
+# receiver and (CONDUCTOR=own, app2) the conductor on the first three
+# isolated CPUs, app the fourth. transport_clients <map> <setup>: the CPUs a
+# bench binary gets (--cpus): every isolated one, less the driver's three
+# under kernel and dpdk.
+transport_layout() {
+    local hk iso
+    read -r hk _ iso <<<"$1"
+    IFS=, read -ra iso <<<"$iso"
+    echo "$hk ${iso[3]} ${iso[0]} ${iso[1]} ${iso[2]}"
+}
+transport_clients() {
+    local iso
+    read -r _ _ iso <<<"$1"
+    case $2 in
+    kernel | dpdk) IFS=, read -ra iso <<<"$iso"; (IFS=,; echo "${iso[*]:3}") ;;
+    *) echo "$iso" ;;
+    esac
+}
+
+# transport_boot_args <map>: the isolated CPUs off the scheduler's balancing,
+# the tick, RCU callbacks and managed IRQs; every other IRQ's default the
+# housekeeping CPU (the data NICs' then go to the IRQ CPU: irqs.sh
+# irqs_pin_data)
+transport_boot_args() {
+    local hk iso
+    read -r hk _ iso <<<"$1"
+    echo "isolcpus=nohz,domain,managed_irq,$iso nohz_full=$iso rcu_nocbs=$iso irqaffinity=$hk"
+}
+
+# cpulist_expand <list>: a kernel CPU list (0-2,4) as "0 1 2 4"
+cpulist_expand() {
+    local part out=() c
+    for part in ${1//,/ }; do
+        [[ $part =~ ^([0-9]+)(-([0-9]+))?$ ]] || continue
+        for ((c = BASH_REMATCH[1]; c <= ${BASH_REMATCH[3]:-${BASH_REMATCH[1]}}; c++)); do out+=("$c"); done
+    done
+    echo "${out[*]}"
+}
+
+# transport_boot_check <map>: 0 when the running kernel isolated exactly the
+# map's CPUs with nohz_full (the boot line took), else 1 saying what it has
+transport_boot_check() {
+    local iso want got nohz
+    read -r _ _ iso <<<"$1"
+    want=$(cpulist_expand "$iso")
+    got=$(cpulist_expand "$(cat "$LAB_SYS_ROOT/devices/system/cpu/isolated" 2>/dev/null)")
+    nohz=$(cpulist_expand "$(cat "$LAB_SYS_ROOT/devices/system/cpu/nohz_full" 2>/dev/null)")
+    if [[ -n $want && $got == "$want" && $nohz == "$want" ]]; then
+        echo "boot: isolated and nohz_full $iso"
+        return 0
+    fi
+    echo "boot: the kernel isolated [$got] with nohz_full [$nohz], not the map's [$want]: the boot line did not take (vm.sh transport-isolate, then a reboot)" >&2
+    return 1
+}
+
+# transport_ports_check <base> <span> [<ephemeral lo> <hi>]: 0 when the
+# bench ports, base to base + span - 1, stay clear of the media driver's
+# wildcard ranges (20000-21999: vm.sh common_env) and of the kernel's
+# ephemeral range (given, else read from ip_local_port_range when there is
+# one), else 1 saying which they meet
+transport_ports_check() {
+    local base=$1 span=$2 lo=${3:-} hi=${4:-} last f=${LAB_PROC_ROOT:-/proc}/sys/net/ipv4/ip_local_port_range
+    last=$((base + span - 1))
+    if ((base <= 21999 && last >= 20000)); then
+        echo "ports $base-$last meet the media driver's wildcard ranges 20000-21999" >&2
+        return 1
+    fi
+    if [[ -z $lo && -r $f ]]; then read -r lo hi <"$f"; fi
+    if [[ -n $lo ]] && ((base <= hi && last >= lo)); then
+        echo "ports $base-$last meet the kernel's ephemeral range $lo-$hi" >&2
+        return 1
+    fi
+    echo "ports $base-$last clear of 20000-21999${lo:+ and the ephemeral range $lo-$hi}"
+}
+
+# transport_smt_off: SMT off (smt/control) and verified: control off (or
+# forceoff) and smt/active 0; nothing to do where the CPU has none. 1 when
+# the kernel kept it on.
+transport_smt_off() {
+    local d=$LAB_SYS_ROOT/devices/system/cpu/smt c a
+    c=$(cat "$d/control" 2>/dev/null) || { echo "smt: no $d/control: SMT state unknown" >&2; return 1; }
+    case $c in
+    notsupported | notimplemented) echo "smt: $c (no SMT to turn off)"; return 0 ;;
+    forceoff) ;;
+    *) echo off | sudo tee "$d/control" >/dev/null 2>&1 ;;
+    esac
+    c=$(cat "$d/control" 2>/dev/null) a=$(cat "$d/active" 2>/dev/null)
+    if [[ ($c == off || $c == forceoff) && $a == 0 ]]; then
+        echo "smt: control $c active $a online $(cat "$LAB_SYS_ROOT/devices/system/cpu/online" 2>/dev/null)"
+        return 0
+    fi
+    echo "smt: control [$c] active [$a] after writing off: SMT still on" >&2
+    return 1
+}
+
+# transport_quiet_settings <housekeeping cpulist> <isolated cpulist>: the
+# lab's quiet node settings (k8s/nri-shared-cpus/lab/lib.sh
+# lab_quiet_settings: one list for both labs), "path|value|why" a line
+transport_quiet_settings() {
+    (
+        # shellcheck source=../../../k8s/nri-shared-cpus/lab/lib.sh
+        . "$(dirname "${BASH_SOURCE[0]}")/../../../k8s/nri-shared-cpus/lab/lib.sh"
+        lab_quiet_settings "$1" "$2"
+    )
+}
+
+# transport_quiet_apply <housekeeping cpulist> <isolated cpulist>: each one
+# this kernel has written and read back, "quiet <path>: <before> -> <after>";
+# one it lacks "quiet skip: <path> (not on this kernel)"; 1 when a write was
+# refused or does not read back
+transport_quiet_apply() {
+    local path value why f before after rc=0
+    while IFS='|' read -r path value why; do
+        case $path in
+        /proc/*) f=${LAB_PROC_ROOT:-/proc}/${path#/proc/} ;;
+        /sys/*) f=$LAB_SYS_ROOT/${path#/sys/} ;;
+        *) continue ;;
+        esac
+        if ! sudo test -e "$f"; then
+            echo "quiet skip: $path (not on this kernel)"
+            continue
+        fi
+        before=$(sudo cat "$f" 2>/dev/null)
+        echo "$value" | sudo tee "$f" >/dev/null 2>&1 || true
+        after=$(sudo cat "$f" 2>/dev/null)
+        # THP reads back as its choices, the one in force bracketed
+        if [[ $after == "$value" || $after == *"[$value]"* ]]; then
+            echo "quiet $path: $before -> $after"
+        else
+            echo "quiet REFUSED $path: stays [$after], wanted $value ($why)" >&2
+            rc=1
+        fi
+    done < <(transport_quiet_settings "$1" "$2")
+    return $rc
+}
+
+# transport_sysctls: "<proc/sys path> <value> <required|optional>" a line,
+# from transport-settings.env (TR_*): every socket arm's TCP and busy-poll
+# settings; the optional ones are the kernel's from 6.15 (absent before)
+transport_sysctls() {
+    cat <<EOT
+net/ipv4/tcp_congestion_control $TR_TCP_CONGESTION required
+net/ipv4/tcp_sack $TR_TCP_SACK required
+net/ipv4/tcp_timestamps $TR_TCP_TIMESTAMPS required
+net/ipv4/tcp_slow_start_after_idle $TR_TCP_SLOW_START_AFTER_IDLE required
+net/ipv4/tcp_rmem $TR_TCP_RMEM required
+net/ipv4/tcp_wmem $TR_TCP_WMEM required
+net/core/rmem_max $TR_CORE_RMEM_MAX required
+net/core/wmem_max $TR_CORE_WMEM_MAX required
+net/core/busy_read $TR_BUSY_READ required
+net/core/busy_poll $TR_BUSY_POLL required
+net/ipv4/tcp_rto_min_us $TR_TCP_RTO_MIN_US optional
+net/ipv4/tcp_delack_max_us $TR_TCP_DELACK_MAX_US optional
+EOT
+}
+
+# transport_sysctls_apply [check]: each written (check: only read) and read
+# back, "sysctl <path> <value>", or "sysctl <path> absent (optional: ...)";
+# 1 when a required one is absent or any reads back otherwise
+transport_sysctls_apply() {
+    local path words value need f got rc=0
+    while read -r path words; do
+        need=${words##* } value=${words% *}
+        f=${LAB_PROC_ROOT:-/proc}/sys/$path
+        if [[ ! -e $f ]]; then
+            if [[ $need == optional ]]; then echo "sysctl $path absent (optional: kernel before 6.15)"; continue; fi
+            echo "sysctl MISSING $path (wanted $value)" >&2
+            rc=1
+            continue
+        fi
+        [[ ${1:-} == check ]] || echo "$value" | sudo tee "$f" >/dev/null 2>&1 || true
+        got=$(tr -s ' \t' '  ' <"$f" 2>/dev/null)
+        if [[ $got == "$value" ]]; then
+            echo "sysctl $path $got"
+        else
+            echo "sysctl WRONG $path: [$got], wanted [$value]" >&2
+            rc=1
+        fi
+    done < <(transport_sysctls)
+    return $rc
+}
+
+# transport_quickack_routes <subnet>: an `ip route change` argument list a
+# line for every route to <subnet> in every table (ip -4 route show table
+# all), each with quickack 1: no ACK on the data subnet delayed
+transport_quickack_routes() {
+    ip -4 route show table all 2>/dev/null | awk -v net="$1" '
+        $1 == net {
+            out = $1
+            for (i = 2; i <= NF; i++) {
+                if ($i ~ /^(dev|table|proto|scope|src|metric|via)$/) {out = out " " $i " " $(i + 1); i++}
+                else if ($i == "quickack") i++
+            }
+            print out " quickack 1"
+        }'
+}
+
+# transport_quickack_check <subnet>: 0 when every route to it has quickack
+# 1, else 1 naming those without; 1 too when there is none
+transport_quickack_check() {
+    local lines
+    lines=$(ip -4 route show table all 2>/dev/null | awk -v net="$1" '$1 == net')
+    [[ -n $lines ]] || { echo "quickack: no route to $1" >&2; return 1; }
+    if grep -v 'quickack 1' <<<"$lines" >&2; then
+        echo "quickack: the routes above lack quickack 1" >&2
+        return 1
+    fi
+    echo "quickack: $(grep -c . <<<"$lines") route(s) to $1 with quickack 1"
+}
+
+# transport_ring <vf> <rx> <tx>: the NIC's rings at that size and read back
+# (ethtool -g's current settings); 1 when above its maximum or not taken
+transport_ring() {
+    local vf=$1 rx=$2 tx=$3 cur
+    sudo ethtool -G "$vf" rx "$rx" tx "$tx" >/dev/null 2>&1 || true
+    cur=$(ethtool -g "$vf" 2>/dev/null | awk '/^Current hardware settings/ {c = 1} c && /^RX:/ {r = $2} c && /^TX:/ {t = $2} END {print r, t}')
+    if [[ $cur == "$rx $tx" ]]; then echo "ring $vf rx $rx tx $tx"; return 0; fi
+    echo "ring $vf: [$cur] after asking rx $rx tx $tx (ethtool -g: above its maximum, or refused)" >&2
+    return 1
+}
+
+# transport_coalesce_off <vf>: interrupt coalescing off (adaptive off, 0 us)
+# and read back; a driver with none to set (ethtool -c not supported) said
+# so, not a failure; 1 when some is left on
+transport_coalesce_off() {
+    local vf=$1 cur
+    if ! cur=$(ethtool -c "$vf" 2>&1); then
+        if [[ $cur == *"not supported"* ]]; then echo "coalesce $vf: none (the driver has no interrupt moderation)"; return 0; fi
+        echo "coalesce $vf: ethtool -c failed: $cur" >&2
+        return 1
+    fi
+    sudo ethtool -C "$vf" adaptive-rx off adaptive-tx off rx-usecs 0 tx-usecs 0 >/dev/null 2>&1 || true
+    cur=$(ethtool -c "$vf" 2>/dev/null | awk '/^Adaptive RX:/ {ar = $3; at = $5} /^rx-usecs:/ {r = $2} /^tx-usecs:/ {t = $2} END {print ar, at, r, t}')
+    if [[ $cur =~ ^(off|n/a)\ (off|n/a)\ (0|n/a)\ (0|n/a)$ ]]; then echo "coalesce $vf off ($cur)"; return 0; fi
+    echo "coalesce $vf: [$cur] (adaptive rx, tx, rx-usecs, tx-usecs) after asking off and 0" >&2
+    return 1
+}
+
+# netem_set <loss %> <iface>...: netem on each one's root (its egress),
+# dropping that share of packets (0: a netem qdisc that drops nothing);
+# netem_clear <iface>...: each root back to the default qdisc
+netem_set() {
+    local p=$1 i
+    shift
+    for i in "$@"; do sudo tc qdisc replace dev "$i" root netem limit 100000 loss "$p%" || return 1; done
+}
+netem_clear() {
+    local i
+    for i in "$@"; do
+        if tc qdisc show dev "$i" 2>/dev/null | grep -q '^qdisc netem .* root'; then sudo tc qdisc del dev "$i" root || return 1; fi
+    done
+}
+
+# netem_check <loss %|none> <iface>...: 0 when each one's root qdisc is netem
+# at that loss (none: no netem on it), else 1 saying which
+netem_check() {
+    local want=$1 i line got rc=0
+    shift
+    for i in "$@"; do
+        line=$(tc qdisc show dev "$i" 2>/dev/null | grep '^qdisc netem .* root' || true)
+        if [[ $want == none ]]; then
+            [[ -z $line ]] || { echo "netem: $i still has [$line]" >&2; rc=1; }
+            continue
+        fi
+        [[ -n $line ]] || { echo "netem: $i has no netem root qdisc (wanted loss $want%)" >&2; rc=1; continue; }
+        got=$(sed -n 's/.* loss \([0-9.]*\)%.*/\1/p' <<<"$line")
+        awk -v a="${got:-0}" -v b="$want" 'BEGIN {d = a - b; exit !(d < 1e-9 && d > -1e-9)}' ||
+            { echo "netem: $i loss [${got:-0}]%, wanted $want% ($line)" >&2; rc=1; }
+    done
+    ((rc)) || echo "netem: $* at $want"
+    return $rc
+}
+
+# netem_stats <iface>...: "<iface> <sent packets> <dropped>" a line from each
+# root netem qdisc's tc -s counters (nothing for one without netem)
+netem_stats() {
+    local i
+    for i in "$@"; do
+        tc -s qdisc show dev "$i" 2>/dev/null | awk -v i="$i" '
+            /^qdisc / {on = ($2 == "netem" && / root /)}
+            on && /^ *Sent / {d = $7; sub(/,$/, "", d); print i, $4, d; on = 0}'
+    done
+}
+
+# transport_placement <isolated cpulist>: `ps -eLo tid,psr,pcpu,comm` (no
+# header) on stdin; "ok <n> busy threads" when every busy thread (50 % of a
+# CPU or more) ran on an isolated CPU, no two on one, else "FAIL <what>", 1
+transport_placement() {
+    awk -v iso=",$1," '
+        $3 + 0 >= 50 {
+            n++
+            if (index(iso, "," $2 ",") == 0) bad = bad sprintf(" %s(%s) on CPU %s, not isolated;", $4, $1, $2)
+            if ($2 in on) bad = bad sprintf(" %s(%s) and %s on CPU %s;", $4, $1, on[$2], $2)
+            on[$2] = $4 "(" $1 ")"
+        }
+        END {
+            if (bad != "") {print "FAIL" bad; exit 1}
+            print "ok " n + 0 " busy threads"
+        }'
+}
