@@ -90,7 +90,10 @@ COPY . .
 # driver through its Aeron directory (as benches/cloud/vm.sh builds them).
 ARG RUST_TARGET_CPU=
 ARG CARGO_BUILD_JOBS=
-RUN export RUSTFLAGS="${RUST_TARGET_CPU:+-Ctarget-cpu=$RUST_TARGET_CPU}" \
+# An ARG is also an environment variable inside RUN, and cargo refuses an
+# empty CARGO_BUILD_JOBS ("could not parse ``"): unset it when it is empty.
+RUN if [ -z "$CARGO_BUILD_JOBS" ]; then unset CARGO_BUILD_JOBS; fi \
+    && export RUSTFLAGS="${RUST_TARGET_CPU:+-Ctarget-cpu=$RUST_TARGET_CPU}" \
     && cargo build ${CARGO_BUILD_JOBS:+-j $CARGO_BUILD_JOBS} -p ergon-md-dpdk --release --features static,dpdk --bin media_driver \
     && cargo build ${CARGO_BUILD_JOBS:+-j $CARGO_BUILD_JOBS} -p ergon-md-dpdk-harness --release --features static --bin rtt --bin counters
 

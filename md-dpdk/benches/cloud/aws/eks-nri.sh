@@ -61,6 +61,14 @@
 #   EKS_MODES (M0 M1 M2 M3 M4 M5 M6) EKS_HUGEPAGES (256 2 MiB pages a node)
 #   EKS_CHECK_ONLY=1 stops after the estimate; EKS_DELETE=<stamp> deletes.
 #   RTT_MESSAGES (300000) RTT_WARMUP (50000) RTT_SECONDS (60)
+#   EKS_PHASE_X (1: before the modes, phase X: the EKS-lane checks of
+#   k8s/nri-shared-cpus/RELEASE.md, placement evidence, a helper's wake-up wait
+#   on the shared CPU idle and under load with 1 ns and 50 us timer slack, the
+#   pin's cost, and the SQPOLL placements; 0 skips it) X_SECONDS (20 a cell)
+#   EKS_HOLD_MINUTES (0): after the report, keep the cluster up to that many
+#   minutes (inside EKS_MAX_MINUTES) for work by hand; `touch <out>/release`
+#   ends the hold and deletes everything. EKS_HOLD_ON_FAIL (0): the same hold
+#   when the run fails, before the teardown, to look at a live failure.
 #
 # Modes (latency-build-plan.md §9). SCHED_FIFO is deliberately absent: the one
 # AWS A/B was inconclusive (io/benches/BENCHMARK.md). Rlimits (MEMLOCK) ride along
@@ -82,7 +90,10 @@ repo=${EKS_REPO:-$(cd "$here/../../../.." && pwd)}
 # edit to the checkout mid-run would otherwise break this run (and its teardown).
 if [[ -z ${EKS_SNAPSHOT:-} ]]; then
     snapshot=$(mktemp -d)
-    cp -R "$here/.." "$snapshot/cloud" || { echo "cannot snapshot the scripts into $snapshot" >&2; exit 1; }
+    # the quiet-CPU unit the user data installs (absent only in a fake repo)
+    { cp -R "$here/.." "$snapshot/cloud" && mkdir -p "$snapshot/quiet" &&
+        { [[ ! -d $repo/samples/low-latency-k8s/node ]] || cp -R "$repo/samples/low-latency-k8s/node/." "$snapshot/quiet/"; }; } ||
+        { echo "cannot snapshot the scripts into $snapshot" >&2; exit 1; }
     EKS_SNAPSHOT=$snapshot EKS_REPO=$repo exec bash "$snapshot/cloud/aws/eks-nri.sh" "$@"
 fi
 scripts=$EKS_SNAPSHOT/cloud/aws
@@ -107,6 +118,10 @@ delete=${EKS_DELETE:-}
 rtt_messages=${RTT_MESSAGES:-300000}
 rtt_warmup=${RTT_WARMUP:-50000}
 rtt_seconds=${RTT_SECONDS:-60}
+phase_x=${EKS_PHASE_X:-1}
+x_seconds=${X_SECONDS:-20}
+hold_minutes=${EKS_HOLD_MINUTES:-0}
+hold_on_fail=${EKS_HOLD_ON_FAIL:-0}
 
 # A unique stamp: eks-nri-YYYYmmdd-HHMMSS, never an eks.sh one (both tag
 # owner=ergon-lab, run=<stamp>), so EKS_DELETE can only select this lab's runs.
@@ -172,7 +187,7 @@ wait_for() {
 nv() { local v="$1_$2"; echo "${!v:-}"; }
 nv_set() { printf -v "$1_$2" '%s' "$3"; }
 
-for t in aws kubectl docker python3; do command -v "$t" >/dev/null || die "$t is not on PATH"; done
+for t in aws kubectl docker python3 helm; do command -v "$t" >/dev/null || die "$t is not on PATH"; done
 ident=$(aws sts get-caller-identity --query '[Account,Arn]' --output text 2>/dev/null) || die "aws is not signed in (aws login)"
 read -r account caller <<<"$ident"
 registry=$account.dkr.ecr.$region.amazonaws.com
@@ -481,9 +496,30 @@ bounded() {
     return "$rc"
 }
 
+# Keep the cluster for work by hand until <out>/release exists, the minutes
+# pass, or EKS_MAX_MINUTES (less a 10-minute margin for the teardown) is near.
+hold() {
+    local minutes=$1 why=$2 until_s cap_s
+    ((minutes > 0)) || return 0
+    until_s=$(($(date +%s) + minutes * 60))
+    cap_s=$((run_t0 + max_minutes * 60 - 600))
+    ((until_s > cap_s)) && until_s=$cap_s
+    {
+        echo "HOLD ($why) until epoch $until_s ($(((until_s - $(date +%s)) / 60)) min) or touch $out/release"
+        echo "KUBECONFIG=$out/kubeconfig"
+    } | tee "$out/HOLD" >&2
+    while (($(date +%s) < until_s)) && [[ ! -e $out/release ]]; do sleep 10; done
+    rm -f "$out/HOLD"
+    log "hold over"
+}
+run_t0=$(date +%s)
+
 teardown() {
     local rc=$?
     trap '' INT TERM HUP
+    if ((rc != 0 && created && hold_on_fail > 0)) && [[ ! -e $out/watchdog-fired && -s $out/kubeconfig ]]; then
+        hold "$hold_on_fail" "run failed, rc $rc"
+    fi
     [[ -n $watchdog_pid ]] && kill "$watchdog_pid" 2>/dev/null
     jobs -p | xargs kill 2>/dev/null
     if ((created)); then
@@ -1143,8 +1179,9 @@ eks create-access-entry --cluster-name "$N" --principal-arn "$node_role_arn" --t
 # The launch template: user data from eks-nri-userdata.sh (kernel command
 # line, sysctls, one reboot, then nodeadm's NodeConfig), 20 GB gp3, public
 # IP, no key pair, terminate on shutdown (the dead-man's switch).
-bash "$scripts/eks-nri-userdata.sh" "$N" "$endpoint" "$ca" "$svc" "$reserved" "$isolated" "$hugepages" >"$out/userdata.gz" ||
-    die "eks-nri-userdata.sh failed (over the 16 KiB user-data limit?)"
+QUIET_DIR=$EKS_SNAPSHOT/quiet bash "$scripts/eks-nri-userdata.sh" "$N" "$endpoint" "$ca" "$svc" "$reserved" "$isolated" "$hugepages" "$irq_cpu" \
+    >"$out/userdata.gz" 2>"$out/userdata.log" || { cat "$out/userdata.log" >&2; die "eks-nri-userdata.sh failed (over the 16 KiB user-data limit?)"; }
+log "$(cat "$out/userdata.log")"
 python3 - "$ami" "$type" "$profile_arn" "$csg" "$sg" "$stamp" "$N" "$out/userdata.gz" >"$out/launch-template.json" <<'PY'
 import base64, json, sys
 ami, itype, profile, csg, sg, stamp, name, udpath = sys.argv[1:9]
@@ -1360,45 +1397,23 @@ spec:
 YAML
 sed -i.bak "s|PROBE_IMAGE|$registry/$N/workload:$tag|" "$out/k8s/probe.yaml" && rm -f "$out/k8s/probe.yaml.bak"
 
-# The shared-cpus plugin: the repo's manifests, its config rewritten for this
-# node group (shared CPU 0, the lab namespaces only, annotation opt-in).
-# devRoot and seccomp are part of that rewrite: the DaemonSet mounts the
-# host's /dev read-only at /host/dev, so the default /dev would have the
-# plugin look at its own /dev for the PHC and cpu_dma_latency; and the
-# io-uring widening defaults to off, which refuses the M3/M6 annotations.
-mkdir -p "$out/k8s/plugin"
-cp "$plugin_src/deploy/namespace.yaml" "$plugin_src/deploy/daemonset.yaml" "$out/k8s/plugin/" 2>/dev/null
-cat >"$out/k8s/plugin/configmap.yaml" <<YAML
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: ergon-shared-cpus
-  namespace: ergon-system
-data:
-  config.yaml: |
-    sharedCpus: "$shared_cpus"
-    oversubscription: 1
-    namespaces: [ergon-latency-pods, ergon-latency-pods-probe]
-    defaultAffinity: shared
-    hookPath: /opt/ergon/bin/ergon-cpus
-    annotationOptIn: true
-    metricsAddress: ":9466"
-    devRoot: /host/dev
-    seccomp:
-      ioUring: allow
-YAML
-cat >"$out/k8s/plugin/kustomization.yaml" <<YAML
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-resources:
-  - namespace.yaml
-  - configmap.yaml
-  - daemonset.yaml
-images:
-  - name: ergon-shared-cpus:dev
-    newName: $registry/$N/shared-cpus
-    newTag: "$tag"
-YAML
+# The shared-cpus plugin: this tree's chart (0.1.2) rendered with the book's
+# EKS AL2023 install (kubelet config.json plus its config.json.d drop-ins,
+# --kubelet-config-dir), the image built above from this tree and pushed to
+# the run's ECR repository (never GHCR). The config for this node group:
+# shared CPU 0, the lab namespaces only, annotation opt-in, and the grants the
+# modes ask for (rlimits memlock, seccomp io_uring, the NIC PHC); devRoot is
+# the chart's /host/dev (the host's /dev, read-only).
+mkdir -p "$out/k8s"
+helm template ergon-shared-cpus "$plugin_src/charts/ergon-shared-cpus" --namespace ergon-system \
+    --set image.repository="$registry/$N/shared-cpus" --set image.tag="$tag" \
+    --set-string config.sharedCpus="$shared_cpus" \
+    --set 'config.namespaces={ergon-latency-pods,ergon-latency-pods-probe}' \
+    --set config.annotationOptIn=true \
+    --set-string config.seccomp.ioUring=allow --set-string config.ptp=auto --set-string config.rlimits.memlock=inf \
+    --set hostContract.kubeletConfig.path=/etc/kubernetes/kubelet/config.json \
+    --set hostContract.kubeletConfigDir.enabled=true \
+    >"$out/k8s/plugin.yaml" 2>"$out/helm.log" || { cat "$out/helm.log" >&2; die "helm template of the shared-cpus chart"; }
 
 # The latency namespaces and the validating admission policy: no liveness
 # probes, readiness only httpGet/tcpSocket/grpc, no sidecars. The policy
@@ -1467,7 +1482,7 @@ spec:
 YAML
 
 k apply -f "$out/k8s/admission.yaml" >"$out/apply.log" 2>&1 || { cat "$out/apply.log" >&2; die "kubectl apply admission"; }
-k apply -k "$out/k8s/plugin" >>"$out/apply.log" 2>&1 || { cat "$out/apply.log" >&2; die "kubectl apply -k plugin"; }
+k apply -f "$out/k8s/plugin.yaml" >>"$out/apply.log" 2>&1 || { cat "$out/apply.log" >&2; die "kubectl apply plugin"; }
 k apply -f "$out/k8s/probe.yaml" >>"$out/apply.log" 2>&1 || { cat "$out/apply.log" >&2; die "kubectl apply probe"; }
 # Each DaemonSet in the namespace it is deployed in: the shared-cpus plugin
 # ships in ergon-system (deploy/daemonset.yaml), the probe in default. A wait
@@ -1476,7 +1491,12 @@ for ds_ns in "ergon-shared-cpus ergon-system" "ergon-lab-probe default"; do
     ds=${ds_ns%% *}
     ns=${ds_ns##* }
     kubectl rollout status "ds/$ds" -n "$ns" --timeout=10m >>"$out/apply.log" 2>&1 ||
-        die "daemonset $ds in $ns did not roll out (logs follow in $out/logs)"
+        {
+            k describe ds "$ds" -n "$ns" >"$out/rollout-$ds.log" 2>&1
+            k describe pods -n "$ns" -l "app=$ds" >>"$out/rollout-$ds.log" 2>&1
+            k logs -n "$ns" -l "app=$ds" --tail=100 --all-containers >>"$out/rollout-$ds.log" 2>&1
+            die "daemonset $ds in $ns did not roll out (see $out/rollout-$ds.log)"
+        }
 done
 k get ds -A >>"$out/apply.log" 2>&1
 
@@ -1736,12 +1756,14 @@ admission_check || die "the admission policy is not in force (see $out/admission
 # Whether this plugin build grants rlimits and seccomp (the plan's plugin
 # extensions). Absent: the modes still run, and the run records that the
 # grant was missing (prelock fails closed).
-plugin_metrics() {
-    local pod
-    pod=$(k get pods -n ergon-system -l app=ergon-shared-cpus -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-    [[ -n $pod ]] && k exec -n ergon-system "$pod" -- wget -qO- http://127.0.0.1:9466/metrics 2>/dev/null
+plugin_metrics() { # [which a|b]: the plugin pod's /metrics on that node, fetched from the node
+    local n=${1:-a} ip
+    ip=$(k get pods -n ergon-system -l app=ergon-shared-cpus --field-selector "spec.nodeName=$(nv node "$n")" \
+        -o jsonpath='{.items[0].status.podIP}' 2>/dev/null)
+    [[ -n $ip ]] || return 1
+    on_host "$n" <<<"curl -fsS -m 10 http://$ip:9466/metrics"
 }
-plugin_metrics >"$out/plugin-metrics.txt" 2>&1 || true
+plugin_metrics a >"$out/plugin-metrics.txt" 2>&1 || true
 rlimits_metric=no seccomp_metric=no
 grep -q ergon_shared_cpus_rlimits_granted "$out/plugin-metrics.txt" && rlimits_metric=yes
 grep -q ergon_shared_cpus_seccomp_granted "$out/plugin-metrics.txt" && seccomp_metric=yes
@@ -1974,6 +1996,212 @@ functional_check() { # <mode> <ns> -> 0 when every promised grant is there
     return 0
 }
 
+
+# ---- the EKS lane (k8s/nri-shared-cpus/RELEASE.md) ---------------------------
+
+# Each item the release gate lists as unproven on EKS, read on both nodes and
+# from the API, with a verdict: VERIFIED, FAILED (and why). The quiet-CPU
+# boot unit's --check is read here too.
+eks_lane() {
+    local n f=$out/eks-lane.md v
+    for n in a b; do
+        on_host "$n" >"$out/eks-lane-$n.txt" 2>&1 <<'SH'
+echo "== nri socket"; ls -l /var/run/nri/nri.sock 2>&1
+echo "== containerd nri"; containerd config dump 2>/dev/null | awk '/io.containerd.nri.v1.nri/{p=1} p&&/^\[/&&!/nri/{p=0} p' | head -30
+echo "== containerd drop-ins"; ls -l /etc/containerd/config.d/ 2>&1; grep -rn nri /etc/containerd/ 2>&1 | head -10
+echo "== kubelet argv"; tr '\0' ' ' </proc/"$(pgrep -xo kubelet)"/cmdline; echo
+echo "== kubelet drop-ins"; ls -l /etc/kubernetes/kubelet/config.json.d/ 2>&1; cat /etc/kubernetes/kubelet/config.json.d/*.conf 2>&1 | head -60
+echo "== kubelet base reservedSystemCPUs"; grep -o '"reservedSystemCPUs":[^,]*' /etc/kubernetes/kubelet/config.json 2>&1
+echo "== opt"; ls -l /opt/ergon/bin/ 2>&1; findmnt -T /opt -no SOURCE,OPTIONS 2>&1
+echo "== quiet unit"; echo "enabled $(systemctl is-enabled ergon-quiet-cpus.service 2>&1) active $(systemctl is-active ergon-quiet-cpus.service 2>&1)"
+/usr/local/sbin/ergon-quiet-cpus.sh --check 2>&1; echo "quiet-check rc=$?"
+echo "== cmdline"; cat /proc/cmdline
+echo "== isolated"; cat /sys/devices/system/cpu/isolated /sys/devices/system/cpu/nohz_full
+echo "== irqbalance"; systemctl is-active irqbalance 2>&1
+echo "== nic irqs (irq requested effective name)"
+for i in $(awk -F: '/eth|ens|ena|Tx|Rx|mgmnt/ {gsub(/ /, "", $1); print $1}' /proc/interrupts); do
+    echo "irq $i $(cat /proc/irq/$i/smp_affinity_list 2>/dev/null) $(cat /proc/irq/$i/effective_affinity_list 2>/dev/null) $(awk -v i="$i:" '$1 == i {print $NF}' /proc/interrupts)"
+done
+echo "== cpu_manager_state"; cat /var/lib/kubelet/cpu_manager_state 2>&1; echo
+SH
+    done
+    k get pods -n ergon-system -l app=ergon-shared-cpus \
+        -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.namespace} {.spec.priorityClassName} {.status.phase} {.spec.nodeName}{"\n"}{end}' \
+        >"$out/eks-lane-plugin-pods.txt" 2>&1
+    k logs -n ergon-system -l app=ergon-shared-cpus --tail=200 --prefix >"$out/plugin-logs-start.txt" 2>&1
+    for n in a b; do plugin_metrics "$n" >"$out/plugin-metrics-$n.txt" 2>&1 || true; done
+    {
+        echo "| item | node a | node b | evidence |"
+        echo "|---|---|---|---|"
+        lane_row() { # <item> <evidence> <test for a> <test for b>
+            local ra rb
+            ra=FAILED rb=FAILED
+            eval "$3" && ra=VERIFIED
+            eval "$4" && rb=VERIFIED
+            echo "| $1 | $ra | $rb | $2 |"
+        }
+        for n in a b; do
+            eval "m_$n=\$(cat \"$out/plugin-metrics-$n.txt\" 2>/dev/null)"
+            eval "h_$n=\$(cat \"$out/eks-lane-$n.txt\" 2>/dev/null)"
+        done
+        lane_row "NRI socket" "/var/run/nri/nri.sock is a socket; ergon_shared_cpus_nri_connected 1" \
+            '[[ $h_a == *"srw"*nri.sock* && $m_a == *"ergon_shared_cpus_nri_connected 1"* ]]' \
+            '[[ $h_b == *"srw"*nri.sock* && $m_b == *"ergon_shared_cpus_nri_connected 1"* ]]'
+        lane_row "nodeadm TOML merge" "containerd config dump shows the NodeConfig's NRI table (default_validator enable = true)" \
+            '[[ $h_a == *default_validator* && $h_a == *"enable = true"* ]]' \
+            '[[ $h_b == *default_validator* && $h_b == *"enable = true"* ]]'
+        lane_row "kubelet drop-in merge (--kubelet-config-dir)" "kubelet runs with --config-dir; ergon_shared_cpus_contract_ok 1 (the merged reservedSystemCPUs and static policy pass)" \
+            '[[ $h_a == *--config-dir* && $m_a == *"ergon_shared_cpus_contract_ok 1"* ]]' \
+            '[[ $h_b == *--config-dir* && $m_b == *"ergon_shared_cpus_contract_ok 1"* ]]'
+        lane_row "/opt writable" "the plugin installed /opt/ergon/bin/ergon-cpus on the node" \
+            '[[ $h_a == *ergon-cpus* ]]' '[[ $h_b == *ergon-cpus* ]]'
+        lane_row "system-node-critical outside kube-system" "the plugin pod in ergon-system with priorityClassName system-node-critical, Running" \
+            "grep -q \" ergon-system system-node-critical Running $(nv node a)\" \"$out/eks-lane-plugin-pods.txt\"" \
+            "grep -q \" ergon-system system-node-critical Running $(nv node b)\" \"$out/eks-lane-plugin-pods.txt\""
+        lane_row "device plugin registered" "ergon_shared_cpus_device_plugin_registered 1" \
+            '[[ $m_a == *"ergon_shared_cpus_device_plugin_registered 1"* ]]' '[[ $m_b == *"ergon_shared_cpus_device_plugin_registered 1"* ]]'
+        lane_row "quiet-CPU boot unit" "ergon-quiet-cpus.service enabled and active; quiet-cpus.sh --check rc 0" \
+            '[[ $h_a == *"enabled enabled active active"* && $h_a == *"quiet-check rc=0"* ]]' \
+            '[[ $h_b == *"enabled enabled active active"* && $h_b == *"quiet-check rc=0"* ]]'
+        echo
+        echo "User data: $(cat "$out/userdata.log" 2>/dev/null)"
+    } >"$f"
+    log "EKS lane:"
+    sed 's/^/    /' "$f" >&2
+}
+eks_lane
+
+# ---- phase X -------------------------------------------------------------------
+#
+# Two latency pods (the M3 manifest: exclusive CPUs, the shared CPU, the
+# io_uring seccomp grant) and, for the loaded cells, a Burstable pod outside
+# the plugin's namespaces with spinners pinned to the shared CPU. kubectl exec
+# starts on the whole cpuset with the kernel's 50 us slack, so every probe here
+# names its CPU and slack itself.
+xcsv=$out/phase-x.csv
+: >"$xcsv"
+x_sh() { local w=$1; shift; kx -n ergon-latency-pods "ergon-lab-$w-M3" -- sh -c "$*"; }
+load_on() { # <which> <spinners on the shared CPU>
+    local w=$1 c=$2 node
+    node=$(nv node "$w")
+    k apply -f - >>"$out/apply.log" 2>&1 <<YAML
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ergon-lab-load-$w
+  namespace: default
+  labels:
+    app: ergon-lab-load
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    kubernetes.io/hostname: "$node"
+  tolerations:
+    - operator: Exists
+  terminationGracePeriodSeconds: 1
+  containers:
+    - name: load
+      image: $registry/$N/workload:$tag
+      command: ["sh", "-c", "for i in \$(seq $c); do taskset -c $shared_cpus sh -c 'while :; do :; done' & done; wait"]
+      resources:
+        requests:
+          cpu: 100m
+          memory: 32Mi
+YAML
+    k wait --for=condition=Ready "pod/ergon-lab-load-$w" -n default --timeout=180s >>"$out/apply.log" 2>&1
+}
+load_off() { k delete pod -n default -l app=ergon-lab-load --ignore-not-found --wait=true >/dev/null 2>&1; }
+cpu_busy() { # <which>: the shared CPU's busy share over 2 s, from /proc/stat on the node
+    on_host "$1" <<SH
+a=\$(grep '^cpu$shared_cpus ' /proc/stat); sleep 2; b=\$(grep '^cpu$shared_cpus ' /proc/stat)
+echo "\$a" "\$b" | awk '{t1=0; for (i=2;i<=11;i++) t1+=\$i; t2=0; for (i=13;i<=22;i++) t2+=\$i; i1=\$5+\$6; i2=\$16+\$17; printf "%.0f\n", 100*(1-(i2-i1)/(t2-t1))}'
+SH
+}
+upp_script() { # <ping|pong> <busy|sqshared|sqexcl> <local port> <peer ip> <peer port> <seconds> <label>
+    cat <<EOF
+expand() { echo "\$1" | tr ',' '\n' | while read -r r; do case \$r in *-*) seq "\${r%%-*}" "\${r##*-}";; *) echo "\$r";; esac; done; }
+set -- \$(expand "\$ERGON_ISOLATED_CPUS")
+app=\$1; second=\${2:-}
+sh0=\$(expand "\$ERGON_SHARED_CPUS" | head -1)
+case $2 in
+busy) mode=busy sq=- ;;
+sqshared) mode=sqpoll sq=\$sh0 ;;
+sqexcl) [ -n "\$second" ] || { echo "no second exclusive CPU" >&2; exit 1; }; mode=sqpoll sq=\$second ;;
+esac
+exec uring-pp $1 $3 $4 $5 \$app \$mode \$sq $6 10000 10000 $7
+EOF
+}
+phase_x_run() {
+    local ok=0 w cell lay load port=23100 pong_bg
+    log "---- phase X: placement, wake-up wait, timer slack, pin cost, SQPOLL placement (${x_seconds}s a cell)"
+    k delete pod -n ergon-latency-pods -l 'app in (ergon-lab-a,ergon-lab-b)' --ignore-not-found >/dev/null 2>&1
+    make_pod M3 a 0 0 >"$out/k8s/pod-a-X.yaml"
+    make_pod M3 b 0 0 >"$out/k8s/pod-b-X.yaml"
+    if ! k apply -f "$out/k8s/pod-a-X.yaml" >>"$out/apply.log" 2>&1 || ! k apply -f "$out/k8s/pod-b-X.yaml" >>"$out/apply.log" 2>&1 ||
+        ! wait_pods_ready ergon-latency-pods; then
+        k describe pod -n ergon-latency-pods -l 'app in (ergon-lab-a,ergon-lab-b)' >"$out/X-describe.log" 2>&1
+        log "WARNING: phase X: the pods did not run (see $out/X-describe.log)"
+        return 1
+    fi
+    # placement: what the hook gave PID 1, the container's cpuset, an exec'd
+    # shell, the env, and the node's view of a helper and a spinner
+    for w in a b; do
+        x_sh "$w" '
+            echo "== env"; env | grep ^ERGON_ | sort
+            echo "== pid 1 (started by the hook)"; grep Cpus_allowed_list /proc/1/status; echo "timerslack_ns $(cat /proc/1/timerslack_ns)"
+            echo "== container cpuset"; cat /sys/fs/cgroup/cpuset.cpus.effective
+            echo "== an exec shell"; grep Cpus_allowed_list /proc/self/status; echo "timerslack_ns $(cat /proc/self/timerslack_ns)"
+            echo "== seccomp"; grep Seccomp /proc/self/status' >"$out/X-placement-$w.txt" 2>&1
+        x_sh "$w" 'set -- $(echo "$ERGON_ISOLATED_CPUS" | tr "," " " | sed "s/-/ /"); (taskset -c "$1" sh -c "while :; do :; done" &) ; (taskset -c "${ERGON_SHARED_CPUS%%[,-]*}" sleep 30 &) ; sleep 1; ps -eLo pid,tid,psr,comm' \
+            >>"$out/X-placement-$w.txt" 2>&1
+        x_sh "$w" 'pkill -f "while :; do :; done"; pkill -f "sleep 30"' >/dev/null 2>&1 || true
+        log "phase X $w placement: $(grep -A1 'pid 1' "$out/X-placement-$w.txt" | tail -1 | tr -s '\t ' ' '); cpuset $(sed -n '/container cpuset/{n;p;}' "$out/X-placement-$w.txt")"
+    done
+    # wake-up wait on the shared CPU: idle (A/A), then one spinner loading it
+    for cell in "idle 50000 slack50us-A" "idle 1 slack1ns" "idle 50000 slack50us-B" "load 50000 load-slack50us" "load 1 load-slack1ns"; do
+        set -- $cell
+        if [[ $1 == load ]]; then
+            [[ -n $(k get pod -n default ergon-lab-load-a -o name 2>/dev/null) ]] || load_on a 1 || log "WARNING: no load pod"
+            log "phase X: shared CPU busy on a: $(cpu_busy a)%"
+        fi
+        x_sh a "taskset -c \"\$ERGON_SHARED_CPUS\" wakelat $x_seconds 1000 $2 $3" 2>>"$out/X-err.log" | tee -a "$xcsv" >&2
+    done
+    for cell in idle load; do
+        if [[ $cell == idle ]]; then load_off; else load_on a 1; fi
+        x_sh a "taskset -c \"\$ERGON_SHARED_CPUS\" pincost 10000" 2>>"$out/X-err.log" | sed "s/^pincost,/pincost-$cell,/" | tee -a "$xcsv" >&2
+    done
+    load_off
+    # SQPOLL placement, a round trip between the nodes at 10,000/s: no io_uring
+    # (A/A), SQPOLL on the shared CPU, SQPOLL on the second exclusive CPU; then
+    # the shared CPU loaded on both nodes
+    for cell in "busy - U0-busy-A" "sqshared - U1-sqpoll-shared" "sqexcl - U2-sqpoll-exclusive" "busy - U0-busy-B" \
+        "busy load U0-busy-load" "sqshared load U1-sqpoll-shared-load" "sqexcl load U2-sqpoll-exclusive-load"; do
+        set -- $cell
+        lay=$1 load=$2
+        if [[ $load == load ]]; then
+            for w in a b; do [[ -n $(k get pod -n default "ergon-lab-load-$w" -o name 2>/dev/null) ]] || load_on "$w" 1; done
+        fi
+        port=$((port + 2))
+        kx -n ergon-latency-pods ergon-lab-b-M3 -- sh -c "$(upp_script pong "$lay" $((port + 1)) "$ip_a" "$port" $((x_seconds + 20)) "$3")" \
+            >"$out/X-$3-pong.log" 2>&1 &
+        pong_bg=$!
+        sleep 2
+        x_sh a "$(upp_script ping "$lay" "$port" "$ip_b" $((port + 1)) "$x_seconds" "$3")" 2>"$out/X-$3-ping.err" | tee -a "$xcsv" >&2
+        wait "$pong_bg" 2>/dev/null
+        kx -n ergon-latency-pods ergon-lab-b-M3 -- pkill uring-pp >/dev/null 2>&1 || true
+        [[ -s $out/X-$3-ping.err ]] && log "phase X $3: $(tr '\n' ' ' <"$out/X-$3-ping.err")"
+    done
+    load_off
+    k logs -n ergon-system -l app=ergon-shared-cpus --tail=300 --prefix >"$out/plugin-logs-X.txt" 2>&1
+    k delete pod -n ergon-latency-pods -l 'app in (ergon-lab-a,ergon-lab-b)' --ignore-not-found >/dev/null 2>&1
+    grep -c . "$xcsv" >/dev/null && ok=1
+    ((ok)) && log "phase X: $(grep -c . "$xcsv") rows in $xcsv"
+    return 0
+}
+if ((phase_x)); then
+    phase_x_run || log "WARNING: phase X did not complete (the modes still run)"
+fi
+
 : >"$results"
 log "modes: $modes, $reps reps of ${rtt_seconds}s each"
 for mode in $modes; do
@@ -2066,7 +2294,7 @@ done
 
 # ---- report ------------------------------------------------------------------
 
-grep -q ",rtt," "$results" 2>/dev/null || die "no round trip was measured (logs: $out/*-ping.log, $out/apply.log)"
+grep -q ",rtt," "$results" 2>/dev/null || log "WARNING: no mode round trip was measured (logs: $out/*-ping.log, $out/apply.log)"
 {
     python3 "$benches/analyse.py" "$results" 2>/dev/null || true
     python3 "$benches/spikes.py" "$out" 2>&1 || true
@@ -2201,6 +2429,46 @@ if os.path.exists(os.path.join(out, "skipped.txt")):
         print(f"- {line.strip()}")
 PY
 
+{
+    echo
+    echo "## EKS lane (k8s/nri-shared-cpus/RELEASE.md)"
+    echo
+    cat "$out/eks-lane.md" 2>/dev/null || echo "not run"
+    echo
+    echo "## Phase X (microseconds)"
+    echo
+    python3 - "$out/phase-x.csv" <<'PY'
+import sys
+rows = [l.strip().split(",") for l in open(sys.argv[1]) if l.strip()]
+us = lambda x: f"{int(x) / 1000:.1f}"
+w = [r for r in rows if r[0] == "wakelat"]
+if w:
+    print("Wake-up wait of a 1 ms sleeper on the shared CPU (lateness past its deadline):")
+    print()
+    print("| cell | samples | p50 | p90 | p99 | p99.9 | p99.99 | max | mean | off shared | slack ns | CPUs |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|")
+    for r in w:
+        print("| " + " | ".join([r[1], r[2]] + [us(x) for x in r[3:9]] + [us(r[9]), r[10], r[11], r[12] if len(r) > 12 else ""]) + " |")
+    print()
+pc = [r for r in rows if r[0].startswith("pincost")]
+if pc:
+    print("Pin cost (getenv+parse ERGON_ISOLATED_CPUS; sched_setaffinity; call until running there):")
+    print()
+    print("| cell | what | samples | p50 | p90 | p99 | p99.9 | max | mean |")
+    print("|---|---|---|---|---|---|---|---|---|")
+    for r in pc:
+        print("| " + " | ".join([r[0].split("-", 1)[1], r[1], r[2]] + [us(x) for x in r[3:9]]) + " |")
+    print()
+u = [r for r in rows if r[0] == "uringpp"]
+if u:
+    print("Kernel-UDP round trip between the nodes, 10,000/s, app thread on the first exclusive CPU:")
+    print()
+    print("| cell | mode | samples | p50 | p90 | p99 | p99.9 | p99.99 | max | mean | lost | nivcsw | app CPU | SQPOLL CPU |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    for r in u:
+        print("| " + " | ".join([r[1], r[2], r[3]] + [us(x) for x in r[4:11]] + r[11:15]) + " |")
+PY
+} >>"$out/benchmarks.md" 2>&1
 log "round trip per mode (us):"
 awk -F, '$2 == "rtt" {
         printf "  %s rep %s: p50 %.1f  p90 %.1f  p99 %.1f  p99.9 %.1f  p99.99 %.1f  MAX %.1f  mean %.1f  (%s samples, %s lost)\n", $3, $1, $5 / 1e3, $6 / 1e3, $7 / 1e3, $8 / 1e3, $9 / 1e3, $10 / 1e3, $11 / 1e3, $12, $13
@@ -2217,3 +2485,4 @@ else
     log "$repo_bench exists: leaving it; this run's page is $out/benchmarks.md"
 fi
 cat "$out/benchmarks.md"
+hold "$hold_minutes" "after the report"

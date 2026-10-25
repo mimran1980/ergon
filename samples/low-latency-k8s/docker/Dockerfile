@@ -84,6 +84,7 @@ RUN case "$TARGETARCH" in \
     esac \
     && { test -n "$RUSTERON_C_MARCH" || { echo "RUSTERON_C_MARCH_${TARGETARCH} must be set (docker/build.sh)" >&2; exit 1; }; } \
     && echo 'int main(void){return 0;}' > /tmp/m.c && gcc -march="$RUSTERON_C_MARCH" -c /tmp/m.c -o /tmp/m.o \
+    && { [ -n "$CARGO_BUILD_JOBS" ] || unset CARGO_BUILD_JOBS; } \
     && export RUSTERON_C_MARCH RUSTFLAGS="${RUST_TARGET_CPU:+-Ctarget-cpu=$RUST_TARGET_CPU}" \
     && cargo build ${CARGO_BUILD_JOBS:+-j $CARGO_BUILD_JOBS} --locked -p ergon-md-dpdk --release --features static,dpdk --bin media_driver \
     && (cd samples/low-latency-k8s && cargo build ${CARGO_BUILD_JOBS:+-j $CARGO_BUILD_JOBS} --locked --release --bins --target-dir /src/target) \
