@@ -119,6 +119,24 @@ def row_flags(r):
     return out
 
 
+def tcp_loss(p):
+    """A TCP point's (real, spurious) segments over every host's traffic:
+    real the retransmits the peer did not report as duplicates
+    (retrans_not_dsack) plus those lost at the end (lost_end), spurious the
+    DSACK-reported ones (a late ACK, not loss). None where no host has a
+    tcp_info with the split."""
+    real = spurious = 0
+    found = False
+    for src in ((p.manifest or {}).get("loss_counters") or {}).values():
+        t = (src or {}).get("tcp_info")
+        if not t or t.get("retrans_not_dsack") is None:
+            continue
+        found = True
+        real += (t.get("retrans_not_dsack") or 0) + (t.get("lost_end") or 0)
+        spurious += t.get("dsack_dups") or 0
+    return (real, spurious) if found else None
+
+
 def group_key(p):
     """The points one table compares: one set, stream count, netem, rate and kind."""
     return (p.set, p.streams, p.netem or "", p.rate, p.kind)

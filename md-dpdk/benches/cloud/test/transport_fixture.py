@@ -102,7 +102,10 @@ def settings_of(arm):
 
 def loss_sources(transport):
     if transport == "tcp":
-        return {"tcp_info": {"retrans": 3}, "nstat": {"TcpRetransSegs": 3}}
+        # the traffic's retransmits split as tcp_lat reports them: those the
+        # peer reported duplicates (DSACK: spurious) and the rest (lost)
+        return {"tcp_info": {"retrans": 3, "dsack_dups": 1, "retrans_not_dsack": 2, "lost_end": 0, "rtos": 0},
+                "nstat": {"TcpRetransSegs": 3}}
     if transport.startswith("aeron"):
         return {"aeron": {"naks-sent": 1, "retransmits-sent": 1}}
     if transport == "udp":

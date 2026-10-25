@@ -389,7 +389,23 @@ LAB_MODES="dpdk-raw@RTT_GAP_US=1000000 dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=
 md-dpdk/benches/cloud/aws/ena-express-mtu.sh                 # ENA Express with UDP above 8,900 bytes
 md-dpdk/benches/cloud/azure/lab.sh                           # the same on Azure
 just test-dpdk-lab                                           # the analysis against its fixture, no cloud
+just transport-smoke-docker                                  # the transport suite end to end on one box, no cloud
+LAB_SUITE=transport LAB_PAIR=a LAB_ESTIMATE=1 md-dpdk/benches/cloud/azure/lab.sh   # its cost, no cloud call
+LAB_SUITE=transport LAB_PAIR=a md-dpdk/benches/cloud/azure/lab.sh                  # one pair session
 ```
+
+`just transport-smoke-docker` (test/transport-smoke-docker.sh; Docker,
+`--privileged` for netem and sysctls, so not in CI) runs `transport.sh
+smoke`: both hosts are homes on one Linux box, loopback addresses, one media
+driver, every arm of transport-matrix.tsv but DPDK's over
+transport-smoke.tsv's cut-down sets at 1 rep, then transport_collect.py,
+fairness.py and analyse.py --transport. It fails unless every point gave its
+rows, no run failed and the tables render; `summary.txt` counts fairness.py's
+violations by rule. On one unisolated box `hostcheck` (no isolated CPUs) is
+expected, `max` too (the runner collects no per-point events yet, so no max
+gets a cause), and now and then `loss` (a tail-loss probe whose DSACK had not
+come back on a thread that waited for a CPU); any other is a bug to fix
+before a cloud run.
 
 A mode's `@KEY=value` is a driver environment variable or a `vm.sh` host
 setting (`modes.sh` lists them). `@DPDK=<build>` (AWS, DPDK modes) runs the driver

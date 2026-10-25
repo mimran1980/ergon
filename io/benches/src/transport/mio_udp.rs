@@ -17,6 +17,11 @@
 //!   waits in the ring.
 //! - Socket options by `setsockopt`: `SO_RCVBUF`, `SO_SNDBUF`,
 //!   `SO_BUSY_POLL`. Nothing allocates after [`pair`].
+//!
+//! The sockets, their send rings and the per-stream read are
+//! [`MioUdpStreams`] and [`MioUdpReader`], built on any `mio::Registry`
+//! with a token base: another binary can poll them in its own loop, beside
+//! its other sockets, with exactly this arm's socket code.
 #![deny(unsafe_code, missing_docs)]
 #![warn(
     clippy::all,
@@ -37,7 +42,7 @@ use std::time::Duration;
 
 use ergon_latency_core::message::MESSAGE_LEN;
 use mio::net::UdpSocket;
-use mio::{Events, Interest, Poll, Token};
+use mio::{Events, Interest, Poll, Registry, Token};
 
 use super::point::{Error, POLL_LIMIT, Rx, Sent, Tx};
 use super::sock::{Inspect, port_plus};
@@ -195,111 +200,120 @@ impl TxState {
     }
 }
 
-struct Shared {
+/// The mio UDP arm's sockets and send side.
+///
+/// Stream `i` is the socket on `local` port + `i`, connected to `peer`
+/// port + `i`, registered readable on a caller's `Registry` as
+/// `Token(token_base + i)`. Every method takes `&self`, so a read's callback
+/// may send (an echo).
+pub struct MioUdpStreams {
     socks: Vec<UdpSocket>,
     tx: RefCell<TxState>,
     opts: MioUdpOptions,
     ipv6: bool,
+    token_base: usize,
 }
 
-/// The sending side.
-pub struct MioUdpTx {
-    s: Rc<Shared>,
-}
-
-/// The receiving side.
-pub struct MioUdpRx {
-    s: Rc<Shared>,
-    poll: Poll,
-    events: Events,
-    rx: Box<[u8]>,
-    /// streams with datagrams maybe left to read (edge-triggered)
-    ready: Vec<u32>,
-    in_ready: Vec<bool>,
-    rx_stats: MioUdpStats,
-}
-
-/// `streams` sockets: stream `i` bound to `local` + `i`, connected to
-/// `peer` + `i`; their sending and receiving sides.
-///
-/// # Errors
-/// A bind, connect or socket option fails.
-pub fn pair(
-    local: SocketAddr,
-    peer: SocketAddr,
-    streams: u32,
-    opts: MioUdpOptions,
-) -> Result<(MioUdpTx, MioUdpRx), Error> {
-    if streams == 0 || opts.epoll_events == 0 {
-        return Err(Error::Usage(
-            "streams and epoll events must be at least 1".into(),
-        ));
-    }
-    let poll = Poll::new().map_err(|e| os("epoll_create", e))?;
-    let mut socks = Vec::with_capacity(streams as usize);
-    for i in 0..streams {
-        let (l, p) = (port_plus(local, i)?, port_plus(peer, i)?);
-        let s = StdUdpSocket::bind(l).map_err(|e| os(&format!("bind {l}"), e))?;
-        s.connect(p).map_err(|e| os(&format!("connect {p}"), e))?;
-        s.set_nonblocking(true).map_err(|e| os("O_NONBLOCK", e))?;
-        let fd = s.as_raw_fd();
-        sockopt::set_rcvbuf(fd, opts.rcvbuf)?;
-        if let Some(b) = opts.sndbuf {
-            sockopt::set_sndbuf(fd, b)?;
+impl MioUdpStreams {
+    /// `streams` sockets bound, connected, set up as [`MioUdpOptions`] says
+    /// and registered on `registry` from `Token(token_base)`.
+    ///
+    /// # Errors
+    /// A bind, connect, socket option or registration fails, or no stream.
+    pub fn new(
+        registry: &Registry,
+        token_base: usize,
+        local: SocketAddr,
+        peer: SocketAddr,
+        streams: u32,
+        opts: MioUdpOptions,
+    ) -> Result<Self, Error> {
+        if streams == 0 {
+            return Err(Error::Usage("streams must be at least 1".into()));
         }
-        // 0 as well, so a sysctl default cannot leak in
-        sockopt::set_busy_poll(fd, opts.busy_read_us)?;
-        let mut s = UdpSocket::from_std(s);
-        poll.registry()
-            .register(&mut s, Token(i as usize), Interest::READABLE)
-            .map_err(|e| os("epoll_ctl", e))?;
-        socks.push(s);
+        let mut socks = Vec::with_capacity(streams as usize);
+        for i in 0..streams {
+            let (l, p) = (port_plus(local, i)?, port_plus(peer, i)?);
+            let s = StdUdpSocket::bind(l).map_err(|e| os(&format!("bind {l}"), e))?;
+            s.connect(p).map_err(|e| os(&format!("connect {p}"), e))?;
+            s.set_nonblocking(true).map_err(|e| os("O_NONBLOCK", e))?;
+            let fd = s.as_raw_fd();
+            sockopt::set_rcvbuf(fd, opts.rcvbuf)?;
+            if let Some(b) = opts.sndbuf {
+                sockopt::set_sndbuf(fd, b)?;
+            }
+            // 0 as well, so a sysctl default cannot leak in
+            sockopt::set_busy_poll(fd, opts.busy_read_us)?;
+            let mut s = UdpSocket::from_std(s);
+            registry
+                .register(&mut s, Token(token_base + i as usize), Interest::READABLE)
+                .map_err(|e| os("epoll_ctl", e))?;
+            socks.push(s);
+        }
+        let n = streams as usize;
+        Ok(Self {
+            socks,
+            tx: RefCell::new(TxState {
+                rings: (0..n).map(|_| Ring::new()).collect(),
+                dirty: Vec::with_capacity(n),
+                in_dirty: vec![false; n],
+                stats: MioUdpStats::default(),
+            }),
+            opts,
+            ipv6: local.is_ipv6(),
+            token_base,
+        })
     }
-    let n = streams as usize;
-    let events = Events::with_capacity(opts.epoll_events);
-    let s = Rc::new(Shared {
-        socks,
-        tx: RefCell::new(TxState {
-            rings: (0..n).map(|_| Ring::new()).collect(),
-            dirty: Vec::with_capacity(n),
-            in_dirty: vec![false; n],
-            stats: MioUdpStats::default(),
-        }),
-        opts,
-        ipv6: local.is_ipv6(),
-    });
-    Ok((
-        MioUdpTx { s: Rc::clone(&s) },
-        MioUdpRx {
-            s,
-            poll,
-            events,
-            rx: vec![1u8; MAX_DATAGRAM].into_boxed_slice(),
-            ready: Vec::with_capacity(n),
-            in_ready: vec![false; n],
-            rx_stats: MioUdpStats::default(),
-        },
-    ))
-}
 
-impl Tx for MioUdpTx {
+    /// The streams.
+    #[must_use]
+    pub fn streams(&self) -> u32 {
+        u32::try_from(self.socks.len()).unwrap_or(u32::MAX)
+    }
+
+    /// The stream a token of this set stands for.
+    #[must_use]
+    pub fn stream_of(&self, token: Token) -> Option<u32> {
+        token
+            .0
+            .checked_sub(self.token_base)
+            .filter(|&i| i < self.socks.len())
+            .and_then(|i| u32::try_from(i).ok())
+    }
+
+    /// Sends `payload` (up to [`MAX_DATAGRAM`] bytes) on `stream`: to the
+    /// kernel at once, else into the stream's ring behind what waits there;
+    /// [`Sent::Busy`] when the ring is full.
+    ///
+    /// # Errors
+    /// No such stream, a datagram too long, or the send failed for good.
     #[inline]
-    fn try_send(&mut self, stream: u32, msg: &[u8; MESSAGE_LEN]) -> Result<Sent, Error> {
+    pub fn send(&self, stream: u32, payload: &[u8]) -> Result<Sent, Error> {
         let i = stream as usize;
-        let mut tx = self.s.tx.borrow_mut();
+        if payload.len() > MAX_DATAGRAM {
+            return Err(Error::Transport(format!(
+                "a {}-byte datagram",
+                payload.len()
+            )));
+        }
+        let mut tx = self.tx.borrow_mut();
         let tx = &mut *tx;
-        let (Some(sock), Some(ring)) = (self.s.socks.get(i), tx.rings.get_mut(i)) else {
+        let (Some(sock), Some(ring)) = (self.socks.get(i), tx.rings.get_mut(i)) else {
             return Err(Error::Transport(format!(
                 "stream {i} of {}",
-                self.s.socks.len()
+                self.socks.len()
             )));
         };
         // a datagram already waiting goes first: order is kept
-        if ring.queued == 0 && matches!(TxState::attempt(sock, msg, &mut tx.stats)?, Attempt::Taken)
+        if ring.queued == 0
+            && matches!(
+                TxState::attempt(sock, payload, &mut tx.stats)?,
+                Attempt::Taken
+            )
         {
             return Ok(Sent::Sent);
         }
-        if !ring.push(msg) {
+        if !ring.push(payload) {
             tx.stats.tx_full += 1;
             return Ok(Sent::Busy);
         }
@@ -309,84 +323,46 @@ impl Tx for MioUdpTx {
         }
         Ok(Sent::Sent)
     }
-}
 
-impl Rx for MioUdpRx {
+    /// Every datagram waiting in a ring to the kernel, until a socket has no
+    /// room.
+    ///
+    /// # Errors
+    /// A send failed for good.
     #[inline]
-    fn poll<F: FnMut(&[u8])>(&mut self, on: &mut F) -> Result<usize, Error> {
-        let s = &*self.s;
-        {
-            let mut tx = s.tx.borrow_mut();
-            if !tx.dirty.is_empty() {
-                tx.flush(&s.socks)?;
-            }
+    pub fn flush(&self) -> Result<(), Error> {
+        let mut tx = self.tx.borrow_mut();
+        if tx.dirty.is_empty() {
+            return Ok(());
         }
-        self.rx_stats.polls += 1;
-        match self.poll.poll(&mut self.events, Some(Duration::ZERO)) {
-            Ok(()) => {}
-            Err(e) if e.kind() == ErrorKind::Interrupted => {}
-            Err(e) => return Err(os("epoll_wait", e)),
-        }
-        for ev in &self.events {
-            let i = ev.token().0;
-            if i < self.in_ready.len() && !self.in_ready[i] {
-                self.in_ready[i] = true;
-                self.ready.push(u32::try_from(i).unwrap_or(u32::MAX));
-            }
-        }
-        let mut n = 0;
-        let mut k = 0;
-        while let Some(&r) = self.ready.get(k) {
-            let i = r as usize;
-            let sock = &s.socks[i];
-            let mut drained = false;
-            for _ in 0..POLL_LIMIT {
-                self.rx_stats.recv_calls += 1;
-                match sock.recv(&mut self.rx) {
-                    Ok(len) => {
-                        self.rx_stats.rx += 1;
-                        n += 1;
-                        on(&self.rx[..len]);
-                    }
-                    Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                        drained = true;
-                        break;
-                    }
-                    Err(e) if e.kind() == ErrorKind::ConnectionRefused => {
-                        self.rx_stats.rx_refused += 1;
-                    }
-                    Err(e) if e.kind() == ErrorKind::Interrupted => {}
-                    Err(e) => return Err(os("udp recv", e)),
-                }
-            }
-            if drained {
-                self.in_ready[i] = false;
-                self.ready.swap_remove(k);
-            } else {
-                k += 1;
-            }
-        }
-        let mut tx = s.tx.borrow_mut();
-        if !tx.dirty.is_empty() {
-            tx.flush(&s.socks)?;
-        }
-        Ok(n)
-    }
-}
-
-impl Inspect for MioUdpRx {
-    fn retrans(&self) -> Result<Option<u64>, Error> {
-        Ok(None)
+        tx.flush(&self.socks)
     }
 
-    fn wire_bytes(&self) -> Result<u64, Error> {
-        Ok(MESSAGE_LEN as u64 + 8 + ip_overhead(self.s.ipv6))
+    /// The send side's counters.
+    #[must_use]
+    pub fn tx_stats(&self) -> MioUdpStats {
+        self.tx.borrow().stats
     }
 
-    fn report(&self, out: &mut Vec<(String, String)>) -> Result<(), Error> {
-        let t = self.s.tx.borrow().stats;
-        let r = self.rx_stats;
-        let o = &self.s.opts;
+    /// Bytes on the wire per 64-byte message.
+    #[must_use]
+    pub const fn wire_bytes(&self) -> u64 {
+        MESSAGE_LEN as u64 + 8 + ip_overhead(self.ipv6)
+    }
+
+    /// The settings and counters (`reader`'s receive side), and stream 0's
+    /// socket options read back.
+    ///
+    /// # Errors
+    /// A read-back fails.
+    pub fn report(
+        &self,
+        reader: &MioUdpReader,
+        out: &mut Vec<(String, String)>,
+    ) -> Result<(), Error> {
+        let t = self.tx_stats();
+        let r = reader.stats;
+        let o = &self.opts;
         for (k, v) in [
             ("udp.max_datagram", MAX_DATAGRAM.to_string()),
             ("udp.tx_slots", TX_SLOTS.to_string()),
@@ -409,9 +385,184 @@ impl Inspect for MioUdpRx {
         ] {
             out.push((k.to_owned(), v));
         }
-        if let Some(s) = self.s.socks.first() {
+        if let Some(s) = self.socks.first() {
             sockopt::read_back(s.as_raw_fd(), false, out)?;
         }
         Ok(())
+    }
+}
+
+/// A receive side's buffer and counters: reads one stream of a
+/// [`MioUdpStreams`] at a time.
+pub struct MioUdpReader {
+    buf: Box<[u8]>,
+    /// The receive side's counters (`polls` is the caller's to count).
+    pub stats: MioUdpStats,
+}
+
+impl Default for MioUdpReader {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MioUdpReader {
+    /// One [`MAX_DATAGRAM`] buffer, every page touched now.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            buf: vec![1u8; MAX_DATAGRAM].into_boxed_slice(),
+            stats: MioUdpStats::default(),
+        }
+    }
+
+    /// Reads `stream` up to [`POLL_LIMIT`] datagrams, each handed to `on`:
+    /// (datagrams read, read to `WouldBlock`). mio is edge-triggered: a
+    /// stream not read to `WouldBlock` must be read again without an event.
+    ///
+    /// # Errors
+    /// No such stream, or the read failed for good.
+    #[inline]
+    pub fn read<F: FnMut(&[u8])>(
+        &mut self,
+        streams: &MioUdpStreams,
+        stream: u32,
+        on: &mut F,
+    ) -> Result<(usize, bool), Error> {
+        let sock = streams.socks.get(stream as usize).ok_or_else(|| {
+            Error::Transport(format!("stream {stream} of {}", streams.socks.len()))
+        })?;
+        let mut n = 0;
+        for _ in 0..POLL_LIMIT {
+            self.stats.recv_calls += 1;
+            match sock.recv(&mut self.buf) {
+                Ok(len) => {
+                    self.stats.rx += 1;
+                    n += 1;
+                    on(&self.buf[..len]);
+                }
+                Err(e) if e.kind() == ErrorKind::WouldBlock => return Ok((n, true)),
+                Err(e) if e.kind() == ErrorKind::ConnectionRefused => {
+                    self.stats.rx_refused += 1;
+                }
+                Err(e) if e.kind() == ErrorKind::Interrupted => {}
+                Err(e) => return Err(os("udp recv", e)),
+            }
+        }
+        Ok((n, false))
+    }
+}
+
+/// The sending side.
+pub struct MioUdpTx {
+    s: Rc<MioUdpStreams>,
+}
+
+/// The receiving side.
+pub struct MioUdpRx {
+    s: Rc<MioUdpStreams>,
+    poll: Poll,
+    events: Events,
+    reader: MioUdpReader,
+    /// streams with datagrams maybe left to read (edge-triggered)
+    ready: Vec<u32>,
+    in_ready: Vec<bool>,
+}
+
+/// `streams` sockets: stream `i` bound to `local` + `i`, connected to
+/// `peer` + `i`; their sending and receiving sides, on a poll of their own.
+///
+/// # Errors
+/// A bind, connect or socket option fails.
+pub fn pair(
+    local: SocketAddr,
+    peer: SocketAddr,
+    streams: u32,
+    opts: MioUdpOptions,
+) -> Result<(MioUdpTx, MioUdpRx), Error> {
+    if streams == 0 || opts.epoll_events == 0 {
+        return Err(Error::Usage(
+            "streams and epoll events must be at least 1".into(),
+        ));
+    }
+    let poll = Poll::new().map_err(|e| os("epoll_create", e))?;
+    let events = Events::with_capacity(opts.epoll_events);
+    let s = Rc::new(MioUdpStreams::new(
+        poll.registry(),
+        0,
+        local,
+        peer,
+        streams,
+        opts,
+    )?);
+    let n = streams as usize;
+    Ok((
+        MioUdpTx { s: Rc::clone(&s) },
+        MioUdpRx {
+            s,
+            poll,
+            events,
+            reader: MioUdpReader::new(),
+            ready: Vec::with_capacity(n),
+            in_ready: vec![false; n],
+        },
+    ))
+}
+
+impl Tx for MioUdpTx {
+    #[inline]
+    fn try_send(&mut self, stream: u32, msg: &[u8; MESSAGE_LEN]) -> Result<Sent, Error> {
+        self.s.send(stream, msg)
+    }
+}
+
+impl Rx for MioUdpRx {
+    #[inline]
+    fn poll<F: FnMut(&[u8])>(&mut self, on: &mut F) -> Result<usize, Error> {
+        let s = &*self.s;
+        s.flush()?;
+        self.reader.stats.polls += 1;
+        match self.poll.poll(&mut self.events, Some(Duration::ZERO)) {
+            Ok(()) => {}
+            Err(e) if e.kind() == ErrorKind::Interrupted => {}
+            Err(e) => return Err(os("epoll_wait", e)),
+        }
+        for ev in &self.events {
+            if let Some(r) = s.stream_of(ev.token()) {
+                let i = r as usize;
+                if !self.in_ready[i] {
+                    self.in_ready[i] = true;
+                    self.ready.push(r);
+                }
+            }
+        }
+        let mut n = 0;
+        let mut k = 0;
+        while let Some(&r) = self.ready.get(k) {
+            let (read, drained) = self.reader.read(s, r, on)?;
+            n += read;
+            if drained {
+                self.in_ready[r as usize] = false;
+                self.ready.swap_remove(k);
+            } else {
+                k += 1;
+            }
+        }
+        s.flush()?;
+        Ok(n)
+    }
+}
+
+impl Inspect for MioUdpRx {
+    fn retrans(&self) -> Result<Option<u64>, Error> {
+        Ok(None)
+    }
+
+    fn wire_bytes(&self) -> Result<u64, Error> {
+        Ok(self.s.wire_bytes())
+    }
+
+    fn report(&self, out: &mut Vec<(String, String)>) -> Result<(), Error> {
+        self.s.report(&self.reader, out)
     }
 }

@@ -18,9 +18,11 @@
 #   loads    msgs/s, every stream together (--rate); each a 30 s point, one run
 #   streams  stream (or connection) counts; the first load 30 s of warm-up, later ones 5
 #   netem    egress loss % on every data NIC of both hosts, one round each;
-#            - no qdisc at all; 0 a netem qdisc dropping nothing
+#            - no qdisc at all; 0 a netem qdisc dropping nothing; none a
+#            round with no qdisc (checked on every data NIC), labelled
+#            @NETEM=none, beside a set's netem levels
 #   arms     arm names; aa is the A/A arm: the set's first arm again, its
-#            rows labelled @AA=1
+#            rows labelled <set>:aa (fairness.py wants one in every round)
 #
 # Points: arms x loads x streams x netem levels x 5 reps.
 
@@ -42,7 +44,7 @@ arm  eio-tcp          tcp_lat    sockets  two  --impl ergon
 set 1    b    p1  a    10000,1000000,5000000  1            -              mpsc,aeron-ipc,aa
 set 2b   b    p1  b    10000,50000,200000     1            -              aeron-spy,aeron-self,dpdk-aeron-self,aa
 set 2a   a    -   ab   10000,50000,200000     1,8,32,128   -              aeron-udp,dpdk-aeron-udp,mio-udp,eio-udp,aa
-set fan  a    -   ab   10000,50000,200000     8,32,128     -              mio-tcp,eio-tcp
+set fan  a    -   ab   10000,50000,200000     8,32,128     -              mio-tcp,eio-tcp,aa
 set 3a   a    -   ab   10000,50000,200000     1            -              aeron-rel,dpdk-aeron-rel,mio-tcp,eio-tcp,aa
 set 3b   b    -   ab   10000,50000,200000     1            0.01,0.1,1     aeron-rel,mio-tcp,eio-tcp,aa
-set 3c   b    -   ab   10000,50000,200000     1            0              aeron-rel,mio-tcp,eio-tcp
+set 3c   b    -   ab   10000,50000,200000     1            none,0         aeron-rel,mio-tcp,eio-tcp,aa

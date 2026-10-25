@@ -312,8 +312,9 @@ fn wait(mut child: Child, limit: Duration) -> Res<Output> {
 }
 
 /// The cross-host shape on one host: a pong process and a ping process,
-/// each on a driver of its own, over UDP (reliable and not). The pong ends
-/// by itself once the ping's images go, and writes its manifest alone.
+/// each on a driver of its own, over UDP (reliable and not). The pong says
+/// `ready` once its channels are added (the runner starts the ping on it),
+/// ends by itself once the ping's images go, and writes its manifest alone.
 fn ping_pong(name: &str, reliable: &str) -> R {
     let root = scratch(name)?;
     let base = free_ports(16)?;
@@ -363,7 +364,11 @@ fn ping_pong(name: &str, reliable: &str) -> R {
     .output();
     let pong = wait(pong, Duration::from_secs(60))?;
     let row = ok("ping", &ping?)?;
-    assert_eq!(ok("pong", &pong)?, "", "a pong prints no row");
+    assert_eq!(
+        ok("pong", &pong)?,
+        "ready\n",
+        "a pong prints one ready line (its channels added) and no row"
+    );
     assert!(!pong_out.join("results.csv").exists(), "a pong writes no row");
     let m = std::fs::read_to_string(pong_out.join("manifest.json"))?;
     for want in [
@@ -426,6 +431,61 @@ fn flags_that_cannot_make_a_fair_point_are_refused() -> R {
         assert!(!o.status.success(), "{args:?}");
         assert!(o.stdout.is_empty(), "no row: {args:?}");
         assert!(!out.join("results.csv").exists(), "{args:?}");
+    }
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
+fn help_prints_the_usage() -> R {
+    let o = Command::new(env!("CARGO_BIN_EXE_aeron_lat")).arg("--help").output()?;
+    let said = String::from_utf8(o.stdout)?;
+    assert!(o.status.success(), "{said}");
+    for flag in [
+        "--role",
+        "--round-trip",
+        "--mode",
+        "--reliable",
+        "--endpoint",
+        "--reply",
+        "--interface",
+        "--aeron-dir",
+        "--driver",
+        "--driver-busy-threads",
+        "--term-length",
+        "--mtu",
+        "--stream-id",
+        "--connect-timeout-s",
+        "--cpus",
+    ] {
+        assert!(said.contains(flag), "{flag}: {said}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_udp_port_in_the_drivers_wildcard_ranges_is_refused() -> R {
+    let root = scratch("wildcard")?;
+    let (out, dir) = (root.join("out"), root.join("aeron"));
+    for (flag, ep) in [("--endpoint", "127.0.0.1:21998"), ("--reply", "127.0.0.1:20500")] {
+        let mut args = vec![
+            "--role",
+            "local",
+            "--round-trip",
+            "--mode",
+            "udp",
+            "--rate",
+            "10",
+            "--label",
+            "x:y",
+        ];
+        args.extend(["--endpoint", "127.0.0.1:39000", "--reply", "127.0.0.1:39100"]);
+        let at = args.iter().position(|a| *a == flag).ok_or("no flag")?;
+        args[at + 1] = ep;
+        let o = command(&out, &dir, &args)?.output()?;
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert!(!o.status.success() && o.stdout.is_empty(), "{flag} {ep}: {err}");
+        assert!(err.contains("20000-21999"), "{flag} {ep}: {err}");
     }
     std::fs::remove_dir_all(root)?;
     Ok(())

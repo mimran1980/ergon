@@ -4,7 +4,7 @@
 # /sys and /proc trees. Checks that:
 #   * modes.sh takes an arm's STREAMS, NETEM and AA, refuses anything else,
 #     and refuses NETEM on every DPDK arm (by name or by its dpdk set-up);
-#   * transport_plan.py counts the plan's points (465 for pair a, 330 for
+#   * transport_plan.py counts the plan's points (510 for pair a, 405 for
 #     b), draws each round's arm order from its seed (reproducible, the A/A
 #     arm once a round, another order on another rep), and refuses a broken
 #     matrix: aa first, an unknown or repeated arm, one- and two-host arms in
@@ -26,10 +26,16 @@
 #   * transport.sh run against fake hosts: every point of pair b once (rows,
 #     manifests, rounds and orders recorded), netem set and cleared around
 #     each lossy round and never under a DPDK arm, the binaries' flags as
-#     transport-cli.md has them, a placement or netem verdict that fails in
-#     the manifest, a failed point recorded, a hostcheck warning stopping the
-#     session before its first point; LAB_ARMS_FILE and LAB_EXTRA_SRC's hooks
-#     with a neutral fixture (transport_prepare's steps too).
+#     their --help has them (transport-cli.md: addresses only for Aeron's
+#     UDP, --busy-read-us only for mio, one CPU a busy thread), each row as
+#     the binary writes it with the rep before it and its point column
+#     <channel>-r<rate>, the session laid out for the analysis
+#     (transport_collect.py), the ping started only once its pong says ready
+#     (a pong that never does fails its point), a placement or netem verdict
+#     that fails in the manifest, a failed point recorded, a hostcheck
+#     warning stopping the session before its first point; LAB_ARMS_FILE and
+#     LAB_EXTRA_SRC's hooks with a neutral fixture (transport_prepare's steps
+#     too).
 #
 # Run from anywhere:  bash md-dpdk/benches/cloud/test/test-transport-runner.sh
 set -euo pipefail
@@ -73,7 +79,7 @@ by setup: 2 0
 
 # ---- transport_plan.py ----
 got="$(plan count a 5 "$matrix") $(plan count b 5 "$matrix") $(plan count a 1 "$matrix")"
-same "transport_plan.py: pair a 465 points, pair b 330 (the plan's table), a fifth of it at one rep" "465 330 93" "$got"
+same "transport_plan.py: pair a 510 points, pair b 405 (the plan's table, an A/A arm in every set, 3c's no-qdisc round), a fifth of it at one rep" "510 405 102" "$got"
 r1=$(plan rounds b 7 5 "$matrix")
 r2=$(plan rounds b 7 5 "$matrix")
 r3=$(plan rounds b 8 5 "$matrix")
@@ -302,6 +308,16 @@ $(printf '%s\n' "101 4 99.5 sender" "104 4 98.0 ping" "105 2 90 spin" | hostrun 
 same "host.sh: the placement verdict (busy threads off the isolated CPUs, or sharing one, fail)" "ok 3 busy threads
 FAIL ping(104) and sender(101) on CPU 4; spin(105) on CPU 2, not isolated;
 rc 1" "$got"
+# each thread's CPU time and last CPU from its stat (a comm with spaces and
+# parentheses kept whole), not ps's lifetime average, the main thread's
+# line the whole process's
+mkdir -p "$proc/500/task/500" "$proc/500/task/501"
+fields() { printf '%s ' S $(seq 4 13) "$1" "$2" $(seq 16 38) "$3" 0 0; }
+echo "500 (aeron_lat) $(fields 3 2 0)" >"$proc/500/task/500/stat"
+echo "501 (my (busy) one) $(fields 700 90 6)" >"$proc/500/task/501/stat"
+same "host.sh: transport_task_times reads each thread's utime+stime and CPU from /proc/<pid>/task/<tid>/stat" "500 5 0 aeron_lat
+501 790 6 my_(busy)_one" "$(hostrun transport_task_times)"
+rm -rf "$proc/500"
 
 # irqs.sh: every data-NIC IRQ (msi_irqs) and VMBus channel moved to the IRQ
 # CPU and checked; one that refuses fails it; IRQ deltas on the hot CPUs
@@ -453,8 +469,8 @@ out=$(LAB_SUITE= lab LAB_SUITE=latency LAB_PAIR=a 2>&1) && why+=" latency with L
     fail "azure/lab.sh transport refusals:$why"
 est=$(lab LAB_ESTIMATE=1 2>&1) && estrc=0 || estrc=$?
 esta=$(lab LAB_ESTIMATE=1 LAB_PAIR=a LAB_ARMS_FILE="$fx/arms.tsv" 2>&1) && estarc=0 || estarc=$?
-if [[ $estrc == 0 && $est == *"pair a: 465 points"*"pair b: 330 points"*"both pairs: about \$"* && $est == *"Standard_D16s_v6"* &&
-    $estarc == 0 && $esta == *"pair a: 505 points (sets 2a, fan, 3a, fx)"* && $esta != *"pair b"* && ! -s $tmp/cloud-calls ]]; then
+if [[ $estrc == 0 && $est == *"pair a: 510 points"*"pair b: 405 points"*"both pairs: about \$"* && $est == *"Standard_D16s_v6"* &&
+    $estarc == 0 && $esta == *"pair a: 550 points (sets 2a, fan, 3a, fx)"* && $esta != *"pair b"* && ! -s $tmp/cloud-calls ]]; then
     pass "azure/lab.sh LAB_ESTIMATE=1: both pairs' points, hours and dollars on Standard_D16s_v6 by default; one pair with LAB_PAIR, an arms file's sets in it; no cloud call"
 else
     fail "azure/lab.sh transport estimate ($estrc, $estarc): $est | $esta"
@@ -580,10 +596,17 @@ netem)
         # 1,000,000 packets offered a call, the loss's share of them dropped
         d=$(awk -v p="$p" -v n="$n" -v bad="${FAKE_NETEM_BAD:-}" 'BEGIN {print bad ? 0 : int(n * 10000 * p + 0.5)}')
         echo "eth1 $((n * 1000000 - d)) $d" ;;
+    show) if [[ -e $st/netem ]]; then echo "eth1 netem"; else echo "eth1 mq"; fi ;;
     esac ;;
 irqsnap) n=$(cat "$st/i" 2>/dev/null || echo 0); n=$((n + 1)); echo $n >"$st/i"
     printf '           CPU0       CPU2       CPU4       CPU6\nLOC:  %d  %d  %d  %d  Local timer interrupts\n' $n $n $n $n ;;
-sample) if [[ -n ${FAKE_PLACEMENT_BAD:-} ]]; then echo "FAIL ping(9) on CPU 0, not isolated;"; else echo "ok 2 busy threads"; fi ;;
+sample) if [[ -n ${FAKE_PLACEMENT_BAD:-} ]]; then echo "FAIL ping(9) on CPU 0, not isolated;"; else echo "ok 2 busy threads"; fi
+    echo "  101   4 99.5 ping"; echo "    1   0  0.1 sshd" ;;
+# every transport sysctl at its declared value, the optional ones absent
+settings) (. "$FAKE_CLOUD/transport-settings.env"; . "$FAKE_CLOUD/host.sh"; transport_sysctls) |
+    awk '{k = $1; gsub("/", ".", k); v = $2; for (i = 3; i < NF; i++) v = v " " $i; print k "=" ($NF == "optional" ? "absent" : v)}' ;;
+nstat) n=$(cat "$st/s" 2>/dev/null || echo 0); n=$((n + 1)); echo $n >"$st/s"
+    printf 'Tcp: RetransSegs InSegs\nTcp: %d %d\nUdp: InErrors\nUdp: 0\n' "$n" "$((n * 100))" ;;
 driver | stop | transport-net) ;;
 *) echo "fake vm.sh: $*" >&2; exit 2 ;;
 esac
@@ -593,19 +616,48 @@ cat >"$sb/bin/stub" <<'SH'
 # a bench binary as transport-cli.md has it
 me=${0##*/}
 echo "$FAKE_HOST $me $*" >>"$FAKE_HOSTS/runs"
-role= out= label= rate= kind=oneway
+role= out= label= rate= kind=oneway streams=1 warm=0 dur=0 mode= impl=
 while (($#)); do
-    case $1 in --role) role=$2 ;; --out) out=$2 ;; --label) label=$2 ;; --rate) rate=$2 ;; --round-trip) kind=load ;; esac
+    case $1 in --role) role=$2 ;; --out) out=$2 ;; --label) label=$2 ;; --rate) rate=$2 ;; --round-trip) kind=load ;;
+    --streams) streams=$2 ;; --warmup-s) warm=$2 ;; --duration-s) dur=$2 ;; --mode) mode=$2 ;; --impl) impl=$2 ;; esac
     shift
 done
+# the manifest's settings as the binaries write them: the transport, the
+# schedule, the counters each host's loss accounting reads
+case $me in
+aeron_lat) transport=aeron-$mode extra=', "aeron.naks-sent": "0", "aeron.retransmits-sent": "0"' ;;
+tcp_lat) transport=tcp extra=', "tcp.retrans": "0", "tcp.dsack_dups": "0", "tcp.retrans_not_dsack": "0", "tcp.lost_end": "0"' ;;
+mpsc_lat) transport=mpsc extra= ;;
+*) transport=udp extra= ;;
+esac
+[[ $impl == mio ]] && extra+=', "busy_read_us": "50"'
+settings="\"transport\": \"$transport\", \"streams\": \"$streams\", \"warmup_s\": \"$warm\", \"duration_s\": \"$dur\", \"scheduled\": \"0\", \"late\": \"0\", \"max_send_lag_ns\": \"0\", \"retrans\": \"0\"$extra"
 [[ $role == oneway-send || $role == oneway-recv ]] && { echo "stub: --role $role is refused (one way is --role local)" >&2; exit 2; }
 [[ $role == ping ]] && kind=load
-if [[ $role == pong ]]; then trap 'exit 0' TERM; while :; do sleep 0.05; done; fi
+if [[ $role == pong ]]; then
+    # ready once "bound", unless told to stay silent; a manifest when stopped
+    [[ -n ${FAKE_PONG_SILENT:-} && $label == *"$FAKE_PONG_SILENT"* ]] || echo ready
+    trap 'mkdir -p "$out"; echo "{\"settings\": {$settings}}" >"$out/manifest.json"; exit 0' TERM
+    while :; do sleep 0.05; done
+fi
 [[ -n ${FAKE_FAIL_LABEL:-} && $label == *"$FAKE_FAIL_LABEL"* ]] && { echo "stub: failing $label" >&2; exit 1; }
 mkdir -p "$out"
-echo "0,$kind,$label,udp-r$rate,64,$rate,1,1,2,3,4,5,6,1,1,1,1,0,$rate,0,0,0,1000,0,0,0,0,64,2,1,2,3,4" >"$out/results.csv"
-echo '{"payload_sha256": "00", "build": "stub"}' >"$out/manifest.json"
-echo "1000,1" >"$out/histogram-x.csv"
+# the row as the binaries write it: kind first, the channel, no rep
+# the max 150 us, due at second :50 of a minute (the per-minute cluster
+# explains it: spikes.py), every other latency 1 to 5 ns
+now=$(date +%s)
+start=$(((now - now % 60 + 50) * 1000000000))
+echo "$kind,$label,udp,64,$rate,1,1,2,3,4,5,150000,1,1,1,1,0,$rate,0,0,0,0,1000,0,0,0,0,64,2,1,2,3,150000" >"$out/results.csv"
+echo "{\"payload_sha256\": \"00\", \"payload_size\": 64, \"wire_bytes\": 64, \"core_build_hash\": \"stub\", \"settings\": {$settings}}" >"$out/manifest.json"
+echo "1000,1" >"$out/histogram-$label.csv"
+printf '# start_realtime_ns=%s\n# spikes_total=1\n# max=0,150000,0\nstream,due_ns,latency_ns\n0,0,150000\n' "$start" >"$out/spikes-$label.csv"
+SH
+# sh, slow to start a pong when FAKE_SH_DELAY says so: its PID file not yet
+# written when the runner first looks
+cat >"$sb/bin/sh" <<'SH'
+#!/bin/bash
+case "$*" in *pong.pid*) [[ -n ${FAKE_SH_DELAY:-} ]] && /bin/sleep "$FAKE_SH_DELAY" ;; esac
+exec /bin/sh "$@"
 SH
 cat >"$sb/bin/taskset" <<'SH'
 #!/usr/bin/env bash
@@ -645,7 +697,7 @@ TRANSPORT_WARMUP_S=0
 TRANSPORT_POINT_S=0
 TRANSPORT_SWITCH_S=0
 ENV
-    env PATH="$sb/bin:$PATH" HOME="$sb/a" FAKE_HOSTS="$sb" FAKE_HOST=a TRANSPORT_PONG_WAIT_S=0.1 "$@" \
+    env PATH="$sb/bin:$PATH" HOME="$sb/a" FAKE_HOSTS="$sb" FAKE_HOST=a FAKE_CLOUD="$cloud" TRANSPORT_READY_TIMEOUT_S=3 "$@" \
         bash "$cloud/transport.sh" run "$pair" >"$sb/run.out" 2>&1
 }
 # a bystander of the same name (another run's aeron_lat on this machine):
@@ -666,6 +718,24 @@ one=$(awk -F'\t' '$3 != "ab" {split($7, l, ","); split($8, st, ","); split($9, a
 [[ $(find "$d/manifest" -name '*.env' | wc -l | tr -d ' ') == "$n" ]] || why+=" manifests;"
 [[ $(find "$d/manifest" -name '*.json' | wc -l | tr -d ' ') == $((n + one)) ]] || why+=" binaries' manifests;"
 ! cut -d, -f1 "$d/results.csv" | grep -qv '^1$' || why+=" rep not in the rows' first column;"
+! cut -d, -f2 "$d/results.csv" | grep -qvE '^(load|oneway)$' || why+=" the kind not in the second column;"
+! cut -d, -f4 "$d/results.csv" | grep -qvE '^udp-r[0-9]+$' || why+=" the point column not <channel>-r<rate>;"
+[[ $(awk -F, '{print NF}' "$d/results.csv" | sort -u) == 34 ]] || why+=" rows not 34 columns;"
+# laid out for the analysis: a manifest and a spikes file a row, the declared settings
+c=$(find "$d" -mindepth 2 -maxdepth 2 -name 'manifest-*.json' | wc -l | tr -d ' ')
+c+=/$(find "$d" -mindepth 2 -maxdepth 2 -name 'spikes-*.csv' | wc -l | tr -d ' ')
+[[ $c == "$((n + one))/$((n + one))" ]] || why+=" $c collected manifests/spikes files;"
+grep -q '^transport_collect: .* 0 problems$' "$d/logs/collect.log" || why+=" collect: $(head -3 "$d/logs/collect.log");"
+grep -q '^shared.net.core.busy_read=50$' "$d/transport-settings.env" && grep -q '^shared.net.ipv4.tcp_rto_min_us=absent$' "$d/transport-settings.env" || why+=" declared settings;"
+m=$(find "$d/3b" -name 'manifest-3b-aa@STREAMS=1@NETEM=1-64-1-r10000.json' | head -1)
+python3 -c 'import json, sys; m = json.load(open(sys.argv[1])); assert m["aa"] and m["aa_of"] == "aeron-rel" and "aa" in m["arm_order"] and m["netem_counters"]["a"]["eth1"]["dropped"] > 0 and m["loss_counters"]["b"]["nstat"]["TcpRetransSegs"] == 1 and m["threads"]["a"][0][0]["util"] > 0.9, m' "$m" 2>/dev/null || why+=" 3b A/A manifest: $m;"
+m=$(find "$d/2b" -name 'manifest-2b-*' | head -1)
+python3 -c 'import json, sys; m = json.load(open(sys.argv[1])); assert list(m["vms"]) == ["a"] and m["vms"]["a"] == "g/b" and m["hosts"] == {"a": "b"}, m' "$m" 2>/dev/null || why+=" 2b (host b's) manifest keyed a: $m;"
+# a TCP point's traffic counters, split as tcp_lat reports them, on both hosts
+m=$(find "$d/3b" -name 'manifest-3b-mio-tcp@STREAMS=1@NETEM=1-64-1-r10000.json' | head -1)
+python3 -c 'import json, sys; m = json.load(open(sys.argv[1])); assert all(m["loss_counters"][h]["tcp_info"]["retrans_not_dsack"] == 0 and m["loss_counters"][h]["tcp_info"]["dsack_dups"] == 0 for h in "ab"), m["loss_counters"]' "$m" 2>/dev/null || why+=" 3b mio-tcp tcp_info split: $m;"
+# the labels as the analysis parses them: every row its manifest, the one-host sets (1, 2b) one host each
+python3 -c 'import sys; sys.path.insert(0, sys.argv[2]); import transport_points as tp; ps = tp.read_points(sys.argv[1]); assert ps and all(p.manifest for p in ps); assert {p.set for p in ps if tp.hosts_of(p.set) == ("a",)} == {"1", "2b"}; assert all(sorted(p.manifest["vms"]) == list(tp.hosts_of(p.set)) for p in ps); assert {p.arm for p in ps if p.manifest["aa"]} == {"aa"}' "$d" "$cloud" 2>/dev/null || why+=" transport_points.read_points: labels or hosts;"
 [[ $(grep -c . "$d/order.csv") == "$(grep -c . "$d/rounds.tsv")" ]] || why+=" orders not recorded a round;"
 [[ $(cut -f6 "$d/rounds.tsv" | sort -u | grep -c .) == "$(grep -c . "$d/rounds.tsv")" ]] || why+=" round seeds not each its own;"
 # netem: set before each lossy round's first point and cleared after it, on both hosts, never under a DPDK arm
@@ -682,8 +752,15 @@ grep -q '^placement_b=unused$' "$m" && grep -q '^netem_a=none$' "$m" || why+=" o
 # the flags of transport-cli.md
 grep -q '^b tcp_lat --role pong .*--listen 10.20.1.7:22000 --nodelay --quickack-per-read' "$sb/runs" || why+=" tcp pong flags;"
 grep -q '^a tcp_lat --role ping .*--connect 10.20.1.7:22000 ' "$sb/runs" || why+=" tcp ping flags;"
-grep -q '^a mpsc_lat --role local --capacity 4096 --streams 1 --rate 1000000 --warmup-s 0 --duration-s 0 --size 64 --cpus 4,6,8,10,12,14 --label set1:mpsc@STREAMS=1 ' "$sb/runs" || why+=" mpsc flags;"
-grep -q '^b aeron_lat --role local --round-trip --endpoint 10.20.1.7:22000 --reply 10.20.1.6:22000 --interface 10.20.1.6 --aeron-dir /mnt/huge/aeron-bench --driver external --driver-busy-threads 3 --term-length 1048576 --mtu 1408 .*--cpus 10,12,14 .*--mode spy' "$sb/runs" || why+=" aeron flags;"
+grep -q '^a mpsc_lat --role local --cpus 4,6 --capacity 4096 --streams 1 --rate 1000000 --warmup-s 0 --duration-s 0 --size 64 --label 1:mpsc@STREAMS=1 ' "$sb/runs" || why+=" mpsc flags;"
+grep -q '^a mpsc_lat --role local --cpus 4,6 .*--label 1:aa@STREAMS=1 ' "$sb/runs" || why+=" the A/A's label;"
+grep -q '^b aeron_lat --role local --round-trip --cpus 10,12 --aeron-dir /mnt/huge/aeron-bench --driver external --driver-busy-threads 3 --term-length 1048576 --mtu 1408 .*--mode spy$' "$sb/runs" || why+=" aeron flags;"
+! grep -E '^. aeron_lat .*--mode (spy|ipc)' "$sb/runs" | grep -qE -- '--(endpoint|reply|interface) ' || why+=" an address given to Aeron IPC or spy;"
+grep -q '^b aeron_lat --role local --round-trip --cpus 10,12 --endpoint 10.20.1.7:22000 --reply 10.20.1.6:22000 --interface 10.20.1.6 .*--mode udp --reliable false$' "$sb/runs" || why+=" aeron self-UDP flags;"
+grep -q '^a aeron_lat --role ping --cpus 10 ' "$sb/runs" && grep -q '^b aeron_lat --role pong .*--cpus 10 ' "$sb/runs" || why+=" one CPU for ping and pong;"
+grep -q '^a tcp_lat --role ping .*--busy-read-us 50 .*--impl mio$' "$sb/runs" && ! grep -E '^. tcp_lat .*--impl ergon$' "$sb/runs" | grep -q -- '--busy-read-us' || why+=" --busy-read-us for mio alone;"
+# the hosts' kernels lack the TCP timer sysctls (the fake's settings): no timer asked for
+! grep -qE -- '--(rto-min|delack-max)-us' "$sb/runs" || why+=" a TCP timer asked of a kernel without it;"
 grep -q '^a aeron_lat --role ping .*--mode udp --reliable true$' "$sb/runs" || why+=" aeron arm flags;"
 grep -q '^b aeron_lat --role pong .*--endpoint 10.20.1.7:22000 --reply 10.20.1.4:22000 --interface 10.20.1.7 ' "$sb/runs" &&
     grep -q '^a aeron_lat --role ping .*--endpoint 10.20.1.7:22000 --reply 10.20.1.4:22000 --interface 10.20.1.4 ' "$sb/runs" || why+=" aeron addresses;"
@@ -694,19 +771,34 @@ grep -q '^b aeron_lat --role pong .*--endpoint 10.20.1.7:22000 --reply 10.20.1.4
 ! grep -q '^b mpsc_lat' "$sb/runs" && ! grep -q '^b aeron_lat .*--mode ipc' "$sb/runs" && ! grep -qE '^a aeron_lat --role local .*--mode (spy|udp)' "$sb/runs" ||
     why+=" a one-host set on the other host;"
 grep -q '^a vm.sh hostcheck$' "$sb/calls" && grep -q '^b vm.sh hostcheck$' "$sb/calls" && [[ -s $d/hostcheck-a.txt ]] || why+=" hostcheck not run and saved;"
-[[ -z $why ]] && pass "transport.sh run: every point of pair b once (rows with their rep, manifests, the binaries' manifests), each round's seed and order recorded, netem around each lossy round on both hosts and never under DPDK, its counters checked, transport-cli.md's flags, sets 1 and 2b each on its own host, the hostcheck reports saved" ||
+# end to end: the session as transport_collect.py leaves it, through
+# fairness.py (no violation: the stub's every max at :50 of its minute) and
+# analyse.py --transport (every set's tables, none refused, an A/A spread)
+fv=$(python3 "$cloud/fairness.py" "$d" 2>&1) || why+=" fairness: $(head -5 <<<"$fv" | tr '\n' ' ');"
+tables=$(python3 "$cloud/analyse.py" --transport "$d" 2>&1) || why+=" analyse.py --transport failed: $(tail -2 <<<"$tables");"
+for s in 1 2b 3b 3c; do grep -q "^### Set $s, " <<<"$tables" || why+=" no set $s table;"; done
+! grep -q '^Refused' <<<"$tables" && grep -q 'A/A spread' <<<"$tables" && grep -q 'no qdisc' <<<"$tables" || why+=" tables refused or no A/A spread or no no-qdisc table;"
+grep -q '^sweep.socket.busy_read_us=mio-tcp$' "$d/transport-settings.env" && grep -q '^mio-tcp.socket.busy_read_us=50$' "$d/transport-settings.env" &&
+    ! grep -q 'eio-tcp' "$d/transport-settings.env" || why+=" mio's busy-read not declared per arm: $(grep -v '^#' "$d/transport-settings.env" | grep -v '^shared' | tr '\n' ' ');"
+echo "$tables" >"$tmp/tables.md"
+[[ -z $why ]] && pass "transport.sh run: every point of pair b once (rows with their rep, manifests, the binaries' manifests), each round's seed and order recorded, netem around each lossy round on both hosts and never under DPDK, its counters checked, transport-cli.md's flags, sets 1 and 2b each on its own host, the hostcheck reports saved; fairness.py clean on the collected session and analyse.py --transport's tables" ||
     fail "transport.sh run:$why $(tail -3 "$sb/run.out")"
 
 # a bad placement and netem counters off their loss are in the manifests
 # (and logged); a failed point recorded and the session's exit 1
-trun b 1 "" FAKE_PLACEMENT_BAD=1 FAKE_NETEM_BAD=1 FAKE_FAIL_LABEL='set3c:mio-tcp@STREAMS=1@NETEM=0' && rrc=0 || rrc=$?
+trun b 1 "" FAKE_PLACEMENT_BAD=1 FAKE_NETEM_BAD=1 FAKE_FAIL_LABEL='3c:mio-tcp@STREAMS=1@NETEM=0' FAKE_PONG_SILENT='3c:eio-tcp@STREAMS=1@NETEM=0' FAKE_SH_DELAY=0.3 && rrc=0 || rrc=$?
 why=
 [[ $rrc != 0 ]] || why+=" exit 0;"
 m=$(grep -l '^mode=aeron-rel@STREAMS=1@NETEM=1$' "$d"/manifest/*.env | head -1)
 grep -q '^placement_a=FAIL' "$m" && grep -q '^netem_a=.* FAIL$' "$m" || why+=" verdicts: $(grep -E 'placement_|netem_' "$m" | tr '\n' ' ');"
 grep -q 'WARNING: point .* netem counters off its loss' "$sb/run.out" || why+=" not logged;"
 [[ $(grep -c '^3c,1,0,mio-tcp,0,1$' "$d/failures.csv") == 1 ]] || why+=" failures: $(cat "$d/failures.csv");"
-[[ -z $why ]] && pass "transport.sh run: a failed placement or netem verdict in the manifest and logged, a failed point in failures.csv, the session's exit 1" ||
+# a pong that never says ready: its point failed, its ping never started
+[[ $(grep -c '^3c,1,0,eio-tcp,0,1$' "$d/failures.csv") == 1 ]] && ! grep -q '^a tcp_lat --role ping .*--label 3c:eio-tcp@STREAMS=1@NETEM=0 ' "$sb/runs" &&
+    grep -q 'the pong did not say ready within 3 s' "$sb/run.out" || why+=" a silent pong: $(grep -c eio-tcp "$d/failures.csv") failures;"
+# every pong slow to write its PID file: waited for, not taken for an exit
+[[ $(grep -c . "$d/failures.csv") == 2 ]] && ! grep -q 'exited before it said ready' "$sb/run.out" || why+=" a slow pong taken for gone: $(tr '\n' ' ' <"$d/failures.csv");"
+[[ -z $why ]] && pass "transport.sh run: a failed placement or netem verdict in the manifest and logged, a failed point and a pong that never said ready in failures.csv (a pong slow to start waited for), the session's exit 1" ||
     fail "transport.sh run failures:$why"
 
 # a hostcheck warning stops the session before its first point
@@ -751,8 +843,8 @@ mkhost() { cp -R "$tmp/home-$1" "$sb/$1"; }
 # shellcheck disable=SC2016
 trun a 1 '$HOME/bench/arms.tsv' && frc=0 || frc=$?
 res=$sb/a/bench/transport-a/results.csv
-rows="rc $frc rows $(grep -c ',setfx:' "$res" || true) runs $(grep -c '^a fixture_lat --role ping .*--local 10.20.1.4:22000 --peer 10.20.1.7:22000 .*--flavour plain$' "$sb/runs" || true) aa $(grep ',setfx:' "$res" | grep -c '@AA=1' || true)"
-same "LAB_ARMS_FILE and LAB_EXTRA_SRC with a neutral fixture: its arms and sets checked with the matrix, its binary built by lab-build.sh and found on the VMs' PATH, its rows recorded, its A/A arm run" "check: 505
+rows="rc $frc rows $(grep -c ',fx:' "$res" || true) runs $(grep -c '^a fixture_lat --role ping .*--local 10.20.1.4:22000 --peer 10.20.1.7:22000 --busy-read-us 50 --rcvbuf 2097152 --sndbuf 2097152 --nodelay --quickack-per-read --streams .*--flavour plain$' "$sb/runs" || true) aa $(grep -c ',fx:aa@' "$res" || true)"
+same "LAB_ARMS_FILE and LAB_EXTRA_SRC with a neutral fixture: its arms and sets checked with the matrix, its binary built by lab-build.sh and found on the VMs' PATH, its rows recorded, its A/A arm run" "check: 550
 arm: fixture_lat sockets two --flavour plain
 rc 0 rows 8 runs 8 aa 4" "$got
 $rows"

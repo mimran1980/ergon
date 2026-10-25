@@ -100,6 +100,8 @@
 #   vm.sh netem set <loss %>|clear|check <loss %|none>|stats   netem on every data NIC's egress
 #   vm.sh sample             every thread's CPU, judged against the isolated CPUs (first line)
 #   vm.sh irqsnap            /proc/interrupts;  vm.sh hostcheck  the ergon-tune report (1 unless clean)
+#   vm.sh nstat              the kernel's protocol counters;  vm.sh settings  every transport sysctl
+#                            as it is now, <knob>=<value> (host.sh transport_settings_read)
 #
 # aarch64 (AWS Graviton, lab.sh LAB_ALLOW_ARM=1): Graviton's own settings where
 # they differ from x86's (host.sh): builds for the instance's own core,
@@ -2110,7 +2112,11 @@ driver)
     fi
     # confined to the housekeeping CPU: every thread that is not an agent
     # (signal handler, Aeron's, the EAL's) stays there; the agents pin themselves
-    sudo bash -c ". '$env_file' && exec taskset -c $HK_CPU '$bin/media_driver'" >"$run/driver.log" 2>&1 &
+    # the transport suite's bench binaries are this user's, not root's: the
+    # driver's files (cnc.dat, the log buffers) writable by them (umask 0)
+    umask_cmd=
+    [[ -s $run/transport-map ]] && umask_cmd='umask 0000 && '
+    sudo bash -c "$umask_cmd. '$env_file' && exec taskset -c $HK_CPU '$bin/media_driver'" >"$run/driver.log" 2>&1 &
     pid=$!
     for _ in $(seq 120); do
         grep -q "media driver started" "$run/driver.log" 2>/dev/null && break
@@ -2760,10 +2766,9 @@ transport-build)
     # the transport suite's bench binaries (transport-cli.md), then
     # LAB_EXTRA_SRC's tree (lib.sh copies it to ~/extra) by its own
     # lab-build.sh into ~/extra/bin
+    # (transport-build.sh: the local smoke builds them the same way)
     export PATH=$HOME/.cargo/bin:$PATH
-    cargo build --release -p ergon-md-dpdk-harness --features "$(client_features "$run/dpdk_unavailable")" \
-        --bin aeron_lat --bin hostcheck
-    cargo build --release -p ergon-io-bench --bin mpsc_lat --bin udp_lat --bin tcp_lat
+    bash "$(dirname "$self")/transport-build.sh" "$HOME/ergon" "$HOME/ergon/target" "$(client_features "$run/dpdk_unavailable")"
     if [[ -f $HOME/extra/lab-build.sh ]]; then
         mkdir -p "$HOME/extra/bin"
         (cd "$HOME/extra" && bash lab-build.sh "$HOME/extra/bin")
@@ -2780,18 +2785,21 @@ netem)
     clear) netem_clear "${ifaces[@]}" && netem_check none "${ifaces[@]}" ;;
     check) netem_check "${3:?loss % or none}" "${ifaces[@]}" ;;
     stats) netem_stats "${ifaces[@]}" ;;
-    *) echo "netem set <loss %> | clear | check <loss %|none> | stats" >&2; exit 2 ;;
+    show) netem_show "${ifaces[@]}" ;;
+    *) echo "netem set <loss %> | clear | check <loss %|none> | stats | show" >&2; exit 2 ;;
     esac
     ;;
 sample)
     # where every thread ran: the verdict on the map's isolated CPUs (host.sh
     # transport_placement) on the first line, then ps's own lines
     read -r _ _ iso <"$run/transport-map"
-    ps -eLo tid,psr,pcpu,comm --no-headers >"$run/sample.ps"
+    transport_threads 1 >"$run/sample.ps"
     transport_placement "$iso" <"$run/sample.ps" || true
     cat "$run/sample.ps"
     ;;
 irqsnap) cat "$LAB_PROC_ROOT/interrupts" ;;
+nstat) transport_nstat ;;
+settings) transport_settings_read ;;
 hostcheck)
     # the ergon-tune checks on the hot CPUs and data NICs (transport-cli.md),
     # its report in bench/hostcheck.txt; 1 on any warning or error

@@ -706,6 +706,8 @@ dpdk_busy_idle() { [[ $1 =~ ^(spin|noop|aeron_idle_strategy_busy_spinning|aeron_
 #   STREAMS=<n>  streams (UDP, Aeron) or connections (TCP), 1 to 1024
 #   NETEM=<pct>  netem's egress loss on every data NIC of both hosts, 0 to
 #                100 (0: a netem qdisc that drops nothing, the control);
+#                none: no qdisc, checked, in a loss set's round (the
+#                control's control);
 #                never on a DPDK arm (a dpdk* name or the dpdk setup): DPDK
 #                bypasses the kernel's qdiscs, so netem would drop nothing
 #                and the row would claim a loss it never saw
@@ -741,6 +743,7 @@ arm_check() {
                 { echo "mode $m: STREAMS=$value: 1 to 1024 streams or connections" >&2; return 2; }
             ;;
         NETEM)
+            [[ $value == none ]] && continue
             [[ $value =~ ^(0|[1-9][0-9]?|100)(\.[0-9]{1,3})?$ ]] && awk -v v="$value" 'BEGIN {exit !(v <= 100)}' ||
                 { echo "mode $m: NETEM=$value: egress loss in %, 0 to 100, at most three decimals" >&2; return 2; }
             if [[ $a == dpdk* || $(arm_setup "$a") == dpdk ]]; then
