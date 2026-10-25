@@ -25,6 +25,27 @@
 //! connection: the connecting end writes `i` (u32 LE) on it before
 //! anything else, and the accepting end orders its connections by it.
 //! No stream may use a port in 20000-20999 (the lab's DPDK range).
+//!
+//! Each end reads its counters off the hot path: before it builds its
+//! sockets, once they are set up (before the first send), and after its
+//! traffic. The row's `retrans` covers the traffic only (`retrans_window`:
+//! warm-up, measured, drain); set-up is recorded apart. Manifest settings
+//! (the other end's prefixed `echo.` in a local round trip):
+//!
+//! | setting | what |
+//! |---|---|
+//! | `tcp.retrans`, `tcp.retrans_setup` | `tcpi_total_retrans` growth over the traffic; during set-up (SYN, SYN-ACK) |
+//! | `tcp.dsack_dups`, `tcp.dsack_dups_setup` | of those, segments the peer reported (DSACK) it already had: spurious |
+//! | `tcp.retrans_not_dsack` | retransmits not reported spurious: a lost segment, or a DSACK not yet back |
+//! | `tcp.lost_end` | `tcpi_lost` after the traffic |
+//! | `tcp.rtos`, `tcp.rtos_setup` | `tcpi_total_rto` growth (Linux 6.7+, else `unavailable`) |
+//! | `netstat.setup.*`, `netstat.window.*` | the namespace's [`kstat::NETSTAT`](super::kstat::NETSTAT) growth (`TCPLossProbes`, `TCPDSACKRecv`, `TCPTimeouts`, `TCPSynRetrans`, `ListenOverflows`, ...): every TCP socket in it |
+//! | `sched.run_delay_ns`, `sched.involuntary_switches` | the end's thread over the traffic: time runnable but waiting for a CPU, and preemptions (every arm) |
+//!
+//! A retransmit that the peer reports a duplicate, on a thread that waited
+//! for a CPU, is an ACK that came late (a tail-loss probe fires about 2 ms
+//! after a stream's second unacknowledged segment, ahead of a delayed ACK),
+//! not loss. On an isolated core `sched.run_delay_ns` stays near 0.
 #![deny(missing_docs)]
 #![warn(
     clippy::all,
@@ -49,23 +70,37 @@ use ergon_latency_core::message::template;
 use super::DEFAULT_RCVBUF;
 use super::eio_tcp::{self, EioTcpOptions};
 use super::eio_udp::{self, EioUdpOptions};
+use super::kstat::{Netstat, Sched};
 use super::mio_tcp::{self, MioTcpOptions};
 use super::mio_udp::{self, MioUdpOptions};
 use super::point::{
     self, Common, Error, Flags, POLL_LIMIT, Progress, Recorder, Report, Role, Rx, START_DELAY_NS,
     SendStats, Tx, thread_allocs,
 };
-use super::sockopt::os;
+use super::sockopt::{TcpCounters, os};
 
 /// What every socket arm reports besides its row: retransmits, wire bytes,
 /// settings and counters. Read off the hot path.
 pub trait Inspect {
-    /// Segments retransmitted so far over every stream (`TCP_INFO`
-    /// `tcpi_total_retrans`); `None` where the transport has none.
+    /// The TCP counters so far, summed over every stream's connection
+    /// (`TCP_INFO`: retransmits, DSACK-reported duplicates, RTOs, lost);
+    /// `None` where the transport has none (the default).
     ///
     /// # Errors
     /// `getsockopt` fails.
-    fn retrans(&self) -> Result<Option<u64>, Error>;
+    fn tcp_counters(&self) -> Result<Option<TcpCounters>, Error> {
+        Ok(None)
+    }
+
+    /// Segments retransmitted so far over every stream (`TCP_INFO`
+    /// `tcpi_total_retrans`); `None` where the transport has none. By
+    /// default [`Inspect::tcp_counters`]'s.
+    ///
+    /// # Errors
+    /// `getsockopt` fails.
+    fn retrans(&self) -> Result<Option<u64>, Error> {
+        Ok(self.tcp_counters()?.map(|c| c.retrans))
+    }
 
     /// Bytes on the wire per message: payload, framing, transport, IP and
     /// Ethernet headers.
@@ -269,16 +304,81 @@ struct Ends {
     other: Vec<(String, String)>,
 }
 
-/// An end's numbers read off the hot path: retransmits since `r0`, its
-/// report.
 /// Settings and counters, by name.
 type Settings = Vec<(String, String)>;
 
-fn inspect<R: Inspect>(rx: &R, r0: Option<u64>) -> Result<(Option<u64>, Settings), Error> {
+/// What the manifest's `retrans_window` says the row's `retrans` covers.
+pub const RETRANS_WINDOW: &str = "after set-up: warm-up, measured, drain";
+
+/// The namespace's TCP counters before an end builds its sockets: the
+/// start of its set-up.
+fn setup_start() -> Result<Netstat, Error> {
+    Netstat::read()
+}
+
+/// An end's counters as its traffic starts (its set-up over): read off
+/// the hot path, before the first send.
+struct Window {
+    retrans: Option<u64>,
+    tcp: Option<TcpCounters>,
+    /// the namespace's at the start of set-up, and now
+    net: (Netstat, Netstat),
+    sched: Sched,
+}
+
+impl Window {
+    fn open<R: Inspect>(rx: &R, setup: Netstat) -> Result<Self, Error> {
+        Ok(Self {
+            retrans: rx.retrans()?,
+            tcp: rx.tcp_counters()?,
+            net: (setup, Netstat::read()?),
+            sched: Sched::read()?,
+        })
+    }
+}
+
+/// An end's numbers read off the hot path once its traffic is over:
+/// retransmits since `w` opened, and its report. For TCP the report holds
+/// the counters that tell a retransmit the peer already had (DSACK) from a
+/// lost segment, for set-up and for the traffic apart (`tcp.*`, the
+/// namespace's `netstat.setup.*` / `netstat.window.*`); for every arm,
+/// the thread's run-queue wait over the traffic (`sched.*`).
+fn inspect<R: Inspect>(rx: &R, w: &Window) -> Result<(Option<u64>, Settings), Error> {
     let r1 = rx.retrans()?;
+    let sched = Sched::read()?.since(&w.sched);
     let mut report = Vec::new();
     rx.report(&mut report)?;
-    Ok((r0.zip(r1).map(|(a, b)| b.saturating_sub(a)), report))
+    let mut put = |k: &str, v: String| report.push((k.to_owned(), v));
+    put("sched.run_delay_ns", sched.run_delay_ns.to_string());
+    put(
+        "sched.involuntary_switches",
+        sched.involuntary_switches.to_string(),
+    );
+    if let (Some(t0), Some(t1)) = (w.tcp, rx.tcp_counters()?) {
+        let opt = |v: Option<u64>| v.map_or_else(|| "unavailable".to_owned(), |v| v.to_string());
+        let d = |a: Option<u64>, b: Option<u64>| a.zip(b).map(|(a, b)| b.saturating_sub(a));
+        let retrans = t1.retrans.saturating_sub(t0.retrans);
+        let dsack = d(t0.dsack_dups, t1.dsack_dups);
+        put("tcp.retrans", retrans.to_string());
+        put("tcp.retrans_setup", t0.retrans.to_string());
+        put("tcp.dsack_dups", opt(dsack));
+        put("tcp.dsack_dups_setup", opt(t0.dsack_dups));
+        put(
+            "tcp.retrans_not_dsack",
+            opt(dsack.map(|k| retrans.saturating_sub(k))),
+        );
+        put("tcp.lost_end", t1.lost.to_string());
+        put("tcp.rtos", opt(d(t0.rtos, t1.rtos)));
+        put("tcp.rtos_setup", opt(t0.rtos));
+        let (start, open) = &w.net;
+        for (k, v) in open.since(start) {
+            put(&format!("netstat.setup.{k}"), v.to_string());
+        }
+        for (k, v) in Netstat::read()?.since(open) {
+            put(&format!("netstat.window.{k}"), v.to_string());
+        }
+    }
+    Ok((w.retrans.zip(r1).map(|(a, b)| b.saturating_sub(a)), report))
 }
 
 fn add(a: Option<u64>, b: Option<u64>) -> Option<u64> {
@@ -299,15 +399,16 @@ where
         joined(
             s.spawn(move || {
                 point::pin(c.cpu(0))?;
+                let n0 = setup_start()?;
                 let (mut tx, mut rx) = make(End::Ping, c.cpu(0))?;
                 let wire_bytes = rx.wire_bytes()?;
-                let r0 = rx.retrans()?;
+                let w = Window::open(&rx, n0)?;
                 let (t, rt) = point::start_at(clock, START_DELAY_NS);
                 let mut rec = Recorder::new(clock, t, c)?;
                 let a0 = thread_allocs();
                 let send = point::ping(clock, c, t, &mut tx, &mut rx, &mut rec)?;
                 let allocs = thread_allocs() - a0;
-                let (retrans, report) = inspect(&rx, r0)?;
+                let (retrans, report) = inspect(&rx, &w)?;
                 Ok(Ends {
                     rec,
                     send,
@@ -329,19 +430,20 @@ where
 /// bytes, report.
 type EchoOut = (u64, u64, Option<u64>, u64, Vec<(String, String)>);
 
-/// The echo end on this thread, once built: until `keep_going` says stop
-/// or every peer closed.
+/// The echo end on this thread, once built (its set-up began at
+/// `setup`): until `keep_going` says stop or every peer closed.
 fn echo_end<T: Tx, R: Rx + Inspect>(
     tx: &mut T,
     rx: &mut R,
+    setup: Netstat,
     keep_going: &mut impl FnMut() -> bool,
 ) -> Result<EchoOut, Error> {
     let wire_bytes = rx.wire_bytes()?;
-    let r0 = rx.retrans()?;
+    let w = Window::open(rx, setup)?;
     let a0 = thread_allocs();
     let echoes = point::echo(rx, tx, keep_going)?;
     let allocs = thread_allocs() - a0;
-    let (retrans, report) = inspect(rx, r0)?;
+    let (retrans, report) = inspect(rx, &w)?;
     Ok((echoes, allocs, retrans, wire_bytes, report))
 }
 
@@ -360,27 +462,33 @@ where
     let (barrier, stop, echoed) = (&barrier, &stop, &echoed);
     std::thread::scope(|s| {
         let echo = s.spawn(move || {
-            let setup = point::pin(c.cpu(1)).and_then(|()| make(End::Pong, c.cpu(1)));
+            let setup = point::pin(c.cpu(1)).and_then(|()| {
+                let n0 = setup_start()?;
+                make(End::Pong, c.cpu(1)).map(|e| (e, n0))
+            });
             barrier.wait();
-            let r = setup.and_then(|(mut tx, mut rx)| {
-                echo_end(&mut tx, &mut rx, &mut || !stop.load(Ordering::Acquire))
+            let r = setup.and_then(|((mut tx, mut rx), n0)| {
+                echo_end(&mut tx, &mut rx, n0, &mut || !stop.load(Ordering::Acquire))
             });
             echoed.store(true, Ordering::Release);
             r
         });
         let ping = s.spawn(move || {
-            let setup = point::pin(c.cpu(0)).and_then(|()| make(End::Ping, c.cpu(0)));
+            let setup = point::pin(c.cpu(0)).and_then(|()| {
+                let n0 = setup_start()?;
+                make(End::Ping, c.cpu(0)).map(|e| (e, n0))
+            });
             barrier.wait();
             let run = || {
-                let (mut tx, mut rx) = setup?;
+                let ((mut tx, mut rx), n0) = setup?;
                 let wire_bytes = rx.wire_bytes()?;
-                let r0 = rx.retrans()?;
+                let w = Window::open(&rx, n0)?;
                 let (t, rt) = point::start_at(clock, START_DELAY_NS);
                 let mut rec = Recorder::new(clock, t, c)?;
                 let a0 = thread_allocs();
                 let send = point::ping(clock, c, t, &mut tx, &mut rx, &mut rec)?;
                 let allocs = thread_allocs() - a0;
-                let (retrans, report) = inspect(&rx, r0)?;
+                let (retrans, report) = inspect(&rx, &w)?;
                 // the echo end stops, and reads its counters, before this
                 // end's sockets close under it
                 stop.store(true, Ordering::Release);
@@ -436,20 +544,23 @@ where
     };
     std::thread::scope(|s| {
         let sender = s.spawn(move || {
-            let setup = point::pin(c.cpu(0)).and_then(|()| make(End::Ping, c.cpu(0)));
+            let setup = point::pin(c.cpu(0)).and_then(|()| {
+                let n0 = setup_start()?;
+                make(End::Ping, c.cpu(0)).map(|e| (e, n0))
+            });
             barrier.wait();
             let (t, rt) = point::start_at(clock, START_DELAY_NS);
             start.store(t, Ordering::Release);
             start_rt.store(u64::try_from(rt).unwrap_or(u64::MAX), Ordering::Release);
             barrier.wait();
             let r = (|| {
-                let (mut tx, rx) = setup.inspect_err(|_| progress.fail())?;
+                let ((mut tx, rx), n0) = setup.inspect_err(|_| progress.fail())?;
                 let wire_bytes = rx.wire_bytes()?;
-                let r0 = rx.retrans()?;
+                let w = Window::open(&rx, n0)?;
                 let a0 = thread_allocs();
                 let send = point::send_oneway(clock, c, t, &mut tx, progress)?;
                 let allocs = thread_allocs() - a0;
-                let (retrans, report) = inspect(&rx, r0)?;
+                let (retrans, report) = inspect(&rx, &w)?;
                 // the receiver reads its counters before these sockets close
                 sent_done.store(true, Ordering::Release);
                 wait(recv_done);
@@ -544,11 +655,12 @@ where
             joined(
                 s.spawn(|| {
                     point::pin(c.cpu(0))?;
+                    let n0 = setup_start()?;
                     let (mut tx, mut rx) = make(End::Pong, c.cpu(0))?;
                     if !ready_said {
                         println!("ready");
                     }
-                    echo_end(&mut tx, &mut rx, &mut || !STOP.load(Ordering::Relaxed))
+                    echo_end(&mut tx, &mut rx, n0, &mut || !STOP.load(Ordering::Relaxed))
                 })
                 .join(),
                 "echo",
@@ -564,6 +676,9 @@ where
                 "retrans",
                 &retrans.map_or_else(|| "none".to_owned(), |r| r.to_string()),
             );
+        if retrans.is_some() {
+            m.setting("retrans_window", RETRANS_WINDOW);
+        }
         point::write_manifest(c, m)?;
         return Ok(None);
     }
@@ -586,6 +701,9 @@ where
             "this end's sends"
         },
     );
+    if ends.retrans.is_some() {
+        m.setting("retrans_window", RETRANS_WINDOW);
+    }
     let row = point::finish(
         c,
         &clock,

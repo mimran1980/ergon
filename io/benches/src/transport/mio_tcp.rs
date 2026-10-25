@@ -43,7 +43,7 @@ use mio::{Events, Interest, Poll, Token};
 
 use super::point::{Error, POLL_LIMIT, Rx, Sent, Tx};
 use super::sock::Inspect;
-use super::sockopt::{self, os};
+use super::sockopt::{self, TcpCounters, os};
 use super::{MAX_FRAME, TCP_RX_BUF, TCP_TX_BUF, ip_overhead};
 
 /// The mio TCP arm's settings.
@@ -425,12 +425,8 @@ impl Rx for MioTcpRx {
 }
 
 impl Inspect for MioTcpRx {
-    fn retrans(&self) -> Result<Option<u64>, Error> {
-        let mut sum = 0u64;
-        for s in &self.s.socks {
-            sum += u64::from(sockopt::tcp_info(s.as_raw_fd())?.total_retrans);
-        }
-        Ok(Some(sum))
+    fn tcp_counters(&self) -> Result<Option<TcpCounters>, Error> {
+        TcpCounters::of(self.s.socks.iter().map(AsRawFd::as_raw_fd)).map(Some)
     }
 
     fn wire_bytes(&self) -> Result<u64, Error> {

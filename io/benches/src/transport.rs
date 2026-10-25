@@ -13,11 +13,14 @@
 //! | [`mio_tcp`], [`eio_tcp`] | one TCP connection per stream, `ergon_latency_core::frame`'s u32 LE frames, raw mio and ergon-io |
 //! | [`sock`] | `udp_lat` and `tcp_lat`: their flags, connection set-up, threads and roles |
 //! | [`sockopt`] | the socket options the mio arms set and every socket arm reads back |
+//! | [`kstat`] | the namespace's TCP counters and a thread's run-queue wait, read around a point's traffic |
 
 #[cfg(target_os = "linux")]
 pub mod eio_tcp;
 #[cfg(target_os = "linux")]
 pub mod eio_udp;
+#[cfg(target_os = "linux")]
+pub mod kstat;
 #[cfg(target_os = "linux")]
 pub mod mio_tcp;
 #[cfg(target_os = "linux")]

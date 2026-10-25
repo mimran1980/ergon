@@ -76,6 +76,14 @@ after their due time.
 | `netem_counters` | {host: {nic: {qdisc, loss_pct, sent_pkts, dropped}}} | netem verified; tc -s on every data NIC |
 | `loss_counters` | {host: {source: {counter: growth}}} | sources `tcp_info`, `nstat`, `aeron` |
 
+A TCP arm's own manifest (`tcp_lat`) also carries, per end, the traffic's
+and the set-up's counters apart: `tcp.retrans`, `tcp.dsack_dups` (the
+spurious ones), `tcp.retrans_not_dsack`, `tcp.lost_end`, `tcp.rtos`, each
+with a `_setup` twin, `netstat.window.*` / `netstat.setup.*` (nstat
+names), and the busy thread's `sched.run_delay_ns` (table in
+`io/benches/src/transport/sock.rs`). At 0 % loss a retransmit is either
+spurious (DSACK reported, the thread waited for a CPU) or a bug to trace.
+
 Hosts are `a` and `b`; a one-host set (1, 2b) has `a` alone.
 
 ## transport-settings.env

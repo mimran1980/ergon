@@ -29,6 +29,7 @@
 
 use std::cell::RefCell;
 use std::net::TcpStream;
+use std::os::fd::AsRawFd;
 use std::rc::Rc;
 
 use ergon_io::{ConnId, Driver, FrameConn, FrameHandler, FrameOptions, Handler, RxMeta};
@@ -39,7 +40,7 @@ use super::eio_udp::{Staged, base_config, eio};
 use super::mio_tcp::tcp_wire_bytes;
 use super::point::{Error, Rx, Sent, Tx};
 use super::sock::Inspect;
-use super::sockopt::{self, os};
+use super::sockopt::{self, TcpCounters, os};
 use super::{MAX_FRAME, TCP_RX_BUF, TCP_TX_BUF};
 
 /// The ergon-io TCP arm's settings.
@@ -67,6 +68,10 @@ struct Shared {
     d: RefCell<Driver<FrameConn>>,
     staged: RefCell<Staged>,
     ids: Vec<ConnId>,
+    /// Each stream's socket through a second descriptor: its `TCP_INFO`
+    /// and options stay readable once the driver has closed its own (a
+    /// peer close), as the mio arm's sockets do. Read off the hot path only.
+    held: Vec<TcpStream>,
     opts: EioTcpOptions,
     ipv6: bool,
 }
@@ -115,7 +120,9 @@ pub fn pair(socks: Vec<TcpStream>, opts: EioTcpOptions) -> Result<(EioTcpTx, Eio
     };
     let n = socks.len();
     let mut ids = Vec::with_capacity(n);
+    let mut held = Vec::with_capacity(n);
     for s in socks {
+        held.push(s.try_clone().map_err(|e| os("dup", e))?);
         let c = FrameConn::from_stream(s, fopts).map_err(|e| eio("FrameConn", e))?;
         ids.push(d.add(c).map_err(|e| eio("Driver::add", e))?);
     }
@@ -127,6 +134,7 @@ pub fn pair(socks: Vec<TcpStream>, opts: EioTcpOptions) -> Result<(EioTcpTx, Eio
         d: RefCell::new(d),
         staged: RefCell::new(Staged::new(per_poll)),
         ids,
+        held,
         opts,
         ipv6,
     });
@@ -232,19 +240,13 @@ impl Rx for EioTcpRx {
 }
 
 impl Inspect for EioTcpRx {
-    fn retrans(&self) -> Result<Option<u64>, Error> {
-        let d = self.s.d.borrow();
-        let mut sum = 0u64;
-        for c in self.s.ids.iter().filter_map(|&id| d.get(id)) {
-            sum += u64::from(sockopt::tcp_info(c.raw_fd())?.total_retrans);
-        }
-        Ok(Some(sum))
+    fn tcp_counters(&self) -> Result<Option<TcpCounters>, Error> {
+        TcpCounters::of(self.s.held.iter().map(AsRawFd::as_raw_fd)).map(Some)
     }
 
     fn wire_bytes(&self) -> Result<u64, Error> {
-        let d = self.s.d.borrow();
-        let ts = match self.s.ids.first().and_then(|&id| d.get(id)) {
-            Some(c) => sockopt::tcp_info(c.raw_fd())?.timestamps,
+        let ts = match self.s.held.first() {
+            Some(s) => sockopt::tcp_info(s.as_raw_fd())?.timestamps,
             None => false,
         };
         Ok(tcp_wire_bytes(ts, self.s.ipv6))
@@ -301,8 +303,8 @@ impl Inspect for EioTcpRx {
         ] {
             out.push((k.to_owned(), v));
         }
-        if let Some(c) = self.s.ids.first().and_then(|&id| d.get(id)) {
-            sockopt::read_back(c.raw_fd(), true, out)?;
+        if let Some(s) = self.s.held.first() {
+            sockopt::read_back(s.as_raw_fd(), true, out)?;
         }
         Ok(())
     }
