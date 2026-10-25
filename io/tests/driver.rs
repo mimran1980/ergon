@@ -279,10 +279,6 @@ fn an_order_queued_before_poll_leaves_before_the_receive_pass() -> R {
             let server = rx.recv_timeout(Duration::from_secs(10))?;
             go_tx.send(())?;
             readable(d.get(id).ok_or("conn gone")?.raw_fd())?;
-            // `io_uring` with DEFER_TASKRUN posts the receive's completion
-            // only on a kernel entry: make that entry now, sending nothing,
-            // so the next poll has the message to deliver.
-            d.flush()?;
             d.get_mut(id)
                 .ok_or("conn gone")?
                 .send_frame(ws::OP_TEXT, b"order")?;
