@@ -8,7 +8,7 @@
 //! `require` is a readiness gate, not a blanket refusal. It refuses on a
 //! **warning** (a check fired) and on an **unproven** check whose job is to
 //! prove a property of this pod or process
-//! ([`CheckId::unknown_stops_require`](crate::CheckId::unknown_stops_require)):
+//! ([`unknown_stops_require`]):
 //! starting on an unproven isolation claim is the false pass the check
 //! exists to stop. An unknown of a check whose subsystem the node may not
 //! have — PSI, a NUMA node, a NIC knob — is printed and allowed through,
@@ -24,6 +24,28 @@ pub const HOST_CHECKS_ENV: &str = "ERGON_HOST_CHECKS";
 /// What every printed warning line ends with.
 pub const SILENCE: &str = "(ERGON_HOST_CHECKS=off silences host-check warnings)";
 
+/// The checks whose unknown result does **not** stop a
+/// [`HostCheckPolicy::Require`] start: each reads a subsystem the node may
+/// not have (THP, tmpfs, NUMA, PSI and `memory.high`, a NIC knob, the time
+/// daemon a pod cannot see), so absent evidence is a host without it, not a
+/// gap in a proof.
+const SUBSYSTEM_CHECKS: [&str; 12] = [
+    "T3", "T4", "T5", "T6", "T11", "K6", "K7", "N1", "N2", "N3", "N4", "M4",
+];
+
+/// Whether an unknown result of check `id` stops a
+/// [`HostCheckPolicy::Require`] start.
+///
+/// A check that proves a property of this pod or process (its CPUs are its
+/// own and isolated, no CPU quota, its helpers have a core) **blocks** when
+/// it cannot be answered: unproven is not "fine". A check of a subsystem the
+/// node may not have (T3, T4, T5, T6, T11, K6, K7, N1-N4, M4) does not.
+/// Every other id blocks, a caller's own included: unclassified fails closed.
+#[must_use]
+pub fn unknown_stops_require(id: &str) -> bool {
+    !SUBSYSTEM_CHECKS.contains(&id)
+}
+
 /// What [`HOST_CHECKS_ENV`] is set to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum HostCheckPolicy {
@@ -35,7 +57,7 @@ pub enum HostCheckPolicy {
     On,
     /// Print them, and make a warning an error at start. An **unproven** check
     /// is an error too, but only where the check must prove something: see
-    /// [`CheckId::unknown_stops_require`](crate::CheckId::unknown_stops_require).
+    /// [`unknown_stops_require`].
     Require,
 }
 
@@ -184,7 +206,7 @@ impl HostCheckPolicy {
 
     /// Under [`Self::Require`], the error a start must fail with when any
     /// finding is a warning, or is an unknown of a check that must be proven
-    /// ([`CheckId::unknown_stops_require`](crate::CheckId::unknown_stops_require)).
+    /// ([`unknown_stops_require`]).
     /// An unknown of a check whose subsystem the node may not have is
     /// reported and allowed through: that is a real host, not a gap.
     #[must_use]
@@ -196,10 +218,10 @@ impl HostCheckPolicy {
         let mut count = 0;
         for f in findings
             .iter()
-            .filter(|f| f.is_warning() || (f.is_unknown() && f.id.unknown_stops_require()))
+            .filter(|f| f.is_warning() || (f.is_unknown() && unknown_stops_require(f.id)))
         {
             count += 1;
-            let id = f.id.as_str();
+            let id = f.id;
             if !ids.contains(&id) {
                 ids.push(id);
             }

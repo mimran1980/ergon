@@ -47,7 +47,14 @@ fn run_all(host: &Host, cpus: &HotSet, interfaces: &[String]) -> Vec<Finding> {
 mod linux {
     use super::*;
 
-    use ergon_tune::CheckId::{T1, T3, T4, T5, T7, T8, T9, T10};
+    const T1: &str = "T1";
+    const T3: &str = "T3";
+    const T4: &str = "T4";
+    const T5: &str = "T5";
+    const T7: &str = "T7";
+    const T8: &str = "T8";
+    const T9: &str = "T9";
+    const T10: &str = "T10";
 
     type R = Result<(), Box<dyn std::error::Error>>;
     use ergon_tune::{

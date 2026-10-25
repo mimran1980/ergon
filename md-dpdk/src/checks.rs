@@ -56,8 +56,8 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use ergon_tune::{
-    BusyPoll, CheckId, Component, CpuSet, Ethtool, EthtoolCache, Finding, Host, HotSet, Netlink, Nic, Role, Severity,
-    Status, Thread, busy_poll_sysctls, carrier_changes, host_check_line, n1_adaptive_rx, n2_deferred_irqs, n4_rx_ring,
+    BusyPoll, Component, CpuSet, Ethtool, EthtoolCache, Finding, Host, HotSet, Netlink, Nic, Role, Severity, Status,
+    Thread, busy_poll_sysctls, carrier_changes, host_check_line, n1_adaptive_rx, n2_deferred_irqs, n4_rx_ring,
     t1_isolation, t2_nic_irqs, t3_thp, t4_aeron_dir, t5_numa_balancing, t6_nic_node, t7_sched_policy, t8_smt_siblings,
     t9_cpu_quota, t10_smt_on, thread_affinity,
 };
@@ -335,7 +335,7 @@ const SHARED_CORE_COST: &str =
 
 const fn m1(status: Status, message: String) -> Finding {
     Finding {
-        id: CheckId::M1,
+        id: "M1",
         severity: Severity::Warn,
         status,
         message,
@@ -435,7 +435,7 @@ pub fn m2_term_buffers(sparse: bool) -> Finding {
         )
     };
     Finding {
-        id: CheckId::M2,
+        id: "M2",
         severity: Severity::Warn,
         status,
         message,
@@ -605,7 +605,7 @@ pub fn m3_socket_buffers(buffers: &SocketBuffers, dpdk: bool) -> Vec<Finding> {
             ),
         };
         Finding {
-            id: CheckId::M3,
+            id: "M3",
             severity,
             status,
             message,
@@ -654,7 +654,7 @@ pub fn m4_busy_polling(host: &Host) -> Finding {
         ),
     };
     Finding {
-        id: CheckId::M4,
+        id: "M4",
         severity: Severity::Info,
         status,
         message,

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Changed
+
+- Breaking: `ergon-tune` drops `CheckId`. `Finding::id` is a `&'static str`
+  (`"T1"`, `"K2"`, `"M1"`), so a caller can add checks of its own.
+  `CheckId::unknown_stops_require` is now `unknown_stops_require(id)`, and an
+  id it does not know blocks a `require` start when unknown (fails closed).
+
 ## [0.1.33] — 2026-10-23
 
 ### Changed

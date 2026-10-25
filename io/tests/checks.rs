@@ -15,8 +15,8 @@ use ergon_io::placement::{Allowed, CpuError, Why};
 use ergon_io::route::{self, Flow};
 use ergon_io::{Backend, Config, ConnId};
 use ergon_tune::{
-    CheckId, Coalesce, CpuSet, Ethtool, EthtoolCache, EthtoolError, Finding, Host, HostCheckPolicy,
-    HotSet, Rings, Role, SILENCE, Status,
+    Coalesce, CpuSet, Ethtool, EthtoolCache, EthtoolError, Finding, Host, HostCheckPolicy, HotSet,
+    Rings, Role, SILENCE, Status,
 };
 
 type R<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -196,7 +196,7 @@ fn tuned(name: &str, cpus_allowed: &str) -> R<Fixture> {
     Ok(f)
 }
 
-fn ids(v: &[Finding]) -> Vec<CheckId> {
+fn ids(v: &[Finding]) -> Vec<&'static str> {
     v.iter().map(|f| f.id).collect()
 }
 
@@ -214,14 +214,7 @@ fn a_loop_pinned_to_one_cpu_is_checked_there() -> R {
     assert_eq!(r.loop_cpu, LoopCpu::Pinned(2));
     assert_eq!(r.hot, HotSet::new().with(2, Role::Loop));
     let found = ids(&r.findings);
-    for id in [
-        CheckId::T1,
-        CheckId::T3,
-        CheckId::T7,
-        CheckId::T8,
-        CheckId::T9,
-        CheckId::T10,
-    ] {
+    for id in ["T1", "T3", "T7", "T8", "T9", "T10"] {
         assert!(found.contains(&id), "{id} missing: {found:?}");
     }
     let text = r.lines();
@@ -279,14 +272,7 @@ fn a_tuned_host_reports_nothing() -> R {
     let r = checks::host_report(&f.host(), &Config::new(Backend::RecvBusy));
     assert_eq!(r.lines(), Vec::<String>::new(), "{:#?}", r.findings);
     let found = ids(&r.findings);
-    for id in [
-        CheckId::T1,
-        CheckId::T3,
-        CheckId::T7,
-        CheckId::T8,
-        CheckId::T9,
-        CheckId::T10,
-    ] {
+    for id in ["T1", "T3", "T7", "T8", "T9", "T10"] {
         assert!(found.contains(&id), "{id} not checked: {found:?}");
     }
     assert!(
@@ -349,16 +335,13 @@ fn in_a_pod_the_kubernetes_checks_run_too() -> R {
         .file(&format!("{dir}/cpu.max"), "max 100000\n")?;
     let r = checks::host_report(&f.host(), &Config::new(Backend::RecvBusy));
     let found = ids(&r.findings);
-    for id in [CheckId::K1, CheckId::K4] {
+    for id in ["K1", "K4"] {
         assert!(found.contains(&id), "{id} missing: {found:?}");
     }
     // Not a pod: no K check.
     let f = tuned("notpod", "2")?;
     let found = ids(&checks::host_report(&f.host(), &Config::new(Backend::RecvBusy)).findings);
-    assert!(
-        !found.iter().any(|id| matches!(id, CheckId::K1)),
-        "{found:?}"
-    );
+    assert!(!found.contains(&"K1"), "{found:?}");
     Ok(())
 }
 
@@ -380,13 +363,13 @@ fn an_unpinned_loop_gets_one_information_line_and_no_cpu_checks() -> R {
     assert_eq!(r.loop_cpu, LoopCpu::Unpinned("0-7".to_owned()));
     assert_eq!(r.hot, HotSet::new());
     let found = ids(&r.findings);
-    assert!(!found.contains(&CheckId::T1), "{found:?}");
-    assert!(!found.contains(&CheckId::T8), "{found:?}");
+    assert!(!found.contains(&"T1"), "{found:?}");
+    assert!(!found.contains(&"T8"), "{found:?}");
     // The thread's policy, THP and the CPU quota do not depend on the CPU:
     // still checked.
-    assert!(found.contains(&CheckId::T7), "{found:?}");
-    assert!(found.contains(&CheckId::T3), "{found:?}");
-    assert!(found.contains(&CheckId::T9), "{found:?}");
+    assert!(found.contains(&"T7"), "{found:?}");
+    assert!(found.contains(&"T3"), "{found:?}");
+    assert!(found.contains(&"T9"), "{found:?}");
     let text = r.lines();
     let notes: Vec<&String> = text.iter().filter(|l| l.contains("not pinned")).collect();
     assert_eq!(notes.len(), 1, "{text:#?}");
@@ -684,14 +667,10 @@ fn the_egress_device_is_checked_once_and_again_after_a_reset() -> R {
     let mut dev = adaptive_on();
     let c = ctx(HotSet::new().with(2, Role::Loop), Backend::RecvBusy);
     let first = dev.check(&host, "ens5", &c);
-    assert_eq!(
-        warned(&first),
-        vec![CheckId::T2, CheckId::T2, CheckId::N1],
-        "{first:#?}"
-    );
+    assert_eq!(warned(&first), vec!["T2", "T2", "N1"], "{first:#?}");
     // A polling backend: N2 does not apply.
-    assert!(!ids(&first).contains(&CheckId::N2), "{first:#?}");
-    assert!(ids(&first).contains(&CheckId::N3), "{first:#?}");
+    assert!(!ids(&first).contains(&"N2"), "{first:#?}");
+    assert!(ids(&first).contains(&"N3"), "{first:#?}");
     assert!(dev.watching());
     // The same device and context again: nothing new, nothing asked.
     assert_eq!(dev.check(&host, "ens5", &c), Vec::new());
@@ -700,26 +679,20 @@ fn the_egress_device_is_checked_once_and_again_after_a_reset() -> R {
     // once the counter has settled.
     f.file("/sys/class/net/ens5/carrier_changes", "4\n")?;
     let again = settled(&mut dev, &host)?;
-    assert_eq!(
-        warned(&again),
-        vec![CheckId::T2, CheckId::T2, CheckId::N1],
-        "{again:#?}"
-    );
+    assert_eq!(warned(&again), vec!["T2", "T2", "N1"], "{again:#?}");
     assert_eq!(dev.recheck(&host), Vec::new(), "once per reset");
     // Fixed after the reset: the next one finds nothing to warn about.
     f.ena("ens5", 3, "0000:00:05.0", "0")?;
     f.file("/sys/class/net/ens5/carrier_changes", "6\n")?;
     let fixed = settled(&mut dev, &host)?;
     assert!(
-        fixed
-            .iter()
-            .all(|f| !f.id.eq(&CheckId::T2) || !f.is_warning()),
+        fixed.iter().all(|f| f.id != "T2" || !f.is_warning()),
         "{fixed:#?}"
     );
     Ok(())
 }
 
-fn warned(v: &[Finding]) -> Vec<CheckId> {
+fn warned(v: &[Finding]) -> Vec<&'static str> {
     v.iter().filter(|f| f.is_warning()).map(|f| f.id).collect()
 }
 
@@ -751,11 +724,7 @@ fn a_reconnect_right_after_a_reset_does_not_swallow_the_recheck() -> R {
     f.file("/sys/class/net/ens5/carrier_changes", "4\n")?;
     assert_eq!(dev.check(&host, "ens5", &c), Vec::new());
     let again = settled(&mut dev, &host)?;
-    assert_eq!(
-        warned(&again),
-        vec![CheckId::T2, CheckId::T2, CheckId::N1],
-        "{again:#?}"
-    );
+    assert_eq!(warned(&again), vec!["T2", "T2", "N1"], "{again:#?}");
     Ok(())
 }
 
@@ -767,7 +736,7 @@ fn a_recheck_waits_until_the_carrier_counter_has_settled() -> R {
     let mut dev = adaptive_on();
     let c = ctx(HotSet::new().with(2, Role::Loop), Backend::RecvBusy);
     let first = dev.check(&host, "ens5", &c);
-    assert!(!warned(&first).contains(&CheckId::T2), "{first:#?}");
+    assert!(!warned(&first).contains(&"T2"), "{first:#?}");
     // A reset: the carrier goes down (the counter moves once) and the
     // driver re-places its queue interrupts on the loop's CPU before it
     // comes back up. A re-pin hook (a link-event watcher) hears of the
@@ -792,10 +761,10 @@ fn a_recheck_waits_until_the_carrier_counter_has_settled() -> R {
     }
     let after = dev.recheck(&host);
     assert!(
-        after.iter().any(|f| f.id == CheckId::N1),
+        after.iter().any(|f| f.id == "N1"),
         "not re-checked: {after:#?}"
     );
-    assert!(!warned(&after).contains(&CheckId::T2), "{after:#?}");
+    assert!(!warned(&after).contains(&"T2"), "{after:#?}");
     Ok(())
 }
 
@@ -809,11 +778,11 @@ fn n2_is_checked_for_interrupt_driven_backends_only() -> R {
     let loop_cpu = HotSet::new().with(2, Role::Loop);
     let spin = adaptive_on().check(&host, "ens5", &ctx(loop_cpu.clone(), Backend::EpollSpin));
     assert!(
-        spin.iter().any(|f| f.id == CheckId::N2 && f.is_warning()),
+        spin.iter().any(|f| f.id == "N2" && f.is_warning()),
         "{spin:#?}"
     );
     let busy = adaptive_on().check(&host, "ens5", &ctx(loop_cpu, Backend::RecvBusy));
-    assert!(!ids(&busy).contains(&CheckId::N2), "{busy:#?}");
+    assert!(!ids(&busy).contains(&"N2"), "{busy:#?}");
     Ok(())
 }
 
@@ -822,9 +791,9 @@ fn an_unpinned_loop_skips_t2_but_not_the_nic_settings() -> R {
     let f = tuned("dev-unpinned", "0-7")?;
     f.ena("ens5", 3, "0000:00:05.0", "2")?;
     let found = adaptive_on().check(&f.host(), "ens5", &ctx(HotSet::new(), Backend::RecvBusy));
-    assert!(!ids(&found).contains(&CheckId::T2), "{found:#?}");
+    assert!(!ids(&found).contains(&"T2"), "{found:#?}");
     assert!(
-        found.iter().any(|f| f.id == CheckId::N1 && f.is_warning()),
+        found.iter().any(|f| f.id == "N1" && f.is_warning()),
         "{found:#?}"
     );
     Ok(())
@@ -860,7 +829,7 @@ fn a_device_not_visible_here_is_one_unknown_line() -> R {
 #[test]
 fn ok_findings_print_nothing_and_unknown_ones_are_information() {
     let ok = Finding {
-        id: CheckId::T1,
+        id: "T1",
         severity: ergon_tune::Severity::Warn,
         status: Status::Ok,
         message: "fine".to_owned(),

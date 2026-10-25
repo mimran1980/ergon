@@ -5,7 +5,7 @@ use std::fmt;
 use std::path::Path;
 
 use crate::cpuset::CpuSet;
-use crate::finding::{CheckId, Component, Finding, Severity};
+use crate::finding::{Component, Finding, Severity};
 use crate::host::{Host, ReadError};
 
 const THP: &str = "/sys/kernel/mm/transparent_hugepage";
@@ -76,7 +76,7 @@ fn thp_on(host: &Host) -> Result<Option<(String, ThpOn)>, ReadError> {
 /// driver, the runtime), information for ergon-io.
 #[must_use]
 pub fn t3_thp(host: &Host, component: Component) -> Vec<Finding> {
-    let id = CheckId::T3;
+    let id = "T3";
     let sev = if component == Component::Io {
         Severity::Info
     } else {
@@ -261,7 +261,7 @@ pub fn t4_aeron_dir(host: &Host, aeron_dir: &Path) -> Finding {
 /// T4 from a [`fs_magic`] result already taken.
 #[must_use]
 pub fn t4_from(aeron_dir: &Path, fs: Result<FsMagic, ReadError>) -> Finding {
-    let id = CheckId::T4;
+    let id = "T4";
     let sev = Severity::Warn;
     let dir = aeron_dir.display();
     match fs {
@@ -310,7 +310,7 @@ const T5_EVIDENCE: &str = "Linux Documentation/admin-guide/sysctl/kernel.rst (nu
 /// T5: automatic NUMA balancing is off, on a host with more than one node.
 #[must_use]
 pub fn t5_numa_balancing(host: &Host) -> Finding {
-    let id = CheckId::T5;
+    let id = "T5";
     let sev = Severity::Warn;
     let nodes = match nodes_online(host) {
         Ok(Some(n)) if n.len() > 1 => n,

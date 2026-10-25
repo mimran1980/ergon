@@ -62,7 +62,9 @@ CPU quota, its helpers have a core. Starting on an unproven claim is the false
 pass those checks exist to stop. An unknown of a check whose subsystem the
 node may not have — PSI and `memory.high`, a NUMA node, a NIC knob, THP — is
 printed and allowed through: that is a real host, and refusing there would
-stop every start on it. Which is which is `CheckId::unknown_stops_require`.
+stop every start on it. `unknown_stops_require(id)` says which: T3, T4, T5,
+T6, T11, K6, K7, N1-N4 and M4 do not block; every other id does, a caller's
+own included.
 Under `require`, T10 refuses every x86 host with SMT on, and K2 refuses a
 stock static-CPU-manager pod: it proves exclusive CPUs only from an isolated
 or root cpuset partition (Linux 6.7+, as the nri-latency-pods plugin sets).

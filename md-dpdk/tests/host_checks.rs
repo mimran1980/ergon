@@ -27,8 +27,7 @@ use ergon_md_dpdk::checks::{
 };
 use ergon_md_dpdk::driver::ConfiguredDriver;
 use ergon_tune::{
-    CheckId, Coalesce, CpuSet, Ethtool, EthtoolCache, EthtoolError, Finding, Host, HotSet, Rings, Role, Severity,
-    Status,
+    Coalesce, CpuSet, Ethtool, EthtoolCache, EthtoolError, Finding, Host, HotSet, Rings, Role, Severity, Status,
 };
 use rusteron_media_driver::AeronDriverContext;
 use rusteron_media_driver::bindings::aeron_threading_mode_t;
@@ -268,11 +267,11 @@ fn socket(agents: Agents) -> Inputs {
     }
 }
 
-fn with_id(findings: &[Finding], id: CheckId) -> Vec<&Finding> {
+fn with_id<'a>(findings: &'a [Finding], id: &str) -> Vec<&'a Finding> {
     findings.iter().filter(|f| f.id == id).collect()
 }
 
-fn warnings(findings: &[Finding], id: CheckId) -> Vec<&Finding> {
+fn warnings<'a>(findings: &'a [Finding], id: &str) -> Vec<&'a Finding> {
     findings.iter().filter(|f| f.id == id && f.is_warning()).collect()
 }
 
@@ -422,12 +421,12 @@ fn every_driver_gets_m1_and_m2_at_warning_severity() {
         inputs.term_buffer_sparse = true;
         let report = host_report(&f.host(), &inputs, &mut stub(false, None));
         assert_eq!(
-            warnings(&report.findings, CheckId::M1).len(),
+            warnings(&report.findings, "M1").len(),
             agents_warned,
             "{mode:?}: {:?}",
             report.findings
         );
-        assert_eq!(warnings(&report.findings, CheckId::M2).len(), 1, "{mode:?}");
+        assert_eq!(warnings(&report.findings, "M2").len(), 1, "{mode:?}");
         assert!(
             !report.notes.iter().any(|n| n.contains("latency")),
             "{mode:?}: {:?}",
@@ -436,16 +435,8 @@ fn every_driver_gets_m1_and_m2_at_warning_severity() {
     }
     // fine where the driver is tuned
     let report = host_report(&f.host(), &socket(tuned()), &mut stub(false, None));
-    assert!(
-        warnings(&report.findings, CheckId::M1).is_empty(),
-        "{:?}",
-        report.findings
-    );
-    assert!(
-        warnings(&report.findings, CheckId::M2).is_empty(),
-        "{:?}",
-        report.findings
-    );
+    assert!(warnings(&report.findings, "M1").is_empty(), "{:?}", report.findings);
+    assert!(warnings(&report.findings, "M2").is_empty(), "{:?}", report.findings);
 }
 
 // --- M1 ---------------------------------------------------------------------------
@@ -474,7 +465,7 @@ fn m1_warns_for_a_pinned_agent_that_idles_with_backoff() {
         assert!(text.contains(needle), "{needle:?} in {text}");
     }
     assert!(!text.contains("receiver"), "{text}");
-    assert_eq!((w[0].id, w[0].severity), (CheckId::M1, Severity::Warn));
+    assert_eq!((w[0].id, w[0].severity), ("M1", Severity::Warn));
 }
 
 /// An agent that busy-spins but floats: a warning naming its CPU variable
@@ -560,7 +551,7 @@ fn m1_warns_for_an_agent_on_the_conductors_cpu() {
 fn m1_is_ok_for_agents_spinning_on_pinned_cpus_of_their_own() {
     let m1 = m1_agents(&tuned());
     assert_eq!(m1.len(), 1, "{m1:?}");
-    assert_eq!((m1[0].id, &m1[0].status), (CheckId::M1, &Status::Ok));
+    assert_eq!((m1[0].id, &m1[0].status), ("M1", &Status::Ok));
     let a = Agents {
         conductor_cpu: None,
         ..tuned()
@@ -628,11 +619,7 @@ fn m1_under_dpdk_is_the_installs_not_a_warning() {
         named: vec![],
     };
     let report = host_report(&f.host(), &inputs, &mut stub(false, None));
-    assert!(
-        warnings(&report.findings, CheckId::M1).is_empty(),
-        "{:?}",
-        report.findings
-    );
+    assert!(warnings(&report.findings, "M1").is_empty(), "{:?}", report.findings);
 }
 
 // --- M2 ---------------------------------------------------------------------------
@@ -643,7 +630,7 @@ fn m1_under_dpdk_is_the_installs_not_a_warning() {
 fn m2_warns_for_sparse_term_buffers() {
     let m2 = m2_term_buffers(true);
     assert!(m2.is_warning(), "{m2:?}");
-    assert_eq!(m2.id, CheckId::M2);
+    assert_eq!(m2.id, "M2");
     for needle in ["sparse", "AERON_TERM_BUFFER_SPARSE_FILE=false", "not A/B'd"] {
         assert!(
             m2.message.contains(needle) || m2.evidence.contains(needle),
@@ -662,12 +649,7 @@ fn m2_warns_for_sparse_term_buffers() {
         named: vec![],
     };
     let report = host_report(&f.host(), &inputs, &mut stub(false, None));
-    assert_eq!(
-        warnings(&report.findings, CheckId::M2).len(),
-        1,
-        "{:?}",
-        report.findings
-    );
+    assert_eq!(warnings(&report.findings, "M2").len(), 1, "{:?}", report.findings);
 }
 
 // --- M3 ---------------------------------------------------------------------------
@@ -771,7 +753,7 @@ fn m4_reports_busy_polling_as_information_and_recommends_no_setting() {
         let m4 = m4_busy_polling(&fixture.host());
         assert_eq!(
             (m4.id, &m4.status, m4.severity),
-            (CheckId::M4, &Status::Finding, Severity::Info),
+            ("M4", &Status::Finding, Severity::Info),
             "{m4:?}"
         );
         assert!(m4.message.contains("kernel busy polling is off"), "{}", m4.message);
@@ -839,11 +821,7 @@ fn m4_reports_busy_polling_as_information_and_recommends_no_setting() {
         named: vec![],
     };
     let report = host_report(&f.host(), &inputs, &mut stub(false, None));
-    assert!(
-        with_id(&report.findings, CheckId::M4).is_empty(),
-        "{:?}",
-        report.findings
-    );
+    assert!(with_id(&report.findings, "M4").is_empty(), "{:?}", report.findings);
 }
 
 // --- M-host -------------------------------------------------------------------------
@@ -901,20 +879,20 @@ fn the_host_checks_run_on_the_agents_cpus() {
         ..tuned()
     };
     let report = host_report(&f.host(), &socket(a), &mut stub(false, None));
-    let t1 = warnings(&report.findings, CheckId::T1);
+    let t1 = warnings(&report.findings, "T1");
     assert_eq!(t1.len(), 1, "{t1:?}");
     assert!(t1[0].message.contains("CPU 3 (receiver)") && t1[0].message.contains("nohz_full"));
-    let t8 = warnings(&report.findings, CheckId::T8);
+    let t8 = warnings(&report.findings, "T8");
     assert_eq!(t8.len(), 1, "{t8:?}");
     assert!(t8[0].message.contains("CPU 2 (sender)") && t8[0].message.contains("CPU 6 (conductor)"));
-    for id in [CheckId::T3, CheckId::T4, CheckId::T5, CheckId::T7, CheckId::T9] {
+    for id in ["T3", "T4", "T5", "T7", "T9"] {
         assert_eq!(with_id(&report.findings, id).len(), 1, "{id}: {:?}", report.findings);
     }
     // T4 reads the driver's own directory (on a fixture: unknown, never a warning)
-    let t4 = with_id(&report.findings, CheckId::T4);
+    let t4 = with_id(&report.findings, "T4");
     assert!(t4[0].message.contains("/dev/shm/aeron"), "{}", t4[0].message);
     // No CPU quota on the driver's cgroup.
-    assert_eq!(with_id(&report.findings, CheckId::T9)[0].status, Status::Ok);
+    assert_eq!(with_id(&report.findings, "T9")[0].status, Status::Ok);
 }
 
 /// A CPU quota on the driver's cgroup (a pod with a CPU limit and no
@@ -938,7 +916,7 @@ fn a_cpu_quota_on_the_drivers_cgroup_is_a_warning() {
         },
     ] {
         let report = host_report(&f.host(), &inputs, &mut stub(false, None));
-        let t9 = warnings(&report.findings, CheckId::T9);
+        let t9 = warnings(&report.findings, "T9");
         assert_eq!(t9.len(), 1, "{:?}", report.findings);
         assert!(
             t9[0].message.contains("/sys/fs/cgroup/cpu.max is `300000 100000`")
@@ -973,7 +951,7 @@ fn unnamed_data_nics_give_one_info_line() {
         .filter(|n| n.contains("RUSTERON_MEDIA_DRIVER_DATA_NICS"))
         .collect();
     assert_eq!(notes.len(), 1, "{:?}", report.notes);
-    for id in [CheckId::T2, CheckId::T6, CheckId::N1, CheckId::N2, CheckId::N4] {
+    for id in ["T2", "T6", "N1", "N2", "N4"] {
         assert!(with_id(&report.findings, id).is_empty(), "{id}: {:?}", report.findings);
     }
 }
@@ -989,20 +967,13 @@ fn each_named_data_nic_is_checked() {
     let mut inputs = socket(tuned());
     inputs.nics = DataNics::Socket(vec!["ens6".into()]);
     let report = host_report(&f.host(), &inputs, &mut stub(true, Some((1024, 8192))));
-    for id in [CheckId::T2, CheckId::N1, CheckId::N2] {
+    for id in ["T2", "N1", "N2"] {
         let w = warnings(&report.findings, id);
         assert_eq!(w.len(), 1, "{id}: {:?}", report.findings);
     }
-    assert!(
-        warnings(&report.findings, CheckId::T2)[0]
-            .message
-            .contains("CPU 2 (sender)")
-    );
-    assert_eq!(with_id(&report.findings, CheckId::T6).len(), 1);
-    assert!(
-        with_id(&report.findings, CheckId::N4).is_empty(),
-        "no busy polling, no N4"
-    );
+    assert!(warnings(&report.findings, "T2")[0].message.contains("CPU 2 (sender)"));
+    assert_eq!(with_id(&report.findings, "T6").len(), 1);
+    assert!(with_id(&report.findings, "N4").is_empty(), "no busy polling, no N4");
     assert!(
         !report
             .notes
@@ -1013,12 +984,8 @@ fn each_named_data_nic_is_checked() {
     // busy polling on: N2's deferral is how that is set up, N4 checks the ring
     f.busy_poll("50", "50");
     let report = host_report(&f.host(), &inputs, &mut stub(true, Some((1024, 8192))));
-    assert!(
-        warnings(&report.findings, CheckId::N2).is_empty(),
-        "{:?}",
-        report.findings
-    );
-    let n4 = warnings(&report.findings, CheckId::N4);
+    assert!(warnings(&report.findings, "N2").is_empty(), "{:?}", report.findings);
+    let n4 = warnings(&report.findings, "N4");
     assert_eq!(n4.len(), 1, "{:?}", report.findings);
     assert!(n4[0].message.contains("ethtool -G ens6 rx 4096"), "{}", n4[0].message);
 }
@@ -1039,14 +1006,10 @@ fn a_data_nic_whose_busy_polling_is_unknown_gets_no_n2_warning_and_no_n4() {
     let mut inputs = socket(tuned());
     inputs.nics = DataNics::Socket(vec!["ens6".into()]);
     let report = host_report(&f.host(), &inputs, &mut stub(false, Some((1024, 8192))));
-    assert!(with_id(&report.findings, CheckId::M4)[0].is_unknown());
-    let n2 = with_id(&report.findings, CheckId::N2);
+    assert!(with_id(&report.findings, "M4")[0].is_unknown());
+    let n2 = with_id(&report.findings, "N2");
     assert!(!n2.is_empty() && n2.iter().all(|f| f.is_unknown()), "{n2:?}");
-    assert!(
-        with_id(&report.findings, CheckId::N4).is_empty(),
-        "{:?}",
-        report.findings
-    );
+    assert!(with_id(&report.findings, "N4").is_empty(), "{:?}", report.findings);
 }
 
 /// Under DPDK the data NICs are the ports, by PCI address: T2 (interrupts
@@ -1065,11 +1028,11 @@ fn dpdk_ports_are_checked_by_pci_address() {
         named: vec![],
     };
     let report = host_report(&f.host(), &inputs, &mut stub(true, Some((1024, 8192))));
-    let t2 = warnings(&report.findings, CheckId::T2);
+    let t2 = warnings(&report.findings, "T2");
     assert_eq!(t2.len(), 1, "one port, its one IRQ, once: {:?}", report.findings);
     assert!(t2[0].message.contains("0000:00:06.0") && t2[0].message.contains("CPU 3 (receiver)"));
-    assert_eq!(with_id(&report.findings, CheckId::T6).len(), 1);
-    for id in [CheckId::N1, CheckId::N2, CheckId::N4] {
+    assert_eq!(with_id(&report.findings, "T6").len(), 1);
+    for id in ["N1", "N2", "N4"] {
         assert!(with_id(&report.findings, id).is_empty(), "{id}: {:?}", report.findings);
     }
 
@@ -1079,11 +1042,7 @@ fn dpdk_ports_are_checked_by_pci_address() {
         named: vec!["ens6".into()],
     };
     let report = host_report(&f.host(), &inputs, &mut stub(true, None));
-    assert!(
-        with_id(&report.findings, CheckId::T2).is_empty(),
-        "{:?}",
-        report.findings
-    );
+    assert!(with_id(&report.findings, "T2").is_empty(), "{:?}", report.findings);
     assert!(
         report.notes.iter().any(|n| n.contains("virtual devices")),
         "{:?}",
@@ -1211,8 +1170,8 @@ fn a_data_nic_is_rechecked_after_its_carrier_changes_settle() {
     let due = r.tick(&f.host());
     assert_eq!(due.len(), 1, "{due:?}");
     assert_eq!((due[0].nic.as_str(), due[0].from, due[0].to), ("ens6", 2, 4));
-    let ids: Vec<CheckId> = due[0].findings.iter().map(|f| f.id).collect();
-    assert_eq!(ids, vec![CheckId::T2, CheckId::N1]);
+    let ids: Vec<&'static str> = due[0].findings.iter().map(|f| f.id).collect();
+    assert_eq!(ids, vec!["T2", "N1"]);
     assert!(due[0].findings.iter().all(Finding::is_warning), "{:?}", due[0].findings);
     for read in 0..=SETTLE_READS {
         assert!(r.tick(&f.host()).is_empty(), "read {read}: checked once a reset");
@@ -1266,7 +1225,7 @@ fn from_env_reports_and_require_refuses_a_warning() {
     let _policy = EnvGuard::set("RUSTERON_MEDIA_DRIVER_HOST_CHECK", "warn");
     let configured = ConfiguredDriver::from_env(AeronDriverContext::new().unwrap()).unwrap();
     let report = configured.host_report().expect("the checks ran");
-    let m1 = warnings(&report.findings, CheckId::M1);
+    let m1 = warnings(&report.findings, "M1");
     assert!(
         m1.iter()
             .any(|f| f.message.contains("sender is pinned to CPU 0 but idles with `backoff`")),
