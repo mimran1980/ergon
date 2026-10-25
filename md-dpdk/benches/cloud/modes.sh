@@ -83,6 +83,14 @@
 #        heartbeats. A rep then runs 20 to 60 s, about 10,000 round trips
 #        where a minute holds them (rtt_plan): 20 s and 20,000 at 1 ms, 60 s
 #        and 1,200 at 50 ms, 300 at 200 ms, 60 at 1 s. Cross-host only
+#   KEEPALIVE_US=<us>  (the raw floor's modes, with RTT_GAP_US) a keep-alive
+#        datagram from the ping every that many microseconds between pings,
+#        echoed by the pong and dropped by the ping, none within 50 us of a
+#        ping (floor.rs Between): whether keeping the path busy keeps it fast
+#   FLUSH_KB=<KiB>  (the raw floor's modes, with RTT_GAP_US of 10 ms or more)
+#        the ping after each round trip and the pong after each echo write one
+#        byte of every cache line of a buffer that large: a round trip from
+#        cold CPU caches over a path the gap keeps as warm as it is
 #   CONDUCTOR=own  the driver's conductor on the layout's fifth core, alone,
 #        spinning (AERON_CONDUCTOR_CPU_AFFINITY, AERON_CONDUCTOR_IDLE_STRATEGY
 #        =spin), the DPDK transport's housekeeping and local-I/O threads kept
@@ -583,7 +591,7 @@ precision_modes_check() {
 # The settings vm.sh host_setting takes (a mode's @KEY=value for the host, the
 # clients or the driver's placement); any other key must be an environment
 # variable the driver reads, AERON_* (Aeron's) or RUSTERON_* (the transport's)
-LAB_SETTINGS=" THP BIN CSTATE BUSY_POLL COALESCE RX_RING MIN_FREE_PCT CLOCKSOURCE RELIABLE AGENTS SMT JUMBO PUB_PARAMS SUB_PARAMS IRQ NAPI_DEFER NAPI_BUSY CONDUCTOR HAIRPIN RTT_GAP_US DPDK "
+LAB_SETTINGS=" THP BIN CSTATE BUSY_POLL COALESCE RX_RING MIN_FREE_PCT CLOCKSOURCE RELIABLE AGENTS SMT JUMBO PUB_PARAMS SUB_PARAMS IRQ NAPI_DEFER NAPI_BUSY CONDUCTOR HAIRPIN RTT_GAP_US KEEPALIVE_US FLUSH_KB DPDK "
 
 # @DPDK=<build>: the media driver and clients linked against DPDK 25.11 built
 # from source for the mode (vm.sh build-dpdk, into ~/bin-dpdk-<build>): stock,
@@ -750,7 +758,7 @@ mode_check() {
             ;;
         esac
         case $key in
-        IRQ | NAPI_DEFER | NAPI_BUSY | CONDUCTOR | HAIRPIN | RTT_GAP_US | DPDK)
+        IRQ | NAPI_DEFER | NAPI_BUSY | CONDUCTOR | HAIRPIN | RTT_GAP_US | KEEPALIVE_US | FLUSH_KB | DPDK)
             [[ $seen != *" $key "* ]] || { echo "mode $m: one $key at most" >&2; return 2; }
             seen+="$key "
             ;;
@@ -798,6 +806,21 @@ mode_check() {
                 { echo "mode $m: RTT_GAP_US is cross-host only: a sparse flow is the network's (lib.sh paces only the cross-host round trip)" >&2; return 2; }
             ! mode_pure "$m" ||
                 { echo "mode $m: RTT_GAP_US is not the pure floor's: purefloor does not pace its pings" >&2; return 2; }
+            ;;
+        KEEPALIVE_US | FLUSH_KB)
+            [[ $value =~ ^[1-9][0-9]{0,6}$ ]] ||
+                { echo "mode $m: $key=$value: a whole number from 1 (KEEPALIVE_US microseconds, FLUSH_KB KiB)" >&2; return 2; }
+            mode_raw "$m" && ! mode_pure "$m" ||
+                { echo "mode $m: $key is the raw floor's (kernel-raw, dpdk-raw): the floor client sends the keep-alives and writes the flush buffer" >&2; return 2; }
+            v=$(mode_get "$m" RTT_GAP_US) ||
+                { echo "mode $m: $key needs @RTT_GAP_US: it acts between paced pings" >&2; return 2; }
+            if [[ $key == KEEPALIVE_US ]]; then
+                ((value * 2 <= v && v - value > 50)) ||
+                    { echo "mode $m: KEEPALIVE_US=$value with RTT_GAP_US=$v: at most half the gap, and none goes within 50 us of a ping" >&2; return 2; }
+            else
+                ((value <= 1048576 && v >= 10000)) ||
+                    { echo "mode $m: FLUSH_KB=$value with RTT_GAP_US=$v: at most 1048576 KiB, and a gap of 10 ms or more for the flush to fit in" >&2; return 2; }
+            fi
             ;;
         JUMBO)
             [[ $value == 1 ]] || { echo "mode $m: JUMBO=1 or nothing" >&2; return 2; }

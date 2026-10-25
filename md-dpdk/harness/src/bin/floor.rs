@@ -72,6 +72,81 @@ const STAMP: usize = 32;
 const SEQ: usize = 40;
 /// Datagrams one poll takes at most: the lab's receiver IO vectors.
 const BURST: usize = 16;
+/// The sequence a keep-alive datagram carries: never a ping's (they count
+/// from 1), so the ping skips its echo as it skips a late one.
+const KEEPALIVE_SEQ: u64 = u64::MAX;
+/// No keep-alive goes this close (ns) before a ping is due, so the ping
+/// never queues behind one: the keep-alive keeps the path warm, it does not
+/// share it with the measured round trip.
+const KEEPALIVE_GUARD_NS: u64 = 50_000;
+
+/// What a paced run does between its pings, beyond spinning:
+///
+/// - `KEEPALIVE_US=<us>` (ping only): a keep-alive datagram every that many
+///   microseconds, which the pong echoes as any other and the ping drops,
+///   none within [`KEEPALIVE_GUARD_NS`] of the next ping. A keep-alive A/B
+///   at one gap tells a path slowed by quiet from one slowed by distance.
+/// - `FLUSH_KB=<KiB>` (ping and pong): after each round trip (the ping) or
+///   each echo of a ping (the pong) one byte of every cache line of a
+///   buffer that large is written, so the next round trip runs from cold
+///   CPU caches while the network stays as warm as the gap leaves it.
+struct Between {
+    gap_ns: u64,
+    keepalive_ns: u64,
+    last_ping: u64,
+    last_keepalive: u64,
+    flush: Vec<u8>,
+}
+
+impl Between {
+    fn from_env() -> Self {
+        let us = |name: &str| -> u64 {
+            std::env::var(name).map_or(0, |v| v.parse().unwrap_or_else(|e| panic!("{name}={v}: {e}")))
+        };
+        let gap_ns = us("RTT_GAP_US") * 1000;
+        let keepalive_ns = us("KEEPALIVE_US") * 1000;
+        assert!(
+            keepalive_ns == 0 || (gap_ns != 0 && keepalive_ns < gap_ns),
+            "floor: KEEPALIVE_US needs RTT_GAP_US, and a keep-alive more often than the pings"
+        );
+        let flush_kb = us("FLUSH_KB");
+        let flush = vec![0u8; usize::try_from(flush_kb * 1024).expect("FLUSH_KB")];
+        if keepalive_ns != 0 || !flush.is_empty() {
+            eprintln!(
+                "floor: between pings: keep-alive every {} us, flush {flush_kb} KiB",
+                keepalive_ns / 1000
+            );
+        }
+        Self {
+            gap_ns,
+            keepalive_ns,
+            last_ping: 0,
+            last_keepalive: 0,
+            flush,
+        }
+    }
+
+    /// A keep-alive is due at `now` (and not too close to the next ping).
+    #[inline]
+    fn keepalive_due(&self, now: u64) -> bool {
+        self.keepalive_ns != 0
+            && self.last_ping != 0
+            && now.wrapping_sub(self.last_keepalive.max(self.last_ping)) >= self.keepalive_ns
+            && now.wrapping_sub(self.last_ping) + KEEPALIVE_GUARD_NS < self.gap_ns
+    }
+
+    /// Writes a byte in every cache line of the flush buffer, if any.
+    #[inline(never)]
+    fn flush(&mut self) {
+        if self.flush.is_empty() {
+            return;
+        }
+        for line in self.flush.chunks_mut(64) {
+            line[0] = line[0].wrapping_add(1);
+        }
+        std::hint::black_box(&self.flush);
+    }
+}
 
 /// What a floor client sends on and polls.
 trait Wire {
@@ -252,10 +327,22 @@ fn run_ping(wire: &mut impl Wire, peer: SocketAddrV4, messages: usize, warmup: u
     };
     let mut seq = 0_u64;
     let mut pace = Pace::from_env();
+    let mut between = Between::from_env();
     let start = Instant::now();
     for i in 0..warmup {
         seq += 1;
-        round_trip(wire, &clock, &mut buffer, &mut None, &mut pace, seq, timeout_ns, |_| {});
+        round_trip(
+            wire,
+            &clock,
+            &mut buffer,
+            &mut None,
+            &mut pace,
+            &mut between,
+            seq,
+            timeout_ns,
+            |_| {},
+        );
+        between.flush();
         if (pace.paced() || i % 64 == 0) && start.elapsed() > budget / 4 {
             break;
         }
@@ -272,6 +359,7 @@ fn run_ping(wire: &mut impl Wire, peer: SocketAddrV4, messages: usize, warmup: u
             &mut buffer,
             &mut stalls,
             &mut pace,
+            &mut between,
             seq,
             timeout_ns,
             |rtt| {
@@ -281,6 +369,7 @@ fn run_ping(wire: &mut impl Wire, peer: SocketAddrV4, messages: usize, warmup: u
         if !echoed {
             lost += 1;
         }
+        between.flush();
         if (pace.paced() || i % 64 == 0) && start.elapsed() > budget {
             break;
         }
@@ -340,6 +429,7 @@ fn round_trip(
     buffer: &mut [u8; DATAGRAM],
     stalls: &mut Option<Stalls>,
     pace: &mut Pace,
+    between: &mut Between,
     seq: u64,
     timeout_ns: u64,
     mut record: impl FnMut(u64),
@@ -347,9 +437,19 @@ fn round_trip(
     if let Some(s) = stalls.as_mut() {
         s.pass(clock.now());
     }
-    while !pace.ready(clock.now()) {
+    loop {
+        let now = clock.now();
+        if pace.ready(now) {
+            break;
+        }
         if let Some(s) = stalls.as_mut() {
-            s.pass(clock.now());
+            s.pass(now);
+        }
+        if between.keepalive_due(now) {
+            buffer[SEQ..SEQ + 8].copy_from_slice(&KEEPALIVE_SEQ.to_le_bytes());
+            // a full ring or an ARP wait skips this one: the next is due anyway
+            let _ = wire.send(buffer).unwrap_or_else(|e| wire_failed("send", &e));
+            between.last_keepalive = now;
         }
         if wire.poll(|_| {}).unwrap_or_else(|e| wire_failed("poll", &e)) == 0 {
             spin_loop();
@@ -362,6 +462,7 @@ fn round_trip(
         match wire.send(buffer) {
             Ok(true) => {
                 pace.sent(now);
+                between.last_ping = clock.now();
                 break now;
             }
             Ok(false) => {
@@ -417,6 +518,7 @@ fn pong_loop(wire: &mut impl Wire, cpu: Option<usize>) {
     let mut stalls = Stalls::new(&clock);
     let mut pending = [[0u8; DATAGRAM]; BURST];
     let mut lengths = [0usize; BURST];
+    let mut between = Between::from_env();
     while !STOP.load(Ordering::Relaxed) {
         if let Some(s) = stalls.as_mut() {
             s.pass(clock.now());
@@ -444,6 +546,14 @@ fn pong_loop(wire: &mut impl Wire, cpu: Option<usize>) {
         }
         if count == 0 {
             spin_loop();
+        } else if pending
+            .iter()
+            .zip(&lengths)
+            .take(count)
+            .any(|(d, &n)| n >= DATAGRAM && !matches!(seq_of(d), 0 | KEEPALIVE_SEQ))
+        {
+            // FLUSH_KB: the next ping finds this side's caches cold
+            between.flush();
         }
     }
     if let Some(stalls) = &stalls {
