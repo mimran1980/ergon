@@ -1,14 +1,7 @@
-//! `epoll-spin`, `epoll-busy` and `recv-busy`.
+//! `epoll-spin` and `recv-busy`.
 //!
 //! - `epoll-spin`: `epoll_wait(timeout = 0)` every poll, then one `recvmsg`
 //!   per ready socket (level-triggered: data left behind is reported again).
-//! - `epoll-busy`: `epoll_pwait2(wait_us)` with busy poll on the epoll
-//!   instance (`EPIOCSPARAMS`, carrying `Config::prefer_busy_poll` and
-//!   `busy_poll_budget`). With nothing ready the kernel polls the NIC queue
-//!   for up to `busy_poll_us`, then sleeps until an event or the timeout. A
-//!   zero timeout returns before the busy loop, so this backend sleeps by
-//!   design. An epoll instance tracks one NAPI id: with sockets on several
-//!   RX queues, only one queue is polled.
 //! - `recv-busy`: no epoll. A non-blocking `recvmsg` on every socket every
 //!   poll, with `SO_BUSY_POLL` set (by [`super::Driver::add`]). An empty read
 //!   runs `sk_busy_loop(sk, nonblock)`: one NAPI pass, then `EAGAIN`. Never
@@ -32,7 +25,6 @@ use crate::sys::{self, MsgSlot};
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
     Spin,
-    Busy,
     Recv,
 }
 
@@ -68,15 +60,14 @@ pub(super) struct Epoll {
     ep: Option<OwnedFd>,
     slot: Box<MsgSlot>,
     events: Box<[libc::epoll_event; MAX_EVENTS]>,
-    wait: libc::timespec,
 }
 
 impl Epoll {
     pub(super) fn new(cfg: &Config) -> Result<Self> {
-        let mode = match cfg.backend {
-            Backend::EpollBusy => Mode::Busy,
-            Backend::RecvBusy => Mode::Recv,
-            _ => Mode::Spin,
+        let mode = if cfg.backend == Backend::RecvBusy {
+            Mode::Recv
+        } else {
+            Mode::Spin
         };
         let per_queue = mode == Mode::Recv && cfg.per_queue;
         let ep = if mode == Mode::Recv && !per_queue {
@@ -90,9 +81,6 @@ impl Epoll {
             // SAFETY: `fd` is a fresh descriptor we own.
             Some(unsafe { OwnedFd::from_raw_fd(fd) })
         };
-        if let (Mode::Busy, Some(ep)) = (mode, &ep) {
-            set_epoll_busy_poll(ep.as_raw_fd(), cfg)?;
-        }
         Ok(Self {
             mode,
             per_queue,
@@ -108,10 +96,6 @@ impl Epoll {
             ep,
             slot: MsgSlot::new(),
             events: Box::new([libc::epoll_event { events: 0, u64: 0 }; MAX_EVENTS]),
-            wait: libc::timespec {
-                tv_sec: libc::time_t::from(cfg.wait_us / 1_000_000),
-                tv_nsec: libc::c_long::from(cfg.wait_us % 1_000_000) * 1000,
-            },
         })
     }
 
@@ -311,25 +295,8 @@ impl Epoll {
         stats.epoll_wait_calls += 1;
         #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
         let max = MAX_EVENTS as libc::c_int;
-        let n = if self.mode == Mode::Busy {
-            // SAFETY: valid fd, event buffer of MAX_EVENTS, timeout pointer, no sigmask.
-            unsafe {
-                libc::syscall(
-                    libc::SYS_epoll_pwait2,
-                    ep.as_raw_fd(),
-                    self.events.as_mut_ptr(),
-                    max,
-                    &raw const self.wait,
-                    std::ptr::null::<libc::sigset_t>(),
-                    0usize,
-                )
-            }
-        } else {
-            // SAFETY: `events` has room for MAX_EVENTS entries.
-            libc::c_long::from(unsafe {
-                libc::epoll_wait(ep.as_raw_fd(), self.events.as_mut_ptr(), max, 0)
-            })
-        };
+        // SAFETY: `events` has room for MAX_EVENTS entries.
+        let n = unsafe { libc::epoll_wait(ep.as_raw_fd(), self.events.as_mut_ptr(), max, 0) };
         if let Ok(n) = usize::try_from(n) {
             return Ok(n);
         }
@@ -340,44 +307,6 @@ impl Epoll {
             Err(Error::Io(e))
         }
     }
-}
-
-/// `struct epoll_params` (Linux 6.9+).
-#[repr(C)]
-struct EpollParams {
-    busy_poll_usecs: u32,
-    busy_poll_budget: u16,
-    prefer_busy_poll: u8,
-    pad: u8,
-}
-
-/// `EPIOCSPARAMS = _IOW(0x8A, 0x01, struct epoll_params)`.
-const EPIOCSPARAMS: libc::c_ulong = (1 << 30) | (8 << 16) | (0x8A << 8) | 0x01;
-
-fn set_epoll_busy_poll(ep: RawFd, cfg: &Config) -> Result<()> {
-    let p = EpollParams {
-        busy_poll_usecs: cfg.busy_poll_us,
-        busy_poll_budget: cfg.busy_poll_budget.unwrap_or(8),
-        prefer_busy_poll: u8::from(cfg.prefer_busy_poll),
-        pad: 0,
-    };
-    // SAFETY: `p` is a valid epoll_params for the duration of the call.
-    if unsafe { libc::ioctl(ep, EPIOCSPARAMS as _, &raw const p) } != 0 {
-        let e = std::io::Error::last_os_error();
-        return Err(match e.raw_os_error() {
-            Some(libc::ENOTTY) => {
-                Error::Unsupported("EPIOCSPARAMS (epoll busy poll) needs Linux 6.9 or newer")
-            }
-            Some(libc::EOPNOTSUPP) => Error::Unsupported(
-                "the kernel was built without busy polling (CONFIG_NET_RX_BUSY_POLL)",
-            ),
-            Some(libc::EPERM) => {
-                Error::Config("busy_poll_budget above 64 needs CAP_NET_ADMIN".to_owned())
-            }
-            _ => Error::Io(e),
-        });
-    }
-    Ok(())
 }
 
 #[cfg(test)]

@@ -292,9 +292,9 @@ enum Imp {
 /// endpoints with deadlines).
 const EXPIRY_CHECK_US: u32 = 250;
 
-/// Polls between two counter reads for that check on backends that never
-/// sleep: a counter read costs more than a whole idle `uring-spin` poll, so
-/// most polls only count down.
+/// Polls between two counter reads for that check: a counter read costs
+/// more than a whole idle `uring-sqpoll` poll, so most polls only count
+/// down.
 const EXPIRY_POLLS: u32 = 64;
 
 /// Slots `Driver::new` makes room for (the send set's included) before the
@@ -311,10 +311,6 @@ struct SockOpts {
     timestamps: bool,
     rcvbuf: Option<u32>,
     busy_poll_us: u32,
-    /// `recv-busy` only: preferred busy polling and the packet budget (epoll
-    /// and `io_uring` take theirs on the instance).
-    prefer_busy_poll: bool,
-    busy_poll_budget: Option<u16>,
     quickack: QuickAckCheck,
     backend: Backend,
     /// TCP keepalive: idle, interval and count (idle 0: left alone), and
@@ -340,16 +336,10 @@ impl SockOpts {
         Self {
             timestamps: cfg.rx_timestamps,
             rcvbuf: cfg.rcvbuf,
-            // Only the backends that poll through the socket set SO_BUSY_POLL;
-            // the others set 0 so a sysctl default cannot leak in.
-            busy_poll_us: match cfg.backend {
-                Backend::EpollBusy | Backend::RecvBusy => cfg.busy_poll_us.max(1),
-                _ => 0,
-            },
-            prefer_busy_poll: cfg.backend == Backend::RecvBusy && cfg.prefer_busy_poll,
-            busy_poll_budget: cfg
-                .busy_poll_budget
-                .filter(|_| cfg.backend == Backend::RecvBusy),
+            // Only `recv-busy` polls through the socket: 1 µs, so an empty
+            // read makes one NAPI pass. The others set 0 so a sysctl default
+            // cannot leak in.
+            busy_poll_us: u32::from(cfg.backend == Backend::RecvBusy),
             quickack: cfg.quickack_check,
             backend: cfg.backend,
             keepalive: (
@@ -380,21 +370,6 @@ impl SockOpts {
             sys::set_tcp_user_timeout(fd, self.user_timeout_ms)?;
         }
         sys::apply_tcp_timers(fd, self.rto_min_us, self.delack_max_us)?;
-        let privileged = |what: &str, e: std::io::Error| {
-            if e.kind() == std::io::ErrorKind::PermissionDenied {
-                Error::Config(format!("{what} needs CAP_NET_ADMIN"))
-            } else {
-                Error::Io(e)
-            }
-        };
-        if self.prefer_busy_poll {
-            sys::set_prefer_busy_poll(fd, true)
-                .map_err(|e| privileged("prefer_busy_poll (SO_PREFER_BUSY_POLL)", e))?;
-        }
-        if let Some(b) = self.busy_poll_budget {
-            sys::set_busy_poll_budget(fd, b)
-                .map_err(|e| privileged("busy_poll_budget (SO_BUSY_POLL_BUDGET)", e))?;
-        }
         Ok(())
     }
 
@@ -531,9 +506,8 @@ pub struct Driver<E> {
     /// Counter value at which deadlines are next checked (`E::DEADLINES`).
     next_expiry: u64,
     expiry_ticks: u64,
-    /// Polls until the counter is read for that check, and the reset value.
+    /// Polls until the counter is read for that check.
     expiry_countdown: u32,
-    expiry_polls: u32,
     /// Counter value at which connection set-up is next advanced.
     next_setup: u64,
     /// `get_mut` handed out a connection (or one was installed with bytes
@@ -656,15 +630,11 @@ impl<E: Endpoint> Driver<E> {
         let ctx = Arc::new(DevContext::new(&cfg, report.hot.clone()));
         let tpu = ticks_per_us();
         let imp = match cfg.backend {
-            Backend::EpollSpin | Backend::EpollBusy | Backend::RecvBusy => {
-                Imp::Epoll(epoll::Epoll::new(&cfg)?)
-            }
+            Backend::EpollSpin | Backend::RecvBusy => Imp::Epoll(epoll::Epoll::new(&cfg)?),
             #[cfg(feature = "uring")]
-            Backend::UringSpin | Backend::UringNapi | Backend::UringSqpoll => {
-                Imp::Uring(uring::Uring::new(&cfg)?)
-            }
+            Backend::UringSqpoll => Imp::Uring(uring::Uring::new(&cfg)?),
             #[cfg(not(feature = "uring"))]
-            Backend::UringSpin | Backend::UringNapi | Backend::UringSqpoll => {
+            Backend::UringSqpoll => {
                 return Err(Error::Unsupported(
                     "io_uring backends need the `uring` feature",
                 ));
@@ -689,12 +659,6 @@ impl<E: Endpoint> Driver<E> {
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             expiry_ticks: (f64::from(EXPIRY_CHECK_US) * tpu) as u64,
             expiry_countdown: 1,
-            // A backend that sleeps has slow polls: read the counter on each.
-            expiry_polls: if cfg.backend.may_sleep() {
-                1
-            } else {
-                EXPIRY_POLLS
-            },
             next_setup: 0,
             tx_fresh: false,
             tcp_info: Vec::new(),
@@ -1129,14 +1093,11 @@ impl<E: Endpoint> Driver<E> {
     /// One iteration: send what was queued since the last poll (through
     /// [`Driver::get_mut`]), receive whatever the kernel has, decode and
     /// deliver it, then send what that queued. Returns messages delivered.
-    /// Never sleeps unless the backend is [`Backend::EpollBusy`] or
-    /// [`Backend::UringNapi`].
+    /// Never sleeps.
     ///
     /// An order queued between polls goes out before this poll's receive
     /// pass, not behind `epoll_wait` and every ready feed's decoding. That
-    /// costs one more send pass (and, on `uring-spin` and `uring-napi`, one
-    /// more `io_uring_enter` when completions are also waiting), only in a
-    /// poll after a `get_mut`. A send pass visits only the connections that
+    /// costs one more send pass, only in a poll after a `get_mut`. A send pass visits only the connections that
     /// may have bytes queued (the send set), not every connection, so an
     /// idle connection costs a poll nothing on the send side.
     ///
@@ -1216,14 +1177,14 @@ impl<E: Endpoint> Driver<E> {
         Ok(usize::try_from(self.stats.messages - before).unwrap_or(usize::MAX))
     }
 
-    /// Every `expiry_polls` polls, reads the counter; every 250 µs, runs
+    /// Every [`EXPIRY_POLLS`] polls, reads the counter; every 250 µs, runs
     /// the endpoints' deadlines and timers.
     #[inline]
     fn check_deadlines<H: Handler>(&mut self, handler: &mut H) {
         if E::DEADLINES {
             self.expiry_countdown -= 1;
             if self.expiry_countdown == 0 {
-                self.expiry_countdown = self.expiry_polls;
+                self.expiry_countdown = EXPIRY_POLLS;
                 let t = rdtsc();
                 if t >= self.next_expiry {
                     self.next_expiry = t.wrapping_add(self.expiry_ticks);

@@ -90,9 +90,7 @@ where
 }
 
 fn http_driver(b: Backend) -> R<Driver<HttpConn>> {
-    let mut cfg = Config::new(b);
-    cfg.wait_us = cfg.wait_us.min(100);
-    Ok(Driver::new(cfg)?)
+    Ok(Driver::new(Config::new(b))?)
 }
 
 fn dial(lab: &Lab, opts: HttpOptions) -> R<HttpDial> {
@@ -237,7 +235,7 @@ fn in_flight_limit_and_pipelining() -> R {
 #[test]
 fn framing_chunked_interim_head_and_no_content() -> R {
     let lab = Lab::new()?;
-    let mut d = http_driver(Backend::UringSpin)?;
+    let mut d = http_driver(support::uring_backend()?)?;
     let big: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
     std::thread::scope(|s| -> R {
         let srv = s.spawn(|| -> R {
@@ -599,7 +597,7 @@ fn invalid_requests_are_rejected_before_sending() -> R {
 #[test]
 fn websocket_and_http_share_one_driver() -> R {
     let lab = Lab::new()?;
-    let mut d: Driver<AnyConn> = Driver::new(Config::new(Backend::UringSpin))?;
+    let mut d: Driver<AnyConn> = Driver::new(Config::new(support::uring_backend()?))?;
     std::thread::scope(|s| -> R {
         let srv = s.spawn(|| -> R {
             let mut wsp = lab.accept()?;

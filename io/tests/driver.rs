@@ -50,10 +50,7 @@ impl WsHandler for Collect {
 }
 
 fn driver(b: Backend) -> R<Driver<WsConn>> {
-    // Short waits keep the sleeping backends quick in tests.
-    let mut cfg = Config::new(b);
-    cfg.wait_us = cfg.wait_us.min(100);
-    Ok(Driver::new(cfg)?)
+    Ok(Driver::new(Config::new(b))?)
 }
 
 fn poll_until(d: &mut Driver<WsConn>, h: &mut Collect, done: impl Fn(&Collect) -> bool) -> R {
@@ -426,65 +423,19 @@ fn drop_with_io_in_flight_closes_sockets() -> R {
     })
 }
 
-#[test]
-fn busy_poll_preference_reaches_the_socket_or_fails_cleanly() -> R {
-    use std::os::fd::AsRawFd;
-    // SO_PREFER_BUSY_POLL and a raised SO_BUSY_POLL_BUDGET need CAP_NET_ADMIN:
-    // with it the options must reach the socket, without it `add` must fail
-    // with an error that says so and keep nothing.
-    let probe = std::net::TcpListener::bind("127.0.0.1:0")?;
-    let privileged = ergon_io::sys::set_prefer_busy_poll(probe.as_raw_fd(), true).is_ok();
-    for (prefer, budget) in [(true, None), (false, Some(16)), (true, Some(16))] {
-        let lab = Lab::new()?;
-        let mut cfg = Config::new(Backend::RecvBusy);
-        cfg.prefer_busy_poll = prefer;
-        cfg.busy_poll_budget = budget;
-        let mut d = Driver::new(cfg)?;
-        std::thread::scope(|s| -> R {
-            let srv = s.spawn(|| -> R {
-                let mut p = lab.accept()?;
-                let _ = p.client_closed()?;
-                Ok(())
-            });
-            let added = d.add(WsConn::connect(
-                &lab.target("/")?,
-                lab.client_cfg.clone(),
-                1 << 20,
-            )?);
-            if privileged {
-                let id = added?;
-                let fd = d.get(id).ok_or("conn gone")?.raw_fd();
-                let bp = ergon_io::sys::busy_poll_settings(fd)?;
-                assert_eq!(bp.prefer, prefer, "{bp:?}");
-                assert!(bp.usec >= 1, "{bp:?}");
-            } else {
-                let e = added.err().ok_or("added without CAP_NET_ADMIN")?;
-                assert!(e.to_string().contains("CAP_NET_ADMIN"), "{e}");
-                assert_eq!(d.len(), 0);
-            }
-            drop(d);
-            srv.join().map_err(|_| "server panicked")??;
-            Ok(())
-        })?;
-    }
-    Ok(())
-}
-
 // Which backends poll the NIC through the socket is not a documentation
 // claim: it is a socket option, and it reads back. `recv-busy` (with or
-// without `per_queue`) and `epoll-busy` set `SO_BUSY_POLL` on every socket,
-// so an empty `recvmsg` runs one NAPI pass and the packet is taken off the
-// NIC with no interrupt. `epoll-spin` and `uring-spin` set nothing and wait
-// for the interrupt. `uring-sqpoll` and `uring-napi` do poll the NIC, but
-// through the SQPOLL kernel thread and io_uring NAPI rather than through the
-// socket, so their `SO_BUSY_POLL` is 0 as well.
+// without `per_queue`) sets `SO_BUSY_POLL` on every socket, so an empty
+// `recvmsg` runs one NAPI pass and the packet is taken off the NIC with no
+// interrupt. `epoll-spin` sets nothing and waits for the interrupt.
+// `uring-sqpoll` does poll the NIC, but through the SQPOLL kernel thread and
+// io_uring NAPI rather than through the socket, so its `SO_BUSY_POLL` is 0
+// as well. No backend sets `SO_PREFER_BUSY_POLL`.
 #[test]
 fn busy_poll_is_set_only_where_the_socket_polls_the_nic() -> R {
     each_backend(|b| {
         let lab = Lab::new()?;
-        let mut cfg = Config::new(b);
-        cfg.wait_us = cfg.wait_us.min(100);
-        let mut d = match Driver::new(cfg) {
+        let mut d = match Driver::new(Config::new(b)) {
             Ok(d) => d,
             Err(e) if b == Backend::UringSqpoll && support::refused(&e, HelperThread::SqPoll) => {
                 return Ok(());
@@ -504,21 +455,17 @@ fn busy_poll_is_set_only_where_the_socket_polls_the_nic() -> R {
             )?)?;
             let fd = d.get(id).ok_or("conn gone")?.raw_fd();
             let bp = ergon_io::sys::busy_poll_settings(fd)?;
-            // SO_BUSY_POLL is set exactly on the two backends that poll the
-            // NIC through the socket. Everything else reads back 0.
-            let socket_polls = matches!(b, Backend::RecvBusy | Backend::EpollBusy);
-            if socket_polls {
-                assert!(bp.usec >= 1, "{b}: SO_BUSY_POLL = {}, want >= 1", bp.usec);
+            // SO_BUSY_POLL is set exactly on the backend that polls the NIC
+            // through the socket. Everything else reads back 0.
+            assert!(!bp.prefer, "{b}: SO_PREFER_BUSY_POLL set");
+            if b == Backend::RecvBusy {
+                assert_eq!(bp.usec, 1, "{b}: SO_BUSY_POLL = {}, want 1", bp.usec);
             } else {
                 assert_eq!(bp.usec, 0, "{b}: SO_BUSY_POLL = {}, want 0", bp.usec);
             }
-            // The socket-level polls-nic set is the two above; the two uring
-            // pollers do it without the option; the two spin backends do not
-            // poll the NIC at all.
-            let polls = matches!(
-                b,
-                Backend::RecvBusy | Backend::EpollBusy | Backend::UringSqpoll | Backend::UringNapi
-            );
+            // `uring-sqpoll` polls the NIC without the option; `epoll-spin`
+            // does not poll it at all.
+            let polls = matches!(b, Backend::RecvBusy | Backend::UringSqpoll);
             assert_eq!(b.polls_nic(), polls, "{b}: polls_nic");
             drop(d);
             srv.join().map_err(|_| "server panicked")??;
@@ -597,7 +544,7 @@ fn tokio_registers_the_socket_without_busy_poll() -> R {
 
 #[test]
 fn send_failures_found_by_flush_reach_the_next_poll() -> R {
-    for b in Backend::ALL.into_iter().filter(|b| !b.may_sleep()) {
+    for b in Backend::ALL {
         let lab = Lab::new()?;
         let mut d = match driver(b) {
             Ok(d) => d,
@@ -720,17 +667,18 @@ fn recv_busy_per_queue_reads_every_socket_that_has_data() -> R {
 fn uring_full_submission_queue_keeps_connections_open() -> R {
     // 16 connections on a 4-entry ring: every round needs 32 submissions and
     // overflows the completion queue too. Nothing may be closed.
-    for b in [Backend::UringSpin, Backend::UringSqpoll] {
+    {
+        let b = Backend::UringSqpoll;
         let lab = Lab::new()?;
         let mut cfg = Config::new(b);
         cfg.ring_entries = 4;
         let mut d = match Driver::new(cfg) {
             Ok(d) => d,
             // A pod with one CPU has no core for SQPOLL: typed refusal
-            // (asserted); `UringSpin` above runs the body everywhere.
+            // (asserted).
             Err(e) if b == Backend::UringSqpoll => {
                 assert!(support::refused(&e, HelperThread::SqPoll), "{e}");
-                continue;
+                return Ok(());
             }
             Err(e) => return Err(format!("{b}: {e}").into()),
         };
@@ -767,17 +715,18 @@ fn uring_close_and_reopen_under_a_full_queue_leaves_new_connections_alone() -> R
     // Closing many connections at once on a 2-entry ring defers their
     // cancels; the slots and descriptors are then reused at once. A late
     // cancel must never reach the newer connections.
-    for b in [Backend::UringSpin, Backend::UringSqpoll] {
+    {
+        let b = Backend::UringSqpoll;
         let lab = Lab::new()?;
         let mut cfg = Config::new(b);
         cfg.ring_entries = 2;
         let mut d = match Driver::new(cfg) {
             Ok(d) => d,
             // A pod with one CPU has no core for SQPOLL: typed refusal
-            // (asserted); `UringSpin` above runs the body everywhere.
+            // (asserted).
             Err(e) if b == Backend::UringSqpoll => {
                 assert!(support::refused(&e, HelperThread::SqPoll), "{e}");
-                continue;
+                return Ok(());
             }
             Err(e) => return Err(format!("{b}: {e}").into()),
         };
@@ -915,7 +864,7 @@ fn background_dns_waits_never_hold_up_other_connects() -> R {
 
 #[test]
 fn spin_backends_never_sleep_when_idle() -> R {
-    for b in Backend::ALL.into_iter().filter(|b| !b.may_sleep()) {
+    for b in Backend::ALL {
         let lab = Lab::new()?;
         let mut d = match driver(b) {
             Ok(d) => d,
@@ -1134,14 +1083,12 @@ fn connect_never_blocks_the_poll_loop() -> R {
         let c = connect_to_a_slow_server(&mut d, &lab)?;
         // The worst poll is one handshake step's CPU (slow in a debug build
         // on a shared host), never the server's 150 ms.
-        if !b.may_sleep() {
-            assert_eq!(
-                c.slept, 0,
-                "{b}: the polling thread slept, (poll, faults, asleep, took): {:?} \
-                 ({} more sleeps in faulting polls, the longest {:?})",
-                c.sleeps, c.slept_faulting, c.longest_fault_sleep
-            );
-        }
+        assert_eq!(
+            c.slept, 0,
+            "{b}: the polling thread slept, (poll, faults, asleep, took): {:?} \
+             ({} more sleeps in faulting polls, the longest {:?})",
+            c.sleeps, c.slept_faulting, c.longest_fault_sleep
+        );
         assert!(
             c.slowest < Duration::from_millis(100),
             "{b}: a poll took {:?}",
@@ -1279,7 +1226,7 @@ fn background_connect_keeps_handshake_cpu_off_the_loop() -> R {
     if support::one_cpu()? {
         return background_refuses_on_one_cpu();
     }
-    for b in [Backend::RecvBusy, Backend::UringSpin] {
+    for b in [Backend::RecvBusy, Backend::UringSqpoll] {
         let lab = Lab::new()?;
         let mut d = driver(b)?;
         std::thread::scope(|s| -> R {

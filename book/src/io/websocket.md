@@ -522,7 +522,7 @@ Order round trip: a 64-byte echo, one message in flight. Every figure, with
 its max:
 
 - [Fair run, Graviton](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton):
-  all six backends with 1, 4, 16 and 64 sockets on the loop.
+  every backend (and mio) with 1, 4, 16 and 64 sockets on the loop.
 - [Round trips on x86](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#round-trips-on-x86-1-connection):
   1 connection.
 

@@ -4,14 +4,14 @@ A backend is the kernel interface the `Driver` waits and reads with. It is
 configuration, so one binary can run with each. Which to pick:
 [Choosing a backend](overview.md#choosing-a-backend).
 
-| backend | how it waits | polls the NIC | sleeps in the kernel | extra core |
-|---|---|---|---|---|
-| `epoll-spin` | `epoll_wait(0)` every poll, then one `recvmsg` per ready socket: [mio's mechanism](#mio-measured-not-a-backend) | no (interrupts) | never | no |
-| `recv-busy` | non-blocking `recvmsg` on every socket every poll, with `SO_BUSY_POLL` (with `per_queue`: one read per NIC queue, then the sockets epoll reports ready) | yes, one pass per socket (or queue) per poll | never | no |
-| `uring-spin` | `IORING_OP_RECVMSG` with `DEFER_TASKRUN`; enters the kernel only when it flags work | no (interrupts) | never | no |
-| `uring-sqpoll` | an `SQPOLL` kernel thread submits, completes and polls the NIC | yes, on the kernel thread | never (the application's thread) | yes |
-| `epoll-busy` | `epoll_pwait2(wait_us)` with epoll busy polling for `busy_poll_us` | yes, inside the wait | up to `wait_us` | no |
-| `uring-napi` | `io_uring_enter(GETEVENTS, 1, wait_us)` with NAPI busy polling | yes, inside the wait | up to `wait_us`, and on every idle poll | no |
+| backend | how it waits | polls the NIC | extra core |
+|---|---|---|---|
+| `epoll-spin` | `epoll_wait(0)` every poll, then one `recvmsg` per ready socket: [mio's mechanism](#mio-measured-not-a-backend) | no (interrupts) | no |
+| `recv-busy` | non-blocking `recvmsg` on every socket every poll, with `SO_BUSY_POLL` (with `per_queue`: one read per NIC queue, then the sockets epoll reports ready) | yes, one pass per socket (or queue) per poll | no |
+| `uring-sqpoll` | an `SQPOLL` kernel thread submits, completes and polls the NIC | yes, on the kernel thread | yes |
+
+- **None sleeps in the kernel.** These are the three backends the
+  benchmarks measured in a busy-spin loop.
 
 - **`epoll-spin` is [mio's mechanism](#mio-measured-not-a-backend), and so tokio's.**
   `epoll_wait(0)` never blocks, but never polls the NIC either.
@@ -38,11 +38,7 @@ every platform.)*
 | `sqpoll_cpu` | unset | the SQPOLL kernel thread's CPU; unset: the first helper CPU ([placement](kubernetes.md#why-a-pod-has-no-housekeeping-cpus)). A core of its own or the loop's SMT sibling: [what the sibling costs](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#smt-sibling-cost) |
 | `sqpoll_idle_ms` | 600,000 | idle time before the SQPOLL thread sleeps; NIC polling does not count as work, so keep it long |
 | `ring_entries` | 256 | `io_uring` submission queue size |
-| `busy_poll_us` | 1 (`recv-busy`, `uring-sqpoll`), 50 (`epoll-busy`, `uring-napi`) | NIC busy polling in µs: how long `epoll-busy` and `uring-napi` poll before sleeping; `recv-busy` and `uring-sqpoll` need it non-zero |
-| `wait_us` | 0, or 100 (`epoll-busy`, `uring-napi`) | the longest `epoll-busy` and `uring-napi` wait in the kernel |
 | `per_queue` | `false` | `recv-busy` only: one busy-polled read per NIC queue, then the sockets epoll reports ready |
-| `prefer_busy_poll` | `false` | the kernel leaves the NIC queue to the polling loop (with `recv-busy`, `SO_PREFER_BUSY_POLL`: needs `CAP_NET_ADMIN`); NIC-polling backends only; effect not measured here |
-| `busy_poll_budget` | 0 (kernel: 8) | packets per busy-poll pass; `recv-busy` and `epoll-busy` only; raising it needs `CAP_NET_ADMIN`; effect not measured here |
 | `connect_cpu` | unset | the `connect_background` helper thread's CPU; unset: the housekeeping CPUs |
 | `connect_timeout_ms` | 10,000 | the longest connection set-up |
 | `rcvbuf` | 4 MiB | `SO_RCVBUF` for every socket; needs `net.core.rmem_max` at least as large (warned at start-up); 0: the kernel's autotuning |
@@ -56,16 +52,17 @@ every platform.)*
 | `tcp_info_interval_ms` | 0 (off) | passive `TCP_INFO` per connection (`Driver::tcp_info`); at most one `getsockopt` per poll, from the 250 µs deadline check |
 
 An unknown key, a bad value or a setting the backend cannot use is an error
-(`Config::validate`), never ignored.
+(`Config::validate`), never ignored. NIC busy polling has no key: `recv-busy`
+sets `SO_BUSY_POLL` to 1 µs (one NAPI pass per empty read) and
+`uring-sqpoll` a 1 µs NAPI busy-poll timeout; every other socket gets 0.
 
-## The four one-core backends
+## The one-core backends
 
-`recv-busy`, `recv-busy,per_queue`, `epoll-spin` and `uring-spin` run on
-the loop's CPU alone: no `SQPOLL` kernel thread. `uring-sqpoll` is the only
-backend that needs another CPU; it is not in this section. The interrupt
-backends (`epoll-spin`, `uring-spin`) were measured with the NIC's
-interrupts on a core of their own; on the loop's CPU their p99 rose from 4
-sockets ([fair run](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton)).
+`recv-busy`, `recv-busy,per_queue` and `epoll-spin` run on the loop's CPU
+alone: no `SQPOLL` kernel thread. `uring-sqpoll` is the only backend that
+needs another CPU; it is not in this section. The interrupt backend
+(`epoll-spin`) was measured with the NIC's interrupts on a core of their
+own; on the loop's CPU its p99 rose from 4 sockets ([fair run](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton)).
 
 ```rust,ignore
 {{#include ../../../io/tests/backend_config.rs:one_core_backends}}
@@ -80,7 +77,6 @@ What one poll does:
 | `recv-busy` | `recvmsg` on **every** socket | one per socket per poll |
 | `recv-busy,per_queue` | one read per **NIC queue**, then `epoll_wait(0)` on the ready sockets | one per queue plus the ready ones |
 | `epoll-spin` | `epoll_wait(0)`, then `recvmsg` on the ready sockets | only the ready sockets |
-| `uring-spin` | `IORING_OP_RECVMSG` with `DEFER_TASKRUN` | few |
 
 Which one to take: [choosing a backend](overview.md#choosing-a-backend).
 
@@ -112,11 +108,11 @@ On the lab command line:
 
 ```sh
 # plain: one recvmsg per socket per poll
-io_bench lab --variants recv-busy --cpus 2 --busy-poll 1 --wait-us 0 \
+io_bench lab --variants recv-busy --cpus 2 \
   --server SENDER:9447 --conns 100 --duration 60 --out res/c100-recv-busy
 
 # per_queue: one read per NIC queue, then the ready sockets
-io_bench lab --variants recv-busy --per-queue --cpus 2 --busy-poll 1 --wait-us 0 \
+io_bench lab --variants recv-busy --per-queue --cpus 2 \
   --server SENDER:9447 --conns 100 --duration 60 --out res/c100-per-queue
 
 $B/analyse --warmup-s 2 res/c100-*
@@ -130,9 +126,7 @@ connections: [polling backends](https://github.com/mimran1980/ergon/blob/main/io
 | backend | needs |
 |---|---|
 | `epoll-spin`, `recv-busy` | any supported kernel |
-| `uring-spin` | Linux 6.1+ and the `uring` feature |
-| `uring-sqpoll`, `uring-napi` | Linux 6.9+ (NAPI registration) and the `uring` feature |
-| `epoll-busy` | Linux 6.9+ (`EPIOCSPARAMS`) |
+| `uring-sqpoll` | Linux 6.9+ (NAPI registration) and the `uring` feature |
 
 An older kernel gives `Error::Unsupported` from `Driver::new`.
 
@@ -156,7 +150,6 @@ flowchart TD
     P["one Driver::poll"]
     P --> RB["recv-busy"]
     P --> ES["epoll-spin"]
-    P --> US["uring-spin"]
     P --> SQ["uring-sqpoll"]
 
     RB --> RB1["recvmsg on every socket"]
@@ -166,10 +159,6 @@ flowchart TD
     ES --> ES1["epoll_wait(0)"]
     ES1 --> ES2["recvmsg on ready only"]
     ES2 --> ES3["interrupt path, no NIC poll"]
-
-    US --> US1["submit RECVMSG"]
-    US1 --> US2["DEFER_TASKRUN complete"]
-    US2 --> US3["interrupt path, no NIC poll"]
 
     SQ --> SQ1["SQPOLL kernel thread"]
     SQ1 --> SQ2["polls each NIC queue"]
@@ -188,8 +177,8 @@ only the ready sockets. Its NIC polling stops at the queue count.
 - **`per_queue`** reads one socket per NIC queue (which polls that queue),
   then only the ready sockets. Its NIC polling stops growing at the queue
   count.
-- **`epoll-spin` and `uring-spin`** do not read idle sockets; they wait for
-  the NIC interrupt instead. Against the polling backends:
+- **`epoll-spin`** does not read idle sockets; it waits for the NIC
+  interrupt instead. Against the polling backends:
   [fair run](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton).
 - **A send pass visits only the connections with bytes queued** (the
   driver's send set), so idle connections add nothing to it. The passes
@@ -205,7 +194,6 @@ second (a mean), two rounds. The longest pass is not attributed to a cause.
 | backend | pass, 1 socket | pass, 256 sockets | longest pass, 256 sockets |
 |---|---|---|---|
 | `epoll-spin` | 342–343 ns | 601–617 ns | 612–690 µs |
-| `uring-spin` | 29 ns | 393–395 ns | 1,015–1,199 µs |
 | `uring-sqpoll` (the loop's thread) | 27 ns | 368 ns | 231–246 µs |
 | `recv-busy,per_queue` | 933–934 ns | 5.56–5.58 µs | 804–897 µs |
 | `recv-busy` | 574–588 ns | 149.3–149.4 µs | 1,910–2,187 µs |

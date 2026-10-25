@@ -585,6 +585,17 @@
   `outcome::refused_upgrade(error)` no longer take a budget, and a 429
   with a malformed `Retry-After` is only an `Error::Http`.
   `io/benches`' `limit_bench` is gone with it.
+- Breaking: `ergon-io` keeps the three backends measured in a busy-spin
+  loop: `epoll-spin`, `recv-busy` and `uring-sqpoll`. `Backend::UringSpin`,
+  `Backend::EpollBusy` and `Backend::UringNapi` (`uring-spin`,
+  `epoll-busy`, `uring-napi`) are gone, so is `Backend::may_sleep`
+  (nothing sleeps), and `Backend::ALL` has 3 entries. `Config` loses
+  `busy_poll_us`, `wait_us`, `prefer_busy_poll` and `busy_poll_budget`,
+  and `Config::parse` refuses those keys as unknown: `recv-busy` sets
+  `SO_BUSY_POLL` to 1 µs and `uring-sqpoll` a 1 µs NAPI busy-poll timeout,
+  as their defaults did. `sys::set_prefer_busy_poll` and
+  `sys::set_busy_poll_budget` are gone. For `uring-spin`, use `epoll-spin`
+  (level in the fair run) or `uring-sqpoll`.
 - Breaking: `ergo-sbe` `GenerationConfig::with_error_from_impls`. Implement
   `From<generated::sbe_rt::EncodeError>` and
   `From<generated::sbe_rt::DecodeError>` on your error type instead (keeps

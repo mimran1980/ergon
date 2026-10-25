@@ -33,6 +33,7 @@ Each run directory holds the hosts' settings (`env-rcv.txt`, `env-snd.txt`). The
   - *Arrival → decoded*: kernel receive timestamp to decoded, on the receiver's clock. It leaves out the interrupt wait (interrupt backends), and for polling backends the wait for the next queue poll. Compare polling backends only.
   - *Sender → decoded*: the whole path, on two hosts' clocks. Compare backends within one round only.
 - **Round trips** (WebSocket echo, HTTP) use one clock, the receiver's.
+- **`uring-spin`, `epoll-busy` and `uring-napi` are no longer backends.** ergon-io keeps the three measured busy-spin ones (`epoll-spin`, `recv-busy`, `uring-sqpoll`); the removed ones' rows stay here as the record of what was measured.
 - **A max is one event.** Where the analyser could not attribute it, the generated tables label it "network, hypervisor or untraced". These pages do not name a cause for it.
 
 ## Interrupt against NIC polling: the fair run (Graviton)
@@ -248,7 +249,6 @@ Not measured here: `prefer_busy_poll`, `busy_poll_budget`, route `quickack` and 
 
 - Graviton against x86: not compared. x86 interrupt against polling: no fair run.
 - The fair run's `md-mio-c1` points show a sender batch up to 40 ms late on 0.07 % of batches, mio at one connection only (`work-counts.md`). No cause yet. It is listed with mio's other maxima still without a cause in the book's [mio: measured, not a backend](https://mimran1980.github.io/ergon/io/backends.html#mio-measured-not-a-backend).
-- Whether `epoll-busy` and `uring-napi` save CPU at low load.
 - Azure's once-a-minute stall: no kernel event explains it.
 
 ## Reproduce

@@ -38,9 +38,7 @@ impl HttpHandler for App {
 }
 
 fn driver(b: Backend) -> R<Driver<WsConn>> {
-    let mut cfg = Config::new(b);
-    cfg.wait_us = cfg.wait_us.min(100);
-    Ok(Driver::new(cfg)?)
+    Ok(Driver::new(Config::new(b))?)
 }
 
 fn poll_until<E: Receive<App>>(d: &mut Driver<E>, h: &mut App, done: impl Fn(&App) -> bool) -> R {
@@ -407,50 +405,9 @@ fn the_idle_timeout_closes_a_silent_connection() -> R {
 }
 
 #[test]
-fn a_sleeping_backend_checks_timers_on_every_poll() -> R {
-    // Each idle poll sleeps `wait_us` (10 ms here). Checking timers only
-    // every 64th poll would put the idle timeout about 640 ms late.
-    for b in [Backend::EpollBusy, Backend::UringNapi] {
-        let lab = Lab::new()?;
-        let mut cfg = Config::new(b);
-        cfg.wait_us = 10_000;
-        let mut d: Driver<WsConn> = Driver::new(cfg)?;
-        std::thread::scope(|s| -> R {
-            let srv = s.spawn(|| -> R {
-                let mut p = peer(&lab)?;
-                assert!(p.client_closed()?);
-                Ok(())
-            });
-            let opts = WsOptions {
-                idle_timeout_ms: 50,
-                ..quiet()
-            };
-            connect(&lab, &mut d, opts)?;
-            let mut h = App::default();
-            let t0 = Instant::now();
-            poll_until(&mut d, &mut h, |h| !h.closed.is_empty())?;
-            let took = t0.elapsed();
-            drop(d);
-            srv.join().map_err(|_| "server panicked")??;
-            assert!(
-                matches!(h.closed[0].1, Error::Timeout("websocket idle")),
-                "{b}: {:?}",
-                h.closed
-            );
-            assert!(
-                took < Duration::from_millis(300),
-                "{b}: closed after {took:?}"
-            );
-            Ok(())
-        })?;
-    }
-    Ok(())
-}
-
-#[test]
 fn control_frames_between_fragments_are_handled() -> R {
     let lab = Lab::new()?;
-    let mut d = driver(Backend::UringSpin)?;
+    let mut d = driver(support::uring_backend()?)?;
     std::thread::scope(|s| -> R {
         let srv = s.spawn(|| -> R {
             let mut p = peer(&lab)?;

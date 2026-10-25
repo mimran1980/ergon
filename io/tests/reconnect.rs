@@ -802,7 +802,6 @@ mod with_driver {
         app.links
             .add(move || WsDial::with_options(target.clone(), tls.clone(), opts.clone()));
         let mut cfg = Config::new(b);
-        cfg.wait_us = cfg.wait_us.min(100);
         // A pod with one CPU has no core for the connect helper: opt in to
         // opening on the loop there, so the reconnect lifecycle runs on any
         // pod (the refusal without this is `no_cpu_for_the_connect_helper_

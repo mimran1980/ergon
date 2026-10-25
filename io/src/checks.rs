@@ -271,7 +271,7 @@ pub fn host_report(host: &Host, cfg: &Config) -> HostReport {
     // Inside a pod only: what its settings do to this layout (K1-K7, with
     // T7 and T9 again). Busy polling needs `CAP_NET_ADMIN`.
     let mut needs = Needs::new(Thread::Current, Role::Loop);
-    if cfg.backend.polls_nic() || cfg.prefer_busy_poll || cfg.busy_poll_us > 0 {
+    if cfg.backend.polls_nic() {
         needs = needs.busy_polls();
     }
     findings.extend(k8s_checks(host, &cpus, &needs));
@@ -557,7 +557,7 @@ pub fn napi_line(
          NAPI id after the handshake: busy polling reaches no NIC queue{dev} (a device without \
          NAPI, such as a pod's veth), so the loop waits for interrupts. Fix: give the loop a \
          NIC with NAPI (the host's network namespace, or a CNI that passes the NIC through), \
-         or use an interrupt-driven backend (epoll-spin, uring-spin), which is what this one \
+         or use the interrupt-driven backend (epoll-spin), which is what this one \
          amounts to here."
     ))
 }
