@@ -1553,6 +1553,12 @@ for n in a b; do
     sed -n '/== containerd config dump/,/== cmdline/p' "$out/facts/$n.txt" | sed 's/^/    /' >&2
 done
 
+has_ptp=1
+if ! grep -q '^crw.*/dev/ptp' "$out/facts/a.txt" || ! grep -q '^crw.*/dev/ptp' "$out/facts/b.txt"; then
+    has_ptp=0
+    log "no /dev/ptp* on the nodes: M4 checks the refusal only, M6 runs without the PHC grant"
+fi
+
 # ---- mode manifests ----------------------------------------------------------
 
 # make_pod <mode> <which a|b> <ping_ep> <pong_ep>: one pod YAML on stdout.
@@ -1562,9 +1568,14 @@ done
 # forbids hostPath and Unconfined). cpu: 2 Guaranteed takes the isolated
 # CPUs; the shared-millicpus request is the opt-in to the plugin's shared
 # CPU. SCHED_FIFO is deliberately absent (inconclusive in the one AWS A/B).
+# The pod name of a role and mode: lowercase, as Kubernetes requires (M0 -> m0).
+pname() { echo "ergon-lab-$1-$(tr '[:upper:]' '[:lower:]' <<<"$2")"; }
+# Whether the nodes have a NIC PHC: without one, M6 is the all-on set less ptp
+# (recorded), and M4 is a refusal check only. Set from the node facts above.
 make_pod() {
     local mode=$1 which=$2 ping_ep=$3 pong_ep=$4
-    local name=ergon-lab-$which-$mode ns=ergon-latency-pods
+    local name ns=ergon-latency-pods
+    name=$(pname "$which" "$mode")
     local node=$node_a
     [[ $which == b ]] && node=$node_b
     local ann_hugepages="" ann_partition="" ann_seccomp="" ann_devices="" ann_rlimits=""
@@ -1590,16 +1601,17 @@ make_pod() {
     M3 | M6) ann_seccomp=$'    seccomp.ergon.io/app: "io-uring"\n' ;;
     esac
     case $mode in
-    M4 | M6) ann_devices=$'    ptp.ergon.io/app: "auto"\n' ;;
+    M4) ann_devices=$'    ptp.ergon.io/app: "auto"\n' ;;
+    M6) ((has_ptp)) && ann_devices=$'    ptp.ergon.io/app: "auto"\n' ;;
     esac
     local probe="" huge_res=""
     [[ $mode == M5 ]] && probe=$(cat <<'PYAML'
-          livenessProbe:
-            exec:
-              command: ["true"]
-            periodSeconds: 1
-            timeoutSeconds: 1
-            failureThreshold: 1000
+      livenessProbe:
+        exec:
+          command: ["true"]
+        periodSeconds: 1
+        timeoutSeconds: 1
+        failureThreshold: 1000
 PYAML
 )
     # Every mode but M5 is a latency pod: the validating policy matches this
@@ -1611,7 +1623,7 @@ PYAML
         # k8s isolates hugepages at container scope; the plugin's mount
         # size matches this limit. 256Mi = the node's 256 x 2 MiB pages.
         huge_res=$(cat <<'PYAML'
-              hugepages-2Mi: 256Mi
+          hugepages-2Mi: 256Mi
 PYAML
 )
     fi
@@ -1962,7 +1974,8 @@ functional_check() { # <mode> <ns> -> 0 when every promised grant is there
     M3 | M6) want="$want io_uring" ;;
     esac
     case $mode in
-    M4 | M6) want="$want ptp" ;;
+    M4) want="$want ptp" ;;
+    M6) ((has_ptp)) && want="$want ptp" ;;
     esac
     local w
     for w in $want; do
@@ -2082,7 +2095,7 @@ eks_lane
 # names its CPU and slack itself.
 xcsv=$out/phase-x.csv
 : >"$xcsv"
-x_sh() { local w=$1; shift; kx -n ergon-latency-pods "ergon-lab-$w-M3" -- sh -c "$*"; }
+x_sh() { local w=$1; shift; kx -n ergon-latency-pods "$(pname "$w" M3)" -- sh -c "$*"; }
 load_on() { # <which> <spinners on the shared CPU>
     local w=$1 c=$2 node
     node=$(nv node "$w")
@@ -2184,13 +2197,13 @@ phase_x_run() {
             for w in a b; do [[ -n $(k get pod -n default "ergon-lab-load-$w" -o name 2>/dev/null) ]] || load_on "$w" 1; done
         fi
         port=$((port + 2))
-        kx -n ergon-latency-pods ergon-lab-b-M3 -- sh -c "$(upp_script pong "$lay" $((port + 1)) "$ip_a" "$port" $((x_seconds + 20)) "$3")" \
+        kx -n ergon-latency-pods "$(pname b M3)" -- sh -c "$(upp_script pong "$lay" $((port + 1)) "$ip_a" "$port" $((x_seconds + 20)) "$3")" \
             >"$out/X-$3-pong.log" 2>&1 &
         pong_bg=$!
         sleep 2
         x_sh a "$(upp_script ping "$lay" "$port" "$ip_b" $((port + 1)) "$x_seconds" "$3")" 2>"$out/X-$3-ping.err" | tee -a "$xcsv" >&2
         wait "$pong_bg" 2>/dev/null
-        kx -n ergon-latency-pods ergon-lab-b-M3 -- pkill uring-pp >/dev/null 2>&1 || true
+        kx -n ergon-latency-pods "$(pname b M3)" -- pkill uring-pp >/dev/null 2>&1 || true
         [[ -s $out/X-$3-ping.err ]] && log "phase X $3: $(tr '\n' ' ' <"$out/X-$3-ping.err")"
     done
     load_off
@@ -2231,7 +2244,7 @@ for mode in $modes; do
         for which in a b; do
             want=$node_a
             [[ $which == b ]] && want=$node_b
-            got=$(k get pod -n "$ns" "ergon-lab-$which-$mode" -o jsonpath='{.spec.nodeName}' 2>/dev/null)
+            got=$(k get pod -n "$ns" "$(pname "$which" "$mode")" -o jsonpath='{.spec.nodeName}' 2>/dev/null)
             if [[ $got != "$want" ]]; then
                 echo "mode $mode rep $rep: pod $which on '$got', not '$want': the endpoints name the wrong process" >>"$out/skipped.txt"
                 die "$mode rep $rep: role $which is on '$got', not '$want' (see $out/skipped.txt)"
@@ -2252,17 +2265,17 @@ for mode in $modes; do
         # rep_cmd moves each measured task into the isolated partition and
         # pins it to a granted CPU; it prints nothing to stdout but the
         # client's own line, and nothing at all if the proof fails.
-        kx -n "$ns" "ergon-lab-b-$mode" -- sh -c "$(rep_cmd "$mode" b "$ping_ep" "$pong_ep")" \
+        kx -n "$ns" "$(pname b "$mode")" -- sh -c "$(rep_cmd "$mode" b "$ping_ep" "$pong_ep")" \
             >"$out/$run-pong.log" 2>&1 &
         pong_bg=$!
         sleep 3
-        kx -n "$ns" "ergon-lab-a-$mode" -- sh -c "$(rep_cmd "$mode" a "$ping_ep" "$pong_ep")" \
+        kx -n "$ns" "$(pname a "$mode")" -- sh -c "$(rep_cmd "$mode" a "$ping_ep" "$pong_ep")" \
             2>"$out/$run-ping-err.log" | sed "s/^/$rep,/" | tee -a "$results" >&2
         ping_rc=${PIPESTATUS[0]}
         if ((ping_rc != 0)); then
             die "$mode rep $rep: the measured client did not prove its placement (rc $ping_rc; $out/$run-ping-err.log)"
         fi
-        kx -n "$ns" "ergon-lab-b-$mode" -- pkill -f '[r]tt xpong' >/dev/null 2>&1 || true
+        kx -n "$ns" "$(pname b "$mode")" -- pkill -f '[r]tt xpong' >/dev/null 2>&1 || true
         wait "$pong_bg" 2>/dev/null
         # what the clients wrote, while the pods still live
         for which in a b; do
@@ -2289,7 +2302,7 @@ for mode in $modes; do
             $( [[ $mode == M5 ]] && echo "--probe-every 1" ) \
             --threshold-us 200 >"$out/$run-attribute.txt" 2>>"$out/$run-attribute.err" || true
         log "$mode rep $rep done: $(tail -1 "$out/$run-attribute.txt" 2>/dev/null)"
-        k delete pod -n "$ns" "ergon-lab-a-$mode" "ergon-lab-b-$mode" --ignore-not-found >/dev/null 2>&1
+        k delete pod -n "$ns" "$(pname a "$mode")" "$(pname b "$mode")" --ignore-not-found >/dev/null 2>&1
         sleep 3
     done
 done
