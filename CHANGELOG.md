@@ -575,6 +575,16 @@
 
 ### Removed
 
+- Breaking: `ergon-io` `limit` (`Budget`, `BucketSpec`, `Charge`, `Class`,
+  `Ticket`, `Limited`, `Resend`, `Why` and the rest) and `outcome::Now`.
+  Pacing to a venue's limits is the application's: gate connects through
+  `Reconnect::poll_gated` and `ClientHandler::connect_gate` as before.
+  `Verdict::Throttled` and `Verdict::Banned` now carry
+  `retry_after_ms: Option<u64>` instead of a bucket and a hold end;
+  `outcome::generic(resp, server_now_ms)` and
+  `outcome::refused_upgrade(error)` no longer take a budget, and a 429
+  with a malformed `Retry-After` is only an `Error::Http`.
+  `io/benches`' `limit_bench` is gone with it.
 - Breaking: `ergo-sbe` `GenerationConfig::with_error_from_impls`. Implement
   `From<generated::sbe_rt::EncodeError>` and
   `From<generated::sbe_rt::DecodeError>` on your error type instead (keeps

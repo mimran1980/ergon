@@ -398,7 +398,13 @@ and feed it every open and close.
 
 ### Connect limits and the server's wait
 
-Services may limit connect attempts per IP. One `Budget` bucket is the gate of every link on that IP:
+Services may limit connect attempts per IP. One gate, the application's
+pacing, serves every link on that IP. ergon-io has no rate limiter; the
+test's pacer is a few lines:
+
+```rust,ignore
+{{#include ../../../io/tests/reconnect.rs:pace}}
+```
 
 ```rust,ignore
 {{#include ../../../io/tests/reconnect.rs:gate}}
@@ -426,10 +432,11 @@ A refused handshake, in `on_closed`:
 {{#include ../../../io/tests/reconnect.rs:refused}}
 ```
 
-- 429: the bucket is held for `Retry-After` (or its backoff without one).
+- 429: `Throttled { retry_after_ms }`; hold the gate for it (your own
+  backoff without one). A malformed `Retry-After` is an `Error::Http`.
 - Application-specific ban statuses are interpreted by the application
-  adapter, which can halt a bucket with `Budget::banned`.
-- Give the HTTP pool a bucket of its own ([HTTP client](http-client.md)):
+  adapter, which halts its gate until a person clears it.
+- Give the HTTP pool a gate of its own ([HTTP client](http-client.md)):
   venues count WebSocket connects.
 
 ## Sending
@@ -446,8 +453,8 @@ A refused handshake, in `on_closed`:
   `poll` returns (as the example does).
 - `stats().auto_frames` counts the frames the connection sends by itself:
   Pongs, Pings on a quiet connection, the echo of a server Close. A venue
-  that limits messages per connection may count them:
-  charge the change each pass with `Budget::force`.
+  that limits messages per connection may count them: charge the change
+  each pass to your pacing.
 
 What a send costs before the kernel:
 

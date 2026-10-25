@@ -1,81 +1,64 @@
 # Rate Limits and Errors
 
-`limit::Budget` checks application-configured limits before a request is
-sent. It never sleeps, queues or retries. The application decides whether
-to wait, drop the request or alert.
+ergon-io has no rate limiter. Pacing requests, orders and connects to a
+venue's limits is the application's: only it knows the venue's scopes,
+costs and usage headers. ergon-io gives the pieces a pacer needs.
 
 ## What ergon-io gives you
 
-| Mechanism | Contract |
+| Piece | Contract |
 |---|---|
-| `Budget::try_charge` | Charge up to eight buckets atomically: all or none. Returns a ticket or the earliest retry time. |
-| `Model::Rolling` | A conservative window count with a guard for timing jitter. |
-| `Model::Decay` | A continuously draining counter. It allows a burst plus replenishment, so it does not enforce a strict window count. |
-| `Model::Gate` | A shared hold or halt without a counter. |
-| `Class::Reduce`, reserve | Capacity reserved for application-designated reducing operations. Holds and halts still block them. |
-| `refund` | Return a ticket when the request never left. |
-| `observe_used`, `set_limit` | Apply server-reported usage and configured limits. Usage observations never lower the local count. |
-| `throttled` | Hold for the server's wait plus the guard; without a wait, use backoff and mark the bucket full for one window. |
-| `banned`, `clear_halt` | Halt a scope until the application explicitly clears it. The application identifies bans and supplies their wait. |
-| `try_resend`, `resend` | Check the original deadline before charging a retry. Unknown outcomes require reconciliation. |
-| `tick` | Advance idle bucket rings outside the send path. |
+| `outcome::Sent` | For a request with no response: `No`, it never wholly left (safe to send again); `Maybe`, it may have run. |
+| `outcome::Verdict` | One answer per request. `Throttled` and `Banned` carry the server's wait (`retry_after_ms`, `None` when it named none). |
+| `outcome::generic` | The verdict from the HTTP status and `Retry-After` alone. |
+| `outcome::refused_upgrade` | The verdict on a refused WebSocket handshake: `Throttled` on a 429, else `None`. |
+| `retry_after_ms`, `header_u64`, `ms_until_epoch` | Parse waits and numeric usage headers. Malformed values are errors, never defaults. |
+| `Reconnect::poll_gated` | Every WebSocket connect and reconnect asks your gate first. |
+| `ClientHandler::connect_gate` | Every HTTP pool connect asks your gate first (native client). |
+| `WsStats::auto_frames` | Frames the connection sent by itself (Pongs, Pings, the Close echo), for a venue that counts them. |
 
-Use one budget for all connections sharing a limit. The budget cannot see
-other processes or hosts; an application adapter must configure scopes,
-request costs, usage headers and service-specific error codes.
+A gate answers `Ok(())` to connect now or `Err(wait_ns)` to be asked
+again after the wait. It returns a wait, not a time, so its clock is
+yours. A refusal is not a failed attempt: the backoff does not grow.
 
 ## Outcomes and HTTP
 
-`Sent::No` means the transport knows the server could not have seen the
-complete request. `Sent::Maybe` means the operation may have run. Retry a
-non-idempotent operation only after establishing that it did not run.
-
-`outcome::generic` classifies HTTP status and `Retry-After`:
+`outcome::generic(resp, server_now_ms)`:
 
 | Status | Verdict |
 |---|---|
 | 2xx | `Done` |
 | 408 | `Unknown` |
-| 429 | `Throttled`; hold the supplied scope |
+| 429 | `Throttled`, with `Retry-After` |
 | 3xx and other 4xx | `Rejected` |
 | Other statuses | `Unknown` |
 
-Read application-specific body codes and ban statuses in your adapter
-before using the generic fallback. No exchange status or ban duration is
-built into the generic HTTP classifier.
+| Verdict | Ran? | What to do |
+|---|---|---|
+| `Done` | yes | apply |
+| `Rejected` | no | fix; never re-send unchanged |
+| `NotRun` | no | re-send inside the request's deadline |
+| `Throttled` | no | hold the scope for `retry_after_ms` (your backoff without one); re-send after it |
+| `Banned` | no | halt the scope until a person clears it; alert |
+| `ClockSkew` | no | re-send with a new timestamp |
+| `Unknown` | maybe | reconcile by client order id; never re-send an order |
 
-`retry_after_ms`, `header_u64` and `ms_until_epoch` parse waits and numeric
-headers. Malformed values are errors. A malformed `Retry-After` on a 429
-still holds the bucket on its fallback backoff before reporting the error.
+- A 429 whose `Retry-After` is malformed is an `Error::Http`. It is still
+  a 429: hold the scope on your own backoff.
+- A date in `Retry-After` is measured against the response's `Date`, else
+  against `server_now_ms` (your UTC clock).
+- Read venue-specific body codes and ban statuses in your adapter before
+  the generic fallback. No exchange status or ban duration is built in.
 
-## Connects and automatic frames
+## Connects
 
-Use `Reconnect::poll_gated` for WebSocket connects and
-`ClientHandler::connect_gate` for the HTTP pool. Every initial connect and
-reconnect then passes the configured gate. `outcome::refused_upgrade`
-holds a gate on HTTP 429; other statuses belong to the application adapter.
-See [WebSocket connect limits](websocket.md#connect-limits-and-the-servers-wait).
-
-If the service counts automatic Pongs or other control frames, charge the
-change in `WsStats::auto_frames` with `Budget::force`.
+Hold the connect gate on a refused handshake, and defer the refused link
+past the wait. See
+[WebSocket connect limits](websocket.md#connect-limits-and-the-servers-wait)
+and the [HTTP pool's gate](http-client.md).
 
 ## Limits
 
-The budget reads no clock, performs no I/O and allocates nothing after
-construction on the charge path. Supply one monotonic clock for all calls.
-Adding buckets allocates and belongs outside the send path. The charge
-path's latency has not been established by a committed benchmark run.
-
-## Measure the generic budget
-
-`io/benches` includes `limit_bench`, with rolling and draining buckets,
-multiple simultaneous charges, refusals and idle catch-up. It reports
-batch means, the slowest batch and allocations; a batch percentile is not
-a percentile of individual calls.
-
-```sh
-cargo run --release --manifest-path io/benches/Cargo.toml --bin limit_bench -- --samples 200000 --batch 64
-```
-
-Pin to an isolated Linux CPU with `--cpu` for timing conclusions. A macOS
-run is a functional smoke check.
+- One sending process per account and IP: a pacer in one process cannot
+  see the others.
+- An unknown outcome needs the order looked up by its client order id.

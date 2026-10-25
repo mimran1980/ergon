@@ -1,10 +1,9 @@
 //! `outcome`: `Retry-After` and usage-header parsing, `Sent` and `Verdict`,
-//! and `generic`. Pure functions over a `Response`: every platform.
+//! `generic` and `refused_upgrade`. Pure functions: every platform.
 #![allow(missing_docs)]
 
 use ergon_io::Response;
-use ergon_io::limit::{BucketSpec, Budget};
-use ergon_io::outcome::{self, Now, Sent, Verdict};
+use ergon_io::outcome::{self, Sent, Verdict};
 
 type R<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -276,17 +275,17 @@ fn a_failure_without_a_response_is_not_run_only_when_never_sent() {
 }
 
 #[test]
-fn only_requests_that_did_not_run_may_be_sent_again() -> R {
-    let b = Budget::new(vec![BucketSpec::rolling("ip", 1_200, 60_000, 60)])?;
-    let ip = b.id("ip").ok_or("no bucket")?;
-    // Not run, throttled, or refused for its timestamp: again, through the
-    // budget and inside the request's own deadline (`Budget::try_resend`).
+fn only_requests_that_did_not_run_may_be_sent_again() {
+    // Not run, throttled, or refused for its timestamp: again, inside the
+    // request's own deadline and after any wait the server named.
     for v in [
         Verdict::NotRun,
         Verdict::ClockSkew,
         Verdict::Throttled {
-            bucket: ip,
-            until_ns: 5,
+            retry_after_ms: Some(5),
+        },
+        Verdict::Throttled {
+            retry_after_ms: None,
         },
     ] {
         assert!(v.may_resend(), "{v:?}");
@@ -298,13 +297,11 @@ fn only_requests_that_did_not_run_may_be_sent_again() -> R {
         Verdict::Rejected,
         Verdict::Unknown,
         Verdict::Banned {
-            bucket: ip,
-            until_ns: 5,
+            retry_after_ms: Some(5),
         },
     ] {
         assert!(!v.may_resend(), "{v:?}");
     }
-    Ok(())
 }
 
 const fn status(status: u16) -> Response<'static> {
@@ -318,12 +315,6 @@ const fn status(status: u16) -> Response<'static> {
 
 #[test]
 fn generic_sorts_statuses_alone() -> R {
-    let mut b = Budget::new(vec![BucketSpec::rolling("ip", 1_200, 60_000, 60)])?;
-    let ip = b.id("ip").ok_or("no bucket")?;
-    let now = Now {
-        ns: 1_000_000_000,
-        real_ns: T0_MS * 1_000_000,
-    };
     for (code, want) in [
         (200, Verdict::Done),
         (204, Verdict::Done),
@@ -339,65 +330,103 @@ fn generic_sorts_statuses_alone() -> R {
         (0, Verdict::Unknown),
         (600, Verdict::Unknown),
     ] {
-        assert_eq!(
-            outcome::generic(&status(code), ip, &mut b, now)?,
-            want,
-            "{code}"
-        );
+        assert_eq!(outcome::generic(&status(code), T0_MS)?, want, "{code}");
     }
-    assert_eq!(
-        b.held_until(ip, now.ns)?,
-        None,
-        "ordinary responses do not hold the scope"
-    );
     Ok(())
 }
 
 #[test]
 fn generic_does_not_interpret_service_specific_statuses_as_bans() -> R {
-    let mut budget = Budget::new(vec![BucketSpec::gate("service")])?;
-    let scope = budget.id("service").ok_or("no bucket")?;
     for code in [403, 418] {
-        assert_eq!(
-            outcome::generic(&status(code), scope, &mut budget, Now::default())?,
-            Verdict::Rejected
-        );
-        assert!(!budget.stats(scope, 0)?.halted);
+        assert_eq!(outcome::generic(&status(code), T0_MS)?, Verdict::Rejected);
     }
     Ok(())
 }
 
 #[test]
-fn generic_holds_the_scope_on_a_429_for_the_servers_wait() -> R {
-    let mut b = Budget::new(vec![BucketSpec::rolling("ip", 1_200, 60_000, 60)])?;
-    let ip = b.id("ip").ok_or("no bucket")?;
-    let now = Now {
-        ns: 1_000_000_000,
-        real_ns: T0_MS * 1_000_000,
-    };
+fn generic_gives_the_servers_wait_on_a_429() -> R {
     let hs = [h("Retry-After", "30")];
-    match outcome::generic(&resp(&hs), ip, &mut b, now)? {
-        Verdict::Throttled { bucket, until_ns } => {
-            assert_eq!(bucket, ip);
-            assert!(until_ns >= now.ns + 30_000_000_000, "{until_ns}");
-            assert_eq!(b.held_until(ip, now.ns)?, Some(until_ns));
+    assert_eq!(
+        outcome::generic(&resp(&hs), T0_MS)?,
+        Verdict::Throttled {
+            retry_after_ms: Some(30_000)
         }
-        v => return Err(format!("{v:?}").into()),
-    }
+    );
+    // A date is measured against the response's Date, as `retry_after_ms`.
+    let hs = [
+        h("Date", "Sun, 06 Nov 1994 08:49:37 GMT"),
+        h("Retry-After", "Sun, 06 Nov 1994 08:49:47 GMT"),
+    ];
+    assert_eq!(
+        outcome::generic(&resp(&hs), 0)?,
+        Verdict::Throttled {
+            retry_after_ms: Some(10_000)
+        }
+    );
+    // No Retry-After: throttled, with no wait named.
+    assert_eq!(
+        outcome::generic(&status(429), T0_MS)?,
+        Verdict::Throttled {
+            retry_after_ms: None
+        }
+    );
     Ok(())
 }
 
 #[test]
-fn generic_holds_the_scope_even_when_retry_after_is_unreadable() -> R {
-    let mut b = Budget::new(vec![BucketSpec::rolling("ip", 1_200, 60_000, 60)])?;
-    let ip = b.id("ip").ok_or("no bucket")?;
-    let now = Now {
-        ns: 1_000_000_000,
-        real_ns: T0_MS * 1_000_000,
-    };
+fn generic_reports_an_unreadable_retry_after_on_a_429() {
     let hs = [h("Retry-After", "soon")];
-    assert!(outcome::generic(&resp(&hs), ip, &mut b, now).is_err());
-    // Reported, and nothing may be sent into the 429 meanwhile.
-    assert!(b.held_until(ip, now.ns)?.is_some());
+    assert!(matches!(
+        outcome::generic(&resp(&hs), T0_MS),
+        Err(ergon_io::Error::Http(_))
+    ));
+    // Only a 429 reads it: a 503's Retry-After is the adapter's business.
+    let r = Response {
+        status: 503,
+        headers: &hs,
+        body: b"",
+        head_ascii: true,
+    };
+    assert!(matches!(outcome::generic(&r, T0_MS), Ok(Verdict::Unknown)));
+}
+
+const fn refusal(status: u16, retry_after_ms: Option<u64>, invalid: bool) -> ergon_io::Error {
+    ergon_io::Error::Upgrade {
+        status,
+        body: String::new(),
+        retry_after_ms,
+        retry_after_invalid: invalid,
+    }
+}
+
+#[test]
+fn a_refused_upgrade_is_throttled_only_on_a_429() -> R {
+    assert_eq!(
+        outcome::refused_upgrade(&refusal(429, Some(5_000), false))?,
+        Some(Verdict::Throttled {
+            retry_after_ms: Some(5_000)
+        })
+    );
+    assert_eq!(
+        outcome::refused_upgrade(&refusal(429, None, false))?,
+        Some(Verdict::Throttled {
+            retry_after_ms: None
+        })
+    );
+    // Other statuses and other errors are the application's policy.
+    for e in [
+        refusal(403, Some(5_000), false),
+        refusal(503, None, false),
+        ergon_io::Error::Closed,
+        ergon_io::Error::Timeout("websocket connect"),
+    ] {
+        assert_eq!(outcome::refused_upgrade(&e)?, None, "{e}");
+    }
+    // A 429 whose Retry-After could not be read is reported, never a
+    // throttle without a wait.
+    assert!(matches!(
+        outcome::refused_upgrade(&refusal(429, None, true)),
+        Err(ergon_io::Error::Http(_))
+    ));
     Ok(())
 }

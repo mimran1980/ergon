@@ -20,7 +20,6 @@
 //!   built on ergon-tune.
 //! - [`placement`]: where the helper threads run (the connect helper, the
 //!   warning thread, `SQPOLL`), inside the process's cpuset.
-//! - [`limit`]: the send budget for venue rate limits ([`Budget`]).
 //! - [`outcome`]: what became of a request ([`Sent`], [`Verdict`]) and
 //!   `Retry-After` parsing.
 //! - [`net`] ([`Target`]), [`dns`], [`any`] ([`AnyConn`]:
@@ -38,7 +37,6 @@ pub mod dns;
 pub mod endpoint;
 pub mod error;
 pub mod http;
-pub mod limit;
 pub mod net;
 pub mod outcome;
 pub mod placement;
@@ -84,11 +82,8 @@ pub use http::{
     HttpConn, HttpDial, HttpHandler, HttpOptions, HttpStats, NonAsciiHead, RequestTemplate,
     Response,
 };
-pub use limit::{
-    BucketId, BucketSpec, BucketStats, Budget, Charge, Class, Limited, Resend, Ticket, Why,
-};
 pub use net::Target;
-pub use outcome::{Now, Sent, Verdict};
+pub use outcome::{Sent, Verdict};
 pub use reconnect::{Reconnect, Retry};
 pub use text::{AsciiText, NonAscii, TextCheck, TextStatus};
 pub use ws_conn::{

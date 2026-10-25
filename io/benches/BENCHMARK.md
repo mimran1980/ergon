@@ -253,12 +253,11 @@ Not measured here: `prefer_busy_poll`, `busy_poll_budget`, route `quickack` and 
 
 ## Reproduce
 
-The generic rate-limit and TLS record tools are in this checkout:
+The TLS record tool is in this checkout:
 
 ```sh
 cargo test --manifest-path io/benches/Cargo.toml
 cargo build --release --manifest-path io/benches/Cargo.toml --bins
-io/benches/target/release/limit_bench --samples 200000 --batch 64
 io/benches/target/release/tls_bench --sizes 200,1000,4000,16000 --mib 64 --reps 5
 ```
 

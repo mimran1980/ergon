@@ -171,16 +171,15 @@ The full table, the evidence and the node settings: the book's
 
 ## Rate limits and errors
 
-- `limit::Budget` checks each request against the venue's limits before it
-  goes out: up to 8 buckets, all or none. It never sleeps or queues.
+- No rate limiter: pacing to a venue's limits is the application's.
+  `Reconnect::poll_gated` and `ClientHandler::connect_gate` ask its gate
+  before every connect.
 - A failed request says whether it left (`outcome::Sent`); a response maps
-  to one `outcome::Verdict`.
-- A ban halts its scope until a person calls `Budget::clear_halt`.
-- Send again only what did not run, inside its deadline
-  (`Budget::try_resend`); look up an unknown order by its client order id.
-- One sending process per account and IP: the budget cannot see others.
-- Configure limits and classify application-specific errors in your adapter.
-  The generic mechanisms are described in the book's
+  to one `outcome::Verdict`, which carries the server's wait.
+- Send again only what did not run, inside its deadline; look up an
+  unknown order by its client order id.
+- Classify application-specific errors in your adapter. The generic
+  mechanisms are described in the book's
   [rate limits and errors](https://mimran1980.github.io/ergon/io/rate-limits.html).
 
 ## Features

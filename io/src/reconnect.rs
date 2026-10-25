@@ -16,9 +16,9 @@
 //!   [`Reconnect::stop`] vetoes further attempts, [`Reconnect::resume`]
 //!   starts again.
 //! - A venue's connect limit: [`Reconnect::poll_gated`] starts an attempt
-//!   only when a gate passes it, typically one [`crate::limit::Budget`]
-//!   bucket shared by every link on the IP. Fifty links added at once then
-//!   start at the gate's pace, not in one burst.
+//!   only when a gate passes it: the application's pacing, one gate shared
+//!   by every link on the IP. Fifty links added at once then start at the
+//!   gate's pace, not in one burst.
 //! - The server's wait: [`Reconnect::defer`] keeps a link from connecting
 //!   before a time (a refused handshake's `Retry-After`, through
 //!   [`crate::outcome::refused_upgrade`]), whatever the backoff says.
@@ -393,13 +393,13 @@ impl<D> Reconnect<D> {
 
     /// [`Reconnect::poll`], but each attempt must pass `gate` first, the
     /// first attempt after [`Reconnect::add`] included. Use it for a venue's
-    /// limit on connect attempts per IP: one gate (one
-    /// [`crate::limit::Budget`] bucket) for every link on that IP.
+    /// limit on connect attempts per IP: one gate (the application's pacing)
+    /// for every link on that IP.
     ///
     /// - `gate` answers `Ok(())` to connect now, or `Err(wait_ns)`: the link
     ///   asks again after that wait, at most [`Retry::max_ms`] later (a
-    ///   halted budget answers about 292 years; asking again restarts the
-    ///   link soon after a person clears the halt).
+    ///   halted gate may answer `u64::MAX`; asking again restarts the link
+    ///   soon after a person clears the halt).
     /// - A refusal is not a failed attempt: the backoff does not grow, and
     ///   [`Retry::max_attempts`] does not count it.
     /// - Each pass starts at the link after the last one the gate passed, so
@@ -407,10 +407,8 @@ impl<D> Reconnect<D> {
     /// - `gate` is called only for a link that is due: never on a pass with
     ///   nothing to start.
     ///
-    /// A gate over a budget, with `now` the budget's clock:
-    /// `|| budget.try_charge(&[connects], Class::Normal, now).map(drop).map_err(|l| l.wait_ns(now))`.
-    /// The gate returns a wait, not a time, so the budget's clock need not
-    /// be `CLOCK_MONOTONIC`.
+    /// The gate returns a wait, not a time, so the application's pacing
+    /// clock need not be `CLOCK_MONOTONIC`.
     #[inline]
     pub fn poll_gated(
         &mut self,

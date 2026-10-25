@@ -3,7 +3,7 @@ name = "ergon-io-bench"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "Generic rate-limit and TLS record benchmarks for ergon-io"
+description = "TLS record, WebSocket and HTTP benchmarks for ergon-io"
 
 [lib]
 name = "io_bench"

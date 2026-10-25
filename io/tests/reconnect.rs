@@ -4,8 +4,9 @@
 //! driver on every backend (Linux).
 #![allow(missing_docs)]
 
-use ergon_io::limit::{BucketId, BucketSpec, Budget, Charge, Class};
-use ergon_io::outcome::{self, Now, Verdict};
+use std::collections::VecDeque;
+
+use ergon_io::outcome::{self, Verdict};
 use ergon_io::reconnect::{Closed, Connector, LinkState, Opened, Reconnect, Retry};
 use ergon_io::{ConnId, Error};
 
@@ -378,30 +379,64 @@ fn no_cpu_for_the_connect_helper_gives_up_at_once() -> R {
 /// `MS` as an unsigned wait.
 const MSU: u64 = 1_000_000;
 
-/// One pass with a gate over `connects`: each attempt charges one unit at
-/// `now`; a refusal answers how long to wait.
-fn gated(
-    rc: &mut Reconnect<u32>,
-    f: &mut Fake,
-    budget: &mut Budget,
-    connects: BucketId,
-    now: i64,
-) -> usize {
-    rc.poll_at_gated(f, now, || {
-        budget
-            .try_charge(&[Charge::new(connects, 1)], Class::Normal, now)
-            .map(drop)
-            .map_err(|l| l.wait_ns(now))
-    })
+// ANCHOR: pace
+/// The application's connect pacing (ergon-io has none): at most `limit`
+/// starts in any `window_ns`, a hold until a time (a 429's wait), and a
+/// halt that only `clear` ends (a ban).
+struct Pace {
+    limit: usize,
+    window_ns: i64,
+    starts: VecDeque<i64>,
+    held_until: i64,
+    halted: bool,
+}
+
+impl Pace {
+    const fn new(limit: usize, window_ns: i64) -> Self {
+        Self {
+            limit,
+            window_ns,
+            starts: VecDeque::new(),
+            held_until: 0,
+            halted: false,
+        }
+    }
+
+    /// The gate: `Ok(())` and count a start, or `Err(wait_ns)`.
+    fn try_start(&mut self, now: i64) -> Result<(), u64> {
+        if self.halted {
+            return Err(u64::MAX);
+        }
+        if now < self.held_until {
+            return Err(self.held_until.abs_diff(now));
+        }
+        while self.starts.front().is_some_and(|&t| t + self.window_ns <= now) {
+            self.starts.pop_front();
+        }
+        match self.starts.front() {
+            Some(&oldest) if self.starts.len() >= self.limit => {
+                Err((oldest + self.window_ns).abs_diff(now))
+            }
+            _ => {
+                self.starts.push_back(now);
+                Ok(())
+            }
+        }
+    }
+}
+// ANCHOR_END: pace
+
+/// One pass with `pace` as the gate.
+fn gated(rc: &mut Reconnect<u32>, f: &mut Fake, pace: &mut Pace, now: i64) -> usize {
+    rc.poll_at_gated(f, now, || pace.try_start(now))
 }
 
 #[test]
 fn a_gate_paces_fifty_links_and_starts_every_one() -> R {
     // ANCHOR: gate
-    // Connect attempts per IP: 3 per second (an illustrative service limit). One bucket, the gate of
-    // every WebSocket link on that IP.
-    let mut budget = Budget::new(vec![BucketSpec::rolling("ws-connects", 3, 1_000, 10)])?;
-    let connects = budget.id("ws-connects").ok_or("no bucket")?;
+    // Connect attempts per IP: 3 per second (an illustrative service
+    // limit). One pacer, the gate of every WebSocket link on that IP.
+    let mut pace = Pace::new(3, 1_000 * MS);
     let mut links = Reconnect::new(Retry::default())?;
     // ANCHOR_END: gate
     let mut f = Fake::default();
@@ -412,13 +447,9 @@ fn a_gate_paces_fifty_links_and_starts_every_one() -> R {
     while now <= 30_000 * MS {
         let before = f.started.len();
         // ANCHOR: gate_poll
-        // Once per loop pass; `now` is the budget's clock, read once.
-        let started = links.poll_at_gated(&mut f, now, || {
-            budget
-                .try_charge(&[Charge::new(connects, 1)], Class::Normal, now)
-                .map(drop) // passed: connect now
-                .map_err(|l| l.wait_ns(now)) // refused: ask again after this
-        });
+        // Once per loop pass; `now` is the pacer's clock, read once.
+        // Ok(()): connect now; Err(wait_ns): ask again after the wait.
+        let started = links.poll_at_gated(&mut f, now, || pace.try_start(now));
         // ANCHOR_END: gate_poll
         assert_eq!(started, f.started.len() - before);
         starts.extend(f.started[before..].iter().map(|s| (now, s.0)));
@@ -451,7 +482,6 @@ fn a_gate_paces_fifty_links_and_starts_every_one() -> R {
             .count();
         assert!(n <= 3, "{n} starts in the second from {t} ns");
     }
-    assert!(budget.stats(connects, now)?.limited > 0, "the gate refused");
     Ok(())
 }
 
@@ -499,7 +529,7 @@ fn a_gate_refusal_is_not_a_failed_attempt() -> R {
             ..
         })
     ));
-    // A wait longer than `max_ms` (a halted budget answers about 292
+    // A wait longer than `max_ms` (a halted gate may answer about 292
     // years) is cut to it: the gate is asked again, so a cleared halt
     // restarts the link.
     now += 200 * MS;
@@ -610,32 +640,24 @@ fn defer_wins_over_the_backoff_and_survives_a_later_close() -> R {
 
 #[test]
 fn a_refused_upgrade_holds_every_link_on_its_gate() -> R {
-    let mut budget = Budget::new(vec![BucketSpec::rolling("ws-connects", 5, 1_000, 10)])?;
-    let connects = budget.id("ws-connects").ok_or("no bucket")?;
+    let mut pace = Pace::new(5, 1_000 * MS);
     let mut rc = Reconnect::new(exact())?;
     let mut f = Fake::default();
     let a = rc.add(|| Ok(1));
     let b = rc.add(|| Ok(2));
-    assert_eq!(gated(&mut rc, &mut f, &mut budget, connects, 0), 2);
+    assert_eq!(gated(&mut rc, &mut f, &mut pace, 0), 2);
     let ids = [f.started[0].2, f.started[1].2];
 
     // ANCHOR: refused
-    // In `Handler::on_closed(id, error)`: a refused handshake holds the
-    // connect bucket (429), and the link waits it out.
-    let on_closed = |rc: &mut Reconnect<u32>, budget: &mut Budget, id, error: &Error, now| -> R {
+    // In `Handler::on_closed(id, error)`: a refused handshake (429) holds
+    // the connect gate for the server's wait, and the link waits it out.
+    let on_closed = |rc: &mut Reconnect<u32>, pace: &mut Pace, id, error: &Error, now: i64| -> R {
         let link = rc.link_of(id).ok_or("not a link")?;
-        if let Some(Verdict::Throttled { until_ns, .. } | Verdict::Banned { until_ns, .. }) =
-            outcome::refused_upgrade(
-                error,
-                connects,
-                budget,
-                Now {
-                    ns: now,
-                    real_ns: now,
-                },
-            )?
-        {
-            rc.defer_at(link, u64::try_from(until_ns - now)?, now);
+        if let Some(Verdict::Throttled { retry_after_ms }) = outcome::refused_upgrade(error)? {
+            // No wait named: this application's own backoff, 1 s.
+            let wait_ns = retry_after_ms.unwrap_or(1_000) * 1_000_000;
+            pace.held_until = now + i64::try_from(wait_ns)?;
+            rc.defer_at(link, wait_ns, now);
         }
         rc.on_closed_at(id, now);
         Ok(())
@@ -650,13 +672,13 @@ fn a_refused_upgrade_holds_every_link_on_its_gate() -> R {
         retry_after_invalid: false,
     };
     let mut now = 10 * MS;
-    on_closed(&mut rc, &mut budget, ids[0], &throttled, now)?;
-    on_closed(&mut rc, &mut budget, ids[1], &Error::Closed, now)?;
-    let until = budget.held_until(connects, now)?.ok_or("not held")?;
-    assert_eq!(until, now + 5_100 * MS, "the server's wait plus the guard");
+    on_closed(&mut rc, &mut pace, ids[0], &throttled, now)?;
+    on_closed(&mut rc, &mut pace, ids[1], &Error::Closed, now)?;
+    let until = pace.held_until;
+    assert_eq!(until, now + 5_000 * MS, "the server's wait");
     // Neither link starts before the hold ends; both start once it has.
     while f.started.len() < 4 {
-        let n = gated(&mut rc, &mut f, &mut budget, connects, now);
+        let n = gated(&mut rc, &mut f, &mut pace, now);
         assert!(
             n == 0 || now >= until,
             "a start at {now} ns, held until {until}"
@@ -665,26 +687,22 @@ fn a_refused_upgrade_holds_every_link_on_its_gate() -> R {
         now += MS;
     }
 
-    // Application policy can halt the shared gate independently of HTTP.
+    // Application policy can halt the shared gate (a ban): it answers
+    // `u64::MAX` until a person clears it.
     let ids = [f.started[2].2, f.started[3].2];
-    budget.banned(
-        connects,
-        std::num::NonZeroU64::new(120_000).ok_or("zero")?,
-        now,
-    )?;
-    on_closed(&mut rc, &mut budget, ids[0], &Error::Closed, now)?;
-    on_closed(&mut rc, &mut budget, ids[1], &Error::Closed, now)?;
-    assert!(budget.stats(connects, now)?.halted);
+    pace.halted = true;
+    on_closed(&mut rc, &mut pace, ids[0], &Error::Closed, now)?;
+    on_closed(&mut rc, &mut pace, ids[1], &Error::Closed, now)?;
     let hour = now + 3_600_000 * MS;
     while now < hour {
-        assert_eq!(gated(&mut rc, &mut f, &mut budget, connects, now), 0);
+        assert_eq!(gated(&mut rc, &mut f, &mut pace, now), 0);
         now += 10 * MS;
     }
     assert!(matches!(rc.state(a), Some(LinkState::Waiting { .. })));
-    assert!(budget.clear_halt(connects)?);
+    pace.halted = false;
     let cleared = now;
     while f.started.len() < 6 {
-        gated(&mut rc, &mut f, &mut budget, connects, now);
+        gated(&mut rc, &mut f, &mut pace, now);
         assert!(
             now <= cleared + 1_000 * MS,
             "not restarted within max_ms of the clear"
@@ -692,8 +710,6 @@ fn a_refused_upgrade_holds_every_link_on_its_gate() -> R {
         now += MS;
     }
     assert!(matches!(rc.state(b), Some(LinkState::Connecting(_))));
-    let st = budget.stats(connects, now)?;
-    assert_eq!((st.throttles, st.bans, st.halted), (1, 1, false));
     Ok(())
 }
 
