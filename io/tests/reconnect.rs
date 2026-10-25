@@ -535,8 +535,9 @@ fn a_gate_refusal_is_not_a_failed_attempt() -> R {
             ..
         })
     ));
-    // A wait longer than `max_ms` (a halted gate may answer `u64::MAX`) is cut to it: the gate is asked again, so a cleared halt
-    // restarts the link.
+    // A wait longer than `max_ms` (a halted gate may answer `u64::MAX`) is
+    // cut to it: the gate is asked again, so a cleared halt restarts the
+    // link.
     now += 200 * MS;
     assert_eq!(rc.poll_at_gated(&mut f, now, || Err(u64::MAX)), 0);
     assert_eq!(

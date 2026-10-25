@@ -81,7 +81,7 @@ use `Target::new("api.example.com", 443, "")` and
 - **A source IP:** `Target::with_source(ip)` makes every pool connection
   come from `ip` (libcurl too, through `CURLOPT_INTERFACE`). Several IPs,
   each with its own limits: one `HttpClient` per IP
-  ([Rate limits](rate-limits.md#connects-and-automatic-frames)).
+  ([Rate limits](rate-limits.md#connects)).
 - **`buf_size`** (1 MiB) is each native connection's receive buffer: it
   must hold the largest response.
 - **Responses:** `Content-Length` or chunked bodies. The body in
