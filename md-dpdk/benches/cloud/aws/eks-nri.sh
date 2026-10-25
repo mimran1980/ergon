@@ -829,7 +829,7 @@ PY
                 read -r pfleet pids <<<"$(python3 -c '
 import json, sys
 f = json.load(open(sys.argv[1]))
-ids = [i["InstanceId"] for inst in f.get("Instances", []) for i in inst.get("InstanceIds", [])]
+ids = [i for inst in f.get("Instances", []) for i in inst.get("InstanceIds", [])]  # InstanceIds is a list of ids
 print((f.get("FleetId") or "-") + " " + " ".join(ids))
 ' "$fj" 2>/dev/null || echo "-")"
                 [[ $pfleet == "-" ]] && pfleet=""
@@ -1277,7 +1277,7 @@ try:
     f = json.load(open(sys.argv[1]))
 except Exception:
     sys.exit(0)
-print("\n".join(i["InstanceId"] for inst in f.get("Instances", []) for i in inst.get("InstanceIds", [])))' "$fleet_json" 2>/dev/null || true)
+print("\n".join(i for inst in f.get("Instances", []) for i in inst.get("InstanceIds", [])))  # a list of ids' "$fleet_json" 2>/dev/null || true)
             n=$(wc -w <<<"$ids")
             if ((n == 2)); then
                 launched=$zone
