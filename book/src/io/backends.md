@@ -12,6 +12,9 @@ configuration, so one binary can run with each. Which to pick:
 
 - **None sleeps in the kernel.** These are the three backends the
   benchmarks measured in a busy-spin loop.
+- **UDP (`UdpConn`) runs on `epoll-spin` only.** The other two refuse a UDP
+  driver at `Driver::new` (`Error::Unsupported`); framed TCP and the TLS
+  endpoints run on all three ([UDP](udp.md)).
 
 - **`epoll-spin` is [mio's mechanism](#mio-measured-not-a-backend), and so tokio's.**
   `epoll_wait(0)` never blocks, but never polls the NIC either.
@@ -51,6 +54,8 @@ every platform.)*
 | `tcp_rto_min_us` | 0 (kernel: 200 ms) | `TCP_RTO_MIN_US`, Linux 6.15+: the retransmission timeout's floor; 2,000 to 200,000 µs in whole kernel ticks; refused, typed, at `Driver::new` ([Kubernetes](kubernetes.md#tcp-timers-and-tcp_info)) |
 | `tcp_delack_max_us` | 0 (kernel: 200 ms) | `TCP_DELACK_MAX_US`, Linux 6.15+: the longest delayed ACK; same range and checks |
 | `tcp_info_interval_ms` | 0 (off) | passive `TCP_INFO` per connection (`Driver::tcp_info`); at most one `getsockopt` per poll, from the 250 µs deadline check |
+| `epoll_events` | 64 | the most ready sockets one `epoll_wait` reports (`epoll-spin`; `recv-busy` with `per_queue`); the rest are reported on the next poll; 1 to 65,536 |
+| `datagram_burst` | 16 | UDP: the most datagrams one poll reads from one ready socket; 1 to 1,024 ([UDP](udp.md)) |
 
 An unknown key, a bad value or a setting the backend cannot use is an error
 (`Config::validate`), never ignored. NIC busy polling has no key: `recv-busy`

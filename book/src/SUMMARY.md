@@ -74,6 +74,8 @@
   - [Backends and Configuration](./io/backends.md)
   - [WebSocket](./io/websocket.md)
   - [HTTP client](./io/http-client.md)
+  - [Framed TCP](./io/framed-tcp.md)
+  - [UDP](./io/udp.md)
   - [Rate Limits and Errors](./io/rate-limits.md)
   - [Kubernetes](./io/kubernetes.md)
 

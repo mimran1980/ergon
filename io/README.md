@@ -5,7 +5,7 @@
 [![Book](https://img.shields.io/badge/book-mimran1980.github.io%2Fergon-blue)](https://mimran1980.github.io/ergon/io/overview.html)
 
 Network I/O for exchange clients on one busy-spinning thread: WebSocket and
-HTTP/1.1 over TLS 1.3.
+HTTP/1.1 over TLS 1.3, length-prefixed frames over plain TCP, and UDP.
 
 - One non-blocking `poll` moves bytes between your loop and the kernel.
 - The kernel interface (epoll or `io_uring`, with or without NIC polling) is
@@ -43,6 +43,8 @@ Which features to pick: see Features, below.
 | `HttpClient` | A pool of warm HTTP connections behind one API: native (fast) or libcurl (feature `curl`). |
 | `HttpConn` | One HTTP/1.1 keep-alive connection. |
 | `Signer` | Query-parameter request signing (HMAC-SHA256 or Ed25519), no allocation. |
+| `FrameConn` | `u32` little-endian length-prefixed frames over plain TCP: dialled (`FrameDial`) or an accepted socket (`from_stream`). Every backend. |
+| `UdpConn` | One UDP socket, connected or receive-only: whole datagrams from preallocated send slots. `epoll-spin` only. |
 
 ## Example: a WebSocket feed
 
@@ -132,7 +134,11 @@ how to change it: the book's
   `TCP_INFO` sampling run on the driver's deadline check (every 250 µs),
   never on the read or send path.
 - **TLS 1.3 only.** TLS 1.2 is refused with a clear error.
-- **Client side only.** No listener.
+- **No listener.** Accept elsewhere and hand the socket to the driver
+  (`FrameConn::from_stream`, then `Driver::add`); WebSocket and HTTP are
+  client side only.
+- **UDP on `epoll-spin` only**; the other backends refuse a UDP driver
+  (`Error::Unsupported`).
 - **WebSocket, not supported:** compression (`permessage-deflate`), other
   extensions, proxies, sending fragmented messages.
 - **Linux for the driver.** `Driver` and `HttpClient` are Linux-only; the
