@@ -139,7 +139,7 @@
       "anyOf": [
         { "type": "boolean" },
         { "type": "integer", "enum": [0, 1] },
-        { "type": "string", "pattern": "^(?i:off|allow|true|false|yes|no|on|0|1)$" }
+        { "type": "string", "pattern": "^(?i:off|allow|true|false|yes|no|y|n|on|0|1)$" }
       ]
     },
     "schedFifo": {
@@ -147,7 +147,7 @@
       "anyOf": [
         { "type": "boolean" },
         { "type": "integer", "enum": [0, 1] },
-        { "type": "string", "pattern": "^(?i:off|thread|true|false|yes|no|on|0|1)$" }
+        { "type": "string", "pattern": "^(?i:off|thread|true|false|yes|no|y|n|on|0|1)$" }
       ]
     },
     "profile": {

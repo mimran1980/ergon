@@ -410,6 +410,8 @@ func TestHelmSwitchSpellings(t *testing.T) {
 		{"off", "off", false},
 		{"false", "no", false},
 		{"0", "0", false},
+		{`"y"`, "Y", true},
+		{"n", `"N"`, false},
 		{`"No"`, `"FALSE"`, false},
 	} {
 		flat := "config:\n  seccomp:\n    ioUring: " + c.io + "\n  schedFifo: " + c.fifo + "\n"
@@ -434,7 +436,7 @@ func TestHelmSwitchSpellings(t *testing.T) {
 		}
 	}
 	t.Log("chart renders boolean and mode spellings that config.Parse reads")
-	for _, set := range []string{"config.schedFifo=allow", "config.seccomp.ioUring=thread", "config.schedFifo=2", "config.seccomp.ioUring=y"} {
+	for _, set := range []string{"config.schedFifo=allow", "config.seccomp.ioUring=thread", "config.schedFifo=2", "config.seccomp.ioUring=ja"} {
 		cmd := exec.Command(helmBin(t), "template", "rel", chart, "--set-string", set)
 		if err := cmd.Run(); err == nil {
 			t.Fatalf("--set-string %s must fail the schema", set)

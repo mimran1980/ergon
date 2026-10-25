@@ -10,10 +10,12 @@ import (
 // seccomp.ioUring and schedFifo share one parse: the field's own mode
 // words, or a YAML 1.1 boolean spelling, quoted or not, any case.
 func TestSwitchSpellings(t *testing.T) {
-	offWords := []string{"false", "False", "FALSE", "no", "No", "NO", "off", "Off", "OFF", "0",
-		`"false"`, `"no"`, `"off"`, `"0"`, `"OFF"`, `""`}
-	onWords := []string{"true", "True", "TRUE", "yes", "Yes", "YES", "on", "On", "ON", "1",
-		`"true"`, `"yes"`, `"on"`, `"1"`, `"YES"`}
+	// y/Y/n/N are YAML 1.1 booleans too: unquoted they arrive as
+	// "true"/"false", so the quoted spelling must mean the same.
+	offWords := []string{"false", "False", "FALSE", "no", "No", "NO", "off", "Off", "OFF", "0", "n", "N",
+		`"false"`, `"no"`, `"off"`, `"0"`, `"OFF"`, `"n"`, `"N"`, `""`}
+	onWords := []string{"true", "True", "TRUE", "yes", "Yes", "YES", "on", "On", "ON", "1", "y", "Y",
+		`"true"`, `"yes"`, `"on"`, `"1"`, `"YES"`, `"y"`, `"Y"`}
 	for _, f := range []struct {
 		name  string
 		yaml  func(string) string
@@ -46,7 +48,7 @@ func TestSwitchSpellings(t *testing.T) {
 		for _, v := range append(onWords, f.on, strings.ToUpper(f.on), `"`+f.on+`"`) {
 			check(v, true)
 		}
-		for _, v := range []string{f.other, "2", `"y"`, "enabled", `" off"`} {
+		for _, v := range []string{f.other, "2", `"ja"`, "enabled", `" off"`, `"yy"`} {
 			_, err := Parse([]byte("sharedCpus: \"0\"\n" + f.yaml(v)))
 			if err == nil {
 				t.Errorf("%s: %s accepted", f.name, v)

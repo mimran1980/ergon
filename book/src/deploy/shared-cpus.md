@@ -271,7 +271,9 @@ Rules:
 - `sharedCpus` must sit inside the kubelet's `reservedSystemCPUs`, minus the
   IRQ CPU(s). In the table above that is `0`.
 - `namespaces` is an allowlist. Create those namespaces before applying.
-- Quote `off`, `on`, `yes`, `no`. YAML 1.1 turns unquoted ones into booleans.
+- Quote `off`, `on`, `yes`, `no` in `ptp` and the string fields. YAML 1.1
+  turns unquoted ones into booleans. `seccomp.ioUring` and `schedFifo` take
+  either form.
 - An unknown field or an out-of-range value stops the plugin at start, and
   the message names the field.
 - **`off` is not harmless.** It is a refusal. A pod whose annotation asks for
@@ -377,8 +379,8 @@ any case:
 
 | spelling | `seccomp.ioUring` | `schedFifo` |
 |---|---|---|
-| `false`, `no`, `off`, `0`, empty | `off` | `off` |
-| `true`, `yes`, `on`, `1` | `allow` | `thread` |
+| `false`, `no`, `n`, `off`, `0`, empty | `off` | `off` |
+| `true`, `yes`, `y`, `on`, `1` | `allow` | `thread` |
 
 Quote `off`, `on`, `yes` and `no` in the other fields. YAML 1.1 turns
 unquoted ones into booleans.

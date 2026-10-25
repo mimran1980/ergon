@@ -334,18 +334,18 @@ func Parse(data []byte) (*Config, error) {
 }
 
 // parseSwitch reads an off/on field: empty, "off" or a YAML 1.1 false
-// (false/no/off/0) is off; onMode or a YAML 1.1 true (true/yes/on/1) is
-// on. Any case. YAML 1.1 turns unquoted spellings into booleans and
+// (false/no/n/off/0) is off; onMode or a YAML 1.1 true (true/yes/y/on/1)
+// is on. Any case. YAML 1.1 turns unquoted spellings into booleans and
 // sigs.k8s.io/yaml stringifies them to "true"/"false", so both forms land
 // here.
 func parseSwitch(field, v, onMode string) (bool, error) {
 	switch strings.ToLower(v) {
-	case "", "off", "false", "no", "0":
+	case "", "off", "false", "no", "n", "0":
 		return false, nil
-	case onMode, "true", "yes", "on", "1":
+	case onMode, "true", "yes", "y", "on", "1":
 		return true, nil
 	}
-	return false, fmt.Errorf("config: %s %q must be %q or %q (or a YAML boolean: true/false, yes/no, on/off, 1/0)",
+	return false, fmt.Errorf("config: %s %q must be %q or %q (or a YAML boolean: true/false, yes/no, y/n, on/off, 1/0)",
 		field, v, onMode, "off")
 }
 
