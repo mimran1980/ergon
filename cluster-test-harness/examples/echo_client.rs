@@ -5,9 +5,8 @@
 //! ```
 
 use ergo_aeron_cluster::{
-    AeronCluster, NullCredentialsSupplier, SessionBuilder,
-    cluster_codec_types::EventCode,
-    egress::{EgressAdapter, EgressListener},
+    AeronCluster, NullCredentialsSupplier, SessionBuilder, cluster_codec_types::EventCode,
+    egress::EgressListener,
 };
 use std::time::Duration;
 
@@ -70,7 +69,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         client.leadership_term_id()
     );
 
-    let mut adapter = EgressAdapter::new(EchoListener { count: 0 });
+    let mut listener = EchoListener { count: 0 };
 
     for n in 0..3 {
         let msg = format!("Hello #{n}");
@@ -91,8 +90,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let deadline = std::time::Instant::now() + Duration::from_secs(2);
         while std::time::Instant::now() < deadline {
             let _ = client.send_keep_alive();
-            let _ = client.poll_egress(&mut adapter, 10);
-            if adapter.listener().count > n as usize {
+            let _ = client.poll(&mut listener, 10);
+            if listener.count > n as usize {
                 break;
             }
             std::thread::sleep(Duration::from_millis(20));

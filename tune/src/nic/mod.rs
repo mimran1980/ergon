@@ -14,7 +14,7 @@ mod genl;
 use std::fmt;
 use std::time::Duration;
 
-use crate::finding::{CheckId, Finding, Severity};
+use crate::finding::{Finding, Severity};
 use crate::host::{Host, ReadError};
 use crate::net::{carrier_changes, check_interface, interface_device, lower_interfaces, no_device};
 use crate::platform::Platform;
@@ -381,7 +381,7 @@ impl<E: Ethtool> EthtoolCache<E> {
 fn driver_of(
     host: &Host,
     interface: &str,
-    id: CheckId,
+    id: &'static str,
     evidence: &'static str,
     what: &str,
 ) -> Result<String, Finding> {
@@ -422,7 +422,7 @@ pub fn n1_adaptive_rx<E: Ethtool>(
     interface: &str,
     cache: &mut EthtoolCache<E>,
 ) -> Finding {
-    let id = CheckId::N1;
+    let id = "N1";
     let sev = Severity::Warn;
     let what = format!("whether {interface}'s adaptive RX moderation is on");
     let driver = match driver_of(host, interface, id, N1_EVIDENCE, &what) {
@@ -524,7 +524,7 @@ fn napi_setting(host: &Host, interface: &str, name: &str) -> Result<u64, ReadErr
 /// way).
 #[must_use]
 pub fn n2_deferred_irqs(host: &Host, interface: &str, busy_polls: Option<bool>) -> Vec<Finding> {
-    let id = CheckId::N2;
+    let id = "N2";
     let sev = Severity::Warn;
     let what = format!("whether {interface} defers its interrupts");
     if let Err(f) = driver_of(host, interface, id, N2_EVIDENCE, &what) {
@@ -624,7 +624,7 @@ const N3_EVIDENCE: &str = "Azure's accelerated networking documentation; not mea
 /// (`lower_*`) that is up. Other drivers are not checked.
 #[must_use]
 pub fn n3_azure_vf(host: &Host, interface: &str) -> Finding {
-    let id = CheckId::N3;
+    let id = "N3";
     let sev = Severity::Warn;
     let what = format!("whether {interface} has an accelerated-networking VF");
     let driver = match driver_of(host, interface, id, N3_EVIDENCE, &what) {
@@ -687,7 +687,7 @@ pub fn n4_rx_ring<E: Ethtool>(
     interface: &str,
     cache: &mut EthtoolCache<E>,
 ) -> Finding {
-    let id = CheckId::N4;
+    let id = "N4";
     let sev = Severity::Warn;
     let what = format!("{interface}'s RX ring");
     let driver = match driver_of(host, interface, id, N4_EVIDENCE, &what) {

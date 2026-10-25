@@ -7,7 +7,7 @@
 
 use crate::cpu::{Thread, t7_sched_policy};
 use crate::cpuset::CpuSet;
-use crate::finding::{CheckId, Finding, HotSet, Role, Severity};
+use crate::finding::{Finding, HotSet, Role, Severity};
 use crate::host::{Host, ReadError};
 use crate::net::Nic;
 use crate::quota::{CpuCgroup, cpu_cgroup, t9_cpu_quota};
@@ -150,7 +150,7 @@ fn qos_of(path: &str) -> Option<&'static str> {
 
 /// K1: the pod is Guaranteed `QoS`.
 fn k1_qos(host: &Host) -> Finding {
-    let id = CheckId::K1;
+    let id = "K1";
     let sev = Severity::Warn;
     let Some(path) = cgroup_path(host) else {
         return Finding::unknown(
@@ -247,7 +247,7 @@ fn exclusivity_evidence(host: &Host, cg: Option<&CpuCgroup>, set: &CpuSet) -> Op
 
 /// K2: the pod's CPUs are its own, not the shared pool.
 fn k2_exclusive(host: &Host, cg: Option<&CpuCgroup>) -> Finding {
-    let id = CheckId::K2;
+    let id = "K2";
     let sev = Severity::Warn;
     let set = match pod_cpuset(host, cg) {
         Ok(s) => s,
@@ -324,7 +324,7 @@ fn k2_exclusive(host: &Host, cg: Option<&CpuCgroup>) -> Finding {
 
 /// K3: a busy-spinning CPU's SMT sibling is outside this pod's cpuset.
 fn k3_smt_sibling(host: &Host, cpus: &HotSet, cg: Option<&CpuCgroup>) -> Finding {
-    let id = CheckId::K3;
+    let id = "K3";
     let sev = Severity::Warn;
     let set = match pod_cpuset(host, cg) {
         Ok(s) => s,
@@ -425,7 +425,7 @@ fn named_helpers(host: &Host) -> bool {
 /// `x86 with SMT, cpu: 2` layout puts the helpers there — and the message
 /// says so, because those helpers take that core's execution units.
 fn k4_helpers(host: &Host, cpus: &HotSet, cg: Option<&CpuCgroup>) -> Finding {
-    let id = CheckId::K4;
+    let id = "K4";
     let sev = Severity::Warn;
     let set = match pod_cpuset(host, cg) {
         Ok(s) => s,
@@ -555,7 +555,7 @@ fn memlock_unlimited(host: &Host) -> bool {
 
 /// K5: the capabilities the caller's needs require.
 fn k5_capabilities(host: &Host, needs: &Needs) -> Finding {
-    let id = CheckId::K5;
+    let id = "K5";
     let sev = Severity::Warn;
     let caps = match cap_eff(host) {
         Ok(c) => c,
@@ -622,7 +622,7 @@ fn psi_avg10(host: &Host, path: &str) -> Option<f64> {
 
 /// K6: no `memory.high`, no CPU or memory pressure.
 fn k6_pressure(host: &Host, cg: Option<&CpuCgroup>) -> Finding {
-    let id = CheckId::K6;
+    let id = "K6";
     let sev = Severity::Warn;
     let mut dirs: Vec<String> = cg.map(|c| vec![c.dir.clone()]).unwrap_or_default();
     dirs.push("/sys/fs/cgroup".to_owned());
@@ -743,7 +743,7 @@ fn cpuset_nodes(host: &Host, set: &CpuSet) -> Result<Vec<u32>, ReadError> {
 
 /// K7: the pod's CPUs are on the NIC's NUMA node.
 fn k7_numa(host: &Host, cg: Option<&CpuCgroup>, nic: Option<&Nic>) -> Finding {
-    let id = CheckId::K7;
+    let id = "K7";
     let sev = Severity::Warn;
     let Some(nic) = nic else {
         return Finding::ok(

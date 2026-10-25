@@ -188,8 +188,9 @@ its helpers have a core — because starting on an unproven claim is the false
 pass those checks exist to stop. An unknown of a check whose subsystem the
 node may not have (PSI and `memory.high`, a NUMA node, a NIC knob, THP) is
 printed and allowed through: that is a real host, and refusing there would
-stop every start on it. Which checks are which is
-`CheckId::unknown_stops_require`.
+stop every start on it. `unknown_stops_require(id)` says which: T3, T4, T5,
+T6, T11, T13-T19, K6, K7, N1-N4 and M4 do not block; every other id does, a
+caller's own included.
 
 Two consequences under `require`:
 
@@ -276,6 +277,7 @@ too.
 
 | field | meaning |
 |---|---|
+| `id` | the check, a string: `"T4"`, `"K2"`, `"M1"`, or a caller's own |
 | `status` | `Finding`: it fired. `Ok`: fine, or it does not apply here. `Unknown(reason)`: the data could not be read. |
 | `severity` | `Warn` or `Info`: how to log a `Finding` |
 | `message` | what was found, its measured effect, and the fix |

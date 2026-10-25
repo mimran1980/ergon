@@ -10,7 +10,7 @@ use std::fmt::Write as _;
 
 use crate::cpu::spare;
 use crate::cpuset::CpuSet;
-use crate::finding::{CheckId, Finding, HotSet, Severity};
+use crate::finding::{Finding, HotSet, Severity};
 use crate::host::{Host, ReadError, first_line};
 
 /// `n thing` or `n things`.
@@ -40,7 +40,7 @@ const T13_EVIDENCE: &str = "Linux Documentation/core-api/workqueue.rst (unbound 
 /// busy-spinning CPU of `cpus` ([`Role::spins`](crate::Role::spins)).
 #[must_use]
 pub fn t13_workqueue_cpumask(host: &Host, cpus: &HotSet) -> Finding {
-    let (id, sev) = (CheckId::T13, Severity::Warn);
+    let (id, sev) = ("T13", Severity::Warn);
     let spinning = cpus.spinning();
     if spinning.is_empty() {
         return Finding::ok(
@@ -126,7 +126,7 @@ fn sysctl_number(host: &Host, path: &str) -> Result<Option<i64>, ReadError> {
 /// 0). Information: compaction on demand still runs.
 #[must_use]
 pub fn t14_compaction(host: &Host) -> Finding {
-    let (id, sev) = (CheckId::T14, Severity::Info);
+    let (id, sev) = ("T14", Severity::Info);
     let read = sysctl_number(host, PROACTIVENESS)
         .and_then(|p| sysctl_number(host, UNEVICTABLE).map(|u| (p, u)));
     let (proactive, unevictable) = match read {
@@ -320,7 +320,7 @@ fn scan_tasks(host: &Host, spinning: &CpuSet) -> Result<Tasks, ReadError> {
 /// can be seen fires.
 #[must_use]
 pub fn t15_host_tasks(host: &Host, cpus: &HotSet) -> Finding {
-    let (id, sev) = (CheckId::T15, Severity::Warn);
+    let (id, sev) = ("T15", Severity::Warn);
     let spinning = cpus.spinning();
     if spinning.is_empty() {
         return Finding::ok(
@@ -511,7 +511,7 @@ fn bpf_programs(host: &Host) -> Result<Vec<String>, ReadError> {
 /// unknown, never a warning.
 #[must_use]
 pub fn t16_instrumentation(host: &Host) -> Finding {
-    let (id, sev) = (CheckId::T16, Severity::Info);
+    let (id, sev) = ("T16", Severity::Info);
     let sources = [
         (kprobes(host), "kprobe", "kprobes"),
         (
@@ -582,7 +582,7 @@ const T17_EVIDENCE: &str = "Linux Documentation/admin-guide/mm/ksm.rst (run: 0 s
 /// 0 or 2).
 #[must_use]
 pub fn t17_ksm(host: &Host) -> Finding {
-    let (id, sev) = (CheckId::T17, Severity::Warn);
+    let (id, sev) = ("T17", Severity::Warn);
     if !host.exists(KSM) && host.exists("/sys/kernel/mm") {
         return Finding::ok(id, sev, T17_EVIDENCE, "the kernel has no KSM".to_owned());
     }
@@ -700,7 +700,7 @@ pub fn cpu_steal(host: &Host) -> Result<Vec<CpuSteal>, ReadError> {
 /// ([`cpu_steal`] twice says that).
 #[must_use]
 pub fn t18_steal(host: &Host, cpus: &HotSet) -> Finding {
-    let (id, sev) = (CheckId::T18, Severity::Info);
+    let (id, sev) = ("T18", Severity::Info);
     let spinning = cpus.spinning();
     if spinning.is_empty() {
         return Finding::ok(

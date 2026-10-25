@@ -3,7 +3,7 @@
 //! `/proc/thread-self`.
 
 use crate::cpuset::CpuSet;
-use crate::finding::{CheckId, Finding, HotSet, Role, Severity};
+use crate::finding::{Finding, HotSet, Role, Severity};
 use crate::host::{Host, ReadError};
 use crate::platform::{Arch, Platform};
 
@@ -170,11 +170,11 @@ struct T1<'a> {
 
 impl T1<'_> {
     const fn finding(message: String) -> Finding {
-        Finding::found(CheckId::T1, Severity::Warn, T1_EVIDENCE, message)
+        Finding::found("T1", Severity::Warn, T1_EVIDENCE, message)
     }
 
     fn unknown(message: String, e: &ReadError) -> Finding {
-        Finding::unknown(CheckId::T1, Severity::Warn, T1_EVIDENCE, message, e)
+        Finding::unknown("T1", Severity::Warn, T1_EVIDENCE, message, e)
     }
 
     fn domain(&self, isolated: &Result<CpuSet, ReadError>, out: &mut Vec<Finding>) {
@@ -256,7 +256,7 @@ impl T1<'_> {
                 self.cpus.describe_all(&ticking)
             )
         };
-        Finding::ok(CheckId::T1, Severity::Warn, T1_EVIDENCE, message)
+        Finding::ok("T1", Severity::Warn, T1_EVIDENCE, message)
     }
 
     fn default_affinity(&self, host: &Host, out: &mut Vec<Finding>) {
@@ -308,7 +308,7 @@ pub fn t1_isolation(host: &Host, cpus: &HotSet) -> Vec<Finding> {
     let spinning = cpus.spinning();
     if spinning.is_empty() {
         return vec![Finding::ok(
-            CheckId::T1,
+            "T1",
             Severity::Warn,
             T1_EVIDENCE,
             "no busy-spinning CPU to check".to_owned(),
@@ -362,7 +362,7 @@ const T7_EVIDENCE: &str = "git show \
 /// media driver checks its process before the agents start.
 #[must_use]
 pub fn t7_sched_policy(host: &Host, thread: Thread, role: Role) -> Finding {
-    let id = CheckId::T7;
+    let id = "T7";
     let sev = Severity::Warn;
     let who = format!("the {} thread", role.name());
     match thread_policy(host, thread) {
@@ -423,7 +423,7 @@ struct T8<'a> {
 impl T8<'_> {
     fn push(&mut self, severity: Severity, message: String) {
         self.out
-            .push(Finding::found(CheckId::T8, severity, T8_EVIDENCE, message));
+            .push(Finding::found("T8", severity, T8_EVIDENCE, message));
     }
 
     /// Two busy-spinning roles pinned to one CPU.
@@ -497,7 +497,7 @@ impl T8<'_> {
                 ),
                 Err(e) => {
                     let f = Finding::unknown(
-                        CheckId::T8,
+                        "T8",
                         Severity::Warn,
                         T8_EVIDENCE,
                         format!("cannot tell whether CPU {s}, {me}'s SMT sibling, is isolated"),
@@ -539,7 +539,7 @@ pub fn t8_smt_siblings(host: &Host, cpus: &HotSet) -> Vec<Finding> {
                 }
             }
             Err(e) => t8.out.push(Finding::unknown(
-                CheckId::T8,
+                "T8",
                 Severity::Warn,
                 T8_EVIDENCE,
                 format!("cannot tell {}'s SMT siblings", cpus.describe(cpu)),
@@ -558,12 +558,8 @@ pub fn t8_smt_siblings(host: &Host, cpus: &HotSet) -> Vec<Finding> {
         } else {
             format!("{all}: one thread per core (no SMT sibling)")
         };
-        t8.out.push(Finding::ok(
-            CheckId::T8,
-            Severity::Warn,
-            T8_EVIDENCE,
-            message,
-        ));
+        t8.out
+            .push(Finding::ok("T8", Severity::Warn, T8_EVIDENCE, message));
     }
     t8.out
 }
@@ -628,7 +624,7 @@ fn smt_active(host: &Host) -> Result<bool, ReadError> {
 /// (they have no SMT); so does an x86 host with SMT off.
 #[must_use]
 pub fn t10_smt_on(host: &Host) -> Finding {
-    let id = CheckId::T10;
+    let id = "T10";
     let sev = Severity::Warn;
     let platform = Platform::detect(host);
     if platform.is_graviton() || platform.arch == Arch::Aarch64 {
