@@ -48,6 +48,11 @@ flat-out runs (<host>-counters-{tput,max,flows}-{before,after}-*.log, in the run
 directory or a state's below it), a table of their wire frames per message.
 
 analyse.py <results.csv> [<run dir>]
+analyse.py --transport [--show-invalid] <run dir | results.csv>
+    the transport suite's tables (transport-format.md): per set, stream count,
+    netem and rate, each arm's min, p50, p99, p99.99 and max with the A/A
+    spread and a verdict per pair of arms; stream-count tables; refused where
+    fairness.py finds a violation, unless --show-invalid
 analyse.py --ab <mode A> <mode B> <results.csv>
     one mode against another (each bare, compared within every state that has
     both, or as <state>:<mode>): per metric both medians and ranges and whether
@@ -61,7 +66,7 @@ import os
 import re
 import statistics
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from types import SimpleNamespace
 
 from spikes import agent_gaps, open_spikes, pmd_bursts, spike_files
@@ -500,6 +505,9 @@ def nic_irqs(r):
 
 
 def main():
+    if len(sys.argv) >= 2 and sys.argv[1] == "--transport":
+        transport(sys.argv[2:])
+        return
     if len(sys.argv) >= 2 and sys.argv[1] == "--ab":
         if len(sys.argv) != 5:
             sys.exit("usage: analyse.py --ab <mode A> <mode B> <results.csv>")
@@ -1360,6 +1368,177 @@ def spikes(folder):
         share = f"{100 * max(phase) / count:.0f}%" if count >= 20 else "too few"
         rows.append([run, str(files), f"{count:,}", share])
     print(table(["run", "reps", "spikes", "in busiest 10 ms of the second"], rows))
+
+
+# The transport suite (transport-format.md): its sets in the plan's order
+TRANSPORT_SETS = ["1", "2a", "2b", "3a", "3b", "3c", "fanin"]
+# (column, row field) a transport table and its verdicts compare
+TRANSPORT_METRICS = (("min", "min"), ("p50", "p50"), ("p99", "p99"), ("p99.99", "p99.99"), ("max", "max"))
+STREAM0 = (("stream 0 p50", "stream0_p50"), ("stream 0 p99", "stream0_p99"), ("stream 0 p99.99", "stream0_p99.99"),
+           ("stream 0 max", "stream0_max"))
+
+
+def transport(args):
+    """analyse.py --transport [--show-invalid] <run dir | results.csv>."""
+    import fairness
+    from spikes import transport_maxima
+    from transport_points import flags, group_key, is_aa
+
+    show_invalid = "--show-invalid" in args
+    rest = [a for a in args if a != "--show-invalid"]
+    if len(rest) != 1:
+        sys.exit("usage: analyse.py --transport [--show-invalid] <run dir | results.csv>")
+    run_dir = rest[0] if os.path.isdir(rest[0]) else os.path.dirname(os.path.abspath(rest[0]))
+    maxima = transport_maxima(run_dir)
+    points = [p for p, _, _ in maxima]
+    cause = {p.tag: c for p, _, c in maxima}
+    violations = fairness.check(run_dir)
+    if not points:
+        sys.exit(f"analyse.py --transport: no transport rows in {run_dir}/results.csv")
+
+    def concerns(v, ps):
+        if v.set is None:
+            return True
+        if v.set != ps[0].set:
+            return False
+        return not v.tags or bool(set(v.tags) & {p.tag for p in ps})
+
+    groups = defaultdict(list)
+    for p in points:
+        groups[group_key(p)].append(p)
+    set_rank = lambda s: (TRANSPORT_SETS.index(s) if s in TRANSPORT_SETS else len(TRANSPORT_SETS), s)
+    order = sorted(groups, key=lambda k: (set_rank(k[0]), k[4] != "load", k[2], k[3], k[1]))
+    us = lambda ns: f"{ns / 1000:.2f}"
+    span = lambda vs: (f"{min(vs):,}" if min(vs) == max(vs) else f"{min(vs):,}–{max(vs):,}") if vs else "-"
+    short = lambda c: c.split(" (")[0]
+
+    print("## Transport latency (µs)\n")
+    print("Each cell is the median across reps, the range in brackets. Latency counts from each message's intended "
+          "send time (open loop): a round trip between hosts, one way on one host. An arm flagged in any rep "
+          "(`sender late`: over 1 % of sends more than 100 µs late; `over capacity`: achieved under 98 % of the rate) "
+          "is shown and never compared. The A/A arm repeats one arm in the same round: its spread is the largest "
+          "per-rep difference between the two, per metric. Two arms are `not separated` where their medians differ "
+          "by no more than the A/A spread or their rep ranges overlap; a max verdict is blocked while either arm has "
+          "an unexplained max (spikes.py --transport). A table holding a point that breaks a fairness rule "
+          "(fairness.py) is refused.\n")
+    run_level = [v for v in violations if v.set is None]
+    print(f"Fairness: {len(violations)} violation{'s' if len(violations) != 1 else ''}"
+          + (f", {len(run_level)} of them run-wide." if run_level else "."))
+    for v in run_level:
+        print(f"- {v}")
+
+    refused = set()
+    for k in order:
+        set_, streams, netem, rate, kind = k
+        ps = groups[k]
+        bad = [v for v in violations if v.set is not None and concerns(v, ps)] + run_level
+        title = (f"### Set {set_}, {streams} stream{'s' if streams != 1 else ''}"
+                 + (f", netem {netem} %" if netem and netem != "none" else ", no qdisc" if netem == "none" else "")
+                 + f", {rate:,} msg/s: {'one way' if kind == 'oneway' else 'round trip'} (µs)")
+        print(f"\n{title}\n")
+        if bad:
+            refused.add(k)
+            if not show_invalid:
+                print(f"Refused: {len(bad)} fairness violation{'s' if len(bad) != 1 else ''} (rerun the round, or "
+                      "`--show-invalid` to print it marked):\n")
+                for v in bad:
+                    print(f"- {v}")
+                continue
+            print(f"**Invalid**, shown with `--show-invalid`: {len(bad)} fairness violation"
+                  f"{'s' if len(bad) != 1 else ''}:\n")
+            for v in bad:
+                print(f"- {v}")
+            print()
+        arms = sorted({p.arm for p in ps}, key=lambda a: (any(is_aa(p) for p in ps if p.arm == a), a))
+        by_arm = {a: sorted((p for p in ps if p.arm == a), key=lambda p: p.rep) for a in arms}
+        flagged = {a: [f"{f} (rep {p.rep})" for p in by_arm[a] for f in flags(p)] for a in arms}
+        rows = []
+        for a in arms:
+            reps = by_arm[a]
+            vals = lambda f: [p.row[f] for p in reps if p.row[f] is not None]
+            causes = Counter(short(cause[p.tag]) for p in reps)
+            name_ = a + (f" (A/A of {reps[0].manifest.get('aa_of')})" if is_aa(reps[0]) else "")
+            rows.append([name_, str(len(reps))]
+                        + [cell(vals(f), 1000, 2) if vals(f) else "-" for _, f in TRANSPORT_METRICS]
+                        + [span(vals("busy_threads")), span(vals("wire_bytes"))]
+                        + [f"{sum(vals(f)):,}" if vals(f) else "-" for f in ("lost", "reordered", "dup", "retrans")]
+                        + [", ".join(flagged[a]) or "none",
+                           ", ".join(f"{c} {n}" for c, n in sorted(causes.items()))])
+        print(table(["arm", "reps"] + [c for c, _ in TRANSPORT_METRICS]
+                    + ["busy threads", "wire bytes", "lost", "reordered", "dup", "retrans", "flags", "max causes"],
+                    rows))
+
+        # the A/A spread: the largest per-rep difference between the A/A and its arm
+        spread = None
+        aa = [a for a in arms if is_aa(by_arm[a][0])]
+        if aa:
+            ref = by_arm[aa[0]][0].manifest.get("aa_of")
+            pairs = [(x, y) for x in by_arm[aa[0]] for y in by_arm.get(ref, []) if x.rep == y.rep]
+            if flagged[aa[0]] or flagged.get(ref):
+                print(f"\nA/A: `{aa[0]}` or `{ref}` flagged, so no spread: nothing compared.")
+            elif pairs:
+                spread = {f: max(abs(x.row[f] - y.row[f]) for x, y in pairs) for _, f in TRANSPORT_METRICS}
+                print(f"\nA/A spread (`{aa[0]}` against `{ref}`, {len(pairs)} reps): "
+                      + ", ".join(f"{c} {us(spread[f])}" for c, f in TRANSPORT_METRICS) + ".")
+        else:
+            print("\nNo A/A arm: nothing compared.")
+        comparable = [a for a in arms if not is_aa(by_arm[a][0]) and not flagged[a]]
+        left = [a for a in arms if not is_aa(by_arm[a][0]) and flagged[a]]
+        if left:
+            print(f"\nFlagged, not compared: {', '.join(left)}.")
+        if spread is None or len(comparable) < 2:
+            continue
+        rows = []
+        for i, a in enumerate(comparable):
+            for b in comparable[i + 1:]:
+                cells = []
+                for _, f in TRANSPORT_METRICS:
+                    va = [p.row[f] for p in by_arm[a]]
+                    vb = [p.row[f] for p in by_arm[b]]
+                    if f == "max" and any(cause[p.tag].startswith("unexplained") for p in by_arm[a] + by_arm[b]):
+                        cells.append("blocked: unexplained max")
+                        continue
+                    d = statistics.median(va) - statistics.median(vb)
+                    if abs(d) <= spread[f]:
+                        cells.append(f"not separated (within A/A {us(spread[f])})")
+                    elif not (max(va) < min(vb) or max(vb) < min(va)):
+                        cells.append("not separated (ranges overlap)")
+                    else:
+                        cells.append(f"{b if d > 0 else a} lower by {us(abs(d))}")
+                rows.append([f"{a} vs {b}"] + cells)
+        print()
+        print(table(["arms"] + [c for c, _ in TRANSPORT_METRICS], rows))
+
+    # stream counts side by side, where a set ran more than one
+    fans = defaultdict(set)
+    for set_, streams, netem, rate, kind in groups:
+        fans[(set_, netem, rate, kind)].add(streams)
+    for fk in sorted((k for k, v in fans.items() if len(v) > 1), key=lambda k: (set_rank(k[0]), k[1], k[2], k[3])):
+        set_, netem, rate, kind = fk
+        print(f"\n### Set {set_} by stream count, {rate:,} msg/s: {'one way' if kind == 'oneway' else 'round trip'} "
+              "(µs)\n")
+        print("All streams together, then stream 0 alone; medians across reps, ranges in brackets. A stream count "
+              "whose table above is refused is left out.\n")
+        rows, gone = [], []
+        for streams in sorted(fans[fk]):
+            k = (set_, streams, netem, rate, kind)
+            if k in refused and not show_invalid:
+                gone.append(str(streams))
+                continue
+            ps = groups[k]
+            for a in sorted({p.arm for p in ps}, key=lambda a: (any(is_aa(p) for p in ps if p.arm == a), a)):
+                reps = [p for p in ps if p.arm == a]
+                vals = lambda f: [p.row[f] for p in reps if p.row[f] is not None]
+                fl = [f"{f} (rep {p.rep})" for p in sorted(reps, key=lambda p: p.rep) for f in flags(p)]
+                rows.append([a, str(streams), str(len(reps))]
+                            + [cell(vals(f), 1000, 2) if vals(f) else "-" for _, f in TRANSPORT_METRICS[1:]]
+                            + [cell(vals(f), 1000, 2) if vals(f) else "-" for _, f in STREAM0]
+                            + [", ".join(fl) or "none"])
+        if rows:
+            print(table(["arm", "streams", "reps"] + [c for c, _ in TRANSPORT_METRICS[1:]] + [c for c, _ in STREAM0]
+                        + ["flags"], rows))
+        if gone:
+            print(f"\nRefused stream counts: {', '.join(gone)}.")
 
 
 if __name__ == "__main__":
