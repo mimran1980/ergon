@@ -964,6 +964,7 @@ dependencies = [
  "env_logger",
  "ergon-latency-core",
  "ergon-md-dpdk",
+ "ergon-tune",
  "hdrhistogram",
  "libc",
  "log",
