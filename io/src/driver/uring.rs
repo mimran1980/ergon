@@ -98,9 +98,7 @@ impl Uring {
         // tracking (6.13+) polls exactly the queues of our sockets; older
         // kernels (6.9+) track the queues of sockets with requests.
         let register = |tracking| {
-            let mut napi = Napi::new()
-                .set_busy_poll_timeout(1)
-                .set_tracking(tracking);
+            let mut napi = Napi::new().set_busy_poll_timeout(1).set_tracking(tracking);
             ring.submitter().register_napi(&mut napi)
         };
         let napi_error = |e: std::io::Error| match e.raw_os_error() {

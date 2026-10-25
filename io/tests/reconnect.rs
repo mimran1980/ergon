@@ -410,7 +410,11 @@ impl Pace {
         if now < self.held_until {
             return Err(self.held_until.abs_diff(now));
         }
-        while self.starts.front().is_some_and(|&t| t + self.window_ns <= now) {
+        while self
+            .starts
+            .front()
+            .is_some_and(|&t| t + self.window_ns <= now)
+        {
             self.starts.pop_front();
         }
         match self.starts.front() {
