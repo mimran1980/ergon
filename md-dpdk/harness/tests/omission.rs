@@ -288,3 +288,60 @@ fn the_schedule_runs_on_whatever_the_replies_do() {
         let _ = std::fs::remove_dir_all(dir);
     }
 }
+
+/// A message whose echo never came is in the percentiles, not left out of
+/// them. The echo is frozen for the rest of the run past warm-up, so the
+/// last part of the schedule is never echoed (or never offered, once the
+/// window is full). Each such measured message is recorded at what it is
+/// known to be at least, the run's end minus its due time, and counted as
+/// censored: `samples` is more than the echoes, and the max is the stall.
+/// Left out, the run would report only the round trips that got through.
+#[test]
+fn a_message_whose_echo_never_came_is_in_the_percentiles() {
+    let load = env!("CARGO_BIN_EXE_load");
+    let rtt = env!("CARGO_BIN_EXE_rtt");
+    let (ping, pong) = (endpoint(), endpoint());
+    let (near, far) = (aeron_dir("lost-near"), aeron_dir("lost-far"));
+
+    let echo = start(rtt, &["xpong", &ping, &pong, "-"], &far);
+    // a warm-up second and two measured ones; the freeze lands in the
+    // measured part and lasts until the generator has given up
+    let offered = start(load, &["xping", &ping, &pong, "2000", "2", "32", "-"], &near);
+    std::thread::sleep(Duration::from_millis(3000));
+    echo.freeze();
+    let offered = offered.finish(60);
+    echo.thaw();
+    let _ = echo.terminate(30);
+    offered.assert_ok("load xping");
+
+    let fields = offered.result("load,omission-test,udp,32,2000,1,");
+    let field = |i: usize, what: &str| -> u64 { fields[i].parse().unwrap_or_else(|_| panic!("{what}: {fields:?}")) };
+    let (max, samples, sent, received, scheduled, censored) = (
+        field(11, "max"),
+        field(13, "samples"),
+        field(14, "sent"),
+        field(15, "received"),
+        field(19, "scheduled"),
+        field(21, "censored"),
+    );
+    eprintln!("lost: {fields:?}");
+    let warmup = 2000;
+    assert!(received < scheduled, "the freeze lost no echo, so this proves nothing: {fields:?}");
+    // the freeze may land in warm-up on a slow start: then no echo is
+    // measured, and every measured message is owed without one
+    let echoed = received.saturating_sub(warmup);
+    assert!(
+        samples > echoed,
+        "the percentiles hold only the {echoed} echoes: the {} messages owed without one are missing: {fields:?}",
+        scheduled - received
+    );
+    assert!(censored >= samples - echoed, "a message without an echo is not counted censored: {fields:?}");
+    assert!(sent <= scheduled);
+    // each was waited for at least until the run gave up on it: the max is
+    // the stall, not the round trips that got through
+    assert!(max >= 1_000_000_000, "max {max} ns is not the stall: {fields:?}");
+
+    for dir in [near, far] {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}

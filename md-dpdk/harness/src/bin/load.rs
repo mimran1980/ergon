@@ -26,12 +26,17 @@
 //! `rate`, the generator or the path could not keep the schedule. `scheduled`
 //! is what the run owed; `sent` below it is work never offered. `late` counts
 //! the sends that found the following slot already due (the run owed more than
-//! one), beside `max send lag`'s worst slip. `censored` counts round trips at
-//! the histogram's bound, whose true value is only known to be at least that:
-//! a max at the bound beside a non-zero `censored` is a floor, not the slowest
-//! round trip. `max send lag` is the longest a measured message waited past
-//! its due time to be offered, so it covers the same messages as the histogram
-//! (warm-up is in neither). `received < sent` means replies never came back
+//! one), beside `max send lag`'s worst slip. The percentiles cover every
+//! measured message the schedule owed and was due by the run's end, not only
+//! the echoed ones: a message sent without an echo, or never offered, is
+//! recorded at what it is known to be at least, the run's end minus its due
+//! time. `censored` counts those plus round trips at the histogram's bound:
+//! values only known to be at least what was recorded, so a non-zero
+//! `censored` makes the max (and any percentile it reaches) a floor.
+//! `samples` is the echoes after warm-up plus the messages owed without one.
+//! `max send lag` is the longest a measured message waited past
+//! its due time to be offered, over the measured messages that were offered
+//! (warm-up is in neither it nor the histogram). `received < sent` means replies never came back
 //! within two seconds of the end (a stall: Aeron itself does not lose
 //! messages), and a run is cut short at twice its schedule if the peer stalls
 //! or goes away. With `RTT_HISTOGRAM=<path>` the first stream's full histogram
@@ -222,6 +227,34 @@ fn achieved_rate(sent: u64, warmup: u64, due_start: u64, send_end: u64, run_end:
     (sent - warmup) as f64 * 1e9 / window as f64
 }
 
+/// Records each measured message whose echo never came at what it is known
+/// to be at least: `end` minus when it was due. Echoes arrive in order (one
+/// Aeron image each way), so the echoed messages are `0..received` and the
+/// rest, `received..total`, were owed without one: sent and unanswered, or
+/// never offered. Warm-up stays out, as it does for an echo. A message not
+/// yet due at `end` (the peer went away early) has no bound above zero and
+/// is not recorded. Returns how many were recorded; each is censored.
+fn record_incomplete(
+    histogram: &mut Histogram<u64>,
+    due_of: impl Fn(u64) -> u64,
+    warmup: u64,
+    received: u64,
+    total: u64,
+    end: u64,
+) -> u64 {
+    let mut recorded = 0;
+    for n in received.max(warmup)..total {
+        let due = due_of(n);
+        if due >= end {
+            // due no earlier than the end: neither are the later ones
+            break;
+        }
+        histogram.saturating_record(end - due);
+        recorded += 1;
+    }
+    recorded
+}
+
 impl Offered {
     #[inline]
     fn due(&self, start: u64, n: u64) -> u64 {
@@ -402,6 +435,23 @@ fn run(
         }
     }
 
+    // What the schedule owed and never got back is in the percentiles: each
+    // measured message without an echo at its lower bound, counted censored.
+    // Left out, a stall that lost the rest of the run would report only the
+    // round trips that got through it.
+    let end = clock.stamp();
+    for s in &mut streams {
+        let (interval_fp, burst) = (s.interval_fp, s.spec.burst);
+        s.censored += record_incomplete(
+            &mut s.histogram,
+            |n| due(start, interval_fp, burst, n),
+            s.warmup,
+            s.received,
+            s.total,
+            end,
+        );
+    }
+
     for (s, achieved) in streams.iter().zip(&achieved) {
         let q = |quantile| s.histogram.value_at_quantile(quantile);
         let (kind, name) = match &s.spec.name {
@@ -561,7 +611,58 @@ fn echo(
 
 #[cfg(test)]
 mod tests {
-    use super::{SECOND_NS, achieved_rate, due, is_late};
+    use super::{HISTOGRAM_MAX_NS, SECOND_NS, achieved_rate, due, is_late, record_incomplete};
+    use hdrhistogram::Histogram;
+
+    fn histogram() -> Histogram<u64> {
+        Histogram::<u64>::new_with_bounds(1, HISTOGRAM_MAX_NS, 3).unwrap()
+    }
+
+    /// A measured message whose echo never came is in the distribution at
+    /// what it is known to be at least: the run's end minus when it was due.
+    /// Sent with no echo and never offered at all are the same: both were
+    /// owed. Echoed messages and warm-up are not added again.
+    #[test]
+    fn a_message_whose_echo_never_came_is_recorded_at_its_lower_bound() {
+        // 10 messages, one a second from 0; warm-up 2, echoes for 0..6
+        let interval_fp = (SECOND_NS as u128) << 32;
+        let mut h = histogram();
+        let end = 20 * SECOND_NS;
+        let n = record_incomplete(&mut h, |n| due(0, interval_fp, 1, n), 2, 6, 10, end);
+        assert_eq!(n, 4, "messages 6..10");
+        assert_eq!(h.len(), 4);
+        assert!(h.equivalent(h.min(), 11 * SECOND_NS), "message 9: {}", h.min());
+        assert!(h.equivalent(h.max(), 14 * SECOND_NS), "message 6: {}", h.max());
+    }
+
+    /// Warm-up that never came back is not measured, so it stays out.
+    #[test]
+    fn warm_up_without_an_echo_stays_out() {
+        let interval_fp = (SECOND_NS as u128) << 32;
+        let mut h = histogram();
+        let n = record_incomplete(&mut h, |n| due(0, interval_fp, 1, n), 5, 3, 7, 20 * SECOND_NS);
+        assert_eq!(n, 2, "messages 5 and 6 only");
+    }
+
+    /// A message not yet due when the run ended (the peer went away early)
+    /// has no lower bound above zero, so it is not recorded as a fast trip.
+    #[test]
+    fn a_message_not_yet_due_at_the_end_is_not_recorded() {
+        let interval_fp = (SECOND_NS as u128) << 32;
+        let mut h = histogram();
+        let n = record_incomplete(&mut h, |n| due(0, interval_fp, 1, n), 0, 0, 10, 4 * SECOND_NS);
+        assert_eq!(n, 4, "messages 0..4 were due before the end");
+        assert!(h.equivalent(h.min(), SECOND_NS), "message 3: {}", h.min());
+    }
+
+    /// Every echo came back: nothing to add.
+    #[test]
+    fn a_complete_run_adds_nothing() {
+        let interval_fp = (SECOND_NS as u128) << 32;
+        let mut h = histogram();
+        assert_eq!(record_incomplete(&mut h, |n| due(0, interval_fp, 1, n), 2, 10, 10, 20 * SECOND_NS), 0);
+        assert_eq!(h.len(), 0);
+    }
 
     /// A stream's own send end, not the run's. A finished its 1000 messages
     /// after a second; B dragged on for two. Reporting both against the run's
