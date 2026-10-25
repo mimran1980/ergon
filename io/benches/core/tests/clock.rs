@@ -14,9 +14,11 @@ fn a_raw_delta_scales_to_the_monotonic_clocks_nanoseconds() -> R {
     let (r1, t1) = (clock.raw(), Instant::now());
     let ns = clock.delta_ns(r0, r1);
     let reference = u64::try_from(t1.duration_since(t0).as_nanos())?;
-    // r0..r1 lies inside t0..t1; reading either clock costs well under 50 us
-    assert!(ns <= reference, "{ns} > {reference}");
-    assert!(ns + 50_000 >= reference, "{ns} vs {reference}");
+    // r0..r1 lies inside t0..t1 (reading either clock costs well under 50
+    // us), and the scale is within 100 ppm of the reference's
+    let slack = reference / 10_000;
+    assert!(ns <= reference + slack, "{ns} > {reference}");
+    assert!(ns + 50_000 + slack >= reference, "{ns} vs {reference}");
     Ok(())
 }
 

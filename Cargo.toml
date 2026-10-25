@@ -5,6 +5,10 @@ members = [
     "cluster",
     "cluster-test-harness",
     "io",
+    # The transport latency suite's shared measurement core (publish = false),
+    # though under the excluded io/benches: md-dpdk/harness and io/benches
+    # both take it by path, and io/benches's own workspace excludes it.
+    "io/benches/core",
     # Low-latency host and NIC checks (pure functions returning findings),
     # called by ergon-io, the media driver and downstream runtimes.
     "tune",

@@ -1,7 +1,9 @@
 //! The counter clock every stamp reads.
 //!
-//! The raw TSC (`x86_64`) or CNTVCT (`aarch64`) through quanta, scaled to
-//! nanoseconds with quanta's own calibration against the monotonic clock.
+//! The raw TSC (`x86_64`) or CNTVCT (`aarch64`), read through quanta, and
+//! scaled to nanoseconds by its own calibration: the counter against the
+//! monotonic clock over 20 ms, each end a counter read bracketed by two
+//! monotonic reads (a few ppm; quanta's own scale was seen 0.1 % off).
 //! Never a millisecond clock.
 //!
 //! Messages carry raw counter values, so two processes on one host share a
@@ -9,9 +11,13 @@
 
 use crate::Error;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
-/// How long [`TscClock::new`] watches the counter to learn ticks per ns.
-const CALIBRATION_NS: u64 = 10_000_000;
+/// How long [`TscClock::new`] watches the counter against the monotonic
+/// clock.
+const CALIBRATION_NS: u128 = 20_000_000;
+/// Bracketed reads at each end of the calibration; the tightest is kept.
+const CALIBRATION_READS: usize = 9;
 /// How long a [`cross_cpu_check`] side waits for its peer before giving up.
 const PEER_TIMEOUT_NS: u64 = 10_000_000_000;
 
@@ -19,6 +25,8 @@ const PEER_TIMEOUT_NS: u64 = 10_000_000_000;
 #[derive(Debug, Clone)]
 pub struct TscClock {
     clock: quanta::Clock,
+    /// ns per tick, 32.32 fixed point
+    ns_per_tick_fp: u128,
     /// ticks per ns, 32.32 fixed point
     ticks_per_ns_fp: u128,
 }
@@ -29,21 +37,38 @@ impl Default for TscClock {
     }
 }
 
+/// A counter read and the monotonic time at it (ns from `base`, the middle
+/// of the tightest of a few bracketing pairs).
+fn bracketed(clock: &quanta::Clock, base: Instant) -> (u128, u64) {
+    let mut best = (u128::MAX, 0u128, 0u64);
+    for _ in 0..CALIBRATION_READS {
+        let a = base.elapsed().as_nanos();
+        let raw = clock.raw();
+        let b = base.elapsed().as_nanos();
+        let width = b.saturating_sub(a);
+        if width < best.0 {
+            best = (width, a + width / 2, raw);
+        }
+    }
+    (best.1, best.2)
+}
+
 impl TscClock {
-    /// The clock, with ticks per ns measured over 10 ms of busy-spin.
+    /// The clock, its scale measured over 20 ms of busy-spin.
     #[must_use]
     pub fn new() -> Self {
         let clock = quanta::Clock::new();
-        let r0 = clock.raw();
-        let mut r1 = r0;
-        while clock.delta_as_nanos(r0, r1) < CALIBRATION_NS {
+        let base = Instant::now();
+        let (t0, r0) = bracketed(&clock, base);
+        while base.elapsed().as_nanos() < t0 + CALIBRATION_NS {
             std::hint::spin_loop();
-            r1 = clock.raw();
         }
-        let ns = u128::from(clock.delta_as_nanos(r0, r1).max(1));
-        let ticks = u128::from(r1.wrapping_sub(r0));
+        let (t1, r1) = bracketed(&clock, base);
+        let ns = t1.saturating_sub(t0).max(1);
+        let ticks = u128::from(r1.wrapping_sub(r0)).max(1);
         Self {
             clock,
+            ns_per_tick_fp: ((ns << 32) / ticks).max(1),
             ticks_per_ns_fp: ((ticks << 32) / ns).max(1),
         }
     }
@@ -60,7 +85,10 @@ impl TscClock {
     #[must_use]
     #[inline]
     pub fn delta_ns(&self, start: u64, end: u64) -> u64 {
-        self.clock.delta_as_nanos(start, end)
+        if end <= start {
+            return 0;
+        }
+        u64::try_from((u128::from(end - start) * self.ns_per_tick_fp) >> 32).unwrap_or(u64::MAX)
     }
 
     /// Raw ticks in `ns` nanoseconds.

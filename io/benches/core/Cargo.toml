@@ -1,15 +1,17 @@
 [package]
 name = "ergon-latency-core"
-version = "0.1.0"
-edition = "2024"
-rust-version = "1.99"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
 publish = false
-license = "Apache-2.0"
+license.workspace = true
+repository.workspace = true
 description = "Shared measurement core of the transport latency suite: message, clock, pacing, histograms, loss, framing and result rows"
 
-# A member of io/benches's own workspace (the root workspace excludes
-# io/benches). md-dpdk/harness takes it by path too, so every arm stamps,
-# paces, records and reports with the same code.
+# A member of the root workspace, though under io/benches (its own
+# workspace, which excludes this crate): the root's `io` member covers the
+# path md-dpdk/harness takes it by. io/benches takes it by path, as it takes
+# ergon-io, so every arm stamps, paces, records and reports with this code.
 
 [dependencies]
 hdrhistogram = { version = "7.5", default-features = false }
@@ -22,15 +24,5 @@ sha2 = "0.11"
 # Hashes the crate's sources into CORE_BUILD_HASH (build.rs).
 sha2 = "0.11"
 
-# The root workspace's lint level (this crate is outside it).
-[lints.rust]
-unsafe_code = "deny"
-missing_docs = "deny"
-
-[lints.clippy]
-all = "deny"
-pedantic = "deny"
-nursery = "deny"
-unwrap_used = "deny"
-expect_used = "deny"
-panic = "deny"
+[lints]
+workspace = true
