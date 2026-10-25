@@ -326,7 +326,10 @@ fn a_message_whose_echo_never_came_is_in_the_percentiles() {
     );
     eprintln!("lost: {fields:?}");
     let warmup = 2000;
-    assert!(received < scheduled, "the freeze lost no echo, so this proves nothing: {fields:?}");
+    assert!(
+        received < scheduled,
+        "the freeze lost no echo, so this proves nothing: {fields:?}"
+    );
     // the freeze may land in warm-up on a slow start: then no echo is
     // measured, and every measured message is owed without one
     let echoed = received.saturating_sub(warmup);
@@ -335,7 +338,10 @@ fn a_message_whose_echo_never_came_is_in_the_percentiles() {
         "the percentiles hold only the {echoed} echoes: the {} messages owed without one are missing: {fields:?}",
         scheduled - received
     );
-    assert!(censored >= samples - echoed, "a message without an echo is not counted censored: {fields:?}");
+    assert!(
+        censored >= samples - echoed,
+        "a message without an echo is not counted censored: {fields:?}"
+    );
     assert!(sent <= scheduled);
     // each was waited for at least until the run gave up on it: the max is
     // the stall, not the round trips that got through

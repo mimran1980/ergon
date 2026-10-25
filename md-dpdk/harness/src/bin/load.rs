@@ -660,7 +660,10 @@ mod tests {
     fn a_complete_run_adds_nothing() {
         let interval_fp = (SECOND_NS as u128) << 32;
         let mut h = histogram();
-        assert_eq!(record_incomplete(&mut h, |n| due(0, interval_fp, 1, n), 2, 10, 10, 20 * SECOND_NS), 0);
+        assert_eq!(
+            record_incomplete(&mut h, |n| due(0, interval_fp, 1, n), 2, 10, 10, 20 * SECOND_NS),
+            0
+        );
         assert_eq!(h.len(), 0);
     }
 
