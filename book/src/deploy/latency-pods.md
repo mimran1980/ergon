@@ -56,7 +56,9 @@ with several nodes and no NIC node. A binding is never dropped in silence.
 The five grants on one pod. Everything stays inside the pod's own cpuset:
 exclusive CPUs from the kubelet's static CPU manager, shared CPUs from
 `ergon.io/shared-millicpus`. Helpers go on the shared CPUs; SQPOLL takes an
-exclusive CPU of the pod's own ([SMT sibling](hft.md#smt-sibling)).
+exclusive CPU of the pod's own ([SMT sibling](hft.md#smt-sibling)). On the
+shared CPU it measured p99 10 ms once that CPU was busy
+([SQPOLL placement](shared-cpus.md#sqpoll-placement)).
 
 ```mermaid
 flowchart TD

@@ -25,9 +25,10 @@ feature gate, plus the pieces those leave out.
 | chart digest | `sha256:145054055d604e8a866bf86556cd3a1b46b92b1b6e3347183b8033dd7112b14d` |
 | platforms | `linux/amd64`, `linux/arm64` |
 | checked | `helm template` of the OCI chart renders image `ghcr.io/mimran1980/ergon-shared-cpus:0.1.2` with `--kubelet-config`. `--version` on amd64 and arm64: `ergon-shared-cpus 0.1.2 85098f8b16e17d80747c73d6069c1ec07d70496a nri=v0.12.3`. The kind e2e (`test/e2e.sh`) at that source: 18 steps, 0 failed (2026-10-25) |
-| not verified | EKS |
+| verified on EKS | AL2023 `c8g.xlarge`, Kubernetes 1.36, containerd 2.3.5, chart and image 0.1.2 built from this tree: NRI socket, nodeadm TOML merge, kubelet drop-in merge, `/opt` writable, `system-node-critical` outside `kube-system` ([RELEASE.md](RELEASE.md)) |
 | measured | one Azure Cobalt VM, helpers on the shared CPU, with the [node settings](#quiet-isolated-cpus): p50 0.02 µs, p99.99 0.03 µs, max 4.81 to 5.52 µs over 3 reps of 60 s, 0 involuntary switches; 3.5 to 5.5 µs is the hypervisor's floor. Shared-CPU scaling as designed ([BENCHMARKS.md](BENCHMARKS.md)) |
-| not measured | a helper's wake-up wait on a shared CPU, the pin's cost, how often node events reach isolated CPUs in production ([BENCHMARKS.md](BENCHMARKS.md#remaining-risk-node-events)) |
+| measured on EKS | a helper's 1 ms wake-up on the shared CPU: p50 2.6 µs late with the hook's 1 ns slack (52.6 µs with 50 µs), max 77 µs with that CPU at 100 %; idle maxima 2.4 to 3.4 ms, unexplained. The pin: p50 5.3 µs, max 50 µs, once a thread ([BENCHMARKS.md](BENCHMARKS.md#eks-c8gxlarge-run-eks-nri-20261025-082023)) |
+| not measured | how often node events reach isolated CPUs in production ([BENCHMARKS.md](BENCHMARKS.md#remaining-risk-node-events)) |
 | release gate | [`RELEASE.md`](RELEASE.md) |
 
 ## Quick start
@@ -83,7 +84,7 @@ admission policy, not another image:
      --set hostContract.proc.enabled=true
    ```
 
-   <a id="eks-al2023"></a>**EKS AL2023** (not verified on EKS). nodeadm writes the base
+   <a id="eks-al2023"></a>**EKS AL2023** (chart 0.1.2; verified on EKS 1.36). nodeadm writes the base
    `/etc/kubernetes/kubelet/config.json`, puts the `NodeConfig` kubelet
    settings in `/etc/kubernetes/kubelet/config.json.d/40-nodeadm.conf`, and
    starts the kubelet with `--config-dir` on that directory. The plugin
@@ -454,8 +455,11 @@ metricsAddress: ":9466"
   `kubeletConfigDir` points at a directory the kubelet does not read (no
   `--config-dir`), the check trusts drop-ins the kubelet ignores. Turn on
   `kubeletConfigZ` with a fresh `/configz` copy to cross-check.
-- Not verified on a real EKS node: the NRI socket, nodeadm TOML merge,
-  the kubelet drop-in merge, `/opt` writable, `system-node-critical` outside kube-system.
+- Verified on EKS AL2023: the NRI socket, nodeadm TOML merge, the kubelet
+  drop-in merge, `/opt` writable, `system-node-critical` outside
+  kube-system. A warm ENI the VPC CNI attached after boot came up with its
+  IRQs on the shared CPU; the plugin refused hot pods until they were
+  re-pinned to the IRQ CPU.
 - Measured on one Azure Cobalt VM: the exclusive core with the plugin on,
   helpers on the shared CPU and the [node settings](#quiet-isolated-cpus),
   p50 0.02 µs, p99.99 0.03 µs, max 4.81 to 5.52 µs, 0 involuntary switches

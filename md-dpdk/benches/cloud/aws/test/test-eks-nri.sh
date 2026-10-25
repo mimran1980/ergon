@@ -276,11 +276,16 @@ if grep -q 'ergon-shared-cpus ergon-system' "$script" &&
 else
     bad "ds namespace: the rollout wait does not pair each DaemonSet with its own namespace"
 fi
-if grep -q 'devRoot: /host/dev' "$script" &&
-    grep -q 'ioUring: allow' "$script"; then
-    ok "plugin config: devRoot and seccomp.ioUring are set (PHC discovery and M3/M6)"
+# The plugin comes from this tree's chart with the book's EKS AL2023 install:
+# the kubelet's config.json plus its drop-in directory, and the grants the
+# modes ask for. (The chart's own devRoot default is /host/dev.)
+if grep -q 'helm template ergon-shared-cpus "$plugin_src/charts/ergon-shared-cpus"' "$script" &&
+    grep -q 'config.seccomp.ioUring=allow' "$script" &&
+    grep -q 'hostContract.kubeletConfig.path=/etc/kubernetes/kubelet/config.json' "$script" &&
+    grep -q 'hostContract.kubeletConfigDir.enabled=true' "$script"; then
+    ok "plugin config: the chart with the EKS kubelet config and drop-ins, seccomp.ioUring allowed (M3/M6)"
 else
-    bad "plugin config: devRoot and/or seccomp.ioUring are missing from the generated ConfigMap"
+    bad "plugin config: the chart install is missing the EKS kubelet paths or seccomp.ioUring"
 fi
 if grep -q 'kubernetes.io/hostname' "$script" &&
     grep -q "role \$which is on" "$script"; then

@@ -1,0 +1,85 @@
+== nri socket
+srwxr-xr-x. 1 root root 0 Oct 25 08:37 /var/run/nri/nri.sock
+== containerd nri
+  [plugins.'io.containerd.nri.v1.nri']
+    disable = false
+    socket_path = '/var/run/nri/nri.sock'
+    plugin_path = '/opt/nri/plugins'
+    plugin_config_path = '/etc/nri/conf.d'
+    plugin_registration_timeout = '5s'
+    plugin_request_timeout = '2s'
+    disable_connections = false
+
+    [plugins.'io.containerd.nri.v1.nri'.default_validator]
+      enable = true
+      reject_oci_hook_adjustment = false
+      reject_runtime_default_seccomp_adjustment = false
+      reject_unconfined_seccomp_adjustment = false
+      reject_custom_seccomp_adjustment = false
+      reject_namespace_adjustment = false
+      reject_sysctl_adjustment = false
+      required_plugins = []
+      tolerate_missing_plugins_annotation = ''
+
+  [plugins.'io.containerd.runtime.v2.task']
+    platforms = ['linux/arm64/v8']
+
+  [plugins.'io.containerd.server.v1.debug']
+    address = ''
+    uid = 0
+    gid = 0
+
+  [plugins.'io.containerd.server.v1.grpc']
+    address = '/run/containerd/containerd.sock'
+== containerd drop-ins
+ls: cannot access '/etc/containerd/config.d/': No such file or directory
+/etc/containerd/config.toml:150:  [plugins.'io.containerd.nri.v1.nri']
+/etc/containerd/config.toml:152:    socket_path = '/var/run/nri/nri.sock'
+/etc/containerd/config.toml:153:    plugin_path = '/opt/nri/plugins'
+/etc/containerd/config.toml:154:    plugin_config_path = '/etc/nri/conf.d'
+/etc/containerd/config.toml:159:    [plugins.'io.containerd.nri.v1.nri'.default_validator]
+== kubelet argv
+/usr/bin/kubelet --runtime-cgroups=/runtime.slice/containerd.service --config-dir=/etc/kubernetes/kubelet/config.json.d --kubeconfig=/var/lib/kubelet/kubeconfig --image-credential-provider-bin-dir=/etc/eks/image-credential-provider --image-credential-provider-config=/etc/eks/image-credential-provider/config.json --node-ip=10.31.11.125 --cloud-provider=external --hostname-override=ip-10-31-11-125.ec2.internal --config=/etc/kubernetes/kubelet/config.json --node-labels=ergon.io/shared-cpus=true 
+== kubelet drop-ins
+total 4
+-rw-r--r--. 1 root root 302 Oct 25 08:37 40-nodeadm.conf
+{
+    "apiVersion": "kubelet.config.k8s.io/v1beta1",
+    "cpuManagerPolicy": "static",
+    "kind": "KubeletConfiguration",
+    "kubeReservedCgroup": "",
+    "reservedSystemCPUs": "0,1",
+    "systemReservedCgroup": "",
+    "topologyManagerPolicy": "single-numa-node",
+    "topologyManagerScope": "pod"
+}== kubelet base reservedSystemCPUs
+== opt
+total 2820
+-rwxr-xr-x. 1 root root 2883744 Oct 25 08:38 ergon-cpus
+/dev/nvme0n1p1 rw,noatime,seclabel,inode64,logbufs=8,logbsize=32k,sunit=1024,swidth=1024,noquota
+== quiet unit
+enabled enabled active active
+PASS thp never
+PASS fair_server cpu2 runtime 0
+PASS fair_server cpu3 runtime 0
+quiet-check rc=0
+== cmdline
+BOOT_IMAGE=(hd0,gpt1)/boot/vmlinuz-6.18.54-121.166.amzn2023.aarch64 root=UUID=<redacted> ro console=tty0 console=ttyS0,115200n8 nvme_core.io_timeout=4294967295 rd.emergency=poweroff rd.shell=0 selinux=1 security=selinux quiet numa_cma=1:64M clocksource=tsc tsc=reliable intel_idle.max_cstate=1 processor.max_cstate=1 hugepagesz=2M hugepages=256 transparent_hugepage=never nohz_full=2,3 rcu_nocbs=2,3 isolcpus=managed_irq,domain,2,3 irqaffinity=1
+== isolated
+2-3
+2-3
+== irqbalance
+inactive
+== nic irqs (irq requested effective name)
+irq 94 1 1 ena-mgmnt@pci:0000:27:00.0
+irq 95 1 1 ens34-Tx-Rx-0
+irq 96 1 1 ens34-Tx-Rx-1
+irq 97 1 1 ens34-Tx-Rx-2
+irq 98 1 1 ens34-Tx-Rx-3
+irq 99 0-1 0 ena-mgmnt@pci:0000:28:00.0
+irq 100 0-1 0 ens35-Tx-Rx-0
+irq 101 0-1 0 ens35-Tx-Rx-1
+irq 102 0-1 0 ens35-Tx-Rx-2
+irq 103 0-1 0 ens35-Tx-Rx-3
+== cpu_manager_state
+{"policyName":"static","defaultCpuSet":"0-3","checksum":611748604}

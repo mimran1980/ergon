@@ -39,7 +39,7 @@ helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus
   --set hostContract.proc.enabled=true
 ```
 
-**EKS AL2023** (not verified on EKS). nodeadm writes `/etc/kubernetes/kubelet/config.json` and the
+**EKS AL2023** (verified on EKS 1.36). nodeadm writes `/etc/kubernetes/kubelet/config.json` and the
 `NodeConfig` kubelet settings as the drop-in
 `/etc/kubernetes/kubelet/config.json.d/40-nodeadm.conf`, and runs the
 kubelet with `--config-dir` on that directory:

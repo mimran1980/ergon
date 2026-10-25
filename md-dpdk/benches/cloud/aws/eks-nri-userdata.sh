@@ -13,16 +13,30 @@
 #   * the nodeadm NodeConfig: the cluster, and kubelet's low-latency settings.
 #
 # usage: eks-nri-userdata.sh <cluster> <apiServerEndpoint> <ca-b64> <service-cidr> \
-#          <reserved-cpus> <isolated-cpus> [hugepages] > userdata.gz
+#          <reserved-cpus> <isolated-cpus> [hugepages] [irq-cpus] > userdata.gz
 #
 #   <reserved-cpus>   kubelet's reservedSystemCPUs, also the kernel's
 #                     housekeeping CPUs (irqaffinity): "0,1" on a c8g.xlarge
 #                     (0 = system and the shared pool, 1 = NIC IRQs).
 #   <isolated-cpus>   the CPUs every latency pod's exclusive cpuset comes from:
 #                     "2,3" on a c8g.xlarge. nohz_full, rcu_nocbs and
-#                     isolcpus=managed_irq name these, never the reserved ones:
+#                     isolcpus=managed_irq,domain name these (without domain the
+#                     kernel isolated set is empty and the plugin refuses every
+#                     hot pod), never the reserved ones:
 #                     the shared CPU must load-balance.
 #   [hugepages]       2 MiB pages reserved at boot (256 = 512 MiB).
+#   [irq-cpus]        where every movable IRQ goes (irqaffinity=, irqbalance
+#                     off, and a boot unit that re-pins): the reserved CPUs
+#                     minus the plugin's sharedCpus, "1" on a c8g.xlarge. The
+#                     plugin refuses a hot pod while a NIC IRQ may land on a
+#                     shared CPU. Default: the reserved CPUs.
+#
+# The shell part also installs the quiet-CPU boot unit from
+# samples/low-latency-k8s/node (quiet-cpus.sh as
+# /usr/local/sbin/ergon-quiet-cpus.sh, ergon-quiet-cpus.service: THP never and
+# the fair server's runtime 0 on the isolated CPUs at every boot), comment
+# lines stripped. QUIET_DIR names that directory (default: the repo's). The
+# gzipped size and the headroom under EC2's limit go to stderr.
 #
 # The output is binary: pass it as `--user-data fileb://userdata.gz`. EC2
 # limits raw user data to 16384 bytes and both cloud-init and nodeadm
@@ -47,12 +61,20 @@
 set -euo pipefail
 
 fail() { echo "userdata FAIL: $*" >&2; exit 1; }
-if (($# < 6 || $# > 7)); then
-    echo "usage: $0 <cluster> <apiServerEndpoint> <ca-b64> <service-cidr> <reserved-cpus> <isolated-cpus> [hugepages] > userdata.gz" >&2
+if (($# < 6 || $# > 8)); then
+    echo "usage: $0 <cluster> <apiServerEndpoint> <ca-b64> <service-cidr> <reserved-cpus> <isolated-cpus> [hugepages] [irq-cpus] > userdata.gz" >&2
     exit 2
 fi
 cluster="$1" endpoint="$2" ca="$3" cidr="$4" reserved="$5" isolated="$6"
 hugepages="${7:-256}"
+irq="${8:-$reserved}"
+quiet_dir=${QUIET_DIR:-$(cd "$(dirname "$0")/../../../.." && pwd)/samples/low-latency-k8s/node}
+for f in quiet-cpus.sh ergon-quiet-cpus.service; do
+    [[ -f $quiet_dir/$f ]] || fail "$quiet_dir/$f missing (QUIET_DIR)"
+    ! grep -qx ERGON_QUIET_EOF "$quiet_dir/$f" || fail "$f has a line ERGON_QUIET_EOF"
+done
+# the node gets the code only: comment lines stay in the repo
+code() { awk 'NR == 1 && /^#!/ { print; next } /^[[:space:]]*#/ { next } { print }' "$1"; }
 
 [[ "$cluster" =~ ^[A-Za-z0-9][A-Za-z0-9_-]*$ ]] || fail "cluster name '$cluster'"
 [[ "$endpoint" =~ ^https://[^[:space:]]+$ ]] || fail "API server endpoint '$endpoint': https://..."
@@ -61,6 +83,7 @@ hugepages="${7:-256}"
 [[ "$reserved" =~ ^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$ ]] || fail "reserved CPUs '$reserved': a CPU list such as 0,1"
 [[ "$isolated" =~ ^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$ ]] || fail "isolated CPUs '$isolated': a CPU list such as 2,3"
 [[ "$hugepages" =~ ^[1-9][0-9]*$ ]] || fail "hugepages '$hugepages': a positive count"
+[[ "$irq" =~ ^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$ ]] || fail "IRQ CPUs '$irq': a CPU list such as 1"
 # the two lists must not overlap
 overlap=$(python3 -c '
 import sys
@@ -89,10 +112,11 @@ if grep -q ' isolcpus=' /proc/cmdline; then
     exit 0
 fi
 args="hugepagesz=2M hugepages=$hugepages transparent_hugepage=never"
-args="\$args nohz_full=$isolated rcu_nocbs=$isolated isolcpus=managed_irq,$isolated"
-# irqaffinity names the reserved CPUs: the NIC IRQs land on the IRQ CPU there,
-# never on an isolated one (Graviton kernel-UDP nodes need a spare CPU for IRQs).
-args="\$args irqaffinity=$reserved"
+args="\$args nohz_full=$isolated rcu_nocbs=$isolated isolcpus=managed_irq,domain,$isolated"
+# irqaffinity names the IRQ CPUs (reserved minus shared): the NIC IRQs land
+# there, never on an isolated or a shared one (Graviton kernel-UDP nodes need
+# a spare CPU for IRQs, and the plugin refuses hot pods otherwise).
+args="\$args irqaffinity=$irq"
 grubby --update-kernel=ALL --args="\$args"
 info="\$(grubby --info=DEFAULT)"
 grep -q 'isolcpus=' <<<"\$info" || { echo "ergon-lab: grubby did not set the kernel arguments" >&2; exit 1; }
@@ -108,6 +132,30 @@ cat > /etc/systemd/system.conf.d/90-ergon-lab.conf <<'SYS'
 [Manager]
 CPUAffinity=$reserved
 SYS
+# irqbalance would spread IRQs back over the shared CPU; one writer only.
+if systemctl cat irqbalance.service >/dev/null 2>&1; then systemctl disable irqbalance.service; fi
+cat > /etc/systemd/system/ergon-lab-irq.service <<'UNIT'
+[Unit]
+Description=ergon-lab: every movable IRQ on the IRQ CPUs
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# \$\$ is systemd's escape for one \$
+ExecStart=/bin/sh -c 'for f in /proc/irq/*/smp_affinity_list; do echo $irq > \$\$f 2>/dev/null || true; done'
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl enable ergon-lab-irq.service
+cat > /usr/local/sbin/ergon-quiet-cpus.sh <<'ERGON_QUIET_EOF'
+$(code "$quiet_dir/quiet-cpus.sh")
+ERGON_QUIET_EOF
+chmod 0755 /usr/local/sbin/ergon-quiet-cpus.sh
+cat > /etc/systemd/system/ergon-quiet-cpus.service <<'ERGON_QUIET_EOF'
+$(code "$quiet_dir/ergon-quiet-cpus.service")
+ERGON_QUIET_EOF
+systemctl enable ergon-quiet-cpus.service
 rm -f /var/lib/kubelet/cpu_manager_state
 echo "ergon-lab: rebooting into the provisioned kernel command line"
 systemctl reboot
@@ -136,6 +184,8 @@ spec:
       - --node-labels=ergon.io/shared-cpus=true
   containerd:
     config: |
+      [plugins."io.containerd.nri.v1.nri"]
+        disable = false
       [plugins."io.containerd.nri.v1.nri".default_validator]
         enable = true
 
@@ -144,4 +194,5 @@ EOF
 } | gzip -9n > "$out"
 size=$(($(wc -c < "$out")))
 ((size <= 16384)) || fail "user data is $size bytes gzipped, over EC2's 16384-byte limit"
+echo "userdata: $size bytes gzipped, $((16384 - size)) bytes under EC2's 16384-byte limit" >&2
 cat "$out"
