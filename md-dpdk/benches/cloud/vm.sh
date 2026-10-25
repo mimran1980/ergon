@@ -750,8 +750,9 @@ ethtool_set() {
 #        local table's, accept_local, no reverse-path filter on the data
 #        NICs), checked by ip route get both ways (fail closed); `stop` puts
 #        the rules and sysctls back
-#   RTT_GAP_US=<us>  the ping's pacing (lib.sh hands it to the client):
-#        nothing for the host or the driver
+#   RTT_GAP_US=<us>, KEEPALIVE_US=<us>, FLUSH_KB=<KiB>  the floor client's
+#        pacing, keep-alives and cache flush (lib.sh hands them to the
+#        client): nothing for the host or the driver
 # Returns 1 when KEY is not a host setting.
 host_setting() {
     local key=$1 value=$2 mode=$3 st vf names=() cur
@@ -989,7 +990,7 @@ host_setting() {
         } >>"$env_file"
         log "CONDUCTOR=own: the conductor alone on CPU $cpu (the layout's fifth core), spinning; housekeeping and local I/O on $HK_CPU"
         ;;
-    RTT_GAP_US) ;;
+    RTT_GAP_US | KEEPALIVE_US | FLUSH_KB) ;;
     HAIRPIN)
         # the raw floor's round trip between this host's own two data NICs
         # (modes.sh HAIRPIN; the floor client's xhairpin): its pong on the
@@ -2173,7 +2174,7 @@ client)
     precision_time && one_way=$run/one-way.csv
     rc=0 started=$SECONDS
     # RTT_GAP_US (lib.sh, a mode's @RTT_GAP_US): the ping's pacing, 0 none
-    sudo ${launch[@]+"${launch[@]}"} env AERON_DIR="$AERON_DIR" LABEL="$label" RTT_SECONDS="${RTT_SECONDS:-20}" RTT_GAP_US="${RTT_GAP_US:-0}" RTT_ONE_WAY="$one_way" \
+    sudo ${launch[@]+"${launch[@]}"} env AERON_DIR="$AERON_DIR" LABEL="$label" RTT_SECONDS="${RTT_SECONDS:-20}" RTT_GAP_US="${RTT_GAP_US:-0}" KEEPALIVE_US="${KEEPALIVE_US:-0}" FLUSH_KB="${FLUSH_KB:-0}" RTT_ONE_WAY="$one_way" \
         SUB_CHANNEL_PARAMS="$sub_params" PUB_CHANNEL_PARAMS="$(cat "$run/pub_channel_params" 2>/dev/null || true)" \
         RTT_LOST_TIMEOUT_US="$(rtt_lost_timeout_us "${lost_params:-$sub_params}" "$(cat "$run/base_rtt_us" 2>/dev/null || true)")" \
         RTT_HISTOGRAM="$run/rtt-histogram.csv" LOOP_STALLS_DIR="$run" LOAD_SPIKES="$run/load-spikes.csv" LOAD_SPIKE_NS="${LOAD_SPIKE_NS:-100000}" LOOP_STALL_NS="${LOOP_STALL_NS:-20000}" BENCH_CLOCK="$(cat "$run/bench_clock" 2>/dev/null || echo tsc)" AERON_TERM_BUFFER_SPARSE_FILE=false AERON_CLIENT_PRE_TOUCH_MAPPED_MEMORY=true \

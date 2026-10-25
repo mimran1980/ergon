@@ -26,6 +26,11 @@ printed before its directory was deleted, so each is partial.
 
 | run | instances | what it ran |
 | --- | --- | --- |
+| `aws-20261025-055230` (G7a) | `c8g.2xlarge` spot pair, us-east-2 | ENA deferred-refill patch against stock DPDK 25.11 and an A/A, 5 reps, idle and 288 B load; the opt-in TX pacer armed; the conductor on its own core |
+| `aws-20261025-055310` (G7b) | `c8g.2xlarge` spot pair, us-east-2 | sparse raw-floor round trips at 1 ms, 10 ms and 1 s gaps, cross-host and same-host hairpin; cold CPU caches; keep-alives |
+| `aws-20261025-055316` (G7c) | `c8g.2xlarge` spot pair, us-west-2 | CPU isolation against pinning alone; 1,024 RX descriptors after flat-out runs; an A/A |
+| `aws-20261025-065326-conductor` | `c8g.2xlarge` spot pair, us-east-2 | the conductor's long duty cycles, traced by hand (perf) |
+| `aws-ena-express-20261025-055456` | `c6gn.4xlarge` spot pair, us-east-1 | ENA Express with UDP: kernel UDP above SRD's 8,900-byte limit |
 | `aws-20261024-131544` (G6) | `c9g.2xlarge` spot pair | pure DPDK floor (no ergon-md-dpdk); same-host hairpin; sparse round trips at 1 ms to 1 s gaps; ENA deferred-refill patch against stock DPDK 25.11, with an A/A |
 | `aws-20261024-111303` (G5) | `c9g.2xlarge` spot pair, precision-time placement | large LLQ against `llq_policy=1` again, with an A/A; the one-way split of the largest round trips; agent loop gaps against a 10 µs gap spinner |
 | `aws-20261023-231150` (G4) | `c9g.2xlarge` spot pair | DPDK knobs against an A/A control (same code built twice), with and without diagnostics; raw floor without Aeron; kernel busy polling |
@@ -40,7 +45,8 @@ printed before its directory was deleted, so each is partial.
 | `aws-20261014-220612` | not recorded (an EC2 listing during the run showed two `c7i.4xlarge`) | DPDK knobs (its base arm is not in the recovered rows) |
 | `eks-20261014-195824` | EKS, `c7i.4xlarge` | DPDK pods: [book](https://mimran1980.github.io/ergon/deploy/benchmarks.html#kubernetes-eks-on-c7i4xlarge) |
 
-The last two ids' directories had no `aws-` prefix. `aws/lab.sh` names its
+G7a, G7b and G7c ran at the same time on three pairs: compare only inside
+each. The last two ids' directories had no `aws-` prefix. `aws/lab.sh` names its
 runs `aws-<stamp>`; `azure/lab.sh` names them `<stamp>` alone. Their
 platform is in neither directory nor rows; only the EC2 listing in each file's header points to AWS.
 
@@ -140,6 +146,7 @@ other; `aws-20261024-111303.txt` line 170 on).
 | Not ergon-md-dpdk's packet path | DPDK alone (the pure floor: a C ping and 5-tuple reflector, no transport) max 79 (72–85) against the raw floor's 88 (86–91); the transport adds 0.40 (0.26–0.50) µs p50, 1.63 (0.64–2.03) p99 (G6 lines 11–14, 60) |
 | Partly on one host | the same-host hairpin (host a's sender ENI to its receiver ENI) has p50 12.38 (12.38–12.39) against 24.73 cross-host, so it turns round before host b; its max is 62 (39–76) against 88 (86–91) (G6 lines 80–81) |
 | Not a guest stall | the agents' loop gaps are at most 31 µs, shorter than the extra, and spikes.py finds no overlapping host event |
+| Not the conductor, the RX refill, the TX pacer or CPU isolation | `c8g.2xlarge`: idle max 94–112 µs a rep in every G7a arm, one A/A rep 217 (conductor alone on its core, deferred refill, pacer armed), agent loop gaps at most 50 µs; pinned against isolated 112 (110–112) against 115 (112–116) (G7c); the raw floor 100 (91–106) (G7b). spikes.py: unexplained, every rep |
 
 So the idle maxima are in flight, beneath ergon-md-dpdk: one host's own
 path already reaches 76 µs, and the full 85–90 µs cluster needs both hosts.
@@ -152,10 +159,11 @@ about 4,500 overlap an interrupt; the rest have nothing in the guest. Which
 host is noisy follows the instance's placement: host b in G4, host a in G5
 (58,643 spinner gaps against b's 3,818).
 
-### Sparse flows: a quiet path is slower
+### Sparse flows: a quiet path is slower, mostly on the host
 
-One ping per gap, the clients spinning in between (G6 lines 89–98, p50 with
-rep ranges):
+G6, one ping per gap, the clients spinning in between (G6 lines 89–98, p50
+with rep ranges): the slowdown is beneath Aeron, which adds at most 1 µs at
+any gap.
 
 | gap | raw floor, no Aeron | DPDK (Aeron) |
 | --- | --- | --- |
@@ -165,11 +173,30 @@ rep ranges):
 | 200 ms | 30.22 (30.11–30.27) | 30.78 (30.46–31.07) |
 | 1 s | 31.45 (31.38–31.52) | 30.37 (30.30–30.38) |
 
-Maxima: 35–41 µs at 50 ms and above (60–1,200 round trips a rep, so the max
-is near p99); 57 (52–83) and 68 (41–78) at 1 ms. The slowdown is beneath
-Aeron (the raw floor shows it), and Aeron's 100 ms heartbeats do not prevent
-it. Whether the NIC, the network or the hosts' cold caches cause it is not
-split: the pure floor was not paced.
+G7b split it on the raw floor (3 reps, `c8g.2xlarge`; lines 52–60). p50,
+then max:
+
+| arm | cross-host | same-host hairpin |
+| --- | --- | --- |
+| unpaced | 24.21 (24.13–24.73), max 100 (91–106) | 12.86 (12.84–12.87), max 65 (54–94) |
+| 1 ms gap | 25.01 (24.94–25.86), max 72 (62–104) | |
+| 10 ms gap | 29.50 (29.33–30.18), max 76 (57–116) | |
+| 1 s gap | 33.98 (32.99–34.24), max 41 (37–47) | 19.61 (19.38–20.41), max 25 (24–27) |
+| 10 ms gap, 64 MiB written between round trips at both ends (`@FLUSH_KB=65536`) | 31.30 (30.66–32.46), max 69 (57–69) | |
+| 10 ms gap, a keep-alive every 100 µs (`@KEEPALIVE_US=100`) | 24.59 (24.22–24.73), max 55 (49–56) | |
+| 1 s gap, a keep-alive every 100 µs | 24.50 (24.13–24.83), max 28 (27–37) | |
+
+- **Mostly on the host.** The hairpin (host a's two NICs, no host b, no
+  fabric between hosts) slows by 6.8 µs at 1 s; the cross-host path by 9.8.
+- **CPU caches are a small share.** Cold caches at both ends add 1.8 µs at
+  10 ms gaps (ranges apart by 0.5 µs; G7b has no A/A). The rest is below the
+  CPU: the NIC or the hypervisor's path, not split further.
+- **A keep-alive removes it.** One datagram every 100 µs, echoed and dropped,
+  none within 50 µs of a ping, keeps the p50 in the unpaced range at both
+  gaps.
+- **Maxima.** All unexplained by spikes.py (the raw floor has no agent
+  counters); the flush arm's are its own 64 MiB write (a ping loop stall).
+  At 1 s a rep holds 60 round trips, so its max is near its p99.
 
 ### Measured, but no setting recommended
 
@@ -188,8 +215,84 @@ split: the pure floor was not paced.
 | receiver IO vectors 16, DPDK | `aws-20261014-113947` lines 88, 124 | 1,344 B at 600 k/s: no NAK against 16,247 over 5 reps; max 142 (134–259) against 1,130 (132–3,424,649). Platform not recorded. The one row here that separated: listed under the recommended configuration; the lab baseline sets 16 (`vm.sh:126`) |
 | transparent hugepages off | `aws-20261014-113947` lines 6, 11 | idle p99.99 53.15 (51.81–82.24) against 67.01 (51.84–87.23); max 90 (77–1,180) against 94 (80–498). Not separated. The lab baseline sets `never` (`vm.sh:125`) |
 | C-states capped at C1, metal | round 4 lines 5–6, 11–12, 80, 85 | idle p50 not separated (37.18 (36.48–38.34) against 35.13 (34.49–38.62); max 66 (57–107) against 127 (68–514)); at 288 B 1 M/s at least one rep per capped arm had p50 above 4 ms (ranges 42.17–4,042.75 busy, max 132 (108–8,380); 57.05–31,719 plain, max 289 (109–32,129)) |
-| ENA PMD deferring RX refill out of bursts that return frames (lab patch, DPDK 25.11) against stock 25.11 | G6 lines 20–22, 66–68, 241 | p99 29.42 (29.39–29.49) against 30.77 (29.68–31.15) and the A/A's 30.64 (29.74–30.73): apart by 0.2 µs, 3 reps. p50 25.28 (25.20–25.39) against 25.65 (25.38–25.76), A/A 25.34 (25.34–25.38): not separated. Max 86 (84–88) against 165 (87–167), A/A 87 (86–152). Every refill deferred (1,367 a rep, none forced by the floor). A shipped PMD patch needs a clearer result: not adopted |
+| opt-in TX pacer: `RUSTERON_DPDK_TX_RATE_MBPS=25000` (far above the 2.8 Gbit/s of frames offered) against unset, DPDK 25.11 | G7a lines 11–15, 42–61 | idle p50 23.86 (23.49–23.93) against 23.68 (23.47–23.76), A/A 23.76 (23.65–24.14); max 103 (97–105) against 101 (94–104): not separated, so a send's pacing cost is below what 5 reps resolve. At 288 B 1 M/s it held sends back (`tx-paced` 30–207 a rep on host b); max 1,132 (331–3,115) against 357 (314–1,490), A/A 422 (235–765), ranges overlapping |
+| CPU isolation on the kernel command line (`isolated`) against pinning alone (`pinned`), DPDK, `c8g.2xlarge` | G7c lines 11–16, 106, 124 | idle p50 26.21 (25.68–26.21) against 25.82 (25.74–26.19), max 115 (112–116) against 112 (110–112); 288 B at 302 k/s p50 28.22 (27.49–28.27) against 27.71 (27.71–27.74). The A/A arms overlap both. Not separated |
 | threaded NAPI busy polling (`NAPI_BUSY=spare`) | G2 lines 13, 108–113 | the run failed: p50 up to 72 ms idle, most load points returned no echo. Not a measurement of the setting |
+
+### ENA PMD deferred RX refill: not adopted
+
+G7a, 5 reps, the lab patch (`@DPDK=patched-refill`) against stock DPDK 25.11
+and an A/A (stock, built as a separate arm). p99, then max (lines 11–13,
+42–53, 96–98):
+
+| point | patched | stock | A/A |
+| --- | --- | --- | --- |
+| idle | 26.67 (26.21–28.93), max 109 (100–112) | 27.21 (26.89–28.56), max 101 (94–104) | 27.21 (27.07–29.10), max 103 (102–217) |
+| 288 B 100 k/s | 27.81 (27.44–28.50), max 115 (110–118) | 28.98 (28.48–29.17), max 110 (65–122) | 29.10 (28.96–31.90), max 116 (88–119) |
+| 288 B 500 k/s | 30.37 (29.74–43.94), max 132 (121–219) | 34.40 (30.43–35.26), max 140 (132–232) | 34.85 (34.11–35.77), max 123 (114–174) |
+| 288 B 1 M/s | 37.44 (35.39–43.68), max 378 (288–3,004) | 42.08 (36.67–122.62), max 357 (314–1,490) | 40.09 (36.70–343.04), max 422 (235–765) |
+
+- Idle p50 23.65 (23.47–24.25) against 23.68 (23.47–23.76), A/A 23.76
+  (23.65–24.14).
+- No point is apart from both stock and the A/A: at 100 k/s the ranges
+  touch (28.50 against 28.48). G6's 0.2 µs p99 gain (3 reps) did not
+  reproduce.
+- At 1 M/s the patched arm lost in 5 of 5 reps (short sends on a full TX
+  ring, 54–489 a rep, no NAK) against 2 of 5 for stock and the A/A.
+- Not worth adopting. The `@DPDK=` arms stay as lab tools.
+
+### The conductor's long duty cycles: CPU sharing and one blocking call
+
+Aeron's counter `Conductor max cycle time` on AWS, G7a (lines 124–185):
+
+| arm | longest cycle, host a / b | cycles over the threshold, a run |
+| --- | --- | --- |
+| conductor on the housekeeping CPU, backoff idle (4 arms) | 8.4–16.0 ms | 45–258 over 2 ms, in every phase |
+| `@CONDUCTOR=own`: alone on its core, spinning | 5.8 / 6.5 ms | 5–6 over 1 ms in 5 reps, all in each driver's first run; 0 under load |
+
+Traced on a kept pair (`aws-20261025-065326-conductor.txt`):
+
+- **Shared CPU:** the conductor was runnable but off its CPU for 8.0 ms
+  while the benchmark client started on that CPU (`sched_switch`,
+  `prev_state=R`). The 8–16 ms marks are scheduling delay on the
+  housekeeping CPU, not the conductor's own work.
+- **Alone:** its one long cycle (4.5 ms off CPU, blocked) is the first
+  channel's set-up. `rusteron_dpdk_counters_register` takes an initial
+  sample of the NIC's extended stats (`rte_eth_xstats_get`, on ENA an admin
+  command) as the send channel endpoint opens. A second connection on the
+  same driver added no cycle over 1 ms.
+- Not the log buffers: 1 MiB terms gave the same 8.0 ms on the shared CPU.
+  Kernel UDP's first connection: 4.0 ms on the shared CPU, not traced.
+- No effect on the round trip: the conductor is off the data path. Idle p50
+  with it alone 23.92 (23.77–24.03), stock 23.68 (23.47–23.76), A/A 23.76
+  (23.65–24.14); max 97 (94–102) against 101 (94–104).
+- Not changed yet: moving that initial sample into housekeeping would take
+  the blocking call out of the conductor.
+
+### NIC receive misses at 288 B: not reproduced
+
+Round 5 (`c7i`) counted 3–13 frames missed on host a's NIC at the first 288 B
+load point. On `c8g.2xlarge`, `nic-rx-missed` stayed 0 in every G7a and G7c
+row. That includes 1,024 RX descriptors after flat-out runs, 3 reps in each
+of two states. Host a's transport dropped 29–30 frames a load point to ports
+nobody listened on (`noport-dpdk-queue-drop`, G7a); what sends them is not
+identified.
+
+### ENA Express: UDP above 8,900 bytes
+
+`aws-ena-express-20261025-055456`: two `c6gn.4xlarge`, ENA Express and its
+UDP mode on both ENIs, MTU 9001, kernel UDP, 2,000 datagrams a size:
+
+| IP packet | arrived (DF set / clear) | sender's SRD counters |
+| --- | --- | --- |
+| 1,500–8,900 B | 2,000 / 2,000 | `ena_srd_tx_pkts` +1,996–1,999 |
+| 8,901–9,001 B | 2,000 / 2,000 | `ena_srd_eligible_tx_pkts` +1,999, `ena_srd_tx_pkts` +0: sent without SRD |
+| 9,100 B | DF: refused at the sender (`EMSGSIZE`); clear: fragmented, 718 arrived | `pps_allowance_exceeded` +1,826 |
+
+So a packet above the limit is not lost; it skips SRD. The transport now
+warns at start instead of refusing (`max_aeron_mtu` 8864 or less keeps
+every frame on SRD). Whether a flow that mixes both paths reorders is not
+measured.
 
 ### One flow's ceiling on AWS
 
@@ -202,6 +305,10 @@ MTU (G1 lines 50–122, G2 lines 50–98). AWS documents a per-flow bandwidth li
 [EC2 network bandwidth](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-network-bandwidth.html).
 An Aeron channel is one flow, so a heavier stream needs several channels.
 
+`c8g.2xlarge` runs out of packets first: 288 B lost from 1.51 M msgs/s in
+every arm and rep, with `pps_allowance_exceeded` growing on both hosts; flat
+out 3.03 M msgs/s (G7c lines 44 on, 186 on).
+
 ## Recommended configuration
 
 Kernel UDP in production ([README](README.md)). Only settings with a
@@ -213,13 +320,16 @@ separating result above are listed.
 | each channel under one flow's ceiling; a heavier stream over several channels | flow ceiling above | application config, in the pod |
 | DPDK (lab only): receiver IO vectors 16 | `aws-20261014-113947`, platform not recorded | pod env `AERON_RECEIVER_IO_VECTOR_CAPACITY` |
 | DPDK (lab only): large ENA LLQ entries, 256 TX descriptors | G4 table above | the transport's default (`llq_policy=3`) |
+| a keep-alive every 100 µs on sparse, latency-critical streams | G7b, sparse flows above (raw floor) | the application |
 
 A lost frame on a quiet stream is noticed at Aeron's next heartbeat, 100 ms
 in the C driver (`aeron_network_publication.h:38` in the locked
 rusteron-media-driver 0.2.13). A keep-alive on sparse, latency-critical
-streams bounds that wait, and keeps the path from slowing when quiet (up to
-6.7 µs p50 at 1 s gaps, 1.3 µs at 1 ms: sparse flows above). The keep-alive
-itself is not measured.
+streams bounds that wait and keeps the path from slowing when quiet. On the
+raw floor (G7b), one every 100 µs kept the p50 at 1 s gaps at 24.50
+(24.13–24.83) against 33.98 (32.99–34.24) without it (unpaced 24.21). One
+every 1 ms leaves what a 1 ms gap costs: +0.8 µs p50. It was measured below
+Aeron (a datagram on the same path), not as an Aeron message.
 
 ## Open
 
@@ -230,16 +340,18 @@ itself is not measured.
 - Kernel polling against interrupts: no single-setting A/B.
 - 4,096 RX descriptors (the code default, `src/config.rs:82`): no separating
   result in the recovered rows.
-- CPU isolation, hugetlbfs, quiet-core pinning: not measured in the
-  committed runs.
+- hugetlbfs `AERON_DIR` against tmpfs, and quiet-core pinning: not measured
+  (CPU isolation: G7c, not separated).
 - Azure: no run output is committed, so no Azure figure is kept.
 - Idle maxima: placed in flight and beneath the transport (above); one
   host's path reaches 76 µs, but the local card is not split from the
   hypervisor.
-- Sparse flows: the slowdown is not split between the NIC, the network and
-  cold caches; a keep-alive's effect is not measured.
-- ENA deferred refill: p99 apart by 0.2 µs in one 3-rep run; needs 5 reps
-  and load points before any decision.
+- Sparse flows: the host-local part is not split between the NIC and the
+  hypervisor.
+- The conductor's initial NIC-stats sample at channel set-up blocks it for
+  about 4.5 ms; moving it into housekeeping is not done.
+- What sends host a's frames to closed ports between load points
+  (`noport-dpdk-queue-drop`).
 
 ## How to run
 
@@ -250,6 +362,8 @@ LAB_LOAD_LADDER="288:250000,500000,1000000" LAB_LOAD_SIZES=288 md-dpdk/benches/c
 LAB_BASE=HEAD~1 LAB_MODES="dpdk dpdk@BIN=bin-base" md-dpdk/benches/cloud/aws/lab.sh   # against an earlier revision
 md-dpdk/benches/cloud/analyse.py --ab dpdk dpdk@BIN=bin-base target/md-dpdk-bench/<stamp>/results.csv
 LAB_MODES="dpdk@DPDK=stock dpdk@DPDK=patched-refill" md-dpdk/benches/cloud/aws/lab.sh   # ENA PMD patched against stock
+LAB_MODES="dpdk-raw@RTT_GAP_US=1000000 dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100 dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536" md-dpdk/benches/cloud/aws/lab.sh   # quiet path, keep-alive, cold caches
+md-dpdk/benches/cloud/aws/ena-express-mtu.sh                 # ENA Express with UDP above 8,900 bytes
 md-dpdk/benches/cloud/azure/lab.sh                           # the same on Azure
 just test-dpdk-lab                                           # the analysis against its fixture, no cloud
 ```

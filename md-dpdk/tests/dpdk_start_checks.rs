@@ -4,8 +4,9 @@
 //! - the EAL's memory options: `--huge-dir` by default, `--in-memory` on
 //!   `RUSTERON_DPDK_EAL_IN_MEMORY=1`, and a typed refusal when
 //!   `RUSTERON_DPDK_EAL_ARGS` contradicts the choice;
-//! - the ENA Express guard: UDP over SRD (the `ena_srd_mode` xstat) carries
-//!   IP packets of at most 8900 bytes, so a larger Aeron MTU is refused;
+//! - the ENA Express check: UDP over SRD (the `ena_srd_mode` xstat) carries
+//!   IP packets of at most 8900 bytes; ENA sends larger ones without SRD
+//!   (measured on c6gn.4xlarge), so a larger Aeron MTU starts, with a warning;
 //! - link-status changes, counted where the NIC can raise them
 //!   (`RTE_ETH_DEV_INTR_LSC`);
 //! - the gateway ARP check the creating thread runs before the agents start.
@@ -37,8 +38,6 @@ use std::os::raw::{c_char, c_int, c_void};
 
 /// rusteron_dpdk_transport.h: a malformed or contradictory environment value.
 const ERR_INVALID_ENV: c_int = 3;
-/// rusteron_dpdk_transport.h: a configuration the NIC as set up cannot carry.
-const ERR_INVALID_CONFIG: c_int = 4;
 
 unsafe extern "C" {
     fn rusteron_dpdk_eal_mem_args(
@@ -150,41 +149,24 @@ fn install_xstats(names: &[&str], values: &[u64]) {
 }
 
 /// ENA Express's UDP mode (`ena_srd_mode` bit 1) carries IP packets of at
-/// most 8900 bytes: a max Aeron MTU whose packets (MTU + 28) exceed it is
-/// refused at start, naming the setting and the largest MTU that fits.
-/// Without UDP over SRD, or within the limit, the port starts.
+/// most 8900 bytes; ENA sends a larger one without SRD rather than drop it
+/// (benches/cloud/aws/ena-express-mtu.sh, 2026-10-25), so a max Aeron MTU
+/// whose packets (MTU + 28) exceed the limit starts in every SRD mode (the
+/// transport warns on stderr), as one within it does.
 #[test]
 #[serial]
-fn udp_over_ena_express_refuses_an_mtu_above_8900() {
+fn udp_over_ena_express_starts_with_an_mtu_above_8900() {
     let mut config = rusteron_dpdk_config_t::valid();
-    config.max_aeron_mtu = 8960;
-    for (mode, starts) in [(0u64, true), (1, true), (2, false), (3, false)] {
-        let env = TestEnv::new();
-        env.eal_skip();
-        install_xstats(&["rx_missed", "ena_srd_mode"], &[0, mode]);
-        match create(&config) {
-            Ok(t) => {
-                assert!(starts, "ena_srd_mode {mode}: started");
-                close(t);
-            }
-            Err(e) => {
-                assert!(!starts, "ena_srd_mode {mode}: {e}");
-                assert_eq!(last_error_code(), ERR_INVALID_CONFIG, "{e}");
-                assert!(
-                    e.contains("ENA Express") && e.contains("8900") && e.contains("RUSTERON_DPDK_MAX_AERON_MTU"),
-                    "{e}"
-                );
-                assert!(e.contains("at most 8864"), "{e}");
-            }
+    for mtu in [8960usize, 8864] {
+        config.max_aeron_mtu = mtu;
+        for mode in [0u64, 1, 2, 3] {
+            let env = TestEnv::new();
+            env.eal_skip();
+            install_xstats(&["rx_missed", "ena_srd_mode"], &[0, mode]);
+            let t = create(&config).unwrap_or_else(|e| panic!("max_aeron_mtu {mtu}, ena_srd_mode {mode}: {e}"));
+            close(t);
         }
     }
-    // Within the limit: UDP over SRD starts.
-    let env = TestEnv::new();
-    env.eal_skip();
-    install_xstats(&["ena_srd_mode"], &[3]);
-    config.max_aeron_mtu = 8864;
-    let t = create(&config).unwrap_or_else(|e| panic!("8864 + 28 fits: {e}"));
-    close(t);
 }
 
 /// Where the NIC raises link-status-change interrupts

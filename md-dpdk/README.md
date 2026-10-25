@@ -411,10 +411,13 @@ kernel UDP sockets.
   the largest workable value, when the NIC cannot carry it. A peer announcing
   a larger MTU is dropped and reported (`peer-mtu-too-large`), so its
   publication shows as not connected rather than stalling.
-- **ENA Express.** UDP over SRD carries IP packets of at most 8900 bytes. An
-  ENA whose `ena_srd_mode` xstat has UDP on (bit 1) fails start with
-  `DpdkError::InvalidConfiguration` when `max_aeron_mtu` + 28 is above that,
-  naming the largest MTU that fits (8864). ENA Express is set on the ENI
+- **ENA Express.** UDP over SRD carries IP packets of at most 8900 bytes.
+  ENA sends a larger one without SRD; it is not dropped (UDP of 8,901 to
+  9,001 IP bytes, c6gn.4xlarge: all delivered, none counted in
+  `ena_srd_tx_pkts`; [BENCHMARKS.md](BENCHMARKS.md#ena-express-udp-above-8900-bytes)).
+  An ENA whose `ena_srd_mode` xstat has UDP on (bit 1) starts with a warning
+  when `max_aeron_mtu` + 28 is above the limit, naming the largest MTU that
+  keeps every frame on SRD (8864). ENA Express is set on the ENI
   (infrastructure), not in the pod.
 
 ## Bandwidth allowance

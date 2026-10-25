@@ -1,0 +1,587 @@
+# Raw output of run aws-20261025-055310 (G7b), kept whole (nothing recovered or recomputed)
+# instances.txt: type a c8g.2xlarge b c8g.2xlarge, arm64, us-east-2a, spot
+# cluster placement, LAB_STATES=isolated, LAB_REPS=3, LAB_NO_FLATOUT=1, commit ec42a818
+# results.csv columns: see md-dpdk/benches/cloud/analyse.py
+
+==== summary.md:      389 lines ====
+## UDP round trip (µs): between the two hosts, or both ends on one (localhost)
+
+| state, transport                                                                                                               | reps | p50                 | p90                 | p99                 | p99.9               | p99.99               | max                  |
+| ------------------------------------------------------------------------------------------------------------------------------ | ---- | ------------------- | ------------------- | ------------------- | ------------------- | -------------------- | -------------------- |
+| isolated, DPDK packet path, no Aeron (raw floor)                                                                               | 3    | 24.21 (24.13–24.73) | 26.29 (25.97–26.59) | 31.52 (31.45–32.09) | 38.91 (38.69–41.60) | 54.62 (53.28–55.45)  | 99.84 (91.20–106.30) |
+| isolated, DPDK packet path, no Aeron (raw floor), same-host hairpin (HAIRPIN=1)                                                | 3    | 12.86 (12.84–12.87) | 14.22 (14.20–14.25) | 16.53 (16.51–16.89) | 21.57 (21.33–21.74) | 30.69 (26.96–32.86)  | 65.28 (54.27–94.53)  |
+| isolated, DPDK packet path, no Aeron (raw floor), same-host hairpin (HAIRPIN=1), one round trip every 1 s (RTT_GAP_US=1000000) | 3    | 19.61 (19.38–20.41) | 21.45 (21.15–22.41) | 24.66 (24.03–26.50) | 24.66 (24.03–26.50) | 24.66 (24.03–26.50)  | 24.66 (24.03–26.50)  |
+| isolated, DPDK packet path, no Aeron (raw floor), one round trip every 1 ms (RTT_GAP_US=1000)                                  | 3    | 25.01 (24.94–25.86) | 26.91 (26.80–28.22) | 32.67 (32.43–33.82) | 41.53 (39.52–44.26) | 56.48 (48.19–58.14)  | 72.38 (62.49–104.00) |
+| isolated, DPDK packet path, no Aeron (raw floor), one round trip every 10 ms (RTT_GAP_US=10000)                                | 3    | 29.50 (29.33–30.18) | 31.81 (31.73–32.67) | 38.21 (36.70–39.10) | 49.25 (42.69–49.28) | 75.58 (56.80–116.29) | 75.58 (56.80–116.29) |
+| isolated, DPDK packet path, no Aeron (raw floor), one round trip every 1 s (RTT_GAP_US=1000000)                                | 3    | 33.98 (32.99–34.24) | 36.54 (35.39–36.99) | 40.83 (37.44–47.23) | 40.83 (37.44–47.23) | 40.83 (37.44–47.23)  | 40.83 (37.44–47.23)  |
+| isolated, dpdk-raw@KEEPALIVE_US=100, one round trip every 1 s (RTT_GAP_US=1000000)                                             | 3    | 24.50 (24.13–24.83) | 25.60 (25.55–26.30) | 27.68 (27.38–37.38) | 27.68 (27.38–37.38) | 27.68 (27.38–37.38)  | 27.68 (27.38–37.38)  |
+| isolated, dpdk-raw@FLUSH_KB=65536, one round trip every 10 ms (RTT_GAP_US=10000)                                               | 3    | 31.30 (30.66–32.46) | 34.08 (33.31–35.52) | 41.22 (39.30–41.76) | 51.90 (50.34–53.38) | 68.73 (56.64–69.44)  | 68.73 (56.64–69.44)  |
+| isolated, dpdk-raw@KEEPALIVE_US=100, one round trip every 10 ms (RTT_GAP_US=10000)                                             | 3    | 24.59 (24.22–24.73) | 26.27 (25.93–26.50) | 30.24 (29.97–31.05) | 39.94 (38.59–40.03) | 54.91 (48.58–56.06)  | 54.91 (48.58–56.06)  |
+
+Round trips measured per rep: isolated, dpdk-raw@KEEPALIVE_US=100, one round trip every 10 ms (RTT_GAP_US=10000) 6,000–6,000, isolated, DPDK packet path, no Aeron (raw floor), same-host hairpin (HAIRPIN=1), one round trip every 1 s (RTT_GAP_US=1000000) 60–60, isolated, dpdk-raw@KEEPALIVE_US=100, one round trip every 1 s (RTT_GAP_US=1000000) 60–60, isolated, DPDK packet path, no Aeron (raw floor), one round trip every 1 s (RTT_GAP_US=1000000) 60–60, isolated, DPDK packet path, no Aeron (raw floor), one round trip every 10 ms (RTT_GAP_US=10000) 6,000–6,000, isolated, dpdk-raw@FLUSH_KB=65536, one round trip every 10 ms (RTT_GAP_US=10000) 6,000–6,000, isolated, DPDK packet path, no Aeron (raw floor), same-host hairpin (HAIRPIN=1) 300,000–300,000, isolated, DPDK packet path, no Aeron (raw floor), one round trip every 1 ms (RTT_GAP_US=1000) 20,000–20,000, isolated, DPDK packet path, no Aeron (raw floor) 300,000–300,000.
+
+## UDP round trip above the network's own (µs)
+
+The network's own round trip is ping's between the hosts' data NICs at the start of each state (vm.sh base-rtt, from host a's sender to host b's receiver: min/avg/max). Each mode's round trip less that minimum, per rep: the median across reps, the range in brackets; what the transport, the driver and the clients add over the wire's own round trip, whatever the distance.
+
+| state, transport                                                                                | network min/avg/max | reps | p50                    | p99                    | p99.99                 | max                    |
+| ----------------------------------------------------------------------------------------------- | ------------------- | ---- | ---------------------- | ---------------------- | ---------------------- | ---------------------- |
+| isolated, DPDK packet path, no Aeron (raw floor)                                                | 68.00/86.00/297.00  | 3    | -43.79 (-43.87–-43.27) | -36.48 (-36.55–-35.91) | -13.38 (-14.72–-12.54) | 31.84 (23.20–38.30)    |
+| isolated, DPDK packet path, no Aeron (raw floor), one round trip every 1 ms (RTT_GAP_US=1000)   | 68.00/86.00/297.00  | 3    | -42.99 (-43.06–-42.15) | -35.33 (-35.57–-34.18) | -11.52 (-19.81–-9.86)  | 4.38 (-5.50–36.00)     |
+| isolated, DPDK packet path, no Aeron (raw floor), one round trip every 10 ms (RTT_GAP_US=10000) | 68.00/86.00/297.00  | 3    | -38.50 (-38.67–-37.83) | -29.79 (-31.30–-28.90) | 7.58 (-11.20–48.29)    | 7.58 (-11.20–48.29)    |
+| isolated, DPDK packet path, no Aeron (raw floor), one round trip every 1 s (RTT_GAP_US=1000000) | 68.00/86.00/297.00  | 3    | -34.02 (-35.01–-33.76) | -27.17 (-30.56–-20.77) | -27.17 (-30.56–-20.77) | -27.17 (-30.56–-20.77) |
+| isolated, dpdk-raw@KEEPALIVE_US=100, one round trip every 1 s (RTT_GAP_US=1000000)              | 68.00/86.00/297.00  | 3    | -43.51 (-43.87–-43.17) | -40.32 (-40.62–-30.62) | -40.32 (-40.62–-30.62) | -40.32 (-40.62–-30.62) |
+| isolated, dpdk-raw@FLUSH_KB=65536, one round trip every 10 ms (RTT_GAP_US=10000)                | 68.00/86.00/297.00  | 3    | -36.70 (-37.34–-35.54) | -26.79 (-28.70–-26.24) | 0.73 (-11.36–1.44)     | 0.73 (-11.36–1.44)     |
+| isolated, dpdk-raw@KEEPALIVE_US=100, one round trip every 10 ms (RTT_GAP_US=10000)              | 68.00/86.00/297.00  | 3    | -43.41 (-43.78–-43.27) | -37.76 (-38.03–-36.95) | -13.09 (-19.43–-11.94) | -13.09 (-19.43–-11.94) |
+
+## Same-host hairpin against the cross-host round trip (µs)
+
+The hairpin (@HAIRPIN=1) is the same mode's round trip on host a alone, from its sender NIC to its receiver NIC and back, never to host b; the cross-host one is host a to host b. Where AWS turns the hairpin round is not documented: a hairpin p50 well under the cross-host one puts it in host a's own card. Medians across reps, the range in brackets. Maxima in the hairpin as large as across the hosts come from host a (its card, the hypervisor, the guest); maxima across the hosts alone come from the fabric or host b.
+
+| state, transport                                                                                | reps hairpin | reps cross-host | p50 hairpin         | p50 cross-host      | p99.99 hairpin      | p99.99 cross-host   | max hairpin         | max cross-host       |
+| ----------------------------------------------------------------------------------------------- | ------------ | --------------- | ------------------- | ------------------- | ------------------- | ------------------- | ------------------- | -------------------- |
+| isolated, DPDK packet path, no Aeron (raw floor)                                                | 3            | 3               | 12.86 (12.84–12.87) | 24.21 (24.13–24.73) | 30.69 (26.96–32.86) | 54.62 (53.28–55.45) | 65.28 (54.27–94.53) | 99.84 (91.20–106.30) |
+| isolated, DPDK packet path, no Aeron (raw floor), one round trip every 1 s (RTT_GAP_US=1000000) | 3            | 3               | 19.61 (19.38–20.41) | 33.98 (32.99–34.24) | 24.66 (24.03–26.50) | 40.83 (37.44–47.23) | 24.66 (24.03–26.50) | 40.83 (37.44–47.23)  |
+
+## Sparse round trips by gap (µs)
+
+A paced mode (@RTT_GAP_US) sends one ping every gap on a fixed schedule, the clients spinning in between, so only the network goes quiet; `none` is the same mode unpaced, each ping as the last one's echo is back. Aeron's heartbeats are 100 ms apart on an idle channel. Medians across reps, the range in brackets; a rep is 20 to 60 s (modes.sh rtt_plan), so a sparse one holds few round trips: p99.99 only from 10,000 a rep, and at a few hundred p99 is near the max. A p50 or p99 that grows with the gap is the path slowing for a flow that goes quiet.
+
+| state, transport                                                                | gap   | reps | round trips a rep | p50                 | p99                 | p99.99              | max                  |
+| ------------------------------------------------------------------------------- | ----- | ---- | ----------------- | ------------------- | ------------------- | ------------------- | -------------------- |
+| isolated, DPDK packet path, no Aeron (raw floor)                                | none  | 3    | 300,000           | 24.21 (24.13–24.73) | 31.52 (31.45–32.09) | 54.62 (53.28–55.45) | 99.84 (91.20–106.30) |
+| isolated, DPDK packet path, no Aeron (raw floor)                                | 1 ms  | 3    | 20,000            | 25.01 (24.94–25.86) | 32.67 (32.43–33.82) | 56.48 (48.19–58.14) | 72.38 (62.49–104.00) |
+| isolated, DPDK packet path, no Aeron (raw floor)                                | 10 ms | 3    | 6,000             | 29.50 (29.33–30.18) | 38.21 (36.70–39.10) | n/a (under 10,000)  | 75.58 (56.80–116.29) |
+| isolated, DPDK packet path, no Aeron (raw floor)                                | 1 s   | 3    | 60                | 33.98 (32.99–34.24) | 40.83 (37.44–47.23) | n/a (under 10,000)  | 40.83 (37.44–47.23)  |
+| isolated, dpdk-raw@FLUSH_KB=65536                                               | 10 ms | 3    | 6,000             | 31.30 (30.66–32.46) | 41.22 (39.30–41.76) | n/a (under 10,000)  | 68.73 (56.64–69.44)  |
+| isolated, DPDK packet path, no Aeron (raw floor), same-host hairpin (HAIRPIN=1) | none  | 3    | 300,000           | 12.86 (12.84–12.87) | 16.53 (16.51–16.89) | 30.69 (26.96–32.86) | 65.28 (54.27–94.53)  |
+| isolated, DPDK packet path, no Aeron (raw floor), same-host hairpin (HAIRPIN=1) | 1 s   | 3    | 60                | 19.61 (19.38–20.41) | 24.66 (24.03–26.50) | n/a (under 10,000)  | 24.66 (24.03–26.50)  |
+| isolated, dpdk-raw@KEEPALIVE_US=100                                             | 10 ms | 3    | 6,000             | 24.59 (24.22–24.73) | 30.24 (29.97–31.05) | n/a (under 10,000)  | 54.91 (48.58–56.06)  |
+| isolated, dpdk-raw@KEEPALIVE_US=100                                             | 1 s   | 3    | 60                | 24.50 (24.13–24.83) | 27.68 (27.38–37.38) | n/a (under 10,000)  | 27.68 (27.38–37.38)  |
+
+## UDP throughput, 32-byte messages (M msgs/s)
+
+| state, transport | reps | msgs/s | dropped (median, % range) |
+| ---------------- | ---- | ------ | ------------------------- |
+
+## Loss counters over the round-trip and throughput runs (both hosts, all reps; none = every one 0; `sat-` counters are saturation, `noport-` ones frames to a port nobody listens on and `isolated-nic-irqs` the data NICs' interrupts on CPUs other than the housekeeping one, a check on the run: none of them loss; localhost base runs are not sampled)
+
+| state, transport                                                                                                               | grew |
+| ------------------------------------------------------------------------------------------------------------------------------ | ---- |
+| isolated, DPDK packet path, no Aeron (raw floor)                                                                               | none |
+| isolated, DPDK packet path, no Aeron (raw floor), same-host hairpin (HAIRPIN=1)                                                | none |
+| isolated, DPDK packet path, no Aeron (raw floor), same-host hairpin (HAIRPIN=1), one round trip every 1 s (RTT_GAP_US=1000000) | none |
+| isolated, DPDK packet path, no Aeron (raw floor), one round trip every 1 ms (RTT_GAP_US=1000)                                  | none |
+| isolated, DPDK packet path, no Aeron (raw floor), one round trip every 10 ms (RTT_GAP_US=10000)                                | none |
+| isolated, DPDK packet path, no Aeron (raw floor), one round trip every 1 s (RTT_GAP_US=1000000)                                | none |
+| isolated, dpdk-raw@KEEPALIVE_US=100, one round trip every 1 s (RTT_GAP_US=1000000)                                             | none |
+| isolated, dpdk-raw@FLUSH_KB=65536, one round trip every 10 ms (RTT_GAP_US=10000)                                               | none |
+| isolated, dpdk-raw@KEEPALIVE_US=100, one round trip every 10 ms (RTT_GAP_US=10000)                                             | none |
+
+## Loss counters over the idle round trip alone (both hosts, all reps; none = every one 0)
+
+| state, transport                                                                                                               | grew |
+| ------------------------------------------------------------------------------------------------------------------------------ | ---- |
+| isolated, DPDK packet path, no Aeron (raw floor)                                                                               | none |
+| isolated, DPDK packet path, no Aeron (raw floor), same-host hairpin (HAIRPIN=1)                                                | none |
+| isolated, DPDK packet path, no Aeron (raw floor), same-host hairpin (HAIRPIN=1), one round trip every 1 s (RTT_GAP_US=1000000) | none |
+| isolated, DPDK packet path, no Aeron (raw floor), one round trip every 1 ms (RTT_GAP_US=1000)                                  | none |
+| isolated, DPDK packet path, no Aeron (raw floor), one round trip every 10 ms (RTT_GAP_US=10000)                                | none |
+| isolated, DPDK packet path, no Aeron (raw floor), one round trip every 1 s (RTT_GAP_US=1000000)                                | none |
+| isolated, dpdk-raw@KEEPALIVE_US=100, one round trip every 1 s (RTT_GAP_US=1000000)                                             | none |
+| isolated, dpdk-raw@FLUSH_KB=65536, one round trip every 10 ms (RTT_GAP_US=10000)                                               | none |
+| isolated, dpdk-raw@KEEPALIVE_US=100, one round trip every 10 ms (RTT_GAP_US=10000)                                             | none |
+## Spikes of 200 us or more by cause, isolated
+
+A load point past its capacity queues for seconds: its spikes are queueing, not stalls,
+so only each file's 50 largest are attributed one by one.
+
+| run | spikes | client stall | host stall | guest preemption | driver errors | unexplained | not attributed |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| isolated-dpdk-raw-rtt | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| isolated-dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000-rtt | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| isolated-dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100-rtt | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+Host clocks, from chrony's tracking around each mode (vm.sh timesync): a's system time at most 3.1 µs from its source, that source within 124.7 µs of UTC (root dispersion and half the root delay; 54 snapshots); b's at most 3.2 µs, its source within 127.6 µs (54 snapshots). Spikes are matched to the other host's diagnostics across these clocks, which may differ by up to 258.6 µs (the sum).
+
+## Each rep's max round trip and its cause, isolated
+
+| run | max per rep (us): cause |
+| --- | --- |
+| isolated-dpdk-raw-rtt | 91: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 106: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 100: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a) |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 65: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 54: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 94: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a) |
+| isolated-dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000-rtt | under 100 us (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); under 100 us (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); under 100 us (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a) |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 62: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 104: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 72: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a) |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 116: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 57: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 76: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a) |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 37: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 41: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 47: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a) |
+| isolated-dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100-rtt | under 100 us (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); under 100 us (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 37: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a) |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 57: ping stall (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 69: ping stall (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 69: ping stall (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a) |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 49: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 55: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a); 56: unexplained (agent loop gaps 20-50/50-100/100+ us: a n/a, b n/a) |
+
+## Round trips of 100-250 us per rep, isolated
+
+| run | per rep | possible slow-path episode |
+| --- | --- | --- |
+| isolated-dpdk-raw-rtt | 0, 2, 0 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 0, 0, 0 | none |
+| isolated-dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000-rtt | 0, 0, 0 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 0, 1, 0 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 1, 0, 0 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 0, 0, 0 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100-rtt | 0, 0, 0 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 0, 0, 0 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 0, 0, 0 | none |
+
+## The 10 largest round trips of each rep and every event overlapping them, isolated
+
+A round trip is [sent, echoed] on the wall clock; an event overlaps it if its interval does (an IPI, a
+compaction or a page migration is an instant). Its phase is its echo's, in the second and in 30 s.
+
+| run | rep | ping | round trip (µs) | mod 1 s (ms) | mod 30 s (s) | overlapping events |
+| --- | --- | --- | --- | --- | --- | --- |
+| isolated-dpdk-raw-rtt | 1 | 129093 | 91.2 | 98.652 | 12.099 | none |
+| isolated-dpdk-raw-rtt | 1 | 126472 | 87.4 | 33.492 | 12.033 | none |
+| isolated-dpdk-raw-rtt | 1 | 129210 | 77.5 | 101.646 | 12.102 | none |
+| isolated-dpdk-raw-rtt | 1 | 142616 | 76.4 | 433.473 | 12.433 | none |
+| isolated-dpdk-raw-rtt | 1 | 131662 | 76.2 | 163.233 | 12.163 | none |
+| isolated-dpdk-raw-rtt | 1 | 130230 | 76.0 | 126.875 | 12.127 | none |
+| isolated-dpdk-raw-rtt | 1 | 130845 | 73.1 | 142.402 | 12.142 | none |
+| isolated-dpdk-raw-rtt | 1 | 129748 | 71.8 | 114.981 | 12.115 | none |
+| isolated-dpdk-raw-rtt | 1 | 291504 | 70.7 | 97.868 | 16.098 | none |
+| isolated-dpdk-raw-rtt | 1 | 130308 | 69.9 | 128.840 | 12.129 | none |
+| isolated-dpdk-raw-rtt | 2 | 143007 | 106.2 | 155.852 | 15.156 | none |
+| isolated-dpdk-raw-rtt | 2 | 14249 | 101.3 | 914.905 | 11.915 | none |
+| isolated-dpdk-raw-rtt | 2 | 228121 | 91.1 | 299.573 | 17.300 | none |
+| isolated-dpdk-raw-rtt | 2 | 42060 | 89.4 | 618.241 | 12.618 | none |
+| isolated-dpdk-raw-rtt | 2 | 79318 | 87.1 | 556.565 | 13.557 | none |
+| isolated-dpdk-raw-rtt | 2 | 33634 | 73.9 | 404.923 | 12.405 | none |
+| isolated-dpdk-raw-rtt | 2 | 203569 | 70.2 | 680.203 | 16.680 | none |
+| isolated-dpdk-raw-rtt | 2 | 262364 | 69.3 | 163.269 | 18.163 | none |
+| isolated-dpdk-raw-rtt | 2 | 259429 | 65.4 | 88.873 | 18.089 | none |
+| isolated-dpdk-raw-rtt | 2 | 21131 | 64.8 | 88.878 | 12.089 | none |
+| isolated-dpdk-raw-rtt | 3 | 255654 | 99.8 | 183.654 | 12.184 | none |
+| isolated-dpdk-raw-rtt | 3 | 126841 | 98.7 | 4.430 | 9.004 | none |
+| isolated-dpdk-raw-rtt | 3 | 289082 | 98.5 | 4.529 | 13.005 | none |
+| isolated-dpdk-raw-rtt | 3 | 5008 | 94.7 | 4.347 | 6.004 | none |
+| isolated-dpdk-raw-rtt | 3 | 167172 | 92.7 | 4.444 | 10.004 | none |
+| isolated-dpdk-raw-rtt | 3 | 86262 | 92.5 | 4.410 | 8.004 | none |
+| isolated-dpdk-raw-rtt | 3 | 248375 | 88.1 | 4.489 | 12.004 | none |
+| isolated-dpdk-raw-rtt | 3 | 45698 | 87.9 | 4.382 | 7.004 | none |
+| isolated-dpdk-raw-rtt | 3 | 81343 | 77.7 | 883.671 | 7.884 | none |
+| isolated-dpdk-raw-rtt | 3 | 207733 | 76.6 | 4.455 | 11.004 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 1 | 184507 | 65.3 | 692.450 | 20.692 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 1 | 183560 | 63.3 | 679.734 | 20.680 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 1 | 87600 | 56.7 | 422.151 | 19.422 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 1 | 26979 | 53.8 | 628.903 | 18.629 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 1 | 220424 | 48.9 | 162.232 | 21.162 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 1 | 192882 | 46.9 | 801.864 | 20.802 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 1 | 227063 | 45.1 | 248.862 | 21.249 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 1 | 235997 | 44.5 | 367.232 | 21.367 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 1 | 128316 | 43.3 | 956.223 | 19.956 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 1 | 263684 | 42.9 | 730.616 | 21.731 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 2 | 237568 | 54.2 | 821.790 | 27.822 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 2 | 185737 | 48.3 | 144.692 | 27.145 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 2 | 192657 | 47.6 | 234.726 | 27.235 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 2 | 236062 | 47.3 | 801.990 | 27.802 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 2 | 289381 | 45.8 | 498.388 | 28.498 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 2 | 163033 | 45.3 | 847.853 | 26.848 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 2 | 242741 | 45.2 | 889.455 | 27.889 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 2 | 95927 | 40.4 | 971.178 | 25.971 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 2 | 101540 | 39.5 | 44.302 | 26.044 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 2 | 8388 | 37.1 | 826.850 | 24.827 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 3 | 251202 | 94.5 | 992.760 | 26.993 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 3 | 174781 | 79.5 | 991.609 | 25.992 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 3 | 244338 | 67.9 | 903.078 | 26.903 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 3 | 244373 | 57.7 | 903.604 | 26.904 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 3 | 196280 | 55.6 | 273.321 | 26.273 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 3 | 251220 | 51.1 | 993.037 | 26.993 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 3 | 251185 | 48.2 | 992.440 | 26.992 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 3 | 67419 | 44.1 | 584.755 | 24.585 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 3 | 228888 | 43.5 | 700.545 | 26.701 | none |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | 3 | 203997 | 42.5 | 374.669 | 26.375 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 1 | 12253 | 62.5 | 88.823 | 18.089 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 1 | 13641 | 60.3 | 476.821 | 19.477 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 1 | 14209 | 58.1 | 44.818 | 20.045 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 1 | 10263 | 52.4 | 98.813 | 16.099 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 1 | 4082 | 52.3 | 917.813 | 9.918 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 1 | 13639 | 51.2 | 474.811 | 19.475 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 1 | 479 | 50.9 | 314.811 | 6.315 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 1 | 6263 | 50.1 | 98.810 | 12.099 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 1 | 14246 | 49.3 | 81.810 | 20.082 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 1 | 13819 | 48.9 | 654.809 | 19.655 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 2 | 15351 | 103.9 | 882.966 | 22.883 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 2 | 19580 | 48.5 | 111.911 | 27.112 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 2 | 8813 | 48.2 | 344.911 | 16.345 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 2 | 5651 | 47.8 | 182.910 | 13.183 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 2 | 14188 | 47.6 | 719.910 | 21.720 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 2 | 4784 | 46.5 | 315.909 | 12.316 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 2 | 3944 | 45.0 | 475.907 | 11.476 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 2 | 6336 | 44.6 | 867.907 | 13.868 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 2 | 351 | 44.6 | 882.907 | 7.883 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 2 | 17490 | 43.9 | 21.906 | 25.022 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 3 | 14668 | 72.4 | 272.118 | 23.272 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 3 | 15470 | 64.0 | 74.110 | 24.074 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 3 | 8503 | 56.5 | 107.102 | 17.107 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 3 | 17470 | 54.4 | 74.100 | 26.074 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 3 | 8873 | 53.7 | 477.100 | 17.477 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 3 | 9759 | 52.6 | 363.099 | 18.363 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 3 | 5817 | 51.2 | 421.097 | 14.421 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 3 | 19997 | 51.1 | 601.097 | 28.601 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 3 | 11512 | 49.6 | 116.096 | 20.116 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | 3 | 11258 | 49.3 | 862.095 | 19.862 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 1 | 4615 | 116.2 | 102.331 | 10.102 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 1 | 5381 | 92.2 | 762.307 | 17.762 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 1 | 2176 | 78.8 | 712.294 | 15.712 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 1 | 2188 | 56.3 | 832.271 | 15.832 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 1 | 2149 | 54.0 | 442.269 | 15.442 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 1 | 3967 | 51.2 | 622.266 | 3.622 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 1 | 1406 | 49.2 | 12.264 | 8.012 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 1 | 5419 | 48.2 | 142.263 | 18.142 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 1 | 3473 | 48.0 | 682.263 | 28.682 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 1 | 5497 | 47.8 | 922.263 | 18.922 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 2 | 5602 | 56.8 | 695.715 | 19.696 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 2 | 953 | 53.3 | 205.712 | 3.206 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 2 | 3041 | 51.0 | 85.709 | 24.086 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 2 | 5623 | 49.0 | 905.707 | 19.906 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 2 | 476 | 47.2 | 435.705 | 28.436 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 2 | 823 | 46.3 | 905.705 | 1.906 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 2 | 3633 | 42.7 | 5.701 | 0.006 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 2 | 566 | 42.2 | 335.700 | 29.336 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 2 | 4172 | 42.0 | 395.700 | 5.396 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 2 | 1117 | 40.9 | 845.699 | 4.846 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 3 | 1716 | 75.5 | 75.920 | 12.076 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 3 | 2355 | 68.7 | 465.913 | 18.466 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 3 | 5636 | 56.2 | 275.901 | 21.276 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 3 | 2602 | 53.2 | 935.898 | 20.936 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 3 | 915 | 50.9 | 65.895 | 4.066 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 3 | 2422 | 49.7 | 135.894 | 19.136 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 3 | 210 | 49.3 | 15.894 | 27.016 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 3 | 1177 | 47.5 | 685.892 | 6.686 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 3 | 4404 | 46.8 | 955.891 | 8.956 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | 3 | 5098 | 46.6 | 895.891 | 15.896 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 1 | 56 | 37.4 | 779.766 | 6.780 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 1 | 38 | 36.8 | 779.765 | 18.780 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 1 | 32 | 35.9 | 779.764 | 12.780 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 1 | 21 | 35.6 | 779.764 | 1.780 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 1 | 48 | 35.4 | 779.764 | 28.780 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 1 | 59 | 35.4 | 779.764 | 9.780 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 1 | 5 | 35.4 | 779.764 | 15.780 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 1 | 58 | 35.3 | 779.764 | 8.780 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 1 | 44 | 35.1 | 779.763 | 24.780 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 1 | 28 | 34.4 | 779.763 | 8.780 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 2 | 27 | 40.8 | 176.306 | 27.176 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 2 | 31 | 39.7 | 176.305 | 1.176 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 2 | 58 | 38.7 | 176.304 | 28.176 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 2 | 44 | 38.2 | 176.304 | 14.176 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 2 | 37 | 37.4 | 176.303 | 7.176 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 2 | 49 | 36.6 | 176.302 | 19.176 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 2 | 0 | 36.5 | 176.302 | 0.176 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 2 | 11 | 36.2 | 176.302 | 11.176 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 2 | 38 | 36.0 | 176.301 | 8.176 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 2 | 13 | 35.8 | 176.301 | 13.176 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 3 | 22 | 47.2 | 916.242 | 15.916 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 3 | 58 | 43.6 | 916.238 | 21.916 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 3 | 6 | 41.4 | 916.236 | 29.916 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 3 | 28 | 39.8 | 916.235 | 21.916 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 3 | 21 | 37.6 | 916.232 | 14.916 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 3 | 3 | 37.4 | 916.232 | 26.916 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 3 | 43 | 37.0 | 916.232 | 6.916 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 3 | 27 | 36.7 | 916.231 | 20.916 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 3 | 50 | 36.7 | 916.231 | 13.916 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | 3 | 8 | 36.5 | 916.231 | 1.916 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100-rtt | 3 | 8 | 37.4 | 320.097 | 20.320 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100-rtt | 3 | 53 | 33.4 | 320.093 | 5.320 | none |
+| isolated-dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100-rtt | 3 | 26 | 30.4 | 320.090 | 8.320 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 1 | 54 | 56.6 | 306.396 | 8.306 | ping stall 2278.7 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 1 | 1590 | 53.6 | 666.393 | 23.666 | ping stall 2171.9 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 1 | 822 | 53.5 | 986.393 | 15.986 | ping stall 2188.3 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 1 | 1365 | 53.3 | 416.392 | 21.416 | ping stall 2157.1 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 1 | 154 | 53.1 | 306.392 | 9.306 | ping stall 2130.3 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 1 | 1334 | 52.0 | 106.391 | 21.106 | ping stall 2121.7 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 1 | 5373 | 51.9 | 496.391 | 1.496 | ping stall 2158.8 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 1 | 1846 | 51.1 | 226.390 | 26.226 | ping stall 2156.1 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 1 | 355 | 50.3 | 316.389 | 11.316 | ping stall 2155.5 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 1 | 3637 | 49.9 | 136.389 | 14.136 | ping stall 2148.2 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 2 | 5811 | 68.7 | 870.626 | 13.871 | ping stall 2107.0 µs; pong stall 2127.4 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 2 | 3019 | 65.7 | 950.623 | 15.951 | ping stall 2199.0 µs; pong stall 2138.6 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 2 | 4581 | 55.5 | 570.613 | 1.571 | ping stall 2147.8 µs; pong stall 2139.5 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 2 | 584 | 53.7 | 600.611 | 21.601 | ping stall 2164.7 µs; pong stall 2093.8 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 2 | 5173 | 52.3 | 490.610 | 7.491 | ping stall 2357.2 µs; pong stall 2133.8 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 2 | 601 | 51.6 | 770.609 | 21.771 | ping stall 2130.0 µs; pong stall 2145.9 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 2 | 54 | 50.3 | 300.608 | 16.301 | ping stall 2150.3 µs; pong stall 2121.9 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 2 | 822 | 49.5 | 980.607 | 23.981 | ping stall 2153.8 µs; pong stall 2130.8 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 2 | 3254 | 49.1 | 300.606 | 18.301 | ping stall 2162.5 µs; pong stall 2145.7 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 2 | 566 | 49.1 | 420.606 | 21.421 | ping stall 2148.1 µs; pong stall 2127.3 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 3 | 1917 | 69.4 | 380.683 | 0.381 | ping stall 2154.8 µs; pong stall 2130.3 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 3 | 1590 | 56.0 | 110.669 | 27.111 | ping stall 2147.3 µs; pong stall 2132.9 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 3 | 454 | 55.5 | 750.669 | 15.751 | ping stall 2093.0 µs; pong stall 2138.3 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 3 | 1334 | 55.3 | 550.669 | 24.551 | ping stall 2244.3 µs; pong stall 2129.2 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 3 | 2358 | 53.9 | 790.667 | 4.791 | ping stall 2084.8 µs; pong stall 2136.8 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 3 | 173 | 53.9 | 940.667 | 12.941 | ping stall 2129.5 µs; pong stall 2141.1 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 3 | 54 | 53.4 | 750.667 | 11.751 | ping stall 2106.1 µs; pong stall 2134.8 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 3 | 822 | 53.3 | 430.667 | 19.431 | ping stall 2117.4 µs; pong stall 2185.0 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 3 | 1846 | 52.8 | 670.666 | 29.671 | ping stall 2166.4 µs; pong stall 2120.3 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | 3 | 566 | 51.9 | 870.665 | 16.871 | ping stall 2165.2 µs; pong stall 2147.2 µs |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 1 | 4594 | 48.6 | 178.082 | 19.178 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 1 | 3044 | 47.8 | 678.082 | 3.678 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 1 | 4752 | 46.2 | 758.080 | 20.758 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 1 | 1847 | 44.6 | 708.078 | 21.708 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 1 | 5578 | 43.7 | 18.078 | 29.018 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 1 | 1711 | 43.3 | 348.077 | 20.348 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 1 | 453 | 39.9 | 768.074 | 7.768 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 1 | 2838 | 39.5 | 618.073 | 1.618 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 1 | 832 | 39.5 | 558.073 | 11.558 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 1 | 2762 | 39.2 | 858.073 | 0.858 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 2 | 3450 | 54.9 | 868.079 | 15.868 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 2 | 634 | 47.8 | 708.072 | 17.708 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 2 | 2095 | 47.4 | 318.072 | 2.318 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 2 | 5461 | 41.3 | 978.065 | 5.978 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 2 | 456 | 40.8 | 928.065 | 15.928 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 2 | 1107 | 39.7 | 438.064 | 22.438 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 2 | 426 | 38.6 | 628.062 | 15.628 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 2 | 4695 | 38.2 | 318.062 | 28.318 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 2 | 4218 | 36.0 | 548.060 | 23.548 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 2 | 3976 | 34.6 | 128.059 | 21.128 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 3 | 5539 | 56.0 | 14.067 | 25.014 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 3 | 1386 | 46.9 | 484.058 | 13.484 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 3 | 5006 | 45.1 | 684.056 | 19.684 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 3 | 3933 | 41.3 | 954.053 | 8.954 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 3 | 246 | 40.6 | 84.052 | 2.084 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 3 | 2046 | 40.6 | 84.052 | 20.084 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 3 | 313 | 40.0 | 754.051 | 2.754 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 3 | 3709 | 38.9 | 714.051 | 6.714 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 3 | 2246 | 38.6 | 84.050 | 22.084 | none |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | 3 | 3019 | 38.5 | 814.050 | 29.814 | none |
+
+## Overlaps against chance (1,000 circular shifts of each rep's round trips, seed 1), isolated
+
+Each rep's round trips shifted together by a random offset within its run (its round trips' sum), so
+their spacing and every source's own timing stay; p is the share of shifts overlapping at least as many.
+
+| run | source | of the largest round trips | expected by chance | p |
+| --- | --- | --- | --- | --- |
+| isolated-dpdk-raw-rtt | IPI | 0 of 30 | 0.00 | 1.000 |
+| isolated-dpdk-raw-rtt | ping stall | 0 of 30 | 0.00 | 1.000 |
+| isolated-dpdk-raw-rtt | pong stall | 0 of 30 | 0.01 | 1.000 |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | IPI | 0 of 30 | 0.00 | 1.000 |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | ping stall | 0 of 30 | 0.00 | 1.000 |
+| isolated-dpdk-raw@HAIRPIN=1-rtt | pong stall | 0 of 30 | 0.00 | 1.000 |
+| isolated-dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000-rtt | IPI | 0 of 0 | 0.00 | 1.000 |
+| isolated-dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000-rtt | ping stall | 0 of 0 | 0.00 | 1.000 |
+| isolated-dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000-rtt | pong stall | 0 of 0 | 0.00 | 1.000 |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | IPI | 0 of 30 | 0.00 | 1.000 |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | ping stall | 0 of 30 | 0.00 | 1.000 |
+| isolated-dpdk-raw@RTT_GAP_US=1000-rtt | pong stall | 0 of 30 | 0.00 | 1.000 |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | IPI | 0 of 30 | 0.00 | 1.000 |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | ping stall | 0 of 30 | 0.00 | 1.000 |
+| isolated-dpdk-raw@RTT_GAP_US=10000-rtt | pong stall | 0 of 30 | 0.00 | 1.000 |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | IPI | 0 of 30 | 0.00 | 1.000 |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | ping stall | 0 of 30 | 0.00 | 1.000 |
+| isolated-dpdk-raw@RTT_GAP_US=1000000-rtt | pong stall | 0 of 30 | 0.00 | 1.000 |
+| isolated-dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100-rtt | IPI | 0 of 3 | 0.00 | 1.000 |
+| isolated-dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100-rtt | ping stall | 0 of 3 | 0.00 | 1.000 |
+| isolated-dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100-rtt | pong stall | 0 of 3 | 0.00 | 1.000 |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | ping stall | 30 of 30 | 6.79 | 0.011 |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | pong stall | 20 of 30 | 6.64 | 0.063 |
+| isolated-dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536-rtt | IPI | 0 of 30 | 0.00 | 1.000 |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | IPI | 0 of 30 | 0.00 | 1.000 |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | ping stall | 0 of 30 | 0.00 | 1.000 |
+| isolated-dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100-rtt | pong stall | 0 of 30 | 0.00 | 1.000 |
+
+==== results.csv:      190 lines ====
+0,netrtt,isolated,68000,86000,297000,17000,200/200
+1,mtu,isolated:dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100,a,1436,1408
+1,mtu,isolated:dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100,b,1436,1408
+1,rtt,isolated:dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100,udp,24591,26271,30239,39935,48575,48575,24880,6000,0
+1,loss,isolated:dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100:rtt,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,loss,isolated:dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100:rtt,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,loss,isolated:dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,loss,isolated:dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,mtu,isolated:dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000,a,1436,1408
+1,mtu,isolated:dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000,b,1436,1408
+1,rtt,isolated:dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000,udp,19615,21455,26495,26495,26495,26495,19698,60,0
+1,loss,isolated:dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000:rtt,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,loss,isolated:dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000:rtt,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,loss,isolated:dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,loss,isolated:dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,mtu,isolated:dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100,a,1436,1408
+1,mtu,isolated:dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100,b,1436,1408
+1,rtt,isolated:dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100,udp,24831,26303,27679,27679,27679,27679,24990,60,0
+1,loss,isolated:dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100:rtt,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,loss,isolated:dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100:rtt,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,loss,isolated:dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,loss,isolated:dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,mtu,isolated:dpdk-raw@RTT_GAP_US=1000000,a,1436,1408
+1,mtu,isolated:dpdk-raw@RTT_GAP_US=1000000,b,1436,1408
+1,rtt,isolated:dpdk-raw@RTT_GAP_US=1000000,udp,32991,35391,37439,37439,37439,37439,33093,60,0
+1,loss,isolated:dpdk-raw@RTT_GAP_US=1000000:rtt,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,loss,isolated:dpdk-raw@RTT_GAP_US=1000000:rtt,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,loss,isolated:dpdk-raw@RTT_GAP_US=1000000,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,loss,isolated:dpdk-raw@RTT_GAP_US=1000000,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,mtu,isolated:dpdk-raw@RTT_GAP_US=10000,a,1436,1408
+1,mtu,isolated:dpdk-raw@RTT_GAP_US=10000,b,1436,1408
+1,rtt,isolated:dpdk-raw@RTT_GAP_US=10000,udp,29327,31727,38207,49247,116287,116287,29722,6000,0
+1,loss,isolated:dpdk-raw@RTT_GAP_US=10000:rtt,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,loss,isolated:dpdk-raw@RTT_GAP_US=10000:rtt,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,loss,isolated:dpdk-raw@RTT_GAP_US=10000,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,loss,isolated:dpdk-raw@RTT_GAP_US=10000,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,mtu,isolated:dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536,a,1436,1408
+1,mtu,isolated:dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536,b,1436,1408
+1,rtt,isolated:dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536,udp,31295,34079,41215,51903,56639,56639,31754,6000,0
+1,loss,isolated:dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536:rtt,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,loss,isolated:dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536:rtt,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,loss,isolated:dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,loss,isolated:dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,mtu,isolated:dpdk-raw@HAIRPIN=1,a,1436,1408
+1,mtu,isolated:dpdk-raw@HAIRPIN=1,b,1436,1408
+1,rtt,isolated:dpdk-raw@HAIRPIN=1,udp,12855,14247,16895,21743,32863,65279,13037,300000,0
+1,loss,isolated:dpdk-raw@HAIRPIN=1:rtt,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,loss,isolated:dpdk-raw@HAIRPIN=1:rtt,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,loss,isolated:dpdk-raw@HAIRPIN=1,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,loss,isolated:dpdk-raw@HAIRPIN=1,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,mtu,isolated:dpdk-raw@RTT_GAP_US=1000,a,1436,1408
+1,mtu,isolated:dpdk-raw@RTT_GAP_US=1000,b,1436,1408
+1,rtt,isolated:dpdk-raw@RTT_GAP_US=1000,udp,25007,26911,32671,44255,58143,62495,25364,20000,0
+1,loss,isolated:dpdk-raw@RTT_GAP_US=1000:rtt,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,loss,isolated:dpdk-raw@RTT_GAP_US=1000:rtt,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,loss,isolated:dpdk-raw@RTT_GAP_US=1000,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,loss,isolated:dpdk-raw@RTT_GAP_US=1000,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,mtu,isolated:dpdk-raw,a,1436,1408
+1,mtu,isolated:dpdk-raw,b,1436,1408
+1,rtt,isolated:dpdk-raw,udp,24207,25967,31455,38911,53279,91199,24538,300000,0
+1,loss,isolated:dpdk-raw:rtt,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,loss,isolated:dpdk-raw:rtt,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,loss,isolated:dpdk-raw,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+1,loss,isolated:dpdk-raw,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,mtu,isolated:dpdk-raw@RTT_GAP_US=1000000,a,1436,1408
+2,mtu,isolated:dpdk-raw@RTT_GAP_US=1000000,b,1436,1408
+2,rtt,isolated:dpdk-raw@RTT_GAP_US=1000000,udp,33983,36543,40831,40831,40831,40831,34253,60,0
+2,loss,isolated:dpdk-raw@RTT_GAP_US=1000000:rtt,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,loss,isolated:dpdk-raw@RTT_GAP_US=1000000:rtt,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,loss,isolated:dpdk-raw@RTT_GAP_US=1000000,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,loss,isolated:dpdk-raw@RTT_GAP_US=1000000,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,mtu,isolated:dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000,a,1436,1408
+2,mtu,isolated:dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000,b,1436,1408
+2,rtt,isolated:dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000,udp,19375,21151,24655,24655,24655,24655,19578,60,0
+2,loss,isolated:dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000:rtt,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,loss,isolated:dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000:rtt,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,loss,isolated:dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,loss,isolated:dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,mtu,isolated:dpdk-raw@RTT_GAP_US=10000,a,1436,1408
+2,mtu,isolated:dpdk-raw@RTT_GAP_US=10000,b,1436,1408
+2,rtt,isolated:dpdk-raw@RTT_GAP_US=10000,udp,29503,31807,36703,42687,56799,56799,29796,6000,0
+2,loss,isolated:dpdk-raw@RTT_GAP_US=10000:rtt,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,loss,isolated:dpdk-raw@RTT_GAP_US=10000:rtt,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,loss,isolated:dpdk-raw@RTT_GAP_US=10000,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,loss,isolated:dpdk-raw@RTT_GAP_US=10000,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,mtu,isolated:dpdk-raw@RTT_GAP_US=1000,a,1436,1408
+2,mtu,isolated:dpdk-raw@RTT_GAP_US=1000,b,1436,1408
+2,rtt,isolated:dpdk-raw@RTT_GAP_US=1000,udp,24943,26799,32431,39519,48191,103999,25272,20000,0
+2,loss,isolated:dpdk-raw@RTT_GAP_US=1000:rtt,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,loss,isolated:dpdk-raw@RTT_GAP_US=1000:rtt,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,loss,isolated:dpdk-raw@RTT_GAP_US=1000,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,loss,isolated:dpdk-raw@RTT_GAP_US=1000,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,mtu,isolated:dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100,a,1436,1408
+2,mtu,isolated:dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100,b,1436,1408
+2,rtt,isolated:dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100,udp,24223,25935,29967,38591,54911,54911,24520,6000,0
+2,loss,isolated:dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100:rtt,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,loss,isolated:dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100:rtt,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,loss,isolated:dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,loss,isolated:dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,mtu,isolated:dpdk-raw@HAIRPIN=1,a,1436,1408
+2,mtu,isolated:dpdk-raw@HAIRPIN=1,b,1436,1408
+2,rtt,isolated:dpdk-raw@HAIRPIN=1,udp,12839,14199,16511,21327,26959,54271,13004,300000,0
+2,loss,isolated:dpdk-raw@HAIRPIN=1:rtt,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,loss,isolated:dpdk-raw@HAIRPIN=1:rtt,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,loss,isolated:dpdk-raw@HAIRPIN=1,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,loss,isolated:dpdk-raw@HAIRPIN=1,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,mtu,isolated:dpdk-raw,a,1436,1408
+2,mtu,isolated:dpdk-raw,b,1436,1408
+2,rtt,isolated:dpdk-raw,udp,24735,26591,32095,41599,54623,106303,25073,300000,0
+2,loss,isolated:dpdk-raw:rtt,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,loss,isolated:dpdk-raw:rtt,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,loss,isolated:dpdk-raw,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,loss,isolated:dpdk-raw,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,mtu,isolated:dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100,a,1436,1408
+2,mtu,isolated:dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100,b,1436,1408
+2,rtt,isolated:dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100,udp,24495,25551,27375,27375,27375,27375,24428,60,0
+2,loss,isolated:dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100:rtt,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,loss,isolated:dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100:rtt,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,loss,isolated:dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,loss,isolated:dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,mtu,isolated:dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536,a,1436,1408
+2,mtu,isolated:dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536,b,1436,1408
+2,rtt,isolated:dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536,udp,30655,33311,39295,50335,68735,68735,31029,6000,0
+2,loss,isolated:dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536:rtt,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,loss,isolated:dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536:rtt,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,loss,isolated:dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+2,loss,isolated:dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,mtu,isolated:dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100,a,1436,1408
+3,mtu,isolated:dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100,b,1436,1408
+3,rtt,isolated:dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100,udp,24735,26495,31055,40031,56063,56063,25057,6000,0
+3,loss,isolated:dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100:rtt,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,loss,isolated:dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100:rtt,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,loss,isolated:dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,loss,isolated:dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,mtu,isolated:dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000,a,1436,1408
+3,mtu,isolated:dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000,b,1436,1408
+3,rtt,isolated:dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000,udp,20415,22415,24031,24031,24031,24031,20533,60,0
+3,loss,isolated:dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000:rtt,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,loss,isolated:dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000:rtt,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,loss,isolated:dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,loss,isolated:dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,mtu,isolated:dpdk-raw@RTT_GAP_US=1000000,a,1436,1408
+3,mtu,isolated:dpdk-raw@RTT_GAP_US=1000000,b,1436,1408
+3,rtt,isolated:dpdk-raw@RTT_GAP_US=1000000,udp,34239,36991,47231,47231,47231,47231,34945,60,0
+3,loss,isolated:dpdk-raw@RTT_GAP_US=1000000:rtt,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,loss,isolated:dpdk-raw@RTT_GAP_US=1000000:rtt,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,loss,isolated:dpdk-raw@RTT_GAP_US=1000000,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,loss,isolated:dpdk-raw@RTT_GAP_US=1000000,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,mtu,isolated:dpdk-raw,a,1436,1408
+3,mtu,isolated:dpdk-raw,b,1436,1408
+3,rtt,isolated:dpdk-raw,udp,24127,26287,31519,38687,55455,99839,24542,300000,0
+3,loss,isolated:dpdk-raw:rtt,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,loss,isolated:dpdk-raw:rtt,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,loss,isolated:dpdk-raw,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,loss,isolated:dpdk-raw,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,mtu,isolated:dpdk-raw@HAIRPIN=1,a,1436,1408
+3,mtu,isolated:dpdk-raw@HAIRPIN=1,b,1436,1408
+3,rtt,isolated:dpdk-raw@HAIRPIN=1,udp,12871,14223,16527,21567,30687,94527,13037,300000,0
+3,loss,isolated:dpdk-raw@HAIRPIN=1:rtt,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,loss,isolated:dpdk-raw@HAIRPIN=1:rtt,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,loss,isolated:dpdk-raw@HAIRPIN=1,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,loss,isolated:dpdk-raw@HAIRPIN=1,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,mtu,isolated:dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536,a,1436,1408
+3,mtu,isolated:dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536,b,1436,1408
+3,rtt,isolated:dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536,udp,32463,35519,41759,53375,69439,69439,32890,6000,0
+3,loss,isolated:dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536:rtt,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,loss,isolated:dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536:rtt,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,loss,isolated:dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,loss,isolated:dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,mtu,isolated:dpdk-raw@RTT_GAP_US=10000,a,1436,1408
+3,mtu,isolated:dpdk-raw@RTT_GAP_US=10000,b,1436,1408
+3,rtt,isolated:dpdk-raw@RTT_GAP_US=10000,udp,30175,32671,39103,49279,75583,75583,30539,6000,0
+3,loss,isolated:dpdk-raw@RTT_GAP_US=10000:rtt,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,loss,isolated:dpdk-raw@RTT_GAP_US=10000:rtt,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,loss,isolated:dpdk-raw@RTT_GAP_US=10000,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,loss,isolated:dpdk-raw@RTT_GAP_US=10000,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,mtu,isolated:dpdk-raw@RTT_GAP_US=1000,a,1436,1408
+3,mtu,isolated:dpdk-raw@RTT_GAP_US=1000,b,1436,1408
+3,rtt,isolated:dpdk-raw@RTT_GAP_US=1000,udp,25855,28223,33823,41535,56479,72383,26258,20000,0
+3,loss,isolated:dpdk-raw@RTT_GAP_US=1000:rtt,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,loss,isolated:dpdk-raw@RTT_GAP_US=1000:rtt,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,loss,isolated:dpdk-raw@RTT_GAP_US=1000,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,loss,isolated:dpdk-raw@RTT_GAP_US=1000,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,mtu,isolated:dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100,a,1436,1408
+3,mtu,isolated:dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100,b,1436,1408
+3,rtt,isolated:dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100,udp,24127,25599,37375,37375,37375,37375,24707,60,0
+3,loss,isolated:dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100:rtt,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,loss,isolated:dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100:rtt,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,loss,isolated:dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100,a,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0
+3,loss,isolated:dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100,b,kernel-udp-InErrors=0;kernel-udp-RcvbufErrors=0;kernel-udp-SndbufErrors=0;nic-kernel-drops=0;routes-missing=0

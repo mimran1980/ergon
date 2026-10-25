@@ -999,7 +999,7 @@ mix_run() {
 # bench_state <state>, on VM a (remote.sh): $reps reps of every mode in a fresh
 # random order each rep, against VM a itself and VM b
 bench_state() {
-    local state=$1 rep mode fm label pong sub prog raw rtt_s rtt_n rtt_w rtt_d gap gap_env pong_host
+    local state=$1 rep mode fm label pong sub prog raw rtt_s rtt_n rtt_w rtt_d gap gap_env between flush_env pong_host
     results=$out/results.csv
     local a_nics b_nics net us host
     a_nics=$(on "$A" "$vm nics" 2>>"$out/nics.log")
@@ -1095,6 +1095,11 @@ bench_state() {
             rtt_d=$((rtt_s + (rtt_s + 3) / 4))
             gap=$(mode_get "${mode%+idle}" RTT_GAP_US) || gap=
             gap_env=${gap:+RTT_GAP_US=$gap }
+            # the floor's keep-alives (the ping's) and cache flush (both ends)
+            between=$(mode_get "${mode%+idle}" KEEPALIVE_US) && gap_env+="KEEPALIVE_US=$between "
+            flush_env=
+            between=$(mode_get "${mode%+idle}" FLUSH_KB) && flush_env="FLUSH_KB=$between "
+            gap_env+=$flush_env
             # the ping started at second $rtt_align of the minute when set
             align_rtt
             # every round trip of rtt_spike_ns or more stamped, every loop stall
@@ -1111,7 +1116,7 @@ bench_state() {
             else
                 # B pongs, A pings (ping's endpoint on B, pong's on A)
                 pong_host=$B
-                on "$B" "LOOP_STALL_NS=${rtt_stall_ns:-10000} LAB_CLIENT_DEADLINE=$(answer_deadline "$rtt_d") $vm client $label $prog xpong $b_rcv:20123 $a_rcv:20124 $app_b" \
+                on "$B" "${flush_env}LOOP_STALL_NS=${rtt_stall_ns:-10000} LAB_CLIENT_DEADLINE=$(answer_deadline "$rtt_d") $vm client $label $prog xpong $b_rcv:20123 $a_rcv:20124 $app_b" \
                     >"$out/pong-$state-$fm-$rep.log" 2>&1 & pong=$!
                 sleep 2
                 # (RTT_SECONDS=20 unpaced: 20 s measured after up to 5 s of warm-up)

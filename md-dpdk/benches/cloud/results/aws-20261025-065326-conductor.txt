@@ -1,0 +1,63 @@
+# Conductor probes on run aws-20261025-065326 (c8g.2xlarge spot pair, us-east-2a, cluster placement,
+# LAB_REPS=0 LAB_KEEP=1: built, not isolated, then by hand). Commit ec42a818 plus the ENA Express change.
+# Each probe: both hosts' drivers restarted in the mode named (vm.sh driver), host b's rtt xpong, then
+# host a's rtt xping (300,000 round trips, 50,000 warm-up), host a's conductor counters sampled every
+# 0.2 s ("counters ''": Conductor max cycle time ns, work cycles over the threshold). Off-CPU spells:
+# perf record -e sched:sched_switch, the conductor thread's switch-out to its next switch-in.
+# Raw files (sampler logs, perf script output) were inspected on the host; the lines below are copied
+# from them unchanged.
+
+==== probe 1: dpdk (conductor on the housekeeping CPU 0, backoff idle), 16 MiB terms
+sampler: <unix time> <conductor max ns> <cycles over 2 ms>
+1792912080.778690166 1621083 0      driver started, no client
+1792912096.186820926 8113416 2      0.27 s after host a's ping started (1792912095.92); unchanged to the end
+rtt,probe,udp,23903,25407,29279,38335,53055,109567,24169,300000,0
+
+==== probe 2: dpdk@AERON_TERM_BUFFER_LENGTH=1048576 (log buffers 16 times smaller)
+1792912149.798391845 1682252 0
+1792912158.963518317 2516637 1      no client yet
+1792912159.171563994 2619248 2
+1792912166.670582829 8021476 5      at the ping's connection
+rtt,probe2,udp,23791,25455,29775,39039,49791,113215,24092,300000,0
+
+==== probe 3: kernel-busy (kernel UDP), conductor on CPU 0
+1792912204.694011809 1374756 0
+1792912208.861104978 2490577 1
+1792912220.323088599 4023530 4      at the ping's connection (ping started 1792912220.16)
+rtt,probe3,udp,29711,32399,36767,46111,66495,151167,30174,300000,0
+
+==== probe 4: dpdk, conductor on CPU 0: its longest off-CPU spells (perf sched_switch on CPU 0)
+off 8.012 ms at 784.994115 state R next rtt          preempted while runnable, by the rtt client starting on CPU 0
+off 4.095 ms at 784.967185 state R next rtt
+off 4.016 ms at 784.962115 state R next rtt
+off 1.779 ms at 772.744059 state S next swapper/0    a 1 ms backoff park, overslept
+conductor counters after the run: max 8395852 ns, 4 cycles over 2 ms
+perf trace -t <conductor> --duration 0.3 over the run: only clock_nanosleep (1.05 ms parks; one 1.79 ms)
+
+==== probe 5: dpdk@CONDUCTOR=own (conductor alone on CPU 4, spinning)
+rtt,own16m,udp,24207,26095,31423,40671,53279,105919,24583,300000,0
+conductor counters: max 4779635 ns, 1 cycle over 1 ms
+off 4.524 ms state S by swapper/4 cpu 004            blocked, not preempted
+off 0.123 ms state S by swapper/4 cpu 004
+second connection on the same driver: max unchanged (4779635), still 1 cycle over 1 ms;
+perf trace --duration 0.2 over it: nothing
+
+==== probe 6: dpdk@CONDUCTOR=own, fresh drivers, the first connection traced
+perf trace -t <conductor> --duration 0.2:
+     3.231 ( 1.757 ms): futex(uaddr: 0x1005fd420, op: WAIT_BITSET|PRIVATE_FLAG|CLOCK_REALTIME, utime: 0xffffc1dcd260, val3: MATCH_ANY) = 0
+the conductor's switch-outs in state S (perf record -e sched:sched_switch -g -t <conductor>), every one not in
+nanosleep has this user stack (kernel frames: futex_wait from __arm64_sys_futex):
+	    ffff99e35854 pthread_cond_timedwait
+	    ffff98b47d18 [unknown]
+	    ffff98b4a058 [unknown]
+	    ffff98b4a254 [unknown]
+	    ffff98b4a898 [unknown]
+	    ffff9a2810f4 rte_eth_xstats_get
+	    aaaacbe9364c rusteron_dpdk_port_xstats_get
+	    aaaacbe91f6c rusteron_dpdk_counters_register
+	    aaaacbe814d8 rusteron_dpdk_transport_init
+	    aaaacbeed0bc aeron_send_channel_endpoint_create
+	    aaaacbe9e068 aeron_driver_conductor_get_or_add_send_channel_endpoint
+	    aaaacbeaa018 aeron_driver_conductor_execute_add_network_publication_create_publication
+	    aaaacbea1820 aeron_driver_conductor_do_work
+	    aaaacbe156b8 media_driver::main
