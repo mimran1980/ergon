@@ -23,8 +23,9 @@ results.csv rows (lab.sh prefixes the rep):
   <rep>,load,<mode>,udp-<fraction|burst>,<size>,<rate>,<burst>,p50,...,max,mean,samples,sent,received,
         backpressured,achieved msgs/s,max send lag ns[,scheduled,late,censored]
         (scheduled is what the run owed, late the sends that found the following slot already due,
-        censored the round trips at the histogram's bound whose true value is only known to be at
-        least that; all three absent in rows from before they were counted)
+        censored the latencies only known to be at least what was recorded: round trips at the
+        histogram's bound and measured messages owed without an echo, recorded at the
+        run's end minus their due time; all three absent in rows from before they were counted)
   <rep>,mix,<mode>,udp-<profile>/<stream>,<size>,<rate>,<burst>,... (as load: one row per stream of a mix)
   <rep>,loss,<mode>[:rtt|:<size>:<fraction>|:<size>:max|:<size>:flows<n>|:mix:<profile>],<host>,<key>=<growth>;...
         (routes-missing as found after the run; VALIDITY's counters check the run and are not loss)
@@ -221,7 +222,8 @@ def work_of(row):
 def work_columns(reps):
     """A point's `echoed` and `late, censored` cells: completed, issued and
     scheduled together, and how often the run fell more than one slot behind
-    plus how many round trips the histogram's bound censored. A rep that
+    plus how many recorded latencies are censored (at the histogram's bound, or
+    owed without an echo and recorded at their lower bound). A rep that
     predates the three counts has none to add, so the point is reported
     without them rather than as a zero that would read as measured."""
     sent = sum(r[6] for r in reps)
@@ -573,9 +575,11 @@ def main():
         print("`offered` is the scheduled rate; `achieved` the rate actually offered after warm-up. "
               "Below 98% of offered (marked *), the generator or the path could not keep the schedule, "
               "and the latencies include that queueing. `echoed` is completed/issued/scheduled; "
-              "`late, censored` is how often the run fell more than one slot behind, and how many round "
-              "trips the histogram's bound censored (a max at the bound beside a censored count is a floor, "
-              "not the slowest round trip). Both are absent (`—`) at a point whose reps predate them. "
+              "`late, censored` is how often the run fell more than one slot behind, and how many recorded "
+              "latencies are only known to be at least their value: round trips at the histogram's bound, "
+              "and measured messages owed without an echo, recorded at the run's end minus their due time "
+              "(beside a censored count the max is a floor, not the slowest round trip). "
+              "Both are absent (`—`) at a point whose reps predate them. "
               "`max send lag` is the longest a measured message "
               "waited past its due time to be offered (median of the reps, range in brackets): how far the "
               "generator itself fell behind, which is already inside the latencies beside it. "

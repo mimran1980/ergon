@@ -478,10 +478,10 @@ fn run(
             s.max_lag,
             // the work behind the percentiles: what the schedule owed, how
             // often the run fell more than one slot behind, and how many
-            // recorded latencies are only known to be at least the histogram's
-            // bound. `sent` below `scheduled` is work never offered; a
-            // `censored` count above zero beside a max at the bound means that
-            // max is a floor, not the slowest round trip.
+            // recorded latencies are only known to be at least their value
+            // (at the histogram's bound, or owed without an echo). `sent`
+            // below `scheduled` is work never offered; a `censored` count
+            // above zero means the max is a floor, not the slowest round trip.
             s.total,
             s.late,
             s.censored
