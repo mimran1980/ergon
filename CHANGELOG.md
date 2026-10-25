@@ -21,7 +21,7 @@
   | `generate_to_out_dir(path, config)` | `generate(SchemaSource::file(path), config)?.write_to_out_dir()` |
   | `generate_to_dir(path, config, dir)` | `generate(SchemaSource::file(path), config)?.write_to(dir)` |
   | `generate_str_to_out_dir` / `generate_str_to_dir` | `generate(SchemaSource::xml(xml), config)?` then a writer |
-  | `generate_multi_to_out_dir` / `generate_multi_to_dir`, `SchemaFile` | `parse` each consumer `with_shared`, `Generator::generate_multi`, then a writer |
+  | `generate_multi_to_out_dir` / `generate_multi_to_dir`, `SchemaFile` | `parse` each consumer `with_shared`, `Generator::generate_multi` with `GenerationConfig::with_shared_module(name)` (the helper set it for you; without it each module emits its own copy of the shared types), then a writer |
   | `out_dir()` | `write_to_out_dir()` reads `OUT_DIR` |
 
 - Breaking: `Ir` has a `sources` field: the schema file, every resolved
