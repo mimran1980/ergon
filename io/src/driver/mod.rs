@@ -1490,7 +1490,8 @@ impl Reads {
     }
 
     /// [`RxMeta`] for input an endpoint already held when it was added (the
-    /// frames the upgrade read with the 101): the next sequence number, no
+    /// frames the upgrade read with the 101, or bytes a blocking connect read
+    /// before `Driver::add`): the next sequence number, no
     /// kernel stamps, and with `stamp` the time now, as the driver takes
     /// them.
     #[cold]

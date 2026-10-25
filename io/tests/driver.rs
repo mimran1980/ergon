@@ -1631,7 +1631,6 @@ fn rx_read_ns_stamps_frames_read_with_the_upgrade() -> R {
         for (on, dial) in [(false, false), (true, false), (false, true), (true, true)] {
             let lab = Lab::new()?;
             let mut cfg = Config::new(b);
-            cfg.wait_us = cfg.wait_us.min(100);
             cfg.rx_read_timestamp = on;
             let mut d: Driver<WsConn> = Driver::new(cfg)?;
             std::thread::scope(|s| -> R {
