@@ -4880,7 +4880,7 @@ pre=$(
 ) || true
 want="keys: 2 2 2 2 2 0 0 0 0
 transports: 2 2 0 0 0 0
-mode dpdk@CONDUCTUR=own: CONDUCTUR is neither a setting the lab knows (THP BIN CSTATE BUSY_POLL COALESCE RX_RING MIN_FREE_PCT CLOCKSOURCE RELIABLE AGENTS SMT JUMBO PUB_PARAMS SUB_PARAMS IRQ NAPI_DEFER NAPI_BUSY CONDUCTOR HAIRPIN RTT_GAP_US DPDK) nor an AERON_* or RUSTERON_* variable: vm.sh would export it to a driver that never reads it, and the mode would measure its baseline under another name
+mode dpdk@CONDUCTUR=own: CONDUCTUR is neither a setting the lab knows (THP BIN CSTATE BUSY_POLL COALESCE RX_RING MIN_FREE_PCT CLOCKSOURCE RELIABLE AGENTS SMT JUMBO PUB_PARAMS SUB_PARAMS IRQ NAPI_DEFER NAPI_BUSY CONDUCTOR HAIRPIN RTT_GAP_US KEEPALIVE_US FLUSH_KB DPDK) nor an AERON_* or RUSTERON_* variable: vm.sh would export it to a driver that never reads it, and the mode would measure its baseline under another name
 mode kernal: transport kernal: kernel, kernel-busy, dpdk, dpdk-spin, dpdk-adaptive, dpdk-epoll, the raw floor's kernel-raw or dpdk-raw, optionally -mono, or the pure floor's dpdk-pure (vm.sh refuses any other at the driver's start)
 rx: 0 0 2 2 2 2 0 2 0
 tx: 0 2 0 0 2 2 2 0 2 2
@@ -6722,6 +6722,49 @@ if [[ $hsmodes == "$want" ]]; then
 else
     fail "modes.sh: the hairpin and sparse round trips"
     diff -u <(echo "$want") <(echo "$hsmodes") >&2 || true
+fi
+
+# The raw floor's keep-alives (@KEEPALIVE_US) and cold-cache flush
+# (@FLUSH_KB): modes.sh takes them on kernel-raw and dpdk-raw only, each with
+# @RTT_GAP_US, once; a keep-alive at most half the gap and over 50 us under
+# it, a flush of at most 1 GiB with a gap of 10 ms or more; each refusal says
+# why
+kfmodes=$(
+    set +e
+    exec 2>&1
+    # shellcheck source=../modes.sh
+    . "$cloud/modes.sh" || exit 1
+    for m in dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100 kernel-raw@RTT_GAP_US=10000@KEEPALIVE_US=100 \
+        dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536 dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000@KEEPALIVE_US=100; do
+        mode_check "$m" remote arm64 aws '' cluster >/dev/null
+        echo "$m $?"
+    done
+    for c in 'dpdk@RTT_GAP_US=1000000@KEEPALIVE_US=100|the raw floor' 'dpdk-raw@KEEPALIVE_US=100|needs @RTT_GAP_US' \
+        'dpdk-raw@RTT_GAP_US=150@KEEPALIVE_US=100|at most half the gap' 'dpdk-raw@RTT_GAP_US=1000@FLUSH_KB=1024|10 ms or more' \
+        'dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=2000000|at most 1048576' 'dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=0|a whole number from 1' \
+        'dpdk-pure@RTT_GAP_US=10000@FLUSH_KB=1024|does not pace' \
+        'dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100@KEEPALIVE_US=200|one KEEPALIVE_US at most'; do
+        why=$(mode_check "${c%|*}" remote arm64 aws '' cluster 2>&1)
+        echo "${c%|*} $? $(grep -cF -- "${c#*|}" <<<"$why")"
+    done
+)
+want="dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100 0
+kernel-raw@RTT_GAP_US=10000@KEEPALIVE_US=100 0
+dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536 0
+dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000@KEEPALIVE_US=100 0
+dpdk@RTT_GAP_US=1000000@KEEPALIVE_US=100 2 1
+dpdk-raw@KEEPALIVE_US=100 2 1
+dpdk-raw@RTT_GAP_US=150@KEEPALIVE_US=100 2 1
+dpdk-raw@RTT_GAP_US=1000@FLUSH_KB=1024 2 1
+dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=2000000 2 1
+dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=0 2 1
+dpdk-pure@RTT_GAP_US=10000@FLUSH_KB=1024 2 1
+dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100@KEEPALIVE_US=200 2 1"
+if [[ $kfmodes == "$want" ]]; then
+    pass "modes.sh: @KEEPALIVE_US and @FLUSH_KB on the raw floor's paced modes only, within the gap, once, each refusal said"
+else
+    fail "modes.sh: keep-alives and the cache flush"
+    diff -u <(echo "$want") <(echo "$kfmodes") >&2 || true
 fi
 
 # lib.sh dry with a hairpin and paced modes: a hairpin rep is one floor
