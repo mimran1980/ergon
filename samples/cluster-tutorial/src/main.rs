@@ -19,9 +19,7 @@
 //! ```
 
 use ergo_aeron_cluster::cluster_codec_types::{AdminRequestType, AdminResponseCode, EventCode};
-use ergo_aeron_cluster::{
-    AeronCluster, EgressAdapter, EgressListener, SessionBuilder, SessionState,
-};
+use ergo_aeron_cluster::{AeronCluster, EgressListener, SessionBuilder, SessionState};
 use ergo_aeron_cluster_test_harness::TestCluster;
 use std::time::{Duration, Instant};
 
@@ -94,8 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // ── 3. Offer messages (allocation-free claim path) ───────────────────
-    let listener = EchoListener { echo_count: 0 };
-    let mut adapter = EgressAdapter::new(listener);
+    let mut listener = EchoListener { echo_count: 0 };
 
     let messages = ["hello", "world", "aeron-cluster-rust"];
     for msg in &messages {
@@ -105,27 +102,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── 4. Poll egress until all echoes received ─────────────────────────
     let deadline = Instant::now() + Duration::from_secs(15);
-    while Instant::now() < deadline && adapter.listener().echo_count < messages.len() {
+    while Instant::now() < deadline && listener.echo_count < messages.len() {
         let _ = client.send_keep_alive();
-        let n = client.poll_egress(&mut adapter, 10)?;
-        client.poll_state_changes()?;
+        let n = client.poll(&mut listener, 10)?;
         if n == 0 {
             std::thread::sleep(Duration::from_millis(5));
         }
     }
 
     assert_eq!(
-        adapter.listener().echo_count,
+        listener.echo_count,
         messages.len(),
         "expected {} echoes, got {}",
         messages.len(),
-        adapter.listener().echo_count
+        listener.echo_count
     );
     println!("all {} messages echoed", messages.len());
 
     // ── 5. Close ─────────────────────────────────────────────────────────
     client.close()?;
-    client.poll_state_changes()?;
+    // A zero fragment limit drives the session state alone: PendingClose
+    // becomes Closed.
+    client.poll(&mut listener, 0)?;
     assert_eq!(client.state(), SessionState::Closed);
     println!("tutorial complete — session closed");
     Ok(())
