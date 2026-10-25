@@ -401,8 +401,11 @@ driver, every arm of transport-matrix.tsv but DPDK's over
 transport-smoke.tsv's cut-down sets at 1 rep, then transport_collect.py,
 fairness.py and analyse.py --transport. It fails unless every point gave its
 rows, no run failed and the tables render; `summary.txt` counts fairness.py's
-violations by rule. On one unisolated box `hostcheck` and `placement`
-violations are expected; any other is a bug to fix before a cloud run.
+violations by rule. On one unisolated box `hostcheck` (no isolated CPUs) is
+expected, `max` too (the runner collects no per-point events yet, so no max
+gets a cause), and now and then `loss` (a tail-loss probe whose DSACK had not
+come back on a thread that waited for a CPU); any other is a bug to fix
+before a cloud run.
 
 A mode's `@KEY=value` is a driver environment variable or a `vm.sh` host
 setting (`modes.sh` lists them). `@DPDK=<build>` (AWS, DPDK modes) runs the driver

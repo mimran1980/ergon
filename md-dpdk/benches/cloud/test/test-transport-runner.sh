@@ -626,7 +626,7 @@ done
 # schedule, the counters each host's loss accounting reads
 case $me in
 aeron_lat) transport=aeron-$mode extra=', "aeron.naks-sent": "0", "aeron.retransmits-sent": "0"' ;;
-tcp_lat) transport=tcp extra= ;;
+tcp_lat) transport=tcp extra=', "tcp.retrans": "0", "tcp.dsack_dups": "0", "tcp.retrans_not_dsack": "0", "tcp.lost_end": "0"' ;;
 mpsc_lat) transport=mpsc extra= ;;
 *) transport=udp extra= ;;
 esac
@@ -731,6 +731,9 @@ m=$(find "$d/3b" -name 'manifest-3b-aa@STREAMS=1@NETEM=1-64-1-r10000.json' | hea
 python3 -c 'import json, sys; m = json.load(open(sys.argv[1])); assert m["aa"] and m["aa_of"] == "aeron-rel" and "aa" in m["arm_order"] and m["netem_counters"]["a"]["eth1"]["dropped"] > 0 and m["loss_counters"]["b"]["nstat"]["TcpRetransSegs"] == 1 and m["threads"]["a"][0][0]["util"] > 0.9, m' "$m" 2>/dev/null || why+=" 3b A/A manifest: $m;"
 m=$(find "$d/2b" -name 'manifest-2b-*' | head -1)
 python3 -c 'import json, sys; m = json.load(open(sys.argv[1])); assert list(m["vms"]) == ["a"] and m["vms"]["a"] == "g/b" and m["hosts"] == {"a": "b"}, m' "$m" 2>/dev/null || why+=" 2b (host b's) manifest keyed a: $m;"
+# a TCP point's traffic counters, split as tcp_lat reports them, on both hosts
+m=$(find "$d/3b" -name 'manifest-3b-mio-tcp@STREAMS=1@NETEM=1-64-1-r10000.json' | head -1)
+python3 -c 'import json, sys; m = json.load(open(sys.argv[1])); assert all(m["loss_counters"][h]["tcp_info"]["retrans_not_dsack"] == 0 and m["loss_counters"][h]["tcp_info"]["dsack_dups"] == 0 for h in "ab"), m["loss_counters"]' "$m" 2>/dev/null || why+=" 3b mio-tcp tcp_info split: $m;"
 # the labels as the analysis parses them: every row its manifest, the one-host sets (1, 2b) one host each
 python3 -c 'import sys; sys.path.insert(0, sys.argv[2]); import transport_points as tp; ps = tp.read_points(sys.argv[1]); assert ps and all(p.manifest for p in ps); assert {p.set for p in ps if tp.hosts_of(p.set) == ("a",)} == {"1", "2b"}; assert all(sorted(p.manifest["vms"]) == list(tp.hosts_of(p.set)) for p in ps); assert {p.arm for p in ps if p.manifest["aa"]} == {"aa"}' "$d" "$cloud" 2>/dev/null || why+=" transport_points.read_points: labels or hosts;"
 [[ $(grep -c . "$d/order.csv") == "$(grep -c . "$d/rounds.tsv")" ]] || why+=" orders not recorded a round;"
@@ -783,7 +786,7 @@ echo "$tables" >"$tmp/tables.md"
 
 # a bad placement and netem counters off their loss are in the manifests
 # (and logged); a failed point recorded and the session's exit 1
-trun b 1 "" FAKE_PLACEMENT_BAD=1 FAKE_NETEM_BAD=1 FAKE_FAIL_LABEL='3c:mio-tcp@STREAMS=1@NETEM=0' FAKE_PONG_SILENT='3c:eio-tcp@' FAKE_SH_DELAY=0.3 && rrc=0 || rrc=$?
+trun b 1 "" FAKE_PLACEMENT_BAD=1 FAKE_NETEM_BAD=1 FAKE_FAIL_LABEL='3c:mio-tcp@STREAMS=1@NETEM=0' FAKE_PONG_SILENT='3c:eio-tcp@STREAMS=1@NETEM=0' FAKE_SH_DELAY=0.3 && rrc=0 || rrc=$?
 why=
 [[ $rrc != 0 ]] || why+=" exit 0;"
 m=$(grep -l '^mode=aeron-rel@STREAMS=1@NETEM=1$' "$d"/manifest/*.env | head -1)
@@ -791,7 +794,7 @@ grep -q '^placement_a=FAIL' "$m" && grep -q '^netem_a=.* FAIL$' "$m" || why+=" v
 grep -q 'WARNING: point .* netem counters off its loss' "$sb/run.out" || why+=" not logged;"
 [[ $(grep -c '^3c,1,0,mio-tcp,0,1$' "$d/failures.csv") == 1 ]] || why+=" failures: $(cat "$d/failures.csv");"
 # a pong that never says ready: its point failed, its ping never started
-[[ $(grep -c '^3c,1,0,eio-tcp,0,1$' "$d/failures.csv") == 1 ]] && ! grep -q '^a tcp_lat --role ping .*--label 3c:eio-tcp@' "$sb/runs" &&
+[[ $(grep -c '^3c,1,0,eio-tcp,0,1$' "$d/failures.csv") == 1 ]] && ! grep -q '^a tcp_lat --role ping .*--label 3c:eio-tcp@STREAMS=1@NETEM=0 ' "$sb/runs" &&
     grep -q 'the pong did not say ready within 3 s' "$sb/run.out" || why+=" a silent pong: $(grep -c eio-tcp "$d/failures.csv") failures;"
 # every pong slow to write its PID file: waited for, not taken for an exit
 [[ $(grep -c . "$d/failures.csv") == 2 ]] && ! grep -q 'exited before it said ready' "$sb/run.out" || why+=" a slow pong taken for gone: $(tr '\n' ' ' <"$d/failures.csv");"
