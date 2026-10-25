@@ -6,6 +6,11 @@
 //!   `backend[,key=value...]`).
 //! - [`ws_conn`]: [`WsConn`], [`WsDial`], [`WsOptions`], [`WsHandler`];
 //!   [`ws`] is the frame codec.
+//! - [`frame`]: [`FrameConn`], [`FrameDial`], [`FrameOptions`],
+//!   [`FrameHandler`]: `u32` little-endian length-prefixed frames over plain
+//!   TCP, on every backend.
+//! - [`udp`]: [`UdpConn`], [`UdpOptions`], [`UdpHandler`]: whole datagrams
+//!   on a connected or receive-only UDP socket, on `epoll-spin` only.
 //! - [`reconnect`]: [`Reconnect`] and its backoff policy, [`Retry`].
 //! - [`http`]: [`HttpConn`], [`HttpDial`], [`HttpHandler`]. On Linux,
 //!   `client` pools connections as `HttpClient`.
@@ -36,6 +41,7 @@ pub mod clock;
 pub mod dns;
 pub mod endpoint;
 pub mod error;
+pub mod frame;
 pub mod http;
 pub mod net;
 pub mod outcome;
@@ -45,6 +51,7 @@ pub mod route;
 mod stream;
 pub mod text;
 pub mod tls;
+pub mod udp;
 pub mod ws;
 pub mod ws_conn;
 
@@ -78,6 +85,7 @@ pub use client::{ClientHandler, CurlDrive, HttpClient, HttpClientConfig, HttpImp
 pub use driver::Driver;
 pub use endpoint::{ConnId, ConnMut, Dial, DriverStats, Endpoint, Handler, Receive, TcpInfo};
 pub use error::{Error, Result};
+pub use frame::{FrameConn, FrameDial, FrameHandler, FrameOptions, FrameStats};
 pub use http::{
     HttpConn, HttpDial, HttpHandler, HttpOptions, HttpStats, NonAsciiHead, RequestTemplate,
     Response,
@@ -86,6 +94,7 @@ pub use net::Target;
 pub use outcome::{Sent, Verdict};
 pub use reconnect::{Reconnect, Retry};
 pub use text::{AsciiText, NonAscii, TextCheck, TextStatus};
+pub use udp::{UdpConn, UdpHandler, UdpOptions, UdpStats};
 pub use ws_conn::{
     Flow, FragmentIter, Fragments, Interest, MAX_FRAGMENTS, WsConn, WsDial, WsHandler, WsOptions,
     WsStats,

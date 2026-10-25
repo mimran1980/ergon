@@ -10,6 +10,10 @@
 //! | `recv-busy` | non-blocking `recvmsg` on every socket every poll (with `per_queue`: one per NIC queue, then the sockets `epoll_wait(0)` reports ready), `SO_BUSY_POLL` set: an empty read runs one NAPI pass | yes, one pass per socket (or queue) per poll | no |
 //! | `uring-sqpoll` | `SQPOLL` kernel thread submits, completes and polls the NIC (NAPI) | yes, on the kernel thread | yes |
 //!
+//! UDP endpoints ([`crate::udp`]) run on `epoll-spin` only: the other two
+//! refuse them at `Driver::new` ([`Error::Unsupported`]). Every other
+//! endpoint runs on all three.
+//!
 //! Count every socket the loop thread polls (feeds, order connections,
 //! `HttpClient` pools).
 //!
@@ -193,7 +197,24 @@ pub struct Config {
     /// is due: one `getsockopt` per poll at most, which takes the socket's
     /// lock briefly.
     pub tcp_info_interval_ms: u32,
+    /// `epoll_wait` batch: the most ready sockets one poll learns of
+    /// (`epoll-spin`, and `recv-busy` with `per_queue`). Sockets past it are
+    /// reported again on the next poll (level-triggered). 1 to 65 536,
+    /// default 64.
+    pub epoll_events: u32,
+    /// UDP ([`crate::udp`]): the most datagrams one poll reads from one ready
+    /// socket before it moves on, so one busy socket cannot hold up the
+    /// others. Each costs one `recvmsg`; the last read of a drained socket
+    /// returns `EAGAIN`. 1 to 1 024, default 16.
+    pub datagram_burst: u32,
 }
+
+/// What [`Config::epoll_events`] may be: `epoll_wait` takes a positive
+/// `int`; past 65 536 the batch is only memory.
+const EPOLL_EVENTS: std::ops::RangeInclusive<u32> = 1..=65_536;
+
+/// What [`Config::datagram_burst`] may be.
+const DATAGRAM_BURST: std::ops::RangeInclusive<u32> = 1..=1_024;
 
 /// The kernel's bounds for `TCP_RTO_MIN_US` and `TCP_DELACK_MAX_US`, µs: two
 /// ticks at the finest `CONFIG_HZ` (1000; `TCP_TIMEOUT_MIN_US`), and `HZ / 5`
@@ -227,6 +248,8 @@ impl Config {
             tcp_rto_min_us: None,
             tcp_delack_max_us: None,
             tcp_info_interval_ms: 0,
+            epoll_events: 64,
+            datagram_burst: 16,
         }
     }
 
@@ -272,6 +295,18 @@ impl Config {
                 self.keepalive_idle_s, self.keepalive_interval_s, self.keepalive_count
             )));
         }
+        for (key, v, range) in [
+            ("epoll_events", self.epoll_events, &EPOLL_EVENTS),
+            ("datagram_burst", self.datagram_burst, &DATAGRAM_BURST),
+        ] {
+            if !range.contains(&v) {
+                return Err(Error::Config(format!(
+                    "{key} {v}: {} to {}",
+                    range.start(),
+                    range.end()
+                )));
+            }
+        }
         if self.per_queue && self.backend != Backend::RecvBusy {
             return Err(Error::Config(format!(
                 "per_queue applies to recv-busy, not {}",
@@ -289,7 +324,8 @@ impl Config {
     /// `keepalive_idle_s` (0: off), `keepalive_interval_s`,
     /// `keepalive_count`, `tcp_user_timeout_ms`
     /// (0: the kernel default), `tcp_rto_min_us` and `tcp_delack_max_us` (0:
-    /// the kernel's), `tcp_info_interval_ms` (0: off), `helper_cpus` (a
+    /// the kernel's), `tcp_info_interval_ms` (0: off), `epoll_events`,
+    /// `datagram_burst`, `helper_cpus` (a
     /// kernel CPU list:
     /// `helper_cpus=1,3-4` keeps the parts after its commas that have no
     /// `=`).
@@ -348,6 +384,8 @@ impl Config {
                 "tcp_rto_min_us" => cfg.tcp_rto_min_us = Some(num()?).filter(|&us| us > 0),
                 "tcp_delack_max_us" => cfg.tcp_delack_max_us = Some(num()?).filter(|&us| us > 0),
                 "tcp_info_interval_ms" => cfg.tcp_info_interval_ms = num()?,
+                "epoll_events" => cfg.epoll_events = num()?,
+                "datagram_burst" => cfg.datagram_burst = num()?,
                 _ => return Err(Error::Config(format!("unknown key {k:?}"))),
             }
         }

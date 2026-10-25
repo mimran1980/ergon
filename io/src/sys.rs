@@ -806,6 +806,13 @@ impl MsgSlot {
         (sw, hw)
     }
 
+    /// Whether the last receive was cut short (`MSG_TRUNC`): a datagram
+    /// longer than the buffer, its tail discarded by the kernel.
+    #[must_use]
+    pub const fn truncated(&self) -> bool {
+        self.hdr.msg_flags & libc::MSG_TRUNC != 0
+    }
+
     /// [`RxMeta`] for a completed receive.
     #[must_use]
     pub fn meta(&self, read_seq: u64) -> RxMeta {
@@ -839,6 +846,44 @@ pub fn recvmsg(fd: RawFd, slot: &mut MsgSlot) -> io::Result<Option<usize>> {
     } else {
         Err(e)
     }
+}
+
+/// Non-blocking `send` of one whole datagram: `Ok(true)` once the kernel
+/// took it, `Ok(false)` on `EAGAIN` (a full send buffer). A datagram is
+/// never sent in part, and a 0-byte one is a datagram.
+///
+/// # Errors
+/// Any other `send` error (`ECONNREFUSED`: the peer's port was
+/// unreachable on an earlier datagram; nothing was sent).
+pub fn send_datagram(fd: RawFd, buf: &[u8]) -> io::Result<bool> {
+    // SAFETY: `buf` is valid for `buf.len()` bytes.
+    let n = unsafe {
+        libc::send(
+            fd,
+            buf.as_ptr().cast(),
+            buf.len(),
+            libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL,
+        )
+    };
+    if n >= 0 {
+        return Ok(true);
+    }
+    let e = io::Error::last_os_error();
+    if e.raw_os_error() == Some(libc::EAGAIN) {
+        Ok(false)
+    } else {
+        Err(e)
+    }
+}
+
+/// Sets `TCP_QUICKACK`: the kernel acknowledges at once (any delayed ACK
+/// goes out now) until it next decides the connection is interactive.
+/// One `setsockopt`.
+///
+/// # Errors
+/// `setsockopt` fails.
+pub fn set_quickack(fd: RawFd) -> io::Result<()> {
+    setsockopt_int(fd, libc::IPPROTO_TCP, libc::TCP_QUICKACK, 1)
 }
 
 /// Non-blocking `send`. Returns bytes sent (0 on `EAGAIN`).
