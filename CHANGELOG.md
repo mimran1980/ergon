@@ -317,13 +317,28 @@
   every other thread on that pod's shared CPUs); the step samples from the
   IRQ CPU, and the contention pods spin 30 s longer each so the first one
   outlasts the window. The traced rep waits 20 s more before its spin and
-  is a failure if tracing was armed after the spin started. Not yet run on
-  the lab VM.
-- `k8s/nri-shared-cpus/BENCHMARKS.md`: run 20261024212712's plugin-on
-  result (p50 0.02 µs, p99.99 0.03 µs, max 17.40 to 25.34 µs over 5 reps,
-  6 involuntary switches a 60 s rep) and e2e placement, its raw files under
-  `lab/results/azure-20261024212712/`, and what the scale step and the
-  traced rep will measure.
+  is a failure if tracing was armed after the spin started. Run on the lab
+  VM (runs 20261024230400 to 20261024234841).
+- `k8s/nri-shared-cpus/BENCHMARKS.md`: measured on one Azure Cobalt VM
+  with THP `never` and the fair server off on the isolated CPUs, helpers
+  on the shared CPU: p50 0.02 µs, p99.99 0.03 µs, max 4.81 to 5.52 µs over
+  3 reps of 60 s, 0 involuntary switches, no interrupt on the spin's CPU;
+  the gaps left (3.5 to 5.5 µs) have no guest kernel event: the
+  hypervisor's floor (run 20261024234841). What reached the isolated CPU
+  before, from the trace: `khugepaged`'s `lru_add_drain_all`, the fair
+  server's 1 s timer, SSH logins' seccomp JIT. A traced rep at a systemd
+  daily timer took a 40.60 µs max and one switch (a block-device ioctl's
+  `lru_add_drain_all`, and BPF loads). Shared-CPU scaling (run
+  20261024230400): `ceil(millicpus/1000)` shared CPUs, all of them when
+  busy (0.99 and 1.99 cores), 0.04 idle, two pods on one shared CPU split
+  0.33 : 0.66 by `cpu.weight` from the `cpu` request; a pod over the
+  allocatable 2000 stays Pending. Raw files under `lab/results/`.
+- `samples/low-latency-k8s`: `node/quiet-cpus.sh` and its oneshot unit
+  `node/ergon-quiet-cpus.service` set THP `never` and the fair server's
+  runtime 0 on every isolated CPU at each boot, after debugfs is mounted
+  (`--check` is read-only). `node/eks-userdata.sh` installs and enables
+  them before the node's reboot; `node/linux-vm-prep.sh` installs them and
+  checks both.
 
 ### Changed
 
@@ -338,6 +353,12 @@
   and runs its UDP helpers in a child process by default (`--helpers
   process`; `LAB_HELPERS=thread` for the old layout). Its summary row has
   four more fields; `report` still reads the 16-field rows.
+- `ergon-shared-cpus` lab (repo only): `LAB_QUIET=1` also sets
+  `transparent_hugepage/enabled` `never` and
+  `/sys/kernel/debug/sched/fair_server/cpu<N>/runtime` 0 on each exclusive
+  CPU; SSH to the VM goes over one multiplexed connection (each login's
+  seccomp JIT interrupted every CPU); the traced rep reads tracefs as root
+  (it is mode 700); the backstop-timer check waits for cloud-init.
 - Breaking: `ergon-md-dpdk` asks every ENA port for large LLQ entries
   (`llq_policy=3`, 256 bytes, from DPDK 24.11; before, `llq_policy=1`, the
   device's recommendation), and `RUSTERON_DPDK_TX_DESCRIPTORS` defaults to
@@ -592,6 +613,13 @@
   polling does). The loop and receive-window counters cited are in
   `io/benches/results/flags-aws-20261019T175248Z/loop-counters.md`.
 - `ergon-md-dpdk`: one "where a frame is lost" table in the book.
+- Node tuning (`k8s/nri-shared-cpus/README.md`, the book's HFT, hosts,
+  shared-CPU and latency-pod pages, `k8s/nri-latency-pods/node-checks.md`):
+  THP `never` and the fair server's runtime 0 on isolated CPUs (kernel
+  6.12+, debugfs, not persistent, only where nothing real-time runs
+  there), with the trace that names each; keep systemd timers, pod churn
+  and SSH logins out of trading hours, since `lru_add_drain_all` callers and
+  BPF loads still reach every isolated CPU.
 
 ## [0.1.33] — 2026-10-23
 

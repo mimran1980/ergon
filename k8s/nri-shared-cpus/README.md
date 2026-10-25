@@ -28,8 +28,8 @@ feature gate, plus the pieces those leave out.
 | not run | 0.1.1 not yet run on kind |
 | in git, not published | 0.1.2, image and chart: `--kubelet-config-dir` / `hostContract.kubeletConfigDir` merge the kubelet's drop-in directory, so hot pods can pass on EKS AL2023 ([install](#eks-al2023)) |
 | not verified | EKS |
-| measured | the hot thread with helpers on the shared CPU, one Azure Cobalt VM: p50 0.02 µs, p99.99 0.03 µs, max 17 to 25 µs over 5 reps of 60 s, 6 involuntary switches a rep ([BENCHMARKS.md](BENCHMARKS.md)) |
-| not measured | a helper's wake-up wait on a shared CPU, the pin's cost, shared-CPU scaling and the zero-switch changes ([lab ready](BENCHMARKS.md#shared-cpu-scaling-lab-ready-not-yet-run), not run) |
+| measured | one Azure Cobalt VM, helpers on the shared CPU, with the [node settings](#quiet-isolated-cpus): p50 0.02 µs, p99.99 0.03 µs, max 4.81 to 5.52 µs over 3 reps of 60 s, 0 involuntary switches; 3.5 to 5.5 µs is the hypervisor's floor. Shared-CPU scaling as designed ([BENCHMARKS.md](BENCHMARKS.md)) |
+| not measured | a helper's wake-up wait on a shared CPU, the pin's cost, how often node events reach isolated CPUs in production ([BENCHMARKS.md](BENCHMARKS.md#remaining-risk-node-events)) |
 | release gate | [`RELEASE.md`](RELEASE.md) |
 
 `helm install` prints NOTES that say the chart is not published. It is
@@ -49,6 +49,7 @@ admission policy, not another image:
    | Kubernetes | >= 1.33 | cluster |
    | kernel | >= 6.2, cgroup v2. The `cpu-partition` opt-in also needs `cpuset.cpus.exclusive`: Linux 6.7 or a vendor backport (the plugin reads the file, not the version) | node image |
    | CPU isolation | every CPU outside `reservedSystemCPUs` in `isolcpus` (`isolcpus=managed_irq,domain,<cpus>`), plus `nohz_full` and `rcu_nocbs` on them. Never a shared CPU | boot line |
+   | isolated-CPU noise | THP `never`; the fair server's runtime 0 on each isolated CPU ([below](#quiet-isolated-cpus)). Not checked by the plugin | every boot |
    | `cpuManagerPolicy` | `static` | kubelet config |
    | `reservedSystemCPUs` | the IRQ CPU(s) plus the shared CPUs | kubelet config |
    | `cpuCFSQuota` | not `false`; feature gate `DisableCPUQuotaWithExclusiveCPUs` not `false` | kubelet config |
@@ -207,18 +208,19 @@ k8s/nri-shared-cpus/lab/azure-vm.sh             # the run; deletes its resource 
 | item | value |
 |---|---|
 | layout | CPU 0: every NIC IRQ and VMBus channel. CPUs 1-2: housekeeping; `sharedCpus` 1 (e2e, bench) or 1-2 (scale). CPUs 3 to the last: `isolcpus=managed_irq,domain` + `nohz_full` + `rcu_nocbs`, handed out as exclusive (`reservedSystemCPUs: 0-2`) |
-| node | with `LAB_QUIET=1` (default) the settings of `lib.sh` `lab_quiet_settings`, recorded in `results/quiet.txt` |
+| node | with `LAB_QUIET=1` (default) the settings of `lib.sh` `lab_quiet_settings` (among them THP `never` and the fair server off on the exclusive CPUs), recorded in `results/quiet.txt` |
 | e2e | a hot pod is admitted and starts; `ps -L` and `Cpus_allowed_list` show its spin thread on its isolated CPU alone and every helper on the shared CPU alone; an exec-probe hot pod is denied |
 | probe | [`lab/gapprobe`](lab/gapprobe): spins reading the CPU counter, a histogram of every iteration (p50 to p99.99, exact max), every gap of 1 µs or more with its `CLOCK_REALTIME` end, the loop's context switches and page faults |
 | load | `stress-ng --cpu 1 --vm 1` and a loopback UDP reader (20,000 datagrams/s) in a child process of the probe, started from the pod's main thread |
 | bench | plugin-on (hot pod, helpers on the shared CPU), 5 reps. `LAB_ARMS="plugin-on plugin-off"` adds the plain static CPU manager arm (chart uninstalled: helpers on the pod's exclusive CPUs) |
 | each max | with the `/proc/interrupts` and `/proc/softirqs` growth on its CPU in the 10 ms windows that overlap it, and the spin thread's involuntary context switches |
 | trace | `LAB_TRACE=1` (default): one more plugin-on rep under kernel ftrace filtered to its spin CPU; `results/trace-cpu<N>.md` names every switch, IPI, timer and work item there and ties each to a gap |
-| scale | `LAB_SCALE=1` (default): how much of two shared CPUs a pod's helpers get at 100 and 1,001 millicpus, idle, and when pods share one; `results/scale.md` ([cases](BENCHMARKS.md#shared-cpu-scaling-lab-ready-not-yet-run)) |
-| results | `target/nri-lab/<stamp>/results/report.md`; a committed run in [`lab/results`](lab/results), summarised in [BENCHMARKS.md](BENCHMARKS.md) |
+| scale | `LAB_SCALE=1` (default): how much of two shared CPUs a pod's helpers get at 100 and 1,001 millicpus, idle, and when pods share one; `results/scale.md` ([result](BENCHMARKS.md#shared-cpu-scaling-run-20261024230400)) |
+| results | `target/nri-lab/<stamp>/results/report.md`; committed runs in [`lab/results`](lab/results), summarised in [BENCHMARKS.md](BENCHMARKS.md) |
 | cost guard | every resource tagged `owner=ergon-lab run=<stamp>`; the group is deleted on every exit and checked gone; at `LAB_MAX_HOURS` (4) a timer on the VM deletes it through the VM's identity, a watchdog here deletes it, and auto-shutdown deallocates it 30 minutes later (a deallocated VM cannot run its timer); runs over 2 hours detach |
+| ssh | one multiplexed connection (`ControlMaster`): each new login's seccomp filter interrupts every CPU |
 | tests | `just test-nri-lab` (fake `az`/`ssh`, fixtures, the probe's unit tests) |
-| status | run 20261024212712 (bench and e2e, before the scale step, the trace and the layout above): [BENCHMARKS.md](BENCHMARKS.md). The current lab is not yet run |
+| status | runs 20261024230400 (scale), 20261024233129 and 20261024234841 (bench, trace, after the fixes): [BENCHMARKS.md](BENCHMARKS.md) |
 
 ## What the app sees
 
@@ -242,16 +244,19 @@ pods.
 
 ### Shared CPUs: how much a pod gets
 
-A container asking for M `ergon.io/shared-millicpus` gets `ceil(M/1000)`
-shared CPUs (at least one), the least loaded at its start; its cpuset is
-its exclusive CPUs plus those. M is scheduler accounting only (allocatable
-is `len(sharedCpus) x 1000 x oversubscription`): no CPU quota is set, so
-its helpers may use all of those CPUs when nothing else wants them, and
-next to nothing when idle. A pod asking 100 on a node with two shared CPUs
-gets one of them, not both; asking 1,001 to 2,000 gets both. Pods given the
-same shared CPU split it by their cgroups' `cpu.weight`, which comes from
-their `cpu` request, not from M. The lab's scale step checks this; it has
-not run yet ([BENCHMARKS.md](BENCHMARKS.md#shared-cpu-scaling-lab-ready-not-yet-run)).
+Measured on two shared CPUs, 4 busy helper threads a pod (run
+20261024230400, [BENCHMARKS.md](BENCHMARKS.md#shared-cpu-scaling-run-20261024230400)):
+
+| ask | gets | helpers used |
+|---|---|---|
+| 100 millicpus | 1 shared CPU (`ceil(M/1000)`, the least loaded at start) | 0.99 cores busy, 0.04 idle (1 % duty) |
+| 1,001 millicpus | 2 shared CPUs | 1.99 cores |
+| two pods on one shared CPU, `cpu: 1` and `cpu: 2`, 100 millicpus each | the same CPU | 0.33 and 0.66 cores: split by cgroup `cpu.weight`, which comes from the integer `cpu` request, not from M |
+
+M is scheduler accounting only (allocatable `len(sharedCpus) x 1000 x
+oversubscription`: 2000 here; a pod asking 2,100 stays Pending). No CPU
+quota is set, so `nr_throttled` stays 0 and busy helpers take the whole of
+their shared CPUs. The container's cpuset is its exclusive CPUs plus those.
 
 ## Pinning
 
@@ -458,11 +463,38 @@ metricsAddress: ":9466"
   `kubeletConfigZ` with a fresh `/configz` copy to cross-check.
 - Not verified on a real EKS node: the NRI socket, nodeadm TOML merge,
   the kubelet drop-in merge, `/opt` writable, `system-node-critical` outside kube-system.
-- Measured once, one Azure Cobalt VM: the exclusive core with the plugin on
-  and helpers on the shared CPU, p50 0.02 µs, p99.99 0.03 µs, max 17 to
-  25 µs, 6 involuntary switches a minute ([BENCHMARKS.md](BENCHMARKS.md)).
-  Not measured: a helper's wake-up wait on a shared CPU, shared-CPU
-  scaling, and whether the lab's zero-switch changes reach zero.
+- Measured on one Azure Cobalt VM: the exclusive core with the plugin on,
+  helpers on the shared CPU and the [node settings](#quiet-isolated-cpus),
+  p50 0.02 µs, p99.99 0.03 µs, max 4.81 to 5.52 µs, 0 involuntary switches
+  a minute; the hypervisor's floor is 3.5 to 5.5 µs ([BENCHMARKS.md](BENCHMARKS.md)).
+  Node events still reach isolated CPUs ([below](#quiet-isolated-cpus)).
+  Not measured: a helper's wake-up wait on a shared CPU.
+
+## Quiet isolated CPUs
+
+`isolcpus` and `nohz_full` leave kernel work that is sent to every CPU.
+The lab's trace named it ([BENCHMARKS.md](BENCHMARKS.md#what-reached-the-exclusive-cpu-and-the-fix)).
+Set these on the node at every boot; the plugin does not:
+
+| setting | value | why | note |
+|---|---|---|---|
+| `/sys/kernel/mm/transparent_hugepage/enabled` | `never`: that stops `khugepaged`; `madvise` still runs it (the lab's node was `madvise`) | `khugepaged` calls `lru_add_drain_all`, which runs a kworker on every CPU with queued pages | `transparent_hugepage=never` on the boot line also works. hugetlbfs pages are unaffected |
+| `/sys/kernel/debug/sched/fair_server/cpu<N>/runtime`, each isolated N | `0` | the fair server's 1 s timer sends a nohz kick and a reschedule IPI, and keeps the tick on | kernel 6.12 and later; debugfs, lost at reboot (a oneshot unit after `sys-kernel-debug.mount`); safe only where nothing real-time runs on those CPUs |
+
+`samples/low-latency-k8s/node/quiet-cpus.sh` and its unit
+`ergon-quiet-cpus.service` apply both, with a read-only `--check`.
+
+What still reaches every isolated CPU: anything that calls
+`lru_add_drain_all` (block-device ioctls, `systemctl daemon-reload` and
+generators, `mlock`, page migration) or loads a BPF program (systemd
+units, a container start with seccomp, an SSH login). The lab caught a
+systemd daily timer doing both: a 40.60 µs max and 1 involuntary switch.
+
+| rule | why |
+|---|---|
+| move systemd daily timers out of trading hours | generators' block-device ioctls and BPF loads |
+| no pod starts or restarts on the node during trading | seccomp filters are BPF programs |
+| no SSH logins to the node during trading | each login installs a seccomp filter |
 
 ## Did the isolation actually hold?
 

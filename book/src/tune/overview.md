@@ -86,7 +86,7 @@ In brackets: the check (T1–N4). Times are in µs.
 |---|---|---|
 | T1 | CPU isolation: `isolcpus`, `nohz_full`, `irqaffinity` | `isolcpus` keeps other tasks off the loop's CPU. `nohz_full` stops its timer tick, an interrupt `CONFIG_HZ` times a second (1,000 on the AWS lab's Ubuntu kernel). `irqaffinity` sends new interrupts elsewhere. `isolcpus` alone leaves the tick on. |
 | T2 | NIC interrupt placement | Each NIC receive queue raises interrupts. On the loop's CPU, the kernel runs the handler instead of the loop. |
-| T3 | transparent hugepages (THP) | The kernel thread `khugepaged` merges small pages into 2 MiB pages in the background. Its work can run on a spinning thread's CPU (not measured here). |
+| T3 | transparent hugepages (THP) | The kernel thread `khugepaged` merges small pages into 2 MiB pages in the background. Its `lru_add_drain_all` ran a kworker on an isolated spin CPU ([nri-shared-cpus lab](https://github.com/mimran1980/ergon/blob/main/k8s/nri-shared-cpus/BENCHMARKS.md#what-reached-the-exclusive-cpu-and-the-fix)). |
 | T4 | the Aeron directory's filesystem | Aeron, the messaging library under ergon's transports, keeps its buffers in memory-mapped files in one directory. On a disk filesystem the kernel writes them back to disk. |
 | T5 | automatic NUMA balancing | On a host with several memory nodes, the kernel unmaps pages to see which CPU uses them, so pinned threads take page faults. |
 | T6 | the NIC's NUMA node | A NIC on another node makes every packet cross between the sockets. |

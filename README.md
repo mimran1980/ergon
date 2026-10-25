@@ -36,10 +36,13 @@ CPUs, and every new thread starts on the shared ones, so the busy-spin loop
 keeps its core. The `hostContract` flags let the plugin check a pod
 labelled `ergon.io/latency: hot` against the node (isolated exclusive CPUs,
 static CPU manager, NIC IRQs on the IRQ CPUs only). Run on kind on one Azure
-Cobalt VM: the hot thread with helpers on the shared CPU held p50 0.02 µs,
-p99.99 0.03 µs, max 17 to 25 µs, with 6 involuntary switches a minute
+Cobalt VM, with THP `never` and the fair server off on the isolated CPUs:
+the hot thread with helpers on the shared CPU held p50 0.02 µs, p99.99
+0.03 µs, max 4.81 to 5.52 µs, 0 involuntary switches a minute; 3.5 to
+5.5 µs is the hypervisor's floor. Node events (systemd timers, pod starts,
+logins) still reach isolated CPUs
 ([benchmarks](k8s/nri-shared-cpus/BENCHMARKS.md)). Not verified on EKS; a
-helper's wake-up wait and shared-CPU scaling not measured.
+helper's wake-up wait not measured.
 
 - Node setup, install, configuration: [k8s/nri-shared-cpus](k8s/nri-shared-cpus/README.md).
 - Node and pod tuning, each setting marked measured or not, with copy-paste

@@ -5,10 +5,11 @@ How to install and use `k8s/nri-shared-cpus` on a Kubernetes node.
 A busy-spinning pod gets whole cores of its own from the kubelet. Its
 helpers (dial, TLS, warnings, Aeron conductors) do not need a whole core,
 and running them on the loop's core is what this layout forbids. With the
-helpers on the shared CPU, one Azure Cobalt VM measured the loop at p50
-0.02 µs, p99.99 0.03 µs, max 17 to 25 µs, with 6 involuntary switches a
-minute ([benchmarks](https://github.com/mimran1980/ergon/blob/main/k8s/nri-shared-cpus/BENCHMARKS.md)); a helper's own wake-up wait is **not
-measured**. This is a containerd
+helpers on the shared CPU and the [quiet-CPU settings](#quiet-isolated-cpus),
+one Azure Cobalt VM measured the loop at p50 0.02 µs, p99.99 0.03 µs, max
+4.81 to 5.52 µs, with 0 involuntary switches a minute; 3.5 to 5.5 µs is the
+hypervisor's floor ([benchmarks](https://github.com/mimran1980/ergon/blob/main/k8s/nri-shared-cpus/BENCHMARKS.md)). A helper's own wake-up wait is
+**not measured**. This is a containerd
 NRI plugin and a kubelet device plugin that give the pod the node's shared
 housekeeping CPUs as well, and start every thread there.
 
@@ -22,8 +23,8 @@ every thread ran) is the
 
 Status: published as tag `0.1.1`. Anyone can pull the image and the chart.
 Not yet run on kind; **not verified on a real EKS node** (see
-[Limits](#limits-and-what-is-not-verified)). The latency numbers are not
-measured. AKS cannot run it.
+[Limits](#limits-and-what-is-not-verified)). Latency is measured on one
+Azure VM only. AKS cannot run it.
 Prior art: `k8s/nri-shared-cpus/README.md`.
 
 ## Use the public chart
@@ -205,6 +206,7 @@ of the node checklist is [Latency Pods: node setup](latency-pods.md#node-setup).
 | kubelet config file | `/var/lib/kubelet/config.yaml` (kubeadm, kind). The plugin pod does not start without it. Another path: `--set hostContract.kubeletConfig.path=<file>`. A kubelet run with `--config-dir` also needs `hostContract.kubeletConfigDir` (chart 0.1.2); EKS AL2023: [Use the public chart](#use-the-public-chart) |
 | kernel | >= 6.2, cgroup v2. Boot line: `isolcpus=managed_irq,domain`, `nohz_full` and `rcu_nocbs` on every CPU outside `reservedSystemCPUs`, never on the shared ones. A `cpu-partition` opt-in also needs `cpuset.cpus.exclusive`: Linux 6.7, or a vendor kernel that backported that file. The plugin reads the file, not the version |
 | NIC IRQs | every hardware NIC IRQ, requested and effective affinity, on the IRQ CPU(s): `reservedSystemCPUs` minus `sharedCpus` |
+| isolated-CPU noise | THP `never` and the fair server's runtime 0 on each isolated CPU, at every boot ([below](#quiet-isolated-cpus)). The plugin does not check them |
 | containerd | >= 2.2, NRI on, default validator on |
 | node label | `ergon.io/shared-cpus=true` |
 
@@ -238,6 +240,33 @@ The validator is what makes an unmet `required-plugins` annotation fail the
 create instead of starting the pod half-granted. Leave
 `required_plugins` empty: a node-wide list would also block kube-system
 pods and the plugin's own pod while it is down.
+
+### Quiet isolated CPUs
+
+The lab's kernel trace named two sources of work sent to an isolated CPU
+that the boot line leaves on ([what reached it, and the fix](https://github.com/mimran1980/ergon/blob/main/k8s/nri-shared-cpus/BENCHMARKS.md#what-reached-the-exclusive-cpu-and-the-fix)):
+
+| setting | value | why | note |
+|---|---|---|---|
+| `/sys/kernel/mm/transparent_hugepage/enabled` | `never` (`madvise` still runs `khugepaged`) | `khugepaged` calls `lru_add_drain_all`: a kworker on every CPU with queued pages | or `transparent_hugepage=never` on the boot line |
+| `/sys/kernel/debug/sched/fair_server/cpu<N>/runtime`, each isolated N | `0` | the fair server's 1 s timer: a nohz kick and a reschedule IPI, and the tick kept on | kernel 6.12+; debugfs, so lost at reboot: a oneshot unit after `sys-kernel-debug.mount`; safe only where nothing real-time runs on those CPUs (not with `ergon-cpus --fifo`) |
+
+`samples/low-latency-k8s/node/quiet-cpus.sh` and
+`node/ergon-quiet-cpus.service` apply both at boot, with a read-only
+`--check`.
+
+**Keep node events out of trading hours.** Anything that calls
+`lru_add_drain_all` (block-device ioctls, `systemctl daemon-reload` and
+generators, `mlock`, page migration) or loads a BPF program (systemd
+units, a container start with seccomp, an SSH login) still reaches every
+isolated CPU. A systemd daily timer did both in the lab: a 40.60 µs max and
+one involuntary switch.
+
+| source | rule |
+|---|---|
+| systemd daily timers | move them out of trading hours (`systemctl list-timers`) |
+| pod churn | no pod starts or restarts on the node during trading |
+| logins | no SSH logins to the node during trading |
 
 ## Install on Kubernetes
 
@@ -616,6 +645,12 @@ kubectl exec aeron-driver -- sh -c 'ps -L -o pid,tid,psr,comm | head'
   oversubscription 2, a node offers 4000; sixteen pods at 250 fit.
 - There is no hard cap. Helpers may use the whole shared CPU, shared with
   the kubelet, containerd, system daemons and other pods.
+- Measured on two shared CPUs, busy helpers: 100 millicpus got one shared
+  CPU and used 0.99 cores of it, 1,001 got both and used 1.99, idle helpers
+  0.04; `nr_throttled` 0. Two pods on one shared CPU (`cpu: 1` and
+  `cpu: 2`, 100 millicpus each) split it 0.33 : 0.66, by cgroup
+  `cpu.weight` from the integer `cpu` request, not by millicpus
+  ([scaling](https://github.com/mimran1980/ergon/blob/main/k8s/nri-shared-cpus/BENCHMARKS.md#shared-cpu-scaling-run-20261024230400)).
 - A helper wake-up on a shared CPU waits on the node's other load; the size
   of that wait is **not measured**. It slows connects and the conductor, not
   the loop.
@@ -660,17 +695,18 @@ kubectl exec aeron-driver -- sh -c 'ps -L -o pid,tid,psr,comm | head'
   the kubelet does not read (no `--config-dir`) makes the check trust
   drop-ins the kubelet ignores; `kubeletConfigZ` with a fresh `/configz`
   copy cross-checks.
-- **Measured once:** the exclusive core with the plugin on and helpers on
-  the shared CPU, one Azure Cobalt VM: p50 0.02 µs, p99.99 0.03 µs, max 17
-  to 25 µs over 5 reps of 60 s, each max overlapping a rescheduling and a
-  function-call IPI, 6 involuntary switches a rep, cause not yet named
-  ([benchmarks](https://github.com/mimran1980/ergon/blob/main/k8s/nri-shared-cpus/BENCHMARKS.md)).
+- **Measured on one Azure Cobalt VM:** the exclusive core with the plugin
+  on, helpers on the shared CPU and the quiet-CPU settings: p50 0.02 µs,
+  p99.99 0.03 µs, max 4.81 to 5.52 µs over 3 reps of 60 s, 0 involuntary
+  switches, no interrupt on the spin's CPU; the gaps left have no guest
+  event (the hypervisor's 3.5 to 5.5 µs floor) ([benchmarks](https://github.com/mimran1980/ergon/blob/main/k8s/nri-shared-cpus/BENCHMARKS.md)).
 - **Not measured / not verified:** a helper's wake-up wait on a shared
-  CPU, shared-CPU scaling (the lab's scale step, not yet run), and a real
+  CPU, how often node events reach isolated CPUs in production, and a real
   EKS node (the NRI socket, nodeadm TOML merge, the kubelet drop-in merge,
   `/opt` writable).
 
 **Decision.** Use it on kind or a self-managed node where you can set
-`reservedSystemCPUs` and enable NRI. The exclusive cores are quiet to
-0.03 µs at p99.99 with it, but not yet free of context switches (6 a
-minute in the one run). Not for AKS or CRI-O.
+`reservedSystemCPUs` and enable NRI. With the quiet-CPU settings the
+exclusive cores took no context switch and nothing above the hypervisor's
+5.5 µs in steady state; keep node events out of trading hours. Not for AKS
+or CRI-O.

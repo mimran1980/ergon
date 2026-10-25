@@ -183,6 +183,7 @@ The full check list is `k8s/nri-latency-pods/node-checks.md`. The short version:
 | `strict-cpu-reservation` | **off** (on, it empties the shared pool) |
 | kernel | >= 6.7, cgroup v2 (`cpuset.cpus.exclusive` is what the partition writes, and it is 6.7; a vendor backport of that file also works — the plugin reads the file, not the version). Also `nohz_full`, `rcu_nocbs`, `isolcpus=managed_irq` on the exclusive CPUs, never the shared ones. 6.2 is enough for the shared CPUs only |
 | `transparent_hugepage` | `never` |
+| fair server | `runtime` 0 on each isolated CPU at every boot, kernel 6.12+ ([shared CPUs](shared-cpus.md#quiet-isolated-cpus)). Not with the `SCHED_FIFO` opt-in: nothing real-time may run there |
 | `net.core.rmem_max` / `wmem_max` | at least Aeron's `AERON_SOCKET_SO_RCVBUF` / `SNDBUF` when raised ([hft](hft.md#settings)) |
 | `net.core.busy_poll` / `busy_read` | unset (global; not measured here). ergon-io busy-polls per socket |
 | containerd | >= 2.2, NRI on, the default validator on |

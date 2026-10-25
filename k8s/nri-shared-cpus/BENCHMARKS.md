@@ -1,126 +1,133 @@
 # ergon-shared-cpus benchmarks
 
-What the [Azure lab](README.md#latency-lab-one-azure-vm) measured, and what
-it is ready to measure but has not yet run. Raw files of the measured run:
-[`lab/results/azure-20261024212712/`](lab/results/azure-20261024212712/).
+What the [Azure lab](README.md#latency-lab-one-azure-vm) measured. Raw
+files: [`lab/results/`](lab/results/), one directory per run.
 
-## Hot thread with helpers on the shared CPU (run 20261024212712)
+| run | what | files |
+|---|---|---|
+| 20261024234841 | **current best**: 3 bench reps and a traced rep, after the THP and fair-server fixes | [`azure-20261024234841/`](lab/results/azure-20261024234841/) |
+| 20261024233129 | the first working trace (2 bench reps and a traced rep), before the fixes | [`azure-20261024233129/`](lab/results/azure-20261024233129/) |
+| 20261024230400 | shared-CPU scaling, then 5 bench reps, before the fixes (its trace failed: tracefs is root-only, fixed since) | [`azure-20261024230400/`](lab/results/azure-20261024230400/) |
+| 20261024212712 | the first bench, an older layout (exclusive CPUs 2-7), superseded | [`azure-20261024212712/`](lab/results/azure-20261024212712/) |
 
-A hot pod's spin thread on its isolated CPU, its helpers on the node's one
-shared CPU, the plugin on. Five reps of 60 s.
+## Setup
 
 | item | value |
 |---|---|
 | VM | Azure `Standard_D8ps_v6` (8 vCPUs, Cobalt 100, Neoverse-N2, no SMT), Debian 13, kernel `6.12.113+deb13-cloud-arm64` |
-| node | kind (kindest/node v1.35.1, containerd 2.2.1), static CPU manager, `reservedSystemCPUs: 0-1` |
-| layout | CPU 0: every NIC IRQ and VMBus channel. CPU 1: `sharedCpus`. CPUs 2-7: `isolcpus=managed_irq,domain` + `nohz_full` + `rcu_nocbs`, exclusive |
-| pod | Guaranteed, `cpu: 2`, `ergon.io/shared-millicpus: 1000`; the spin on CPU 2 |
-| helper load | `stress-ng --cpu 1 --vm 1 --vm-bytes 128M` and a loopback UDP reader fed 20,000 datagrams/s by a sender, threads of the probe's process |
-| probe | [`lab/gapprobe`](lab/gapprobe): every loop iteration into a histogram (exact max), every gap of 1 µs or more logged with its `CLOCK_REALTIME` end; the counter is `CNTVCT_EL0` at 1 GHz |
+| node | kind (kindest/node v1.35.1), static CPU manager, `reservedSystemCPUs: 0-2` |
+| layout | CPU 0: every NIC IRQ and VMBus channel. CPU 1: `sharedCpus` (bench); 1-2 (scale). CPUs 3-7: `isolcpus=managed_irq,domain` + `nohz_full` + `rcu_nocbs`, exclusive. The spin on CPU 3 |
+| node settings | `quiet.txt` of each run; the THP and fair-server lines only in 20261024234841 |
+| pod | Guaranteed, `cpu: 2`, `ergon.io/shared-millicpus: 1000` |
+| helper load | `stress-ng --cpu 1 --vm 1 --vm-bytes 128M` and a loopback UDP reader fed 20,000 datagrams/s, in a child process of the probe, on the shared CPU |
+| probe | [`lab/gapprobe`](lab/gapprobe): every loop iteration into a histogram (exact max), every gap of 1 µs or more logged with its `CLOCK_REALTIME` end; counter `CNTVCT_EL0` at 1 GHz |
 | sampler | `/proc/interrupts` and `/proc/softirqs` of the spin's CPU every 10 ms, from CPU 0 |
+| trace | one more rep under ftrace filtered to CPU 3: every switch, IPI, cross-call, timer and work item, with the sender's stack, matched to the gap log (`trace-cpu3.md`) |
 
-### Result
+## Hot thread with helpers on the shared CPU (run 20261024234841)
 
-| rep | p50 µs | p90 µs | p99 µs | p99.9 µs | p99.99 µs | max µs | overlapping the max (growth on CPU 2, 10 ms windows) | involuntary switches |
-|---|---|---|---|---|---|---|---|---|
-| 1 | 0.02 | 0.02 | 0.03 | 0.03 | 0.03 | 17.40 | arch_timer +1, IPI0 Rescheduling +1, IPI1 Function call +1 | 6 |
-| 2 | 0.02 | 0.02 | 0.03 | 0.03 | 0.03 | 23.47 | arch_timer +1, IPI0 +1, IPI1 +1 | 6 |
-| 3 | 0.02 | 0.02 | 0.03 | 0.03 | 0.03 | 18.44 | arch_timer +1, IPI0 +1, IPI1 +1 | 6 |
-| 4 | 0.02 | 0.02 | 0.03 | 0.03 | 0.03 | 25.34 | IPI0 +1, IPI1 +1 | 6 |
-| 5 | 0.02 | 0.02 | 0.03 | 0.03 | 0.03 | 23.18 | IPI0 +1, IPI1 +1 | 6 |
+60 s reps, plugin on. From [`report.md`](lab/results/azure-20261024234841/report.md):
 
-- Floor: p50 0.02 µs, p99.99 0.03 µs, max 17.40 to 25.34 µs.
-- Every max overlaps one rescheduling IPI and one function-call IPI on the
-  isolated CPU; in 3 of 5 also an `arch_timer` tick (`nohz_full` keeps a
-  residual tick).
-- 6 involuntary context switches of the spin thread in every 60 s rep
-  (`nonvoluntary_ctxt_switches`). Something preempted it 6 times a minute.
-- Gaps of 5 µs or more: 59 to 60 a rep, about one a second. In each rep 58
-  or 59 of them overlap an IPI0 and an IPI1 window, 43 to 47 an
-  `arch_timer` one too.
-- Gaps of 9 µs or more: a pair in the spin's first second (17.4 to 19.6
-  µs, then 11.9 to 13.4 µs 2 ms later), then about one every 10.240 s (9
-  to 25 µs; rep 4 has one more, 9.3 µs, 1 s after the pair). The max is
-  one of these.
+| rep | p50 µs | p99.99 µs | max µs | involuntary switches | page faults | gaps ≥ 3 µs | interrupts on CPU 3 during the spin |
+|---|---|---|---|---|---|---|---|
+| 1 | 0.02 | 0.03 | 4.81 | 0 | 0 | 2 | 0 |
+| 2 | 0.02 | 0.03 | 5.24 | 0 | 0 | 2 | 0 |
+| 3 | 0.02 | 0.03 | 5.52 | 0 | 0 | 2 | 0 |
+| trace | 0.02 | 0.03 | 40.60 | 1 | 0 | 6 | 1 rescheduling IPI, 2 ticks, 37 function-call IPIs (`trace-cpu3.md`) |
 
-What sent those IPIs and what ran in those 6 switches is **not known from
-this run**: the sampler counts interrupts, it does not name their sender.
-The lab now has a traced rep for that (below).
+- Gaps ≥ 3 µs counted from `plugin-on-<n>.gaps.csv`; interrupts from
+  `plugin-on-<n>.irq.tsv` within each summary's `start_ns`..`end_ns`.
+- Before the fixes, same layout: max 15.14 to 22.09 µs, 1 involuntary
+  switch a rep, 106 to 116 gaps ≥ 3 µs a rep (run 20261024230400,
+  `report.md` and `plugin-on-<n>.gaps.csv`).
+- The traced rep's max is a node event, not the steady state: see the
+  next two sections.
 
-### e2e placement in the same run
+## What reached the exclusive CPU, and the fix
 
-From [`e2e.txt`](lab/results/azure-20261024212712/e2e.txt): the hot pod was
-admitted and started with `ERGON_SHARED_CPUS=1` and
-`ERGON_ISOLATED_CPUS=2,3`; in three `ps -L` snapshots its spin thread
-(`gp-hot`) was on CPU 2 with `Cpus_allowed_list` 2, and every other thread
-(`sh`, `gapprobe`, `gp-udp-sink`, `gp-udp-src`, `stress-ng` and its
-workers) on CPU 1 with `Cpus_allowed_list` 1. An exec-probe hot pod was
-denied.
+| cause | evidence | fix | after (run 20261024234841) |
+|---|---|---|---|
+| `khugepaged` on CPU 0 called `lru_add_drain_all`, which ran `kworker/3` (`lru_add_drain_per_cpu`) for 6 µs: the rep's only involuntary switch and its 16.25 µs max | 20261024233129 `trace-cpu3.md`, "Switches away" and "Work items" | `transparent_hugepage/enabled` `never` | no `khugepaged` work on CPU 3 in the trace; 0 switches in the 3 untraced reps |
+| the fair server (kernel 6.12's deadline server, `dl_task_timer` every 1.024 s on a housekeeping CPU): `enqueue_dl_entity` sent CPU 3 a nohz kick and a rescheduling IPI 56 times in 60 s, gaps 6.3 to 14.1 µs, and kept the tick on (`tick_stop dependency=SCHED` 115, `arch_timer` 61) | 20261024233129 `trace-cpu3.md`, "IPIs" and "Timers" | `/sys/kernel/debug/sched/fair_server/cpu<N>/runtime` 0 on CPUs 3-7 (`quiet.txt`: 50000000 -> 0) | 1 rescheduling IPI and 2 ticks in the traced minute, both at the node event below |
+| `kick_all_cpus_sync` from the BPF JIT (`__text_poke`): `sshd-auth` installing its seccomp filter at each SSH login of the lab's own polling (6 in the minute), and `bpf_jit_free` kworkers: 18 cross-calls, gaps up to 6.2 µs | 20261024233129 `trace-cpu3.md` | one multiplexed SSH connection (`ControlMaster`) | no `sshd-auth` cross-call in the trace |
+| run 20261024212712: 6 involuntary switches a rep, cause not traced (no trace then) | that run's `report.md` | the probe's log and histogram touched before it pins, helpers in a child process, the first node settings | 1 a rep, 0 page faults (run 20261024230400 `report.md`) |
 
-## Zero context switches on the exclusive CPU: lab ready, not yet run
+## Remaining risk: node events
 
-The target is 0 involuntary switches of the spin thread in a 60 s rep, and
-a named cause for every remaining max. The lab changed since run
-20261024212712; **none of these changes is measured yet**.
+The traced rep of run 20261024234841 fell at 00:00:09 UTC, when systemd's
+daily timers ran (`trace-cpu3.md`, `trace-1.trace.txt.gz`):
 
-| change | why | where |
+| event | path to CPU 3 | cost |
 |---|---|---|
-| a traced rep (`LAB_TRACE=1`, default): one more 60 s plugin-on rep under kernel ftrace | names every switch away from the spin thread (what ran, who woke it, the waker's kernel stack), every IPI and cross-call sent to its CPU (sender CPU, task, callsite, stack), every timer, tick, interrupt and work item there, and ties each to the gap log by `CLOCK_REALTIME`. Output `results/trace-cpu<N>.md`. Its helpers run 25 s before the spin so the tracefs setup (each event enabled patches kernel text, which interrupts every CPU) is done first; a rep armed after its spin started is a failure | `vm.sh` `trace_start`/`trace_stop`, `lib.sh` `lab_trace_events`, `gapprobe trace-report` |
-| the probe's gap log and histogram are written before the spin thread pins itself | the old log grew on the hot CPU: one first-touch page fault per 4 KiB (256 gaps), which leaves per-CPU memory state (charge cache, LRU batch, vmstat counters) the kernel settles with work queued on that CPU. The summary now counts the loop's page faults (`minflt`, `majflt`) | `gapprobe` `GapLog`, `Histogram::new` (a Linux unit test fails on 4,096 faults without it) |
-| the probe's UDP helpers run in a child process (`--helpers process`, default) | helpers that map or unmap memory in the spin thread's process can send it TLB-flush or membarrier IPIs; a separate process has its own address space | `gapprobe spin --helpers`; `LAB_HELPERS=thread` repeats the old layout |
-| node settings (`LAB_QUIET=1`, default) | `vm.stat_interval` 120, `kernel.watchdog_cpumask` the housekeeping CPUs, `kernel.nmi_watchdog` 0, `kernel.numa_balancing` 0, `vm.compaction_proactiveness` 0, `kernel.timer_migration` 1, the writeback workqueue on the housekeeping CPUs: each removes a per-CPU kernel worker or timer of `Documentation/admin-guide/kernel-per-CPU-kthreads.rst`. Which of them mattered is for the trace to show | `lib.sh` `lab_quiet_settings`, recorded in `results/quiet.txt` |
-| layout: exclusive CPUs 3-7, `reservedSystemCPUs: 0-2` | one boot line serves one shared CPU (bench) and two (scale); the spin now runs on CPU 3 | `lib.sh` `lab_layout` |
+| systemd ran its generators; `systemd-gpt-auto-generator`'s block-device ioctl (`blkdev_common_ioctl` → `invalidate_bdev`) called `lru_add_drain_all` | `kworker/3` ran `lru_add_drain_per_cpu` for 20 µs | the 40.60 µs max, the rep's 1 involuntary switch |
+| systemd (pid 1) loaded 12 BPF programs (`bpf_prog_load` → JIT → `kick_all_cpus_sync`), and kworkers freed old ones | 36 cross-calls | gaps up to 3.6 µs |
 
-Rule for apps, from the mechanism above (not yet measured): allocate and
-touch the hot thread's memory before it pins itself, and keep threads that
-map and unmap memory out of the hot thread's process, or have them stop
-unmapping once the hot thread runs.
+Anything on the node that calls `lru_add_drain_all` (block-device ioctls,
+`systemctl daemon-reload` and generators, `mlock`, page migration) or
+loads a BPF program (systemd units, a container start with seccomp, an
+SSH login) still reaches every isolated CPU. Keep them out of trading
+hours:
 
-The `nohz_full` residual tick (about 1 Hz with one runnable task) is a
-kernel limit; if the trace shows it, it stays and is reported as remaining.
+| source | rule |
+|---|---|
+| systemd daily timers | move or disable them on latency nodes (`systemctl list-timers`) |
+| pod churn | no pod starts or restarts on the node during trading |
+| logins | no SSH logins to the node during trading (`kubectl exec` also starts a seccomp-filtered process through runc; not traced) |
 
-The traced pipeline (tracefs setup, filters, stacks, `trace-report`) has
-been run on a Linux 7.0 kernel in a privileged container; not yet on the
-lab VM's 6.12.
+How often these fire on a production node over a day is not measured.
 
-## Shared-CPU scaling: lab ready, not yet run
+## The floor: below the guest kernel
 
-The design, from the code (`internal/assign`): a container asking for M
-`ergon.io/shared-millicpus` gets `ceil(M/1000)` shared CPUs (at least one),
-the least-loaded ones; its cpuset is its exclusive CPUs plus those. M is
-scheduler accounting only: no CPU quota is set (a container with one is
-refused), so its helpers may use all of their shared CPUs when they are
-free. When pods share a shared CPU, the kernel splits it by the containers'
-cgroup `cpu.weight`, which comes from their `cpu` request, not from M.
+Gaps the trace finds no guest event for: 5.13 and 3.48 µs in run
+20261024234841, 5.87, 3.54 and 3.68 µs in run 20261024233129
+(`trace-cpu3.md`, "Gaps of 3.00 µs or more"). The untraced reps' maxima,
+4.81 to 5.52 µs with no interrupt counted on CPU 3, are the same kind.
+That is the hypervisor (or the hardware): a 3.5 to 5.5 µs floor on this VM
+that no guest setting removes.
 
-`vm.sh scale` (`LAB_SCALE=1`, default) checks that on two shared CPUs
-(`sharedCpus: 1-2`), 30 s a case, 4 helper threads a pod:
+## Shared-CPU scaling (run 20261024230400)
 
-| case | pods | expected |
-|---|---|---|
-| accounting | none, then 2,100 and 2,000 millicpus | allocatable `ergon.io/shared-millicpus` 2000 at oversubscription 1; a pod asking 2,100 stays Pending (Unschedulable); one asking 2,000 schedules |
-| a-burst-100m | cpu 1, 100 m, busy helpers | helpers on 1 of the 2 shared CPUs, up to all of it (about 1 core); the other idle; `nr_throttled` 0 |
-| b-burst-1001m | cpu 1, 1,001 m, busy helpers | helpers on both shared CPUs: about 2 cores |
-| c-idle | cpu 1, 100 m, helpers busy 1 % | near 0.04 cores |
-| d-contention | A cpu 1, B cpu 1, C cpu 2, 100 m each, started in turn | A and B on different shared CPUs; C on A's; A and C split it by `cpu.weight` (C's about twice A's), B alone |
+From [`scale.md`](lab/results/azure-20261024230400/scale.md): two shared
+CPUs (`sharedCpus: 1-2`), 30 s windows, 4 helper threads a pod. Before the
+THP and fair-server fixes.
 
-Each case records per-CPU busy time of every shared and exclusive CPU
-(`/proc/stat`, every task on the VM), each pod's `cpu.stat` (`usage_usec`,
-`nr_periods`, `nr_throttled`, `throttled_usec`), `cpu.weight` and `cpu.max`,
-of the container's cgroup and of the pod's (a pod-level quota throttles
-there, not in the container's), the shared CPUs each pod got, every
-thread's CPU and `Cpus_allowed_list` each second with a verdict (the spin
-thread on its CPU alone, every other thread on that pod's shared CPUs),
-and the spin thread's max. A pod's helper time is its container's usage
-less the spin thread's. The step's own sampling runs on the IRQ CPU; the
-contention pods spin 30 s longer each, so the first one's helpers run
-through the whole window. Output `results/scale.md`.
+| case | pods | shared CPUs given | helpers' CPU, cores | `nr_throttled` (container, pod) | spin max µs, involuntary switches |
+|---|---|---|---|---|---|
+| a-burst-100m | cpu 1, 100 m, busy | 1 | 0.99 (CPU 1 1.00 busy, CPU 2 0.05) | 0, 0 | 15.08, 0 |
+| b-burst-1001m | cpu 1, 1,001 m, busy | 1, 2 | 1.99 | 0, 0 | 16.53, 0 |
+| c-idle | cpu 1, 100 m, helpers busy 1 % | 1 | 0.04 | 0, 0 | 16.44, 0 |
+| d-contention A | cpu 1, 100 m, busy | 1 | 0.33 | 0, 0 | 14.96, 0 |
+| d-contention B | cpu 1, 100 m, busy | 2 | 0.99 | 0, 0 | 14.16, 0 |
+| d-contention C | cpu 2, 100 m, busy | 1 | 0.66 | 0, 0 | 11.73, 0 |
+
+- A container gets `ceil(millicpus/1000)` shared CPUs and, when busy, the
+  whole of them; idle, near zero. No quota (`cpu.max` `max` on container
+  and pod).
+- A and C share CPU 1 and split it 0.33 : 0.66. That follows cgroup
+  `cpu.weight` (container 100 vs 174, pod 39 vs 79), which comes from their
+  integer `cpu` request, not their equal millicpus. B has CPU 2 alone.
+- Every placement verdict passed: the spin thread on its exclusive CPU
+  alone, every other thread on its pod's shared CPUs.
+- Accounting ([`scale/accounting.txt`](lab/results/azure-20261024230400/scale/accounting.txt)):
+  allocatable `ergon.io/shared-millicpus` 2000; a pod asking 2,100 stays
+  Pending (`Insufficient ergon.io/shared-millicpus`); one asking 2,000
+  schedules.
+
+## e2e placement (run 20261024234841)
+
+From [`e2e.txt`](lab/results/azure-20261024234841/e2e.txt): the hot pod was
+admitted with `ERGON_SHARED_CPUS=1` and `ERGON_ISOLATED_CPUS=3,4`; in three
+`ps -L` snapshots its spin thread (`gp-hot`) was on CPU 3, allowed 3, and
+every other thread on CPU 1, allowed 1. An exec-probe hot pod was denied.
 
 ## Not measured
 
 - How long a helper's wake-up waits on a shared CPU under node load.
 - The cost of `pin_isolated` and of reading `ERGON_*`.
-- Everything in the two "lab ready" sections above, until a run.
+- The scale step with the THP and fair-server fixes (its spin maxima above
+  are from before them).
+- Another VM size, x86, bare metal, EKS.
+- How often node events (above) occur on a production node.
 
 ## Reproduce
 
@@ -129,4 +136,5 @@ DRY_RUN=1 k8s/nri-shared-cpus/lab/azure-vm.sh   # plan, time, price; no cloud ca
 k8s/nri-shared-cpus/lab/azure-vm.sh             # about 75 minutes, about $0.44
 ```
 
+`LAB_SCALE=0 LAB_REPS=3` is run 20261024234841's shape.
 `LAB_ARMS="plugin-on plugin-off"` adds the plain static CPU manager arm.

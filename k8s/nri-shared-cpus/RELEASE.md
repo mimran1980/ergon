@@ -14,8 +14,8 @@
 | not run | kind install of 0.1.1 |
 | pending publish | **0.1.2, image and chart.** Image: `--kubelet-config-dir` merges the kubelet's drop-in directory (EKS AL2023 `config.json.d`). Chart: `hostContract.kubeletConfig`, `sys` and `proc` on by default; `hostContract.kubeletConfigDir` (off); `appVersion` 0.1.2. The kubeadm install command works on either chart; the EKS AL2023 one needs chart 0.1.2 |
 | not verified | EKS |
-| measured | the hot thread with helpers on the shared CPU (the checkout, on kind on one Azure Cobalt VM): p50 0.02 µs, p99.99 0.03 µs, max 17 to 25 µs, 6 involuntary switches a 60 s rep ([BENCHMARKS.md](BENCHMARKS.md)) |
-| not measured | a helper's wake-up wait on a shared CPU, the pin's cost, shared-CPU scaling (lab ready) |
+| measured | the hot thread with helpers on the shared CPU (the checkout, on kind on one Azure Cobalt VM, THP `never` and the fair server off on the isolated CPUs): p50 0.02 µs, p99.99 0.03 µs, max 4.81 to 5.52 µs, 0 involuntary switches a 60 s rep; the hypervisor's floor 3.5 to 5.5 µs. Shared-CPU scaling as designed ([BENCHMARKS.md](BENCHMARKS.md)) |
+| not measured | a helper's wake-up wait on a shared CPU, the pin's cost |
 
 The 0.1.1 package's install NOTES say the chart is not published. It is
 published; ignore that line.
@@ -67,12 +67,12 @@ quiet. A figure without its max is not a result.
 
 | claim | what must be measured | state |
 |---|---|---|
-| helpers on shared CPUs do not disturb the hot thread | hot-thread latency p50 / p90 / p99 / p99.9 / p99.99 / **max** with the plugin, helpers loaded | measured once (run 20261024212712, [BENCHMARKS.md](BENCHMARKS.md)): p50 0.02 µs, p99.99 0.03 µs, max 17.40 to 25.34 µs over 5 reps, each max overlapping a rescheduling and a function-call IPI, 6 involuntary switches a 60 s rep. Their cause is not named yet: the lab's traced rep names it (not yet run) |
-| the exclusive CPU takes no context switch | 0 involuntary switches of the hot thread a 60 s rep, every remaining max named | not reached: 6 a rep in run 20261024212712. Lab changes for it (prefaulted probe, helpers in another process, node settings, the trace) not yet run |
-| a pod's helpers scale to its shared CPUs and idle near zero | per-CPU busy time, cgroup usage and throttling at 100 and 1,001 millicpus, idle, and two pods on one shared CPU | not measured. `vm.sh scale` measures it; not yet run |
+| helpers on shared CPUs do not disturb the hot thread | hot-thread latency p50 / p90 / p99 / p99.9 / p99.99 / **max** with the plugin, helpers loaded | measured (run 20261024234841, [BENCHMARKS.md](BENCHMARKS.md)): p50 0.02 µs, p99.99 0.03 µs, max 4.81 to 5.52 µs over 3 reps, no interrupt on the spin's CPU during the spin; the gaps left have no guest event (the hypervisor) |
+| the exclusive CPU takes no context switch | 0 involuntary switches of the hot thread a 60 s rep, every remaining max named | reached in steady state: 0 in each of 3 reps (run 20261024234841), with THP `never` and the fair server off. A traced rep at a systemd daily timer took 1 (40.60 µs, a block-device ioctl's `lru_add_drain_all`), named in its `trace-cpu3.md`: node events stay a risk, kept out of trading hours |
+| a pod's helpers scale to its shared CPUs and idle near zero | per-CPU busy time, cgroup usage and throttling at 100 and 1,001 millicpus, idle, and two pods on one shared CPU | measured (run 20261024230400 `scale.md`): 0.99 cores at 100 millicpus, 1.99 at 1,001, 0.04 idle, 0.33 : 0.66 by `cpu.weight` on one shared CPU, `nr_throttled` 0 |
 | a wake-up on a shared CPU can wait milliseconds under node load | distribution of that wait under a load the node is meant to carry | not measured |
 | the CPU env and the pin do not cost the hot path | cost of `pin_isolated` and of reading `ERGON_*` | not measured |
-| capacity accounting is honest | scheduler sees `len(sharedCpus) x 1000 x oversubscription`, and a pod that asks for more is refused | covered by unit tests, not measured |
+| capacity accounting is honest | scheduler sees `len(sharedCpus) x 1000 x oversubscription`, and a pod that asks for more is refused | covered by unit tests; on the lab node allocatable 2000 and a pod asking 2,100 stayed Pending (run 20261024230400 `scale/accounting.txt`) |
 | the layout refusal fires | a split core is named and refused, with the core id | covered by unit tests, not measured on hardware |
 
 "Covered by all scenarios" means: a split core, an unknown NUMA node, a
