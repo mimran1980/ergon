@@ -271,6 +271,33 @@ fn a_non_ascii_byte_meets_the_policy() -> R {
     Ok(())
 }
 
+/// The drop above is reported once per connection: one warning line,
+/// queued to the warning thread, for two cut-short messages.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_cut_short_streamed_message_warns_once_per_connection() -> R {
+    let lab = Lab::new()?;
+    let mut bad = ascii(400);
+    bad[250] = 0xC3;
+    let mut wire = fragmented(OP_TEXT, &bad, 4)?;
+    wire.extend_from_slice(&fragmented(OP_TEXT, &bad, 4)?);
+    ergon_io::warnings::keep_lines();
+    drop(ergon_io::warnings::take_lines());
+    let mut r = WsRig::new(&lab, &opts(TextCheck::AsciiChecked(NonAscii::Skip)))?;
+    let mut h = App::new(Interest::Stream);
+    r.feed_records(&wire, &[], &mut h)?;
+    // No driver here, so no warning thread: the line is written (and kept)
+    // at once rather than queued.
+    let lines: Vec<String> = ergon_io::warnings::take_lines()
+        .into_iter()
+        .filter(|l| l.contains("NonAscii::Skip"))
+        .collect();
+    assert_eq!(lines.len(), 1, "{lines:#?}");
+    assert!(lines[0].contains("fragment 2 of"), "{}", lines[0]);
+    assert_eq!(stats(&r).skipped, 2);
+    Ok(())
+}
+
 /// `Stream` under `AsciiChecked(Skip)`: a later fragment that is not ASCII
 /// ends the message mid-way. The fragments before it were delivered, no
 /// `fin` fragment follows and no callback reports the drop; `skipped`

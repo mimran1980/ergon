@@ -200,7 +200,8 @@ undefined behaviour (debug builds assert; release builds read nothing).
   `k` is not ASCII stops mid-way. Fragments `0..k` were already delivered
   through `on_fragment`, no `fin` fragment follows, and no callback says
   the message was dropped: it counts in `stats().skipped` once its last
-  frame arrives. The next message starts again at `index` 0, so a handler
+  frame arrives, and the first one per connection writes one warning line
+  (from the warning thread). The next message starts again at `index` 0, so a handler
   that sees index 0 while it holds a partial message discards it. Pinned
   by `a_streamed_non_ascii_fragment_ends_the_message_without_fin`
   (`io/tests/ws_stream.rs`).

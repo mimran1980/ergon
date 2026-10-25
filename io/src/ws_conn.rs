@@ -56,9 +56,11 @@ use crate::ws::{self, Close};
 ///
 /// A streamed message can end without a `fin` fragment: a Close inside it,
 /// [`Flow::SkipRest`], or, under [`TextCheck::AsciiChecked`] with
-/// [`NonAscii::Skip`], a fragment that is not ASCII. In that last case fragments before it were already delivered
-/// and no callback says the message was dropped (it counts in
-/// [`WsStats::skipped`]); the next message starts again at `index` 0.
+/// [`NonAscii::Skip`], a fragment that is not ASCII. In that last case
+/// fragments before it were already delivered and no callback says the
+/// message was dropped (it counts in [`WsStats::skipped`], and on Linux the
+/// first one per connection queues one warning line); the next message
+/// starts again at `index` 0.
 ///
 /// Nothing is dropped by a default: a handler that asks for
 /// [`Interest::Fragments`] or [`Interest::Stream`] without implementing
@@ -433,6 +435,9 @@ pub struct WsConn {
     /// one of its fragments was not ASCII.
     carry: Utf8Carry,
     stream_non_ascii: bool,
+    /// Streamed messages cut short by `NonAscii::Skip`; the first queues
+    /// this connection's one warning.
+    cut_short: u64,
     /// Largest single frame: the configured message limit, capped by the
     /// buffer.
     frame_limit: usize,
@@ -543,6 +548,7 @@ impl WsConn {
             frag_index: 0,
             carry: Utf8Carry::default(),
             stream_non_ascii: false,
+            cut_short: 0,
             frame_limit: max_message.min(max_frame(buf_len)),
             max_message,
             rng,
@@ -992,8 +998,19 @@ impl WsConn {
                         NonAscii::Close => return Err(not_ascii()),
                         NonAscii::Skip => {
                             // The rest is dropped; the message ends
-                            // without a `fin` fragment.
+                            // without a `fin` fragment. Rare: one line per
+                            // connection, formatted here and written by
+                            // the warning thread.
                             self.frag_mode = FragMode::Skip;
+                            self.cut_short += 1;
+                            #[cfg(target_os = "linux")]
+                            if self.cut_short == 1 {
+                                crate::warn::emit(format!(
+                                    "ergon-io warning: connection {}: fragment {} of a streamed text message is not ASCII; under AsciiChecked(NonAscii::Skip) the rest of it is dropped with no fin fragment (warned once per connection)",
+                                    id.index(),
+                                    self.frag_index
+                                ));
+                            }
                             return Ok(());
                         }
                         NonAscii::DeliverUnchecked => TextStatus::NotAscii,

@@ -378,7 +378,8 @@
   because it reads nothing. Under `Interest::Stream` with
   `AsciiChecked(NonAscii::Skip)`, a message whose later fragment is not
   ASCII stops mid-way with no `fin` fragment and no callback, and the next
-  message starts at index 0; a test pins it.
+  message starts at index 0; a test pins it. The first such drop on a
+  connection now writes one warning line (queued to the warning thread).
 
 - `ergon-shared-cpus` lab (repo only): one boot line serves one shared
   CPU (e2e, bench) and two (scale): exclusive CPUs 3 to the last,

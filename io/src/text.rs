@@ -72,8 +72,9 @@ pub enum NonAscii {
     /// arrives, so a message whose fragment `k` is not ASCII stops mid-way:
     /// fragments `0..k` were already delivered through
     /// [`crate::WsHandler::on_fragment`], no `fin` fragment follows, and
-    /// nothing else signals the drop (the message counts in
-    /// [`crate::WsStats::skipped`] once its last frame arrives). The next
+    /// no callback signals the drop (the message counts in
+    /// [`crate::WsStats::skipped`] once its last frame arrives, and on Linux
+    /// the first one per connection queues one warning line). The next
     /// message starts again at index 0: a handler that sees index 0 while
     /// it holds a partial message should discard that partial message.
     Skip,
