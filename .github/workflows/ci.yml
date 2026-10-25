@@ -299,6 +299,13 @@ jobs:
           cargo check  # triggers build script
           cargo test --features test-harness -- --test-threads=1
 
+      - name: Cluster tutorial sample (fmt, clippy, run)
+        run: |
+          cd samples/cluster-tutorial
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo run --quiet
+
   samples:
     needs: gate
     runs-on: ubuntu-24.04
