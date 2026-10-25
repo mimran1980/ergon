@@ -19,6 +19,11 @@
 //!   `SO_SNDBUF`, `SO_BUSY_POLL`, `TCP_RTO_MIN_US` and `TCP_DELACK_MAX_US`
 //!   (read back; refused on a kernel without them). Nothing allocates after
 //!   [`pair`].
+//!
+//! The connections, their send queues and the per-stream read are
+//! [`MioTcpStreams`] and [`MioTcpReader`], built on any `mio::Registry`
+//! with a token base: another binary can poll them in its own loop, beside
+//! its other sockets, with exactly this arm's socket code.
 #![deny(unsafe_code, missing_docs)]
 #![warn(
     clippy::all,
@@ -39,7 +44,7 @@ use std::time::Duration;
 use ergon_latency_core::frame::{self, Deframer, FRAME_HEADER};
 use ergon_latency_core::message::MESSAGE_LEN;
 use mio::net::TcpStream;
-use mio::{Events, Interest, Poll, Token};
+use mio::{Events, Interest, Poll, Registry, Token};
 
 use super::point::{Error, POLL_LIMIT, Rx, Sent, Tx, thread_allocs};
 use super::sock::Inspect;
@@ -171,32 +176,6 @@ impl TxState {
     }
 }
 
-struct Shared {
-    socks: Vec<TcpStream>,
-    tx: RefCell<TxState>,
-    opts: MioTcpOptions,
-    ipv6: bool,
-}
-
-/// The sending side.
-pub struct MioTcpTx {
-    s: Rc<Shared>,
-}
-
-/// The receiving side.
-pub struct MioTcpRx {
-    s: Rc<Shared>,
-    poll: Poll,
-    events: Events,
-    de: Vec<Deframer>,
-    ready: Vec<u32>,
-    in_ready: Vec<bool>,
-    closed: Vec<bool>,
-    open: usize,
-    allocs_at_close: Option<u64>,
-    rx_stats: MioTcpStats,
-}
-
 /// Applies the mio arm's socket options to a connected socket.
 ///
 /// # Errors
@@ -220,85 +199,96 @@ pub fn prepare(s: &StdTcpStream, opts: &MioTcpOptions) -> Result<(), Error> {
     s.set_nonblocking(true).map_err(|e| os("O_NONBLOCK", e))
 }
 
-/// Takes connected sockets, stream `i` the `i`-th; their sending and
-/// receiving sides.
+/// The mio TCP arm's connections and send side.
 ///
-/// # Errors
-/// [`prepare`] fails, or registering one does.
-pub fn pair(socks: Vec<StdTcpStream>, opts: &MioTcpOptions) -> Result<(MioTcpTx, MioTcpRx), Error> {
-    if socks.is_empty() || opts.epoll_events == 0 {
-        return Err(Error::Usage(
-            "streams and epoll events must be at least 1".into(),
-        ));
-    }
-    let poll = Poll::new().map_err(|e| os("epoll_create", e))?;
-    let n = socks.len();
-    let ipv6 = socks[0]
-        .local_addr()
-        .map_err(|e| os("getsockname", e))?
-        .is_ipv6();
-    let mut mio_socks = Vec::with_capacity(n);
-    let mut de = Vec::with_capacity(n);
-    for (i, s) in socks.into_iter().enumerate() {
-        prepare(&s, opts)?;
-        let mut sock = TcpStream::from_std(s);
-        poll.registry()
-            .register(&mut sock, Token(i), Interest::READABLE)
-            .map_err(|e| os("epoll_ctl", e))?;
-        let mut d = Deframer::new(MAX_FRAME)?;
-        // touch the receive buffer now: no page fault on the first reads
-        let spare = d.spare();
-        if spare.len() != TCP_RX_BUF {
-            return Err(Error::Transport(format!(
-                "deframer holds {} bytes, not {TCP_RX_BUF}",
-                spare.len()
-            )));
-        }
-        spare.fill(1);
-        mio_socks.push(sock);
-        de.push(d);
-    }
-    let s = Rc::new(Shared {
-        socks: mio_socks,
-        tx: RefCell::new(TxState {
-            queues: (0..n).map(|_| TxQueue::new()).collect(),
-            dirty: Vec::with_capacity(n),
-            in_dirty: vec![false; n],
-            stats: MioTcpStats::default(),
-        }),
-        opts: opts.clone(),
-        ipv6,
-    });
-    Ok((
-        MioTcpTx { s: Rc::clone(&s) },
-        MioTcpRx {
-            s,
-            poll,
-            events: Events::with_capacity(opts.epoll_events),
-            de,
-            ready: Vec::with_capacity(n),
-            in_ready: vec![false; n],
-            closed: vec![false; n],
-            open: n,
-            allocs_at_close: None,
-            rx_stats: MioTcpStats::default(),
-        },
-    ))
+/// Stream `i` is the `i`-th connection, registered readable on a caller's
+/// `Registry` as `Token(token_base + i)`. Every method takes `&self`, so a
+/// read's callback may send (an echo).
+pub struct MioTcpStreams {
+    socks: Vec<TcpStream>,
+    tx: RefCell<TxState>,
+    opts: MioTcpOptions,
+    ipv6: bool,
+    token_base: usize,
 }
 
-impl Tx for MioTcpTx {
+impl MioTcpStreams {
+    /// Takes connected sockets, stream `i` the `i`-th: [`prepare`]d and
+    /// registered on `registry` from `Token(token_base)`.
+    ///
+    /// # Errors
+    /// [`prepare`] fails, registering one does, or none is given.
+    pub fn new(
+        registry: &Registry,
+        token_base: usize,
+        socks: Vec<StdTcpStream>,
+        opts: &MioTcpOptions,
+    ) -> Result<Self, Error> {
+        if socks.is_empty() {
+            return Err(Error::Usage("streams must be at least 1".into()));
+        }
+        let n = socks.len();
+        let ipv6 = socks[0]
+            .local_addr()
+            .map_err(|e| os("getsockname", e))?
+            .is_ipv6();
+        let mut mio_socks = Vec::with_capacity(n);
+        for (i, s) in socks.into_iter().enumerate() {
+            prepare(&s, opts)?;
+            let mut sock = TcpStream::from_std(s);
+            registry
+                .register(&mut sock, Token(token_base + i), Interest::READABLE)
+                .map_err(|e| os("epoll_ctl", e))?;
+            mio_socks.push(sock);
+        }
+        Ok(Self {
+            socks: mio_socks,
+            tx: RefCell::new(TxState {
+                queues: (0..n).map(|_| TxQueue::new()).collect(),
+                dirty: Vec::with_capacity(n),
+                in_dirty: vec![false; n],
+                stats: MioTcpStats::default(),
+            }),
+            opts: opts.clone(),
+            ipv6,
+            token_base,
+        })
+    }
+
+    /// The streams.
+    #[must_use]
+    pub fn streams(&self) -> u32 {
+        u32::try_from(self.socks.len()).unwrap_or(u32::MAX)
+    }
+
+    /// The stream a token of this set stands for.
+    #[must_use]
+    pub fn stream_of(&self, token: Token) -> Option<u32> {
+        token
+            .0
+            .checked_sub(self.token_base)
+            .filter(|&i| i < self.socks.len())
+            .and_then(|i| u32::try_from(i).ok())
+    }
+
+    /// Frames `payload` onto `stream`'s send queue and writes it at once;
+    /// what the kernel has no room for goes on [`flush`](Self::flush).
+    /// [`Sent::Busy`] when the queue is full.
+    ///
+    /// # Errors
+    /// No such stream, a frame too long, or the write failed for good.
     #[inline]
-    fn try_send(&mut self, stream: u32, msg: &[u8; MESSAGE_LEN]) -> Result<Sent, Error> {
+    pub fn send(&self, stream: u32, payload: &[u8]) -> Result<Sent, Error> {
         let i = stream as usize;
-        let mut tx = self.s.tx.borrow_mut();
+        let mut tx = self.tx.borrow_mut();
         let tx = &mut *tx;
-        let (Some(sock), Some(q)) = (self.s.socks.get(i), tx.queues.get_mut(i)) else {
+        let (Some(sock), Some(q)) = (self.socks.get(i), tx.queues.get_mut(i)) else {
             return Err(Error::Transport(format!(
                 "stream {i} of {}",
-                self.s.socks.len()
+                self.socks.len()
             )));
         };
-        if !q.queue(msg)? {
+        if !q.queue(payload)? {
             tx.stats.tx_full += 1;
             return Ok(Sent::Busy);
         }
@@ -309,150 +299,63 @@ impl Tx for MioTcpTx {
         }
         Ok(Sent::Sent)
     }
-}
 
-impl MioTcpRx {
-    /// Stream `i`'s peer closed: it is not read again (edge-triggered, its
-    /// end of file reports no more events). The socket stays open: the
-    /// send side holds it.
-    fn close(&mut self, i: usize) {
-        if !self.closed[i] {
-            self.closed[i] = true;
-            self.open -= 1;
-        }
-    }
-}
-
-impl Rx for MioTcpRx {
+    /// Every queued byte to the kernel, until a connection has no room.
+    ///
+    /// # Errors
+    /// A write failed for good.
     #[inline]
-    fn poll<F: FnMut(&[u8])>(&mut self, on: &mut F) -> Result<usize, Error> {
-        let allocs = thread_allocs();
-        {
-            let s = &*self.s;
-            let mut tx = s.tx.borrow_mut();
-            if !tx.dirty.is_empty() {
-                tx.flush(&s.socks)?;
-            }
+    pub fn flush(&self) -> Result<(), Error> {
+        let mut tx = self.tx.borrow_mut();
+        if tx.dirty.is_empty() {
+            return Ok(());
         }
-        self.rx_stats.polls += 1;
-        match self.poll.poll(&mut self.events, Some(Duration::ZERO)) {
-            Ok(()) => {}
-            Err(e) if e.kind() == ErrorKind::Interrupted => {}
-            Err(e) => return Err(os("epoll_wait", e)),
-        }
-        for ev in &self.events {
-            let i = ev.token().0;
-            if i < self.in_ready.len() && !self.in_ready[i] && !self.closed[i] {
-                self.in_ready[i] = true;
-                self.ready.push(u32::try_from(i).unwrap_or(u32::MAX));
-            }
-        }
-        let quickack = self.s.opts.quickack_per_read;
-        let mut n = 0;
-        let mut k = 0;
-        while let Some(&r) = self.ready.get(k) {
-            let i = r as usize;
-            let mut delivered = 0;
-            // done: read to WouldBlock with every frame handed over
-            let mut done = false;
-            let mut peer_closed = false;
-            loop {
-                while delivered < POLL_LIMIT {
-                    match self.de[i].next_frame()? {
-                        Some(f) => {
-                            self.rx_stats.frames_in += 1;
-                            delivered += 1;
-                            on(f);
-                        }
-                        None => break,
-                    }
-                }
-                if delivered == POLL_LIMIT {
-                    break;
-                }
-                let spare = self.de[i].spare();
-                if spare.is_empty() {
-                    return Err(Error::Transport(format!("stream {i}: receive buffer full")));
-                }
-                self.rx_stats.reads += 1;
-                match (&self.s.socks[i]).read(spare) {
-                    Ok(0) => {
-                        peer_closed = true;
-                        done = true;
-                        break;
-                    }
-                    Ok(len) => {
-                        self.de[i].filled(len)?;
-                        self.rx_stats.bytes_in += len as u64;
-                        if quickack {
-                            sockopt::quickack(self.s.socks[i].as_raw_fd())
-                                .map_err(|e| os("TCP_QUICKACK", e))?;
-                            self.rx_stats.quickacks += 1;
-                        }
-                    }
-                    Err(e) if e.kind() == ErrorKind::WouldBlock => {
-                        done = true;
-                        break;
-                    }
-                    Err(e) if e.kind() == ErrorKind::Interrupted => {}
-                    Err(e) if e.kind() == ErrorKind::ConnectionReset => {
-                        peer_closed = true;
-                        done = true;
-                        break;
-                    }
-                    Err(e) => return Err(os("tcp read", e)),
-                }
-            }
-            n += delivered;
-            if peer_closed {
-                self.allocs_at_close.get_or_insert(allocs);
-                self.close(i);
-            }
-            if done {
-                self.in_ready[i] = false;
-                self.ready.swap_remove(k);
-            } else {
-                k += 1;
-            }
-        }
-        let s = &*self.s;
-        let mut tx = s.tx.borrow_mut();
-        if !tx.dirty.is_empty() {
-            tx.flush(&s.socks)?;
-        }
-        Ok(n)
+        tx.flush(&self.socks)
     }
 
-    fn closed(&self) -> bool {
-        self.open == 0
-    }
-}
-
-impl Inspect for MioTcpRx {
-    fn allocs_at_close(&self) -> Option<u64> {
-        self.allocs_at_close
+    /// The send side's counters.
+    #[must_use]
+    pub fn tx_stats(&self) -> MioTcpStats {
+        self.tx.borrow().stats
     }
 
-    fn retrans(&self) -> Result<Option<u64>, Error> {
+    /// Segments retransmitted so far over every connection (`TCP_INFO`).
+    ///
+    /// # Errors
+    /// `getsockopt` fails.
+    pub fn retrans(&self) -> Result<u64, Error> {
         let mut sum = 0u64;
-        for s in &self.s.socks {
+        for s in &self.socks {
             sum += u64::from(sockopt::tcp_info(s.as_raw_fd())?.total_retrans);
         }
-        Ok(Some(sum))
+        Ok(sum)
     }
 
-    fn wire_bytes(&self) -> Result<u64, Error> {
-        let ts = match self.s.socks.first() {
+    /// Bytes on the wire per 64-byte message.
+    ///
+    /// # Errors
+    /// `TCP_INFO` cannot be read.
+    pub fn wire_bytes(&self) -> Result<u64, Error> {
+        let ts = match self.socks.first() {
             Some(s) => sockopt::tcp_info(s.as_raw_fd())?.timestamps,
             None => false,
         };
-        Ok(tcp_wire_bytes(ts, self.s.ipv6))
+        Ok(tcp_wire_bytes(ts, self.ipv6))
     }
 
-    fn report(&self, out: &mut Vec<(String, String)>) -> Result<(), Error> {
-        let t = self.s.tx.borrow().stats;
-        let r = self.rx_stats;
-        let o = &self.s.opts;
+    /// The settings and counters (`reader`'s receive side), and stream 0's
+    /// socket options read back.
+    ///
+    /// # Errors
+    /// A read-back fails.
+    pub fn report(
+        &self,
+        reader: &MioTcpReader,
+        out: &mut Vec<(String, String)>,
+    ) -> Result<(), Error> {
+        let t = self.tx_stats();
+        let r = reader.stats;
+        let o = &self.opts;
         let opt = |v: Option<u32>| v.map_or_else(|| "kernel".to_owned(), |b| b.to_string());
         for (k, v) in [
             ("tcp.max_frame", MAX_FRAME.to_string()),
@@ -479,10 +382,277 @@ impl Inspect for MioTcpRx {
         ] {
             out.push((k.to_owned(), v));
         }
-        if let Some(s) = self.s.socks.first() {
+        if let Some(s) = self.socks.first() {
             sockopt::read_back(s.as_raw_fd(), true, out)?;
         }
         Ok(())
+    }
+}
+
+/// What one [`MioTcpReader::read`] of a stream did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TcpRead {
+    /// Frames handed over.
+    pub frames: usize,
+    /// Read to `WouldBlock` (or the peer's close) with every frame handed
+    /// over: no need to read again before its next event.
+    pub done: bool,
+    /// The peer closed it in this read (the first time only).
+    pub closed: bool,
+}
+
+/// A receive side's deframers (one per stream, every page touched up front),
+/// closed streams and counters: reads one stream of a [`MioTcpStreams`] at a
+/// time.
+pub struct MioTcpReader {
+    de: Vec<Deframer>,
+    closed: Vec<bool>,
+    open: usize,
+    /// The receive side's counters (`polls` is the caller's to count).
+    pub stats: MioTcpStats,
+}
+
+impl MioTcpReader {
+    /// One deframer per stream of `streams`.
+    ///
+    /// # Errors
+    /// A deframer of another size than [`TCP_RX_BUF`].
+    pub fn new(streams: &MioTcpStreams) -> Result<Self, Error> {
+        let n = streams.socks.len();
+        let mut de = Vec::with_capacity(n);
+        for _ in 0..n {
+            let mut d = Deframer::new(MAX_FRAME)?;
+            // touch the receive buffer now: no page fault on the first reads
+            let spare = d.spare();
+            if spare.len() != TCP_RX_BUF {
+                return Err(Error::Transport(format!(
+                    "deframer holds {} bytes, not {TCP_RX_BUF}",
+                    spare.len()
+                )));
+            }
+            spare.fill(1);
+            de.push(d);
+        }
+        Ok(Self {
+            de,
+            closed: vec![false; n],
+            open: n,
+            stats: MioTcpStats::default(),
+        })
+    }
+
+    /// Whether `stream`'s peer closed it (it is not read again).
+    #[must_use]
+    pub fn is_closed(&self, stream: u32) -> bool {
+        self.closed.get(stream as usize).copied().unwrap_or(true)
+    }
+
+    /// Whether every peer closed.
+    #[must_use]
+    pub const fn all_closed(&self) -> bool {
+        self.open == 0
+    }
+
+    /// Reads `stream` and hands its whole frames to `on`, up to
+    /// [`POLL_LIMIT`]; with `quickack_per_read`, `TCP_QUICKACK` after every
+    /// read with data. mio is edge-triggered: a stream not `done` must be
+    /// read again without an event.
+    ///
+    /// # Errors
+    /// No such stream, a malformed frame, a full receive buffer, or the read
+    /// failed for good.
+    #[inline]
+    pub fn read<F: FnMut(&[u8])>(
+        &mut self,
+        streams: &MioTcpStreams,
+        stream: u32,
+        on: &mut F,
+    ) -> Result<TcpRead, Error> {
+        let i = stream as usize;
+        let (Some(sock), Some(de)) = (streams.socks.get(i), self.de.get_mut(i)) else {
+            return Err(Error::Transport(format!(
+                "stream {i} of {}",
+                streams.socks.len()
+            )));
+        };
+        let quickack = streams.opts.quickack_per_read;
+        let mut delivered = 0;
+        let mut done = false;
+        let mut peer_closed = false;
+        loop {
+            while delivered < POLL_LIMIT {
+                match de.next_frame()? {
+                    Some(f) => {
+                        self.stats.frames_in += 1;
+                        delivered += 1;
+                        on(f);
+                    }
+                    None => break,
+                }
+            }
+            if delivered == POLL_LIMIT {
+                break;
+            }
+            let spare = de.spare();
+            if spare.is_empty() {
+                return Err(Error::Transport(format!("stream {i}: receive buffer full")));
+            }
+            self.stats.reads += 1;
+            match (&*sock).read(spare) {
+                Ok(0) => {
+                    peer_closed = true;
+                    done = true;
+                    break;
+                }
+                Ok(len) => {
+                    de.filled(len)?;
+                    self.stats.bytes_in += len as u64;
+                    if quickack {
+                        sockopt::quickack(sock.as_raw_fd()).map_err(|e| os("TCP_QUICKACK", e))?;
+                        self.stats.quickacks += 1;
+                    }
+                }
+                Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                    done = true;
+                    break;
+                }
+                Err(e) if e.kind() == ErrorKind::Interrupted => {}
+                Err(e) if e.kind() == ErrorKind::ConnectionReset => {
+                    peer_closed = true;
+                    done = true;
+                    break;
+                }
+                Err(e) => return Err(os("tcp read", e)),
+            }
+        }
+        // the peer's close: not read again (edge-triggered, its end of file
+        // reports no more events); the socket stays open, the send side
+        // holds it
+        let closed = peer_closed && !self.closed[i];
+        if closed {
+            self.closed[i] = true;
+            self.open -= 1;
+        }
+        Ok(TcpRead {
+            frames: delivered,
+            done,
+            closed,
+        })
+    }
+}
+
+/// The sending side.
+pub struct MioTcpTx {
+    s: Rc<MioTcpStreams>,
+}
+
+/// The receiving side.
+pub struct MioTcpRx {
+    s: Rc<MioTcpStreams>,
+    poll: Poll,
+    events: Events,
+    reader: MioTcpReader,
+    ready: Vec<u32>,
+    in_ready: Vec<bool>,
+    allocs_at_close: Option<u64>,
+}
+
+/// Takes connected sockets, stream `i` the `i`-th; their sending and
+/// receiving sides, on a poll of their own.
+///
+/// # Errors
+/// [`prepare`] fails, or registering one does.
+pub fn pair(socks: Vec<StdTcpStream>, opts: &MioTcpOptions) -> Result<(MioTcpTx, MioTcpRx), Error> {
+    if socks.is_empty() || opts.epoll_events == 0 {
+        return Err(Error::Usage(
+            "streams and epoll events must be at least 1".into(),
+        ));
+    }
+    let poll = Poll::new().map_err(|e| os("epoll_create", e))?;
+    let n = socks.len();
+    let s = Rc::new(MioTcpStreams::new(poll.registry(), 0, socks, opts)?);
+    let reader = MioTcpReader::new(&s)?;
+    Ok((
+        MioTcpTx { s: Rc::clone(&s) },
+        MioTcpRx {
+            s,
+            poll,
+            events: Events::with_capacity(opts.epoll_events),
+            reader,
+            ready: Vec::with_capacity(n),
+            in_ready: vec![false; n],
+            allocs_at_close: None,
+        },
+    ))
+}
+
+impl Tx for MioTcpTx {
+    #[inline]
+    fn try_send(&mut self, stream: u32, msg: &[u8; MESSAGE_LEN]) -> Result<Sent, Error> {
+        self.s.send(stream, msg)
+    }
+}
+
+impl Rx for MioTcpRx {
+    #[inline]
+    fn poll<F: FnMut(&[u8])>(&mut self, on: &mut F) -> Result<usize, Error> {
+        let allocs = thread_allocs();
+        let s = &*self.s;
+        s.flush()?;
+        self.reader.stats.polls += 1;
+        match self.poll.poll(&mut self.events, Some(Duration::ZERO)) {
+            Ok(()) => {}
+            Err(e) if e.kind() == ErrorKind::Interrupted => {}
+            Err(e) => return Err(os("epoll_wait", e)),
+        }
+        for ev in &self.events {
+            if let Some(r) = s.stream_of(ev.token()) {
+                let i = r as usize;
+                if !self.in_ready[i] && !self.reader.is_closed(r) {
+                    self.in_ready[i] = true;
+                    self.ready.push(r);
+                }
+            }
+        }
+        let mut n = 0;
+        let mut k = 0;
+        while let Some(&r) = self.ready.get(k) {
+            let read = self.reader.read(s, r, on)?;
+            n += read.frames;
+            if read.closed {
+                self.allocs_at_close.get_or_insert(allocs);
+            }
+            if read.done {
+                self.in_ready[r as usize] = false;
+                self.ready.swap_remove(k);
+            } else {
+                k += 1;
+            }
+        }
+        s.flush()?;
+        Ok(n)
+    }
+
+    fn closed(&self) -> bool {
+        self.reader.all_closed()
+    }
+}
+
+impl Inspect for MioTcpRx {
+    fn allocs_at_close(&self) -> Option<u64> {
+        self.allocs_at_close
+    }
+
+    fn retrans(&self) -> Result<Option<u64>, Error> {
+        self.s.retrans().map(Some)
+    }
+
+    fn wire_bytes(&self) -> Result<u64, Error> {
+        self.s.wire_bytes()
+    }
+
+    fn report(&self, out: &mut Vec<(String, String)>) -> Result<(), Error> {
+        self.s.report(&self.reader, out)
     }
 }
 

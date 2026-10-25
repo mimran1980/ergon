@@ -548,7 +548,20 @@ fn settings_an_arm_cannot_take_are_refused() -> R {
             "2",
         ],
     );
-    refused(UDP, &dpdk, "20000-20999")?;
+    refused(UDP, &dpdk, "20000-21999")?;
+    // the receiver's wildcard half too (the media driver's 21000-21999)
+    let wildcard = with(
+        &base,
+        &[
+            "--impl",
+            "mio",
+            "--local",
+            "127.0.0.1:21500",
+            "--peer",
+            "127.0.0.1:39050",
+        ],
+    );
+    refused(UDP, &wildcard, "20000-21999")?;
     let oneway = [
         "--impl",
         "mio",
@@ -564,5 +577,89 @@ fn settings_an_arm_cannot_take_are_refused() -> R {
     refused(UDP, &oneway, "--role oneway-send")?;
     assert!(!out.join("results.csv").exists());
     std::fs::remove_dir_all(out)?;
+    Ok(())
+}
+
+/// The mio arms' socket code on a caller's own poll: two UDP stream sets and
+/// two TCP ones on one `Registry`, each from its own token base, each token
+/// mapped back to its set's stream and read there, frames and datagrams
+/// whole and in order.
+#[test]
+fn mio_stream_sets_share_a_callers_registry() -> R {
+    use io_bench::transport::mio_tcp::{MioTcpOptions, MioTcpReader, MioTcpStreams};
+    use io_bench::transport::mio_udp::{MioUdpOptions, MioUdpReader, MioUdpStreams};
+    use io_bench::transport::point::Sent;
+    use io_bench::transport::sock::{accept_all, connect_all};
+    use std::time::{Duration, Instant};
+
+    let mut poll = mio::Poll::new()?;
+    let mut events = mio::Events::with_capacity(64);
+    let udp = MioUdpOptions {
+        rcvbuf: 1 << 20,
+        sndbuf: None,
+        busy_read_us: 0,
+        epoll_events: 64,
+    };
+    let (pa, pb) = ("127.0.0.1:39200".parse()?, "127.0.0.1:39210".parse()?);
+    let a = MioUdpStreams::new(poll.registry(), 0, pa, pb, 2, udp.clone())?;
+    let b = MioUdpStreams::new(poll.registry(), 100, pb, pa, 2, udp)?;
+    assert_eq!(
+        (b.stream_of(mio::Token(101)), b.stream_of(mio::Token(1))),
+        (Some(1), None)
+    );
+    let l = std::net::TcpListener::bind("127.0.0.1:0")?;
+    let to = l.local_addr()?;
+    let wait = Duration::from_secs(5);
+    let dial = std::thread::spawn(move || connect_all(to, 2, wait));
+    let accepted = accept_all(&l, 2, wait)?;
+    let dialled = dial.join().map_err(|_| "dial panicked")??;
+    let tcp = MioTcpOptions {
+        rcvbuf: 1 << 20,
+        sndbuf: None,
+        busy_read_us: 0,
+        epoll_events: 64,
+        quickack_per_read: true,
+        rto_min_us: None,
+        delack_max_us: None,
+    };
+    let c = MioTcpStreams::new(poll.registry(), 200, dialled, &tcp)?;
+    let d = MioTcpStreams::new(poll.registry(), 300, accepted, &tcp)?;
+    for k in 0u8..4 {
+        assert_eq!(a.send(u32::from(k % 2), &[k; 64])?, Sent::Sent);
+        assert_eq!(c.send(u32::from(k % 2), &[k + 10; 64])?, Sent::Sent);
+    }
+    let (mut ur, mut tr) = (MioUdpReader::new(), MioTcpReader::new(&d)?);
+    let (mut got_udp, mut got_tcp) = (Vec::new(), Vec::new());
+    let until = Instant::now() + wait;
+    while (got_udp.len() < 4 || got_tcp.len() < 4) && Instant::now() < until {
+        a.flush()?;
+        c.flush()?;
+        poll.poll(&mut events, Some(Duration::from_millis(10)))?;
+        for ev in &events {
+            if let Some(s) = b.stream_of(ev.token()) {
+                ur.read(&b, s, &mut |p: &[u8]| got_udp.push((s, p[0], p.len())))?;
+            } else if let Some(s) = d.stream_of(ev.token()) {
+                loop {
+                    let r = tr.read(&d, s, &mut |p: &[u8]| got_tcp.push((s, p[0], p.len())))?;
+                    if r.done {
+                        break;
+                    }
+                }
+            } else {
+                assert!(
+                    a.stream_of(ev.token()).is_some() || c.stream_of(ev.token()).is_some(),
+                    "{ev:?}"
+                );
+            }
+        }
+    }
+    got_udp.sort_unstable();
+    got_tcp.sort_unstable();
+    assert_eq!(got_udp, [(0, 0, 64), (0, 2, 64), (1, 1, 64), (1, 3, 64)]);
+    assert_eq!(
+        got_tcp,
+        [(0, 10, 64), (0, 12, 64), (1, 11, 64), (1, 13, 64)]
+    );
+    assert!(!tr.all_closed() && tr.stats.quickacks > 0);
     Ok(())
 }

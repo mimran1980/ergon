@@ -26,6 +26,11 @@
 //! | `ping` | ping (sends, polls the echoes) | `load` |
 //! | `pong` | echo | none: `manifest.json` alone |
 //!
+//! A `pong` prints one `ready` line once its subscriptions and publications
+//! are added (the runner starts the ping on it); its echo then waits for the
+//! ping's (`--connect-timeout-s`). No stream's port may fall in the media
+//! driver's wildcard ranges (20000-21999 in the lab).
+//!
 //! Each busy thread has its own Aeron client, created before it pins
 //! itself, so the client's conductor thread keeps the process's starting
 //! affinity (the runner starts the binary on a housekeeping CPU).
@@ -95,6 +100,23 @@ const LOSS_COUNTERS: [(&str, &str); 6] = [
     ("Errors", "errors"),
 ];
 
+/// `--help`.
+const USAGE: &str = "\
+aeron_lat --role ping|pong|local [--round-trip] --mode ipc|spy|udp --rate MSG_PER_S --label SET:ARM --out DIR
+          --aeron-dir PATH [--driver external|embedded] [--driver-busy-threads 3] [--reliable true|false]
+          [--endpoint HOST:PORT] [--reply HOST:PORT] [--interface IP] [--term-length 1048576] [--mtu 1408]
+          [--stream-id 1001] [--connect-timeout-s 30] [--streams 1] [--warmup-s 30] [--duration-s 30]
+          [--size 64] [--cpus CSV] [--spike-ns 100000] [--stall-ns 10000]
+--mode udp: stream i's pings go to --endpoint port + i (stream id S+i), its echoes to --reply port + i
+  (S+10000+i); ping and pong take the same --endpoint (the pong's address) and --reply (the ping's), and
+  --interface is this end's own address. --endpoint, --reply and --interface are UDP only. Ports
+  20000-21999 (the media driver's wildcard ranges) are refused.
+--cpus: ping: ping; pong: echo; local: sender,receiver (--round-trip: ping,echo).
+--driver-busy-threads: the external driver's busy threads (DEDICATED: 3), counted in the row's busy_threads.
+A pong prints `ready` once its channels are added, and no row.";
+/// The media driver's wildcard port ranges in the lab (vm.sh `common_env`).
+const WILDCARD_PORTS: std::ops::RangeInclusive<u32> = 20_000..=21_999;
+
 /// SIGTERM: a pong stops.
 static STOP: AtomicBool = AtomicBool::new(false);
 
@@ -145,9 +167,14 @@ impl Endpoint {
         })
     }
 
-    /// Stream `i`'s `host:port+i`.
+    /// Stream `i`'s `host:port+i`, refused in [`WILDCARD_PORTS`].
     fn of(&self, flag: &str, i: u32) -> Result<String, Error> {
         let port = u32::from(self.port) + i;
+        if WILDCARD_PORTS.contains(&port) {
+            return Err(Error::Usage(format!(
+                "--{flag}: stream {i}'s port {port}: 20000-21999 are the media driver's wildcard ranges"
+            )));
+        }
         u16::try_from(port)
             .map(|p| format!("{}:{p}", self.host))
             .map_err(|_| Error::Usage(format!("--{flag}: port {port} past 65535")))
@@ -223,6 +250,14 @@ impl Aeronish {
                     "--endpoint, --reply and --interface are UDP only, not --mode {}",
                     a.mode_name()
                 )));
+            }
+        }
+        for i in 0..c.streams {
+            if let Some(e) = &a.endpoint {
+                e.of("endpoint", i)?;
+            }
+            if let Some(e) = &a.reply {
+                e.of("reply", i)?;
             }
         }
         if !a.term_length.is_power_of_two() || a.term_length < 65_536 {
@@ -652,19 +687,22 @@ fn ping_end(
 }
 
 /// The echo end on this thread: its client, ping subscriptions and echo
-/// publications, then (after `barrier`, when given) echoes until the pings
-/// go or `keep_going` says stop. Returns its hot-path allocations.
+/// publications (then `added`), then (after `barrier`, when given) echoes
+/// until the pings go or `keep_going` says stop. Returns its hot-path
+/// allocations.
 fn echo_end(
     c: &Common,
     a: &Aeronish,
     cpu: Option<usize>,
     barrier: Option<&Barrier>,
+    added: &dyn Fn(),
     keep_going: &mut impl FnMut() -> bool,
 ) -> Result<u64, Error> {
     let setup = (|| -> Result<_, Error> {
         let aeron = client(&a.dir)?;
         let subs = subscriptions(&aeron, c.streams, |i| a.ping_channel(i))?;
         let tx = publications(&aeron, c.streams, |i| a.echo_channel(i))?;
+        added();
         let rx = ready(Some(&tx), subs, a.connect_timeout)?;
         point::pin(cpu)?;
         Ok((aeron, tx, rx))
@@ -682,7 +720,11 @@ fn local_round_trip(c: &Common, a: &Aeronish, clock: &TscClock) -> Result<Ends, 
     let (barrier, stop) = (Barrier::new(2), AtomicBool::new(false));
     let (barrier, stop) = (&barrier, &stop);
     std::thread::scope(|s| {
-        let echo = s.spawn(move || echo_end(c, a, c.cpu(1), Some(barrier), &mut || !stop.load(Ordering::Acquire)));
+        let echo = s.spawn(move || {
+            echo_end(c, a, c.cpu(1), Some(barrier), &|| {}, &mut || {
+                !stop.load(Ordering::Acquire)
+            })
+        });
         let ping = s.spawn(move || {
             let r = ping_end(c, a, clock, c.cpu(0), Some(barrier));
             stop.store(true, Ordering::Release);
@@ -772,7 +814,9 @@ fn run(c: &Common, a: &Aeronish) -> Result<Option<String>, Error> {
     let mut m = manifest(c, a, transport)?;
     if c.role == Role::Pong {
         stop_on_sigterm();
-        let allocs = echo_end(c, a, c.cpu(0), None, &mut || !STOP.load(Ordering::Relaxed))?;
+        let allocs = echo_end(c, a, c.cpu(0), None, &|| println!("ready"), &mut || {
+            !STOP.load(Ordering::Relaxed)
+        })?;
         let (after, _) = loss_counters(&counters);
         record_counters(&mut m, &before, &after);
         m.setting("hot_path_allocs", &allocs.to_string())
@@ -822,6 +866,10 @@ fn record_counters(m: &mut RunManifest, before: &BTreeMap<&str, i64>, after: &BT
 }
 
 fn main() -> ExitCode {
+    if std::env::args().skip(1).any(|a| a == "--help") {
+        println!("{USAGE}");
+        return ExitCode::SUCCESS;
+    }
     let go = || -> Result<Option<String>, Error> {
         let mut f = Flags::parse(std::env::args().skip(1))?;
         let c = Common::parse(&mut f)?;

@@ -24,7 +24,8 @@
 //! connected to `--peer` port + `i`. TCP stream `i` is the `i`-th
 //! connection: the connecting end writes `i` (u32 LE) on it before
 //! anything else, and the accepting end orders its connections by it.
-//! No stream may use a port in 20000-20999 (the lab's DPDK range).
+//! No stream may use a port in 20000-21999 (the media driver's wildcard
+//! ranges in the lab).
 #![deny(missing_docs)]
 #![warn(
     clippy::all,
@@ -89,8 +90,10 @@ pub trait Inspect {
     }
 }
 
-/// The lab's DPDK wildcard ports: no socket arm binds or sends to one.
-pub const DPDK_PORTS: std::ops::RangeInclusive<u16> = 20_000..=20_999;
+/// The media driver's wildcard port ranges in the lab (sender 20000-20999,
+/// receiver 21000-21999: vm.sh `common_env`): no socket arm binds or sends
+/// to one.
+pub const DPDK_PORTS: std::ops::RangeInclusive<u16> = 20_000..=21_999;
 
 /// `base` with its port moved up by `i`.
 ///
@@ -107,7 +110,7 @@ pub fn port_plus(base: SocketAddr, i: u32) -> Result<SocketAddr, Error> {
         .map_err(|_| Error::Usage(format!("{base} + {i}: past port 65535")))?;
     if DPDK_PORTS.contains(&port) {
         return Err(Error::Usage(format!(
-            "port {port} (stream {i} of base {base}): 20000-20999 is the lab's DPDK range"
+            "port {port} (stream {i} of base {base}): 20000-21999 are the media driver's wildcard ranges"
         )));
     }
     Ok(SocketAddr::new(base.ip(), port))
@@ -161,7 +164,14 @@ pub struct Sock {
 }
 
 impl Sock {
-    fn parse(f: &mut Flags) -> Result<Self, Error> {
+    /// The socket flags, as `udp_lat` and `tcp_lat` take them.
+    ///
+    /// `--impl`, `--rcvbuf`, `--sndbuf`, `--busy-read-us`, `--epoll-events`
+    /// and `--connect-timeout-s`, taken from `f`.
+    ///
+    /// # Errors
+    /// [`Error::Usage`] for one missing or refused.
+    pub fn parse(f: &mut Flags) -> Result<Self, Error> {
         let imp = match f.req("impl")?.as_str() {
             "mio" => Impl::Mio,
             "ergon" => Impl::Ergon,
@@ -715,7 +725,11 @@ pub fn udp_main<I: IntoIterator<Item = String>>(args: I) -> Result<Option<String
 
 /// Accepts `n` connections on `l` within `wait`, ordered by the index each
 /// one's peer writes first.
-fn accept_all(l: &TcpListener, n: u32, wait: Duration) -> Result<Vec<TcpStream>, Error> {
+///
+/// # Errors
+/// An accept or read fails, an index repeats or is out of range, or not all
+/// came in time.
+pub fn accept_all(l: &TcpListener, n: u32, wait: Duration) -> Result<Vec<TcpStream>, Error> {
     l.set_nonblocking(true).map_err(|e| os("O_NONBLOCK", e))?;
     let until = Instant::now() + wait;
     let mut slots: Vec<Option<TcpStream>> = (0..n).map(|_| None).collect();
@@ -757,7 +771,10 @@ fn accept_all(l: &TcpListener, n: u32, wait: Duration) -> Result<Vec<TcpStream>,
 
 /// Opens `n` connections to `to`, retrying a refused one within `wait`,
 /// each first carrying its stream index.
-fn connect_all(to: SocketAddr, n: u32, wait: Duration) -> Result<Vec<TcpStream>, Error> {
+///
+/// # Errors
+/// A connect still refused when `wait` is up, or a write fails.
+pub fn connect_all(to: SocketAddr, n: u32, wait: Duration) -> Result<Vec<TcpStream>, Error> {
     let until = Instant::now() + wait;
     let mut out = Vec::with_capacity(n as usize);
     for i in 0..n {
