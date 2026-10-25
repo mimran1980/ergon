@@ -383,8 +383,8 @@ fn validate_reports_each_wire_violation() -> Result<(), GenerateError> {
     Ok(())
 }
 
-/// Shared schema for the `with_shared` tests: a bounded composite member and
-/// an enum, neither declared by the consumer.
+/// Shared schema for the `with_shared` tests: a bounded composite member, an
+/// enum and a set, none declared by the consumer.
 const SHARED: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="vshared" id="92" version="0" byteOrder="littleEndian">
   <types>
@@ -402,6 +402,10 @@ const SHARED: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
       <validValue name="Buy">1</validValue>
       <validValue name="Sell">2</validValue>
     </enum>
+    <set name="Marks" encodingType="uint8">
+      <choice name="Low">0</choice>
+      <choice name="High">2</choice>
+    </set>
   </types>
 </sbe:messageSchema>"#;
 
@@ -410,6 +414,7 @@ const CONSUMER: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
   <sbe:message name="Order" id="1">
     <field name="px" id="1" type="Px"/>
     <field name="side" id="2" type="Side"/>
+    <field name="marks" id="3" type="Marks"/>
   </sbe:message>
 </sbe:messageSchema>"#;
 
@@ -419,21 +424,23 @@ const SHARED_CHECKS: &str = r#"
         use vconsumer::*;
         use {rt}::sbe_rt::ValidateError;
 
-        // Order body: px.mantissa@0 i64 (shared Px), side@8 u8 (shared Side).
-        fn frame(mantissa: i64, side: u8) -> Vec<u8> {
+        // Order body: px.mantissa@0 i64 (shared Px), side@8 u8 (shared Side),
+        // marks@9 u8 (shared Marks).
+        fn frame(mantissa: i64, side: u8, marks: u8) -> Vec<u8> {
             let mut f = Vec::new();
-            for v in [9u16, 1, 93, 0] {
+            for v in [10u16, 1, 93, 0] {
                 f.extend_from_slice(&v.to_le_bytes());
             }
             f.extend_from_slice(&mantissa.to_le_bytes());
             f.push(side);
+            f.push(marks);
             f
         }
         let check = |f: &[u8]| OrderDecoder::try_decode(f, 0).expect("bounds-valid frame").validate();
 
-        assert_eq!(check(&frame(12_345, 1)), Ok(()));
+        assert_eq!(check(&frame(12_345, 1, 0b101)), Ok(()));
         assert_eq!(
-            check(&frame(2_000_000, 1)),
+            check(&frame(2_000_000, 1, 0)),
             Err(ValidateError::ValueOutOfRange {
                 field: "Order.px.mantissa",
                 min: -1_000_000,
@@ -442,14 +449,19 @@ const SHARED_CHECKS: &str = r#"
             })
         );
         assert_eq!(
-            check(&frame(0, 3)),
+            check(&frame(0, 3, 0)),
             Err(ValidateError::UnknownEnum { field: "Order.side", discriminant: 3 })
+        );
+        assert_eq!(
+            check(&frame(0, 1, 0b010)),
+            Err(ValidateError::UnknownSetBits { field: "Order.marks", bits: 0b010 })
         );
 "#;
 
 /// A consumer parsed `with_shared` and generated through `generate_multi`
-/// checks the shared composites and enums its fields use: the shared schema's
-/// types travel with the consumer's IR, so `validate()` finds their bounds.
+/// checks the shared composites, enums and sets its fields use: the shared
+/// schema's types travel with the consumer's IR, so `validate()` finds their
+/// bounds.
 #[test]
 fn validate_checks_shared_types_in_a_consumer_module() -> Result<(), Box<dyn std::error::Error>> {
     let shared = parse(SchemaSource::xml(SHARED))?;
