@@ -41,8 +41,21 @@ path = "src/bin/clockcheck.rs"
 name = "counters"
 path = "src/bin/counters.rs"
 
+# The transport latency suite's Aeron arms (IPC, spy, kernel UDP, DPDK: one
+# binary against an external media driver), and its host check.
+[[bin]]
+name = "aeron_lat"
+path = "src/bin/aeron_lat.rs"
+
+[[bin]]
+name = "hostcheck"
+path = "src/bin/hostcheck.rs"
+
 [dependencies]
 env_logger = "0.11"
+# The transport latency suite's shared message, clock, pacer, histograms and
+# rows (io/benches/core, outside the workspace), as every other arm uses.
+ergon-latency-core = { path = "../../io/benches/core" }
 ergon-md-dpdk = { path = ".." }
 hdrhistogram = "7.5"
 libc = "0.2"

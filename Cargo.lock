@@ -913,6 +913,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ergon-latency-core"
+version = "0.1.34"
+dependencies = [
+ "hdrhistogram",
+ "quanta",
+ "sha2",
+]
+
+[[package]]
 name = "ergon-md-dpdk"
 version = "0.1.34"
 dependencies = [
@@ -953,6 +962,7 @@ name = "ergon-md-dpdk-harness"
 version = "0.1.34"
 dependencies = [
  "env_logger",
+ "ergon-latency-core",
  "ergon-md-dpdk",
  "hdrhistogram",
  "libc",
