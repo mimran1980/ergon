@@ -1577,3 +1577,85 @@ fn sqpoll_thread_never_shares_the_polling_cpu() -> R {
         .map_err(|_| "panicked")?
     })
 }
+
+/// `RxMeta::rx_read_ns`: with `rx_read_timestamp`, every read carries the
+/// `CLOCK_REALTIME` time the driver took the bytes, after the server wrote
+/// them, after the kernel's own stamp, and before the handler ran; off (the
+/// default) it stays 0. Every backend.
+#[test]
+fn rx_read_ns_stamps_each_read_only_when_asked() -> R {
+    #[derive(Default)]
+    struct Stamps {
+        metas: Vec<(RxMeta, i64)>,
+        closed: Vec<String>,
+    }
+    impl Handler for Stamps {
+        fn on_closed(&mut self, _: ConnId, e: Error) {
+            self.closed.push(e.to_string());
+        }
+    }
+    impl WsHandler for Stamps {
+        fn on_message(&mut self, _: ConnId, _: u8, _: &[u8], meta: &RxMeta, _: u16) {
+            self.metas.push((*meta, ergon_io::clock::realtime_ns()));
+        }
+    }
+    assert!(
+        !Config::new(Backend::RecvBusy).rx_read_timestamp,
+        "off by default"
+    );
+    each_backend(|b| {
+        for on in [false, true] {
+            let lab = Lab::new()?;
+            let mut cfg = Config::new(b);
+            cfg.wait_us = cfg.wait_us.min(100);
+            cfg.rx_read_timestamp = on;
+            let mut d: Driver<WsConn> = Driver::new(cfg)?;
+            let sent_after = std::thread::scope(|s| -> R<Vec<i64>> {
+                let srv = s.spawn(|| -> R<Vec<i64>> {
+                    let mut p = lab.accept()?;
+                    let mut at = Vec::new();
+                    for i in 0..20u32 {
+                        std::thread::sleep(Duration::from_millis(1));
+                        at.push(ergon_io::clock::realtime_ns());
+                        p.send(ws::OP_TEXT, true, format!("m{i}").as_bytes())?;
+                    }
+                    p.send(ws::OP_CLOSE, true, &[])?;
+                    Ok(at)
+                });
+                d.add(WsConn::connect(
+                    &lab.target("/")?,
+                    lab.client_cfg.clone(),
+                    1 << 20,
+                )?)?;
+                let mut h = Stamps::default();
+                let end = Instant::now() + Duration::from_secs(10);
+                while h.closed.is_empty() {
+                    assert!(Instant::now() < end, "{b}: timed out");
+                    d.poll(&mut h)?;
+                }
+                let at = srv.join().map_err(|_| "server panicked")??;
+                assert_eq!(h.metas.len(), 20, "{b} on={on}: {:?}", h.closed);
+                for (k, (m, handled)) in h.metas.iter().enumerate() {
+                    if !on {
+                        assert_eq!(m.rx_read_ns, 0, "{b}: message {k}");
+                        continue;
+                    }
+                    assert!(
+                        m.rx_read_ns >= at[k],
+                        "{b}: message {k} read before it was sent: {m:?}"
+                    );
+                    assert!(
+                        m.rx_read_ns <= *handled,
+                        "{b}: message {k} read after it was handled"
+                    );
+                    if m.rx_sw_ns != 0 {
+                        assert!(m.rx_read_ns >= m.rx_sw_ns, "{b}: message {k}: {m:?}");
+                    }
+                }
+                Ok(at)
+            })?;
+            assert_eq!(sent_after.len(), 20);
+        }
+        Ok(())
+    })
+}

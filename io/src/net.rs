@@ -2,7 +2,7 @@
 //! connect plus TLS handshake every protocol shares.
 
 use std::io::{ErrorKind, Write};
-use std::net::{SocketAddr, TcpStream};
+use std::net::{IpAddr, SocketAddr, TcpStream};
 use std::os::fd::{AsRawFd, RawFd};
 use std::sync::Arc;
 
@@ -27,6 +27,14 @@ pub struct Target {
     pub headers: Vec<(String, String)>,
     /// A fixed address: skips DNS (the host is still used for TLS and `Host`).
     pub addr: Option<SocketAddr>,
+    /// The local address to connect from: the socket binds it (port 0)
+    /// before connecting. `None`: the kernel picks one by route. It must be
+    /// an address of this host, of the destination's family; on Linux the
+    /// port is chosen at connect, per destination
+    /// (`IP_BIND_ADDRESS_NO_PORT`), so binding uses up no ephemeral ports.
+    /// For several IPs each with its own rate budget, see
+    /// [`crate::limit::SourceIps`].
+    pub source: Option<IpAddr>,
 }
 
 impl Target {
@@ -39,6 +47,7 @@ impl Target {
             path: path.into(),
             headers: Vec::new(),
             addr: None,
+            source: None,
         }
     }
 
@@ -46,6 +55,13 @@ impl Target {
     #[must_use]
     pub const fn with_addr(mut self, addr: SocketAddr) -> Self {
         self.addr = Some(addr);
+        self
+    }
+
+    /// Connects from `ip` ([`Target::source`]).
+    #[must_use]
+    pub const fn with_source(mut self, ip: IpAddr) -> Self {
+        self.source = Some(ip);
         self
     }
 
@@ -67,14 +83,39 @@ impl Target {
     }
 }
 
-/// Starts a non-blocking TCP connect (`TCP_NODELAY` set).
+/// A dial whose source IP ([`Target::source`]) can be set once built.
+///
+/// [`crate::reconnect::Reconnect::poll_sourced`] uses it to bind each
+/// attempt to the IP [`crate::limit::SourceIps`] picked.
+pub trait BindSource {
+    /// Connect from `ip`.
+    fn bind_source(&mut self, ip: IpAddr);
+}
+
+/// Starts a non-blocking TCP connect (`TCP_NODELAY` set), from `source`
+/// when given ([`Target::source`]).
 ///
 /// # Errors
-/// Socket creation or an immediate connect failure.
-pub fn connect_nonblocking(addr: SocketAddr) -> Result<TcpStream> {
+/// [`Error::Config`]: `source` is not of `addr`'s family. Socket creation,
+/// the bind (`AddrNotAvailable`: not an address of this host), or an
+/// immediate connect failure.
+pub fn connect_nonblocking(addr: SocketAddr, source: Option<IpAddr>) -> Result<TcpStream> {
+    if let Some(ip) = source
+        && ip.is_ipv4() != addr.is_ipv4()
+    {
+        return Err(Error::Config(format!(
+            "source {ip} is not of the destination {addr}'s address family"
+        )));
+    }
     let s = Socket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP))?;
     s.set_nonblocking(true)?;
     s.set_tcp_nodelay(true)?;
+    if let Some(ip) = source {
+        // The port is picked at connect, per destination, not at bind.
+        #[cfg(target_os = "linux")]
+        crate::sys::set_bind_address_no_port(s.as_raw_fd())?;
+        s.bind(&SocketAddr::new(ip, 0).into())?;
+    }
     match s.connect(&addr.into()) {
         Ok(()) => {}
         Err(e)
@@ -133,8 +174,8 @@ impl TlsDial {
         })
     }
 
-    pub(crate) fn start(&mut self, addr: SocketAddr) -> Result<()> {
-        self.stage = Stage::Tcp(connect_nonblocking(addr)?);
+    pub(crate) fn start(&mut self, addr: SocketAddr, source: Option<IpAddr>) -> Result<()> {
+        self.stage = Stage::Tcp(connect_nonblocking(addr, source)?);
         Ok(())
     }
 

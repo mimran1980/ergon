@@ -85,7 +85,8 @@ pub use http::{
     Response,
 };
 pub use limit::{
-    BucketId, BucketSpec, BucketStats, Budget, Charge, Class, Limited, Resend, Ticket, Why,
+    BucketId, BucketSpec, BucketStats, Budget, Charge, Class, Limited, Picked, Resend, SourceIp,
+    SourceIps, Ticket, Why,
 };
 pub use net::Target;
 pub use outcome::{Now, Sent, Verdict};
@@ -104,6 +105,12 @@ pub struct RxMeta {
     pub rx_sw_ns: i64,
     /// NIC hardware timestamp (raw PHC ns), 0 if absent.
     pub rx_hw_ns: i64,
+    /// ergon-io's own receive time (`CLOCK_REALTIME` ns, the domain of
+    /// `rx_sw_ns`): read on the polling thread right after the read
+    /// returned the bytes (`io_uring`: when the completion was reaped). 0
+    /// unless `Config::rx_read_timestamp` is on. `rx_read_ns - rx_sw_ns` is
+    /// the time from the kernel's stamp to the driver's read.
+    pub rx_read_ns: i64,
     /// Sequence number of this read within its driver.
     pub read_seq: u64,
     /// What the text check ([`text`]) found for the payload being

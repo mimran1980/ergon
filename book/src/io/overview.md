@@ -78,6 +78,7 @@ Terms this chapter uses. Each links to the section that explains it.
 | [round trip](websocket.md#measured-results) | Request sent to answer received, on one clock. | x86: 1 connection. Graviton: 1–64 sockets on the loop and an HTTP pool of 20. |
 | p50 / p99 / max | pN: N % of samples are at or below it (p50: the median). max: the worst. | In µs. Every figure in `BENCHMARK.md` keeps its max. |
 | [kernel arrival timestamp](backends.md#configuration-strings) | When the kernel stamped a packet's arrival; in `RxMeta`, with the NIC's stamp where it has one. | Starts *arrival → decoded*. Key `rx_timestamps`, on by default. |
+| [read timestamp](backends.md#configuration-strings) | When the driver's read returned the bytes, `CLOCK_REALTIME` like the kernel's stamp; `RxMeta::rx_read_ns`. | `rx_read_ns - rx_sw_ns`: kernel stamp to the driver's read. Key `rx_read_timestamp`, off by default. |
 | arrival → decoded | Kernel arrival timestamp to decoded message, on the receiver's clock only. | Leaves out the interrupt wait and the wait for the next queue poll: compares polling backends only. |
 | whole path | One-way time, sender → decoded, on two hosts' clocks. | Includes everything, but the clocks drift: compare backends within one round only. |
 

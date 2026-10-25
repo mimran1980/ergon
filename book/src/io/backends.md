@@ -47,6 +47,7 @@ every platform.)*
 | `connect_timeout_ms` | 10,000 | the longest connection set-up |
 | `rcvbuf` | 4 MiB | `SO_RCVBUF` for every socket; needs `net.core.rmem_max` at least as large (warned at start-up); 0: the kernel's autotuning |
 | `rx_timestamps` | `true` | kernel software, and where supported NIC hardware, receive timestamps in `RxMeta` |
+| `rx_read_timestamp` | `false` | ergon-io's own receive time in `RxMeta::rx_read_ns`: one `CLOCK_REALTIME` read (vDSO) per read with data, right after the read returns (`io_uring`: when the completion is reaped); off, no clock read and the field is 0 |
 | `quickack_check` | `warn` | `off`, `warn` or `require` |
 | `keepalive_idle_s` | 10 | TCP keepalive: idle seconds before the first probe; 0: off |
 | `keepalive_interval_s`, `keepalive_count` | 5, 3 | seconds between probes, probes before the drop |

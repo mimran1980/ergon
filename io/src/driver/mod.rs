@@ -518,7 +518,8 @@ pub struct Driver<E> {
     imp: Imp,
     conns: Conns<E>,
     stats: DriverStats,
-    read_seq: u64,
+    /// Read sequence numbers and ergon-io's own receive stamp.
+    reads: Reads,
     /// An added endpoint holds input that arrived during its handshake; the next
     /// `poll` delivers it before reading the socket.
     buffered: bool,
@@ -674,7 +675,10 @@ impl<E: Endpoint> Driver<E> {
             imp,
             conns: Conns::with_capacity(INITIAL_SLOTS),
             stats: DriverStats::default(),
-            read_seq: 0,
+            reads: Reads {
+                seq: 0,
+                stamp: cfg.rx_read_timestamp,
+            },
             buffered: false,
             pending: Vec::new(),
             unreported: Vec::new(),
@@ -1182,21 +1186,11 @@ impl<E: Endpoint> Driver<E> {
         };
         if r.is_ok() {
             r = match &mut self.imp {
-                Imp::Epoll(e) => e.poll(
-                    &mut self.conns,
-                    handler,
-                    &mut self.stats,
-                    &mut self.read_seq,
-                ),
+                Imp::Epoll(e) => e.poll(&mut self.conns, handler, &mut self.stats, &mut self.reads),
                 // Receives, sends and the kernel entry in one pass, so re-arms
                 // and sends share one io_uring_enter.
                 #[cfg(feature = "uring")]
-                Imp::Uring(u) => u.poll(
-                    &mut self.conns,
-                    handler,
-                    &mut self.stats,
-                    &mut self.read_seq,
-                ),
+                Imp::Uring(u) => u.poll(&mut self.conns, handler, &mut self.stats, &mut self.reads),
             };
         }
         // What the receive pass queued (replies, pongs) goes out now, and
@@ -1508,6 +1502,32 @@ fn advance_one<E: Endpoint>(
     r
 }
 
+/// The driver's reads: their sequence number, and whether each is stamped
+/// with ergon-io's own receive time (`Config::rx_read_timestamp`).
+pub struct Reads {
+    seq: u64,
+    stamp: bool,
+}
+
+impl Reads {
+    /// [`RxMeta`] for a read that returned data through `slot`: the next
+    /// sequence number, the kernel's stamps, and with `stamp` the time now
+    /// (read first, nearest the read). Off, no clock is read.
+    #[inline]
+    pub fn next(&mut self, slot: &sys::MsgSlot) -> RxMeta {
+        let rx_read_ns = if self.stamp {
+            crate::clock::realtime_ns()
+        } else {
+            0
+        };
+        self.seq += 1;
+        RxMeta {
+            rx_read_ns,
+            ..slot.meta(self.seq)
+        }
+    }
+}
+
 /// Reads once from `conn` through `slot` and delivers what arrived: `true`
 /// when bytes were delivered (which may have queued a send).
 fn recv_one<E, H>(
@@ -1516,7 +1536,7 @@ fn recv_one<E, H>(
     slot: &mut sys::MsgSlot,
     handler: &mut H,
     stats: &mut DriverStats,
-    read_seq: &mut u64,
+    reads: &mut Reads,
 ) -> Result<bool>
 where
     E: Receive<H>,
@@ -1531,9 +1551,8 @@ where
         }
         Some(0) => Err(Error::Closed),
         Some(n) => {
-            *read_seq += 1;
+            let meta = reads.next(slot);
             stats.completions += 1;
-            let meta = slot.meta(*read_seq);
             stats.messages += conn.on_received(id, n, &meta, handler)? as u64;
             Ok(true)
         }

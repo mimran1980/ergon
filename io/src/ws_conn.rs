@@ -55,9 +55,8 @@ use crate::ws::{self, Close};
 /// just before delivery; [`RxMeta::text`] carries the outcome.
 ///
 /// A streamed message can end without a `fin` fragment: a Close inside it,
-/// [`Flow::SkipRest`], or, under
-/// [`TextCheck::AsciiChecked`]`(`[`NonAscii::Skip`]`)`, a fragment that is
-/// not ASCII. In that last case fragments before it were already delivered
+/// [`Flow::SkipRest`], or, under [`TextCheck::AsciiChecked`] with
+/// [`NonAscii::Skip`], a fragment that is not ASCII. In that last case fragments before it were already delivered
 /// and no callback says the message was dropped (it counts in
 /// [`WsStats::skipped`]); the next message starts again at `index` 0.
 ///
@@ -1620,6 +1619,21 @@ impl WsDial {
     }
 }
 
+impl WsDial {
+    /// Where it connects: the target it was built with, its source set by
+    /// [`crate::net::BindSource`] if that was called.
+    #[must_use]
+    pub const fn target(&self) -> &Target {
+        &self.target
+    }
+}
+
+impl crate::net::BindSource for WsDial {
+    fn bind_source(&mut self, ip: std::net::IpAddr) {
+        self.target.source = Some(ip);
+    }
+}
+
 impl DialIo for WsDial {
     type Conn = WsConn;
 
@@ -1636,7 +1650,7 @@ impl DialIo for WsDial {
     }
 
     fn start(&mut self, addr: SocketAddr) -> Result<()> {
-        self.tls.start(addr)
+        self.tls.start(addr, self.target.source)
     }
 
     fn step(&mut self) -> Result<Option<WsConn>> {

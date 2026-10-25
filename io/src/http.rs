@@ -1646,7 +1646,7 @@ impl DialIo for HttpDial {
     }
 
     fn start(&mut self, addr: SocketAddr) -> Result<()> {
-        self.tls.start(addr)
+        self.tls.start(addr, self.target.source)
     }
 
     fn step(&mut self) -> Result<Option<HttpConn>> {
@@ -1680,7 +1680,20 @@ impl DialIo for HttpDial {
     }
 }
 
+impl crate::net::BindSource for HttpDial {
+    fn bind_source(&mut self, ip: std::net::IpAddr) {
+        self.target.source = Some(ip);
+    }
+}
+
 impl HttpDial {
+    /// Where it connects: the target it was built with, its source set by
+    /// [`crate::net::BindSource`] if that was called.
+    #[must_use]
+    pub const fn target(&self) -> &Target {
+        &self.target
+    }
+
     /// Connects and runs the TLS handshake, waiting until done: a convenience
     /// for tools and tests. In a busy-spin loop use `Driver::connect`. Without
     /// [`Target::addr`] the host is resolved with the system resolver (blocking).

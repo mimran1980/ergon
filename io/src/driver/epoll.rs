@@ -163,7 +163,7 @@ impl Epoll {
         conns: &mut Conns<E>,
         handler: &mut H,
         stats: &mut DriverStats,
-        read_seq: &mut u64,
+        reads: &mut super::Reads,
     ) -> Result<()>
     where
         E: Receive<H>,
@@ -171,13 +171,13 @@ impl Epoll {
     {
         if self.mode == Mode::Recv && !self.per_queue {
             for i in 0..conns.len_slots() {
-                self.recv_index(conns, i, handler, stats, read_seq);
+                self.recv_index(conns, i, handler, stats, reads);
             }
         } else if self.per_queue {
             self.refresh_reps(conns);
             for k in 0..self.reps.len() {
                 let i = self.reps[k];
-                self.recv_index(conns, i, handler, stats, read_seq);
+                self.recv_index(conns, i, handler, stats, reads);
             }
             let n = self.wait(stats)?;
             for k in 0..n {
@@ -186,13 +186,13 @@ impl Epoll {
                 if self.polled.get(i).copied().unwrap_or(false) {
                     continue;
                 }
-                self.recv_index(conns, i, handler, stats, read_seq);
+                self.recv_index(conns, i, handler, stats, reads);
             }
         } else {
             let n = self.wait(stats)?;
             for k in 0..n {
                 let i = usize::try_from(self.events[k].u64).unwrap_or(usize::MAX);
-                self.recv_index(conns, i, handler, stats, read_seq);
+                self.recv_index(conns, i, handler, stats, reads);
             }
         }
         Ok(())
@@ -233,7 +233,7 @@ impl Epoll {
         i: usize,
         handler: &mut H,
         stats: &mut DriverStats,
-        read_seq: &mut u64,
+        reads: &mut super::Reads,
     ) where
         E: Receive<H>,
         H: Handler,
@@ -242,7 +242,7 @@ impl Epoll {
         let Some(conn) = conns.at(i) else {
             return;
         };
-        match recv_one(conn, id, &mut self.slot, handler, stats, read_seq) {
+        match recv_one(conn, id, &mut self.slot, handler, stats, reads) {
             Ok(false) => {}
             // A reply (a Pong) may be queued: list it for the send pass.
             Ok(true) => {

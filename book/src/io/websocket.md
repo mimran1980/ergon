@@ -11,7 +11,8 @@
 - Text is checked only when asked, and only on kept messages: UTF-8, or
   one cheaper ASCII pass ([Text checks](#text-checks)).
 - `RxMeta` carries the read's kernel receive timestamp and, where the NIC
-  has one, its hardware timestamp.
+  has one, its hardware timestamp; with `rx_read_timestamp`, also the time
+  the driver read the bytes (`rx_read_ns`).
 - Timers (Pings, timeouts, the close wait) run on the driver's deadline
   check (every 250 µs), never on the read or send path.
 
@@ -448,6 +449,35 @@ A refused handshake, in `on_closed`:
   adapter, which can halt a bucket with `Budget::banned`.
 - Give the HTTP pool a bucket of its own ([HTTP client](http-client.md)):
   venues count WebSocket connects.
+
+#### Several source IPs
+
+When the host has several IPs and the venue limits connects (and requests)
+per IP, give each IP its own buckets and let `SourceIps` pick one per
+connect:
+
+```rust,ignore
+{{#include ../../../io/tests/reconnect.rs:sourced}}
+```
+
+```rust,ignore
+{{#include ../../../io/tests/reconnect.rs:sourced_poll}}
+```
+*(From `io/tests/reconnect.rs`.)*
+
+| what | how |
+|---|---|
+| pick | `SourceIps::try_connect` charges one connect to the next IP with room, round-robin; a held or full IP is passed over |
+| none has room | refused with the soonest `Limited`: under `poll_sourced` the link waits for it (not a failed attempt), at most `max_ms` |
+| bind | the dial connects from the pick (`BindSource`, `Target::source`); on Linux with `IP_BIND_ADDRESS_NO_PORT`, so binding uses up no ephemeral ports |
+| requests | `Reconnect::source(link)` names the IP; charge its `SourceIp::sends` bucket with the account's |
+| without `Reconnect` | `try_connect`, then `Target::with_source(picked.ip)`; refund `picked.ticket` if the connect never went out |
+
+- The source must be an address of this host, of the destination's
+  family: the other family is `Error::Config` before any connect; an
+  address the host does not have fails the connect (`AddrNotAvailable`).
+- A dial that cannot be built or started still spends its connect unit:
+  the count errs on the safe side.
 
 ## Sending
 
