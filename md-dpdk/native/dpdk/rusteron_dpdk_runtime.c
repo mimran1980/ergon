@@ -605,14 +605,20 @@ static int rusteron_dpdk_ena_llq_check(const rusteron_dpdk_transport_t *native, 
 /* ENA Express (SRD) carries UDP only in IP packets of at most this many
  * bytes (AWS: ENA Express's UDP mode needs an MTU of 8900 or less); the
  * ena_srd_mode xstat's bit 1 says its UDP mode is on (0 off, 1 SRD for TCP
- * only, 2 or 3 UDP too). */
+ * only, 2 or 3 UDP too). A larger packet is not lost: measured on
+ * c6gn.4xlarge (ENA 2.17.4g, 2026-10-25), UDP of 8,901 to 9,001 IP bytes
+ * arrived whole, counted in ena_srd_eligible_tx_pkts but not in
+ * ena_srd_tx_pkts: ENA sent it without SRD. */
 #define RUSTERON_DPDK_ENA_EXPRESS_UDP_MTU 8900
 #define RUSTERON_DPDK_ENA_SRD_MODE_UDP 0x2ULL
 
-/* Refuse an ENA whose ENA Express runs UDP over SRD when this transport's
- * IP packets (l3_mtu) exceed what SRD carries: the larger ones would be lost.
- * Read once at start from the PMD's ena_srd_mode xstat (on ENA an admin
- * command); a port without it, or with an MTU within the limit, passes. */
+/* Warn, once at start, when an ENA runs ENA Express's UDP over SRD and this
+ * transport's IP packets (l3_mtu) can exceed what SRD carries: those leave
+ * SRD for ENA's plain path (its bandwidth and tail-latency gains do not
+ * apply to them), while smaller frames of the same flow stay on SRD. Read
+ * from the PMD's ena_srd_mode xstat (on ENA an admin command); a port
+ * without it, or with an MTU within the limit, says nothing. Never refuses:
+ * nothing is lost. */
 static int rusteron_dpdk_ena_express_check(const rusteron_dpdk_transport_t *native, const rusteron_dpdk_port_t *p,
                                            uint16_t l3_mtu)
 {
@@ -651,16 +657,14 @@ static int rusteron_dpdk_ena_express_check(const rusteron_dpdk_transport_t *nati
     {
         return 0;
     }
-    char message[512];
-    snprintf(message, sizeof(message),
-             "%s (port %u) runs ENA Express with UDP over SRD (ena_srd_mode %llu), which carries IP packets of at "
-             "most %d bytes; max_aeron_mtu %zu needs %u: lower RUSTERON_DPDK_MAX_AERON_MTU to at most %d, or turn "
-             "ENA Express's UDP off on the ENI",
-             p->pci, (unsigned)p->port_id, (unsigned long long)values[srd], RUSTERON_DPDK_ENA_EXPRESS_UDP_MTU,
-             native->config.max_aeron_mtu, (unsigned)l3_mtu,
-             (RUSTERON_DPDK_ENA_EXPRESS_UDP_MTU - RUSTERON_DPDK_IP_UDP_OVERHEAD) / 32 * 32);
-    rusteron_dpdk_set_error_code(message, RUSTERON_DPDK_ERR_INVALID_CONFIG);
-    return -1;
+    fprintf(stderr,
+            "WARNING ergon-md-dpdk: %s (port %u) runs ENA Express with UDP over SRD (ena_srd_mode %llu), which "
+            "carries IP packets of at most %d bytes; max_aeron_mtu %zu makes packets of up to %u, and ENA sends "
+            "the larger ones without SRD. RUSTERON_DPDK_MAX_AERON_MTU of at most %d keeps every frame on SRD\n",
+            p->pci, (unsigned)p->port_id, (unsigned long long)values[srd], RUSTERON_DPDK_ENA_EXPRESS_UDP_MTU,
+            native->config.max_aeron_mtu, (unsigned)l3_mtu,
+            (RUSTERON_DPDK_ENA_EXPRESS_UDP_MTU - RUSTERON_DPDK_IP_UDP_OVERHEAD) / 32 * 32);
+    return 0;
 }
 
 static int rusteron_dpdk_init_port(rusteron_dpdk_transport_t *native, rusteron_dpdk_port_t *p)

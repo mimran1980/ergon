@@ -36,7 +36,7 @@ Terms this chapter uses. Host, Kubernetes and Java terms:
 | idle strategy, park | what an Aeron thread does with no work: `spin` and `noop` never sleep; `backoff` spins, yields, then parks (sleeps) ever longer | spinning needs a CPU of its own |
 | log buffer, term buffer | Aeron's memory-mapped file of one stream's messages, in three term buffers | [on hugepages, not sparse](configuration.md#aeron-settings) |
 | [receiver window, status message](configuration.md#aeron-settings) | window: the bytes a sender may have in flight. Status message: the receiver's "send more" | on MANA, sized to what the 256-entry ring holds (not measured here) |
-| heartbeat, keep-alive | heartbeat: Aeron's frame on a quiet stream. Keep-alive: your own small message | [why a keep-alive](configuration.md#aeron-settings); its effect is not measured here |
+| heartbeat, keep-alive | heartbeat: Aeron's frame on a quiet stream. Keep-alive: your own small message | [why a keep-alive](configuration.md#aeron-settings): a quiet path is up to 9.8 µs slower at p50; one every 100 µs removes that |
 | [kernel UDP](#what-it-is) | the normal path: NIC interrupt, the kernel's network stack, a system call | no setup, every tool works ([tuning](#tuning-kernel-udp-first)) |
 | [kernel bypass](#why-bypass-is-faster-and-what-it-costs) | one process takes a NIC from the kernel and reads and writes its queues itself | lower median and max in these runs; costs cores, NICs, root setup and upkeep |
 | DPDK | the Data Plane Development Kit: the kernel-bypass library this crate uses | |
@@ -196,7 +196,7 @@ are the driver's (`AeronStat`, label `rusteron-dpdk role=... <name>`); type
 | send: next hop unresolved or silent | `arp-miss`: waits during the first 3 s of resolution, then dropped (one `EHOSTUNREACH`) | the peer or gateway answering ARP; a silent gateway warns at start |
 | send: rate cap | `tx-paced`: deferred, not lost | raise `RUSTERON_DPDK_TX_RATE_MBPS` / `_TX_ROUTE_MBPS` |
 | send: datagram above the channel MTU | `error` | Aeron's MTU within `RUSTERON_DPDK_MAX_AERON_MTU` |
-| ENA Express, UDP over SRD | refused at start: packets above 8,900 B would be lost | MTU 8,864 or less, or ENA Express's UDP off on the ENI |
+| ENA Express, UDP over SRD | not lost: packets above 8,900 B go without SRD (a warning at start) | MTU 8,864 or less keeps every frame on SRD |
 | VPC: the instance's allowances (bandwidth, packets a second, connections) | ENA: type 92 `bw_in_allowance_exceeded`, `bw_out_allowance_exceeded`, `pps_allowance_exceeded`, `conntrack_allowance_exceeded`, `linklocal_allowance_exceeded`. MANA: none | a larger instance, or less traffic |
 | path: a link with a smaller MTU | `icmp-frag-needed`, and a line on stderr naming the router | a lower `RUSTERON_DPDK_MAX_AERON_MTU` |
 | NIC: link down | `nic-link-changes` (where the NIC raises link interrupts) | the network; the frames are gone |
