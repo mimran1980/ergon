@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # ergon-shared-cpus on EKS AL2023 nodes prepared by node/eks-nodeconfig.yaml
 # (c9g.2xlarge: 8 CPUs, reservedSystemCPUs 0-1, IRQs on 0, shared CPU 1).
-# Needs chart 0.1.2 (in git, not published): nodeadm's kubelet config is
+# Needs chart 0.1.2: nodeadm's kubelet config is
 # /etc/kubernetes/kubelet/config.json plus the config.json.d drop-ins.
 # Not run on EKS.
 config:

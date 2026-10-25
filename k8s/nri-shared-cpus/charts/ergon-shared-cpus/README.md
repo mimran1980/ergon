@@ -30,7 +30,7 @@ merged with its drop-in directory when `kubeletConfigDir` is set.
 
 ```sh
 helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus \
-  --version 0.1.1 \
+  --version 0.1.2 \
   --namespace ergon-system --create-namespace \
   --set-string config.sharedCpus=0 \
   --set 'config.namespaces={trading}' \
@@ -39,11 +39,7 @@ helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus
   --set hostContract.proc.enabled=true
 ```
 
-The three `hostContract` flags are the defaults from chart 0.1.2; 0.1.1
-needs them.
-
-**EKS AL2023** (needs chart 0.1.2, not yet published; not verified on
-EKS). nodeadm writes `/etc/kubernetes/kubelet/config.json` and the
+**EKS AL2023** (not verified on EKS). nodeadm writes `/etc/kubernetes/kubelet/config.json` and the
 `NodeConfig` kubelet settings as the drop-in
 `/etc/kubernetes/kubelet/config.json.d/40-nodeadm.conf`, and runs the
 kubelet with `--config-dir` on that directory:
@@ -61,8 +57,7 @@ helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus
   --set hostContract.proc.enabled=true
 ```
 
-Chart 0.1.1 rejects `kubeletConfigDir`; without it every hot create on
-EKS AL2023 is refused.
+Without `kubeletConfigDir` every hot create on EKS AL2023 is refused.
 
 ## Key values
 

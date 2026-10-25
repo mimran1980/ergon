@@ -1,26 +1,21 @@
 # Release gate
 
-## Current release: 0.1.1
+## Current release: 0.1.2
 
 | what | value |
 |---|---|
-| image | `ghcr.io/mimran1980/ergon-shared-cpus:0.1.1` (and `:latest`) |
-| image digest | `sha256:69893e0c23ec6c3656053c0d6c4a06c676e33b726d56f362a30ce760908796c0` |
-| chart | `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.1` |
-| chart digest | `sha256:77a65305a45ea1b376ce80f9b1d5234b9061f4066a8c5baf5efdb892854fc0d8` |
-| source | `515846b0`, Actions run [39853440732](https://github.com/mimran1980/ergon/actions/runs/39853440732) |
-| `--version` (amd64, arm64) | `ergon-shared-cpus 0.1.1 515846b0201b5fd70a7a6cf3a88839b6180fa9c1 nri=v0.12.3` |
-| checked | `helm template` of the OCI chart renders that image |
-| not run | kind install of 0.1.1 |
-| pending publish | **0.1.2, image and chart.** Image: `--kubelet-config-dir` merges the kubelet's drop-in directory (EKS AL2023 `config.json.d`). Chart: `hostContract.kubeletConfig`, `sys` and `proc` on by default; `hostContract.kubeletConfigDir` (off); `appVersion` 0.1.2. The kubeadm install command works on either chart; the EKS AL2023 one needs chart 0.1.2 |
+| image | `ghcr.io/mimran1980/ergon-shared-cpus:0.1.2` (and `:latest`) |
+| image digest | index `sha256:33ddd06f6b2e58bae6a2bf13092366482b5a292bc50a01223b0b383b66026da6` (amd64 `sha256:63946a9a9c11ec98be252778c16f9e7020186b1a5400ee711251b6510fb748a9`, arm64 `sha256:0d341b3cc0f9c125708120e216e12b61ed7827c74d24851c51afec10c728e102`); the index carries the `org.opencontainers.image.description` annotation |
+| chart | `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.2`, appVersion `0.1.2` |
+| chart digest | `sha256:145054055d604e8a866bf86556cd3a1b46b92b1b6e3347183b8033dd7112b14d` |
+| source | `85098f8b`, Actions run [40173324072](https://github.com/mimran1980/ergon/actions/runs/40173324072) (unit, vet, static build, helm lint and template, push) |
+| `--version` (amd64, arm64) | `ergon-shared-cpus 0.1.2 85098f8b16e17d80747c73d6069c1ec07d70496a nri=v0.12.3` |
+| checked | `helm template` of the OCI chart renders image `:0.1.2` with `--kubelet-config`; the kind e2e (`test/e2e.sh`) at that source: 18 steps, 0 failed (2026-10-25) |
 | not verified | EKS |
 | measured | the hot thread with helpers on the shared CPU (the checkout, on kind on one Azure Cobalt VM, THP `never` and the fair server off on the isolated CPUs): p50 0.02 µs, p99.99 0.03 µs, max 4.81 to 5.52 µs, 0 involuntary switches a 60 s rep; the hypervisor's floor 3.5 to 5.5 µs. Shared-CPU scaling as designed ([BENCHMARKS.md](BENCHMARKS.md)) |
 | not measured | a helper's wake-up wait on a shared CPU, the pin's cost |
 
-The 0.1.1 package's install NOTES say the chart is not published. It is
-published; ignore that line.
-
-The EKS lane and the open benchmarks below are open for 0.1.1. Do not
+The EKS lane and the open benchmarks below are open for 0.1.2. Do not
 invent their figures.
 
 ## 1. Code defects
@@ -128,8 +123,7 @@ The EKS row and the benchmark rows are open. Order for a tag:
    chart on a test cluster.
 
 The workflow packages the chart at the `tag` input as both version and
-appVersion and pushes the image at that tag. 0.1.2 changes both, so it
-publishes with `tag: 0.1.2` unchanged.
+appVersion and pushes the image at that tag.
 
 Image and chart names, in one place:
 

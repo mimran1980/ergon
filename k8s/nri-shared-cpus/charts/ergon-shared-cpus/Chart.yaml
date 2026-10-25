@@ -5,7 +5,7 @@ description: >-
   Give a Kubernetes pod its exclusive CPUs and the node's shared housekeeping
   CPUs. Containerd NRI plugin and kubelet device plugin in one daemon.
 type: application
-# OCI chart 0.1.1 is published; 0.1.2 is not yet. EKS is not verified.
+# OCI chart 0.1.2 is published. EKS is not verified.
 # Latency is not measured.
 version: 0.1.2
 # Default image tag. Image 0.1.2 adds --kubelet-config-dir.

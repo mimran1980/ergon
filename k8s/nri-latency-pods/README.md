@@ -9,7 +9,7 @@ Latency-pod extensions for Kubernetes. One directory, three kinds of thing:
 | admission | things a policy should refuse or strip | `admission/` here (ValidatingAdmissionPolicy) |
 
 The grants are in the published `ergon-shared-cpus` image
-(`ghcr.io/mimran1980/ergon-shared-cpus:0.1.1`). This directory is not a
+(`ghcr.io/mimran1980/ergon-shared-cpus:0.1.2`). This directory is not a
 second image. Its admission YAML and node units stay in the repo. Experimental.
 EKS is not verified. Latency figures are not measured.
 
@@ -274,12 +274,11 @@ test/e2e.sh
      --set hostContract.proc.enabled=true
    ```
 
-   Needs chart 0.1.2 (image 0.1.2), not yet published. nodeadm writes the
+   nodeadm writes the
    base `/etc/kubernetes/kubelet/config.json` and the `NodeConfig` kubelet
    settings as the drop-in `config.json.d/40-nodeadm.conf`;
    `kubeletConfigDir` mounts that directory and the hot-pod check merges
-   it as the kubelet does. Chart 0.1.1 rejects `kubeletConfigDir`; without
-   it every hot pod is refused on AL2023 and unlabelled pods still get the
+   it as the kubelet does. Without `kubeletConfigDir` every hot pod is refused on AL2023 and unlabelled pods still get the
    grants.
 
    Image: `ghcr.io/mimran1980/ergon-shared-cpus:0.1.2` (the chart's
@@ -289,8 +288,8 @@ test/e2e.sh
 3. `kubectl apply -f admission/priority-class.yaml -f admission/validating-admission-policy.yaml`
 4. Label the node `ergon.io/shared-cpus=true`. The label
    `ergon.io/latency: "hot"` is what the admission policy and the plugin's
-   hot-pod check match; with chart 0.1.1 that check refuses the pod on
-   AL2023 (step 2).
+   hot-pod check match; without `kubeletConfigDir` that check refuses the
+   pod on AL2023 (step 2).
 5. Read `node-checks.md` and run those checks on every node before a run.
 
 ## Security cost, plainly

@@ -10,9 +10,9 @@ Terms: [deployment glossary](overview.md#glossary).
 
 This chapter is the list. It is not an image and it is not a second chart.
 The shared-CPU grant is [Shared CPUs](shared-cpus.md): public image
-`ghcr.io/mimran1980/ergon-shared-cpus:0.1.1` and chart
-`oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.1`
-(EKS AL2023 hot pods need chart 0.1.2:
+`ghcr.io/mimran1980/ergon-shared-cpus:0.1.2` and chart
+`oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.2`
+(EKS AL2023 hot pods need `kubeletConfigDir`:
 [EKS install](shared-cpus.md#use-the-public-chart)).
 The refusal of an exec probe on a pod labelled `ergon.io/latency: hot` is
 the admission policy in [Latency Pods](latency-pods.md). Hugepages, the
