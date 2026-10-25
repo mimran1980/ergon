@@ -152,7 +152,11 @@ reserved="0,1"   # 0 = system + the shared pool, 1 = NIC IRQs
 isolated="2,3"   # the latency pod's exclusive CPUs
 shared_cpus="0"  # the plugin's sharedCpus, inside reserved minus the IRQ CPU
 irq_cpu=1
-pod_cpus=2
+# One exclusive CPU a pod: 4 CPUs less 2 reserved leave 2000m allocatable, and
+# the node's own pods (aws-node, kube-proxy, the plugin) request part of it,
+# so a cpu: 2 Guaranteed pod never schedules (run eks-nri-20261025-082023:
+# "Insufficient cpu"). The gap spinner then has no CPU of its own and is off.
+pod_cpus=${EKS_POD_CPUS:-1}
 
 cluster_role=$N-cluster
 node_role=$N-node
@@ -290,7 +294,9 @@ fleets_left() {
             [[ -z $id ]] && continue
             state=$(ec2 describe-fleets --fleet-ids "$id" --query 'Fleets[0].FleetState' --output text 2>/dev/null || true)
             case $state in
-                active|deleted_running|deleted_terminating) printf '%s\n' "$id" ;;
+                # deleted_terminating is a record whose instances are going: the
+                # instances check above covers them, and the record bills nothing
+                active|deleted_running) printf '%s\n' "$id" ;;
             esac
         done <"$out/fleet-ids"
     fi
@@ -1907,14 +1913,18 @@ expand() { echo "\$1" | tr ',' '\n' | while read -r r; do case \$r in *-*) seq "
 set -- \$(expand "\$iso")
 [ \$# -ge 1 ] || { echo "rep: ERGON_ISOLATED_CPUS=\$iso names no CPU" >&2; exit 1; }
 cpu_client=\$1
-cpu_gap=\${2:-\$1}
+cpu_gap=\${2:-}
 
 # The isolated child. The env carries the node's path; inside the pod's own
 # cgroup namespace the child is a directory of the namespace root.
 $partition_enter
 
-gapspin \$cpu_gap 50 > /data/gapspin-$which.log 2>&1 &
-gap=\$!
+# the gap spinner only on a second exclusive CPU, never beside the client
+gap=
+if [ -n "\$cpu_gap" ]; then
+    gapspin \$cpu_gap 50 > /data/gapspin-$which.log 2>&1 &
+    gap=\$!
+fi
 $cmd \$cpu_client &
 app=\$!
 
@@ -2106,6 +2116,20 @@ SH
 }
 eks_lane
 
+# The VPC CNI attaches its warm ENI after boot, and that ENA's queue IRQs came
+# up with requested affinity 0-1 (irqaffinity=1 notwithstanding), which the
+# plugin refuses hot pods for (run eks-nri-20261025-082023, ens35). Re-pin
+# every movable IRQ to the IRQ CPU before each measurement.
+repin_irqs() {
+    local n
+    for n in a b; do
+        on_host "$n" >>"$out/repin.log" 2>&1 <<SH
+c=0; for f in /proc/irq/*/smp_affinity_list; do echo $irq_cpu > \$f 2>/dev/null && c=\$((c + 1)); done
+echo "\$(date +%T) $n: \$c IRQs on CPU $irq_cpu"
+SH
+    done
+}
+
 # ---- phase X -------------------------------------------------------------------
 #
 # Two latency pods (the M3 manifest: exclusive CPUs, the shared CPU, the
@@ -2169,6 +2193,7 @@ EOF
 phase_x_run() {
     local ok=0 w cell lay load port=23100 pong_bg
     log "---- phase X: placement, wake-up wait, timer slack, pin cost, SQPOLL placement (${x_seconds}s a cell)"
+    repin_irqs
     k delete pod -n ergon-latency-pods -l 'app in (ergon-lab-a,ergon-lab-b)' --ignore-not-found >/dev/null 2>&1
     make_pod M3 a 0 0 >"$out/k8s/pod-a-X.yaml"
     make_pod M3 b 0 0 >"$out/k8s/pod-b-X.yaml"
@@ -2209,8 +2234,11 @@ phase_x_run() {
     # SQPOLL placement, a round trip between the nodes at 10,000/s: no io_uring
     # (A/A), SQPOLL on the shared CPU, SQPOLL on the second exclusive CPU; then
     # the shared CPU loaded on both nodes
-    for cell in "busy - U0-busy-A" "sqshared - U1-sqpoll-shared" "sqexcl - U2-sqpoll-exclusive" "busy - U0-busy-B" \
-        "busy load U0-busy-load" "sqshared load U1-sqpoll-shared-load" "sqexcl load U2-sqpoll-exclusive-load"; do
+    local cells=("busy - U0-busy-A" "sqshared - U1-sqpoll-shared" "busy - U0-busy-B" "sqshared - U1-sqpoll-shared-B"
+        "busy load U0-busy-load" "sqshared load U1-sqpoll-shared-load")
+    # SQPOLL on a second exclusive CPU needs a pod with two
+    ((pod_cpus >= 2)) && cells+=("sqexcl - U2-sqpoll-exclusive" "sqexcl load U2-sqpoll-exclusive-load")
+    for cell in "${cells[@]}"; do
         set -- $cell
         lay=$1 load=$2
         if [[ $load == load ]]; then
@@ -2247,6 +2275,7 @@ for mode in $modes; do
         run=$mode-$rep
         ping_ep=$ip_b:$((22200 + 2 * rep))
         pong_ep=$ip_a:$((22201 + 2 * rep))
+        repin_irqs
         make_pod "$mode" a "$ping_ep" "$pong_ep" >"$out/k8s/pod-a-$run.yaml"
         make_pod "$mode" b "$ping_ep" "$pong_ep" >"$out/k8s/pod-b-$run.yaml"
         if ! k apply -f "$out/k8s/pod-a-$run.yaml" >>"$out/apply.log" 2>&1 ||
