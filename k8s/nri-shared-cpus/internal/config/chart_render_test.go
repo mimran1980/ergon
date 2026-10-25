@@ -393,3 +393,52 @@ func daemonPod(t *testing.T, rendered string) string {
 	t.Fatal("no DaemonSet in render")
 	return ""
 }
+
+// The chart takes seccomp.ioUring and schedFifo as a mode string or a
+// YAML boolean, flat or in a profile, and renders what config.Parse reads.
+func TestHelmSwitchSpellings(t *testing.T) {
+	chart := chartRoot(t)
+	for _, c := range []struct {
+		io, fifo string
+		on       bool
+	}{
+		{"on", "yes", true},
+		{"true", "true", true},
+		{"1", "1", true},
+		{"Allow", "THREAD", true},
+		{`"yes"`, `"On"`, true},
+		{"off", "off", false},
+		{"false", "no", false},
+		{"0", "0", false},
+		{`"No"`, `"FALSE"`, false},
+	} {
+		flat := "config:\n  seccomp:\n    ioUring: " + c.io + "\n  schedFifo: " + c.fifo + "\n"
+		profile := "config:\n  nodeProfileLabel: ergon.io/node-profile\n  profiles:\n    p:\n" +
+			"      sharedCpus: \"0\"\n      seccomp:\n        ioUring: " + c.io + "\n      schedFifo: " + c.fifo + "\n"
+		for _, values := range []string{flat, profile} {
+			file := filepath.Join(t.TempDir(), "values.yaml")
+			if err := os.WriteFile(file, []byte(values), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			raw := configYAML(t, helmOut(t, "template", "rel", chart, "-f", file))
+			cfg, err := Parse([]byte(raw))
+			if values == profile {
+				cfg, err = Resolve([]byte(raw), "p")
+			}
+			if err != nil {
+				t.Fatalf("%q: %v\n%s", values, err, raw)
+			}
+			if cfg.SeccompIOUring != c.on || (cfg.SchedFifo == SchedFifoThread) != c.on {
+				t.Fatalf("%q: ioUring=%v schedFifo=%s, want on=%v\n%s", values, cfg.SeccompIOUring, cfg.SchedFifo, c.on, raw)
+			}
+		}
+	}
+	t.Log("chart renders boolean and mode spellings that config.Parse reads")
+	for _, set := range []string{"config.schedFifo=allow", "config.seccomp.ioUring=thread", "config.schedFifo=2", "config.seccomp.ioUring=y"} {
+		cmd := exec.Command(helmBin(t), "template", "rel", chart, "--set-string", set)
+		if err := cmd.Run(); err == nil {
+			t.Fatalf("--set-string %s must fail the schema", set)
+		}
+	}
+	t.Log("schema refuses the other field's mode and other words")
+}
