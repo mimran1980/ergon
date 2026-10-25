@@ -275,3 +275,30 @@ fn require_fails_closed_on_an_unknown_result_of_a_callers_own_check() -> R {
     );
     Ok(())
 }
+
+/// The whole classification, pinned: the exhaustive `match` that used to
+/// force it is gone, so a check dropped from (or added to) the subsystem
+/// list must fail here. T11 matters most: a pod normally cannot see the
+/// time daemon, and blocking on it would refuse every pod start.
+#[test]
+fn unknown_stops_require_classifies_every_built_in_check() {
+    let blocks = [
+        "T1", "T2", "T7", "T8", "T9", "T10", "T12", "K1", "K2", "K3", "K4", "K5", "M1", "M2", "M3",
+    ];
+    let allowed = [
+        "T3", "T4", "T5", "T6", "T11", "K6", "K7", "N1", "N2", "N3", "N4", "M4",
+    ];
+    for id in blocks {
+        assert!(unknown_stops_require(id), "{id} must block when unknown");
+    }
+    for id in allowed {
+        assert!(
+            !unknown_stops_require(id),
+            "{id} must not block when unknown"
+        );
+    }
+    // Ids are exact: no case folding or trimming lets a typo through.
+    for id in ["t3", " T3", "T3 ", "T03", ""] {
+        assert!(unknown_stops_require(id), "{id:?} is not T3");
+    }
+}
