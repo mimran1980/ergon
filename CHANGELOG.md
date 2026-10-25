@@ -383,6 +383,14 @@
 
 ### Changed
 
+- `ergon-io`: closing connections allocates nothing on the polling thread,
+  for one connection or many at once, a peer close, `Driver::close` or a
+  WebSocket Close handshake alike: the closed list has room for every
+  slot, a `WsConn` holds room for the server's Close from the start, and
+  `connect_background`'s helper mailbox is bounded and allocated once
+  (1 024 messages). `connect_background` fails with `Error::Busy` when that
+  mailbox is full; a closed connection that finds it full is freed on the
+  polling thread.
 - Breaking: `ergon-io` has no `limit` module (`Budget`, `BucketSpec`,
   `Charge`, `Class`, `Ticket`, `Limited`, `Resend`, `Why`, `SourceIps`
   and the rest) and no `outcome::Now`. Pacing to a venue's limits is the

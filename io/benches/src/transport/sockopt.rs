@@ -159,13 +159,62 @@ pub fn set_tcp_timer(fd: RawFd, opt: libc::c_int, us: u32) -> Result<(), Error> 
     Ok(())
 }
 
-/// What `TCP_INFO` says about a connection that the suite reports.
+/// What `TCP_INFO` says about a connection that the suite reports
+/// (`include/uapi/linux/tcp.h` offsets).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TcpInfo {
-    /// `tcpi_total_retrans`: segments retransmitted over its life.
+    /// `tcpi_total_retrans`: segments retransmitted over its life,
+    /// SYN / SYN-ACK retransmits included.
     pub total_retrans: u32,
     /// TCP timestamps negotiated (12 more header bytes per segment).
     pub timestamps: bool,
+    /// `tcpi_lost`: segments in flight now marked lost.
+    pub lost: u32,
+    /// `tcpi_dsack_dups` (Linux 5.10): retransmitted segments the peer
+    /// reported, by DSACK, it already had. `None` where the kernel's
+    /// `tcp_info` stops before it.
+    pub dsack_dups: Option<u32>,
+    /// `tcpi_total_rto` (Linux 6.7): retransmission timeouts over its
+    /// life. `None` where the kernel's `tcp_info` stops before it.
+    pub total_rto: Option<u16>,
+}
+
+/// A point's TCP counters, summed over its streams' connections.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TcpCounters {
+    /// [`TcpInfo::total_retrans`].
+    pub retrans: u64,
+    /// [`TcpInfo::lost`].
+    pub lost: u64,
+    /// [`TcpInfo::dsack_dups`]; `None` if any connection lacks it.
+    pub dsack_dups: Option<u64>,
+    /// [`TcpInfo::total_rto`]; `None` if any connection lacks it.
+    pub rtos: Option<u64>,
+}
+
+impl TcpCounters {
+    /// Sums `fds`' `TCP_INFO`.
+    ///
+    /// # Errors
+    /// [`tcp_info`] fails.
+    pub fn of(fds: impl IntoIterator<Item = RawFd>) -> Result<Self, Error> {
+        let mut c = Self {
+            dsack_dups: Some(0),
+            rtos: Some(0),
+            ..Self::default()
+        };
+        for fd in fds {
+            let i = tcp_info(fd)?;
+            c.retrans += u64::from(i.total_retrans);
+            c.lost += u64::from(i.lost);
+            c.dsack_dups = c
+                .dsack_dups
+                .zip(i.dsack_dups)
+                .map(|(a, b)| a + u64::from(b));
+            c.rtos = c.rtos.zip(i.total_rto).map(|(a, b)| a + u64::from(b));
+        }
+        Ok(c)
+    }
 }
 
 /// Reads `TCP_INFO`: one `getsockopt`, which takes the socket's lock
@@ -176,7 +225,8 @@ pub struct TcpInfo {
 /// stops before `tcpi_total_retrans`.
 pub fn tcp_info(fd: RawFd) -> Result<TcpInfo, Error> {
     // struct tcp_info: eight u8 fields (tcpi_options at 5), then u32s;
-    // tcpi_total_retrans at 100.
+    // tcpi_lost at 32, tcpi_total_retrans at 100, tcpi_dsack_dups at 216,
+    // tcpi_total_rto (u16) at 240.
     let mut b = [0u8; 256];
     let mut len: libc::socklen_t = 256;
     // SAFETY: `b` and `len` are valid for the call; the kernel writes at
@@ -196,9 +246,16 @@ pub fn tcp_info(fd: RawFd) -> Result<TcpInfo, Error> {
     if len < 104 {
         return Err(os("TCP_INFO", "tcp_info stops before tcpi_total_retrans"));
     }
+    let got = usize::try_from(len).unwrap_or(0).min(b.len());
+    let u32_at = |at: usize| {
+        (at + 4 <= got).then(|| u32::from_ne_bytes([b[at], b[at + 1], b[at + 2], b[at + 3]]))
+    };
     Ok(TcpInfo {
         total_retrans: u32::from_ne_bytes([b[100], b[101], b[102], b[103]]),
         timestamps: b[5] & TCPI_OPT_TIMESTAMPS != 0,
+        lost: u32::from_ne_bytes([b[32], b[33], b[34], b[35]]),
+        dsack_dups: u32_at(216),
+        total_rto: (242 <= got).then(|| u16::from_ne_bytes([b[240], b[241]])),
     })
 }
 
