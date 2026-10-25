@@ -309,8 +309,10 @@ step1_build_load() {
     # --cap-add=SYS_NICE: SetTimerSlack writes another task's
     # /proc/PID/timerslack_ns, which the kernel refuses without CAP_SYS_NICE.
     # The OCI hook has the capability; the tests run where the write can work.
+    # The admission policy the unit tests read lives in the sibling
+    # nri-latency-pods module, mounted where scripts/check.sh mounts it.
     must docker run --rm --name "ergon-nri-check-e2e" --cap-add=SYS_NICE \
-        -v "$ROOT":/src -w /src \
+        -v "$ROOT":/src -v "$ROOT/../nri-latency-pods/admission":/admission:ro -w /src \
         -v "$GOMOD_VOL":/go/pkg/mod \
         "$GO_IMAGE" bash scripts/check.sh --local || return 1
 
