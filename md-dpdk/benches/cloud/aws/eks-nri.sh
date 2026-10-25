@@ -1150,8 +1150,11 @@ create_cluster() {
     local me
     me=$(curl -fsS -m 10 https://checkip.amazonaws.com | tr -d '[:space:]') || return 1
     [[ $me =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || { log "cannot tell this machine's public IPv4 ($me)"; return 1; }
+    # The /24 of this machine's address, not the /32: its egress can move
+    # between neighbouring addresses (seen: .116 and .117 within minutes), and
+    # a /32 then locks this machine out of its own cluster mid-run.
     eks create-cluster --name "$N" --kubernetes-version "$k8s" --role-arn "$cluster_role_arn" \
-        --resources-vpc-config "{\"subnetIds\":[$cluster_subnets],\"endpointPublicAccess\":true,\"publicAccessCidrs\":[\"$me/32\"],\"endpointPrivateAccess\":true}" \
+        --resources-vpc-config "{\"subnetIds\":[$cluster_subnets],\"endpointPublicAccess\":true,\"publicAccessCidrs\":[\"${me%.*}.0/24\"],\"endpointPrivateAccess\":true}" \
         --access-config authenticationMode=API,bootstrapClusterCreatorAdminPermissions=true \
         --upgrade-policy supportType=STANDARD \
         --logging '{"clusterLogging":[{"types":["api","audit","authenticator","controllerManager","scheduler"],"enabled":false}]}' \
