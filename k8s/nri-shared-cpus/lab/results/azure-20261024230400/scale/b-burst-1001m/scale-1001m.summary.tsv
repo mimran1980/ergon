@@ -1,0 +1,2 @@
+label	arm	rep	cpu	samples	p50_ns	p90_ns	p99_ns	p999_ns	p9999_ns	max_ns	max_end_ns	gaps	dropped	nvcsw	nivcsw	start_ns	end_ns	minflt	majflt
+scale-1001m	b-burst-1001m	1	3	1665994086	24	24	32	32	32	16536	1792883557201427805	2884	0	0	0	1792883555652087223	1792883595653312753	0	0

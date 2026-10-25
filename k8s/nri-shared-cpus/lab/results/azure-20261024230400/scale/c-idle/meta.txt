@@ -1,0 +1,6 @@
+case=c-idle
+title=one pod: cpu 1 exclusive, 100 shared millicpus, 4 helper threads busy 1 % of each 10 ms
+shared=1-2
+exclusive=3-7
+window_ns=30133068614
+expect=the pod's helpers near 0.04 cores

@@ -1,0 +1,4 @@
+irq_vectors:local_timer_entry
+irq_vectors:reschedule_entry
+irq_vectors:call_function_entry
+irq_vectors:call_function_single_entry

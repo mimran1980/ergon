@@ -1,0 +1,2 @@
+gapprobe: label=trace-1 cpu=3 counter_hz=1000000000 threshold=1000ns seconds=60 udp_rate=20000 helpers=process ERGON_ISOLATED_CPUS=3,4 ERGON_SHARED_CPUS=1 main_affinity=[1]
+gapprobe: trace-1 cpu=3 samples=2488258738 p50=24 p90=24 p99=32 p99.9=32 p99.99=32 max=40608 ns max_end=1792886409985124735 gaps>=1000ns=6280 dropped=0 nvcsw=0 nivcsw=1 minflt=0 majflt=0 udp_received=1004340

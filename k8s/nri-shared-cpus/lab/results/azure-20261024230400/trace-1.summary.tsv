@@ -1,0 +1,2 @@
+label	arm	rep	cpu	samples	p50_ns	p90_ns	p99_ns	p999_ns	p9999_ns	max_ns	max_end_ns	gaps	dropped	nvcsw	nivcsw	start_ns	end_ns	minflt	majflt
+trace-1	trace	1	3	2496661310	24	24	32	32	32	22248	1792884226619441457	4423	0	0	1	1792884220444533024	1792884280446460290	0	0

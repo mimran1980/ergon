@@ -1,0 +1,6 @@
+cpu=1
+millicpus=1001
+threads=4
+duty=100
+shared_cpus=1,2
+isolated_cpus=3
