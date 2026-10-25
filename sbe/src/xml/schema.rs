@@ -146,6 +146,7 @@ pub(crate) fn parse_schema(
         semantic_version,
         header_type,
         tokens,
+        sources: Vec::new(),
     })
 }
 

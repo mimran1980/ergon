@@ -51,7 +51,7 @@ fn fixture_path(name: &str) -> PathBuf {
 #[test]
 fn missing_required_attr_returns_missing_error() -> Result<(), Box<dyn std::error::Error>> {
     let path = fixture_path("missing-required-attr.xml");
-    let err = ergo_sbe::parse_file(&path).unwrap_err();
+    let err = ergo_sbe::parse(ergo_sbe::SchemaSource::file(&path)).unwrap_err();
     assert!(
         matches!(&err, ergo_sbe::ParseError::Missing { what, .. } if what == "field @name"),
         "expected Missing(field @name), got {err:?}"
@@ -69,7 +69,7 @@ fn missing_required_attr_returns_missing_error() -> Result<(), Box<dyn std::erro
 #[test]
 fn invalid_type_ref_returns_invalid_error() -> Result<(), Box<dyn std::error::Error>> {
     let path = fixture_path("invalid-type-ref.xml");
-    let err = ergo_sbe::parse_file(&path).unwrap_err();
+    let err = ergo_sbe::parse(ergo_sbe::SchemaSource::file(&path)).unwrap_err();
     assert!(
         matches!(&err, ergo_sbe::ParseError::Invalid { what, value, .. }
             if what == "type for field 'badField'" && value == "NonExistentType"),
@@ -87,7 +87,7 @@ fn invalid_type_ref_returns_invalid_error() -> Result<(), Box<dyn std::error::Er
 #[test]
 fn duplicate_message_id_returns_duplicate_template_id() -> Result<(), Box<dyn std::error::Error>> {
     let path = fixture_path("duplicate-message-id.xml");
-    let err = ergo_sbe::parse_file(&path).unwrap_err();
+    let err = ergo_sbe::parse(ergo_sbe::SchemaSource::file(&path)).unwrap_err();
     assert!(
         matches!(&err, ergo_sbe::ParseError::Resolve { error, .. }
             if matches!(error.as_ref(), ergo_sbe::ResolveError::DuplicateTemplateId { id: 1, name, .. } if name == "AnotherMessageWithId1")),
@@ -109,7 +109,7 @@ fn duplicate_message_id_returns_duplicate_template_id() -> Result<(), Box<dyn st
 #[test]
 fn duplicate_message_id_renders_miette_diagnostic() -> Result<(), Box<dyn std::error::Error>> {
     let path = fixture_path("duplicate-message-id.xml");
-    let err = ergo_sbe::parse_file(&path).unwrap_err();
+    let err = ergo_sbe::parse(ergo_sbe::SchemaSource::file(&path)).unwrap_err();
 
     use miette::Diagnostic;
     assert!(
@@ -144,7 +144,7 @@ fn duplicate_message_id_renders_miette_diagnostic() -> Result<(), Box<dyn std::e
 #[test]
 fn version_gap_returns_since_version_beyond_schema() -> Result<(), Box<dyn std::error::Error>> {
     let path = fixture_path("version-gap.xml");
-    let err = ergo_sbe::parse_file(&path).unwrap_err();
+    let err = ergo_sbe::parse(ergo_sbe::SchemaSource::file(&path)).unwrap_err();
     assert!(
         matches!(&err, ergo_sbe::ParseError::Resolve { error, .. }
             if matches!(error.as_ref(), ergo_sbe::ResolveError::SinceVersionBeyondSchema { version: 5, schema_version: 1, .. })),
@@ -166,7 +166,7 @@ fn version_gap_returns_since_version_beyond_schema() -> Result<(), Box<dyn std::
 #[test]
 fn version_gap_renders_miette_diagnostic() -> Result<(), Box<dyn std::error::Error>> {
     let path = fixture_path("version-gap.xml");
-    let err = ergo_sbe::parse_file(&path).unwrap_err();
+    let err = ergo_sbe::parse(ergo_sbe::SchemaSource::file(&path)).unwrap_err();
 
     use miette::Diagnostic;
     assert!(
@@ -210,7 +210,7 @@ fn error_handler_schemas_all_rejected() -> Result<(), Box<dyn std::error::Error>
     ];
     for name in cases {
         let path = fixture_path(name);
-        let err = ergo_sbe::parse_file(&path);
+        let err = ergo_sbe::parse(ergo_sbe::SchemaSource::file(&path));
         assert!(
             err.is_err(),
             "expected parse rejection for {name}, got Ok(...)"
@@ -223,7 +223,7 @@ fn error_handler_schemas_all_rejected() -> Result<(), Box<dyn std::error::Error>
 #[test]
 fn invalid_enum_encoding_type_returns_invalid_error() -> Result<(), Box<dyn std::error::Error>> {
     let path = fixture_path("invalid-enum-value.xml");
-    let err = ergo_sbe::parse_file(&path).unwrap_err();
+    let err = ergo_sbe::parse(ergo_sbe::SchemaSource::file(&path)).unwrap_err();
     assert!(
         matches!(&err, ergo_sbe::ParseError::Invalid { what, value, .. }
             if what == "enum encodingType" && value == "NonExistentEncodingType"),
@@ -270,7 +270,7 @@ fn invalid_schema_fixtures_have_useful_miette_errors() -> Result<(), Box<dyn std
     for name in cases {
         let path = fixture_path(name);
         assert!(path.is_file(), "{name}: invalid-schema fixture is missing");
-        let err = match ergo_sbe::parse_file(&path) {
+        let err = match ergo_sbe::parse(ergo_sbe::SchemaSource::file(&path)) {
             Ok(_) => panic!("{name}: invalid schema unexpectedly parsed"),
             Err(e) => e,
         };
@@ -340,7 +340,7 @@ fn invalid_field_type_names_the_field() -> Result<(), Box<dyn std::error::Error>
       </message>
     </messageSchema>"#;
 
-    let err = ergo_sbe::parse(xml).unwrap_err();
+    let err = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml)).unwrap_err();
     let msg = format!("{err}");
     assert!(
         msg.contains("NotARealType"),
@@ -391,7 +391,7 @@ fn invalid_nested_group_field_type_names_the_field() -> Result<(), Box<dyn std::
       </message>
     </messageSchema>"#;
 
-    let err = ergo_sbe::parse(xml).unwrap_err();
+    let err = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml)).unwrap_err();
     let msg = format!("{err}");
     assert!(
         msg.contains("NotARealType"),
@@ -434,7 +434,7 @@ fn block_length_too_short_named_field() -> Result<(), Box<dyn std::error::Error>
       </message>
     </messageSchema>"#;
 
-    let err = ergo_sbe::parse(xml).unwrap_err();
+    let err = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml)).unwrap_err();
     let msg = format!("{err}");
     assert!(
         msg.contains("overflow") || msg.contains("8") || msg.to_lowercase().contains("block"),
@@ -460,7 +460,7 @@ fn malformed_xml_gives_clear_error() -> Result<(), Box<dyn std::error::Error>> {
       </unclosed></message>
     </messageSchema>"#;
 
-    let err = ergo_sbe::parse(xml).unwrap_err();
+    let err = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml)).unwrap_err();
     let msg = format!("{err}");
     assert!(
         msg.contains("XML")
@@ -490,7 +490,7 @@ fn unknown_composite_type_named_in_error() -> Result<(), Box<dyn std::error::Err
       </message>
     </messageSchema>"#;
 
-    let err = ergo_sbe::parse(xml).unwrap_err();
+    let err = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml)).unwrap_err();
     let msg = format!("{err}");
     assert!(
         msg.contains("UnknownComposite"),
@@ -503,7 +503,7 @@ fn unknown_composite_type_named_in_error() -> Result<(), Box<dyn std::error::Err
 #[test]
 fn missing_attribute_renders_miette_source_context() -> Result<(), Box<dyn std::error::Error>> {
     let path = fixture_path("missing-required-attr.xml");
-    let err = ergo_sbe::parse_file(&path).unwrap_err();
+    let err = ergo_sbe::parse(ergo_sbe::SchemaSource::file(&path)).unwrap_err();
     let report = miette::Report::from(err);
     let rendered = format!("{report:?}");
     assert!(
@@ -521,7 +521,7 @@ fn missing_attribute_renders_miette_source_context() -> Result<(), Box<dyn std::
 #[test]
 fn since_version_beyond_schema_is_explained() -> Result<(), Box<dyn std::error::Error>> {
     let path = fixture_path("version-gap.xml");
-    let err = ergo_sbe::parse_file(&path).unwrap_err();
+    let err = ergo_sbe::parse(ergo_sbe::SchemaSource::file(&path)).unwrap_err();
     let msg = format!("{err}");
     assert!(
         msg.contains("sinceVersion"),

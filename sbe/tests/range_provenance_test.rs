@@ -12,7 +12,7 @@
 #![allow(clippy::pedantic)]
 #![allow(clippy::restriction)]
 
-use ergo_sbe::{Encoding, Ir, Signal, parse, resolve_schema};
+use ergo_sbe::{Encoding, Ir, SchemaSource, Signal, parse, resolve_schema};
 
 const SCHEMA: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="ranges" id="74" version="0" byteOrder="littleEndian">
@@ -61,7 +61,7 @@ fn field_range(ir: &Ir, name: &str) -> (Option<u64>, bool, Option<u64>, bool) {
 
 #[test]
 fn bare_primitive_range_is_the_sbe_default() -> Result<(), Box<dyn std::error::Error>> {
-    let ir = parse(SCHEMA)?;
+    let ir = parse(SchemaSource::xml(SCHEMA))?;
     // uint64: 0 ..= 2^64 - 2 (2^64 - 1 is the null value).
     assert_eq!(
         field_range(&ir, "plain"),
@@ -72,7 +72,7 @@ fn bare_primitive_range_is_the_sbe_default() -> Result<(), Box<dyn std::error::E
 
 #[test]
 fn alias_ranges_record_each_declared_bound() -> Result<(), Box<dyn std::error::Error>> {
-    let ir = parse(SCHEMA)?;
+    let ir = parse(SchemaSource::xml(SCHEMA))?;
     assert_eq!(field_range(&ir, "pct"), (Some(1), true, Some(99), true));
     // Only maxValue declared: min is int16's default -32767, as two's-complement bits.
     assert_eq!(
@@ -88,7 +88,7 @@ fn alias_ranges_record_each_declared_bound() -> Result<(), Box<dyn std::error::E
 
 #[test]
 fn composite_member_ranges_record_each_declared_bound() -> Result<(), Box<dyn std::error::Error>> {
-    let ir = parse(SCHEMA)?;
+    let ir = parse(SchemaSource::xml(SCHEMA))?;
     let lo = token(&ir, Signal::BeginField, "lo");
     assert_eq!(
         (lo.min_value_declared, lo.max_value_declared),
@@ -105,7 +105,7 @@ fn composite_member_ranges_record_each_declared_bound() -> Result<(), Box<dyn st
 
 #[test]
 fn resolving_again_keeps_the_provenance() -> Result<(), Box<dyn std::error::Error>> {
-    let mut ir = parse(SCHEMA)?;
+    let mut ir = parse(SchemaSource::xml(SCHEMA))?;
     let before = ir.clone();
     resolve_schema(&mut ir, None)?;
     assert_eq!(ir, before, "resolve_schema is idempotent, flags included");
@@ -119,7 +119,7 @@ fn resolving_again_keeps_the_provenance() -> Result<(), Box<dyn std::error::Erro
 #[test]
 fn primitive_fields_name_the_alias_they_were_declared_with()
 -> Result<(), Box<dyn std::error::Error>> {
-    let ir = parse(SCHEMA)?;
+    let ir = parse(SchemaSource::xml(SCHEMA))?;
     let named = |field: &str| {
         token(&ir, Signal::BeginField, field)
             .referenced_type

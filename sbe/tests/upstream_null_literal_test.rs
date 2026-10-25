@@ -20,7 +20,7 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 fn generate_str(xml: &str, module: &str) -> Result<String, Box<dyn Error>> {
-    let schema = ergo_sbe::Schema::from_ir(ergo_sbe::parse(xml)?);
+    let schema = ergo_sbe::Schema::from_ir(ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml))?);
     let modules =
         ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new(module)).generate(&schema)?;
     Ok(modules.modules().next().ok_or("no module")?.source.clone())
@@ -241,7 +241,7 @@ fn keyword_named_set_choices_round_trip() -> Result<(), Box<dyn Error>> {
 #[test]
 fn non_java_float_spellings_are_rejected() -> Result<(), Box<dyn Error>> {
     let xml = std::fs::read_to_string(fixture("floating-point-infinity-schema.xml"))?;
-    ergo_sbe::parse(&xml)?;
+    ergo_sbe::parse(ergo_sbe::SchemaSource::xml(&xml))?;
     for (from, to) in [
         (r#"nullValue="Infinity""#, r#"nullValue="inf""#),
         (r#"nullValue="-Infinity""#, r#"nullValue="-infinity""#),
@@ -251,17 +251,20 @@ fn non_java_float_spellings_are_rejected() -> Result<(), Box<dyn Error>> {
     ] {
         let bad = xml.replacen(from, to, 1);
         assert_ne!(bad, xml, "fixture no longer contains {from}");
-        assert!(ergo_sbe::parse(&bad).is_err(), "{to} must be rejected");
+        assert!(
+            ergo_sbe::parse(ergo_sbe::SchemaSource::xml(&bad)).is_err(),
+            "{to} must be rejected"
+        );
     }
     let field_constant = FLOAT_NULL_SCHEMA.replace(
         r#"<field name="mid" id="3" type="NanD"/>"#,
         r#"<field name="mid" id="3" type="double" presence="constant" constantValue="nan"/>"#,
     );
     assert!(
-        ergo_sbe::parse(&field_constant).is_err(),
+        ergo_sbe::parse(ergo_sbe::SchemaSource::xml(&field_constant)).is_err(),
         "field constantValue nan must be rejected"
     );
     let accepted = field_constant.replace(r#"constantValue="nan""#, r#"constantValue="+Infinity""#);
-    ergo_sbe::parse(&accepted)?;
+    ergo_sbe::parse(ergo_sbe::SchemaSource::xml(&accepted))?;
     Ok(())
 }

@@ -1278,7 +1278,7 @@ fn group_entry_domain_required_bool_invalid_discriminant_is_typed_error()
 #[test]
 fn all_enums_as_option_none_writes_null_on_reused_buffer() -> Result<(), Box<dyn std::error::Error>>
 {
-    use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse};
+    use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, SchemaSource, parse};
     const XML: &str = r#"<messageSchema package="review" id="1" version="0" byteOrder="littleEndian">
   <types>
     <composite name="messageHeader">
@@ -1294,7 +1294,7 @@ fn all_enums_as_option_none_writes_null_on_reused_buffer() -> Result<(), Box<dyn
   </types>
   <message name="M" id="1"><field name="status" id="1" type="Status"/></message>
 </messageSchema>"#;
-    let schema = Schema::from_ir(parse(XML)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(XML))?);
     let src = Generator::new(
         GenerationConfig::new("review")
             .with_domain_objects(DomainVarData::Bytes)
@@ -1351,7 +1351,7 @@ fn all_enums_as_option_none_writes_null_on_reused_buffer() -> Result<(), Box<dyn
 #[test]
 fn all_enums_as_option_flat_group_bulk_compiles_and_nulls() -> Result<(), Box<dyn std::error::Error>>
 {
-    use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse};
+    use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, SchemaSource, parse};
     const XML: &str = r#"<messageSchema package="reviewg" id="1" version="0" byteOrder="littleEndian">
   <types>
     <composite name="messageHeader">
@@ -1375,7 +1375,7 @@ fn all_enums_as_option_flat_group_bulk_compiles_and_nulls() -> Result<(), Box<dy
     </group>
   </message>
 </messageSchema>"#;
-    let schema = Schema::from_ir(parse(XML)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(XML))?);
     let src = Generator::new(
         GenerationConfig::new("reviewg")
             .with_domain_objects(DomainVarData::Bytes)
@@ -1445,7 +1445,7 @@ fn all_enums_as_option_flat_group_bulk_compiles_and_nulls() -> Result<(), Box<dy
 /// cells do not prove this location.
 #[test]
 fn nested_entry_enum_none_writes_null() -> Result<(), Box<dyn std::error::Error>> {
-    use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse};
+    use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, SchemaSource, parse};
     const XML: &str = r#"<messageSchema package="reviewn" id="1" version="0" byteOrder="littleEndian">
   <types>
     <composite name="messageHeader">
@@ -1471,7 +1471,7 @@ fn nested_entry_enum_none_writes_null() -> Result<(), Box<dyn std::error::Error>
     </group>
   </message>
 </messageSchema>"#;
-    let schema = Schema::from_ir(parse(XML)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(XML))?);
     let src = Generator::new(
         GenerationConfig::new("reviewn")
             .with_domain_objects(DomainVarData::Bytes)
@@ -1514,7 +1514,7 @@ fn nested_entry_enum_none_writes_null() -> Result<(), Box<dyn std::error::Error>
 #[test]
 fn versioned_required_enum_none_writes_null_on_reused_buffer()
 -> Result<(), Box<dyn std::error::Error>> {
-    use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse};
+    use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, SchemaSource, parse};
     const XML: &str = r#"<messageSchema package="reviewv" id="1" version="1" byteOrder="littleEndian">
   <types>
     <composite name="messageHeader">
@@ -1532,7 +1532,7 @@ fn versioned_required_enum_none_writes_null_on_reused_buffer()
     <field name="status" id="1" type="Status" sinceVersion="1"/>
   </message>
 </messageSchema>"#;
-    let schema = Schema::from_ir(parse(XML)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(XML))?);
     let src =
         Generator::new(GenerationConfig::new("reviewv").with_domain_objects(DomainVarData::Bytes))
             .generate(&schema)?
@@ -1567,7 +1567,8 @@ fn versioned_required_enum_none_writes_null_on_reused_buffer()
 #[test]
 fn domain_typed_enum_none_writes_null_on_reused_buffer() -> Result<(), Box<dyn std::error::Error>> {
     use ergo_sbe::{
-        ConversionSelector, DomainVarData, EnumMapping, GenerationConfig, Generator, Schema, parse,
+        ConversionSelector, DomainVarData, EnumMapping, GenerationConfig, Generator, Schema,
+        SchemaSource, parse,
     };
     const XML: &str = r#"<messageSchema package="reviewd" id="1" version="1" byteOrder="littleEndian">
   <types>
@@ -1597,7 +1598,7 @@ fn domain_typed_enum_none_writes_null_on_reused_buffer() -> Result<(), Box<dyn s
     </group>
   </message>
 </messageSchema>"#;
-    let schema = Schema::from_ir(parse(XML)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(XML))?);
     let src = Generator::new(
         GenerationConfig::new("reviewd")
             .with_domain_objects(DomainVarData::Bytes)

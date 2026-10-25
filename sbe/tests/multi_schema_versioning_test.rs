@@ -12,7 +12,7 @@
 mod common;
 use common::{Paths, compile_and_run_two_modules};
 
-use ergo_sbe::{GenerationConfig, Generator, Schema, parse_file};
+use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
 use std::path::PathBuf;
 
 fn multi_schema_a() -> PathBuf {
@@ -24,8 +24,8 @@ fn multi_schema_b() -> PathBuf {
 }
 
 fn generate_pair() -> (Schema, Schema) {
-    let ir_a = parse_file(&multi_schema_a()).expect("parse schema A");
-    let ir_b = parse_file(&multi_schema_b()).expect("parse schema B");
+    let ir_a = parse(SchemaSource::file(&multi_schema_a())).expect("parse schema A");
+    let ir_b = parse(SchemaSource::file(&multi_schema_b())).expect("parse schema B");
     (Schema::from_ir(ir_a), Schema::from_ir(ir_b))
 }
 
@@ -325,8 +325,8 @@ fn shared_set_enum_group_fields_are_public() -> Result<(), Box<dyn std::error::E
     </sbe:message>
     </sbe:messageSchema>"#;
 
-    let ir_a = ergo_sbe::parse(schema_a_xml)?;
-    let ir_b = ergo_sbe::parse(schema_b_xml)?;
+    let ir_a = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(schema_a_xml))?;
+    let ir_b = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(schema_b_xml))?;
     let schema_a = Schema::from_ir(ir_a);
     let schema_b = Schema::from_ir(ir_b);
 
@@ -453,8 +453,8 @@ fn shared_type_with_version_gated_field_emits_warning() -> Result<(), Box<dyn st
     </sbe:message>
 </sbe:messageSchema>"#;
 
-    let ir_a = ergo_sbe::parse(schema_a_xml)?;
-    let ir_b = ergo_sbe::parse(schema_b_xml)?;
+    let ir_a = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(schema_a_xml))?;
+    let ir_b = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(schema_b_xml))?;
     let schema_a = Schema::from_ir(ir_a);
     let schema_b = Schema::from_ir(ir_b);
 
@@ -521,7 +521,7 @@ fn mini_schema(package: &str, id: u16, extra_types: &str) -> Schema {
           <sbe:message name="M" id="1"><field name="x" id="1" type="uint32"/></sbe:message>
         </sbe:messageSchema>"#
     );
-    Schema::from_ir(ergo_sbe::parse(&xml).expect("parse mini schema"))
+    Schema::from_ir(ergo_sbe::parse(ergo_sbe::SchemaSource::xml(&xml)).expect("parse mini schema"))
 }
 
 #[test]
@@ -718,8 +718,8 @@ fn multi_schema_rejects_byte_order_mismatch_shared_type() -> Result<(), Box<dyn 
         .replace("littleEndian", "bigEndian")
         .replace("package=\"a\"", "package=\"b\"")
         .replace("id=\"1\"", "id=\"2\"");
-    let a = Schema::from_ir(ergo_sbe::parse(&le)?);
-    let b = Schema::from_ir(ergo_sbe::parse(&be)?);
+    let a = Schema::from_ir(ergo_sbe::parse(ergo_sbe::SchemaSource::xml(&le))?);
+    let b = Schema::from_ir(ergo_sbe::parse(ergo_sbe::SchemaSource::xml(&be))?);
     let config = GenerationConfig::new("multi").with_shared_module("common");
     let mut g = Generator::new(config);
     let err = g
@@ -732,16 +732,15 @@ fn multi_schema_rejects_byte_order_mismatch_shared_type() -> Result<(), Box<dyn 
     Ok(())
 }
 
-// ── parse_file_with_shared ─────────────────────────────────────────────
+// ── SchemaSource::file(..).with_shared ─────────────────────────────────
 //
-// `parse_with_shared` (string form) is exercised above and elsewhere; the
-// file form was public but called by nothing, so a break in its path
-// resolution or its shared-registry seeding would not have been caught.
+// The XML form is exercised above and elsewhere; this covers the file form's
+// path resolution and shared-registry seeding.
 
 #[test]
-fn parse_file_with_shared_seeds_the_registry_from_the_shared_schema()
+fn file_source_with_shared_seeds_the_registry_from_the_shared_schema()
 -> Result<(), Box<dyn std::error::Error>> {
-    let shared = ergo_sbe::parse(
+    let shared = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(
         r#"<?xml version="1.0"?>
 <messageSchema package="common" id="0" version="0" byteOrder="littleEndian">
   <types>
@@ -749,7 +748,7 @@ fn parse_file_with_shared_seeds_the_registry_from_the_shared_schema()
     <composite name="SharedPrice"><type name="mantissa" primitiveType="int64"/><type name="exponent" primitiveType="int8"/></composite>
   </types>
 </messageSchema>"#,
-    )?;
+    ))?;
 
     let dir = std::env::temp_dir().join(format!("ergo-shared-{}", std::process::id()));
     std::fs::create_dir_all(&dir)?;
@@ -764,7 +763,7 @@ fn parse_file_with_shared_seeds_the_registry_from_the_shared_schema()
 </messageSchema>"#,
     )?;
 
-    let ir = ergo_sbe::parse_file_with_shared(&consumer, &shared)?;
+    let ir = ergo_sbe::parse(ergo_sbe::SchemaSource::file(&consumer).with_shared(&shared))?;
     assert!(
         ir.tokens.iter().any(|t| t.name == "SharedPrice"),
         "shared composite must resolve through the seeded registry"
@@ -776,7 +775,10 @@ fn parse_file_with_shared_seeds_the_registry_from_the_shared_schema()
     );
 
     // A missing file is an error, not a panic — the read happens before parse.
-    assert!(ergo_sbe::parse_file_with_shared(dir.join("absent.xml"), &shared).is_err());
+    assert!(
+        ergo_sbe::parse(ergo_sbe::SchemaSource::file(dir.join("absent.xml")).with_shared(&shared))
+            .is_err()
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
@@ -815,8 +817,8 @@ fn shared_bool_domain_type_emits_impl_once() -> Result<(), Box<dyn std::error::E
         )
     }
 
-    let ir_a = ergo_sbe::parse(&schema("a", 101, "AMsg"))?;
-    let ir_b = ergo_sbe::parse(&schema("b", 202, "BMsg"))?;
+    let ir_a = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(&schema("a", 101, "AMsg")))?;
+    let ir_b = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(&schema("b", 202, "BMsg")))?;
     let schema_a = Schema::from_ir(ir_a);
     let schema_b = Schema::from_ir(ir_b);
 

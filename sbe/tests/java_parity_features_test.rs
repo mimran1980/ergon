@@ -8,8 +8,8 @@
 #![allow(unused)]
 
 use ergo_sbe::{
-    DomainVarData, GenerationConfig, Generator, SBE_XSD, Schema, parse, parse_with_shared,
-    parse_with_xsd_validation, validate_against_sbe_xsd,
+    DomainVarData, GenerationConfig, Generator, SBE_XSD, Schema, SchemaSource, parse,
+    validate_against_sbe_xsd,
 };
 
 mod common;
@@ -33,7 +33,7 @@ fn field_metadata_constants_and_meta_attribute() -> Result<(), Box<dyn std::erro
             <field name="ts" id="7" type="u64" offset="0"/>
           </message>
         </messageSchema>"#;
-    let ir = parse(&xml)?;
+    let ir = parse(SchemaSource::xml(&xml))?;
     let schema = Schema::from_ir(ir);
     let out = Generator::new(GenerationConfig::new("m"))
         .generate(&schema)?
@@ -81,7 +81,7 @@ fn fixed_array_put_and_str_helpers() -> Result<(), Box<dyn std::error::Error>> {
             <field name="vehicleCode" id="2" type="Code" offset="16"/>
           </message>
         </messageSchema>"#;
-    let ir = parse(&xml)?;
+    let ir = parse(SchemaSource::xml(&xml))?;
     let schema = Schema::from_ir(ir);
     let out = Generator::new(GenerationConfig::new("m"))
         .generate(&schema)?
@@ -166,7 +166,7 @@ fn group_entry_char_array_getter_is_bulk_copy() -> Result<(), Box<dyn std::error
             </group>
           </message>
         </messageSchema>"#;
-    let ir = parse(xml)?;
+    let ir = parse(SchemaSource::xml(xml))?;
     let schema = Schema::from_ir(ir);
     let out = Generator::new(GenerationConfig::new("gwd"))
         .generate(&schema)?
@@ -209,11 +209,11 @@ fn xsd_validation_accepts_and_rejects() -> Result<(), Box<dyn std::error::Error>
           </message>
         </messageSchema>"#;
     validate_against_sbe_xsd(good)?;
-    let _ = parse_with_xsd_validation(good)?;
+    let _ = parse(SchemaSource::xml(good).with_xsd_validation())?;
 
     let bad = r#"<?xml version="1.0"?><messageSchema id="1" version="0"><types/><message name="M" id="1"><bogus/></message></messageSchema>"#;
     assert!(validate_against_sbe_xsd(bad).is_err());
-    assert!(parse_with_xsd_validation(bad).is_err());
+    assert!(parse(SchemaSource::xml(bad).with_xsd_validation()).is_err());
     Ok(())
 }
 
@@ -294,7 +294,7 @@ fn keyword_append_rewrites_type_field() -> Result<(), Box<dyn std::error::Error>
             <field name="type" id="1" type="u8" offset="0"/>
           </message>
         </messageSchema>"#;
-    let ir = parse(&xml)?;
+    let ir = parse(SchemaSource::xml(&xml))?;
     let schema = Schema::from_ir(ir);
     let out = Generator::new(GenerationConfig::new("m").with_keyword_append_token("_"))
         .generate(&schema)?
@@ -333,7 +333,7 @@ fn domain_dto_range_validation_emitted() -> Result<(), Box<dyn std::error::Error
             <field name="qty" id="1" type="qty" offset="0"/>
           </message>
         </messageSchema>"#;
-    let ir = parse(xml)?;
+    let ir = parse(SchemaSource::xml(xml))?;
     let schema = Schema::from_ir(ir);
     let out = Generator::new(GenerationConfig::new("m").with_domain_objects(DomainVarData::Bytes))
         .generate(&schema)?
@@ -373,7 +373,7 @@ fn enum_display_and_fromstr_emitted() -> Result<(), Box<dyn std::error::Error>> 
             <field name="side" id="1" type="Side" offset="0"/>
           </message>
         </messageSchema>"#;
-    let ir = parse(xml)?;
+    let ir = parse(SchemaSource::xml(xml))?;
     let schema = Schema::from_ir(ir);
     let out = Generator::new(GenerationConfig::new("m"))
         .generate(&schema)?
@@ -411,7 +411,7 @@ fn bitset_display_and_fromstr_emitted() -> Result<(), Box<dyn std::error::Error>
             <field name="extras" id="1" type="OptionalExtras" offset="0"/>
           </message>
         </messageSchema>"#;
-    let ir = parse(xml)?;
+    let ir = parse(SchemaSource::xml(xml))?;
     let schema = Schema::from_ir(ir);
     let out = Generator::new(GenerationConfig::new("m"))
         .generate(&schema)?
@@ -471,7 +471,7 @@ fn set_field_shown_in_debug_at_message_and_entry_level() -> Result<(), Box<dyn s
             </group>
           </message>
         </messageSchema>"#;
-    let ir = parse(xml)?;
+    let ir = parse(SchemaSource::xml(xml))?;
     let schema = Schema::from_ir(ir);
     let out = Generator::new(GenerationConfig::new("m"))
         .generate(&schema)?
@@ -547,7 +547,7 @@ fn set_description_doc_not_duplicated() -> Result<(), Box<dyn std::error::Error>
             </set>
           </types>
         </messageSchema>"#;
-    let ir = parse(xml)?;
+    let ir = parse(SchemaSource::xml(xml))?;
     let schema = Schema::from_ir(ir);
     let out = Generator::new(GenerationConfig::new("m"))
         .generate(&schema)?
@@ -580,7 +580,7 @@ fn deprecated_field_marks_getter() -> Result<(), Box<dyn std::error::Error>> {
             <field name="legacy" id="2" type="u8" offset="1" deprecated="1"/>
           </message>
         </messageSchema>"#;
-    let ir = parse(xml)?;
+    let ir = parse(SchemaSource::xml(xml))?;
     let schema = Schema::from_ir(ir);
     // `#[deprecated]` emission is opt-in (cascades to types/impls).
     let out = Generator::new(GenerationConfig::new("m").with_deprecated_attrs(true))
@@ -643,7 +643,7 @@ fn deprecated_getter_note_names_schema_version() -> Result<(), Box<dyn std::erro
             <field name="legacy" id="1" type="u8" offset="0" deprecated="3"/>
           </message>
         </messageSchema>"#;
-    let schema = Schema::from_ir(parse(xml)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(xml))?);
     let out = Generator::new(GenerationConfig::new("m").with_deprecated_attrs(true))
         .generate(&schema)?
         .modules()
@@ -697,7 +697,7 @@ const fn all_field_types_schema() -> &'static str {
 
 #[test]
 fn decoder_debug_shows_all_field_types() -> Result<(), Box<dyn std::error::Error>> {
-    let ir = parse(all_field_types_schema())?;
+    let ir = parse(SchemaSource::xml(all_field_types_schema()))?;
     let schema = Schema::from_ir(ir);
     let out = Generator::new(GenerationConfig::new("dbg"))
         .generate(&schema)?
@@ -739,7 +739,7 @@ fn decoder_debug_shows_all_field_types() -> Result<(), Box<dyn std::error::Error
 
 #[test]
 fn decoder_debug_survives_truncated_buffer() -> Result<(), Box<dyn std::error::Error>> {
-    let ir = parse(all_field_types_schema())?;
+    let ir = parse(SchemaSource::xml(all_field_types_schema()))?;
     let schema = Schema::from_ir(ir);
     let out = Generator::new(GenerationConfig::new("dbg_trunc"))
         .generate(&schema)?
@@ -773,7 +773,7 @@ fn decoder_debug_survives_truncated_buffer() -> Result<(), Box<dyn std::error::E
 
 #[test]
 fn dto_debug_shows_all_fields() -> Result<(), Box<dyn std::error::Error>> {
-    let ir = parse(all_field_types_schema())?;
+    let ir = parse(SchemaSource::xml(all_field_types_schema()))?;
     let schema = Schema::from_ir(ir);
     let out = Generator::new(
         GenerationConfig::new("dbg_dto").with_domain_objects(DomainVarData::Strings),
@@ -816,7 +816,7 @@ fn dto_debug_shows_all_fields() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn encoder_display_delegates_to_decoder() -> Result<(), Box<dyn std::error::Error>> {
-    let ir = parse(all_field_types_schema())?;
+    let ir = parse(SchemaSource::xml(all_field_types_schema()))?;
     let schema = Schema::from_ir(ir);
     let out = Generator::new(GenerationConfig::new("dbg_enc"))
         .generate(&schema)?
@@ -864,7 +864,7 @@ fn entry_decoder_debug_shows_enum_set_and_composite() -> Result<(), Box<dyn std:
     </group>
   </message>
 </messageSchema>"#;
-    let ir = parse(xml)?;
+    let ir = parse(SchemaSource::xml(xml))?;
     let schema = Schema::from_ir(ir);
     let out = Generator::new(GenerationConfig::new("entry_dbg"))
         .generate(&schema)?
@@ -912,7 +912,7 @@ fn bulk_decode_handles_multi_byte_primitive_arrays() -> Result<(), Box<dyn std::
     </group>
   </message>
 </messageSchema>"#;
-    let ir = parse(xml)?;
+    let ir = parse(SchemaSource::xml(xml))?;
     let schema = Schema::from_ir(ir);
     let out = Generator::new(GenerationConfig::new("bdarr"))
         .generate(&schema)?
@@ -957,7 +957,7 @@ fn xiinclude_shared_type_warning_path_does_not_panic() -> Result<(), Box<dyn std
     <composite name="BadComposite"><type name="x" primitiveType="uint32" nullValue="999"/></composite>
   </types>
 </messageSchema>"#;
-    let shared = parse(common)?;
+    let shared = parse(SchemaSource::xml(common))?;
 
     // Schema with one consumer message referencing BadComposite — parsing
     // must succeed (the nullValue warning is non-fatal).
@@ -965,7 +965,7 @@ fn xiinclude_shared_type_warning_path_does_not_panic() -> Result<(), Box<dyn std
 <messageSchema package="c" id="1" version="0" byteOrder="littleEndian" headerType="messageHeader">
   <message name="M" id="1"><field name="f" id="1" type="BadComposite"/></message>
 </messageSchema>"#;
-    let ir = parse_with_shared(consumer, &shared)?;
+    let ir = parse(SchemaSource::xml(consumer).with_shared(&shared))?;
 
     // The parsed IR must contain both the shared type and the consumer message.
     let found_bad = ir.tokens.iter().any(|t| t.name == "BadComposite");

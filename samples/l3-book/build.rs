@@ -19,7 +19,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "chrono::DateTime<chrono::Utc>",
         );
     // ANCHOR_END: with_domain_type_config
-    ergo_sbe::generate_to_dir("schemas/l3-book.xml", config, &generated_dir)?;
+    ergo_sbe::generate(ergo_sbe::SchemaSource::file("schemas/l3-book.xml"), config)?
+        .write_to(&generated_dir)?;
     Ok(())
 }
 // ANCHOR_END: build_with_domain_type

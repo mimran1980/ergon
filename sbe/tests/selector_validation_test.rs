@@ -15,7 +15,9 @@
 #![allow(clippy::pedantic)]
 #![allow(clippy::restriction)]
 
-use ergo_sbe::{ConversionSelector, GenerateError, GenerationConfig, Generator, Schema, parse};
+use ergo_sbe::{
+    ConversionSelector, GenerateError, GenerationConfig, Generator, Schema, SchemaSource, parse,
+};
 
 const SCHEMA: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="sel" id="71" version="0" byteOrder="littleEndian">
@@ -66,7 +68,7 @@ const SECOND: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 </sbe:messageSchema>"#;
 
 fn schema(xml: &str) -> Result<Schema, Box<dyn std::error::Error>> {
-    Ok(Schema::from_ir(parse(xml)?))
+    Ok(Schema::from_ir(parse(SchemaSource::xml(xml))?))
 }
 
 fn generate(config: GenerationConfig) -> Result<(), GenerateError> {

@@ -22,8 +22,8 @@ use common::{
     compile_fails_with_diagnostics_excluding,
 };
 use ergo_sbe::{
-    CompositeMapping, EnumMapping, GenerateError, GenerationConfig, Generator, Schema, parse,
-    parse_file,
+    CompositeMapping, EnumMapping, GenerateError, GenerationConfig, Generator, Schema,
+    SchemaSource, parse,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -794,7 +794,7 @@ fn mapping_schema() -> Result<Schema, Box<dyn std::error::Error>> {
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/schemas/domain-mapping-schema.xml"
     );
-    Ok(Schema::from_ir(parse_file(path)?))
+    Ok(Schema::from_ir(parse(SchemaSource::file(path))?))
 }
 
 fn source_of(config: GenerationConfig) -> Result<String, Box<dyn std::error::Error>> {
@@ -1068,7 +1068,7 @@ fn a_source_missing_a_field_does_not_compile() -> Result<(), Box<dyn std::error:
 #[test]
 fn unusable_source_traits_are_rejected_at_generate_time() -> Result<(), Box<dyn std::error::Error>>
 {
-    let extension = Schema::from_ir(parse_file(Paths::extension_schema())?);
+    let extension = Schema::from_ir(parse(SchemaSource::file(Paths::extension_schema()))?);
     let r = Generator::new(
         GenerationConfig::new("ext")
             .with_source_traits(true)
@@ -1081,7 +1081,7 @@ fn unusable_source_traits_are_rejected_at_generate_time() -> Result<(), Box<dyn 
         "{r:?}"
     );
 
-    let clash = Schema::from_ir(parse(
+    let clash = Schema::from_ir(parse(SchemaSource::xml(
         r#"<messageSchema package="clash" id="3" version="0" byteOrder="littleEndian">
   <types>
     <composite name="messageHeader">
@@ -1098,7 +1098,7 @@ fn unusable_source_traits_are_rejected_at_generate_time() -> Result<(), Box<dyn 
     <field name="src" id="1" type="PingSource"/>
   </message>
 </messageSchema>"#,
-    )?);
+    ))?);
     let r =
         Generator::new(GenerationConfig::new("clash").with_source_traits(true)).generate(&clash);
     assert!(
@@ -1136,7 +1136,7 @@ fn a_first_tail_named_like_the_sizing_helper_keeps_its_path()
     <data name="encodedLengthWithHeaderFrom" id="2" type="varDataEncoding"/>
   </message>
 </messageSchema>"#;
-    let schema = Schema::from_ir(parse(xml)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(xml))?);
     let sized = Generator::new(GenerationConfig::new("sized").with_source_traits(true))
         .generate(&schema)?
         .modules()
@@ -1193,7 +1193,7 @@ const SOURCE_FIELDS_XML: &str = r#"<messageSchema package="named" id="4" version
 </messageSchema>"#;
 
 fn generate_xml(xml: &str, config: GenerationConfig) -> Result<String, Box<dyn std::error::Error>> {
-    let schema = Schema::from_ir(parse(xml)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(xml))?);
     Ok(Generator::new(config)
         .generate(&schema)?
         .modules()

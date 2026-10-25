@@ -17,7 +17,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use ergo_sbe::{
-    DomainVarData, GenerationConfig, Generator, SBE_XSD, Schema, parse, validate_against_sbe_xsd,
+    DomainVarData, GenerationConfig, Generator, SBE_XSD, Schema, SchemaSource, parse,
+    validate_against_sbe_xsd,
 };
 
 const fn header_and_types() -> &'static str {
@@ -72,7 +73,7 @@ fn docs_schema_xml() -> String {
 }
 
 fn docs_codec_source() -> Result<String, Box<dyn std::error::Error>> {
-    let ir = parse(&docs_schema_xml())?;
+    let ir = parse(SchemaSource::xml(&docs_schema_xml()))?;
     let schema = Schema::from_ir(ir);
     Ok(Generator::new(
         GenerationConfig::new("docs_codec").with_domain_objects(DomainVarData::Bytes),
@@ -94,7 +95,7 @@ fn feature_tour_codec_source() -> Result<String, Box<dyn std::error::Error>> {
         .to_path_buf();
     let xml_path = workspace.join("samples/sbe-feature-tour/schemas/feature-tour.xml");
     let xml = fs::read_to_string(&xml_path)?;
-    let ir = parse(&xml)?;
+    let ir = parse(SchemaSource::xml(&xml))?;
     let schema = Schema::from_ir(ir);
     Ok(Generator::new(
         GenerationConfig::new("tour_codec")
@@ -381,7 +382,7 @@ fn readme_rust_fences_compile() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn documented_generated_surface_strings() -> Result<(), Box<dyn std::error::Error>> {
-    let ir = parse(&docs_schema_xml())?;
+    let ir = parse(SchemaSource::xml(&docs_schema_xml()))?;
     let schema = Schema::from_ir(ir);
     let cfg = GenerationConfig::new("docs_codec")
         .with_domain_objects(DomainVarData::Bytes)
@@ -425,7 +426,7 @@ fn documented_generated_surface_strings() -> Result<(), Box<dyn std::error::Erro
 
 #[test]
 fn documented_encode_decode_smoke() -> Result<(), Box<dyn std::error::Error>> {
-    let ir = parse(&docs_schema_xml())?;
+    let ir = parse(SchemaSource::xml(&docs_schema_xml()))?;
     let schema = Schema::from_ir(ir);
     let src =
         Generator::new(GenerationConfig::new("docs_run").with_domain_objects(DomainVarData::Bytes))

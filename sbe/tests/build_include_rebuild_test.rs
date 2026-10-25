@@ -27,6 +27,39 @@ fn write_types(path: &std::path::Path, primitive: &str) -> Result<(), Box<dyn st
     Ok(())
 }
 
+/// The stdout Cargo recorded for the scratch crate's build script.
+fn build_script_output(krate: &ScratchCrate) -> Result<String, Box<dyn std::error::Error>> {
+    let prefix = format!("{}-", krate.name());
+    for entry in fs::read_dir(krate.target_dir().join("debug/build"))? {
+        let path = entry?.path().join("output");
+        let is_ours = path
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with(&prefix));
+        if is_ours && path.is_file() {
+            return Ok(fs::read_to_string(path)?);
+        }
+    }
+    Err(format!("no build-script output for {}", krate.name()).into())
+}
+
+/// Without explicit rerun-if-changed lines Cargo reruns the script on any
+/// package edit, so the rebuild alone would not prove the schemas are watched.
+fn assert_watches_schemas(krate: &ScratchCrate) -> Result<(), Box<dyn std::error::Error>> {
+    let output = build_script_output(krate)?;
+    for name in ["root.xml", "types.xml"] {
+        assert!(
+            output
+                .lines()
+                .any(|l| l.starts_with("cargo::rerun-if-changed=")
+                    && l.ends_with(&format!("schemas/{name}"))),
+            "build script must watch schemas/{name}:\n{output}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn cargo_rebuilds_generated_source_after_include_only_edit()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -57,11 +90,7 @@ fn cargo_rebuilds_generated_source_after_include_only_edit()
         dir.join("build.rs"),
         r#"fn main() -> ergo_sbe::miette::Result<()> {
     let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/generated");
-    ergo_sbe::generate_to_dir(
-        "schemas/root.xml",
-        ergo_sbe::GenerationConfig::new("ping"),
-        &out,
-    )?;
+    ergo_sbe::generate(ergo_sbe::SchemaSource::file("schemas/root.xml"), ergo_sbe::GenerationConfig::new("ping"))?.write_to(&out)?;
     Ok(())
 }
 "#,
@@ -103,6 +132,7 @@ ergo-sbe = {{ path = "{sbe}" }}
         String::from_utf8_lossy(&first.stdout),
         String::from_utf8_lossy(&first.stderr)
     );
+    assert_watches_schemas(&krate)?;
     let generated = dir.join("src/generated/ping.rs");
     let before = fs::read_to_string(&generated)?;
     assert!(
@@ -121,7 +151,7 @@ ergo-sbe = {{ path = "{sbe}" }}
     let after = fs::read_to_string(&generated)?;
     assert!(
         after.contains("u64"),
-        "include-only edit must rerun generate_to_dir and emit uint64 Seq:\n{after}"
+        "include-only edit must rerun the build script and emit uint64 Seq:\n{after}"
     );
 
     let _ = fs::remove_dir_all(&dir);

@@ -14,7 +14,9 @@ use common::compile_and_run;
 
 use std::sync::{Arc, Mutex};
 
-use ergo_sbe::{DomainVarData, GenerationConfig, Generator, ItemContext, Schema, parse};
+use ergo_sbe::{
+    DomainVarData, GenerationConfig, Generator, ItemContext, Schema, SchemaSource, parse,
+};
 
 /// A snapshot of one hooked item, captured for assertions.
 #[derive(Debug, Clone)]
@@ -125,7 +127,7 @@ fn capture_all() -> Result<Vec<Captured>, Box<dyn std::error::Error>> {
     let config = GenerationConfig::new("hookmeta")
         .with_domain_objects(DomainVarData::Bytes)
         .with_hook(capture_hook(Arc::clone(&sink)));
-    let schema = Schema::from_ir(parse(SCHEMA_XML)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(SCHEMA_XML))?);
     let _ = Generator::new(config).generate(&schema)?;
     let out = sink.lock().expect("lock").clone();
     Ok(out)
@@ -319,7 +321,7 @@ fn hook_extends_message_and_entry_domain_and_compiles() {
             }
         });
 
-    let schema = Schema::from_ir(parse(SCHEMA_XML).expect("parse"));
+    let schema = Schema::from_ir(parse(SchemaSource::xml(SCHEMA_XML)).expect("parse"));
     let src = Generator::new(config)
         .generate(&schema)
         .expect("generate")
@@ -377,10 +379,10 @@ fn config_and_item_context_debug_stay_short_and_useful() -> Result<(), Box<dyn s
     // Hooks must report its arity, never try to format the closures.
     assert!(rendered.contains("hooks: Hooks(1)"), "{rendered}");
 
-    let ir = parse(&std::fs::read_to_string(
+    let ir = parse(SchemaSource::xml(&std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/schemas/example-schema.xml"),
-    )?)?;
+    )?))?;
     Generator::new(config).generate(&Schema::from_ir(ir))?;
 
     let captured = seen.lock().expect("hook sink").clone();
@@ -475,7 +477,7 @@ fn hooks_expose_deprecated_flags() -> Result<(), Box<dyn std::error::Error>> {
         drop(s);
         vec![]
     });
-    let schema = Schema::from_ir(parse(DEP_SCHEMA_XML)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(DEP_SCHEMA_XML))?);
     let _ = Generator::new(config).generate(&schema)?;
     let flags = seen.lock().expect("lock").clone();
     for name in [

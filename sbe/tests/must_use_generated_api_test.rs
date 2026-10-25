@@ -22,14 +22,15 @@
 
 mod common;
 use common::{Paths, compile_and_run, compile_fails_with_diagnostics, generate};
-use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse_file};
+use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, SchemaSource, parse};
 
 fn generate_with(
     xml_path: &std::path::Path,
     module_name: &str,
     f: impl FnOnce(GenerationConfig) -> GenerationConfig,
 ) -> String {
-    let ir = parse_file(xml_path).unwrap_or_else(|e| panic!("parse {xml_path:?}: {e}"));
+    let ir =
+        parse(SchemaSource::file(xml_path)).unwrap_or_else(|e| panic!("parse {xml_path:?}: {e}"));
     let schema = Schema::from_ir(ir);
     let config = f(GenerationConfig::new(module_name));
     let (modules, _warnings) = Generator::new(config)

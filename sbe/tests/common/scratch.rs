@@ -133,6 +133,12 @@ impl ScratchCrate {
         &self.name
     }
 
+    /// The shared `CARGO_TARGET_DIR` this crate builds into.
+    #[allow(dead_code)] // used by some test binaries only
+    pub fn target_dir(&self) -> &Path {
+        &self.target
+    }
+
     /// Copy the workspace `Cargo.lock` into `dir`, so the crate resolves the
     /// workspace's versions (shared artifacts, no per-crate index update).
     #[allow(clippy::unused_self)] // a method so every call site reads `krate.…`

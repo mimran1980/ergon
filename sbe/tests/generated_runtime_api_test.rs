@@ -42,8 +42,8 @@ fn any_message_visitor_dispatches_known_template_to_correct_arm()
     <field name="y" id="1" type="uint32" offset="0"/>
   </message>
 </messageSchema>"#;
-    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
-    let ir = parse(multi)?;
+    use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
+    let ir = parse(SchemaSource::xml(multi))?;
     let schema = Schema::from_ir(ir);
     let src = Generator::new(GenerationConfig::new("visitor_test"))
         .generate(&schema)?
@@ -129,8 +129,8 @@ fn any_message_lane_accessors_exist_only_for_messages_with_tails()
     <data name="label" id="4" type="varStringEncoding"/>
   </message>
 </messageSchema>"#;
-    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
-    let ir = parse(multi)?;
+    use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
+    let ir = parse(SchemaSource::xml(multi))?;
     let schema = Schema::from_ir(ir);
     let src = Generator::new(GenerationConfig::new("lanes_test"))
         .generate(&schema)?

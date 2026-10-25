@@ -10,7 +10,9 @@
 
 mod common;
 use common::compile_and_run_modules;
-use ergo_sbe::{ConversionSelector, GenerateError, GenerationConfig, Generator, Schema, parse};
+use ergo_sbe::{
+    ConversionSelector, GenerateError, GenerationConfig, Generator, Schema, SchemaSource, parse,
+};
 
 const SCHEMA: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="alias" id="73" version="0" byteOrder="littleEndian">
@@ -41,13 +43,12 @@ const SCHEMA: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 </sbe:messageSchema>"#;
 
 fn generate(config: GenerationConfig) -> Result<String, GenerateError> {
-    let schema =
-        parse(SCHEMA)
-            .map(Schema::from_ir)
-            .map_err(|e| GenerateError::InvalidConversion {
-                selector: "fixture".into(),
-                reason: e.to_string(),
-            })?;
+    let schema = parse(SchemaSource::xml(SCHEMA))
+        .map(Schema::from_ir)
+        .map_err(|e| GenerateError::InvalidConversion {
+            selector: "fixture".into(),
+            reason: e.to_string(),
+        })?;
     let set = Generator::new(config).generate(&schema)?;
     Ok(set
         .modules()

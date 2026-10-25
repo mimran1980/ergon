@@ -1,6 +1,6 @@
 //! Offset / block-length resolution and schema integrity checks on [`Ir`].
 //!
-//! Called automatically by [`crate::parse`] / [`crate::parse_file`]. Direct use
+//! Called automatically by [`crate::parse`]. Direct use
 //! is only needed if you build an [`Ir`] by hand.
 //!
 //! Passes: unique template ids, `sinceVersion` ≤ schema version, default
@@ -588,7 +588,7 @@ mod tests {
     use super::*;
 
     fn minimal_schema() -> Ir {
-        crate::parse(
+        crate::parse(crate::SchemaSource::xml(
             r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
     package="test" id="1" version="0" byteOrder="littleEndian">
@@ -602,13 +602,13 @@ mod tests {
   </types>
   <sbe:message name="A" id="1"><field name="x" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#,
-        )
+        ))
         .unwrap()
     }
 
     #[test]
     fn duplicate_template_id_rejected() -> Result<(), Box<dyn std::error::Error>> {
-        let result = crate::parse(
+        let result = crate::parse(crate::SchemaSource::xml(
             r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
     package="test" id="1" version="0" byteOrder="littleEndian">
@@ -616,7 +616,7 @@ mod tests {
   <sbe:message name="A" id="1"><field name="x" id="1" type="uint32"/></sbe:message>
   <sbe:message name="B" id="1"><field name="y" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#,
-        );
+        ));
         assert!(result.is_err());
 
         Ok(())
@@ -649,7 +649,7 @@ mod tests {
 <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
 <sbe:message name="A" id="1"><field name="x" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
-        let mut ir = crate::parse(xml).unwrap();
+        let mut ir = crate::parse(crate::SchemaSource::xml(xml)).unwrap();
         assert!(resolve_schema(&mut ir, Some(xml)).is_ok());
 
         Ok(())
@@ -749,13 +749,11 @@ mod tests {
 
     #[test]
     fn explicit_offset_preserved() -> Result<(), Box<dyn std::error::Error>> {
-        let ir = crate::parse(
-            r#"<?xml version="1.0"?>
+        let ir = crate::parse(crate::SchemaSource::xml(r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
 <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
 <sbe:message name="A" id="1"><field name="x" id="1" type="uint32" offset="0"/><field name="y" id="2" type="uint16" offset="4"/></sbe:message>
-</sbe:messageSchema>"#,
-        ).unwrap();
+</sbe:messageSchema>"#)).unwrap();
         let mut ir = ir;
         resolve_schema(&mut ir, None).unwrap();
         let x = ir.tokens.iter().find(|t| t.name == "x").unwrap();
@@ -768,8 +766,7 @@ mod tests {
 
     #[test]
     fn group_offsets_resolved() -> Result<(), Box<dyn std::error::Error>> {
-        let ir = crate::parse(
-            r#"<?xml version="1.0"?>
+        let ir = crate::parse(crate::SchemaSource::xml(r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
 <types>
   <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
@@ -782,8 +779,7 @@ mod tests {
     <field name="b" id="2" type="uint16"/>
   </group>
 </sbe:message>
-</sbe:messageSchema>"#,
-        ).unwrap();
+</sbe:messageSchema>"#)).unwrap();
         let mut ir = ir;
         resolve_schema(&mut ir, None).unwrap();
         let a = ir.tokens.iter().find(|t| t.name == "a").unwrap();
@@ -796,8 +792,7 @@ mod tests {
 
     #[test]
     fn vardata_offsets_resolved() -> Result<(), Box<dyn std::error::Error>> {
-        let ir = crate::parse(
-            r#"<?xml version="1.0"?>
+        let ir = crate::parse(crate::SchemaSource::xml(r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
 <types>
   <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
@@ -807,8 +802,7 @@ mod tests {
   <field name="x" id="1" type="uint32"/>
   <data name="payload" id="2" type="varDataEncoding"/>
 </sbe:message>
-</sbe:messageSchema>"#,
-        ).unwrap();
+</sbe:messageSchema>"#)).unwrap();
         let mut ir = ir;
         resolve_schema(&mut ir, None).unwrap();
         let msg = ir
@@ -823,16 +817,14 @@ mod tests {
 
     #[test]
     fn enum_block_size_calculated() -> Result<(), Box<dyn std::error::Error>> {
-        let ir = crate::parse(
-            r#"<?xml version="1.0"?>
+        let ir = crate::parse(crate::SchemaSource::xml(r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
 <types>
   <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
   <enum name="Colour" encodingType="uint8"><validValue name="R">1</validValue></enum>
 </types>
 <sbe:message name="A" id="1"><field name="c" id="1" type="Colour"/></sbe:message>
-</sbe:messageSchema>"#,
-        ).unwrap();
+</sbe:messageSchema>"#)).unwrap();
         let mut ir = ir;
         resolve_schema(&mut ir, None).unwrap();
         let msg = ir
@@ -848,16 +840,14 @@ mod tests {
 
     #[test]
     fn set_block_size_calculated() -> Result<(), Box<dyn std::error::Error>> {
-        let ir = crate::parse(
-            r#"<?xml version="1.0"?>
+        let ir = crate::parse(crate::SchemaSource::xml(r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
 <types>
   <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
   <set name="Flags" encodingType="uint8"><choice name="A">0</choice></set>
 </types>
 <sbe:message name="A" id="1"><field name="f" id="1" type="Flags"/></sbe:message>
-</sbe:messageSchema>"#,
-        ).unwrap();
+</sbe:messageSchema>"#)).unwrap();
         let mut ir = ir;
         resolve_schema(&mut ir, None).unwrap();
         let msg = ir
@@ -872,16 +862,14 @@ mod tests {
 
     #[test]
     fn constant_field_does_not_affect_block_length() -> Result<(), Box<dyn std::error::Error>> {
-        let ir = crate::parse(
-            r#"<?xml version="1.0"?>
+        let ir = crate::parse(crate::SchemaSource::xml(r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
 <types>
   <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
   <type name="ConstVal" primitiveType="char" presence="constant">X</type>
 </types>
 <sbe:message name="A" id="1"><field name="x" id="1" type="uint32"/><field name="c" id="2" type="ConstVal"/></sbe:message>
-</sbe:messageSchema>"#,
-        ).unwrap();
+</sbe:messageSchema>"#)).unwrap();
         let mut ir = ir;
         resolve_schema(&mut ir, None).unwrap();
         let msg = ir
@@ -896,16 +884,14 @@ mod tests {
 
     #[test]
     fn nested_composite_offsets_resolved() -> Result<(), Box<dyn std::error::Error>> {
-        let ir = crate::parse(
-            r#"<?xml version="1.0"?>
+        let ir = crate::parse(crate::SchemaSource::xml(r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
 <types>
   <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
   <composite name="Point"><type name="px" primitiveType="int32"/><type name="py" primitiveType="int32"/></composite>
 </types>
 <sbe:message name="A" id="1"><field name="p" id="1" type="Point"/></sbe:message>
-</sbe:messageSchema>"#,
-        ).unwrap();
+</sbe:messageSchema>"#)).unwrap();
         let mut ir = ir;
         resolve_schema(&mut ir, None).unwrap();
         let msg = ir
@@ -1029,16 +1015,14 @@ mod tests {
 
     #[test]
     fn fixed_array_field_offset() -> Result<(), Box<dyn std::error::Error>> {
-        let ir = crate::parse(
-            r#"<?xml version="1.0"?>
+        let ir = crate::parse(crate::SchemaSource::xml(r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
 <types>
   <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
   <type name="int32array4" primitiveType="int32" length="4"/>
 </types>
 <sbe:message name="A" id="1"><field name="nums" id="1" type="int32array4"/></sbe:message>
-</sbe:messageSchema>"#,
-        ).unwrap();
+</sbe:messageSchema>"#)).unwrap();
         let mut ir = ir;
         resolve_schema(&mut ir, None).unwrap();
         let msg = ir
@@ -1054,8 +1038,7 @@ mod tests {
 
     #[test]
     fn nested_group_offsets_resolved() -> Result<(), Box<dyn std::error::Error>> {
-        let ir = crate::parse(
-            r#"<?xml version="1.0"?>
+        let ir = crate::parse(crate::SchemaSource::xml(r#"<?xml version="1.0"?>
 <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="t" id="1" version="0" byteOrder="littleEndian">
 <types>
   <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
@@ -1069,8 +1052,7 @@ mod tests {
     </group>
   </group>
 </sbe:message>
-</sbe:messageSchema>"#,
-        ).unwrap();
+</sbe:messageSchema>"#)).unwrap();
         let mut ir = ir;
         resolve_schema(&mut ir, None).unwrap();
         let b = ir.tokens.iter().find(|t| t.name == "b").unwrap();
@@ -1091,6 +1073,7 @@ mod tests {
             description: None,
             semantic_version: None,
             header_type: "messageHeader".to_string(),
+            sources: Vec::new(),
             tokens: vec![
                 Token {
                     id: None,

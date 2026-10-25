@@ -23,10 +23,10 @@ const MODULE: &str = "car_example";
 
 #[test]
 fn external_sbe_rt_two_modules_share_runtime() -> Result<(), Box<dyn std::error::Error>> {
-    use ergo_sbe::{GenerationConfig, Generator, Schema, parse_file};
+    use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
     let (_schema_a, source_a) = generate(&Paths::example_schema(), "shared_rt");
     // Generate a second module that re-uses the first module's sbe_rt.
-    let ir = parse_file(&Paths::example_schema())?;
+    let ir = parse(SchemaSource::file(&Paths::example_schema()))?;
     let schema_b = Schema::from_ir(ir);
     let mut g = Generator::new(
         GenerationConfig::new("consumer_rt").with_external_sbe_rt("super::shared_rt::sbe_rt"),
@@ -68,7 +68,7 @@ fn external_sbe_rt_two_modules_share_runtime() -> Result<(), Box<dyn std::error:
 #[test]
 fn external_sbe_rt_from_fixed_block_owner_supports_consumer_tails()
 -> Result<(), Box<dyn std::error::Error>> {
-    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
+    use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
     const TYPES: &str = r#"<types>
     <composite name="messageHeader">
       <type name="blockLength" primitiveType="uint16"/>
@@ -104,7 +104,7 @@ fn external_sbe_rt_from_fixed_block_owner_supports_consumer_tails()
     let module =
         |xml: &str, config: GenerationConfig| -> Result<String, Box<dyn std::error::Error>> {
             Ok(Generator::new(config)
-                .generate(&Schema::from_ir(parse(xml)?))?
+                .generate(&Schema::from_ir(parse(SchemaSource::xml(xml))?))?
                 .modules()
                 .next()
                 .ok_or("one module")?
@@ -413,7 +413,7 @@ fn generate_multi_message_schema() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn generator_constructs_with_config() -> Result<(), Box<dyn std::error::Error>> {
-    use ergo_sbe::{DomainVarData, GenerationConfig, Generator};
+    use ergo_sbe::{DomainVarData, GenerationConfig, Generator, SchemaSource};
     let _generator = Generator::new(GenerationConfig::new("cfg_test"));
     Ok(())
 }
@@ -422,10 +422,10 @@ fn generator_constructs_with_config() -> Result<(), Box<dyn std::error::Error>> 
 fn generate_multi_schema_entry_point() -> Result<(), Box<dyn std::error::Error>> {
     // generate_multi() generates multiple schemas into separate modules with
     // shared-type tracking. No other test exercises it.
-    use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse_file};
-    let ir1 = parse_file(&Paths::example_schema()).unwrap();
+    use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, SchemaSource, parse};
+    let ir1 = parse(SchemaSource::file(&Paths::example_schema())).unwrap();
     let s1 = Schema::from_ir(ir1);
-    let ir2 = parse_file(&Paths::l3_orderbook_schema()).unwrap();
+    let ir2 = parse(SchemaSource::file(&Paths::l3_orderbook_schema())).unwrap();
     let s2 = Schema::from_ir(ir2);
     let mut g = Generator::new(GenerationConfig::new("multi_test"));
     let ms = g.generate_multi(&[(&s1, "mod1"), (&s2, "mod2")])?;
@@ -482,7 +482,7 @@ fn constant_set_field_value_ref_is_rejected() -> Result<(), Box<dyn std::error::
     use std::path::PathBuf;
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/schemas/constant-set-field.xml");
-    let Err(err) = ergo_sbe::parse_file(&path) else {
+    let Err(err) = ergo_sbe::parse(ergo_sbe::SchemaSource::file(&path)) else {
         return Err("constant set valueRef must be rejected".into());
     };
     assert!(format!("{err}").contains("not an enum"), "{err}");
@@ -2443,7 +2443,7 @@ fn upstream_issue_schemas_parse() -> Result<(), Box<dyn std::error::Error>> {
     for name in schemas {
         let path = Paths::sbe_tool_test_resource(name);
         assert!(path.is_file(), "upstream issue fixture is missing: {name}");
-        ergo_sbe::parse_file(&path)
+        ergo_sbe::parse(ergo_sbe::SchemaSource::file(&path))
             .unwrap_or_else(|error| panic!("{name}: supported schema failed to parse: {error}"));
     }
 
@@ -2667,7 +2667,7 @@ fn decimal_converter_emits_conversion_traits() -> Result<(), Box<dyn std::error:
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/schemas/decimal-converter-schema.xml"
     ));
-    let ir = ergo_sbe::parse_file(&path).unwrap();
+    let ir = ergo_sbe::parse(ergo_sbe::SchemaSource::file(&path)).unwrap();
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("decimal_test")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
@@ -2694,7 +2694,7 @@ fn conversion_rejects_nonexistent_type() -> Result<(), Box<dyn std::error::Error
 </types>
 <sbe:message name="M" id="1"><field name="f" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
-    let ir = ergo_sbe::parse(xml).unwrap();
+    let ir = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml)).unwrap();
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("bad")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("NonExistent"));
@@ -2717,7 +2717,7 @@ fn decimal_converter_rejects_missing_composite() -> Result<(), Box<dyn std::erro
 </types>
 <sbe:message name="M" id="1"><field name="f" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
-    let ir = ergo_sbe::parse(xml).unwrap();
+    let ir = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml)).unwrap();
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("missing_dec")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("NonExistent"));
@@ -2754,7 +2754,7 @@ fn conversion_rejects_nonexistent_named_type() -> Result<(), Box<dyn std::error:
 </types>
 <sbe:message name="M" id="1"><field name="f" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
-    let ir = ergo_sbe::parse(xml).unwrap();
+    let ir = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml)).unwrap();
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("missing")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("DoesNotExist"));
@@ -2777,7 +2777,7 @@ fn generate_returns_error_on_invalid_decimal_composite() -> Result<(), Box<dyn s
 </types>
 <sbe:message name="M" id="1"><field name="f" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
-    let ir = ergo_sbe::parse(xml).unwrap();
+    let ir = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml)).unwrap();
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("panics")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("NonExistent"));
@@ -2808,7 +2808,7 @@ fn decimal_converter_skips_non_decimal_fields_and_messages()
   <field name="qty" id="1" type="uint32"/>
 </sbe:message>
 </sbe:messageSchema>"#;
-    let ir = ergo_sbe::parse(xml).unwrap();
+    let ir = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml)).unwrap();
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("mixed_dec")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
@@ -2857,7 +2857,8 @@ fn vardata_composite_with_length_not_first_member_is_rejected()
   <data name="blob" id="2" type="oddVarEncoding"/>
 </sbe:message>
 </sbe:messageSchema>"#;
-    let err = ergo_sbe::parse(xml).expect_err("reversed var-data members must be rejected");
+    let err = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml))
+        .expect_err("reversed var-data members must be rejected");
     assert!(
         format!("{err}").contains("expected exactly 'length' then 'varData'"),
         "unexpected diagnostic: {err}"
@@ -2884,7 +2885,8 @@ fn group_entry_constant_field_without_value_is_skipped() -> Result<(), Box<dyn s
   </group>
 </sbe:message>
 </sbe:messageSchema>"#;
-    let err = ergo_sbe::parse(xml).expect_err("constant without value text must fail parse");
+    let err = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml))
+        .expect_err("constant without value text must fail parse");
     let msg = format!("{err}");
     assert!(
         msg.contains("constant") || msg.contains("EmptyConst"),
@@ -2904,7 +2906,8 @@ fn schema_without_header_composite_is_rejected() -> Result<(), Box<dyn std::erro
 </types>
 <sbe:message name="M" id="1"><field name="a" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
-    let err = ergo_sbe::parse(xml).expect_err("headerless schema must be rejected");
+    let err = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml))
+        .expect_err("headerless schema must be rejected");
     assert!(
         format!("{err}").contains("messageHeader: expected a defined composite"),
         "unexpected diagnostic: {err}"
@@ -3080,7 +3083,7 @@ fn group_entry_domain_mapped_set_formats_with_debug() -> Result<(), Box<dyn std:
   </group>
 </sbe:message>
 </sbe:messageSchema>"#;
-    let schema = ergo_sbe::Schema::from_ir(ergo_sbe::parse(xml)?);
+    let schema = ergo_sbe::Schema::from_ir(ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml))?);
     let src = ergo_sbe::Generator::new(
         ergo_sbe::GenerationConfig::new("group_set_domain").with_domain_type(
             ergo_sbe::ConversionSelector::named_type("Flags"),
@@ -3727,7 +3730,7 @@ fn decimal_converter_emits_wire_and_generic_methods() -> Result<(), Box<dyn std:
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/schemas/decimal-converter-schema.xml"
     ));
-    let ir = ergo_sbe::parse_file(&path).unwrap();
+    let ir = ergo_sbe::parse(ergo_sbe::SchemaSource::file(&path)).unwrap();
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("decimal_wire")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
@@ -3771,7 +3774,7 @@ fn conversion_only_domain_dto_uses_wire_setters() -> Result<(), Box<dyn std::err
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/schemas/decimal-converter-schema.xml"
     ));
-    let ir = ergo_sbe::parse_file(&path).unwrap();
+    let ir = ergo_sbe::parse(ergo_sbe::SchemaSource::file(&path)).unwrap();
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("conv_domain")
         .with_domain_objects(ergo_sbe::DomainVarData::Bytes)
@@ -3827,7 +3830,7 @@ fn decimal_converter_wire_and_generic_byte_identity() -> Result<(), Box<dyn std:
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/schemas/decimal-converter-schema.xml"
     ));
-    let ir = ergo_sbe::parse_file(&path).unwrap();
+    let ir = ergo_sbe::parse(ergo_sbe::SchemaSource::file(&path)).unwrap();
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("decimal_id")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
@@ -4124,7 +4127,7 @@ fn decimal_converter_covers_group_entry_fields() -> Result<(), Box<dyn std::erro
   </group>
 </sbe:message>
 </sbe:messageSchema>"#;
-    let ir = ergo_sbe::parse(xml).unwrap();
+    let ir = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml)).unwrap();
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("entdec")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
@@ -4213,7 +4216,7 @@ fn decimal_converter_exact_adapter_matrix() -> Result<(), Box<dyn std::error::Er
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/schemas/decimal-converter-schema.xml"
     ));
-    let ir = ergo_sbe::parse_file(&path).unwrap();
+    let ir = ergo_sbe::parse(ergo_sbe::SchemaSource::file(&path)).unwrap();
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("exact_matrix")
         .with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
