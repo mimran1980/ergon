@@ -135,6 +135,16 @@ impl Row<'_> {
     }
 }
 
+/// An empty vector of `capacity` whose every slot was written once, so a
+/// push during a measured run never takes a first-touch page fault.
+fn prefaulted<T: Copy>(capacity: usize, fill: T) -> Vec<T> {
+    let mut v = Vec::with_capacity(capacity);
+    v.resize(capacity, fill);
+    std::hint::black_box(v.as_slice());
+    v.clear();
+    v
+}
+
 /// Latencies of at least a threshold, each with when it was due:
 /// `stream,due_ns,latency_ns,ping` under `# start_realtime_ns=` and
 /// `# spikes_total=`. Preallocated; past capacity only the total grows.
@@ -152,7 +162,7 @@ impl Spikes {
     pub fn new(threshold_ns: u64, capacity: usize) -> Self {
         Self {
             threshold_ns,
-            rows: Vec::with_capacity(capacity),
+            rows: prefaulted(capacity, (0, 0, 0, 0)),
             total: 0,
         }
     }
@@ -211,7 +221,7 @@ impl Stalls {
             threshold_ns,
             t0,
             last: t0,
-            rows: Vec::with_capacity(capacity),
+            rows: prefaulted(capacity, (0, 0)),
         }
     }
 
