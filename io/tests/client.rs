@@ -227,7 +227,7 @@ impl ClientHandler for Counting {
 }
 
 /// A handler whose [`ClientHandler::connect_gate`] runs `gate`: the gate
-/// lives on the handler so it can share the handler's `Budget`.
+/// lives on the handler so it can share the handler's state.
 struct Gated<F> {
     seen: Seen,
     gate: F,
@@ -781,18 +781,17 @@ fn dropped_pool_connections_reconnect_spread_out() -> R {
 
 #[test]
 fn a_gated_pool_opens_only_through_its_gate() -> R {
-    use ergon_io::limit::{BucketSpec, Budget, Charge, Class};
     // ANCHOR: pool_gate
-    // The pool's own bucket: venues' connect limits count WebSocket
-    // connects, not HTTP ones. The gate lives on the handler, so it shares
-    // the handler's budget with `on_response`.
-    struct BudgetGate {
+    // The pool's own gate: venues' connect limits count WebSocket connects,
+    // not HTTP ones. The gate lives on the handler, so it shares the
+    // handler's state with `on_response`. The pacing is the application's:
+    // here at most two connects in any second.
+    struct PacedPool {
         seen: Seen,
-        budget: Budget,
-        connects: ergon_io::limit::BucketId,
+        starts: Vec<i64>,
         now: i64,
     }
-    impl ClientHandler for BudgetGate {
+    impl ClientHandler for PacedPool {
         fn on_response(&mut self, request: u64, r: &Response<'_>) {
             self.seen.on_response(request, r);
         }
@@ -800,24 +799,32 @@ fn a_gated_pool_opens_only_through_its_gate() -> R {
             self.seen.on_error(request, sent, error);
         }
         fn connect_gate(&mut self) -> std::result::Result<(), u64> {
-            self.budget
-                .try_charge(&[Charge::new(self.connects, 1)], Class::Normal, self.now)
-                .map(drop)
-                .map_err(|l| l.wait_ns(self.now))
+            const SECOND: i64 = 1_000_000_000;
+            let now = self.now;
+            let recent: Vec<i64> = self
+                .starts
+                .iter()
+                .copied()
+                .filter(|&t| t + SECOND > now)
+                .collect();
+            match recent.first() {
+                Some(&oldest) if recent.len() >= 2 => Err((oldest + SECOND).abs_diff(now)),
+                _ => {
+                    self.starts.push(now);
+                    Ok(())
+                }
+            }
         }
     }
     let lab = Lab::new()?;
-    let budget = Budget::new(vec![BucketSpec::rolling("http-connects", 2, 1_000, 10)])?;
-    let connects = budget.id("http-connects").ok_or("no bucket")?;
     let mut cfg = native_cfg();
     cfg.pool = 4;
     cfg.connect_gate = true; // `new` opens nothing: every open asks the gate
     let mut c = HttpClient::new(&cfg, lab.target("")?, lab.client_cfg.clone())?;
     // ANCHOR_END: pool_gate
-    let mut h = BudgetGate {
+    let mut h = PacedPool {
         seen: Seen::default(),
-        budget,
-        connects,
+        starts: Vec::new(),
         now: 0,
     };
     assert!(
@@ -858,7 +865,7 @@ fn a_gated_pool_opens_only_through_its_gate() -> R {
             let mut c = client.take().ok_or("no client")?;
             let t0 = Instant::now();
             while c.idle() < 4 {
-                h.now = i64::try_from(t0.elapsed().as_nanos())?; // the budget's clock
+                h.now = i64::try_from(t0.elapsed().as_nanos())?; // the pacer's clock
                 // ANCHOR: pool_gate_poll
                 c.poll_gated(&mut h)?;
                 // ANCHOR_END: pool_gate_poll
@@ -866,15 +873,12 @@ fn a_gated_pool_opens_only_through_its_gate() -> R {
                     return Err(format!("{} of 4 open", c.idle()).into());
                 }
             }
-            // Two per second: the last two wait for the window (1 s, plus a
-            // 100 ms guard), and no longer: a refusal does not grow the
-            // backoff.
+            // Two per second: the last two wait for the window (1 s), and
+            // no longer: a refusal does not grow the backoff.
             let took = t0.elapsed();
-            assert!(took >= Duration::from_millis(1_100), "{took:?}");
-            assert!(took < Duration::from_millis(1_600), "{took:?}");
-            let st = h.budget.stats(h.connects, h.now)?;
-            assert_eq!(st.charged, 4);
-            assert!(st.limited > 0);
+            assert!(took >= Duration::from_millis(1_000), "{took:?}");
+            assert!(took < Duration::from_millis(1_500), "{took:?}");
+            assert_eq!(h.starts.len(), 4, "each connect passed the gate once");
             Ok(())
         })();
         srv.join().map_err(|_| "server panicked")??;

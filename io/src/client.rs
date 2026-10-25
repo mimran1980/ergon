@@ -106,8 +106,8 @@ pub struct HttpClientConfig {
     /// Native: every pool connect waits for [`ClientHandler::connect_gate`],
     /// the first ones included, so `new` opens nothing and
     /// [`HttpClient::poll`] refuses ([`Error::Config`]). For a venue that
-    /// limits connects per IP. Give the pool a budget bucket of its own:
-    /// venues' connect limits count WebSocket connects, not HTTP ones. Off
+    /// limits connects per IP. Give the pool a gate of its own: venues'
+    /// connect limits count WebSocket connects, not HTTP ones. Off
     /// (default): `new` opens every connection at once.
     pub connect_gate: bool,
     /// Native: the seed of the reconnect delays' jitter; `0` picks one at
@@ -173,20 +173,13 @@ pub trait ClientHandler {
     /// nothing to open.
     ///
     /// Lives here, not in a closure passed to [`HttpClient::poll_gated`],
-    /// so the gate can share this handler's [`Budget`](crate::limit::Budget) (the same one
-    /// [`on_response`](ClientHandler::on_response) charges for requests):
-    ///
-    /// ```text
-    /// fn connect_gate(&mut self) -> Result<(), u64> {
-    ///     self.budget
-    ///         .try_charge(&[Charge::new(self.connects, 1)], Class::Normal, self.now)
-    ///         .map(drop)
-    ///         .map_err(|l| l.wait_ns(self.now))
-    /// }
-    /// ```
+    /// so the gate can share this handler's state (the application's
+    /// pacing, which [`on_response`](ClientHandler::on_response) also
+    /// updates). ergon-io has no rate limiter: the pacing is the
+    /// application's.
     ///
     /// The default passes every connect. Implement it for a venue's connect
-    /// limit, with a bucket of the pool's own: venues count WebSocket
+    /// limit, with a gate of the pool's own: venues count WebSocket
     /// connects, not HTTP ones.
     ///
     /// # Errors
@@ -416,7 +409,7 @@ impl HttpClient {
     /// [`HttpClient::poll`], but a pool connect starts only when
     /// [`ClientHandler::connect_gate`] passes it: a venue's limit on
     /// connects per IP. The gate is the handler's, so it can share the
-    /// handler's [`Budget`](crate::limit::Budget) (see [`ClientHandler::connect_gate`]).
+    /// handler's state (see [`ClientHandler::connect_gate`]).
     ///
     /// # Errors
     /// As [`HttpClient::poll`]; [`Error::Unsupported`] for libcurl, which

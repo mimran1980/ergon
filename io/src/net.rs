@@ -32,8 +32,8 @@ pub struct Target {
     /// an address of this host, of the destination's family; on Linux the
     /// port is chosen at connect, per destination
     /// (`IP_BIND_ADDRESS_NO_PORT`), so binding uses up no ephemeral ports.
-    /// For several IPs each with its own rate budget, see
-    /// [`crate::limit::SourceIps`].
+    /// For several IPs each with its own connect limit, see
+    /// [`crate::reconnect::Reconnect::poll_sourced`].
     pub source: Option<IpAddr>,
 }
 
@@ -86,7 +86,7 @@ impl Target {
 /// A dial whose source IP ([`Target::source`]) can be set once built.
 ///
 /// [`crate::reconnect::Reconnect::poll_sourced`] uses it to bind each
-/// attempt to the IP [`crate::limit::SourceIps`] picked.
+/// attempt to the IP its gate picked.
 pub trait BindSource {
     /// Connect from `ip`.
     fn bind_source(&mut self, ip: IpAddr);

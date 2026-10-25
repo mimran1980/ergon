@@ -33,10 +33,10 @@ Terms this chapter uses. Each links to the section that explains it.
 | [static CPU manager](kubernetes.md#pod-layouts) | The kubelet policy that gives a Guaranteed pod whole CPUs of its own. | What makes a second CPU the loop does not share possible; x86 with SMT: also `full-pcpus-only`. |
 | [Graviton](#when-to-use-it) | AWS's Arm CPUs. | Each vCPU is a whole core, so there is no hyperthread sibling. The fair backend comparison ran on it. |
 | [`SCHED_FIFO`](../tune/overview.md) | Real-time scheduling: the thread runs ahead of every normal one. | One A/B for the loop: no consistent change ([data](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#host-and-nic-settings-aws-x86)). |
-| [syscall](#choosing-a-backend) | A call from the program into the kernel. | Each costs CPU. `uring-spin` makes far fewer than `epoll-spin` at the same message rate. |
-| [interrupt](#choosing-a-backend) | The NIC's signal to the CPU that packets arrived. | `epoll-spin`, `uring-spin` and mio wait for it. Compared fairly with NIC polling on Graviton only. |
+| [syscall](#choosing-a-backend) | A call from the program into the kernel. | Each costs CPU. `epoll-spin` makes one `epoll_wait` per poll, idle or not. |
+| [interrupt](#choosing-a-backend) | The NIC's signal to the CPU that packets arrived. | `epoll-spin` and mio wait for it. Compared fairly with NIC polling on Graviton only. |
 | [NIC polling (busy polling)](backends.md) | The reading thread checks the NIC queue itself instead of waiting for an interrupt. | Pro: skips the interrupt path. Con: CPU; plain `recv-busy` pays it per socket. |
-| [NAPI](backends.md#kernel) | The kernel code that takes packets off a NIC queue; busy polling calls it directly. | `uring-sqpoll` and `uring-napi` register their queues with it: Linux 6.9+. |
+| [NAPI](backends.md#kernel) | The kernel code that takes packets off a NIC queue; busy polling calls it directly. | `uring-sqpoll` registers its queues with it: Linux 6.9+. |
 | [NIC queue](backends.md#cost-per-poll) | One of the NIC's receive queues (`c7i.2xlarge`: 8); each connection lands on one. | `per_queue` and the SQPOLL thread poll queues, not sockets, so their NIC polling stops growing with sockets. The loop's pass still grows ([cost per poll](backends.md#cost-per-poll)). |
 | [adaptive RX](#best-practice) | ENA (the AWS NIC) re-tunes how long it delays interrupts to batch packets (adaptive receive moderation). | On by default. Set on the node: `ethtool -C <nic> adaptive-rx off`. |
 | [backend](backends.md) | How the `Driver` waits for and reads data; set in config: `Config::parse("recv-busy")`. | Pick by socket count and spare CPUs: [choosing a backend](#choosing-a-backend). |
@@ -44,10 +44,8 @@ Terms this chapter uses. Each links to the section that explains it.
 | [mio, tokio](backends.md#mio-measured-not-a-backend) | Rust's usual async I/O. On Linux both wait in `epoll_wait` and read the ready sockets: `epoll-spin`'s mechanism, edge- rather than level-triggered (two reads per message, not one). mio polled with a zero timeout never blocks, as `epoll-spin`; tokio blocks when idle. | Level with `epoll-spin` in the fair run, and gated in CI both ways; as a backend it would duplicate `epoll-spin`. reqwest on tokio parks its thread between requests. |
 | [`recv-busy`](backends.md) | Reads every socket every poll; `SO_BUSY_POLL` makes each read poll the NIC too. | The pick at 1–4 sockets. Each socket adds to every poll. |
 | [`per_queue`](backends.md#per_queue-one-read-per-nic-queue) | A `recv-busy` option: one read per NIC queue, then only the ready sockets. | Its NIC polling stops growing at the queue count. The one-CPU pick past 4 sockets. |
-| [`io_uring`](backends.md#kernel) | A Linux interface: requests and results pass through rings shared with the kernel. | Needs feature `uring` (on by default) and Linux 6.1+ (6.9+ for NAPI). |
-| [`uring-spin`](backends.md) | `io_uring` with `DEFER_TASKRUN`: enters the kernel only when it flags work. | Pro: few syscalls, low CPU. Con: waits for the interrupt, like `epoll-spin`. |
+| [`io_uring`](backends.md#kernel) | A Linux interface: requests and results pass through rings shared with the kernel. | Needs feature `uring` (on by default) and Linux 6.9+ (NAPI). |
 | [`uring-sqpoll`](backends.md) | A kernel thread (SQPOLL) spins for the ring: submits, completes, polls the NIC. | Its kernel thread polls NIC queues, not sockets; the loop's own pass still grows with sockets ([cost per poll](backends.md#cost-per-poll)). Needs a second CPU or the loop's sibling. |
-| [`uring-napi`, `epoll-busy`](backends.md) | Wait in the kernel up to `wait_us` (100 µs): poll the NIC up to `busy_poll_us` (50 µs), then sleep. | No run shows them saving CPU. |
 | [crossover](backends.md#find-the-crossover-on-your-own-host) | The socket count where one backend stops beating another. | Depends on the NIC, its queue count, the interrupt path and the traffic: measure it on your host. |
 | [`TCP_NODELAY`](#defaults) | Turns off Nagle's algorithm, which holds a small send until earlier data is ACKed. | On for every socket: each send goes out at once. |
 | [quick ACK](#what-it-checks-for-you) | The kernel ACKs at once instead of delaying ([tcp(7)](https://man7.org/linux/man-pages/man7/tcp.7.html), `TCP_QUICKACK`). | A peer using Nagle's algorithm waits for our ACK before its next small send. Effect not measured here. |
@@ -65,16 +63,11 @@ Terms this chapter uses. Each links to the section that explains it.
 | [HTTP/1.1 keep-alive](http-client.md#rules) | One connection reused for many requests. | No handshake per request. One request in flight per connection; a timed-out request closes its connection. |
 | [connection pool](http-client.md#many-connections) | The warm keep-alive connections an `HttpClient` keeps. | All busy: `Error::Busy`. Each one is one more socket the loop polls. |
 | [libcurl](http-client.md) | The common C HTTP library: `HttpImpl::Curl` (feature `curl`). | Pro: redirects, proxies, HTTP/2, compression. Con: slower than native at the median on the same interrupt path. |
-| [rate limit](rate-limits.md#what-ergon-io-gives-you) | A venue's cap on requests, orders or connects per window: per IP, account, instrument or connection. | Break it: refused (429). Keep going: your IP is banned. |
-| [budget, bucket](rate-limits.md#what-ergon-io-gives-you) | `limit::Budget`: one bucket per venue limit, checked before each request. | Never sleeps or queues: a refusal says when to try again. Sees only this process. |
-| [rolling window](rate-limits.md#what-ergon-io-gives-you) | A count of what went out in the last window, kept in sub-windows. | Safe whatever window edges the venue uses; costs at most one sub-window of budget. |
-| [draining counter (GCRA)](rate-limits.md#what-ergon-io-gives-you) | A level that drains at a fixed rate. | Wrong for window limits: it lets twice the limit through in one window. |
-| [reserve](rate-limits.md#what-ergon-io-gives-you) | Units only cancels and reduce-only orders may use. | Keeps cancels possible when a bucket is nearly full; not during a hold. |
-| [hold, halt](rate-limits.md#limits) | Hold: a bucket refuses everything until the venue's wait ends (a 429). Halt: until a person clears it (a ban). | A halt never ends by itself: alert on `Budget::halted()`. |
+| [rate limit](rate-limits.md) | A venue's cap on requests, orders or connects per window: per IP, account, instrument or connection. | Break it: refused (429). Keep going: your IP is banned. Pacing is the application's: ergon-io has no rate limiter. |
 | [verdict](rate-limits.md#outcomes-and-http) | What became of a request: done, rejected, not run, throttled, banned, clock skew, unknown. | Only the "did not run" kinds may be sent again, inside their deadline. |
 | [`Sent::No`, `Sent::Maybe`](rate-limits.md#outcomes-and-http) | For a request with no answer: it never left, or it may have run. | Only the transport knows. `Maybe`: look the order up. |
 | [client order id](rate-limits.md#limits) | Your unique id on each order. | The only way to find out what became of an order with an unknown outcome. |
-| [connect gate](websocket.md#connect-limits-and-the-servers-wait) | A bucket every connect attempt must pass. | Keeps 50 links reconnecting at once inside a venue's connect limit. |
+| [connect gate](websocket.md#connect-limits-and-the-servers-wait) | The application's check every connect attempt must pass. | Keeps 50 links reconnecting at once inside a venue's connect limit. |
 | [round trip](websocket.md#measured-results) | Request sent to answer received, on one clock. | x86: 1 connection. Graviton: 1–64 sockets on the loop and an HTTP pool of 20. |
 | p50 / p99 / max | pN: N % of samples are at or below it (p50: the median). max: the worst. | In µs. Every figure in `BENCHMARK.md` keeps its max. |
 | [kernel arrival timestamp](backends.md#configuration-strings) | When the kernel stamped a packet's arrival; in `RxMeta`, with the NIC's stamp where it has one. | Starts *arrival → decoded*. Key `rx_timestamps`, on by default. |
@@ -119,12 +112,12 @@ adds its own). Then pick by what CPUs you have:
 | sockets on the loop thread | one CPU | a spare CPU for the SQPOLL thread (or the loop's sibling) | the NIC's interrupts on a core of their own (node-level) |
 |---|---|---|---|
 | 1–4 | `recv-busy` | `recv-busy` or `uring-sqpoll` | `recv-busy` |
-| 5–64 | `recv-busy,per_queue=true` | `uring-sqpoll` | `uring-sqpoll`, `epoll-spin` or `uring-spin` |
+| 5–64 | `recv-busy,per_queue=true` | `uring-sqpoll` | `uring-sqpoll` or `epoll-spin` |
 | 65–256 | `recv-busy,per_queue=true` | `uring-sqpoll` | `uring-sqpoll` (interrupt backends not measured past 64) |
 
 Evidence:
 [fair run, Graviton](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton)
-(all six backends, 1–64 sockets, HTTP pool of 1 and 20) and
+(1–64 sockets, HTTP pool of 1 and 20) and
 [polling backends, x86](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#polling-backends-by-socket-count-x86)
 (1–256 connections).
 
@@ -134,7 +127,7 @@ Evidence:
 - **`per_queue`** reads one socket per NIC queue, then the ready ones. Its
   NIC polling stops growing at the queue count. It trails `uring-sqpoll` at
   16–64 sockets. Not the default: set it when the count can pass 4.
-- **The interrupt backends** (`epoll-spin`, `uring-spin`, mio) matched
+- **The interrupt backends** (`epoll-spin`, mio) matched
   `uring-sqpoll` from 4 sockets in the fair run, which had moderation off
   and their interrupts on a core of their own. Both are node settings; a
   pod cannot set them. With the interrupts on the loop's CPU their p99
@@ -146,15 +139,8 @@ Evidence:
 - **One physical core with two hyperthreads:** `uring-sqpoll` with the
   SQPOLL thread on the loop's sibling (the default in a `cpu: 2` x86 pod:
   [Kubernetes](kubernetes.md#x86-with-smt-cpu-2-one-physical-core)).
-- **The loop's CPU time in the kernel matters:** `uring-spin`. It equals
-  `epoll-spin`'s latency with thousands of times fewer syscalls
-  ([data](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#syscalls-and-kernel-cpu-epoll-spin-against-uring-spin)).
 - **Many streams on one exchange:** pack them onto a few combined-stream
   connections; fewer sockets decode sooner.
-- **`uring-napi`, `epoll-busy`** poll the NIC inside a timed wait, then
-  sleep. In the one run they trailed `uring-sqpoll` and spent most of the
-  loop's time in the kernel
-  ([data](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#poll-then-sleep-backends-epoll-busy-uring-napi)).
 - How each one waits, every key, and how to find the crossover on your own
   host: [Backends and configuration](backends.md).
 
@@ -234,7 +220,7 @@ Node-level means the setting is on the host, not in the pod spec
 
 Measured with no consistent effect: `SCHED_FIFO` for the loop, one NIC
 queue, capped idle states. Not measured here: route `quickack` and
-`rto_min`, `prefer_busy_poll`, `busy_poll_budget`.
+`rto_min`.
 
 ## Verify
 

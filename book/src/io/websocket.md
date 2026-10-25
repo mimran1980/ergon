@@ -417,7 +417,13 @@ and feed it every open and close.
 
 ### Connect limits and the server's wait
 
-Services may limit connect attempts per IP. One `Budget` bucket is the gate of every link on that IP:
+Services may limit connect attempts per IP. One gate, the application's
+pacing, serves every link on that IP. ergon-io has no rate limiter; the
+test's pacer is a few lines:
+
+```rust,ignore
+{{#include ../../../io/tests/reconnect.rs:pace}}
+```
 
 ```rust,ignore
 {{#include ../../../io/tests/reconnect.rs:gate}}
@@ -445,17 +451,18 @@ A refused handshake, in `on_closed`:
 {{#include ../../../io/tests/reconnect.rs:refused}}
 ```
 
-- 429: the bucket is held for `Retry-After` (or its backoff without one).
+- 429: `Throttled { retry_after_ms }`; hold the gate for it (your own
+  backoff without one). A malformed `Retry-After` is an `Error::Http`.
 - Application-specific ban statuses are interpreted by the application
-  adapter, which can halt a bucket with `Budget::banned`.
-- Give the HTTP pool a bucket of its own ([HTTP client](http-client.md)):
+  adapter, which halts its gate until a person clears it.
+- Give the HTTP pool a gate of its own ([HTTP client](http-client.md)):
   venues count WebSocket connects.
 
 #### Several source IPs
 
 When the host has several IPs and the venue limits connects (and requests)
-per IP, give each IP its own buckets and let `SourceIps` pick one per
-connect:
+per IP, pace each IP on its own and let the gate pick one per connect. The
+test's pick, round-robin over one `Pace` per IP:
 
 ```rust,ignore
 {{#include ../../../io/tests/reconnect.rs:sourced}}
@@ -468,17 +475,17 @@ connect:
 
 | what | how |
 |---|---|
-| pick | `SourceIps::try_connect` charges one connect to the next IP with room, round-robin; a held or full IP is passed over |
-| none has room | refused with the soonest `Limited`: under `poll_sourced` the link waits for it (not a failed attempt), at most `max_ms` |
+| pick | `poll_sourced(driver, gate)`: the gate answers `Ok(ip)` to connect now from `ip` |
+| none has room | the gate answers `Err(wait_ns)`: the link waits for it (not a failed attempt), at most `max_ms` |
 | bind | the dial connects from the pick (`BindSource`, `Target::source`); on Linux with `IP_BIND_ADDRESS_NO_PORT`, so binding uses up no ephemeral ports |
-| requests | `Reconnect::source(link)` names the IP; charge its `SourceIp::sends` bucket with the account's |
-| without `Reconnect` | `try_connect`, then `Target::with_source(picked.ip)`; refund `picked.ticket` if the connect never went out |
+| requests | `Reconnect::source(link)` names the IP; pace its requests on that IP's limit |
+| without `Reconnect` | pick an IP, then `Target::with_source(ip)` |
 
 - The source must be an address of this host, of the destination's
   family: the other family is `Error::Config` before any connect; an
   address the host does not have fails the connect (`AddrNotAvailable`).
-- A dial that cannot be built or started still spends its connect unit:
-  the count errs on the safe side.
+- A dial that cannot be built or started has still passed the gate: a
+  pacer that counted it errs on the safe side.
 
 ## Sending
 
@@ -494,8 +501,8 @@ connect:
   `poll` returns (as the example does).
 - `stats().auto_frames` counts the frames the connection sends by itself:
   Pongs, Pings on a quiet connection, the echo of a server Close. A venue
-  that limits messages per connection may count them:
-  charge the change each pass with `Budget::force`.
+  that limits messages per connection may count them: charge the change
+  each pass to your pacing.
 
 What a send costs before the kernel:
 
@@ -563,7 +570,7 @@ Order round trip: a 64-byte echo, one message in flight. Every figure, with
 its max:
 
 - [Fair run, Graviton](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton):
-  all six backends with 1, 4, 16 and 64 sockets on the loop.
+  every backend (and mio) with 1, 4, 16 and 64 sockets on the loop.
 - [Round trips on x86](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#round-trips-on-x86-1-connection):
   1 connection.
 

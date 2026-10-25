@@ -33,7 +33,6 @@ fn backend(b: Backend) -> R {
     let dial = move || WsDial::with_options(target.clone(), tls.clone(), WsOptions::default());
     let mut app = example::App::new(retry, dial, 3)?;
     let mut cfg = Config::new(b);
-    cfg.wait_us = cfg.wait_us.min(100);
     cfg.connect_timeout_ms = 2_000;
     // A pod with one CPU has no core for the connect helper the example's
     // reconnect uses: opt in to opening on the loop there, so the example's

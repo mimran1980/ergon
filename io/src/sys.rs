@@ -51,32 +51,8 @@ pub fn set_busy_poll(fd: RawFd, usec: u32) -> io::Result<()> {
 }
 
 const SO_PREFER_BUSY_POLL: libc::c_int = 69;
-const SO_BUSY_POLL_BUDGET: libc::c_int = 70;
 
-/// Sets `SO_PREFER_BUSY_POLL` (enabling it needs `CAP_NET_ADMIN`).
-///
-/// # Errors
-/// `setsockopt` fails (`EPERM` without the capability).
-pub fn set_prefer_busy_poll(fd: RawFd, on: bool) -> io::Result<()> {
-    setsockopt_int(fd, libc::SOL_SOCKET, SO_PREFER_BUSY_POLL, i32::from(on))
-}
-
-/// Sets `SO_BUSY_POLL_BUDGET`, packets per busy-poll pass (raising it needs
-/// `CAP_NET_ADMIN`).
-///
-/// # Errors
-/// `setsockopt` fails (`EPERM` without the capability).
-pub fn set_busy_poll_budget(fd: RawFd, packets: u16) -> io::Result<()> {
-    setsockopt_int(
-        fd,
-        libc::SOL_SOCKET,
-        SO_BUSY_POLL_BUDGET,
-        i32::from(packets),
-    )
-}
-
-/// A socket's busy-poll settings (the kernel does not report
-/// `SO_BUSY_POLL_BUDGET` back).
+/// A socket's busy-poll settings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BusyPoll {
     /// `SO_BUSY_POLL`, microseconds.

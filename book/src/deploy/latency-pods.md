@@ -126,7 +126,7 @@ reads every write back; a write that does not stick fails the create.
 
 `RuntimeDefault` blocks io_uring (containerd issue 9320). Aeron's C media
 driver does **not** use io_uring; the grant is for applications that do,
-such as ergon-io's `uring-spin` and `uring-sqpoll` backends. It is a clone
+such as ergon-io's `uring-sqpoll` backend. It is a clone
 of the pod's own seccomp profile with the `io_uring_*` calls allowed —
 never `Unconfined`, which the plugin refuses.
 

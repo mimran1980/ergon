@@ -132,7 +132,6 @@ fn pair(l: &TcpListener) -> R<(Stub, Peer)> {
 /// kernel thread (refused typed, see `placement_tests`).
 fn driver(b: Backend) -> R<Option<Driver<Stub>>> {
     let mut cfg = Config::new(b);
-    cfg.wait_us = cfg.wait_us.min(100);
     // Loopback: no route to look up.
     cfg.quickack_check = QuickAckCheck::Off;
     match Driver::new(cfg) {

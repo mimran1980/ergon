@@ -121,8 +121,8 @@ how to change it: the book's
 
 ## Guarantees and limits
 
-- **Never sleeps** with `epoll-spin`, `recv-busy`, `uring-spin` or
-  `uring-sqpoll`. `epoll-busy` and `uring-napi` may wait up to `wait_us`.
+- **Never sleeps** in the kernel: `epoll-spin`, `recv-busy` and
+  `uring-sqpoll` all spin.
 - **One failure closes one connection.** It goes to `Handler::on_closed`;
   the others keep running. `poll` fails only when the backend fails.
 - **Connecting does not block.** `Driver::connect` takes a step per poll,
@@ -137,10 +137,8 @@ how to change it: the book's
   extensions, proxies, sending fragmented messages.
 - **Linux for the driver.** `Driver` and `HttpClient` are Linux-only; the
   protocol code builds everywhere.
-- **Kernel.** `uring-spin` needs Linux 6.1+; `uring-sqpoll`, `uring-napi`
-  and `epoll-busy` need 6.9+. The `io_uring` backends need the `uring`
-  feature (on by default). `prefer_busy_poll` on `recv-busy` and a raised
-  `busy_poll_budget` need `CAP_NET_ADMIN`. The opt-in `tcp_rto_min_us` and
+- **Kernel.** `uring-sqpoll` needs Linux 6.9+ and the `uring` feature (on
+  by default). The opt-in `tcp_rto_min_us` and
   `tcp_delack_max_us` need 6.15+ (refused, typed, at `Driver::new`).
 - **Host checks at start-up** ([ergon-tune](https://github.com/mimran1980/ergon/tree/main/tune)):
   the loop's CPU, the receive buffer, each route's quick ACK and each egress
@@ -158,7 +156,7 @@ thread polls (feeds, order connections, `HttpClient` pool connections):
 - 1–4 sockets: `recv-busy`.
 - More: `uring-sqpoll` with a spare CPU, or `recv-busy,per_queue=true` on
   one CPU.
-- The interrupt backends (`epoll-spin`, `uring-spin`) were level with
+- The interrupt backend (`epoll-spin`) was level with
   `uring-sqpoll` from 4 sockets with node-level NIC settings: moderation
   off and the NIC's interrupts on a core of their own.
 - `epoll-spin` is mio's mechanism (and so tokio's): `epoll_wait(0)` every
@@ -171,26 +169,25 @@ The full table, the evidence and the node settings: the book's
 
 ## Rate limits and errors
 
-- `limit::Budget` checks each request against the venue's limits before it
-  goes out: up to 8 buckets, all or none. It never sleeps or queues.
+- No rate limiter: pacing to a venue's limits is the application's.
+  `Reconnect::poll_gated` and `ClientHandler::connect_gate` ask its gate
+  before every connect.
 - A failed request says whether it left (`outcome::Sent`); a response maps
-  to one `outcome::Verdict`.
-- A ban halts its scope until a person calls `Budget::clear_halt`.
-- Send again only what did not run, inside its deadline
-  (`Budget::try_resend`); look up an unknown order by its client order id.
-- One sending process per account and IP: the budget cannot see others.
-- Several source IPs, each with its own limits: `limit::SourceIps` picks an
-  IP with room for each connect and `Target::with_source` binds it;
-  `Reconnect::poll_sourced` does both for every link.
-- Configure limits and classify application-specific errors in your adapter.
-  The generic mechanisms are described in the book's
+  to one `outcome::Verdict`, which carries the server's wait.
+- Send again only what did not run, inside its deadline; look up an
+  unknown order by its client order id.
+- Several source IPs, each with its own limits: `Target::with_source`
+  binds a connection to one; `Reconnect::poll_sourced` binds every link's
+  attempt to the IP the application's gate picks.
+- Classify application-specific errors in your adapter. The generic
+  mechanisms are described in the book's
   [rate limits and errors](https://mimran1980.github.io/ergon/io/rate-limits.html).
 
 ## Features
 
 | Feature | Default | Adds |
 |---|---|---|
-| `uring` | on | the `io_uring` backends (Linux); without it, choosing one returns `Error::Unsupported` |
+| `uring` | on | the `io_uring` backend, `uring-sqpoll` (Linux); without it, choosing it returns `Error::Unsupported` |
 | `webpki-roots` | off | Mozilla's root store, `tls::webpki_roots` (CDLA-Permissive-2.0, so opt-in) |
 | `curl` | off | libcurl as an `HttpClient` implementation (the system libcurl, through pkg-config). It refuses every method but GET, HEAD, OPTIONS and DELETE unless `curl_allow_non_idempotent_methods` is set: libcurl can send a request twice |
 

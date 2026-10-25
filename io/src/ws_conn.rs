@@ -334,8 +334,8 @@ pub struct WsStats {
     pub pongs: u64,
     /// Frames the connection sent by itself: Pongs to the server's Pings,
     /// Pings on a quiet connection, and the echo of the server's Close. A
-    /// venue that limits messages per connection may count them (including Pongs): charge the change since the last pass
-    /// with `Budget::force`.
+    /// venue that limits messages per connection may count them (including
+    /// Pongs): charge the change since the last pass to your own pacing.
     pub auto_frames: u64,
 }
 

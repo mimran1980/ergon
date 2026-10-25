@@ -536,10 +536,11 @@ fn tcp_timers_reach_the_socket_or_are_refused_typed() -> R {
 #[test]
 fn tcp_info_is_sampled_only_when_asked_for() -> R {
     let floor = kernel_at_least(6, 15)?;
+    let uring = format!("{},tcp_info_interval_ms=1", support::uring_backend()?);
     for (cfg, on) in [
         ("epoll-spin", false),
         ("epoll-spin,tcp_info_interval_ms=1", true),
-        ("uring-spin,tcp_info_interval_ms=1", true),
+        (uring.as_str(), true),
         (
             "epoll-spin,tcp_info_interval_ms=1,tcp_rto_min_us=20000",
             true,
