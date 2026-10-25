@@ -1,0 +1,55 @@
+== uname
+Linux ip-10-31-11-125.ec2.internal 6.18.54-121.166.amzn2023.aarch64 #2 SMP Tue Oct  6 23:12:04 UTC 2026 aarch64 aarch64 aarch64 GNU/Linux
+== containerd
+containerd github.com/containerd/containerd/v2 2.3.5+unknown 
+== runc
+runc version 1.4.3
+commit: bb14dabeb7185bb72c8c86735d090dcb20f36587
+spec: 1.3.0
+go: go1.26.8-X:nodwarf5
+libseccomp: 2.5.3
+== containerd config dump (NRI)
+  [plugins.'io.containerd.nri.v1.nri']
+    disable = false
+    socket_path = '/var/run/nri/nri.sock'
+    plugin_path = '/opt/nri/plugins'
+    plugin_config_path = '/etc/nri/conf.d'
+    plugin_registration_timeout = '5s'
+    plugin_request_timeout = '2s'
+    disable_connections = false
+
+    [plugins.'io.containerd.nri.v1.nri'.default_validator]
+      enable = true
+      reject_oci_hook_adjustment = false
+      reject_runtime_default_seccomp_adjustment = false
+      reject_unconfined_seccomp_adjustment = false
+      reject_custom_seccomp_adjustment = false
+      reject_namespace_adjustment = false
+== cmdline
+BOOT_IMAGE=(hd0,gpt1)/boot/vmlinuz-6.18.54-121.166.amzn2023.aarch64 root=UUID=<redacted> ro console=tty0 console=ttyS0,115200n8 nvme_core.io_timeout=4294967295 rd.emergency=poweroff rd.shell=0 selinux=1 security=selinux quiet numa_cma=1:64M clocksource=tsc tsc=reliable intel_idle.max_cstate=1 processor.max_cstate=1 hugepagesz=2M hugepages=256 transparent_hugepage=never nohz_full=2,3 rcu_nocbs=2,3 isolcpus=managed_irq,domain,2,3 irqaffinity=1
+== numactl
+bash: line 6: numactl: command not found
+no numactl
+== ptp
+ls: cannot access '/dev/ptp*': No such file or directory
+== RT_GROUP_SCHED
+no /proc/config.gz
+== sysctls
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+net.core.busy_poll = 0
+net.core.busy_read = 0
+== hugepages
+AnonHugePages:         0 kB
+ShmemHugePages:        0 kB
+FileHugePages:      8192 kB
+HugePages_Total:     256
+HugePages_Free:      256
+HugePages_Rsvd:        0
+HugePages_Surp:        0
+Hugepagesize:       2048 kB
+Hugetlb:          524288 kB
+== isolated
+2-3
+== thp
+always madvise [never]

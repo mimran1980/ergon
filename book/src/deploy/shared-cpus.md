@@ -8,13 +8,16 @@ and running them on the loop's core is what this layout forbids. With the
 helpers on the shared CPU and the [quiet-CPU settings](#quiet-isolated-cpus),
 one Azure Cobalt VM measured the loop at p50 0.02 µs, p99.99 0.03 µs, max
 4.81 to 5.52 µs, with 0 involuntary switches a minute; 3.5 to 5.5 µs is the
-hypervisor's floor ([benchmarks](https://github.com/mimran1980/ergon/blob/main/k8s/nri-shared-cpus/BENCHMARKS.md)). A helper's own wake-up wait is
-**not measured**. This is a containerd
+hypervisor's floor ([benchmarks](https://github.com/mimran1980/ergon/blob/main/k8s/nri-shared-cpus/BENCHMARKS.md)). On EKS
+`c8g.xlarge` a helper sleeping 1 ms on the shared CPU woke p50 2.6 µs late
+with the hook's 1 ns slack (52.6 µs with the kernel's 50 µs), and at most
+77 µs with a spinner holding that CPU. This is a containerd
 NRI plugin and a kubelet device plugin that give the pod the node's shared
 housekeeping CPUs as well, and start every thread there.
 
 The busy-spin loop keeps its exclusive core. Only sleepy helpers go to the
-shared CPUs. Never a spinner or SQPOLL there.
+shared CPUs. Never a spinner or SQPOLL there: SQPOLL on a busy shared CPU
+measured p99 10 ms ([SQPOLL placement](#sqpoll-placement)).
 
 Source: `k8s/nri-shared-cpus/`. A full example on this plugin (a DPDK
 media driver and an Aeron ping/pong, with a verifier that proves where
@@ -22,9 +25,11 @@ every thread ran) is the
 [`low-latency-k8s` sample](https://github.com/mimran1980/ergon/blob/main/samples/README.md#low-latency-k8s).
 
 Status: published as tag `0.1.1`. Anyone can pull the image and the chart.
-Not yet run on kind; **not verified on a real EKS node** (see
-[Limits](#limits-and-what-is-not-verified)). Latency is measured on one
-Azure VM only. AKS cannot run it.
+Not yet run on kind. **Verified on EKS AL2023** with chart and image
+0.1.2 from this tree (not yet published): the NRI socket, nodeadm's TOML
+merge, the kubelet drop-in merge, `/opt` writable, `system-node-critical`
+outside `kube-system`. Latency of the spin loop is measured on one Azure VM;
+the helpers' wake-up wait and the pin on EKS. AKS cannot run it.
 Prior art: `k8s/nri-shared-cpus/README.md`.
 
 ## Use the public chart
@@ -53,8 +58,8 @@ helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus
   --set hostContract.proc.enabled=true
 ```
 
-**EKS AL2023** (needs chart 0.1.2, not yet published; not verified on
-EKS). nodeadm writes the base `/etc/kubernetes/kubelet/config.json`, puts
+**EKS AL2023** (needs chart 0.1.2, not yet published; verified on EKS
+1.36 `c8g.xlarge` with this tree's chart and image). nodeadm writes the base `/etc/kubernetes/kubelet/config.json`, puts
 the `NodeConfig` kubelet settings in the drop-in
 `/etc/kubernetes/kubelet/config.json.d/40-nodeadm.conf`, and runs the
 kubelet with `--config-dir` on that directory. `kubeletConfigDir` mounts
@@ -190,9 +195,48 @@ start. The OCI hook runs as root, so it can write
 `/proc/<tid>/timerslack_ns`; a program can always set its own slack with
 `prctl(PR_SET_TIMERSLACK)`.
 
-What the 1 ns slack is worth in latency is **not measured**. The loop
-spins and never sleeps; the slack applies to sleeping helpers such as
-Aeron's conductor.
+Measured on EKS `c8g.xlarge` (a thread sleeping to a 1 ms deadline on the
+shared CPU, 15,000 wake-ups a cell, µs late):
+
+| shared CPU | slack | p50 | p99 | p99.99 | max |
+|---|---|---|---|---|---|
+| idle | 50 µs | 52.6 | 56.8 to 57.8 | 1,390 to 2,907 | 2,447 to 3,265 |
+| idle | 1 ns | 2.6 | 8.5 | 1,343 | 3,369 |
+| one spinner, 100 % | 50 µs | 54.5 | 56.7 | 97 | 117 |
+| one spinner, 100 % | 1 ns | 4.6 | 7.0 | 76 | 77 |
+
+The 1 ns slack takes the kernel's 50 µs off every wake-up and leaves the
+tail alone. The idle maxima (2.4 to 3.4 ms) are unexplained: the slack and
+the CPU are ruled out, the node's own daemons on CPU 0 are not
+([benchmarks](https://github.com/mimran1980/ergon/blob/main/k8s/nri-shared-cpus/BENCHMARKS.md)). The loop spins and never sleeps; the slack
+applies to sleeping helpers such as Aeron's conductor. A thread a pod
+starts with `kubectl exec` has the kernel's 50 µs, not the hook's 1 ns.
+
+### SQPOLL placement
+
+A kernel-UDP round trip between two EKS `c8g.xlarge` nodes at 10,000/s,
+the app thread spinning on its exclusive CPU, IRQs on their own CPU (µs,
+15 s a cell, `uring-pp`):
+
+| cell | p50 | p99 | p99.9 | max | round trips |
+|---|---|---|---|---|---|
+| no io_uring, non-blocking `recv` spin (A/A second run) | 33.1 | 36.7 | 41.0 | 119 | 140,000 |
+| SQPOLL on the shared CPU, idle, run 1 | 34.2 | 38.1 | 130 | 1,306 | 140,000 |
+| SQPOLL on the shared CPU, idle, run 2 | 68.6 | 290 | 296 | 1,301 | 140,000 |
+| no io_uring, shared CPU busy | 55.7 | 100 | 102 | 134 | 140,000 |
+| SQPOLL on the shared CPU, shared CPU busy | 35.8 | 10,184 | 18,916 | 19,035 | 33,937 |
+
+- SQPOLL on a shared CPU that something else uses: p99 10 ms, max 19 ms,
+  and a quarter of the round trips (the run fell behind). Never put it
+  there.
+- Idle, its two runs disagree by 2x at p50 and both reach 1.3 ms; it is
+  not better than the spinning `recv`.
+- SQPOLL on an exclusive CPU of the pod's own was not measured on EKS: a
+  4-vCPU node cannot give a pod two exclusive CPUs. The `ergon-io`
+  rule stands: give it a CPU of the pod's own.
+- The first no-io_uring run (p50 263 µs, 47,116 round trips) does not match
+  its A/A repeat and is unexplained; it is left out of the table and kept in
+  the run's `phase-x.csv`.
 
 ## Node setup
 
@@ -511,7 +555,9 @@ Rules:
   thread copies its creator's mask);
 - each sleepy helper checks `sched_getcpu()` when it wakes and alarms if it
   is not on `ERGON_SHARED_CPUS`;
-- never a spinner or SQPOLL on a shared CPU. ergon-io keeps this: with no
+- never a spinner or SQPOLL on a shared CPU (SQPOLL there measured p99
+  10 ms, max 19 ms once the CPU was busy: [SQPOLL placement](#sqpoll-placement)).
+  ergon-io keeps this: with no
   `sqpoll_cpu`, `uring-sqpoll` takes a CPU of the pod's own outside
   `ERGON_HELPER_CPUS` and refuses (`Error::Cpu`) when there is none
   ([io: Kubernetes](../io/kubernetes.md#shared-cpus-from-the-node));
@@ -700,10 +746,14 @@ kubectl exec aeron-driver -- sh -c 'ps -L -o pid,tid,psr,comm | head'
   p99.99 0.03 µs, max 4.81 to 5.52 µs over 3 reps of 60 s, 0 involuntary
   switches, no interrupt on the spin's CPU; the gaps left have no guest
   event (the hypervisor's 3.5 to 5.5 µs floor) ([benchmarks](https://github.com/mimran1980/ergon/blob/main/k8s/nri-shared-cpus/BENCHMARKS.md)).
-- **Not measured / not verified:** a helper's wake-up wait on a shared
-  CPU, how often node events reach isolated CPUs in production, and a real
-  EKS node (the NRI socket, nodeadm TOML merge, the kubelet drop-in merge,
-  `/opt` writable).
+- **Verified on EKS AL2023** (runs `eks-nri-20261025-070515`,
+  `eks-nri-20261025-082023`): the NRI socket, nodeadm TOML merge, the
+  kubelet drop-in merge, `/opt` writable, `system-node-critical` outside
+  `kube-system`. A warm ENI the VPC CNI attaches after boot came up with its
+  IRQs on the shared CPU, and the plugin refused hot pods until they were
+  re-pinned: pin IRQs again after the CNI attaches an ENI.
+- **Not measured:** how often node events reach isolated CPUs in
+  production; the spin loop on EKS.
 
 **Decision.** Use it on kind or a self-managed node where you can set
 `reservedSystemCPUs` and enable NRI. With the quiet-CPU settings the

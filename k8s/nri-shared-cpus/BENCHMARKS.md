@@ -120,13 +120,72 @@ admitted with `ERGON_SHARED_CPUS=1` and `ERGON_ISOLATED_CPUS=3,4`; in three
 `ps -L` snapshots its spin thread (`gp-hot`) was on CPU 3, allowed 3, and
 every other thread on CPU 1, allowed 1. An exec-probe hot pod was denied.
 
+## EKS c8g.xlarge (run eks-nri-20261025-082023)
+
+`md-dpdk/benches/cloud/aws/eks-nri.sh`: EKS 1.36, AL2023, 2 x `c8g.xlarge`
+spot (4 vCPUs, Graviton4, no SMT), kernel 6.18.54, containerd 2.3.5, this
+tree's chart and image 0.1.2. Files:
+[`lab/results/eks-nri-20261025-082023/`](lab/results/eks-nri-20261025-082023/)
+(`phase-x/` holds the probes' CSV and the script that ran them by hand on
+the lab's cluster, `phasex-manual.sh`). One run of 15 s a cell, no repeat
+run: read the A/A pairs before any comparison.
+
+| item | value |
+|---|---|
+| layout | CPU 0: system and `sharedCpus`. CPU 1: every IRQ. CPUs 2-3: `isolcpus=managed_irq,domain` + `nohz_full` + `rcu_nocbs`, THP `never`, fair server 0 (the quiet-CPU unit) |
+| pod | Guaranteed `cpu: 1` (exclusive CPU 2), `ergon.io/shared-millicpus: 250`, `seccomp.ergon.io: io-uring` |
+| placement | PID 1 `Cpus_allowed_list: 0` (the hook), container cpuset `0,2`, an exec'd shell `0,2`, `ERGON_ISOLATED_CPUS=2`, `ERGON_SHARED_CPUS=0` (`phase-x/placement-*.txt`) |
+| load | one `while :` spinner pinned to CPU 0 in a Burstable pod outside the plugin's namespaces: CPU 0 100 % busy (`busy.txt`); idle cells 0 to 1 % |
+
+**A helper's wake-up wait** (`wakelat`): a thread on the shared CPU sleeps to
+a 1 ms absolute deadline and records how late it woke. µs, 15,000 wake-ups a
+cell.
+
+| cell | slack | p50 | p99 | p99.9 | p99.99 | max |
+|---|---|---|---|---|---|---|
+| idle A | 50 µs | 52.6 | 56.8 | 299 | 1,390 | 2,447 |
+| idle B (A/A) | 50 µs | 52.6 | 57.8 | 281 | 2,907 | 3,265 |
+| idle | 1 ns | 2.6 | 8.5 | 219 | 1,343 | 3,369 |
+| CPU 0 at 100 % | 50 µs | 54.5 | 56.7 | 57.5 | 97 | 117 |
+| CPU 0 at 100 % | 1 ns | 4.6 | 7.0 | 8.9 | 76 | 77 |
+
+- **The 1 ns slack** (the hook's) takes 50 µs off every wake-up: p50 52.6
+  to 2.6 µs idle, 54.5 to 4.6 µs loaded. That is the kernel's default slack,
+  removed. It does not move the tail.
+- **Under one spinner** the wait stayed under 117 µs: the woken helper
+  preempts the spinner (EEVDF wake-up preemption). Milliseconds were not seen
+  under this load.
+- **Idle maxima of 2.4 to 3.4 ms, unexplained.** Both idle A/A cells have
+  them, the loaded cells do not. Ruled out: the slack (1 ns has it too), the
+  probe's CPU (every wake-up was on CPU 0, `offshared` 0). Not ruled out:
+  the node's own daemons on CPU 0 (systemd `CPUAffinity=0,1`: kubelet,
+  containerd, the VPC CNI) and the idle CPU's exit latency. No trace was
+  taken.
+
+**The pin's cost** (`pincost`, 10,000 times): read and parse
+`ERGON_ISOLATED_CPUS`, then `sched_setaffinity` from the shared CPU to
+CPU 2, until `sched_getcpu()` reports it. µs.
+
+| cell | step | p50 | p99 | p99.9 | max |
+|---|---|---|---|---|---|
+| idle | read `ERGON_*` | 0.06 | 0.10 | 0.19 | 0.24 |
+| idle | pin (move included) | 5.3 | 6.0 | 8.2 | 50 |
+| CPU 0 at 100 % | read `ERGON_*` | 0.16 | 0.18 | 0.19 | 0.23 |
+| CPU 0 at 100 % | pin (move included) | 6.6 | 8.3 | 9.5 | 26 |
+
+The call returns once the thread runs on the target (pin and "moved" agree
+within 0.1 µs). Both are start-up costs, paid once a thread.
+
+The SQPOLL placement measured on the same nodes is in the book
+([shared CPUs](https://mimran1980.github.io/ergon/deploy/shared-cpus.html)).
+
 ## Not measured
 
-- How long a helper's wake-up waits on a shared CPU under node load.
-- The cost of `pin_isolated` and of reading `ERGON_*`.
+- A helper's wake-up wait under more than one spinner, and the cause of
+  the idle 2.4 to 3.4 ms maxima (EKS, above).
 - The scale step with the THP and fair-server fixes (its spin maxima above
   are from before them).
-- Another VM size, x86, bare metal, EKS.
+- Another VM size, x86, bare metal. The hot-thread spin probe on EKS.
 - How often node events (above) occur on a production node.
 
 ## Reproduce

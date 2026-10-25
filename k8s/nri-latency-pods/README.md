@@ -11,7 +11,8 @@ Latency-pod extensions for Kubernetes. One directory, three kinds of thing:
 The grants are in the published `ergon-shared-cpus` image
 (`ghcr.io/mimran1980/ergon-shared-cpus:0.1.1`). This directory is not a
 second image. Its admission YAML and node units stay in the repo. Experimental.
-EKS is not verified. Latency figures are not measured.
+On EKS the plugin's install is verified (`k8s/nri-shared-cpus/RELEASE.md`); the five
+grants' latency modes (M0-M6) have not yet run there.
 
 Kubernetes HFT tuning
 ([book](https://mimran1980.github.io/ergon/deploy/hft.html)) is the list of

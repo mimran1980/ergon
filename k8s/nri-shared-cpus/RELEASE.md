@@ -13,15 +13,15 @@
 | checked | `helm template` of the OCI chart renders that image |
 | not run | kind install of 0.1.1 |
 | pending publish | **0.1.2, image and chart.** Image: `--kubelet-config-dir` merges the kubelet's drop-in directory (EKS AL2023 `config.json.d`). Chart: `hostContract.kubeletConfig`, `sys` and `proc` on by default; `hostContract.kubeletConfigDir` (off); `appVersion` 0.1.2. The kubeadm install command works on either chart; the EKS AL2023 one needs chart 0.1.2 |
-| not verified | EKS |
+| verified on EKS | AL2023 `c8g.xlarge` spot, Kubernetes 1.36, kernel 6.18.54, containerd 2.3.5, runc 1.4.3, this tree's chart and image 0.1.2 (ECR, not GHCR), runs `eks-nri-20261025-070515` and `eks-nri-20261025-082023` ([`lab/results/`](lab/results/)): the NRI socket, nodeadm's TOML merge, the kubelet drop-in merge, `/opt` writable, `system-node-critical` in `ergon-system`, the device plugin, the quiet-CPU boot unit. Hot pods were refused while a late ENI's IRQs sat on the shared CPU (fail closed, as designed) |
 | measured | the hot thread with helpers on the shared CPU (the checkout, on kind on one Azure Cobalt VM, THP `never` and the fair server off on the isolated CPUs): p50 0.02 µs, p99.99 0.03 µs, max 4.81 to 5.52 µs, 0 involuntary switches a 60 s rep; the hypervisor's floor 3.5 to 5.5 µs. Shared-CPU scaling as designed ([BENCHMARKS.md](BENCHMARKS.md)) |
-| not measured | a helper's wake-up wait on a shared CPU, the pin's cost |
+| measured on EKS | a helper's wake-up wait on the shared CPU, the 1 ns timer slack, the pin's cost ([BENCHMARKS.md](BENCHMARKS.md#eks-c8gxlarge-run-eks-nri-20261025-082023)) |
 
 The 0.1.1 package's install NOTES say the chart is not published. It is
 published; ignore that line.
 
-The EKS lane and the open benchmarks below are open for 0.1.1. Do not
-invent their figures.
+The EKS lane is verified for 0.1.2 (not yet published). Do not invent
+the figures of the benchmarks still open below.
 
 ## 1. Code defects
 
@@ -54,7 +54,7 @@ adjustment in, as the runtime does), not on the create request.
 | unit, vet, static amd64+arm64 | `scripts/check.sh --local` | green 2026-10-18 over the whole tree |
 | cgroup kernel lane (real cgroup v2, partition a real kernel will accept) | `scripts/check-cgroup.sh` | green 2026-10-18 over the whole tree |
 | kind e2e, 18 steps | `test/e2e.sh` | green 2026-10-18, `fails: 0` |
-| EKS | — | **not verified.** The NRI socket, nodeadm TOML merge, the kubelet drop-in merge, `/opt` writable and `system-node-critical` outside `kube-system` are all unproven on a real node |
+| EKS | `md-dpdk/benches/cloud/aws/eks-nri.sh` (phase EKS lane) | **verified** on both nodes of runs `eks-nri-20261025-070515` and `eks-nri-20261025-082023` ([`lab/results/`](lab/results/)): NRI socket (`ergon_shared_cpus_nri_connected 1`), nodeadm TOML merge (`containerd config dump` shows `default_validator enable = true`), kubelet drop-in merge (`--config-dir` on the kubelet, `ergon_shared_cpus_contract_ok 1`), `/opt/ergon/bin/ergon-cpus` installed, `system-node-critical` Running in `ergon-system`, device plugin registered, `ergon-quiet-cpus.service` active with `--check` rc 0 |
 | AKS | — | not supported (no NRI enablement, no `reservedSystemCPUs`) |
 | CRI-O | — | not supported; use its own `shared_cpuset` |
 | Bottlerocket | — | not verified. runc exec of a hook binary from a pod-written host path is unproven on a read-only root with SELinux |
@@ -70,8 +70,8 @@ quiet. A figure without its max is not a result.
 | helpers on shared CPUs do not disturb the hot thread | hot-thread latency p50 / p90 / p99 / p99.9 / p99.99 / **max** with the plugin, helpers loaded | measured (run 20261024234841, [BENCHMARKS.md](BENCHMARKS.md)): p50 0.02 µs, p99.99 0.03 µs, max 4.81 to 5.52 µs over 3 reps, no interrupt on the spin's CPU during the spin; the gaps left have no guest event (the hypervisor) |
 | the exclusive CPU takes no context switch | 0 involuntary switches of the hot thread a 60 s rep, every remaining max named | reached in steady state: 0 in each of 3 reps (run 20261024234841), with THP `never` and the fair server off. A traced rep at a systemd daily timer took 1 (40.60 µs, a block-device ioctl's `lru_add_drain_all`), named in its `trace-cpu3.md`: node events stay a risk, kept out of trading hours |
 | a pod's helpers scale to its shared CPUs and idle near zero | per-CPU busy time, cgroup usage and throttling at 100 and 1,001 millicpus, idle, and two pods on one shared CPU | measured (run 20261024230400 `scale.md`): 0.99 cores at 100 millicpus, 1.99 at 1,001, 0.04 idle, 0.33 : 0.66 by `cpu.weight` on one shared CPU, `nr_throttled` 0 |
-| a wake-up on a shared CPU can wait milliseconds under node load | distribution of that wait under a load the node is meant to carry | not measured |
-| the CPU env and the pin do not cost the hot path | cost of `pin_isolated` and of reading `ERGON_*` | not measured |
+| a wake-up on a shared CPU can wait milliseconds under node load | distribution of that wait under a load the node is meant to carry | measured on EKS (run eks-nri-20261025-082023): a 1 ms sleeper with one spinner holding the shared CPU at 100 %: p50 4.6 µs, p99.99 76 µs, max 77 µs (1 ns slack); idle CPU: p99.99 1.3 to 2.9 ms, max 2.4 to 3.4 ms, cause unexplained ([BENCHMARKS.md](BENCHMARKS.md#eks-c8gxlarge-run-eks-nri-20261025-082023)) |
+| the CPU env and the pin do not cost the hot path | cost of `pin_isolated` and of reading `ERGON_*` | measured on EKS: reading and parsing `ERGON_ISOLATED_CPUS` p50 0.06 µs, max 0.24 µs; `sched_setaffinity` to the isolated CPU (the move included) p50 5.3 µs, p99 5.9 µs, max 50 µs. A start-up cost, once a thread |
 | capacity accounting is honest | scheduler sees `len(sharedCpus) x 1000 x oversubscription`, and a pod that asks for more is refused | covered by unit tests; on the lab node allocatable 2000 and a pod asking 2,100 stayed Pending (run 20261024230400 `scale/accounting.txt`) |
 | the layout refusal fires | a split core is named and refused, with the core id | covered by unit tests, not measured on hardware |
 
@@ -110,7 +110,7 @@ written "not measured", never invented.
 
 ## 6. How to publish
 
-The EKS row and the benchmark rows are open. Order for a tag:
+The benchmark rows still open block a tag. Order for a tag:
 
 1. Keep sections 1 and 2 green.
 2. Run the benchmarks in section 3 and put the numbers in a

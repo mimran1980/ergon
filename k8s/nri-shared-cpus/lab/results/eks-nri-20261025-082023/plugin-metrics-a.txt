@@ -1,0 +1,35 @@
+# HELP ergon_shared_cpus_nri_connected 1 while connected to the runtime's NRI socket.
+# TYPE ergon_shared_cpus_nri_connected gauge
+ergon_shared_cpus_nri_connected 1
+# HELP ergon_shared_cpus_device_plugin_registered 1 while registered with the kubelet.
+# TYPE ergon_shared_cpus_device_plugin_registered gauge
+ergon_shared_cpus_device_plugin_registered 1
+# HELP ergon_shared_cpus_contract_ok 1 while the node contract last evaluated clean.
+# TYPE ergon_shared_cpus_contract_ok gauge
+ergon_shared_cpus_contract_ok 0
+# HELP ergon_shared_cpus_containers Containers holding shared CPUs.
+# TYPE ergon_shared_cpus_containers gauge
+ergon_shared_cpus_containers 0
+# HELP ergon_shared_cpus_cpu_load_millicpus Millicpus asked for on each shared CPU.
+# TYPE ergon_shared_cpus_cpu_load_millicpus gauge
+ergon_shared_cpus_cpu_load_millicpus{cpu="0"} 0
+# HELP ergon_shared_cpus_refused_total Containers refused at create, by reason.
+# TYPE ergon_shared_cpus_refused_total counter
+# HELP ergon_shared_cpus_rewidened_total Cpusets widened again, by event.
+# TYPE ergon_shared_cpus_rewidened_total counter
+ergon_shared_cpus_rewidened_total{event="sync"} 0
+ergon_shared_cpus_rewidened_total{event="update"} 0
+# HELP ergon_shared_cpus_unhandled_total Containers that asked for shared CPUs but were created without the plugin.
+# TYPE ergon_shared_cpus_unhandled_total counter
+ergon_shared_cpus_unhandled_total 0
+# HELP ergon_shared_cpus_stale_env_total Cpuset changes that left a container's CPU env stale.
+# TYPE ergon_shared_cpus_stale_env_total counter
+ergon_shared_cpus_stale_env_total 0
+# HELP ergon_shared_cpus_stale_partition_total Cpuset changes that left a container's cpu-partition hooks naming the wrong CPUs.
+# TYPE ergon_shared_cpus_stale_partition_total counter
+ergon_shared_cpus_stale_partition_total 0
+# HELP ergon_shared_cpus_ineligible_total Containers no longer exclusive integer-CPU, shared CPUs dropped.
+# TYPE ergon_shared_cpus_ineligible_total counter
+ergon_shared_cpus_ineligible_total 0
+# HELP ergon_shared_cpus_grants_total Latency-pod grants given, by kind and value.
+# TYPE ergon_shared_cpus_grants_total counter
