@@ -37,7 +37,7 @@ use ergon_latency_core::message::MESSAGE_LEN;
 
 use super::eio_udp::{Staged, base_config, eio};
 use super::mio_tcp::tcp_wire_bytes;
-use super::point::{Error, Rx, Sent, Tx, thread_allocs};
+use super::point::{Error, Rx, Sent, Tx};
 use super::sock::Inspect;
 use super::sockopt::{self, os};
 use super::{MAX_FRAME, TCP_RX_BUF, TCP_TX_BUF};
@@ -80,7 +80,6 @@ pub struct EioTcpTx {
 pub struct EioTcpRx {
     s: Rc<Shared>,
     gone: usize,
-    allocs_at_close: Option<u64>,
 }
 
 /// Takes connected sockets, stream `i` the `i`-th, onto one driver; their
@@ -131,14 +130,7 @@ pub fn pair(socks: Vec<TcpStream>, opts: EioTcpOptions) -> Result<(EioTcpTx, Eio
         opts,
         ipv6,
     });
-    Ok((
-        EioTcpTx { s: Rc::clone(&s) },
-        EioTcpRx {
-            s,
-            gone: 0,
-            allocs_at_close: None,
-        },
-    ))
+    Ok((EioTcpTx { s: Rc::clone(&s) }, EioTcpRx { s, gone: 0 }))
 }
 
 /// One frame queued and flushed now; `Ok(false)` when busy.
@@ -213,7 +205,6 @@ impl<F: FnMut(&[u8])> FrameHandler for Deliver<'_, F> {
 impl Rx for EioTcpRx {
     #[inline]
     fn poll<F: FnMut(&[u8])>(&mut self, on: &mut F) -> Result<usize, Error> {
-        let allocs = thread_allocs();
         let s = &*self.s;
         let mut d = s.d.borrow_mut();
         let mut h = Deliver {
@@ -224,7 +215,6 @@ impl Rx for EioTcpRx {
         let n = d.poll(&mut h).map_err(|e| eio("poll", e))?;
         if h.gone > 0 {
             self.gone += h.gone;
-            self.allocs_at_close.get_or_insert(allocs);
         }
         if let Some(e) = h.err {
             return Err(e);
@@ -242,10 +232,6 @@ impl Rx for EioTcpRx {
 }
 
 impl Inspect for EioTcpRx {
-    fn allocs_at_close(&self) -> Option<u64> {
-        self.allocs_at_close
-    }
-
     fn retrans(&self) -> Result<Option<u64>, Error> {
         let d = self.s.d.borrow();
         let mut sum = 0u64;

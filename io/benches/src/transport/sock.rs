@@ -80,13 +80,6 @@ pub trait Inspect {
     /// # Errors
     /// A read-back fails.
     fn report(&self, out: &mut Vec<(String, String)>) -> Result<(), Error>;
-
-    /// [`thread_allocs`] as the pass that first saw a peer close began:
-    /// the point was over then, and what the transport's close handling
-    /// allocates is not the hot path's. `None` while no peer closed.
-    fn allocs_at_close(&self) -> Option<u64> {
-        None
-    }
 }
 
 /// The lab's DPDK wildcard ports: no socket arm binds or sends to one.
@@ -347,7 +340,7 @@ fn echo_end<T: Tx, R: Rx + Inspect>(
     let r0 = rx.retrans()?;
     let a0 = thread_allocs();
     let echoes = point::echo(rx, tx, keep_going)?;
-    let allocs = rx.allocs_at_close().unwrap_or_else(thread_allocs) - a0;
+    let allocs = thread_allocs() - a0;
     let (retrans, report) = inspect(rx, r0)?;
     Ok((echoes, allocs, retrans, wire_bytes, report))
 }
@@ -565,10 +558,6 @@ where
         let mut m = manifest(wire_bytes, &report);
         m.setting("echoes", &echoes.to_string())
             .setting("hot_path_allocs", &allocs.to_string())
-            .setting(
-                "hot_path_window",
-                "the echo loop, until it stopped or a peer first closed",
-            )
             .setting("busy_threads", &busy_threads(c).to_string())
             .setting("wire_bytes", &wire_bytes.to_string())
             .setting(

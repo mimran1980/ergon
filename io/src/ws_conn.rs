@@ -495,6 +495,9 @@ struct Timers {
     close_due_ns: i64,
     /// The server's Close, reported when the connection ends.
     received: Option<Box<Close>>,
+    /// Room for it, allocated with the connection: receiving a Close
+    /// allocates nothing.
+    spare: Option<Box<Close>>,
 }
 
 const MS: i64 = 1_000_000;
@@ -514,7 +517,18 @@ impl Timers {
             pings_sent: 0,
             close_due_ns: 0,
             received: None,
+            spare: Some(Box::new(empty_close())),
         }
+    }
+}
+
+/// A Close with room for the longest reason (a control frame's 125-byte
+/// payload less the code).
+fn empty_close() -> Close {
+    Close {
+        code: None,
+        reason: String::with_capacity(123),
+        by_server: false,
     }
 }
 
@@ -1186,11 +1200,18 @@ impl WsConn {
     #[cold]
     fn on_close(&mut self, body: &[u8]) -> Result<()> {
         let (code, reason) = ws::parse_close(body)?;
-        let close = Box::new(Close {
-            code,
-            reason: reason.to_owned(),
-            by_server: !self.closing,
-        });
+        // The spare is always there: a second Close is never parsed
+        // (`discard`, or the connection ends).
+        let mut close = self
+            .timers
+            .spare
+            .take()
+            .unwrap_or_else(|| Box::new(empty_close()));
+        close.code = code;
+        close.reason.clear();
+        // At most 123 bytes (a control frame): within the spare's capacity.
+        close.reason.push_str(reason);
+        close.by_server = !self.closing;
         if self.closing {
             return Err(Error::WsClose(close));
         }

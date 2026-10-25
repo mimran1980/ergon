@@ -41,7 +41,7 @@ use ergon_latency_core::message::MESSAGE_LEN;
 use mio::net::TcpStream;
 use mio::{Events, Interest, Poll, Token};
 
-use super::point::{Error, POLL_LIMIT, Rx, Sent, Tx, thread_allocs};
+use super::point::{Error, POLL_LIMIT, Rx, Sent, Tx};
 use super::sock::Inspect;
 use super::sockopt::{self, os};
 use super::{MAX_FRAME, TCP_RX_BUF, TCP_TX_BUF, ip_overhead};
@@ -193,7 +193,6 @@ pub struct MioTcpRx {
     in_ready: Vec<bool>,
     closed: Vec<bool>,
     open: usize,
-    allocs_at_close: Option<u64>,
     rx_stats: MioTcpStats,
 }
 
@@ -280,7 +279,6 @@ pub fn pair(socks: Vec<StdTcpStream>, opts: &MioTcpOptions) -> Result<(MioTcpTx,
             in_ready: vec![false; n],
             closed: vec![false; n],
             open: n,
-            allocs_at_close: None,
             rx_stats: MioTcpStats::default(),
         },
     ))
@@ -326,7 +324,6 @@ impl MioTcpRx {
 impl Rx for MioTcpRx {
     #[inline]
     fn poll<F: FnMut(&[u8])>(&mut self, on: &mut F) -> Result<usize, Error> {
-        let allocs = thread_allocs();
         {
             let s = &*self.s;
             let mut tx = s.tx.borrow_mut();
@@ -405,7 +402,6 @@ impl Rx for MioTcpRx {
             }
             n += delivered;
             if peer_closed {
-                self.allocs_at_close.get_or_insert(allocs);
                 self.close(i);
             }
             if done {
@@ -429,10 +425,6 @@ impl Rx for MioTcpRx {
 }
 
 impl Inspect for MioTcpRx {
-    fn allocs_at_close(&self) -> Option<u64> {
-        self.allocs_at_close
-    }
-
     fn retrans(&self) -> Result<Option<u64>, Error> {
         let mut sum = 0u64;
         for s in &self.s.socks {
