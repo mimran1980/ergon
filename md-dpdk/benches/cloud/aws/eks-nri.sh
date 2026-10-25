@@ -1850,8 +1850,8 @@ wait_pods_ready() { # <ns>
 
 # The rep's command inside the pod: the gap spinner on the second granted
 # exclusive CPU (to attribute every max), then the measured client on the
-# first. Both are moved into the isolated partition first — a task left
-# outside it cannot execute on those CPUs at all — and the rep refuses to
+# first. On a partition mode both start inside the isolated child — a task
+# left outside it cannot execute on those CPUs at all — and the rep refuses to
 # produce numbers unless the measured task is shown to be in the child and
 # on the CPU it was given. The CPUs come from the grant, never a literal.
 rep_cmd() { # <mode> <which> <ping_ep> <pong_ep>
@@ -1894,8 +1894,18 @@ fi
 [ -d "$child" ] || { echo "rep: this mode asked for a partition but no isolated cgroup is under ERGON_ISOLATED_CGROUP" >&2; exit 1; }
 [ "$(cat "$child/cpuset.cpus.partition" 2>/dev/null)" = isolated ] ||
     { echo "rep: $child/cpuset.cpus.partition is not isolated" >&2; exit 1; }
-# The whole process group goes into the partition before anything starts.
-echo $$ >"$child/cgroup.procs" || { echo "rep: cannot move $$ into $child" >&2; exit 1; }'
+# containerd mounts /sys/fs/cgroup read-only in an unprivileged container,
+# so this shell cannot write cgroup.procs. It publishes its pid and waits
+# for the lab to move it from the node (move_into_partition); everything
+# it starts afterwards inherits the child.
+echo $$ >/data/rep-'"$which"'.pid
+name=$(basename "$child")
+i=0
+until grep -q "/$name\$" /proc/$$/cgroup; do
+    i=$((i + 1))
+    [ $i -le 300 ] || { echo "rep: pid $$ was not moved into $child within 30 s" >&2; exit 1; }
+    sleep 0.1
+done'
         partition_prove='grep -q "^$app$" "$child/cgroup.threads" 2>/dev/null ||
     { echo "rep: pid $app is not in $child" >&2; kill $app $gap 2>/dev/null || true; exit 1; }'
     fi
@@ -1903,7 +1913,7 @@ echo $$ >"$child/cgroup.procs" || { echo "rep: cannot move $$ into $child" >&2; 
 $envs
 set -eu
 mkdir -p "\${AERON_DIR:-/data/aeron}"
-rm -f /data/gapspin-$which.log /data/load-spikes.csv /data/stalls-ping.csv /data/stalls-pong.csv /data/rtt-histogram.csv
+rm -f /data/rep-$which.pid /data/gapspin-$which.log /data/load-spikes.csv /data/stalls-ping.csv /data/stalls-pong.csv /data/rtt-histogram.csv
 
 # The exclusive CPUs the plugin granted this pod. Every mode gets these from
 # ergon-shared-cpus; only the partition annotation adds an isolated child.
@@ -1939,6 +1949,52 @@ esac
 echo "rep: $which pid \$app on cpu \$cpu_client (affinity \$mask); gapspin \$gap on \$cpu_gap; $partition_note" >&2
 wait \$app
 EOF
+}
+
+# The node-side half of a partition mode's move. The pod cannot write its
+# own cgroup.procs (read-only cgroup mount), so the lab writes it from the
+# node: args <child> <pod pid>, the child as ERGON_ISOLATED_CGROUP names it
+# on the node. The pid is accepted only when exactly one task of that
+# container's cgroup has it as its innermost NSpid, and the child must be an
+# isolated partition. ERGON_LAB_PROC replaces /proc for the shell tests.
+partition_move_script() {
+    cat <<'EOF'
+set -u
+child=$1 nspid=$2 proc=${ERGON_LAB_PROC:-/proc}
+parent=$(dirname "$child")
+fail() { echo "move: $*" >&2; exit 1; }
+[ "$(cat "$child/cpuset.cpus.partition" 2>/dev/null)" = isolated ] ||
+    fail "$child/cpuset.cpus.partition is not isolated"
+host=""
+for p in $(cat "$parent/cgroup.procs" 2>/dev/null); do
+    ns=$(awk '/^NSpid:/ {print $NF}' "$proc/$p/status" 2>/dev/null)
+    [ "$ns" = "$nspid" ] || continue
+    [ -z "$host" ] || fail "pod pid $nspid matches node pids $host and $p in $parent"
+    host=$p
+done
+[ -n "$host" ] || fail "pod pid $nspid is not a task of $parent"
+echo "$host" >"$child/cgroup.procs" || fail "cannot write $host to $child/cgroup.procs"
+grep -qx "$host" "$child/cgroup.threads" || fail "node pid $host is not in $child after the move"
+echo "move: node pid $host (pod pid $nspid) is in $child"
+EOF
+}
+
+# Move one role's waiting rep shell into its pod's isolated child, from the
+# node through the privileged probe. Returns non-zero when the pid file, the
+# env or the move is missing; the rep then times out and exits 1 as well.
+move_into_partition() { # <which> <ns>
+    local which=$1 ns=$2 pod nspid="" child i
+    pod=$(pod_of "$which" "$ns")
+    [[ -n $pod ]] || { echo "move: no $which pod in $ns" >&2; return 1; }
+    for i in $(seq 100); do
+        nspid=$(kx -n "$ns" "$pod" -- cat "/data/rep-$which.pid" 2>/dev/null) || nspid=""
+        [[ $nspid =~ ^[0-9]+$ ]] && break
+        sleep 0.2
+    done
+    [[ $nspid =~ ^[0-9]+$ ]] || { echo "move: $pod wrote no /data/rep-$which.pid" >&2; return 1; }
+    child=$(kx -n "$ns" "$pod" -- printenv ERGON_ISOLATED_CGROUP 2>/dev/null)
+    [[ $child == /sys/fs/cgroup/* ]] || { echo "move: $pod has no node path in ERGON_ISOLATED_CGROUP ('$child')" >&2; return 1; }
+    partition_move_script | on_host "$which" "$child" "$nspid"
 }
 
 # What each extension actually granted, read back from inside the pods
@@ -2334,10 +2390,24 @@ for mode in $modes; do
         kx -n "$ns" "$(pname b "$mode")" -- sh -c "$(rep_cmd "$mode" b "$ping_ep" "$pong_ep")" \
             >"$out/$run-pong.log" 2>&1 &
         pong_bg=$!
+        # A partition mode's reps wait to be moved into the isolated child
+        # from the node (the pod's cgroup mount is read-only).
+        move_a=""
+        case $mode in
+        M2 | M6)
+            move_into_partition b "$ns" >>"$out/$run-move.log" 2>&1 ||
+                die "$mode rep $rep: pong was not moved into its partition ($out/$run-move.log)"
+            move_into_partition a "$ns" >>"$out/$run-move.log" 2>&1 &
+            move_a=$!
+            ;;
+        esac
         sleep 3
         kx -n "$ns" "$(pname a "$mode")" -- sh -c "$(rep_cmd "$mode" a "$ping_ep" "$pong_ep")" \
             2>"$out/$run-ping-err.log" | sed "s/^/$rep,/" | tee -a "$results" >&2
         ping_rc=${PIPESTATUS[0]}
+        if [[ -n $move_a ]]; then
+            wait "$move_a" || die "$mode rep $rep: ping was not moved into its partition ($out/$run-move.log)"
+        fi
         if ((ping_rc != 0)); then
             die "$mode rep $rep: the measured client did not prove its placement (rc $ping_rc; $out/$run-ping-err.log)"
         fi

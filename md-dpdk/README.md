@@ -540,14 +540,14 @@ must be `CNTFRQ_EL0` (above), the generic timer's stated rate.
   (`DpdkTransportConfig::rx_hw_timestamp`). Init fails on a port that cannot:
   today only AWS ENA on Gen7+ instances in a `precision-time` placement group,
   DPDK 25.11+. Azure MANA has none.
-- **What it measures:** per port, NIC arrival to the receive burst that
-  carried the frame, against `CLOCK_REALTIME` read once a burst (type 81:
-  `nic-arrival-to-rx-burst-max-ns`, `-min-ns`, `-sum-ns`, `-count`). The read
-  is after the NIC handed the burst over and before any frame of it is
-  classified or dispatched, so a frame after the burst's first is measured
-  before its own dispatch: a lower bound on arrival to dispatch, exact only
-  for the first frame of the burst. A stamp after the read is clock skew,
-  counted in `nic-arrival-to-rx-burst-negative`. It means something only while
+- **What it measures:** per port, NIC arrival to the frame's own dispatch to
+  Aeron, against `CLOCK_REALTIME` read for each stamped frame after its
+  classify and just before the hand-off (type 81:
+  `nic-arrival-to-dispatch-max-ns`, `-min-ns`, `-sum-ns`, `-count`). A frame
+  later in a burst includes its wait behind the earlier ones. The read costs
+  one clock read per stamped frame; with the flag off no frame is stamped and
+  nothing is read. A stamp after the read is clock skew, counted in
+  `nic-arrival-to-dispatch-negative`. It means something only while
   chrony keeps the host on the NIC's PTP clock (`benches/cloud/vm.sh
   build-ptp` sets it up).
 - **`media-rcv-ts-offset` channels** get each datagram's receive time, as on

@@ -721,15 +721,13 @@ int rusteron_dpdk_poller_receive(
     int work_count = 0;
     int64_t rx_bytes = 0;
     int64_t sw_csum = 0;
-    /* NIC arrival to the receive burst that carried the frame, over the frames
-     * the NIC stamped no later than the host clock read at that burst; one
-     * stamped later is clock skew between the NIC's PTP hardware clock and
-     * CLOCK_REALTIME, counted apart. The read is once a burst and before any
-     * frame of it is classified or dispatched, so a frame after the burst's
-     * first is measured before its own dispatch: a lower bound on arrival to
-     * dispatch, exact only for the first frame of the burst. Per-frame dispatch
-     * stamps would cost a clock read per frame on the receive path; the burst
-     * endpoint is the one this path can report without adding that. */
+    /* NIC arrival to the frame's own dispatch, over the frames the NIC stamped
+     * no later than the host clock read just before that dispatch; one stamped
+     * later is clock skew between the NIC's PTP hardware clock and
+     * CLOCK_REALTIME, counted apart. The read is per stamped frame, so a frame
+     * later in a burst carries its wait behind the earlier ones. Frames are
+     * stamped only with RUSTERON_DPDK_RX_HW_TIMESTAMP=1: without it no frame
+     * reads the clock here. */
     int64_t hw_sum = 0, hw_count = 0, hw_max = INT64_MIN, hw_min = INT64_MAX, hw_negative = 0;
     int observed = 0; /* the first datagram's source checked against ARP */
     /* A channel on this NIC asking for media receive timestamps
@@ -757,15 +755,14 @@ int rusteron_dpdk_poller_receive(
              * frames: a slow one delayed every frame of it */
             rusteron_dpdk_counters_burst(&port->counters, RD_COUNTER_RX_BURST_MAX, rusteron_dpdk_clock_now() - burst_ns);
         }
-        /* CLOCK_REALTIME, read at most once a burst, after the NIC handed the
-         * burst over (every frame of it arrived before): at once for media
-         * timestamps, else at the burst's first NIC-timestamped frame. Never
-         * once a poll: a later burst's frames arrived after that read. */
-        uint64_t realtime_ns = 0;
+        /* The media timestamp of a frame the NIC did not stamp: CLOCK_REALTIME
+         * read once a burst, after the NIC handed the burst over (every frame
+         * of it arrived before). Never once a poll: a later burst's frames
+         * arrived after that read. */
         struct timespec *burst_media_ts = NULL;
         if (media_ts && received > 0)
         {
-            realtime_ns = rusteron_dpdk_realtime_ns();
+            const uint64_t realtime_ns = rusteron_dpdk_realtime_ns();
             burst_ts.tv_sec = (time_t)(realtime_ns / 1000000000ULL);
             burst_ts.tv_nsec = (long)(realtime_ns % 1000000000ULL);
             burst_media_ts = &burst_ts;
@@ -796,13 +793,15 @@ int rusteron_dpdk_poller_receive(
                 struct timespec nic_ts;
                 if (0 != m->hw_rx_ns)
                 {
-                    /* NIC arrival to this burst: the NIC stamps with its PTP
-                     * hardware clock, which chrony keeps CLOCK_REALTIME on. */
-                    if (0 == realtime_ns)
-                    {
-                        realtime_ns = rusteron_dpdk_realtime_ns();
-                    }
-                    const int64_t delay = (int64_t)(realtime_ns - m->hw_rx_ns);
+                    /* NIC arrival to this frame's dispatch: the NIC stamps
+                     * with its PTP hardware clock, which chrony keeps
+                     * CLOCK_REALTIME on. Read here, after the classify and
+                     * just before the hand-off, for every stamped frame: a
+                     * frame later in the burst waited for the ones before it.
+                     * Only a NIC with RUSTERON_DPDK_RX_HW_TIMESTAMP=1 stamps,
+                     * so without it this costs nothing. */
+                    const uint64_t dispatch_ns = rusteron_dpdk_realtime_ns();
+                    const int64_t delay = (int64_t)(dispatch_ns - m->hw_rx_ns);
                     if (delay < 0)
                     {
                         hw_negative++;
