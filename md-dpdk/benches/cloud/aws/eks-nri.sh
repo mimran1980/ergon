@@ -727,7 +727,7 @@ probe_clean() {
     fi
     if [[ -n ${ids// /} ]]; then
         i=0
-        while ((i < 18)); do
+        while ((i < 36)); do
             left=$(aws ec2 --region "$r" describe-instances --instance-ids $ids \
                 --query 'Reservations[].Instances[?State.Name!=`terminated`].InstanceId' --output text 2>/dev/null || true)
             [[ -z $left || $left == None ]] && break
@@ -735,9 +735,11 @@ probe_clean() {
             i=$((i + 1))
         done
     fi
+    # A terminated instance keeps its ENI "in use" for a minute or more:
+    # the subnet and the VPC wait for that (up to 3 and 2 minutes).
     if [[ -n $subnet ]]; then
         i=0
-        while ((i < 6)); do
+        while ((i < 36)); do
             for eni in $(aws ec2 --region "$r" describe-network-interfaces --filters "Name=subnet-id,Values=$subnet" \
                 --query 'NetworkInterfaces[].NetworkInterfaceId' --output text 2>/dev/null); do
                 [[ -z $eni || $eni == None ]] && continue
@@ -750,7 +752,7 @@ probe_clean() {
     fi
     if [[ -n $vpc ]]; then
         i=0
-        while ((i < 6)); do
+        while ((i < 24)); do
             aws ec2 --region "$r" delete-vpc --vpc-id "$vpc" >/dev/null 2>>"$out/probe.log" && break
             sleep 5
             i=$((i + 1))

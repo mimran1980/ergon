@@ -64,6 +64,26 @@
 #   LAB_KEEP and LAB_DELETE are not read: one exported for lab.sh must never
 #   keep a billing cluster.
 #   RTT_MESSAGES (300000) RTT_WARMUP (50000) RTT_SECONDS (20)
+#   EKS_SPOT=1: the two nodes as spot instances (run-instances market options;
+#   the spot vCPU quota L-34B43A08 instead of the on-demand one).
+#   EKS_ALLOW_CLUSTERS="<name> ...": ergon-lab clusters the leftover sweep
+#   accepts (another live run of these labs); any other one still refuses.
+#   EKS_LL=1: the combined run, samples/low-latency-k8s on these nodes instead
+#   of this script's driver pod and rtt clients: the nodes take the sample's
+#   user data (node/eks-userdata.sh: md-dpdk's node path with reserved CPUs 0-1
+#   and IRQs on 0, NRI on, the ergon.io labels, the quiet-CPU boot unit), the
+#   shared-cpus plugin from this tree's chart and image (ECR, never GHCR) with
+#   helm/values-eks.yaml, the admission policy, and the eks-ena-arm64 overlay
+#   (images and instance type rewritten for this run) with its DPDK driver,
+#   pong and ping; EKS_LL_REPS ping Jobs (3) of LL_DURATION_S (90) each and
+#   scripts/verify.sh during the first, then the teardown. EKS_LL_LAYOUTS
+#   ("shared exclusive shared"): the driver's conductor on the shared CPU (the
+#   sample's layout) or on a third exclusive CPU (cpu 3, AERON_CONDUCTOR_CPU_AFFINITY
+#   isolated:2), each for EKS_LL_REPS pings, in that order (the repeat is the
+#   A/A drift check). EKS_LL_IMAGE
+#   (ll:baseline, built by samples/low-latency-k8s/docker/build.sh when absent).
+#   EKS_HOLD_ON_FAIL=<minutes> keeps a failed run that long (inside
+#   EKS_MAX_MINUTES) before its teardown; `touch <out>/release` ends it.
 set -uo pipefail
 export AWS_PAGER=""
 
@@ -92,6 +112,15 @@ delete=${EKS_DELETE:-}
 rtt_messages=${RTT_MESSAGES:-300000}
 rtt_warmup=${RTT_WARMUP:-50000}
 rtt_seconds=${RTT_SECONDS:-20}
+spot=${EKS_SPOT:-}
+allow_clusters=${EKS_ALLOW_CLUSTERS:-}
+ll=${EKS_LL:-}
+ll_reps=${EKS_LL_REPS:-3}
+ll_image=${EKS_LL_IMAGE:-ll:baseline}
+ll_duration=${LL_DURATION_S:-90}
+ll_layouts=${EKS_LL_LAYOUTS:-shared exclusive shared}
+hold_on_fail=${EKS_HOLD_ON_FAIL:-0}
+run_t0=$(date +%s)
 # Graviton4/5 or Intel x86: provision-node.sh refuses any other CPU (an older
 # Graviton, AMD), so the nodes would never join. Intel bare metal runs the
 # same node path: its IOMMU passes igb_uio's DMA through (iommu=pt), as in the
@@ -125,6 +154,7 @@ profile=$N-node
 lt=$N-node
 pg=$N
 repos="$N/media-driver $N/device-plugin"
+[[ -n $ll ]] && repos="$repos $N/ll $N/shared-cpus"
 cluster_policies="arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
 node_policies="arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPullOnly arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
 created=0
@@ -480,8 +510,22 @@ SH
     done
 }
 
+hold() { # <minutes> <why>: keep the run until <out>/release, the minutes, or EKS_MAX_MINUTES less 10
+    local until_s cap_s
+    ((${1:-0} > 0)) || return 0
+    until_s=$(($(date +%s) + $1 * 60))
+    cap_s=$((run_t0 + max_minutes * 60 - 600))
+    ((until_s > cap_s)) && until_s=$cap_s
+    log "HOLD ($2): $(((until_s - $(date +%s)) / 60)) minutes or touch $out/release; KUBECONFIG=$out/kubeconfig"
+    echo "HOLD $2" >"$out/HOLD"
+    while (($(date +%s) < until_s)) && [[ ! -e $out/release ]]; do sleep 10; done
+    rm -f "$out/HOLD"
+}
 teardown() {
     local rc=$?
+    if ((rc != 0 && hold_on_fail > 0)) && [[ ! -e $out/watchdog-fired && -s $out/kubeconfig ]]; then
+        hold "$hold_on_fail" "run failed, rc $rc"
+    fi
     # the teardown must finish: a second Ctrl-C would leave the run billing
     trap '' INT TERM HUP
     [[ -n $watchdog_pid ]] && kill "$watchdog_pid" 2>/dev/null
@@ -576,23 +620,31 @@ sweep_leftovers() {
     else
         log "no ergon-lab leftovers in any region"
     fi
-    if grep -q ' eks-cluster ' "$out/leftovers.txt"; then
-        die "an ergon-lab EKS cluster exists (above): delete it first with EKS_DELETE=<its stamp> $self"
+    local c others=
+    for c in $(awk '$2 == "eks-cluster" {print $3}' "$out/leftovers.txt"); do
+        [[ " $allow_clusters " == *" $c "* ]] && { log "  $c: another live run, accepted (EKS_ALLOW_CLUSTERS)"; continue; }
+        others+=" $c"
+    done
+    if [[ -n $others ]]; then
+        die "an ergon-lab EKS cluster exists (above:$others): delete it first with EKS_DELETE=<its stamp> $self"
     fi
 }
 sweep_leftovers
 
 # The on-demand standard vCPU quota (A, C, D, H, I, M, R, T, Z) must hold both
 # nodes on top of what already runs in the region.
-quota=$(aws service-quotas get-service-quota --region "$region" --service-code ec2 --quota-code L-1216C47A \
-    --query Quota.Value --output text 2>&1) || die "cannot read the on-demand standard vCPU quota (L-1216C47A): $quota"
+quota_code=L-1216C47A
+[[ -n $spot ]] && quota_code=L-34B43A08
+quota=$(aws service-quotas get-service-quota --region "$region" --service-code ec2 --quota-code "$quota_code" \
+    --query Quota.Value --output text 2>&1) || die "cannot read the vCPU quota ($quota_code): $quota"
 quota=${quota%.*}
 used=$(ec2 describe-instances --filters Name=instance-state-name,Values=pending,running \
     --query 'Reservations[].Instances[].[InstanceType,CpuOptions.CoreCount,CpuOptions.ThreadsPerCore]' --output text |
     awk '$1 ~ /^([acdhmrtz]|i|im|is)[0-9]/ {s += $2 * $3} END {print s + 0}') || die "cannot count the running vCPUs"
+# (the count is every standard instance in the region, spot or not: an upper bound for either quota)
 need=$((2 * cores * node_tpc))
 if ((used + need > quota)); then
-    die "the on-demand standard vCPU quota (L-1216C47A) in $region is $quota, $used in use: 2 x $type needs $need more. Stop what runs or raise the quota (Service Quotas)."
+    die "the vCPU quota ($quota_code) in $region is $quota, $used in use: 2 x $type needs $need more. Stop what runs or raise the quota (Service Quotas)."
 fi
 log "vCPU quota $quota, $used in use, this run $need"
 
@@ -621,6 +673,19 @@ build_image() { # <name> <Dockerfile>
 }
 build_image media-driver Dockerfile.media-driver
 build_image device-plugin Dockerfile.device-plugin
+if [[ -n $ll ]]; then
+    if ! docker image inspect "$ll_image" >/dev/null 2>&1; then
+        log "building $ll_image (samples/low-latency-k8s/docker/build.sh, arm64), log $out/build-ll.log"
+        LL_PLATFORMS=$platform bash "$repo/samples/low-latency-k8s/docker/build.sh" "${ll_image#*:}" >"$out/build-ll.log" 2>&1 ||
+            { tail -30 "$out/build-ll.log" >&2; die "the sample image did not build"; }
+    fi
+    docker tag "$ll_image" "ergon-md-dpdk/ll:$tag" || die "tag $ll_image"
+    if ! docker image inspect "ergon-md-dpdk/shared-cpus:$tag" >/dev/null 2>&1; then
+        log "building ergon-md-dpdk/shared-cpus:$tag ($platform, k8s/nri-shared-cpus), log $out/build-shared-cpus.log"
+        docker buildx build --platform "$platform" --load -t "ergon-md-dpdk/shared-cpus:$tag" "$repo/k8s/nri-shared-cpus" \
+            >"$out/build-shared-cpus.log" 2>&1 || { tail -30 "$out/build-shared-cpus.log" >&2; die "the plugin image did not build"; }
+    fi
+fi
 # the driver image also serves the clients and the host probe
 docker run --rm --platform "$platform" --entrypoint bash "ergon-md-dpdk/media-driver:$tag" -c \
     'for t in media_driver rtt counters taskset nsenter pkill timeout sleep; do command -v $t >/dev/null || { echo "missing $t"; exit 1; }; done' ||
@@ -761,7 +826,7 @@ wait_for 180 15 "create-cluster to accept the new role" create_cluster || { tail
 log "cluster $N creating; pushing the images meanwhile"
 aws ecr get-login-password --region "$region" | docker login --username AWS --password-stdin "$registry" >/dev/null 2>&1 ||
     die "docker login to $registry"
-for name in media-driver device-plugin; do
+for name in media-driver device-plugin ${ll:+ll shared-cpus}; do
     docker tag "ergon-md-dpdk/$name:$tag" "$registry/$N/$name:$tag" || die "docker tag $name"
     docker push "$registry/$N/$name:$tag" >>"$out/push.log" 2>&1 || { tail -5 "$out/push.log" >&2; die "push $name"; }
 done
@@ -789,9 +854,19 @@ eks create-access-entry --cluster-name "$N" --principal-arn "$node_role_arn" --t
     --tags "owner=ergon-lab,run=$stamp" >/dev/null || die "access entry for the nodes"
 
 # The nodes: user data from node/userdata.sh, in a launch template.
+if [[ -n $ll ]]; then
+    # the sample's node: reserved 0-1, IRQs on 0, NRI, the ergon.io labels
+    # (ll-role ping on both; b is relabelled pong once it has joined), the
+    # quiet-CPU boot unit
+    RUSTERON_DPDK_DEVICE_NUMBERS="1 2" RUSTERON_HUGEPAGES=$hugepages \
+        bash "$repo/samples/low-latency-k8s/node/eks-userdata.sh" "$N" "$endpoint" "$ca" "$svc" ping >"$out/userdata.gz" ||
+        die "samples/low-latency-k8s/node/eks-userdata.sh failed"
+    log "user data (the sample's): $(wc -c <"$out/userdata.gz" | tr -d ' ') bytes gzipped, $((16384 - $(wc -c <"$out/userdata.gz"))) under EC2's 16384"
+else
 RUSTERON_DPDK_DEVICE_NUMBERS="1 2" RUSTERON_HUGEPAGES=$hugepages \
     bash "$deploy/node/userdata.sh" "$N" "$endpoint" "$ca" "$svc" "$reserved" >"$out/userdata.gz" ||
     die "node/userdata.sh failed (over the 16 KiB user-data limit?)"
+fi
 # The launch template: CpuOptions ThreadsPerCore=1 on x86 where EC2 accepts
 # it (node/launch-template.py turns SMT off, so one CPU is one physical core).
 python3 "$deploy/node/launch-template.py" "$ami" "$type" "$profile_arn" "$out/userdata.gz" "$stamp" "$N" \
@@ -809,6 +884,7 @@ launch() { # <node subnet> <zone>: both instance ids
     for try in $(seq 12); do
         res=$(ec2 run-instances --launch-template "LaunchTemplateName=$lt,Version=1" --count 2 --subnet-id "$1" \
             --security-group-ids "$csg" "$sg" --placement "GroupName=$pg" \
+            ${spot:+--instance-market-options '{"MarketType":"spot","SpotOptions":{"SpotInstanceType":"one-time","InstanceInterruptionBehavior":"terminate"}}'} \
             --query 'Instances[].InstanceId' --output text 2>&1) && { echo "$res"; return 0; }
         echo "$res" >>"$out/run-instances-$2.log"
         # a new instance profile takes a while to be usable; anything else: the next zone
@@ -892,6 +968,152 @@ node_a=$(node_of "$ida")
 node_b=$(node_of "$idb")
 [[ -n $node_a && -n $node_b ]] || die "cannot match the nodes to $ida and $idb"
 log "nodes: a $node_a, b $node_b"
+
+
+# ---- EKS_LL: the combined run (samples/low-latency-k8s) -------------------------
+if [[ -n $ll ]]; then
+    llout=$out/ll
+    mkdir -p "$llout"
+    k label node "$node_b" ergon.io/ll-role=pong --overwrite >/dev/null || die "label $node_b pong"
+    # the host probe (this script's), for host commands and the deadline
+    cat >"$llout/probe.yaml" <<YAML
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ergon-lab-probe
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: ergon-lab-probe
+  template:
+    metadata:
+      labels:
+        app: ergon-lab-probe
+    spec:
+      tolerations:
+        - operator: Exists
+      hostPID: true
+      terminationGracePeriodSeconds: 1
+      containers:
+        - name: probe
+          image: $registry/$N/media-driver:$tag
+          command: ["sleep", "infinity"]
+          securityContext:
+            privileged: true
+YAML
+    # the plugin, from this tree's chart with the sample's EKS values
+    helm template ergon-shared-cpus "$repo/k8s/nri-shared-cpus/charts/ergon-shared-cpus" --namespace ergon-system \
+        -f "$repo/samples/low-latency-k8s/helm/values-eks.yaml" \
+        --set image.repository="$registry/$N/shared-cpus" --set image.tag="$tag" >"$llout/plugin.yaml" 2>"$llout/helm.log" ||
+        { cat "$llout/helm.log" >&2; die "helm template of the shared-cpus chart"; }
+    # the overlay, copied with the relative path its device-plugin component
+    # needs, and rewritten for this run: ECR images, this instance type, the
+    # receiver ENA IPs
+    tree=$llout/tree
+    mkdir -p "$tree/samples" "$tree/md-dpdk/deploy"
+    cp -R "$repo/samples/low-latency-k8s" "$tree/samples/" && rm -rf "$tree/samples/low-latency-k8s/target"
+    cp -R "$repo/md-dpdk/deploy/aws-eks" "$tree/md-dpdk/deploy/"
+    ov=$tree/samples/low-latency-k8s/k8s/overlays/eks-ena-arm64
+    sed -i.bak -e "s|newName: REGISTRY/ll, newTag: arm64-v3|newName: $registry/$N/ll, newTag: \"$tag\"|" \
+        -e "s|newName: REGISTRY/rusteron-dpdk-device-plugin, newTag: 0.1.34-arm64|newName: $registry/$N/device-plugin, newTag: \"$tag\"|" \
+        -e "s|values: \[c9g.2xlarge\]|values: [$type]|" "$ov/kustomization.yaml" && rm -f "$ov/kustomization.yaml.bak"
+    grep -q "$registry/$N/ll" "$ov/kustomization.yaml" && grep -q "values: \[$type\]" "$ov/kustomization.yaml" ||
+        die "the overlay rewrite did not take ($ov/kustomization.yaml)"
+    sed -i.bak -e "s|PONG_NODE_RECEIVER_IP|$ip_rcv_b|g" -e "s|PING_NODE_RECEIVER_IP|$ip_rcv_a|g" "$ov/endpoints.env" && rm -f "$ov/endpoints.env.bak"
+    k apply -f "$llout/probe.yaml" >"$llout/apply.log" 2>&1 || { cat "$llout/apply.log" >&2; die "apply probe"; }
+    k apply -f "$llout/plugin.yaml" >>"$llout/apply.log" 2>&1 || { cat "$llout/apply.log" >&2; die "apply plugin"; }
+    k apply -f "$repo/k8s/nri-latency-pods/admission/priority-class.yaml" \
+        -f "$repo/k8s/nri-latency-pods/admission/validating-admission-policy.yaml" >>"$llout/apply.log" 2>&1 ||
+        { cat "$llout/apply.log" >&2; die "apply admission"; }
+    for ds_ns in "ergon-lab-probe default" "ergon-shared-cpus ergon-system"; do
+        kubectl rollout status "ds/${ds_ns% *}" -n "${ds_ns#* }" --timeout=10m >>"$llout/apply.log" 2>&1 || {
+            k describe pods -n "${ds_ns#* }" -l "app=${ds_ns% *}" >"$llout/rollout-${ds_ns% *}.log" 2>&1
+            k logs -n "${ds_ns#* }" -l "app=${ds_ns% *}" --tail=100 >>"$llout/rollout-${ds_ns% *}.log" 2>&1
+            die "daemonset ${ds_ns% *} did not roll out ($llout/rollout-${ds_ns% *}.log)"
+        }
+    done
+    for n in a b; do
+        nv_set probe "$n" "$(k get pods -n default -l app=ergon-lab-probe --field-selector "spec.nodeName=$(nv node "$n")" -o jsonpath='{.items[0].metadata.name}')"
+    done
+    on_host() { local n=$1; shift; kx -i -n default "$(nv probe "$n")" -- nsenter -t 1 -m -u -i -n -p -- timeout 600 bash -s -- "$@"; }
+    for n in a b; do
+        on_host "$n" <<<"shutdown -h +$((max_minutes + 30)) 'ergon-lab deadline'" >/dev/null 2>&1 ||
+            log "WARNING: $n: no shutdown deadline; only this machine's teardown deletes it"
+        on_host "$n" >"$llout/node-$n.txt" 2>&1 <<'SH'
+echo "== cmdline"; cat /proc/cmdline
+echo "== isolated"; cat /sys/devices/system/cpu/isolated
+echo "== containerd"; containerd --version
+echo "== nri socket"; ls -l /var/run/nri/nri.sock
+echo "== kubelet argv"; tr '\0' ' ' </proc/"$(pgrep -xo kubelet)"/cmdline; echo
+echo "== quiet"; systemctl is-enabled ergon-quiet-cpus.service; systemctl is-active ergon-quiet-cpus.service; /usr/local/sbin/ergon-quiet-cpus.sh --check; echo "quiet-check rc=$?"
+echo "== dpdk"; systemctl is-active rusteron-dpdk-ena.service 2>&1; ls /var/lib/rusteron-dpdk 2>&1
+echo "== irqs"; for i in $(awk -F: '/eth|ens|ena|Tx|Rx/ {gsub(/ /, "", $1); print $1}' /proc/interrupts); do echo "irq $i $(cat /proc/irq/$i/smp_affinity_list) $(cat /proc/irq/$i/effective_affinity_list 2>/dev/null)"; done
+SH
+        log "$n node: $(grep -A1 '== containerd' "$llout/node-$n.txt" | tail -1); quiet check: $(grep 'quiet-check rc' "$llout/node-$n.txt")"
+    done
+    k apply -k "$ov" >>"$llout/apply.log" 2>&1 || { tail -20 "$llout/apply.log" >&2; die "kubectl apply -k the eks-ena-arm64 overlay"; }
+    ll_job_done() {
+        local s
+        s=$(k get job ll-ping -n trading -o jsonpath='{.status.succeeded}{" "}{.status.failed}' 2>/dev/null)
+        [[ $s == 1* || $s == *" 1" ]]
+    }
+    ll_snapshot() { # <rep>
+        k get pods -A -o wide >"$llout/pods-$1.txt" 2>&1
+        k logs -n trading job/ll-ping --tail=-1 >"$llout/ping-$1.log" 2>&1
+        k logs -n trading deploy/ll-pong --tail=400 >"$llout/pong-$1.log" 2>&1
+        k logs -n trading-driver -l app=ll-media-driver --tail=400 --prefix >"$llout/driver-$1.log" 2>&1
+        k get events -A --sort-by=.lastTimestamp >"$llout/events-$1.txt" 2>&1
+    }
+    ll_layout() { # <shared|exclusive>: the driver's conductor placement, then the pong restarted on the new driver
+        local ops
+        if [[ $1 == exclusive ]]; then
+            ops='[{"op":"replace","path":"/spec/template/spec/containers/0/resources/requests/cpu","value":"3"},
+{"op":"replace","path":"/spec/template/spec/containers/0/resources/limits/cpu","value":"3"},
+{"op":"add","path":"/spec/template/spec/containers/0/command/5","value":"--env"},
+{"op":"add","path":"/spec/template/spec/containers/0/command/6","value":"AERON_CONDUCTOR_CPU_AFFINITY=isolated:2"}]'
+            k patch ds ll-media-driver -n trading-driver --type json -p "$ops" >>"$llout/apply.log" 2>&1 || return 1
+        else
+            k apply -k "$ov" >>"$llout/apply.log" 2>&1 || return 1
+        fi
+        kubectl rollout status ds/ll-media-driver -n trading-driver --timeout=10m >>"$llout/apply.log" 2>&1 || return 1
+        k rollout restart deploy/ll-pong -n trading >>"$llout/apply.log" 2>&1 || return 1
+        kubectl rollout status deploy/ll-pong -n trading --timeout=10m >>"$llout/apply.log" 2>&1 || return 1
+        k get ds ll-media-driver -n trading-driver -o jsonpath='{.spec.template.spec.containers[0].command}' >"$llout/driver-command-$1.txt"
+    }
+    rep=0 current=shared
+    for layout in $ll_layouts; do
+    if [[ $layout != "$current" ]]; then
+        log "---- LL layout: conductor $layout"
+        k delete job ll-ping -n trading --wait=true >/dev/null 2>&1
+        ll_layout "$layout" || { ll_snapshot "layout-$layout"; die "LL: could not switch the driver to conductor $layout"; }
+        current=$layout
+    fi
+    for r in $(seq "$ll_reps"); do
+        rep=$((rep + 1))
+        log "---- LL rep $rep (conductor $layout): ping Job, ${ll_duration}s"
+        if ((rep > 1)); then
+            k delete job ll-ping -n trading --wait=true >/dev/null 2>&1
+            k apply -k "$ov" >>"$llout/apply.log" 2>&1 || die "re-apply the overlay"
+        else
+            # the verifier during the first rep's measuring window
+            (sleep 60; KUBECONFIG=$out/kubeconfig bash "$repo/samples/low-latency-k8s/scripts/verify.sh" --contract full --irq-cpu 0 \
+                >"$llout/verify.txt" 2>&1; echo "verify rc=$?" >>"$llout/verify.txt") &
+            verify_pid=$!
+        fi
+        if ! wait_for $((ll_duration + 600)) 15 "LL rep $rep: the ping Job to finish" ll_job_done; then
+            ll_snapshot "$rep"
+            die "LL rep $rep: the ping Job did not finish (see $llout)"
+        fi
+        ll_snapshot "$rep"
+        grep 'll-latency' "$llout/ping-$rep.log" | sed "s/^/rep $rep conductor-$layout: /" | tee -a "$llout/results.txt" >&2
+        grep -q 'rtt_ns' "$llout/ping-$rep.log" || log "WARNING: LL rep $rep printed no rtt_ns line (see $llout/ping-$rep.log)"
+        [[ $rep == 1 ]] && { wait "$verify_pid" 2>/dev/null; log "verify: $(grep -E 'RESULT|verify rc' "$llout/verify.txt" | tr '\n' ' ')"; }
+    done
+    done
+    log "LL results: $llout/results.txt"
+    exit 0
+fi
 
 # ---- deploy ------------------------------------------------------------------
 
