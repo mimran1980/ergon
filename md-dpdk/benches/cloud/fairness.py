@@ -27,6 +27,9 @@ concerns. Rules:
                    TCP, Aeron); counters from every host (TCP: tcp_info
                    and nstat; Aeron: aeron; UDP: nstat; a transport joined by +,
                    such as udp+tcp, every part's)
+  loss             a TCP point's real loss (retrans_not_dsack, lost_end) only on a
+                   loss row: on one without (no netem, none, 0 %) it is a bug to
+                   trace; DSACK-reported (spurious) retransmits are reported, not loss
   lateness         scheduled and late counted, as the manifest says
   max              every max labelled (spikes.py); unexplained blocks
   netem            a loss row's netem on every data NIC of every host at its
@@ -41,7 +44,7 @@ import sys
 from collections import defaultdict, namedtuple
 
 from spikes import transport_maxima
-from transport_points import hosts_of, read_points
+from transport_points import hosts_of, read_points, tcp_loss
 
 Violation = namedtuple("Violation", "rule set tags detail")
 Violation.__str__ = lambda v: f"{v.rule}: {v.set or 'run'}: {v.detail}"
@@ -75,6 +78,21 @@ def retransmits(transport):
     """Whether a transport (or a part of a +-joined one) retransmits, so its
     rows must count it: TCP and Aeron's."""
     return any(p == "tcp" or p.startswith("aeron") for p in (transport or "").split("+"))
+
+
+def tcp_loss_problem(p):
+    """What is wrong with a TCP point's loss: real loss (retransmits not
+    reported spurious, segments lost) on a row without loss (no netem, the
+    no-qdisc control, or netem at 0 %) is a bug to trace; spurious
+    retransmits are reported, never loss. None when nothing is."""
+    loss = tcp_loss(p)
+    if loss is None or (p.netem not in (None, "none") and float(p.netem) != 0):
+        return None
+    real, spurious = loss
+    if real:
+        return (f"{p.tag}: {real} segments lost (retransmits not DSACK-reported, or lost at the end) "
+                f"on a row without loss ({spurious} spurious): trace it")
+    return None
 
 
 def read_env(path):
@@ -299,6 +317,9 @@ def check(run_dir):
                 for s in loss_sources(m["transport"]) or ():
                     if s not in sources:
                         add("loss-accounting", set_, [p.tag], f"{p.tag}: no {s} counters on {host}")
+                if "tcp_info" in sources and "retrans_not_dsack" not in (sources["tcp_info"] or {}):
+                    add("loss-accounting", set_, [p.tag], f"{p.tag}: {host}'s tcp_info has no DSACK split "
+                        "(retrans_not_dsack): spurious and real retransmits cannot be told apart")
             if loss_sources(m["transport"]) is None:
                 add("loss-accounting", set_, [p.tag], f"{p.tag}: unknown transport {m['transport']!r}")
             # retrans: a count only where the transport retransmits (TCP, Aeron);
@@ -307,6 +328,9 @@ def check(run_dir):
             empty = [c for c in need if p.row[c] is None]
             if empty:
                 add("loss-accounting", set_, [p.tag], f"{p.tag}: row has no {', '.join(empty)}")
+            why = tcp_loss_problem(p)
+            if why:
+                add("loss", set_, [p.tag], why)
             # lateness
             if p.row["scheduled"] is None or p.row["late"] is None:
                 add("lateness", set_, [p.tag], f"{p.tag}: row has no scheduled or late count")

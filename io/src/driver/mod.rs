@@ -68,6 +68,8 @@ struct Conns<E> {
     reserved: Vec<bool>,
     /// Closed endpoints the kernel no longer references, waiting to be freed
     /// (on the helper thread when there is one: `Driver::free_closed`).
+    /// Emptied by every call that fills it, and with room for every slot
+    /// (grown in `reserve`), so a close never allocates in `poll`.
     closed: Vec<E>,
     /// The send set: slots that may hold queued sends, each listed once, so
     /// a send pass visits these and not every slot. A slot is listed when a
@@ -89,7 +91,7 @@ impl<E> Conns<E> {
             gens: Vec::with_capacity(n),
             closing: Vec::with_capacity(n),
             reserved: Vec::with_capacity(n),
-            closed: Vec::new(),
+            closed: Vec::with_capacity(n),
             tx_dirty: Vec::with_capacity(n),
             tx_listed: Vec::with_capacity(n),
         }
@@ -134,9 +136,12 @@ impl<E> Conns<E> {
                 self.closing.push(false);
                 self.reserved.push(false);
                 self.tx_listed.push(false);
-                // Every slot can be listed once: room for all of them.
+                // Every slot can be listed once, and closed once between
+                // two frees: room for all of them.
                 self.tx_dirty
                     .reserve(self.slots.len().saturating_sub(self.tx_dirty.len()));
+                self.closed
+                    .reserve(self.slots.len().saturating_sub(self.closed.len()));
                 self.slots.len() - 1
             });
         self.reserved[i] = true;
@@ -800,8 +805,10 @@ impl<E: Endpoint> Driver<E> {
     /// `Config::inline_connect_fallback` to have this call do that, or give
     /// the pod a second CPU; [`CpuError::Outside`] or
     /// [`CpuError::PollingCpu`] for a `connect_cpu` outside the process's
-    /// cpuset, or that is the polling CPU. Otherwise: the helper thread
-    /// could not be started.
+    /// cpuset, or that is the polling CPU. [`Error::Busy`] when the
+    /// helper's mailbox (1 024 messages, allocated once so the polling
+    /// thread's sends to it never allocate) is full. Otherwise: the helper
+    /// thread could not be started.
     pub fn connect_background<D>(&mut self, dial: D) -> Result<ConnId>
     where
         D: Dial<Conn = E> + Send + 'static,

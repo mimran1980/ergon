@@ -82,6 +82,21 @@ after their due time.
 | `netem_counters` | {host: {nic: {qdisc, loss_pct, sent_pkts, dropped}}} | netem verified; tc -s on every data NIC |
 | `loss_counters` | {host: {source: {counter: growth}}} | sources `tcp_info`, `nstat`, `aeron` |
 
+A TCP arm's own manifest (`tcp_lat`) also carries, per end, the traffic's
+and the set-up's counters apart: `tcp.retrans`, `tcp.dsack_dups` (the
+spurious ones), `tcp.retrans_not_dsack`, `tcp.lost_end`, `tcp.rtos`, each
+with a `_setup` twin, `netstat.window.*` / `netstat.setup.*` (nstat
+names), and the busy thread's `sched.run_delay_ns` (table in
+`io/benches/src/transport/sock.rs`). At 0 % loss a retransmit is either
+spurious (DSACK reported, the thread waited for a CPU) or a bug to trace.
+transport_collect.py copies each end's into `loss_counters.<host>.tcp_info`
+(`retrans`, `dsack_dups`, `retrans_not_dsack`, `lost_end`, `rtos` and the
+`_setup` twins) and `netstat_window`. A TCP point's real loss is
+`retrans_not_dsack` plus `lost_end` over both hosts (`transport_points.tcp_loss`);
+the DSACK-reported ones are spurious, shown apart and never counted as loss.
+fairness.py's `loss` rule flags real loss on a row without loss (no netem,
+`none`, 0 %), and `loss-accounting` a `tcp_info` without the split.
+
 Hosts are `a` and `b`; a one-host set (1, 2b) has `a` alone.
 
 ## transport-settings.env

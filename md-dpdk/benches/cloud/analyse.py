@@ -1382,7 +1382,7 @@ def transport(args):
     """analyse.py --transport [--show-invalid] <run dir | results.csv>."""
     import fairness
     from spikes import transport_maxima
-    from transport_points import flags, group_key, is_aa
+    from transport_points import flags, group_key, is_aa, tcp_loss
 
     show_invalid = "--show-invalid" in args
     rest = [a for a in args if a != "--show-invalid"]
@@ -1412,6 +1412,14 @@ def transport(args):
     span = lambda vs: (f"{min(vs):,}" if min(vs) == max(vs) else f"{min(vs):,}–{max(vs):,}") if vs else "-"
     short = lambda c: c.split(" (")[0]
 
+    def tcp_cell(reps):
+        """TCP: real loss (retransmits not DSACK-reported, lost at the end) and
+        the spurious (DSACK-reported) ones, every rep and host summed."""
+        got = [tcp_loss(p) for p in reps]
+        if not any(got):
+            return "-"
+        return f"{sum(g[0] for g in got if g):,} / {sum(g[1] for g in got if g):,}"
+
     print("## Transport latency (µs)\n")
     print("Each cell is the median across reps, the range in brackets. Latency counts from each message's intended "
           "send time (open loop): a round trip between hosts, one way on one host. An arm flagged in any rep "
@@ -1419,7 +1427,9 @@ def transport(args):
           "is shown and never compared. The A/A arm repeats one arm in the same round: its spread is the largest "
           "per-rep difference between the two, per metric. Two arms are `not separated` where their medians differ "
           "by no more than the A/A spread or their rep ranges overlap; a max verdict is blocked while either arm has "
-          "an unexplained max (spikes.py --transport). A table holding a point that breaks a fairness rule "
+          "an unexplained max (spikes.py --transport). TCP's loss is its retransmits the peer did not report as "
+          "duplicates and segments lost at the end; DSACK-reported (spurious) ones are shown apart, never as loss. "
+          "A table holding a point that breaks a fairness rule "
           "(fairness.py) is refused.\n")
     run_level = [v for v in violations if v.set is None]
     print(f"Fairness: {len(violations)} violation{'s' if len(violations) != 1 else ''}"
@@ -1462,10 +1472,12 @@ def transport(args):
                         + [cell(vals(f), 1000, 2) if vals(f) else "-" for _, f in TRANSPORT_METRICS]
                         + [span(vals("busy_threads")), span(vals("wire_bytes"))]
                         + [f"{sum(vals(f)):,}" if vals(f) else "-" for f in ("lost", "reordered", "dup", "retrans")]
+                        + [tcp_cell(reps)]
                         + [", ".join(flagged[a]) or "none",
                            ", ".join(f"{c} {n}" for c, n in sorted(causes.items()))])
         print(table(["arm", "reps"] + [c for c, _ in TRANSPORT_METRICS]
-                    + ["busy threads", "wire bytes", "lost", "reordered", "dup", "retrans", "flags", "max causes"],
+                    + ["busy threads", "wire bytes", "lost", "reordered", "dup", "retrans", "TCP segs lost / spurious",
+                       "flags", "max causes"],
                     rows))
 
         # the A/A spread: the largest per-rep difference between the A/A and its arm

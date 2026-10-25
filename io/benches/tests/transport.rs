@@ -98,7 +98,9 @@ struct Run {
     streams: u32,
     rate: u64,
     /// UDP: the ping end's base port (the echo end's is + 1000); TCP: the
-    /// port the echo end listens on.
+    /// port the echo end listens on. Below the kernel's ephemeral range
+    /// (32768-60999): an earlier test's connecting socket, still closing,
+    /// can hold a port in it and fail the bind (seen once, `EADDRINUSE`).
     port: u16,
 }
 
@@ -221,6 +223,17 @@ impl Run {
         ] {
             assert!(pm.contains(want), "pong manifest: no {want}: {pm}");
         }
+        if self.bin == TCP {
+            // loopback loses nothing: every retransmit is one the peer had
+            for want in [
+                "\"tcp.lost_end\": \"0\"",
+                "\"tcp.retrans_not_dsack\": \"0\"",
+                "\"netstat.window.TcpExtTCPLossProbes\"",
+                "\"sched.run_delay_ns\"",
+            ] {
+                assert!(pm.contains(want), "pong manifest: no {want}: {pm}");
+            }
+        }
         let echoes = format!("\"echoes\": \"{}\"", self.rate * 3);
         assert!(pm.contains(&echoes), "pong manifest: no {echoes}: {pm}");
         assert_eq!(
@@ -290,6 +303,25 @@ assert s["transport"] == transport and s["kind"] == kind and s["streams"] == str
 assert s["hot_path_allocs"] == "0", s
 assert s["backend"] == "epoll-spin" and s["readback.so_busy_poll"] == "0", s
 assert s["max_ns"] == str(r["max"]) and s["lost"] == "0", s
+TCP_KEYS = ("tcp.retrans", "tcp.retrans_setup", "tcp.dsack_dups", "tcp.dsack_dups_setup",
+            "tcp.retrans_not_dsack", "tcp.lost_end", "tcp.rtos", "tcp.rtos_setup",
+            "netstat.setup.TcpRetransSegs", "netstat.setup.TcpExtTCPSynRetrans",
+            "netstat.setup.TcpExtListenOverflows", "netstat.window.TcpRetransSegs",
+            "netstat.window.TcpExtTCPLossProbes", "netstat.window.TcpExtTCPDSACKRecv",
+            "netstat.window.TcpExtTCPTimeouts", "netstat.window.TcpExtTCPSpuriousRTOs",
+            "netstat.window.TcpExtTCPLostRetransmit", "sched.run_delay_ns", "sched.involuntary_switches")
+if transport == "tcp":
+    assert s["retrans_window"] == "after set-up: warm-up, measured, drain", s
+    ends = [""] + (["echo."] if kind == "load" and busy == 2 else [])
+    for e in ends:
+        for k in TCP_KEYS:
+            assert e + k in s, (e + k, s)
+        # loopback loses nothing: every retransmit is one the peer already had
+        assert s[e + "tcp.lost_end"] == "0" and s[e + "tcp.retrans_not_dsack"] == "0", s
+        assert int(s[e + "tcp.retrans"]) == int(s[e + "tcp.dsack_dups"]), s
+    assert sum(int(s[e + "tcp.retrans"]) for e in ends) == r["retrans"], (r["retrans"], s)
+else:
+    assert not any(k.startswith("tcp.") for k in s), s
 loc = spikes.transport_max(os.path.join(run, "2a"), tag, r["max"])
 assert loc is not None and loc[2] == r["max"], (loc, r["max"])
 if kind == "load":
@@ -351,42 +383,42 @@ fn every_role(run: &Run) -> R {
 
 #[test]
 fn udp_mio_one_stream() -> R {
-    every_role(&Run::udp("mio", 1, 1_000, 31_000))
+    every_role(&Run::udp("mio", 1, 1_000, 35_000))
 }
 
 #[test]
 fn udp_ergon_one_stream() -> R {
-    every_role(&Run::udp("ergon", 1, 1_000, 33_000))
+    every_role(&Run::udp("ergon", 1, 1_000, 23_000))
 }
 
 #[test]
 fn udp_mio_128_streams() -> R {
-    every_role(&Run::udp("mio", 128, 2_560, 35_000))
+    every_role(&Run::udp("mio", 128, 2_560, 25_000))
 }
 
 #[test]
 fn udp_ergon_128_streams() -> R {
-    every_role(&Run::udp("ergon", 128, 2_560, 37_000))
+    every_role(&Run::udp("ergon", 128, 2_560, 27_000))
 }
 
 #[test]
 fn tcp_mio_one_stream() -> R {
-    every_role(&Run::tcp("mio", 1, 1_000, 39_001))
+    every_role(&Run::tcp("mio", 1, 1_000, 30_001))
 }
 
 #[test]
 fn tcp_ergon_one_stream() -> R {
-    every_role(&Run::tcp("ergon", 1, 1_000, 39_002))
+    every_role(&Run::tcp("ergon", 1, 1_000, 30_002))
 }
 
 #[test]
 fn tcp_mio_128_streams() -> R {
-    every_role(&Run::tcp("mio", 128, 2_560, 39_003))
+    every_role(&Run::tcp("mio", 128, 2_560, 30_003))
 }
 
 #[test]
 fn tcp_ergon_128_streams() -> R {
-    every_role(&Run::tcp("ergon", 128, 2_560, 39_004))
+    every_role(&Run::tcp("ergon", 128, 2_560, 30_004))
 }
 
 /// TCP's settings reach the socket the same way in both arms: per-read
@@ -394,7 +426,7 @@ fn tcp_ergon_128_streams() -> R {
 #[test]
 fn tcp_settings_reach_both_arms_sockets() -> R {
     for imp in ["mio", "ergon"] {
-        let run = Run::tcp(imp, 2, 1_000, 39_010);
+        let run = Run::tcp(imp, 2, 1_000, 30_010);
         let out = scratch(&format!("tcp-settings-{imp}"))?;
         let o = Command::new(TCP)
             .args(run.common("local", two_cpus().map(|(a, b)| format!("{a},{b}")), &out))

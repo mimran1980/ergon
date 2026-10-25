@@ -24,7 +24,7 @@ import analyse  # noqa: E402
 import fairness  # noqa: E402
 import spikes  # noqa: E402
 import transport_fixture as fx  # noqa: E402
-from transport_points import COLUMNS, read_points  # noqa: E402
+from transport_points import COLUMNS, read_points, tcp_loss  # noqa: E402
 
 CLEAN = None
 
@@ -284,6 +284,29 @@ class FairnessTest(unittest.TestCase):
         run.rows(lambda r: r["label"] == "2a:mio-udp" and r["rep"] == "1", lambda r: r.__setitem__(27, ""))
         self.assertEqual(fairness.check(run.run), [])
         run.rows(lambda r: r["label"] == "3b:mio-tcp@NETEM=0.1" and r["rep"] == "1", lambda r: r.__setitem__(27, ""))
+        self.assertOnly(run, "loss-accounting")
+
+    def test_tcp_loss_is_retrans_not_dsack_and_lost(self):
+        # real loss: retransmits the peer did not report duplicates, and
+        # segments lost at the end, on every host; DSACK-reported ones are
+        # spurious. On a row without loss real loss is a bug to trace, while
+        # spurious ones are reported, not counted
+        run = Run(self)
+        p = [p for p in read_points(run.run) if p.arm == "mio-tcp"][0]
+        self.assertEqual(tcp_loss(p), (4, 2))
+        self.assertIsNone(fairness.tcp_loss_problem(p))
+        self.assertIn("4 segments lost", fairness.tcp_loss_problem(p._replace(netem=None)))
+        self.assertIn("4 segments lost", fairness.tcp_loss_problem(p._replace(netem="0")))
+        spurious = {h: dict(src, tcp_info=dict(src["tcp_info"], retrans_not_dsack=0, dsack_dups=3))
+                    for h, src in p.manifest["loss_counters"].items()}
+        q = p._replace(netem=None, manifest=dict(p.manifest, loss_counters=spurious))
+        self.assertEqual(tcp_loss(q), (0, 6))
+        self.assertIsNone(fairness.tcp_loss_problem(q))
+
+    def test_tcp_info_without_its_dsack_split(self):
+        run = Run(self)
+        run.edit(lambda m: m["arm"] == "mio-tcp",
+                 lambda m: m["loss_counters"]["a"]["tcp_info"].pop("retrans_not_dsack"))
         self.assertOnly(run, "loss-accounting")
 
     def test_tcp_without_tcp_info(self):

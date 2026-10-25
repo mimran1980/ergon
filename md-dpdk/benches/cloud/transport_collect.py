@@ -295,7 +295,16 @@ def collect(d):
                 m = own.get(key) or {}
                 ms = m.get("settings", {})
                 if bs.get("transport") == "tcp" and ints(ms.get("retrans")) is not None:
-                    src["tcp_info"] = {"total_retrans": ints(ms.get("retrans"))}
+                    # the traffic's counters as tcp_lat splits them (sock.rs): real
+                    # loss is retrans_not_dsack and lost_end, DSACK dups spurious
+                    src["tcp_info"] = {"retrans": ints(ms.get("tcp.retrans", ms.get("retrans")))}
+                    for k in ("retrans_setup", "dsack_dups", "dsack_dups_setup", "retrans_not_dsack", "lost_end",
+                              "rtos", "rtos_setup"):
+                        if f"tcp.{k}" in ms:
+                            src["tcp_info"][k] = ints(ms[f"tcp.{k}"])
+                    win = {k[len("netstat.window."):]: ints(v) for k, v in ms.items() if k.startswith("netstat.window.")}
+                    if win:
+                        src["netstat_window"] = win
                 aeron = {k[len("aeron."):]: ints(v) for k, v in ms.items() if k.startswith("aeron.")}
                 if aeron:
                     src["aeron"] = aeron
