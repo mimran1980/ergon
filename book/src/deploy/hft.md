@@ -92,8 +92,8 @@ two isolated lines.
 
 **Graviton** (fair run, `io/benches/results/flags-aws-20261019T175248Z/fair.md`,
 committed): WebSocket round trip, interrupt-driven backends (`epoll-spin`,
-`mio`, `uring-spin`), moderation off everywhere, two rounds. Six points'
-senders fell behind; the file's top note names them.
+`mio`, and `uring-spin`, since removed), moderation off everywhere, two
+rounds. Six points' senders fell behind; the file's top note names them.
 
 | connections | queue IRQs on the loop's CPU: p99 / max | on a core of their own: p99 / max |
 |---|---|---|

@@ -258,7 +258,7 @@ pub struct DriverStats {
     pub recvmsg_calls: u64,
     /// `recvmsg` calls that returned `EAGAIN`.
     pub recvmsg_eagain: u64,
-    /// `epoll_wait` / `epoll_pwait2` calls.
+    /// `epoll_wait` calls.
     pub epoll_wait_calls: u64,
     /// `send` syscalls (epoll backends; `io_uring` sends are submitted through
     /// `io_uring_enter` or the `SQPOLL` thread and are not syscalls of their own).

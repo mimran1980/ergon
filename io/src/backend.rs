@@ -1,17 +1,14 @@
 //! Backend selection: which kernel interface the `Driver` uses, chosen at
 //! run time from configuration.
 //!
-//! | backend | how it waits | NIC polling | sleeps in the kernel | extra core |
-//! |---|---|---|---|---|
-//! | `epoll-spin` | `epoll_wait(0)` every poll, then `recvmsg` on ready sockets | no (interrupts) | never | no |
-//! | `recv-busy` | non-blocking `recvmsg` on every socket every poll (with `per_queue`: one per NIC queue, then the sockets `epoll_wait(0)` reports ready), `SO_BUSY_POLL` set: an empty read runs one NAPI pass | yes, one pass per socket (or queue) per poll | never | no |
-//! | `uring-spin` | `IORING_OP_RECVMSG`, `DEFER_TASKRUN`; enters the kernel only when it flags work | no (interrupts) | never | no |
-//! | `uring-sqpoll` | `SQPOLL` kernel thread submits, completes and polls the NIC (NAPI) | yes, on the kernel thread | never (the application thread) | yes |
-//! | `epoll-busy` | `epoll_pwait2(wait_us)` with epoll busy poll for `busy_poll_us` | yes, inside the wait | up to `wait_us` | no |
-//! | `uring-napi` | `io_uring_enter(GETEVENTS, 1, wait_us)` with NAPI busy poll | yes, inside the wait | up to `wait_us`, and on every idle poll even with `wait_us = 0` | no |
+//! Three backends, each measured in a busy-spin loop (evidence:
+//! `io/benches/BENCHMARK.md`); none sleeps in the kernel.
 //!
-//! Which one: it depends on sockets per loop and whether a second core is
-//! free (evidence: `io/benches/BENCHMARK.md`).
+//! | backend | how it waits | NIC polling | extra core |
+//! |---|---|---|---|
+//! | `epoll-spin` | `epoll_wait(0)` every poll, then `recvmsg` on ready sockets | no (interrupts) | no |
+//! | `recv-busy` | non-blocking `recvmsg` on every socket every poll (with `per_queue`: one per NIC queue, then the sockets `epoll_wait(0)` reports ready), `SO_BUSY_POLL` set: an empty read runs one NAPI pass | yes, one pass per socket (or queue) per poll | no |
+//! | `uring-sqpoll` | `SQPOLL` kernel thread submits, completes and polls the NIC (NAPI) | yes, on the kernel thread | yes |
 //!
 //! Count every socket the loop thread polls (feeds, order connections,
 //! `HttpClient` pools).
@@ -22,18 +19,15 @@
 //! | 5 or more sockets, a second core to spare | `uring-sqpoll`: its kernel thread polls each NIC queue once per pass |
 //! | 5 or more sockets, one physical core (two hyperthreads) | `uring-sqpoll`: its `SQPOLL` thread goes on the loop CPU's sibling by default ([`crate::placement`]) |
 //! | 5 or more sockets, a single CPU | `recv-busy` with `per_queue` (`uring-sqpoll` refuses: `SQPOLL` would spin on the loop's CPU) |
-//! | the loop's CPU time in the kernel matters | `uring-spin`: interrupt-driven, far fewer syscalls than `epoll-spin` (about 800 a second against 4.1 million at 800 msg/s, Azure) |
-//! | the NIC's interrupts on a core of their own (node-level), moderation off | `epoll-spin` or `uring-spin`: level with `uring-sqpoll` from 4 sockets in the one fair comparison (Graviton) |
+//! | the NIC's interrupts on a core of their own (node-level), moderation off | `epoll-spin`: level with `uring-sqpoll` from 4 sockets in the one fair comparison (Graviton) |
 //!
 //! - `epoll_wait(0)` never blocks, but it also skips the kernel's NIC
 //!   busy-poll step; mio (and so tokio) is this path.
-//! - `epoll-busy` and `uring-napi` poll the NIC only inside a timed wait,
-//!   then sleep. No run shows them saving CPU.
 //! - `uring-sqpoll` spins one kernel thread per ring; rings in one process
 //!   can share one, other processes cannot.
 //!
 //! Configuration strings are `backend[,key=value...]`, for example
-//! `uring-sqpoll,sqpoll_cpu=3` or `epoll-busy,busy_poll_us=50,wait_us=100`.
+//! `uring-sqpoll,sqpoll_cpu=3` or `recv-busy,per_queue=true`.
 
 use std::fmt;
 use std::str::FromStr;
@@ -48,26 +42,13 @@ pub enum Backend {
     EpollSpin,
     /// Non-blocking `recvmsg` spin with `SO_BUSY_POLL`: one NAPI pass per empty read.
     RecvBusy,
-    /// `io_uring`, `DEFER_TASKRUN`; enters the kernel only when it flags work.
-    UringSpin,
     /// `io_uring` with an `SQPOLL` kernel thread that also polls the NIC.
     UringSqpoll,
-    /// `epoll_pwait2` with epoll busy poll; sleeps up to `wait_us`.
-    EpollBusy,
-    /// `io_uring` waiting in `io_uring_enter` with NAPI busy poll; sleeps.
-    UringNapi,
 }
 
 impl Backend {
-    /// Every backend, never-sleeping ones first.
-    pub const ALL: [Self; 6] = [
-        Self::EpollSpin,
-        Self::RecvBusy,
-        Self::UringSpin,
-        Self::UringSqpoll,
-        Self::EpollBusy,
-        Self::UringNapi,
-    ];
+    /// Every backend.
+    pub const ALL: [Self; 3] = [Self::EpollSpin, Self::RecvBusy, Self::UringSqpoll];
 
     /// The configuration name.
     #[must_use]
@@ -75,32 +56,20 @@ impl Backend {
         match self {
             Self::EpollSpin => "epoll-spin",
             Self::RecvBusy => "recv-busy",
-            Self::UringSpin => "uring-spin",
             Self::UringSqpoll => "uring-sqpoll",
-            Self::EpollBusy => "epoll-busy",
-            Self::UringNapi => "uring-napi",
         }
-    }
-
-    /// Whether `Driver::poll` can sleep in the kernel with this backend.
-    #[must_use]
-    pub const fn may_sleep(self) -> bool {
-        matches!(self, Self::EpollBusy | Self::UringNapi)
     }
 
     /// Whether the backend polls the NIC instead of waiting for interrupts.
     #[must_use]
     pub const fn polls_nic(self) -> bool {
-        matches!(
-            self,
-            Self::RecvBusy | Self::UringSqpoll | Self::EpollBusy | Self::UringNapi
-        )
+        matches!(self, Self::RecvBusy | Self::UringSqpoll)
     }
 
     /// Whether the backend is built on `io_uring`.
     #[must_use]
     pub const fn is_uring(self) -> bool {
-        matches!(self, Self::UringSpin | Self::UringSqpoll | Self::UringNapi)
+        matches!(self, Self::UringSqpoll)
     }
 }
 
@@ -124,14 +93,10 @@ impl FromStr for Backend {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(clippy::struct_excessive_bools)] // independent switches, each its own key
 pub struct Config {
-    /// The kernel interface.
+    /// The kernel interface. `recv-busy` and `uring-sqpoll` make one NIC
+    /// busy-poll pass per call (`SO_BUSY_POLL` 1 µs, a NAPI busy-poll
+    /// timeout of 1 µs); every other socket gets `SO_BUSY_POLL` 0.
     pub backend: Backend,
-    /// NIC busy-poll budget in microseconds. `epoll-busy` and `uring-napi` poll
-    /// this long before sleeping; `recv-busy` and `uring-sqpoll` only need it
-    /// non-zero (they make one pass per call).
-    pub busy_poll_us: u32,
-    /// Longest kernel wait for `epoll-busy` and `uring-napi`, in microseconds.
-    pub wait_us: u32,
     /// The polling loop's CPU, for the host checks `Driver::new` runs
     /// ([`crate::checks`]: isolation, SMT siblings, and the NIC interrupts of
     /// each connection's egress device). `None` takes the CPU the thread
@@ -181,17 +146,6 @@ pub struct Config {
     /// connect: `io/benches/BENCHMARK.md`, "Connection set-up").
     /// `HttpClient`'s pool and `Reconnect` follow it.
     pub inline_connect_fallback: bool,
-    /// Preferred busy polling (`SO_PREFER_BUSY_POLL`, or the `io_uring` / epoll
-    /// equivalent): while the application keeps polling, the kernel leaves the
-    /// NIC queue to it instead of also processing it from interrupts. It only
-    /// suppresses interrupts when the device has `napi_defer_hard_irqs` and
-    /// `gro_flush_timeout` set (sysfs). Backends that poll the NIC only; the
-    /// socket option needs `CAP_NET_ADMIN`.
-    pub prefer_busy_poll: bool,
-    /// Packets per NIC busy-poll pass (`SO_BUSY_POLL_BUDGET`, or the epoll
-    /// budget); `None` keeps the kernel default (8). `recv-busy` and
-    /// `epoll-busy` only; raising it needs `CAP_NET_ADMIN`.
-    pub busy_poll_budget: Option<u16>,
     /// `recv-busy` with many sockets: read one socket per NIC queue every
     /// poll (which polls each queue once), then only the sockets
     /// `epoll_wait(0)` reports ready, instead of reading every socket every
@@ -250,15 +204,8 @@ impl Config {
     /// Defaults for `backend`.
     #[must_use]
     pub const fn new(backend: Backend) -> Self {
-        let (busy_poll_us, wait_us) = match backend {
-            Backend::EpollBusy | Backend::UringNapi => (50, 100),
-            Backend::RecvBusy | Backend::UringSqpoll => (1, 0),
-            Backend::EpollSpin | Backend::UringSpin => (0, 0),
-        };
         Self {
             backend,
-            busy_poll_us,
-            wait_us,
             loop_cpu: None,
             sqpoll_cpu: None,
             sqpoll_idle_ms: 600_000,
@@ -270,8 +217,6 @@ impl Config {
             connect_cpu: None,
             helper_cpus: Vec::new(),
             inline_connect_fallback: false,
-            prefer_busy_poll: false,
-            busy_poll_budget: None,
             per_queue: false,
             quickack_check: QuickAckCheck::Warn,
             keepalive_idle_s: 10,
@@ -288,10 +233,9 @@ impl Config {
     /// Checks that every setting applies to the backend.
     ///
     /// # Errors
-    /// `busy_poll_us` or `tcp_user_timeout_ms` above `i32::MAX`,
-    /// `prefer_busy_poll` on a backend that does not poll the NIC,
-    /// `busy_poll_budget` on one that does not poll through the socket or
-    /// epoll, keepalive settings outside the kernel's limits, or
+    /// `tcp_user_timeout_ms` above `i32::MAX`, `per_queue` on a backend
+    /// other than `recv-busy`, keepalive settings outside the kernel's
+    /// limits, or
     /// `tcp_rto_min_us` / `tcp_delack_max_us` outside 2 000 to 200 000 µs
     /// (what no kernel accepts; the running kernel's tick is checked at
     /// `Driver::new`).
@@ -328,44 +272,22 @@ impl Config {
                 self.keepalive_idle_s, self.keepalive_interval_s, self.keepalive_count
             )));
         }
-        // The kernel takes the busy-poll time as a signed int.
-        if i32::try_from(self.busy_poll_us).is_err() {
-            return Err(Error::Config(format!(
-                "busy_poll_us {} is above {}",
-                self.busy_poll_us,
-                i32::MAX
-            )));
-        }
-        if self.prefer_busy_poll && !self.backend.polls_nic() {
-            return Err(Error::Config(format!(
-                "prefer_busy_poll needs a backend that polls the NIC, not {}",
-                self.backend
-            )));
-        }
         if self.per_queue && self.backend != Backend::RecvBusy {
             return Err(Error::Config(format!(
                 "per_queue applies to recv-busy, not {}",
                 self.backend
             )));
         }
-        if self.busy_poll_budget.is_some()
-            && !matches!(self.backend, Backend::RecvBusy | Backend::EpollBusy)
-        {
-            return Err(Error::Config(format!(
-                "busy_poll_budget applies to recv-busy and epoll-busy, not {}",
-                self.backend
-            )));
-        }
         Ok(())
     }
 
-    /// Parses `backend[,key=value...]`. Keys: `busy_poll_us`, `wait_us`,
-    /// `loop_cpu`, `sqpoll_cpu`, `sqpoll_idle_ms`, `ring_entries`, `connect_timeout_ms`,
-    /// `connect_cpu`, `rcvbuf` (0 keeps the kernel default), `rx_timestamps`,
-    /// `rx_read_timestamp`, `prefer_busy_poll`, `per_queue` and `inline_connect_fallback`
-    /// (`true`/`false`), `busy_poll_budget` (0 keeps the kernel default),
-    /// `quickack_check` (`off`, `warn` or `require`), `keepalive_idle_s` (0:
-    /// off), `keepalive_interval_s`, `keepalive_count`, `tcp_user_timeout_ms`
+    /// Parses `backend[,key=value...]`. Keys: `loop_cpu`, `sqpoll_cpu`,
+    /// `sqpoll_idle_ms`, `ring_entries`, `connect_timeout_ms`, `connect_cpu`,
+    /// `rcvbuf` (0 keeps the kernel default), `rx_timestamps`,
+    /// `rx_read_timestamp`, `per_queue` and `inline_connect_fallback`
+    /// (`true`/`false`), `quickack_check` (`off`, `warn` or `require`),
+    /// `keepalive_idle_s` (0: off), `keepalive_interval_s`,
+    /// `keepalive_count`, `tcp_user_timeout_ms`
     /// (0: the kernel default), `tcp_rto_min_us` and `tcp_delack_max_us` (0:
     /// the kernel's), `tcp_info_interval_ms` (0: off), `helper_cpus` (a
     /// kernel CPU list:
@@ -403,8 +325,6 @@ impl Config {
                     .map_err(|_| Error::Config(format!("{k}: bad bool {v:?}")))
             };
             match k {
-                "busy_poll_us" => cfg.busy_poll_us = num()?,
-                "wait_us" => cfg.wait_us = num()?,
                 "loop_cpu" => cfg.loop_cpu = Some(num()?),
                 "sqpoll_cpu" => cfg.sqpoll_cpu = Some(num()?),
                 "sqpoll_idle_ms" => cfg.sqpoll_idle_ms = num()?,
@@ -419,7 +339,6 @@ impl Config {
                 "rcvbuf" => cfg.rcvbuf = Some(num()?).filter(|&b| b > 0),
                 "rx_timestamps" => cfg.rx_timestamps = flag()?,
                 "rx_read_timestamp" => cfg.rx_read_timestamp = flag()?,
-                "prefer_busy_poll" => cfg.prefer_busy_poll = flag()?,
                 "per_queue" => cfg.per_queue = flag()?,
                 "quickack_check" => cfg.quickack_check = v.parse()?,
                 "keepalive_idle_s" => cfg.keepalive_idle_s = num()?,
@@ -429,11 +348,6 @@ impl Config {
                 "tcp_rto_min_us" => cfg.tcp_rto_min_us = Some(num()?).filter(|&us| us > 0),
                 "tcp_delack_max_us" => cfg.tcp_delack_max_us = Some(num()?).filter(|&us| us > 0),
                 "tcp_info_interval_ms" => cfg.tcp_info_interval_ms = num()?,
-                "busy_poll_budget" => {
-                    let b = u16::try_from(num()?)
-                        .map_err(|_| Error::Config(format!("{k}: above 65535: {v:?}")))?;
-                    cfg.busy_poll_budget = Some(b).filter(|&b| b > 0);
-                }
                 _ => return Err(Error::Config(format!("unknown key {k:?}"))),
             }
         }

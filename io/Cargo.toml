@@ -24,7 +24,7 @@ autobenches = false
 
 [features]
 default = ["uring"]
-# io_uring backends (Linux). Without it, selecting a uring backend returns
+# The io_uring backend, `uring-sqpoll` (Linux). Without it, selecting it returns
 # `Error::Unsupported` and the io-uring crate is not built.
 uring = ["dep:io-uring"]
 # Mozilla's root store via webpki-roots (CDLA-Permissive-2.0, so opt-in).

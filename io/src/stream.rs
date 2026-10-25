@@ -510,6 +510,7 @@ impl TxQueue {
     /// vector now in `other`; the queue is left over the old `other`,
     /// cleared.
     #[inline]
+    #[cfg_attr(not(feature = "uring"), allow(dead_code))] // only io_uring sends from it
     pub(crate) fn swap_out(&mut self, other: &mut Vec<u8>) -> usize {
         std::mem::swap(&mut self.buf, other);
         self.buf.clear();

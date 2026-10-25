@@ -8,30 +8,28 @@
 //! - [`generic`]: the verdict from the HTTP status and `Retry-After` alone
 //!   (RFC 9110, RFC 6585). The application's venue adapter reads its venue's
 //!   body codes and usage headers first, and calls it last.
+//! - Pacing (rate limits, holds, bans) is the application's: a verdict
+//!   carries the server's wait, and the application's pacer applies it.
 //! - [`retry_after_ms`], [`header_u64`], [`ms_until_epoch`]: the header
 //!   parsing an adapter needs. No allocation; malformed input is an error,
 //!   never a default.
-//! - [`refused_upgrade`]: a refused WebSocket handshake (429) held on the connect gate's bucket.
+//! - [`refused_upgrade`]: the verdict on a refused WebSocket handshake (429).
 //!
 //! | Verdict | Ran? | What to do |
 //! |---|---|---|
 //! | `Done` | yes | apply |
 //! | `Rejected` | no | fix; never re-send unchanged |
-//! | `NotRun` | no | re-send through the budget, inside the request's deadline |
-//! | `Throttled` | no | the scope is held; re-send after the hold, inside the deadline |
-//! | `Banned` | no | the scope stays halted until a person clears it; alert |
+//! | `NotRun` | no | re-send inside the request's deadline |
+//! | `Throttled` | no | hold the scope for `retry_after_ms` (your backoff without one); re-send after it, inside the deadline |
+//! | `Banned` | no | halt the scope until a person clears it; alert |
 //! | `ClockSkew` | no | re-send with a new timestamp, inside the deadline |
 //! | `Unknown` | maybe | reconcile by client order id; never re-send an order |
 //!
 //! A 408 is `Unknown`: the server may have run the request before the wait
 //! timed out. Application adapters classify service-specific ban statuses.
-//!
-//! Re-send through [`Budget::try_resend`], which drops a request whose own
-//! deadline has passed.
 
 use crate::error::{Error, Result};
 use crate::http::Response;
-use crate::limit::{BucketId, Budget};
 
 /// For a request that got no response: could the server have seen it?
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -54,23 +52,19 @@ pub enum Verdict {
     Rejected,
     /// It did not run; it may be sent again (budget and deadline permitting).
     NotRun,
-    /// It did not run: the server says `bucket` is full. `bucket` is held
-    /// until `until_ns` (the budget's clock).
+    /// It did not run: the server says the scope is full. Send nothing on
+    /// that scope for `retry_after_ms`.
     Throttled {
-        /// The bucket the server named.
-        bucket: BucketId,
-        /// End of the hold.
-        until_ns: i64,
+        /// The server's wait (`Retry-After`, or the venue's own field), ms;
+        /// `None`: it named none, so use your own backoff.
+        retry_after_ms: Option<u64>,
     },
-    /// It did not run: the application identified a ban on the scope.
-    /// The budget halts `bucket` until the application clears it
-    /// ([`Budget::clear_halt`], a person's action); alert a person.
+    /// It did not run: the application identified a ban on the scope. Halt
+    /// the scope until a person clears it; alert a person.
     Banned {
-        /// The banned scope.
-        bucket: BucketId,
-        /// End of the server's wait, for the alert. The scope stays halted
-        /// after it.
-        until_ns: i64,
+        /// The server's wait, ms, for the alert; `None`: it named none. The
+        /// scope stays halted after it.
+        retry_after_ms: Option<u64>,
     },
     /// It did not run: its timestamp was outside the venue's window. Send
     /// it again with a new timestamp.
@@ -93,8 +87,7 @@ impl Verdict {
 
     /// Whether the request may be sent again at all: it did not run and was
     /// not refused for good (`NotRun`, `Throttled`, `ClockSkew`). Even then,
-    /// only through the budget and inside its own deadline
-    /// ([`Budget::try_resend`]).
+    /// only inside its own deadline and after any wait the server named.
     #[must_use]
     pub const fn may_resend(self) -> bool {
         matches!(
@@ -102,16 +95,6 @@ impl Verdict {
             Self::NotRun | Self::Throttled { .. } | Self::ClockSkew
         )
     }
-}
-
-/// The caller's clocks for one loop pass.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct Now {
-    /// The budget's clock, ns: monotonic, the same for every budget call.
-    pub ns: i64,
-    /// UTC, ns since 1970: a `Retry-After` date is measured against it when
-    /// the response has no `Date`.
-    pub real_ns: i64,
 }
 
 /// `Retry-After` as a wait in ms. `Ok(None)`: no `Retry-After`.
@@ -184,7 +167,7 @@ pub const fn ms_until_epoch(epoch_ms: i64, server_now_ms: i64) -> u64 {
 /// |---|---|
 /// | 2xx | `Done` |
 /// | 408 | `Unknown` (see below) |
-/// | 429 | `Throttled`: `scope` held for the server's wait, or the bucket's backoff without one |
+/// | 429 | `Throttled`, with the server's `Retry-After` ([`retry_after_ms`] against `server_now_ms`) |
 /// | 3xx (no redirect is followed), other 4xx | `Rejected` |
 /// | 5xx, 0, anything else | `Unknown` |
 ///
@@ -193,60 +176,37 @@ pub const fn ms_until_epoch(epoch_ms: i64, server_now_ms: i64) -> u64 {
 /// body codes and ban statuses belong in application adapters.
 ///
 /// # Errors
-/// - A 429 whose `Retry-After` (or the `Date` it needs) is malformed
-///   ([`Error::Http`]). `scope` is held for the bucket's backoff first: a
-///   429 always holds.
-/// - `scope` is not a bucket of `budget` (from `Budget::throttled`).
-pub fn generic(
-    resp: &Response<'_>,
-    scope: BucketId,
-    budget: &mut Budget,
-    now: Now,
-) -> Result<Verdict> {
+/// [`Error::Http`]: a 429 whose `Retry-After` (or the `Date` it needs) is
+/// malformed. It is still a 429: hold the scope on your own backoff.
+pub fn generic(resp: &Response<'_>, server_now_ms: i64) -> Result<Verdict> {
     Ok(match resp.status {
         200..=299 => Verdict::Done,
         408 => Verdict::Unknown,
-        429 => {
-            let wait = retry_after_ms(resp, now.real_ns.div_euclid(1_000_000));
-            let until_ns =
-                budget.throttled(scope, wait.as_ref().ok().copied().flatten(), now.ns)?;
-            wait?;
-            Verdict::Throttled {
-                bucket: scope,
-                until_ns,
-            }
-        }
+        429 => Verdict::Throttled {
+            retry_after_ms: retry_after_ms(resp, server_now_ms)?,
+        },
         300..=499 => Verdict::Rejected,
         _ => Verdict::Unknown,
     })
 }
 
-/// A refused WebSocket handshake ([`Error::Upgrade`]), on `scope`: the
-/// bucket that gates connects on that IP (`Reconnect::poll_gated`).
+/// The verdict on a refused WebSocket handshake ([`Error::Upgrade`]).
 ///
-/// | Refusal | Budget | Verdict |
-/// |---|---|---|
-/// | 429 | [`Budget::throttled`]: held for `Retry-After`, or the bucket's backoff without one | `Throttled` |
-/// | anything else | untouched | `None` |
+/// | Refusal | Verdict |
+/// |---|---|
+/// | 429 | `Some(Throttled)`, with the refusal's `Retry-After` |
+/// | anything else, or not a refused upgrade | `None` |
 ///
-/// - Then `Reconnect::defer(link, until_ns - now.ns)` keeps the refused
-///   link from trying before the wait ends, and the gate keeps every link
-///   on `scope` from trying until the hold ends or the halt is cleared.
+/// - Then hold the connect gate (`Reconnect::poll_gated`) for the wait, and
+///   `Reconnect::defer` the refused link past it.
 ///
-/// Other refusal statuses are application policy; this helper leaves them
-/// untouched.
+/// Other refusal statuses are application policy.
 ///
 /// # Errors
-/// - [`Error::Http`]: the refusal's `Retry-After` could not be read
-///   (`retry_after_invalid`). `scope` is held on the
-///   fallback wait first: a refusal always holds.
-/// - [`Error::Config`]: `scope` is not a bucket of `budget`.
-pub fn refused_upgrade(
-    error: &Error,
-    scope: BucketId,
-    budget: &mut Budget,
-    now: Now,
-) -> Result<Option<Verdict>> {
+/// [`Error::Http`]: a 429 whose `Retry-After` could not be read
+/// (`retry_after_invalid`). It is still a 429: hold the gate on your own
+/// backoff.
+pub fn refused_upgrade(error: &Error) -> Result<Option<Verdict>> {
     let (status, retry_after_ms, invalid) = match error {
         Error::Upgrade {
             status,
@@ -256,19 +216,15 @@ pub fn refused_upgrade(
         } => (*status, *retry_after_ms, *retry_after_invalid),
         _ => return Ok(None),
     };
-    let verdict = match status {
-        429 => Verdict::Throttled {
-            bucket: scope,
-            until_ns: budget.throttled(scope, retry_after_ms, now.ns)?,
-        },
-        _ => return Ok(None),
-    };
+    if status != 429 {
+        return Ok(None);
+    }
     if invalid {
         return Err(Error::Http(format!(
-            "refused upgrade ({status}): malformed Retry-After header; held on the fallback wait"
+            "refused upgrade ({status}): malformed Retry-After header"
         )));
     }
-    Ok(Some(verdict))
+    Ok(Some(Verdict::Throttled { retry_after_ms }))
 }
 
 /// The value of header `name`, trimmed. A header that appears more than

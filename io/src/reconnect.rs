@@ -16,13 +16,13 @@
 //!   [`Reconnect::stop`] vetoes further attempts, [`Reconnect::resume`]
 //!   starts again.
 //! - A venue's connect limit: [`Reconnect::poll_gated`] starts an attempt
-//!   only when a gate passes it, typically one [`crate::limit::Budget`]
-//!   bucket shared by every link on the IP. Fifty links added at once then
-//!   start at the gate's pace, not in one burst.
-//! - Several source IPs, each with its own connect budget:
-//!   [`Reconnect::poll_sourced`] binds each attempt to an IP that
-//!   [`SourceIps`] picks and charges, and waits for the soonest one when
-//!   none has room; [`Reconnect::source`] names the IP.
+//!   only when a gate passes it: the application's pacing, one gate shared
+//!   by every link on the IP. Fifty links added at once then start at the
+//!   gate's pace, not in one burst.
+//! - Several source IPs, each with its own connect limit:
+//!   [`Reconnect::poll_sourced`] binds each attempt to the IP the
+//!   application's gate picks, and waits as long as the gate says when none
+//!   has room; [`Reconnect::source`] names the IP.
 //! - The server's wait: [`Reconnect::defer`] keeps a link from connecting
 //!   before a time (a refused handshake's `Retry-After`, through
 //!   [`crate::outcome::refused_upgrade`]), whatever the backoff says.
@@ -34,7 +34,6 @@ use std::net::IpAddr;
 use crate::clock::{monotonic_ns, rdtsc, ticks_per_us};
 use crate::endpoint::ConnId;
 use crate::error::{Error, Result};
-use crate::limit::{Budget, SourceIps};
 use crate::net::BindSource;
 
 /// The backoff policy.
@@ -292,8 +291,8 @@ impl<D> Reconnect<D> {
     }
 
     /// The source IP `link`'s latest attempt was bound to by
-    /// [`Reconnect::poll_sourced`]: charge requests on its connection to
-    /// that IP's [`SourceIp::sends`](crate::limit::SourceIp::sends).
+    /// [`Reconnect::poll_sourced`]: pace requests on its connection to
+    /// that IP's limit.
     /// `None` before its first sourced attempt, or for an unknown link.
     #[must_use]
     pub fn source(&self, link: LinkId) -> Option<IpAddr> {
@@ -414,13 +413,13 @@ impl<D> Reconnect<D> {
 
     /// [`Reconnect::poll`], but each attempt must pass `gate` first, the
     /// first attempt after [`Reconnect::add`] included. Use it for a venue's
-    /// limit on connect attempts per IP: one gate (one
-    /// [`crate::limit::Budget`] bucket) for every link on that IP.
+    /// limit on connect attempts per IP: one gate (the application's pacing)
+    /// for every link on that IP.
     ///
     /// - `gate` answers `Ok(())` to connect now, or `Err(wait_ns)`: the link
     ///   asks again after that wait, at most [`Retry::max_ms`] later (a
-    ///   halted budget answers about 292 years; asking again restarts the
-    ///   link soon after a person clears the halt).
+    ///   halted gate may answer `u64::MAX`; asking again restarts the link
+    ///   soon after a person clears the halt).
     /// - A refusal is not a failed attempt: the backoff does not grow, and
     ///   [`Retry::max_attempts`] does not count it.
     /// - Each pass starts at the link after the last one the gate passed, so
@@ -428,10 +427,8 @@ impl<D> Reconnect<D> {
     /// - `gate` is called only for a link that is due: never on a pass with
     ///   nothing to start.
     ///
-    /// A gate over a budget, with `now` the budget's clock:
-    /// `|| budget.try_charge(&[connects], Class::Normal, now).map(drop).map_err(|l| l.wait_ns(now))`.
-    /// The gate returns a wait, not a time, so the budget's clock need not
-    /// be `CLOCK_MONOTONIC`.
+    /// The gate returns a wait, not a time, so the application's pacing
+    /// clock need not be `CLOCK_MONOTONIC`.
     #[inline]
     pub fn poll_gated(
         &mut self,
@@ -461,25 +458,22 @@ impl<D> Reconnect<D> {
         self.run(c, now_ns, || gate().map(|()| None), |_, _| {})
     }
 
-    /// [`Reconnect::poll`], with every attempt from a source IP that
-    /// [`SourceIps::try_connect`] picks and charges in `budget` at
-    /// `budget_now_ns` (the budget's clock): the connect gate for a venue
-    /// that limits connects per IP, with several IPs each on its own
-    /// bucket. The dial is bound to the pick ([`BindSource`]) and
-    /// [`Reconnect::source`] names it.
+    /// [`Reconnect::poll_gated`], with every attempt from the source IP the
+    /// gate picks: the connect gate for a venue that limits connects per
+    /// IP, with several IPs each paced on its own. The dial is bound to the
+    /// pick ([`BindSource`]) and [`Reconnect::source`] names it.
     ///
-    /// - No IP has room: the link waits for the soonest one, at most
-    ///   [`Retry::max_ms`]. As with [`Reconnect::poll_gated`], a refusal is
-    ///   not a failed attempt.
-    /// - A dial that cannot be built or started has still spent its
-    ///   connect unit: the count errs on the safe side.
+    /// - `gate` answers `Ok(ip)` to connect now from `ip` (one of this
+    ///   host's addresses), or `Err(wait_ns)` when no IP has room: the link
+    ///   asks again after that wait, at most [`Retry::max_ms`] later. As with
+    ///   [`Reconnect::poll_gated`], a refusal is not a failed attempt.
+    /// - A dial that cannot be built or started has still passed the gate:
+    ///   a pacer that counted it errs on the safe side.
     #[inline]
     pub fn poll_sourced(
         &mut self,
         c: &mut impl Connector<D>,
-        ips: &mut SourceIps,
-        budget: &mut Budget,
-        budget_now_ns: i64,
+        gate: impl FnMut() -> std::result::Result<IpAddr, u64>,
     ) -> usize
     where
         D: BindSource,
@@ -492,7 +486,7 @@ impl<D> Reconnect<D> {
             return 0;
         }
         self.next_check = t.wrapping_add(self.check_ticks);
-        self.poll_at_sourced(c, monotonic_ns(), ips, budget, budget_now_ns)
+        self.poll_at_sourced(c, monotonic_ns(), gate)
     }
 
     /// [`Reconnect::poll_sourced`] at `now_ns` (`CLOCK_MONOTONIC`), every
@@ -502,23 +496,12 @@ impl<D> Reconnect<D> {
         &mut self,
         c: &mut impl Connector<D>,
         now_ns: i64,
-        ips: &mut SourceIps,
-        budget: &mut Budget,
-        budget_now_ns: i64,
+        mut gate: impl FnMut() -> std::result::Result<IpAddr, u64>,
     ) -> usize
     where
         D: BindSource,
     {
-        self.run(
-            c,
-            now_ns,
-            || {
-                ips.try_connect(budget, budget_now_ns)
-                    .map(|p| Some(p.ip))
-                    .map_err(|l| l.wait_ns(budget_now_ns))
-            },
-            BindSource::bind_source,
-        )
+        self.run(c, now_ns, || gate().map(Some), BindSource::bind_source)
     }
 
     /// Starts every due link that `gate` passes; a passed link's dial is

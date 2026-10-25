@@ -10,17 +10,18 @@
   (`CURLOPT_INTERFACE`); on Linux with `IP_BIND_ADDRESS_NO_PORT`. A
   source of the other address family is `Error::Config` before any
   connect.
-- `ergon-io`: `limit::SourceIps`, several source IPs each with its own
-  buckets in one `Budget`. `try_connect` charges one connect to the next
-  IP with room, round-robin, or refuses with the soonest `Limited`.
-  `Reconnect::poll_sourced` / `poll_at_sourced` put every attempt through
-  it and bind the dial to the pick (`net::BindSource`, implemented by
-  `WsDial`, `HttpDial`, `AnyDial`); `Reconnect::source` names the IP.
+- `ergon-io`: several source IPs, each paced by the application.
+  `Reconnect::poll_sourced` / `poll_at_sourced` ask a gate for the IP of
+  every attempt (`Ok(ip)`, or `Err(wait_ns)` when none has room, not a
+  failed attempt) and bind the dial to it (`net::BindSource`, implemented
+  by `WsDial`, `HttpDial`, `AnyDial`); `Reconnect::source` names the IP.
   `WsDial::target` and `HttpDial::target` return the dial's target.
 - `ergon-io`: `RxMeta::rx_read_ns`, ergon-io's own receive time
   (`CLOCK_REALTIME`, the domain of `rx_sw_ns`), read right after each read
   returns data when `Config::rx_read_timestamp` (key `rx_read_timestamp`)
-  is on. Off by default: no clock read, the field is 0.
+  is on. Off by default: no clock read, the field is 0. Bytes the
+  connection already held when added (read by a blocking connect) are
+  delivered with 0.
 
 - `ergon-io` (repo only): a two-sided mio parity gate,
   `io/benches/parity/mio_parity.rs` (`just io-parity`, CI on Linux x86_64
@@ -362,6 +363,30 @@
 
 ### Changed
 
+- Breaking: `ergon-io` has no `limit` module (`Budget`, `BucketSpec`,
+  `Charge`, `Class`, `Ticket`, `Limited`, `Resend`, `Why`, `SourceIps`
+  and the rest) and no `outcome::Now`. Pacing to a venue's limits is the
+  application's: gate connects through
+  `Reconnect::poll_gated` and `ClientHandler::connect_gate` as before;
+  several source IPs through `Reconnect::poll_sourced(connector, gate)`,
+  whose gate picks the IP (`Ok(ip)`) or waits (`Err(wait_ns)`).
+  `Verdict::Throttled` and `Verdict::Banned` now carry
+  `retry_after_ms: Option<u64>` instead of a bucket and a hold end;
+  `outcome::generic(resp, server_now_ms)` and
+  `outcome::refused_upgrade(error)` no longer take a budget, and a 429
+  with a malformed `Retry-After` is only an `Error::Http`.
+  `io/benches`' `limit_bench` is gone with it.
+- Breaking: `ergon-io` keeps the three backends measured in a busy-spin
+  loop: `epoll-spin`, `recv-busy` and `uring-sqpoll`. `Backend::UringSpin`,
+  `Backend::EpollBusy` and `Backend::UringNapi` (`uring-spin`,
+  `epoll-busy`, `uring-napi`) are gone, so is `Backend::may_sleep`
+  (nothing sleeps), and `Backend::ALL` has 3 entries. `Config` loses
+  `busy_poll_us`, `wait_us`, `prefer_busy_poll` and `busy_poll_budget`,
+  and `Config::parse` refuses those keys as unknown: `recv-busy` sets
+  `SO_BUSY_POLL` to 1 µs and `uring-sqpoll` a 1 µs NAPI busy-poll timeout,
+  as their defaults did. `sys::set_prefer_busy_poll` and
+  `sys::set_busy_poll_budget` are gone. For `uring-spin`, use `epoll-spin`
+  (level in the fair run) or `uring-sqpoll`.
 - Breaking: `ergo-aeron-cluster` has one listener and one poll.
   `AeronCluster::poll(&mut listener, fragment_limit)` replaces
   `poll_egress`, `poll_egress_controlled` and `poll_state_changes`, and takes

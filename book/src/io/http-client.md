@@ -76,12 +76,12 @@ use `Target::new("api.example.com", 443, "")` and
 - **A venue's connect limit** (native only): with `connect_gate`, `new`
   opens nothing and every connect waits for the gate passed to
   `poll_gated`; `poll` then refuses. A refusal does not grow the backoff.
-  Give the pool a `Budget` bucket of its own: venues' connect limits count
-  WebSocket connects.
+  Give the pool a gate of its own: venues' connect limits count WebSocket
+  connects.
 - **A source IP:** `Target::with_source(ip)` makes every pool connection
   come from `ip` (libcurl too, through `CURLOPT_INTERFACE`). Several IPs,
   each with its own limits: one `HttpClient` per IP
-  ([Rate limits](rate-limits.md#connects-and-automatic-frames)).
+  ([Rate limits](rate-limits.md#connects)).
 - **`buf_size`** (1 MiB) is each native connection's receive buffer: it
   must hold the largest response.
 - **Responses:** `Content-Length` or chunked bodies. The body in
