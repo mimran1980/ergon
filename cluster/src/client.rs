@@ -11,11 +11,10 @@ use std::ffi::{CStr, CString};
 use std::io::Write;
 use std::time::{Duration, Instant};
 
-use rusteron_client::bindings::aeron_controlled_fragment_handler_action_en as AeronAction;
 use rusteron_client::{
     Aeron, AeronAsyncAddExclusivePublication, AeronAsyncAddSubscription, AeronClaim, AeronContext,
-    AeronControlledFragmentClosureAssembler, AeronExclusivePublication, AeronFragmentClosureAssembler, AeronImage,
-    AeronSubscription, Handlers, IdleStrategy, cformat,
+    AeronExclusivePublication, AeronFragmentClosureAssembler, AeronImage, AeronSubscription, Handlers, IdleStrategy,
+    cformat,
 };
 
 use crate::protocol::{self, HandshakeEvent};
@@ -49,8 +48,7 @@ fn checked_deadline(phase: &'static str, timeout_ms: u64) -> Result<Instant, Clu
         })
 }
 
-use crate::controlled::{ControlledEgressAdapter, ControlledEgressListener, ControlledPollAction};
-use crate::egress::{EgressAdapter, EgressListener};
+use crate::egress::EgressListener;
 use crate::error::ClusterError;
 use crate::error::PublicationFailure;
 use crate::state::SessionState;
@@ -66,16 +64,6 @@ fn publication_limits(publication: &AeronExclusivePublication) -> Result<(usize,
         .get_constants()
         .map_err(|e| ClusterError::aeron("ingress_constants", e))?;
     Ok((constants.max_message_length, constants.max_payload_length))
-}
-
-/// Map [`ControlledPollAction`] to Aeron's C enum.
-fn to_aeron_action(action: ControlledPollAction) -> AeronAction {
-    match action {
-        ControlledPollAction::Continue => AeronAction::AERON_ACTION_CONTINUE,
-        ControlledPollAction::Abort => AeronAction::AERON_ACTION_ABORT,
-        ControlledPollAction::Break => AeronAction::AERON_ACTION_BREAK,
-        ControlledPollAction::Commit => AeronAction::AERON_ACTION_COMMIT,
-    }
 }
 
 /// The egress image a session is bound to: the one that delivered its
@@ -127,15 +115,7 @@ struct PendingIngress {
 
 /// Context for the dispatch function — set up before each poll cycle.
 struct PollCtx<'a, L: EgressListener> {
-    adapter: &'a mut EgressAdapter<L>,
-    new_leader: &'a mut Option<NewLeader>,
-    decode_err: &'a mut Option<ClusterError>,
-    expected_session_id: i64,
-    session_closed: &'a mut bool,
-}
-
-struct ControlledPollCtx<'a, L: ControlledEgressListener> {
-    adapter: &'a mut ControlledEgressAdapter<L>,
+    listener: &'a mut L,
     new_leader: &'a mut Option<NewLeader>,
     decode_err: &'a mut Option<ClusterError>,
     expected_session_id: i64,
@@ -148,7 +128,7 @@ fn dispatch_regular<L: EgressListener>(ctx: &mut PollCtx<L>, data: &[u8], hdr: r
     let frag = match crate::fragment::Fragment::decode(data) {
         Ok(Some(f)) => f,
         Ok(None) => {
-            if let Err(error) = ctx.adapter.dispatch_extension(data)
+            if let Err(error) = crate::egress::dispatch_extension(ctx.listener, data)
                 && ctx.decode_err.is_none()
             {
                 *ctx.decode_err = Some(error);
@@ -187,72 +167,10 @@ fn dispatch_regular<L: EgressListener>(ctx: &mut PollCtx<L>, data: &[u8], hdr: r
         _ => {}
     }
     // Pass the already-decoded fragment — no second decode
-    if let Err(e) = ctx.adapter.dispatch_fragment(frag, reserved_value)
+    if let Err(e) = crate::egress::dispatch(ctx.listener, ctx.expected_session_id, frag, reserved_value)
         && ctx.decode_err.is_none()
     {
         *ctx.decode_err = Some(e);
-    }
-}
-
-fn dispatch_controlled<L: ControlledEgressListener>(
-    ctx: &mut ControlledPollCtx<L>,
-    data: &[u8],
-    hdr: rusteron_client::AeronHeader,
-) -> AeronAction {
-    let reserved_value = hdr.reserved_value().unwrap_or(0);
-    // Decode once — shared between state tracking and listener dispatch.
-    let frag = match crate::fragment::Fragment::decode(data) {
-        Ok(Some(f)) => f,
-        Ok(None) => {
-            return match ctx.adapter.dispatch_extension(data) {
-                Ok(action) => to_aeron_action(action),
-                Err(error) => {
-                    if ctx.decode_err.is_none() {
-                        *ctx.decode_err = Some(error);
-                    }
-                    AeronAction::AERON_ACTION_ABORT
-                }
-            };
-        }
-        Err(e) => {
-            if ctx.decode_err.is_none() {
-                *ctx.decode_err = Some(e);
-            }
-            return AeronAction::AERON_ACTION_ABORT;
-        }
-    };
-    // State tracking — no second decode
-    match &frag {
-        crate::fragment::Fragment::NewLeader {
-            leadership_term_id,
-            leader_member_id,
-            ingress_endpoints,
-            cluster_session_id,
-        } if *cluster_session_id == ctx.expected_session_id => {
-            *ctx.new_leader = Some(NewLeader {
-                leadership_term_id: *leadership_term_id,
-                leader_member_id: *leader_member_id,
-                ingress_endpoints: ingress_endpoints.to_string(),
-                image_session_id: hdr.session_id(),
-            });
-        }
-        crate::fragment::Fragment::SessionEvent {
-            code: crate::codecs::session::EventCode::CLOSED,
-            cluster_session_id,
-            ..
-        } if *cluster_session_id == ctx.expected_session_id => {
-            *ctx.session_closed = true;
-        }
-        _ => {}
-    }
-    match ctx.adapter.dispatch_fragment(frag, reserved_value) {
-        Ok(action) => to_aeron_action(action),
-        Err(e) => {
-            if ctx.decode_err.is_none() {
-                *ctx.decode_err = Some(e);
-            }
-            AeronAction::AERON_ACTION_ABORT
-        }
     }
 }
 
@@ -610,7 +528,7 @@ pub struct AeronCluster {
     state: SessionState,
     /// Wall-clock when the session entered `AwaitingNewLeader` (None while
     /// Connected). Drives the `new_leader_timeout` enforced by
-    /// [`Self::poll_state_changes`].
+    /// [`Self::poll`].
     awaiting_leader_since: Option<Instant>,
     /// Configured ingress stream id, retained so a `NewLeaderEvent`
     /// reconnect uses the same stream the session was established on.
@@ -619,7 +537,7 @@ pub struct AeronCluster {
     /// keeps every setting of but the endpoint.
     ingress_channel: Option<CString>,
     /// `newLeaderTimeout` from the builder (ms). Enforced by
-    /// [`Self::poll_state_changes`].
+    /// [`Self::poll`].
     new_leader_timeout_ms: u64,
     /// `messageTimeout` from the builder (ms): how long a new leader's
     /// ingress publication may take to connect.
@@ -636,8 +554,6 @@ pub struct AeronCluster {
     max_payload_length: usize,
     /// rusteron fragment assembler for regular egress.
     regular_assembler: AeronFragmentClosureAssembler,
-    /// rusteron fragment assembler for controlled egress.
-    controlled_assembler: AeronControlledFragmentClosureAssembler,
 }
 
 impl Drop for AeronCluster {
@@ -706,8 +622,6 @@ impl AeronCluster {
             max_payload_length,
             regular_assembler: AeronFragmentClosureAssembler::new()
                 .map_err(|error| ClusterError::aeron("AeronFragmentClosureAssembler", error))?,
-            controlled_assembler: AeronControlledFragmentClosureAssembler::new()
-                .map_err(|error| ClusterError::aeron("AeronControlledFragmentClosureAssembler", error))?,
         };
         client.handshake(builder)?;
         Ok(client)
@@ -733,8 +647,6 @@ impl AeronCluster {
         }
         let regular_assembler = AeronFragmentClosureAssembler::new()
             .map_err(|error| ClusterError::aeron("AeronFragmentClosureAssembler", error))?;
-        let controlled_assembler = AeronControlledFragmentClosureAssembler::new()
-            .map_err(|error| ClusterError::aeron("AeronControlledFragmentClosureAssembler", error))?;
         let mut egress = None;
         let mut ingress = None;
         let mut active_endpoint = None;
@@ -858,7 +770,6 @@ impl AeronCluster {
             max_message_length,
             max_payload_length,
             regular_assembler,
-            controlled_assembler,
         })
     }
 
@@ -995,26 +906,6 @@ impl AeronCluster {
         self.track_ingress_publication_result_offer(r)
     }
 
-    /// Publish a sub-range of application data — equivalent to Java
-    /// `offer(DirectBuffer, int offset, int length)`. The slice
-    /// `payload[offset..offset+length]` is bounds-checked then published
-    /// via the allocation-free [`Self::offer`] path.
-    pub fn offer_range(&mut self, payload: &[u8], offset: usize, length: usize) -> Result<i64, ClusterError> {
-        let Some(end) = offset.checked_add(length) else {
-            return Err(ClusterError::BufferTooSmall {
-                needed: offset.saturating_add(length),
-                actual: payload.len(),
-            });
-        };
-        if end > payload.len() {
-            return Err(ClusterError::BufferTooSmall {
-                needed: end,
-                actual: payload.len(),
-            });
-        }
-        self.offer(&payload[offset..end])
-    }
-
     /// Publish `parts` as one message, session header first.
     ///
     /// The header is built on the stack and offered with the parts. No heap
@@ -1073,7 +964,7 @@ impl AeronCluster {
     /// Encoded into a stack array sized to the generated
     /// [`SessionKeepAliveEncoder::ENCODED_LENGTH`] — no heap allocation.
     /// Retries a back-pressured offer up to three times, as Java's
-    /// `AeronCluster.SEND_ATTEMPTS` does. `poll_egress`
+    /// `AeronCluster.SEND_ATTEMPTS` does. [`Self::poll`]
     /// does not call this; a caller that only polls loses the session when
     /// the cluster's message timeout elapses.
     pub fn send_keep_alive(&mut self) -> Result<(), ClusterError> {
@@ -1107,7 +998,7 @@ impl AeronCluster {
 
     /// Send a keep-alive when the interval has elapsed.
     ///
-    /// [`Self::poll_egress`] does not call this. Call it from the same loop
+    /// [`Self::poll`] does not call this. Call it from the same loop
     /// that polls egress.
     pub fn keep_alive_if_due(&mut self) -> Result<(), ClusterError> {
         let now = Instant::now();
@@ -1118,24 +1009,6 @@ impl AeronCluster {
             self.last_keep_alive = now;
         }
         Ok(())
-    }
-
-    /// Classify an ingress publication result (raw offer/try_claim return
-    /// or commit position). While connected, [`PublicationFailure::NotConnected`]
-    /// and [`PublicationFailure::Closed`] wait for a new leader, and
-    /// [`PublicationFailure::MaxPositionExceeded`] closes the session after a
-    /// best-effort `SessionCloseRequest`. Java `trackIngressPublicationResult`
-    /// analogue. Retryable back-pressure leaves the session state alone.
-    pub fn track_ingress_publication_result(&mut self, result: i64) -> Result<i64, ClusterError> {
-        if result > 0 {
-            return Ok(result);
-        }
-        let failure = PublicationFailure::from_raw(result);
-        self.note_ingress_failure(failure);
-        Err(ClusterError::Publication {
-            failure,
-            context: "track_ingress",
-        })
     }
 
     /// Apply [`protocol::ingress_failure_state`] for one publication failure.
@@ -1156,8 +1029,8 @@ impl AeronCluster {
         }
     }
 
-    /// Mirror [`Self::track_ingress_publication_result`] for the typed
-    /// `ClusterError::Publication` path used by `offer` / `try_claim`.
+    /// Apply a typed `ClusterError::Publication` from `offer` / `try_claim`
+    /// to the session state (Java `trackIngressPublicationResult`).
     fn track_publication_error(&mut self, err: ClusterError) -> ClusterError {
         if let ClusterError::Publication { failure, .. } = &err {
             self.note_ingress_failure(*failure);
@@ -1180,7 +1053,7 @@ impl AeronCluster {
     ///
     /// Responses arrive as admin events on the egress listener
     /// ([`crate::EgressListener::on_admin_response`]).
-    pub fn send_admin_request(
+    fn send_admin_request(
         &mut self,
         correlation_id: i64,
         request_type: AdminRequestType,
@@ -1234,27 +1107,33 @@ impl AeronCluster {
         Ok(())
     }
 
-    /// Poll egress and dispatch decoded messages through `adapter`.
-    /// Fragments are reassembled into complete logical messages before
-    /// decoding. Application messages not matching the connected
-    /// `cluster_session_id` are silently dropped.
+    /// The one poll: egress fragments to `listener`, then session state.
     ///
-    /// Handles `NewLeaderEvent` internally: binds the session to the egress
-    /// image that delivered it and starts adding an ingress publication for
-    /// the new leader without waiting; [`Self::poll_state_changes`] adopts the
-    /// new term and leader once that publication has connected. Returns
-    /// fragments polled.
-    pub fn poll_egress<L: EgressListener>(
-        &mut self,
-        adapter: &mut EgressAdapter<L>,
-        limit: usize,
-    ) -> Result<i32, ClusterError> {
-        adapter.set_expected_session_id(self.cluster_session_id);
+    /// Reassembles fragments into whole messages, decodes each once, and
+    /// calls `listener` for this session's messages only (another session's
+    /// are dropped). Then drives the session state (Java `pollStateChanges`):
+    /// a `NewLeaderEvent` starts adding the new leader's ingress publication
+    /// without waiting, and a later poll adopts the new term and leader once
+    /// it has connected; it also detects leader loss, enforces
+    /// `new_leader_timeout` (after a `NewLeaderEvent`, `message_timeout`),
+    /// and finishes `PendingClose` → `Closed`. Never blocks.
+    ///
+    /// Call it every loop iteration, with [`Self::keep_alive_if_due`]. A
+    /// `fragment_limit` of 0 drives the state alone. Returns the fragments
+    /// polled.
+    ///
+    /// # Errors
+    ///
+    /// A malformed frame ([`ClusterError::ProtocolError`]), a listener panic
+    /// ([`ClusterError::ListenerPanicked`]), an Aeron poll failure, or a
+    /// session-state failure (leader lost past its timeout, a failed
+    /// reconnect).
+    pub fn poll<L: EgressListener>(&mut self, listener: &mut L, fragment_limit: usize) -> Result<i32, ClusterError> {
         let mut new_leader: Option<NewLeader> = None;
         let mut decode_err: Option<ClusterError> = None;
         let mut session_closed = false;
         let mut ctx = PollCtx {
-            adapter,
+            listener,
             new_leader: &mut new_leader,
             decode_err: &mut decode_err,
             expected_session_id: self.cluster_session_id,
@@ -1262,36 +1141,8 @@ impl AeronCluster {
         };
         let n = self
             .regular_assembler
-            .poll(&self.egress, &mut ctx, dispatch_regular::<L>, limit)
+            .poll(&self.egress, &mut ctx, dispatch_regular::<L>, fragment_limit)
             .map_err(|e| ClusterError::aeron("poll", e))?;
-        self.apply_polled(session_closed, new_leader, decode_err)?;
-        Ok(n)
-    }
-
-    /// Controlled variant — application messages are dispatched through a
-    /// [`ControlledEgressListener`] whose `on_message` returns a
-    /// [`ControlledPollAction`] for backpressure. Lifecycle, challenge, and
-    /// admin callbacks are no-ops by default.
-    pub fn poll_egress_controlled<L: ControlledEgressListener>(
-        &mut self,
-        adapter: &mut ControlledEgressAdapter<L>,
-        fragment_limit: usize,
-    ) -> Result<i32, ClusterError> {
-        adapter.set_expected_session_id(self.cluster_session_id);
-        let mut new_leader: Option<NewLeader> = None;
-        let mut decode_err: Option<ClusterError> = None;
-        let mut session_closed = false;
-        let mut ctx = ControlledPollCtx {
-            adapter,
-            new_leader: &mut new_leader,
-            decode_err: &mut decode_err,
-            expected_session_id: self.cluster_session_id,
-            session_closed: &mut session_closed,
-        };
-        let n = self
-            .controlled_assembler
-            .poll(&self.egress, &mut ctx, dispatch_controlled::<L>, fragment_limit)
-            .map_err(|e| ClusterError::aeron("controlled_poll", e))?;
         self.apply_polled(session_closed, new_leader, decode_err)?;
         Ok(n)
     }
@@ -1316,7 +1167,7 @@ impl AeronCluster {
         if let Some(e) = decode_err {
             return Err(e);
         }
-        self.poll_state_changes()
+        self.poll_state()
     }
 
     /// Handle a `NewLeaderEvent` without blocking (Java `onNewLeader`, whose
@@ -1468,7 +1319,7 @@ impl AeronCluster {
 
     /// True while the egress image this session is bound to is open (Java
     /// `!egressImage.isClosed()`). Going false while `Connected` is the
-    /// leader-loss signal consumed by [`Self::poll_state_changes`]. Other
+    /// leader-loss signal consumed by [`Self::poll`]. Other
     /// images on the egress subscription do not count: the image a failed
     /// leader leaves behind can close while its replacement is open.
     #[must_use = "the connectivity decision is the point of calling this"]
@@ -1504,13 +1355,9 @@ impl AeronCluster {
         self.send_admin_request(correlation_id, AdminRequestType::SNAPSHOT, &[])
     }
 
-    /// Drive session-state transitions without polling fragments (Java
-    /// `pollStateChanges`): adopting a new leader's ingress publication once
-    /// it has connected, leader-loss detection, `new_leader_timeout` (and,
-    /// after a NewLeaderEvent, `message_timeout`) enforcement, and
-    /// `PendingClose` → `Closed` finalisation. Never blocks.
-    /// Call this from your event loop alongside [`Self::poll_egress`].
-    pub fn poll_state_changes(&mut self) -> Result<(), ClusterError> {
+    /// Session-state transitions without polling fragments (Java
+    /// `pollStateChanges`); the second half of [`Self::poll`].
+    fn poll_state(&mut self) -> Result<(), ClusterError> {
         self.poll_pending_ingress()?;
         let connected = self.is_egress_connected();
         // The new leader's egress image closed before its ingress connected:
@@ -1631,7 +1478,7 @@ pub(crate) struct Awaiting {
 }
 
 /// Pure state-machine transition logic, extracted for unit testing.
-/// Called by [`AeronCluster::poll_state_changes`].
+/// Called by [`AeronCluster::poll`].
 pub(crate) fn apply_state_transition(
     state: &mut SessionState,
     awaiting_leader_since: &mut Option<Instant>,
@@ -1988,8 +1835,6 @@ impl AsyncClusterConnect {
             keep_alive_interval_ms,
             regular_assembler: AeronFragmentClosureAssembler::new()
                 .map_err(|e| ClusterError::aeron("AeronFragmentClosureAssembler", e))?,
-            controlled_assembler: AeronControlledFragmentClosureAssembler::new()
-                .map_err(|e| ClusterError::aeron("AeronControlledFragmentClosureAssembler", e))?,
         })
     }
 
@@ -2165,7 +2010,7 @@ mod tests {
 
     #[test]
     fn test_pending_close_finalises_to_closed() -> Result<(), Box<dyn std::error::Error>> {
-        // T1: PendingClose → Closed via poll_state_changes → apply_state_transition.
+        // T1: PendingClose → Closed via poll → apply_state_transition.
         let mut state = SessionState::PendingClose;
         let mut awaiting = None;
         apply_state_transition(&mut state, &mut awaiting, AWAITING_LEADER, true)?;

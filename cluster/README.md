@@ -91,7 +91,7 @@ in a custom idle strategy.
 
 No poll waits on the media driver. `AsyncClusterConnect::poll` adds the egress
 subscription and ingress publication, and the publication a REDIRECT asks
-for, with Aeron's async add and picks them up on later polls. `poll_egress`
+for, with Aeron's async add and picks them up on later polls. `poll`
 handles a `NewLeaderEvent` the same way: the session stays `AwaitingNewLeader`
 until the new leader's publication has connected, for up to the message
 timeout. Only the first `poll`, which creates the Aeron client, can wait, and
@@ -107,10 +107,41 @@ multicast channels stay as they are), so the limits hold across failover.
 ## Egress and errors
 
 <!-- ANCHOR: egress -->
-Implement `EgressListener` and pass it through `EgressAdapter` to
-`AeronCluster::poll_egress`. Use `ControlledEgressListener` and
-`ControlledEgressAdapter` when callbacks must return Aeron controlled-poll
-actions.
+Implement `EgressListener` (only `on_message` is required) and call
+`AeronCluster::poll` every loop iteration. One call reads egress, passes this
+session's messages to the listener (other sessions' are dropped), and drives
+the session state: failover to a new leader, the leader and message timeouts,
+close. A `fragment_limit` of 0 drives the state alone.
+
+```rust,no_run
+use ergo_aeron_cluster::{AeronCluster, ClusterError, EgressListener};
+
+struct Fills(usize);
+
+impl EgressListener for Fills {
+    fn on_message(&mut self, _session: i64, _timestamp: i64, payload: &[u8]) {
+        self.0 += payload.len();
+    }
+}
+
+fn run(client: &mut AeronCluster) -> Result<(), ClusterError> {
+    let mut fills = Fills(0);
+    loop {
+        client.poll(&mut fills, 10)?;
+        client.keep_alive_if_due()?;
+    }
+}
+```
+
+| Callback | Default | Override to |
+|---|---|---|
+| `on_message` | required | handle application payloads |
+| `on_message_with_reserved_value` | calls `on_message` | read the Aeron header's reserved value (a send stamp) |
+| `on_session_event`, `on_new_leader` | ignore | observe lifecycle; the client acts on them itself |
+| `on_challenge`, `on_admin_response` | ignore | observe auth challenges, snapshot replies |
+| `on_extension_message` | ignore | read frames of another template or schema |
+
+A payload slice is valid only inside the callback: copy what you keep.
 
 Protocol errors, listener panics, keep-alive failures, publication failures, and
 reconnect failures are returned as `ClusterError`. Application payloads,

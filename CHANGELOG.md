@@ -4,6 +4,17 @@
 
 ### Changed
 
+- Breaking: `ergo-aeron-cluster` has one listener and one poll.
+  `AeronCluster::poll(&mut listener, fragment_limit)` replaces
+  `poll_egress`, `poll_egress_controlled` and `poll_state_changes`, and takes
+  the listener directly: `EgressAdapter` is gone and the client always drops
+  other sessions' messages. `EgressListener` needs only `on_message`; the
+  lifecycle callbacks default to no-ops. Removed: the `controlled` module
+  (`ControlledEgressAdapter`, `ControlledEgressListener`,
+  `ControlledPollAction`), the `poller` module with `parse_event` and
+  `EgressEvent`, and `offer_range` (slice the payload),
+  `send_admin_request` (use `send_admin_request_to_take_snapshot`) and
+  `track_ingress_publication_result`.
 - Breaking: `ergon-tune` drops `CheckId`. `Finding::id` is a `&'static str`
   (`"T1"`, `"K2"`, `"M1"`), so a caller can add checks of its own.
   `CheckId::unknown_stops_require` is now `unknown_stops_require(id)`, and an

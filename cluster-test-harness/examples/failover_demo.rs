@@ -2,192 +2,79 @@
 //!
 //! The client runs its own embedded C media driver and reaches the
 //! cluster over UDP with a separate egress port. Killing the leader
-//! does NOT kill the client's driver, so the client survives and can
-//! reconnect to the new leader.
+//! does NOT kill the client's driver, so `AeronCluster::poll` follows the
+//! `NewLeaderEvent` to the new leader. `failover_own_driver` asserts the
+//! same path; this prints it.
 //!
 //! ```bash
 //! cargo run -p ergo-aeron-cluster-test-harness --example failover_demo
 //! ```
 
-use ergo_aeron_cluster::cluster_codec_types::{
-    SessionConnectRequestEncoder, SessionConnectRequestFixedFields,
-};
-use ergo_aeron_cluster::poller;
+use std::time::{Duration, Instant};
+
+use ergo_aeron_cluster::{AeronCluster, EgressListener, SessionBuilder, SessionState};
 use ergo_aeron_cluster_test_harness::TestCluster;
 use rusteron_client::cformat;
-use std::time::{Duration, Instant};
+
+/// Prints each new leader.
+struct Leaders;
+
+impl EgressListener for Leaders {
+    fn on_message(&mut self, _: i64, _: i64, _: &[u8]) {}
+
+    fn on_new_leader(&mut self, _: i64, term: i64, leader_member_id: i32, endpoints: &str) {
+        println!(
+            "  <- NewLeaderEvent: term {term}, leader member {leader_member_id} ({endpoints})"
+        );
+    }
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Live 3-node failover (own-driver UDP) ===\n");
     let mut cluster = TestCluster::three_node();
-    let node0_port = parse_port(&cluster.ingress_channel);
-    println!("3-node cluster up. node 0 ingress port = {node0_port}");
 
-    // Client's own embedded driver.
+    // The client's own embedded driver.
     let client_dir = std::env::temp_dir().join(format!("fo-{pid}", pid = std::process::id()));
-    let _ = std::fs::create_dir_all(&client_dir);
-    let dir_cstr = cformat!("{}", client_dir.display());
+    std::fs::create_dir_all(&client_dir)?;
     let dc = rusteron_media_driver::AeronDriverContext::new()?;
-    dc.set_dir(&dir_cstr)?;
+    dc.set_dir(&cformat!("{}", client_dir.display()))?;
     dc.set_dir_delete_on_shutdown(true)?;
     dc.set_dir_delete_on_start(true)?;
-    let (_stop, _h) = rusteron_media_driver::AeronDriver::launch_embedded(dc, false);
-    let ctx = rusteron_client::AeronContext::new()?;
-    ctx.set_dir(&dir_cstr)?;
-    let a = rusteron_client::Aeron::new(&ctx)?;
-    a.start()?;
+    let _driver = rusteron_media_driver::AeronDriver::launch_embedded_guard(dc, false);
 
-    let egress_port: u16 = 19199;
-    // Already CString — do not cformat! again (would re-allocate).
-    let egress_uri = cformat!("localhost:{egress_port}");
-    let egress = a.add_subscription(
-        &egress_uri,
-        102,
-        rusteron_client::Handlers::NONE,
-        rusteron_client::Handlers::NONE,
-        Duration::from_secs(5),
-    )?;
+    let builder = SessionBuilder::default()
+        .ingress_channel(&cluster.ingress_channel)?
+        .egress_channel("aeron:udp?endpoint=localhost:19199")?
+        .ingress_stream_id(101)
+        .egress_stream_id(102)
+        .message_timeout(Duration::from_secs(10))?;
+    let mut client = AeronCluster::connect(&builder, &client_dir.to_string_lossy())?;
+    let leader = client.leader_member_id();
+    println!(
+        "Connected: session {}, leader member {leader}",
+        client.cluster_session_id()
+    );
 
-    let connect_to_leader = |port: u16, resp: &str| -> Option<rusteron_client::AeronPublication> {
-        let uri = cformat!("localhost:{port}");
-        let pub_ = a.add_publication(&uri, 101, Duration::from_secs(5)).ok()?;
-        let expected_len =
-            SessionConnectRequestEncoder::compute_length_with_header(resp.len(), 0, 0);
-        let mut storage = [0u8; 512];
-        let len =
-            SessionConnectRequestEncoder::wrap_and_apply_header(&mut storage[..expected_len], 0)
-                .fixed(&SessionConnectRequestFixedFields {
-                    correlation_id: 1,
-                    response_stream_id: 102,
-                    version: Some(0),
-                })
-                .response_channel(resp.as_bytes())
-                .ok()?
-                .encoded_credentials(b"")
-                .ok()?
-                .client_info(b"")
-                .ok()?
-                .encoded_length_with_header();
-        debug_assert_eq!(len, expected_len);
-        let bytes = &storage[..len];
-        for _ in 0..50 {
-            if pub_.offer_raw(bytes, rusteron_client::Handlers::NONE) > 0 {
-                return Some(pub_);
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        Some(pub_)
-    };
+    println!("\nKilling the leader (node {leader})...");
+    cluster.kill_node(usize::try_from(leader)?);
 
-    let resp = format!("aeron:udp?endpoint=localhost:{egress_port}");
-    let _ingress = connect_to_leader(node0_port, &resp).ok_or("connect to node 0 failed")?;
-
-    // Wait for SessionEvent(OK).
-    let mut connected = false;
-    for _ in 0..50 {
-        let mut got = false;
-        egress
-            .poll_fn(
-                |data, _h| {
-                    if data.len() >= 8 && u16::from_le_bytes([data[2], data[3]]) == 2 {
-                        got = true;
-                    }
-                },
-                10,
-            )
-            .ok();
-        if got {
-            connected = true;
-            break;
+    let mut listener = Leaders;
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while Instant::now() < deadline {
+        let _ = client.keep_alive_if_due();
+        client.poll(&mut listener, 10)?;
+        if client.state() == SessionState::Connected && client.leader_member_id() != leader {
+            println!(
+                "\n=== Result: failover handled — now on leader member {} ===",
+                client.leader_member_id()
+            );
+            return Ok(());
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    println!("Connected to leader: {connected}");
-    if !connected {
-        println!("FAIL: no session");
-        return Ok(());
-    }
-
-    println!("\nKilling leader (node 0)...");
-    cluster.kill_node(0);
-
-    // Poll egress for NewLeaderEvent (give the cluster time to elect).
-    println!("Polling for NewLeaderEvent (up to 30s for election)...");
-    let deadline = Instant::now() + Duration::from_secs(30);
-    let mut new_leader: Option<(i32, String)> = None;
-    while Instant::now() < deadline {
-        let mut captured: Option<(i32, String)> = None;
-        egress
-            .poll_fn(
-                |data, _h| {
-                    if let Ok(ev) = poller::parse_event(data) {
-                        match ev {
-                            poller::EgressEvent::NewLeader {
-                                leader_member_id,
-                                ingress_endpoints,
-                                ..
-                            } => {
-                                if captured.is_none() {
-                                    captured = Some((leader_member_id, ingress_endpoints));
-                                }
-                                println!("  <- NewLeaderEvent (leader member {leader_member_id})");
-                            }
-                            poller::EgressEvent::SessionEvent { code, .. } => {
-                                println!("  <- SessionEvent {code:?}");
-                            }
-                            _ => {}
-                        }
-                    }
-                },
-                10,
-            )
-            .ok();
-        if let Some(info) = captured {
-            new_leader = Some(info);
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(200));
-    }
-
-    match new_leader {
-        Some((leader_member_id, eps)) => {
-            println!("  NewLeaderEvent received: {eps}");
-            // Resolve the new leader's endpoint by member id — the list is in
-            // id order, so a first-entry parse would reconnect to the dead leader.
-            match poller::parse_leader_endpoint(&eps, leader_member_id) {
-                Ok(Some(ep)) => {
-                    let _reconn =
-                        connect_to_leader(parse_port(&format!("aeron:udp?endpoint={ep}")), &resp)
-                            .ok_or("reconnect to new leader failed")?;
-                    println!(
-                        "  Reconnected ingress to new leader (member {leader_member_id}): {ep}"
-                    );
-                    println!("\n=== Result: failover handled — client survived leader death ===");
-                }
-                Ok(None) => {
-                    println!(
-                        "\n=== Result: NewLeaderEvent had no endpoint for member {leader_member_id} ==="
-                    );
-                }
-                Err(e) => {
-                    println!("\n=== Result: NewLeaderEvent endpoint map was malformed: {e} ===");
-                }
-            }
-
-            Ok(())
-        }
-        None => {
-            println!("\n=== Result: no NewLeaderEvent within 30s ===");
-            println!("(cluster election timing — the transport survived, but no new");
-            println!(" leader event was observed in the window.)");
-            Ok(())
-        }
-    }
-}
-
-fn parse_port(ch: &str) -> u16 {
-    ch.rsplit(':')
-        .next()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0)
+    println!(
+        "\n=== Result: no new leader within 60s (state {:?}) ===",
+        client.state()
+    );
+    Ok(())
 }

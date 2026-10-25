@@ -55,17 +55,16 @@ The harness (`cluster-test-harness/tests/`) runs in `ci.yml`
 | New leader that never connects times out | `nonblocking.rs` (`a_new_leader_that_never_connects_times_out`) |
 | `SessionEvent(CLOSED)` while a new leader is pending | `nonblocking.rs` |
 | Ingress channel settings kept across failover and redirect | `ingress_channel_settings.rs` |
-| Fragmented egress, regular and controlled poll | `egress_fragmentation.rs` |
+| Fragmented egress reassembled by `poll` | `egress_fragmentation.rs` |
 | Restart, reconnect, quorum loss, log recovery | `restart.rs` |
 | Null and simple credentials (the default authenticator accepts all) | `auth.rs` |
 
-Not covered by the harness: auth challenge and rejection, controlled-poll
-abort, and connect or poll timeout expiry. Unit tests in `cluster/src/` (run
+Not covered by the harness: auth challenge and rejection, and connect or poll
+timeout expiry. Unit tests in `cluster/src/` (run
 by `ci.yml`'s `test` job) cover challenge dispatch (`egress.rs`), the
 challenge response (`credentials.rs`, `client.rs`) and the new-leader timeout
 (`client.rs`, `test_new_leader_timeout_disconnects`). No test drives
-`ClusterError::AuthRejected`, a controlled-poll abort, or a connect or poll
-timeout.
+`ClusterError::AuthRejected` or a connect or poll timeout.
 
 ## Limitations
 
