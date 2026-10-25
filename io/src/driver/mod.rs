@@ -1269,7 +1269,6 @@ impl<E: Endpoint> Driver<E> {
     where
         E: Receive<H>,
     {
-        let meta = RxMeta::default();
         for i in 0..self.conns.len_slots() {
             let id = self.conns.id(i);
             if !self.conns.is_open(i) {
@@ -1281,6 +1280,8 @@ impl<E: Endpoint> Driver<E> {
             if !c.has_buffered_input() {
                 continue;
             }
+            // The upgrade read these bytes; the driver takes them now.
+            let meta = self.reads.buffered();
             // io_uring arms this connection's receive only now, after the
             // buffer layout has settled.
             let r = c.on_received(id, 0, &meta, handler);
@@ -1485,6 +1486,25 @@ impl Reads {
         RxMeta {
             rx_read_ns,
             ..slot.meta(self.seq)
+        }
+    }
+
+    /// [`RxMeta`] for input an endpoint already held when it was added (the
+    /// frames the upgrade read with the 101): the next sequence number, no
+    /// kernel stamps, and with `stamp` the time now, as the driver takes
+    /// them.
+    #[cold]
+    pub fn buffered(&mut self) -> RxMeta {
+        let rx_read_ns = if self.stamp {
+            crate::clock::realtime_ns()
+        } else {
+            0
+        };
+        self.seq += 1;
+        RxMeta {
+            rx_read_ns,
+            read_seq: self.seq,
+            ..RxMeta::default()
         }
     }
 }
