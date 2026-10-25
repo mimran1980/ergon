@@ -112,7 +112,7 @@ fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
 #[cfg(target_os = "linux")]
 #[allow(unsafe_code)]
 fn pin(cpu: usize) -> bool {
-    if cpu >= libc::CPU_SETSIZE as usize {
+    if cpu >= usize::try_from(libc::CPU_SETSIZE).unwrap_or(0) {
         return false;
     }
     // SAFETY: a zeroed cpu_set_t is the empty set; CPU_SET writes one bit

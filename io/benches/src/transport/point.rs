@@ -38,7 +38,7 @@
 
 use ergon_latency_core::clock::{TscClock, realtime_ns};
 use ergon_latency_core::hist::{Latency, PointLatency};
-use ergon_latency_core::loss::{LossCounts, LossTracker};
+use ergon_latency_core::loss::{Arrival, LossCounts, LossTracker};
 use ergon_latency_core::manifest::RunManifest;
 use ergon_latency_core::message::{Kind, MESSAGE_LEN, Message, echo_in_place};
 use ergon_latency_core::pace::{PaceStats, Pacer};
@@ -450,7 +450,7 @@ impl Common {
 #[allow(unsafe_code)]
 pub fn pin(cpu: Option<usize>) -> Result<(), Error> {
     let Some(cpu) = cpu else { return Ok(()) };
-    if cpu >= libc::CPU_SETSIZE as usize {
+    if cpu >= usize::try_from(libc::CPU_SETSIZE).unwrap_or(0) {
         return Err(Error::Usage(format!("CPU {cpu} past CPU_SETSIZE")));
     }
     // SAFETY: a zeroed cpu_set_t is the empty set; CPU_SET writes one bit
@@ -646,8 +646,11 @@ impl Recorder {
         if m.kind != self.expect {
             return self.refuse(ergon_latency_core::Error::MessageKind(m.kind as u32));
         }
-        if let Err(e) = self.loss.on_message(m.stream, m.seq) {
-            return self.refuse(e);
+        match self.loss.on_message(m.stream, m.seq) {
+            Err(e) => return self.refuse(e),
+            // counted by the loss tracker; one sequence number, one latency
+            Ok(Arrival::Duplicate | Arrival::Stale) => return,
+            Ok(Arrival::InOrder | Arrival::Gap { .. } | Arrival::Reordered) => {}
         }
         self.received += 1;
         let index = m
@@ -684,7 +687,8 @@ impl Recorder {
         self.stalls.pass(&self.clock, now);
     }
 
-    /// Messages received, warm-up included.
+    /// Distinct messages received, warm-up included (a duplicate is the
+    /// loss tracker's, not counted here).
     #[must_use]
     pub const fn received(&self) -> u64 {
         self.received
