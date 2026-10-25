@@ -19,15 +19,23 @@
 //!   only when a gate passes it, typically one [`crate::limit::Budget`]
 //!   bucket shared by every link on the IP. Fifty links added at once then
 //!   start at the gate's pace, not in one burst.
+//! - Several source IPs, each with its own connect budget:
+//!   [`Reconnect::poll_sourced`] binds each attempt to an IP that
+//!   [`SourceIps`] picks and charges, and waits for the soonest one when
+//!   none has room; [`Reconnect::source`] names the IP.
 //! - The server's wait: [`Reconnect::defer`] keeps a link from connecting
 //!   before a time (a refused handshake's `Retry-After`, through
 //!   [`crate::outcome::refused_upgrade`]), whatever the backoff says.
 //! - Cost: `poll` is one branch while nothing waits. While a link waits, it
 //!   reads the counter once per call and the clock every 250 µs.
 
+use std::net::IpAddr;
+
 use crate::clock::{monotonic_ns, rdtsc, ticks_per_us};
 use crate::endpoint::ConnId;
 use crate::error::{Error, Result};
+use crate::limit::{Budget, SourceIps};
+use crate::net::BindSource;
 
 /// The backoff policy.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -220,6 +228,9 @@ struct Link<D> {
     stop: bool,
     /// No attempt before this ([`Reconnect::defer`]); `i64::MIN`: none.
     not_before: i64,
+    /// The source IP its latest attempt was bound to
+    /// ([`Reconnect::poll_sourced`]).
+    source: Option<IpAddr>,
 }
 
 /// Keeps links open: reconnects each with backoff after it closes.
@@ -274,9 +285,19 @@ impl<D> Reconnect<D> {
             was_open: false,
             stop: false,
             not_before: i64::MIN,
+            source: None,
         });
         self.waiting += 1;
         LinkId(self.links.len() - 1)
+    }
+
+    /// The source IP `link`'s latest attempt was bound to by
+    /// [`Reconnect::poll_sourced`]: charge requests on its connection to
+    /// that IP's [`SourceIp::sends`](crate::limit::SourceIp::sends).
+    /// `None` before its first sourced attempt, or for an unknown link.
+    #[must_use]
+    pub fn source(&self, link: LinkId) -> Option<IpAddr> {
+        self.links.get(link.0).and_then(|l| l.source)
     }
 
     /// Where `link` is; `None` for an unknown link.
@@ -437,6 +458,78 @@ impl<D> Reconnect<D> {
         now_ns: i64,
         mut gate: impl FnMut() -> std::result::Result<(), u64>,
     ) -> usize {
+        self.run(c, now_ns, || gate().map(|()| None), |_, _| {})
+    }
+
+    /// [`Reconnect::poll`], with every attempt from a source IP that
+    /// [`SourceIps::try_connect`] picks and charges in `budget` at
+    /// `budget_now_ns` (the budget's clock): the connect gate for a venue
+    /// that limits connects per IP, with several IPs each on its own
+    /// bucket. The dial is bound to the pick ([`BindSource`]) and
+    /// [`Reconnect::source`] names it.
+    ///
+    /// - No IP has room: the link waits for the soonest one, at most
+    ///   [`Retry::max_ms`]. As with [`Reconnect::poll_gated`], a refusal is
+    ///   not a failed attempt.
+    /// - A dial that cannot be built or started has still spent its
+    ///   connect unit: the count errs on the safe side.
+    #[inline]
+    pub fn poll_sourced(
+        &mut self,
+        c: &mut impl Connector<D>,
+        ips: &mut SourceIps,
+        budget: &mut Budget,
+        budget_now_ns: i64,
+    ) -> usize
+    where
+        D: BindSource,
+    {
+        if self.waiting == 0 {
+            return 0;
+        }
+        let t = rdtsc();
+        if t < self.next_check {
+            return 0;
+        }
+        self.next_check = t.wrapping_add(self.check_ticks);
+        self.poll_at_sourced(c, monotonic_ns(), ips, budget, budget_now_ns)
+    }
+
+    /// [`Reconnect::poll_sourced`] at `now_ns` (`CLOCK_MONOTONIC`), every
+    /// time.
+    #[cold]
+    pub fn poll_at_sourced(
+        &mut self,
+        c: &mut impl Connector<D>,
+        now_ns: i64,
+        ips: &mut SourceIps,
+        budget: &mut Budget,
+        budget_now_ns: i64,
+    ) -> usize
+    where
+        D: BindSource,
+    {
+        self.run(
+            c,
+            now_ns,
+            || {
+                ips.try_connect(budget, budget_now_ns)
+                    .map(|p| Some(p.ip))
+                    .map_err(|l| l.wait_ns(budget_now_ns))
+            },
+            BindSource::bind_source,
+        )
+    }
+
+    /// Starts every due link that `gate` passes; a passed link's dial is
+    /// bound to the IP the gate names, if any.
+    fn run(
+        &mut self,
+        c: &mut impl Connector<D>,
+        now_ns: i64,
+        mut gate: impl FnMut() -> std::result::Result<Option<IpAddr>, u64>,
+        mut bind: impl FnMut(&mut D, IpAddr),
+    ) -> usize {
         let links = self.links.len();
         let first = if self.cursor < links { self.cursor } else { 0 };
         let longest = ms_to_ns(u64::from(self.retry.max_ms));
@@ -450,18 +543,30 @@ impl<D> Reconnect<D> {
             if at_ns > now_ns {
                 continue;
             }
-            if let Err(wait_ns) = gate() {
-                let wait = i64::try_from(wait_ns).unwrap_or(i64::MAX).min(longest);
-                self.links[i].state = LinkState::Waiting {
-                    at_ns: now_ns.saturating_add(wait),
-                    attempt,
-                };
-                continue;
-            }
+            let source = match gate() {
+                Ok(source) => source,
+                Err(wait_ns) => {
+                    let wait = i64::try_from(wait_ns).unwrap_or(i64::MAX).min(longest);
+                    self.links[i].state = LinkState::Waiting {
+                        at_ns: now_ns.saturating_add(wait),
+                        attempt,
+                    };
+                    continue;
+                }
+            };
             self.cursor = (i + 1) % links;
             self.waiting -= 1;
             let l = &mut self.links[i];
-            match (l.make)().and_then(|d| c.start(d, bg)) {
+            if source.is_some() {
+                l.source = source;
+            }
+            let made = (l.make)().map(|mut d| {
+                if let Some(ip) = source {
+                    bind(&mut d, ip);
+                }
+                d
+            });
+            match made.and_then(|d| c.start(d, bg)) {
                 Ok(id) => {
                     l.state = LinkState::Connecting(id);
                     started += 1;

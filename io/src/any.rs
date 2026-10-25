@@ -159,6 +159,15 @@ impl From<HttpDial> for AnyDial {
     }
 }
 
+impl crate::net::BindSource for AnyDial {
+    fn bind_source(&mut self, ip: std::net::IpAddr) {
+        match self {
+            Self::Ws(d) => d.bind_source(ip),
+            Self::Http(d) => d.bind_source(ip),
+        }
+    }
+}
+
 impl DialIo for AnyDial {
     type Conn = AnyConn;
 

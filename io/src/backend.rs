@@ -154,6 +154,11 @@ pub struct Config {
     pub rcvbuf: Option<u32>,
     /// Request kernel software (and, where supported, NIC) receive timestamps.
     pub rx_timestamps: bool,
+    /// Stamp every read with ergon-io's own receive time,
+    /// `RxMeta::rx_read_ns` ([`crate::RxMeta::rx_read_ns`]): one
+    /// `CLOCK_REALTIME` read (vDSO) per read with data. Off (the default):
+    /// no clock read, the field stays 0.
+    pub rx_read_timestamp: bool,
     /// Deadline for `Driver::connect` (DNS, TCP, TLS, upgrade), in milliseconds.
     pub connect_timeout_ms: u32,
     /// CPU for the `Driver::connect_background` helper thread. `None` runs it
@@ -260,6 +265,7 @@ impl Config {
             ring_entries: 256,
             rcvbuf: Some(4 << 20),
             rx_timestamps: true,
+            rx_read_timestamp: false,
             connect_timeout_ms: 10_000,
             connect_cpu: None,
             helper_cpus: Vec::new(),
@@ -355,8 +361,8 @@ impl Config {
 
     /// Parses `backend[,key=value...]`. Keys: `busy_poll_us`, `wait_us`,
     /// `loop_cpu`, `sqpoll_cpu`, `sqpoll_idle_ms`, `ring_entries`, `connect_timeout_ms`,
-    /// `connect_cpu`, `rcvbuf` (0 keeps the kernel default), `rx_timestamps`
-    /// `prefer_busy_poll`, `per_queue` and `inline_connect_fallback`
+    /// `connect_cpu`, `rcvbuf` (0 keeps the kernel default), `rx_timestamps`,
+    /// `rx_read_timestamp`, `prefer_busy_poll`, `per_queue` and `inline_connect_fallback`
     /// (`true`/`false`), `busy_poll_budget` (0 keeps the kernel default),
     /// `quickack_check` (`off`, `warn` or `require`), `keepalive_idle_s` (0:
     /// off), `keepalive_interval_s`, `keepalive_count`, `tcp_user_timeout_ms`
@@ -412,6 +418,7 @@ impl Config {
                 "inline_connect_fallback" => cfg.inline_connect_fallback = flag()?,
                 "rcvbuf" => cfg.rcvbuf = Some(num()?).filter(|&b| b > 0),
                 "rx_timestamps" => cfg.rx_timestamps = flag()?,
+                "rx_read_timestamp" => cfg.rx_read_timestamp = flag()?,
                 "prefer_busy_poll" => cfg.prefer_busy_poll = flag()?,
                 "per_queue" => cfg.per_queue = flag()?,
                 "quickack_check" => cfg.quickack_check = v.parse()?,

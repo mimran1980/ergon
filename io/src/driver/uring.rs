@@ -346,7 +346,7 @@ impl Uring {
         conns: &mut Conns<E>,
         handler: &mut H,
         stats: &mut DriverStats,
-        read_seq: &mut u64,
+        reads: &mut super::Reads,
     ) -> Result<()>
     where
         E: Receive<H>,
@@ -377,7 +377,7 @@ impl Uring {
                 continue;
             }
             match op {
-                RECV => self.on_recv(conns, i, res, handler, stats, read_seq),
+                RECV => self.on_recv(conns, i, res, handler, stats, reads),
                 SEND => self.on_send(conns, i, res, handler, stats),
                 _ => {}
             }
@@ -394,7 +394,7 @@ impl Uring {
         res: i32,
         handler: &mut H,
         stats: &mut DriverStats,
-        read_seq: &mut u64,
+        reads: &mut super::Reads,
     ) where
         E: Receive<H>,
         H: Handler,
@@ -416,9 +416,8 @@ impl Uring {
         let outcome = match usize::try_from(res) {
             Ok(0) => Err(Error::Closed),
             Ok(len) => {
-                *read_seq += 1;
+                let meta = reads.next(&slot.msg);
                 stats.completions += 1;
-                let meta = slot.msg.meta(*read_seq);
                 let r = conn
                     .on_received(id, len, &meta, handler)
                     .map(|m| stats.messages += m as u64);

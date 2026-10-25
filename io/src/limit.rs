@@ -2,6 +2,8 @@
 //!
 //! - [`Budget`] is a plain struct the application owns: one per account and
 //!   IP, shared by every connection that sends for them (REST and WebSocket).
+//!   Several source IPs: one budget with each IP's buckets, picked per
+//!   connect by [`SourceIps`].
 //! - [`Budget::try_charge`] charges up to [`MAX_CHARGES`] buckets at once,
 //!   all or none, and answers "go" ([`Ticket`]) or "not before T"
 //!   ([`Limited`]). It never sleeps and never queues: the caller waits, drops
@@ -77,8 +79,17 @@
 //! # Ok(())
 //! # }
 //! ```
+//!
+//! # Several source IPs
+//!
+//! A venue that limits connects and requests per IP: [`SourceIps`] holds
+//! each local address with its own buckets in one [`Budget`], picks an IP
+//! with room for each connect ([`SourceIps::try_connect`]), and refuses
+//! with the soonest wait when none has one. Each connection binds its pick
+//! ([`crate::Target::source`]); its requests charge that IP's bucket.
 
 use std::fmt;
+use std::net::IpAddr;
 use std::num::NonZeroU64;
 
 use crate::error::{Error, Result};
@@ -1509,5 +1520,143 @@ impl Budget {
             held_until_ns: b.held_until(now),
             halted: b.halted,
         })
+    }
+}
+
+/// One local address connections may come from ([`crate::Target::source`]),
+/// and its buckets in the application's [`Budget`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceIp {
+    /// The address: one of this host's, never unspecified.
+    pub ip: IpAddr,
+    /// Charged one unit per connect attempt from `ip`: the venue's limit
+    /// on connects per IP. Its own bucket: two IPs never share one.
+    pub connects: BucketId,
+    /// The IP's request budget (a weight per IP), for the application to
+    /// charge with the requests it sends on connections from `ip`; `None`
+    /// when the venue has none.
+    pub sends: Option<BucketId>,
+}
+
+/// The IP [`SourceIps::try_connect`] picked, and what it charged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Picked {
+    /// Connect from this address ([`crate::Target::with_source`]).
+    pub ip: IpAddr,
+    /// Its index in [`SourceIps::ips`].
+    pub index: usize,
+    /// The connect unit charged: give it back with [`Budget::refund`] if
+    /// the connect never went out.
+    pub ticket: Ticket,
+}
+
+/// Several source IPs, each with its own budget: the connect gate for a
+/// venue that limits connects and requests per IP.
+///
+/// - [`SourceIps::try_connect`] picks the next IP whose connect bucket
+///   takes one more connect, round-robin from after the last one picked,
+///   and charges it. When none does it refuses with the [`Limited`] that
+///   frees first: the caller waits (queues) or drops the connect. It never
+///   sleeps.
+/// - Bind the connection to the pick: [`crate::Target::with_source`], or
+///   [`crate::reconnect::Reconnect::poll_sourced`], which does both for
+///   every link.
+/// - Charge requests sent on that connection to the IP's
+///   [`SourceIp::sends`] together with the account's buckets.
+/// - The buckets are the application's [`Budget`]'s: throttles, bans and
+///   server usage apply to them as to any bucket. A held IP is passed over.
+///
+/// Like [`Budget`]: no I/O, no clock reads, no allocation after
+/// [`SourceIps::new`].
+#[derive(Debug, Clone)]
+pub struct SourceIps {
+    ips: Vec<SourceIp>,
+    next: usize,
+}
+
+impl SourceIps {
+    /// A pool of `ips`, tried in this order.
+    ///
+    /// # Errors
+    /// [`Error::Config`]: no source IPs; an unspecified address; an IP
+    /// listed twice; two IPs that share a `connects` bucket.
+    pub fn new(ips: Vec<SourceIp>) -> Result<Self> {
+        if ips.is_empty() {
+            return Err(Error::Config("no source IPs".into()));
+        }
+        for (i, a) in ips.iter().enumerate() {
+            if a.ip.is_unspecified() {
+                return Err(Error::Config(format!(
+                    "source IP {} is unspecified: name one of this host's addresses",
+                    a.ip
+                )));
+            }
+            for b in &ips[..i] {
+                if a.ip == b.ip {
+                    return Err(Error::Config(format!("source IP {} is listed twice", a.ip)));
+                }
+                if a.connects == b.connects {
+                    return Err(Error::Config(format!(
+                        "source IPs {} and {} share a connects bucket: each needs its own",
+                        b.ip, a.ip
+                    )));
+                }
+            }
+        }
+        Ok(Self { ips, next: 0 })
+    }
+
+    /// The IPs, in the order given.
+    #[must_use]
+    pub fn ips(&self) -> &[SourceIp] {
+        &self.ips
+    }
+
+    /// The entry for `ip`.
+    #[must_use]
+    pub fn get(&self, ip: IpAddr) -> Option<&SourceIp> {
+        self.ips.iter().find(|s| s.ip == ip)
+    }
+
+    /// Picks an IP for one connect and charges its `connects` bucket one
+    /// unit at `now_ns` (the budget's clock).
+    ///
+    /// Tries each IP once, starting after the last one picked, so connects
+    /// spread over the IPs: at most one charge attempt per IP.
+    ///
+    /// # Errors
+    /// [`Limited`]: no IP takes a connect now; of the refusals, the one
+    /// that frees first (`ready_at_ns`). Nothing was charged.
+    pub fn try_connect(
+        &mut self,
+        budget: &mut Budget,
+        now_ns: i64,
+    ) -> std::result::Result<Picked, Limited> {
+        let n = self.ips.len();
+        let mut soonest = Limited {
+            bucket: BucketId(0),
+            ready_at_ns: i64::MAX,
+            why: Why::Never,
+        };
+        for step in 0..n {
+            let index = (self.next + step) % n;
+            let src = self.ips[index];
+            match budget.try_charge(&[Charge::new(src.connects, 1)], Class::Normal, now_ns) {
+                Ok(ticket) => {
+                    self.next = (index + 1) % n;
+                    return Ok(Picked {
+                        ip: src.ip,
+                        index,
+                        ticket,
+                    });
+                }
+                Err(l) => {
+                    if step == 0 || l.ready_at_ns < soonest.ready_at_ns {
+                        soonest = l;
+                    }
+                }
+            }
+        }
+        Err(soonest)
     }
 }

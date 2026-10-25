@@ -6,9 +6,17 @@
 //! it found. [`AsciiText`] is a byte view for text the application trusts
 //! to be ASCII.
 //!
-//! Off by default on both. [`TextCheck::Ascii`] reads nothing and costs the
-//! same as [`TextCheck::None`]; [`TextCheck::AsciiChecked`] and
-//! [`TextCheck::Utf8`] read every byte once more. An HTTP response head has
+//! # The default: [`TextCheck::None`]
+//!
+//! | | |
+//! |---|---|
+//! | what it does | no check: the payload is delivered as the bytes that arrived, [`TextStatus::Unchecked`] |
+//! | what it does not promise | ASCII, or valid UTF-8: a WebSocket text message may break RFC 6455's UTF-8 rule and still be delivered |
+//! | why it is the default | it reads nothing, so it costs nothing on the hot path; a parser that works on `&[u8]` needs no check |
+//! | when you need a guarantee | [`TextCheck::Utf8`] (any character, RFC 6455) or [`TextCheck::AsciiChecked`] (every byte below 0x80): each reads every text byte once more |
+//!
+//! [`TextCheck::Ascii`] reads nothing either and costs the same as `None`:
+//! it is a promise about the source, not a check. An HTTP response head has
 //! its own rule ([`crate::NonAsciiHead`]).
 //!
 //! The one `unsafe` here is [`AsciiText::as_str_unchecked`], so this module
@@ -24,7 +32,11 @@ use core::ops::{Bound, Index, RangeBounds};
 /// [`TextCheck::None`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum TextCheck {
-    /// No check: [`crate::RxMeta::text`] is [`TextStatus::Unchecked`].
+    /// The default. No check: the payload is delivered as the bytes that
+    /// arrived, and [`crate::RxMeta::text`] is [`TextStatus::Unchecked`].
+    /// Nothing promises ASCII or valid UTF-8. It reads nothing, so it costs
+    /// nothing on the hot path; use [`TextCheck::Utf8`] or
+    /// [`TextCheck::AsciiChecked`] when the parser needs a guarantee.
     #[default]
     None,
     /// UTF-8 (what RFC 6455 requires of WebSocket text): invalid text closes
@@ -55,6 +67,15 @@ pub enum NonAscii {
     /// WebSocket only: drop the message ([`crate::WsStats::skipped`]); the
     /// connection stays up. Refused for HTTP bodies ([`crate::Error::Config`]):
     /// a dropped response would leave its request unanswered.
+    ///
+    /// Under [`crate::Interest::Stream`] each fragment is checked as it
+    /// arrives, so a message whose fragment `k` is not ASCII stops mid-way:
+    /// fragments `0..k` were already delivered through
+    /// [`crate::WsHandler::on_fragment`], no `fin` fragment follows, and
+    /// nothing else signals the drop (the message counts in
+    /// [`crate::WsStats::skipped`] once its last frame arrives). The next
+    /// message starts again at index 0: a handler that sees index 0 while
+    /// it holds a partial message should discard that partial message.
     Skip,
     /// Deliver it as plain bytes, flagged [`TextStatus::NotAscii`]: a stray
     /// byte never drops a feed.

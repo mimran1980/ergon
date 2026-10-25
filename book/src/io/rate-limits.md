@@ -56,6 +56,17 @@ reconnect then passes the configured gate. `outcome::refused_upgrade`
 holds a gate on HTTP 429; other statuses belong to the application adapter.
 See [WebSocket connect limits](websocket.md#connect-limits-and-the-servers-wait).
 
+Several source IPs, each with its own limits: put every IP's buckets in
+one budget and pick an IP per connect with `SourceIps`
+([Several source IPs](websocket.md#several-source-ips)).
+
+| `SourceIps` | Contract |
+|---|---|
+| `SourceIp { ip, connects, sends }` | One local address; `connects` is its own bucket (never shared), `sends` its request bucket, if the venue has one. |
+| `try_connect` | Charges one connect to the next IP with room, round-robin from the last pick; none has room: the `Limited` that frees first, nothing charged. |
+| `Reconnect::poll_sourced` | Every attempt through `try_connect`, the dial bound to the pick; a refused link waits for the soonest IP. |
+| `HttpClient` | One client per source IP: its target `with_source(ip)`, its `connect_gate` on that IP's `connects`, its requests charged to that IP's `sends`. |
+
 If the service counts automatic Pongs or other control frames, charge the
 change in `WsStats::auto_frames` with `Budget::force`.
 

@@ -11,7 +11,8 @@
 - Text is checked only when asked, and only on kept messages: UTF-8, or
   one cheaper ASCII pass ([Text checks](#text-checks)).
 - `RxMeta` carries the read's kernel receive timestamp and, where the NIC
-  has one, its hardware timestamp.
+  has one, its hardware timestamp; with `rx_read_timestamp`, also the time
+  the driver read the bytes (`rx_read_ns`).
 - Timers (Pings, timeouts, the close wait) run on the driver's deadline
   check (every 250 µs), never on the read or send path.
 
@@ -86,6 +87,9 @@ cargo run -p ergon-io --features webpki-roots --example websocket -- 20 recv-bus
 - Control frames inside a fragmented message are handled whatever the
   decision: a Ping is answered, a Close ends the message undelivered (a
   streamed message then has no `fin` fragment).
+- A streamed message also ends without `fin` under
+  `AsciiChecked(NonAscii::Skip)` when a later fragment is not ASCII; the
+  next message starts at `index` 0 ([Text checks](#text-checks)).
 - `max_message` holds for every decision, skipped and streamed messages
   included.
 
@@ -147,7 +151,14 @@ checked. The same `TextCheck` checks HTTP bodies
 ([`body_check`](http-client.md#rules)), where `Skip` is
 refused.
 
-A parser that works on `&[u8]` needs no mode at all: leave `None`.
+`None` is the default:
+
+| | |
+|---|---|
+| what it does | no check: the payload is delivered as the bytes that arrived, `meta.text` `Unchecked` |
+| what it does not promise | ASCII, or valid UTF-8: a text message that breaks RFC 6455's UTF-8 rule is still delivered |
+| why it is the default | it reads nothing, so the hot path pays nothing; a parser that works on `&[u8]` needs no check |
+| when you need a guarantee | `Utf8` (any character) or `AsciiChecked` (every byte below 0x80); each reads every text byte once more |
 
 | choose | when | reads the payload | `meta.text` | you get |
 |---|---|---|---|---|
@@ -184,8 +195,15 @@ undefined behaviour (debug builds assert; release builds read nothing).
 - `Stream` checks each fragment: `meta.text` is that fragment's status.
   Under `Utf8` a character cut between fragments is carried across (at
   most 3 bytes); invalid text closes before the fragment holding it is
-  delivered. Under `AsciiChecked(Skip)` the message ends at the first non-ASCII
-  fragment, with no `fin` fragment.
+  delivered.
+- `Stream` with `AsciiChecked(NonAscii::Skip)`: a message whose fragment
+  `k` is not ASCII stops mid-way. Fragments `0..k` were already delivered
+  through `on_fragment`, no `fin` fragment follows, and no callback says
+  the message was dropped: it counts in `stats().skipped` once its last
+  frame arrives. The next message starts again at `index` 0, so a handler
+  that sees index 0 while it holds a partial message discards it. Pinned
+  by `a_streamed_non_ascii_fragment_ends_the_message_without_fin`
+  (`io/tests/ws_stream.rs`).
 - RFC 6455 §8.1 requires invalid UTF-8 to fail the connection. A skipped
   message is never read, so invalid text in it does not close the
   connection. This relaxation is deliberate.
@@ -431,6 +449,35 @@ A refused handshake, in `on_closed`:
   adapter, which can halt a bucket with `Budget::banned`.
 - Give the HTTP pool a bucket of its own ([HTTP client](http-client.md)):
   venues count WebSocket connects.
+
+#### Several source IPs
+
+When the host has several IPs and the venue limits connects (and requests)
+per IP, give each IP its own buckets and let `SourceIps` pick one per
+connect:
+
+```rust,ignore
+{{#include ../../../io/tests/reconnect.rs:sourced}}
+```
+
+```rust,ignore
+{{#include ../../../io/tests/reconnect.rs:sourced_poll}}
+```
+*(From `io/tests/reconnect.rs`.)*
+
+| what | how |
+|---|---|
+| pick | `SourceIps::try_connect` charges one connect to the next IP with room, round-robin; a held or full IP is passed over |
+| none has room | refused with the soonest `Limited`: under `poll_sourced` the link waits for it (not a failed attempt), at most `max_ms` |
+| bind | the dial connects from the pick (`BindSource`, `Target::source`); on Linux with `IP_BIND_ADDRESS_NO_PORT`, so binding uses up no ephemeral ports |
+| requests | `Reconnect::source(link)` names the IP; charge its `SourceIp::sends` bucket with the account's |
+| without `Reconnect` | `try_connect`, then `Target::with_source(picked.ip)`; refund `picked.ticket` if the connect never went out |
+
+- The source must be an address of this host, of the destination's
+  family: the other family is `Error::Config` before any connect; an
+  address the host does not have fails the connect (`AddrNotAvailable`).
+- A dial that cannot be built or started still spends its connect unit:
+  the count errs on the safe side.
 
 ## Sending
 

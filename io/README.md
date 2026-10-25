@@ -179,6 +179,9 @@ The full table, the evidence and the node settings: the book's
 - Send again only what did not run, inside its deadline
   (`Budget::try_resend`); look up an unknown order by its client order id.
 - One sending process per account and IP: the budget cannot see others.
+- Several source IPs, each with its own limits: `limit::SourceIps` picks an
+  IP with room for each connect and `Target::with_source` binds it;
+  `Reconnect::poll_sourced` does both for every link.
 - Configure limits and classify application-specific errors in your adapter.
   The generic mechanisms are described in the book's
   [rate limits and errors](https://mimran1980.github.io/ergon/io/rate-limits.html).

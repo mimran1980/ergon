@@ -4,6 +4,24 @@
 
 ### Added
 
+- `ergon-io`: source-IP binding. `Target::source` (`with_source`) binds
+  the socket to a local address before it connects, on every dial,
+  `Driver::connect`, `connect_background`, `HttpClient` and libcurl
+  (`CURLOPT_INTERFACE`); on Linux with `IP_BIND_ADDRESS_NO_PORT`. A
+  source of the other address family is `Error::Config` before any
+  connect.
+- `ergon-io`: `limit::SourceIps`, several source IPs each with its own
+  buckets in one `Budget`. `try_connect` charges one connect to the next
+  IP with room, round-robin, or refuses with the soonest `Limited`.
+  `Reconnect::poll_sourced` / `poll_at_sourced` put every attempt through
+  it and bind the dial to the pick (`net::BindSource`, implemented by
+  `WsDial`, `HttpDial`, `AnyDial`); `Reconnect::source` names the IP.
+  `WsDial::target` and `HttpDial::target` return the dial's target.
+- `ergon-io`: `RxMeta::rx_read_ns`, ergon-io's own receive time
+  (`CLOCK_REALTIME`, the domain of `rx_sw_ns`), read right after each read
+  returns data when `Config::rx_read_timestamp` (key `rx_read_timestamp`)
+  is on. Off by default: no clock read, the field is 0.
+
 - `ergon-io` (repo only): a two-sided mio parity gate,
   `io/benches/parity/mio_parity.rs` (`just io-parity`, CI on Linux x86_64
   and aarch64, lane `io-parity`). Structural tests assert from the
@@ -348,6 +366,18 @@
   Unquoted `schedFifo: off` no longer fails at start. The chart schema
   accepts a boolean, `0`/`1` or those words for both fields. Mode words are
   now case-insensitive in both.
+- `ergon-io` (Breaking): `Target` has a new public field `source`,
+  `RxMeta` a new field `rx_read_ns` and `Config` a new field
+  `rx_read_timestamp`, so struct literals that name every field need
+  them. `net::connect_nonblocking` takes the source as a second argument.
+- `ergon-io` docs: `TextCheck::None`, the default for `WsOptions::text_check`
+  and `HttpOptions::body_check`, is documented as what it is: no check, the
+  payload delivered as bytes with no ASCII or UTF-8 promise, the default
+  because it reads nothing. Under `Interest::Stream` with
+  `AsciiChecked(NonAscii::Skip)`, a message whose later fragment is not
+  ASCII stops mid-way with no `fin` fragment and no callback, and the next
+  message starts at index 0; a test pins it.
+
 - `ergon-shared-cpus` lab (repo only): one boot line serves one shared
   CPU (e2e, bench) and two (scale): exclusive CPUs 3 to the last,
   `reservedSystemCPUs: 0-2`, so the bench's spin moves from CPU 2 to 3 and

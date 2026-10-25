@@ -29,6 +29,15 @@ fn keys_override_defaults() -> R {
 // ANCHOR_END: config_strings
 
 #[test]
+fn rx_read_timestamp_is_off_by_default_and_parses() -> R {
+    assert!(!Config::new(Backend::RecvBusy).rx_read_timestamp);
+    assert!(Config::parse("recv-busy, rx_read_timestamp=true")?.rx_read_timestamp);
+    assert!(!Config::parse("recv-busy, rx_read_timestamp=false")?.rx_read_timestamp);
+    assert!(Config::parse("recv-busy, rx_read_timestamp=yes").is_err());
+    Ok(())
+}
+
+#[test]
 fn busy_poll_preference_and_budget_parse() -> R {
     let d = Config::new(Backend::RecvBusy);
     assert!(!d.prefer_busy_poll);

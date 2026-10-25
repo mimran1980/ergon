@@ -278,6 +278,8 @@ pub struct CurlClient {
     active: Vec<(u64, Easy2Handle<Collector>)>,
     base: String,
     resolve: Option<String>,
+    /// `Target::source` as `CURLOPT_INTERFACE` (`host!<ip>`).
+    interface: Option<String>,
     fixed: Vec<String>,
     ca_file: Option<String>,
     timeout: Duration,
@@ -375,6 +377,7 @@ impl CurlClient {
             resolve: target
                 .addr
                 .map(|a| format!("{}:{}:{}", target.host, target.port, a.ip())),
+            interface: target.source.map(|ip| format!("host!{ip}")),
             fixed: target
                 .headers
                 .iter()
@@ -431,6 +434,9 @@ impl CurlClient {
             let mut l = List::new();
             l.append(r).map_err(map)?;
             e.resolve(l).map_err(map)?;
+        }
+        if let Some(i) = &self.interface {
+            e.interface(i).map_err(map)?;
         }
         if let Some(ca) = &self.ca_file {
             e.cainfo(ca).map_err(map)?;

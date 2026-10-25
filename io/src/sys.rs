@@ -24,6 +24,24 @@ pub fn enable_rx_timestamps(fd: RawFd) -> io::Result<()> {
     setsockopt_int(fd, libc::SOL_SOCKET, libc::SO_TIMESTAMPING, to_int(flags)?)
 }
 
+/// Sets `IP_BIND_ADDRESS_NO_PORT` (Linux 4.2+): a socket bound to a source
+/// address with port 0 gets its port at connect, per destination, so
+/// binding uses up no ephemeral ports.
+///
+/// # Errors
+/// `setsockopt` fails.
+pub fn set_bind_address_no_port(fd: RawFd) -> io::Result<()> {
+    setsockopt_int(fd, libc::IPPROTO_IP, libc::IP_BIND_ADDRESS_NO_PORT, 1)
+}
+
+/// Whether `IP_BIND_ADDRESS_NO_PORT` is set on `fd`.
+///
+/// # Errors
+/// `getsockopt` fails.
+pub fn bind_address_no_port(fd: RawFd) -> io::Result<bool> {
+    Ok(getsockopt_int(fd, libc::IPPROTO_IP, libc::IP_BIND_ADDRESS_NO_PORT)? != 0)
+}
+
 /// Sets `SO_BUSY_POLL` (microseconds; no privilege needed).
 ///
 /// # Errors

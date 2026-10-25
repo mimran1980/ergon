@@ -4,7 +4,10 @@
 //! driver on every backend (Linux).
 #![allow(missing_docs)]
 
-use ergon_io::limit::{BucketId, BucketSpec, Budget, Charge, Class};
+use std::net::IpAddr;
+
+use ergon_io::limit::{BucketId, BucketSpec, Budget, Charge, Class, SourceIp, SourceIps};
+use ergon_io::net::BindSource;
 use ergon_io::outcome::{self, Now, Verdict};
 use ergon_io::reconnect::{Closed, Connector, LinkState, Opened, Reconnect, Retry};
 use ergon_io::{ConnId, Error};
@@ -694,6 +697,112 @@ fn a_refused_upgrade_holds_every_link_on_its_gate() -> R {
     assert!(matches!(rc.state(b), Some(LinkState::Connecting(_))));
     let st = budget.stats(connects, now)?;
     assert_eq!((st.throttles, st.bans, st.halted), (1, 1, false));
+    Ok(())
+}
+
+// ---- source IPs: several IPs, each with its own connect budget -------------
+
+/// A stand-in dial that records the source IP it was bound to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SrcDial {
+    n: u32,
+    source: Option<IpAddr>,
+}
+
+impl BindSource for SrcDial {
+    fn bind_source(&mut self, ip: IpAddr) {
+        self.source = Some(ip);
+    }
+}
+
+#[derive(Default)]
+struct SrcFake {
+    started: Vec<SrcDial>,
+}
+
+impl Connector<SrcDial> for SrcFake {
+    fn start(&mut self, dial: SrcDial, _: bool) -> ergon_io::Result<ConnId> {
+        let n = u32::try_from(self.started.len()).map_err(|_| Error::Busy("too many"))?;
+        self.started.push(dial);
+        Ok(ConnId::from_parts(n, 1))
+    }
+}
+
+#[test]
+fn sourced_links_bind_an_ip_with_budget_and_wait_when_none_has() -> R {
+    // ANCHOR: sourced
+    // Two source IPs, each allowed 1 connect a second (an illustrative
+    // service limit): each IP has its own bucket.
+    let ips: [IpAddr; 2] = ["10.0.0.1".parse()?, "10.0.0.2".parse()?];
+    let mut budget = Budget::new(vec![
+        BucketSpec::rolling("connects 10.0.0.1", 1, 1_000, 10),
+        BucketSpec::rolling("connects 10.0.0.2", 1, 1_000, 10),
+    ])?;
+    let mut sources = Vec::new();
+    for ip in ips {
+        let connects = budget.id(&format!("connects {ip}")).ok_or("no bucket")?;
+        sources.push(SourceIp {
+            ip,
+            connects,
+            sends: None,
+        });
+    }
+    let mut pool = SourceIps::new(sources)?;
+    // ANCHOR_END: sourced
+    let mut rc = Reconnect::new(exact())?;
+    let mut f = SrcFake::default();
+    let links: Vec<_> = (0..4)
+        .map(|n| rc.add(move || Ok(SrcDial { n, source: None })))
+        .collect();
+    // ANCHOR: sourced_poll
+    // Once per loop pass; `now` is the budget's clock, read once.
+    let now = 0;
+    let started = rc.poll_at_sourced(&mut f, now, &mut pool, &mut budget, now);
+    // ANCHOR_END: sourced_poll
+    assert_eq!(started, 2, "one per IP");
+    let bound: Vec<_> = f.started.iter().map(|d| (d.n, d.source)).collect();
+    assert_eq!(bound, [(0, Some(ips[0])), (1, Some(ips[1]))]);
+    assert_eq!(rc.source(links[0]), Some(ips[0]));
+    assert_eq!(rc.source(links[1]), Some(ips[1]));
+    assert_eq!(rc.source(links[2]), None, "not started");
+    // The other two wait for the soonest IP, with no failed attempt.
+    for &l in &links[2..] {
+        let Some(LinkState::Waiting { at_ns, attempt }) = rc.state(l) else {
+            return Err(format!("{l:?} not waiting").into());
+        };
+        assert_eq!(attempt, 0, "a refusal is not a failed attempt");
+        assert!(at_ns > now, "{l:?} waits");
+    }
+    let mut t = now;
+    while f.started.len() < 4 {
+        t += MS;
+        assert!(t < 3_000 * MS, "the waiting links never started");
+        rc.poll_at_sourced(&mut f, t, &mut pool, &mut budget, t);
+    }
+    assert!(
+        t >= 1_000 * MS,
+        "a second connect went out within the window: {t}"
+    );
+    let mut late: Vec<_> = f.started[2..].iter().map(|d| d.source).collect();
+    late.sort_unstable();
+    assert_eq!(late, [Some(ips[0]), Some(ips[1])]);
+    for ip in ips {
+        let connects = pool.get(ip).ok_or("no ip")?.connects;
+        assert_eq!(budget.stats(connects, t)?.charged, 2, "{ip}");
+    }
+    // A link that closes reconnects through the pool again.
+    let id = ConnId::from_parts(0, 1);
+    rc.on_open_at(id, t);
+    rc.on_closed_at(id, t);
+    let before = f.started.len();
+    let mut t2 = t;
+    while f.started.len() == before {
+        t2 += MS;
+        assert!(t2 < t + 5_000 * MS, "the reconnect never started");
+        rc.poll_at_sourced(&mut f, t2, &mut pool, &mut budget, t2);
+    }
+    assert!(f.started[before].source.is_some());
+    assert_eq!(rc.source(links[0]), f.started[before].source);
     Ok(())
 }
 

@@ -78,6 +78,10 @@ use `Target::new("api.example.com", 443, "")` and
   `poll_gated`; `poll` then refuses. A refusal does not grow the backoff.
   Give the pool a `Budget` bucket of its own: venues' connect limits count
   WebSocket connects.
+- **A source IP:** `Target::with_source(ip)` makes every pool connection
+  come from `ip` (libcurl too, through `CURLOPT_INTERFACE`). Several IPs,
+  each with its own limits: one `HttpClient` per IP
+  ([Rate limits](rate-limits.md#connects-and-automatic-frames)).
 - **`buf_size`** (1 MiB) is each native connection's receive buffer: it
   must hold the largest response.
 - **Responses:** `Content-Length` or chunked bodies. The body in
@@ -172,7 +176,10 @@ request, ns. Native macOS, M1 Pro, loaded host, no pinning
 
 ## Body checks
 
-A parser that works on `&[u8]` needs no mode at all: leave `None`.
+`None` is the default: no check, the body is delivered as the bytes that
+arrived, with no ASCII or UTF-8 promise. It reads nothing, so the hot path
+pays nothing, and a parser that works on `&[u8]` needs no check. Use
+`Utf8` or `AsciiChecked` when you need a guarantee.
 
 | `body_check` | when | reads the body | `meta.text` | a failing body |
 |---|---|---|---|---|

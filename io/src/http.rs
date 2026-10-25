@@ -363,10 +363,13 @@ pub struct HttpOptions {
     pub buf_size: usize,
     /// What a response head with a non-ASCII byte does.
     pub non_ascii_head: NonAsciiHead,
-    /// The check on every response body ([`TextCheck::None`] by default:
-    /// HTTP has no text rule for bodies); [`RxMeta::text`] says what it
-    /// found. [`NonAscii::Skip`] is refused. [`TextCheck::Ascii`] reads
-    /// nothing.
+    /// The check on every response body; [`RxMeta::text`] says what it
+    /// found. [`TextCheck::None`] by default: no check, the body is
+    /// delivered as bytes ([`crate::TextStatus::Unchecked`]) with no ASCII
+    /// or UTF-8 promise, and nothing is read, so the hot path pays nothing
+    /// (HTTP has no text rule for bodies). Use [`TextCheck::Utf8`] or
+    /// [`TextCheck::AsciiChecked`] when the parser needs a guarantee.
+    /// [`NonAscii::Skip`] is refused. [`TextCheck::Ascii`] reads nothing.
     pub body_check: TextCheck,
 }
 
@@ -1643,7 +1646,7 @@ impl DialIo for HttpDial {
     }
 
     fn start(&mut self, addr: SocketAddr) -> Result<()> {
-        self.tls.start(addr)
+        self.tls.start(addr, self.target.source)
     }
 
     fn step(&mut self) -> Result<Option<HttpConn>> {
@@ -1677,7 +1680,20 @@ impl DialIo for HttpDial {
     }
 }
 
+impl crate::net::BindSource for HttpDial {
+    fn bind_source(&mut self, ip: std::net::IpAddr) {
+        self.target.source = Some(ip);
+    }
+}
+
 impl HttpDial {
+    /// Where it connects: the target it was built with, its source set by
+    /// [`crate::net::BindSource`] if that was called.
+    #[must_use]
+    pub const fn target(&self) -> &Target {
+        &self.target
+    }
+
     /// Connects and runs the TLS handshake, waiting until done: a convenience
     /// for tools and tests. In a busy-spin loop use `Driver::connect`. Without
     /// [`Target::addr`] the host is resolved with the system resolver (blocking).

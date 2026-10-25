@@ -5,12 +5,13 @@
 //! the halt after a ban, and the re-send-within-deadline helper.
 #![allow(missing_docs)]
 
+use std::net::IpAddr;
 use std::num::NonZeroU64;
 
 use ergon_io::Error;
 use ergon_io::limit::{
-    BucketId, BucketSpec, Budget, Charge, Class, Limited, MAX_CHARGES, Model, Rate, Resend, Ticket,
-    Why,
+    BucketId, BucketSpec, Budget, Charge, Class, Limited, MAX_CHARGES, Model, Rate, Resend,
+    SourceIp, SourceIps, Ticket, Why,
 };
 
 type R<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -960,5 +961,162 @@ fn limited_is_an_error_with_a_message() -> R {
     };
     let e: Box<dyn std::error::Error> = Box::new(l);
     assert!(e.to_string().contains("full"), "{e}");
+    Ok(())
+}
+
+// ---- SourceIps: several source IPs, each with its own budget --------------
+
+/// Three source IPs, each with its own connect bucket (2 a second) and its
+/// own request bucket, in one budget with the account's bucket.
+fn three_ips() -> R<(Budget, SourceIps, [IpAddr; 3])> {
+    let ips: [IpAddr; 3] = [
+        "10.0.0.1".parse()?,
+        "10.0.0.2".parse()?,
+        "10.0.0.3".parse()?,
+    ];
+    let mut specs = vec![BucketSpec::rolling("account-orders", 100, 10_000, 10)];
+    for ip in ips {
+        specs.push(BucketSpec::rolling(format!("connects {ip}"), 2, 1_000, 10));
+        specs.push(BucketSpec::rolling(
+            format!("weight {ip}"),
+            6_000,
+            60_000,
+            60,
+        ));
+    }
+    let budget = Budget::new(specs)?;
+    let mut sources = Vec::new();
+    for ip in ips {
+        let id = |name: String| budget.id(&name).ok_or("no bucket");
+        sources.push(SourceIp {
+            ip,
+            connects: id(format!("connects {ip}"))?,
+            sends: Some(id(format!("weight {ip}"))?),
+        });
+    }
+    Ok((budget, SourceIps::new(sources)?, ips))
+}
+
+/// Connects go round the IPs, each charged to its own bucket: six pass at
+/// once (two per IP), the seventh is refused until the soonest IP frees,
+/// and then that IP passes.
+#[test]
+fn source_ips_spread_connects_each_within_its_own_budget() -> R {
+    let (mut budget, mut pool, ips) = three_ips()?;
+    let mut picked = Vec::new();
+    for _ in 0..6 {
+        let p = pool
+            .try_connect(&mut budget, T0)
+            .map_err(|l| format!("refused: {l}"))?;
+        assert_eq!(p.ticket.parts().len(), 1);
+        assert_eq!(
+            Some(p.ticket.parts()[0].bucket),
+            pool.get(p.ip).map(|s| s.connects)
+        );
+        picked.push(p.ip);
+    }
+    assert_eq!(picked, [ips[0], ips[1], ips[2], ips[0], ips[1], ips[2]]);
+    for ip in ips {
+        let s = pool.get(ip).ok_or("no ip")?;
+        assert_eq!(budget.stats(s.connects, T0)?.used, 2, "{ip}");
+    }
+    let Err(l) = pool.try_connect(&mut budget, T0) else {
+        return Err("a seventh connect passed".into());
+    };
+    assert_eq!(l.why, Why::Full);
+    assert!(l.ready_at_ns > T0, "{l}");
+    // Each IP was asked once and refused; nothing was charged.
+    for ip in ips {
+        let s = pool.get(ip).ok_or("no ip")?;
+        assert_eq!(budget.stats(s.connects, T0)?.used, 2, "{ip}");
+    }
+    let p = pool
+        .try_connect(&mut budget, l.ready_at_ns)
+        .map_err(|e| format!("still refused at ready_at_ns: {e}"))?;
+    assert!(ips.contains(&p.ip));
+    Ok(())
+}
+
+/// A throttled IP is passed over; the others keep connecting. A connect
+/// that never went out is refunded with its ticket.
+#[test]
+fn a_held_source_ip_is_passed_over_and_a_refund_gives_back_its_connect() -> R {
+    let (mut budget, mut pool, ips) = three_ips()?;
+    let held = pool.get(ips[1]).ok_or("no ip")?.connects;
+    budget.throttled(held, Some(5_000), T0)?;
+    let mut picked = Vec::new();
+    for _ in 0..4 {
+        let p = pool
+            .try_connect(&mut budget, T0)
+            .map_err(|l| l.to_string())?;
+        picked.push(p.ip);
+    }
+    assert_eq!(picked, [ips[0], ips[2], ips[0], ips[2]]);
+    let Err(l) = pool.try_connect(&mut budget, T0) else {
+        return Err("a fifth connect passed".into());
+    };
+    // The soonest is a full IP freeing in about a second, not the held one.
+    assert_eq!(l.why, Why::Full);
+    assert!(l.ready_at_ns < T0 + 5_000 * MS, "{l}");
+
+    let (mut budget, mut pool, _) = three_ips()?;
+    let p = pool
+        .try_connect(&mut budget, T0)
+        .map_err(|l| l.to_string())?;
+    let connects = pool.get(p.ip).ok_or("no ip")?.connects;
+    assert_eq!(budget.stats(connects, T0)?.used, 1);
+    budget.refund(&p.ticket, T0)?;
+    assert_eq!(budget.stats(connects, T0)?.used, 0);
+    Ok(())
+}
+
+/// The IP a connection is bound to names its request bucket: requests are
+/// charged to that IP's weight and the account's count together.
+#[test]
+fn a_request_charges_its_connections_source_ip() -> R {
+    let (mut budget, mut pool, ips) = three_ips()?;
+    let orders = budget.id("account-orders").ok_or("no bucket")?;
+    let p = pool
+        .try_connect(&mut budget, T0)
+        .map_err(|l| l.to_string())?;
+    let weight = pool
+        .get(p.ip)
+        .and_then(|s| s.sends)
+        .ok_or("no sends bucket")?;
+    budget
+        .try_charge(&[c(weight, 5), c(orders, 1)], Class::Normal, T0)
+        .map_err(|l| l.to_string())?;
+    assert_eq!(budget.stats(weight, T0)?.used, 5);
+    for other in &ips[1..] {
+        let w = pool.get(*other).and_then(|s| s.sends).ok_or("no sends")?;
+        assert_eq!(budget.stats(w, T0)?.used, 0, "{other}");
+    }
+    assert_eq!(pool.ips().len(), 3);
+    Ok(())
+}
+
+#[test]
+fn source_ips_refuse_a_bad_list() -> R {
+    let (budget, _, _) = three_ips()?;
+    let a = budget.id("connects 10.0.0.1").ok_or("no bucket")?;
+    let b = budget.id("connects 10.0.0.2").ok_or("no bucket")?;
+    let ip1: IpAddr = "10.0.0.1".parse()?;
+    let ip2: IpAddr = "10.0.0.2".parse()?;
+    let src = |ip, connects| SourceIp {
+        ip,
+        connects,
+        sends: None,
+    };
+    for (list, why) in [
+        (vec![], "no source IPs"),
+        (vec![src(ip1, a), src(ip1, b)], "listed twice"),
+        (vec![src(ip1, a), src(ip2, a)], "share a connects bucket"),
+        (vec![src("0.0.0.0".parse()?, a)], "unspecified"),
+    ] {
+        match SourceIps::new(list) {
+            Err(Error::Config(m)) => assert!(m.contains(why), "{why}: {m}"),
+            other => return Err(format!("{why}: {:?}", other.err()).into()),
+        }
+    }
     Ok(())
 }
