@@ -1,27 +1,22 @@
 # Release gate
 
-## Current release: 0.1.1
+## Current release: 0.1.2
 
 | what | value |
 |---|---|
-| image | `ghcr.io/mimran1980/ergon-shared-cpus:0.1.1` (and `:latest`) |
-| image digest | `sha256:69893e0c23ec6c3656053c0d6c4a06c676e33b726d56f362a30ce760908796c0` |
-| chart | `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.1` |
-| chart digest | `sha256:77a65305a45ea1b376ce80f9b1d5234b9061f4066a8c5baf5efdb892854fc0d8` |
-| source | `515846b0`, Actions run [39853440732](https://github.com/mimran1980/ergon/actions/runs/39853440732) |
-| `--version` (amd64, arm64) | `ergon-shared-cpus 0.1.1 515846b0201b5fd70a7a6cf3a88839b6180fa9c1 nri=v0.12.3` |
-| checked | `helm template` of the OCI chart renders that image |
-| not run | kind install of 0.1.1 |
-| pending publish | **0.1.2, image and chart.** Image: `--kubelet-config-dir` merges the kubelet's drop-in directory (EKS AL2023 `config.json.d`). Chart: `hostContract.kubeletConfig`, `sys` and `proc` on by default; `hostContract.kubeletConfigDir` (off); `appVersion` 0.1.2. The kubeadm install command works on either chart; the EKS AL2023 one needs chart 0.1.2 |
-| verified on EKS | AL2023 `c8g.xlarge` spot, Kubernetes 1.36, kernel 6.18.54, containerd 2.3.5, runc 1.4.3, this tree's chart and image 0.1.2 (ECR, not GHCR), runs `eks-nri-20261025-070515` and `eks-nri-20261025-082023` ([`lab/results/`](lab/results/)): the NRI socket, nodeadm's TOML merge, the kubelet drop-in merge, `/opt` writable, `system-node-critical` in `ergon-system`, the device plugin, the quiet-CPU boot unit. Hot pods were refused while a late ENI's IRQs sat on the shared CPU (fail closed, as designed) |
+| image | `ghcr.io/mimran1980/ergon-shared-cpus:0.1.2` (and `:latest`) |
+| image digest | index `sha256:33ddd06f6b2e58bae6a2bf13092366482b5a292bc50a01223b0b383b66026da6` (amd64 `sha256:63946a9a9c11ec98be252778c16f9e7020186b1a5400ee711251b6510fb748a9`, arm64 `sha256:0d341b3cc0f9c125708120e216e12b61ed7827c74d24851c51afec10c728e102`); the index carries the `org.opencontainers.image.description` annotation |
+| chart | `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.2`, appVersion `0.1.2` |
+| chart digest | `sha256:145054055d604e8a866bf86556cd3a1b46b92b1b6e3347183b8033dd7112b14d` |
+| source | `85098f8b`, Actions run [40173324072](https://github.com/mimran1980/ergon/actions/runs/40173324072) (unit, vet, static build, helm lint and template, push) |
+| `--version` (amd64, arm64) | `ergon-shared-cpus 0.1.2 85098f8b16e17d80747c73d6069c1ec07d70496a nri=v0.12.3` |
+| checked | `helm template` of the OCI chart renders image `:0.1.2` with `--kubelet-config`; the kind e2e (`test/e2e.sh`) at that source: 18 steps, 0 failed (2026-10-25) |
+| verified on EKS | AL2023 `c8g.xlarge` spot, Kubernetes 1.36, kernel 6.18.54, containerd 2.3.5, runc 1.4.3, the same plugin and chart source as published 0.1.2 (`85098f8b`), built by the lab and pushed to the run's ECR (not the GHCR image), runs `eks-nri-20261025-070515` and `eks-nri-20261025-082023` ([`lab/results/`](lab/results/)): the NRI socket, nodeadm's TOML merge, the kubelet drop-in merge, `/opt` writable, `system-node-critical` in `ergon-system`, the device plugin, the quiet-CPU boot unit. Hot pods were refused while a late ENI's IRQs sat on the shared CPU (fail closed, as designed; `create refused ... reason node-contract` in the plugin log) |
 | measured | the hot thread with helpers on the shared CPU (the checkout, on kind on one Azure Cobalt VM, THP `never` and the fair server off on the isolated CPUs): p50 0.02 µs, p99.99 0.03 µs, max 4.81 to 5.52 µs, 0 involuntary switches a 60 s rep; the hypervisor's floor 3.5 to 5.5 µs. Shared-CPU scaling as designed ([BENCHMARKS.md](BENCHMARKS.md)) |
 | measured on EKS | a helper's wake-up wait on the shared CPU, the 1 ns timer slack, the pin's cost ([BENCHMARKS.md](BENCHMARKS.md#eks-c8gxlarge-run-eks-nri-20261025-082023)) |
 
-The 0.1.1 package's install NOTES say the chart is not published. It is
-published; ignore that line.
-
-The EKS lane is verified for 0.1.2 (not yet published). Do not invent
-the figures of the benchmarks still open below.
+The EKS lane is verified for 0.1.2. Do not invent the figures of the
+benchmarks still open below.
 
 ## 1. Code defects
 
@@ -54,7 +49,7 @@ adjustment in, as the runtime does), not on the create request.
 | unit, vet, static amd64+arm64 | `scripts/check.sh --local` | green 2026-10-18 over the whole tree |
 | cgroup kernel lane (real cgroup v2, partition a real kernel will accept) | `scripts/check-cgroup.sh` | green 2026-10-18 over the whole tree |
 | kind e2e, 18 steps | `test/e2e.sh` | green 2026-10-18, `fails: 0` |
-| EKS | `md-dpdk/benches/cloud/aws/eks-nri.sh` (phase EKS lane) | **verified** on both nodes of runs `eks-nri-20261025-070515` and `eks-nri-20261025-082023` ([`lab/results/`](lab/results/)): NRI socket (`ergon_shared_cpus_nri_connected 1`), nodeadm TOML merge (`containerd config dump` shows `default_validator enable = true`), kubelet drop-in merge (`--config-dir` on the kubelet, `ergon_shared_cpus_contract_ok 1`), `/opt/ergon/bin/ergon-cpus` installed, `system-node-critical` Running in `ergon-system`, device plugin registered, `ergon-quiet-cpus.service` active with `--check` rc 0 |
+| EKS | `md-dpdk/benches/cloud/aws/eks-nri.sh` (phase EKS lane) | **verified** on both nodes of runs `eks-nri-20261025-070515` and `eks-nri-20261025-082023` ([`lab/results/`](lab/results/)): NRI socket (`ergon_shared_cpus_nri_connected 1`), nodeadm TOML merge (`containerd config dump` shows `default_validator enable = true`), kubelet drop-in merge (`--config-dir` on the kubelet; `ergon_shared_cpus_contract_ok 1` on node b, and on node a, where it was 0, a node-contract warning naming only the late ENI's IRQs, which the plugin checks only after the merged kubelet config passes), `/opt/ergon/bin/ergon-cpus` installed, `system-node-critical` Running in `ergon-system`, device plugin registered, `ergon-quiet-cpus.service` active with `--check` rc 0 |
 | AKS | — | not supported (no NRI enablement, no `reservedSystemCPUs`) |
 | CRI-O | — | not supported; use its own `shared_cpuset` |
 | Bottlerocket | — | not verified. runc exec of a hook binary from a pod-written host path is unproven on a read-only root with SELinux |
@@ -128,8 +123,7 @@ The benchmark rows still open block a tag. Order for a tag:
    chart on a test cluster.
 
 The workflow packages the chart at the `tag` input as both version and
-appVersion and pushes the image at that tag. 0.1.2 changes both, so it
-publishes with `tag: 0.1.2` unchanged.
+appVersion and pushes the image at that tag.
 
 Image and chart names, in one place:
 

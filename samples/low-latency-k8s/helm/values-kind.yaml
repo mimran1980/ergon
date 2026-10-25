@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # ergon-shared-cpus for one kind node (node/kind-ll.yaml) or a kubeadm node:
 # the kubelet reserves CPUs 0-1, CPU 0 takes the IRQs, CPU 1 is the shared
-# CPU every helper runs on. Works with chart 0.1.1 (GHCR) and 0.1.2 (git).
+# CPU every helper runs on. Chart 0.1.2.
 #   driver 500 + ping 100 + pong 100 = 700 of the 1000 shared millicpus.
 config:
   sharedCpus: "1"

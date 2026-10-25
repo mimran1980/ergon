@@ -49,7 +49,7 @@
   `Encoding::max_value_declared` (whether a bound came from the schema or is
   the SBE default) and `Encoding::referenced_type` (the alias a primitive
   field refers to).
-- `ergon-shared-cpus` 0.1.2 (image and chart, not yet published): the
+- `ergon-shared-cpus` 0.1.2 (image and chart): the
   `--kubelet-config-dir` flag and chart value `hostContract.kubeletConfigDir`
   (off by default; a read-only `Directory` mount; needs
   `hostContract.kubeletConfig`). The hot-pod node check merges the
@@ -61,7 +61,7 @@
   `config.json.d/40-nodeadm.conf`) install with
   `--set hostContract.kubeletConfig.path=/etc/kubernetes/kubelet/config.json
   --set hostContract.kubeletConfigDir.enabled=true`. Not verified on EKS.
-- `ergon-shared-cpus` 0.1.2 (not yet published): the hot-pod NIC check reads
+- `ergon-shared-cpus` 0.1.2: the hot-pod NIC check reads
   a Hyper-V synthetic NIC (Azure `hv_netvsc`, which has no PCI interrupt)
   by its VMBus channels: each `device/channels/<relid>/cpu` must be an IRQ
   CPU, and an unreadable one refuses. Before, every hot pod on an Azure VM
@@ -564,6 +564,14 @@
   (as `WsConn`'s is), so the first requests take no page fault. Header
   checks are faster (a token table, CR/LF/NUL scanned eight bytes at a
   time); what they accept is unchanged.
+- `ergon-shared-cpus` 0.1.2 is on GHCR. Image
+  `ghcr.io/mimran1980/ergon-shared-cpus:0.1.2` and `:latest` (index digest
+  `sha256:33ddd06f6b2e58bae6a2bf13092366482b5a292bc50a01223b0b383b66026da6`).
+  Chart version `0.1.2` (appVersion `0.1.2`) digest
+  `sha256:145054055d604e8a866bf86556cd3a1b46b92b1b6e3347183b8033dd7112b14d`.
+  `--version` on linux/amd64 and linux/arm64 printed
+  `ergon-shared-cpus 0.1.2 85098f8b16e17d80747c73d6069c1ec07d70496a nri=v0.12.3`.
+  Actions run 40173324072. The kind e2e passed at that source.
 
 ### Removed
 

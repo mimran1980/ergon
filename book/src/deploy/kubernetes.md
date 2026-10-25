@@ -172,7 +172,7 @@ fractional sidecar can run on the reserved CPUs. `strict-cpu-reservation:
 when nothing but the system (and threads you pin there yourself) may use
 them: it breaks anything that needs the shared pool by default, such as a
 fractional sidecar in a latency pod or ergon-stack's host-stats thread. The
-shared-CPU NRI plugin (`ghcr.io/mimran1980/ergon-shared-cpus:0.1.1`; chart `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.1`)
+shared-CPU NRI plugin (`ghcr.io/mimran1980/ergon-shared-cpus:0.1.2`; chart `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.2`)
 lends shared CPUs from `reservedSystemCPUs` to a pod's helper threads and expects the
 default, so leave `strict-cpu-reservation` off while using it.
 
@@ -230,7 +230,7 @@ the drop-in over the file. Put the `NodeConfig` in the launch template's
 user data, as a MIME part with `Content-Type: application/node.eks.aws`.
 The full one, with the cluster fields, is in [Nodes](#nodes). The
 shared-CPU plugin reads both for its hot-pod check with
-`hostContract.kubeletConfigDir` (needs chart 0.1.2):
+`hostContract.kubeletConfigDir`:
 [EKS install](shared-cpus.md#use-the-public-chart).
 
 ```yaml

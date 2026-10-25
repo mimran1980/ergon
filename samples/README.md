@@ -220,14 +220,9 @@ lab only.
    are exclusive.
 
    ```sh
-   # published chart 0.1.1 (kubeadm, kind, a plain VM)
-   helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus --version 0.1.1 \
+   # kubeadm, kind, a plain VM: values-kind.yaml; EKS AL2023: values-eks.yaml
+   helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus --version 0.1.2 \
      -n ergon-system --create-namespace -f samples/low-latency-k8s/helm/values-kind.yaml
-   # from this checkout (chart 0.1.2; EKS AL2023 needs it for the kubelet drop-ins)
-   docker buildx build --platform linux/arm64 --push -t $REG/ergon-shared-cpus:0.1.2 k8s/nri-shared-cpus
-   helm install ergon-shared-cpus k8s/nri-shared-cpus/charts/ergon-shared-cpus \
-     -n ergon-system --create-namespace -f samples/low-latency-k8s/helm/values-eks.yaml \
-     --set image.repository=$REG/ergon-shared-cpus --set image.tag=0.1.2
    kubectl apply -f k8s/nri-latency-pods/admission/priority-class.yaml \
                  -f k8s/nri-latency-pods/admission/validating-admission-policy.yaml
    ```
@@ -477,7 +472,7 @@ tag's latency effect is not measured.
 
 ### Not verified
 
-- kind, the Linux VM lane and EKS: chart 0.1.1 on kind; chart 0.1.2 and
+- kind, the Linux VM lane and EKS: chart 0.1.2 on kind; chart 0.1.2 and
   nodeadm's containerd block on AL2023; AL2023's containerd version;
   `node/eks-userdata.sh`'s user data on EC2 (checked offline only).
 - The image's `ergon-cpus` comes from the published 0.1.1 image; its source
