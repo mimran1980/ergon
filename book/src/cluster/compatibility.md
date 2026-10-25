@@ -56,6 +56,7 @@ The harness (`cluster-test-harness/tests/`) runs in `ci.yml`
 | `SessionEvent(CLOSED)` while a new leader is pending | `nonblocking.rs` |
 | Ingress channel settings kept across failover and redirect | `ingress_channel_settings.rs` |
 | Fragmented egress reassembled by `poll` | `egress_fragmentation.rs` |
+| `poll` with `fragment_limit` 0 reads nothing but finishes a failover | `nonblocking.rs` |
 | Restart, reconnect, quorum loss, log recovery | `restart.rs` |
 | Null and simple credentials (the default authenticator accepts all) | `auth.rs` |
 

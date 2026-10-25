@@ -900,3 +900,60 @@ fn a_new_leader_event_without_the_leader_changes_nothing() -> Result<(), Box<dyn
     );
     Ok(())
 }
+
+/// A `fragment_limit` of 0 reads no egress but still drives the session
+/// state: here it adopts a pending new leader once its publication connects.
+#[test]
+#[serial]
+fn a_zero_fragment_poll_drives_the_state_and_reads_nothing() -> Result<(), Box<dyn Error>> {
+    let client_driver = JavaDriver::launch("nonblocking-zero-limit")?;
+    let cluster = FakeCluster::launch()?;
+    let (mut client, _old_egress) = cluster.connect(
+        builder(Duration::from_secs(10), Duration::from_secs(60))?,
+        &client_driver,
+    )?;
+    let new_egress = cluster.egress()?;
+    offer(&new_egress, &new_leader_event(2, 1, LATE_MEMBER)?)?;
+    let_land();
+
+    // The NewLeaderEvent waits in the image: a zero-limit poll leaves it.
+    let mut listener = Capture::new();
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_millis(500) {
+        assert_eq!(client.poll(&mut listener, 0)?, 0);
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(listener.new_leader_member_id, None);
+    assert_eq!(client.state(), SessionState::Connected);
+
+    // A real poll reads it; nothing listens at member 1 yet, so it waits.
+    wait_until(
+        || {
+            let _ = client.poll(&mut listener, 10);
+            client.state() == SessionState::AwaitingNewLeader
+        },
+        "the NewLeaderEvent to be read",
+    )?;
+    assert_eq!(listener.new_leader_member_id, Some(1));
+
+    // Member 1 comes up: zero-limit polls alone finish the failover.
+    let _late_member = cluster.aeron.add_subscription(
+        c"aeron:udp?endpoint=localhost:19234",
+        101,
+        Handlers::NONE,
+        Handlers::NONE,
+        Duration::from_secs(5),
+    )?;
+    wait_until(
+        || {
+            let _ = client.poll(&mut NullListener, 0);
+            client.state() == SessionState::Connected
+        },
+        "a zero-limit poll to adopt the new leader",
+    )?;
+    assert_eq!(
+        (client.leadership_term_id(), client.leader_member_id()),
+        (2, 1)
+    );
+    Ok(())
+}
