@@ -17,12 +17,30 @@ hdrhistogram = "7"
 httparse = "1.10"
 aws-lc-rs = { version = "1.18", optional = true }
 openssl = { version = "0.10", optional = true }
+# The transport latency suite's shared message, clock, pacer, histograms,
+# loss tracker, framing and rows.
+ergon-latency-core = { path = "core" }
+# The raw mio arms (src/transport/mio_*.rs) and the mio parity gate
+# (parity/mio_parity.rs). `os-poll` and `net` are mio's Poll, UdpSocket and
+# TcpStream.
+mio = { version = "1", features = ["os-poll", "net"] }
 
 [dev-dependencies]
-# The mio parity gate (parity/mio_parity.rs): the same round trip through a
-# minimal mio loop. `os-poll` and `net` are mio's Poll and its TcpStream.
-mio = { version = "1", features = ["os-poll", "net"] }
 socket2 = "0.6"
+
+# The transport latency suite's arms (src/transport/): each sends
+# ergon-latency-core's 64-byte message on its schedule and prints its row.
+[[bin]]
+name = "mpsc_lat"
+path = "src/bin/mpsc_lat.rs"
+
+[[bin]]
+name = "udp_lat"
+path = "src/bin/udp_lat.rs"
+
+[[bin]]
+name = "tcp_lat"
+path = "src/bin/tcp_lat.rs"
 
 # The mio parity gate: a timed benchmark test, so it runs in release on its
 # own lane (test-lanes.tsv, `just io-parity`), never in the debug test runs.
@@ -41,7 +59,8 @@ codegen-units = 1
 lto = "fat"
 panic = "abort"
 
-# Its own workspace (the root one excludes io/benches), with the shared
-# latency core as a member.
+# Its own workspace (the root one excludes io/benches). core/ is a member of
+# the root workspace instead (md-dpdk/harness takes it by path from under
+# `io`), so it is taken by path here as ergon-io is.
 [workspace]
-members = ["core"]
+exclude = ["core"]
