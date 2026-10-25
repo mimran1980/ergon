@@ -20,7 +20,7 @@ use crate::fragment::Fragment;
 /// | `on_message_with_reserved_value` | the same, plus the Aeron header's reserved value |
 /// | `on_session_event` | OK, ERROR, REDIRECT, `AUTHENTICATION_REJECTED`, CLOSED ([`EventCode`]) |
 /// | `on_new_leader` | a new leader's term, member id and `id=host:port,…` endpoints |
-/// | `on_challenge` | an auth challenge (the client answers it through [`CredentialsSupplier`](crate::CredentialsSupplier)) |
+/// | `on_challenge` | an auth challenge after connect; reported only (connect answers its own through [`CredentialsSupplier`](crate::CredentialsSupplier)) |
 /// | `on_admin_response` | the reply to [`send_admin_request_to_take_snapshot`](crate::AeronCluster::send_admin_request_to_take_snapshot) |
 /// | `on_extension_message` | a frame of another template or schema; not an error |
 ///
