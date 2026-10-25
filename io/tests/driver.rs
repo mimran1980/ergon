@@ -909,7 +909,8 @@ struct SlowConnect {
     /// Polls that took a page fault, and their faults (minor + major).
     faulting_polls: u64,
     faults: u64,
-    /// The slowest `poll`.
+    /// The slowest `poll`, less any time it was preempted (runnable, on a
+    /// run queue): its own time, running or asleep.
     slowest: Duration,
     /// Each poll that slept and was not put down to a fault: its index,
     /// faults, time asleep and wall time.
@@ -935,13 +936,22 @@ fn thread_page_faults() -> R<u64> {
 fn thread_busy() -> R<Duration> {
     let cpu = rustix::time::clock_gettime(rustix::time::ClockId::ThreadCPUTime);
     let cpu = Duration::new(u64::try_from(cpu.tv_sec)?, u32::try_from(cpu.tv_nsec)?);
+    Ok(cpu + thread_queued()?)
+}
+
+/// The calling thread's time so far waiting on a run queue: runnable but
+/// preempted (field 2 of `/proc/thread-self/schedstat`). On a thread that is
+/// not pinned, in a shared VM, a poll's wall time holds this too: seen on
+/// Linux arm64 under load, a poll of 7.9 ms wall of which 3.6 ms waited here
+/// after an involuntary switch.
+fn thread_queued() -> R<Duration> {
     let stat = std::fs::read_to_string("/proc/thread-self/schedstat")?;
     let queued: u64 = stat
         .split_whitespace()
         .nth(1)
         .ok_or("short schedstat")?
         .parse()?;
-    Ok(cpu + Duration::from_nanos(queued))
+    Ok(Duration::from_nanos(queued))
 }
 
 /// The longest a poll that took a page fault may sleep and still have its
@@ -980,6 +990,7 @@ fn connect_to_a_slow_server(d: &mut Driver<WsConn>, lab: &Lab) -> R<SlowConnect>
             assert!(p.client_closed()?);
             Ok(())
         });
+        let q0 = thread_queued()?;
         let t0 = Instant::now();
         let id = d.connect(WsDial::new(
             lab.target("/")?,
@@ -987,11 +998,14 @@ fn connect_to_a_slow_server(d: &mut Driver<WsConn>, lab: &Lab) -> R<SlowConnect>
             1 << 20,
         )?)?;
         // A connect that waited for the handshake would take the server's
-        // 150 ms; 50 ms leaves room for a debug build on a loaded host.
+        // 150 ms; 50 ms leaves room for a debug build on a loaded host. The
+        // time the thread was preempted (runnable, on a run queue) is the
+        // scheduler's, not the connect's, and is left out.
         let took = t0.elapsed();
+        let queued = thread_queued()?.saturating_sub(q0);
         assert!(
-            took < Duration::from_millis(50),
-            "connect returned late: {took:?}"
+            took.saturating_sub(queued) < Duration::from_millis(50),
+            "connect returned late: {took:?}, {queued:?} of it preempted"
         );
         assert!(d.get(id).is_none(), "not open yet");
         let mut h = Collect::default();
@@ -1010,6 +1024,7 @@ fn connect_to_a_slow_server(d: &mut Driver<WsConn>, lab: &Lab) -> R<SlowConnect>
             // Only the poll is inside the switch count; the /proc reads
             // around it are not.
             let f0 = thread_page_faults()?;
+            let q0 = thread_queued()?;
             let busy0 = thread_busy()?;
             let (v0, _) = ergon_io::clock::thread_ctx_switches();
             let t = Instant::now();
@@ -1017,7 +1032,10 @@ fn connect_to_a_slow_server(d: &mut Driver<WsConn>, lab: &Lab) -> R<SlowConnect>
             let took = t.elapsed();
             let (v1, _) = ergon_io::clock::thread_ctx_switches();
             let asleep = took.saturating_sub(thread_busy()?.saturating_sub(busy0));
-            c.slowest = c.slowest.max(took);
+            // The poll's own time: running or asleep, not preempted.
+            c.slowest = c
+                .slowest
+                .max(took.saturating_sub(thread_queued()?.saturating_sub(q0)));
             let faults = thread_page_faults()? - f0;
             if faults > 0 {
                 c.faulting_polls += 1;
@@ -1087,7 +1105,7 @@ fn connect_never_blocks_the_poll_loop() -> R {
         );
         assert!(
             c.slowest < Duration::from_millis(100),
-            "{b}: a poll took {:?}",
+            "{b}: a poll took {:?}, not counting preemption",
             c.slowest
         );
         // Only the few polls that set up the connection fault.
@@ -1212,56 +1230,289 @@ fn frames_sent_with_the_upgrade_then_more_on_every_backend() -> R {
     })
 }
 
+/// The client's TLS handshake crypto, each step with the thread it ran on:
+/// the key share (`ClientHello`), the shared secret (`ServerHello`), the
+/// certificate chain and the `CertificateVerify` signature. Together they
+/// are the handshake's CPU; a test reads where they ran instead of timing
+/// polls, which on an unpinned thread also times the scheduler.
+#[derive(Debug, Default)]
+struct HandshakeSteps(std::sync::Mutex<Vec<HandshakeStep>>);
+
+#[derive(Debug, Clone)]
+struct HandshakeStep {
+    what: &'static str,
+    thread: std::thread::ThreadId,
+    /// The kernel's thread name (`ergon-io-dial` for the helper, which
+    /// `std` did not start and so does not name).
+    comm: String,
+}
+
+impl HandshakeSteps {
+    fn record(&self, what: &'static str) {
+        let comm = std::fs::read_to_string("/proc/thread-self/comm")
+            .map(|s| s.trim().to_owned())
+            .unwrap_or_default();
+        let step = HandshakeStep {
+            what,
+            thread: std::thread::current().id(),
+            comm,
+        };
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(step);
+    }
+
+    fn take(&self) -> Vec<HandshakeStep> {
+        std::mem::take(
+            &mut *self
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    }
+}
+
+/// A key-exchange group that records its two steps.
+#[derive(Debug)]
+struct RecordingKx {
+    inner: &'static dyn rustls::crypto::SupportedKxGroup,
+    steps: std::sync::Arc<HandshakeSteps>,
+}
+
+impl rustls::crypto::SupportedKxGroup for RecordingKx {
+    fn start(&self) -> Result<Box<dyn rustls::crypto::ActiveKeyExchange>, rustls::Error> {
+        self.steps.record("key share");
+        Ok(Box::new(RecordingActiveKx {
+            inner: self.inner.start()?,
+            steps: self.steps.clone(),
+        }))
+    }
+
+    fn name(&self) -> rustls::NamedGroup {
+        self.inner.name()
+    }
+
+    fn usable_for_version(&self, version: rustls::ProtocolVersion) -> bool {
+        self.inner.usable_for_version(version)
+    }
+}
+
+struct RecordingActiveKx {
+    inner: Box<dyn rustls::crypto::ActiveKeyExchange>,
+    steps: std::sync::Arc<HandshakeSteps>,
+}
+
+impl rustls::crypto::ActiveKeyExchange for RecordingActiveKx {
+    fn complete(
+        self: Box<Self>,
+        peer_pub_key: &[u8],
+    ) -> Result<rustls::crypto::SharedSecret, rustls::Error> {
+        self.steps.record("shared secret");
+        self.inner.complete(peer_pub_key)
+    }
+
+    fn pub_key(&self) -> &[u8] {
+        self.inner.pub_key()
+    }
+
+    fn group(&self) -> rustls::NamedGroup {
+        self.inner.group()
+    }
+}
+
+/// The lab's certificate verifier, recording the chain and signature checks.
+#[derive(Debug)]
+struct RecordingVerifier {
+    inner: std::sync::Arc<rustls::client::WebPkiServerVerifier>,
+    steps: std::sync::Arc<HandshakeSteps>,
+}
+
+impl rustls::client::danger::ServerCertVerifier for RecordingVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &rustls::pki_types::CertificateDer<'_>,
+        intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        server_name: &rustls::pki_types::ServerName<'_>,
+        ocsp_response: &[u8],
+        now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        self.steps.record("certificate");
+        self.inner
+            .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        self.inner.verify_tls12_signature(message, cert, dss)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        self.steps.record("certificate verify");
+        self.inner.verify_tls13_signature(message, cert, dss)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.inner.supported_verify_schemes()
+    }
+}
+
+/// Every step a full handshake records, once each, sorted.
+fn all_steps() -> Vec<&'static str> {
+    let mut names = vec![
+        "key share",
+        "shared secret",
+        "certificate",
+        "certificate verify",
+    ];
+    names.sort_unstable();
+    names
+}
+
+/// `lab`'s client config with every handshake step recorded in `steps`
+/// (its own session store: a fresh lab never resumes, so every connect
+/// runs all four steps).
+fn recording_client_cfg(
+    lab: &Lab,
+    steps: &std::sync::Arc<HandshakeSteps>,
+) -> R<std::sync::Arc<rustls::ClientConfig>> {
+    use rustls::pki_types::pem::PemObject;
+    let mut provider = rustls::crypto::ring::default_provider();
+    provider.kx_groups = provider
+        .kx_groups
+        .iter()
+        .map(|&inner| -> &'static dyn rustls::crypto::SupportedKxGroup {
+            // `kx_groups` holds `&'static` groups; a few bytes per lab.
+            Box::leak(Box::new(RecordingKx {
+                inner,
+                steps: steps.clone(),
+            }))
+        })
+        .collect();
+    let provider = std::sync::Arc::new(provider);
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(rustls::pki_types::CertificateDer::from_pem_slice(
+        lab.cert_pem.as_bytes(),
+    )?)?;
+    let verifier = rustls::client::WebPkiServerVerifier::builder_with_provider(
+        std::sync::Arc::new(roots.clone()),
+        provider.clone(),
+    )
+    .build()?;
+    let mut cfg = (*ergon_io::tls::client_config_with(roots, provider, true)?).clone();
+    cfg.dangerous()
+        .set_certificate_verifier(std::sync::Arc::new(RecordingVerifier {
+            inner: verifier,
+            steps: steps.clone(),
+        }));
+    Ok(std::sync::Arc::new(cfg))
+}
+
+/// The steps' names, sorted, for comparing with [`all_steps`].
+fn step_names(steps: &[HandshakeStep]) -> Vec<&'static str> {
+    let mut names: Vec<_> = steps.iter().map(|s| s.what).collect();
+    names.sort_unstable();
+    names
+}
+
+/// Connects `d` to `lab` (with `connect_background` when `background`,
+/// else `connect`), polls until the server's first message, and returns
+/// the handshake steps the client ran.
+fn handshake_steps_of(
+    d: &mut Driver<WsConn>,
+    lab: &Lab,
+    background: bool,
+) -> R<Vec<HandshakeStep>> {
+    let steps = std::sync::Arc::new(HandshakeSteps::default());
+    let dial = WsDial::new(
+        lab.target("/")?,
+        recording_client_cfg(lab, &steps)?,
+        1 << 20,
+    )?;
+    std::thread::scope(|s| -> R<Vec<HandshakeStep>> {
+        let srv = s.spawn(|| -> R {
+            let mut p = lab.accept_within(Duration::from_secs(10))?;
+            p.send(ws::OP_TEXT, true, b"hi")?;
+            assert!(p.client_closed()?);
+            Ok(())
+        });
+        let id = if background {
+            d.connect_background(dial)?
+        } else {
+            d.connect(dial)?
+        };
+        let mut h = Collect::default();
+        poll_until(d, &mut h, |h| !h.msgs.is_empty())?;
+        assert_eq!(h.opened, vec![id]);
+        assert_eq!(h.msgs[0].0, id);
+        d.close(id);
+        let end = Instant::now() + Duration::from_secs(10);
+        while !srv.is_finished() {
+            d.poll(&mut h)?;
+            assert!(Instant::now() < end, "the server never saw the close");
+        }
+        srv.join().map_err(|_| "server panicked")??;
+        Ok(steps.take())
+    })
+}
+
+/// `connect_background` runs the TLS handshake on its helper thread: every
+/// handshake step (key share, shared secret, certificate chain,
+/// `CertificateVerify`; [`HandshakeSteps`]) of the connection ran on
+/// `ergon-io-dial`, none on the polling thread, and no set-up step ran in
+/// `poll` (`connect_step_max_ns == 0`).
+///
+/// The steps are read where they ran, not inferred from how long polls
+/// took: the polling thread is not pinned here, so a poll's wall time also
+/// holds the scheduler's choices. Seen on Linux arm64 in a shared VM, the
+/// poll that takes the finished connection (`uring-sqpoll`, usually 0.25 ms
+/// of CPU): 5.9 ms wall of which 5.7 ms waited on the run queue after an
+/// involuntary switch, and under load 7.1 ms wall with 4.7 ms queued and
+/// 2.4 ms of CPU time for the same work (same syscall counts), so a bound
+/// on CPU time per poll is no sounder. The same recorder on `connect` sees
+/// all four steps on the polling thread, so a handshake moved back onto the
+/// loop fails here.
 #[test]
 fn background_connect_keeps_handshake_cpu_off_the_loop() -> R {
     let _helpers = dial_helpers();
-    // `connect_step_max_ns == 0` is the helper's: the loop never sets a
-    // connection up. A pod with one CPU has no core for the helper and
-    // refuses typed instead (asserted; the helper half runs on a pod with
-    // two CPUs).
+    // A pod with one CPU has no core for the helper and refuses typed
+    // instead (asserted; the helper half runs on a pod with two CPUs).
     if support::one_cpu()? {
         return background_refuses_on_one_cpu();
     }
+    let loop_thread = std::thread::current().id();
     for b in [Backend::RecvBusy, Backend::UringSqpoll] {
-        let lab = Lab::new()?;
         let mut d = driver(b)?;
-        std::thread::scope(|s| -> R {
-            let srv = s.spawn(|| -> R {
-                let mut p = lab.accept_within(Duration::from_secs(10))?;
-                p.send(ws::OP_TEXT, true, b"hi")?;
-                assert!(p.client_closed()?);
-                Ok(())
-            });
-            let id = d.connect_background(WsDial::new(
-                lab.target("/")?,
-                lab.client_cfg.clone(),
-                1 << 20,
-            )?)?;
-            let mut h = Collect::default();
-            let mut slowest = Duration::ZERO;
-            let end = Instant::now() + Duration::from_secs(10);
-            while h.msgs.is_empty() {
-                let t = Instant::now();
-                d.poll(&mut h)?;
-                slowest = slowest.max(t.elapsed());
-                assert!(Instant::now() < end, "never opened: {:?}", h.closed);
-            }
-            assert_eq!(h.opened, vec![id]);
-            assert_eq!(h.msgs[0].0, id);
-            assert_eq!(
-                d.stats().connect_step_max_ns,
-                0,
-                "no set-up step ran on the loop"
-            );
-            assert!(
-                slowest < Duration::from_millis(5),
-                "{b}: a poll took {slowest:?}"
-            );
-            drop(d);
-            srv.join().map_err(|_| "server panicked")??;
-            Ok(())
-        })
-        .map_err(|e| format!("{b}: {e}"))?;
+        // The recorder sees a handshake on the loop: `connect` runs it there.
+        let inline = handshake_steps_of(&mut d, &Lab::new()?, false)?;
+        assert_eq!(step_names(&inline), all_steps(), "{b}: {inline:?}");
+        assert!(
+            inline.iter().all(|s| s.thread == loop_thread),
+            "{b}: connect ran a step off the loop: {inline:?}"
+        );
+        let mut d = driver(b)?;
+        let bg = handshake_steps_of(&mut d, &Lab::new()?, true)?;
+        assert_eq!(step_names(&bg), all_steps(), "{b}: {bg:?}");
+        assert!(
+            bg.iter()
+                .all(|s| s.thread != loop_thread && s.comm == "ergon-io-dial"),
+            "{b}: a handshake step ran off the helper: {bg:?}"
+        );
+        assert_eq!(
+            d.stats().connect_step_max_ns,
+            0,
+            "{b}: no set-up step ran on the loop"
+        );
+        assert_eq!(d.stats().connects, 1, "{b}");
     }
     Ok(())
 }

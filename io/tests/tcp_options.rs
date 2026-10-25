@@ -529,6 +529,38 @@ fn tcp_timers_reach_the_socket_or_are_refused_typed() -> R {
     Ok(())
 }
 
+/// `tcpi_total_retrans` and `tcpi_dsack_dups` (retransmitted segments the
+/// peer reported it already had) of `fd`'s `struct tcp_info`
+/// (`include/uapi/linux/tcp.h`: offsets 100 and 216).
+fn retrans_and_dsack_dups(fd: std::os::fd::RawFd) -> R<(u32, u32)> {
+    let mut b = [0u8; 256];
+    let mut len = libc::socklen_t::try_from(b.len())?;
+    // SAFETY: `b` and `len` are valid for the call; the kernel writes at
+    // most `len` bytes.
+    #[allow(unsafe_code)]
+    let rc = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::IPPROTO_TCP,
+            libc::TCP_INFO,
+            b.as_mut_ptr().cast(),
+            &raw mut len,
+        )
+    };
+    if rc != 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    let got = usize::try_from(len)?;
+    let field = |at: usize| -> R<u32> {
+        let bytes = b
+            .get(at..at + 4)
+            .filter(|_| at + 4 <= got)
+            .ok_or("this kernel's tcp_info has no tcpi_dsack_dups")?;
+        Ok(u32::from_ne_bytes(bytes.try_into()?))
+    };
+    Ok((field(100)?, field(216)?))
+}
+
 /// Passive `TCP_INFO`: off by default (no sample, no `getsockopt`); on, a
 /// sample per connection at the configured interval, with the kernel's RTT,
 /// RTO and loss counters. With `tcp_rto_min_us` (6.15+) the sampled RTO
@@ -602,8 +634,28 @@ fn tcp_info_is_sampled_only_when_asked_for() -> R {
                 assert!(i.at_ns > 0, "{cfg}: {i:?}");
                 assert!(i.rto_us > 0 && i.rto_us >= i.rtt_us, "{cfg}: {i:?}");
                 assert!(i.min_rtt_us.is_some(), "{cfg}: {i:?}");
-                // Loopback loses nothing.
-                assert_eq!((i.total_retrans, i.lost), (0, 0), "{cfg}: {i:?}");
+                // Loopback loses nothing: no segment is lost, and any
+                // retransmission is a tail-loss probe of data the peer
+                // already had, which it reports as a duplicate (DSACK).
+                // Seen in a shared VM: `total_retrans` 1, `lost` 0, with
+                // TcpExt TCPLossProbes +1 and TCPDSACKRecv +1, when the
+                // peer's ACK came late.
+                assert_eq!(i.lost, 0, "{cfg}: {i:?}");
+                let fd = d.get(id).ok_or("gone")?.raw_fd();
+                // The DSACK comes a round trip after the probe.
+                let end = Instant::now() + Duration::from_secs(1);
+                let (retrans, dups) = loop {
+                    let (retrans, dups) = retrans_and_dsack_dups(fd)?;
+                    if dups >= retrans || Instant::now() > end {
+                        break (retrans, dups);
+                    }
+                    d.poll(&mut h)?;
+                };
+                assert!(i.total_retrans <= retrans, "{cfg}: {i:?}, {retrans}");
+                assert!(
+                    dups >= retrans,
+                    "{cfg}: {retrans} retransmissions, {dups} reported duplicate: {i:?}"
+                );
                 if cfg.contains("tcp_rto_min_us") {
                     // The kernel's RTO is about srtt + max(rttvar, floor):
                     // 20 ms and a little on loopback, far below the 200 ms
