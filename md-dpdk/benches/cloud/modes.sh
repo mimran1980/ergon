@@ -700,12 +700,70 @@ modes_want_ynl() {
 # out a pacing debt (RUSTERON_DPDK_TX_PACE_SPIN_US 0 or unset)
 dpdk_busy_idle() { [[ $1 =~ ^(spin|noop|aeron_idle_strategy_busy_spinning|aeron_idle_strategy_noop)$ ]]; }
 
+# The transport suite's arms (transport.sh, transport-matrix.tsv and
+# LAB_ARMS_FILE): " <name>=<setup>/<hosts> ..." as transport.sh's tr_load sets
+# it. An arm's mode is <name>[@STREAMS=<n>][@NETEM=<loss %>][@AA=1]:
+#   STREAMS=<n>  streams (UDP, Aeron) or connections (TCP), 1 to 1024
+#   NETEM=<pct>  netem's egress loss on every data NIC of both hosts, 0 to
+#                100 (0: a netem qdisc that drops nothing, the control);
+#                never on a DPDK arm (a dpdk* name or the dpdk setup): DPDK
+#                bypasses the kernel's qdiscs, so netem would drop nothing
+#                and the row would claim a loss it never saw
+#   AA=1         the A/A arm: the round's first arm run again
+TRANSPORT_ARMS=${TRANSPORT_ARMS:-}
+ARM_SETTINGS=" STREAMS NETEM AA "
+
+# arm_of <mode>: the arm's name, 1 when the mode is not an arm's
+arm_of() {
+    local a=${1%%@*}
+    [[ $TRANSPORT_ARMS == *" $a="* ]] || return 1
+    printf '%s' "$a"
+}
+
+# arm_setup <arm>: none, kernel, dpdk or sockets; arm_hosts <arm>: one or two
+arm_setup() { local s=${TRANSPORT_ARMS#* "$1"=}; s=${s%% *}; printf '%s' "${s%/*}"; }
+arm_hosts() { local s=${TRANSPORT_ARMS#* "$1"=}; s=${s%% *}; printf '%s' "${s#*/}"; }
+
+# arm_check <mode>: 0, or 2 with why on stderr
+arm_check() {
+    local m=$1 a p key value seen=" "
+    a=$(arm_of "$m") || { echo "mode $m: not a transport arm (${TRANSPORT_ARMS:- none loaded})" >&2; return 2; }
+    [[ $m != *+idle ]] || { echo "mode $m: an arm takes no +idle" >&2; return 2; }
+    while IFS= read -r p; do
+        key=${p%%=*} value=${p#*=}
+        [[ $p == *=* && $ARM_SETTINGS == *" $key "* ]] ||
+            { echo "mode $m: $p is not an arm setting ($ARM_SETTINGS): the arm's own settings are its matrix arguments and transport-settings.env, the same for every point" >&2; return 2; }
+        [[ $seen != *" $key "* ]] || { echo "mode $m: one $key at most" >&2; return 2; }
+        seen+="$key "
+        case $key in
+        STREAMS)
+            [[ $value =~ ^[1-9][0-9]{0,3}$ ]] && ((value <= 1024)) ||
+                { echo "mode $m: STREAMS=$value: 1 to 1024 streams or connections" >&2; return 2; }
+            ;;
+        NETEM)
+            [[ $value =~ ^(0|[1-9][0-9]?|100)(\.[0-9]{1,3})?$ ]] && awk -v v="$value" 'BEGIN {exit !(v <= 100)}' ||
+                { echo "mode $m: NETEM=$value: egress loss in %, 0 to 100, at most three decimals" >&2; return 2; }
+            if [[ $a == dpdk* || $(arm_setup "$a") == dpdk ]]; then
+                echo "mode $m: NETEM on a DPDK arm: DPDK bypasses the kernel's qdiscs, so netem would drop nothing (no DPDK in loss rows)" >&2
+                return 2
+            fi
+            ;;
+        AA) [[ $value == 1 ]] || { echo "mode $m: AA=1 or nothing" >&2; return 2; } ;;
+        esac
+    done < <(mode_pairs "$m")
+}
+
 # mode_check <mode> <remote|local> <arch: x86_64|arm64> <cloud: aws|azure>
 # <threads per core, LAB_THREADS_PER_CORE> [<placement>]: 0, or 2 with why
 # on stderr
 mode_check() {
     local m=$1 where=$2 arch=$3 cloud=$4 tpc=$5 placement=${6:-} p key value threading=() v idle seen=" " transport settings
     [[ $m != *,* ]] || { echo "mode $m: a comma would split its results.csv rows (COALESCE takes <rx>/<tx>)" >&2; return 2; }
+    # a transport suite arm: its own settings alone
+    if arm_of "$m" >/dev/null; then
+        arm_check "$m"
+        return
+    fi
     # the transport, as vm.sh driver takes it (any other stops the run there)
     transport=${m%+idle}
     transport=${transport%%@*}

@@ -215,8 +215,101 @@ def estimate(type_a, type_b, placement, reps, modes, local_modes, states, load_s
     }
 
 
+# The transport suite (azure/lab.sh LAB_SUITE=transport, transport.sh): a
+# pair session's set-up is the latency lab's SETUP_S, then the bench
+# binaries' build, the CPU map's reboot and transport-tune
+# (TRANSPORT_PREP_S); each run of a binary (an arm at one stream count)
+# costs TRANSPORT_RUN_S besides its warm-up and points (about 5 s a point: the
+# pong started and given 2 s to bind, the snapshots, its output fetched; the driver
+# or kernel path set up and stopped), each round TRANSPORT_ROUND_S (netem set, checked, cleared).
+TRANSPORT_PREP_S, TRANSPORT_RUN_S, TRANSPORT_ROUND_S = 900, 15, 5
+
+
+def transport_estimate(pair, paths, reps, warmup_s, point_s, switch_s):
+    """A pair session's points, sets, measuring seconds, run and round
+    overheads and wall seconds (transport_plan.py's plan)."""
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import transport_plan as tp
+    _, sets = tp.load(paths)
+    measuring = tp.seconds(sets, pair, reps, warmup_s, point_s, switch_s)
+    runs = rounds = 0
+    for g in tp.groups(sets, pair):
+        # sets run at once overlap: the longest one's runs and rounds count
+        longest = max(g, key=lambda s: tp.set_seconds(s, reps, warmup_s, point_s, switch_s))
+        runs += ((1 if longest["host"] == "ab" else 2) * len(longest["arms"]) * len(longest["streams"])
+                 * len(longest["netem"]) * reps)
+        rounds += len(longest["netem"]) * reps
+    overhead = runs * TRANSPORT_RUN_S + rounds * TRANSPORT_ROUND_S
+    wall = SETUP_S + TRANSPORT_PREP_S + measuring + overhead + TEARDOWN_S
+    return {"points": tp.count(sets, pair, reps), "sets": [s["id"] for s in sets if s["pair"] == pair],
+            "measuring_s": measuring, "overhead_s": overhead, "wall_s": wall,
+            "over_deadline": False, "hours_needed": math.ceil(wall * 1.2 / 3600)}
+
+
+def transport_report(a):
+    """azure/lab.sh LAB_ESTIMATE=1 (and its deadline checks) for the
+    transport suite: the pair given, or both pairs."""
+    pairs = [a.pair] if a.pair else ["a", "b"]
+    try:
+        est = {p: transport_estimate(p, a.matrix, a.reps, a.transport_warmup_s, a.transport_point_s,
+                                     a.transport_switch_s) for p in pairs}
+    except Exception as e:  # the plan's own errors, said once
+        print(f"estimate.py: {e}", file=sys.stderr)
+        return 2
+    for e in est.values():
+        e["over_deadline"] = e["wall_s"] > a.max_hours * 3600
+    if a.print_hours:
+        print(f"{est[pairs[0]]['wall_s'] / 3600:.2f}")
+        return 0
+    if a.refuse_over_deadline:
+        for p, e in est.items():
+            if e["over_deadline"]:
+                print(f"the plan takes pair {p} about {e['wall_s'] / 3600:.2f} h, longer than LAB_MAX_HOURS="
+                      f"{a.max_hours}: the backstop deletes the resource group {a.max_hours} h after creation, "
+                      f"cutting the session short: give LAB_MAX_HOURS={e['hours_needed']} or trim the plan", file=sys.stderr)
+                return 3
+        return 0
+    hourly = None
+    if a.type_a in AZURE_PRICES and a.type_b in AZURE_PRICES:
+        hourly = AZURE_PRICES[a.type_a] + AZURE_PRICES[a.type_b]
+    print(f"LAB_ESTIMATE: nothing created, no cloud call made. Transport suite, a {a.type_a}, b {a.type_b}, "
+          f"{a.priority}, {a.reps} reps; {a.transport_warmup_s} s warm-up a run, {a.transport_point_s} s a point, "
+          f"{a.transport_switch_s} s a switch")
+    total_usd = 0.0
+    for p, e in est.items():
+        line = (f"pair {p}: {e['points']} points (sets {', '.join(e['sets'])}): measuring {e['measuring_s'] / 3600:.2f} h, "
+                f"set-up, runs and teardown {(e['wall_s'] - e['measuring_s']) / 3600:.2f} h: "
+                f"wall about {e['wall_s'] / 3600:.2f} h, {2 * e['wall_s'] / 3600:.2f} VM-hours")
+        if hourly is not None:
+            usd = e["wall_s"] / 3600 * hourly
+            total_usd += usd
+            line += f", about ${usd:.2f} (at most ${a.max_hours * hourly:.2f} to LAB_MAX_HOURS={a.max_hours})"
+        print(line)
+        if e["over_deadline"]:
+            print(f"WARNING: pair {p} is longer than LAB_MAX_HOURS={a.max_hours}: give LAB_MAX_HOURS={e['hours_needed']}")
+    if hourly is None:
+        unknown = [t for t in (a.type_a, a.type_b) if t not in AZURE_PRICES]
+        print(f"VMs: no price for {', '.join(unknown)} in estimate.py's AZURE_PRICES: their dollars unknown")
+        return 0
+    spot = " (pay-as-you-go: Spot bills less, by the hour's Spot price, not looked up)" if a.priority == "Spot" else ""
+    print(f"prices: pay-as-you-go Linux, {AZURE_REGION} on {AZURE_AS_OF}: {a.type_a} ${AZURE_PRICES[a.type_a]:.3f}/h, "
+          f"{a.type_b} ${AZURE_PRICES[a.type_b]:.3f}/h{spot}; disks and public addresses extra, cents an hour; "
+          "no data transfer charge (one VNet, one proximity placement group)")
+    if len(est) > 1:
+        print(f"both pairs: about ${total_usd:.2f}, wall about {max(e['wall_s'] for e in est.values()) / 3600:.2f} h "
+              "run side by side")
+    return 0
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p.add_argument("--suite", choices=("latency", "transport"), default="latency")
+    p.add_argument("--pair", default="")
+    p.add_argument("--matrix", action="append", default=[])
+    p.add_argument("--priority", choices=("Regular", "Spot"), default="Regular")
+    for name in ("transport-warmup-s", "transport-point-s", "transport-switch-s"):
+        p.add_argument("--" + name, type=int, default={"transport-switch-s": 5}.get(name, 30))
     for name in ("type-a", "type-b", "placement", "modes", "local-modes", "states", "load-sizes", "load-fractions",
                  "load-ladder", "mix"):
         p.add_argument("--" + name, default="")
@@ -229,6 +322,8 @@ def main():
     p.add_argument("--cloud", choices=("aws", "azure"), default="aws")
     p.add_argument("--print-hours", action="store_true", help="the wall time alone, in hours")
     a = p.parse_args()
+    if a.suite == "transport":
+        return transport_report(a)
     ladder = {}
     for entry in a.load_ladder.split():
         size, _, rates = entry.partition(":")
