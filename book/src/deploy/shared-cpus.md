@@ -25,11 +25,11 @@ every thread ran) is the
 [`low-latency-k8s` sample](https://github.com/mimran1980/ergon/blob/main/samples/README.md#low-latency-k8s).
 
 Status: published as tag `0.1.2`. Anyone can pull the image and the chart.
-The kind e2e passed at its source. **Verified on EKS AL2023** with chart and
-image 0.1.2 built from this tree: the NRI socket, nodeadm's TOML merge, the
-kubelet drop-in merge, `/opt` writable, `system-node-critical` outside
-`kube-system`. Latency of the spin loop is measured on one Azure VM; the
-helpers' wake-up wait and the pin on EKS. AKS cannot run it.
+The kind e2e passed at its source. **Verified on EKS AL2023** (Kubernetes
+1.36, `c8g.xlarge`) with the same plugin and chart source as published 0.1.2 (`85098f8b`), built by the lab and pushed to the run's ECR: the NRI socket, nodeadm's TOML
+merge, the kubelet drop-in merge, `/opt` writable, `system-node-critical`
+outside `kube-system`. Latency of the spin loop is measured on one Azure VM;
+the helpers' wake-up wait and the pin on EKS. AKS cannot run it.
 Prior art: `k8s/nri-shared-cpus/README.md`.
 
 ## Use the public chart
@@ -57,7 +57,7 @@ helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus
   --set hostContract.proc.enabled=true
 ```
 
-**EKS AL2023** (chart 0.1.2; verified on EKS 1.36 `c8g.xlarge`). nodeadm writes the base `/etc/kubernetes/kubelet/config.json`, puts
+**EKS AL2023** (verified on EKS 1.36 `c8g.xlarge` with the same plugin and chart source as published 0.1.2 (`85098f8b`), built by the lab and pushed to the run's ECR). nodeadm writes the base `/etc/kubernetes/kubelet/config.json`, puts
 the `NodeConfig` kubelet settings in the drop-in
 `/etc/kubernetes/kubelet/config.json.d/40-nodeadm.conf`, and runs the
 kubelet with `--config-dir` on that directory. `kubeletConfigDir` mounts
@@ -385,9 +385,7 @@ Rules:
 - `sharedCpus` must sit inside the kubelet's `reservedSystemCPUs`, minus the
   IRQ CPU(s). In the table above that is `0`.
 - `namespaces` is an allowlist. Create those namespaces before applying.
-- Quote `off`, `on`, `yes`, `no` in `ptp` and the string fields. YAML 1.1
-  turns unquoted ones into booleans. `seccomp.ioUring` and `schedFifo` take
-  either form.
+- Quote `off`, `on`, `yes`, `no`. YAML 1.1 turns unquoted ones into booleans.
 - An unknown field or an out-of-range value stops the plugin at start, and
   the message names the field.
 - **`off` is not harmless.** It is a refusal. A pod whose annotation asks for
@@ -465,10 +463,10 @@ stay as they were at create.
 | `annotationOptIn` | `false` | allow the pod annotation `cpu-shared.ergon.io/<container>` as a fallback when the device plugin is not used |
 | `metricsAddress` | `:9466` | serves `/metrics`, `/healthz` and `/readyz` |
 | `rlimits.memlock`, `.nofile`, `.rtPrio`, `.nice` | unset | the ceiling a pod may ask for by kind. `"inf"` or a positive count. The pod asks for kinds, never values |
-| `seccomp.ioUring` (nested: `seccomp:` then `ioUring:`) | `off` | `off` or `allow`. `allow` widens the container's seccomp profile for `io_uring_*`. See [Latency Pods](latency-pods.md) |
+| `seccomp.ioUring` (nested: `seccomp:` then `ioUring:`) | `off` | `allow` widens the container's seccomp profile for `io_uring_*`. See [Latency Pods](latency-pods.md) |
 | `seccompProfilePath` | `/etc/ergon-shared-cpus/ergon-io-uring.json` | the shipped io_uring profile on the node, the fallback for a pod that cannot take the NRI grant |
 | `devRoot` | `/dev` | where this process sees the host's `/dev`. The DaemonSet mounts it read-only at `/host/dev` so the plugin can stat the PHC and PM QoS nodes; granted paths stay `/dev/...` |
-| `schedFifo` | `off` | `off`, or `thread` (the hot thread only, never the container) |
+| `schedFifo` | `off` | `off`, or `thread` (the hot thread only, never the container). Quote the value: unquoted `off` is a YAML boolean |
 | `ptp` | `off` | `off`, `auto`, or a `/dev/ptp*` path the node has. `auto` grants the NIC's PHC |
 | `hugepagesAeronDir` | unset | absolute `AERON_DIR` to export when the pod mounts a sized hugetlbfs |
 
@@ -486,16 +484,8 @@ before changing a label or a profile. Containers that are already running
 keep the helper CPUs recorded at create. This selection was not run on a
 multi-node cluster.
 
-`seccomp.ioUring` and `schedFifo` also take a YAML boolean, quoted or not,
-any case:
-
-| spelling | `seccomp.ioUring` | `schedFifo` |
-|---|---|---|
-| `false`, `no`, `n`, `off`, `0`, empty | `off` | `off` |
-| `true`, `yes`, `y`, `on`, `1` | `allow` | `thread` |
-
-Quote `off`, `on`, `yes` and `no` in the other fields. YAML 1.1 turns
-unquoted ones into booleans.
+Quote `off`, `on`, `yes` and `no` in this file. YAML 1.1 turns unquoted ones
+into booleans.
 
 Unknown fields and out-of-range values are refused at start, each naming its
 field: `oversubscription` outside 1–100, a `namespaces` entry that is not a

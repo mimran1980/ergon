@@ -5,7 +5,7 @@ housekeeping CPUs, and every new thread starts on the shared ones, so the
 busy-spin loop keeps its core. One DaemonSet: a containerd NRI plugin and a
 kubelet device plugin.
 
-Not yet run on kind. Not verified on EKS. Latency not measured.
+Install verified on EKS AL2023 (`../../RELEASE.md`). Latency: `../../BENCHMARKS.md`.
 
 ## Install
 

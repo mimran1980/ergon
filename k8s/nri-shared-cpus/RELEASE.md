@@ -11,12 +11,12 @@
 | source | `85098f8b`, Actions run [40173324072](https://github.com/mimran1980/ergon/actions/runs/40173324072) (unit, vet, static build, helm lint and template, push) |
 | `--version` (amd64, arm64) | `ergon-shared-cpus 0.1.2 85098f8b16e17d80747c73d6069c1ec07d70496a nri=v0.12.3` |
 | checked | `helm template` of the OCI chart renders image `:0.1.2` with `--kubelet-config`; the kind e2e (`test/e2e.sh`) at that source: 18 steps, 0 failed (2026-10-25) |
-| verified on EKS | AL2023 `c8g.xlarge` spot, Kubernetes 1.36, kernel 6.18.54, containerd 2.3.5, runc 1.4.3, chart and image 0.1.2 built from this tree (ECR, not GHCR), runs `eks-nri-20261025-070515` and `eks-nri-20261025-082023` ([`lab/results/`](lab/results/)): the NRI socket, nodeadm's TOML merge, the kubelet drop-in merge, `/opt` writable, `system-node-critical` in `ergon-system`, the device plugin, the quiet-CPU boot unit. Hot pods were refused while a late ENI's IRQs sat on the shared CPU (fail closed, as designed) |
+| verified on EKS | AL2023 `c8g.xlarge` spot, Kubernetes 1.36, kernel 6.18.54, containerd 2.3.5, runc 1.4.3, the same plugin and chart source as published 0.1.2 (`85098f8b`), built by the lab and pushed to the run's ECR (not the GHCR image), runs `eks-nri-20261025-070515` and `eks-nri-20261025-082023` ([`lab/results/`](lab/results/)): the NRI socket, nodeadm's TOML merge, the kubelet drop-in merge, `/opt` writable, `system-node-critical` in `ergon-system`, the device plugin, the quiet-CPU boot unit. Hot pods were refused while a late ENI's IRQs sat on the shared CPU (fail closed, as designed; `create refused ... reason node-contract` in the plugin log) |
 | measured | the hot thread with helpers on the shared CPU (the checkout, on kind on one Azure Cobalt VM, THP `never` and the fair server off on the isolated CPUs): p50 0.02 µs, p99.99 0.03 µs, max 4.81 to 5.52 µs, 0 involuntary switches a 60 s rep; the hypervisor's floor 3.5 to 5.5 µs. Shared-CPU scaling as designed ([BENCHMARKS.md](BENCHMARKS.md)) |
 | measured on EKS | a helper's wake-up wait on the shared CPU, the 1 ns timer slack, the pin's cost ([BENCHMARKS.md](BENCHMARKS.md#eks-c8gxlarge-run-eks-nri-20261025-082023)) |
 
-The open benchmarks below are open for 0.1.2. Do not invent their
-figures.
+The EKS lane is verified for 0.1.2. Do not invent the figures of the
+benchmarks still open below.
 
 ## 1. Code defects
 
@@ -49,7 +49,7 @@ adjustment in, as the runtime does), not on the create request.
 | unit, vet, static amd64+arm64 | `scripts/check.sh --local` | green 2026-10-18 over the whole tree |
 | cgroup kernel lane (real cgroup v2, partition a real kernel will accept) | `scripts/check-cgroup.sh` | green 2026-10-18 over the whole tree |
 | kind e2e, 18 steps | `test/e2e.sh` | green 2026-10-18, `fails: 0` |
-| EKS | `md-dpdk/benches/cloud/aws/eks-nri.sh` (phase EKS lane) | **verified** on both nodes of runs `eks-nri-20261025-070515` and `eks-nri-20261025-082023` ([`lab/results/`](lab/results/)): NRI socket (`ergon_shared_cpus_nri_connected 1`), nodeadm TOML merge (`containerd config dump` shows `default_validator enable = true`), kubelet drop-in merge (`--config-dir` on the kubelet, `ergon_shared_cpus_contract_ok 1`), `/opt/ergon/bin/ergon-cpus` installed, `system-node-critical` Running in `ergon-system`, device plugin registered, `ergon-quiet-cpus.service` active with `--check` rc 0 |
+| EKS | `md-dpdk/benches/cloud/aws/eks-nri.sh` (phase EKS lane) | **verified** on both nodes of runs `eks-nri-20261025-070515` and `eks-nri-20261025-082023` ([`lab/results/`](lab/results/)): NRI socket (`ergon_shared_cpus_nri_connected 1`), nodeadm TOML merge (`containerd config dump` shows `default_validator enable = true`), kubelet drop-in merge (`--config-dir` on the kubelet; `ergon_shared_cpus_contract_ok 1` on node b, and on node a, where it was 0, a node-contract warning naming only the late ENI's IRQs, which the plugin checks only after the merged kubelet config passes), `/opt/ergon/bin/ergon-cpus` installed, `system-node-critical` Running in `ergon-system`, device plugin registered, `ergon-quiet-cpus.service` active with `--check` rc 0 |
 | AKS | — | not supported (no NRI enablement, no `reservedSystemCPUs`) |
 | CRI-O | — | not supported; use its own `shared_cpuset` |
 | Bottlerocket | — | not verified. runc exec of a hook binary from a pod-written host path is unproven on a read-only root with SELinux |

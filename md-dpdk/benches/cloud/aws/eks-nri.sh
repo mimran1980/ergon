@@ -2089,22 +2089,38 @@ SH
             eval "m_$n=\$(cat \"$out/plugin-metrics-$n.txt\" 2>/dev/null)"
             eval "h_$n=\$(cat \"$out/eks-lane-$n.txt\" 2>/dev/null)"
         done
+        # A metric's value line, matched whole: a substring match also hits
+        # its "# HELP <name> 1 while ..." line, whatever the value.
+        metric_is_1() { grep -qx "$2 1" <<<"$1"; }
+        # The kubelet drop-in merge passed on a node: its contract is clean, or
+        # its last "node contract" warning names only NIC refusals (the plugin
+        # checks NIC affinity only after the merged kubelet config loads and
+        # passes, and joins every refusal with "; ").
+        dropin_ok() { # <metrics> <a|b>
+            local pod line
+            metric_is_1 "$1" ergon_shared_cpus_contract_ok && return 0
+            pod=$(awk -v n="$(nv node "$2")" '$5 == n {print $1}' "$out/eks-lane-plugin-pods.txt")
+            [[ -n $pod ]] || return 1
+            line=$(grep -F "pod/$pod/" "$out/plugin-logs-start.txt" | grep -F '"msg":"node contract"' | tail -1)
+            [[ $line == *'"error":"NIC '* ]] || return 1
+            ! sed 's/.*"error":"\([^"]*\)".*/\1/' <<<"$line" | tr ';' '\n' | sed 's/^ *//' | grep -v '^NIC ' | grep -q .
+        }
         lane_row "NRI socket" "/var/run/nri/nri.sock is a socket; ergon_shared_cpus_nri_connected 1" \
-            '[[ $h_a == *"srw"*nri.sock* && $m_a == *"ergon_shared_cpus_nri_connected 1"* ]]' \
-            '[[ $h_b == *"srw"*nri.sock* && $m_b == *"ergon_shared_cpus_nri_connected 1"* ]]'
+            '[[ $h_a == *"srw"*nri.sock* ]] && metric_is_1 "$m_a" ergon_shared_cpus_nri_connected' \
+            '[[ $h_b == *"srw"*nri.sock* ]] && metric_is_1 "$m_b" ergon_shared_cpus_nri_connected'
         lane_row "nodeadm TOML merge" "containerd config dump shows the NodeConfig's NRI table (default_validator enable = true)" \
             '[[ $h_a == *default_validator* && $h_a == *"enable = true"* ]]' \
             '[[ $h_b == *default_validator* && $h_b == *"enable = true"* ]]'
-        lane_row "kubelet drop-in merge (--kubelet-config-dir)" "kubelet runs with --config-dir; ergon_shared_cpus_contract_ok 1 (the merged reservedSystemCPUs and static policy pass)" \
-            '[[ $h_a == *--config-dir* && $m_a == *"ergon_shared_cpus_contract_ok 1"* ]]' \
-            '[[ $h_b == *--config-dir* && $m_b == *"ergon_shared_cpus_contract_ok 1"* ]]'
+        lane_row "kubelet drop-in merge (--kubelet-config-dir)" "kubelet runs with --config-dir; ergon_shared_cpus_contract_ok 1, or the plugin's node-contract warning names only NIC refusals (the merged kubelet config loaded and passed)" \
+            '[[ $h_a == *--config-dir* ]] && dropin_ok "$m_a" a' \
+            '[[ $h_b == *--config-dir* ]] && dropin_ok "$m_b" b'
         lane_row "/opt writable" "the plugin installed /opt/ergon/bin/ergon-cpus on the node" \
             '[[ $h_a == *ergon-cpus* ]]' '[[ $h_b == *ergon-cpus* ]]'
         lane_row "system-node-critical outside kube-system" "the plugin pod in ergon-system with priorityClassName system-node-critical, Running" \
             "grep -q \" ergon-system system-node-critical Running $(nv node a)\" \"$out/eks-lane-plugin-pods.txt\"" \
             "grep -q \" ergon-system system-node-critical Running $(nv node b)\" \"$out/eks-lane-plugin-pods.txt\""
         lane_row "device plugin registered" "ergon_shared_cpus_device_plugin_registered 1" \
-            '[[ $m_a == *"ergon_shared_cpus_device_plugin_registered 1"* ]]' '[[ $m_b == *"ergon_shared_cpus_device_plugin_registered 1"* ]]'
+            'metric_is_1 "$m_a" ergon_shared_cpus_device_plugin_registered' 'metric_is_1 "$m_b" ergon_shared_cpus_device_plugin_registered'
         lane_row "quiet-CPU boot unit" "ergon-quiet-cpus.service enabled and active; quiet-cpus.sh --check rc 0" \
             '[[ $h_a == *"enabled enabled active active"* && $h_a == *"quiet-check rc=0"* ]]' \
             '[[ $h_b == *"enabled enabled active active"* && $h_b == *"quiet-check rc=0"* ]]'
