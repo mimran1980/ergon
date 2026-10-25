@@ -107,8 +107,10 @@ pub struct RxMeta {
     pub rx_hw_ns: i64,
     /// ergon-io's own receive time (`CLOCK_REALTIME` ns, the domain of
     /// `rx_sw_ns`): read on the polling thread right after the read
-    /// returned the bytes (`io_uring`: when the completion was reaped). 0
-    /// unless `Config::rx_read_timestamp` is on. `rx_read_ns - rx_sw_ns` is
+    /// returned the bytes (`io_uring`: when the completion was reaped;
+    /// frames the upgrade read with the 101: when the driver took them, on
+    /// its first poll after the connect). 0 unless
+    /// `Config::rx_read_timestamp` is on. `rx_read_ns - rx_sw_ns` is
     /// the time from the kernel's stamp to the driver's read.
     pub rx_read_ns: i64,
     /// Sequence number of this read within its driver.

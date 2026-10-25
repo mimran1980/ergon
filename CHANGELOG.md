@@ -20,7 +20,9 @@
 - `ergon-io`: `RxMeta::rx_read_ns`, ergon-io's own receive time
   (`CLOCK_REALTIME`, the domain of `rx_sw_ns`), read right after each read
   returns data when `Config::rx_read_timestamp` (key `rx_read_timestamp`)
-  is on. Off by default: no clock read, the field is 0.
+  is on; frames the upgrade read with the 101 are stamped when the driver
+  takes them, with a `read_seq` like any read. Off by default: no clock
+  read, the field is 0.
 
 - `ergon-io` (repo only): a two-sided mio parity gate,
   `io/benches/parity/mio_parity.rs` (`just io-parity`, CI on Linux x86_64

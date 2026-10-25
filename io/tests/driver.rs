@@ -1659,3 +1659,74 @@ fn rx_read_ns_stamps_each_read_only_when_asked() -> R {
         Ok(())
     })
 }
+
+/// `RxMeta::rx_read_ns` and `read_seq` for frames the upgrade read along
+/// with the 101: the driver hands them over on its first poll, and with
+/// `rx_read_timestamp` they carry the time it did (after the connect, before
+/// the handler ran) and a read sequence number like every other read; off,
+/// the stamp stays 0. Every backend, on a blocking `WsConn::connect` and on
+/// a dial the driver runs (`Driver::connect`).
+#[test]
+fn rx_read_ns_stamps_frames_read_with_the_upgrade() -> R {
+    #[derive(Default)]
+    struct Stamps {
+        metas: Vec<(RxMeta, i64)>,
+    }
+    impl Handler for Stamps {}
+    impl WsHandler for Stamps {
+        fn on_message(&mut self, _: ConnId, _: u8, _: &[u8], meta: &RxMeta, _: u16) {
+            self.metas.push((*meta, ergon_io::clock::realtime_ns()));
+        }
+    }
+    each_backend(|b| {
+        for (on, dial) in [(false, false), (true, false), (false, true), (true, true)] {
+            let lab = Lab::new()?;
+            let mut cfg = Config::new(b);
+            cfg.wait_us = cfg.wait_us.min(100);
+            cfg.rx_read_timestamp = on;
+            let mut d: Driver<WsConn> = Driver::new(cfg)?;
+            std::thread::scope(|s| -> R {
+                let srv = s.spawn(|| -> R {
+                    let (sock, _) = lab.listener.accept()?;
+                    let mut p = support::Peer::serve_with(&lab, sock, &[b"first", b"second"])?;
+                    assert!(p.client_closed()?);
+                    Ok(())
+                });
+                let before = ergon_io::clock::realtime_ns();
+                if dial {
+                    d.connect(WsDial::new(
+                        lab.target("/")?,
+                        lab.client_cfg.clone(),
+                        1 << 20,
+                    )?)?;
+                } else {
+                    d.add(WsConn::connect(
+                        &lab.target("/")?,
+                        lab.client_cfg.clone(),
+                        1 << 20,
+                    )?)?;
+                }
+                let mut h = Stamps::default();
+                let end = Instant::now() + Duration::from_secs(10);
+                while h.metas.len() < 2 {
+                    assert!(Instant::now() < end, "{b}: timed out");
+                    d.poll(&mut h)?;
+                }
+                drop(d);
+                srv.join().map_err(|_| "server panicked")??;
+                for (k, (m, handled)) in h.metas.iter().enumerate() {
+                    let at = format!("{b} on={on} dial={dial}: frame {k}: {m:?}");
+                    assert_ne!(m.read_seq, 0, "{at}");
+                    if on {
+                        assert!(m.rx_read_ns >= before, "{at}: stamped before the connect");
+                        assert!(m.rx_read_ns <= *handled, "{at}: stamped after the handler");
+                    } else {
+                        assert_eq!(m.rx_read_ns, 0, "{at}");
+                    }
+                }
+                Ok(())
+            })?;
+        }
+        Ok(())
+    })
+}
