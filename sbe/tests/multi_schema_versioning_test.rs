@@ -865,3 +865,42 @@ fn shared_bool_domain_type_emits_impl_once() -> Result<(), Box<dyn std::error::E
 
     Ok(())
 }
+
+// ── Consumer that redeclares a shared type ─────────────────────────────
+
+const REDECLARE_SHARED: &str = r#"<?xml version="1.0"?>
+<messageSchema package="rshared" id="20" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+    <composite name="Px"><type name="mantissa" primitiveType="int64"/><type name="exponent" primitiveType="int8"/></composite>
+  </types>
+</messageSchema>"#;
+
+/// The consumer keeps its own `messageHeader`, as a standalone SBE schema
+/// does, and uses the shared `Px`.
+const REDECLARE_CONSUMER: &str = r#"<?xml version="1.0"?>
+<messageSchema package="rconsumer" id="21" version="0" byteOrder="littleEndian" headerType="messageHeader">
+  <types>
+    <composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite>
+  </types>
+  <message name="Quote" id="1"><field name="px" id="1" type="Px"/></message>
+</messageSchema>"#;
+
+/// A consumer parsed `with_shared` may not redeclare a shared type, even
+/// identically: the parse fails, so the shared types copied into the
+/// consumer's IR can never sit beside a second definition of the same name.
+#[test]
+fn with_shared_consumer_redeclaring_a_shared_type_is_rejected()
+-> Result<(), Box<dyn std::error::Error>> {
+    let shared = parse(SchemaSource::xml(REDECLARE_SHARED))?;
+    let err = parse(SchemaSource::xml(REDECLARE_CONSUMER).with_shared(&shared))
+        .expect_err("redeclared shared type must not parse");
+    match err {
+        ergo_sbe::ParseError::Invalid { what, value, .. } => {
+            assert_eq!(what, "duplicate type name");
+            assert!(value.starts_with("messageHeader:"), "{value}");
+        }
+        other => panic!("expected a duplicate type name error, got {other:?}"),
+    }
+    Ok(())
+}
