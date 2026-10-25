@@ -24,9 +24,10 @@ test-dpdk-vdev-rootless *args:
 test-dpdk-bootstrap:
     bash md-dpdk/deploy/aws-eks/node/test/test-bootstrap.sh
 
-# The cloud lab's analysis (analyse.py, spikes.py) against its fixture, its scripts' syntax, and the EKS runners against fakes; no cloud
+# The cloud lab's analysis (analyse.py, spikes.py, fairness.py) against its fixtures, its scripts' syntax, and the EKS runners against fakes; no cloud
 test-dpdk-lab:
     bash md-dpdk/benches/cloud/test/test-lab.sh
+    bash md-dpdk/benches/cloud/test/test-transport.sh
     bash md-dpdk/benches/cloud/aws/test/test-eks-nri.sh
     bash md-dpdk/benches/cloud/aws/test/test-latency-bench-podrun.sh
 
