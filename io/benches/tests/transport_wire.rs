@@ -70,9 +70,7 @@ fn args(imp: &str, role: &str, out: &str) -> Vec<String> {
         "t:wire",
         "--out",
         out,
-        "--idle-exit-s",
-        "1",
-        "--wait-s",
+        "--connect-timeout-s",
         "20",
     ]
     .iter()
@@ -122,6 +120,16 @@ fn wait_ready(child: &mut Child) -> R {
         }
     }
     Err("the pong never said ready".into())
+}
+
+#[allow(unsafe_code)]
+fn sigterm(child: &Child) -> R {
+    let pid = libc::pid_t::try_from(child.id())?;
+    // SAFETY: a signal to our own child.
+    if unsafe { libc::kill(pid, libc::SIGTERM) } != 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    Ok(())
 }
 
 fn ok(name: &str, child: Child) -> R {
@@ -220,6 +228,7 @@ fn udp_echoes(imp: &str, base: u16) -> R<Vec<Vec<Vec<u8>>>> {
         }
         all.push(got);
     }
+    sigterm(&pong)?;
     ok("udp pong", pong)?;
     Ok(all)
 }
@@ -238,7 +247,11 @@ fn tcp_pings(imp: &str, port: u16) -> R<Vec<Vec<u8>>> {
     let mut peers = Vec::new();
     for _ in 0..STREAMS {
         let (mut s, _) = l.accept()?;
-        peers.push(std::thread::spawn(move || -> R<Vec<u8>> {
+        peers.push(std::thread::spawn(move || -> R<(u32, Vec<u8>)> {
+            // the connecting end's stream index comes first
+            let mut index = [0u8; 4];
+            s.read_exact(&mut index)?;
+            let index = u32::from_le_bytes(index);
             let mut raw = Vec::new();
             let mut pending = Vec::new();
             let mut frames = 0usize;
@@ -246,7 +259,7 @@ fn tcp_pings(imp: &str, port: u16) -> R<Vec<Vec<u8>>> {
             loop {
                 let n = s.read(&mut b)?;
                 if n == 0 {
-                    return Ok(raw);
+                    return Ok((index, raw));
                 }
                 pending.extend_from_slice(&b[..n]);
                 while let Some((payload, taken)) = frame::decode(&pending, 1 << 16)? {
@@ -265,12 +278,17 @@ fn tcp_pings(imp: &str, port: u16) -> R<Vec<Vec<u8>>> {
         }));
     }
     let r = ok("tcp ping", ping);
-    let raw = peers
+    let mut raw = peers
         .into_iter()
         .map(|h| h.join().map_err(|_| "peer panicked")?)
         .collect::<R<Vec<_>>>()?;
     r?;
-    Ok(raw)
+    raw.sort_by_key(|(i, _)| *i);
+    assert_eq!(
+        raw.iter().map(|(i, _)| *i).collect::<Vec<_>>(),
+        (0..STREAMS).collect::<Vec<_>>()
+    );
+    Ok(raw.into_iter().map(|(_, b)| b).collect())
 }
 
 /// What `tcp_lat --role pong` writes back for crafted frames, raw.
@@ -288,7 +306,9 @@ fn tcp_echoes(imp: &str, port: u16) -> R<Vec<Vec<u8>>> {
     for _ in 0..STREAMS {
         loop {
             match TcpStream::connect(("127.0.0.1", port)) {
-                Ok(s) => {
+                Ok(mut s) => {
+                    // the stream index first, as the connecting end writes it
+                    s.write_all(&u32::try_from(conns.len())?.to_le_bytes())?;
                     conns.push(s);
                     break;
                 }

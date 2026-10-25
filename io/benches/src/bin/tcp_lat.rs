@@ -1,25 +1,45 @@
 //! The transport latency suite's TCP arms: raw mio
-//! ([`io_bench::transport::mio_tcp`]) and ergon-io framed TCP
-//! ([`io_bench::transport::eio_tcp`]), epoll-spin, both writing
-//! `ergon_latency_core::frame`'s u32 LE length frames. One connection per
-//! stream; one busy-spinning thread per end. Flags and threads:
-//! [`io_bench::transport::bench`] (`--help`).
+//! (`io_bench::transport::mio_tcp`) and ergon-io framed TCP
+//! (`io_bench::transport::eio_tcp`), epoll-spin, one connection per
+//! stream, both writing `ergon_latency_core::frame`'s u32 LE length
+//! frames. Every measurement, the echo and the files are
+//! `io_bench::transport::point`'s; flags, threads and roles:
+//! `io_bench::transport::sock` (`--help`).
+//!
+//! Prints the row (none for a pong) and exits non-zero, with no row, on
+//! any error.
+#![deny(unsafe_code, missing_docs)]
+#![warn(
+    clippy::all,
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic
+)]
 
 use std::process::ExitCode;
 
+use io_bench::transport::point::CountingAlloc;
+
+#[global_allocator]
+static ALLOC: CountingAlloc = CountingAlloc;
+
 #[cfg(target_os = "linux")]
 fn main() -> ExitCode {
-    use io_bench::args::Args;
-    use io_bench::transport::bench::{TCP_USAGE, tcp_main};
-    use io_bench::transport::point::Hooks;
-
-    let a = Args::from_env();
-    if a.flag("help") {
+    use io_bench::transport::sock::{TCP_USAGE, tcp_main};
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--help") {
         println!("{TCP_USAGE}");
         return ExitCode::SUCCESS;
     }
-    match tcp_main(&a, Hooks::default()) {
-        Ok(()) => ExitCode::SUCCESS,
+    match tcp_main(args) {
+        Ok(row) => {
+            if let Some(row) = row {
+                println!("{row}");
+            }
+            ExitCode::SUCCESS
+        }
         Err(e) => {
             eprintln!("tcp_lat: {e}");
             ExitCode::FAILURE

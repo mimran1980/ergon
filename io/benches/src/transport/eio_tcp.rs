@@ -2,27 +2,45 @@
 //! stream on one `Driver`, the same u32 LE length frames as
 //! `ergon_latency_core::frame`.
 //!
-//! - Receive: `Driver::poll`; each frame is handed over in
+//! - Receive ([`EioTcpRx`]): `Driver::poll`, one read per ready
+//!   connection a pass; each frame is handed over in
 //!   `FrameHandler::on_frame`, in place in the connection's receive buffer
-//!   ([`TCP_RX_BUF`](super::TCP_RX_BUF) bytes, as the mio arm's).
-//! - Send: `ConnMut::send_frame` queues header and payload
+//!   ([`TCP_RX_BUF`](super::TCP_RX_BUF) bytes, as the mio arm's). Every
+//!   whole frame a read brings is delivered in that pass (ergon-io has no
+//!   per-pass frame limit). A peer's close is counted; [`Rx::closed`] once
+//!   every connection is gone.
+//! - Send ([`EioTcpTx`]): `ConnMut::send_frame` queues header and payload
 //!   ([`TCP_TX_BUF`](super::TCP_TX_BUF)), then `Driver::flush` writes at
-//!   once. A full queue is back-pressure.
-//! - Echo: as the UDP arm, a preallocated batch made during the poll, sent
-//!   right after it.
+//!   once. A full queue is busy.
+//! - Echo: as the UDP arm, staged while the driver polls and sent right
+//!   after that poll.
 //! - Driver keys: `rcvbuf`, `epoll_events`, `tcp_rto_min_us`,
 //!   `tcp_delack_max_us` (checked against the kernel at `Driver::new`);
 //!   `FrameOptions::quickack_per_read`, `sndbuf`. `TCP_NODELAY` always.
+#![deny(unsafe_code, missing_docs)]
+#![warn(
+    clippy::all,
+    clippy::pedantic,
+    clippy::nursery,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic
+)]
 
+use std::cell::RefCell;
 use std::net::TcpStream;
+use std::rc::Rc;
 
 use ergon_io::{ConnId, Driver, FrameConn, FrameHandler, FrameOptions, Handler, RxMeta};
 use ergon_latency_core::frame::FRAME_HEADER;
 use ergon_latency_core::message::MESSAGE_LEN;
 
-use super::eio_udp::{Echoes, base_config};
+use super::eio_udp::{Staged, base_config, eio};
 use super::mio_tcp::tcp_wire_bytes;
-use super::{Error, Link, MAX_FRAME, TCP_RX_BUF, TCP_TX_BUF, sockopt};
+use super::point::{Error, Rx, Sent, Tx, thread_allocs};
+use super::sock::Inspect;
+use super::sockopt::{self, os};
+use super::{MAX_FRAME, TCP_RX_BUF, TCP_TX_BUF};
 
 /// The ergon-io TCP arm's settings.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,210 +63,214 @@ pub struct EioTcpOptions {
     pub helper_cpus: Vec<u32>,
 }
 
+struct Shared {
+    d: RefCell<Driver<FrameConn>>,
+    staged: RefCell<Staged>,
+    ids: Vec<ConnId>,
+    opts: EioTcpOptions,
+    ipv6: bool,
+}
+
+/// The sending side.
+pub struct EioTcpTx {
+    s: Rc<Shared>,
+}
+
+/// The receiving side (it owns the driver's poll).
+pub struct EioTcpRx {
+    s: Rc<Shared>,
+    gone: usize,
+    allocs_at_close: Option<u64>,
+}
+
+/// Takes connected sockets, stream `i` the `i`-th, onto one driver; their
+/// sending and receiving sides. Call it on the polling thread, pinned.
+///
+/// # Errors
+/// `Driver::new` (a key out of range, a timer the kernel refuses or
+/// rounds), or adding a connection fails.
+pub fn pair(socks: Vec<TcpStream>, opts: EioTcpOptions) -> Result<(EioTcpTx, EioTcpRx), Error> {
+    if socks.is_empty() {
+        return Err(Error::Usage("streams must be at least 1".into()));
+    }
+    let ipv6 = socks[0]
+        .local_addr()
+        .map_err(|e| os("getsockname", e))?
+        .is_ipv6();
+    let mut cfg = base_config(
+        opts.rcvbuf,
+        opts.epoll_events,
+        opts.loop_cpu,
+        &opts.helper_cpus,
+    );
+    cfg.tcp_rto_min_us = opts.rto_min_us;
+    cfg.tcp_delack_max_us = opts.delack_max_us;
+    cfg.validate().map_err(|e| eio("config", e))?;
+    let mut d: Driver<FrameConn> = Driver::new(cfg).map_err(|e| eio("Driver::new", e))?;
+    let fopts = FrameOptions {
+        max_frame: MAX_FRAME,
+        rx_buf: TCP_RX_BUF,
+        tx_buf: TCP_TX_BUF,
+        sndbuf: opts.sndbuf,
+        quickack_per_read: opts.quickack_per_read,
+    };
+    let n = socks.len();
+    let mut ids = Vec::with_capacity(n);
+    for s in socks {
+        let c = FrameConn::from_stream(s, fopts).map_err(|e| eio("FrameConn", e))?;
+        ids.push(d.add(c).map_err(|e| eio("Driver::add", e))?);
+    }
+    // one read per ready connection per poll, of at most the receive
+    // buffer: at most this many whole frames
+    let per_read = TCP_RX_BUF / (FRAME_HEADER + MESSAGE_LEN) + 1;
+    let per_poll = (opts.epoll_events as usize).min(n) * per_read;
+    let s = Rc::new(Shared {
+        d: RefCell::new(d),
+        staged: RefCell::new(Staged::new(per_poll)),
+        ids,
+        opts,
+        ipv6,
+    });
+    Ok((
+        EioTcpTx { s: Rc::clone(&s) },
+        EioTcpRx {
+            s,
+            gone: 0,
+            allocs_at_close: None,
+        },
+    ))
+}
+
+/// One frame queued and flushed now; `Ok(false)` when busy.
+#[inline]
+fn send_now(
+    d: &mut Driver<FrameConn>,
+    ids: &[ConnId],
+    stream: u32,
+    msg: &[u8; MESSAGE_LEN],
+) -> Result<bool, Error> {
+    let id = *ids
+        .get(stream as usize)
+        .ok_or_else(|| Error::Transport(format!("stream {stream} of {}", ids.len())))?;
+    let mut c = d
+        .get_mut(id)
+        .ok_or_else(|| Error::Transport(format!("stream {stream}: its connection closed")))?;
+    match c.send_frame(msg) {
+        Ok(()) => {
+            d.flush().map_err(|e| eio("flush", e))?;
+            Ok(true)
+        }
+        Err(ergon_io::Error::Busy(_)) => Ok(false),
+        Err(e) => Err(eio("send_frame", e)),
+    }
+}
+
+impl Tx for EioTcpTx {
+    #[inline]
+    fn try_send(&mut self, stream: u32, msg: &[u8; MESSAGE_LEN]) -> Result<Sent, Error> {
+        // inside the receive side's poll (an echo): staged, sent after it
+        let Ok(mut d) = self.s.d.try_borrow_mut() else {
+            return Ok(if self.s.staged.borrow_mut().push(stream, msg) {
+                Sent::Sent
+            } else {
+                Sent::Busy
+            });
+        };
+        Ok(if send_now(&mut d, &self.s.ids, stream, msg)? {
+            Sent::Sent
+        } else {
+            Sent::Busy
+        })
+    }
+}
+
 struct Deliver<'a, F> {
-    stream_of: &'a [u32],
-    on_msg: &'a mut F,
+    on: &'a mut F,
+    gone: usize,
     err: Option<Error>,
 }
 
 impl<F> Handler for Deliver<'_, F> {
     fn on_closed(&mut self, id: ConnId, error: ergon_io::Error) {
-        if self.err.is_none() {
-            self.err = Some(match error {
-                ergon_io::Error::Closed => {
-                    Error::Closed(format!("connection {id:?}: the peer closed"))
+        match error {
+            ergon_io::Error::Closed => self.gone += 1,
+            e => {
+                if self.err.is_none() {
+                    self.err = Some(Error::Transport(format!("tcp {id:?} closed: {e}")));
                 }
-                e => Error::Closed(format!("connection {id:?}: {e}")),
-            });
-        }
-    }
-}
-
-impl<F: FnMut(u32, &[u8]) -> Result<(), Error>> FrameHandler for Deliver<'_, F> {
-    #[inline]
-    fn on_frame(&mut self, conn: ConnId, payload: &[u8], _meta: &RxMeta) {
-        if self.err.is_some() {
-            return;
-        }
-        let stream = self
-            .stream_of
-            .get(conn.index())
-            .copied()
-            .unwrap_or(u32::MAX);
-        if let Err(e) = (self.on_msg)(stream, payload) {
-            self.err = Some(e);
-        }
-    }
-}
-
-impl FrameHandler for Echoes {
-    #[inline]
-    fn on_frame(&mut self, conn: ConnId, payload: &[u8], _meta: &RxMeta) {
-        self.take(conn, payload);
-    }
-}
-
-/// N `FrameConn`s on one epoll-spin `Driver`.
-pub struct EioTcp {
-    d: Driver<FrameConn>,
-    ids: Vec<ConnId>,
-    stream_of: Vec<u32>,
-    echoes: Echoes,
-    opts: EioTcpOptions,
-    ipv6: bool,
-}
-
-impl EioTcp {
-    /// Takes connected sockets, stream `i` the `i`-th. Call it on the
-    /// polling thread, pinned.
-    ///
-    /// # Errors
-    /// `Driver::new` (a key out of range, a timer the kernel refuses or
-    /// rounds), or adding a connection fails.
-    pub fn new(socks: Vec<TcpStream>, opts: EioTcpOptions) -> Result<Self, Error> {
-        if socks.is_empty() {
-            return Err(Error::Config("streams must be at least 1".into()));
-        }
-        let ipv6 = socks[0].local_addr()?.is_ipv6();
-        let mut cfg = base_config(
-            opts.rcvbuf,
-            opts.epoll_events,
-            opts.loop_cpu,
-            &opts.helper_cpus,
-        );
-        cfg.tcp_rto_min_us = opts.rto_min_us;
-        cfg.tcp_delack_max_us = opts.delack_max_us;
-        cfg.validate()?;
-        let mut d: Driver<FrameConn> = Driver::new(cfg)?;
-        let fopts = FrameOptions {
-            max_frame: MAX_FRAME,
-            rx_buf: TCP_RX_BUF,
-            tx_buf: TCP_TX_BUF,
-            sndbuf: opts.sndbuf,
-            quickack_per_read: opts.quickack_per_read,
-        };
-        let streams = u32::try_from(socks.len()).unwrap_or(u32::MAX);
-        let mut ids = Vec::with_capacity(socks.len());
-        for s in socks {
-            ids.push(d.add(FrameConn::from_stream(s, fopts)?)?);
-        }
-        let mut stream_of = vec![u32::MAX; ids.iter().map(|id| id.index() + 1).max().unwrap_or(0)];
-        for (i, id) in (0u32..).zip(&ids) {
-            stream_of[id.index()] = i;
-        }
-        // one read per ready connection per poll, of at most the receive
-        // buffer: at most this many whole frames
-        let per_read = TCP_RX_BUF / (FRAME_HEADER + MESSAGE_LEN) + 1;
-        let per_poll = opts.epoll_events.min(streams) as usize * per_read;
-        Ok(Self {
-            d,
-            ids,
-            stream_of,
-            echoes: Echoes::new(per_poll),
-            opts,
-            ipv6,
-        })
-    }
-
-    /// The driver, for its counters.
-    #[must_use]
-    pub const fn driver(&self) -> &Driver<FrameConn> {
-        &self.d
-    }
-}
-
-impl Link for EioTcp {
-    fn streams(&self) -> u32 {
-        u32::try_from(self.ids.len()).unwrap_or(u32::MAX)
-    }
-
-    #[inline]
-    fn send(&mut self, stream: u32, payload: &[u8]) -> Result<bool, Error> {
-        let id = *self
-            .ids
-            .get(stream as usize)
-            .ok_or_else(|| Error::Protocol(format!("stream {stream} of {}", self.ids.len())))?;
-        let mut c = self
-            .d
-            .get_mut(id)
-            .ok_or_else(|| Error::Closed(format!("stream {stream}")))?;
-        match c.send_frame(payload) {
-            Ok(()) => {
-                self.d.flush()?;
-                Ok(true)
             }
-            Err(ergon_io::Error::Busy(_)) => Ok(false),
-            Err(e) => Err(e.into()),
         }
     }
+}
 
+impl<F: FnMut(&[u8])> FrameHandler for Deliver<'_, F> {
     #[inline]
-    fn poll<F>(&mut self, on_msg: &mut F) -> Result<usize, Error>
-    where
-        F: FnMut(u32, &[u8]) -> Result<(), Error>,
-    {
+    fn on_frame(&mut self, _conn: ConnId, payload: &[u8], _meta: &RxMeta) {
+        (self.on)(payload);
+    }
+}
+
+impl Rx for EioTcpRx {
+    #[inline]
+    fn poll<F: FnMut(&[u8])>(&mut self, on: &mut F) -> Result<usize, Error> {
+        let allocs = thread_allocs();
+        let s = &*self.s;
+        let mut d = s.d.borrow_mut();
         let mut h = Deliver {
-            stream_of: &self.stream_of,
-            on_msg,
+            on,
+            gone: 0,
             err: None,
         };
-        let n = self.d.poll(&mut h)?;
-        h.err.map_or(Ok(n), Err)
-    }
-
-    #[inline]
-    fn echo(&mut self) -> Result<usize, Error> {
-        self.echoes.len = 0;
-        self.d.poll(&mut self.echoes)?;
-        if let Some(e) = self.echoes.err.take() {
+        let n = d.poll(&mut h).map_err(|e| eio("poll", e))?;
+        if h.gone > 0 {
+            self.gone += h.gone;
+            self.allocs_at_close.get_or_insert(allocs);
+        }
+        if let Some(e) = h.err {
             return Err(e);
         }
-        let n = self.echoes.len;
-        for k in 0..n {
-            let (id, m) = self.echoes.batch[k];
-            let mut c = self
-                .d
-                .get_mut(id)
-                .ok_or_else(|| Error::Closed(format!("connection {id:?}")))?;
-            match c.send_frame(&m) {
-                Ok(()) => {}
-                Err(ergon_io::Error::Busy(_)) => {
-                    return Err(Error::Protocol(format!("echo on {id:?}: send queue full")));
-                }
-                Err(e) => return Err(e.into()),
-            }
-        }
-        if n > 0 {
-            self.d.flush()?;
+        let mut staged = s.staged.borrow_mut();
+        if staged.len > 0 {
+            staged.drain(|stream, m| send_now(&mut d, &s.ids, stream, m))?;
         }
         Ok(n)
     }
 
+    fn closed(&self) -> bool {
+        self.gone >= self.s.ids.len()
+    }
+}
+
+impl Inspect for EioTcpRx {
+    fn allocs_at_close(&self) -> Option<u64> {
+        self.allocs_at_close
+    }
+
     fn retrans(&self) -> Result<Option<u64>, Error> {
+        let d = self.s.d.borrow();
         let mut sum = 0u64;
-        for c in self.ids.iter().filter_map(|&id| self.d.get(id)) {
+        for c in self.s.ids.iter().filter_map(|&id| d.get(id)) {
             sum += u64::from(sockopt::tcp_info(c.raw_fd())?.total_retrans);
         }
         Ok(Some(sum))
     }
 
     fn wire_bytes(&self) -> Result<u64, Error> {
-        let ts = match self.ids.first().and_then(|&id| self.d.get(id)) {
+        let d = self.s.d.borrow();
+        let ts = match self.s.ids.first().and_then(|&id| d.get(id)) {
             Some(c) => sockopt::tcp_info(c.raw_fd())?.timestamps,
             None => false,
         };
-        Ok(tcp_wire_bytes(ts, self.ipv6))
+        Ok(tcp_wire_bytes(ts, self.s.ipv6))
     }
 
     fn report(&self, out: &mut Vec<(String, String)>) -> Result<(), Error> {
-        let cfg = self.d.config();
+        let d = self.s.d.borrow();
+        let cfg = d.config();
         let opt = |v: Option<u32>| v.map_or_else(|| "kernel".to_owned(), |b| b.to_string());
-        let mut frames_in = 0u64;
-        let mut frames_out = 0u64;
-        let mut bytes_in = 0u64;
-        let mut quickacks = 0u64;
-        let mut compact = 0u64;
-        for c in self.ids.iter().filter_map(|&id| self.d.get(id)) {
+        let (mut frames_in, mut frames_out, mut bytes_in, mut quickacks, mut compact) =
+            (0u64, 0u64, 0u64, 0u64, 0u64);
+        for c in self.s.ids.iter().filter_map(|&id| d.get(id)) {
             let s = c.stats();
             frames_in += s.frames_in;
             frames_out += s.frames_out;
@@ -256,17 +278,21 @@ impl Link for EioTcp {
             quickacks += s.quickacks;
             compact += s.compact_bytes;
         }
-        let ds = self.d.stats();
+        let ds = d.stats();
         for (k, v) in [
             ("tcp.max_frame", MAX_FRAME.to_string()),
             ("tcp.rx_buf", TCP_RX_BUF.to_string()),
             ("tcp.tx_buf", TCP_TX_BUF.to_string()),
+            ("tcp.frames_per_pass", "one read".to_owned()),
             ("nodelay", "true".to_owned()),
-            ("quickack_per_read", self.opts.quickack_per_read.to_string()),
+            (
+                "quickack_per_read",
+                self.s.opts.quickack_per_read.to_string(),
+            ),
             ("rto_min_us", opt(cfg.tcp_rto_min_us)),
             ("delack_max_us", opt(cfg.tcp_delack_max_us)),
             ("rcvbuf", opt(cfg.rcvbuf)),
-            ("sndbuf", opt(self.opts.sndbuf)),
+            ("sndbuf", opt(self.s.opts.sndbuf)),
             ("epoll_events", cfg.epoll_events.to_string()),
             ("ergon.backend", cfg.backend.to_string()),
             ("ergon.rx_timestamps", cfg.rx_timestamps.to_string()),
@@ -289,7 +315,7 @@ impl Link for EioTcp {
         ] {
             out.push((k.to_owned(), v));
         }
-        if let Some(c) = self.ids.first().and_then(|&id| self.d.get(id)) {
+        if let Some(c) = self.s.ids.first().and_then(|&id| d.get(id)) {
             sockopt::read_back(c.raw_fd(), true, out)?;
         }
         Ok(())
