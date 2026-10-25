@@ -586,9 +586,13 @@ sweep_leftovers() {
     else
         log "no ergon-lab leftovers in any region"
     fi
-    if grep -q ' eks-cluster ' "$out/leftovers.txt"; then
-        die "an ergon-lab EKS cluster exists (above): delete it first with EKS_DELETE=<its stamp> $self"
-    fi
+    # EKS_ALLOW_CLUSTERS: names of other live (or still deleting) runs' clusters to accept
+    local c others=
+    for c in $(awk '$2 == "eks-cluster" {print $3}' "$out/leftovers.txt"); do
+        [[ " ${EKS_ALLOW_CLUSTERS:-} " == *" $c "* ]] && { log "  $c: accepted (EKS_ALLOW_CLUSTERS)"; continue; }
+        others+=" $c"
+    done
+    [[ -z $others ]] || die "an ergon-lab EKS cluster exists (above:$others): delete it first with EKS_DELETE=<its stamp> $self"
 }
 sweep_leftovers
 
@@ -1483,9 +1487,22 @@ spec:
   validationActions: ["Deny"]
 YAML
 
-k apply -f "$out/k8s/admission.yaml" >"$out/apply.log" 2>&1 || { cat "$out/apply.log" >&2; die "kubectl apply admission"; }
-k apply -f "$out/k8s/plugin.yaml" >>"$out/apply.log" 2>&1 || { cat "$out/apply.log" >&2; die "kubectl apply plugin"; }
-k apply -f "$out/k8s/probe.yaml" >>"$out/apply.log" 2>&1 || { cat "$out/apply.log" >&2; die "kubectl apply probe"; }
+# A fresh control plane can drop a TLS handshake (seen once: "TLS handshake
+# timeout" fetching the OpenAPI schema); each apply gets five tries.
+k_apply() { # <file> <what>
+    local try
+    for try in 1 2 3 4 5; do
+        k apply -f "$1" >>"$out/apply.log" 2>&1 && return 0
+        log "kubectl apply $2 failed (try $try); retrying"
+        sleep $((try * 10))
+    done
+    cat "$out/apply.log" >&2
+    die "kubectl apply $2"
+}
+: >"$out/apply.log"
+k_apply "$out/k8s/admission.yaml" admission
+k_apply "$out/k8s/plugin.yaml" plugin
+k_apply "$out/k8s/probe.yaml" probe
 # Each DaemonSet in the namespace it is deployed in: the shared-cpus plugin
 # ships in ergon-system (deploy/daemonset.yaml), the probe in default. A wait
 # on the wrong namespace finds nothing and the run dies before it measures.
