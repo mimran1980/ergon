@@ -363,10 +363,13 @@ pub struct HttpOptions {
     pub buf_size: usize,
     /// What a response head with a non-ASCII byte does.
     pub non_ascii_head: NonAsciiHead,
-    /// The check on every response body ([`TextCheck::None`] by default:
-    /// HTTP has no text rule for bodies); [`RxMeta::text`] says what it
-    /// found. [`NonAscii::Skip`] is refused. [`TextCheck::Ascii`] reads
-    /// nothing.
+    /// The check on every response body; [`RxMeta::text`] says what it
+    /// found. [`TextCheck::None`] by default: no check, the body is
+    /// delivered as bytes ([`crate::TextStatus::Unchecked`]) with no ASCII
+    /// or UTF-8 promise, and nothing is read, so the hot path pays nothing
+    /// (HTTP has no text rule for bodies). Use [`TextCheck::Utf8`] or
+    /// [`TextCheck::AsciiChecked`] when the parser needs a guarantee.
+    /// [`NonAscii::Skip`] is refused. [`TextCheck::Ascii`] reads nothing.
     pub body_check: TextCheck,
 }
 

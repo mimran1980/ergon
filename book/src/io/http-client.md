@@ -172,7 +172,10 @@ request, ns. Native macOS, M1 Pro, loaded host, no pinning
 
 ## Body checks
 
-A parser that works on `&[u8]` needs no mode at all: leave `None`.
+`None` is the default: no check, the body is delivered as the bytes that
+arrived, with no ASCII or UTF-8 promise. It reads nothing, so the hot path
+pays nothing, and a parser that works on `&[u8]` needs no check. Use
+`Utf8` or `AsciiChecked` when you need a guarantee.
 
 | `body_check` | when | reads the body | `meta.text` | a failing body |
 |---|---|---|---|---|

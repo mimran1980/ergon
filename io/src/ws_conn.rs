@@ -54,6 +54,13 @@ use crate::ws::{self, Close};
 /// [`WsOptions::text_check`] checks a text message only once it is kept,
 /// just before delivery; [`RxMeta::text`] carries the outcome.
 ///
+/// A streamed message can end without a `fin` fragment: a Close inside it,
+/// [`Flow::SkipRest`], or, under
+/// [`TextCheck::AsciiChecked`]`(`[`NonAscii::Skip`]`)`, a fragment that is
+/// not ASCII. In that last case fragments before it were already delivered
+/// and no callback says the message was dropped (it counts in
+/// [`WsStats::skipped`]); the next message starts again at `index` 0.
+///
 /// Nothing is dropped by a default: a handler that asks for
 /// [`Interest::Fragments`] or [`Interest::Stream`] without implementing
 /// `on_fragments` or `on_fragment` gets the message joined by copy through
@@ -352,8 +359,10 @@ pub struct WsOptions {
     /// socket is closed anyway. `0`: no wait.
     pub close_timeout_ms: u32,
     /// How text messages are checked ([`TextCheck`]); [`RxMeta::text`]
-    /// says what was found. [`TextCheck::None`] by default: a check reads
-    /// every text byte once more. [`TextCheck::Utf8`] is what RFC 6455
+    /// says what was found. [`TextCheck::None`] by default: no check, the
+    /// payload is delivered as bytes ([`TextStatus::Unchecked`]) with no
+    /// ASCII or UTF-8 promise, and nothing is read, so the hot path pays
+    /// nothing; any check reads every text byte once more. [`TextCheck::Utf8`] is what RFC 6455
     /// requires; [`TextCheck::AsciiChecked`] is one cheaper pass whose
     /// result lets a parser index text freely; [`TextCheck::Ascii`] trusts
     /// the source and reads nothing. Only kept messages are checked, after

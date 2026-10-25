@@ -271,6 +271,71 @@ fn a_non_ascii_byte_meets_the_policy() -> R {
     Ok(())
 }
 
+/// `Stream` under `AsciiChecked(Skip)`: a later fragment that is not ASCII
+/// ends the message mid-way. The fragments before it were delivered, no
+/// `fin` fragment follows and no callback reports the drop; `skipped`
+/// counts it once its last frame arrives, and the next message starts
+/// again at index 0. One record per frame, and all in one read.
+#[test]
+fn a_streamed_non_ascii_fragment_ends_the_message_without_fin() -> R {
+    let lab = Lab::new()?;
+    let skip = TextCheck::AsciiChecked(NonAscii::Skip);
+    for bad_at in 1..4u32 {
+        let mut first = ascii(400);
+        first[bad_at as usize * 100 + 50] = 0xC3;
+        let next = ascii(300);
+        let mut wire = fragmented(OP_TEXT, &first, 4)?;
+        wire.extend_from_slice(&fragmented(OP_TEXT, &next, 3)?);
+        for per_frame in [true, false] {
+            let what = format!("non-ASCII fragment {bad_at}, one read per frame {per_frame}");
+            let mut r = WsRig::new(&lab, &opts(skip))?;
+            let mut h = App::new(Interest::Stream);
+            if per_frame {
+                let mut at = 0;
+                while at < wire.len() {
+                    let f = ergon_io::ws::parse_header(&wire[at..])?.ok_or("short")?;
+                    r.feed_records(&wire[at..at + f.frame_len()], &[], &mut h)?;
+                    at += f.frame_len();
+                }
+            } else {
+                r.feed_records(&wire, &[], &mut h)?;
+            }
+            let seen: Vec<(u32, bool, usize)> = h
+                .got
+                .iter()
+                .map(|g| match g {
+                    Got::Fragment {
+                        index, fin, part, ..
+                    } => Ok((*index, *fin, part.len())),
+                    other => Err(format!("{what}: not a fragment: {other:?}")),
+                })
+                .collect::<Result<_, _>>()?;
+            let mut want: Vec<(u32, bool, usize)> = (0..bad_at).map(|i| (i, false, 100)).collect();
+            want.extend([(0, false, 100), (1, false, 100), (2, true, 100)]);
+            assert_eq!(seen, want, "{what}");
+            let delivered: Vec<u8> = h.got[..bad_at as usize]
+                .iter()
+                .flat_map(|g| match g {
+                    Got::Fragment { part, .. } => part.clone(),
+                    _ => Vec::new(),
+                })
+                .collect();
+            assert_eq!(delivered, first[..bad_at as usize * 100], "{what}");
+            assert_eq!(
+                h.messages(),
+                vec![(next.clone(), vec![TextStatus::Ascii; 3])]
+            );
+            let s = stats(&r);
+            assert_eq!(
+                (s.skipped, s.non_ascii, s.frag_copy_bytes),
+                (1, 1, 0),
+                "{what}"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// A skipped message is never read: invalid text in it closes nothing,
 /// whatever the check.
 #[test]
