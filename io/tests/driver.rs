@@ -1552,9 +1552,15 @@ fn rx_read_ns_stamps_each_read_only_when_asked() -> R {
             let mut cfg = Config::new(b);
             cfg.rx_read_timestamp = on;
             let mut d: Driver<WsConn> = Driver::new(cfg)?;
+            // The server sends only once the driver has the connection:
+            // bytes that reach the blocking connect first are delivered
+            // from its buffer, unstamped.
+            let (go_tx, go) = std::sync::mpsc::channel::<()>();
+            let lab = &lab;
             let sent_after = std::thread::scope(|s| -> R<Vec<i64>> {
-                let srv = s.spawn(|| -> R<Vec<i64>> {
+                let srv = s.spawn(move || -> R<Vec<i64>> {
                     let mut p = lab.accept()?;
+                    go.recv_timeout(Duration::from_secs(10))?;
                     let mut at = Vec::new();
                     for i in 0..20u32 {
                         std::thread::sleep(Duration::from_millis(1));
@@ -1569,6 +1575,7 @@ fn rx_read_ns_stamps_each_read_only_when_asked() -> R {
                     lab.client_cfg.clone(),
                     1 << 20,
                 )?)?;
+                go_tx.send(())?;
                 let mut h = Stamps::default();
                 let end = Instant::now() + Duration::from_secs(10);
                 while h.closed.is_empty() {
