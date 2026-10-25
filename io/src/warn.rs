@@ -586,13 +586,51 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         keep_lines();
         let _ = take_lines();
-        // 4 MiB of fresh pages, each touched once: minor faults on this thread.
-        let mut fresh = vec![0u8; 4 << 20];
-        for b in fresh.iter_mut().step_by(4096) {
-            *b = 1;
-        }
-        std::hint::black_box(&fresh);
+        // What an earlier test in this process may leave behind: an 8 MiB
+        // buffer freed (glibc raises its mmap threshold past 4 MiB) and a
+        // 4 MiB one touched and freed on the heap. A heap allocation of 4 MiB
+        // then reuses those pages and faults on none of them.
+        drop(std::hint::black_box(vec![1u8; 8 << 20]));
+        drop(std::hint::black_box(vec![1u8; 4 << 20]));
         st.check_faults_now();
+        let _ = take_lines();
+        // So the pages come from the kernel, not the allocator: 4 MiB mapped
+        // here, small pages only (a huge page would be one fault), each
+        // touched once: one minor fault per page on this thread.
+        let len: usize = 4 << 20;
+        // SAFETY: a new private anonymous mapping, no address hint.
+        #[allow(unsafe_code)]
+        let p = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                len,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                -1,
+                0,
+            )
+        };
+        if p == libc::MAP_FAILED {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        // SAFETY: `p` is the `len`-byte mapping made above.
+        #[allow(unsafe_code)]
+        unsafe {
+            libc::madvise(p, len, libc::MADV_NOHUGEPAGE);
+        }
+        for off in (0..len).step_by(4096) {
+            // SAFETY: `off` is inside the writable mapping.
+            #[allow(unsafe_code)]
+            unsafe {
+                p.cast::<u8>().add(off).write_volatile(1);
+            }
+        }
+        st.check_faults_now();
+        // SAFETY: the mapping made above, no reference into it remains.
+        #[allow(unsafe_code)]
+        unsafe {
+            libc::munmap(p, len);
+        }
         let lines: Vec<String> = take_lines()
             .into_iter()
             .filter(|l| l.contains("T19"))
@@ -603,6 +641,14 @@ mod tests {
             "{}",
             lines[0]
         );
+        // At least one fault per page touched, not an unrelated one.
+        let minor: u64 = lines[0]
+            .split(" took ")
+            .nth(1)
+            .and_then(|s| s.split(' ').next())
+            .ok_or("no count")?
+            .parse()?;
+        assert!(minor >= 1024, "{minor} minor faults for 1,024 fresh pages");
         Ok(())
     }
 }
