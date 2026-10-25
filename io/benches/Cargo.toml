@@ -41,4 +41,7 @@ codegen-units = 1
 lto = "fat"
 panic = "abort"
 
+# Its own workspace (the root one excludes io/benches), with the shared
+# latency core as a member.
 [workspace]
+members = ["core"]

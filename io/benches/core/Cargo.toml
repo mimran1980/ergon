@@ -1,0 +1,36 @@
+[package]
+name = "ergon-latency-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+publish = false
+license = "Apache-2.0"
+description = "Shared measurement core of the transport latency suite: message, clock, pacing, histograms, loss, framing and result rows"
+
+# A member of io/benches's own workspace (the root workspace excludes
+# io/benches). md-dpdk/harness takes it by path too, so every arm stamps,
+# paces, records and reports with the same code.
+
+[dependencies]
+hdrhistogram = { version = "7.5", default-features = false }
+# The counter every stamp reads (the raw TSC / CNTVCT, scaled with quanta's
+# own calibration). No `mock` feature, so a read has no thread-local check.
+quanta = { version = "0.13", default-features = false }
+sha2 = "0.11"
+
+[build-dependencies]
+# Hashes the crate's sources into CORE_BUILD_HASH (build.rs).
+sha2 = "0.11"
+
+# The root workspace's lint level (this crate is outside it).
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "deny"
+
+[lints.clippy]
+all = "deny"
+pedantic = "deny"
+nursery = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
