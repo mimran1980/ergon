@@ -17,12 +17,17 @@ use super::warn::WarnState;
 /// | Constructor / option | Effect |
 /// |---|---|
 /// | [`SchemaSource::file`] (or `From<&Path>` / `From<PathBuf>`) | Read a file; `xi:include` resolves relative to it; [`Ir::sources`] lists the file and every include |
-/// | [`SchemaSource::xml`] | Inline XML text (e.g. `include_str!`); [`Ir::sources`] is empty |
+/// | [`SchemaSource::xml`] | Inline XML text (e.g. `include_str!`); [`Ir::sources`] lists no file of its own |
 /// | [`with_shared`](Self::with_shared) | Resolve type references against an already-parsed schema, and copy its types (not its messages) into the result |
 /// | [`with_xsd_validation`](Self::with_xsd_validation) | Run [`crate::validate_against_sbe_xsd`] on the root document first |
 ///
 /// A bare `&str` is deliberately not accepted: it could mean a path or XML
 /// text. Say which with [`SchemaSource::file`] or [`SchemaSource::xml`].
+///
+/// ```compile_fail
+/// // Does not compile: `&str` is not a `SchemaSource`.
+/// let _ = ergo_sbe::parse("schemas/messages.xml");
+/// ```
 #[derive(Clone, Debug)]
 pub struct SchemaSource<'a> {
     input: Input<'a>,

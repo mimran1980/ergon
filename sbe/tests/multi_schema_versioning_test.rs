@@ -732,14 +732,13 @@ fn multi_schema_rejects_byte_order_mismatch_shared_type() -> Result<(), Box<dyn 
     Ok(())
 }
 
-// ── parse_file_with_shared ─────────────────────────────────────────────
+// ── SchemaSource::file(..).with_shared ─────────────────────────────────
 //
-// `parse_with_shared` (string form) is exercised above and elsewhere; the
-// file form was public but called by nothing, so a break in its path
-// resolution or its shared-registry seeding would not have been caught.
+// The XML form is exercised above and elsewhere; this covers the file form's
+// path resolution and shared-registry seeding.
 
 #[test]
-fn parse_file_with_shared_seeds_the_registry_from_the_shared_schema()
+fn file_source_with_shared_seeds_the_registry_from_the_shared_schema()
 -> Result<(), Box<dyn std::error::Error>> {
     let shared = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(
         r#"<?xml version="1.0"?>

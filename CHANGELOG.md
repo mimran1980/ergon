@@ -28,7 +28,9 @@
   include and the shared schema's files. The writers print
   `cargo::rerun-if-changed` for each, so multi-schema builds through
   `Generator::generate_multi` watch every file too. A struct literal needs
-  `sources: Vec::new()`.
+  `sources: Vec::new()`. The watched paths are canonical (absolute), not the
+  path as passed, and two `Ir`s parsed from the same text via a file and via
+  `SchemaSource::xml` are no longer `==`.
 - Breaking: a consumer parsed `with_shared` also carries the shared schema's
   composites, enums and sets (not its messages), so it generates on its own.
 - `GenerateError` implements `miette::Diagnostic`, so a `build.rs` returning

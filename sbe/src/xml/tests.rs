@@ -3492,6 +3492,42 @@ fn parse_file_sources_list_root_nested_and_transitive_includes()
     Ok(())
 }
 
+/// `with_xsd_validation` runs the XSD check for file and XML sources. Both
+/// checks reject a missing `@id`, but with different variants, so the variant
+/// shows which one ran.
+#[test]
+fn with_xsd_validation_runs_the_xsd_check_for_file_and_xml()
+-> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<messageSchema package="t" version="0" byteOrder="littleEndian"><types/></messageSchema>"#;
+    let dir = std::env::temp_dir().join(format!("ergon_xml_xsd_file_{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("no-id.xml");
+    std::fs::write(&path, xml)?;
+    let results = [
+        (
+            parse(SchemaSource::file(&path)),
+            parse(SchemaSource::file(&path).with_xsd_validation()),
+        ),
+        (
+            parse(SchemaSource::xml(xml)),
+            parse(SchemaSource::xml(xml).with_xsd_validation()),
+        ),
+    ];
+    std::fs::remove_dir_all(&dir)?;
+    for (plain, checked) in results {
+        assert!(
+            matches!(plain, Err(ParseError::Missing { .. })),
+            "{plain:?}"
+        );
+        assert!(
+            matches!(&checked, Err(ParseError::Invalid { what, value, .. })
+                if what == "SBE schema" && value.contains("`id`")),
+            "{checked:?}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn include_without_href_is_ignored() -> Result<(), Box<dyn std::error::Error>> {
     let schema = format!(
