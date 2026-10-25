@@ -382,3 +382,129 @@ fn validate_reports_each_wire_violation() -> Result<(), GenerateError> {
     );
     Ok(())
 }
+
+/// Shared schema for the `with_shared` tests: a bounded composite member, an
+/// enum and a set, none declared by the consumer.
+const SHARED: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="vshared" id="92" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="Px">
+      <type name="mantissa" primitiveType="int64" minValue="-1000000" maxValue="1000000"/>
+      <type name="exponent" primitiveType="int8" presence="constant">-2</type>
+    </composite>
+    <enum name="Side" encodingType="uint8">
+      <validValue name="Buy">1</validValue>
+      <validValue name="Sell">2</validValue>
+    </enum>
+    <set name="Marks" encodingType="uint8">
+      <choice name="Low">0</choice>
+      <choice name="High">2</choice>
+    </set>
+  </types>
+</sbe:messageSchema>"#;
+
+const CONSUMER: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe" package="vconsumer" id="93" version="0" byteOrder="littleEndian" headerType="messageHeader">
+  <sbe:message name="Order" id="1">
+    <field name="px" id="1" type="Px"/>
+    <field name="side" id="2" type="Side"/>
+    <field name="marks" id="3" type="Marks"/>
+  </sbe:message>
+</sbe:messageSchema>"#;
+
+/// Runtime checks on the consumer's `Order`; `{rt}` is the module that owns
+/// `sbe_rt`.
+const SHARED_CHECKS: &str = r#"
+        use vconsumer::*;
+        use {rt}::sbe_rt::ValidateError;
+
+        // Order body: px.mantissa@0 i64 (shared Px), side@8 u8 (shared Side),
+        // marks@9 u8 (shared Marks).
+        fn frame(mantissa: i64, side: u8, marks: u8) -> Vec<u8> {
+            let mut f = Vec::new();
+            for v in [10u16, 1, 93, 0] {
+                f.extend_from_slice(&v.to_le_bytes());
+            }
+            f.extend_from_slice(&mantissa.to_le_bytes());
+            f.push(side);
+            f.push(marks);
+            f
+        }
+        let check = |f: &[u8]| OrderDecoder::try_decode(f, 0).expect("bounds-valid frame").validate();
+
+        assert_eq!(check(&frame(12_345, 1, 0b101)), Ok(()));
+        assert_eq!(
+            check(&frame(2_000_000, 1, 0)),
+            Err(ValidateError::ValueOutOfRange {
+                field: "Order.px.mantissa",
+                min: -1_000_000,
+                max: 1_000_000,
+                actual: 2_000_000,
+            })
+        );
+        assert_eq!(
+            check(&frame(0, 3, 0)),
+            Err(ValidateError::UnknownEnum { field: "Order.side", discriminant: 3 })
+        );
+        assert_eq!(
+            check(&frame(0, 1, 0b010)),
+            Err(ValidateError::UnknownSetBits { field: "Order.marks", bits: 0b010 })
+        );
+"#;
+
+/// A consumer parsed `with_shared` and generated through `generate_multi`
+/// checks the shared composites, enums and sets its fields use: the shared
+/// schema's types travel with the consumer's IR, so `validate()` finds their
+/// bounds.
+#[test]
+fn validate_checks_shared_types_in_a_consumer_module() -> Result<(), Box<dyn std::error::Error>> {
+    let shared = parse(SchemaSource::xml(SHARED))?;
+    let consumer = parse(SchemaSource::xml(CONSUMER).with_shared(&shared))?;
+    let (shared, consumer) = (Schema::from_ir(shared), Schema::from_ir(consumer));
+    let set = Generator::new(
+        GenerationConfig::new("vshared")
+            .with_shared_module("vshared")
+            .with_validate(true),
+    )
+    .generate_multi(&[(&shared, "vshared"), (&consumer, "vconsumer")])?;
+    let source = |path: &str| {
+        set.modules()
+            .find(|m| m.path == path)
+            .map(|m| m.source.clone())
+            .ok_or_else(|| format!("no {path}"))
+    };
+    compile_and_run_modules(
+        "validate_shared_types",
+        &[
+            ("vshared", &source("vshared.rs")?),
+            ("vconsumer", &source("vconsumer.rs")?),
+        ],
+        &SHARED_CHECKS.replace("{rt}", "vshared"),
+    );
+    Ok(())
+}
+
+/// The same consumer generated on its own (`ergo_sbe::generate`) emits the
+/// shared types itself, and its `validate()` checks them the same way.
+#[test]
+fn validate_checks_shared_types_in_a_self_contained_consumer()
+-> Result<(), Box<dyn std::error::Error>> {
+    let shared = parse(SchemaSource::xml(SHARED))?;
+    let set = ergo_sbe::generate(
+        SchemaSource::xml(CONSUMER).with_shared(&shared),
+        GenerationConfig::new("vconsumer").with_validate(true),
+    )?;
+    let source = &set.modules().next().ok_or("one module")?.source;
+    compile_and_run_modules(
+        "validate_shared_self_contained",
+        &[("vconsumer", source)],
+        &SHARED_CHECKS.replace("{rt}", "vconsumer"),
+    );
+    Ok(())
+}
