@@ -2236,6 +2236,7 @@ for mode in $modes; do
             k get events -n "$ns" --sort-by=.lastTimestamp >"$out/$run-events.log" 2>&1
             log "WARNING: $mode rep $rep: the pods did not run (see $out/$run-describe.log; the plugin may have refused a grant). Skipping the rest of $mode."
             echo "mode $mode: not measured (pods did not run; see $run-describe.log)" >>"$out/skipped.txt"
+            [[ $mode == M0 ]] && die "the baseline M0 pods did not run ($out/$run-describe.log, $out/apply.log): nothing else can be compared"
             k delete pod -n "$ns" -l 'app in (ergon-lab-a,ergon-lab-b)' --ignore-not-found >/dev/null 2>&1
             break
         fi
