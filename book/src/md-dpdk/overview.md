@@ -165,8 +165,9 @@ platform only.
 
 Source:
 [BENCHMARKS.md, DPDK against the best kernel arm](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#dpdk-against-the-best-kernel-arm-same-run)
-(its `max X (a–b)` cells: the max here is `b`). Azure: no run output is
-committed, so no Azure figure is kept.
+(its `max X (a–b)` cells: the max here is `b`). Azure has no kernel-against-DPDK
+run committed; its DPDK loss under load is in
+[BENCHMARKS.md, Azure](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#azure-the-288-b-loss-under-load).
 
 - DPDK's max was lower in every pair except bare-metal idle (845 against
   307 µs).

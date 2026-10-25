@@ -503,15 +503,19 @@ run output is committed.
   ([BENCHMARKS.md](BENCHMARKS.md#one-flows-ceiling-on-aws)). AWS documents a
   10 Gbit/s single-flow limit in a cluster placement group. Spread a heavier
   stream over several channels on different ports.
-- **A small receiver window (`rcv-wnd`) caps the rate.** Only a ring that
-  cannot hold more needs one (Azure MANA: 256 × the smallest datagram, 80 KiB
-  for 288 B), paired with the conductor's park capped at 20 µs
-  (`AERON_CONDUCTOR_IDLE_STRATEGY_INIT_ARGS=100-10-1us-20us`). On AWS
+- **A small receiver window (`rcv-wnd`) trades rate for loss.** On Azure
+  MANA's 256-descriptor receive ring overflows whenever the receiver agent
+  stops polling for 256 frames' time, from 1 M msgs/s of 288 B. A window of
+  256 × the smallest datagram (80 KiB for 288 B) keeps no more in flight than
+  the ring holds: no loss in 50 rep-points against 9 of 50 without it, but
+  288 B then keeps up only to 2 M msgs/s (flat out 0.24 M alone, 2.93 M with
+  the conductor's park at 20 µs, `AERON_CONDUCTOR_IDLE_STRATEGY_INIT_ARGS=100-10-1us-20us`,
+  against 4.57 M). The park alone is not a loss fix
+  ([BENCHMARKS.md](BENCHMARKS.md#azure-the-288-b-loss-under-load)). On AWS
   (`c7i.4xlarge`, round 7) the 20 µs park with a 256 KiB window did not
   separate at idle, and at 288 B 500 k msgs/s its max was 5,140 against
   135 µs
-  ([BENCHMARKS.md](BENCHMARKS.md#measured-but-no-setting-recommended)). The
-  Azure pairing is not measured here.
+  ([BENCHMARKS.md](BENCHMARKS.md#measured-but-no-setting-recommended)).
 
 ## Host-local channels
 
