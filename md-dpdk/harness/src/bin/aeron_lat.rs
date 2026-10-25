@@ -607,8 +607,8 @@ fn local_oneway(c: &Common, a: &Aeronish, clock: &TscClock) -> Result<Ends, Erro
             point::recv_oneway(clock, c, t, &mut rx, &mut rec, progress)?;
             Ok((rec, thread_allocs() - a0))
         });
-        let (send, sa) = joined(sender.join(), "sender")?;
-        let (rec, ra) = joined(receiver.join(), "receiver")?;
+        let ((send, sa), (rec, ra)) =
+            point::both(joined(sender.join(), "sender"), joined(receiver.join(), "receiver"))?;
         Ok(Ends {
             rec,
             send,

@@ -86,6 +86,9 @@ pub enum Error {
     Transport(String),
     /// The point did not finish in time.
     Timeout(String),
+    /// This end stopped because the other end (another thread) failed: its
+    /// error is the cause ([`both`]).
+    Peer(&'static str),
     /// Payloads that did not decode as the expected message.
     Payload {
         /// How many.
@@ -103,6 +106,7 @@ impl fmt::Display for Error {
             Self::Io { path, source } => write!(f, "{}: {source}", path.display()),
             Self::Transport(why) => write!(f, "transport: {why}"),
             Self::Timeout(why) => write!(f, "timed out: {why}"),
+            Self::Peer(who) => write!(f, "the {who} failed"),
             Self::Payload { count, first } => {
                 write!(f, "{count} payload(s) refused, the first: {first}")
             }
@@ -721,6 +725,19 @@ pub struct SendStats {
     pub send_end_tsc: u64,
 }
 
+/// Both ends' results; when both failed, the cause, not the end that
+/// stopped because of it ([`Error::Peer`]).
+///
+/// # Errors
+/// The cause.
+pub fn both<T, U>(a: Result<T, Error>, b: Result<U, Error>) -> Result<(T, U), Error> {
+    match (a, b) {
+        (Ok(a), Ok(b)) => Ok((a, b)),
+        (Err(Error::Peer(_)), Err(cause)) => Err(cause),
+        (Err(e), _) | (Ok(_), Err(e)) => Err(e),
+    }
+}
+
 /// Where a one-way sender tells its receiver (another thread) it is done.
 #[derive(Debug, Default)]
 pub struct Progress {
@@ -882,7 +899,7 @@ pub fn send_oneway<T: Tx>(
                 break;
             }
             if progress.failed.load(Ordering::Acquire) {
-                return Err(Error::Transport("the receiver failed".into()));
+                return Err(Error::Peer("receiver"));
             }
             if now > deadline {
                 return Err(timeout("oneway sender"));
@@ -931,7 +948,7 @@ pub fn recv_oneway<R: Rx>(
                 rec.on_payload(p, recv);
             })?;
             if progress.failed.load(Ordering::Acquire) {
-                return Err(Error::Transport("the sender failed".into()));
+                return Err(Error::Peer("sender"));
             }
             if drain_until == 0 && progress.done.load(Ordering::Acquire) {
                 drain_until = now.saturating_add(clock.ns_to_ticks(DRAIN_NS));
