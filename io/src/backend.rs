@@ -285,8 +285,9 @@ impl Config {
     /// `sqpoll_idle_ms`, `ring_entries`, `connect_timeout_ms`, `connect_cpu`,
     /// `rcvbuf` (0 keeps the kernel default), `rx_timestamps`,
     /// `rx_read_timestamp`, `per_queue` and `inline_connect_fallback`
-    /// (`true`/`false`), `quickack_check` (`off`, `warn` or `require`), `keepalive_idle_s` (0:
-    /// off), `keepalive_interval_s`, `keepalive_count`, `tcp_user_timeout_ms`
+    /// (`true`/`false`), `quickack_check` (`off`, `warn` or `require`),
+    /// `keepalive_idle_s` (0: off), `keepalive_interval_s`,
+    /// `keepalive_count`, `tcp_user_timeout_ms`
     /// (0: the kernel default), `tcp_rto_min_us` and `tcp_delack_max_us` (0:
     /// the kernel's), `tcp_info_interval_ms` (0: off), `helper_cpus` (a
     /// kernel CPU list:
