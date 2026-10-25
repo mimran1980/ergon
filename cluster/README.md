@@ -32,7 +32,7 @@ The crate implements client-side operations:
 
 - synchronous and poll-driven connection;
 - ingress `offer` and explicit `try_claim`;
-- regular and controlled egress polling;
+- one egress poll (`AeronCluster::poll`) into one listener;
 - authentication challenges and credentials;
 - keep-alives and close requests;
 - session events, administrative responses, and leader changes.

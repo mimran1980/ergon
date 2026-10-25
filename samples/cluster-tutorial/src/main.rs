@@ -5,7 +5,7 @@
 //! 1. **Connect** via `SessionBuilder` with ingress endpoints
 //! 2. **Offer** application messages via the allocation-free claim path
 //! 3. **Poll egress** with an `EgressListener` for session events and echoes
-//! 4. **Keep-alive** auto-scheduling during poll
+//! 4. **Keep-alive** from the poll loop (`poll` itself never sends one)
 //! 5. **Close** the session cleanly
 //!
 //! Requires `just build-aeron-jars`. Seeds a
@@ -15,10 +15,10 @@
 //! Run:
 //! ```sh
 //! just build-aeron-jars
-//! cargo run -p cluster-tutorial
+//! cargo run --manifest-path samples/cluster-tutorial/Cargo.toml
 //! ```
 
-use ergo_aeron_cluster::cluster_codec_types::{AdminRequestType, AdminResponseCode, EventCode};
+use ergo_aeron_cluster::cluster_codec_types::EventCode;
 use ergo_aeron_cluster::{AeronCluster, EgressListener, SessionBuilder, SessionState};
 use ergo_aeron_cluster_test_harness::TestCluster;
 use std::time::{Duration, Instant};
@@ -78,17 +78,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         fn on_new_leader(&mut self, _csid: i64, ltid: i64, lmid: i32, endpoints: &str) {
             println!("  new leader: term={ltid} member={lmid} eps={endpoints}");
         }
-        fn on_challenge(&mut self, _cid: i64, _csid: i64, _chal: &[u8]) {}
-        fn on_admin_response(
-            &mut self,
-            _csid: i64,
-            _cid: i64,
-            _rt: AdminRequestType,
-            _rc: AdminResponseCode,
-            _msg: &str,
-            _payload: &[u8],
-        ) {
-        }
     }
 
     // ── 3. Offer messages (allocation-free claim path) ───────────────────
@@ -103,7 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── 4. Poll egress until all echoes received ─────────────────────────
     let deadline = Instant::now() + Duration::from_secs(15);
     while Instant::now() < deadline && listener.echo_count < messages.len() {
-        let _ = client.send_keep_alive();
+        client.keep_alive_if_due()?;
         let n = client.poll(&mut listener, 10)?;
         if n == 0 {
             std::thread::sleep(Duration::from_millis(5));
