@@ -147,9 +147,10 @@ arm gets a value a comparable arm was not swept for.
 |---|---|---|---|
 | host checks | ergon-tune clean on the hot CPUs (no `warn`); a warning stops the session | all | [ergon-tune](../tune/overview.md#what-it-checks), `hostcheck` |
 | NIC interrupts | the data NICs' IRQs on CPU 2, coalescing off, rings 1,024 | network arms | [best kernel path measured](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#recommended-configuration) |
-| busy poll | `busy_read` and `busy_poll` 50 µs, `napi_defer_hard_irqs` 2, `gro_flush_timeout` 200 µs | socket and kernel-UDP arms | the md-dpdk lab's `kernel-busy` mode |
+| busy poll | `busy_read` and `busy_poll` 50 µs | socket and kernel-UDP arms | the md-dpdk lab's `kernel-busy` mode |
+| NIC interrupt deferral | `napi_defer_hard_irqs` 2, `gro_flush_timeout` 200 µs for the Aeron kernel arms (their non-blocking `recvmmsg` busy-polls the queue); 0 / 0 for the socket arms, which wait in `epoll` and would otherwise wait for the 200 µs timer on every packet (ergon-tune N2). Read back per point; a socket point with deferral on is refused | Aeron kernel arms; socket arms | `transport-settings.env` `TR_BEST_BY_TECHNOLOGY` |
 | ergon-io backend | `epoll-spin`, which sets `SO_BUSY_POLL` 0; `datagram_burst` 64 (the other arms' per-stream limit), `epoll_events` 64 | `eio-*` | [UDP](../io/udp.md#options), [framed TCP](../io/framed-tcp.md#options) |
-| mio | `epoll_wait(0)` spin, edge-triggered, read to `WouldBlock`; `SO_BUSY_POLL` 50 µs (`--busy-read-us`) | `mio-*` | `transport/mio_udp.rs`, `mio_tcp.rs` |
+| mio | `epoll_wait(0)` spin, edge-triggered, read to `WouldBlock`; `SO_BUSY_POLL` 50 µs (`--busy-read-us`, mio only: ergon-io's `epoll-spin` has no such knob) | `mio-*` | `transport/mio_udp.rs`, `mio_tcp.rs` |
 | socket buffers | 2 MiB send and receive | socket arms | `TR_SOCKBUF` |
 | TCP | `TCP_NODELAY`; `TCP_QUICKACK` after every read; quick-ACK routes; `tcp_rto_min_us` 5,000 and `tcp_delack_max_us` 1,000 (kernel 6.15+); SACK and timestamps on; `slow_start_after_idle` 0; cubic | TCP arms | [framed TCP settings](../io/framed-tcp.md#tcp-settings) |
 | Aeron | `DEDICATED`, every agent busy-spinning, the conductor on its own core, 1 MiB terms, no sparse files, the client's mapped memory pre-touched, MTU 1,408 | Aeron arms | [md-dpdk configuration](../md-dpdk/configuration.md#threads-and-cores) |
