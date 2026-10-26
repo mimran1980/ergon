@@ -2846,6 +2846,22 @@ hostcheck)
     # its report in bench/hostcheck.txt; 1 on any warning or error
     read -r _ _ iso <"$run/transport-map"
     rm -f "$run/hostcheck.txt"
+    # after the isolation reboot chrony is still slewing CLOCK_REALTIME, and
+    # T11 rightly refuses a clock its last update moved by over 1 ms: wait,
+    # up to 5 min, until its last offset and the correction still owed are
+    # both under 0.5 ms (chronyc -c tracking: fields 5 system time, 6 last
+    # offset, in s); the check below still decides
+    if command -v chronyc >/dev/null; then
+        settled=
+        for _ in $(seq 60); do
+            if chronyc -c tracking 2>/dev/null | awk -F, '{s = $5 < 0 ? -$5 : $5; l = $6 < 0 ? -$6 : $6; exit !(NF >= 6 && s < 0.0005 && l < 0.0005)}'; then
+                settled=1
+                break
+            fi
+            sleep 5
+        done
+        echo "hostcheck: chrony $([[ -n $settled ]] && echo settled || echo 'not settled after 5 min'): $(chronyc -c tracking 2>/dev/null | cut -d, -f5,6)"
+    fi
     # (exit 2 not clean, 1 not run: either stops the session; a warn line too)
     PATH=$tools:$PATH hostcheck --hot-cpus "$iso" --nic "$(data_ifaces | paste -sd, -)" --aeron-dir "$TR_AERON_DIR" \
         --out "$run/hostcheck.txt" && rc=0 || rc=$?
