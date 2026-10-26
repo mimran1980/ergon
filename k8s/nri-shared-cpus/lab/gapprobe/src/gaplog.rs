@@ -78,10 +78,20 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn filling_the_log_takes_no_page_fault() {
-        let minflt = || {
-            let s = std::fs::read_to_string("/proc/thread-self/stat").unwrap_or_default();
-            crate::procfs::faults(&s).map_or(u64::MAX, |f| f.0)
+        use std::io::Read;
+        // one buffer, touched before the window: a fresh String per read
+        // would itself fault between the two counts
+        let mut buf = String::with_capacity(4096);
+        let mut minflt = || {
+            buf.clear();
+            let read = std::fs::File::open("/proc/thread-self/stat")
+                .and_then(|mut f| f.read_to_string(&mut buf));
+            if read.is_err() {
+                return u64::MAX;
+            }
+            crate::procfs::faults(&buf).map_or(u64::MAX, |f| f.0)
         };
+        let _ = minflt();
         // 16 MiB: mmap'd, every page fresh
         let cap = 1 << 20;
         let mut g = GapLog::new(cap);

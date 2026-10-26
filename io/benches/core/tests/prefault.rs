@@ -35,9 +35,9 @@ fn filling_spike_and_stall_buffers_takes_no_page_fault() {
 }
 
 #[test]
-fn recording_across_the_histogram_takes_no_page_fault() {
+fn recording_across_the_histogram_takes_no_page_fault() -> Result<(), Box<dyn std::error::Error>> {
     use ergon_latency_core::hist::Latency;
-    let mut lat = Latency::new().expect("histogram");
+    let mut lat = Latency::new()?;
     let before = minor_faults();
     // every power of two from 1 ns to 60 s, and a dense run in the µs range:
     // each lands in its own bucket, so each would touch a fresh page if the
@@ -55,4 +55,5 @@ fn recording_across_the_histogram_takes_no_page_fault() {
         faults, 0,
         "{faults} page faults recording into a fresh histogram"
     );
+    Ok(())
 }
