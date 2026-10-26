@@ -363,3 +363,49 @@ fn a_datagram_socket_gets_the_socket_options_but_no_tcp_ones() -> R {
     assert!(d.get(id).is_some());
     Ok(())
 }
+
+/// With `busy_poll_us`, the read that finds a datagram socket empty (the
+/// one that polls the NIC) comes at the start of the next poll, after what
+/// the receive pass queued went out: mio's order (read, echo, read to
+/// `WouldBlock`). At 0 the burst ends on it in the receiving poll.
+#[test]
+fn busy_poll_us_moves_a_datagram_sockets_empty_read_to_the_next_poll() -> R {
+    for us in [50u32, 0] {
+        let mut d = driver(&format!("epoll-spin,busy_poll_us={us}"))?;
+        let (a, b) = pair(&UdpOptions::default())?;
+        let (pa, pb) = (a.local_addr()?, b.local_addr()?);
+        drop(b);
+        let peer = UdpSocket::bind(pb)?;
+        peer.connect(pa)?;
+        let fd = a.raw_fd();
+        d.add(a)?;
+        let mut h = Got::default();
+        let busy = u64::from(us > 0);
+        for i in 0..5u8 {
+            peer.send(&[i; 8])?;
+            readable(fd)?;
+            let mut seen = Vec::new();
+            for _ in 0..3 {
+                let before = d.stats().recvmsg_eagain;
+                d.poll(&mut h)?;
+                seen.push(d.stats().recvmsg_eagain - before);
+            }
+            assert_eq!(h.dgrams.len(), usize::from(i) + 1, "busy_poll_us={us}");
+            assert_eq!(seen, [1 - busy, busy, 0], "busy_poll_us={us}, datagram {i}");
+        }
+    }
+    Ok(())
+}
+
+/// `busy_poll_us` reaches a datagram socket as `SO_BUSY_POLL` (no
+/// `SO_PREFER_BUSY_POLL`).
+#[test]
+fn busy_poll_us_sets_so_busy_poll_on_a_datagram_socket() -> R {
+    let mut d: Driver<UdpConn> = Driver::new(Config::parse("epoll-spin,busy_poll_us=50")?)?;
+    let (a, _b) = pair(&UdpOptions::default())?;
+    let fd = a.raw_fd();
+    d.add(a)?;
+    let bp = ergon_io::sys::busy_poll_settings(fd)?;
+    assert_eq!((bp.usec, bp.prefer), (50, false));
+    Ok(())
+}

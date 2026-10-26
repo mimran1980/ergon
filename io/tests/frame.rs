@@ -431,6 +431,42 @@ mod driver {
         Ok(())
     }
 
+    /// `busy_poll_us` on `epoll-spin`: `SO_BUSY_POLL` reads back on the
+    /// socket, and a read with data is followed by one more read of that
+    /// socket on the next poll (the kernel busy-polls only a read that finds
+    /// the receive queue empty: that read makes the NAPI pass). At 0 (the
+    /// default) a drained socket is not read again.
+    #[test]
+    fn busy_poll_us_sets_so_busy_poll_and_reads_a_socket_to_empty() -> R {
+        for us in [50u32, 0] {
+            let cfg = Config::parse(&format!("epoll-spin,busy_poll_us={us}"))?;
+            let mut d: Driver<FrameConn> = Driver::new(cfg)?;
+            let l = TcpListener::bind("127.0.0.1:0")?;
+            let mut client = TcpStream::connect(l.local_addr()?)?;
+            let id = d.add(FrameConn::from_stream(
+                l.accept()?.0,
+                FrameOptions::default(),
+            )?)?;
+            let fd = d.get(id).ok_or("gone")?.raw_fd();
+            let bp = ergon_io::sys::busy_poll_settings(fd)?;
+            assert_eq!((bp.usec, bp.prefer), (us, false), "busy_poll_us={us}");
+            let mut h = Got::default();
+            for i in 0..5u8 {
+                let start = d.stats().recvmsg_eagain;
+                client.write_all(&wire(&[i; 10]))?;
+                poll_until(&mut d, &mut h, |h| h.frames.len() == usize::from(i) + 1)?;
+                // The receiving poll reads once: the empty read is not in it.
+                assert_eq!(d.stats().recvmsg_eagain, start, "busy_poll_us={us}");
+                let before = d.stats().recvmsg_eagain;
+                d.poll(&mut h)?;
+                d.poll(&mut h)?;
+                let empty = d.stats().recvmsg_eagain - before;
+                assert_eq!(empty, u64::from(us > 0), "busy_poll_us={us}, frame {i}");
+            }
+        }
+        Ok(())
+    }
+
     /// The TCP keys reach a framed connection: `tcp_rto_min_us` and
     /// `tcp_delack_max_us` read back exactly on a 6.15+ kernel (refused
     /// typed at `Driver::new` before), and the quick-ACK route check runs

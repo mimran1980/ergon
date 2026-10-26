@@ -267,12 +267,7 @@ fn only_the_three_measured_backends_exist() -> R {
 /// itself.
 #[test]
 fn the_unmeasured_busy_poll_keys_are_unknown() -> R {
-    for key in [
-        "busy_poll_us=1",
-        "wait_us=0",
-        "prefer_busy_poll=false",
-        "busy_poll_budget=8",
-    ] {
+    for key in ["wait_us=0", "prefer_busy_poll=false", "busy_poll_budget=8"] {
         let s = format!("recv-busy,{key}");
         let e = Config::parse(&s)
             .err()
@@ -282,6 +277,46 @@ fn the_unmeasured_busy_poll_keys_are_unknown() -> R {
             "{s}: {e}"
         );
     }
+    Ok(())
+}
+
+/// `busy_poll_us`: `SO_BUSY_POLL` on every socket `epoll-spin` owns, 0 (the
+/// default: no busy polling) up to the kernel's `INT_MAX`. The other
+/// backends set their own (`recv-busy` 1 µs, `uring-sqpoll` 0) and refuse
+/// the key typed.
+#[test]
+fn busy_poll_us_is_epoll_spins_and_bounded() -> R {
+    for b in Backend::ALL {
+        assert_eq!(Config::new(b).busy_poll_us, 0, "{b}");
+    }
+    assert_eq!(
+        Config::parse("epoll-spin,busy_poll_us=50")?.busy_poll_us,
+        50
+    );
+    assert_eq!(Config::parse("epoll-spin,busy_poll_us=0")?.busy_poll_us, 0);
+    let max = Config::parse("epoll-spin,busy_poll_us=2147483647")?;
+    assert_eq!(max.busy_poll_us, 2_147_483_647);
+    for bad in [
+        "epoll-spin,busy_poll_us=2147483648",
+        "epoll-spin,busy_poll_us=-1",
+        "epoll-spin,busy_poll_us=x",
+        "recv-busy,busy_poll_us=50",
+        "uring-sqpoll,busy_poll_us=1",
+    ] {
+        let e = Config::parse(bad)
+            .err()
+            .ok_or_else(|| format!("{bad:?} accepted"))?;
+        assert!(
+            matches!(&e, ergon_io::Error::Config(m) if m.contains("busy_poll_us")),
+            "{bad}: {e}"
+        );
+    }
+    let mut c = Config::new(Backend::RecvBusy);
+    c.busy_poll_us = 1;
+    assert!(matches!(c.validate(), Err(ergon_io::Error::Config(_))));
+    let mut c = Config::new(Backend::EpollSpin);
+    c.busy_poll_us = u32::MAX;
+    assert!(matches!(c.validate(), Err(ergon_io::Error::Config(_))));
     Ok(())
 }
 

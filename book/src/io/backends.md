@@ -6,7 +6,7 @@ configuration, so one binary can run with each. Which to pick:
 
 | backend | how it waits | polls the NIC | extra core |
 |---|---|---|---|
-| `epoll-spin` | `epoll_wait(0)` every poll, then one `recvmsg` per ready socket: [mio's mechanism](#mio-measured-not-a-backend) | no (interrupts) | no |
+| `epoll-spin` | `epoll_wait(0)` every poll, then one `recvmsg` per ready socket: [mio's mechanism](#mio-measured-not-a-backend) | no (interrupts); with `busy_poll_us`, once per socket after each receive | no |
 | `recv-busy` | non-blocking `recvmsg` on every socket every poll, with `SO_BUSY_POLL` (with `per_queue`: one read per NIC queue, then the sockets epoll reports ready) | yes, one pass per socket (or queue) per poll | no |
 | `uring-sqpoll` | an `SQPOLL` kernel thread submits, completes and polls the NIC | yes, on the kernel thread | yes |
 
@@ -56,11 +56,30 @@ every platform.)*
 | `tcp_info_interval_ms` | 0 (off) | passive `TCP_INFO` per connection (`Driver::tcp_info`); at most one `getsockopt` per poll, from the 250 µs deadline check |
 | `epoll_events` | 64 | the most ready sockets one `epoll_wait` reports (`epoll-spin`; `recv-busy` with `per_queue`); the rest are reported on the next poll; 1 to 65,536 |
 | `datagram_burst` | 16 | UDP: the most datagrams one poll reads from one ready socket; 1 to 1,024 ([UDP](udp.md)) |
+| `busy_poll_us` | 0 (off) | `epoll-spin` only: `SO_BUSY_POLL` on every socket, 0 to `i32::MAX` µs; above 0, the read that empties a socket polls the NIC once ([busy polling on `epoll-spin`](#busy-polling-on-epoll-spin)); other backends refuse it |
 
 An unknown key, a bad value or a setting the backend cannot use is an error
-(`Config::validate`), never ignored. NIC busy polling has no key: `recv-busy`
-sets `SO_BUSY_POLL` to 1 µs (one NAPI pass per empty read) and
-`uring-sqpoll` a 1 µs NAPI busy-poll timeout; every other socket gets 0.
+(`Config::validate`), never ignored. `recv-busy` sets `SO_BUSY_POLL` to 1 µs
+(one NAPI pass per empty read) and `uring-sqpoll` a 1 µs NAPI busy-poll
+timeout; `epoll-spin` sockets get `busy_poll_us` (0 by default), so a
+`net.core.busy_read` default never leaks in.
+
+### Busy polling on `epoll-spin`
+
+`busy_poll_us` gives `epoll-spin` what mio gets from the same socket option,
+for a comparison where only the library differs.
+
+| what | with `busy_poll_us` above 0 |
+|---|---|
+| socket | `SO_BUSY_POLL` set to the value (TCP, framed TCP, WebSocket, HTTP, UDP); never `SO_PREFER_BUSY_POLL` |
+| TCP read | a socket read with data is read once more at the start of the next poll, after the replies went out; finding the queue empty, that read makes one NAPI pass, then `EAGAIN` (mio reads to `WouldBlock`: the same pass) |
+| UDP read | a ready socket is read once; its `datagram_burst` runs at the start of the next poll and ends on the empty read |
+| value | the reads are non-blocking: any value above 0 makes exactly one pass; the value only bounds a blocking read |
+| `epoll_wait(0)` | never busy-polls: the kernel returns before `ep_busy_loop` on a zero timeout, so `net.core.busy_poll`, `EPIOCSPARAMS` and `SO_PREFER_BUSY_POLL` change nothing |
+| host | `CONFIG_NET_RX_BUSY_POLL`; a NIC with NAPI ids (none on loopback or a plain veth, where the option does nothing); no sysctl and no capability (`SO_BUSY_POLL` needs no `CAP_NET_ADMIN`) |
+
+It polls the NIC once per receive, not while idle: the loop still waits
+for the interrupt. To poll the NIC every poll, use `recv-busy`.
 
 ## The one-core backends
 

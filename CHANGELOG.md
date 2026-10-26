@@ -4,6 +4,12 @@
 
 ### Added
 
+- `ergon-io`: `Config::busy_poll_us` (key `busy_poll_us`, default 0,
+  `epoll-spin` only, 0 to `i32::MAX`): `SO_BUSY_POLL` on every socket the
+  driver owns, and a socket read with data is read once more on the
+  next poll, so the empty read polls the NIC once, as mio's read to
+  `WouldBlock` with the same option does. Other backends, or a value above
+  `i32::MAX`, are `Error::Config`.
 - `ergon-io`: UDP, `udp::UdpConn` (`UdpOptions`, `UdpHandler::on_datagram`,
   `UdpStats`), on `epoll-spin` only: `Driver::<UdpConn>::new` on
   `recv-busy` or `uring-sqpoll` is `Error::Unsupported`. Connected

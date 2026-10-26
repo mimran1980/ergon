@@ -2,6 +2,12 @@
 //!
 //! - `epoll-spin`: `epoll_wait(timeout = 0)` every poll, then one `recvmsg`
 //!   per ready socket (level-triggered: data left behind is reported again).
+//!   With `Config::busy_poll_us` (`SO_BUSY_POLL` on every socket), a socket
+//!   read with data is read once more at the start of the next poll,
+//!   after the replies went out: that read finds the queue empty and makes
+//!   one NAPI pass before `EAGAIN`, as mio's read to `WouldBlock` does. A
+//!   datagram socket epoll reports is then read once, and its
+//!   `datagram_burst` runs from that next-poll read.
 //! - `recv-busy`: no epoll. A non-blocking `recvmsg` on every socket every
 //!   poll, with `SO_BUSY_POLL` set (by [`super::Driver::add`]). An empty read
 //!   runs `sk_busy_loop(sk, nonblock)`: one NAPI pass, then `EAGAIN`. Never
@@ -28,6 +34,7 @@ enum Mode {
     Recv,
 }
 
+#[allow(clippy::struct_excessive_bools)] // independent switches from the configuration
 pub(super) struct Epoll {
     mode: Mode,
     /// `recv-busy` with `Config::per_queue`.
@@ -61,6 +68,18 @@ pub(super) struct Epoll {
     events: Box<[libc::epoll_event]>,
     /// `Config::datagram_burst`: reads per ready datagram socket per poll.
     burst: u32,
+    /// `epoll-spin` with `Config::busy_poll_us`: a socket read with data is
+    /// read once more on the next poll. That read finds the queue
+    /// empty and, with `SO_BUSY_POLL` set, makes one NAPI pass first.
+    drain: bool,
+    /// The slots to read again on the next poll, each once.
+    again: Vec<usize>,
+    /// `again` while it is being read (kept to avoid an allocation).
+    draining: Vec<usize>,
+    /// Per slot: in `again`.
+    queued: Vec<bool>,
+    /// Reading the `again` list (a datagram socket's burst runs there).
+    again_pass: bool,
 }
 
 impl Epoll {
@@ -99,6 +118,11 @@ impl Epoll {
             events: vec![libc::epoll_event { events: 0, u64: 0 }; cfg.epoll_events as usize]
                 .into_boxed_slice(),
             burst: cfg.datagram_burst,
+            drain: mode == Mode::Spin && cfg.busy_poll_us > 0,
+            again: Vec::new(),
+            draining: Vec::new(),
+            queued: Vec::new(),
+            again_pass: false,
         })
     }
 
@@ -112,6 +136,13 @@ impl Epoll {
         }
         if let Some(a) = self.asked.get_mut(id.index()) {
             *a = false;
+        }
+        if self.drain && self.queued.len() <= id.index() {
+            // Room for every slot now, so the poll never allocates.
+            let n = id.index() + 1;
+            self.queued.resize(n, false);
+            self.again.reserve(n.saturating_sub(self.again.len()));
+            self.draining.reserve(n.saturating_sub(self.draining.len()));
         }
         let Some(ep) = &self.ep else {
             return Ok(());
@@ -176,6 +207,20 @@ impl Epoll {
                 self.recv_index(conns, i, handler, stats, reads);
             }
         } else {
+            if !self.again.is_empty() {
+                // The read to empty after last poll's data: the NIC poll.
+                std::mem::swap(&mut self.again, &mut self.draining);
+                self.again_pass = true;
+                for k in 0..self.draining.len() {
+                    let i = self.draining[k];
+                    if let Some(q) = self.queued.get_mut(i) {
+                        *q = false;
+                    }
+                    self.recv_index(conns, i, handler, stats, reads);
+                }
+                self.draining.clear();
+                self.again_pass = false;
+            }
             let n = self.wait(stats)?;
             for k in 0..n {
                 let i = usize::try_from(self.events[k].u64).unwrap_or(usize::MAX);
@@ -230,7 +275,10 @@ impl Epoll {
             return;
         };
         let mut r = recv_one(conn, id, &mut self.slot, handler, stats, reads);
-        if E::DATAGRAM {
+        // With `drain`, a datagram socket epoll reports is read once and
+        // its burst runs from the again list on the next poll, so the empty
+        // read that ends it (the NIC poll) comes after this poll's replies.
+        if E::DATAGRAM && (!self.drain || self.again_pass) {
             // Up to `burst` datagrams from this socket, then the next one;
             // what is left is reported again by the next `epoll_wait`.
             let mut left = self.burst;
@@ -247,6 +295,11 @@ impl Epoll {
                     conns.mark_tx(i);
                 }
                 self.data_arrived(i);
+                // Read again on the next poll: to `EAGAIN`, which polls the NIC.
+                if self.drain && self.queued.get(i) == Some(&false) {
+                    self.queued[i] = true;
+                    self.again.push(i);
+                }
             }
             Err(e) => {
                 let e = conn.close_reason(e);

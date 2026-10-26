@@ -341,10 +341,15 @@ impl SockOpts {
         Self {
             timestamps: cfg.rx_timestamps,
             rcvbuf: cfg.rcvbuf,
-            // Only `recv-busy` polls through the socket: 1 µs, so an empty
-            // read makes one NAPI pass. The others set 0 so a sysctl default
-            // cannot leak in.
-            busy_poll_us: u32::from(cfg.backend == Backend::RecvBusy),
+            // `recv-busy` polls through the socket: 1 µs, so an empty read
+            // makes one NAPI pass. `epoll-spin` takes `busy_poll_us` (0 by
+            // default); `uring-sqpoll` sets 0. Always set, so a sysctl
+            // default (`net.core.busy_read`) cannot leak in.
+            busy_poll_us: match cfg.backend {
+                Backend::RecvBusy => 1,
+                Backend::EpollSpin => cfg.busy_poll_us,
+                Backend::UringSqpoll => 0,
+            },
             quickack: cfg.quickack_check,
             backend: cfg.backend,
             keepalive: (

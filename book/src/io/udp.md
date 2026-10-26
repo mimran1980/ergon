@@ -53,7 +53,7 @@ Driver keys (`Config`, [configuration strings](backends.md#configuration-strings
 
 - No TCP option applies: keepalive, `TCP_USER_TIMEOUT`, `tcp_rto_min_us`,
   `tcp_delack_max_us` and the quick-ACK route check are skipped.
-  `SO_RCVBUF`, `SO_BUSY_POLL` (0 on `epoll-spin`) and receive timestamps
+  `SO_RCVBUF`, `SO_BUSY_POLL` (`busy_poll_us`, 0 by default) and receive timestamps
   are set.
 - UDP is unreliable: a datagram the network or a full receive buffer drops
   is gone. `UdpStats` counts only what this socket saw.

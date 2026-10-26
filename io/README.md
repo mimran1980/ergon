@@ -169,6 +169,11 @@ thread polls (feeds, order connections, `HttpClient` pool connections):
   poll, then one read per ready socket where mio, edge-triggered, makes
   two. Level with mio in the fair run, and a CI gate fails if either pulls
   ahead: [mio](https://mimran1980.github.io/ergon/io/backends.html#mio-measured-not-a-backend).
+- `epoll-spin,busy_poll_us=N` sets `SO_BUSY_POLL` N on every socket, as a
+  mio program with that option has it: the read that empties a socket then
+  polls the NIC once (`epoll_wait(0)` never does). No sysctl or capability
+  needed; a NIC with NAPI ids is (not loopback or a plain veth):
+  [busy polling on `epoll-spin`](https://mimran1980.github.io/ergon/io/backends.html#busy-polling-on-epoll-spin).
 
 The full table, the evidence and the node settings: the book's
 [choosing a backend](https://mimran1980.github.io/ergon/io/overview.html#choosing-a-backend).
