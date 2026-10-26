@@ -81,6 +81,7 @@ after their due time.
 | `settings` | {host: {knob: value}} | read back from the host after the point |
 | `netem_counters` | {host: {nic: {qdisc, loss_pct, sent_pkts, dropped}}} | netem verified; tc -s on every data NIC |
 | `loss_counters` | {host: {source: {counter: growth}}} | sources `tcp_info`, `nstat`, `aeron` |
+| `events` | {host: {file, rows, notes}} | the events file, its row count and what could not be recorded |
 
 A TCP arm's own manifest (`tcp_lat`) also carries, per end, the traffic's
 and the set-up's counters apart: `tcp.retrans`, `tcp.dsack_dups` (the
@@ -108,13 +109,40 @@ sweep.<knob>=<arm>,<arm>,...   the arms swept for a per-arm knob
 ```
 
 An arm reporting a knob the file does not give it, or a different value,
-breaks the settings rule. transport_collect.py writes `shared.` lines alone:
-every transport sysctl (`host.sh transport_sysctls`) at its TR_* value, each
-host reading them back after every point (`vm.sh settings`); an optional one
-(kernel 6.15's) that no host had at any point is declared `absent`. The shared-knob rule: a per-arm knob needs a
-`sweep.` line naming that arm and every other arm of the round that reports
-the knob, and a knob is never both `shared.` and per-arm. The A/A arm is
-checked against `aa_of`'s settings.
+breaks the settings rule. transport_collect.py writes:
+
+- `shared.<sysctl>`: every transport sysctl (`host.sh transport_sysctls`) at
+  its TR_* value, each host reading them back after every point (`vm.sh
+  settings`); an optional one (kernel 6.15's) that no host had at any point is
+  declared `absent`. A sysctl an arm's knob sets otherwise (a tuning variant's
+  congestion control; `aeron_path=kernel`'s busy poll, 0) is declared per arm
+  instead, for every arm, each its own value.
+- `<arm>.knob.<name>`: each per-arm knob of transport-settings.env's list
+  that the arm has, as the runner ran it (`manifest/<point>.env` `knob.*`),
+  read back from the binary's manifest where it reports it.
+- `sweep.<knob>`: the arms a tuning session swept for it: the tuned
+  section's `TR_TUNED_SWEPT`, and in a tuning session its variants.
+
+The shared-knob rule: where the arms of a round run a per-arm knob at
+different values, every arm of the round that has it needs a `sweep.` line
+naming it (one value everywhere is no arm's own tweak); a knob is never both
+`shared.` and per-arm. The A/A arm is checked against `aa_of`'s settings.
+
+## The tuning session (LAB_TUNE=1)
+
+`transport.sh run tune-a|tune-b` (`transport_tune.py`): each arm of
+`TR_SWEEP_*` (pair a: the arms of no loss set; pair b: the TCP arms and
+aeron-rel) is a set of its own, `<set>.<n>`, of variants
+`<arm>--<knob>-<value>`, the current value first and its A/A, at the arm's
+sets' middle load and 1 and 128 streams where they have them (profile
+`loss`: also under netem `TR_TUNE_NETEM`). Then `<set>.c<n>`: each knob
+whose sweep found a value better than the current one, the current value,
+the top two and the A/A, `TR_TUNE_CONFIRM_REPS` reps. A one-host context
+(`1`, `2b`) keeps its set's one host (`<set>.<n>` is one-host too). Files:
+`tune-arms.tsv`, `tune-sweep.tsv`, `variants.txt`, `tune-confirm.tsv`,
+`tune-sweep.json` (each decision), `tuned.env` (the section
+`transport_tune.py apply` writes into transport-settings.env, merged with
+the other pair's) and `tune-report.md` (the evidence).
 
 ## Spikes file (`spikes-<tag>.csv`)
 
@@ -127,22 +155,51 @@ row's max column; otherwise the max is not located and is unexplained.
 ## Events file (`<host>-events-<tag>.csv`)
 
 `kind,start_ns,end_ns,cpu,detail`, times on CLOCK_REALTIME, `cpu` `-` when
-none. Kinds:
+none, after `# note: ...` lines. transport_collect.py writes one per host
+and tag from what the runner kept (`events/<point>-<host>.log.gz`: vm.sh
+events-stop's output) and, on host `a`, the measuring loop's stalls file
+(`transport_events.py`). A one-host point's two runs share one log.
+
+How the runner records them, per point and host (`vm.sh events-start`
+before any binary of the point starts, so before its warm-up; `vm.sh
+events-stop` after its window):
+
+| source | where it runs | what |
+|---|---|---|
+| tracefs instance `ergon-events` | the hot CPUs, CLOCK_MONOTONIC | sched_switch, irq and softirq entry/exit, IPIs (x86 irq_vectors, arm64 ipi_entry/exit), page faults (x86 exceptions tracepoints, else a kprobe on `handle_mm_fault`) |
+| osnoise (`knoise_start`) | the hot CPUs | noise with durations, where the kernel has the tracer and NO_OSNOISE_WORKLOAD |
+| gap spinner (`gapspin.c`) | each hot CPU the point leaves idle | gaps of `TR_EVENTS_GAPSPIN_US` or more |
+| sampler | the housekeeping CPU, each second | tc -s of every data NIC, the TCP counters (`/proc/net/snmp`, `netstat`), the media driver's loss counters (`counters loss`, Aeron arms) |
+
+Tracepoints and kprobes are enabled (kernel text patched, an IPI to every
+CPU) only before the binaries start, never in a window. What a kernel lacks
+is a note (`... unavailable: why`), as is a CPU whose trace buffer
+overran.
+
+Kinds (cpu-bound kinds only on a CPU whose busy thread is the measured
+path's: the task the trace shows on it longest, not a gap spinner):
 
 | kind | source | detail |
 |---|---|---|
-| `irq` | trace, per CPU | IRQ name |
-| `softirq` | trace / osnoise | softirq name |
-| `nak`, `retransmit` | Aeron counters, sampled | count |
-| `tcp-rto`, `tcp-tlp` | TCP_INFO / nstat, sampled | count |
+| `irq` | trace (x86's local timer too), osnoise | IRQ name |
+| `softirq` | trace, osnoise | softirq name |
+| `ipi` | trace | IPI vector or reason |
+| `preempt` | trace | the busy thread, preempted or blocked, and what ran instead |
+| `page-fault` | trace, the busy thread's | user/kernel and address, or the kprobe's span |
+| `host-pause` | gap spinner, less what the trace shows on its CPU | µs untraced |
+| `nak`, `retransmit` | the media driver's counters, each second | count |
+| `tcp-rto`, `tcp-tlp`, `tcp-dsack`, `tcp-retrans` | the host's TCP counters, each second | count |
 | `tc-drop` | tc -s, each second | packets netem dropped that second |
-| `page-fault` | ergon-tune T19 FaultWatch | faults |
+| `stall` | the measuring loop's stalls file (host `a`) | the loop and its gap |
 | `dpdk-refill` | DPDK event log | descriptors |
-| `host-pause` | gap spinner | µs |
 
 `spikes.py` also reads `host-pause` from the diag log's `gapspin` section,
 IRQs from its `trace` section, softirqs from its `knoise` section and
-`refill` rows from the DPDK event log.
+`refill` rows from the DPDK event log. A `stall` never labels a max: an
+unexplained max names the stall it overlaps (the thread did not run, and the
+guest's trace shows nothing), or what was not recorded (no events file, the
+trace unavailable, an overrun). The two hosts' events are on their own
+clocks: a cross-host match is as good as their CLOCK_REALTIME agreement.
 
 ## hostcheck report
 
@@ -161,6 +218,7 @@ no `warn`, and no `unknown` of an id that must prove something
 | over capacity | achieved under 98 % of the rate (shown, never compared) |
 | netem verified | drops within 3.29 σ + 1 of `offered × loss` (99.9 %), pooled over a host's data NICs; 0 % drops nothing |
 | a cause with a length | at least half of what the max adds to the p50 |
+| a host pause | a spinner gap's untraced part, at least `TR_EVENTS_GAPSPIN_US` and half the gap |
 | per-minute stall cluster | a max of 100 µs or more overlapping seconds :49 to :51 of its minute, nothing more specific found |
 | TCP RTO/TLP | explained only with a `tc-drop` on either host in the same second |
 | not separated | medians within the A/A spread (largest per-rep A/A difference), or rep ranges overlap |

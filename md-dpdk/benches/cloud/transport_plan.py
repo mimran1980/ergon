@@ -34,13 +34,17 @@ class PlanError(Exception):
 
 
 def load(paths):
-    """(arms {name: (binary, setup, hosts, [args])}, sets [dict]) from the files, in order."""
+    """(arms {name: (binary, setup, hosts, [args])}, sets [dict]) from the files, in order;
+    a path ending :arms gives its arm rows alone (LAB_SETS_FILE's sets in place of the matrix's)."""
     arms, sets, seen = {}, [], set()
     for path in paths:
         if not path:
             continue
+        arms_only = path.endswith(":arms")
+        path = path.removesuffix(":arms")
         try:
-            text = open(path).read()
+            with open(path) as f:
+                text = f.read()
         except OSError as e:
             raise PlanError(f"{path}: {e.strerror}") from None
         for n, line in enumerate(text.splitlines(), 1):
@@ -59,6 +63,8 @@ def load(paths):
                 if not all(c.isalnum() or c in "-_" for c in name + binary):
                     raise PlanError(f"{where}: arm {name}: names and binaries are letters, digits, - and _")
                 arms[name] = (binary, setup, hosts, words[5:])
+            elif words[0] == "set" and arms_only:
+                continue
             elif words[0] == "set":
                 if len(words) != 9:
                     raise PlanError(f"{where}: set <id> <pair> <par> <host> <loads> <streams> <netem> <arms>")
@@ -66,8 +72,8 @@ def load(paths):
                 if sid in seen:
                     raise PlanError(f"{where}: set {sid} given twice")
                 seen.add(sid)
-                if pair not in ("a", "b") or host not in ("a", "b", "ab"):
-                    raise PlanError(f"{where}: set {sid}: pair a or b, host a, b or ab")
+                if pair not in ("a", "b", "tune") or host not in ("a", "b", "ab"):
+                    raise PlanError(f"{where}: set {sid}: pair a or b (tune: the tuning session's), host a, b or ab")
                 try:
                     loads = [int(v) for v in loads.split(",")]
                     streams = [int(v) for v in streams.split(",")]

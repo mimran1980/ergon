@@ -223,6 +223,10 @@ def estimate(type_a, type_b, placement, reps, modes, local_modes, states, load_s
 # pong started and given 2 s to bind, the snapshots, its output fetched; the driver
 # or kernel path set up and stopped), each round TRANSPORT_ROUND_S (netem set, checked, cleared).
 TRANSPORT_PREP_S, TRANSPORT_RUN_S, TRANSPORT_ROUND_S = 900, 15, 5
+# each point's events on its hosts (vm.sh events-start and events-stop: the
+# trace set up, read back and gzipped, the spinners and sampler started and
+# stopped), measured in the local smoke
+TRANSPORT_EVENTS_S = 6
 
 
 def transport_estimate(pair, paths, reps, warmup_s, point_s, switch_s):
@@ -240,20 +244,67 @@ def transport_estimate(pair, paths, reps, warmup_s, point_s, switch_s):
         runs += ((1 if longest["host"] == "ab" else 2) * len(longest["arms"]) * len(longest["streams"])
                  * len(longest["netem"]) * reps)
         rounds += len(longest["netem"]) * reps
-    overhead = runs * TRANSPORT_RUN_S + rounds * TRANSPORT_ROUND_S
+    overhead = runs * TRANSPORT_RUN_S + rounds * TRANSPORT_ROUND_S + tp.count(sets, pair, reps) * TRANSPORT_EVENTS_S
     wall = SETUP_S + TRANSPORT_PREP_S + measuring + overhead + TEARDOWN_S
     return {"points": tp.count(sets, pair, reps), "sets": [s["id"] for s in sets if s["pair"] == pair],
             "measuring_s": measuring, "overhead_s": overhead, "wall_s": wall,
             "over_deadline": False, "hours_needed": math.ceil(wall * 1.2 / 3600)}
 
 
+def tune_estimate(pair, a):
+    """A tuning session's (LAB_TUNE=1, pair tune-a or tune-b) sweep and
+    confirmation (transport_tune.py's plan): the sweep's runs exactly, the
+    confirmation's at most (every knob confirmed) and likely (a third of
+    them: the share a sweep beats its current value is not known before it
+    runs); wall_s the at-most one, which the deadline must cover."""
+    import argparse as ap
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import transport_tune as tt
+    ns = ap.Namespace(settings=a.settings, arms=a.tune_arms, knobs=a.tune_knobs, absent="", pair=pair[len("tune-"):],
+                      files=a.matrix)
+    tr = tt.read_settings(a.settings)
+    reps = int(tr.get("TR_TUNE_CONFIRM_REPS", "3"))
+    _, sets, _, _ = tt.plan(ns)
+    run_s = a.transport_warmup_s + 2 * a.transport_switch_s + a.transport_point_s + TRANSPORT_RUN_S + TRANSPORT_EVENTS_S
+
+    def runs(s, n_arms, r):
+        return (1 if s["host"] == "ab" else 2) * n_arms * len(s["streams"]) * len(s["netem"]) * r
+
+    def timed(arms_of, r):
+        total, seen = 0, set()
+        for s in sets:
+            if s["par"] != "-":
+                if s["par"] in seen:
+                    continue
+                seen.add(s["par"])
+                total += max(runs(x, arms_of(x), r) for x in sets if x["par"] == s["par"])
+            else:
+                total += runs(s, arms_of(s), r)
+        return total
+
+    sweep = timed(lambda s: len(s["arms"]), 1)
+    confirm = timed(lambda s: min(len(s["arms"]) - 1, 3) + 1, reps)
+    rounds = sum(len(s["netem"]) for s in sets) * (1 + reps)
+    fixed = SETUP_S + TRANSPORT_PREP_S + TEARDOWN_S + rounds * TRANSPORT_ROUND_S
+    sweep_s, confirm_s = sweep * run_s, confirm * run_s
+    points = sum(len(s["arms"]) * len(s["streams"]) * len(s["netem"]) for s in sets)
+    wall = fixed + sweep_s + confirm_s
+    return {"points": points, "sets": [f"{len(sets)} arm-knob sweeps"], "measuring_s": sweep_s + confirm_s,
+            "overhead_s": fixed, "wall_s": wall, "likely_s": fixed + sweep_s + confirm_s / 3,
+            "sweep_s": sweep_s, "confirm_s": confirm_s, "over_deadline": False,
+            "hours_needed": math.ceil(wall * 1.2 / 3600)}
+
+
 def transport_report(a):
     """azure/lab.sh LAB_ESTIMATE=1 (and its deadline checks) for the
-    transport suite: the pair given, or both pairs."""
-    pairs = [a.pair] if a.pair else ["a", "b"]
+    transport suite: the pair given, or both pairs (both tuning sessions
+    with --tune)."""
+    pairs = [a.pair] if a.pair else (["tune-a", "tune-b"] if a.tune else ["a", "b"])
     try:
-        est = {p: transport_estimate(p, a.matrix, a.reps, a.transport_warmup_s, a.transport_point_s,
-                                     a.transport_switch_s) for p in pairs}
+        est = {p: (tune_estimate(p, a) if p.startswith("tune-") else
+                   transport_estimate(p, a.matrix, a.reps, a.transport_warmup_s, a.transport_point_s,
+                                      a.transport_switch_s)) for p in pairs}
     except Exception as e:  # the plan's own errors, said once
         print(f"estimate.py: {e}", file=sys.stderr)
         return 2
@@ -286,6 +337,11 @@ def transport_report(a):
             total_usd += usd
             line += f", about ${usd:.2f} (at most ${a.max_hours * hourly:.2f} to LAB_MAX_HOURS={a.max_hours})"
         print(line)
+        if "likely_s" in e:
+            likely = f"{e['likely_s'] / 3600:.2f} h" + (f", about ${e['likely_s'] / 3600 * hourly:.2f}" if hourly else "")
+            print(f"  tuning {p}: the sweep {e['sweep_s'] / 3600:.2f} h, the confirmation at most "
+                  f"{e['confirm_s'] / 3600:.2f} h (every knob confirmed; the wall above); likely about {likely} "
+                  "(a third of the knobs confirmed)")
         if e["over_deadline"]:
             print(f"WARNING: pair {p} is longer than LAB_MAX_HOURS={a.max_hours}: give LAB_MAX_HOURS={e['hours_needed']}")
     if hourly is None:
@@ -308,6 +364,10 @@ def main():
     p.add_argument("--pair", default="")
     p.add_argument("--matrix", action="append", default=[])
     p.add_argument("--priority", choices=("Regular", "Spot"), default="Regular")
+    p.add_argument("--tune", action="store_true", help="the tuning sessions (LAB_TUNE=1)")
+    p.add_argument("--settings", default="")
+    p.add_argument("--tune-arms", default="")
+    p.add_argument("--tune-knobs", default="")
     for name in ("transport-warmup-s", "transport-point-s", "transport-switch-s"):
         p.add_argument("--" + name, type=int, default={"transport-switch-s": 5}.get(name, 30))
     for name in ("type-a", "type-b", "placement", "modes", "local-modes", "states", "load-sizes", "load-fractions",

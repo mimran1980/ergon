@@ -51,10 +51,17 @@ tr_here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # under LAB_LOCAL_SMOKE the matrix's arm rows alone, then transport-smoke.tsv's
 # sets (TRANSPORT_SMOKE_SETS), then the arms file
 tr_files() {
+    # the tuning session's own plan files (tr_tune)
+    if [[ -n ${tr_plan_files:-} ]]; then printf '%s\n' $tr_plan_files; return; fi
     if [[ -n ${LAB_LOCAL_SMOKE:-} ]]; then
         local arms=${LOCAL_SMOKE_ROOT:?}/matrix-arms.tsv
         grep '^arm ' "$tr_here/transport-matrix.tsv" >"$arms"
         printf '%s\n' "$arms" "${TRANSPORT_SMOKE_SETS:-$tr_here/transport-smoke.tsv}" ${1:+"$1"}
+        return
+    fi
+    # LAB_SETS_FILE: its set rows in place of the matrix's (the cloud smoke's)
+    if [[ -n ${tr_sets_file:-} ]]; then
+        printf '%s\n' "$tr_here/transport-matrix.tsv:arms" "$tr_sets_file" ${1:+"$1"}
         return
     fi
     printf '%s\n' "$tr_here/transport-matrix.tsv" ${1:+"$1"}
@@ -73,6 +80,7 @@ tr_plan() {
 tr_check() {
     local pair=$1 m why n
     tr_arms_file=${2:-}
+    [[ $pair == tune-a || $pair == tune-b ]] && { tr_check_tune "${pair#tune-}"; return; }
     [[ $pair == a || $pair == b ]] || { echo "LAB_PAIR $pair: a or b (the sessions of transport-matrix.tsv)" >&2; return 2; }
     [[ -z $tr_arms_file || -r $tr_arms_file ]] || { echo "LAB_ARMS_FILE $tr_arms_file: not a readable file" >&2; return 2; }
     TRANSPORT_ARMS=$(tr_plan arms) || return 2
@@ -93,9 +101,45 @@ tr_check() {
     echo "$n"
 }
 
+# tr_check_tune <a|b>: the tuning session of that pair (LAB_TUNE=1) planned
+# as the VM will (transport_tune.py sweep, LAB_TUNE_ARMS and LAB_TUNE_KNOBS;
+# a knob a kernel lacks is dropped only there), every variant's driver mode
+# through modes.sh; 0 and the sweep's point count, or 2 saying why
+tr_check_tune() {
+    local p=$1 files tmpd v m why rc=0
+    [[ -z $tr_arms_file || -r $tr_arms_file ]] || { echo "LAB_ARMS_FILE $tr_arms_file: not a readable file" >&2; return 2; }
+    mapfile -t files < <(tr_files "$tr_arms_file")
+    tmpd=$(mktemp -d "${TMPDIR:-/tmp}/ergon-tune.XXXXXX") || return 2
+    if ! why=$(python3 "$tr_here/transport_tune.py" sweep --settings "$tr_here/transport-settings.env" --out "$tmpd" --pair "$p" \
+        --arms "${LAB_TUNE_ARMS:-}" --knobs "${LAB_TUNE_KNOBS:-}" "${files[@]}" 2>&1); then
+        echo "LAB_TUNE=1 pair $p: $why" >&2
+        rm -rf -- "$tmpd"
+        return 2
+    fi
+    (
+        dir=$tmpd tr_plan_files="$tmpd/tune-arms.tsv $tmpd/tune-sweep.tsv"
+        TRANSPORT_ARMS=$(tr_plan arms) || exit 2
+        while read -r v _ _ _ _; do
+            read -r _ bin setup _ args <<<"$(tr_plan arm "$v")"
+            read -ra args <<<"${args:-}"
+            arm=$v
+            [[ $setup == kernel || $setup == dpdk ]] || continue
+            m=$(tr_driver_mode)
+            why=$(mode_check "$m" remote x86_64 azure '' 2>&1) || { echo "LAB_TUNE=1: variant $v's driver mode $m: $why" >&2; exit 2; }
+        done <"$tmpd/variants.txt"
+        modes=$(tr_plan modes tune) || exit 2
+        for m in $modes; do
+            why=$(mode_check "$m" remote x86_64 azure '' 2>&1) || { echo "$why" >&2; exit 2; }
+        done
+        tr_plan count tune 1
+    ) || rc=2
+    rm -rf -- "$tmpd"
+    return $rc
+}
+
 # ---- the operator machine's side (azure/lab.sh, after lib.sh prepare_vms) ----
 
-# transport_prepare: LAB_EXTRA_SRC's tree and LAB_ARMS_FILE on both VMs,
+# transport_prepare: LAB_EXTRA_SRC's tree, LAB_ARMS_FILE and LAB_SETS_FILE on both VMs,
 # the bench binaries built (vm.sh transport-build), the CPU map's boot line,
 # a reboot into it, transport-tune on both (fail closed), VM a's key on both
 transport_prepare() {
@@ -112,6 +156,9 @@ transport_prepare() {
         fi
         if [[ -n ${arms_file:-} ]]; then
             scp -q "${ssh_opts[@]}" "$arms_file" "$user@$host:bench/arms.tsv" || die "copy of LAB_ARMS_FILE to $host failed"
+        fi
+        if [[ -n ${sets_file:-} ]]; then
+            scp -q "${ssh_opts[@]}" "$sets_file" "$user@$host:bench/sets.tsv" || die "copy of LAB_SETS_FILE to $host failed"
         fi
     done
     log "transport: bench binaries"
@@ -141,6 +188,9 @@ vm_b=$vm_b
 commit=$(git -C "$repo" rev-parse HEAD 2>/dev/null)
 dirty=$(git -C "$repo" status --porcelain 2>/dev/null | grep -c .)
 arms_file=${arms_file:+\$HOME/bench/arms.tsv}
+sets_file=${sets_file:+\$HOME/bench/sets.tsv}
+tune_arms=${LAB_TUNE_ARMS:-}
+tune_knobs=${LAB_TUNE_KNOBS:-}
 TRANSPORT_WARMUP_S=${TRANSPORT_WARMUP_S:-30}
 TRANSPORT_POINT_S=${TRANSPORT_POINT_S:-30}
 TRANSPORT_SWITCH_S=${TRANSPORT_SWITCH_S:-5}
@@ -192,35 +242,160 @@ tr_now() {
 tr_bin_args() {
     local b=$1 role=$2 own=$3 peer=$4 port=$TR_PORT_BASE out=
     shift 4
-    local args=" $* " busy=
-    [[ $args == *" --impl mio "* ]] && busy="--busy-read-us $TR_BUSY_READ "
+    local args=" $* " busy= sb qa
+    [[ $args == *" --impl mio "* ]] && busy="--busy-read-us $(tr_knob busy_read_us) "
+    sb=$(tr_knob sockbuf)
+    qa="--quickack-per-read"
+    [[ $(tr_knob quickack_per_read) == off ]] && qa+=" false"
     case $b in
-    mpsc_lat) out="--capacity $TR_MPSC_CAPACITY" ;;
+    mpsc_lat) out="--capacity $(tr_knob capacity)" ;;
     aeron_lat)
-        out="--aeron-dir $TR_AERON_DIR --driver external --driver-busy-threads $TR_AERON_DRIVER_BUSY_THREADS --term-length $TR_TERM_LENGTH --mtu $TR_MTU"
+        out="--aeron-dir $TR_AERON_DIR --driver external --driver-busy-threads $(tr_driver_busy) --term-length $(tr_knob term_length) --mtu $TR_MTU"
         if [[ $args == *" --mode udp "* ]]; then
             local ep=$peer rp=$own
             [[ $role == pong ]] && ep=$own rp=$peer
             out="--endpoint $ep:$port --reply $rp:$port --interface $own $out"
         fi
         ;;
-    udp_lat) out="--local $own:$port --peer $peer:$port ${busy}--rcvbuf $TR_SOCKBUF --sndbuf $TR_SOCKBUF" ;;
+    udp_lat)
+        out="--local $own:$port --peer $peer:$port ${busy}--rcvbuf $sb --sndbuf $sb --epoll-events $(tr_knob epoll_events)"
+        [[ $args == *" --impl ergon "* ]] && out+=" --datagram-burst $(tr_knob datagram_burst)"
+        ;;
     tcp_lat)
         local a="--connect $peer:$port"
         [[ $role == pong ]] && a="--listen $own:$port"
         [[ $role == local ]] && a="--listen $peer:$port"
-        out="$a --nodelay --quickack-per-read $(tr_timer_args)${busy}--rcvbuf $TR_SOCKBUF --sndbuf $TR_SOCKBUF"
+        out="$a --nodelay $qa $(tr_timer_args)${busy}--rcvbuf $sb --sndbuf $sb --epoll-events $(tr_knob epoll_events)"
         ;;
     *)
         # an arms file's binary: its addresses, and on the kernel's path
         # (setup sockets) every socket and TCP setting the built-in socket
         # arms get, so it cannot run with other ones (transport-cli.md)
         out="--local $own:$port --peer $peer:$port"
-        [[ ${setup:-} == sockets ]] && out+=" --busy-read-us $TR_BUSY_READ --rcvbuf $TR_SOCKBUF --sndbuf $TR_SOCKBUF --nodelay --quickack-per-read $(tr_timer_args)"
+        [[ ${setup:-} == sockets ]] && out+=" --busy-read-us $(tr_knob busy_read_us) --rcvbuf $sb --sndbuf $sb --nodelay $qa $(tr_timer_args)"
         out=${out% }
         ;;
     esac
     echo "$out"
+}
+
+# tr_knob <knob>: the current arm's value of a per-arm knob
+# (transport-settings.env's list): a tuning variant's own value
+# (variants.txt: the tuning session), else the tuned section's
+# (TR_ARM_KNOBS "<arm>:<knob>=<value> ..."), else the knob's default
+tr_knob() {
+    local k=$1 v= kv base
+    if [[ -s ${dir:-}/variants.txt ]]; then
+        v=$(awk -v a="${arm:-}" -v k="$k" '$1 == a && $3 == k {print $4; exit}' "$dir/variants.txt")
+        [[ -z $v ]] || { echo "$v"; return; }
+    fi
+    base=$(tr_base_arm)
+    for kv in ${TR_ARM_KNOBS:-}; do
+        [[ $kv == "$base:$k="* ]] && { echo "${kv#*=}"; return; }
+    done
+    case $k in
+    busy_read_us) echo "$TR_BUSY_READ" ;;
+    epoll_events) echo "$TR_EPOLL_EVENTS" ;;
+    datagram_burst) echo "$TR_DATAGRAM_BURST" ;;
+    sockbuf) echo "$TR_SOCKBUF" ;;
+    quickack_per_read) echo "$TR_QUICKACK_PER_READ" ;;
+    rto_min_us) echo "$TR_TCP_RTO_MIN_US" ;;
+    congestion) echo "$TR_TCP_CONGESTION" ;;
+    term_length) echo "$TR_TERM_LENGTH" ;;
+    aeron_path) echo "$TR_AERON_PATH" ;;
+    aeron_so_rcvbuf) echo "$TR_AERON_SO_RCVBUF" ;;
+    nak_delay_ns) echo "$TR_AERON_NAK_DELAY_NS" ;;
+    rx_free_thresh) echo "$TR_DPDK_RX_FREE_THRESH" ;;
+    aeron_threading) echo "$TR_AERON_IPC_THREADING" ;;
+    capacity) echo "$TR_MPSC_CAPACITY" ;;
+    *) echo "tr_knob: no knob $k" >&2; return 2 ;;
+    esac
+}
+
+# tr_base_arm: the current arm's own name: a tuning variant's base arm
+# (variants.txt), else the arm itself
+tr_base_arm() {
+    local b=
+    [[ -s ${dir:-}/variants.txt ]] && b=$(awk -v a="${arm:-}" '$1 == a {print $2; exit}' "$dir/variants.txt")
+    echo "${b:-${arm:-}}"
+}
+
+# tr_arm_knobs: the per-arm knobs the current arm has, one a line (its
+# binary, its --impl, --mode and --reliable, its setup), each recorded in
+# its points' manifests (knob.<name>=<value>) for transport_collect.py
+tr_arm_knobs() {
+    local a=" ${args[*]:-} "
+    case $bin in
+    udp_lat)
+        echo sockbuf epoll_events
+        if [[ $a == *" --impl mio "* ]]; then echo busy_read_us; else echo datagram_burst; fi
+        ;;
+    tcp_lat)
+        echo sockbuf epoll_events quickack_per_read congestion
+        [[ $a == *" --impl mio "* ]] && echo busy_read_us
+        [[ $(tr_timer_args) == *--rto-min-us* ]] && echo rto_min_us
+        ;;
+    aeron_lat)
+        echo term_length
+        if [[ $setup == dpdk ]]; then
+            echo rx_free_thresh
+        elif [[ $a == *" --mode ipc "* ]]; then
+            echo aeron_threading
+        elif [[ $a == *" --mode udp "* ]]; then
+            echo aeron_path aeron_so_rcvbuf
+        fi
+        [[ $a == *" --mode udp "* && $a == *" --reliable true "* ]] && echo nak_delay_ns
+        ;;
+    mpsc_lat) echo capacity ;;
+    esac
+    return 0
+}
+
+# tr_driver_mode: the current Aeron arm's media driver mode (vm.sh driver):
+# its path (aeron_path: kernel-busy or kernel; dpdk) and
+# TR_AERON_MODE_SUFFIX, with its driver knobs where they differ from the
+# driver's own (the socket buffer, the NAK delay, DPDK's rx_free_thresh) and
+# aeron-ipc's SHARED threading (one agent: no conductor of its own)
+tr_driver_mode() {
+    local m s=$TR_AERON_MODE_SUFFIX v k knobs
+    knobs=" $(tr_arm_knobs | tr '\n' ' ') "
+    if [[ $setup == dpdk ]]; then m=dpdk; else m=kernel-busy; fi
+    [[ $knobs == *" aeron_path "* ]] && m=$(tr_knob aeron_path)
+    for k in aeron_so_rcvbuf nak_delay_ns rx_free_thresh; do
+        [[ $knobs == *" $k "* ]] || continue
+        v=$(tr_knob "$k")
+        case $k in
+        aeron_so_rcvbuf) [[ $v == 2097152 ]] || s+="@AERON_SOCKET_SO_RCVBUF=$v" ;;
+        nak_delay_ns) [[ $v == 1000 ]] || s+="@AERON_NAK_UNICAST_DELAY=$v" ;;
+        rx_free_thresh) [[ $v == pmd ]] || s+="@RUSTERON_DPDK_RX_FREE_THRESH=$v" ;;
+        esac
+    done
+    if [[ $knobs == *" aeron_threading "* && $(tr_knob aeron_threading) == SHARED ]]; then
+        s=${s//@CONDUCTOR=own/}
+        s=${s//@AERON_CONDUCTOR_IDLE_STRATEGY=spin/}
+        s=${s//@AERON_SENDER_IDLE_STRATEGY=noop/}
+        s=${s//@AERON_RECEIVER_IDLE_STRATEGY=noop/}
+        s+="@AERON_THREADING_MODE=SHARED"
+    fi
+    echo "$m$s"
+}
+
+# tr_driver_busy: the external driver's busy threads (aeron_lat
+# --driver-busy-threads): TR_AERON_DRIVER_BUSY_THREADS, one under SHARED
+tr_driver_busy() {
+    if [[ $(tr_driver_mode) == *@AERON_THREADING_MODE=SHARED* ]]; then echo 1; else echo "$TR_AERON_DRIVER_BUSY_THREADS"; fi
+}
+
+# tr_host_overrides: the TR_OVERRIDES the current arm's host set-up runs
+# with (vm.sh transport-net, driver): its congestion control where not the
+# hosts' default, and under the kernel path (no busy poll) the busy-poll
+# sysctls kernel's driver sets (0) for transport-net check
+tr_host_overrides() {
+    local o= knobs
+    knobs=" $(tr_arm_knobs | tr '\n' ' ') "
+    [[ $knobs == *" congestion "* && $(tr_knob congestion) != "$TR_TCP_CONGESTION" ]] && o+="TR_TCP_CONGESTION=$(tr_knob congestion) "
+    [[ $knobs == *" aeron_path "* && $(tr_knob aeron_path) == kernel ]] && o+="TR_BUSY_READ=0 TR_BUSY_POLL=0 "
+    echo "${o% }"
 }
 
 # tr_timer_args: "--rto-min-us N --delack-max-us N " for the timers both
@@ -232,7 +407,7 @@ tr_timer_args() {
     local k v out=
     for k in rto_min delack_max; do
         grep -q "^net.ipv4.tcp_${k}_us=absent$" "$dir/settings-a.txt" "$dir/settings-b.txt" 2>/dev/null && continue
-        [[ $k == rto_min ]] && v=$TR_TCP_RTO_MIN_US || v=$TR_TCP_DELACK_MAX_US
+        if [[ $k == rto_min ]]; then v=$(tr_knob rto_min_us); else v=$TR_TCP_DELACK_MAX_US; fi
         out+="--${k//_/-}-us $v "
     done
     printf '%s' "$out"
@@ -314,7 +489,7 @@ tr_snap() {
 # tr_manifest <pid> <load> <warm-up s> <start ns> <end ns>: the point's
 # manifest (manifest/<point>.env; the binary's own is manifest/<point>.json)
 tr_manifest() {
-    local pid=$1 h hot place nline
+    local pid=$1 h hot place nline k
     {
         echo "point=$pid"
         echo "set=$sid"
@@ -340,6 +515,11 @@ tr_manifest() {
         echo "commit=$commit"
         echo "dirty=$dirty"
         echo "settings_sha256=$settings_sha"
+        # the arm's per-arm knobs as it ran them (transport_collect.py
+        # declares them; fairness.py's settings and shared-knob rules)
+        echo "base_arm=$(tr_base_arm)"
+        for k in $(tr_arm_knobs); do echo "knob.$k=$(tr_knob "$k")"; done
+        [[ $setup == kernel || $setup == dpdk ]] && echo "driver_mode=$(tr_driver_mode)"
         echo "start_ns=$4"
         echo "end_ns=$5"
         for h in a b; do
@@ -368,22 +548,84 @@ tr_manifest() {
 # (kernel: kernel-busy's path, then transport-net check; dpdk), the kernel
 # path (sockets: transport-net), or nothing; tr_arm_down: the driver stopped
 tr_arm_up() {
-    local setup=$1 h
+    local setup=$1 h ov
     shift
+    ov=$(tr_host_overrides)
+    [[ -z $ov ]] || ov="TR_OVERRIDES='$ov' "
     for h in "$@"; do
         case $setup in
-        kernel) on "$(tr_host "$h")" "$vm driver kernel-busy$TR_AERON_MODE_SUFFIX && $vm transport-net check" ;;
-        dpdk) on "$(tr_host "$h")" "$vm driver dpdk$TR_AERON_MODE_SUFFIX" ;;
-        sockets) on "$(tr_host "$h")" "$vm transport-net" ;;
+        kernel) on "$(tr_host "$h")" "$vm driver $(tr_driver_mode) && ${ov}$vm transport-net check" ;;
+        dpdk) on "$(tr_host "$h")" "$vm driver $(tr_driver_mode)" ;;
+        sockets) on "$(tr_host "$h")" "${ov}$vm transport-net" ;;
         none) true ;;
         esac >>"$dir/logs/setup-$h.log" 2>&1 || { log "host $h: $setup set-up failed ($dir/logs/setup-$h.log)"; return 1; }
     done
 }
+# (a socket arm whose host settings differed: the hosts' own put back)
 tr_arm_down() {
     local setup=$1 h
     shift
+    if [[ $setup == sockets && -n $(tr_host_overrides) ]]; then
+        for h in "$@"; do on "$(tr_host "$h")" "$vm transport-net" >>"$dir/logs/setup-$h.log" 2>&1 || log "host $h: settings not put back"; done
+    fi
     [[ $setup == kernel || $setup == dpdk ]] || return 0
     for h in "$@"; do on "$(tr_host "$h")" "$vm stop" >>"$dir/logs/setup-$h.log" 2>&1 || log "host $h: vm.sh stop failed"; done
+}
+
+# tr_events_cpus <host>: "<traced cpus> <spinner cpus|->" for this point on
+# <host>, each a list: traced, the hot CPUs the point's busy threads run on
+# there (the media driver's three under kernel and dpdk: host.sh
+# transport_layout; the binary's: tr_role_cpus) and the spinners'; the
+# spinners', the map's isolated CPUs the point leaves idle (- with none).
+# Under LAB_LOCAL_SMOKE one box is both hosts: neither host spins on a CPU
+# either end uses, a two-host point's idle ones are dealt between a and b in
+# turn, and each host takes one (the box isolates nothing: more would starve
+# what else must run there).
+tr_events_cpus() {
+    local h=$1 used=" " mine_used=" " c all out=() i=0 mine r
+    IFS=, read -ra all <<<"$iso"
+    if [[ $setup == kernel || $setup == dpdk ]]; then used+="${all[0]} ${all[1]} ${all[2]} "; mine_used=$used; fi
+    if [[ $kind == two ]]; then
+        for r in ping pong; do
+            c=$(tr_role_cpus $r)
+            [[ $r == ping && $h == a || $r == pong && $h == b ]] && mine_used+="$c "
+            [[ -z ${LAB_LOCAL_SMOKE:-} && ! ($r == ping && $h == a || $r == pong && $h == b) ]] || used+="$c "
+        done
+    else
+        used+="$(tr_role_cpus local | tr , ' ') "
+        mine_used=$used
+    fi
+    mine=0
+    [[ $h == b ]] && mine=1
+    for c in "${all[@]}"; do
+        [[ $used == *" $c "* ]] && continue
+        if [[ -n ${LAB_LOCAL_SMOKE:-} && $kind == two ]]; then
+            ((i++ % 2 == mine)) || continue
+        fi
+        out+=("$c")
+    done
+    [[ -z ${LAB_LOCAL_SMOKE:-} ]] || out=("${out[@]:0:1}")
+    local traced
+    traced=$(printf '%s\n' $mine_used "${out[@]}" | sort -nu | paste -sd, -)
+    if ((${#out[@]})); then echo "$traced $(IFS=,; echo "${out[*]}")"; else echo "$traced -"; fi
+}
+
+# tr_events <start|stop> <pid>: the point's events on each host it uses
+# (vm.sh events-start before any of its binaries starts; events-stop after
+# its window, gzipped into events/<pid>-<host>.log.gz for
+# transport_collect.py). One that does not start is logged, never fatal: its
+# max then has no events to be labelled by, which spikes.py says.
+tr_events() {
+    local what=$1 pid=$2 h ex=
+    [[ $setup == kernel || $setup == dpdk ]] && ex=aeron
+    for h in "${run_hosts[@]}"; do
+        if [[ $what == start ]]; then
+            on "$(tr_host "$h")" "$vm events-start $pid $(tr_events_cpus "$h") $ex" >>"$dir/logs/events-$h.log" 2>&1 ||
+                log "WARNING: point $pid: host $h's events did not start ($dir/logs/events-$h.log): its max goes unlabelled"
+        else
+            on "$(tr_host "$h")" "$vm events-stop $pid" 2>>"$dir/logs/events-$h.log" | gzip >"$dir/events/$pid-$h.log.gz"
+        fi
+    done
 }
 
 # tr_point <k>: one point at loads[k] (the round's variables: sid host rep
@@ -415,6 +657,9 @@ tr_point() {
         tr_stream_seq=$((tr_stream_seq + 1))
     fi
     for h in "${run_hosts[@]}"; do on "$(tr_host "$h")" "rm -rf $rdir && mkdir -p $rdir" || return 1; done
+    # the point's events on each host, begun before any binary of it starts
+    # (so before its warm-up), read back after its window (tr_events)
+    tr_events start "$pid"
     if [[ $kind == two ]]; then
         meas=a
         # the pong first, on b (a simple background command: the SSH session
@@ -433,6 +678,7 @@ tr_point() {
         if [[ -n $why ]]; then
             on "$B" "kill -TERM \$(cat $rdir/pong.pid) 2>/dev/null; sleep 1; kill -KILL \$(cat $rdir/pong.pid) 2>/dev/null; cat $rdir/pong.out" >"$log.pong" 2>&1
             log "point $pid: $why: $(tail -2 "$log.pong" | tr '\n' ' ')"
+            tr_events stop "$pid"
             return 1
         fi
         runs=("--role ping --cpus $(tr_role_cpus ping) $(tr_bin_args "$bin" ping "$(tr_nic a sender)" "$(tr_nic b receiver)" "${args[@]}")$sid0")
@@ -458,6 +704,7 @@ tr_point() {
     end=$(tr_now)
     wait "$sampler" 2>/dev/null
     tr_snap after "$pid"
+    tr_events stop "$pid"
     if [[ -n $pong ]]; then
         on "$B" "kill -TERM \$(cat $rdir/pong.pid) 2>/dev/null; for _ in \$(seq 50); do kill -0 \$(cat $rdir/pong.pid) 2>/dev/null || break; sleep 0.1; done; kill -KILL \$(cat $rdir/pong.pid) 2>/dev/null; true" >/dev/null 2>&1
         on "$B" "cat $rdir/pong.out" >"$log.pong" 2>&1
@@ -574,7 +821,92 @@ tr_set() {
             ((failures < ${TRANSPORT_MAX_FAILURES:-3})) || { log "set $sid: $failures failed runs in a row: stopping the session"; [[ $netem == - ]] || tr_netem_off "${rhosts[@]}"; return 1; }
         done
         [[ $netem == - ]] || tr_netem_off "${rhosts[@]}" || return 1
-    done 9<"$dir/rounds.tsv"
+    done 9<"${rounds_file:-$dir/rounds.tsv}"
+}
+
+# tr_load_arms: TRANSPORT_ARMS and arms.txt from the plan's files (tr_files)
+tr_load_arms() {
+    local a
+    TRANSPORT_ARMS=$(tr_plan arms) || return 1
+    : >"$dir/arms.txt"
+    for a in $(sed 's/=[^ ]*//g' <<<"$TRANSPORT_ARMS"); do echo "$a $(tr_plan arm "$a")" >>"$dir/arms.txt"; done
+}
+
+# tr_groups <rounds file>: its groups in order, each group's sets at once
+# (their logs in logs/set-<id>.log and here: the operator's progress lines,
+# their status in set-<id>.rc); 1 at the first group with a set that failed
+# (keep-going: every group runs, 1 at the end; the tuning session's)
+tr_groups() {
+    local rounds_file=$1 keep=${2:-} gi pids s sets rc=0
+    for gi in $(cut -f1 "$rounds_file" | uniq); do
+        pids=()
+        sets=$(awk -F'\t' -v g="$gi" '$1 == g && !seen[$2]++ {print $2}' "$rounds_file")
+        for s in $sets; do
+            { tr_set "$s" </dev/null; echo $? >"$dir/logs/set-$s.rc"; } 2>&1 | tee -a "$dir/logs/set-$s.log" >&2 &
+            pids+=($!)
+        done
+        for s in "${pids[@]}"; do wait "$s"; done
+        for s in $sets; do [[ $(cat "$dir/logs/set-$s.rc" 2>/dev/null) == 0 ]] || rc=1; done
+        ((rc == 0)) || [[ -n $keep ]] || { log "a set of group $gi failed (logs/set-*.log)"; return 1; }
+    done
+    return $rc
+}
+
+# tr_tune: the tuning session (LAB_TUNE=1, pair tune: transport_tune.py).
+# The sweep: every arm and knob of transport-settings.env's TR_SWEEP_* (less
+# what LAB_TUNE_ARMS and LAB_TUNE_KNOBS leave out, and a knob or value a
+# host's kernel lacks), one round each of its values and an A/A of its
+# current value, one rep; then the confirmation: each knob whose sweep found
+# a value outside the A/A band of the current one, its top two and the
+# current value, TR_TUNE_CONFIRM_REPS reps; then the frozen choice
+# (tuned.env, tune-report.md: transport_tune.py freeze), which the
+# operator's lab.sh writes into transport-settings.env. rounds.tsv holds both
+# phases' rounds.
+tr_tune() {
+    local rc=0 absent= f m v
+    # what the hosts' kernels lack: the TCP timers (settings-*.txt), bbr
+    grep -q '^net.ipv4.tcp_rto_min_us=absent$' "$dir/settings-a.txt" "$dir/settings-b.txt" 2>/dev/null && absent+="rto_min_us "
+    for f in a b; do
+        on "$(tr_host "$f")" "$vm cc-available" 2>/dev/null | grep -qw bbr || absent+="congestion=bbr "
+    done
+    [[ -z $absent ]] || log "tune: the hosts lack: $absent(not swept)"
+    local files
+    mapfile -t files < <(tr_files "${tr_arms_file:-}")
+    tr_plan_files="$dir/tune-arms.tsv $dir/tune-sweep.tsv"
+    python3 "$tr_here/transport_tune.py" sweep --settings "$tr_here/transport-settings.env" --out "$dir" \
+        --pair "${tune_pair-${pair#tune-}}" --arms "${tune_arms:-}" --knobs "${tune_knobs:-}" --absent "$absent" "${files[@]}" >"$dir/logs/tune-sweep.log" 2>&1 ||
+        { log "tune: no sweep plan: $(tail -2 "$dir/logs/tune-sweep.log")"; return 1; }
+    tr_load_arms || { log "tune: the sweep plan's arms do not parse"; return 1; }
+    # every variant's driver mode as modes.sh checks it (vm.sh would refuse it at its start)
+    while read -r arm _ _ _ _; do
+        read -r _ bin setup _ args <<<"$(grep -m1 "^$arm " "$dir/arms.txt")"
+        read -ra args <<<"${args:-}"
+        [[ $setup == kernel || $setup == dpdk ]] || continue
+        m=$(tr_driver_mode)
+        v=$(mode_check "$m" remote x86_64 azure '' 2>&1) || { log "tune: variant $arm's driver mode $m: $v"; return 1; }
+    done <"$dir/variants.txt"
+    arm=
+    tr_plan rounds tune "$seed" 1 >"$dir/rounds-sweep.tsv" || { log "tune: the sweep's rounds do not parse"; return 1; }
+    log "tune: sweep of $(grep -c . "$dir/variants.txt") variants: $(tr_plan count tune 1) points in $(grep -c . "$dir/rounds-sweep.tsv") rounds"
+    cp "$dir/rounds-sweep.tsv" "$dir/rounds.tsv"
+    tr_groups "$dir/rounds-sweep.tsv" keep-going || rc=1
+    python3 "$tr_here/transport_collect.py" "$dir" >"$dir/logs/collect-sweep.log" 2>&1 || rc=1
+    python3 "$tr_here/transport_tune.py" confirm "$dir" >"$dir/tune-confirm.tsv" 2>"$dir/logs/tune-confirm.log" ||
+        { log "tune: the sweep's results do not decide ($dir/logs/tune-confirm.log): $(tail -2 "$dir/logs/tune-confirm.log")"; return 1; }
+    if grep -q '^set ' "$dir/tune-confirm.tsv"; then
+        tr_plan_files="$dir/tune-arms.tsv $dir/tune-confirm.tsv"
+        tr_plan rounds tune "$seed" "${TR_TUNE_CONFIRM_REPS:-3}" >"$dir/rounds-confirm.tsv" || { log "tune: the confirmation's rounds do not parse"; return 1; }
+        log "tune: confirmation of $(grep -c '^set ' "$dir/tune-confirm.tsv") knobs: $(tr_plan count tune "${TR_TUNE_CONFIRM_REPS:-3}") points"
+        cat "$dir/rounds-confirm.tsv" >>"$dir/rounds.tsv"
+        tr_groups "$dir/rounds-confirm.tsv" keep-going || rc=1
+        python3 "$tr_here/transport_collect.py" "$dir" >"$dir/logs/collect-confirm.log" 2>&1 || rc=1
+    else
+        log "tune: no knob's sweep found a value outside the A/A band of its current one: nothing to confirm"
+    fi
+    python3 "$tr_here/transport_tune.py" freeze "$dir" "$session" >"$dir/tuned.env" 2>"$dir/logs/tune-freeze.log" ||
+        { log "tune: no frozen choice ($dir/logs/tune-freeze.log): $(tail -2 "$dir/logs/tune-freeze.log")"; rc=1; }
+    log "tune: frozen ($dir/tuned.env, tune-report.md): $(grep -c '^# changed' "$dir/tuned.env" 2>/dev/null || echo 0) knobs changed"
+    return $rc
 }
 
 # tr_run <pair>: the session on VM a
@@ -584,6 +916,7 @@ tr_run() {
     # shellcheck source=/dev/null
     . "$dir/env"
     tr_arms_file=${arms_file:-}
+    tr_sets_file=${sets_file:-}
     TRANSPORT_WARMUP_S=${TRANSPORT_WARMUP_S:-30} TRANSPORT_POINT_S=${TRANSPORT_POINT_S:-30} TRANSPORT_SWITCH_S=${TRANSPORT_SWITCH_S:-5}
     known=$dir/known_hosts
     ssh_key=${TRANSPORT_SSH_KEY:-$HOME/.ssh/lab}
@@ -595,16 +928,18 @@ tr_run() {
     . "$tr_here/irqs.sh"
     # shellcheck source=host.sh
     . "$tr_here/host.sh"
-    mkdir -p "$dir/manifest" "$dir/points" "$dir/logs" "$dir/irq" "$dir/netem" "$dir/samples" "$dir/nstat" "$dir/settings"
+    mkdir -p "$dir/manifest" "$dir/points" "$dir/logs" "$dir/irq" "$dir/netem" "$dir/samples" "$dir/nstat" "$dir/settings" "$dir/events"
     # LAB_LOCAL_SMOKE: both hosts homes on this box (tr_smoke_hooks)
     [[ -z ${LAB_LOCAL_SMOKE:-} ]] || tr_smoke_hooks
     : >"$dir/failures.csv"
-    TRANSPORT_ARMS=$(tr_plan arms) || die "the plan's arms do not parse"
-    : >"$dir/arms.txt"
-    local a h gi rc=0 pids s sets
-    for a in $(sed 's/=[^ ]*//g' <<<"$TRANSPORT_ARMS"); do echo "$a $(tr_plan arm "$a")" >>"$dir/arms.txt"; done
-    tr_plan rounds "$pair" "$seed" "$reps" >"$dir/rounds.tsv" || die "the plan's rounds do not parse"
-    log "session $session pair $pair: seed $seed, $(tr_plan count "$pair" "$reps") points in $(grep -c . "$dir/rounds.tsv") rounds"
+    local h rc=0
+    tr_load_arms || die "the plan's arms do not parse"
+    if [[ $pair == tune-? ]]; then
+        log "session $session: the tuning session (LAB_TUNE=1), seed $seed"
+    else
+        tr_plan rounds "$pair" "$seed" "$reps" >"$dir/rounds.tsv" || die "the plan's rounds do not parse"
+        log "session $session pair $pair: seed $seed, $(tr_plan count "$pair" "$reps") points in $(grep -c . "$dir/rounds.tsv") rounds"
+    fi
     # the declared settings as sourced (TR_*); transport_collect.py writes
     # transport-settings.env, fairness.py's form of them
     cp "$tr_here/transport-settings.env" "$dir/transport-settings.tr.env"
@@ -627,19 +962,11 @@ tr_run() {
     cmp -s "$dir/map-a.txt" "$dir/map-b.txt" || die "the hosts' CPU maps differ: $(cat "$dir/map-a.txt") and $(cat "$dir/map-b.txt")"
     map=$(cat "$dir/map-a.txt")
     read -r hk _ iso <<<"$map"
-    for gi in $(cut -f1 "$dir/rounds.tsv" | uniq); do
-        pids=()
-        # each set of the group at once, its log in logs/set-<id>.log and
-        # here (the operator's progress lines), its status in set-<id>.rc
-        sets=$(awk -F'\t' -v g="$gi" '$1 == g && !seen[$2]++ {print $2}' "$dir/rounds.tsv")
-        for s in $sets; do
-            { tr_set "$s" </dev/null; echo $? >"$dir/logs/set-$s.rc"; } 2>&1 | tee -a "$dir/logs/set-$s.log" >&2 &
-            pids+=($!)
-        done
-        for s in "${pids[@]}"; do wait "$s"; done
-        for s in $sets; do [[ $(cat "$dir/logs/set-$s.rc" 2>/dev/null) == 0 ]] || rc=1; done
-        ((rc == 0)) || { log "a set of group $gi failed (logs/set-*.log)"; break; }
-    done
+    if [[ $pair == tune-? ]]; then
+        tr_tune || rc=1
+    else
+        tr_groups "$dir/rounds.tsv" || rc=1
+    fi
     for h in a b; do on "$(tr_host "$h")" "$vm netem clear" >>"$dir/logs/netem-$h.log" 2>&1 || rc=1; done
     [[ ! -s $dir/failures.csv ]] || { log "failed runs: $(grep -c . "$dir/failures.csv") (failures.csv)"; rc=1; }
     # the directory as transport-format.md has it, for fairness.py and analyse.py
@@ -689,12 +1016,20 @@ tr_smoke() {
         HOME=$root/hosts/$h bash "$tr_here/local-vm.sh" transport-tune >"$root/transport-tune-$h.log" 2>&1 ||
             { echo "smoke: host $h's settings did not hold ($root/transport-tune-$h.log): $(tail -3 "$root/transport-tune-$h.log")" >&2; return 1; }
     done
-    mkdir -p "$root/hosts/a/bench/transport-a"
-    cat >"$root/hosts/a/bench/transport-a/env" <<ENV
+    # LAB_TUNE=1: the tuning session instead, every arm on this one box
+    # (tune_pair empty), cut down to TR_SMOKE_TUNE_ARMS and _KNOBS unless
+    # LAB_TUNE_ARMS and LAB_TUNE_KNOBS say otherwise
+    local p=a
+    [[ ${LAB_TUNE:-} == 1 ]] && p=tune-a
+    mkdir -p "$root/hosts/a/bench/transport-$p"
+    cat >"$root/hosts/a/bench/transport-$p/env" <<ENV
 A=host-a
 B=host-b
 user=$(id -un)
-pair=a
+pair=$p
+tune_pair=
+tune_arms=${LAB_TUNE_ARMS-$TR_SMOKE_TUNE_ARMS}
+tune_knobs=${LAB_TUNE_KNOBS-$TR_SMOKE_TUNE_KNOBS}
 session=smoke-$(date +%Y%m%d-%H%M%S)
 seed=${LAB_SEED:-$RANDOM}
 reps=1
@@ -707,9 +1042,9 @@ TRANSPORT_WARMUP_S=${TRANSPORT_WARMUP_S:-2}
 TRANSPORT_POINT_S=${TRANSPORT_POINT_S:-3}
 TRANSPORT_SWITCH_S=${TRANSPORT_SWITCH_S:-1}
 ENV
-    HOME=$root/hosts/a bash "$tr_here/transport.sh" run a 2>&1 | tee "$root/run.log" >&2
-    rc=$(cat "$root/hosts/a/bench/transport-a/rc" 2>/dev/null || echo 1)
-    ln -sfn hosts/a/bench/transport-a "$root/run"
+    HOME=$root/hosts/a bash "$tr_here/transport.sh" run "$p" 2>&1 | tee "$root/run.log" >&2
+    rc=$(cat "$root/hosts/a/bench/transport-$p/rc" 2>/dev/null || echo 1)
+    ln -sfn "hosts/a/bench/transport-$p" "$root/run"
     python3 "$tr_here/fairness.py" "$root/run" >"$root/fairness.txt" 2>&1
     python3 "$tr_here/analyse.py" --transport --show-invalid "$root/run" >"$root/tables.md" 2>&1 || rc=1
     tr_smoke_summary "$root" || rc=1
@@ -734,8 +1069,14 @@ tr_smoke_summary() {
         echo "collect: $(head -1 "$run/logs/collect.log" 2>/dev/null)"
         echo "fairness: $(tail -1 "$root/fairness.txt"), by rule:"
         sed -n 's/^\([a-z-]*\): .*/\1/p' "$root/fairness.txt" | sort | uniq -c | sed 's/^/  /'
+        echo "maxima: $(python3 "$tr_here/spikes.py" --transport "$run" 2>/dev/null | sed -n 's/^By cause: //p')"
+        if [[ -e $run/tune-sweep.tsv ]]; then
+            echo "tune: $(grep -c '^set ' "$run/tune-sweep.tsv") swept, $(grep -c '^set ' "$run/tune-confirm.tsv" 2>/dev/null || echo 0) confirmed, $(grep -c '^# changed' "$run/tuned.env" 2>/dev/null || echo 0) changed (tuned.env, tune-report.md)"
+            grep -E '^(TR_|# changed|# kept)' "$run/tuned.env" 2>/dev/null | sed 's/^/  /'
+        fi
     } | tee "$root/summary.txt"
     [[ $got == "$want" && $fails == 0 && $tables -gt 0 ]] || bad=1
+    [[ ! -e $run/tune-sweep.tsv || -s $run/tuned.env ]] || bad=1
     grep -q ' 0 problems$' "$run/logs/collect.log" 2>/dev/null || bad=1
     return $bad
 }
@@ -753,7 +1094,7 @@ if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
         # on any exit: the bench binaries this runner started (their PIDs, as
         # tr_start recorded them: never by name, which would stop another's),
         # netem and the media driver, on both VMs; then rc
-        trap 'rc=$?; for h in "${A:-}" "${B:-}"; do [[ -n $h ]] && on "$h" "for f in bench/transport-$tr_pair/run-*/*.pid; do [ -s \$f ] && kill -TERM \$(cat \$f) 2>/dev/null; done; ${vm:-ergon/md-dpdk/benches/cloud/vm.sh} netem clear; ${vm:-ergon/md-dpdk/benches/cloud/vm.sh} stop" >/dev/null 2>&1 </dev/null; done; kill $(jobs -p) 2>/dev/null; echo $rc >"$dir/rc"' EXIT
+        trap 'rc=$?; for h in "${A:-}" "${B:-}"; do [[ -n $h ]] && on "$h" "for f in bench/transport-$tr_pair/run-*/*.pid; do [ -s \$f ] && kill -TERM \$(cat \$f) 2>/dev/null; done; ${vm:-ergon/md-dpdk/benches/cloud/vm.sh} events-stop-all; ${vm:-ergon/md-dpdk/benches/cloud/vm.sh} netem clear; ${vm:-ergon/md-dpdk/benches/cloud/vm.sh} stop" >/dev/null 2>&1 </dev/null; done; kill $(jobs -p) 2>/dev/null; echo $rc >"$dir/rc"' EXIT
         tr_run "$2"
         ;;
     *) awk 'NR > 1 && !/^#/ {exit} NR > 1 {print}' "$0" >&2; exit 2 ;;

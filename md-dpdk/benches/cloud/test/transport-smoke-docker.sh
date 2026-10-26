@@ -58,5 +58,6 @@ docker run --rm --privileged --network host --shm-size=2g \
     -v "$repo:/src:ro" -v "$out:/out" \
     -v "${SMOKE_TARGET_VOLUME:-ergon-transport-smoke-target}:/target" \
     -v "${SMOKE_REGISTRY_VOLUME:-ergon-transport-smoke-registry}:/usr/local/cargo/registry" \
-    -e CARGO_TARGET_DIR=/target -e LAB_SEED="${LAB_SEED:-}" \
+    -e CARGO_TARGET_DIR=/target -e LAB_SEED="${LAB_SEED:-}" -e LAB_TUNE -e LAB_TUNE_ARMS -e LAB_TUNE_KNOBS \
+    -e TRANSPORT_WARMUP_S -e TRANSPORT_POINT_S -e TRANSPORT_SWITCH_S \
     "$image" bash -c "$inner"

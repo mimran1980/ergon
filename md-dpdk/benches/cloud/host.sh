@@ -1048,6 +1048,24 @@ transport_quiet_apply() {
     return $rc
 }
 
+# transport_overrides: TR_OVERRIDES ("TR_<NAME>=<value> ..."), the runner's
+# for one arm's host set-up (transport.sh tr_host_overrides: a tuning
+# variant's congestion control, the kernel path's busy poll), over the
+# settings sourced; 2 for one not of that form
+transport_overrides() {
+    local kv
+    for kv in ${TR_OVERRIDES:-}; do
+        [[ $kv =~ ^TR_[A-Z0-9_]+=[A-Za-z0-9._-]+$ ]] || { echo "TR_OVERRIDES: $kv is not TR_<NAME>=<value>" >&2; return 2; }
+        printf -v "${kv%%=*}" '%s' "${kv#*=}"
+    done
+}
+
+# transport_cc_load: the congestion control TR_TCP_CONGESTION names loaded
+# where it is a module (tcp_bbr), so the sysctl takes it; never fatal
+transport_cc_load() {
+    [[ $TR_TCP_CONGESTION == cubic || $TR_TCP_CONGESTION == reno ]] || sudo modprobe "tcp_$TR_TCP_CONGESTION" 2>/dev/null || true
+}
+
 # transport_sysctls: "<proc/sys path> <value> <required|optional>" a line,
 # from transport-settings.env (TR_*): every socket arm's TCP and busy-poll
 # settings; the optional ones are the kernel's from 6.15 (absent before)
@@ -1271,4 +1289,205 @@ transport_placement() {
             if (bad != "") {print "FAIL" bad; exit 1}
             print "ok " n + 0 " busy threads"
         }'
+}
+
+# ---- Per-point events (transport.sh around every point: vm.sh and
+# local-vm.sh events-start and events-stop; transport_events.py reads what
+# events_stop prints into <host>-events-<tag>.csv) ----
+# Everything is set up before the point's binaries start, so before their
+# warm-up, and read back after its window: enabling a tracepoint or a kprobe
+# patches kernel text (an IPI to every CPU), never inside a window. During
+# the window only the sampler (on the housekeeping CPU) and the gap spinners
+# (on hot CPUs the point leaves idle) run, and the trace records.
+
+# events_trace_start <instance> <cpus> <buffer KiB>: as root, a tracefs
+# instance of its own tracing <cpus> (a list: 4,6,8) on CLOCK_MONOTONIC:
+# context switches, IRQs and softirqs with their exits, IPIs (x86's
+# irq_vectors with their exits, arm64's ipi_entry and ipi_exit) and page
+# faults (x86's exceptions tracepoints, else a kprobe and a kretprobe on
+# handle_mm_fault). Prints "events: ..." lines: what is on, and what this
+# kernel lacks ("unavailable"), which the events file keeps as notes.
+events_trace_start() {
+    local name=$1 cpus=$2 kb=$3 t=$LAB_SYS_ROOT/kernel/tracing i e c mask=0 missing= pf=
+    i=$t/instances/$name
+    # tracefs where nothing mounted it yet (a container's /sys)
+    [[ -e $t/trace ]] || mount -t tracefs nodev "$t" 2>/dev/null || true
+    [[ -e $t/trace ]] || { echo "events: trace unavailable: no tracefs at $t"; return 0; }
+    [[ ! -d $i ]] || events_trace_stop "$name" >/dev/null 2>&1
+    mkdir "$i" 2>/dev/null || { echo "events: trace unavailable: cannot create the tracefs instance $i"; return 0; }
+    echo 0 >"$i/tracing_on"
+    for c in ${cpus//,/ }; do mask=$((mask | (1 << c))); done
+    printf '%x' "$mask" >"$i/tracing_cpumask"
+    echo "$kb" >"$i/buffer_size_kb"
+    if grep -qw mono "$i/trace_clock" 2>/dev/null; then
+        echo mono >"$i/trace_clock"
+    else
+        echo "events: trace unavailable: no mono trace clock in [$(cat "$i/trace_clock" 2>/dev/null)], so no wall clock for it"
+    fi
+    for e in sched/sched_switch irq/irq_handler_entry irq/irq_handler_exit irq/softirq_entry irq/softirq_exit; do
+        if [[ -e $i/events/$e/enable ]]; then echo 1 >"$i/events/$e/enable"; else missing+=" $e"; fi
+    done
+    if [[ -d $i/events/irq_vectors ]]; then
+        for e in "$i"/events/irq_vectors/*_entry "$i"/events/irq_vectors/*_exit; do
+            [[ -e $e/enable ]] && echo 1 >"$e/enable"
+        done
+    elif [[ -e $i/events/ipi/ipi_entry/enable ]]; then
+        echo 1 >"$i/events/ipi/ipi_entry/enable"
+        [[ -e $i/events/ipi/ipi_exit/enable ]] && echo 1 >"$i/events/ipi/ipi_exit/enable"
+    else
+        missing+=" irq_vectors/ipi_entry (IPIs)"
+    fi
+    if [[ -e $i/events/exceptions/page_fault_user/enable ]]; then
+        echo 1 >"$i/events/exceptions/page_fault_user/enable"
+        [[ -e $i/events/exceptions/page_fault_kernel/enable ]] && echo 1 >"$i/events/exceptions/page_fault_kernel/enable"
+        pf="the exceptions tracepoints"
+    elif grep -qw handle_mm_fault "$t/available_filter_functions" 2>/dev/null; then
+        e=ergon_pf_${name//[^A-Za-z0-9]/_}
+        { echo "p:$e handle_mm_fault" >>"$t/kprobe_events" && echo "r:${e}_ret handle_mm_fault" >>"$t/kprobe_events"; } 2>/dev/null
+        if [[ -e $i/events/kprobes/$e/enable && -e $i/events/kprobes/${e}_ret/enable ]]; then
+            echo 1 >"$i/events/kprobes/$e/enable" && echo 1 >"$i/events/kprobes/${e}_ret/enable" && pf="a kprobe on handle_mm_fault"
+        fi
+    fi
+    [[ -n $pf ]] || echo "events: page faults unavailable: no exceptions tracepoints and no kprobe on handle_mm_fault"
+    [[ -z $missing ]] || echo "events: trace events unavailable:$missing"
+    echo 1 >"$i/tracing_on"
+    echo "events: trace on cpus $cpus, $kb KiB a CPU, page faults by ${pf:-nothing}"
+}
+
+# events_trace_dump <instance> <cpus>: as root, the instance's events, then
+# "# overrun cpu<n> <events lost>" for each traced CPU whose buffer filled
+events_trace_dump() {
+    local i=$LAB_SYS_ROOT/kernel/tracing/instances/$1 c n
+    [[ -d $i ]] || return 0
+    echo 0 >"$i/tracing_on"
+    grep -v '^#' "$i/trace" 2>/dev/null
+    for c in ${2//,/ }; do
+        n=$(awk '/^overrun:/ {print $2}' "$i/per_cpu/cpu$c/stats" 2>/dev/null)
+        [[ -z $n || $n == 0 ]] || echo "# overrun cpu$c $n"
+    done
+    return 0
+}
+
+# events_trace_stop <instance>: as root, its events off, its kprobes
+# removed, the instance removed
+events_trace_stop() {
+    local name=$1 t=$LAB_SYS_ROOT/kernel/tracing e
+    [[ -d $t/instances/$name ]] || return 0
+    echo 0 >"$t/instances/$name/tracing_on"
+    echo 0 >"$t/instances/$name/events/enable" 2>/dev/null
+    e=ergon_pf_${name//[^A-Za-z0-9]/_}
+    if grep -q ":$e " "$t/kprobe_events" 2>/dev/null; then
+        { echo "-:${e}_ret" >>"$t/kprobe_events"; echo "-:$e" >>"$t/kprobe_events"; } 2>/dev/null
+    fi
+    rmdir "$t/instances/$name" 2>/dev/null || true
+}
+
+# events_tcp_counters: this host's TCP loss counters now, one
+# "<name>=<value>;..." line (/proc/net/snmp and netstat, as nstat names them
+# less the protocol): retransmitted segments, RTOs, tail-loss probes, DSACKs
+# received. Host-wide: every TCP connection's, the bench's among them.
+events_tcp_counters() {
+    awk '/^(Tcp|TcpExt):/ {
+            if (!($1 in hdr)) { hdr[$1] = 1; for (i = 2; i <= NF; i++) name[$1, i] = $i; next }
+            for (i = 2; i <= NF; i++) v[$1 name[$1, i]] = $i
+        }
+        END {
+            printf "RetransSegs=%d;TCPTimeouts=%d;TCPLossProbes=%d;TCPDSACKRecv=%d;TCPDSACKOfoRecv=%d\n",
+                v["Tcp:RetransSegs"], v["TcpExt:TCPTimeouts"], v["TcpExt:TCPLossProbes"], v["TcpExt:TCPDSACKRecv"],
+                v["TcpExt:TCPDSACKOfoRecv"]
+        }' "${LAB_PROC_ROOT:-/proc}/net/snmp" "${LAB_PROC_ROOT:-/proc}/net/netstat" 2>/dev/null
+}
+
+# events_sampler <stop file> <aeron dir|-> <counters binary|-> <iface>...:
+# one line a second until <stop file> exists: "t=<CLOCK_REALTIME ns>
+# tc=<iface>:<sent>:<dropped>,... tcp=<events_tcp_counters> aeron=<counters
+# loss>" (tc: each root netem qdisc's tc -s, - with none; aeron: the media
+# driver's loss counters read from its CnC file, - for an arm without one).
+# events_start runs it on the housekeeping CPU.
+events_sampler() {
+    local stop=$1 adir=$2 counters=$3 tc aer
+    shift 3
+    while [[ ! -e $stop ]]; do
+        tc=$(netem_stats "$@" | awk '{printf "%s%s:%s:%s", (NR > 1 ? "," : ""), $1, $2, $3}')
+        aer=-
+        [[ $adir == - || $counters == - ]] || aer=$(AERON_DIR=$adir "$counters" loss 2>/dev/null) || aer=-
+        echo "t=$(date +%s%N) tc=${tc:--} tcp=$(events_tcp_counters) aeron=${aer:--}"
+        sleep 1
+    done
+}
+
+# events_clock: "<CLOCK_MONOTONIC ns> <CLOCK_REALTIME ns>", read together:
+# the trace's clock (mono) onto the wall clock, at the start and at the end
+events_clock() {
+    python3 -c 'import time; m = time.clock_gettime_ns(time.CLOCK_MONOTONIC); r = time.time_ns(); print(m, r)'
+}
+
+# events_start <dir> <instance> <housekeeping cpu> <traced cpus> <spinner
+# cpus|-> <gapspin> <threshold us> <aeron dir|-> <counters|-> <buffer KiB>
+# <iface>...: a point's events begun in <dir> (made anew): the trace
+# (events_trace_start, as root), osnoise on the traced CPUs where the kernel
+# has it (knoise_start where the caller defines it; its line, or why not),
+# the clocks, a gap spinner on each spinner CPU and the sampler on the
+# housekeeping CPU. Their PIDs in <dir>; "events: ..." notes in <dir>/notes.
+events_start() {
+    local d=$1 name=$2 hk=$3 cpus=$4 spin=$5 gapspin=$6 us=$7 adir=$8 counters=$9 kb=${10} c
+    shift 10
+    rm -rf "$d" && mkdir -p "$d" || return 1
+    echo "$cpus" >"$d/cpus"
+    sudo env LAB_SYS_ROOT="$LAB_SYS_ROOT" bash -c "$(declare -f events_trace_start events_trace_stop); events_trace_start $name $cpus $kb" >"$d/notes" 2>&1
+    if declare -F knoise_start >/dev/null; then
+        sudo env LAB_SYS_ROOT="$LAB_SYS_ROOT" bash -c "$(declare -f knoise_start); knoise_start $cpus" 2>&1 | sed 's/^/events: /' >>"$d/notes"
+    else
+        echo "events: osnoise not tried: ${EVENTS_NO_OSNOISE:-this host runs no osnoise}" >>"$d/notes"
+    fi
+    events_clock >"$d/clock"
+    if [[ $spin != - ]]; then
+        for c in ${spin//,/ }; do
+            nohup "$gapspin" "$c" "$us" >"$d/gapspin-$c.log" 2>&1 </dev/null &
+            echo $! >>"$d/spin.pids"
+        done
+    else
+        echo "events: gap spinner unavailable: every hot CPU busy in this point" >>"$d/notes"
+    fi
+    nohup taskset -c "$hk" bash -c "$(declare -f events_sampler events_tcp_counters netem_stats); events_sampler $d/stop $adir $counters $*" \
+        >"$d/samples" 2>&1 </dev/null &
+    echo $! >"$d/sampler.pid"
+    echo "events: started in $d ($(grep -c . "$d/notes") notes)"
+}
+
+# events_stop <dir> <instance> <traced cpus>: the point's events, sections a
+# reader splits on (== clock, == notes, == gapspin <cpu>, == trace,
+# == osnoise, == samples), then everything events_start began stopped and
+# <dir> removed
+events_stop() {
+    local d=$1 name=$2 cpus=$3 f p
+    [[ -d $d ]] || { echo "== notes"; echo "events: not started (no $d)"; return 1; }
+    [[ -s $d/cpus ]] && cpus=$(cat "$d/cpus")
+    : >"$d/stop"
+    p=$(cat "$d/sampler.pid" 2>/dev/null)
+    for _ in $(seq 30); do [[ -n $p ]] && kill -0 "$p" 2>/dev/null || break; sleep 0.1; done
+    [[ -z $p ]] || kill "$p" 2>/dev/null || true
+    while read -r p; do kill "$p" 2>/dev/null || true; done < <(cat "$d/spin.pids" 2>/dev/null)
+    events_clock >>"$d/clock"
+    echo "== clock"
+    cat "$d/clock"
+    echo "== notes"
+    cat "$d/notes"
+    for f in "$d"/gapspin-*.log; do
+        [[ -e $f ]] || continue
+        f=${f##*/gapspin-}
+        echo "== gapspin ${f%.log}"
+        cat "$d/gapspin-$f"
+    done
+    echo "== trace"
+    sudo env LAB_SYS_ROOT="$LAB_SYS_ROOT" bash -c "$(declare -f events_trace_dump); events_trace_dump $name $cpus"
+    echo "== osnoise"
+    if declare -F knoise_stop >/dev/null; then
+        sudo grep -v '^#' "$LAB_SYS_ROOT/kernel/tracing/instances/knoise/trace" 2>/dev/null || true
+        sudo env LAB_SYS_ROOT="$LAB_SYS_ROOT" bash -c "$(declare -f knoise_stop); knoise_stop" >/dev/null 2>&1
+    fi
+    echo "== samples"
+    cat "$d/samples"
+    sudo env LAB_SYS_ROOT="$LAB_SYS_ROOT" bash -c "$(declare -f events_trace_stop); events_trace_stop $name" >/dev/null 2>&1
+    rm -rf "$d"
 }

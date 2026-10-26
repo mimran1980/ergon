@@ -15,14 +15,19 @@ row:
                               runner's point manifest ("runner") and the
                               binaries' own ("binary", "pong")
   <set>/spikes-<tag>.csv      the measuring run's spikes file
+  <set>/<host>-events-<tag>.csv  each host's events over the point
+                              (transport_events.py: events/<point>-<host>.log.gz,
+                              and on host a the measuring loop's stalls)
   <set>/hostcheck-<host>.txt  each host's session report
   transport-settings.env      the declared settings in fairness.py's form:
                               shared.<knob>=<value> for every transport sysctl
                               (host.sh transport_sysctls); an optional one that
                               no host's kernel has at any point is declared
-                              `absent`; and <arm>.socket.busy_read_us (with
-                              its sweep line) for each arm whose binary
-                              reports a busy-read (the mio arms)
+                              `absent`; one an arm's knob sets otherwise per
+                              arm; <arm>.knob.<name> for each per-arm knob an
+                              arm ran (manifest/<point>.env's knob.*), and a
+                              sweep line for each the tuning swept
+                              (TR_TUNED_SWEPT, a tuning session's variants)
 
 Hosts: a two-host set's are a and b; a one-host set's one host is `a` in the
 manifest (transport-format.md), whichever VM it ran on. A run of a failed point
@@ -39,6 +44,7 @@ import sys
 from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import transport_events  # noqa: E402
 from transport_points import COLUMNS, tag_of  # noqa: E402
 
 # nstat's counters a loss row reads (the growth of every Tcp, TcpExt and Udp
@@ -46,8 +52,42 @@ from transport_points import COLUMNS, tag_of  # noqa: E402
 NSTAT_ALWAYS = ("TcpRetransSegs", "TcpExtTCPLossProbes", "TcpExtTCPTimeouts", "UdpInErrors", "UdpRcvbufErrors",
                 "UdpSndbufErrors", "UdpNoPorts")
 NSTAT_KEEP = ("Tcp", "TcpExt", "Udp")
-# the per-arm knob the mio arms report (their binaries' busy_read_us)
-BUSY_KNOB = "socket.busy_read_us"
+# a per-arm knob (transport-settings.env's list, transport.sh tr_arm_knobs):
+# the binary's manifest key it reads back from, where the binary reports it
+# (the rest, the media driver's, as the runner recorded them)
+READBACK = {"busy_read_us": "busy_read_us", "epoll_events": "epoll_events", "datagram_burst": "datagram_burst",
+            "sockbuf": "rcvbuf", "quickack_per_read": "quickack_per_read", "rto_min_us": "rto_min_us",
+            "term_length": "term_length", "capacity": "capacity"}
+BOOL = {"true": "on", "false": "off"}
+# the hosts' own knob (a sysctl, read back as one): never a per-arm knob.* line
+HOST_WIDE = {"congestion"}
+# what a knob's value implies of the hosts' sysctls (vm.sh driver kernel: no
+# busy poll), beyond transport_sysctls' own
+IMPLIED = {("aeron_path", "kernel"): {"net.core.busy_read": "0", "net.core.busy_poll": "0"}}
+
+
+def implied(knobs):
+    """{sysctl: value} an arm's knobs imply."""
+    out = {}
+    for k, v in knobs.items():
+        out.update(IMPLIED.get((k, v), {}))
+        if k == "congestion":
+            out["net.ipv4.tcp_congestion_control"] = v
+    return out
+
+
+def swept_of(d, tr):
+    """{knob: {arm}}: the tuned section's (TR_TUNED_SWEPT, base arms) and, in
+    a tuning session, its variants (variants.txt: each the arm swept)."""
+    out = defaultdict(set)
+    for kv in tr.get("TR_TUNED_SWEPT", "").strip('"').split():
+        k, _, arms = kv.partition(":")
+        out[k].update(a for a in arms.split(",") if a)
+    for line in (read(os.path.join(d, "variants.txt")) or "").splitlines():
+        w = line.split()
+        if len(w) == 6:
+            out[w[2]].add(w[0])
+    return out
 
 
 def read(path):
@@ -231,7 +271,7 @@ def collect(d):
                 if len(raw) == len(COLUMNS):
                     rows.add(tag_of(raw[2], ints(raw[4]), ints(raw[0]), ints(raw[5]), raw[1]))
     knobs_seen = defaultdict(set)  # knob: values read back anywhere
-    busy_arms = {}  # arm: the busy-read its binary reported
+    arm_knobs = defaultdict(dict)  # arm: {knob: value} as the runner ran it
     hostcheck_done = set()
     for name in sorted(os.listdir(os.path.join(d, "manifest"))):
         if not name.endswith(".env"):
@@ -279,13 +319,18 @@ def collect(d):
             aa = pe.get("aa") == "1"
             # each host's own binary manifest: the measuring run's on a, the pong's on b
             own = {"a": bm, "b": pong}
-            # the per-arm knob: mio's SO_BUSY_POLL (ergon-io's epoll-spin has none)
+            # the arm's per-arm knobs (the runner's knob.* lines), each read
+            # back from the binary that reports it, else as the runner set it
             run_settings = {k: dict(v) for k, v in settings.items()}
+            knobs = {k[len("knob."):]: v for k, v in pe.items() if k.startswith("knob.")}
+            arm_knobs[pe.get("arm")].update(knobs)
             for key in run_settings:
-                busy = ((own.get(key) or {}).get("settings") or {}).get("busy_read_us")
-                if busy is not None:
-                    run_settings[key][BUSY_KNOB] = busy
-                    busy_arms[pe.get("arm")] = busy
+                ms = (own.get(key) or {}).get("settings") or {}
+                for k, v in knobs.items():
+                    if k in HOST_WIDE:
+                        continue
+                    got = ms.get(READBACK[k]) if k in READBACK else None
+                    run_settings[key][f"knob.{k}"] = v if got is None else BOOL.get(got, got)
             loss = {}
             for key, h in keys.items():
                 src = {}
@@ -337,6 +382,20 @@ def collect(d):
                 "loss_counters": loss,
                 "hosts": keys, "point": pid, "runner": pe, "binary": bm, "pong": pong,
             }
+            # each host's events over the point (transport_events.py): the
+            # measuring host's with its loop's stalls (its last busy CPU)
+            manifest["events"] = {}
+            for key, h in keys.items():
+                stalls = None
+                if key == "a":
+                    cpus_used = [c for c in str(bs.get("cpu_list", "")).split(",") if c.isdigit()]
+                    stalls = (os.path.join(out, f"stalls-{label}.csv"), int(cpus_used[-1]) if cpus_used else None,
+                              bs.get("role", "measuring") + " receive")
+                rows_, notes = transport_events.events(os.path.join(d, "events", f"{pid}-{h}.log.gz"), stalls)
+                name = f"{key}-events-{tag}.csv"
+                with open(os.path.join(folder, name), "w", newline="") as f:
+                    transport_events.write(f, rows_, notes)
+                manifest["events"][key] = {"file": name, "rows": len(rows_), "notes": notes}
             with open(os.path.join(folder, f"manifest-{tag}.json"), "w") as f:
                 json.dump(manifest, f, indent=1, sort_keys=True)
             spikes = os.path.join(out, f"spikes-{label}.csv")
@@ -354,6 +413,11 @@ def collect(d):
     lines = ["# transport_collect.py: transport-settings.tr.env's sysctls (host.sh transport_sysctls),",
              "# each the value every host must read back at every point; an optional one no host's",
              "# kernel had at any point is declared absent"]
+    tr = read_env(os.path.join(d, "transport-settings.tr.env"))
+    swept = swept_of(d, tr)
+    # a sysctl an arm's knob sets otherwise (a tuning variant's congestion
+    # control, the kernel path's busy poll) is every arm's own, each its value
+    shared = {}
     for line in (read(os.path.join(d, "declared-sysctls.txt")) or "").splitlines():
         w = line.split()
         if len(w) < 3:
@@ -361,14 +425,33 @@ def collect(d):
         knob, value, need = w[0].replace("/", "."), " ".join(w[1:-1]), w[-1]
         if need == "optional" and knobs_seen.get(knob) == {"absent"}:
             value = "absent"
-        lines.append(f"shared.{knob}={value}")
-    if busy_arms:
-        lines += ["# mio's busy-read (SO_BUSY_POLL, TR_BUSY_READ; tuning sweeps 0 and 50): an",
-                  "# arm's own knob, every arm that has it named; ergon-io's epoll-spin has none"]
-        tr = read_env(os.path.join(d, "transport-settings.tr.env"))
-        for arm in sorted(busy_arms):
-            lines.append(f"{arm}.{BUSY_KNOB}={tr.get('TR_BUSY_READ', busy_arms[arm])}")
-        lines.append(f"sweep.{BUSY_KNOB}={','.join(sorted(busy_arms))}")
+        shared[knob] = value
+    own = {arm: implied(k) for arm, k in arm_knobs.items()}
+    per_arm_sysctls = sorted({s for arm in own for s, v in own[arm].items() if s in shared and v != shared[s]})
+    for knob, value in shared.items():
+        if knob not in per_arm_sysctls:
+            lines.append(f"shared.{knob}={value}")
+    if per_arm_sysctls:
+        lines.append("# sysctls an arm's knob sets: each arm's own (transport_collect.py IMPLIED)")
+        for sysctl in per_arm_sysctls:
+            for arm in sorted(arm_knobs):
+                lines.append(f"{arm}.{sysctl}={own[arm].get(sysctl, shared[sysctl])}")
+            by = {"net.ipv4.tcp_congestion_control": ("congestion",)}.get(sysctl, ("aeron_path",))
+            arms = sorted(set().union(*(swept.get(k, set()) for k in by)) & set(arm_knobs))
+            if arms:
+                lines.append(f"sweep.{sysctl}={','.join(arms)}")
+    names = sorted({k for kn in arm_knobs.values() for k in kn if k not in HOST_WIDE})
+    if names:
+        lines += ["# each arm's per-arm knobs as it ran them (transport-settings.env's list); a sweep",
+                  "# line names the arms a tuning session swept for one (TR_TUNED_SWEPT, its variants)"]
+        for arm in sorted(arm_knobs):
+            for k in sorted(arm_knobs[arm]):
+                if k not in HOST_WIDE:
+                    lines.append(f"{arm}.knob.{k}={arm_knobs[arm][k]}")
+        for k in names:
+            arms = sorted(swept.get(k, set()) & set(arm_knobs))
+            if arms:
+                lines.append(f"sweep.knob.{k}={','.join(arms)}")
     with open(os.path.join(d, "transport-settings.env"), "w") as f:
         f.write("\n".join(lines) + "\n")
     print(f"transport_collect: {written} runs with a row, {len(rows)} rows in results.csv, "
