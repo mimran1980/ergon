@@ -98,7 +98,90 @@ tr_check() {
         { echo "TR_PORT_BASE: $why" >&2; return 2; }
     n=$(tr_plan count "$pair" "${reps:-5}") || return 2
     ((n > 0)) || { echo "LAB_PAIR $pair: no point to run in $(tr_files "$tr_arms_file" | tr '\n' ' ')" >&2; return 2; }
+    tr_declared_check || return 2
+    tr_huge_check "$pair" || return 2
     echo "$n"
+}
+
+# tr_declared <arm>: "<twin> <knob> <value>", the arm's TR_DECLARED entry
+# (transport-settings.env), or nothing (1) when it has none
+tr_declared() {
+    local e k
+    for e in ${TR_DECLARED:-}; do
+        [[ $e == "$1:"* ]] || continue
+        e=${e#*:} k=${e#*:}
+        echo "${e%%:*} ${k%%=*} ${k#*=}"
+        return 0
+    done
+    return 1
+}
+
+# tr_declared_check: every TR_DECLARED entry an arm of the plan whose arm
+# row is its twin's, its knob a per-arm knob of that binary, aeron_page 4096
+# or 2097152; 2 saying why not
+tr_declared_check() {
+    local e a twin k v mine theirs arm bin setup args
+    for e in ${TR_DECLARED:-}; do
+        [[ $e =~ ^[A-Za-z0-9_-]+:[A-Za-z0-9_-]+:[a-z_]+=[^[:space:]]+$ ]] || { echo "TR_DECLARED $e: <arm>:<twin>:<knob>=<value>" >&2; return 2; }
+        a=${e%%:*}
+        read -r twin k v <<<"$(tr_declared "$a")"
+        mine=$(tr_plan arm "$a" 2>/dev/null) || { echo "TR_DECLARED $a: no arm $a" >&2; return 2; }
+        theirs=$(tr_plan arm "$twin" 2>/dev/null) || { echo "TR_DECLARED $a: no arm $twin to be its twin" >&2; return 2; }
+        [[ $mine == "$theirs" ]] || { echo "TR_DECLARED $a: not $twin's twin: [$mine] against [$theirs]" >&2; return 2; }
+        read -r bin setup _ args <<<"$mine"
+        read -ra args <<<"${args:-}"
+        arm=$a
+        [[ " $(tr_arm_knobs | tr '\n' ' ') " == *" $k "* ]] ||
+            { echo "TR_DECLARED $a: $k is not a per-arm knob of $bin (transport-settings.env's list)" >&2; return 2; }
+        [[ $k != aeron_page || $v == 4096 || $v == 2097152 ]] ||
+            { echo "TR_DECLARED $a: aeron_page $v: 4096 (TR_AERON_DIR, tmpfs) or 2097152 (TR_AERON_HUGE_DIR, 2 MiB hugetlbfs)" >&2; return 2; }
+    done
+}
+
+# tr_huge_check <pair>: TR_AERON_HUGE_PAGES holds what each of the pair's
+# arms on the hugetlbfs (aeron_page 2097152) needs at its term length and
+# most streams (host.sh transport_huge_pages); 2 saying which needs more
+tr_huge_check() {
+    local a s need arm bin setup args
+    for a in $(tr_huge_arms "$(tr_plan rounds "$1" 1 1)"); do
+        read -r bin setup _ args <<<"$(tr_plan arm "$a")"
+        read -ra args <<<"${args:-}"
+        arm=$a
+        s=$(tr_plan rounds "$1" 1 1 | awk -F'\t' -v a="$a" '("," $9 ",") ~ ("," a "[,@]") {n = split($8, st, ","); for (i = 1; i <= n; i++) if (st[i] > m) m = st[i]} END {print m + 0}')
+        need=$(. "$tr_here/host.sh"; transport_huge_pages "$(tr_knob term_length)" "$s")
+        ((TR_AERON_HUGE_PAGES >= need)) || {
+            echo "TR_AERON_HUGE_PAGES $TR_AERON_HUGE_PAGES: $a's hugetlbfs needs $need pages of 2 MiB (term length $(tr_knob term_length), $s streams: host.sh transport_huge_pages)" >&2
+            return 2
+        }
+    done
+}
+
+# tr_huge_arms <rounds>: the Aeron arms of these rounds (transport_plan.py
+# rounds' lines) on the hugetlbfs (aeron_page 2097152), one a line
+tr_huge_arms() {
+    local a arm
+    for a in $(cut -f9 <<<"$1" | tr ',' '\n' | sed 's/@.*//' | sort -u); do
+        [[ $(tr_plan arm "$a" 2>/dev/null) == aeron_lat\ * ]] || continue
+        arm=$a
+        [[ $(tr_knob aeron_page) != 2097152 ]] || echo "$a"
+    done
+}
+
+# tr_aeron_dir: the current arm's Aeron directory (aeron_lat --aeron-dir,
+# the driver's AERON_DIR): TR_AERON_HUGE_DIR at aeron_page 2097152, else
+# TR_AERON_DIR
+tr_aeron_dir() {
+    if [[ $(tr_knob aeron_page) == 2097152 ]]; then echo "$TR_AERON_HUGE_DIR"; else echo "$TR_AERON_DIR"; fi
+}
+
+# tr_arm_vm: vm.sh for a call about the current arm (its driver, its
+# events, its directory's page size): on the arm's own Aeron directory
+tr_arm_vm() { echo "LAB_AERON_DIR=$(tr_aeron_dir) ${vm#LAB_AERON_DIR=* }"; }
+
+# tr_hostcheck_file <host>: the session hostcheck report that covers the
+# current arm on that host: on the hugetlbfs, the one run on its directory
+tr_hostcheck_file() {
+    if [[ $bin == aeron_lat && $(tr_aeron_dir) == "$TR_AERON_HUGE_DIR" ]]; then echo "hostcheck-$1-hugepages.txt"; else echo "hostcheck-$1.txt"; fi
 }
 
 # tr_check_tune <a|b>: the tuning session of that pair (LAB_TUNE=1) planned
@@ -252,7 +335,7 @@ tr_bin_args() {
     case $b in
     mpsc_lat) out="--capacity $(tr_knob capacity)" ;;
     aeron_lat)
-        out="--aeron-dir $TR_AERON_DIR --driver external --driver-busy-threads $(tr_driver_busy) --term-length $(tr_knob term_length) --mtu $TR_MTU"
+        out="--aeron-dir $(tr_aeron_dir) --driver external --driver-busy-threads $(tr_driver_busy) --term-length $(tr_knob term_length) --mtu $TR_MTU"
         if [[ $args == *" --mode udp "* ]]; then
             local ep=$peer rp=$own
             [[ $role == pong ]] && ep=$own rp=$peer
@@ -299,15 +382,20 @@ tr_alt_args() {
 
 # tr_knob <knob>: the current arm's value of a per-arm knob
 # (transport-settings.env's list): a tuning variant's own value
-# (variants.txt: the tuning session), else the tuned section's
-# (TR_ARM_KNOBS "<arm>:<knob>=<value> ..."), else the knob's default
+# (variants.txt: the tuning session), else a declared twin's own knob
+# (TR_DECLARED), else the tuned section's (TR_ARM_KNOBS "<arm>:<knob>=<value>
+# ...": a declared twin's twin's), else the knob's default
 tr_knob() {
-    local k=$1 v= kv base
+    local k=$1 v= kv base twin dk dv
     if [[ -s ${dir:-}/variants.txt ]]; then
         v=$(awk -v a="${arm:-}" -v k="$k" '$1 == a && $3 == k {print $4; exit}' "$dir/variants.txt")
         [[ -z $v ]] || { echo "$v"; return; }
     fi
     base=$(tr_base_arm)
+    if read -r twin dk dv < <(tr_declared "$base"); then
+        [[ $dk == "$k" ]] && { echo "$dv"; return; }
+        base=$twin
+    fi
     for kv in ${TR_ARM_KNOBS:-}; do
         [[ $kv == "$base:$k="* ]] && { echo "${kv#*=}"; return; }
     done
@@ -326,6 +414,7 @@ tr_knob() {
     rx_free_thresh) echo "$TR_DPDK_RX_FREE_THRESH" ;;
     aeron_threading) echo "$TR_AERON_IPC_THREADING" ;;
     capacity) echo "$TR_MPSC_CAPACITY" ;;
+    aeron_page) echo "$TR_AERON_PAGE" ;;
     *) echo "tr_knob: no knob $k" >&2; return 2 ;;
     esac
 }
@@ -354,7 +443,7 @@ tr_arm_knobs() {
         [[ $(tr_timer_args) == *--rto-min-us* ]] && echo rto_min_us
         ;;
     aeron_lat)
-        echo term_length
+        echo term_length aeron_page
         if [[ $setup == dpdk ]]; then
             echo rx_free_thresh
         elif [[ $a == *" --mode ipc "* ]]; then
@@ -489,7 +578,7 @@ tr_netem_line() {
 # tr_snap <before|after> <pid>: each host the point uses: its IRQ counts, its
 # kernel counters (/proc/net/snmp and netstat: nstat's) and, under netem, its
 # qdisc counters; after the point also its settings read back (vm.sh
-# settings)
+# settings) and an Aeron arm's directory's page size (vm.sh aeron-page)
 tr_snap() {
     local h
     for h in "${run_hosts[@]}"; do
@@ -501,13 +590,14 @@ tr_snap() {
         *) on "$(tr_host "$h")" "$vm netem stats" >"$dir/netem/$2-$h-$1" 2>/dev/null ;;
         esac
         [[ $1 == before ]] || on "$(tr_host "$h")" "$vm settings" >"$dir/settings/$2-$h" 2>/dev/null
+        [[ $1 == before || $bin != aeron_lat ]] || on "$(tr_host "$h")" "$(tr_arm_vm) aeron-page" >"$dir/aeronpage/$2-$h" 2>/dev/null
     done
 }
 
 # tr_manifest <pid> <load> <warm-up s> <start ns> <end ns>: the point's
 # manifest (manifest/<point>.env; the binary's own is manifest/<point>.json)
 tr_manifest() {
-    local pid=$1 h hot place nline k
+    local pid=$1 h hot place nline k v
     {
         echo "point=$pid"
         echo "set=$sid"
@@ -529,6 +619,7 @@ tr_manifest() {
         echo "vm_a=$vm_a"
         echo "vm_b=$vm_b"
         echo "bin=$bin"
+        echo "args=${args[*]:-}"
         for h in "${run_hosts[@]}"; do echo "bin_sha256_$h=$(awk -v b="$bin" '$2 ~ "/" b "$" {print $1}' "$dir/bins-$h.txt")"; done
         echo "commit=$commit"
         echo "dirty=$dirty"
@@ -554,11 +645,16 @@ tr_manifest() {
             echo "placement_$h=$place"
             nline=$(tr_netem_line "$pid" "$h")
             echo "netem_$h=$nline"
+            if [[ $bin == aeron_lat ]]; then
+                v=$(head -1 "$dir/aeronpage/$pid-$h" 2>/dev/null)
+                [[ $v =~ ^[0-9]+$ ]] || v=unread
+                echo "aeron_page_$h=$v"
+            fi
             [[ $nline != *FAIL ]] || log "WARNING: point $pid: host $h's netem counters off its loss: $nline"
             [[ $place == ok* ]] || log "WARNING: point $pid: host $h's thread placement: $place"
         done
-        echo "hostcheck_a=hostcheck-a.txt"
-        echo "hostcheck_b=hostcheck-b.txt"
+        echo "hostcheck_a=$(tr_hostcheck_file a)"
+        echo "hostcheck_b=$(tr_hostcheck_file b)"
     } >"$dir/manifest/$pid.env"
 }
 
@@ -572,8 +668,8 @@ tr_arm_up() {
     [[ -z $ov ]] || ov="TR_OVERRIDES='$ov' "
     for h in "$@"; do
         case $setup in
-        kernel) on "$(tr_host "$h")" "$vm driver $(tr_driver_mode) && ${ov}$vm transport-net check" ;;
-        dpdk) on "$(tr_host "$h")" "$vm driver $(tr_driver_mode)" ;;
+        kernel) on "$(tr_host "$h")" "$(tr_arm_vm) driver $(tr_driver_mode) && ${ov}$vm transport-net check" ;;
+        dpdk) on "$(tr_host "$h")" "$(tr_arm_vm) driver $(tr_driver_mode)" ;;
         sockets) on "$(tr_host "$h")" "${ov}$vm transport-net" ;;
         none) true ;;
         esac >>"$dir/logs/setup-$h.log" 2>&1 || { log "host $h: $setup set-up failed ($dir/logs/setup-$h.log)"; return 1; }
@@ -587,7 +683,7 @@ tr_arm_down() {
         for h in "$@"; do on "$(tr_host "$h")" "$vm transport-net" >>"$dir/logs/setup-$h.log" 2>&1 || log "host $h: settings not put back"; done
     fi
     [[ $setup == kernel || $setup == dpdk ]] || return 0
-    for h in "$@"; do on "$(tr_host "$h")" "$vm stop" >>"$dir/logs/setup-$h.log" 2>&1 || log "host $h: vm.sh stop failed"; done
+    for h in "$@"; do on "$(tr_host "$h")" "$(tr_arm_vm) stop" >>"$dir/logs/setup-$h.log" 2>&1 || log "host $h: vm.sh stop failed"; done
 }
 
 # tr_events_cpus <host>: "<traced cpus> <spinner cpus|->" for this point on
@@ -638,7 +734,7 @@ tr_events() {
     [[ $setup == kernel || $setup == dpdk ]] && ex=aeron
     for h in "${run_hosts[@]}"; do
         if [[ $what == start ]]; then
-            on "$(tr_host "$h")" "$vm events-start $pid $(tr_events_cpus "$h") $ex" >>"$dir/logs/events-$h.log" 2>&1 ||
+            on "$(tr_host "$h")" "$(tr_arm_vm) events-start $pid $(tr_events_cpus "$h") $ex" >>"$dir/logs/events-$h.log" 2>&1 ||
                 log "WARNING: point $pid: host $h's events did not start ($dir/logs/events-$h.log): its max goes unlabelled"
         else
             on "$(tr_host "$h")" "$vm events-stop $pid" 2>>"$dir/logs/events-$h.log" | gzip >"$dir/events/$pid-$h.log.gz"
@@ -969,7 +1065,7 @@ tr_run() {
     . "$tr_here/irqs.sh"
     # shellcheck source=host.sh
     . "$tr_here/host.sh"
-    mkdir -p "$dir/manifest" "$dir/points" "$dir/logs" "$dir/irq" "$dir/netem" "$dir/samples" "$dir/nstat" "$dir/settings" "$dir/events"
+    mkdir -p "$dir/manifest" "$dir/points" "$dir/logs" "$dir/irq" "$dir/netem" "$dir/samples" "$dir/nstat" "$dir/settings" "$dir/events" "$dir/aeronpage"
     # LAB_LOCAL_SMOKE: both hosts homes on this box (tr_smoke_hooks)
     [[ -z ${LAB_LOCAL_SMOKE:-} ]] || tr_smoke_hooks
     : >"$dir/failures.csv"
@@ -986,8 +1082,13 @@ tr_run() {
     cp "$tr_here/transport-settings.env" "$dir/transport-settings.tr.env"
     transport_sysctls >"$dir/declared-sysctls.txt"
     settings_sha=$(sha256sum "$dir/transport-settings.tr.env" 2>/dev/null | awk '{print $1}')
-    # the map, the NICs, the binaries and the ergon-tune report of each host;
-    # a report with any warning stops the session before its first point
+    # the map, the NICs, the binaries and the ergon-tune report of each host
+    # (and one on the hugetlbfs Aeron directory, where an arm of the plan
+    # runs there: its points' report); a report with any warning stops the
+    # session before its first point
+    local huge=
+    [[ ! -s $dir/rounds.tsv ]] || huge=$(tr_huge_arms "$(cat "$dir/rounds.tsv")")
+    arm=
     for h in a b; do
         on "$(tr_host "$h")" "$vm transport-map" >"$dir/map-$h.txt" 2>"$dir/logs/map-$h.err" || die "host $h: no transport map"
         on "$(tr_host "$h")" "$vm nics" >"$dir/nics-$h.txt" 2>/dev/null || die "host $h: data NICs not read"
@@ -999,6 +1100,9 @@ tr_run() {
             [[ -n ${LAB_LOCAL_SMOKE:-} ]] && { log "smoke: host $h's hostcheck report is not clean (no isolated CPUs here): recorded, not stopping"; continue; }
             die "host $h: the hostcheck report is not clean ($dir/hostcheck-$h.txt): $(grep -E '^[^ ]+ (warn|unknown): ' "$dir/hostcheck-$h.txt" | head -3 | tr '\n' ';') stopping before the first point"
         fi
+        [[ -n $huge ]] || continue
+        on "$(tr_host "$h")" "$vm hostcheck $TR_AERON_HUGE_DIR" >"$dir/hostcheck-$h-hugepages.txt" 2>&1 ||
+            die "host $h: the hostcheck report on $TR_AERON_HUGE_DIR ($(echo $huge)) is not clean ($dir/hostcheck-$h-hugepages.txt): $(grep -E '^[^ ]+ (warn|unknown): ' "$dir/hostcheck-$h-hugepages.txt" | head -3 | tr '\n' ';') stopping before the first point"
     done
     cmp -s "$dir/map-a.txt" "$dir/map-b.txt" || die "the hosts' CPU maps differ: $(cat "$dir/map-a.txt") and $(cat "$dir/map-b.txt")"
     map=$(cat "$dir/map-a.txt")

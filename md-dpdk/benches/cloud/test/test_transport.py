@@ -24,7 +24,7 @@ import analyse  # noqa: E402
 import fairness  # noqa: E402
 import spikes  # noqa: E402
 import transport_fixture as fx  # noqa: E402
-from transport_points import COLUMNS, read_points, tcp_loss  # noqa: E402
+from transport_points import COLUMNS, read_points, tag_of, tcp_loss  # noqa: E402
 
 CLEAN = None
 
@@ -101,6 +101,43 @@ class Run:
 
     def path(self, *parts):
         return os.path.join(self.run, *parts)
+
+    def add_twin(self, set_, arm, twin, knob, value, default, declare=True):
+        """A copy of arm in every round of set_ as twin (aeron-ipc-huge's
+        shape: its rows, manifests, spikes and events files), the two apart
+        only in knob: arm at default, twin at value; with declare, the
+        settings file's declared line naming the difference."""
+        env = read(self.path("transport-settings.env"))
+        own = [l for l in env.splitlines() if l.startswith(f"{arm}.")]
+        env += "".join(f"{twin}.{l[len(arm) + 1:]}\n" for l in own)
+        env += f"{arm}.{knob}={default}\n{twin}.{knob}={value}\n"
+        if declare:
+            env += f"declared.{twin}={arm}:{knob}\n"
+        write(self.path("transport-settings.env"), env)
+        folder = self.path(set_)
+        for path, m in self.manifests(lambda m: m["set"] == set_):
+            m["arm_order"] = m["arm_order"] + [twin]
+            if m["arm"] == arm or m.get("aa_of") == arm:
+                for s in m["settings"].values():
+                    s[knob] = default
+            if m["arm"] == arm:
+                t = dict(m, arm=twin, label=m["label"].replace(f"{set_}:{arm}", f"{set_}:{twin}", 1),
+                         settings={h: dict(s, **{knob: value}) for h, s in m["settings"].items()})
+                old = tag_of(m["label"], m["size"], m["rep"], m["rate"], m["kind"])
+                new = tag_of(t["label"], t["size"], t["rep"], t["rate"], t["kind"])
+                write(os.path.join(folder, f"manifest-{new}.json"), json.dumps(t))
+                for name in ("spikes-{}.csv", "a-events-{}.csv", "b-events-{}.csv"):
+                    if os.path.exists(os.path.join(folder, name.format(old))):
+                        shutil.copyfile(os.path.join(folder, name.format(old)), os.path.join(folder, name.format(new)))
+            write(path, json.dumps(m))
+        path = self.path("results.csv")
+        rows = list(csv.reader(read(path).splitlines()))
+        lab = COLUMNS.index("label")
+        add = [r[:lab] + [r[lab].replace(f"{set_}:{arm}", f"{set_}:{twin}", 1)] + r[lab + 1:] for r in rows
+               if len(r) == len(COLUMNS) and (r[lab] == f"{set_}:{arm}" or r[lab].startswith(f"{set_}:{arm}@"))]
+        assert add, "no row of the arm"
+        with open(path, "w", newline="") as f:
+            csv.writer(f).writerows(rows + add)
 
     def rules(self):
         return sorted({v.rule for v in fairness.check(self.run)})
@@ -251,6 +288,58 @@ class FairnessTest(unittest.TestCase):
         env = read(run.path("transport-settings.env"))
         write(run.path("transport-settings.env"), env.replace("sweep.socket.busy_poll_us=mio-udp,eio-udp\n", ""))
         self.assertEqual(run.rules(), [])
+
+    # a declared technology difference (aeron-ipc-huge: aeron-ipc on 2 MiB
+    # pages): the twin arm differs from its arm in the declared knob alone
+    PAGE = "knob.aeron_page"
+
+    def twin(self, declare=True):
+        run = Run(self)
+        run.add_twin("2b", "aeron-spy", "aeron-spy-huge", self.PAGE, "2097152", "4096", declare)
+        return run
+
+    def test_declared_difference_is_no_violation(self):
+        run = self.twin()
+        self.assertEqual(run.rules(), [], "\n".join(str(v) for v in fairness.check(run.run)))
+
+    def test_undeclared_difference_is_an_unswept_knob(self):
+        self.assertOnly(self.twin(declare=False), "shared-knob")
+
+    def test_declared_value_not_read_back(self):
+        run = self.twin()
+        run.edit(lambda m: m["arm"] == "aeron-spy-huge", lambda m: m["settings"]["a"].update({self.PAGE: "4096"}))
+        self.assertOnly(run, "settings")
+
+    def test_declared_twin_differs_in_another_knob(self):
+        run = self.twin()
+        env = read(run.path("transport-settings.env"))
+        write(run.path("transport-settings.env"), env.replace("aeron-spy-huge.aeron.threading.mode=DEDICATED",
+                                                               "aeron-spy-huge.aeron.threading.mode=SHARED"))
+        run.edit(lambda m: m["arm"] == "aeron-spy-huge",
+                 lambda m: [s.update({"aeron.threading.mode": "SHARED"}) for s in m["settings"].values()], first=False)
+        self.assertIn("declared", run.rules())
+
+    def test_declared_twin_runs_another_driver(self):
+        run = self.twin()
+        run.edit(lambda m: m["set"] == "2b",
+                 lambda m: m.update(runner={"bin": "aeron_lat", "args": "--mode spy", "driver_mode": (
+                     "kernel-busy@AERON_THREADING_MODE=SHARED" if m["arm"] == "aeron-spy-huge" else "kernel-busy")}),
+                 first=False)
+        self.assertOnly(run, "declared")
+
+    def test_declared_twin_runs_another_binary_or_arguments(self):
+        run = self.twin()
+        run.edit(lambda m: m["set"] == "2b",
+                 lambda m: m.update(runner={"bin": "aeron_lat", "driver_mode": "kernel-busy", "args": (
+                     "--mode ipc" if m["arm"] == "aeron-spy-huge" else "--mode spy")}), first=False)
+        self.assertOnly(run, "declared")
+
+    def test_declared_twin_without_its_arm_in_the_round(self):
+        run = self.twin()
+        env = read(run.path("transport-settings.env"))
+        write(run.path("transport-settings.env"), env.replace("declared.aeron-spy-huge=aeron-spy:",
+                                                               "declared.aeron-spy-huge=aeron-self-udp:"))
+        self.assertIn("declared", run.rules())
 
     def test_knob_both_shared_and_per_arm(self):
         run = Run(self)

@@ -50,7 +50,7 @@ own):
 | binary | runner's flags |
 |---|---|
 | `mpsc_lat` | `--capacity <capacity>` |
-| `aeron_lat` | `--aeron-dir $TR_AERON_DIR --driver external --driver-busy-threads $TR_AERON_DRIVER_BUSY_THREADS (1 under SHARED) --term-length <term_length> --mtu $TR_MTU`; `--mode udp` arms also `--endpoint <pong's data IP>:$TR_PORT_BASE --reply <ping's data IP>:$TR_PORT_BASE --interface <own data IP>`; every run `--stream-id 1001+256k` (the k-th Aeron point of the set; a one-host point's round trip +128), ping and pong the same, so no lingering publication of an earlier run is the image a subscription takes |
+| `aeron_lat` | `--aeron-dir <aeron_page's directory: $TR_AERON_DIR (tmpfs), at 2097152 $TR_AERON_HUGE_DIR (2 MiB hugetlbfs), the media driver's AERON_DIR too> --driver external --driver-busy-threads $TR_AERON_DRIVER_BUSY_THREADS (1 under SHARED) --term-length <term_length> --mtu $TR_MTU`; `--mode udp` arms also `--endpoint <pong's data IP>:$TR_PORT_BASE --reply <ping's data IP>:$TR_PORT_BASE --interface <own data IP>`; every run `--stream-id 1001+256k` (the k-th Aeron point of the set; a one-host point's round trip +128), ping and pong the same, so no lingering publication of an earlier run is the image a subscription takes |
 | `udp_lat` | `--local <own>:$TR_PORT_BASE --peer <other end>:$TR_PORT_BASE --rcvbuf/--sndbuf <sockbuf> --epoll-events <epoll_events>`, `--busy-read-us <busy_read_us>` for `--impl mio`, `--datagram-burst <datagram_burst>` for `--impl ergon` |
 | `tcp_lat` | pong (and `local`, on its receiver NIC) `--listen <own>:port`, ping `--source <own> --connect <peer>:port` (`local` also `--source <own>`), then `--nodelay --quickack-per-read [false] --rto-min-us <rto_min_us> --delack-max-us --rcvbuf --sndbuf <sockbuf> --epoll-events <epoll_events>`, and `--busy-read-us` for `--impl mio` |
 | other (arms file) | `--local <own>:port --peer <other end>:port`; setup `sockets` also `--busy-read-us $TR_BUSY_READ --rcvbuf/--sndbuf $TR_SOCKBUF --nodelay --quickack-per-read --rto-min-us $TR_TCP_RTO_MIN_US --delack-max-us $TR_TCP_DELACK_MAX_US`: every socket and TCP setting the built-in arms get. Such a binary must take them all, apply each it uses, and report them in its manifest |
@@ -64,8 +64,23 @@ driver's own; aeron-ipc's `aeron_threading=SHARED` takes the conductor's core
 and idle settings out and adds `@AERON_THREADING_MODE=SHARED`. A host
 setting an arm's knob sets otherwise (`congestion`; the kernel path's busy
 poll) goes to `vm.sh transport-net` as `TR_OVERRIDES`, and back after the
-arm. Each point's `manifest/<point>.env` records `base_arm`, every
-`knob.<name>` and `driver_mode`.
+arm. Each point's `manifest/<point>.env` records `base_arm`, `bin`, `args`,
+every `knob.<name>`, `driver_mode`, and for an Aeron arm `aeron_page_<host>`
+(the Aeron directory's page size read back on the host: `vm.sh aeron-page`).
+
+A declared twin (`TR_DECLARED "<arm>:<twin>:<knob>=<value>"`) is its twin's
+arm row run with the twin's value of every other knob, the tuned section's
+included, and its own value of the one knob: `aeron-ipc-huge` is
+`aeron-ipc` with `aeron_page=2097152`. Its driver, `aeron_lat` and its events
+use `$TR_AERON_HUGE_DIR`, on the hugetlbfs `vm.sh transport-tune` mounts at
+`$TR_AERON_HUGE_MOUNT` on each host (`TR_AERON_HUGE_PAGES` pages of 2 MiB,
+reserved with `min_size`; refused when the kernel has fewer free; verified
+from `/proc/mounts`: `hugetlbfs`, `pagesize=2M`, its size). When a set of
+the session runs such an arm, the session also runs `hostcheck --aeron-dir
+$TR_AERON_HUGE_DIR` on each host (`hostcheck-<host>-hugepages.txt`, its
+points' report). `transport.sh check` refuses a twin whose arm row differs,
+a knob that is not the binary's, and a hugetlbfs smaller than twice what the
+arm holds at once (`host.sh transport_huge_pages`).
 
 Addresses: ping binds host a's sender NIC and talks to host b's receiver NIC.
 Pong binds b's receiver NIC and talks to a's sender NIC. `local` binds its
@@ -137,8 +152,9 @@ As the session ends `transport_collect.py` lays the directory out for
 fairness.py and analyse.py (transport-format.md).
 
 hostcheck runs once per session per host (`vm.sh hostcheck`, its report saved
-as `hostcheck-<a|b>.txt`). A nonzero exit, or any `warn:` line, stops the
-session before the first point.
+as `hostcheck-<a|b>.txt`), and again on `$TR_AERON_HUGE_DIR` when an arm of
+the session runs there (`vm.sh hostcheck <dir>`, `hostcheck-<a|b>-hugepages.txt`).
+A nonzero exit, or any `warn:` line, stops the session before the first point.
 
 ## Per-point manifest (written by the runner)
 
@@ -153,12 +169,15 @@ to it as `manifest/<point>.json` (a one-host point's round-trip run as
 | `seed`, `order`, `position` | the round's seed, its arm order, this arm's place in it |
 | `session`, `pair`, `vm_a`, `vm_b` | session stamp, LAB_PAIR, the VMs (`<group>/a`, `<group>/b`) |
 | `bin`, `bin_sha256_<host>`, `commit`, `dirty` | the binary on each host and the build |
+| `args` | the arm row's arguments |
+| `base_arm`, `knob.<name>`, `driver_mode` | the arm's per-arm knobs as run, its media driver mode (Aeron arms) |
+| `aeron_page_a`, `aeron_page_b` | Aeron arms: the page size of the arm's Aeron directory read back on the host (`vm.sh aeron-page`), or `unread` |
 | `settings_sha256` | sha256 of transport-settings.env as applied |
 | `start_ns`, `end_ns` | the run's wall-clock start and end (CLOCK_REALTIME) |
 | `irq_hot_a`, `irq_hot_b` | each isolated CPU's interrupts over the run, `cpu<n>=<all>/<device IRQs>`, or `unused` |
 | `placement_a`, `placement_b` | `ok <n> busy threads`, or `FAIL` and what broke: a busy thread off the isolated CPUs, or two on one CPU |
 | `netem_a`, `netem_b` | `none`, or `<offered>/<dropped> p=<pct> in [<lo>,<hi>] ok`, or the same ending `FAIL` |
-| `hostcheck_a`, `hostcheck_b` | the session's report files |
+| `hostcheck_a`, `hostcheck_b` | the session's report file that covers the arm on each host (`hostcheck-<host>-hugepages.txt` for an arm on the hugetlbfs) |
 
 The row the binary writes gets the rep in its first column (the binary is
 not given it), and goes to `results.csv`.

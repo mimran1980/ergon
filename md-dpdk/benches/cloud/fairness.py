@@ -19,7 +19,12 @@ concerns. Rules:
   hostcheck        every host's report clean (no warn, no unproven blocking check)
   settings         every knob as transport-settings.env gives it, none it does not
   shared-knob      a per-arm knob the round's arms run at different values swept
-                   for every arm of the round that has it; never also shared
+                   for every arm of the round that has it (a declared arm's own
+                   knob excepted); never also shared
+  declared         an arm declared another's twin but for one knob (aeron-ipc-huge:
+                   aeron-ipc on 2 MiB pages) runs in every round with it, and
+                   nothing else differs: its other per-arm knobs, transport, wire
+                   bytes, binary, arguments and media driver mode are the twin's
   order            a seed and the round's arms in its recorded order; seeds
                    distinct and orders not all the same across reps
   aa               an A/A arm in every round, repeating an arm of the round
@@ -97,10 +102,11 @@ def tcp_loss_problem(p):
 
 def read_env(path):
     """transport-settings.env as (shared {knob: value}, per arm {arm: {knob:
-    value}}, sweep {knob: {arm}}), or None when missing."""
+    value}}, sweep {knob: {arm}}, declared {arm: (twin, knob)}), or None
+    when missing."""
     if not os.path.exists(path):
         return None
-    shared, per_arm, sweep = {}, defaultdict(dict), {}
+    shared, per_arm, sweep, declared = {}, defaultdict(dict), {}, {}
     with open(path) as f:
         text = f.read().splitlines()
     for line in text:
@@ -113,9 +119,12 @@ def read_env(path):
             shared[knob] = v
         elif prefix == "sweep":
             sweep[knob] = {a.strip() for a in v.split(",") if a.strip()}
+        elif prefix == "declared":
+            twin, _, k = v.partition(":")
+            declared[knob] = (twin, k)
         else:
             per_arm[prefix][knob] = v
-    return shared, per_arm, sweep
+    return shared, per_arm, sweep, declared
 
 
 def hostcheck_problems(path):
@@ -238,7 +247,7 @@ def check(run_dir):
                     f"{', '.join(sorted(arms))}")
 
         if env is not None:
-            shared, per_arm, sweep = env
+            shared, per_arm, sweep, declared = env
             reported = defaultdict(set)  # knob: arms reporting it
             for p in ps:
                 for host, knobs in p.manifest["settings"].items():
@@ -265,8 +274,16 @@ def check(run_dir):
             # arm of the round that has it swept for it (one at the same
             # value everywhere is no arm's own tweak)
             round_arms = {arm_key(p) for p in ps}
+
+            def own(arm, k):
+                """k is arm's declared difference from a twin in the round:
+                its value is what the pair compares (the declared rule
+                checks the rest)."""
+                return declared.get(arm, (None, None))[1] == k and declared[arm][0] in round_arms
+
             for k in sorted({k for arm in round_arms for k in per_arm.get(arm, {})}):
                 have = (reported[k] | {arm for arm in round_arms if k in per_arm.get(arm, {})})
+                have = {arm for arm in have if not own(arm, k)}
                 values = {per_arm[arm][k] for arm in have if k in per_arm.get(arm, {})}
                 swept = sweep.get(k, set())
                 if len(values) > 1 and not have <= swept:
@@ -274,6 +291,31 @@ def check(run_dir):
                         f"({', '.join(a + ' ' + per_arm.get(a, {}).get(k, '?') for a in sorted(have))}), and "
                         f"{', '.join(sorted(have - swept))} was not swept for it "
                         f"(sweep.{k}={','.join(sorted(swept)) or 'none'})")
+            for arm in sorted(round_arms & set(declared)):
+                twin, k = declared[arm]
+                if twin not in round_arms:
+                    add("declared", set_, tags, f"round {rid}: {arm} is declared {twin}'s twin but for {k}, "
+                        f"and {twin} is not in the round")
+                    continue
+                mine, theirs = per_arm.get(arm, {}), per_arm.get(twin, {})
+                if k not in mine or k not in theirs:
+                    add("declared", set_, tags, f"round {rid}: {arm}'s declared difference {k} is not a per-arm "
+                        f"knob of both it and {twin}")
+                diff = sorted(x for x in (set(mine) | set(theirs)) - {k} if mine.get(x) != theirs.get(x))
+                if diff:
+                    add("declared", set_, tags, f"round {rid}: {arm} differs from its twin {twin} beyond {k}: "
+                        + ", ".join(f"{x} {mine.get(x, '-')} against {theirs.get(x, '-')}" for x in diff))
+                pair = [p for p in ps if p.arm in (arm, twin) and not p.manifest.get("aa")]
+                for what, value in (("transport", lambda p: p.manifest.get("transport")),
+                                    ("wire bytes", lambda p: p.manifest.get("wire_bytes")),
+                                    ("binary", lambda p: (p.manifest.get("runner") or {}).get("bin")),
+                                    ("arguments", lambda p: (p.manifest.get("runner") or {}).get("args")),
+                                    ("media driver mode",
+                                     lambda p: (p.manifest.get("runner") or {}).get("driver_mode"))):
+                    seen = sorted({repr(value(p)) for p in pair})
+                    if len(seen) > 1:
+                        add("declared", set_, tags, f"round {rid}: {arm} and its twin {twin} differ in {what}: "
+                            + ", ".join(seen))
 
         for p in ps:
             m, hosts = p.manifest, hosts_of(p.set)
