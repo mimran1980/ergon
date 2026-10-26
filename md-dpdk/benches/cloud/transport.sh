@@ -245,12 +245,30 @@ transport_prepare() {
         fi
     done
     log "transport: bench binaries"
-    detached transport-build transport-build || die "transport-build failed"
+    local fstack=
+    if tr_wants_fstack; then
+        fstack=fstack
+        log "transport: an arm runs on F-Stack: it and fstack_lat are built too (x86_64 only)"
+    fi
+    detached transport-build transport-build $fstack || die "transport-build failed"
     log "transport: CPU map and its boot line"
     both transport-isolate transport-isolate || die "transport-isolate failed"
     reboot_both
     both transport-tune transport-tune || die "transport-tune failed: a setting did not hold ($out/{a,b}-transport-tune.log)"
     remote_access
+}
+
+# tr_wants_fstack: 0 when a set of either pair runs an arm on F-Stack
+# (setup fstack): vm.sh transport-build then builds F-Stack and fstack_lat
+tr_wants_fstack() {
+    local p m tr_arms_file=${arms_file:-} tr_sets_file=${sets_file:-}
+    for p in a b; do
+        while read -r m; do
+            [[ -n $m ]] || continue
+            [[ $(tr_plan arm "${m%%@*}" | awk '{print $2}') == fstack ]] && return 0
+        done < <(tr_plan modes "$p" 2>/dev/null)
+    done
+    return 1
 }
 
 # transport_remote <pair>: the session on VM a (transport.sh run), detached
@@ -300,6 +318,12 @@ tr_host() { if [[ $1 == a ]]; then echo "$A"; else echo "$B"; fi; }
 # tr_nic <a|b> <sender|receiver>: that host's data NIC address (vm.sh nics,
 # read once a session into nics-<host>.txt)
 tr_nic() { awk -v r="$2" '$1 == r {print $5}' "$dir/nics-$1.txt"; }
+# tr_nic_of <address> <field>: a field of the data NIC with that address on
+# either host (vm.sh nics: role iface vf mac address prefix pci)
+tr_nic_of() { awk -v ip="$1" -v f="$2" '$5 == ip {print $f; exit}' "$dir"/nics-[ab].txt; }
+# tr_gateway <address/prefix>: its subnet's router, the first address (AWS
+# and Azure both; host.sh subnet_gateway)
+tr_gateway() { python3 -c 'import ipaddress, sys; print(next(ipaddress.ip_network(sys.argv[1], strict=False).hosts()))' "$1"; }
 
 # tr_bin_path: the PATH a bench binary is found on, on either host
 tr_bin_path='"$HOME/ergon/target/release:$HOME/extra/bin:$PATH"'
@@ -366,6 +390,17 @@ tr_bin_args() {
         [[ $role == pong ]] && a="--listen $own:$port"
         [[ $role == local ]] && a="--source $own --listen $peer:$port"
         out="$a --nodelay $qa $(tr_timer_args)${busy}--rcvbuf $sb --sndbuf $sb --epoll-events $(tr_knob epoll_events)"
+        ;;
+    fstack_lat)
+        # TCP over F-Stack: tcp_lat's addresses (the F-Stack interface takes
+        # the address, so the NIC: its PCI address, prefix and gateway from
+        # vm.sh nics) and socket buffers; no busy poll, epoll or kernel TCP
+        # timers (F-Stack polls, and has none of them: the binary refuses
+        # them)
+        local a="--source $own --connect $peer:$port" pci len
+        [[ $role == pong ]] && a="--listen $own:$port"
+        pci=$(tr_nic_of "$own" 7) len=$(tr_nic_of "$own" 6)
+        out="$a --pci $pci --prefix-len $len --gateway $(tr_gateway "$own/$len") --nodelay --rcvbuf $sb --sndbuf $sb"
         ;;
     *)
         # an arms file's binary: its addresses, and on the kernel's path
@@ -477,6 +512,7 @@ tr_arm_knobs() {
         [[ $a == *" --mode udp "* && $a == *" --reliable true "* ]] && echo nak_delay_ns
         ;;
     mpsc_lat) echo capacity ;;
+    fstack_lat) echo sockbuf ;;
     esac
     # every arm on the kernel's sockets (an arms file's binary too): the data
     # NICs' interrupt deferral, its own host setting (tr_host_overrides)
@@ -744,6 +780,7 @@ tr_arm_up() {
         kernel) on "$(tr_host "$h")" "$(tr_arm_vm) driver $(tr_driver_mode) && ${ov}$vm transport-net check" ;;
         dpdk) on "$(tr_host "$h")" "$(tr_arm_vm) driver $(tr_driver_mode)" ;;
         sockets) on "$(tr_host "$h")" "${ov}$vm transport-net" ;;
+        fstack) on "$(tr_host "$h")" "$vm fstack-up" ;;
         none) true ;;
         esac >>"$dir/logs/setup-$h.log" 2>&1 || { log "host $h: $setup set-up failed ($dir/logs/setup-$h.log)"; return 1; }
     done
@@ -755,7 +792,8 @@ tr_arm_down() {
     if [[ $setup == sockets && -n $(tr_host_overrides) ]]; then
         for h in "$@"; do on "$(tr_host "$h")" "$vm transport-net" >>"$dir/logs/setup-$h.log" 2>&1 || log "host $h: settings not put back"; done
     fi
-    [[ $setup == kernel || $setup == dpdk ]] || return 0
+    # fstack: the data NICs back from igb_uio to the kernel (vm.sh stop)
+    [[ $setup == kernel || $setup == dpdk || $setup == fstack ]] || return 0
     for h in "$@"; do on "$(tr_host "$h")" "$(tr_arm_vm) stop" >>"$dir/logs/setup-$h.log" 2>&1 || log "host $h: vm.sh stop failed"; done
 }
 

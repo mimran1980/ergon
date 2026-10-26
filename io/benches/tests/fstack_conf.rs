@@ -1,7 +1,6 @@
 //! `fstack_lat`'s flags, the F-Stack config it writes and FreeBSD's
 //! `tcp_info` decoding (`io_bench::transport::fstack_conf`), without
 //! F-Stack. The arm end to end: io/benches/fstack/docker-test.sh.
-#![cfg(target_os = "linux")]
 
 use io_bench::transport::fstack_conf::{BsdTcpInfo, FstackArgs, netmask};
 use io_bench::transport::point::{Flags, Role};
@@ -189,4 +188,32 @@ fn tcp_info_offsets_follow_freebsd_15() {
         }
     );
     assert!(BsdTcpInfo::parse(&b[..100]).is_err());
+}
+
+/// What transport.sh `tr_bin_args fstack_lat` and `tr_point` pass, flag for
+/// flag (test-transport-runner.sh checks the runner's side of it): every
+/// one taken, none left.
+#[test]
+fn takes_exactly_the_runners_flags() {
+    use io_bench::transport::point::Common;
+    let point = "--streams 8 --rate 50000 --warmup-s 5 --duration-s 30 --size 64 --label d8:dpdk-tcp@STREAMS=8 \
+                 --spike-ns 100000 --stall-ns 10000 --cpus 2 --out /tmp/x";
+    for (role, ends) in [
+        (
+            "ping",
+            "--source 10.30.1.11 --connect 10.30.1.22:22000 --pci 0000:00:06.0 --prefix-len 24 --gateway 10.30.1.1 --nodelay --rcvbuf 2097152 --sndbuf 2097152",
+        ),
+        (
+            "pong",
+            "--listen 10.30.1.22:22000 --pci 0000:00:07.0 --prefix-len 24 --gateway 10.30.1.1 --nodelay --rcvbuf 2097152 --sndbuf 2097152",
+        ),
+    ] {
+        let mut f = flags(&format!("--role {role} {point} {ends}"));
+        let c = Common::parse(&mut f).unwrap();
+        let a = FstackArgs::parse(&mut f, c.role, &c.cpus).unwrap();
+        f.finish().unwrap();
+        assert_eq!(a.conf.rcvbuf, 2_097_152);
+        assert_eq!(a.conf.sndbuf, Some(2_097_152));
+        assert_eq!(a.conf.lcore, 2);
+    }
 }

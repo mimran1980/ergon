@@ -183,7 +183,7 @@ impl FstackArgs {
             sndbuf,
         };
         for a in listen.iter().chain(&connect) {
-            super::sock::port_plus(SocketAddr::V4(*a), 0)?;
+            super::point::port_plus(SocketAddr::V4(*a), 0)?;
         }
         Ok(Self {
             conf,

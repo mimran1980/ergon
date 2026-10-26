@@ -118,31 +118,8 @@ pub trait Inspect {
     fn report(&self, out: &mut Vec<(String, String)>) -> Result<(), Error>;
 }
 
-/// The media driver's wildcard port ranges in the lab (sender 20000-20999,
-/// receiver 21000-21999: vm.sh `common_env`): no socket arm binds or sends
-/// to one.
-pub const DPDK_PORTS: std::ops::RangeInclusive<u16> = 20_000..=21_999;
-
-/// `base` with its port moved up by `i`.
-///
-/// # Errors
-/// [`Error::Usage`] for port 0, a port past 65 535, or one in
-/// [`DPDK_PORTS`].
-pub fn port_plus(base: SocketAddr, i: u32) -> Result<SocketAddr, Error> {
-    if base.port() == 0 {
-        return Err(Error::Usage(format!(
-            "{base}: a base port is needed (stream i uses port + i)"
-        )));
-    }
-    let port = u16::try_from(u32::from(base.port()) + i)
-        .map_err(|_| Error::Usage(format!("{base} + {i}: past port 65535")))?;
-    if DPDK_PORTS.contains(&port) {
-        return Err(Error::Usage(format!(
-            "port {port} (stream {i} of base {base}): 20000-21999 are the media driver's wildcard ranges"
-        )));
-    }
-    Ok(SocketAddr::new(base.ip(), port))
-}
+// stream ports: point's (fstack_conf takes them too, on every OS)
+pub use super::point::{DPDK_PORTS, port_plus};
 
 /// The technology.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

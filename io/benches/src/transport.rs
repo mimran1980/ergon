@@ -22,7 +22,6 @@ pub mod eio_tcp;
 pub mod eio_udp;
 #[cfg(all(target_os = "linux", feature = "fstack"))]
 pub mod fstack;
-#[cfg(target_os = "linux")]
 pub mod fstack_conf;
 #[cfg(target_os = "linux")]
 pub mod kstat;
