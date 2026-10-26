@@ -203,6 +203,55 @@ irqs_pin_data() {
     return $rc
 }
 
+# irqs_data_settle <CPU> <when> <kick> <iface>...: every data-NIC MSI IRQ
+# irqs_pin_data gave <CPU> effective there before a point starts. x86 under
+# Hyper-V (hv_pci, no interrupt remapping) moves an IRQ to a new affinity
+# only at its next interrupt, which its old CPU still takes: in a real
+# session the mlx5 completion vectors no traffic had used since pinning each
+# fired once on its own isolated CPU mid-run, whenever a connection first
+# used its queue. So each IRQ still effective elsewhere is fired now:
+# `<kick> <cpu> <iface>` (the caller's: a frame sent from <cpu>, which goes
+# out on that CPU's queue, whose completion raises its vector) from each CPU
+# it is effective on, up to three times. Then "irqs <when>: <k> of <n>
+# data-NIC IRQs effective on CPU <CPU>" and what moved, or what still lags,
+# on stderr. A lag is reported, not fatal (fairness.py's irq rule counts what
+# lands on a hot CPU); an IRQ with no effective list is the affinity's.
+irqs_data_settle() {
+    local cpu=$1 when=$2 kick=$3 i f irq iface eff c try from n=0 moved='' lag=''
+    shift 3
+    while read -r irq iface; do
+        [[ -n $irq ]] || continue
+        n=$((n + 1))
+        eff=$(cat "$LAB_PROC_ROOT/irq/$irq/effective_affinity_list" 2>/dev/null) || eff=
+        [[ -z $eff || $eff == "$cpu" ]] && continue
+        from=$eff
+        for try in 1 2 3; do
+            for c in $(cpu_list_expand "$eff"); do
+                [[ $c == "$cpu" ]] || "$kick" "$c" "$iface" >/dev/null 2>&1 </dev/null || true
+            done
+            eff=$(cat "$LAB_PROC_ROOT/irq/$irq/effective_affinity_list" 2>/dev/null) || eff=
+            [[ $eff == "$cpu" ]] && break
+        done
+        if [[ $eff == "$cpu" ]]; then moved+="${moved:+, }$irq moved by a frame from CPU $from"; else lag+="${lag:+ }$irq@$eff"; fi
+    done < <(for i in "$@"; do
+        for f in "$LAB_SYS_ROOT/class/net/$i/device/msi_irqs"/*; do
+            [[ -e $f ]] && echo "${f##*/} $i"
+        done
+    done | sort -n -u -k1,1)
+    local lagging
+    lagging=$(wc -w <<<"$lag")
+    echo "irqs $when: $((n - lagging)) of $n data-NIC IRQs effective on CPU $cpu${moved:+ ($moved)}${lag:+; still on another until their next interrupt: $lag (after 3 frames from each)}" >&2
+    return 0
+}
+
+# cpu_list_expand <list>: a CPU list ("1-3,5") one CPU a word
+cpu_list_expand() {
+    local part
+    for part in ${1//,/ }; do
+        if [[ $part == *-* ]]; then seq "${part%-*}" "${part#*-}"; else echo "$part"; fi
+    done | tr '\n' ' '
+}
+
 # irqs_data_check <CPU> <iface>...: one line per data-NIC IRQ (its affinity)
 # and VMBus channel (its cpu): "ok <iface> irq <n>" or "FAIL <iface> irq <n>
 # on <CPUs>"; then "<k> of <n> on CPU <CPU>"; 1 unless all are, or with none
