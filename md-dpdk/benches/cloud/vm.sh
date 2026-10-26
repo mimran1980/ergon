@@ -630,10 +630,7 @@ transport_nics() {
         if [[ $TR_COALESCE_OFF == 1 ]]; then transport_coalesce_off "$vf" || rc=1; fi
     done
     if [[ $TR_QUICKACK_ROUTES == 1 ]]; then
-        while read -r route; do
-            # shellcheck disable=SC2086
-            [[ -n $route ]] && sudo ip route change $route
-        done < <(transport_quickack_routes "$DATA_SUBNET")
+        transport_quickack_apply "$DATA_SUBNET"
         transport_quickack_check "$DATA_SUBNET" || rc=1
     fi
     read -r _ cpu _ <"$run/transport-map"

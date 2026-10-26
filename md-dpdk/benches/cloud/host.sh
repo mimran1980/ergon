@@ -1179,6 +1179,27 @@ transport_quickack_routes() {
         }'
 }
 
+# transport_quickack_apply <subnet>: quickack 1 on every route to <subnet>.
+# Each is deleted (prefix, table and dev pick it) and appended with quickack
+# 1: `ip route change` picks by prefix and table alone, so with one route per
+# data NIC on the subnet (the sender and receiver ports) it would change the
+# first twice and leave the other without quickack. Run before the data path
+# carries traffic.
+transport_quickack_apply() {
+    local routes r
+    routes=$(transport_quickack_routes "$1")
+    [[ -n $routes ]] || return 0
+    while read -r r; do
+        # shellcheck disable=SC2086
+        [[ -n $r ]] && sudo ip route del ${r% quickack 1}
+    done <<<"$routes"
+    while read -r r; do
+        # shellcheck disable=SC2086
+        [[ -n $r ]] && sudo ip route append $r
+    done <<<"$routes"
+    return 0
+}
+
 # transport_quickack_check <subnet>: 0 when every route to it has quickack
 # 1, else 1 naming those without; 1 too when there is none
 transport_quickack_check() {

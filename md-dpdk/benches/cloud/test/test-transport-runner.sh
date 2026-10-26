@@ -148,10 +148,20 @@ if [[ "$*" == "-4 route show table all" ]]; then
     cat "$FAKE_ROUTES"
 elif [[ $1 == route && $2 == change ]]; then
     shift 2
-    # the route replaced by the one given (prefix, dev and table pick it)
-    awk -v new="$*" 'BEGIN {split(new, w, " ")} {dev = ""; tbl = ""; for (i = 1; i < NF; i++) {if ($i == "dev") dev = $(i + 1); if ($i == "table") tbl = $(i + 1)}
+    # as the kernel: prefix and table pick the route, the first that matches,
+    # whatever dev the request names (two NICs on one subnet: one is missed)
+    awk -v new="$*" 'BEGIN {split(new, w, " "); done = 0} {tbl = ""; for (i = 1; i < NF; i++) if ($i == "table") tbl = $(i + 1)
+        nt = ""; for (i in w) if (w[i] == "table") nt = w[i + 1]
+        if (!done && $1 == w[1] && tbl == nt) {print new; done = 1} else print}' "$FAKE_ROUTES" >"$FAKE_ROUTES.new" && mv "$FAKE_ROUTES.new" "$FAKE_ROUTES"
+elif [[ $1 == route && $2 == del ]]; then
+    shift 2
+    # prefix, table and (when given) dev pick the one route deleted
+    awk -v sel="$*" 'BEGIN {split(sel, w, " "); done = 0} {dev = ""; tbl = ""; for (i = 1; i < NF; i++) {if ($i == "dev") dev = $(i + 1); if ($i == "table") tbl = $(i + 1)}
         nd = ""; nt = ""; for (i in w) {if (w[i] == "dev") nd = w[i + 1]; if (w[i] == "table") nt = w[i + 1]}
-        if ($1 == w[1] && dev == nd && tbl == nt) print new; else print}' "$FAKE_ROUTES" >"$FAKE_ROUTES.new" && mv "$FAKE_ROUTES.new" "$FAKE_ROUTES"
+        if (!done && $1 == w[1] && tbl == nt && (nd == "" || dev == nd)) done = 1; else print}' "$FAKE_ROUTES" >"$FAKE_ROUTES.new" && mv "$FAKE_ROUTES.new" "$FAKE_ROUTES"
+elif [[ $1 == route && $2 == append ]]; then
+    shift 2
+    echo "$*" >>"$FAKE_ROUTES"
 fi
 SH
 # fake ethtool: rings settable up to 4096; coalescing unless FAKE_NO_COALESCE
@@ -273,18 +283,22 @@ else
     fail "host.sh sysctls: $src [$s] $chkrc $wrongrc [$wrong] $missrc [$missing]"
 fi
 
-# quickack: every route to the data subnet, in every table, with quickack 1
-printf '%s\n' "10.20.1.0/24 dev eth1 proto kernel scope link src 10.20.1.4" "10.20.1.0/24 dev eth1 table 100 scope link src 10.20.1.4" \
+# quickack: every route to the data subnet, in every table, with quickack 1;
+# the main table holds one route per data NIC (both on the subnet), which a
+# prefix-keyed `ip route change` cannot tell apart
+printf '%s\n' "10.20.1.0/24 dev eth1 proto kernel scope link src 10.20.1.4" "10.20.1.0/24 dev eth2 proto kernel scope link src 10.20.1.5" \
+    "10.20.1.0/24 dev eth1 table 100 scope link src 10.20.1.4" \
     "10.20.1.0/24 dev eth2 table 101 scope link src 10.20.1.5" "default via 10.20.0.1 dev eth0" >"$FAKE_ROUTES"
 qa=$(hostrun transport_quickack_routes 10.20.1.0/24)
 before=$(hostrun transport_quickack_check 10.20.1.0/24 >/dev/null 2>&1; echo $?)
-while read -r r; do env PATH="$tmp/fakebin:$PATH" ip route change $r; done <<<"$qa"
+hostrun transport_quickack_apply 10.20.1.0/24 >/dev/null 2>&1
 after=$(hostrun transport_quickack_check 10.20.1.0/24 2>&1)
-same "host.sh: quickack 1 on every data-subnet route of every table, checked" "10.20.1.0/24 dev eth1 proto kernel scope link src 10.20.1.4 quickack 1
+same "host.sh: quickack 1 on every data-subnet route of every table (one per NIC in main), checked" "10.20.1.0/24 dev eth1 proto kernel scope link src 10.20.1.4 quickack 1
+10.20.1.0/24 dev eth2 proto kernel scope link src 10.20.1.5 quickack 1
 10.20.1.0/24 dev eth1 table 100 scope link src 10.20.1.4 quickack 1
 10.20.1.0/24 dev eth2 table 101 scope link src 10.20.1.5 quickack 1
 before 1
-quickack: 3 route(s) to 10.20.1.0/24 with quickack 1" "$qa
+quickack: 4 route(s) to 10.20.1.0/24 with quickack 1" "$qa
 before $before
 $after"
 
@@ -570,7 +584,10 @@ why=
 grep -q 'spot eviction: VM b' "$tmp/evict.out" || why+=" not said;"
 grep -q 'verified: resource group ergon-lab-transport-b-.* no longer exists' "$tmp/evict.out" || why+=" not deleted and verified;"
 [[ -z $(ls "$FAKE_AZ_STATE/groups") ]] || why+=" a group left;"
-! pgrep -f 'ergon-lab-reaper .*ergon-lab-transport-b' >/dev/null || why+=" its backstop left running;"
+# its own group only: a real run's backstop on this machine is not this test's
+evg=$(grep -o 'creating ergon-lab-transport-b-[0-9-]*' "$tmp/evict.out" | head -1 | cut -d' ' -f2)
+[[ -n $evg ]] || why+=" its group not named;"
+! pgrep -f "ergon-lab-reaper .*$evg" >/dev/null || why+=" its backstop left running;"
 [[ -z $why ]] && pass "azure/lab.sh: a Spot VM Azure evicts ends the run through its teardown (exit 75), the group deleted and verified, the backstop stopped" ||
     fail "azure/lab.sh eviction:$why $(tail -3 "$tmp/evict.out")"
 rm -f "$tmp/fakecli/ssh" "$tmp/fakecli/scp"
