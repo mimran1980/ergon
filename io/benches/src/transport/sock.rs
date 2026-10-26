@@ -182,7 +182,8 @@ pub struct Sock {
     pub rcvbuf: u32,
     /// `--sndbuf`; absent: the kernel's.
     pub sndbuf: Option<u32>,
-    /// `--busy-read-us` (`SO_BUSY_POLL`, mio only), default 0.
+    /// `--busy-read-us`, default 0: `SO_BUSY_POLL` on every socket of either
+    /// arm (mio by `setsockopt`, ergon-io by `Config::busy_poll_us`).
     pub busy_read_us: u32,
     /// `--epoll-events`, default 64.
     pub epoll_events: u32,
@@ -206,11 +207,6 @@ impl Sock {
             i => return Err(Error::Usage(format!("--impl {i}: mio or ergon"))),
         };
         let busy_read_us = f.num("busy-read-us", 0)?;
-        if imp == Impl::Ergon && busy_read_us != 0 {
-            return Err(Error::Usage(
-                "--busy-read-us is the mio arm's: ergon-io's epoll-spin sets SO_BUSY_POLL 0".into(),
-            ));
-        }
         let sndbuf = match f.take("sndbuf") {
             None => None,
             Some(v) => Some(
@@ -738,7 +734,7 @@ pub const UDP_USAGE: &str = "\
 udp_lat --impl mio|ergon --role ping|pong|local [--round-trip] --rate MSG_PER_S --label SET:ARM --out DIR
         [--local 127.0.0.1:22000] [--peer 127.0.0.1:23000] [--streams 1] [--warmup-s 30] [--duration-s 30]
         [--size 64] [--cpus CSV] [--spike-ns 100000] [--stall-ns 10000] [--rcvbuf 4194304] [--sndbuf BYTES]
-        [--epoll-events 64] [--busy-read-us 0 (mio)] [--datagram-burst 64 (ergon)]
+        [--epoll-events 64] [--busy-read-us 0] [--datagram-burst 64 (ergon)]
 stream i: --local port + i <-> --peer port + i (local: the echo/receiver end binds --peer).
 --cpus: ping: ping; pong: echo; local: sender,receiver (--round-trip: ping,echo).";
 
@@ -749,7 +745,7 @@ tcp_lat --impl mio|ergon --role ping|pong|local [--round-trip] --rate MSG_PER_S 
         and --source)
         [--streams 1] [--warmup-s 30] [--duration-s 30] [--size 64] [--cpus CSV] [--spike-ns 100000]
         [--stall-ns 10000] [--rcvbuf 4194304] [--sndbuf BYTES] [--epoll-events 64] [--nodelay]
-        [--quickack-per-read] [--rto-min-us US] [--delack-max-us US] [--busy-read-us 0 (mio)]
+        [--quickack-per-read] [--rto-min-us US] [--delack-max-us US] [--busy-read-us 0]
         [--connect-timeout-s 30]
 stream i: connection i. local: the echo/receiver end listens, the other connects.
 --source: the connecting end binds it first (so leaves by the NIC that address routes by).
@@ -823,6 +819,7 @@ pub fn udp_main<I: IntoIterator<Item = String>>(args: I) -> Result<Option<String
                         sndbuf: s.sndbuf,
                         epoll_events: s.epoll_events,
                         datagram_burst,
+                        busy_poll_us: s.busy_read_us,
                         loop_cpu: cpu.and_then(|c| u32::try_from(c).ok()),
                         helper_cpus: helpers.clone(),
                     },
@@ -1058,6 +1055,7 @@ pub fn tcp_main<I: IntoIterator<Item = String>>(args: I) -> Result<Option<String
                     EioTcpOptions {
                         rcvbuf: s.rcvbuf,
                         sndbuf: s.sndbuf,
+                        busy_poll_us: s.busy_read_us,
                         epoll_events: s.epoll_events,
                         quickack_per_read,
                         rto_min_us,

@@ -14,7 +14,7 @@
 //!   once. A full queue is busy.
 //! - Echo: as the UDP arm, staged while the driver polls and sent right
 //!   after that poll.
-//! - Driver keys: `rcvbuf`, `epoll_events`, `tcp_rto_min_us`,
+//! - Driver keys: `rcvbuf`, `epoll_events`, `busy_poll_us`, `tcp_rto_min_us`,
 //!   `tcp_delack_max_us` (checked against the kernel at `Driver::new`);
 //!   `FrameOptions::quickack_per_read`, `sndbuf`. `TCP_NODELAY` always.
 #![deny(unsafe_code, missing_docs)]
@@ -52,6 +52,8 @@ pub struct EioTcpOptions {
     pub sndbuf: Option<u32>,
     /// `Config::epoll_events`.
     pub epoll_events: u32,
+    /// `Config::busy_poll_us` (`SO_BUSY_POLL`, µs; 0: none).
+    pub busy_poll_us: u32,
     /// `FrameOptions::quickack_per_read`.
     pub quickack_per_read: bool,
     /// `Config::tcp_rto_min_us`.
@@ -107,6 +109,7 @@ pub fn pair(socks: Vec<TcpStream>, opts: EioTcpOptions) -> Result<(EioTcpTx, Eio
         opts.loop_cpu,
         &opts.helper_cpus,
     );
+    cfg.busy_poll_us = opts.busy_poll_us;
     cfg.tcp_rto_min_us = opts.rto_min_us;
     cfg.tcp_delack_max_us = opts.delack_max_us;
     cfg.validate().map_err(|e| eio("config", e))?;
@@ -282,6 +285,7 @@ impl Inspect for EioTcpRx {
             ("rcvbuf", opt(cfg.rcvbuf)),
             ("sndbuf", opt(self.s.opts.sndbuf)),
             ("epoll_events", cfg.epoll_events.to_string()),
+            ("busy_read_us", cfg.busy_poll_us.to_string()),
             ("ergon.backend", cfg.backend.to_string()),
             ("ergon.rx_timestamps", cfg.rx_timestamps.to_string()),
             ("ergon.keepalive_idle_s", cfg.keepalive_idle_s.to_string()),

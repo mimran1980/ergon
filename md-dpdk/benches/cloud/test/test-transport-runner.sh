@@ -27,7 +27,7 @@
 #     manifests, rounds and orders recorded), netem set and cleared around
 #     each lossy round and never under a DPDK arm, the binaries' flags as
 #     their --help has them (transport-cli.md: addresses only for Aeron's
-#     UDP, --busy-read-us only for mio, one CPU a busy thread), each row as
+#     UDP, --busy-read-us for every socket arm, one CPU a busy thread), each row as
 #     the binary writes it with the rep before it and its point column
 #     <channel>-r<rate>, the session laid out for the analysis
 #     (transport_collect.py), the ping started only once its pong says ready
@@ -825,7 +825,7 @@ tcp_lat) transport=tcp extra=', "tcp.retrans": "0", "tcp.dsack_dups": "0", "tcp.
 mpsc_lat) transport=mpsc extra= ;;
 *) transport=udp extra= ;;
 esac
-[[ $impl == mio ]] && extra+=', "busy_read_us": "50"'
+[[ $me == udp_lat || $me == tcp_lat ]] && extra+=', "busy_read_us": "50"'
 settings="\"transport\": \"$transport\", \"streams\": \"$streams\", \"warmup_s\": \"$warm\", \"duration_s\": \"$dur\", \"scheduled\": \"0\", \"late\": \"0\", \"max_send_lag_ns\": \"0\", \"retrans\": \"0\"$extra"
 [[ $role == oneway-send || $role == oneway-recv ]] && { echo "stub: --role $role is refused (one way is --role local)" >&2; exit 2; }
 [[ $role == ping ]] && kind=load
@@ -990,7 +990,9 @@ python3 -c 'import json, sys; m = json.load(open(sys.argv[1])); assert m["hostch
 ! grep -E '^. aeron_lat .*--mode (spy|ipc)' "$sb/runs" | grep -qE -- '--(endpoint|reply|interface) ' || why+=" an address given to Aeron IPC or spy;"
 grep -q '^b aeron_lat --role local --round-trip --cpus 10,12 --endpoint 10.20.1.7:22000 --reply 10.20.1.6:22000 --interface 10.20.1.6 .*--mode udp --reliable false$' "$sb/runs" || why+=" aeron self-UDP flags;"
 grep -q '^a aeron_lat --role ping --cpus 10 ' "$sb/runs" && grep -q '^b aeron_lat --role pong .*--cpus 10 ' "$sb/runs" || why+=" one CPU for ping and pong;"
-grep -q '^a tcp_lat --role ping .*--busy-read-us 50 .*--impl mio$' "$sb/runs" && ! grep -E '^. tcp_lat .*--impl ergon$' "$sb/runs" | grep -q -- '--busy-read-us' || why+=" --busy-read-us for mio alone;"
+for i in mio ergon; do
+    grep -q "^a tcp_lat --role ping .*--busy-read-us 50 .*--impl $i\$" "$sb/runs" || why+=" --busy-read-us 50 not given to tcp_lat --impl $i;"
+done
 # the hosts' kernels lack the TCP timer sysctls (the fake's settings): no timer asked for
 ! grep -qE -- '--(rto-min|delack-max)-us' "$sb/runs" || why+=" a TCP timer asked of a kernel without it;"
 grep -q '^a aeron_lat --role ping .*--mode udp --reliable true$' "$sb/runs" || why+=" aeron arm flags;"
@@ -1010,12 +1012,12 @@ fv=$(python3 "$cloud/fairness.py" "$d" 2>&1) || why+=" fairness: $(head -5 <<<"$
 tables=$(python3 "$cloud/analyse.py" --transport "$d" 2>&1) || why+=" analyse.py --transport failed: $(tail -2 <<<"$tables");"
 for s in 1 2b 3b 3c; do grep -q "^### Set $s, " <<<"$tables" || why+=" no set $s table;"; done
 ! grep -q '^Refused' <<<"$tables" && grep -q 'A/A spread' <<<"$tables" && grep -q 'no qdisc' <<<"$tables" || why+=" tables refused or no A/A spread or no no-qdisc table;"
-# each arm's per-arm knobs declared as it ran them (mio's busy-read its
-# own; no sweep line: no tuning session ran), every point's manifest
+# each arm's per-arm knobs declared as it ran them (busy-read both socket
+# impls'; no sweep line: no tuning session ran), every point's manifest
 # recording them
 grep -q '^mio-tcp.knob.busy_read_us=50$' "$d/transport-settings.env" && grep -q '^eio-tcp.knob.epoll_events=64$' "$d/transport-settings.env" &&
     grep -q '^mpsc.knob.capacity=4096$' "$d/transport-settings.env" && grep -q '^aeron-rel.knob.nak_delay_ns=1000$' "$d/transport-settings.env" &&
-    ! grep -q '^eio-tcp.knob.busy_read_us' "$d/transport-settings.env" && ! grep -q '^sweep\.' "$d/transport-settings.env" &&
+    grep -q '^eio-tcp.knob.busy_read_us=50$' "$d/transport-settings.env" && ! grep -q '^sweep\.' "$d/transport-settings.env" &&
     ! grep -q 'knob.congestion' "$d/transport-settings.env" || why+=" per-arm knobs: $(grep -v '^#' "$d/transport-settings.env" | grep -v '^shared' | tr '\n' ' ');"
 m=$(grep -l '^mode=mio-tcp@STREAMS=1@NETEM=0.1$' "$d"/manifest/*.env | head -1)
 grep -q '^knob.busy_read_us=50$' "$m" && grep -q '^knob.quickack_per_read=on$' "$m" && grep -q '^knob.congestion=cubic$' "$m" && grep -q '^base_arm=mio-tcp$' "$m" ||
