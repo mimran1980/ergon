@@ -805,7 +805,7 @@ m=$(grep -l '^mode=mpsc@STREAMS=1$' "$d"/manifest/*.env | head -1)
 grep -q '^placement_b=unused$' "$m" && grep -q '^netem_a=none$' "$m" || why+=" one-host manifest;"
 # the flags of transport-cli.md
 grep -q '^b tcp_lat --role pong .*--listen 10.20.1.7:22000 --nodelay --quickack-per-read' "$sb/runs" || why+=" tcp pong flags;"
-grep -q '^a tcp_lat --role ping .*--connect 10.20.1.7:22000 ' "$sb/runs" || why+=" tcp ping flags;"
+grep -q '^a tcp_lat --role ping .*--source 10.20.1.4 --connect 10.20.1.7:22000 ' "$sb/runs" || why+=" tcp ping flags;"
 grep -q '^a mpsc_lat --role local --cpus 4,6 --capacity 4096 --streams 1 --rate 1000000 --warmup-s 0 --duration-s 0 --size 64 --label 1:mpsc@STREAMS=1 ' "$sb/runs" || why+=" mpsc flags;"
 grep -q '^a mpsc_lat --role local --cpus 4,6 .*--label 1:aa@STREAMS=1 ' "$sb/runs" || why+=" the A/A's label;"
 grep -q '^b aeron_lat --role local --round-trip --cpus 10,12 --aeron-dir /dev/shm/aeron-bench --driver external --driver-busy-threads 3 --term-length 1048576 --mtu 1408 .*--mode spy$' "$sb/runs" || why+=" aeron flags;"
@@ -988,6 +988,26 @@ same "LAB_ARMS_FILE and LAB_EXTRA_SRC with a neutral fixture: its arms and sets 
 arm: fixture_lat sockets two --flavour plain
 rc 0 rows 8 runs 8 aa 4" "$got
 $rows"
+
+# an arm on each host's other data NIC (--nics alt, the runner's: not passed
+# on; tcp_lat's ping binding its source there), and an arms-file binary
+# given the other NICs' addresses ({own_alt}, {peer_alt}) beside its own
+cat >"$tmp/home-a/bench/arms-alt.tsv" <<'ARMS'
+arm  fixture-two  fixture_lat  sockets  two  --tcp-local {own_alt} --tcp-peer {peer_alt} --flavour plain
+arm  tcp-other    tcp_lat      sockets  two  --impl mio --nics alt
+set  fxn          a    -  ab  1000  1  -  fixture-two,tcp-other
+ARMS
+# shellcheck disable=SC2016
+trun a 1 '$HOME/bench/arms-alt.tsv' && frc=0 || frc=$?
+why=
+((frc == 0)) || why+=" exit $frc: $(tail -3 "$sb/run.out" | tr '\n' ' ');"
+grep -q '^a fixture_lat --role ping .*--local 10.20.1.4:22000 --peer 10.20.1.7:22000 .*--tcp-local 10.20.1.5 --tcp-peer 10.20.1.6 --flavour plain$' "$sb/runs" || why+=" ping's other NICs;"
+grep -q '^b fixture_lat --role pong .*--local 10.20.1.7:22000 --peer 10.20.1.4:22000 .*--tcp-local 10.20.1.6 --tcp-peer 10.20.1.5 --flavour plain$' "$sb/runs" || why+=" pong's other NICs;"
+grep -q '^a tcp_lat --role ping .*--source 10.20.1.5 --connect 10.20.1.6:22000 .*--impl mio$' "$sb/runs" || why+=" tcp ping on the other NICs;"
+grep -q '^b tcp_lat --role pong .*--listen 10.20.1.6:22000 .*--impl mio$' "$sb/runs" || why+=" tcp pong on the other NICs;"
+! grep -qE -- '--nics|\{(own|peer)_alt\}' "$sb/runs" || why+=" the runner's own arguments passed on;"
+[[ -z $why ]] && pass "transport.sh run: --nics alt puts an arm on each host's other data NIC (tcp_lat's ping bound to its source there), {own_alt}/{peer_alt} give an arms-file binary those addresses; neither passed on" ||
+    fail "transport.sh run, the other data NICs:$why"
 
 # transport_prepare's steps on the operator machine (lib.sh's helpers faked):
 # the tree and the arms file to both VMs, the build, the map's boot line, a

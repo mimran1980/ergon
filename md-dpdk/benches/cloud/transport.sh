@@ -237,8 +237,10 @@ tr_now() {
 # --interface this end's own; --mode ipc and spy take no address (the binary
 # refuses one). udp_lat: --local own, --peer the other end (local: the
 # receiver binds --peer). tcp_lat: the pong (and local's receiver) listens,
-# the ping connects. --busy-read-us is mio's alone (ergon-io's epoll-spin
-# refuses it: its SO_BUSY_POLL is 0).
+# the ping connects from its own address (--source: each data NIC has a
+# routing table its address selects, so the address is the NIC).
+# --busy-read-us is mio's alone (ergon-io's epoll-spin refuses it: its
+# SO_BUSY_POLL is 0).
 tr_bin_args() {
     local b=$1 role=$2 own=$3 peer=$4 port=$TR_PORT_BASE out=
     shift 4
@@ -262,9 +264,9 @@ tr_bin_args() {
         [[ $args == *" --impl ergon "* ]] && out+=" --datagram-burst $(tr_knob datagram_burst)"
         ;;
     tcp_lat)
-        local a="--connect $peer:$port"
+        local a="--source $own --connect $peer:$port"
         [[ $role == pong ]] && a="--listen $own:$port"
-        [[ $role == local ]] && a="--listen $peer:$port"
+        [[ $role == local ]] && a="--source $own --listen $peer:$port"
         out="$a --nodelay $qa $(tr_timer_args)${busy}--rcvbuf $sb --sndbuf $sb --epoll-events $(tr_knob epoll_events)"
         ;;
     *)
@@ -277,6 +279,22 @@ tr_bin_args() {
         ;;
     esac
     echo "$out"
+}
+
+# tr_other_nic <sender|receiver>: the other data NIC's role
+tr_other_nic() { if [[ $1 == sender ]]; then echo receiver; else echo sender; fi; }
+
+# tr_alt_args <own host> <own NIC> <peer host> <peer NIC>: the arm's
+# arguments (args) with {own_alt} and {peer_alt} each the address of the
+# other data NIC of the own end's host and of the peer end's (an arm that
+# runs a second path on the NICs this one does not use)
+tr_alt_args() {
+    local a=" ${args[*]:-} " oa pa
+    oa=$(tr_nic "$1" "$(tr_other_nic "$2")") pa=$(tr_nic "$3" "$(tr_other_nic "$4")")
+    a=${a//\{own_alt\}/$oa}
+    a=${a//\{peer_alt\}/$pa}
+    a=${a# }
+    echo "${a% }"
 }
 
 # tr_knob <knob>: the current arm's value of a per-arm knob
@@ -642,6 +660,10 @@ tr_events() {
 # unrecorded).
 tr_point() {
     local k=$1 load=${loads[$1]} warm pid rdir=bench/transport-$pair/run-$sid rc=0 meas log common pong= start end v runs=()
+    # the arm's NICs: the ping's (and local's own) sender NIC and the pong's
+    # (local's peer) receiver NIC, or each host's other one (--nics alt)
+    local ns=sender nr=receiver pargs rargs
+    if ((${nics_alt:-0})); then ns=receiver nr=sender; fi
     warm=$TRANSPORT_SWITCH_S
     ((k == 0)) && warm=$TRANSPORT_WARMUP_S
     pid="$tag-$load"
@@ -664,7 +686,9 @@ tr_point() {
         meas=a
         # the pong first, on b (a simple background command: the SSH session
         # ends as it returns); the ping starts once it says ready
-        on "$B" "nohup $(tr_start "$rdir/pong.pid" "$rdir/pong.out" "$bin --role pong $common$sid0 --cpus $(tr_role_cpus pong) --out $rdir/out-pong $(tr_bin_args "$bin" pong "$(tr_nic b receiver)" "$(tr_nic a sender)" "${args[@]}") ${args[*]}") 2>&1 </dev/null &" ||
+        pargs=$(tr_alt_args b "$nr" a "$ns")
+        rargs=$(tr_alt_args a "$ns" b "$nr")
+        on "$B" "nohup $(tr_start "$rdir/pong.pid" "$rdir/pong.out" "$bin --role pong $common$sid0 --cpus $(tr_role_cpus pong) --out $rdir/out-pong $(tr_bin_args "$bin" pong "$(tr_nic b "$nr")" "$(tr_nic a "$ns")" "${args[@]}") $pargs") 2>&1 </dev/null &" ||
             { log "point $pid: pong did not start on b"; return 1; }
         pong=1
         local why
@@ -681,10 +705,11 @@ tr_point() {
             tr_events stop "$pid"
             return 1
         fi
-        runs=("--role ping --cpus $(tr_role_cpus ping) $(tr_bin_args "$bin" ping "$(tr_nic a sender)" "$(tr_nic b receiver)" "${args[@]}")$sid0")
+        runs=("--role ping --cpus $(tr_role_cpus ping) $(tr_bin_args "$bin" ping "$(tr_nic a "$ns")" "$(tr_nic b "$nr")" "${args[@]}")$sid0")
     else
         meas=$host
-        v=$(tr_bin_args "$bin" local "$(tr_nic "$host" sender)" "$(tr_nic "$host" receiver)" "${args[@]}")
+        rargs=$(tr_alt_args "$host" "$ns" "$host" "$nr")
+        v=$(tr_bin_args "$bin" local "$(tr_nic "$host" "$ns")" "$(tr_nic "$host" "$nr")" "${args[@]}")
         runs=("--role local --cpus $(tr_role_cpus local) $v$sid0" "--role local --round-trip --cpus $(tr_role_cpus local) $v$sid1")
     fi
     tr_snap before "$pid"
@@ -697,7 +722,7 @@ tr_point() {
     : >"$log.out"
     : >"$log.err"
     for v in "${!runs[@]}"; do
-        on "$(tr_host "$meas")" "$(tr_start "$rdir/run.pid" "$rdir/run$v.out" "$bin ${runs[$v]} $common --out $rdir/out$v ${args[*]}") 2>&1" >>"$log.out" 2>>"$log.err" || rc=$?
+        on "$(tr_host "$meas")" "$(tr_start "$rdir/run.pid" "$rdir/run$v.out" "$bin ${runs[$v]} $common --out $rdir/out$v $rargs") 2>&1" >>"$log.out" 2>>"$log.err" || rc=$?
         on "$(tr_host "$meas")" "cat $rdir/run$v.out" >>"$log.out" 2>/dev/null
         ((rc == 0)) || break
     done
@@ -788,7 +813,7 @@ tr_netem_off() {
 # tr_set <set id>: every round of the set, in rounds.tsv's order
 tr_set() {
     local want=$1 gi sid host rep netem rseed loadlist streamlist order position armspec arm aa
-    local bin setup kind args loads streams rhosts failures=0 spec
+    local bin setup kind args loads streams rhosts failures=0 spec nics_alt=0
     while IFS=$'\t' read -r -u 9 gi sid host rep netem rseed loadlist streamlist order; do
         [[ $sid == "$want" ]] || continue
         IFS=, read -ra loads <<<"$loadlist"
@@ -805,6 +830,19 @@ tr_set() {
             spec=$(grep -m1 "^$arm " "$dir/arms.txt") || { log "no arm $arm"; return 1; }
             read -r _ bin setup kind args <<<"$spec"
             read -ra args <<<"${args:-}"
+            # --nics alt is the runner's (tr_point): the arm on each host's
+            # other data NIC; not passed on
+            local i kept=()
+            nics_alt=0
+            for ((i = 0; i < ${#args[@]}; i++)); do
+                if [[ ${args[i]} == --nics ]]; then
+                    [[ ${args[i + 1]:-} == alt ]] || { log "arm $arm: --nics takes alt"; return 1; }
+                    nics_alt=1 i=$((i + 1))
+                    continue
+                fi
+                kept+=("${args[i]}")
+            done
+            args=(${kept[@]+"${kept[@]}"})
             if ! tr_arm_up "$setup" "${rhosts[@]}"; then
                 echo "$sid,$rep,$netem,$arm,$aa,setup" >>"$dir/failures.csv"
                 failures=$((failures + 1))

@@ -34,7 +34,7 @@ nonzero exit on any error. A partial row is never printed.
 | `mpsc_lat` | `--capacity N` (sync_channel); role `local` only, `--round-trip` for the round trip |
 | `aeron_lat` | `--mode <ipc\|spy\|udp>`, `--reliable <true\|false>` (`false` UDP only), `--endpoint HOST:PORT` (pings; stream i on PORT+i, stream id S+i), `--reply HOST:PORT` (echoes, stream id S+10000+i), `--interface IP` (the three UDP only: refused for ipc and spy), `--aeron-dir PATH`, `--driver external\|embedded`, `--driver-busy-threads N` (the external driver's, as the runner starts it), `--term-length BYTES`, `--mtu BYTES`, `--stream-id S` (1001), `--connect-timeout-s N` (30), `--round-trip` (`local` only) |
 | `udp_lat` | `--impl <mio\|ergon>`, `--local IP:PORT`, `--peer IP:PORT` (base ports, stream i on +i; `local`: the receiver binds `--peer`), `--busy-read-us N` (mio only: ergon-io refuses it), `--epoll-events N`, `--datagram-burst N` (ergon only), `--rcvbuf`/`--sndbuf BYTES` |
-| `tcp_lat` | `--impl <mio\|ergon>`, `--listen IP:PORT` (pong; `local` takes `--listen` alone) or `--connect IP:PORT` (ping; stream i is connection i), `--nodelay` (always on), `--quickack-per-read`, `--rto-min-us N`, `--delack-max-us N`, `--busy-read-us N` (mio only), `--rcvbuf`/`--sndbuf BYTES` |
+| `tcp_lat` | `--impl <mio\|ergon>`, `--listen IP:PORT` (pong; `local` takes `--listen`, and `--source`) or `--connect IP:PORT` (ping; stream i is connection i), `--source IP` (the connecting end binds it first), `--nodelay` (always on), `--quickack-per-read`, `--rto-min-us N`, `--delack-max-us N`, `--busy-read-us N` (mio only), `--rcvbuf`/`--sndbuf BYTES` |
 | `hostcheck` | `--hot-cpus CSV`, `--out FILE`, `--nic IFACE,...`, `--aeron-dir PATH`; one finding a line (`<id> ok:`, `info:`, `warn:`, `unknown:`); exit 0 clean, 2 not clean, 1 not run |
 
 ## What the runner passes
@@ -52,7 +52,7 @@ own):
 | `mpsc_lat` | `--capacity <capacity>` |
 | `aeron_lat` | `--aeron-dir $TR_AERON_DIR --driver external --driver-busy-threads $TR_AERON_DRIVER_BUSY_THREADS (1 under SHARED) --term-length <term_length> --mtu $TR_MTU`; `--mode udp` arms also `--endpoint <pong's data IP>:$TR_PORT_BASE --reply <ping's data IP>:$TR_PORT_BASE --interface <own data IP>`; every run `--stream-id 1001+256k` (the k-th Aeron point of the set; a one-host point's round trip +128), ping and pong the same, so no lingering publication of an earlier run is the image a subscription takes |
 | `udp_lat` | `--local <own>:$TR_PORT_BASE --peer <other end>:$TR_PORT_BASE --rcvbuf/--sndbuf <sockbuf> --epoll-events <epoll_events>`, `--busy-read-us <busy_read_us>` for `--impl mio`, `--datagram-burst <datagram_burst>` for `--impl ergon` |
-| `tcp_lat` | pong (and `local`, on its receiver NIC) `--listen <own>:port`, ping `--connect <peer>:port`, then `--nodelay --quickack-per-read [false] --rto-min-us <rto_min_us> --delack-max-us --rcvbuf --sndbuf <sockbuf> --epoll-events <epoll_events>`, and `--busy-read-us` for `--impl mio` |
+| `tcp_lat` | pong (and `local`, on its receiver NIC) `--listen <own>:port`, ping `--source <own> --connect <peer>:port` (`local` also `--source <own>`), then `--nodelay --quickack-per-read [false] --rto-min-us <rto_min_us> --delack-max-us --rcvbuf --sndbuf <sockbuf> --epoll-events <epoll_events>`, and `--busy-read-us` for `--impl mio` |
 | other (arms file) | `--local <own>:port --peer <other end>:port`; setup `sockets` also `--busy-read-us $TR_BUSY_READ --rcvbuf/--sndbuf $TR_SOCKBUF --nodelay --quickack-per-read --rto-min-us $TR_TCP_RTO_MIN_US --delack-max-us $TR_TCP_DELACK_MAX_US`: every socket and TCP setting the built-in arms get. Such a binary must take them all, apply each it uses, and report them in its manifest |
 
 The media driver's mode (`vm.sh driver`, `tr_driver_mode`): `<aeron_path>`
@@ -70,6 +70,19 @@ arm. Each point's `manifest/<point>.env` records `base_arm`, every
 Addresses: ping binds host a's sender NIC and talks to host b's receiver NIC.
 Pong binds b's receiver NIC and talks to a's sender NIC. `local` binds its
 host's sender NIC and talks to its receiver NIC.
+
+Each data NIC has a routing table its own address selects (`vm.sh
+data_kernel_up`), so the address a socket binds is the NIC it leaves by:
+`udp_lat` binds `--local`, `tcp_lat`'s connecting end `--source`, its
+listening end `--listen`.
+
+Two arm arguments are the runner's own, not passed on:
+
+- `--nics alt`: the arm on each host's other data NIC (ping: a's receiver
+  NIC to b's sender NIC; `local`: its receiver NIC to its sender NIC).
+- `{own_alt}` and `{peer_alt}`: replaced by the address of the other data
+  NIC (the one the arm's addresses do not use) of the end's own host and
+  of the peer's, so a binary can run a second path on the other NICs.
 
 Ports: `TR_PORT_BASE` is 22000, and stream i uses base + i, within
 `TR_PORT_SPAN` (1024). That range stays clear of the media driver's wildcard

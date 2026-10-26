@@ -62,7 +62,10 @@ def load(paths):
                     raise PlanError(f"{where}: arm {name}: setup is one of {', '.join(SETUPS)}, hosts one or two")
                 if not all(c.isalnum() or c in "-_" for c in name + binary):
                     raise PlanError(f"{where}: arm {name}: names and binaries are letters, digits, - and _")
-                arms[name] = (binary, setup, hosts, words[5:])
+                args = words[5:]
+                if "--nics" in args and args[args.index("--nics") + 1:args.index("--nics") + 2] != ["alt"]:
+                    raise PlanError(f"{where}: arm {name}: --nics takes alt (each host's other data NIC)")
+                arms[name] = (binary, setup, hosts, args)
             elif words[0] == "set" and arms_only:
                 continue
             elif words[0] == "set":

@@ -59,7 +59,7 @@
 #![allow(clippy::many_single_char_names, clippy::similar_names)] // c, f, s, l, n: the flags, sockets and counts
 
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::sync::Barrier;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -745,12 +745,14 @@ stream i: --local port + i <-> --peer port + i (local: the echo/receiver end bin
 /// `tcp_lat`'s usage.
 pub const TCP_USAGE: &str = "\
 tcp_lat --impl mio|ergon --role ping|pong|local [--round-trip] --rate MSG_PER_S --label SET:ARM --out DIR
-        (--listen IP:PORT | --connect IP:PORT; local: --listen, default 127.0.0.1:24000)
+        (--listen IP:PORT | [--source IP] --connect IP:PORT; local: --listen, default 127.0.0.1:24000,
+        and --source)
         [--streams 1] [--warmup-s 30] [--duration-s 30] [--size 64] [--cpus CSV] [--spike-ns 100000]
         [--stall-ns 10000] [--rcvbuf 4194304] [--sndbuf BYTES] [--epoll-events 64] [--nodelay]
         [--quickack-per-read] [--rto-min-us US] [--delack-max-us US] [--busy-read-us 0 (mio)]
         [--connect-timeout-s 30]
 stream i: connection i. local: the echo/receiver end listens, the other connects.
+--source: the connecting end binds it first (so leaves by the NIC that address routes by).
 --cpus: ping: ping; pong: echo; local: sender,receiver (--round-trip: ping,echo).";
 
 /// `udp_lat`: parses `args` (without the program name) and runs the point;
@@ -876,22 +878,56 @@ pub fn accept_all(l: &TcpListener, n: u32, wait: Duration) -> Result<Vec<TcpStre
     Ok(slots.into_iter().flatten().collect())
 }
 
-/// Opens `n` connections to `to`, retrying a refused one within `wait`,
-/// each first carrying its stream index.
+/// Opens `n` connections to `to`, each bound to `source` first when given.
+///
+/// The bind is ergon-io's `net::connect_nonblocking`'s: on a host with a
+/// routing table per NIC selected by source address, it picks the NIC. A
+/// refused connect is retried within `wait`; each connection first carries
+/// its stream index.
 ///
 /// # Errors
-/// A connect still refused when `wait` is up, or a write fails.
-pub fn connect_all(to: SocketAddr, n: u32, wait: Duration) -> Result<Vec<TcpStream>, Error> {
+/// A connect still refused when `wait` is up (or `source` is not this
+/// host's address), or a write fails.
+pub fn connect_all(
+    to: SocketAddr,
+    source: Option<IpAddr>,
+    n: u32,
+    wait: Duration,
+) -> Result<Vec<TcpStream>, Error> {
     let until = Instant::now() + wait;
     let mut out = Vec::with_capacity(n as usize);
+    let fail = |e: &dyn std::fmt::Display| {
+        let from = source.map_or_else(|| "the kernel's pick".to_owned(), |ip| ip.to_string());
+        Error::Transport(format!("connect {to} from {from}: {e}"))
+    };
     for i in 0..n {
-        let mut s = loop {
-            match TcpStream::connect_timeout(&to, Duration::from_secs(1)) {
-                Ok(s) => break s,
-                Err(_) if Instant::now() < until => std::thread::sleep(Duration::from_millis(10)),
-                Err(e) => return Err(os(&format!("connect {to}"), e)),
+        let mut s = 'retry: loop {
+            let s = match ergon_io::net::connect_nonblocking(to, source) {
+                Ok(s) => s,
+                // refused at once (nothing listens yet): again, within `wait`
+                Err(ergon_io::Error::Io(_)) if Instant::now() < until => {
+                    std::thread::sleep(Duration::from_millis(10));
+                    continue;
+                }
+                Err(e) => return Err(fail(&e)),
+            };
+            let attempt = Instant::now() + Duration::from_secs(1);
+            loop {
+                match ergon_io::net::connect_finished(&s) {
+                    Ok(true) => break 'retry s,
+                    Ok(false) if Instant::now() < attempt => {
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                    Ok(false) | Err(_) if Instant::now() < until => {
+                        std::thread::sleep(Duration::from_millis(10));
+                        continue 'retry;
+                    }
+                    Ok(false) => return Err(fail(&"timed out")),
+                    Err(e) => return Err(fail(&e)),
+                }
             }
         };
+        s.set_nonblocking(false).map_err(|e| os("O_NONBLOCK", e))?;
         s.write_all(&i.to_le_bytes())
             .map_err(|e| os("writing the stream index", e))?;
         out.push(s);
@@ -925,7 +961,19 @@ pub fn tcp_main<I: IntoIterator<Item = String>>(args: I) -> Result<Option<String
     let delack_max_us = timer(&mut f, "delack-max-us")?;
     let listen = addr(&mut f, "listen", None)?;
     let connect = addr(&mut f, "connect", None)?;
+    let source = f
+        .take("source")
+        .map(|v| {
+            v.parse::<IpAddr>()
+                .map_err(|_| Error::Usage(format!("--source {v}: an IP address")))
+        })
+        .transpose()?;
     f.finish()?;
+    if source.is_some() && c.role != Role::Local && connect.is_none() {
+        return Err(Error::Usage(
+            "--source is the connecting end's (--connect, or --role local)".into(),
+        ));
+    }
     let listen = match (c.role, listen, connect) {
         (Role::Local, None, None) => Some(SocketAddr::from(([127, 0, 0, 1], 24_000))),
         (Role::Local, l, None) => l,
@@ -963,10 +1011,10 @@ pub fn tcp_main<I: IntoIterator<Item = String>>(args: I) -> Result<Option<String
     let sockets = move |end: End| -> Result<Vec<TcpStream>, Error> {
         match (role, end, listener, to) {
             (Role::Local, End::Pong, Some(l), _) => accept_all(l, streams, wait),
-            (Role::Local, End::Ping, _, Some(t)) => connect_all(t, streams, wait),
+            (Role::Local, End::Ping, _, Some(t)) => connect_all(t, source, streams, wait),
             (Role::Local, ..) => Err(Error::Usage("--role local needs --listen".into())),
             (_, _, Some(l), None) => accept_all(l, streams, wait),
-            (_, _, None, Some(t)) => connect_all(t, streams, wait),
+            (_, _, None, Some(t)) => connect_all(t, source, streams, wait),
             _ => Err(Error::Usage("one of --listen or --connect".into())),
         }
     };
@@ -979,6 +1027,10 @@ pub fn tcp_main<I: IntoIterator<Item = String>>(args: I) -> Result<Option<String
         (
             "connect".to_owned(),
             connect.map_or_else(|| "-".to_owned(), |a| a.to_string()),
+        ),
+        (
+            "source".to_owned(),
+            source.map_or_else(|| "-".to_owned(), |ip| ip.to_string()),
         ),
         ("rto_min_us_asked".to_owned(), opt(rto_min_us)),
         ("delack_max_us_asked".to_owned(), opt(delack_max_us)),

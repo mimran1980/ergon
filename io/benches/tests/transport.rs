@@ -6,7 +6,8 @@
 //! `analyse.read_results`, `spikes.transport_max`), lose nothing at a low
 //! rate, carry the manifest the fairness checks compare, and show that the
 //! busy threads allocated nothing while measuring. Settings an arm cannot
-//! take are refused.
+//! take are refused. `tcp_lat --source` binds the connecting end's address
+//! (127.0.0.2 on `lo` here; a data NIC's address in the lab).
 #![cfg(target_os = "linux")]
 #![allow(missing_docs)]
 
@@ -678,6 +679,86 @@ fn settings_an_arm_cannot_take_are_refused() -> R {
     Ok(())
 }
 
+/// The connecting end binds `--source` before it connects: each
+/// connection's own address is the source asked for, as the accepting end
+/// sees it too; an address the host lacks fails the connect; tcp_lat takes
+/// `--source` on the connecting end alone and records it.
+#[test]
+fn tcp_connections_leave_from_the_source_address() -> R {
+    use io_bench::transport::sock::{accept_all, connect_all};
+    use std::net::IpAddr;
+    use std::time::Duration;
+
+    let l = std::net::TcpListener::bind("127.0.0.3:0")?;
+    let to = l.local_addr()?;
+    let src: IpAddr = "127.0.0.2".parse()?;
+    let wait = Duration::from_secs(5);
+    let dial = std::thread::spawn(move || connect_all(to, Some(src), 2, wait));
+    let accepted = accept_all(&l, 2, wait)?;
+    let dialled = dial.join().map_err(|_| "dial panicked")??;
+    for (d, a) in dialled.iter().zip(&accepted) {
+        assert_eq!(d.local_addr()?.ip(), src);
+        assert_eq!(a.peer_addr()?.ip(), src);
+        assert_eq!(d.peer_addr()?, to);
+    }
+    // TEST-NET-1: no host has it
+    let none: IpAddr = "192.0.2.1".parse()?;
+    let e = connect_all(to, Some(none), 1, Duration::from_millis(200))
+        .err()
+        .ok_or("a connect from an address the host lacks ran")?;
+    assert!(e.to_string().contains("from 192.0.2.1"), "{e}");
+
+    let out = scratch("source")?;
+    let o = out.display().to_string();
+    let run = Command::new(TCP)
+        .args([
+            "--impl",
+            "mio",
+            "--role",
+            "local",
+            "--round-trip",
+            "--rate",
+            "100",
+            "--warmup-s",
+            "0",
+            "--duration-s",
+            "1",
+            "--label",
+            "t:src",
+            "--out",
+            &o,
+            "--listen",
+            "127.0.0.3:39060",
+            "--source",
+            "127.0.0.2",
+        ])
+        .output()?;
+    finished("tcp_lat --source", &run)?;
+    let m = std::fs::read_to_string(out.join("manifest.json"))?;
+    assert!(m.contains("\"source\": \"127.0.0.2\""), "{m}");
+    std::fs::remove_dir_all(&out)?;
+    let base = [
+        "--impl", "mio", "--rate", "100", "--label", "t:x", "--out", &o, "--source",
+    ];
+    refused(
+        TCP,
+        &with(
+            &base,
+            &["127.0.0.2", "--role", "pong", "--listen", "127.0.0.3:39070"],
+        ),
+        "--source is the connecting end's",
+    )?;
+    refused(
+        TCP,
+        &with(
+            &base,
+            &["nic0", "--role", "ping", "--connect", "127.0.0.3:39070"],
+        ),
+        "--source nic0: an IP address",
+    )?;
+    Ok(())
+}
+
 /// The mio arms' socket code on a caller's own poll: two UDP stream sets and
 /// two TCP ones on one `Registry`, each from its own token base, each token
 /// mapped back to its set's stream and read there, frames and datagrams
@@ -708,7 +789,7 @@ fn mio_stream_sets_share_a_callers_registry() -> R {
     let l = std::net::TcpListener::bind("127.0.0.1:0")?;
     let to = l.local_addr()?;
     let wait = Duration::from_secs(5);
-    let dial = std::thread::spawn(move || connect_all(to, 2, wait));
+    let dial = std::thread::spawn(move || connect_all(to, None, 2, wait));
     let accepted = accept_all(&l, 2, wait)?;
     let dialled = dial.join().map_err(|_| "dial panicked")??;
     let tcp = MioTcpOptions {
