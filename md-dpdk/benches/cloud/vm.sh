@@ -223,8 +223,9 @@ ynl_ready() {
     return 1
 }
 
-# AERON_DIR on 2 MiB hugetlbfs, as rusteron's tuned runs (vm.sh tune mounts it)
-export AERON_DIR=/mnt/huge/aeron-bench
+# AERON_DIR on 2 MiB hugetlbfs, as rusteron's tuned runs (vm.sh tune mounts it);
+# LAB_AERON_DIR in its place for the transport suite (transport.sh: TR_AERON_DIR)
+export AERON_DIR=${LAB_AERON_DIR:-/mnt/huge/aeron-bench}
 
 # invoker: whether the running mode embeds the driver in each client (`driver`
 # <mode>@AERON_THREADING_MODE=INVOKER leaves ~/bench/harness_driver; `stop`

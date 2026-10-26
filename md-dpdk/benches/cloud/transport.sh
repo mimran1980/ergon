@@ -924,6 +924,9 @@ tr_run() {
     cd "$HOME" || exit 1
     # shellcheck source=lib.sh
     . "$tr_here/lib.sh"
+    # the media driver on TR_AERON_DIR, the directory the binaries are given
+    # (vm.sh's own default is the latency lab's hugetlbfs mount)
+    vm="LAB_AERON_DIR=$TR_AERON_DIR $vm"
     # shellcheck source=irqs.sh
     . "$tr_here/irqs.sh"
     # shellcheck source=host.sh

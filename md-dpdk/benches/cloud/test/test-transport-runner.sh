@@ -608,6 +608,7 @@ SH
 cat >"$sb/bin/fakevm" <<'SH'
 #!/usr/bin/env bash
 echo "$FAKE_HOST vm.sh $*" >>"$FAKE_HOSTS/calls"
+[[ $1 != driver ]] || echo "$FAKE_HOST driver-dir ${LAB_AERON_DIR:-unset}" >>"$FAKE_HOSTS/calls"
 st=$HOME/state
 mkdir -p "$st"
 case $1 in
@@ -807,7 +808,10 @@ grep -q '^b tcp_lat --role pong .*--listen 10.20.1.7:22000 --nodelay --quickack-
 grep -q '^a tcp_lat --role ping .*--connect 10.20.1.7:22000 ' "$sb/runs" || why+=" tcp ping flags;"
 grep -q '^a mpsc_lat --role local --cpus 4,6 --capacity 4096 --streams 1 --rate 1000000 --warmup-s 0 --duration-s 0 --size 64 --label 1:mpsc@STREAMS=1 ' "$sb/runs" || why+=" mpsc flags;"
 grep -q '^a mpsc_lat --role local --cpus 4,6 .*--label 1:aa@STREAMS=1 ' "$sb/runs" || why+=" the A/A's label;"
-grep -q '^b aeron_lat --role local --round-trip --cpus 10,12 --aeron-dir /mnt/huge/aeron-bench --driver external --driver-busy-threads 3 --term-length 1048576 --mtu 1408 .*--mode spy$' "$sb/runs" || why+=" aeron flags;"
+grep -q '^b aeron_lat --role local --round-trip --cpus 10,12 --aeron-dir /dev/shm/aeron-bench --driver external --driver-busy-threads 3 --term-length 1048576 --mtu 1408 .*--mode spy$' "$sb/runs" || why+=" aeron flags;"
+# the driver on the binaries' AERON_DIR (tmpfs), not vm.sh's hugetlbfs default
+grep -q ' driver-dir /dev/shm/aeron-bench$' "$sb/calls" || why+=" driver not on TR_AERON_DIR;"
+! grep ' driver-dir ' "$sb/calls" | grep -qv ' driver-dir /dev/shm/aeron-bench$' || why+=" a driver started on another AERON_DIR;"
 ! grep -E '^. aeron_lat .*--mode (spy|ipc)' "$sb/runs" | grep -qE -- '--(endpoint|reply|interface) ' || why+=" an address given to Aeron IPC or spy;"
 grep -q '^b aeron_lat --role local --round-trip --cpus 10,12 --endpoint 10.20.1.7:22000 --reply 10.20.1.6:22000 --interface 10.20.1.6 .*--mode udp --reliable false$' "$sb/runs" || why+=" aeron self-UDP flags;"
 grep -q '^a aeron_lat --role ping --cpus 10 ' "$sb/runs" && grep -q '^b aeron_lat --role pong .*--cpus 10 ' "$sb/runs" || why+=" one CPU for ping and pong;"
