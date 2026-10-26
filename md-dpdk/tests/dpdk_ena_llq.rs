@@ -405,6 +405,7 @@ fn mana_ports_are_not_checked() {
         env.reset();
         env.eal_skip();
         env.set_driver(driver);
+        env.attach_netvsc_vf();
         env.set_ena_llq(ENA_LLQ_UNSEEN);
         let t = create(&rusteron_dpdk_config_t::mana()).unwrap_or_else(|e| panic!("{driver}: {e}"));
         assert_eq!(close(t), 0);

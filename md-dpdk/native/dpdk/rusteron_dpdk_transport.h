@@ -188,6 +188,7 @@ void rusteron_dpdk_clock_report(rusteron_dpdk_clock_report_t *report);
 #define RUSTERON_DPDK_ERR_ALREADY_INITIALIZED 2
 #define RUSTERON_DPDK_ERR_INVALID_ENV 3    /* a malformed or contradictory environment value */
 #define RUSTERON_DPDK_ERR_INVALID_CONFIG 4 /* a configuration the NIC as set up cannot carry */
+#define RUSTERON_DPDK_ERR_NO_ACCELERATED_VF 5 /* Azure: a netvsc port without its accelerated-networking VF */
 int rusteron_dpdk_last_error_code(void);
 
 #ifdef __cplusplus

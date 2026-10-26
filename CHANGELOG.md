@@ -728,6 +728,13 @@
 
 ### Fixed
 
+- `ergon-md-dpdk`: an Azure `net_netvsc` port with no accelerated-networking
+  VF attached fails start with the new `DpdkError::NoAcceleratedVf`, naming
+  the port, the cause and the fix. It ran on the synthetic VMBus path
+  instead, slower than kernel UDP while looking like DPDK (seen with
+  Mellanox VFs, which this set-up does not support; MANA VFs only).
+  `RUSTERON_DPDK_ALLOW_SYNTHETIC=1` starts it anyway, with a warning, for
+  diagnosis only. Breaking: `DpdkError` has a new variant.
 - `ergon-io`: the warning thread writes each line in one `write(2)`, its
   newline included (it wrote the text, then the newline). Where stdout and
   stderr share one file, another thread's line could land between the two:

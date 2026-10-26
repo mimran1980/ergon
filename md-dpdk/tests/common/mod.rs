@@ -321,6 +321,27 @@ impl TestEnv {
         unsafe { rusteron_dpdk_fake_set_ena_llq(state) };
     }
 
+    /// The extended statistics a net_netvsc port reports once its
+    /// accelerated-networking VF is attached: its own per-queue stats, then
+    /// the VF's, each prefixed `vf_` (DPDK's hn_vf_xstats_get_names). After
+    /// reset the fake reports none, as netvsc does without a VF.
+    pub fn attach_netvsc_vf(&self) {
+        let names = [
+            CString::new("rx_good_packets").unwrap(),
+            CString::new("tx_q0_good_packets").unwrap(),
+            CString::new("vf_rx_good_packets").unwrap(),
+            CString::new("vf_tx_good_packets").unwrap(),
+        ];
+        let ptrs: Vec<*const c_char> = names.iter().map(|n| n.as_ptr()).collect();
+        unsafe { transport::rusteron_dpdk_fake_set_xstats(ptrs.as_ptr(), ptr::null(), ptrs.len() as u32) };
+    }
+
+    /// The first `reads` xstats counts report none, whatever is installed: a
+    /// VF netvsc attaches after the port starts (its 1 s retry). 0 after reset.
+    pub fn set_xstats_hidden_reads(&self, reads: u32) {
+        unsafe { rusteron_dpdk_fake_set_xstats_hidden_reads(reads) };
+    }
+
     /// The DPDK version the fake EAL reports (25.11 after reset), which picks
     /// ENA's LLQ device argument.
     pub fn set_eal_version(&self, year: c_int, month: c_int) {
@@ -482,6 +503,7 @@ unsafe extern "C" {
     fn rusteron_dpdk_fake_log_at(index: c_int, buf: *mut c_char, buflen: usize);
     fn rusteron_dpdk_fake_eal_reset();
     fn rusteron_dpdk_fake_set_ena_llq(state: c_int);
+    fn rusteron_dpdk_fake_set_xstats_hidden_reads(reads: u32);
     fn rusteron_dpdk_fake_set_eal_version(year: c_int, month: c_int);
     /// How `bdf`'s BAR 2 is mapped in the memory map at `maps_path`
     /// (`ENA_LLQ_*`; native/dpdk/rusteron_dpdk_runtime.c).

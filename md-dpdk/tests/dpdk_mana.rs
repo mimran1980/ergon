@@ -90,6 +90,7 @@ fn mana_takes_its_256_descriptor_maximum_by_default() {
         env.reset();
         env.eal_skip();
         env.set_driver(driver);
+        env.attach_netvsc_vf();
         let mut config = rusteron_dpdk_config_t::mana();
         config.rx_descriptors = 0;
         let transport = create(&config).unwrap_or_else(|e| panic!("{driver}: {e}"));
@@ -135,6 +136,7 @@ fn netvsc_ports_are_probed_by_mac() {
     let env = TestEnv::new();
     env.eal_skip();
     env.set_driver("net_netvsc");
+    env.attach_netvsc_vf();
 
     let transport = create(&rusteron_dpdk_config_t::mana()).unwrap_or_else(|e| panic!("create failed: {e}"));
     assert!(
@@ -166,6 +168,155 @@ fn netvsc_rejects_more_than_256_descriptors() {
     config.tx_descriptors = 512;
     let err = create(&config).unwrap_err();
     assert!(err.contains("256"), "got: {err}");
+}
+
+// --- netvsc without its accelerated-networking VF ------------------------------
+
+/// `RUSTERON_DPDK_ERR_NO_ACCELERATED_VF` (rusteron_dpdk_transport.h).
+const ERR_NO_ACCELERATED_VF: i32 = 5;
+/// `RUSTERON_DPDK_ERR_INVALID_ENV`.
+const ERR_INVALID_ENV: i32 = 3;
+
+unsafe extern "C" {
+    fn dup(fd: std::os::raw::c_int) -> std::os::raw::c_int;
+    fn dup2(from: std::os::raw::c_int, to: std::os::raw::c_int) -> std::os::raw::c_int;
+    #[link_name = "close"]
+    fn close_fd(fd: std::os::raw::c_int) -> std::os::raw::c_int;
+}
+
+/// What the native side writes to standard error while `f` runs.
+fn stderr_of<T>(f: impl FnOnce() -> T) -> (T, String) {
+    use std::os::fd::AsRawFd;
+    let path = std::env::temp_dir().join(format!("dpdk-mana-{}.log", std::process::id()));
+    let file = std::fs::File::create(&path).expect("log file");
+    let saved = unsafe { dup(2) };
+    assert!(saved >= 0);
+    assert!(unsafe { dup2(file.as_raw_fd(), 2) } >= 0);
+    let out = f();
+    unsafe {
+        dup2(saved, 2);
+        close_fd(saved);
+    }
+    let log = std::fs::read_to_string(&path).expect("log");
+    let _ = std::fs::remove_file(&path);
+    (out, log)
+}
+
+/// A netvsc port without its VF runs every packet over the synthetic VMBus
+/// channel through the hypervisor: slower than kernel UDP while looking like
+/// DPDK. Start fails, naming the port, the cause and the fix, with its own
+/// error code (`DpdkError::NoAcceleratedVf`).
+#[serial]
+#[test]
+fn netvsc_without_an_accelerated_vf_refuses_start() {
+    let env = TestEnv::new();
+    env.eal_skip();
+    env.set_driver("net_netvsc");
+
+    let err = create(&rusteron_dpdk_config_t::mana()).unwrap_err();
+    for needle in [
+        "net_netvsc",
+        "7870:00:00.0",
+        "02:00:00:00:00:01",
+        "no accelerated-networking VF",
+        "synthetic",
+        "MANA",
+        "Mellanox",
+        "RUSTERON_DPDK_ALLOW_SYNTHETIC=1",
+    ] {
+        assert!(err.contains(needle), "missing {needle:?}: {err}");
+    }
+    assert_eq!(last_error_code(), ERR_NO_ACCELERATED_VF);
+    assert!(log_contains(&env, "close 0"), "the started port must be torn down");
+}
+
+/// netvsc reports its VF's extended statistics, prefixed `vf_`, only while
+/// the VF is attached: with them it starts.
+#[serial]
+#[test]
+fn netvsc_with_an_accelerated_vf_starts() {
+    let env = TestEnv::new();
+    env.eal_skip();
+    env.set_driver("net_netvsc");
+    env.attach_netvsc_vf();
+
+    let (created, log) = stderr_of(|| create(&rusteron_dpdk_config_t::mana()));
+    let t = created.unwrap_or_else(|e| panic!("create failed: {e}"));
+    assert!(!log.contains("synthetic"), "{log}");
+    assert_eq!(close(t), 0);
+}
+
+/// netvsc attaches a VF it could not yet find a second later (its retry
+/// alarm): start waits a bounded time for it.
+#[serial]
+#[test]
+fn netvsc_waits_for_a_vf_that_attaches_late() {
+    let env = TestEnv::new();
+    env.eal_skip();
+    env.set_driver("net_netvsc");
+    env.attach_netvsc_vf();
+    env.set_xstats_hidden_reads(5);
+
+    let t = create(&rusteron_dpdk_config_t::mana()).unwrap_or_else(|e| panic!("create failed: {e}"));
+    assert_eq!(close(t), 0);
+}
+
+/// The VF check is netvsc's alone: ENA, and MANA through its own PMD (the VF
+/// itself), have no synthetic path and start without `vf_` statistics.
+#[serial]
+#[test]
+fn ports_of_other_drivers_are_not_checked_for_a_vf() {
+    let env = TestEnv::new();
+    env.eal_skip();
+    let t = create(&rusteron_dpdk_config_t::valid()).unwrap_or_else(|e| panic!("net_ena: {e}"));
+    assert_eq!(close(t), 0);
+
+    env.reset();
+    env.eal_skip();
+    env.set_driver("net_mana");
+    let t = create(&rusteron_dpdk_config_t::mana()).unwrap_or_else(|e| panic!("net_mana: {e}"));
+    assert_eq!(close(t), 0);
+}
+
+/// `RUSTERON_DPDK_ALLOW_SYNTHETIC=1` (or `true`) starts a netvsc port without
+/// its VF, for diagnosis only, with a warning naming each such port; `0` or
+/// `false` keeps the refusal; any other value fails start naming the variable.
+#[serial]
+#[test]
+fn the_synthetic_opt_out_starts_with_a_warning() {
+    let env = TestEnv::new();
+    for on in ["1", "true"] {
+        env.reset();
+        env.eal_skip();
+        env.set_driver("net_netvsc");
+        let _opt_out = EnvGuard::set("RUSTERON_DPDK_ALLOW_SYNTHETIC", on);
+        let (created, log) = stderr_of(|| create(&rusteron_dpdk_config_t::mana()));
+        let t = created.unwrap_or_else(|e| panic!("{on}: {e}"));
+        for mac in ["02:00:00:00:00:01", "02:00:00:00:00:02"] {
+            assert!(
+                log.lines().any(|l| l.starts_with("WARNING ergon-md-dpdk:")
+                    && l.contains(mac)
+                    && l.contains("synthetic")
+                    && l.contains("RUSTERON_DPDK_ALLOW_SYNTHETIC=1")),
+                "{on}: {log}"
+            );
+        }
+        assert_eq!(close(t), 0);
+    }
+    for off in ["0", "false"] {
+        env.reset();
+        env.eal_skip();
+        env.set_driver("net_netvsc");
+        let _opt_out = EnvGuard::set("RUSTERON_DPDK_ALLOW_SYNTHETIC", off);
+        assert!(create(&rusteron_dpdk_config_t::mana()).is_err(), "{off}");
+        assert_eq!(last_error_code(), ERR_NO_ACCELERATED_VF, "{off}");
+    }
+    env.reset();
+    env.eal_skip();
+    let _bad = EnvGuard::set("RUSTERON_DPDK_ALLOW_SYNTHETIC", "maybe");
+    let err = create(&rusteron_dpdk_config_t::valid()).unwrap_err();
+    assert!(err.contains("RUSTERON_DPDK_ALLOW_SYNTHETIC"), "{err}");
+    assert_eq!(last_error_code(), ERR_INVALID_ENV);
 }
 
 #[serial]

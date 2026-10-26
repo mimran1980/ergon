@@ -49,7 +49,7 @@ Aeron apps, node settings, a layout verifier) is the
 | Cloud | DPDK driver | Port selected by |
 |---|---|---|
 | AWS | `net_ena`, the ENA bound to `igb_uio` (`wc_activate=1`) or a write-combining `vfio-pci` | its PCI address |
-| Azure | `net_netvsc` over the MANA VF. `net_mana` alone is accepted, but no committed run shows it receiving | its MAC (`RUSTERON_DPDK_*_MAC`): every accelerated NIC of a VM is a vport on one PCI function |
+| Azure | `net_netvsc` over the MANA VF; MANA VFs only. A Mellanox (mlx5) VF is not supported yet: netvsc then has no VF and start fails (below). `net_mana` alone is accepted, but no committed run shows it receiving | its MAC (`RUSTERON_DPDK_*_MAC`): every accelerated NIC of a VM is a vport on one PCI function |
 
 ## Requirements
 
@@ -237,6 +237,15 @@ start fails otherwise (`tests/dpdk_ena_llq.rs`).
 - **Move each data NIC's VMBus device to `uio_hv_generic`** (its kernel
   interface and VF down), so the netvsc PMD takes it and keeps the VF data
   path. `benches/cloud/vm.sh driver dpdk` shows the steps.
+- **Start requires the VF:** a `net_netvsc` port with no accelerated-networking
+  VF attached (no `vf_*` extended statistics within 3 s of link up) fails
+  start with `DpdkError::NoAcceleratedVf`, naming the port. Without the VF
+  every packet takes the synthetic VMBus path through the hypervisor: slower
+  than kernel UDP while looking like DPDK. Cause: no VF on the VM size, or a
+  Mellanox VF, which this set-up does not support. Fix: a VM size with MANA,
+  accelerated networking on, and the MANA function probed by DPDK.
+- **`RUSTERON_DPDK_ALLOW_SYNTHETIC=1`** starts such a port anyway, with a
+  warning, for diagnosis only. `0` (default), `1`, `false` or `true`.
 - **TX descriptors:** MANA queues hold at most 256, the default. A count
   outside a NIC's limits fails start.
 - **The transport stops DPDK's automatic vdev_netvsc fail-safe device,**

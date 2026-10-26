@@ -130,6 +130,9 @@ static rusteron_dpdk_fake_rx_entry_t rusteron_dpdk_fake_rx_q[RUSTERON_DPDK_FAKE_
 static uint32_t rusteron_dpdk_fake_xstat_count = 0;
 static char rusteron_dpdk_fake_xstat_names[RUSTERON_DPDK_FAKE_XSTAT_MAX][RUSTERON_DPDK_XSTAT_NAME_LEN];
 static uint64_t rusteron_dpdk_fake_xstat_values[RUSTERON_DPDK_FAKE_XSTAT_MAX];
+/* xstats_count reports none while this many reads remain: a netvsc VF that
+ * attaches after the port starts. */
+static uint32_t rusteron_dpdk_fake_xstats_hidden_reads = 0;
 
 /* Link-status-change interrupts: whether the ports can raise them (1, as
  * ENA, after the reset), whether each was configured to, and where its
@@ -231,6 +234,7 @@ void rusteron_dpdk_fake_reset(void)
     memset(rusteron_dpdk_fake_rx_tail, 0, sizeof(rusteron_dpdk_fake_rx_tail));
     memset(rusteron_dpdk_fake_rx_q, 0, sizeof(rusteron_dpdk_fake_rx_q));
     rusteron_dpdk_fake_xstat_count = 0;
+    rusteron_dpdk_fake_xstats_hidden_reads = 0;
     memset(rusteron_dpdk_fake_tx_unreaped, 0, sizeof(rusteron_dpdk_fake_tx_unreaped));
     memset(rusteron_dpdk_fake_tx_cleanups, 0, sizeof(rusteron_dpdk_fake_tx_cleanups));
     rusteron_dpdk_fake_tx_cleanup_budget = 0;
@@ -1057,7 +1061,17 @@ int rusteron_dpdk_fake_tx_foreign(uint16_t port_id)
 static uint32_t rusteron_dpdk_fake_xstats_count(uint16_t port_id)
 {
     (void)port_id;
+    if (rusteron_dpdk_fake_xstats_hidden_reads > 0)
+    {
+        rusteron_dpdk_fake_xstats_hidden_reads--;
+        return 0;
+    }
     return rusteron_dpdk_fake_xstat_count;
+}
+
+void rusteron_dpdk_fake_set_xstats_hidden_reads(uint32_t reads)
+{
+    rusteron_dpdk_fake_xstats_hidden_reads = reads;
 }
 
 static int rusteron_dpdk_fake_xstats_names(uint16_t port_id, char *names, uint32_t count)
