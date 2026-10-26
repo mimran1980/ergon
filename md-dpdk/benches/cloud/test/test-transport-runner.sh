@@ -607,7 +607,26 @@ settings) (. "$FAKE_CLOUD/transport-settings.env"; . "$FAKE_CLOUD/host.sh"; tran
     awk '{k = $1; gsub("/", ".", k); v = $2; for (i = 3; i < NF; i++) v = v " " $i; print k "=" ($NF == "optional" ? "absent" : v)}' ;;
 nstat) n=$(cat "$st/s" 2>/dev/null || echo 0); n=$((n + 1)); echo $n >"$st/s"
     printf 'Tcp: RetransSegs InSegs\nTcp: %d %d\nUdp: InErrors\nUdp: 0\n' "$n" "$((n * 100))" ;;
-driver | stop | transport-net) ;;
+driver | stop | transport-net | events-stop-all) ;;
+cc-available) echo "reno cubic" ;;
+# a point's events: begun (logged), then read back as host.sh events_stop
+# prints them: the trace's clock the wall clock's, and on the host that
+# measured (its newest spikes file) an IRQ of 100 us on hot CPU 4, where
+# the ping runs, at the max (the stub's: due at the run's start)
+events-start) echo "$2 $3 $4 ${5:-}" >>"$st/events-started" ;;
+events-stop)
+    echo "$2" >>"$st/events-stopped"
+    f=$(ls -t "$HOME"/bench/transport-*/run-*/out*/spikes-*.csv 2>/dev/null | head -1)
+    s=$(sed -n 's/^# start_realtime_ns=//p' "$f" 2>/dev/null)
+    printf '== clock\n1000000000 1000000000\n2000000000 2000000000\n== notes\nevents: trace on cpus 4,6,8,10,12,14 (fake)\nevents: osnoise unavailable: the kernel has no osnoise tracer (fake)\n== trace\n'
+    if [[ -n $s ]]; then
+        sec=$((s / 1000000000)) us=$((s % 1000000000 / 1000))
+        printf '   ping-101 [004] d..2. %d.%06d: sched_switch: prev_comm=swapper/4 prev_pid=0 prev_prio=120 prev_state=R ==> next_comm=ping next_pid=101 next_prio=120\n' $((sec - 1)) 0
+        printf '   ping-101 [004] d.h1. %d.%06d: irq_handler_entry: irq=24 name=fake_nic\n' "$sec" "$us"
+        printf '   ping-101 [004] d.h1. %d.%06d: irq_handler_exit: irq=24 ret=handled\n' "$sec" $((us + 100))
+        printf '   ping-101 [004] d..2. %d.%06d: sched_switch: prev_comm=ping prev_pid=101 prev_prio=120 prev_state=S ==> next_comm=swapper/4 next_pid=0 next_prio=120\n' $((sec + 1)) 0
+    fi
+    printf '== samples\nt=1000000000 tc=- tcp=RetransSegs=0 aeron=-\n' ;;
 *) echo "fake vm.sh: $*" >&2; exit 2 ;;
 esac
 SH
@@ -647,7 +666,10 @@ mkdir -p "$out"
 # explains it: spikes.py), every other latency 1 to 5 ns
 now=$(date +%s)
 start=$(((now - now % 60 + 50) * 1000000000))
-echo "$kind,$label,udp,64,$rate,1,1,2,3,4,5,150000,1,1,1,1,0,$rate,0,0,0,0,1000,0,0,0,0,64,2,1,2,3,150000" >"$out/results.csv"
+# p99.99 5 ns, or 2 for a label FAKE_BETTER names (the tuning test's better value)
+p9999=5
+[[ -n ${FAKE_BETTER:-} && $label == *"$FAKE_BETTER"* ]] && p9999=2
+echo "$kind,$label,udp,64,$rate,1,1,2,3,4,$p9999,150000,1,1,1,1,0,$rate,0,0,0,0,1000,0,0,0,0,64,2,1,2,3,150000" >"$out/results.csv"
 echo "{\"payload_sha256\": \"00\", \"payload_size\": 64, \"wire_bytes\": 64, \"core_build_hash\": \"stub\", \"settings\": {$settings}}" >"$out/manifest.json"
 echo "1000,1" >"$out/histogram-$label.csv"
 printf '# start_realtime_ns=%s\n# spikes_total=1\n# max=0,150000,0\nstream,due_ns,latency_ns\n0,0,150000\n' "$start" >"$out/spikes-$label.csv"
@@ -778,9 +800,43 @@ fv=$(python3 "$cloud/fairness.py" "$d" 2>&1) || why+=" fairness: $(head -5 <<<"$
 tables=$(python3 "$cloud/analyse.py" --transport "$d" 2>&1) || why+=" analyse.py --transport failed: $(tail -2 <<<"$tables");"
 for s in 1 2b 3b 3c; do grep -q "^### Set $s, " <<<"$tables" || why+=" no set $s table;"; done
 ! grep -q '^Refused' <<<"$tables" && grep -q 'A/A spread' <<<"$tables" && grep -q 'no qdisc' <<<"$tables" || why+=" tables refused or no A/A spread or no no-qdisc table;"
-grep -q '^sweep.socket.busy_read_us=mio-tcp$' "$d/transport-settings.env" && grep -q '^mio-tcp.socket.busy_read_us=50$' "$d/transport-settings.env" &&
-    ! grep -q 'eio-tcp' "$d/transport-settings.env" || why+=" mio's busy-read not declared per arm: $(grep -v '^#' "$d/transport-settings.env" | grep -v '^shared' | tr '\n' ' ');"
+# each arm's per-arm knobs declared as it ran them (mio's busy-read its
+# own; no sweep line: no tuning session ran), every point's manifest
+# recording them
+grep -q '^mio-tcp.knob.busy_read_us=50$' "$d/transport-settings.env" && grep -q '^eio-tcp.knob.epoll_events=64$' "$d/transport-settings.env" &&
+    grep -q '^mpsc.knob.capacity=4096$' "$d/transport-settings.env" && grep -q '^aeron-rel.knob.nak_delay_ns=1000$' "$d/transport-settings.env" &&
+    ! grep -q '^eio-tcp.knob.busy_read_us' "$d/transport-settings.env" && ! grep -q '^sweep\.' "$d/transport-settings.env" &&
+    ! grep -q 'knob.congestion' "$d/transport-settings.env" || why+=" per-arm knobs: $(grep -v '^#' "$d/transport-settings.env" | grep -v '^shared' | tr '\n' ' ');"
+m=$(grep -l '^mode=mio-tcp@STREAMS=1@NETEM=0.1$' "$d"/manifest/*.env | head -1)
+grep -q '^knob.busy_read_us=50$' "$m" && grep -q '^knob.quickack_per_read=on$' "$m" && grep -q '^knob.congestion=cubic$' "$m" && grep -q '^base_arm=mio-tcp$' "$m" ||
+    why+=" a point's knobs: $(grep '^knob' "$m" | tr '\n' ' ');"
+m=$(grep -l '^mode=aeron-rel@STREAMS=1@NETEM=0.1$' "$d"/manifest/*.env | head -1)
+grep -q '^driver_mode=kernel-busy@CONDUCTOR=own@' "$m" || why+=" an Aeron point's driver mode: $(grep '^driver_mode' "$m");"
 echo "$tables" >"$tmp/tables.md"
+# every point's events on each host it used: begun before its binaries
+# (the fake's log orders them), read back after, gzipped, laid out per host
+# and tag; each max then labelled by them (the fake's IRQ at it), never
+# unexplained
+evwhy=
+for h in a b; do
+    [[ -s $sb/$h/state/events-started && $(grep -c . "$sb/$h/state/events-started") == $(grep -c . "$sb/$h/state/events-stopped") ]] ||
+        evwhy+=" host $h: events started $(grep -c . "$sb/$h/state/events-started" 2>/dev/null) stopped $(grep -c . "$sb/$h/state/events-stopped" 2>/dev/null);"
+done
+[[ $(find "$d/events" -name '*.log.gz' | wc -l | tr -d ' ') -ge $n ]] || evwhy+=" $(find "$d/events" -name '*.log.gz' | wc -l) events logs for $n points;"
+c=$(find "$d" -mindepth 2 -maxdepth 2 -name 'a-events-*.csv' | wc -l | tr -d ' ')
+[[ $c == $((n + one)) ]] || evwhy+=" $c host-a events files, not $((n + one));"
+[[ $(find "$d/3b" -name 'b-events-*.csv' | wc -l | tr -d ' ') -gt 0 && -z $(find "$d/1" "$d/2b" -name 'b-events-*.csv') ]] || evwhy+=" host b's events files on the wrong sets;"
+# spinners on the hot CPUs the point leaves idle: a socket ping's (4) and an
+# Aeron arm's driver (4, 6, 8) and local ends (10, 12) left out
+grep -q '^3b-r1-mio-tcp@STREAMS=1@NETEM=1-10000 4,6,8,10,12,14 6,8,10,12,14 *$' "$sb/a/state/events-started" || evwhy+=" mio-tcp's spinners: $(grep -m1 3b-r1-mio-tcp "$sb/a/state/events-started");"
+grep -q '^1-r1-aeron-ipc@STREAMS=1-10000 4,6,8,10,12,14 14 aeron$' "$sb/a/state/events-started" || evwhy+=" aeron-ipc's spinners or counters: $(grep -m1 aeron-ipc "$sb/a/state/events-started");"
+labels=$(python3 "$cloud/spikes.py" --transport "$d" 2>&1)
+[[ $(grep -c 'IRQ fake_nic on hot CPU 4 (a, 100 µs)' <<<"$labels") == $((n + one)) ]] && grep -q '^unexplained: none$' <<<"$labels" ||
+    evwhy+=" labels: $(grep -c 'IRQ fake_nic' <<<"$labels") IRQ labels of $((n + one)); $(grep -m2 '| unexplained' <<<"$labels");"
+python3 -c 'import json, sys; m = json.load(open(sys.argv[1])); e = m["events"]; assert set(e) == {"a", "b"} and any("osnoise unavailable" in x for x in e["a"]["notes"]), e' \
+    "$(find "$d/3b" -name 'manifest-3b-mio-tcp@STREAMS=1@NETEM=1-64-1-r10000.json' | head -1)" 2>/dev/null || evwhy+=" the manifest's events notes;"
+[[ -z $evwhy ]] && pass "transport.sh run: each point's events begun before its binaries and read back after on every host it used (spinners on the idle hot CPUs, Aeron's counters), laid out per host and tag, every max labelled from them (spikes.py --transport)" ||
+    fail "transport.sh run events:$evwhy"
 [[ -z $why ]] && pass "transport.sh run: every point of pair b once (rows with their rep, manifests, the binaries' manifests), each round's seed and order recorded, netem around each lossy round on both hosts and never under DPDK, its counters checked, transport-cli.md's flags, sets 1 and 2b each on its own host, the hostcheck reports saved; fairness.py clean on the collected session and analyse.py --transport's tables" ||
     fail "transport.sh run:$why $(tail -3 "$sb/run.out")"
 
@@ -808,6 +864,55 @@ if [[ $rrc != 0 && $(cat "$d/rc" 2>/dev/null) == 1 && ! -s $sb/runs ]] && grep -
 else
     fail "transport.sh run with a hostcheck warning: exit $rrc, $(grep -c . "$sb/runs" 2>/dev/null) runs, $(tail -1 "$sb/run.out")"
 fi
+# the tuning session (LAB_TUNE=1: pair tune-a), cut down to two knobs of
+# pair a's one-host arms: mpsc's capacity (1024 the stub's better p99.99)
+# and aeron-ipc's threading (no difference): the sweep, then the
+# confirmation of capacity alone at TR_TUNE_CONFIRM_REPS reps, then the
+# frozen choice: 1024 for mpsc, aeron-ipc's DEDICATED kept
+trun tune-a 1 "" tune_arms=mpsc,aeron-ipc tune_knobs=capacity,aeron_threading FAKE_BETTER=capacity-1024 && trc=0 || trc=$?
+t=$sb/a/bench/transport-tune-a
+why=
+[[ $trc == 0 && $(cat "$t/rc") == 0 ]] || why+=" exit $trc: $(grep -E 'ERROR|tune:' "$sb/run.out" | tail -3 | tr '\n' ' ');"
+[[ $(grep -c '^set ' "$t/tune-sweep.tsv" 2>/dev/null) == 2 && $(grep -c . "$t/variants.txt" 2>/dev/null) == 5 ]] || why+=" sweep plan: $(cat "$t/tune-sweep.tsv" 2>/dev/null | tr '\n' ' ');"
+grep -q '^set 1\.[0-9]* tune - a 1000000 1 - mpsc--capacity-4096,mpsc--capacity-64,mpsc--capacity-1024,aa$' "$t/tune-sweep.tsv" || why+=" mpsc's sweep set;"
+grep -q '^set 1\.c1 tune - a 1000000 1 - mpsc--capacity-4096,mpsc--capacity-1024,aa$' "$t/tune-confirm.tsv" && [[ $(grep -c '^set ' "$t/tune-confirm.tsv") == 1 ]] ||
+    why+=" confirmation: $(grep '^set' "$t/tune-confirm.tsv" | tr '\n' ' ');"
+# the sweep's rounds at 1 rep, the confirmation's at 3
+[[ $(awk -F'\t' '$2 ~ /\.c/ {print $4}' "$t/rounds.tsv" | sort -u | tr '\n' ' ') == "1 2 3 " && $(awk -F'\t' '$2 !~ /\.c/ {print $4}' "$t/rounds.tsv" | sort -u) == 1 ]] ||
+    why+=" rounds: $(cut -f2,4 "$t/rounds.tsv" | tr '\n' ' ');"
+grep -q 'mpsc_lat --role local .*--capacity 1024 .*--label 1\.c1:mpsc--capacity-1024@STREAMS=1 ' "$sb/runs" &&
+    grep -q 'aeron_lat --role local .*--driver-busy-threads 1 .*--label 1\.[0-9]*:aeron-ipc--aeron_threading-SHARED@' "$sb/runs" &&
+    grep -q 'vm.sh driver kernel-busy@AERON_TERM_BUFFER_LENGTH=1048576@AERON_IPC_TERM_BUFFER_LENGTH=1048576@AERON_THREADING_MODE=SHARED$' "$sb/calls" ||
+    why+=" the variants' flags and driver mode: $(grep -m2 -E 'SHARED|capacity-1024' "$sb/runs" | tr '\n' ' ');"
+grep -q '^TR_ARM_KNOBS="aeron-ipc:aeron_threading=DEDICATED mpsc:capacity=1024"$' "$t/tuned.env" &&
+    grep -q '^# changed mpsc capacity: 4096 -> 1024: p99.99 better at ' "$t/tuned.env" && grep -q '^# kept aeron-ipc aeron_threading DEDICATED: ' "$t/tuned.env" &&
+    grep -q '^TR_TUNED_SWEPT="aeron_threading:aeron-ipc capacity:mpsc"$' "$t/tuned.env" && grep -q '^TR_TUNED_RUN="20261025-120000"$' "$t/tuned.env" ||
+    why+=" frozen: $(tr '\n' ' ' <"$t/tuned.env" 2>/dev/null);"
+grep -q '| mpsc | capacity | 4096 |' "$t/tune-report.md" 2>/dev/null || why+=" no tune-report.md row;"
+# the tuning session's own fairness: each round's variants differ in their
+# one knob, every one of them swept for it; every max labelled
+fv=$(python3 "$cloud/fairness.py" "$t" 2>&1)
+! grep -qE '^(shared-knob|settings|max|aa|order):' <<<"$fv" || why+=" fairness: $(grep -E '^(shared-knob|settings|max|aa|order):' <<<"$fv" | head -3 | tr '\n' ' ');"
+grep -q '^sweep.knob.capacity=mpsc--capacity-1024,mpsc--capacity-4096,mpsc--capacity-64$' "$t/transport-settings.env" || why+=" sweep line: $(grep '^sweep' "$t/transport-settings.env" | tr '\n' ' ');"
+# the frozen section into a settings file, in place of the empty one; the
+# comparison session's flags then the frozen value's, its collector's sweep line
+cp "$cloud/transport-settings.env" "$tmp/settings.env"
+python3 "$cloud/transport_tune.py" apply "$tmp/settings.env" "$t/tuned.env" >/dev/null || why+=" apply failed;"
+[[ $(grep -c '^# ==== tuned:' "$tmp/settings.env") == 1 ]] && grep -q '^TR_ARM_KNOBS="aeron-ipc:aeron_threading=DEDICATED mpsc:capacity=1024"$' "$tmp/settings.env" &&
+    ! grep -q '^TR_ARM_KNOBS=$' "$tmp/settings.env" || why+=" applied: $(grep '^TR_' "$tmp/settings.env" | tail -4 | tr '\n' ' ');"
+got=$(
+    . "$cloud/transport.sh"
+    . "$tmp/settings.env"
+    dir=$tmp arm=mpsc bin=mpsc_lat setup=none args=()
+    echo "$(tr_bin_args mpsc_lat local x y)"
+    arm=aeron-ipc bin=aeron_lat setup=kernel args=(--mode ipc)
+    echo "$(tr_driver_mode)"
+)
+[[ $got == "--capacity 1024
+kernel-busy$(. "$cloud/transport-settings.env"; echo "$TR_AERON_MODE_SUFFIX")" ]] || why+=" the tuned flags: $got;"
+[[ -z $why ]] && pass "transport.sh run tune-a (LAB_TUNE=1): the sweep of each arm and knob (its current value first and its A/A), the confirmation of the value that beat it at 3 reps, the frozen choice with its evidence (tuned.env, tune-report.md), fairness's shared-knob rule clean on the variants, the section applied and its values the comparison's flags" ||
+    fail "transport.sh run tune:$why"
+
 if kill -0 "$bystander" 2>/dev/null; then
     pass "transport.sh run: its exit stops only the bench binaries it started (by their recorded PIDs), never another process of the same name"
 else

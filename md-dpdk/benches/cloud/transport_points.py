@@ -8,7 +8,7 @@ import os
 from collections import namedtuple
 
 # the sets that run on one host (transport-format.md)
-ONE_HOST_SETS = {"1", "2b"}
+ONE_HOST_SETS = {"1", "2b"}  # and their tuning sets, <set>.<n> (transport_tune.py)
 
 # a transport row: the load row's 23 columns, then these
 TRAILING = ["min", "lost", "reordered", "dup", "retrans", "wire_bytes", "busy_threads",
@@ -97,7 +97,7 @@ def read_points(run_dir):
 
 
 def hosts_of(set_):
-    return ("a",) if set_ in ONE_HOST_SETS else ("a", "b")
+    return ("a",) if set_.split(".")[0] in ONE_HOST_SETS else ("a", "b")
 
 
 def flags(p):

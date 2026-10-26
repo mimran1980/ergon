@@ -72,7 +72,7 @@ import random
 import re
 import sys
 
-from transport_points import hosts_of, read_points, row_flags
+from transport_points import hosts_of as transport_hosts_of, read_points, row_flags
 
 # the threads that busy-spin on traced CPUs: the dedicated agents, the shared
 # network agent ("[sender, receiver]", which the kernel cuts to 15 characters),
@@ -1052,8 +1052,10 @@ TransportPoint = collections.namedtuple("TransportPoint", "set tag row manifest 
 # seconds :49 to :51 of a minute, when nothing more specific explains them
 MINUTE_WINDOW = (49.0, 52.0)
 MINUTE_MIN_NS = 100_000
-EVENT_KINDS = {"irq", "softirq", "nak", "retransmit", "tcp-rto", "tcp-tlp", "tc-drop", "page-fault", "dpdk-refill",
-               "host-pause"}
+EVENT_KINDS = {"irq", "softirq", "ipi", "preempt", "nak", "retransmit", "tcp-rto", "tcp-tlp", "tcp-dsack", "tcp-retrans",
+               "tc-drop", "page-fault", "dpdk-refill", "host-pause", "stall"}
+# a gap spinner's own CPU: its switches say nothing of the measured path
+SPINNER_COMM = "gapspin:"
 _cache = {}
 
 
@@ -1098,20 +1100,35 @@ def transport_events(folder, tag, hosts):
     """[(start_s, end_s, kind, cpu or None, detail, host)] from each host's
     events file for the point (<host>-events-<tag>.csv) and its DPDK event
     log's refills (<host>-rings-<tag>.log)."""
-    out = []
-    for host in hosts:
-        path = os.path.join(folder, f"{host}-events-{tag}.csv")
-        if os.path.exists(path):
-            for row in csv.reader(text_lines(path)):
-                if len(row) == 5 and row[0] in EVENT_KINDS and row[1].isdigit() and row[2].isdigit():
-                    cpu = int(row[3]) if row[3].isdigit() else None
-                    out.append((int(row[1]) / 1e9, int(row[2]) / 1e9, row[0], cpu, row[4], host))
-        ring = os.path.join(folder, f"{host}-rings-{tag}.log")
-        if os.path.exists(ring):
-            for t0, t1, source, label in read_rings(ring, host)[0]:
-                if source == "refill":
-                    out.append((t0, t1, "dpdk-refill", None, label, host))
-    return out
+    return transport_host_events(folder, tag, hosts)[0]
+
+
+def transport_host_events(folder, tag, hosts):
+    """(events as transport_events gives them, {host: [notes]}): an events
+    file's `# note:` lines (what could not be recorded), and a note for a
+    host with no events file at all."""
+    def load():
+        out, notes = [], {}
+        for host in hosts:
+            path = os.path.join(folder, f"{host}-events-{tag}.csv")
+            notes[host] = []
+            if os.path.exists(path):
+                for line in text_lines(path):
+                    if line.startswith("# note: "):
+                        notes[host].append(line[len("# note: "):].strip())
+                for row in csv.reader(l for l in text_lines(path) if not l.startswith("#")):
+                    if len(row) == 5 and row[0] in EVENT_KINDS and row[1].isdigit() and row[2].isdigit():
+                        cpu = int(row[3]) if row[3].isdigit() else None
+                        out.append((int(row[1]) / 1e9, int(row[2]) / 1e9, row[0], cpu, row[4], host))
+            else:
+                notes[host].append("no events file")
+            ring = os.path.join(folder, f"{host}-rings-{tag}.log")
+            if os.path.exists(ring):
+                for t0, t1, source, label in read_rings(ring, host)[0]:
+                    if source == "refill":
+                        out.append((t0, t1, "dpdk-refill", None, label, host))
+        return out, notes
+    return cached(("events", os.path.abspath(folder), tag, tuple(hosts)), load)
 
 
 def transport_diag(folder, set_, host):
@@ -1130,11 +1147,41 @@ def transport_diag(folder, set_, host):
 
 def transport_cause(folder, point):
     """What explains a transport point's max (transport-format.md), or
-    `unexplained ...`: a flagged point's max is queueing; else the first of a
-    host pause, a page fault, an IRQ on a hot CPU, a softirq there, a DPDK
-    refill, a NAK or retransmit, a TCP RTO or TLP matched to a netem drop in
-    its second, and the per-minute stall cluster that overlaps it. An event
-    with a length must account for half of what the max adds to the p50."""
+    `unexplained (why)`: a flagged point's max is queueing; else the first of
+    a host pause, a page fault, a busy thread preempted, an IRQ on a hot CPU,
+    a softirq there, an IPI there, a DPDK refill, a NAK or retransmit, a TCP
+    RTO, TLP or retransmit matched to a netem drop in its second, and the
+    per-minute stall cluster that overlaps it. An event with a length must
+    account for half of what the max adds to the p50. An unexplained max
+    says what the events do show: a stall of the measuring loop, or what was
+    not recorded (no events file, the trace unavailable or overrun)."""
+    why = transport_cause_found(folder, point)
+    if why != "unexplained":
+        return why
+    _, notes = transport_host_events(folder, point.tag, point.hosts)
+    loc = transport_max(folder, point.tag, point.row.get("max"))
+    reasons = []
+    if loc is not None:
+        start, due, lat = loc
+        t0, t1 = (start + due) / 1e9, (start + due + lat) / 1e9
+        need = max(lat - (point.row.get("p50") or 0), 0) / 2 / 1e9
+        for e in transport_events(folder, point.tag, point.hosts):
+            if e[2] == "stall" and e[0] <= t1 and e[1] >= t0 and e[1] - e[0] >= need:
+                reasons.append(f"the {e[4]} on {e[5]} cpu {e[3]} with no traced event covering it: the thread did not "
+                               "run and the guest shows nothing, so the host or an untraced CPU")
+                break
+    for host in point.hosts:
+        for n in notes.get(host, []):
+            if n == "no events file" or ("unavailable" in n and not n.startswith("osnoise")) or "overran" in n \
+                    or n.startswith("trace empty"):
+                reasons.append(f"{host}: {n}")
+    if not reasons:
+        reasons.append("no recorded event overlaps it on either host")
+    return f"unexplained ({'; '.join(reasons)})"
+
+
+def transport_cause_found(folder, point):
+    """transport_cause's labels, or plain `unexplained`."""
     row, manifest = point.row, point.manifest or {}
     found = row_flags(row)
     if "over capacity" in found:
@@ -1153,6 +1200,9 @@ def transport_cause(folder, point):
     on_hot = lambda host, cpu: cpu is not None and cpu in hot.get(host, set())
     hit = lambda a, b: a <= t1 and b >= t0
     enough = lambda a, b: b == a or b - a >= need
+    # a traced span (an IRQ, a switch, a spinner gap): its own length, never
+    # taken for an instant when it read 0
+    lasting = lambda a, b: b > a and b - a >= need
     events = [e for e in transport_events(folder, point.tag, point.hosts) if hit(e[0], e[1])]
     of = lambda *kinds: [e for e in events if e[2] in kinds]
     diag = {h: transport_diag(folder, point.set, h) for h in point.hosts}
@@ -1160,15 +1210,18 @@ def transport_cause(folder, point):
     for host in point.hosts:
         for g0, g1 in diag[host][0]:
             if hit(g0, g1) and g1 - g0 >= need:
-                return f"Azure host pause (gap spinner {(g1 - g0) * 1e6:.0f} µs, {host})"
+                return f"host pause (gap spinner {(g1 - g0) * 1e6:.0f} µs, {host})"
     for e in of("host-pause"):
-        if enough(e[0], e[1]):
-            return f"Azure host pause (gap spinner {(e[1] - e[0]) * 1e6:.0f} µs, {e[5]})"
+        if lasting(e[0], e[1]):
+            return f"host pause (gap spinner {(e[1] - e[0]) * 1e6:.0f} µs, {e[5]} cpu {e[3]})"
     for e in of("page-fault"):
-        return f"page fault (T19, {e[5]}{f' cpu {e[3]}' if e[3] is not None else ''}: {e[4]})"
+        return f"page fault ({e[5]}{f' cpu {e[3]}' if e[3] is not None else ''}: {e[4]})"
+    for e in of("preempt"):
+        if on_hot(e[5], e[3]) and not e[4].startswith(SPINNER_COMM) and lasting(e[0], e[1]):
+            return f"busy thread off its CPU {(e[1] - e[0]) * 1e6:.0f} µs ({e[5]} cpu {e[3]}: {e[4]})"
     for e in of("irq"):
-        if on_hot(e[5], e[3]) and enough(e[0], e[1]):
-            return f"IRQ {e[4]} on hot CPU {e[3]} ({e[5]})"
+        if on_hot(e[5], e[3]) and lasting(e[0], e[1]):
+            return f"IRQ {e[4]} on hot CPU {e[3]} ({e[5]}, {(e[1] - e[0]) * 1e6:.0f} µs)"
     for host in point.hosts:
         for cpu, irqs in sorted(diag[host][1].items()):
             if on_hot(host, cpu):
@@ -1176,20 +1229,27 @@ def transport_cause(folder, point):
                     if hit(a, b) and enough(a, b):
                         return f"IRQ {name} on hot CPU {cpu} ({host})"
     for e in of("softirq"):
-        if on_hot(e[5], e[3]) and enough(e[0], e[1]):
-            return f"softirq {e[4]} ({e[5]} cpu {e[3]})"
+        if on_hot(e[5], e[3]) and lasting(e[0], e[1]):
+            return f"softirq {e[4]} ({e[5]} cpu {e[3]}, {(e[1] - e[0]) * 1e6:.0f} µs)"
     for host in point.hosts:
         for a, b, source, label in diag[host][2]:
             if source == "softirq_noise" and hit(a, b) and enough(a, b):
                 return label.replace("softirq_noise ", "softirq ", 1)
+    for e in of("ipi"):
+        if on_hot(e[5], e[3]) and lasting(e[0], e[1]):
+            return f"IPI {e[4]} on hot CPU {e[3]} ({e[5]}, {(e[1] - e[0]) * 1e6:.0f} µs)"
     for e in of("dpdk-refill"):
         if enough(e[0], e[1]):
             return f"DPDK refill ({e[5]}: {e[4]})"
-    for e in of("nak", "retransmit"):
-        return f"NAK/retransmit ({e[5]}: {e[2]} x{e[4]})"
+    # the per-second counters are the host's (the media driver's, every TCP
+    # connection's): each read only for a transport that has them
+    parts = set((manifest.get("transport") or "").split("+"))
+    aeron = any(p.startswith("aeron") for p in parts)
+    for e in of("nak", "retransmit") if aeron else ():
+        return f"NAK/retransmit ({e[5]}: {e[2]} x{e[4]} in that second)"
     drops = [e for e in transport_events(folder, point.tag, point.hosts) if e[2] == "tc-drop"]
-    for e in of("tcp-rto", "tcp-tlp"):
-        what = "RTO" if e[2] == "tcp-rto" else "TLP"
+    for e in of("tcp-rto", "tcp-tlp", "tcp-retrans") if "tcp" in parts else ():
+        what = {"tcp-rto": "RTO", "tcp-tlp": "TLP", "tcp-retrans": "retransmit"}[e[2]]
         sec = int(e[0])
         same = [d for d in drops if int(d[0]) <= sec < int(d[0]) + max(1, round(d[1] - d[0]))]
         if same:
@@ -1206,7 +1266,7 @@ def transport_maxima(run_dir):
     """[(Point, max ns, cause)] for every transport point of a run directory."""
     out = []
     for p in read_points(run_dir):
-        point = TransportPoint(p.set, p.tag, p.row, p.manifest or {}, hosts_of(p.set))
+        point = TransportPoint(p.set, p.tag, p.row, p.manifest or {}, transport_hosts_of(p.set))
         out.append((p, p.row["max"], transport_cause(os.path.join(run_dir, p.set), point)))
     return out
 
@@ -1214,10 +1274,11 @@ def transport_maxima(run_dir):
 def transport_main(run_dir):
     maxima = transport_maxima(run_dir)
     print("## Each point's max and its cause\n")
-    print("Labels, first that overlaps the max: a flagged point's queueing, an Azure host pause (gap spinner), a page "
-          "fault (T19), an IRQ on a hot CPU, a softirq there, a DPDK refill, a NAK or retransmit, a TCP RTO or TLP "
-          "matched to a netem drop in its second, the per-minute stall cluster (:49-:51). An unexplained max blocks "
-          "its cell's conclusion: rerun it traced.\n")
+    print("Labels, first that overlaps the max: a flagged point's queueing, a host pause (a gap spinner's gap the "
+          "trace does not explain), a page fault of a busy thread, a busy thread off its CPU (preempted or blocked), "
+          "an IRQ, softirq or IPI on a hot CPU, a DPDK refill, a NAK or retransmit, a TCP RTO, TLP or retransmit "
+          "matched to a netem drop in its second, the per-minute stall cluster (:49-:51). An unexplained max says "
+          "what its events do show and blocks its cell's conclusion: rerun it traced.\n")
     print("| set | label | kind | rate | rep | max (µs) | cause |")
     print("| --- | --- | --- | --- | --- | --- | --- |")
     for p, mx, cause in sorted(maxima, key=lambda x: (x[0].set, x[0].label, x[0].kind, x[0].rate, x[0].rep)):

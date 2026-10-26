@@ -102,6 +102,9 @@
 #   vm.sh irqsnap            /proc/interrupts;  vm.sh hostcheck  the ergon-tune report (1 unless clean)
 #   vm.sh nstat              the kernel's protocol counters;  vm.sh settings  every transport sysctl
 #                            as it is now, <knob>=<value> (host.sh transport_settings_read)
+#   vm.sh events-start <point> <traced cpus> <spinner cpus|-> [aeron]   a point's events begun before
+#                            its binaries start (trace of its hot CPUs, osnoise, gap spinners, the 1 s sampler)
+#   vm.sh events-stop <point>  its events read back (transport_events.py's input) and stopped
 #
 # aarch64 (AWS Graviton, lab.sh LAB_ALLOW_ARM=1): Graviton's own settings where
 # they differ from x86's (host.sh): builds for the instance's own core,
@@ -134,6 +137,8 @@ self=$(readlink -f "$0")
 # the transport suite's declared settings (TR_*: transport-* commands)
 # shellcheck source=transport-settings.env
 . "$(dirname "$self")/transport-settings.env"
+# one arm's own over them (transport.sh tr_host_overrides: TR_OVERRIDES)
+transport_overrides || exit 2
 cd "$HOME/ergon"
 run=$HOME/bench
 mkdir -p "$run"
@@ -2756,11 +2761,18 @@ transport-net)
         echo "$TR_NAPI_DEFER" | sudo tee "$LAB_SYS_ROOT/class/net/$vf/napi_defer_hard_irqs" >/dev/null
         echo "$TR_GRO_FLUSH_NS" | sudo tee "$LAB_SYS_ROOT/class/net/$vf/gro_flush_timeout" >/dev/null
     done
+    transport_cc_load
     transport_sysctls_apply
     ;;
 transport-map)
     # "<housekeeping> <irq> <isolated,...>" as transport-isolate kept it
     cat "$run/transport-map"
+    ;;
+cc-available)
+    # the congestion controls this kernel offers, bbr loaded first where it
+    # is a module (the tuning session sweeps only what both hosts have)
+    sudo modprobe tcp_bbr 2>/dev/null || true
+    cat "$LAB_PROC_ROOT/sys/net/ipv4/tcp_available_congestion_control"
     ;;
 transport-build)
     # the transport suite's bench binaries (transport-cli.md), then
@@ -2800,6 +2812,37 @@ sample)
 irqsnap) cat "$LAB_PROC_ROOT/interrupts" ;;
 nstat) transport_nstat ;;
 settings) transport_settings_read ;;
+events-start)
+    # events-start <point> <traced cpus> <spinner cpus|-> [aeron]: before the
+    # point's binaries start (transport.sh), so before their warm-up: host.sh
+    # events_start on the hot CPUs given (trace, osnoise where the kernel has
+    # it), gap spinners on the spinner CPUs, the sampler on the housekeeping
+    # CPU, the media driver's counters with aeron
+    [[ -s $run/transport-map ]] || { echo "events-start: no transport map" >&2; exit 2; }
+    read -r hk _ _ <"$run/transport-map"
+    [[ -x $run/gapspin ]] || gcc -O2 -o "$run/gapspin" "$(dirname "$self")/gapspin.c" || exit 1
+    adir=-
+    [[ ${5:-} == aeron ]] && adir=$TR_AERON_DIR
+    counters=-
+    [[ -x $tools/counters ]] && counters=$tools/counters
+    mapfile -t ifaces < <(nics | awk '{print $2}')
+    events_start "$run/events/${2:?point}" ergon-events "$hk" "${3:?traced cpus}" "${4:--}" "$run/gapspin" "$TR_EVENTS_GAPSPIN_US" \
+        "$adir" "$counters" "$TR_EVENTS_BUFFER_KB" "${ifaces[@]}"
+    ;;
+events-stop-all)
+    # whatever events a runner that died left running (its EXIT trap)
+    [[ -s $run/transport-map ]] || exit 0
+    read -r _ _ iso <"$run/transport-map"
+    for d in "$run"/events/*/; do [[ -d $d ]] && events_stop "${d%/}" ergon-events "$iso" >/dev/null 2>&1; done
+    true
+    ;;
+events-stop)
+    # events-stop <point>: after the point's window, its events as
+    # transport_events.py reads them (host.sh events_stop), all of it stopped
+    [[ -s $run/transport-map ]] || { echo "events-stop: no transport map" >&2; exit 2; }
+    read -r _ _ iso <"$run/transport-map"
+    events_stop "$run/events/${2:?point}" ergon-events "$iso"
+    ;;
 hostcheck)
     # the ergon-tune checks on the hot CPUs and data NICs (transport-cli.md),
     # its report in bench/hostcheck.txt; 1 on any warning or error

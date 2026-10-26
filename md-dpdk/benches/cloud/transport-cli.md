@@ -42,15 +42,30 @@ nonzero exit on any error. A partial row is never printed.
 The arm's own flags come from its `arm` row in `transport-matrix.tsv`
 (`--mode`, `--reliable`, `--impl`). Each host's flags are the same for every
 arm that runs the binary. They are set in `transport-settings.env` (`TR_*`) and
-built by `transport.sh tr_bin_args`:
+built by `transport.sh tr_bin_args`; a per-arm knob's value (`<knob>` below:
+transport-settings.env's list) is `tr_knob`'s: the tuned section's
+`TR_ARM_KNOBS` for the arm, else the knob's default (a tuning variant: its
+own):
 
 | binary | runner's flags |
 |---|---|
-| `mpsc_lat` | `--capacity $TR_MPSC_CAPACITY` |
-| `aeron_lat` | `--aeron-dir $TR_AERON_DIR --driver external --driver-busy-threads $TR_AERON_DRIVER_BUSY_THREADS --term-length $TR_TERM_LENGTH --mtu $TR_MTU`; `--mode udp` arms also `--endpoint <pong's data IP>:$TR_PORT_BASE --reply <ping's data IP>:$TR_PORT_BASE --interface <own data IP>`; every run `--stream-id 1001+256k` (the k-th Aeron point of the set; a one-host point's round trip +128), ping and pong the same, so no lingering publication of an earlier run is the image a subscription takes |
-| `udp_lat` | `--local <own>:$TR_PORT_BASE --peer <other end>:$TR_PORT_BASE --rcvbuf/--sndbuf $TR_SOCKBUF`, and `--busy-read-us $TR_BUSY_READ` for `--impl mio` |
-| `tcp_lat` | pong (and `local`, on its receiver NIC) `--listen <own>:port`, ping `--connect <peer>:port`, then `--nodelay --quickack-per-read --rto-min-us --delack-max-us --rcvbuf --sndbuf`, and `--busy-read-us` for `--impl mio` |
+| `mpsc_lat` | `--capacity <capacity>` |
+| `aeron_lat` | `--aeron-dir $TR_AERON_DIR --driver external --driver-busy-threads $TR_AERON_DRIVER_BUSY_THREADS (1 under SHARED) --term-length <term_length> --mtu $TR_MTU`; `--mode udp` arms also `--endpoint <pong's data IP>:$TR_PORT_BASE --reply <ping's data IP>:$TR_PORT_BASE --interface <own data IP>`; every run `--stream-id 1001+256k` (the k-th Aeron point of the set; a one-host point's round trip +128), ping and pong the same, so no lingering publication of an earlier run is the image a subscription takes |
+| `udp_lat` | `--local <own>:$TR_PORT_BASE --peer <other end>:$TR_PORT_BASE --rcvbuf/--sndbuf <sockbuf> --epoll-events <epoll_events>`, `--busy-read-us <busy_read_us>` for `--impl mio`, `--datagram-burst <datagram_burst>` for `--impl ergon` |
+| `tcp_lat` | pong (and `local`, on its receiver NIC) `--listen <own>:port`, ping `--connect <peer>:port`, then `--nodelay --quickack-per-read [false] --rto-min-us <rto_min_us> --delack-max-us --rcvbuf --sndbuf <sockbuf> --epoll-events <epoll_events>`, and `--busy-read-us` for `--impl mio` |
 | other (arms file) | `--local <own>:port --peer <other end>:port`; setup `sockets` also `--busy-read-us $TR_BUSY_READ --rcvbuf/--sndbuf $TR_SOCKBUF --nodelay --quickack-per-read --rto-min-us $TR_TCP_RTO_MIN_US --delack-max-us $TR_TCP_DELACK_MAX_US`: every socket and TCP setting the built-in arms get. Such a binary must take them all, apply each it uses, and report them in its manifest |
+
+The media driver's mode (`vm.sh driver`, `tr_driver_mode`): `<aeron_path>`
+(kernel-busy or kernel) or dpdk, then `TR_AERON_MODE_SUFFIX`, then
+`@AERON_SOCKET_SO_RCVBUF=<aeron_so_rcvbuf>`,
+`@AERON_NAK_UNICAST_DELAY=<nak_delay_ns>` and
+`@RUSTERON_DPDK_RX_FREE_THRESH=<rx_free_thresh>` where they differ from the
+driver's own; aeron-ipc's `aeron_threading=SHARED` takes the conductor's core
+and idle settings out and adds `@AERON_THREADING_MODE=SHARED`. A host
+setting an arm's knob sets otherwise (`congestion`; the kernel path's busy
+poll) goes to `vm.sh transport-net` as `TR_OVERRIDES`, and back after the
+arm. Each point's `manifest/<point>.env` records `base_arm`, every
+`knob.<name>` and `driver_mode`.
 
 Addresses: ping binds host a's sender NIC and talks to host b's receiver NIC.
 Pong binds b's receiver NIC and talks to a's sender NIC. `local` binds its
@@ -86,6 +101,12 @@ Each binary starts as `sh -c 'echo $$ >run/<x>.pid; exec taskset -c <housekeepin
 The runner's exit stops binaries by the PIDs recorded this way, never by
 name.
 
+0. On each host the point uses, `vm.sh events-start` (transport-format.md's
+   events file): the trace, osnoise, the gap spinners on the hot CPUs the
+   point leaves idle, the 1 s sampler on the housekeeping CPU, before any
+   binary of the point starts. `vm.sh events-stop` reads them back after
+   the window (before the pong is stopped) into
+   `events/<point>-<host>.log.gz`.
 1. The runner starts the pong on b (`nohup`).
 2. It waits for the pong's one `ready` line on stdout: `udp_lat` once its
    sockets are bound, `tcp_lat` once it listens, `aeron_lat` once its

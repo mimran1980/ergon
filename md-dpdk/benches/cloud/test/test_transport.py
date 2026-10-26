@@ -235,11 +235,22 @@ class FairnessTest(unittest.TestCase):
         self.assertIn("settings", run.rules())
 
     def test_per_arm_knob_not_swept_for_a_comparable_arm(self):
+        # mio-udp at its own value, swept; eio-udp, at another, not
         run = Run(self)
         env = read(run.path("transport-settings.env"))
         env = env.replace("sweep.socket.busy_poll_us=mio-udp,eio-udp", "sweep.socket.busy_poll_us=mio-udp")
+        env = env.replace("mio-udp.socket.busy_poll_us=50", "mio-udp.socket.busy_poll_us=0")
         write(run.path("transport-settings.env"), env)
+        run.edit(lambda m: m.get("arm") == "mio-udp",
+                 lambda m: [s.update({"socket.busy_poll_us": "0"}) for s in m["settings"].values()], first=False)
         self.assertOnly(run, "shared-knob")
+
+    def test_per_arm_knob_at_one_value_needs_no_sweep(self):
+        # every arm that has it at the same value: no arm's own tweak
+        run = Run(self)
+        env = read(run.path("transport-settings.env"))
+        write(run.path("transport-settings.env"), env.replace("sweep.socket.busy_poll_us=mio-udp,eio-udp\n", ""))
+        self.assertEqual(run.rules(), [])
 
     def test_knob_both_shared_and_per_arm(self):
         run = Run(self)
@@ -433,7 +444,7 @@ class SpikesLabelTest(unittest.TestCase):
     def test_host_pause_from_the_gap_spinner(self):
         with open(os.path.join(self.folder, "b-diag-2a.log"), "w") as f:
             f.write(f"== gapspin\n{(self.mid + 80_000) / 1e9:.6f} 160\n")
-        self.assertTrue(self.cause().startswith("Azure host pause"), self.cause())
+        self.assertTrue(self.cause().startswith("host pause (gap spinner 160"), self.cause())
 
     def test_a_spinner_gap_too_short_explains_nothing(self):
         with open(os.path.join(self.folder, "b-diag-2a.log"), "w") as f:
@@ -472,11 +483,48 @@ class SpikesLabelTest(unittest.TestCase):
 
     def test_nak(self):
         self.events("b", f"nak,{self.mid},{self.mid},-,2")
-        self.assertTrue(self.cause().startswith("NAK/retransmit"), self.cause())
+        self.assertTrue(self.cause(transport="aeron-udp").startswith("NAK/retransmit"), self.cause(transport="aeron-udp"))
 
     def test_retransmit(self):
         self.events("a", f"retransmit,{self.mid},{self.mid},-,1")
-        self.assertTrue(self.cause().startswith("NAK/retransmit"), self.cause())
+        self.assertTrue(self.cause(transport="aeron-udp").startswith("NAK/retransmit"),
+                        self.cause(transport="aeron-udp"))
+
+    def test_a_nak_explains_no_socket_arm(self):
+        # the media driver's counters are no UDP socket's
+        self.events("a", f"nak,{self.mid},{self.mid},-,2")
+        self.assertTrue(self.cause().startswith("unexplained"), self.cause())
+
+    def test_busy_thread_preempted(self):
+        self.events("a", f"preempt,{self.mid - 50_000},{self.mid + 50_000},4,\"ping:101 preempted, ran kworker/4:1\"")
+        self.assertTrue(self.cause().startswith("busy thread off its CPU 100 µs (a cpu 4: ping:101"), self.cause())
+
+    def test_a_spinner_preempted_explains_nothing(self):
+        self.events("a", f"preempt,{self.mid - 50_000},{self.mid + 50_000},6,\"gapspin:77 preempted, ran kworker/6:1\"")
+        self.assertTrue(self.cause().startswith("unexplained"), self.cause())
+
+    def test_ipi(self):
+        self.events("b", f"ipi,{self.mid - 50_000},{self.mid + 50_000},6,call_function")
+        self.assertTrue(self.cause().startswith("IPI call_function on hot CPU 6 (b"), self.cause())
+
+    def test_tcp_retransmit_matched_to_a_tc_drop(self):
+        sec = self.mid // 10**9 * 10**9
+        self.events("a", f"tcp-retrans,{self.mid},{self.mid},-,3", f"tc-drop,{sec},{sec + 10**9},-,2")
+        self.assertTrue(self.cause(transport="tcp").startswith("TCP retransmit after a netem drop"),
+                        self.cause(transport="tcp"))
+
+    def test_a_stall_names_why_the_max_is_unexplained(self):
+        self.events("a", f"stall,{self.mid - 60_000},{self.mid + 60_000},4,ping receive loop 120.0 µs")
+        self.events("b")
+        got = self.cause()
+        self.assertTrue(got.startswith("unexplained (the ping receive loop 120.0 µs on a cpu 4 with no traced event"),
+                        got)
+
+    def test_what_was_not_recorded_is_said(self):
+        with open(os.path.join(self.folder, f"a-events-{self.tag}.csv"), "w") as f:
+            f.write("# note: trace unavailable: no tracefs at /sys/kernel/tracing\nkind,start_ns,end_ns,cpu,detail\n")
+        self.assertEqual(self.cause(), "unexplained (a: trace unavailable: no tracefs at /sys/kernel/tracing; "
+                         "b: no events file)")
 
     def test_tcp_rto_matched_to_a_tc_drop_in_its_second(self):
         sec = self.mid // 10**9 * 10**9
@@ -508,13 +556,13 @@ class SpikesLabelTest(unittest.TestCase):
 
     def test_page_fault(self):
         self.events("a", f"page-fault,{self.mid - 50_000},{self.mid + 50_000},4,3")
-        self.assertTrue(self.cause().startswith("page fault (T19"), self.cause())
+        self.assertTrue(self.cause().startswith("page fault (a cpu 4"), self.cause())
 
     def test_host_pause_comes_before_an_irq(self):
         with open(os.path.join(self.folder, "a-diag-2a.log"), "w") as f:
             f.write(f"== gapspin\n{(self.mid + 80_000) / 1e9:.6f} 160\n")
         self.events("a", f"irq,{self.mid - 50_000},{self.mid + 50_000},4,mana_q1")
-        self.assertTrue(self.cause().startswith("Azure host pause"))
+        self.assertTrue(self.cause().startswith("host pause"))
 
     def test_over_capacity_is_queueing(self):
         self.assertEqual(self.cause(achieved=9_000), "past capacity (queueing)")
@@ -523,7 +571,9 @@ class SpikesLabelTest(unittest.TestCase):
         self.assertEqual(self.cause(late=6_000), "sender late (queueing)")
 
     def test_nothing_is_unexplained(self):
-        self.assertEqual(self.cause(), "unexplained")
+        self.events("a")
+        self.events("b")
+        self.assertEqual(self.cause(), "unexplained (no recorded event overlaps it on either host)")
 
     def test_max_not_located(self):
         self.write_spikes(with_max=False)
@@ -540,7 +590,7 @@ class SpikesLabelTest(unittest.TestCase):
         got = subprocess.run([sys.executable, os.path.join(CLOUD, "spikes.py"), "--transport",
                               os.path.join(CLEAN, "run")], capture_output=True, text=True)
         self.assertEqual(got.returncode, 0, got.stderr)
-        self.assertIn("Azure host pause", got.stdout)
+        self.assertIn("host pause", got.stdout)
         self.assertIn("unexplained: none", got.stdout)
 
 
@@ -620,6 +670,159 @@ class AnalyseTest(unittest.TestCase):
     def test_stream_count_table(self):
         got = self.analyse(os.path.join(CLEAN, "run"))
         self.assertIn("### Set 2a by stream count", got)
+
+
+class EventsTest(unittest.TestCase):
+    """transport_events.py: vm.sh events-stop's log as the events file."""
+    # the trace's clock (mono, s) 100.0 is CLOCK_REALTIME 1,800,000,000 s
+    RT = 1_800_000_000 * 10**9
+
+    def log(self, trace=(), gaps=(), samples=(), notes=("events: trace on cpus 4,6 (test)",)):
+        d = tempfile.mkdtemp(prefix="transport-events-")
+        self.addCleanup(shutil.rmtree, d, True)
+        path = os.path.join(d, "p-a.log")
+        text = ["== clock", f"{100 * 10**9} {self.RT}", f"{200 * 10**9} {self.RT + 100 * 10**9}", "== notes", *notes]
+        text += ["== gapspin 6", *gaps, "== trace", *trace, "== osnoise", "== samples", *samples]
+        write(path, "\n".join(text) + "\n")
+        return path
+
+    def at(self, s):
+        return self.RT + int(round((s - 100) * 1e9))
+
+    def test_busy_thread_irq_softirq_ipi_preemption_and_page_faults(self):
+        import transport_events as te
+        trace = [
+            "  <idle>-0 [004] d..2. 100.000000: sched_switch: prev_comm=swapper/4 prev_pid=0 prev_prio=120 prev_state=R ==> next_comm=udp_lat next_pid=77 next_prio=120",
+            "  udp_lat-77 [004] d.h1. 101.000000: irq_handler_entry: irq=24 name=mana_q0",
+            "  udp_lat-77 [004] d.h1. 101.000040: irq_handler_exit: irq=24 ret=handled",
+            "  udp_lat-77 [004] ..s1. 101.000041: softirq_entry: vec=3 [action=NET_RX]",
+            "  udp_lat-77 [004] ..s1. 101.000071: softirq_exit: vec=3 [action=NET_RX]",
+            "  udp_lat-77 [004] d.h1. 102.000000: call_function_entry: vector=251",
+            "  udp_lat-77 [004] d.h1. 102.000005: call_function_exit: vector=251",
+            "  udp_lat-77 [004] d.... 103.000000: page_fault_user: address=0x7f00 ip=0x55 error_code=0x6",
+            "  udp_lat-77 [004] d..2. 104.000000: sched_switch: prev_comm=udp_lat prev_pid=77 prev_prio=120 prev_state=R+ ==> next_comm=kworker/4:1 next_pid=9 next_prio=120",
+            "  kworker/4:1-9 [004] d..2. 104.000300: sched_switch: prev_comm=kworker/4:1 prev_pid=9 prev_prio=120 prev_state=I ==> next_comm=udp_lat next_pid=77 next_prio=120",
+            # another task's fault on CPU 6, which no busy thread owns: dropped
+            "  bash-5 [006] d.... 105.000000: page_fault_user: address=0x1 ip=0x2 error_code=0x6",
+            "  udp_lat-77 [004] d..2. 199.000000: sched_switch: prev_comm=udp_lat prev_pid=77 prev_prio=120 prev_state=S ==> next_comm=swapper/4 next_pid=0 next_prio=120",
+            "# overrun cpu4 12",
+        ]
+        rows, notes = te.events(self.log(trace=trace))
+        got = {(k, cpu, d) for k, a, b, cpu, d in rows}
+        self.assertIn(("irq", 4, "mana_q0"), got)
+        self.assertIn(("softirq", 4, "NET_RX"), got)
+        self.assertIn(("ipi", 4, "call_function"), got)
+        self.assertIn(("page-fault", 4, "user 0x7f00"), got)
+        self.assertIn(("preempt", 4, "udp_lat:77 preempted, ran kworker/4:1"), got)
+        self.assertFalse([r for r in rows if r[3] == 6], rows)
+        irq = next(r for r in rows if r[0] == "irq")
+        self.assertEqual((irq[1], irq[2]), (self.at(101.0), self.at(101.00004)))
+        pre = next(r for r in rows if r[0] == "preempt")
+        self.assertEqual(pre[2] - pre[1], 300_000)
+        self.assertTrue(any("overran on cpu4: 12 events lost" in n for n in notes), notes)
+
+    def test_a_spinner_gap_the_trace_explains_is_no_host_pause(self):
+        import transport_events as te
+        trace = [
+            "  <idle>-0 [006] d..2. 100.000000: sched_switch: prev_comm=swapper/6 prev_pid=0 prev_prio=120 prev_state=R ==> next_comm=gapspin next_pid=50 next_prio=120",
+            "  gapspin-50 [006] d.h1. 110.000000: irq_handler_entry: irq=11 name=arch_timer",
+            "  gapspin-50 [006] d.h1. 110.000090: irq_handler_exit: irq=11 ret=handled",
+            "  gapspin-50 [006] d..2. 199.000000: sched_switch: prev_comm=gapspin prev_pid=50 prev_prio=120 prev_state=S ==> next_comm=swapper/6 next_pid=0 next_prio=120",
+        ]
+        # a 100 us gap the IRQ covers 90 us of, and one at 120 s nothing does
+        gaps = [f"{1_800_000_010.000095:.6f} 100.0", f"{1_800_000_020.000100:.6f} 100.0"]
+        rows, _ = te.events(self.log(trace=trace, gaps=gaps))
+        pauses = [r for r in rows if r[0] == "host-pause"]
+        self.assertEqual(len(pauses), 1, pauses)
+        self.assertEqual(pauses[0][3], 6)
+        self.assertTrue(pauses[0][4].startswith("100.0 µs of a 100.0 µs spinner gap untraced"), pauses)
+        # the spinner's CPU's own IRQ is no busy thread's: not an event
+        self.assertFalse([r for r in rows if r[0] == "irq"], rows)
+
+    def test_per_second_counters(self):
+        import transport_events as te
+        t0 = self.RT
+        samples = [f"t={t0} tc=eth1:100:0,eth2:50:0 tcp=RetransSegs=5;TCPTimeouts=1;TCPLossProbes=0;TCPDSACKRecv=0;TCPDSACKOfoRecv=0 aeron=naks-sent=3;naks-received=0;retransmits-sent=0",
+                   f"t={t0 + 10**9} tc=eth1:200:2,eth2:90:1 tcp=RetransSegs=9;TCPTimeouts=2;TCPLossProbes=1;TCPDSACKRecv=1;TCPDSACKOfoRecv=0 aeron=naks-sent=5;naks-received=1;retransmits-sent=2"]
+        rows, _ = te.events(self.log(samples=samples))
+        got = {r[0]: r[4] for r in rows}
+        self.assertEqual(got, {"tc-drop": "3", "tcp-retrans": "4", "tcp-rto": "1", "tcp-tlp": "1", "tcp-dsack": "1",
+                               "nak": "3", "retransmit": "2"})
+        self.assertTrue(all((r[1], r[2], r[3]) == (t0, t0 + 10**9, None) for r in rows))
+
+    def test_stalls_and_what_is_missing(self):
+        import transport_events as te
+        d = tempfile.mkdtemp(prefix="transport-events-")
+        self.addCleanup(shutil.rmtree, d, True)
+        stalls = os.path.join(d, "stalls-x.csv")
+        write(stalls, f"# start_realtime_ns={self.RT}\nend_ns,gap_ns\n2000000,150000\n")
+        rows, notes = te.events(os.path.join(d, "missing.log.gz"), (stalls, 4, "ping receive"))
+        self.assertEqual(rows, [("stall", self.RT + 1_850_000, self.RT + 2_000_000, 4, "ping receive loop 150.0 µs")])
+        self.assertTrue(notes[0].startswith("events unavailable: no events log"), notes)
+        rows, notes = te.events(self.log(notes=("events: trace unavailable: no tracefs at /sys/kernel/tracing",)))
+        self.assertIn("trace unavailable: no tracefs at /sys/kernel/tracing", notes)
+
+
+class TuneTest(unittest.TestCase):
+    """transport_tune.py's rule: better by more than the A/A band, ties keep the current value."""
+
+    def test_better_outside_the_band_and_ties(self):
+        import transport_tune as tt
+        dim = ("load", 1, "-")
+        cur, aa = {dim: [(1, 50_000, 300_000)]}, {dim: [(1, 52_000, 310_000)]}
+        self.assertTrue(tt.better({dim: [(1, 40_000, 300_000)]}, cur, aa, ranges=False)[0])
+        # within the 2 us band at p99.99, and the max no better outside its 10 us
+        self.assertFalse(tt.better({dim: [(1, 49_000, 295_000)]}, cur, aa, ranges=False)[0])
+        # p99.99 tied: the max decides
+        ok, why = tt.better({dim: [(1, 49_000, 200_000)]}, cur, aa, ranges=False)
+        self.assertTrue(ok and why.startswith("max better"), why)
+        # better at N=1, worse at N=128: not better
+        d2 = ("load", 128, "-")
+        two = lambda a, b: {dim: [(1, a, 300_000)], d2: [(1, b, 300_000)]}
+        self.assertFalse(tt.better(two(40_000, 90_000), two(50_000, 60_000), two(50_500, 60_500), ranges=False)[0])
+
+    def test_confirmation_needs_ranges_apart(self):
+        import transport_tune as tt
+        dim = ("load", 1, "-")
+        cur = {dim: [(1, 50_000, 1), (2, 51_000, 1), (3, 50_500, 1)]}
+        aa = {dim: [(1, 50_200, 1), (2, 50_900, 1), (3, 50_400, 1)]}
+        self.assertTrue(tt.better({dim: [(1, 45_000, 1), (2, 46_000, 1), (3, 45_500, 1)]}, cur, aa, ranges=True)[0])
+        self.assertFalse(tt.better({dim: [(1, 45_000, 1), (2, 50_100, 1), (3, 45_500, 1)]}, cur, aa, ranges=True)[0])
+
+    def test_two_sessions_merge_into_one_section(self):
+        import transport_tune as tt
+        d = tempfile.mkdtemp(prefix="transport-tune-")
+        self.addCleanup(shutil.rmtree, d, True)
+        env = os.path.join(d, "settings.env")
+        shutil.copyfile(os.path.join(CLOUD, "transport-settings.env"), env)
+        a = [tt.BEGIN + " x ====", "# Run 1", 'TR_TUNED_RUN="1"', 'TR_TUNED_SWEPT="capacity:mpsc"',
+             'TR_ARM_KNOBS="mpsc:capacity=1024"', "# changed mpsc capacity: 4096 -> 1024: p99.99 better", tt.END]
+        b = [tt.BEGIN + " x ====", "# Run 2", 'TR_TUNED_RUN="2"', 'TR_TUNED_SWEPT="congestion:eio-tcp,mio-tcp"',
+             'TR_ARM_KNOBS=""', "TR_TCP_CONGESTION=bbr", "# changed congestion (the hosts'): bbr: every arm", tt.END]
+        for n, sec in enumerate((a, b)):
+            write(os.path.join(d, f"s{n}"), "\n".join(sec) + "\n")
+            self.assertEqual(tt.main(["apply", env, os.path.join(d, f"s{n}")]), 0)
+        tr = tt.read_settings(env)
+        self.assertEqual(tr["TR_TUNED_RUN"], "1 2")
+        self.assertEqual(tr["TR_ARM_KNOBS"], "mpsc:capacity=1024")
+        self.assertEqual(tr["TR_TUNED_SWEPT"], "capacity:mpsc congestion:eio-tcp,mio-tcp")
+        self.assertEqual(tr["TR_TCP_CONGESTION"], "bbr")
+        self.assertEqual(read(env).count(tt.BEGIN), 1)
+        self.assertIn("# changed mpsc capacity", read(env))
+
+    def test_sweep_plan(self):
+        import transport_tune as tt
+        d = tempfile.mkdtemp(prefix="transport-tune-")
+        self.addCleanup(shutil.rmtree, d, True)
+        self.assertEqual(tt.main(["sweep", "--settings", os.path.join(CLOUD, "transport-settings.env"), "--out", d,
+                                  "--pair", "b", "--knobs", "rto_min_us,congestion", "--absent", "congestion=bbr",
+                                  os.path.join(CLOUD, "transport-matrix.tsv")]), 0)
+        sets = [l for l in read(os.path.join(d, "tune-sweep.tsv")).splitlines() if l.startswith("set ")]
+        # rto_min_us for both TCP arms (pair b: they are in loss sets), at 1
+        # and 128 connections, without and with netem; no bbr to sweep
+        self.assertEqual(sets, [
+            "set fan.1 tune - ab 50000 1,128 -,0.1 mio-tcp--rto_min_us-5000,mio-tcp--rto_min_us-2000,mio-tcp--rto_min_us-10000,aa",
+            "set fan.2 tune - ab 50000 1,128 -,0.1 eio-tcp--rto_min_us-5000,eio-tcp--rto_min_us-2000,eio-tcp--rto_min_us-10000,aa"])
 
 
 if __name__ == "__main__":

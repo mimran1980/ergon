@@ -21,6 +21,8 @@
 #   local-vm.sh transport-net [check] the sysctls written (check: read) back
 #   local-vm.sh netem set <pct>|clear|check <pct|none>|stats   netem on lo
 #   local-vm.sh sample | irqsnap | nstat | settings   as vm.sh's
+#   local-vm.sh events-start <point> <traced cpus> <spinner cpus|-> [aeron] | events-stop <point>   as vm.sh's,
+#                                     each host its own trace instance; osnoise host a's alone
 set -euo pipefail
 export PATH=/usr/local/sbin:/usr/sbin:/sbin:$PATH
 self=$(readlink -f "$0")
@@ -31,6 +33,7 @@ here=$(dirname "$self")
 . "$here/host.sh"
 # shellcheck source=transport-settings.env
 . "$here/transport-settings.env"
+transport_overrides || exit 2
 TR_AERON_DIR=${LOCAL_SMOKE_AERON_DIR:-/dev/shm/aeron-transport-smoke}
 run=$HOME/bench
 mkdir -p "$run"
@@ -86,6 +89,14 @@ driver)
         export AERON_SOCKET_SO_RCVBUF=2097152 AERON_RCV_INITIAL_WINDOW_LENGTH=2097152
         export AERON_SENDER_WILDCARD_PORT_RANGE='20000 20999' AERON_RECEIVER_WILDCARD_PORT_RANGE='21000 21999'
         export ERGON_HOST_CHECKS=warn
+        # the mode's own driver settings (a tuning variant's: the socket
+        # buffer, the NAK delay, SHARED threading on the sender's CPU)
+        for kv in ${mode//@/ }; do
+            case $kv in
+            AERON_THREADING_MODE=SHARED) export AERON_THREADING_MODE=SHARED AERON_CONDUCTOR_CPU_AFFINITY=$sender AERON_SHARED_IDLE_STRATEGY=noop ;;
+            AERON_*=* | RUSTERON_*=*) export "${kv?}" ;;
+            esac
+        done
         exec nohup taskset -c "$hk" "$tools/media_driver" </dev/null >"$shared/driver.log" 2>&1
     ) &
     echo $! >"$shared/driver.pid"
@@ -95,7 +106,10 @@ driver)
         sleep 0.2
     done
     grep -q "media driver started" "$shared/driver.log" || { cat "$shared/driver.log" >&2; exit 1; }
-    sysctl -qw net.core.busy_read="$TR_BUSY_READ" net.core.busy_poll="$TR_BUSY_POLL"
+    # kernel-busy's busy poll; kernel (no busy poll) 0, as vm.sh driver has them
+    busy=$TR_BUSY_READ
+    [[ ${mode%%@*} == kernel ]] && busy=0
+    sysctl -qw net.core.busy_read="$busy" net.core.busy_poll="$busy"
     echo "driver: $mode, the box's (pid $(driver_pid)): conductor $app2, sender $sender, receiver $receiver (app $app unused)"
     ;;
 stop)
@@ -109,7 +123,12 @@ stop)
     ;;
 transport-net)
     if [[ ${2:-} == check ]]; then transport_sysctls_apply check >/dev/null && echo "transport-net: settings hold"; exit; fi
+    transport_cc_load
     transport_sysctls_apply
+    ;;
+cc-available)
+    modprobe tcp_bbr 2>/dev/null || true
+    cat /proc/sys/net/ipv4/tcp_available_congestion_control
     ;;
 netem)
     case ${2:-} in
@@ -130,6 +149,35 @@ sample)
 irqsnap) cat /proc/interrupts ;;
 nstat) transport_nstat ;;
 settings) transport_settings_read ;;
+events-start)
+    # as vm.sh's, each host its own trace instance (one kernel for both): host
+    # a also runs osnoise (vm.sh's knoise_start) where the kernel has it
+    read -r hk _ _ < <(map)
+    [[ -x $shared/gapspin ]] || gcc -O2 -o "$shared/gapspin" "$here/gapspin.c" || exit 1
+    if [[ $host == a ]]; then
+        eval "$(for f in knoise_start knoise_stop; do awk -v f="$f() {" '$0 == f {on = 1} on {print} on && $0 == "}" {exit}' "$here/vm.sh"; done)"
+    else
+        export EVENTS_NO_OSNOISE="the smoke's two hosts are one kernel: host a's osnoise"
+    fi
+    adir=-
+    [[ ${5:-} == aeron ]] && adir=$TR_AERON_DIR
+    counters=-
+    [[ -x $tools/counters ]] && counters=$tools/counters
+    events_start "$run/events/${2:?point}" "ergon-events-$host" "$hk" "${3:?traced cpus}" "${4:--}" "$shared/gapspin" "$TR_EVENTS_GAPSPIN_US" \
+        "$adir" "$counters" "$TR_EVENTS_BUFFER_KB" lo
+    ;;
+events-stop-all)
+    read -r _ _ iso < <(map)
+    for d in "$run"/events/*/; do [[ -d $d ]] && events_stop "${d%/}" "ergon-events-$host" "$iso" >/dev/null 2>&1; done
+    true
+    ;;
+events-stop)
+    read -r _ _ iso < <(map)
+    if [[ $host == a ]]; then
+        eval "$(awk -v f='knoise_stop() {' '$0 == f {on = 1} on {print} on && $0 == "}" {exit}' "$here/vm.sh")"
+    fi
+    events_stop "$run/events/${2:?point}" "ergon-events-$host" "$iso"
+    ;;
 *)
     awk 'NR > 1 && !/^#/ {exit} NR > 1 {print}' "$self" >&2
     exit 2

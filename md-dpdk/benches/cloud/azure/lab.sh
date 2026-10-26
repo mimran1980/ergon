@@ -96,7 +96,17 @@
 #   any az call; LAB_EXTRA_SRC: a source tree copied to ~/extra on both VMs
 #   and built there by its own lab-build.sh, whose binaries the arms file's
 #   arms may name. TRANSPORT_WARMUP_S (30), TRANSPORT_POINT_S (30) and
-#   TRANSPORT_SWITCH_S (5): the plan's durations
+#   TRANSPORT_SWITCH_S (5): the plan's durations. LAB_SETS_FILE: set rows
+#   in place of the matrix's (its arms kept): the cloud smoke's
+#   ../transport-cloud-smoke.tsv, every arm at one load.
+#   LAB_TUNE=1: the pair's tuning session in place of its sets (session
+#   tune-<pair>, ../transport_tune.py): each arm's knob sweeps of
+#   ../transport-settings.env (TR_SWEEP_*; pair a the arms of no loss set,
+#   pair b the TCP arms and aeron-rel), the better values confirmed, the
+#   frozen choice written into this checkout's transport-settings.env (its
+#   tuned section) as the session ends, for the comparison sessions;
+#   LAB_TUNE_ARMS and LAB_TUNE_KNOBS (comma lists) cut it down. Its
+#   estimate gives the confirmation at most and likely
 #   LAB_PRIORITY (Regular; Spot for smoke and tuning runs only): Spot VMs
 #   with eviction policy Delete; each minute (LAB_EVICTION_POLL) both are
 #   looked for, and one Azure evicted ends the run through its teardown at
@@ -138,8 +148,12 @@ trap remove_snapshot EXIT
 # transport latency suite (transport.sh), one pair session of it
 suite=${LAB_SUITE:-latency}
 pair=${LAB_PAIR:-}
+# LAB_TUNE=1: the pair's tuning session (tune-a, tune-b) instead of its sets
+tune=${LAB_TUNE:-}
+[[ $tune == 1 && ($pair == a || $pair == b) ]] && pair=tune-$pair
 priority=${LAB_PRIORITY:-Regular}
 arms_file=${LAB_ARMS_FILE:-}
+sets_file=${LAB_SETS_FILE:-}
 extra_src=${LAB_EXTRA_SRC:-}
 case $suite in
 latency) default_size=Standard_D8s_v6 default_hours=8 ;;
@@ -251,8 +265,15 @@ if [[ $suite == transport ]]; then
     # arms), the Aeron arms' driver modes and their conductor's core on both
     # sizes, before any az call
     # LAB_ESTIMATE=1 without a pair: both pairs' estimates
-    [[ $pair == a || $pair == b || ( -z $pair && ${LAB_ESTIMATE:-} == 1 ) ]] ||
+    [[ -z $tune || $tune == 1 ]] || die "LAB_TUNE is 1 or unset, not $tune"
+    [[ $pair == a || $pair == b || $pair == tune-a || $pair == tune-b || ( -z $pair && ${LAB_ESTIMATE:-} == 1 ) ]] ||
         die "LAB_PAIR is a or b with LAB_SUITE=transport (the session of transport-matrix.tsv to run), not [${pair}]"
+    [[ -z $tune || -z $sets_file ]] || die "LAB_TUNE=1 sweeps the matrix's arms in their own sets' context: no LAB_SETS_FILE"
+    if [[ -n $sets_file ]]; then
+        [[ -r $sets_file ]] || die "LAB_SETS_FILE $sets_file: not a readable file"
+        sets_file=$(cd "$(dirname "$sets_file")" && pwd)/${sets_file##*/}
+    fi
+    tr_sets_file=$sets_file
     [[ $run_stamp =~ ^[0-9]{8}-[0-9]{6}$ ]] || die "LAB_RUN_STAMP is <yyyymmdd>-<hhmmss>, not $run_stamp"
     [[ ${LAB_MODES:-}${LAB_LOCAL_MODES:-} == "" ]] || die "LAB_MODES and LAB_LOCAL_MODES are the latency suite's: LAB_SUITE=transport runs transport-matrix.tsv's arms"
     if [[ -n $extra_src ]]; then
@@ -262,7 +283,9 @@ if [[ $suite == transport ]]; then
     [[ -z $arms_file ]] || arms_file=$(cd "$(dirname "$arms_file")" && pwd)/${arms_file##*/}
     # shellcheck source=../transport.sh
     . "$here/../transport.sh"
-    for p in ${pair:-a b}; do
+    all_pairs="a b"
+    [[ $tune == 1 ]] && all_pairs="tune-a tune-b"
+    for p in ${pair:-$all_pairs}; do
         points=$(tr_check "$p" "$arms_file" 2>&1) || die "$points"
     done
     for m in "kernel-busy$TR_AERON_MODE_SUFFIX" "dpdk$TR_AERON_MODE_SUFFIX"; do
@@ -274,7 +297,8 @@ if [[ $suite == transport ]]; then
     seed=${LAB_SEED:-$(od -An -N4 -tu4 /dev/urandom | tr -d ' ')}
     [[ $seed =~ ^[0-9A-Za-z_-]{1,40}$ ]] || die "LAB_SEED is letters, digits, - and _ (the session's seed), not $seed"
 else
-    [[ -z $pair && -z $arms_file && -z $extra_src ]] || die "LAB_PAIR, LAB_ARMS_FILE and LAB_EXTRA_SRC are the transport suite's (LAB_SUITE=transport)"
+    [[ -z $pair && -z $arms_file && -z $extra_src && -z $sets_file && -z $tune ]] ||
+        die "LAB_PAIR, LAB_ARMS_FILE, LAB_SETS_FILE, LAB_EXTRA_SRC and LAB_TUNE are the transport suite's (LAB_SUITE=transport)"
     for m in "${modes[@]}"; do
         why=$(mode_check "$m" remote "$arch" azure "" 2>&1) || die "$why"
         # the layout's fifth core on both sizes (vm.sh ready would find it missing
@@ -320,7 +344,9 @@ if [[ $suite == transport ]]; then
     plan=(--cloud azure --suite transport --pair "$pair" --type-a "$size_a" --type-b "$size_b" --reps "$reps"
         --max-hours "$max_hours" --priority "$priority" --transport-warmup-s "${TRANSPORT_WARMUP_S:-30}"
         --transport-point-s "${TRANSPORT_POINT_S:-30}" --transport-switch-s "${TRANSPORT_SWITCH_S:-5}"
-        --matrix "$here/../transport-matrix.tsv" ${arms_file:+--matrix "$arms_file"})
+        --matrix "$here/../transport-matrix.tsv${sets_file:+:arms}" ${sets_file:+--matrix "$sets_file"}
+        ${arms_file:+--matrix "$arms_file"} ${tune:+--tune --settings "$here/../transport-settings.env"}
+        --tune-arms "${LAB_TUNE_ARMS:-}" --tune-knobs "${LAB_TUNE_KNOBS:-}")
 fi
 if [[ ${LAB_ESTIMATE:-} == 1 ]]; then
     python3 "$here/../estimate.py" "${plan[@]}"
@@ -515,7 +541,18 @@ if [[ $suite == transport ]]; then
     vm_a=$group/a vm_b=$group/b
     echo "$seed" >"$out/seed"
     transport_prepare
-    transport_remote "$pair" || die "transport pair $pair failed ($out/transport)"
+    session_ok=1
+    transport_remote "$pair" || session_ok=
+    if [[ $tune == 1 && -s $out/transport/tuned.env ]]; then
+        # the frozen choice into this checkout's transport-settings.env (the
+        # comparison sessions run it; commit it with the run's tune-report.md).
+        # A session with failed variants still froze: a knob whose rounds did
+        # not complete keeps its current value (tune-report.md says which)
+        python3 "$here/../transport_tune.py" apply "$repo/md-dpdk/benches/cloud/transport-settings.env" "$out/transport/tuned.env" ||
+            die "the tuned section was not written ($out/transport/tuned.env)"
+        log "tune: $(grep -c '^# changed' "$out/transport/tuned.env") knobs changed: $repo/md-dpdk/benches/cloud/transport-settings.env (evidence $out/transport/tune-report.md)"
+    fi
+    [[ -n $session_ok ]] || die "transport pair $pair failed ($out/transport)"
     log "transport pair $pair: $(grep -c . "$out/transport/results.csv" 2>/dev/null || echo 0) rows in $out/transport/results.csv"
 else
     run_bench

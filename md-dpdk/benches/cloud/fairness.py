@@ -18,8 +18,8 @@ concerns. Rules:
   irq              no data-NIC IRQ on a hot CPU; IRQs read on every host
   hostcheck        every host's report clean (no warn, no unproven blocking check)
   settings         every knob as transport-settings.env gives it, none it does not
-  shared-knob      a per-arm knob swept for every arm of the round that has it,
-                   never also shared
+  shared-knob      a per-arm knob the round's arms run at different values swept
+                   for every arm of the round that has it; never also shared
   order            a seed and the round's arms in its recorded order; seeds
                    distinct and orders not all the same across reps
   aa               an A/A arm in every round, repeating an arm of the round
@@ -261,13 +261,19 @@ def check(run_dir):
                         add("settings", set_, [p.tag], f"{p.tag}: {host} {k}={got[k]} is not in the env for {arm}")
             for k in sorted(set(shared) & {k for knobs in per_arm.values() for k in knobs}):
                 add("shared-knob", set_, tags, f"round {rid}: {k} is both shared and per arm")
-            for arm in sorted({arm_key(p) for p in ps}):
-                for k in sorted(per_arm.get(arm, {})):
-                    swept = sweep.get(k, set())
-                    need = reported[k] | {arm}
-                    if not need <= swept:
-                        add("shared-knob", set_, tags, f"round {rid}: {arm}'s {k} needs a sweep for "
-                            f"{', '.join(sorted(need - swept))} (sweep.{k}={','.join(sorted(swept)) or 'none'})")
+            # a per-arm knob the round's arms run at different values: every
+            # arm of the round that has it swept for it (one at the same
+            # value everywhere is no arm's own tweak)
+            round_arms = {arm_key(p) for p in ps}
+            for k in sorted({k for arm in round_arms for k in per_arm.get(arm, {})}):
+                have = (reported[k] | {arm for arm in round_arms if k in per_arm.get(arm, {})})
+                values = {per_arm[arm][k] for arm in have if k in per_arm.get(arm, {})}
+                swept = sweep.get(k, set())
+                if len(values) > 1 and not have <= swept:
+                    add("shared-knob", set_, tags, f"round {rid}: {k} differs across its arms "
+                        f"({', '.join(a + ' ' + per_arm.get(a, {}).get(k, '?') for a in sorted(have))}), and "
+                        f"{', '.join(sorted(have - swept))} was not swept for it "
+                        f"(sweep.{k}={','.join(sorted(swept)) or 'none'})")
 
         for p in ps:
             m, hosts = p.manifest, hosts_of(p.set)
