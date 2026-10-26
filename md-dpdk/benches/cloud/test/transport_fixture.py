@@ -79,6 +79,15 @@ eio-udp.socket.busy_poll_us=50
 sweep.socket.busy_poll_us=mio-udp,eio-udp
 mio-tcp.tcp.quickack=1
 sweep.tcp.quickack=mio-tcp
+# the data NICs' interrupt deferral (napi_defer_hard_irqs, read back per
+# point): each technology at its own best (best.knob.napi_defer), Aeron's
+# busy-polling kernel path deferred, the sockets not
+aeron-kernel.knob.napi_defer=2
+aeron-self-udp.knob.napi_defer=2
+mio-udp.knob.napi_defer=0
+eio-udp.knob.napi_defer=0
+mio-tcp.knob.napi_defer=0
+best.knob.napi_defer=aeron-kernel:2,aeron-self-udp:2,eio-udp:0,mio-tcp:0,mio-udp:0
 """
 
 HOSTCHECK = """\

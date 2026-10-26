@@ -771,7 +771,19 @@ settings) (. "$FAKE_CLOUD/transport-settings.env"; . "$FAKE_CLOUD/host.sh"; tran
     awk '{k = $1; gsub("/", ".", k); v = $2; for (i = 3; i < NF; i++) v = v " " $i; print k "=" ($NF == "optional" ? "absent" : v)}' ;;
 nstat) n=$(cat "$st/s" 2>/dev/null || echo 0); n=$((n + 1)); echo $n >"$st/s"
     printf 'Tcp: RetransSegs InSegs\nTcp: %d %d\nUdp: InErrors\nUdp: 0\n' "$n" "$((n * 100))" ;;
-driver | stop | transport-net | events-stop-all) ;;
+# the data NICs' interrupt deferral (napi_defer_hard_irqs, gro_flush_timeout),
+# both NICs alike: kernel-busy's driver sets 2/200000, kernel's 0/0;
+# transport-net the settings' TR_NAPI_DEFER/TR_GRO_FLUSH_NS under the arm's
+# TR_OVERRIDES (logged); napi reads them back as vm.sh napi prints them
+driver) case $2 in kernel-busy*) echo "2 200000" >"$st/napi" ;; kernel | kernel@*) echo "0 0" >"$st/napi" ;; esac ;;
+transport-net)
+    if [[ ${2:-} != check ]]; then
+        v=$(. "$FAKE_CLOUD/transport-settings.env"; . "$FAKE_CLOUD/host.sh"; transport_overrides; echo "$TR_NAPI_DEFER $TR_GRO_FLUSH_NS")
+        echo "$v" >"$st/napi"
+        echo "$FAKE_HOST transport-net napi $v" >>"$FAKE_HOSTS/calls"
+    fi ;;
+napi) read -r n ns <"$st/napi" 2>/dev/null || { n=2 ns=200000; }; printf 'enP1 %s %s\nenP2 %s %s\n' "$n" "$ns" "$n" "$ns" ;;
+stop | events-stop-all) ;;
 cc-available) echo "reno cubic" ;;
 # a point's events: begun (logged), then read back as host.sh events_stop
 # prints them: the trace's clock the wall clock's, and on the host that
@@ -1010,6 +1022,30 @@ grep -q '^knob.busy_read_us=50$' "$m" && grep -q '^knob.quickack_per_read=on$' "
     why+=" a point's knobs: $(grep '^knob' "$m" | tr '\n' ' ');"
 m=$(grep -l '^mode=aeron-rel@STREAMS=1@NETEM=0.1$' "$d"/manifest/*.env | head -1)
 grep -q '^driver_mode=kernel-busy@CONDUCTOR=own@' "$m" || why+=" an Aeron point's driver mode: $(grep '^driver_mode' "$m");"
+# the data NICs' interrupt deferral, each arm at its own best: every socket
+# point with none (0/0 on every NIC of both hosts: its own host settings,
+# transport-net with TR_OVERRIDES), every Aeron kernel UDP point at
+# kernel-busy's 2/200000, each read back after the point; the hosts' own
+# (2/200000) put back after each socket arm; none read under DPDK or IPC
+nw=
+for m in $(grep -l '^setup=sockets$' "$d"/manifest/*.env); do
+    grep -q '^knob.napi_defer=0$' "$m" && grep -q '^napi_a=enP1:0/0,enP2:0/0$' "$m" && grep -q '^napi_b=enP1:0/0,enP2:0/0$' "$m" &&
+        grep -q '^napi_defer_a=0$' "$m" && grep -q '^napi_defer_b=0$' "$m" || nw+=" $(grep '^mode=' "$m"): $(grep -E '^(knob.napi|napi)' "$m" | tr '\n' ' ');"
+done
+[[ $(grep -l '^setup=sockets$' "$d"/manifest/*.env | wc -l | tr -d ' ') -gt 0 ]] || nw+=" no socket point;"
+for m in $(grep -lE '^arm=(aeron-rel|aeron-self)$' "$d"/manifest/*.env); do
+    grep -q '^knob.napi_defer=2$' "$m" && grep -qE '^napi_[ab]=enP1:2/200000,enP2:2/200000$' "$m" && grep -qE '^napi_defer_[ab]=2$' "$m" &&
+        ! grep -qE '^napi_[ab]=.*:0/' "$m" ||
+        nw+=" $(grep '^mode=' "$m"): $(grep -E '^(knob.napi|napi)' "$m" | tr '\n' ' ');"
+done
+! grep -lE '^arm=(mpsc|aeron-ipc|aeron-spy|dpdk-aeron-self)$' "$d"/manifest/*.env | xargs grep -lE '^(knob\.napi_defer|napi_)' >/dev/null 2>&1 || nw+=" a NIC deferral recorded for a non-UDP or DPDK arm;"
+for h in a b; do
+    s=$(grep "^$h transport-net napi " "$sb/calls" | cut -d' ' -f4,5 | tr '\n' ';')
+    [[ $s =~ ^(0\ 0\;2\ 200000\;)+$ ]] || nw+=" host $h's transport-net NIC deferral not 0/0 for each socket arm, put back after: $s;"
+done
+grep -q '^mio-tcp.knob.napi_defer=0$' "$d/transport-settings.env" && grep -q '^aeron-rel.knob.napi_defer=2$' "$d/transport-settings.env" &&
+    grep -qE '^best.knob.napi_defer=(.*,)?aeron-rel:2,(.*,)?mio-tcp:0(,|$)' "$d/transport-settings.env" || nw+=" collected: $(grep napi "$d/transport-settings.env" | tr '\n' ' ');"
+[[ -z $nw ]] || why+=" NIC deferral:$nw"
 echo "$tables" >"$tmp/tables.md"
 # every point's events on each host it used: begun before its binaries
 # (the fake's log orders them), read back after, gzipped, laid out per host
@@ -1114,6 +1150,26 @@ got=$(
 kernel-busy$(. "$cloud/transport-settings.env"; echo "$TR_AERON_MODE_SUFFIX")" ]] || why+=" the tuned flags: $got;"
 [[ -z $why ]] && pass "transport.sh run tune-a (LAB_TUNE=1): the sweep of each arm and knob (its current value first and its A/A), the confirmation of the value that beat it at 3 reps, the frozen choice with its evidence (tuned.env, tune-report.md), fairness's shared-knob rule clean on the variants, the section applied and its values the comparison's flags" ||
     fail "transport.sh run tune:$why"
+
+# the socket arms' data-NIC interrupt deferral swept (TR_SWEEP_NAPI_DEFER),
+# cut down to mio-udp: its default 0 first, then 2; each variant's points on
+# its own value (0/0, or 2/200000: transport-net's TR_OVERRIDES), read back,
+# the variant at 2 accepted as swept (shared-knob, settings and napi clean)
+trun tune-a 1 "" tune_arms=mio-udp tune_knobs=napi_defer && trc=0 || trc=$?
+t=$sb/a/bench/transport-tune-a
+why=
+[[ $trc == 0 ]] || why+=" exit $trc: $(grep -E 'ERROR|tune:' "$sb/run.out" | tail -3 | tr '\n' ' ');"
+grep -q '^mio-udp--napi_defer-0 mio-udp napi_defer 0 1 ' "$t/variants.txt" 2>/dev/null && grep -q '^mio-udp--napi_defer-2 mio-udp napi_defer 2 0 ' "$t/variants.txt" ||
+    why+=" variants: $(tr '\n' ' ' <"$t/variants.txt" 2>/dev/null);"
+m0=$(grep -l '^arm=mio-udp--napi_defer-0$' "$t"/manifest/*.env 2>/dev/null | head -1)
+m2=$(grep -l '^arm=mio-udp--napi_defer-2$' "$t"/manifest/*.env 2>/dev/null | head -1)
+[[ -n $m0 && -n $m2 ]] && grep -q '^napi_a=enP1:0/0,enP2:0/0$' "$m0" && grep -q '^napi_b=enP1:0/0,enP2:0/0$' "$m0" &&
+    grep -q '^napi_a=enP1:2/200000,enP2:2/200000$' "$m2" && grep -q '^napi_defer_b=2$' "$m2" && grep -q '^knob.napi_defer=2$' "$m2" ||
+    why+=" the variants' NICs: $(grep -hE '^(arm|napi)' "$m0" "$m2" 2>/dev/null | tr '\n' ' ');"
+fv=$(python3 "$cloud/fairness.py" "$t" 2>&1)
+! grep -qE '^(shared-knob|settings|napi):' <<<"$fv" || why+=" fairness: $(grep -E '^(shared-knob|settings|napi):' <<<"$fv" | head -3 | tr '\n' ' ');"
+[[ -z $why ]] && pass "transport.sh run tune-a: the socket arms' data-NIC interrupt deferral swept (0, the default, and 2), each variant's NICs at its own value and read back, fairness clean on the variants" ||
+    fail "transport.sh run tune, NIC deferral:$why"
 
 if kill -0 "$bystander" 2>/dev/null; then
     pass "transport.sh run: its exit stops only the bench binaries it started (by their recorded PIDs), never another process of the same name"

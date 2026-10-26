@@ -118,6 +118,7 @@ shared.<knob>=<value>          every arm, both hosts
 <arm>.<knob>=<value>           that arm only
 sweep.<knob>=<arm>,<arm>,...   the arms swept for a per-arm knob
 declared.<arm>=<twin>:<knob>   arm is twin but for this knob (a declared technology difference)
+best.<knob>=<arm>:<value>,...  each arm's technology's best value of a knob (TR_BEST_BY_TECHNOLOGY)
 ```
 
 An arm reporting a knob the file does not give it, or a different value,
@@ -134,17 +135,34 @@ breaks the settings rule. transport_collect.py writes:
   read back from the binary's manifest where it reports it, or from the
   host: `knob.aeron_page`, the page size of every Aeron arm's directory
   (`vm.sh aeron-page`: 4096 on tmpfs, 2097152 on aeron-ipc-huge's hugetlbfs;
-  `unread` when the read failed).
+  `unread` when the read failed), and `knob.napi_defer`, the data NICs'
+  interrupt deferral of every socket arm and Aeron kernel UDP arm (`vm.sh
+  napi` after the point: `n` where every NIC has `n`/`TR_GRO_FLUSH_NS`, 0
+  for 0/0, else each NIC's `<nic>:<n>/<ns>`; the runner's `napi_<host>`
+  keeps each NIC's as read).
 - `sweep.<knob>`: the arms a tuning session swept for it: the tuned
   section's `TR_TUNED_SWEPT`, and in a tuning session its variants.
 - `declared.<arm>`: each `TR_DECLARED` arm that ran, its twin and the
   `knob.<name>` it differs in (`declared.aeron-ipc-huge=aeron-ipc:knob.aeron_page`).
+- `best.knob.<name>`: for each `TR_BEST_BY_TECHNOLOGY` knob, each arm that
+  ran with it and its technology's best value: `napi_defer`, a socket arm's
+  `TR_SOCKET_NAPI_DEFER` (0), an Aeron kernel UDP arm's driver's
+  (kernel-busy: `TR_NAPI_DEFER`, 2; kernel: 0).
 
 The shared-knob rule: where the arms of a round run a per-arm knob at
 different values, every arm of the round that has it needs a `sweep.` line
 naming it (one value everywhere is no arm's own tweak); a knob is never both
 `shared.` and per-arm. The A/A arm is checked against `aa_of`'s settings. A
-declared arm's own knob is left out of it while its twin is in the round.
+declared arm's own knob is left out of it while its twin is in the round,
+and an arm at its `best.` value needs no sweep (an arm off it still does).
+
+The napi rule: a socket arm's point (the runner's `setup=sockets`, else a
+`tcp` or `udp` transport) needs interrupt deferral off on every data NIC of
+every host it used (`knob.napi_defer` read back 0, each NIC of `napi_<host>`
+0/0). Its epoll waits with a zero timeout and never busy-polls, so a deferred
+interrupt leaves each packet waiting for the gro_flush timer (ergon-io's N2
+check warns of it). Only an arm a tuning session swept and froze at a
+non-zero value may run with it.
 
 The declared rule: a declared arm runs in every round with its twin, and
 nothing but its knob differs between them: every other per-arm knob, the

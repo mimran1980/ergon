@@ -430,6 +430,15 @@ tr_knob() {
     aeron_threading) echo "$TR_AERON_IPC_THREADING" ;;
     capacity) echo "$TR_MPSC_CAPACITY" ;;
     aeron_page) echo "$TR_AERON_PAGE" ;;
+    # an Aeron arm's: its media driver's (kernel-busy defers, kernel not);
+    # a socket arm's own default (transport-settings.env TR_SOCKET_NAPI_DEFER)
+    napi_defer)
+        if [[ $bin == aeron_lat ]]; then
+            if [[ $(tr_knob aeron_path) == kernel-busy ]]; then echo "$TR_NAPI_DEFER"; else echo 0; fi
+        else
+            echo "$TR_SOCKET_NAPI_DEFER"
+        fi
+        ;;
     *) echo "tr_knob: no knob $k" >&2; return 2 ;;
     esac
 }
@@ -464,12 +473,15 @@ tr_arm_knobs() {
         elif [[ $a == *" --mode ipc "* ]]; then
             echo aeron_threading
         elif [[ $a == *" --mode udp "* ]]; then
-            echo aeron_path aeron_so_rcvbuf
+            echo aeron_path aeron_so_rcvbuf napi_defer
         fi
         [[ $a == *" --mode udp "* && $a == *" --reliable true "* ]] && echo nak_delay_ns
         ;;
     mpsc_lat) echo capacity ;;
     esac
+    # every arm on the kernel's sockets (an arms file's binary too): the data
+    # NICs' interrupt deferral, its own host setting (tr_host_overrides)
+    [[ ${setup:-} != sockets ]] || echo napi_defer
     return 0
 }
 
@@ -510,14 +522,46 @@ tr_driver_busy() {
 
 # tr_host_overrides: the TR_OVERRIDES the current arm's host set-up runs
 # with (vm.sh transport-net, driver): its congestion control where not the
-# hosts' default, and under the kernel path (no busy poll) the busy-poll
-# sysctls kernel's driver sets (0) for transport-net check
+# hosts' default, under the kernel path (no busy poll) the busy-poll
+# sysctls kernel's driver sets (0) for transport-net check, and a socket
+# arm's data-NIC interrupt deferral where not the hosts' (napi_defer: 0 is
+# 0/0, n is n/TR_GRO_FLUSH_NS)
 tr_host_overrides() {
-    local o= knobs
+    local o= knobs n g
     knobs=" $(tr_arm_knobs | tr '\n' ' ') "
     [[ $knobs == *" congestion "* && $(tr_knob congestion) != "$TR_TCP_CONGESTION" ]] && o+="TR_TCP_CONGESTION=$(tr_knob congestion) "
     [[ $knobs == *" aeron_path "* && $(tr_knob aeron_path) == kernel ]] && o+="TR_BUSY_READ=0 TR_BUSY_POLL=0 "
+    if [[ ${setup:-} == sockets && $knobs == *" napi_defer "* ]]; then
+        n=$(tr_knob napi_defer) g=0
+        [[ $n == 0 ]] || g=$TR_GRO_FLUSH_NS
+        [[ $n == "$TR_NAPI_DEFER" && $g == "$TR_GRO_FLUSH_NS" ]] || o+="TR_NAPI_DEFER=$n TR_GRO_FLUSH_NS=$g "
+    fi
     echo "${o% }"
+}
+
+# tr_napi_value <file>: the knob napi_defer as a host's data NICs had it
+# (vm.sh napi: "<nic> <napi_defer_hard_irqs> <gro_flush_timeout>" a line):
+# n where every NIC has n/TR_GRO_FLUSH_NS (0: 0/0), else "<nic>:<n>/<ns>,..."
+# as read (no knob value: the settings rule refuses it), unread for none
+tr_napi_value() {
+    local nic n ns v= raw=
+    while read -r nic n ns; do
+        [[ -n $nic ]] || continue
+        raw+="$nic:$n/$ns,"
+        if [[ $n == 0 && $ns == 0 ]] || [[ $n =~ ^[1-9][0-9]*$ && $ns == "$TR_GRO_FLUSH_NS" ]]; then
+            [[ -z $v || $v == "$n" ]] && v=$n || v=mixed
+        else
+            v=mixed
+        fi
+    done <"$1"
+    if [[ -z $raw ]]; then echo unread; elif [[ $v == mixed ]]; then echo "${raw%,}"; else echo "$v"; fi
+}
+
+# tr_napi_raw <file>: "<nic>:<n>/<ns>,..." as vm.sh napi read them, unread for none
+tr_napi_raw() {
+    local out
+    out=$(awk 'NF == 3 {printf "%s%s:%s/%s", sep, $1, $2, $3; sep = ","}' "$1" 2>/dev/null)
+    echo "${out:-unread}"
 }
 
 # tr_timer_args: "--rto-min-us N --delack-max-us N " for the timers both
@@ -606,6 +650,8 @@ tr_snap() {
         esac
         [[ $1 == before ]] || on "$(tr_host "$h")" "$vm settings" >"$dir/settings/$2-$h" 2>/dev/null
         [[ $1 == before || $bin != aeron_lat ]] || on "$(tr_host "$h")" "$(tr_arm_vm) aeron-page" >"$dir/aeronpage/$2-$h" 2>/dev/null
+        # the data NICs' interrupt deferral, where the arm has it as a knob
+        [[ $1 == before || " $(tr_arm_knobs | tr '\n' ' ') " != *" napi_defer "* ]] || on "$(tr_host "$h")" "$vm napi" >"$dir/napi/$2-$h" 2>/dev/null
     done
 }
 
@@ -642,6 +688,7 @@ tr_manifest() {
         # the arm's per-arm knobs as it ran them (transport_collect.py
         # declares them; fairness.py's settings and shared-knob rules)
         echo "base_arm=$(tr_base_arm)"
+        echo "setup=$setup"
         for k in $(tr_arm_knobs); do echo "knob.$k=$(tr_knob "$k")"; done
         [[ $setup == kernel || $setup == dpdk ]] && echo "driver_mode=$(tr_driver_mode)"
         echo "start_ns=$4"
@@ -664,6 +711,12 @@ tr_manifest() {
                 v=$(head -1 "$dir/aeronpage/$pid-$h" 2>/dev/null)
                 [[ $v =~ ^[0-9]+$ ]] || v=unread
                 echo "aeron_page_$h=$v"
+            fi
+            # the data NICs' interrupt deferral read back (fairness.py's
+            # napi rule): each NIC's, and the knob's value of them
+            if [[ " $(tr_arm_knobs | tr '\n' ' ') " == *" napi_defer "* ]]; then
+                echo "napi_$h=$(tr_napi_raw "$dir/napi/$pid-$h")"
+                echo "napi_defer_$h=$(tr_napi_value "$dir/napi/$pid-$h" 2>/dev/null || echo unread)"
             fi
             [[ $nline != *FAIL ]] || log "WARNING: point $pid: host $h's netem counters off its loss: $nline"
             [[ $place == ok* ]] || log "WARNING: point $pid: host $h's thread placement: $place"
@@ -1080,7 +1133,7 @@ tr_run() {
     . "$tr_here/irqs.sh"
     # shellcheck source=host.sh
     . "$tr_here/host.sh"
-    mkdir -p "$dir/manifest" "$dir/points" "$dir/logs" "$dir/irq" "$dir/netem" "$dir/samples" "$dir/nstat" "$dir/settings" "$dir/events" "$dir/aeronpage"
+    mkdir -p "$dir/manifest" "$dir/points" "$dir/logs" "$dir/irq" "$dir/netem" "$dir/samples" "$dir/nstat" "$dir/settings" "$dir/events" "$dir/aeronpage" "$dir/napi"
     # LAB_LOCAL_SMOKE: both hosts homes on this box (tr_smoke_hooks)
     [[ -z ${LAB_LOCAL_SMOKE:-} ]] || tr_smoke_hooks
     : >"$dir/failures.csv"

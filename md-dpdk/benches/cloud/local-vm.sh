@@ -22,7 +22,7 @@
 #   local-vm.sh stop                  the media driver stopped (if running)
 #   local-vm.sh transport-net [check] the sysctls written (check: read) back
 #   local-vm.sh netem set <pct>|clear|check <pct|none>|stats   netem on lo
-#   local-vm.sh sample | irqsnap | nstat | settings   as vm.sh's
+#   local-vm.sh sample | irqsnap | nstat | settings | napi   as vm.sh's (napi: lo's own)
 #   local-vm.sh events-start <point> <traced cpus> <spinner cpus|-> [aeron] | events-stop <point>   as vm.sh's,
 #                                     each host its own trace instance; osnoise host a's alone
 set -euo pipefail
@@ -150,6 +150,13 @@ sample)
     ;;
 irqsnap) cat /proc/interrupts ;;
 aeron-page) stat -f -c %S "$TR_AERON_DIR" ;;
+napi)
+    # vm.sh napi's lines for the data NICs, all lo here: the box's own (lo
+    # takes no interrupts; the smoke sets nothing on it)
+    nics | while read -r _ _ vf _; do
+        echo "$vf $(cat "/sys/class/net/$vf/napi_defer_hard_irqs" 2>/dev/null || echo 0) $(cat "/sys/class/net/$vf/gro_flush_timeout" 2>/dev/null || echo 0)"
+    done
+    ;;
 nstat) transport_nstat ;;
 settings) transport_settings_read ;;
 events-start)

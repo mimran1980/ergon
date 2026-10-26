@@ -25,7 +25,16 @@ concerns. Rules:
   settings         every knob as transport-settings.env gives it, none it does not
   shared-knob      a per-arm knob the round's arms run at different values swept
                    for every arm of the round that has it (a declared arm's own
-                   knob excepted); never also shared
+                   knob excepted, and an arm at its technology's declared best:
+                   best.knob.<name>, the data NICs' interrupt deferral); never
+                   also shared
+  napi             a socket arm's point (sockets set-up, or a tcp/udp transport)
+                   with interrupt deferral off on every data NIC of every host
+                   (knob.napi_defer read back 0, each NIC 0/0 where the runner
+                   recorded them): its epoll never busy-polls, so a deferred
+                   interrupt leaves each packet waiting for the gro_flush timer;
+                   only a tuning session's frozen choice (the arm swept for it)
+                   may run it on
   declared         an arm declared another's twin but for one knob (aeron-ipc-huge:
                    aeron-ipc on 2 MiB pages) runs in every round with it, and
                    nothing else differs: its other per-arm knobs, transport, wire
@@ -180,11 +189,11 @@ def path_loss(p):
 
 def read_env(path):
     """transport-settings.env as (shared {knob: value}, per arm {arm: {knob:
-    value}}, sweep {knob: {arm}}, declared {arm: (twin, knob)}), or None
-    when missing."""
+    value}}, sweep {knob: {arm}}, declared {arm: (twin, knob)}, best {knob:
+    {arm: value}}), or None when missing."""
     if not os.path.exists(path):
         return None
-    shared, per_arm, sweep, declared = {}, defaultdict(dict), {}, {}
+    shared, per_arm, sweep, declared, best = {}, defaultdict(dict), {}, {}, {}
     with open(path) as f:
         text = f.read().splitlines()
     for line in text:
@@ -200,9 +209,42 @@ def read_env(path):
         elif prefix == "declared":
             twin, _, k = v.partition(":")
             declared[knob] = (twin, k)
+        elif prefix == "best":
+            best[knob] = dict(e.partition(":")[::2] for e in v.split(",") if ":" in e)
         else:
             per_arm[prefix][knob] = v
-    return shared, per_arm, sweep, declared
+    return shared, per_arm, sweep, declared, best
+
+
+SOCKET_TRANSPORTS = {"tcp", "udp"}
+
+
+def socket_point(p):
+    """Whether a point is a socket arm's: the runner's sockets set-up, else
+    (no set-up recorded) a transport of the kernel's sockets alone."""
+    setup = ((p.manifest or {}).get("runner") or {}).get("setup")
+    if setup:
+        return setup == "sockets"
+    parts = (p.manifest or {}).get("transport", "").split("+")
+    return bool(parts) and all(x in SOCKET_TRANSPORTS for x in parts)
+
+
+def napi_on(p, host):
+    """What shows a point's data NICs on host deferring interrupts: the
+    knob read back (knob.napi_defer) not 0, or a NIC the runner read
+    (napi_<host>: <nic>:<defer>/<gro_flush ns>,...) not 0/0; None when
+    neither does; "unread" when neither was read."""
+    got = ((p.manifest.get("settings") or {}).get(host) or {}).get("knob.napi_defer")
+    host_of = (p.manifest.get("hosts") or {}).get(host, host)
+    raw = ((p.manifest.get("runner") or {}).get(f"napi_{host_of}") or "")
+    nics = [e for e in raw.split(",") if e]
+    if got is None and not nics:
+        return "unread"
+    if got is not None and got != "0":
+        return f"napi_defer {got}"
+    if any(e.rpartition(":")[2] != "0/0" for e in nics):
+        return raw
+    return None
 
 
 def hostcheck_problems(path):
@@ -390,7 +432,7 @@ def check(run_dir, absences=None, notes=None):
                                             + f": failures.csv), no row: left out of round {rid}'s comparison"))
 
         if env is not None:
-            shared, per_arm, sweep, declared = env
+            shared, per_arm, sweep, declared, best = env
             reported = defaultdict(set)  # knob: arms reporting it
             for p in ps:
                 for host, knobs in p.manifest["settings"].items():
@@ -428,6 +470,9 @@ def check(run_dir, absences=None, notes=None):
                 have = (reported[k] | {arm for arm in round_arms if k in per_arm.get(arm, {})})
                 have = {arm for arm in have if not own(arm, k)}
                 values = {per_arm[arm][k] for arm in have if k in per_arm.get(arm, {})}
+                # an arm at its technology's declared best (best.<knob>): its
+                # own value, needing no sweep; the others still do
+                have = {arm for arm in have if best.get(k, {}).get(arm) != per_arm.get(arm, {}).get(k, "?")}
                 swept = sweep.get(k, set())
                 if len(values) > 1 and not have <= swept:
                     add("shared-knob", set_, tags, f"round {rid}: {k} differs across its arms "
@@ -462,6 +507,19 @@ def check(run_dir, absences=None, notes=None):
 
         for p in ps:
             m, hosts = p.manifest, hosts_of(p.set)
+            # a socket arm's NICs: interrupts not deferred (epoll never
+            # busy-polls), but where a tuning session froze it on
+            if socket_point(p):
+                arm = arm_key(p)
+                tuned = (env is not None and env[1].get(arm, {}).get("knob.napi_defer", "0") != "0"
+                         and arm in env[2].get("knob.napi_defer", set()))
+                for host in hosts:
+                    on = napi_on(p, host)
+                    if on == "unread":
+                        add("napi", set_, [p.tag], f"{p.tag}: {host}'s data NICs' interrupt deferral not read back")
+                    elif on and not tuned:
+                        add("napi", set_, [p.tag], f"{p.tag}: {host}'s data NICs defer interrupts ({on}) under a "
+                            "socket arm: its epoll never busy-polls, so each packet waits for the gro_flush timer")
             # wire bytes
             if p.row["wire_bytes"] != m["wire_bytes"]:
                 add("payload", set_, [p.tag], f"{p.tag}: row says {p.row['wire_bytes']} wire bytes, the manifest "

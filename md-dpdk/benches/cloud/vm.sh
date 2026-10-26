@@ -103,6 +103,8 @@
 #   vm.sh irqsnap            /proc/interrupts;  vm.sh hostcheck [aeron dir]  the ergon-tune report
 #                            (1 unless clean), on TR_AERON_DIR or the directory given
 #   vm.sh aeron-page         the page size (statfs's block size) of AERON_DIR's filesystem
+#   vm.sh napi               each data NIC's interrupt deferral as it is now, "<nic>
+#                            <napi_defer_hard_irqs> <gro_flush_timeout ns>" a line
 #   vm.sh nstat              the kernel's protocol counters;  vm.sh settings  every transport sysctl
 #                            as it is now, <knob>=<value> (host.sh transport_settings_read)
 #   vm.sh events-start <point> <traced cpus> <spinner cpus|-> [aeron]   a point's events begun before
@@ -2771,7 +2773,9 @@ transport-tune)
 transport-net)
     # an arm on the kernel's data path, no media driver (the socket arms):
     # the data NICs as transport-tune left them (data_kernel_up: rings,
-    # coalescing, quickack, IRQs), NAPI as kernel-busy has it, every sysctl;
+    # coalescing, quickack, IRQs), their interrupt deferral TR_NAPI_DEFER and
+    # TR_GRO_FLUSH_NS (the hosts' own; a socket arm's own 0/0 by
+    # TR_OVERRIDES: transport.sh tr_host_overrides), every sysctl;
     # `check`: only read back (after a driver started on the kernel's path)
     [[ -s $run/transport-map ]] || { echo "transport-net: no transport map" >&2; exit 2; }
     if [[ ${2:-} == check ]]; then
@@ -2838,6 +2842,12 @@ aeron-page)
     # the page size of the filesystem AERON_DIR is on (statfs's block size:
     # 4096 on tmpfs, 2097152 on a 2 MiB hugetlbfs), while its driver runs
     stat -f -c %S "$AERON_DIR"
+    ;;
+napi)
+    # each data NIC's interrupt deferral now (transport.sh tr_napi_value)
+    nics | while read -r _ _ vf _; do
+        echo "$vf $(cat "$LAB_SYS_ROOT/class/net/$vf/napi_defer_hard_irqs") $(cat "$LAB_SYS_ROOT/class/net/$vf/gro_flush_timeout")"
+    done
     ;;
 nstat) transport_nstat ;;
 settings) transport_settings_read ;;
