@@ -300,7 +300,7 @@ rm "$proc/sys/net/core/busy_poll"
 missing=$(hostrun transport_sysctls_apply 2>&1) && missrc=0 || missrc=$?
 if [[ $src == 0 && $(grep -c '^sysctl ' <<<"$s") == 12 && $s == *"tcp_rmem 4096 1048576 16777216"* && $s == *"tcp_rto_min_us absent"* &&
     $chkrc == 0 && $wrongrc == 1 && $wrong == *"WRONG net/ipv4/tcp_congestion_control: [bbr]"* &&
-    $missrc == 1 && $missing == *"MISSING net/core/busy_poll"* && $(cat "$proc/sys/net/ipv4/tcp_rto_min_us") == 5000 ]]; then
+    $missrc == 1 && $missing == *"MISSING net/core/busy_poll"* && $(cat "$proc/sys/net/ipv4/tcp_rto_min_us") == 8000 ]]; then
     pass "host.sh: the TCP and busy-poll sysctls written and read back (the 6.15 ones optional), a wrong or missing required one refused"
 else
     fail "host.sh sysctls: $src [$s] $chkrc $wrongrc [$wrong] $missrc [$missing]"
@@ -908,6 +908,8 @@ grep -q '^b aeron_lat --role local --round-trip --cpus 10,12 --aeron-dir /dev/sh
 # default; aeron-ipc-huge's alone (one round, on host a) on its 2 MiB
 # hugetlbfs, its driver stopped and its events and page read there too
 grep -q ' driver-dir /dev/shm/aeron-bench$' "$sb/calls" || why+=" driver not on TR_AERON_DIR;"
+# DPDK's Aeron arms name no kernel interface (the NIC is DPDK's), the kernel's do
+! grep -E 'aeron_lat .*--mode udp' "$sb/runs" | grep 'dpdk' | grep -q -- '--interface' || why+=" a DPDK aeron arm given --interface;"
 [[ $(grep ' driver-dir ' "$sb/calls" | grep -cv ' driver-dir /dev/shm/aeron-bench$') == 1 && $(grep -c '^a driver-dir /mnt/huge-aeron/aeron-bench$' "$sb/calls") == 1 ]] ||
     why+=" drivers on another AERON_DIR: $(grep ' driver-dir ' "$sb/calls" | grep -v ' /dev/shm/aeron-bench$' | tr '\n' ' ');"
 [[ $(grep -c '^a stop-dir /mnt/huge-aeron/aeron-bench$' "$sb/calls") == 1 && $(grep -c '^a events-start-dir /mnt/huge-aeron/aeron-bench$' "$sb/calls") == 3 &&

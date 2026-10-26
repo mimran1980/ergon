@@ -339,7 +339,15 @@ tr_bin_args() {
         if [[ $args == *" --mode udp "* ]]; then
             local ep=$peer rp=$own
             [[ $role == pong ]] && ep=$own rp=$peer
-            out="--endpoint $ep:$port --reply $rp:$port --interface $own $out"
+            # the kernel's path: the data NIC by its address; DPDK's transport
+            # takes its port from the driver (RUSTERON_DPDK_*), and the
+            # driver's lookup of a kernel interface by that address fails
+            # once DPDK holds the NIC (md-dpdk's own clients give none)
+            if [[ ${setup:-} == dpdk ]]; then
+                out="--endpoint $ep:$port --reply $rp:$port $out"
+            else
+                out="--endpoint $ep:$port --reply $rp:$port --interface $own $out"
+            fi
         fi
         ;;
     udp_lat)
