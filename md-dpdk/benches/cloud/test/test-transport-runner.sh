@@ -4,7 +4,7 @@
 # /sys and /proc trees. Checks that:
 #   * modes.sh takes an arm's STREAMS, NETEM and AA, refuses anything else,
 #     and refuses NETEM on every DPDK arm (by name or by its dpdk set-up);
-#   * transport_plan.py counts the plan's points (510 for pair a, 405 for
+#   * transport_plan.py counts the plan's points (510 for pair a, 420 for
 #     b), draws each round's arm order from its seed (reproducible, the A/A
 #     arm once a round, another order on another rep), and refuses a broken
 #     matrix: aa first, an unknown or repeated arm, one- and two-host arms in
@@ -79,7 +79,7 @@ by setup: 2 0
 
 # ---- transport_plan.py ----
 got="$(plan count a 5 "$matrix") $(plan count b 5 "$matrix") $(plan count a 1 "$matrix")"
-same "transport_plan.py: pair a 510 points, pair b 405 (the plan's table, an A/A arm in every set, 3c's no-qdisc round), a fifth of it at one rep" "510 405 102" "$got"
+same "transport_plan.py: pair a 510 points, pair b 420 (the plan's table, an A/A arm in every set, 3c's no-qdisc round), a fifth of it at one rep" "510 420 102" "$got"
 r1=$(plan rounds b 7 5 "$matrix")
 r2=$(plan rounds b 7 5 "$matrix")
 r3=$(plan rounds b 8 5 "$matrix")
@@ -110,6 +110,29 @@ done
 got="$(plan binom 300000 30 0.01) | $(plan binom 300000 80 0.01) | $(plan binom 1000 0 0) | $(plan binom 1000 1 0) | $(plan binom 1000 2 0.01) | $(plan binom 6000000 60000 1)"
 same "transport_plan.py binom: the dropped count against its 1-in-10,000 interval, exact at small means, none at 0 %" \
     "8 52 ok | 8 52 FAIL | 0 0 ok | 0 0 FAIL | 0 3 ok | 59051 60949 ok" "$got"
+
+# transport.sh check: a declared twin (TR_DECLARED) is its twin's arm row
+# but for a per-arm knob; aeron-ipc-huge's hugetlbfs (TR_AERON_HUGE_PAGES)
+# holds its logs twice over (host.sh transport_huge_pages)
+got=$(
+    . "$cloud/transport.sh"
+    reps=5
+    c() { tr_check b 2>&1 | tr '\n' ' '; echo "rc ${PIPESTATUS[0]}"; }
+    echo "ok: $(c)"
+    echo "small: $(TR_AERON_HUGE_PAGES=16; c)"
+    echo "twin: $(TR_DECLARED="aeron-ipc-huge:aeron-spy:aeron_page=2097152"; c)"
+    echo "no twin: $(TR_DECLARED="aeron-ipc-huge:nosuch:aeron_page=2097152"; c)"
+    echo "knob: $(TR_DECLARED="aeron-ipc-huge:aeron-ipc:nosuch=1"; c)"
+    echo "page: $(TR_DECLARED="aeron-ipc-huge:aeron-ipc:aeron_page=65536"; c)"
+    echo "form: $(TR_DECLARED="aeron-ipc-huge=aeron-ipc"; c)"
+)
+same "transport.sh check: a declared twin is its twin's arm but for one per-arm knob (aeron_page 4096 or 2097152); aeron-ipc-huge's hugetlbfs holds its logs twice over" "ok: 420 rc 0
+small: TR_AERON_HUGE_PAGES 16: aeron-ipc-huge's hugetlbfs needs 28 pages of 2 MiB (term length 1048576, 1 streams: host.sh transport_huge_pages) rc 2
+twin: TR_DECLARED aeron-ipc-huge: not aeron-spy's twin: [aeron_lat kernel one --mode ipc] against [aeron_lat kernel one --mode spy] rc 2
+no twin: TR_DECLARED aeron-ipc-huge: no arm nosuch to be the twin of rc 2
+knob: TR_DECLARED aeron-ipc-huge: nosuch is not a per-arm knob of aeron_lat (transport-settings.env's list) rc 2
+page: TR_DECLARED aeron-ipc-huge: aeron_page 65536: 4096 (TR_AERON_DIR, tmpfs) or 2097152 (TR_AERON_HUGE_DIR, 2 MiB hugetlbfs) rc 2
+form: TR_DECLARED aeron-ipc-huge=aeron-ipc: <arm>:<twin>:<knob>=<value> rc 2" "$got"
 
 # ---- host.sh and irqs.sh against fake trees ----
 sys=$tmp/sys proc=$tmp/proc
@@ -347,6 +370,73 @@ same "host.sh: transport_task_times reads each thread's utime+stime and CPU from
 501 790 6 my_(busy)_one" "$(hostrun transport_task_times)"
 rm -rf "$proc/500"
 
+# the 2 MiB hugetlbfs of aeron-ipc-huge's Aeron directory: refused when the
+# kernel has too few free, unreserved 2 MiB pages (no mount tried); else
+# mounted with every page reserved for it (min_size) and verified from
+# /proc/mounts (hugetlbfs, pagesize 2M, its size); a mount already there and
+# right kept, one of another type, page size or size refused
+cat >"$tmp/fakebin/mount" <<'SH'
+#!/usr/bin/env bash
+# mount -t <type> -o <options> <source> <mount point>: into the fake /proc/mounts
+echo "mount $*" >>"$FAKE_LOG"
+o=$4
+[[ -n ${FAKE_MOUNT_PAGESIZE:-} ]] && o=${o//pagesize=2M/pagesize=$FAKE_MOUNT_PAGESIZE}
+echo "$5 $6 ${FAKE_MOUNT_FS:-$2} rw,relatime,$o 0 0" >>"$LAB_PROC_ROOT/mounts"
+SH
+cat >"$tmp/fakebin/mountpoint" <<'SH'
+#!/usr/bin/env bash
+# mountpoint -q <dir>: whether the fake /proc/mounts has it
+awk -v d="$2" '$2 == d {found = 1} END {exit !found}' "$LAB_PROC_ROOT/mounts" 2>/dev/null
+SH
+chmod +x "$tmp/fakebin/mount" "$tmp/fakebin/mountpoint"
+hp=$sys/kernel/mm/hugepages/hugepages-2048kB
+mkdir -p "$hp"
+echo 2048 >"$hp/nr_hugepages"
+echo 20 >"$hp/free_hugepages"
+echo 0 >"$hp/resv_hugepages"
+: >"$proc/mounts"
+: >"$FAKE_LOG"
+mnt=$tmp/huge-aeron
+few=$(hostrun transport_huge_mount "$mnt" 32 2>&1; echo "rc $?")
+grep -q '^mount ' "$FAKE_LOG" && few+=" (mounted)"
+echo 2048 >"$hp/free_hugepages"
+echo 4 >"$hp/resv_hugepages"
+ok=$(hostrun transport_huge_mount "$mnt" 32 2>&1; echo "rc $?")
+again=$(hostrun transport_huge_mount "$mnt" 32 2>&1; echo "rc $?")
+calls=$(grep -c '^mount ' "$FAKE_LOG")
+args=$(grep -m1 '^mount ' "$FAKE_LOG")
+other=$(hostrun transport_huge_check "$mnt" 16 2>&1; echo "rc $?")
+tmpfs=$(FAKE_MOUNT_FS=tmpfs hostrun transport_huge_mount "$tmp/huge-tmpfs" 32 2>&1; echo "rc $?")
+gig=$(FAKE_MOUNT_PAGESIZE=1024M hostrun transport_huge_mount "$tmp/huge-1g" 32 2>&1; echo "rc $?")
+gone=$(hostrun transport_huge_check "$tmp/huge-none" 32 2>&1; echo "rc $?")
+same "host.sh: aeron-ipc-huge's hugetlbfs: refused on too few free 2 MiB pages, mounted with its pages reserved and verified (hugetlbfs, 2M, its size), kept when right, refused when another type, page size or size" "hugetlbfs $mnt: 32 pages of 2 MiB wanted, the kernel has 20 free and unreserved (vm.nr_hugepages 2048): not mounted
+rc 1
+hugetlbfs $mnt: pagesize 2M, size 67108864, min_size 67108864 (32 pages of 2 MiB, reserved)
+rc 0
+hugetlbfs $mnt: pagesize 2M, size 67108864, min_size 67108864 (32 pages of 2 MiB, reserved)
+rc 0
+1 mount -t hugetlbfs -o mode=1777,pagesize=2M,size=67108864,min_size=67108864 none $mnt
+hugetlbfs $mnt: rw,relatime,mode=1777,pagesize=2M,size=67108864,min_size=67108864, not hugetlbfs with pagesize=2M, size=33554432 and min_size=33554432
+rc 1
+hugetlbfs $tmp/huge-tmpfs: tmpfs rw,relatime,mode=1777,pagesize=2M,size=67108864,min_size=67108864, not hugetlbfs with pagesize=2M, size=67108864 and min_size=67108864
+rc 1
+hugetlbfs $tmp/huge-1g: rw,relatime,mode=1777,pagesize=1024M,size=67108864,min_size=67108864, not hugetlbfs with pagesize=2M, size=67108864 and min_size=67108864
+rc 1
+hugetlbfs $tmp/huge-none: not a mount point
+rc 1" "$few
+$ok
+$again
+$calls $args
+$other
+$tmpfs
+$gig
+$gone"
+# the margin: the logs aeron-ipc-huge's points hold at once (a point's two
+# runs' ping and echo publications, the last point's lingering), the CnC and
+# loss report, twice over, in 2 MiB pages
+same "host.sh: transport_huge_pages: the pages a 2 MiB hugetlbfs needs for an arm's term length and streams, twice over" "28 20 140" \
+    "$(hostrun transport_huge_pages 1048576 1) $(hostrun transport_huge_pages 65536 1) $(hostrun transport_huge_pages 1048576 8)"
+
 # irqs.sh: every data-NIC IRQ (msi_irqs) and VMBus channel moved to the IRQ
 # CPU and checked; one that refuses fails it; IRQ deltas on the hot CPUs
 for i in eth1 enP1; do mkdir -p "$sys/class/net/$i/device/msi_irqs"; done
@@ -497,7 +587,7 @@ out=$(LAB_SUITE= lab LAB_SUITE=latency LAB_PAIR=a 2>&1) && why+=" latency with L
     fail "azure/lab.sh transport refusals:$why"
 est=$(lab LAB_ESTIMATE=1 2>&1) && estrc=0 || estrc=$?
 esta=$(lab LAB_ESTIMATE=1 LAB_PAIR=a LAB_ARMS_FILE="$fx/arms.tsv" 2>&1) && estarc=0 || estarc=$?
-if [[ $estrc == 0 && $est == *"pair a: 510 points"*"pair b: 405 points"*"both pairs: about \$"* && $est == *"Standard_D16s_v6"* &&
+if [[ $estrc == 0 && $est == *"pair a: 510 points"*"pair b: 420 points"*"both pairs: about \$"* && $est == *"Standard_D16s_v6"* &&
     $estarc == 0 && $esta == *"pair a: 550 points (sets 2a, fan, 3a, fx)"* && $esta != *"pair b"* && ! -s $tmp/cloud-calls ]]; then
     pass "azure/lab.sh LAB_ESTIMATE=1: both pairs' points, hours and dollars on Standard_D16s_v6 by default; one pair with LAB_PAIR, an arms file's sets in it; no cloud call"
 else
@@ -608,14 +698,19 @@ SH
 cat >"$sb/bin/fakevm" <<'SH'
 #!/usr/bin/env bash
 echo "$FAKE_HOST vm.sh $*" >>"$FAKE_HOSTS/calls"
-[[ $1 != driver ]] || echo "$FAKE_HOST driver-dir ${LAB_AERON_DIR:-unset}" >>"$FAKE_HOSTS/calls"
+# the Aeron directory each per-arm call names (LAB_AERON_DIR)
+case $1 in driver | stop | events-start | aeron-page) echo "$FAKE_HOST $1-dir ${LAB_AERON_DIR:-unset}" >>"$FAKE_HOSTS/calls" ;; esac
 st=$HOME/state
 mkdir -p "$st"
 case $1 in
 transport-map) echo "0 2 4,6,8,10,12,14" ;;
 nics) if [[ $FAKE_HOST == a ]]; then printf 'sender eth1 enP1 m 10.20.1.4 24 x\nreceiver eth2 enP2 m 10.20.1.5 24 y\n'
       else printf 'sender eth1 enP1 m 10.20.1.6 24 x\nreceiver eth2 enP2 m 10.20.1.7 24 y\n'; fi ;;
-hostcheck) if [[ ${FAKE_HOSTCHECK_WARN:-} == "$FAKE_HOST" ]]; then echo "T3 warn: cpu 6 has its tick (evidence: LOC 1000/s)"; exit 1; fi; echo "T3 ok: every hot CPU tickless" ;;
+hostcheck) if [[ ${FAKE_HOSTCHECK_WARN:-} == "$FAKE_HOST" ]]; then echo "T3 warn: cpu 6 has its tick (evidence: LOC 1000/s)"; exit 1; fi
+    echo "T3 ok: every hot CPU tickless"; echo "T4 ok: the Aeron directory ${2:-/dev/shm/aeron-bench} is on ${2:+hugetlbfs}${2:-tmpfs}" ;;
+# the page size of the Aeron directory: 2 MiB on the hugetlbfs, else 4 KiB
+# (FAKE_AERON_PAGE_BAD: the hugetlbfs one reads back 4 KiB)
+aeron-page) if [[ ${LAB_AERON_DIR:-} == /mnt/huge-aeron/* && -z ${FAKE_AERON_PAGE_BAD:-} ]]; then echo 2097152; else echo 4096; fi ;;
 netem)
     case $2 in
     set) echo "$3" >"$st/netem" ;;
@@ -809,9 +904,34 @@ grep -q '^a tcp_lat --role ping .*--connect 10.20.1.7:22000 ' "$sb/runs" || why+
 grep -q '^a mpsc_lat --role local --cpus 4,6 --capacity 4096 --streams 1 --rate 1000000 --warmup-s 0 --duration-s 0 --size 64 --label 1:mpsc@STREAMS=1 ' "$sb/runs" || why+=" mpsc flags;"
 grep -q '^a mpsc_lat --role local --cpus 4,6 .*--label 1:aa@STREAMS=1 ' "$sb/runs" || why+=" the A/A's label;"
 grep -q '^b aeron_lat --role local --round-trip --cpus 10,12 --aeron-dir /dev/shm/aeron-bench --driver external --driver-busy-threads 3 --term-length 1048576 --mtu 1408 .*--mode spy$' "$sb/runs" || why+=" aeron flags;"
-# the driver on the binaries' AERON_DIR (tmpfs), not vm.sh's hugetlbfs default
+# the driver on the binaries' AERON_DIR (tmpfs), not vm.sh's hugetlbfs
+# default; aeron-ipc-huge's alone (one round, on host a) on its 2 MiB
+# hugetlbfs, its driver stopped and its events and page read there too
 grep -q ' driver-dir /dev/shm/aeron-bench$' "$sb/calls" || why+=" driver not on TR_AERON_DIR;"
-! grep ' driver-dir ' "$sb/calls" | grep -qv ' driver-dir /dev/shm/aeron-bench$' || why+=" a driver started on another AERON_DIR;"
+[[ $(grep ' driver-dir ' "$sb/calls" | grep -cv ' driver-dir /dev/shm/aeron-bench$') == 1 && $(grep -c '^a driver-dir /mnt/huge-aeron/aeron-bench$' "$sb/calls") == 1 ]] ||
+    why+=" drivers on another AERON_DIR: $(grep ' driver-dir ' "$sb/calls" | grep -v ' /dev/shm/aeron-bench$' | tr '\n' ' ');"
+[[ $(grep -c '^a stop-dir /mnt/huge-aeron/aeron-bench$' "$sb/calls") == 1 && $(grep -c '^a events-start-dir /mnt/huge-aeron/aeron-bench$' "$sb/calls") == 3 &&
+    $(grep -c '^a aeron-page-dir /mnt/huge-aeron/aeron-bench$' "$sb/calls") == 3 ]] || why+=" aeron-ipc-huge's stop, events or page not on its directory;"
+# aeron-ipc-huge: aeron-ipc's flags but its Aeron directory
+grep -q '^a aeron_lat --role local --round-trip --cpus 10,12 --aeron-dir /mnt/huge-aeron/aeron-bench --driver external --driver-busy-threads 3 --term-length 1048576 --mtu 1408 .*--label 1:aeron-ipc-huge@STREAMS=1 .*--mode ipc$' "$sb/runs" &&
+    grep -q '^a aeron_lat --role local --round-trip --cpus 10,12 --aeron-dir /dev/shm/aeron-bench --driver external --driver-busy-threads 3 --term-length 1048576 --mtu 1408 .*--label 1:aeron-ipc@STREAMS=1 .*--mode ipc$' "$sb/runs" &&
+    ! grep -v -- '--label 1:aeron-ipc-huge@' "$sb/runs" | grep -q huge-aeron || why+=" aeron-ipc-huge's flags;"
+# its hostcheck on its own directory, on both hosts, its points pointing at it
+grep -q '^a vm.sh hostcheck /mnt/huge-aeron/aeron-bench$' "$sb/calls" && grep -q '^b vm.sh hostcheck /mnt/huge-aeron/aeron-bench$' "$sb/calls" &&
+    grep -q 'T4 ok: the Aeron directory /mnt/huge-aeron/aeron-bench is on hugetlbfs' "$d/hostcheck-a-hugepages.txt" || why+=" the hugetlbfs hostcheck;"
+mi=$(grep -l '^mode=aeron-ipc@STREAMS=1$' "$d"/manifest/*.env | head -1)
+mh=$(grep -l '^mode=aeron-ipc-huge@STREAMS=1$' "$d"/manifest/*.env | head -1)
+grep -q '^knob.aeron_page=2097152$' "$mh" && grep -q '^aeron_page_a=2097152$' "$mh" && grep -q '^hostcheck_a=hostcheck-a-hugepages.txt$' "$mh" &&
+    grep -q '^knob.aeron_page=4096$' "$mi" && grep -q '^aeron_page_a=4096$' "$mi" && grep -q '^hostcheck_a=hostcheck-a.txt$' "$mi" &&
+    [[ $(grep -E '^(driver_mode|bin|args|knob.term_length|knob.aeron_threading)=' "$mh") == "$(grep -E '^(driver_mode|bin|args|knob.term_length|knob.aeron_threading)=' "$mi")" ]] ||
+    why+=" aeron-ipc-huge's manifest against aeron-ipc's: $(grep -E '^(knob|aeron_page|hostcheck|driver_mode|args)' "$mh" | tr '\n' ' ');"
+grep -q '^aeron-ipc-huge.knob.aeron_page=2097152$' "$d/transport-settings.env" && grep -q '^aeron-ipc.knob.aeron_page=4096$' "$d/transport-settings.env" &&
+    grep -q '^declared.aeron-ipc-huge=aeron-ipc:knob.aeron_page$' "$d/transport-settings.env" &&
+    [[ $(grep '^aeron-ipc-huge\.' "$d/transport-settings.env" | grep -v aeron_page | sed 's/^aeron-ipc-huge/x/') == "$(grep '^aeron-ipc\.' "$d/transport-settings.env" | grep -v aeron_page | sed 's/^aeron-ipc/x/')" ]] ||
+    why+=" the declared difference in transport-settings.env: $(grep -E 'aeron-ipc|declared' "$d/transport-settings.env" | tr '\n' ' ');"
+m=$(find "$d/1" -name 'manifest-1-aeron-ipc-huge@STREAMS=1-64-1-r10000.json' | head -1)
+python3 -c 'import json, sys; m = json.load(open(sys.argv[1])); assert m["hostcheck"] == {"a": "hostcheck-a-hugepages.txt"} and m["settings"]["a"]["knob.aeron_page"] == "2097152", (m["hostcheck"], m["settings"])' "$m" 2>/dev/null &&
+    [[ -s $d/1/hostcheck-a-hugepages.txt ]] || why+=" aeron-ipc-huge's collected manifest: $m;"
 ! grep -E '^. aeron_lat .*--mode (spy|ipc)' "$sb/runs" | grep -qE -- '--(endpoint|reply|interface) ' || why+=" an address given to Aeron IPC or spy;"
 grep -q '^b aeron_lat --role local --round-trip --cpus 10,12 --endpoint 10.20.1.7:22000 --reply 10.20.1.6:22000 --interface 10.20.1.6 .*--mode udp --reliable false$' "$sb/runs" || why+=" aeron self-UDP flags;"
 grep -q '^a aeron_lat --role ping --cpus 10 ' "$sb/runs" && grep -q '^b aeron_lat --role pong .*--cpus 10 ' "$sb/runs" || why+=" one CPU for ping and pong;"
@@ -877,12 +997,15 @@ python3 -c 'import json, sys; m = json.load(open(sys.argv[1])); e = m["events"];
 
 # a bad placement and netem counters off their loss are in the manifests
 # (and logged); a failed point recorded and the session's exit 1
-trun b 1 "" FAKE_PLACEMENT_BAD=1 FAKE_NETEM_BAD=1 FAKE_FAIL_LABEL='3c:mio-tcp@STREAMS=1@NETEM=0' FAKE_PONG_SILENT='3c:eio-tcp@STREAMS=1@NETEM=0' FAKE_SH_DELAY=0.3 && rrc=0 || rrc=$?
+trun b 1 "" FAKE_PLACEMENT_BAD=1 FAKE_NETEM_BAD=1 FAKE_AERON_PAGE_BAD=1 FAKE_FAIL_LABEL='3c:mio-tcp@STREAMS=1@NETEM=0' FAKE_PONG_SILENT='3c:eio-tcp@STREAMS=1@NETEM=0' FAKE_SH_DELAY=0.3 && rrc=0 || rrc=$?
 why=
 [[ $rrc != 0 ]] || why+=" exit 0;"
 m=$(grep -l '^mode=aeron-rel@STREAMS=1@NETEM=1$' "$d"/manifest/*.env | head -1)
 grep -q '^placement_a=FAIL' "$m" && grep -q '^netem_a=.* FAIL$' "$m" || why+=" verdicts: $(grep -E 'placement_|netem_' "$m" | tr '\n' ' ');"
 grep -q 'WARNING: point .* netem counters off its loss' "$sb/run.out" || why+=" not logged;"
+# the hugetlbfs read back at 4 KiB: aeron-ipc-huge's points break the settings rule
+python3 "$cloud/fairness.py" "$d" 2>/dev/null | grep -q '^settings: 1: 1-aeron-ipc-huge@STREAMS=1-64-1-r10000: a knob.aeron_page=4096, the env gives 2097152$' ||
+    why+=" a 4 KiB page on aeron-ipc-huge not flagged: $(python3 "$cloud/fairness.py" "$d" 2>/dev/null | grep -m2 aeron_page);"
 [[ $(grep -c '^3c,1,0,mio-tcp,0,1$' "$d/failures.csv") == 1 ]] || why+=" failures: $(cat "$d/failures.csv");"
 # a pong that never says ready: its point failed, its ping never started
 [[ $(grep -c '^3c,1,0,eio-tcp,0,1$' "$d/failures.csv") == 1 ]] && ! grep -q '^a tcp_lat --role ping .*--label 3c:eio-tcp@STREAMS=1@NETEM=0 ' "$sb/runs" &&
