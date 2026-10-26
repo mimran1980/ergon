@@ -1376,7 +1376,8 @@ events_trace_stop() {
     echo 0 >"$t/instances/$name/tracing_on"
     echo 0 >"$t/instances/$name/events/enable" 2>/dev/null
     e=ergon_pf_${name//[^A-Za-z0-9]/_}
-    if grep -q ":$e " "$t/kprobe_events" 2>/dev/null; then
+    # (kprobe_events lists them as p:kprobes/<name> ...)
+    if grep -qE "[:/]$e " "$t/kprobe_events" 2>/dev/null; then
         { echo "-:${e}_ret" >>"$t/kprobe_events"; echo "-:$e" >>"$t/kprobe_events"; } 2>/dev/null
     fi
     rmdir "$t/instances/$name" 2>/dev/null || true

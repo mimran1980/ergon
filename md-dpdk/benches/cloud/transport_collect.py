@@ -391,9 +391,19 @@ def collect(d):
                     cpus_used = [c for c in str(bs.get("cpu_list", "")).split(",") if c.isdigit()]
                     stalls = (os.path.join(out, f"stalls-{label}.csv"), int(cpus_used[-1]) if cpus_used else None,
                               bs.get("role", "measuring") + " receive")
-                rows_, notes = transport_events.events(os.path.join(d, "events", f"{pid}-{h}.log.gz"), stalls)
+                log = os.path.join(d, "events", f"{pid}-{h}.log.gz")
                 name = f"{key}-events-{tag}.csv"
-                with open(os.path.join(folder, name), "w", newline="") as f:
+                dst = os.path.join(folder, name)
+                if os.path.exists(dst) and os.path.exists(log) and os.path.getmtime(dst) >= os.path.getmtime(log):
+                    # laid out by an earlier pass (the tuning session collects
+                    # after each phase): its rows and notes as written
+                    text = read(dst) or ""
+                    notes = [l[len("# note: "):] for l in text.splitlines() if l.startswith("# note: ")]
+                    n = sum(1 for l in text.splitlines() if l and not l.startswith("#")) - 1
+                    manifest["events"][key] = {"file": name, "rows": max(n, 0), "notes": notes}
+                    continue
+                rows_, notes = transport_events.events(log, stalls)
+                with open(dst, "w", newline="") as f:
                     transport_events.write(f, rows_, notes)
                 manifest["events"][key] = {"file": name, "rows": len(rows_), "notes": notes}
             with open(os.path.join(folder, f"manifest-{tag}.json"), "w") as f:
