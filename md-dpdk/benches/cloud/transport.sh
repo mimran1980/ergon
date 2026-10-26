@@ -344,9 +344,13 @@ tr_bin_args() {
             # driver's lookup of a kernel interface by that address fails
             # once DPDK holds the NIC (md-dpdk's own clients give none)
             if [[ ${setup:-} == dpdk ]]; then
-                # one host: DPDK receives on its receiver port alone, so the
-                # echo's channel is on that NIC's address too
-                [[ $role == local ]] && rp=$peer
+                # DPDK receives on each host's receiver port alone: the echo
+                # comes back to the ping host's receiver NIC (one host: the
+                # same NIC as the endpoint), never to a sender NIC
+                case $role in
+                local) rp=$peer ;;
+                ping | pong) rp=$(tr_nic a receiver) ;;
+                esac
                 out="--endpoint $ep:$port --reply $rp:$port $out"
             else
                 out="--endpoint $ep:$port --reply $rp:$port --interface $own $out"

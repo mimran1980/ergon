@@ -912,6 +912,8 @@ grep -q ' driver-dir /dev/shm/aeron-bench$' "$sb/calls" || why+=" driver not on 
 ! grep -E 'aeron_lat .*--mode udp' "$sb/runs" | grep 'dpdk' | grep -q -- '--interface' || why+=" a DPDK aeron arm given --interface;"
 # one-host DPDK: both channels on the receiver NIC (the only port DPDK reads)
 grep -E 'aeron_lat --role local --round-trip .*--mode udp' "$sb/runs" | grep 'dpdk' | while read -r l; do e=${l#*--endpoint }; r=${l#*--reply }; [[ ${e%%:*} == "${r%%:*}" ]] || echo bad; done | grep -q bad && why+=" a one-host DPDK round trip with its echo off the receiver NIC;"
+# two hosts: a DPDK arm's echo on host a's receiver NIC (10.20.1.5 in the fake), never its sender NIC
+! grep -E 'aeron_lat --role (ping|pong) .*--mode udp' "$sb/runs" | grep dpdk | grep -qv -- '--reply 10.20.1.5:' || why+=" a two-host DPDK echo off host a's receiver NIC;"
 [[ $(grep ' driver-dir ' "$sb/calls" | grep -cv ' driver-dir /dev/shm/aeron-bench$') == 1 && $(grep -c '^a driver-dir /mnt/huge-aeron/aeron-bench$' "$sb/calls") == 1 ]] ||
     why+=" drivers on another AERON_DIR: $(grep ' driver-dir ' "$sb/calls" | grep -v ' /dev/shm/aeron-bench$' | tr '\n' ' ');"
 [[ $(grep -c '^a stop-dir /mnt/huge-aeron/aeron-bench$' "$sb/calls") == 1 && $(grep -c '^a events-start-dir /mnt/huge-aeron/aeron-bench$' "$sb/calls") == 3 &&
