@@ -124,7 +124,8 @@ pub struct CrossCpu {
     pub rounds: u64,
     /// Handoffs whose reader's counter was behind the writer's stamp.
     pub backward: u64,
-    /// The furthest behind, in ns.
+    /// The furthest behind, in ns, rounded up: at least 1 when any handoff
+    /// ran backward (a skew of a few ticks is still reported).
     pub max_backward_ns: u64,
     /// The shortest forward handoff, in ns: an upper bound on any skew the
     /// check cannot see, and the handoff's own cost.
@@ -227,7 +228,11 @@ where
         cpus: (a, b),
         rounds: rounds.saturating_mul(2),
         backward: sa.backward + sb.backward,
-        max_backward_ns: clock.delta_ns(0, max_backward),
+        max_backward_ns: if max_backward == 0 {
+            0
+        } else {
+            clock.delta_ns(0, max_backward).max(1)
+        },
         min_forward_ns: match (sa.min_forward, sb.min_forward) {
             (Some(x), Some(y)) => x.min(y),
             (x, y) => x.or(y).unwrap_or(0),

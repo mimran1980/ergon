@@ -43,18 +43,26 @@ fn nanoseconds_convert_to_ticks_and_back_within_a_thousandth() {
     }
 }
 
-/// Two threads hand a stamp back and forth: the reader's counter is never
-/// behind the writer's. Unpinned here (the pin hook does nothing); the
-/// suite's hostcheck runs it pinned to each hot CPU.
+/// Two threads hand a stamp back and forth. Unpinned here (the pin hook
+/// does nothing), on whatever host runs the tests: a shared VM's vCPUs may
+/// differ by a few ticks (CI's x86 runners: 24 of 20,000 handoffs, under
+/// 1 ns), which the report must count and bound, never round away. A broken
+/// counter (unsynchronised sockets, a stopped TSC) is microseconds or more
+/// apart. The suite's hostcheck runs it pinned to each hot CPU and reports
+/// the bound (C1).
 #[test]
-fn the_counter_never_runs_backward_across_threads() -> R {
+fn the_counter_runs_backward_across_threads_by_at_most_a_few_ticks() -> R {
     let clock = TscClock::new();
     let report = cross_cpu_check(&clock, 0, 1, 10_000, |_| {})?;
     assert_eq!(report.cpus, (0, 1));
     assert_eq!(report.rounds, 20_000);
-    assert!(report.consistent(), "{report:?}");
-    assert_eq!(report.backward, 0);
-    assert_eq!(report.max_backward_ns, 0);
+    assert_eq!(report.consistent(), report.backward == 0, "{report:?}");
+    assert_eq!(
+        report.backward == 0,
+        report.max_backward_ns == 0,
+        "{report:?}"
+    );
+    assert!(report.max_backward_ns < 1_000, "{report:?}");
     Ok(())
 }
 
