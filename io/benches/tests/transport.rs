@@ -401,6 +401,72 @@ fn udp_ergon_128_streams() -> R {
     every_role(&Run::udp("ergon", 128, 2_560, 27_000))
 }
 
+/// The transport runner sends a pong's stdout and stderr to one file and
+/// waits for the line `ready`. Every write the pong makes there must be
+/// whole lines: a warning written as its text, then its newline, let the
+/// pinned thread's `ready` land between the two (`...the polling CPU is
+/// 2.ready`), and the runner timed out on a pong that was echoing. Here
+/// both go to one end of a Unix datagram socket pair, so each `write(2)`
+/// arrives as one datagram.
+#[test]
+fn a_pongs_writes_are_whole_lines_with_stderr_on_stdout() -> R {
+    use std::os::fd::OwnedFd;
+    use std::os::unix::net::UnixDatagram;
+    use std::time::{Duration, Instant};
+
+    let run = Run::udp("ergon", 1, 1_000, 39_300);
+    let out = scratch("pong-lines")?;
+    let (ours, theirs) = UnixDatagram::pair()?;
+    let mut pong = Command::new(run.bin)
+        .args(run.common("pong", two_cpus().map(|c| s(c.1)), &out))
+        .args(run.addrs("pong"))
+        .stdout(Stdio::from(OwnedFd::from(theirs.try_clone()?)))
+        .stderr(Stdio::from(OwnedFd::from(theirs)))
+        .spawn()?;
+    ours.set_read_timeout(Some(Duration::from_millis(100)))?;
+    let (mut writes, mut buf) = (Vec::<String>::new(), vec![0u8; 1 << 16]);
+    let until = Instant::now() + Duration::from_secs(30);
+    let (mut stopped, mut exited) = (false, None);
+    loop {
+        match ours.recv(&mut buf) {
+            Ok(n) => writes.push(String::from_utf8_lossy(&buf[..n]).into_owned()),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                if exited.is_some() {
+                    break;
+                }
+                exited = pong.try_wait()?;
+                // stopped once it said ready and ergon-io wrote its lines
+                let ready = writes.iter().any(|w| w == "ready\n");
+                let warned = writes.iter().any(|w| w.starts_with("ergon-io "));
+                if !stopped && exited.is_none() && ready && warned {
+                    sigterm(&pong)?;
+                    stopped = true;
+                }
+                if Instant::now() > until {
+                    let _ = pong.kill();
+                    return Err(format!("the pong did not say ready and stop: {writes:?}").into());
+                }
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    let status = exited.ok_or("no exit status")?;
+    assert!(status.success(), "the pong failed ({status}): {writes:?}");
+    for w in &writes {
+        assert!(
+            w.ends_with('\n') && w.matches('\n').count() == 1,
+            "a write that is not one whole line: {w:?} (all: {writes:?})"
+        );
+    }
+    assert_eq!(
+        writes.iter().filter(|w| *w == "ready\n").count(),
+        1,
+        "{writes:?}"
+    );
+    std::fs::remove_dir_all(out)?;
+    Ok(())
+}
+
 #[test]
 fn tcp_mio_one_stream() -> R {
     every_role(&Run::tcp("mio", 1, 1_000, 30_001))

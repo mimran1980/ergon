@@ -726,6 +726,15 @@
   unprivileged pod. A pid that is not a task of that container's cgroup is
   refused. `just test-dpdk-lab` runs the EKS runner shell tests.
 
+### Fixed
+
+- `ergon-io`: the warning thread writes each line in one `write(2)`, its
+  newline included (it wrote the text, then the newline). Where stdout and
+  stderr share one file, another thread's line could land between the two:
+  a `udp_lat` pong's `ready` became `...the polling CPU is 2.ready`, and
+  the transport runner, waiting for the line `ready`, timed out on a pong
+  that was echoing.
+
 ### Removed
 
 - Breaking: `ergo-sbe` `GenerationConfig::with_error_from_impls`. Implement

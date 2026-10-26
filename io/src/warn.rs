@@ -93,7 +93,7 @@ impl State {
     /// Writes `line`.
     #[allow(clippy::unused_self)] // on the state, so only its holder writes
     pub fn print(&self, line: String) {
-        eprintln!("{line}");
+        write_line(&line);
         keep(line);
     }
 
@@ -367,8 +367,23 @@ fn deliver(writer: Option<&Sender<Msg>>, m: Msg) {
                 .to_owned()
         }
     };
-    eprintln!("{line}");
+    write_line(&line);
     keep(line);
+}
+
+/// Writes `line` and its newline to stderr in one `write(2)`.
+///
+/// `eprintln!` writes the text, then the newline, in two: where stdout and
+/// stderr share a file (a runner's `>out 2>&1`), another thread's line could
+/// land between them, and a `ready` the runner waits for read
+/// `...is 2.ready`. One `eprint!` of one string is one write (still
+/// captured under `cargo test`); to a regular file, or a pipe up to
+/// `PIPE_BUF`, it lands whole.
+fn write_line(line: &str) {
+    let mut whole = String::with_capacity(line.len() + 1);
+    whole.push_str(line);
+    whole.push('\n');
+    eprint!("{whole}");
 }
 
 /// Queues `line` for the writer; written here only if the writer is not

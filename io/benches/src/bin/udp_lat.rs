@@ -40,7 +40,10 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprintln!("udp_lat: {e}");
+            // one write, its newline in it: ergon-io's warning thread may be
+            // writing to the same file (a runner's `>out 2>&1`)
+            let line = format!("udp_lat: {e}\n");
+            eprint!("{line}");
             ExitCode::FAILURE
         }
     }
