@@ -273,6 +273,12 @@ if [[ $suite == transport ]]; then
         [[ -r $sets_file ]] || die "LAB_SETS_FILE $sets_file: not a readable file"
         sets_file=$(cd "$(dirname "$sets_file")" && pwd)/${sets_file##*/}
     fi
+    # a copy taken now, beside this run's script snapshot: an edit to the
+    # checkout while the run goes on (a merge) never changes what it runs
+    if [[ -n $sets_file ]]; then
+        cp "$sets_file" "$here/../.lab-sets-$$.tsv" || die "LAB_SETS_FILE $sets_file: cannot copy"
+        sets_file=$here/../.lab-sets-$$.tsv
+    fi
     tr_sets_file=$sets_file
     [[ $run_stamp =~ ^[0-9]{8}-[0-9]{6}$ ]] || die "LAB_RUN_STAMP is <yyyymmdd>-<hhmmss>, not $run_stamp"
     [[ ${LAB_MODES:-}${LAB_LOCAL_MODES:-} == "" ]] || die "LAB_MODES and LAB_LOCAL_MODES are the latency suite's: LAB_SUITE=transport runs transport-matrix.tsv's arms"
@@ -281,6 +287,11 @@ if [[ $suite == transport ]]; then
         extra_src=$(cd "$extra_src" && pwd)
     fi
     [[ -z $arms_file ]] || arms_file=$(cd "$(dirname "$arms_file")" && pwd)/${arms_file##*/}
+    # (an unreadable one is left for transport.sh's own refusal)
+    if [[ -n $arms_file && -r $arms_file ]]; then
+        cp "$arms_file" "$here/../.lab-arms-$$.tsv" || die "LAB_ARMS_FILE $arms_file: cannot copy"
+        arms_file=$here/../.lab-arms-$$.tsv
+    fi
     # shellcheck source=../transport.sh
     . "$here/../transport.sh"
     all_pairs="a b"
