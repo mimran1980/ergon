@@ -1,6 +1,10 @@
 //! The WebSocket receive path allocates nothing per message once warm: kept,
 //! skipped, held as fragments, reassembled by copy, with Pings answered.
 //! Its own test binary, for the counting allocator. Every platform.
+//!
+//! The count is process-wide, so the tests here take [`ONE_AT_A_TIME`]: under
+//! `--test-threads=2` (CI's workspace run) one test's setup would otherwise
+//! land in the other's window.
 #![allow(missing_docs, unsafe_code, clippy::cast_possible_truncation)]
 
 mod support;
@@ -8,6 +12,7 @@ mod ws_rig;
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use ergon_io::ws::{OP_BINARY, OP_CONT, OP_PING, OP_TEXT};
 use ergon_io::{
@@ -39,6 +44,14 @@ unsafe impl GlobalAlloc for Counting {
 
 #[global_allocator]
 static GLOBAL: Counting = Counting;
+
+/// Held for a whole test: nothing else in this process allocates while a
+/// test counts.
+static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+
+fn alone() -> MutexGuard<'static, ()> {
+    ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// Keeps text, takes binary as fragments, skips what starts with `s`; sums
 /// what it sees without allocating.
@@ -99,6 +112,7 @@ fn round() -> R<(Vec<u8>, Vec<usize>)> {
 
 #[test]
 fn the_steady_state_receive_path_does_not_allocate() -> R {
+    let _alone = alone();
     let lab = Lab::new()?;
     let o = WsOptions {
         ping_interval_ms: 0,
@@ -179,6 +193,7 @@ impl WsHandler for StreamSum {
 /// inside: no allocation once warm.
 #[test]
 fn streaming_and_every_text_check_do_not_allocate() -> R {
+    let _alone = alone();
     let lab = Lab::new()?;
     let checks = [
         TextCheck::None,
