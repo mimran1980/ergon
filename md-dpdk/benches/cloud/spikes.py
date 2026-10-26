@@ -72,7 +72,7 @@ import random
 import re
 import sys
 
-from transport_points import hosts_of as transport_hosts_of, read_points, row_flags
+from transport_points import hosts_of as transport_hosts_of, irq_core_saturated, read_points, row_flags
 
 # the threads that busy-spin on traced CPUs: the dedicated agents, the shared
 # network agent ("[sender, receiver]", which the kernel cuts to 15 characters),
@@ -1054,6 +1054,9 @@ MINUTE_WINDOW = (49.0, 52.0)
 MINUTE_MIN_NS = 100_000
 EVENT_KINDS = {"irq", "softirq", "ipi", "preempt", "nak", "retransmit", "tcp-rto", "tcp-tlp", "tcp-dsack", "tcp-retrans",
                "tc-drop", "page-fault", "dpdk-refill", "host-pause", "stall"}
+# the kinds the tracefs instance records on a CPU (transport_events.py)
+TRACE_KINDS = {"irq", "softirq", "ipi", "preempt", "page-fault"}
+OVERRUN = re.compile(r"^trace overran on cpu(\d+):")
 # a gap spinner's own CPU: its switches say nothing of the measured path
 SPINNER_COMM = "gapspin:"
 _cache = {}
@@ -1145,39 +1148,83 @@ def transport_diag(folder, set_, host):
     return cached(("diag", os.path.abspath(folder), set_, host), load)
 
 
+def own_tcp_info(manifest, host):
+    """The point's own TCP connections' counters on host over its window
+    (loss_counters.<host>.tcp_info: retrans, retrans_not_dsack, rtos...), or
+    None where the manifest has none. The events' per-second TCP counters are
+    the host's, every connection's (the runner's SSH session's too: in a
+    real session's UDP-only points they grew in the window every few
+    seconds), so they say something of the point only where these show its
+    connections retransmitted."""
+    t = (((manifest or {}).get("loss_counters") or {}).get(host) or {}).get("tcp_info")
+    return t if isinstance(t, dict) else None
+
+
+def trace_starts(events):
+    """{(host, cpu): wall s} of each CPU's first trace row (an IRQ, softirq,
+    IPI, switch or page fault; not a stall or a spinner's gap): where a CPU
+    whose trace buffer overran is complete from (the ring buffer overwrites
+    its oldest pages, so what survives runs to the end)."""
+    first = {}
+    for e in events:
+        if e[2] in TRACE_KINDS and e[3] is not None:
+            k = (e[5], e[3])
+            if k not in first or e[0] < first[k]:
+                first[k] = e[0]
+    return first
+
+
 def transport_cause(folder, point):
     """What explains a transport point's max (transport-format.md), or
-    `unexplained (why)`: a flagged point's max is queueing; else the first of
-    a host pause, a page fault, a busy thread preempted, an IRQ on a hot CPU,
-    a softirq there, an IPI there, a DPDK refill, a NAK or retransmit, a TCP
-    RTO, TLP or retransmit matched to a netem drop in its second, and the
-    per-minute stall cluster that overlaps it. An event with a length must
-    account for half of what the max adds to the p50. An unexplained max
-    says what the events do show: a stall of the measuring loop, or what was
-    not recorded (no events file, the trace unavailable or overrun)."""
+    `unexplained (why)`: a flagged point's max is queueing (the IRQ core
+    saturated too); else the first of a host pause, a page fault, a busy
+    thread preempted, an IRQ on a hot CPU, a softirq there, an IPI there, a
+    DPDK refill, a NAK or retransmit, a TCP RTO, TLP or retransmit of the
+    point's own connections (own_tcp_info) after a netem drop in its second
+    or the one before, else as loss recovery, and the per-minute stall
+    cluster that overlaps it. An event with a length must account for half
+    of what the max adds to the p50. An unexplained max says what the events
+    do show: a stall of the measuring loop, what was not recorded (no events
+    file, the trace unavailable, an overrun reaching past the max's start),
+    and a host TCP counter no connection of the point's accounts for."""
     why = transport_cause_found(folder, point)
     if why != "unexplained":
         return why
-    _, notes = transport_host_events(folder, point.tag, point.hosts)
+    events, notes = transport_host_events(folder, point.tag, point.hosts)
     loc = transport_max(folder, point.tag, point.row.get("max"))
-    reasons = []
+    reasons, after = [], []
+    t0 = None
     if loc is not None:
         start, due, lat = loc
         t0, t1 = (start + due) / 1e9, (start + due + lat) / 1e9
         need = max(lat - (point.row.get("p50") or 0), 0) / 2 / 1e9
-        for e in transport_events(folder, point.tag, point.hosts):
+        for e in events:
             if e[2] == "stall" and e[0] <= t1 and e[1] >= t0 and e[1] - e[0] >= need:
                 reasons.append(f"the {e[4]} on {e[5]} cpu {e[3]} with no traced event covering it: the thread did not "
                                "run and the guest shows nothing, so the host or an untraced CPU")
                 break
+        # a host's per-second TCP counter in the max's window that the
+        # point's own connections there do not account for (own_tcp_info)
+        if "tcp" in set((point.manifest or {}).get("transport", "").split("+")):
+            for host in point.hosts:
+                own = own_tcp_info(point.manifest, host)
+                grew = any(e[5] == host and e[2] in ("tcp-rto", "tcp-tlp", "tcp-retrans") and e[0] <= t1 and e[1] >= t0
+                           for e in events)
+                if grew and own is not None and not (own.get("retrans") or own.get("rtos")):
+                    after.append(f"a TCP counter grew in that second on {host}, but the point's connections there "
+                                 "retransmitted nothing in the window: another connection's")
+    first = trace_starts(events)
     for host in point.hosts:
         for n in notes.get(host, []):
-            if n == "no events file" or ("unavailable" in n and not n.startswith("osnoise")) or "overran" in n \
+            over = OVERRUN.match(n)
+            if over and t0 is not None and first.get((host, int(over.group(1))), float("inf")) <= t0:
+                continue  # what the overrun lost came before the max: the trace there covers it
+            if n == "no events file" or ("unavailable" in n and not n.startswith("osnoise")) or over \
                     or n.startswith("trace empty"):
                 reasons.append(f"{host}: {n}")
     if not reasons:
         reasons.append("no recorded event overlaps it on either host")
-    return f"unexplained ({'; '.join(reasons)})"
+    return f"unexplained ({'; '.join(reasons + after)})"
 
 
 def transport_cause_found(folder, point):
@@ -1188,6 +1235,9 @@ def transport_cause_found(folder, point):
         return "past capacity (queueing)"
     if "sender late" in found:
         return "sender late (queueing)"
+    saturated = irq_core_saturated(manifest)
+    if saturated:
+        return f"IRQ core saturated (queueing: {', '.join(saturated)})"
     loc = transport_max(folder, point.tag, row.get("max"))
     if loc is None:
         return "unexplained (max not located: no `# max=` line, and no spike row at the row's max)"
@@ -1250,12 +1300,24 @@ def transport_cause_found(folder, point):
     drops = [e for e in transport_events(folder, point.tag, point.hosts) if e[2] == "tc-drop"]
     for e in of("tcp-rto", "tcp-tlp", "tcp-retrans") if "tcp" in parts else ():
         what = {"tcp-rto": "RTO", "tcp-tlp": "TLP", "tcp-retrans": "retransmit"}[e[2]]
+        own = own_tcp_info(manifest, e[5])
+        if own is not None and not (own.get("retrans") or own.get("rtos")):
+            continue  # the host's counter, another connection's (transport_cause says so)
         sec = int(e[0])
-        same = [d for d in drops if int(d[0]) <= sec < int(d[0]) + max(1, round(d[1] - d[0]))]
+        # the drop the timer recovers comes at least rto_min (or a probe
+        # timeout) before it: in its second or the one before
+        same = [d for d in drops if any(int(d[0]) <= s < int(d[0]) + max(1, round(d[1] - d[0])) for s in (sec, sec - 1))]
         if same:
             n = sum(int(d[4]) if d[4].isdigit() else 0 for d in same)
-            return f"TCP {what} after a netem drop ({e[5]}, {n:,} dropped in that second)"
-        return f"unexplained (TCP {what} on {e[5]} with no tc drop in that second)"
+            return f"TCP {what} after a netem drop ({e[5]}, {n:,} dropped in that second or the one before)"
+        if own is not None:
+            # the point's own connections retransmitted on that host, and no
+            # netem dropped: a loss on the path (fairness.py's loss rule
+            # reports it on a row without netem), recovered by this
+            return (f"TCP loss recovery ({e[5]}: {what} x{e[4]} in that second; the point's connections there "
+                    f"retransmitted {own.get('retrans') or 0} in the window, {own.get('retrans_not_dsack') or 0} not "
+                    "DSACK-reported; no netem drop: a loss on the path)")
+        return f"unexplained (TCP {what} on {e[5]} with no tc drop in that second or the one before)"
     s0, s1 = t0 % 60, t0 % 60 + (t1 - t0)
     if lat >= MINUTE_MIN_NS and s0 < MINUTE_WINDOW[1] and s1 >= MINUTE_WINDOW[0]:
         return "per-minute stall cluster (:49-:51)"
@@ -1274,11 +1336,12 @@ def transport_maxima(run_dir):
 def transport_main(run_dir):
     maxima = transport_maxima(run_dir)
     print("## Each point's max and its cause\n")
-    print("Labels, first that overlaps the max: a flagged point's queueing, a host pause (a gap spinner's gap the "
-          "trace does not explain), a page fault of a busy thread, a busy thread off its CPU (preempted or blocked), "
-          "an IRQ, softirq or IPI on a hot CPU, a DPDK refill, a NAK or retransmit, a TCP RTO, TLP or retransmit "
-          "matched to a netem drop in its second, the per-minute stall cluster (:49-:51). An unexplained max says "
-          "what its events do show and blocks its cell's conclusion: rerun it traced.\n")
+    print("Labels, first that overlaps the max: a flagged point's queueing (late, over capacity, the IRQ core "
+          "saturated), a host pause (a gap spinner's gap the trace does not explain), a page fault of a busy thread, "
+          "a busy thread off its CPU (preempted or blocked), an IRQ, softirq or IPI on a hot CPU, a DPDK refill, a "
+          "NAK or retransmit, a TCP RTO, TLP or retransmit of the point's own connections (after a netem drop in its "
+          "second or the one before, else loss recovery), the per-minute stall cluster (:49-:51). An unexplained max "
+          "says what its events do show and blocks its cell's conclusion: rerun it traced.\n")
     print("| set | label | kind | rate | rep | max (µs) | cause |")
     print("| --- | --- | --- | --- | --- | --- | --- |")
     for p, mx, cause in sorted(maxima, key=lambda x: (x[0].set, x[0].label, x[0].kind, x[0].rate, x[0].rep)):

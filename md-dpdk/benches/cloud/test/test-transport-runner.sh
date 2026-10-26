@@ -468,6 +468,43 @@ $off
 $none
 $delta"
 
+# irqs.sh: a moved data-NIC IRQ still effective on its old CPU (x86 under
+# Hyper-V moves it only at its next interrupt, which the old CPU takes: a real
+# session's idle mlx5 vectors each fired once on their hot CPU mid-run) is
+# made to fire now, by a frame from each CPU it is still effective on; one
+# that never fires is reported, not fatal (fairness.py's irq rule counts
+# what lands on a hot CPU)
+for irq in 40 41; do echo 2 >"$proc/irq/$irq/smp_affinity_list"; done
+echo 5 >"$proc/irq/40/effective_affinity_list"
+echo 2 >"$proc/irq/41/effective_affinity_list"
+# the kick: a frame from CPU <cpu> on <iface> fires every vector of it still
+# effective there (the fake moves it: its effective CPUs become its affinity)
+cat >"$tmp/fakebin/fakekick" <<'EOF'
+#!/usr/bin/env bash
+echo "kick cpu $1 $2" >>"$FAKE_KICKS"
+for f in "$LAB_SYS_ROOT/class/net/$2/device/msi_irqs"/*; do
+    [[ -e $f ]] || continue
+    irq=${f##*/}
+    [[ ${FAKE_KICK_DEAD:-} == "$irq" ]] && continue
+    [[ $(cat "$LAB_PROC_ROOT/irq/$irq/effective_affinity_list") == "$1" ]] &&
+        cp "$LAB_PROC_ROOT/irq/$irq/smp_affinity_list" "$LAB_PROC_ROOT/irq/$irq/effective_affinity_list"
+done
+exit 0
+EOF
+chmod +x "$tmp/fakebin/fakekick"
+export FAKE_KICKS=$tmp/kicks
+settled=$(hostrun irqs_data_settle 2 test fakekick eth1 enP1 2>&1; echo "rc $?")
+kicks=$(cat "$FAKE_KICKS")
+echo 5 >"$proc/irq/40/effective_affinity_list"
+dead=$(FAKE_KICK_DEAD=40 hostrun irqs_data_settle 2 test fakekick eth1 enP1 2>&1; echo "rc $?")
+same "irqs.sh: a data-NIC IRQ still effective on its old CPU fired by a frame from that CPU, then checked; one that never moves reported" "irqs test: 2 of 2 data-NIC IRQs effective on CPU 2 (40 moved by a frame from CPU 5)
+rc 0
+kick cpu 5 enP1
+irqs test: 1 of 2 data-NIC IRQs effective on CPU 2; still on another until their next interrupt: 40@5 (after 3 frames from each)
+rc 0" "$settled
+$kicks
+$dead"
+
 # ---- az.sh against a fake az of several groups ----
 mkdir -p "$tmp/fakeaz" "$tmp/azstate/groups"
 cat >"$tmp/fakeaz/az" <<'FAKEAZ'

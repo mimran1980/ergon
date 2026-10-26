@@ -15,6 +15,8 @@ is missing is a fairness violation, never a default.
 <run>/results.csv                 every row, rep first (as lab.sh writes it)
 <run>/transport-settings.env      the settings each arm must run with (transport_collect.py)
 <run>/transport-settings.tr.env   the TR_* file the session sourced
+<run>/failures.csv                each failed run: set,rep,netem,arm,aa,<streams|setup> (transport.sh)
+<run>/logs/<point>.out, .pong     the measuring run's output (host a) and its echo's (b; a on a one-host set)
 <run>/<set>/manifest-<tag>.json   one per point
 <run>/<set>/spikes-<tag>.csv      the point's spikes and its max
 <run>/<set>/<host>-events-<tag>.csv  timed events on a host during the point
@@ -72,11 +74,12 @@ after their due time.
 | `aa`, `aa_of` | bool, string | the A/A arm repeats arm `aa_of` |
 | `payload_sha256`, `wire_bytes` | string, int | same payload |
 | `core_build` | string | same core build (the core binary's hash) |
-| `seed`, `arm_order` | int, [arm] | randomised order |
+| `seed`, `arm_order` | int, [arm] | randomised order; an arm of it with no row in the round is absent only with its failure there in failures.csv, and left out of that comparison |
+| `runner` | {knob: value} (`manifest/<point>.env`) | `point` names the logs a binary's own check warnings are read from (hostcheck) |
 | `scheduled`, `late`, `max_send_lag_ns` | int | lateness |
 | `vms` | {host: VM id} | same VM pair |
 | `cpus` | {host: {housekeeping: [cpu], irq: [cpu], hot: [cpu]}} | placement, IRQs |
-| `threads` | {host: [[{tid, comm, cpu, util}]]} | samples taken during the point; `util` 0 to 1 |
+| `threads` | {host: [[{tid, comm, cpu, util}]]} | samples taken during the point; `util` 0 to 1; the IRQ CPU's own `ksoftirqd/<n>` over 90 % is the flag `IRQ core saturated`, not a placement fault |
 | `irqs` | {host: [{irq, name, data_nic, cpu, delta}]} | growth over the point; `[]` read and none |
 | `hostcheck` | {host: path relative to `<run>/<set>`} | hostcheck clean |
 | `settings` | {host: {knob: value}} | read back from the host after the point |
@@ -89,15 +92,22 @@ and the set-up's counters apart: `tcp.retrans`, `tcp.dsack_dups` (the
 spurious ones), `tcp.retrans_not_dsack`, `tcp.lost_end`, `tcp.rtos`, each
 with a `_setup` twin, `netstat.window.*` / `netstat.setup.*` (nstat
 names), and the busy thread's `sched.run_delay_ns` (table in
-`io/benches/src/transport/sock.rs`). At 0 % loss a retransmit is either
-spurious (DSACK reported, the thread waited for a CPU) or a bug to trace.
+`io/benches/src/transport/sock.rs`). At 0 % loss a retransmit is
+spurious (DSACK reported, the thread waited for a CPU), a drop the guest
+counted (a bug to trace), or a segment lost below the guest's stack: the
+NIC or the network. A real Azure session had the last at roughly one
+segment per million on rows without netem, Aeron's NAKed retransmits alike.
 transport_collect.py copies each end's into `loss_counters.<host>.tcp_info`
 (`retrans`, `dsack_dups`, `retrans_not_dsack`, `lost_end`, `rtos` and the
 `_setup` twins) and `netstat_window`. A TCP point's real loss is
 `retrans_not_dsack` plus `lost_end` over both hosts (`transport_points.tcp_loss`);
 the DSACK-reported ones are spurious, shown apart and never counted as loss.
 fairness.py's `loss` rule flags real loss on a row without loss (no netem,
-`none`, 0 %), and `loss-accounting` a `tcp_info` without the split.
+`none`, 0 %) where a guest drop counter grew on a host (`loss_counters`'
+nstat: a socket backlog or receive queue full, an IP discard...); with
+none grown the loss is the path's, a note (`note: loss: ...`) and no
+violation, as an Aeron row's retransmits there are. `loss-accounting` flags
+a `tcp_info` without the split.
 
 Hosts are `a` and `b`; a one-host set (1, 2b) has `a` alone.
 
@@ -212,15 +222,38 @@ IRQs from its `trace` section, softirqs from its `knoise` section and
 `refill` rows from the DPDK event log. A `stall` never labels a max: an
 unexplained max names the stall it overlaps (the thread did not run, and the
 guest's trace shows nothing), or what was not recorded (no events file, the
-trace unavailable, an overrun). The two hosts' events are on their own
-clocks: a cross-host match is as good as their CLOCK_REALTIME agreement.
+trace unavailable, an overrun that reaches past the max's start: the ring
+buffer overwrites a CPU's oldest events, so its trace is complete from its
+first surviving row, and an overrun that lost only warm-up is not named).
+The two hosts' events are on their own clocks: a cross-host match is as good
+as their CLOCK_REALTIME agreement.
+
+The `tcp-*` counters are the host's, every connection's, the runner's SSH
+session's among them (in a real session's UDP-only points they grew inside
+the window every few seconds). One labels a max only where the point's own
+`tcp_info` on that host shows its connections retransmitted in the window:
+after a `tc-drop` in its second or the one before (the timer fires at least
+`rto_min` or a probe timeout after the drop) it is `TCP <kind> after a netem
+drop`, without one `TCP loss recovery` (a loss on the path, which the `loss`
+rule reports on a row without netem). Otherwise it is another connection's,
+and an unexplained max says so.
+
+What the trace cannot see on Azure (Hyper-V): the IRQ CPU and the
+housekeeping CPU (not traced; every kernel packet's interrupt and NAPI poll
+run on the IRQ CPU), the synthetic timer and VMBus interrupts (`HVS`, `HYP`
+in /proc/interrupts: no tracepoint), and a hypervisor pause of a CPU no gap
+spinner runs on (every busy CPU and the IRQ CPU).
 
 ## hostcheck report
 
 ergon-tune's lines, one finding a line: `<id> ok: ...`, `<id> info: ...`,
 `<id> warn: ...`, `<id> unknown: ...: <reason>`. Clean: at least one line,
 no `warn`, and no `unknown` of an id that must prove something
-(`tune/src/report.rs` `unknown_stops_require`).
+(`tune/src/report.rs` `unknown_stops_require`). A binary's own checks count
+too: a `warning: <id> warn: ...` line in the point's logs
+(`logs/<runner.point>.out`, `.pong`; ergon-io checks the host at start and
+its loop thread's page faults every 5 s, T19, whose first report covers the
+start and warm-up and is left out) breaks the hostcheck rule.
 
 ## What the checks use
 
@@ -234,5 +267,7 @@ no `warn`, and no `unknown` of an id that must prove something
 | a cause with a length | at least half of what the max adds to the p50 |
 | a host pause | a spinner gap's untraced part, at least `TR_EVENTS_GAPSPIN_US` and half the gap |
 | per-minute stall cluster | a max of 100 µs or more overlapping seconds :49 to :51 of its minute, nothing more specific found |
-| TCP RTO/TLP | explained only with a `tc-drop` on either host in the same second |
+| TCP RTO/TLP/retransmit | only where the point's own `tcp_info` on that host retransmitted; a `tc-drop` on either host in its second or the one before makes it netem's, none a loss on the path |
+| IRQ core saturated | the IRQ CPU's `ksoftirqd` over 90 % in a placement sample (shown, never compared) |
+| absent arm | named by a round's order, no row, its failure in failures.csv for that rep, netem and stream count (or `setup`) |
 | not separated | medians within the A/A spread (largest per-rep A/A difference), or rep ranges overlap |

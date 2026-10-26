@@ -548,14 +548,35 @@ pin_irqs() {
         ifaces=$(data_ifaces 2>/dev/null) || ifaces=
         read -r _ cpu _ <"$run/transport-map"
         [[ -n $ifaces ]] || { echo "irqs $1: no data NIC in the kernel's hands" >&2; return 0; }
+        local rc=0
         # shellcheck disable=SC2086
-        irqs_pin_data "$cpu" "$1" $ifaces
-        return
+        irqs_pin_data "$cpu" "$1" $ifaces || rc=1
+        # each moved IRQ fired now, so its first interrupt is not a hot
+        # CPU's in a measured window (irqs.sh irqs_data_settle)
+        # shellcheck disable=SC2086
+        irqs_data_settle "$cpu" "$1" data_kick $ifaces
+        return $rc
     fi
     cpu=$(cat "$run/irq_cpu" 2>/dev/null) || return 0
     [[ -n $cpu && $cpu != "$HK_CPU" ]] || return 0
     # shellcheck disable=SC2046
     irqs_pin_queues "$cpu" "$1" $(data_ifaces) || true
+}
+
+# data_kick <cpu> <iface>: one frame sent from <cpu> out of data NIC <iface>
+# (Azure's VF: through its kernel interface, which holds the address): a
+# ping to its subnet's gateway, answered or not. It leaves on that CPU's
+# queue (the driver's XPS map), whose completion raises that queue's vector:
+# irqs_data_settle's kick
+data_kick() {
+    local cpu=$1 want=$2 iface vf ip prefix
+    while read -r _ iface vf _ ip prefix _; do
+        if [[ $want == "$vf" || $want == "$iface" ]]; then
+            taskset -c "$cpu" ping -q -c 1 -W 1 -I "$iface" "$(subnet_gateway "$ip/$prefix")" >/dev/null 2>&1 || true
+            return 0
+        fi
+    done < <(nics)
+    return 1
 }
 
 # data_ifaces: the data NICs' kernel interfaces (and Azure's VFs), one a line

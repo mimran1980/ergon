@@ -395,8 +395,17 @@ class FairnessTest(unittest.TestCase):
         p = [p for p in read_points(run.run) if p.arm == "mio-tcp"][0]
         self.assertEqual(tcp_loss(p), (4, 2))
         self.assertIsNone(fairness.tcp_loss_problem(p))
-        self.assertIn("4 segments lost", fairness.tcp_loss_problem(p._replace(netem=None)))
-        self.assertIn("4 segments lost", fairness.tcp_loss_problem(p._replace(netem="0")))
+        # with no guest drop counter grown on either host the loss is below
+        # the guest's stack (the NIC or the network): a note, not a violation
+        self.assertIsNone(fairness.tcp_loss_problem(p._replace(netem=None)))
+        self.assertIn("4 segments lost below the guest", fairness.path_loss(p._replace(netem=None)))
+        self.assertIsNone(fairness.path_loss(p))
+        # a drop the guest counted (its socket backlog full) is a bug to trace
+        dropped = {h: dict(src, nstat=dict(src["nstat"], TcpExtTCPBacklogDrop=2))
+                   for h, src in p.manifest["loss_counters"].items()}
+        d = p._replace(manifest=dict(p.manifest, loss_counters=dropped))
+        self.assertIn("4 segments lost", fairness.tcp_loss_problem(d._replace(netem=None)))
+        self.assertIn("TcpExtTCPBacklogDrop 4", fairness.tcp_loss_problem(d._replace(netem="0")))
         spurious = {h: dict(src, tcp_info=dict(src["tcp_info"], retrans_not_dsack=0, dsack_dups=3))
                     for h, src in p.manifest["loss_counters"].items()}
         q = p._replace(netem=None, manifest=dict(p.manifest, loss_counters=spurious))
@@ -627,10 +636,18 @@ class SpikesLabelTest(unittest.TestCase):
         self.events("a", f"tcp-tlp,{self.mid},{self.mid},-,1", f"tc-drop,{sec},{sec + 10**9},-,2")
         self.assertTrue(self.cause(transport="tcp").startswith("TCP TLP after a netem drop"))
 
+    def test_tcp_rto_after_a_tc_drop_in_the_second_before(self):
+        # the timer fires at least rto_min (or a probe timeout) after the
+        # drop it recovers: across a second boundary as often as not
+        sec = self.mid // 10**9 * 10**9
+        self.events("a", f"tcp-rto,{self.mid},{self.mid},-,1")
+        self.events("b", f"tc-drop,{sec - 10**9},{sec},-,1")
+        self.assertTrue(self.cause(transport="tcp").startswith("TCP RTO after a netem drop"), self.cause(transport="tcp"))
+
     def test_tcp_rto_without_a_tc_drop_is_unexplained(self):
         sec = self.mid // 10**9 * 10**9
         self.events("a", f"tcp-rto,{self.mid},{self.mid},-,1")
-        self.events("b", f"tc-drop,{sec - 10**9},{sec},-,1")  # the second before
+        self.events("b", f"tc-drop,{sec - 2 * 10**9},{sec - 10**9},-,1")  # two seconds before
         self.assertTrue(self.cause(transport="tcp").startswith("unexplained (TCP RTO"), self.cause(transport="tcp"))
 
     def test_dpdk_refill_from_the_event_log(self):
@@ -681,6 +698,179 @@ class SpikesLabelTest(unittest.TestCase):
         self.assertEqual(got.returncode, 0, got.stderr)
         self.assertIn("host pause", got.stdout)
         self.assertIn("unexplained: none", got.stdout)
+
+
+A2 = os.path.join(HERE, "fixture", "transport-a2")
+
+
+class A2SessionTest(unittest.TestCase):
+    """Cases cut from a real Azure session (20261026-120451-transport-a, sets
+    fan and 3a): each point's spikes header and max, its events files
+    trimmed to their notes, each CPU's first trace rows and the rows around
+    the max, and the manifest fields the labels read; values as recorded."""
+
+    def point(self, tag):
+        with open(os.path.join(A2, "fan", f"point-{tag}.json")) as f:
+            p = json.load(f)
+        return spikes.TransportPoint(set=p["set"], tag=tag, row=p["row"], manifest=p["manifest"], hosts=("a", "b"))
+
+    def copy(self, *tags):
+        """The fan fixture's files of tags in a folder of their own, to edit."""
+        d = tempfile.mkdtemp(prefix="transport-a2-")
+        self.addCleanup(shutil.rmtree, d, True)
+        folder = os.path.join(d, "fan")
+        os.makedirs(folder)
+        for name in os.listdir(os.path.join(A2, "fan")):
+            if any(t in name for t in tags):
+                shutil.copyfile(os.path.join(A2, "fan", name), os.path.join(folder, name))
+        return folder
+
+    def test_an_overrun_before_the_max_leaves_it_traced(self):
+        # both hosts' CPU 2 overran, but its trace on each runs from long
+        # before the max (a: 0.9 s into the 41 s; b: 28 s): the overrun lost
+        # warm-up events only, so it is not what left the max unexplained
+        tag = "fan-aa@STREAMS=128-64-1-r10000"
+        self.assertEqual(spikes.transport_cause(os.path.join(A2, "fan"), self.point(tag)),
+                         "unexplained (no recorded event overlaps it on either host)")
+
+    def test_an_overrun_after_the_max_is_said(self):
+        tag = "fan-aa@STREAMS=128-64-1-r10000"
+        folder = self.copy(tag)
+        path = os.path.join(folder, f"spikes-{tag}.csv")
+        # the max moved to half a second into the run: before host a's first
+        # surviving trace row on CPU 2 (0.88 s), after nothing on b's (28 s)
+        text = read(path).replace("# max=41148699978,", "# max=500000000,").replace(",41148699978,", ",500000000,")
+        write(path, text)
+        self.assertEqual(spikes.transport_cause(folder, self.point(tag)),
+                         "unexplained (a: trace overran on cpu2: 29884 events lost (its buffer full): an event there "
+                         "may be missing; b: trace overran on cpu2: 954962 events lost (its buffer full): an event "
+                         "there may be missing)")
+
+    def test_a_host_tcp_counter_without_the_points_own_retransmits_is_another_connections(self):
+        # a's TCP counters grew in the max's second (a retransmit, a DSACK,
+        # two probes), but the point's connections retransmitted nothing on
+        # either host in the window (tcp_info): the counters are the host's,
+        # the runner's SSH session among them, so they explain nothing
+        tag = "fan-mio-tcp@STREAMS=8-64-2-r10000"
+        self.assertEqual(spikes.transport_cause(os.path.join(A2, "fan"), self.point(tag)),
+                         "unexplained (no recorded event overlaps it on either host; a TCP counter grew in that second "
+                         "on a, but the point's connections there retransmitted nothing in the window: another "
+                         "connection's)")
+
+    def test_a_retransmit_of_the_points_own_with_no_netem_is_a_loss_elsewhere(self):
+        # a's probes in the max's second, and a's own connection retransmitted
+        # one segment the peer did not report as a duplicate: a real loss with
+        # no netem on the row, recovered by a probe ~12 ms later (2 x SRTT
+        # rounded up to jiffies plus two jiffies at HZ=250)
+        tag = "fan-aa@STREAMS=32-64-2-r50000"
+        got = spikes.transport_cause(os.path.join(A2, "fan"), self.point(tag))
+        self.assertEqual(got, "TCP loss recovery (a: TLP x4 in that second; the point's connections there "
+                              "retransmitted 1 in the window, 1 not DSACK-reported; no netem drop: a loss on the path)")
+
+    def test_path_loss_on_a_row_without_netem_is_a_note(self):
+        # a real 3a point (mio-tcp, 50k msg/s, rep 1, no netem): each end's
+        # connection retransmitted one segment the peer never reported a
+        # duplicate (each sender fast-retransmitted after SACKs, each
+        # receiver queued out of order: a hole), and no guest drop counter
+        # grew on either host: lost below the guest's stack
+        run = Run(self)
+        real = {"a": {"tcp_info": {"dsack_dups": 0, "lost_end": 0, "retrans": 1, "retrans_not_dsack": 1, "rtos": 0},
+                      "nstat": {"TcpExtTCPSackRecovery": 1, "TcpExtTCPFastRetrans": 1, "TcpExtTCPOFOQueue": 9,
+                                "TcpRetransSegs": 10}},
+                "b": {"tcp_info": {"dsack_dups": 0, "lost_end": 0, "retrans": 1, "retrans_not_dsack": 1, "rtos": 0},
+                      "nstat": {"TcpExtTCPSackRecovery": 1, "TcpExtTCPFastRetrans": 1, "TcpExtTCPOFOQueue": 6,
+                                "TcpRetransSegs": 1}}}
+        mio = lambda m: m["arm"] == "mio-tcp" and m["rep"] == 1
+        run.edit(mio, lambda m: m.update(loss_counters=real, netem=None, netem_counters=None))
+        run.rows(lambda r: r["label"] == "3b:mio-tcp@NETEM=0.1" and r["rep"] == "1",
+                 lambda r: r.__setitem__(2, "3b:mio-tcp"))
+        os.rename(run.path("3b", "manifest-3b-mio-tcp@NETEM=0.1-64-1-r10000.json"),
+                  run.path("3b", "manifest-3b-mio-tcp-64-1-r10000.json"))
+        run.edit(mio, lambda m: m.update(label="3b:mio-tcp"))
+        notes = []
+        found = [v for v in fairness.check(run.run, notes=notes) if v.rule in ("loss", "netem")]
+        self.assertEqual([v.rule for v in found if v.rule == "loss"], [])
+        self.assertEqual([str(n) for n in notes if n.rule == "loss"], [
+            "note: loss: 3b: 3b-mio-tcp-64-1-r10000: 2 segments lost below the guest's TCP stack (the NIC or the "
+            "network: no guest drop counter grew on either host; retransmits not DSACK-reported: a 1, b 1), 0 "
+            "spurious, on a row without netem"])
+
+    def test_failed_arm_absent_from_its_rounds(self):
+        # 3a's dpdk-aeron-rel failed in every rep (failures.csv as the runner
+        # wrote it): its rounds' orders name it, no row has it
+        run = Run(self)
+        shutil.copyfile(os.path.join(A2, "failures.csv"), run.path("failures.csv"))
+        with open(run.path("failures.csv"), "a") as f:
+            f.write("2a,1,-,aeron-x,0,1\n2a,2,-,aeron-x,0,setup\n2a,3,-,aeron-x,0,1\n")
+        run.edit(lambda m: m["set"] == "2a" and m["streams"] == 1,
+                 lambda m: m.update(arm_order=m["arm_order"] + ["aeron-x"]), first=False)
+        notes = []
+        self.assertEqual(fairness.check(run.run, absences=notes), [])
+        self.assertEqual(sorted({(a.set, a.rep, a.streams, a.arm) for a in notes}),
+                         [("2a", 1, 1, "aeron-x"), ("2a", 2, 1, "aeron-x"), ("2a", 3, 1, "aeron-x")])
+        self.assertIn("failures.csv", notes[0].detail)
+
+    def test_an_arm_absent_without_a_recorded_failure_breaks_the_order(self):
+        run = Run(self)
+        shutil.copyfile(os.path.join(A2, "failures.csv"), run.path("failures.csv"))
+        with open(run.path("failures.csv"), "a") as f:
+            f.write("2a,1,-,aeron-x,0,8\n")  # another stream count's
+        run.edit(lambda m: m["round"] == "2a-s1-n--r10000-rep1",
+                 lambda m: m.update(arm_order=m["arm_order"] + ["aeron-x"]), first=False)
+        self.assertEqual(run.rules(), ["order"])
+
+    def test_analysis_says_which_arm_is_absent(self):
+        run = Run(self)
+        with open(run.path("failures.csv"), "w") as f:
+            f.write("2a,1,-,aeron-x,0,1\n2a,2,-,aeron-x,0,1\n2a,3,-,aeron-x,0,1\n")
+        run.edit(lambda m: m["set"] == "2a" and m["streams"] == 1,
+                 lambda m: m.update(arm_order=m["arm_order"] + ["aeron-x"]), first=False)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            analyse.transport([run.run])
+        s1 = out.getvalue().split("### Set 2a, 1 stream, 10,000 msg/s")[1].split("\n### ")[0]
+        self.assertIn("Absent: aeron-x (failed in reps 1, 2, 3: failures.csv): left out of this comparison.", s1)
+        self.assertNotIn("Refused", s1)
+
+    def test_irq_core_saturated_is_a_flag_not_a_placement_fault(self):
+        # fan-eio-tcp, 128 connections at 200k msg/s: host a's ksoftirqd/1 at
+        # 102 % on CPU 1, the IRQ CPU (its softirq work handed to its thread)
+        with open(os.path.join(A2, "placement-fan-eio-tcp@STREAMS=128-64-1-r200000.json")) as f:
+            real = json.load(f)
+        run = Run(self)
+        irq_cpu = 2  # the fixture's IRQ CPU; the real one was 1
+        sat = dict(next(t for t in real["threads"]["a"][0] if t["comm"] == "ksoftirqd/1"),
+                   comm=f"ksoftirqd/{irq_cpu}", cpu=irq_cpu)
+        run.edit(ONE, lambda m: [s.append(dict(sat)) for s in m["threads"]["a"]])
+        self.assertEqual(run.rules(), [])
+        p = next(p for p in read_points(run.run) if p.manifest and ONE(p.manifest))
+        from transport_points import flags
+        self.assertIn("IRQ core saturated", flags(p))
+
+    def test_ksoftirqd_on_a_hot_cpu_is_still_a_placement_fault(self):
+        run = Run(self)
+        run.edit(ONE, lambda m: m["threads"]["a"][0].append({"comm": "ksoftirqd/6", "cpu": 6, "tid": 27, "util": 1.02}))
+        self.assertEqual(run.rules(), ["placement"])
+
+    def test_a_binarys_own_warning_breaks_hostcheck(self):
+        # ergon-io's checks at start and through the run: N2 (interrupts
+        # deferred for busy polling that nothing does) and T19 (the loop
+        # thread's page faults), from a real eio-tcp point's log
+        run = Run(self)
+        os.makedirs(run.path("logs"))
+        shutil.copyfile(os.path.join(A2, "eio-tcp.out"), run.path("logs", "2a-r1-eio-udp-10000.out"))
+        run.edit(lambda m: m["set"] == "2a" and m["arm"] == "eio-udp" and m["streams"] == 1 and m["rep"] == 1,
+                 lambda m: m.update(runner={"point": "2a-r1-eio-udp-10000"}))
+        found = [v for v in fairness.check(run.run) if v.rule == "hostcheck"]
+        self.assertEqual([str(v) for v in found], [
+            "hostcheck: 2a: 2a-eio-udp-64-1-r10000: a eio-udp's own check N2 warned 1x: enP44106s2: interrupts are "
+            "deferred (napi_defer_hard_irqs 2, gro_flush_timeout 200000 ns) but no socket on it busy-polls: packets "
+            "wait for the 200 µs timer",
+            # T19's first covers the start (1085 faults: set-up and warm-up), left out
+            "hostcheck: 2a: 2a-eio-udp-64-1-r10000: a eio-udp's own check T19 warned 1x: the loop thread "
+            "(/proc/thread-self/stat) took 5 minor and 0 major page faults since the last check (minflt 1108 → "
+            "1113, majflt 0 → 0): each stops the thread while the kernel maps the page in, and a major one waits for "
+            "I/O too (not measured here)"])
 
 
 class AnalyseTest(unittest.TestCase):
@@ -910,8 +1100,8 @@ class TuneTest(unittest.TestCase):
         # rto_min_us for both TCP arms (pair b: they are in loss sets), at 1
         # and 128 connections, without and with netem; no bbr to sweep
         self.assertEqual(sets, [
-            "set fan.1 tune - ab 50000 1,128 -,0.1 mio-tcp--rto_min_us-5000,mio-tcp--rto_min_us-2000,mio-tcp--rto_min_us-10000,aa",
-            "set fan.2 tune - ab 50000 1,128 -,0.1 eio-tcp--rto_min_us-5000,eio-tcp--rto_min_us-2000,eio-tcp--rto_min_us-10000,aa"])
+            "set fan.1 tune - ab 50000 1,128 -,0.1 mio-tcp--rto_min_us-8000,mio-tcp--rto_min_us-12000,mio-tcp--rto_min_us-16000,aa",
+            "set fan.2 tune - ab 50000 1,128 -,0.1 eio-tcp--rto_min_us-8000,eio-tcp--rto_min_us-12000,eio-tcp--rto_min_us-16000,aa"])
 
 
 if __name__ == "__main__":
