@@ -182,7 +182,10 @@ UDP at 1 to 128 streams, TCP with and without loss, and TCP fan-in up to
 [transport latency comparison](https://mimran1980.github.io/ergon/transports/comparison.html).
 
 <!-- RESULTS: io README -->
-Results pending.
+Pending a rerun. In the first Azure sessions mio's sockets busy-polled
+(`SO_BUSY_POLL` 50 µs) while ergon-io's `epoll-spin` set 0, so those runs
+do not compare mio with ergon-io. The rerun gives both the same busy
+polling.
 
 ## Rate limits and errors
 
