@@ -129,7 +129,7 @@ got=$(
 same "transport.sh check: a declared twin is its twin's arm but for one per-arm knob (aeron_page 4096 or 2097152); aeron-ipc-huge's hugetlbfs holds its logs twice over" "ok: 420 rc 0
 small: TR_AERON_HUGE_PAGES 16: aeron-ipc-huge's hugetlbfs needs 28 pages of 2 MiB (term length 1048576, 1 streams: host.sh transport_huge_pages) rc 2
 twin: TR_DECLARED aeron-ipc-huge: not aeron-spy's twin: [aeron_lat kernel one --mode ipc] against [aeron_lat kernel one --mode spy] rc 2
-no twin: TR_DECLARED aeron-ipc-huge: no arm nosuch to be the twin of rc 2
+no twin: TR_DECLARED aeron-ipc-huge: no arm nosuch to be its twin rc 2
 knob: TR_DECLARED aeron-ipc-huge: nosuch is not a per-arm knob of aeron_lat (transport-settings.env's list) rc 2
 page: TR_DECLARED aeron-ipc-huge: aeron_page 65536: 4096 (TR_AERON_DIR, tmpfs) or 2097152 (TR_AERON_HUGE_DIR, 2 MiB hugetlbfs) rc 2
 form: TR_DECLARED aeron-ipc-huge=aeron-ipc: <arm>:<twin>:<knob>=<value> rc 2" "$got"
@@ -1004,8 +1004,9 @@ m=$(grep -l '^mode=aeron-rel@STREAMS=1@NETEM=1$' "$d"/manifest/*.env | head -1)
 grep -q '^placement_a=FAIL' "$m" && grep -q '^netem_a=.* FAIL$' "$m" || why+=" verdicts: $(grep -E 'placement_|netem_' "$m" | tr '\n' ' ');"
 grep -q 'WARNING: point .* netem counters off its loss' "$sb/run.out" || why+=" not logged;"
 # the hugetlbfs read back at 4 KiB: aeron-ipc-huge's points break the settings rule
-python3 "$cloud/fairness.py" "$d" 2>/dev/null | grep -q '^settings: 1: 1-aeron-ipc-huge@STREAMS=1-64-1-r10000: a knob.aeron_page=4096, the env gives 2097152$' ||
-    why+=" a 4 KiB page on aeron-ipc-huge not flagged: $(python3 "$cloud/fairness.py" "$d" 2>/dev/null | grep -m2 aeron_page);"
+fv=$(python3 "$cloud/fairness.py" "$d" 2>/dev/null || true)
+grep -q '^settings: 1: 1-aeron-ipc-huge@STREAMS=1-64-1-r10000: a knob.aeron_page=4096, the env gives 2097152$' <<<"$fv" ||
+    why+=" a 4 KiB page on aeron-ipc-huge not flagged: $(grep aeron_page <<<"$fv" | head -2 || true);"
 [[ $(grep -c '^3c,1,0,mio-tcp,0,1$' "$d/failures.csv") == 1 ]] || why+=" failures: $(cat "$d/failures.csv");"
 # a pong that never says ready: its point failed, its ping never started
 [[ $(grep -c '^3c,1,0,eio-tcp,0,1$' "$d/failures.csv") == 1 ]] && ! grep -q '^a tcp_lat --role ping .*--label 3c:eio-tcp@STREAMS=1@NETEM=0 ' "$sb/runs" &&

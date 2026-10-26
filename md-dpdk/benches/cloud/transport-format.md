@@ -21,6 +21,7 @@ is missing is a fairness violation, never a default.
 <run>/<set>/<host>-diag-<set>.log    vm.sh diag: gapspin, trace, knoise
 <run>/<set>/<host>-rings-<tag>.log   DPDK event log (dpdk arms)
 <run>/<set>/hostcheck-<a|b>.txt   each host's session hostcheck report
+<run>/<set>/hostcheck-<a|b>-hugepages.txt  the one on the hugetlbfs Aeron directory (aeron-ipc-huge's)
 ```
 
 `<set>` is the matrix set (`1`, `2a`, `2b`, `3a`, `3b`, `3c`, `fan`).
@@ -106,6 +107,7 @@ Hosts are `a` and `b`; a one-host set (1, 2b) has `a` alone.
 shared.<knob>=<value>          every arm, both hosts
 <arm>.<knob>=<value>           that arm only
 sweep.<knob>=<arm>,<arm>,...   the arms swept for a per-arm knob
+declared.<arm>=<twin>:<knob>   arm is twin but for this knob (a declared technology difference)
 ```
 
 An arm reporting a knob the file does not give it, or a different value,
@@ -119,14 +121,26 @@ breaks the settings rule. transport_collect.py writes:
   instead, for every arm, each its own value.
 - `<arm>.knob.<name>`: each per-arm knob of transport-settings.env's list
   that the arm has, as the runner ran it (`manifest/<point>.env` `knob.*`),
-  read back from the binary's manifest where it reports it.
+  read back from the binary's manifest where it reports it, or from the
+  host: `knob.aeron_page`, the page size of every Aeron arm's directory
+  (`vm.sh aeron-page`: 4096 on tmpfs, 2097152 on aeron-ipc-huge's hugetlbfs;
+  `unread` when the read failed).
 - `sweep.<knob>`: the arms a tuning session swept for it: the tuned
   section's `TR_TUNED_SWEPT`, and in a tuning session its variants.
+- `declared.<arm>`: each `TR_DECLARED` arm that ran, its twin and the
+  `knob.<name>` it differs in (`declared.aeron-ipc-huge=aeron-ipc:knob.aeron_page`).
 
 The shared-knob rule: where the arms of a round run a per-arm knob at
 different values, every arm of the round that has it needs a `sweep.` line
 naming it (one value everywhere is no arm's own tweak); a knob is never both
-`shared.` and per-arm. The A/A arm is checked against `aa_of`'s settings.
+`shared.` and per-arm. The A/A arm is checked against `aa_of`'s settings. A
+declared arm's own knob is left out of it while its twin is in the round.
+
+The declared rule: a declared arm runs in every round with its twin, and
+nothing but its knob differs between them: every other per-arm knob, the
+transport, the wire bytes, and the runner's `bin`, `args` and `driver_mode`
+(`manifest-<tag>.json`'s `runner`). Its knob's value is read back like any
+other (the settings rule).
 
 ## The tuning session (LAB_TUNE=1)
 

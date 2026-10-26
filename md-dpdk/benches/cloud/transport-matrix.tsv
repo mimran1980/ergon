@@ -25,9 +25,15 @@
 #            rows labelled <set>:aa (fairness.py wants one in every round)
 #
 # Points: arms x loads x streams x netem levels x 5 reps.
+#
+# aeron-ipc-huge is aeron-ipc with its Aeron directory on a 2 MiB hugetlbfs
+# (TR_AERON_HUGE_DIR) in place of tmpfs: transport-settings.env's
+# TR_DECLARED names that its one difference, and fairness.py checks nothing
+# else differs.
 
 arm  mpsc             mpsc_lat   none     one
 arm  aeron-ipc        aeron_lat  kernel   one  --mode ipc
+arm  aeron-ipc-huge   aeron_lat  kernel   one  --mode ipc
 arm  aeron-spy        aeron_lat  kernel   one  --mode spy
 arm  aeron-self       aeron_lat  kernel   one  --mode udp --reliable false
 arm  dpdk-aeron-self  aeron_lat  dpdk     one  --mode udp --reliable false
@@ -41,7 +47,7 @@ arm  mio-tcp          tcp_lat    sockets  two  --impl mio
 arm  eio-tcp          tcp_lat    sockets  two  --impl ergon
 
 # set   pair par host loads                  streams      netem          arms
-set 1    b    p1  a    10000,1000000,5000000  1            -              mpsc,aeron-ipc,aa
+set 1    b    p1  a    10000,1000000,5000000  1            -              mpsc,aeron-ipc,aeron-ipc-huge,aa
 set 2b   b    p1  b    10000,50000,200000     1            -              aeron-spy,aeron-self,dpdk-aeron-self,aa
 set 2a   a    -   ab   10000,50000,200000     1,8,32,128   -              aeron-udp,dpdk-aeron-udp,mio-udp,eio-udp,aa
 set fan  a    -   ab   10000,50000,200000     8,32,128     -              mio-tcp,eio-tcp,aa

@@ -987,6 +987,63 @@ transport_ports_check() {
     echo "ports $base-$last clear of 20000-21999${lo:+ and the ephemeral range $lo-$hi}"
 }
 
+# transport_huge_pages <term length> <streams>: the 2 MiB pages a hugetlbfs
+# Aeron directory needs for one IPC arm, twice over. Each file is a whole
+# number of pages (AERON_FILE_PAGE_SIZE 2 MiB, vm.sh common_env): the CnC
+# (two 1 MiB buffers, 1 MiB of counter values, their 4 MiB of metadata, the
+# 1 MiB error log: 5 pages) and the loss report (1 page); a log is three
+# terms and its 4 KiB of metadata. A point's run holds each stream's ping
+# and echo publications, and the run before it may still be lingering its
+# own: 4 logs a stream.
+transport_huge_pages() {
+    local term=$1 streams=$2 page=2097152 log
+    log=$(((3 * term + 4096 + page - 1) / page))
+    echo $((2 * (6 + 4 * streams * log)))
+}
+
+# transport_huge_mount <mount point> <pages>: a hugetlbfs of <pages> 2 MiB
+# pages at <mount point> (mode 1777, as /dev/shm), every page reserved for
+# it at mount (min_size), so nothing else on the host can take them; then
+# verified (transport_huge_check). Refused (1, nothing mounted) when the
+# kernel has fewer 2 MiB pages free and unreserved; one already mounted is
+# kept only when it is right.
+transport_huge_mount() {
+    local mnt=$1 pages=$2 hp=$LAB_SYS_ROOT/kernel/mm/hugepages/hugepages-2048kB free resv bytes
+    bytes=$((pages * 2097152))
+    if mountpoint -q "$mnt"; then
+        transport_huge_check "$mnt" "$pages"
+        return
+    fi
+    free=$(cat "$hp/free_hugepages" 2>/dev/null) resv=$(cat "$hp/resv_hugepages" 2>/dev/null)
+    if ! [[ $free =~ ^[0-9]+$ && $resv =~ ^[0-9]+$ ]] || ((free - resv < pages)); then
+        echo "hugetlbfs $mnt: $pages pages of 2 MiB wanted, the kernel has $((${free:-0} - ${resv:-0})) free and unreserved" \
+            "(vm.nr_hugepages $(cat "$hp/nr_hugepages" 2>/dev/null || echo unread)): not mounted" >&2
+        return 1
+    fi
+    sudo mkdir -p "$mnt" || return 1
+    sudo mount -t hugetlbfs -o "mode=1777,pagesize=2M,size=$bytes,min_size=$bytes" none "$mnt" ||
+        { echo "hugetlbfs $mnt: mount failed" >&2; return 1; }
+    transport_huge_check "$mnt" "$pages"
+}
+
+# transport_huge_check <mount point> <pages>: 0, saying so, when
+# <mount point> is a mount point that /proc/mounts lists as hugetlbfs with
+# pagesize=2M, size and min_size <pages> of them; else 1 saying what it is
+transport_huge_check() {
+    local mnt=$1 pages=$2 bytes fs opts
+    bytes=$((pages * 2097152))
+    mountpoint -q "$mnt" || { echo "hugetlbfs $mnt: not a mount point" >&2; return 1; }
+    read -r fs opts < <(awk -v m="$mnt" '$2 == m {fs = $3; o = $4} END {print fs, o}' "${LAB_PROC_ROOT:-/proc}/mounts")
+    if [[ $fs == hugetlbfs && ,$opts, == *,pagesize=2M,* && ,$opts, == *,size=$bytes,* && ,$opts, == *,min_size=$bytes,* ]]; then
+        echo "hugetlbfs $mnt: pagesize 2M, size $bytes, min_size $bytes ($pages pages of 2 MiB, reserved)"
+        return 0
+    fi
+    # (the filesystem named only when it is not hugetlbfs)
+    [[ $fs == hugetlbfs ]] || opts="$fs $opts"
+    echo "hugetlbfs $mnt: $opts, not hugetlbfs with pagesize=2M, size=$bytes and min_size=$bytes" >&2
+    return 1
+}
+
 # transport_smt_off: SMT off (smt/control) and verified: control off (or
 # forceoff) and smt/active 0; nothing to do where the CPU has none. 1 when
 # the kernel kept it on.

@@ -12,7 +12,9 @@
 #                                     (LOCAL_SMOKE_MAP to set one); 2 with fewer than eight
 #   local-vm.sh nics                  vm.sh nics' lines: sender and receiver on lo
 #                                     (a: 127.0.1.1 and 127.0.1.2, b: 127.0.2.1 and 127.0.2.2)
-#   local-vm.sh hostcheck             the real hostcheck on the map's CPUs (exit as it says)
+#   local-vm.sh hostcheck [aeron dir] the real hostcheck on the map's CPUs (exit as it says)
+#   local-vm.sh aeron-page            the page size of the smoke's Aeron directory's filesystem
+#                                     (the smoke runs no arm on a hugetlbfs)
 #   local-vm.sh driver <mode>         kernel-busy...: the box's media driver (one for both hosts:
 #                                     started by the first, a no-op while it runs), DEDICATED, its
 #                                     sender, receiver and conductor on the map's first three isolated
@@ -70,7 +72,7 @@ transport-map) map ;;
 nics) nics ;;
 hostcheck)
     read -r _ _ iso < <(map)
-    "$tools/hostcheck" --hot-cpus "$iso" --nic lo --aeron-dir "$TR_AERON_DIR" --out "$run/hostcheck.txt" && rc=0 || rc=$?
+    "$tools/hostcheck" --hot-cpus "$iso" --nic lo --aeron-dir "${2:-$TR_AERON_DIR}" --out "$run/hostcheck.txt" && rc=0 || rc=$?
     cat "$run/hostcheck.txt" 2>/dev/null
     exit $rc
     ;;
@@ -147,6 +149,7 @@ sample)
     cat "$run/sample.ps"
     ;;
 irqsnap) cat /proc/interrupts ;;
+aeron-page) stat -f -c %S "$TR_AERON_DIR" ;;
 nstat) transport_nstat ;;
 settings) transport_settings_read ;;
 events-start)

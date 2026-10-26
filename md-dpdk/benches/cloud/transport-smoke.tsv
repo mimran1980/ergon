@@ -1,5 +1,6 @@
 # The local smoke's sets (transport.sh smoke, LAB_LOCAL_SMOKE=1): every arm of
-# every set of transport-matrix.tsv but DPDK's, cut down: one or two loads,
+# every set of transport-matrix.tsv but DPDK's and aeron-ipc-huge (its 2 MiB
+# hugetlbfs is vm.sh transport-tune's, not the box's), cut down: one or two loads,
 # streams 1 and 8 for UDP, 8 for the TCP fan-in, one netem loss level, all in
 # one session (pair a) and one after the other (the box is both hosts). The
 # arms are the matrix's own (its arm rows); the format is its set rows'.

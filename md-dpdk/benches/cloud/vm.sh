@@ -94,12 +94,15 @@
 #                            the driver's layout under it, and its boot line from the next boot
 #   vm.sh transport-tune     after that boot: SMT off, the boot line checked, the quiet settings,
 #                            irqbalance off, the data NICs (rings, coalescing off, quickack routes,
-#                            every interrupt on the IRQ CPU) and the sysctls, each read back
+#                            every interrupt on the IRQ CPU) and the sysctls, each read back; the
+#                            2 MiB hugetlbfs of aeron-ipc-huge's Aeron directory mounted and verified
 #   vm.sh transport-net [check]  a socket arm's kernel path (NAPI, busy poll, TCP), or only read back
 #   vm.sh transport-map      the map;  vm.sh transport-build  the bench binaries and LAB_EXTRA_SRC's
 #   vm.sh netem set <loss %>|clear|check <loss %|none>|stats   netem on every data NIC's egress
 #   vm.sh sample             every thread's CPU, judged against the isolated CPUs (first line)
-#   vm.sh irqsnap            /proc/interrupts;  vm.sh hostcheck  the ergon-tune report (1 unless clean)
+#   vm.sh irqsnap            /proc/interrupts;  vm.sh hostcheck [aeron dir]  the ergon-tune report
+#                            (1 unless clean), on TR_AERON_DIR or the directory given
+#   vm.sh aeron-page         the page size (statfs's block size) of AERON_DIR's filesystem
 #   vm.sh nstat              the kernel's protocol counters;  vm.sh settings  every transport sysctl
 #                            as it is now, <knob>=<value> (host.sh transport_settings_read)
 #   vm.sh events-start <point> <traced cpus> <spinner cpus|-> [aeron]   a point's events begun before
@@ -2736,6 +2739,8 @@ transport-tune)
         data_kernel_up || return 1
         transport_sysctls_apply || return 1
         transport_ports_check "$TR_PORT_BASE" "$TR_PORT_SPAN" || return 1
+        # aeron-ipc-huge's Aeron directory: a 2 MiB hugetlbfs, its pages reserved
+        transport_huge_mount "$TR_AERON_HUGE_MOUNT" "$TR_AERON_HUGE_PAGES" || return 1
         echo "kernel $(uname -r) cmdline $(cat "${LAB_PROC_ROOT}/cmdline" 2>/dev/null)"
     }
     tune_steps >"$run/transport-tune.txt" 2>&1 && rc=0 || rc=$?
@@ -2808,6 +2813,11 @@ sample)
     cat "$run/sample.ps"
     ;;
 irqsnap) cat "$LAB_PROC_ROOT/interrupts" ;;
+aeron-page)
+    # the page size of the filesystem AERON_DIR is on (statfs's block size:
+    # 4096 on tmpfs, 2097152 on a 2 MiB hugetlbfs), while its driver runs
+    stat -f -c %S "$AERON_DIR"
+    ;;
 nstat) transport_nstat ;;
 settings) transport_settings_read ;;
 events-start)
@@ -2820,7 +2830,8 @@ events-start)
     read -r hk _ _ <"$run/transport-map"
     [[ -x $run/gapspin ]] || gcc -O2 -o "$run/gapspin" "$(dirname "$self")/gapspin.c" || exit 1
     adir=-
-    [[ ${5:-} == aeron ]] && adir=$TR_AERON_DIR
+    # the arm's own directory (transport.sh passes it as LAB_AERON_DIR)
+    [[ ${5:-} == aeron ]] && adir=$AERON_DIR
     counters=-
     [[ -x $tools/counters ]] && counters=$tools/counters
     mapfile -t ifaces < <(nics | awk '{print $2}')
@@ -2842,12 +2853,14 @@ events-stop)
     events_stop "$run/events/${2:?point}" ergon-events "$iso"
     ;;
 hostcheck)
-    # the ergon-tune checks on the hot CPUs and data NICs (transport-cli.md),
-    # its report in bench/hostcheck.txt; 1 on any warning or error
+    # hostcheck [aeron dir]: the ergon-tune checks on the hot CPUs, data NICs
+    # and the Aeron directory (TR_AERON_DIR, or the one given: the
+    # hugetlbfs's) (transport-cli.md), its report in bench/hostcheck.txt; 1
+    # on any warning or error
     read -r _ _ iso <"$run/transport-map"
     rm -f "$run/hostcheck.txt"
     # (exit 2 not clean, 1 not run: either stops the session; a warn line too)
-    PATH=$tools:$PATH hostcheck --hot-cpus "$iso" --nic "$(data_ifaces | paste -sd, -)" --aeron-dir "$TR_AERON_DIR" \
+    PATH=$tools:$PATH hostcheck --hot-cpus "$iso" --nic "$(data_ifaces | paste -sd, -)" --aeron-dir "${2:-$TR_AERON_DIR}" \
         --out "$run/hostcheck.txt" && rc=0 || rc=$?
     cat "$run/hostcheck.txt" 2>/dev/null
     if ((rc)) || grep -qE '^[^ ]+ warn: ' "$run/hostcheck.txt" 2>/dev/null; then

@@ -18,7 +18,8 @@ row:
   <set>/<host>-events-<tag>.csv  each host's events over the point
                               (transport_events.py: events/<point>-<host>.log.gz,
                               and on host a the measuring loop's stalls)
-  <set>/hostcheck-<host>.txt  each host's session report
+  <set>/hostcheck-<host>.txt  each host's session report (hostcheck-<host>-hugepages.txt:
+                              the one on the hugetlbfs Aeron directory, its arm's points')
   transport-settings.env      the declared settings in fairness.py's form:
                               shared.<knob>=<value> for every transport sysctl
                               (host.sh transport_sysctls); an optional one that
@@ -27,7 +28,9 @@ row:
                               arm; <arm>.knob.<name> for each per-arm knob an
                               arm ran (manifest/<point>.env's knob.*), and a
                               sweep line for each the tuning swept
-                              (TR_TUNED_SWEPT, a tuning session's variants)
+                              (TR_TUNED_SWEPT, a tuning session's variants);
+                              declared.<arm>=<twin>:knob.<name> for each
+                              TR_DECLARED arm that ran
 
 Hosts: a two-host set's are a and b; a one-host set's one host is `a` in the
 manifest (transport-format.md), whichever VM it ran on. A run of a failed point
@@ -59,6 +62,9 @@ READBACK = {"busy_read_us": "busy_read_us", "epoll_events": "epoll_events", "dat
             "sockbuf": "rcvbuf", "quickack_per_read": "quickack_per_read", "rto_min_us": "rto_min_us",
             "term_length": "term_length", "capacity": "capacity"}
 BOOL = {"true": "on", "false": "off"}
+# a per-arm knob read back on each host after the point (manifest/<point>.env's
+# <name>_<host>: vm.sh aeron-page, the Aeron directory's page size)
+HOST_READBACK = {"aeron_page": "aeron_page"}
 # the hosts' own knob (a sysctl, read back as one): never a per-arm knob.* line
 HOST_WIDE = {"congestion"}
 # what a knob's value implies of the hosts' sysctls (vm.sh driver kernel: no
@@ -284,11 +290,14 @@ def collect(d):
         keys = dict(zip(("a", "b"), real))  # manifest key: the real host
         folder = os.path.join(d, set_)
         os.makedirs(folder, exist_ok=True)
+        # each host's session report that covers the arm (the runner's
+        # hostcheck_<host>: on the hugetlbfs, the one on its directory)
+        reports = {key: pe.get(f"hostcheck_{h}") or f"hostcheck-{h}.txt" for key, h in keys.items()}
         for key, h in keys.items():
-            src, dst = os.path.join(d, f"hostcheck-{h}.txt"), os.path.join(folder, f"hostcheck-{h}.txt")
-            if (set_, h) not in hostcheck_done and os.path.exists(src):
+            src, dst = os.path.join(d, reports[key]), os.path.join(folder, reports[key])
+            if (set_, reports[key]) not in hostcheck_done and os.path.exists(src):
                 shutil.copyfile(src, dst)
-                hostcheck_done.add((set_, h))
+                hostcheck_done.add((set_, reports[key]))
         snap = lambda kind, h, when: read(os.path.join(d, kind, f"{pid}-{h}-{when}"))
         pong = read_json(os.path.join(d, "points", pid, "pong", "manifest.json"))
         settings = {}
@@ -330,6 +339,9 @@ def collect(d):
                     if k in HOST_WIDE:
                         continue
                     got = ms.get(READBACK[k]) if k in READBACK else None
+                    if k in HOST_READBACK:
+                        # read back on the host, never taken as set
+                        got = pe.get(f"{HOST_READBACK[k]}_{keys[key]}") or "unread"
                     run_settings[key][f"knob.{k}"] = v if got is None else BOOL.get(got, got)
             loss = {}
             for key, h in keys.items():
@@ -372,8 +384,7 @@ def collect(d):
                             if (t := threads(read(os.path.join(d, "samples", f"{pid}-{h}")))) is not None},
                 "irqs": {key: q for key, h in keys.items()
                          if (q := irq_deltas(snap("irq", h, "before"), snap("irq", h, "after"), nics[key])) is not None},
-                "hostcheck": {key: f"hostcheck-{h}.txt" for key, h in keys.items()
-                              if os.path.exists(os.path.join(d, f"hostcheck-{h}.txt"))},
+                "hostcheck": {key: reports[key] for key in keys if os.path.exists(os.path.join(d, reports[key]))},
                 "settings": run_settings,
                 "netem_counters": None if netem == "-" else {
                     key: g for key, h in keys.items()
@@ -462,6 +473,13 @@ def collect(d):
             arms = sorted(swept.get(k, set()) & set(arm_knobs))
             if arms:
                 lines.append(f"sweep.knob.{k}={','.join(arms)}")
+    # declared technology differences (TR_DECLARED "<arm>:<twin>:<knob>=<value>"):
+    # fairness.py's declared rule, each arm that ran
+    declared = [e.split(":") for e in tr.get("TR_DECLARED", "").strip('"').split() if e.count(":") == 2]
+    declared = [(a, twin, kv.partition("=")[0]) for a, twin, kv in declared if a in arm_knobs]
+    if declared:
+        lines.append("# each declared twin and the one knob it differs from its twin in (TR_DECLARED)")
+        lines += [f"declared.{a}={twin}:knob.{k}" for a, twin, k in declared]
     with open(os.path.join(d, "transport-settings.env"), "w") as f:
         f.write("\n".join(lines) + "\n")
     print(f"transport_collect: {written} runs with a row, {len(rows)} rows in results.csv, "
