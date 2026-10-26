@@ -14,9 +14,14 @@ concerns. Rules:
   build            one core build per round
   schedule         one rate, duration, warm-up, stream count and size per round
   placement        every thread over 90 % CPU alone on a hot CPU; none on a
-                   housekeeping or IRQ CPU; samples from every host
+                   housekeeping or IRQ CPU (but the IRQ CPU's own ksoftirqd:
+                   the IRQ core saturated, a flag of the point,
+                   transport_points.flags); samples from every host
   irq              no data-NIC IRQ on a hot CPU; IRQs read on every host
-  hostcheck        every host's report clean (no warn, no unproven blocking check)
+  hostcheck        every host's report clean (no warn, no unproven blocking check),
+                   and no warning of a binary's own checks in the point's logs
+                   (<run>/logs/<runner point>.out on a, .pong on its echo's host:
+                   ergon-io's `warning: <id> warn:` lines)
   settings         every knob as transport-settings.env gives it, none it does not
   shared-knob      a per-arm knob the round's arms run at different values swept
                    for every arm of the round that has it (a declared arm's own
@@ -26,15 +31,23 @@ concerns. Rules:
                    nothing else differs: its other per-arm knobs, transport, wire
                    bytes, binary, arguments and media driver mode are the twin's
   order            a seed and the round's arms in its recorded order; seeds
-                   distinct and orders not all the same across reps
+                   distinct and orders not all the same across reps. An arm
+                   the order names with no row in the round is absent, not a
+                   violation, only where failures.csv records it failed there
+                   (that rep, netem and stream count, or its set-up): it is
+                   left out of that round's comparison (check's absences,
+                   which fairness.py prints and analyse.py states)
   aa               an A/A arm in every round, repeating an arm of the round
   loss-accounting  loss columns filled (retrans where the transport retransmits:
                    TCP, Aeron); counters from every host (TCP: tcp_info
                    and nstat; Aeron: aeron; UDP: nstat; a transport joined by +,
                    such as udp+tcp, every part's)
-  loss             a TCP point's real loss (retrans_not_dsack, lost_end) only on a
-                   loss row: on one without (no netem, none, 0 %) it is a bug to
-                   trace; DSACK-reported (spurious) retransmits are reported, not loss
+  loss             a TCP point's real loss (retrans_not_dsack, lost_end) on a row
+                   without loss (no netem, none, 0 %) where the guest's own drop
+                   counters grew is a bug to trace; with none grown it was lost
+                   below the guest's stack (the NIC or the network), a note
+                   (path_loss), as an Aeron row's retransmits there are;
+                   DSACK-reported (spurious) retransmits are reported, not loss
   lateness         scheduled and late counted, as the manifest says
   max              every max labelled (spikes.py); unexplained blocks
   netem            a loss row's netem on every data NIC of every host at its
@@ -42,6 +55,7 @@ concerns. Rules:
                    other rows; no DPDK in a loss row
   vm-pair          one VM pair per set
 """
+import csv
 import math
 import os
 import re
@@ -49,10 +63,27 @@ import sys
 from collections import defaultdict, namedtuple
 
 from spikes import transport_maxima
-from transport_points import hosts_of, read_points, tcp_loss
+from transport_points import hosts_of, irq_core_thread, read_points, tcp_loss
 
 Violation = namedtuple("Violation", "rule set tags detail")
 Violation.__str__ = lambda v: f"{v.rule}: {v.set or 'run'}: {v.detail}"
+# an arm a round's order names that has no row there, excused by a recorded failure
+Absence = namedtuple("Absence", "set rep netem streams arm detail")
+Absence.__str__ = lambda a: (f"absent: {a.set}: rep {a.rep}, {a.streams} stream{'s' if a.streams != 1 else ''}, "
+                             f"netem {a.netem or '-'}: {a.arm} {a.detail}")
+# a binary's own check warning (ergon-io's host checks): "<who> warning: <id> warn: <finding>. Fix: ..."
+BINARY_WARN = re.compile(r"warning: (\w+) warn: (.*)$")
+# a binary's periodic checks whose first warning covers the process's start (io/src/warn.rs FAULTS_EVERY)
+START_CHECKS = {"T19"}
+# what the run reports beside its violations: a path's loss, say
+Note = namedtuple("Note", "rule set tags detail")
+Note.__str__ = lambda n: f"note: {n.rule}: {n.set or 'run'}: {n.detail}"
+# the guest's own drop counters (nstat's names): a segment the guest's
+# stack received and threw away
+GUEST_DROPS = {"TcpExtTCPBacklogDrop", "TcpExtTCPRcvQDrop", "TcpExtTCPOFODrop", "TcpExtTCPZeroWindowDrop",
+               "TcpExtPFMemallocDrop", "TcpExtTCPMinTTLDrop", "TcpExtTCPDeferAcceptDrop", "TcpExtLockDroppedIcmps",
+               "TcpExtListenDrops", "TcpExtTCPReqQFullDrop", "IpInDiscards", "IpInHdrErrors", "IpInAddrErrors",
+               "TcpInErrs", "TcpInCsumErrors", "UdpRcvbufErrors", "UdpInErrors", "UdpMemErrors"}
 
 BUSY = 0.9  # a thread over this share of a CPU is a busy thread
 ALONE = 0.05  # another thread over this share of the busy thread's CPU shares it
@@ -85,18 +116,65 @@ def retransmits(transport):
     return any(p == "tcp" or p.startswith("aeron") for p in (transport or "").split("+"))
 
 
+def guest_drops(p):
+    """{counter: growth} of the guest's own drop counters (GUEST_DROPS) over
+    every host of a point (its loss_counters' nstat; nstat leaves zero ones
+    out), the counters that grew."""
+    out = defaultdict(int)
+    for src in ((p.manifest or {}).get("loss_counters") or {}).values():
+        for k, v in ((src or {}).get("nstat") or {}).items():
+            if k in GUEST_DROPS and isinstance(v, int) and v > 0:
+                out[k] += v
+    return dict(out)
+
+
+def lossless_row(p):
+    """Whether a point's row has no loss of its own: no netem, the no-qdisc
+    control, or netem at 0 %."""
+    return p.netem in (None, "none") or float(p.netem) == 0
+
+
 def tcp_loss_problem(p):
     """What is wrong with a TCP point's loss: real loss (retransmits not
     reported spurious, segments lost) on a row without loss (no netem, the
-    no-qdisc control, or netem at 0 %) is a bug to trace; spurious
+    no-qdisc control, or netem at 0 %) where the guest's own drop counters
+    grew (a socket's backlog or receive queue full, an IP discard...) is a
+    bug to trace; with none of them grown it was lost below the guest's
+    stack, the NIC or the network (path_loss: a note); spurious
     retransmits are reported, never loss. None when nothing is."""
     loss = tcp_loss(p)
-    if loss is None or (p.netem not in (None, "none") and float(p.netem) != 0):
+    if loss is None or not lossless_row(p):
         return None
     real, spurious = loss
-    if real:
+    drops = guest_drops(p)
+    if real and drops:
         return (f"{p.tag}: {real} segments lost (retransmits not DSACK-reported, or lost at the end) "
-                f"on a row without loss ({spurious} spurious): trace it")
+                f"on a row without loss ({spurious} spurious), and the guest dropped some "
+                f"({', '.join(f'{k} {v}' for k, v in sorted(drops.items()))}): trace it")
+    return None
+
+
+def path_loss(p):
+    """A note of a point's loss below the guest's stack on a row without
+    loss: TCP's real loss (tcp_loss) with no guest drop counter grown, or
+    the Aeron retransmits its row counts (NAKed gaps); None when there is
+    none. The path's, as every arm's on it: reported, not a violation."""
+    if not lossless_row(p):
+        return None
+    loss = tcp_loss(p)
+    if loss is not None:
+        real, spurious = loss
+        if not real or guest_drops(p):
+            return None
+        per = ", ".join(f"{h} {((s or {}).get('tcp_info') or {}).get('retrans_not_dsack') or 0}"
+                        for h, s in sorted(((p.manifest or {}).get("loss_counters") or {}).items())
+                        if (s or {}).get("tcp_info"))
+        return (f"{p.tag}: {real} segments lost below the guest's TCP stack (the NIC or the network: no guest drop "
+                f"counter grew on either host; retransmits not DSACK-reported: {per}), {spurious} spurious, on a row "
+                "without netem")
+    if (p.manifest or {}).get("transport", "").startswith("aeron") and (p.row.get("retrans") or 0) > 0:
+        return (f"{p.tag}: Aeron retransmitted {p.row['retrans']} (NAKed gaps) on a row without netem: lost below "
+                "the guest's stack")
     return None
 
 
@@ -146,6 +224,50 @@ def hostcheck_problems(path):
     return out
 
 
+def read_failures(run_dir):
+    """failures.csv (transport.sh tr_set: set, rep, netem, arm, aa, then the
+    stream count that failed or `setup`) as {(set, rep, netem, arm): [what]},
+    the A/A arm as `aa`; {} when there is none."""
+    out = defaultdict(list)
+    path = os.path.join(run_dir, "failures.csv")
+    if os.path.exists(path):
+        with open(path, newline="") as f:
+            for row in csv.reader(f):
+                if len(row) >= 6 and row[1].isdigit():
+                    out[(row[0], int(row[1]), row[2] or "-", "aa" if row[4] == "1" else row[3])].append(row[5])
+    return out
+
+
+def binary_warnings(run_dir, p):
+    """{host: {check id: [finding]}}: the warnings of the point's binaries'
+    own checks in the runner's logs (logs/<runner point>.out: the measuring
+    run, host a; .pong: its echo, host b, or a on a one-host set), each
+    finding cut at its first sentence; {} where the logs are not kept. The
+    first of a log's T19 warnings (the loop thread's page faults since the
+    last check, every 5 s) covers the process's start, set-up and warm-up,
+    not the window: left out."""
+    point = ((p.manifest or {}).get("runner") or {}).get("point")
+    out = {}
+    if not point:
+        return out
+    for suffix, host in ((".out", "a"), (".pong", hosts_of(p.set)[-1])):
+        path = os.path.join(run_dir, "logs", point + suffix)
+        if not os.path.exists(path):
+            continue
+        seen = set()
+        with open(path, errors="replace") as f:
+            for line in f:
+                m = BINARY_WARN.search(line.rstrip("\n"))
+                if not m:
+                    continue
+                if m.group(1) in START_CHECKS and m.group(1) not in seen:
+                    seen.add(m.group(1))
+                    continue
+                finding = m.group(2).split(". Fix:")[0].split(". ")[0]
+                out.setdefault(host, {}).setdefault(m.group(1), []).append(finding)
+    return out
+
+
 def within_binomial(offered, dropped, pct):
     """Whether `dropped` of `offered` is inside the Z interval of loss `pct` %."""
     p = pct / 100
@@ -157,10 +279,17 @@ def within_binomial(offered, dropped, pct):
     return abs(dropped - mean) <= Z * math.sqrt(offered * p * (1 - p)) + 1
 
 
-def check(run_dir):
+def check(run_dir, absences=None, notes=None):
+    """[Violation]; with absences (a list), every arm a round's order names
+    that failed there (failures.csv) appended to it as an Absence; with
+    notes (a list), what is reported and breaks no rule (a path's loss) as
+    Notes."""
     out = []
+    note = lambda rule, set_, tags, detail: notes is not None and notes.append(
+        Note(rule, set_, tuple(sorted(tags)), detail))
     add = lambda rule, set_, tags, detail: out.append(Violation(rule, set_, tuple(sorted(tags)), detail))
     points = read_points(run_dir)
+    failed = read_failures(run_dir)
     env = read_env(os.path.join(run_dir, "transport-settings.env"))
     if env is None:
         add("settings", None, (), "transport-settings.env missing")
@@ -241,10 +370,24 @@ def check(run_dir):
             add("order", set_, tags, f"round {rid}: points record different seeds")
         if len(orders) > 1:
             add("order", set_, tags, f"round {rid}: points record different arm orders")
+        p0 = ps[0]
         for order in orders:
-            if sorted(order) != sorted(arms):
+            # an arm of the order with no row here: absent where its failure
+            # in this round (its rep, netem and stream count, or its set-up)
+            # is recorded, and left out of the round's comparison
+            why = {a: failed.get((set_, p0.rep, p0.netem or "-", a), []) for a in set(order) - arms}
+            excused = {a for a, what in why.items() if str(p0.streams) in what or "setup" in what}
+            if sorted(a for a in order if a not in excused) != sorted(arms):
+                unrecorded = sorted(set(why) - excused)
                 add("order", set_, tags, f"round {rid}: arm order {', '.join(order)} is not the round's arms "
-                    f"{', '.join(sorted(arms))}")
+                    f"{', '.join(sorted(arms))}"
+                    + (f" (no failure recorded for {', '.join(unrecorded)})" if unrecorded else ""))
+            elif absences is not None:
+                for a in sorted(excused):
+                    what = sorted(set(why[a]))
+                    absences.append(Absence(set_, p0.rep, p0.netem, p0.streams, a,
+                                            "failed (" + ", ".join(w if w == "setup" else f"{w} streams" for w in what)
+                                            + f": failures.csv), no row: left out of round {rid}'s comparison"))
 
         if env is not None:
             shared, per_arm, sweep, declared = env
@@ -335,6 +478,8 @@ def check(run_dir):
                     for t in sample:
                         if t.get("util", 0) <= BUSY:
                             continue
+                        if irq_core_thread(t, c):
+                            continue  # the IRQ core saturated: the point's flag (transport_points.flags)
                         who = f"{host} {t.get('comm')} ({t.get('tid')}) at {t.get('util', 0):.0%} on CPU {t.get('cpu')}"
                         if t.get("cpu") in quiet:
                             add("placement", set_, [p.tag], f"{p.tag}: sample {i}: {who}, a housekeeping/IRQ CPU")
@@ -360,6 +505,11 @@ def check(run_dir):
                             else hostcheck_problems(os.path.join(run_dir, p.set, rel)))
                 if problems:
                     add("hostcheck", set_, [p.tag], f"{p.tag}: {host} hostcheck {rel}: {'; '.join(problems)}")
+            for host, checks in sorted(binary_warnings(run_dir, p).items()):
+                for cid, findings in sorted(checks.items()):
+                    add("hostcheck", set_, [p.tag], f"{p.tag}: {host} {p.arm}'s own check {cid} warned "
+                        f"{len(findings)}x: {findings[0]}")
+            for host in hosts:
                 # loss counters
                 sources = (m["loss_counters"].get(host) or {})
                 for s in loss_sources(m["transport"]) or ():
@@ -379,6 +529,8 @@ def check(run_dir):
             why = tcp_loss_problem(p)
             if why:
                 add("loss", set_, [p.tag], why)
+            elif path_loss(p):
+                note("loss", set_, [p.tag], path_loss(p))
             # lateness
             if p.row["scheduled"] is None or p.row["late"] is None:
                 add("lateness", set_, [p.tag], f"{p.tag}: row has no scheduled or late count")
@@ -466,9 +618,12 @@ def check(run_dir):
 def main():
     if len(sys.argv) != 2:
         sys.exit("usage: fairness.py <run dir>")
-    found = check(sys.argv[1])
+    absent, notes = [], []
+    found = check(sys.argv[1], absences=absent, notes=notes)
     for v in found:
         print(v)
+    for a in absent + notes:
+        print(a)
     print(f"{len(found)} violation{'s' if len(found) != 1 else ''}")
     sys.exit(1 if found else 0)
 

@@ -23,6 +23,9 @@ KINDS = ("load", "oneway")
 LATE_SHARE = 0.01
 # achieved below this share of the offered rate is flagged "over capacity"
 CAPACITY_SHARE = 0.98
+# the IRQ CPU's ksoftirqd over this share of it is flagged "IRQ core saturated"
+# (fairness.py's busy-thread threshold)
+SATURATED = 0.9
 
 Point = namedtuple("Point", "set arm label kind streams netem rate size rep tag row manifest")
 
@@ -100,9 +103,31 @@ def hosts_of(set_):
     return ("a",) if set_.split(".")[0] in ONE_HOST_SETS else ("a", "b")
 
 
+def irq_core_thread(t, cpus):
+    """Whether placement sample entry t is the IRQ CPU's own softirq thread
+    (ksoftirqd/<n> on IRQ CPU n, cpus a manifest's cpus.<host>) over
+    SATURATED of it: the softirq work of the data NICs' interrupts more than
+    their CPU keeps up with in interrupt context, handed to its thread. The
+    IRQ core saturated: a capacity limit of the one-IRQ-CPU layout, the
+    point's flag, never a placement fault."""
+    cpu = t.get("cpu")
+    return (cpu in set((cpus or {}).get("irq") or []) and t.get("comm") == f"ksoftirqd/{cpu}"
+            and t.get("util", 0) > SATURATED)
+
+
+def irq_core_saturated(manifest):
+    """The hosts whose IRQ core a placement sample shows saturated (irq_core_thread)."""
+    m = manifest or {}
+    return sorted(h for h, samples in (m.get("threads") or {}).items()
+                  if any(irq_core_thread(t, (m.get("cpus") or {}).get(h)) for s in samples or [] for t in s))
+
+
 def flags(p):
-    """A point's flags: shown, never compared."""
-    return row_flags(p.row)
+    """A point's flags: shown, never compared. The row's (row_flags), and
+    `IRQ core saturated` where a host's IRQ CPU's ksoftirqd ran over
+    SATURATED of it (irq_core_saturated): the point measures the IRQ core's
+    queue, not the transport."""
+    return row_flags(p.row) + (["IRQ core saturated"] if irq_core_saturated(p.manifest) else [])
 
 
 def row_flags(r):

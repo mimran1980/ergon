@@ -1,0 +1,5 @@
+# start_realtime_ns=1793019921237634247
+# spikes_total=226692
+# max=45944299968,745981,3
+stream,due_ns,latency_ns,ping
+3,45944299968,745981,0

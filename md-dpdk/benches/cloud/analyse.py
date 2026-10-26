@@ -1392,7 +1392,8 @@ def transport(args):
     maxima = transport_maxima(run_dir)
     points = [p for p, _, _ in maxima]
     cause = {p.tag: c for p, _, c in maxima}
-    violations = fairness.check(run_dir)
+    absences, notes = [], []
+    violations = fairness.check(run_dir, absences=absences, notes=notes)
     if not points:
         sys.exit(f"analyse.py --transport: no transport rows in {run_dir}/results.csv")
 
@@ -1423,8 +1424,9 @@ def transport(args):
     print("## Transport latency (µs)\n")
     print("Each cell is the median across reps, the range in brackets. Latency counts from each message's intended "
           "send time (open loop): a round trip between hosts, one way on one host. An arm flagged in any rep "
-          "(`sender late`: over 1 % of sends more than 100 µs late; `over capacity`: achieved under 98 % of the rate) "
-          "is shown and never compared. The A/A arm repeats one arm in the same round: its spread is the largest "
+          "(`sender late`: over 1 % of sends more than 100 µs late; `over capacity`: achieved under 98 % of the rate; "
+          "`IRQ core saturated`: the IRQ CPU's ksoftirqd over 90 % of it) is shown and never compared. An arm a "
+          "round's order names that failed there (failures.csv) is absent: said, and left out. The A/A arm repeats one arm in the same round: its spread is the largest "
           "per-rep difference between the two, per metric. Two arms are `not separated` where their medians differ "
           "by no more than the A/A spread or their rep ranges overlap; a max verdict is blocked while either arm has "
           "an unexplained max (spikes.py --transport). TCP's loss is its retransmits the peer did not report as "
@@ -1446,6 +1448,20 @@ def transport(args):
                  + (f", netem {netem} %" if netem and netem != "none" else ", no qdisc" if netem == "none" else "")
                  + f", {rate:,} msg/s: {'one way' if kind == 'oneway' else 'round trip'} (µs)")
         print(f"\n{title}\n")
+        # an arm the rounds' orders name that failed there (failures.csv):
+        # no row, so not compared, and said
+        gone = defaultdict(set)
+        for a in absences:
+            if (a.set, a.streams, a.netem or "") == (set_, streams, netem):
+                gone[a.arm].add(a.rep)
+        for arm, reps in sorted(gone.items()):
+            print(f"Absent: {arm} (failed in rep{'s' if len(reps) > 1 else ''} "
+                  f"{', '.join(map(str, sorted(reps)))}: failures.csv): left out of this comparison.\n")
+        said = [n for n in notes if n.set == set_ and set(n.tags) & {p.tag for p in ps}]
+        for n in said:
+            print(f"Note: {n.detail}.")
+        if said:
+            print()
         if bad:
             refused.add(k)
             if not show_invalid:
