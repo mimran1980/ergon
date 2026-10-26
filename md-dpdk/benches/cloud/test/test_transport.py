@@ -341,6 +341,69 @@ class FairnessTest(unittest.TestCase):
                                                                "declared.aeron-spy-huge=aeron-self-udp:"))
         self.assertIn("declared", run.rules())
 
+    # the data NICs' interrupt deferral: each technology at its own best
+    # (best.knob.napi_defer: Aeron's busy-polling kernel path deferred, the
+    # sockets, waiting in epoll, not), read back per point on every host
+    NAPI = "knob.napi_defer"
+
+    def test_declared_best_napi_difference_is_no_violation(self):
+        # the clean fixture's round 2a: aeron-kernel at 2, the socket arms at 0
+        run = Run(self)
+        self.assertEqual(run.rules(), [], "\n".join(str(v) for v in fairness.check(run.run)))
+
+    def test_napi_difference_without_its_best_line_is_an_unswept_knob(self):
+        run = Run(self)
+        env = read(run.path("transport-settings.env"))
+        write(run.path("transport-settings.env"), "".join(
+            l + "\n" for l in env.splitlines() if not l.startswith("best.")))
+        self.assertOnly(run, "shared-knob")
+
+    def test_arm_off_its_declared_best_is_an_unswept_knob(self):
+        # mio-udp declared and run at 2, its best 0, not swept: refused
+        run = Run(self)
+        env = read(run.path("transport-settings.env"))
+        write(run.path("transport-settings.env"), env.replace("mio-udp.knob.napi_defer=0", "mio-udp.knob.napi_defer=2"))
+        run.edit(lambda m: m.get("arm") == "mio-udp",
+                 lambda m: [s.update({self.NAPI: "2"}) for s in m["settings"].values()], first=False)
+        self.assertEqual(run.rules(), ["napi", "shared-knob"])
+
+    def test_socket_point_with_deferral_on_is_refused(self):
+        # a socket arm declared 0 whose NICs read back 2: the settings rule
+        # and the napi rule's own refusal (its packets waited for the timer)
+        run = Run(self)
+        run.edit(ONE, lambda m: m["settings"]["b"].update({self.NAPI: "2"}))
+        found = [str(v) for v in fairness.check(run.run) if v.rule == "napi"]
+        self.assertEqual(found, ["napi: 2a: 2a-mio-udp-64-1-r10000: b's data NICs defer interrupts (napi_defer 2) "
+                                 "under a socket arm: its epoll never busy-polls, so each packet waits for the "
+                                 "gro_flush timer"])
+        self.assertEqual(run.rules(), ["napi", "settings"])
+
+    def test_socket_point_nic_read_back_with_deferral_is_refused(self):
+        # the knob read back 0, but one NIC's own values (the runner's raw
+        # napi_<host>) show a gro_flush timer left on
+        run = Run(self)
+        run.edit(ONE, lambda m: m.update(runner={"setup": "sockets", "napi_a": "eth1:0/0,eth2:0/200000",
+                                                 "napi_b": "eth1:0/0,eth2:0/0"}))
+        found = [str(v) for v in fairness.check(run.run) if v.rule == "napi"]
+        self.assertEqual(found, ["napi: 2a: 2a-mio-udp-64-1-r10000: a's data NICs defer interrupts "
+                                 "(eth1:0/0,eth2:0/200000) under a socket arm: its epoll never busy-polls, so each "
+                                 "packet waits for the gro_flush timer"])
+
+    def test_socket_point_without_deferral_read_back_is_refused(self):
+        run = Run(self)
+        run.edit(ONE, lambda m: m["settings"]["a"].pop(self.NAPI))
+        self.assertIn("napi", run.rules())
+
+    def test_socket_arm_swept_to_deferral_is_its_tuned_best(self):
+        # a tuning session chose 2 for mio-udp (swept, with eio-udp at 0):
+        # its deferral is its frozen best, not refused
+        run = Run(self)
+        env = read(run.path("transport-settings.env")).replace("mio-udp.knob.napi_defer=0", "mio-udp.knob.napi_defer=2")
+        write(run.path("transport-settings.env"), env + "sweep.knob.napi_defer=mio-udp,eio-udp\n")
+        run.edit(lambda m: m.get("arm") == "mio-udp",
+                 lambda m: [s.update({self.NAPI: "2"}) for s in m["settings"].values()], first=False)
+        self.assertEqual(run.rules(), [], "\n".join(str(v) for v in fairness.check(run.run)))
+
     def test_knob_both_shared_and_per_arm(self):
         run = Run(self)
         with open(run.path("transport-settings.env"), "a") as f:

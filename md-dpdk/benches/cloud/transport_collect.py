@@ -64,12 +64,25 @@ READBACK = {"busy_read_us": "busy_read_us", "epoll_events": "epoll_events", "dat
 BOOL = {"true": "on", "false": "off"}
 # a per-arm knob read back on each host after the point (manifest/<point>.env's
 # <name>_<host>: vm.sh aeron-page, the Aeron directory's page size)
-HOST_READBACK = {"aeron_page": "aeron_page"}
+# and vm.sh napi, the data NICs' interrupt deferral (transport.sh tr_napi_value)
+HOST_READBACK = {"aeron_page": "aeron_page", "napi_defer": "napi_defer"}
 # the hosts' own knob (a sysctl, read back as one): never a per-arm knob.* line
 HOST_WIDE = {"congestion"}
 # what a knob's value implies of the hosts' sysctls (vm.sh driver kernel: no
 # busy poll), beyond transport_sysctls' own
 IMPLIED = {("aeron_path", "kernel"): {"net.core.busy_read": "0", "net.core.busy_poll": "0"}}
+
+
+def best_of(knob, knobs, tr):
+    """An arm's technology's best value of a TR_BEST_BY_TECHNOLOGY knob,
+    from its knobs (transport-settings.env): napi_defer, an Aeron kernel
+    UDP arm's driver's (kernel-busy: TR_NAPI_DEFER; kernel: 0), a socket
+    arm's TR_SOCKET_NAPI_DEFER; None for a knob without one."""
+    if knob == "napi_defer":
+        if "aeron_path" in knobs:
+            return tr.get("TR_NAPI_DEFER", "2") if knobs["aeron_path"] == "kernel-busy" else "0"
+        return tr.get("TR_SOCKET_NAPI_DEFER", "0")
+    return None
 
 
 def implied(knobs):
@@ -473,6 +486,14 @@ def collect(d):
             arms = sorted(swept.get(k, set()) & set(arm_knobs))
             if arms:
                 lines.append(f"sweep.knob.{k}={','.join(arms)}")
+    # each technology's own best (TR_BEST_BY_TECHNOLOGY): fairness.py's
+    # shared-knob rule takes an arm at it as needing no sweep
+    for k in tr.get("TR_BEST_BY_TECHNOLOGY", "").strip('"').split():
+        best = sorted((arm, b) for arm in arm_knobs if k in arm_knobs[arm]
+                      and (b := best_of(k, arm_knobs[arm], tr)) is not None)
+        if best:
+            lines.append(f"# each arm's technology's best {k} (TR_BEST_BY_TECHNOLOGY)")
+            lines.append(f"best.knob.{k}=" + ",".join(f"{arm}:{b}" for arm, b in best))
     # declared technology differences (TR_DECLARED "<arm>:<twin>:<knob>=<value>"):
     # fairness.py's declared rule, each arm that ran
     declared = [e.split(":") for e in tr.get("TR_DECLARED", "").strip('"').split() if e.count(":") == 2]
