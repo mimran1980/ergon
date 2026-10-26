@@ -205,9 +205,7 @@ fn kill_leader_never_serves_stale_book() -> Result<(), Box<dyn Error>> {
     loop {
         let _ = client.send_keep_alive();
         client.poll(&mut listener, 10)?;
-        if listener.new_leader_member_id.is_some()
-            && client.state() == SessionState::Connected
-        {
+        if listener.new_leader_member_id.is_some() && client.state() == SessionState::Connected {
             break;
         }
         if Instant::now() >= deadline {

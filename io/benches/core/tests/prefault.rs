@@ -51,5 +51,8 @@ fn recording_across_the_histogram_takes_no_page_fault() {
         lat.record(ns);
     }
     let faults = minor_faults() - before;
-    assert_eq!(faults, 0, "{faults} page faults recording into a fresh histogram");
+    assert_eq!(
+        faults, 0,
+        "{faults} page faults recording into a fresh histogram"
+    );
 }
