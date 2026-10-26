@@ -235,3 +235,5 @@ Every figure, with its max and its data file:
 [`io/benches/BENCHMARK.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md).
 WebSocket and HTTP round trips: [WebSocket](websocket.md#measured-results),
 [HTTP client](http-client.md#measured-results).
+UDP against TCP, and mio against ergon-io, beside Aeron:
+[transport latency comparison](../transports/comparison.md).

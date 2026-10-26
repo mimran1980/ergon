@@ -173,6 +173,17 @@ thread polls (feeds, order connections, `HttpClient` pool connections):
 The full table, the evidence and the node settings: the book's
 [choosing a backend](https://mimran1980.github.io/ergon/io/overview.html#choosing-a-backend).
 
+## UDP or TCP, ergon-io or mio
+
+UDP and framed TCP, each through raw mio and through ergon-io, are measured
+beside Aeron on the same hosts, cores and settings, with 64-byte messages:
+UDP at 1 to 128 streams, TCP with and without loss, and TCP fan-in up to
+128 connections. Tables and conclusion: the book's
+[transport latency comparison](https://mimran1980.github.io/ergon/transports/comparison.html).
+
+<!-- RESULTS: io README -->
+Results pending.
+
 ## Rate limits and errors
 
 - No rate limiter: pacing to a venue's limits is the application's.

@@ -2,7 +2,7 @@
 
 Earlier measurement details are retained in the [2026-10-18 snapshot](BENCHMARK-2026-10-18.md). This page takes precedence where conclusions differ.
 
-Every ergon-io latency figure lives here, once, except the in-memory WebSocket receive-path microbenchmark (`ws_bench`), whose table is in the book's [WebSocket page](https://mimran1980.github.io/ergon/io/websocket.html#receive-cost). Each row names the committed file that holds it, under `io/benches/results/<run>/`. Figures are µs, p50 / p99 / max, a range across rounds, unless a column says otherwise. `max` is the absolute maximum of each round.
+Every ergon-io latency figure lives here, once, except the in-memory WebSocket receive-path microbenchmark (`ws_bench`), whose table is in the book's [WebSocket page](https://mimran1980.github.io/ergon/io/websocket.html#receive-cost), and the transport comparison (UDP against TCP, mio against ergon-io, beside Aeron), whose tables are in the book's [transport latency comparison](https://mimran1980.github.io/ergon/transports/comparison.html). Each row names the committed file that holds it, under `io/benches/results/<run>/`. Figures are µs, p50 / p99 / max, a range across rounds, unless a column says otherwise. `max` is the absolute maximum of each round.
 
 ## Answers
 
@@ -14,6 +14,8 @@ Every ergon-io latency figure lives here, once, except the in-memory WebSocket r
 | ergon-io or libcurl for HTTP? | ergon-io is 5–12 µs ahead at the median on the same interrupt path. Its p99 and max are lower on Azure, not on AWS. | [HTTP clients](#http-clients) |
 | `connect_background` or `Driver::connect`? | Background: the loop's worst poll per connect is 6–12 µs p50 (max 98–102) against about 105 µs inline (max 775, the first connect). | [Connection set-up](#connection-set-up) |
 | mio as a backend? | No. On Linux it is `epoll-spin`'s mechanism: level on round trips, with 2.0× the `recvmsg` calls; a two-sided CI gate fails on a 10 % slowdown of either ([`mio-parity-docker-20261024T154626Z`](results/mio-parity-docker-20261024T154626Z/summary.md)). Its market-data arm was confounded. Reasons and its maxima without a cause: the book's [mio: measured, not a backend](https://mimran1980.github.io/ergon/io/backends.html#mio-measured-not-a-backend). | [Fair run](#interrupt-against-nic-polling-the-fair-run-graviton), [loop pass](#loop-pass-by-socket-count-graviton) |
+| UDP or TCP, between two hosts? | Results pending. | [Transport comparison](#transport-comparison-udp-tcp-mio-and-ergon-io) |
+| mio or ergon-io, for UDP and framed TCP? | Results pending. | [Transport comparison](#transport-comparison-udp-tcp-mio-and-ergon-io) |
 | ENA adaptive moderation? | Off stopped the polling loop's involuntary preemptions (about 8,900 in 8 min to 0) and cut WebSocket p99.99 from 117–119 to 72–76 µs. HTTP p99.99 did not move. | [Host and NIC settings](#host-and-nic-settings-aws-x86) |
 
 ## Hosts and runs
@@ -239,6 +241,18 @@ Run `flags-aws-20261015T062428Z`: NIC interrupts on the loop's CPU (`irqlocal`) 
 The same run tried one NIC queue (`onequeue`) and capped idle states (`cstate`): their changes differ in sign between workloads. No conclusion.
 
 Not measured here: `prefer_busy_poll`, `busy_poll_budget`, route `quickack` and `rto_min` (every run used `quickack 1 rto_min 5ms`).
+
+## Transport comparison: UDP, TCP, mio and ergon-io
+
+The latency tables and the conclusion live in the book's
+[transport latency comparison](https://mimran1980.github.io/ergon/transports/comparison.html),
+with how the arms were made fair. This section holds what only the socket
+arms report, per run: system calls a message (`recvmsg`, `send`,
+`epoll_wait`), `UdpStats` (`tx_full`, `truncated`, `refused`),
+`FrameStats::quickacks`, and TCP retransmits from `TCP_INFO` and `nstat`.
+
+<!-- RESULTS: io socket counters -->
+Results pending.
 
 ## Worst cases
 

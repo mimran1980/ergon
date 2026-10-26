@@ -328,6 +328,20 @@ arms; flat out 3.03 M msgs/s (G7c lines 44 on, 186 on). The VPC allowance
 counters (type 92) are not in G7c's committed output, so whether the
 packets-a-second allowance was the limit is not shown.
 
+## Transport comparison on Azure: Aeron kernel UDP and DPDK
+
+Aeron's arms (IPC, spy, kernel UDP and DPDK, reliable and not) against
+`std::sync::mpsc`, mio and ergon-io, UDP and TCP, on `Standard_D16s_v6`
+pairs. The latency tables, the fairness rules and the conclusion live in the
+book's
+[transport latency comparison](https://mimran1980.github.io/ergon/transports/comparison.html).
+This section holds the Aeron arms' own counters per run: NAKs, retransmits,
+loss-gap fills and short sends (each point's manifest), and the DPDK arms'
+ring events (`<host>-rings-<tag>.log`).
+
+<!-- RESULTS: md-dpdk aeron-dpdk -->
+Results pending.
+
 ## Recommended configuration
 
 Kernel UDP in production ([README](README.md)). Only settings with a
