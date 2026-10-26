@@ -164,11 +164,15 @@ fn clock_findings(host: &Host, cpus: &[u32], rounds: u64) -> Vec<String> {
                      shortest {} ns)",
                     r.rounds, r.min_forward_ns
                 ),
+                // A property of the host (a hypervisor's per-vCPU counter
+                // offsets), not a setting to fix: reported, not refused, so
+                // every one-way figure across these CPUs carries this bound;
+                // a round trip (both stamps on one CPU) is unaffected.
                 Ok(r) => format!(
-                    "{CLOCK_ID} warn: the counter ran behind {} times in {} handoffs between CPUs {a} and {b}, by up \
-                     to {} ns: one-way latency across them is wrong by as much (evidence: \
-                     ergon_latency_core::clock::cross_cpu_check)",
-                    r.backward, r.rounds, r.max_backward_ns
+                    "{CLOCK_ID} info: the counter ran behind {} times in {} handoffs between CPUs {a} and {b}, by up \
+                     to {} ns: one-way latency across them carries a {} ns error bound; round trips are unaffected \
+                     (evidence: ergon_latency_core::clock::cross_cpu_check)",
+                    r.backward, r.rounds, r.max_backward_ns, r.max_backward_ns
                 ),
                 Err(e) => format!("{CLOCK_ID} unknown: the counter clock between CPUs {a} and {b}: {e}"),
             }
