@@ -432,6 +432,7 @@ struct rusteron_dpdk_transport_stct
     uint32_t rx_max_bursts;              /* RUSTERON_DPDK_RX_MAX_BURSTS: bursts one poll drains while they come back full */
     uint32_t tx_idle_clean;              /* RUSTERON_DPDK_TX_IDLE_CLEAN: descriptors an idle poll reclaims, 0 off */
     int ena_llq_required;                /* RUSTERON_DPDK_ENA_LLQ_REQUIRED: an ENA without verified LLQ fails start */
+    int allow_synthetic;                 /* RUSTERON_DPDK_ALLOW_SYNTHETIC=1: a netvsc port without its VF starts */
     int vfio_wc;                         /* RUSTERON_DPDK_VFIO_WC=1: a vfio-pci port's unseen LLQ BAR is write-combined */
     uint64_t tx_pace_spin_ns;            /* RUSTERON_DPDK_TX_PACE_SPIN_US: longest wait to repay pacing debt */
     int tx_pace_spin_set;                /* RUSTERON_DPDK_TX_PACE_SPIN_US was given, not defaulted */

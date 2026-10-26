@@ -101,6 +101,9 @@ void rusteron_dpdk_fake_set_pool_avail(int n);
  * RUSTERON_DPDK_XSTAT_NAME_LEN stride; `values` are copied verbatim. Call again
  * to change the values between 1 Hz samples (the sample must re-read them). */
 void rusteron_dpdk_fake_set_xstats(const char *const *names, const uint64_t *values, uint32_t count);
+/* The next `reads` xstats counts report none, whatever is installed (0 after
+ * the reset): a netvsc VF that attaches after the port starts. */
+void rusteron_dpdk_fake_set_xstats_hidden_reads(uint32_t reads);
 
 /* A frame accepted by the fake tx_burst (the mbuf is owned by the "NIC"). */
 typedef struct rusteron_dpdk_fake_capture_stct

@@ -1311,6 +1311,7 @@ fn rx_poll_gaps_and_full_bursts_counted() {
 /// 32, the receiver's label prefix beside it.
 fn azure(env: TestEnv, driver: &str, rx: u16) -> (Harness, &'static str) {
     env.set_driver(driver);
+    env.attach_netvsc_vf(); // netvsc starts only with its VF attached
     let mut config = rusteron_dpdk_config_t::mana();
     config.rx_descriptors = rx;
     config.burst_size = 32; // drains up to min(8, ring / 32) bursts a poll

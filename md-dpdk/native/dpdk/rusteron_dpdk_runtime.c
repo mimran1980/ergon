@@ -667,6 +667,86 @@ static int rusteron_dpdk_ena_express_check(const rusteron_dpdk_transport_t *nati
     return 0;
 }
 
+/* Azure: a netvsc port moves data through its accelerated-networking VF only
+ * while one is attached; without it every packet takes the synthetic VMBus
+ * channel through the hypervisor (measured: millions of HYP interrupts a
+ * point, slower than kernel UDP), and nothing else fails. ethdev has no call
+ * that says whether a VF is attached; what shows it is the port's extended
+ * statistics: netvsc appends its VF's, each prefixed "vf_"
+ * (hn_vf_xstats_get_names, DPDK 23.11 to 25.11), and reports none without
+ * one, its own being "rx_q<n>_*" and "tx_q<n>_*". netvsc attaches a VF it
+ * cannot yet find a second later (hn_vf_add's retry alarm), so start waits up
+ * to this long after link up. */
+#define RUSTERON_DPDK_NETVSC_VF_WAIT_MS 3000
+#define RUSTERON_DPDK_NETVSC_VF_POLL_MS 100
+
+/* Whether the port reports any "vf_" extended statistic. */
+static int rusteron_dpdk_netvsc_vf_attached(const rusteron_dpdk_port_ops_t *ops, uint16_t port_id)
+{
+    if (NULL == ops->xstats_count || NULL == ops->xstats_names)
+    {
+        return 0;
+    }
+    const uint32_t n = ops->xstats_count(port_id);
+    if (0 == n)
+    {
+        return 0;
+    }
+    char *names = calloc(n, RUSTERON_DPDK_XSTAT_NAME_LEN);
+    if (NULL == names)
+    {
+        return 0;
+    }
+    int found = 0;
+    if (0 == ops->xstats_names(port_id, names, n))
+    {
+        for (uint32_t i = 0; i < n && !found; i++)
+        {
+            found = 0 == strncmp(names + (size_t)i * RUSTERON_DPDK_XSTAT_NAME_LEN, "vf_", 3);
+        }
+    }
+    free(names);
+    return found;
+}
+
+/* Fail start for a netvsc port with no VF attached (RUSTERON_DPDK_ERR_NO_ACCELERATED_VF),
+ * or, under RUSTERON_DPDK_ALLOW_SYNTHETIC=1, warn and go on. */
+static int rusteron_dpdk_netvsc_vf_check(const rusteron_dpdk_transport_t *native, const rusteron_dpdk_port_t *p)
+{
+    const struct timespec step = { 0, RUSTERON_DPDK_NETVSC_VF_POLL_MS * 1000000L };
+    for (uint32_t waited = 0;; waited += RUSTERON_DPDK_NETVSC_VF_POLL_MS)
+    {
+        if (rusteron_dpdk_netvsc_vf_attached(native->ops, p->port_id))
+        {
+            return 0;
+        }
+        if (waited >= RUSTERON_DPDK_NETVSC_VF_WAIT_MS)
+        {
+            break;
+        }
+        nanosleep(&step, NULL);
+    }
+    char message[1024];
+    snprintf(message, sizeof(message),
+             "net_netvsc port %u on %s (MAC %s) has no accelerated-networking VF attached (no vf_* extended "
+             "statistics %d ms after link up): it would run on the synthetic VMBus path, every packet through the "
+             "hypervisor, slower than kernel UDP. This set-up supports MANA VFs only; a Mellanox (mlx5) VF is not "
+             "supported. Use a VM size with MANA and accelerated networking on, with the MANA PCI function probed "
+             "by DPDK (mana_ib loaded, the VF's kernel interface down). RUSTERON_DPDK_ALLOW_SYNTHETIC=1 starts it "
+             "anyway, for diagnosis only",
+             (unsigned)p->port_id, p->pci, p->mac_text, RUSTERON_DPDK_NETVSC_VF_WAIT_MS);
+    if (!native->allow_synthetic)
+    {
+        rusteron_dpdk_set_error_code(message, RUSTERON_DPDK_ERR_NO_ACCELERATED_VF);
+        return -1;
+    }
+    fprintf(stderr,
+            "WARNING ergon-md-dpdk: %s. STARTING ANYWAY ON THE SYNTHETIC PATH (RUSTERON_DPDK_ALLOW_SYNTHETIC=1): "
+            "no measurement of this port is kernel bypass\n",
+            message);
+    return 0;
+}
+
 static int rusteron_dpdk_init_port(rusteron_dpdk_transport_t *native, rusteron_dpdk_port_t *p)
 {
     const rusteron_dpdk_port_ops_t *ops = native->ops;
@@ -1055,6 +1135,10 @@ static int rusteron_dpdk_init_port(rusteron_dpdk_transport_t *native, rusteron_d
     p->link_up = 1;
 
     if (ena && rusteron_dpdk_ena_express_check(native, p, l3_mtu) < 0)
+    {
+        return -1;
+    }
+    if (0 == strcmp(driver, "net_netvsc") && rusteron_dpdk_netvsc_vf_check(native, p) < 0)
     {
         return -1;
     }
@@ -2036,6 +2120,23 @@ static int rusteron_dpdk_runtime_net_init(rusteron_dpdk_transport_t *native)
             return -1;
         }
         native->ena_llq_required = on;
+    }
+    /* A netvsc port without its accelerated-networking VF fails start unless
+     * RUSTERON_DPDK_ALLOW_SYNTHETIC=1 (or true), for diagnosis only. */
+    native->allow_synthetic = 0;
+    const char *allow_synthetic = getenv("RUSTERON_DPDK_ALLOW_SYNTHETIC");
+    if (NULL != allow_synthetic && '\0' != allow_synthetic[0])
+    {
+        const int on = 0 == strcmp(allow_synthetic, "1") || 0 == strcmp(allow_synthetic, "true");
+        if (!on && 0 != strcmp(allow_synthetic, "0") && 0 != strcmp(allow_synthetic, "false"))
+        {
+            rusteron_dpdk_set_error_code(
+                "RUSTERON_DPDK_ALLOW_SYNTHETIC must be 0, 1, false or true (1: start an Azure netvsc port without "
+                "its accelerated-networking VF, for diagnosis only)",
+                RUSTERON_DPDK_ERR_INVALID_ENV);
+            return -1;
+        }
+        native->allow_synthetic = on;
     }
     /* RUSTERON_DPDK_VFIO_WC=1: a write-combining vfio-pci, as preflight reads
      * it (0, the default, or 1). */

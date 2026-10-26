@@ -607,12 +607,14 @@ fn fill(buf: &mut [c_char], value: &str, field: &str) -> Result<(), DpdkError> {
 /// The typed error for a failed native create: its error code
 /// (`rusteron_dpdk_transport.h`) says which. 3: a malformed or contradictory
 /// environment value; 4: a configuration the NIC as set up cannot carry;
-/// anything else: a native failure.
+/// 5: an Azure netvsc port without its accelerated-networking VF; anything
+/// else: a native failure.
 #[cfg_attr(not(feature = "dpdk"), allow(dead_code))]
 const fn native_create_error(code: i32, message: String) -> DpdkError {
     match code {
         3 => DpdkError::InvalidEnvironment(message),
         4 => DpdkError::InvalidConfiguration(message),
+        5 => DpdkError::NoAcceleratedVf(message),
         _ => DpdkError::Native(message),
     }
 }
@@ -966,6 +968,10 @@ mod tests {
         assert_eq!(
             native_create_error(4, "ENA Express".into()),
             DpdkError::InvalidConfiguration("ENA Express".into())
+        );
+        assert_eq!(
+            native_create_error(5, "net_netvsc".into()),
+            DpdkError::NoAcceleratedVf("net_netvsc".into())
         );
         assert_eq!(native_create_error(1, "x".into()), DpdkError::Native("x".into()));
         assert_eq!(native_create_error(2, "x".into()), DpdkError::Native("x".into()));
