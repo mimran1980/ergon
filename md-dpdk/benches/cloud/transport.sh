@@ -434,7 +434,7 @@ tr_knob() {
     # a socket arm's own default (transport-settings.env TR_SOCKET_NAPI_DEFER)
     napi_defer)
         if [[ $bin == aeron_lat ]]; then
-            if [[ $(tr_knob aeron_path) == kernel-busy ]]; then echo "$TR_NAPI_DEFER"; else echo 0; fi
+            if [[ $(tr_knob aeron_path) == kernel-busy ]]; then echo "$TR_AERON_NAPI_DEFER"; else echo 0; fi
         else
             echo "$TR_SOCKET_NAPI_DEFER"
         fi
@@ -504,6 +504,12 @@ tr_driver_mode() {
         rx_free_thresh) [[ $v == pmd ]] || s+="@RUSTERON_DPDK_RX_FREE_THRESH=$v" ;;
         esac
     done
+    # the data NICs' interrupt deferral (napi_defer): kernel-busy's own is
+    # 2 / TR_GRO_FLUSH_NS; an Aeron kernel UDP arm's is TR_AERON_NAPI_DEFER
+    if [[ $m == kernel-busy && $knobs == *" napi_defer "* ]]; then
+        v=$(tr_knob napi_defer)
+        if [[ $v == 0 ]]; then s+="@NAPI_DEFER=0/0"; elif [[ $v != "$TR_NAPI_DEFER" ]]; then s+="@NAPI_DEFER=$v/$TR_GRO_FLUSH_NS"; fi
+    fi
     if [[ $knobs == *" aeron_threading "* && $(tr_knob aeron_threading) == SHARED ]]; then
         s=${s//@CONDUCTOR=own/}
         s=${s//@AERON_CONDUCTOR_IDLE_STRATEGY=spin/}

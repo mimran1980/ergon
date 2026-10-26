@@ -76,11 +76,11 @@ IMPLIED = {("aeron_path", "kernel"): {"net.core.busy_read": "0", "net.core.busy_
 def best_of(knob, knobs, tr):
     """An arm's technology's best value of a TR_BEST_BY_TECHNOLOGY knob,
     from its knobs (transport-settings.env): napi_defer, an Aeron kernel
-    UDP arm's driver's (kernel-busy: TR_NAPI_DEFER; kernel: 0), a socket
+    UDP arm's driver's (kernel-busy: TR_AERON_NAPI_DEFER; kernel: 0), a socket
     arm's TR_SOCKET_NAPI_DEFER; None for a knob without one."""
     if knob == "napi_defer":
         if "aeron_path" in knobs:
-            return tr.get("TR_NAPI_DEFER", "2") if knobs["aeron_path"] == "kernel-busy" else "0"
+            return tr.get("TR_AERON_NAPI_DEFER", "0") if knobs["aeron_path"] == "kernel-busy" else "0"
         return tr.get("TR_SOCKET_NAPI_DEFER", "0")
     return None
 

@@ -775,7 +775,7 @@ nstat) n=$(cat "$st/s" 2>/dev/null || echo 0); n=$((n + 1)); echo $n >"$st/s"
 # both NICs alike: kernel-busy's driver sets 2/200000, kernel's 0/0;
 # transport-net the settings' TR_NAPI_DEFER/TR_GRO_FLUSH_NS under the arm's
 # TR_OVERRIDES (logged); napi reads them back as vm.sh napi prints them
-driver) case $2 in kernel-busy*) echo "2 200000" >"$st/napi" ;; kernel | kernel@*) echo "0 0" >"$st/napi" ;; esac ;;
+driver) case $2 in *@NAPI_DEFER=*) v=${2#*@NAPI_DEFER=}; v=${v%%@*}; echo "${v%/*} ${v#*/}" >"$st/napi" ;; kernel-busy*) echo "2 200000" >"$st/napi" ;; kernel | kernel@*) echo "0 0" >"$st/napi" ;; esac ;;
 transport-net)
     if [[ ${2:-} != check ]]; then
         v=$(. "$FAKE_CLOUD/transport-settings.env"; . "$FAKE_CLOUD/host.sh"; transport_overrides; echo "$TR_NAPI_DEFER $TR_GRO_FLUSH_NS")
@@ -1024,8 +1024,8 @@ m=$(grep -l '^mode=aeron-rel@STREAMS=1@NETEM=0.1$' "$d"/manifest/*.env | head -1
 grep -q '^driver_mode=kernel-busy@CONDUCTOR=own@' "$m" || why+=" an Aeron point's driver mode: $(grep '^driver_mode' "$m");"
 # the data NICs' interrupt deferral, each arm at its own best: every socket
 # point with none (0/0 on every NIC of both hosts: its own host settings,
-# transport-net with TR_OVERRIDES), every Aeron kernel UDP point at
-# kernel-busy's 2/200000, each read back after the point; the hosts' own
+# transport-net with TR_OVERRIDES), every Aeron kernel UDP point at its
+# driver's @NAPI_DEFER=0/0 (TR_AERON_NAPI_DEFER), each read back after the point; the hosts' own
 # (2/200000) put back after each socket arm; none read under DPDK or IPC
 nw=
 for m in $(grep -l '^setup=sockets$' "$d"/manifest/*.env); do
@@ -1034,8 +1034,8 @@ for m in $(grep -l '^setup=sockets$' "$d"/manifest/*.env); do
 done
 [[ $(grep -l '^setup=sockets$' "$d"/manifest/*.env | wc -l | tr -d ' ') -gt 0 ]] || nw+=" no socket point;"
 for m in $(grep -lE '^arm=(aeron-rel|aeron-self)$' "$d"/manifest/*.env); do
-    grep -q '^knob.napi_defer=2$' "$m" && grep -qE '^napi_[ab]=enP1:2/200000,enP2:2/200000$' "$m" && grep -qE '^napi_defer_[ab]=2$' "$m" &&
-        ! grep -qE '^napi_[ab]=.*:0/' "$m" ||
+    grep -q '^knob.napi_defer=0$' "$m" && grep -qE '^napi_[ab]=enP1:0/0,enP2:0/0$' "$m" && grep -qE '^napi_defer_[ab]=0$' "$m" &&
+        ! grep -qE '^napi_[ab]=.*:2/' "$m" && grep -q '@NAPI_DEFER=0/0' "$m" ||
         nw+=" $(grep '^mode=' "$m"): $(grep -E '^(knob.napi|napi)' "$m" | tr '\n' ' ');"
 done
 ! grep -lE '^arm=(mpsc|aeron-ipc|aeron-spy|dpdk-aeron-self)$' "$d"/manifest/*.env | xargs grep -lE '^(knob\.napi_defer|napi_)' >/dev/null 2>&1 || nw+=" a NIC deferral recorded for a non-UDP or DPDK arm;"
@@ -1043,8 +1043,8 @@ for h in a b; do
     s=$(grep "^$h transport-net napi " "$sb/calls" | cut -d' ' -f4,5 | tr '\n' ';')
     [[ $s =~ ^(0\ 0\;2\ 200000\;)+$ ]] || nw+=" host $h's transport-net NIC deferral not 0/0 for each socket arm, put back after: $s;"
 done
-grep -q '^mio-tcp.knob.napi_defer=0$' "$d/transport-settings.env" && grep -q '^aeron-rel.knob.napi_defer=2$' "$d/transport-settings.env" &&
-    grep -qE '^best.knob.napi_defer=(.*,)?aeron-rel:2,(.*,)?mio-tcp:0(,|$)' "$d/transport-settings.env" || nw+=" collected: $(grep napi "$d/transport-settings.env" | tr '\n' ' ');"
+grep -q '^mio-tcp.knob.napi_defer=0$' "$d/transport-settings.env" && grep -q '^aeron-rel.knob.napi_defer=0$' "$d/transport-settings.env" &&
+    grep -qE '^best.knob.napi_defer=(.*,)?aeron-rel:0,(.*,)?mio-tcp:0(,|$)' "$d/transport-settings.env" || nw+=" collected: $(grep napi "$d/transport-settings.env" | tr '\n' ' ');"
 [[ -z $nw ]] || why+=" NIC deferral:$nw"
 echo "$tables" >"$tmp/tables.md"
 # every point's events on each host it used: begun before its binaries
