@@ -6,7 +6,7 @@
 //!
 //! | backend | how it waits | NIC polling | extra core |
 //! |---|---|---|---|
-//! | `epoll-spin` | `epoll_wait(0)` every poll, then `recvmsg` on ready sockets | no (interrupts) | no |
+//! | `epoll-spin` | `epoll_wait(0)` every poll, then `recvmsg` on ready sockets | no (interrupts); with `busy_poll_us`, one pass per socket after each receive | no |
 //! | `recv-busy` | non-blocking `recvmsg` on every socket every poll (with `per_queue`: one per NIC queue, then the sockets `epoll_wait(0)` reports ready), `SO_BUSY_POLL` set: an empty read runs one NAPI pass | yes, one pass per socket (or queue) per poll | no |
 //! | `uring-sqpoll` | `SQPOLL` kernel thread submits, completes and polls the NIC (NAPI) | yes, on the kernel thread | yes |
 //!
@@ -26,7 +26,9 @@
 //! | the NIC's interrupts on a core of their own (node-level), moderation off | `epoll-spin`: level with `uring-sqpoll` from 4 sockets in the one fair comparison (Graviton) |
 //!
 //! - `epoll_wait(0)` never blocks, but it also skips the kernel's NIC
-//!   busy-poll step; mio (and so tokio) is this path.
+//!   busy-poll step; mio (and so tokio) is this path. `busy_poll_us` gives
+//!   `epoll-spin` what mio gets from `SO_BUSY_POLL`: the read that empties a
+//!   socket polls the NIC once ([`Config::busy_poll_us`]).
 //! - `uring-sqpoll` spins one kernel thread per ring; rings in one process
 //!   can share one, other processes cannot.
 //!
@@ -99,8 +101,28 @@ impl FromStr for Backend {
 pub struct Config {
     /// The kernel interface. `recv-busy` and `uring-sqpoll` make one NIC
     /// busy-poll pass per call (`SO_BUSY_POLL` 1 µs, a NAPI busy-poll
-    /// timeout of 1 µs); every other socket gets `SO_BUSY_POLL` 0.
+    /// timeout of 1 µs); `epoll-spin` sockets get
+    /// [`busy_poll_us`](Self::busy_poll_us) (0 by default), `uring-sqpoll`
+    /// ones 0.
     pub backend: Backend,
+    /// `epoll-spin` only: `SO_BUSY_POLL`, µs, on every socket the driver
+    /// owns. `0` (the default): no busy polling, the loop waits for the
+    /// NIC's interrupt. Above 0, a read with data is followed by one more
+    /// read of that socket on the next poll, and that read, finding the
+    /// receive queue empty, makes one NAPI pass (`sk_busy_loop`) before it
+    /// returns `EAGAIN`: one NIC poll per socket per receive, after the
+    /// replies the receive queued went out, as mio with the same option
+    /// (it reads to `WouldBlock`). A datagram socket epoll reports is read
+    /// once; its `datagram_burst` runs from that next-poll read. The reads are
+    /// non-blocking, so any value above 0 makes the same single pass; the
+    /// value matters only to blocking reads. `epoll_wait(0)` itself never
+    /// busy-polls (the kernel returns before `ep_busy_loop` on a zero
+    /// timeout), so `net.core.busy_poll`, `EPIOCSPARAMS` and
+    /// `SO_PREFER_BUSY_POLL` change nothing here. Needs a kernel with
+    /// `CONFIG_NET_RX_BUSY_POLL` and a NIC with NAPI ids (none on loopback
+    /// or a plain veth: there the option is set and does nothing). 0 to
+    /// `i32::MAX`; other backends refuse it.
+    pub busy_poll_us: u32,
     /// The polling loop's CPU, for the host checks `Driver::new` runs
     /// ([`crate::checks`]: isolation, SMT siblings, and the NIC interrupts of
     /// each connection's egress device). `None` takes the CPU the thread
@@ -229,6 +251,7 @@ impl Config {
             backend,
             loop_cpu: None,
             sqpoll_cpu: None,
+            busy_poll_us: 0,
             sqpoll_idle_ms: 600_000,
             ring_entries: 256,
             rcvbuf: Some(4 << 20),
@@ -256,8 +279,9 @@ impl Config {
     /// Checks that every setting applies to the backend.
     ///
     /// # Errors
-    /// `tcp_user_timeout_ms` above `i32::MAX`, `per_queue` on a backend
-    /// other than `recv-busy`, keepalive settings outside the kernel's
+    /// `tcp_user_timeout_ms` or `busy_poll_us` above `i32::MAX`, `per_queue`
+    /// on a backend other than `recv-busy`, `busy_poll_us` on one other than
+    /// `epoll-spin`, keepalive settings outside the kernel's
     /// limits, or
     /// `tcp_rto_min_us` / `tcp_delack_max_us` outside 2 000 to 200 000 µs
     /// (what no kernel accepts; the running kernel's tick is checked at
@@ -307,6 +331,19 @@ impl Config {
                 )));
             }
         }
+        if self.busy_poll_us > 0 && self.backend != Backend::EpollSpin {
+            return Err(Error::Config(format!(
+                "busy_poll_us applies to epoll-spin, not {} (it sets its own)",
+                self.backend
+            )));
+        }
+        if i32::try_from(self.busy_poll_us).is_err() {
+            return Err(Error::Config(format!(
+                "busy_poll_us {}: 0 to {}",
+                self.busy_poll_us,
+                i32::MAX
+            )));
+        }
         if self.per_queue && self.backend != Backend::RecvBusy {
             return Err(Error::Config(format!(
                 "per_queue applies to recv-busy, not {}",
@@ -325,7 +362,7 @@ impl Config {
     /// `keepalive_count`, `tcp_user_timeout_ms`
     /// (0: the kernel default), `tcp_rto_min_us` and `tcp_delack_max_us` (0:
     /// the kernel's), `tcp_info_interval_ms` (0: off), `epoll_events`,
-    /// `datagram_burst`, `helper_cpus` (a
+    /// `datagram_burst`, `busy_poll_us` (`epoll-spin` only), `helper_cpus` (a
     /// kernel CPU list:
     /// `helper_cpus=1,3-4` keeps the parts after its commas that have no
     /// `=`).
@@ -386,6 +423,7 @@ impl Config {
                 "tcp_info_interval_ms" => cfg.tcp_info_interval_ms = num()?,
                 "epoll_events" => cfg.epoll_events = num()?,
                 "datagram_burst" => cfg.datagram_burst = num()?,
+                "busy_poll_us" => cfg.busy_poll_us = num()?,
                 _ => return Err(Error::Config(format!("unknown key {k:?}"))),
             }
         }

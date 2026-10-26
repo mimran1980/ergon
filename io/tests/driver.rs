@@ -470,6 +470,32 @@ fn busy_poll_is_set_only_where_the_socket_polls_the_nic() -> R {
     })
 }
 
+// `epoll-spin,busy_poll_us=N` sets `SO_BUSY_POLL` N on a WebSocket
+// connection too, and never `SO_PREFER_BUSY_POLL`.
+#[test]
+fn busy_poll_us_reaches_a_websocket_connection() -> R {
+    let lab = Lab::new()?;
+    let mut d = Driver::new(Config::parse("epoll-spin,busy_poll_us=50")?)?;
+    std::thread::scope(|s| -> R {
+        let srv = s.spawn(|| -> R {
+            let mut p = lab.accept()?;
+            let _ = p.client_closed()?;
+            Ok(())
+        });
+        let id = d.add(WsConn::connect(
+            &lab.target("/")?,
+            lab.client_cfg.clone(),
+            1 << 20,
+        )?)?;
+        let fd = d.get(id).ok_or("conn gone")?.raw_fd();
+        let bp = ergon_io::sys::busy_poll_settings(fd)?;
+        assert_eq!((bp.usec, bp.prefer), (50, false));
+        drop(d);
+        srv.join().map_err(|_| "server panicked")??;
+        Ok(())
+    })
+}
+
 // mio is the interrupt path, and so is tokio's I/O, which is built on it.
 // "Interrupt path" has a socket-level meaning: nothing makes an empty receive
 // run a NAPI pass, so the packet waits for the NIC's interrupt instead of

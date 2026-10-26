@@ -531,6 +531,40 @@ fn tcp_settings_reach_both_arms_sockets() -> R {
     Ok(())
 }
 
+/// `--busy-read-us` reaches both arms' sockets, TCP and UDP, at both ends:
+/// mio by `setsockopt`, ergon-io by `Config::busy_poll_us`. Each manifest
+/// records the setting and `SO_BUSY_POLL` as read back.
+#[test]
+fn busy_read_reaches_both_arms_sockets() -> R {
+    for (k, run) in [
+        Run::tcp("mio", 1, 1_000, 30_110),
+        Run::tcp("ergon", 1, 1_000, 30_120),
+        Run::udp("mio", 1, 1_000, 30_130),
+        Run::udp("ergon", 1, 1_000, 30_140),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let out = scratch(&format!("busy-read-{k}"))?;
+        let o = Command::new(run.bin)
+            .args(run.common("local", two_cpus().map(|(a, b)| format!("{a},{b}")), &out))
+            .args(run.addrs("local"))
+            .args(["--round-trip", "--busy-read-us", "50"])
+            .output()?;
+        finished(run.imp, &o)?;
+        let m = std::fs::read_to_string(out.join("manifest.json"))?;
+        for want in [
+            "\"busy_read_us\": \"50\"",
+            "\"readback.so_busy_poll\": \"50\"",
+            "\"echo.readback.so_busy_poll\": \"50\"",
+        ] {
+            assert!(m.contains(want), "{}: no {want} in {m}", run.label());
+        }
+        std::fs::remove_dir_all(out)?;
+    }
+    Ok(())
+}
+
 fn refused(bin: &str, args: &[&str], why: &str) -> R {
     let o = Command::new(bin).args(args).output()?;
     let err = String::from_utf8_lossy(&o.stderr);
@@ -601,13 +635,13 @@ fn settings_an_arm_cannot_take_are_refused() -> R {
     )?;
     refused(
         TCP,
-        &with(&tcp, &["--impl", "ergon", "--busy-read-us", "50"]),
-        "SO_BUSY_POLL 0",
+        &with(&tcp, &["--impl", "ergon", "--busy-read-us", "2147483648"]),
+        "busy_poll_us",
     )?;
     refused(
         UDP,
-        &with(&udp, &["--impl", "ergon", "--busy-read-us", "50"]),
-        "SO_BUSY_POLL 0",
+        &with(&udp, &["--impl", "ergon", "--busy-read-us", "2147483648"]),
+        "busy_poll_us",
     )?;
     refused(
         UDP,

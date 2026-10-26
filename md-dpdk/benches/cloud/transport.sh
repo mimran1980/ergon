@@ -322,13 +322,13 @@ tr_now() {
 # receiver binds --peer). tcp_lat: the pong (and local's receiver) listens,
 # the ping connects from its own address (--source: each data NIC has a
 # routing table its address selects, so the address is the NIC).
-# --busy-read-us is mio's alone (ergon-io's epoll-spin refuses it: its
-# SO_BUSY_POLL is 0).
+# --busy-read-us goes to both socket impls: SO_BUSY_POLL on every socket
+# (mio by setsockopt, ergon-io's epoll-spin by its busy_poll_us key).
 tr_bin_args() {
     local b=$1 role=$2 own=$3 peer=$4 port=$TR_PORT_BASE out=
     shift 4
     local args=" $* " busy= sb qa
-    [[ $args == *" --impl mio "* ]] && busy="--busy-read-us $(tr_knob busy_read_us) "
+    busy="--busy-read-us $(tr_knob busy_read_us) "
     sb=$(tr_knob sockbuf)
     qa="--quickack-per-read"
     [[ $(tr_knob quickack_per_read) == off ]] && qa+=" false"
@@ -458,12 +458,11 @@ tr_arm_knobs() {
     local a=" ${args[*]:-} "
     case $bin in
     udp_lat)
-        echo sockbuf epoll_events
-        if [[ $a == *" --impl mio "* ]]; then echo busy_read_us; else echo datagram_burst; fi
+        echo sockbuf epoll_events busy_read_us
+        if [[ $a == *" --impl ergon "* ]]; then echo datagram_burst; fi
         ;;
     tcp_lat)
-        echo sockbuf epoll_events quickack_per_read congestion
-        [[ $a == *" --impl mio "* ]] && echo busy_read_us
+        echo sockbuf epoll_events quickack_per_read congestion busy_read_us
         [[ $(tr_timer_args) == *--rto-min-us* ]] && echo rto_min_us
         ;;
     aeron_lat)

@@ -13,8 +13,8 @@
 //! - Echo: the handler has no driver to send with, so an echo made while
 //!   the driver polls ([`Staged`]) goes out right after that poll, before
 //!   `Rx::poll` returns.
-//! - Driver keys: `epoll_events`, `datagram_burst`, `rcvbuf`; receive
-//!   timestamps off (nothing reads them); keepalive and
+//! - Driver keys: `epoll_events`, `datagram_burst`, `rcvbuf`,
+//!   `busy_poll_us`; receive timestamps off (nothing reads them); keepalive and
 //!   `TCP_USER_TIMEOUT` left alone (the mio arms set neither).
 #![deny(unsafe_code, missing_docs)]
 #![warn(
@@ -49,6 +49,8 @@ pub struct EioUdpOptions {
     pub epoll_events: u32,
     /// `Config::datagram_burst`.
     pub datagram_burst: u32,
+    /// `Config::busy_poll_us` (`SO_BUSY_POLL`, µs; 0: none).
+    pub busy_poll_us: u32,
     /// `Config::loop_cpu`: the CPU the polling thread is pinned to.
     pub loop_cpu: Option<u32>,
     /// `Config::helper_cpus` (empty: ergon-io chooses).
@@ -178,6 +180,7 @@ pub fn pair(
         opts.loop_cpu,
         &opts.helper_cpus,
     );
+    cfg.busy_poll_us = opts.busy_poll_us;
     cfg.datagram_burst = opts.datagram_burst;
     cfg.validate().map_err(|e| eio("config", e))?;
     let mut d: Driver<UdpConn> = Driver::new(cfg).map_err(|e| eio("Driver::new", e))?;
@@ -332,6 +335,7 @@ impl Inspect for EioUdpRx {
                     .map_or_else(|| "kernel".to_owned(), |b| b.to_string()),
             ),
             ("epoll_events", cfg.epoll_events.to_string()),
+            ("busy_read_us", cfg.busy_poll_us.to_string()),
             ("datagram_burst", cfg.datagram_burst.to_string()),
             ("ergon.backend", cfg.backend.to_string()),
             ("ergon.rx_timestamps", cfg.rx_timestamps.to_string()),
