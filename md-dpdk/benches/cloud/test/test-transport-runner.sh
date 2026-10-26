@@ -233,6 +233,20 @@ qlines=$(grep -c '^quiet /' <<<"$q" || true)
 qskip=$(grep -c '^quiet skip' <<<"$q" || true)
 mkdir -p "$proc/sys/kernel/refuse"
 ref=$(env PATH="$tmp/fakebin:$PATH" LAB_SYS_ROOT="$sys" LAB_PROC_ROOT="$proc" bash -c '. "$1/host.sh"; transport_quiet_settings() { echo "/proc/sys/kernel/refuse|1|test"; }; transport_quiet_apply 0 4' _ "$cloud" 2>&1) && refrc=0 || refrc=$?
+# a cpumask the kernel reads back zero-padded and comma-grouped (03 for 3,
+# 00000000,000000ff for ff), or a cpu list read back as ranges (0-1,4 for
+# 0,1,4), is the same set of CPUs: it holds
+mkdir -p "$sys/bus/workqueue/devices/writeback"
+echo ff >"$sys/bus/workqueue/devices/writeback/cpumask"
+mask=$(env PATH="$tmp/fakebin:$PATH" LAB_SYS_ROOT="$sys" LAB_PROC_ROOT="$proc" bash -c '. "$1/host.sh"
+transport_quiet_settings() { echo "/sys/bus/workqueue/devices/writeback/cpumask|3|test"; echo "/sys/kernel/padded/cpumask|ff|test"; echo "/proc/sys/kernel/watchdog_cpumask|0,1,4|test"; }
+sudo() { if [[ $1 == cat && $2 == */writeback/cpumask ]]; then echo 03; elif [[ $1 == cat && $2 == */padded/cpumask ]]; then echo 00000000,000000ff; elif [[ $1 == cat && $2 == */watchdog_cpumask ]]; then echo 0-1,4; else "$@"; fi; }
+mkdir -p "$LAB_PROC_ROOT/sys/kernel"; echo 0-7 >"$LAB_PROC_ROOT/sys/kernel/watchdog_cpumask"
+mkdir -p "$LAB_SYS_ROOT/kernel/padded"; echo ff >"$LAB_SYS_ROOT/kernel/padded/cpumask"
+transport_quiet_apply 0 4' _ "$cloud" 2>&1) && maskrc=0 || maskrc=$?
+if [[ $maskrc != 0 || $mask == *REFUSED* ]]; then
+    fail "host.sh quiet settings: a zero-padded cpumask read back is the same mask: rc $maskrc: $mask"
+fi
 if [[ $qrc == 0 && $qlines == 3 && $qskip -ge 6 && $(cat "$proc/sys/vm/stat_interval") == 120 && $refrc == 1 && $ref == *REFUSED* ]]; then
     pass "host.sh: the lab's quiet settings (k8s lab_quiet_settings) written and read back, the absent skipped, a refused one fails"
 else

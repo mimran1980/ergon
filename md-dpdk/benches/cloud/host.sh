@@ -1018,6 +1018,31 @@ transport_quiet_settings() {
     )
 }
 
+# cpumask_norm <hex mask>: the mask without commas, leading zeros or case,
+# so 00000000,00000003 and 3 compare equal
+cpumask_norm() {
+    local m
+    m=$(printf '%s' "${1//,/}" | tr 'A-F' 'a-f')
+    while [[ $m == 0?* ]]; do m=${m#0}; done
+    echo "${m:-0}"
+}
+
+# cpulist_norm <cpu list>: its CPUs one per comma, ranges expanded, sorted,
+# so 0-1,4 and 0,1,4 compare equal
+cpulist_norm() {
+    local part a b out=()
+    local IFS=,
+    for part in $1; do
+        if [[ $part == *-* ]]; then
+            a=${part%-*} b=${part#*-}
+            while ((a <= b)); do out+=("$a"); a=$((a + 1)); done
+        elif [[ -n $part ]]; then
+            out+=("$part")
+        fi
+    done
+    printf '%s\n' "${out[@]}" | sort -n | paste -sd, -
+}
+
 # transport_quiet_apply <housekeeping cpulist> <isolated cpulist>: each one
 # this kernel has written and read back, "quiet <path>: <before> -> <after>";
 # one it lacks "quiet skip: <path> (not on this kernel)"; 1 when a write was
@@ -1037,8 +1062,12 @@ transport_quiet_apply() {
         before=$(sudo cat "$f" 2>/dev/null)
         echo "$value" | sudo tee "$f" >/dev/null 2>&1 || true
         after=$(sudo cat "$f" 2>/dev/null)
-        # THP reads back as its choices, the one in force bracketed
-        if [[ $after == "$value" || $after == *"[$value]"* ]]; then
+        # THP reads back as its choices, the one in force bracketed; a sysfs
+        # cpumask zero-padded and comma-grouped (03 for 3); a proc cpu list as
+        # ranges (0-1 for 0,1)
+        if [[ $after == "$value" || $after == *"[$value]"* ]] ||
+            [[ $path == /sys/*/cpumask && $(cpumask_norm "$after") == "$(cpumask_norm "$value")" ]] ||
+            [[ $path == /proc/*_cpumask && $(cpulist_norm "$after") == "$(cpulist_norm "$value")" ]]; then
             echo "quiet $path: $before -> $after"
         else
             echo "quiet REFUSED $path: stays [$after], wanted $value ($why)" >&2
