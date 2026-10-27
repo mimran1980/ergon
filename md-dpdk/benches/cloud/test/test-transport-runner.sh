@@ -1605,7 +1605,7 @@ plan modes a "$matrix:arms" "$bad" >/dev/null 2>&1 || refusals+=" a sink arm bes
 # run), and the A/A of aeron-spy-udp
 spysets=$tmp/spy-sets.tsv
 echo "set spy a - a 10000 1 - aeron-spy-udp,aeron-spy,dpdk-aeron-spy-udp,aa" >"$spysets"
-trun a 1 "" sets_file="$spysets" && rrc=0 || rrc=$?
+TRUN_SETS="$spysets" trun a 1 "" && rrc=0 || rrc=$?
 d=$sb/a/bench/transport-a
 why=
 [[ $rrc == 0 && $(cat "$d/rc") == 0 ]] || why+=" exit $rrc rc $(cat "$d/rc" 2>/dev/null): $(tail -3 "$sb/run.out" | tr '\n' ' ');"
@@ -1655,7 +1655,7 @@ fv=$(python3 "$cloud/fairness.py" "$d" 2>&1) || why+=" fairness: $(head -5 <<<"$
 tables=$(python3 "$cloud/analyse.py" --transport "$d" 2>&1) || why+=" analyse.py --transport failed: $(tail -2 <<<"$tables");"
 grep -q '^### Set spy, ' <<<"$tables" && ! grep -q '^Refused' <<<"$tables" || why+=" no set spy table, or one refused;"
 # a sink that read fewer pings than its run sent: the sink rule
-trun a 1 "" sets_file="$spysets" FAKE_SINK_SHORT=spy:aa
+TRUN_SETS="$spysets" trun a 1 "" FAKE_SINK_SHORT=spy:aa
 fv=$(python3 "$cloud/fairness.py" "$d" 2>&1 || true)
 [[ $(grep -c '^sink: spy: .*the sink received 90 of 100 pings$' <<<"$fv") == 2 ]] && ! grep '^sink:' <<<"$fv" | grep -qv 'spy-aa@' ||
     why+=" a short sink not flagged (or another): $(grep '^sink' <<<"$fv" | head -3 | tr '\n' ' ');"
