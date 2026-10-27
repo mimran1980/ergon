@@ -181,16 +181,20 @@ The full table, the evidence and the node settings: the book's
 ## UDP or TCP, ergon-io or mio
 
 UDP and framed TCP, each through raw mio and through ergon-io, are measured
-beside Aeron on the same hosts, cores and settings, with 64-byte messages:
-UDP at 1 to 128 streams, TCP with and without loss, and TCP fan-in up to
-128 connections. Tables and conclusion: the book's
+beside Aeron on the same hosts, cores and settings (Azure x86, 64-byte
+messages, round trips, both arms `SO_BUSY_POLL` 50 µs): UDP at 1 to 128
+streams, TCP with and without loss. Tables and conclusion: the book's
 [transport latency comparison](https://mimran1980.github.io/ergon/transports/comparison.html).
 
 <!-- RESULTS: io README -->
-Pending a rerun. In the first Azure sessions mio's sockets busy-polled
-(`SO_BUSY_POLL` 50 µs) while ergon-io's `epoll-spin` set 0, so those runs
-do not compare mio with ergon-io. The rerun gives both the same busy
-polling.
+
+| question | answer |
+|---|---|
+| mio or ergon-io, UDP? | Either. ergon-io's p50 is 0.1 to 0.9 µs behind mio's (behind in every rep); p99.99 and max not separated |
+| mio or ergon-io, TCP? | No verdict: the median p50 gaps (ergon-io 2.4 µs ahead to 4.0 behind) are inside each arm's own spread across reps (up to 10.7 µs). A same-connection A/B (`tcp_lat --source-port`) is scheduled on AWS |
+| sockets or Aeron UDP? | One stream: Aeron (p50 55.6 against 61.8 µs at 50,000 msg/s). 32 to 128 streams: sockets (p50 lower by 3.7 to 10.5 µs), on 1 busy thread against Aeron's 4 |
+| at 200,000 msg/s? | Neither socket library keeps up (one `send` a message on one thread; 151,000 to 195,000 msg/s carried); Aeron does |
+| TCP or Aeron reliable? | Aeron's p50 is 7 to 15 µs lower without loss. Under loss neither tail wins everywhere: Aeron's maxima sit at its 10 ms retransmit linger, TCP's come from its retransmits (8 ms minimum RTO) |
 
 ## Rate limits and errors
 

@@ -348,8 +348,7 @@ interrupts a point, against under 600 for the kernel arms. Those rows
 measure the fallback path, so they are excluded. `ergon-md-dpdk` now fails
 at start on a `net_netvsc` port without an attached VF
 (`DpdkError::NoAcceleratedVf`; `RUSTERON_DPDK_ALLOW_SYNTHETIC=1` allows it
-for diagnosis). mlx5 support and DPDK results beside kernel UDP follow the
-release.
+for diagnosis). A DPDK rerun beside kernel UDP is planned on AWS (ENA).
 
 Aeron's results, round trip, µs, the median of 3 reps (range); `max` the
 median of the reps' maxima:
@@ -360,13 +359,27 @@ median of the reps' maxima:
 | | | 5,000,000 | 0.25 (0.25–0.26) | 0.38 | 82.2 (75.4–101) | 175 (164–181) | 5 |
 | 2b, one host | `aeron-spy` | 10,000 to 200,000 | 0.26 | 0.32–0.42 | 2.11–17.1 | 3.92–108 | 5 |
 | | `aeron-self` (kernel UDP to its own address) | 10,000 to 200,000 | 10.3–13.9 | 11.9–19.8 | 19.2–58.0 | 31.3–181 | 5 |
+| 2a, between hosts | `aeron-udp` (kernel UDP, unreliable), 1 stream | 10,000 | 59.5 (59.2–59.7) | 63.7 | 77.1 (75.9–92.2) | 88.6 (84.9–198) | 4 a host |
+| | | 200,000 | 55.8 (55.4–56.5) | 63.7 | 387 (177–899) | 2,186 (427–2,885) | 4 a host |
+| | `aeron-udp`, 128 streams | 10,000 | 70.0 (69.8–70.3) | 78.7 | 176 (136–204) | 231 (197–240) | 4 a host |
+| | | 200,000 | 86.3 (86.1–87.3) | 115 | 268 (264–832) | 581 (573–1,583) | 4 a host |
 | 3a, between hosts | `aeron-rel` (kernel UDP, reliable) | 10,000 | 56.1 (53.9–61.3) | 63.0 | 225 (212–244) | 286 (278–610) | 4 a host |
 | | | 200,000 | 56.4 (54.5–61.9) | 80.4 | 470 (325–1,167) | 1,703 (743–2,575) | 4 a host |
+| 3b, netem 0.1 % | `aeron-rel` | 10,000 | 61.6 (54.0–62.0) | 67.7 | 7,246 (315–7,356) | 10,240 (1,717–10,349) | 4 a host |
+| | | 200,000 | 54.6 (53.9–58.9) | 120 | 9,953 (9,576–10,019) | 10,235 (10,222–10,239) | 4 a host |
 
-2a (kernel UDP, unreliable, 1 to 128 streams) and 3b (under loss) are
-pending. Directory on 2 MiB pages (`aeron-ipc-huge`) and on tmpfs were not
-separated at any load. Every max here is a host pause or unexplained, as
-the book's page says.
+Sessions: 1 and 2b `20261026-120448-transport-b`, 3a
+`20261026-172859-transport-a`, 2a `20261026-221959-transport-a`, 3b
+`20261026-222001-transport-a`. Directory on 2 MiB pages (`aeron-ipc-huge`)
+and on tmpfs were not separated at any load. Kernel UDP's p50 grows with
+streams (one publication, subscription and channel each); at 32 and 128
+streams mio and ergon-io sockets are 3.7 to 10.5 µs lower at p50, but at
+200,000 msg/s only Aeron keeps up. Under 0.1 % loss Aeron's max is 10.1 to
+10.3 ms in 8 of 9 points, which fits its retransmit linger, 10 ms by default
+(`AERON_RETRANSMIT_UNICAST_LINGER`): a retransmit that is itself dropped
+waits it out (not traced per message). The other maxima here are NAK
+repairs under loss, host pauses, Azure's per-minute stall or unexplained, as
+the book's page lists.
 
 Aeron's own counters (both hosts, 3 reps summed; `dpdk-*` left out):
 
@@ -374,9 +387,13 @@ Aeron's own counters (both hosts, 3 reps summed; `dpdk-*` left out):
 | --- | --- | --- | --- | --- | --- |
 | 1, 2b | `aeron-ipc`, `aeron-ipc-huge`, `aeron-spy`, `aeron-self` | 0 | 0 | 0 | 0 |
 | 3a, no netem | `aeron-rel` and its A/A | 1 in each of two 200,000 msg/s points | 1 in each of the same two | 0 | 0 |
+| 2a (72 points) | `aeron-udp` and its A/A | 0 | 0 | 0 | 642, all on host b with 8 to 128 streams (7 to 19 a point, at every load) |
+| 3c, netem 0 % and no qdisc (36 points) | `aeron-rel` and its A/A | 5 | 5 | 0 | 0 |
+| 3b, netem 0.01 / 0.1 / 1 % (18 points each) | `aeron-rel` and its A/A | 11,370 / 119,606 / 1,928,409 sent | 11,224 / 108,927 / 966,388 | 0 | 0 |
 
-The two NAKed losses came with no guest drop counter growing on either
-host: lost below the guest, as TCP's retransmits in the same session.
+The NAKed losses without netem came with no guest drop counter growing on
+either host: lost below the guest, as TCP's retransmits in the same
+sessions. 2a's short sends are not traced to a cause; no message was lost.
 
 ## Recommended configuration
 

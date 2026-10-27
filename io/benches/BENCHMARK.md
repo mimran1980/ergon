@@ -14,8 +14,8 @@ Every ergon-io latency figure lives here, once, except the in-memory WebSocket r
 | ergon-io or libcurl for HTTP? | ergon-io is 5–12 µs ahead at the median on the same interrupt path. Its p99 and max are lower on Azure, not on AWS. | [HTTP clients](#http-clients) |
 | `connect_background` or `Driver::connect`? | Background: the loop's worst poll per connect is 6–12 µs p50 (max 98–102) against about 105 µs inline (max 775, the first connect). | [Connection set-up](#connection-set-up) |
 | mio as a backend? | No. On Linux it is `epoll-spin`'s mechanism: level on round trips, with 2.0× the `recvmsg` calls; a two-sided CI gate fails on a 10 % slowdown of either ([`mio-parity-docker-20261024T154626Z`](results/mio-parity-docker-20261024T154626Z/summary.md)). Its market-data arm was confounded. Reasons and its maxima without a cause: the book's [mio: measured, not a backend](https://mimran1980.github.io/ergon/io/backends.html#mio-measured-not-a-backend). | [Fair run](#interrupt-against-nic-polling-the-fair-run-graviton), [loop pass](#loop-pass-by-socket-count-graviton) |
-| UDP or TCP, between two hosts? | Pending a rerun: the first Azure sessions gave mio and ergon-io unequal busy polling. | [Transport comparison](#transport-comparison-udp-tcp-mio-and-ergon-io) |
-| mio or ergon-io, for UDP and framed TCP? | Pending the same rerun. | [Transport comparison](#transport-comparison-udp-tcp-mio-and-ergon-io) |
+| UDP or TCP, between two hosts? | Not compared directly: the UDP and TCP sets ran on different Azure VM pairs. 1 stream, p50: UDP 61.8–62.9 µs, TCP 64.7–69.8 µs, each with no loss. | [Transport comparison](#transport-comparison-udp-tcp-mio-and-ergon-io) |
+| mio or ergon-io, for UDP and framed TCP? | UDP: ergon-io's p50 0.1–0.9 µs behind mio's in every rep; tails not separated. TCP: no verdict, the gap is inside run-to-run noise; a same-connection A/B is scheduled on AWS. Both read twice and send once a message. | [Transport comparison](#transport-comparison-udp-tcp-mio-and-ergon-io) |
 | ENA adaptive moderation? | Off stopped the polling loop's involuntary preemptions (about 8,900 in 8 min to 0) and cut WebSocket p99.99 from 117–119 to 72–76 µs. HTTP p99.99 did not move. | [Host and NIC settings](#host-and-nic-settings-aws-x86) |
 
 ## Hosts and runs
@@ -254,33 +254,47 @@ arms report, per run: system calls a message (`recvmsg`, `send`,
 <!-- RESULTS: io socket counters -->
 
 Azure, `F8als_v6` / `F8ams_v6` pairs (AMD Genoa, mlx5 VFs), `epoll-spin`
-for ergon-io, interrupt deferral off, 64-byte messages. **Superseded by the
-coming rerun:** mio ran with `SO_BUSY_POLL` 50 µs and ergon-io with 0, so
-the counters below describe each arm, never a comparison of the two. Medians of 3 reps
-per point, from each binary's manifest (`settings.stat.*`, `settings.tcp.*`).
+for ergon-io, `SO_BUSY_POLL` 50 µs on both arms (read back from every
+socket), interrupt deferral off, 64-byte messages, round trips. Each binary's
+manifest (`settings.stat.*`, `settings.tcp.*`), per message, ranges over the
+points at 10,000 and 50,000 msg/s.
 
-**TCP** (session `20261026-172859-transport-a`, sets 3a and fan, 1 to 128
-connections, 10,000 and 50,000 msg/s):
+**UDP** (session `20261026-221959-transport-a`, set 2a, 1 to 128 streams):
+
+| counter, per message | `eio-udp` | `mio-udp` |
+|---|---|---|
+| reads (`recvmsg`) | 2.00: one with data, one empty (the busy-poll pass) | 2.00: mio reads to `WouldBlock` |
+| sends | 1.00 | 1.00 (one `send` a message in its code) |
+| `UdpStats` `tx_full`, `truncated`, `refused` | 0 | (no such counters) |
+| heap allocations on the hot path | 0 | 0 |
+
+At 200,000 msg/s both ping loops polled 1.0 to 1.5 times a message and fell
+behind (151,000 to 195,000 msg/s carried): one `send` system call a message
+on one thread does not reach that rate here.
+
+**TCP** (session `20261026-222001-transport-a`, sets 3b and 3c, 1
+connection):
 
 | counter, per message | `eio-tcp` | `mio-tcp` |
 |---|---|---|
-| reads (`recv`) | 1.00 | 2.00: mio reads to `WouldBlock` |
+| reads (`recv`), no loss | 1.94 to 1.99 | 1.89 to 1.99 |
 | sends | 1.00 | 1.00 |
-| `TCP_QUICKACK` re-arms | one per read | one per read |
-| RTOs (`TCP_INFO`) | 0 | 0 |
-| retransmits not DSACK-reported (no netem: lost on the path) | 1 to 2 segments in 2 of 36 points | 1 to 2 segments in 8 of 36 points |
+| `TCP_QUICKACK` re-arms, no loss | 0.99 to 1.00 | 0.99 to 1.00 |
+| RTOs (`TCP_INFO`), no loss | 0 | 0 |
 | heap allocations on the hot path | 0 | 0 |
-| loop thread's minor page faults in one 5 s check (ergon-io check T19) | 1 to 4 at 10,000 msg/s; 3 to 205 at 50,000; 53 to 782 at 200,000 (past capacity) | not checked |
+| retransmits at the ping end, netem 0.01 / 0.1 / 1 % | 54–182 / 567–1,748 / 5,722–16,817 a point | 55–179 / 591–1,755 / 5,695–16,672 a point |
 
-UDP: pending the rerun.
-
-- **Page faults with no allocation.** ergon-io's loop thread took minor page
-  faults in the measured window although `hot_path_allocs` was 0, more as
-  the load and the latencies grew. The likely source is the first touch of
-  the latency histogram's pages (the shared measurement code, which mio's
-  arm runs too but does not check), not ergon-io's buffers. Not yet
-  confirmed. Each fault stops the thread for a few µs; none was found at a
-  point's max but one (`page fault 1`, 128 connections, 10,000 msg/s).
+- **Page faults with no allocation.** ergon-io's own check T19 saw the loop
+  thread fault: 141 to 566 times a 5 s check at 200,000 msg/s (past
+  capacity), 1 to 98 a point at lighter load. The ones under overload came
+  from the shared measurement code, which mio's arm runs too: the latency
+  core's stall buffer, whose zero fill a release build folded into a lazily
+  mapped `calloc`, so each 4 KiB of stall rows faulted. Fixed in
+  `3b285a9b`. The few at lighter load were not traced one by one.
+- **Missing TCP points.** 9 `eio-tcp` points at 200,000 msg/s failed: the
+  bench's ergon-io pong had room for one read a poll, read twice and spun in
+  its echo loop once overloaded. A bench bug, not ergon-io's; fixed in
+  `55bee73a`.
 
 ## Worst cases
 
@@ -292,6 +306,7 @@ UDP: pending the rerun.
 - Graviton against x86: not compared. x86 interrupt against polling: no fair run.
 - The fair run's `md-mio-c1` points show a sender batch up to 40 ms late on 0.07 % of batches, mio at one connection only (`work-counts.md`). No cause yet. It is listed with mio's other maxima still without a cause in the book's [mio: measured, not a backend](https://mimran1980.github.io/ergon/io/backends.html#mio-measured-not-a-backend).
 - Azure's once-a-minute stall: no kernel event explains it.
+- mio against ergon-io over TCP: no verdict on Azure (each point a new connection and source port). A same-connection A/B (`tcp_lat --source-port`) is scheduled on AWS.
 
 ## Reproduce
 

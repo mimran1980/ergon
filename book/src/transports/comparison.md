@@ -18,8 +18,7 @@ Terms: [ergon-io glossary](../io/overview.md#glossary),
 > VMBus path (1 to 6 million hypervisor interrupts a point, against under 600
 > for the kernel arms), so the `dpdk-*` rows measured that path, not DPDK on
 > the NIC. They are left out. md-dpdk now refuses to start on that path
-> (`DpdkError::NoAcceleratedVf`). mlx5 support and DPDK results come after
-> this release.
+> (`DpdkError::NoAcceleratedVf`). A DPDK rerun on AWS (ENA) is planned.
 
 ## The answer
 
@@ -33,25 +32,25 @@ brackets after it.
 | question | answer | set |
 |---|---|---|
 | In one process: `std::sync::mpsc` or Aeron IPC? | Aeron IPC. Round trip p50 0.22 against 0.33 at 10,000 msg/s. At 1,000,000 msg/s the two are not separated. At 5,000,000 msg/s `mpsc`'s round trip falls behind (sender late, p50 27 µs) while Aeron IPC holds p50 0.25. Tails are not separated: p99.99 18 to 99, max 105 to 294 in both, each max a host pause or a stop the guest does not show. Costs: Aeron 5 busy threads, `mpsc` 2 | [1](#set-1-ipc-on-one-host) |
-| Between hosts, unreliable UDP: Aeron kernel, mio or ergon-io? | Pending the rerun: the socket arms ran with unequal busy polling (see [the socket arms](#the-socket-arms-a-rerun-is-due)) | [2a](#set-2a-unreliable-udp-between-hosts) |
-| Does the answer change from 1 to 128 streams? | Pending the rerun | [2a](#set-2a-unreliable-udp-between-hosts) |
+| Between hosts, unreliable UDP, 1 stream: Aeron kernel, mio or ergon-io? | Aeron. p50 55.6 against 61.8 to 61.9 at 50,000 msg/s; at 10,000 msg/s 59.5 against 62.3 to 62.9, lower in both Aeron runs but inside the A/A spread (3.8). At 200,000 msg/s only Aeron keeps up (p50 55.8); mio and ergon-io fall seconds behind. mio and ergon-io are within 0.1 to 0.9 of each other at p50 (ergon-io behind in every rep). Max: no verdict (unexplained). Costs: Aeron 4 busy threads a host, sockets 1 | [2a](#set-2a-unreliable-udp-between-hosts) |
+| Does the answer change from 1 to 128 streams? | Yes. At 8 streams the three are not separated. At 32 and 128 streams plain sockets are lower: p50 by 3.7 to 4.8 (32) and 9.1 to 10.5 (128), p99 by 4.8 to 14. Aeron's p50 rises from 56 to 60 at 1 stream to 68 to 70 at 128; the sockets' stays 58 to 63. At 200,000 msg/s only Aeron keeps up at every stream count (p50 56 to 86) | [2a](#set-2a-unreliable-udp-between-hosts) |
 | On one host: Aeron spy, or UDP to itself? | Spy. Round trip p50 0.26 against 10.3 to 13.9 for kernel UDP to the host's own address, at every load. p99.99 2.1 against 55 at 10,000 msg/s, not separated above that; max 4 to 181, no verdict (unexplained). Both 5 busy threads | [2b](#set-2b-one-host-spy-and-self-udp) |
-| Reliable, no loss: Aeron reliable UDP or TCP? | Aeron reliable, by its tail. Caveat: the TCP arms are due a rerun (mio and ergon-io ran with unequal busy polling); both are quoted. p50 56 to 58 against 60 to 69 (not separated from `mio-tcp` at 10,000 msg/s); p99 63 against 89 to 120; p99.99 225 against 405 to 463 at 10,000 msg/s, not separated at 50,000. Max 286 to 363 against 559 to 2,244, no verdict (unexplained). At 200,000 msg/s Aeron holds p50 56; neither TCP arm keeps up (130,000 to 177,000 msg/s achieved). Costs: Aeron 4 busy threads a host, TCP 1 | [3a](#set-3a-reliable-no-loss) |
-| Reliable under 0.01, 0.1 and 1 % loss? | Pending the rerun | [3b](#set-3b-reliable-under-loss) |
-| What does a 0 % netem qdisc cost? | Pending the rerun | [3c](#set-3c-the-netem-control) |
-| TCP with 8 to 128 connections into one loop: mio or ergon-io? | Pending the rerun: the arms ran with unequal busy polling | [fan](#set-fan-tcp-fan-in) |
+| Reliable, no loss: Aeron reliable UDP or TCP? | Aeron reliable. p50 lower by 7.1 to 14.5 (54.8 to 57.6 against 64.7 to 69.8); p99 59.9 to 64.3 against 79 to 225; p99.99 lower by 3.8 to 5.5 ms in 4 of 8 comparisons, the rest not separated. Max: no verdict (unexplained). At 200,000 msg/s Aeron holds p50 57.6 to 60.5; TCP carries 106,000 to 151,000 msg/s. Costs: Aeron 4 busy threads a host, TCP 1 | [3c](#set-3c-the-netem-control), [3a](#set-3a-reliable-no-loss) |
+| Reliable under 0.01, 0.1 and 1 % loss? | No single winner in the tail. p50: Aeron 52.7 to 61.6, TCP 64.1 to 68.5. p99: Aeron lower at 0.01 and 0.1 % and at 1 % / 10,000 msg/s; TCP lower at 1 % / 50,000 msg/s (4.8 to 5.5 ms against 9.4). p99.99: Aeron lower at 0.01 % (by 3.5 to 7.1 ms), not separated at 0.1 and 1 %. The tails follow each protocol's repair: Aeron's maxima sit at its 10 ms retransmit linger, TCP's come from its retransmits (8 ms minimum RTO). At 200,000 msg/s only Aeron keeps up | [3b](#set-3b-reliable-under-loss) |
+| What does a 0 % netem qdisc cost? | Nothing measured: each arm's 0 % and no-qdisc p50 differ by 0.2 to 4.6, inside the A/A spread (3.7 to 8.8) | [3c](#set-3c-the-netem-control) |
+| TCP, 1 connection: mio or ergon-io? | No verdict. The median p50 gaps run from ergon-io 2.4 ahead to 4.0 behind, inside each arm's own spread across reps (up to 6.1 for mio, 10.7 for ergon-io). A same-connection A/B is scheduled on AWS | [3c](#mio-against-ergon-io-over-tcp-no-verdict) |
+| TCP with 8 to 128 connections into one loop: mio or ergon-io? | Not measured fairly: the one session gave the arms unequal busy polling, and the set was not rerun | [Not covered](#not-covered) |
 
 ## What was compared
 
 | set | question | arms | streams | load, msg/s (every stream together) | latency |
 |---|---|---|---|---|---|
 | 1 | IPC on one host | `mpsc` (`sync_channel`, `try_send` / `try_recv` spin), `aeron-ipc`, `aeron-ipc-huge` (Aeron IPC with its directory on 2 MiB pages) | 1 | 10,000; 1,000,000; 5,000,000 | one way and round trip |
-| 2a | unreliable UDP between hosts | `aeron-udp` (kernel, `reliable=false`), `dpdk-aeron-udp`, `mio-udp`, `eio-udp` | 1, 8, 32, 128 | 10,000; 50,000; 200,000 | round trip |
+| 2a | unreliable UDP between hosts | `aeron-udp` (kernel, `reliable=false`), `mio-udp`, `eio-udp` | 1, 8, 32, 128 | 10,000; 50,000; 200,000 | round trip |
 | 2b | one host | `aeron-spy`, `aeron-self` (kernel UDP to the host's own receiver address; the kernel delivers it locally, 2 to 5 data-NIC interrupts a point), `dpdk-aeron-self` | 1 | 10,000; 50,000; 200,000 | one way and round trip |
-| 3a | reliable, no loss | `aeron-rel` (kernel), `dpdk-aeron-rel`, `mio-tcp`, `eio-tcp` (framed TCP) | 1 | 10,000; 50,000; 200,000 | round trip |
+| 3a | reliable, no loss, Aeron only (its TCP rows are superseded by 3c) | `aeron-rel` (kernel) | 1 | 10,000; 50,000; 200,000 | round trip |
 | 3b | reliable under loss | `aeron-rel`, `mio-tcp`, `eio-tcp`; netem 0.01, 0.1 and 1 % | 1 | 10,000; 50,000; 200,000 | round trip |
-| 3c | the netem control | `aeron-rel`, `mio-tcp`, `eio-tcp`; netem 0 % | 1 | 10,000; 50,000; 200,000 | round trip |
-| fan | TCP fan-in | `mio-tcp`, `eio-tcp` | 8, 32, 128 connections | 10,000; 50,000; 200,000 | round trip |
+| 3c | the netem control, and reliable without loss | `aeron-rel`, `mio-tcp`, `eio-tcp` (framed TCP); netem 0 %, and no qdisc | 1 | 10,000; 50,000; 200,000 | round trip |
 
 Every set adds an A/A arm (`aa`: one of its arms run again in the same
 round), so a difference smaller than two runs of the same arm is never
@@ -176,17 +175,16 @@ No tuning sweep ran before these sessions: every arm ran at the values
 above. Interrupt deferral was turned off for every kernel arm after the
 earlier sessions below; a sweep of it per load was not run.
 
-#### The socket arms: a rerun is due
+#### The socket arms: equal busy polling
 
-In these sessions the mio arms ran with `SO_BUSY_POLL` 50 µs, so a read
+In the first sessions the mio arms ran with `SO_BUSY_POLL` 50 µs, so a read
 spun on the NIC's queue, while ergon-io's `epoll-spin` forced
-`SO_BUSY_POLL` 0 and waited for the interrupt. That breaks the rule above:
-something other than the technology changed. It shows even at the minimum
-(set 3a, TCP: `min` 56 for mio, 61 for ergon-io). So no mio against ergon-io
-result is drawn from them, and the sets that compare socket arms (2a, 3a's
-TCP arms, 3b, 3c, fan) are rerun with busy polling as an opt-in for
-`epoll-spin`, given to both. Until then their tables stay below, marked
-superseded, and Aeron against TCP carries that caveat.
+`SO_BUSY_POLL` 0 and waited for the interrupt. That broke the rule above,
+and showed even at the minimum (TCP `min` 56 for mio, 61 for ergon-io).
+ergon-io gained `Config::busy_poll_us`, and the socket sets were rerun with
+both arms at 50 µs, read back from every socket at both ends
+(`readback.so_busy_poll` 50 in each manifest). The socket rows of the first
+sessions are dropped from this page. The fan-in set was not rerun.
 
 #### NIC interrupt deferral: a finding
 
@@ -196,9 +194,9 @@ superseded and not shown here; what they showed:
 
 | what | deferral on | deferral off (this page) |
 |---|---|---|
-| a socket arm waiting in `epoll` (mio, ergon-io), 1 stream, 10,000 msg/s | each packet waits for the 200 µs timer: UDP p50 236 to 267 (session `20261026-132809`), TCP p50 277 to 309 (`20261026-120451`) | TCP p50 60 to 65 |
+| a socket arm waiting in `epoll` (mio, ergon-io), 1 stream, 10,000 msg/s | each packet waits for the 200 µs timer: UDP p50 236 to 267 (session `20261026-132809`), TCP p50 277 to 309 (`20261026-120451`) | UDP p50 62.3 to 62.9 (2a), TCP 65.3 to 69.3 (3c) |
 | Aeron kernel UDP (busy-polling `recvmmsg`) | 1 stream p50 58 to 62; 8 to 128 streams p50 269 to 334 at 50,000 and 200,000 msg/s (`20261026-132809`) | set 2a |
-| TCP, 1 stream and 8 connections, 200,000 msg/s | sustained: 200,000 msg/s achieved, p50 370 to 476 (`20261026-120451`) | past capacity: 130,000 to 177,000 msg/s achieved |
+| TCP, 200,000 msg/s | sustained, 1 stream and 8 connections: 200,000 msg/s achieved, p50 370 to 476 (`20261026-120451`) | past capacity, 1 stream: 106,000 to 151,000 msg/s achieved (3c) |
 
 So deferral costs every message about 200 µs at light load, and buys
 throughput at heavy load: fewer interrupts and batched receive on the one
@@ -248,8 +246,24 @@ that column's verdict and gets a traced rerun.
 
 <!-- RESULTS: maxima -->
 
-The 243 points of sets 1, 2b, 3a and fan (every arm, A/A included, one
-way and round trip), each point's max:
+The final sessions: 2a (`20261026-221959`, 144 points) and 3b with 3c
+(`20261026-222001`, 171 points), every arm and A/A, each point's max:
+
+| cause | 2a | 3b, 3c | what it is |
+|---|---|---|---|
+| queueing: past capacity, sender late, IRQ CPU saturated | 25 | 21 | the socket arms at 200,000 msg/s; one Aeron 2a point with its IRQ CPU over 90 % |
+| Aeron NAK and retransmit | | 53 | under netem loss |
+| TCP retransmit or tail-loss probe after a netem drop | | 35 | under netem loss |
+| TCP loss recovery, no netem | | 3 | a segment lost on the path (no guest drop counter grew) |
+| host pause | 2 | 1 | a gap spinner saw the hypervisor take an idle isolated CPU for 75 to 939 µs at that moment |
+| Azure's per-minute stall (seconds :49 to :51) | 6 | 2 | |
+| **unexplained** | 111 | 56 | 2a: no recorded event overlaps the max on either host (all 111). 3b, 3c: the same (51), a TCP counter grew in that second on another connection (4), a trace buffer overran (1) |
+
+What was ruled out for those, and what cannot be seen, is as for the first
+sessions below. The 243 points of sets 1, 2b, 3a and fan in the first
+sessions (every arm, A/A included, one way and round trip; socket points
+included, since their maxima are host events whatever the busy polling),
+each point's max:
 
 | cause | maxima | what it is |
 |---|---|---|
@@ -274,8 +288,9 @@ The unexplained ones, and what was ruled out:
 The leading hypothesis is Azure host pauses: they are the one cause seen
 directly (44 maxima, by gap spinners) with the same sizes, and a pause of a
 busy CPU, the IRQ CPU or the host's network path leaves no trace in the
-guest. It is not proven. Because of these, no max verdict is drawn on this
-page. Finding them needs a view of the host the guest does not have.
+guest. It is not proven: the final sessions' 167 unexplained maxima overlap no
+recorded event on either host. Because of these, no max verdict is drawn on
+this page. Finding them needs a view of the host the guest does not have.
 
 ## Results
 
@@ -286,9 +301,13 @@ Run ids, VMs and commits:
 | sets | session | VMs (a, b) | region | commit |
 |---|---|---|---|---|
 | 1 (on VM a), 2b (on VM b), at once | `20261026-120448-transport-b` | `F8as_v6`, `F8ams_v6` | West US 2 | `3e13126b` |
-| 3a, fan | `20261026-172859-transport-a` | `F8als_v6`, `F8ams_v6` | West US 3 | `aefe999d` |
-| 2a | `20261026-172857-transport-a` | `F8als_v6`, `F8ams_v6` | North Central US | `aefe999d` |
-| 3b, 3c | `20261026-172901-transport-b` | `F8als_v6`, `F8ams_v6` | West US 2 | `aefe999d` |
+| 3a (Aeron rows) | `20261026-172859-transport-a` | `F8als_v6`, `F8ams_v6` | West US 3 | `aefe999d` |
+| 2a | `20261026-221959-transport-a` | `F8als_v6`, `F8ams_v6` | North Central US | `63cf9e25` |
+| 3b, 3c | `20261026-222001-transport-a` | `F8als_v6`, `F8ams_v6` | West US 2 | `63cf9e25` |
+
+`63cf9e25` predates two fixes to the bench, not to ergon-io: the latency
+core's prefaulted stall buffer (`3b285a9b`, see [set 2a](#set-2a-unreliable-udp-between-hosts))
+and the `eio-tcp` pong's overload loop (`55bee73a`, see [set 3b](#set-3b-reliable-under-loss)).
 
 Arms are compared only inside one session, on one VM pair. 3 reps; each
 rep's arm order is drawn from the session's seed.
@@ -296,8 +315,7 @@ rep's arm order is drawn from the session's seed.
 **Every table is marked invalid by `fairness.py`**, for the reasons listed
 under it, and is shown with `analyse.py --transport --show-invalid`. The
 reasons are unexplained maxima (which block every max verdict, so no max is
-compared) and the few listed with each set; none moves a median, and none
-differs between the arms compared.
+compared) and the few listed with each set; none moves a median.
 
 How to read a row: `p50 (lowest–highest rep)`, µs. `busy` is busy threads
 per host. A row in **bold flags** is past what the arm can carry and is
@@ -373,9 +391,106 @@ offset between the two CPUs.
 
 <!-- RESULTS: set 2a -->
 
-Pending. Session `20261026-172857-transport-a` ran this set; its Aeron
-kernel UDP rows are valid and are added once analysed, its mio and ergon-io
-rows are rerun (unequal busy polling).
+Round trip (µs), no netem. A/A: `aeron-udp` again. `dpdk-aeron-udp` is
+left out (see the note at the top). Busy threads a host: Aeron 4, mio and
+ergon-io 1.
+
+| msg/s | streams | arm | min | p50 | p99 | p99.99 | max | max causes (3 reps) |
+|---|---|---|---|---|---|---|---|---|
+| 10,000 | 1 | `aeron-udp` | 56.0 (55.6–56.1) | 59.5 (59.2–59.7) | 63.7 (63.4–63.9) | 77.1 (75.9–92.2) | 88.6 (84.9–198) | host pause 1, unexplained 2 |
+|  |  | `mio-udp` | 59.2 (59.1–59.3) | 62.3 (62.3–62.4) | 66.0 (65.8–66.8) | 140 (139–144) | 213 (209–239) | unexplained 3 |
+|  |  | `eio-udp` | 60.1 (57.1–60.2) | 62.9 (62.9–63.0) | 67.1 (66.4–67.3) | 181 (171–265) | 353 (228–525) | unexplained 3 |
+|  |  | A/A | 52.1 (52.1–53.0) | 55.9 (55.8–56.5) | 60.2 (59.8–60.5) | 75.1 (71.5–138) | 209 (82.8–277) | host pause 1, unexplained 2 |
+|  | 8 | `aeron-udp` | 54.2 (54.2–54.7) | 61.6 (61.5–64.3) | 68.6 (68.5–69.2) | 178 (154–178) | 212 (205–276) | per-minute stall 1, unexplained 2 |
+|  |  | `mio-udp` | 56.1 (55.9–56.1) | 62.1 (62.0–62.2) | 65.8 (65.5–65.9) | 173 (162–192) | 262 (198–365) | unexplained 3 |
+|  |  | `eio-udp` | 56.9 (56.5–56.9) | 62.9 (62.7–62.9) | 66.4 (66.4–66.5) | 158 (151–173) | 232 (210–242) | unexplained 3 |
+|  |  | A/A | 55.1 (55.1–55.5) | 61.8 (61.5–62.0) | 68.2 (65.9–69.0) | 156 (152–173) | 223 (222–289) | unexplained 3 |
+|  | 32 | `aeron-udp` | 55.9 (55.7–56.3) | 63.7 (63.7–63.8) | 70.8 (70.7–71.2) | 190 (181–292) | 419 (230–488) | unexplained 3 |
+|  |  | `mio-udp` | 52.0 (52.0–52.1) | 58.9 (58.9–59.0) | 65.2 (65.1–65.2) | 170 (137–183) | 216 (198–378) | unexplained 3 |
+|  |  | `eio-udp` | 53.0 (52.9–53.3) | 59.9 (59.8–59.9) | 66.0 (66.0–66.3) | 166 (155–284) | 200 (195–467) | unexplained 3 |
+|  |  | A/A | 56.0 (55.8–56.0) | 63.5 (63.5–63.8) | 70.7 (70.5–70.7) | 187 (185–192) | 279 (217–336) | unexplained 3 |
+|  | 128 | `aeron-udp` | 58.1 (58.1–58.3) | 70.0 (69.8–70.3) | 78.7 (78.7–79.0) | 176 (136–204) | 231 (197–240) | unexplained 3 |
+|  |  | `mio-udp` | 52.5 (52.2–52.5) | 59.4 (59.4–59.6) | 66.2 (66.0–66.8) | 262 (159–314) | 468 (462–536) | unexplained 3 |
+|  |  | `eio-udp` | 53.2 (52.9–53.3) | 60.3 (60.3–60.5) | 66.6 (66.5–66.8) | 173 (161–186) | 391 (325–496) | unexplained 3 |
+|  |  | A/A | 58.6 (58.4–58.8) | 70.0 (69.9–70.3) | 78.7 (78.5–78.7) | 198 (197–331) | 290 (245–499) | unexplained 3 |
+| 50,000 | 1 | `aeron-udp` | 51.8 (51.4–54.2) | 55.6 (55.2–58.2) | 60.7 (60.0–62.4) | 77.4 (76.6–80.5) | 235 (231–243) | unexplained 3 |
+|  |  | `mio-udp` | 55.2 (53.8–55.4) | 61.8 (61.7–64.2) | 67.6 (67.1–68.7) | 458 (168–548) | 2,886 (245–2,915) | unexplained 3 |
+|  |  | `eio-udp` | 56.2 (55.9–56.5) | 61.9 (61.8–64.5) | 68.9 (65.9–69.0) | 227 (179–238) | 710 (637–829) | unexplained 3 |
+|  |  | A/A | 51.1 (51.0–51.8) | 54.9 (54.8–55.6) | 58.8 (58.8–59.5) | 81.7 (71.9–102) | 228 (223–625) | unexplained 3 |
+|  | 8 | `aeron-udp` | 53.6 (53.4–56.3) | 60.7 (60.0–63.2) | 69.0 (67.4–70.0) | 185 (178–198) | 303 (242–528) | unexplained 3 |
+|  |  | `mio-udp` | 53.3 (53.3–53.5) | 61.1 (61.0–61.2) | 68.1 (66.8–68.1) | 161 (161–169) | 253 (237–333) | unexplained 3 |
+|  |  | `eio-udp` | 54.5 (54.4–54.6) | 61.6 (61.6–61.6) | 65.9 (65.7–66.0) | 174 (170–177) | 250 (248–382) | unexplained 3 |
+|  |  | A/A | 53.5 (53.5–53.6) | 60.4 (59.8–60.6) | 69.0 (67.5–69.3) | 189 (187–225) | 349 (261–627) | unexplained 3 |
+|  | 32 | `aeron-udp` | 52.5 (52.4–53.3) | 62.3 (62.2–62.9) | 71.3 (71.1–72.1) | 195 (185–196) | 253 (242–267) | unexplained 3 |
+|  |  | `mio-udp` | 49.6 (49.5–49.7) | 57.8 (57.8–58.0) | 65.7 (65.4–66.0) | 175 (170–325) | 346 (265–559) | unexplained 3 |
+|  |  | `eio-udp` | 50.1 (50.1–50.1) | 58.5 (58.4–58.5) | 65.6 (65.5–65.8) | 181 (179–293) | 671 (589–781) | unexplained 3 |
+|  |  | A/A | 53.8 (52.3–53.9) | 62.3 (62.0–62.8) | 71.4 (70.8–71.7) | 189 (188–192) | 308 (294–366) | unexplained 3 |
+|  | 128 | `aeron-udp` | 54.7 (53.4–55.7) | 68.2 (68.2–68.9) | 80.0 (79.5–80.0) | 201 (197–331) | 626 (281–718) | unexplained 3 |
+|  |  | `mio-udp` | 49.8 (49.7–49.9) | 58.5 (58.5–58.6) | 66.0 (65.6–67.5) | 286 (171–338) | 599 (267–781) | unexplained 3 |
+|  |  | `eio-udp` | 50.2 (50.1–50.3) | 59.1 (59.0–59.2) | 66.0 (65.9–66.2) | 176 (163–182) | 268 (251–553) | per-minute stall 1, unexplained 2 |
+|  |  | A/A | 55.3 (55.3–55.4) | 68.2 (67.8–68.7) | 79.4 (79.0–80.0) | 198 (198–199) | 305 (284–812) | per-minute stall 1, unexplained 2 |
+
+At 200,000 msg/s only Aeron keeps up:
+
+| msg/s | streams | arm | min | p50 | p99 | p99.99 | max | max causes (3 reps) |
+|---|---|---|---|---|---|---|---|---|
+| 200,000 | 1 | `aeron-udp` | 49.8 (49.0–50.6) | 55.8 (55.4–56.5) | 63.7 (62.9–65.3) | 387 (177–899) | 2,186 (427–2,885) | unexplained 3 |
+|  |  | A/A | 50.6 (46.1–54.5) | 55.8 (52.4–59.6) | 64.3 (61.0–68.2) | 184 (138–500) | 771 (373–2,534) | unexplained 3 |
+|  | 8 | `aeron-udp` | 54.3 (51.7–54.6) | 80.8 (75.7–93.8) | 97.7 (94.4–109) | 147 (131–177) | 324 (228–335) | IRQ core saturated 1, per-minute stall 1, unexplained 1 |
+|  |  | A/A | 54.4 (52.7–58.9) | 75.8 (73.9–83.7) | 94.3 (92.2–104) | 193 (153–502) | 303 (302–835) | unexplained 3 |
+|  | 32 | `aeron-udp` | 54.4 (54.4–57.7) | 79.9 (79.2–83.7) | 98.5 (98.4–101) | 224 (204–253) | 557 (356–773) | unexplained 3 |
+|  |  | A/A | 56.2 (53.4–56.4) | 79.9 (78.3–79.9) | 101 (96.8–101) | 219 (204–641) | 471 (327–1,035) | per-minute stall 1, unexplained 2 |
+|  | 128 | `aeron-udp` | 56.2 (55.1–56.3) | 86.3 (86.1–87.3) | 115 (113–118) | 268 (264–832) | 581 (573–1,583) | unexplained 3 |
+|  |  | A/A | 57.0 (54.8–58.2) | 86.5 (84.3–88.1) | 113 (108–115) | 264 (261–266) | 591 (555–636) | per-minute stall 1, unexplained 2 |
+
+The socket arms at 200,000 msg/s, past capacity in every rep (sender late
+and under 98 % of the rate), so never compared:
+
+| streams | arm | achieved, msg/s | p50 (backlog) |
+|---|---|---|---|
+| 1 | `mio-udp` | 189,580 to 190,369 | 0.81 to 0.95 s |
+| | `eio-udp` | 193,669 to 195,032 | 0.41 to 0.57 s |
+| 8, 32, 128 | `mio-udp` | 169,826 to 170,740 | 2.9 to 3.1 s |
+| | `eio-udp` | 150,942 to 155,870 | 4.8 to 5.6 s |
+
+- **1 stream: Aeron is lowest.** At 50,000 msg/s p50 lower by 6.1 to 6.3
+  and p99 by 6.9 to 8.1; p99.99 77 against 227 to 458. At 10,000 msg/s
+  both Aeron runs (59.5 and its A/A 55.9) are below both socket arms
+  (62.3, 62.9), but the two Aeron runs differ by 3.8, so the analysis
+  calls it not separated.
+- **8 streams: not separated** at p50.
+- **32 and 128 streams: plain sockets are lower.** p50 by 3.7 to 4.8 (32)
+  and 9.1 to 10.5 (128), p99 by 4.8 to 5.7 and 12 to 14. Aeron's p50 grows
+  with streams (56 to 60 at 1, 68 to 70 at 128): each stream is its own
+  publication, subscription and channel in one driver. A socket arm's
+  stream is one more socket in the same `epoll` loop.
+- **At 200,000 msg/s Aeron holds** (p50 56 at 1 stream, 80 to 86 at 8 to
+  128); both socket libraries fall seconds behind. Each socket message
+  costs its loop one `send` system call at each end (ergon-io's counter:
+  1.00 a message; mio's code makes one per message too) on its one
+  thread, and at 200,000 msg/s both ping loops polled 1.0 to 1.5 times a
+  message, never idle. Aeron's client writes into shared memory with no
+  system call, and the driver's sender and receiver run on threads of
+  their own; by design the sender puts messages that queue up into one
+  datagram up to the MTU (not counted here). Which end of a socket arm
+  saturates first was not isolated.
+- **mio against ergon-io:** ergon-io's p50 is behind by 0.1 to 0.9 at the
+  median, 0.1 to 1.1 per rep, in all 24 same-round rep pairs. Past the A/A
+  spread only at 32 streams (0.7 to 0.9) and 128 streams at 10,000 msg/s
+  (0.9). p99.99 and max: not separated. Both arms read twice and send once
+  a message (the second read is the empty one that busy-polls the NIC).
+  At 200,000 msg/s ergon-io carries more at 1 stream and less from 8.
+- **Loss:** 0 or 1 message lost and 0 to 18 reordered a point at 10,000
+  and 50,000 msg/s, in the socket arms; Aeron (no retransmission here) lost none.
+- **Page faults:** ergon-io's own check T19 saw its loop thread fault 141
+  to 361 times a 5 s check at 200,000 msg/s. They came from the shared
+  measurement code, which mio's arm runs too and faulted in as well (it has
+  no such check): the latency core's stall buffer, whose zero fill a release
+  build folded into a lazily mapped `calloc`, so each 4 KiB of stall rows
+  faulted under overload. Fixed in `3b285a9b` (the buffers are prefaulted).
+- **Fairness flags** (set 2a): 111 `max` (unexplained), 14 `hostcheck`
+  (ergon-io's T19: the 12 points at 200,000 msg/s above, and one fault in
+  each of two 1-stream points at 50,000 msg/s).
 
 ### Set 2b: one host, spy and self-UDP
 
@@ -427,111 +542,181 @@ One way (µs), up to 20 ns of TSC offset each.
 
 <!-- RESULTS: set 3a -->
 
-Round trip (µs), 1 stream, no netem. A/A: `aeron-rel` again.
-`dpdk-aeron-rel` is left out (see the note at the top). **The `mio-tcp` and
-`eio-tcp` rows are superseded**: they ran with unequal busy polling ([the
-socket arms](#the-socket-arms-a-rerun-is-due)), so they are shown only
-against Aeron, never against each other.
+Aeron alone: this session's TCP rows ran with unequal busy polling and are
+dropped; TCP against Aeron without loss is in [set 3c](#set-3c-the-netem-control),
+from the rerun. Round trip (µs), 1 stream, no netem. A/A: `aeron-rel` again.
+`dpdk-aeron-rel` is left out (see the note at the top). 4 busy threads a
+host.
 
-| msg/s | arm | min | p50 | p99 | p99.99 | max | busy | max causes (3 reps) |
-|---|---|---|---|---|---|---|---|---|
-| 10,000 | `aeron-rel` | 52.3 (49.8–57.5) | 56.1 (53.9–61.3) | 63.0 (60.4–66.2) | 225 (212–244) | 286 (278–610) | 4 | unexplained 3 |
-| | `mio-tcp` | 56.3 (56.2–65.0) | 60.3 (59.2–68.0) | 99.5 (74.8–148) | 405 (392–693) | 559 (537–2,139) | 1 | unexplained 3 |
-| | `eio-tcp` | 61.4 (59.1–62.0) | 64.9 (63.0–65.0) | 105 (89.0–155) | 463 (399–805) | 962 (948–2,995) | 1 | host pause 1, unexplained 2 |
-| | A/A | 53.7 (53.5–54.0) | 57.7 (57.6–58.0) | 63.2 (62.9–63.9) | 202 (148–215) | 562 (236–566) | 4 | unexplained 3 |
-| 50,000 | `aeron-rel` | 53.9 (48.9–54.7) | 57.7 (52.8–58.6) | 63.7 (58.3–67.3) | 222 (189–1,410) | 363 (306–3,210) | 4 | unexplained 3 |
-| | `mio-tcp` | 53.1 (53.0–60.9) | 61.6 (61.2–69.6) | 88.6 (77.4–113) | 455 (444–563) | 1,137 (670–1,201) | 1 | per-minute stall 1, unexplained 2 |
-| | `eio-tcp` | 58.7 (55.7–63.7) | 69.1 (68.1–71.2) | 120 (78.7–213) | 711 (530–2,259) | 2,244 (937–5,127) | 1 | unexplained 3 |
-| | A/A | 51.3 (51.0–52.7) | 55.9 (55.1–56.7) | 63.5 (62.0–67.5) | 356 (214–370) | 586 (445–599) | 4 | per-minute stall 1, unexplained 2 |
-| 200,000 | `aeron-rel` | 50.4 (49.4–54.6) | 56.4 (54.5–61.9) | 80.4 (67.4–121) | 470 (325–1,167) | 1,703 (743–2,575) | 4 | unexplained 3 |
-| | `mio-tcp` **over capacity** | 1,144,458 | 4,567,597 | 7,969,178 | 8,040,234 | 8,040,234 (7,189,147–11,759,668) | 1 | queueing |
-| | `eio-tcp` **over capacity** | 740,897 | 3,164,602 | 5,544,870 | 5,593,108 | 5,593,108 (3,919,181–16,134,252) | 1 | queueing |
-| | A/A | 50.5 (50.0–59.3) | 56.2 (55.7–65.5) | 76.3 (69.9–97.9) | 387 (251–2,466) | 1,132 (455–4,088) | 4 | per-minute stall 1, unexplained 2 |
+| msg/s | arm | min | p50 | p99 | p99.99 | max | max causes (3 reps) |
+|---|---|---|---|---|---|---|---|
+| 10,000 | `aeron-rel` | 52.3 (49.8–57.5) | 56.1 (53.9–61.3) | 63.0 (60.4–66.2) | 225 (212–244) | 286 (278–610) | unexplained 3 |
+| | A/A | 53.7 (53.5–54.0) | 57.7 (57.6–58.0) | 63.2 (62.9–63.9) | 202 (148–215) | 562 (236–566) | unexplained 3 |
+| 50,000 | `aeron-rel` | 53.9 (48.9–54.7) | 57.7 (52.8–58.6) | 63.7 (58.3–67.3) | 222 (189–1,410) | 363 (306–3,210) | unexplained 3 |
+| | A/A | 51.3 (51.0–52.7) | 55.9 (55.1–56.7) | 63.5 (62.0–67.5) | 356 (214–370) | 586 (445–599) | per-minute stall 1, unexplained 2 |
+| 200,000 | `aeron-rel` | 50.4 (49.4–54.6) | 56.4 (54.5–61.9) | 80.4 (67.4–121) | 470 (325–1,167) | 1,703 (743–2,575) | unexplained 3 |
+| | A/A | 50.5 (50.0–59.3) | 56.2 (55.7–65.5) | 76.3 (69.9–97.9) | 387 (251–2,466) | 1,132 (455–4,088) | per-minute stall 1, unexplained 2 |
 
-| arms | p50 | p99 | p99.99 |
-|---|---|---|---|
-| `aeron-rel` vs `mio-tcp`, 10,000 | not separated | Aeron lower by 36 | Aeron lower by 180 |
-| `aeron-rel` vs `eio-tcp`, 10,000 | Aeron lower by 8.8 | Aeron lower by 42 | Aeron lower by 238 |
-| `aeron-rel` vs `mio-tcp`, 50,000 | Aeron lower by 3.9 | Aeron lower by 25 | not separated (A/A 1,196) |
-| `aeron-rel` vs `eio-tcp`, 50,000 | Aeron lower by 11.4 | Aeron lower by 56 | not separated |
-
-- **200,000 msg/s is past TCP's capacity here:** 130,000 to 177,000 msg/s
-  achieved across both TCP arms, and latency grows for the whole 30 s. Aeron holds the rate at p50 56. In those points each
-  TCP ping thread polled once a message (never idle), and host a's IRQ CPU
-  was over 90 % busy in some reps. Which limit binds first was not
-  isolated.
 - **The network's own round trip** is most of every figure: Aeron's `min`
-  is 50 to 54, TCP's 53 to 61.
+  is 50 to 54.
 - **Loss without netem:** Aeron NAKed and retransmitted 1 message in 2 of
-  the 200,000 msg/s points; mio retransmitted 2 TCP segments in one. No
-  guest drop counter grew on either host, so the packets were lost below the
-  guest (the NIC or Azure's network). Across 3a and fan that is 17 TCP
-  segments and 2 Aeron messages in about 730 million messages sent (both
-  directions counted): about 1 in 40 million.
-- **Fairness flags** (set 3a): 9 `hostcheck` (ergon-io's own check T19:
-  minor page faults on the loop thread; see [the io
-  benchmarks](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#transport-comparison-udp-tcp-mio-and-ergon-io)),
-  26 `max` (unexplained).
+  the 200,000 msg/s points, with no guest drop counter growing on either
+  host: lost below the guest (the NIC or Azure's network).
+- **Sessions differ.** The same arm in 3c's no-qdisc rows, on another VM
+  pair, has the same p50 (54.8 to 57.6) but p99.99 269 to 4,149 and max 902
+  to 6,311. Compare arms only inside one session.
 
 ### Set 3b: reliable under loss
 
 <!-- RESULTS: set 3b -->
 
-Pending the rerun of the socket arms. The session that ran this set
-(`20261026-172901-transport-b`) gave mio and ergon-io unequal busy polling.
+Round trip (µs), 1 stream, netem on both hosts' data NICs. A/A: `aeron-rel`
+again. `retrans`: messages Aeron retransmitted, or TCP segments, summed
+over the 3 reps. Busy threads a host: Aeron 4, TCP 1. TCP's minimum RTO is
+8 ms; Aeron's NAK delay 1 µs, its retransmit linger the default 10 ms.
+
+| msg/s | netem | arm | min | p50 | p99 | p99.99 | max | retrans | max causes (3 reps) |
+|---|---|---|---|---|---|---|---|---|---|
+| 10,000 | 0.01 % | `aeron-rel` | 54.6 (53.0–58.2) | 58.4 (57.0–62.2) | 66.0 (63.5–66.8) | 518 (453–3,547) | 1,466 (1,262–6,376) | 182 | NAK/retransmit 2, unexplained 1 |
+|  |  | `mio-tcp` | 59.0 (55.7–61.8) | 64.1 (60.3–66.5) | 169 (93.9–230) | 5,374 (5,177–5,853) | 7,239 (6,997–7,427) | 184 | TCP TLP after a netem drop 1, TCP retransmit after a netem drop 2 |
+|  |  | `eio-tcp` | 63.8 (59.9–65.4) | 68.2 (64.5–68.7) | 132 (78.4–1,282) | 7,619 (4,207–7,877) | 8,554 (5,705–9,544) | 167 | TCP TLP after a netem drop 1, TCP retransmit after a netem drop 1, unexplained 1 |
+|  |  | A/A | 57.6 (54.6–58.1) | 61.4 (58.3–61.5) | 65.4 (63.5–65.9) | 488 (231–490) | 1,249 (400–1,911) | 177 | NAK/retransmit 3 |
+| 50,000 | 0.01 % | `aeron-rel` | 48.6 (48.5–51.6) | 52.7 (52.4–56.2) | 61.3 (57.0–65.5) | 2,425 (979–3,060) | 3,898 (2,985–4,016) | 556 | NAK/retransmit 3 |
+|  |  | `mio-tcp` | 55.2 (54.8–61.8) | 68.2 (67.8–72.5) | 185 (110–826) | 5,931 (4,833–6,296) | 7,301 (6,641–7,694) | 510 | TCP retransmit after a netem drop 3 |
+|  |  | `eio-tcp` | 56.2 (51.5–62.4) | 68.5 (59.9–73.7) | 153 (115–183) | 6,287 (2,800–6,488) | 7,791 (4,141–7,890) | 512 | TCP retransmit after a netem drop 3 |
+|  |  | A/A | 52.9 (52.3–57.5) | 56.7 (56.1–61.4) | 67.3 (61.1–69.4) | 454 (204–1,870) | 1,579 (461–3,669) | 518 | NAK/retransmit 3 |
+| 10,000 | 0.1 % | `aeron-rel` | 57.4 (50.1–58.2) | 61.6 (54.0–62.0) | 67.7 (64.8–69.9) | 7,246 (315–7,356) | 10,240 (1,717–10,349) | 1,796 | NAK/retransmit 3 |
+|  |  | `mio-tcp` | 59.0 (58.2–61.5) | 65.0 (62.7–65.9) | 141 (107–233) | 12,648 (12,419–14,074) | 15,324 (14,555–16,985) | 1,816 | TCP retransmit after a netem drop 3 |
+|  |  | `eio-tcp` | 62.9 (61.4–63.5) | 66.7 (66.4–68.2) | 148 (143–185) | 13,132 (11,117–22,495) | 15,470 (14,014–25,331) | 1,799 | TCP retransmit after a netem drop 3 |
+|  |  | A/A | 57.2 (54.3–58.3) | 61.0 (57.6–62.3) | 75.5 (67.7–92.3) | 7,332 (230–8,839) | 10,328 (1,014–10,344) | 1,752 | NAK/retransmit 3 |
+| 50,000 | 0.1 % | `aeron-rel` | 49.2 (49.2–50.0) | 53.1 (52.8–53.9) | 90.1 (72.2–91.0) | 8,675 (8,643–9,585) | 10,147 (10,136–10,238) | 5,133 | NAK/retransmit 3 |
+|  |  | `mio-tcp` | 55.7 (54.3–56.1) | 68.2 (67.9–68.2) | 127 (112–140) | 4,407 (1,497–4,559) | 5,615 (2,956–7,179) | 5,167 | TCP retransmit after a netem drop 3 |
+|  |  | `eio-tcp` | 54.2 (53.2–56.4) | 68.5 (61.9–69.0) | 143 (117–150) | 3,379 (3,070–5,677) | 5,791 (4,666–7,066) | 5,068 | TCP retransmit after a netem drop 3 |
+|  |  | A/A | 53.7 (52.2–56.6) | 57.6 (56.2–60.9) | 94.0 (71.4–101) | 7,156 (1,742–7,193) | 10,148 (4,248–10,151) | 5,173 | NAK/retransmit 3 |
+| 10,000 | 1 % | `aeron-rel` | 49.5 (49.2–53.7) | 53.6 (52.7–57.6) | 5,235 (4,870–5,718) | 10,232 (10,224–22,004) | 10,418 (10,351–24,998) | 18,309 | NAK/retransmit 3 |
+|  |  | `mio-tcp` | 58.9 (58.8–64.1) | 64.5 (63.6–68.8) | 10,478 (10,289–11,452) | 23,560 (21,217–39,682) | 26,103 (23,963–42,581) | 17,288 | TCP retransmit after a netem drop 3 |
+|  |  | `eio-tcp` | 60.0 (58.9–60.7) | 64.9 (64.4–65.0) | 11,502 (8,327–11,682) | 21,610 (18,547–40,141) | 22,998 (20,538–42,080) | 17,340 | TCP retransmit after a netem drop 3 |
+|  |  | A/A | 54.9 (53.2–57.1) | 58.5 (57.2–61.0) | 4,633 (4,399–5,513) | 17,236 (10,330–17,842) | 20,221 (13,142–20,325) | 17,850 | NAK/retransmit 3 |
+| 50,000 | 1 % | `aeron-rel` | 52.3 (49.6–52.8) | 56.6 (54.3–57.1) | 9,388 (9,388–9,683) | 24,494 (18,350–26,427) | 27,422 (19,927–29,299) | 52,461 | NAK/retransmit 3 |
+|  |  | `mio-tcp` | 55.9 (52.8–60.0) | 68.4 (66.9–71.9) | 4,784 (4,037–6,263) | 22,135 (17,367–39,322) | 24,811 (19,001–41,995) | 49,576 | TCP retransmit after a netem drop 3 |
+|  |  | `eio-tcp` | 52.9 (52.5–55.6) | 66.9 (66.4–68.3) | 5,513 (5,280–6,771) | 18,711 (18,547–38,044) | 20,139 (20,031–40,692) | 50,168 | TCP retransmit after a netem drop 3 |
+|  |  | A/A | 52.1 (48.7–52.8) | 56.5 (53.0–57.2) | 9,429 (9,380–9,552) | 19,251 (18,661–19,333) | 20,150 (20,149–20,247) | 51,990 | NAK/retransmit 3 |
+
+At 200,000 msg/s only Aeron keeps up:
+
+| msg/s | netem | arm | min | p50 | p99 | p99.99 | max | retrans | max causes (3 reps) |
+|---|---|---|---|---|---|---|---|---|---|
+| 200,000 | 0.01 % | `aeron-rel` | 47.1 (46.9–52.1) | 52.6 (52.4–58.0) | 73.8 (68.0–82.6) | 4,313 (3,844–5,849) | 5,843 (4,953–6,800) | 2,114 | NAK/retransmit 3 |
+|  |  | A/A | 52.0 (48.4–55.6) | 58.2 (54.2–61.0) | 95.5 (65.6–100) | 8,102 (2,955–9,527) | 10,218 (5,063–10,654) | 2,142 | NAK/retransmit 3 |
+|  | 0.1 % | `aeron-rel` | 48.6 (47.4–52.8) | 54.6 (53.9–58.9) | 120 (114–132) | 9,953 (9,576–10,019) | 10,235 (10,222–10,239) | 20,782 | NAK/retransmit 3 |
+|  |  | A/A | 49.2 (48.0–55.9) | 55.4 (55.3–62.7) | 121 (118–129) | 9,970 (9,863–9,978) | 10,239 (10,231–10,244) | 20,816 | NAK/retransmit 3 |
+|  | 1 % | `aeron-rel` | 51.3 (48.9–52.5) | 67.0 (66.3–67.7) | 17,154 (16,671–17,334) | 30,654 (27,853–34,931) | 31,866 (30,151–37,787) | 207,948 | NAK/retransmit 3 |
+|  |  | A/A | 51.8 (50.5–53.0) | 68.8 (66.9–70.0) | 17,908 (17,236–19,038) | 28,967 (28,393–39,453) | 30,718 (29,767–42,272) | 207,400 | NAK/retransmit 3 |
+
+TCP at 200,000 msg/s under loss is past capacity in every point that ran
+(134,000 to 170,647 msg/s achieved, p50 2.9 to 7.7 s behind). `eio-tcp`
+has 4 of its 9 points at this rate: the other 5 failed on a bug in the
+bench's ergon-io pong, not in ergon-io (below).
+
+- **p50:** Aeron lower by 9.8 to 15.8 in 9 of 12 comparisons; the other 3
+  (0.1 % at 10,000 msg/s, and `mio-tcp` at 0.01 % and 10,000) not separated. Loss leaves
+  the median almost where it is without loss.
+- **p99:** Aeron lower at 0.01 % (by 66 to 124) and 0.1 % (by 37 to 80),
+  and at 1 % and 10,000 msg/s (5.2 ms against 10.5 to 11.5 ms). At
+  1 % and 50,000 msg/s TCP is lower: 4.8 to 5.5 ms against 9.4 ms.
+- **p99.99:** Aeron lower at 0.01 % in 3 of 4 comparisons (by 3.5 to 7.1
+  ms); not separated at 0.1 and 1 % (A/A spread 6.9 to 8.5 ms).
+- **Max:** at 0.1 % Aeron's max is 10.1 to 10.3 ms in 5 of the 6 points
+  at 10,000 and 50,000 msg/s (the sixth 1.7 ms) and in all 3 at 200,000;
+  at 1 %, 10.4 to 37.8 ms. That fits Aeron's retransmit
+  linger (`AERON_RETRANSMIT_UNICAST_LINGER`, 10 ms by default, not changed
+  here): after a retransmit the sender ignores NAKs for that range for
+  10 ms, so a retransmit that is itself dropped is repaired only after it.
+  Not traced per message. TCP's max is 3.0 to 42.6 ms: its retransmits
+  and RTOs (8 ms minimum, doubling). Every max is labelled by its own
+  repair (a NAK and retransmit, or a TCP retransmit or tail-loss probe
+  after a netem drop) or is past capacity, except 2 unexplained, at 0.01 %
+  and 10,000 msg/s.
+- **mio against ergon-io:** not separated at any loss level or load.
+- **Missing points:** `eio-tcp` failed at 200,000 msg/s in 5 of the 9
+  netem points of this set and 4 of 6 in 3c. The bench's ergon-io pong had
+  room for one read a poll, read twice, and spun in its echo loop once
+  overloaded; fixed in `55bee73a`. Every `eio-tcp` point that ran at that
+  rate was past capacity, as `mio-tcp`'s were.
+- **Fairness flags** (3b and 3c): 56 `max` (unexplained), 36 `hostcheck`
+  (ergon-io's T19 page faults: 1 to 2 a point at 10,000 msg/s, 2 to 98 at
+  50,000, 417 to 566 at 200,000, the last from the stall buffer described
+  in [set 2a](#set-2a-unreliable-udp-between-hosts); the few at lighter
+  load were not traced one by one), 9 `absent` (the failed points).
 
 ### Set 3c: the netem control
 
 <!-- RESULTS: set 3c -->
 
-Pending the rerun, as 3b.
+Round trip (µs), 1 stream, no loss: netem at 0 %, and no qdisc at all (the
+same as 3a). A/A: `aeron-rel` again. TCP at 200,000 msg/s is left out of
+the table: past capacity in every point (106,311 to 151,042 msg/s
+achieved, p50 5.5 to 14.7 s behind), and `eio-tcp`'s no-qdisc points at
+that rate all failed (the pong bug above).
 
-### Set fan: TCP fan-in
-
-<!-- RESULTS: set fan -->
-
-**Superseded; no mio against ergon-io result is drawn from it.** The two
-arms ran with unequal busy polling ([the socket
-arms](#the-socket-arms-a-rerun-is-due)); the rerun replaces this table.
-
-Round trip (µs) over every connection, no netem. A/A: `mio-tcp` again.
-Every arm 1 busy thread.
-
-| msg/s | connections | arm | min | p50 | p99 | p99.99 | max | max causes (3 reps) |
+| msg/s | netem | arm | min | p50 | p99 | p99.99 | max | max causes (3 reps) |
 |---|---|---|---|---|---|---|---|---|
-| 10,000 | 8 | `mio-tcp` | 56.4 (55.6–56.8) | 63.7 (62.8–64.2) | 75.1 (73.0–101) | 403 (359–1,095) | 964 (641–3,954) | host pause 1, unexplained 2 |
-| | | `eio-tcp` | 58.2 (56.6–58.5) | 64.9 (64.5–65.9) | 80.6 (75.3–163) | 397 (348–562) | 1,067 (715–1,221) | unexplained 3 |
-| | | A/A | 59.1 (55.6–60.6) | 65.3 (63.5–66.0) | 124 (79.3–138) | 474 (464–512) | 1,414 (1,011–2,712) | per-minute stall 2, unexplained 1 |
-| | 32 | `mio-tcp` | 56.4 (56.2–57.2) | 63.9 (63.5–64.0) | 92.3 (78.8–93.7) | 411 (339–420) | 952 (887–1,607) | unexplained 3 |
-| | | `eio-tcp` | 56.9 (56.9–57.7) | 65.0 (64.9–65.0) | 92.3 (76.5–102) | 572 (312–1,828) | 1,003 (448–4,043) | unexplained 3 |
-| | | A/A | 57.4 (55.7–57.4) | 65.1 (63.1–65.2) | 79.7 (79.7–176) | 575 (495–2,376) | 1,894 (1,014–4,146) | unexplained 3 |
-| | 128 | `mio-tcp` | 55.8 (55.5–55.9) | 64.0 (63.9–64.1) | 84.2 (79.7–87.9) | 403 (325–2,609) | 1,398 (573–5,612) | unexplained 3 |
-| | | `eio-tcp` | 56.4 (56.0–56.6) | 65.5 (64.5–65.7) | 97.8 (93.2–126) | 541 (530–917) | 1,001 (741–2,595) | page fault 1, unexplained 2 |
-| | | A/A | 56.2 (55.4–56.6) | 64.5 (64.3–65.3) | 89.0 (80.3–190) | 2,021 (321–5,456) | 4,336 (1,006–8,537) | unexplained 3 |
-| 50,000 | 8 | `mio-tcp` | 56.7 (56.2–57.4) | 66.5 (66.0–68.9) | 122 (77.7–131) | 628 (564–2,300) | 1,190 (913–5,329) | unexplained 3 |
-| | | `eio-tcp` | 54.8 (54.6–56.2) | 66.3 (66.2–66.3) | 83.5 (78.7–182) | 1,849 (902–3,762) | 3,690 (2,641–5,316) | unexplained 3 |
-| | | A/A | 57.2 (55.2–58.1) | 66.2 (66.0–66.3) | 80.1 (78.0–82.9) | 598 (585–1,036) | 1,023 (926–3,811) | unexplained 3 |
-| | 32 | `mio-tcp` | 54.1 (53.8–55.8) | 66.4 (66.3–66.4) | 81.3 (80.2–100) | 621 (618–2,791) | 1,131 (1,052–5,314) | unexplained 3 |
-| | | `eio-tcp` | 53.7 (53.1–54.9) | 66.4 (66.3–67.3) | 85.4 (79.3–157) | 1,035 (307–2,753) | 2,956 (634–5,552) | unexplained 3 |
-| | | A/A | 55.4 (53.9–55.9) | 66.3 (66.2–66.9) | 120 (83.3–169) | 589 (483–6,062) | 1,157 (726–6,481) | unexplained 3 |
-| | 128 | `mio-tcp` | 54.3 (53.9–55.1) | 66.4 (66.4–67.1) | 86.3 (84.4–95.0) | 656 (644–2,671) | 2,703 (2,702–3,088) | TCP loss recovery 2, unexplained 1 |
-| | | `eio-tcp` | 55.2 (55.2–55.3) | 66.5 (66.5–67.3) | 92.0 (86.3–167) | 1,197 (599–4,116) | 1,651 (977–5,882) | per-minute stall 2, unexplained 1 |
-| | | A/A | 54.0 (53.0–55.7) | 67.5 (66.5–68.4) | 87.0 (82.2–167) | 657 (500–3,682) | 2,711 (1,376–6,612) | TCP loss recovery 1, unexplained 2 |
+| 10,000 | no qdisc | `aeron-rel` | 51.4 (47.9–54.0) | 54.8 (52.2–57.7) | 59.9 (57.8–64.2) | 1,335 (324–6,402) | 3,725 (2,912–8,924) | unexplained 3 |
+|  |  | `mio-tcp` | 61.6 (59.2–63.5) | 65.3 (63.9–68.3) | 225 (91.1–236) | 5,669 (5,407–5,706) | 6,972 (6,824–7,863) | unexplained 3 |
+|  |  | `eio-tcp` | 64.1 (58.5–65.2) | 69.3 (63.9–69.4) | 173 (74.4–185) | 4,125 (3,334–7,262) | 5,934 (4,810–10,092) | unexplained 3 |
+|  |  | A/A | 56.8 (50.5–57.3) | 61.0 (54.1–61.2) | 65.4 (58.2–66.4) | 147 (88.3–3,650) | 814 (280–4,961) | unexplained 3 |
+| 50,000 | no qdisc | `aeron-rel` | 52.5 (50.1–52.8) | 56.3 (54.2–56.5) | 60.5 (58.3–61.7) | 269 (226–813) | 902 (712–2,756) | unexplained 3 |
+|  |  | `mio-tcp` | 55.8 (55.4–56.7) | 67.8 (67.7–67.8) | 150 (89.5–178) | 4,114 (1,722–6,070) | 6,637 (3,189–7,907) | unexplained 3 |
+|  |  | `eio-tcp` | 55.8 (52.4–60.1) | 67.8 (60.8–71.5) | 147 (78.5–157) | 5,771 (2,363–6,205) | 7,459 (4,013–7,843) | TCP loss recovery 2, unexplained 1 |
+|  |  | A/A | 50.7 (47.6–52.2) | 54.8 (51.2–55.9) | 61.7 (55.6–65.5) | 1,278 (648–1,482) | 2,945 (1,675–3,068) | unexplained 3 |
+| 200,000 | no qdisc | `aeron-rel` | 51.7 (50.5–52.1) | 57.6 (55.7–58.0) | 71.6 (66.9–2,443) | 4,149 (1,108–10,764) | 6,311 (2,786–11,908) | unexplained 3 |
+|  |  | A/A | 52.2 (47.4–53.4) | 58.1 (54.4–58.5) | 66.4 (61.4–78.6) | 5,399 (2,054–5,603) | 7,064 (3,914–7,643) | per-minute stall 1, unexplained 2 |
+| 10,000 | 0 % | `aeron-rel` | 53.8 (49.5–54.8) | 57.6 (53.3–58.4) | 62.3 (57.4–63.0) | 489 (189–1,113) | 1,351 (1,273–3,200) | unexplained 3 |
+|  |  | `mio-tcp` | 59.8 (59.0–59.8) | 67.1 (64.1–67.3) | 181 (157–205) | 5,247 (4,661–6,513) | 7,138 (6,458–9,388) | unexplained 3 |
+|  |  | `eio-tcp` | 59.4 (55.9–63.3) | 64.7 (60.0–68.3) | 190 (81.6–323) | 6,017 (3,443–6,439) | 8,027 (5,927–8,692) | unexplained 3 |
+|  |  | A/A | 53.1 (50.8–53.3) | 57.0 (54.4–57.0) | 61.7 (58.7–64.9) | 201 (201–846) | 857 (801–2,507) | unexplained 3 |
+| 50,000 | 0 % | `aeron-rel` | 53.5 (52.2–55.2) | 57.5 (56.4–59.1) | 64.3 (63.5–77.4) | 565 (239–2,077) | 2,031 (410–4,385) | unexplained 3 |
+|  |  | `mio-tcp` | 55.3 (53.2–56.7) | 67.6 (61.9–68.0) | 79.0 (75.5–123) | 559 (536–5,300) | 1,366 (1,042–7,582) | unexplained 3 |
+|  |  | `eio-tcp` | 58.2 (58.2–60.8) | 69.8 (68.6–71.6) | 99.4 (88.8–107) | 3,502 (558–3,625) | 4,651 (1,048–5,204) | TCP loss recovery 1, host pause 1, unexplained 1 |
+|  |  | A/A | 49.8 (49.2–52.8) | 53.5 (53.0–56.8) | 59.3 (57.7–61.7) | 373 (139–1,528) | 2,260 (453–4,229) | per-minute stall 1, unexplained 2 |
+| 200,000 | 0 % | `aeron-rel` | 54.6 (46.6–55.8) | 60.5 (53.2–62.3) | 70.2 (63.3–72.1) | 3,688 (915–4,686) | 5,319 (2,610–6,792) | unexplained 3 |
+|  |  | A/A | 51.6 (48.3–53.3) | 57.1 (53.6–60.4) | 68.6 (67.8–72.8) | 6,648 (1,635–13,058) | 7,018 (2,406–15,118) | unexplained 3 |
 
-At 200,000 msg/s every arm is past capacity in every rep (sender late,
-over capacity, host a's IRQ CPU over 90 % in most): 109,000 to 170,000
-msg/s carried, latency growing to seconds.
+- **What a 0 % qdisc costs:** nothing measured. Each arm's 0 % and
+  no-qdisc p50 differ by 0.2 to 4.6, inside the A/A spread of either round
+  (3.7 to 8.8).
+- **Aeron reliable against TCP, no loss:** Aeron's p50 lower by 7.1 to
+  14.5 in every comparison at 10,000 and 50,000 msg/s; p99 lower by 35 to
+  165 in 7 of 8 (mio at 0 % and 50,000 msg/s not separated); p99.99 lower
+  by 3.8 to 5.5 ms in 4 of 8, the rest not separated. Max: no verdict.
+- **TCP's tail here:** p99 79 to 225 and p99.99 0.56 to 6.0 ms with no
+  netem, 0 RTOs and at most one segment lost a point at 10,000 and 50,000
+  msg/s; the earlier session
+  (`20261026-172859`, another VM pair, unequal busy polling) had p99.99 405
+  to 711. 54 of 3c's 68 maxima are unexplained (above).
 
-- **Stream 0 alone** (one connection out of the N) shows the same p50 as all
-  connections together, within 4 µs, in both arms: no connection is
-  starved.
-- **The 2.70 ms maxima with 128 connections at 50,000 msg/s** are TCP loss
-  recovery after a segment lost on the path. Each connection sends every
-  128 / 50,000 s = 2.56 ms, and the loss is only seen when that
-  connection's next segment arrives and is SACKed: 2.56 ms plus the
-  recovery.
-- **Fairness flags** (set fan): 27 `hostcheck` (ergon-io's T19 page-fault
-  warning, as in 3a), 45 `max` (unexplained).
+#### mio against ergon-io over TCP: no verdict
+
+The first sessions showed ergon-io 4.6 to 7.5 behind mio at p50 (set 3a,
+`20261026-172859`): the unfair set-up (ergon-io's `SO_BUSY_POLL` 0). With
+both at 50 µs, the no-loss rows above:
+
+| rows | ergon-io against mio, median p50 | per rep | each arm's own range across reps |
+|---|---|---|---|
+| no qdisc, 10,000 | 4.0 behind | 1.4 ahead to 5.4 behind | ergon-io 5.6, mio 4.4 |
+| no qdisc, 50,000 | level | 7.0 ahead to 3.7 behind | ergon-io 10.7, mio 0.1 |
+| 0 %, 10,000 | 2.4 ahead | 4.2 ahead to 1.2 behind | ergon-io 8.3, mio 3.2 |
+| 0 %, 50,000 | 2.2 behind | 1.0 to 7.8 behind | ergon-io 3.0, mio 6.1 |
+
+So the gap is within run-to-run noise: no verdict. Each TCP point opens a
+new connection from a fresh source port, so each can hash to another NIC
+queue and flow path; that alone can move a point by several µs. A
+same-connection A/B (`tcp_lat --source-port`: both arms on the same
+4-tuples) is scheduled on AWS. A code audit found no per-message system
+call or socket option that differs: both make `epoll_wait(0)`, one `recv`
+of up to 128 KiB, `TCP_QUICKACK`, one `send`, and one empty read (the
+busy-poll pass). Their counters agree: 1.9 to 2.0 reads, 1 send and 0.99
+to 1.0 quick-ACK re-arms a message on both, with no loss.
 
 ## Conclusion
 
@@ -545,18 +730,23 @@ paths only (no DPDK result yet):
 | IPC, one host, under 1,000,000 msg/s | Aeron IPC or `std::sync::mpsc`: round trips within 0.11 of each other | Aeron 0.22 / 0.30–0.39 / 18–41 / 118–146; `mpsc` 0.30–0.33 / 0.45 / 30–33 / 106–143 | Aeron 5 busy threads, `mpsc` 2 |
 | IPC at 5,000,000 msg/s | Aeron IPC: `mpsc`'s round trip falls behind | Aeron 0.25 / 0.38 / 82 / 175 | 5 busy threads |
 | one host, a process boundary | Aeron spy, not UDP to the host's own address | 0.26 / 0.32–0.42 / 2.1–17 / 4–108, against 10.3–13.9 / 12–20 / 19–58 / 31–181 | 5 busy threads |
-| reliable delivery between hosts, no loss | Aeron reliable UDP, for its tail and its headroom (caveat: TCP rerun due) | Aeron 56–58 / 63–80 / 222–470 / 286–1,703 at 10,000 to 200,000 msg/s; TCP 60–69 / 89–120 / 405–711 / 559–2,244 at 10,000 and 50,000 msg/s, past capacity at 200,000 | Aeron 4 busy threads a host, TCP 1 |
-| unreliable UDP fan-in, mio or ergon-io | pending the rerun | | |
-| reliable under loss | pending the rerun | | |
+| one stream between hosts, lowest latency | Aeron kernel UDP | 1 stream, 10,000 to 200,000 msg/s: 55.6–59.5 / 60.7–63.7 / 77–387 / 89–2,186; mio and ergon-io at 10,000 and 50,000: 61.8–62.9 / 66.0–68.9 / 140–458 / 213–2,886 | Aeron 4 busy threads a host, sockets 1 |
+| 32 or more streams between hosts, up to 50,000 msg/s (measured) | plain sockets, mio or ergon-io (one loop, one socket a stream) | sockets 57.8–60.3 / 65.2–66.6 / 166–286 / 200–671; Aeron 62.3–70.0 / 70.8–80.0 / 176–201 / 231–626 (10,000 and 50,000 msg/s) | 1 busy thread a host, against 4 |
+| 200,000 msg/s between hosts | Aeron: both socket libraries fall seconds behind (151,000 to 195,000 msg/s carried, one `send` a message) | Aeron 55.8–86.3 / 63.7–115 / 147–387 / 324–2,186 at 1 to 128 streams | 4 busy threads a host |
+| mio or ergon-io | either: UDP p50 within 0.1–0.9 (ergon-io behind), TCP no verdict | see [2a](#set-2a-unreliable-udp-between-hosts), [3c](#mio-against-ergon-io-over-tcp-no-verdict) | 1 busy thread each |
+| reliable delivery between hosts, no loss | Aeron reliable UDP, for its p50, its p99 and its headroom | Aeron 54.8–57.6 / 59.9–64.3 / 269–1,335 / 902–3,725; TCP 64.7–69.8 / 79–225 / 559–6,017 / 1,366–8,027 (10,000 and 50,000 msg/s); TCP past capacity at 200,000 | Aeron 4 busy threads a host, TCP 1 |
+| reliable under loss | compare the tails at your loss rate: neither wins everywhere. Aeron keeps the lower p50 and, to 0.1 %, the lower p99; its maxima sit at its 10 ms retransmit linger, TCP's come from its retransmits (8 ms minimum RTO) | 0.1 %: Aeron 53.1–61.6 / 67.7–90.1 / 7,246–8,675 / 10,147–10,240; TCP 65.0–68.5 / 127–148 / 3,379–13,132 / 5,615–15,470 | as above |
 
-- The tail on this cloud is the host, not the transport: p99 stays under
-  0.5 µs in IPC and at 125 µs or less between hosts, but p99.99 and
-  max reach 18 to 2,244 µs in every arm, from host pauses and stops the
-  guest cannot see.
+- The tail on this cloud is the host as much as the transport: without
+  loss, p99 stays under 0.5 µs in IPC and at 225 µs or less between hosts,
+  but p99.99 and max reach 18 µs to 8 ms in every arm, from host pauses
+  and stops neither guest records.
+- Aeron's latency grows with its stream count (p50 +10.5 to +12.6 from 1 to
+  128 streams); a socket loop's does not, to 128.
 - Interrupt deferral is a load-dependent choice: off, an epoll-waiting
   socket answers 200 µs sooner at light load; on, TCP carried 200,000 msg/s
-  where without it it carried 130,000 to 177,000. Not swept.
-- Aeron's lead over TCP costs three more busy cores a host.
+  where without it 1 connection carried 106,000 to 151,000. Not swept.
+- Aeron's lead costs three more busy cores a host.
 
 ## Reproduce
 
@@ -597,6 +787,8 @@ What the runner writes and the analysis reads:
 
 - ergon-io's other backends (`recv-busy`, `uring-sqpoll`): the socket arms
   run `epoll-spin` only.
+- TCP fan-in (8 to 128 connections into one loop): its one session gave
+  mio and ergon-io unequal busy polling, and it was not rerun.
 - Graviton, AWS, bare metal: one Azure x86 size only.
 - Kubernetes pods: the VMs run the arms directly. The node and pod settings
   they need: [Kubernetes latency checklist](../deploy/kubernetes.md#latency-checklist).

@@ -387,6 +387,18 @@
   them before the node's reboot; `node/linux-vm-prep.sh` installs them and
   checks both.
 
+- Transport comparison suite (repo only; `md-dpdk/benches/cloud/transport.sh`
+  and `io/benches`): `aeron_lat` (Aeron IPC, spy, kernel or DPDK UDP,
+  reliable or not), `udp_lat` and `tcp_lat` (mio or ergon-io), `mpsc_lat`
+  and `hostcheck`, every arm measured by one shared core
+  (`ergon-latency-core`): 64-byte messages, open-loop pacing, TSC stamps and
+  a manifest per point. The Azure runner applies `transport-settings.env`
+  and reads it back, sets netem, and runs each rep's arms in a seeded random
+  order with an A/A arm. `fairness.py`, `spikes.py --transport` and
+  `analyse.py --transport` check every point, label each max and build the
+  tables. `tcp_lat --source-port N` binds connection i to port N + i and
+  closes with a reset, so two arms can run on the same 4-tuples.
+
 ### Changed
 
 - `ergon-io`: closing connections allocates nothing on the polling thread,
@@ -748,6 +760,15 @@
   the transport runner, waiting for the line `ready`, timed out on a pong
   that was echoing.
 
+- Transport bench (repo only): `ergon-latency-core` prefaults its spike and
+  stall buffers through `black_box`. A release build had folded the zero fill
+  into a lazily mapped `calloc`, so under overload every 4 KiB of stall rows
+  page-faulted on the measuring thread, in mio's arms and ergon-io's alike.
+- Transport bench (repo only): the `eio-tcp` arm's pong stages room for both
+  of a poll's reads per connection and reads nothing while echoes wait.
+  Overloaded, it had spun in its echo loop and the point failed (9 points at
+  200,000 msg/s on Azure).
+
 ### Removed
 
 - Breaking: `ergo-sbe` `GenerationConfig::with_error_from_impls`. Implement
@@ -766,6 +787,17 @@
 
 ### Docs
 
+- The book's transport latency comparison has its final Azure results, with
+  mio and ergon-io at equal busy polling: unreliable UDP at 1 to 128
+  streams, Aeron reliable against TCP without and under 0.01, 0.1 and 1 %
+  loss, every max attributed or listed as unexplained, and a conclusion.
+  ergon-io's UDP p50 is 0.1 to 0.9 µs behind mio's; over TCP there is no
+  verdict (run-to-run noise; a same-connection A/B is due on AWS). The
+  first sessions' socket rows and the TCP fan-in set are dropped (unequal
+  busy polling). `io/README.md`, `io/benches/BENCHMARK.md` and
+  `md-dpdk/BENCHMARKS.md` carry the matching answers and counters. DPDK
+  results stay out on Azure (synthetic VMBus path on mlx5 VFs); a DPDK rerun
+  is planned on AWS.
 - `docs/SBE_COMPATIBILITY.md`: `encode_from` and DTO `encode` check the
   declared bounds of integer and char scalar fields of messages and groups
   only; composite members and array elements are not checked on encode.
