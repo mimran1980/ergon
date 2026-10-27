@@ -46,7 +46,7 @@ if [[ ! -d "$SBE_UPSTREAM/sbe-tool" ]]; then
   exit 1
 fi
 
-# An init script adds the one-shot task without appending to the pinned
+# An init script adds the generation tasks without appending to the pinned
 # submodule's build.gradle. This keeps regeneration reproducible and leaves the
 # submodule clean even if generation fails.
 python3 - "$INIT_SCRIPT" <<'PY'
@@ -57,20 +57,36 @@ Path(sys.argv[1]).write_text(
     """
 gradle.rootProject {
     afterEvaluate {
-        tasks.register('generateRustOneToDir', JavaExec) {
-            mainClass.set('uk.co.real_logic.sbe.SbeTool')
-            classpath = project(':sbe-tool').sourceSets.main.runtimeClasspath
-            jvmArgs('--add-opens', 'java.base/jdk.internal.misc=ALL-UNNAMED')
-            def schema = project.findProperty('schema')
-            def out = project.findProperty('out')
-            if (schema == null || out == null) {
-                throw new GradleException('schema and out properties are required')
+        // One Gradle run generates every schema: `-Pmanifest` names a file of
+        // `key<TAB>schema<TAB>out` lines, and each line becomes its own
+        // SbeTool JavaExec task with its own JVM and output directory, all
+        // depended on by generateRustAllToDirs.
+        def manifest = project.findProperty('manifest')
+        if (manifest != null) {
+            def all = tasks.register('generateRustAllToDirs')
+            new File(manifest.toString()).eachLine { line ->
+                if (line.trim().isEmpty()) {
+                    return
+                }
+                def fields = line.split('\t')
+                if (fields.length != 3) {
+                    throw new GradleException("malformed manifest line: " + line)
+                }
+                def key = fields[0]
+                def schemaPath = fields[1]
+                def outDir = fields[2]
+                def one = tasks.register('generateRust_' + key, JavaExec) {
+                    mainClass.set('uk.co.real_logic.sbe.SbeTool')
+                    classpath = project(':sbe-tool').sourceSets.main.runtimeClasspath
+                    jvmArgs('--add-opens', 'java.base/jdk.internal.misc=ALL-UNNAMED')
+                    systemProperties(
+                            'sbe.output.dir': outDir,
+                            'sbe.xinclude.aware': 'true',
+                            'sbe.target.language': 'Rust')
+                    args = [schemaPath]
+                }
+                all.configure { dependsOn one }
             }
-            systemProperties(
-                    'sbe.output.dir': out,
-                    'sbe.xinclude.aware': 'true',
-                    'sbe.target.language': 'Rust')
-            args = [schema]
         }
 
         tasks.register('generateCarDataToFile', JavaExec) {
@@ -154,15 +170,27 @@ schemas=(
 )
 
 cd "$SBE_UPSTREAM"
+# One Gradle invocation for every schema and both fixtures: Gradle's start-up
+# and configuration cost about 0.9 s per call, which 47 calls paid each time.
+# Each schema still runs SbeTool in its own JVM into its own directory.
+manifest="$STAGING/schemas.tsv"
+: >"$manifest"
 for entry in "${schemas[@]}"; do
   schema="${entry%%|*}"
   key="${entry##*|}"
   out="$STAGING/generated/$key"
   mkdir -p "$out"
   echo ">>> generating $key from $schema"
-  ./gradlew -q -I "$INIT_SCRIPT" generateRustOneToDir \
-    -Pschema="$schema" -Pout="$out"
+  printf '%s\t%s\t%s\n' "$key" "$schema" "$out" >>"$manifest"
 done
+
+fixtures="$STAGING/fixtures"
+mkdir -p "$fixtures"
+./gradlew -q -I "$INIT_SCRIPT" \
+  generateRustAllToDirs generateCarDataToFile generateCarExtensionDataToFile \
+  -Pmanifest="$manifest" \
+  -Pbaseline_out="$fixtures/car_example_baseline_data.sbe" \
+  -Pextension_out="$fixtures/car_example_extension_data.sbe"
 
 for entry in "${schemas[@]}"; do
   key="${entry##*|}"
@@ -268,13 +296,6 @@ for generated_file in (manifest, *src.glob("*.rs")):
 print(f"  prepared {key} -> parity_{key}")
 PY
 done
-
-fixtures="$STAGING/fixtures"
-mkdir -p "$fixtures"
-./gradlew -q -I "$INIT_SCRIPT" \
-  generateCarDataToFile generateCarExtensionDataToFile \
-  -Pbaseline_out="$fixtures/car_example_baseline_data.sbe" \
-  -Pextension_out="$fixtures/car_example_extension_data.sbe"
 
 if [[ "$MODE" == "check" ]]; then
   status=0

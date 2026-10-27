@@ -92,9 +92,9 @@ DPDK's own threads.
 | `RUSTERON_DPDK_EAL_ARGS` | extra EAL options, such as `-l <cpu>` to keep the EAL's main thread on a housekeeping CPU from the pod's cpuset |
 | `RUSTERON_DPDK_HOUSEKEEPING_CPU` | the CPU for the transport's housekeeping and local-I/O threads |
 | `RUSTERON_DPDK_HUGE_DIR` | the hugetlbfs mount DPDK uses, an absolute path; `/dev/hugepages` by default |
+| `RUSTERON_DPDK_EAL_IN_MEMORY` | `1`: the EAL runs `--in-memory` (no hugepage files, none left after an OOM kill; no multi-process channel thread). The pod keeps its `hugepages-2Mi` limit. EAL options that contradict it fail start. Default `0`; latency effect not measured |
 | `RUSTERON_MEDIA_DRIVER_DIR` | the Aeron directory `ConfiguredDriver` sets |
-| `ERGON_HOST_CHECKS` | `on`/`warn` (default), `off` (no check runs), or `require`: refuse to start while any [host check](../tune/overview.md) warns. Wins over its alias below when both are set |
-| `RUSTERON_MEDIA_DRIVER_HOST_CHECK` | alias of `ERGON_HOST_CHECKS`, read only when that is unset |
+| `ERGON_HOST_CHECKS` | `on`/`warn` (default), `off` (no check runs), or `require`: refuse to start while any [host check](../tune/overview.md) warns, or while a port's gateway does not answer ARP within 1 s at start |
 | `RUSTERON_MEDIA_DRIVER_MLOCKALL` | `1`: `mlockall` before the driver starts (needs `CAP_IPC_LOCK` in the pod). **Not recommended**: see the entry-point table above |
 
 Every other knob (rate caps, host-local channels, ENA device arguments,
@@ -129,6 +129,13 @@ pod's cpuset (static CPU manager, whole cores):
 
 - **The agents are pinned for you**, in every mode, each to the CPU its
   `AERON_*_CPU_AFFINITY` names. Running unpinned is not measured here.
+- **The conductor's 8–16 ms duty cycles on the housekeeping core cost no
+  latency.** The one traced (8.4 ms) was the CPU's other work preempting
+  it; the 12–16 ms ones were not traced. Alone on its own core it reached
+  5.8–6.5 ms, with the same round trip; its long cycle there is most likely
+  the blocking NIC-stats read at the first channel's set-up (traced: a
+  1.8 ms wait in `rte_eth_xstats_get`)
+  ([BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#the-conductors-long-duty-cycles-cpu-sharing-and-one-blocking-call)).
 - **`SHARED_NETWORK` saves a core and costs latency.** Graviton G1, one A/B:
   1,344 B bursts p50 522 against 234 µs, max 886 against 745 µs
   ([BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#measured-but-no-setting-recommended)).
@@ -162,7 +169,7 @@ the pod spec or the channel URI; **node** needs node-level access.
 
 | setting | where | what it does | evidence |
 |---|---|---|---|
-| `AERON_RECEIVER_IO_VECTOR_CAPACITY=16` (the default under `dpdk-ena`) | pod | up to 16 frames a receive, Aeron's maximum (`md-dpdk/src/driver.rs`) | measured before the DPDK poll drained whole bursts itself; it now sizes host-local socket reads. One run (`aws-20261014-113947`, platform not recorded), DPDK, 1,344 B at 600 k msgs/s: no NAK against 16,247 NAKs without it, max 142 against 1,130 µs ([BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#measured-but-no-setting-recommended)) |
+| `AERON_RECEIVER_IO_VECTOR_CAPACITY=16` (the default under `dpdk-ena`) | pod | up to 16 frames a receive, Aeron's maximum (`md-dpdk/src/driver.rs`) | under DPDK the poll drains whole bursts itself, so this sizes host-local socket reads; the A/B predates that. One run (`aws-20261014-113947`, platform not recorded), DPDK, 1,344 B at 600 k msgs/s: no NAK against 16,247 NAKs without it, max 142 against 1,130 µs ([BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#measured-but-no-setting-recommended)) |
 | `AERON_DIR` on a *sized* 2 MiB hugetlbfs, `AERON_FILE_PAGE_SIZE=2097152`, `AERON_TERM_BUFFER_SPARSE_FILE=false` | node mount, pod env | the log buffers sit on hugepages, allocated up front | required, not A/B'd: an unsized hugetlbfs reports no free space, and Aeron refuses every log buffer |
 | `AERON_CLIENT_PRE_TOUCH_MAPPED_MEMORY=true` on clients | pod | clients fault their mappings in before the first message | not measured here |
 | `AERON_MTU_LENGTH=1408` (at most `RUSTERON_DPDK_MAX_AERON_MTU`, 1,408 by default) | pod | every frame fits one packet buffer | jumbo frames, Graviton G2, **one run**: 1,344 B bursts p50 242 → 210 µs, max 954 → 1,533 µs; idle unchanged. A candidate for bulk or bursty channels only |
@@ -170,7 +177,7 @@ the pod spec or the channel URI; **node** needs node-level access.
 | Azure: `AERON_CONDUCTOR_IDLE_STRATEGY_INIT_ARGS=100-10-1us-20us` **and**, per channel, `rcv-wnd` of 256 × the smallest datagram (80 KiB for 288 B) | pod | status messages go out every 20 µs, and the sender never has more in flight than MANA's 256-entry ring holds | not measured here: no Azure run output is committed. Set both or neither |
 | kernel busy polling (`net.core.busy_read`, `busy_poll`): none recommended | node | a socket read spins on the NIC's queue | measured, not isolated: Graviton G1 lost at 288 B 1 M msgs/s in 5 of 5 reps, max 9,175 (8,544–102,826) µs (four settings differ); x86 round 7 lower p50 at 288 B 100 k msgs/s, max 382 (372–389) against 469 (448–578) µs (two settings differ) ([BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#measured-but-no-setting-recommended)). Check M4 reports the state as information |
 | transparent hugepages off | node | the kernel stops building large pages in the background | not separated: one run (`aws-20261014-113947`), idle p99.99 53.15 against 67.01 µs, max 90 (77–1,180) against 94 (80–498) |
-| a ~1 kHz keep-alive on sparse, latency-critical streams | application | a lost frame is noticed within a millisecond, not at Aeron's next heartbeat (100 ms) | not measured here; the 100 ms is `aeron_network_publication.h:38` (rusteron-media-driver 0.2.13) |
+| a keep-alive every 100 µs on sparse, latency-critical streams | application | a lost frame is noticed at the next keep-alive, not at Aeron's next heartbeat (100 ms, `aeron_network_publication.h:38`, rusteron-media-driver 0.2.13); the path stays warm | below Aeron (raw floor, `c8g.2xlarge`, 3 reps): one ping a second p50 33.98 (32.99–34.24) µs, with the keep-alive 24.50 (24.13–24.83), unpaced 24.21; a 1 ms gap costs +0.8 µs (a 1 ms keep-alive is not measured; this run has no A/A) ([BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#sparse-flows-a-quiet-path-is-slower-mostly-on-the-host)) |
 
 **One AWS flow topped out at 7.75–7.77 Gbit/s of Aeron frames** on
 `c7i.4xlarge`, kernel UDP and DPDK alike; on `c9g.2xlarge` 1,344 B messages

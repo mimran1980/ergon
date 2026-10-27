@@ -1,0 +1,11 @@
+trace-1 placement, mid-run:
+ok:   stress-ng-vm 29232 on CPU 1, allowed 1
+ok:   sh 29201 on CPU 1, allowed 1
+ok:   stress-ng 29226 on CPU 1, allowed 1
+ok:   stress-ng-cpu 29231 on CPU 1, allowed 1
+ok:   gapprobe 29227 on CPU 1, allowed 1
+ok:   gp-hot 29410 on CPU 3, allowed 3
+ok:   stress-ng-vm 29233 on CPU 1, allowed 1
+ok:   gapprobe 29228 on CPU 1, allowed 1
+ok:   gp-udp-sink 29229 on CPU 1, allowed 1
+ok:   gp-udp-src 29230 on CPU 1, allowed 1

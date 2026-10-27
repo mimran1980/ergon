@@ -54,7 +54,7 @@ const RECEIVER_IO_VECTOR_CAPACITY_ENV: &str = "AERON_RECEIVER_IO_VECTOR_CAPACITY
 /// ([`crate::configure_media_transport_from_env`]), and under `dpdk-ena` the
 /// receiver IO vector capacity is 16 unless `AERON_RECEIVER_IO_VECTOR_CAPACITY`
 /// says otherwise. The host checks ([`crate::checks`]) then run, as
-/// `RUSTERON_MEDIA_DRIVER_HOST_CHECK` says.
+/// `ERGON_HOST_CHECKS` says.
 #[must_use = "the transport it may hold is freed when it drops: start it, or keep it alive for as long as a driver it started can run"]
 pub struct ConfiguredDriver {
     context: AeronDriverContext,
@@ -71,20 +71,20 @@ impl ConfiguredDriver {
     /// Configure `context` (made from the environment, with any setting of the
     /// caller's own already applied) as the bundled binary does.
     ///
-    /// Then, unless `RUSTERON_MEDIA_DRIVER_HOST_CHECK=off` (one line on
-    /// stderr saying so), the host checks run ([`crate::checks`]): one line on
-    /// stderr for each that is not fine, and, for the socket transport with
+    /// Then, unless `ERGON_HOST_CHECKS=off` (one line on stderr saying so),
+    /// the host checks run ([`crate::checks`]): one line on stderr for each
+    /// that is not fine, and, for the socket transport with
     /// `RUSTERON_MEDIA_DRIVER_DATA_NICS` set, md's re-check thread for those
     /// NICs, which stops when the driver does.
     ///
     /// # Errors
     ///
     /// [`DpdkError::InvalidEnvironment`] for a `RUSTERON_MEDIA_DRIVER_DIR` with
-    /// a NUL byte, or a `RUSTERON_MEDIA_DRIVER_HOST_CHECK` or
+    /// a NUL byte, or an `ERGON_HOST_CHECKS` or
     /// `RUSTERON_MEDIA_DRIVER_DATA_NICS` that does not parse; otherwise what
     /// pinning or [`crate::configure_media_transport_from_env`] reports. A
     /// selected DPDK transport that fails never falls back to the socket
-    /// transport. Under `RUSTERON_MEDIA_DRIVER_HOST_CHECK=require`,
+    /// transport. Under `ERGON_HOST_CHECKS=require`,
     /// [`DpdkError::HostCheck`] when a host check warned (the transport is
     /// closed again).
     pub fn from_env(context: AeronDriverContext) -> Result<Self, DpdkError> {
@@ -125,6 +125,15 @@ impl ConfiguredDriver {
                     data_nics,
                     policy,
                 )?;
+                // Before the agents start: each port's gateway asked for its MAC.
+                if let Some(t) = transport.as_ref().and_then(CloseOnDrop::get) {
+                    let answered = t.check_gateways(GATEWAY_CHECK_MS)?;
+                    let lines = gateway_warnings(t.ports().0, t.gateways(), answered, GATEWAY_CHECK_MS);
+                    for line in &lines {
+                        eprintln!("{line}");
+                    }
+                    gateway_verdict(policy, &lines)?;
+                }
                 (Some(report), rechecks)
             }
         };
@@ -138,7 +147,7 @@ impl ConfiguredDriver {
     }
 
     /// What the host checks found ([`crate::checks`]); `None` under
-    /// `RUSTERON_MEDIA_DRIVER_HOST_CHECK=off`.
+    /// `ERGON_HOST_CHECKS=off`.
     #[must_use]
     pub const fn host_report(&self) -> Option<&HostReport> {
         self.report.as_ref()
@@ -218,6 +227,51 @@ impl ConfiguredDriver {
             transport,
         })
     }
+}
+
+/// How long the start-time gateway check waits for each port's gateway to
+/// answer ARP.
+const GATEWAY_CHECK_MS: u32 = 1000;
+
+/// The start-time gateway check's lines: one warning for each port whose
+/// gateway did not answer ARP within `timeout_ms`.
+fn gateway_warnings(
+    ports: &[String; 2],
+    gateways: [std::net::Ipv4Addr; 2],
+    answered: [bool; 2],
+    timeout_ms: u32,
+) -> Vec<String> {
+    const ROLES: [(&str, &str); 2] = [
+        ("sender", "RUSTERON_DPDK_SENDER_GATEWAY"),
+        ("receiver", "RUSTERON_DPDK_RECEIVER_GATEWAY"),
+    ];
+    (0..2)
+        .filter(|&i| !answered[i])
+        .map(|i| {
+            let (role, var) = ROLES[i];
+            format!(
+                "ergon-md-dpdk warning: the {role} port's gateway {} ({}) did not answer ARP within {timeout_ms} \
+                 ms at start: every send to an off-subnet peer waits for it, and fails with EHOSTUNREACH 3 s \
+                 after the first; check {var} and the subnet's router {}",
+                gateways[i],
+                ports[i],
+                ergon_tune::SILENCE
+            )
+        })
+        .collect()
+}
+
+/// What the gateway check's `warnings` decide under `policy`: only
+/// `require` refuses to start on them.
+fn gateway_verdict(policy: HostCheckPolicy, warnings: &[String]) -> Result<(), DpdkError> {
+    if policy != HostCheckPolicy::Require || warnings.is_empty() {
+        return Ok(());
+    }
+    Err(DpdkError::HostCheck(format!(
+        "ERGON_HOST_CHECKS=require and {} gateway(s) silent at start, printed above: fix them, or set \
+         ERGON_HOST_CHECKS=warn (or off) to start anyway",
+        warnings.len()
+    )))
 }
 
 /// The host checks for a configured `context`: print each line, refuse under
@@ -348,7 +402,7 @@ impl EnvMediaDriver {
     }
 
     /// What the host checks found before the driver started; `None` under
-    /// `RUSTERON_MEDIA_DRIVER_HOST_CHECK=off`.
+    /// `ERGON_HOST_CHECKS=off`.
     #[must_use]
     pub const fn host_report(&self) -> Option<&HostReport> {
         self.report.as_ref()
@@ -443,4 +497,47 @@ fn aeron_error(call: &str, error: &rusteron_media_driver::AeronCError) -> DpdkEr
 #[cold]
 fn do_work_error(error: &rusteron_media_driver::AeronCError) -> DpdkError {
     aeron_error("aeron_driver_main_do_work", error)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+
+    fn ports() -> [String; 2] {
+        ["0000:00:06.0".to_owned(), "0000:00:07.0".to_owned()]
+    }
+
+    const GATEWAYS: [Ipv4Addr; 2] = [Ipv4Addr::new(10, 0, 0, 1), Ipv4Addr::new(10, 0, 1, 1)];
+
+    #[test]
+    fn a_silent_gateway_is_a_warning_naming_its_port() {
+        assert_eq!(
+            gateway_warnings(&ports(), GATEWAYS, [true, true], 1000),
+            Vec::<String>::new()
+        );
+        let lines = gateway_warnings(&ports(), GATEWAYS, [true, false], 1000);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].starts_with("ergon-md-dpdk warning: the receiver port's gateway 10.0.1.1 (0000:00:07.0)"));
+        assert!(lines[0].contains("RUSTERON_DPDK_RECEIVER_GATEWAY"));
+        assert!(lines[0].ends_with(ergon_tune::SILENCE));
+        assert!(
+            lines[0].contains("within 1000 ms at start") && lines[0].contains("EHOSTUNREACH 3 s after the first"),
+            "one line of single-spaced words: {:?}",
+            lines[0]
+        );
+        assert_eq!(gateway_warnings(&ports(), GATEWAYS, [false, false], 1000).len(), 2);
+    }
+
+    #[test]
+    fn only_require_refuses_a_silent_gateway() {
+        let lines = gateway_warnings(&ports(), GATEWAYS, [false, true], 1000);
+        assert_eq!(gateway_verdict(HostCheckPolicy::Warn, &lines), Ok(()));
+        assert_eq!(gateway_verdict(HostCheckPolicy::Off, &lines), Ok(()));
+        assert_eq!(gateway_verdict(HostCheckPolicy::Require, &[]), Ok(()));
+        assert!(matches!(
+            gateway_verdict(HostCheckPolicy::Require, &lines),
+            Err(DpdkError::HostCheck(m)) if m.contains("1 gateway(s) silent")
+        ));
+    }
 }

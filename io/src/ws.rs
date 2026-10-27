@@ -303,6 +303,61 @@ pub fn encode_frame(
     Ok(pos + n)
 }
 
+/// A FIN frame header for `payload_len` bytes on the stack: the bytes and
+/// their length (2 to 14).
+#[inline]
+#[must_use]
+pub fn header_bytes(opcode: u8, payload_len: usize, mask: Option<[u8; 4]>) -> ([u8; 14], usize) {
+    let mut h = [0u8; 14];
+    h[0] = 0x80 | opcode;
+    let mbit = if mask.is_some() { 0x80 } else { 0x00 };
+    let mut pos = 2;
+    if let Ok(small @ 0..126) = u8::try_from(payload_len) {
+        h[1] = mbit | small;
+    } else if let Ok(medium) = u16::try_from(payload_len) {
+        h[1] = mbit | LEN16;
+        h[2..4].copy_from_slice(&medium.to_be_bytes());
+        pos = 4;
+    } else {
+        h[1] = mbit | LEN64;
+        h[2..10].copy_from_slice(&(payload_len as u64).to_be_bytes());
+        pos = 10;
+    }
+    if let Some(m) = mask {
+        h[pos..pos + 4].copy_from_slice(&m);
+        pos += 4;
+    }
+    (h, pos)
+}
+
+/// Appends a FIN frame header for `payload_len` bytes ([`header_bytes`]).
+#[inline]
+pub fn push_header(out: &mut Vec<u8>, opcode: u8, payload_len: usize, mask: Option<[u8; 4]>) {
+    let (h, hl) = header_bytes(opcode, payload_len, mask);
+    // All 14 bytes (one fixed-size store), then the unused tail is dropped.
+    out.extend_from_slice(&h);
+    out.truncate(out.len() - (h.len() - hl));
+}
+
+/// Appends `data` XOR-ed with the masking key, starting at key offset
+/// `offset`: one copy into the vector's spare capacity, then the XOR in
+/// place over the bytes just written (still in L1). No zero fill.
+#[inline]
+pub fn push_masked(out: &mut Vec<u8>, data: &[u8], mask: [u8; 4], offset: usize) {
+    let start = out.len();
+    out.extend_from_slice(data);
+    apply_mask_at(&mut out[start..], mask, offset);
+}
+
+/// Appends one masked FIN frame: the header from the stack, then the
+/// payload copied and masked ([`push_masked`]). The bytes equal
+/// [`encode_frame`]'s with the same mask.
+#[inline]
+pub fn push_frame(out: &mut Vec<u8>, opcode: u8, payload: &[u8], mask: [u8; 4]) {
+    push_header(out, opcode, payload.len(), Some(mask));
+    push_masked(out, payload, mask, 0);
+}
+
 /// `Sec-WebSocket-Accept` value for a client key.
 #[must_use]
 pub fn accept_key(client_key: &str) -> String {

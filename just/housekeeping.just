@@ -12,6 +12,15 @@ clean:
         (cd "$d" && cargo clean)
       fi
     done
+    just _reset-sources
+
+# The source half of `clean`, which `just release` starts with: remove the
+# gitignored sample codegen (and make cargo regenerate it) and reset every
+# submodule to its pinned commit (`git clean -fdx` also removes Aeron jars
+# built from other sources). Cargo target directories are kept.
+_reset-sources:
+    #!/usr/bin/env bash
+    set -euo pipefail
     # IDE-friendly codecs from build.rs (**/src/generated/ is gitignored).
     echo "=== remove sample src/generated ==="
     for d in samples/*/src/generated; do
@@ -19,6 +28,13 @@ clean:
         echo "rm -rf $d"
         rm -rf "$d"
       fi
+    done
+    # Those build scripts rerun only when their schema or ergo-sbe changes, so
+    # with a warm target directory the deleted codecs would not come back and
+    # the sample would fail to compile. A newer build.rs mtime makes cargo
+    # rebuild and rerun each one (seconds; no dependency rebuilds).
+    for b in samples/*/build.rs; do
+      touch "$b"
     done
     echo "=== git submodules → origin / pinned commits ==="
     git submodule sync --recursive
@@ -29,7 +45,7 @@ clean:
       git clean -fdx
     '
     git submodule update --init --recursive --force
-    echo "clean: done"
+    echo "sources reset"
 
 # Build rustdoc for the two product crates (no deps).
 docs:

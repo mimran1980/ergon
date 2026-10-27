@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# A Guaranteed pod that gets the shared CPU. No ergon.io/latency: hot
+# label: a kind node has no isolcpus, so the plugin's hot-pod check would
+# refuse it (hot-pod.yaml shows that). The grant is the same without the label.
+# cpu: "2" is two exclusive CPUs from the static CPU manager.
+# ergon.io/shared-millicpus: "250" asks the plugin for one shared CPU
+# (the quarter is scheduler accounting only).
+# The command prints the grant and sleeps. It is not a latency benchmark.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: trader
+  namespace: trading
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus"]'
+spec:
+  # OnFailure, not Never. A pod with restartPolicy Never cannot set
+  # resizePolicy RestartContainer; the API server rejects that pair before
+  # admission. The container sleeps, so a successful exit is not the path.
+  restartPolicy: OnFailure
+  nodeSelector:
+    ergon.io/shared-cpus: "true"
+  containers:
+    - name: app
+      image: registry.k8s.io/e2e-test-images/busybox:1.36.1-1
+      command: ["sh", "-c"]
+      args:
+        - |
+          echo "ERGON_ISOLATED_CPUS=${ERGON_ISOLATED_CPUS-}"
+          echo "ERGON_SHARED_CPUS=${ERGON_SHARED_CPUS-}"
+          echo "ERGON_SHARED_MILLICPUS=${ERGON_SHARED_MILLICPUS-}"
+          echo "ERGON_HELPER_CPUS=${ERGON_HELPER_CPUS-}"
+          echo "ERGON_ISOLATED_CORES=${ERGON_ISOLATED_CORES-}"
+          grep '^Cpus_allowed_list:' /proc/1/status
+          if [ -r /sys/fs/cgroup/cpuset.cpus.effective ]; then
+            printf 'cpuset.cpus.effective='
+            cat /sys/fs/cgroup/cpuset.cpus.effective
+          else
+            echo "cpuset.cpus.effective=absent"
+          fi
+          printf 'nproc='
+          nproc
+          sleep 3600
+      resources:
+        requests:
+          cpu: "2"
+          memory: 64Mi
+          ergon.io/shared-millicpus: "250"
+        limits:
+          cpu: "2"
+          memory: 64Mi
+          ergon.io/shared-millicpus: "250"
+      resizePolicy:
+        - resourceName: cpu
+          restartPolicy: RestartContainer

@@ -8,8 +8,13 @@ For re-encode, eligible flat groups are bulk-written directly from
 `&[EntryDomain]`: no temporary `Vec<Entry>` and no encode-time allocation.
 Eligibility requires fixed-size entries whose domain fields have the same wire
 representation; nested groups, var-data, optional/versioned fields, configured
-domain conversions, and bool remapping use the general `add` path. Integer
-min/max checks are preserved in both paths. `with_all_enums_as_option()` /
+domain conversions, and bool remapping use the general `add` path. Both
+paths check integer and `char` scalars written as their wire type against
+the `minValue` / `maxValue` the schema declares, and only those
+(`EncodeError::ValueOutOfRange`). A side the schema does not declare is not
+checked, so a required `uint32` of `u32::MAX` is written as given. Composite
+members and array elements are not checked. `fixed()` and the plain setters
+check no range. `with_all_enums_as_option()` /
 `with_null_as_option` maps a required enum to `Option<Enum>` on the DTO:
 `None` writes the schema `NullVal` image (including on a reused buffer), and
 `bulk_add_domain` / `to_wire_entry` use that same mapping.

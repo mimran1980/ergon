@@ -66,6 +66,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         burst_size: 32,
         max_aeron_mtu: 1408,
         rx_hw_timestamp: false,
+        rx_free_thresh: None,
+        tx_free_thresh: None,
+        tx_fast_free: false,
     };
 
     // 3. Create the native DPDK runtime and install it into the context. The

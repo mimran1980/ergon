@@ -1,14 +1,13 @@
-//! `epoll-spin`, `epoll-busy` and `recv-busy`.
+//! `epoll-spin` and `recv-busy`.
 //!
 //! - `epoll-spin`: `epoll_wait(timeout = 0)` every poll, then one `recvmsg`
 //!   per ready socket (level-triggered: data left behind is reported again).
-//! - `epoll-busy`: `epoll_pwait2(wait_us)` with busy poll on the epoll
-//!   instance (`EPIOCSPARAMS`, carrying `Config::prefer_busy_poll` and
-//!   `busy_poll_budget`). With nothing ready the kernel polls the NIC queue
-//!   for up to `busy_poll_us`, then sleeps until an event or the timeout. A
-//!   zero timeout returns before the busy loop, so this backend sleeps by
-//!   design. An epoll instance tracks one NAPI id: with sockets on several
-//!   RX queues, only one queue is polled.
+//!   With `Config::busy_poll_us` (`SO_BUSY_POLL` on every socket), a socket
+//!   read with data is read once more at the start of the next poll,
+//!   after the replies went out: that read finds the queue empty and makes
+//!   one NAPI pass before `EAGAIN`, as mio's read to `WouldBlock` does. A
+//!   datagram socket epoll reports is then read once, and its
+//!   `datagram_burst` runs from that next-poll read.
 //! - `recv-busy`: no epoll. A non-blocking `recvmsg` on every socket every
 //!   poll, with `SO_BUSY_POLL` set (by [`super::Driver::add`]). An empty read
 //!   runs `sk_busy_loop(sk, nonblock)`: one NAPI pass, then `EAGAIN`. Never
@@ -16,7 +15,9 @@
 //! - `recv-busy` with `Config::per_queue`: one read per NIC queue (one
 //!   socket per NAPI id; sockets whose queue is not known yet are all read),
 //!   which polls every queue once, then `epoll_wait(0)` for the sockets those
-//!   passes (or interrupts) made ready.
+//!   passes (or interrupts) made ready. A socket's queue is looked up after
+//!   its first data and on a look-again every 4096 polls; a socket with no
+//!   NAPI id (loopback, a plain veth) costs no lookup in between.
 #![allow(unsafe_code)]
 
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
@@ -30,18 +31,25 @@ use crate::sys::{self, MsgSlot};
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
     Spin,
-    Busy,
     Recv,
 }
 
-const MAX_EVENTS: usize = 64;
-
+#[allow(clippy::struct_excessive_bools)] // independent switches from the configuration
 pub(super) struct Epoll {
     mode: Mode,
     /// `recv-busy` with `Config::per_queue`.
     per_queue: bool,
     /// Per slot: the socket's NAPI id once known (0 until then).
     napi: Vec<u32>,
+    /// Per slot: its id was looked up once after data arrived. A socket
+    /// still at 0 then has no NAPI id (loopback, a plain veth): it is asked
+    /// again only on the periodic look-again.
+    asked: Vec<bool>,
+    /// The NAPI ids seen while picking (scratch space, kept to avoid an
+    /// allocation per rebuild).
+    seen: Vec<u32>,
+    /// Rebuilds of the representatives (test lever).
+    picks: u64,
     /// Per slot: read every poll (one per NIC queue, plus unknown queues).
     polled: Vec<bool>,
     /// The slots in `polled`, in order.
@@ -56,16 +64,30 @@ pub(super) struct Epoll {
     polls: u64,
     ep: Option<OwnedFd>,
     slot: Box<MsgSlot>,
-    events: Box<[libc::epoll_event; MAX_EVENTS]>,
-    wait: libc::timespec,
+    /// `Config::epoll_events` entries.
+    events: Box<[libc::epoll_event]>,
+    /// `Config::datagram_burst`: reads per ready datagram socket per poll.
+    burst: u32,
+    /// `epoll-spin` with `Config::busy_poll_us`: a socket read with data is
+    /// read once more on the next poll. That read finds the queue
+    /// empty and, with `SO_BUSY_POLL` set, makes one NAPI pass first.
+    drain: bool,
+    /// The slots to read again on the next poll, each once.
+    again: Vec<usize>,
+    /// `again` while it is being read (kept to avoid an allocation).
+    draining: Vec<usize>,
+    /// Per slot: in `again`.
+    queued: Vec<bool>,
+    /// Reading the `again` list (a datagram socket's burst runs there).
+    again_pass: bool,
 }
 
 impl Epoll {
     pub(super) fn new(cfg: &Config) -> Result<Self> {
-        let mode = match cfg.backend {
-            Backend::EpollBusy => Mode::Busy,
-            Backend::RecvBusy => Mode::Recv,
-            _ => Mode::Spin,
+        let mode = if cfg.backend == Backend::RecvBusy {
+            Mode::Recv
+        } else {
+            Mode::Spin
         };
         let per_queue = mode == Mode::Recv && cfg.per_queue;
         let ep = if mode == Mode::Recv && !per_queue {
@@ -79,13 +101,13 @@ impl Epoll {
             // SAFETY: `fd` is a fresh descriptor we own.
             Some(unsafe { OwnedFd::from_raw_fd(fd) })
         };
-        if let (Mode::Busy, Some(ep)) = (mode, &ep) {
-            set_epoll_busy_poll(ep.as_raw_fd(), cfg)?;
-        }
         Ok(Self {
             mode,
             per_queue,
             napi: Vec::new(),
+            asked: Vec::new(),
+            seen: Vec::with_capacity(16),
+            picks: 0,
             polled: Vec::new(),
             reps: Vec::new(),
             dirty: true,
@@ -93,11 +115,14 @@ impl Epoll {
             polls: 0,
             ep,
             slot: MsgSlot::new(),
-            events: Box::new([libc::epoll_event { events: 0, u64: 0 }; MAX_EVENTS]),
-            wait: libc::timespec {
-                tv_sec: libc::time_t::from(cfg.wait_us / 1_000_000),
-                tv_nsec: libc::c_long::from(cfg.wait_us % 1_000_000) * 1000,
-            },
+            events: vec![libc::epoll_event { events: 0, u64: 0 }; cfg.epoll_events as usize]
+                .into_boxed_slice(),
+            burst: cfg.datagram_burst,
+            drain: mode == Mode::Spin && cfg.busy_poll_us > 0,
+            again: Vec::new(),
+            draining: Vec::new(),
+            queued: Vec::new(),
+            again_pass: false,
         })
     }
 
@@ -108,6 +133,16 @@ impl Epoll {
         self.rebind = true;
         if let Some(n) = self.napi.get_mut(id.index()) {
             *n = 0;
+        }
+        if let Some(a) = self.asked.get_mut(id.index()) {
+            *a = false;
+        }
+        if self.drain && self.queued.len() <= id.index() {
+            // Room for every slot now, so the poll never allocates.
+            let n = id.index() + 1;
+            self.queued.resize(n, false);
+            self.again.reserve(n.saturating_sub(self.again.len()));
+            self.draining.reserve(n.saturating_sub(self.draining.len()));
         }
         let Some(ep) = &self.ep else {
             return Ok(());
@@ -146,7 +181,7 @@ impl Epoll {
         conns: &mut Conns<E>,
         handler: &mut H,
         stats: &mut DriverStats,
-        read_seq: &mut u64,
+        reads: &mut super::Reads,
     ) -> Result<()>
     where
         E: Receive<H>,
@@ -154,24 +189,13 @@ impl Epoll {
     {
         if self.mode == Mode::Recv && !self.per_queue {
             for i in 0..conns.len_slots() {
-                self.recv_index(conns, i, handler, stats, read_seq);
+                self.recv_index(conns, i, handler, stats, reads);
             }
         } else if self.per_queue {
-            // Queues are learnt from each socket's first packets: look again
-            // now and then until every socket's is known.
-            self.polls += 1;
-            if self.dirty || self.polls.is_multiple_of(4096) {
-                // A socket coming or going, and the periodic look-again, both
-                // refresh every id: a NIC can move a queue under a live
-                // socket (RSS remap), and a reused slot can hold the previous
-                // connection's queue. A rebuild only to fill ids that are
-                // still unknown reads nothing new.
-                let refresh_all = self.rebind || self.polls.is_multiple_of(4096);
-                self.pick_reps(conns, refresh_all);
-            }
+            self.refresh_reps(conns);
             for k in 0..self.reps.len() {
                 let i = self.reps[k];
-                self.recv_index(conns, i, handler, stats, read_seq);
+                self.recv_index(conns, i, handler, stats, reads);
             }
             let n = self.wait(stats)?;
             for k in 0..n {
@@ -180,16 +204,58 @@ impl Epoll {
                 if self.polled.get(i).copied().unwrap_or(false) {
                     continue;
                 }
-                self.recv_index(conns, i, handler, stats, read_seq);
+                self.recv_index(conns, i, handler, stats, reads);
             }
         } else {
+            if !self.again.is_empty() {
+                // The read to empty after last poll's data: the NIC poll.
+                std::mem::swap(&mut self.again, &mut self.draining);
+                self.again_pass = true;
+                for k in 0..self.draining.len() {
+                    let i = self.draining[k];
+                    if let Some(q) = self.queued.get_mut(i) {
+                        *q = false;
+                    }
+                    self.recv_index(conns, i, handler, stats, reads);
+                }
+                self.draining.clear();
+                self.again_pass = false;
+            }
             let n = self.wait(stats)?;
             for k in 0..n {
                 let i = usize::try_from(self.events[k].u64).unwrap_or(usize::MAX);
-                self.recv_index(conns, i, handler, stats, read_seq);
+                self.recv_index(conns, i, handler, stats, reads);
             }
         }
         Ok(())
+    }
+
+    /// Rebuilds the representatives when due: a socket came or went, an
+    /// unknown socket's first data arrived (its queue is learnt from it), or
+    /// the periodic look-again (every 4096 polls). Otherwise one branch.
+    #[inline]
+    fn refresh_reps<E: Endpoint>(&mut self, conns: &mut Conns<E>) {
+        self.polls += 1;
+        let periodic = self.polls.is_multiple_of(4096);
+        if self.dirty || periodic {
+            // A socket coming or going, and the periodic look-again, both
+            // refresh every id: a NIC can move a queue under a live socket
+            // (RSS remap), and a reused slot can hold the previous
+            // connection's queue. A rebuild only to fill ids that are still
+            // unknown reads nothing new.
+            let refresh_all = self.rebind || periodic;
+            self.pick_reps(conns, refresh_all);
+        }
+    }
+
+    /// Data arrived on slot `i`: when its queue is unknown, look it up once
+    /// (on the next poll), not every poll.
+    #[inline]
+    fn data_arrived(&mut self, i: usize) {
+        if self.per_queue && self.napi.get(i) == Some(&0) && self.asked.get(i) == Some(&false) {
+            self.asked[i] = true;
+            self.dirty = true;
+        }
     }
 
     #[inline]
@@ -199,7 +265,7 @@ impl Epoll {
         i: usize,
         handler: &mut H,
         stats: &mut DriverStats,
-        read_seq: &mut u64,
+        reads: &mut super::Reads,
     ) where
         E: Receive<H>,
         H: Handler,
@@ -208,12 +274,40 @@ impl Epoll {
         let Some(conn) = conns.at(i) else {
             return;
         };
-        if let Err(e) = recv_one(conn, id, &mut self.slot, handler, stats, read_seq) {
-            let e = conn.close_reason(e);
-            self.remove(conn.fd());
-            conns.remove(i);
-            stats.closed += 1;
-            handler.on_closed(id, e);
+        let mut r = recv_one(conn, id, &mut self.slot, handler, stats, reads);
+        // With `drain`, a datagram socket epoll reports is read once and
+        // its burst runs from the again list on the next poll, so the empty
+        // read that ends it (the NIC poll) comes after this poll's replies.
+        if E::DATAGRAM && (!self.drain || self.again_pass) {
+            // Up to `burst` datagrams from this socket, then the next one;
+            // what is left is reported again by the next `epoll_wait`.
+            let mut left = self.burst;
+            while matches!(r, Ok(true)) && left > 1 {
+                left -= 1;
+                r = recv_one(conn, id, &mut self.slot, handler, stats, reads);
+            }
+        }
+        match r {
+            Ok(false) => {}
+            // A reply (a Pong) may be queued: list it for the send pass.
+            Ok(true) => {
+                if conn.has_tx() {
+                    conns.mark_tx(i);
+                }
+                self.data_arrived(i);
+                // Read again on the next poll: to `EAGAIN`, which polls the NIC.
+                if self.drain && self.queued.get(i) == Some(&false) {
+                    self.queued[i] = true;
+                    self.again.push(i);
+                }
+            }
+            Err(e) => {
+                let e = conn.close_reason(e);
+                self.remove(conn.fd());
+                conns.remove(i);
+                stats.closed += 1;
+                handler.on_closed(id, e);
+            }
         }
     }
 
@@ -223,8 +317,10 @@ impl Epoll {
     /// asked again which queue it is on. Without it only ids that are still
     /// unknown are read, which never corrects an id that has gone stale.
     fn pick_reps<E: Endpoint>(&mut self, conns: &mut Conns<E>, refresh_all: bool) {
+        self.picks += 1;
         let n = conns.len_slots();
         self.napi.resize(n, 0);
+        self.asked.resize(n, false);
         if refresh_all {
             self.rebind = false;
             self.napi.fill(0);
@@ -232,28 +328,30 @@ impl Epoll {
         self.polled.clear();
         self.polled.resize(n, false);
         self.reps.clear();
-        let mut seen: Vec<u32> = Vec::new();
-        let mut unknown = false;
+        self.seen.clear();
         for i in 0..n {
             let Some(c) = conns.at(i) else {
                 self.napi[i] = 0;
+                self.asked[i] = false;
                 continue;
             };
             if self.napi[i] == 0 {
                 self.napi[i] = sys::incoming_napi_id(c.fd()).unwrap_or(0);
             }
             let id = self.napi[i];
-            if id == 0 {
-                unknown = true;
-            } else if seen.contains(&id) {
-                continue;
-            } else {
-                seen.push(id);
+            if id != 0 {
+                if self.seen.contains(&id) {
+                    continue;
+                }
+                self.seen.push(id);
             }
+            // Unknown queues are all read: nothing is missed meanwhile.
             self.polled[i] = true;
             self.reps.push(i);
         }
-        self.dirty = unknown;
+        // Unknown ids wait for their socket's first data or the periodic
+        // look-again, not the next poll.
+        self.dirty = false;
     }
 
     fn wait(&mut self, stats: &mut DriverStats) -> Result<usize> {
@@ -261,27 +359,10 @@ impl Epoll {
             return Ok(0);
         };
         stats.epoll_wait_calls += 1;
-        #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
-        let max = MAX_EVENTS as libc::c_int;
-        let n = if self.mode == Mode::Busy {
-            // SAFETY: valid fd, event buffer of MAX_EVENTS, timeout pointer, no sigmask.
-            unsafe {
-                libc::syscall(
-                    libc::SYS_epoll_pwait2,
-                    ep.as_raw_fd(),
-                    self.events.as_mut_ptr(),
-                    max,
-                    &raw const self.wait,
-                    std::ptr::null::<libc::sigset_t>(),
-                    0usize,
-                )
-            }
-        } else {
-            // SAFETY: `events` has room for MAX_EVENTS entries.
-            libc::c_long::from(unsafe {
-                libc::epoll_wait(ep.as_raw_fd(), self.events.as_mut_ptr(), max, 0)
-            })
-        };
+        // At most 65 536 (`Config::validate`).
+        let max = libc::c_int::try_from(self.events.len()).unwrap_or(libc::c_int::MAX);
+        // SAFETY: `events` has room for `max` entries.
+        let n = unsafe { libc::epoll_wait(ep.as_raw_fd(), self.events.as_mut_ptr(), max, 0) };
         if let Ok(n) = usize::try_from(n) {
             return Ok(n);
         }
@@ -292,44 +373,6 @@ impl Epoll {
             Err(Error::Io(e))
         }
     }
-}
-
-/// `struct epoll_params` (Linux 6.9+).
-#[repr(C)]
-struct EpollParams {
-    busy_poll_usecs: u32,
-    busy_poll_budget: u16,
-    prefer_busy_poll: u8,
-    pad: u8,
-}
-
-/// `EPIOCSPARAMS = _IOW(0x8A, 0x01, struct epoll_params)`.
-const EPIOCSPARAMS: libc::c_ulong = (1 << 30) | (8 << 16) | (0x8A << 8) | 0x01;
-
-fn set_epoll_busy_poll(ep: RawFd, cfg: &Config) -> Result<()> {
-    let p = EpollParams {
-        busy_poll_usecs: cfg.busy_poll_us,
-        busy_poll_budget: cfg.busy_poll_budget.unwrap_or(8),
-        prefer_busy_poll: u8::from(cfg.prefer_busy_poll),
-        pad: 0,
-    };
-    // SAFETY: `p` is a valid epoll_params for the duration of the call.
-    if unsafe { libc::ioctl(ep, EPIOCSPARAMS as _, &raw const p) } != 0 {
-        let e = std::io::Error::last_os_error();
-        return Err(match e.raw_os_error() {
-            Some(libc::ENOTTY) => {
-                Error::Unsupported("EPIOCSPARAMS (epoll busy poll) needs Linux 6.9 or newer")
-            }
-            Some(libc::EOPNOTSUPP) => Error::Unsupported(
-                "the kernel was built without busy polling (CONFIG_NET_RX_BUSY_POLL)",
-            ),
-            Some(libc::EPERM) => {
-                Error::Config("busy_poll_budget above 64 needs CAP_NET_ADMIN".to_owned())
-            }
-            _ => Error::Io(e),
-        });
-    }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -345,7 +388,7 @@ mod tests {
     struct Stub {
         fd: OwnedFd,
         rx: Vec<u8>,
-        tx: Vec<u8>,
+        tx: crate::stream::TxQueue,
         route: RouteSlot,
     }
 
@@ -371,7 +414,7 @@ mod tests {
             Ok(Self {
                 fd,
                 rx: Vec::new(),
-                tx: Vec::new(),
+                tx: crate::stream::TxQueue::default(),
                 route: RouteSlot::default(),
             })
         }
@@ -384,7 +427,7 @@ mod tests {
         fn rx_space(&mut self) -> &mut [u8] {
             &mut self.rx
         }
-        fn tx_queue(&mut self) -> &mut Vec<u8> {
+        fn tx_queue(&mut self) -> &mut crate::stream::TxQueue {
             &mut self.tx
         }
         fn has_buffered_input(&self) -> bool {
@@ -401,7 +444,7 @@ mod tests {
     fn per_queue() -> R<(Epoll, Conns<Stub>)> {
         let mut cfg = Config::new(Backend::RecvBusy);
         cfg.per_queue = true;
-        Ok((Epoll::new(&cfg)?, Conns::new()))
+        Ok((Epoll::new(&cfg)?, Conns::with_capacity(0)))
     }
 
     fn install(ep: &mut Epoll, conns: &mut Conns<Stub>) -> R<usize> {
@@ -442,6 +485,50 @@ mod tests {
             "the replacement is never a polling representative: {:?}",
             ep.reps
         );
+        Ok(())
+    }
+
+    /// Sockets with no NAPI id (loopback, a plain veth) never learn one:
+    /// the representatives are not rebuilt every poll (one getsockopt per
+    /// socket and an allocation each time), only on the periodic
+    /// look-again, and the rebuild reuses its scratch space.
+    #[test]
+    fn unknown_queues_are_looked_up_again_only_now_and_then() -> R {
+        let (mut ep, mut conns) = per_queue()?;
+        install(&mut ep, &mut conns)?;
+        install(&mut ep, &mut conns)?;
+        for _ in 0..10_000 {
+            ep.refresh_reps(&mut conns);
+        }
+        // The first poll after the adds, then the look-again at 4096 and 8192.
+        assert_eq!(ep.picks, 3, "picks over 10,000 polls");
+        assert_eq!(ep.reps, [0, 1], "unknown queues are all still read");
+        let cap = ep.seen.capacity();
+        for _ in 0..10_000 {
+            ep.refresh_reps(&mut conns);
+        }
+        assert_eq!(ep.seen.capacity(), cap, "the scratch space grew");
+        Ok(())
+    }
+
+    /// A socket's first data asks for its queue once: the next poll looks it
+    /// up, and later data on a socket that still has no id (loopback, a
+    /// plain veth) asks nothing until the periodic look-again.
+    #[test]
+    fn first_data_looks_a_queue_up_once() -> R {
+        let (mut ep, mut conns) = per_queue()?;
+        install(&mut ep, &mut conns)?;
+        install(&mut ep, &mut conns)?;
+        ep.refresh_reps(&mut conns);
+        assert_eq!(ep.picks, 1, "the adds");
+        for _ in 0..100 {
+            ep.data_arrived(0);
+            ep.refresh_reps(&mut conns);
+        }
+        assert_eq!(ep.picks, 2, "one look-up after the first data");
+        ep.data_arrived(1);
+        ep.refresh_reps(&mut conns);
+        assert_eq!(ep.picks, 3, "the other socket's first data");
         Ok(())
     }
 

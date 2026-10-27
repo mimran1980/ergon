@@ -45,6 +45,13 @@ pub struct Report {
     pub cntfrq_hz: u64,
     pub detail: Vec<String>,
     pub error: Option<String>,
+    /// The embedded driver's DPDK counters at the end of the run, summed by
+    /// `<role>.<dir>.<name>` (`sender.rx.icmp-echo=5;...`), sorted; empty for
+    /// kernel UDP. The vdev scenarios assert on them.
+    pub dpdk_counters: String,
+    /// The embedded driver's distinct error log at the end of the run, one
+    /// entry per error, joined by ` | `.
+    pub driver_errors: String,
 }
 
 impl Report {
@@ -75,6 +82,8 @@ impl Report {
         s.push_str(&format!("  \"clock_measured_hz\": {},\n", self.clock_measured_hz));
         s.push_str(&format!("  \"clock_reason\": {},\n", json_str(&self.clock_reason)));
         s.push_str(&format!("  \"cntfrq_hz\": {},\n", self.cntfrq_hz));
+        s.push_str(&format!("  \"dpdk_counters\": {},\n", json_str(&self.dpdk_counters)));
+        s.push_str(&format!("  \"driver_errors\": {},\n", json_str(&self.driver_errors)));
         s.push_str("  \"detail\": [\n");
         for (i, d) in self.detail.iter().enumerate() {
             s.push_str(&format!("    {}", json_str(d)));
@@ -112,9 +121,80 @@ fn json_str(s: &str) -> String {
     out
 }
 
+/// The key a DPDK counter's label sums under: `<role>.<dir>.<name>` from
+/// `rusteron-dpdk role=<role> bdf=<bdf> port=<n> q=<n> dir=<dir> <name> ...`
+/// (port-info appends its details after the name); `None` for any other label.
+pub fn dpdk_counter_key(label: &str) -> Option<String> {
+    let rest = label.strip_prefix("rusteron-dpdk role=")?;
+    let role = rest.split_whitespace().next()?;
+    let (_, after_dir) = rest.split_once(" dir=")?;
+    let mut words = after_dir.split_whitespace();
+    let dir = words.next()?;
+    let name = words.next()?;
+    Some(format!("{role}.{dir}.{name}"))
+}
+
+/// `key=value` pairs, summed per key and sorted, joined by `;`.
+pub fn sum_counters(values: impl IntoIterator<Item = (String, i64)>) -> String {
+    let mut sums = std::collections::BTreeMap::<String, i64>::new();
+    for (key, value) in values {
+        *sums.entry(key).or_default() += value;
+    }
+    sums.iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dpdk_counter_labels_key_by_role_dir_and_name() {
+        assert_eq!(
+            dpdk_counter_key("rusteron-dpdk role=sender bdf=net_tap0 port=0 q=0 dir=rx icmp-echo").as_deref(),
+            Some("sender.rx.icmp-echo")
+        );
+        assert_eq!(
+            dpdk_counter_key("rusteron-dpdk role=receiver bdf=net_tap1 port=1 q=0 dir=tx arp-miss").as_deref(),
+            Some("receiver.tx.arp-miss")
+        );
+        assert_eq!(
+            dpdk_counter_key(
+                "rusteron-dpdk role=sender bdf=net_tap0 port=0 q=0 dir=- port-info driver=net_tap mac=02:00:00:00:00:01"
+            )
+            .as_deref(),
+            Some("sender.-.port-info")
+        );
+        assert_eq!(dpdk_counter_key("NAKs sent: 0"), None);
+        assert_eq!(dpdk_counter_key("rusteron-dpdk role=sender"), None);
+    }
+
+    #[test]
+    fn counters_sum_per_key_sorted() {
+        let line = sum_counters([
+            ("sender.tx.pkts".to_string(), 3),
+            ("receiver.rx.pkts".to_string(), 2),
+            ("sender.tx.pkts".to_string(), 4),
+        ]);
+        assert_eq!(line, "receiver.rx.pkts=2;sender.tx.pkts=7");
+    }
+
+    #[test]
+    fn the_report_carries_counters_and_errors() {
+        let report = Report {
+            dpdk_counters: "sender.rx.icmp-echo=5".to_string(),
+            driver_errors: "next hop 10.9.0.254 does not answer ARP".to_string(),
+            ..Report::default()
+        };
+        let json = report.to_json();
+        assert!(json.contains("\"dpdk_counters\": \"sender.rx.icmp-echo=5\","), "{json}");
+        assert!(
+            json.contains("\"driver_errors\": \"next hop 10.9.0.254 does not answer ARP\","),
+            "{json}"
+        );
+    }
 
     /// The vdev script reads `"<field>": <value>` up to the next comma: the
     /// transport's clock, its rate and `CNTFRQ_EL0` come out that way.

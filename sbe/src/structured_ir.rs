@@ -140,7 +140,7 @@ pub(crate) struct MessageStructure {
     pub(crate) id: u16,
     pub(crate) since_version: u16,
     pub(crate) description: Option<String>,
-    pub(crate) deprecated: bool,
+    pub(crate) deprecated: Option<u16>,
     pub(crate) semantic_type: Option<String>,
     /// Root fixed-block length in bytes (schema `blockLength` when declared and
     /// larger than the tight field packing, else the computed field span).
@@ -167,8 +167,13 @@ pub(crate) struct MessageField {
     pub(crate) null_value: Option<u64>,
     pub(crate) min_value: Option<u64>,
     pub(crate) max_value: Option<u64>,
+    /// Whether `min_value` is the schema's `minValue`, not the SBE default
+    /// ([`crate::Encoding::min_value_declared`]).
+    pub(crate) min_value_declared: bool,
+    /// Whether `max_value` is the schema's `maxValue`, not the SBE default.
+    pub(crate) max_value_declared: bool,
     pub(crate) description: Option<String>,
-    pub(crate) deprecated: bool,
+    pub(crate) deprecated: Option<u16>,
     pub(crate) semantic_type: Option<String>,
     pub(crate) constant_value: Option<String>,
     /// Epoch for timestamp fields (e.g. `"unix"`); feeds `MetaAttribute::Epoch`.
@@ -177,6 +182,10 @@ pub(crate) struct MessageField {
     pub(crate) time_unit: Option<String>,
     /// Character encoding for fixed char arrays (e.g. `"ASCII"`).
     pub(crate) character_encoding: Option<String>,
+    /// The `<type>` alias a primitive field was declared with (`Timestamp`
+    /// for `type="Timestamp"`); `None` for a built-in primitive or a
+    /// composite, enum or set field, whose name is in [`FieldType`].
+    pub(crate) type_alias: Option<String>,
     pub(crate) field_type: FieldType,
 }
 
@@ -230,7 +239,7 @@ pub(crate) struct MessageGroup {
     pub(crate) name: String,
     pub(crate) id: u16,
     pub(crate) since_version: u16,
-    pub(crate) deprecated: bool,
+    pub(crate) deprecated: Option<u16>,
     pub(crate) description: Option<String>,
     pub(crate) dimension_type: String,
     pub(crate) fields: Vec<MessageField>,
@@ -368,7 +377,7 @@ pub(crate) struct MessageVarData {
     pub(crate) name: String,
     pub(crate) id: u16,
     pub(crate) since_version: u16,
-    pub(crate) deprecated: bool,
+    pub(crate) deprecated: Option<u16>,
     pub(crate) description: Option<String>,
     pub(crate) type_name: String,
     pub(crate) max_length: Option<usize>,
@@ -467,6 +476,8 @@ pub(crate) fn parse_field_structure(tokens: &[Token], elements: &SchemaElements)
     let null_value = begin.encoding.null_value;
     let min_value = begin.encoding.min_value;
     let max_value = begin.encoding.max_value;
+    let min_value_declared = begin.encoding.min_value_declared;
+    let max_value_declared = begin.encoding.max_value_declared;
     let description = begin.encoding.description.clone();
     let deprecated = begin.encoding.deprecated;
     let semantic_type = begin.encoding.semantic_type.clone();
@@ -474,6 +485,7 @@ pub(crate) fn parse_field_structure(tokens: &[Token], elements: &SchemaElements)
     let epoch = begin.encoding.epoch.clone();
     let time_unit = begin.encoding.time_unit.clone();
     let character_encoding = begin.encoding.character_encoding.clone();
+    let type_alias = begin.encoding.referenced_type.clone();
 
     let field_type = if tokens.len() > 2 {
         let inner_signal = tokens[1].signal;
@@ -540,6 +552,8 @@ pub(crate) fn parse_field_structure(tokens: &[Token], elements: &SchemaElements)
         null_value,
         min_value,
         max_value,
+        min_value_declared,
+        max_value_declared,
         description,
         deprecated,
         semantic_type,
@@ -547,6 +561,7 @@ pub(crate) fn parse_field_structure(tokens: &[Token], elements: &SchemaElements)
         epoch,
         time_unit,
         character_encoding,
+        type_alias,
         field_type,
     }
 }
@@ -1017,13 +1032,16 @@ mod tests {
             null_value: None,
             min_value: None,
             max_value: None,
+            min_value_declared: false,
+            max_value_declared: false,
             description: None,
-            deprecated: false,
+            deprecated: None,
             semantic_type: None,
             constant_value: None,
             epoch: None,
             time_unit: None,
             character_encoding: None,
+            type_alias: None,
             field_type: FieldType::Primitive(PrimitiveType::Char, Some(size)),
         }
     }

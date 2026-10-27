@@ -30,7 +30,10 @@
 #     Kubernetes CPU is one physical core as the launch template leaves it;
 #     it computes the kernel command line from that topology (nosmt, no
 #     C-state cap), retries its network steps, holds kubelet back
-#     when it fails, and does nothing on an already provisioned node;
+#     when it fails, and does nothing on an already provisioned node; on
+#     Graviton4 and Graviton5 (CPU parts 0xd4f, 0xd84) it builds the arm64
+#     line (no nosmt, iommu.passthrough=1), and it fails closed on any other
+#     CPU, on 64 KiB pages and without 2 MiB hugepages;
 #   * userdata.sh fits EC2's user-data limit gzipped with an incompressible
 #     CA, carries the kubelet settings (no Memory Manager, CPU quota left at
 #     its default so every pod's CPU limit holds) and embeds the node
@@ -621,8 +624,9 @@ expect_fail "provision IRQ CPU outside housekeeping" "not a housekeeping CPU" \
 expect_fail "provision dry run on the host's /sys" "RUSTERON_DRY_RUN" \
     fixture_env RUSTERON_SYSFS_ROOT=/sys RUSTERON_DRY_RUN=1 "$PROVISION"
 cp "$PROC/cpuinfo" "$TMP/cpuinfo.intel"
-printf 'processor\t: 0\nBogoMIPS\t: 2100.00\nCPU implementer\t: 0x41\n' > "$PROC/cpuinfo"
-expect_fail "provision on Graviton" "Intel x86" fixture_env RUSTERON_DRY_RUN=1 "$PROVISION"
+# An x86 CPU that is not Intel still fails closed.
+printf 'processor\t: 0\nvendor_id\t: AuthenticAMD\nflags\t\t: fpu tsc hypervisor\n' > "$PROC/cpuinfo"
+expect_fail "provision on AMD x86" "Intel x86" fixture_env RUSTERON_DRY_RUN=1 "$PROVISION"
 assert_grep "dry-run: would hold kubelet back" "$TMP/err"
 cp "$TMP/cpuinfo.intel" "$PROC/cpuinfo"
 echo "$PROVISIONED_CMDLINE" > "$PROC/cmdline"
@@ -672,6 +676,68 @@ echo 0 > "$SYSFS/devices/system/cpu/smt/active"
 echo on > "$SYSFS/devices/system/cpu/smt/control"
 echo "$PROVISIONED_CMDLINE" > "$PROC/cmdline"
 echo "SMT transition assertions PASSED"
+
+# --- 5c. provision on Graviton (aarch64) --------------------------------------
+# Graviton4 (c8g, Neoverse V2, CPU part 0xd4f) and Graviton5 (c9g, Neoverse
+# V3, 0xd84; Linux arch/arm64/include/asm/cputype.h). No SMT, no TSC, no
+# hypervisor flag in arm64's cpuinfo. arm64 ignores x86's iommu=pt; Graviton
+# metal's SMMU needs iommu.passthrough=1 (benches/cloud/host.sh boot_args).
+# A 64 KiB-page kernel (not qualified) fails closed, as does any
+# other CPU.
+echo "== provision-node.sh (Graviton) =="
+graviton_cpuinfo() { # <CPU part> [implementer]
+    printf 'processor\t: 0\nBogoMIPS\t: 2000.00\nFeatures\t: fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics sve2\nCPU implementer\t: %s\nCPU architecture: 8\nCPU variant\t: 0x0\nCPU part\t: %s\nCPU revision\t: 1\n' \
+        "${2:-0x41}" "$1"
+}
+GRAVITON_ARGS="isolcpus=nohz,domain,managed_irq,$ISO nohz_full=$ISO rcu_nocbs=$ISO irqaffinity=0 iommu.passthrough=1 transparent_hugepage=never hugepagesz=2M hugepages=2048"
+echo "BOOT_IMAGE=/boot/vmlinuz ro" > "$PROC/cmdline"
+for part in 0xd4f 0xd84; do
+    graviton_cpuinfo "$part" > "$PROC/cpuinfo"
+    fixture_env RUSTERON_NODE_ENV="$TMP/node.env" RUSTERON_PAGE_SIZE=4096 RUSTERON_DRY_RUN=1 "$PROVISION" \
+        2>"$TMP/graviton.err" || { cat "$TMP/graviton.err" >&2; die "provision on Graviton ($part) failed"; }
+    assert_grep "dry-run: kernel args: $GRAVITON_ARGS" "$TMP/graviton.err"
+    assert_no_grep "iommu=pt" "$TMP/graviton.err"
+    assert_no_grep "nosmt" "$TMP/graviton.err"
+    assert_no_grep "clocksource=" "$TMP/graviton.err"
+    assert_no_grep "hold kubelet" "$TMP/graviton.err"
+    assert_grep "dry-run: would run: systemctl reboot" "$TMP/graviton.err"
+done
+assert_grep "Graviton5 (Neoverse V3)" "$TMP/graviton.err"
+graviton_cpuinfo 0xd4f > "$PROC/cpuinfo"
+fixture_env RUSTERON_NODE_ENV="$TMP/node.env" RUSTERON_PAGE_SIZE=4096 RUSTERON_DRY_RUN=1 "$PROVISION" 2>"$TMP/graviton.err" \
+    || { cat "$TMP/graviton.err" >&2; die "provision on Graviton4 failed"; }
+assert_grep "Graviton4 (Neoverse V2)" "$TMP/graviton.err"
+# Graviton3 (0xd40), Graviton2 (0xd0c) and any other Arm core fail closed, and
+# so does a V2 part from another implementer.
+for part in 0xd40 0xd0c 0xd8e; do
+    graviton_cpuinfo "$part" > "$PROC/cpuinfo"
+    expect_fail "provision on Arm CPU part $part" "implementer/part 0x41/$part" \
+        fixture_env RUSTERON_PAGE_SIZE=4096 RUSTERON_DRY_RUN=1 "$PROVISION"
+    assert_grep "dry-run: would hold kubelet back" "$TMP/err"
+done
+graviton_cpuinfo 0xd4f 0x48 > "$PROC/cpuinfo"
+expect_fail "provision on a non-Arm implementer" "implementer/part 0x48/0xd4f" \
+    fixture_env RUSTERON_PAGE_SIZE=4096 RUSTERON_DRY_RUN=1 "$PROVISION"
+# No CPU part at all (no vendor either): fail closed, never a guess.
+printf 'processor\t: 0\nBogoMIPS\t: 2000.00\n' > "$PROC/cpuinfo"
+expect_fail "provision on an unknown CPU" "not Intel x86 or Graviton4/5 (vendor '', implementer/part /)" fixture_env RUSTERON_DRY_RUN=1 "$PROVISION"
+graviton_cpuinfo 0xd4f > "$PROC/cpuinfo"
+# 64 KiB pages: only 4 KiB pages are qualified; fail closed.
+expect_fail "provision on 64 KiB pages" "65536-byte pages" \
+    fixture_env RUSTERON_PAGE_SIZE=65536 RUSTERON_DRY_RUN=1 "$PROVISION"
+assert_grep "dry-run: would hold kubelet back" "$TMP/err"
+# 4 KiB pages but no 2 MiB hugepage size: also fail closed.
+mv "$SYSFS/kernel/mm/hugepages/hugepages-2048kB" "$TMP/hugepages-2048kB.saved"
+expect_fail "provision without 2 MiB hugepages" "need 4 KiB pages and 2 MiB hugepages" \
+    fixture_env RUSTERON_PAGE_SIZE=4096 RUSTERON_DRY_RUN=1 "$PROVISION"
+mv "$TMP/hugepages-2048kB.saved" "$SYSFS/kernel/mm/hugepages/hugepages-2048kB"
+# The page size override is for fixtures only: the dry-run guard already
+# refuses the host's /sys, and RUSTERON_FORCE_TSC is x86's.
+expect_fail "provision Graviton with a forced TSC" "x86 only" \
+    fixture_env RUSTERON_FORCE_TSC=1 RUSTERON_PAGE_SIZE=4096 RUSTERON_DRY_RUN=1 "$PROVISION"
+cp "$TMP/cpuinfo.intel" "$PROC/cpuinfo"
+echo "$PROVISIONED_CMDLINE" > "$PROC/cmdline"
+echo "Graviton provision assertions PASSED"
 
 # --- 6. userdata.sh ----------------------------------------------------------
 echo "== userdata.sh =="

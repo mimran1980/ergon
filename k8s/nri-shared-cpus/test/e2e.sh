@@ -208,7 +208,7 @@ cleanup() {
         [[ -z "$c" ]] && continue
         if ! grep -qxF "$c" <<<"$pre_containers"; then
             case "$c" in
-            ergon-nri* | "$CLUSTER" | "$NODE")
+            "ergon-nri-kind-$$" | ergon-nri-check-e2e | ergon-nri-kindbuild | "$CLUSTER" | "$NODE")
                 say "  rm container $c"
                 docker rm -f "$c" >/dev/null 2>&1
                 ;;
@@ -219,10 +219,10 @@ cleanup() {
     local v
     while read -r v; do
         [[ -z "$v" ]] && continue
-        # Only volumes this run created. A pre-existing ergon-* volume is
-        # another workflow's cache: keep it. The kind tools volume is a run
-        # artifact and is always ours.
-        if ! grep -qxF "$v" <<<"$pre_volumes" || [[ "$v" == "$TOOLS_VOL" ]]; then
+        # Only this run's volumes: the kind tools volume always, the Go
+        # module cache when this run created it. Any other volume, new or
+        # not, belongs to another job on the same Docker.
+        if [[ "$v" == "$TOOLS_VOL" ]] || { [[ "$v" == "$GOMOD_VOL" ]] && ! grep -qxF "$v" <<<"$pre_volumes"; }; then
             say "  rm volume $v"
             docker volume rm -f "$v" >/dev/null 2>&1
         fi
@@ -231,11 +231,10 @@ cleanup() {
     local img
     while read -r img; do
         [[ -z "$img" || "$img" == "<none>:<none>" ]] && continue
-        # Only images this run built or loaded. Never match on a shared name
-        # like kindest/node or another workflow's stamped ergon-* image: those
-        # belong to whoever pulled them, and deleting them breaks their run.
-        if ! grep -qxF "$img" <<<"$pre_images" \
-            || [[ "$img" == ergon-nri* || "$img" == "$PLUGIN_IMAGE" || "$img" == "$TEST_IMAGE" ]]; then
+        # Only the two images this run builds. Never "anything new since the
+        # start" or a name pattern: another job building on the same Docker
+        # meanwhile (e.g. a cloud lab's ergon-nri/* images) owns its images.
+        if [[ "$img" == "$PLUGIN_IMAGE" || "$img" == "$TEST_IMAGE" ]]; then
             say "  rmi $img"
             docker rmi -f "$img" >/dev/null 2>&1
         fi
@@ -309,8 +308,10 @@ step1_build_load() {
     # --cap-add=SYS_NICE: SetTimerSlack writes another task's
     # /proc/PID/timerslack_ns, which the kernel refuses without CAP_SYS_NICE.
     # The OCI hook has the capability; the tests run where the write can work.
+    # The admission policy the unit tests read lives in the sibling
+    # nri-latency-pods module, mounted where scripts/check.sh mounts it.
     must docker run --rm --name "ergon-nri-check-e2e" --cap-add=SYS_NICE \
-        -v "$ROOT":/src -w /src \
+        -v "$ROOT":/src -v "$ROOT/../nri-latency-pods/admission":/admission:ro -w /src \
         -v "$GOMOD_VOL":/go/pkg/mod \
         "$GO_IMAGE" bash scripts/check.sh --local || return 1
 

@@ -23,9 +23,15 @@ pub enum DpdkError {
     InvalidConfiguration(String),
     /// DPDK or the native transport returned an error code and message.
     Native(String),
+    /// Azure: a `net_netvsc` port has no accelerated-networking VF attached,
+    /// so DPDK would run on the synthetic `VMBus` path, slower than kernel UDP.
+    /// Only MANA VFs are supported (a Mellanox VF is not). Names the port and
+    /// the fix; `RUSTERON_DPDK_ALLOW_SYNTHETIC=1` starts anyway, for
+    /// diagnosis only.
+    NoAcceleratedVf(String),
     /// Installation through the Aeron context failed.
     Aeron(String),
-    /// Under `RUSTERON_MEDIA_DRIVER_HOST_CHECK=require`, a host check warned
+    /// Under `ERGON_HOST_CHECKS=require`, a host check warned
     /// ([`crate::checks`]): the driver was not started. Names the warnings,
     /// which were printed in full.
     HostCheck(String),
@@ -46,6 +52,7 @@ impl fmt::Display for DpdkError {
             Self::InvalidEnvironment(msg) => write!(f, "invalid environment value: {msg}"),
             Self::InvalidConfiguration(msg) => write!(f, "invalid DPDK configuration: {msg}"),
             Self::Native(msg) => write!(f, "DPDK native error: {msg}"),
+            Self::NoAcceleratedVf(msg) => write!(f, "no accelerated-networking VF: {msg}"),
             Self::Aeron(msg) => write!(f, "Aeron installation error: {msg}"),
             Self::HostCheck(msg) => write!(f, "host check refused to start the driver: {msg}"),
         }

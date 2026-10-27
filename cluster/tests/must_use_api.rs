@@ -88,14 +88,14 @@ fn cluster_claim_has_must_use_attribute() {
 
 /// T-10: pin the bounded list so a mutating poll/dispatch/transition method
 /// is never annotated `#[must_use]` alongside the pure decision observers —
-/// discarding `close()`/`poll()`/`poll_state_changes()`/`finish()` after
+/// discarding `close()`/`poll()`/`finish()` after
 /// calling it (for the side effect) is intentionally allowed.
 #[test]
 fn mutating_transition_methods_stay_unannotated() {
     let src = include_str!("../src/client.rs");
     for sig in [
         "pub fn close(&mut self)",
-        "pub fn poll_state_changes(&mut self)",
+        "pub fn poll<L: EgressListener>(&mut self",
         "pub fn poll(&mut self)",
         "pub fn finish(self)",
     ] {

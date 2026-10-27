@@ -829,7 +829,7 @@ checksum = "00d174d5400e5e8fd687ad1049e2f578285fa914201b1af7e8b112a4546bd826"
 
 [[package]]
 name = "ergo-aeron-cluster"
-version = "0.1.33"
+version = "0.1.34"
 dependencies = [
  "criterion",
  "ergo-sbe",
@@ -843,7 +843,7 @@ dependencies = [
 
 [[package]]
 name = "ergo-aeron-cluster-test-harness"
-version = "0.1.33"
+version = "0.1.34"
 dependencies = [
  "ergo-aeron-cluster",
  "rusteron-client",
@@ -853,7 +853,7 @@ dependencies = [
 
 [[package]]
 name = "ergo-sbe"
-version = "0.1.33"
+version = "0.1.34"
 dependencies = [
  "bytes",
  "chrono",
@@ -875,7 +875,7 @@ dependencies = [
 
 [[package]]
 name = "ergo-sbe-benchmarks"
-version = "0.1.33"
+version = "0.1.34"
 dependencies = [
  "bytes",
  "chrono",
@@ -883,6 +883,7 @@ dependencies = [
  "criterion",
  "ergo-sbe",
  "hdrhistogram",
+ "quanta",
  "rust_decimal",
  "sbe_tool_extension",
  "sbe_tool_group_with_data",
@@ -892,7 +893,7 @@ dependencies = [
 
 [[package]]
 name = "ergon-io"
-version = "0.1.33"
+version = "0.1.34"
 dependencies = [
  "base64 0.23.1",
  "curl",
@@ -901,8 +902,10 @@ dependencies = [
  "io-uring",
  "libc",
  "mio",
+ "proptest",
  "rcgen",
  "ring",
+ "rustix",
  "rustls",
  "socket2",
  "tokio",
@@ -910,8 +913,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ergon-latency-core"
+version = "0.1.34"
+dependencies = [
+ "hdrhistogram",
+ "libc",
+ "quanta",
+ "sha2",
+]
+
+[[package]]
 name = "ergon-md-dpdk"
-version = "0.1.33"
+version = "0.1.34"
 dependencies = [
  "cc",
  "criterion",
@@ -920,6 +933,7 @@ dependencies = [
  "libc",
  "log",
  "pkg-config",
+ "proptest",
  "rusteron-media-driver",
  "rustix",
  "serial_test",
@@ -927,7 +941,7 @@ dependencies = [
 
 [[package]]
 name = "ergon-md-dpdk-device-plugin"
-version = "0.1.33"
+version = "0.1.34"
 dependencies = [
  "env_logger",
  "hyper-util",
@@ -946,10 +960,12 @@ dependencies = [
 
 [[package]]
 name = "ergon-md-dpdk-harness"
-version = "0.1.33"
+version = "0.1.34"
 dependencies = [
  "env_logger",
+ "ergon-latency-core",
  "ergon-md-dpdk",
+ "ergon-tune",
  "hdrhistogram",
  "libc",
  "log",
@@ -960,7 +976,7 @@ dependencies = [
 
 [[package]]
 name = "ergon-tune"
-version = "0.1.33"
+version = "0.1.34"
 dependencies = [
  "rustix",
 ]

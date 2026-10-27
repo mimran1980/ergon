@@ -11,7 +11,7 @@
 mod common;
 use common::compile_and_run;
 
-use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
+use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
 
 const SCHEMA_XML: &str = r#"<messageSchema package="clash" id="1" version="0" byteOrder="littleEndian">
   <types>
@@ -35,7 +35,7 @@ const SCHEMA_XML: &str = r#"<messageSchema package="clash" id="1" version="0" by
 #[test]
 fn optional_and_array_fields_named_after_reserved_methods_compile()
 -> Result<(), Box<dyn std::error::Error>> {
-    let schema = Schema::from_ir(parse(SCHEMA_XML)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(SCHEMA_XML))?);
     let src = Generator::new(GenerationConfig::new("clash"))
         .generate(&schema)?
         .modules()
@@ -138,7 +138,7 @@ const ENCODER_CLASH_SCHEMA: &str = r#"<messageSchema package="eclash" id="1" ver
 
 #[test]
 fn fields_named_after_encoder_methods_compile() -> Result<(), Box<dyn std::error::Error>> {
-    let schema = Schema::from_ir(parse(ENCODER_CLASH_SCHEMA)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(ENCODER_CLASH_SCHEMA))?);
     let src = Generator::new(GenerationConfig::new("eclash"))
         .generate(&schema)?
         .modules()
@@ -242,7 +242,7 @@ const REWIND_CLASH_SCHEMA: &str = r#"<messageSchema package="rewclash" id="1" ve
 
 #[test]
 fn rewind_field_vs_consuming_method() -> Result<(), Box<dyn std::error::Error>> {
-    let schema = Schema::from_ir(parse(REWIND_CLASH_SCHEMA)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(REWIND_CLASH_SCHEMA))?);
     let src = Generator::new(GenerationConfig::new("rewclash"))
         .generate(&schema)?
         .modules()
@@ -301,7 +301,7 @@ fn optional_fixed_field_runtime() -> Result<(), Box<dyn std::error::Error>> {
     <field name="maybe" id="2" type="uint16" presence="optional" offset="2"/>
   </message>
 </messageSchema>"#;
-    let schema = Schema::from_ir(parse(xml)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(xml))?);
     let src = Generator::new(GenerationConfig::new("optfix"))
         .generate(&schema)?
         .modules()
@@ -357,7 +357,7 @@ fn rust_keyword_field_names_compile() -> Result<(), Box<dyn std::error::Error>> 
       </message>
     </messageSchema>"#;
 
-    let schema = Schema::from_ir(parse(keyword_schema)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(keyword_schema))?);
     let src = Generator::new(GenerationConfig::new("kw"))
         .generate(&schema)?
         .modules()
@@ -430,7 +430,7 @@ fn rust_keyword_message_name_self_compiles() -> Result<(), Box<dyn std::error::E
       </message>
     </messageSchema>"#;
 
-    let schema = Schema::from_ir(parse(keyword_msg_schema)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(keyword_msg_schema))?);
     let src = Generator::new(GenerationConfig::new("kwmsg"))
         .generate(&schema)?
         .modules()
@@ -483,7 +483,7 @@ fn keyword_field_fails_compile_without_append_token() -> Result<(), Box<dyn std:
       </message>
     </messageSchema>"#;
 
-    let schema = Schema::from_ir(parse(keyword_schema)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(keyword_schema))?);
     // Empty append token — "type" + "" is still the keyword `type`, which is
     // now rejected as configuration before any code is emitted.
     let config = GenerationConfig::new("kwfail").with_keyword_append_token("");
@@ -504,7 +504,7 @@ fn keyword_field_fails_compile_without_append_token() -> Result<(), Box<dyn std:
 }
 
 fn generate_src(xml: &str, pkg: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let schema = Schema::from_ir(parse(xml)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(xml))?);
     Ok(Generator::new(GenerationConfig::new(pkg))
         .generate(&schema)?
         .modules()
@@ -756,7 +756,7 @@ const TAIL_CLASH_XML: &str = r#"<messageSchema package="tailclash" id="9" versio
 
 #[test]
 fn tail_accessors_yield_to_colliding_field_names() -> Result<(), Box<dyn std::error::Error>> {
-    let schema = Schema::from_ir(parse(TAIL_CLASH_XML)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(TAIL_CLASH_XML))?);
     let src = Generator::new(GenerationConfig::new("tailclash"))
         .generate(&schema)?
         .modules()
@@ -830,7 +830,7 @@ fn entry_fields_named_acting_version_and_block_length_compile()
     </group>
   </message>
 </messageSchema>"#;
-    let schema = Schema::from_ir(parse(XML)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(XML))?);
     let src = Generator::new(GenerationConfig::new("entrynames"))
         .generate(&schema)?
         .modules()
@@ -923,7 +923,7 @@ fn acting_names_yield_on_tail_owners_and_ordered_lanes() -> Result<(), Box<dyn s
     <data name="actingVersion" id="4" type="varStringEncoding"/>
   </message>
 </messageSchema>"#;
-    let schema = Schema::from_ir(parse(XML)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(XML))?);
     let src = Generator::new(GenerationConfig::new("actingtails"))
         .generate(&schema)?
         .modules()
@@ -1059,7 +1059,7 @@ fn nested_entry_fields_named_acting_version_compile() -> Result<(), Box<dyn std:
     </group>
   </message>
 </messageSchema>"#;
-    let schema = Schema::from_ir(parse(XML)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(XML))?);
     let src = Generator::new(GenerationConfig::new("nestedacting"))
         .generate(&schema)?
         .modules()
@@ -1160,7 +1160,7 @@ const DOMAIN_CLASH_XML: &str = r#"<messageSchema package="domclash" id="1" versi
 #[test]
 fn domain_accessors_named_after_reserved_and_tail_methods_compile()
 -> Result<(), Box<dyn std::error::Error>> {
-    let schema = Schema::from_ir(parse(DOMAIN_CLASH_XML)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(DOMAIN_CLASH_XML))?);
     let src = Generator::new(
         GenerationConfig::new("domclash")
             .with_domain_type(

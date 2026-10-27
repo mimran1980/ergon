@@ -6,7 +6,8 @@
  * Only the first
  * resolution of a next hop waits (a zero send result Aeron retries; requests
  * at most one per 100 ms). Once learned, a next hop never leaves the send
- * path: after 30 s a refresh request goes out alongside the traffic, retried
+ * path: after 30 s a refresh request goes out alongside the traffic (after
+ * the data frames of the send that found it due), retried
  * at most once a second, while sends keep using the cached MAC — no pause,
  * ever, and an unanswered refresh keeps the MAC. A refresh's answer may move
  * the next hop to a new MAC (addresses change under Kubernetes).
@@ -72,11 +73,17 @@ typedef struct rusteron_dpdk_arp_table_stct
     rusteron_dpdk_arp_entry_t entries[RUSTERON_DPDK_ARP_TABLE_SIZE];
     int full_reported;           /* a next hop found no room and was reported... */
     uint64_t full_report_ns;     /* ...at this time: again at most once a minute */
+    /* A refresh request a resolve found due, sent by
+     * rusteron_dpdk_arp_send_due after the send's data frames. */
+    int refresh_due;
+    uint32_t refresh_ip;
 } rusteron_dpdk_arp_table_t;
 
 /*
  * Resolve a next hop. Returns 1 and copies the MAC for any learned (REACHABLE)
- * entry, starting a background refresh when a learned one is 30 s old. An
+ * entry; when a learned one is 30 s old (or stale) its refresh request falls
+ * due, sent by rusteron_dpdk_arp_send_due once the caller's data frames have
+ * gone, never before them. An
  * unresolved next hop returns 0 while its first resolution runs (the entry
  * INCOMPLETE, requests 100 ms apart; the caller reports a retryable zero-send
  * result). Once it has gone unanswered for 3 s it is FAILED, as Linux's
@@ -114,6 +121,17 @@ int rusteron_dpdk_arp_resolve(
  */
 void rusteron_dpdk_arp_observe(
     rusteron_dpdk_arp_table_t *table, uint32_t src_ip, const uint8_t src_mac[RUSTERON_DPDK_ETH_ADDR_LEN]);
+
+/* Send the refresh request the last resolve found due, if any: the caller
+ * calls it after the send's data frames went (or failed to). */
+void rusteron_dpdk_arp_send_due(
+    rusteron_dpdk_arp_table_t *table, rusteron_dpdk_transport_t *runtime, rusteron_dpdk_port_t *port);
+
+/* Forget an unresolved (INCOMPLETE or FAILED) entry for `ip`, so its next
+ * resolve starts afresh: the start-time gateway check's silent gateway. Only
+ * when no entry follows it in its probe window (an emptied slot must not
+ * hide one); a learned entry is kept. */
+void rusteron_dpdk_arp_forget(rusteron_dpdk_arp_table_t *table, uint32_t ip);
 
 /* Install a learned (REACHABLE) entry directly: tests. -1 when full. */
 int rusteron_dpdk_arp_seed(

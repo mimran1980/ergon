@@ -11,6 +11,7 @@
 # and just before each driver starts; a reset mid-run is not undone until
 # then, and `loss` counts what landed elsewhere (isolated-nic-irqs).
 LAB_PROC_ROOT=${LAB_PROC_ROOT:-/proc}
+LAB_SYS_ROOT=${LAB_SYS_ROOT:-/sys}
 
 # irqs_pin <housekeeping CPU> <when>: irqbalance stopped, every IRQ's
 # affinity and new IRQs' default the housekeeping CPU (the first core's, so
@@ -173,6 +174,138 @@ irqs_pin_queues() {
     line=$(irqs_queues_check "$cpu" "$@") || rc=1
     echo "irqs $when: $line" >&2
     return $rc
+}
+
+# The transport suite's IRQ core (host.sh transport_cpu_map): every data-NIC
+# interrupt on one CPU, by the NICs' own sysfs: each interface's MSI IRQs
+# (class/net/<if>/device/msi_irqs: the VF's queues; MANA's one PCI function
+# serves every port, the management NIC's too) and its VMBus channels
+# (class/net/<if>/device/channels/<n>/cpu: Hyper-V signals a netvsc channel
+# on that CPU). irqs_pin_data <CPU> <when> <iface>...: each moved there (after
+# irqs_pin put everything else on housekeeping), then irqs_data_check's
+# lines, "irqs <when>: ..." on stderr; 1 when one stays elsewhere or there is
+# none to move.
+irqs_pin_data() {
+    local cpu=$1 when=$2 i f rc=0 line
+    shift 2
+    for i in "$@"; do
+        for f in "$LAB_SYS_ROOT/class/net/$i/device/msi_irqs"/*; do
+            [[ -e $f ]] || continue
+            echo "$cpu" | sudo tee "$LAB_PROC_ROOT/irq/${f##*/}/smp_affinity_list" >/dev/null 2>&1 || true
+        done
+        for f in "$LAB_SYS_ROOT/class/net/$i/device/channels"/*/cpu; do
+            [[ -e $f ]] || continue
+            echo "$cpu" | sudo tee "$f" >/dev/null 2>&1 || true
+        done
+    done
+    line=$(irqs_data_check "$cpu" "$@") || rc=1
+    echo "irqs $when: $(tr '\n' ';' <<<"$line" | sed 's/;$//')" >&2
+    return $rc
+}
+
+# irqs_data_settle <CPU> <when> <kick> <iface>...: every data-NIC MSI IRQ
+# irqs_pin_data gave <CPU> effective there before a point starts. x86 under
+# Hyper-V (hv_pci, no interrupt remapping) moves an IRQ to a new affinity
+# only at its next interrupt, which its old CPU still takes: in a real
+# session the mlx5 completion vectors no traffic had used since pinning each
+# fired once on its own isolated CPU mid-run, whenever a connection first
+# used its queue. So each IRQ still effective elsewhere is fired now:
+# `<kick> <cpu> <iface>` (the caller's: a frame sent from <cpu>, which goes
+# out on that CPU's queue, whose completion raises its vector) from each CPU
+# it is effective on, up to three times. Then "irqs <when>: <k> of <n>
+# data-NIC IRQs effective on CPU <CPU>" and what moved, or what still lags,
+# on stderr. A lag is reported, not fatal (fairness.py's irq rule counts what
+# lands on a hot CPU); an IRQ with no effective list is the affinity's.
+irqs_data_settle() {
+    local cpu=$1 when=$2 kick=$3 i f irq iface eff c try from n=0 moved='' lag=''
+    shift 3
+    while read -r irq iface; do
+        [[ -n $irq ]] || continue
+        n=$((n + 1))
+        eff=$(cat "$LAB_PROC_ROOT/irq/$irq/effective_affinity_list" 2>/dev/null) || eff=
+        [[ -z $eff || $eff == "$cpu" ]] && continue
+        from=$eff
+        for try in 1 2 3; do
+            for c in $(cpu_list_expand "$eff"); do
+                [[ $c == "$cpu" ]] || "$kick" "$c" "$iface" >/dev/null 2>&1 </dev/null || true
+            done
+            eff=$(cat "$LAB_PROC_ROOT/irq/$irq/effective_affinity_list" 2>/dev/null) || eff=
+            [[ $eff == "$cpu" ]] && break
+        done
+        if [[ $eff == "$cpu" ]]; then moved+="${moved:+, }$irq moved by a frame from CPU $from"; else lag+="${lag:+ }$irq@$eff"; fi
+    done < <(for i in "$@"; do
+        for f in "$LAB_SYS_ROOT/class/net/$i/device/msi_irqs"/*; do
+            [[ -e $f ]] && echo "${f##*/} $i"
+        done
+    done | sort -n -u -k1,1)
+    local lagging
+    lagging=$(wc -w <<<"$lag")
+    echo "irqs $when: $((n - lagging)) of $n data-NIC IRQs effective on CPU $cpu${moved:+ ($moved)}${lag:+; still on another until their next interrupt: $lag (after 3 frames from each)}" >&2
+    return 0
+}
+
+# cpu_list_expand <list>: a CPU list ("1-3,5") one CPU a word
+cpu_list_expand() {
+    local part
+    for part in ${1//,/ }; do
+        if [[ $part == *-* ]]; then seq "${part%-*}" "${part#*-}"; else echo "$part"; fi
+    done | tr '\n' ' '
+}
+
+# irqs_data_check <CPU> <iface>...: one line per data-NIC IRQ (its affinity)
+# and VMBus channel (its cpu): "ok <iface> irq <n>" or "FAIL <iface> irq <n>
+# on <CPUs>"; then "<k> of <n> on CPU <CPU>"; 1 unless all are, or with none
+irqs_data_check() {
+    local cpu=$1 i f c n=0 ok=0
+    shift
+    for i in "$@"; do
+        for f in "$LAB_SYS_ROOT/class/net/$i/device/msi_irqs"/*; do
+            [[ -e $f ]] || continue
+            n=$((n + 1))
+            c=$(cat "$LAB_PROC_ROOT/irq/${f##*/}/smp_affinity_list" 2>/dev/null) || c=
+            if [[ $c == "$cpu" ]]; then ok=$((ok + 1)); echo "ok $i irq ${f##*/}"; else echo "FAIL $i irq ${f##*/} on ${c:-?}"; fi
+        done
+        for f in "$LAB_SYS_ROOT/class/net/$i/device/channels"/*/cpu; do
+            [[ -e $f ]] || continue
+            n=$((n + 1))
+            c=$(cat "$f" 2>/dev/null) || c=
+            f=${f%/cpu}
+            if [[ $c == "$cpu" ]]; then ok=$((ok + 1)); echo "ok $i channel ${f##*/}"; else echo "FAIL $i channel ${f##*/} on ${c:-?}"; fi
+        done
+    done
+    echo "$ok of $n data-NIC interrupts on CPU $cpu"
+    ((n > 0 && ok == n))
+}
+
+# irqs_hot_delta <before> <after> <cpulist>: the interrupts each listed CPU
+# took between two /proc/interrupts snapshots, "cpu<n>=<all>/<device>" for
+# each (all: every row, the timer and IPIs too; device: the numbered IRQs'),
+# space-separated; nothing for a CPU neither snapshot lists
+irqs_hot_delta() {
+    awk -v cpus=",$3," '
+        FNR == 1 {f++; for (i = 1; i <= NF; i++) col[f, i + 1] = $i; ncol[f] = NF; next}
+        {
+            dev = $1 ~ /^[0-9]+:$/
+            for (i = 2; i <= ncol[f] + 1; i++) {
+                name = col[f, i]
+                if ($i !~ /^[0-9]+$/) break
+                c = substr(name, 4)
+                if (index(cpus, "," c ",") == 0) continue
+                all[f, c] += $i
+                if (dev) dv[f, c] += $i
+                seen[c] = 1
+            }
+        }
+        END {
+            n = split(substr(cpus, 2, length(cpus) - 2), list, ",")
+            for (j = 1; j <= n; j++) {
+                c = list[j]
+                if (!(c in seen)) continue
+                printf "%scpu%s=%d/%d", sep, c, all[2, c] - all[1, c], dv[2, c] - dv[1, c]
+                sep = " "
+            }
+            print ""
+        }' "$1" "$2"
 }
 
 # irqs_on_cpu <CPU>: "irqs=<n> timer=<n>[ <IPI>=<n>...]" taken on that CPU,

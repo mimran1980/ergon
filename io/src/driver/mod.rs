@@ -19,8 +19,8 @@
 //! let mut app = App;
 //! loop {
 //!     driver.poll(&mut app)?; // receive, decode, deliver, flush
-//!     // ... the rest of the duty cycle; sends queued here go out on the next
-//!     // poll, or call driver.flush() to send now.
+//!     // ... the rest of the duty cycle; sends queued here go out first on
+//!     // the next poll (before it reads), or call driver.flush() to send now.
 //! #   break;
 //! }
 //! # Ok(()) }
@@ -38,8 +38,8 @@ use crate::backend::{Backend, Config};
 use crate::checks::{self, DevContext, HostReport};
 use crate::clock::{monotonic_ns, rdtsc, ticks_per_us};
 use crate::dns::{DnsConfig, Lookup, Resolver};
-use crate::endpoint::sealed::RouteSlot;
-use crate::endpoint::{ConnId, ConnMut, Dial, DriverStats, Endpoint, Handler, Receive};
+use crate::endpoint::sealed::{Io, RouteSlot};
+use crate::endpoint::{ConnId, ConnMut, Dial, DriverStats, Endpoint, Handler, Receive, TcpInfo};
 use crate::error::{Error, Result};
 use crate::placement::{self, CpuError};
 use crate::route::{self, Flow, QuickAckCheck, QuickAckError, RouteCheck};
@@ -52,6 +52,8 @@ mod conn_checks;
 mod epoll;
 #[cfg(test)]
 mod placement_tests;
+#[cfg(test)]
+mod tx_dirty_tests;
 #[cfg(feature = "uring")]
 mod uring;
 
@@ -66,17 +68,32 @@ struct Conns<E> {
     reserved: Vec<bool>,
     /// Closed endpoints the kernel no longer references, waiting to be freed
     /// (on the helper thread when there is one: `Driver::free_closed`).
+    /// Emptied by every call that fills it, and with room for every slot
+    /// (grown in `reserve`), so a close never allocates in `poll`.
     closed: Vec<E>,
+    /// The send set: slots that may hold queued sends, each listed once, so
+    /// a send pass visits these and not every slot. A slot is listed when a
+    /// send may have been queued (`Driver::get_mut`, a receive, a timer, an
+    /// endpoint installed with bytes queued) and leaves when a pass finds
+    /// its queue empty or the slot closed; one whose bytes did not all go
+    /// out (a full socket, a send in flight) stays. Its capacity grows with
+    /// the slots in `reserve`, so listing a slot never allocates in `poll`.
+    tx_dirty: Vec<usize>,
+    /// Per slot: listed in `tx_dirty`.
+    tx_listed: Vec<bool>,
 }
 
 impl<E> Conns<E> {
-    const fn new() -> Self {
+    /// Room for `n` slots before `reserve` grows anything.
+    fn with_capacity(n: usize) -> Self {
         Self {
-            slots: Vec::new(),
-            gens: Vec::new(),
-            closing: Vec::new(),
-            reserved: Vec::new(),
-            closed: Vec::new(),
+            slots: Vec::with_capacity(n),
+            gens: Vec::with_capacity(n),
+            closing: Vec::with_capacity(n),
+            reserved: Vec::with_capacity(n),
+            closed: Vec::with_capacity(n),
+            tx_dirty: Vec::with_capacity(n),
+            tx_listed: Vec::with_capacity(n),
         }
     }
 
@@ -118,6 +135,13 @@ impl<E> Conns<E> {
                 self.gens.push(1);
                 self.closing.push(false);
                 self.reserved.push(false);
+                self.tx_listed.push(false);
+                // Every slot can be listed once, and closed once between
+                // two frees: room for all of them.
+                self.tx_dirty
+                    .reserve(self.slots.len().saturating_sub(self.tx_dirty.len()));
+                self.closed
+                    .reserve(self.slots.len().saturating_sub(self.closed.len()));
                 self.slots.len() - 1
             });
         self.reserved[i] = true;
@@ -177,8 +201,30 @@ impl<E> Conns<E> {
         std::mem::forget(std::mem::take(&mut self.slots));
     }
 
+    /// Lists slot `i` in the send set (once).
+    fn mark_tx(&mut self, i: usize) {
+        if let Some(listed) = self.tx_listed.get_mut(i)
+            && !*listed
+        {
+            *listed = true;
+            self.tx_dirty.push(i);
+        }
+    }
+
+    /// Takes entry `k` (an index into `tx_dirty`) out of the send set; the
+    /// last entry moves into its place.
+    fn unlist_tx(&mut self, k: usize) {
+        if k < self.tx_dirty.len() {
+            let i = self.tx_dirty.swap_remove(k);
+            if let Some(listed) = self.tx_listed.get_mut(i) {
+                *listed = false;
+            }
+        }
+    }
+
     /// Removes slot `i` at once, invalidating its id; the endpoint is freed
-    /// later (see `closed`).
+    /// later (see `closed`). A send-set entry it leaves behind is dropped by
+    /// the next send pass.
     fn remove(&mut self, i: usize) {
         if self.is_closing(i) {
             return;
@@ -187,6 +233,54 @@ impl<E> Conns<E> {
             self.gens[i] = self.gens[i].wrapping_add(1);
             self.closed.push(e);
         }
+    }
+}
+
+impl<E: Endpoint> Conns<E> {
+    /// Lists slot `i` in the send set if it is open with bytes queued.
+    fn mark_tx_if_queued(&mut self, i: usize) {
+        if self.is_open(i) && self.at(i).is_some_and(Io::has_tx) {
+            self.mark_tx(i);
+        }
+    }
+
+    /// Test-only cross-check of the send set against a full scan: each
+    /// slot listed once and `tx_listed` agreeing with the list; every open
+    /// slot with bytes queued listed; with `exact`, no open slot listed
+    /// with an empty queue (what holds after a send pass).
+    #[cfg(test)]
+    fn tx_dirty_check(&mut self, exact: bool) -> std::result::Result<(), String> {
+        let mut seen = vec![false; self.slots.len()];
+        for &i in &self.tx_dirty {
+            match seen.get_mut(i) {
+                Some(s) if !*s => *s = true,
+                Some(_) => return Err(format!("slot {i} listed twice: {:?}", self.tx_dirty)),
+                None => return Err(format!("slot {i} listed but out of range")),
+            }
+        }
+        if seen != self.tx_listed {
+            return Err(format!(
+                "flags {:?} disagree with the list {:?}",
+                self.tx_listed, self.tx_dirty
+            ));
+        }
+        for (i, listed) in seen.into_iter().enumerate() {
+            if !self.is_open(i) {
+                continue;
+            }
+            let queued = self.at(i).map_or(0, |c| c.tx_queue().len());
+            if queued > 0 && !listed {
+                return Err(format!(
+                    "slot {i} has {queued} bytes queued but is not listed"
+                ));
+            }
+            if exact && queued == 0 && listed {
+                return Err(format!(
+                    "slot {i} is listed after a send pass with nothing queued"
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -203,10 +297,14 @@ enum Imp {
 /// endpoints with deadlines).
 const EXPIRY_CHECK_US: u32 = 250;
 
-/// Polls between two counter reads for that check on backends that never
-/// sleep: a counter read costs more than a whole idle `uring-spin` poll, so
-/// most polls only count down.
+/// Polls between two counter reads for that check: a counter read costs
+/// more than a whole idle `uring-sqpoll` poll, so most polls only count
+/// down.
 const EXPIRY_POLLS: u32 = 64;
+
+/// Slots `Driver::new` makes room for (the send set's included) before the
+/// first connection; more grow in `Driver::add` and `Driver::connect`.
+const INITIAL_SLOTS: usize = 64;
 
 /// How often connections being set up are advanced, in microseconds.
 const SETUP_STEP_US: u32 = 20;
@@ -218,16 +316,15 @@ struct SockOpts {
     timestamps: bool,
     rcvbuf: Option<u32>,
     busy_poll_us: u32,
-    /// `recv-busy` only: preferred busy polling and the packet budget (epoll
-    /// and `io_uring` take theirs on the instance).
-    prefer_busy_poll: bool,
-    busy_poll_budget: Option<u16>,
     quickack: QuickAckCheck,
     backend: Backend,
     /// TCP keepalive: idle, interval and count (idle 0: left alone), and
     /// `TCP_USER_TIMEOUT` (0: left alone).
     keepalive: (u32, u32, u32),
     user_timeout_ms: u32,
+    /// `TCP_RTO_MIN_US` and `TCP_DELACK_MAX_US` (`None`: left alone).
+    rto_min_us: Option<u32>,
+    delack_max_us: Option<u32>,
     /// The egress-device checks' context (the driver's hot CPUs).
     ctx: Arc<DevContext>,
 }
@@ -244,16 +341,15 @@ impl SockOpts {
         Self {
             timestamps: cfg.rx_timestamps,
             rcvbuf: cfg.rcvbuf,
-            // Only the backends that poll through the socket set SO_BUSY_POLL;
-            // the others set 0 so a sysctl default cannot leak in.
+            // `recv-busy` polls through the socket: 1 µs, so an empty read
+            // makes one NAPI pass. `epoll-spin` takes `busy_poll_us` (0 by
+            // default); `uring-sqpoll` sets 0. Always set, so a sysctl
+            // default (`net.core.busy_read`) cannot leak in.
             busy_poll_us: match cfg.backend {
-                Backend::EpollBusy | Backend::RecvBusy => cfg.busy_poll_us.max(1),
-                _ => 0,
+                Backend::RecvBusy => 1,
+                Backend::EpollSpin => cfg.busy_poll_us,
+                Backend::UringSqpoll => 0,
             },
-            prefer_busy_poll: cfg.backend == Backend::RecvBusy && cfg.prefer_busy_poll,
-            busy_poll_budget: cfg
-                .busy_poll_budget
-                .filter(|_| cfg.backend == Backend::RecvBusy),
             quickack: cfg.quickack_check,
             backend: cfg.backend,
             keepalive: (
@@ -262,11 +358,15 @@ impl SockOpts {
                 cfg.keepalive_count,
             ),
             user_timeout_ms: cfg.tcp_user_timeout_ms,
+            rto_min_us: cfg.tcp_rto_min_us,
+            delack_max_us: cfg.tcp_delack_max_us,
             ctx: Arc::clone(ctx),
         }
     }
 
-    fn apply(&self, fd: RawFd) -> Result<()> {
+    /// `datagram`: a UDP socket, which takes the socket-level options only
+    /// (timestamps, `SO_RCVBUF`, `SO_BUSY_POLL`), no TCP one.
+    fn apply(&self, fd: RawFd, datagram: bool) -> Result<()> {
         if self.timestamps {
             sys::enable_rx_timestamps(fd)?;
         }
@@ -274,6 +374,9 @@ impl SockOpts {
             sys::set_rcvbuf(fd, b)?;
         }
         sys::set_busy_poll(fd, self.busy_poll_us)?;
+        if datagram {
+            return Ok(());
+        }
         let (idle, interval, count) = self.keepalive;
         if idle > 0 {
             sys::set_tcp_keepalive(fd, idle, interval, count)?;
@@ -281,21 +384,7 @@ impl SockOpts {
         if self.user_timeout_ms > 0 {
             sys::set_tcp_user_timeout(fd, self.user_timeout_ms)?;
         }
-        let privileged = |what: &str, e: std::io::Error| {
-            if e.kind() == std::io::ErrorKind::PermissionDenied {
-                Error::Config(format!("{what} needs CAP_NET_ADMIN"))
-            } else {
-                Error::Io(e)
-            }
-        };
-        if self.prefer_busy_poll {
-            sys::set_prefer_busy_poll(fd, true)
-                .map_err(|e| privileged("prefer_busy_poll (SO_PREFER_BUSY_POLL)", e))?;
-        }
-        if let Some(b) = self.busy_poll_budget {
-            sys::set_busy_poll_budget(fd, b)
-                .map_err(|e| privileged("busy_poll_budget (SO_BUSY_POLL_BUDGET)", e))?;
-        }
+        sys::apply_tcp_timers(fd, self.rto_min_us, self.delack_max_us)?;
         Ok(())
     }
 
@@ -311,7 +400,8 @@ impl SockOpts {
     /// up here (`require`; `warn` off the polling thread), or under `warn` on
     /// the polling thread queued to the warning thread, which fills in the
     /// connection's [`RouteCheck`] later. Either way the warning thread then
-    /// checks the NAPI id and the egress device.
+    /// checks the NAPI id and the egress device. A datagram endpoint gets
+    /// the socket-level options and no route check (quick ACK is TCP's).
     fn prepare<E: Endpoint>(
         &self,
         ep: &mut E,
@@ -320,7 +410,10 @@ impl SockOpts {
         on_loop: bool,
     ) -> Result<RouteCost> {
         let fd = ep.fd();
-        self.apply(fd)?;
+        self.apply(fd, E::DATAGRAM)?;
+        if E::DATAGRAM {
+            return Ok(RouteCost::default());
+        }
         if added && sys::tcp_nodelay_and_cork(fd)? == Some(true) {
             crate::warn::emit(checks::cork_line(id));
         }
@@ -374,6 +467,25 @@ fn require_route(fd: RawFd) -> std::result::Result<RouteCheck, QuickAckError> {
     route::check_socket(QuickAckCheck::Require, fd)
 }
 
+/// Hands the calling thread's page-fault counters to the warning thread
+/// (T19, [`crate::warn::State::watch_faults`]), once per thread: a second
+/// driver on the same thread adds nothing. A `stat` that cannot be opened
+/// is one info line.
+fn watch_faults(host: &ergon_tune::Host) {
+    thread_local! {
+        static WATCHED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+    if WATCHED.with(|w| w.replace(true)) {
+        return;
+    }
+    match ergon_tune::FaultWatch::open(host, ergon_tune::Thread::Current, ergon_tune::Role::Loop) {
+        Ok(watch) => crate::warn::run(move |st| st.watch_faults(watch)),
+        Err(e) => crate::warn::once(format!(
+            "ergon-io info: T19 unknown: cannot watch the polling thread's page faults: {e}"
+        )),
+    }
+}
+
 #[allow(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -400,7 +512,8 @@ pub struct Driver<E> {
     imp: Imp,
     conns: Conns<E>,
     stats: DriverStats,
-    read_seq: u64,
+    /// Read sequence numbers and ergon-io's own receive stamp.
+    reads: Reads,
     /// An added endpoint holds input that arrived during its handshake; the next
     /// `poll` delivers it before reading the socket.
     buffered: bool,
@@ -413,11 +526,22 @@ pub struct Driver<E> {
     /// Counter value at which deadlines are next checked (`E::DEADLINES`).
     next_expiry: u64,
     expiry_ticks: u64,
-    /// Polls until the counter is read for that check, and the reset value.
+    /// Polls until the counter is read for that check.
     expiry_countdown: u32,
-    expiry_polls: u32,
     /// Counter value at which connection set-up is next advanced.
     next_setup: u64,
+    /// `get_mut` handed out a connection (or one was installed with bytes
+    /// queued) since the last send pass: `poll` sends before its receive
+    /// pass. Which connections is the send set (`Conns::tx_dirty`).
+    tx_fresh: bool,
+    /// Per slot: the last passive `TCP_INFO` sample.
+    tcp_info: Vec<Option<TcpInfo>>,
+    /// Counter ticks between two sampling rounds (0: off), the counter
+    /// value at which the next round starts, and the next slot of the
+    /// current round (past the end: no round running).
+    tcp_info_ticks: u64,
+    next_tcp_info: u64,
+    tcp_info_cursor: usize,
     setup_ticks: u64,
     /// The background connect thread, started by the first `connect_background`.
     /// It also frees closed connections.
@@ -453,6 +577,11 @@ impl<E: Endpoint> Driver<E> {
     /// [`Error::HostCheck`]: `ERGON_HOST_CHECKS` is set to something other
     /// than `off`, `on` or `require`, or it is `require` and a host check
     /// warned (after its lines were printed).
+    /// [`Error::Unsupported`]: `tcp_rto_min_us` or `tcp_delack_max_us` on a
+    /// kernel before 6.15; a datagram endpoint (`UdpConn`) on a backend
+    /// other than `epoll-spin`. [`Error::Config`]: one of them below two ticks of
+    /// this kernel, or not whole ticks (checked on a probe socket: user space
+    /// cannot read `CONFIG_HZ`).
     pub fn new(cfg: Config) -> Result<Self> {
         Self::with_dns(cfg, DnsConfig::system())
     }
@@ -474,6 +603,14 @@ impl<E: Endpoint> Driver<E> {
         host: &ergon_tune::Host,
     ) -> Result<Self> {
         cfg.validate()?;
+        if E::DATAGRAM && cfg.backend != Backend::EpollSpin {
+            return Err(Error::Unsupported(
+                "UDP endpoints (UdpConn) run on the epoll-spin backend only",
+            ));
+        }
+        // A timer this kernel lacks, refuses or would round fails now, not
+        // at the first connection.
+        sys::probe_tcp_timers(cfg.tcp_rto_min_us, cfg.tcp_delack_max_us)?;
         // The one switch over every host-check warning (`ERGON_HOST_CHECKS`).
         let policy = ergon_tune::HostCheckPolicy::from_env()?;
         // I-host and I3 (see `crate::checks`), and where the helper threads
@@ -493,6 +630,10 @@ impl<E: Endpoint> Driver<E> {
             &helpers,
             &placement::thread_cpus(&helpers, placement::sqpoll_of(&cfg)),
         );
+        // T19: the polling thread's page faults, read by the warning thread.
+        // Opened here, on the thread creating the driver (the polling thread,
+        // as for the other hot-thread checks), once per thread.
+        watch_faults(host);
         // Each line once per process, under the switch (`off` drops the
         // warning lines).
         for l in report
@@ -515,15 +656,11 @@ impl<E: Endpoint> Driver<E> {
         let ctx = Arc::new(DevContext::new(&cfg, report.hot.clone()));
         let tpu = ticks_per_us();
         let imp = match cfg.backend {
-            Backend::EpollSpin | Backend::EpollBusy | Backend::RecvBusy => {
-                Imp::Epoll(epoll::Epoll::new(&cfg)?)
-            }
+            Backend::EpollSpin | Backend::RecvBusy => Imp::Epoll(epoll::Epoll::new(&cfg)?),
             #[cfg(feature = "uring")]
-            Backend::UringSpin | Backend::UringNapi | Backend::UringSqpoll => {
-                Imp::Uring(uring::Uring::new(&cfg)?)
-            }
+            Backend::UringSqpoll => Imp::Uring(uring::Uring::new(&cfg)?),
             #[cfg(not(feature = "uring"))]
-            Backend::UringSpin | Backend::UringNapi | Backend::UringSqpoll => {
+            Backend::UringSqpoll => {
                 return Err(Error::Unsupported(
                     "io_uring backends need the `uring` feature",
                 ));
@@ -531,9 +668,12 @@ impl<E: Endpoint> Driver<E> {
         };
         Ok(Self {
             imp,
-            conns: Conns::new(),
+            conns: Conns::with_capacity(INITIAL_SLOTS),
             stats: DriverStats::default(),
-            read_seq: 0,
+            reads: Reads {
+                seq: 0,
+                stamp: cfg.rx_read_timestamp,
+            },
             buffered: false,
             pending: Vec::new(),
             unreported: Vec::new(),
@@ -548,13 +688,17 @@ impl<E: Endpoint> Driver<E> {
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             expiry_ticks: (f64::from(EXPIRY_CHECK_US) * tpu) as u64,
             expiry_countdown: 1,
-            // A backend that sleeps has slow polls: read the counter on each.
-            expiry_polls: if cfg.backend.may_sleep() {
-                1
-            } else {
-                EXPIRY_POLLS
-            },
             next_setup: 0,
+            tx_fresh: false,
+            tcp_info: Vec::new(),
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            tcp_info_ticks: if cfg.tcp_info_interval_ms == 0 {
+                0
+            } else {
+                ((f64::from(cfg.tcp_info_interval_ms) * 1000.0 * tpu) as u64).max(1)
+            },
+            next_tcp_info: 0,
+            tcp_info_cursor: usize::MAX,
             background: None,
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             setup_ticks: (f64::from(SETUP_STEP_US) * tpu) as u64,
@@ -584,7 +728,9 @@ impl<E: Endpoint> Driver<E> {
 
     /// Takes over a connected, non-blocking endpoint. Sets its socket options
     /// (receive timestamps, `SO_RCVBUF`, `SO_BUSY_POLL`, `TCP_NODELAY`, TCP
-    /// keepalive and `TCP_USER_TIMEOUT`; `TCP_CORK` left on is reported),
+    /// keepalive, `TCP_USER_TIMEOUT`, and `TCP_RTO_MIN_US` /
+    /// `TCP_DELACK_MAX_US` when configured; `TCP_CORK` left on is reported;
+    /// a UDP socket gets the first three only, and no route check),
     /// checks its route for quick ACK
     /// (`Config::quickack_check`, see [`crate::route`]: under `warn` on
     /// ergon-io's warning thread, under `require` here) and starts
@@ -664,8 +810,10 @@ impl<E: Endpoint> Driver<E> {
     /// `Config::inline_connect_fallback` to have this call do that, or give
     /// the pod a second CPU; [`CpuError::Outside`] or
     /// [`CpuError::PollingCpu`] for a `connect_cpu` outside the process's
-    /// cpuset, or that is the polling CPU. Otherwise: the helper thread
-    /// could not be started.
+    /// cpuset, or that is the polling CPU. [`Error::Busy`] when the
+    /// helper's mailbox (1 024 messages, allocated once so the polling
+    /// thread's sends to it never allocate) is full. Otherwise: the helper
+    /// thread could not be started.
     pub fn connect_background<D>(&mut self, dial: D) -> Result<ConnId>
     where
         D: Dial<Conn = E> + Send + 'static,
@@ -848,7 +996,17 @@ impl<E: Endpoint> Driver<E> {
             return Err(e);
         }
         self.buffered |= ep.has_buffered_input();
+        // Sized here, where the slots grow, not in the sampling (polling) pass.
+        if self.tcp_info_ticks != 0 && self.tcp_info.len() <= i {
+            self.tcp_info.resize(i + 1, None);
+        }
+        if let Some(t) = self.tcp_info.get_mut(i) {
+            *t = None;
+        }
         self.conns.install(i, ep);
+        // It may hold sends queued before it was handed over.
+        self.conns.mark_tx_if_queued(i);
+        self.tx_fresh |= self.conns.tx_listed.get(i) == Some(&true);
         Ok(())
     }
 
@@ -905,10 +1063,11 @@ impl<E: Endpoint> Driver<E> {
     /// The connection, if `id` is still open, for queuing sends. The handle
     /// offers the connection's methods but cannot replace or move it.
     pub fn get_mut(&mut self, id: ConnId) -> Option<ConnMut<'_, E>> {
-        self.conns
-            .lookup(id)
-            .and_then(|i| self.conns.at(i))
-            .map(ConnMut::new)
+        let i = self.conns.lookup(id)?;
+        // The caller may queue a send: the next `poll` sends first.
+        self.conns.mark_tx(i);
+        self.tx_fresh = true;
+        self.conns.at(i).map(ConnMut::new)
     }
 
     /// Open connections.
@@ -963,9 +1122,16 @@ impl<E: Endpoint> Driver<E> {
                 .all(|(_, c)| sys::incoming_napi_id(c.fd()).unwrap_or(0) != 0)
     }
 
-    /// One iteration: receive whatever the kernel has, decode and deliver it,
-    /// then send queued bytes. Returns messages delivered. Never sleeps unless
-    /// the backend is [`Backend::EpollBusy`] or [`Backend::UringNapi`].
+    /// One iteration: send what was queued since the last poll (through
+    /// [`Driver::get_mut`]), receive whatever the kernel has, decode and
+    /// deliver it, then send what that queued. Returns messages delivered.
+    /// Never sleeps.
+    ///
+    /// An order queued between polls goes out before this poll's receive
+    /// pass, not behind `epoll_wait` and every ready feed's decoding. That
+    /// costs one more send pass, only in a poll after a `get_mut`. A send pass visits only the connections that
+    /// may have bytes queued (the send set), not every connection, so an
+    /// idle connection costs a poll nothing on the send side.
     ///
     /// # Errors
     /// The backend itself failed. Connection errors close that connection and
@@ -1001,26 +1167,29 @@ impl<E: Endpoint> Driver<E> {
             self.buffered = false;
             self.deliver_buffered(handler);
         }
-        let mut r = match &mut self.imp {
-            Imp::Epoll(e) => e.poll(
-                &mut self.conns,
-                handler,
-                &mut self.stats,
-                &mut self.read_seq,
-            ),
-            // Receives, sends and the kernel entry in one pass, so re-arms and
-            // sends share one io_uring_enter.
-            #[cfg(feature = "uring")]
-            Imp::Uring(u) => u.poll(
-                &mut self.conns,
-                handler,
-                &mut self.stats,
-                &mut self.read_seq,
-            ),
+        // Sends queued since the last poll leave before the receive pass.
+        let mut r = if self.tx_fresh {
+            self.send_queued(handler)
+        } else {
+            Ok(())
         };
-        if r.is_ok() && matches!(self.imp, Imp::Epoll(_)) {
+        if r.is_ok() {
+            r = match &mut self.imp {
+                Imp::Epoll(e) => e.poll(&mut self.conns, handler, &mut self.stats, &mut self.reads),
+                // Receives, sends and the kernel entry in one pass, so re-arms
+                // and sends share one io_uring_enter.
+                #[cfg(feature = "uring")]
+                Imp::Uring(u) => u.poll(&mut self.conns, handler, &mut self.stats, &mut self.reads),
+            };
+        }
+        // What the receive pass queued (replies, pongs) goes out now, and
+        // anything left unsent (a full socket) is retried here on every
+        // poll: both are in the send set. (`io_uring` sends inside its
+        // pass.)
+        if r.is_ok() && matches!(self.imp, Imp::Epoll(_)) && !self.conns.tx_dirty.is_empty() {
             r = self.send_queued(handler);
         }
+        self.tx_fresh = false;
         // After receiving, so a response already in the socket is not timed out.
         self.check_deadlines(handler);
         if !self.conns.closed.is_empty() {
@@ -1030,21 +1199,71 @@ impl<E: Endpoint> Driver<E> {
         Ok(usize::try_from(self.stats.messages - before).unwrap_or(usize::MAX))
     }
 
-    /// Every `expiry_polls` polls, reads the counter; every 250 µs, runs
+    /// Every [`EXPIRY_POLLS`] polls, reads the counter; every 250 µs, runs
     /// the endpoints' deadlines and timers.
     #[inline]
     fn check_deadlines<H: Handler>(&mut self, handler: &mut H) {
         if E::DEADLINES {
             self.expiry_countdown -= 1;
             if self.expiry_countdown == 0 {
-                self.expiry_countdown = self.expiry_polls;
+                self.expiry_countdown = EXPIRY_POLLS;
                 let t = rdtsc();
                 if t >= self.next_expiry {
                     self.next_expiry = t.wrapping_add(self.expiry_ticks);
                     self.expire_all(handler);
+                    if self.tcp_info_ticks != 0 {
+                        self.sample_tcp_info(t);
+                    }
                 }
             }
         }
+    }
+
+    /// Passive `TCP_INFO`: at most one connection per deadline check, so a
+    /// round over many connections never puts their `getsockopt` calls in
+    /// one poll. A round starts every `tcp_info_ticks`; a failed read leaves
+    /// the previous sample.
+    #[cold]
+    fn sample_tcp_info(&mut self, t: u64) {
+        let n = self.conns.len_slots();
+        if self.tcp_info_cursor >= n {
+            if t < self.next_tcp_info {
+                return;
+            }
+            self.next_tcp_info = t.wrapping_add(self.tcp_info_ticks);
+            self.tcp_info_cursor = 0;
+        }
+        while self.tcp_info_cursor < n {
+            let i = self.tcp_info_cursor;
+            self.tcp_info_cursor += 1;
+            if !self.conns.is_open(i) {
+                continue;
+            }
+            let Some(fd) = self.conns.at(i).map(|c| c.fd()) else {
+                continue;
+            };
+            let t0 = rdtsc();
+            let read = sys::tcp_info(fd);
+            let ns = ticks_ns(rdtsc().wrapping_sub(t0), self.ticks_per_us);
+            self.stats.tcp_info_samples += 1;
+            self.stats.tcp_info_max_ns = self.stats.tcp_info_max_ns.max(ns);
+            if let (Ok(mut info), Some(slot)) = (read, self.tcp_info.get_mut(i)) {
+                info.at_ns = monotonic_ns();
+                *slot = Some(info);
+            }
+            return;
+        }
+    }
+
+    /// The last passive `TCP_INFO` sample of `id`
+    /// (`Config::tcp_info_interval_ms`): `None` while sampling is off,
+    /// before the connection's first sample, or once `id` is closed.
+    #[must_use]
+    pub fn tcp_info(&self, id: ConnId) -> Option<&TcpInfo> {
+        self.conns
+            .lookup(id)
+            .and_then(|i| self.tcp_info.get(i))
+            .and_then(Option::as_ref)
     }
 
     /// Closes connections whose deadlines passed.
@@ -1059,11 +1278,15 @@ impl<E: Endpoint> Driver<E> {
             let Some(c) = self.conns.at(i) else {
                 continue;
             };
-            if let Err(e) = c.expire(now) {
-                let e = c.close_reason(e);
-                close_index(&mut self.imp, &mut self.conns, i);
-                self.stats.closed += 1;
-                handler.on_closed(id, e);
+            match c.expire(now) {
+                // A timer may have queued a send (a WebSocket Ping).
+                Ok(()) => self.conns.mark_tx_if_queued(i),
+                Err(e) => {
+                    let e = c.close_reason(e);
+                    close_index(&mut self.imp, &mut self.conns, i);
+                    self.stats.closed += 1;
+                    handler.on_closed(id, e);
+                }
             }
         }
     }
@@ -1074,7 +1297,6 @@ impl<E: Endpoint> Driver<E> {
     where
         E: Receive<H>,
     {
-        let meta = RxMeta::default();
         for i in 0..self.conns.len_slots() {
             let id = self.conns.id(i);
             if !self.conns.is_open(i) {
@@ -1086,6 +1308,8 @@ impl<E: Endpoint> Driver<E> {
             if !c.has_buffered_input() {
                 continue;
             }
+            // The upgrade read these bytes; the driver takes them now.
+            let meta = self.reads.buffered();
             // io_uring arms this connection's receive only now, after the
             // buffer layout has settled.
             let r = c.on_received(id, 0, &meta, handler);
@@ -1094,7 +1318,10 @@ impl<E: Endpoint> Driver<E> {
                 u.arm_initial(c, i);
             }
             match r {
-                Ok(n) => self.stats.messages += n as u64,
+                Ok(n) => {
+                    self.stats.messages += n as u64;
+                    self.conns.mark_tx_if_queued(i);
+                }
                 Err(e) => {
                     let e = c.close_reason(e);
                     close_index(&mut self.imp, &mut self.conns, i);
@@ -1140,28 +1367,46 @@ impl<E: Endpoint> Driver<E> {
     #[inline]
     #[cfg_attr(not(feature = "uring"), allow(clippy::unnecessary_wraps))]
     fn send_queued<H: Handler>(&mut self, handler: &mut H) -> Result<()> {
+        self.tx_fresh = false;
         match &mut self.imp {
+            Imp::Epoll(e) if E::DATAGRAM => {
+                send_datagrams(e, &mut self.conns, &mut self.stats, handler);
+                Ok(())
+            }
             Imp::Epoll(e) => {
-                for i in 0..self.conns.len_slots() {
-                    let Some(c) = self.conns.at(i) else {
+                // The send set only: a connection stays listed while bytes
+                // are left (a full socket) and leaves once it has none.
+                let mut k = 0;
+                while let Some(&i) = self.conns.tx_dirty.get(k) {
+                    let open = self.conns.is_open(i);
+                    let Some(c) = self.conns.at(i).filter(|_| open) else {
+                        self.conns.unlist_tx(k);
                         continue;
                     };
                     if c.tx_queue().is_empty() {
+                        self.conns.unlist_tx(k);
                         continue;
                     }
                     self.stats.send_calls += 1;
                     self.stats.sends += 1;
                     let fd = c.fd();
-                    match sys::send(fd, c.tx_queue()) {
+                    match sys::send(fd, c.tx_queue().pending()) {
                         Ok(n) => {
-                            c.tx_queue().drain(..n);
+                            // Moves the head only: the unsent tail stays put.
+                            c.tx_queue().sent(n);
                             c.on_handed(n);
+                            if c.tx_queue().is_empty() {
+                                self.conns.unlist_tx(k);
+                            } else {
+                                k += 1;
+                            }
                         }
                         Err(err) => {
                             let err = c.close_reason(err.into());
                             let id = self.conns.id(i);
                             e.remove(fd);
                             self.conns.remove(i);
+                            self.conns.unlist_tx(k);
                             self.stats.closed += 1;
                             handler.on_closed(id, err);
                         }
@@ -1195,6 +1440,70 @@ fn timestamp_keeper() -> Option<socket2::Socket> {
     let s = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::DGRAM, None).ok()?;
     sys::enable_rx_timestamps(s.as_raw_fd()).ok()?;
     Some(s)
+}
+
+/// The send pass of datagram endpoints (`epoll-spin`): each datagram of a
+/// connection in the send set goes to the kernel whole, in order, until its
+/// ring is empty (it leaves the set) or the socket's send buffer is full
+/// (it stays). `ECONNREFUSED` is counted, not a close: it reports an
+/// earlier datagram's ICMP port unreachable, the kernel sent nothing, and
+/// the datagram is tried once more in this pass.
+fn send_datagrams<E: Endpoint, H: Handler>(
+    e: &mut epoll::Epoll,
+    conns: &mut Conns<E>,
+    stats: &mut DriverStats,
+    handler: &mut H,
+) {
+    let mut k = 0;
+    while let Some(&i) = conns.tx_dirty.get(k) {
+        let open = conns.is_open(i);
+        let Some(c) = conns.at(i).filter(|_| open) else {
+            conns.unlist_tx(k);
+            continue;
+        };
+        let fd = c.fd();
+        let mut retried = false;
+        let mut failed = None;
+        let mut drained = false;
+        loop {
+            let Some(d) = c.pending_tx() else {
+                drained = true;
+                break;
+            };
+            stats.send_calls += 1;
+            stats.sends += 1;
+            match sys::send_datagram(fd, d) {
+                Ok(true) => {
+                    c.sent_tx();
+                    retried = false;
+                }
+                Ok(false) => break,
+                Err(err) if err.raw_os_error() == Some(libc::ECONNREFUSED) => {
+                    c.on_refused();
+                    if retried {
+                        break;
+                    }
+                    retried = true;
+                }
+                Err(err) => {
+                    failed = Some(c.close_reason(err.into()));
+                    break;
+                }
+            }
+        }
+        if let Some(err) = failed {
+            let id = conns.id(i);
+            e.remove(fd);
+            conns.remove(i);
+            conns.unlist_tx(k);
+            stats.closed += 1;
+            handler.on_closed(id, err);
+        } else if drained {
+            conns.unlist_tx(k);
+        } else {
+            k += 1;
+        }
+    }
 }
 
 fn close_index<E: Endpoint>(imp: &mut Imp, conns: &mut Conns<E>, i: usize) {
@@ -1251,34 +1560,93 @@ fn advance_one<E: Endpoint>(
     r
 }
 
-/// Reads once from `conn` through `slot` and delivers what arrived.
+/// The driver's reads: their sequence number, and whether each is stamped
+/// with ergon-io's own receive time (`Config::rx_read_timestamp`).
+pub struct Reads {
+    seq: u64,
+    stamp: bool,
+}
+
+impl Reads {
+    /// [`RxMeta`] for a read that returned data through `slot`: the next
+    /// sequence number, the kernel's stamps, and with `stamp` the time now
+    /// (read first, nearest the read). Off, no clock is read.
+    #[inline]
+    pub fn next(&mut self, slot: &sys::MsgSlot) -> RxMeta {
+        let rx_read_ns = if self.stamp {
+            crate::clock::realtime_ns()
+        } else {
+            0
+        };
+        self.seq += 1;
+        RxMeta {
+            rx_read_ns,
+            ..slot.meta(self.seq)
+        }
+    }
+
+    /// [`RxMeta`] for input an endpoint already held when it was added (the
+    /// frames the upgrade read with the 101, or bytes a blocking connect read
+    /// before `Driver::add`): the next sequence number, no
+    /// kernel stamps, and with `stamp` the time now, as the driver takes
+    /// them.
+    #[cold]
+    pub fn buffered(&mut self) -> RxMeta {
+        let rx_read_ns = if self.stamp {
+            crate::clock::realtime_ns()
+        } else {
+            0
+        };
+        self.seq += 1;
+        RxMeta {
+            rx_read_ns,
+            read_seq: self.seq,
+            ..RxMeta::default()
+        }
+    }
+}
+
+/// Reads once from `conn` through `slot` and delivers what arrived: `true`
+/// when bytes were delivered (which may have queued a send).
 fn recv_one<E, H>(
     conn: &mut E,
     id: ConnId,
     slot: &mut sys::MsgSlot,
     handler: &mut H,
     stats: &mut DriverStats,
-    read_seq: &mut u64,
-) -> Result<()>
+    reads: &mut Reads,
+) -> Result<bool>
 where
     E: Receive<H>,
     H: Handler,
 {
     slot.arm(conn.rx_space());
     stats.recvmsg_calls += 1;
-    match sys::recvmsg(conn.fd(), slot)? {
-        None => {
+    match sys::recvmsg(conn.fd(), slot) {
+        Ok(None) => {
             stats.recvmsg_eagain += 1;
-            Ok(())
+            Ok(false)
         }
-        Some(0) => Err(Error::Closed),
-        Some(n) => {
-            *read_seq += 1;
+        // A stream's end; a datagram endpoint's empty datagram.
+        Ok(Some(0)) if !E::DATAGRAM => Err(Error::Closed),
+        // Longer than the buffer: the kernel cut it. Dropped, counted.
+        Ok(Some(_)) if E::DATAGRAM && slot.truncated() => {
+            conn.on_truncated();
+            Ok(true)
+        }
+        Ok(Some(n)) => {
+            let meta = reads.next(slot);
             stats.completions += 1;
-            let meta = slot.meta(*read_seq);
             stats.messages += conn.on_received(id, n, &meta, handler)? as u64;
-            Ok(())
+            Ok(true)
         }
+        // An ICMP port unreachable for an earlier datagram: counted, the
+        // socket stays open.
+        Err(e) if E::DATAGRAM && e.raw_os_error() == Some(libc::ECONNREFUSED) => {
+            conn.on_refused();
+            Ok(true)
+        }
+        Err(e) => Err(e.into()),
     }
 }
 
@@ -1338,6 +1706,55 @@ mod tests {
                 return Err(format!("no progress: {stats:?}").into());
             }
         }
+    }
+
+    /// The `struct tcp_info` offsets `sys::tcp_info` reads, against the libc
+    /// crate's layout of the same struct (which stops before `tcpi_min_rtt`;
+    /// that one is checked against the uapi header's order: after
+    /// `tcpi_total_retrans`, four `__u64` and three `__u32`).
+    #[test]
+    fn tcp_info_offsets_match_the_kernel_struct() {
+        use std::mem::offset_of;
+        use sys::tcpi;
+        assert_eq!(tcpi::RTO, offset_of!(libc::tcp_info, tcpi_rto));
+        assert_eq!(tcpi::LOST, offset_of!(libc::tcp_info, tcpi_lost));
+        assert_eq!(tcpi::RTT, offset_of!(libc::tcp_info, tcpi_rtt));
+        assert_eq!(tcpi::RTTVAR, offset_of!(libc::tcp_info, tcpi_rttvar));
+        assert_eq!(
+            tcpi::TOTAL_RETRANS,
+            offset_of!(libc::tcp_info, tcpi_total_retrans)
+        );
+        let after_total_retrans = offset_of!(libc::tcp_info, tcpi_total_retrans) + 4;
+        // `tcpi_pacing_rate` is 8-aligned: no padding after the u32 at 100.
+        assert_eq!(tcpi::MIN_RTT, after_total_retrans + 4 * 8 + 3 * 4);
+    }
+
+    /// `ENOPROTOOPT` (a kernel before 6.15), or `EINVAL` from a kernel that
+    /// cannot even read the option, is `Unsupported` naming the option and
+    /// the kernel; `EINVAL` from one that can is the range check, a config
+    /// error naming the key; anything else is left to the caller.
+    #[test]
+    fn tcp_timer_errors_are_typed() -> R {
+        use sys::{TcpTimer, timer_error};
+        let errno = std::io::Error::from_raw_os_error;
+        for t in [TcpTimer::RtoMin, TcpTimer::DelackMax] {
+            for (e, known) in [
+                (libc::ENOPROTOOPT, false),
+                (libc::ENOPROTOOPT, true),
+                (libc::EINVAL, false),
+            ] {
+                let Some(Error::Unsupported(why)) = timer_error(t, 5_000, &errno(e), known) else {
+                    return Err(format!("{t:?} errno {e} known {known}: not Unsupported").into());
+                };
+                assert!(why.contains(t.name()) && why.contains("6.15"), "{why}");
+            }
+            let Some(Error::Config(why)) = timer_error(t, 5_000, &errno(libc::EINVAL), true) else {
+                return Err(format!("{t:?}: EINVAL from a kernel that knows it").into());
+            };
+            assert!(why.contains(t.key()) && why.contains("5000"), "{why}");
+            assert!(timer_error(t, 5_000, &errno(libc::EBADF), true).is_none());
+        }
+        Ok(())
     }
 
     #[test]

@@ -5,8 +5,8 @@
  * (transport.c / poller.c) only ever calls the inline `rusteron_dpdk_counters_add`.
  * Extended statistics are cached at registration (names for the labels, ids for
  * the sample) and refreshed at most once per second by
- * `rusteron_dpdk_counters_sample`, which the owning agent's hot path invokes
- * behind a millisecond gate — no metrics thread is ever created.
+ * `rusteron_dpdk_counters_sample`, which the housekeeping thread calls, never
+ * an agent.
  */
 #include "rusteron_dpdk_internal.h" /* port struct + rusteron_dpdk_clock_ns */
 #include "rusteron_dpdk_counters.h"
@@ -53,9 +53,9 @@ static const rusteron_dpdk_counter_spec_t rusteron_dpdk_counter_specs[RD_COUNTER
     [RD_COUNTER_MEMPOOL_AVAILABLE] =
         { RUSTERON_DPDK_TYPE_MEMPOOL_AVAILABLE, "mempool-available", "-" },
     [RD_COUNTER_CLOCK] = { RUSTERON_DPDK_TYPE_CLOCK, "clock", "-" },
-    [RD_COUNTER_RX_HW_DELAY_MAX] = { RUSTERON_DPDK_TYPE_RX_HW_DELAY, "nic-arrival-to-rx-burst-max-ns", "rx" },
-    [RD_COUNTER_RX_HW_DELAY_SUM] = { RUSTERON_DPDK_TYPE_RX_HW_DELAY, "nic-arrival-to-rx-burst-sum-ns", "rx" },
-    [RD_COUNTER_RX_HW_TIMESTAMPED] = { RUSTERON_DPDK_TYPE_RX_HW_DELAY, "nic-arrival-to-rx-burst-count", "rx" },
+    [RD_COUNTER_RX_HW_DELAY_MAX] = { RUSTERON_DPDK_TYPE_RX_HW_DELAY, "nic-arrival-to-dispatch-max-ns", "rx" },
+    [RD_COUNTER_RX_HW_DELAY_SUM] = { RUSTERON_DPDK_TYPE_RX_HW_DELAY, "nic-arrival-to-dispatch-sum-ns", "rx" },
+    [RD_COUNTER_RX_HW_TIMESTAMPED] = { RUSTERON_DPDK_TYPE_RX_HW_DELAY, "nic-arrival-to-dispatch-count", "rx" },
     [RD_COUNTER_RX_POLL_GAP_MAX] = { RUSTERON_DPDK_TYPE_POLLER, "rx-poll-gap-max-ns", "rx" },
     [RD_COUNTER_RX_POLL_GAPS_100US] = { RUSTERON_DPDK_TYPE_POLLER, "rx-poll-gaps-over-100us", "rx" },
     [RD_COUNTER_RX_BURST_FULL] = { RUSTERON_DPDK_TYPE_POLLER, "rx-burst-full", "rx" },
@@ -83,9 +83,22 @@ static const rusteron_dpdk_counter_spec_t rusteron_dpdk_counter_specs[RD_COUNTER
     [RD_COUNTER_RX_BACKLOG_MAX] = { RUSTERON_DPDK_TYPE_POLLER, "rx-backlog-max", "rx" },
     [RD_COUNTER_RX_RING_FULL_SUSPECTED] = { RUSTERON_DPDK_TYPE_POLLER, "rx-ring-full-suspected", "rx" },
     [RD_COUNTER_NIC_RESET_REQUESTED] = { RUSTERON_DPDK_TYPE_ERROR, "nic-reset-requested", "-" },
-    [RD_COUNTER_RX_HW_DELAY_MIN] = { RUSTERON_DPDK_TYPE_RX_HW_DELAY, "nic-arrival-to-rx-burst-min-ns", "rx" },
-    [RD_COUNTER_RX_HW_DELAY_NEGATIVE] = { RUSTERON_DPDK_TYPE_RX_HW_DELAY, "nic-arrival-to-rx-burst-negative", "rx" },
+    [RD_COUNTER_RX_HW_DELAY_MIN] = { RUSTERON_DPDK_TYPE_RX_HW_DELAY, "nic-arrival-to-dispatch-min-ns", "rx" },
+    [RD_COUNTER_RX_HW_DELAY_NEGATIVE] = { RUSTERON_DPDK_TYPE_RX_HW_DELAY, "nic-arrival-to-dispatch-negative", "rx" },
+    [RD_COUNTER_RX_BURST_MAX] = { RUSTERON_DPDK_TYPE_POLLER, "rx-burst-max-ns", "rx" },
+    [RD_COUNTER_RX_BURSTS_1US] = { RUSTERON_DPDK_TYPE_POLLER, "rx-bursts-over-1us", "rx" },
+    [RD_COUNTER_RX_BURSTS_5US] = { RUSTERON_DPDK_TYPE_POLLER, "rx-bursts-over-5us", "rx" },
+    [RD_COUNTER_TX_BURST_MAX] = { RUSTERON_DPDK_TYPE_POLLER, "tx-burst-max-ns", "tx" },
+    [RD_COUNTER_TX_BURSTS_1US] = { RUSTERON_DPDK_TYPE_POLLER, "tx-bursts-over-1us", "tx" },
+    [RD_COUNTER_TX_BURSTS_5US] = { RUSTERON_DPDK_TYPE_POLLER, "tx-bursts-over-5us", "tx" },
+    [RD_COUNTER_NIC_LINK_CHANGES] = { RUSTERON_DPDK_TYPE_ERROR, "nic-link-changes", "-" },
+    [RD_COUNTER_TX_IDLE_CLEANED] = { RUSTERON_DPDK_TYPE_POLLER, "tx-idle-cleaned", "tx" },
 };
+_Static_assert(RD_COUNTER_RX_BURSTS_1US == RD_COUNTER_RX_BURST_MAX + 1 &&
+                   RD_COUNTER_RX_BURSTS_5US == RD_COUNTER_RX_BURST_MAX + 2 &&
+                   RD_COUNTER_TX_BURSTS_1US == RD_COUNTER_TX_BURST_MAX + 1 &&
+                   RD_COUNTER_TX_BURSTS_5US == RD_COUNTER_TX_BURST_MAX + 2,
+               "each burst max is followed by its two counts (rusteron_dpdk_counters_burst)");
 
 static void rusteron_dpdk_counters_label(
     char *label, size_t label_len, const rusteron_dpdk_port_t *port,
@@ -96,6 +109,92 @@ static void rusteron_dpdk_counters_label(
     snprintf(
         label, label_len, "rusteron-dpdk role=%s bdf=%s port=%u q=%" PRId32 " dir=%s %s",
         role, port->pci, (unsigned)port->port_id, queue, dir, name);
+}
+
+/* One of ethdev's basic statistics as xstats (rte_eth_stats_get, on ENA an
+ * admin command): the eight fixed ones and the per-queue rx_q<n>_packets,
+ * _bytes, _errors and tx_q<n>_packets, _bytes. */
+static int rusteron_dpdk_xstat_is_basic(const char *name)
+{
+    static const char *const fixed[] = {
+        "rx_good_packets", "tx_good_packets", "rx_good_bytes", "tx_good_bytes",
+        "rx_missed_errors", "rx_errors", "tx_errors", "rx_mbuf_allocation_errors",
+    };
+    for (size_t i = 0; i < sizeof(fixed) / sizeof(fixed[0]); i++)
+    {
+        if (0 == strcmp(name, fixed[i]))
+        {
+            return 1;
+        }
+    }
+    const int rx = 0 == strncmp(name, "rx_q", 4);
+    if (!rx && 0 != strncmp(name, "tx_q", 4))
+    {
+        return 0;
+    }
+    const char *p = name + 4;
+    if (*p < '0' || *p > '9')
+    {
+        return 0;
+    }
+    while (*p >= '0' && *p <= '9')
+    {
+        p++;
+    }
+    return 0 == strcmp(p, "_packets") || 0 == strcmp(p, "_bytes") || (rx && 0 == strcmp(p, "_errors"));
+}
+
+/* A PMD xstat kept in software, read without a device command: ENA's queue
+ * stats (rx_q<n>_*, tx_q<n>_*) and its global ones. Its ENI allowances, SRD
+ * and customer metrics are admin commands. */
+static int rusteron_dpdk_xstat_is_software(const char *name)
+{
+    static const char *const global[] = { "wd_expired", "dev_start", "dev_stop", "tx_drops" };
+    for (size_t i = 0; i < sizeof(global) / sizeof(global[0]); i++)
+    {
+        if (0 == strcmp(name, global[i]))
+        {
+            return 1;
+        }
+    }
+    if (0 != strncmp(name, "rx_q", 4) && 0 != strncmp(name, "tx_q", 4))
+    {
+        return 0;
+    }
+    const char *p = name + 4;
+    if (*p < '0' || *p > '9')
+    {
+        return 0;
+    }
+    while (*p >= '0' && *p <= '9')
+    {
+        p++;
+    }
+    return '_' == *p;
+}
+
+/* The software xstats among `n` names: past ethdev's basic block, which
+ * leads (rte_eth_xstats_get_names lists it first), so its per-queue names,
+ * which look like a PMD's, are never taken for one. */
+static void rusteron_dpdk_counters_software_xstats(rusteron_dpdk_counters_t *c, const char *names, uint32_t n)
+{
+    uint32_t i = 0;
+    while (i < n && rusteron_dpdk_xstat_is_basic(names + ((size_t)i * RUSTERON_DPDK_XSTAT_NAME_LEN)))
+    {
+        i++;
+    }
+    c->software_xstat_count = 0;
+    if (NULL == c->software_xstats)
+    {
+        return;
+    }
+    for (; i < n; i++)
+    {
+        if (rusteron_dpdk_xstat_is_software(names + ((size_t)i * RUSTERON_DPDK_XSTAT_NAME_LEN)))
+        {
+            c->software_xstats[c->software_xstat_count++] = (uint16_t)i;
+        }
+    }
 }
 
 /* Cache the PMD's extended stats: one Aeron counter (type 92) per xstat, names
@@ -168,6 +267,12 @@ static void rusteron_dpdk_counters_cache_xstats(
     c->xstat_count = n;
     c->xstats = xstats;
     c->xstat_names = names;
+    /* best effort: without it the reads are never split (all full) */
+    if (aeron_alloc((void **)&c->software_xstats, (size_t)n * sizeof(uint16_t)) < 0)
+    {
+        c->software_xstats = NULL;
+    }
+    rusteron_dpdk_counters_software_xstats(c, names, n);
 }
 
 /* Registration ids for this process's counter sets: unique across drivers
@@ -275,6 +380,38 @@ int rusteron_dpdk_counters_register(
                 port->mac[0], port->mac[1], port->mac[2],
                 port->mac[3], port->mac[4], port->mac[5], (unsigned)port->rx_descriptors,
                 port->ena_llq >= 0 && port->ena_llq <= RUSTERON_DPDK_ENA_LLQ_DISABLED ? llq[port->ena_llq] : "");
+            /* The queue tuning, where it is not the PMD's default. */
+            static const char *const fast_free[] = { "", " tx-fast-free=on", " tx-fast-free=unsupported" };
+            off = strlen(label);
+            snprintf(label + off, sizeof(label) - off, "%s",
+                     port->tx_fast_free >= 0 && port->tx_fast_free <= RUSTERON_DPDK_FAST_FREE_UNSUPPORTED
+                         ? fast_free[port->tx_fast_free]
+                         : "");
+            if (0 != port->rx_free_thresh || 0 != port->tx_free_thresh)
+            {
+                off = strlen(label);
+                snprintf(label + off, sizeof(label) - off, " rx-free-thresh=%u tx-free-thresh=%u",
+                         (unsigned)port->rx_free_thresh, (unsigned)port->tx_free_thresh);
+            }
+            /* idle TX cleanup: its budget, or that the PMD lacks the op */
+            if (0 != port->tx_idle_clean_asked)
+            {
+                off = strlen(label);
+                if (0 != port->tx_idle_clean)
+                {
+                    snprintf(label + off, sizeof(label) - off, " tx-idle-clean=%u", (unsigned)port->tx_idle_clean);
+                }
+                else
+                {
+                    snprintf(label + off, sizeof(label) - off, " tx-idle-clean=unsupported");
+                }
+            }
+            /* nic-link-changes stays 0 on a NIC that cannot raise them */
+            if (!port->lsc_on)
+            {
+                off = strlen(label);
+                snprintf(label + off, sizeof(label) - off, " lsc=off");
+            }
         }
         else
         {
@@ -310,17 +447,24 @@ int rusteron_dpdk_counters_register(
     {
         __atomic_store_n(c->addr[RD_COUNTER_CLOCK], (int64_t)rusteron_dpdk_clock_source(), __ATOMIC_RELAXED);
     }
-    /* Reset requests the port saw before this set existed (housekeeping
-     * keeps it current while a transport is open). */
+    /* Reset requests and link changes the port saw before this set existed
+     * (housekeeping keeps them current while a transport is open). */
     if (NULL != c->addr[RD_COUNTER_NIC_RESET_REQUESTED])
     {
         __atomic_store_n(
             c->addr[RD_COUNTER_NIC_RESET_REQUESTED],
             (int64_t)__atomic_load_n(&port->nic_resets, __ATOMIC_RELAXED), __ATOMIC_RELAXED);
     }
+    if (NULL != c->addr[RD_COUNTER_NIC_LINK_CHANGES])
+    {
+        __atomic_store_n(
+            c->addr[RD_COUNTER_NIC_LINK_CHANGES],
+            (int64_t)__atomic_load_n(&port->nic_link_changes, __ATOMIC_RELAXED), __ATOMIC_RELAXED);
+    }
 
     c->last_sample_ns = rusteron_dpdk_clock_now();
     c->last_nic_sample_ns = c->last_sample_ns;
+    c->last_slow_sample_ns = c->last_sample_ns;
     c->registered = 1;
     c->dormant = 0;
     return 0;
@@ -328,9 +472,11 @@ int rusteron_dpdk_counters_register(
 
 void rusteron_dpdk_counters_sample(
     rusteron_dpdk_counters_t *c, const rusteron_dpdk_port_t *port,
-    const rusteron_dpdk_port_ops_t *ops, uint64_t now_ns, uint64_t nic_stats_ns)
+    const rusteron_dpdk_port_ops_t *ops, uint64_t now_ns, uint64_t nic_stats_ns, uint64_t nic_slow_ns,
+    rusteron_dpdk_event_ring_t *events, rusteron_dpdk_nic_sample_t *nic)
 {
-    if (NULL == c || !c->registered || NULL == port || NULL == ops)
+    nic->due = 0;
+    if (NULL == c || !c->registered || c->dormant || NULL == port || NULL == ops)
     {
         return;
     }
@@ -341,6 +487,7 @@ void rusteron_dpdk_counters_sample(
     }
     c->last_sample_ns = now_ns;
 
+    const uint64_t start_ns = NULL != events ? rusteron_dpdk_clock_now() : 0;
     if (NULL != ops->mempool_avail && NULL != port->mempool &&
         NULL != c->addr[RD_COUNTER_MEMPOOL_AVAILABLE])
     {
@@ -348,51 +495,135 @@ void rusteron_dpdk_counters_sample(
             c->addr[RD_COUNTER_MEMPOOL_AVAILABLE],
             (int64_t)ops->mempool_avail(port->mempool), __ATOMIC_RELAXED);
     }
+    if (NULL != events)
+    {
+        rusteron_dpdk_event_record(events, RUSTERON_DPDK_EVENT_SAMPLE, port->port_id, rusteron_dpdk_clock_now() - start_ns);
+    }
 
     /* The NIC's own statistics: on ENA each read is an admin command to the
-     * device, so as often as RUSTERON_DPDK_NIC_STATS_MS says (0: never). */
-    if (0 == nic_stats_ns || now_ns < c->last_nic_sample_ns || now_ns - c->last_nic_sample_ns < nic_stats_ns)
+     * device, so as often as RUSTERON_DPDK_NIC_STATS_MS says (0: never). Split
+     * (RUSTERON_DPDK_NIC_SLOW_STATS_MS), those reads take only the PMD's
+     * software xstats, and the full read comes as often as it says. */
+    const int fast_due =
+        0 != nic_stats_ns && now_ns >= c->last_nic_sample_ns && now_ns - c->last_nic_sample_ns >= nic_stats_ns;
+    const int split = RUSTERON_DPDK_NIC_STATS_UNSPLIT != nic_slow_ns;
+    const int slow_due = split && 0 != nic_slow_ns && now_ns >= c->last_slow_sample_ns &&
+        now_ns - c->last_slow_sample_ns >= nic_slow_ns;
+    if (!fast_due && !slow_due)
     {
         return;
     }
-    c->last_nic_sample_ns = now_ns;
+    if (fast_due)
+    {
+        c->last_nic_sample_ns = now_ns;
+    }
+    nic->full = !split || slow_due;
+    if (slow_due)
+    {
+        c->last_slow_sample_ns = now_ns;
+    }
+    nic->id_count = 0;
+    if (!nic->full)
+    {
+        if (NULL == ops->xstats_get_by_id || 0 == c->software_xstat_count)
+        {
+            return; /* nothing a split read could take */
+        }
+        nic->id_count = c->software_xstat_count;
+        for (uint32_t i = 0; i < c->software_xstat_count; i++)
+        {
+            nic->ids[i] = c->software_xstats[i];
+        }
+    }
+    nic->due = 1;
+    nic->port_id = port->port_id;
+    nic->xstat_count = NULL != ops->xstats_get ? c->xstat_count : 0;
+    nic->generation = c->generation;
+}
 
-    uint64_t ierrors, imissed, rx_nombuf;
-    if (NULL != ops->basic_stats && 0 == ops->basic_stats(port->port_id, &ierrors, &imissed, &rx_nombuf))
+void rusteron_dpdk_counters_read_nic(
+    const rusteron_dpdk_port_ops_t *ops, rusteron_dpdk_nic_sample_t *nic, rusteron_dpdk_event_ring_t *events)
+{
+    if (!nic->due)
+    {
+        return;
+    }
+    const uint64_t start_ns = NULL != events ? rusteron_dpdk_clock_now() : 0;
+    if (!nic->full)
+    {
+        /* Split: the software xstats alone, by id, scattered to their slots. */
+        uint64_t got[RUSTERON_DPDK_MAX_XSTATS];
+        nic->basic_ok = 0;
+        nic->xstats_ok = nic->xstat_count > 0 &&
+            0 == ops->xstats_get_by_id(nic->port_id, nic->ids, got, nic->id_count);
+        for (uint32_t i = 0; nic->xstats_ok && i < nic->id_count; i++)
+        {
+            nic->values[nic->ids[i]] = got[i];
+        }
+    }
+    else
+    {
+        nic->basic_ok = NULL != ops->basic_stats &&
+            0 == ops->basic_stats(nic->port_id, &nic->ierrors, &nic->imissed, &nic->rx_nombuf);
+        nic->xstats_ok =
+            nic->xstat_count > 0 && 0 == ops->xstats_get(nic->port_id, nic->values, nic->xstat_count);
+    }
+    if (NULL != events)
+    {
+        rusteron_dpdk_event_record(
+            events, RUSTERON_DPDK_EVENT_NIC_STATS, nic->port_id, rusteron_dpdk_clock_now() - start_ns);
+    }
+}
+
+void rusteron_dpdk_counters_store_nic(rusteron_dpdk_counters_t *c, const rusteron_dpdk_nic_sample_t *nic)
+{
+    if (!nic->due || NULL == c || !c->registered || c->dormant || c->generation != nic->generation)
+    {
+        return;
+    }
+    if (nic->basic_ok)
     {
         if (NULL != c->addr[RD_COUNTER_NIC_RX_ERRORS])
         {
-            __atomic_store_n(c->addr[RD_COUNTER_NIC_RX_ERRORS], (int64_t)ierrors, __ATOMIC_RELAXED);
+            __atomic_store_n(c->addr[RD_COUNTER_NIC_RX_ERRORS], (int64_t)nic->ierrors, __ATOMIC_RELAXED);
         }
         if (NULL != c->addr[RD_COUNTER_NIC_RX_MISSED])
         {
-            __atomic_store_n(c->addr[RD_COUNTER_NIC_RX_MISSED], (int64_t)imissed, __ATOMIC_RELAXED);
+            __atomic_store_n(c->addr[RD_COUNTER_NIC_RX_MISSED], (int64_t)nic->imissed, __ATOMIC_RELAXED);
         }
         if (NULL != c->addr[RD_COUNTER_NIC_RX_NOMBUF])
         {
-            __atomic_store_n(c->addr[RD_COUNTER_NIC_RX_NOMBUF], (int64_t)rx_nombuf, __ATOMIC_RELAXED);
+            __atomic_store_n(c->addr[RD_COUNTER_NIC_RX_NOMBUF], (int64_t)nic->rx_nombuf, __ATOMIC_RELAXED);
         }
     }
-
-    if (c->xstat_count > 0 && NULL != ops->xstats_get)
+    if (nic->xstats_ok && nic->xstat_count == c->xstat_count && !nic->full)
     {
-        uint64_t values[RUSTERON_DPDK_MAX_XSTATS];
-        if (0 == ops->xstats_get(port->port_id, values, c->xstat_count))
+        for (uint32_t i = 0; i < nic->id_count; i++)
         {
-            for (uint32_t i = 0; i < c->xstat_count; i++)
+            const uint64_t id = nic->ids[i];
+            if (NULL != c->xstats[id].addr)
             {
-                if (NULL != c->xstats[i].addr)
-                {
-                    __atomic_store_n(c->xstats[i].addr, (int64_t)values[i], __ATOMIC_RELAXED);
-                }
+                __atomic_store_n(c->xstats[id].addr, (int64_t)nic->values[id], __ATOMIC_RELAXED);
             }
-            if (UINT32_MAX != c->missed_xstat_index &&
-                NULL != c->addr[RD_COUNTER_MISSED_PACKETS])
+            if (id == c->missed_xstat_index && NULL != c->addr[RD_COUNTER_MISSED_PACKETS])
             {
-                __atomic_store_n(
-                    c->addr[RD_COUNTER_MISSED_PACKETS],
-                    (int64_t)values[c->missed_xstat_index], __ATOMIC_RELAXED);
+                __atomic_store_n(c->addr[RD_COUNTER_MISSED_PACKETS], (int64_t)nic->values[id], __ATOMIC_RELAXED);
             }
+        }
+    }
+    else if (nic->xstats_ok && nic->xstat_count == c->xstat_count)
+    {
+        for (uint32_t i = 0; i < c->xstat_count; i++)
+        {
+            if (NULL != c->xstats[i].addr)
+            {
+                __atomic_store_n(c->xstats[i].addr, (int64_t)nic->values[i], __ATOMIC_RELAXED);
+            }
+        }
+        if (UINT32_MAX != c->missed_xstat_index && NULL != c->addr[RD_COUNTER_MISSED_PACKETS])
+        {
+            __atomic_store_n(
+                c->addr[RD_COUNTER_MISSED_PACKETS], (int64_t)nic->values[c->missed_xstat_index], __ATOMIC_RELAXED);
         }
     }
 }
@@ -411,11 +642,15 @@ void rusteron_dpdk_counters_forget(rusteron_dpdk_counters_t *c)
     }
     aeron_free(c->xstats);
     aeron_free(c->xstat_names);
+    aeron_free(c->software_xstats);
     c->xstats = NULL;
     c->xstat_names = NULL;
+    c->software_xstats = NULL;
     c->xstat_count = 0;
+    c->software_xstat_count = 0;
     c->missed_xstat_index = UINT32_MAX;
     c->registered = 0;
     c->dormant = 0;
+    c->generation++;
     c->manager = NULL;
 }

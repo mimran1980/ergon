@@ -78,7 +78,7 @@ impl Io for AnyConn {
         }
     }
     #[inline]
-    fn tx_queue(&mut self) -> &mut Vec<u8> {
+    fn tx_queue(&mut self) -> &mut crate::stream::TxQueue {
         match self {
             Self::Ws(c) => c.tx_queue(),
             Self::Http(c) => c.tx_queue(),
@@ -156,6 +156,15 @@ impl From<WsDial> for AnyDial {
 impl From<HttpDial> for AnyDial {
     fn from(d: HttpDial) -> Self {
         Self::Http(d)
+    }
+}
+
+impl crate::net::BindSource for AnyDial {
+    fn bind_source(&mut self, ip: std::net::IpAddr) {
+        match self {
+            Self::Ws(d) => d.bind_source(ip),
+            Self::Http(d) => d.bind_source(ip),
+        }
     }
 }
 

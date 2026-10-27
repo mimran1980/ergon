@@ -8,7 +8,7 @@
 #
 #   1. Exit at once on a node that is already provisioned (its kernel command
 #      line has isolcpus=), so the reboot can never loop. Fail on anything
-#      but an Intel x86 CPU.
+#      but Intel x86 or Graviton4/5 with 4 KiB pages.
 #   2. Turn SMT off on a node that still has it (bare metal: EC2's CpuOptions
 #      cover a VM only) and split the CPUs: one CPU is one physical core, the
 #      same as on Graviton. The housekeeping CPUs (RUSTERON_HOUSEKEEPING_CPUS,
@@ -25,8 +25,8 @@
 #      git) are tried five times, 5, 10, 20 and 40 s apart, before they fail.
 #   5. Install bootstrap-dpdk-ena.sh, preflight.sh, irq-affinity.sh, the
 #      per-boot unit and the IRQ watcher's unit, and enable both units.
-#   6. Set the kernel command line with grubby: nosmt (SMT stays off on every
-#      later boot), CPU isolation (isolcpus, nohz_full, rcu_nocbs,
+#   6. Set the kernel command line with grubby: nosmt (x86: SMT stays off on
+#      every later boot), CPU isolation (isolcpus, nohz_full, rcu_nocbs,
 #      irqaffinity), IOMMU passthrough,
 #      transparent hugepages off from boot and 2 MiB hugepages
 #      (RUSTERON_HUGEPAGES, default 2048). The clocksource is left to the
@@ -154,9 +154,31 @@ if [[ " $cmdline " == *" isolcpus="* ]]; then
     exit 0
 fi
 
-# x86 Intel only: production is x86 (c7i).
-grep -q '^vendor_id[[:space:]]*:[[:space:]]*GenuineIntel' "$RUSTERON_PROC_ROOT/cpuinfo" \
-    || fail "not an Intel x86 CPU ($(uname -m)): the node needs a c7i (or other Intel x86) instance"
+# The CPU, from cpuinfo (x86 has vendor_id, arm64 CPU implementer/part):
+# Intel x86 (c7i), or Graviton4 (c8g, Neoverse V2, CPU part 0xd4f) or
+# Graviton5 (c9g, Neoverse V3, 0xd84) from Arm (implementer 0x41); part
+# numbers as Linux's arch/arm64/include/asm/cputype.h. Anything else fails
+# closed: older Graviton cores and other x86 vendors are not qualified.
+cpuinfo_field() { awk -F': *' -v f="$1" '$1 ~ "^" f "[[:space:]]*$" { print $2; exit }' "$RUSTERON_PROC_ROOT/cpuinfo"; }
+vendor="$(cpuinfo_field vendor_id)"
+cpu="$(cpuinfo_field 'CPU implementer')/$(cpuinfo_field 'CPU part')"
+arch=aarch64
+case "$vendor:$cpu" in
+GenuineIntel:/) arch=x86_64 ;;
+:0x41/0xd4f) ok "Graviton4 (Neoverse V2)" ;;
+:0x41/0xd84) ok "Graviton5 (Neoverse V3)" ;;
+*) fail "not Intel x86 or Graviton4/5 (vendor '$vendor', implementer/part $cpu)" ;;
+esac
+if [[ "$arch" == aarch64 ]]; then
+    # DPDK's mempools and the Aeron directory take 2 MiB hugepages; only 4 KiB
+    # pages are qualified (the VM lab's tune refuses others too).
+    # RUSTERON_PAGE_SIZE stands in for getconf only under a fixture dry run.
+    page_size="$(getconf PAGESIZE)"
+    if ((RUSTERON_DRY_RUN)); then page_size="${RUSTERON_PAGE_SIZE:-$page_size}"; fi
+    [[ "$page_size" == 4096 && -d "$RUSTERON_SYSFS_ROOT/kernel/mm/hugepages/hugepages-2048kB" ]] \
+        || fail "$page_size-byte pages: need 4 KiB pages and 2 MiB hugepages"
+    [[ "${RUSTERON_FORCE_TSC:-0}" != 1 ]] || fail "RUSTERON_FORCE_TSC=1 is x86 only"
+fi
 
 # --- 2. SMT off, then housekeeping and isolated CPUs -------------------------
 # One Kubernetes CPU is one physical core, the same as on Graviton (option 1,
@@ -316,7 +338,9 @@ ok "$UNIT and $IRQ_UNIT enabled from the next boot"
 # nosmt keeps SMT off on every later boot (a VM's launch template turned it
 # off already with CpuOptions ThreadsPerCore=1; bare metal needs this).
 # The isolation flags are the VM lab's (vm.sh isolate).
-args="nosmt isolcpus=nohz,domain,managed_irq,$ISO nohz_full=$ISO rcu_nocbs=$ISO irqaffinity=$IRQ"
+args="isolcpus=nohz,domain,managed_irq,$ISO nohz_full=$ISO rcu_nocbs=$ISO irqaffinity=$IRQ"
+# Graviton has no SMT, so nosmt is x86's alone.
+if [[ "$arch" == x86_64 ]]; then args="nosmt $args"; fi
 # No C-state cap (intel_idle.max_cstate), on a VM or bare metal: no committed
 # A/B showed a gain. VM (io/benches/BENCHMARK.md, run
 # flags-aws-20261015T062428Z, cstate): mixed, WebSocket worse, HTTP better at
@@ -337,7 +361,9 @@ fi
 # $PREFIX/clocksource-policy so a later run can see what was decided.
 clocksource_args=""
 clocksource_policy="kernel: the kernel keeps its own clocksource and its TSC checks"
-if ((is_vm)); then
+if [[ "$arch" == aarch64 ]]; then
+    clocksource_policy="kernel: arm64's architected timer (no TSC)"
+elif ((is_vm)); then
     clocksource_policy="kernel: a VM gets no clocksource override (tsc=reliable would turn the kernel's TSC checks off)"
     ok "clocksource left to the kernel: this is a VM"
 elif [[ "${RUSTERON_FORCE_TSC:-0}" == "1" ]]; then
@@ -350,12 +376,16 @@ else
 fi
 # iommu=pt: bare metal has a real IOMMU, which igb_uio does not program;
 # passthrough (identity mapping for host-owned devices) lets its DMA through,
-# as in the metal lab. A VM has no IOMMU, so it changes nothing there.
+# as in the metal lab. A VM has no IOMMU, so it changes nothing there. arm64
+# ignores iommu=pt (an x86 parameter): Graviton metal's SMMU takes
+# iommu.passthrough=1, as the VM lab boots it (benches/cloud/host.sh).
 # transparent_hugepage=never from boot, before the per-boot unit sets it.
 if [[ -n "$clocksource_args" ]]; then
     args+=" $clocksource_args"
 fi
-args+=" iommu=pt transparent_hugepage=never"
+iommu=iommu=pt
+if [[ "$arch" == aarch64 ]]; then iommu=iommu.passthrough=1; fi
+args+=" $iommu transparent_hugepage=never"
 args+=" hugepagesz=2M hugepages=$RUSTERON_HUGEPAGES"
 if ((RUSTERON_DRY_RUN)); then
     ok "dry-run: kernel args: $args"

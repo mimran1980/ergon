@@ -517,3 +517,154 @@ fn an_unknown_harness_driver_is_refused() {
     assert!(refused.stderr.contains("HARNESS_DRIVER"), "{}", refused.stderr);
     assert!(refused.stdout.is_empty(), "{}", refused.stdout);
 }
+
+/// Every spike row `rtt xping` writes (`LOAD_SPIKES`) carries the ping's index
+/// in the measured run, so the lab can place a spike in the run (a term
+/// rotation, the n-th ping after warm-up): at `LOAD_SPIKE_NS=1` every
+/// measured round trip is a spike, so the rows are pings 0, 1, 2, ... in
+/// order, one each, as many as `# spikes_total=` counts.
+#[test]
+fn rtt_spike_rows_carry_their_ping_index() {
+    let (ping, pong) = (
+        format!("127.0.0.1:{}", free_port()),
+        format!("127.0.0.1:{}", free_port()),
+    );
+    let (ping_dir, pong_dir) = (aeron_dir("index-ping"), aeron_dir("index-pong"));
+    let spikes = format!("{ping_dir}-spikes.csv");
+    let _ = std::fs::remove_file(&spikes);
+    let rtt = env!("CARGO_BIN_EXE_rtt");
+    let ponger = start(rtt, &["xpong", &ping, &pong, "-"], Some("invoker"), &pong_dir, &[]);
+    let pinged = start(
+        rtt,
+        &["xping", &ping, &pong, "2000", "200", "-"],
+        Some("invoker"),
+        &ping_dir,
+        &[("LOAD_SPIKES", spikes.as_str()), ("LOAD_SPIKE_NS", "1")],
+    )
+    .finish(90);
+    let ponged = ponger.terminate(30);
+    pinged.assert_ok("xping", EMBEDDED);
+    ponged.assert_ok("xpong", EMBEDDED);
+    let samples: usize = pinged.result("rtt,invoker-test,udp,")[10].parse().expect("samples");
+    let text = std::fs::read_to_string(&spikes).unwrap_or_else(|e| panic!("{spikes}: {e}"));
+    let mut lines = text.lines();
+    assert!(
+        lines.next().is_some_and(|l| l.starts_with("# start_realtime_ns=")),
+        "{text}"
+    );
+    assert_eq!(
+        lines.next(),
+        Some(format!("# spikes_total={samples}").as_str()),
+        "{text}"
+    );
+    assert_eq!(lines.next(), Some("stream,due_ns,latency_ns,ping"), "{text}");
+    let rows: Vec<Vec<&str>> = lines.map(|l| l.split(',').collect()).collect();
+    assert_eq!(rows.len(), samples, "one row a measured round trip");
+    for (i, row) in rows.iter().enumerate() {
+        assert_eq!(row.len(), 4, "row {i}: {row:?}");
+        assert_eq!(row[3], i.to_string(), "row {i}: {row:?}");
+    }
+    let _ = std::fs::remove_file(&spikes);
+    for dir in [ping_dir, pong_dir] {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+/// One round trip run between two INVOKER clients with `SUB_CHANNEL_PARAMS`
+/// on both ends' subscriptions and `RTT_ONE_WAY`, every round trip a spike
+/// (`LOAD_SPIKE_NS=1`): the ping's sample count and the one-way file's text.
+fn one_way_run(tag: &str, sub_params: &str) -> (usize, String) {
+    let (ping, pong) = (
+        format!("127.0.0.1:{}", free_port()),
+        format!("127.0.0.1:{}", free_port()),
+    );
+    let (ping_dir, pong_dir) = (aeron_dir(&format!("{tag}-ping")), aeron_dir(&format!("{tag}-pong")));
+    let one_way = format!("{ping_dir}-one-way.csv");
+    let _ = std::fs::remove_file(&one_way);
+    let rtt = env!("CARGO_BIN_EXE_rtt");
+    let params = [("SUB_CHANNEL_PARAMS", sub_params)];
+    let ponger = start(rtt, &["xpong", &ping, &pong, "-"], Some("invoker"), &pong_dir, &params);
+    let pinged = start(
+        rtt,
+        &["xping", &ping, &pong, "2000", "200", "-"],
+        Some("invoker"),
+        &ping_dir,
+        &[
+            ("SUB_CHANNEL_PARAMS", sub_params),
+            ("RTT_ONE_WAY", one_way.as_str()),
+            ("LOAD_SPIKE_NS", "1"),
+        ],
+    )
+    .finish(90);
+    let ponged = ponger.terminate(30);
+    pinged.assert_ok(&format!("xping {sub_params}"), EMBEDDED);
+    ponged.assert_ok(&format!("xpong {sub_params}"), EMBEDDED);
+    let samples = pinged.result("rtt,invoker-test,udp,")[10].parse().expect("samples");
+    let text = std::fs::read_to_string(&one_way).unwrap_or_else(|e| panic!("{one_way}: {e}"));
+    let _ = std::fs::remove_file(&one_way);
+    for dir in [ping_dir, pong_dir] {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+    (samples, text)
+}
+
+/// The one-way split of a spike (`RTT_ONE_WAY`, the lab's precision-time
+/// runs): with a receive timestamp in each frame header's reserved value,
+/// the pong echoes the ping's (its host's NIC arrival under the DPDK
+/// transport's RX hardware timestamps) in the echo's bytes 16 to 23, and the
+/// ping writes, for each spike, when it sent, when the pong's host received
+/// it, when its own host received the echo, and when the echo reached it,
+/// all on `CLOCK_REALTIME`: the round trip split into its way out, its way
+/// back and the ping's own host. `channel-rcv-ts-offset` (Aeron's own stamp,
+/// the same write at the same place, any OS) stands in for the media stamp
+/// off Linux, beside it on Linux. Without a receive timestamp there is
+/// nothing to split: the file has its header and no rows.
+#[test]
+fn rtt_splits_each_spike_one_way_by_the_receive_timestamps() {
+    let mut stamps = vec!["channel-rcv-ts-offset=reserved"];
+    if cfg!(target_os = "linux") {
+        stamps.push("media-rcv-ts-offset=reserved");
+    }
+    for params in stamps {
+        let (samples, text) = one_way_run("oneway", params);
+        let mut lines = text.lines();
+        assert!(
+            lines.next().is_some_and(|l| l.starts_with("# start_realtime_ns=")),
+            "{params}: {text}"
+        );
+        assert_eq!(
+            lines.next(),
+            Some("ping,sent_realtime_ns,pong_rx_realtime_ns,ping_rx_realtime_ns,echoed_realtime_ns"),
+            "{params}"
+        );
+        let rows: Vec<Vec<i128>> = lines
+            .map(|l| l.split(',').map(|v| v.parse().unwrap()).collect())
+            .collect();
+        assert_eq!(
+            rows.len(),
+            samples,
+            "{params}: every round trip a spike, each one split"
+        );
+        for (i, row) in rows.iter().enumerate() {
+            let (ping, sent, pong_rx, ping_rx, echoed) = (row[0], row[1], row[2], row[3], row[4]);
+            assert_eq!(ping, i as i128, "{params}: row {i}: {row:?}");
+            assert!(
+                pong_rx > 0 && ping_rx >= pong_rx && echoed > sent,
+                "{params}: row {i}: {row:?}"
+            );
+            // one host's clock throughout: each leg within the round trip
+            // and a little skew between the clients' clock and CLOCK_REALTIME
+            let slack = 1_000_000;
+            assert!(
+                (pong_rx - sent).abs() < echoed - sent + slack && (echoed - ping_rx).abs() < echoed - sent + slack,
+                "{params}: row {i}: {row:?}"
+            );
+        }
+    }
+    let (_, text) = one_way_run("oneway-none", "");
+    assert_eq!(
+        text.lines().count(),
+        2,
+        "no receive timestamp, nothing to split: the header alone:\n{text}"
+    );
+}

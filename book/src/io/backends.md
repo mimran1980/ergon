@@ -4,23 +4,26 @@ A backend is the kernel interface the `Driver` waits and reads with. It is
 configuration, so one binary can run with each. Which to pick:
 [Choosing a backend](overview.md#choosing-a-backend).
 
-| backend | how it waits | polls the NIC | sleeps in the kernel | extra core |
-|---|---|---|---|---|
-| `epoll-spin` | `epoll_wait(0)` every poll, then `recvmsg` on ready sockets | no (interrupts) | never | no |
-| `recv-busy` | non-blocking `recvmsg` on every socket every poll, with `SO_BUSY_POLL` (with `per_queue`: one read per NIC queue, then the sockets epoll reports ready) | yes, one pass per socket (or queue) per poll | never | no |
-| `uring-spin` | `IORING_OP_RECVMSG` with `DEFER_TASKRUN`; enters the kernel only when it flags work | no (interrupts) | never | no |
-| `uring-sqpoll` | an `SQPOLL` kernel thread submits, completes and polls the NIC | yes, on the kernel thread | never (the application's thread) | yes |
-| `epoll-busy` | `epoll_pwait2(wait_us)` with epoll busy polling for `busy_poll_us` | yes, inside the wait | up to `wait_us` | no |
-| `uring-napi` | `io_uring_enter(GETEVENTS, 1, wait_us)` with NAPI busy polling | yes, inside the wait | up to `wait_us`, and on every idle poll | no |
+| backend | how it waits | polls the NIC | extra core |
+|---|---|---|---|
+| `epoll-spin` | `epoll_wait(0)` every poll, then one `recvmsg` per ready socket: [mio's mechanism](#mio-measured-not-a-backend) | no (interrupts); with `busy_poll_us`, once per socket after each receive | no |
+| `recv-busy` | non-blocking `recvmsg` on every socket every poll, with `SO_BUSY_POLL` (with `per_queue`: one read per NIC queue, then the sockets epoll reports ready) | yes, one pass per socket (or queue) per poll | no |
+| `uring-sqpoll` | an `SQPOLL` kernel thread submits, completes and polls the NIC | yes, on the kernel thread | yes |
 
-- **`epoll_wait(0)` never blocks, but never polls the NIC either.** mio,
-  and so tokio, is this path too.
+- **None sleeps in the kernel.** These are the three backends the
+  benchmarks measured in a busy-spin loop.
+- **UDP (`UdpConn`) runs on `epoll-spin` only.** The other two refuse a UDP
+  driver at `Driver::new` (`Error::Unsupported`); framed TCP and the TLS
+  endpoints run on all three ([UDP](udp.md)).
+
+- **`epoll-spin` is [mio's mechanism](#mio-measured-not-a-backend), and so tokio's.**
+  `epoll_wait(0)` never blocks, but never polls the NIC either.
 - **Plain `recv-busy` reads every socket on every poll**, so each socket
   adds a little to every poll. `per_queue` reads one socket per NIC
   queue instead: see [cost per poll](#cost-per-poll).
 - **`uring-sqpoll` costs a spinning kernel thread per ring.** Rings in one
-  process can share one; other processes cannot. Its kernel thread polls
-  each NIC queue once per pass, so it has no per-socket scan.
+  process can share one; other processes cannot. Its kernel thread polls each
+  NIC queue, not each socket ([cost per poll](#cost-per-poll)).
 
 ## Configuration strings
 
@@ -38,31 +41,53 @@ every platform.)*
 | `sqpoll_cpu` | unset | the SQPOLL kernel thread's CPU; unset: the first helper CPU ([placement](kubernetes.md#why-a-pod-has-no-housekeeping-cpus)). A core of its own or the loop's SMT sibling: [what the sibling costs](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#smt-sibling-cost) |
 | `sqpoll_idle_ms` | 600,000 | idle time before the SQPOLL thread sleeps; NIC polling does not count as work, so keep it long |
 | `ring_entries` | 256 | `io_uring` submission queue size |
-| `busy_poll_us` | 1 (`recv-busy`, `uring-sqpoll`), 50 (`epoll-busy`, `uring-napi`) | NIC busy polling in µs: how long `epoll-busy` and `uring-napi` poll before sleeping; `recv-busy` and `uring-sqpoll` need it non-zero |
-| `wait_us` | 0, or 100 (`epoll-busy`, `uring-napi`) | the longest `epoll-busy` and `uring-napi` wait in the kernel |
 | `per_queue` | `false` | `recv-busy` only: one busy-polled read per NIC queue, then the sockets epoll reports ready |
-| `prefer_busy_poll` | `false` | the kernel leaves the NIC queue to the polling loop (with `recv-busy`, `SO_PREFER_BUSY_POLL`: needs `CAP_NET_ADMIN`); NIC-polling backends only; effect not measured here |
-| `busy_poll_budget` | 0 (kernel: 8) | packets per busy-poll pass; `recv-busy` and `epoll-busy` only; raising it needs `CAP_NET_ADMIN`; effect not measured here |
 | `connect_cpu` | unset | the `connect_background` helper thread's CPU; unset: the housekeeping CPUs |
 | `connect_timeout_ms` | 10,000 | the longest connection set-up |
 | `rcvbuf` | 4 MiB | `SO_RCVBUF` for every socket; needs `net.core.rmem_max` at least as large (warned at start-up); 0: the kernel's autotuning |
 | `rx_timestamps` | `true` | kernel software, and where supported NIC hardware, receive timestamps in `RxMeta` |
+| `rx_read_timestamp` | `false` | ergon-io's own receive time in `RxMeta::rx_read_ns`: one `CLOCK_REALTIME` read (vDSO) per read with data, right after the read returns (`io_uring`: when the completion is reaped; frames the upgrade read with the 101: when the driver takes them); off, no clock read and the field is 0 |
 | `quickack_check` | `warn` | `off`, `warn` or `require` |
 | `keepalive_idle_s` | 10 | TCP keepalive: idle seconds before the first probe; 0: off |
 | `keepalive_interval_s`, `keepalive_count` | 5, 3 | seconds between probes, probes before the drop |
 | `tcp_user_timeout_ms` | 25,000 | `TCP_USER_TIMEOUT`; 0: the kernel default |
+| `tcp_rto_min_us` | 0 (kernel: 200 ms) | `TCP_RTO_MIN_US`, Linux 6.15+: the retransmission timeout's floor; 2,000 to 200,000 µs in whole kernel ticks; refused, typed, at `Driver::new` ([Kubernetes](kubernetes.md#tcp-timers-and-tcp_info)) |
+| `tcp_delack_max_us` | 0 (kernel: 200 ms) | `TCP_DELACK_MAX_US`, Linux 6.15+: the longest delayed ACK; same range and checks |
+| `tcp_info_interval_ms` | 0 (off) | passive `TCP_INFO` per connection (`Driver::tcp_info`); at most one `getsockopt` per poll, from the 250 µs deadline check |
+| `epoll_events` | 64 | the most ready sockets one `epoll_wait` reports (`epoll-spin`; `recv-busy` with `per_queue`); the rest are reported on the next poll; 1 to 65,536 |
+| `datagram_burst` | 16 | UDP: the most datagrams one poll reads from one ready socket; 1 to 1,024 ([UDP](udp.md)) |
+| `busy_poll_us` | 0 (off) | `epoll-spin` only: `SO_BUSY_POLL` on every socket, 0 to `i32::MAX` µs; above 0, the read that empties a socket polls the NIC once ([busy polling on `epoll-spin`](#busy-polling-on-epoll-spin)); other backends refuse it |
 
 An unknown key, a bad value or a setting the backend cannot use is an error
-(`Config::validate`), never ignored.
+(`Config::validate`), never ignored. `recv-busy` sets `SO_BUSY_POLL` to 1 µs
+(one NAPI pass per empty read) and `uring-sqpoll` a 1 µs NAPI busy-poll
+timeout; `epoll-spin` sockets get `busy_poll_us` (0 by default), so a
+`net.core.busy_read` default never leaks in.
 
-## The four one-core backends
+### Busy polling on `epoll-spin`
 
-`recv-busy`, `recv-busy,per_queue`, `epoll-spin` and `uring-spin` run on
-the loop's CPU alone: no `SQPOLL` kernel thread. `uring-sqpoll` is the only
-backend that needs another CPU; it is not in this section. The interrupt
-backends (`epoll-spin`, `uring-spin`) were measured with the NIC's
-interrupts on a core of their own; on the loop's CPU their p99 rose from 4
-sockets ([fair run](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton)).
+`busy_poll_us` gives `epoll-spin` what mio gets from the same socket option,
+for a comparison where only the library differs.
+
+| what | with `busy_poll_us` above 0 |
+|---|---|
+| socket | `SO_BUSY_POLL` set to the value (TCP, framed TCP, WebSocket, HTTP, UDP); never `SO_PREFER_BUSY_POLL` |
+| TCP read | a socket read with data is read once more at the start of the next poll, after the replies went out; finding the queue empty, that read makes one NAPI pass, then `EAGAIN` (mio reads to `WouldBlock`: the same pass) |
+| UDP read | a ready socket is read once; its `datagram_burst` runs at the start of the next poll and ends on the empty read |
+| value | the reads are non-blocking: any value above 0 makes exactly one pass; the value only bounds a blocking read |
+| `epoll_wait(0)` | never busy-polls: the kernel returns before `ep_busy_loop` on a zero timeout, so `net.core.busy_poll`, `EPIOCSPARAMS` and `SO_PREFER_BUSY_POLL` change nothing |
+| host | `CONFIG_NET_RX_BUSY_POLL`; a NIC with NAPI ids (none on loopback or a plain veth, where the option does nothing); no sysctl and no capability (`SO_BUSY_POLL` needs no `CAP_NET_ADMIN`) |
+
+It polls the NIC once per receive, not while idle: the loop still waits
+for the interrupt. To poll the NIC every poll, use `recv-busy`.
+
+## The one-core backends
+
+`recv-busy`, `recv-busy,per_queue` and `epoll-spin` run on the loop's CPU
+alone: no `SQPOLL` kernel thread. `uring-sqpoll` is the only backend that
+needs another CPU; it is not in this section. The interrupt backend
+(`epoll-spin`) was measured with the NIC's interrupts on a core of their
+own; on the loop's CPU its p99 rose from 4 sockets ([fair run](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton)).
 
 ```rust,ignore
 {{#include ../../../io/tests/backend_config.rs:one_core_backends}}
@@ -77,7 +102,6 @@ What one poll does:
 | `recv-busy` | `recvmsg` on **every** socket | one per socket per poll |
 | `recv-busy,per_queue` | one read per **NIC queue**, then `epoll_wait(0)` on the ready sockets | one per queue plus the ready ones |
 | `epoll-spin` | `epoll_wait(0)`, then `recvmsg` on the ready sockets | only the ready sockets |
-| `uring-spin` | `IORING_OP_RECVMSG` with `DEFER_TASKRUN` | few |
 
 Which one to take: [choosing a backend](overview.md#choosing-a-backend).
 
@@ -90,7 +114,7 @@ waits for its socket's turn, half a poll on average and up to a whole one.
 
 `per_queue` changes the scan. It reads **one socket per NIC queue** (that
 read polls the queue), then calls `epoll_wait(0)` and reads only the sockets
-that are ready. The cost stops growing at the queue count.
+that are ready. Its NIC polling stops growing at the queue count.
 
 As struct fields, for when more than one setting changes:
 
@@ -109,11 +133,11 @@ On the lab command line:
 
 ```sh
 # plain: one recvmsg per socket per poll
-io_bench lab --variants recv-busy --cpus 2 --busy-poll 1 --wait-us 0 \
+io_bench lab --variants recv-busy --cpus 2 \
   --server SENDER:9447 --conns 100 --duration 60 --out res/c100-recv-busy
 
 # per_queue: one read per NIC queue, then the ready sockets
-io_bench lab --variants recv-busy --per-queue --cpus 2 --busy-poll 1 --wait-us 0 \
+io_bench lab --variants recv-busy --per-queue --cpus 2 \
   --server SENDER:9447 --conns 100 --duration 60 --out res/c100-per-queue
 
 $B/analyse --warmup-s 2 res/c100-*
@@ -127,9 +151,7 @@ connections: [polling backends](https://github.com/mimran1980/ergon/blob/main/io
 | backend | needs |
 |---|---|
 | `epoll-spin`, `recv-busy` | any supported kernel |
-| `uring-spin` | Linux 6.1+ and the `uring` feature |
-| `uring-sqpoll`, `uring-napi` | Linux 6.9+ (NAPI registration) and the `uring` feature |
-| `epoll-busy` | Linux 6.9+ (`EPIOCSPARAMS`) |
+| `uring-sqpoll` | Linux 6.9+ (NAPI registration) and the `uring` feature |
 
 An older kernel gives `Error::Unsupported` from `Driver::new`.
 
@@ -153,7 +175,6 @@ flowchart TD
     P["one Driver::poll"]
     P --> RB["recv-busy"]
     P --> ES["epoll-spin"]
-    P --> US["uring-spin"]
     P --> SQ["uring-sqpoll"]
 
     RB --> RB1["recvmsg on every socket"]
@@ -164,10 +185,6 @@ flowchart TD
     ES1 --> ES2["recvmsg on ready only"]
     ES2 --> ES3["interrupt path, no NIC poll"]
 
-    US --> US1["submit RECVMSG"]
-    US1 --> US2["DEFER_TASKRUN complete"]
-    US2 --> US3["interrupt path, no NIC poll"]
-
     SQ --> SQ1["SQPOLL kernel thread"]
     SQ1 --> SQ2["polls each NIC queue"]
     SQ2 --> SQ3["NAPI pass per queue"]
@@ -175,7 +192,7 @@ flowchart TD
 
 `recv-busy,per_queue` sits between the first two: one busy-polled read
 per NIC queue (so one NAPI pass per queue), then `epoll_wait(0)` and
-only the ready sockets. Its cost stops at the queue count.
+only the ready sockets. Its NIC polling stops at the queue count.
 
 - **Plain `recv-busy` grows with sockets:** each non-blocking `recvmsg` runs
   one NIC busy-poll pass even on an idle socket, so most reads return
@@ -183,12 +200,30 @@ only the ready sockets. Its cost stops at the queue count.
 - **What it costs in latency:** a message waits for its socket's turn, half
   a poll on average and up to a whole poll.
 - **`per_queue`** reads one socket per NIC queue (which polls that queue),
-  then only the ready sockets. Its poll stops growing at the queue count.
-- **`epoll-spin` and `uring-spin`** do not scan idle sockets; they wait for
-  the NIC interrupt instead. Against the polling backends:
+  then only the ready sockets. Its NIC polling stops growing at the queue
+  count.
+- **`epoll-spin`** does not read idle sockets; it waits for the NIC
+  interrupt instead. Against the polling backends:
   [fair run](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton).
+- **A send pass visits only the connections with bytes queued** (the
+  driver's send set), so idle connections add nothing to it. The passes
+  measured below predate the send set: each also checked every connection
+  for queued sends, which grew the pass with idle sockets (not re-measured
+  since).
 - Where each polling backend stops winning:
   [choosing a backend](overview.md#choosing-a-backend).
+
+Graviton fair run, market data, `irqcore`. Pass = 1 ÷ the loop's passes per
+second (a mean), two rounds. The longest pass is not attributed to a cause.
+
+| backend | pass, 1 socket | pass, 256 sockets | longest pass, 256 sockets |
+|---|---|---|---|
+| `epoll-spin` | 342–343 ns | 601–617 ns | 612–690 µs |
+| `uring-sqpoll` (the loop's thread) | 27 ns | 368 ns | 231–246 µs |
+| `recv-busy,per_queue` | 933–934 ns | 5.56–5.58 µs | 804–897 µs |
+| `recv-busy` | 574–588 ns | 149.3–149.4 µs | 1,910–2,187 µs |
+
+Data: [`loop-counters.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/flags-aws-20261019T175248Z/loop-counters.md).
 
 ## Find the crossover on your own host
 
@@ -206,3 +241,92 @@ count; run each backend separately.
   Otherwise the interrupt backends wait for moderation.
 - HTTP with a pool: [HTTP with many connections](http-client.md#many-connections).
 - Everything about the method: [`io/benches/BENCHMARK.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md).
+
+## mio: measured, not a backend
+
+**On Linux `epoll-spin` is mio's mechanism.** mio's `Poll::poll` with a zero
+timeout is `epoll_wait(timeout = 0)`, and the loop then reads the sockets it
+reports ready. tokio's I/O driver is mio (it passes a timeout and blocks
+when it has no work). `epoll-spin` makes the same two calls every poll. The
+differences:
+
+| | mio | `epoll-spin` |
+|---|---|---|
+| wait | `epoll_wait(0)` | `epoll_wait(0)` |
+| readiness | edge-triggered: read until `WouldBlock` | level-triggered: one `recvmsg` per ready socket |
+| reads per message | 2 (the data, then the empty read) | 1 |
+| on top | nothing | TLS 1.3 records, WebSocket, HTTP, queued sends, background connect, receive timestamps, host checks, and the other backends behind the same API |
+
+**Measured level.** Graviton fair run `flags-aws-20261019T175248Z`
+(`c8g.2xlarge` / `c8g.xlarge`, moderation off, NIC interrupts on a core of
+their own). mio arm: ergon-stack's `mio_bench`, mio 1.2.4, rustls's buffered
+`ClientConnection`, `Poll::poll(0)` in a spin loop. µs, p50 / p99 / max,
+ranges over 2 rounds:
+
+| | mio | `epoll-spin` |
+|---|---|---|
+| WebSocket N = 1 | 39.1–39.3 / 47.0–48.4 / 108–133 | 38.9–39.2 / 47.0–47.4 / 131–145 |
+| WebSocket N = 16 | 39.7–40.1 / 49.9–51.5 / 156–168 | 39.6–40.0 / 50.0–51.6 / 158–193 |
+| WebSocket N = 64 | 39.9–40.1 / 52.3–53.1 / 178–425 | 40.2–40.4 / 51.9–53.9 / 143–146 |
+| HTTP pool of 1 | 41.1 / 50.8–51.4 / 127–225 | 40.2–40.4 / 50.2–51.2 / 136–158 |
+| HTTP pool of 20 | 42.3–42.9 / 53.0–55.0 / 157–1,478 | 42.3–42.9 / 52.8–54.9 / 137–285 |
+
+Every row, the polling backends beside them, and the work counts:
+[fair run](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton).
+mio makes 2.0× the `recvmsg` calls (WebSocket N = 1: 1.20 M against 0.60 M,
+[`loop-counters.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/flags-aws-20261019T175248Z/loop-counters.md)).
+
+**Gated.** [`io/benches/parity/mio_parity.rs`](https://github.com/mimran1980/ergon/blob/main/io/benches/parity/mio_parity.rs)
+runs in CI on Linux x86_64 and aarch64 (`just io-parity`, release):
+
+- **Structure**, exact counts from the `Driver`'s counters: one
+  `epoll_wait` per poll; 20,000 idle polls return in milliseconds, so the
+  timeout is 0 (at 1 ms, the shortest that blocks, they would take 20 s);
+  one `recvmsg` per echo and none to `EAGAIN`, at 1 and 16 sockets. The
+  mio loop makes exactly two reads per echo.
+- **Latency**, two-sided: a loopback TLS 1.3 WebSocket round trip, 64 B
+  at 10,000/s, through the `Driver` and through a minimal mio loop doing
+  the same work (ergon-io's TLS record layer and WebSocket framing, the
+  same echo peer on its own CPU, `TCP_NODELAY`, 4 MiB `SO_RCVBUF`, 64
+  events per wait, each echo checked byte for byte). 7 pairs at 1 and 16
+  sockets; in each pair the two loops take turns round trip by round trip.
+  It fails if either side's p50 is ahead by more than 5 % in 6 of 7
+  pairs: an `epoll-spin` win that large is a suspected defect too.
+
+The tolerance comes from 10 runs, 140 pairs, in Docker on Apple silicon
+(arm64 and amd64; [`summary.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/mio-parity-docker-20261024T154626Z/summary.md)):
+p50 5.3–15.3 µs, mio slower by +2.1 to +3.1 % at the median (its read to
+`WouldBlock` is timed), every run passed. With 10 % added to either loop's
+round trips every test failed, 7 of 7 pairs.
+
+Why it is not a backend:
+
+1. **It would duplicate `epoll-spin`:** the same two syscalls, plus one
+   empty read per message.
+2. **Its one edge was not mio's.** Its mean pass at 256 sockets was 359 ns
+   against `epoll-spin`'s 601–617 ns because the `Driver` then checked every
+   connection for queued sends on each pass and `mio_bench` does not. That
+   cost was the `Driver`'s, paid by every backend, not epoll's; the send set
+   has removed it (not re-measured: [cost per poll](#cost-per-poll)).
+3. **Off Linux it would lose what ergon-io is for.** macOS and Windows have
+   no `SO_BUSY_POLL`, `io_uring`, `TCP_QUICKACK`, `SO_TIMESTAMPING` or
+   netlink route checks. Latency verdicts come from Linux only.
+4. **Its fair-run maxima have no cause yet:**
+
+   | max | where | what the data rules out |
+   |---|---|---|
+   | 1,478 µs | HTTP pool of 20, `irqcore`, round 2 | a stall of either loop; a TCP retransmit on either host |
+   | 640.75 µs | WebSocket N = 16, `irqlocal`, round 2 | a stall of either loop |
+   | 425 µs | WebSocket N = 64, `irqcore`, round 2 | a stall of either loop. It falls at 60.0 s, the run's final instant |
+   | 36,059–40,180 µs sender lateness | market data, 1 connection, every placement, 0.07 % of batches | no latency sample saw it, so the `md-mio-c1` latency figures stand |
+
+   Data: the last section of `loop-counters.md` (above); the sender
+   lateness is in
+   [`fair.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/flags-aws-20261019T175248Z/fair.md).
+5. **The market-data arm was confounded.** The default `SO_RCVBUF` gave
+   receive-window pressure (`TCPWantZeroWindowAdv` up to 2,862 per point)
+   that no ergon-io arm showed. So mio is not ranked on market data. Data:
+   `loop-counters.md`, "mio receive-window pressure".
+
+**Revisit if** someone needs the `Driver` on macOS or Windows for its own
+sake, not for latency.

@@ -20,7 +20,8 @@ plugin and the pod can read them (the NIC's node and PHC name among them). The t
 | `net.core.busy_poll` / `busy_read` | `0` (unset) | global: every blocking read on the host would spin. Not measured from committed data; ergon-io busy-polls per socket instead | `sysctl net.core.busy_poll net.core.busy_read` |
 | `kernel.numa_balancing` | `0` | no automatic page migration under a latency pod; matters only with several NUMA nodes; not measured | `sysctl kernel.numa_balancing` |
 | hugepages | boot `hugepagesz=2M hugepages=256` | `AERON_DIR` on hugetlbfs removes 4 KiB page faults | `grep HugePages /proc/meminfo` |
-| `transparent_hugepage` | `never` | no `khugepaged` merging under busy threads (kernel `transhuge.rst`); latency not measured from committed data | `cat /sys/kernel/mm/transparent_hugepage/enabled` |
+| `transparent_hugepage` | `never` | `khugepaged` (it runs under `madvise` too) calls `lru_add_drain_all`, which ran a kworker on an isolated CPU ([evidence](../nri-shared-cpus/BENCHMARKS.md#what-reached-the-exclusive-cpu-and-the-fix)) | `cat /sys/kernel/mm/transparent_hugepage/enabled` |
+| fair server | `runtime` 0 on each isolated CPU, at every boot (debugfs, kernel 6.12+); only where nothing real-time runs there | its 1 s timer IPIs isolated CPUs and keeps their tick on ([evidence](../nri-shared-cpus/BENCHMARKS.md#what-reached-the-exclusive-cpu-and-the-fix)) | `cat /sys/kernel/debug/sched/fair_server/cpu<N>/runtime` |
 | `nohz_full` | every non-reserved CPU | keeps the tick off the loop's core | `cat /sys/devices/system/cpu/nohz_full` |
 | `rcu_nocbs` | every non-reserved CPU | RCU callbacks off the hot cores | `cat /sys/devices/system/cpu/rcu_nocbs 2>/dev/null` or `grep rcu_nocbs /proc/cmdline` |
 | `isolcpus=managed_irq` | every non-reserved CPU | no stray IRQ on the loop's core | `grep isolcpus /proc/cmdline` |

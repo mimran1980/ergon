@@ -190,11 +190,6 @@ static void rusteron_dpdk_client_note_reply_ip(rusteron_dpdk_client_t *client, u
     }
 }
 
-/* Aeron's distinct error log, from the driver library when it is linked
- * (production); absent from the DPDK-free test archives. */
-extern int aeron_distinct_error_log_record(aeron_distinct_error_log_t *log, int error_code, const char *description)
-    __attribute__((weak));
-
 #define RUSTERON_DPDK_AERON_HDR_TYPE_SETUP 0x05
 #define RUSTERON_DPDK_ICMP_UNREACH_PER_SEC 100
 #define RUSTERON_DPDK_ICMP_ECHO_PER_SEC 100
@@ -215,6 +210,19 @@ static int rusteron_dpdk_setup_mtu_too_large(const rusteron_dpdk_transport_t *na
     return rusteron_dpdk_le32(f->payload + 32) > native->config.max_aeron_mtu;
 }
 
+/* Receive-path error reports formatted so far (tests). */
+static int rusteron_dpdk_reports_formatted = 0;
+
+int rusteron_dpdk_test_reports_formatted(void)
+{
+    return __atomic_load_n(&rusteron_dpdk_reports_formatted, __ATOMIC_RELAXED);
+}
+
+void rusteron_dpdk_reports_test_reset(void)
+{
+    __atomic_store_n(&rusteron_dpdk_reports_formatted, 0, __ATOMIC_RELAXED);
+}
+
 /* At most one report a second per NIC: spoofed frames must not cost string
  * formatting per packet or fill the driver's distinct error log. */
 static int rusteron_dpdk_report_due(rusteron_dpdk_port_t *port)
@@ -228,30 +236,66 @@ static int rusteron_dpdk_report_due(rusteron_dpdk_port_t *port)
     return 1;
 }
 
-static void rusteron_dpdk_record_peer_mtu(
-    aeron_udp_channel_transport_t *target, const rusteron_dpdk_transport_t *native, rusteron_dpdk_port_t *port,
-    const rusteron_dpdk_parsed_frame_t *f)
+/* Queue an error report for housekeeping to format and record
+ * (rusteron_dpdk_report_take): at most one a second per NIC, and only while
+ * housekeeping has taken the last one, so the agent formats nothing, builds
+ * no message and never takes the distinct error log's mutex (which the
+ * conductor shares). A report it cannot queue is dropped; the frame's counter
+ * still has it. */
+static void rusteron_dpdk_report_queue(
+    rusteron_dpdk_port_t *port, uint32_t kind, uint32_t ip, uint16_t udp_port, uint32_t value)
 {
     if (!rusteron_dpdk_report_due(port))
     {
         return;
     }
-    char ip_text[INET_ADDRSTRLEN] = "";
-    char message[256];
-    inet_ntop(AF_INET, &f->src_ip, ip_text, sizeof(ip_text));
-    snprintf(message, sizeof(message),
-             "DPDK transport: SETUP from %s:%u has mtu %u, above max_aeron_mtu %zu: dropped; every peer's Aeron "
-             "mtu must be <= max_aeron_mtu",
-             ip_text, (unsigned)f->src_port, rusteron_dpdk_le32(f->payload + 32), native->config.max_aeron_mtu);
-    rusteron_dpdk_set_error(message);
-    if (NULL != aeron_distinct_error_log_record && NULL != target->error_log)
+    uint32_t expected = RUSTERON_DPDK_REPORT_FREE;
+    if (!__atomic_compare_exchange_n(&port->report.state, &expected, RUSTERON_DPDK_REPORT_WRITING, 0,
+                                     __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
     {
-        /* A fixed description: the distinct log keeps one entry, not one per
-         * spoofed source. The details are in the counter and last_error. */
-        aeron_distinct_error_log_record(
-            target->error_log, EMSGSIZE,
-            "DPDK transport: SETUP from a peer whose mtu exceeds max_aeron_mtu dropped (counter peer-mtu-too-large)");
+        return;
     }
+    port->report.kind = kind;
+    port->report.ip = ip;
+    port->report.udp_port = udp_port;
+    port->report.value = value;
+    __atomic_store_n(&port->report.state, RUSTERON_DPDK_REPORT_READY, __ATOMIC_RELEASE);
+}
+
+uint32_t rusteron_dpdk_report_take(
+    const rusteron_dpdk_transport_t *native, rusteron_dpdk_port_t *port, char *message, size_t len,
+    const char **description)
+{
+    if (RUSTERON_DPDK_REPORT_READY != __atomic_load_n(&port->report.state, __ATOMIC_ACQUIRE))
+    {
+        return RUSTERON_DPDK_REPORT_NONE;
+    }
+    const rusteron_dpdk_report_t r = port->report;
+    __atomic_store_n(&port->report.state, RUSTERON_DPDK_REPORT_FREE, __ATOMIC_RELEASE);
+    __atomic_add_fetch(&rusteron_dpdk_reports_formatted, 1, __ATOMIC_RELAXED);
+    char ip_text[INET_ADDRSTRLEN] = "";
+    inet_ntop(AF_INET, &r.ip, ip_text, sizeof(ip_text));
+    if (RUSTERON_DPDK_REPORT_PEER_MTU == r.kind)
+    {
+        snprintf(message, len,
+                 "DPDK transport: SETUP from %s:%u has mtu %u, above max_aeron_mtu %zu: dropped; every peer's Aeron "
+                 "mtu must be <= max_aeron_mtu",
+                 ip_text, (unsigned)r.udp_port, r.value, native->config.max_aeron_mtu);
+        /* A fixed description: the distinct log keeps one entry, not one per
+         * spoofed source. The details are in the counter and on stderr. */
+        *description =
+            "DPDK transport: SETUP from a peer whose mtu exceeds max_aeron_mtu dropped (counter peer-mtu-too-large)";
+    }
+    else
+    {
+        snprintf(message, len,
+                 "DPDK transport: %s reports fragmentation needed, next-hop MTU %u: a path MTU below "
+                 "max_aeron_mtu + 28 drops this transport's (DF) frames",
+                 ip_text, r.value);
+        *description = "DPDK transport: ICMP fragmentation needed: a path MTU below max_aeron_mtu + 28 drops this "
+                       "transport's (DF) frames (counter icmp-frag-needed)";
+    }
+    return r.kind;
 }
 
 /* Transmit one locally built frame (ICMP) on the port. */
@@ -346,17 +390,8 @@ static void rusteron_dpdk_icmp_handle(
     else if (3 == type && 4 == code)
     {
         rusteron_dpdk_counters_add(&port->counters, RD_COUNTER_ICMP_FRAG_NEEDED, 1);
-        if (rusteron_dpdk_report_due(port))
-        {
-            char ip_text[INET_ADDRSTRLEN] = "";
-            char message[256];
-            inet_ntop(AF_INET, &f->src_ip, ip_text, sizeof(ip_text));
-            snprintf(message, sizeof(message),
-                     "DPDK transport: %s reports fragmentation needed, next-hop MTU %u: a path MTU below "
-                     "max_aeron_mtu + 28 drops this transport's (DF) frames",
-                     ip_text, (unsigned)((icmp[6] << 8) | icmp[7]));
-            rusteron_dpdk_set_error(message);
-        }
+        rusteron_dpdk_report_queue(port, RUSTERON_DPDK_REPORT_FRAG_NEEDED, f->src_ip, 0,
+                                   (uint32_t)((icmp[6] << 8) | icmp[7]));
     }
     else
     {
@@ -482,7 +517,8 @@ static int rusteron_dpdk_dispatch_frame(
     if (rusteron_dpdk_setup_mtu_too_large(client->runtime, frame))
     {
         rusteron_dpdk_counters_add(&client->port->counters, RD_COUNTER_PEER_MTU_TOO_LARGE, 1);
-        rusteron_dpdk_record_peer_mtu(target, client->runtime, client->port, frame);
+        rusteron_dpdk_report_queue(client->port, RUSTERON_DPDK_REPORT_PEER_MTU, frame->src_ip, frame->src_port,
+                                   rusteron_dpdk_le32(frame->payload + 32));
         return 0;
     }
 
@@ -527,12 +563,22 @@ static int rusteron_dpdk_dispatch_frame(
  * also splits the gap: the thread's own CPU time across it, half or more of
  * the wall length being the agent working between polls and less being the
  * host descheduling its vCPU (RUSTERON_DPDK_GAP_ATTRIB=1; `now_cpu_ns` is 0
- * and last_poll_cpu_ns stays 0 otherwise). */
+ * and last_poll_cpu_ns stays 0 otherwise). With the event log open, a gap of
+ * RUSTERON_DPDK_EVENT_GAP_NS or more is also logged, stamped. One compare on
+ * an ordinary cycle either way: the floor is the lower of the two. */
 static inline void rusteron_dpdk_poll_cycle(rusteron_dpdk_port_t *port, uint64_t now_ns, uint64_t now_cpu_ns)
 {
-    if (0 != port->last_poll_ns && now_ns - port->last_poll_ns >= 20000)
+    if (0 != port->last_poll_ns && now_ns - port->last_poll_ns >= rusteron_dpdk_gap_floor_ns)
     {
         const uint64_t cycle = now_ns - port->last_poll_ns;
+        if (NULL != port->events)
+        {
+            rusteron_dpdk_event_record(port->events, RUSTERON_DPDK_EVENT_GAP, port->port_id, cycle);
+        }
+        if (cycle < RUSTERON_DPDK_POLL_GAP_NS)
+        {
+            return;
+        }
         rusteron_dpdk_counters_max(&port->counters, RD_COUNTER_POLL_CYCLE_GAP_MAX, (int64_t)cycle);
         rusteron_dpdk_counters_add(
             &port->counters,
@@ -551,6 +597,68 @@ static inline void rusteron_dpdk_poll_cycle(rusteron_dpdk_port_t *port, uint64_t
                 work ? RD_COUNTER_POLL_CYCLE_GAP_WORK_MAX : RD_COUNTER_POLL_CYCLE_GAP_DESCHED_MAX,
                 (int64_t)cycle);
         }
+    }
+}
+
+/* A receive burst's ARP and ICMP frames (`control`, indexes into `views`),
+ * in arrival order, after the burst's data frames were dispatched; each
+ * recycled after its handler. */
+static __attribute__((cold, noinline)) void rusteron_dpdk_poller_controls(
+    rusteron_dpdk_transport_t *native, rusteron_dpdk_port_t *port, rusteron_dpdk_mbuf_t *views,
+    const uint16_t *control, uint16_t controls)
+{
+    for (uint16_t c = 0; c < controls; c++)
+    {
+        rusteron_dpdk_mbuf_t *m = &views[control[c]];
+        rusteron_dpdk_parsed_frame_t frame;
+        if (RUSTERON_DPDK_RX_RESULT_ICMP == rusteron_dpdk_packet_classify_rx(m, &frame))
+        {
+            port->rx_stats.icmp++;
+            if (rusteron_dpdk_port_owns_ip(port, frame.dst_ip))
+            {
+                rusteron_dpdk_icmp_handle(native, port, m, &frame);
+            }
+        }
+        else
+        {
+            port->rx_stats.arp++;
+            rusteron_dpdk_arp_handle_frame(&port->arp, native, port, m->data, m->frame_len);
+        }
+        native->ops->mbuf_release(m);
+    }
+}
+
+/* RUSTERON_DPDK_TX_IDLE_CLEAN: on a poll that received nothing, reclaim up
+ * to the budget of what the NIC sent, once the last data send is old enough
+ * for its completions to be posted, so the PMD does not do it inside a later
+ * send (ENA: every completed descriptor, once fewer than its free threshold
+ * are left). The agent owns the port's TX queue, as it does its sends. A
+ * PMD found to lack the op at start never gets here; one that answers
+ * -ENOTSUP later turns it off. Called only with sends unreaped and the last
+ * one old enough (checked inline at its one call), so
+ * an idle poll with nothing outstanding makes no call. */
+static __attribute__((cold, noinline)) void rusteron_dpdk_tx_idle_clean(
+    const rusteron_dpdk_port_ops_t *ops, rusteron_dpdk_port_t *port)
+{
+    const int rc = ops->tx_done_cleanup(port->port_id, port->tx_queue_id, port->tx_idle_clean);
+    if (rc < 0)
+    {
+        if (-ENOTSUP == rc)
+        {
+            port->tx_idle_clean = 0;
+        }
+        /* Any other error: no retry on every idle poll; the PMD reclaims
+         * these in a later tx_burst, and the next send arms it again. */
+        port->tx_unreaped = 0;
+        return;
+    }
+    const uint32_t cleaned = (uint32_t)rc;
+    /* Fewer than the budget: none completed is left (any still in flight
+     * is reclaimed by the PMD's next send, as without this). */
+    port->tx_unreaped = cleaned >= port->tx_idle_clean && port->tx_unreaped > cleaned ? port->tx_unreaped - cleaned : 0;
+    if (0 != cleaned)
+    {
+        rusteron_dpdk_counters_add(&port->counters, RD_COUNTER_TX_IDLE_CLEANED, (int64_t)cleaned);
     }
 }
 
@@ -582,6 +690,10 @@ int rusteron_dpdk_poller_receive(
     rusteron_dpdk_transport_t *native = client->runtime;
     rusteron_dpdk_port_t *port = client->port;
     const rusteron_dpdk_port_ops_t *ops = native->ops;
+    /* RUSTERON_DPDK_GAP_ATTRIB=1 or burst: time each burst that returns
+     * frames (two clock reads); 1 also splits the loop gap (the thread CPU
+     * clock). */
+    const int attrib = rusteron_dpdk_gap_attrib_on();
 
     /* Up to the configured burst size a burst, whatever Aeron's vlen: every
      * frame is dispatched through msgvec[0] the moment it is parsed (zero
@@ -609,15 +721,13 @@ int rusteron_dpdk_poller_receive(
     int work_count = 0;
     int64_t rx_bytes = 0;
     int64_t sw_csum = 0;
-    /* NIC arrival to the receive burst that carried the frame, over the frames
-     * the NIC stamped no later than the host clock read at that burst; one
-     * stamped later is clock skew between the NIC's PTP hardware clock and
-     * CLOCK_REALTIME, counted apart. The read is once a burst and before any
-     * frame of it is classified or dispatched, so a frame after the burst's
-     * first is measured before its own dispatch: a lower bound on arrival to
-     * dispatch, exact only for the first frame of the burst. Per-frame dispatch
-     * stamps would cost a clock read per frame on the receive path; the burst
-     * endpoint is the one this path can report without adding that. */
+    /* NIC arrival to the frame's own dispatch, over the frames the NIC stamped
+     * no later than the host clock read just before that dispatch; one stamped
+     * later is clock skew between the NIC's PTP hardware clock and
+     * CLOCK_REALTIME, counted apart. The read is per stamped frame, so a frame
+     * later in a burst carries its wait behind the earlier ones. Frames are
+     * stamped only with RUSTERON_DPDK_RX_HW_TIMESTAMP=1: without it no frame
+     * reads the clock here. */
     int64_t hw_sum = 0, hw_count = 0, hw_max = INT64_MIN, hw_min = INT64_MAX, hw_negative = 0;
     int observed = 0; /* the first datagram's source checked against ARP */
     /* A channel on this NIC asking for media receive timestamps
@@ -637,20 +747,28 @@ int rusteron_dpdk_poller_receive(
     int full = 0;
     for (uint32_t burst = 0; burst < native->rx_max_bursts; burst++)
     {
+        const uint64_t burst_ns = attrib ? rusteron_dpdk_clock_now() : 0;
         const uint16_t received = ops->rx_burst(port->port_id, port->rx_queue_id, batch, (uint16_t)limit);
-        /* CLOCK_REALTIME, read at most once a burst, after the NIC handed the
-         * burst over (every frame of it arrived before): at once for media
-         * timestamps, else at the burst's first NIC-timestamped frame. Never
-         * once a poll: a later burst's frames arrived after that read. */
-        uint64_t realtime_ns = 0;
+        if (attrib && received > 0)
+        {
+            /* ENA refills the ring inside the call before returning the
+             * frames: a slow one delayed every frame of it */
+            rusteron_dpdk_counters_burst(&port->counters, RD_COUNTER_RX_BURST_MAX, rusteron_dpdk_clock_now() - burst_ns);
+        }
+        /* The media timestamp of a frame the NIC did not stamp: CLOCK_REALTIME
+         * read once a burst, after the NIC handed the burst over (every frame
+         * of it arrived before). Never once a poll: a later burst's frames
+         * arrived after that read. */
         struct timespec *burst_media_ts = NULL;
         if (media_ts && received > 0)
         {
-            realtime_ns = rusteron_dpdk_realtime_ns();
+            const uint64_t realtime_ns = rusteron_dpdk_realtime_ns();
             burst_ts.tv_sec = (time_t)(realtime_ns / 1000000000ULL);
             burst_ts.tv_nsec = (long)(realtime_ns % 1000000000ULL);
             burst_media_ts = &burst_ts;
         }
+        uint16_t control[256];
+        uint16_t controls = 0;
         for (uint16_t i = 0; i < received; i++)
         {
             rusteron_dpdk_mbuf_t *m = &views[i];
@@ -675,13 +793,15 @@ int rusteron_dpdk_poller_receive(
                 struct timespec nic_ts;
                 if (0 != m->hw_rx_ns)
                 {
-                    /* NIC arrival to this burst: the NIC stamps with its PTP
-                     * hardware clock, which chrony keeps CLOCK_REALTIME on. */
-                    if (0 == realtime_ns)
-                    {
-                        realtime_ns = rusteron_dpdk_realtime_ns();
-                    }
-                    const int64_t delay = (int64_t)(realtime_ns - m->hw_rx_ns);
+                    /* NIC arrival to this frame's dispatch: the NIC stamps
+                     * with its PTP hardware clock, which chrony keeps
+                     * CLOCK_REALTIME on. Read here, after the classify and
+                     * just before the hand-off, for every stamped frame: a
+                     * frame later in the burst waited for the ones before it.
+                     * Only a NIC with RUSTERON_DPDK_RX_HW_TIMESTAMP=1 stamps,
+                     * so without it this costs nothing. */
+                    const uint64_t dispatch_ns = rusteron_dpdk_realtime_ns();
+                    const int64_t delay = (int64_t)(dispatch_ns - m->hw_rx_ns);
                     if (delay < 0)
                     {
                         hw_negative++;
@@ -709,27 +829,27 @@ int rusteron_dpdk_poller_receive(
                 work_count += dispatched;
                 rx_bytes += dispatched ? (int64_t)frame.payload_len : 0;
             }
-            else if (RUSTERON_DPDK_RX_RESULT_ICMP == result)
+            else if (RUSTERON_DPDK_RX_RESULT_ICMP == result || RUSTERON_DPDK_RX_RESULT_ARP == result)
             {
-                port->rx_stats.icmp++;
-                if (rusteron_dpdk_port_owns_ip(port, frame.dst_ip))
-                {
-                    rusteron_dpdk_icmp_handle(native, port, m, &frame);
-                }
-            }
-            else if (RUSTERON_DPDK_RX_RESULT_ARP == result)
-            {
-                port->rx_stats.arp++;
-                rusteron_dpdk_arp_handle_frame(&port->arp, native, port, m->data, m->frame_len);
+                /* Answered after the burst's data frames (below): a datagram
+                 * behind it never waits for a reply's build and transmit. */
+                control[controls++] = i;
+                continue;
             }
             else
             {
                 rusteron_dpdk_rx_count(&port->rx_stats, &port->counters, result);
             }
 
-            /* The callback has returned (and the ARP handler has run); the mbuf is
-             * recycled now and no later (plan §7.6). */
+            /* The callback has returned; the mbuf is recycled now and no
+             * later (plan §7.6). */
             ops->mbuf_release(m);
+        }
+        /* The burst's ARP and ICMP frames, once its data frames are
+         * dispatched (out of line: a data-only burst pays one branch). */
+        if (__builtin_expect(0 != controls, 0))
+        {
+            rusteron_dpdk_poller_controls(native, port, views, control, controls);
         }
         total += received;
         if ((size_t)received < limit)
@@ -779,7 +899,7 @@ int rusteron_dpdk_poller_receive(
     /* The agent's own loop: any gap since the port's last poll of 20 µs or
      * more is the agent not running (preempted, or its vCPU descheduled), so
      * a latency spike can be matched to it. The clock is read here anyway. */
-    const uint64_t now_cpu_ns = rusteron_dpdk_gap_attributing() ? rusteron_dpdk_thread_cpu_ns() : 0;
+    const uint64_t now_cpu_ns = rusteron_dpdk_gap_cpu_on() ? rusteron_dpdk_thread_cpu_ns() : 0;
     rusteron_dpdk_poll_cycle(port, now_ns, now_cpu_ns);
     if (total > 0 && 0 != port->last_poll_ns)
     {
@@ -793,6 +913,11 @@ int rusteron_dpdk_poller_receive(
     if (full)
     {
         rusteron_dpdk_counters_add(&port->counters, RD_COUNTER_RX_BURST_FULL, 1);
+    }
+    if (__builtin_expect(0 != port->tx_idle_clean, 0) && 0 == total && 0 != port->tx_unreaped &&
+        now_ns - port->last_tx_ns >= RUSTERON_DPDK_TX_IDLE_CLEAN_AGE_NS)
+    {
+        rusteron_dpdk_tx_idle_clean(ops, port);
     }
     port->last_poll_ns = now_ns;
     port->last_poll_cpu_ns = now_cpu_ns;
@@ -1098,7 +1223,7 @@ int rusteron_dpdk_poller_poll(
         if (NULL != first && NULL != first->port)
         {
             const uint64_t now = rusteron_dpdk_clock_now();
-            const uint64_t now_cpu = rusteron_dpdk_gap_attributing() ? rusteron_dpdk_thread_cpu_ns() : 0;
+            const uint64_t now_cpu = rusteron_dpdk_gap_cpu_on() ? rusteron_dpdk_thread_cpu_ns() : 0;
             rusteron_dpdk_poll_cycle(first->port, now, now_cpu);
             first->port->last_poll_ns = now;
             first->port->last_poll_cpu_ns = now_cpu;

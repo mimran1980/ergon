@@ -1,21 +1,14 @@
-//! `uring-spin`, `uring-napi` and `uring-sqpoll`.
+//! `uring-sqpoll`.
 //!
 //! - Each connection keeps one single-shot `IORING_OP_RECVMSG` armed at the
 //!   free tail of its receive buffer: the kernel copies straight into the
 //!   buffer the TLS layer decrypts in place. (Multishot with a provided-buffer
 //!   ring would save the re-arm but needs a copy to stitch TLS records that
 //!   straddle ring buffers.)
-//! - `uring-spin`: `SINGLE_ISSUER | DEFER_TASKRUN | TASKRUN_FLAG`. `poll`
-//!   reads the completion ring and the `IORING_SQ_TASKRUN` flag in shared
-//!   memory, and enters the kernel only with submissions or flagged work.
-//!   Idle polls make no syscalls.
-//! - `uring-napi`: the same ring plus NAPI busy poll (static NAPI ids). An
-//!   idle poll waits in `io_uring_enter(GETEVENTS, 1, wait_us)`: the kernel
-//!   polls the NIC, then sleeps until a completion or the timeout. Even with
-//!   `wait_us = 0` it schedules on an expired timer, so it can sleep; with
-//!   `wait_us = 0` the NAPI budget is 0 (one pass).
-//! - `uring-sqpoll`: an `SQPOLL` kernel thread (optionally pinned) submits,
-//!   completes and polls the NIC; `poll` only reads the completion ring.
+//! - An `SQPOLL` kernel thread (optionally pinned) submits, completes and
+//!   polls the NIC (NAPI busy poll, one pass per call, static NAPI ids);
+//!   `poll` only reads the completion ring. It enters the kernel only when
+//!   the thread went to sleep or completions overflowed.
 //!
 //! Safety of in-flight operations:
 //!
@@ -38,18 +31,11 @@ use io_uring::types::{CancelBuilder, Napi, NapiTracking};
 use io_uring::{IoUring, opcode, squeue, types};
 
 use super::Conns;
-use crate::backend::{Backend, Config};
+use crate::backend::Config;
 use crate::endpoint::sealed::Io;
 use crate::endpoint::{DriverStats, Endpoint, Handler, Receive};
 use crate::error::{Error, Result};
 use crate::sys::{self, MsgSlot};
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Mode {
-    Spin,
-    Napi,
-    Sqpoll,
-}
 
 const RECV: u64 = 0;
 const SEND: u64 = 1;
@@ -74,10 +60,8 @@ struct Slot {
 pub(super) struct Uring {
     // Dropped first: closing the ring fd before the buffers below.
     ring: IoUring,
-    mode: Mode,
     slots: Vec<Slot>,
     pending: usize,
-    wait: types::Timespec,
     /// Static NAPI ids registered with the ring and how many open
     /// connections use each; an id is deleted when its last one closes.
     napi_refs: Vec<(u32, usize)>,
@@ -88,33 +72,21 @@ pub(super) struct Uring {
 
 impl Uring {
     pub(super) fn new(cfg: &Config) -> Result<Self> {
-        let mode = match cfg.backend {
-            Backend::UringNapi => Mode::Napi,
-            Backend::UringSqpoll => Mode::Sqpoll,
-            _ => Mode::Spin,
-        };
         let mut b = IoUring::builder();
-        if mode == Mode::Sqpoll {
-            // NAPI passes do not count as SQPOLL work, so keep the idle window
-            // long or the thread sleeps through quiet periods.
-            b.setup_sqpoll(cfg.sqpoll_idle_ms);
-            // The SQPOLL thread inherits its creator's affinity: with a pinned
-            // polling thread it would spin on the poller's own core and steal
-            // whole time slices. `Driver::new` has set its CPU
-            // (`placement::sqpoll_cpu`: `sqpoll_cpu`, else the first helper
-            // CPU — except an explicit helper list, the shared-work CPUs,
-            // where it takes a CPU of the process's own outside that list;
-            // inside the cpuset, where `io_uring_setup` refuses any other
-            // with EINVAL).
-            if let Some(cpu) = cfg.sqpoll_cpu {
-                b.setup_sqpoll_cpu(cpu);
-            }
-            b.setup_single_issuer();
-        } else {
-            b.setup_single_issuer()
-                .setup_defer_taskrun()
-                .setup_taskrun_flag();
+        // NAPI passes do not count as SQPOLL work, so keep the idle window
+        // long or the thread sleeps through quiet periods.
+        b.setup_sqpoll(cfg.sqpoll_idle_ms);
+        // The SQPOLL thread inherits its creator's affinity: with a pinned
+        // polling thread it would spin on the poller's own core and steal
+        // whole time slices. `Driver::new` has set its CPU
+        // (`placement::sqpoll_cpu`: `sqpoll_cpu`, else the first helper CPU —
+        // except an explicit helper list, the shared-work CPUs, where it
+        // takes a CPU of the process's own outside that list; inside the
+        // cpuset, where `io_uring_setup` refuses any other with EINVAL).
+        if let Some(cpu) = cfg.sqpoll_cpu {
+            b.setup_sqpoll_cpu(cpu);
         }
+        b.setup_single_issuer();
         let ring = b.build(cfg.ring_entries).map_err(|e| {
             if e.raw_os_error() == Some(libc::ENOSYS) || e.raw_os_error() == Some(libc::EPERM) {
                 Error::Unsupported("io_uring is disabled or unavailable on this kernel")
@@ -122,50 +94,35 @@ impl Uring {
                 Error::Io(e)
             }
         })?;
-        let mut napi_static = false;
-        if mode != Mode::Spin {
-            // With a zero wait the GETEVENTS busy loop is capped only by the NAPI
-            // budget, not by the expired timeout: budget 0 makes it one pass.
-            let budget = if mode == Mode::Napi && cfg.wait_us == 0 {
-                0
-            } else {
-                cfg.busy_poll_us.max(1)
-            };
-            // Static tracking (6.13+) polls exactly the queues of our sockets;
-            // older kernels (6.9+) track the queues of sockets with requests.
-            let register = |tracking| {
-                let mut napi = Napi::new()
-                    .set_busy_poll_timeout(budget)
-                    .set_prefer_busy_poll(cfg.prefer_busy_poll)
-                    .set_tracking(tracking);
-                ring.submitter().register_napi(&mut napi)
-            };
-            let napi_error = |e: std::io::Error| match e.raw_os_error() {
-                Some(libc::EINVAL) => {
-                    Error::Unsupported("IORING_REGISTER_NAPI needs Linux 6.9 or newer")
-                }
-                Some(libc::EOPNOTSUPP) => Error::Unsupported(
-                    "the kernel was built without busy polling (CONFIG_NET_RX_BUSY_POLL)",
-                ),
-                _ => Error::Io(e),
-            };
-            match register(NapiTracking::Static) {
-                Ok(()) => napi_static = true,
-                // Static tracking is 6.13+: only "unknown mode" falls back.
-                Err(e) if e.raw_os_error() == Some(libc::EINVAL) => {
-                    register(NapiTracking::Dynamic).map_err(napi_error)?;
-                }
-                Err(e) => return Err(napi_error(e)),
+        // One NAPI pass per call: a busy-poll timeout of 1 µs. Static
+        // tracking (6.13+) polls exactly the queues of our sockets; older
+        // kernels (6.9+) track the queues of sockets with requests.
+        let register = |tracking| {
+            let mut napi = Napi::new().set_busy_poll_timeout(1).set_tracking(tracking);
+            ring.submitter().register_napi(&mut napi)
+        };
+        let napi_error = |e: std::io::Error| match e.raw_os_error() {
+            Some(libc::EINVAL) => {
+                Error::Unsupported("IORING_REGISTER_NAPI needs Linux 6.9 or newer")
             }
-        }
+            Some(libc::EOPNOTSUPP) => Error::Unsupported(
+                "the kernel was built without busy polling (CONFIG_NET_RX_BUSY_POLL)",
+            ),
+            _ => Error::Io(e),
+        };
+        let napi_static = match register(NapiTracking::Static) {
+            Ok(()) => true,
+            // Static tracking is 6.13+: only "unknown mode" falls back.
+            Err(e) if e.raw_os_error() == Some(libc::EINVAL) => {
+                register(NapiTracking::Dynamic).map_err(napi_error)?;
+                false
+            }
+            Err(e) => return Err(napi_error(e)),
+        };
         Ok(Self {
             ring,
-            mode,
             slots: Vec::new(),
             pending: 0,
-            wait: types::Timespec::new()
-                .sec(u64::from(cfg.wait_us / 1_000_000))
-                .nsec((cfg.wait_us % 1_000_000) * 1000),
             napi_refs: Vec::new(),
             napi_static,
             backlog: VecDeque::with_capacity(cfg.ring_entries as usize),
@@ -174,9 +131,13 @@ impl Uring {
 
     pub(super) fn add<E: Endpoint>(&mut self, ep: &mut E, i: usize) -> Result<()> {
         while self.slots.len() <= i {
+            // Written once now: swapped with the connection's queue on every
+            // send, so its pages must not fault on the first one.
+            let mut send_buf = Vec::with_capacity(1 << 16);
+            crate::stream::prefault(&mut send_buf);
             self.slots.push(Slot {
                 msg: MsgSlot::new(),
-                send_buf: Vec::with_capacity(1 << 16),
+                send_buf,
                 send_off: 0,
                 recv_armed: false,
                 send_active: false,
@@ -342,7 +303,7 @@ impl Uring {
         conns: &mut Conns<E>,
         handler: &mut H,
         stats: &mut DriverStats,
-        read_seq: &mut u64,
+        reads: &mut super::Reads,
     ) -> Result<()>
     where
         E: Receive<H>,
@@ -354,7 +315,7 @@ impl Uring {
         if self.ring.completion().is_empty() {
             // Idle fast path: nothing to reap.
             self.push_sends(conns, stats);
-            return self.enter(true, stats);
+            return self.enter(stats);
         }
         let mut cqes = [(0u64, 0i32); MAX_CQES];
         let mut n = 0;
@@ -373,13 +334,13 @@ impl Uring {
                 continue;
             }
             match op {
-                RECV => self.on_recv(conns, i, res, handler, stats, read_seq),
+                RECV => self.on_recv(conns, i, res, handler, stats, reads),
                 SEND => self.on_send(conns, i, res, handler, stats),
                 _ => {}
             }
         }
         self.push_sends(conns, stats);
-        self.enter(n == 0, stats)
+        self.enter(stats)
     }
 
     #[inline]
@@ -390,7 +351,7 @@ impl Uring {
         res: i32,
         handler: &mut H,
         stats: &mut DriverStats,
-        read_seq: &mut u64,
+        reads: &mut super::Reads,
     ) where
         E: Receive<H>,
         H: Handler,
@@ -408,14 +369,18 @@ impl Uring {
             return;
         };
         let napi_known = slot.napi_known;
+        let mut queued = false;
         let outcome = match usize::try_from(res) {
             Ok(0) => Err(Error::Closed),
             Ok(len) => {
-                *read_seq += 1;
+                let meta = reads.next(&slot.msg);
                 stats.completions += 1;
-                let meta = slot.msg.meta(*read_seq);
-                conn.on_received(id, len, &meta, handler)
-                    .map(|m| stats.messages += m as u64)
+                let r = conn
+                    .on_received(id, len, &meta, handler)
+                    .map(|m| stats.messages += m as u64);
+                // A reply (a Pong) may be queued: list it for `push_sends`.
+                queued = !conn.tx_queue().is_empty();
+                r
             }
             Err(_) if res == -libc::EAGAIN || res == -libc::EINTR => Ok(()),
             Err(_) => Err(Error::Io(std::io::Error::from_raw_os_error(-res))),
@@ -430,8 +395,10 @@ impl Uring {
             Ok(())
         });
         let outcome = outcome.map(|()| self.arm_recv(conn, i));
-        if let Err(e) = outcome {
-            self.fail(conns, i, e, handler, stats);
+        match outcome {
+            Err(e) => self.fail(conns, i, e, handler, stats),
+            Ok(()) if queued => conns.mark_tx(i),
+            Ok(()) => {}
         }
     }
 
@@ -465,29 +432,36 @@ impl Uring {
         }
     }
 
-    /// Moves each idle connection's queued bytes into its in-flight send buffer
-    /// (a swap, no copy) and queues the send.
+    /// Moves the queued bytes of each connection in the send set with no send
+    /// in flight into its in-flight send buffer (a swap, no copy) and queues
+    /// the send. A connection whose send is still in flight stays listed
+    /// while it has bytes queued; the others leave the set.
     #[inline]
     fn push_sends<E: Endpoint>(&mut self, conns: &mut Conns<E>, stats: &mut DriverStats) {
-        for i in 0..conns.len_slots().min(self.slots.len()) {
-            if self.slots[i].send_active || !conns.is_open(i) {
-                continue;
-            }
-            let Some(c) = conns.at(i) else {
+        let mut k = 0;
+        while let Some(&i) = conns.tx_dirty.get(k) {
+            let open = conns.is_open(i);
+            let (Some(slot), Some(conn)) = (self.slots.get_mut(i), conns.at(i).filter(|_| open))
+            else {
+                conns.unlist_tx(k);
                 continue;
             };
-            let q = c.tx_queue();
-            if q.is_empty() {
+            let queue = conn.tx_queue();
+            if queue.is_empty() {
+                conns.unlist_tx(k);
                 continue;
             }
-            let n = q.len();
-            let s = &mut self.slots[i];
-            std::mem::swap(&mut s.send_buf, q);
-            s.send_off = 0;
+            if slot.send_active {
+                k += 1;
+                continue;
+            }
+            let len = queue.len();
+            slot.send_off = queue.swap_out(&mut slot.send_buf);
             // Counted as handed once queued for the kernel: an upper bound,
             // so a close before the kernel takes it errs towards "maybe sent".
-            c.on_handed(n);
+            conn.on_handed(len);
             self.push_send(conns, i, stats);
+            conns.unlist_tx(k);
         }
     }
 
@@ -500,51 +474,22 @@ impl Uring {
             self.drain_backlog();
         }
         self.push_sends(conns, stats);
-        self.enter(false, stats)
+        self.enter(stats)
     }
 
     #[inline]
-    fn enter(&mut self, idle: bool, stats: &mut DriverStats) -> Result<()> {
-        match self.mode {
-            Mode::Sqpoll => {
-                // Completions that overflowed the ring wait in the kernel until
-                // an enter collects them.
-                let overflow = self.ring.submission().cq_overflow();
-                if self.pending > 0 || overflow {
-                    // A syscall happens only when the SQPOLL thread went to
-                    // sleep or completions overflowed.
-                    if overflow || self.ring.submission().need_wakeup() {
-                        stats.enter_calls += 1;
-                    }
-                    self.ring.submit()?;
-                    self.pending = 0;
-                }
-            }
-            Mode::Napi if idle => {
+    fn enter(&mut self, stats: &mut DriverStats) -> Result<()> {
+        // Completions that overflowed the ring wait in the kernel until an
+        // enter collects them.
+        let overflow = self.ring.submission().cq_overflow();
+        if self.pending > 0 || overflow {
+            // A syscall happens only when the SQPOLL thread went to sleep or
+            // completions overflowed.
+            if overflow || self.ring.submission().need_wakeup() {
                 stats.enter_calls += 1;
-                let args = types::SubmitArgs::new().timespec(&self.wait);
-                match self.ring.submitter().submit_with_args(1, &args) {
-                    Ok(_) => {}
-                    Err(e)
-                        if matches!(
-                            e.raw_os_error(),
-                            Some(libc::ETIME | libc::EINTR | libc::EBUSY)
-                        ) => {}
-                    Err(e) => return Err(e.into()),
-                }
-                self.pending = 0;
             }
-            _ => {
-                let work = {
-                    let sq = self.ring.submission();
-                    sq.taskrun() || sq.cq_overflow()
-                };
-                if self.pending > 0 || work {
-                    stats.enter_calls += 1;
-                    self.ring.submitter().submit_and_wait(0)?;
-                    self.pending = 0;
-                }
-            }
+            self.ring.submit()?;
+            self.pending = 0;
         }
         Ok(())
     }
@@ -597,16 +542,10 @@ impl Uring {
         self.backlog.push_back(e);
     }
 
-    /// Moves backlog entries into the submission queue while they fit. Without
-    /// `SQPOLL` an enter first makes room (the kernel consumes the whole queue).
+    /// Moves backlog entries into the submission queue while they fit (the
+    /// `SQPOLL` thread makes room as it consumes the queue).
     #[cold]
     fn drain_backlog(&mut self) {
-        if self.mode != Mode::Sqpoll
-            && self.ring.submission().is_full()
-            && self.ring.submit().is_ok()
-        {
-            self.pending = 0;
-        }
         while let Some(e) = self.backlog.front() {
             // SAFETY: as in `push`.
             if unsafe { self.ring.submission().push(e) }.is_err() {

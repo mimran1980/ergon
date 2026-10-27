@@ -175,6 +175,87 @@ pub mod sbe_rt {
             }
         }
     }
+    /// Why an opt-in `validate()` refused a bounds-valid frame
+    /// (`GenerationConfig::with_validate`). Kept apart from
+    /// [`DecodeError`] so the decode path's error stays small.
+    /// `field` is the schema path, e.g. `"Order.legs.qty"`.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum ValidateError {
+        /// Value outside the schema's declared `minValue` / `maxValue`.
+        /// `min` / `max` are the effective bounds; an undeclared one is
+        /// the SBE default and was not checked.
+        ValueOutOfRange {
+            ///Generated field `field`.
+            field: &'static str,
+            ///Generated field `min`.
+            min: i128,
+            ///Generated field `max`.
+            max: i128,
+            ///Generated field `actual`.
+            actual: i128,
+        },
+        /// Enum discriminant that is neither a `validValue` nor the enum's null.
+        UnknownEnum {
+            ///Generated field `field`.
+            field: &'static str,
+            ///Generated field `discriminant`.
+            discriminant: u64,
+        },
+        /// Set bits that no `choice` declares (`bits` holds only those).
+        UnknownSetBits {
+            ///Generated field `field`.
+            field: &'static str,
+            ///Generated field `bits`.
+            bits: u64,
+        },
+        /// `AnyMessage::Unknown`: no schema message to check against.
+        UnknownTemplate {
+            ///Generated field `template_id`.
+            template_id: u16,
+        },
+        /// Walking a group or var-data tail failed.
+        Decode(DecodeError),
+    }
+    impl core::fmt::Display for ValidateError {
+        #[cold]
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            match self {
+                Self::ValueOutOfRange { field, min, max, actual } => {
+                    write!(
+                        f, "field '{}': value {} outside schema range [{}, {}]", field,
+                        actual, min, max
+                    )
+                }
+                Self::UnknownEnum { field, discriminant } => {
+                    write!(
+                        f, "field '{}': undeclared enum discriminant {discriminant:#x}",
+                        field
+                    )
+                }
+                Self::UnknownSetBits { field, bits } => {
+                    write!(f, "field '{}': undeclared set bits {bits:#x}", field)
+                }
+                Self::UnknownTemplate { template_id } => {
+                    write!(f, "template id {} is not in this schema", template_id)
+                }
+                Self::Decode(e) => write!(f, "decode error during validation: {e}"),
+            }
+        }
+    }
+    impl From<DecodeError> for ValidateError {
+        #[inline]
+        fn from(e: DecodeError) -> Self {
+            ValidateError::Decode(e)
+        }
+    }
+    impl core::error::Error for ValidateError {
+        fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+            match self {
+                Self::Decode(e) => Some(e),
+                _ => None,
+            }
+        }
+    }
     ///Generated enum `EncodeError`.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum EncodeError {
@@ -217,7 +298,9 @@ pub mod sbe_rt {
             ///Generated field `field`.
             field: &'static str,
         },
-        /// Domain/DTO value outside the schema min/max range.
+        /// Value outside the schema's declared `minValue` / `maxValue`, or a
+        /// group longer than its count type. `min` / `max` are the effective
+        /// bounds; an undeclared one is the SBE default and was not checked.
         ValueOutOfRange {
             ///Generated field `field`.
             field: &'static str,
@@ -7592,17 +7675,6 @@ impl CarFuelFiguresEntryDomain {
         &self,
         mut enc: FuelFiguresEntryEncoder<'a>,
     ) -> Result<FuelFiguresEntryComplete<'a>, sbe_rt::EncodeError> {
-        {
-            let __v = self.speed as i128;
-            if __v < 0 || __v > 65534 {
-                return Err(sbe_rt::EncodeError::ValueOutOfRange {
-                    field: "speed",
-                    min: 0,
-                    max: 65534,
-                    actual: __v,
-                });
-            }
-        }
         enc.speed(self.speed);
         enc.mpg(self.mpg);
         let enc = enc.usage_description(&self.usage_description)?;
@@ -7663,17 +7735,6 @@ impl CarPerformanceFiguresEntryAccelerationEntryDomain {
         &self,
         enc: &mut PerformanceFiguresAccelerationEntryEncoder<'a>,
     ) -> Result<(), sbe_rt::EncodeError> {
-        {
-            let __v = self.mph as i128;
-            if __v < 0 || __v > 65534 {
-                return Err(sbe_rt::EncodeError::ValueOutOfRange {
-                    field: "mph",
-                    min: 0,
-                    max: 65534,
-                    actual: __v,
-                });
-            }
-        }
         enc.mph(self.mph);
         enc.seconds(self.seconds);
         Ok(())
@@ -7708,17 +7769,6 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
         self.bulk_add_with(
             entries,
             |entry, slot| {
-                {
-                    let __v = entry.mph as i128;
-                    if __v < 0 || __v > 65534 {
-                        return Err(sbe_rt::EncodeError::ValueOutOfRange {
-                            field: "mph",
-                            min: 0,
-                            max: 65534,
-                            actual: __v,
-                        });
-                    }
-                }
                 slot[0..0 + 2].copy_from_slice(&entry.mph.to_le_bytes());
                 slot[2..2 + 4].copy_from_slice(&entry.seconds.to_le_bytes());
                 Ok(())
@@ -7918,29 +7968,7 @@ impl CarDomain {
     #[inline]
     pub fn encode(&self, buf: &mut [u8]) -> Result<usize, sbe_rt::EncodeError> {
         let mut enc = CarEncoder::try_wrap_and_apply_header(buf, 0)?;
-        {
-            let __v = self.serial_number as i128;
-            if __v < 0 || __v > 18446744073709551614 {
-                return Err(sbe_rt::EncodeError::ValueOutOfRange {
-                    field: "serialNumber",
-                    min: 0,
-                    max: 18446744073709551614,
-                    actual: __v,
-                });
-            }
-        }
         enc.serial_number(self.serial_number);
-        {
-            let __v = self.model_year as i128;
-            if __v < 0 || __v > 65534 {
-                return Err(sbe_rt::EncodeError::ValueOutOfRange {
-                    field: "modelYear",
-                    min: 0,
-                    max: 65534,
-                    actual: __v,
-                });
-            }
-        }
         enc.model_year(self.model_year);
         enc.available_bool(self.available);
         enc.code(self.code);
@@ -11765,17 +11793,6 @@ fn __encode_fuel_figures_entry_from<'b, S: FuelFiguresEntrySource + ?Sized>(
 ) -> Result<FuelFiguresEntryComplete<'b>, sbe_rt::EncodeError> {
     {
         let v = src.speed();
-        {
-            let __v = v as i128;
-            if __v < 0 || __v > 65534 {
-                return Err(sbe_rt::EncodeError::ValueOutOfRange {
-                    field: "speed",
-                    min: 0,
-                    max: 65534,
-                    actual: __v,
-                });
-            }
-        }
         enc.speed(v);
     }
     {
@@ -11922,17 +11939,6 @@ fn __encode_performance_figures_acceleration_entry_from<
 ) -> Result<(), sbe_rt::EncodeError> {
     {
         let v = src.mph();
-        {
-            let __v = v as i128;
-            if __v < 0 || __v > 65534 {
-                return Err(sbe_rt::EncodeError::ValueOutOfRange {
-                    field: "mph",
-                    min: 0,
-                    max: 65534,
-                    actual: __v,
-                });
-            }
-        }
         enc.mph(v);
     }
     {
@@ -11950,7 +11956,7 @@ fn __performance_figures_acceleration_entry_length_from<
 impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsUnfixed> {
     /// Write every field of `src` in wire order — fixed block, groups, var-data — and return the finished stage.
     ///
-    /// An absent optional field writes its null value, as `fixed()` does. Errors are the encoder's own, plus `SomeNullValue` for `Some` of a field's null value (NaN for a float), `Conversion` for a value its domain conversion refused (with the field's path and the conversion's error), and `ValueOutOfRange` for a group longer than its count type or a value outside the schema range.
+    /// An absent optional field writes its null value, as `fixed()` does. Errors are the encoder's own, plus `SomeNullValue` for `Some` of a field's null value (NaN for a float), `Conversion` for a value its domain conversion refused (with the field's path and the conversion's error), and `ValueOutOfRange` for a group longer than its count type or a value outside a `minValue` / `maxValue` the schema declares.
     #[inline]
     pub fn encode_from<S: CarSource + ?Sized>(
         mut self,
@@ -11958,32 +11964,10 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsUnfixed> {
     ) -> Result<CarComplete<'a, H>, sbe_rt::EncodeError> {
         {
             let v = src.serial_number();
-            {
-                let __v = v as i128;
-                if __v < 0 || __v > 18446744073709551614 {
-                    return Err(sbe_rt::EncodeError::ValueOutOfRange {
-                        field: "serialNumber",
-                        min: 0,
-                        max: 18446744073709551614,
-                        actual: __v,
-                    });
-                }
-            }
             self.serial_number(v);
         }
         {
             let v = src.model_year();
-            {
-                let __v = v as i128;
-                if __v < 0 || __v > 65534 {
-                    return Err(sbe_rt::EncodeError::ValueOutOfRange {
-                        field: "modelYear",
-                        min: 0,
-                        max: 65534,
-                        actual: __v,
-                    });
-                }
-            }
             self.model_year(v);
         }
         {

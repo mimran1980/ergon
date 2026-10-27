@@ -447,3 +447,248 @@ fn libcurl_connections_get_keepalive_too() -> R {
     assert!(matches!(r, Err(Error::Config(_))), "{:?}", r.err());
     Ok(())
 }
+
+/// `TCP_RTO_MIN_US` and `TCP_DELACK_MAX_US` (`include/uapi/linux/tcp.h`,
+/// Linux 6.15), read straight off the socket.
+fn tcp_timer_us(fd: std::os::fd::RawFd, opt: libc::c_int) -> R<libc::c_int> {
+    let mut v: libc::c_int = 0;
+    let mut len = libc::socklen_t::try_from(std::mem::size_of::<libc::c_int>())?;
+    // SAFETY: `v` and `len` are valid for the call.
+    #[allow(unsafe_code)]
+    let rc = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::IPPROTO_TCP,
+            opt,
+            (&raw mut v).cast(),
+            &raw mut len,
+        )
+    };
+    if rc != 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    Ok(v)
+}
+
+/// Whether the running kernel is at least `major.minor` (from
+/// `/proc/sys/kernel/osrelease`): the oracle for which outcome a test
+/// expects, never a reason to skip one.
+fn kernel_at_least(major: u32, minor: u32) -> R<bool> {
+    let rel = std::fs::read_to_string("/proc/sys/kernel/osrelease")?;
+    let mut parts = rel.trim().split(['.', '-']);
+    let maj: u32 = parts.next().ok_or("no major")?.parse()?;
+    let min: u32 = parts.next().ok_or("no minor")?.parse()?;
+    Ok((maj, min) >= (major, minor))
+}
+
+/// The two timers reach every connection on a 6.15+ kernel, read back
+/// exactly; an older kernel refuses at `Driver::new`, typed, naming the
+/// option and the kernel it needs. Never set silently, never ignored.
+#[test]
+fn tcp_timers_reach_the_socket_or_are_refused_typed() -> R {
+    let cfg = "epoll-spin,tcp_rto_min_us=40000,tcp_delack_max_us=20000";
+    let made: Result<Driver<WsConn>, Error> = Driver::new(Config::parse(cfg)?);
+    if !kernel_at_least(6, 15)? {
+        let Err(Error::Unsupported(why)) = made else {
+            return Err(format!("{cfg}: a pre-6.15 kernel gave {:?}", made.err()).into());
+        };
+        assert!(
+            why.contains("TCP_RTO_MIN_US") && why.contains("6.15"),
+            "{why}"
+        );
+        return Ok(());
+    }
+    let mut d = made?;
+    let lab = Lab::new()?;
+    std::thread::scope(|s| -> R {
+        let srv = s.spawn(|| -> R {
+            let mut p = lab.accept_within(Duration::from_secs(15))?;
+            assert!(p.client_closed()?);
+            Ok(())
+        });
+        let id = open(&lab, &mut d, "add")?;
+        let fd = d.get(id).ok_or("gone")?.raw_fd();
+        // 40 ms and 20 ms are whole ticks, at least two, at CONFIG_HZ 100,
+        // 250, 300 and 1000, so every kernel keeps them exactly (10 ms would
+        // be one tick at 100 and 2.5 at 250: refused).
+        assert_eq!(tcp_timer_us(fd, 45)?, 40_000, "TCP_RTO_MIN_US");
+        assert_eq!(tcp_timer_us(fd, 46)?, 20_000, "TCP_DELACK_MAX_US");
+        drop(d);
+        srv.join().map_err(|_| "server panicked")??;
+        Ok(())
+    })?;
+    // 2.5 ms is never whole ticks of at least two: CONFIG_HZ=1000 rounds it
+    // up to 3 ms, and coarser ticks make it one tick (below the kernel's
+    // two). Either way a typed config error, not a silently different floor.
+    let r: Result<Driver<WsConn>, Error> =
+        Driver::new(Config::parse("epoll-spin,tcp_rto_min_us=2500")?);
+    let Err(Error::Config(why)) = r else {
+        return Err(format!("2500 us: {:?}", r.err()).into());
+    };
+    assert!(why.contains("tcp_rto_min_us"), "{why}");
+    Ok(())
+}
+
+/// `tcpi_total_retrans` and `tcpi_dsack_dups` (retransmitted segments the
+/// peer reported it already had) of `fd`'s `struct tcp_info`
+/// (`include/uapi/linux/tcp.h`: offsets 100 and 216).
+fn retrans_and_dsack_dups(fd: std::os::fd::RawFd) -> R<(u32, u32)> {
+    let mut b = [0u8; 256];
+    let mut len = libc::socklen_t::try_from(b.len())?;
+    // SAFETY: `b` and `len` are valid for the call; the kernel writes at
+    // most `len` bytes.
+    #[allow(unsafe_code)]
+    let rc = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::IPPROTO_TCP,
+            libc::TCP_INFO,
+            b.as_mut_ptr().cast(),
+            &raw mut len,
+        )
+    };
+    if rc != 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    let got = usize::try_from(len)?;
+    let field = |at: usize| -> R<u32> {
+        let bytes = b
+            .get(at..at + 4)
+            .filter(|_| at + 4 <= got)
+            .ok_or("this kernel's tcp_info has no tcpi_dsack_dups")?;
+        Ok(u32::from_ne_bytes(bytes.try_into()?))
+    };
+    Ok((field(100)?, field(216)?))
+}
+
+/// Passive `TCP_INFO`: off by default (no sample, no `getsockopt`); on, a
+/// sample per connection at the configured interval, with the kernel's RTT,
+/// RTO and loss counters. With `tcp_rto_min_us` (6.15+) the sampled RTO
+/// shows the floor took effect.
+#[test]
+fn tcp_info_is_sampled_only_when_asked_for() -> R {
+    let floor = kernel_at_least(6, 15)?;
+    let uring = format!("{},tcp_info_interval_ms=1", support::uring_backend()?);
+    for (cfg, on) in [
+        ("epoll-spin", false),
+        ("epoll-spin,tcp_info_interval_ms=1", true),
+        (uring.as_str(), true),
+        (
+            "epoll-spin,tcp_info_interval_ms=1,tcp_rto_min_us=20000",
+            true,
+        ),
+    ] {
+        if cfg.contains("tcp_rto_min_us") && !floor {
+            // Covered by `tcp_timers_reach_the_socket_or_are_refused_typed`.
+            let r: Result<Driver<WsConn>, Error> = Driver::new(Config::parse(cfg)?);
+            assert!(
+                matches!(r, Err(Error::Unsupported(_))),
+                "{cfg}: {:?}",
+                r.err()
+            );
+            continue;
+        }
+        let lab = Lab::new()?;
+        let mut d: Driver<WsConn> = Driver::new(Config::parse(cfg)?)?;
+        std::thread::scope(|s| -> R {
+            let srv = s.spawn(|| -> R {
+                let mut p = lab.accept_within(Duration::from_secs(15))?;
+                for _ in 0..5 {
+                    let (op, body) = p.recv()?;
+                    p.send(op, true, &body)?;
+                }
+                assert!(p.client_closed()?);
+                Ok(())
+            });
+            let id = open(&lab, &mut d, "add")?;
+            let mut h = Echoed::default();
+            // A few round trips, so the kernel has RTT samples.
+            for i in 0..5 {
+                d.get_mut(id)
+                    .ok_or("gone")?
+                    .send_frame(ergon_io::ws::OP_BINARY, b"ping")?;
+                let end = Instant::now() + Duration::from_secs(10);
+                while h.0 <= i {
+                    d.poll(&mut h)?;
+                    if Instant::now() > end || !h.1.is_empty() {
+                        return Err(format!("{cfg}: no echo: {:?}", h.1).into());
+                    }
+                }
+            }
+            // Poll for a while: many intervals when on.
+            let end = Instant::now() + Duration::from_millis(200);
+            let mut info = None;
+            while Instant::now() < end {
+                d.poll(&mut h)?;
+                info = d.tcp_info(id).copied();
+                if on && info.is_some_and(|i| !cfg.contains("tcp_rto_min_us") || i.rto_us < 200_000)
+                {
+                    break;
+                }
+            }
+            let st = *d.stats();
+            if on {
+                let i = info.ok_or_else(|| format!("{cfg}: never sampled: {st:?}"))?;
+                assert!(st.tcp_info_samples > 0, "{cfg}: {st:?}");
+                assert!(st.tcp_info_max_ns > 0, "{cfg}: {st:?}");
+                assert!(i.at_ns > 0, "{cfg}: {i:?}");
+                assert!(i.rto_us > 0 && i.rto_us >= i.rtt_us, "{cfg}: {i:?}");
+                assert!(i.min_rtt_us.is_some(), "{cfg}: {i:?}");
+                // Loopback loses nothing: no segment is lost, and any
+                // retransmission is a tail-loss probe of data the peer
+                // already had, which it reports as a duplicate (DSACK).
+                // Seen in a shared VM: `total_retrans` 1, `lost` 0, with
+                // TcpExt TCPLossProbes +1 and TCPDSACKRecv +1, when the
+                // peer's ACK came late.
+                assert_eq!(i.lost, 0, "{cfg}: {i:?}");
+                let fd = d.get(id).ok_or("gone")?.raw_fd();
+                // The DSACK comes a round trip after the probe.
+                let end = Instant::now() + Duration::from_secs(1);
+                let (retrans, dups) = loop {
+                    let (retrans, dups) = retrans_and_dsack_dups(fd)?;
+                    if dups >= retrans || Instant::now() > end {
+                        break (retrans, dups);
+                    }
+                    d.poll(&mut h)?;
+                };
+                assert!(i.total_retrans <= retrans, "{cfg}: {i:?}, {retrans}");
+                assert!(
+                    dups >= retrans,
+                    "{cfg}: {retrans} retransmissions, {dups} reported duplicate: {i:?}"
+                );
+                if cfg.contains("tcp_rto_min_us") {
+                    // The kernel's RTO is about srtt + max(rttvar, floor):
+                    // 20 ms and a little on loopback, far below the 200 ms
+                    // default floor.
+                    assert!((20_000..200_000).contains(&i.rto_us), "{cfg}: {i:?}");
+                }
+                // A closed id has no sample.
+                d.close(id);
+                assert!(d.tcp_info(id).is_none(), "{cfg}: sample of a closed id");
+            } else {
+                assert_eq!(info, None, "{cfg}: sampled while off");
+                assert_eq!(st.tcp_info_samples, 0, "{cfg}: {st:?}");
+                assert_eq!(st.tcp_info_max_ns, 0, "{cfg}: {st:?}");
+            }
+            drop(d);
+            srv.join().map_err(|_| "server panicked")??;
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+#[derive(Default)]
+struct Echoed(usize, Vec<String>);
+
+impl Handler for Echoed {
+    fn on_closed(&mut self, _: ConnId, error: Error) {
+        self.1.push(error.to_string());
+    }
+}
+
+impl WsHandler for Echoed {
+    fn on_message(&mut self, _: ConnId, _: u8, _: &[u8], _: &RxMeta, _: u16) {
+        self.0 += 1;
+    }
+}

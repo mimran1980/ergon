@@ -35,11 +35,10 @@
 use std::fmt::Write as _;
 
 use ergon_tune::{
-    CheckId, Component, Ethtool, EthtoolCache, Finding, Host, HostCheckError, HostCheckPolicy,
-    HotSet, Needs, Netlink, Nic, Role, SILENCE, Severity, Status, Thread, carrier_changes,
-    host_check_line, k8s_checks, n1_adaptive_rx, n2_deferred_irqs, n3_azure_vf, t1_isolation,
-    t2_nic_irqs, t3_thp, t7_sched_policy, t8_smt_siblings, t9_cpu_quota, t10_smt_on,
-    thread_affinity,
+    Component, Ethtool, EthtoolCache, Finding, Host, HostCheckError, HostCheckPolicy, HotSet,
+    Needs, Netlink, Nic, Role, SILENCE, Severity, Status, Thread, carrier_changes, host_check_line,
+    k8s_checks, n1_adaptive_rx, n2_deferred_irqs, n3_azure_vf, t1_isolation, t2_nic_irqs, t3_thp,
+    t7_sched_policy, t8_smt_siblings, t9_cpu_quota, t10_smt_on, thread_affinity,
 };
 
 use crate::backend::{Backend, Config};
@@ -271,7 +270,7 @@ pub fn host_report(host: &Host, cfg: &Config) -> HostReport {
     // Inside a pod only: what its settings do to this layout (K1-K7, with
     // T7 and T9 again). Busy polling needs `CAP_NET_ADMIN`.
     let mut needs = Needs::new(Thread::Current, Role::Loop);
-    if cfg.backend.polls_nic() || cfg.prefer_busy_poll || cfg.busy_poll_us > 0 {
+    if cfg.backend.polls_nic() {
         needs = needs.busy_polls();
     }
     findings.extend(k8s_checks(host, &cpus, &needs));
@@ -460,7 +459,7 @@ impl<E: Ethtool> DevChecks<E> {
 /// The one unknown finding for a device the checks cannot see.
 fn invisible(dev: &str, why: String) -> Finding {
     Finding {
-        id: CheckId::T2,
+        id: "T2",
         severity: Severity::Warn,
         status: Status::Unknown(why),
         message: format!(
@@ -557,7 +556,7 @@ pub fn napi_line(
          NAPI id after the handshake: busy polling reaches no NIC queue{dev} (a device without \
          NAPI, such as a pod's veth), so the loop waits for interrupts. Fix: give the loop a \
          NIC with NAPI (the host's network namespace, or a CNI that passes the NIC through), \
-         or use an interrupt-driven backend (epoll-spin, uring-spin), which is what this one \
+         or use the interrupt-driven backend (epoll-spin), which is what this one \
          amounts to here."
     ))
 }

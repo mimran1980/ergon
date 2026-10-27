@@ -3,6 +3,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -25,13 +26,21 @@ type Sources struct {
 	SysRoot string
 	// ProcRoot is a proc root (irq/<n>/smp_affinity_list).
 	ProcRoot string
-	// KubeletConfig is the final kubelet configuration file.
+	// KubeletConfig is the kubelet's --config file (the final configuration
+	// when the kubelet runs without --config-dir).
 	KubeletConfig string
+	// KubeletConfigDir is the kubelet's --config-dir. When set, its *.conf
+	// drop-ins are merged over KubeletConfig the way the kubelet merges them
+	// (lexical walk, JSON merge patch). A missing or unreadable directory, or
+	// a drop-in the kubelet would reject, refuses hot creates.
+	KubeletConfigDir string
 	// ConfigZ is an optional copy of the effective /configz document.
-	// When the path is set, the document must exist and agree with the file.
+	// When the path is set, the document must exist and agree with the
+	// merged configuration.
 	ConfigZ string
-	// Overrides is an optional kubelet argv file or a directory of drop-ins.
-	// A checked flag that disagrees with the file is a conflicting override.
+	// Overrides is an optional kubelet argv file or a directory of them. It is
+	// a conflict check, not a merge: a checked flag (or field) that disagrees
+	// with the merged configuration refuses. Drop-ins go in KubeletConfigDir.
 	Overrides string
 }
 
@@ -96,7 +105,7 @@ func Evaluate(src Sources, shared cpuset.Set) (Report, error) {
 		rep.Refusals = append(rep.Refusals, fmt.Sprintf("shared/nohz overlap: %s", both))
 	}
 
-	body, reserved, kubeErr := loadKubelet(src.KubeletConfig)
+	body, reserved, kubeErr := loadKubelet(src.KubeletConfig, src.KubeletConfigDir)
 	if kubeErr != "" {
 		rep.Refusals = append(rep.Refusals, kubeErr)
 	} else {
@@ -137,11 +146,17 @@ func CheckContract(src Sources, shared, exclusive cpuset.Set) error {
 	return rep.Err()
 }
 
-func loadKubelet(path string) (kubeletBody, cpuset.Set, string) {
+func loadKubelet(path, dir string) (kubeletBody, cpuset.Set, string) {
 	if path == "" {
 		return kubeletBody{}, cpuset.Set{}, "kubelet configuration is not mounted"
 	}
-	body, err := readKubeletFile(path)
+	var body kubeletBody
+	var err error
+	if dir == "" {
+		body, err = readKubeletFile(path)
+	} else {
+		body, err = readKubeletMerged(path, dir)
+	}
 	if err != nil {
 		return kubeletBody{}, cpuset.Set{}, fmt.Sprintf("kubelet configuration: %v", err)
 	}
@@ -152,22 +167,165 @@ func loadKubelet(path string) (kubeletBody, cpuset.Set, string) {
 	return body, reserved, ""
 }
 
+// dropInSuffix is the only suffix the kubelet reads from --config-dir.
+const dropInSuffix = ".conf"
+
+// readKubeletMerged is the kubelet's --config plus --config-dir merge
+// (cmd/kubelet/app/server.go mergeKubeletConfigurations): walk dir in
+// lexical order, descending into subdirectories; skip every file whose
+// extension is not .conf; refuse an empty drop-in, one that is not a
+// kubelet.config.k8s.io/v1beta1 KubeletConfiguration, and one that does not
+// parse; apply each as a JSON merge patch (RFC 7386: later fields replace
+// earlier ones, lists are replaced whole, maps merge key by key, null
+// deletes). JSON and YAML both parse. A missing or unreadable dir is an
+// error, as it is for the kubelet.
+func readKubeletMerged(path, dir string) (kubeletBody, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return kubeletBody{}, err
+	}
+	merged, err := yamlObject(data)
+	if err != nil {
+		return kubeletBody{}, fmt.Errorf("%s: %w", path, err)
+	}
+	if inner, ok := merged["kubeletconfig"].(map[string]any); ok {
+		merged = inner
+	}
+	// Only the base: the kubelet keeps drop-ins as raw maps and decodes the
+	// merge with encoding/json, which takes a mis-cased key.
+	dropMiscasedFields(merged)
+	info, err := os.Stat(dir)
+	if err != nil {
+		return kubeletBody{}, fmt.Errorf("drop-in directory: %w", err)
+	}
+	if !info.IsDir() {
+		return kubeletBody{}, fmt.Errorf("drop-in directory %s: not a directory", dir)
+	}
+	walkErr := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || filepath.Ext(d.Name()) != dropInSuffix {
+			return nil
+		}
+		patch, err := readDropIn(p)
+		if err != nil {
+			return fmt.Errorf("drop-in %s: %w", p, err)
+		}
+		merged = mergePatch(merged, patch).(map[string]any)
+		return nil
+	})
+	if walkErr != nil {
+		return kubeletBody{}, walkErr
+	}
+	return decodeBody(merged)
+}
+
+// kubeletGroupVersion and kubeletKind are the type metadata the kubelet
+// requires on every drop-in.
+const (
+	kubeletGroupVersion = "kubelet.config.k8s.io/v1beta1"
+	kubeletKind         = "KubeletConfiguration"
+)
+
+func readDropIn(path string) (map[string]any, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 {
+		return nil, errors.New("empty")
+	}
+	obj, err := yamlObject(data)
+	if err != nil {
+		return nil, err
+	}
+	if obj["apiVersion"] != kubeletGroupVersion || obj["kind"] != kubeletKind {
+		return nil, fmt.Errorf("apiVersion/kind %v/%v, want %s/%s", obj["apiVersion"], obj["kind"], kubeletGroupVersion, kubeletKind)
+	}
+	return obj, nil
+}
+
+// yamlObject parses JSON or YAML into a JSON object. Duplicate keys are
+// refused: which value the kubelet's strict decoder would keep is not a
+// question this check answers.
+func yamlObject(data []byte) (map[string]any, error) {
+	js, err := yaml.YAMLToJSONStrict(data)
+	if err != nil {
+		return nil, err
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(js, &obj); err != nil {
+		return nil, err
+	}
+	if obj == nil {
+		return nil, errors.New("not a configuration object")
+	}
+	return obj, nil
+}
+
+// mergePatch applies patch to target as RFC 7386 JSON merge patch.
+func mergePatch(target, patch any) any {
+	p, ok := patch.(map[string]any)
+	if !ok {
+		return patch
+	}
+	t, ok := target.(map[string]any)
+	if !ok {
+		t = map[string]any{}
+	}
+	for k, v := range p {
+		if v == nil {
+			delete(t, k)
+			continue
+		}
+		t[k] = mergePatch(t[k], v)
+	}
+	return t
+}
+
 func readKubeletFile(path string) (kubeletBody, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return kubeletBody{}, err
 	}
-	var wrapped struct {
-		KubeletConfig *kubeletBody `json:"kubeletconfig"`
-	}
-	if err := yaml.Unmarshal(data, &wrapped); err != nil {
+	var obj map[string]any
+	if err := yaml.Unmarshal(data, &obj); err != nil {
 		return kubeletBody{}, err
 	}
-	if wrapped.KubeletConfig != nil {
-		return *wrapped.KubeletConfig, nil
+	if inner, ok := obj["kubeletconfig"].(map[string]any); ok {
+		obj = inner
+	}
+	dropMiscasedFields(obj)
+	return decodeBody(obj)
+}
+
+// checkedFields are the json names kubeletBody reads.
+var checkedFields = []string{"cpuManagerPolicy", "cpuCFSQuota", "reservedSystemCPUs", "featureGates"}
+
+// dropMiscasedFields deletes keys that match a checked field only when case
+// is ignored. The kubelet decodes its --config file case-sensitively
+// (apimachinery UnmarshalCaseSensitivePreserveInts), so such a key is an
+// unknown field it ignores; encoding/json would otherwise take it.
+func dropMiscasedFields(obj map[string]any) {
+	for k := range obj {
+		for _, f := range checkedFields {
+			if k != f && strings.EqualFold(k, f) {
+				delete(obj, k)
+			}
+		}
+	}
+}
+
+// decodeBody decodes the checked fields with encoding/json, as the kubelet
+// decodes its merged --config-dir result.
+func decodeBody(obj map[string]any) (kubeletBody, error) {
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return kubeletBody{}, err
 	}
 	var body kubeletBody
-	if err := yaml.Unmarshal(data, &body); err != nil {
+	if err := json.Unmarshal(out, &body); err != nil {
 		return kubeletBody{}, err
 	}
 	return body, nil
@@ -380,8 +538,11 @@ func parseMaybeCPUList(s string) (cpuset.Set, error) {
 
 // checkNICAffinity checks requested and effective affinity of every hardware
 // NIC under sys/class/net. Interfaces with no device directory (bridges,
-// veth, lo) are not NIC inventory. Missing inventory or an unreadable NIC
-// mask is a refusal. Other /proc/irq entries are notes.
+// veth, lo) are not NIC inventory. A Hyper-V synthetic NIC (hv_netvsc, Azure)
+// has no PCI interrupt: the host signals each VMBus channel on the CPU in its
+// channels/<relid>/cpu, so that CPU is the channel's affinity, requested and
+// effective. Missing inventory or an unreadable NIC mask is a refusal. Other
+// /proc/irq entries are notes.
 func checkNICAffinity(src Sources, allowed cpuset.Set) (refusals, notes []string, err error) {
 	nics, err := hardwareNICs(src.SysRoot)
 	if err != nil {
@@ -403,6 +564,17 @@ func checkNICAffinity(src Sources, allowed cpuset.Set) (refusals, notes []string
 					n.name, irq, req, eff, allowed))
 			}
 		}
+		for _, ch := range n.channels {
+			cpu, cpuErr := readChannelCPU(ch.path)
+			if cpuErr != nil {
+				refusals = append(refusals, fmt.Sprintf("NIC %s vmbus channel %d: unreadable cpu", n.name, ch.relid))
+				continue
+			}
+			if !allowed.Contains(cpu) {
+				refusals = append(refusals, fmt.Sprintf("NIC %s vmbus channel %d on CPU %d, allowed %s",
+					n.name, ch.relid, cpu, allowed))
+			}
+		}
 	}
 	notes, err = otherIRQNotes(src.ProcRoot, nicIRQs)
 	if err != nil {
@@ -412,8 +584,16 @@ func checkNICAffinity(src Sources, allowed cpuset.Set) (refusals, notes []string
 }
 
 type nicInfo struct {
-	name string
-	irqs []int
+	name     string
+	irqs     []int
+	channels []vmbusChannel
+}
+
+// vmbusChannel is one VMBus channel of a synthetic NIC: its relid and its
+// cpu file.
+type vmbusChannel struct {
+	relid int
+	path  string
 }
 
 func hardwareNICs(sysRoot string) ([]nicInfo, error) {
@@ -437,10 +617,17 @@ func hardwareNICs(sysRoot string) ([]nicInfo, error) {
 		if err != nil {
 			return nil, fmt.Errorf("NIC %s: %w", name, err)
 		}
+		var channels []vmbusChannel
 		if len(irqs) == 0 {
+			channels, err = vmbusChannels(dev)
+			if err != nil {
+				return nil, fmt.Errorf("NIC %s: %w", name, err)
+			}
+		}
+		if len(irqs) == 0 && len(channels) == 0 {
 			return nil, fmt.Errorf("NIC %s: no NIC interrupt found", name)
 		}
-		out = append(out, nicInfo{name: name, irqs: irqs})
+		out = append(out, nicInfo{name: name, irqs: irqs, channels: channels})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
 	if len(out) == 0 {
@@ -482,6 +669,45 @@ func ifaceIRQs(iface string) ([]int, error) {
 		return nil, nil
 	}
 	return []int{n}, nil
+}
+
+// vmbusChannels lists device/channels/<relid> of a VMBus device, sorted by
+// relid. A device without that directory has none.
+func vmbusChannels(dev string) ([]vmbusChannel, error) {
+	dir := filepath.Join(dev, "channels")
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []vmbusChannel
+	for _, e := range entries {
+		n, conv := strconv.Atoi(e.Name())
+		if conv != nil || n < 0 {
+			continue
+		}
+		out = append(out, vmbusChannel{relid: n, path: filepath.Join(dir, e.Name(), "cpu")})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].relid < out[j].relid })
+	return out, nil
+}
+
+// readChannelCPU reads a VMBus channel's target CPU.
+func readChannelCPU(path string) (int, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", path, err)
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("%s: negative CPU %d", path, n)
+	}
+	return n, nil
 }
 
 func readIRQAffinity(procRoot string, irq int, effective bool) (cpuset.Set, error) {

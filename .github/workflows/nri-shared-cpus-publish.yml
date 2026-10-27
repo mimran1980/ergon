@@ -32,6 +32,10 @@ permissions:
 
 env:
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/ergon-shared-cpus
+  # The GHCR package page shows this text under the image name. Text only, at
+  # most 512 characters (the chart job checks), on one line: the action reads
+  # `annotations` one per line.
+  IMAGE_DESCRIPTION: "Kubernetes NRI plugin and kubelet device plugin in one daemon: a Guaranteed pod gets its exclusive CPUs plus the node's shared housekeeping CPUs. Docs: https://github.com/mimran1980/ergon/tree/main/k8s/nri-shared-cpus"
 
 jobs:
   checks:
@@ -82,6 +86,13 @@ jobs:
 
       - name: helm template
         run: helm template ergon-shared-cpus k8s/nri-shared-cpus/charts/ergon-shared-cpus >/dev/null
+
+      - name: image description is at most 512 characters
+        run: |
+          set -eu
+          n=${#IMAGE_DESCRIPTION}
+          [ "$n" -le 512 ] || { echo "IMAGE_DESCRIPTION is $n characters; GHCR takes at most 512." >&2; exit 1; }
+          echo "IMAGE_DESCRIPTION: $n characters"
 
   publish:
     name: push to GHCR
@@ -134,6 +145,15 @@ jobs:
           cache-from: type=gha
           provenance: true
           sbom: true
+          # A multi-arch image needs its description on the manifest index;
+          # a Dockerfile LABEL lands in each platform's config, which the
+          # package page does not read. GitHub docs, "Adding a description to
+          # multi-arch images":
+          # https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry#adding-a-description-to-multi-arch-images
+          annotations: |
+            index:org.opencontainers.image.description=${{ env.IMAGE_DESCRIPTION }}
+            index:org.opencontainers.image.source=https://github.com/mimran1980/ergon
+            index:org.opencontainers.image.licenses=Apache-2.0
 
       - name: Package the chart
         run: |

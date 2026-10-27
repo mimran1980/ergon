@@ -9,7 +9,7 @@
 //! ```
 
 use ergo_aeron_cluster::cluster_codec_types::{AdminRequestType, AdminResponseCode, EventCode};
-use ergo_aeron_cluster::egress::{EgressAdapter, EgressListener};
+use ergo_aeron_cluster::egress::EgressListener;
 use ergo_aeron_cluster::{AeronCluster, SessionBuilder};
 use rusteron_client::cformat;
 use serial_test::serial;
@@ -53,13 +53,11 @@ fn test_admin_snapshot_request_gets_response() -> Result<(), Box<dyn std::error:
         .ingress_channel(&cluster.ingress_channel)?
         .egress_channel(&cluster.egress_channel)?;
 
-    let listener = Rec {
+    let mut listener = Rec {
         admin_cid: Mutex::new(None),
         admin_code: Mutex::new(None),
     };
-    let mut adapter = EgressAdapter::new(listener);
     let mut client = AeronCluster::connect(&builder, &dir.to_string_lossy())?;
-    adapter.set_expected_session_id(client.cluster_session_id());
 
     // Request a snapshot; the Java cluster replies on the egress listener.
     let correlation_id = client.leadership_term_id() + 1000;
@@ -69,16 +67,15 @@ fn test_admin_snapshot_request_gets_response() -> Result<(), Box<dyn std::error:
     let deadline = Instant::now() + Duration::from_secs(15);
     while Instant::now() < deadline {
         let _ = client.send_keep_alive();
-        client.poll_egress(&mut adapter, 10)?;
-        client.poll_state_changes()?;
-        if adapter.listener().admin_cid.lock().unwrap().is_some() {
+        client.poll(&mut listener, 10)?;
+        if listener.admin_cid.lock().unwrap().is_some() {
             break;
         }
         std::thread::sleep(Duration::from_millis(5));
     }
 
-    let got_cid = *adapter.listener().admin_cid.lock().unwrap();
-    let got_code = *adapter.listener().admin_code.lock().unwrap();
+    let got_cid = *listener.admin_cid.lock().unwrap();
+    let got_code = *listener.admin_code.lock().unwrap();
     // The round-trip is the parity point: the cluster MUST reply on
     // on_admin_response with the matching correlation id. The response CODE
     // depends on cluster auth — the default single-node test cluster denies

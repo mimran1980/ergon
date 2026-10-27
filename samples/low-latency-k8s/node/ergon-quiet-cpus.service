@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+# Runs node/quiet-cpus.sh (installed as /usr/local/sbin/ergon-quiet-cpus.sh)
+# at every boot, once debugfs is mounted and before the kubelet starts.
+[Unit]
+Description=ergon: THP never and the fair server off on the isolated CPUs
+Wants=sys-kernel-debug.mount
+After=sys-kernel-debug.mount
+Before=kubelet.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/ergon-quiet-cpus.sh
+
+[Install]
+WantedBy=multi-user.target

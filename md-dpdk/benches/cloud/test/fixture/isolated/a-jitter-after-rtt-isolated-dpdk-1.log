@@ -8,3 +8,12 @@ counter            0   87 rusteron-dpdk role=receiver bdf=0000:00:07.0 port=1 q=
 counter            0   87 rusteron-dpdk role=receiver bdf=0000:00:07.0 port=1 q=0 dir=rx poll-cycle-gaps-50-100us
 counter            0   87 rusteron-dpdk role=receiver bdf=0000:00:07.0 port=1 q=0 dir=rx poll-cycle-gaps-over-100us
 cpu 2 irqs=24229 timer=14696 steal=0
+counter         6250   87 rusteron-dpdk role=sender bdf=0000:00:06.0 port=0 q=0 dir=rx rx-burst-max-ns
+counter          7   87 rusteron-dpdk role=sender bdf=0000:00:06.0 port=0 q=0 dir=rx rx-bursts-over-1us
+counter          1   87 rusteron-dpdk role=sender bdf=0000:00:06.0 port=0 q=0 dir=rx rx-bursts-over-5us
+counter         1900   87 rusteron-dpdk role=sender bdf=0000:00:06.0 port=0 q=0 dir=tx tx-burst-max-ns
+counter          2   87 rusteron-dpdk role=sender bdf=0000:00:06.0 port=0 q=0 dir=tx tx-bursts-over-1us
+counter          0   87 rusteron-dpdk role=sender bdf=0000:00:06.0 port=0 q=0 dir=tx tx-bursts-over-5us
+counter        900   87 rusteron-dpdk role=receiver bdf=0000:00:07.0 port=1 q=0 dir=rx rx-burst-max-ns
+counter          1   87 rusteron-dpdk role=receiver bdf=0000:00:07.0 port=1 q=0 dir=rx rx-bursts-over-1us
+counter      99999   81 rusteron-dpdk role=receiver bdf=0000:00:07.0 port=1 q=0 dir=rx nic-arrival-to-rx-burst-max-ns

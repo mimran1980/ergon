@@ -3,8 +3,7 @@
 //! ergon-tune host checks on the agents' CPUs (M-host), the data NICs'
 //! (M-nic) and their re-check after a reset (M-run), and how
 //! `ConfiguredDriver::from_env` and the bundled binary report them: one line
-//! each, and under `RUSTERON_MEDIA_DRIVER_HOST_CHECK=require` no start while
-//! one warns.
+//! each, and under `ERGON_HOST_CHECKS=require` no start while one warns.
 //!
 //! Every check reads a host tree (a fixture standing for `/sys` and `/proc`),
 //! so they run on every platform; what needs the running kernel (the probe
@@ -27,8 +26,7 @@ use ergon_md_dpdk::checks::{
 };
 use ergon_md_dpdk::driver::ConfiguredDriver;
 use ergon_tune::{
-    CheckId, Coalesce, CpuSet, Ethtool, EthtoolCache, EthtoolError, Finding, Host, HotSet, Rings, Role, Severity,
-    Status,
+    Coalesce, CpuSet, Ethtool, EthtoolCache, EthtoolError, Finding, Host, HotSet, Rings, Role, Severity, Status,
 };
 use rusteron_media_driver::AeronDriverContext;
 use rusteron_media_driver::bindings::aeron_threading_mode_t;
@@ -268,11 +266,11 @@ fn socket(agents: Agents) -> Inputs {
     }
 }
 
-fn with_id(findings: &[Finding], id: CheckId) -> Vec<&Finding> {
+fn with_id<'a>(findings: &'a [Finding], id: &str) -> Vec<&'a Finding> {
     findings.iter().filter(|f| f.id == id).collect()
 }
 
-fn warnings(findings: &[Finding], id: CheckId) -> Vec<&Finding> {
+fn warnings<'a>(findings: &'a [Finding], id: &str) -> Vec<&'a Finding> {
     findings.iter().filter(|f| f.id == id && f.is_warning()).collect()
 }
 
@@ -307,55 +305,50 @@ impl Drop for EnvGuard {
 
 // --- The environment ----------------------------------------------------------
 
-/// `ERGON_HOST_CHECKS` is the one switch, with
-/// `RUSTERON_MEDIA_DRIVER_HOST_CHECK` as its alias: `warn`/`on` when
-/// unset, `off`, `warn`/`on` or `require` (any case); anything else fails
-/// start, naming the variable that was set. The primary wins over the
-/// alias.
+/// `ERGON_HOST_CHECKS` is the one switch: `warn`/`on` when unset, `off`,
+/// `warn`/`on` or `require` (any case); anything else fails start, naming
+/// it.
 #[test]
 #[serial]
 fn the_host_check_policy_is_read_from_the_environment() {
+    let _a = EnvGuard::unset("RUSTERON_MEDIA_DRIVER_HOST_CHECK");
     {
-        let _a = EnvGuard::unset("RUSTERON_MEDIA_DRIVER_HOST_CHECK");
         let _p = EnvGuard::unset("ERGON_HOST_CHECKS");
         assert_eq!(HostCheckPolicy::from_env().unwrap(), HostCheckPolicy::Warn);
     }
+    for (value, want) in [
+        ("off", HostCheckPolicy::Off),
+        ("warn", HostCheckPolicy::Warn),
+        ("on", HostCheckPolicy::Warn),
+        ("Require", HostCheckPolicy::Require),
+    ] {
+        let _p = EnvGuard::set("ERGON_HOST_CHECKS", value);
+        assert_eq!(HostCheckPolicy::from_env().unwrap(), want, "{value}");
+    }
+    for bad in ["", "strict", "no"] {
+        let _p = EnvGuard::set("ERGON_HOST_CHECKS", bad);
+        let e = HostCheckPolicy::from_env().unwrap_err();
+        assert!(matches!(e, DpdkError::InvalidEnvironment(_)), "{bad:?}: {e:?}");
+        assert!(e.to_string().contains("ERGON_HOST_CHECKS"), "{e}");
+    }
+}
+
+/// `RUSTERON_MEDIA_DRIVER_HOST_CHECK`, the old alias, is no switch: set
+/// alone, whatever its value, the policy is the default `warn`, and it never
+/// overrides `ERGON_HOST_CHECKS`.
+#[test]
+#[serial]
+fn the_old_alias_is_ignored() {
     {
         let _p = EnvGuard::unset("ERGON_HOST_CHECKS");
-        for (value, want) in [
-            ("off", HostCheckPolicy::Off),
-            ("warn", HostCheckPolicy::Warn),
-            ("on", HostCheckPolicy::Warn),
-            ("Require", HostCheckPolicy::Require),
-        ] {
-            let _v = EnvGuard::set("RUSTERON_MEDIA_DRIVER_HOST_CHECK", value);
-            assert_eq!(HostCheckPolicy::from_env().unwrap(), want, "{value}");
-        }
-        for bad in ["", "strict", "no"] {
-            let _v = EnvGuard::set("RUSTERON_MEDIA_DRIVER_HOST_CHECK", bad);
-            let e = HostCheckPolicy::from_env().unwrap_err();
-            assert!(matches!(e, DpdkError::InvalidEnvironment(_)), "{bad:?}: {e:?}");
-            assert!(e.to_string().contains("RUSTERON_MEDIA_DRIVER_HOST_CHECK"), "{e}");
+        for value in ["require", "off", "strict"] {
+            let _a = EnvGuard::set("RUSTERON_MEDIA_DRIVER_HOST_CHECK", value);
+            assert_eq!(HostCheckPolicy::from_env().unwrap(), HostCheckPolicy::Warn, "{value}");
         }
     }
-    {
-        let _a = EnvGuard::set("RUSTERON_MEDIA_DRIVER_HOST_CHECK", "off");
-        let _p = EnvGuard::set("ERGON_HOST_CHECKS", "require");
-        assert_eq!(
-            HostCheckPolicy::from_env().unwrap(),
-            HostCheckPolicy::Require,
-            "the primary wins over the alias"
-        );
-    }
-    {
-        let _a = EnvGuard::set("RUSTERON_MEDIA_DRIVER_HOST_CHECK", "strict");
-        let _p = EnvGuard::set("ERGON_HOST_CHECKS", "on");
-        assert_eq!(
-            HostCheckPolicy::from_env().unwrap(),
-            HostCheckPolicy::Warn,
-            "the primary wins over a bad alias"
-        );
-    }
+    let _a = EnvGuard::set("RUSTERON_MEDIA_DRIVER_HOST_CHECK", "require");
+    let _p = EnvGuard::set("ERGON_HOST_CHECKS", "off");
+    assert_eq!(HostCheckPolicy::from_env().unwrap(), HostCheckPolicy::Off);
 }
 
 /// `RUSTERON_MEDIA_DRIVER_DATA_NICS` names the socket transport's data NICs,
@@ -412,8 +405,7 @@ fn the_agents_layout_reads_idle_strategies_from_the_environment() {
 /// Every check runs for every driver, at its own severity: a driver left at
 /// Aeron's defaults (agents floating, idling with `backoff`, sparse term
 /// buffers) gets M1 for each network agent of its mode and M2, as warnings,
-/// and no note excusing them. `RUSTERON_MEDIA_DRIVER_HOST_CHECK=off` is the
-/// one switch.
+/// and no note excusing them. `ERGON_HOST_CHECKS=off` is the one switch.
 #[test]
 fn every_driver_gets_m1_and_m2_at_warning_severity() {
     let f = Fixture::x86("every-driver");
@@ -422,12 +414,12 @@ fn every_driver_gets_m1_and_m2_at_warning_severity() {
         inputs.term_buffer_sparse = true;
         let report = host_report(&f.host(), &inputs, &mut stub(false, None));
         assert_eq!(
-            warnings(&report.findings, CheckId::M1).len(),
+            warnings(&report.findings, "M1").len(),
             agents_warned,
             "{mode:?}: {:?}",
             report.findings
         );
-        assert_eq!(warnings(&report.findings, CheckId::M2).len(), 1, "{mode:?}");
+        assert_eq!(warnings(&report.findings, "M2").len(), 1, "{mode:?}");
         assert!(
             !report.notes.iter().any(|n| n.contains("latency")),
             "{mode:?}: {:?}",
@@ -436,16 +428,8 @@ fn every_driver_gets_m1_and_m2_at_warning_severity() {
     }
     // fine where the driver is tuned
     let report = host_report(&f.host(), &socket(tuned()), &mut stub(false, None));
-    assert!(
-        warnings(&report.findings, CheckId::M1).is_empty(),
-        "{:?}",
-        report.findings
-    );
-    assert!(
-        warnings(&report.findings, CheckId::M2).is_empty(),
-        "{:?}",
-        report.findings
-    );
+    assert!(warnings(&report.findings, "M1").is_empty(), "{:?}", report.findings);
+    assert!(warnings(&report.findings, "M2").is_empty(), "{:?}", report.findings);
 }
 
 // --- M1 ---------------------------------------------------------------------------
@@ -474,7 +458,7 @@ fn m1_warns_for_a_pinned_agent_that_idles_with_backoff() {
         assert!(text.contains(needle), "{needle:?} in {text}");
     }
     assert!(!text.contains("receiver"), "{text}");
-    assert_eq!((w[0].id, w[0].severity), (CheckId::M1, Severity::Warn));
+    assert_eq!((w[0].id, w[0].severity), ("M1", Severity::Warn));
 }
 
 /// An agent that busy-spins but floats: a warning naming its CPU variable
@@ -560,7 +544,7 @@ fn m1_warns_for_an_agent_on_the_conductors_cpu() {
 fn m1_is_ok_for_agents_spinning_on_pinned_cpus_of_their_own() {
     let m1 = m1_agents(&tuned());
     assert_eq!(m1.len(), 1, "{m1:?}");
-    assert_eq!((m1[0].id, &m1[0].status), (CheckId::M1, &Status::Ok));
+    assert_eq!((m1[0].id, &m1[0].status), ("M1", &Status::Ok));
     let a = Agents {
         conductor_cpu: None,
         ..tuned()
@@ -628,11 +612,7 @@ fn m1_under_dpdk_is_the_installs_not_a_warning() {
         named: vec![],
     };
     let report = host_report(&f.host(), &inputs, &mut stub(false, None));
-    assert!(
-        warnings(&report.findings, CheckId::M1).is_empty(),
-        "{:?}",
-        report.findings
-    );
+    assert!(warnings(&report.findings, "M1").is_empty(), "{:?}", report.findings);
 }
 
 // --- M2 ---------------------------------------------------------------------------
@@ -643,7 +623,7 @@ fn m1_under_dpdk_is_the_installs_not_a_warning() {
 fn m2_warns_for_sparse_term_buffers() {
     let m2 = m2_term_buffers(true);
     assert!(m2.is_warning(), "{m2:?}");
-    assert_eq!(m2.id, CheckId::M2);
+    assert_eq!(m2.id, "M2");
     for needle in ["sparse", "AERON_TERM_BUFFER_SPARSE_FILE=false", "not A/B'd"] {
         assert!(
             m2.message.contains(needle) || m2.evidence.contains(needle),
@@ -662,12 +642,7 @@ fn m2_warns_for_sparse_term_buffers() {
         named: vec![],
     };
     let report = host_report(&f.host(), &inputs, &mut stub(false, None));
-    assert_eq!(
-        warnings(&report.findings, CheckId::M2).len(),
-        1,
-        "{:?}",
-        report.findings
-    );
+    assert_eq!(warnings(&report.findings, "M2").len(), 1, "{:?}", report.findings);
 }
 
 // --- M3 ---------------------------------------------------------------------------
@@ -771,7 +746,7 @@ fn m4_reports_busy_polling_as_information_and_recommends_no_setting() {
         let m4 = m4_busy_polling(&fixture.host());
         assert_eq!(
             (m4.id, &m4.status, m4.severity),
-            (CheckId::M4, &Status::Finding, Severity::Info),
+            ("M4", &Status::Finding, Severity::Info),
             "{m4:?}"
         );
         assert!(m4.message.contains("kernel busy polling is off"), "{}", m4.message);
@@ -839,11 +814,7 @@ fn m4_reports_busy_polling_as_information_and_recommends_no_setting() {
         named: vec![],
     };
     let report = host_report(&f.host(), &inputs, &mut stub(false, None));
-    assert!(
-        with_id(&report.findings, CheckId::M4).is_empty(),
-        "{:?}",
-        report.findings
-    );
+    assert!(with_id(&report.findings, "M4").is_empty(), "{:?}", report.findings);
 }
 
 // --- M-host -------------------------------------------------------------------------
@@ -901,20 +872,20 @@ fn the_host_checks_run_on_the_agents_cpus() {
         ..tuned()
     };
     let report = host_report(&f.host(), &socket(a), &mut stub(false, None));
-    let t1 = warnings(&report.findings, CheckId::T1);
+    let t1 = warnings(&report.findings, "T1");
     assert_eq!(t1.len(), 1, "{t1:?}");
     assert!(t1[0].message.contains("CPU 3 (receiver)") && t1[0].message.contains("nohz_full"));
-    let t8 = warnings(&report.findings, CheckId::T8);
+    let t8 = warnings(&report.findings, "T8");
     assert_eq!(t8.len(), 1, "{t8:?}");
     assert!(t8[0].message.contains("CPU 2 (sender)") && t8[0].message.contains("CPU 6 (conductor)"));
-    for id in [CheckId::T3, CheckId::T4, CheckId::T5, CheckId::T7, CheckId::T9] {
+    for id in ["T3", "T4", "T5", "T7", "T9"] {
         assert_eq!(with_id(&report.findings, id).len(), 1, "{id}: {:?}", report.findings);
     }
     // T4 reads the driver's own directory (on a fixture: unknown, never a warning)
-    let t4 = with_id(&report.findings, CheckId::T4);
+    let t4 = with_id(&report.findings, "T4");
     assert!(t4[0].message.contains("/dev/shm/aeron"), "{}", t4[0].message);
     // No CPU quota on the driver's cgroup.
-    assert_eq!(with_id(&report.findings, CheckId::T9)[0].status, Status::Ok);
+    assert_eq!(with_id(&report.findings, "T9")[0].status, Status::Ok);
 }
 
 /// A CPU quota on the driver's cgroup (a pod with a CPU limit and no
@@ -938,7 +909,7 @@ fn a_cpu_quota_on_the_drivers_cgroup_is_a_warning() {
         },
     ] {
         let report = host_report(&f.host(), &inputs, &mut stub(false, None));
-        let t9 = warnings(&report.findings, CheckId::T9);
+        let t9 = warnings(&report.findings, "T9");
         assert_eq!(t9.len(), 1, "{:?}", report.findings);
         assert!(
             t9[0].message.contains("/sys/fs/cgroup/cpu.max is `300000 100000`")
@@ -973,7 +944,7 @@ fn unnamed_data_nics_give_one_info_line() {
         .filter(|n| n.contains("RUSTERON_MEDIA_DRIVER_DATA_NICS"))
         .collect();
     assert_eq!(notes.len(), 1, "{:?}", report.notes);
-    for id in [CheckId::T2, CheckId::T6, CheckId::N1, CheckId::N2, CheckId::N4] {
+    for id in ["T2", "T6", "N1", "N2", "N4"] {
         assert!(with_id(&report.findings, id).is_empty(), "{id}: {:?}", report.findings);
     }
 }
@@ -989,20 +960,13 @@ fn each_named_data_nic_is_checked() {
     let mut inputs = socket(tuned());
     inputs.nics = DataNics::Socket(vec!["ens6".into()]);
     let report = host_report(&f.host(), &inputs, &mut stub(true, Some((1024, 8192))));
-    for id in [CheckId::T2, CheckId::N1, CheckId::N2] {
+    for id in ["T2", "N1", "N2"] {
         let w = warnings(&report.findings, id);
         assert_eq!(w.len(), 1, "{id}: {:?}", report.findings);
     }
-    assert!(
-        warnings(&report.findings, CheckId::T2)[0]
-            .message
-            .contains("CPU 2 (sender)")
-    );
-    assert_eq!(with_id(&report.findings, CheckId::T6).len(), 1);
-    assert!(
-        with_id(&report.findings, CheckId::N4).is_empty(),
-        "no busy polling, no N4"
-    );
+    assert!(warnings(&report.findings, "T2")[0].message.contains("CPU 2 (sender)"));
+    assert_eq!(with_id(&report.findings, "T6").len(), 1);
+    assert!(with_id(&report.findings, "N4").is_empty(), "no busy polling, no N4");
     assert!(
         !report
             .notes
@@ -1013,12 +977,8 @@ fn each_named_data_nic_is_checked() {
     // busy polling on: N2's deferral is how that is set up, N4 checks the ring
     f.busy_poll("50", "50");
     let report = host_report(&f.host(), &inputs, &mut stub(true, Some((1024, 8192))));
-    assert!(
-        warnings(&report.findings, CheckId::N2).is_empty(),
-        "{:?}",
-        report.findings
-    );
-    let n4 = warnings(&report.findings, CheckId::N4);
+    assert!(warnings(&report.findings, "N2").is_empty(), "{:?}", report.findings);
+    let n4 = warnings(&report.findings, "N4");
     assert_eq!(n4.len(), 1, "{:?}", report.findings);
     assert!(n4[0].message.contains("ethtool -G ens6 rx 4096"), "{}", n4[0].message);
 }
@@ -1039,14 +999,10 @@ fn a_data_nic_whose_busy_polling_is_unknown_gets_no_n2_warning_and_no_n4() {
     let mut inputs = socket(tuned());
     inputs.nics = DataNics::Socket(vec!["ens6".into()]);
     let report = host_report(&f.host(), &inputs, &mut stub(false, Some((1024, 8192))));
-    assert!(with_id(&report.findings, CheckId::M4)[0].is_unknown());
-    let n2 = with_id(&report.findings, CheckId::N2);
+    assert!(with_id(&report.findings, "M4")[0].is_unknown());
+    let n2 = with_id(&report.findings, "N2");
     assert!(!n2.is_empty() && n2.iter().all(|f| f.is_unknown()), "{n2:?}");
-    assert!(
-        with_id(&report.findings, CheckId::N4).is_empty(),
-        "{:?}",
-        report.findings
-    );
+    assert!(with_id(&report.findings, "N4").is_empty(), "{:?}", report.findings);
 }
 
 /// Under DPDK the data NICs are the ports, by PCI address: T2 (interrupts
@@ -1065,11 +1021,11 @@ fn dpdk_ports_are_checked_by_pci_address() {
         named: vec![],
     };
     let report = host_report(&f.host(), &inputs, &mut stub(true, Some((1024, 8192))));
-    let t2 = warnings(&report.findings, CheckId::T2);
+    let t2 = warnings(&report.findings, "T2");
     assert_eq!(t2.len(), 1, "one port, its one IRQ, once: {:?}", report.findings);
     assert!(t2[0].message.contains("0000:00:06.0") && t2[0].message.contains("CPU 3 (receiver)"));
-    assert_eq!(with_id(&report.findings, CheckId::T6).len(), 1);
-    for id in [CheckId::N1, CheckId::N2, CheckId::N4] {
+    assert_eq!(with_id(&report.findings, "T6").len(), 1);
+    for id in ["N1", "N2", "N4"] {
         assert!(with_id(&report.findings, id).is_empty(), "{id}: {:?}", report.findings);
     }
 
@@ -1079,11 +1035,7 @@ fn dpdk_ports_are_checked_by_pci_address() {
         named: vec!["ens6".into()],
     };
     let report = host_report(&f.host(), &inputs, &mut stub(true, None));
-    assert!(
-        with_id(&report.findings, CheckId::T2).is_empty(),
-        "{:?}",
-        report.findings
-    );
+    assert!(with_id(&report.findings, "T2").is_empty(), "{:?}", report.findings);
     assert!(
         report.notes.iter().any(|n| n.contains("virtual devices")),
         "{:?}",
@@ -1134,7 +1086,7 @@ fn findings_are_printed_one_line_each() {
     );
 }
 
-/// `RUSTERON_MEDIA_DRIVER_HOST_CHECK=require` refuses on any one warning,
+/// `ERGON_HOST_CHECKS=require` refuses on any one warning,
 /// naming it, and never on an information line or on what could not be read
 /// (a pod's namespace, a system other than Linux).
 #[test]
@@ -1173,9 +1125,9 @@ fn require_refuses_on_one_warning_and_never_on_information_or_unknown() {
     assert!(matches!(e, DpdkError::HostCheck(_)), "{e:?}");
     let text = e.to_string();
     assert!(
-        text.contains("1 host check warning(s) (M2)")
-            && text.contains("RUSTERON_MEDIA_DRIVER_HOST_CHECK=warn")
-            && text.contains("ERGON_HOST_CHECKS=off"),
+        text.contains("ERGON_HOST_CHECKS=require and 1 host check warning(s) (M2)")
+            && text.contains("set ERGON_HOST_CHECKS=warn or off to start anyway")
+            && !text.contains("RUSTERON_MEDIA_DRIVER_HOST_CHECK"),
         "{text}"
     );
 }
@@ -1211,8 +1163,8 @@ fn a_data_nic_is_rechecked_after_its_carrier_changes_settle() {
     let due = r.tick(&f.host());
     assert_eq!(due.len(), 1, "{due:?}");
     assert_eq!((due[0].nic.as_str(), due[0].from, due[0].to), ("ens6", 2, 4));
-    let ids: Vec<CheckId> = due[0].findings.iter().map(|f| f.id).collect();
-    assert_eq!(ids, vec![CheckId::T2, CheckId::N1]);
+    let ids: Vec<&'static str> = due[0].findings.iter().map(|f| f.id).collect();
+    assert_eq!(ids, vec!["T2", "N1"]);
     assert!(due[0].findings.iter().all(Finding::is_warning), "{:?}", due[0].findings);
     for read in 0..=SETTLE_READS {
         assert!(r.tick(&f.host()).is_empty(), "read {read}: checked once a reset");
@@ -1263,10 +1215,21 @@ fn from_env_reports_and_require_refuses_a_warning() {
     let _cpu = EnvGuard::set("AERON_SENDER_CPU_AFFINITY", "0");
     let _idle = EnvGuard::unset("AERON_SENDER_IDLE_STRATEGY");
 
-    let _policy = EnvGuard::set("RUSTERON_MEDIA_DRIVER_HOST_CHECK", "warn");
+    // The old alias alone changes nothing: the checks run and warn, and the
+    // driver may start.
+    let _policy = EnvGuard::unset("ERGON_HOST_CHECKS");
+    let _alias = EnvGuard::set("RUSTERON_MEDIA_DRIVER_HOST_CHECK", "require");
+    let configured = ConfiguredDriver::from_env(AeronDriverContext::new().unwrap())
+        .expect("RUSTERON_MEDIA_DRIVER_HOST_CHECK=require alone is ignored");
+    let report = configured.host_report().expect("the checks ran");
+    assert!(!warnings(&report.findings, "M1").is_empty());
+    drop(configured);
+    let _alias = EnvGuard::unset("RUSTERON_MEDIA_DRIVER_HOST_CHECK");
+
+    let _policy = EnvGuard::set("ERGON_HOST_CHECKS", "warn");
     let configured = ConfiguredDriver::from_env(AeronDriverContext::new().unwrap()).unwrap();
     let report = configured.host_report().expect("the checks ran");
-    let m1 = warnings(&report.findings, CheckId::M1);
+    let m1 = warnings(&report.findings, "M1");
     assert!(
         m1.iter()
             .any(|f| f.message.contains("sender is pinned to CPU 0 but idles with `backoff`")),
@@ -1275,22 +1238,22 @@ fn from_env_reports_and_require_refuses_a_warning() {
     assert!(!configured.rechecking(), "no data NIC named");
     drop(configured);
 
-    let _policy = EnvGuard::set("RUSTERON_MEDIA_DRIVER_HOST_CHECK", "require");
+    let _policy = EnvGuard::set("ERGON_HOST_CHECKS", "require");
     let e = ConfiguredDriver::from_env(AeronDriverContext::new().unwrap())
         .err()
         .expect("require refuses a warning");
     assert!(matches!(e, DpdkError::HostCheck(_)), "{e:?}");
     let text = e.to_string();
     assert!(
-        text.contains("M1") && text.contains("RUSTERON_MEDIA_DRIVER_HOST_CHECK"),
+        text.contains("M1") && text.contains("ERGON_HOST_CHECKS=require"),
         "{text}"
     );
 
-    let _policy = EnvGuard::set("RUSTERON_MEDIA_DRIVER_HOST_CHECK", "off");
+    let _policy = EnvGuard::set("ERGON_HOST_CHECKS", "off");
     let configured = ConfiguredDriver::from_env(AeronDriverContext::new().unwrap()).unwrap();
     assert!(configured.host_report().is_none(), "off runs no check");
 
-    let _policy = EnvGuard::set("RUSTERON_MEDIA_DRIVER_HOST_CHECK", "loud");
+    let _policy = EnvGuard::set("ERGON_HOST_CHECKS", "loud");
     assert!(matches!(
         ConfiguredDriver::from_env(AeronDriverContext::new().unwrap()),
         Err(DpdkError::InvalidEnvironment(_))
@@ -1311,7 +1274,7 @@ fn the_binary_prints_the_lines_and_require_exits_before_starting() {
         .env("AERON_SENDER_CPU_AFFINITY", "0")
         .env_remove("AERON_SENDER_IDLE_STRATEGY")
         .env_remove("RUSTERON_MEDIA_DRIVER_TRANSPORT")
-        .env("RUSTERON_MEDIA_DRIVER_HOST_CHECK", "require")
+        .env("ERGON_HOST_CHECKS", "require")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1371,6 +1334,8 @@ fn run_binary(envs: &[(&str, &str)]) -> (Option<std::process::ExitStatus>, Strin
         .env("AERON_DIR_DELETE_ON_SHUTDOWN", "true")
         .env_remove("RUSTERON_MEDIA_DRIVER_TRANSPORT")
         .env_remove("RUSTERON_MEDIA_DRIVER_DATA_NICS")
+        .env_remove("ERGON_HOST_CHECKS")
+        .env_remove("RUSTERON_MEDIA_DRIVER_HOST_CHECK")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -1405,16 +1370,17 @@ fn run_binary(envs: &[(&str, &str)]) -> (Option<std::process::ExitStatus>, Strin
     (status, out.join().unwrap(), err.join().unwrap())
 }
 
-/// `RUSTERON_MEDIA_DRIVER_HOST_CHECK=off` runs no check and says so in one
-/// information line, whatever the driver (here one at Aeron's defaults,
-/// which `warn` would warn about); a value other than off, warn or require
-/// refuses to start, naming the variable. (`RUSTERON_MEDIA_DRIVER_MLOCKALL`
-/// set wrong stops the driver after the checks, before it is created.)
+/// `ERGON_HOST_CHECKS=off` runs no check and says so in one information
+/// line, whatever the driver (here one at Aeron's defaults, which `warn`
+/// would warn about); a value other than off, on, warn or require refuses to
+/// start, naming the variable. The old alias `RUSTERON_MEDIA_DRIVER_HOST_CHECK`
+/// is ignored, whatever it holds. (`RUSTERON_MEDIA_DRIVER_MLOCKALL` set wrong
+/// stops the driver after the checks, before it is created.)
 #[test]
 #[serial]
 fn the_binary_says_once_that_the_checks_are_off_and_refuses_an_unknown_policy() {
     let (status, stdout, stderr) = run_binary(&[
-        ("RUSTERON_MEDIA_DRIVER_HOST_CHECK", "off"),
+        ("ERGON_HOST_CHECKS", "off"),
         ("RUSTERON_MEDIA_DRIVER_MLOCKALL", "sometimes"),
         ("AERON_TERM_BUFFER_SPARSE_FILE", "true"),
     ]);
@@ -1424,7 +1390,7 @@ fn the_binary_says_once_that_the_checks_are_off_and_refuses_an_unknown_policy() 
     let ours: Vec<&str> = stderr.lines().filter(|l| l.starts_with("ergon-md-dpdk ")).collect();
     assert_eq!(ours.len(), 1, "{stderr}");
     assert!(
-        ours[0].starts_with("ergon-md-dpdk info: ") && ours[0].contains("RUSTERON_MEDIA_DRIVER_HOST_CHECK=off"),
+        ours[0].starts_with("ergon-md-dpdk info: ERGON_HOST_CHECKS=off: no host check runs"),
         "{}",
         ours[0]
     );
@@ -1436,18 +1402,40 @@ fn the_binary_says_once_that_the_checks_are_off_and_refuses_an_unknown_policy() 
     ]);
     assert!(stderr.contains("ergon-md-dpdk warning: M1 warn: "), "{stderr}");
     assert!(stderr.contains("ergon-md-dpdk warning: M2 warn: "), "{stderr}");
-    assert!(!stderr.contains("HOST_CHECK=off"), "{stderr}");
+    assert!(!stderr.contains("no host check runs"), "{stderr}");
+
+    // The old alias is ignored: `off` still warns, and `require` or a bad
+    // value neither refuses nor stops the start (MLOCKALL stops it later).
+    for value in ["off", "require", "loud"] {
+        let (status, stdout, stderr) = run_binary(&[
+            ("RUSTERON_MEDIA_DRIVER_HOST_CHECK", value),
+            ("RUSTERON_MEDIA_DRIVER_MLOCKALL", "sometimes"),
+            ("AERON_TERM_BUFFER_SPARSE_FILE", "true"),
+        ]);
+        let status = status.unwrap_or_else(|| panic!("{value:?}: a driver started: {stdout}\n{stderr}"));
+        assert_ne!(status.code(), Some(0), "{value:?}: {stderr}");
+        assert!(
+            stderr.contains("ergon-md-dpdk warning: M1 warn: "),
+            "{value:?}: {stderr}"
+        );
+        assert!(stderr.contains("RUSTERON_MEDIA_DRIVER_MLOCKALL"), "{value:?}: {stderr}");
+        assert!(!stderr.contains("HostCheck"), "{value:?}: {stderr}");
+        assert!(
+            !stderr.contains("RUSTERON_MEDIA_DRIVER_HOST_CHECK"),
+            "{value:?}: {stderr}"
+        );
+    }
 
     // Any case works: `OFF` is `off`. What is not one of the words is refused.
     for bad in ["loud", "", "strict", "sometimes"] {
-        let (status, stdout, stderr) = run_binary(&[("RUSTERON_MEDIA_DRIVER_HOST_CHECK", bad)]);
+        let (status, stdout, stderr) = run_binary(&[("ERGON_HOST_CHECKS", bad)]);
         let status = status.unwrap_or_else(|| panic!("{bad:?}: a driver started: {stdout}\n{stderr}"));
         assert_ne!(status.code(), Some(0), "{bad:?}: {stderr}");
-        assert!(stderr.contains("RUSTERON_MEDIA_DRIVER_HOST_CHECK"), "{bad:?}: {stderr}");
+        assert!(stderr.contains("ERGON_HOST_CHECKS"), "{bad:?}: {stderr}");
         assert!(!stdout.contains("media driver started"), "{bad:?}: {stdout}");
     }
     let (status, stdout, stderr) = run_binary(&[
-        ("RUSTERON_MEDIA_DRIVER_HOST_CHECK", "OFF"),
+        ("ERGON_HOST_CHECKS", "OFF"),
         ("RUSTERON_MEDIA_DRIVER_MLOCKALL", "sometimes"),
     ]);
     let status = status.unwrap_or_else(|| panic!("a driver started: {stdout}\n{stderr}"));
@@ -1463,7 +1451,7 @@ fn the_binary_says_once_that_the_checks_are_off_and_refuses_an_unknown_policy() 
 #[serial]
 fn the_recheck_thread_starts_for_named_nics_and_stops_with_the_driver() {
     let _transport = EnvGuard::unset("RUSTERON_MEDIA_DRIVER_TRANSPORT");
-    let _policy = EnvGuard::set("RUSTERON_MEDIA_DRIVER_HOST_CHECK", "warn");
+    let _policy = EnvGuard::set("ERGON_HOST_CHECKS", "warn");
     let _nics = EnvGuard::set("RUSTERON_MEDIA_DRIVER_DATA_NICS", "lo");
     let cpus = allowed_cpus();
     let spinner = *cpus.last().unwrap();

@@ -30,6 +30,10 @@ spec:
             - /etc/ergon-shared-cpus/config.yaml
             - --kubelet-config
             - /host/kubelet-config
+            - --host-sys
+            - /host/sys
+            - --host-proc
+            - /host/proc
           securityContext:
             runAsUser: 0
             runAsGroup: 0
@@ -77,6 +81,12 @@ spec:
             - name: host-kubelet-config
               mountPath: /host/kubelet-config
               readOnly: true
+            - name: host-sys
+              mountPath: /host/sys
+              readOnly: true
+            - name: host-proc
+              mountPath: /host/proc
+              readOnly: true
       volumes:
         - name: nri
           hostPath:
@@ -118,9 +128,24 @@ spec:
         # Hot creates read cpuManagerPolicy and reservedSystemCPUs from this
         # file. An empty --kubelet-config refuses those creates. File, not
         # FileOrCreate: a missing path fails the pod instead of mounting an
-        # empty file the plugin would trust. This manifest is the :dev image.
-        # Chart 0.1.0 leaves the mount off because image 0.1.0 rejects the flag.
+        # empty file the plugin would trust. The chart mounts the same path
+        # by default (hostContract.kubeletConfig). A kubelet run with
+        # --config-dir (EKS AL2023: /etc/kubernetes/kubelet/config.json plus
+        # config.json.d) also needs that directory mounted and passed as
+        # --kubelet-config-dir (the chart's hostContract.kubeletConfigDir).
         - name: host-kubelet-config
           hostPath:
             path: /var/lib/kubelet/config.yaml
             type: File
+        # The node's sysfs and proc for the hot-create contract: isolated and
+        # nohz_full CPUs, NIC inventory and IRQ affinity. The container's own
+        # /sys/class/net lists the pod's network namespace, not the node's
+        # NICs. Same as the chart's hostContract.sys and hostContract.proc.
+        - name: host-sys
+          hostPath:
+            path: /sys
+            type: Directory
+        - name: host-proc
+          hostPath:
+            path: /proc
+            type: Directory

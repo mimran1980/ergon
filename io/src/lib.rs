@@ -6,9 +6,17 @@
 //!   `backend[,key=value...]`).
 //! - [`ws_conn`]: [`WsConn`], [`WsDial`], [`WsOptions`], [`WsHandler`];
 //!   [`ws`] is the frame codec.
+//! - [`frame`]: [`FrameConn`], [`FrameDial`], [`FrameOptions`],
+//!   [`FrameHandler`]: `u32` little-endian length-prefixed frames over plain
+//!   TCP, on every backend.
+//! - [`udp`]: [`UdpConn`], [`UdpOptions`], [`UdpHandler`]: whole datagrams
+//!   on a connected or receive-only UDP socket, on `epoll-spin` only.
 //! - [`reconnect`]: [`Reconnect`] and its backoff policy, [`Retry`].
 //! - [`http`]: [`HttpConn`], [`HttpDial`], [`HttpHandler`]. On Linux,
 //!   `client` pools connections as `HttpClient`.
+//! - [`text`]: the text check on WebSocket text and HTTP bodies
+//!   ([`TextCheck`], [`TextStatus`]) and [`AsciiText`], a byte view of text
+//!   trusted to be ASCII.
 //! - [`tls`]: the TLS 1.3 client configuration ([`tls::client_config`]).
 //! - [`auth`]: request signing ([`Signer`]).
 //! - [`endpoint`]: [`Handler`] (`on_open`, `on_closed`), [`ConnId`], and
@@ -17,7 +25,6 @@
 //!   built on ergon-tune.
 //! - [`placement`]: where the helper threads run (the connect helper, the
 //!   warning thread, `SQPOLL`), inside the process's cpuset.
-//! - [`limit`]: the send budget for venue rate limits ([`Budget`]).
 //! - [`outcome`]: what became of a request ([`Sent`], [`Verdict`]) and
 //!   `Retry-After` parsing.
 //! - [`net`] ([`Target`]), [`dns`], [`any`] ([`AnyConn`]:
@@ -34,15 +41,17 @@ pub mod clock;
 pub mod dns;
 pub mod endpoint;
 pub mod error;
+pub mod frame;
 pub mod http;
-pub mod limit;
 pub mod net;
 pub mod outcome;
 pub mod placement;
 pub mod reconnect;
 pub mod route;
 mod stream;
+pub mod text;
 pub mod tls;
+pub mod udp;
 pub mod ws;
 pub mod ws_conn;
 
@@ -74,24 +83,47 @@ pub use backend::{Backend, Config};
 pub use client::{ClientHandler, CurlDrive, HttpClient, HttpClientConfig, HttpImpl};
 #[cfg(target_os = "linux")]
 pub use driver::Driver;
-pub use endpoint::{ConnId, ConnMut, Dial, DriverStats, Endpoint, Handler, Receive};
+pub use endpoint::{ConnId, ConnMut, Dial, DriverStats, Endpoint, Handler, Receive, TcpInfo};
 pub use error::{Error, Result};
-pub use http::{HttpConn, HttpDial, HttpHandler, HttpOptions, HttpStats, Response};
-pub use limit::{
-    BucketId, BucketSpec, BucketStats, Budget, Charge, Class, Limited, Resend, Ticket, Why,
+pub use frame::{FrameConn, FrameDial, FrameHandler, FrameOptions, FrameStats};
+pub use http::{
+    HttpConn, HttpDial, HttpHandler, HttpOptions, HttpStats, NonAsciiHead, RequestTemplate,
+    Response,
 };
 pub use net::Target;
-pub use outcome::{Now, Sent, Verdict};
+pub use outcome::{Sent, Verdict};
 pub use reconnect::{Reconnect, Retry};
-pub use ws_conn::{WsConn, WsDial, WsHandler, WsOptions, WsStats};
+pub use text::{AsciiText, NonAscii, TextCheck, TextStatus};
+pub use udp::{UdpConn, UdpHandler, UdpOptions, UdpStats};
+pub use ws_conn::{
+    Flow, FragmentIter, Fragments, Interest, MAX_FRAGMENTS, WsConn, WsDial, WsHandler, WsOptions,
+    WsStats,
+};
 
-/// Receive metadata for one read.
+/// Receive metadata for one read, and for each WebSocket message or HTTP
+/// body what its text check found.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RxMeta {
     /// Kernel software receive timestamp (`CLOCK_REALTIME` ns), 0 if absent.
     pub rx_sw_ns: i64,
     /// NIC hardware timestamp (raw PHC ns), 0 if absent.
     pub rx_hw_ns: i64,
+    /// ergon-io's own receive time (`CLOCK_REALTIME` ns, the domain of
+    /// `rx_sw_ns`): read on the polling thread right after the read
+    /// returned the bytes (`io_uring`: when the completion was reaped; bytes
+    /// the connection already held when the driver took it, read with the
+    /// upgrade's 101 or by a blocking connect before `Driver::add`: when the
+    /// driver took them, on its first poll). 0 unless
+    /// `Config::rx_read_timestamp` is on. `rx_read_ns - rx_sw_ns` is the
+    /// time from the kernel's stamp to the driver's read.
+    pub rx_read_ns: i64,
     /// Sequence number of this read within its driver.
     pub read_seq: u64,
+    /// What the text check ([`text`]) found for the payload being
+    /// delivered: a WebSocket message under [`WsOptions::text_check`], an
+    /// HTTP body under [`HttpOptions::body_check`]
+    /// ([`TextStatus::Ascii`]: every byte is one character;
+    /// [`TextStatus::AssumedAscii`]: trusted, never read).
+    /// [`TextStatus::Unchecked`] everywhere else.
+    pub text: TextStatus,
 }

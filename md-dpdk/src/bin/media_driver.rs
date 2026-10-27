@@ -15,8 +15,10 @@
 //! ([`ergon_md_dpdk::driver::ConfiguredDriver`]), which a process embedding
 //! the driver shares, host checks included: one stderr line for each
 //! low-latency setting that is not fine, and under
-//! `RUSTERON_MEDIA_DRIVER_HOST_CHECK=require` a non-zero exit before any
+//! `ERGON_HOST_CHECKS=require` a non-zero exit before any
 //! driver starts while one warns ([`ergon_md_dpdk::checks`]).
+//! `media_driver --version` prints the version, the architecture, Rust's
+//! target CPU and the native C's CPU flag, and exits without starting a driver.
 
 use ergon_md_dpdk::driver::ConfiguredDriver;
 use log::info;
@@ -25,6 +27,16 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::args().nth(1).as_deref() == Some("--version") {
+        println!(
+            "media_driver {} ({}; Rust target CPU {}; native C {})",
+            env!("CARGO_PKG_VERSION"),
+            std::env::consts::ARCH,
+            env!("ERGON_MD_DPDK_RUST_TARGET_CPU"),
+            env!("ERGON_MD_DPDK_C_CPU_FLAG"),
+        );
+        return Ok(());
+    }
     // Flag to indicate when the application should stop
     let running = Arc::new(AtomicBool::new(true));
     let running_clone = Arc::clone(&running);

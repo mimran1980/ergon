@@ -138,8 +138,9 @@ grep -F -q 'link ../clock/overview.md' "$fixture/links-ref.out"
 
 # Absolute links into the repository (GitHub blob/tree URLs) and the book,
 # relative links in Markdown outside the book, and benchmark anchors cited in
-# source must resolve against the working tree. A git submodule is not
-# scanned. mdbook and GitHub both render a dead one without a warning.
+# source must resolve against the working tree. A git submodule, or any
+# other checkout inside the tree (a worktree), is not scanned. mdbook and
+# GitHub both render a dead one without a warning.
 make_repo() {
     local repo="$fixture/abs/$1"
     mkdir -p "$repo/book/src/guide" "$repo/docs" "$repo/src" "$repo/vendor/docs"
@@ -150,6 +151,11 @@ make_repo() {
     printf '# Bench\n\n## SMT sibling cost (x86)\n\n## `uring-sqpoll`, own core\n' >"$repo/docs/BENCHMARKS.md"
     printf 'fn a() {}\nfn b() {}\n' >"$repo/src/a.rs"
     printf '[gone](https://github.com/mimran1980/ergon/blob/main/missing.md)\n' >"$repo/vendor/docs/x.md"
+    # Another checkout inside the tree (a git worktree: a .git file) is its
+    # own repository, never scanned as part of this one.
+    mkdir -p "$repo/wt/docs"
+    printf 'gitdir: /elsewhere\n' >"$repo/wt/.git"
+    printf '[gone](https://github.com/mimran1980/ergon/blob/main/missing.md)\n' >"$repo/wt/docs/x.md"
 }
 make_repo ok
 repo="$fixture/abs/ok"
@@ -183,6 +189,10 @@ for case in file anchor code book relative; do
     fi
     if grep -F -q 'vendor/' "$fixture/abs-$case.out"; then
         echo "a submodule's links were checked ($case)" >&2
+        exit 1
+    fi
+    if grep -F -q 'wt/' "$fixture/abs-$case.out"; then
+        echo "a nested checkout's links were checked ($case)" >&2
         exit 1
     fi
 done

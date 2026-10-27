@@ -216,7 +216,9 @@ than the confidence intervals before publishing.
 | `just bench-diagnostics` | size, count, var-data, endian and version matrix; `versioned_l3_bench` |
 | `cargo bench -p ergo-sbe-benchmarks --bench alignment_bench` | message offsets `0..=63` |
 | `instruction_counts` | amplified wall-clock of tiny ops (not instruction counts) |
-| `latency_distribution` | warmed p50/p99/p99.9 for 1,000-message batches; it prints no max, so add one before quoting |
+| `latency_distribution` | per-operation p50/p99/p99.9/max with quanta's counter, the max's sample index and a first guess at its cause; an empty `clock` arm gives the floor. Medians below one counter tick read 0: take them from Criterion |
+| `cargo bench -p ergo-sbe-benchmarks --bench encode_bench -- new_order` | `NewOrder` through `fixed()` + `asset` against `encode_from`; bytes checked equal first |
+| `cargo bench -p ergo-sbe-benchmarks --bench decode_bench -- new_order` | mapped `Side` / `Decimal9` accessors against the wire enum, `raw_side()` and the mantissas; values checked equal first |
 | `just bench-cold` | schema parse, codegen and artifact size |
 
 Only `just bench` and `just bench-cluster` stamp a run id. No diagnostic

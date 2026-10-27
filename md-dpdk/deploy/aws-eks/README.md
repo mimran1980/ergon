@@ -1,8 +1,8 @@
 # AWS EKS DPDK ENA deployment
 
 Deployment assets for running the `ergon-md-dpdk` DPDK ENA kernel-bypass
-transport on Amazon EKS (Amazon Linux 2023, Linux x86_64 Nitro, never
-Graviton). One Media Driver pod per dedicated node owns two secondary ENAs
+transport on Amazon EKS (Amazon Linux 2023 on Nitro: Graviton4/5 arm64 or
+Intel x86_64). One Media Driver pod per dedicated node owns two secondary ENAs
 (sender and receiver). The node's primary ENA stays kernel-owned for EKS, DNS
 and telemetry, and is the kernel-UDP rollback path.
 
@@ -33,15 +33,17 @@ Build both from the ergon repo root (`.dockerignore` keeps `target/`, `.git`
 and the upstream submodules out of the context):
 
 ```bash
-docker build -f md-dpdk/deploy/aws-eks/Dockerfile.media-driver -t rusteron-media-driver:dpdk .
-docker build -f md-dpdk/deploy/aws-eks/Dockerfile.device-plugin -t rusteron-dpdk-device-plugin:latest .
+docker buildx build --platform linux/arm64 --load -f md-dpdk/deploy/aws-eks/Dockerfile.media-driver -t rusteron-media-driver:dpdk .
+docker buildx build --platform linux/arm64 --load -f md-dpdk/deploy/aws-eks/Dockerfile.device-plugin -t rusteron-dpdk-device-plugin:latest .
 docker run --rm rusteron-media-driver:dpdk ldd /usr/local/bin/media_driver
+docker run --rm --entrypoint /usr/local/bin/media_driver rusteron-media-driver:dpdk --version
 ```
 
 The media driver image compiles DPDK 24.11.4 from a pinned, checksummed
-tarball (ENA PMD only; the version the VM lab runs) for DPDK's generic x86
-platform (`-Dplatform=generic`, `corei7`, as Debian's package the lab ran is
-built), never for the CPU that happens to build the image. It builds
+tarball (ENA PMD only; the version the VM lab runs) for DPDK's generic
+platform (`-Dplatform=generic`: `armv8-a` on arm64, `corei7` on x86_64, as
+Debian's package the lab ran is built), never for the CPU that happens to
+build the image. It builds
 `media_driver` with `--features static,dpdk`, and adds the benchmark clients
 `rtt` and `counters` (`ergon-md-dpdk-harness --features static`), which run
 inside the driver's pod against its Aeron directory. It also carries
@@ -49,9 +51,19 @@ inside the driver's pod against its Aeron directory. It also carries
 versions it was built against, and the instruction set DPDK was built for, in
 `/etc/rusteron-dpdk-versions.txt`.
 
-Both images are `--platform=linux/amd64` (EC2 Nitro x86_64; the `dpdk`
-feature rejects any other target). On an Arm Mac they build under emulation,
-which is slow.
+Both images build for the platform buildx is given: `linux/arm64` for
+Graviton nodes, `linux/amd64` for Intel x86 (the `dpdk` feature rejects any
+other target). On an Arm Mac arm64 builds natively and amd64 under emulation,
+which is slow. Pick the image with the node's architecture
+(`kubernetes.io/arch`).
+
+| Build argument | Default | Effect |
+|---|---|---|
+| `RUST_TARGET_CPU` | empty: generic | `-Ctarget-cpu` for the Rust; `build.rs` gives md-dpdk's C the same `-mcpu` (arm64) or `-march` (x86_64), which `cc` does not pass on. The image then runs only on that CPU family (SIGILL elsewhere): select its nodes by instance family too. The C compiler must know the name, or the build stops. |
+| `CARGO_BUILD_JOBS` | empty: cargo's | caps the build's parallel jobs on a small Docker VM |
+
+`media_driver --version` prints the architecture, Rust's target CPU and the
+native C's CPU flag.
 
 ## 2. Nodes
 
@@ -126,7 +138,7 @@ after cloud-init). It does nothing on a node whose kernel command line already
 has `isolcpus=`, so it can never loop. Otherwise it:
 
 1. turns SMT off on a node that still has it (bare metal: EC2's CPU options
-   cover a VM only), then checks the node: an Intel x86 CPU, housekeeping CPUs
+   cover a VM only), then checks the node: Intel x86 or Graviton4/5, housekeeping CPUs
    (`RUSTERON_HOUSEKEEPING_CPUS`, default cpu0's core, one CPU per core) that
    run with SMT off, and at least four physical cores outside them (the
    driver's housekeeping, sender and receiver, and an application);
@@ -280,11 +292,24 @@ Optional settings, read from `/etc/rusteron-dpdk/node.env` (the unit's
 
 ### Node requirements
 
-- AL2023 x86_64 Intel Nitro instance with at least 5 physical cores, which
+- AL2023 Nitro instance with at least 5 physical cores, which
   `provision-node.sh` checks: one reserved for the system and kubelet, three
   for the driver pod (housekeeping, sender, receiver) and one for an
-  application. The smallest c7i with them is c7i.4xlarge (8 cores). SMT is off
-  ([above](#smt-off-one-cpu-is-one-physical-core)), so one CPU is one core.
+  application. SMT is off ([above](#smt-off-one-cpu-is-one-physical-core)),
+  so one CPU is one core.
+
+  | CPU | `provision-node.sh` accepts | Smallest size | Kernel command line differs by |
+  |---|---|---|---|
+  | Graviton4 (c8g, Neoverse V2) | `CPU part 0xd4f` | c8g.2xlarge (8 cores) | no `nosmt` (no SMT); `iommu.passthrough=1` in place of `iommu=pt` |
+  | Graviton5 (c9g, Neoverse V3) | `CPU part 0xd84` | c9g.2xlarge (8 cores) | as Graviton4 |
+  | Intel x86 (c7i) | `vendor_id GenuineIntel` | c7i.4xlarge (8 cores) | `nosmt`, `iommu=pt` |
+
+  Any other CPU (Graviton2/3, AMD) fails closed, as does a Graviton kernel
+  without 4 KiB pages and 2 MiB hugepages (`getconf PAGESIZE`: only 4 KiB
+  pages are qualified, as in the VM lab). Graviton bare metal is not
+  supported yet: `bootstrap-dpdk-ena.sh` still requires `iommu=pt` wherever
+  there are IOMMU groups, and `eks.sh` refuses a Graviton `*.metal` type.
+  These are node settings (user data), not pod settings.
 - Three ENAs: the primary plus the sender and receiver, created with the tag
   `node.k8s.amazonaws.com/no_manage=true` so the VPC CNI never claims them.
 - The ENAs bind to igb_uio with `wc_activate=1`, the only write-combining
@@ -353,8 +378,8 @@ holds that ring.
 | Setting | Value | Why |
 |---|---|---|
 | `AERON_RECEIVER_IO_VECTOR_CAPACITY` | `16` | Aeron's maximum (its default is 4) and `BENCHMARKS.md`'s recommended configuration: with DPDK at 1,344 B 600 k msgs/s no NAK against 16,247 at the default (one run). The DPDK receive poll drains whole bursts whatever this is; it still sizes each receive from a host-local socket. The media driver also defaults to 16 under `dpdk-ena` when it is unset, never under the socket transport; a rollback sets it back to 4 (the runbook's §4) |
-| `RUSTERON_DPDK_TX_DESCRIPTORS` | `512` | An ENA queue takes at most 512 transmit descriptors; a larger ring fails the port's start |
-| `RUSTERON_DPDK_MBUFS_PER_PORT` | `16384` | The count every lab measurement used (`benches/cloud/vm.sh`): about 37 MiB of hugepages a port; see [Hugepage budget](#hugepage-budget). It holds the 4096-descriptor receive ring, the transmit ring, four bursts of 32 and two mempool caches (4096 + 512 + 128 + 768 = 5,504) with room to spare |
+| `RUSTERON_DPDK_TX_DESCRIPTORS` | `256` | An ENA queue takes at most 256 transmit descriptors under the transport's large LLQ entries (`llq_policy=3`, the default; 512 under `llq_policy=1`); a larger ring fails the port's start |
+| `RUSTERON_DPDK_MBUFS_PER_PORT` | `16384` | The count every lab measurement used (`benches/cloud/vm.sh`): about 37 MiB of hugepages a port; see [Hugepage budget](#hugepage-budget). It holds the 4096-descriptor receive ring, the transmit ring, four bursts of 32 and two mempool caches (4096 + 256 + 128 + 768 = 5,248) with room to spare |
 | `RUSTERON_DPDK_VFIO_WC` | `1` | A vfio-pci node's write-combining, as its preflight confirmed: the bootstrap binds the ENAs to vfio-pci only after `preflight.sh` passed with the operator's `RUSTERON_DPDK_VFIO_WC=1`, and a failed run leaves no inventory, so the device plugin hands out no pair. vfio-pci maps the LLQ BAR through its device file, so `/proc/self/maps` cannot show it write-combined; with this the transport's start check accepts a port bound to vfio-pci, with no warning. Inert for igb_uio ports, which must still show `resource2_wc` |
 | `AERON_DIR`, `RUSTERON_MEDIA_DRIVER_DIR` | `/mnt/huge-aeron/aeron` | Aeron's directory on a hugetlbfs of its own that the node bootstrap mounts with a size (an unsized hugetlbfs reports no free space, and Aeron's storage check then refuses every log buffer) |
 | `AERON_FILE_PAGE_SIZE`, `AERON_TERM_BUFFER_SPARSE_FILE`, `AERON_DIR_DELETE_ON_START` | `2097152`, `false`, `true` | Log buffers in whole 2 MiB pages, filled when created, as in the VM lab |

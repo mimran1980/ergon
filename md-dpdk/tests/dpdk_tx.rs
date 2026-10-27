@@ -1144,6 +1144,36 @@ fn arp_refresh_never_pauses_sends() {
     assert_no_leak();
 }
 
+/// The refresh request a send starts goes out after that send's data frame,
+/// never before it: the data frame pays for no ARP build or transmit.
+#[test]
+#[serial]
+fn an_arp_refresh_goes_out_after_the_data_frame() {
+    let mut h = Harness::new();
+    h.init(
+        aeron_udp_channel_transport_affinity_t::AERON_UDP_CHANNEL_TRANSPORT_AFFINITY_SENDER,
+        SENDER_IP,
+        40000,
+        None,
+        1472,
+    );
+    pin_clock_ms(1000);
+    const PEER_MAC: [u8; 6] = [0x02, 0, 0, 0, 0, 0x50];
+    h.arp_seed([10, 0, 0, 5], PEER_MAC);
+    assert_eq!(h.send_to(([10, 0, 0, 5], 40123), &[b"fresh"]).0, 1);
+    pin_clock_ms(1000 + 30_000);
+    assert_eq!(h.send_to(([10, 0, 0, 5], 40123), &[b"due"]).0, 1);
+    let order: Vec<u16> = captures().iter().map(eth_type).collect();
+    assert_eq!(order, vec![0x0800, 0x0800, 0x0806], "[data, data, ARP]");
+    assert_eq!(udp_payload(&captures()[1]), b"due");
+    // A retried refresh (unanswered for a second) also follows the data.
+    pin_clock_ms(1000 + 31_000);
+    assert_eq!(h.send_to(([10, 0, 0, 5], 40123), &[b"again"]).0, 1);
+    let order: Vec<u16> = captures().iter().map(eth_type).collect();
+    assert_eq!(order[3..], [0x0800, 0x0806], "[data, ARP]");
+    assert_no_leak();
+}
+
 /// A refresh reply may move the next hop to a new MAC (a pod rescheduled, a
 /// failover), but only a
 /// reply to an outstanding refresh: unsolicited replies still cannot.

@@ -1,0 +1,7 @@
+vm/stat_interval: 1 -> 120 (vmstat_update work on a CPU whose counters moved (1 s by default))
+kernel/watchdog_cpumask: 0-2 -> 0-2 (the soft-lockup watchdog's per-CPU hrtimer and its stopper-thread wakeup (nohz_full already narrows it; set explicitly))
+kernel/nmi_watchdog: 1 -> 0 (the hard-lockup detector's per-CPU perf event)
+kernel/numa_balancing: 0 -> 0 (NUMA balancing's page scanning of the hot task's memory)
+vm/compaction_proactiveness: 20 -> 0 (proactive compaction migrating the hot task's pages (a fault on the next touch))
+kernel/timer_migration: 1 -> 1 (unpinned timers armed on an isolated CPU move to a housekeeping one)
+/sys/bus/workqueue/devices/writeback/cpumask: ff -> 07 (writeback work on the housekeeping CPUs)

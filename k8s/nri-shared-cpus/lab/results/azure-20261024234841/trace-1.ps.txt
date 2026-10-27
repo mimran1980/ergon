@@ -1,0 +1,11 @@
+trace-1 placement, mid-run:
+ok:   sh 18498 on CPU 1, allowed 1
+ok:   gapprobe 18526 on CPU 1, allowed 1
+ok:   gp-udp-sink 18527 on CPU 1, allowed 1
+ok:   gp-udp-src 18528 on CPU 1, allowed 1
+ok:   stress-ng-vm 18530 on CPU 1, allowed 1
+ok:   gapprobe 18525 on CPU 1, allowed 1
+ok:   gp-hot 18949 on CPU 3, allowed 3
+ok:   stress-ng-vm 18531 on CPU 1, allowed 1
+ok:   stress-ng 18524 on CPU 1, allowed 1
+ok:   stress-ng-cpu 18529 on CPU 1, allowed 1

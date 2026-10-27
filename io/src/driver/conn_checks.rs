@@ -160,6 +160,9 @@ mod tests {
         host_with_irq_on_the_loop(&root)?;
         let mut r = route::decode_reply(&V4_DEFAULT_REPLY, 1)?;
         r.dev = Some("ens5".to_owned());
+        let _kept = warn::KEPT_LINES_TEST
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         warn::keep_lines();
         let mut st = State::at(Host::at(&root));
         job(&r).run(&mut st);

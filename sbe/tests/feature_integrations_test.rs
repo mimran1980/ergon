@@ -25,7 +25,7 @@ fn generate_with_config(
     <sbe:message name="Msg" id="1">{fields}</sbe:message>
 </sbe:messageSchema>"#
     );
-    let ir = ergo_sbe::parse(&xml)?;
+    let ir = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(&xml))?;
     let schema = ergo_sbe::Schema::from_ir(ir);
     let modules = ergo_sbe::Generator::new(config).generate(&schema)?;
     let source = modules

@@ -40,6 +40,7 @@ use rusteron_media_driver::bindings::*;
 unsafe extern "C" {
     fn rusteron_dpdk_transport_bindings() -> *mut aeron_udp_channel_transport_bindings_stct;
     fn rusteron_dpdk_fake_rx_queued(port_id: u16) -> c_int;
+    fn rusteron_dpdk_test_reports_formatted() -> c_int;
     fn rusteron_dpdk_rx_ol_flags_from_dpdk(
         ol: u64,
         ip_bad: u64,
@@ -102,6 +103,8 @@ struct RxDatagram {
     src_port: u16,
     alloc_at_cb: c_int,
     released_at_cb: c_int,
+    /// Frames the fake NIC had transmitted when this datagram was dispatched.
+    captures_at_cb: c_int,
 }
 
 unsafe extern "C" fn recv_cb(
@@ -127,6 +130,7 @@ unsafe extern "C" fn recv_cb(
         src_port,
         alloc_at_cb: rusteron_dpdk_fake_allocated(),
         released_at_cb: rusteron_dpdk_fake_released(),
+        captures_at_cb: rusteron_dpdk_fake_capture_count(),
     });
 }
 
@@ -704,6 +708,75 @@ fn arp_request_handled_and_reply_sent() {
     assert_no_leak();
 }
 
+/// An ICMP echo request from the peer to the receiver's address.
+fn icmp_echo_to_receiver() -> Vec<u8> {
+    let mut icmp = vec![8u8, 0, 0, 0, 0x12, 0x34, 0x00, 0x01, b'p', b'i', b'n', b'g'];
+    let c = inet_csum(&icmp);
+    icmp[2..4].copy_from_slice(&c.to_be_bytes());
+    let mut f = Vec::new();
+    f.extend_from_slice(&RECEIVER_MAC);
+    f.extend_from_slice(&PEER_MAC);
+    f.extend_from_slice(&[0x08, 0x00, 0x45, 0x00]);
+    f.extend_from_slice(&((20 + icmp.len()) as u16).to_be_bytes());
+    f.extend_from_slice(&[0, 0, 0, 0, 64, 1, 0, 0]);
+    f.extend_from_slice(&PEER_IP);
+    f.extend_from_slice(&RECEIVER_IP);
+    let c = ip_csum(&f[14..34]);
+    f[24..26].copy_from_slice(&c.to_be_bytes());
+    f.extend_from_slice(&icmp);
+    f
+}
+
+/// ARP and ICMP frames that arrive in a burst with data are answered after
+/// the burst's data frames are dispatched: a data frame never waits behind
+/// the build and transmit of a reply to a frame that came before it.
+#[test]
+#[serial]
+fn control_frames_are_answered_after_the_bursts_data() {
+    let mut h = Harness::new();
+    pin_clock_ms(1000);
+    h.init(
+        aeron_udp_channel_transport_affinity_t::AERON_UDP_CHANNEL_TRANSPORT_AFFINITY_RECEIVER,
+        RECEIVER_IP,
+        60000,
+        1472,
+    );
+    let mut p = h.poller();
+    p.add(&mut *h.transport);
+
+    let arp = arp_request_for_receiver(PEER_MAC, PEER_IP);
+    let echo = icmp_echo_to_receiver();
+    let data = frame_to_receiver(60000, b"data");
+    for f in [&arp, &echo, &data] {
+        assert_eq!(
+            unsafe { rusteron_dpdk_fake_rx_inject(RECEIVER_PORT, f.as_ptr(), f.len(), 0, 1) },
+            0
+        );
+    }
+    let mut bytes = 0i64;
+    let clientd = &mut h.rx as *mut Vec<RxDatagram> as *mut c_void;
+    assert_eq!(p.poll(16, clientd, &mut bytes), 1, "one datagram in the burst");
+    assert_eq!(h.rx.len(), 1);
+    assert_eq!(h.rx[0].data, b"data");
+    assert_eq!(h.rx[0].captures_at_cb, 0, "dispatched before either reply was sent");
+    assert_eq!(
+        unsafe { rusteron_dpdk_fake_capture_count() },
+        2,
+        "both replied after it"
+    );
+    let mut c = unsafe { std::mem::zeroed::<FakeCapture>() };
+    assert_eq!(unsafe { rusteron_dpdk_fake_capture_at(0, &mut c) }, 0);
+    assert_eq!(
+        (c.data[12], c.data[13]),
+        (0x08, 0x06),
+        "the ARP reply first, in arrival order"
+    );
+    assert_eq!(unsafe { rusteron_dpdk_fake_capture_at(1, &mut c) }, 0);
+    assert_eq!((c.data[23], c.data[34]), (1, 0), "then the echo reply");
+    assert_eq!((h.stats().arp, h.stats().icmp), (1, 1), "both counted");
+    assert_no_leak();
+}
+
 // ---------------------------------------------------------------------------
 // Rejected frame classes (plan §7.6)
 // ---------------------------------------------------------------------------
@@ -903,7 +976,10 @@ fn setup_from_a_peer_with_a_larger_mtu_is_dropped() {
         0
     );
     assert_eq!(p.poll(16, clientd, &mut bytes), 0, "dropped");
-    assert!(last_error().contains("above max_aeron_mtu"), "{}", last_error());
+    // Reported by housekeeping (dpdk_health.rs has the text), not the agent.
+    assert_eq!(unsafe { rusteron_dpdk_test_reports_formatted() }, 0);
+    unsafe { rusteron_dpdk_test_housekeeping_tick(h.native) };
+    assert_eq!(unsafe { rusteron_dpdk_test_reports_formatted() }, 1, "reported");
     let ok = frame_to_receiver(60000, &setup(1408));
     assert_eq!(
         unsafe { rusteron_dpdk_fake_rx_inject(RECEIVER_PORT, ok.as_ptr(), ok.len(), RX_GOOD, 1) },

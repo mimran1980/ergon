@@ -1,0 +1,103 @@
+{
+ "manifest": {
+  "cpus": {
+   "a": {
+    "hot": [
+     2,
+     3,
+     4,
+     5,
+     6,
+     7
+    ],
+    "housekeeping": [
+     0
+    ],
+    "irq": [
+     1
+    ]
+   },
+   "b": {
+    "hot": [
+     2,
+     3,
+     4,
+     5,
+     6,
+     7
+    ],
+    "housekeeping": [
+     0
+    ],
+    "irq": [
+     1
+    ]
+   }
+  },
+  "loss_counters": {
+   "a": {
+    "tcp_info": {
+     "dsack_dups": 0,
+     "dsack_dups_setup": 0,
+     "lost_end": 0,
+     "retrans": 0,
+     "retrans_not_dsack": 0,
+     "retrans_setup": 0,
+     "rtos": 0,
+     "rtos_setup": 0
+    }
+   },
+   "b": {
+    "tcp_info": {
+     "dsack_dups": 0,
+     "dsack_dups_setup": 0,
+     "lost_end": 0,
+     "retrans": 0,
+     "retrans_not_dsack": 0,
+     "retrans_setup": 0,
+     "rtos": 0,
+     "rtos_setup": 0
+    }
+   }
+  },
+  "netem": null,
+  "transport": "tcp"
+ },
+ "row": {
+  "achieved": 10000,
+  "backpressured": 0,
+  "burst": 1,
+  "busy_threads": 1,
+  "censored": 0,
+  "dup": 0,
+  "kind": "load",
+  "label": "fan:aa@STREAMS=128",
+  "late": 22,
+  "lost": 0,
+  "max": 939134,
+  "max_send_lag": 205414,
+  "mean": 186484,
+  "min": 56910,
+  "p50": 165759,
+  "p90": 370943,
+  "p99": 441343,
+  "p99.9": 471807,
+  "p99.99": 531455,
+  "point": "tcp-r10000",
+  "rate": 10000,
+  "received": 600000,
+  "reordered": 0,
+  "rep": 1,
+  "retrans": 0,
+  "samples": 300000,
+  "scheduled": 600000,
+  "sent": 600000,
+  "size": 64,
+  "stream0_max": 557429,
+  "stream0_p50": 200959,
+  "stream0_p99": 414207,
+  "stream0_p99.99": 557429,
+  "wire_bytes": 134
+ },
+ "set": "fan"
+}

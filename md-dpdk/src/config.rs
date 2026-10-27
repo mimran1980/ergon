@@ -138,6 +138,23 @@ pub struct DpdkTransportConfig {
     /// before its own dispatch. Initialization fails on a port whose driver
     /// does not offer RX timestamps.
     pub rx_hw_timestamp: bool,
+    /// The receive queue's free threshold: how many used descriptors the PMD
+    /// lets pile up before it refills them, inside the `rx_burst` that crosses
+    /// it (`rx_conf.rx_free_thresh`). `None` keeps the PMD's default (ENA:
+    /// 256 at 4096 descriptors); else `1..` the receive ring (as each port takes
+    /// it, so below 256 on Azure MANA).
+    pub rx_free_thresh: Option<u16>,
+    /// The transmit queue's free threshold (`tx_conf.tx_free_thresh`): ENA
+    /// reclaims every completed descriptor inside the send that finds fewer
+    /// than this free. `None` keeps the PMD's default (ENA: 224
+    /// at 256 descriptors); else `1..tx_descriptors`.
+    pub tx_free_thresh: Option<u16>,
+    /// Ask for `RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE`, so the PMD frees sent mbufs
+    /// in bulk. Configured only on a NIC that offers it (ENA does); the port's
+    /// `port-info` counter label says `tx-fast-free=on` or `=unsupported`.
+    /// Sound because every frame the transport sends is one segment from the
+    /// port's own pool, never shared.
+    pub tx_fast_free: bool,
 }
 
 impl DpdkTransportConfig {
@@ -250,6 +267,8 @@ impl DpdkTransportConfig {
             }));
         }
 
+        self.validate_free_thresholds(rx)?;
+
         if self.max_aeron_mtu == 0 || !self.max_aeron_mtu.is_multiple_of(32) || self.max_aeron_mtu > 8960 {
             return Err(DpdkError::InvalidConfiguration(format!(
                 "max_aeron_mtu {} must be non-zero, 32-aligned and at most 8960",
@@ -257,6 +276,30 @@ impl DpdkTransportConfig {
             )));
         }
 
+        Ok(())
+    }
+
+    /// The queues' free thresholds: each, when set, from 1 to below its ring
+    /// (`rx`, the receive ring as configured or the most it can take unset;
+    /// start checks the ring each port took).
+    fn validate_free_thresholds(&self, rx: u16) -> Result<(), DpdkError> {
+        if let Some(thresh) = self.rx_free_thresh
+            && (thresh == 0 || thresh >= rx)
+        {
+            return Err(DpdkError::InvalidConfiguration(format!(
+                "rx_free_thresh {thresh} (RUSTERON_DPDK_RX_FREE_THRESH) must be in 1..{rx}, below the receive ring; \
+                 unset keeps the PMD's default"
+            )));
+        }
+        if let Some(thresh) = self.tx_free_thresh
+            && (thresh == 0 || thresh >= self.tx_descriptors)
+        {
+            return Err(DpdkError::InvalidConfiguration(format!(
+                "tx_free_thresh {thresh} (RUSTERON_DPDK_TX_FREE_THRESH) must be in 1..{}, below tx_descriptors; \
+                 unset keeps the PMD's default",
+                self.tx_descriptors
+            )));
+        }
         Ok(())
     }
 }

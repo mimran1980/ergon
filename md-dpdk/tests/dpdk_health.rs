@@ -346,3 +346,187 @@ fn reset_callbacks_span_each_ports_life() {
         assert!(at(&format!("unwatch-reset {port}")) < at(&format!("close {port}")));
     }
 }
+
+unsafe extern "C" {
+    /// How many receive-path error reports were formatted (an address into
+    /// text, a message, a distinct-error-log record), on any thread.
+    fn rusteron_dpdk_test_reports_formatted() -> c_int;
+    /// The fake NIC statistics read (basic stats) sleeps this long inside the
+    /// call, as an ENA admin command can take.
+    fn rusteron_dpdk_fake_set_stats_delay_ms(ms: u32);
+    /// NIC statistics reads that have begun.
+    fn rusteron_dpdk_fake_stats_reads_started() -> c_int;
+}
+
+/// An Aeron SETUP frame (40 bytes) announcing `mtu`.
+fn setup_frame(mtu: u32) -> Vec<u8> {
+    let mut f = vec![0u8; 40];
+    f[0..4].copy_from_slice(&40u32.to_le_bytes()); // frame length
+    f[6..8].copy_from_slice(&0x05u16.to_le_bytes()); // HDR_TYPE_SETUP
+    f[12..16].copy_from_slice(&7i32.to_le_bytes()); // session
+    f[16..20].copy_from_slice(&1001i32.to_le_bytes()); // stream
+    f[32..36].copy_from_slice(&mtu.to_le_bytes());
+    frame_to_receiver(60000, &f)
+}
+
+/// An ICMP fragmentation-needed from a router, reporting `mtu`, to the receiver.
+fn frag_needed_frame(mtu: u16) -> Vec<u8> {
+    let quoted = &frame_to_receiver(60000, b"q")[14..14 + 28];
+    let mut icmp = vec![3u8, 4, 0, 0, 0, 0];
+    icmp.extend_from_slice(&mtu.to_be_bytes());
+    icmp.extend_from_slice(quoted);
+    let mut f = Vec::new();
+    f.extend_from_slice(&RECEIVER_MAC);
+    f.extend_from_slice(&PEER_MAC);
+    f.extend_from_slice(&[0x08, 0x00, 0x45, 0x00]);
+    f.extend_from_slice(&((20 + icmp.len()) as u16).to_be_bytes());
+    f.extend_from_slice(&[0, 0, 0x40, 0, 64, 1, 0, 0]);
+    f.extend_from_slice(&[10, 0, 1, 254]); // the router
+    f.extend_from_slice(&RECEIVER_IP);
+    let words: Vec<u16> = f[14..34].chunks(2).map(|w| u16::from_be_bytes([w[0], w[1]])).collect();
+    let c = !(ones_sum(&words) as u16);
+    f[24..26].copy_from_slice(&c.to_be_bytes());
+    f.extend_from_slice(&icmp);
+    f
+}
+
+fn reports_formatted() -> c_int {
+    unsafe { rusteron_dpdk_test_reports_formatted() }
+}
+
+/// A receive-path error the agent finds (a SETUP from a peer whose MTU is
+/// above ours, an ICMP fragmentation-needed) is formatted and recorded by
+/// housekeeping, never on the agent: the poll queues a fixed-size record and
+/// makes no address formatting, message or distinct-error-log call (a mutex
+/// the conductor shares). The next housekeeping pass writes it to standard
+/// error and the driver's error log. At most one report a second per NIC, as
+/// before; every frame is still counted.
+#[test]
+#[serial]
+fn receive_errors_are_formatted_on_housekeeping_not_the_agent() {
+    let mut buffer = vec![0u64; 8192];
+    let mut log: Box<aeron_distinct_error_log_t> = Box::new(unsafe { std::mem::zeroed() });
+    assert_eq!(
+        unsafe {
+            aeron_distinct_error_log_init(
+                &mut *log,
+                buffer.as_mut_ptr().cast(),
+                buffer.len() * 8,
+                Some(aeron_epoch_clock),
+            )
+        },
+        0
+    );
+    let mut h = Harness::new();
+    h.context.error_log = &mut *log;
+    h.init_rx(RECEIVER_IP, 60000, 1472);
+    let mut p = h.poller();
+    p.add(&mut *h.rx);
+    let mut bytes = 0i64;
+    let clientd = &mut h.rx_dgrams as *mut Vec<RxDatagram> as *mut c_void;
+    let inject = |f: &[u8]| {
+        assert_eq!(
+            unsafe { rusteron_dpdk_fake_rx_inject(RECEIVER_PORT, f.as_ptr(), f.len(), RX_GOOD, 1) },
+            0
+        );
+    };
+
+    pin_clock_ms(1_000);
+    let big = setup_frame(8192);
+    inject(&big);
+    inject(&big); // the same second: counted, not reported again
+    assert_eq!(p.poll(16, clientd, &mut bytes), 0, "dropped");
+    assert_eq!(h.counter(TYPE_ERROR, "peer-mtu-too-large"), 2, "every frame counted");
+    assert_eq!(reports_formatted(), 0, "nothing formatted on the agent");
+    assert!(
+        !last_error().contains("max_aeron_mtu"),
+        "no message on the agent: {}",
+        last_error()
+    );
+    assert!(
+        error_log_entries(&buffer).is_empty(),
+        "no distinct-error-log call on the agent"
+    );
+
+    let text = stderr_of(|| tick(&h));
+    assert_eq!(reports_formatted(), 1, "one report for the second");
+    assert!(
+        text.contains("SETUP from 10.0.0.5:7000 has mtu 8192, above max_aeron_mtu"),
+        "formatted on housekeeping: {text:?}"
+    );
+    let entries = error_log_entries(&buffer);
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    assert!(entries[0].1.contains("peer-mtu-too-large"), "{entries:?}");
+    let text = stderr_of(|| tick(&h));
+    assert!(text.is_empty() && reports_formatted() == 1, "reported once: {text:?}");
+
+    // A second on: the next one is reported again, and so is a router's
+    // fragmentation-needed the second after.
+    pin_clock_ms(2_000);
+    inject(&big);
+    assert_eq!(p.poll(16, clientd, &mut bytes), 0);
+    stderr_of(|| tick(&h));
+    assert_eq!(reports_formatted(), 2);
+    assert_eq!(error_log_entries(&buffer)[0].0, 2, "the same entry, observed twice");
+
+    pin_clock_ms(3_000);
+    inject(&frag_needed_frame(1200));
+    assert_eq!(p.poll(16, clientd, &mut bytes), 0);
+    assert_eq!(h.counter(TYPE_UNSUPPORTED_PROTOCOL, "icmp-frag-needed"), 1);
+    assert_eq!(reports_formatted(), 2, "nothing formatted on the agent");
+    let text = stderr_of(|| tick(&h));
+    assert_eq!(reports_formatted(), 3);
+    assert!(
+        text.contains("10.0.1.254 reports fragmentation needed, next-hop MTU 1200"),
+        "{text:?}"
+    );
+    assert_eq!(error_log_entries(&buffer).len(), 2, "its own entry");
+    drop(p);
+    drop(h);
+    unsafe { aeron_distinct_error_log_close(&mut *log) };
+}
+
+/// Closing a NIC's last transport never waits for a NIC statistics read
+/// (on ENA, admin commands to the device): housekeeping holds its lock only
+/// to copy the port's state and to store what it read, not across the read.
+/// What it read after the close is not stored: the counters are dormant.
+#[test]
+#[serial]
+fn closing_a_transport_never_waits_for_a_nic_statistics_read() {
+    let mut h = Harness::new();
+    pin_clock_ms(1_000);
+    h.init_rx(RECEIVER_IP, 60000, 1472);
+    unsafe { rusteron_dpdk_fake_set_basic_stats(0, 7, 0) };
+    unsafe { rusteron_dpdk_fake_set_stats_delay_ms(600) };
+    pin_clock_ms(5_000); // the 1 Hz sample and the NIC read are due
+    let native = h.native as usize;
+    let housekeeping = std::thread::spawn(move || {
+        let start = std::time::Instant::now();
+        unsafe { rusteron_dpdk_test_housekeeping_tick(native as *mut c_void) };
+        start.elapsed()
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while unsafe { rusteron_dpdk_fake_stats_reads_started() } < 1 {
+        assert!(std::time::Instant::now() < deadline, "the read never began");
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    let start = std::time::Instant::now();
+    unsafe { (*h.bindings).close_func.unwrap()(&mut *h.rx) };
+    h.rx_inited = false;
+    let closed_in = start.elapsed();
+    let read_took = housekeeping.join().expect("housekeeping");
+    assert!(
+        read_took >= std::time::Duration::from_millis(600),
+        "the read was slow: {read_took:?}"
+    );
+    assert!(
+        closed_in < std::time::Duration::from_millis(200),
+        "the close waited for the read: {closed_in:?}"
+    );
+    assert_eq!(
+        h.counter(TYPE_MISSED_PACKETS, "nic-rx-missed"),
+        0,
+        "read after the close: not stored into the dormant counters"
+    );
+    assert_no_leak();
+}

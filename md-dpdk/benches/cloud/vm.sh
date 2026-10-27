@@ -7,7 +7,9 @@
 #                            on AWS chrony in systemd-timesyncd's place (timesync_setup)
 #                            (x86_64; aarch64, AWS Graviton, only with lab.sh's LAB_ALLOW_ARM=1)
 #   vm.sh build              the media driver (static, dpdk), the rtt/load/tput/counters clients with
-#                            the driver's features (INVOKER embeds it), igb_uio (AWS); on aarch64,
+#                            the driver's features (INVOKER embeds it), igb_uio (AWS), purefloor
+#                            (purefloor.c, against pkg-config's libdpdk; why not in
+#                            ~/bench/purefloor_unavailable, never fatal); on aarch64,
 #                            should md-dpdk's dpdk feature not build there, both without dpdk
 #                            (DPDK modes then refuse to start, saying so)
 #   vm.sh build-ynl          (build, where lib.sh's bench/want_ynl is 1: a mode with @NAPI_BUSY) the
@@ -16,6 +18,11 @@
 #                            the reason in ~/bench/ynl_unavailable
 #   vm.sh build-base         the revision lib.sh unpacked in ~/ergon-base (LAB_BASE): its media
 #                            driver and benchmark clients into ~/bin-base, for modes with @BIN=bin-base
+#   vm.sh build-dpdk <build> (build, for each build lib.sh's bench/want_dpdk names: the modes'
+#                            @DPDK=) DPDK 25.11 from source, stock or patched-refill
+#                            (dpdk-ena-deferred-refill.patch on ENA's PMD), under a prefix of its
+#                            own, and the media driver and benchmark clients linked against it
+#                            (its library directory their RPATH) into ~/bin-dpdk-<build>; AWS only
 #   vm.sh isolate [poll]     CPU isolation on the kernel command line (takes effect at the next boot);
 #                            poll (the isolated-poll state): idle CPUs poll rather than halt
 #   vm.sh tune               after each boot: irqbalance off, every IRQ on the housekeeping CPU, hugetlbfs
@@ -27,8 +34,8 @@
 #                            four cores, and of a fifth where the host has one (every Graviton CPU is a core)
 #   vm.sh ready <mode>...    what each mode's settings need of this host (lib.sh asks after the build):
 #                            a fifth core for @IRQ=spare, @NAPI_BUSY=spare and @CONDUCTOR=own, Linux 6.17
-#                            and the kernel's ynl for @NAPI_BUSY; a line for each mode that cannot run
-#                            here, exit 2
+#                            and the kernel's ynl for @NAPI_BUSY, its build for @DPDK= (build-dpdk);
+#                            a line for each mode that cannot run here, exit 2
 #   vm.sh host               the architecture and the host settings in effect (lib.sh's env file,
 #                            each boot's tune log), and what was skipped as x86-only
 #   vm.sh nics               the data NICs from the cloud's metadata: one line per role
@@ -37,8 +44,14 @@
 #                            @AERON_THREADING_MODE=INVOKER starts none (on Graviton under DPDK one
 #                            for its LLQ check, then stops it): everything else is set up, and
 #                            each client embeds the driver (vm.sh client); the kernel modes name
-#                            the data NICs (RUSTERON_MEDIA_DRIVER_DATA_NICS) for its NIC checks
-#   vm.sh client <label> <rtt|tput> <args>   a benchmark client against the running driver, ended at
+#                            the data NICs (RUSTERON_MEDIA_DRIVER_DATA_NICS) for its NIC checks;
+#                            the raw floor's kernel-raw and dpdk-raw start none either: kernel-busy's
+#                            or dpdk's set-up under INVOKER's threading (one thread sends and
+#                            receives), for the floor client (no Aeron), its wire in ~/bench/floor;
+#                            the pure floor's dpdk-pure dpdk's set-up, its wire pure, for purefloor
+#   vm.sh client <label> <rtt|tput|load|floor|purefloor> <args>   a benchmark client against the running
+#                            driver (floor, purefloor: the raw or pure floor's, on the wire vm.sh driver
+#                            set up), ended at
 #                            its deadline (LAB_CLIENT_DEADLINE seconds, an hour without it; SIGKILL
 #                            LAB_CLIENT_GRACE, 10 s, after SIGTERM): exit 124 then
 #   vm.sh stop               stop the media driver and give the data NICs back to the kernel
@@ -69,12 +82,34 @@
 #                            precision-time, fails unless the PHC is chrony's source within 10 us
 #   vm.sh timesync-wait      AWS: chronyc waitsync until chrony has settled (lib.sh: before each state);
 #                            1 if it never does
-#   vm.sh rx-hw-delay        "<mean ns>,<max ns>,<frames>,<min ns>,<negative>" NIC arrival -> the receive burst on the receiver port
+#   vm.sh rx-hw-delay        "<mean ns>,<max ns>,<frames>,<min ns>,<negative>" NIC arrival -> the frame's dispatch on the receiver port
 #   vm.sh pmtu <peer ip>...  jumbo frames: the data NICs at the jumbo MTU and the path to each peer
 #                            address checked at it (ping -M do), before a JUMBO=1 mode's drivers start
 #   vm.sh mtu                "<link MTU> <Aeron MTU>" the running mode uses
 #   vm.sh base-rtt <peer ip> the network's own round trip, sender NIC to <peer ip> (ping, 200 a 10 ms):
 #                            "<min> <avg> <max> <mdev> (ns) <replies>/<sent>"
+#
+# The transport suite (transport.sh; settings from transport-settings.env):
+#   vm.sh transport-isolate  the CPU map (housekeeping, IRQ, isolated: host.sh transport_cpu_map),
+#                            the driver's layout under it, and its boot line from the next boot
+#   vm.sh transport-tune     after that boot: SMT off, the boot line checked, the quiet settings,
+#                            irqbalance off, the data NICs (rings, coalescing off, quickack routes,
+#                            every interrupt on the IRQ CPU) and the sysctls, each read back; the
+#                            2 MiB hugetlbfs of aeron-ipc-huge's Aeron directory mounted and verified
+#   vm.sh transport-net [check]  a socket arm's kernel path (NAPI, busy poll, TCP), or only read back
+#   vm.sh transport-map      the map;  vm.sh transport-build  the bench binaries and LAB_EXTRA_SRC's
+#   vm.sh netem set <loss %>|clear|check <loss %|none>|stats   netem on every data NIC's egress
+#   vm.sh sample             every thread's CPU, judged against the isolated CPUs (first line)
+#   vm.sh irqsnap            /proc/interrupts;  vm.sh hostcheck [aeron dir]  the ergon-tune report
+#                            (1 unless clean), on TR_AERON_DIR or the directory given
+#   vm.sh aeron-page         the page size (statfs's block size) of AERON_DIR's filesystem
+#   vm.sh napi               each data NIC's interrupt deferral as it is now, "<nic>
+#                            <napi_defer_hard_irqs> <gro_flush_timeout ns>" a line
+#   vm.sh nstat              the kernel's protocol counters;  vm.sh settings  every transport sysctl
+#                            as it is now, <knob>=<value> (host.sh transport_settings_read)
+#   vm.sh events-start <point> <traced cpus> <spinner cpus|-> [aeron]   a point's events begun before
+#                            its binaries start (trace of its hot CPUs, osnoise, gap spinners, the 1 s sampler)
+#   vm.sh events-stop <point>  its events read back (transport_events.py's input) and stopped
 #
 # aarch64 (AWS Graviton, lab.sh LAB_ALLOW_ARM=1): Graviton's own settings where
 # they differ from x86's (host.sh): builds for the instance's own core,
@@ -104,6 +139,11 @@ self=$(readlink -f "$0")
 # arguments, the CPU layout, the agents' CPUs, the LLQ and IOMMU checks
 # shellcheck source=host.sh
 . "$(dirname "$self")/host.sh"
+# the transport suite's declared settings (TR_*: transport-* commands)
+# shellcheck source=transport-settings.env
+. "$(dirname "$self")/transport-settings.env"
+# one arm's own over them (transport.sh tr_host_overrides: TR_OVERRIDES)
+transport_overrides || exit 2
 cd "$HOME/ergon"
 run=$HOME/bench
 mkdir -p "$run"
@@ -148,7 +188,8 @@ PLACEMENT=$(cat "$run/placement" 2>/dev/null || true)
 precision_time() { [[ $CLOUD == aws && $PLACEMENT == precision-time ]]; }
 # DPDK 25.11, the first with ENA RX timestamps (Debian 13 has 24.11)
 DPDK_VERSION=25.11
-DPDK_PREFIX=/opt/dpdk-$DPDK_VERSION
+# (LAB_OPT_ROOT: /opt; test/test-lab.sh's fake)
+DPDK_PREFIX=${LAB_OPT_ROOT:-/opt}/dpdk-$DPDK_VERSION
 if precision_time; then
     export PKG_CONFIG_PATH=$DPDK_PREFIX/lib/$ARCH-linux-gnu/pkgconfig
 fi
@@ -161,7 +202,13 @@ fi
 # SMT on (host_setting SMT keeps it): cpu_layout ranks a core by its twins'
 # pre-flight stalls, and an offline twin would rank it anew, moving the roles
 # off the cores the SMT-on baseline ran on
+# The transport suite's (transport-isolate writes it): its CPU map's layout,
+# whatever the cores' pre-flight said (host.sh transport_layout)
 layout() {
+    if [[ -s $run/layout-transport ]]; then
+        cat "$run/layout-transport"
+        return
+    fi
     if [[ -s $run/layout-smt-off && $(cat "$LAB_SYS_ROOT/devices/system/cpu/smt/control" 2>/dev/null) == off ]]; then
         cat "$run/layout-smt-off"
         return
@@ -181,8 +228,9 @@ ynl_ready() {
     return 1
 }
 
-# AERON_DIR on 2 MiB hugetlbfs, as rusteron's tuned runs (vm.sh tune mounts it)
-export AERON_DIR=/mnt/huge/aeron-bench
+# AERON_DIR on 2 MiB hugetlbfs, as rusteron's tuned runs (vm.sh tune mounts it);
+# LAB_AERON_DIR in its place for the transport suite (transport.sh: TR_AERON_DIR)
+export AERON_DIR=${LAB_AERON_DIR:-/mnt/huge/aeron-bench}
 
 # invoker: whether the running mode embeds the driver in each client (`driver`
 # <mode>@AERON_THREADING_MODE=INVOKER leaves ~/bench/harness_driver; `stop`
@@ -321,6 +369,18 @@ conductor_cycle_threshold() {
 # the threshold has to clear the park of whatever idle strategy those
 # overrides left in play. An explicit threshold that does not is refused
 # before the driver starts, naming both values and the one to use.
+# override_export <KEY=value>: a mode's override as the driver environment's
+# export line. A mode's name cannot hold a comma (it would split its
+# results.csv rows: modes.sh mode_check), so RUSTERON_DPDK_ENA_DEVARGS, a
+# comma-separated list of ENA device arguments, is written with + between
+# them, as SUB_PARAMS and PUB_PARAMS are: @RUSTERON_DPDK_ENA_DEVARGS=
+# miss_txc_to=0+control_path_poll_interval=1000.
+override_export() {
+    local key=${1%%=*} value=${1#*=}
+    [[ $key == RUSTERON_DPDK_ENA_DEVARGS ]] && value=${value//+/,}
+    echo "export $key='$value'"
+}
+
 conductor_cycle_threshold_apply() {
     local env_file=${1-} got strategy args threshold park want have
     [[ -f $env_file ]] || return 2
@@ -482,10 +542,43 @@ data_unmanaged() {
 pin_irqs() {
     irqs_pin "$HK_CPU" "$1"
     local cpu
+    # the transport suite: every data-NIC interrupt on its map's IRQ CPU
+    # (irqs.sh irqs_pin_data), the NICs' interfaces and VFs
+    # (fail closed; none to move only while DPDK holds every NIC)
+    if [[ -s ${run:-}/transport-map ]]; then
+        local ifaces
+        ifaces=$(data_ifaces 2>/dev/null) || ifaces=
+        read -r _ cpu _ <"$run/transport-map"
+        [[ -n $ifaces ]] || { echo "irqs $1: no data NIC in the kernel's hands" >&2; return 0; }
+        local rc=0
+        # shellcheck disable=SC2086
+        irqs_pin_data "$cpu" "$1" $ifaces || rc=1
+        # each moved IRQ fired now, so its first interrupt is not a hot
+        # CPU's in a measured window (irqs.sh irqs_data_settle)
+        # shellcheck disable=SC2086
+        irqs_data_settle "$cpu" "$1" data_kick $ifaces
+        return $rc
+    fi
     cpu=$(cat "$run/irq_cpu" 2>/dev/null) || return 0
     [[ -n $cpu && $cpu != "$HK_CPU" ]] || return 0
     # shellcheck disable=SC2046
     irqs_pin_queues "$cpu" "$1" $(data_ifaces) || true
+}
+
+# data_kick <cpu> <iface>: one frame sent from <cpu> out of data NIC <iface>
+# (Azure's VF: through its kernel interface, which holds the address): a
+# ping to its subnet's gateway, answered or not. It leaves on that CPU's
+# queue (the driver's XPS map), whose completion raises that queue's vector:
+# irqs_data_settle's kick
+data_kick() {
+    local cpu=$1 want=$2 iface vf ip prefix
+    while read -r _ iface vf _ ip prefix _; do
+        if [[ $want == "$vf" || $want == "$iface" ]]; then
+            taskset -c "$cpu" ping -q -c 1 -W 1 -I "$iface" "$(subnet_gateway "$ip/$prefix")" >/dev/null 2>&1 || true
+            return 0
+        fi
+    done < <(nics)
+    return 1
 }
 
 # data_ifaces: the data NICs' kernel interfaces (and Azure's VFs), one a line
@@ -527,7 +620,9 @@ data_kernel_up() {
         fi
         # NICs can come back in another order after a DPDK run: any other rule
         # left for this address goes, now that its current one is in place
-        ip rule show | awk -v ip="$ip" -v t="$table" '$2 == "from" && $3 == ip && !($1 == t":" && $5 == t) {sub(":", "", $1); print $1, $5}' |
+        # (plain "from <ip> lookup <table>" rules only: HAIRPIN's from/to
+        # rules stay)
+        ip rule show | awk -v ip="$ip" -v t="$table" '$2 == "from" && $3 == ip && $4 == "lookup" && !($1 == t":" && $5 == t) {sub(":", "", $1); print $1, $5}' |
             while read -r prio tbl; do sudo ip rule del priority "$prio" from "$ip" lookup "$tbl"; done
         table=$((table + 1))
     done
@@ -546,6 +641,29 @@ data_kernel_up() {
     local missing
     missing=$(data_routes_missing)
     [[ $missing == 0 ]] || { echo "data NICs: $missing policy route(s) missing after configuring them" >&2; return 1; }
+    # the transport suite: its NIC settings again, as a NIC brought up (or
+    # given back by DPDK) has its driver's own, and its routes just replaced
+    if [[ -s ${run:-}/transport-map ]]; then transport_nics; fi
+}
+
+# transport_nics: the transport suite's data-NIC settings (transport-settings.env),
+# each read back: every VF's rings and interrupt coalescing off, every route
+# to the data subnet with quickack 1, every data-NIC interrupt on the IRQ CPU;
+# 1, saying what, when one does not hold
+transport_nics() {
+    local vf rc=0 route cpu
+    for vf in $(nics | awk '{print $3}'); do
+        transport_ring "$vf" "$TR_RX_RING" "$TR_TX_RING" || rc=1
+        if [[ $TR_COALESCE_OFF == 1 ]]; then transport_coalesce_off "$vf" || rc=1; fi
+    done
+    if [[ $TR_QUICKACK_ROUTES == 1 ]]; then
+        transport_quickack_apply "$DATA_SUBNET"
+        transport_quickack_check "$DATA_SUBNET" || rc=1
+    fi
+    read -r _ cpu _ <"$run/transport-map"
+    # shellcheck disable=SC2046
+    irqs_data_check "$cpu" $(data_ifaces) | tail -1 || rc=1
+    return $rc
 }
 
 # How many data NICs lack their policy rule or one of their table's routes
@@ -648,6 +766,13 @@ ethtool_set() {
 #        checkout's build: dpdk@BIN=bin-base A/Bs an older build (lab.sh
 #        LAB_BASE builds one there) against the current one. A client <dir>
 #        lacks is this checkout's, and the client says so
+#   DPDK=stock|patched-refill  (DPDK modes) the media driver and every
+#        client from ~/bin-dpdk-<build> (vm.sh build-dpdk: linked against
+#        DPDK 25.11 from source; patched-refill with
+#        dpdk-ena-deferred-refill.patch on ENA's PMD), as BIN= takes a
+#        build, never beside it; once the driver starts, its log shows the
+#        PMD the build loads (dpdk_variant_check, fail closed); `stop`
+#        forgets it
 #   CSTATE=<n>        no idle state deeper than the n-th on any CPU
 #        (intel_idle.max_cstate=n at run time; 1 = C1, 0 = poll only). x86
 #        only: arm64 has no C-states the OS controls, so it is refused there
@@ -708,6 +833,16 @@ ethtool_set() {
 #        beside @IRQ=spare or @NAPI_BUSY=spare (one core each); its thread
 #        checked on that core alone once the driver starts (agents_placed,
 #        fail closed); `stop` forgets it
+#   HAIRPIN=1  (the raw floor's modes, AWS) the round trip between this host's
+#        own two data NICs (the floor client's xhairpin): the pong on the
+#        receiver core (refused without one); on the kernel wire each end's
+#        sends routed out of its own NIC, not over loopback (rules before the
+#        local table's, accept_local, no reverse-path filter on the data
+#        NICs), checked by ip route get both ways (fail closed); `stop` puts
+#        the rules and sysctls back
+#   RTT_GAP_US=<us>, KEEPALIVE_US=<us>, FLUSH_KB=<KiB>  the floor client's
+#        pacing, keep-alives and cache flush (lib.sh hands them to the
+#        client): nothing for the host or the driver
 # Returns 1 when KEY is not a host setting.
 host_setting() {
     local key=$1 value=$2 mode=$3 st vf names=() cur
@@ -724,6 +859,19 @@ host_setting() {
         save_host bin set
         bin=$dir
         log "BIN=$value: the media driver and clients from $dir ($(ls "$dir" | tr '\n' ' '))"
+        ;;
+    DPDK)
+        [[ $DPDK_BUILDS == *" $value "* ]] || { echo "DPDK=$value: stock or patched-refill" >&2; exit 2; }
+        [[ $mode == dpdk ]] || { echo "DPDK=$value: DPDK modes only (the media driver and clients linked against that DPDK build)" >&2; exit 2; }
+        [[ ! -s $run/bin ]] || { echo "DPDK=$value with BIN=: one build a mode" >&2; exit 2; }
+        local dir=$HOME/bin-dpdk-$value
+        [[ -x $dir/media_driver ]] || { echo "DPDK=$value: no media_driver in $dir (vm.sh build-dpdk $value)" >&2; exit 2; }
+        printf '%s\n' "$dir" >"$run/bin"
+        save_host bin set
+        bin=$dir
+        printf '%s\n' "$value" >"$run/dpdk_variant"
+        save_host dpdk_variant set
+        log "DPDK=$value: the media driver and clients from $dir"
         ;;
     CSTATE)
         [[ $value =~ ^[0-9]$ ]] || { echo "CSTATE=$value: an idle state index" >&2; exit 2; }
@@ -932,6 +1080,54 @@ host_setting() {
         } >>"$env_file"
         log "CONDUCTOR=own: the conductor alone on CPU $cpu (the layout's fifth core), spinning; housekeeping and local I/O on $HK_CPU"
         ;;
+    RTT_GAP_US | KEEPALIVE_US | FLUSH_KB) ;;
+    HAIRPIN)
+        # the raw floor's round trip between this host's own two data NICs
+        # (modes.sh HAIRPIN; the floor client's xhairpin): its pong on the
+        # receiver core, which the raw floor leaves free (bench/hairpin for
+        # the run). The kernel delivers a packet for its own address over
+        # loopback, so on the kernel wire each end's sends (from its own
+        # address: floor binds them so) are routed out of its own NIC by a
+        # rule before the local table's, which moves from priority 0 to 50
+        # (its new rule in place first); the data NICs then take their own
+        # host's packets (accept_local, no reverse-path filter). Checked both
+        # ways by ip route get, fail closed; `stop` puts everything back
+        [[ $value == 1 ]] || { echo "HAIRPIN=$value: 1 or nothing" >&2; exit 2; }
+        [[ $CLOUD == aws ]] || { echo "HAIRPIN: AWS only (two ENIs on the data subnet)" >&2; exit 2; }
+        [[ -n ${floor_wire:-} ]] || { echo "HAIRPIN: the raw floor's modes only (kernel-raw, dpdk-raw): the floor client runs both ends" >&2; exit 2; }
+        [[ -n ${RECEIVER_CPU:-} ]] ||
+            { echo "HAIRPIN: no receiver core on this host (its layout $HK_CPU ${APP_CPU:-} ${SENDER_CPU:-}): the hairpin's pong runs there; four cores (c9g.xlarge and up)" >&2; exit 2; }
+        save_host hairpin set
+        echo "$RECEIVER_CPU" >"$run/hairpin"
+        if [[ $floor_wire == kernel ]]; then
+            local snd_if snd_ip rcv_if rcv_ip sysctls= k fwd back
+            # the tables data_kernel_up gives them: 100 the sender's, 101 the receiver's
+            read -r _ snd_if _ _ snd_ip _ < <(nics | sed -n 1p)
+            read -r _ rcv_if _ _ rcv_ip _ < <(nics | sed -n 2p)
+            [[ -n $snd_ip && -n $rcv_ip ]] || { echo "HAIRPIN: the data NICs not read" >&2; restore_host; exit 1; }
+            for k in all.rp_filter "$snd_if.rp_filter" "$rcv_if.rp_filter" "$snd_if.accept_local" "$rcv_if.accept_local"; do
+                sysctls+=" net.ipv4.conf.$k=$(sysctl -n "net.ipv4.conf.$k")"
+            done
+            save_host hairpin-sysctl "${sysctls# }"
+            save_host hairpin-routes set
+            sudo sysctl -qw net.ipv4.conf.all.rp_filter=0 "net.ipv4.conf.$snd_if.rp_filter=0" "net.ipv4.conf.$rcv_if.rp_filter=0" \
+                "net.ipv4.conf.$snd_if.accept_local=1" "net.ipv4.conf.$rcv_if.accept_local=1"
+            sudo ip rule add priority 10 iif lo from "$snd_ip" to "$rcv_ip" lookup 100
+            sudo ip rule add priority 11 iif lo from "$rcv_ip" to "$snd_ip" lookup 101
+            ip rule show | grep -q '^50:' || sudo ip rule add priority 50 lookup local
+            sudo ip rule del priority 0 lookup local
+            fwd=$(ip route get "$rcv_ip" from "$snd_ip" 2>&1 || true)
+            back=$(ip route get "$snd_ip" from "$rcv_ip" 2>&1 || true)
+            if [[ $fwd != *" dev $snd_if "* || $fwd == local* || $back != *" dev $rcv_if "* || $back == local* ]]; then
+                echo "HAIRPIN: this host's own addresses still routed over loopback, not out of their NICs ($fwd; $back): stopping" >&2
+                restore_host
+                exit 1
+            fi
+            log "HAIRPIN=1: $snd_if ($snd_ip) to $rcv_if ($rcv_ip) and back out of the NICs ($fwd; $back); the pong on CPU $RECEIVER_CPU"
+        else
+            log "HAIRPIN=1: the DPDK sender port to the receiver port and back; the pong on CPU $RECEIVER_CPU"
+        fi
+        ;;
     CLOCKSOURCE)
         local cs=/sys/devices/system/clocksource/clocksource0
         grep -qw -- "$value" "$cs/available_clocksource" || { echo "CLOCKSOURCE=$value: not among $(cat "$cs/available_clocksource")" >&2; exit 2; }
@@ -939,6 +1135,26 @@ host_setting() {
         echo "$value" | sudo tee "$cs/current_clocksource" >/dev/null
         ;;
     *) return 1 ;;
+    esac
+}
+
+# dpdk_variant_check <driver log>: under a mode's @DPDK=<build>, the ENA PMD
+# the log shows loaded is that build's: patched-refill's line
+# (dpdk-ena-deferred-refill.patch's, one per RX queue) there, or under stock
+# none; 1, saying why, when not. 0 without @DPDK=.
+dpdk_variant_check() {
+    local v n
+    v=$(cat "$run/dpdk_variant" 2>/dev/null) || return 0
+    n=$(grep -c 'ergon-lab deferred-refill ENA PMD' "$1" 2>/dev/null) || n=0
+    case $v in
+    patched-refill)
+        ((n > 0)) || { echo "DPDK=patched-refill: no RX queue on the patched ENA PMD (no 'ergon-lab deferred-refill ENA PMD' line in $1): stopping" >&2; return 1; }
+        log "DPDK=patched-refill: the patched ENA PMD on $n RX queues ($1)"
+        ;;
+    *)
+        ((n == 0)) || { echo "DPDK=$v: $n RX queues on the patched ENA PMD in $1, not $v's: stopping" >&2; return 1; }
+        log "DPDK=$v: the $v ENA PMD (no patched RX queue in $1)"
+        ;;
     esac
 }
 
@@ -967,6 +1183,7 @@ restore_host() {
         # shellcheck disable=SC2015
         mtu-*) [[ -e /sys/class/net/${key#mtu-} ]] && sudo ip link set dev "${key#mtu-}" mtu "$(cat "$f")" || true ;;
         bin) rm -f "$run/bin" ;;
+        dpdk_variant) rm -f "$run/dpdk_variant" ;;
         clocksource) sudo tee /sys/devices/system/clocksource/clocksource0/current_clocksource <"$f" >/dev/null ;;
         smt)
             sudo tee "$LAB_SYS_ROOT/devices/system/cpu/smt/control" <"$f" >/dev/null
@@ -978,7 +1195,7 @@ restore_host() {
             if [[ -s $run/diag-paused ]]; then
                 spin=$(cat "$run/diag-paused")
                 echo "# resumed $(date +%s.%N)" >>"$run/diag-gapspin.log"
-                nohup "$run/gapspin" "$spin" 50 >>"$run/diag-gapspin.log" 2>&1 </dev/null &
+                nohup "$run/gapspin" "$spin" "$(gapspin_us)" >>"$run/diag-gapspin.log" 2>&1 </dev/null &
                 rm -f "$run/diag-paused"
             fi
             ;;
@@ -987,6 +1204,16 @@ restore_host() {
             pin_irqs "after IRQ= back to housekeeping"
             ;;
         conductor) rm -f "$run/conductor_cpu" ;;
+        hairpin) rm -f "$run/hairpin" ;;
+        hairpin-routes)
+            # the local table back at 0 before its moved rule goes
+            sudo ip rule add priority 0 lookup local 2>/dev/null || true
+            sudo ip rule del priority 50 lookup local 2>/dev/null || true
+            sudo ip rule del priority 10 2>/dev/null || true
+            sudo ip rule del priority 11 2>/dev/null || true
+            ;;
+        # shellcheck disable=SC2046
+        hairpin-sysctl) sudo sysctl -qw $(cat "$f") || true ;;
         # shellcheck disable=SC2015
         napi-defer-*)
             if [[ -e $LAB_SYS_ROOT/class/net/${key#napi-defer-} ]]; then
@@ -1099,6 +1326,42 @@ agents_placed() {
     fi
 }
 
+# build_dpdk <prefix> [<patch>]: DPDK $DPDK_VERSION from fast.dpdk.org,
+# unpacked afresh in ~/<prefix's name> (<patch> applied exactly: -p1, no
+# fuzz), only what the ENA path needs, installed under <prefix>; nothing when
+# <prefix> has it already, built from the same patch (its SHA-256 in
+# <prefix>/ergon-lab-patch.sha256). Never put in ld.so.conf here: build-ptp
+# does that for its own; build-dpdk links against its builds by RPATH.
+# Graviton: for the core it is built on (-Dplatform=native, DPDK's default:
+# the Neoverse's flags), with this host's lcores and NUMA nodes rather than
+# DPDK's table's (native Neoverse V2's 144 lcores, or -Dplatform=graviton4's
+# 96 and one node, would not cover c8g.metal-48xl's 192 CPUs on two sockets)
+build_dpdk() {
+    local prefix=$1 patch=${2:-} src sum= blog platform=()
+    if [[ -n $patch ]]; then sum=$(sha256sum "$patch" | cut -d' ' -f1); fi
+    if [[ -f $prefix/lib/$ARCH-linux-gnu/pkgconfig/libdpdk.pc ]] &&
+        [[ -z $patch || $(cat "$prefix/ergon-lab-patch.sha256" 2>/dev/null) == "$sum" ]]; then
+        return 0
+    fi
+    if [[ $ARCH == aarch64 ]]; then platform=(-Dplatform=native -Dmax_lcores=detect -Dmax_numa_nodes=detect); fi
+    src=$HOME/${prefix##*/}
+    rm -rf "$src" && mkdir -p "$src"
+    curl -fsSL "https://fast.dpdk.org/rel/dpdk-$DPDK_VERSION.tar.xz" | tar -xJ -C "$src" --strip-components=1
+    if [[ -n $patch ]]; then
+        (cd "$src" && patch -p1 --forward --fuzz=0 <"$patch") ||
+            { echo "build_dpdk: $patch does not apply to DPDK $DPDK_VERSION" >&2; return 1; }
+    fi
+    sudo rm -rf "$prefix"
+    # meson's and ninja's output in $run/dpdk-build-<prefix's name>.log
+    blog=$run/dpdk-build-${prefix##*/}.log
+    (cd "$src" &&
+        meson setup -Dprefix="$prefix" -Dtests=false -Ddisable_apps='*' ${platform[@]+"${platform[@]}"} \
+            -Denable_drivers=bus/pci,bus/vdev,mempool/ring,net/ena build &&
+        ninja -C build && sudo ninja -C build install) >"$blog" 2>&1 ||
+        { echo "build_dpdk: DPDK $DPDK_VERSION did not build under $prefix ($blog): $(grep -m1 -E 'ERROR|error:' "$blog" || tail -1 "$blog")" >&2; return 1; }
+    if [[ -n $patch ]]; then echo "$sum" | sudo tee "$prefix/ergon-lab-patch.sha256" >/dev/null; fi
+}
+
 # build_driver <marker>: the media driver, with the DPDK transport (static,
 # dpdk). On aarch64 (Graviton), should md-dpdk's dpdk feature not build there
 # (an older checkout's build.rs and lib.rs allow x86_64 only, as a LAB_BASE
@@ -1136,6 +1399,101 @@ client_features() {
     else
         echo static
     fi
+}
+
+# trace_anchor: "ergon-anchor <CLOCK_REALTIME ns>" into the trace from the
+# app CPU (traced: tracing_cpumask drops a marker from any other), the clock
+# read just before the write, so spikes.py puts the trace's events on the
+# wall clock to a few us (/proc/uptime has 10 ms). Never fatal.
+trace_anchor() {
+    sudo taskset -c "$APP_CPU" python3 -c 'import os, time
+fd = os.open("/sys/kernel/tracing/trace_marker", os.O_WRONLY)
+t = time.time_ns()
+os.write(fd, b"ergon-anchor %d" % t)' 2>/dev/null || echo "trace_anchor: no marker written (the trace stays on /proc/uptime's 10 ms)" >&2
+}
+
+# gapspin_us: the diagnostics' gap spinner's threshold, us (lab.sh's
+# LAB_GAPSPIN_US, which lib.sh leaves in bench/gapspin_us; 50 without it)
+gapspin_us() {
+    local us
+    us=$(cat "$run/gapspin_us" 2>/dev/null) || us=
+    [[ $us =~ ^[1-9][0-9]{0,5}$ ]] || us=50
+    echo "$us"
+}
+
+# KNOISE: guest-kernel noise on the agent and app CPUs, with durations, in a
+# tracefs instance of its own (knoise: its own buffer and cpumask, every CPU,
+# apart from diag-start's trace). knoise_start <cpus> (a list: 1,2,3,4), as
+# root, against $LAB_SYS_ROOT/kernel/tracing:
+#   * the osnoise tracer with NO_OSNOISE_WORKLOAD on <cpus>: no workload
+#     thread, it times what else runs there (irq_noise, softirq_noise,
+#     thread_noise, nmi_noise: each a start and a net duration);
+#   * who sends IPIs, with their callsite (ipi_send_cpumask, ipi_send_cpu:
+#     spikes.py keeps those to <cpus>), compaction (mm_compaction_begin) and
+#     page migration (mm_migrate_pages), on every CPU;
+#   * cpumasks printed as lists where the kernel has the option (bitmask-list).
+# Enabling a tracer or event flips static keys, an IPI to every CPU (arm64:
+# kick_all_cpus_sync), so diag-start runs it only before reps. Prints one
+# "osnoise ..." line, "osnoise unavailable: <why>" where the kernel lacks
+# the tracer (a limit of the run's diagnostics, recorded: lib.sh
+# record_knoise; also where NO_OSNOISE_WORKLOAD cannot be set, before Linux
+# 6.3), and "knoise events missing: ..." for events it lacks.
+# On Kubernetes this is node configuration (root on the node's tracefs: a
+# privileged node DaemonSet), never the app pod's.
+knoise_start() {
+    local cpus=$1 t=$LAB_SYS_ROOT/kernel/tracing i e missing= old_cpus got
+    i=$t/instances/knoise
+    if [[ ! -d $t ]]; then
+        echo "osnoise unavailable: no tracefs at $t"
+        return 0
+    fi
+    mkdir -p "$i" || { echo "osnoise unavailable: cannot create the tracefs instance $i"; return 0; }
+    echo 0 >"$i/tracing_on"
+    { echo nop >"$i/current_tracer"; } 2>/dev/null
+    : >"$i/trace"
+    echo 8192 >"$i/buffer_size_kb"
+    [[ -e $i/options/bitmask-list ]] && echo 1 >"$i/options/bitmask-list"
+    for e in ipi/ipi_send_cpumask ipi/ipi_send_cpu compaction/mm_compaction_begin migrate/mm_migrate_pages; do
+        if [[ -e $i/events/$e/enable ]]; then echo 1 >"$i/events/$e/enable"; else missing+=" $e"; fi
+    done
+    if ! grep -qw osnoise "$t/available_tracers" 2>/dev/null; then
+        echo "osnoise unavailable: the kernel has no osnoise tracer (available_tracers: $(cat "$t/available_tracers" 2>/dev/null))"
+    elif ! { echo NO_OSNOISE_WORKLOAD >"$t/osnoise/options"; } 2>/dev/null ||
+        ! grep -qw NO_OSNOISE_WORKLOAD "$t/osnoise/options" 2>/dev/null; then
+        # Before Linux 6.3 osnoise has no options: the tracer would start its
+        # workload threads, a CPU hog on every agent CPU, so it stays off
+        echo "osnoise unavailable: this osnoise tracer has no NO_OSNOISE_WORKLOAD option (Linux 6.3 and later), so it would run its workload on the agent CPUs"
+    else
+        old_cpus=$(cat "$t/osnoise/cpus")
+        echo "$cpus" >"$t/osnoise/cpus"
+        { echo osnoise >"$i/current_tracer"; } 2>/dev/null
+        got=$(cat "$i/current_tracer" 2>/dev/null) || got=unreadable
+        if [[ $got == osnoise ]]; then
+            for e in irq_noise softirq_noise thread_noise nmi_noise; do
+                if [[ -e $i/events/osnoise/$e/enable ]]; then echo 1 >"$i/events/osnoise/$e/enable"; else missing+=" osnoise/$e"; fi
+            done
+            echo "osnoise on cpus $cpus (NO_OSNOISE_WORKLOAD: noise timed on them, no workload)"
+        else
+            # (a kernel whose instances cannot run it): its settings put back
+            echo OSNOISE_WORKLOAD >"$t/osnoise/options"
+            echo "$old_cpus" >"$t/osnoise/cpus"
+            echo "osnoise unavailable: the knoise instance did not take the osnoise tracer (it has $got)"
+        fi
+    fi
+    [[ -z $missing ]] || echo "knoise events missing:$missing"
+    echo 1 >"$i/tracing_on"
+}
+
+# knoise_stop: KNOISE off (diag-stop, after the reps): the instance's tracing
+# and tracer, the osnoise workload option back to its default, the instance
+# removed where the kernel lets it
+knoise_stop() {
+    local t=$LAB_SYS_ROOT/kernel/tracing
+    [[ -d $t/instances/knoise ]] || return 0
+    echo 0 >"$t/instances/knoise/tracing_on"
+    echo nop >"$t/instances/knoise/current_tracer"
+    [[ -f $t/osnoise/options ]] && echo OSNOISE_WORKLOAD >"$t/osnoise/options"
+    rmdir "$t/instances/knoise" 2>/dev/null || true
 }
 
 case ${1:-} in
@@ -1202,7 +1560,7 @@ build)
     precision_time && "$self" build-ptp
     build_driver "$run/dpdk_unavailable"
     cargo build --release -p ergon-md-dpdk-harness --features "$(client_features "$run/dpdk_unavailable")" \
-        --bin rtt --bin load --bin tput --bin counters --bin clockcheck
+        --bin rtt --bin load --bin tput --bin floor --bin counters --bin clockcheck
     if [[ $CLOUD == aws ]]; then
         # No IOMMU on virtualised EC2 and no write-combining in mainline
         # vfio-pci, which ENA's low-latency queues need: Amazon's documented
@@ -1216,6 +1574,19 @@ build)
     if [[ $(cat "$run/want_ynl" 2>/dev/null) == 1 ]]; then
         "$self" build-ynl || echo "build: no ynl ($(cat "$run/ynl_unavailable" 2>/dev/null)): @NAPI_BUSY modes are refused (vm.sh ready)" >&2
     fi
+    # the pure floor's client (dpdk-pure), against the DPDK the media driver
+    # links (pkg-config's libdpdk: Debian's, or build-ptp's); never fatal
+    # here: vm.sh ready refuses a dpdk-pure mode without it, saying why
+    rm -f "$run/purefloor" "$run/purefloor_unavailable"
+    # shellcheck disable=SC2046,SC2086
+    if ! gcc -O2 -Wall -Wextra -Werror ${CFLAGS:-} $(pkg-config --cflags libdpdk) -o "$run/purefloor" "$(dirname "$self")/purefloor.c" \
+        $(pkg-config --libs libdpdk) 2>"$run/purefloor.err"; then
+        rm -f "$run/purefloor"
+        echo "purefloor.c did not compile: $(grep -m1 'error' "$run/purefloor.err" || tail -1 "$run/purefloor.err")" >"$run/purefloor_unavailable"
+        echo "build: $(cat "$run/purefloor_unavailable"): dpdk-pure modes are refused (vm.sh ready)" >&2
+    fi
+    # the DPDK builds the modes' @DPDK= ask for, where lib.sh named them
+    for b in $(cat "$run/want_dpdk" 2>/dev/null); do "$self" build-dpdk "$b"; done
     ;;
 build-ynl)
     # @NAPI_BUSY's tool: ynl, the kernel's own (tools/net/ynl), and its
@@ -1275,34 +1646,72 @@ build-base)
     fi
     build_driver "$run/dpdk_unavailable-base"
     clients=()
-    for c in rtt load tput; do
+    for c in rtt load tput floor; do
         if [[ -f md-dpdk/harness/src/bin/$c.rs ]]; then clients+=(--bin "$c"); fi
     done
     if ((${#clients[@]})); then
         cargo build --release -p ergon-md-dpdk-harness --features "$(client_features "$run/dpdk_unavailable-base")" "${clients[@]}"
     fi
     rm -rf "$HOME/bin-base" && mkdir -p "$HOME/bin-base"
-    for b in media_driver rtt load tput; do
+    for b in media_driver rtt load tput floor; do
         if [[ -x target/release/$b ]]; then cp "target/release/$b" "$HOME/bin-base/"; fi
     done
     echo "bin-base $(ls "$HOME/bin-base" | tr '\n' ' ')"
     ;;
+build-dpdk)
+    # vm.sh build-dpdk <build>: a mode's @DPDK=<build> (modes.sh DPDK_BUILDS),
+    # built where lib.sh's bench/want_dpdk names it (`build`): DPDK 25.11 from
+    # source (build_dpdk; patched-refill with dpdk-ena-deferred-refill.patch
+    # applied, under its own prefix; stock under $DPDK_PREFIX, precision-time's
+    # build-ptp's), in any placement; then this checkout's media driver and
+    # every benchmark client (under INVOKER each embeds the driver) linked
+    # against it, in a target directory of their own (this checkout's build
+    # stays as it was), the build's library directory their DT_RPATH
+    # (--disable-new-dtags: unlike DT_RUNPATH, their libraries' own
+    # dependencies and the PMDs the EAL loads are found there too, ahead of
+    # ld.so.conf's), and only at the link (cargo rustc: every crate compiled
+    # as this checkout's), into ~/bin-dpdk-<build>. Fail closed: every
+    # librte_* each binary loads from that directory, or the build is removed.
+    build=${2:-}
+    [[ $DPDK_BUILDS == *" $build "* && -n $build ]] ||
+        { echo "build-dpdk ${build:-(none)}: stock (DPDK 25.11 from source) or patched-refill (with dpdk-ena-deferred-refill.patch on ENA's PMD)" >&2; exit 2; }
+    [[ $CLOUD == aws ]] || { echo "build-dpdk $build: AWS only (a build of ENA's PMD)" >&2; exit 2; }
+    export PATH=$HOME/.cargo/bin:$PATH
+    # what `host` (the env file) records of this build: only once it passed
+    rm -f "$run/bin-dpdk-$build.txt"
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq meson ninja-build python3-pyelftools libnuma-dev
+    prefix=$DPDK_PREFIX patch=
+    if [[ $build == patched-refill ]]; then
+        prefix=$DPDK_PREFIX-$build patch=$(dirname "$self")/dpdk-ena-deferred-refill.patch
+    fi
+    build_dpdk "$prefix" "$patch" || { echo "build-dpdk $build: DPDK $DPDK_VERSION did not build" >&2; exit 1; }
+    libdir=$prefix/lib/$ARCH-linux-gnu
+    export PKG_CONFIG_PATH=$libdir/pkgconfig CARGO_TARGET_DIR=$HOME/ergon/target-dpdk
+    link=(-- -C "link-arg=-Wl,--disable-new-dtags,-rpath,$libdir")
+    cargo rustc --release -p ergon-md-dpdk --features static,dpdk --bin media_driver "${link[@]}"
+    for c in rtt load tput floor; do
+        cargo rustc --release -p ergon-md-dpdk-harness --features static,dpdk --bin "$c" "${link[@]}"
+    done
+    out=$HOME/bin-dpdk-$build
+    rm -rf "$out" && mkdir -p "$out"
+    for c in media_driver rtt load tput floor; do cp "$CARGO_TARGET_DIR/release/$c" "$out/"; done
+    for c in "$out"/*; do
+        loads=$(ldd "$c" | awk '$1 ~ /^librte_/ {print $1, ($3 == "not" ? "nowhere" : $3)}')
+        [[ -n $loads ]] || { rm -rf "$out"; echo "build-dpdk $build: $c loads no librte_* library: removed" >&2; exit 1; }
+        while read -r lib path; do
+            [[ $path == "$libdir/"* ]] ||
+                { rm -rf "$out"; echo "build-dpdk $build: $c loads $lib from $path, not $libdir: removed" >&2; exit 1; }
+        done <<<"$loads"
+    done
+    echo "dpdk-build $build: DPDK $DPDK_VERSION in $prefix${patch:+, ${patch##*/} sha256 $(cat "$prefix/ergon-lab-patch.sha256")}: $out" >"$run/bin-dpdk-$build.txt"
+    echo "bin-dpdk-$build: $(ls "$out" | tr '\n' ' ')against DPDK $DPDK_VERSION in $prefix${patch:+ (${patch##*/})}"
+    ;;
 build-ptp)
     # precision-time only, run by `build` before the media driver.
-    # DPDK 25.11: only what the ENA path needs, installed under $DPDK_PREFIX.
+    # DPDK 25.11: only what the ENA path needs, installed under $DPDK_PREFIX
+    # (build_dpdk), on the loader's path: this checkout's build links it.
     if [[ ! -f $DPDK_PREFIX/lib/$ARCH-linux-gnu/pkgconfig/libdpdk.pc ]]; then
-        # Graviton: for the core it is built on (-Dplatform=native, DPDK's
-        # default: the Neoverse's flags), with this host's lcores and NUMA
-        # nodes rather than DPDK's table's (native Neoverse V2's 144 lcores,
-        # or -Dplatform=graviton4's 96 and one node, would not cover
-        # c8g.metal-48xl's 192 CPUs on two sockets)
-        platform=()
-        if [[ $ARCH == aarch64 ]]; then platform=(-Dplatform=native -Dmax_lcores=detect -Dmax_numa_nodes=detect); fi
-        curl -fsSL "https://fast.dpdk.org/rel/dpdk-$DPDK_VERSION.tar.xz" | tar -xJ -C "$HOME"
-        (cd "$HOME/dpdk-$DPDK_VERSION" &&
-            meson setup -Dprefix="$DPDK_PREFIX" -Dtests=false -Ddisable_apps='*' "${platform[@]}" \
-                -Denable_drivers=bus/pci,bus/vdev,mempool/ring,net/ena build >/dev/null &&
-            ninja -C build >/dev/null && sudo ninja -C build install >/dev/null)
+        build_dpdk "$DPDK_PREFIX"
         echo "$DPDK_PREFIX/lib/$ARCH-linux-gnu" | sudo tee /etc/ld.so.conf.d/dpdk-$DPDK_VERSION.conf >/dev/null
         sudo ldconfig
     fi
@@ -1439,6 +1848,9 @@ host)
     done
     echo "ena $(for p in rx_queue_size enable_bql force_large_llq_header lpc_size phc_enable; do printf '%s=%s ' "$p" "$(cat "/sys/module/ena/parameters/$p" 2>/dev/null || echo -)"; done)"
     echo "dpdk $(pkg-config --modversion libdpdk 2>/dev/null || echo none)$([[ -s $run/dpdk_unavailable ]] && echo ", not in the media driver: $(cat "$run/dpdk_unavailable")")"
+    # each @DPDK= build's DPDK (build-dpdk): the modes with it link that one
+    # rather than the line above's
+    for f in "$run"/bin-dpdk-*.txt; do if [[ -f $f ]]; then cat "$f"; fi; done
     echo "ynl $(cat "$run/ynl.version" 2>/dev/null || cat "$run/ynl_unavailable" 2>/dev/null || echo 'not built (no @NAPI_BUSY mode)')"
     echo "build CFLAGS=${CFLAGS:-} RUSTFLAGS=${RUSTFLAGS:-}"
     if [[ $ARCH == aarch64 ]]; then
@@ -1453,13 +1865,29 @@ ready)
     # asked by lib.sh after the build, before any state (a mode that cannot
     # run here would fail at its first driver start, hours in): a fifth core
     # for @IRQ=spare, @NAPI_BUSY=spare and @CONDUCTOR=own; Linux 6.17 or later and the
-    # kernel's ynl (build-ynl) for @NAPI_BUSY. A line for each mode that
-    # cannot run here, then exit 2; nothing, exit 0, when all can
+    # kernel's ynl (build-ynl) for @NAPI_BUSY; its build (build-dpdk) for
+    # @DPDK=. A line for each mode that cannot run here, then exit 2;
+    # nothing, exit 0, when all can
     shift
     rc=0
     for m in "$@"; do
+        if mode_hairpin "$m" && [[ -z ${RECEIVER_CPU:-} ]]; then
+            echo "mode $m: no receiver core on this host (its layout $(layout)): the hairpin's pong runs there; four cores (c9g.xlarge and up)"
+            rc=2
+            continue
+        fi
+        if b=$(mode_get "$m" DPDK) && [[ ! -x $HOME/bin-dpdk-$b/media_driver ]]; then
+            echo "mode $m: no DPDK=$b build: no media_driver in $HOME/bin-dpdk-$b (vm.sh build-dpdk $b, which vm.sh build runs for each build bench/want_dpdk names)"
+            rc=2
+            continue
+        fi
         if mode_spare "$m" && ! why=$(setting_cpu spare DEDICATED "$HK_CPU" "$APP_CPU" "$SENDER_CPU" "$RECEIVER_CPU" "${APP2_CPU:-}" 2>&1 >/dev/null); then
             echo "mode $m: $why"
+            rc=2
+            continue
+        fi
+        if mode_pure "$m" && [[ ! -x $run/purefloor ]]; then
+            echo "mode $m: purefloor did not build here (vm.sh build): $(cat "$run/purefloor_unavailable" 2>/dev/null || echo "no $run/purefloor")"
             rc=2
             continue
         fi
@@ -1480,6 +1908,9 @@ driver)
     "$self" stop
     # `stop` removed any earlier run's BIN: this run's own, if any, follows
     bin=${BENCH_BIN:-$tools}
+    # the last run's DPDK event log (a mode's @RUSTERON_DPDK_EVENT_LOG=
+    # <home>/bench/events.csv): a run without it must leave none to fetch
+    rm -f "$run/events.csv"
     env_file=$run/driver.env
     # <mode>@KEY=value@...: environment overrides for one experiment, applied
     # last so they win (e.g. dpdk@RUSTERON_DPDK_BURST_SIZE=32)
@@ -1492,9 +1923,25 @@ driver)
     # CPUs (host.sh threading_env), set before the other overrides, which can
     # then change an idle strategy
     threading=$(threading_of "$overrides") || exit 2
+    # kernel-raw, dpdk-raw: the raw floor (the floor client, no Aeron) on
+    # kernel-busy's or dpdk's set-up (modes.sh raw_base), its one thread
+    # sending and receiving as INVOKER's does (threading_env); no media
+    # driver, as under INVOKER (below)
+    raw=$(raw_base "$mode") floor_wire=
+    if [[ -n $raw ]]; then
+        threading=INVOKER floor_wire=${raw%-busy}
+    fi
+    # dpdk-pure: dpdk's set-up for purefloor (DPDK alone), its wire pure,
+    # which only purefloor takes
+    if mode_pure "$mode"; then
+        [[ -x $run/purefloor ]] ||
+            { echo "dpdk-pure: purefloor did not build here (vm.sh build): $(cat "$run/purefloor_unavailable" 2>/dev/null || echo "no $run/purefloor")" >&2; exit 2; }
+        floor_wire=pure
+    fi
     common_env "${threading:-DEDICATED}" >"$env_file" || exit 2
     clock=tsc
     if [[ $mode == *-mono ]]; then clock=monotonic; mode=${mode%-mono}; fi
+    [[ -n $raw ]] && mode=$raw
     echo "export RUSTERON_DPDK_CLOCK='$clock'" >>"$env_file"
     echo "$clock" >"$run/bench_clock"
     # dpdk-spin: the DPDK driver with its agents reading host-local kernel
@@ -1602,7 +2049,7 @@ driver)
             # a host setting (host_setting) for this run, which `stop` undoes;
             # anything else is the driver's environment
             host_setting "${pair%%=*}" "${pair#*=}" "$mode" && continue
-            echo "export ${pair%%=*}='${pair#*=}'" >>"$env_file"
+            override_export "$pair" >>"$env_file"
         done
     fi
     # The conductor's duty-cycle threshold, derived from whatever idle
@@ -1654,8 +2101,13 @@ driver)
     # the driver with it (`client`), and `loss` keeps a ledger of the embedded
     # drivers' counters (host.sh invoker_ledger_total)
     if [[ $threading == INVOKER ]]; then
-        echo invoker >"$run/harness_driver"
-        rm -rf "$run/invoker-ledger"
+        if [[ -n $floor_wire ]]; then
+            # the floor client's wire (`client`, `stop`): no embedded driver
+            echo "${floor_wire}" >"$run/floor"
+        else
+            echo invoker >"$run/harness_driver"
+            rm -rf "$run/invoker-ledger"
+        fi
         : >"$run/driver.log"
         # Graviton, DPDK: ENA's low-latency queues and write-combining, as
         # below, checked on a driver started once with the embedded drivers'
@@ -1669,17 +2121,31 @@ driver)
                 "$self" stop >/dev/null 2>&1 || true
                 exit 1
             fi
+            # @DPDK=: the probe's driver loaded the build's PMD
+            if ! dpdk_variant_check "$run/driver.log"; then
+                "$self" stop >/dev/null 2>&1 || true
+                exit 1
+            fi
             sudo rm -rf "$AERON_DIR"
         fi
         # no driver log of its own (`pmd-log` reads this, after the probe's
         # lines if any): each client's output has its driver's
+        if [[ -n $floor_wire ]]; then
+            echo "raw floor: no media driver process; each floor client logs its transport's lines to its output" >>"$run/driver.log"
+            log "driver: raw floor ($floor_wire): no media driver process; the floor clients run with driver.env, no Aeron"
+            exit 0
+        fi
         echo "INVOKER: no media driver process; each client's embedded driver logs to the client's output" >>"$run/driver.log"
         log "driver: INVOKER: no media driver process; each client embeds the driver (HARNESS_DRIVER=invoker) with driver.env"
         exit 0
     fi
     # confined to the housekeeping CPU: every thread that is not an agent
     # (signal handler, Aeron's, the EAL's) stays there; the agents pin themselves
-    sudo bash -c ". '$env_file' && exec taskset -c $HK_CPU '$bin/media_driver'" >"$run/driver.log" 2>&1 &
+    # the transport suite's bench binaries are this user's, not root's: the
+    # driver's files (cnc.dat, the log buffers) writable by them (umask 0)
+    umask_cmd=
+    [[ -s $run/transport-map ]] && umask_cmd='umask 0000 && '
+    sudo bash -c "$umask_cmd. '$env_file' && exec taskset -c $HK_CPU '$bin/media_driver'" >"$run/driver.log" 2>&1 &
     pid=$!
     for _ in $(seq 120); do
         grep -q "media driver started" "$run/driver.log" 2>/dev/null && break
@@ -1688,6 +2154,11 @@ driver)
     done
     grep -q "media driver started" "$run/driver.log" || { cat "$run/driver.log" >&2; exit 1; }
     grep "transport backend" "$run/driver.log" >&2
+    # @DPDK=: the driver loaded that build's ENA PMD, fail closed
+    if ! dpdk_variant_check "$run/driver.log"; then
+        "$self" stop >/dev/null 2>&1 || true
+        exit 1
+    fi
     # SHARED's and SHARED_NETWORK's one busy agent, and @CONDUCTOR=own's
     # conductor, where they were put, fail closed: a run measured with one
     # elsewhere would be another mode's (agents_placed)
@@ -1711,7 +2182,7 @@ driver)
     fi
     ;;
 client)
-    # vm.sh client <label> <rtt|tput|load> <args...>: a benchmark client against the running driver
+    # vm.sh client <label> <rtt|tput|load|floor|purefloor> <args...>: a benchmark client against the running driver (floor, purefloor: the raw or pure floor's)
     label=${2:?label}
     prog=${3:?rtt or tput}
     shift 3
@@ -1722,14 +2193,18 @@ client)
     trap 'termed=1' TERM
     # the last run's spikes and histogram: a client that writes none this time
     # must leave none to fetch (lib.sh takes each load point's histogram)
-    if [[ $prog == rtt && ${1:-} == xping || $prog == load && ${1:-} != xecho ]]; then
+    # (floor xhairpin: both ends here, so both loop-stall files)
+    if [[ $prog =~ ^(rtt|floor|purefloor)$ && ${1:-} =~ ^x(ping|hairpin)$ || $prog == load && ${1:-} != xecho ]]; then
         rm -f "$run/load-spikes.csv" "$run/rtt-histogram.csv"
     fi
-    [[ $prog == rtt && ${1:-} == xping ]] && rm -f "$run/stalls-ping.csv"
-    [[ $prog == rtt && ${1:-} == xpong ]] && rm -f "$run/stalls-pong.csv"
+    [[ $prog =~ ^(rtt|floor|purefloor)$ && ${1:-} =~ ^x(ping|hairpin)$ ]] && rm -f "$run/stalls-ping.csv" "$run/one-way.csv"
+    [[ $prog =~ ^(rtt|floor|purefloor)$ && ${1:-} =~ ^x(pong|hairpin)$ ]] && rm -f "$run/stalls-pong.csv"
     # a build under BIN without this client: this checkout's, said in its log
+    # (purefloor: vm.sh build's, on this host)
     exe=$bin/$prog
-    if [[ ! -x $exe ]]; then
+    if [[ $prog == purefloor ]]; then
+        exe=$run/purefloor
+    elif [[ ! -x $exe ]]; then
         log "client: no $prog in $bin: this checkout's"
         exe=$tools/$prog
     fi
@@ -1738,7 +2213,7 @@ client)
     # the mode's channel parameters (RELIABLE, PUB_PARAMS, SUB_PARAMS), and an
     # unreliable channel's lost-round-trip timeout, stretched by a long
     # network round trip (lib.sh measures it: ~/bench/base_rtt_us)
-    sub_params=$(cat "$run/sub_channel_params" 2>/dev/null || true)
+    sub_params=$(cat "$run/sub_channel_params" 2>/dev/null || true) lost_params=
     # INVOKER: the client embeds the driver, configured from driver.env as the
     # media driver would be (AERON_*, RUSTERON_DPDK_*, the transport), with
     # HARNESS_DRIVER=invoker; refused while the last client's embedded driver
@@ -1747,6 +2222,26 @@ client)
     if invoker; then
         if id=$(cnc_now); then invoker_client_ready "$run/cnc.head" "$run/invoker-ledger" || exit 2; fi
         launch=(bash -c '. "$1"; shift; exec "$@"' _ "$run/driver.env" env HARNESS_DRIVER=invoker)
+    fi
+    # the raw floor: only on the wire `driver` set up (kernel-raw, dpdk-raw),
+    # with its environment (the DPDK transport's, the kernel's selector
+    # absent); raw UDP repairs nothing, so a lost round trip times out as an
+    # unreliable channel's does
+    if [[ $prog == floor || $prog == purefloor ]]; then
+        if [[ $prog == floor && ( ! -s $run/floor || $(cat "$run/floor") == pure ) ]]; then
+            log "client: floor: no raw floor set up here (vm.sh driver kernel-raw or dpdk-raw first)"
+            exit 2
+        fi
+        if [[ $prog == purefloor && $(cat "$run/floor" 2>/dev/null) != pure ]]; then
+            log "client: purefloor: no pure floor set up here (vm.sh driver dpdk-pure first)"
+            exit 2
+        fi
+        if [[ $prog == purefloor && ! -x $exe ]]; then
+            log "client: purefloor: not built here (vm.sh build): $(cat "$run/purefloor_unavailable" 2>/dev/null)"
+            exit 2
+        fi
+        launch=(bash -c '. "$1"; shift; exec "$@"' _ "$run/driver.env" env)
+        lost_params="reliable=false"
     fi
     # The lab's deadline for the client (LAB_CLIENT_DEADLINE, seconds from
     # here; an hour unless lib.sh gives one): GNU timeout, as root beside it,
@@ -1767,11 +2262,16 @@ client)
         log "client: $prog ${1:-}: SIGTERM before it started: not started"
         exit 143
     fi
+    # precision-time: rtt's ping splits each spike one way by both hosts' NIC
+    # receive timestamps (the PTP hardware clock's), where its mode stamps them
+    one_way=
+    precision_time && one_way=$run/one-way.csv
     rc=0 started=$SECONDS
-    sudo ${launch[@]+"${launch[@]}"} env AERON_DIR="$AERON_DIR" LABEL="$label" RTT_SECONDS="${RTT_SECONDS:-20}" \
+    # RTT_GAP_US (lib.sh, a mode's @RTT_GAP_US): the ping's pacing, 0 none
+    sudo ${launch[@]+"${launch[@]}"} env AERON_DIR="$AERON_DIR" LABEL="$label" RTT_SECONDS="${RTT_SECONDS:-20}" RTT_GAP_US="${RTT_GAP_US:-0}" KEEPALIVE_US="${KEEPALIVE_US:-0}" FLUSH_KB="${FLUSH_KB:-0}" RTT_ONE_WAY="$one_way" \
         SUB_CHANNEL_PARAMS="$sub_params" PUB_CHANNEL_PARAMS="$(cat "$run/pub_channel_params" 2>/dev/null || true)" \
-        RTT_LOST_TIMEOUT_US="$(rtt_lost_timeout_us "$sub_params" "$(cat "$run/base_rtt_us" 2>/dev/null || true)")" \
-        RTT_HISTOGRAM="$run/rtt-histogram.csv" LOOP_STALLS_DIR="$run" LOAD_SPIKES="$run/load-spikes.csv" LOAD_SPIKE_NS="${LOAD_SPIKE_NS:-100000}" BENCH_CLOCK="$(cat "$run/bench_clock" 2>/dev/null || echo tsc)" AERON_TERM_BUFFER_SPARSE_FILE=false AERON_CLIENT_PRE_TOUCH_MAPPED_MEMORY=true \
+        RTT_LOST_TIMEOUT_US="$(rtt_lost_timeout_us "${lost_params:-$sub_params}" "$(cat "$run/base_rtt_us" 2>/dev/null || true)")" \
+        RTT_HISTOGRAM="$run/rtt-histogram.csv" LOOP_STALLS_DIR="$run" LOAD_SPIKES="$run/load-spikes.csv" LOAD_SPIKE_NS="${LOAD_SPIKE_NS:-100000}" LOOP_STALL_NS="${LOOP_STALL_NS:-20000}" BENCH_CLOCK="$(cat "$run/bench_clock" 2>/dev/null || echo tsc)" AERON_TERM_BUFFER_SPARSE_FILE=false AERON_CLIENT_PRE_TOUCH_MAPPED_MEMORY=true \
         taskset -c "$HK_CPU" timeout --kill-after="$grace" "$deadline" "$exe" "$@" || rc=$?
     what="$prog ${1:-}"
     if ((rc == 124 || rc == 137)) && ((SECONDS - started >= deadline)); then
@@ -1804,6 +2304,13 @@ stop)
         for c in rtt load tput; do sudo pkill -x "$c" 2>/dev/null || true; done
         for _ in $(seq 40); do pgrep -x 'rtt|load|tput' >/dev/null || break; sleep 0.25; done
         rm -rf "$run/harness_driver" "$run/invoker-ledger"
+    fi
+    # the raw floor: a floor client still running holds the NICs (DPDK's)
+    if [[ -s $run/floor ]]; then
+        sudo pkill -x floor 2>/dev/null || true
+        sudo pkill -x purefloor 2>/dev/null || true
+        for _ in $(seq 40); do pgrep -x 'floor|purefloor' >/dev/null || break; sleep 0.25; done
+        rm -f "$run/floor"
     fi
     data_return_to_kernel
     restore_host
@@ -1874,8 +2381,9 @@ pmd-log)
     # After a DPDK run: the PMD's and EAL's lines on how the NIC was set up
     # (on AWS at info, `driver`'s EAL arguments): ENA's placement policy (its
     # low-latency queues or host memory), LLQ, the queue sizes, and whether
-    # its BAR could be mapped write-combining
-    grep -E 'Placement policy|LLQ|tx queue size|cannot be mapped|write combin|WC' "$run/driver.log" 2>/dev/null ||
+    # its BAR could be mapped write-combining; under @DPDK=patched-refill the
+    # patched PMD's line for each RX queue
+    grep -E 'Placement policy|LLQ|tx queue size|cannot be mapped|write combin|WC|ergon-lab deferred-refill' "$run/driver.log" 2>/dev/null ||
         echo "pmd-log: no such line in the driver's log"
     ;;
 wc-check)
@@ -1923,13 +2431,17 @@ counters)
     # Frames per message (lib.sh snapshots these around each flat-out run):
     # under DPDK the transport's own frames (pkts) and bytes, its sends a full
     # ring refused back to Aeron (tx-eagain) or queued to go first
-    # (tx-queued), and the ENA's per-queue TX statistics (type 92, named by
+    # (tx-queued), sent descriptors reclaimed on idle polls (tx-idle-cleaned,
+    # RUSTERON_DPDK_TX_IDLE_CLEAN), and the ENA's per-queue TX statistics (type 92, named by
     # the PMD: packets, doorbells, completion polls, free descriptors); in a
     # kernel mode the data NICs' packet counts. On receive: frames whose UDP
     # checksum the transport verified in software (the NIC did not), the
     # deepest backlog one poll drained, and the polls that nearly emptied a
-    # full ring.
-    pattern=' (vf_)?(rx|tx)_good_packets$|allowance_exceeded$|dir=- clock$| dir=(rx|tx) pkts$| dir=tx (bytes|tx-eagain|tx-queued)$| dir=rx (sw-checksum-verified|rx-backlog-max|rx-ring-full-suspected)$| tx_q[0-9]+_(cnt|doorbells|tx_poll|available_desc)$'
+    # full ring. Under @DPDK=patched-refill, the patched PMD's RX queue
+    # counters: bursts that returned frames and left a due refill
+    # (rx_q<n>_refill_deferred), and those that refilled at its floor
+    # (rx_q<n>_refill_floor).
+    pattern=' (vf_)?(rx|tx)_good_packets$|allowance_exceeded$|dir=- clock$| dir=(rx|tx) pkts$| dir=tx (bytes|tx-eagain|tx-queued|tx-idle-cleaned)$| dir=rx (sw-checksum-verified|rx-backlog-max|rx-ring-full-suspected)$| tx_q[0-9]+_(cnt|doorbells|tx_poll|available_desc)$| rx_q[0-9]+_refill_(deferred|floor)$'
     if driver_cnc && dpdk_active; then
         # under INVOKER, whose driver's CnC this is (analyse.py counts a run's
         # frames from zero over another embedded driver's snapshot)
@@ -1948,6 +2460,12 @@ counters)
         # (ethtool has nothing): no driver named, which analyse.py counts as
         # zero, the next client's driver starting from zero too
         echo "cnc none"
+        echo
+    elif [[ -s $run/floor ]] && dpdk_active; then
+        # the raw floor under DPDK: its clients register the transport's
+        # counters privately (no CnC), and the NICs are DPDK's (ethtool has
+        # nothing)
+        echo "floor: no CnC"
         echo
     elif [[ $CLOUD == azure ]]; then
         # netvsc's own stats split the VF path (vf_*) from the synthetic one (per queue)
@@ -1985,6 +2503,13 @@ jitter)
     # not under INVOKER, whose CnC between clients is the last one's
     if [[ -n $pid ]] && dpdk_active && ! invoker; then
         sudo env AERON_DIR="$AERON_DIR" timeout 20 "$tools/counters" -gap 2>/dev/null | sed 's/^/counter /'
+        # PMD burst timing (RUSTERON_DPDK_GAP_ATTRIB=1 or burst; zero otherwise)
+        sudo env AERON_DIR="$AERON_DIR" timeout 20 "$tools/counters" -burst 2>/dev/null | sed 's/^/counter /'
+        # receive checksums the transport verified in software (the NIC did
+        # not), and sent descriptors reclaimed on idle polls
+        # (RUSTERON_DPDK_TX_IDLE_CLEAN; zero otherwise)
+        sudo env AERON_DIR="$AERON_DIR" timeout 20 "$tools/counters" sw-checksum-verified 2>/dev/null | sed 's/^/counter /'
+        sudo env AERON_DIR="$AERON_DIR" timeout 20 "$tools/counters" tx-idle-cleaned 2>/dev/null | sed 's/^/counter /'
     fi
     for cpu in $HK_CPU $APP_CPU $SENDER_CPU $RECEIVER_CPU $APP2_CPU; do
         # its interrupts, local timer and IPIs from its own column (irqs.sh
@@ -2040,11 +2565,20 @@ print(f"preflight stalls100={len(gaps)} on_several_cpus={shared}")
 PY
     ;;
 diag-start)
+    # Only before reps: a trace, a tracer or a kprobe set up flips static keys,
+    # an IPI to every CPU, agents included; refused while a rep runs (a media
+    # driver, or a client: INVOKER's embed the driver)
+    if running=$(pgrep -x 'media_driver|rtt|load|tput|floor|purefloor'); then
+        log "diag-start: a rep is running (pid $(echo $running)): diagnostics are set up only before reps (enabling them flips static keys, an IPI to every CPU)"
+        exit 2
+    fi
     # For the whole state: the gap spinner on a spare CPU (the first core
     # outside the layout, else housekeeping's SMT twin, else none: host.sh
     # diag_spare_cpu; a four-core Graviton has neither, and a spinner on a
     # core of the layout would take it from the run) and a trace of the app
-    # and agent CPUs (context switches, work items, IRQs), plus who calls
+    # and agent CPUs (context switches, work items, IRQs and IPIs with their
+    # exits, so each is timed; on CLOCK_MONOTONIC, anchored to the wall clock
+    # by trace_anchor at the start and at diag-fetch), plus who calls
     # lru_add_drain_all (every CPU), so each spike can be told apart:
     # a guest preemption (traced), a host stall (the spinner too), or neither.
     gcc -O2 -o "$run/gapspin" "$(dirname "$self")/gapspin.c" || exit 1
@@ -2054,7 +2588,7 @@ diag-start)
     rm -f "$run/diag-paused"
     printf '%s\n' "$spare" >"$run/diag-spare"
     if [[ -n $spare ]]; then
-        nohup "$run/gapspin" "$spare" 50 >"$run/diag-gapspin.log" 2>&1 </dev/null &
+        nohup "$run/gapspin" "$spare" "$(gapspin_us)" >"$run/diag-gapspin.log" 2>&1 </dev/null &
     else
         echo "# no spinner: no CPU outside the layout (no fifth core, no SMT twin)" >"$run/diag-gapspin.log"
     fi
@@ -2067,18 +2601,25 @@ diag-start)
     for cpu in $APP_CPU $SENDER_CPU $RECEIVER_CPU $APP2_CPU $spare; do mask=$((mask | (1 << cpu))); done
     # arm64's IPIs (x86's are the irq_vectors events below)
     ipi=
-    if [[ $ARCH == aarch64 ]]; then ipi='[ -d events/ipi/ipi_entry ] && echo 1 > events/ipi/ipi_entry/enable;'; fi
+    if [[ $ARCH == aarch64 ]]; then ipi='[ -d events/ipi/ipi_entry ] && echo 1 > events/ipi/ipi_entry/enable && echo 1 > events/ipi/ipi_exit/enable;'; fi
     sudo bash -c "cd /sys/kernel/tracing && echo 0 > tracing_on && echo > trace && printf '%x' $mask > tracing_cpumask &&
         echo 8192 > buffer_size_kb && echo 1 > events/sched/sched_switch/enable &&
-        echo 1 > events/workqueue/workqueue_execute_start/enable && echo 1 > events/irq/irq_handler_entry/enable &&
+        echo 1 > events/workqueue/workqueue_execute_start/enable && echo 1 > events/irq/irq_handler_entry/enable && echo 1 > events/irq/irq_handler_exit/enable &&
         for e in call_function_entry call_function_single_entry reschedule_entry; do
             [ -d events/irq_vectors/\$e ] && echo 1 > events/irq_vectors/\$e/enable; done; $ipi
         { grep -q drainall kprobe_events || echo 'p:drainall lru_add_drain_all' >> kprobe_events; } &&
         for k in text_poke_bp_batch synchronize_rcu_expedited; do
             grep -qw \$k available_filter_functions && { grep -q \"p:\$k \" kprobe_events || echo \"p:\$k \$k\" >> kprobe_events; }; done;
         mkdir -p instances/drain && echo 1 > instances/drain/events/kprobes/enable && echo 1 > instances/drain/options/stacktrace &&
+        { ! grep -qw mono trace_clock || echo mono > trace_clock; } &&
         echo 1 > tracing_on"
+    trace_anchor
     echo "diag spinner cpu ${spare:-none (no CPU outside the layout: host stalls go unattributed)}, traced cpus $(printf '%x' $mask)"
+    # KNOISE on the agent and app CPUs (the spare keeps the spinner)
+    # shellcheck disable=SC2086
+    cpus=$(echo $APP_CPU $SENDER_CPU $RECEIVER_CPU ${APP2_CPU:-} | tr ' ' ',')
+    echo "$cpus" >"$run/knoise-cpus"
+    sudo env LAB_SYS_ROOT="$LAB_SYS_ROOT" bash -c "$(declare -f knoise_start); knoise_start $cpus"
     ;;
 diag-fetch)
     # the spinner's gaps, then the trace with the uptime and wall clock it
@@ -2086,7 +2627,8 @@ diag-fetch)
     echo "== gapspin"
     cat "$run/diag-gapspin.log" 2>/dev/null
     echo "== trace"
-    sudo grep -E 'sched_switch|workqueue_execute_start|irq_handler_entry|call_function|reschedule_entry|ipi_entry' /sys/kernel/tracing/trace
+    trace_anchor
+    sudo grep -E 'sched_switch|workqueue_execute_start|irq_handler_(entry|exit)|call_function|reschedule_entry|ipi_(entry|exit)|ergon-anchor' /sys/kernel/tracing/trace
     echo "UPTIME $(cut -d' ' -f1 /proc/uptime) REALTIME $(date +%s.%N)"
     echo "== drains"
     # who drains LRU batches, patches kernel text (a static key flipped on
@@ -2094,12 +2636,19 @@ diag-fetch)
     sudo grep -v '^#' /sys/kernel/tracing/instances/drain/trace 2>/dev/null
     echo "== ipmon"
     cat "$run/diag-ipmon.log" 2>/dev/null
+    # KNOISE's events (knoise_start), on the trace's clock: the agent and app
+    # CPUs it timed, and how its cpumasks print
+    echo "== knoise"
+    echo "# cpus $(cat "$run/knoise-cpus" 2>/dev/null)"
+    echo "# cpumask $([[ $(sudo cat "$LAB_SYS_ROOT/kernel/tracing/instances/knoise/options/bitmask-list" 2>/dev/null) == 1 ]] && echo list || echo hex)"
+    sudo grep -v '^#' "$LAB_SYS_ROOT/kernel/tracing/instances/knoise/trace" 2>/dev/null
     ;;
 diag-stop)
     pkill -x gapspin 2>/dev/null || true
     rm -f "$run/diag-paused"
     if [[ -s $run/diag-ipmon.pid ]]; then kill "$(cat "$run/diag-ipmon.pid")" 2>/dev/null || true; rm -f "$run/diag-ipmon.pid"; fi
     echo 0 | sudo tee /sys/kernel/tracing/tracing_on >/dev/null
+    sudo env LAB_SYS_ROOT="$LAB_SYS_ROOT" bash -c "$(declare -f knoise_stop); knoise_stop"
     ;;
 hostchecks)
     # vm.sh hostchecks: the media driver's start-up host checks
@@ -2152,17 +2701,16 @@ base-rtt)
     sudo ping -q -c 200 -i 0.01 -I "$src" "$peer" | ping_stats
     ;;
 rx-hw-delay)
-    # the receiver port's NIC-arrival-to-rx-burst counters (type 81), as
+    # the receiver port's NIC-arrival-to-dispatch counters (type 81), as
     # "<mean ns>,<max ns>,<frames>,<min ns>,<negative>": the mean over the
     # frames in the sum; apart, the frames the NIC stamped after the host
-    # clock read at their burst (PHC and host clock skew). The endpoint is
-    # the burst that carried the frame, so a frame after the burst's first is
-    # measured before its own dispatch. A driver built before the labels said
-    # so (an @BIN= base build) has no min or negative: empty. Only skewed
-    # frames (a NIC clock chrony does not keep the host on) give
-    # ",,0,,<negative>"; no stamped frame gives nothing. Older drivers
-    # labelled these nic-arrival-to-dispatch-* and rx-hw-delay-*: both still
-    # parse.
+    # clock read at their dispatch (PHC and host clock skew). The endpoint is
+    # each frame's own dispatch. A driver built before the labels said so (an
+    # @BIN= base build) has no min or negative: empty. Only skewed frames (a
+    # NIC clock chrony does not keep the host on) give ",,0,,<negative>"; no
+    # stamped frame gives nothing. Older drivers labelled these
+    # nic-arrival-to-rx-burst-* (one read a burst, a lower bound for every
+    # frame after the first) and rx-hw-delay-*: both still parse.
     driver_cnc || exit 0
     sudo env AERON_DIR="$AERON_DIR" "$tools/counters" 'role=receiver' | awk '
         / (nic-arrival-to-rx-burst|nic-arrival-to-dispatch|rx-hw-delay)-max-ns$/ {max = $1}
@@ -2176,6 +2724,198 @@ rx-hw-delay)
             if (n > 0) printf "%.0f,%d,%d,%s,%s\n", sum / n, max, n, min, neg
             else if (neg > 0) printf ",,0,,%d\n", neg
         }'
+    ;;
+transport-isolate)
+    # the transport suite's CPU map (host.sh transport_cpu_map), kept for
+    # every later command, its layout for the media driver, and its boot
+    # line (replacing `isolate`'s) from the next boot
+    map=$(transport_cpu_map) || exit 2
+    echo "$map" >"$run/transport-map"
+    transport_layout "$map" >"$run/layout-transport"
+    args=$(transport_boot_args "$map")
+    sudo mkdir -p /etc/default/grub.d
+    echo "GRUB_CMDLINE_LINUX_DEFAULT=\"\$GRUB_CMDLINE_LINUX_DEFAULT $args\"" |
+        sudo tee /etc/default/grub.d/99-ergon-isolation.cfg >/dev/null
+    sudo update-grub >/dev/null 2>&1
+    echo "transport-isolate: map $map (housekeeping, IRQ, isolated); layout $(cat "$run/layout-transport"); $args from the next boot"
+    ;;
+transport-tune)
+    # after the boot transport-isolate set up: SMT off, the boot line
+    # checked, the quiet settings, irqbalance off, the data NICs (rings,
+    # coalescing, quickack routes, every interrupt on the IRQ CPU) and the
+    # sysctls, each read back; its record bench/transport-tune.txt; 1 at the
+    # first setting that does not hold
+    [[ -s $run/transport-map ]] || { echo "transport-tune: no transport map (vm.sh transport-isolate first)" >&2; exit 2; }
+    map=$(cat "$run/transport-map")
+    read -r hk irq iso <<<"$map"
+    tune_steps() {
+        echo "map $map"
+        transport_smt_off || return 1
+        local now
+        now=$(transport_cpu_map) && [[ $now == "$map" ]] ||
+            { echo "transport-tune: the CPU map with SMT off is [$now], not [$map]" >&2; return 1; }
+        transport_boot_check "$map" || return 1
+        transport_quiet_apply "$hk,$irq" "$iso" || return 1
+        sudo systemctl disable --now irqbalance >/dev/null 2>&1 || true
+        if systemctl is-active --quiet irqbalance 2>/dev/null; then echo "transport-tune: irqbalance still running" >&2; return 1; fi
+        echo "irqbalance off"
+        data_kernel_up || return 1
+        transport_sysctls_apply || return 1
+        transport_ports_check "$TR_PORT_BASE" "$TR_PORT_SPAN" || return 1
+        # aeron-ipc-huge's Aeron directory: a 2 MiB hugetlbfs, its pages reserved
+        transport_huge_mount "$TR_AERON_HUGE_MOUNT" "$TR_AERON_HUGE_PAGES" || return 1
+        echo "kernel $(uname -r) cmdline $(cat "${LAB_PROC_ROOT}/cmdline" 2>/dev/null)"
+    }
+    tune_steps >"$run/transport-tune.txt" 2>&1 && rc=0 || rc=$?
+    cat "$run/transport-tune.txt"
+    exit $rc
+    ;;
+transport-net)
+    # an arm on the kernel's data path, no media driver (the socket arms):
+    # the data NICs as transport-tune left them (data_kernel_up: rings,
+    # coalescing, quickack, IRQs), their interrupt deferral TR_NAPI_DEFER and
+    # TR_GRO_FLUSH_NS (the hosts' own; a socket arm's own 0/0 by
+    # TR_OVERRIDES: transport.sh tr_host_overrides), every sysctl;
+    # `check`: only read back (after a driver started on the kernel's path)
+    [[ -s $run/transport-map ]] || { echo "transport-net: no transport map" >&2; exit 2; }
+    if [[ ${2:-} == check ]]; then
+        transport_sysctls_apply check >/dev/null || exit 1
+        transport_nics >/dev/null || exit 1
+        echo "transport-net: settings hold"
+        exit 0
+    fi
+    data_kernel_up
+    nics | while read -r _ _ vf _; do
+        echo "$TR_NAPI_DEFER" | sudo tee "$LAB_SYS_ROOT/class/net/$vf/napi_defer_hard_irqs" >/dev/null
+        echo "$TR_GRO_FLUSH_NS" | sudo tee "$LAB_SYS_ROOT/class/net/$vf/gro_flush_timeout" >/dev/null
+    done
+    transport_cc_load
+    transport_sysctls_apply
+    ;;
+transport-map)
+    # "<housekeeping> <irq> <isolated,...>" as transport-isolate kept it
+    cat "$run/transport-map"
+    ;;
+cc-available)
+    # the congestion controls this kernel offers, bbr loaded first where it
+    # is a module (the tuning session sweeps only what both hosts have)
+    sudo modprobe tcp_bbr 2>/dev/null || true
+    cat "$LAB_PROC_ROOT/sys/net/ipv4/tcp_available_congestion_control"
+    ;;
+transport-build)
+    # the transport suite's bench binaries (transport-cli.md), then
+    # LAB_EXTRA_SRC's tree (lib.sh copies it to ~/extra) by its own
+    # lab-build.sh into ~/extra/bin
+    # (transport-build.sh: the local smoke builds them the same way)
+    export PATH=$HOME/.cargo/bin:$PATH
+    bash "$(dirname "$self")/transport-build.sh" "$HOME/ergon" "$HOME/ergon/target" "$(client_features "$run/dpdk_unavailable")"
+    if [[ -f $HOME/extra/lab-build.sh ]]; then
+        mkdir -p "$HOME/extra/bin"
+        (cd "$HOME/extra" && bash lab-build.sh "$HOME/extra/bin")
+    fi
+    ;;
+netem)
+    # netem on every data NIC's egress (the interfaces the kernel sends on;
+    # under accelerated networking the VF below forwards what they send):
+    # netem set <loss %> | clear | check <loss %|none> | stats (host.sh)
+    mapfile -t ifaces < <(nics | awk '{print $2}')
+    ((${#ifaces[@]})) || { echo "netem: no data NIC in the kernel's hands" >&2; exit 1; }
+    case ${2:-} in
+    set) netem_set "${3:?loss %}" "${ifaces[@]}" && netem_check "$3" "${ifaces[@]}" ;;
+    clear) netem_clear "${ifaces[@]}" && netem_check none "${ifaces[@]}" ;;
+    check) netem_check "${3:?loss % or none}" "${ifaces[@]}" ;;
+    stats) netem_stats "${ifaces[@]}" ;;
+    show) netem_show "${ifaces[@]}" ;;
+    *) echo "netem set <loss %> | clear | check <loss %|none> | stats | show" >&2; exit 2 ;;
+    esac
+    ;;
+sample)
+    # where every thread ran: the verdict on the map's isolated CPUs (host.sh
+    # transport_placement) on the first line, then ps's own lines
+    read -r _ _ iso <"$run/transport-map"
+    transport_threads 1 >"$run/sample.ps"
+    transport_placement "$iso" <"$run/sample.ps" || true
+    cat "$run/sample.ps"
+    ;;
+irqsnap) cat "$LAB_PROC_ROOT/interrupts" ;;
+aeron-page)
+    # the page size of the filesystem AERON_DIR is on (statfs's block size:
+    # 4096 on tmpfs, 2097152 on a 2 MiB hugetlbfs), while its driver runs
+    stat -f -c %S "$AERON_DIR"
+    ;;
+napi)
+    # each data NIC's interrupt deferral now (transport.sh tr_napi_value)
+    nics | while read -r _ _ vf _; do
+        echo "$vf $(cat "$LAB_SYS_ROOT/class/net/$vf/napi_defer_hard_irqs") $(cat "$LAB_SYS_ROOT/class/net/$vf/gro_flush_timeout")"
+    done
+    ;;
+nstat) transport_nstat ;;
+settings) transport_settings_read ;;
+events-start)
+    # events-start <point> <traced cpus> <spinner cpus|-> [aeron]: before the
+    # point's binaries start (transport.sh), so before their warm-up: host.sh
+    # events_start on the hot CPUs given (trace, osnoise where the kernel has
+    # it), gap spinners on the spinner CPUs, the sampler on the housekeeping
+    # CPU, the media driver's counters with aeron
+    [[ -s $run/transport-map ]] || { echo "events-start: no transport map" >&2; exit 2; }
+    read -r hk _ _ <"$run/transport-map"
+    [[ -x $run/gapspin ]] || gcc -O2 -o "$run/gapspin" "$(dirname "$self")/gapspin.c" || exit 1
+    adir=-
+    # the arm's own directory (transport.sh passes it as LAB_AERON_DIR)
+    [[ ${5:-} == aeron ]] && adir=$AERON_DIR
+    counters=-
+    [[ -x $tools/counters ]] && counters=$tools/counters
+    mapfile -t ifaces < <(nics | awk '{print $2}')
+    events_start "$run/events/${2:?point}" ergon-events "$hk" "${3:?traced cpus}" "${4:--}" "$run/gapspin" "$TR_EVENTS_GAPSPIN_US" \
+        "$adir" "$counters" "$TR_EVENTS_BUFFER_KB" "${ifaces[@]}"
+    ;;
+events-stop-all)
+    # whatever events a runner that died left running (its EXIT trap)
+    [[ -s $run/transport-map ]] || exit 0
+    read -r _ _ iso <"$run/transport-map"
+    for d in "$run"/events/*/; do [[ -d $d ]] && events_stop "${d%/}" ergon-events "$iso" >/dev/null 2>&1; done
+    true
+    ;;
+events-stop)
+    # events-stop <point>: after the point's window, its events as
+    # transport_events.py reads them (host.sh events_stop), all of it stopped
+    [[ -s $run/transport-map ]] || { echo "events-stop: no transport map" >&2; exit 2; }
+    read -r _ _ iso <"$run/transport-map"
+    events_stop "$run/events/${2:?point}" ergon-events "$iso"
+    ;;
+hostcheck)
+    # hostcheck [aeron dir]: the ergon-tune checks on the hot CPUs, data NICs
+    # and the Aeron directory (TR_AERON_DIR, or the one given: the
+    # hugetlbfs's) (transport-cli.md), its report in bench/hostcheck.txt; 1
+    # on any warning or error
+    read -r _ _ iso <"$run/transport-map"
+    rm -f "$run/hostcheck.txt"
+    # after the isolation reboot chrony is still slewing CLOCK_REALTIME, and
+    # T11 rightly refuses a clock its last update moved by over 1 ms: wait,
+    # up to 10 min, until it is synchronised to a source (field 14, leap
+    # status, Normal: an unsynchronised chrony reports zero offsets) and its
+    # last offset and the correction still owed are both under 0.5 ms
+    # (chronyc -c tracking: fields 5 system time, 6 last offset, in s); the
+    # check below still decides
+    if command -v chronyc >/dev/null; then
+        settled=
+        for _ in $(seq 120); do
+            if chronyc -c tracking 2>/dev/null | awk -F, '{s = $5 < 0 ? -$5 : $5; l = $6 < 0 ? -$6 : $6; exit !(NF >= 14 && $14 == "Normal" && s < 0.0005 && l < 0.0005)}'; then
+                settled=1
+                break
+            fi
+            sleep 5
+        done
+        echo "hostcheck: chrony $([[ -n $settled ]] && echo settled || echo 'not settled after 10 min'): $(chronyc -c tracking 2>/dev/null | cut -d, -f2,5,6,14)"
+    fi
+    # (exit 2 not clean, 1 not run: either stops the session; a warn line too)
+    PATH=$tools:$PATH hostcheck --hot-cpus "$iso" --nic "$(data_ifaces | paste -sd, -)" --aeron-dir "${2:-$TR_AERON_DIR}" \
+        --out "$run/hostcheck.txt" && rc=0 || rc=$?
+    cat "$run/hostcheck.txt" 2>/dev/null
+    if ((rc)) || grep -qE '^[^ ]+ warn: ' "$run/hostcheck.txt" 2>/dev/null; then
+        echo "hostcheck: not clean (exit $rc)" >&2
+        exit 1
+    fi
     ;;
 *)
     awk 'NR > 1 && !/^#/ {exit} NR > 1 {print}' "$self" >&2

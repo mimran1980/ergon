@@ -1,0 +1,16 @@
+# The cloud smoke's sets (azure/lab.sh LAB_SETS_FILE=<this file>, LAB_REPS=1,
+# short TRANSPORT_* durations, Spot): every arm of transport-matrix.tsv on
+# real VMs, DPDK's too, at one load: the DPDK binding, netem on the data NICs,
+# the session's hostcheck on the isolated CPUs, aeron-ipc-huge's hugetlbfs, the media driver's umask (the
+# Aeron arms map its files), the TCP timers on the backports kernel and each
+# point's events, before the long sessions. The arms are the matrix's (its arm
+# rows); the format is its set rows'.
+
+# set   pair par host loads   streams  netem   arms
+set 1    b    p1  a    1000000 1        -       mpsc,aeron-ipc,aeron-ipc-huge,aa
+set 2b   b    p1  b    50000   1        -       aeron-spy,aeron-self,dpdk-aeron-self,aa
+set 3b   b    -   ab   50000   1        0.1     aeron-rel,mio-tcp,eio-tcp,aa
+set 3c   b    -   ab   50000   1        none,0  aeron-rel,mio-tcp,eio-tcp,aa
+set 2a   a    -   ab   50000   1,8      -       aeron-udp,dpdk-aeron-udp,mio-udp,eio-udp,aa
+set fan  a    -   ab   50000   8        -       mio-tcp,eio-tcp,aa
+set 3a   a    -   ab   50000   1        -       aeron-rel,dpdk-aeron-rel,mio-tcp,eio-tcp,aa

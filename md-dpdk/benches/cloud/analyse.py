@@ -23,8 +23,9 @@ results.csv rows (lab.sh prefixes the rep):
   <rep>,load,<mode>,udp-<fraction|burst>,<size>,<rate>,<burst>,p50,...,max,mean,samples,sent,received,
         backpressured,achieved msgs/s,max send lag ns[,scheduled,late,censored]
         (scheduled is what the run owed, late the sends that found the following slot already due,
-        censored the round trips at the histogram's bound whose true value is only known to be at
-        least that; all three absent in rows from before they were counted)
+        censored the latencies only known to be at least what was recorded: round trips at the
+        histogram's bound and measured messages owed without an echo, recorded at the
+        run's end minus their due time; all three absent in rows from before they were counted)
   <rep>,mix,<mode>,udp-<profile>/<stream>,<size>,<rate>,<burst>,... (as load: one row per stream of a mix)
   <rep>,loss,<mode>[:rtt|:<size>:<fraction>|:<size>:max|:<size>:flows<n>|:mix:<profile>],<host>,<key>=<growth>;...
         (routes-missing as found after the run; VALIDITY's counters check the run and are not loss)
@@ -40,13 +41,18 @@ results.csv rows (lab.sh prefixes the rep):
 Next to results.csv, each load point's histograms (histogram-<state>-<mode>-<size>-<rep>-<point>.csv,
 value_ns,count) are merged over its reps into percentiles of every sample.
 
-Next to results.csv, spikes-*.csv (stream,due_ns,latency_ns: round trips of 100 µs
+Next to results.csv, spikes-*.csv (stream,due_ns,latency_ns[,ping]: round trips of 100 µs
 or more) are summarised: whether spikes recur at one phase of each second, the
 signature of once-a-second work. Where lib.sh saved the counters around the
 flat-out runs (<host>-counters-{tput,max,flows}-{before,after}-*.log, in the run
 directory or a state's below it), a table of their wire frames per message.
 
 analyse.py <results.csv> [<run dir>]
+analyse.py --transport [--show-invalid] <run dir | results.csv>
+    the transport suite's tables (transport-format.md): per set, stream count,
+    netem and rate, each arm's min, p50, p99, p99.99 and max with the A/A
+    spread and a verdict per pair of arms; stream-count tables; refused where
+    fairness.py finds a violation, unless --show-invalid
 analyse.py --ab <mode A> <mode B> <results.csv>
     one mode against another (each bare, compared within every state that has
     both, or as <state>:<mode>): per metric both medians and ranges and whether
@@ -60,16 +66,17 @@ import os
 import re
 import statistics
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from types import SimpleNamespace
 
-from spikes import agent_gaps, open_spikes, spike_files
+from spikes import agent_gaps, open_spikes, pmd_bursts, spike_files
 
-ORDER = ["kernel", "kernel-mono", "kernel-busy", "kernel-busy-mono", "dpdk", "dpdk-mono", "dpdk+idle",
-         "dpdk-spin", "dpdk-spin+idle", "dpdk-adaptive+idle", "local-kernel", "local-dpdk",
-         "local-dpdk-adaptive", "local-dpdk-spin"]
-# isolated-poll: isolated, with idle CPUs polling (lib.sh run_bench)
-STATES = ["", "pinned", "isolated", "isolated-poll"]
+ORDER = ["kernel", "kernel-mono", "kernel-busy", "kernel-busy-mono", "kernel-raw", "kernel-raw-mono", "dpdk",
+         "dpdk-mono", "dpdk+idle", "dpdk-spin", "dpdk-spin+idle", "dpdk-adaptive+idle", "dpdk-raw", "dpdk-raw-mono",
+         "dpdk-pure", "local-kernel", "local-dpdk", "local-dpdk-adaptive", "local-dpdk-spin"]
+# isolated-poll: isolated, with idle CPUs polling; -nodiag: the state without
+# the diagnostics (lib.sh run_bench)
+STATES = ["", "pinned", "pinned-nodiag", "isolated", "isolated-nodiag", "isolated-poll", "isolated-poll-nodiag"]
 NAMES = {
     "kernel": "kernel UDP",
     "kernel-busy": "kernel UDP, busy polling",
@@ -84,6 +91,11 @@ NAMES = {
     "local-dpdk-adaptive": "localhost, DPDK driver, adaptive local-I/O",
     "local-dpdk-epoll": "localhost, DPDK driver, epoll local-I/O",
     "dpdk-adaptive+idle": "DPDK, idle localhost subscription, adaptive local-I/O",
+    # the raw floor (modes.sh mode_raw): the floor client, rtt's round trip with no Aeron
+    "kernel-raw": "kernel UDP, no Aeron (raw floor)",
+    "dpdk-raw": "DPDK packet path, no Aeron (raw floor)",
+    # the pure floor (modes.sh mode_pure): purefloor.c, DPDK alone
+    "dpdk-pure": "DPDK alone, no ergon-md-dpdk or Aeron (pure floor)",
 }
 # a -mono mode: the transport and the clients clock with CLOCK_MONOTONIC, not TSC
 NAMES.update({f"{m}-mono": f"{n}, monotonic clock" for m, n in list(NAMES.items())})
@@ -98,9 +110,42 @@ THREADING = {
 RTT_COLUMNS = ["p50", "p90", "p99", "p99.9", "p99.99", "max"]
 
 
+def gap_name(us):
+    """RTT_GAP_US's microseconds as a duration: 100 µs, 50 ms, 1 s."""
+    if us % 1_000_000 == 0:
+        return f"{us // 1_000_000} s"
+    if us % 1000 == 0:
+        return f"{us // 1000} ms"
+    return f"{us} µs"
+
+
+def gap_of(mode):
+    """A mode's @RTT_GAP_US (µs), or None: unpaced."""
+    gaps = [p.partition("=")[2] for p in mode.removesuffix("+idle").split("@")[1:] if p.startswith("RTT_GAP_US=")]
+    return int(gaps[-1]) if gaps and gaps[-1].isdigit() else None
+
+
+def without(mode, key):
+    """A mode with its @<key>=... overrides taken out (a +idle kept)."""
+    idle = "+idle" if mode.endswith("+idle") else ""
+    parts = mode.removesuffix("+idle").split("@")
+    return "@".join([parts[0]] + [p for p in parts[1:] if not p.startswith(key + "=")]) + idle
+
+
 def mode_name(mode):
     """A mode as tables name it: its name, or the mode as given; a threading
-    mode override named after the rest, with Aeron's name for it."""
+    mode override named after the rest, with Aeron's name for it; a hairpin
+    (@HAIRPIN=1: the round trip on one host, between its own two NICs) and a
+    pacing (@RTT_GAP_US) after that."""
+    suffix = ""
+    if "@HAIRPIN=1@" in mode.split("+idle")[0] + "@":
+        mode, suffix = without(mode, "HAIRPIN"), suffix + ", same-host hairpin (HAIRPIN=1)"
+    gap = gap_of(mode)
+    if gap is not None:
+        mode = without(mode, "RTT_GAP_US")
+        suffix += f", one round trip every {gap_name(gap)} (RTT_GAP_US={gap})"
+    if suffix:
+        return mode_name(mode) + suffix
     parts = mode.split("@")
     threading = [p for p in parts[1:] if p.startswith("AERON_THREADING_MODE=")]
     if not threading:
@@ -182,7 +227,8 @@ def work_of(row):
 def work_columns(reps):
     """A point's `echoed` and `late, censored` cells: completed, issued and
     scheduled together, and how often the run fell more than one slot behind
-    plus how many round trips the histogram's bound censored. A rep that
+    plus how many recorded latencies are censored (at the histogram's bound, or
+    owed without an echo and recorded at their lower bound). A rep that
     predates the three counts has none to add, so the point is reported
     without them rather than as a zero that would read as measured."""
     sent = sum(r[6] for r in reps)
@@ -459,6 +505,9 @@ def nic_irqs(r):
 
 
 def main():
+    if len(sys.argv) >= 2 and sys.argv[1] == "--transport":
+        transport(sys.argv[2:])
+        return
     if len(sys.argv) >= 2 and sys.argv[1] == "--ab":
         if len(sys.argv) != 5:
             sys.exit("usage: analyse.py --ab <mode A> <mode B> <results.csv>")
@@ -488,6 +537,9 @@ def main():
               + ", ".join(f"{name(m)} {min(v):,}–{max(v):,} of {min(samples[m]) + min(v):,}" for m, v in lost_rtt.items()) + ".\n")
 
     above_network(r, modes)
+    above_floor(r, modes)
+    hairpin(r, modes)
+    sparse(r, modes)
 
     print("## UDP throughput, 32-byte messages (M msgs/s)\n")
     def dropped(m):
@@ -531,9 +583,11 @@ def main():
         print("`offered` is the scheduled rate; `achieved` the rate actually offered after warm-up. "
               "Below 98% of offered (marked *), the generator or the path could not keep the schedule, "
               "and the latencies include that queueing. `echoed` is completed/issued/scheduled; "
-              "`late, censored` is how often the run fell more than one slot behind, and how many round "
-              "trips the histogram's bound censored (a max at the bound beside a censored count is a floor, "
-              "not the slowest round trip). Both are absent (`—`) at a point whose reps predate them. "
+              "`late, censored` is how often the run fell more than one slot behind, and how many recorded "
+              "latencies are only known to be at least their value: round trips at the histogram's bound, "
+              "and measured messages owed without an echo, recorded at the run's end minus their due time "
+              "(beside a censored count the max is a floor, not the slowest round trip). "
+              "Both are absent (`—`) at a point whose reps predate them. "
               "`max send lag` is the longest a measured message "
               "waited past its due time to be offered (median of the reps, range in brackets): how far the "
               "generator itself fell behind, which is already inside the latencies beside it. "
@@ -808,7 +862,8 @@ def above_network(r, modes):
     for m in modes:
         state, _, mode = m.rpartition(":")
         base = r.netrtt.get(state)
-        if not base or not r.rtt.get(m) or mode.startswith("local-"):
+        # a localhost run or a hairpin (@HAIRPIN=1, on host a alone) never crosses between the hosts
+        if not base or not r.rtt.get(m) or mode.startswith("local-") or "@HAIRPIN=1@" in mode + "@":
             continue
         low = min(b[0] for b in base)
         net = f"{low / 1000:.2f}/{statistics.mean(b[1] for b in base) / 1000:.2f}/{max(b[2] for b in base) / 1000:.2f}"
@@ -822,6 +877,130 @@ def above_network(r, modes):
           "minimum, per rep: the median across reps, the range in brackets; what the transport, the driver and the "
           "clients add over the wire's own round trip, whatever the distance.\n")
     print(table(["state, transport", "network min/avg/max", "reps", "p50", "p99", "p99.99", "max"], rows) + "\n")
+
+
+def floor_of(mode):
+    """The floor beneath a cross-host mode's transport: kernel-raw for the
+    kernel's Aeron modes, dpdk-raw for DPDK's (-mono for -mono), the pure
+    floor dpdk-pure for dpdk-raw itself; None for the other floors and
+    localhost modes."""
+    transport = mode.split("@")[0].removesuffix("+idle")
+    if transport == "dpdk-raw":
+        return "dpdk-pure"
+    mono = "-mono" if transport.endswith("-mono") else ""
+    transport = transport.removesuffix("-mono")
+    if transport.endswith("-raw") or transport == "dpdk-pure" or mode.startswith("local-"):
+        return None
+    # a paced mode's floor is paced alike
+    gap = gap_of(mode)
+    paced = f"@RTT_GAP_US={gap}" if gap is not None else ""
+    if transport.startswith("kernel"):
+        return f"kernel-raw{mono}{paced}"
+    return f"dpdk-raw{mono}{paced}" if transport.startswith("dpdk") else None
+
+
+def above_floor(r, modes):
+    """Each cross-host Aeron mode's round trip less its transport's raw floor
+    (the floor client, no Aeron) in the same state, rep by rep where both ran:
+    what Aeron's driver and client add over the NIC, PMD or kernel, host and
+    fabric beneath them."""
+    rows = []
+    for m in modes:
+        state, _, mode = m.rpartition(":")
+        floor = floor_of(mode)
+        if floor is None or not r.rtt.get(m):
+            continue
+        # the floor with the mode's own overrides where that ran (under
+        # precision-time, a timestamps-off baseline against the floor's),
+        # else the bare floor
+        overrides = mode.partition("@")[2]
+        if overrides and r.rtt.get(f"{state}:{floor}@{overrides}" if state else f"{floor}@{overrides}"):
+            floor = f"{floor}@{overrides}"
+        base = f"{state}:{floor}" if state else floor
+        if not r.rtt.get(base):
+            continue
+        reps = sorted({rep for (label, rep) in r.rtt_rep if label == m} &
+                      {rep for (label, rep) in r.rtt_rep if label == base}, key=rep_key)
+        if not reps:
+            continue
+        diff = lambda i: cell([r.rtt_rep[(m, rep)][i] - r.rtt_rep[(base, rep)][i] for rep in reps], 1000, 2)
+        rows.append([name(m), mode_name(floor), str(len(reps))] + [diff(i) for i in (0, 2, 4, 5)])
+    if not rows:
+        return
+    print("## UDP round trip above the raw floor (µs)\n")
+    print("The raw floor is the floor client's round trip in the same state (md-dpdk/harness/src/bin/floor.rs: rtt's "
+          "pacing, warm-up, clock, CPUs and 64-byte datagrams, with no Aeron driver or client: kernel UDP sockets "
+          "for the kernel's modes, the DPDK transport's bindings alone for DPDK's). Each Aeron mode's round trip less "
+          "its floor's, rep by rep where both ran: the median across reps, the range in brackets; what Aeron's "
+          "driver and client add. A max no higher than the floor's lies beneath Aeron. dpdk-raw is set against the "
+          "pure floor (purefloor.c: DPDK alone, a 5-tuple-swapping reflector at the pong, the port set up as the "
+          "transport's): what ergon-md-dpdk's packet path adds; a max no higher than the pure floor's lies beneath "
+          "the transport. The pure floor sends and receives on each host's receiver port alone, dpdk-raw sends on "
+          "the sender port. A mode with overrides is set against the floor with the same overrides where that "
+          "ran, else the bare floor.\n")
+    print(table(["state, transport", "floor", "reps", "p50", "p99", "p99.99", "max"], rows) + "\n")
+
+
+def hairpin(r, modes):
+    """Each same-host hairpin (@HAIRPIN=1) beside the cross-host round trip of
+    the same mode in the same state: whether the idle maxima come from the
+    fabric between the hosts or from beneath it on one host."""
+    rows = []
+    for m in modes:
+        if "@HAIRPIN=1@" not in m + "@" or not r.rtt.get(m):
+            continue
+        state, _, mode = m.rpartition(":")
+        cross = without(mode, "HAIRPIN")
+        base = f"{state}:{cross}" if state else cross
+        if not r.rtt.get(base):
+            continue
+        h, c = r.rtt[m], r.rtt[base]
+        rows.append([name(base), str(len(h)), str(len(c))]
+                    + [cell([x[i] for x in reps], 1000, 2) for i in (0, 4, 5) for reps in (h, c)])
+    if not rows:
+        return
+    print("## Same-host hairpin against the cross-host round trip (µs)\n")
+    print("The hairpin (@HAIRPIN=1) is the same mode's round trip on host a alone, from its sender NIC to its "
+          "receiver NIC and back, never to host b; the cross-host one is host a to host b. Where AWS turns the "
+          "hairpin round is not documented: a hairpin p50 well under the cross-host one puts it in host a's own "
+          "card. Medians across reps, the range in brackets. Maxima in the hairpin as large as across the hosts "
+          "come from host a (its card, the hypervisor, the guest); maxima across the hosts alone come from the "
+          "fabric or host b.\n")
+    print(table(["state, transport", "reps hairpin", "reps cross-host", "p50 hairpin", "p50 cross-host",
+                 "p99.99 hairpin", "p99.99 cross-host", "max hairpin", "max cross-host"], rows) + "\n")
+
+
+def sparse(r, modes):
+    """Round trips by @RTT_GAP_US (one ping every that long), each mode beside
+    itself unpaced in the same state."""
+    groups = defaultdict(list)
+    for m in modes:
+        state, _, mode = m.rpartition(":")
+        gap = gap_of(mode)
+        if gap is not None and r.rtt.get(m):
+            base = without(mode, "RTT_GAP_US")
+            groups[f"{state}:{base}" if state else base].append((gap, m))
+    if not groups:
+        return
+    rows = []
+    for base in sorted(groups, key=key):
+        runs = ([(0, base)] if r.rtt.get(base) else []) + sorted(groups[base])
+        for gap, m in runs:
+            reps = r.rtt[m]
+            samples = [int(x[6]) for x in reps]
+            count = f"{min(samples):,}" if min(samples) == max(samples) else f"{min(samples):,}–{max(samples):,}"
+            tail = cell([x[4] for x in reps], 1000, 2) if min(samples) >= 10000 else "n/a (under 10,000)"
+            rows.append([name(base), gap_name(gap) if gap else "none", str(len(reps)), count,
+                         cell([x[0] for x in reps], 1000, 2), cell([x[2] for x in reps], 1000, 2), tail,
+                         cell([x[5] for x in reps], 1000, 2)])
+    print("## Sparse round trips by gap (µs)\n")
+    print("A paced mode (@RTT_GAP_US) sends one ping every gap on a fixed schedule, the clients spinning in between, so "
+          "only the network goes quiet; `none` is the same mode unpaced, each ping as the last one's echo is back. "
+          "Aeron's heartbeats are 100 ms apart on an idle channel. Medians across reps, the range in brackets; a "
+          "rep is 20 to 60 s (modes.sh rtt_plan), so a sparse one holds few round trips: p99.99 only from 10,000 "
+          "a rep, and at a few hundred p99 is near the max. A p50 or p99 that grows with the gap is the path "
+          "slowing for a flow that goes quiet.\n")
+    print(table(["state, transport", "gap", "reps", "round trips a rep", "p50", "p99", "p99.99", "max"], rows) + "\n")
 
 
 def one_flow(r, m, size, rep):
@@ -1149,6 +1328,20 @@ def ab_pair(r, la, lb, dirs):
             return ", ".join(f"{h} {'/'.join(map(str, g)) if g is not None else 'n/a'}" for h, g in sorted(hosts.items()))
         print("\n### Agent poll-cycle gaps during the idle round trip, per rep (20–50/50–100/over 100 µs, both ports)\n")
         print(table(["rep", "A", "B"], [[str(rep), side(gaps[la, rep]), side(gaps[lb, rep])] for rep in reps]))
+    bursts = {(l, rep): pmd_bursts(dirs, f"{file_name(l)}-{rep}") for l in (la, lb) for rep in reps}
+    if any(b is not None for hosts in bursts.values() for b in hosts.values()):
+        def burst_side(hosts):
+            def one(b):
+                if b is None:
+                    return "n/a"
+                f = ["n/a" if v is None else str(v) for v in b]
+                return f"rx {'/'.join(f[:3])}, tx {'/'.join(f[3:])}"
+            if all(b is None for b in hosts.values()):
+                return "n/a"
+            return "; ".join(f"{h} {one(b)}" for h, b in sorted(hosts.items()))
+        print("\n### PMD burst timing during the idle round trip, per rep "
+              "(RUSTERON_DPDK_GAP_ATTRIB=1: max ns / ≥1 µs / ≥5 µs)\n")
+        print(table(["rep", "A", "B"], [[str(rep), burst_side(bursts[la, rep]), burst_side(bursts[lb, rep])] for rep in reps]))
 
 
 def spikes(folder):
@@ -1164,7 +1357,7 @@ def spikes(folder):
         g[2] += 1
         with open_spikes(path) as f:
             for row in csv.reader(f):
-                if len(row) == 3 and row[1].isdigit():
+                if len(row) in (3, 4) and row[1].isdigit():
                     g[0] += 1
                     g[1][int(row[1]) % 1_000_000_000 // 10_000_000] += 1
     if not groups:
@@ -1175,6 +1368,205 @@ def spikes(folder):
         share = f"{100 * max(phase) / count:.0f}%" if count >= 20 else "too few"
         rows.append([run, str(files), f"{count:,}", share])
     print(table(["run", "reps", "spikes", "in busiest 10 ms of the second"], rows))
+
+
+# The transport suite (transport-format.md): its sets in the plan's order
+TRANSPORT_SETS = ["1", "2a", "2b", "3a", "3b", "3c", "fan"]
+# (column, row field) a transport table and its verdicts compare
+TRANSPORT_METRICS = (("min", "min"), ("p50", "p50"), ("p99", "p99"), ("p99.99", "p99.99"), ("max", "max"))
+STREAM0 = (("stream 0 p50", "stream0_p50"), ("stream 0 p99", "stream0_p99"), ("stream 0 p99.99", "stream0_p99.99"),
+           ("stream 0 max", "stream0_max"))
+
+
+def transport(args):
+    """analyse.py --transport [--show-invalid] <run dir | results.csv>."""
+    import fairness
+    from spikes import transport_maxima
+    from transport_points import flags, group_key, is_aa, tcp_loss
+
+    show_invalid = "--show-invalid" in args
+    rest = [a for a in args if a != "--show-invalid"]
+    if len(rest) != 1:
+        sys.exit("usage: analyse.py --transport [--show-invalid] <run dir | results.csv>")
+    run_dir = rest[0] if os.path.isdir(rest[0]) else os.path.dirname(os.path.abspath(rest[0]))
+    maxima = transport_maxima(run_dir)
+    points = [p for p, _, _ in maxima]
+    cause = {p.tag: c for p, _, c in maxima}
+    absences, notes = [], []
+    violations = fairness.check(run_dir, absences=absences, notes=notes)
+    if not points:
+        sys.exit(f"analyse.py --transport: no transport rows in {run_dir}/results.csv")
+
+    def concerns(v, ps):
+        if v.set is None:
+            return True
+        if v.set != ps[0].set:
+            return False
+        return not v.tags or bool(set(v.tags) & {p.tag for p in ps})
+
+    groups = defaultdict(list)
+    for p in points:
+        groups[group_key(p)].append(p)
+    set_rank = lambda s: (TRANSPORT_SETS.index(s) if s in TRANSPORT_SETS else len(TRANSPORT_SETS), s)
+    order = sorted(groups, key=lambda k: (set_rank(k[0]), k[4] != "load", k[2], k[3], k[1]))
+    us = lambda ns: f"{ns / 1000:.2f}"
+    span = lambda vs: (f"{min(vs):,}" if min(vs) == max(vs) else f"{min(vs):,}–{max(vs):,}") if vs else "-"
+    short = lambda c: c.split(" (")[0]
+
+    def tcp_cell(reps):
+        """TCP: real loss (retransmits not DSACK-reported, lost at the end) and
+        the spurious (DSACK-reported) ones, every rep and host summed."""
+        got = [tcp_loss(p) for p in reps]
+        if not any(got):
+            return "-"
+        return f"{sum(g[0] for g in got if g):,} / {sum(g[1] for g in got if g):,}"
+
+    print("## Transport latency (µs)\n")
+    print("Each cell is the median across reps, the range in brackets. Latency counts from each message's intended "
+          "send time (open loop): a round trip between hosts, one way on one host. An arm flagged in any rep "
+          "(`sender late`: over 1 % of sends more than 100 µs late; `over capacity`: achieved under 98 % of the rate; "
+          "`IRQ core saturated`: the IRQ CPU's ksoftirqd over 90 % of it) is shown and never compared. An arm a "
+          "round's order names that failed there (failures.csv) is absent: said, and left out. The A/A arm repeats one arm in the same round: its spread is the largest "
+          "per-rep difference between the two, per metric. Two arms are `not separated` where their medians differ "
+          "by no more than the A/A spread or their rep ranges overlap; a max verdict is blocked while either arm has "
+          "an unexplained max (spikes.py --transport). TCP's loss is its retransmits the peer did not report as "
+          "duplicates and segments lost at the end; DSACK-reported (spurious) ones are shown apart, never as loss. "
+          "A table holding a point that breaks a fairness rule "
+          "(fairness.py) is refused.\n")
+    run_level = [v for v in violations if v.set is None]
+    print(f"Fairness: {len(violations)} violation{'s' if len(violations) != 1 else ''}"
+          + (f", {len(run_level)} of them run-wide." if run_level else "."))
+    for v in run_level:
+        print(f"- {v}")
+
+    refused = set()
+    for k in order:
+        set_, streams, netem, rate, kind = k
+        ps = groups[k]
+        bad = [v for v in violations if v.set is not None and concerns(v, ps)] + run_level
+        title = (f"### Set {set_}, {streams} stream{'s' if streams != 1 else ''}"
+                 + (f", netem {netem} %" if netem and netem != "none" else ", no qdisc" if netem == "none" else "")
+                 + f", {rate:,} msg/s: {'one way' if kind == 'oneway' else 'round trip'} (µs)")
+        print(f"\n{title}\n")
+        # an arm the rounds' orders name that failed there (failures.csv):
+        # no row, so not compared, and said
+        gone = defaultdict(set)
+        for a in absences:
+            if (a.set, a.streams, a.netem or "") == (set_, streams, netem):
+                gone[a.arm].add(a.rep)
+        for arm, reps in sorted(gone.items()):
+            print(f"Absent: {arm} (failed in rep{'s' if len(reps) > 1 else ''} "
+                  f"{', '.join(map(str, sorted(reps)))}: failures.csv): left out of this comparison.\n")
+        said = [n for n in notes if n.set == set_ and set(n.tags) & {p.tag for p in ps}]
+        for n in said:
+            print(f"Note: {n.detail}.")
+        if said:
+            print()
+        if bad:
+            refused.add(k)
+            if not show_invalid:
+                print(f"Refused: {len(bad)} fairness violation{'s' if len(bad) != 1 else ''} (rerun the round, or "
+                      "`--show-invalid` to print it marked):\n")
+                for v in bad:
+                    print(f"- {v}")
+                continue
+            print(f"**Invalid**, shown with `--show-invalid`: {len(bad)} fairness violation"
+                  f"{'s' if len(bad) != 1 else ''}:\n")
+            for v in bad:
+                print(f"- {v}")
+            print()
+        arms = sorted({p.arm for p in ps}, key=lambda a: (any(is_aa(p) for p in ps if p.arm == a), a))
+        by_arm = {a: sorted((p for p in ps if p.arm == a), key=lambda p: p.rep) for a in arms}
+        flagged = {a: [f"{f} (rep {p.rep})" for p in by_arm[a] for f in flags(p)] for a in arms}
+        rows = []
+        for a in arms:
+            reps = by_arm[a]
+            vals = lambda f: [p.row[f] for p in reps if p.row[f] is not None]
+            causes = Counter(short(cause[p.tag]) for p in reps)
+            name_ = a + (f" (A/A of {reps[0].manifest.get('aa_of')})" if is_aa(reps[0]) else "")
+            rows.append([name_, str(len(reps))]
+                        + [cell(vals(f), 1000, 2) if vals(f) else "-" for _, f in TRANSPORT_METRICS]
+                        + [span(vals("busy_threads")), span(vals("wire_bytes"))]
+                        + [f"{sum(vals(f)):,}" if vals(f) else "-" for f in ("lost", "reordered", "dup", "retrans")]
+                        + [tcp_cell(reps)]
+                        + [", ".join(flagged[a]) or "none",
+                           ", ".join(f"{c} {n}" for c, n in sorted(causes.items()))])
+        print(table(["arm", "reps"] + [c for c, _ in TRANSPORT_METRICS]
+                    + ["busy threads", "wire bytes", "lost", "reordered", "dup", "retrans", "TCP segs lost / spurious",
+                       "flags", "max causes"],
+                    rows))
+
+        # the A/A spread: the largest per-rep difference between the A/A and its arm
+        spread = None
+        aa = [a for a in arms if is_aa(by_arm[a][0])]
+        if aa:
+            ref = by_arm[aa[0]][0].manifest.get("aa_of")
+            pairs = [(x, y) for x in by_arm[aa[0]] for y in by_arm.get(ref, []) if x.rep == y.rep]
+            if flagged[aa[0]] or flagged.get(ref):
+                print(f"\nA/A: `{aa[0]}` or `{ref}` flagged, so no spread: nothing compared.")
+            elif pairs:
+                spread = {f: max(abs(x.row[f] - y.row[f]) for x, y in pairs) for _, f in TRANSPORT_METRICS}
+                print(f"\nA/A spread (`{aa[0]}` against `{ref}`, {len(pairs)} reps): "
+                      + ", ".join(f"{c} {us(spread[f])}" for c, f in TRANSPORT_METRICS) + ".")
+        else:
+            print("\nNo A/A arm: nothing compared.")
+        comparable = [a for a in arms if not is_aa(by_arm[a][0]) and not flagged[a]]
+        left = [a for a in arms if not is_aa(by_arm[a][0]) and flagged[a]]
+        if left:
+            print(f"\nFlagged, not compared: {', '.join(left)}.")
+        if spread is None or len(comparable) < 2:
+            continue
+        rows = []
+        for i, a in enumerate(comparable):
+            for b in comparable[i + 1:]:
+                cells = []
+                for _, f in TRANSPORT_METRICS:
+                    va = [p.row[f] for p in by_arm[a]]
+                    vb = [p.row[f] for p in by_arm[b]]
+                    if f == "max" and any(cause[p.tag].startswith("unexplained") for p in by_arm[a] + by_arm[b]):
+                        cells.append("blocked: unexplained max")
+                        continue
+                    d = statistics.median(va) - statistics.median(vb)
+                    if abs(d) <= spread[f]:
+                        cells.append(f"not separated (within A/A {us(spread[f])})")
+                    elif not (max(va) < min(vb) or max(vb) < min(va)):
+                        cells.append("not separated (ranges overlap)")
+                    else:
+                        cells.append(f"{b if d > 0 else a} lower by {us(abs(d))}")
+                rows.append([f"{a} vs {b}"] + cells)
+        print()
+        print(table(["arms"] + [c for c, _ in TRANSPORT_METRICS], rows))
+
+    # stream counts side by side, where a set ran more than one
+    fans = defaultdict(set)
+    for set_, streams, netem, rate, kind in groups:
+        fans[(set_, netem, rate, kind)].add(streams)
+    for fk in sorted((k for k, v in fans.items() if len(v) > 1), key=lambda k: (set_rank(k[0]), k[1], k[2], k[3])):
+        set_, netem, rate, kind = fk
+        print(f"\n### Set {set_} by stream count, {rate:,} msg/s: {'one way' if kind == 'oneway' else 'round trip'} "
+              "(µs)\n")
+        print("All streams together, then stream 0 alone; medians across reps, ranges in brackets. A stream count "
+              "whose table above is refused is left out.\n")
+        rows, gone = [], []
+        for streams in sorted(fans[fk]):
+            k = (set_, streams, netem, rate, kind)
+            if k in refused and not show_invalid:
+                gone.append(str(streams))
+                continue
+            ps = groups[k]
+            for a in sorted({p.arm for p in ps}, key=lambda a: (any(is_aa(p) for p in ps if p.arm == a), a)):
+                reps = [p for p in ps if p.arm == a]
+                vals = lambda f: [p.row[f] for p in reps if p.row[f] is not None]
+                fl = [f"{f} (rep {p.rep})" for p in sorted(reps, key=lambda p: p.rep) for f in flags(p)]
+                rows.append([a, str(streams), str(len(reps))]
+                            + [cell(vals(f), 1000, 2) if vals(f) else "-" for _, f in TRANSPORT_METRICS[1:]]
+                            + [cell(vals(f), 1000, 2) if vals(f) else "-" for _, f in STREAM0]
+                            + [", ".join(fl) or "none"])
+        if rows:
+            print(table(["arm", "streams", "reps"] + [c for c, _ in TRANSPORT_METRICS[1:]] + [c for c, _ in STREAM0]
+                        + ["flags"], rows))
+        if gone:
+            print(f"\nRefused stream counts: {', '.join(gone)}.")
 
 
 if __name__ == "__main__":

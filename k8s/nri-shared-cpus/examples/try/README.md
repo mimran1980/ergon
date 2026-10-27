@@ -1,8 +1,9 @@
 # Try the public chart
 
 One throwaway kind cluster. It installs
-`oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.0`, applies
-the hot-pod admission policy, and prints what the plugin did.
+`oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.1` with the
+hot-pod check's host mounts, applies the hot-pod admission policy, and
+prints what the plugin did.
 
 ```sh
 k8s/nri-shared-cpus/examples/try/run.sh
@@ -21,14 +22,25 @@ Docker Desktop can crash-loop containerd in this kind node with
 containerd state once and keeps waiting. It does not wipe a node whose
 containerd is answering, and it does not touch any other cluster.
 
-The kind node is `kindest/node:v1.33.0` with the static CPU manager,
+The kind node is `kindest/node:v1.35.1` (containerd 2.2.1: NRI with the default validator) with the static CPU manager,
 `reservedSystemCPUs: "0,1"`, NRI on, and the label
-`ergon.io/shared-cpus=true`. The chart is installed with `sharedCpus: "0"`
-and namespace allowlist `trading`.
+`ergon.io/shared-cpus=true`. The chart is installed with `sharedCpus: "0"`,
+namespace allowlist `trading`, and `hostContract.kubeletConfig`, `sys` and
+`proc` on. The script checks the DaemonSet passes `--kubelet-config`,
+`--host-sys` and `--host-proc`.
 
-`hot-pod.yaml` is a Guaranteed pod labelled `ergon.io/latency: hot`. It
-asks for `cpu: "2"` and `ergon.io/shared-millicpus: "250"`. The script
-waits until the log contains:
+A kind node shares the host kernel, so it has no `isolcpus`. A pod
+labelled `ergon.io/latency: hot` needs its exclusive CPUs isolated, so no
+hot pod can start here. The sample shows the grant on an unlabelled pod
+and the refusal on a hot one. It does not switch the check off.
+
+| file | pod | expected |
+|---|---|---|
+| `shared-pod.yaml` | Guaranteed, `cpu: "2"`, `ergon.io/shared-millicpus: "250"`, no hot label | Ready. Log: `ERGON_SHARED_CPUS=0`, non-empty `ERGON_ISOLATED_CPUS`, `Cpus_allowed_list: 0`, `nproc=1` |
+| `hot-pod.yaml` | the same, labelled hot, with `priorityClassName: ergon-hot`. Applied after `trader` is deleted, so its two CPUs fit | admitted, then `CreateContainerError` with `exclusive CPU not isolated` from the plugin, never running |
+| `bad-probe.yaml` | the hot pod with an exec `livenessProbe` | denied by the ValidatingAdmissionPolicy: `livenessProbe must not be exec` |
+
+What the log lines mean:
 
 | line | meaning |
 |---|---|
@@ -36,10 +48,6 @@ waits until the log contains:
 | `ERGON_ISOLATED_CPUS` non-empty | the kubelet's two exclusive CPUs |
 | `Cpus_allowed_list: 0` | PID 1 is bound to the shared CPU only |
 | `nproc=1` | the process affinity is that one CPU |
-
-`bad-probe.yaml` is the same pod with an exec `livenessProbe`. The
-ValidatingAdmissionPolicy must deny it. The denial text contains
-`livenessProbe must not be exec`.
 
 ## What this is, and what it skips
 
@@ -51,44 +59,18 @@ Kubernetes HFT tuning is the node and pod settings in the book chapter
   an exec probe on a hot pod.
 
 There is no HFT image. Hugepages, an isolated cpuset partition, io_uring
-seccomp and the NIC PHC are grants in the same plugin. Chart 0.1.0 does
-not write `seccomp`, `ptp` or `schedFifo`, and this kind node is not a
+seccomp and the NIC PHC are grants in the same plugin. The chart writes
+`seccomp`, `ptp` and `schedFifo` as `"off"`, and this kind node is not a
 place those grants can be shown: no hugepage pool, no `/dev/ptp`, no
 `cpuset.cpus.exclusive` partition. Latency is not measured. EKS is not
 involved.
 
-`helm install` of chart 0.1.0 prints "This chart is NOT released". That
-note was packed before the image was pushed. The script still installs
-that tag. The log says the sentence is stale.
+`helm install` prints NOTES that say the chart is not published. It is
+published; ignore that line.
 
 `test/e2e.sh` is the longer kind run. It builds `ergon-shared-cpus:dev`
 from this tree and does not pull the public chart.
 
-## Run on 2026-10-22
+## Status
 
-`run.sh` against chart `0.1.0` on `kindest/node:v1.33.0`. Docker Desktop,
-linux aarch64, 10 CPUs. The cluster was deleted at the end. No kind
-clusters remained.
-
-```
-allocatable ergon.io/shared-millicpus=1k
-ERGON_ISOLATED_CPUS=2,3
-ERGON_SHARED_CPUS=0
-ERGON_SHARED_MILLICPUS=250
-ERGON_HELPER_CPUS=0
-ERGON_ISOLATED_CORES=2;3
-Cpus_allowed_list:	0
-cpuset.cpus.effective=0,2-3
-nproc=1
-```
-
-The exec-probe pod was refused:
-
-```
-Error from server (Forbidden): ... ValidatingAdmissionPolicy 'ergon-latency-pods' with binding 'ergon-latency-pods' denied request: livenessProbe must not be exec/command on a hot pod.
-```
-
-`1k` is 1000 millicpus: one shared CPU, oversubscription 1. CPUs 2 and 3
-were the kubelet's exclusive pair on that node. CPU 0 was the shared CPU
-from the chart. This is one kind node. It is not an EKS result and it is
-not a latency measurement.
+Not yet run on kind.

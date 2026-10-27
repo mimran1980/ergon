@@ -2,7 +2,7 @@
 
 Earlier measurement details are retained in the [2026-10-18 snapshot](BENCHMARK-2026-10-18.md). This page takes precedence where conclusions differ.
 
-Every ergon-io latency figure lives here, once. Each row names the committed file that holds it, under `io/benches/results/<run>/`. Figures are µs, p50 / p99 / max, a range across rounds, unless a column says otherwise. `max` is the absolute maximum of each round.
+Every ergon-io latency figure lives here, once, except the in-memory WebSocket receive-path microbenchmark (`ws_bench`), whose table is in the book's [WebSocket page](https://mimran1980.github.io/ergon/io/websocket.html#receive-cost), and the transport comparison (UDP against TCP, mio against ergon-io, beside Aeron), whose tables are in the book's [transport latency comparison](https://mimran1980.github.io/ergon/transports/comparison.html). Each row names the committed file that holds it, under `io/benches/results/<run>/`. Figures are µs, p50 / p99 / max, a range across rounds, unless a column says otherwise. `max` is the absolute maximum of each round.
 
 ## Answers
 
@@ -13,6 +13,9 @@ Every ergon-io latency figure lives here, once. Each row names the committed fil
 | SQPOLL on the loop's hyperthread sibling? | Works; about +2.3–2.5 µs p50 and +9–12 µs p99 at 10–100 connections against a core of its own. | [SMT sibling cost](#smt-sibling-cost) |
 | ergon-io or libcurl for HTTP? | ergon-io is 5–12 µs ahead at the median on the same interrupt path. Its p99 and max are lower on Azure, not on AWS. | [HTTP clients](#http-clients) |
 | `connect_background` or `Driver::connect`? | Background: the loop's worst poll per connect is 6–12 µs p50 (max 98–102) against about 105 µs inline (max 775, the first connect). | [Connection set-up](#connection-set-up) |
+| mio as a backend? | No. On Linux it is `epoll-spin`'s mechanism: level on round trips, with 2.0× the `recvmsg` calls; a two-sided CI gate fails on a 10 % slowdown of either ([`mio-parity-docker-20261024T154626Z`](results/mio-parity-docker-20261024T154626Z/summary.md)). Its market-data arm was confounded. Reasons and its maxima without a cause: the book's [mio: measured, not a backend](https://mimran1980.github.io/ergon/io/backends.html#mio-measured-not-a-backend). | [Fair run](#interrupt-against-nic-polling-the-fair-run-graviton), [loop pass](#loop-pass-by-socket-count-graviton) |
+| UDP or TCP, between two hosts? | Not compared directly: the UDP and TCP sets ran on different Azure VM pairs. 1 stream, p50: UDP 61.8–62.9 µs, TCP 64.7–69.8 µs, each with no loss. | [Transport comparison](#transport-comparison-udp-tcp-mio-and-ergon-io) |
+| mio or ergon-io, for UDP and framed TCP? | UDP: ergon-io's p50 0.1–0.9 µs behind mio's in every rep; tails not separated. TCP: no verdict, the gap is inside run-to-run noise; a same-connection A/B is scheduled on AWS. Both read twice and send once a message. | [Transport comparison](#transport-comparison-udp-tcp-mio-and-ergon-io) |
 | ENA adaptive moderation? | Off stopped the polling loop's involuntary preemptions (about 8,900 in 8 min to 0) and cut WebSocket p99.99 from 117–119 to 72–76 µs. HTTP p99.99 did not move. | [Host and NIC settings](#host-and-nic-settings-aws-x86) |
 
 ## Hosts and runs
@@ -32,6 +35,7 @@ Each run directory holds the hosts' settings (`env-rcv.txt`, `env-snd.txt`). The
   - *Arrival → decoded*: kernel receive timestamp to decoded, on the receiver's clock. It leaves out the interrupt wait (interrupt backends), and for polling backends the wait for the next queue poll. Compare polling backends only.
   - *Sender → decoded*: the whole path, on two hosts' clocks. Compare backends within one round only.
 - **Round trips** (WebSocket echo, HTTP) use one clock, the receiver's.
+- **`uring-spin`, `epoll-busy` and `uring-napi` are no longer backends.** ergon-io keeps the three measured busy-spin ones (`epoll-spin`, `recv-busy`, `uring-sqpoll`); the removed ones' rows stay here as the record of what was measured.
 - **A max is one event.** Where the analyser could not attribute it, the generated tables label it "network, hypervisor or untraced". These pages do not name a cause for it.
 
 ## Interrupt against NIC polling: the fair run (Graviton)
@@ -89,6 +93,22 @@ What the run shows:
 - The interrupt backends hold 38.8–40.4 µs p50 from 1 to 64 sockets. `uring-sqpoll` goes from 36.5–37.0 at 1 socket to 40.0–40.1 at 64. `per_queue` holds 44 µs from 16. Plain `recv-busy` reaches 78 µs at 64.
 - With the interrupts on the loop's CPU, the interrupt backends keep their median and lose tail: p99 62–87 µs at 16 and 64 sockets against 50–54 on a core of their own.
 - The maxima overlap across all backends and placements.
+
+### Loop pass by socket count (Graviton)
+
+Market data, `irqcore`, the same run. Pass = 1 ÷ the loop's passes per second (a mean). Longest pass: the loop's longest iteration, not attributed to a cause; mio's harness does not record it. Data: [`loop-counters.md`](results/flags-aws-20261019T175248Z/loop-counters.md).
+
+| backend | pass, 1 socket | pass, 256 sockets | longest pass, 256 sockets |
+|---|---|---|---|
+| `epoll-spin` | 342–343 ns | 601–617 ns | 612–690 µs |
+| mio | 348 ns | 359 ns | not recorded |
+| `uring-spin` | 29 ns | 393–395 ns | 1,015–1,199 µs |
+| `uring-sqpoll` (the loop's thread) | 27 ns | 368 ns | 231–246 µs |
+| `recv-busy,per_queue` | 933–934 ns | 5.56–5.58 µs | 804–897 µs |
+| `recv-busy` | 574–588 ns | 149.3–149.4 µs | 1,910–2,187 µs |
+
+- Every backend's pass grows with sockets, idle ones included: the `Driver` of this run checked each connection for queued sends on every pass. `uring-sqpoll`'s kernel thread polls NIC queues, but the loop's own pass still grows. The send pass now visits only connections with bytes queued (the send set); not re-measured.
+- mio makes 2.0× the `recvmsg` calls of `epoll-spin` (WebSocket round trip, N = 1: 1,200,000 against 600,000), from reading until `WouldBlock`.
 
 ## Polling backends by socket count (x86)
 
@@ -222,6 +242,60 @@ The same run tried one NIC queue (`onequeue`) and capped idle states (`cstate`):
 
 Not measured here: `prefer_busy_poll`, `busy_poll_budget`, route `quickack` and `rto_min` (every run used `quickack 1 rto_min 5ms`).
 
+## Transport comparison: UDP, TCP, mio and ergon-io
+
+The latency tables and the conclusion live in the book's
+[transport latency comparison](https://mimran1980.github.io/ergon/transports/comparison.html),
+with how the arms were made fair. This section holds what only the socket
+arms report, per run: system calls a message (`recvmsg`, `send`,
+`epoll_wait`), `UdpStats` (`tx_full`, `truncated`, `refused`),
+`FrameStats::quickacks`, and TCP retransmits from `TCP_INFO` and `nstat`.
+
+<!-- RESULTS: io socket counters -->
+
+Azure, `F8als_v6` / `F8ams_v6` pairs (AMD Genoa, mlx5 VFs), `epoll-spin`
+for ergon-io, `SO_BUSY_POLL` 50 µs on both arms (read back from every
+socket), interrupt deferral off, 64-byte messages, round trips. Each binary's
+manifest (`settings.stat.*`, `settings.tcp.*`), per message, ranges over the
+points at 10,000 and 50,000 msg/s.
+
+**UDP** (session `20261026-221959-transport-a`, set 2a, 1 to 128 streams):
+
+| counter, per message | `eio-udp` | `mio-udp` |
+|---|---|---|
+| reads (`recvmsg`) | 2.00: one with data, one empty (the busy-poll pass) | 2.00: mio reads to `WouldBlock` |
+| sends | 1.00 | 1.00 (one `send` a message in its code) |
+| `UdpStats` `tx_full`, `truncated`, `refused` | 0 | (no such counters) |
+| heap allocations on the hot path | 0 | 0 |
+
+At 200,000 msg/s both ping loops polled 1.0 to 1.5 times a message and fell
+behind (151,000 to 195,000 msg/s carried): one `send` system call a message
+on one thread does not reach that rate here.
+
+**TCP** (session `20261026-222001-transport-a`, sets 3b and 3c, 1
+connection):
+
+| counter, per message | `eio-tcp` | `mio-tcp` |
+|---|---|---|
+| reads (`recv`), no loss | 1.94 to 1.99 | 1.89 to 1.99 |
+| sends | 1.00 | 1.00 |
+| `TCP_QUICKACK` re-arms, no loss | 0.99 to 1.00 | 0.99 to 1.00 |
+| RTOs (`TCP_INFO`), no loss | 0 | 0 |
+| heap allocations on the hot path | 0 | 0 |
+| retransmits at the ping end, netem 0.01 / 0.1 / 1 % | 54–182 / 567–1,748 / 5,722–16,817 a point | 55–179 / 591–1,755 / 5,695–16,672 a point |
+
+- **Page faults with no allocation.** ergon-io's own check T19 saw the loop
+  thread fault: 141 to 566 times a 5 s check at 200,000 msg/s (past
+  capacity), 1 to 98 a point at lighter load. The ones under overload came
+  from the shared measurement code, which mio's arm runs too: the latency
+  core's stall buffer, whose zero fill a release build folded into a lazily
+  mapped `calloc`, so each 4 KiB of stall rows faulted. Fixed in
+  `3b285a9b`. The few at lighter load were not traced one by one.
+- **Missing TCP points.** 9 `eio-tcp` points at 200,000 msg/s failed: the
+  bench's ergon-io pong had room for one read a poll, read twice and spun in
+  its echo loop once overloaded. A bench bug, not ergon-io's; fixed in
+  `55bee73a`.
+
 ## Worst cases
 
 - **Azure, once a minute:** loop stalls and slow samples bunch at seconds :49–:51 of every minute, on both hosts, in every workload and in a loop that only reads the counter, up to 2.1 ms ([`rows.md`](results/flags-azure-20261014T144146Z/rows.md), run `flags-azure-20261014T144146Z`).
@@ -230,18 +304,17 @@ Not measured here: `prefer_busy_poll`, `busy_poll_budget`, route `quickack` and 
 ## Open
 
 - Graviton against x86: not compared. x86 interrupt against polling: no fair run.
-- The fair run's `md-mio-c1` points show a sender batch up to 40 ms late on 0.07 % of batches, mio at one connection only (`work-counts.md`). Not traced.
-- Whether `epoll-busy` and `uring-napi` save CPU at low load.
+- The fair run's `md-mio-c1` points show a sender batch up to 40 ms late on 0.07 % of batches, mio at one connection only (`work-counts.md`). No cause yet. It is listed with mio's other maxima still without a cause in the book's [mio: measured, not a backend](https://mimran1980.github.io/ergon/io/backends.html#mio-measured-not-a-backend).
 - Azure's once-a-minute stall: no kernel event explains it.
+- mio against ergon-io over TCP: no verdict on Azure (each point a new connection and source port). A same-connection A/B (`tcp_lat --source-port`) is scheduled on AWS.
 
 ## Reproduce
 
-The generic rate-limit and TLS record tools are in this checkout:
+The TLS record tool is in this checkout:
 
 ```sh
 cargo test --manifest-path io/benches/Cargo.toml
 cargo build --release --manifest-path io/benches/Cargo.toml --bins
-io/benches/target/release/limit_bench --samples 200000 --batch 64
 io/benches/target/release/tls_bench --sizes 200,1000,4000,16000 --mib 64 --reps 5
 ```
 

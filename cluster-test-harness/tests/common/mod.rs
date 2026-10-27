@@ -3,14 +3,13 @@
 //! Each lifecycle test (failover, quorum loss, restart) connects a
 //! high-level `AeronCluster` client to a Java cluster over the client's
 //! OWN embedded media driver + UDP transport, then drives it through
-//! `poll_egress`. These helpers factor that shared scaffolding out.
+//! `poll`. These helpers factor that shared scaffolding out.
 
 use rusteron_client::cformat;
 use std::error::Error;
 use std::time::{Duration, Instant};
 
-use ergo_aeron_cluster::cluster_codec_types::{AdminRequestType, AdminResponseCode, EventCode};
-use ergo_aeron_cluster::egress::{EgressAdapter, EgressListener};
+use ergo_aeron_cluster::egress::EgressListener;
 use ergo_aeron_cluster::{AeronCluster, SessionBuilder};
 
 /// The client's own embedded C media driver, held alive for the test.
@@ -78,22 +77,10 @@ impl EgressListener for Capture {
     fn on_message(&mut self, _csid: i64, _ts: i64, buffer: &[u8]) {
         self.messages.push(buffer.to_vec());
     }
-    fn on_session_event(&mut self, _: i64, _: i64, _: i64, _: i32, _: EventCode, _: &str) {}
     fn on_new_leader(&mut self, _: i64, _: i64, leader_member_id: i32, _: &str) {
         if self.new_leader_member_id.is_none() {
             self.new_leader_member_id = Some(leader_member_id);
         }
-    }
-    fn on_challenge(&mut self, _: i64, _: i64, _: &[u8]) {}
-    fn on_admin_response(
-        &mut self,
-        _: i64,
-        _: i64,
-        _: AdminRequestType,
-        _: AdminResponseCode,
-        _: &str,
-        _: &[u8],
-    ) {
     }
 }
 
@@ -101,7 +88,7 @@ impl EgressListener for Capture {
 /// cluster echoes it back. Errors on timeout — a real round-trip failure.
 pub fn await_echo(
     client: &mut AeronCluster,
-    adapter: &mut EgressAdapter<Capture>,
+    listener: &mut Capture,
     payload: &[u8],
     timeout: Duration,
 ) -> Result<(), Box<dyn Error>> {
@@ -109,13 +96,8 @@ pub fn await_echo(
     client.offer(payload)?;
     loop {
         let _ = client.send_keep_alive();
-        let _ = client.poll_egress(adapter, 10);
-        if adapter
-            .listener()
-            .messages
-            .iter()
-            .any(|m| m.as_slice() == payload)
-        {
+        let _ = client.poll(listener, 10);
+        if listener.messages.iter().any(|m| m.as_slice() == payload) {
             return Ok(());
         }
         if Instant::now() >= deadline {
@@ -123,7 +105,7 @@ pub fn await_echo(
                 "no echo of {:?} within {:?} (got {} messages)",
                 std::str::from_utf8(payload).unwrap_or("<bytes>"),
                 timeout,
-                adapter.listener().messages.len()
+                listener.messages.len()
             )
             .into());
         }

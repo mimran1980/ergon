@@ -72,7 +72,7 @@ static int rusteron_dpdk_port_dev_info(
     uint16_t port_id, const char *pci_bdf,
     uint8_t mac[RUSTERON_DPDK_ETH_ADDR_LEN],
     char *driver_name, size_t driver_name_len,
-    int *csum_offload_ok, int *ena_llq, int *rx_timestamp_ok, uint16_t *max_mtu,
+    int *csum_offload_ok, int *ena_llq, int *rx_timestamp_ok, int *tx_fast_free_ok, uint16_t *max_mtu,
     uint16_t desc_lim[4])
 {
     /* capabilities are read by port id once probed; pci_bdf names the device
@@ -113,6 +113,9 @@ static int rusteron_dpdk_port_dev_info(
     /* ENA delivers the Nitro PHC's RX timestamps from DPDK 25.11, in a
      * precision-time placement group on supporting instances. */
     *rx_timestamp_ok = 0 != (info.rx_offload_capa & RTE_ETH_RX_OFFLOAD_TIMESTAMP);
+    /* Bulk frees of sent mbufs: ENA advertises it from DPDK 22.07, and AWS's
+     * ENA DPDK guide recommends it. */
+    *tx_fast_free_ok = 0 != (info.tx_offload_capa & RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE);
     *max_mtu = info.max_mtu;
     desc_lim[0] = info.rx_desc_lim.nb_min;
     desc_lim[1] = info.rx_desc_lim.nb_max;
@@ -129,10 +132,13 @@ static uint64_t rusteron_dpdk_port_ts_flag = 0;
 
 static int rusteron_dpdk_port_dev_configure(
     uint16_t port_id, uint16_t rx_rings, uint16_t tx_rings,
-    uint64_t rx_offloads, uint64_t tx_offloads)
+    uint64_t rx_offloads, uint64_t tx_offloads, int lsc)
 {
     struct rte_eth_conf conf;
     memset(&conf, 0, sizeof(conf));
+    /* Link-status-change interrupts, raised on the EAL interrupt thread
+     * (confined to the housekeeping CPU), never an agent's. */
+    conf.intr_conf.lsc = lsc ? 1 : 0;
 
     if (0 != (rx_offloads & RUSTERON_DPDK_RX_OFFLOAD_IPV4_CKSUM))
     {
@@ -154,6 +160,10 @@ static int rusteron_dpdk_port_dev_configure(
     {
         conf.txmode.offloads |= RTE_ETH_TX_OFFLOAD_UDP_CKSUM;
     }
+    if (0 != (tx_offloads & RUSTERON_DPDK_TX_OFFLOAD_MBUF_FAST_FREE))
+    {
+        conf.txmode.offloads |= RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE;
+    }
 
     int rc = rte_eth_dev_configure(port_id, rx_rings, tx_rings, &conf);
     if (0 == rc && 0 != (rx_offloads & RUSTERON_DPDK_RX_OFFLOAD_TIMESTAMP) && rusteron_dpdk_port_ts_offset < 0)
@@ -169,6 +179,17 @@ static int rusteron_dpdk_port_dev_configure(
         }
     }
     return rc;
+}
+
+static int rusteron_dpdk_port_lsc_capable(uint16_t port_id)
+{
+    struct rte_eth_dev_info info;
+    memset(&info, 0, sizeof(info));
+    if (rte_eth_dev_info_get(port_id, &info) < 0 || NULL == info.dev_flags)
+    {
+        return 0;
+    }
+    return 0 != (*info.dev_flags & RTE_ETH_DEV_INTR_LSC);
 }
 
 /* The port's NUMA node, or SOCKET_ID_ANY when the PMD reports none. */
@@ -211,18 +232,41 @@ static uint32_t rusteron_dpdk_port_mbuf_room(void *mempool)
     return room > RTE_PKTMBUF_HEADROOM ? (uint32_t)(room - RTE_PKTMBUF_HEADROOM) : 0;
 }
 
+/* Each queue takes the PMD's default configuration, exactly what a NULL conf
+ * gives (ethdev copies dev_info's default and strips the port's offloads from
+ * it either way), with only the free threshold replaced when one is set. */
 static int rusteron_dpdk_port_rx_queue_setup(
-    uint16_t port_id, uint16_t queue_id, uint16_t nb_desc, void *mempool, int socket_id)
+    uint16_t port_id, uint16_t queue_id, uint16_t nb_desc, void *mempool, int socket_id, uint16_t free_thresh)
 {
+    struct rte_eth_dev_info info;
+    if (rte_eth_dev_info_get(port_id, &info) < 0)
+    {
+        return -1;
+    }
+    struct rte_eth_rxconf conf = info.default_rxconf;
+    if (0 != free_thresh)
+    {
+        conf.rx_free_thresh = free_thresh;
+    }
     return rte_eth_rx_queue_setup(
-        port_id, queue_id, nb_desc, (unsigned int)rusteron_dpdk_port_socket(socket_id), NULL, mempool);
+        port_id, queue_id, nb_desc, (unsigned int)rusteron_dpdk_port_socket(socket_id), &conf, mempool);
 }
 
 static int rusteron_dpdk_port_tx_queue_setup(
-    uint16_t port_id, uint16_t queue_id, uint16_t nb_desc, int socket_id)
+    uint16_t port_id, uint16_t queue_id, uint16_t nb_desc, int socket_id, uint16_t free_thresh)
 {
+    struct rte_eth_dev_info info;
+    if (rte_eth_dev_info_get(port_id, &info) < 0)
+    {
+        return -1;
+    }
+    struct rte_eth_txconf conf = info.default_txconf;
+    if (0 != free_thresh)
+    {
+        conf.tx_free_thresh = free_thresh;
+    }
     return rte_eth_tx_queue_setup(
-        port_id, queue_id, nb_desc, (unsigned int)rusteron_dpdk_port_socket(socket_id), NULL);
+        port_id, queue_id, nb_desc, (unsigned int)rusteron_dpdk_port_socket(socket_id), &conf);
 }
 
 static int rusteron_dpdk_port_dev_set_mtu(uint16_t port_id, uint16_t mtu)
@@ -463,6 +507,24 @@ static int rusteron_dpdk_port_xstats_get(uint16_t port_id, uint64_t *values, uin
     return 0;
 }
 
+/* The xstats `ids` asks for. With only driver ids asked, ethdev calls the
+ * PMD's xstats_get_by_id directly, which on ENA reads its software queue
+ * stats without an admin command. */
+static int rusteron_dpdk_port_xstats_get_by_id(uint16_t port_id, const uint64_t *ids, uint64_t *values, uint32_t count)
+{
+    if (0 == count)
+    {
+        return 0;
+    }
+    const int got = rte_eth_xstats_get_by_id(port_id, ids, values, count);
+    return got == (int)count ? 0 : -1;
+}
+
+static int rusteron_dpdk_port_tx_done_cleanup(uint16_t port_id, uint16_t queue_id, uint32_t budget)
+{
+    return rte_eth_tx_done_cleanup(port_id, queue_id, budget);
+}
+
 static uint32_t rusteron_dpdk_port_mempool_avail(void *mempool)
 {
     return rte_mempool_avail_count(mempool);
@@ -541,6 +603,36 @@ static void rusteron_dpdk_port_unwatch_reset(uint16_t port_id, uint64_t *resets)
     }
 }
 
+/* RTE_ETH_EVENT_INTR_LSC: the link went up or down. Raised on the EAL
+ * interrupt thread, so only an atomic count; housekeeping reports it. */
+static int rusteron_dpdk_port_on_lsc(uint16_t port_id, enum rte_eth_event_type event, void *cb_arg, void *ret_param)
+{
+    (void)port_id;
+    (void)event;
+    (void)ret_param;
+    __atomic_add_fetch((uint64_t *)cb_arg, 1, __ATOMIC_RELAXED);
+    return 0;
+}
+
+static int rusteron_dpdk_port_watch_lsc(uint16_t port_id, uint64_t *changes)
+{
+    return rte_eth_dev_callback_register(port_id, RTE_ETH_EVENT_INTR_LSC, rusteron_dpdk_port_on_lsc, changes);
+}
+
+/* As unwatch_reset: -EAGAIN while the callback runs, waited out. */
+static void rusteron_dpdk_port_unwatch_lsc(uint16_t port_id, uint64_t *changes)
+{
+    for (int tries = 0; tries < 1000; tries++)
+    {
+        if (-EAGAIN != rte_eth_dev_callback_unregister(
+                           port_id, RTE_ETH_EVENT_INTR_LSC, rusteron_dpdk_port_on_lsc, changes))
+        {
+            return;
+        }
+        rte_delay_ms(1);
+    }
+}
+
 rusteron_dpdk_port_ops_t *rusteron_dpdk_port_ops_real(void)
 {
     static rusteron_dpdk_port_ops_t ops = {
@@ -565,11 +657,16 @@ rusteron_dpdk_port_ops_t *rusteron_dpdk_port_ops_real(void)
         .xstats_count = rusteron_dpdk_port_xstats_count,
         .xstats_names = rusteron_dpdk_port_xstats_names,
         .xstats_get = rusteron_dpdk_port_xstats_get,
+        .xstats_get_by_id = rusteron_dpdk_port_xstats_get_by_id,
+        .tx_done_cleanup = rusteron_dpdk_port_tx_done_cleanup,
         .mempool_avail = rusteron_dpdk_port_mempool_avail,
         .basic_stats = rusteron_dpdk_port_basic_stats,
         .timer_service = rusteron_dpdk_port_timer_service,
         .watch_reset = rusteron_dpdk_port_watch_reset,
         .unwatch_reset = rusteron_dpdk_port_unwatch_reset,
+        .lsc_capable = rusteron_dpdk_port_lsc_capable,
+        .watch_lsc = rusteron_dpdk_port_watch_lsc,
+        .unwatch_lsc = rusteron_dpdk_port_unwatch_lsc,
     };
     return &ops;
 }

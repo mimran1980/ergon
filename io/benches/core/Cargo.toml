@@ -1,0 +1,32 @@
+[package]
+name = "ergon-latency-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+license.workspace = true
+repository.workspace = true
+description = "Shared measurement core of the transport latency suite: message, clock, pacing, histograms, loss, framing and result rows"
+
+# A member of the root workspace, though under io/benches (its own
+# workspace, which excludes this crate): the root's `io` member covers the
+# path md-dpdk/harness takes it by. io/benches takes it by path, as it takes
+# ergon-io, so every arm stamps, paces, records and reports with this code.
+
+[dependencies]
+hdrhistogram = { version = "7.5", default-features = false }
+# The counter every stamp reads (the raw TSC / CNTVCT, scaled with quanta's
+# own calibration). No `mock` feature, so a read has no thread-local check.
+quanta = { version = "0.13", default-features = false }
+sha2 = "0.11"
+
+[build-dependencies]
+# Hashes the crate's sources into CORE_BUILD_HASH (build.rs).
+sha2 = "0.11"
+
+[lints]
+workspace = true
+
+[target.'cfg(unix)'.dev-dependencies]
+# getrusage in tests/prefault.rs.
+libc = "0.2"

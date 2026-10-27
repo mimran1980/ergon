@@ -41,6 +41,30 @@ The `unsafe fn *_unchecked` variants skip the extent proof entirely — only for
 the case where panic machinery is measurable and the caller has proven the
 layout independently.
 
+## Value validation (opt-in)
+
+The tiers above prove bounds, not values. A frame from an older or foreign
+producer can be in bounds and still carry a value the schema does not allow.
+Generate with `GenerationConfig::with_validate(true)` to get `validate()` on
+every message decoder, group entry decoder and `AnyMessage`. Call it after
+`try_decode`, which still checks bounds only:
+`NewOrderDecoder::try_decode(buf, 0)?.validate()?` returns the first
+`sbe_rt::ValidateError`.
+
+| Wire value | `ValidateError` |
+|---|---|
+| integer or `char` scalar, or integer array element, outside a declared `minValue` / `maxValue` | `ValueOutOfRange` |
+| enum discriminant that is neither a `validValue` nor the enum's null | `UnknownEnum` |
+| set bit that no `choice` declares | `UnknownSetBits` |
+| `AnyMessage::Unknown` | `UnknownTemplate` |
+| malformed group or var-data tail | `Decode` |
+
+`validate()` reads every field and every group entry, so keep it off the hot
+path (archive replay, ingest from another team's producer). It does not
+allocate. Not checked: bounds the schema does not declare, floats, fixed
+`char` arrays (NUL padding is valid SBE) and var-data contents. An optional
+field's null value passes. `DecodeError` is unchanged.
+
 ## Encoder entry points
 
 | Entry | Return | Behaviour |

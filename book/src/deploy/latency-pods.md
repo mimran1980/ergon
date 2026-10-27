@@ -12,16 +12,20 @@ built in the shared-cpus plugin and off by default
 ([evidence: mixed](hft.md#sched_fifo)).
 
 Status: the grants ship in the public image
-`ghcr.io/mimran1980/ergon-shared-cpus:0.1.1`. Install it with the chart
-`oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.1`
-([Shared CPUs](shared-cpus.md#use-the-public-chart)). This page's admission
-YAML and node units are not an image. Chart 0.1.1 writes `seccomp.ioUring`
-and `ptp` as `"off"`. Chart 0.1.0 does not write those keys.
-`k8s/nri-shared-cpus/examples/try` installs that chart and shows two things
-on kind: the shared-CPU grant, and this page's admission policy denying an
-exec probe. It does not exercise hugepages, the cpuset partition, io_uring
-seccomp, or the PHC. The five-grant kind e2e (`test/e2e.sh`) builds the
-plugin from source. Not verified on EKS. No latency figure is measured.
+`ghcr.io/mimran1980/ergon-shared-cpus:0.1.2`. Install it with the chart
+`oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.2`
+([Shared CPUs](shared-cpus.md#use-the-public-chart)). On EKS AL2023 a pod
+labelled `ergon.io/latency: hot` needs `kubeletConfigDir`, which lets the
+plugin read nodeadm's kubelet drop-in; the EKS install line is on that page. This page's admission
+YAML and node units are not an image. The chart writes `seccomp.ioUring`
+and `ptp` as `"off"`.
+`k8s/nri-shared-cpus/examples/try` installs that chart and shows three
+things on kind: the shared-CPU grant on an unlabelled pod, the plugin
+refusing a hot pod (a kind node has no `isolcpus`), and this page's
+admission policy denying an exec probe. Not yet run on kind. It does not
+exercise hugepages, the cpuset partition, io_uring seccomp, or the PHC. The
+five-grant kind e2e (`test/e2e.sh`) builds the plugin from source. On EKS the plugin's install is verified
+([Shared CPUs](shared-cpus.md#limits-and-what-is-not-verified)); the grants' latency modes have not run there. No latency figure is measured.
 
 ## The five
 
@@ -53,7 +57,9 @@ with several nodes and no NIC node. A binding is never dropped in silence.
 The five grants on one pod. Everything stays inside the pod's own cpuset:
 exclusive CPUs from the kubelet's static CPU manager, shared CPUs from
 `ergon.io/shared-millicpus`. Helpers go on the shared CPUs; SQPOLL takes an
-exclusive CPU of the pod's own ([SMT sibling](hft.md#smt-sibling)).
+exclusive CPU of the pod's own ([SMT sibling](hft.md#smt-sibling)). On the
+shared CPU it measured p99 10 ms once that CPU was busy
+([SQPOLL placement](shared-cpus.md#sqpoll-placement)).
 
 ```mermaid
 flowchart TD
@@ -99,6 +105,14 @@ shared CPUs. Latency effect not measured here.
 | one process whose threads all belong on the exclusive CPUs | write the pid to `$ERGON_ISOLATED_CGROUP/cgroup.procs`, then pin each thread to `ERGON_ISOLATED_CPUS` |
 | hot threads in a multi-threaded process | write the pid to `$ERGON_ISOLATED_CGROUP/cgroup.procs` first, then move each helper thread back to the container cgroup through its `cgroup.threads`. The kernel confines the hot threads to the exclusive CPUs and the helpers to the shared ones (kernel lane: `test/cgroup/kernel_test.go`, `TestOneThreadCanLiveInThePartition`) |
 
+These writes need a writable cgroup mount. containerd mounts
+`/sys/fs/cgroup` read-only in an unprivileged container, so there the
+`cgroup.procs` write fails and the move has to come from the node. The EKS
+lab does that (`md-dpdk/benches/cloud/aws/eks-nri.sh`,
+`partition_move_script`): the pod publishes its pid and waits; a privileged
+node agent moves it only if exactly one task of that container's cgroup has
+that pid. The kind e2e lane also moves from the node.
+
 A program that does not make these moves itself, such as Aeron's C media
 driver, keeps the boot line's isolation and `sched_setaffinity`: see the
 [worked example](shared-cpus.md#worked-example-an-aeron-media-driver).
@@ -112,7 +126,7 @@ reads every write back; a write that does not stick fails the create.
 
 `RuntimeDefault` blocks io_uring (containerd issue 9320). Aeron's C media
 driver does **not** use io_uring; the grant is for applications that do,
-such as ergon-io's `uring-spin` and `uring-sqpoll` backends. It is a clone
+such as ergon-io's `uring-sqpoll` backend. It is a clone
 of the pod's own seccomp profile with the `io_uring_*` calls allowed —
 never `Unconfined`, which the plugin refuses.
 
@@ -179,6 +193,7 @@ The full check list is `k8s/nri-latency-pods/node-checks.md`. The short version:
 | `strict-cpu-reservation` | **off** (on, it empties the shared pool) |
 | kernel | >= 6.7, cgroup v2 (`cpuset.cpus.exclusive` is what the partition writes, and it is 6.7; a vendor backport of that file also works — the plugin reads the file, not the version). Also `nohz_full`, `rcu_nocbs`, `isolcpus=managed_irq` on the exclusive CPUs, never the shared ones. 6.2 is enough for the shared CPUs only |
 | `transparent_hugepage` | `never` |
+| fair server | `runtime` 0 on each isolated CPU at every boot, kernel 6.12+ ([shared CPUs](shared-cpus.md#quiet-isolated-cpus)). Not with the `SCHED_FIFO` opt-in: nothing real-time may run there |
 | `net.core.rmem_max` / `wmem_max` | at least Aeron's `AERON_SOCKET_SO_RCVBUF` / `SNDBUF` when raised ([hft](hft.md#settings)) |
 | `net.core.busy_poll` / `busy_read` | unset (global; not measured here). ergon-io busy-polls per socket |
 | containerd | >= 2.2, NRI on, the default validator on |

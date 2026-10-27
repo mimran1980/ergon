@@ -44,6 +44,12 @@ ergo_sbe::sbe_mod!(pub versioned_l3_v2 = "versioned_l3_v2_bench");
 ergo_sbe::sbe_mod!(pub versioned_l3 = "versioned_l3_bench");
 // Shared dense/sparse/empty L3 book plus one encoder per acting version.
 pub mod versioned_l3_fixture;
+// NewOrder with source traits (fixed() against encode_from), and the same
+// schema with Side / Decimal9 mapped to application types.
+ergo_sbe::sbe_mod!(pub new_order = "new_order_bench");
+ergo_sbe::sbe_mod!(pub new_order_mapped = "new_order_mapped_bench");
+// The shared NewOrder frame and the arms timed against it.
+pub mod new_order_fixture;
 // L2 orderbook with Decimal (rust_decimal conversion) for converter benchmarks.
 ergo_sbe::sbe_mod!(pub l2book = "l2book_bench");
 // Null/optional field benchmark schema.

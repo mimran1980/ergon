@@ -15,6 +15,11 @@
 //!   again once the counter has moved and then held for
 //!   [`checks::SETTLE_READS`] reads. Otherwise it is parked until something
 //!   is queued.
+//! - While it watches a polling thread's page faults (T19, opened by
+//!   `Driver::new` on the thread creating the driver) it reads that
+//!   thread's `stat` every [`FAULTS_EVERY`] from a file opened once
+//!   ([`ergon_tune::FaultWatch`]), and writes a line when the thread took a
+//!   fault since the last read.
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
@@ -22,7 +27,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SendError, Sender};
 use std::sync::{Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
-use ergon_tune::{Host, HostCheckPolicy};
+use ergon_tune::{FaultWatch, Host, HostCheckPolicy};
 
 use crate::checks::{self, DevChecks};
 use crate::clock::monotonic_ns;
@@ -35,6 +40,9 @@ static WRITER: OnceLock<Option<Sender<Msg>>> = OnceLock::new();
 
 /// How often watched devices' `carrier_changes` are read.
 const RECHECK: Duration = Duration::from_secs(1);
+
+/// How often watched polling threads' page faults are read (T19).
+pub const FAULTS_EVERY: Duration = Duration::from_secs(5);
 
 /// Work for the warning thread.
 pub type Job = Box<dyn FnOnce(&mut State) + Send>;
@@ -55,6 +63,8 @@ pub struct State {
     dev: DevChecks,
     seen: HashSet<String>,
     last_recheck: Instant,
+    faults: Vec<FaultWatch>,
+    last_faults: Instant,
     policy: HostCheckPolicy,
 }
 
@@ -74,6 +84,8 @@ impl State {
             dev: DevChecks::new(),
             seen: HashSet::new(),
             last_recheck: Instant::now(),
+            faults: Vec::new(),
+            last_faults: Instant::now(),
             policy: HostCheckPolicy::On,
         }
     }
@@ -81,7 +93,7 @@ impl State {
     /// Writes `line`.
     #[allow(clippy::unused_self)] // on the state, so only its holder writes
     pub fn print(&self, line: String) {
-        eprintln!("{line}");
+        write_line(&line);
         keep(line);
     }
 
@@ -106,6 +118,24 @@ impl State {
         }
     }
 
+    /// Watches a polling thread's page faults (T19) from now on, read every
+    /// [`FAULTS_EVERY`].
+    pub fn watch_faults(&mut self, watch: FaultWatch) {
+        self.faults.push(watch);
+    }
+
+    /// How long the thread may park before its next due read: `None` when
+    /// nothing is watched.
+    const fn wake_every(&self) -> Option<Duration> {
+        if self.dev.watching() {
+            Some(RECHECK)
+        } else if self.faults.is_empty() {
+            None
+        } else {
+            Some(FAULTS_EVERY)
+        }
+    }
+
     fn handle(&mut self, m: Msg) {
         match m {
             Msg::Line(l) => self.print(l),
@@ -118,11 +148,28 @@ impl State {
     /// finding written again (an ENA reset undoes the fixes), what could not
     /// be read only once.
     fn recheck_if_due(&mut self) {
-        if !self.dev.watching() || self.last_recheck.elapsed() < RECHECK {
-            return;
+        if self.dev.watching() && self.last_recheck.elapsed() >= RECHECK {
+            self.last_recheck = Instant::now();
+            self.recheck_now();
         }
-        self.last_recheck = Instant::now();
-        self.recheck_now();
+        if !self.faults.is_empty() && self.last_faults.elapsed() >= FAULTS_EVERY {
+            self.last_faults = Instant::now();
+            self.check_faults_now();
+        }
+    }
+
+    /// [`FaultWatch::check`] of every watched thread now: a line for each
+    /// that took a fault since the last read, one for a read that fails
+    /// (under `ERGON_HOST_CHECKS`: `off` drops the warning lines).
+    pub(crate) fn check_faults_now(&mut self) {
+        let found: Vec<_> = self
+            .faults
+            .iter_mut()
+            .filter_map(FaultWatch::check)
+            .collect();
+        for l in self.policy.lines("ergon-io", &found) {
+            self.print(l);
+        }
     }
 
     /// [`DevChecks::recheck`] now, its findings written (under
@@ -268,8 +315,8 @@ fn start_with(masks: &[Vec<usize>], spawn: &mut Spawn<'_>) -> Option<(Sender<Msg
 fn serve(rx: &Receiver<Msg>) {
     let mut st = State::new();
     loop {
-        let msg = if st.dev.watching() {
-            match rx.recv_timeout(RECHECK) {
+        let msg = if let Some(every) = st.wake_every() {
+            match rx.recv_timeout(every) {
                 Ok(m) => Some(m),
                 Err(RecvTimeoutError::Timeout) => None,
                 Err(RecvTimeoutError::Disconnected) => return,
@@ -320,8 +367,23 @@ fn deliver(writer: Option<&Sender<Msg>>, m: Msg) {
                 .to_owned()
         }
     };
-    eprintln!("{line}");
+    write_line(&line);
     keep(line);
+}
+
+/// Writes `line` and its newline to stderr in one `write(2)`.
+///
+/// `eprintln!` writes the text, then the newline, in two: where stdout and
+/// stderr share a file (a runner's `>out 2>&1`), another thread's line could
+/// land between them, and a `ready` the runner waits for read
+/// `...is 2.ready`. One `eprint!` of one string is one write (still
+/// captured under `cargo test`); to a regular file, or a pipe up to
+/// `PIPE_BUF`, it lands whole.
+fn write_line(line: &str) {
+    let mut whole = String::with_capacity(line.len() + 1);
+    whole.push_str(line);
+    whole.push('\n');
+    eprint!("{whole}");
 }
 
 /// Queues `line` for the writer; written here only if the writer is not
@@ -398,6 +460,11 @@ fn keep(line: String) {
     }
 }
 
+/// Held by every unit test that reads the kept lines: they are one buffer
+/// for the process, and one test's `take_lines` would take another's.
+#[cfg(test)]
+pub static KEPT_LINES_TEST: Mutex<()> = Mutex::new(());
+
 /// Test lever: from now on, keep a copy of every line written.
 #[doc(hidden)]
 pub fn keep_lines() {
@@ -427,6 +494,8 @@ mod tests {
     use std::time::Duration;
 
     use super::{Msg, deliver, start_with, writer_masks};
+    #[cfg(target_os = "linux")]
+    use super::{State, keep_lines, take_lines};
 
     type R = Result<(), Box<dyn std::error::Error>>;
 
@@ -511,5 +580,90 @@ mod tests {
             Msg::Run(Box::new(move |_| r.store(true, Ordering::Relaxed))),
         );
         assert!(!ran.load(Ordering::Relaxed));
+    }
+
+    /// T19: a polling thread that takes page faults while watched gets a
+    /// line from the warning thread's next read, naming the role and the
+    /// counts.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_watched_thread_that_faults_gets_a_t19_line() -> R {
+        let host = ergon_tune::Host::system();
+        let watch = ergon_tune::FaultWatch::open(
+            &host,
+            ergon_tune::Thread::Current,
+            ergon_tune::Role::Loop,
+        )?;
+        let mut st = State::at(host);
+        st.watch_faults(watch);
+        let _kept = super::KEPT_LINES_TEST
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        keep_lines();
+        let _ = take_lines();
+        // What an earlier test in this process may leave behind: an 8 MiB
+        // buffer freed (glibc raises its mmap threshold past 4 MiB) and a
+        // 4 MiB one touched and freed on the heap. A heap allocation of 4 MiB
+        // then reuses those pages and faults on none of them.
+        drop(std::hint::black_box(vec![1u8; 8 << 20]));
+        drop(std::hint::black_box(vec![1u8; 4 << 20]));
+        st.check_faults_now();
+        let _ = take_lines();
+        // So the pages come from the kernel, not the allocator: 4 MiB mapped
+        // here, small pages only (a huge page would be one fault), each
+        // touched once: one minor fault per page on this thread.
+        let len: usize = 4 << 20;
+        // SAFETY: a new private anonymous mapping, no address hint.
+        #[allow(unsafe_code)]
+        let p = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                len,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+                -1,
+                0,
+            )
+        };
+        if p == libc::MAP_FAILED {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        // SAFETY: `p` is the `len`-byte mapping made above.
+        #[allow(unsafe_code)]
+        unsafe {
+            libc::madvise(p, len, libc::MADV_NOHUGEPAGE);
+        }
+        for off in (0..len).step_by(4096) {
+            // SAFETY: `off` is inside the writable mapping.
+            #[allow(unsafe_code)]
+            unsafe {
+                p.cast::<u8>().add(off).write_volatile(1);
+            }
+        }
+        st.check_faults_now();
+        // SAFETY: the mapping made above, no reference into it remains.
+        #[allow(unsafe_code)]
+        unsafe {
+            libc::munmap(p, len);
+        }
+        let lines: Vec<String> = take_lines()
+            .into_iter()
+            .filter(|l| l.contains("T19"))
+            .collect();
+        assert_eq!(lines.len(), 1, "one T19 line, got {lines:?}");
+        assert!(
+            lines[0].contains("loop") && lines[0].contains("minor"),
+            "{}",
+            lines[0]
+        );
+        // At least one fault per page touched, not an unrelated one.
+        let minor: u64 = lines[0]
+            .split(" took ")
+            .nth(1)
+            .and_then(|s| s.split(' ').next())
+            .ok_or("no count")?
+            .parse()?;
+        assert!(minor >= 1024, "{minor} minor faults for 1,024 fresh pages");
+        Ok(())
     }
 }

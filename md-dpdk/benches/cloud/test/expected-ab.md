@@ -33,3 +33,11 @@ Left out of the rates over several flows at once, their flows' measured windows 
 | 1 | a 1/0/0, b 2/0/0 | a 0/0/1, b 4/2/1 |
 | 2 | a 2/1/0, b 0/0/0 | a 1/0/0, b n/a |
 | 3 | n/a | n/a |
+
+### PMD burst timing during the idle round trip, per rep (RUSTERON_DPDK_GAP_ATTRIB=1: max ns / ≥1 µs / ≥5 µs)
+
+| rep | A | B |
+| --- | --- | --- |
+| 1 | a rx 6250/4/1, tx 1900/1/0; b n/a | n/a |
+| 2 | n/a | n/a |
+| 3 | n/a | n/a |

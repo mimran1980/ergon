@@ -5,7 +5,7 @@
 #![allow(missing_docs, unused)]
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
+use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
 use std::hint::black_box;
 
 const SCHEMA: &str = include_str!("../schemas/codec-matrix.xml");
@@ -13,11 +13,11 @@ const SCHEMA: &str = include_str!("../schemas/codec-matrix.xml");
 fn bench_schema_parse_and_codegen(c: &mut Criterion) {
     let mut group = c.benchmark_group("cold_path/schema");
     group.bench_function("parse", |b| {
-        b.iter(|| black_box(parse(black_box(SCHEMA)).unwrap()));
+        b.iter(|| black_box(parse(SchemaSource::xml(black_box(SCHEMA))).unwrap()));
     });
     group.bench_function("parse_and_codegen", |b| {
         b.iter(|| {
-            let schema = Schema::from_ir(parse(black_box(SCHEMA)).unwrap());
+            let schema = Schema::from_ir(parse(SchemaSource::xml(black_box(SCHEMA))).unwrap());
             black_box(
                 Generator::new(GenerationConfig::new("cold_path"))
                     .generate(&schema)
@@ -27,7 +27,7 @@ fn bench_schema_parse_and_codegen(c: &mut Criterion) {
     });
     group.finish();
 
-    let schema = Schema::from_ir(parse(SCHEMA).unwrap());
+    let schema = Schema::from_ir(parse(SchemaSource::xml(SCHEMA)).unwrap());
     let modules = Generator::new(GenerationConfig::new("cold_path"))
         .generate(&schema)
         .unwrap();

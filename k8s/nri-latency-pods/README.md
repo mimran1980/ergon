@@ -9,9 +9,10 @@ Latency-pod extensions for Kubernetes. One directory, three kinds of thing:
 | admission | things a policy should refuse or strip | `admission/` here (ValidatingAdmissionPolicy) |
 
 The grants are in the published `ergon-shared-cpus` image
-(`ghcr.io/mimran1980/ergon-shared-cpus:0.1.1`). This directory is not a
+(`ghcr.io/mimran1980/ergon-shared-cpus:0.1.2`). This directory is not a
 second image. Its admission YAML and node units stay in the repo. Experimental.
-EKS is not verified. Latency figures are not measured.
+On EKS the plugin's install is verified (`k8s/nri-shared-cpus/RELEASE.md`); the five
+grants' latency modes (M0-M6) have not yet run there.
 
 Kubernetes HFT tuning
 ([book](https://mimran1980.github.io/ergon/deploy/hft.html)) is the list of
@@ -19,11 +20,11 @@ node and pod settings. This directory is the admission half and the node
 units. The shared-CPU half is the public chart. Apply only
 `admission/priority-class.yaml` and
 `admission/validating-admission-policy.yaml`. The kind sample
-`k8s/nri-shared-cpus/examples/try` installs the chart, accepts one hot pod,
-and shows this policy denying an exec probe. It does not grant hugepages,
-an isolated cpuset partition, io_uring seccomp, or a PHC. Chart 0.1.1
-writes `seccomp`, `ptp` and `schedFifo` as `"off"`. Chart 0.1.0 does
-not write those keys.
+`k8s/nri-shared-cpus/examples/try` installs the chart, runs an unlabelled
+pod that gets the shared CPU, shows the plugin refusing a hot pod (a kind
+node has no `isolcpus`), and shows this policy denying an exec probe. It
+does not grant hugepages, an isolated cpuset partition, io_uring seccomp,
+or a PHC. Not yet run on kind. The chart writes `seccomp`, `ptp` and `schedFifo` as `"off"`.
 
 ## Why not AKS
 
@@ -32,7 +33,9 @@ NRI plugin cannot be installed) and no `reservedSystemCPUs` list. Everything
 here needs one of those. **The target is EKS on AL2023**: containerd 2.3.5
 with NRI on by default. The cloud lab
 (`md-dpdk/benches/cloud/aws/eks-nri.sh`) runs on EKS with SPOT `c8g.xlarge`
-nodes.
+nodes. If no enabled region has Spot capacity for that shape, it tries
+`c9g.xlarge` and then `c7g.xlarge` (also 4 vCPU and no SMT, so the same CPU
+pins) and only then on-demand, and the results name the type that ran.
 
 ## The five extensions
 
@@ -90,7 +93,10 @@ The child is threaded, so it can hold single threads. At start-up the app
 writes its pid to `$ERGON_ISOLATED_CGROUP/cgroup.procs`, moves each helper
 thread back through the container cgroup's `cgroup.threads`, then pins the
 hot threads to `$ERGON_ISOLATED_CPUS` (kernel lane:
-`../nri-shared-cpus/test/cgroup/kernel_test.go`). The partition file itself
+`../nri-shared-cpus/test/cgroup/kernel_test.go`). containerd mounts
+`/sys/fs/cgroup` read-only in an unprivileged container, so there the move
+has to come from the node, as the EKS lab's `partition_move_script` and the
+kind e2e lane do. The partition file itself
 is parent-owned and not delegatable, so the plugin writes it. Needs
 `cpuset.cpus.exclusive` (Linux 6.7 or a vendor backport); without it every
 `cpu-partition` opt-in is refused, naming the cause. Do **not** use
@@ -261,18 +267,33 @@ test/e2e.sh
 
    ```sh
    helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus \
-     --version 0.1.1 \
+     --version 0.1.2 \
      --namespace ergon-system --create-namespace \
      --set-string config.sharedCpus=0 \
-     --set 'config.namespaces={trading}'
+     --set 'config.namespaces={trading}' \
+     --set hostContract.kubeletConfig.enabled=true \
+     --set hostContract.kubeletConfig.path=/etc/kubernetes/kubelet/config.json \
+     --set hostContract.kubeletConfigDir.enabled=true \
+     --set hostContract.sys.enabled=true \
+     --set hostContract.proc.enabled=true
    ```
 
-   Image: `ghcr.io/mimran1980/ergon-shared-cpus:0.1.1`. The chart writes
+   nodeadm writes the
+   base `/etc/kubernetes/kubelet/config.json` and the `NodeConfig` kubelet
+   settings as the drop-in `config.json.d/40-nodeadm.conf`;
+   `kubeletConfigDir` mounts that directory and the hot-pod check merges
+   it as the kubelet does. Without `kubeletConfigDir` every hot pod is refused on AL2023 and unlabelled pods still get the
+   grants.
+
+   Image: `ghcr.io/mimran1980/ergon-shared-cpus:0.1.2` (the chart's
+   `appVersion`). The chart writes
    `seccomp.ioUring` and `ptp` as `"off"`. A node that grants those writes them
    into the ConfigMap; the keys are in `k8s/nri-shared-cpus/README.md`.
 3. `kubectl apply -f admission/priority-class.yaml -f admission/validating-admission-policy.yaml`
-4. Label the node `ergon.io/shared-cpus=true`, and give every latency pod the
-   label `ergon.io/latency: "hot"` (that is what the admission policy matches).
+4. Label the node `ergon.io/shared-cpus=true`. The label
+   `ergon.io/latency: "hot"` is what the admission policy and the plugin's
+   hot-pod check match; without `kubeletConfigDir` that check refuses the
+   pod on AL2023 (step 2).
 5. Read `node-checks.md` and run those checks on every node before a run.
 
 ## Security cost, plainly

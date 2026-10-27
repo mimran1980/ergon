@@ -1,4 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
+{{- if and .Values.hostContract.kubeletConfigDir.enabled (not .Values.hostContract.kubeletConfig.enabled) }}
+{{- fail "hostContract.kubeletConfigDir needs hostContract.kubeletConfig: the drop-ins merge over that file" }}
+{{- end }}
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -55,6 +58,10 @@ spec:
             {{- if .Values.hostContract.kubeletConfig.enabled }}
             - --kubelet-config
             - /host/kubelet-config
+            {{- end }}
+            {{- if .Values.hostContract.kubeletConfigDir.enabled }}
+            - --kubelet-config-dir
+            - /host/kubelet-config-dir
             {{- end }}
             {{- if .Values.hostContract.kubeletConfigZ.enabled }}
             - --kubelet-configz
@@ -115,6 +122,11 @@ spec:
             {{- if .Values.hostContract.kubeletConfig.enabled }}
             - name: host-kubelet-config
               mountPath: /host/kubelet-config
+              readOnly: true
+            {{- end }}
+            {{- if .Values.hostContract.kubeletConfigDir.enabled }}
+            - name: host-kubelet-config-dir
+              mountPath: /host/kubelet-config-dir
               readOnly: true
             {{- end }}
             {{- if .Values.hostContract.kubeletConfigZ.enabled }}
@@ -185,6 +197,14 @@ spec:
           hostPath:
             path: {{ .Values.hostContract.kubeletConfig.path }}
             type: File
+        {{- end }}
+        {{- if .Values.hostContract.kubeletConfigDir.enabled }}
+        # The kubelet's --config-dir. Directory, never DirectoryOrCreate: an
+        # empty created directory would hide the node's real drop-ins.
+        - name: host-kubelet-config-dir
+          hostPath:
+            path: {{ .Values.hostContract.kubeletConfigDir.path }}
+            type: Directory
         {{- end }}
         {{- if .Values.hostContract.kubeletConfigZ.enabled }}
         - name: host-kubelet-configz

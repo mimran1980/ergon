@@ -885,3 +885,717 @@ ExecStart=/usr/local/sbin/ergon-lab-phc
 WantedBy=multi-user.target
 UNIT
 }
+
+# ---- The transport suite (transport.sh; vm.sh transport-*, netem, sample) ----
+# Every function reads and writes under $LAB_SYS_ROOT and $LAB_PROC_ROOT, so
+# test/test-transport-runner.sh runs them against fake trees.
+
+# transport_cpu_map: "<housekeeping> <irq> <isolated,...>": the first thread
+# of each core in core order (an offline CPU, SMT off's twins, has no
+# topology and is no core): the first core housekeeping, the second every
+# data-NIC IRQ, the rest isolated. Standard_D16s_v6 with SMT off: 0 2
+# 4,6,8,10,12,14. 2 with fewer than six cores (an Aeron arm needs four
+# isolated ones: its sender, receiver and conductor, and a client thread).
+transport_cpu_map() {
+    local dir=$LAB_SYS_ROOT/devices/system/cpu cpu siblings cores=()
+    for cpu in $(printf '%s\n' "$dir"/cpu[0-9]* | sed 's/.*cpu//' | sort -n); do
+        [[ -r $dir/cpu$cpu/topology/thread_siblings_list ]] || continue
+        siblings=$(cat "$dir/cpu$cpu/topology/thread_siblings_list")
+        [[ ${siblings%%[,-]*} == "$cpu" ]] && cores+=("$cpu")
+    done
+    ((${#cores[@]} >= 6)) ||
+        { echo "transport: ${#cores[@]} cores: the map needs six (housekeeping, IRQ, an Aeron arm's four isolated)" >&2; return 2; }
+    local iso
+    iso=$(IFS=,; echo "${cores[*]:2}")
+    echo "${cores[0]} ${cores[1]} $iso"
+}
+
+# transport_layout <map>: vm.sh layout's "<housekeeping> <app> <sender>
+# <receiver> <app2>" for the media driver under the map: the sender, the
+# receiver and (CONDUCTOR=own, app2) the conductor on the first three
+# isolated CPUs, app the fourth. transport_clients <map> <setup>: the CPUs a
+# bench binary gets (--cpus): every isolated one, less the driver's three
+# under kernel and dpdk.
+transport_layout() {
+    local hk iso
+    read -r hk _ iso <<<"$1"
+    IFS=, read -ra iso <<<"$iso"
+    echo "$hk ${iso[3]} ${iso[0]} ${iso[1]} ${iso[2]}"
+}
+transport_clients() {
+    local iso
+    read -r _ _ iso <<<"$1"
+    case $2 in
+    kernel | dpdk) IFS=, read -ra iso <<<"$iso"; (IFS=,; echo "${iso[*]:3}") ;;
+    *) echo "$iso" ;;
+    esac
+}
+
+# transport_boot_args <map>: the isolated CPUs off the scheduler's balancing,
+# the tick, RCU callbacks and managed IRQs; every other IRQ's default the
+# housekeeping CPU (the data NICs' then go to the IRQ CPU: irqs.sh
+# irqs_pin_data)
+transport_boot_args() {
+    local hk iso
+    read -r hk _ iso <<<"$1"
+    echo "isolcpus=nohz,domain,managed_irq,$iso nohz_full=$iso rcu_nocbs=$iso irqaffinity=$hk"
+}
+
+# cpulist_expand <list>: a kernel CPU list (0-2,4) as "0 1 2 4"
+cpulist_expand() {
+    local part out=() c
+    for part in ${1//,/ }; do
+        [[ $part =~ ^([0-9]+)(-([0-9]+))?$ ]] || continue
+        for ((c = BASH_REMATCH[1]; c <= ${BASH_REMATCH[3]:-${BASH_REMATCH[1]}}; c++)); do out+=("$c"); done
+    done
+    echo "${out[*]}"
+}
+
+# transport_boot_check <map>: 0 when the running kernel isolated exactly the
+# map's CPUs with nohz_full (the boot line took), else 1 saying what it has
+transport_boot_check() {
+    local iso want got nohz
+    read -r _ _ iso <<<"$1"
+    want=$(cpulist_expand "$iso")
+    got=$(cpulist_expand "$(cat "$LAB_SYS_ROOT/devices/system/cpu/isolated" 2>/dev/null)")
+    nohz=$(cpulist_expand "$(cat "$LAB_SYS_ROOT/devices/system/cpu/nohz_full" 2>/dev/null)")
+    if [[ -n $want && $got == "$want" && $nohz == "$want" ]]; then
+        echo "boot: isolated and nohz_full $iso"
+        return 0
+    fi
+    echo "boot: the kernel isolated [$got] with nohz_full [$nohz], not the map's [$want]: the boot line did not take (vm.sh transport-isolate, then a reboot)" >&2
+    return 1
+}
+
+# transport_ports_check <base> <span> [<ephemeral lo> <hi>]: 0 when the
+# bench ports, base to base + span - 1, stay clear of the media driver's
+# wildcard ranges (20000-21999: vm.sh common_env) and of the kernel's
+# ephemeral range (given, else read from ip_local_port_range when there is
+# one), else 1 saying which they meet
+transport_ports_check() {
+    local base=$1 span=$2 lo=${3:-} hi=${4:-} last f=${LAB_PROC_ROOT:-/proc}/sys/net/ipv4/ip_local_port_range
+    last=$((base + span - 1))
+    if ((base <= 21999 && last >= 20000)); then
+        echo "ports $base-$last meet the media driver's wildcard ranges 20000-21999" >&2
+        return 1
+    fi
+    if [[ -z $lo && -r $f ]]; then read -r lo hi <"$f"; fi
+    if [[ -n $lo ]] && ((base <= hi && last >= lo)); then
+        echo "ports $base-$last meet the kernel's ephemeral range $lo-$hi" >&2
+        return 1
+    fi
+    echo "ports $base-$last clear of 20000-21999${lo:+ and the ephemeral range $lo-$hi}"
+}
+
+# transport_huge_pages <term length> <streams>: the 2 MiB pages a hugetlbfs
+# Aeron directory needs for one IPC arm, twice over. Each file is a whole
+# number of pages (AERON_FILE_PAGE_SIZE 2 MiB, vm.sh common_env): the CnC
+# (two 1 MiB buffers, 1 MiB of counter values, their 4 MiB of metadata, the
+# 1 MiB error log: 5 pages) and the loss report (1 page); a log is three
+# terms and its 4 KiB of metadata. A point's run holds each stream's ping
+# and echo publications, and the run before it may still be lingering its
+# own: 4 logs a stream.
+transport_huge_pages() {
+    local term=$1 streams=$2 page=2097152 log
+    log=$(((3 * term + 4096 + page - 1) / page))
+    echo $((2 * (6 + 4 * streams * log)))
+}
+
+# transport_huge_mount <mount point> <pages>: a hugetlbfs of <pages> 2 MiB
+# pages at <mount point> (mode 1777, as /dev/shm), every page reserved for
+# it at mount (min_size), so nothing else on the host can take them; then
+# verified (transport_huge_check). Refused (1, nothing mounted) when the
+# kernel has fewer 2 MiB pages free and unreserved; one already mounted is
+# kept only when it is right.
+transport_huge_mount() {
+    local mnt=$1 pages=$2 hp=$LAB_SYS_ROOT/kernel/mm/hugepages/hugepages-2048kB free resv bytes
+    bytes=$((pages * 2097152))
+    if mountpoint -q "$mnt"; then
+        transport_huge_check "$mnt" "$pages"
+        return
+    fi
+    free=$(cat "$hp/free_hugepages" 2>/dev/null) resv=$(cat "$hp/resv_hugepages" 2>/dev/null)
+    if ! [[ $free =~ ^[0-9]+$ && $resv =~ ^[0-9]+$ ]] || ((free - resv < pages)); then
+        echo "hugetlbfs $mnt: $pages pages of 2 MiB wanted, the kernel has $((${free:-0} - ${resv:-0})) free and unreserved" \
+            "(vm.nr_hugepages $(cat "$hp/nr_hugepages" 2>/dev/null || echo unread)): not mounted" >&2
+        return 1
+    fi
+    sudo mkdir -p "$mnt" || return 1
+    sudo mount -t hugetlbfs -o "mode=1777,pagesize=2M,size=$bytes,min_size=$bytes" none "$mnt" ||
+        { echo "hugetlbfs $mnt: mount failed" >&2; return 1; }
+    transport_huge_check "$mnt" "$pages"
+}
+
+# transport_huge_check <mount point> <pages>: 0, saying so, when
+# <mount point> is a mount point that /proc/mounts lists as hugetlbfs with
+# pagesize=2M, size and min_size <pages> of them; else 1 saying what it is
+transport_huge_check() {
+    local mnt=$1 pages=$2 bytes fs opts
+    bytes=$((pages * 2097152))
+    mountpoint -q "$mnt" || { echo "hugetlbfs $mnt: not a mount point" >&2; return 1; }
+    read -r fs opts < <(awk -v m="$mnt" '$2 == m {fs = $3; o = $4} END {print fs, o}' "${LAB_PROC_ROOT:-/proc}/mounts")
+    if [[ $fs == hugetlbfs && ,$opts, == *,pagesize=2M,* && ,$opts, == *,size=$bytes,* && ,$opts, == *,min_size=$bytes,* ]]; then
+        echo "hugetlbfs $mnt: pagesize 2M, size $bytes, min_size $bytes ($pages pages of 2 MiB, reserved)"
+        return 0
+    fi
+    # (the filesystem named only when it is not hugetlbfs)
+    [[ $fs == hugetlbfs ]] || opts="$fs $opts"
+    echo "hugetlbfs $mnt: $opts, not hugetlbfs with pagesize=2M, size=$bytes and min_size=$bytes" >&2
+    return 1
+}
+
+# transport_smt_off: SMT off (smt/control) and verified: control off (or
+# forceoff) and smt/active 0; nothing to do where the CPU has none. 1 when
+# the kernel kept it on.
+transport_smt_off() {
+    local d=$LAB_SYS_ROOT/devices/system/cpu/smt c a
+    c=$(cat "$d/control" 2>/dev/null) || { echo "smt: no $d/control: SMT state unknown" >&2; return 1; }
+    case $c in
+    notsupported | notimplemented) echo "smt: $c (no SMT to turn off)"; return 0 ;;
+    forceoff) ;;
+    *) echo off | sudo tee "$d/control" >/dev/null 2>&1 ;;
+    esac
+    c=$(cat "$d/control" 2>/dev/null) a=$(cat "$d/active" 2>/dev/null)
+    if [[ ($c == off || $c == forceoff) && $a == 0 ]]; then
+        echo "smt: control $c active $a online $(cat "$LAB_SYS_ROOT/devices/system/cpu/online" 2>/dev/null)"
+        return 0
+    fi
+    echo "smt: control [$c] active [$a] after writing off: SMT still on" >&2
+    return 1
+}
+
+# transport_quiet_settings <housekeeping cpulist> <isolated cpulist>: the
+# lab's quiet node settings (k8s/nri-shared-cpus/lab/lib.sh
+# lab_quiet_settings: one list for both labs), "path|value|why" a line
+transport_quiet_settings() {
+    (
+        # shellcheck source=../../../k8s/nri-shared-cpus/lab/lib.sh
+        . "$(dirname "${BASH_SOURCE[0]}")/../../../k8s/nri-shared-cpus/lab/lib.sh"
+        lab_quiet_settings "$1" "$2"
+    )
+}
+
+# cpumask_norm <hex mask>: the mask without commas, leading zeros or case,
+# so 00000000,00000003 and 3 compare equal
+cpumask_norm() {
+    local m
+    m=$(printf '%s' "${1//,/}" | tr 'A-F' 'a-f')
+    while [[ $m == 0?* ]]; do m=${m#0}; done
+    echo "${m:-0}"
+}
+
+# cpulist_norm <cpu list>: its CPUs one per comma, ranges expanded, sorted,
+# so 0-1,4 and 0,1,4 compare equal
+cpulist_norm() {
+    local part a b out=()
+    local IFS=,
+    for part in $1; do
+        if [[ $part == *-* ]]; then
+            a=${part%-*} b=${part#*-}
+            while ((a <= b)); do out+=("$a"); a=$((a + 1)); done
+        elif [[ -n $part ]]; then
+            out+=("$part")
+        fi
+    done
+    printf '%s\n' "${out[@]}" | sort -n | paste -sd, -
+}
+
+# transport_quiet_apply <housekeeping cpulist> <isolated cpulist>: each one
+# this kernel has written and read back, "quiet <path>: <before> -> <after>";
+# one it lacks "quiet skip: <path> (not on this kernel)"; 1 when a write was
+# refused or does not read back
+transport_quiet_apply() {
+    local path value why f before after rc=0
+    while IFS='|' read -r path value why; do
+        case $path in
+        /proc/*) f=${LAB_PROC_ROOT:-/proc}/${path#/proc/} ;;
+        /sys/*) f=$LAB_SYS_ROOT/${path#/sys/} ;;
+        *) continue ;;
+        esac
+        if ! sudo test -e "$f"; then
+            echo "quiet skip: $path (not on this kernel)"
+            continue
+        fi
+        before=$(sudo cat "$f" 2>/dev/null)
+        echo "$value" | sudo tee "$f" >/dev/null 2>&1 || true
+        after=$(sudo cat "$f" 2>/dev/null)
+        # THP reads back as its choices, the one in force bracketed; a sysfs
+        # cpumask zero-padded and comma-grouped (03 for 3); a proc cpu list as
+        # ranges (0-1 for 0,1)
+        if [[ $after == "$value" || $after == *"[$value]"* ]] ||
+            [[ $path == /sys/*/cpumask && $(cpumask_norm "$after") == "$(cpumask_norm "$value")" ]] ||
+            [[ $path == /proc/*_cpumask && $(cpulist_norm "$after") == "$(cpulist_norm "$value")" ]]; then
+            echo "quiet $path: $before -> $after"
+        else
+            echo "quiet REFUSED $path: stays [$after], wanted $value ($why)" >&2
+            rc=1
+        fi
+    done < <(transport_quiet_settings "$1" "$2")
+    return $rc
+}
+
+# transport_overrides: TR_OVERRIDES ("TR_<NAME>=<value> ..."), the runner's
+# for one arm's host set-up (transport.sh tr_host_overrides: a tuning
+# variant's congestion control, the kernel path's busy poll), over the
+# settings sourced; 2 for one not of that form
+transport_overrides() {
+    local kv
+    for kv in ${TR_OVERRIDES:-}; do
+        [[ $kv =~ ^TR_[A-Z0-9_]+=[A-Za-z0-9._-]+$ ]] || { echo "TR_OVERRIDES: $kv is not TR_<NAME>=<value>" >&2; return 2; }
+        printf -v "${kv%%=*}" '%s' "${kv#*=}"
+    done
+}
+
+# transport_cc_load: the congestion control TR_TCP_CONGESTION names loaded
+# where it is a module (tcp_bbr), so the sysctl takes it; never fatal
+transport_cc_load() {
+    [[ $TR_TCP_CONGESTION == cubic || $TR_TCP_CONGESTION == reno ]] || sudo modprobe "tcp_$TR_TCP_CONGESTION" 2>/dev/null || true
+}
+
+# transport_sysctls: "<proc/sys path> <value> <required|optional>" a line,
+# from transport-settings.env (TR_*): every socket arm's TCP and busy-poll
+# settings; the optional ones are the kernel's from 6.15 (absent before)
+transport_sysctls() {
+    cat <<EOT
+net/ipv4/tcp_congestion_control $TR_TCP_CONGESTION required
+net/ipv4/tcp_sack $TR_TCP_SACK required
+net/ipv4/tcp_timestamps $TR_TCP_TIMESTAMPS required
+net/ipv4/tcp_slow_start_after_idle $TR_TCP_SLOW_START_AFTER_IDLE required
+net/ipv4/tcp_rmem $TR_TCP_RMEM required
+net/ipv4/tcp_wmem $TR_TCP_WMEM required
+net/core/rmem_max $TR_CORE_RMEM_MAX required
+net/core/wmem_max $TR_CORE_WMEM_MAX required
+net/core/busy_read $TR_BUSY_READ required
+net/core/busy_poll $TR_BUSY_POLL required
+net/ipv4/tcp_rto_min_us $TR_TCP_RTO_MIN_US optional
+net/ipv4/tcp_delack_max_us $TR_TCP_DELACK_MAX_US optional
+EOT
+}
+
+# transport_sysctls_apply [check]: each written (check: only read) and read
+# back, "sysctl <path> <value>", or "sysctl <path> absent (optional: ...)";
+# 1 when a required one is absent or any reads back otherwise
+transport_sysctls_apply() {
+    local path words value need f got rc=0
+    while read -r path words; do
+        need=${words##* } value=${words% *}
+        f=${LAB_PROC_ROOT:-/proc}/sys/$path
+        if [[ ! -e $f ]]; then
+            if [[ $need == optional ]]; then echo "sysctl $path absent (optional: kernel before 6.15)"; continue; fi
+            echo "sysctl MISSING $path (wanted $value)" >&2
+            rc=1
+            continue
+        fi
+        [[ ${1:-} == check ]] || echo "$value" | sudo tee "$f" >/dev/null 2>&1 || true
+        got=$(tr -s ' \t' '  ' <"$f" 2>/dev/null)
+        if [[ $got == "$value" ]]; then
+            echo "sysctl $path $got"
+        else
+            echo "sysctl WRONG $path: [$got], wanted [$value]" >&2
+            rc=1
+        fi
+    done < <(transport_sysctls)
+    return $rc
+}
+
+# transport_settings_read: each transport_sysctls knob as this host has it
+# now, "<knob>=<value>" a line, the knob dotted (net.ipv4.tcp_sack), a value
+# of several words single-spaced, and "absent" for one this kernel lacks:
+# what fairness.py checks every point against (vm.sh settings)
+transport_settings_read() {
+    local path words f
+    while read -r path words; do
+        f=${LAB_PROC_ROOT:-/proc}/sys/$path
+        if [[ -e $f ]]; then
+            echo "${path//\//.}=$(tr -s ' \t' '  ' <"$f" 2>/dev/null)"
+        else
+            echo "${path//\//.}=absent"
+        fi
+    done < <(transport_sysctls)
+}
+
+# transport_nstat: the kernel's protocol counters as nstat reads them
+# (/proc/net/snmp and /proc/net/netstat: a header line of names, then a line
+# of values, per protocol), for their growth over a point (transport_collect.py)
+transport_nstat() {
+    cat "${LAB_PROC_ROOT:-/proc}/net/snmp" "${LAB_PROC_ROOT:-/proc}/net/netstat" 2>/dev/null
+}
+
+# transport_quickack_routes <subnet>: an `ip route change` argument list a
+# line for every route to <subnet> in every table (ip -4 route show table
+# all), each with quickack 1: no ACK on the data subnet delayed
+transport_quickack_routes() {
+    ip -4 route show table all 2>/dev/null | awk -v net="$1" '
+        $1 == net {
+            out = $1
+            for (i = 2; i <= NF; i++) {
+                if ($i ~ /^(dev|table|proto|scope|src|metric|via)$/) {out = out " " $i " " $(i + 1); i++}
+                else if ($i == "quickack") i++
+            }
+            print out " quickack 1"
+        }'
+}
+
+# transport_quickack_apply <subnet>: quickack 1 on every route to <subnet>.
+# Each is deleted (prefix, table and dev pick it) and appended with quickack
+# 1: `ip route change` picks by prefix and table alone, so with one route per
+# data NIC on the subnet (the sender and receiver ports) it would change the
+# first twice and leave the other without quickack. Run before the data path
+# carries traffic.
+transport_quickack_apply() {
+    local routes r
+    routes=$(transport_quickack_routes "$1")
+    [[ -n $routes ]] || return 0
+    while read -r r; do
+        # shellcheck disable=SC2086
+        [[ -n $r ]] && sudo ip route del ${r% quickack 1}
+    done <<<"$routes"
+    while read -r r; do
+        # shellcheck disable=SC2086
+        [[ -n $r ]] && sudo ip route append $r
+    done <<<"$routes"
+    return 0
+}
+
+# transport_quickack_check <subnet>: 0 when every route to it has quickack
+# 1, else 1 naming those without; 1 too when there is none
+transport_quickack_check() {
+    local lines
+    lines=$(ip -4 route show table all 2>/dev/null | awk -v net="$1" '$1 == net')
+    [[ -n $lines ]] || { echo "quickack: no route to $1" >&2; return 1; }
+    if grep -v 'quickack 1' <<<"$lines" >&2; then
+        echo "quickack: the routes above lack quickack 1" >&2
+        return 1
+    fi
+    echo "quickack: $(grep -c . <<<"$lines") route(s) to $1 with quickack 1"
+}
+
+# transport_ring <vf> <rx> <tx>: the NIC's rings at that size and read back
+# (ethtool -g's current settings); 1 when above its maximum or not taken
+transport_ring() {
+    local vf=$1 rx=$2 tx=$3 cur
+    sudo ethtool -G "$vf" rx "$rx" tx "$tx" >/dev/null 2>&1 || true
+    cur=$(ethtool -g "$vf" 2>/dev/null | awk '/^Current hardware settings/ {c = 1} c && /^RX:/ {r = $2} c && /^TX:/ {t = $2} END {print r, t}')
+    if [[ $cur == "$rx $tx" ]]; then echo "ring $vf rx $rx tx $tx"; return 0; fi
+    echo "ring $vf: [$cur] after asking rx $rx tx $tx (ethtool -g: above its maximum, or refused)" >&2
+    return 1
+}
+
+# transport_coalesce_off <vf>: interrupt coalescing off (adaptive off, 0 us)
+# and read back; a driver with none to set (ethtool -c not supported) said
+# so, not a failure; 1 when some is left on
+transport_coalesce_off() {
+    local vf=$1 cur
+    if ! cur=$(ethtool -c "$vf" 2>&1); then
+        if [[ $cur == *"not supported"* ]]; then echo "coalesce $vf: none (the driver has no interrupt moderation)"; return 0; fi
+        echo "coalesce $vf: ethtool -c failed: $cur" >&2
+        return 1
+    fi
+    sudo ethtool -C "$vf" adaptive-rx off adaptive-tx off rx-usecs 0 tx-usecs 0 >/dev/null 2>&1 || true
+    cur=$(ethtool -c "$vf" 2>/dev/null | awk '/^Adaptive RX:/ {ar = $3; at = $5} /^rx-usecs:/ {r = $2} /^tx-usecs:/ {t = $2} END {print ar, at, r, t}')
+    if [[ $cur =~ ^(off|n/a)\ (off|n/a)\ (0|n/a)\ (0|n/a)$ ]]; then echo "coalesce $vf off ($cur)"; return 0; fi
+    echo "coalesce $vf: [$cur] (adaptive rx, tx, rx-usecs, tx-usecs) after asking off and 0" >&2
+    return 1
+}
+
+# netem_set <loss %> <iface>...: netem on each one's root (its egress),
+# dropping that share of packets (0: a netem qdisc that drops nothing);
+# netem_clear <iface>...: each root back to the default qdisc
+netem_set() {
+    local p=$1 i
+    shift
+    for i in "$@"; do sudo tc qdisc replace dev "$i" root netem limit 100000 loss "$p%" || return 1; done
+}
+netem_clear() {
+    local i
+    for i in "$@"; do
+        if tc qdisc show dev "$i" 2>/dev/null | grep -q '^qdisc netem .* root'; then sudo tc qdisc del dev "$i" root || return 1; fi
+    done
+}
+
+# netem_check <loss %|none> <iface>...: 0 when each one's root qdisc is netem
+# at that loss (none: no netem on it), else 1 saying which
+netem_check() {
+    local want=$1 i line got rc=0
+    shift
+    for i in "$@"; do
+        line=$(tc qdisc show dev "$i" 2>/dev/null | grep '^qdisc netem .* root' || true)
+        if [[ $want == none ]]; then
+            [[ -z $line ]] || { echo "netem: $i still has [$line]" >&2; rc=1; }
+            continue
+        fi
+        [[ -n $line ]] || { echo "netem: $i has no netem root qdisc (wanted loss $want%)" >&2; rc=1; continue; }
+        got=$(sed -n 's/.* loss \([0-9.]*\)%.*/\1/p' <<<"$line")
+        awk -v a="${got:-0}" -v b="$want" 'BEGIN {d = a - b; exit !(d < 1e-9 && d > -1e-9)}' ||
+            { echo "netem: $i loss [${got:-0}]%, wanted $want% ($line)" >&2; rc=1; }
+    done
+    ((rc)) || echo "netem: $* at $want"
+    return $rc
+}
+
+# netem_show <iface>...: "<iface> <root qdisc>" a line (netem, mq, fq_codel...):
+# a no-qdisc round's proof that none is netem
+netem_show() {
+    local i
+    for i in "$@"; do
+        tc qdisc show dev "$i" 2>/dev/null | awk -v i="$i" '/ root / {print i, $2; exit}'
+    done
+}
+
+# netem_stats <iface>...: "<iface> <sent packets> <dropped>" a line from each
+# root netem qdisc's tc -s counters (nothing for one without netem)
+netem_stats() {
+    local i
+    for i in "$@"; do
+        tc -s qdisc show dev "$i" 2>/dev/null | awk -v i="$i" '
+            /^qdisc / {on = ($2 == "netem" && / root /)}
+            on && /^ *Sent / {d = $7; sub(/,$/, "", d); print i, $4, d; on = 0}'
+    done
+}
+
+# transport_threads [<seconds>]: every thread's CPU use over the next
+# <seconds> (1), "<tid> <cpu> <% of a CPU> <comm>" a line, as `ps -eLo
+# tid,psr,pcpu,comm` prints but over that window: ps's pcpu is a thread's
+# average since it started (and the process's total on its main thread's
+# line), which no busy thread's placement can be judged by. From
+# /proc/<pid>/task/<tid>/stat (utime and stime, in clock ticks; the CPU it
+# last ran on).
+transport_threads() {
+    local s=${1:-1} hz a b
+    hz=$(getconf CLK_TCK 2>/dev/null || echo 100)
+    a=$(transport_task_times)
+    sleep "$s"
+    b=$(transport_task_times)
+    awk -v hz="$hz" -v s="$s" 'FNR == NR {t[$1] = $2; next} ($1 in t) {printf "%7d %3d %5.1f %s\n", $1, $3, ($2 - t[$1]) * 100 / hz / s, $4}' \
+        <(echo "$a") <(echo "$b")
+}
+
+# transport_task_times: "<tid> <utime+stime> <cpu> <comm>" for every thread
+# now (comm's spaces as _)
+transport_task_times() {
+    cat "${LAB_PROC_ROOT:-/proc}"/[0-9]*/task/[0-9]*/stat 2>/dev/null | awk '{
+        i = index($0, " ("); j = length($0); while (j > 0 && substr($0, j, 1) != ")") j--
+        comm = substr($0, i + 2, j - i - 2); gsub(/ /, "_", comm)
+        n = split(substr($0, j + 2), f, " ")
+        if (n >= 37) print $1, f[12] + f[13], f[37], comm
+    }'
+}
+
+# transport_placement <isolated cpulist>: transport_threads' lines (or
+# `ps -eLo tid,psr,pcpu,comm`'s, no header) on stdin; "ok <n> busy threads" when every busy thread (50 % of a
+# CPU or more) ran on an isolated CPU, no two on one, else "FAIL <what>", 1
+transport_placement() {
+    awk -v iso=",$1," '
+        $3 + 0 >= 50 {
+            n++
+            if (index(iso, "," $2 ",") == 0) bad = bad sprintf(" %s(%s) on CPU %s, not isolated;", $4, $1, $2)
+            if ($2 in on) bad = bad sprintf(" %s(%s) and %s on CPU %s;", $4, $1, on[$2], $2)
+            on[$2] = $4 "(" $1 ")"
+        }
+        END {
+            if (bad != "") {print "FAIL" bad; exit 1}
+            print "ok " n + 0 " busy threads"
+        }'
+}
+
+# ---- Per-point events (transport.sh around every point: vm.sh and
+# local-vm.sh events-start and events-stop; transport_events.py reads what
+# events_stop prints into <host>-events-<tag>.csv) ----
+# Everything is set up before the point's binaries start, so before their
+# warm-up, and read back after its window: enabling a tracepoint or a kprobe
+# patches kernel text (an IPI to every CPU), never inside a window. During
+# the window only the sampler (on the housekeeping CPU) and the gap spinners
+# (on hot CPUs the point leaves idle) run, and the trace records.
+
+# events_trace_start <instance> <cpus> <buffer KiB>: as root, a tracefs
+# instance of its own tracing <cpus> (a list: 4,6,8) on CLOCK_MONOTONIC:
+# context switches, IRQs and softirqs with their exits, IPIs (x86's
+# irq_vectors with their exits, arm64's ipi_entry and ipi_exit) and page
+# faults (x86's exceptions tracepoints, else a kprobe and a kretprobe on
+# handle_mm_fault). Prints "events: ..." lines: what is on, and what this
+# kernel lacks ("unavailable"), which the events file keeps as notes.
+events_trace_start() {
+    local name=$1 cpus=$2 kb=$3 t=$LAB_SYS_ROOT/kernel/tracing i e c mask=0 missing= pf=
+    i=$t/instances/$name
+    # tracefs where nothing mounted it yet (a container's /sys)
+    [[ -e $t/trace ]] || mount -t tracefs nodev "$t" 2>/dev/null || true
+    [[ -e $t/trace ]] || { echo "events: trace unavailable: no tracefs at $t"; return 0; }
+    [[ ! -d $i ]] || events_trace_stop "$name" >/dev/null 2>&1
+    mkdir "$i" 2>/dev/null || { echo "events: trace unavailable: cannot create the tracefs instance $i"; return 0; }
+    echo 0 >"$i/tracing_on"
+    for c in ${cpus//,/ }; do mask=$((mask | (1 << c))); done
+    printf '%x' "$mask" >"$i/tracing_cpumask"
+    echo "$kb" >"$i/buffer_size_kb"
+    if grep -qw mono "$i/trace_clock" 2>/dev/null; then
+        echo mono >"$i/trace_clock"
+    else
+        echo "events: trace unavailable: no mono trace clock in [$(cat "$i/trace_clock" 2>/dev/null)], so no wall clock for it"
+    fi
+    for e in sched/sched_switch irq/irq_handler_entry irq/irq_handler_exit irq/softirq_entry irq/softirq_exit; do
+        if [[ -e $i/events/$e/enable ]]; then echo 1 >"$i/events/$e/enable"; else missing+=" $e"; fi
+    done
+    if [[ -d $i/events/irq_vectors ]]; then
+        for e in "$i"/events/irq_vectors/*_entry "$i"/events/irq_vectors/*_exit; do
+            [[ -e $e/enable ]] && echo 1 >"$e/enable"
+        done
+    elif [[ -e $i/events/ipi/ipi_entry/enable ]]; then
+        echo 1 >"$i/events/ipi/ipi_entry/enable"
+        [[ -e $i/events/ipi/ipi_exit/enable ]] && echo 1 >"$i/events/ipi/ipi_exit/enable"
+    else
+        missing+=" irq_vectors/ipi_entry (IPIs)"
+    fi
+    if [[ -e $i/events/exceptions/page_fault_user/enable ]]; then
+        echo 1 >"$i/events/exceptions/page_fault_user/enable"
+        [[ -e $i/events/exceptions/page_fault_kernel/enable ]] && echo 1 >"$i/events/exceptions/page_fault_kernel/enable"
+        pf="the exceptions tracepoints"
+    elif grep -qw handle_mm_fault "$t/available_filter_functions" 2>/dev/null; then
+        e=ergon_pf_${name//[^A-Za-z0-9]/_}
+        { echo "p:$e handle_mm_fault" >>"$t/kprobe_events" && echo "r:${e}_ret handle_mm_fault" >>"$t/kprobe_events"; } 2>/dev/null
+        if [[ -e $i/events/kprobes/$e/enable && -e $i/events/kprobes/${e}_ret/enable ]]; then
+            echo 1 >"$i/events/kprobes/$e/enable" && echo 1 >"$i/events/kprobes/${e}_ret/enable" && pf="a kprobe on handle_mm_fault"
+        fi
+    fi
+    [[ -n $pf ]] || echo "events: page faults unavailable: no exceptions tracepoints and no kprobe on handle_mm_fault"
+    [[ -z $missing ]] || echo "events: trace events unavailable:$missing"
+    echo 1 >"$i/tracing_on"
+    echo "events: trace on cpus $cpus, $kb KiB a CPU, page faults by ${pf:-nothing}"
+}
+
+# events_trace_dump <instance> <cpus>: as root, the instance's events, then
+# "# overrun cpu<n> <events lost>" for each traced CPU whose buffer filled
+events_trace_dump() {
+    local i=$LAB_SYS_ROOT/kernel/tracing/instances/$1 c n
+    [[ -d $i ]] || return 0
+    echo 0 >"$i/tracing_on"
+    grep -v '^#' "$i/trace" 2>/dev/null
+    for c in ${2//,/ }; do
+        n=$(awk '/^overrun:/ {print $2}' "$i/per_cpu/cpu$c/stats" 2>/dev/null)
+        [[ -z $n || $n == 0 ]] || echo "# overrun cpu$c $n"
+    done
+    return 0
+}
+
+# events_trace_stop <instance>: as root, its events off, its kprobes
+# removed, the instance removed
+events_trace_stop() {
+    local name=$1 t=$LAB_SYS_ROOT/kernel/tracing e
+    [[ -d $t/instances/$name ]] || return 0
+    echo 0 >"$t/instances/$name/tracing_on"
+    echo 0 >"$t/instances/$name/events/enable" 2>/dev/null
+    e=ergon_pf_${name//[^A-Za-z0-9]/_}
+    # (kprobe_events lists them as p:kprobes/<name> ...)
+    if grep -qE "[:/]$e " "$t/kprobe_events" 2>/dev/null; then
+        { echo "-:${e}_ret" >>"$t/kprobe_events"; echo "-:$e" >>"$t/kprobe_events"; } 2>/dev/null
+    fi
+    rmdir "$t/instances/$name" 2>/dev/null || true
+}
+
+# events_tcp_counters: this host's TCP loss counters now, one
+# "<name>=<value>;..." line (/proc/net/snmp and netstat, as nstat names them
+# less the protocol): retransmitted segments, RTOs, tail-loss probes, DSACKs
+# received. Host-wide: every TCP connection's, the bench's among them.
+events_tcp_counters() {
+    awk '/^(Tcp|TcpExt):/ {
+            if (!($1 in hdr)) { hdr[$1] = 1; for (i = 2; i <= NF; i++) name[$1, i] = $i; next }
+            for (i = 2; i <= NF; i++) v[$1 name[$1, i]] = $i
+        }
+        END {
+            printf "RetransSegs=%d;TCPTimeouts=%d;TCPLossProbes=%d;TCPDSACKRecv=%d;TCPDSACKOfoRecv=%d\n",
+                v["Tcp:RetransSegs"], v["TcpExt:TCPTimeouts"], v["TcpExt:TCPLossProbes"], v["TcpExt:TCPDSACKRecv"],
+                v["TcpExt:TCPDSACKOfoRecv"]
+        }' "${LAB_PROC_ROOT:-/proc}/net/snmp" "${LAB_PROC_ROOT:-/proc}/net/netstat" 2>/dev/null
+}
+
+# events_sampler <stop file> <aeron dir|-> <counters binary|-> <iface>...:
+# one line a second until <stop file> exists: "t=<CLOCK_REALTIME ns>
+# tc=<iface>:<sent>:<dropped>,... tcp=<events_tcp_counters> aeron=<counters
+# loss>" (tc: each root netem qdisc's tc -s, - with none; aeron: the media
+# driver's loss counters read from its CnC file, - for an arm without one).
+# events_start runs it on the housekeeping CPU.
+events_sampler() {
+    local stop=$1 adir=$2 counters=$3 tc aer
+    shift 3
+    while [[ ! -e $stop ]]; do
+        tc=$(netem_stats "$@" | awk '{printf "%s%s:%s:%s", (NR > 1 ? "," : ""), $1, $2, $3}')
+        aer=-
+        [[ $adir == - || $counters == - ]] || aer=$(AERON_DIR=$adir "$counters" loss 2>/dev/null) || aer=-
+        echo "t=$(date +%s%N) tc=${tc:--} tcp=$(events_tcp_counters) aeron=${aer:--}"
+        sleep 1
+    done
+}
+
+# events_clock: "<CLOCK_MONOTONIC ns> <CLOCK_REALTIME ns>", read together:
+# the trace's clock (mono) onto the wall clock, at the start and at the end
+events_clock() {
+    python3 -c 'import time; m = time.clock_gettime_ns(time.CLOCK_MONOTONIC); r = time.time_ns(); print(m, r)'
+}
+
+# events_start <dir> <instance> <housekeeping cpu> <traced cpus> <spinner
+# cpus|-> <gapspin> <threshold us> <aeron dir|-> <counters|-> <buffer KiB>
+# <iface>...: a point's events begun in <dir> (made anew): the trace
+# (events_trace_start, as root), osnoise on the traced CPUs where the kernel
+# has it (knoise_start where the caller defines it; its line, or why not),
+# the clocks, a gap spinner on each spinner CPU and the sampler on the
+# housekeeping CPU. Their PIDs in <dir>; "events: ..." notes in <dir>/notes.
+events_start() {
+    local d=$1 name=$2 hk=$3 cpus=$4 spin=$5 gapspin=$6 us=$7 adir=$8 counters=$9 kb=${10} c
+    shift 10
+    rm -rf "$d" && mkdir -p "$d" || return 1
+    echo "$cpus" >"$d/cpus"
+    sudo env LAB_SYS_ROOT="$LAB_SYS_ROOT" bash -c "$(declare -f events_trace_start events_trace_stop); events_trace_start $name $cpus $kb" >"$d/notes" 2>&1
+    if declare -F knoise_start >/dev/null; then
+        sudo env LAB_SYS_ROOT="$LAB_SYS_ROOT" bash -c "$(declare -f knoise_start); knoise_start $cpus" 2>&1 | sed 's/^/events: /' >>"$d/notes"
+    else
+        echo "events: osnoise not tried: ${EVENTS_NO_OSNOISE:-this host runs no osnoise}" >>"$d/notes"
+    fi
+    events_clock >"$d/clock"
+    if [[ $spin != - ]]; then
+        for c in ${spin//,/ }; do
+            nohup "$gapspin" "$c" "$us" >"$d/gapspin-$c.log" 2>&1 </dev/null &
+            echo $! >>"$d/spin.pids"
+        done
+    else
+        echo "events: gap spinner unavailable: every hot CPU busy in this point" >>"$d/notes"
+    fi
+    nohup taskset -c "$hk" bash -c "$(declare -f events_sampler events_tcp_counters netem_stats); events_sampler $d/stop $adir $counters $*" \
+        >"$d/samples" 2>&1 </dev/null &
+    echo $! >"$d/sampler.pid"
+    echo "events: started in $d ($(grep -c . "$d/notes") notes)"
+}
+
+# events_stop <dir> <instance> <traced cpus>: the point's events, sections a
+# reader splits on (== clock, == notes, == gapspin <cpu>, == trace,
+# == osnoise, == samples), then everything events_start began stopped and
+# <dir> removed
+events_stop() {
+    local d=$1 name=$2 cpus=$3 f p
+    [[ -d $d ]] || { echo "== notes"; echo "events: not started (no $d)"; return 1; }
+    [[ -s $d/cpus ]] && cpus=$(cat "$d/cpus")
+    : >"$d/stop"
+    p=$(cat "$d/sampler.pid" 2>/dev/null)
+    for _ in $(seq 30); do [[ -n $p ]] && kill -0 "$p" 2>/dev/null || break; sleep 0.1; done
+    [[ -z $p ]] || kill "$p" 2>/dev/null || true
+    while read -r p; do kill "$p" 2>/dev/null || true; done < <(cat "$d/spin.pids" 2>/dev/null)
+    events_clock >>"$d/clock"
+    echo "== clock"
+    cat "$d/clock"
+    echo "== notes"
+    cat "$d/notes"
+    for f in "$d"/gapspin-*.log; do
+        [[ -e $f ]] || continue
+        f=${f##*/gapspin-}
+        echo "== gapspin ${f%.log}"
+        cat "$d/gapspin-$f"
+    done
+    echo "== trace"
+    sudo env LAB_SYS_ROOT="$LAB_SYS_ROOT" bash -c "$(declare -f events_trace_dump); events_trace_dump $name $cpus"
+    echo "== osnoise"
+    if declare -F knoise_stop >/dev/null; then
+        sudo grep -v '^#' "$LAB_SYS_ROOT/kernel/tracing/instances/knoise/trace" 2>/dev/null || true
+        sudo env LAB_SYS_ROOT="$LAB_SYS_ROOT" bash -c "$(declare -f knoise_stop); knoise_stop" >/dev/null 2>&1
+    fi
+    echo "== samples"
+    cat "$d/samples"
+    sudo env LAB_SYS_ROOT="$LAB_SYS_ROOT" bash -c "$(declare -f events_trace_stop); events_trace_stop $name" >/dev/null 2>&1
+    rm -rf "$d"
+}

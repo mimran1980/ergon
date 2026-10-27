@@ -62,6 +62,8 @@ rusteron_dpdk_clock_t rusteron_dpdk_clock = RUSTERON_DPDK_CLOCK_BOOT;
 static int rusteron_dpdk_clock_started_mode = RUSTERON_DPDK_CLOCK_MONOTONIC;
 static rusteron_dpdk_clock_report_t rusteron_dpdk_clock_found = { .why = RUSTERON_DPDK_CLOCK_WHY_NOT_STARTED };
 static uint64_t rusteron_dpdk_test_clock_ns_value = 0;
+/* Reads of the pinned clock since the pin (tests: what a path costs). */
+static uint64_t rusteron_dpdk_test_clock_read_count = 0;
 /* The rate a test has the clock start take as measured (0: measure). */
 static uint64_t rusteron_dpdk_test_measured_counter_hz = 0;
 /* How far each of this thread's reads moves a pinned clock on: the test's
@@ -71,10 +73,12 @@ static _Thread_local uint64_t rusteron_dpdk_test_clock_step_ns = 0;
  * descheduling is deterministic (0: it is not pinned). */
 static uint64_t rusteron_dpdk_test_thread_cpu_ns_value = 0;
 static int rusteron_dpdk_test_thread_cpu_pinned = 0;
-/* RUSTERON_DPDK_GAP_ATTRIB=1: read the thread CPU clock every receive poll and
- * split each poll gap into work and descheduling. Off by default, so the hot
- * path never reads it. */
-static int rusteron_dpdk_gap_attrib = 0;
+/* RUSTERON_DPDK_GAP_ATTRIB: RUSTERON_DPDK_GAP_ATTRIB_BURST times each PMD
+ * burst; RUSTERON_DPDK_GAP_ATTRIB_CPU reads the thread CPU clock every receive
+ * poll and splits each poll gap into work and descheduling. 1 sets both,
+ * `burst` the first. Off by default, so the hot path never reads either.
+ * Hidden and read inline (rusteron_dpdk_gap_attrib_on, _cpu_on). */
+int rusteron_dpdk_gap_attrib = 0;
 
 static uint64_t rusteron_dpdk_clock_read_ns(clockid_t id)
 {
@@ -223,6 +227,7 @@ uint64_t rusteron_dpdk_clock_ns_slow(void)
 {
     if (RUSTERON_DPDK_CLOCK_PINNED == rusteron_dpdk_clock.mode)
     {
+        __atomic_add_fetch(&rusteron_dpdk_test_clock_read_count, 1, __ATOMIC_RELAXED);
         const uint64_t now = rusteron_dpdk_test_clock_ns_value;
         if (0 != rusteron_dpdk_test_clock_step_ns)
         {
@@ -295,6 +300,19 @@ void rusteron_dpdk_test_set_clock_ns(uint64_t ns)
 void rusteron_dpdk_test_set_clock_step_ns(uint64_t ns)
 {
     rusteron_dpdk_test_clock_step_ns = ns;
+}
+
+void rusteron_dpdk_test_advance_clock_ns(uint64_t ns)
+{
+    if (RUSTERON_DPDK_CLOCK_PINNED == rusteron_dpdk_clock.mode)
+    {
+        rusteron_dpdk_test_clock_ns_value += ns;
+    }
+}
+
+uint64_t rusteron_dpdk_test_clock_reads(void)
+{
+    return __atomic_load_n(&rusteron_dpdk_test_clock_read_count, __ATOMIC_RELAXED);
 }
 
 uint64_t rusteron_dpdk_thread_cpu_ns(void)
@@ -393,6 +411,7 @@ static void rusteron_dpdk_test_clock_reset(void)
     rusteron_dpdk_clock_started_mode = RUSTERON_DPDK_CLOCK_MONOTONIC;
     rusteron_dpdk_clock_found = (rusteron_dpdk_clock_report_t){ .why = RUSTERON_DPDK_CLOCK_WHY_NOT_STARTED };
     rusteron_dpdk_test_clock_ns_value = 0;
+    rusteron_dpdk_test_clock_read_count = 0;
     rusteron_dpdk_test_measured_counter_hz = 0;
     rusteron_dpdk_test_clock_step_ns = 0;
     rusteron_dpdk_test_realtime_ns_value = 0;
@@ -411,6 +430,8 @@ void rusteron_dpdk_test_reset(void)
     rusteron_dpdk_test_thread_cpu_pinned = 0;
     rusteron_dpdk_test_thread_cpu_ns_value = 0;
     rusteron_dpdk_gap_attrib = 0;
+    rusteron_dpdk_events_test_reset();
+    rusteron_dpdk_reports_test_reset();
     rusteron_dpdk_housekeeping_enabled = 0;
     rusteron_dpdk_transport_test_reset();
     /* Clear the thread-local error state so last_error()/last_error_code()
@@ -457,6 +478,13 @@ static int rusteron_dpdk_runtime_eal_up(rusteron_dpdk_transport_t *native)
         return -1;
     }
 
+    /* RUSTERON_DPDK_EAL_IN_MEMORY and RUSTERON_DPDK_EAL_ARGS agree, or
+     * nothing starts. */
+    int in_memory = 0;
+    if (rusteron_dpdk_eal_in_memory(&in_memory) < 0)
+    {
+        return -1;
+    }
     if (RUSTERON_DPDK_EAL_SKIP == rusteron_dpdk_test_eal_mode)
     {
         native->eal_up = 1;
@@ -574,6 +602,151 @@ static int rusteron_dpdk_ena_llq_check(const rusteron_dpdk_transport_t *native, 
     return 0;
 }
 
+/* ENA Express (SRD) carries UDP only in IP packets of at most this many
+ * bytes (AWS: ENA Express's UDP mode needs an MTU of 8900 or less); the
+ * ena_srd_mode xstat's bit 1 says its UDP mode is on (0 off, 1 SRD for TCP
+ * only, 2 or 3 UDP too). A larger packet is not lost: measured on
+ * c6gn.4xlarge with kernel UDP (ENA driver 2.17.4g, 2026-10-25), UDP of
+ * 8,901 to 9,001 IP bytes arrived whole, counted in ena_srd_eligible_tx_pkts
+ * but not in ena_srd_tx_pkts: ENA sent it without SRD. */
+#define RUSTERON_DPDK_ENA_EXPRESS_UDP_MTU 8900
+#define RUSTERON_DPDK_ENA_SRD_MODE_UDP 0x2ULL
+
+/* Warn, once at start, when an ENA runs ENA Express's UDP over SRD and this
+ * transport's IP packets (l3_mtu) can exceed what SRD carries: those leave
+ * SRD for ENA's plain path (its bandwidth and tail-latency gains do not
+ * apply to them), while smaller frames of the same flow stay on SRD. Read
+ * from the PMD's ena_srd_mode xstat (on ENA an admin command); a port
+ * without it, or with an MTU within the limit, says nothing. Never refuses:
+ * nothing is lost. */
+static int rusteron_dpdk_ena_express_check(const rusteron_dpdk_transport_t *native, const rusteron_dpdk_port_t *p,
+                                           uint16_t l3_mtu)
+{
+    const rusteron_dpdk_port_ops_t *ops = native->ops;
+    if (l3_mtu <= RUSTERON_DPDK_ENA_EXPRESS_UDP_MTU || NULL == ops->xstats_count || NULL == ops->xstats_names ||
+        NULL == ops->xstats_get)
+    {
+        return 0;
+    }
+    const uint32_t n = ops->xstats_count(p->port_id);
+    if (0 == n || n > RUSTERON_DPDK_MAX_XSTATS)
+    {
+        return 0;
+    }
+    char *names = calloc(n, RUSTERON_DPDK_XSTAT_NAME_LEN);
+    if (NULL == names)
+    {
+        return 0;
+    }
+    uint32_t srd = UINT32_MAX;
+    if (0 == ops->xstats_names(p->port_id, names, n))
+    {
+        for (uint32_t i = 0; i < n && UINT32_MAX == srd; i++)
+        {
+            if (0 == strncmp(names + (size_t)i * RUSTERON_DPDK_XSTAT_NAME_LEN, "ena_srd_mode",
+                             RUSTERON_DPDK_XSTAT_NAME_LEN))
+            {
+                srd = i;
+            }
+        }
+    }
+    free(names);
+    uint64_t values[RUSTERON_DPDK_MAX_XSTATS];
+    if (UINT32_MAX == srd || 0 != ops->xstats_get(p->port_id, values, n) ||
+        0 == (values[srd] & RUSTERON_DPDK_ENA_SRD_MODE_UDP))
+    {
+        return 0;
+    }
+    fprintf(stderr,
+            "WARNING ergon-md-dpdk: %s (port %u) runs ENA Express with UDP over SRD (ena_srd_mode %llu), which "
+            "carries IP packets of at most %d bytes; max_aeron_mtu %zu makes packets of up to %u, and ENA sends "
+            "the larger ones without SRD. RUSTERON_DPDK_MAX_AERON_MTU of at most %d keeps every frame on SRD\n",
+            p->pci, (unsigned)p->port_id, (unsigned long long)values[srd], RUSTERON_DPDK_ENA_EXPRESS_UDP_MTU,
+            native->config.max_aeron_mtu, (unsigned)l3_mtu,
+            (RUSTERON_DPDK_ENA_EXPRESS_UDP_MTU - RUSTERON_DPDK_IP_UDP_OVERHEAD) / 32 * 32);
+    return 0;
+}
+
+/* Azure: a netvsc port moves data through its accelerated-networking VF only
+ * while one is attached; without it every packet takes the synthetic VMBus
+ * channel through the hypervisor (measured: millions of HYP interrupts a
+ * point, slower than kernel UDP), and nothing else fails. ethdev has no call
+ * that says whether a VF is attached; what shows it is the port's extended
+ * statistics: netvsc appends its VF's, each prefixed "vf_"
+ * (hn_vf_xstats_get_names, DPDK 23.11 to 25.11), and reports none without
+ * one, its own being "rx_q<n>_*" and "tx_q<n>_*". netvsc attaches a VF it
+ * cannot yet find a second later (hn_vf_add's retry alarm), so start waits up
+ * to this long after link up. */
+#define RUSTERON_DPDK_NETVSC_VF_WAIT_MS 3000
+#define RUSTERON_DPDK_NETVSC_VF_POLL_MS 100
+
+/* Whether the port reports any "vf_" extended statistic. */
+static int rusteron_dpdk_netvsc_vf_attached(const rusteron_dpdk_port_ops_t *ops, uint16_t port_id)
+{
+    if (NULL == ops->xstats_count || NULL == ops->xstats_names)
+    {
+        return 0;
+    }
+    const uint32_t n = ops->xstats_count(port_id);
+    if (0 == n)
+    {
+        return 0;
+    }
+    char *names = calloc(n, RUSTERON_DPDK_XSTAT_NAME_LEN);
+    if (NULL == names)
+    {
+        return 0;
+    }
+    int found = 0;
+    if (0 == ops->xstats_names(port_id, names, n))
+    {
+        for (uint32_t i = 0; i < n && !found; i++)
+        {
+            found = 0 == strncmp(names + (size_t)i * RUSTERON_DPDK_XSTAT_NAME_LEN, "vf_", 3);
+        }
+    }
+    free(names);
+    return found;
+}
+
+/* Fail start for a netvsc port with no VF attached (RUSTERON_DPDK_ERR_NO_ACCELERATED_VF),
+ * or, under RUSTERON_DPDK_ALLOW_SYNTHETIC=1, warn and go on. */
+static int rusteron_dpdk_netvsc_vf_check(const rusteron_dpdk_transport_t *native, const rusteron_dpdk_port_t *p)
+{
+    const struct timespec step = { 0, RUSTERON_DPDK_NETVSC_VF_POLL_MS * 1000000L };
+    for (uint32_t waited = 0;; waited += RUSTERON_DPDK_NETVSC_VF_POLL_MS)
+    {
+        if (rusteron_dpdk_netvsc_vf_attached(native->ops, p->port_id))
+        {
+            return 0;
+        }
+        if (waited >= RUSTERON_DPDK_NETVSC_VF_WAIT_MS)
+        {
+            break;
+        }
+        nanosleep(&step, NULL);
+    }
+    char message[1024];
+    snprintf(message, sizeof(message),
+             "net_netvsc port %u on %s (MAC %s) has no accelerated-networking VF attached (no vf_* extended "
+             "statistics %d ms after link up): it would run on the synthetic VMBus path, every packet through the "
+             "hypervisor, slower than kernel UDP. This set-up supports MANA VFs only; a Mellanox (mlx5) VF is not "
+             "supported. Use a VM size with MANA and accelerated networking on, with the MANA PCI function probed "
+             "by DPDK (mana_ib loaded, the VF's kernel interface down). RUSTERON_DPDK_ALLOW_SYNTHETIC=1 starts it "
+             "anyway, for diagnosis only",
+             (unsigned)p->port_id, p->pci, p->mac_text, RUSTERON_DPDK_NETVSC_VF_WAIT_MS);
+    if (!native->allow_synthetic)
+    {
+        rusteron_dpdk_set_error_code(message, RUSTERON_DPDK_ERR_NO_ACCELERATED_VF);
+        return -1;
+    }
+    fprintf(stderr,
+            "WARNING ergon-md-dpdk: %s. STARTING ANYWAY ON THE SYNTHETIC PATH (RUSTERON_DPDK_ALLOW_SYNTHETIC=1): "
+            "no measurement of this port is kernel bypass\n",
+            message);
+    return 0;
+}
+
 static int rusteron_dpdk_init_port(rusteron_dpdk_transport_t *native, rusteron_dpdk_port_t *p)
 {
     const rusteron_dpdk_port_ops_t *ops = native->ops;
@@ -620,7 +793,8 @@ static int rusteron_dpdk_init_port(rusteron_dpdk_transport_t *native, rusteron_d
     char driver[64] = "";
     uint16_t desc_lim[4] = { 0, 0, 0, 0 };
     if (ops->dev_info(p->port_id, p->pci, p->mac, driver, sizeof(driver),
-                      &p->csum_offload_ok, &p->ena_llq, &p->rx_timestamp_ok, &p->max_mtu, desc_lim) < 0)
+                      &p->csum_offload_ok, &p->ena_llq, &p->rx_timestamp_ok, &p->tx_fast_free_ok, &p->max_mtu,
+                      desc_lim) < 0)
     {
         snprintf(message, sizeof(message),
                  "cannot read capabilities of device %s (port %u)", p->pci, p->port_id);
@@ -746,7 +920,8 @@ static int rusteron_dpdk_init_port(rusteron_dpdk_transport_t *native, rusteron_d
         rusteron_dpdk_set_error(message);
         return -1;
     }
-    /* Queue sizes the NIC takes (an ENA at most 512 TX descriptors), checked
+    /* Queue sizes the NIC takes (an ENA at most 256 TX descriptors under
+     * large LLQ entries, the transport's default, 512 otherwise), checked
      * before anything is configured: DPDK refuses a queue outside them, and
      * the port it leaves half set up cannot be closed (see port_teardown). */
     for (int tx = 0; tx < 2; tx++)
@@ -763,6 +938,29 @@ static int rusteron_dpdk_init_port(rusteron_dpdk_transport_t *native, rusteron_d
             return -1;
         }
     }
+    /* A queue's free threshold must be below its ring, the receive ring as
+     * this port took it (a NIC's maximum may be below what the Rust check
+     * assumed). 0 keeps the PMD's default. */
+    if (0 != cfg->rx_free_thresh && cfg->rx_free_thresh >= p->rx_descriptors)
+    {
+        snprintf(message, sizeof(message),
+                 "rx_free_thresh (RUSTERON_DPDK_RX_FREE_THRESH) %u is not below %s's receive ring of %u "
+                 "(driver %s): set it lower, or unset it for the PMD's default",
+                 cfg->rx_free_thresh, p->pci, p->rx_descriptors, driver);
+        rusteron_dpdk_set_error(message);
+        return -1;
+    }
+    if (0 != cfg->tx_free_thresh && cfg->tx_free_thresh >= cfg->tx_descriptors)
+    {
+        snprintf(message, sizeof(message),
+                 "tx_free_thresh (RUSTERON_DPDK_TX_FREE_THRESH) %u is not below the transmit ring of %u: set it "
+                 "lower, or unset it for the PMD's default",
+                 cfg->tx_free_thresh, cfg->tx_descriptors);
+        rusteron_dpdk_set_error(message);
+        return -1;
+    }
+    p->rx_free_thresh = cfg->rx_free_thresh;
+    p->tx_free_thresh = cfg->tx_free_thresh;
     /* The pool holds both rings, four bursts and what two lcores' mempool
      * caches may keep (the port's agent, and the EAL main lcore, which starts
      * and stops the port), each up to DPDK's flush threshold of 1.5 times the
@@ -790,7 +988,30 @@ static int rusteron_dpdk_init_port(rusteron_dpdk_transport_t *native, rusteron_d
         rx_off |= RUSTERON_DPDK_RX_OFFLOAD_TIMESTAMP;
     }
     uint64_t tx_off = p->csum_offload_ok ? (RUSTERON_DPDK_TX_OFFLOAD_IPV4_CKSUM | RUSTERON_DPDK_TX_OFFLOAD_UDP_CKSUM) : 0;
-    if (ops->dev_configure(p->port_id, 1, 1, rx_off, tx_off) < 0)
+    /* Bulk frees of sent mbufs, where the NIC offers them: every frame this
+     * transport sends (data, ARP, ICMP) is one segment from this port's own
+     * pool, held by nothing else, which is what the PMD then assumes. */
+    p->tx_fast_free = RUSTERON_DPDK_FAST_FREE_OFF;
+    if (cfg->tx_fast_free)
+    {
+        if (p->tx_fast_free_ok)
+        {
+            tx_off |= RUSTERON_DPDK_TX_OFFLOAD_MBUF_FAST_FREE;
+            p->tx_fast_free = RUSTERON_DPDK_FAST_FREE_ON;
+        }
+        else
+        {
+            p->tx_fast_free = RUSTERON_DPDK_FAST_FREE_UNSUPPORTED;
+            fprintf(stderr,
+                    "WARNING ergon-md-dpdk: %s (driver %s) does not offer TX MBUF_FAST_FREE: "
+                    "RUSTERON_DPDK_TX_FAST_FREE left off on it\n",
+                    p->pci, driver);
+        }
+    }
+    /* Link-status-change interrupts where the NIC can raise them (a PMD
+     * refuses the configuration otherwise): counted, never acted on. */
+    p->lsc_on = NULL != ops->lsc_capable && NULL != ops->watch_lsc && ops->lsc_capable(p->port_id);
+    if (ops->dev_configure(p->port_id, 1, 1, rx_off, tx_off, p->lsc_on) < 0)
     {
         snprintf(message, sizeof(message), "failed to configure queues/offloads on %s", p->pci);
         rusteron_dpdk_set_error(message);
@@ -844,7 +1065,7 @@ static int rusteron_dpdk_init_port(rusteron_dpdk_transport_t *native, rusteron_d
         return -1;
     }
 
-    if (ops->rx_queue_setup(p->port_id, 0, p->rx_descriptors, p->mempool, p->socket_id) < 0)
+    if (ops->rx_queue_setup(p->port_id, 0, p->rx_descriptors, p->mempool, p->socket_id, p->rx_free_thresh) < 0)
     {
         snprintf(message, sizeof(message), "rx queue setup failed on %s", p->pci);
         rusteron_dpdk_set_error(message);
@@ -852,7 +1073,7 @@ static int rusteron_dpdk_init_port(rusteron_dpdk_transport_t *native, rusteron_d
     }
     p->rx_queue_id = 0;
 
-    if (ops->tx_queue_setup(p->port_id, 0, cfg->tx_descriptors, p->socket_id) < 0)
+    if (ops->tx_queue_setup(p->port_id, 0, cfg->tx_descriptors, p->socket_id, p->tx_free_thresh) < 0)
     {
         snprintf(message, sizeof(message), "tx queue setup failed on %s", p->pci);
         rusteron_dpdk_set_error(message);
@@ -883,6 +1104,17 @@ static int rusteron_dpdk_init_port(rusteron_dpdk_transport_t *native, rusteron_d
         }
         p->reset_watched = 1;
     }
+    if (p->lsc_on)
+    {
+        if (ops->watch_lsc(p->port_id, &p->nic_link_changes) < 0)
+        {
+            snprintf(message, sizeof(message), "cannot watch %s (port %u) for link-status changes", p->pci,
+                     p->port_id);
+            rusteron_dpdk_set_error(message);
+            return -1;
+        }
+        p->lsc_watched = 1;
+    }
 
     if (ops->dev_start(p->port_id) < 0)
     {
@@ -902,6 +1134,37 @@ static int rusteron_dpdk_init_port(rusteron_dpdk_transport_t *native, rusteron_d
     }
     p->link_up = 1;
 
+    if (ena && rusteron_dpdk_ena_express_check(native, p, l3_mtu) < 0)
+    {
+        return -1;
+    }
+    if (0 == strcmp(driver, "net_netvsc") && rusteron_dpdk_netvsc_vf_check(native, p) < 0)
+    {
+        return -1;
+    }
+
+    /* Idle TX cleanup: one call on the empty ring, before any agent owns the
+     * queue, finds whether the PMD has the op. */
+    p->tx_idle_clean = 0;
+    p->tx_unreaped = 0;
+    p->last_tx_ns = 0;
+    p->tx_idle_clean_asked = native->tx_idle_clean;
+    if (0 != native->tx_idle_clean)
+    {
+        const int rc = NULL != ops->tx_done_cleanup ? ops->tx_done_cleanup(p->port_id, p->tx_queue_id, native->tx_idle_clean)
+                                                    : -ENOTSUP;
+        if (-ENOTSUP == rc)
+        {
+            fprintf(stderr,
+                    "WARNING ergon-md-dpdk: %s (driver %s) cannot reclaim sent descriptors on demand "
+                    "(rte_eth_tx_done_cleanup): RUSTERON_DPDK_TX_IDLE_CLEAN left off on it\n",
+                    p->pci, p->driver);
+        }
+        else
+        {
+            p->tx_idle_clean = native->tx_idle_clean;
+        }
+    }
     return 0;
 }
 
@@ -962,8 +1225,11 @@ int rusteron_dpdk_ena_devargs(char *out, size_t len, int *llq_off)
 {
     /* DPDK 24.11 replaced ENA's enable_llq (on by default) with llq_policy,
      * whose default 24.11.0 and .1 left at 0, disabled ("net/ena: fix missing
-     * default LLQ policy", 24.11.2): so the transport always names it, as the
-     * device's recommended policy (1). */
+     * default LLQ policy", 24.11.2): so the transport always names it, as
+     * large 256-byte entries (3), which push a whole small frame's headers
+     * with the descriptor (c9g: -0.7 us p50, -1.0 us p99 against 1, the
+     * device's recommendation; BENCHMARKS.md). They halve the TX ring an ENA
+     * takes, to 256 (RUSTERON_DPDK_TX_DESCRIPTORS' default). */
     int year = 0, month = 0;
     rusteron_dpdk_eal_version(&year, &month);
     const int policy = year > 24 || (24 == year && month >= 11);
@@ -1019,7 +1285,7 @@ int rusteron_dpdk_ena_devargs(char *out, size_t len, int *llq_off)
         return -1;
     }
     const int n = named ? snprintf(out, len, "%s", extra)
-                        : snprintf(out, len, "%s=1%s%s", key, '\0' != extra[0] ? "," : "", extra);
+                        : snprintf(out, len, "%s=%u%s%s", key, policy ? 3U : 1U, '\0' != extra[0] ? "," : "", extra);
     if (n < 0 || (size_t)n >= len)
     {
         rusteron_dpdk_set_error("RUSTERON_DPDK_ENA_DEVARGS does not fit the EAL argument buffer");
@@ -1060,6 +1326,129 @@ int rusteron_dpdk_ena_llq_mapping(const char *maps_path, const char *bdf)
     }
     fclose(maps);
     return seen_wc ? RUSTERON_DPDK_ENA_LLQ_WC : seen_uc ? RUSTERON_DPDK_ENA_LLQ_UNCACHED : RUSTERON_DPDK_ENA_LLQ_UNSEEN;
+}
+
+/* An option's name: `--name` of `--name` or `--name=value`, into `name`. */
+static void rusteron_dpdk_eal_option_name(const char *tok, char *name, size_t len)
+{
+    size_t n = strcspn(tok, "=");
+    if (n >= len)
+    {
+        n = len - 1;
+    }
+    memcpy(name, tok, n);
+    name[n] = '\0';
+}
+
+/* Whether RUSTERON_DPDK_EAL_ARGS contradicts the memory choice `in_memory`;
+ * the option is named in the error. In memory, the EAL keeps no hugepage
+ * files and no shared configuration: no --huge-dir, --no-huge, a
+ * --proc-type other than primary, or --huge-unlink=never. Otherwise
+ * --in-memory and --no-shconf belong to RUSTERON_DPDK_EAL_IN_MEMORY. */
+static int rusteron_dpdk_eal_args_conflict(int in_memory)
+{
+    const char *extra = getenv("RUSTERON_DPDK_EAL_ARGS");
+    if (NULL == extra)
+    {
+        return 0;
+    }
+    char copy[1024];
+    snprintf(copy, sizeof(copy), "%s", extra);
+    char *save = NULL;
+    for (char *tok = strtok_r(copy, " \t", &save); NULL != tok; tok = strtok_r(NULL, " \t", &save))
+    {
+        char name[64];
+        rusteron_dpdk_eal_option_name(tok, name, sizeof(name));
+        const char *value = strchr(tok, '=');
+        int conflict = 0;
+        if (in_memory)
+        {
+            if (0 == strcmp(name, "--proc-type"))
+            {
+                const char *type = NULL != value ? value + 1 : strtok_r(NULL, " \t", &save);
+                conflict = NULL == type || 0 != strcmp(type, "primary");
+            }
+            else
+            {
+                conflict = 0 == strcmp(name, "--huge-dir") || 0 == strcmp(name, "--no-huge") ||
+                    (0 == strcmp(name, "--huge-unlink") && NULL != value && 0 == strcmp(value + 1, "never"));
+            }
+        }
+        else
+        {
+            conflict = 0 == strcmp(name, "--in-memory") || 0 == strcmp(name, "--no-shconf");
+        }
+        if (conflict)
+        {
+            char message[512];
+            if (in_memory)
+            {
+                snprintf(message, sizeof(message),
+                         "RUSTERON_DPDK_EAL_ARGS option %s contradicts RUSTERON_DPDK_EAL_IN_MEMORY=1 (--in-memory: no "
+                         "hugepage files, no shared configuration, a primary process): remove it, or unset "
+                         "RUSTERON_DPDK_EAL_IN_MEMORY",
+                         name);
+            }
+            else
+            {
+                snprintf(message, sizeof(message),
+                         "RUSTERON_DPDK_EAL_ARGS option %s changes how the EAL keeps its memory: set "
+                         "RUSTERON_DPDK_EAL_IN_MEMORY=1 instead",
+                         name);
+            }
+            rusteron_dpdk_set_error_code(message, RUSTERON_DPDK_ERR_INVALID_ENV);
+            return -1;
+        }
+    }
+    return 0;
+}
+
+int rusteron_dpdk_eal_in_memory(int *in_memory)
+{
+    *in_memory = 0;
+    const char *v = getenv("RUSTERON_DPDK_EAL_IN_MEMORY");
+    if (NULL != v && '\0' != v[0])
+    {
+        if (0 == strcasecmp(v, "1") || 0 == strcasecmp(v, "true"))
+        {
+            *in_memory = 1;
+        }
+        else if (0 != strcasecmp(v, "0") && 0 != strcasecmp(v, "false"))
+        {
+            char message[256];
+            snprintf(message, sizeof(message), "RUSTERON_DPDK_EAL_IN_MEMORY=%.64s must be 0, 1, false or true", v);
+            rusteron_dpdk_set_error_code(message, RUSTERON_DPDK_ERR_INVALID_ENV);
+            return -1;
+        }
+    }
+    return rusteron_dpdk_eal_args_conflict(*in_memory);
+}
+
+int rusteron_dpdk_eal_mem_args(const rusteron_dpdk_config_t *cfg, int mode, char *out, size_t len)
+{
+    int in_memory = 0;
+    if (NULL == cfg || NULL == out || 0 == len)
+    {
+        rusteron_dpdk_set_error("eal_mem_args requires a config and an output buffer");
+        return -1;
+    }
+    if (rusteron_dpdk_eal_in_memory(&in_memory) < 0)
+    {
+        return -1;
+    }
+    if (RUSTERON_DPDK_EAL_NO_HUGE == mode)
+    {
+        snprintf(out, len, "%s", in_memory ? "--no-huge --in-memory" : "--no-huge");
+    }
+    else if (in_memory)
+    {
+        snprintf(out, len, "--in-memory");
+    }
+    else
+    {
+        snprintf(out, len, "--huge-dir %s", cfg->hugepage_dir);
+    }
+    return 0;
 }
 
 int rusteron_dpdk_eal_allow_args(const rusteron_dpdk_config_t *cfg, char *out, size_t len)
@@ -1363,21 +1752,62 @@ static int rusteron_dpdk_runtime_net_init(rusteron_dpdk_transport_t *native)
         }
         native->nic_stats_ns = ms * 1000000ULL;
     }
-    /* Split poll-cycle gaps into work and descheduling: off by default, so
-     * the hot path never reads the thread CPU clock for it. */
+    /* Split the NIC reads: every RUSTERON_DPDK_NIC_STATS_MS only the PMD's
+     * software xstats (no admin command on ENA), and everything (basic
+     * statistics, every xstat) every RUSTERON_DPDK_NIC_SLOW_STATS_MS, 0
+     * never. Unset: every read is a full one. */
+    native->nic_slow_stats_ns = RUSTERON_DPDK_NIC_STATS_UNSPLIT;
+    const char *nic_slow = getenv("RUSTERON_DPDK_NIC_SLOW_STATS_MS");
+    if (NULL != nic_slow && '\0' != nic_slow[0])
+    {
+        char *end = NULL;
+        const unsigned long long ms = strtoull(nic_slow, &end, 10);
+        if ('\0' != *end || '-' == nic_slow[0] || (0 != ms && (ms < 1000ULL || ms > 3600000ULL)))
+        {
+            rusteron_dpdk_set_error(
+                "RUSTERON_DPDK_NIC_SLOW_STATS_MS must be 0 (never) or milliseconds from 1000 to 3600000");
+            return -1;
+        }
+        native->nic_slow_stats_ns = ms * 1000000ULL;
+    }
+    /* Time the PMD bursts and split poll-cycle gaps into work and
+     * descheduling: off by default, so the hot path never reads the thread
+     * CPU clock for it. `burst` times the bursts alone: the CPU clock is a
+     * system call every poll (no vDSO path), which changes the loop. */
     rusteron_dpdk_gap_attrib = 0;
     const char *gap_attrib = getenv("RUSTERON_DPDK_GAP_ATTRIB");
     if (NULL != gap_attrib && '\0' != gap_attrib[0])
     {
         if (0 == strcmp(gap_attrib, "1"))
         {
-            rusteron_dpdk_gap_attrib = 1;
+            rusteron_dpdk_gap_attrib = RUSTERON_DPDK_GAP_ATTRIB_BURST | RUSTERON_DPDK_GAP_ATTRIB_CPU;
+        }
+        else if (0 == strcmp(gap_attrib, "burst"))
+        {
+            rusteron_dpdk_gap_attrib = RUSTERON_DPDK_GAP_ATTRIB_BURST;
         }
         else if (0 != strcmp(gap_attrib, "0"))
         {
-            rusteron_dpdk_set_error("RUSTERON_DPDK_GAP_ATTRIB must be 0 or 1");
+            rusteron_dpdk_set_error("RUSTERON_DPDK_GAP_ATTRIB must be 0, 1 or burst");
             return -1;
         }
+    }
+    /* Reclaim sent descriptors on an idle poll, at most this many a poll,
+     * instead of inside the send that crosses the PMD's free threshold: off
+     * by default. */
+    native->tx_idle_clean = 0;
+    const char *idle_clean = getenv("RUSTERON_DPDK_TX_IDLE_CLEAN");
+    if (NULL != idle_clean && '\0' != idle_clean[0])
+    {
+        char *end = NULL;
+        const unsigned long long n = strtoull(idle_clean, &end, 10);
+        if ('\0' != *end || '-' == idle_clean[0] || n > RUSTERON_DPDK_TX_IDLE_CLEAN_MAX)
+        {
+            rusteron_dpdk_set_error(
+                "RUSTERON_DPDK_TX_IDLE_CLEAN must be 0 (off) or the descriptors an idle poll reclaims, 1 to 1024");
+            return -1;
+        }
+        native->tx_idle_clean = (uint32_t)n;
     }
     /* How many bursts one poll drains while they come back full: by default
      * as many as fill the receive ring, at most 8, so a backlog a stall left
@@ -1691,6 +2121,23 @@ static int rusteron_dpdk_runtime_net_init(rusteron_dpdk_transport_t *native)
         }
         native->ena_llq_required = on;
     }
+    /* A netvsc port without its accelerated-networking VF fails start unless
+     * RUSTERON_DPDK_ALLOW_SYNTHETIC=1 (or true), for diagnosis only. */
+    native->allow_synthetic = 0;
+    const char *allow_synthetic = getenv("RUSTERON_DPDK_ALLOW_SYNTHETIC");
+    if (NULL != allow_synthetic && '\0' != allow_synthetic[0])
+    {
+        const int on = 0 == strcmp(allow_synthetic, "1") || 0 == strcmp(allow_synthetic, "true");
+        if (!on && 0 != strcmp(allow_synthetic, "0") && 0 != strcmp(allow_synthetic, "false"))
+        {
+            rusteron_dpdk_set_error_code(
+                "RUSTERON_DPDK_ALLOW_SYNTHETIC must be 0, 1, false or true (1: start an Azure netvsc port without "
+                "its accelerated-networking VF, for diagnosis only)",
+                RUSTERON_DPDK_ERR_INVALID_ENV);
+            return -1;
+        }
+        native->allow_synthetic = on;
+    }
     /* RUSTERON_DPDK_VFIO_WC=1: a write-combining vfio-pci, as preflight reads
      * it (0, the default, or 1). */
     native->vfio_wc = 0;
@@ -1762,7 +2209,13 @@ static void rusteron_dpdk_timer_service(rusteron_dpdk_transport_t *native, uint6
     }
     native->timer_service_ns = now_ns;
     const int registered = rusteron_dpdk_eal_thread_register() >= 0;
+    const uint64_t start_ns = NULL != native->housekeeping_events ? rusteron_dpdk_clock_now() : 0;
     const int rc = registered ? native->ops->timer_service() : -1;
+    if (NULL != native->housekeeping_events)
+    {
+        rusteron_dpdk_event_record(native->housekeeping_events, RUSTERON_DPDK_EVENT_TIMERS, RUSTERON_DPDK_EVENT_NO_PORT,
+                                   rusteron_dpdk_clock_now() - start_ns);
+    }
     if (rc >= 0)
     {
         native->timer_service_failing = 0;
@@ -1812,36 +2265,113 @@ static uint64_t rusteron_dpdk_reset_requests(rusteron_dpdk_port_t *p, char *mess
     return fresh;
 }
 
+/* `p`'s queued receive-path error report, if any: formatted into `message`
+ * and recorded in the driver's distinct error log (under one fixed
+ * description per kind) while a transport is open. Caller holds
+ * housekeeping_lock. 1 when there was one, to print once the lock is
+ * released. */
+static int rusteron_dpdk_report(const rusteron_dpdk_transport_t *native, rusteron_dpdk_port_t *p, char *message,
+                                size_t len)
+{
+    const char *description = NULL;
+    if (RUSTERON_DPDK_REPORT_NONE == rusteron_dpdk_report_take(native, p, message, len, &description))
+    {
+        return 0;
+    }
+    if (p->open_transports > 0 && NULL != p->error_log && NULL != aeron_distinct_error_log_record)
+    {
+        aeron_distinct_error_log_record(p->error_log, EMSGSIZE, description);
+    }
+    return 1;
+}
+
+/* Link-status changes `p`'s PMD raised: kept on the port's counter while a
+ * transport is open; the number new since the last pass is returned, to log
+ * once the lock is released. Caller holds housekeeping_lock. */
+static uint64_t rusteron_dpdk_link_changes(rusteron_dpdk_port_t *p)
+{
+    const uint64_t changes = __atomic_load_n(&p->nic_link_changes, __ATOMIC_RELAXED);
+    if (p->open_transports > 0 && NULL != p->counters.addr[RD_COUNTER_NIC_LINK_CHANGES])
+    {
+        __atomic_store_n(p->counters.addr[RD_COUNTER_NIC_LINK_CHANGES], (int64_t)changes, __ATOMIC_RELAXED);
+    }
+    const uint64_t fresh = changes - p->nic_link_changes_seen;
+    p->nic_link_changes_seen = changes;
+    return fresh;
+}
+
 void rusteron_dpdk_housekeeping_tick(rusteron_dpdk_transport_t *native, uint64_t now_ns)
 {
     rusteron_dpdk_timer_service(native, now_ns);
 
+    rusteron_dpdk_port_t *ports[2] = { &native->sender, &native->receiver };
     char messages[2][512];
+    char reports[2][384];
+    int reported[2];
     uint64_t fresh[2];
-    /* Only ports with open transports: counters belong to transports' lifetimes. */
+    uint64_t link_changes[2];
+    rusteron_dpdk_nic_sample_t nic[2];
+    /* Only ports with open transports: counters belong to transports'
+     * lifetimes. The lock is held to copy and to store, never across a read
+     * of the NIC (on ENA an admin command to the device), so a transport's
+     * close never waits behind one. */
     pthread_mutex_lock(&native->housekeeping_lock);
-    fresh[0] = rusteron_dpdk_reset_requests(&native->sender, messages[0], sizeof(messages[0]));
-    fresh[1] = rusteron_dpdk_reset_requests(&native->receiver, messages[1], sizeof(messages[1]));
-    if (native->sender.open_transports > 0)
+    for (int i = 0; i < 2; i++)
     {
-        rusteron_dpdk_counters_sample(&native->sender.counters, &native->sender, native->ops, now_ns, native->nic_stats_ns);
-    }
-    if (native->receiver.open_transports > 0)
-    {
-        rusteron_dpdk_counters_sample(&native->receiver.counters, &native->receiver, native->ops, now_ns, native->nic_stats_ns);
+        rusteron_dpdk_port_t *p = ports[i];
+        fresh[i] = rusteron_dpdk_reset_requests(p, messages[i], sizeof(messages[i]));
+        link_changes[i] = rusteron_dpdk_link_changes(p);
+        reported[i] = rusteron_dpdk_report(native, p, reports[i], sizeof(reports[i]));
+        nic[i].due = 0;
+        if (p->open_transports > 0)
+        {
+            rusteron_dpdk_counters_sample(&p->counters, p, native->ops, now_ns, native->nic_stats_ns,
+                                          native->nic_slow_stats_ns, native->housekeeping_events, &nic[i]);
+        }
     }
     if (0 != fresh[0] || 0 != fresh[1])
     {
         __atomic_store_n(&native->nic_reset_exit, 1, __ATOMIC_RELEASE);
     }
     pthread_mutex_unlock(&native->housekeeping_lock);
+
+    if (nic[0].due || nic[1].due)
+    {
+        for (int i = 0; i < 2; i++)
+        {
+            rusteron_dpdk_counters_read_nic(native->ops, &nic[i], native->housekeeping_events);
+        }
+        pthread_mutex_lock(&native->housekeeping_lock);
+        for (int i = 0; i < 2; i++)
+        {
+            if (ports[i]->open_transports > 0)
+            {
+                rusteron_dpdk_counters_store_nic(&ports[i]->counters, &nic[i]);
+            }
+        }
+        pthread_mutex_unlock(&native->housekeeping_lock);
+    }
+
     for (int i = 0; i < 2; i++)
     {
         if (0 != fresh[i])
         {
             fprintf(stderr, RUSTERON_DPDK_LOG_ERROR "%s [%llu new]\n", messages[i], (unsigned long long)fresh[i]);
         }
+        if (reported[i])
+        {
+            rusteron_dpdk_housekeeping_log(reports[i]);
+        }
+        if (0 != link_changes[i])
+        {
+            fprintf(stderr,
+                    "WARNING ergon-md-dpdk: NIC %s (port %u) link status changed %llu time(s) (counter "
+                    "nic-link-changes): frames sent or due while the link was down are lost\n",
+                    ports[i]->pci, (unsigned)ports[i]->port_id, (unsigned long long)link_changes[i]);
+        }
     }
+    /* The event log's rings into its file, outside the lock. */
+    rusteron_dpdk_events_drain(native);
 }
 
 int rusteron_dpdk_transport_nic_reset_exit(rusteron_dpdk_transport_t *transport)
@@ -2255,6 +2785,14 @@ int rusteron_dpdk_runtime_init(rusteron_dpdk_transport_t *native)
         native->rx_max_bursts = bursts > 8 ? 8 : bursts < 1 ? 1 : bursts;
     }
 
+    /* The lab event log (RUSTERON_DPDK_EVENT_LOG): its rings exist before
+     * any thread that writes them runs. */
+    if (rusteron_dpdk_events_open(native) < 0)
+    {
+        rusteron_dpdk_runtime_cleanup(native);
+        return -1;
+    }
+
     if (rusteron_dpdk_housekeeping_enabled && rusteron_dpdk_housekeeping_start(native) < 0)
     {
         rusteron_dpdk_runtime_cleanup(native);
@@ -2286,6 +2824,11 @@ static void rusteron_dpdk_port_teardown(rusteron_dpdk_transport_t *native, ruste
         ops->unwatch_reset(p->port_id, &p->nic_resets);
         p->reset_watched = 0;
     }
+    if (p->lsc_watched)
+    {
+        ops->unwatch_lsc(p->port_id, &p->nic_link_changes);
+        p->lsc_watched = 0;
+    }
     if (p->started)
     {
         ops->dev_stop(p->port_id);
@@ -2313,6 +2856,8 @@ void rusteron_dpdk_runtime_cleanup(rusteron_dpdk_transport_t *native)
     /* The housekeeping thread reads the counters and the ports: stop it first. */
     rusteron_dpdk_housekeeping_stop(native);
     rusteron_dpdk_local_io_stop(native);
+    /* What the agents logged since housekeeping's last pass, then the file. */
+    rusteron_dpdk_events_close(native);
     free(native->host_ips);
     native->host_ips = NULL;
     native->host_ip_count = 0;

@@ -42,7 +42,7 @@ fn docs_before(src: &str, item: &str) -> String {
 /// Generate schema, compile the generated code and assert the source
 /// contains the expected doc string on the expected item.
 fn assert_doc_on_item(schema_xml: &str, module_name: &str, expected: &str, item_prefix: &str) {
-    let ir = ergo_sbe::parse(schema_xml).expect("parse schema");
+    let ir = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(schema_xml)).expect("parse schema");
     let schema = ergo_sbe::Schema::from_ir(ir);
     let modules = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new(module_name))
         .generate(&schema)
@@ -197,7 +197,7 @@ fn multiline_indented_description_is_text_fenced() -> Result<(), Box<dyn std::er
   -->
   <sbe:message name="M" id="1" description="Header line."><field name="f" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
-    let ir = ergo_sbe::parse(xml).expect("parse");
+    let ir = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml)).expect("parse");
     let schema = ergo_sbe::Schema::from_ir(ir);
     let modules = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("ml_fence"))
         .generate(&schema)
@@ -232,7 +232,7 @@ fn single_line_description_html_chars_are_escaped() -> Result<(), Box<dyn std::e
   <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
   <sbe:message name="M" id="1" description="presence=optional field: generates Option&lt;u32&gt; via A &amp; B"><field name="f" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
-    let ir = ergo_sbe::parse(xml).expect("parse");
+    let ir = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml)).expect("parse");
     let schema = ergo_sbe::Schema::from_ir(ir);
     let modules = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("html_escape"))
         .generate(&schema)

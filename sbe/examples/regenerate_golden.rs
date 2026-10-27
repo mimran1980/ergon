@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse_file};
+use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, SchemaSource, parse};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output_path = std::env::args_os()
@@ -11,7 +11,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("usage: regenerate_golden OUTPUT_PATH")?;
     let schema_path =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/schemas/example-schema.xml");
-    let schema = Schema::from_ir(parse_file(&schema_path)?);
+    let schema = Schema::from_ir(parse(SchemaSource::file(&schema_path))?);
     let config = GenerationConfig::new("car_example")
         .with_domain_objects(DomainVarData::Bytes)
         .with_source_traits(true);

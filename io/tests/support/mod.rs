@@ -446,6 +446,19 @@ pub fn one_cpu() -> R<bool> {
     Ok(cpuset()?.len() == 1)
 }
 
+/// The `io_uring` backend where this process has a CPU for its `SQPOLL`
+/// thread: `uring-sqpoll`, else `epoll-spin` (a pod with one CPU, where
+/// `uring-sqpoll` is refused typed; driver.rs's `each_backend` asserts
+/// that). Linux only.
+#[cfg(target_os = "linux")]
+pub fn uring_backend() -> R<ergon_io::Backend> {
+    Ok(if one_cpu()? {
+        ergon_io::Backend::EpollSpin
+    } else {
+        ergon_io::Backend::UringSqpoll
+    })
+}
+
 /// Whether `e` is the typed refusal of `want` for want of a second CPU
 /// ([`ergon_io::placement::CpuError::NoSpareCpu`]), when a test's error
 /// came back boxed.

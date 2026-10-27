@@ -154,6 +154,38 @@ CPU. Node settings: [deployment: Kubernetes](../deploy/kubernetes.md).
 - Pinned by other means? Name the CPU as `loop_cpu` in the backend
   configuration ([backends](backends.md#configuration-strings)).
 
+## TCP timers and `TCP_INFO`
+
+Opt-in, off by default. Each is a socket option, so the pod sets it in its
+own backend configuration; the node only decides whether the kernel has it.
+
+| key | what | pod or node |
+|---|---|---|
+| `tcp_rto_min_us` | `TCP_RTO_MIN_US`: the retransmission timeout's floor (kernel default 200 ms). Only this side's retransmissions; a locked route `rto_min` still wins | pod: no capability. Node: kernel 6.15+ and its `CONFIG_HZ` |
+| `tcp_delack_max_us` | `TCP_DELACK_MAX_US`: the longest delayed ACK (kernel default 200 ms) | as above |
+| `tcp_info_interval_ms` | passive `TCP_INFO` per connection (`Driver::tcp_info`: RTT, min RTT, RTO, retransmits, lost) | pod |
+
+- **Range.** 2,000 to 200,000 µs, in whole kernel ticks of at least two.
+  User space cannot read `CONFIG_HZ` (`getconf CLK_TCK` is `USER_HZ`,
+  always 100), so `Driver::new` sets each timer on a probe socket and reads
+  it back. 5 ms works at `CONFIG_HZ=1000` only; 20 ms works at 100, 250, 300
+  and 1000.
+- **Refusals are typed, at start-up.** A kernel before 6.15:
+  `Error::Unsupported` naming the option. Below two ticks, or a value the
+  kernel would round: `Error::Config` naming the key and what the kernel
+  keeps. `HttpClient`'s libcurl sockets get the same check and settings.
+- **Alternatives.** A route `rto_min` needs `CAP_NET_ADMIN` in the pod's
+  network namespace (pod `securityContext`). The `net.ipv4.tcp_rto_min_us`
+  sysctl is not on Kubernetes' safe list: the kubelet's
+  `--allowed-unsafe-sysctls` (node).
+- **`TCP_INFO` cost.** One `getsockopt` per poll at most, from the
+  250 µs deadline check, one connection at a time. It takes the socket's
+  lock briefly (`lock_sock_fast`), so a softirq delivering to that socket
+  waits for it. `DriverStats::tcp_info_max_ns` is the longest read;
+  off, nothing runs.
+- **Effect not measured.** A lower floor helps only after a lost segment;
+  too low a floor sends spurious retransmissions, which a venue may count.
+
 ## What the driver reports
 
 - **One start-up line** with the helper CPUs and why

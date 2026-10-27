@@ -97,14 +97,14 @@ int rusteron_dpdk_eal_init(const rusteron_dpdk_eal_params_t *params, char *errbu
     selectors[nselectors++] = cfg->sender_pci;
     selectors[nselectors++] = cfg->receiver_pci;
 
-    const char *mem_option;
-    if (RUSTERON_DPDK_EAL_NO_HUGE == params->mode)
+    /* Hugepage files under the configured directory, or, with
+     * RUSTERON_DPDK_EAL_IN_MEMORY=1, --in-memory (no shared configuration,
+     * no multi-process channel thread, no files left after a crash). */
+    int in_memory = 0;
+    if (rusteron_dpdk_eal_in_memory(&in_memory) < 0)
     {
-        mem_option = "--no-huge";
-    }
-    else
-    {
-        mem_option = "--huge-dir";
+        snprintf(errbuf, errlen, "%s", rusteron_dpdk_last_error());
+        return -1;
     }
 
     /* argv[0] is the program name; EAL scans argv[1..] for its options. The
@@ -130,10 +130,18 @@ int rusteron_dpdk_eal_init(const rusteron_dpdk_eal_params_t *params, char *errbu
     argv[argc++] = (char *)"--proc-type";
     argv[argc++] = (char *)"primary";
     argv[argc++] = (char *)"--no-telemetry";
-    argv[argc++] = (char *)mem_option;
-    if (RUSTERON_DPDK_EAL_NO_HUGE != params->mode)
+    if (RUSTERON_DPDK_EAL_NO_HUGE == params->mode)
     {
+        argv[argc++] = (char *)"--no-huge";
+    }
+    else if (!in_memory)
+    {
+        argv[argc++] = (char *)"--huge-dir";
         argv[argc++] = (char *)cfg->hugepage_dir;
+    }
+    if (in_memory)
+    {
+        argv[argc++] = (char *)"--in-memory";
     }
 
     char version[64] = "";
@@ -169,7 +177,9 @@ int rusteron_dpdk_eal_init(const rusteron_dpdk_eal_params_t *params, char *errbu
                  "the interfaces down for MANA) and hugetlbfs",
                  rc, version[0] != '\0' ? version : "<unknown>",
                  selectors[0], selectors[1],
-                 RUSTERON_DPDK_EAL_NO_HUGE == params->mode ? "disabled" : cfg->hugepage_dir);
+                 RUSTERON_DPDK_EAL_NO_HUGE == params->mode ? "disabled"
+                 : in_memory ? "in memory (RUSTERON_DPDK_EAL_IN_MEMORY=1)"
+                             : cfg->hugepage_dir);
         return -1;
     }
 

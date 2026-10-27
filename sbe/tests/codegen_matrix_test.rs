@@ -29,7 +29,9 @@
 )]
 mod common;
 use common::{compile_and_run_with_deps, generate_domain_with};
-use ergo_sbe::{ConversionSelector, DomainVarData, GenerationConfig, GenerationProfile};
+use ergo_sbe::{
+    ConversionSelector, DomainVarData, GenerationConfig, GenerationProfile, SchemaSource,
+};
 use std::path::PathBuf;
 
 fn matrix_schema() -> PathBuf {
@@ -188,8 +190,8 @@ struct Variant {
     /// Whether the scratch crate needs the domain impls and `rust_decimal`.
     domain_impls: bool,
     build: fn(GenerationConfig) -> GenerationConfig,
-    /// Appended to the generated module: items a knob's output names (an error
-    /// type) or that prove its output exists (a hook's item).
+    /// Appended to the generated module: items that prove a knob's output
+    /// exists (a hook's item, a renamed accessor).
     module_suffix: &'static str,
     /// Fragments the knob must put in the generated source. For a knob whose
     /// output is an attribute, compiling proves nothing on its own — a missing
@@ -312,24 +314,6 @@ const VARIANTS: &[Variant] = &[
         expect_src: &[],
     },
     Variant {
-        name: "domain_objects_error_from_impls",
-        domain_impls: true,
-        #[allow(deprecated)]
-        build: |c| {
-            with_matrix_domain_types(c.with_domain_objects(DomainVarData::Bytes))
-                .with_error_from_impls("self::MatrixError")
-        },
-        module_suffix: r#"
-            #[derive(Debug)]
-            pub struct MatrixError(pub String);
-            impl From<String> for MatrixError {
-                fn from(s: String) -> Self { Self(s) }
-            }
-            const _: fn(sbe_rt::DecodeError) -> MatrixError = MatrixError::from;
-        "#,
-        expect_src: &[],
-    },
-    Variant {
         name: "flyweight_deprecated_attrs_keyword_token",
         domain_impls: false,
         build: |c| {
@@ -341,7 +325,10 @@ const VARIANTS: &[Variant] = &[
             fn _keyword_renamed_row(d: &NestedRowsEntryDecoder<'_>) -> u8 { d.type_kw() }
             fn _keyword_renamed_cell(d: &NestedRowsCellsEntryDecoder<'_>) -> u8 { d.type_kw() }
         "#,
-        expect_src: &["#[deprecated", "pub fn type_kw("],
+        expect_src: &[
+            r#"#[deprecated(note = "deprecated since schema version 2")]"#,
+            "pub fn type_kw(",
+        ],
     },
     Variant {
         name: "domain_objects_hook",
@@ -598,9 +585,9 @@ const FIXED_BLOCK_OWNER: &str = r#"<messageSchema package="owner" id="1" version
 /// the same iterator surface as every row.
 #[test]
 fn module_set_knobs_compile() -> Result<(), Box<dyn std::error::Error>> {
-    use ergo_sbe::{Generator, Schema, parse, parse_file};
-    let owner_schema = Schema::from_ir(parse(FIXED_BLOCK_OWNER)?);
-    let matrix = Schema::from_ir(parse_file(&matrix_schema())?);
+    use ergo_sbe::{Generator, Schema, SchemaSource, parse};
+    let owner_schema = Schema::from_ir(parse(SchemaSource::xml(FIXED_BLOCK_OWNER))?);
+    let matrix = Schema::from_ir(parse(SchemaSource::file(&matrix_schema()))?);
     // The shared runtime must stay *one* runtime: a helper written against the
     // owner's `EntryInfo` has to accept the dependent module's.
     let body = |module: &str, owner: &str| {
@@ -654,7 +641,8 @@ fn module_set_knobs_compile() -> Result<(), Box<dyn std::error::Error>> {
 /// module that does not compile cannot pass, however good its source looks.
 #[test]
 fn every_config_variant_compiles() -> Result<(), Box<dyn std::error::Error>> {
-    for v in VARIANTS {
+    // Independent variants: run in parallel, fail with the first failing one.
+    common::parallel_map(VARIANTS, |_, v| {
         let module = format!("cm_{}", v.name);
         let (_s, src) = generate_domain_with(&matrix_schema(), &module, |c| (v.build)(c));
         for fragment in v.expect_src {
@@ -681,7 +669,7 @@ fn every_config_variant_compiles() -> Result<(), Box<dyn std::error::Error>> {
             ),
             deps,
         );
-    }
+    });
     Ok(())
 }
 
@@ -974,7 +962,7 @@ fn short_nested_block_rejected_at_entry_and_nested_entry() -> Result<(), Box<dyn
     </group>
   </sbe:message>
 </sbe:messageSchema>"#;
-    let schema = ergo_sbe::Schema::from_ir(ergo_sbe::parse(xml)?);
+    let schema = ergo_sbe::Schema::from_ir(ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml))?);
     let src = ergo_sbe::Generator::new(GenerationConfig::new("short_block_loc"))
         .generate(&schema)?
         .modules()

@@ -74,6 +74,8 @@
   - [Backends and Configuration](./io/backends.md)
   - [WebSocket](./io/websocket.md)
   - [HTTP client](./io/http-client.md)
+  - [Framed TCP](./io/framed-tcp.md)
+  - [UDP](./io/udp.md)
   - [Rate Limits and Errors](./io/rate-limits.md)
   - [Kubernetes](./io/kubernetes.md)
 
@@ -85,6 +87,10 @@
 
 - [DPDK Transport: Proof of Concept](./md-dpdk/overview.md)
   - [Configuration](./md-dpdk/configuration.md)
+
+# Transports
+
+- [Transport Latency Comparison](./transports/comparison.md)
 
 # Deployment
 

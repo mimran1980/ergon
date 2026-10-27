@@ -25,10 +25,27 @@
 //! Build scripts may panic: a failure here should stop the build.
 #![allow(clippy::all, clippy::pedantic, clippy::nursery, clippy::restriction)]
 
+#[path = "build_target_cpu.rs"]
+mod build_target_cpu;
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=build_target_cpu.rs");
     println!("cargo:rerun-if-changed=native/dpdk");
-    if std::env::var_os("CARGO_FEATURE_DPDK").is_some() {
+    // What `media_driver --version` reports: Rust's target CPU and the flag
+    // the native C gets for it (build_dpdk_native adds that flag).
+    let arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    let rustflags = std::env::var("CARGO_ENCODED_RUSTFLAGS").unwrap_or_default();
+    let dpdk = std::env::var_os("CARGO_FEATURE_DPDK").is_some();
+    let rust_cpu = build_target_cpu::last_target_cpu(&rustflags).unwrap_or("default");
+    let c_flag = match build_target_cpu::c_cpu_flag(&arch, &rustflags) {
+        _ if !dpdk => "none (no dpdk feature, no native C)".to_string(),
+        Some(flag) => flag,
+        None => "none (the compiler's default)".to_string(),
+    };
+    println!("cargo:rustc-env=ERGON_MD_DPDK_RUST_TARGET_CPU={rust_cpu}");
+    println!("cargo:rustc-env=ERGON_MD_DPDK_C_CPU_FLAG={c_flag}");
+    if dpdk {
         build_dpdk_native();
     }
 }
@@ -69,9 +86,30 @@ fn build_dpdk_native() {
     let native_dir = manifest_dir.join("native/dpdk");
     let test_dir = native_dir.join("test");
 
+    // The C follows Rust's target CPU: the last -C target-cpu in the encoded
+    // rustflags becomes -mcpu (aarch64) or -march (x86_64), which cc does not
+    // pass on itself (build_target_cpu.rs). A CPU name the C compiler does not
+    // know stops the build rather than leave the C generic unnoticed. CFLAGS
+    // still come last on cc's command line, so an explicit -mcpu there wins.
+    let rustflags = std::env::var("CARGO_ENCODED_RUSTFLAGS").unwrap_or_default();
+    let cpu_flag = build_target_cpu::c_cpu_flag(&arch, &rustflags);
+    if let Some(flag) = &cpu_flag {
+        let mut probe = cc::Build::new();
+        probe.cargo_metadata(false);
+        if !probe.is_flag_supported(flag).unwrap_or(false) {
+            panic!(
+                "the C compiler does not accept {flag} (from -C target-cpu in RUSTFLAGS): use a CPU name both rustc \
+                 and the C compiler know (CC=clang takes LLVM's names), or none"
+            );
+        }
+    }
+
     let base = || {
         let mut b = cc::Build::new();
         b.std("c11");
+        if let Some(flag) = &cpu_flag {
+            b.flag(flag);
+        }
         // _POSIX_C_SOURCE is declared in rusteron_dpdk_internal.h, which every
         // native source includes first. It must not be a global -D: the
         // vendored Aeron util files declare their own value.
@@ -108,6 +146,7 @@ fn build_dpdk_native() {
         .file(native_dir.join("rusteron_dpdk_endpoint_map.c"))
         .file(native_dir.join("rusteron_dpdk_poller.c"))
         .file(native_dir.join("rusteron_dpdk_kernel.c"))
+        .file(native_dir.join("rusteron_dpdk_events.c"))
         // AERON_SET_ERR routes through aeron_err_set, which lives in the client
         // util and is not exported by the driver-only libaeron_driver. Compile
         // the error, thread and alloc helpers from the same Aeron sources so the

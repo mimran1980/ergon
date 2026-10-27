@@ -18,6 +18,7 @@ include = [
     "/Cargo.toml",
     "/README.md",
     "/build.rs",
+    "/build_target_cpu.rs",
     "/native/dpdk/*.c",
     "/native/dpdk/*.h",
     "/native/dpdk/test/*.c",
@@ -36,7 +37,7 @@ log = "0.4"
 # The low-latency host and NIC checks `driver::ConfiguredDriver` runs at start
 # (src/checks.rs). Path and version, as ergo-sbe is for the cluster crate: the
 # release publishes it first (scripts/check-publish-set.sh).
-ergon-tune = { version = "0.1.33", path = "../tune", features = ["nic"] }
+ergon-tune = { version = "0.1.34", path = "../tune", features = ["nic"] }
 
 # The M3 probe socket's buffer sizes and the re-check thread's CPU affinity,
 # without `unsafe` (already in the lock through ergon-tune).
@@ -45,6 +46,8 @@ rustix = { version = "1.1.5", default-features = false, features = ["std", "net"
 
 [dev-dependencies]
 criterion = "0.8"
+# tests/dpdk_classify_prop.rs (fixed seed), pinned as ergo-sbe pins it.
+proptest = "=1.12.0"
 serial_test = { version = "4", features = ["file_locks"] }
 
 [build-dependencies]

@@ -1,14 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 #
-# A hot Guaranteed pod the admission policy accepts.
-# cpu: "2" is two exclusive CPUs from the static CPU manager.
-# ergon.io/shared-millicpus: "250" asks the plugin for one shared CPU
-# (the quarter is scheduler accounting only).
-# The command prints the grant and sleeps. It is not a latency benchmark.
+# A hot pod the admission policy accepts and the plugin refuses on kind.
+# A pod labelled ergon.io/latency: hot is checked against the node at
+# create: each exclusive CPU must be in the kernel's isolated set (isolcpus).
+# A kind node shares the host kernel and has none, so the create fails with
+# "exclusive CPU not isolated". run.sh expects that refusal. On a node set
+# up as in the README Quick start, this pod starts.
 apiVersion: v1
 kind: Pod
 metadata:
-  name: trader
+  name: trader-hot
   namespace: trading
   labels:
     ergon.io/latency: "hot"
@@ -16,33 +17,15 @@ metadata:
     required-plugins.noderesource.dev: '["ergon-shared-cpus"]'
 spec:
   priorityClassName: ergon-hot
-  # OnFailure, not Never. A pod with restartPolicy Never cannot set
-  # resizePolicy RestartContainer; the API server rejects that pair before
-  # admission. The container sleeps, so a successful exit is not the path.
+  # OnFailure, not Never. Never plus resizePolicy RestartContainer is
+  # rejected by the API server before admission.
   restartPolicy: OnFailure
   nodeSelector:
     ergon.io/shared-cpus: "true"
   containers:
     - name: app
       image: registry.k8s.io/e2e-test-images/busybox:1.36.1-1
-      command: ["sh", "-c"]
-      args:
-        - |
-          echo "ERGON_ISOLATED_CPUS=${ERGON_ISOLATED_CPUS-}"
-          echo "ERGON_SHARED_CPUS=${ERGON_SHARED_CPUS-}"
-          echo "ERGON_SHARED_MILLICPUS=${ERGON_SHARED_MILLICPUS-}"
-          echo "ERGON_HELPER_CPUS=${ERGON_HELPER_CPUS-}"
-          echo "ERGON_ISOLATED_CORES=${ERGON_ISOLATED_CORES-}"
-          grep '^Cpus_allowed_list:' /proc/1/status
-          if [ -r /sys/fs/cgroup/cpuset.cpus.effective ]; then
-            printf 'cpuset.cpus.effective='
-            cat /sys/fs/cgroup/cpuset.cpus.effective
-          else
-            echo "cpuset.cpus.effective=absent"
-          fi
-          printf 'nproc='
-          nproc
-          sleep 3600
+      command: ["sleep", "3600"]
       resources:
         requests:
           cpu: "2"

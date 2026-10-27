@@ -204,7 +204,8 @@ fi
 # SCHED_FIFO is not built (inconclusive in the one AWS A/B); the hugepage mount
 # is the plugin's sized hugetlbfs, never an emptyDir medium (no size=); the
 # node never gets a node-wide cpuCFSQuota:false; the cost gate is $0.30/h and
-# 180 minutes; on-demand fallback is off.
+# 180 minutes. Spot requests keep OnDemandTargetCapacity=0. On-demand is a
+# logged fallback after spot cannot be placed, not a silent fleet setting.
 contract() { # <name> <ok-if-this-regex-is-absent> <why>
     local name=$1 re=$2 why=$3
     if grep -Eq "$re" "$script" "$aws_dir/eks-nri-userdata.sh" 2>/dev/null; then
@@ -216,10 +217,10 @@ contract() { # <name> <ok-if-this-regex-is-absent> <why>
 contract no-fifo '--fifo|sched_setscheduler|SCHED_FIFO mode' "no SCHED_FIFO path (plan: inconclusive A/B)"
 contract no-emptydir-hugepage 'medium:[[:space:]]*HugePages' "no emptyDir hugepage volume (Aeron needs a sized mount)"
 contract no-cfs-quota-false 'cpuCFSQuota:[[:space:]]*false|cpuCFSQuota=false' "no node-wide cpuCFSQuota:false"
-if grep -q 'OnDemandTargetCapacity=0' "$script"; then
-    ok "spot-only: OnDemandTargetCapacity=0 (never silently on-demand)"
+if grep -q 'OnDemandTargetCapacity=0' "$script" && grep -q 'on-demand fallback' "$script"; then
+    ok "spot requests set OnDemandTargetCapacity=0; on-demand is a logged fallback"
 else
-    bad "spot-only: OnDemandTargetCapacity=0 is missing"
+    bad "spot OnDemandTargetCapacity=0 or the on-demand fallback text is missing"
 fi
 if grep -q '0\.30/h gate' "$script" && grep -q 'cap is 180 minutes' "$script"; then
     ok "cost gate text: \$0.30/h and 180 minutes"
@@ -275,11 +276,16 @@ if grep -q 'ergon-shared-cpus ergon-system' "$script" &&
 else
     bad "ds namespace: the rollout wait does not pair each DaemonSet with its own namespace"
 fi
-if grep -q 'devRoot: /host/dev' "$script" &&
-    grep -q 'ioUring: allow' "$script"; then
-    ok "plugin config: devRoot and seccomp.ioUring are set (PHC discovery and M3/M6)"
+# The plugin comes from this tree's chart with the book's EKS AL2023 install:
+# the kubelet's config.json plus its drop-in directory, and the grants the
+# modes ask for. (The chart's own devRoot default is /host/dev.)
+if grep -q 'helm template ergon-shared-cpus "$plugin_src/charts/ergon-shared-cpus"' "$script" &&
+    grep -q 'config.seccomp.ioUring=allow' "$script" &&
+    grep -q 'hostContract.kubeletConfig.path=/etc/kubernetes/kubelet/config.json' "$script" &&
+    grep -q 'hostContract.kubeletConfigDir.enabled=true' "$script"; then
+    ok "plugin config: the chart with the EKS kubelet config and drop-ins, seccomp.ioUring allowed (M3/M6)"
 else
-    bad "plugin config: devRoot and/or seccomp.ioUring are missing from the generated ConfigMap"
+    bad "plugin config: the chart install is missing the EKS kubelet paths or seccomp.ioUring"
 fi
 if grep -q 'kubernetes.io/hostname' "$script" &&
     grep -q "role \$which is on" "$script"; then
@@ -331,18 +337,76 @@ if grep -q 'cgroup.procs' "$tmp/rep-m0.sh"; then
 else
     ok "rep_cmd M0: a control mode stays in the container cgroup"
 fi
-if grep -q 'cgroup.procs' "$tmp/rep-m2.sh" &&
+if grep -q 'rep-a.pid' "$tmp/rep-m2.sh" &&
+    grep -qF '/proc/$$/cgroup' "$tmp/rep-m2.sh" &&
     grep -q 'cgroup.threads' "$tmp/rep-m2.sh" &&
     grep -q 'partition isolated' "$tmp/rep-m2.sh"; then
-    ok "rep_cmd M2: the partition mode still moves in and proves it"
+    ok "rep_cmd M2: the partition mode waits to be moved in and proves it"
 else
-    bad "rep_cmd M2: the partition mode lost its move or its proof"
+    bad "rep_cmd M2: the partition mode lost its wait for the move or its proof"
 fi
 if grep -q 'no partition (control mode)' "$tmp/rep-m0.sh" &&
     ! grep -q 'ERGON_ISOLATED_CGROUP' "$tmp/rep-m0.sh"; then
     ok "rep_cmd: a control mode's script names its mode and never looks for a child"
 else
     bad "rep_cmd: a control mode's script still looks for an isolated child"
+fi
+
+# ---- 15. the partition move is made from the node ----------------------------
+# containerd mounts /sys/fs/cgroup read-only in an unprivileged container, so
+# the rep's own `echo $$ > child/cgroup.procs` fails with EROFS and M2/M6
+# never measured. The rep publishes its pid and waits; the lab moves it from
+# the node through the privileged probe, after checking that the pid is in
+# that container's cgroup. Run the node-side mover against fake trees.
+if grep -qF 'echo $$ >"$child/cgroup.procs"' "$tmp/rep-m2.sh"; then
+    bad "rep_cmd M2: the pod writes its own cgroup.procs (read-only in an unprivileged pod)"
+else
+    ok "rep_cmd M2: the pod does not write cgroup.procs itself"
+fi
+mover_fn=$tmp/mover.sh
+sed -n '/^partition_move_script()/,/^}/p' "$script" >"$mover_fn"
+fake_node() { # <dir> <partition> -> a container cgroup with an isolated child, and /proc
+    local d=$1
+    mkdir -p "$d/cg/ctr/ergon-isolated" "$d/proc/4100" "$d/proc/4200"
+    printf '4100\n4200\n' >"$d/cg/ctr/cgroup.procs"
+    echo "$2" >"$d/cg/ctr/ergon-isolated/cpuset.cpus.partition"
+    : >"$d/cg/ctr/ergon-isolated/cgroup.procs"
+    # the fake kernel: what lands in cgroup.procs is the child's membership
+    ln -s cgroup.procs "$d/cg/ctr/ergon-isolated/cgroup.threads"
+    printf 'Name:\tsleep\nNSpid:\t4100\t1\n' >"$d/proc/4100/status"
+    printf 'Name:\tsh\nNSpid:\t4200\t37\n' >"$d/proc/4200/status"
+}
+run_mover() { # <dir> <nspid> -> rc
+    bash -c 'source "$1"; partition_move_script' _ "$mover_fn" >"$tmp/mover-body.sh" || return 99
+    ERGON_LAB_PROC=$1/proc bash "$tmp/mover-body.sh" "$1/cg/ctr/ergon-isolated" "$2" >"$1/out" 2>&1
+}
+if [[ ! -s $mover_fn ]]; then
+    bad "mover: eks-nri.sh has no partition_move_script"
+else
+    fake_node "$tmp/n1" isolated
+    if run_mover "$tmp/n1" 37 && [[ $(cat "$tmp/n1/cg/ctr/ergon-isolated/cgroup.procs") == 4200 ]]; then
+        ok "mover: the pod's pid 37 is found as node pid 4200 and moved into the child"
+    else
+        bad "mover: the rep was not moved ($(cat "$tmp/n1/out" 2>/dev/null))"
+    fi
+    fake_node "$tmp/n2" isolated
+    if ! run_mover "$tmp/n2" 99 && [[ ! -s $tmp/n2/cg/ctr/ergon-isolated/cgroup.procs ]]; then
+        ok "mover: a pid that is not in this container's cgroup is refused, nothing moved"
+    else
+        bad "mover: moved a pid that is not in the container's cgroup"
+    fi
+    fake_node "$tmp/n3" member
+    if ! run_mover "$tmp/n3" 37 && [[ ! -s $tmp/n3/cg/ctr/ergon-isolated/cgroup.procs ]]; then
+        ok "mover: a child that is not an isolated partition is refused, nothing moved"
+    else
+        bad "mover: moved into a child that is not isolated"
+    fi
+fi
+if grep -qF 'pong was not moved into its partition' "$script" &&
+    grep -qF 'wait "$move_a" ||' "$script"; then
+    ok "mover: the lab moves both roles of a partition mode and a failed move fails the run"
+else
+    bad "mover: the lab does not move the reps from the node, or ignores a failed move"
 fi
 
 echo

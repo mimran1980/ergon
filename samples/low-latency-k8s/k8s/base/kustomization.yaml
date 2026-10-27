@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: Apache-2.0
+# The sample's workloads: the DPDK media driver (DaemonSet), the pong
+# (Deployment) and the ping (Job), on nodes labelled ergon.io/shared-cpus,
+# ergon.io/ll-driver and ergon.io/ll-app. Never applied alone: an overlay
+# picks the transport (vdev or ENA) and whether the pods are hot.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespaces.yaml
+  - driver-daemonset.yaml
+  - pong-deployment.yaml
+  - ping-job.yaml
+generatorOptions:
+  disableNameSuffixHash: true
+configMapGenerator:
+  - name: ll-driver
+    namespace: trading-driver
+    envs: [driver.env]
+  - name: ll-app
+    namespace: trading
+    envs: [app.env]
+  - name: ll-endpoints
+    namespace: trading
+    envs: [endpoints.env]
+# baseline: the multi-arch image (linux/amd64 x86-64-v2, linux/arm64
+# Neoverse N1), which runs on any node of either; the EKS overlays name a
+# CPU tag in their registry instead (docker/build.sh).
+images:
+  - name: ll
+    newName: ll
+    newTag: baseline

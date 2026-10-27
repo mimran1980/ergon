@@ -2,7 +2,8 @@
 //!
 //! Measures encode throughput: scalar-only encode, full end-to-end encode
 //! with the checked API (`try_wrap_and_apply_header`), and the unchecked path
-//! (`wrap` + var-data variants).
+//! (`wrap` + var-data variants). `encode/new_order` times a `NewOrder` frame
+//! through `fixed()` + `asset` against `encode_from` (`new_order_fixture`).
 
 // Generated code generates lots of diagnostics; suppress across the crate.
 #![allow(
@@ -250,11 +251,38 @@ fn bench_encode_checked_vs_unchecked(c: &mut Criterion) {
     group.finish();
 }
 
+/// `NewOrder` as ergon-stack's engine encodes it (`fixed()` + `asset`
+/// setter) against `encode_from` through `NewOrderSource`. Both arms write
+/// the header and return the frame length.
+fn bench_new_order_encode(c: &mut Criterion) {
+    use ergo_sbe_benchmarks::new_order_fixture::{BUY, FRAME_LEN, encode_fixed, encode_from};
+
+    // Different fill bytes: equal frames prove both arms wrote every byte.
+    let mut fixed = [0x00u8; 128];
+    let mut from = [0xAAu8; 128];
+    assert_eq!(encode_fixed(&mut fixed, &BUY).unwrap(), FRAME_LEN);
+    assert_eq!(encode_from(&mut from, &BUY).unwrap(), FRAME_LEN);
+    assert_eq!(fixed[..FRAME_LEN], from[..FRAME_LEN]);
+
+    let mut group = c.benchmark_group("encode/new_order");
+    group.throughput(Throughput::Elements(1));
+    group.bench_function("fixed", |b| {
+        let mut buf = [0u8; 128];
+        b.iter(|| black_box(encode_fixed(black_box(&mut buf), black_box(&BUY))));
+    });
+    group.bench_function("encode_from", |b| {
+        let mut buf = [0u8; 128];
+        b.iter(|| black_box(encode_from(black_box(&mut buf), black_box(&BUY))));
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_encode_checked,
     bench_encode_safe,
     bench_encode_scalar_only,
     bench_encode_checked_vs_unchecked,
+    bench_new_order_encode,
 );
 criterion_main!(benches);

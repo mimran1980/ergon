@@ -1,8 +1,6 @@
 # Example only. Do not publish this file.
-# crates.io has ergon-md-dpdk 0.1.31 and ergon-tune 0.1.31.
-# Newer crates.io releases of those crates are 0.1.32.
-# This git workspace is 0.1.33. There is no 0.1.31 crate named ergon;
-# that name on crates.io is a different project.
+# crates.io release: ergon-md-dpdk 0.1.33 and ergon-tune 0.1.33.
+# The crates.io crate named ergon is a different project.
 [package]
 name = "md-dpdk-low-latency-sample"
 version = "0.0.0"
@@ -10,5 +8,5 @@ edition = "2024"
 publish = false
 
 [dependencies]
-ergon-md-dpdk = "=0.1.31"
-ergon-tune = "=0.1.31"
+ergon-md-dpdk = "=0.1.33"
+ergon-tune = "=0.1.33"

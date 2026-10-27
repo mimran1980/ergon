@@ -1,0 +1,17 @@
+sched:sched_switch if CPU == 3
+sched:sched_waking if target_cpu == 3, with the sender's stack
+sched:sched_wakeup if target_cpu == 3, with the sender's stack
+sched:sched_wakeup_new if target_cpu == 3, with the sender's stack
+sched:sched_migrate_task if orig_cpu == 3 || dest_cpu == 3, with the sender's stack
+ipi:ipi_send_cpu if cpu == 3, with the sender's stack
+ipi:ipi_send_cpumask if cpumask & CPUS{3}, with the sender's stack
+ipi:ipi_entry if CPU == 3
+csd:csd_queue_cpu if cpu == 3, with the sender's stack
+csd:csd_function_entry if CPU == 3
+irq:irq_handler_entry if CPU == 3
+irq:softirq_entry if CPU == 3
+timer:hrtimer_expire_entry if CPU == 3
+timer:timer_expire_entry if CPU == 3
+timer:tick_stop if CPU == 3
+workqueue:workqueue_queue_work if cpu == 3, with the sender's stack
+workqueue:workqueue_execute_start if CPU == 3

@@ -1,0 +1,6 @@
+case=a-burst-100m
+title=one pod: cpu 1 exclusive, 100 shared millicpus, 4 busy helper threads
+shared=1-2
+exclusive=3-7
+window_ns=30226760457
+expect=its helpers on 1 of the 2 shared CPUs (ceil(100/1000) = 1), using up to all of it: about 1 core, nr_throttled 0, the other shared CPU idle

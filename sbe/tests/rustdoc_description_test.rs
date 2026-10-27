@@ -6,7 +6,7 @@
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, unused)]
 
 fn src(xml: &str, name: &str) -> String {
-    let ir = ergo_sbe::parse(xml).expect("parse schema");
+    let ir = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml)).expect("parse schema");
     let schema = ergo_sbe::Schema::from_ir(ir);
     ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new(name))
         .generate(&schema)

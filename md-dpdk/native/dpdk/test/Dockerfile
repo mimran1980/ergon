@@ -5,7 +5,8 @@
 #
 # Hosts the full `cargo test -p ergon-md-dpdk --features dpdk` path:
 # Rust 1.99.0 (pinned), Aeron C build-from-source deps (cmake/clang/Java),
-# and libdpdk >= 23.11 from Ubuntu 24.04. Run verify-dpdk.sh from anywhere.
+# and libdpdk >= 23.11 from Ubuntu 24.04, plus iproute2 and ping for the vdev
+# runner (scripts/test-dpdk-vdev-rootless.sh). Run verify-dpdk.sh from anywhere.
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -16,6 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         openjdk-25-jre-headless \
         python3-pip \
         libdpdk-dev \
+        iproute2 iputils-ping \
     && rm -rf /var/lib/apt/lists/*
 
 # The vendored Aeron requires CMake >= 3.30 (ubuntu 24.04 apt ships 3.28).

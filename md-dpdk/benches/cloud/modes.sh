@@ -4,6 +4,24 @@
 # localhost subscription held throughout). Functions only, so test/test-lab.sh
 # calls them directly.
 #
+# The raw floor's transports, kernel-raw and dpdk-raw (-mono too), run no
+# Aeron at all: the harness's floor client (md-dpdk/harness/src/bin/floor.rs)
+# does rtt's round trip over kernel UDP sockets or the DPDK transport's
+# bindings alone, on kernel-busy's or dpdk's host set-up (raw_base), so a
+# state's idle round trip splits into what is under Aeron and Aeron's own.
+# Cross-host only (or, @HAIRPIN=1, on host a between its own two NICs), the
+# round trip alone (lib.sh), with host settings and RUSTERON_* ones; anything
+# only Aeron reads is refused (mode_check).
+#
+# The pure floor, dpdk-pure (AWS), runs none of ergon-md-dpdk either:
+# purefloor.c, DPDK's rte_eth_rx_burst and rte_eth_tx_burst on the receiver
+# port, its pong a 5-tuple-swapping reflector, on dpdk's host set-up, the
+# port's rings, pool, offloads and interrupts as the transport sets them, with
+# the floor client's arguments and outputs. dpdk-raw less dpdk-pure is what
+# ergon-md-dpdk's packet path adds, and dpdk-raw's second port (it sends on
+# the sender port). Its clock is the CPU's counter alone (no -mono), and it
+# reads only the RUSTERON_DPDK_* settings in PURE_KEYS.
+#
 # The settings here (the rest are vm.sh host_setting's, or the driver's
 # environment):
 #   AERON_THREADING_MODE=DEDICATED|SHARED_NETWORK|SHARED|INVOKER  the driver's
@@ -44,6 +62,35 @@
 #        polling on every NAPI of the data NICs, their kthreads on the
 #        layout's fifth core, which they spin at 100% (vm.sh; the kernel's
 #        ynl, vm.sh build-ynl); threaded disabled again after the mode
+#   HAIRPIN=1 (the raw floor's modes, AWS) the round trip on host a alone,
+#        between its own two data NICs (ENIs on one subnet): the floor
+#        client's xhairpin, ping and pong in one process, the ping on the app
+#        core and its sender NIC, the pong on the receiver core (which the
+#        raw floor leaves free) and its receiver NIC, so a packet leaves by
+#        one NIC and comes back by the other, never to host b, which idles.
+#        Whether AWS turns it round in host a's own card or further out is
+#        not documented: a hairpin p50 well under the cross-host one says
+#        the former. Against the cross-host floor of the same mode it tells
+#        host a's part of the maxima from the rest (the fabric, host b).
+#        Both hosts need four cores (hairpin_types_check: host b sets the
+#        mode up too). On the kernel wire vm.sh routes each end's sends out of its own NIC (the kernel
+#        would deliver its own address over loopback), checked fail closed
+#   RTT_GAP_US=<us>  (1 to 1000000) one ping every that many microseconds,
+#        on a fixed schedule (a ping half a gap late restarts it), the
+#        warm-up's too, the clients spinning in between (rtt's and
+#        floor's Pace): a sparse flow, the network quiet between
+#        round trips, as an idle Aeron channel is between its 100 ms
+#        heartbeats. A rep then runs 20 to 60 s, about 10,000 round trips
+#        where a minute holds them (rtt_plan): 20 s and 20,000 at 1 ms, 60 s
+#        and 1,200 at 50 ms, 300 at 200 ms, 60 at 1 s. Cross-host only
+#   KEEPALIVE_US=<us>  (the raw floor's modes, with RTT_GAP_US) a keep-alive
+#        datagram from the ping every that many microseconds between pings,
+#        echoed by the pong and dropped by the ping, none within 50 us of a
+#        ping (floor.rs Between): whether keeping the path busy keeps it fast
+#   FLUSH_KB=<KiB>  (the raw floor's modes, with RTT_GAP_US of 10 ms or more)
+#        the ping after each round trip and the pong after each echo write one
+#        byte of every cache line of a buffer that large: a round trip from
+#        cold CPU caches over a path the gap keeps as warm as it is
 #   CONDUCTOR=own  the driver's conductor on the layout's fifth core, alone,
 #        spinning (AERON_CONDUCTOR_CPU_AFFINITY, AERON_CONDUCTOR_IDLE_STRATEGY
 #        =spin), the DPDK transport's housekeeping and local-I/O threads kept
@@ -146,6 +193,89 @@ mode_pairs() {
     set +f
     shift
     for p in "$@"; do printf '%s\n' "$p"; done
+}
+
+# mode_raw <mode>: 0 for the raw floor's modes (kernel-raw, dpdk-raw, -mono)
+# and the pure floor's (dpdk-pure)
+mode_raw() {
+    local t=${1%+idle}
+    t=${t%%@*}
+    t=${t%-mono}
+    [[ $t == kernel-raw || $t == dpdk-raw || $t == dpdk-pure ]]
+}
+
+# mode_hairpin <mode>: 0 for a same-host hairpin (@HAIRPIN=1)
+mode_hairpin() {
+    [[ $(mode_get "${1%+idle}" HAIRPIN) == 1 ]]
+}
+
+# rtt_plan <mode> <messages> <warmup>: "<seconds> <messages> <warmup>" for
+# its round trip (RTT_SECONDS, then the ping's round trips and warm-up): 20 s
+# and as given, unless the mode paces its pings (@RTT_GAP_US=<us>): then as
+# long as 10,000 round trips take (p99.99 needs them), from 20 s to 60 s; as
+# many round trips as fit in that (at most the messages given), and about
+# 2 s of warm-up pings (at least one, at most the warm-up given)
+rtt_plan() {
+    local gap seconds messages warmup
+    gap=$(mode_get "${1%+idle}" RTT_GAP_US) || { echo "20 $2 $3"; return 0; }
+    seconds=$(((10000 * gap + 999999) / 1000000))
+    ((seconds >= 20)) || seconds=20
+    ((seconds <= 60)) || seconds=60
+    messages=$((seconds * 1000000 / gap))
+    ((messages <= $2)) || messages=$2
+    warmup=$(((2000000 + gap - 1) / gap))
+    ((warmup <= $3)) || warmup=$3
+    echo "$seconds $messages $warmup"
+}
+
+# hairpin_types_check <mode> <aws|azure> <type>...: 0, or 2 saying why, for a
+# hairpin (@HAIRPIN=1) on a type with fewer than four physical cores (the
+# layout's housekeeping, app (ping), sender and receiver (pong) cores): host
+# a's, and host b's too, which sets the mode up as well (vm.sh driver and
+# ready refuse it there without a receiver core); 0 for any other mode
+hairpin_types_check() {
+    local m=$1 cloud=$2 t cores
+    shift 2
+    mode_hairpin "$m" || return 0
+    for t in "$@"; do
+        cores=$(type_cores "$cloud" "$t" 2>&1) || { echo "mode $m: $cores" >&2; return 2; }
+        ((cores >= 4)) ||
+            { echo "mode $m: $t has $cores physical cores: a hairpin's ping and pong need the layout's four cores (housekeeping, app, sender, receiver: c9g.xlarge and up), on host b too, which sets the mode up as well" >&2; return 2; }
+    done
+}
+
+# mode_pure <mode>: 0 for the pure floor's mode (dpdk-pure, -mono too: which
+# mode_check refuses)
+mode_pure() {
+    local t=${1%+idle}
+    t=${t%%@*}
+    [[ ${t%-mono} == dpdk-pure ]]
+}
+
+# mode_client <mode>: the round trip's client: purefloor for the pure floor,
+# floor for a raw floor mode, else rtt
+mode_client() {
+    if mode_pure "$1"; then
+        echo purefloor
+    elif mode_raw "$1"; then
+        echo floor
+    else
+        echo rtt
+    fi
+}
+
+# The RUSTERON_DPDK_* settings purefloor.c reads (the rest of the transport's
+# it never does)
+PURE_KEYS=" RX_DESCRIPTORS TX_DESCRIPTORS MBUFS_PER_PORT MEMPOOL_CACHE BURST_SIZE RX_HW_TIMESTAMP ENA_DEVARGS EAL_IN_MEMORY "
+
+# raw_base <mode>: the transport whose host set-up a raw floor mode runs on
+# (vm.sh driver): kernel-busy's (busy_read and busy_poll, NAPI deferral) for
+# kernel-raw, dpdk's (igb_uio, the ports' environment) for dpdk-raw and
+# dpdk-pure; nothing for any other mode
+raw_base() {
+    mode_raw "$1" || return 0
+    local t=${1%%@*}
+    if [[ ${t%-mono} == kernel-raw ]]; then echo kernel-busy; else echo dpdk; fi
 }
 
 # mode_get <mode> <KEY>: the value of KEY's last override; 1 when it has none
@@ -345,7 +475,8 @@ mode_spare() {
 # over the family's threads a core: two for Intel's (c5, c6i, c7i, c8i and
 # kin) and AMD's before C7a, one for Graviton's (every vCPU a core) and AMD's
 # from C7a on. Azure: the D, E and F series' v5 and v6 sizes
-# (Standard_D8s_v6: 8 vCPUs), two threads a core. Anything else unknown.
+# (Standard_D8s_v6: 8 vCPUs), two threads a core, but one on AMD's Fasv6
+# and Cobalt 100's Arm v6 sizes (Dpsv6, Dplsv6, Epsv6). Anything else unknown.
 AWS_TWO_THREADS=" c5 c5a c5ad c5d c5n c6a c6i c6id c6in c7i c7i-flex c8i c8i-flex m5 m5n m6a m6i m6in m7i m7i-flex m8i r5 r6a r6i r7i r8i "
 AWS_ONE_THREAD=" c7a m7a r7a c8a m8a r8a "
 
@@ -387,6 +518,9 @@ type_cores() {
         [[ $type =~ ^Standard_[DEF]([1-9][0-9]{0,2})[a-z]*_v[56]$ ]] ||
             { echo "$type: no core count for it in modes.sh's table (the D, E and F series' v5 and v6 sizes)" >&2; return 1; }
         vcpus=${BASH_REMATCH[1]} threads=2
+        # no SMT: AMD's Fasv6 (Falsv6, Famsv6) and Cobalt 100's Arm sizes
+        # (a p after the vCPUs: Dpsv6, Dplsv6, Dpdsv6, Epsv6), each vCPU a core
+        if [[ $type =~ ^Standard_F[0-9]+a[a-z]*_v6$ || $type =~ ^Standard_[DE][0-9]+p[a-z]*_v6$ ]]; then threads=1; fi
         ;;
     *)
         echo "type_cores: aws or azure, not $cloud" >&2
@@ -406,7 +540,7 @@ spare_types_check() {
     takers=$(spare_takers "$m")
     [[ -n $takers ]] || return 0
     more="c7i.4xlarge, c8g.2xlarge and up have five or more"
-    [[ $cloud == azure ]] && more="Standard_D16s_v6 and up have five or more"
+    [[ $cloud == azure ]] && more="Standard_D16s_v6, Standard_D8ps_v6, Standard_F8as_v6 and up have five or more"
     for t in "$@"; do
         if ! cores=$(type_cores "$cloud" "$t" 2>&1); then
             echo "mode $m takes the layout's fifth core ($takers): $cores" >&2
@@ -457,7 +591,21 @@ precision_modes_check() {
 # The settings vm.sh host_setting takes (a mode's @KEY=value for the host, the
 # clients or the driver's placement); any other key must be an environment
 # variable the driver reads, AERON_* (Aeron's) or RUSTERON_* (the transport's)
-LAB_SETTINGS=" THP BIN CSTATE BUSY_POLL COALESCE RX_RING MIN_FREE_PCT CLOCKSOURCE RELIABLE AGENTS SMT JUMBO PUB_PARAMS SUB_PARAMS IRQ NAPI_DEFER NAPI_BUSY CONDUCTOR "
+LAB_SETTINGS=" THP BIN CSTATE BUSY_POLL COALESCE RX_RING MIN_FREE_PCT CLOCKSOURCE RELIABLE AGENTS SMT JUMBO PUB_PARAMS SUB_PARAMS IRQ NAPI_DEFER NAPI_BUSY CONDUCTOR HAIRPIN RTT_GAP_US KEEPALIVE_US FLUSH_KB DPDK "
+
+# @DPDK=<build>: the media driver and clients linked against DPDK 25.11 built
+# from source for the mode (vm.sh build-dpdk, into ~/bin-dpdk-<build>): stock,
+# or patched-refill (dpdk-ena-deferred-refill.patch on ENA's PMD)
+DPDK_BUILDS=" stock patched-refill "
+
+# modes_want_dpdk <mode>...: the @DPDK= builds the modes ask for, each once,
+# on one line (lib.sh writes it to bench/want_dpdk; vm.sh build builds each)
+modes_want_dpdk() {
+    local m v
+    for m in "$@"; do
+        if v=$(mode_get "$m" DPDK); then echo "$v"; fi
+    done | sort -u | tr '\n' ' ' | sed 's/ $//'
+}
 
 # dpdk_setting <mode> <name> <default> <least> <most> <why> [pow2]: the
 # mode's RUSTERON_DPDK_<name>, else <default>, when a whole number from
@@ -479,17 +627,32 @@ dpdk_setting() {
 # of 512 at most, bursts 1 to 256, mbufs for both rings, four bursts and two
 # caches, an Aeron MTU 32-aligned up to 8960; env.rs: a timestamp flag 0, 1,
 # true or false) or the NIC refuses at start (its PMD's ring limits, each a
-# power of two: ENA's receive 8192, its low-latency transmit queues 512, as
-# 1024 made DPDK refuse the queue; MANA's 256 each), and NIC RX timestamps
-# where the NIC offers none (anywhere but AWS's precision-time placement).
-# The defaults are vm.sh's (rings: min(4096, the NIC's) and 512 on AWS, 256
-# and 256 on Azure; 16384 mbufs a port) and config.rs's (bursts of 32, a
-# mempool cache of 256)
+# power of two: ENA's receive 8192, its low-latency transmit queues 256
+# under the transport's large LLQ entries and 512 under any other LLQ policy
+# (@RUSTERON_DPDK_ENA_DEVARGS=llq_policy=1 or 2), as 1024 made DPDK refuse the
+# queue; MANA's 256 each), and NIC RX timestamps where the NIC offers none
+# (anywhere but AWS's precision-time placement). The defaults are vm.sh's
+# and env.rs's (rings: min(4096, the NIC's) and 256 on AWS, 256 and 256 on
+# Azure; 16384 mbufs a port) and config.rs's (bursts of 32, a mempool cache
+# of 256)
 dpdk_values_check() {
-    local m=$1 cloud=$2 placement=${3:-} nic=ENA rx_most=8192 tx_most=512 rx_default=4096 tx_default=512 rx tx cache burst mbufs need v
-    if [[ $cloud == azure ]]; then nic=MANA rx_most=256 tx_most=256 rx_default=256 tx_default=256; fi
+    local m=$1 cloud=$2 placement=${3:-} nic=ENA rx_most=8192 tx_most=256 rx_default=4096 tx_default=256 rx tx cache burst mbufs need v
+    local ring="ENA's transmit ring holds 256 at most under large LLQ entries (the transport's llq_policy=3; llq_policy=1 takes 512)"
+    if v=$(mode_get "$m" RUSTERON_DPDK_ENA_DEVARGS) && [[ ,${v//+/,}, =~ ,llq_policy=0*([12]), ]]; then
+        tx_most=512 ring="ENA's transmit ring holds 512 at most under llq_policy=${BASH_REMATCH[1]}"
+    fi
+    if [[ $cloud == azure ]]; then nic=MANA rx_most=256 tx_most=256 rx_default=256 tx_default=256 ring="MANA's transmit ring holds 256 at most"; fi
     rx=$(dpdk_setting "$m" RX_DESCRIPTORS "$rx_default" 64 "$rx_most" "$nic's receive ring holds $rx_most at most: the transport refuses more at start" pow2) || return 2
-    tx=$(dpdk_setting "$m" TX_DESCRIPTORS "$tx_default" 64 "$tx_most" "$nic's transmit ring holds $tx_most at most: the transport refuses more at start" pow2) || return 2
+    # @DPDK=patched-refill: a burst that returns frames refills only at
+    # min(2 x rx_free_thresh, ring - 1) free descriptors; a threshold of half
+    # the ring or more makes that ring - 1, an empty ring (the PMD's default
+    # threshold, min(ring / 8, 256), is always below half)
+    if [[ $(mode_get "$m" DPDK) == patched-refill ]] && v=$(mode_get "$m" RUSTERON_DPDK_RX_FREE_THRESH) &&
+        [[ $v =~ ^[0-9]{1,10}$ ]] && ((2 * 10#$v >= rx)); then
+        echo "mode $m: DPDK=patched-refill with RUSTERON_DPDK_RX_FREE_THRESH=$v: below half the receive ring ($rx) only: the patch's floor, min(2 x $((10#$v)), $((rx - 1))), would let bursts that return frames drain the ring before any refill" >&2
+        return 2
+    fi
+    tx=$(dpdk_setting "$m" TX_DESCRIPTORS "$tx_default" 64 "$tx_most" "$ring: the transport refuses more at start" pow2) || return 2
     cache=$(dpdk_setting "$m" MEMPOOL_CACHE 256 0 512 "DPDK's per-lcore mempool cache: the transport's configuration refuses more") || return 2
     burst=$(dpdk_setting "$m" BURST_SIZE 32 1 256 "packets a receive or transmit burst, as the transport's configuration takes them") || return 2
     mbufs=$(dpdk_setting "$m" MBUFS_PER_PORT 16384 1 4294967295 "mbufs in each port's pool") || return 2
@@ -537,17 +700,107 @@ modes_want_ynl() {
 # out a pacing debt (RUSTERON_DPDK_TX_PACE_SPIN_US 0 or unset)
 dpdk_busy_idle() { [[ $1 =~ ^(spin|noop|aeron_idle_strategy_busy_spinning|aeron_idle_strategy_noop)$ ]]; }
 
+# The transport suite's arms (transport.sh, transport-matrix.tsv and
+# LAB_ARMS_FILE): " <name>=<setup>/<hosts> ..." as transport.sh's tr_load sets
+# it. An arm's mode is <name>[@STREAMS=<n>][@NETEM=<loss %>][@AA=1]:
+#   STREAMS=<n>  streams (UDP, Aeron) or connections (TCP), 1 to 1024
+#   NETEM=<pct>  netem's egress loss on every data NIC of both hosts, 0 to
+#                100 (0: a netem qdisc that drops nothing, the control);
+#                none: no qdisc, checked, in a loss set's round (the
+#                control's control);
+#                never on a DPDK arm (a dpdk* name or the dpdk setup): DPDK
+#                bypasses the kernel's qdiscs, so netem would drop nothing
+#                and the row would claim a loss it never saw
+#   AA=1         the A/A arm: the round's first arm run again
+TRANSPORT_ARMS=${TRANSPORT_ARMS:-}
+ARM_SETTINGS=" STREAMS NETEM AA "
+
+# arm_of <mode>: the arm's name, 1 when the mode is not an arm's
+arm_of() {
+    local a=${1%%@*}
+    [[ $TRANSPORT_ARMS == *" $a="* ]] || return 1
+    printf '%s' "$a"
+}
+
+# arm_setup <arm>: none, kernel, dpdk or sockets; arm_hosts <arm>: one or two
+arm_setup() { local s=${TRANSPORT_ARMS#* "$1"=}; s=${s%% *}; printf '%s' "${s%/*}"; }
+arm_hosts() { local s=${TRANSPORT_ARMS#* "$1"=}; s=${s%% *}; printf '%s' "${s#*/}"; }
+
+# arm_check <mode>: 0, or 2 with why on stderr
+arm_check() {
+    local m=$1 a p key value seen=" "
+    a=$(arm_of "$m") || { echo "mode $m: not a transport arm (${TRANSPORT_ARMS:- none loaded})" >&2; return 2; }
+    [[ $m != *+idle ]] || { echo "mode $m: an arm takes no +idle" >&2; return 2; }
+    while IFS= read -r p; do
+        key=${p%%=*} value=${p#*=}
+        [[ $p == *=* && $ARM_SETTINGS == *" $key "* ]] ||
+            { echo "mode $m: $p is not an arm setting ($ARM_SETTINGS): the arm's own settings are its matrix arguments and transport-settings.env, the same for every point" >&2; return 2; }
+        [[ $seen != *" $key "* ]] || { echo "mode $m: one $key at most" >&2; return 2; }
+        seen+="$key "
+        case $key in
+        STREAMS)
+            [[ $value =~ ^[1-9][0-9]{0,3}$ ]] && ((value <= 1024)) ||
+                { echo "mode $m: STREAMS=$value: 1 to 1024 streams or connections" >&2; return 2; }
+            ;;
+        NETEM)
+            [[ $value == none ]] && continue
+            [[ $value =~ ^(0|[1-9][0-9]?|100)(\.[0-9]{1,3})?$ ]] && awk -v v="$value" 'BEGIN {exit !(v <= 100)}' ||
+                { echo "mode $m: NETEM=$value: egress loss in %, 0 to 100, at most three decimals" >&2; return 2; }
+            if [[ $a == dpdk* || $(arm_setup "$a") == dpdk ]]; then
+                echo "mode $m: NETEM on a DPDK arm: DPDK bypasses the kernel's qdiscs, so netem would drop nothing (no DPDK in loss rows)" >&2
+                return 2
+            fi
+            ;;
+        AA) [[ $value == 1 ]] || { echo "mode $m: AA=1 or nothing" >&2; return 2; } ;;
+        esac
+    done < <(mode_pairs "$m")
+}
+
 # mode_check <mode> <remote|local> <arch: x86_64|arm64> <cloud: aws|azure>
 # <threads per core, LAB_THREADS_PER_CORE> [<placement>]: 0, or 2 with why
 # on stderr
 mode_check() {
     local m=$1 where=$2 arch=$3 cloud=$4 tpc=$5 placement=${6:-} p key value threading=() v idle seen=" " transport settings
     [[ $m != *,* ]] || { echo "mode $m: a comma would split its results.csv rows (COALESCE takes <rx>/<tx>)" >&2; return 2; }
+    # a transport suite arm: its own settings alone
+    if arm_of "$m" >/dev/null; then
+        arm_check "$m"
+        return
+    fi
     # the transport, as vm.sh driver takes it (any other stops the run there)
     transport=${m%+idle}
     transport=${transport%%@*}
-    [[ $transport =~ ^(kernel|kernel-busy|dpdk|dpdk-spin|dpdk-adaptive|dpdk-epoll)(-mono)?$ ]] ||
-        { echo "mode $m: transport $transport: kernel, kernel-busy, dpdk, dpdk-spin, dpdk-adaptive or dpdk-epoll, optionally -mono (vm.sh refuses any other at the driver's start)" >&2; return 2; }
+    [[ $transport =~ ^(kernel|kernel-busy|dpdk|dpdk-spin|dpdk-adaptive|dpdk-epoll|kernel-raw|dpdk-raw|dpdk-pure)(-mono)?$ ]] ||
+        { echo "mode $m: transport $transport: kernel, kernel-busy, dpdk, dpdk-spin, dpdk-adaptive, dpdk-epoll, the raw floor's kernel-raw or dpdk-raw, optionally -mono, or the pure floor's dpdk-pure (vm.sh refuses any other at the driver's start)" >&2; return 2; }
+    # the raw floor: no Aeron, so nothing only Aeron reads, and its round trip
+    # alone, cross-host (floor.rs)
+    if mode_raw "$m"; then
+        [[ $m != *+idle ]] || { echo "mode $m: the raw floor runs no Aeron, so no idle subscription (+idle)" >&2; return 2; }
+        [[ $where != local ]] || { echo "mode $m: the raw floor is cross-host only: its round trip between the hosts' data NICs" >&2; return 2; }
+        while IFS= read -r p; do
+            key=${p%%=*}
+            case $key in
+            AERON_* | PUB_PARAMS | SUB_PARAMS | RELIABLE | CONDUCTOR)
+                echo "mode $m: $key is Aeron's, and the raw floor runs no Aeron (no media driver, no client): it would measure its baseline under another name" >&2
+                return 2
+                ;;
+            esac
+        done < <(mode_pairs "$m")
+    fi
+    # the pure floor: purefloor.c, on AWS's ENA ports, its clock the CPU's
+    # counter, and only the transport's settings it reads
+    if mode_pure "$m"; then
+        [[ $transport != *-mono ]] ||
+            { echo "mode $m: the pure floor clocks with the CPU's counter alone (purefloor.c: the TSC or CNTVCT_EL0): no -mono, no monotonic clock" >&2; return 2; }
+        [[ $cloud == aws ]] || { echo "mode $m: the pure floor is AWS only (purefloor.c takes an ENA port by PCI address)" >&2; return 2; }
+        while IFS= read -r p; do
+            key=${p%%=*}
+            if [[ $key == RUSTERON_* && ( $key != RUSTERON_DPDK_* || $PURE_KEYS != *" ${key#RUSTERON_DPDK_} "* ) ]]; then
+                echo "mode $m: $key is not one purefloor reads (RUSTERON_DPDK_ and one of$PURE_KEYS): it would measure its baseline under another name" >&2
+                return 2
+            fi
+        done < <(mode_pairs "$m")
+    fi
     settings=${LAB_SETTINGS# }
     settings=${settings% }
     while IFS= read -r p; do
@@ -566,7 +819,7 @@ mode_check() {
             ;;
         esac
         case $key in
-        IRQ | NAPI_DEFER | NAPI_BUSY | CONDUCTOR)
+        IRQ | NAPI_DEFER | NAPI_BUSY | CONDUCTOR | HAIRPIN | RTT_GAP_US | KEEPALIVE_US | FLUSH_KB | DPDK)
             [[ $seen != *" $key "* ]] || { echo "mode $m: one $key at most" >&2; return 2; }
             seen+="$key "
             ;;
@@ -599,6 +852,37 @@ mode_check() {
             [[ $where != local ]] ||
                 { echo "mode $m: CONDUCTOR=own with both ends on one host (localhost): the run takes the fifth core for its second end" >&2; return 2; }
             ;;
+        HAIRPIN)
+            [[ $value == 1 ]] || { echo "mode $m: HAIRPIN=1 or nothing" >&2; return 2; }
+            mode_raw "$m" ||
+                { echo "mode $m: HAIRPIN is the raw floor's (kernel-raw, dpdk-raw): the floor client runs both ends in one process; Aeron's would need two clients on one driver" >&2; return 2; }
+            ! mode_pure "$m" ||
+                { echo "mode $m: HAIRPIN is not the pure floor's: purefloor has no hairpin client (one port per host)" >&2; return 2; }
+            [[ $cloud == aws ]] || { echo "mode $m: HAIRPIN is AWS only (two ENIs on the data subnet)" >&2; return 2; }
+            ;;
+        RTT_GAP_US)
+            [[ $value =~ ^[1-9][0-9]{0,6}$ ]] && ((value <= 1000000)) ||
+                { echo "mode $m: RTT_GAP_US=$value: whole microseconds between pings, 1 to 1000000 (a rep of at most 60 s holds 60 round trips at 1 s)" >&2; return 2; }
+            [[ $where != local ]] ||
+                { echo "mode $m: RTT_GAP_US is cross-host only: a sparse flow is the network's (lib.sh paces only the cross-host round trip)" >&2; return 2; }
+            ! mode_pure "$m" ||
+                { echo "mode $m: RTT_GAP_US is not the pure floor's: purefloor does not pace its pings" >&2; return 2; }
+            ;;
+        KEEPALIVE_US | FLUSH_KB)
+            [[ $value =~ ^[1-9][0-9]{0,6}$ ]] ||
+                { echo "mode $m: $key=$value: a whole number from 1 (KEEPALIVE_US microseconds, FLUSH_KB KiB)" >&2; return 2; }
+            mode_raw "$m" && ! mode_pure "$m" ||
+                { echo "mode $m: $key is the raw floor's (kernel-raw, dpdk-raw): the floor client sends the keep-alives and writes the flush buffer" >&2; return 2; }
+            v=$(mode_get "$m" RTT_GAP_US) ||
+                { echo "mode $m: $key needs @RTT_GAP_US: it acts between paced pings" >&2; return 2; }
+            if [[ $key == KEEPALIVE_US ]]; then
+                ((value * 2 <= v && v - value > 50)) ||
+                    { echo "mode $m: KEEPALIVE_US=$value with RTT_GAP_US=$v: at most half the gap, and none goes within 50 us of a ping" >&2; return 2; }
+            else
+                ((value <= 1048576 && v >= 10000)) ||
+                    { echo "mode $m: FLUSH_KB=$value with RTT_GAP_US=$v: at most 1048576 KiB, and a gap of 10 ms or more for the flush to fit in" >&2; return 2; }
+            fi
+            ;;
         JUMBO)
             [[ $value == 1 ]] || { echo "mode $m: JUMBO=1 or nothing" >&2; return 2; }
             [[ $cloud == aws ]] || { echo "mode $m: JUMBO is AWS only (ENA's 9001-byte frames)" >&2; return 2; }
@@ -607,6 +891,17 @@ mode_check() {
             [[ $value == off ]] || { echo "mode $m: SMT=off or nothing" >&2; return 2; }
             [[ $arch != arm64 ]] || { echo "mode $m: SMT=off on Graviton, which has no SMT (each CPU a core)" >&2; return 2; }
             [[ $tpc != 1 ]] || { echo "mode $m: SMT=off with LAB_THREADS_PER_CORE=1: the instances have no SMT to turn off" >&2; return 2; }
+            ;;
+        DPDK)
+            [[ $DPDK_BUILDS == *" $value "* ]] ||
+                { echo "mode $m: DPDK=$value: stock (DPDK 25.11 from source) or patched-refill (with dpdk-ena-deferred-refill.patch on ENA's PMD)" >&2; return 2; }
+            [[ $transport == dpdk* ]] ||
+                { echo "mode $m: DPDK=$value is for DPDK modes only (the media driver and clients linked against that DPDK build)" >&2; return 2; }
+            [[ $cloud == aws ]] || { echo "mode $m: DPDK=$value is AWS only (a build of ENA's PMD)" >&2; return 2; }
+            ! mode_pure "$m" ||
+                { echo "mode $m: DPDK=$value is not the pure floor's: purefloor links the DPDK vm.sh build compiles it against" >&2; return 2; }
+            mode_get "$m" BIN >/dev/null &&
+                { echo "mode $m: DPDK=$value with BIN=: one build a mode (DPDK= is its own, in ~/bin-dpdk-$value)" >&2; return 2; }
             ;;
         PUB_PARAMS) channel_params pub "$value" >/dev/null || { echo "mode $m: see above" >&2; return 2; } ;;
         SUB_PARAMS) channel_params sub "$value" >/dev/null || { echo "mode $m: see above" >&2; return 2; } ;;

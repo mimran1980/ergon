@@ -17,9 +17,10 @@ data:
   # NIC's maximum), 4096 on an ENA: room for a burst. Against 1024 it did not
   # separate at idle (BENCHMARKS.md, "Measured, but no setting recommended").
   # The pool below holds that ring.
-  # ENA queues take at most 512 TX descriptors (the device reports
-  # tx_desc_lim.nb_max = 512); a larger ring fails port init.
-  RUSTERON_DPDK_TX_DESCRIPTORS: "512"
+  # ENA queues take at most 256 TX descriptors under the transport's large
+  # LLQ entries (llq_policy=3, the default; 512 under llq_policy=1); a larger
+  # ring fails the port's start.
+  RUSTERON_DPDK_TX_DESCRIPTORS: "256"
   # The VM lab's count, which every DPDK measurement used (benches/cloud/vm.sh).
   # Each mbuf is about 2.3 KiB of 2 MiB hugepages (a 2 KiB data room, the
   # headroom and its headers), so two ports take about 75 MiB of the pod's

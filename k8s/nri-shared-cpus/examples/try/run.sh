@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# Throwaway kind cluster. Installs the public ergon-shared-cpus chart 0.1.0,
-# applies the latency-pod admission policy from this repo, runs one hot pod,
-# and shows that an exec probe is refused.
+# Throwaway kind cluster. Installs the public ergon-shared-cpus chart 0.1.1
+# with the hot-pod check's host mounts, applies the latency-pod admission
+# policy from this repo, runs one pod that gets the shared CPU, and shows two
+# refusals: a hot pod (the kind node has no isolcpus) and an exec probe.
 #
 # Needs: docker (at least 6 CPUs), helm, kubectl, kind.
 # Uses KUBECONFIG under /tmp. Does not read or write ~/.kube/config.
@@ -135,6 +136,8 @@ fail() {
     echo "=== trader ==="
     kubectl -n trading describe pod trader 2>&1 || true
     kubectl -n trading logs trader 2>&1 || true
+    echo "=== trader-hot ==="
+    kubectl -n trading describe pod trader-hot 2>&1 || true
   } >>"$LOG"
   say "log: $LOG"
   exit 1
@@ -154,7 +157,7 @@ if "$KIND" get clusters 2>/dev/null | grep -qx "$CLUSTER"; then
   fail "cluster ${CLUSTER} already exists; delete it before running this sample"
 fi
 
-say "creating ${CLUSTER} (kindest/node:v1.33.0)"
+say "creating ${CLUSTER} (kindest/node:v1.35.1, containerd 2.2.1)"
 "$KIND" create cluster \
   --name "$CLUSTER" \
   --config "$TRY/kind.yaml" \
@@ -170,14 +173,17 @@ wait_containerd || fail "containerd did not stay up on ${node}; see $LOG"
 
 install_chart() {
   helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus \
-    --version 0.1.0 \
+    --version 0.1.1 \
     --namespace ergon-system --create-namespace \
-    --set config.sharedCpus=0 \
+    --set-string config.sharedCpus=0 \
     --set 'config.namespaces={trading}' \
+    --set hostContract.kubeletConfig.enabled=true \
+    --set hostContract.sys.enabled=true \
+    --set hostContract.proc.enabled=true \
     >>"$LOG" 2>&1
 }
 
-say "helm install oci://ghcr.io/mimran1980/charts/ergon-shared-cpus --version 0.1.0"
+say "helm install oci://ghcr.io/mimran1980/charts/ergon-shared-cpus --version 0.1.1"
 if ! install_chart; then
   say "helm install failed; checking containerd and retrying once"
   wait_containerd || fail "containerd did not stay up on ${node}; see $LOG"
@@ -185,7 +191,11 @@ if ! install_chart; then
   install_chart || fail "helm install failed; see $LOG"
 fi
 wait_plugin || fail "the ergon-shared-cpus DaemonSet did not become ready; see $LOG"
-say "chart 0.1.0 notes still say it is not released. That sentence is stale. This install is the public chart."
+args=$(kubectl -n ergon-system get ds ergon-shared-cpus -o jsonpath='{.spec.template.spec.containers[0].args}')
+say "plugin args: $args"
+for flag in --kubelet-config --host-sys --host-proc; do
+  [[ "$args" == *"\"$flag\""* ]] || fail "the DaemonSet does not pass $flag"
+done
 
 say "waiting for ergon.io/shared-millicpus"
 ok=0
@@ -206,8 +216,8 @@ kubectl create namespace trading >>"$LOG" 2>&1 || fail "namespace trading alread
 kubectl apply -f "$ADMISSION/priority-class.yaml" >>"$LOG" || fail "priority classes failed"
 kubectl apply -f "$ADMISSION/validating-admission-policy.yaml" >>"$LOG" || fail "admission policy failed"
 
-say "applying the hot pod"
-kubectl apply -f "$TRY/hot-pod.yaml" >>"$LOG" || fail "hot pod was refused"
+say "applying the shared-CPU pod (no hot label)"
+kubectl apply -f "$TRY/shared-pod.yaml" >>"$LOG" || fail "shared-CPU pod was refused"
 kubectl wait -n trading --for=condition=Ready pod/trader --timeout=180s >>"$LOG" 2>&1 || fail "trader did not become Ready"
 
 # The container prints once, then sleeps. Give the log a moment.
@@ -218,6 +228,31 @@ printf '%s\n' "$grant" | grep -q '^ERGON_SHARED_CPUS=0$' || fail "ERGON_SHARED_C
 printf '%s\n' "$grant" | grep -q '^ERGON_ISOLATED_CPUS=..*' || fail "ERGON_ISOLATED_CPUS is empty"
 printf '%s\n' "$grant" | grep -q '^Cpus_allowed_list:[[:space:]]*0$' || fail "PID 1 Cpus_allowed_list is not the shared CPU 0"
 printf '%s\n' "$grant" | grep -q '^nproc=1$' || fail "nproc is not 1; PID 1 can see more than the shared CPU"
+
+# Free trader's two exclusive CPUs first. On a 6-CPU Docker the node has 4
+# allocatable CPUs and kube-system requests about 1, so two cpu: "2" pods
+# do not fit and the hot pod would stay Pending, never reaching the plugin.
+say "deleting trader to free its exclusive CPUs"
+kubectl -n trading delete pod trader --grace-period=1 --wait=true --timeout=120s >>"$LOG" 2>&1 || fail "trader was not deleted"
+
+# The hot pod passes admission, then the plugin's node check refuses its
+# create: the kind node has no isolcpus. The kubelet keeps it waiting with
+# CreateContainerError and the plugin's reason.
+say "applying the hot pod (expect the plugin to refuse it: no isolcpus on kind)"
+kubectl apply -f "$TRY/hot-pod.yaml" >>"$LOG" || fail "hot pod was denied at admission"
+msg=""
+i=0
+while [[ "$i" -lt 90 ]]; do
+  msg=$(kubectl -n trading get pod trader-hot -o jsonpath='{.status.containerStatuses[0].state.waiting.message}' 2>/dev/null || true)
+  [[ "$msg" == *"exclusive CPU not isolated"* ]] && break
+  i=$((i + 1))
+  sleep 2
+done
+say "trader-hot: $msg"
+[[ "$msg" == *"exclusive CPU not isolated"* ]] || fail "the hot pod was not refused for its exclusive CPUs"
+[[ "$msg" != *"kubelet configuration is not mounted"* ]] || fail "the kubelet config did not reach the plugin"
+running=$(kubectl -n trading get pod trader-hot -o jsonpath='{.status.containerStatuses[0].state.running}' 2>/dev/null || true)
+[[ -z "$running" ]] || fail "trader-hot is running; the node check let it through"
 
 say "applying the exec-probe pod (expect deny)"
 deny_status=0

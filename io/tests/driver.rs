@@ -50,10 +50,7 @@ impl WsHandler for Collect {
 }
 
 fn driver(b: Backend) -> R<Driver<WsConn>> {
-    // Short waits keep the sleeping backends quick in tests.
-    let mut cfg = Config::new(b);
-    cfg.wait_us = cfg.wait_us.min(100);
-    Ok(Driver::new(cfg)?)
+    Ok(Driver::new(Config::new(b))?)
 }
 
 fn poll_until(d: &mut Driver<WsConn>, h: &mut Collect, done: impl Fn(&Collect) -> bool) -> R {
@@ -180,6 +177,134 @@ fn sends_and_receives_echo() -> R {
 }
 // ANCHOR_END: echo
 
+/// Records, at the first message, whether the server already had the order
+/// the application queued before that `poll`.
+struct OrderFirst {
+    server: std::net::TcpStream,
+    /// `Some(true)`: the order was on the server's socket when the message
+    /// was delivered; `Some(false)`: not within a second of waiting.
+    sent_first: Option<bool>,
+}
+
+impl Handler for OrderFirst {}
+
+impl WsHandler for OrderFirst {
+    fn on_message(&mut self, _: ConnId, _: u8, _: &[u8], _: &RxMeta, _: u16) {
+        if self.sent_first.is_some() {
+            return;
+        }
+        // `uring-sqpoll` sends from its kernel thread: allow it a moment.
+        // Without the send before the receive pass the order is still only
+        // queued here, so the wait runs out.
+        let end = Instant::now() + Duration::from_secs(1);
+        let fd = std::os::fd::AsRawFd::as_raw_fd(&self.server);
+        let mut b = [0u8; 1];
+        let seen = loop {
+            // MSG_DONTWAIT: the server's own reads on this socket block.
+            // SAFETY: `b` is valid for one byte.
+            #[allow(unsafe_code)]
+            let n = unsafe {
+                libc::recv(
+                    fd,
+                    b.as_mut_ptr().cast(),
+                    1,
+                    libc::MSG_PEEK | libc::MSG_DONTWAIT,
+                )
+            };
+            if n > 0 {
+                break true;
+            }
+            if Instant::now() > end {
+                break false;
+            }
+            std::hint::spin_loop();
+        };
+        self.sent_first = Some(seen);
+    }
+}
+
+/// Waits until `fd` has bytes to read (the feed's message reached the
+/// client's socket).
+fn readable(fd: std::os::fd::RawFd) -> R {
+    let mut p = libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    // SAFETY: one valid pollfd for the duration of the call.
+    #[allow(unsafe_code)]
+    let n = unsafe { libc::poll(&raw mut p, 1, 5_000) };
+    if n == 1 {
+        Ok(())
+    } else {
+        Err(format!("socket never became readable: {n}").into())
+    }
+}
+
+/// An order queued between polls (in the application's idle work) leaves
+/// before the next `poll` decodes and delivers what arrived meanwhile: it
+/// does not wait behind the receive pass.
+#[test]
+fn an_order_queued_before_poll_leaves_before_the_receive_pass() -> R {
+    each_backend(|b| {
+        let lab = Lab::new()?;
+        let lab = &lab;
+        let mut d = driver(b)?;
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (go_tx, go) = std::sync::mpsc::channel::<()>();
+        let (read_tx, read) = std::sync::mpsc::channel::<()>();
+        std::thread::scope(|s| -> R {
+            let srv = s.spawn(move || -> R<Vec<u8>> {
+                let mut p = lab.accept()?;
+                p.sock.set_read_timeout(Some(Duration::from_secs(10)))?;
+                // The handshake and upgrade are done: nothing else arrives
+                // from the client until the order.
+                tx.send(p.sock.try_clone()?)?;
+                // Once the driver holds the connection, so the message is
+                // read by a poll, not with the upgrade response.
+                go.recv_timeout(Duration::from_secs(10))?;
+                p.send(ws::OP_TEXT, true, b"tick")?;
+                // Read only once the handler has looked: a read here would
+                // take the order off the socket before its peek.
+                read.recv_timeout(Duration::from_secs(20))?;
+                let (op, body) = p.recv()?;
+                assert_eq!(op, ws::OP_TEXT);
+                Ok(body)
+            });
+            let id = d.add(WsConn::connect(
+                &lab.target("/")?,
+                lab.client_cfg.clone(),
+                1 << 20,
+            )?)?;
+            let server = rx.recv_timeout(Duration::from_secs(10))?;
+            go_tx.send(())?;
+            readable(d.get(id).ok_or("conn gone")?.raw_fd())?;
+            d.get_mut(id)
+                .ok_or("conn gone")?
+                .send_frame(ws::OP_TEXT, b"order")?;
+            let mut h = OrderFirst {
+                server,
+                sent_first: None,
+            };
+            let end = Instant::now() + Duration::from_secs(10);
+            while h.sent_first.is_none() {
+                d.poll(&mut h)?;
+                if Instant::now() > end {
+                    return Err(format!("no message: {:?}", d.stats()).into());
+                }
+            }
+            read_tx.send(())?;
+            assert_eq!(
+                h.sent_first,
+                Some(true),
+                "{b}: the order waited behind the receive pass"
+            );
+            assert_eq!(srv.join().map_err(|_| "server panicked")??, b"order");
+            Ok(())
+        })
+    })
+}
+
 #[test]
 fn protocol_error_closes_only_that_connection() -> R {
     each_backend(|b| {
@@ -294,65 +419,19 @@ fn drop_with_io_in_flight_closes_sockets() -> R {
     })
 }
 
-#[test]
-fn busy_poll_preference_reaches_the_socket_or_fails_cleanly() -> R {
-    use std::os::fd::AsRawFd;
-    // SO_PREFER_BUSY_POLL and a raised SO_BUSY_POLL_BUDGET need CAP_NET_ADMIN:
-    // with it the options must reach the socket, without it `add` must fail
-    // with an error that says so and keep nothing.
-    let probe = std::net::TcpListener::bind("127.0.0.1:0")?;
-    let privileged = ergon_io::sys::set_prefer_busy_poll(probe.as_raw_fd(), true).is_ok();
-    for (prefer, budget) in [(true, None), (false, Some(16)), (true, Some(16))] {
-        let lab = Lab::new()?;
-        let mut cfg = Config::new(Backend::RecvBusy);
-        cfg.prefer_busy_poll = prefer;
-        cfg.busy_poll_budget = budget;
-        let mut d = Driver::new(cfg)?;
-        std::thread::scope(|s| -> R {
-            let srv = s.spawn(|| -> R {
-                let mut p = lab.accept()?;
-                let _ = p.client_closed()?;
-                Ok(())
-            });
-            let added = d.add(WsConn::connect(
-                &lab.target("/")?,
-                lab.client_cfg.clone(),
-                1 << 20,
-            )?);
-            if privileged {
-                let id = added?;
-                let fd = d.get(id).ok_or("conn gone")?.raw_fd();
-                let bp = ergon_io::sys::busy_poll_settings(fd)?;
-                assert_eq!(bp.prefer, prefer, "{bp:?}");
-                assert!(bp.usec >= 1, "{bp:?}");
-            } else {
-                let e = added.err().ok_or("added without CAP_NET_ADMIN")?;
-                assert!(e.to_string().contains("CAP_NET_ADMIN"), "{e}");
-                assert_eq!(d.len(), 0);
-            }
-            drop(d);
-            srv.join().map_err(|_| "server panicked")??;
-            Ok(())
-        })?;
-    }
-    Ok(())
-}
-
 // Which backends poll the NIC through the socket is not a documentation
 // claim: it is a socket option, and it reads back. `recv-busy` (with or
-// without `per_queue`) and `epoll-busy` set `SO_BUSY_POLL` on every socket,
-// so an empty `recvmsg` runs one NAPI pass and the packet is taken off the
-// NIC with no interrupt. `epoll-spin` and `uring-spin` set nothing and wait
-// for the interrupt. `uring-sqpoll` and `uring-napi` do poll the NIC, but
-// through the SQPOLL kernel thread and io_uring NAPI rather than through the
-// socket, so their `SO_BUSY_POLL` is 0 as well.
+// without `per_queue`) sets `SO_BUSY_POLL` on every socket, so an empty
+// `recvmsg` runs one NAPI pass and the packet is taken off the NIC with no
+// interrupt. `epoll-spin` sets nothing and waits for the interrupt.
+// `uring-sqpoll` does poll the NIC, but through the SQPOLL kernel thread and
+// io_uring NAPI rather than through the socket, so its `SO_BUSY_POLL` is 0
+// as well. No backend sets `SO_PREFER_BUSY_POLL`.
 #[test]
 fn busy_poll_is_set_only_where_the_socket_polls_the_nic() -> R {
     each_backend(|b| {
         let lab = Lab::new()?;
-        let mut cfg = Config::new(b);
-        cfg.wait_us = cfg.wait_us.min(100);
-        let mut d = match Driver::new(cfg) {
+        let mut d = match Driver::new(Config::new(b)) {
             Ok(d) => d,
             Err(e) if b == Backend::UringSqpoll && support::refused(&e, HelperThread::SqPoll) => {
                 return Ok(());
@@ -372,26 +451,48 @@ fn busy_poll_is_set_only_where_the_socket_polls_the_nic() -> R {
             )?)?;
             let fd = d.get(id).ok_or("conn gone")?.raw_fd();
             let bp = ergon_io::sys::busy_poll_settings(fd)?;
-            // SO_BUSY_POLL is set exactly on the two backends that poll the
-            // NIC through the socket. Everything else reads back 0.
-            let socket_polls = matches!(b, Backend::RecvBusy | Backend::EpollBusy);
-            if socket_polls {
-                assert!(bp.usec >= 1, "{b}: SO_BUSY_POLL = {}, want >= 1", bp.usec);
+            // SO_BUSY_POLL is set exactly on the backend that polls the NIC
+            // through the socket. Everything else reads back 0.
+            assert!(!bp.prefer, "{b}: SO_PREFER_BUSY_POLL set");
+            if b == Backend::RecvBusy {
+                assert_eq!(bp.usec, 1, "{b}: SO_BUSY_POLL = {}, want 1", bp.usec);
             } else {
                 assert_eq!(bp.usec, 0, "{b}: SO_BUSY_POLL = {}, want 0", bp.usec);
             }
-            // The socket-level polls-nic set is the two above; the two uring
-            // pollers do it without the option; the two spin backends do not
-            // poll the NIC at all.
-            let polls = matches!(
-                b,
-                Backend::RecvBusy | Backend::EpollBusy | Backend::UringSqpoll | Backend::UringNapi
-            );
+            // `uring-sqpoll` polls the NIC without the option; `epoll-spin`
+            // does not poll it at all.
+            let polls = matches!(b, Backend::RecvBusy | Backend::UringSqpoll);
             assert_eq!(b.polls_nic(), polls, "{b}: polls_nic");
             drop(d);
             srv.join().map_err(|_| "server panicked")??;
             Ok(())
         })
+    })
+}
+
+// `epoll-spin,busy_poll_us=N` sets `SO_BUSY_POLL` N on a WebSocket
+// connection too, and never `SO_PREFER_BUSY_POLL`.
+#[test]
+fn busy_poll_us_reaches_a_websocket_connection() -> R {
+    let lab = Lab::new()?;
+    let mut d = Driver::new(Config::parse("epoll-spin,busy_poll_us=50")?)?;
+    std::thread::scope(|s| -> R {
+        let srv = s.spawn(|| -> R {
+            let mut p = lab.accept()?;
+            let _ = p.client_closed()?;
+            Ok(())
+        });
+        let id = d.add(WsConn::connect(
+            &lab.target("/")?,
+            lab.client_cfg.clone(),
+            1 << 20,
+        )?)?;
+        let fd = d.get(id).ok_or("conn gone")?.raw_fd();
+        let bp = ergon_io::sys::busy_poll_settings(fd)?;
+        assert_eq!((bp.usec, bp.prefer), (50, false));
+        drop(d);
+        srv.join().map_err(|_| "server panicked")??;
+        Ok(())
     })
 }
 
@@ -465,7 +566,7 @@ fn tokio_registers_the_socket_without_busy_poll() -> R {
 
 #[test]
 fn send_failures_found_by_flush_reach_the_next_poll() -> R {
-    for b in Backend::ALL.into_iter().filter(|b| !b.may_sleep()) {
+    for b in Backend::ALL {
         let lab = Lab::new()?;
         let mut d = match driver(b) {
             Ok(d) => d,
@@ -588,17 +689,18 @@ fn recv_busy_per_queue_reads_every_socket_that_has_data() -> R {
 fn uring_full_submission_queue_keeps_connections_open() -> R {
     // 16 connections on a 4-entry ring: every round needs 32 submissions and
     // overflows the completion queue too. Nothing may be closed.
-    for b in [Backend::UringSpin, Backend::UringSqpoll] {
+    {
+        let b = Backend::UringSqpoll;
         let lab = Lab::new()?;
         let mut cfg = Config::new(b);
         cfg.ring_entries = 4;
         let mut d = match Driver::new(cfg) {
             Ok(d) => d,
             // A pod with one CPU has no core for SQPOLL: typed refusal
-            // (asserted); `UringSpin` above runs the body everywhere.
+            // (asserted).
             Err(e) if b == Backend::UringSqpoll => {
                 assert!(support::refused(&e, HelperThread::SqPoll), "{e}");
-                continue;
+                return Ok(());
             }
             Err(e) => return Err(format!("{b}: {e}").into()),
         };
@@ -635,17 +737,18 @@ fn uring_close_and_reopen_under_a_full_queue_leaves_new_connections_alone() -> R
     // Closing many connections at once on a 2-entry ring defers their
     // cancels; the slots and descriptors are then reused at once. A late
     // cancel must never reach the newer connections.
-    for b in [Backend::UringSpin, Backend::UringSqpoll] {
+    {
+        let b = Backend::UringSqpoll;
         let lab = Lab::new()?;
         let mut cfg = Config::new(b);
         cfg.ring_entries = 2;
         let mut d = match Driver::new(cfg) {
             Ok(d) => d,
             // A pod with one CPU has no core for SQPOLL: typed refusal
-            // (asserted); `UringSpin` above runs the body everywhere.
+            // (asserted).
             Err(e) if b == Backend::UringSqpoll => {
                 assert!(support::refused(&e, HelperThread::SqPoll), "{e}");
-                continue;
+                return Ok(());
             }
             Err(e) => return Err(format!("{b}: {e}").into()),
         };
@@ -783,7 +886,7 @@ fn background_dns_waits_never_hold_up_other_connects() -> R {
 
 #[test]
 fn spin_backends_never_sleep_when_idle() -> R {
-    for b in Backend::ALL.into_iter().filter(|b| !b.may_sleep()) {
+    for b in Backend::ALL {
         let lab = Lab::new()?;
         let mut d = match driver(b) {
             Ok(d) => d,
@@ -820,61 +923,227 @@ fn spin_backends_never_sleep_when_idle() -> R {
     Ok(())
 }
 
+/// What the polling thread did during one connect to a slow server.
+struct SlowConnect {
+    /// Voluntary context switches (the thread slept in the kernel), except
+    /// in a poll that took a page fault and slept under `FAULT_SLEEP`.
+    slept: u64,
+    /// Voluntary context switches in polls that took a page fault and slept
+    /// under `FAULT_SLEEP`, and the longest such sleep.
+    slept_faulting: u64,
+    longest_fault_sleep: Duration,
+    /// Polls that took a page fault, and their faults (minor + major).
+    faulting_polls: u64,
+    faults: u64,
+    /// The slowest `poll`, less any time it was preempted (runnable, on a
+    /// run queue): its own time, running or asleep.
+    slowest: Duration,
+    /// Each poll that slept and was not put down to a fault: its index,
+    /// faults, time asleep and wall time.
+    sleeps: Vec<(usize, u64, Duration, Duration)>,
+}
+
+/// Page faults of the calling thread so far, minor plus major (fields 10
+/// and 12 of `/proc/thread-self/stat`).
+fn thread_page_faults() -> R<u64> {
+    let stat = std::fs::read_to_string("/proc/thread-self/stat")?;
+    let after = stat.rfind(')').ok_or("no comm in stat")?;
+    // The fields after the comm start at field 3 (state).
+    let mut fields = stat[after + 1..].split_whitespace().skip(10 - 3);
+    let minor: u64 = fields.next().ok_or("short stat")?.parse()?;
+    let major: u64 = fields.nth(1).ok_or("short stat")?.parse()?;
+    Ok(minor + major)
+}
+
+/// The calling thread's CPU time (`CLOCK_THREAD_CPUTIME_ID`, exact to the
+/// call) plus its time waiting on a run queue (field 2 of
+/// `/proc/thread-self/schedstat`, settled each time it is switched back
+/// in): over a poll, the poll's wall time minus this is the time it slept.
+fn thread_busy() -> R<Duration> {
+    let cpu = rustix::time::clock_gettime(rustix::time::ClockId::ThreadCPUTime);
+    let cpu = Duration::new(u64::try_from(cpu.tv_sec)?, u32::try_from(cpu.tv_nsec)?);
+    Ok(cpu + thread_queued()?)
+}
+
+/// The calling thread's time so far waiting on a run queue: runnable but
+/// preempted (field 2 of `/proc/thread-self/schedstat`). On a thread that is
+/// not pinned, in a shared VM, a poll's wall time holds this too: seen on
+/// Linux arm64 under load, a poll of 7.9 ms wall of which 3.6 ms waited here
+/// after an involuntary switch.
+fn thread_queued() -> R<Duration> {
+    let stat = std::fs::read_to_string("/proc/thread-self/schedstat")?;
+    let queued: u64 = stat
+        .split_whitespace()
+        .nth(1)
+        .ok_or("short schedstat")?
+        .parse()?;
+    Ok(Duration::from_nanos(queued))
+}
+
+/// The longest a poll that took a page fault may sleep and still have its
+/// sleeps put down to the fault. Seen on Linux arm64 (debug build, 80 runs
+/// of the six backends): at most 145 µs. A 2 ms sleep added to the poll that
+/// faults fails the test.
+const FAULT_SLEEP: Duration = Duration::from_millis(1);
+
+/// Connects `d` to a server that waits 150 ms before the TLS handshake even
+/// starts, and polls until its first message arrives, counting per poll.
+fn connect_to_a_slow_server(d: &mut Driver<WsConn>, lab: &Lab) -> R<SlowConnect> {
+    std::thread::scope(|s| -> R<SlowConnect> {
+        // The server gives up after 10 s with no client or no data, so a
+        // failing check below ends the test instead of hanging the scope.
+        let srv = s.spawn(|| -> R {
+            let wait = Duration::from_secs(10);
+            lab.listener.set_nonblocking(true)?;
+            let give_up = Instant::now() + wait;
+            let sock = loop {
+                match lab.listener.accept() {
+                    Ok((sock, _)) => break sock,
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        if Instant::now() > give_up {
+                            return Err("no client connected".into());
+                        }
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+            };
+            sock.set_nonblocking(false)?;
+            sock.set_read_timeout(Some(wait))?;
+            std::thread::sleep(Duration::from_millis(150));
+            let mut p = support::Peer::serve(lab, sock)?;
+            p.send(ws::OP_TEXT, true, b"hi")?;
+            assert!(p.client_closed()?);
+            Ok(())
+        });
+        let q0 = thread_queued()?;
+        let t0 = Instant::now();
+        let id = d.connect(WsDial::new(
+            lab.target("/")?,
+            lab.client_cfg.clone(),
+            1 << 20,
+        )?)?;
+        // A connect that waited for the handshake would take the server's
+        // 150 ms; 50 ms leaves room for a debug build on a loaded host. The
+        // time the thread was preempted (runnable, on a run queue) is the
+        // scheduler's, not the connect's, and is left out.
+        let took = t0.elapsed();
+        let queued = thread_queued()?.saturating_sub(q0);
+        assert!(
+            took.saturating_sub(queued) < Duration::from_millis(50),
+            "connect returned late: {took:?}, {queued:?} of it preempted"
+        );
+        assert!(d.get(id).is_none(), "not open yet");
+        let mut h = Collect::default();
+        let mut c = SlowConnect {
+            slept: 0,
+            slept_faulting: 0,
+            longest_fault_sleep: Duration::ZERO,
+            faulting_polls: 0,
+            faults: 0,
+            slowest: Duration::ZERO,
+            sleeps: Vec::new(),
+        };
+        let end = Instant::now() + Duration::from_secs(10);
+        let mut polls = 0;
+        while h.msgs.is_empty() {
+            // Only the poll is inside the switch count; the /proc reads
+            // around it are not.
+            let f0 = thread_page_faults()?;
+            let q0 = thread_queued()?;
+            let busy0 = thread_busy()?;
+            let (v0, _) = ergon_io::clock::thread_ctx_switches();
+            let t = Instant::now();
+            d.poll(&mut h)?;
+            let took = t.elapsed();
+            let (v1, _) = ergon_io::clock::thread_ctx_switches();
+            let asleep = took.saturating_sub(thread_busy()?.saturating_sub(busy0));
+            // The poll's own time: running or asleep, not preempted.
+            c.slowest = c
+                .slowest
+                .max(took.saturating_sub(thread_queued()?.saturating_sub(q0)));
+            let faults = thread_page_faults()? - f0;
+            if faults > 0 {
+                c.faulting_polls += 1;
+                c.faults += faults;
+            }
+            if faults > 0 && asleep < FAULT_SLEEP {
+                c.slept_faulting += v1 - v0;
+                if v1 > v0 {
+                    c.longest_fault_sleep = c.longest_fault_sleep.max(asleep);
+                }
+            } else if v1 > v0 {
+                c.slept += v1 - v0;
+                c.sleeps.push((polls, faults, asleep, took));
+            }
+            polls += 1;
+            assert!(Instant::now() < end, "never opened: {:?}", h.closed);
+        }
+        assert_eq!(h.opened, vec![id]);
+        assert_eq!(h.msgs[0].0, id);
+        assert!(d.get(id).is_some());
+        // Closed at once (with `io_uring` the socket goes on a later poll):
+        // the server sees it and ends.
+        d.close(id);
+        while !srv.is_finished() {
+            d.poll(&mut h)?;
+            assert!(Instant::now() < end, "the server never saw the close");
+        }
+        srv.join().map_err(|_| "server panicked")??;
+        Ok(c)
+    })
+}
+
+/// A connect never makes the polling thread wait for the network: while
+/// the server holds the handshake back for 150 ms, no poll sleeps and none
+/// comes near that delay.
+///
+/// Two things sleep the thread that are not the network, and both are
+/// page faults. The first connect in a process runs the TLS and upgrade
+/// code for the first time; paging it in can take a major fault (seen run
+/// alone: majflt 20 -> 21 and one voluntary switch in the first poll; in
+/// the full suite an earlier test had paged it in). So a warm-up connect
+/// runs first, unmeasured: the claim is about a warm loop. And every
+/// connect's poll that finishes TLS touches its new 1 MiB receive buffer
+/// (`prefault`, about 256 minor faults); a fault can sleep on the kernel's
+/// memory locks, shared here with the server thread in the same process
+/// (seen on Linux arm64: one switch in that poll, +273 faults, in 12 of 40
+/// runs). A sleep in a poll that faulted is counted apart when that poll
+/// slept under `FAULT_SLEEP` in all (wall time minus CPU and run-queue
+/// time); any other poll never sleeps. A driver that blocks on the network
+/// sleeps out the 150 ms, so it fails both the sleep and the poll-time
+/// check; a short blocking wait fails the sleep check unless it is under
+/// 1 ms and lands in one of the few polls that fault.
 #[test]
 fn connect_never_blocks_the_poll_loop() -> R {
     each_backend(|b| {
         let lab = Lab::new()?;
         let mut d = driver(b)?;
-        std::thread::scope(|s| -> R {
-            let srv = s.spawn(|| -> R {
-                // A slow server: 150 ms before the handshake even starts.
-                let (sock, _) = lab.listener.accept()?;
-                std::thread::sleep(Duration::from_millis(150));
-                let mut p = support::Peer::serve(&lab, sock)?;
-                p.send(ws::OP_TEXT, true, b"hi")?;
-                assert!(p.client_closed()?);
-                Ok(())
-            });
-            let t0 = Instant::now();
-            let id = d.connect(WsDial::new(
-                lab.target("/")?,
-                lab.client_cfg.clone(),
-                1 << 20,
-            )?)?;
-            assert!(
-                t0.elapsed() < Duration::from_millis(5),
-                "connect returned late"
-            );
-            assert!(d.get(id).is_none(), "not open yet");
-            let mut h = Collect::default();
-            let mut slowest = Duration::ZERO;
-            let end = Instant::now() + Duration::from_secs(10);
-            let (slept0, _) = ergon_io::clock::thread_ctx_switches();
-            while h.msgs.is_empty() {
-                let t = Instant::now();
-                d.poll(&mut h)?;
-                slowest = slowest.max(t.elapsed());
-                assert!(Instant::now() < end, "never opened: {:?}", h.closed);
-            }
-            let (slept1, _) = ergon_io::clock::thread_ctx_switches();
-            assert_eq!(h.opened, vec![id]);
-            assert_eq!(h.msgs[0].0, id);
-            assert!(d.get(id).is_some());
-            // Never waiting for the network: the thread never slept, and no
-            // poll came near the server's 150 ms delay (the worst is one
-            // handshake step's CPU, slow in a debug build on a shared host).
-            if !b.may_sleep() {
-                assert_eq!(slept1 - slept0, 0, "{b}: the polling thread slept");
-            }
-            assert!(
-                slowest < Duration::from_millis(100),
-                "{b}: a poll took {slowest:?}"
-            );
-            assert_eq!(d.stats().connects, 1);
-            drop(d);
-            srv.join().map_err(|_| "server panicked")??;
-            Ok(())
-        })
+        connect_to_a_slow_server(&mut d, &lab)?;
+        let c = connect_to_a_slow_server(&mut d, &lab)?;
+        // The worst poll is one handshake step's CPU (slow in a debug build
+        // on a shared host), never the server's 150 ms.
+        assert_eq!(
+            c.slept, 0,
+            "{b}: the polling thread slept, (poll, faults, asleep, took): {:?} \
+             ({} more sleeps in faulting polls, the longest {:?})",
+            c.sleeps, c.slept_faulting, c.longest_fault_sleep
+        );
+        assert!(
+            c.slowest < Duration::from_millis(100),
+            "{b}: a poll took {:?}, not counting preemption",
+            c.slowest
+        );
+        // Only the few polls that set up the connection fault.
+        assert!(
+            c.faulting_polls <= 4,
+            "{b}: {} polls faulted ({} faults, {} sleeps)",
+            c.faulting_polls,
+            c.faults,
+            c.slept_faulting
+        );
+        assert_eq!(d.stats().connects, 2);
+        Ok(())
     })
 }
 
@@ -987,56 +1256,289 @@ fn frames_sent_with_the_upgrade_then_more_on_every_backend() -> R {
     })
 }
 
+/// The client's TLS handshake crypto, each step with the thread it ran on:
+/// the key share (`ClientHello`), the shared secret (`ServerHello`), the
+/// certificate chain and the `CertificateVerify` signature. Together they
+/// are the handshake's CPU; a test reads where they ran instead of timing
+/// polls, which on an unpinned thread also times the scheduler.
+#[derive(Debug, Default)]
+struct HandshakeSteps(std::sync::Mutex<Vec<HandshakeStep>>);
+
+#[derive(Debug, Clone)]
+struct HandshakeStep {
+    what: &'static str,
+    thread: std::thread::ThreadId,
+    /// The kernel's thread name (`ergon-io-dial` for the helper, which
+    /// `std` did not start and so does not name).
+    comm: String,
+}
+
+impl HandshakeSteps {
+    fn record(&self, what: &'static str) {
+        let comm = std::fs::read_to_string("/proc/thread-self/comm")
+            .map(|s| s.trim().to_owned())
+            .unwrap_or_default();
+        let step = HandshakeStep {
+            what,
+            thread: std::thread::current().id(),
+            comm,
+        };
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(step);
+    }
+
+    fn take(&self) -> Vec<HandshakeStep> {
+        std::mem::take(
+            &mut *self
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    }
+}
+
+/// A key-exchange group that records its two steps.
+#[derive(Debug)]
+struct RecordingKx {
+    inner: &'static dyn rustls::crypto::SupportedKxGroup,
+    steps: std::sync::Arc<HandshakeSteps>,
+}
+
+impl rustls::crypto::SupportedKxGroup for RecordingKx {
+    fn start(&self) -> Result<Box<dyn rustls::crypto::ActiveKeyExchange>, rustls::Error> {
+        self.steps.record("key share");
+        Ok(Box::new(RecordingActiveKx {
+            inner: self.inner.start()?,
+            steps: self.steps.clone(),
+        }))
+    }
+
+    fn name(&self) -> rustls::NamedGroup {
+        self.inner.name()
+    }
+
+    fn usable_for_version(&self, version: rustls::ProtocolVersion) -> bool {
+        self.inner.usable_for_version(version)
+    }
+}
+
+struct RecordingActiveKx {
+    inner: Box<dyn rustls::crypto::ActiveKeyExchange>,
+    steps: std::sync::Arc<HandshakeSteps>,
+}
+
+impl rustls::crypto::ActiveKeyExchange for RecordingActiveKx {
+    fn complete(
+        self: Box<Self>,
+        peer_pub_key: &[u8],
+    ) -> Result<rustls::crypto::SharedSecret, rustls::Error> {
+        self.steps.record("shared secret");
+        self.inner.complete(peer_pub_key)
+    }
+
+    fn pub_key(&self) -> &[u8] {
+        self.inner.pub_key()
+    }
+
+    fn group(&self) -> rustls::NamedGroup {
+        self.inner.group()
+    }
+}
+
+/// The lab's certificate verifier, recording the chain and signature checks.
+#[derive(Debug)]
+struct RecordingVerifier {
+    inner: std::sync::Arc<rustls::client::WebPkiServerVerifier>,
+    steps: std::sync::Arc<HandshakeSteps>,
+}
+
+impl rustls::client::danger::ServerCertVerifier for RecordingVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &rustls::pki_types::CertificateDer<'_>,
+        intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        server_name: &rustls::pki_types::ServerName<'_>,
+        ocsp_response: &[u8],
+        now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        self.steps.record("certificate");
+        self.inner
+            .verify_server_cert(end_entity, intermediates, server_name, ocsp_response, now)
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        self.inner.verify_tls12_signature(message, cert, dss)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &rustls::pki_types::CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        self.steps.record("certificate verify");
+        self.inner.verify_tls13_signature(message, cert, dss)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.inner.supported_verify_schemes()
+    }
+}
+
+/// Every step a full handshake records, once each, sorted.
+fn all_steps() -> Vec<&'static str> {
+    let mut names = vec![
+        "key share",
+        "shared secret",
+        "certificate",
+        "certificate verify",
+    ];
+    names.sort_unstable();
+    names
+}
+
+/// `lab`'s client config with every handshake step recorded in `steps`
+/// (its own session store: a fresh lab never resumes, so every connect
+/// runs all four steps).
+fn recording_client_cfg(
+    lab: &Lab,
+    steps: &std::sync::Arc<HandshakeSteps>,
+) -> R<std::sync::Arc<rustls::ClientConfig>> {
+    use rustls::pki_types::pem::PemObject;
+    let mut provider = rustls::crypto::ring::default_provider();
+    provider.kx_groups = provider
+        .kx_groups
+        .iter()
+        .map(|&inner| -> &'static dyn rustls::crypto::SupportedKxGroup {
+            // `kx_groups` holds `&'static` groups; a few bytes per lab.
+            Box::leak(Box::new(RecordingKx {
+                inner,
+                steps: steps.clone(),
+            }))
+        })
+        .collect();
+    let provider = std::sync::Arc::new(provider);
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(rustls::pki_types::CertificateDer::from_pem_slice(
+        lab.cert_pem.as_bytes(),
+    )?)?;
+    let verifier = rustls::client::WebPkiServerVerifier::builder_with_provider(
+        std::sync::Arc::new(roots.clone()),
+        provider.clone(),
+    )
+    .build()?;
+    let mut cfg = (*ergon_io::tls::client_config_with(roots, provider, true)?).clone();
+    cfg.dangerous()
+        .set_certificate_verifier(std::sync::Arc::new(RecordingVerifier {
+            inner: verifier,
+            steps: steps.clone(),
+        }));
+    Ok(std::sync::Arc::new(cfg))
+}
+
+/// The steps' names, sorted, for comparing with [`all_steps`].
+fn step_names(steps: &[HandshakeStep]) -> Vec<&'static str> {
+    let mut names: Vec<_> = steps.iter().map(|s| s.what).collect();
+    names.sort_unstable();
+    names
+}
+
+/// Connects `d` to `lab` (with `connect_background` when `background`,
+/// else `connect`), polls until the server's first message, and returns
+/// the handshake steps the client ran.
+fn handshake_steps_of(
+    d: &mut Driver<WsConn>,
+    lab: &Lab,
+    background: bool,
+) -> R<Vec<HandshakeStep>> {
+    let steps = std::sync::Arc::new(HandshakeSteps::default());
+    let dial = WsDial::new(
+        lab.target("/")?,
+        recording_client_cfg(lab, &steps)?,
+        1 << 20,
+    )?;
+    std::thread::scope(|s| -> R<Vec<HandshakeStep>> {
+        let srv = s.spawn(|| -> R {
+            let mut p = lab.accept_within(Duration::from_secs(10))?;
+            p.send(ws::OP_TEXT, true, b"hi")?;
+            assert!(p.client_closed()?);
+            Ok(())
+        });
+        let id = if background {
+            d.connect_background(dial)?
+        } else {
+            d.connect(dial)?
+        };
+        let mut h = Collect::default();
+        poll_until(d, &mut h, |h| !h.msgs.is_empty())?;
+        assert_eq!(h.opened, vec![id]);
+        assert_eq!(h.msgs[0].0, id);
+        d.close(id);
+        let end = Instant::now() + Duration::from_secs(10);
+        while !srv.is_finished() {
+            d.poll(&mut h)?;
+            assert!(Instant::now() < end, "the server never saw the close");
+        }
+        srv.join().map_err(|_| "server panicked")??;
+        Ok(steps.take())
+    })
+}
+
+/// `connect_background` runs the TLS handshake on its helper thread: every
+/// handshake step (key share, shared secret, certificate chain,
+/// `CertificateVerify`; [`HandshakeSteps`]) of the connection ran on
+/// `ergon-io-dial`, none on the polling thread, and no set-up step ran in
+/// `poll` (`connect_step_max_ns == 0`).
+///
+/// The steps are read where they ran, not inferred from how long polls
+/// took: the polling thread is not pinned here, so a poll's wall time also
+/// holds the scheduler's choices. Seen on Linux arm64 in a shared VM, the
+/// poll that takes the finished connection (`uring-sqpoll`, usually 0.25 ms
+/// of CPU): 5.9 ms wall of which 5.7 ms waited on the run queue after an
+/// involuntary switch, and under load 7.1 ms wall with 4.7 ms queued and
+/// 2.4 ms of CPU time for the same work (same syscall counts), so a bound
+/// on CPU time per poll is no sounder. The same recorder on `connect` sees
+/// all four steps on the polling thread, so a handshake moved back onto the
+/// loop fails here.
 #[test]
 fn background_connect_keeps_handshake_cpu_off_the_loop() -> R {
     let _helpers = dial_helpers();
-    // `connect_step_max_ns == 0` is the helper's: the loop never sets a
-    // connection up. A pod with one CPU has no core for the helper and
-    // refuses typed instead (asserted; the helper half runs on a pod with
-    // two CPUs).
+    // A pod with one CPU has no core for the helper and refuses typed
+    // instead (asserted; the helper half runs on a pod with two CPUs).
     if support::one_cpu()? {
         return background_refuses_on_one_cpu();
     }
-    for b in [Backend::RecvBusy, Backend::UringSpin] {
-        let lab = Lab::new()?;
+    let loop_thread = std::thread::current().id();
+    for b in [Backend::RecvBusy, Backend::UringSqpoll] {
         let mut d = driver(b)?;
-        std::thread::scope(|s| -> R {
-            let srv = s.spawn(|| -> R {
-                let mut p = lab.accept_within(Duration::from_secs(10))?;
-                p.send(ws::OP_TEXT, true, b"hi")?;
-                assert!(p.client_closed()?);
-                Ok(())
-            });
-            let id = d.connect_background(WsDial::new(
-                lab.target("/")?,
-                lab.client_cfg.clone(),
-                1 << 20,
-            )?)?;
-            let mut h = Collect::default();
-            let mut slowest = Duration::ZERO;
-            let end = Instant::now() + Duration::from_secs(10);
-            while h.msgs.is_empty() {
-                let t = Instant::now();
-                d.poll(&mut h)?;
-                slowest = slowest.max(t.elapsed());
-                assert!(Instant::now() < end, "never opened: {:?}", h.closed);
-            }
-            assert_eq!(h.opened, vec![id]);
-            assert_eq!(h.msgs[0].0, id);
-            assert_eq!(
-                d.stats().connect_step_max_ns,
-                0,
-                "no set-up step ran on the loop"
-            );
-            assert!(
-                slowest < Duration::from_millis(5),
-                "{b}: a poll took {slowest:?}"
-            );
-            drop(d);
-            srv.join().map_err(|_| "server panicked")??;
-            Ok(())
-        })
-        .map_err(|e| format!("{b}: {e}"))?;
+        // The recorder sees a handshake on the loop: `connect` runs it there.
+        let inline = handshake_steps_of(&mut d, &Lab::new()?, false)?;
+        assert_eq!(step_names(&inline), all_steps(), "{b}: {inline:?}");
+        assert!(
+            inline.iter().all(|s| s.thread == loop_thread),
+            "{b}: connect ran a step off the loop: {inline:?}"
+        );
+        let mut d = driver(b)?;
+        let bg = handshake_steps_of(&mut d, &Lab::new()?, true)?;
+        assert_eq!(step_names(&bg), all_steps(), "{b}: {bg:?}");
+        assert!(
+            bg.iter()
+                .all(|s| s.thread != loop_thread && s.comm == "ergon-io-dial"),
+            "{b}: a handshake step ran off the helper: {bg:?}"
+        );
+        assert_eq!(
+            d.stats().connect_step_max_ns,
+            0,
+            "{b}: no set-up step ran on the loop"
+        );
+        assert_eq!(d.stats().connects, 1, "{b}");
     }
     Ok(())
 }
@@ -1293,5 +1795,163 @@ fn sqpoll_thread_never_shares_the_polling_cpu() -> R {
         })
         .join()
         .map_err(|_| "panicked")?
+    })
+}
+
+/// `RxMeta::rx_read_ns`: with `rx_read_timestamp`, every read carries the
+/// `CLOCK_REALTIME` time the driver took the bytes, after the server wrote
+/// them, after the kernel's own stamp, and before the handler ran; off (the
+/// default) it stays 0. Every backend.
+#[test]
+fn rx_read_ns_stamps_each_read_only_when_asked() -> R {
+    #[derive(Default)]
+    struct Stamps {
+        metas: Vec<(RxMeta, i64)>,
+        closed: Vec<String>,
+    }
+    impl Handler for Stamps {
+        fn on_closed(&mut self, _: ConnId, e: Error) {
+            self.closed.push(e.to_string());
+        }
+    }
+    impl WsHandler for Stamps {
+        fn on_message(&mut self, _: ConnId, _: u8, _: &[u8], meta: &RxMeta, _: u16) {
+            self.metas.push((*meta, ergon_io::clock::realtime_ns()));
+        }
+    }
+    assert!(
+        !Config::new(Backend::RecvBusy).rx_read_timestamp,
+        "off by default"
+    );
+    each_backend(|b| {
+        for on in [false, true] {
+            let lab = Lab::new()?;
+            let mut cfg = Config::new(b);
+            cfg.rx_read_timestamp = on;
+            let mut d: Driver<WsConn> = Driver::new(cfg)?;
+            // The server sends only once the driver has the connection:
+            // bytes that reach the blocking connect first are delivered
+            // from its buffer, unstamped.
+            let (go_tx, go) = std::sync::mpsc::channel::<()>();
+            let lab = &lab;
+            let sent_after = std::thread::scope(|s| -> R<Vec<i64>> {
+                let srv = s.spawn(move || -> R<Vec<i64>> {
+                    let mut p = lab.accept()?;
+                    go.recv_timeout(Duration::from_secs(10))?;
+                    let mut at = Vec::new();
+                    for i in 0..20u32 {
+                        std::thread::sleep(Duration::from_millis(1));
+                        at.push(ergon_io::clock::realtime_ns());
+                        p.send(ws::OP_TEXT, true, format!("m{i}").as_bytes())?;
+                    }
+                    p.send(ws::OP_CLOSE, true, &[])?;
+                    Ok(at)
+                });
+                d.add(WsConn::connect(
+                    &lab.target("/")?,
+                    lab.client_cfg.clone(),
+                    1 << 20,
+                )?)?;
+                go_tx.send(())?;
+                let mut h = Stamps::default();
+                let end = Instant::now() + Duration::from_secs(10);
+                while h.closed.is_empty() {
+                    assert!(Instant::now() < end, "{b}: timed out");
+                    d.poll(&mut h)?;
+                }
+                let at = srv.join().map_err(|_| "server panicked")??;
+                assert_eq!(h.metas.len(), 20, "{b} on={on}: {:?}", h.closed);
+                for (k, (m, handled)) in h.metas.iter().enumerate() {
+                    if !on {
+                        assert_eq!(m.rx_read_ns, 0, "{b}: message {k}");
+                        continue;
+                    }
+                    assert!(
+                        m.rx_read_ns >= at[k],
+                        "{b}: message {k} read before it was sent: {m:?}"
+                    );
+                    assert!(
+                        m.rx_read_ns <= *handled,
+                        "{b}: message {k} read after it was handled"
+                    );
+                    if m.rx_sw_ns != 0 {
+                        assert!(m.rx_read_ns >= m.rx_sw_ns, "{b}: message {k}: {m:?}");
+                    }
+                }
+                Ok(at)
+            })?;
+            assert_eq!(sent_after.len(), 20);
+        }
+        Ok(())
+    })
+}
+
+/// `RxMeta::rx_read_ns` and `read_seq` for frames the upgrade read along
+/// with the 101: the driver hands them over on its first poll, and with
+/// `rx_read_timestamp` they carry the time it did (after the connect, before
+/// the handler ran) and a read sequence number like every other read; off,
+/// the stamp stays 0. Every backend, on a blocking `WsConn::connect` and on
+/// a dial the driver runs (`Driver::connect`).
+#[test]
+fn rx_read_ns_stamps_frames_read_with_the_upgrade() -> R {
+    #[derive(Default)]
+    struct Stamps {
+        metas: Vec<(RxMeta, i64)>,
+    }
+    impl Handler for Stamps {}
+    impl WsHandler for Stamps {
+        fn on_message(&mut self, _: ConnId, _: u8, _: &[u8], meta: &RxMeta, _: u16) {
+            self.metas.push((*meta, ergon_io::clock::realtime_ns()));
+        }
+    }
+    each_backend(|b| {
+        for (on, dial) in [(false, false), (true, false), (false, true), (true, true)] {
+            let lab = Lab::new()?;
+            let mut cfg = Config::new(b);
+            cfg.rx_read_timestamp = on;
+            let mut d: Driver<WsConn> = Driver::new(cfg)?;
+            std::thread::scope(|s| -> R {
+                let srv = s.spawn(|| -> R {
+                    let (sock, _) = lab.listener.accept()?;
+                    let mut p = support::Peer::serve_with(&lab, sock, &[b"first", b"second"])?;
+                    assert!(p.client_closed()?);
+                    Ok(())
+                });
+                let before = ergon_io::clock::realtime_ns();
+                if dial {
+                    d.connect(WsDial::new(
+                        lab.target("/")?,
+                        lab.client_cfg.clone(),
+                        1 << 20,
+                    )?)?;
+                } else {
+                    d.add(WsConn::connect(
+                        &lab.target("/")?,
+                        lab.client_cfg.clone(),
+                        1 << 20,
+                    )?)?;
+                }
+                let mut h = Stamps::default();
+                let end = Instant::now() + Duration::from_secs(10);
+                while h.metas.len() < 2 {
+                    assert!(Instant::now() < end, "{b}: timed out");
+                    d.poll(&mut h)?;
+                }
+                drop(d);
+                srv.join().map_err(|_| "server panicked")??;
+                for (k, (m, handled)) in h.metas.iter().enumerate() {
+                    let at = format!("{b} on={on} dial={dial}: frame {k}: {m:?}");
+                    assert_ne!(m.read_seq, 0, "{at}");
+                    if on {
+                        assert!(m.rx_read_ns >= before, "{at}: stamped before the connect");
+                        assert!(m.rx_read_ns <= *handled, "{at}: stamped after the handler");
+                    } else {
+                        assert_eq!(m.rx_read_ns, 0, "{at}");
+                    }
+                }
+                Ok(())
+            })?;
+        }
+        Ok(())
     })
 }

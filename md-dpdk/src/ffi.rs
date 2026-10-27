@@ -42,6 +42,10 @@ pub struct DpdkTransport {
     /// The clock the native transport started ([`crate::clock`]).
     #[cfg_attr(not(feature = "dpdk"), allow(dead_code))]
     clock: TransportClock,
+    /// The sender's and the receiver's gateways, for the start-time gateway
+    /// check's lines.
+    #[cfg_attr(not(feature = "dpdk"), allow(dead_code))]
+    gateways: [std::net::Ipv4Addr; 2],
 }
 
 /// Opaque native transport state. Empty without the `dpdk` feature.
@@ -101,6 +105,7 @@ impl DpdkTransport {
                 ports: [config.sender.pci_address.clone(), config.receiver.pci_address.clone()],
                 test_vdev: config.test_vdev,
                 clock,
+                gateways: [config.sender.gateway_ipv4, config.receiver.gateway_ipv4],
             };
             if let Err(err) = transport.inner.install(context) {
                 // Created in this call and never installed, so no driver can be
@@ -187,6 +192,43 @@ impl DpdkTransport {
         (&self.ports, self.test_vdev)
     }
 
+    /// The sender's and the receiver's gateways.
+    pub(crate) const fn gateways(&self) -> [std::net::Ipv4Addr; 2] {
+        self.gateways
+    }
+
+    /// Ask each port's gateway for its MAC, from the calling thread, for up
+    /// to `timeout_ms`: whether the sender's and the receiver's answered. An
+    /// answer is learned, so the first send to it does not wait. Only before
+    /// the driver starts: the native side refuses once a transport is open
+    /// (an agent may be polling the ports).
+    ///
+    /// # Errors
+    ///
+    /// [`DpdkError::Native`] when the native side refuses or fails;
+    /// [`DpdkError::FeatureDisabled`] without the `dpdk` feature.
+    #[allow(clippy::unused_self)]
+    #[cfg_attr(not(feature = "dpdk"), allow(clippy::missing_const_for_fn))]
+    pub(crate) fn check_gateways(&self, timeout_ms: u32) -> Result<[bool; 2], DpdkError> {
+        #[cfg(feature = "dpdk")]
+        {
+            let mut answered = [0i32; 2];
+            // SAFETY: `ptr` came from a successful create and is not closed
+            // while `self` lives; `answered` has room for both ports.
+            let rc =
+                unsafe { rusteron_dpdk_transport_gateway_check(self.inner.ptr, timeout_ms, answered.as_mut_ptr()) };
+            if rc != 0 {
+                return Err(DpdkError::Native(last_error()));
+            }
+            Ok([answered[0] == 1, answered[1] == 1])
+        }
+        #[cfg(not(feature = "dpdk"))]
+        {
+            let _ = timeout_ms;
+            Err(DpdkError::FeatureDisabled)
+        }
+    }
+
     /// The CPU the EAL's main lcore runs on (where the EAL keeps its own
     /// threads), once the EAL is up.
     #[allow(clippy::unused_self)] // the EAL is the transport's
@@ -268,7 +310,11 @@ impl NativeTransport {
         // config and writes `ptr` only on success.
         let rc = unsafe { rusteron_dpdk_transport_create(&raw const native_config, &raw mut ptr) };
         if rc != 0 {
-            return Err(DpdkError::Native(last_error()));
+            // SAFETY: reads the calling thread's last native error code.
+            return Err(native_create_error(
+                unsafe { rusteron_dpdk_last_error_code() },
+                last_error(),
+            ));
         }
         Ok(Self { ptr })
     }
@@ -339,6 +385,9 @@ struct rusteron_dpdk_config_t {
     rx_hw_timestamp: u8,
     /// `RUSTERON_DPDK_CLOCK_CHOICE_*`: 0 the counter, 1 `CLOCK_MONOTONIC`.
     clock: u8,
+    tx_fast_free: u8,
+    rx_free_thresh: u16,
+    tx_free_thresh: u16,
 }
 
 // The C layout, field by field (asserted in native/dpdk/rusteron_dpdk_transport.c
@@ -368,7 +417,10 @@ const _: () = {
     assert!(offset_of!(C, receiver_mac) == 4306);
     assert!(offset_of!(C, rx_hw_timestamp) == 4324);
     assert!(offset_of!(C, clock) == 4325);
-    assert!(size_of::<C>() == 4328);
+    assert!(offset_of!(C, tx_fast_free) == 4326);
+    assert!(offset_of!(C, rx_free_thresh) == 4328);
+    assert!(offset_of!(C, tx_free_thresh) == 4330);
+    assert!(size_of::<C>() == 4336);
 };
 
 /// Mirror of the C `rusteron_dpdk_clock_report_t` in
@@ -454,6 +506,8 @@ unsafe extern "C" {
     fn rusteron_dpdk_transport_close(transport: *mut c_void) -> c_int;
     fn rusteron_dpdk_transport_nic_reset_exit(transport: *mut c_void) -> c_int;
     fn rusteron_dpdk_last_error() -> *const c_char;
+    fn rusteron_dpdk_last_error_code() -> c_int;
+    fn rusteron_dpdk_transport_gateway_check(transport: *mut c_void, timeout_ms: u32, answered: *mut i32) -> c_int;
     fn rusteron_dpdk_eal_main_cpu() -> c_int;
     fn rusteron_dpdk_clock_report(report: *mut rusteron_dpdk_clock_report_t);
 }
@@ -489,6 +543,9 @@ fn native_config(
             crate::clock::ClockChoice::Counter => 0,
             crate::clock::ClockChoice::Monotonic => 1,
         },
+        tx_fast_free: u8::from(config.tx_fast_free),
+        rx_free_thresh: config.rx_free_thresh.unwrap_or(0), // 0: the PMD's default
+        tx_free_thresh: config.tx_free_thresh.unwrap_or(0),
     };
     if let Some(mac) = config.sender.mac {
         fill(&mut c.sender_mac, &mac.to_string(), "sender.mac")?;
@@ -545,6 +602,21 @@ fn fill(buf: &mut [c_char], value: &str, field: &str) -> Result<(), DpdkError> {
     }
     buf[bytes.len()] = 0;
     Ok(())
+}
+
+/// The typed error for a failed native create: its error code
+/// (`rusteron_dpdk_transport.h`) says which. 3: a malformed or contradictory
+/// environment value; 4: a configuration the NIC as set up cannot carry;
+/// 5: an Azure netvsc port without its accelerated-networking VF; anything
+/// else: a native failure.
+#[cfg_attr(not(feature = "dpdk"), allow(dead_code))]
+const fn native_create_error(code: i32, message: String) -> DpdkError {
+    match code {
+        3 => DpdkError::InvalidEnvironment(message),
+        4 => DpdkError::InvalidConfiguration(message),
+        5 => DpdkError::NoAcceleratedVf(message),
+        _ => DpdkError::Native(message),
+    }
 }
 
 #[cfg(feature = "dpdk")]
@@ -880,5 +952,28 @@ pub fn lock_memory_from_env() -> Result<bool, DpdkError> {
         Ok(other) => Err(DpdkError::InvalidConfiguration(format!(
             "RUSTERON_MEDIA_DRIVER_MLOCKALL={other}: 0 or 1"
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_native_create_failure_keeps_its_type() {
+        assert_eq!(
+            native_create_error(3, "RUSTERON_DPDK_EAL_ARGS".into()),
+            DpdkError::InvalidEnvironment("RUSTERON_DPDK_EAL_ARGS".into())
+        );
+        assert_eq!(
+            native_create_error(4, "ENA Express".into()),
+            DpdkError::InvalidConfiguration("ENA Express".into())
+        );
+        assert_eq!(
+            native_create_error(5, "net_netvsc".into()),
+            DpdkError::NoAcceleratedVf("net_netvsc".into())
+        );
+        assert_eq!(native_create_error(1, "x".into()), DpdkError::Native("x".into()));
+        assert_eq!(native_create_error(2, "x".into()), DpdkError::Native("x".into()));
     }
 }

@@ -22,8 +22,8 @@ use common::{
     compile_fails_with_diagnostics_excluding,
 };
 use ergo_sbe::{
-    CompositeMapping, EnumMapping, GenerateError, GenerationConfig, Generator, Schema, parse,
-    parse_file,
+    CompositeMapping, EnumMapping, GenerateError, GenerationConfig, Generator, Schema,
+    SchemaSource, parse,
 };
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -419,12 +419,382 @@ fn a_value_outside_the_schema_range_is_an_error() -> Result<(), Box<dyn std::err
     Ok(())
 }
 
+/// Fields with no declared bound, one declared side, or both, at message
+/// level and in a flat group entry (so `bulk_add_domain` is generated too).
+const RANGE_XML: &str = r#"<messageSchema package="rng" id="76" version="0" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+    <type name="Cap" primitiveType="int32" maxValue="100"/>
+    <type name="Floor" primitiveType="uint32" minValue="10"/>
+    <type name="Pct" primitiveType="uint8" minValue="1" maxValue="99"/>
+    <type name="OptCount" primitiveType="uint32" presence="optional"/>
+  </types>
+  <message name="Row" id="1">
+    <field name="source" id="1" type="uint64"/>
+    <field name="session" id="2" type="int32"/>
+    <field name="hdr" id="3" type="uint16"/>
+    <field name="ch" id="4" type="char"/>
+    <field name="cap" id="5" type="Cap"/>
+    <field name="floor" id="6" type="Floor"/>
+    <field name="pct" id="7" type="Pct"/>
+    <field name="count" id="8" type="OptCount"/>
+    <group name="legs" id="9" dimensionType="groupSizeEncoding">
+      <field name="qty" id="10" type="uint64"/>
+      <field name="legPct" id="11" type="Pct"/>
+    </group>
+  </message>
+</messageSchema>"#;
+
+/// `RowDomain` as a `RowSource`: getters over its own fields.
+const RANGE_SOURCE_IMPLS: &str = r#"
+        impl rng::RowSource for rng::RowDomain {
+            fn source(&self) -> u64 { self.source }
+            fn session(&self) -> i32 { self.session }
+            fn hdr(&self) -> u16 { self.hdr }
+            fn ch(&self) -> u8 { self.ch }
+            fn cap(&self) -> i32 { self.cap }
+            fn floor(&self) -> u32 { self.floor }
+            fn pct(&self) -> u8 { self.pct }
+            fn count(&self) -> Option<u32> { self.count }
+            fn legs(&self) -> impl ExactSizeIterator<Item = impl rng::LegsEntrySource> {
+                self.legs.iter()
+            }
+        }
+        impl rng::LegsEntrySource for rng::RowLegsEntryDomain {
+            fn qty(&self) -> u64 { self.qty }
+            fn leg_pct(&self) -> u8 { self.leg_pct }
+        }
+"#;
+
+/// `encode_from`, the DTO's `encode` and `bulk_add_domain` check only the
+/// bounds the schema declares. A value an undeclared side would have
+/// refused under the SBE default range (`u64::MAX`, `i32::MIN`, `0xFFFF`,
+/// a control `char`) is written as given, byte-for-byte what `fixed()`
+/// writes, and reads back unchanged.
+#[test]
+fn undeclared_bounds_are_not_checked_on_encode() -> Result<(), Box<dyn std::error::Error>> {
+    let source = generate_xml(
+        RANGE_XML,
+        GenerationConfig::new("rng")
+            .with_domain_objects(ergo_sbe::DomainVarData::Bytes)
+            .with_source_traits(true),
+    )?;
+    compile_and_run_modules(
+        "source_trait_undeclared_bounds",
+        &[("rng", &source)],
+        &format!(
+            "{RANGE_SOURCE_IMPLS}{}",
+            r#"
+        use rng::*;
+        let legs = vec![
+            RowLegsEntryDomain { qty: u64::MAX, leg_pct: 1 },
+            RowLegsEntryDomain { qty: 0, leg_pct: 99 },
+        ];
+        let row = RowDomain {
+            source: u64::MAX,
+            session: i32::MIN,
+            hdr: 0xFFFF,
+            ch: 0x01,
+            cap: i32::MIN,
+            floor: u32::MAX,
+            pct: 50,
+            count: Some(u32::MAX - 1),
+            legs: legs.clone(),
+        };
+
+        // Reference: the plain setters, which check nothing.
+        const LEN: usize = RowEncoder::compute_length_with_header(2);
+        let mut expected = [0u8; LEN];
+        let n = RowEncoder::try_wrap_and_apply_header(&mut expected, 0)?
+            .fixed(&RowFixedFields {
+                source: u64::MAX,
+                session: i32::MIN,
+                hdr: 0xFFFF,
+                ch: 0x01,
+                cap: i32::MIN,
+                floor: u32::MAX,
+                pct: 50,
+                count: Some(u32::MAX - 1),
+            })
+            .legs(2, |g| {
+                g.add(|e| { e.qty(u64::MAX).leg_pct(1); Ok(()) })?;
+                g.add(|e| { e.qty(0).leg_pct(99); Ok(()) })
+            })?
+            .encoded_length_with_header();
+        assert_eq!(n, LEN);
+
+        let mut dto_buf = [0xAAu8; LEN];
+        assert_eq!(row.encode(&mut dto_buf)?, n);
+        assert_eq!(dto_buf, expected, "DTO encode");
+
+        let mut from_buf = [0xAAu8; LEN];
+        let written = RowEncoder::try_wrap_and_apply_header(&mut from_buf, 0)?
+            .encode_from(&row)?
+            .encoded_length_with_header();
+        assert_eq!(written, n);
+        assert_eq!(from_buf, expected, "encode_from");
+
+        let mut bulk_buf = [0xAAu8; LEN];
+        RowEncoder::try_wrap_and_apply_header(&mut bulk_buf, 0)?
+            .fixed(&RowFixedFields {
+                source: u64::MAX,
+                session: i32::MIN,
+                hdr: 0xFFFF,
+                ch: 0x01,
+                cap: i32::MIN,
+                floor: u32::MAX,
+                pct: 50,
+                count: Some(u32::MAX - 1),
+            })
+            .legs(2, |g| g.bulk_add_domain(&legs))?;
+        assert_eq!(bulk_buf, expected, "bulk_add_domain");
+
+        let back = RowDomain::try_from_slice_with_header(&dto_buf, 0)?;
+        assert_eq!(back, row, "round trip");
+        let dec = RowDecoder::decode(&dto_buf, 0)?;
+        assert_eq!(
+            (dec.source(), dec.session(), dec.hdr(), dec.ch(), dec.cap(), dec.floor()),
+            (u64::MAX, i32::MIN, 0xFFFF, 0x01, i32::MIN, u32::MAX),
+        );
+        "#
+        ),
+    );
+    Ok(())
+}
+
+/// A declared `minValue` or `maxValue` is still enforced on every encode
+/// path, each side alone and both together, with the same
+/// `ValueOutOfRange` it always returned. `Some` of an optional field's null
+/// value is still `SomeNullValue`: it would read back as `None`.
+#[test]
+fn declared_bounds_are_still_checked_on_encode() -> Result<(), Box<dyn std::error::Error>> {
+    let source = generate_xml(
+        RANGE_XML,
+        GenerationConfig::new("rng")
+            .with_domain_objects(ergo_sbe::DomainVarData::Bytes)
+            .with_source_traits(true),
+    )?;
+    compile_and_run_modules(
+        "source_trait_declared_bounds",
+        &[("rng", &source)],
+        &format!(
+            "{RANGE_SOURCE_IMPLS}{}",
+            r#"
+        use rng::*;
+        use rng::sbe_rt::EncodeError;
+        let ok = RowDomain {
+            source: 0,
+            session: 0,
+            hdr: 0,
+            ch: b'A',
+            cap: 100,
+            floor: 10,
+            pct: 1,
+            count: None,
+            legs: vec![RowLegsEntryDomain { qty: 1, leg_pct: 99 }],
+        };
+        const LEN: usize = RowEncoder::compute_length_with_header(1);
+        let mut buf = [0u8; LEN];
+        ok.encode(&mut buf)?;
+
+        // Both encode paths must refuse `row` with exactly `expect`.
+        let refused = |row: &RowDomain, expect: EncodeError| {
+            let mut b = [0u8; LEN];
+            assert_eq!(row.encode(&mut b), Err(expect.clone()), "DTO encode");
+            let r = RowEncoder::try_wrap_and_apply_header(&mut b, 0)
+                .map_err(|e| format!("{e:?}"))
+                .and_then(|enc| enc.encode_from(row).map(|_| ()).map_err(|e| format!("{e:?}")));
+            assert_eq!(r, Err(format!("{expect:?}")), "encode_from");
+        };
+
+        // maxValue alone: the undeclared min reports int32's SBE default.
+        refused(
+            &RowDomain { cap: 101, ..ok.clone() },
+            EncodeError::ValueOutOfRange { field: "cap", min: -2_147_483_647, max: 100, actual: 101 },
+        );
+        // minValue alone: the undeclared max reports uint32's SBE default.
+        refused(
+            &RowDomain { floor: 9, ..ok.clone() },
+            EncodeError::ValueOutOfRange { field: "floor", min: 10, max: 4_294_967_294, actual: 9 },
+        );
+        // Both declared: each side.
+        for actual in [0u8, 100] {
+            refused(
+                &RowDomain { pct: actual, ..ok.clone() },
+                EncodeError::ValueOutOfRange { field: "pct", min: 1, max: 99, actual: i128::from(actual) },
+            );
+        }
+        // In a group entry, through the DTO and through bulk_add_domain.
+        let bad_legs = vec![RowLegsEntryDomain { qty: u64::MAX, leg_pct: 0 }];
+        let expect = EncodeError::ValueOutOfRange { field: "legPct", min: 1, max: 99, actual: 0 };
+        refused(&RowDomain { legs: bad_legs.clone(), ..ok.clone() }, expect.clone());
+        let mut b = [0u8; LEN];
+        let r = RowEncoder::try_wrap_and_apply_header(&mut b, 0)?
+            .fixed(&RowFixedFields {
+                source: 0, session: 0, hdr: 0, ch: b'A', cap: 0, floor: 10, pct: 1, count: None,
+            })
+            .legs(1, |g| g.bulk_add_domain(&bad_legs));
+        assert_eq!(r.map(|_| ()).err(), Some(expect));
+
+        // Some(null) on an optional field is not a range question.
+        let mut b = [0u8; LEN];
+        match (RowDomain { count: Some(u32::MAX), ..ok.clone() }).encode(&mut b) {
+            Err(EncodeError::SomeNullValue { at }) => assert_eq!(at.to_string(), "count"),
+            other => panic!("Some(null) must be refused, got {other:?}"),
+        }
+        "#
+        ),
+    );
+    Ok(())
+}
+
+/// The other generated range-check sites: an optional field with declared
+/// bounds, a `char` with declared bounds, a declared bound equal to the
+/// Rust type's own limit (checks nothing), a versioned (`sinceVersion`)
+/// field, and a nested group entry.
+const RANGE_EDGE_XML: &str = r#"<messageSchema package="rng" id="77" version="1" byteOrder="littleEndian">
+  <types>
+    <composite name="messageHeader">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="templateId" primitiveType="uint16"/>
+      <type name="schemaId" primitiveType="uint16"/>
+      <type name="version" primitiveType="uint16"/>
+    </composite>
+    <composite name="groupSizeEncoding">
+      <type name="blockLength" primitiveType="uint16"/>
+      <type name="numInGroup" primitiveType="uint16"/>
+    </composite>
+    <type name="Pct" primitiveType="uint8" minValue="1" maxValue="99"/>
+    <type name="OptPct" primitiveType="uint8" presence="optional" minValue="1" maxValue="99"/>
+    <type name="Full" primitiveType="uint8" minValue="1" maxValue="255"/>
+    <type name="Wide" primitiveType="int8" minValue="-128"/>
+    <type name="Letter" primitiveType="char" minValue="A" maxValue="Z"/>
+  </types>
+  <message name="Edge" id="1">
+    <field name="opt" id="1" type="OptPct"/>
+    <field name="full" id="2" type="Full"/>
+    <field name="wide" id="3" type="Wide"/>
+    <field name="letter" id="4" type="Letter"/>
+    <field name="late" id="5" type="Pct" sinceVersion="1"/>
+    <field name="lateFree" id="6" type="uint64" sinceVersion="1"/>
+    <group name="outer" id="7" dimensionType="groupSizeEncoding">
+      <field name="tag" id="8" type="uint32"/>
+      <group name="inner" id="9" dimensionType="groupSizeEncoding">
+        <field name="qty" id="10" type="uint64"/>
+        <field name="pct" id="11" type="Pct"/>
+      </group>
+    </group>
+  </message>
+</messageSchema>"#;
+
+/// `EdgeDomain` as an `EdgeSource`: getters over its own fields.
+const RANGE_EDGE_SOURCE_IMPLS: &str = r#"
+        impl rng::EdgeSource for rng::EdgeDomain {
+            fn opt(&self) -> Option<u8> { self.opt }
+            fn full(&self) -> u8 { self.full }
+            fn wide(&self) -> i8 { self.wide }
+            fn letter(&self) -> u8 { self.letter }
+            fn late(&self) -> u8 { self.late.unwrap_or(1) }
+            fn late_free(&self) -> u64 { self.late_free.unwrap_or(0) }
+            fn outer(&self) -> impl ExactSizeIterator<Item = impl rng::OuterEntrySource> {
+                self.outer.iter()
+            }
+        }
+        impl rng::OuterEntrySource for rng::EdgeOuterEntryDomain {
+            fn tag(&self) -> u32 { self.tag }
+            fn inner(&self) -> impl ExactSizeIterator<Item = impl rng::OuterInnerEntrySource> {
+                self.inner.iter()
+            }
+        }
+        impl rng::OuterInnerEntrySource for rng::EdgeOuterEntryInnerEntryDomain {
+            fn qty(&self) -> u64 { self.qty }
+            fn pct(&self) -> u8 { self.pct }
+        }
+"#;
+
+#[test]
+fn declared_only_bounds_hold_at_every_encode_site() -> Result<(), Box<dyn std::error::Error>> {
+    let source = generate_xml(
+        RANGE_EDGE_XML,
+        GenerationConfig::new("rng")
+            .with_domain_objects(ergo_sbe::DomainVarData::Bytes)
+            .with_source_traits(true),
+    )?;
+    compile_and_run_modules(
+        "source_trait_range_edges",
+        &[("rng", &source)],
+        &format!(
+            "{RANGE_EDGE_SOURCE_IMPLS}{}",
+            r#"
+        use rng::*;
+        use rng::sbe_rt::EncodeError;
+        let entry = |qty: u64, pct: u8| EdgeOuterEntryDomain {
+            tag: u32::MAX,
+            inner: vec![EdgeOuterEntryInnerEntryDomain { qty, pct }],
+        };
+        // Every undeclared side and every type-limit bound at its extreme.
+        let ok = EdgeDomain {
+            opt: Some(99),
+            full: 255,
+            wide: i8::MIN,
+            letter: b'A',
+            late: Some(1),
+            late_free: Some(u64::MAX),
+            outer: vec![entry(u64::MAX, 99)],
+        };
+        let mut buf = [0xAAu8; 256];
+        let n = ok.encode(&mut buf)?;
+        let mut from_buf = [0x55u8; 256];
+        let m = EdgeEncoder::try_wrap_and_apply_header(&mut from_buf, 0)?
+            .encode_from(&ok)?
+            .encoded_length_with_header();
+        assert_eq!((n, &buf[..n]), (m, &from_buf[..m]), "DTO encode vs encode_from");
+        assert_eq!(EdgeDomain::try_from_slice_with_header(&buf[..n], 0)?, ok, "round trip");
+        let wide_max = EdgeDomain { wide: i8::MAX, letter: b'Z', ..ok.clone() };
+        wide_max.encode(&mut buf)?;
+
+        // Both encode paths must refuse `row` with exactly `expect`.
+        let refused = |row: &EdgeDomain, expect: EncodeError| {
+            let mut b = [0u8; 256];
+            assert_eq!(row.encode(&mut b), Err(expect.clone()), "DTO encode");
+            let r = EdgeEncoder::try_wrap_and_apply_header(&mut b, 0)
+                .map_err(|e| format!("{e:?}"))
+                .and_then(|enc| enc.encode_from(row).map(|_| ()).map_err(|e| format!("{e:?}")));
+            assert_eq!(r, Err(format!("{expect:?}")), "encode_from");
+        };
+        let out = |field: &'static str, min: i128, max: i128, actual: i128| {
+            EncodeError::ValueOutOfRange { field, min, max, actual }
+        };
+        refused(&EdgeDomain { opt: Some(0), ..ok.clone() }, out("opt", 1, 99, 0));
+        refused(&EdgeDomain { opt: Some(100), ..ok.clone() }, out("opt", 1, 99, 100));
+        refused(&EdgeDomain { full: 0, ..ok.clone() }, out("full", 1, 255, 0));
+        refused(&EdgeDomain { letter: b'@', ..ok.clone() }, out("letter", 65, 90, 64));
+        refused(&EdgeDomain { letter: b'[', ..ok.clone() }, out("letter", 65, 90, 91));
+        refused(&EdgeDomain { late: Some(0), ..ok.clone() }, out("late", 1, 99, 0));
+        refused(&EdgeDomain { late: Some(100), ..ok.clone() }, out("late", 1, 99, 100));
+        refused(&EdgeDomain { outer: vec![entry(u64::MAX, 0)], ..ok.clone() }, out("pct", 1, 99, 0));
+        refused(&EdgeDomain { outer: vec![entry(0, 100)], ..ok.clone() }, out("pct", 1, 99, 100));
+        "#
+        ),
+    );
+    Ok(())
+}
+
 fn mapping_schema() -> Result<Schema, Box<dyn std::error::Error>> {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/schemas/domain-mapping-schema.xml"
     );
-    Ok(Schema::from_ir(parse_file(path)?))
+    Ok(Schema::from_ir(parse(SchemaSource::file(path))?))
 }
 
 fn source_of(config: GenerationConfig) -> Result<String, Box<dyn std::error::Error>> {
@@ -698,11 +1068,11 @@ fn a_source_missing_a_field_does_not_compile() -> Result<(), Box<dyn std::error:
 #[test]
 fn unusable_source_traits_are_rejected_at_generate_time() -> Result<(), Box<dyn std::error::Error>>
 {
-    let extension = Schema::from_ir(parse_file(Paths::extension_schema())?);
+    let extension = Schema::from_ir(parse(SchemaSource::file(Paths::extension_schema()))?);
     let r = Generator::new(
         GenerationConfig::new("ext")
             .with_source_traits(true)
-            .with_encode_version(extension.version - 1),
+            .with_encode_version(extension.ir.version - 1),
     )
     .generate(&extension);
     assert!(
@@ -711,7 +1081,7 @@ fn unusable_source_traits_are_rejected_at_generate_time() -> Result<(), Box<dyn 
         "{r:?}"
     );
 
-    let clash = Schema::from_ir(parse(
+    let clash = Schema::from_ir(parse(SchemaSource::xml(
         r#"<messageSchema package="clash" id="3" version="0" byteOrder="littleEndian">
   <types>
     <composite name="messageHeader">
@@ -728,7 +1098,7 @@ fn unusable_source_traits_are_rejected_at_generate_time() -> Result<(), Box<dyn 
     <field name="src" id="1" type="PingSource"/>
   </message>
 </messageSchema>"#,
-    )?);
+    ))?);
     let r =
         Generator::new(GenerationConfig::new("clash").with_source_traits(true)).generate(&clash);
     assert!(
@@ -766,7 +1136,7 @@ fn a_first_tail_named_like_the_sizing_helper_keeps_its_path()
     <data name="encodedLengthWithHeaderFrom" id="2" type="varDataEncoding"/>
   </message>
 </messageSchema>"#;
-    let schema = Schema::from_ir(parse(xml)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(xml))?);
     let sized = Generator::new(GenerationConfig::new("sized").with_source_traits(true))
         .generate(&schema)?
         .modules()
@@ -823,7 +1193,7 @@ const SOURCE_FIELDS_XML: &str = r#"<messageSchema package="named" id="4" version
 </messageSchema>"#;
 
 fn generate_xml(xml: &str, config: GenerationConfig) -> Result<String, Box<dyn std::error::Error>> {
-    let schema = Schema::from_ir(parse(xml)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(xml))?);
     Ok(Generator::new(config)
         .generate(&schema)?
         .modules()

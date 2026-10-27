@@ -79,6 +79,9 @@ fn canonical() -> DpdkTransportConfig {
         burst_size: 32,
         max_aeron_mtu: 1408,
         rx_hw_timestamp: false,
+        rx_free_thresh: None,
+        tx_free_thresh: None,
+        tx_fast_free: false,
     }
 }
 

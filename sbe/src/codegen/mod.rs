@@ -15,9 +15,9 @@
 //! # Example
 //!
 //! ```rust
-//! use ergo_sbe::{parse, Generator, GenerationConfig, Schema};
+//! use ergo_sbe::{parse, Generator, GenerationConfig, Schema, SchemaSource};
 //!
-//! let ir = parse(r#"<?xml version="1.0"?>
+//! let ir = parse(SchemaSource::xml(r#"<?xml version="1.0"?>
 //! <messageSchema package="ex" id="1" version="0" byteOrder="littleEndian">
 //!   <types>
 //!     <composite name="messageHeader">
@@ -30,7 +30,7 @@
 //!   <message name="Ping" id="1">
 //!     <field name="seq" id="1" type="uint32" offset="0"/>
 //!   </message>
-//! </messageSchema>"#).unwrap();
+//! </messageSchema>"#)).unwrap();
 //! let schema = Schema::from_ir(ir);
 //! let set = Generator::new(GenerationConfig::new("ping"))
 //!     .generate(&schema)
@@ -45,6 +45,7 @@
 
 use std::collections::HashSet;
 use std::fmt::Write;
+use std::path::PathBuf;
 
 use crate::ir::{ByteOrder, Ir, Presence, PrimitiveType, Signal, Token};
 use crate::structured_ir::*;
@@ -69,6 +70,7 @@ pub(crate) mod nullification;
 pub(crate) use nullification::*;
 pub(crate) mod runtime;
 mod schema_dispatch;
+pub(crate) mod validate;
 use quote::format_ident;
 pub(crate) use runtime::*;
 pub(crate) mod group_encoder;
@@ -100,26 +102,20 @@ pub struct GeneratedModule {
     pub source: String,
 }
 
-/// Set of modules from [`Generator::generate`] or [`Generator::generate_multi`].
+/// Set of modules from [`crate::generate`], [`Generator::generate`] or
+/// [`Generator::generate_multi`].
 ///
-/// ```rust
-/// # use std::path::Path;
-/// # fn example(generator: &mut ergo_sbe::Generator, schema: &ergo_sbe::Schema, out_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
-/// let set = generator.generate(schema)?;
-/// for m in set.modules() {
-///     std::fs::write(out_dir.join(&m.path), &m.source)?;
-/// }
-/// for w in set.warnings() {
-///     println!("cargo:warning={w}");
-/// }
-/// # Ok(())
-/// # }
-/// ```
+/// Write it with [`Self::write_to_out_dir`] (Cargo `build.rs`) or
+/// [`Self::write_to`]: both publish every module or none, watch every
+/// [`Self::sources`] file with `cargo::rerun-if-changed`, and print
+/// [`Self::warnings`] as `cargo::warning`.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct GeneratedModuleSet {
     modules: Vec<GeneratedModule>,
     /// Generation warnings (e.g. shared types with version-gated members).
     warnings: Vec<String>,
+    /// Schema files the modules were generated from (see [`Ir::sources`]).
+    sources: Vec<PathBuf>,
 }
 
 /// Errors returned by [`Generator::generate`] when the configuration
@@ -247,6 +243,10 @@ impl core::fmt::Display for GenerateError {
 
 impl core::error::Error for GenerateError {}
 
+/// Lets a `build.rs` returning `miette::Result` use `?` on
+/// [`Generator::generate_multi`] directly.
+impl miette::Diagnostic for GenerateError {}
+
 impl GeneratedModuleSet {
     pub(crate) fn push(&mut self, module: GeneratedModule) {
         self.modules.push(module);
@@ -255,6 +255,24 @@ impl GeneratedModuleSet {
     /// Iterate modules in a stable order (write each to `OUT_DIR`).
     pub fn modules(&self) -> impl ExactSizeIterator<Item = &GeneratedModule> {
         self.modules.iter()
+    }
+
+    /// Schema files the modules came from: every root, include and shared
+    /// schema file, each once. Empty when every schema was inline XML.
+    #[must_use]
+    pub fn sources(&self) -> &[PathBuf] {
+        &self.sources
+    }
+
+    fn with_sources<'s>(mut self, schemas: impl IntoIterator<Item = &'s Schema>) -> Self {
+        for schema in schemas {
+            for path in &schema.ir.sources {
+                if !self.sources.contains(path) {
+                    self.sources.push(path.clone());
+                }
+            }
+        }
+        self
     }
 
     /// Non-fatal warnings (e.g. shared types with `sinceVersion > 0`).
@@ -316,7 +334,7 @@ pub(crate) struct GenerationContext {
 /// [`Self::generate_multi`] when sharing types across schemas.
 ///
 /// ```rust
-/// use ergo_sbe::{parse, Generator, GenerationConfig, Schema};
+/// use ergo_sbe::{parse, Generator, GenerationConfig, Schema, SchemaSource};
 /// # let xml = r#"<?xml version="1.0"?><messageSchema package="t" id="1" version="0"
 /// # byteOrder="littleEndian"><types><composite name="messageHeader">
 /// # <type name="blockLength" primitiveType="uint16"/>
@@ -325,7 +343,7 @@ pub(crate) struct GenerationContext {
 /// # <type name="version" primitiveType="uint16"/>
 /// # </composite></types><message name="M" id="1">
 /// # <field name="x" id="1" type="uint8" offset="0"/></message></messageSchema>"#;
-/// let schema = Schema::from_ir(parse(xml).unwrap());
+/// let schema = Schema::from_ir(parse(SchemaSource::xml(xml)).unwrap());
 /// let modules = Generator::new(GenerationConfig::new("m"))
 ///     .generate(&schema)
 ///     .unwrap();
@@ -378,9 +396,9 @@ impl Generator {
             Ok(())
         };
 
-        let schema_context = format!("schema '{}'", schema.package);
-        check("schemaId", u64::from(schema.id), schema_context.clone())?;
-        check("version", u64::from(schema.version), schema_context)?;
+        let schema_context = format!("schema '{}'", schema.ir.package);
+        check("schemaId", u64::from(schema.ir.id), schema_context.clone())?;
+        check("version", u64::from(schema.ir.version), schema_context)?;
 
         for message_tokens in &elements.messages {
             let message = parse_message_structure(message_tokens, &elements);
@@ -394,89 +412,22 @@ impl Generator {
     }
 
     fn validate_conversions(&self, schema: &Schema) -> Result<(), GenerateError> {
-        if !self.config.has_conversions() {
-            return Ok(());
-        }
         let elements = partition_tokens(&schema.ir.tokens);
-        for sel in &self.config.conversions {
-            let matched = match sel {
-                crate::ConversionSelector::NamedType(name) => {
-                    elements.composites.iter().any(|c| c[0].name == *name)
-                        || elements.enums.iter().any(|e| e[0].name == *name)
-                        || elements.sets.iter().any(|s| s[0].name == *name)
-                }
-                crate::ConversionSelector::SemanticType(_) => {
-                    // Semantic types are validated during codegen when we can
-                    // inspect field metadata — always passes pre-validation.
-                    true
-                }
-                crate::ConversionSelector::FieldPath(_) => {
-                    // Field paths are validated during codegen.
-                    true
-                }
-            };
-            if !matched {
-                return Err(GenerateError::InvalidConversion {
-                    selector: format!("{sel:?}"),
-                    reason: "no matching type found in schema".into(),
-                });
-            }
-        }
-        for (sel, rust_type) in &self.config.domain_types {
-            if rust_type.is_empty() {
-                return Err(GenerateError::InvalidConversion {
-                    selector: format!("{sel:?}"),
-                    reason: "domain type path must not be empty".into(),
-                });
-            }
-            // Validate the path is parseable Rust — catch typos at build time,
-            // not as a panic deep in codegen.
-            syn::parse_str::<syn::Type>(rust_type).map_err(|e| {
-                GenerateError::InvalidConversion {
-                    selector: format!("{sel:?}"),
-                    reason: format!("domain type path is not a valid Rust type: {e}"),
-                }
-            })?;
-        }
-        Ok(())
+        validate_selectors(&self.config, &[&elements], "schema")
     }
 
     /// Validate conversions against the token union of all schemas in a
-    /// multi-schema generation. A [`crate::ConversionSelector::NamedType`]
-    /// that only exists in one schema's type declarations is valid as long
-    /// as at least one schema in the union contains the named type.
+    /// multi-schema generation. A selector is valid when at least one schema
+    /// in the union has what it names: a [`crate::ConversionSelector::NamedType`]
+    /// declared in only one schema's types, or a field path in only one
+    /// schema's messages.
     fn validate_conversions_union(
         &self,
         union: &[(&Schema, crate::structured_ir::SchemaElements)],
     ) -> Result<(), GenerateError> {
-        if !self.config.has_conversions() {
-            return Ok(());
-        }
-        for sel in &self.config.conversions {
-            if let crate::ConversionSelector::NamedType(name) = sel {
-                let matched = union.iter().any(|(_, elements)| {
-                    elements.composites.iter().any(|c| c[0].name == *name)
-                        || elements.enums.iter().any(|e| e[0].name == *name)
-                        || elements.sets.iter().any(|s| s[0].name == *name)
-                });
-                if !matched {
-                    return Err(GenerateError::InvalidConversion {
-                        selector: format!("{sel:?}"),
-                        reason: "no matching type found in any schema".into(),
-                    });
-                }
-            }
-            // SemanticType and FieldPath are validated during codegen per-field.
-        }
-        for (sel, rust_type) in &self.config.domain_types {
-            syn::parse_str::<syn::Type>(rust_type).map_err(|e| {
-                GenerateError::InvalidConversion {
-                    selector: format!("{sel:?}"),
-                    reason: format!("domain type path is not a valid Rust type: {e}"),
-                }
-            })?;
-        }
-        Ok(())
+        let elements: Vec<&crate::structured_ir::SchemaElements> =
+            union.iter().map(|(_, e)| e).collect();
+        validate_selectors(&self.config, &elements, "any schema")
     }
 
     /// Validate user-supplied paths that will be parsed by syn later. Catches
@@ -492,14 +443,6 @@ impl Generator {
                     "module name must be a single Rust identifier — no '/', '\\\\', '.', or '..'"
                         .into(),
             });
-        }
-        if let Some(ref err_path) = self.config.error_from_path {
-            syn::parse_str::<syn::Type>(err_path).map_err(|e| {
-                GenerateError::InvalidConversion {
-                    selector: "error_from_path".into(),
-                    reason: format!("error-from path is not a valid Rust type: {e}"),
-                }
-            })?;
         }
         if let Some(ref rt_path) = self.config.external_sbe_rt_path {
             syn::parse_str::<syn::Path>(rt_path).map_err(|e| {
@@ -544,14 +487,14 @@ impl Generator {
         let Some(version) = self.config.encode_version else {
             return Ok(());
         };
-        if version > schema.version {
+        if version > schema.ir.version {
             return Err(GenerateError::InvalidConfiguration {
                 option: "encode_version".into(),
                 value: version.to_string(),
-                reason: format!("exceeds schema version {}", schema.version),
+                reason: format!("exceeds schema version {}", schema.ir.version),
             });
         }
-        if version >= schema.version {
+        if version >= schema.ir.version {
             return Ok(());
         }
         let reason = if self.config.domain_objects
@@ -569,6 +512,28 @@ impl Generator {
             value: version.to_string(),
             reason: reason.into(),
         })
+    }
+
+    /// `with_validate(true)` emits a `validate` method on each message and
+    /// entry decoder, so no member there may have an accessor of that name.
+    fn validate_validate_names(&self, schema: &Schema) -> Result<(), GenerateError> {
+        if !self.config.validate {
+            return Ok(());
+        }
+        let elements = partition_tokens(&schema.ir.tokens);
+        for tokens in &elements.messages {
+            let msg = parse_message_structure(tokens, &elements);
+            if let Some(path) = validate::name_clash(&msg) {
+                return Err(GenerateError::InvalidConfiguration {
+                    option: "validate".into(),
+                    value: path,
+                    reason: "a member named `validate` collides with the generated \
+                             `validate()` method"
+                        .into(),
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Source trait names must not collide with a schema type, or the
@@ -646,19 +611,21 @@ impl Generator {
             self.validate_paths()?;
             self.validate_encode_version(schema)?;
             self.validate_source_traits(schema)?;
+            self.validate_validate_names(schema)?;
             let mut modules = GeneratedModuleSet::default();
             let src = self.gen_schema(schema, &HashSet::new(), false, true, &effective)?;
             modules.push(GeneratedModule {
                 path: format!("{}.rs", self.config.module_name),
                 source: src,
             });
-            Ok(modules)
+            Ok(modules.with_sources([schema]))
         })
     }
 
     /// Generate modules for several schemas, optionally deduplicating shared types.
     ///
-    /// When [`GenerationConfig::with_shared_module`] is set:
+    /// When [`GenerationConfig::with_shared_module`] is set (it must name the
+    /// first entry's module):
     /// - first entry owns shared enums/sets/composites (+ usually `sbe_rt`);
     /// - later entries emit `pub use super::<shared>::*;` and skip shared types.
     ///
@@ -677,8 +644,11 @@ impl Generator {
             for (schema, _) in schemas {
                 self.validate_encode_version(schema)?;
                 self.validate_source_traits(schema)?;
+                self.validate_validate_names(schema)?;
             }
-            self.generate_multi_inner(schemas, &effective)
+            Ok(self
+                .generate_multi_inner(schemas, &effective)?
+                .with_sources(schemas.iter().map(|(schema, _)| *schema)))
         })
     }
 
@@ -1085,7 +1055,7 @@ impl Generator {
                     semantic_type: enc.and_then(|e| e.semantic_type.clone()),
                     presence,
                     null_value: enc.and_then(|e| e.null_value),
-                    deprecated: enc.map(|e| e.deprecated).unwrap_or(false),
+                    deprecated: enc.and_then(|e| e.deprecated),
                     description: enc.and_then(|e| e.description.clone()),
                 }
             })
@@ -1160,7 +1130,7 @@ impl Generator {
         writeln!(
             src,
             "/// Generated from SBE schema package `{}` id {} version {}.",
-            schema.package, schema.id, schema.version
+            schema.ir.package, schema.ir.id, schema.ir.version
         )
         .unwrap();
         // Lint allow list is intentionally narrow — do not re-add
@@ -1228,13 +1198,9 @@ impl Generator {
             }
         } else if emit_sbe_rt {
             src.push_str(&generate_sbe_rt_src());
-            // A shared runtime is implemented against by sibling modules, so its
-            // sealing module widens to `pub(super)`. A self-contained module
-            // keeps it private, which is what makes `SbeMessage` unimplementable
-            // outside the generated module.
-            src.push_str(&crate::codegen::runtime::generate_sealed_module_src(
-                self.config.shared_module.is_some(),
-            ));
+            // `pub(crate)` sealing module: sibling modules sharing this runtime
+            // can implement `SbeMessage`; other crates cannot.
+            src.push_str(&crate::codegen::runtime::generate_sealed_module_src());
             if self.config.has_conversions() {
                 emit_conversion_traits(&mut src);
             }
@@ -1412,6 +1378,11 @@ impl Generator {
                 );
                 src.push_str(&source_ts.to_string());
             }
+            if self.config.validate {
+                let validate_ts =
+                    validate::message_validate_tokens(msg, &elements, ir.byte_order, multi);
+                src.push_str(&validate_ts.to_string());
+            }
             src.push('\n');
             if self.config.enable_meta_attributes {
                 generate_message_field_meta(&mut src, msg);
@@ -1458,7 +1429,7 @@ impl Generator {
             )
             .unwrap();
         }
-        let schema_hash = compute_schema_hash(&schema.package, schema.id, schema.version);
+        let schema_hash = compute_schema_hash(&schema.ir.package, schema.ir.id, schema.ir.version);
         write!(src, "pub const SCHEMA_HASH: u64 = {};\n\n", schema_hash).unwrap();
         let sha256_hash = compute_schema_sha256(&schema.ir);
         src.push_str("pub const SCHEMA_SHA256: [u8; 32] = [");
@@ -1480,26 +1451,6 @@ impl Generator {
             ir.version,
             self.config.enable_dispatch,
         );
-        // 7.6b. Opt-in From<EncodeError/DecodeError> for user error type
-        if let Some(ref err_path) = self.config.error_from_path {
-            let err_ty: syn::Type = syn::parse_str(err_path).expect("invalid error_from_path");
-            let impls = quote::quote! {
-                /// Generated: encode errors convert directly to the crate error type.
-                impl From<sbe_rt::EncodeError> for #err_ty {
-                    fn from(e: sbe_rt::EncodeError) -> Self {
-                        Self::from(format!("sbe encode: {e}"))
-                    }
-                }
-                /// Generated: decode errors convert directly to the crate error type.
-                impl From<sbe_rt::DecodeError> for #err_ty {
-                    fn from(e: sbe_rt::DecodeError) -> Self {
-                        Self::from(format!("sbe decode: {e}"))
-                    }
-                }
-            };
-            src.push_str(&impls.to_string());
-            src.push('\n');
-        }
         // 7.7. Byte helpers. Checked helpers are public; unchecked raw I/O is
         // private + unsafe — never a safe public memory-safety
         // precondition for callers.
@@ -1555,6 +1506,10 @@ impl Generator {
         };
         src.push_str(&read_bytes_ts.to_string());
         src.push('\n');
+        if self.config.validate {
+            src.push_str(&validate::read_helper_tokens().to_string());
+            src.push('\n');
+        }
         generate_schema_id_from_header(&mut src, &elements, &ir.header_type, ir.byte_order);
 
         if self.config.enable_dispatch {
@@ -1568,6 +1523,12 @@ impl Generator {
             );
             src.push_str(&any_msg_ts.to_string());
             src.push('\n');
+            if self.config.validate {
+                let any_validate_ts =
+                    validate::any_message_validate_tokens(&messages, &elements, &ir.header_type);
+                src.push_str(&any_validate_ts.to_string());
+                src.push('\n');
+            }
         }
 
         let mut file = match syn::parse_str::<syn::File>(&src) {
@@ -1786,8 +1747,121 @@ fn annotate_item(item: &mut syn::Item) {
     }
 }
 
-/// Generate a `pub mod prelude` that re-exports the common API surface so users
-/// can write `use my_schema::prelude::*;`.
+/// Every message and group field in `elements`, groups flattened, in schema
+/// order. Selectors resolve against exactly these fields.
+fn selector_fields(elements: &[&SchemaElements]) -> Vec<MessageField> {
+    fn walk(fields: &[MessageField], groups: &[MessageGroup], out: &mut Vec<MessageField>) {
+        out.extend(fields.iter().cloned());
+        for g in groups {
+            walk(&g.fields, &g.groups, out);
+        }
+    }
+    let mut out = Vec::new();
+    for el in elements {
+        for tokens in &el.messages {
+            let msg = parse_message_structure(tokens, el);
+            walk(&msg.fields, &msg.groups, &mut out);
+        }
+    }
+    out
+}
+
+/// Fail closed on every selector that cannot apply, so a typo never
+/// generates a codec silently without its mapping:
+///
+/// | Selector | Error when |
+/// |---|---|
+/// | `NamedType` | no composite, enum or set of that name, and no field of a primitive alias of it |
+/// | `FieldPath`, `SemanticType` | no field matches |
+/// | domain type | a second type for the same selector, or every field it matches takes a higher-precedence selector |
+/// | `null_as_option` | anything but `NamedType` naming an enum |
+///
+/// `scope` names where a `NamedType` was looked for (`"schema"` or `"any schema"`).
+fn validate_selectors(
+    config: &GenerationConfig,
+    elements: &[&SchemaElements],
+    scope: &str,
+) -> Result<(), GenerateError> {
+    let declares = |name: &str, enums_only: bool| {
+        elements.iter().any(|el| {
+            el.enums.iter().any(|e| e[0].name == name)
+                || (!enums_only
+                    && (el.composites.iter().any(|c| c[0].name == name)
+                        || el.sets.iter().any(|s| s[0].name == name)))
+        })
+    };
+    for sel in &config.null_as_option {
+        let reason = match sel {
+            crate::ConversionSelector::NamedType(name) if declares(name, true) => continue,
+            crate::ConversionSelector::NamedType(_) => "names no enum in the schema",
+            _ => "only named_type(<enum>) is applied",
+        };
+        return Err(GenerateError::InvalidConfiguration {
+            option: "null_as_option".into(),
+            value: format!("{sel:?}"),
+            reason: reason.into(),
+        });
+    }
+    if !config.has_conversions() {
+        return Ok(());
+    }
+
+    let fields = selector_fields(elements);
+    for sel in &config.conversions {
+        let matches_field = fields.iter().any(|f| selector_matches(sel, f));
+        let reason = match sel {
+            crate::ConversionSelector::NamedType(name)
+                if declares(name, false) || matches_field =>
+            {
+                continue;
+            }
+            crate::ConversionSelector::NamedType(_) => format!("no matching type found in {scope}"),
+            _ if matches_field => continue,
+            _ => "matches no field in the schema".into(),
+        };
+        return Err(GenerateError::InvalidConversion {
+            selector: format!("{sel:?}"),
+            reason,
+        });
+    }
+
+    if let Some((sel, first, second)) = config.domain_type_conflicts.first() {
+        return Err(GenerateError::InvalidConversion {
+            selector: format!("{sel:?}"),
+            reason: format!("mapped to both `{first}` and `{second}`"),
+        });
+    }
+    for (sel, rust_type) in &config.domain_types {
+        if rust_type.is_empty() {
+            return Err(GenerateError::InvalidConversion {
+                selector: format!("{sel:?}"),
+                reason: "domain type path must not be empty".into(),
+            });
+        }
+        // Validate the path is parseable Rust — catch typos at build time,
+        // not as a panic deep in codegen.
+        syn::parse_str::<syn::Type>(rust_type).map_err(|e| GenerateError::InvalidConversion {
+            selector: format!("{sel:?}"),
+            reason: format!("domain type path is not a valid Rust type: {e}"),
+        })?;
+        // A selector whose every field a higher-precedence one takes would
+        // generate nothing for it: almost always a stale or mistyped mapping.
+        let mut matched = fields
+            .iter()
+            .filter(|f| selector_matches(sel, f))
+            .peekable();
+        if matched.peek().is_some()
+            && matched.all(|f| find_domain_selector(f, &config.domain_types) != Some(sel))
+        {
+            return Err(GenerateError::InvalidConversion {
+                selector: format!("{sel:?}"),
+                reason: "every field it matches takes a higher-precedence selector".into(),
+            });
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::Generator;
@@ -2035,7 +2109,7 @@ mod tests {
             </group>
           </message>
         </messageSchema>"#;
-        let schema = crate::Schema::from_ir(crate::parse(xml)?);
+        let schema = crate::Schema::from_ir(crate::parse(crate::SchemaSource::xml(xml))?);
         let mut generator = crate::Generator::new(crate::GenerationConfig::new("array_guard"));
         let modules = generator.generate(&schema)?;
         let source = &modules
@@ -2143,13 +2217,16 @@ mod tests {
             null_value: None,
             min_value: None,
             max_value: None,
+            min_value_declared: false,
+            max_value_declared: false,
             description: None,
-            deprecated: false,
+            deprecated: None,
             semantic_type: Some("UTCTimestamp".into()),
             constant_value: None,
             epoch: None,
             time_unit: None,
             character_encoding: None,
+            type_alias: None,
             field_type: FieldType::Primitive(PrimitiveType::UInt64, None),
         };
         let conversions = vec![crate::ConversionSelector::semantic_type("UTCTimestamp")];
@@ -2188,7 +2265,7 @@ mod tests {
             <field name="ts" id="1" type="uint64" semanticType="UTCTimestamp"/>
           </sbe:message>
         </sbe:messageSchema>"#;
-        let ir = crate::parse(xml)?;
+        let ir = crate::parse(crate::SchemaSource::xml(xml))?;
         let schema = crate::Schema::from_ir(ir);
         let config = crate::GenerationConfig::new("test_chrono").with_domain_type(
             crate::ConversionSelector::semantic_type("UTCTimestamp"),
@@ -2215,7 +2292,8 @@ mod tests {
     #[test]
     fn narrow_message_header_rejects_values_above_declared_field_maximum() {
         fn generate(xml: &str) -> Result<super::GeneratedModuleSet, super::GenerateError> {
-            let ir = crate::parse(xml).expect("schema should parse before codegen validation");
+            let ir = crate::parse(crate::SchemaSource::xml(xml))
+                .expect("schema should parse before codegen validation");
             let schema = crate::Schema::from_ir(ir);
             crate::Generator::new(crate::GenerationConfig::new("narrow")).generate(&schema)
         }
@@ -2269,7 +2347,7 @@ mod tests {
           </message>
         </messageSchema>"#;
 
-        let ir = crate::parse(xml).expect("schema should parse");
+        let ir = crate::parse(crate::SchemaSource::xml(xml)).expect("schema should parse");
         let schema = crate::Schema::from_ir(ir);
         let modules =
             crate::Generator::new(crate::GenerationConfig::new("test")).generate(&schema)?;
@@ -2397,7 +2475,7 @@ mod tests {
                 }
             });
 
-        let ir = crate::parse(xml).expect("schema should parse");
+        let ir = crate::parse(crate::SchemaSource::xml(xml)).expect("schema should parse");
         let schema = crate::Schema::from_ir(ir);
         let modules = crate::Generator::new(config).generate(&schema)?;
         let src = modules.modules().next().expect("one module").source.clone();
@@ -2474,8 +2552,8 @@ mod tests {
           </message>
         </messageSchema>"#;
 
-        let schema_a = Schema::from_ir(crate::parse(xml_a)?);
-        let schema_b = Schema::from_ir(crate::parse(xml_b)?);
+        let schema_a = Schema::from_ir(crate::parse(crate::SchemaSource::xml(xml_a))?);
+        let schema_b = Schema::from_ir(crate::parse(crate::SchemaSource::xml(xml_b))?);
         let mut generator = Generator::new(
             crate::GenerationConfig::new("common_types")
                 .with_shared_module("common_types")
@@ -2516,7 +2594,7 @@ mod tests {
     }
 
     fn generate_ping(config: GenerationConfig) -> Result<String, Box<dyn std::error::Error>> {
-        let schema = Schema::from_ir(crate::parse(ping_schema_xml())?);
+        let schema = Schema::from_ir(crate::parse(crate::SchemaSource::xml(ping_schema_xml()))?);
         let src = Generator::new(config)
             .generate(&schema)?
             .modules()

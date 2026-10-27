@@ -37,7 +37,8 @@ const CUSTOM_NULL_SCHEMA: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 "#;
 
 fn generate_from_str(xml: &str, module_name: &str) -> String {
-    let ir = ergo_sbe::parse(xml).unwrap_or_else(|e| panic!("parse custom schema: {e}"));
+    let ir = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml))
+        .unwrap_or_else(|e| panic!("parse custom schema: {e}"));
     let schema = ergo_sbe::Schema::from_ir(ir);
     let g = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new(module_name));
     let ms = g.generate(&schema).unwrap();
@@ -108,7 +109,7 @@ fn enum_custom_null_value_is_parsed() -> Result<(), Box<dyn Error>> {
         <field name="prio" id="2" type="Priority" offset="1"/>
     </sbe:message>
 </sbe:messageSchema>"#;
-    let ir = ergo_sbe::parse(schema)?;
+    let ir = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(schema))?;
     let schema_obj = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("cust_null");
     let modules = ergo_sbe::Generator::new(config).generate(&schema_obj)?;
@@ -149,7 +150,7 @@ fn with_null_as_option_generates_option_accessor() -> Result<(), Box<dyn Error>>
     </sbe:message>
 </sbe:messageSchema>"#;
 
-    let ir = ergo_sbe::parse(schema)?;
+    let ir = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(schema))?;
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("opt_enum")
         .with_null_as_option(ergo_sbe::ConversionSelector::named_type("Side"));
@@ -195,7 +196,7 @@ fn with_all_enums_as_option_catches_every_enum() -> Result<(), Box<dyn Error>> {
     </sbe:message>
 </sbe:messageSchema>"#;
 
-    let ir = ergo_sbe::parse(schema)?;
+    let ir = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(schema))?;
     let schema = ergo_sbe::Schema::from_ir(ir);
     let config = ergo_sbe::GenerationConfig::new("all_opt").with_all_enums_as_option();
     let modules = ergo_sbe::Generator::new(config).generate(&schema)?;

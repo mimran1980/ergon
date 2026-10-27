@@ -9,6 +9,7 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -135,7 +136,10 @@ RUSTERON_DPDK_CONFIG_AT(sender_mac, 4288);
 RUSTERON_DPDK_CONFIG_AT(receiver_mac, 4306);
 RUSTERON_DPDK_CONFIG_AT(rx_hw_timestamp, 4324);
 RUSTERON_DPDK_CONFIG_AT(clock, 4325);
-_Static_assert(sizeof(rusteron_dpdk_config_t) == 4328, "config size changed: update the Rust mirrors");
+RUSTERON_DPDK_CONFIG_AT(tx_fast_free, 4326);
+RUSTERON_DPDK_CONFIG_AT(rx_free_thresh, 4328);
+RUSTERON_DPDK_CONFIG_AT(tx_free_thresh, 4330);
+_Static_assert(sizeof(rusteron_dpdk_config_t) == 4336, "config size changed: update the Rust mirrors");
 /* The clock report, field by field (src/ffi.rs asserts the Rust side). */
 #define RUSTERON_DPDK_CLOCK_REPORT_AT(field, offset) \
     _Static_assert(offsetof(rusteron_dpdk_clock_report_t, field) == (offset), #field " moved: update src/ffi.rs")
@@ -208,6 +212,11 @@ static int rusteron_dpdk_config_validate(const rusteron_dpdk_config_t *config)
     if (config->rx_hw_timestamp > 1)
     {
         rusteron_dpdk_set_error("rx_hw_timestamp must be 0 or 1");
+        return -1;
+    }
+    if (config->tx_fast_free > 1)
+    {
+        rusteron_dpdk_set_error("tx_fast_free must be 0 or 1");
         return -1;
     }
     if (config->burst_size < 1 || config->burst_size > 256)
@@ -925,6 +934,7 @@ static int rusteron_dpdk_transport_close_transport(aeron_udp_channel_transport_t
             {
                 client->port->open_transports = 0;
                 client->port->counters.dormant = 1;
+                client->port->counters.generation++;
             }
             pthread_mutex_unlock(&native->housekeeping_lock);
             /* nothing will send or poll this NIC again: its queued frames go */
@@ -1075,6 +1085,26 @@ static int rusteron_dpdk_transport_send_local(
     return rc;
 }
 
+/* One tx_burst; with RUSTERON_DPDK_GAP_ATTRIB=1 or burst timed (two clock
+ * reads): ENA reclaims sent descriptors inside the call once fewer than its
+ * free threshold are left, ahead of the frames given it. */
+static inline uint16_t rusteron_dpdk_tx_burst(
+    const rusteron_dpdk_port_ops_t *ops, rusteron_dpdk_port_t *port, rusteron_dpdk_mbuf_t **pkts, uint16_t nb)
+{
+    uint16_t sent;
+    if (!rusteron_dpdk_gap_attrib_on())
+    {
+        sent = ops->tx_burst(port->port_id, port->tx_queue_id, pkts, nb);
+    }
+    else
+    {
+        const uint64_t start_ns = rusteron_dpdk_clock_now();
+        sent = ops->tx_burst(port->port_id, port->tx_queue_id, pkts, nb);
+        rusteron_dpdk_counters_burst(&port->counters, RD_COUNTER_TX_BURST_MAX, rusteron_dpdk_clock_now() - start_ns);
+    }
+    return sent;
+}
+
 /* Offer a burst: what the NIC's ring takes now; with
  * RUSTERON_DPDK_TX_RETRY_US set, the rest again as the NIC drains the ring,
  * until that long has passed. Returns the accepted count, a prefix of `pkts`;
@@ -1083,13 +1113,13 @@ static uint16_t rusteron_dpdk_port_tx_offer(
     rusteron_dpdk_transport_t *native, rusteron_dpdk_port_t *port, rusteron_dpdk_mbuf_t **pkts, uint16_t nb)
 {
     const rusteron_dpdk_port_ops_t *ops = native->ops;
-    uint16_t sent = ops->tx_burst(port->port_id, port->tx_queue_id, pkts, nb);
+    uint16_t sent = rusteron_dpdk_tx_burst(ops, port, pkts, nb);
     if (sent < nb && native->tx_retry_ns > 0)
     {
         const uint64_t deadline = rusteron_dpdk_clock_now() + native->tx_retry_ns;
         do
         {
-            sent += ops->tx_burst(port->port_id, port->tx_queue_id, pkts + sent, (uint16_t)(nb - sent));
+            sent += rusteron_dpdk_tx_burst(ops, port, pkts + sent, (uint16_t)(nb - sent));
         } while (sent < nb && rusteron_dpdk_clock_now() < deadline);
     }
     return sent;
@@ -1121,7 +1151,7 @@ int rusteron_dpdk_port_tx_flush(rusteron_dpdk_transport_t *native, rusteron_dpdk
     {
         pkts[i] = &port->tx_queued[i];
     }
-    const uint16_t sent = native->ops->tx_burst(port->port_id, port->tx_queue_id, pkts, n);
+    const uint16_t sent = rusteron_dpdk_tx_burst(native->ops, port, pkts, n);
     if (sent < n)
     {
         memmove(&port->tx_queued[0], &port->tx_queued[sent], (size_t)(n - sent) * sizeof(port->tx_queued[0]));
@@ -1139,152 +1169,24 @@ void rusteron_dpdk_port_tx_drop_queued(rusteron_dpdk_transport_t *native, ruster
     port->tx_queued_count = 0;
 }
 
-static int rusteron_dpdk_transport_send(
-    aeron_udp_channel_data_paths_t *data_paths,
-    aeron_udp_channel_transport_t *transport,
-    struct sockaddr_storage *address,
+/* The rest of a send once the next hop's MAC is known: the frames built,
+ * paced and handed to the ring (or queued behind it). Always inlined into its
+ * one caller: out of line, its eleven arguments cost every send about 1 ns
+ * (benches/clock.rs send_32b). */
+static inline __attribute__((always_inline)) int rusteron_dpdk_transport_send_resolved(
+    rusteron_dpdk_client_t *client,
+    rusteron_dpdk_transport_t *native,
+    rusteron_dpdk_port_t *port,
+    uint32_t dst_ip,
+    uint16_t dst_port,
+    const uint8_t dst_mac[RUSTERON_DPDK_ETH_ADDR_LEN],
+    uint64_t now_ns,
     struct iovec *iov,
     size_t iov_length,
     int64_t *bytes_sent)
 {
-    (void)data_paths;
-
-    rusteron_dpdk_client_t *client = transport->bindings_clientd;
-    if (NULL == client || NULL == client->runtime || NULL == client->port)
-    {
-        AERON_SET_ERR(EINVAL, "%s", "DPDK transport send: transport has no client state");
-        rusteron_dpdk_set_error("DPDK transport send: transport has no client state");
-        return -1;
-    }
-    if (NULL == bytes_sent || (NULL == iov && iov_length > 0))
-    {
-        AERON_SET_ERR(EINVAL, "%s", "DPDK transport send: iov/bytes_sent must not be NULL");
-        rusteron_dpdk_set_error("DPDK transport send: iov/bytes_sent must not be NULL");
-        return -1;
-    }
-    if (0 == iov_length)
-    {
-        return 0;
-    }
-
-    if (client->delegated)
-    {
-        /* A host-local channel: its kernel socket, connected or not, as
-         * Aeron's kernel transport sends. */
-        int rc = rusteron_dpdk_kernel_send(
-            client->kernel_fd, NULL != transport->connected_address ? NULL : address, iov, iov_length, bytes_sent);
-        if (rc < 0)
-        {
-            rusteron_dpdk_set_error("DPDK transport send: host-local kernel send failed");
-        }
-        return rc;
-    }
-
-    /* The Aeron sender is a non-EAL thread; register it with DPDK before its
-     * first tx (plan §7.2). The seam is a cheap lcore-id check after the first
-     * call and is a no-op on already-registered/EAL threads. */
-    if (rusteron_dpdk_eal_thread_register() < 0)
-    {
-        rusteron_dpdk_set_error("DPDK transport send: failed to register thread with DPDK");
-        return -1;
-    }
-
-    rusteron_dpdk_transport_t *native = client->runtime;
-    rusteron_dpdk_port_t *port = client->port;
     const rusteron_dpdk_port_ops_t *ops = native->ops;
     rusteron_dpdk_counters_t *counters = &port->counters;
-
-    struct sockaddr_storage *dst = address != NULL ? address : transport->connected_address;
-    if (NULL == dst)
-    {
-        rusteron_dpdk_counters_add(counters, RD_COUNTER_ERROR, 1);
-        AERON_SET_ERR(EINVAL, "%s", "DPDK transport send: no destination address");
-        rusteron_dpdk_set_error("DPDK transport send: no destination address");
-        return -1;
-    }
-    if (AF_INET != dst->ss_family)
-    {
-        rusteron_dpdk_counters_add(counters, RD_COUNTER_ERROR, 1);
-        AERON_SET_ERR(EINVAL, "%s", "DPDK transport send: only IPv4 unicast destinations are supported");
-        rusteron_dpdk_set_error("DPDK transport send: only IPv4 unicast destinations are supported");
-        return -1;
-    }
-    struct sockaddr_in *sin = (struct sockaddr_in *)dst;
-    uint32_t dst_ip = sin->sin_addr.s_addr;
-    uint16_t dst_port = (uint16_t)ntohs(sin->sin_port);
-
-    if (rusteron_dpdk_ipv4_is_multicast(dst_ip))
-    {
-        rusteron_dpdk_counters_add(counters, RD_COUNTER_ERROR, 1);
-        AERON_SET_ERR(EINVAL, "%s", "DPDK transport send: multicast destinations are not supported");
-        rusteron_dpdk_set_error("DPDK transport send: multicast destinations are not supported");
-        return -1;
-    }
-    uint32_t net = rusteron_dpdk_ipv4_mask(port->prefix_len);
-    if (INADDR_ANY == dst_ip || INADDR_BROADCAST == dst_ip || 0 == dst_port ||
-        (31 > port->prefix_len && (dst_ip & net) == (port->local_ip & net) && (dst_ip & ~net) == ~net))
-    {
-        rusteron_dpdk_counters_add(counters, RD_COUNTER_ERROR, 1);
-        AERON_SET_ERR(EINVAL, "%s", "DPDK transport send: 0.0.0.0, broadcast or port 0 is not a destination");
-        rusteron_dpdk_set_error("DPDK transport send: invalid destination");
-        return -1;
-    }
-
-    /* A host-local destination (loopback, the host's kernel interfaces) is
-     * unreachable through the NIC: it goes through a kernel socket bound to
-     * this transport's own port, so the peer's replies come back to it. */
-    if (rusteron_dpdk_is_host_local(native, dst_ip))
-    {
-        return rusteron_dpdk_transport_send_local(transport, client, dst, iov, iov_length, bytes_sent);
-    }
-    if (rusteron_dpdk_port_owns_ip(port, dst_ip))
-    {
-        rusteron_dpdk_counters_add(counters, RD_COUNTER_ERROR, 1);
-        AERON_SET_ERR(EINVAL, "%s", "DPDK transport send: the destination is this DPDK NIC's own address");
-        rusteron_dpdk_set_error("DPDK transport send: destination is this NIC");
-        return -1;
-    }
-
-    /* Route: an in-subnet next hop is ARP'd directly; anything else goes via
-     * the configured gateway while keeping the destination IP in the header. */
-    uint32_t next_hop = ((dst_ip & net) == (port->local_ip & net)) ? dst_ip : port->gateway_ip;
-
-    const uint64_t now_ns = rusteron_dpdk_clock_now();
-    uint8_t dst_mac[RUSTERON_DPDK_ETH_ADDR_LEN];
-    const int resolved = rusteron_dpdk_arp_resolve(&port->arp, native, port, next_hop, now_ns, dst_mac);
-    if (RUSTERON_DPDK_ARP_DROP == resolved)
-    {
-        /* Failed and already reported: drop, as an unconnected sendto to a
-         * failed neighbour succeeds, so Aeron's other destinations carry on. */
-        rusteron_dpdk_counters_add(counters, RD_COUNTER_ARP_MISS, (int64_t)iov_length);
-        for (size_t i = 0; i < iov_length; i++)
-        {
-            *bytes_sent += (int64_t)iov[i].iov_len;
-        }
-        return (int)iov_length;
-    }
-    if (RUSTERON_DPDK_ARP_FULL == resolved)
-    {
-        rusteron_dpdk_counters_add(counters, RD_COUNTER_ARP_MISS, 1);
-        AERON_SET_ERR(ENOBUFS, "DPDK transport send: ARP table full (%d next hops in use)",
-                      RUSTERON_DPDK_ARP_TABLE_SIZE);
-        rusteron_dpdk_set_error("DPDK transport send: ARP table full");
-        return -1;
-    }
-    if (resolved <= 0)
-    {
-        rusteron_dpdk_counters_add(counters, RD_COUNTER_ARP_MISS, 1);
-        if (resolved < 0)
-        {
-            /* As Linux once a neighbour is NUD_FAILED: a hard error Aeron logs. */
-            char ip_text[INET_ADDRSTRLEN] = "";
-            inet_ntop(AF_INET, &next_hop, ip_text, sizeof(ip_text));
-            AERON_SET_ERR(EHOSTUNREACH, "DPDK transport send: next hop %s does not answer ARP", ip_text);
-            rusteron_dpdk_set_error("DPDK transport send: next hop unreachable (ARP failed)");
-            return -1;
-        }
-        return 0; /* first resolution in flight; Aeron retries the zero result */
-    }
 
     /* The source address, as the kernel would choose it: the bound one; for a
      * wildcard bind, the address this peer reached us on, else the NIC's. */
@@ -1496,6 +1398,14 @@ static int rusteron_dpdk_transport_send(
     }
     /* Sent or queued: either way Aeron's to forget. */
     const size_t sent = built;
+    /* Idle TX cleanup: the data frames the NIC took, for the agent's idle
+     * poll to reclaim once their completions are posted (ARP and ICMP
+     * replies, and frames sent off the queue, are left to the PMD). */
+    if (__builtin_expect(0 != port->tx_idle_clean, 0) && 0 != accepted)
+    {
+        port->tx_unreaped += (uint32_t)accepted;
+        port->last_tx_ns = now_ns;
+    }
 
     /* Frames charged to the allowances above but neither sent nor queued
      * (no mbufs, an oversized datagram and those after it): refund them, as
@@ -1517,13 +1427,17 @@ static int rusteron_dpdk_transport_send(
         }
     }
 
-    /* bytes_sent accrues for the datagrams sent or queued (plan §7.4). */
+    /* bytes_sent accrues for the datagrams sent or queued (plan §7.4). The
+     * counter takes this send's bytes alone: Aeron's multi-destination path
+     * presets *bytes_sent and sends to each destination on the same total. */
+    int64_t sent_bytes = 0;
     for (size_t i = 0; i < sent; i++)
     {
-        *bytes_sent += iov[i].iov_len;
+        sent_bytes += (int64_t)iov[i].iov_len;
     }
+    *bytes_sent += sent_bytes;
     rusteron_dpdk_counters_add(counters, RD_COUNTER_TX_PKTS, (int64_t)sent);
-    rusteron_dpdk_counters_add(counters, RD_COUNTER_TX_BYTES, *bytes_sent);
+    rusteron_dpdk_counters_add(counters, RD_COUNTER_TX_BYTES, sent_bytes);
 
     if (oversized)
     {
@@ -1536,6 +1450,164 @@ static int rusteron_dpdk_transport_send(
     }
 
     return (int)sent;
+}
+
+static int rusteron_dpdk_transport_send(
+    aeron_udp_channel_data_paths_t *data_paths,
+    aeron_udp_channel_transport_t *transport,
+    struct sockaddr_storage *address,
+    struct iovec *iov,
+    size_t iov_length,
+    int64_t *bytes_sent)
+{
+    (void)data_paths;
+
+    rusteron_dpdk_client_t *client = transport->bindings_clientd;
+    if (NULL == client || NULL == client->runtime || NULL == client->port)
+    {
+        AERON_SET_ERR(EINVAL, "%s", "DPDK transport send: transport has no client state");
+        rusteron_dpdk_set_error("DPDK transport send: transport has no client state");
+        return -1;
+    }
+    if (NULL == bytes_sent || (NULL == iov && iov_length > 0))
+    {
+        AERON_SET_ERR(EINVAL, "%s", "DPDK transport send: iov/bytes_sent must not be NULL");
+        rusteron_dpdk_set_error("DPDK transport send: iov/bytes_sent must not be NULL");
+        return -1;
+    }
+    if (0 == iov_length)
+    {
+        return 0;
+    }
+
+    if (client->delegated)
+    {
+        /* A host-local channel: its kernel socket, connected or not, as
+         * Aeron's kernel transport sends. */
+        int rc = rusteron_dpdk_kernel_send(
+            client->kernel_fd, NULL != transport->connected_address ? NULL : address, iov, iov_length, bytes_sent);
+        if (rc < 0)
+        {
+            rusteron_dpdk_set_error("DPDK transport send: host-local kernel send failed");
+        }
+        return rc;
+    }
+
+    /* The Aeron sender is a non-EAL thread; register it with DPDK before its
+     * first tx (plan §7.2). The seam is a cheap lcore-id check after the first
+     * call and is a no-op on already-registered/EAL threads. */
+    if (rusteron_dpdk_eal_thread_register() < 0)
+    {
+        rusteron_dpdk_set_error("DPDK transport send: failed to register thread with DPDK");
+        return -1;
+    }
+
+    rusteron_dpdk_transport_t *native = client->runtime;
+    rusteron_dpdk_port_t *port = client->port;
+    rusteron_dpdk_counters_t *counters = &port->counters;
+
+    struct sockaddr_storage *dst = address != NULL ? address : transport->connected_address;
+    if (NULL == dst)
+    {
+        rusteron_dpdk_counters_add(counters, RD_COUNTER_ERROR, 1);
+        AERON_SET_ERR(EINVAL, "%s", "DPDK transport send: no destination address");
+        rusteron_dpdk_set_error("DPDK transport send: no destination address");
+        return -1;
+    }
+    if (AF_INET != dst->ss_family)
+    {
+        rusteron_dpdk_counters_add(counters, RD_COUNTER_ERROR, 1);
+        AERON_SET_ERR(EINVAL, "%s", "DPDK transport send: only IPv4 unicast destinations are supported");
+        rusteron_dpdk_set_error("DPDK transport send: only IPv4 unicast destinations are supported");
+        return -1;
+    }
+    struct sockaddr_in *sin = (struct sockaddr_in *)dst;
+    uint32_t dst_ip = sin->sin_addr.s_addr;
+    uint16_t dst_port = (uint16_t)ntohs(sin->sin_port);
+
+    if (rusteron_dpdk_ipv4_is_multicast(dst_ip))
+    {
+        rusteron_dpdk_counters_add(counters, RD_COUNTER_ERROR, 1);
+        AERON_SET_ERR(EINVAL, "%s", "DPDK transport send: multicast destinations are not supported");
+        rusteron_dpdk_set_error("DPDK transport send: multicast destinations are not supported");
+        return -1;
+    }
+    uint32_t net = rusteron_dpdk_ipv4_mask(port->prefix_len);
+    if (INADDR_ANY == dst_ip || INADDR_BROADCAST == dst_ip || 0 == dst_port ||
+        (31 > port->prefix_len && (dst_ip & net) == (port->local_ip & net) && (dst_ip & ~net) == ~net))
+    {
+        rusteron_dpdk_counters_add(counters, RD_COUNTER_ERROR, 1);
+        AERON_SET_ERR(EINVAL, "%s", "DPDK transport send: 0.0.0.0, broadcast or port 0 is not a destination");
+        rusteron_dpdk_set_error("DPDK transport send: invalid destination");
+        return -1;
+    }
+
+    /* A host-local destination (loopback, the host's kernel interfaces) is
+     * unreachable through the NIC: it goes through a kernel socket bound to
+     * this transport's own port, so the peer's replies come back to it. */
+    if (rusteron_dpdk_is_host_local(native, dst_ip))
+    {
+        return rusteron_dpdk_transport_send_local(transport, client, dst, iov, iov_length, bytes_sent);
+    }
+    if (rusteron_dpdk_port_owns_ip(port, dst_ip))
+    {
+        rusteron_dpdk_counters_add(counters, RD_COUNTER_ERROR, 1);
+        AERON_SET_ERR(EINVAL, "%s", "DPDK transport send: the destination is this DPDK NIC's own address");
+        rusteron_dpdk_set_error("DPDK transport send: destination is this NIC");
+        return -1;
+    }
+
+    /* Route: an in-subnet next hop is ARP'd directly; anything else goes via
+     * the configured gateway while keeping the destination IP in the header. */
+    uint32_t next_hop = ((dst_ip & net) == (port->local_ip & net)) ? dst_ip : port->gateway_ip;
+
+    const uint64_t now_ns = rusteron_dpdk_clock_now();
+    uint8_t dst_mac[RUSTERON_DPDK_ETH_ADDR_LEN];
+    const int resolved = rusteron_dpdk_arp_resolve(&port->arp, native, port, next_hop, now_ns, dst_mac);
+    if (RUSTERON_DPDK_ARP_DROP == resolved)
+    {
+        /* Failed and already reported: drop, as an unconnected sendto to a
+         * failed neighbour succeeds, so Aeron's other destinations carry on. */
+        rusteron_dpdk_counters_add(counters, RD_COUNTER_ARP_MISS, (int64_t)iov_length);
+        for (size_t i = 0; i < iov_length; i++)
+        {
+            *bytes_sent += (int64_t)iov[i].iov_len;
+        }
+        return (int)iov_length;
+    }
+    if (RUSTERON_DPDK_ARP_FULL == resolved)
+    {
+        rusteron_dpdk_counters_add(counters, RD_COUNTER_ARP_MISS, 1);
+        AERON_SET_ERR(ENOBUFS, "DPDK transport send: ARP table full (%d next hops in use)",
+                      RUSTERON_DPDK_ARP_TABLE_SIZE);
+        rusteron_dpdk_set_error("DPDK transport send: ARP table full");
+        return -1;
+    }
+    if (resolved <= 0)
+    {
+        rusteron_dpdk_counters_add(counters, RD_COUNTER_ARP_MISS, 1);
+        if (resolved < 0)
+        {
+            /* As Linux once a neighbour is NUD_FAILED: a hard error Aeron logs. */
+            char ip_text[INET_ADDRSTRLEN] = "";
+            inet_ntop(AF_INET, &next_hop, ip_text, sizeof(ip_text));
+            AERON_SET_ERR(EHOSTUNREACH, "DPDK transport send: next hop %s does not answer ARP", ip_text);
+            rusteron_dpdk_set_error("DPDK transport send: next hop unreachable (ARP failed)");
+            return -1;
+        }
+        return 0; /* first resolution in flight; Aeron retries the zero result */
+    }
+
+    /* A refresh the resolve found due goes out after the data frames, never
+     * before them: the data frame pays for no ARP build or transmit. */
+    const int rc = rusteron_dpdk_transport_send_resolved(
+        client, native, port, dst_ip, dst_port, dst_mac, now_ns, iov, iov_length, bytes_sent);
+    /* Checked inline: an ordinary send makes no call into arp.c for it. */
+    if (__builtin_expect(port->arp.refresh_due, 0))
+    {
+        rusteron_dpdk_arp_send_due(&port->arp, native, port);
+    }
+    return rc;
 }
 
 static int rusteron_dpdk_transport_get_so_rcvbuf(
@@ -1685,4 +1757,101 @@ const char *rusteron_dpdk_last_error(void)
 int rusteron_dpdk_last_error_code(void)
 {
     return rusteron_dpdk_error_code;
+}
+
+/* CLOCK_MONOTONIC in ns: the gateway check's own deadline, apart from the
+ * transport clock (which a test may pin). */
+static uint64_t rusteron_dpdk_gateway_check_now_ns(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
+}
+
+/* What `port` received while no agent polls it: ARP handled (an answer
+ * learned, a request answered), everything else released. */
+static void rusteron_dpdk_gateway_check_drain(rusteron_dpdk_transport_t *native, rusteron_dpdk_port_t *port)
+{
+    rusteron_dpdk_mbuf_t views[32];
+    rusteron_dpdk_mbuf_t *batch[32];
+    for (size_t i = 0; i < 32; i++)
+    {
+        batch[i] = &views[i];
+    }
+    const uint16_t n = native->ops->rx_burst(port->port_id, port->rx_queue_id, batch, 32);
+    for (uint16_t i = 0; i < n; i++)
+    {
+        if (views[i].frame_len >= RUSTERON_DPDK_ETH_HDR_LEN && 0x08 == views[i].data[12] && 0x06 == views[i].data[13])
+        {
+            rusteron_dpdk_arp_handle_frame(&port->arp, native, port, views[i].data, views[i].frame_len);
+        }
+        native->ops->mbuf_release(&views[i]);
+    }
+}
+
+int rusteron_dpdk_transport_gateway_check(void *transport, uint32_t timeout_ms, int32_t answered[2])
+{
+    rusteron_dpdk_transport_t *native = transport;
+    if (NULL == native || NULL == answered)
+    {
+        rusteron_dpdk_set_error("gateway check: transport and answered must not be NULL");
+        return -1;
+    }
+    rusteron_dpdk_port_t *ports[2] = { &native->sender, &native->receiver };
+    pthread_mutex_lock(&native->housekeeping_lock);
+    const int open = ports[0]->open_transports > 0 || ports[1]->open_transports > 0;
+    pthread_mutex_unlock(&native->housekeeping_lock);
+    if (open)
+    {
+        rusteron_dpdk_set_error("gateway check: a transport is open, so an agent may be polling the ports: run it "
+                                "before the driver starts");
+        return -1;
+    }
+    if (rusteron_dpdk_eal_thread_register() < 0)
+    {
+        rusteron_dpdk_set_error("gateway check: the calling thread cannot register with DPDK");
+        return -1;
+    }
+    /* A port without a gateway has nothing to ask. */
+    answered[0] = 0 == ports[0]->gateway_ip;
+    answered[1] = 0 == ports[1]->gateway_ip;
+    const uint64_t start_ns = rusteron_dpdk_gateway_check_now_ns();
+    const struct timespec step = { .tv_sec = 0, .tv_nsec = 1000000L };
+    for (;;)
+    {
+        int waiting = 0;
+        for (int i = 0; i < 2; i++)
+        {
+            if (answered[i])
+            {
+                continue;
+            }
+            uint8_t mac[RUSTERON_DPDK_ETH_ADDR_LEN];
+            /* The first call sends the request (again every 100 ms of the
+             * transport clock); 1 once the answer is learned. */
+            answered[i] = 1 == rusteron_dpdk_arp_resolve(
+                                   &ports[i]->arp, native, ports[i], ports[i]->gateway_ip, rusteron_dpdk_clock_now(), mac);
+            if (!answered[i])
+            {
+                rusteron_dpdk_gateway_check_drain(native, ports[i]);
+                answered[i] = 1 == rusteron_dpdk_arp_resolve(
+                                       &ports[i]->arp, native, ports[i], ports[i]->gateway_ip, rusteron_dpdk_clock_now(),
+                                       mac);
+            }
+            waiting |= !answered[i];
+        }
+        if (!waiting || rusteron_dpdk_gateway_check_now_ns() - start_ns >= (uint64_t)timeout_ms * 1000000ULL)
+        {
+            break;
+        }
+        nanosleep(&step, NULL);
+    }
+    for (int i = 0; i < 2; i++)
+    {
+        if (!answered[i])
+        {
+            rusteron_dpdk_arp_forget(&ports[i]->arp, ports[i]->gateway_ip);
+        }
+    }
+    return 0;
 }

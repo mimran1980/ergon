@@ -16,7 +16,14 @@
 # maximum, no several flows; the load sweep runs its ladder alone), max_hours
 # (LAB_MAX_HOURS: the instances' deadline, how long a state is waited for),
 # warmup_seconds and warmup_rate (LAB_WARMUP_SECONDS, LAB_WARMUP_RATE: a
-# warm-up load before each mode's first ladder, recorded nowhere).
+# warm-up load before each mode's first ladder, recorded nowhere),
+# rtt_spike_ns and rtt_stall_ns (LAB_RTT_SPIKE_NS, 30000, and
+# LAB_RTT_STALL_NS, 10000: the cross-host round trip's clients stamp every
+# round trip and every stall of their own loop of at least that many ns, so
+# each idle max, 72-79 us in G3, gets a cause; the clients' own defaults,
+# 100 and 20 us, would leave it unstamped), gapspin_us (LAB_GAPSPIN_US, 50:
+# the diagnostics' gap spinner records its loop's gaps of at least that many
+# us; vm.sh diag-start reads it from bench/gapspin_us).
 # The functions run the benchmark on both VMs in lockstep; teardown stays with
 # the caller's trap.
 
@@ -315,6 +322,24 @@ record_market() {
     for host in "$A" "$B"; do echo "$line" >>"$out/env-$host.txt"; done
 }
 
+# record_knoise <state>: what each host's diag-start said of KNOISE (vm.sh
+# knoise_start: osnoise on the agent and app CPUs, or "osnoise unavailable:
+# <why>", a limit of the run's diagnostics, and any event its kernel lacks)
+# in its environment record (env-<host>.txt), with the state
+record_knoise() {
+    local state=$1 node host lines
+    for node in a b; do
+        [[ $node == a ]] && host=$A || host=$B
+        if [[ ! -e $out/$node-diag-start-$state.log ]]; then
+            lines="knoise not recorded (no diag-start log)"
+        else
+            lines=$(grep -E '^(osnoise|knoise) ' "$out/$node-diag-start-$state.log") ||
+                lines="knoise not recorded (diag-start said nothing of it)"
+        fi
+        awk -v s="$state" '{print s ": " $0}' <<<"$lines" >>"$out/env-$host.txt"
+    done
+}
+
 # reboot both VMs and wait for them to come back
 reboot_both() {
     local host
@@ -347,10 +372,13 @@ prepare_vms() {
         git -C "$repo" archive --format=tar "$base" >"$out/ergon-base.tar" || die "cannot pack LAB_BASE $base"
         tars+=(ergon-base.tar)
     fi
-    local host tar own peer want_ynl=
+    local host tar own peer want_ynl= want_dpdk
     # a mode busy-polling its NAPIs (NAPI_BUSY) needs the kernel's ynl: vm.sh
     # build fetches it (build-ynl) only where bench/want_ynl says 1
     if modes_want_ynl "${modes[@]}" ${local_modes:-}; then want_ynl=1; fi
+    # the DPDK builds the modes' @DPDK= ask for: vm.sh build builds each
+    # (build-dpdk) that bench/want_dpdk names
+    want_dpdk=$(modes_want_dpdk "${modes[@]}" ${local_modes:-})
     for host in "$A" "$B"; do
         read -r own peer <<<"$(host_subnets "$host")"
         for tar in "${tars[@]}"; do
@@ -361,7 +389,7 @@ prepare_vms() {
             done
             [[ -n $copied ]] || die "copy of $tar to $host failed"
         done
-        on "$host" "rm -rf ergon bench && mkdir -p ergon bench && echo $own >bench/data_subnet${peer:+ && echo $peer >bench/peer_subnet} && echo ${placement:-} >bench/placement && echo ${allow_arm:-} >bench/allow_arm && echo $want_ynl >bench/want_ynl && tar -xf ergon.tar -C ergon && rm ergon.tar" ||
+        on "$host" "rm -rf ergon bench && mkdir -p ergon bench && echo $own >bench/data_subnet${peer:+ && echo $peer >bench/peer_subnet} && echo ${placement:-} >bench/placement && echo ${allow_arm:-} >bench/allow_arm && echo ${gapspin_us:-50} >bench/gapspin_us && echo $want_ynl >bench/want_ynl && echo $want_dpdk >bench/want_dpdk && tar -xf ergon.tar -C ergon && rm ergon.tar" ||
             die "unpack on $host failed"
         if [[ -n ${base:-} ]]; then
             on "$host" "rm -rf ergon-base bin-base && mkdir -p ergon-base && tar -xf ergon-base.tar -C ergon-base && rm ergon-base.tar" ||
@@ -388,7 +416,10 @@ prepare_vms() {
     # each host's environment, with the baseline every mode runs on top of
     # (once tune has set it) and the base build, if any
     for host in "$A" "$B"; do
+        # the DPDK the drivers link, and how it was built (Debian's generic
+        # armv8, or native): every arm of a comparison must link the same
         on "$host" "echo \"kernel \$(uname -r)\"; echo \"dpdk \$(pkg-config --modversion libdpdk)\";
+            echo \"dpdk-build \$(for d in \$(pkg-config --cflags-only-I libdpdk | tr ' ' '\n' | sed -n 's/^-I//p'); do [[ -f \$d/rte_build_config.h ]] && grep -hE '^#define RTE_(CACHE_LINE_SIZE|MACHINE|ARCH|PLATFORM|MAX_LCORE) ' \$d/rte_build_config.h; done | awk '{printf \"%s=%s \", \$2, \$3}')\";
             echo \"cpu \$(lscpu | sed -n 's/^Model name: *//p')\"; echo \"cpus \$(nproc)\";
             echo \"rustc \$(~/.cargo/bin/rustc -V)\"; $vm layout; $vm nics; $vm ptp; $vm baseline; $vm host" >"$out/env-$host.txt" 2>&1
         if [[ -n ${base:-} ]]; then
@@ -406,7 +437,10 @@ prepare_vms() {
 # connection only has to start a state and collect it; the isolated states'
 # reboots are driven from here: isolated, and isolated-poll, the same with
 # idle CPUs polling rather than halting (vm.sh isolate poll; Graviton's only
-# way to keep CPUs out of idle, nohlt). Results to $out/results.csv.
+# way to keep CPUs out of idle, nohlt). A state ending -nodiag is that state
+# with no diagnostics (vm.sh diag-start: the sched/irq tracepoints, the drain
+# kprobes, KNOISE's osnoise and gapspin), so an A/A against it bounds what
+# the diagnostics add to a max. Results to $out/results.csv.
 run_bench() {
     results=$out/results.csv
     if ((reps == 0)); then
@@ -416,9 +450,11 @@ run_bench() {
     remote_access
     local state
     for state in "${states[@]}"; do
-        if [[ $state == isolated || $state == isolated-poll ]]; then
+        local base_state=${state%-nodiag} diag=1
+        [[ $state == "$base_state" ]] || diag=0
+        if [[ $base_state == isolated || $base_state == isolated-poll ]]; then
             local variant=
-            [[ $state == isolated-poll ]] && variant=poll
+            [[ $base_state == isolated-poll ]] && variant=poll
             log "state $state: kernel command line, reboot"
             both "isolate${variant:+-$variant}" isolate $variant || die "isolate failed"
             reboot_both
@@ -435,10 +471,17 @@ run_bench() {
         # chrony anew. Spikes are matched across the hosts' clocks.
         both "timesync-$state" timesync-wait ||
             die "state $state: chrony did not synchronise both hosts' clocks (vm.sh timesync-wait; $out/{a,b}-timesync-$state.log)"
-        both "diag-start-$state" diag-start || log "WARNING: diagnostics did not start"
+        if ((diag)); then
+            both "diag-start-$state" diag-start || log "WARNING: diagnostics did not start"
+            record_knoise "$state"
+        else
+            log "state $state: no diagnostics (no tracepoints, kprobes, KNOISE or gapspin)"
+        fi
         remote_state "$state" || die "$state benchmark failed"
-        both "diag-$state" diag-fetch || log "WARNING: diagnostics not fetched"
-        both "diag-stop-$state" diag-stop || true
+        if ((diag)); then
+            both "diag-$state" diag-fetch || log "WARNING: diagnostics not fetched"
+            both "diag-stop-$state" diag-stop || true
+        fi
     done
     python3 "$repo/md-dpdk/benches/cloud/analyse.py" "$results" >"$out/summary.md"
     # every spike and every rep's max, attributed: host stall, guest preemption or unexplained
@@ -517,6 +560,8 @@ no_flatout='${no_flatout:-}'
 placement='${placement:-}'
 warmup_seconds=${warmup_seconds:-0}
 warmup_rate=${warmup_rate:-0}
+rtt_spike_ns='${rtt_spike_ns:-30000}'
+rtt_stall_ns='${rtt_stall_ns:-10000}'
 ENV
     on "$A" "nohup bash ergon/md-dpdk/benches/cloud/remote.sh $1 >$dir/run.log 2>&1 </dev/null &" || return 1
     log "state $state: running on VM a ($dir)"
@@ -954,7 +999,7 @@ mix_run() {
 # bench_state <state>, on VM a (remote.sh): $reps reps of every mode in a fresh
 # random order each rep, against VM a itself and VM b
 bench_state() {
-    local state=$1 rep mode fm label pong sub
+    local state=$1 rep mode fm label pong sub prog raw rtt_s rtt_n rtt_w rtt_d gap gap_env between flush_env pong_host
     results=$out/results.csv
     local a_nics b_nics net us host
     a_nics=$(on "$A" "$vm nics" 2>>"$out/nics.log")
@@ -962,6 +1007,8 @@ bench_state() {
     a_rcv=$(awk '$1 == "receiver" {print $5}' <<<"$a_nics")
     b_rcv=$(awk '$1 == "receiver" {print $5}' <<<"$b_nics")
     [[ -n $a_rcv && -n $b_rcv ]] || { cat "$out/nics.log" >&2; die "cannot read the data NICs"; }
+    # a's sender NIC: a hairpin's ping listens there (modes.sh HAIRPIN)
+    a_snd=$(awk '$1 == "sender" {print $5}' <<<"$a_nics")
     # every data address of each host (the path MTU check's peers)
     a_ips=$(awk '{printf "%s%s", sep, $5; sep = " "}' <<<"$a_nics")
     b_ips=$(awk '{printf "%s%s", sep, $5; sep = " "}' <<<"$b_nics")
@@ -980,7 +1027,8 @@ bench_state() {
         log "WARNING: the network's own round trip not measured (${net:-nothing})"
     fi
     app_a=$(on "$A" "$vm layout" | awk '{print $2}')
-    app2_a=$(on "$A" "$vm layout" | awk '{print $5}')
+    # a's receiver core too: a hairpin's pong (the raw floor leaves it free)
+    read -r _ _ _ rcv_cpu_a app2_a <<<"$(on "$A" "$vm layout")"
     app_b=$(on "$B" "$vm layout" | awk '{print $2}')
     app2_b=$(on "$B" "$vm layout" | awk '{print $5}')
     log "receiver ports: a=$a_rcv b=$b_rcv; app CPUs: a=$app_a b=$app_b"
@@ -992,6 +1040,10 @@ bench_state() {
         for mode in $(printf '%s\n' "${modes[@]}" | python3 -c 'import random,sys; l=sys.stdin.read().split(); random.shuffle(l); print(" ".join(l))'); do
             label=$state:$mode
             fm=$(file_mode "$mode")
+            # the raw floor's modes (modes.sh mode_raw): the floor client,
+            # no Aeron, so the round trip alone
+            prog=$(mode_client "$mode") raw=
+            mode_raw "$mode" && raw=1
             log "$state rep $rep: $mode"
             # jumbo frames: the path checked at the jumbo MTU first, both ways
             if [[ $(mode_get "${mode%+idle}" JUMBO) == 1 ]]; then
@@ -1009,8 +1061,9 @@ bench_state() {
             both "driver-$state-$fm-$rep" driver "${mode%+idle}" || die "$mode drivers did not start"
             mtu_rows "$rep" "$label" a b
             # what each host's driver said of the host as it started (under
-            # INVOKER the clients' embedded drivers say it: after the round trip)
-            if [[ $(mode_get "${mode%+idle}" AERON_THREADING_MODE) != INVOKER ]]; then
+            # INVOKER the clients' embedded drivers say it: after the round
+            # trip; the raw floor has no driver)
+            if [[ $(mode_get "${mode%+idle}" AERON_THREADING_MODE) != INVOKER && -z $raw ]]; then
                 hostcheck_rows "$rep" "$label" a
                 hostcheck_rows "$rep" "$label" b
             fi
@@ -1034,19 +1087,46 @@ bench_state() {
             if [[ ${mode%%@*} == dpdk* ]]; then both "wc-$state-$fm-$rep" wc-check || true; fi
             both "jitter-before-rtt-$state-$fm-$rep" jitter || true
             loss_a=$(on "$A" "$vm loss" 2>/dev/null); loss_b=$(on "$B" "$vm loss" 2>/dev/null)
-            # round trip: B pongs, A pings (ping's endpoint on B, pong's on A),
+            # the round trip's seconds, round trips and warm-up (modes.sh
+            # rtt_plan: 20 s, RTT_MESSAGES and RTT_WARMUP, unless the mode paces
+            # its pings, @RTT_GAP_US), and the clients' deadline: those seconds
+            # and a quarter more of warm-up
+            read -r rtt_s rtt_n rtt_w <<<"$(rtt_plan "${mode%+idle}" "$rtt_messages" "$rtt_warmup")"
+            rtt_d=$((rtt_s + (rtt_s + 3) / 4))
+            gap=$(mode_get "${mode%+idle}" RTT_GAP_US) || gap=
+            gap_env=${gap:+RTT_GAP_US=$gap }
+            # the floor's keep-alives (the ping's) and cache flush (both ends)
+            between=$(mode_get "${mode%+idle}" KEEPALIVE_US) && gap_env+="KEEPALIVE_US=$between "
+            flush_env=
+            between=$(mode_get "${mode%+idle}" FLUSH_KB) && flush_env="FLUSH_KB=$between "
+            gap_env+=$flush_env
             # the ping started at second $rtt_align of the minute when set
             align_rtt
-            on "$B" "LAB_CLIENT_DEADLINE=$(answer_deadline 25) $vm client $label rtt xpong $b_rcv:20123 $a_rcv:20124 $app_b" \
-                >"$out/pong-$state-$fm-$rep.log" 2>&1 & pong=$!
-            sleep 2
-            # (RTT_SECONDS=20: 20 s measured after up to 5 s of warm-up)
-            on "$A" "RTT_SECONDS=20 LAB_CLIENT_DEADLINE=$(client_deadline 25) $vm client $label rtt xping $b_rcv:20123 $a_rcv:20124 $rtt_messages $rtt_warmup $app_a" \
-                2>"$out/ping-$state-$fm-$rep.log" | sed "s/^/$rep,/" | tee -a "$results" >&2
-            client_rc "$label rep $rep: the round trip's ping" "${PIPESTATUS[0]}"
-            end_client "$B" rtt xpong
-            wait_bounded "$(client_bound "$(answer_deadline 25)")" "$label rep $rep: the round trip's pong" $pong || true
-            invoker_named "$mode" "$out/ping-$state-$fm-$rep.log" "$out/pong-$state-$fm-$rep.log"
+            # every round trip of rtt_spike_ns or more stamped, every loop stall
+            # of rtt_stall_ns or more (LAB_RTT_SPIKE_NS, LAB_RTT_STALL_NS)
+            if mode_hairpin "$mode"; then
+                # the hairpin (modes.sh HAIRPIN): both ends on A in one floor
+                # client, the pong on A's receiver NIC and core, the ping on its
+                # sender NIC and app core; B idles
+                [[ -n $a_snd && -n $rcv_cpu_a ]] || die "$mode: a hairpin needs host a's sender NIC and receiver core (vm.sh nics, layout)"
+                pong_host=$A
+                on "$A" "${gap_env}RTT_SECONDS=$rtt_s LOAD_SPIKE_NS=${rtt_spike_ns:-30000} LOOP_STALL_NS=${rtt_stall_ns:-10000} LAB_CLIENT_DEADLINE=$(client_deadline "$rtt_d") $vm client $label floor xhairpin $a_rcv:20123 $a_snd:20124 $rtt_n $rtt_w $app_a $rcv_cpu_a" \
+                    2>"$out/ping-$state-$fm-$rep.log" | sed "s/^/$rep,/" | tee -a "$results" >&2
+                client_rc "$label rep $rep: the hairpin" "${PIPESTATUS[0]}"
+            else
+                # B pongs, A pings (ping's endpoint on B, pong's on A)
+                pong_host=$B
+                on "$B" "${flush_env}LOOP_STALL_NS=${rtt_stall_ns:-10000} LAB_CLIENT_DEADLINE=$(answer_deadline "$rtt_d") $vm client $label $prog xpong $b_rcv:20123 $a_rcv:20124 $app_b" \
+                    >"$out/pong-$state-$fm-$rep.log" 2>&1 & pong=$!
+                sleep 2
+                # (RTT_SECONDS=20 unpaced: 20 s measured after up to 5 s of warm-up)
+                on "$A" "${gap_env}RTT_SECONDS=$rtt_s LOAD_SPIKE_NS=${rtt_spike_ns:-30000} LOOP_STALL_NS=${rtt_stall_ns:-10000} LAB_CLIENT_DEADLINE=$(client_deadline "$rtt_d") $vm client $label $prog xping $b_rcv:20123 $a_rcv:20124 $rtt_n $rtt_w $app_a" \
+                    2>"$out/ping-$state-$fm-$rep.log" | sed "s/^/$rep,/" | tee -a "$results" >&2
+                client_rc "$label rep $rep: the round trip's ping" "${PIPESTATUS[0]}"
+                end_client "$B" "$prog" xpong
+                wait_bounded "$(client_bound "$(answer_deadline "$rtt_d")")" "$label rep $rep: the round trip's pong" $pong || true
+                invoker_named "$mode" "$out/ping-$state-$fm-$rep.log" "$out/pong-$state-$fm-$rep.log"
+            fi
             if [[ $(mode_get "${mode%+idle}" AERON_THREADING_MODE) == INVOKER ]]; then
                 hostcheck_rows "$rep" "$label" a "$out/ping-$state-$fm-$rep.log"
                 hostcheck_rows "$rep" "$label" b "$out/pong-$state-$fm-$rep.log"
@@ -1054,7 +1134,21 @@ bench_state() {
             on "$A" 'cat bench/rtt-histogram.csv' >"$out/histogram-$state-$fm-$rep.csv" 2>/dev/null || true
             on "$A" 'cat bench/load-spikes.csv' >"$out/spikes-$state-$fm-rtt-$rep.csv" 2>/dev/null || true
             on "$A" 'cat bench/stalls-ping.csv' >"$out/stalls-ping-$state-$fm-$rep.csv" 2>/dev/null || true
-            on "$B" 'cat bench/stalls-pong.csv' >"$out/stalls-pong-$state-$fm-$rep.csv" 2>/dev/null || true
+            on "$pong_host" 'cat bench/stalls-pong.csv' >"$out/stalls-pong-$state-$fm-$rep.csv" 2>/dev/null || true
+            # precision-time: each spike split one way (rtt's RTT_ONE_WAY,
+            # vm.sh client), for spikes.py; none kept where the ping wrote none
+            on "$A" 'cat bench/one-way.csv' >"$out/oneway-$state-$fm-$rep.csv" 2>/dev/null || true
+            [[ -s $out/oneway-$state-$fm-$rep.csv ]] || rm -f "$out/oneway-$state-$fm-$rep.csv"
+            # each host's DPDK event log, where the mode turned it on
+            # (@RUSTERON_DPDK_EVENT_LOG=<home>/bench/events.csv: the agents' loop
+            # gaps, ARP and housekeeping's calls, each timed; vm.sh driver
+            # removes the last one): its events so far, the round trip's among
+            # them, for spikes.py; none kept where a host has none
+            for n in a b; do
+                [[ $n == a ]] && host=$A || host=$B
+                on "$host" 'cat bench/events.csv' >"$out/$n-rings-$state-$fm-$rep.log" 2>/dev/null || true
+                [[ -s $out/$n-rings-$state-$fm-$rep.log ]] || rm -f "$out/$n-rings-$state-$fm-$rep.log"
+            done
             both "jitter-after-rtt-$state-$fm-$rep" jitter || true
             # NIC arrival -> the receive burst on each receiver port (DPDK with NIC RX timestamps only)
             for host in "$A" "$B"; do
@@ -1065,10 +1159,12 @@ bench_state() {
             mid_a=$(on "$A" "$vm loss" 2>/dev/null); mid_b=$(on "$B" "$vm loss" 2>/dev/null)
             loss_row "$rep" "$label:rtt" a "$loss_a" "$mid_a"
             loss_row "$rep" "$label:rtt" b "$loss_b" "$mid_b"
+            [[ -n $raw ]] &&
+                log "$label: the raw floor (no Aeron): its round trip alone, no throughput, load sweep, mix, several flows at once or driver host checks"
             # throughput: A publishes, B subscribes, with the counters on both
             # hosts just before and after (its wire frames per message); flat
             # out, so not with no_flatout (LAB_NO_FLATOUT=1)
-            if [[ -z ${no_flatout:-} ]]; then
+            if [[ -z ${no_flatout:-} && -z $raw ]]; then
                 # one job, a subshell, so wait_bounded ends all of it and has
                 # on()'s status (a pipeline's $! is its last process: sed)
                 (on "$B" "LAB_CLIENT_DEADLINE=$(answer_deadline "$tput_seconds") $vm client $label tput xsub $b_rcv:20125 $tput_seconds $app_b" \
@@ -1088,22 +1184,22 @@ bench_state() {
             loss_row "$rep" "$label" a "$loss_a" "$(on "$A" "$vm loss" 2>/dev/null)"
             loss_row "$rep" "$label" b "$loss_b" "$(on "$B" "$vm loss" 2>/dev/null)"
             # latency under load (LAB_LOAD_SIZES), the same drivers
-            [[ -n ${load_sizes:-} && $mode != *+idle ]] &&
+            [[ -n ${load_sizes:-} && $mode != *+idle && -z $raw ]] &&
                 load_sweep "$state" "$rep" "$fm" "$label" "$B" "$b_rcv" "$a_rcv" "$app_a" "$app_b"
-            [[ -n ${mix:-} && $mode != *+idle ]] &&
+            [[ -n ${mix:-} && $mode != *+idle && -z $raw ]] &&
                 mix_run "$state" "$rep" "$fm" "$label" "$B" "$b_rcv" "$a_rcv" "$app_a" "$app_b"
             # several flows at once (LAB_TPUT_FLOWS), after everything above so
             # that runs as it did without it; the same drivers. Not under
             # INVOKER: each flow's clients would embed a driver of their own
-            if ((flows)) && [[ $(mode_get "$mode" AERON_THREADING_MODE) == INVOKER ]]; then
+            if ((flows)) && [[ $(mode_get "$mode" AERON_THREADING_MODE) == INVOKER && -z $raw ]]; then
                 log "$label: several flows at once not run under INVOKER (each flow's clients would embed a driver of their own on one host)"
             fi
             # nor where the mode takes the fifth core, the second flow's app
             # CPU (@IRQ=spare, @NAPI_BUSY=spare, @CONDUCTOR=own)
-            if ((flows)) && mode_spare "$mode"; then
+            if ((flows)) && [[ -z $raw ]] && mode_spare "$mode"; then
                 log "$label: several flows at once not run: the mode takes the fifth core ($(spare_takers "$mode")), the second flow's app CPU"
             fi
-            ((flows)) && [[ $mode != *+idle && -z ${no_flatout:-} && $(mode_get "$mode" AERON_THREADING_MODE) != INVOKER ]] &&
+            ((flows)) && [[ $mode != *+idle && -z ${no_flatout:-} && -z $raw && $(mode_get "$mode" AERON_THREADING_MODE) != INVOKER ]] &&
                 ! mode_spare "$mode" &&
                 multi_flow_max "$state" "$rep" "$fm" "$label" "$b_rcv" "${cpus_a[*]:0:flows}" "${cpus_b[*]:0:flows}"
             if ((${#idle_pids[@]})); then

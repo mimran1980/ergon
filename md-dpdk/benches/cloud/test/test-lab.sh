@@ -109,6 +109,16 @@
 #   * analyse.py names threading modes and isolated-poll readably, and sorts
 #     that state after isolated and before any it does not know; spikes.py
 #     attributes preemptions of the shared agents;
+#   * the same-host hairpin (@HAIRPIN=1) and sparse round trips
+#     (@RTT_GAP_US): modes.sh takes and refuses them (and rtt_plan's seconds,
+#     round trips and warm-up; four cores on host a), lib.sh runs a hairpin
+#     as one floor client on host a and hands a paced mode's clients its
+#     pacing and plan, vm.sh client passes RTT_GAP_US, vm.sh routes a kernel
+#     hairpin out of its NICs (fail closed, put back) and ready refuses a
+#     host without the receiver core, analyse.py tables both, spikes.py
+#     judges a hairpin on host a alone and a paced run's length by its gap,
+#     estimate.py times and sizes both, and aws/lab.sh refuses what cannot
+#     run before any cloud call;
 #   * aws/lab.sh end to end against a stateful fake aws (fake_aws.py): a
 #     cluster run, a precision-time run and LAB_DELETE make exactly the calls
 #     of expected-aws-calls.txt (the lab's before cross-AZ and cross-region,
@@ -223,6 +233,21 @@
 #   * the final round's plan (G3): accepted before any cloud call,
 #     and LAB_ESTIMATE=1's hours, bytes and dollars at the lab's spot prices
 #     beside the on-demand ceiling (estimate.py's spot table);
+#   * ATTR-LAB: the idle cross-host round trip's clients stamp round trips of
+#     30 us and loop stalls of 10 us or more (LAB_RTT_SPIKE_NS,
+#     LAB_RTT_STALL_NS; refused unless whole nanoseconds), vm.sh client hands
+#     both through sudo, each host's DPDK event log saved with the round trip;
+#     spikes.py gives each rep's 10 largest round trips every overlapping
+#     event (client stalls, the event log's agent gaps, ARP and housekeeping
+#     calls, spinner gaps, KNOISE's), each label proven by mutation, their
+#     ping index and phase in 1 s and 30 s, and each source against chance
+#     (1,000 circular shifts, a fixed seed); analyse.py reads the ping column;
+#   * KNOISE: vm.sh knoise_start against a fake tracefs (osnoise with
+#     NO_OSNOISE_WORKLOAD on exactly the agent and app CPUs, its noise events,
+#     IPI senders, compaction and migration; "osnoise unavailable" said, and
+#     the tracer kept off where NO_OSNOISE_WORKLOAD cannot be set; a missing
+#     event named), knoise_stop, diag-start refusing while a rep runs
+#     and handing knoise_start the layout's CPUs, lib.sh record_knoise;
 #   * vm.sh, irqs.sh, host.sh, modes.sh, lib.sh, remote.sh and both lab.sh
 #     parse (bash -n), and analyse.py, spikes.py, estimate.py and
 #     fake_aws.py compile.
@@ -919,6 +944,68 @@ else
     fail "lib.sh: VM a's environment: $(cat "$tmp/dry-env/env-written" 2>/dev/null | tr '\n' ' ')"
 fi
 
+# ATTR-LAB: the idle cross-host round trip stamps every round trip of 30 us or
+# more (LOAD_SPIKE_NS=30000, the client's own default 100 us would leave every
+# idle max of 72-79 us unstamped) and every stall of either client's loop of
+# 10 us or more (LOOP_STALL_NS=10000) in the dry run above, with
+# LAB_RTT_SPIKE_NS and LAB_RTT_STALL_NS unset; the localhost round trip keeps
+# its 25 us; given, both knobs reach VM a's environment (remote.sh) and the
+# clients' command lines. Each host's DPDK event log (a mode's
+# @RUSTERON_DPDK_EVENT_LOG=<home>/bench/events.csv) is saved with the round
+# trip as <node>-rings-<run>.log for spikes.py; a host without one leaves none
+# (the round trip's ports, 20123-20124: a load point's echo is an xpong too)
+xping=$(grep -E ' rtt xping 10\.[0-9.]+:20123 ' "$dry/calls" || true)
+xpong=$(grep -E ' rtt xpong 10\.[0-9.]+:20123 ' "$dry/calls" || true)
+local_ping=$(grep ' rtt xping 127\.' "$dry/calls" || true)
+(
+    set +e
+    out=$tmp/dry-knobs known=$tmp/dry-knobs/known_hosts user=admin A=192.0.2.1 B=192.0.2.2
+    mkdir -p "$out"
+    log() { :; }
+    . "$cloud/lib.sh"
+    on() { [[ $2 == *"/env" ]] && cat >"$out/env-written"; [[ $2 == *"/rc 2>/dev/null" ]] && echo 0; return 0; }
+    sleep() { :; }
+    reps=1 modes=(dpdk) rtt_messages=1 rtt_warmup=1 tput_seconds=5 a_private=10.30.0.10 b_private=10.30.0.11
+    rtt_spike_ns=40000 rtt_stall_ns=12000
+    results=$out/results.csv
+    remote_state isolated >/dev/null 2>&1
+) || true
+# (VM b's DPDK event log holds a row, VM a has none: b's saved with the
+# round trip, a's not at all)
+python3 - "$tmp/dry.sh" "$tmp/dry-knobs.sh" <<'PY' || fail "lib.sh dry with the spike and stall knobs: the dry script was not set up"
+import sys
+s = open(sys.argv[1]).read()
+for old, new in (("tput_seconds=5 rtt_messages=10 rtt_warmup=1 rtt_align=\n",
+                  "tput_seconds=5 rtt_messages=10 rtt_warmup=1 rtt_align= rtt_spike_ns=40000 rtt_stall_ns=12000\n"),
+                 ('    *"/env") cat >"$out/env-written" ;;\n',
+                  '    *"cat bench/events.csv") [[ $host == "$B" ]] && echo "gap,1,1792032878000000000,30000,1,4242" ;;\n'
+                  '    *"/env") cat >"$out/env-written" ;;\n')):
+    assert s.count(old) == 1, old
+    s = s.replace(old, new)
+open(sys.argv[2], "w").write(s)
+PY
+mkdir -p "$tmp/dry-knobs-run"
+bash "$tmp/dry-knobs.sh" "$cloud" "$tmp/dry-knobs-run" unset </dev/null 2>"$tmp/dry-knobs-run/stderr" || fail "lib.sh dry run with the spike and stall knobs exited $?"
+knob_ping=$(grep -E ' rtt xping 10\.[0-9.]+:20123 ' "$tmp/dry-knobs-run/calls" || true)
+knob_pong=$(grep -E ' rtt xpong 10\.[0-9.]+:20123 ' "$tmp/dry-knobs-run/calls" || true)
+if [[ -z $xping || $(grep -vc ' LOAD_SPIKE_NS=30000 LOOP_STALL_NS=10000 ' <<<"$xping") != 0 ]]; then
+    fail "lib.sh dry: the cross-host round trip's ping without LOAD_SPIKE_NS=30000 LOOP_STALL_NS=10000: $xping"
+elif [[ -z $xpong || $(grep -vc ' LOOP_STALL_NS=10000 ' <<<"$xpong") != 0 ]]; then
+    fail "lib.sh dry: the cross-host round trip's pong without LOOP_STALL_NS=10000: $xpong"
+elif [[ -z $local_ping || $(grep -vc ' LOAD_SPIKE_NS=25000 ' <<<"$local_ping") != 0 ]]; then
+    fail "lib.sh dry: the localhost round trip's ping lost its LOAD_SPIKE_NS=25000: $local_ping"
+elif ! grep -qx "rtt_spike_ns='40000'" "$tmp/dry-knobs/env-written" 2>/dev/null || ! grep -qx "rtt_stall_ns='12000'" "$tmp/dry-knobs/env-written"; then
+    fail "lib.sh: the spike and stall knobs do not reach VM a's environment: $(tr '\n' ' ' <"$tmp/dry-knobs/env-written" 2>/dev/null)"
+elif ! grep -q 'cat bench/events.csv' "$tmp/dry-knobs.sh" || [[ $(cat "$tmp/dry-knobs-run/b-rings-isolated-dpdk-1.log" 2>/dev/null) != "gap,1,1792032878000000000,30000,1,4242" ]] ||
+    compgen -G "$tmp/dry-knobs-run/a-rings-*" >/dev/null; then
+    fail "lib.sh dry: the DPDK event log not saved with the round trip (b's) or an empty one kept (a's): $(ls "$tmp/dry-knobs-run" | grep rings)"
+elif [[ -z $knob_ping || $(grep -vc ' LOAD_SPIKE_NS=40000 LOOP_STALL_NS=12000 ' <<<"$knob_ping") != 0 || -z $knob_pong ||
+    $(grep -vc ' LOOP_STALL_NS=12000 ' <<<"$knob_pong") != 0 ]]; then
+    fail "lib.sh dry with the spike and stall knobs: $knob_ping / $knob_pong"
+else
+    pass "lib.sh: the idle cross-host round trip stamps round trips of 30 us and loop stalls of 10 us or more (LAB_RTT_SPIKE_NS, LAB_RTT_STALL_NS), localhost's 25 us kept"
+fi
+
 # LAB_ESTIMATE=1 (aws/lab.sh's, below): estimate.py's arithmetic, against a
 # plan worked by hand: two c7i.4xlarge across zones, one isolated state, two modes, two reps,
 # 288 B at a ladder of 1000 and 2000/s (the burst at the median, 1000/s),
@@ -971,12 +1058,18 @@ assert not estimate.estimate(**dict(plan, reps=400, max_hours=30))["over_deadlin
 # spot: the lab's us-east-1 spot prices (each below its on-demand price,
 # a one-time spot instance's default maximum, so the ceiling), the
 # instances at them beside the on-demand figure; a type without one has none
-for t, usd in (("c9g.2xlarge", 0.153), ("c8g.xlarge", 0.077), ("c7i.2xlarge", 0.200)):
+for t, usd in (("c9g.2xlarge", 0.153), ("c8g.xlarge", 0.077), ("c8g.2xlarge", 0.147), ("c7i.2xlarge", 0.200)):
     assert estimate.SPOT_PRICES.get(t) == usd and usd < estimate.PRICES[t], (t, estimate.SPOT_PRICES.get(t), usd)
 sp = estimate.estimate(**dict(plan, type_a="c9g.2xlarge", type_b="c9g.2xlarge", placement="cluster"))
 assert close(sp["spot_usd"], 1762 / 3600 * 0.153 * 2) and close(sp["instance_usd"], 1762 / 3600 * 0.34776 * 2), sp
 assert close(sp["spot_deadline_usd"], 8 * 0.153 * 2), sp
 assert e["spot_usd"] is None and e["spot_deadline_usd"] is None, e
+# c8g.2xlarge, the D-b pair: priced both ways (on demand twice c8g.xlarge's)
+c8 = estimate.estimate(**dict(plan, type_a="c8g.2xlarge", type_b="c8g.2xlarge", placement="cluster"))
+assert close(c8["instance_usd"], 1762 / 3600 * 0.31904 * 2) and close(c8["spot_usd"], 1762 / 3600 * 0.147 * 2), c8
+# a -nodiag state costs what its state does
+nd = estimate.estimate(**dict(plan, states=["isolated-nodiag"]))
+assert nd["wall_s"] == estimate.estimate(**dict(plan, states=["isolated"]))["wall_s"], nd
 PY
 
 # lib.sh dry, jumbo frames and distance: a kernel mode and the same with
@@ -1495,7 +1588,8 @@ fi
 # azure/lab.sh checks every mode as aws/lab.sh does (modes.sh), before any
 # az call: AWS-only settings (jumbo frames) and INVOKER on one host refused
 for refused in "LAB_MODES=kernel@JUMBO=1|AWS only" "LAB_MODES=kernel@IRQ=receiver|AWS only" "LAB_LOCAL_MODES=kernel@AERON_THREADING_MODE=INVOKER|out of scope" \
-    "LAB_MODES=kernel@SUB_PARAMS=rcv-wnd=1m+bogus=1|bogus is not an Aeron URI parameter" "LAB_NO_FLATOUT=1 LAB_TPUT_FLOWS=2|flat out"; do
+    "LAB_MODES=kernel@SUB_PARAMS=rcv-wnd=1m+bogus=1|bogus is not an Aeron URI parameter" "LAB_NO_FLATOUT=1 LAB_TPUT_FLOWS=2|flat out" \
+    "LAB_RTT_SPIKE_NS=-1|LAB_RTT_SPIKE_NS is a whole number of nanoseconds" "LAB_RTT_STALL_NS=10k|LAB_RTT_STALL_NS is a whole number of nanoseconds"; do
     # shellcheck disable=SC2086
     if env PATH="$tmp/fakebin:$PATH" HOME="$tmp/commahome" TMPDIR="$tmp/commatmp" LAB_REPO="$tmp/commarepo" \
         ${refused%|*} bash "$cloud/azure/lab.sh" >"$tmp/az.out" 2>&1; then
@@ -1597,7 +1691,12 @@ for refused in "LAB_TYPE=c8g.4xlarge|LAB_ALLOW_ARM=1" "LAB_TYPE_B=c7gn.4xlarge|L
     "LAB_MODES=dpdk@IRQ=receiver|kernel modes only" "LAB_LOCAL_MODES=kernel@IRQ=spare|fifth core" \
     "LAB_MODES=kernel@IRQ=all|hk, receiver or spare" "LAB_MODES=kernel@NAPI_DEFER=2|<n>/<ns>" \
     "LAB_MODES=dpdk@NAPI_BUSY=spare|kernel modes only" "LAB_LOCAL_MODES=kernel@NAPI_BUSY=spare|fifth core" \
-    "LAB_STATES=isolate|pinned, isolated or isolated-poll"; do
+    "LAB_STATES=isolate|pinned, isolated or isolated-poll" \
+    "LAB_STATES=isolated-nodiags|optionally ending -nodiag" \
+    "LAB_RTT_SPIKE_NS=30us|LAB_RTT_SPIKE_NS is a whole number of nanoseconds" "LAB_RTT_STALL_NS=0|LAB_RTT_STALL_NS is a whole number of nanoseconds" \
+    "LAB_MODES=dpdk@HAIRPIN=1|the raw floor" "LAB_ALLOW_ARM=1 LAB_TYPE=c9g.large LAB_MODES=dpdk-raw@HAIRPIN=1|four cores" \
+    "LAB_ALLOW_ARM=1 LAB_TYPE_A=c9g.xlarge LAB_TYPE_B=c9g.large LAB_MODES=dpdk-raw@HAIRPIN=1|on host b too" \
+    "LAB_MODES=dpdk@RTT_GAP_US=5ms|1 to 1000000" "LAB_LOCAL_MODES=kernel@RTT_GAP_US=1000|cross-host"; do
     # shellcheck disable=SC2086
     if lab_aws "$tmp/arm-refused" ${refused%|*}; then
         fail "aws/lab.sh ran with ${refused%|*}"
@@ -2762,7 +2861,7 @@ smt=$(
     . "$cloud/host.sh" || exit 1
     # shellcheck source=../irqs.sh
     . "$cloud/irqs.sh" || exit 1
-    eval "$(for f in layout save_host pin_irqs host_setting restore_host; do vm_fn "$f"; done)"
+    eval "$(for f in layout save_host pin_irqs host_setting restore_host gapspin_us; do vm_fn "$f"; done)"
     run=$st/home/bench CLOUD=aws ARCH=x86_64 HK_CPU=0 smt_calls=$st/calls
     sudo() { [[ $1 == systemctl ]] && return 0; [[ $* == *"$tmp/"* ]] || { echo "sudo $*" >>"$tmp/sudo-outside"; return 1; }; "$@"; }
     log() { :; }
@@ -3353,14 +3452,15 @@ on() {
 }
 modes=(kernel@IRQ=spare dpdk) local_modes=kernel market=spot
 if [[ -n ${YNL:-} ]]; then modes+=(kernel@NAPI_BUSY=spare); fi
+if [[ -n ${DPDKB:-} ]]; then modes+=(dpdk@DPDK=patched-refill dpdk@DPDK=stock@RUSTERON_DPDK_RX_FREE_THRESH=32); fi
 prepare_vms
 echo "rc $?" >>"$out/calls"
 SH
-for case in ynl plain fail; do
+for case in ynl plain fail dpdk; do
     dp=$tmp/dry-prepare-$case
     mkdir -p "$dp/repo"
     git -C "$dp/repo" init -q && echo x >"$dp/repo/f"
-    env YNL="$([[ $case == ynl ]] && echo 1)" FAIL_READY="$([[ $case == fail ]] && echo 1)" \
+    env YNL="$([[ $case == ynl ]] && echo 1)" FAIL_READY="$([[ $case == fail ]] && echo 1)" DPDKB="$([[ $case == dpdk ]] && echo 1)" \
         bash "$tmp/dry-prepare.sh" "$cloud" "$dp" </dev/null 2>"$dp/stderr" || true
 done
 order() { grep -nE 'vm.sh (ready|tune)$|vm.sh ready |cat bench/build.rc' "$1" | sed -E 's/^([0-9]+):[^ ]* .*vm.sh (ready|tune).*/\1 \2/; s/^([0-9]+):.*build.rc.*/\1 build/' | sort -n | awk '{print $2}' | uniq | tr '\n' ' '; }
@@ -3369,6 +3469,8 @@ if grep -E 'unbound variable|command not found|syntax error' "$dp"-*/stderr; the
     fail "lib.sh prepare_vms dry: shell errors"
 elif ! grep -q 'echo 1 >bench/want_ynl' "$dp-ynl/calls" || grep -q 'echo 1 >bench/want_ynl' "$dp-plain/calls"; then
     fail "lib.sh prepare_vms dry: want_ynl: $(grep -o 'echo[^&]*want_ynl' "$dp"-{ynl,plain}/calls | sort -u)"
+elif [[ $(grep -c 'echo patched-refill stock >bench/want_dpdk' "$dp-dpdk/calls") != 2 || $(grep -c 'echo  >bench/want_dpdk' "$dp-plain/calls") != 2 ]]; then
+    fail "lib.sh prepare_vms dry: want_dpdk: $(grep -o 'echo[^&]*want_dpdk' "$dp"-{dpdk,plain}/calls | sort -u)"
 elif [[ $(grep -c 'vm.sh ready kernel@IRQ=spare dpdk kernel@NAPI_BUSY=spare kernel$' "$dp-ynl/calls") != 2 ]] ||
     [[ $(order "$dp-ynl/calls") != "build ready tune " ]] || ! grep -q '^rc 0' "$dp-ynl/calls"; then
     fail "lib.sh prepare_vms dry: the hosts' readiness: $(grep 'vm.sh ready' "$dp-ynl/calls"); order $(order "$dp-ynl/calls"); $(tail -2 "$dp-ynl/log")"
@@ -3379,7 +3481,7 @@ elif ! grep -qx 'market spot (AWS spot instances: AWS may reclaim them mid-run)'
     ! grep -qx 'market spot (AWS spot instances: AWS may reclaim them mid-run)' "$dp-plain/env-192.0.2.2.txt"; then
     fail "lib.sh prepare_vms dry: the market not recorded: $(cat "$dp-plain"/env-*.txt)"
 else
-    pass "lib.sh prepare_vms dry: ynl fetched for NAPI_BUSY only, each host's readiness for every mode checked after the build (stopping the run before tune), the market recorded"
+    pass "lib.sh prepare_vms dry: ynl fetched for NAPI_BUSY only, the @DPDK= builds asked for (bench/want_dpdk), each host's readiness for every mode checked after the build (stopping the run before tune), the market recorded"
 fi
 
 # lib.sh remote_state, dry: a state that never finishes (VM a writes no rc)
@@ -3445,6 +3547,160 @@ elif [[ $invoker != *"$sbc/home/bench/driver.env"* || $invoker != *" HARNESS_DRI
     fail "vm.sh client under INVOKER: $invoker $(tail -2 "$sbc/out")"
 else
     pass "vm.sh client: the mode's publication and subscription parameters, the lost-round-trip timeout by the network's round trip; under INVOKER the driver's environment and HARNESS_DRIVER=invoker"
+fi
+# vm.sh client hands LOAD_SPIKE_NS and LOOP_STALL_NS to the client through
+# sudo, which drops the caller's environment (lib.sh sets them on the round
+# trip's command line): 100 us and 20 us, the clients' own, without them
+stall_client() { # <environment>...: the client's command line vm.sh client hands sudo
+    : >"$sbc/log"
+    env -i PATH="$sbc/bin:$PATH" HOME="$sbc/home" FAKE_LOG="$sbc/log" FAKE_ARCH=x86_64 LAB_SYS_ROOT="$sys/aws-x86" "$@" \
+        bash "$cloud/vm.sh" client isolated:kernel rtt xping 10.30.1.7:20123 10.30.1.5:20124 10 1 2 >"$sbc/out" 2>&1
+    grep '^sudo ' "$sbc/log" | tail -1
+}
+stall_given=$(stall_client LOAD_SPIKE_NS=30000 LOOP_STALL_NS=10000)
+stall_default=$(stall_client)
+if [[ $stall_given != *" LOAD_SPIKE_NS=30000 "* || $stall_given != *" LOOP_STALL_NS=10000 "* ]]; then
+    fail "vm.sh client: LOAD_SPIKE_NS and LOOP_STALL_NS given do not reach the client: $stall_given"
+elif [[ $stall_default != *" LOAD_SPIKE_NS=100000 "* || $stall_default != *" LOOP_STALL_NS=20000 "* ]]; then
+    fail "vm.sh client without them: $stall_default"
+else
+    pass "vm.sh client: LOAD_SPIKE_NS and LOOP_STALL_NS reach the client through sudo (100 us and 20 us without them)"
+fi
+# KNOISE: vm.sh knoise_start against a fake tracefs ($LAB_SYS_ROOT/kernel/tracing,
+# the instance knoise as mkdir leaves it): the osnoise tracer in that
+# instance with NO_OSNOISE_WORKLOAD and exactly the agent and app CPUs given,
+# its irq, softirq, thread and NMI noise events, the IPI senders, compaction
+# and page migration on, the instance's cpumask printed as a list where the
+# kernel has the option; without osnoise in available_tracers, "osnoise
+# unavailable" said (a reported limit, never silent), its files untouched,
+# the other events on all the same, as where the instance refuses the tracer
+# (its options put back); an event the kernel lacks named, the rest
+# on. knoise_stop puts the tracer and the workload option back. diag-start
+# refuses while a rep runs (a media driver or a client), before it writes
+# anything, and otherwise hands knoise_start the layout's agent and app CPUs
+knoise_tree() { # <root> <tracers>: a fake tracefs
+    local t=$1/kernel/tracing e
+    mkdir -p "$t/osnoise" "$t/instances/knoise/options"
+    echo "$2" >"$t/available_tracers"
+    echo "OSNOISE_WORKLOAD" >"$t/osnoise/options"
+    echo "0-7" >"$t/osnoise/cpus"
+    echo nop >"$t/instances/knoise/current_tracer"
+    echo 1 >"$t/instances/knoise/tracing_on"
+    echo 1408 >"$t/instances/knoise/buffer_size_kb"
+    echo 0 >"$t/instances/knoise/options/bitmask-list"
+    : >"$t/instances/knoise/trace"
+    for e in osnoise/irq_noise osnoise/softirq_noise osnoise/thread_noise osnoise/nmi_noise ipi/ipi_send_cpumask ipi/ipi_send_cpu \
+        compaction/mm_compaction_begin migrate/mm_migrate_pages; do
+        mkdir -p "$t/instances/knoise/events/$e"
+        echo 0 >"$t/instances/knoise/events/$e/enable"
+    done
+}
+knoise_state() { # <root>: what the fake tracefs holds now, one line
+    local t=$1/kernel/tracing i=$1/kernel/tracing/instances/knoise e
+    printf 'options=%s cpus=%s tracer=%s on=%s buffer=%s list=%s events=' "$(cat "$t/osnoise/options" 2>/dev/null || echo -)" "$(cat "$t/osnoise/cpus")" \
+        "$(cat "$i/current_tracer" 2>/dev/null || echo -)" "$(cat "$i/tracing_on")" "$(cat "$i/buffer_size_kb")" "$(cat "$i/options/bitmask-list" 2>/dev/null)"
+    for e in "$i"/events/*/*/enable; do
+        [[ $(cat "$e") == 1 ]] && printf '%s,' "$(basename "$(dirname "$e")")"
+    done
+    echo
+}
+kn=$tmp/knoise
+knoise_tree "$kn/full" "hwlat osnoise timerlat function nop"
+knoise_tree "$kn/none" "function nop"
+knoise_tree "$kn/old" "hwlat osnoise nop"
+# a kernel whose instances take no osnoise tracer: its write refused (a
+# directory in its place, which refuses root too)
+knoise_tree "$kn/refused" "hwlat osnoise nop"
+rm "$kn/refused/kernel/tracing/instances/knoise/current_tracer"
+mkdir "$kn/refused/kernel/tracing/instances/knoise/current_tracer"
+# a kernel with the osnoise tracer but no osnoise/options (before Linux 6.3,
+# such as 6.1): NO_OSNOISE_WORKLOAD cannot be set, so the tracer would start
+# its workload threads on the agent CPUs; it must stay off (a directory in the
+# options file's place refuses the write, as tracefs refuses a new file)
+knoise_tree "$kn/noopt" "hwlat osnoise nop"
+rm "$kn/noopt/kernel/tracing/osnoise/options"
+mkdir "$kn/noopt/kernel/tracing/osnoise/options"
+rm -r "$kn/old/kernel/tracing/instances/knoise/events/compaction" "$kn/old/kernel/tracing/instances/knoise/events/ipi/ipi_send_cpumask" \
+    "$kn/old/kernel/tracing/instances/knoise/options/bitmask-list"
+knoised=$(
+    set +e
+    exec 2>&1
+    eval "$(vm_fn knoise_start; vm_fn knoise_stop)"
+    for tree in full none old refused noopt; do
+        echo "$tree: $(LAB_SYS_ROOT=$kn/$tree knoise_start 1,2,3,4 | tr '\n' '|')"
+        echo "$tree now: $(knoise_state "$kn/$tree")"
+    done
+    LAB_SYS_ROOT=$kn/full knoise_stop
+    echo "full stopped: $(knoise_state "$kn/full")"
+)
+want_knoise='full: osnoise on cpus 1,2,3,4 (NO_OSNOISE_WORKLOAD: noise timed on them, no workload)|
+full now: options=NO_OSNOISE_WORKLOAD cpus=1,2,3,4 tracer=osnoise on=1 buffer=8192 list=1 events=mm_compaction_begin,ipi_send_cpu,ipi_send_cpumask,mm_migrate_pages,irq_noise,nmi_noise,softirq_noise,thread_noise,
+none: osnoise unavailable: the kernel has no osnoise tracer (available_tracers: function nop)|
+none now: options=OSNOISE_WORKLOAD cpus=0-7 tracer=nop on=1 buffer=8192 list=1 events=mm_compaction_begin,ipi_send_cpu,ipi_send_cpumask,mm_migrate_pages,
+old: osnoise on cpus 1,2,3,4 (NO_OSNOISE_WORKLOAD: noise timed on them, no workload)|knoise events missing: ipi/ipi_send_cpumask compaction/mm_compaction_begin|
+old now: options=NO_OSNOISE_WORKLOAD cpus=1,2,3,4 tracer=osnoise on=1 buffer=8192 list= events=ipi_send_cpu,mm_migrate_pages,irq_noise,nmi_noise,softirq_noise,thread_noise,
+refused: osnoise unavailable: the knoise instance did not take the osnoise tracer (it has unreadable)|
+refused now: options=OSNOISE_WORKLOAD cpus=0-7 tracer=- on=1 buffer=8192 list=1 events=mm_compaction_begin,ipi_send_cpu,ipi_send_cpumask,mm_migrate_pages,
+noopt: osnoise unavailable: this osnoise tracer has no NO_OSNOISE_WORKLOAD option (Linux 6.3 and later), so it would run its workload on the agent CPUs|
+noopt now: options=- cpus=0-7 tracer=nop on=1 buffer=8192 list=1 events=mm_compaction_begin,ipi_send_cpu,ipi_send_cpumask,mm_migrate_pages,
+full stopped: options=OSNOISE_WORKLOAD cpus=1,2,3,4 tracer=nop on=0 buffer=8192 list=1 events=mm_compaction_begin,ipi_send_cpu,ipi_send_cpumask,mm_migrate_pages,irq_noise,nmi_noise,softirq_noise,thread_noise,'
+# diag-start in a sandbox: a fake pgrep says a rep runs (a media driver, or
+# none), gcc, ip and pkill do nothing, sudo logs
+ks=$tmp/vm-knoise
+mkdir -p "$ks/bin" "$ks/home/ergon" "$ks/home/bench"
+cp "$sb/bin/"* "$ks/bin/"
+echo aws >"$ks/home/bench/cloud"
+# shellcheck disable=SC2016
+{
+    printf '#!/bin/sh\n[ -n "$FAKE_RUNNING" ] && { echo "$FAKE_RUNNING"; exit 0; }\nexit 1\n' >"$ks/bin/pgrep"
+    printf '#!/bin/sh\necho "gcc $*" >>"$FAKE_LOG"\nwhile [ "$1" != -o ]; do shift; done\nprintf "#!/bin/sh\\n" >"$2"; chmod +x "$2"\n' >"$ks/bin/gcc"
+    printf '#!/bin/sh\nexit 0\n' >"$ks/bin/ip"
+    printf '#!/bin/sh\nexit 1\n' >"$ks/bin/pkill"
+}
+chmod +x "$ks/bin/"*
+diag_sb() { # <running>: "<rc> <sudo and gcc calls> <the CPUs knoise_start was given>"
+    : >"$ks/log"
+    local rc=0
+    env -i PATH="$ks/bin:$PATH" HOME="$ks/home" FAKE_LOG="$ks/log" FAKE_ARCH=x86_64 FAKE_RUNNING="$1" LAB_SYS_ROOT="$sys/aws-x86" \
+        bash "$cloud/vm.sh" diag-start >"$ks/out" 2>&1 || rc=$?
+    echo "$rc $(grep -cE '^(sudo|gcc) ' "$ks/log") [$(sed -n 's/.*knoise_start \([0-9,]*\)$/\1/p' "$ks/log")] [$(cat "$ks/home/bench/knoise-cpus" 2>/dev/null)]"
+}
+running=$(diag_sb 4242)
+running_said=$(cat "$ks/out")
+idle=$(diag_sb "")
+layout_cpus=$(env -i PATH="$ks/bin:$PATH" HOME="$ks/home" FAKE_LOG=/dev/null FAKE_ARCH=x86_64 LAB_SYS_ROOT="$sys/aws-x86" bash "$cloud/vm.sh" layout | awk '{$1 = ""; print substr($0, 2)}' | tr ' ' ',')
+if [[ $knoised != "$want_knoise" ]]; then
+    fail "vm.sh knoise_start and knoise_stop against a fake tracefs"
+    diff -u <(echo "$want_knoise") <(echo "$knoised") >&2 || true
+elif [[ $running != "2 0 [] []" || $running_said != *"a rep is running"* ]]; then
+    fail "vm.sh diag-start while a rep runs: $running: $running_said"
+elif [[ -z $layout_cpus || $idle != "0 "*" [$layout_cpus] [$layout_cpus]" ]]; then
+    fail "vm.sh diag-start: knoise_start not given the agent and app CPUs ($layout_cpus): $idle $(tail -3 "$ks/out")"
+else
+    pass "vm.sh: KNOISE (osnoise with NO_OSNOISE_WORKLOAD on exactly the agent and app CPUs, its noise events, IPI senders, compaction and migration; 'osnoise unavailable' said; a missing event named), put back by knoise_stop; diag-start refuses while a rep runs"
+fi
+# lib.sh record_knoise: each host's KNOISE lines from its diag-start log in
+# its environment record (env-<host>.txt) with the state, "osnoise
+# unavailable" included; a host whose log has none says so
+(
+    set +e
+    out=$tmp/knoise-env known=$tmp/knoise-env/known_hosts user=admin A=192.0.2.1 B=192.0.2.2
+    mkdir -p "$out"
+    log() { :; }
+    . "$cloud/lib.sh"
+    printf 'diag spinner cpu 5, traced cpus 3e\nosnoise unavailable: the kernel has no osnoise tracer (available_tracers: function nop)\n' >"$out/a-diag-start-isolated.log"
+    printf 'osnoise on cpus 1,2,3,4 (NO_OSNOISE_WORKLOAD: noise timed on them, no workload)\nknoise events missing: compaction/mm_compaction_begin\n' >"$out/b-diag-start-isolated.log"
+    record_knoise isolated
+    record_knoise pinned
+) || true
+if [[ $(cat "$tmp/knoise-env/env-192.0.2.1.txt" 2>/dev/null) != "isolated: osnoise unavailable: the kernel has no osnoise tracer (available_tracers: function nop)
+pinned: knoise not recorded (no diag-start log)" ||
+    $(cat "$tmp/knoise-env/env-192.0.2.2.txt" 2>/dev/null) != "isolated: osnoise on cpus 1,2,3,4 (NO_OSNOISE_WORKLOAD: noise timed on them, no workload)
+isolated: knoise events missing: compaction/mm_compaction_begin
+pinned: knoise not recorded (no diag-start log)" ]]; then
+    fail "lib.sh record_knoise: $(cat "$tmp/knoise-env/env-"*.txt 2>/dev/null | tr '\n' '|')"
+else
+    pass "lib.sh record_knoise: each host's KNOISE state per state in its environment record, 'osnoise unavailable' included"
 fi
 # The media-receive-timestamp mode's way to the clients: its
 # @SUB_PARAMS=media-rcv-ts-offset=reserved applied as `driver` applies a
@@ -3852,14 +4108,14 @@ base:
 $(build_sb x86_64 '' build-base)"
 want="x86:
 ergon-md-dpdk static,dpdk --bin media_driver
-ergon-md-dpdk-harness static,dpdk --bin rtt --bin load --bin tput --bin counters --bin clockcheck
+ergon-md-dpdk-harness static,dpdk --bin rtt --bin load --bin tput --bin floor --bin counters --bin clockcheck
 arm:
 ergon-md-dpdk static,dpdk --bin media_driver
-ergon-md-dpdk-harness static,dpdk --bin rtt --bin load --bin tput --bin counters --bin clockcheck
+ergon-md-dpdk-harness static,dpdk --bin rtt --bin load --bin tput --bin floor --bin counters --bin clockcheck
 arm, no dpdk:
 ergon-md-dpdk static,dpdk --bin media_driver
 ergon-md-dpdk static --bin media_driver
-ergon-md-dpdk-harness static --bin rtt --bin load --bin tput --bin counters --bin clockcheck
+ergon-md-dpdk-harness static --bin rtt --bin load --bin tput --bin floor --bin counters --bin clockcheck
 base:
 ergon-md-dpdk static,dpdk --bin media_driver
 ergon-md-dpdk-harness static,dpdk --bin rtt --bin load --bin tput"
@@ -3868,6 +4124,117 @@ if [[ $got != "$want" ]]; then
     diff -u <(echo "$want") <(echo "$got") >&2 || true
 else
     pass "vm.sh build and build-base: the clients built with the media driver's features, DPDK's wherever it has them (INVOKER embeds it)"
+fi
+
+# vm.sh build-dpdk <build> in a sandbox (vm.sh build runs it for each build
+# bench/want_dpdk names: lib.sh, from the modes' @DPDK=): DPDK 25.11 from
+# fast.dpdk.org, unpacked afresh; patched-refill with
+# dpdk-ena-deferred-refill.patch applied exactly (patch -p1, no fuzz), each
+# under its own prefix (stock's the precision-time build's), built as
+# build-ptp builds it (meson: the ENA path only), never put in ld.so.conf;
+# then the media driver and every benchmark client linked against it in a
+# target directory of their own, its library directory their RPATH
+# (DT_RPATH, which their transitive libraries and the PMDs the EAL loads
+# follow too), every librte_* checked to load from it (fail closed: the build
+# directory removed), into ~/bin-dpdk-<build>. Again with the same patch:
+# DPDK not rebuilt; with another patch: rebuilt. Only those two builds, on
+# AWS only.
+sbp=$tmp/vm-build-dpdk
+mkdir -p "$sbp/bin" "$sbp/home/ergon/md-dpdk/harness" "$sbp/home/bench" "$sbp/home/dpdk-kmods" "$sbp/opt" "$sbp/tarball/dpdk-25.11"
+cp "$sb/bin/uname" "$sb/bin/nproc" "$sbp/bin/"
+cp "$cloud/../../harness/Cargo.toml" "$sbp/home/ergon/md-dpdk/harness/Cargo.toml"
+echo 'project dpdk' >"$sbp/tarball/dpdk-25.11/meson.build"
+(cd "$sbp/tarball" && tar -cJf ../dpdk-25.11.tar.xz dpdk-25.11)
+# shellcheck disable=SC2016
+{
+    printf '#!/usr/bin/env bash\necho "sudo $*" >>"$FAKE_LOG"\ncase $1 in ninja) "$@" ;; tee) case $2 in "$LAB_OPT_ROOT"/*) "$@" >/dev/null ;; *) cat >/dev/null ;; esac ;; esac\nexit 0\n' >"$sbp/bin/sudo"
+    printf '#!/bin/sh\necho "curl $*" >>"$FAKE_LOG"\ncat "$FAKE_TARBALL"\n' >"$sbp/bin/curl"
+    printf '#!/bin/sh\nif cmp -s - "$FAKE_PATCH"; then p=the-patch; else p=other; fi\necho "patch $* in ${PWD##*/} <$p" >>"$FAKE_LOG"\n' >"$sbp/bin/patch"
+    printf '#!/bin/sh\necho "meson $* in ${PWD##*/}" >>"$FAKE_LOG"\nmkdir -p build\nfor a; do case $a in -Dprefix=*) echo "${a#-Dprefix=}" >build/prefix ;; esac; done\n' >"$sbp/bin/meson"
+    printf '#!/bin/sh\necho "ninja $*" >>"$FAKE_LOG"\nif [ "$3" = install ]; then d=$(cat build/prefix)/lib/x86_64-linux-gnu; mkdir -p "$d/pkgconfig"; : >"$d/pkgconfig/libdpdk.pc"; fi\n' >"$sbp/bin/ninja"
+    printf '#!/bin/sh\necho "cargo $* [PKG_CONFIG_PATH=$PKG_CONFIG_PATH CARGO_TARGET_DIR=$CARGO_TARGET_DIR]" >>"$FAKE_LOG"\nb=; n=; for a; do [ "$n" = 1 ] && b=$a; n=; [ "$a" = --bin ] && n=1; done\nd=${CARGO_TARGET_DIR:-target}/release; mkdir -p "$d"; [ -z "$b" ] || { : >"$d/$b"; chmod +x "$d/$b"; }\nexit 0\n' >"$sbp/bin/cargo"
+    printf '#!/bin/sh\nprintf "\\tlinux-vdso.so.1 (0x0)\\n\\tlibrte_eal.so.26 => %%s/librte_eal.so.26 (0x0)\\n\\tlibrte_kvargs.so.26 => %%s/librte_kvargs.so.26 (0x0)\\n\\tlibc.so.6 => /lib/libc.so.6 (0x0)\\n" "$FAKE_EAL_DIR" "${FAKE_KVARGS_DIR:-$FAKE_EAL_DIR}"\n' >"$sbp/bin/ldd"
+    printf '#!/bin/sh\nexit 0\n' >"$sbp/bin/make"
+    printf '#!/bin/sh\nexit 0\n' >"$sbp/bin/rustup"
+}
+chmod +x "$sbp/bin/"*
+dpdk_sb() { # <cloud> <placement> <eal dir> <vm.sh args>...: "<rc> | <the calls, one a line>" with the sandbox's path as <sb>
+    local rc=0
+    : >"$sbp/log"
+    echo "$1" >"$sbp/home/bench/cloud"
+    echo "$2" >"$sbp/home/bench/placement"
+    env -i PATH="$sbp/bin:$PATH" HOME="$sbp/home" FAKE_LOG="$sbp/log" FAKE_ARCH=x86_64 FAKE_TARBALL="$sbp/dpdk-25.11.tar.xz" \
+        FAKE_PATCH="$cloud/dpdk-ena-deferred-refill.patch" FAKE_EAL_DIR="$3" FAKE_KVARGS_DIR="${FAKE_KVARGS_DIR:-}" \
+        LAB_OPT_ROOT="$sbp/opt" LAB_SYS_ROOT="$sys/aws-x86" bash "$cloud/vm.sh" "${@:4}" >"$sbp/out" 2>&1 || rc=$?
+    echo "rc $rc$( ((rc)) && echo " ($(tail -1 "$sbp/out"))")"
+    sed "s|$sbp|<sb>|g" "$sbp/log"
+}
+lib=$sbp/opt/dpdk-25.11-patched-refill/lib/x86_64-linux-gnu
+patch_sum=$(sha256sum "$cloud/dpdk-ena-deferred-refill.patch" | cut -d' ' -f1)
+got="patched:
+$(dpdk_sb aws cluster "$lib" build-dpdk patched-refill)
+bins: $(ls "$sbp/home/bin-dpdk-patched-refill" 2>/dev/null | tr '\n' ' ')ld.so.conf: $(grep -c ld.so.conf "$sbp/log" || true)
+again:
+$(dpdk_sb aws cluster "$lib" build-dpdk patched-refill | grep -cE '^(curl|patch|meson|ninja|sudo ninja) ' || true) DPDK steps, $(grep -c '^cargo rustc' "$sbp/log" || true) links"
+echo stale >"$sbp/opt/dpdk-25.11-patched-refill/ergon-lab-patch.sha256"
+got+="
+another patch: $(dpdk_sb aws cluster "$lib" build-dpdk patched-refill | grep -cE '^(curl|patch|meson) ' || true) DPDK steps
+stock:
+$(dpdk_sb aws cluster "$sbp/opt/dpdk-25.11/lib/x86_64-linux-gnu" build-dpdk stock | grep -vE '^cargo rustc --release -p ergon-md-dpdk-harness ' || true)
+host: $(dpdk_sb aws cluster "$lib" host >/dev/null; grep '^dpdk-build ' "$sbp/out" | tr '\n' ';')
+bad kvargs: $(FAKE_KVARGS_DIR=/opt/dpdk-25.11/lib/x86_64-linux-gnu dpdk_sb aws cluster "$lib" build-dpdk patched-refill | head -1) $( (ls -d "$sbp/home/bin-dpdk-patched-refill" 2>/dev/null || true) | wc -l | tr -d ' ') bin dir
+host after it: $(dpdk_sb aws cluster "$lib" host >/dev/null; grep '^dpdk-build ' "$sbp/out" | tr '\n' ';')
+unknown: $(dpdk_sb aws cluster "$lib" build-dpdk refill | head -1)
+azure: $(dpdk_sb azure '' "$lib" build-dpdk patched-refill | head -1)"
+echo patched-refill >"$sbp/home/bench/want_dpdk"
+got+="
+build: $(dpdk_sb aws cluster "$lib" build | sed -nE 's/^cargo (build|rustc) --release -p ([^ ]+) .*--bin ([a-z_]+).*/\1 \2 \3/p' | tr '\n' ';')"
+rm "$sbp/home/bench/want_dpdk"
+got+="
+build, none wanted: $(dpdk_sb aws cluster "$lib" build | grep -c '^cargo rustc' || true)"
+want="patched:
+rc 0
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq meson ninja-build python3-pyelftools libnuma-dev
+curl -fsSL https://fast.dpdk.org/rel/dpdk-25.11.tar.xz
+patch -p1 --forward --fuzz=0 in dpdk-25.11-patched-refill <the-patch
+sudo rm -rf <sb>/opt/dpdk-25.11-patched-refill
+meson setup -Dprefix=<sb>/opt/dpdk-25.11-patched-refill -Dtests=false -Ddisable_apps=* -Denable_drivers=bus/pci,bus/vdev,mempool/ring,net/ena build in dpdk-25.11-patched-refill
+ninja -C build
+sudo ninja -C build install
+ninja -C build install
+sudo tee <sb>/opt/dpdk-25.11-patched-refill/ergon-lab-patch.sha256
+cargo rustc --release -p ergon-md-dpdk --features static,dpdk --bin media_driver -- -C link-arg=-Wl,--disable-new-dtags,-rpath,<sb>/opt/dpdk-25.11-patched-refill/lib/x86_64-linux-gnu [PKG_CONFIG_PATH=<sb>/opt/dpdk-25.11-patched-refill/lib/x86_64-linux-gnu/pkgconfig CARGO_TARGET_DIR=<sb>/home/ergon/target-dpdk]
+cargo rustc --release -p ergon-md-dpdk-harness --features static,dpdk --bin rtt -- -C link-arg=-Wl,--disable-new-dtags,-rpath,<sb>/opt/dpdk-25.11-patched-refill/lib/x86_64-linux-gnu [PKG_CONFIG_PATH=<sb>/opt/dpdk-25.11-patched-refill/lib/x86_64-linux-gnu/pkgconfig CARGO_TARGET_DIR=<sb>/home/ergon/target-dpdk]
+cargo rustc --release -p ergon-md-dpdk-harness --features static,dpdk --bin load -- -C link-arg=-Wl,--disable-new-dtags,-rpath,<sb>/opt/dpdk-25.11-patched-refill/lib/x86_64-linux-gnu [PKG_CONFIG_PATH=<sb>/opt/dpdk-25.11-patched-refill/lib/x86_64-linux-gnu/pkgconfig CARGO_TARGET_DIR=<sb>/home/ergon/target-dpdk]
+cargo rustc --release -p ergon-md-dpdk-harness --features static,dpdk --bin tput -- -C link-arg=-Wl,--disable-new-dtags,-rpath,<sb>/opt/dpdk-25.11-patched-refill/lib/x86_64-linux-gnu [PKG_CONFIG_PATH=<sb>/opt/dpdk-25.11-patched-refill/lib/x86_64-linux-gnu/pkgconfig CARGO_TARGET_DIR=<sb>/home/ergon/target-dpdk]
+cargo rustc --release -p ergon-md-dpdk-harness --features static,dpdk --bin floor -- -C link-arg=-Wl,--disable-new-dtags,-rpath,<sb>/opt/dpdk-25.11-patched-refill/lib/x86_64-linux-gnu [PKG_CONFIG_PATH=<sb>/opt/dpdk-25.11-patched-refill/lib/x86_64-linux-gnu/pkgconfig CARGO_TARGET_DIR=<sb>/home/ergon/target-dpdk]
+bins: floor load media_driver rtt tput ld.so.conf: 0
+again:
+0 DPDK steps, 5 links
+another patch: 3 DPDK steps
+stock:
+rc 0
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq meson ninja-build python3-pyelftools libnuma-dev
+curl -fsSL https://fast.dpdk.org/rel/dpdk-25.11.tar.xz
+sudo rm -rf <sb>/opt/dpdk-25.11
+meson setup -Dprefix=<sb>/opt/dpdk-25.11 -Dtests=false -Ddisable_apps=* -Denable_drivers=bus/pci,bus/vdev,mempool/ring,net/ena build in dpdk-25.11
+ninja -C build
+sudo ninja -C build install
+ninja -C build install
+cargo rustc --release -p ergon-md-dpdk --features static,dpdk --bin media_driver -- -C link-arg=-Wl,--disable-new-dtags,-rpath,<sb>/opt/dpdk-25.11/lib/x86_64-linux-gnu [PKG_CONFIG_PATH=<sb>/opt/dpdk-25.11/lib/x86_64-linux-gnu/pkgconfig CARGO_TARGET_DIR=<sb>/home/ergon/target-dpdk]
+host: dpdk-build patched-refill: DPDK 25.11 in <sb>/opt/dpdk-25.11-patched-refill, dpdk-ena-deferred-refill.patch sha256 $patch_sum: <sb>/home/bin-dpdk-patched-refill;dpdk-build stock: DPDK 25.11 in <sb>/opt/dpdk-25.11: <sb>/home/bin-dpdk-stock;
+bad kvargs: rc 1 (build-dpdk patched-refill: <sb>/home/bin-dpdk-patched-refill/floor loads librte_kvargs.so.26 from /opt/dpdk-25.11/lib/x86_64-linux-gnu/librte_kvargs.so.26, not <sb>/opt/dpdk-25.11-patched-refill/lib/x86_64-linux-gnu: removed) 0 bin dir
+host after it: dpdk-build stock: DPDK 25.11 in <sb>/opt/dpdk-25.11: <sb>/home/bin-dpdk-stock;
+unknown: rc 2 (build-dpdk refill: stock (DPDK 25.11 from source) or patched-refill (with dpdk-ena-deferred-refill.patch on ENA's PMD))
+azure: rc 2 (build-dpdk patched-refill: AWS only (a build of ENA's PMD))
+build: build ergon-md-dpdk media_driver;build ergon-md-dpdk-harness clockcheck;rustc ergon-md-dpdk media_driver;rustc ergon-md-dpdk-harness rtt;rustc ergon-md-dpdk-harness load;rustc ergon-md-dpdk-harness tput;rustc ergon-md-dpdk-harness floor;
+build, none wanted: 0"
+got=${got//$sbp/<sb>}
+if [[ $got != "$want" ]]; then
+    fail "vm.sh build-dpdk: DPDK 25.11 from source, patched or stock, and the driver and clients linked against it"
+    diff -u <(echo "$want") <(echo "$got") >&2 || true
+else
+    pass "vm.sh build-dpdk: DPDK 25.11 from source (patched-refill: the patch applied exactly), its own prefix, never in ld.so.conf, idempotent by the patch's hash; the driver and every client linked with its RPATH, each librte_* checked to load from it (fail closed); each build's DPDK and patch in vm.sh host (the env file); run by build for each wanted build, AWS only"
 fi
 
 # vm.sh ready <mode>... in a sandbox (lib.sh asks it after the build, before
@@ -3900,17 +4267,107 @@ chmod +x "$sbr/home/bench/ynl"
 got+="
 busy: $(ready_sb aws-x86 7.2.6+deb13-cloud-amd64 kernel-busy@NAPI_BUSY=spare kernel)
 none: $(ready_sb c8g-xl 6.12.43+deb13-cloud-arm64 kernel dpdk kernel@IRQ=receiver)"
+got+="
+dpdk build missing: $(ready_sb aws-x86 7.2.6+deb13-cloud-amd64 dpdk@DPDK=patched-refill dpdk)"
+mkdir -p "$sbr/home/bin-dpdk-patched-refill"
+printf '#!/bin/sh\nexit 0\n' >"$sbr/home/bin-dpdk-patched-refill/media_driver"
+chmod +x "$sbr/home/bin-dpdk-patched-refill/media_driver"
+got+="
+dpdk build: $(ready_sb aws-x86 7.2.6+deb13-cloud-amd64 dpdk@DPDK=patched-refill+idle dpdk)"
 want="four cores: 2 mode kernel@IRQ=spare: spare: no fifth core on this host (its layout 0 1 2 3: four cores), so no spare one: a host with five cores or more (c7i.4xlarge, c8g.2xlarge and up)
 five cores: 0
 busy, 6.12: 2 mode kernel@NAPI_BUSY=spare: threaded NAPI busy polling needs Linux 6.17 or later (this is 6.12.43+deb13-cloud-amd64)
 busy, no ynl: 2 mode kernel@NAPI_BUSY=spare: no ynl, the kernel's netlink tool (vm.sh build-ynl): linux-source-7.2 has no 7.2.6 in the archive (only 7.2.5-1~bpo13+1)
 busy: 0
-none: 0"
+none: 0
+dpdk build missing: 2 mode dpdk@DPDK=patched-refill: no DPDK=patched-refill build: no media_driver in $sbr/home/bin-dpdk-patched-refill (vm.sh build-dpdk patched-refill, which vm.sh build runs for each build bench/want_dpdk names)
+dpdk build: 0"
 if [[ $got != "$want" ]]; then
     fail "vm.sh ready: each mode's needs of the host"
     diff -u <(echo "$want") <(echo "$got") >&2 || true
 else
-    pass "vm.sh ready: a fifth core for the spare core's modes, Linux 6.17 and the kernel's ynl for NAPI_BUSY, said before any state"
+    pass "vm.sh ready: a fifth core for the spare core's modes, Linux 6.17 and the kernel's ynl for NAPI_BUSY, a @DPDK= mode's build, said before any state"
+fi
+
+# vm.sh driver's @DPDK=<build> (host_setting): the media driver and clients
+# from ~/bin-dpdk-<build> (as @BIN= would take them; `stop` forgets both),
+# in DPDK modes only, never beside @BIN=, refused without the build; and
+# once the driver has started (dpdk_variant_check), its log shows the ENA
+# PMD it loaded: patched-refill's line on its RX queues, or none of them
+# under stock, else the run stops (fail closed); nothing asked without
+# @DPDK=
+dv=$tmp/vm-dpdk-setting
+mkdir -p "$dv/home/bench" "$dv/home/bin-dpdk-patched-refill"
+printf '#!/bin/sh\nexit 0\n' >"$dv/home/bin-dpdk-patched-refill/media_driver"
+chmod +x "$dv/home/bin-dpdk-patched-refill/media_driver"
+printf 'ENA_INIT: ena_rx_queue_setup(): ergon-lab deferred-refill ENA PMD: Rx queue 0 refills after a burst that returns frames only at 512 free descriptors (threshold 256)\nENA_INIT: ena_rx_queue_setup(): ergon-lab deferred-refill ENA PMD: Rx queue 0 refills after a burst that returns frames only at 512 free descriptors (threshold 256)\nmedia driver started\n' >"$dv/patched.log"
+printf 'ENA_DRIVER: ena_set_queues_placement_policy(): Placement policy: Low latency\nmedia driver started\n' >"$dv/stock.log"
+setv=$(
+    set +e
+    exec 2>&1
+    # shellcheck source=../host.sh
+    . "$cloud/host.sh" || exit 1
+    eval "$(for f in save_host host_setting restore_host dpdk_variant_check; do vm_fn "$f"; done)"
+    HOME=$dv/home run=$dv/home/bench CLOUD=aws ARCH=x86_64
+    log() { echo "log: $*" >&2; }
+    sudo() { :; }
+    for case in "patched-refill dpdk patched.log" "patched-refill dpdk stock.log" "stock dpdk stock.log" "patched-refill kernel -" "refill dpdk -"; do
+        read -r v mode logf <<<"$case"
+        [[ $v == stock && $logf == stock.log ]] && { mkdir -p "$dv/home/bin-dpdk-stock"; cp "$dv/home/bin-dpdk-patched-refill/media_driver" "$dv/home/bin-dpdk-stock/"; }
+        out=$( (host_setting DPDK "$v" "$mode" && { [[ $logf == - ]] || dpdk_variant_check "$dv/$logf"; }) 2>&1)
+        rc=$?
+        echo "$v $mode $logf: rc $rc bin [$(cat "$run/bin" 2>/dev/null)] build [$(cat "$run/dpdk_variant" 2>/dev/null)] | $(tr '\n' ' ' <<<"$out")"
+        restore_host >/dev/null 2>&1
+        echo "  undone: [$(cd "$run" && ls bin dpdk_variant restore/* 2>/dev/null | tr '\n' ' ')]"
+    done
+    echo "stock on the patched PMD: $( (printf 'stock\n' >"$run/dpdk_variant"; dpdk_variant_check "$dv/patched.log") 2>&1; echo "rc $?")"
+    rm -f "$run/dpdk_variant"
+    echo "none: $(dpdk_variant_check "$dv/patched.log" 2>&1; echo "rc $?")"
+    rm -rf "$dv/home/bin-dpdk-stock"
+    echo "no build: $( (host_setting DPDK stock dpdk) 2>&1; echo "rc $?")"
+    echo "$dv/home/bin-base" >"$run/bin"
+    echo "with BIN: $( (host_setting DPDK patched-refill dpdk) 2>&1; echo "rc $?")"
+    rm -f "$run/bin"
+)
+setv=${setv//$dv/<dv>}
+want="patched-refill dpdk patched.log: rc 0 bin [<dv>/home/bin-dpdk-patched-refill] build [patched-refill] | log: DPDK=patched-refill: the media driver and clients from <dv>/home/bin-dpdk-patched-refill log: DPDK=patched-refill: the patched ENA PMD on 2 RX queues (<dv>/patched.log) 
+  undone: []
+patched-refill dpdk stock.log: rc 1 bin [<dv>/home/bin-dpdk-patched-refill] build [patched-refill] | log: DPDK=patched-refill: the media driver and clients from <dv>/home/bin-dpdk-patched-refill DPDK=patched-refill: no RX queue on the patched ENA PMD (no 'ergon-lab deferred-refill ENA PMD' line in <dv>/stock.log): stopping 
+  undone: []
+stock dpdk stock.log: rc 0 bin [<dv>/home/bin-dpdk-stock] build [stock] | log: DPDK=stock: the media driver and clients from <dv>/home/bin-dpdk-stock log: DPDK=stock: the stock ENA PMD (no patched RX queue in <dv>/stock.log) 
+  undone: []
+patched-refill kernel -: rc 2 bin [] build [] | DPDK=patched-refill: DPDK modes only (the media driver and clients linked against that DPDK build) 
+  undone: []
+refill dpdk -: rc 2 bin [] build [] | DPDK=refill: stock or patched-refill 
+  undone: []
+stock on the patched PMD: DPDK=stock: 2 RX queues on the patched ENA PMD in <dv>/patched.log, not stock's: stopping
+rc 1
+none: rc 0
+no build: DPDK=stock: no media_driver in <dv>/home/bin-dpdk-stock (vm.sh build-dpdk stock)
+rc 2
+with BIN: DPDK=patched-refill with BIN=: one build a mode
+rc 2"
+if [[ $setv != "$want" ]]; then
+    fail "vm.sh: @DPDK= takes its build's binaries and checks the PMD loaded"
+    diff -u <(echo "$want") <(echo "$setv") >&2 || true
+else
+    pass "vm.sh: @DPDK= runs its build's driver and clients (DPDK modes only, not beside @BIN=, refused without the build), undone by stop; the PMD the driver's log shows is checked against it (fail closed)"
+fi
+# ...and what a run keeps of it: vm.sh pmd-log lists the patched PMD's line
+# with ENA's others, and vm.sh counters keeps its two RX queue counters
+# (rx_q<n>_refill_deferred, rx_q<n>_refill_floor; type 92, the PMD's xstats
+# the transport mirrors), not ENA's other RX queue counters
+cp "$dv/patched.log" "$sbr/home/bench/driver.log"
+pmdlog=$(env -i PATH="$sbr/bin:$PATH" HOME="$sbr/home" FAKE_LOG="$sbr/log" FAKE_ARCH=x86_64 FAKE_KREL=7.2.6+deb13-cloud-amd64 \
+    LAB_SYS_ROOT="$sys/aws-x86" bash "$cloud/vm.sh" pmd-log 2>&1 | grep -c 'ergon-lab deferred-refill ENA PMD' || true)
+rm -f "$sbr/home/bench/driver.log"
+pattern=$(sed -n '/^counters)$/,/^    ;;$/s/^    pattern=//p' "$cloud/vm.sh" || true)
+eval "pattern=$pattern"
+kept=$(printf '%s\n' '  12: 41 92 role=receiver rx_q0_refill_deferred' '  13: 2 92 role=receiver rx_q0_refill_floor' '  14: 0 92 role=receiver rx_q0_refill_partial' '  15: 900 92 role=receiver rx_q0_cnt' | awk -v pat="$pattern" '$0 ~ pat {print $NF}' | tr '\n' ' ' || true)
+if [[ $pmdlog != 2 || $kept != "rx_q0_refill_deferred rx_q0_refill_floor " ]]; then
+    fail "vm.sh pmd-log and counters: the patched PMD's line ($pmdlog) and counters ($kept)"
+else
+    pass "vm.sh pmd-log lists the patched PMD's line; counters keeps its RX queue counters (refill_deferred, refill_floor) and no other RX queue counter"
 fi
 
 # vm.sh build-ynl in a sandbox (vm.sh build runs it where bench/want_ynl is
@@ -4396,14 +4853,16 @@ pre=$(
     mode_check dpdk@CONDUCTUR=own remote x86_64 aws '' cluster
     mode_check kernal remote x86_64 aws '' cluster
     echo "rx:$(mc dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=4096)$(mc dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=8192)$(mc dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=16384)$(mc dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=32)$(mc dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=3000)$(mc dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=many)$(mc dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=256 remote azure '')$(mc dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=512 remote azure '')$(mc kernel@RUSTERON_DPDK_RX_DESCRIPTORS=99999)"
-    echo "tx:$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=512)$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=1024)$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=256 remote azure '')$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=512 remote azure '')$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=384)"
+    echo "tx:$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=256)$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=512)$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=512@RUSTERON_DPDK_ENA_DEVARGS=llq_policy=1)$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=512@RUSTERON_DPDK_ENA_DEVARGS=miss_txc_to=0+llq_policy=2)$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=1024@RUSTERON_DPDK_ENA_DEVARGS=llq_policy=1)$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=512@RUSTERON_DPDK_ENA_DEVARGS=llq_policy=3)$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=1024)$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=256 remote azure '')$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=512 remote azure '')$(mc dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=384)"
     echo "cache, burst:$(mc dpdk@RUSTERON_DPDK_MEMPOOL_CACHE=512)$(mc dpdk@RUSTERON_DPDK_MEMPOOL_CACHE=0)$(mc dpdk@RUSTERON_DPDK_MEMPOOL_CACHE=513)$(mc dpdk@RUSTERON_DPDK_BURST_SIZE=256)$(mc dpdk@RUSTERON_DPDK_BURST_SIZE=0)$(mc dpdk@RUSTERON_DPDK_BURST_SIZE=257)"
-    echo "mbufs:$(mc dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=8192@RUSTERON_DPDK_MEMPOOL_CACHE=512)$(mc dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=5504)$(mc dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=5503)$(mc dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=9600@RUSTERON_DPDK_RX_DESCRIPTORS=8192)$(mc dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=9599@RUSTERON_DPDK_RX_DESCRIPTORS=8192)$(mc dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=1408 remote azure '')$(mc dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=1407 remote azure '')"
+    echo "mbufs:$(mc dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=8192@RUSTERON_DPDK_MEMPOOL_CACHE=512)$(mc dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=5248)$(mc dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=5247)$(mc dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=9344@RUSTERON_DPDK_RX_DESCRIPTORS=8192)$(mc dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=9343@RUSTERON_DPDK_RX_DESCRIPTORS=8192)$(mc dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=1408 remote azure '')$(mc dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=1407 remote azure '')"
     echo "aeron mtu:$(mc dpdk@RUSTERON_DPDK_MAX_AERON_MTU=1500)$(mc dpdk@RUSTERON_DPDK_MAX_AERON_MTU=9024@JUMBO=1)$(mc dpdk@RUSTERON_DPDK_MAX_AERON_MTU=4096)"
     echo "timestamps:$(mc dpdk@RUSTERON_DPDK_RX_HW_TIMESTAMP=1)$(mc dpdk@RUSTERON_DPDK_RX_HW_TIMESTAMP=1 remote aws precision-time)$(mc dpdk@RUSTERON_DPDK_RX_HW_TIMESTAMP=TRUE remote aws precision-time)$(mc dpdk@RUSTERON_DPDK_RX_HW_TIMESTAMP=0)$(mc dpdk@RUSTERON_DPDK_RX_HW_TIMESTAMP=False)$(mc dpdk@RUSTERON_DPDK_RX_HW_TIMESTAMP=yes remote aws precision-time)$(mc dpdk@RUSTERON_DPDK_RX_HW_TIMESTAMP=1 remote azure '')"
     mode_check dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=1024 remote x86_64 aws '' cluster
     mode_check dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=512 remote x86_64 azure '' ''
-    mode_check dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=5503 remote x86_64 aws '' cluster
+    mode_check dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=512 remote x86_64 aws '' cluster
+    mode_check dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=1024@RUSTERON_DPDK_ENA_DEVARGS=llq_policy=1 remote x86_64 aws '' cluster
+    mode_check dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=5247 remote x86_64 aws '' cluster
     mode_check dpdk@RUSTERON_DPDK_RX_HW_TIMESTAMP=1 remote x86_64 aws '' cluster
     echo "conductor:$(mc dpdk@CONDUCTOR=own)$(mc kernel@CONDUCTOR=own@AERON_THREADING_MODE=SHARED_NETWORK)$(mc dpdk@CONDUCTOR=own@AERON_THREADING_MODE=SHARED)$(mc dpdk@CONDUCTOR=own@AERON_THREADING_MODE=INVOKER)$(mc dpdk@CONDUCTOR=own local)$(mc kernel@CONDUCTOR=own@IRQ=spare)$(mc kernel-busy@NAPI_BUSY=spare@CONDUCTOR=own)$(mc dpdk@CONDUCTOR=fast)$(mc dpdk@CONDUCTOR=own@CONDUCTOR=own)$(mc kernel@CONDUCTOR=own@IRQ=receiver)$(mc dpdk@CONDUCTOR=own remote azure '')"
     mode_check kernel@CONDUCTOR=own@IRQ=spare remote x86_64 aws '' cluster
@@ -4421,17 +4880,19 @@ pre=$(
 ) || true
 want="keys: 2 2 2 2 2 0 0 0 0
 transports: 2 2 0 0 0 0
-mode dpdk@CONDUCTUR=own: CONDUCTUR is neither a setting the lab knows (THP BIN CSTATE BUSY_POLL COALESCE RX_RING MIN_FREE_PCT CLOCKSOURCE RELIABLE AGENTS SMT JUMBO PUB_PARAMS SUB_PARAMS IRQ NAPI_DEFER NAPI_BUSY CONDUCTOR) nor an AERON_* or RUSTERON_* variable: vm.sh would export it to a driver that never reads it, and the mode would measure its baseline under another name
-mode kernal: transport kernal: kernel, kernel-busy, dpdk, dpdk-spin, dpdk-adaptive or dpdk-epoll, optionally -mono (vm.sh refuses any other at the driver's start)
+mode dpdk@CONDUCTUR=own: CONDUCTUR is neither a setting the lab knows (THP BIN CSTATE BUSY_POLL COALESCE RX_RING MIN_FREE_PCT CLOCKSOURCE RELIABLE AGENTS SMT JUMBO PUB_PARAMS SUB_PARAMS IRQ NAPI_DEFER NAPI_BUSY CONDUCTOR HAIRPIN RTT_GAP_US KEEPALIVE_US FLUSH_KB DPDK) nor an AERON_* or RUSTERON_* variable: vm.sh would export it to a driver that never reads it, and the mode would measure its baseline under another name
+mode kernal: transport kernal: kernel, kernel-busy, dpdk, dpdk-spin, dpdk-adaptive, dpdk-epoll, the raw floor's kernel-raw or dpdk-raw, optionally -mono, or the pure floor's dpdk-pure (vm.sh refuses any other at the driver's start)
 rx: 0 0 2 2 2 2 0 2 0
-tx: 0 2 0 2 2
+tx: 0 2 0 0 2 2 2 0 2 2
 cache, burst: 0 0 2 0 2 2
 mbufs: 0 0 2 0 2 0 2
 aeron mtu: 2 2 0
 timestamps: 2 0 0 0 0 2 2
-mode dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=1024: RUSTERON_DPDK_TX_DESCRIPTORS=1024: 64 to 512, a power of two (ENA's transmit ring holds 512 at most: the transport refuses more at start)
+mode dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=1024: RUSTERON_DPDK_TX_DESCRIPTORS=1024: 64 to 256, a power of two (ENA's transmit ring holds 256 at most under large LLQ entries (the transport's llq_policy=3; llq_policy=1 takes 512): the transport refuses more at start)
 mode dpdk@RUSTERON_DPDK_RX_DESCRIPTORS=512: RUSTERON_DPDK_RX_DESCRIPTORS=512: 64 to 256, a power of two (MANA's receive ring holds 256 at most: the transport refuses more at start)
-mode dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=5503: RUSTERON_DPDK_MBUFS_PER_PORT=5503 is below the 5504 the transport needs: a receive ring of 4096, a transmit ring of 512, four bursts of 32 and two mempool caches of up to 384 each
+mode dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=512: RUSTERON_DPDK_TX_DESCRIPTORS=512: 64 to 256, a power of two (ENA's transmit ring holds 256 at most under large LLQ entries (the transport's llq_policy=3; llq_policy=1 takes 512): the transport refuses more at start)
+mode dpdk@RUSTERON_DPDK_TX_DESCRIPTORS=1024@RUSTERON_DPDK_ENA_DEVARGS=llq_policy=1: RUSTERON_DPDK_TX_DESCRIPTORS=1024: 64 to 512, a power of two (ENA's transmit ring holds 512 at most under llq_policy=1: the transport refuses more at start)
+mode dpdk@RUSTERON_DPDK_MBUFS_PER_PORT=5247: RUSTERON_DPDK_MBUFS_PER_PORT=5247 is below the 5248 the transport needs: a receive ring of 4096, a transmit ring of 256, four bursts of 32 and two mempool caches of up to 384 each
 mode dpdk@RUSTERON_DPDK_RX_HW_TIMESTAMP=1: RUSTERON_DPDK_RX_HW_TIMESTAMP=1: NIC RX timestamps only in AWS's precision-time placement (LAB_PLACEMENT=precision-time): elsewhere the NIC offers none, and the transport refuses to start
 conductor: 0 0 2 2 2 2 2 2 2 0 0
 mode kernel@CONDUCTOR=own@IRQ=spare: CONDUCTOR=own with IRQ=spare: both take the layout's fifth core
@@ -4451,6 +4912,50 @@ if [[ $pre != "$want" ]]; then
     diff -u <(echo "$want") <(echo "$pre") >&2 || true
 else
     pass "modes.sh pre-flight: unknown keys and transports, the DPDK transport's values and the NIC's rings, CONDUCTOR=own's rules, each type's cores for the fifth core, the PHC families and precision-time's timestamp pair"
+fi
+
+# @DPDK=<build> (modes.sh, before any cloud call): the media driver and
+# clients linked against a DPDK 25.11 built from source for the mode (vm.sh
+# build-dpdk): stock, or patched-refill (dpdk-ena-deferred-refill.patch on
+# ENA's PMD); in DPDK modes only (the raw floor's dpdk-raw too), on AWS only
+# (ENA), in any placement, once, never beside @BIN= (one build a mode); and
+# the builds the modes ask for, each once, for bench/want_dpdk
+dpdkb=$(
+    set +e
+    exec 2>&1
+    # shellcheck source=../modes.sh
+    . "$cloud/modes.sh" || exit 1
+    rc() { "$@" >/dev/null 2>&1; echo -n " $?"; }
+    mc() { rc mode_check "$1" remote x86_64 "${2:-aws}" '' "${3:-cluster}"; }
+    echo "builds:$(mc dpdk@DPDK=patched-refill)$(mc dpdk@DPDK=stock)$(mc dpdk@DPDK=patched-refill aws precision-time)$(mc dpdk-spin@DPDK=patched-refill@RUSTERON_DPDK_RX_FREE_THRESH=32)$(mc dpdk-raw@DPDK=stock)$(mc dpdk@DPDK=patched-refill+idle)"
+    echo "refused:$(mc kernel@DPDK=patched-refill)$(mc kernel-raw@DPDK=stock)$(mc dpdk@DPDK=refill)$(mc dpdk@DPDK=patched-refill azure '')$(mc dpdk@DPDK=stock@BIN=bin-base)$(mc dpdk@DPDK=stock@DPDK=patched-refill)$(mc dpdk-pure@DPDK=stock)"
+    mode_check kernel@DPDK=patched-refill remote x86_64 aws '' cluster
+    mode_check dpdk@DPDK=refill remote x86_64 aws '' cluster
+    mode_check dpdk@DPDK=patched-refill remote x86_64 azure '' ''
+    mode_check dpdk@BIN=bin-base@DPDK=stock remote x86_64 aws '' cluster
+    mode_check dpdk@DPDK=stock@DPDK=patched-refill remote x86_64 aws '' cluster
+    # patched-refill's floor, min(2 x rx_free_thresh, ring - 1): a threshold
+    # of half the ring or more would let bursts that return frames drain the
+    # ring; stock is not refused (its own refill at the threshold)
+    echo "floor:$(mc dpdk@DPDK=patched-refill@RUSTERON_DPDK_RX_FREE_THRESH=2047)$(mc dpdk@DPDK=stock@RUSTERON_DPDK_RX_FREE_THRESH=2048)$(mc dpdk@DPDK=patched-refill@RUSTERON_DPDK_RX_DESCRIPTORS=1024@RUSTERON_DPDK_RX_FREE_THRESH=511)$(mc dpdk@DPDK=patched-refill@RUSTERON_DPDK_RX_DESCRIPTORS=1024)$(mc dpdk@DPDK=patched-refill@RUSTERON_DPDK_RX_FREE_THRESH=2048)$(mc dpdk@DPDK=patched-refill@RUSTERON_DPDK_RX_DESCRIPTORS=1024@RUSTERON_DPDK_RX_FREE_THRESH=512)"
+    mode_check dpdk@DPDK=patched-refill@RUSTERON_DPDK_RX_DESCRIPTORS=1024@RUSTERON_DPDK_RX_FREE_THRESH=512 remote x86_64 aws '' cluster
+    echo "want: [$(modes_want_dpdk kernel dpdk@DPDK=patched-refill dpdk@DPDK=stock+idle dpdk-spin@DPDK=patched-refill@RUSTERON_DPDK_RX_FREE_THRESH=32)] [$(modes_want_dpdk kernel dpdk)] [$(modes_want_dpdk)]"
+) || true
+want="builds: 0 0 0 0 0 0
+refused: 2 2 2 2 2 2 2
+mode kernel@DPDK=patched-refill: DPDK=patched-refill is for DPDK modes only (the media driver and clients linked against that DPDK build)
+mode dpdk@DPDK=refill: DPDK=refill: stock (DPDK 25.11 from source) or patched-refill (with dpdk-ena-deferred-refill.patch on ENA's PMD)
+mode dpdk@DPDK=patched-refill: DPDK=patched-refill is AWS only (a build of ENA's PMD)
+mode dpdk@BIN=bin-base@DPDK=stock: DPDK=stock with BIN=: one build a mode (DPDK= is its own, in ~/bin-dpdk-stock)
+mode dpdk@DPDK=stock@DPDK=patched-refill: one DPDK at most
+floor: 0 0 0 0 2 2
+mode dpdk@DPDK=patched-refill@RUSTERON_DPDK_RX_DESCRIPTORS=1024@RUSTERON_DPDK_RX_FREE_THRESH=512: DPDK=patched-refill with RUSTERON_DPDK_RX_FREE_THRESH=512: below half the receive ring (1024) only: the patch's floor, min(2 x 512, 1023), would let bursts that return frames drain the ring before any refill
+want: [patched-refill stock] [] []"
+if [[ $dpdkb != "$want" ]]; then
+    fail "modes.sh: @DPDK= builds"
+    diff -u <(echo "$want") <(echo "$dpdkb") >&2 || true
+else
+    pass "modes.sh: @DPDK=stock|patched-refill in AWS DPDK modes only, once, never beside @BIN=, patched-refill's threshold below half the receive ring; the builds the modes want, each once"
 fi
 
 # both lab.sh apply that pre-flight before any cloud call: aws/lab.sh refuses
@@ -5303,7 +5808,7 @@ on() {
     esac
     return 0
 }
-reps=1 local_modes= load_sizes= mix= rtt_messages=10 rtt_warmup=1 rtt_align= tput_seconds=5 no_flatout=1 states=(pinned)
+reps=1 local_modes= load_sizes= mix= rtt_messages=10 rtt_warmup=1 rtt_align= tput_seconds=5 no_flatout=1 states=(${FAKE_STATE:-pinned})
 modes=(kernel dpdk)
 if [[ $3 == state ]]; then
     remote_state() { echo "remote_state $1" >>"$out/calls"; return 0; }
@@ -5314,11 +5819,20 @@ fi
 echo "rc $?" >>"$out/calls"
 SH
 tsd=$tmp/dry-timesync
-for case in mode mode-fail state state-fail; do
+for case in mode mode-fail state state-fail state-nodiag; do
     mkdir -p "$tsd-$case/repo/md-dpdk/benches/cloud"
     env FAKE_CHECK_FAIL="$([[ $case == mode-fail ]] && echo 192.0.2.2)" FAKE_WAIT_FAIL="$([[ $case == state-fail ]] && echo 192.0.2.1)" \
-        bash "$tmp/dry-timesync.sh" "$cloud" "$tsd-$case" "${case%-fail}" </dev/null >"$tsd-$case/stdout" 2>"$tsd-$case/stderr" || true
+        FAKE_STATE="$([[ $case == state-nodiag ]] && echo pinned-nodiag)" \
+        bash "$tmp/dry-timesync.sh" "$cloud" "$tsd-$case" "$([[ $case == state-nodiag ]] && echo state || echo "${case%-fail}")" </dev/null >"$tsd-$case/stdout" 2>"$tsd-$case/stderr" || true
 done
+# a -nodiag state: the same steps without any diagnostics (lib.sh run_bench)
+nodiagsteps=$(grep -E '^(192.0.2.1 |remote_state)' "$tsd-state-nodiag/calls" | sed -nE 's#^192.0.2.1 [^ ]*vm.sh (preflight 120|timesync-wait|diag-[a-z]+)$#\1#p; s#^(remote_state .*)#\1#p' | tr '\n' ';') || true
+if [[ $nodiagsteps != "preflight 120;timesync-wait;remote_state pinned-nodiag;" ]] || ! grep -q '^rc 0' "$tsd-state-nodiag/calls" ||
+    ! grep -q 'state pinned-nodiag: no diagnostics' "$tsd-state-nodiag/log"; then
+    fail "lib.sh dry: a -nodiag state ran diagnostics or not its steps: $nodiagsteps"
+else
+    pass "lib.sh dry: a -nodiag state runs without vm.sh diag-start, diag-fetch or diag-stop, and says so"
+fi
 # per mode, VM a's: its check, driver start, stop and the log after
 modesteps=$(grep '^192.0.2.1 ' "$tsd-mode/calls" | sed -nE 's#^192.0.2.1 [^ ]*vm.sh (timesync check|timesync|driver [a-z]+|stop)$#\1#p' | tr '\n' ';') || true
 statesteps=$(grep -E '^(192.0.2.1 |remote_state)' "$tsd-state/calls" | sed -nE 's#^192.0.2.1 [^ ]*vm.sh (preflight 120|timesync-wait|diag-start)$#\1#p; s#^(remote_state .*)#\1#p' | tr '\n' ';') || true
@@ -5427,6 +5941,179 @@ assert note in after, after
 assert "Host clocks" not in before and after.replace("\n\n" + note, "") == before, (before, after)
 PY
 
+# ATTR-LAB and KNOISE in spikes.py: each round trip run's 10 largest round
+# trips per rep, each with every event whose interval overlaps it ([sent,
+# echoed] on the wall clock), its ping index and its echo's phase in the
+# second and in 30 s; and how often each source overlaps them against chance
+# (1,000 circular shifts of the rep's round trips within its run, a fixed
+# seed). Sources: either client's loop stalls, the DPDK transport's event log
+# (RUSTERON_DPDK_EVENT_LOG, saved as <host>-rings-<run>.log: rows
+# kind,tsc,realtime_ns,value_ns,port,agent, ended at realtime_ns: agent loop
+# gaps, ARP, the housekeeping thread's 1 Hz sample, NIC statistics read and
+# PMD timers; the events its full rings dropped noted), the
+# gap spinner, and diag-fetch's knoise section (osnoise's irq, softirq,
+# thread and NMI noise with their durations, IPIs sent to the agent and app
+# CPUs by callsite, compaction and page migration). One fixture spike for
+# each label, one with none, an 11th smaller spike left out; each label
+# proven by mutation (its event moved 100 s away removes it and only it).
+# The agents' and clients' own busy threads are never thread noise; an IPI
+# to no agent or app CPU is never labelled. Rows with no ping index (files
+# from before it) read as before, in analyse.py too
+python3 - "$cloud" "$tmp/attr" <<'PY' && pass "spikes.py: every event overlapping each rep's 10 largest round trips, labelled (each proven by mutation), phases, ping index, a permutation baseline" || fail "spikes.py: the 10 largest round trips and their overlapping events"
+import os, re, shutil, subprocess, sys
+cloud, d = sys.argv[1], sys.argv[2]
+sys.path.insert(0, cloud)
+START = 1792032877_000_000_000  # the measured run's CLOCK_REALTIME start (ns): 7 s into a 30 s period
+UP0 = 1000.0  # the trace clock (uptime) at START
+S = 1_000_000_000
+
+def up(sec):  # the trace clock at START + sec
+    return f"{UP0 + sec:.6f}"
+
+def start_of(sec):  # osnoise's "start" field
+    return f"{UP0 + sec:.9f}"
+
+def fixture(name, moved=()):
+    """A run directory with one isolated round trip rep; each event named in
+    `moved` placed 100 s later, out of every spike."""
+    off = lambda key: 100.0 if key in moved else 0.0
+    root = os.path.join(d, name)
+    state = os.path.join(root, "isolated")
+    os.makedirs(state)
+    spikes = [(i, 76_000 - 1_000 * i, 1000 * i) for i in range(1, 11)]  # (second, latency ns, ping)
+    with open(os.path.join(state, "spikes-isolated-dpdk-rtt-1.csv"), "w") as f:
+        f.write(f"# start_realtime_ns={START}\n# spikes_total=11\nstream,due_ns,latency_ns,ping\n")
+        for sec, lat, ping in spikes:
+            f.write(f"1002,{sec * S},{lat},{ping}\n")
+        f.write(f"1002,{11 * S},31000,11000\n")  # the 11th, overlapping a stall: left out
+    # 20 s measured (histogram: the run's round trips' sum)
+    with open(os.path.join(state, "histogram-isolated-dpdk-1.csv"), "w") as f:
+        f.write("value_ns,count\n50000,400000\n")
+    with open(os.path.join(state, "stalls-ping-isolated-dpdk-1.csv"), "w") as f:
+        f.write(f"# start_realtime_ns={START}\nend_ns,gap_ns\n{int((1.00007 + off('stall')) * S)},60000\n{int(11.00002 * S)},15000\n")
+    with open(os.path.join(state, "stalls-pong-isolated-dpdk-1.csv"), "w") as f:
+        f.write(f"# start_realtime_ns={START}\nend_ns,gap_ns\n")
+    with open(os.path.join(state, "b-rings-isolated-dpdk-1.log"), "w") as f:
+        f.write("# kind,tsc,realtime_ns,value_ns,port,agent\n")
+        f.write(f"gap,77001,{START + int((2.00005 + off('gap')) * S)},30000,1,4242\n")
+    with open(os.path.join(state, "a-rings-isolated-dpdk-1.log"), "w") as f:
+        f.write("# kind,tsc,realtime_ns,value_ns,port,agent\n")
+        f.write(f"arp-request,77002,{START + int((2.00004 + off('arp')) * S)},0,0,4300\n")
+        f.write(f"nic-stats,77003,{START + int((3.00003 + off('hk')) * S)},40000,0,4100\n")
+        f.write(f"drops,77004,{START + 19 * S},5,0,4100\n")
+    knoise = {
+        "a": [
+            f"  ksoftirqd/2-20     [002] d.h1.  {up(4.00004 + off('irq'))}: irq_noise: ena-mgmnt:24 start {start_of(4.00001 + off('irq'))} duration 20000 ns",
+            f"      <idle>-0       [002] ..s1.  {up(6.00002 + off('softirq'))}: softirq_noise:    TIMER:1 start {start_of(6.00001 + off('softirq'))} duration 5000 ns",
+            f"      <idle>-0       [002] d.Z1.  {up(7.00002 + off('nmi'))}: nmi_noise: start {start_of(7.00001 + off('nmi'))} duration 3000 ns",
+            f"     kworker/0:1-30   [000] d..1.  {up(7.00003 + off('ipi1'))}: ipi_send_cpu: cpu=2 callsite=generic_exec_single+0x30/0x160 callback=nohz_csd_func+0x0/0x90",
+            f"     kworker/0:1-30   [000] d..1.  {up(10.00003)}: ipi_send_cpu: cpu=0 callsite=generic_exec_single+0x30/0x160 callback=nohz_csd_func+0x0/0x90",
+            f"    kcompactd0-40    [000] .....  {up(9.00001 + off('compaction'))}: mm_compaction_begin: zone_start=0x1000 migrate_pfn=0x1000 free_pfn=0x2000 zone_end=0x3000, mode=async",
+            f"    kcompactd0-40    [000] .....  {up(9.00002 + off('migration'))}: mm_migrate_pages: nr_succeeded=3 nr_failed=0 nr_thp_succeeded=0 nr_thp_failed=0 nr_thp_split=0 nr_split=0 mode=MIGRATE_ASYNC reason=compaction",
+            # the agent's own thread: busy, never noise
+            f"      sender-4242    [002] d..2.  {up(19.0)}: thread_noise:   sender:4242 start {start_of(0.5)} duration 18000000000 ns",
+        ],
+        "b": [
+            f"     kworker/3:1-77   [003] d..2.  {up(5.00003 + off('thread'))}: thread_noise: kworker/3:1:77 start {start_of(5.00001 + off('thread'))} duration 15000 ns",
+            f"     kworker/0:1-30   [000] d..1.  {up(8.00002 + off('ipi'))}: ipi_send_cpumask: cpumask={'0c' if 'ipi-mask' not in moved else '01'} callsite=smp_call_function_many_cond+0x1a4/0x5c0 callback=do_sync_core+0x0/0x30",
+            # to CPU 0 only (housekeeping): never labelled
+            f"     kworker/0:1-30   [000] d..1.  {up(8.00003)}: ipi_send_cpumask: cpumask=01 callsite=on_each_cpu_cond_mask+0x20/0x40 callback=do_flush_tlb_all+0x0/0x30",
+        ],
+    }
+    gapspin = {"a": "", "b": f"{START / S + 6.00003 + off('host'):.6f} 20\n"}
+    for host in "ab":
+        with open(os.path.join(root, f"{host}-diag-isolated.log"), "w") as f:
+            f.write("== gapspin\n" + gapspin[host] + "== trace\n")
+            f.write(f"UPTIME {UP0} REALTIME {START / S}\n== drains\n== ipmon\n== knoise\n# cpus 1,2,3,4\n# cpumask hex\n")
+            f.write("\n".join(knoise[host]) + "\n")
+    return state
+
+def run(state):
+    return subprocess.run([sys.executable, os.path.join(cloud, "spikes.py"), state], capture_output=True, text=True, check=True).stdout
+
+def table(out, heading):
+    lines = out.split("\n")
+    i = lines.index(heading)
+    rows = []
+    for line in lines[i + 1:]:
+        if line.startswith("## "):
+            break
+        if line.startswith("| ") and not line.startswith("| ---") and not line.startswith("| run "):
+            rows.append([c.strip() for c in line.strip("|").split("|")])
+    return rows
+
+TOP = "## The 10 largest round trips of each rep and every event overlapping them, isolated"
+BASE = "## Overlaps against chance (1,000 circular shifts of each rep's round trips, seed 1), isolated"
+want = {
+    1000: "ping stall 60.0 µs",
+    2000: "ARP request port 0 (a); agent gap port 1 30.0 µs (b tid 4242)",
+    3000: "1 Hz NIC stats 40.0 µs (a port 0)",
+    4000: "irq_noise ena-mgmnt:24 20.0 µs (a cpu 2)",
+    5000: "thread_noise kworker/3:1:77 15.0 µs (b cpu 3)",
+    6000: "host stall 20 µs (b); softirq_noise TIMER:1 5.0 µs (a cpu 2)",
+    7000: "IPI generic_exec_single to 2 (a); nmi_noise 3.0 µs (a cpu 2)",
+    8000: "IPI smp_call_function_many_cond to 2,3 (b)",
+    9000: "compaction (a); page migration succeeded=3 reason=compaction (a)",
+    10000: "none",
+}
+out = run(fixture("all"))
+rows = table(out, TOP)
+assert len(rows) == 10, out
+got = {int(r[2]): r[6] for r in rows}
+assert got == want, (got, out)
+# the largest first; its round trip, its echo's phase in the second (ms) and in 30 s (s)
+assert rows[0][:6] == ["isolated-dpdk-rtt", "1", "1000", "75.0", "0.075", "8.000"], rows[0]
+assert rows[9][:6] == ["isolated-dpdk-rtt", "1", "10000", "66.0", "0.066", "17.000"], rows[9]
+# the baseline: deterministic, one row a source, the observed count of 10
+base = table(out, BASE)
+assert out == run(fixture("again")), "the baseline is not deterministic"
+sources = {r[1]: r for r in base}
+assert "a's event log dropped 5 events in isolated-dpdk-1 (full rings): an overlap there may be missing." in out, out
+assert set(sources) == {"ping stall", "agent gap", "ARP", "1 Hz NIC stats", "irq_noise", "thread_noise", "host stall", "softirq_noise",
+                        "IPI", "nmi_noise", "compaction", "page migration"}, base
+assert sources["IPI"][2] == "2 of 10" and sources["ping stall"][2] == "1 of 10", base
+for r in base:
+    assert float(r[3]) < 0.1 and 0 < float(r[4]) <= 1, r
+# each label proven by mutation: its event moved away, it alone goes
+for moved, ping, gone in (("stall", 1000, "ping stall 60.0 µs"), ("gap", 2000, "agent gap port 1 30.0 µs (b tid 4242)"),
+                          ("arp", 2000, "ARP request port 0 (a)"), ("hk", 3000, "1 Hz NIC stats 40.0 µs (a port 0)"), ("irq", 4000, "irq_noise ena-mgmnt:24 20.0 µs (a cpu 2)"),
+                          ("thread", 5000, "thread_noise kworker/3:1:77 15.0 µs (b cpu 3)"), ("host", 6000, "host stall 20 µs (b)"),
+                          ("softirq", 6000, "softirq_noise TIMER:1 5.0 µs (a cpu 2)"), ("nmi", 7000, "nmi_noise 3.0 µs (a cpu 2)"),
+                          ("ipi1", 7000, "IPI generic_exec_single to 2 (a)"), ("ipi", 8000, "IPI smp_call_function_many_cond to 2,3 (b)"),
+                          ("ipi-mask", 8000, "IPI smp_call_function_many_cond to 2,3 (b)"), ("compaction", 9000, "compaction (a)"),
+                          ("migration", 9000, "page migration succeeded=3 reason=compaction (a)")):
+    mutated = {int(r[2]): r[6] for r in table(run(fixture(f"moved-{moved}", (moved,))), TOP)}
+    left = "; ".join(l for l in want[ping].split("; ") if l != gone) or "none"
+    assert mutated == {**want, ping: left}, (moved, mutated[ping], left)
+# chance: a source at every one of the 10 spikes, spread over 20 s, is far
+# above chance (p at its floor, 1/1001): the 1 Hz sample overlapping each
+state = fixture("periodic")
+with open(os.path.join(state, "a-rings-isolated-dpdk-1.log"), "w") as f:
+    for sec in range(1, 11):
+        f.write(f"sample,1,{START + int((sec + 0.00002) * S)},10000,0,4100\n")
+periodic = {r[1]: r for r in table(run(state), BASE)}
+assert periodic["1 Hz sample"][2] == "10 of 10" and periodic["1 Hz sample"][4] == "0.001", periodic["1 Hz sample"]
+# a spike file without the ping index (before it): read as before, "-" for its ping
+state = fixture("noindex")
+path = os.path.join(state, "spikes-isolated-dpdk-rtt-1.csv")
+text = open(path).read().replace(",ping\n", "\n")
+open(path, "w").write(re.sub(r"^(1002,\d+,\d+),\d+$", r"\1", text, flags=re.M))
+old = table(run(state), TOP)
+assert [r[2] for r in old] == ["-"] * 10 and [r[6] for r in old] == [want[p] for p in sorted(want)], old
+# analyse.py counts both alike (round trips of 100 us or more: none here at
+# 66-76 us, so a copy at 150 us)
+import analyse, io, contextlib
+for name in ("all", "noindex"):
+    src = os.path.join(d, name, "isolated", "spikes-isolated-dpdk-rtt-1.csv")
+    big = os.path.join(d, name, "isolated", "spikes-isolated-dpdk-rtt-2.csv")
+    open(big, "w").write(re.sub(r"^(1002,\d+,)\d+", r"\g<1>150000", open(src).read(), flags=re.M))
+    os.remove(src)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        analyse.spikes(os.path.join(d, name, "isolated"))
+    assert re.search(r"isolated-dpdk-rtt +\| 1 +\| 11 ", buf.getvalue()), (name, buf.getvalue())
+PY
+
 # every aws/lab.sh run above (refused, estimated, run end to end, failed,
 # interrupted, reclaimed, deleted) removed its snapshot as it exited, and the
 # teardown still ran first (each run's verification is checked above); a kept
@@ -5441,10 +6128,1329 @@ else
     pass "aws/lab.sh removes its snapshot on every exit (refused, estimated, failed, interrupted, reclaimed, deleted), the teardown first; LAB_KEEP's delete command names the checkout's lab.sh"
 fi
 
-for script in vm.sh irqs.sh host.sh modes.sh lib.sh remote.sh azure/lab.sh aws/lab.sh; do
+# vm.sh override_export: a mode's @KEY=value as the driver's export line; the
+# ENA device arguments, comma-separated for the PMD, are written with + in a
+# mode (whose name cannot hold a comma), which mode_check takes
+devargs=$(
+    set +e
+    exec 2>&1
+    eval "$(vm_fn override_export)"
+    # shellcheck source=../modes.sh
+    . "$cloud/modes.sh" || exit 1
+    override_export RUSTERON_DPDK_ENA_DEVARGS=miss_txc_to=0+control_path_poll_interval=1000
+    override_export RUSTERON_DPDK_ENA_DEVARGS=llq_policy=3
+    override_export SUB_PARAMS=rcv-wnd=8m+so-rcvbuf=8m
+    override_export RUSTERON_DPDK_NIC_STATS_MS=0
+    m='dpdk@RUSTERON_DPDK_NIC_STATS_MS=0@RUSTERON_DPDK_ENA_DEVARGS=miss_txc_to=0+control_path_poll_interval=1000'
+    mode_check "$m" remote arm64 aws '' cluster && echo "checked: 0"
+    mode_check 'dpdk@RUSTERON_DPDK_ENA_DEVARGS=miss_txc_to=0,llq_policy=3' remote arm64 aws '' cluster >/dev/null 2>&1; echo "comma: $?"
+)
+want="export RUSTERON_DPDK_ENA_DEVARGS='miss_txc_to=0,control_path_poll_interval=1000'
+export RUSTERON_DPDK_ENA_DEVARGS='llq_policy=3'
+export SUB_PARAMS='rcv-wnd=8m+so-rcvbuf=8m'
+export RUSTERON_DPDK_NIC_STATS_MS='0'
+checked: 0
+comma: 2"
+if [[ $devargs != "$want" ]]; then
+    fail "vm.sh override_export: ENA device arguments with + not exported comma-separated"
+    diff -u <(echo "$want") <(echo "$devargs") >&2 || true
+else
+    pass "vm.sh: a mode's @RUSTERON_DPDK_ENA_DEVARGS takes its device arguments joined with +, exported comma-separated (mode_check takes it; a comma is still refused); every other override as written"
+fi
+
+# The raw floor's modes, kernel-raw and dpdk-raw (the harness's floor client:
+# rtt's round trip with no Aeron, over kernel UDP or the DPDK transport's
+# bindings alone). modes.sh: taken cross-host, -mono too, with host settings
+# and RUSTERON_* ones; refused with +idle, on one host, and with anything
+# only Aeron reads (AERON_*, PUB_PARAMS, SUB_PARAMS, RELIABLE, CONDUCTOR),
+# saying so; their round trip's client floor, every other mode's rtt; their
+# host set-up kernel-busy's and dpdk's (raw_base)
+rawmodes=$(
+    set +e
+    exec 2>&1
+    # shellcheck source=../modes.sh
+    . "$cloud/modes.sh" || exit 1
+    for m in kernel-raw dpdk-raw kernel-raw-mono dpdk-raw-mono dpdk-raw@RUSTERON_DPDK_RX_DESCRIPTORS=1024 kernel-raw@RX_RING=4096@THP=always; do
+        mode_check "$m" remote x86_64 aws '' cluster >/dev/null
+        echo "$m $? $(mode_client "$m") $(raw_base "$m")"
+    done
+    for m in dpdk kernel-busy dpdk@AERON_THREADING_MODE=INVOKER; do
+        mode_check "$m" remote x86_64 aws '' cluster >/dev/null
+        echo "$m $? $(mode_client "$m") [$(raw_base "$m")]"
+    done
+    for m in dpdk-raw+idle kernel-raw@AERON_THREADING_MODE=INVOKER dpdk-raw@AERON_MTU_LENGTH=4096 \
+        kernel-raw@SUB_PARAMS=rcv-wnd=1m kernel-raw@PUB_PARAMS=mtu=1408 kernel-raw@RELIABLE=false dpdk-raw@CONDUCTOR=own; do
+        why=$(mode_check "$m" remote x86_64 aws '' cluster 2>&1)
+        echo "$m $? $(grep -c 'no Aeron' <<<"$why")"
+    done
+    why=$(mode_check kernel-raw local x86_64 aws '' cluster 2>&1)
+    echo "local kernel-raw $? $(grep -c 'cross-host only' <<<"$why")"
+)
+want="kernel-raw 0 floor kernel-busy
+dpdk-raw 0 floor dpdk
+kernel-raw-mono 0 floor kernel-busy
+dpdk-raw-mono 0 floor dpdk
+dpdk-raw@RUSTERON_DPDK_RX_DESCRIPTORS=1024 0 floor dpdk
+kernel-raw@RX_RING=4096@THP=always 0 floor kernel-busy
+dpdk 0 rtt []
+kernel-busy 0 rtt []
+dpdk@AERON_THREADING_MODE=INVOKER 0 rtt []
+dpdk-raw+idle 2 1
+kernel-raw@AERON_THREADING_MODE=INVOKER 2 1
+dpdk-raw@AERON_MTU_LENGTH=4096 2 1
+kernel-raw@SUB_PARAMS=rcv-wnd=1m 2 1
+kernel-raw@PUB_PARAMS=mtu=1408 2 1
+kernel-raw@RELIABLE=false 2 1
+dpdk-raw@CONDUCTOR=own 2 1
+local kernel-raw 2 1"
+if [[ $rawmodes == "$want" ]]; then
+    pass "modes.sh: the raw floor's modes (kernel-raw, dpdk-raw, -mono too) taken cross-host with host and RUSTERON_* settings, refused with +idle, on one host or with what only Aeron reads; their client floor, kernel-busy's or dpdk's set-up"
+else
+    fail "modes.sh: the raw floor's modes"
+    diff -u <(echo "$want") <(echo "$rawmodes") >&2 || true
+fi
+
+# lib.sh dry with the floor modes beside an Aeron one: a floor mode's rep is
+# its round trip alone, by the floor client (pong on b, ping on a, the pong
+# ended by its path, "/floor xpong"), its rtt row, histogram, spikes and
+# stalls fetched as rtt's, its loss rows; no throughput, load sweep, mix,
+# several flows or driver host checks (no driver), each said so once a
+# rep; the Aeron mode as before
+cat >"$tmp/dry-floor.sh" <<'SH'
+set -uo pipefail
+cloud=$1 out=$2
+known=$out/known_hosts user=admin A=192.0.2.1 B=192.0.2.2
+log() { echo "$*" >>"$out/log"; }
+die() { log "ERROR: $*"; exit 1; }
+. "$cloud/lib.sh"
+sleep() { :; }
+label() { local l=${1#*client }; echo "${l%% *}"; }
+on() {
+    local host=$1 cmd
+    shift
+    cmd=$*
+    printf '%s %s\n' "$host" "$cmd" >>"$out/calls"
+    case $cmd in
+    *"vm.sh nics") echo "receiver ens7 ens7 0d $([[ $host == "$A" ]] && echo 10.30.1.5 || echo 10.30.1.7) 24 0000:00:07.0" ;;
+    *"vm.sh layout") echo "0 2 1 3 4" ;;
+    *"vm.sh loss") echo "kernel-udp-InErrors=0;nic-kernel-drops=0" ;;
+    *" floor xping "* | *" purefloor xping "* | *" rtt xping "*) echo "rtt,$(label "$cmd"),udp,20000,21000,25000,30000,40000,75000,20500,1000,0" ;;
+    *" tput xsub "*) echo "tput,$(label "$cmd"),udp,1000,1,2,3,0,1,2" ;;
+    *"cat bench/load-spikes.csv") printf '# start_realtime_ns=1\n# spikes_total=0\nstream,due_ns,latency_ns,ping\n' ;;
+    esac
+    return 0
+}
+reps=1 local_modes= load_sizes=288 load_fractions=50 load_seconds=1 load_ladder= mix='p=s:3001:1000:32' mix_seconds=1
+tput_seconds=5 rtt_messages=1000 rtt_warmup=100 rtt_align= tput_flows=2
+modes=(kernel-raw dpdk-raw dpdk dpdk-pure)
+bench_state isolated
+SH
+dfl=$tmp/dry-floor
+mkdir -p "$dfl"
+bash "$tmp/dry-floor.sh" "$cloud" "$dfl" </dev/null 2>"$dfl/stderr" || fail "lib.sh dry run with the floor modes exited $?"
+floor_calls() { # <mode>: the clients its rep ran on the VMs (sorted: the pong starts in the background), and the client ended after its ping
+    grep "client isolated:$1 " "$dfl/calls" | sort |
+        sed -E 's/LAB_CLIENT_DEADLINE=[0-9]+ //; s/LOAD_SPIKE_NS=[0-9]+ //; s/LOOP_STALL_NS=[0-9]+ //; s/RTT_SECONDS=[0-9]+ //'
+    echo "then $(awk -v m="client isolated:$1 floor xping " 'index($0, m) {on = 1; next} on && /pkill -f/ {print; exit}' "$dfl/calls")"
+}
+got=$(floor_calls kernel-raw; echo; grep 'client isolated:dpdk-raw ' "$dfl/calls" | grep -c ' tput \| load ' || true)
+want="192.0.2.1 ergon/md-dpdk/benches/cloud/vm.sh client isolated:kernel-raw floor xping 10.30.1.7:20123 10.30.1.5:20124 1000 100 2
+192.0.2.2 ergon/md-dpdk/benches/cloud/vm.sh client isolated:kernel-raw floor xpong 10.30.1.7:20123 10.30.1.5:20124 2
+then 192.0.2.2 sudo pkill -f '/[f]loor xpong'
+
+0"
+if grep -E 'unbound variable|command not found|syntax error' "$dfl/stderr"; then
+    fail "lib.sh dry with the floor modes: shell errors"
+elif [[ $got != "$want" ]]; then
+    fail "lib.sh dry with the floor modes: the clients run"
+    diff -u <(echo "$want") <(echo "$got") >&2 || true
+elif grep -q ERROR "$dfl/log" || [[ $(grep -c '^1,rtt,isolated:\(kernel\|dpdk\)-raw,udp,20000,' "$dfl/results.csv") != 2 ]]; then
+    fail "lib.sh dry with the floor modes: their rtt rows: $(grep ',rtt,' "$dfl/results.csv" | tr '\n' ' ') $(tail -2 "$dfl/log")"
+elif [[ ! -s $dfl/spikes-isolated-dpdk-raw-rtt-1.csv ]] || ! grep -q "cat bench/stalls-pong.csv" "$dfl/calls" ||
+    [[ $(grep -c '^1,loss,isolated:kernel-raw:rtt,[ab],' "$dfl/results.csv") != 2 ]]; then
+    fail "lib.sh dry with the floor modes: the spikes, stalls or loss rows not taken as rtt's"
+elif grep -q ',hostcheck,isolated:[a-z]*-raw,' "$dfl/results.csv" || ! grep -q ',hostcheck,isolated:dpdk,' "$dfl/results.csv"; then
+    fail "lib.sh dry with the floor modes: driver host checks: $(grep ',hostcheck,' "$dfl/results.csv" | tr '\n' ' ')"
+elif [[ $(grep -c 'isolated:kernel-raw: the raw floor (no Aeron): its round trip alone' "$dfl/log") != 1 ]] ||
+    ! grep -q ' tput xpub ' <(grep 'client isolated:dpdk ' "$dfl/calls") || ! grep -q ' load xping ' <(grep 'client isolated:dpdk ' "$dfl/calls"); then
+    fail "lib.sh dry with the floor modes: the skipped phases not said once, or the Aeron mode's phases gone: $(grep -c raw "$dfl/log")"
+else
+    pass "lib.sh dry with the floor modes: the floor client's round trip alone (no throughput, load, mix, flows or driver host checks: said so), rtt's files and loss rows; the Aeron mode as before"
+fi
+
+# vm.sh client for the floor client: only after vm.sh driver set a floor mode
+# up (~/bench/floor: kernel or dpdk), then with the driver's environment
+# (driver.env: the DPDK transport's, the kernel's selector absent) and the
+# lost-round-trip timeout an unreliable channel's (raw UDP repairs nothing:
+# 50 ms, or four of the network's round trips), never HARNESS_DRIVER
+floor_client() {
+    : >"$sbc/log"
+    env -i PATH="$sbc/bin:$PATH" HOME="$sbc/home" FAKE_LOG="$sbc/log" FAKE_ARCH=x86_64 LAB_SYS_ROOT="$sys/aws-x86" \
+        bash "$cloud/vm.sh" client isolated:dpdk-raw floor xping 10.30.1.7:20123 10.30.1.5:20124 10 1 2 >"$sbc/out" 2>&1
+    echo "rc $? $(grep '^sudo ' "$sbc/log" | tail -1)"
+}
+rm -f "$sbc/home/bench/harness_driver" "$sbc/home/bench/sub_channel_params" "$sbc/home/bench/pub_channel_params" "$sbc/home/bench/floor"
+unset_floor=$(floor_client)
+unset_said=$(cat "$sbc/out")
+echo dpdk >"$sbc/home/bench/floor"
+echo 70000 >"$sbc/home/bench/base_rtt_us"
+floored=$(floor_client)
+echo 5 >"$sbc/home/bench/base_rtt_us"
+floored_near=$(floor_client)
+rm -f "$sbc/home/bench/floor"
+if [[ $unset_floor != "rc 2 " || $unset_said != *"vm.sh driver kernel-raw or dpdk-raw"* ]]; then
+    fail "vm.sh client: the floor client ran without a floor mode's set-up: $unset_floor $unset_said"
+elif [[ $floored != "rc 0 sudo bash -c "*"$sbc/home/bench/driver.env"* || $floored != *" RTT_LOST_TIMEOUT_US=280000 "* ||
+    $floored != *"/target/release/floor xping 10.30.1.7:20123 10.30.1.5:20124 10 1 2" || $floored == *HARNESS_DRIVER* ]]; then
+    fail "vm.sh client for the floor client: $floored $(tail -2 "$sbc/out")"
+elif [[ $floored_near != *" RTT_LOST_TIMEOUT_US=50000 "* ]]; then
+    fail "vm.sh client for the floor client, a near network: $floored_near"
+else
+    pass "vm.sh client: the floor client only after a floor mode's set-up, with the driver's environment, an unreliable channel's lost-round-trip timeout, no HARNESS_DRIVER"
+fi
+
+# vm.sh client under precision-time: rtt's ping writes each spike's one-way
+# split (RTT_ONE_WAY, ~/bench/one-way.csv, the last run's removed first);
+# elsewhere none asked for (two hosts' clocks off the PTP hardware clock)
+rm -f "$sbc/home/bench/floor" "$sbc/home/bench/driver.env"
+cluster_client=$(client_sb)
+echo precision-time >"$sbc/home/bench/placement"
+: >"$sbc/home/bench/one-way.csv"
+precise_client=$(client_sb)
+precise_left=$([[ -e $sbc/home/bench/one-way.csv ]] && echo kept || echo removed)
+rm -f "$sbc/home/bench/placement"
+if [[ $cluster_client != *" RTT_ONE_WAY= "* || $precise_client != *" RTT_ONE_WAY=$sbc/home/bench/one-way.csv "* || $precise_left != removed ]]; then
+    fail "vm.sh client: RTT_ONE_WAY: cluster [$cluster_client] precision-time [$precise_client] last file $precise_left"
+else
+    pass "vm.sh client: under precision-time the ping splits each spike one way (RTT_ONE_WAY, the last run's file removed first), elsewhere not"
+fi
+
+# vm.sh driver for a floor mode: kernel-busy's or dpdk's set-up under
+# INVOKER's threading (one thread sends and receives), the floor's wire
+# recorded for `client` and `stop`, no media driver started (the INVOKER
+# branch's exit, before the driver's start), and `stop` ends a floor client
+# and forgets the wire
+driver_branch=$(awk '/^driver\)$/ {on = 1} on {print} on && /^    ;;$/ {exit}' "$cloud/vm.sh")
+stop_branch=$(awk '/^stop\)$/ {on = 1} on {print} on && /^    ;;$/ {exit}' "$cloud/vm.sh")
+before_start=${driver_branch%%exec taskset -c \$HK_CPU*}
+if [[ $driver_branch != *'raw=$(raw_base "$mode")'* || $driver_branch != *'threading=INVOKER'* ]]; then
+    fail "vm.sh driver: a floor mode's set-up (raw_base, INVOKER's threading)"
+elif [[ $before_start != *'echo "${floor_wire}" >"$run/floor"'* || $before_start != *'exit 0'* ]]; then
+    fail "vm.sh driver: a floor mode's wire not recorded, or a media driver started"
+elif [[ $stop_branch != *'pkill -x floor'* || $stop_branch != *'rm -f "$run/floor"'* ]]; then
+    fail "vm.sh stop: a floor client not ended, or its wire kept"
+elif ! grep -q -- '--bin floor' "$cloud/vm.sh" || ! grep -q "pgrep -x 'media_driver|rtt|load|tput|floor|" "$cloud/vm.sh"; then
+    fail "vm.sh: the floor client not built, or diag-start blind to it"
+else
+    pass "vm.sh driver: a floor mode set up as kernel-busy or dpdk under INVOKER's threading, its wire recorded, no media driver; stop ends its client; build builds it"
+fi
+
+# estimate.py: a floor mode's rep is its round trip alone (the mode's 12 s
+# and the round trip's 85 s, and its 64-byte datagrams each way); the Aeron
+# mode beside it keeps its flat-out, load and mix phases
+est=$(python3 - "$cloud" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import estimate as e
+args = dict(type_a="c8g.xlarge", type_b="c8g.xlarge", placement="cluster", reps=2, local_modes=[], states=["pinned"],
+            load_sizes=[288], load_fractions=[50], load_ladder={}, load_seconds=5, mix=[[(1000, 32)]], mix_seconds=5,
+            tput_seconds=5, tput_flows=2, rtt_messages=1000, rtt_warmup=100, no_flatout=False, max_hours=8)
+floor = e.estimate(modes=["kernel-raw", "dpdk-raw-mono@RUSTERON_DPDK_RX_DESCRIPTORS=1024"], **args)
+aeron = e.estimate(modes=["dpdk"], **args)
+fixed = e.SETUP_S + e.TEARDOWN_S + e.STATE_S["pinned"]
+print(floor["wall_s"] == fixed + 2 * 2 * (e.MODE_S + e.RTT_S),
+      floor["bytes_ab"] == 2 * 2 * 1100 * (e.RTT_SIZE + e.WIRE_OVERHEAD) == floor["bytes_ba"], floor["bound"],
+      aeron["wall_s"] > fixed + 2 * (e.MODE_S + e.RTT_S), aeron["bound"])
+PY
+)
+if [[ $est == "True True False True True" ]]; then
+    pass "estimate.py: a floor mode's rep is its round trip alone; an Aeron mode keeps its other phases"
+else
+    fail "estimate.py with the floor modes: $est"
+fi
+
+# analyse.py: the floor modes named for what they are, after the Aeron modes
+# they floor, and a table of what Aeron adds over the floor in the same
+# state (each Aeron mode beside its transport's floor: kernel's beside
+# kernel-raw, DPDK's beside dpdk-raw, -mono beside -mono), none without a
+# floor; spikes.py counts the floor client among the busy threads
+cat >"$tmp/floor-results.csv" <<'CSV'
+1,rtt,isolated:kernel-busy,udp,30000,31000,35000,40000,50000,79000,30500,1000,0
+2,rtt,isolated:kernel-busy,udp,32000,33000,36000,41000,52000,75000,32500,1000,0
+1,rtt,isolated:kernel-raw,udp,20000,21000,25000,30000,40000,70000,20500,1000,0
+2,rtt,isolated:kernel-raw,udp,22000,23000,26000,31000,42000,74000,22500,1000,0
+1,rtt,isolated:dpdk,udp,25000,26000,30000,35000,45000,72000,25500,1000,0
+1,rtt,isolated:dpdk-raw,udp,15000,16000,20000,25000,35000,71000,15500,1000,0
+1,rtt,pinned:dpdk,udp,25000,26000,30000,35000,45000,72000,25500,1000,0
+CSV
+floor_md=$(python3 "$cloud/analyse.py" "$tmp/floor-results.csv" 2>&1 || true)
+above=$(section "## UDP round trip above the raw floor (µs)" <<<"$floor_md" | tr -s ' ')
+busy=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import spikes; print(bool(spikes.BUSY.match("floor")))' "$cloud")
+if [[ $floor_md != *"| isolated, kernel UDP, no Aeron (raw floor) "* || $floor_md != *"| isolated, DPDK packet path, no Aeron (raw floor) "* ]]; then
+    fail "analyse.py: the floor modes' names: $(grep -m3 'raw' <<<"$floor_md")"
+elif [[ $(grep -c '^| isolated, ' <<<"$above") != 2 || $above != *"| isolated, kernel UDP, busy polling | kernel UDP, no Aeron (raw floor) | 2 | 10.00 (10.00–10.00) "* ||
+    $above != *"| isolated, DPDK | DPDK packet path, no Aeron (raw floor) | 1 | 10.00 (10.00–10.00) "* || $above == *pinned* ]]; then
+    fail "analyse.py: the table above the raw floor"
+    echo "$above" >&2
+elif [[ $busy != True ]]; then
+    fail "spikes.py: the floor client is not among the busy threads"
+else
+    pass "analyse.py: the floor modes named, and what each Aeron mode adds over its transport's floor in the same state (none without one); spikes.py counts the floor client busy"
+fi
+
+# The pure floor, dpdk-pure: DPDK alone (purefloor.c: rte_eth_rx_burst and
+# rte_eth_tx_burst on the receiver port, a 5-tuple-swapping reflector at the
+# pong), none of ergon-md-dpdk or Aeron. modes.sh: a raw floor mode on dpdk's
+# set-up, its client purefloor; cross-host on AWS only; refused with -mono
+# (the CPU's counter is its only clock), +idle, anything only Aeron reads,
+# and any RUSTERON_* purefloor does not read; the transport's ring and pool
+# limits still apply (they are the NIC's)
+puremodes=$(
+    set +e
+    exec 2>&1
+    # shellcheck source=../modes.sh
+    . "$cloud/modes.sh" || exit 1
+    for m in dpdk-pure dpdk-pure@RUSTERON_DPDK_RX_DESCRIPTORS=1024@RUSTERON_DPDK_BURST_SIZE=16 dpdk-pure@THP=always@JUMBO=1; do
+        mode_check "$m" remote arm64 aws '' cluster >/dev/null
+        echo "$m $? $(mode_client "$m") $(raw_base "$m") $(mode_raw "$m" && echo raw)"
+    done
+    for m in dpdk-pure-mono:monotonic dpdk-pure+idle:'no Aeron' dpdk-pure@AERON_MTU_LENGTH=4096:'no Aeron' \
+        dpdk-pure@RUSTERON_DPDK_LOCAL_IO=spin:'not one purefloor reads' dpdk-pure@RUSTERON_DPDK_RX_DESCRIPTORS=16384:'8192 at most'; do
+        why=$(mode_check "${m%%:*}" remote arm64 aws '' cluster 2>&1)
+        echo "${m%%:*} $? $(grep -c -- "${m#*:}" <<<"$why")"
+    done
+    why=$(mode_check dpdk-pure local arm64 aws '' cluster 2>&1)
+    echo "local $? $(grep -c 'cross-host only' <<<"$why")"
+    why=$(mode_check dpdk-pure remote x86_64 azure '' cluster 2>&1)
+    echo "azure $? $(grep -c 'AWS only' <<<"$why")"
+    echo "dpdk-raw: $(mode_client dpdk-raw)"
+)
+want="dpdk-pure 0 purefloor dpdk raw
+dpdk-pure@RUSTERON_DPDK_RX_DESCRIPTORS=1024@RUSTERON_DPDK_BURST_SIZE=16 0 purefloor dpdk raw
+dpdk-pure@THP=always@JUMBO=1 0 purefloor dpdk raw
+dpdk-pure-mono 2 1
+dpdk-pure+idle 2 1
+dpdk-pure@AERON_MTU_LENGTH=4096 2 1
+dpdk-pure@RUSTERON_DPDK_LOCAL_IO=spin 2 1
+dpdk-pure@RUSTERON_DPDK_RX_DESCRIPTORS=16384 2 1
+local 2 1
+azure 2 1
+dpdk-raw: floor"
+if [[ $puremodes == "$want" ]]; then
+    pass "modes.sh: the pure floor, dpdk-pure: a raw floor mode on dpdk's set-up, its client purefloor; refused with -mono, +idle, Aeron's settings, a RUSTERON_* purefloor does not read, past the NIC's rings, on one host or off AWS"
+else
+    fail "modes.sh: the pure floor's mode"
+    diff -u <(echo "$want") <(echo "$puremodes") >&2 || true
+fi
+
+# vm.sh build compiles purefloor on the host, as gapspin, against the DPDK
+# the media driver links (pkg-config libdpdk: Debian's, or precision-time's
+# 25.11), with -Wall -Wextra -Werror and the architecture's CFLAGS; one that
+# does not compile leaves why in ~/bench/purefloor_unavailable and no
+# purefloor, and the build goes on (the other modes need none)
+# shellcheck disable=SC2016
+{
+    printf '#!/bin/sh\necho "gcc $*" >>"$FAKE_LOG"\n[ -z "$FAKE_GCC_FAIL" ] || { echo "purefloor.c:1:1: error: boom" >&2; exit 1; }\nwhile [ "$1" != -o ]; do shift; done\nprintf "#!/bin/sh\\n" >"$2"; chmod +x "$2"\n' >"$sbb/bin/gcc"
+    printf '#!/bin/sh\ncase "$*" in *--cflags*) echo "-I/usr/include/dpdk -include rte_config.h" ;; *--libs*) echo "-lrte_ethdev -lrte_eal" ;; esac\n' >"$sbb/bin/pkg-config"
+}
+chmod +x "$sbb/bin/gcc" "$sbb/bin/pkg-config"
+pure_build() { # <arch> [FAKE_GCC_FAIL]: the gcc line, then whether purefloor and its marker are there
+    rm -f "$sbb/home/bench/purefloor"
+    : >"$sbb/log"
+    env -i PATH="$sbb/bin:$PATH" HOME="$sbb/home" FAKE_LOG="$sbb/log" FAKE_ARCH="$1" FAKE_NO_DPDK= FAKE_GCC_FAIL="${2:-}" \
+        LAB_SYS_ROOT="$sys/$([[ $1 == aarch64 ]] && echo graviton || echo aws-x86)" \
+        bash "$cloud/vm.sh" build >"$sbb/out" 2>&1 || echo "exit $?"
+    grep '^gcc .*purefloor' "$sbb/log"
+    echo "purefloor $([[ -x $sbb/home/bench/purefloor ]] && echo built || echo none), unavailable: $(cat "$sbb/home/bench/purefloor_unavailable" 2>/dev/null)"
+}
+echo "an earlier build's" >"$sbb/home/bench/purefloor_unavailable"
+got="x86:
+$(pure_build x86_64)
+arm:
+$(pure_build aarch64)
+fails:
+$(pure_build x86_64 1)"
+want="x86:
+gcc -O2 -Wall -Wextra -Werror -I/usr/include/dpdk -include rte_config.h -o $sbb/home/bench/purefloor $cloud/purefloor.c -lrte_ethdev -lrte_eal
+purefloor built, unavailable: 
+arm:
+gcc -O2 -Wall -Wextra -Werror -mcpu=native -I/usr/include/dpdk -include rte_config.h -o $sbb/home/bench/purefloor $cloud/purefloor.c -lrte_ethdev -lrte_eal
+purefloor built, unavailable: 
+fails:
+gcc -O2 -Wall -Wextra -Werror -I/usr/include/dpdk -include rte_config.h -o $sbb/home/bench/purefloor $cloud/purefloor.c -lrte_ethdev -lrte_eal
+purefloor none, unavailable: purefloor.c did not compile: purefloor.c:1:1: error: boom"
+if [[ $got != "$want" ]]; then
+    fail "vm.sh build: purefloor"
+    diff -u <(echo "$want") <(echo "$got") >&2 || true
+else
+    pass "vm.sh build: purefloor compiled on the host against pkg-config's libdpdk with -Wall -Wextra -Werror and the architecture's CFLAGS; a failure said in purefloor_unavailable, the build going on"
+fi
+
+# vm.sh ready: a dpdk-pure mode where purefloor did not build is refused
+# before any state, saying why; with purefloor there, taken
+rm -f "$sbr/home/bench/purefloor"
+echo "purefloor.c did not compile: boom" >"$sbr/home/bench/purefloor_unavailable"
+got="none: $(ready_sb aws-x86 7.2.6+deb13-cloud-amd64 dpdk dpdk-pure@THP=always)"
+rm -f "$sbr/home/bench/purefloor_unavailable"
+printf '#!/bin/sh\n' >"$sbr/home/bench/purefloor"
+chmod +x "$sbr/home/bench/purefloor"
+got+="
+built: $(ready_sb aws-x86 7.2.6+deb13-cloud-amd64 dpdk dpdk-pure)"
+rm -f "$sbr/home/bench/purefloor"
+want="none: 2 mode dpdk-pure@THP=always: purefloor did not build here (vm.sh build): purefloor.c did not compile: boom
+built: 0"
+if [[ $got != "$want" ]]; then
+    fail "vm.sh ready: dpdk-pure without purefloor"
+    diff -u <(echo "$want") <(echo "$got") >&2 || true
+else
+    pass "vm.sh ready: a dpdk-pure mode refused where purefloor did not build, saying why"
+fi
+
+# vm.sh client purefloor: only on the pure floor's wire (vm.sh driver
+# dpdk-pure: ~/bench/floor is pure), the build's ~/bench/purefloor with the
+# driver's environment and an unreliable channel's lost-round-trip timeout,
+# never HARNESS_DRIVER; the floor client never on that wire, nor purefloor
+# on dpdk-raw's
+pure_client() { # <prog>
+    : >"$sbc/log"
+    env -i PATH="$sbc/bin:$PATH" HOME="$sbc/home" FAKE_LOG="$sbc/log" FAKE_ARCH=x86_64 LAB_SYS_ROOT="$sys/aws-x86" \
+        bash "$cloud/vm.sh" client isolated:dpdk-pure "$1" xping 10.30.1.7:20123 10.30.1.5:20124 10 1 2 >"$sbc/out" 2>&1
+    echo "rc $? $(grep '^sudo ' "$sbc/log" | tail -1)"
+}
+echo 70000 >"$sbc/home/bench/base_rtt_us"
+printf '#!/bin/sh\n' >"$sbc/home/bench/purefloor"
+chmod +x "$sbc/home/bench/purefloor"
+rm -f "$sbc/home/bench/floor"
+p_none=$(pure_client purefloor)
+echo dpdk >"$sbc/home/bench/floor"
+p_raw=$(pure_client purefloor)
+p_raw_said=$(cat "$sbc/out")
+echo pure >"$sbc/home/bench/floor"
+p_pure=$(pure_client purefloor)
+f_pure=$(pure_client floor)
+f_pure_said=$(cat "$sbc/out")
+rm -f "$sbc/home/bench/floor" "$sbc/home/bench/purefloor"
+if [[ $p_none != "rc 2 " || $p_raw != "rc 2 " || $p_raw_said != *"vm.sh driver dpdk-pure"* ]]; then
+    fail "vm.sh client purefloor off the pure floor's wire: [$p_none] [$p_raw] $p_raw_said"
+elif [[ $f_pure != "rc 2 " || $f_pure_said != *"vm.sh driver kernel-raw or dpdk-raw"* ]]; then
+    fail "vm.sh client floor on the pure floor's wire: $f_pure $f_pure_said"
+elif [[ $p_pure != "rc 0 sudo bash -c "*"$sbc/home/bench/driver.env"* || $p_pure != *" RTT_LOST_TIMEOUT_US=280000 "* ||
+    $p_pure != *" $sbc/home/bench/purefloor xping 10.30.1.7:20123 10.30.1.5:20124 10 1 2" || $p_pure == *HARNESS_DRIVER* ]]; then
+    fail "vm.sh client purefloor: $p_pure $(tail -2 "$sbc/out")"
+else
+    pass "vm.sh client purefloor: only on the pure floor's wire, the build's purefloor with the driver's environment and an unreliable channel's timeout; the floor client never there"
+fi
+
+# vm.sh driver dpdk-pure: dpdk's set-up, the wire recorded as pure, refused
+# without purefloor; stop ends a purefloor client; diag-start sees it busy
+if [[ $before_start != *'floor_wire=pure'* || $before_start != *'purefloor did not build here'* ]]; then
+    fail "vm.sh driver: the pure floor's wire, or its refusal without purefloor"
+elif [[ $stop_branch != *'pkill -x purefloor'* ]] || ! grep -q "pgrep -x 'media_driver|rtt|load|tput|floor|purefloor'" "$cloud/vm.sh"; then
+    fail "vm.sh stop or diag-start: blind to purefloor"
+else
+    pass "vm.sh driver dpdk-pure: dpdk's set-up, its wire pure, refused without purefloor; stop ends purefloor, diag-start sees it"
+fi
+
+# lib.sh dry (the floor modes' run above, dpdk-pure among them): its rep is
+# purefloor's round trip alone, pong on b, ping on a, the pong ended by its
+# path ("/purefloor xpong"), its rtt row; no throughput or load
+got=$(grep "client isolated:dpdk-pure " "$dfl/calls" | sort |
+    sed -E 's/LAB_CLIENT_DEADLINE=[0-9]+ //; s/LOAD_SPIKE_NS=[0-9]+ //; s/LOOP_STALL_NS=[0-9]+ //; s/RTT_SECONDS=[0-9]+ //'
+    echo "then $(awk 'index($0, "client isolated:dpdk-pure purefloor xping ") {on = 1; next} on && /pkill -f/ {print; exit}' "$dfl/calls")"
+    grep 'client isolated:dpdk-pure ' "$dfl/calls" | grep -c ' tput \| load ' || true
+    grep -c '^1,rtt,isolated:dpdk-pure,udp,20000,' "$dfl/results.csv")
+want="192.0.2.1 ergon/md-dpdk/benches/cloud/vm.sh client isolated:dpdk-pure purefloor xping 10.30.1.7:20123 10.30.1.5:20124 1000 100 2
+192.0.2.2 ergon/md-dpdk/benches/cloud/vm.sh client isolated:dpdk-pure purefloor xpong 10.30.1.7:20123 10.30.1.5:20124 2
+then 192.0.2.2 sudo pkill -f '/[p]urefloor xpong'
+0
+1"
+if [[ $got != "$want" ]]; then
+    fail "lib.sh dry: the pure floor's rep"
+    diff -u <(echo "$want") <(echo "$got") >&2 || true
+else
+    pass "lib.sh dry: the pure floor's rep is purefloor's round trip alone (pong on b, ping on a, ended by its path), its rtt row"
+fi
+
+# analyse.py: dpdk-pure named for what it is, after dpdk-raw, and dpdk-raw
+# beside it in the table above the floor (what ergon-md-dpdk's packet path
+# adds over DPDK alone), the Aeron DPDK mode still beside dpdk-raw; a mode
+# with overrides set against the floor with the same ones where that ran
+# (precision-time's timestamps-off baselines), else the bare floor;
+# estimate.py: its rep the round trip alone; spikes.py: purefloor busy
+cat >"$tmp/pure-results.csv" <<'CSV'
+1,rtt,isolated:dpdk,udp,25000,26000,30000,35000,45000,72000,25500,1000,0
+1,rtt,isolated:dpdk-raw,udp,15000,16000,20000,25000,35000,71000,15500,1000,0
+1,rtt,isolated:dpdk-pure,udp,12000,13000,16000,20000,30000,85000,12500,1000,0
+1,rtt,isolated:dpdk-raw@RUSTERON_DPDK_RX_HW_TIMESTAMP=0,udp,14000,15000,19000,24000,34000,70000,14500,1000,0
+1,rtt,isolated:dpdk-pure@RUSTERON_DPDK_RX_HW_TIMESTAMP=0,udp,12500,13000,17000,21000,31000,90000,12600,1000,0
+1,rtt,isolated:dpdk-raw@RUSTERON_DPDK_BURST_SIZE=16,udp,16000,17000,21000,26000,36000,72000,16500,1000,0
+CSV
+pure_md=$(python3 "$cloud/analyse.py" "$tmp/pure-results.csv" 2>&1 || true)
+above=$(section "## UDP round trip above the raw floor (µs)" <<<"$pure_md" | tr -s ' ')
+rtt_order=$(grep -o '^| isolated, [^|]*' <<<"$pure_md" | head -3 | tr -s ' ' | tr '\n' ';')
+est=$(python3 - "$cloud" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import estimate as e
+args = dict(type_a="c8g.xlarge", type_b="c8g.xlarge", placement="cluster", reps=2, local_modes=[], states=["pinned"],
+            load_sizes=[288], load_fractions=[50], load_ladder={}, load_seconds=5, mix=[[(1000, 32)]], mix_seconds=5,
+            tput_seconds=5, tput_flows=2, rtt_messages=1000, rtt_warmup=100, no_flatout=False, max_hours=8)
+pure = e.estimate(modes=["dpdk-pure@RUSTERON_DPDK_RX_DESCRIPTORS=1024"], **args)
+fixed = e.SETUP_S + e.TEARDOWN_S + e.STATE_S["pinned"]
+print(pure["wall_s"] == fixed + 2 * (e.MODE_S + e.RTT_S), pure["bound"])
+PY
+)
+busy=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import spikes; print(bool(spikes.BUSY.match("purefloor")))' "$cloud")
+if [[ $pure_md != *"| isolated, DPDK alone, no ergon-md-dpdk or Aeron (pure floor) "* ]]; then
+    fail "analyse.py: the pure floor's name: $(grep -m3 'pure' <<<"$pure_md")"
+elif [[ $(grep -c '^| isolated, ' <<<"$above") != 4 ||
+    $above != *"| isolated, dpdk-raw@RUSTERON_DPDK_RX_HW_TIMESTAMP=0 | dpdk-pure@RUSTERON_DPDK_RX_HW_TIMESTAMP=0 | 1 | 1.50 (1.50–1.50) | 2.00 (2.00–2.00) | 3.00 (3.00–3.00) | -20.00 (-20.00–-20.00) |"* ||
+    $above != *"| isolated, dpdk-raw@RUSTERON_DPDK_BURST_SIZE=16 | DPDK alone, no ergon-md-dpdk or Aeron (pure floor) | 1 | 4.00 (4.00–4.00) | 5.00 (5.00–5.00) | 6.00 (6.00–6.00) | -13.00 (-13.00–-13.00) |"* ||
+    $above != *"| isolated, DPDK | DPDK packet path, no Aeron (raw floor) | 1 | 10.00 (10.00–10.00) "* ||
+    $above != *"| isolated, DPDK packet path, no Aeron (raw floor) | DPDK alone, no ergon-md-dpdk or Aeron (pure floor) | 1 | 3.00 (3.00–3.00) | 4.00 (4.00–4.00) | 5.00 (5.00–5.00) | -14.00 (-14.00–-14.00) |"* ]]; then
+    fail "analyse.py: dpdk-raw above the pure floor"
+    echo "$above" >&2
+elif [[ $rtt_order != *"DPDK packet path, no Aeron (raw floor) ;| isolated, DPDK alone, no ergon-md-dpdk or Aeron (pure floor) "* ]]; then
+    fail "analyse.py: the pure floor not after dpdk-raw: $rtt_order"
+elif [[ $est != "True False" || $busy != True ]]; then
+    fail "estimate.py or spikes.py with the pure floor: $est $busy"
+else
+    pass "analyse.py: the pure floor named, after dpdk-raw, and dpdk-raw above it (ergon-md-dpdk's packet path over DPDK alone); estimate.py: its round trip alone; spikes.py: purefloor busy"
+fi
+
+# spikes.py: each rep's largest round trips split one way (rtt's RTT_ONE_WAY,
+# precision-time: oneway-<state>-<mode>-<rep>.csv): out (sent to the pong's
+# NIC), back (the pong's NIC to the ping's) and the ping's host (its NIC to
+# the echo's arrival), largest first; printed before the diagnostics are
+# read, so a -nodiag state has it too
+ow=$tmp/oneway/pinned
+mkdir -p "$ow"
+printf '# start_realtime_ns=1000000000\nping,sent_realtime_ns,pong_rx_realtime_ns,ping_rx_realtime_ns,echoed_realtime_ns\n7,2000000000,2000100000,2000120000,2000130000\n8,3000000000,3000010000,3000070000,3000075000\n' \
+    >"$ow/oneway-pinned-dpdk@SUB_PARAMS=media-rcv-ts-offset=reserved-1.csv"
+ow_out=$(python3 "$cloud/spikes.py" "$ow" 2>&1 || true)
+ow_table=$(section "## One-way split of the largest round trips, pinned" <<<"$ow_out")
+if [[ $ow_table != *"| pinned-dpdk@SUB_PARAMS=media-rcv-ts-offset=reserved | 1 | 7 | 130.0 | 100.0 | 20.0 | 10.0 |"* ||
+    $ow_table != *"| pinned-dpdk@SUB_PARAMS=media-rcv-ts-offset=reserved | 1 | 8 | 75.0 | 10.0 | 60.0 | 5.0 |"* ||
+    ${ow_table%%| 1 | 8 |*} != *"| 1 | 7 |"* ]]; then
+    fail "spikes.py: the one-way split"
+    echo "$ow_out" >&2
+else
+    pass "spikes.py: each rep's largest round trips split one way (out, back, the ping's host), largest first, without diagnostics too"
+fi
+
+# The same-host hairpin (@HAIRPIN=1: the raw floor's round trip between host
+# a's own two data NICs, never between hosts) and sparse round trips
+# (@RTT_GAP_US=<us>: one ping every that many microseconds). modes.sh: HAIRPIN
+# taken on the raw floor's modes only (the floor client runs both ends), AWS,
+# cross-host lists only, once; RTT_GAP_US 1 to 1000000 us, once, not on
+# localhost; each refusal says why. rtt_plan: a paced rep's seconds (20 to 60:
+# 10,000 round trips where they fit), its round trips and its warm-up (about
+# 2 s of pings); an unpaced one's as before. hairpin_types_check: host a
+# needs four cores (housekeeping, ping, the sender's, the pong's)
+hsmodes=$(
+    set +e
+    exec 2>&1
+    # shellcheck source=../modes.sh
+    . "$cloud/modes.sh" || exit 1
+    for m in dpdk-raw@HAIRPIN=1 kernel-raw@HAIRPIN=1 dpdk-raw-mono@HAIRPIN=1 dpdk-raw@HAIRPIN=1@RTT_GAP_US=50000 \
+        dpdk@RTT_GAP_US=1000 kernel-raw@RTT_GAP_US=1000000 dpdk-raw; do
+        mode_check "$m" remote arm64 aws '' cluster >/dev/null
+        echo "$m $? $(mode_hairpin "$m" && echo hairpin || echo cross)"
+    done
+    for c in 'dpdk@HAIRPIN=1|the raw floor' 'kernel-busy@HAIRPIN=1|the raw floor' 'dpdk-raw@HAIRPIN=2|HAIRPIN=1 or nothing' \
+        'dpdk-raw@HAIRPIN=1@HAIRPIN=1|one HAIRPIN at most' 'dpdk@RTT_GAP_US=0|1 to 1000000' 'dpdk@RTT_GAP_US=1000001|1 to 1000000' \
+        'dpdk@RTT_GAP_US=5ms|1 to 1000000' 'dpdk@RTT_GAP_US=1000@RTT_GAP_US=2000|one RTT_GAP_US at most' \
+        'dpdk-pure@HAIRPIN=1|no hairpin client' 'dpdk-pure@RTT_GAP_US=1000|does not pace'; do
+        why=$(mode_check "${c%|*}" remote arm64 aws '' cluster 2>&1)
+        echo "${c%|*} $? $(grep -cF -- "${c#*|}" <<<"$why")"
+    done
+    why=$(mode_check dpdk-raw@HAIRPIN=1 remote x86_64 azure '' 2>&1)
+    echo "azure $? $(grep -c 'AWS only' <<<"$why")"
+    why=$(mode_check kernel@RTT_GAP_US=1000 local arm64 aws '' cluster 2>&1)
+    echo "local $? $(grep -c 'cross-host' <<<"$why")"
+    for m in dpdk dpdk@RTT_GAP_US=1000 dpdk@RTT_GAP_US=50000 kernel-raw@RTT_GAP_US=200000 dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000 dpdk@RTT_GAP_US=100; do
+        echo "plan $m $(rtt_plan "$m" 300000 50000)"
+    done
+    echo "plan few $(rtt_plan dpdk@RTT_GAP_US=50000 500 10)"
+    for t in c9g.2xlarge c9g.xlarge c9g.large c8g.medium; do
+        hairpin_types_check dpdk-raw@HAIRPIN=1 aws "$t" >/dev/null 2>&1
+        echo "type $t $?"
+    done
+    why=$(hairpin_types_check dpdk-raw@HAIRPIN=1 aws c9g.large 2>&1)
+    echo "said $(grep -c 'four' <<<"$why")"
+    # host b sets the mode up too (vm.sh driver, ready): its type checked as well
+    hairpin_types_check dpdk-raw@HAIRPIN=1 aws c9g.xlarge c9g.large >/dev/null 2>&1
+    echo "type b $?"
+    hairpin_types_check dpdk-raw aws c9g.large
+    echo "cross $?"
+)
+want="dpdk-raw@HAIRPIN=1 0 hairpin
+kernel-raw@HAIRPIN=1 0 hairpin
+dpdk-raw-mono@HAIRPIN=1 0 hairpin
+dpdk-raw@HAIRPIN=1@RTT_GAP_US=50000 0 hairpin
+dpdk@RTT_GAP_US=1000 0 cross
+kernel-raw@RTT_GAP_US=1000000 0 cross
+dpdk-raw 0 cross
+dpdk@HAIRPIN=1 2 1
+kernel-busy@HAIRPIN=1 2 1
+dpdk-raw@HAIRPIN=2 2 1
+dpdk-raw@HAIRPIN=1@HAIRPIN=1 2 1
+dpdk@RTT_GAP_US=0 2 1
+dpdk@RTT_GAP_US=1000001 2 1
+dpdk@RTT_GAP_US=5ms 2 1
+dpdk@RTT_GAP_US=1000@RTT_GAP_US=2000 2 1
+dpdk-pure@HAIRPIN=1 2 1
+dpdk-pure@RTT_GAP_US=1000 2 1
+azure 2 1
+local 2 1
+plan dpdk 20 300000 50000
+plan dpdk@RTT_GAP_US=1000 20 20000 2000
+plan dpdk@RTT_GAP_US=50000 60 1200 40
+plan kernel-raw@RTT_GAP_US=200000 60 300 10
+plan dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000 60 60 2
+plan dpdk@RTT_GAP_US=100 20 200000 20000
+plan few 60 500 10
+type c9g.2xlarge 0
+type c9g.xlarge 0
+type c9g.large 2
+type c8g.medium 2
+said 1
+type b 2
+cross 0"
+if [[ $hsmodes == "$want" ]]; then
+    pass "modes.sh: @HAIRPIN=1 on the raw floor's modes only (AWS, cross-host lists, once) and @RTT_GAP_US=1 to 1000000 (once, not localhost), each refusal said; a paced rep's seconds, round trips and warm-up; four cores on host a for a hairpin"
+else
+    fail "modes.sh: the hairpin and sparse round trips"
+    diff -u <(echo "$want") <(echo "$hsmodes") >&2 || true
+fi
+
+# The raw floor's keep-alives (@KEEPALIVE_US) and cold-cache flush
+# (@FLUSH_KB): modes.sh takes them on kernel-raw and dpdk-raw only, each with
+# @RTT_GAP_US, once; a keep-alive at most half the gap and over 50 us under
+# it, a flush of at most 1 GiB with a gap of 10 ms or more; each refusal says
+# why
+kfmodes=$(
+    set +e
+    exec 2>&1
+    # shellcheck source=../modes.sh
+    . "$cloud/modes.sh" || exit 1
+    for m in dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100 kernel-raw@RTT_GAP_US=10000@KEEPALIVE_US=100 \
+        dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536 dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000@KEEPALIVE_US=100; do
+        mode_check "$m" remote arm64 aws '' cluster >/dev/null
+        echo "$m $?"
+    done
+    for c in 'dpdk@RTT_GAP_US=1000000@KEEPALIVE_US=100|the raw floor' 'dpdk-raw@KEEPALIVE_US=100|needs @RTT_GAP_US' \
+        'dpdk-raw@RTT_GAP_US=150@KEEPALIVE_US=100|at most half the gap' 'dpdk-raw@RTT_GAP_US=1000@FLUSH_KB=1024|10 ms or more' \
+        'dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=2000000|at most 1048576' 'dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=0|a whole number from 1' \
+        'dpdk-pure@RTT_GAP_US=10000@FLUSH_KB=1024|does not pace' \
+        'dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100@KEEPALIVE_US=200|one KEEPALIVE_US at most'; do
+        why=$(mode_check "${c%|*}" remote arm64 aws '' cluster 2>&1)
+        echo "${c%|*} $? $(grep -cF -- "${c#*|}" <<<"$why")"
+    done
+)
+want="dpdk-raw@RTT_GAP_US=1000000@KEEPALIVE_US=100 0
+kernel-raw@RTT_GAP_US=10000@KEEPALIVE_US=100 0
+dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=65536 0
+dpdk-raw@HAIRPIN=1@RTT_GAP_US=1000000@KEEPALIVE_US=100 0
+dpdk@RTT_GAP_US=1000000@KEEPALIVE_US=100 2 1
+dpdk-raw@KEEPALIVE_US=100 2 1
+dpdk-raw@RTT_GAP_US=150@KEEPALIVE_US=100 2 1
+dpdk-raw@RTT_GAP_US=1000@FLUSH_KB=1024 2 1
+dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=2000000 2 1
+dpdk-raw@RTT_GAP_US=10000@FLUSH_KB=0 2 1
+dpdk-pure@RTT_GAP_US=10000@FLUSH_KB=1024 2 1
+dpdk-raw@RTT_GAP_US=10000@KEEPALIVE_US=100@KEEPALIVE_US=200 2 1"
+if [[ $kfmodes == "$want" ]]; then
+    pass "modes.sh: @KEEPALIVE_US and @FLUSH_KB on the raw floor's paced modes only, within the gap, once, each refusal said"
+else
+    fail "modes.sh: keep-alives and the cache flush"
+    diff -u <(echo "$want") <(echo "$kfmodes") >&2 || true
+fi
+
+# lib.sh dry with a hairpin and paced modes: a hairpin rep is one floor
+# client on VM a (floor xhairpin: the pong listens on a's receiver NIC, the
+# ping on a's sender NIC; ping on the app CPU, pong on the receiver's), no
+# client on b, both loop-stall files from a; a paced mode's clients get
+# RTT_GAP_US, RTT_SECONDS from rtt_plan (60 s at 50 ms), its round trips and
+# warm-up, and deadlines stretched to fit; an unpaced mode as before
+cat >"$tmp/dry-hs.sh" <<'SH'
+set -uo pipefail
+cloud=$1 out=$2
+known=$out/known_hosts user=admin A=192.0.2.1 B=192.0.2.2
+log() { echo "$*" >>"$out/log"; }
+die() { log "ERROR: $*"; exit 1; }
+. "$cloud/lib.sh"
+sleep() { :; }
+label() { local l=${1#*client }; echo "${l%% *}"; }
+on() {
+    local host=$1 cmd
+    shift
+    cmd=$*
+    printf '%s %s\n' "$host" "$cmd" >>"$out/calls"
+    case $cmd in
+    *"vm.sh nics")
+        if [[ $host == "$A" ]]; then
+            printf 'sender ens6 ens6 0c 10.30.1.4 24 0000:00:06.0\nreceiver ens7 ens7 0d 10.30.1.5 24 0000:00:07.0\n'
+        else
+            printf 'sender ens6 ens6 0e 10.30.1.6 24 0000:00:06.0\nreceiver ens7 ens7 0f 10.30.1.7 24 0000:00:07.0\n'
+        fi
+        ;;
+    *"vm.sh layout") echo "0 2 1 3 4" ;;
+    *"vm.sh loss") echo "kernel-udp-InErrors=0;nic-kernel-drops=0" ;;
+    *" floor xping "* | *" floor xhairpin "* | *" rtt xping "*) echo "rtt,$(label "$cmd"),udp,20000,21000,25000,30000,40000,75000,20500,1000,0" ;;
+    *" tput xsub "*) echo "tput,$(label "$cmd"),udp,1000,1,2,3,0,1,2" ;;
+    *"cat bench/load-spikes.csv") printf '# start_realtime_ns=1\n# spikes_total=0\nstream,due_ns,latency_ns,ping\n' ;;
+    *"cat bench/stalls-pong.csv") printf '# start_realtime_ns=1\nend_ns,gap_ns\n' ;;
+    esac
+    return 0
+}
+reps=1 local_modes= load_sizes= load_fractions= load_seconds=1 load_ladder= mix= mix_seconds=1
+tput_seconds=5 rtt_messages=1000 rtt_warmup=100 rtt_align= tput_flows=0 no_flatout=1
+modes=(dpdk-raw@HAIRPIN=1 kernel-raw@HAIRPIN=1@RTT_GAP_US=50000 dpdk@RTT_GAP_US=1000)
+bench_state isolated
+SH
+dhs=$tmp/dry-hs
+mkdir -p "$dhs"
+bash "$tmp/dry-hs.sh" "$cloud" "$dhs" </dev/null 2>"$dhs/stderr" || fail "lib.sh dry run with the hairpin and paced modes exited $?"
+hs_calls() { # <mode>: the clients its rep ran (sorted)
+    grep "client isolated:$1 " "$dhs/calls" | sort | sed -E 's/LOAD_SPIKE_NS=[0-9]+ //; s/LOOP_STALL_NS=[0-9]+ //'
+}
+got=$(hs_calls dpdk-raw@HAIRPIN=1; hs_calls kernel-raw@HAIRPIN=1@RTT_GAP_US=50000; hs_calls dpdk@RTT_GAP_US=1000)
+want="192.0.2.1 RTT_SECONDS=20 LAB_CLIENT_DEADLINE=112 ergon/md-dpdk/benches/cloud/vm.sh client isolated:dpdk-raw@HAIRPIN=1 floor xhairpin 10.30.1.5:20123 10.30.1.4:20124 1000 100 2 3
+192.0.2.1 RTT_GAP_US=50000 RTT_SECONDS=60 LAB_CLIENT_DEADLINE=212 ergon/md-dpdk/benches/cloud/vm.sh client isolated:kernel-raw@HAIRPIN=1@RTT_GAP_US=50000 floor xhairpin 10.30.1.5:20123 10.30.1.4:20124 1000 40 2 3
+192.0.2.1 RTT_GAP_US=1000 RTT_SECONDS=20 LAB_CLIENT_DEADLINE=112 ergon/md-dpdk/benches/cloud/vm.sh client isolated:dpdk@RTT_GAP_US=1000 rtt xping 10.30.1.7:20123 10.30.1.5:20124 1000 100 2
+192.0.2.2 LAB_CLIENT_DEADLINE=142 ergon/md-dpdk/benches/cloud/vm.sh client isolated:dpdk@RTT_GAP_US=1000 rtt xpong 10.30.1.7:20123 10.30.1.5:20124 2"
+hairpin_after=$(awk '/client isolated:dpdk-raw@HAIRPIN=1 floor xhairpin /{on = 1; next} on && /cat bench\/stalls-pong.csv/ {print $1; exit}' "$dhs/calls")
+if grep -E 'unbound variable|command not found|syntax error' "$dhs/stderr"; then
+    fail "lib.sh dry with the hairpin and paced modes: shell errors"
+elif [[ $got != "$want" ]]; then
+    fail "lib.sh dry with the hairpin and paced modes: the clients run"
+    diff -u <(echo "$want") <(echo "$got") >&2 || true
+elif grep -q ERROR "$dhs/log" || [[ $(grep -c '^1,rtt,isolated:' "$dhs/results.csv") != 3 ]]; then
+    fail "lib.sh dry with the hairpin and paced modes: their rtt rows: $(tail -2 "$dhs/log")"
+elif [[ $hairpin_after != 192.0.2.1 ]] || grep -q "192.0.2.2 sudo pkill -f '/\[f\]loor" "$dhs/calls" ||
+    [[ ! -s $dhs/stalls-pong-isolated-dpdk-raw@HAIRPIN=1-1.csv ]]; then
+    fail "lib.sh dry with a hairpin: the pong's stalls not from a, or a pong ended on b ($hairpin_after)"
+else
+    pass "lib.sh dry: a hairpin rep is one floor client on a over its own two NICs (pong on the receiver's CPU), its stalls from a; a paced mode's clients get RTT_GAP_US and rtt_plan's seconds, round trips, warm-up and deadlines"
+fi
+
+# vm.sh client: RTT_GAP_US reaches the client through sudo (0, unpaced,
+# without it); floor xhairpin takes the last run's spikes, histogram and
+# both loop-stall files away first, as xping and xpong do theirs
+gap_client() { # <environment>... -- <client args>...
+    local envs=()
+    while [[ $1 != -- ]]; do envs+=("$1"); shift; done
+    shift
+    : >"$sbc/log"
+    env -i PATH="$sbc/bin:$PATH" HOME="$sbc/home" FAKE_LOG="$sbc/log" FAKE_ARCH=x86_64 LAB_SYS_ROOT="$sys/aws-x86" ${envs[@]+"${envs[@]}"} \
+        bash "$cloud/vm.sh" client "$@" >"$sbc/out" 2>&1
+    echo "rc $? $(grep '^sudo ' "$sbc/log" | tail -1)"
+}
+rm -f "$sbc/home/bench/harness_driver" "$sbc/home/bench/driver.env"
+paced_client=$(gap_client RTT_GAP_US=50000 -- isolated:dpdk@RTT_GAP_US=50000 rtt xping 10.30.1.7:20123 10.30.1.5:20124 10 1 2)
+unpaced_client=$(gap_client -- isolated:dpdk rtt xping 10.30.1.7:20123 10.30.1.5:20124 10 1 2)
+echo dpdk >"$sbc/home/bench/floor"
+for f in stalls-ping.csv stalls-pong.csv load-spikes.csv rtt-histogram.csv; do : >"$sbc/home/bench/$f"; done
+hairpin_client=$(gap_client -- isolated:dpdk-raw@HAIRPIN=1 floor xhairpin 10.30.1.5:20123 10.30.1.4:20124 10 1 2 3)
+left=$(cd "$sbc/home/bench" && { ls stalls-ping.csv stalls-pong.csv load-spikes.csv rtt-histogram.csv 2>/dev/null || true; } | tr '\n' ' ')
+rm -f "$sbc/home/bench/floor"
+if [[ $paced_client != *" RTT_GAP_US=50000 "* || $unpaced_client != *" RTT_GAP_US=0 "* ]]; then
+    fail "vm.sh client: RTT_GAP_US: paced [$paced_client] unpaced [$unpaced_client]"
+elif [[ $hairpin_client != "rc 0 "*"/target/release/floor xhairpin 10.30.1.5:20123 10.30.1.4:20124 10 1 2 3" || -n $left ]]; then
+    fail "vm.sh client floor xhairpin: [$hairpin_client], left: $left"
+else
+    pass "vm.sh client: RTT_GAP_US through sudo (0 without it); floor xhairpin with the last run's files taken away"
+fi
+
+# vm.sh host_setting HAIRPIN=1 (vm.sh driver, a raw floor mode): the pong's
+# CPU is the layout's receiver core, which the raw floor leaves free
+# (recorded for the run); on the kernel wire the kernel would deliver a's
+# own address over loopback, so the mode routes each end's sends out of its
+# own NIC (a rule for each direction before the local table, which moves
+# from priority 0 to 50; accept_local and no reverse-path filter on the data
+# NICs, which then receive their own host's packets), checked by ip route
+# get both ways (fail closed, everything put back); restore_host puts the
+# local table back at 0 before its moved rule goes, the rules and sysctls
+# as they were. Refused off the raw floor, off AWS and without a receiver core
+hs=$tmp/hairpin-setting
+mkdir -p "$hs/bench"
+hairpin_sb() { # <floor wire> <cloud> <receiver cpu> <route get answer>: "<rc> | <calls> | <bench/hairpin>"
+    (
+        set +e
+        exec 2>&1
+        # shellcheck source=../modes.sh
+        . "$cloud/modes.sh" || exit 1
+        eval "$(for f in save_host host_setting restore_host; do vm_fn "$f"; done)"
+        run=$hs/bench CLOUD=$2 HK_CPU=0 APP_CPU=1 SENDER_CPU=2 RECEIVER_CPU=$3 APP2_CPU= threading=INVOKER floor_wire=$1
+        rm -rf "$run"/*
+        : >"$hs/calls"
+        nics() { printf 'sender ens6 ens6 0c 10.30.1.4 24 0000:00:06.0\nreceiver ens7 ens7 0d 10.30.1.5 24 0000:00:07.0\n'; }
+        sudo() { echo "$*" >>"$hs/calls"; }
+        sysctl() { echo 2; }
+        ip() {
+            if [[ $1 == route && $2 == get ]]; then
+                [[ $4 == from && $3 == 10.30.1.5 ]] && echo "${FAKE_FWD:-10.30.1.5 from 10.30.1.4 dev ens6 table 100 uid 0}"
+                [[ $4 == from && $3 == 10.30.1.4 ]] && echo "10.30.1.4 from 10.30.1.5 dev ens7 table 101 uid 0"
+            elif [[ $1 == rule && $2 == show ]]; then
+                echo "0:	from all lookup local"
+            fi
+        }
+        log() { :; }
+        rc=0
+        (FAKE_FWD=$4 host_setting HAIRPIN 1 kernel-busy) 2>"$hs/err" || rc=$?
+        echo "$rc | $(tr '\n' ';' <"$hs/calls") | $(cat "$run/hairpin" 2>/dev/null)"
+        : >"$hs/calls"
+        restore_host
+        echo "restored | $(tr '\n' ';' <"$hs/calls") | $(ls "$run/restore" 2>/dev/null | tr '\n' ' ')$(cat "$run/hairpin" 2>/dev/null)"
+        echo "said: $(tr '\n' ' ' <"$hs/err")"
+    )
+}
+kernel_on=$(hairpin_sb kernel aws 3 '')
+dpdk_on=$(hairpin_sb dpdk aws 3 '')
+looped=$(hairpin_sb kernel aws 3 'local 10.30.1.5 from 10.30.1.4 dev lo table local uid 0')
+off_floor=$(hairpin_sb '' aws 3 '')
+azure=$(hairpin_sb dpdk azure 3 '')
+no_cpu=$(hairpin_sb dpdk aws '' '')
+want_kernel="0 | sysctl -qw net.ipv4.conf.all.rp_filter=0 net.ipv4.conf.ens6.rp_filter=0 net.ipv4.conf.ens7.rp_filter=0 net.ipv4.conf.ens6.accept_local=1 net.ipv4.conf.ens7.accept_local=1;ip rule add priority 10 iif lo from 10.30.1.4 to 10.30.1.5 lookup 100;ip rule add priority 11 iif lo from 10.30.1.5 to 10.30.1.4 lookup 101;ip rule add priority 50 lookup local;ip rule del priority 0 lookup local; | 3
+restored | ip rule add priority 0 lookup local;ip rule del priority 50 lookup local;ip rule del priority 10;ip rule del priority 11;sysctl -qw net.ipv4.conf.all.rp_filter=2 net.ipv4.conf.ens6.rp_filter=2 net.ipv4.conf.ens7.rp_filter=2 net.ipv4.conf.ens6.accept_local=2 net.ipv4.conf.ens7.accept_local=2; | 
+said: "
+if [[ $kernel_on != "$want_kernel" ]]; then
+    fail "vm.sh host_setting HAIRPIN=1 on the kernel wire"
+    diff -u <(echo "$want_kernel") <(echo "$kernel_on") >&2 || true
+elif [[ $dpdk_on != "0 |  | 3
+restored |  | 
+said: " ]]; then
+    fail "vm.sh host_setting HAIRPIN=1 on the DPDK wire: $dpdk_on"
+elif [[ $looped != 1\ \|*"ip rule add priority 0 lookup local"*"| "$'\n'"restored |  | "* || $looped != *"over loopback"* ]]; then
+    fail "vm.sh host_setting HAIRPIN=1, a route still over loopback: $looped"
+elif [[ $off_floor != 2\ * || $off_floor != *"raw floor"* || $azure != 2\ * || $azure != *"AWS only"* || $no_cpu != 2\ * || $no_cpu != *"receiver core"* ]]; then
+    fail "vm.sh host_setting HAIRPIN=1 refusals: [$off_floor] [$azure] [$no_cpu]"
+else
+    pass "vm.sh host_setting HAIRPIN=1: the pong on the receiver core; on the kernel wire each end routed out of its own NIC, checked both ways (fail closed, put back), restored local table first; refused off the raw floor, off AWS, without a receiver core"
+fi
+
+# vm.sh data_kernel_up after HAIRPIN=1 (a later @RX_RING= in the same mode
+# brings the NICs up again): it removes an address's stale plain rule (the
+# NICs back in another order), never the hairpin's from/to rules, which would
+# put the round trip back over loopback unseen
+dku=$(
+    set +e
+    exec 2>&1
+    eval "$(vm_fn data_kernel_up)"
+    : >"$hs/dku-calls"
+    data_unmanaged() { :; }
+    nics() { printf 'sender ens6 ens6 0c 10.30.1.4 24 0000:00:06.0\nreceiver ens7 ens7 0d 10.30.1.5 24 0000:00:07.0\n'; }
+    policy_routes() { :; }
+    pin_irqs() { :; }
+    data_routes_missing() { echo 0; }
+    sudo() { echo "$*" >>"$hs/dku-calls"; }
+    ip() {
+        [[ $1 == rule && $2 == show ]] && printf '%s\n' "0:	from all lookup local" \
+            "10:	from 10.30.1.4 to 10.30.1.5 iif lo lookup 100" "11:	from 10.30.1.5 to 10.30.1.4 iif lo lookup 101" \
+            "50:	from all lookup local" "100:	from 10.30.1.4 lookup 100" "101:	from 10.30.1.5 lookup 101" \
+            "102:	from 10.30.1.5 lookup 100"
+        return 0
+    }
+    ARCH=x86_64 PEER_SUBNET=
+    data_kernel_up || echo "rc $?"
+    grep 'rule' "$hs/dku-calls" | tr '\n' ';'
+)
+if [[ $dku != "ip rule del priority 102 from 10.30.1.5 lookup 100;" ]]; then
+    fail "vm.sh data_kernel_up after HAIRPIN=1: rules changed: [$dku]"
+else
+    pass "vm.sh data_kernel_up: a stale plain rule removed, the hairpin's from/to rules kept"
+fi
+
+# vm.sh ready: a hairpin needs the layout's receiver core on host a (a
+# two-core host has none)
+# shellcheck disable=SC2016
+fake_cpus "$sys/c9g-l" 2 '$cpu'
+got="two cores: $(ready_sb c9g-l 7.2.6+deb13-cloud-arm64 dpdk-raw@HAIRPIN=1 dpdk-raw)
+four cores: $(ready_sb c8g-xl 7.2.6+deb13-cloud-arm64 dpdk-raw@HAIRPIN=1 kernel-raw@HAIRPIN=1)"
+if [[ $got != "two cores: 2 mode dpdk-raw@HAIRPIN=1: no receiver core on this host (its layout 0 1): the hairpin's pong runs there; four cores (c9g.xlarge and up)
+four cores: 0" ]]; then
+    fail "vm.sh ready with a hairpin: $got"
+else
+    pass "vm.sh ready: a hairpin refused on a host without the layout's receiver core, said before any state"
+fi
+
+# analyse.py: a hairpin and paced modes named for what they are; the hairpin
+# beside the cross-host floor of the same mode and state (its maxima there
+# too: below the fabric); round trips by gap, each beside the same mode
+# unpaced, p99.99 only from 10,000 round trips a rep; a paced Aeron mode's
+# floor is the floor paced alike; a hairpin is not set against the round
+# trip between the hosts, which it never crosses
+cat >"$tmp/hs-results.csv" <<'CSV'
+0,netrtt,isolated,40000,50000,60000,5000,200/200
+1,rtt,isolated:dpdk-raw,udp,15000,16000,20000,25000,35000,85000,15500,300000,0
+2,rtt,isolated:dpdk-raw,udp,15000,16000,20000,25000,35000,87000,15500,300000,0
+1,rtt,isolated:dpdk-raw@HAIRPIN=1,udp,9000,9500,11000,15000,30000,84000,9200,300000,0
+2,rtt,isolated:dpdk-raw@HAIRPIN=1,udp,9000,9500,11000,15000,30000,86000,9200,300000,0
+1,rtt,isolated:dpdk,udp,25000,26000,30000,35000,45000,72000,25500,300000,0
+1,rtt,isolated:dpdk@RTT_GAP_US=1000,udp,26000,27000,31000,36000,46000,90000,26500,20000,0
+1,rtt,isolated:dpdk@RTT_GAP_US=50000,udp,28000,29000,40000,50000,60000,100000,28500,1200,0
+1,rtt,isolated:dpdk-raw@RTT_GAP_US=50000,udp,18000,19000,30000,40000,50000,95000,18500,1200,0
+CSV
+hs_md=$(python3 "$cloud/analyse.py" "$tmp/hs-results.csv" 2>&1 || true)
+hp=$(section "## Same-host hairpin against the cross-host round trip (µs)" <<<"$hs_md" | tr -s ' ')
+sp=$(section "## Sparse round trips by gap (µs)" <<<"$hs_md" | tr -s ' ')
+fl=$(section "## UDP round trip above the raw floor (µs)" <<<"$hs_md" | tr -s ' ')
+net=$(section "## UDP round trip above the network's own (µs)" <<<"$hs_md")
+if [[ $hs_md != *"| isolated, DPDK packet path, no Aeron (raw floor), same-host hairpin (HAIRPIN=1) "* ||
+    $hs_md != *"| isolated, DPDK, one round trip every 50 ms (RTT_GAP_US=50000) "* ]]; then
+    fail "analyse.py: the hairpin's and paced modes' names: $(grep -m3 'HAIRPIN\|RTT_GAP' <<<"$hs_md")"
+elif [[ $hp != *"| isolated, DPDK packet path, no Aeron (raw floor) | 2 | 2 | 9.00 (9.00–9.00) | 15.00 (15.00–15.00) | 30.00 (30.00–30.00) | 35.00 (35.00–35.00) | 85.00 (84.00–86.00) | 86.00 (85.00–87.00) |"* ]]; then
+    fail "analyse.py: the hairpin table"
+    echo "$hp" >&2
+elif [[ $sp != *"| isolated, DPDK | none | 1 | 300,000 | 25.00 (25.00–25.00) | 30.00 (30.00–30.00) | 45.00 (45.00–45.00) | 72.00 (72.00–72.00) |"* ||
+    $sp != *"| isolated, DPDK | 1 ms | 1 | 20,000 | 26.00 (26.00–26.00) | 31.00 (31.00–31.00) | 46.00 (46.00–46.00) | 90.00 (90.00–90.00) |"* ||
+    $sp != *"| isolated, DPDK | 50 ms | 1 | 1,200 | 28.00 (28.00–28.00) | 40.00 (40.00–40.00) | n/a (under 10,000) | 100.00 (100.00–100.00) |"* ||
+    $sp != *"| isolated, DPDK packet path, no Aeron (raw floor) | 50 ms | 1 | 1,200 |"* || $sp == *HAIRPIN* ]]; then
+    fail "analyse.py: the sparse table"
+    echo "$sp" >&2
+elif [[ $fl != *"| isolated, DPDK, one round trip every 50 ms (RTT_GAP_US=50000) | DPDK packet path, no Aeron (raw floor), one round trip every 50 ms (RTT_GAP_US=50000) | 1 | 10.00 (10.00–10.00) "* ||
+    $fl == *"RTT_GAP_US=1000)"*"| 1 |"* || $fl == *"HAIRPIN"* ]]; then
+    fail "analyse.py: a paced mode's floor"
+    echo "$fl" >&2
+elif [[ $net != *"| isolated, DPDK packet path, no Aeron (raw floor) "* || $net == *HAIRPIN* ]]; then
+    fail "analyse.py: a hairpin above the network's own round trip between the hosts, which it never crosses"
+    echo "$net" >&2
+else
+    pass "analyse.py: the hairpin and paced modes named; the hairpin beside its cross-host floor; round trips by gap beside unpaced (p99.99 from 10,000 a rep); a paced mode above its floor paced alike"
+fi
+# a paced mode with an idle localhost subscription (<mode>@RTT_GAP_US=<us>+idle,
+# which modes.sh takes): its gap read, named, and set beside the same +idle
+# mode unpaced
+cat >"$tmp/hs-idle.csv" <<'CSV'
+0,netrtt,isolated,40000,50000,60000,5000,200/200
+1,rtt,isolated:dpdk+idle,udp,25000,26000,30000,35000,45000,72000,25500,300000,0
+1,rtt,isolated:dpdk@RTT_GAP_US=1000+idle,udp,26000,27000,31000,36000,46000,90000,26500,20000,0
+CSV
+hs_idle=$(python3 "$cloud/analyse.py" "$tmp/hs-idle.csv" 2>&1 || true)
+sp_idle=$(section "## Sparse round trips by gap (µs)" <<<"$hs_idle" | tr -s ' ')
+if [[ $sp_idle != *"| isolated, DPDK, idle localhost subscription | none | 1 | 300,000 |"* ||
+    $sp_idle != *"| isolated, DPDK, idle localhost subscription | 1 ms | 1 | 20,000 |"* ||
+    $hs_idle != *"| isolated, DPDK, idle localhost subscription, one round trip every 1 ms (RTT_GAP_US=1000) "* ]]; then
+    fail "analyse.py: a paced +idle mode"
+    echo "$sp_idle" >&2
+else
+    pass "analyse.py: a paced +idle mode named, beside the same +idle mode unpaced"
+fi
+
+# spikes.py: a hairpin's spikes are host a's alone (b plays no part: its
+# spinner's gap at that moment is no cause), and a paced run's length for the
+# chance baseline is its pings times the gap, not the sum of its round trips
+hsd=$tmp/hs-spikes/isolated
+mkdir -p "$hsd"
+python3 - "$hsd" <<'EOF'
+import os, sys
+d = sys.argv[1]
+W0 = 2_000_000_000
+for host in "ab":
+    with open(os.path.join(d, "..", f"{host}-diag-isolated.log"), "w") as f:
+        f.write("== gapspin\n# cpu=5 ns_per_tick=1.000000 threshold_us=10 counter_hz=1000000000\n")
+        if host == "b":
+            f.write(f"{W0 + 1.000400:.6f} 400\n")
+        f.write("== trace\n== drains\n== ipmon\n== knoise\n")
+for mode in ("dpdk-raw@HAIRPIN=1", "dpdk-raw"):
+    with open(os.path.join(d, f"spikes-isolated-{mode}-rtt-1.csv"), "w") as f:
+        f.write(f"# start_realtime_ns={W0 * 1_000_000_000}\n# spikes_total=1\nstream,due_ns,latency_ns,ping\n")
+        f.write("1002,1000000000,500000,7\n")
+for m in ("dpdk-raw@RTT_GAP_US=50000", "dpdk@RTT_GAP_US=50000+idle"):
+    with open(os.path.join(d, f"histogram-isolated-{m}-1.csv"), "w") as f:
+        f.write("value_ns,count\n20000,1000\n30000,200\n")
+EOF
+hs_out=$(python3 "$cloud/spikes.py" "$hsd" 2>&1 || true)
+hs_len=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import spikes
+print(spikes.run_length(sys.argv[2], "isolated-dpdk-raw@RTT_GAP_US=50000-1", 0.0, 1.0),
+      spikes.run_length(sys.argv[2], "isolated-dpdk@RTT_GAP_US=50000+idle-1", 0.0, 1.0))' "$cloud" "$hsd")
+if [[ $hs_out != *"| isolated-dpdk-raw-rtt | 500: host stall (b)"* || $hs_out != *"| isolated-dpdk-raw@HAIRPIN=1-rtt | 500: unexplained"* ]]; then
+    fail "spikes.py: a hairpin's spikes judged on host a alone"
+    grep 'isolated-dpdk' <<<"$hs_out" >&2 || echo "$hs_out" >&2
+elif [[ $hs_len != "60.0 60.0" ]]; then
+    fail "spikes.py run_length of a paced run (and a paced +idle one): $hs_len, not 1,200 pings x 50 ms = 60.0 s each"
+else
+    pass "spikes.py: a hairpin's spikes judged on host a alone; a paced run's length its pings times the gap"
+fi
+
+# estimate.py: a paced rep's round trip takes rtt_plan's seconds (60 s at
+# 50 ms: 40 s and its warm-up's 10 s more than an unpaced one's) and sends
+# its round trips and warm-up; a hairpin sends nothing between the hosts
+est=$(python3 - "$cloud" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+import estimate as e
+args = dict(type_a="c9g.2xlarge", type_b="c9g.2xlarge", placement="cluster", reps=1, local_modes=[], states=["pinned"],
+            load_sizes=[], load_fractions=[], load_ladder={}, load_seconds=5, mix=[], mix_seconds=5,
+            tput_seconds=5, tput_flows=0, rtt_messages=300000, rtt_warmup=50000, no_flatout=True, max_hours=8)
+fixed = e.SETUP_S + e.TEARDOWN_S + e.STATE_S["pinned"]
+raw = e.estimate(modes=["dpdk-raw"], **args)
+paced = e.estimate(modes=["dpdk-raw@RTT_GAP_US=50000"], **args)
+hairpin = e.estimate(modes=["dpdk-raw@HAIRPIN=1@RTT_GAP_US=50000"], **args)
+print(e.rtt_plan("dpdk@RTT_GAP_US=50000", 300000, 50000), e.rtt_plan("dpdk", 300000, 50000),
+      paced["wall_s"] - raw["wall_s"], paced["bytes_ab"] == (1200 + 40) * (e.RTT_SIZE + e.WIRE_OVERHEAD),
+      hairpin["bytes_ab"], hairpin["bytes_ba"], hairpin["wall_s"] == paced["wall_s"])
+PY
+)
+if [[ $est == "(60, 1200, 40) (20, 300000, 50000) 50 True 0 0 True" ]]; then
+    pass "estimate.py: a paced rep's round trip by rtt_plan (seconds, round trips, warm-up); a hairpin sends nothing between the hosts"
+else
+    fail "estimate.py with the hairpin and paced modes: $est"
+fi
+
+# azure/lab.sh, against a fake az first on PATH that logs every call
+# ($FAKE_AZ_LOG) and keeps the one resource group's state in $FAKE_AZ_STATE:
+# a group created (its run tag kept), shown, listed and deleted; each
+# VM size's quota family (list-skus) and the family's and the region's vCPU
+# use and limit (list-usage) printed as azure-cli 2.91 prints a top-level
+# list, one value per line (FAKE_AZ_TABS=1: tab-separated, as earlier ones);
+# a public address never found (FAKE_AZ_IP_RC), so a run stops right after
+# its VMs are created and tears down.
+mkdir -p "$tmp/fakeaz" "$tmp/azstate" "$tmp/azrepo"
+cat >"$tmp/fakeaz/az" <<'FAKEAZ'
+#!/usr/bin/env bash
+st=${FAKE_AZ_STATE:?}
+echo "az $*" >>"${FAKE_AZ_LOG:?}"
+emit() { if [[ ${FAKE_AZ_TABS:-} == 1 ]]; then (IFS=$'\t'; echo "$*"); else printf '%s\n' "$@"; fi; }
+case "$*" in
+"account show"*) exit 0 ;;
+"group exists"*) [[ -f $st/group ]] && echo true || echo false ;;
+"group create"*) touch "$st/group"; [[ $* =~ run=([^ ]+) ]] && echo "${BASH_REMATCH[1]}" >"$st/run"; exit "${FAKE_AZ_CREATE_RC:-0}" ;;
+"group delete"*) rm -f "$st/group" ;;
+"group wait"*) ;;
+"group show"*) [[ -f $st/group ]] || exit 3; cat "$st/run" ;;
+"vm list-skus"*MaxNetworkInterfaces*) echo "${FAKE_AZ_NICS:-8}" ;;
+"vm list-skus"*)
+    case "$*" in
+    *Standard_D8ps_v6* | *Standard_D16ps_v6*) echo standardDPSv6Family ;;
+    *Standard_D8s_v6* | *Standard_D16s_v6*) echo standardDSv6Family ;;
+    esac ;;
+"vm list-usage"*)
+    case "$*" in
+    *"=='cores'"*) emit ${FAKE_AZ_CORES:-10 200} ;;
+    *standardDPSv6Family*) emit ${FAKE_AZ_FAMILY:-4 100} ;;
+    *standardDSv6Family*) emit 0 100 ;;
+    esac ;;
+"resource list --tag"*) if [[ -f $st/group ]]; then echo 2; else echo "${FAKE_AZ_LEFT:-0}"; fi ;;
+"resource list"*) [[ -f $st/group ]] && printf 'Microsoft.Network/virtualNetworks\tvnet\nMicrosoft.Compute/virtualMachines\ta\n' ;;
+"network public-ip show"*) exit "${FAKE_AZ_IP_RC:-1}" ;;
+"disk show"*) [[ $* =~ -n\ ([^ ]+) ]] && echo "/subscriptions/0/resourceGroups/g/providers/Microsoft.Compute/disks/${BASH_REMATCH[1]}" ;;
+esac
+exit 0
+FAKEAZ
+chmod +x "$tmp/fakeaz/az"
+# every az below is the fake (a real one would query the account)
+saved_path=$PATH
+export PATH="$tmp/fakeaz:$PATH" FAKE_AZ_STATE=$tmp/azstate FAKE_AZ_LOG=$tmp/az-calls
+
+# modes.sh type_cores: one thread a core on Azure's sizes without SMT (AMD's
+# Fasv6, Cobalt 100's Dpsv6, Dplsv6, Dpdsv6 and Epsv6), two on the rest
+az_cores=$(. "$cloud/modes.sh"; echo "$(type_cores azure Standard_F8as_v6) $(type_cores azure Standard_F16as_v6) $(type_cores azure Standard_D8ps_v6) $(type_cores azure Standard_D8pls_v6) $(type_cores azure Standard_D8pds_v6) $(type_cores azure Standard_E8ps_v6) $(type_cores azure Standard_D8s_v6) $(type_cores azure Standard_D8as_v6)")
+if [[ $az_cores == "8 16 8 8 8 8 4 4" ]]; then
+    pass "modes.sh type_cores: Azure's Fasv6 and Cobalt 100 sizes one thread a core, the D v6 and Dasv6 two"
+else
+    fail "modes.sh type_cores on Azure: $az_cores, not 8 16 8 8 8 8 4 4"
+fi
+
+# azure/az.sh: a size's architecture and its Debian 13 image; az_words joins
+# a tsv list printed one value per line (azure-cli 2.91) or tab-separated;
+# the quota check reads each size's family and the region's vCPUs either way
+# and refuses a run they cannot hold, or a size the region does not offer
+az_helpers=$(
+    . "$cloud/azure/az.sh"
+    rc() { "$@" >/dev/null 2>&1; echo -n " $?"; }
+    echo "arch: $(azure_arch Standard_D8ps_v6) $(azure_arch Standard_D8s_v6) $(azure_arch Standard_E8ps_v6) $(azure_arch Standard_F8as_v6) $(azure_arch Standard_D16pls_v6)"
+    echo "image: $(azure_image arm64) $(azure_image x86_64)"
+    echo "words: [$(printf '4\n100\n' | az_words)] [$(printf '4\t100\n' | az_words)]"
+    echo "quota lines:$(rc azure_quota_check northcentralus Standard_D8ps_v6 Standard_D8ps_v6)"
+    azure_quota_check northcentralus Standard_D8ps_v6 Standard_D8ps_v6 2>&1
+    echo "quota tabs:$(FAKE_AZ_TABS=1 rc azure_quota_check northcentralus Standard_D8ps_v6 Standard_D8ps_v6)"
+    echo "quota family full:$(FAKE_AZ_FAMILY='90 100' rc azure_quota_check northcentralus Standard_D8ps_v6 Standard_D8ps_v6)"
+    FAKE_AZ_FAMILY='90 100' azure_quota_check northcentralus Standard_D8ps_v6 Standard_D8ps_v6 2>&1
+    echo "quota region full:$(FAKE_AZ_CORES='190 200' rc azure_quota_check northcentralus Standard_D8ps_v6 Standard_D8s_v6)"
+    echo "not offered:$(rc azure_quota_check northcentralus Standard_D8zz_v6)"
+) || true
+want_helpers="arch: arm64 x86_64 arm64 x86_64 arm64
+image: Debian:debian-13:13-arm64:latest Debian:debian-13:13-gen2:latest
+words: [4 100] [4 100]
+quota lines: 0
+quota: standardDPSv6Family 4 of 100 vCPUs in use, this run 16; the region 10 of 200, this run 16
+quota tabs: 0
+quota family full: 2
+quota: standardDPSv6Family in northcentralus: 90 of 100 vCPUs in use, and this run needs 16 more: delete what runs there or raise the quota
+quota region full: 2
+not offered: 2"
+if [[ $az_helpers == "$want_helpers" ]]; then
+    pass "azure/az.sh: the size's architecture and Debian 13 image; quota read from a one-value-a-line or tab-separated list, a full family or region refused"
+else
+    fail "azure/az.sh helpers"
+    diff -u <(echo "$want_helpers") <(echo "$az_helpers") >&2 || true
+fi
+
+# the backstop deletes the group at its deadline only while the group is
+# this run's (its run tag); the watch logs the group's resources each period
+mkdir -p "$tmp/fakedate"
+printf '#!/bin/sh\nif [ "$1" = +%%s ]; then n=$(cat "%s/date-calls" 2>/dev/null || echo 0); echo $((n + 1)) >"%s/date-calls"; s=$(/bin/date +%%s); [ "$n" -gt 0 ] && s=$((s + 100000)); echo "$s"; else exec /bin/date "$@"; fi\n' "$tmp" "$tmp" >"$tmp/fakedate/date"
+chmod +x "$tmp/fakedate/date"
+reap=$(
+    . "$cloud/azure/az.sh"
+    : >"$FAKE_AZ_LOG"
+    touch "$FAKE_AZ_STATE/group"; echo s1 >"$FAKE_AZ_STATE/run"
+    azure_reaper g1 s2 1 "$tmp/reaper-other.log" >/dev/null
+    for _ in $(seq 40); do grep -q . "$tmp/reaper-other.log" 2>/dev/null && break; sleep 0.25; done
+    echo -n "other: $([[ -f $FAKE_AZ_STATE/group ]] && echo kept || echo deleted)"
+    azure_reaper g1 s1 1 "$tmp/reaper-own.log" >/dev/null
+    for _ in $(seq 40); do [[ -f $FAKE_AZ_STATE/group ]] || break; sleep 0.25; done
+    echo -n "; own: $([[ -f $FAKE_AZ_STATE/group ]] && echo kept || echo deleted)"
+    echo -n "$(grep -q 'resource group g1 verified gone' "$tmp/reaper-own.log" && echo ', verified' || echo ', unverified')"
+    # a deadline in wall-clock time: a Mac asleep stops sleep's clock, so a
+    # sleep of the whole period would delete hours late. Here every date +%s
+    # after the first is 100000 s later, as after a night asleep.
+    touch "$FAKE_AZ_STATE/group"; echo s5 >"$FAKE_AZ_STATE/run"; rm -f "$tmp/date-calls"
+    pid=$(PATH="$tmp/fakedate:$PATH" AZ_REAPER_POLL=1 azure_reaper g5 s5 3600 "$tmp/reaper-asleep.log")
+    for _ in $(seq 40); do [[ -f $FAKE_AZ_STATE/group ]] || break; sleep 0.25; done
+    echo -n "; asleep: $([[ -f $FAKE_AZ_STATE/group ]] && echo kept || echo deleted)"
+    kill -TERM "$pid" 2>/dev/null
+    pid=$(AZ_REAPER_POLL=7200 azure_reaper g9 s9 3600 "$tmp/reaper-killed.log")
+    kill -TERM "$pid"; sleep 0.5
+    echo -n "; killed: $(pgrep -f 'ergon-lab-reaper 3600 g9' >/dev/null && echo alive || echo gone)$(pgrep -fx 'sleep 3600' >/dev/null && echo ', its sleep alive' || true)"
+    touch "$FAKE_AZ_STATE/group"
+    azure_watch g1 1 2>"$tmp/watch.log" &
+    w=$!
+    sleep 1.6
+    kill "$w"
+    echo "; watch: $(grep -c 'resources in g1: 2: Microsoft.Network/virtualNetworks/vnet Microsoft.Compute/virtualMachines/a$' "$tmp/watch.log")"
+    rm -f "$FAKE_AZ_STATE/group" "$FAKE_AZ_STATE/run"
+) || true
+if [[ $reap == "other: kept; own: deleted, verified; asleep: deleted; killed: gone; watch: 1" ]]; then
+    pass "azure/az.sh: the backstop deletes only its own run's group at the deadline, checks it gone, keeps its deadline in wall-clock time (through a sleep), and dies with its sleep when killed; the watch lists the group's resources"
+else
+    fail "azure/az.sh backstop and watch: $reap ($(cat "$tmp"/reaper-*.log 2>/dev/null))"
+fi
+
+# a whole run on Cobalt 100 (arm64), to the point its VMs exist: the quota
+# read before the group, every resource tagged owner=ergon-lab run=<stamp>
+# (the OS disks after their VMs), the arm64 Debian 13 image, a DPDK mode
+# accepted on arm64 (DPDK builds the MANA and netvsc PMDs for arm64 too),
+# each VM's auto-shutdown at the deadline (Azure's own: it stops the compute
+# billing with this machine asleep; the group's deletion is the backstop's),
+# the backstop started before the group and, once the group is verified gone,
+# stopped
+: >"$FAKE_AZ_LOG"
+rm -rf "$tmp/azrepo/target"
+env PATH="$tmp/fakeaz:$PATH" HOME="$tmp/commahome" TMPDIR="$tmp/commatmp" LAB_REPO="$tmp/azrepo" \
+    LAB_GROUP=ergon-lab-test LAB_SIZE=Standard_D8ps_v6 LAB_MODES="kernel dpdk" LAB_STATES=pinned LAB_REPS=1 \
+    LAB_SSH_FROM=203.0.113.9 LAB_DETACH=0 bash "$cloud/azure/lab.sh" >"$tmp/azrun.out" 2>&1 && azrc=0 || azrc=$?
+stamp=$(ls "$tmp/azrepo/target/md-dpdk-bench" 2>/dev/null | head -1 || true)
+creates=$(grep -E ' create |^az tag update ' "$FAKE_AZ_LOG" | grep -vE 'subnet create|nsg rule create' || true)
+untagged=$(grep -vF -- "--tags owner=ergon-lab run=$stamp" <<<"$creates" || true)
+reaper_pid=$(sed -n 's/.*backstop.*(pid \([0-9]*\)).*/\1/p' "$tmp/azrun.out" | head -1 || true)
+why=
+[[ $azrc != 0 ]] || why+=" exit 0;"
+[[ -n $stamp && $(grep -c . <<<"$creates") -ge 12 && -z $untagged ]] || why+=" untagged: [$untagged];"
+grep -q -- 'tag update --resource-id .*/disks/a-os --operation merge' "$FAKE_AZ_LOG" && grep -q -- 'tag update --resource-id .*/disks/b-os --operation merge' "$FAKE_AZ_LOG" || why+=" OS disks not tagged;"
+grep -q 'vm create.*--image Debian:debian-13:13-arm64:latest' "$FAKE_AZ_LOG" || why+=" no arm64 image;"
+off=$(date -u -v+8H +%H 2>/dev/null || date -u -d '+8 hours' +%H)
+grep -q "vm auto-shutdown -g ergon-lab-test -n a --time $off" "$FAKE_AZ_LOG" && grep -q "vm auto-shutdown -g ergon-lab-test -n b --time $off" "$FAKE_AZ_LOG" || why+=" no auto-shutdown at the deadline;"
+[[ -s $tmp/azrepo/target/md-dpdk-bench/$stamp/reaper.log || -f $tmp/azrepo/target/md-dpdk-bench/$stamp/reaper.log ]] || why+=" no backstop log;"
+[[ $(grep -n 'backstop:' "$tmp/azrun.out" | head -1 | cut -d: -f1) -lt $(grep -n 'creating ergon-lab-test' "$tmp/azrun.out" | cut -d: -f1) ]] 2>/dev/null || why+=" backstop not started before the group;"
+grep -q 'left tagged run=.*: 0$' "$tmp/azrun.out" || why+=" tagged leftovers not counted;"
+[[ $(grep -n 'vm list-usage' "$FAKE_AZ_LOG" | head -1 | cut -d: -f1) -lt $(grep -n 'group create' "$FAKE_AZ_LOG" | cut -d: -f1) ]] 2>/dev/null || why+=" quota not read before the group;"
+grep -q 'az group delete -n ergon-lab-test' "$FAKE_AZ_LOG" && grep -q 'verified: resource group ergon-lab-test no longer exists' "$tmp/azrun.out" || why+=" no verified delete;"
+[[ -n $reaper_pid ]] && ! kill -0 "$reaper_pid" 2>/dev/null || why+=" backstop [$reaper_pid] not started or left running;"
+! pgrep -f 'ergon-lab-reaper .* ergon-lab-test' >/dev/null || why+=" a backstop left running;"
+grep -q 'no public address' "$tmp/azrun.out" || why+=" no refusal of the missing address;"
+if [[ -z $why ]]; then
+    pass "azure/lab.sh on Cobalt 100: quota read first, every resource tagged owner=ergon-lab run=<stamp>, the arm64 image, a DPDK mode accepted, auto-shutdown at the deadline, the backstop started before the group and stopped once the group is verified gone"
+else
+    fail "azure/lab.sh run:$why $(tail -4 "$tmp/azrun.out")"
+fi
+rm -rf "$tmp/azrepo/target" "$FAKE_AZ_STATE"/*
+
+# fail closed: a group create that fails after making the group is still
+# deleted; resources still tagged run=<stamp> after it a WARNING; no backstop
+# (nohup fails) refused before the group exists; LAB_MAX_HOURS of a day or
+# more no auto-shutdown (a daily schedule would fire before the deadline)
+azrun() { # out-file vars...
+    local o=$1
+    shift
+    : >"$FAKE_AZ_LOG"
+    rm -rf "$tmp/azrepo/target" "$FAKE_AZ_STATE"/*
+    env PATH="$tmp/fakeaz:$PATH" HOME="$tmp/commahome" TMPDIR="$tmp/commatmp" LAB_REPO="$tmp/azrepo" \
+        LAB_GROUP=ergon-lab-test LAB_SIZE=Standard_D8s_v6 LAB_MODES=kernel LAB_STATES=pinned LAB_REPS=1 \
+        LAB_SSH_FROM=203.0.113.9 LAB_DETACH=0 "$@" bash "$cloud/azure/lab.sh" >"$o" 2>&1
+}
+why=
+azrun "$tmp/azrun-create.out" FAKE_AZ_CREATE_RC=1 FAKE_AZ_LEFT=1 && why+=" create failure exit 0;"
+grep -q 'az group delete -n ergon-lab-test' "$FAKE_AZ_LOG" && grep -q 'verified: resource group ergon-lab-test no longer exists' "$tmp/azrun-create.out" ||
+    why+=" a failed create not deleted;"
+grep -q 'WARNING: 1 resource(s) still tagged run=' "$tmp/azrun-create.out" || why+=" tagged leftovers not a WARNING;"
+mkdir -p "$tmp/fakenohup"
+printf '#!/bin/sh\nexit 1\n' >"$tmp/fakenohup/nohup"
+chmod +x "$tmp/fakenohup/nohup"
+azrun "$tmp/azrun-nohup.out" PATH="$tmp/fakenohup:$tmp/fakeaz:$PATH" && why+=" no backstop exit 0;"
+grep -q 'backstop' "$tmp/azrun-nohup.out" && ! grep -q 'group create' "$FAKE_AZ_LOG" || why+=" no backstop not refused before the group: $(tail -1 "$tmp/azrun-nohup.out");"
+azrun "$tmp/azrun-day.out" LAB_MAX_HOURS=30 || true
+! grep -q 'auto-shutdown' "$FAKE_AZ_LOG" && grep -q 'no auto-shutdown: LAB_MAX_HOURS=30' "$tmp/azrun-day.out" || why+=" auto-shutdown with LAB_MAX_HOURS=30;"
+if [[ -z $why ]]; then
+    pass "azure/lab.sh fails closed: a group whose create failed deleted, tagged leftovers a WARNING, no backstop refused before the group, no daily auto-shutdown before a deadline a day or more away"
+else
+    fail "azure/lab.sh fail-closed:$why"
+fi
+rm -rf "$tmp/azrepo/target" "$FAKE_AZ_STATE"/*
+
+# refused before any cloud call (the fake that logs to cloud-calls): sizes
+# of two architectures (one image for both); a plan longer than the backstop's
+# deadline. LAB_ESTIMATE=1 prints the hours and the sizes' prices, no call.
+for refused in "LAB_SIZE_A=Standard_D8ps_v6|LAB_SIZE_B=Standard_D8s_v6#one architecture" \
+    "LAB_REPS=40|LAB_MAX_HOURS=2#give LAB_MAX_HOURS="; do
+    IFS='|' read -ra vars <<<"${refused%#*}"
+    if env PATH="$tmp/fakebin:$PATH" HOME="$tmp/commahome" TMPDIR="$tmp/commatmp" LAB_REPO="$tmp/commarepo" \
+        "${vars[@]}" bash "$cloud/azure/lab.sh" >"$tmp/az.out" 2>&1; then
+        fail "azure/lab.sh ran with ${vars[*]}"
+    elif grep -qF -- "${refused##*#}" "$tmp/az.out" && [[ ! -s $tmp/cloud-calls ]]; then
+        pass "azure/lab.sh refuses ${vars[*]} before any cloud call (${refused##*#})"
+    else
+        fail "azure/lab.sh with ${vars[*]}: $(tail -2 "$tmp/az.out"; cat "$tmp/cloud-calls" 2>/dev/null)"
+    fi
+    rm -f "$tmp/cloud-calls"
+done
+est=$(env PATH="$tmp/fakebin:$PATH" HOME="$tmp/commahome" TMPDIR="$tmp/commatmp" LAB_REPO="$tmp/commarepo" \
+    LAB_ESTIMATE=1 LAB_SIZE=Standard_D8ps_v6 bash "$cloud/azure/lab.sh" 2>&1) && estrc=0 || estrc=$?
+if [[ $estrc == 0 && ! -s $tmp/cloud-calls && $est == *"wall time about "*" h"* && $est == *'Standard_D8ps_v6'* && $est == *'$0.281/h'* && $est == *'total about $'* ]]; then
+    pass "azure/lab.sh LAB_ESTIMATE=1: hours and dollars at the sizes' prices, no cloud call"
+else
+    fail "azure/lab.sh LAB_ESTIMATE=1 (exit $estrc): $est $(cat "$tmp/cloud-calls" 2>/dev/null)"
+fi
+rm -f "$tmp/cloud-calls"
+
+# a plan estimated over 2 h detaches (a nohup subshell, its parent 1, its
+# log in the run directory) and returns; here the detached run goes to its
+# teardown in its log (the fake az's missing address). az's sign-in is
+# checked before detaching, so a run that cannot start says so here, not in
+# a log nobody reads; LAB_DETACH=0 keeps it in the foreground.
+rm -rf "$tmp/commarepo/target" "$FAKE_AZ_STATE"/*
+det=$(env PATH="$tmp/fakeaz:$PATH" HOME="$tmp/commahome" TMPDIR="$tmp/commatmp" LAB_REPO="$tmp/commarepo" \
+    LAB_GROUP=ergon-lab-test LAB_SSH_FROM=203.0.113.9 LAB_REPS=12 LAB_MAX_HOURS=24 bash "$cloud/azure/lab.sh" 2>&1) && detrc=0 || detrc=$?
+detlog=$(ls "$tmp"/commarepo/target/md-dpdk-bench/*/lab.log 2>/dev/null | head -1 || true)
+for _ in $(seq 80); do [[ -n $detlog ]] && grep -q 'results:' "$detlog" && break; sleep 0.25; done
+for _ in $(seq 40); do [[ -z $(find "$tmp/commatmp" -mindepth 1 -maxdepth 1 -name 'ergon-lab.*') ]] && break; sleep 0.25; done
+detout=$(cat "$detlog" 2>/dev/null || true)
+rm -rf "$tmp/commarepo/target"
+nolog=$(env PATH="$tmp/fakebin:$PATH" HOME="$tmp/commahome" TMPDIR="$tmp/commatmp" LAB_REPO="$tmp/commarepo" \
+    LAB_REPS=12 LAB_MAX_HOURS=24 bash "$cloud/azure/lab.sh" 2>&1) && nologrc=0 || nologrc=$?
+fg=$(env PATH="$tmp/fakebin:$PATH" HOME="$tmp/commahome" TMPDIR="$tmp/commatmp" LAB_REPO="$tmp/commarepo" \
+    LAB_REPS=12 LAB_MAX_HOURS=24 LAB_DETACH=0 bash "$cloud/azure/lab.sh" 2>&1) && fgrc=0 || fgrc=$?
+if [[ $detrc == 0 && $det == *"detached"*"lab.log"* && -n $detlog && $detout == *'verified: resource group ergon-lab-test no longer exists'* &&
+    -z $(find "$tmp/commatmp" -mindepth 1 -maxdepth 1 -name 'ergon-lab.*') && $nologrc != 0 && $nolog == *'not logged in'* && $nolog != *detached* &&
+    -z $(ls "$tmp"/commarepo/target/md-dpdk-bench/*/lab.log 2>/dev/null) && $fgrc != 0 && $fg == *'not logged in'* ]]; then
+    pass "azure/lab.sh detaches a plan over 2 h into a nohup subshell logging to the run directory (its snapshot removed as it exits), after checking az's sign-in; LAB_DETACH=0 runs it in the foreground"
+else
+    fail "azure/lab.sh detach (exit $detrc): $det; log [$detlog] $(tail -2 <<<"$detout"); not signed in (exit $nologrc): $(tail -1 <<<"$nolog"); foreground (exit $fgrc): $(tail -1 <<<"$fg")"
+fi
+rm -rf "$tmp/commarepo/target" "$FAKE_AZ_STATE"/*
+rm -f "$tmp/cloud-calls"
+unset FAKE_AZ_STATE FAKE_AZ_LOG
+export PATH=$saved_path
+
+for script in vm.sh irqs.sh host.sh modes.sh lib.sh remote.sh transport.sh azure/lab.sh azure/az.sh aws/lab.sh test/purefloor-docker.sh test/test-transport.sh test/test-transport-runner.sh; do
     bash -n "$cloud/$script" && pass "bash -n $script" || fail "bash -n $script"
 done
-for script in analyse.py spikes.py estimate.py test/fake_aws.py; do
+# spikes.py's agent gap table: every agent loop gap the DPDK event log
+# stamped (<host>-rings-<run>.log), on its agent's CPU as the trace shows it
+# (its tid), labelled by a traced preemption, else the interrupts there (each
+# entry to its exit; their time inside the gap), else the spare CPU's spinner
+# gap on that host, else nothing the guest saw; a gap of a tid the trace never
+# showed not classed. The trace put on the wall clock through its two
+# ergon-anchor markers (1 ppm apart here: an offset alone would place the
+# second half 50 µs late), not /proc/uptime's line. Then the spinner's gaps
+# by size. vm.sh gapspin_us: bench/gapspin_us, else 50.
+gt=$tmp/gapcause/isolated
+mkdir -p "$gt"
+python3 - "$gt" <<'EOF'
+import os, sys
+root = sys.argv[1]
+S = 1_000_000_000
+W0 = 2_000_000_000  # the wall clock at trace time 1000 s
+def tr(wall):
+    """the trace's clock for a wall-clock second (1 ppm slow against it)"""
+    return f"{1000.0 + (wall - W0) / (1 + 1e-6):.6f}"
+def ns(wall):
+    return int(round(wall * S))
+trace = [
+    f"     python3-900     [001] .....  {tr(W0)}: tracing_mark_write: ergon-anchor {W0 * S}",
+    # receiver, tid 4242, on CPU 3: a timer tick of 3 µs, an IPI of 2 µs
+    f"    receiver-4242    [003] d.h1.  {tr(W0 + 10.000010)}: irq_handler_entry: irq=11 name=arch_timer",
+    f"    receiver-4242    [003] d.h1.  {tr(W0 + 10.000013)}: irq_handler_exit: irq=11 ret=handled",
+    f"    receiver-4242    [003] d.h1.  {tr(W0 + 60.000010)}: ipi_entry: (Function call interrupts)",
+    f"    receiver-4242    [003] d.h1.  {tr(W0 + 60.000012)}: ipi_exit: (Function call interrupts)",
+    # a kworker preempts it for 25 µs
+    f"    receiver-4242    [003] d..2.  {tr(W0 + 20.000005)}: sched_switch: prev_comm=receiver prev_pid=4242 prev_prio=120 prev_state=R+ ==> next_comm=kworker/3:1 next_pid=77 next_prio=120",
+    f" kworker/3:1-77      [003] d..2.  {tr(W0 + 20.000030)}: sched_switch: prev_comm=kworker/3:1 prev_pid=77 prev_prio=120 prev_state=I ==> next_comm=receiver next_pid=4242 next_prio=120",
+    f"     python3-901     [001] .....  {tr(W0 + 100.0)}: tracing_mark_write: ergon-anchor {(W0 + 100) * S}",
+]
+with open(os.path.join(root, "..", "a-diag-isolated.log"), "w") as f:
+    # spinner gaps: 15 µs, 30 µs (with the 40-µs agent gap at 40 s), 120 µs
+    f.write("== gapspin\n# cpu=5 ns_per_tick=1.000000 threshold_us=10 counter_hz=1000000000\n")
+    f.write(f"{W0 + 5.000015:.6f} 15\n{W0 + 40.000035:.6f} 30\n{W0 + 70.000120:.6f} 120\n")
+    # the uptime line 1 s off: used, every event would miss its gap
+    f.write("== trace\n" + "\n".join(trace) + f"\nUPTIME 1001.0 REALTIME {W0 + 0.0}\n== drains\n== ipmon\n== knoise\n")
+gaps = [
+    (W0 + 10.000020, 20000),  # [10.000000, 10.000020]: the tick
+    (W0 + 20.000040, 40000),  # [20.000000, 20.000040]: the preemption
+    (W0 + 40.000040, 40000),  # [40.000000, 40.000040]: the spinner's 30-µs gap
+    (W0 + 50.000025, 25000),  # nothing
+    (W0 + 60.000030, 30000),  # the IPI, 2 µs of it: an anchor's offset alone puts it 60 µs late
+]
+with open(os.path.join(root, "a-rings-isolated-dpdk@RUSTERON_DPDK_EVENT_LOG=x-1.log"), "w") as f:
+    f.write("# kind,tsc,realtime_ns,value_ns,port,agent\n")
+    for end, v in gaps:
+        f.write(f"gap,1,{ns(end)},{v},1,4242\n")
+    f.write(f"gap,1,{ns(W0 + 80.0)},22000,0,5555\n")  # a tid the trace never showed
+    f.write(f"arp-request,1,{ns(W0 + 30.0)},0,0,4242\n")
+EOF
+gapcause=$(python3 "$cloud/spikes.py" "$gt" 2>&1 | awk '/^## Agent loop gaps/{on=1} on')
+want='## Agent loop gaps by what overlapped them, isolated
+
+Every gap of an agent'"'"'s loop the DPDK event log stamped (modes with @RUSTERON_DPDK_EVENT_LOG), on the
+agent'"'"'s CPU: a traced preemption; else interrupts there (their time inside the gap); else a gap of the
+spare CPU'"'"'s spinner on the same host (the whole VM paused); else nothing the guest saw: the agent'"'"'s own
+work, or the hypervisor taking this vCPU alone. Lengths in µs: median (largest).
+
+| host | class | gaps | length | interrupt time inside | what |
+| --- | --- | --- | --- | --- | --- |
+| a | guest preemption | 1 | 40.0 (40.0) | 0.0 (0.0) | kworker/3:1 (1) |
+| a | interrupts | 2 | 30.0 (30.0) | 3.1 (3.1) | arch_timer (1), Function call interrupts (1) |
+| a | VM paused | 1 | 40.0 (40.0) | 0.0 (0.0) | spinner gap (1) |
+| a | nothing in the guest | 1 | 25.0 (25.0) | 0.0 (0.0) | - |
+
+a: 1 gaps of an agent the trace never showed (no CPU known): not classed.
+
+The spare CPU'"'"'s gap spinner, each host, the whole state (vm.sh diag-start; its threshold is the
+diag log'"'"'s threshold_us):
+
+| host | gaps | 10-20 µs | 20-50 µs | 50-100 µs | 100 µs or more | largest |
+| --- | --- | --- | --- | --- | --- | --- |
+| a | 3 | 1 | 1 | 0 | 1 | 120 |'
+spin_us=$(
+    run=$tmp/gapcause
+    eval "$(vm_fn gapspin_us)"
+    echo -n "$(gapspin_us)"
+    echo 10 >"$run/gapspin_us"; echo -n " $(gapspin_us)"
+    echo 0 >"$run/gapspin_us"; echo -n " $(gapspin_us)"
+    echo x >"$run/gapspin_us"; echo -n " $(gapspin_us)"
+)
+if [[ $gapcause != "$want" ]]; then
+    fail "spikes.py: agent loop gaps by cause"
+    diff -u <(echo "$want") <(echo "$gapcause") >&2 || true
+elif [[ $spin_us != "50 10 50 50" ]]; then
+    fail "vm.sh gapspin_us: $spin_us, not 50 10 50 50"
+else
+    pass "spikes.py: each agent loop gap labelled on its agent's CPU (preemption, interrupts timed entry to exit, the spinner's VM pause, nothing), the trace on the wall clock through its two anchors; the spinner's gaps by size; vm.sh gapspin_us"
+fi
+
+for script in analyse.py spikes.py estimate.py transport_plan.py test/fake_aws.py; do
     python3 -c 'import ast, sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' "$cloud/$script" &&
         pass "$script compiles" || fail "$script does not compile"
 done

@@ -112,14 +112,15 @@ fn all_reference_message_headers_follow_schema_byte_order() {
         ("uint64_vardata_be", "uint64-vardata-be-schema.xml", true),
     ];
 
-    for (key, schema_name, big_endian) in cases {
+    // Independent cases: run in parallel, fail with the first failing case.
+    common::parallel_map(&cases, |_, &(key, schema_name, big_endian)| {
         dual_header_decode_run(
             &format!("header_{key}"),
             &schema(schema_name),
             key,
             big_endian,
         );
-    }
+    });
 }
 
 /// sbe-tool's own regression schema uses a seven-byte message header with
@@ -3429,7 +3430,8 @@ fn code_generation_car() {
         // Compare just the header portion (both sides write the header immediately).
         let ergo_hdr = &ebuf[..8];
         let tool_hdr = &tbuf[..8];
-        assert_frames_eq("code_generation header", ergo_hdr, tool_hdr);
+        // A header alone is not a frame, so compare bytes without `validate()`.
+        assert_eq!(ergo_hdr, tool_hdr, "code_generation header");
         println!("PASS: code_generation_car");
         "###,
     );
@@ -3457,7 +3459,8 @@ fn dto_test_car() {
 
         let ergo_hdr = &ebuf[..8];
         let tool_hdr = &tbuf[..8];
-        assert_frames_eq("dto_test header", ergo_hdr, tool_hdr);
+        // A header alone is not a frame, so compare bytes without `validate()`.
+        assert_eq!(ergo_hdr, tool_hdr, "dto_test header");
         println!("PASS: dto_test_car");
         "###,
     );

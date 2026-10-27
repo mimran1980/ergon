@@ -5,7 +5,7 @@
 [![Book](https://img.shields.io/badge/book-mimran1980.github.io%2Fergon-blue)](https://mimran1980.github.io/ergon/io/overview.html)
 
 Network I/O for exchange clients on one busy-spinning thread: WebSocket and
-HTTP/1.1 over TLS 1.3.
+HTTP/1.1 over TLS 1.3, length-prefixed frames over plain TCP, and UDP.
 
 - One non-blocking `poll` moves bytes between your loop and the kernel.
 - The kernel interface (epoll or `io_uring`, with or without NIC polling) is
@@ -28,7 +28,7 @@ Which features to pick: see Features, below.
 
 | Use it for | Use something else for |
 |---|---|
-| A Linux thread that spins on its own core and owns 1 to a few hundred exchange connections (pick the backend by count: below) | An async application: tokio or mio |
+| A Linux thread that spins on its own core and owns 1 to a few hundred exchange connections (pick the backend by count: below) | An async application: tokio or mio. On Linux both use `epoll-spin`'s mechanism (`epoll_wait`, then read the ready sockets; tokio blocks in it when idle), [measured level and gated in CI](https://mimran1980.github.io/ergon/io/backends.html#mio-measured-not-a-backend); ergon-io adds the busy-spin loop, TLS, WebSocket, HTTP and the other backends |
 | A loop that must never sleep in the kernel | Production on macOS or Windows: the driver is Linux-only |
 | Fixed endpoints: HTTP/1.1 keep-alive, TLS 1.3 | HTTP/2 or 3, proxies, redirects, cookies, compression: the `curl` feature or a general client |
 
@@ -36,13 +36,15 @@ Which features to pick: see Features, below.
 
 | Part | What it does |
 |---|---|
-| `Driver` | Owns the connections. Each `poll` makes one pass (receive, decrypt, decode, deliver, send) and returns. |
-| `WsConn` | WebSocket client. `WsHandler::on_message` gets a slice of the receive buffer. |
+| `Driver` | Owns the connections. Each `poll` makes one pass (send what you queued, receive, decrypt, decode, deliver, send replies) and returns. |
+| `WsConn` | WebSocket client. `WsHandler::on_message` gets a slice of the receive buffer; `on_message_start` can skip a message or take a fragmented one as slices. |
 | `WsOptions` | WebSocket limits and timers. |
 | `Reconnect` | Optional. Reopens closed connections with backoff; you resubscribe. |
 | `HttpClient` | A pool of warm HTTP connections behind one API: native (fast) or libcurl (feature `curl`). |
 | `HttpConn` | One HTTP/1.1 keep-alive connection. |
 | `Signer` | Query-parameter request signing (HMAC-SHA256 or Ed25519), no allocation. |
+| `FrameConn` | `u32` little-endian length-prefixed frames over plain TCP: dialled (`FrameDial`) or an accepted socket (`from_stream`). Every backend. |
+| `UdpConn` | One UDP socket, connected or receive-only: whole datagrams from preallocated send slots. `epoll-spin` only. |
 
 ## Example: a WebSocket feed
 
@@ -121,25 +123,29 @@ how to change it: the book's
 
 ## Guarantees and limits
 
-- **Never sleeps** with `epoll-spin`, `recv-busy`, `uring-spin` or
-  `uring-sqpoll`. `epoll-busy` and `uring-napi` may wait up to `wait_us`.
+- **Never sleeps** in the kernel: `epoll-spin`, `recv-busy` and
+  `uring-sqpoll` all spin.
 - **One failure closes one connection.** It goes to `Handler::on_closed`;
   the others keep running. `poll` fails only when the backend fails.
 - **Connecting does not block.** `Driver::connect` takes a step per poll,
   but the TLS handshake makes one poll long; `Driver::connect_background`
   runs it on a helper thread.
-- **Timers stay off the hot path.** Pings and timeouts run on the driver's
-  deadline check (every 250 µs), never on the read or send path.
+- **Timers stay off the hot path.** Pings, timeouts and the opt-in
+  `TCP_INFO` sampling run on the driver's deadline check (every 250 µs),
+  never on the read or send path.
 - **TLS 1.3 only.** TLS 1.2 is refused with a clear error.
-- **Client side only.** No listener.
+- **No listener.** Accept elsewhere and hand the socket to the driver
+  (`FrameConn::from_stream`, then `Driver::add`); WebSocket and HTTP are
+  client side only.
+- **UDP on `epoll-spin` only**; the other backends refuse a UDP driver
+  (`Error::Unsupported`).
 - **WebSocket, not supported:** compression (`permessage-deflate`), other
   extensions, proxies, sending fragmented messages.
 - **Linux for the driver.** `Driver` and `HttpClient` are Linux-only; the
   protocol code builds everywhere.
-- **Kernel.** `uring-spin` needs Linux 6.1+; `uring-sqpoll`, `uring-napi`
-  and `epoll-busy` need 6.9+. The `io_uring` backends need the `uring`
-  feature (on by default). `prefer_busy_poll` on `recv-busy` and a raised
-  `busy_poll_budget` need `CAP_NET_ADMIN`.
+- **Kernel.** `uring-sqpoll` needs Linux 6.9+ and the `uring` feature (on
+  by default). The opt-in `tcp_rto_min_us` and
+  `tcp_delack_max_us` need 6.15+ (refused, typed, at `Driver::new`).
 - **Host checks at start-up** ([ergon-tune](https://github.com/mimran1980/ergon/tree/main/tune)):
   the loop's CPU, the receive buffer, each route's quick ACK and each egress
   NIC. Each finding goes to stderr once, with its fix, from a warning thread.
@@ -156,32 +162,61 @@ thread polls (feeds, order connections, `HttpClient` pool connections):
 - 1–4 sockets: `recv-busy`.
 - More: `uring-sqpoll` with a spare CPU, or `recv-busy,per_queue=true` on
   one CPU.
-- The interrupt backends (`epoll-spin`, `uring-spin`) were level with
+- The interrupt backend (`epoll-spin`) was level with
   `uring-sqpoll` from 4 sockets with node-level NIC settings: moderation
   off and the NIC's interrupts on a core of their own.
+- `epoll-spin` is mio's mechanism (and so tokio's): `epoll_wait(0)` every
+  poll, then one read per ready socket where mio, edge-triggered, makes
+  two. Level with mio in the fair run, and a CI gate fails if either pulls
+  ahead: [mio](https://mimran1980.github.io/ergon/io/backends.html#mio-measured-not-a-backend).
+- `epoll-spin,busy_poll_us=N` sets `SO_BUSY_POLL` N on every socket, as a
+  mio program with that option has it: the read that empties a socket then
+  polls the NIC once (`epoll_wait(0)` never does). No sysctl or capability
+  needed; a NIC with NAPI ids is (not loopback or a plain veth):
+  [busy polling on `epoll-spin`](https://mimran1980.github.io/ergon/io/backends.html#busy-polling-on-epoll-spin).
 
 The full table, the evidence and the node settings: the book's
 [choosing a backend](https://mimran1980.github.io/ergon/io/overview.html#choosing-a-backend).
 
+## UDP or TCP, ergon-io or mio
+
+UDP and framed TCP, each through raw mio and through ergon-io, are measured
+beside Aeron on the same hosts, cores and settings (Azure x86, 64-byte
+messages, round trips, both arms `SO_BUSY_POLL` 50 µs): UDP at 1 to 128
+streams, TCP with and without loss. Tables and conclusion: the book's
+[transport latency comparison](https://mimran1980.github.io/ergon/transports/comparison.html).
+
+<!-- RESULTS: io README -->
+
+| question | answer |
+|---|---|
+| mio or ergon-io, UDP? | Either. ergon-io's p50 is 0.1 to 0.9 µs behind mio's (behind in every rep); p99.99 and max not separated |
+| mio or ergon-io, TCP? | No verdict: the median p50 gaps (ergon-io 2.4 µs ahead to 4.0 behind) are inside each arm's own spread across reps (up to 10.7 µs). A same-connection A/B (`tcp_lat --source-port`) is scheduled on AWS |
+| sockets or Aeron UDP? | One stream: Aeron (p50 55.6 against 61.8 µs at 50,000 msg/s). 32 to 128 streams: sockets (p50 lower by 3.7 to 10.5 µs), on 1 busy thread against Aeron's 4 |
+| at 200,000 msg/s? | Neither socket library keeps up (one `send` a message on one thread; 151,000 to 195,000 msg/s carried); Aeron does |
+| TCP or Aeron reliable? | Aeron's p50 is 7 to 15 µs lower without loss. Under loss neither tail wins everywhere: Aeron's maxima sit at its 10 ms retransmit linger, TCP's come from its retransmits (8 ms minimum RTO) |
+
 ## Rate limits and errors
 
-- `limit::Budget` checks each request against the venue's limits before it
-  goes out: up to 8 buckets, all or none. It never sleeps or queues.
+- No rate limiter: pacing to a venue's limits is the application's.
+  `Reconnect::poll_gated` and `ClientHandler::connect_gate` ask its gate
+  before every connect.
 - A failed request says whether it left (`outcome::Sent`); a response maps
-  to one `outcome::Verdict`.
-- A ban halts its scope until a person calls `Budget::clear_halt`.
-- Send again only what did not run, inside its deadline
-  (`Budget::try_resend`); look up an unknown order by its client order id.
-- One sending process per account and IP: the budget cannot see others.
-- Configure limits and classify application-specific errors in your adapter.
-  The generic mechanisms are described in the book's
+  to one `outcome::Verdict`, which carries the server's wait.
+- Send again only what did not run, inside its deadline; look up an
+  unknown order by its client order id.
+- Several source IPs, each with its own limits: `Target::with_source`
+  binds a connection to one; `Reconnect::poll_sourced` binds every link's
+  attempt to the IP the application's gate picks.
+- Classify application-specific errors in your adapter. The generic
+  mechanisms are described in the book's
   [rate limits and errors](https://mimran1980.github.io/ergon/io/rate-limits.html).
 
 ## Features
 
 | Feature | Default | Adds |
 |---|---|---|
-| `uring` | on | the `io_uring` backends (Linux); without it, choosing one returns `Error::Unsupported` |
+| `uring` | on | the `io_uring` backend, `uring-sqpoll` (Linux); without it, choosing it returns `Error::Unsupported` |
 | `webpki-roots` | off | Mozilla's root store, `tls::webpki_roots` (CDLA-Permissive-2.0, so opt-in) |
 | `curl` | off | libcurl as an `HttpClient` implementation (the system libcurl, through pkg-config). It refuses every method but GET, HEAD, OPTIONS and DELETE unless `curl_allow_non_idempotent_methods` is set: libcurl can send a request twice |
 

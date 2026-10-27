@@ -35,6 +35,58 @@ void rusteron_dpdk_fake_set_csum_ok(int ok);
  * ena_llq for net_ena): RUSTERON_DPDK_ENA_LLQ_WC after the reset. */
 void rusteron_dpdk_fake_set_ena_llq(int state);
 
+/* Whether dev_info advertises TX MBUF_FAST_FREE (1, as ENA, after the reset). */
+void rusteron_dpdk_fake_set_tx_fast_free_capa(int ok);
+/* Each rx_burst that returns frames, and each tx_burst that takes some, moves
+ * the pinned transport clock on by this much inside the call (0 after the
+ * reset): a PMD call that took that long. */
+void rusteron_dpdk_fake_set_burst_ns(uint64_t rx_ns, uint64_t tx_ns);
+/* What `port_id` was set up with: its queues' free thresholds (0: the PMD's)
+ * and the TX offloads it was configured with. 0 on success. */
+int rusteron_dpdk_fake_queue_conf(uint16_t port_id, uint16_t *rx_free_thresh, uint16_t *tx_free_thresh,
+                                  uint64_t *tx_offloads);
+/* Mbufs sent on a port configured with MBUF_FAST_FREE that break its
+ * preconditions: another pool's, not held by the sender alone, or more than
+ * one segment. */
+int rusteron_dpdk_fake_fast_free_violations(void);
+/* Send one mbuf of the other role's pool on `port_id` (0 or 1), as nothing in
+ * the transport does: the check above sees it. 0 when the fake took it. */
+int rusteron_dpdk_fake_tx_foreign(uint16_t port_id);
+
+/* The NIC statistics read (basic_stats) sleeps `ms` inside the call, as an
+ * ENA admin command may take (0 after the reset); and how many such reads
+ * have begun, on any thread. */
+void rusteron_dpdk_fake_set_stats_delay_ms(uint32_t ms);
+int rusteron_dpdk_fake_stats_reads_started(void);
+
+/* Link-status-change interrupts: whether the ports can raise them
+ * (RTE_ETH_DEV_INTR_LSC; 1, as ENA, after the reset), whether `port_id` was
+ * configured to, and one raised on it, as its event callback would count it. */
+void rusteron_dpdk_fake_set_lsc_capa(int ok);
+int rusteron_dpdk_fake_lsc_configured(uint16_t port_id);
+void rusteron_dpdk_fake_raise_lsc(uint16_t port_id);
+
+/* A gateway on `port_id` that answers every ARP request sent on it (off
+ * after the reset): the reply is queued for the port's next rx_burst. */
+void rusteron_dpdk_fake_set_arp_responder(uint16_t port_id, int on);
+
+/* tx_done_cleanup: the cleanups asked for on `port_id`, the budget of the
+ * last, the frames the port sent since its last cleanup, and whether the PMD
+ * lacks the op (-ENOTSUP; 0 after the reset). */
+int rusteron_dpdk_fake_tx_cleanup_calls(uint16_t port_id);
+uint32_t rusteron_dpdk_fake_tx_cleanup_last_budget(void);
+uint32_t rusteron_dpdk_fake_tx_unreaped_count(uint16_t port_id);
+void rusteron_dpdk_fake_set_tx_cleanup_unsupported(int unsupported);
+/* Make tx_done_cleanup return `rc` (a negative errno other than -ENOTSUP),
+ * 0 to stop; 0 after the reset. */
+void rusteron_dpdk_fake_set_tx_cleanup_error(int rc);
+
+/* Extended-statistics reads since the reset: of every xstat and by id; and
+ * the ids the last by-id read asked for (its count returned, at most `max`
+ * copied). */
+void rusteron_dpdk_fake_xstats_reads(int *full, int *by_id);
+uint32_t rusteron_dpdk_fake_xstats_last_ids(uint64_t *ids, uint32_t max);
+
 /* The fake's call log, for reverse-teardown ordering assertions. */
 int rusteron_dpdk_fake_log_count(void);
 void rusteron_dpdk_fake_log_at(int index, char *buf, size_t buflen);
@@ -49,6 +101,9 @@ void rusteron_dpdk_fake_set_pool_avail(int n);
  * RUSTERON_DPDK_XSTAT_NAME_LEN stride; `values` are copied verbatim. Call again
  * to change the values between 1 Hz samples (the sample must re-read them). */
 void rusteron_dpdk_fake_set_xstats(const char *const *names, const uint64_t *values, uint32_t count);
+/* The next `reads` xstats counts report none, whatever is installed (0 after
+ * the reset): a netvsc VF that attaches after the port starts. */
+void rusteron_dpdk_fake_set_xstats_hidden_reads(uint32_t reads);
 
 /* A frame accepted by the fake tx_burst (the mbuf is owned by the "NIC"). */
 typedef struct rusteron_dpdk_fake_capture_stct

@@ -38,6 +38,7 @@
 #include "rusteron_dpdk_counters.h"
 #include "rusteron_dpdk_arp.h"
 #include "rusteron_dpdk_endpoint_map.h"
+#include "rusteron_dpdk_events.h"
 
 /* Aeron types for the poller callbacks and the shared receive loop (poller.c):
  * the affinity enum, the transport struct, the recv/recvmmsg function typedefs
@@ -73,6 +74,15 @@ static inline int rusteron_dpdk_selector_is_pci(const char *sel)
 #define RUSTERON_DPDK_RX_OFFLOAD_TIMESTAMP (1ULL << 2)
 #define RUSTERON_DPDK_TX_OFFLOAD_IPV4_CKSUM (1ULL << 0)
 #define RUSTERON_DPDK_TX_OFFLOAD_UDP_CKSUM (1ULL << 1)
+/* A port's MBUF_FAST_FREE (port->tx_fast_free): not asked for, configured,
+ * or asked for on a NIC that does not offer it (left off). */
+#define RUSTERON_DPDK_FAST_FREE_OFF 0
+#define RUSTERON_DPDK_FAST_FREE_ON 1
+#define RUSTERON_DPDK_FAST_FREE_UNSUPPORTED 2
+/* RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE: the PMD frees sent mbufs in bulk to one
+ * pool, so every mbuf sent on the port must come from the port's own pool,
+ * have a reference count of one and be a single segment (port_tx's are). */
+#define RUSTERON_DPDK_TX_OFFLOAD_MBUF_FAST_FREE (1ULL << 2)
 
 /* Error codes are defined in rusteron_dpdk_transport.h (public ABI). */
 
@@ -150,6 +160,29 @@ typedef struct rusteron_dpdk_ksock_stct
     volatile uint64_t hot_until_ns; /* adaptive: its agent reads it every cycle until then */
 } __attribute__((aligned(64))) rusteron_dpdk_ksock_t;
 
+/* A receive-path error report (rusteron_dpdk_report_t.kind). */
+#define RUSTERON_DPDK_REPORT_NONE 0
+#define RUSTERON_DPDK_REPORT_PEER_MTU 1    /* a SETUP whose mtu is above max_aeron_mtu */
+#define RUSTERON_DPDK_REPORT_FRAG_NEEDED 2 /* an ICMP fragmentation-needed for this NIC */
+/* Its slot's state (rusteron_dpdk_report_t.state). */
+#define RUSTERON_DPDK_REPORT_FREE 0
+#define RUSTERON_DPDK_REPORT_WRITING 1
+#define RUSTERON_DPDK_REPORT_READY 2
+
+/* An error the NIC's agent found on the receive path, for housekeeping to
+ * format and record: the agent fills it (FREE -> WRITING -> READY) and never
+ * formats an address, builds a message or takes the distinct error log's
+ * mutex; housekeeping takes it (READY -> FREE). One slot a NIC: the agent
+ * reports at most once a second and housekeeping looks every 100 ms. */
+typedef struct rusteron_dpdk_report_stct
+{
+    uint32_t state;    /* RUSTERON_DPDK_REPORT_FREE / _WRITING / _READY */
+    uint32_t kind;     /* RUSTERON_DPDK_REPORT_* */
+    uint32_t ip;       /* the peer (SETUP) or the router (ICMP), network order */
+    uint32_t value;    /* the peer's mtu / the next-hop MTU */
+    uint16_t udp_port; /* the peer's UDP port (SETUP), host order */
+} rusteron_dpdk_report_t;
+
 typedef struct rusteron_dpdk_port_stct
 {
     uint8_t role;                 /* RUSTERON_DPDK_ROLE_* */
@@ -180,6 +213,10 @@ typedef struct rusteron_dpdk_port_stct
      * on an ENA, which counts a full ring's drops itself (nic-rx-missed). */
     uint32_t rx_ring_full_at;
     int rx_timestamp_ok;          /* dev_info: NIC RX hardware timestamps */
+    int tx_fast_free_ok;          /* dev_info: TX MBUF_FAST_FREE offered */
+    int tx_fast_free;             /* RUSTERON_DPDK_FAST_FREE_*: what became of RUSTERON_DPDK_TX_FAST_FREE */
+    uint16_t rx_free_thresh;      /* the queues' free thresholds as set up (0: the PMD's) */
+    uint16_t tx_free_thresh;
     uint16_t max_mtu;             /* dev_info: the NIC's largest L3 MTU (0: unknown) */
     uint8_t mac[RUSTERON_DPDK_ETH_ADDR_LEN]; /* dev_info MAC, byte order */
     uint32_t local_ip;            /* parsed local IPv4, network order */
@@ -208,11 +245,18 @@ typedef struct rusteron_dpdk_port_stct
     uint64_t nic_resets;
     uint64_t nic_resets_seen;
     int reset_watched;            /* watch_reset took: unwatch before the port closes */
+    /* Link-status changes (RTE_ETH_EVENT_INTR_LSC), counted as nic_resets
+     * are, where the NIC can raise them (lsc_on: RTE_ETH_DEV_INTR_LSC);
+     * housekeeping keeps the counter and logs each new one. */
+    int lsc_on;
+    int lsc_watched;              /* watch_lsc took: unwatch before the port closes */
+    uint64_t nic_link_changes;
+    uint64_t nic_link_changes_seen;
     uint64_t icmp_window_ns;      /* ICMP error rate limit: current one-second window */
     uint32_t icmp_sent_in_window;
     uint64_t icmp_echo_window_ns; /* ICMP echo rate limit: current one-second window */
     uint32_t icmp_echo_sent;
-    uint64_t last_report_ns;      /* rate limit for formatted error reports */
+    uint64_t last_report_ns;      /* rate limit for error reports (the agent's) */
     uint64_t arp_reply_window_ns; /* ARP reply rate limit: current one-second window */
     /* The bandwidth allowances: this NIC's (RUSTERON_DPDK_TX_RATE_MBPS, the
      * VM's allowance) and one per destination prefix
@@ -223,6 +267,12 @@ typedef struct rusteron_dpdk_port_stct
     uint32_t extra_ips[RUSTERON_DPDK_MAX_EXTRA_IPS]; /* more local IPv4s (secondary IPs, VIPs) */
     uint32_t extra_ip_count;
     rusteron_dpdk_counters_t counters; /* Aeron counters (plan §9) */
+    /* The agent's error report for housekeeping: a line of its own, which
+     * housekeeping reads every 100 ms. */
+    rusteron_dpdk_report_t report __attribute__((aligned(64)));
+    /* The lab event log's ring for this NIC's agent, its one writer (NULL:
+     * no log; RUSTERON_DPDK_EVENT_LOG). */
+    rusteron_dpdk_event_ring_t *events;
     /* Owned by this NIC's agent thread alone (the sender agent for the sender
      * NIC, the receiver agent for the receiver NIC), so no lock is needed:
      * both its sends and its polls run there. */
@@ -235,8 +285,24 @@ typedef struct rusteron_dpdk_port_stct
      * At most one vector waits: while any frame does, a new vector is refused
      * whole before anything of it is built. */
     uint16_t tx_queued_count;
+    /* Idle TX cleanup (RUSTERON_DPDK_TX_IDLE_CLEAN): the descriptors an idle
+     * poll may reclaim (0: off, or the PMD lacks rte_eth_tx_done_cleanup),
+     * the frames handed to the NIC since the last reclaim, and the clock at
+     * the last data send. Written only while on. */
+    uint32_t tx_idle_clean;
+    uint32_t tx_unreaped;
+    uint64_t last_tx_ns;
+    uint32_t tx_idle_clean_asked; /* the budget asked for (port-info: unsupported when tx_idle_clean is 0) */
     rusteron_dpdk_mbuf_t tx_queued[RUSTERON_DPDK_TX_VECTOR_MAX];
 } rusteron_dpdk_port_t;
+
+/* An idle poll reclaims sent descriptors only once the last data send is
+ * this old: the NIC has posted its completions by then. */
+#define RUSTERON_DPDK_TX_IDLE_CLEAN_AGE_NS 5000ULL
+/* The most descriptors RUSTERON_DPDK_TX_IDLE_CLEAN may ask a poll for (an
+ * ENA's TX ring is at most 1024). */
+#define RUSTERON_DPDK_TX_IDLE_CLEAN_MAX 1024
+
 
 /* The UDP ports bound on one NIC, exclusively as a kernel socket would. Cold:
  * touched only at transport init/close, under the runtime's port_table_lock. */
@@ -362,8 +428,11 @@ struct rusteron_dpdk_transport_stct
     int local_unwatch;                   /* adaptive: hot sockets come off the epoll (RUSTERON_DPDK_LOCAL_UNWATCH) */
     uint64_t tx_retry_ns;                /* RUSTERON_DPDK_TX_RETRY_US: re-offer a refused tail this long */
     uint64_t nic_stats_ns;               /* RUSTERON_DPDK_NIC_STATS_MS: housekeeping's NIC statistics reads, 0 never */
+    uint64_t nic_slow_stats_ns;          /* RUSTERON_DPDK_NIC_SLOW_STATS_MS: the full reads once split (UNSPLIT: not split), 0 never */
     uint32_t rx_max_bursts;              /* RUSTERON_DPDK_RX_MAX_BURSTS: bursts one poll drains while they come back full */
+    uint32_t tx_idle_clean;              /* RUSTERON_DPDK_TX_IDLE_CLEAN: descriptors an idle poll reclaims, 0 off */
     int ena_llq_required;                /* RUSTERON_DPDK_ENA_LLQ_REQUIRED: an ENA without verified LLQ fails start */
+    int allow_synthetic;                 /* RUSTERON_DPDK_ALLOW_SYNTHETIC=1: a netvsc port without its VF starts */
     int vfio_wc;                         /* RUSTERON_DPDK_VFIO_WC=1: a vfio-pci port's unseen LLQ BAR is write-combined */
     uint64_t tx_pace_spin_ns;            /* RUSTERON_DPDK_TX_PACE_SPIN_US: longest wait to repay pacing debt */
     int tx_pace_spin_set;                /* RUSTERON_DPDK_TX_PACE_SPIN_US was given, not defaulted */
@@ -391,6 +460,11 @@ struct rusteron_dpdk_transport_stct
     int nic_reset_exit;
     uint64_t timer_service_ns;           /* the PMDs' timer service last ran (0: never; housekeeping) */
     int timer_service_failing;           /* it failed last time, which was reported (housekeeping) */
+    /* The lab event log (RUSTERON_DPDK_EVENT_LOG, rusteron_dpdk_events.c):
+     * the file, written by housekeeping and the close only, and the ring
+     * housekeeping records its own work into. NULL when off. */
+    FILE *event_log;
+    rusteron_dpdk_event_ring_t *housekeeping_events;
 
     /* Cold: the per-NIC UDP port tables and the ephemeral range, resolved at
      * runtime init (RUSTERON_DPDK_EPHEMERAL_PORT_RANGE, else the netns's
@@ -420,8 +494,9 @@ struct rusteron_dpdk_transport_stct
     rusteron_dpdk_ksock_t ksocks[RUSTERON_DPDK_MAX_KSOCKS];
 };
 
-/* Every send reads both counts (the NIC's allowance is on by default), so
- * they share a cache line: the transport is allocated 64-byte aligned. */
+/* Every send reads both counts whenever an allowance is armed
+ * (RUSTERON_DPDK_TX_RATE_MBPS or a route's; none unless set), so they share a
+ * cache line: the transport is allocated 64-byte aligned. */
 _Static_assert(offsetof(struct rusteron_dpdk_transport_stct, tx_route_count) / 64 ==
                    offsetof(struct rusteron_dpdk_transport_stct, tx_low_count) / 64,
                "the route and low-stream counts share one cache line");
@@ -664,8 +739,8 @@ void rusteron_dpdk_eal_version(int *year, int *month);
 
 /* The ENA device arguments every ENA port gets (`-a <bdf>,<these>`): the
  * operator's RUSTERON_DPDK_ENA_DEVARGS, and the PMD's LLQ setting unless
- * those name it (`llq_policy=1`, the device's recommended LLQ policy, from
- * DPDK 24.11, whose 24.11.0 and .1 otherwise disable LLQ; `enable_llq=1`
+ * those name it (`llq_policy=3`, large 256-byte entries, from DPDK 24.11,
+ * whose 24.11.0 and .1 otherwise disable LLQ; `enable_llq=1`
  * before). *llq_off is set when the operator's arguments turn LLQ off. 0 on
  * success; -1 (error set, naming the variable) when they are malformed,
  * the LLQ key's value included unless a decimal in the PMD's range. */
@@ -685,6 +760,19 @@ int rusteron_dpdk_parse_mac(const char *text, uint8_t mac[RUSTERON_DPDK_ETH_ADDR
  * rusteron_dpdk_eal.c splits it into argv. 0 on success. */
 int rusteron_dpdk_eal_allow_args(const rusteron_dpdk_config_t *cfg, char *out, size_t len);
 
+/* RUSTERON_DPDK_EAL_IN_MEMORY (0/1/false/true, unset 0) into *in_memory:
+ * --in-memory instead of hugepage files, so no multi-process channel and no
+ * files left in hugetlbfs after a crash. 0 on success; -1 (error code
+ * RUSTERON_DPDK_ERR_INVALID_ENV, naming the variables) when it is malformed
+ * or RUSTERON_DPDK_EAL_ARGS contradicts it. DPDK-free (runtime.c). */
+int rusteron_dpdk_eal_in_memory(int *in_memory);
+
+/* The EAL's memory options for `cfg` in EAL mode `mode`, space-separated,
+ * into `out`: `--huge-dir <dir>`, `--in-memory`, `--no-huge` or
+ * `--no-huge --in-memory`, as rusteron_dpdk_eal.c passes them. 0 on success,
+ * -1 as rusteron_dpdk_eal_in_memory. */
+int rusteron_dpdk_eal_mem_args(const rusteron_dpdk_config_t *cfg, int mode, char *out, size_t len);
+
 /* Runtime orchestration (rusteron_dpdk_runtime.c). */
 int rusteron_dpdk_runtime_init(rusteron_dpdk_transport_t *native);
 void rusteron_dpdk_runtime_cleanup(rusteron_dpdk_transport_t *native);
@@ -697,6 +785,17 @@ int rusteron_dpdk_runtime_probe_device(
 /* Test hooks (runtime.c). Production behaviour is the default (REAL, no
  * override, reset is a no-op for a fresh process). */
 void rusteron_dpdk_test_reset(void);
+/* Take `port`'s queued error report, if any (housekeeping): its message into
+ * `message` and the fixed description for the driver's distinct error log
+ * (one entry per kind, not per peer) into *description. Returns its kind, or
+ * RUSTERON_DPDK_REPORT_NONE. poller.c. */
+uint32_t rusteron_dpdk_report_take(
+    const rusteron_dpdk_transport_t *native, rusteron_dpdk_port_t *port, char *message, size_t len,
+    const char **description);
+/* How many receive-path error reports were formatted (poller.c), and its
+ * reset. */
+int rusteron_dpdk_test_reports_formatted(void);
+void rusteron_dpdk_reports_test_reset(void);
 void rusteron_dpdk_test_set_eal_mode(int mode);
 void rusteron_dpdk_set_port_ops(const rusteron_dpdk_port_ops_t *ops);
 /* The kernel driver every PCI port reads as bound to, instead of its sysfs
@@ -846,13 +945,46 @@ void rusteron_dpdk_test_set_clock_ns(uint64_t ns);
 /* Move the pinned clock on by `ns` at every read from the calling thread (0:
  * it stays put), so a wait spun on it ends; reset clears it. */
 void rusteron_dpdk_test_set_clock_step_ns(uint64_t ns);
+/* Move the pinned clock on by `ns` without reading it (a fake PMD call that
+ * takes that long); nothing when the clock is not pinned. */
+void rusteron_dpdk_test_advance_clock_ns(uint64_t ns);
+/* Reads of the pinned clock since the reset (tests: what a path costs). */
+uint64_t rusteron_dpdk_test_clock_reads(void);
 /* CLOCK_THREAD_CPUTIME_ID in ns, the clock gap attribution splits a poll gap
  * with; pinned by the test hook below. */
 uint64_t rusteron_dpdk_thread_cpu_ns(void);
 /* Pin the thread CPU clock at `ns`; reset clears the pin. */
 void rusteron_dpdk_test_set_thread_cpu_ns(uint64_t ns);
-/* Whether RUSTERON_DPDK_GAP_ATTRIB=1 turned poll-gap attribution on (0 default). */
+/* RUSTERON_DPDK_GAP_ATTRIB's two parts: time the PMD bursts (1 or `burst`),
+ * and split poll gaps by the thread CPU clock (1 only). */
+#define RUSTERON_DPDK_GAP_ATTRIB_BURST 1
+#define RUSTERON_DPDK_GAP_ATTRIB_CPU 2
+/* Which of them RUSTERON_DPDK_GAP_ATTRIB turned on (0 default). */
 int rusteron_dpdk_gap_attributing(void);
+/* The same, read inline on the agents' paths (runtime.c sets it at create). */
+extern int rusteron_dpdk_gap_attrib __attribute__((visibility("hidden")));
+/* PMD burst timing (two transport clock reads a burst). */
+static inline int rusteron_dpdk_gap_attrib_on(void)
+{
+    return __builtin_expect(0 != (rusteron_dpdk_gap_attrib & RUSTERON_DPDK_GAP_ATTRIB_BURST), 0);
+}
+/* The work/descheduling split (a thread CPU clock read, a system call, a poll). */
+static inline int rusteron_dpdk_gap_cpu_on(void)
+{
+    return __builtin_expect(0 != (rusteron_dpdk_gap_attrib & RUSTERON_DPDK_GAP_ATTRIB_CPU), 0);
+}
+
+/* The lab event log (rusteron_dpdk_events.c). Open it when
+ * RUSTERON_DPDK_EVENT_LOG names a file (0; -1 with the error set when it
+ * cannot be written), drain every ring into it (housekeeping), and drain and
+ * close it (cleanup, after every writer stopped). */
+int rusteron_dpdk_events_open(rusteron_dpdk_transport_t *native);
+void rusteron_dpdk_events_drain(rusteron_dpdk_transport_t *native);
+void rusteron_dpdk_events_close(rusteron_dpdk_transport_t *native);
+/* Tests: the events each ring holds (a power of two; 0 the default), and the
+ * reset of that and the gap floor. */
+void rusteron_dpdk_test_set_event_ring_events(uint32_t events);
+void rusteron_dpdk_events_test_reset(void);
 
 /* CLOCK_REALTIME in ns, the clock NIC RX timestamps are compared against
  * (chrony disciplines it to the NIC's PTP hardware clock), and the media

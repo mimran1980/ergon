@@ -81,14 +81,17 @@ impl Checked {
     }
 }
 
-/// TCP keepalive and `TCP_USER_TIMEOUT` for libcurl's sockets: the same
-/// settings the driver gives its connections.
+/// TCP keepalive, `TCP_USER_TIMEOUT` and the per-socket TCP timers for
+/// libcurl's sockets: the same settings the driver gives its connections.
 #[derive(Debug, Clone, Copy, Default)]
 struct TcpOpts {
     /// Idle, interval and count; idle 0 leaves keepalive off.
     keepalive: (u32, u32, u32),
     /// 0 leaves the kernel default.
     user_timeout_ms: u32,
+    /// `TCP_RTO_MIN_US` and `TCP_DELACK_MAX_US` (`None`: left alone).
+    rto_min_us: Option<u32>,
+    delack_max_us: Option<u32>,
 }
 
 impl TcpOpts {
@@ -100,6 +103,8 @@ impl TcpOpts {
                 cfg.keepalive_count,
             ),
             user_timeout_ms: cfg.tcp_user_timeout_ms,
+            rto_min_us: cfg.tcp_rto_min_us,
+            delack_max_us: cfg.tcp_delack_max_us,
         }
     }
 
@@ -111,6 +116,8 @@ impl TcpOpts {
         if self.user_timeout_ms > 0 {
             crate::sys::set_tcp_user_timeout(fd, self.user_timeout_ms)?;
         }
+        crate::sys::apply_tcp_timers(fd, self.rto_min_us, self.delack_max_us)
+            .map_err(std::io::Error::other)?;
         Ok(())
     }
 }
@@ -271,6 +278,8 @@ pub struct CurlClient {
     active: Vec<(u64, Easy2Handle<Collector>)>,
     base: String,
     resolve: Option<String>,
+    /// `Target::source` as `CURLOPT_INTERFACE` (`host!<ip>`).
+    interface: Option<String>,
     fixed: Vec<String>,
     ca_file: Option<String>,
     timeout: Duration,
@@ -288,6 +297,9 @@ impl CurlClient {
     pub(crate) fn new(cfg: &HttpClientConfig, target: &Target) -> Result<Self> {
         // Its keepalive settings apply here too: refused, never ignored.
         cfg.driver.validate()?;
+        // As `Driver::new`: a TCP timer this kernel lacks or would round is
+        // refused here, typed, not at libcurl's first socket.
+        crate::sys::probe_tcp_timers(cfg.driver.tcp_rto_min_us, cfg.driver.tcp_delack_max_us)?;
         curl::init();
         let mut multi = Multi::new();
         multi
@@ -365,6 +377,7 @@ impl CurlClient {
             resolve: target
                 .addr
                 .map(|a| format!("{}:{}:{}", target.host, target.port, a.ip())),
+            interface: target.source.map(|ip| format!("host!{ip}")),
             fixed: target
                 .headers
                 .iter()
@@ -421,6 +434,9 @@ impl CurlClient {
             let mut l = List::new();
             l.append(r).map_err(map)?;
             e.resolve(l).map_err(map)?;
+        }
+        if let Some(i) = &self.interface {
+            e.interface(i).map_err(map)?;
         }
         if let Some(ca) = &self.ca_file {
             e.cainfo(ca).map_err(map)?;
@@ -616,6 +632,7 @@ fn deliver<H: ClientHandler>(id: u64, e: &Easy2<Collector>, handler: &mut H) {
                 status,
                 headers: resp.headers,
                 body: &c.body,
+                head_ascii: c.head.is_ascii(),
             },
         ),
         Err(why) => handler.on_error(

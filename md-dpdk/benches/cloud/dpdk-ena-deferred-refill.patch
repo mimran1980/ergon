@@ -1,0 +1,89 @@
+SPDX-License-Identifier: BSD-3-Clause
+Copyright (c) 2015-2020 Amazon.com, Inc. or its affiliates (the patched files).
+All rights reserved.
+
+A lab-only patch to DPDK 25.11's ENA PMD (drivers/net/ena), under that
+code's own BSD-3-Clause licence. Nothing ships it: vm.sh build-dpdk
+patched-refill applies it (patch -p1 --forward --fuzz=0) to an unpacked
+dpdk-25.11 and installs the result under its own prefix, for modes with
+@DPDK=patched-refill.
+
+What changes, and nothing else:
+  * eth_ena_recv_pkts: stock DPDK refills the RX ring inside every rx_burst
+    once its free descriptors reach rx_free_thresh, so the frames that burst
+    returns wait for the refill (an mbuf bulk alloc, a descriptor write each,
+    the doorbell). Here a burst that returns frames skips that refill unless
+    min(2 * rx_free_thresh, ring - 1) descriptors are free (the floor: at
+    most one more threshold's worth is ever owed); the next burst that
+    returns nothing refills, as stock does. A burst that returns nothing
+    behaves exactly as stock.
+  * two RX queue counters, in the PMD's xstats (rx_q<n>_refill_deferred:
+    bursts that returned frames and left a due refill; rx_q<n>_refill_floor:
+    those that refilled anyway at the floor), which the transport mirrors
+    as Aeron counters (type 92) and vm.sh counters reads;
+  * ena_rx_queue_setup logs, at NOTICE, one line per RX queue beginning
+    "ergon-lab deferred-refill ENA PMD", so a run's driver.log proves this
+    PMD was the one loaded (vm.sh driver checks it, fail closed).
+
+--- a/drivers/net/ena/ena_ethdev.h
++++ b/drivers/net/ena/ena_ethdev.h
+@@ -138,6 +138,10 @@
+ 	u64 bad_req_id;
+ 	u64 bad_desc;
+ 	u64 unknown_error;
++	/* ergon-lab: bursts that returned frames and left a due refill to the
++	 * next empty burst, and bursts that refilled anyway at the floor */
++	u64 refill_deferred;
++	u64 refill_floor;
+ };
+ 
+ struct ena_timestamp_config {
+--- a/drivers/net/ena/ena_ethdev.c
++++ b/drivers/net/ena/ena_ethdev.c
+@@ -178,6 +178,8 @@
+ 	ENA_STAT_RX_ENTRY(bad_req_id),
+ 	ENA_STAT_RX_ENTRY(bad_desc),
+ 	ENA_STAT_RX_ENTRY(unknown_error),
++	ENA_STAT_RX_ENTRY(refill_deferred),
++	ENA_STAT_RX_ENTRY(refill_floor),
+ };
+ 
+ #define ENA_STATS_ARRAY_GLOBAL	ARRAY_SIZE(ena_stats_global_strings)
+@@ -1837,6 +1839,12 @@
+ 		rxq->rx_free_thresh = RTE_MIN(dyn_thresh,
+ 			(uint16_t)(ENA_REFILL_THRESH_PACKET));
+ 	}
++
++	PMD_INIT_LOG_LINE(NOTICE,
++		"ergon-lab deferred-refill ENA PMD: Rx queue %d refills after a burst that returns frames only at %u free descriptors (threshold %u)",
++		queue_idx,
++		RTE_MIN(2U * rxq->rx_free_thresh, rxq->ring_size - 1U),
++		rxq->rx_free_thresh);
+ 
+ 	/* Store pointer to this queue in upper layer */
+ 	rxq->configured = 1;
+@@ -3025,9 +3033,22 @@
+ 
+ 	free_queue_entries = ena_com_free_q_entries(rx_ring->ena_com_io_sq);
+ 
+-	/* Burst refill to save doorbells, memory barriers, const interval */
++	/* Burst refill to save doorbells, memory barriers, const interval.
++	 * ergon-lab: not in a burst that returns frames, whose return would
++	 * wait for it, unless a second threshold's worth is due (the floor);
++	 * the next burst that returns nothing refills.
++	 */
+ 	if (free_queue_entries >= rx_ring->rx_free_thresh) {
+-		ena_populate_rx_queue(rx_ring, free_queue_entries);
++		if (completed == 0) {
++			ena_populate_rx_queue(rx_ring, free_queue_entries);
++		} else if (free_queue_entries >=
++			   RTE_MIN(2U * rx_ring->rx_free_thresh,
++				   rx_ring->ring_size - 1U)) {
++			++rx_ring->rx_stats.refill_floor;
++			ena_populate_rx_queue(rx_ring, free_queue_entries);
++		} else {
++			++rx_ring->rx_stats.refill_deferred;
++		}
+ 	}
+ 
+ 	return completed;

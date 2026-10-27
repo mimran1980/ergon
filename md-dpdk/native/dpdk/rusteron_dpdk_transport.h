@@ -91,6 +91,15 @@ typedef struct rusteron_dpdk_config_stct
      * RUSTERON_DPDK_CLOCK_CHOICE_{COUNTER,MONOTONIC}, started at create for
      * the process. */
     uint8_t clock;
+
+    /* ENA queue tuning (RUSTERON_DPDK_TX_FAST_FREE, RUSTERON_DPDK_RX_FREE_THRESH,
+     * RUSTERON_DPDK_TX_FREE_THRESH). tx_fast_free 1 asks for
+     * RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE, configured on a port whose NIC offers
+     * it; 0 leaves it off. A free threshold of 0 keeps the PMD's default; else
+     * it must be below its ring (the receive ring as each port takes it). */
+    uint8_t tx_fast_free;
+    uint16_t rx_free_thresh;
+    uint16_t tx_free_thresh;
 }
 rusteron_dpdk_config_t;
 
@@ -123,6 +132,17 @@ int rusteron_dpdk_transport_close(rusteron_dpdk_transport_t *transport);
  * and exits; a NULL transport returns 0. The flag stays set.
  */
 int rusteron_dpdk_transport_nic_reset_exit(rusteron_dpdk_transport_t *transport);
+
+/*
+ * Ask each port's gateway for its MAC (ARP) from the calling thread, for up
+ * to `timeout_ms`, polling the ports' receive queues itself: answered[0] and
+ * answered[1] say whether the sender's and the receiver's answered. An
+ * answer is learned, so the first send to it does not wait; a silent
+ * gateway's entry is forgotten, so its first send resolves afresh. Only
+ * before the driver starts: -1 (error set) once a transport is open, as an
+ * agent may be polling the ports. 0 when it ran.
+ */
+int rusteron_dpdk_transport_gateway_check(void *transport, uint32_t timeout_ms, int32_t answered[2]);
 
 /* The populated Aeron transport binding table (static, process-lifetime). */
 aeron_udp_channel_transport_bindings_t *rusteron_dpdk_transport_bindings(void);
@@ -166,6 +186,9 @@ void rusteron_dpdk_clock_report(rusteron_dpdk_clock_report_t *report);
 #define RUSTERON_DPDK_ERR_OK 0
 #define RUSTERON_DPDK_ERR_NATIVE 1
 #define RUSTERON_DPDK_ERR_ALREADY_INITIALIZED 2
+#define RUSTERON_DPDK_ERR_INVALID_ENV 3    /* a malformed or contradictory environment value */
+#define RUSTERON_DPDK_ERR_INVALID_CONFIG 4 /* a configuration the NIC as set up cannot carry */
+#define RUSTERON_DPDK_ERR_NO_ACCELERATED_VF 5 /* Azure: a netvsc port without its accelerated-networking VF */
 int rusteron_dpdk_last_error_code(void);
 
 #ifdef __cplusplus

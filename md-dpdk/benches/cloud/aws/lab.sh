@@ -80,7 +80,13 @@
 #   LAB_THREADS_PER_CORE=1: SMT off from launch, every core of the type at one thread
 #   (run-instances --cpu-options); refused for Graviton, bare metal, C7a, M7a, R7a, T2.
 #   Per mode instead: <mode>@SMT=off (x86; vm.sh)
-#   LAB_MODES ("kernel kernel-busy dpdk"; <mode>@AERON_THREADING_MODE=SHARED_NETWORK or
+#   LAB_MODES ("kernel kernel-busy dpdk"; the raw floor's kernel-raw and dpdk-raw run
+#   rtt's round trip with no Aeron, over kernel UDP or the DPDK transport's
+#   bindings alone, on kernel-busy's or dpdk's set-up: the round trip only,
+#   cross-host, host and RUSTERON_* settings only (../modes.sh); the pure
+#   floor's dpdk-pure runs it over DPDK alone, none of ergon-md-dpdk
+#   (../purefloor.c, on dpdk's set-up, no -mono);
+#   <mode>@AERON_THREADING_MODE=SHARED_NETWORK or
 #   SHARED runs the driver's agents that way, each busy one on a core of its own:
 #   ../host.sh threading_env; INVOKER runs no media driver: each client embeds it
 #   (HARNESS_DRIVER=invoker), cross-host only; DEDICATED otherwise. Also @JUMBO=1
@@ -93,7 +99,15 @@
 #   (napi_defer_hard_irqs, gro_flush_timeout) and @NAPI_BUSY=spare (threaded NAPI
 #   busy polling, its kthreads on the fifth core; Linux 6.17 and up); in any mode,
 #   @CONDUCTOR=own (the driver's conductor alone on the fifth core, spinning; not
-#   beside the other two on it). The fifth core is not on a four-core type
+#   beside the other two on it). @HAIRPIN=1 (the raw floor's modes): the round
+#   trip on host a alone, from its sender ENI to its receiver ENI and back
+#   (../modes.sh), both hosts of four cores or more; @RTT_GAP_US=<us> (1 to 1000000,
+#   cross-host): one ping every that many microseconds, a rep of 20 to 60 s
+#   (../modes.sh rtt_plan: 20,000 round trips at 1 ms, 1,200 at 50 ms, 300 at
+#   200 ms, 60 at 1 s; p99.99 means something from 10,000); DPDK modes only,
+#   @DPDK=stock|patched-refill (the driver and clients linked against DPDK 25.11
+#   built from source on each VM, patched-refill with ../dpdk-ena-deferred-refill.patch:
+#   vm.sh build-dpdk, any placement; not beside @BIN=). The fifth core is not on a four-core type
 #   (c7i.2xlarge, c8g.xlarge, c9g.xlarge): refused here, before any cloud call, by
 #   the types' physical cores (../modes.sh type_cores: a type its table lacks is
 #   refused too, said so), as NAPI_BUSY is after the build on a kernel or host that
@@ -107,9 +121,10 @@
 #   the load client's own warm-up is its first second at each point's rate); refused
 #   without LAB_LOAD_SIZES, where it would never run
 #   LAB_STATES ("pinned isolated"; isolated-poll: isolated, and idle CPUs poll rather
-#   than halt, x86 idle=poll, Graviton nohlt)
+#   than halt, x86 idle=poll, Graviton nohlt; any of them ending -nodiag: that state
+#   without the diagnostics, vm.sh diag-start, for an A/A that bounds their effect)
 #   LAB_LOCAL_MODES, LAB_LOAD_SIZES, LAB_LOAD_FRACTIONS, LAB_LOAD_SECONDS,
-#   LAB_LOAD_LADDER, LAB_MIX, LAB_MIX_SECONDS, LAB_RTT_ALIGN, LAB_BASE, LAB_TPUT_FLOWS: as azure/lab.sh
+#   LAB_LOAD_LADDER, LAB_MIX, LAB_MIX_SECONDS, LAB_RTT_ALIGN, LAB_RTT_SPIKE_NS, LAB_RTT_STALL_NS, LAB_GAPSPIN_US, LAB_BASE, LAB_TPUT_FLOWS: as azure/lab.sh
 #   (LAB_TPUT_FLOWS: one UDP flow carries at most 8.0 Gbit/s of frames here, on every size
 #   measured; LAB_TPUT_FLOWS=2, where both instances have a fifth core (c7i.4xlarge and
 #   up), adds the sustained maximum over two flows at once, which shows whether two carry
@@ -220,6 +235,12 @@ tput_flows=${LAB_TPUT_FLOWS:-}
 rtt_messages=${RTT_MESSAGES:-300000}
 rtt_warmup=${RTT_WARMUP:-50000}
 rtt_align=${LAB_RTT_ALIGN:-}
+# the cross-host round trip's stamps: every round trip and every loop stall of
+# at least that many ns (lib.sh)
+rtt_spike_ns=${LAB_RTT_SPIKE_NS:-30000}
+rtt_stall_ns=${LAB_RTT_STALL_NS:-10000}
+# the gap spinner's threshold, us (lib.sh, vm.sh diag-start)
+gapspin_us=${LAB_GAPSPIN_US:-50}
 base=${LAB_BASE:-}
 # the instances' own deadline (hours from launch), in case this machine never
 # gets to delete them (it slept, lost its network): see deadline-userdata.sh
@@ -276,12 +297,16 @@ if [[ -z ${LAB_DELETE:-} ]]; then
         # the layout's fifth core on both types (vm.sh ready would find it
         # missing only after the build)
         why=$(spare_types_check "$m" aws "$type_a" "$type_b" 2>&1) || die "$why"
+        # a hairpin's ping and pong on host a's own cores (host b sets the
+        # mode up too, so its type is checked as well)
+        why=$(hairpin_types_check "$m" aws "$type_a" "$type_b" 2>&1) || die "$why"
     done
     for m in ${local_modes:-}; do
         why=$(mode_check "$m" local "$arch" aws "$threads_per_core" "$placement" 2>&1) || die "$why"
     done
     for s in "${states[@]}"; do
-        [[ $s =~ ^(pinned|isolated|isolated-poll)$ ]] || die "LAB_STATES $s: pinned, isolated or isolated-poll"
+        [[ $s =~ ^(pinned|isolated|isolated-poll)(-nodiag)?$ ]] ||
+            die "LAB_STATES $s: pinned, isolated or isolated-poll, optionally ending -nodiag"
     done
     # precision-time: a PTP hardware clock on both types (chrony's reference,
     # and the NIC's RX timestamps), and the DPDK modes' timestamp pair
@@ -311,6 +336,9 @@ if [[ -z ${LAB_DELETE:-} ]]; then
     [[ -z ${LAB_CLOCK_ONLY:-}${LAB_DISCIPLINE_SECONDS:-} ]] ||
         die "LAB_CLOCK_ONLY and LAB_DISCIPLINE_SECONDS were removed with the clock benchmarks: unset them"
     [[ $max_hours =~ ^[1-9][0-9]*$ ]] || die "LAB_MAX_HOURS is a whole number of hours, from 1 (the instances' deadline), not $max_hours"
+    [[ $rtt_spike_ns =~ ^[1-9][0-9]{0,9}$ ]] || die "LAB_RTT_SPIKE_NS is a whole number of nanoseconds, from 1 (the round trips stamped), not $rtt_spike_ns"
+    [[ $rtt_stall_ns =~ ^[1-9][0-9]{0,9}$ ]] || die "LAB_RTT_STALL_NS is a whole number of nanoseconds, from 1 (the client loop stalls stamped), not $rtt_stall_ns"
+    [[ $gapspin_us =~ ^[1-9][0-9]{0,5}$ ]] || die "LAB_GAPSPIN_US is a whole number of microseconds, 1 to 999999 (the gap spinner's threshold), not $gapspin_us"
     if [[ $placement == cross-az || $placement == cross-region ]] && [[ $no_flatout != 1 ]]; then
         die "LAB_PLACEMENT=$placement: the traffic between the hosts is billed per GB, so no flat-out phases: set LAB_NO_FLATOUT=1 (LAB_ESTIMATE=1 prints the cost)"
     fi

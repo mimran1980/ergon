@@ -4,10 +4,8 @@
 # the nodes the DaemonSet runs on. It must be inside the kubelet's
 # reservedSystemCPUs, minus the CPU(s) kept for NIC IRQs.
 
-# Published image tag 0.1.1. Empty tag means the chart appVersion.
+# Empty tag means the chart appVersion (image 0.1.2).
 # image.digest, when set, wins and the pod uses repository@digest.
-# Image 0.1.1 accepts --kubelet-config and the other host flags.
-# hostContract stays off in this chart. Image 0.1.0 rejects those flags.
 image:
   repository: ghcr.io/mimran1980/ergon-shared-cpus
   # Empty means appVersion. Ignored when digest is set.
@@ -82,22 +80,20 @@ config:
     nofile: ""
     rtPrio: ""
     nice: ""
-  # Quote off. Unquoted off is a YAML 1.1 boolean. Kept off.
+  # off or allow, or a YAML boolean (true = allow). Kept off.
   seccomp:
     ioUring: "off"
   seccompProfilePath: /etc/ergon-shared-cpus/ergon-io-uring.json
-  # off or thread. Kept off. Quote off.
+  # off or thread, or a YAML boolean (true = thread). Kept off.
   schedFifo: "off"
   # off, auto, or a /dev/ptp* path. Kept off. Quote off.
   ptp: "off"
   # Absolute AERON_DIR, or empty to omit a directory.
   hugepagesAeronDir: ""
-  # Named layouts. Leave this unset for the legacy single sharedCpus file.
-  # Image 0.1.0 rejects nodeProfileLabel (unknown field) and exits. Image
-  # 0.1.1 accepts these keys. When profiles is set, the chart
-  # writes profiles and nodeProfileLabel and omits the flat sharedCpus key.
-  # That process reads the node once
-  # (NODE_NAME, a get-only Role) and fails if the label is missing or names
+  # Named layouts. Leave this unset for the flat sharedCpus file. When
+  # profiles is set, the chart writes profiles and nodeProfileLabel and omits
+  # the flat sharedCpus key. That process reads the node once
+  # (NODE_NAME, a get-only ClusterRole on nodes) and fails if the label is missing or names
   # an unknown profile. It does not watch the node or change labels.
   # Drain before changing a label or a profile. Running grants stay until
   # those containers are recreated. Do not set this and a hand-edited
@@ -108,22 +104,35 @@ config:
   #     sharedCpus: "0,1"
   #     namespaces: ["trading"]
 
-# Read-only host facts for the hot-create contract. Off by default, and
-# never FileOrCreate: a created file would be a kubelet config the plugin
-# would trust. Image 0.1.1 accepts --kubelet-config, --kubelet-configz,
-# --kubelet-overrides, --host-sys and --host-proc. Leave these off: the
-# chart does not pass them unless a value below is enabled. Image 0.1.0
-# rejects the flags.
+# Read-only host facts for the hot-create contract. Every pod labelled
+# ergon.io/latency: hot is checked against them at create (see the plugin
+# README, node contract). Without the kubelet file every hot create is
+# refused. Never FileOrCreate: a created file would be a kubelet config the
+# plugin would trust, so a missing path keeps the plugin pod from starting.
+# kubeletConfig.path is the kubeadm and kind path. kubeletConfigDir is the
+# kubelet's --config-dir: its *.conf drop-ins are merged over the file as
+# the kubelet merges them. Set it only when the kubelet runs with
+# --config-dir at that path. EKS AL2023 (nodeadm, not verified):
+#   --set hostContract.kubeletConfig.path=/etc/kubernetes/kubelet/config.json
+#   --set hostContract.kubeletConfigDir.enabled=true
+# configz and overrides are optional and off: a stock kubeadm node has
+# neither path. overrides is a conflict check (argv), not a merge.
 hostContract:
   sys:
-    enabled: false
+    enabled: true
     path: /sys
   proc:
-    enabled: false
+    enabled: true
     path: /proc
   kubeletConfig:
-    enabled: false
+    enabled: true
     path: /var/lib/kubelet/config.yaml
+  # Directory mount, read-only. Off: a stock kubeadm node has no drop-ins,
+  # and a Directory mount of a missing path keeps the plugin pod from
+  # starting. Needs kubeletConfig on.
+  kubeletConfigDir:
+    enabled: false
+    path: /etc/kubernetes/kubelet/config.json.d
   kubeletConfigZ:
     enabled: false
     path: /var/lib/kubelet/configz.json

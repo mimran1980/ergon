@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Fake scp for test-lab.sh: logs; copying the results back leaves a report.
+echo "scp $*" >>"$FAKE_DIR/scp.log"
+[[ ${FAKE_SSH:-up} == up ]] || exit 1
+dest=${!#}
+[[ $* == *"/var/lib/ergon-lab/results/."* ]] && echo "# fake report" >"$dest/report.md"
+exit 0

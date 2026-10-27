@@ -244,8 +244,9 @@ then watch the same counters as §3.
   prefetchable BAR mapped write-combining. While the driver runs, the BAR's
   start address (third line of `/sys/bus/pci/devices/<bdf>/resource`) appears
   as `write-combining` in `/sys/kernel/debug/x86/pat_memtype_list`.
-- **`RUSTERON_DPDK_TX_DESCRIPTORS` stays at most 512**: an ENA queue takes no
-  more, and a larger ring fails the driver's start.
+- **`RUSTERON_DPDK_TX_DESCRIPTORS` stays at most 256**: an ENA queue takes no
+  more under the transport's large LLQ entries (`llq_policy=3`, the default;
+  512 under `llq_policy=1`), and a larger ring fails the driver's start.
 - **ENA Express** is toggled per-ENI with `scripts/toggle-ena-express.sh`
   (`on|off`). It requires SRD-capable instance types and an ENA that supports
   it; the script verifies the resulting `EnaSrdSpecification`. The acceptance

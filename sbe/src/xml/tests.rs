@@ -46,7 +46,7 @@ fn parse_u64_val_handles_value_types() -> Result<(), Box<dyn std::error::Error>>
 
 #[test]
 fn parse_malformed_xml_is_error() -> Result<(), Box<dyn std::error::Error>> {
-    let err = parse("<messageSchema><unclosed>").unwrap_err();
+    let err = parse(crate::SchemaSource::xml("<messageSchema><unclosed>")).unwrap_err();
     assert!(matches!(err, ParseError::MalformedXml { .. }));
 
     Ok(())
@@ -56,7 +56,7 @@ fn parse_malformed_xml_is_error() -> Result<(), Box<dyn std::error::Error>> {
 fn parse_valid_xml_without_message_schema_root_is_missing() -> Result<(), Box<dyn std::error::Error>>
 {
     // Valid XML, but no <messageSchema> root element.
-    let err = parse("<root/>").unwrap_err();
+    let err = parse(crate::SchemaSource::xml("<root/>")).unwrap_err();
     assert!(matches!(err, ParseError::Missing { .. }));
 
     Ok(())
@@ -64,7 +64,10 @@ fn parse_valid_xml_without_message_schema_root_is_missing() -> Result<(), Box<dy
 
 #[test]
 fn parse_file_missing_path_is_io() -> Result<(), Box<dyn std::error::Error>> {
-    let err = parse_file("/nonexistent/ergon/coverage/schema.xml").unwrap_err();
+    let err = parse(crate::SchemaSource::file(
+        "/nonexistent/ergon/coverage/schema.xml",
+    ))
+    .unwrap_err();
     assert!(matches!(err, ParseError::Io { .. }));
     assert!(std::error::Error::source(&err).is_some());
 
@@ -81,7 +84,10 @@ fn parse_set_choice_bit_out_of_range_is_error() -> Result<(), Box<dyn std::error
 </set>
   </types>
 </messageSchema>"#;
-    assert!(parse(xml).is_err(), "set choice bit > max must error");
+    assert!(
+        parse(crate::SchemaSource::xml(xml)).is_err(),
+        "set choice bit > max must error"
+    );
 
     Ok(())
 }
@@ -130,7 +136,10 @@ fn parse_set_negative_choice_bit_is_error() -> Result<(), Box<dyn std::error::Er
 </set>
   </types>
 </messageSchema>"#;
-    assert!(parse(xml).is_err(), "set choice bit -1 must error");
+    assert!(
+        parse(crate::SchemaSource::xml(xml)).is_err(),
+        "set choice bit -1 must error"
+    );
 
     Ok(())
 }
@@ -159,7 +168,7 @@ fn enum_null_value_precedence() -> Result<(), Box<dyn std::error::Error>> {
         )
     };
     let enum_null = |xml: String| -> Result<Option<u64>, Box<dyn std::error::Error>> {
-        let ir = parse(&xml)?;
+        let ir = parse(crate::SchemaSource::xml(&xml))?;
         let token = ir
             .tokens
             .iter()
@@ -187,7 +196,10 @@ fn parse_set_duplicate_choice_bit_is_error() -> Result<(), Box<dyn std::error::E
 </set>
   </types>
 </messageSchema>"#;
-    assert!(parse(xml).is_err(), "duplicate set choice bit must error");
+    assert!(
+        parse(crate::SchemaSource::xml(xml)).is_err(),
+        "duplicate set choice bit must error"
+    );
 
     Ok(())
 }
@@ -198,7 +210,10 @@ fn parse_invalid_byte_order_is_error() -> Result<(), Box<dyn std::error::Error>>
 <messageSchema package="x" id="1" version="0" byteOrder="sideways">
   <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/></composite></types>
 </messageSchema>"#;
-    assert!(parse(xml).is_err(), "invalid byteOrder must error");
+    assert!(
+        parse(crate::SchemaSource::xml(xml)).is_err(),
+        "invalid byteOrder must error"
+    );
 
     Ok(())
 }
@@ -210,7 +225,10 @@ fn parse_invalid_presence_is_error() -> Result<(), Box<dyn std::error::Error>> {
   <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
   <message name="M" id="1"><field name="f" id="1" type="uint32" presence="bogus"/></message>
 </messageSchema>"#;
-    assert!(parse(xml).is_err(), "invalid presence must error");
+    assert!(
+        parse(crate::SchemaSource::xml(xml)).is_err(),
+        "invalid presence must error"
+    );
 
     Ok(())
 }
@@ -224,7 +242,10 @@ fn parse_invalid_primitive_type_is_error() -> Result<(), Box<dyn std::error::Err
 <type name="bad" primitiveType="notatype"/>
   </types>
 </messageSchema>"#;
-    assert!(parse(xml).is_err(), "invalid primitiveType must error");
+    assert!(
+        parse(crate::SchemaSource::xml(xml)).is_err(),
+        "invalid primitiveType must error"
+    );
 
     Ok(())
 }
@@ -238,7 +259,10 @@ fn parse_enum_with_float_encoding_is_error() -> Result<(), Box<dyn std::error::E
 <enum name="E" encodingType="float"><validValue name="A">1</validValue></enum>
   </types>
 </messageSchema>"#;
-    assert!(parse(xml).is_err(), "enum with float encoding must error");
+    assert!(
+        parse(crate::SchemaSource::xml(xml)).is_err(),
+        "enum with float encoding must error"
+    );
 
     Ok(())
 }
@@ -252,7 +276,10 @@ fn parse_set_with_signed_encoding_is_error() -> Result<(), Box<dyn std::error::E
 <set name="S" encodingType="int8"><choice name="A">0</choice></set>
   </types>
 </messageSchema>"#;
-    assert!(parse(xml).is_err(), "set with signed encoding must error");
+    assert!(
+        parse(crate::SchemaSource::xml(xml)).is_err(),
+        "set with signed encoding must error"
+    );
 
     Ok(())
 }
@@ -266,7 +293,10 @@ fn parse_set_duplicate_choice_name_is_error() -> Result<(), Box<dyn std::error::
 <set name="S" encodingType="uint8"><choice name="A">0</choice><choice name="A">1</choice></set>
   </types>
 </messageSchema>"#;
-    assert!(parse(xml).is_err(), "duplicate set choice name must error");
+    assert!(
+        parse(crate::SchemaSource::xml(xml)).is_err(),
+        "duplicate set choice name must error"
+    );
 
     Ok(())
 }
@@ -279,7 +309,7 @@ fn parse_invalid_message_schema_child_is_error() -> Result<(), Box<dyn std::erro
   <unexpectedChild/>
 </messageSchema>"#;
     assert!(
-        parse(xml).is_err(),
+        parse(crate::SchemaSource::xml(xml)).is_err(),
         "invalid messageSchema child must error"
     );
 
@@ -296,7 +326,10 @@ fn parse_field_offset_out_of_order_is_error() -> Result<(), Box<dyn std::error::
 <field name="b" id="2" type="uint32" offset="0"/>
   </message>
 </messageSchema>"#;
-    assert!(parse(xml).is_err(), "out-of-order field offsets must error");
+    assert!(
+        parse(crate::SchemaSource::xml(xml)).is_err(),
+        "out-of-order field offsets must error"
+    );
 
     Ok(())
 }
@@ -308,7 +341,10 @@ fn parse_invalid_message_child_is_error() -> Result<(), Box<dyn std::error::Erro
   <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
   <message name="M" id="1"><bogusElement/></message>
 </messageSchema>"#;
-    assert!(parse(xml).is_err(), "invalid message child must error");
+    assert!(
+        parse(crate::SchemaSource::xml(xml)).is_err(),
+        "invalid message child must error"
+    );
 
     Ok(())
 }
@@ -323,7 +359,7 @@ fn parse_invalid_types_container_child_is_error() -> Result<(), Box<dyn std::err
   </types>
 </messageSchema>"#;
     assert!(
-        parse(xml).is_err(),
+        parse(crate::SchemaSource::xml(xml)).is_err(),
         "invalid types container child must error"
     );
 
@@ -339,7 +375,7 @@ fn parse_collects_all_documentation_sources() -> Result<(), Box<dyn std::error::
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/schemas/schema-docs-all-sources.xml"
     );
-    let ir = parse_file(path).unwrap();
+    let ir = parse(crate::SchemaSource::file(path)).unwrap();
 
     // Schema-level: description attr collected from root + preceding
     // XML comment (<!-- xml-comment:schema --> before root element).
@@ -432,7 +468,7 @@ fn parse_composite_with_undefined_type_member() -> Result<(), Box<dyn std::error
 </messageSchema>"#;
     // Either parse errors (undefined type) or succeeds (fallback branch).
     // In either case the fallback code at 769-796 is exercised.
-    let _ = parse(xml);
+    let _ = parse(crate::SchemaSource::xml(xml));
     Ok(())
 }
 
@@ -443,7 +479,7 @@ fn parse_include_file_not_found_is_error() -> Result<(), Box<dyn std::error::Err
   <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/></composite></types>
   <include href="definitely_nonexistent_file_12345.xml"/>
 </messageSchema>"#;
-    let err = parse(xml).unwrap_err();
+    let err = parse(crate::SchemaSource::xml(xml)).unwrap_err();
     match &err {
         ParseError::Include {
             href,
@@ -488,7 +524,12 @@ fn resolve_type_with_since_version() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn parse_missing_root_element() -> Result<(), Box<dyn std::error::Error>> {
-    assert!(parse("<?xml version=\"1.0\"?>\n<notSchema/>").is_err());
+    assert!(
+        parse(crate::SchemaSource::xml(
+            "<?xml version=\"1.0\"?>\n<notSchema/>"
+        ))
+        .is_err()
+    );
 
     Ok(())
 }
@@ -597,7 +638,7 @@ fn parse_enum_duplicate_value() -> Result<(), Box<dyn std::error::Error>> {
 <enum name="E" encodingType="uint8"><validValue name="A">1</validValue><validValue name="B">1</validValue></enum></types>
 <sbe:message name="M" id="1"><field name="e" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
-    assert!(parse(xml).is_err());
+    assert!(parse(crate::SchemaSource::xml(xml)).is_err());
 
     Ok(())
 }
@@ -615,7 +656,7 @@ fn parse_enum_null_sentinel_collision() -> Result<(), Box<dyn std::error::Error>
 <sbe:message name="M" id="1"><field name="e" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
     assert!(
-        parse(xml).is_err(),
+        parse(crate::SchemaSource::xml(xml)).is_err(),
         "validValue == null sentinel must error"
     );
     Ok(())
@@ -629,7 +670,7 @@ fn parse_set_bit_index_too_high() -> Result<(), Box<dyn std::error::Error>> {
 <set name="F" encodingType="uint8"><choice name="X">99</choice></set></types>
 <sbe:message name="M" id="1"><field name="f" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
-    assert!(parse(xml).is_err());
+    assert!(parse(crate::SchemaSource::xml(xml)).is_err());
 
     Ok(())
 }
@@ -642,7 +683,7 @@ fn parse_set_non_numeric_bit_index() -> Result<(), Box<dyn std::error::Error>> {
 <set name="F" encodingType="uint8"><choice name="X">abc</choice></set></types>
 <sbe:message name="M" id="1"><field name="f" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
-    assert!(parse(xml).is_err());
+    assert!(parse(crate::SchemaSource::xml(xml)).is_err());
 
     Ok(())
 }
@@ -654,7 +695,7 @@ fn parse_message_duplicate_field_name() -> Result<(), Box<dyn std::error::Error>
 <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
 <sbe:message name="M" id="1"><field name="x" id="1" type="uint32"/><field name="x" id="2" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
-    assert!(parse(xml).is_err());
+    assert!(parse(crate::SchemaSource::xml(xml)).is_err());
 
     Ok(())
 }
@@ -666,7 +707,7 @@ fn parse_message_duplicate_field_id() -> Result<(), Box<dyn std::error::Error>> 
 <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
 <sbe:message name="M" id="1"><field name="x" id="1" type="uint32"/><field name="y" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
-    assert!(parse(xml).is_err());
+    assert!(parse(crate::SchemaSource::xml(xml)).is_err());
 
     Ok(())
 }
@@ -678,7 +719,7 @@ fn parse_message_out_of_order_offset() -> Result<(), Box<dyn std::error::Error>>
 <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
 <sbe:message name="M" id="1"><field name="x" id="1" type="uint32" offset="4"/><field name="y" id="2" type="uint32" offset="0"/></sbe:message>
 </sbe:messageSchema>"#;
-    assert!(parse(xml).is_err());
+    assert!(parse(crate::SchemaSource::xml(xml)).is_err());
 
     Ok(())
 }
@@ -690,7 +731,7 @@ fn parse_constant_field_missing_value() -> Result<(), Box<dyn std::error::Error>
 <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
 <sbe:message name="M" id="1"><field name="c" id="1" type="uint32" presence="constant"/></sbe:message>
 </sbe:messageSchema>"#;
-    assert!(parse(xml).is_err());
+    assert!(parse(crate::SchemaSource::xml(xml)).is_err());
 
     Ok(())
 }
@@ -704,7 +745,7 @@ fn parse_composite_ref_member() -> Result<(), Box<dyn std::error::Error>> {
 <composite name="Wrapper"><type name="val" type="baseInt"/></composite></types>
 <sbe:message name="M" id="1"><field name="w" id="1" type="Wrapper"/></sbe:message>
 </sbe:messageSchema>"#;
-    let _ = parse(xml);
+    let _ = parse(crate::SchemaSource::xml(xml));
 
     Ok(())
 }
@@ -718,7 +759,7 @@ fn parse_field_inheriting_presence() -> Result<(), Box<dyn std::error::Error>> {
 <sbe:message name="M" id="1"><field name="x" id="1" type="optVal"/></sbe:message>
 </sbe:messageSchema>"#;
     // Exercise field inheriting presence from referenced type — may succeed or error
-    let _ = parse(xml);
+    let _ = parse(crate::SchemaSource::xml(xml));
 
     Ok(())
 }
@@ -741,9 +782,15 @@ fn value_ref_schema(field: &str) -> String {
 #[test]
 fn parse_value_ref_accepts_what_sbe_tool_accepts() -> Result<(), Box<dyn std::error::Error>> {
     // The field's own enum, and a primitive whose encoding matches the enum's.
-    parse(&value_ref_schema(r#"type="Colour" valueRef="Colour.Red""#))?;
-    parse(&value_ref_schema(r#"type="uint8" valueRef="Colour.Red""#))?;
-    parse(&value_ref_schema(r#"type="char" valueRef="Side.Buy""#))?;
+    parse(crate::SchemaSource::xml(&value_ref_schema(
+        r#"type="Colour" valueRef="Colour.Red""#,
+    )))?;
+    parse(crate::SchemaSource::xml(&value_ref_schema(
+        r#"type="uint8" valueRef="Colour.Red""#,
+    )))?;
+    parse(crate::SchemaSource::xml(&value_ref_schema(
+        r#"type="char" valueRef="Side.Buy""#,
+    )))?;
     Ok(())
 }
 
@@ -791,7 +838,7 @@ fn parse_value_ref_rejects_what_sbe_tool_rejects() -> Result<(), Box<dyn std::er
             "does not match field type",
         ),
     ] {
-        let Err(err) = parse(&value_ref_schema(field)) else {
+        let Err(err) = parse(crate::SchemaSource::xml(&value_ref_schema(field))) else {
             return Err(format!("expected {field} to be rejected").into());
         };
         let message = format!("{err}");
@@ -822,7 +869,7 @@ fn parse_rejects_constant_set_and_composite_in_group_entries()
 <field name="x" id="3" type="uint8"/><field name="c" id="4" {field}/></group></sbe:message>
 </sbe:messageSchema>"#
         );
-        let Err(err) = parse(&xml) else {
+        let Err(err) = parse(crate::SchemaSource::xml(&xml)) else {
             return Err(format!("expected {field} to be rejected").into());
         };
         let message = format!("{err}");
@@ -839,7 +886,7 @@ fn parse_field_inherit_constant_from_type() -> Result<(), Box<dyn std::error::Er
 <type name="ci" primitiveType="uint32" presence="constant">42</type></types>
 <sbe:message name="M" id="1"><field name="c" id="1" type="ci" presence="constant"/></sbe:message>
 </sbe:messageSchema>"#;
-    let _ = parse(xml);
+    let _ = parse(crate::SchemaSource::xml(xml));
 
     Ok(())
 }
@@ -852,7 +899,7 @@ fn parse_char_constant_wrong_length() -> Result<(), Box<dyn std::error::Error>> 
 <type name="c3" primitiveType="char" length="3" presence="constant">AB</type></types>
 <sbe:message name="M" id="1"><field name="x" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
-    let _ = parse(xml);
+    let _ = parse(crate::SchemaSource::xml(xml));
 
     Ok(())
 }
@@ -869,7 +916,7 @@ fn parse_set_valid_indices() -> Result<(), Box<dyn std::error::Error>> {
 </types>
 <message name="M" id="1"><field name="f" id="1" type="uint32"/></message>
 </sbe:messageSchema>"#;
-    let _ = parse(xml);
+    let _ = parse(crate::SchemaSource::xml(xml));
 
     Ok(())
 }
@@ -897,7 +944,7 @@ fn parse_message_with_explicit_offsets_and_registered_types()
   <field name="v" id="2" type="uint16" offset="8"/>
 </sbe:message>
 </sbe:messageSchema>"#;
-    let _ = parse(xml);
+    let _ = parse(crate::SchemaSource::xml(xml));
 
     Ok(())
 }
@@ -910,7 +957,7 @@ fn parse_message_nullvalue_on_required_field() -> Result<(), Box<dyn std::error:
 <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
 <sbe:message name="M" id="1"><field name="x" id="1" type="uint32" nullValue="0"/></sbe:message>
 </sbe:messageSchema>"#;
-    let _ = parse(xml);
+    let _ = parse(crate::SchemaSource::xml(xml));
 
     Ok(())
 }
@@ -924,7 +971,7 @@ fn parse_char_constant_correct_length() -> Result<(), Box<dyn std::error::Error>
 <type name="code3" primitiveType="char" length="3" presence="constant">ABC</type></types>
 <sbe:message name="M" id="1"><field name="x" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
-    let _ = parse(xml);
+    let _ = parse(crate::SchemaSource::xml(xml));
 
     Ok(())
 }
@@ -941,7 +988,7 @@ fn parse_enum_with_description() -> Result<(), Box<dyn std::error::Error>> {
 </enum></types>
 <sbe:message name="M" id="1"><field name="c" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
-    let _ = parse(xml);
+    let _ = parse(crate::SchemaSource::xml(xml));
 
     Ok(())
 }
@@ -958,7 +1005,7 @@ fn parse_set_with_description() -> Result<(), Box<dyn std::error::Error>> {
 </set></types>
 <sbe:message name="M" id="1"><field name="f" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
-    let _ = parse(xml);
+    let _ = parse(crate::SchemaSource::xml(xml));
 
     Ok(())
 }
@@ -973,7 +1020,7 @@ fn parse_composite_member_nonexistent_type() -> Result<(), Box<dyn std::error::E
 <composite name="C"><type name="f" type="NonExistent"/></composite></types>
 <sbe:message name="M" id="1"><field name="x" id="1" type="uint32"/></sbe:message>
 </sbe:messageSchema>"#;
-    let _ = parse(xml);
+    let _ = parse(crate::SchemaSource::xml(xml));
     Ok(())
 }
 
@@ -1065,7 +1112,10 @@ fn parse_malformed_include_file_is_error() -> Result<(), Box<dyn std::error::Err
   <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
   <include href="bad-include.xml"/>
 </messageSchema>"#;
-    assert!(parse(xml).is_err(), "malformed include file must error");
+    assert!(
+        parse(crate::SchemaSource::xml(xml)).is_err(),
+        "malformed include file must error"
+    );
 
     Ok(())
 }
@@ -1081,7 +1131,10 @@ fn parse_var_data_with_simple_encoding_type_is_error() -> Result<(), Box<dyn std
   </types>
   <message name="M" id="1"><data name="d" id="1" type="uint32"/></message>
 </messageSchema>"#;
-    assert!(parse(xml).is_err(), "simple encoding as varData must error");
+    assert!(
+        parse(crate::SchemaSource::xml(xml)).is_err(),
+        "simple encoding as varData must error"
+    );
 
     Ok(())
 }
@@ -1147,7 +1200,7 @@ fn field(
 
 #[test]
 fn parses_schema_metadata() -> Result<(), Box<dyn std::error::Error>> {
-    let ir = parse(MINIMAL_SCHEMA).unwrap();
+    let ir = parse(crate::SchemaSource::xml(MINIMAL_SCHEMA)).unwrap();
     assert_eq!(ir.package, "example.sbe");
     assert_eq!(ir.id, 1);
     assert_eq!(ir.version, 0);
@@ -1161,7 +1214,7 @@ fn parses_schema_metadata() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn parses_message_header_composite_and_message_fields() -> Result<(), Box<dyn std::error::Error>> {
-    let ir = parse(MINIMAL_SCHEMA).unwrap();
+    let ir = parse(crate::SchemaSource::xml(MINIMAL_SCHEMA)).unwrap();
 
     let mut expected = Vec::new();
     let mut msg_hdr_start = structural("messageHeader", Signal::BeginComposite);
@@ -1204,6 +1257,7 @@ fn parses_message_header_composite_and_message_fields() -> Result<(), Box<dyn st
         semantic_version: None,
         header_type: "messageHeader".to_string(),
         tokens: expected,
+        sources: Vec::new(),
     };
     crate::resolve::resolve_schema(&mut expected_ir, None).unwrap();
 
@@ -1220,7 +1274,7 @@ fn parses_message_header_composite_and_message_fields() -> Result<(), Box<dyn st
 
 #[test]
 fn rejects_non_message_schema_root() -> Result<(), Box<dyn std::error::Error>> {
-    let err = parse("<notSbe/>").unwrap_err();
+    let err = parse(crate::SchemaSource::xml("<notSbe/>")).unwrap_err();
     assert!(matches!(err, ParseError::Missing { .. }));
 
     Ok(())
@@ -1228,7 +1282,10 @@ fn rejects_non_message_schema_root() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn rejects_missing_package() -> Result<(), Box<dyn std::error::Error>> {
-    let err = parse(r#"<messageSchema id="1" version="0"/>"#).unwrap_err();
+    let err = parse(crate::SchemaSource::xml(
+        r#"<messageSchema id="1" version="0"/>"#,
+    ))
+    .unwrap_err();
     assert!(matches!(err, ParseError::Missing { .. }));
 
     Ok(())
@@ -1236,12 +1293,10 @@ fn rejects_missing_package() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn invalid_primitive_error_describes_and_spans() -> Result<(), Box<dyn std::error::Error>> {
-    let err = parse(
-        r#"<messageSchema package="x" id="1" version="0">
+    let err = parse(crate::SchemaSource::xml(r#"<messageSchema package="x" id="1" version="0">
   <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
   <message name="M" id="1"><field name="f" id="1" type="bogus"/></message>
-</messageSchema>"#,
-    )
+</messageSchema>"#))
     .unwrap_err();
     let msg = format!("{err}");
     assert!(msg.contains("type for field 'f'"), "{msg}");
@@ -1263,7 +1318,7 @@ fn invalid_primitive_error_renders_source_snippet_via_miette()
   <types><composite name="messageHeader"><type name="blockLength" primitiveType="uint16"/><type name="templateId" primitiveType="uint16"/><type name="schemaId" primitiveType="uint16"/><type name="version" primitiveType="uint16"/></composite></types>
   <message name="M" id="1"><field name="f" id="1" type="bogus"/></message>
 </messageSchema>"#;
-    let err = parse(xml).unwrap_err();
+    let err = parse(crate::SchemaSource::xml(xml)).unwrap_err();
 
     let mut rendered = String::new();
     miette::GraphicalReportHandler::new_themed(miette::GraphicalTheme::unicode_nocolor())
@@ -1334,7 +1389,7 @@ fn xsd_validator_accepts_every_parser_valid_schema() -> Result<(), Box<dyn std::
         };
         // Only schemas the parser itself accepts are in scope — a negative
         // fixture proves nothing about the validator.
-        if parse(&xml).is_err() {
+        if parse(crate::SchemaSource::xml(&xml)).is_err() {
             continue;
         }
         checked += 1;
@@ -1391,7 +1446,7 @@ fn sbe_sample_resource(sub: &str) -> PathBuf {
 #[test]
 fn parses_schema_with_xinclude_relative_path() -> Result<(), Box<dyn std::error::Error>> {
     let path = sbe_test_resource("sub/basic-schema.xml");
-    let ir = parse_file(&path).unwrap();
+    let ir = parse(crate::SchemaSource::file(&path)).unwrap();
 
     assert_eq!(ir.package, "SBE tests");
     assert_eq!(ir.id, 2);
@@ -1415,7 +1470,7 @@ fn parses_schema_with_xinclude_relative_path() -> Result<(), Box<dyn std::error:
 #[test]
 fn parses_example_schema_with_xinclude() -> Result<(), Box<dyn std::error::Error>> {
     let path = sbe_sample_resource("example-schema.xml");
-    let ir = parse_file(&path).unwrap();
+    let ir = parse(crate::SchemaSource::file(&path)).unwrap();
 
     assert_eq!(ir.package, "baseline");
 
@@ -1438,7 +1493,7 @@ fn parses_example_schema_with_xinclude() -> Result<(), Box<dyn std::error::Error
 
 #[test]
 fn parse_with_shared_resolves_types_without_include() -> Result<(), Box<dyn std::error::Error>> {
-    let common = parse(
+    let common = parse(crate::SchemaSource::xml(
         r#"<?xml version="1.0"?>
 <messageSchema package="common" id="0" version="1" byteOrder="littleEndian">
   <types>
@@ -1454,20 +1509,22 @@ fn parse_with_shared_resolves_types_without_include() -> Result<(), Box<dyn std:
 </composite>
   </types>
 </messageSchema>"#,
-    )
+    ))
     .unwrap();
 
     // No <types> or <include> of common-types.xml here — both messageHeader
     // and Price must resolve from `common`'s seeded registry.
-    let orders = parse_with_shared(
-        r#"<?xml version="1.0"?>
+    let orders = parse(
+        crate::SchemaSource::xml(
+            r#"<?xml version="1.0"?>
 <messageSchema package="orders" id="1" version="1" byteOrder="littleEndian"
            headerType="messageHeader">
   <message name="NewOrder" id="1">
 <field name="price" id="1" type="Price"/>
   </message>
 </messageSchema>"#,
-        &common,
+        )
+        .with_shared(&common),
     )?;
 
     assert!(
@@ -1487,7 +1544,7 @@ fn xinclude_without_base_falls_back_to_hardcoded_paths() -> Result<(), Box<dyn s
     // for common schemas.
     let path = sbe_sample_resource("example-schema.xml");
     let content = std::fs::read_to_string(&path).unwrap();
-    let ir = parse(&content).unwrap();
+    let ir = parse(crate::SchemaSource::xml(&content)).unwrap();
 
     assert_eq!(ir.package, "baseline");
     assert!(
@@ -1564,7 +1621,7 @@ fn stub_schema_including(href: &str) -> String {
 fn xinclude_detects_cycle() -> Result<(), Box<dyn std::error::Error>> {
     let path = sbe_test_resource("cyclic-self-include.xml");
     let canon = path.canonicalize()?;
-    let err = parse_file(&path).unwrap_err();
+    let err = parse(crate::SchemaSource::file(&path)).unwrap_err();
     assert_eq!(include_cycle_chain(&err), [canon.clone(), canon].as_slice());
 
     Ok(())
@@ -1577,7 +1634,7 @@ fn parse_file_mutual_include_cycle_is_visit_order() -> Result<(), Box<dyn std::e
     let dir = TempXmlDir::new("mutual")?;
     let z = dir.write("z.xml", &stub_schema_including("a.xml"))?;
     let a = dir.write("a.xml", &stub_schema_including("z.xml"))?;
-    let err = parse_file(&z).unwrap_err();
+    let err = parse(crate::SchemaSource::file(&z)).unwrap_err();
     let z_c = z.canonicalize()?;
     let a_c = a.canonicalize()?;
     assert_eq!(
@@ -1595,7 +1652,7 @@ fn parse_file_transitive_include_cycle_is_visit_order() -> Result<(), Box<dyn st
     let c = dir.write("c.xml", &stub_schema_including("b.xml"))?;
     let b = dir.write("b.xml", &stub_schema_including("a.xml"))?;
     let a = dir.write("a.xml", &stub_schema_including("c.xml"))?;
-    let err = parse_file(&c).unwrap_err();
+    let err = parse(crate::SchemaSource::file(&c)).unwrap_err();
     let c_c = c.canonicalize()?;
     let b_c = b.canonicalize()?;
     let a_c = a.canonicalize()?;
@@ -1650,7 +1707,7 @@ fn parse_file_diamond_shared_include_is_not_a_cycle() -> Result<(), Box<dyn std:
 "#,
     )?;
 
-    let ir = parse_file(&root)?;
+    let ir = parse(crate::SchemaSource::file(&root))?;
     assert!(
         ir.tokens
             .iter()
@@ -1664,7 +1721,7 @@ fn parse_file_diamond_shared_include_is_not_a_cycle() -> Result<(), Box<dyn std:
 #[test]
 fn parse_file_directory_root_is_io() -> Result<(), Box<dyn std::error::Error>> {
     let dir = TempXmlDir::new("dir_root")?;
-    let err = parse_file(&dir.0).unwrap_err();
+    let err = parse(crate::SchemaSource::file(&dir.0)).unwrap_err();
     match &err {
         ParseError::Io { path, source } => {
             assert_eq!(path, &dir.0);
@@ -1693,7 +1750,7 @@ fn parse_file_unreadable_root_is_io() -> Result<(), Box<dyn std::error::Error>> 
     let dir = TempXmlDir::new("perm_root")?;
     let path = dir.write("schema.xml", &stub_schema_including("missing.xml"))?;
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000))?;
-    let err = parse_file(&path).unwrap_err();
+    let err = parse(crate::SchemaSource::file(&path)).unwrap_err();
     let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644));
     match &err {
         ParseError::Io { source, .. } => {
@@ -1727,7 +1784,7 @@ fn parse_file_unreadable_include_is_include_io() -> Result<(), Box<dyn std::erro
 </messageSchema>
 "#,
     )?;
-    let err = parse_file(&root).unwrap_err();
+    let err = parse(crate::SchemaSource::file(&root)).unwrap_err();
     match &err {
         ParseError::Include {
             href,
@@ -1762,7 +1819,7 @@ fn parse_file_permission_denied_include_is_include_io() -> Result<(), Box<dyn st
     let blocked = dir.write("blocked.xml", "<types/>")?;
     std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o000))?;
     let root = dir.write("root.xml", &stub_schema_including("blocked.xml"))?;
-    let err = parse_file(&root).unwrap_err();
+    let err = parse(crate::SchemaSource::file(&root)).unwrap_err();
     let _ = std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o644));
     match &err {
         ParseError::Include {
@@ -1794,7 +1851,7 @@ fn null_value_on_non_optional_type_parses_with_warning() -> Result<(), Box<dyn s
 <field name="f" id="1" type="MyType"/>
   </message>
 </messageSchema>"#;
-    let ir = parse(schema).unwrap();
+    let ir = parse(crate::SchemaSource::xml(schema)).unwrap();
     assert!(ir.tokens.iter().any(|t| t.name == "M"));
 
     Ok(())
@@ -1812,7 +1869,7 @@ fn constant_field_without_value_errors() -> Result<(), Box<dyn std::error::Error
 <field name="f" id="1" type="MT" presence="constant"/>
   </message>
 </messageSchema>"#;
-    let err = parse(schema).unwrap_err();
+    let err = parse(crate::SchemaSource::xml(schema)).unwrap_err();
     assert!(matches!(err, ParseError::Missing { .. }));
 
     Ok(())
@@ -1832,7 +1889,7 @@ fn duplicate_enum_valid_value_names_error() -> Result<(), Box<dyn std::error::Er
 <field name="f" id="1" type="Color"/>
   </message>
 </messageSchema>"#;
-    let err = parse(schema).unwrap_err();
+    let err = parse(crate::SchemaSource::xml(schema)).unwrap_err();
     assert!(matches!(err, ParseError::Invalid { .. }));
 
     Ok(())
@@ -1852,7 +1909,7 @@ fn duplicate_enum_encoded_values_error() -> Result<(), Box<dyn std::error::Error
 <field name="f" id="1" type="Color"/>
   </message>
 </messageSchema>"#;
-    let err = parse(schema).unwrap_err();
+    let err = parse(crate::SchemaSource::xml(schema)).unwrap_err();
     assert!(matches!(err, ParseError::Invalid { .. }));
 
     Ok(())
@@ -1869,7 +1926,7 @@ fn char_constant_length_too_short_errors() -> Result<(), Box<dyn std::error::Err
 <field name="f" id="1" type="CC"/>
   </message>
 </messageSchema>"#;
-    let err = parse(schema).unwrap_err();
+    let err = parse(crate::SchemaSource::xml(schema)).unwrap_err();
     assert!(matches!(err, ParseError::Invalid { .. }));
 
     Ok(())
@@ -1887,7 +1944,7 @@ fn char_constant_exact_length_parses() -> Result<(), Box<dyn std::error::Error>>
 <field name="f" id="1" type="CC"/>
   </message>
 </messageSchema>"#;
-    let ir = parse(schema).unwrap();
+    let ir = parse(crate::SchemaSource::xml(schema)).unwrap();
     assert!(ir.tokens.iter().any(|t| t.name == "M"));
 
     Ok(())
@@ -1911,7 +1968,7 @@ package="test" id="1" version="1" byteOrder="littleEndian">
 <field name="b" id="1" type="uint8"/>
   </sbe:message>
 </sbe:messageSchema>"#;
-    assert!(parse(schema).is_err());
+    assert!(parse(crate::SchemaSource::xml(schema)).is_err());
 
     Ok(())
 }
@@ -1934,7 +1991,7 @@ package="test" id="1" version="1" byteOrder="littleEndian">
 <field name="dup" id="2" type="uint8"/>
   </sbe:message>
 </sbe:messageSchema>"#;
-    assert!(parse(schema).is_err());
+    assert!(parse(crate::SchemaSource::xml(schema)).is_err());
 
     Ok(())
 }
@@ -1957,7 +2014,7 @@ fn group_with_unknown_dimension_type_fails() -> Result<(), Box<dyn std::error::E
 </group>
   </message>
 </messageSchema>"#;
-    let err = parse(schema).unwrap_err();
+    let err = parse(crate::SchemaSource::xml(schema)).unwrap_err();
     assert!(matches!(err, ParseError::Invalid { .. }));
 
     Ok(())
@@ -1985,7 +2042,7 @@ fn group_with_wrong_dimension_type_structure_fails() -> Result<(), Box<dyn std::
 </group>
   </message>
 </messageSchema>"#;
-    let err = parse(schema).unwrap_err();
+    let err = parse(crate::SchemaSource::xml(schema)).unwrap_err();
     assert!(matches!(err, ParseError::Invalid { .. }));
 
     Ok(())
@@ -2016,7 +2073,7 @@ fn dimension_schema(member: &str) -> String {
 }
 
 fn assert_dimension_invalid(xml: &str, field: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let err = parse(xml).unwrap_err();
+    let err = parse(crate::SchemaSource::xml(xml)).unwrap_err();
     let msg = format!("{err}");
     assert!(
         msg.contains(field),
@@ -2105,7 +2162,7 @@ fn var_data_with_unknown_type_fails() -> Result<(), Box<dyn std::error::Error>> 
 <data name="d" id="2" type="NonExistentVarType"/>
   </message>
 </messageSchema>"#;
-    let err = parse(schema).unwrap_err();
+    let err = parse(crate::SchemaSource::xml(schema)).unwrap_err();
     assert!(matches!(err, ParseError::Invalid { .. }));
 
     Ok(())
@@ -2131,7 +2188,7 @@ fn var_data_with_wrong_type_structure_fails() -> Result<(), Box<dyn std::error::
 <data name="d" id="2" type="BadVar"/>
   </message>
 </messageSchema>"#;
-    let err = parse(schema).unwrap_err();
+    let err = parse(crate::SchemaSource::xml(schema)).unwrap_err();
     assert!(matches!(err, ParseError::Invalid { .. }));
 
     Ok(())
@@ -2198,7 +2255,7 @@ fn malformed_variable_data_encodings_are_rejected() -> Result<(), Box<dyn std::e
 </messageSchema>"#
         );
         assert!(
-            parse(&schema).is_err(),
+            parse(crate::SchemaSource::xml(&schema)).is_err(),
             "{name} must not be accepted as a variable-data encoding"
         );
     }
@@ -2225,7 +2282,7 @@ fn block_length_validation_passes_for_correct_value() -> Result<(), Box<dyn std:
 <field name="c" id="3" type="uint8"  offset="10"/>
   </message>
 </messageSchema>"#;
-    parse(schema).unwrap();
+    parse(crate::SchemaSource::xml(schema)).unwrap();
 
     Ok(())
 }
@@ -2248,7 +2305,7 @@ fn larger_block_length_is_legal_padding() -> Result<(), Box<dyn std::error::Erro
 <field name="c" id="3" type="uint8"  offset="10"/>
   </message>
 </messageSchema>"#;
-    let ir = parse(schema).unwrap();
+    let ir = parse(crate::SchemaSource::xml(schema)).unwrap();
     let message = ir
         .tokens
         .iter()
@@ -2314,7 +2371,7 @@ fn overlapping_fixed_field_offsets_are_rejected() -> Result<(), Box<dyn std::err
 
     for (name, schema) in cases {
         assert!(
-            parse(&schema).is_err(),
+            parse(crate::SchemaSource::xml(&schema)).is_err(),
             "{name} overlapping offsets must be rejected"
         );
     }
@@ -2361,7 +2418,7 @@ fn undersized_message_and_group_block_lengths_are_rejected()
 
     for (name, schema) in cases {
         assert!(
-            parse(&schema).is_err(),
+            parse(crate::SchemaSource::xml(&schema)).is_err(),
             "{name} blockLength must cover its fixed fields"
         );
     }
@@ -2387,7 +2444,7 @@ fn field_inherits_optional_presence_from_type() -> Result<(), Box<dyn std::error
 <field name="g" id="2" type="OptU32" presence="required"/>
   </message>
 </messageSchema>"#;
-    let ir = parse(schema).unwrap();
+    let ir = parse(crate::SchemaSource::xml(schema)).unwrap();
     // f should have inherited optional presence from OptU32.
     let f_begins: Vec<&Token> = ir
         .tokens
@@ -2433,7 +2490,7 @@ fn field_inherits_constant_presence_from_type() -> Result<(), Box<dyn std::error
 <field name="f" id="1" type="ConstU32"/>
   </message>
 </messageSchema>"#;
-    let ir = parse(schema).unwrap();
+    let ir = parse(crate::SchemaSource::xml(schema)).unwrap();
     let f_begins: Vec<&Token> = ir
         .tokens
         .iter()
@@ -2470,7 +2527,7 @@ fn composite_member_with_valid_ref_parses() -> Result<(), Box<dyn std::error::Er
 <field name="f" id="1" type="outer"/>
   </message>
 </messageSchema>"#;
-    let ir = parse(schema).unwrap();
+    let ir = parse(crate::SchemaSource::xml(schema)).unwrap();
     assert!(ir.tokens.iter().any(|t| t.name == "M"));
 
     Ok(())
@@ -2495,7 +2552,7 @@ fn composite_member_with_invalid_ref_fails() -> Result<(), Box<dyn std::error::E
 <field name="f" id="1" type="outer"/>
   </message>
 </messageSchema>"#;
-    let err = parse(schema).unwrap_err();
+    let err = parse(crate::SchemaSource::xml(schema)).unwrap_err();
     assert!(matches!(err, ParseError::Invalid { .. }));
 
     Ok(())
@@ -2517,7 +2574,7 @@ fn custom_header_type_with_required_fields_parses() -> Result<(), Box<dyn std::e
 <field name="x" id="1" type="uint8"/>
   </message>
 </messageSchema>"#;
-    parse(schema).unwrap();
+    parse(crate::SchemaSource::xml(schema)).unwrap();
 
     Ok(())
 }
@@ -2538,7 +2595,7 @@ fn custom_header_type_missing_fields_fails() -> Result<(), Box<dyn std::error::E
 <field name="x" id="1" type="uint8"/>
   </message>
 </messageSchema>"#;
-    let err = parse(schema).unwrap_err();
+    let err = parse(crate::SchemaSource::xml(schema)).unwrap_err();
     let msg = format!("{err}");
     assert!(
         msg.contains("schemaId"),
@@ -2611,7 +2668,10 @@ fn malformed_message_header_fields_are_rejected() -> Result<(), Box<dyn std::err
   <message name="M" id="1"><field name="x" id="1" type="uint8"/></message>
 </messageSchema>"#
         );
-        assert!(parse(&schema).is_err(), "{name} must be rejected");
+        assert!(
+            parse(crate::SchemaSource::xml(&schema)).is_err(),
+            "{name} must be rejected"
+        );
     }
 
     Ok(())
@@ -2663,7 +2723,7 @@ fn message_members_must_follow_fixed_group_data_order() -> Result<(), Box<dyn st
   <message name="M" id="1">{body}</message>
 </messageSchema>"#
         );
-        let error = parse(&schema).expect_err(name);
+        let error = parse(crate::SchemaSource::xml(&schema)).expect_err(name);
         assert!(
             format!("{error}").contains("message member order"),
             "{name} failed for an unrelated reason: {error}"
@@ -2681,7 +2741,7 @@ fn message_members_must_follow_fixed_group_data_order() -> Result<(), Box<dyn st
   </message>
 </messageSchema>"#
     );
-    parse(&valid)?;
+    parse(crate::SchemaSource::xml(&valid))?;
 
     Ok(())
 }
@@ -2703,7 +2763,7 @@ fn parses_epoch_and_time_unit_on_type() -> Result<(), Box<dyn std::error::Error>
 <field name="ts" id="1" type="Timestamp"/>
   </message>
 </messageSchema>"#;
-    let ir = parse(schema).unwrap();
+    let ir = parse(crate::SchemaSource::xml(schema)).unwrap();
     let ts_tokens: Vec<&Token> = ir
         .tokens
         .iter()
@@ -2740,7 +2800,7 @@ fn parses_epoch_and_time_unit_on_field() -> Result<(), Box<dyn std::error::Error
 <field name="ts" id="1" type="uint64" epoch="unix" timeUnit="nanoseconds"/>
   </message>
 </messageSchema>"#;
-    let ir = parse(schema).unwrap();
+    let ir = parse(crate::SchemaSource::xml(schema)).unwrap();
     let ts_tokens: Vec<&Token> = ir
         .tokens
         .iter()
@@ -2773,14 +2833,14 @@ fn deprecated_on_type() -> Result<(), Box<dyn std::error::Error>> {
 <field name="f" id="1" type="OldType"/>
   </message>
 </messageSchema>"#;
-    let ir = parse(schema).unwrap();
+    let ir = parse(crate::SchemaSource::xml(schema)).unwrap();
     let old_tokens: Vec<&Token> = ir
         .tokens
         .iter()
         .filter(|t| t.name == "f" && t.signal == Signal::BeginField)
         .collect();
     assert_eq!(old_tokens.len(), 1);
-    assert!(old_tokens[0].encoding.deprecated);
+    assert_eq!(old_tokens[0].encoding.deprecated, Some(1));
 
     Ok(())
 }
@@ -2801,13 +2861,13 @@ fn deprecated_on_message() -> Result<(), Box<dyn std::error::Error>> {
 <field name="f" id="1" type="uint8"/>
   </message>
 </messageSchema>"#;
-    let ir = parse(schema).unwrap();
+    let ir = parse(crate::SchemaSource::xml(schema)).unwrap();
     let msg_token = ir
         .tokens
         .iter()
         .find(|t| t.signal == Signal::BeginMessage && t.name == "M");
     assert!(msg_token.is_some());
-    assert!(msg_token.unwrap().encoding.deprecated);
+    assert_eq!(msg_token.unwrap().encoding.deprecated, Some(1));
 
     Ok(())
 }
@@ -2828,14 +2888,14 @@ fn deprecated_on_field() -> Result<(), Box<dyn std::error::Error>> {
 <field name="f" id="1" type="uint8" deprecated="1"/>
   </message>
 </messageSchema>"#;
-    let ir = parse(schema).unwrap();
+    let ir = parse(crate::SchemaSource::xml(schema)).unwrap();
     let f_tokens: Vec<&Token> = ir
         .tokens
         .iter()
         .filter(|t| t.name == "f" && t.signal == Signal::BeginField)
         .collect();
     assert_eq!(f_tokens.len(), 1);
-    assert!(f_tokens[0].encoding.deprecated);
+    assert_eq!(f_tokens[0].encoding.deprecated, Some(1));
 
     Ok(())
 }
@@ -2862,13 +2922,13 @@ fn deprecated_on_group() -> Result<(), Box<dyn std::error::Error>> {
 </group>
   </message>
 </messageSchema>"#;
-    let ir = parse(schema).unwrap();
+    let ir = parse(crate::SchemaSource::xml(schema)).unwrap();
     let g_token = ir
         .tokens
         .iter()
         .find(|t| t.signal == Signal::BeginGroup && t.name == "g");
     assert!(g_token.is_some());
-    assert!(g_token.unwrap().encoding.deprecated);
+    assert_eq!(g_token.unwrap().encoding.deprecated, Some(1));
 
     Ok(())
 }
@@ -2893,13 +2953,13 @@ fn deprecated_on_data() -> Result<(), Box<dyn std::error::Error>> {
 <data name="d" id="2" type="varDataEncoding" deprecated="1"/>
   </message>
 </messageSchema>"#;
-    let ir = parse(schema).unwrap();
+    let ir = parse(crate::SchemaSource::xml(schema)).unwrap();
     let d_token = ir
         .tokens
         .iter()
         .find(|t| t.signal == Signal::BeginVarData && t.name == "d");
     assert!(d_token.is_some());
-    assert!(d_token.unwrap().encoding.deprecated);
+    assert_eq!(d_token.unwrap().encoding.deprecated, Some(1));
 
     Ok(())
 }
@@ -2923,13 +2983,13 @@ fn deprecated_on_composite() -> Result<(), Box<dyn std::error::Error>> {
 <field name="f" id="1" type="OldComposite"/>
   </message>
 </messageSchema>"#;
-    let ir = parse(schema).unwrap();
+    let ir = parse(crate::SchemaSource::xml(schema)).unwrap();
     let c_token = ir
         .tokens
         .iter()
         .find(|t| t.signal == Signal::BeginComposite && t.name == "OldComposite");
     assert!(c_token.is_some());
-    assert!(c_token.unwrap().encoding.deprecated);
+    assert_eq!(c_token.unwrap().encoding.deprecated, Some(1));
 
     Ok(())
 }
@@ -2953,13 +3013,13 @@ fn deprecated_on_enum() -> Result<(), Box<dyn std::error::Error>> {
 <field name="f" id="1" type="OldEnum"/>
   </message>
 </messageSchema>"#;
-    let ir = parse(schema).unwrap();
+    let ir = parse(crate::SchemaSource::xml(schema)).unwrap();
     let e_token = ir
         .tokens
         .iter()
         .find(|t| t.signal == Signal::BeginEnum && t.name == "OldEnum");
     assert!(e_token.is_some());
-    assert!(e_token.unwrap().encoding.deprecated);
+    assert_eq!(e_token.unwrap().encoding.deprecated, Some(1));
 
     Ok(())
 }
@@ -2983,13 +3043,13 @@ fn deprecated_on_set() -> Result<(), Box<dyn std::error::Error>> {
 <field name="f" id="1" type="OldSet"/>
   </message>
 </messageSchema>"#;
-    let ir = parse(schema).unwrap();
+    let ir = parse(crate::SchemaSource::xml(schema)).unwrap();
     let s_token = ir
         .tokens
         .iter()
         .find(|t| t.signal == Signal::BeginSet && t.name == "OldSet");
     assert!(s_token.is_some());
-    assert!(s_token.unwrap().encoding.deprecated);
+    assert_eq!(s_token.unwrap().encoding.deprecated, Some(1));
 
     Ok(())
 }
@@ -3011,13 +3071,13 @@ fn deprecated_version_zero_is_preserved() -> Result<(), Box<dyn std::error::Erro
     <field name="f" id="1" type="OldType"/>
   </message>
 </messageSchema>"#;
-    let ir = parse(xml)?;
+    let ir = parse(crate::SchemaSource::xml(xml))?;
     let field = ir
         .tokens
         .iter()
         .find(|t| t.name == "f" && t.signal == Signal::BeginField)
         .ok_or("field f")?;
-    assert!(field.encoding.deprecated);
+    assert_eq!(field.encoding.deprecated, Some(0));
     Ok(())
 }
 
@@ -3038,13 +3098,13 @@ fn deprecated_ordinary_version_is_preserved() -> Result<(), Box<dyn std::error::
     <field name="f" id="1" type="OldType"/>
   </message>
 </messageSchema>"#;
-    let ir = parse(xml)?;
+    let ir = parse(crate::SchemaSource::xml(xml))?;
     let field = ir
         .tokens
         .iter()
         .find(|t| t.name == "f" && t.signal == Signal::BeginField)
         .ok_or("field f")?;
-    assert!(field.encoding.deprecated);
+    assert_eq!(field.encoding.deprecated, Some(7));
     Ok(())
 }
 
@@ -3065,13 +3125,13 @@ fn field_inherits_type_deprecation_version() -> Result<(), Box<dyn std::error::E
     <field name="f" id="1" type="OldType"/>
   </message>
 </messageSchema>"#;
-    let ir = parse(xml)?;
+    let ir = parse(crate::SchemaSource::xml(xml))?;
     let field = ir
         .tokens
         .iter()
         .find(|t| t.name == "f" && t.signal == Signal::BeginField)
         .ok_or("field f")?;
-    assert!(field.encoding.deprecated);
+    assert_eq!(field.encoding.deprecated, Some(4));
     Ok(())
 }
 
@@ -3094,7 +3154,7 @@ fn field_and_type_deprecation_keep_the_earliest_version() -> Result<(), Box<dyn 
     <field name="earlier_on_type" id="2" type="OldType" deprecated="9"/>
   </message>
 </messageSchema>"#;
-    let ir = parse(xml)?;
+    let ir = parse(crate::SchemaSource::xml(xml))?;
     let earlier_on_field = ir
         .tokens
         .iter()
@@ -3105,8 +3165,8 @@ fn field_and_type_deprecation_keep_the_earliest_version() -> Result<(), Box<dyn 
         .iter()
         .find(|t| t.name == "earlier_on_type" && t.signal == Signal::BeginField)
         .ok_or("earlier_on_type")?;
-    assert!(earlier_on_field.encoding.deprecated);
-    assert!(earlier_on_type.encoding.deprecated);
+    assert_eq!(earlier_on_field.encoding.deprecated, Some(2));
+    assert_eq!(earlier_on_type.encoding.deprecated, Some(5));
     Ok(())
 }
 
@@ -3138,7 +3198,7 @@ fn duplicate_message_name_is_rejected() -> Result<(), Box<dyn std::error::Error>
 <field name="b" id="2" type="uint8"/>
   </message>
 </messageSchema>"#;
-    let err = parse(schema).unwrap_err();
+    let err = parse(crate::SchemaSource::xml(schema)).unwrap_err();
     assert!(matches!(err, ParseError::Invalid { .. }));
     let msg = format!("{err}");
     assert!(
@@ -3172,7 +3232,7 @@ fn vardata_member_excluded_from_block_length() -> Result<(), Box<dyn std::error:
 <data name="d" id="2" type="varDataEncoding"/>
   </message>
 </messageSchema>"#;
-    let ir = parse(schema).unwrap();
+    let ir = parse(crate::SchemaSource::xml(schema)).unwrap();
     // The resolver will compute blockLength from fixed-width fields only.
     // uint32 = 4 bytes; varData's length field is uint32 = 4 bytes but lives in the tail.
     // So block length should be 4 (just field 'a').
@@ -3225,25 +3285,29 @@ fn unknown_attributes_are_rejected_but_namespaced_ones_pass()
 
     // Control: the same schema with no stray attribute parses, so a failure
     // below is the attribute and not a malformed fixture.
-    parse(&schema("", ""))?;
+    parse(crate::SchemaSource::xml(&schema("", "")))?;
 
     // Typo on the root element.
     assert!(matches!(
-        parse(&schema(r#" bogusAttr="x""#, "")).unwrap_err(),
+        parse(crate::SchemaSource::xml(&schema(r#" bogusAttr="x""#, ""))).unwrap_err(),
         ParseError::Invalid { .. }
     ));
 
     // Typo on a field — `presense` is the classic one.
     assert!(matches!(
-        parse(&schema("", r#" presense="optional""#)).unwrap_err(),
+        parse(crate::SchemaSource::xml(&schema(
+            "",
+            r#" presense="optional""#
+        )))
+        .unwrap_err(),
         ParseError::Invalid { .. }
     ));
 
     // Namespaced attributes are not part of the SBE grammar; they must pass.
-    parse(&schema(
+    parse(crate::SchemaSource::xml(&schema(
         r#" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="sbe.xsd""#,
         "",
-    ))?;
+    )))?;
 
     Ok(())
 }
@@ -3280,7 +3344,7 @@ fn grammar_attributes_absent_from_the_fixture_corpus_are_accepted()
     };
 
     // Control first: the bare shape must parse.
-    parse(&schema("", ""))?;
+    parse(crate::SchemaSource::xml(&schema("", "")))?;
 
     // `<data>` is typed `sbe:fieldType` by the XSD, so it takes the full
     // field attribute set — not the narrower list one might hand-write.
@@ -3290,7 +3354,8 @@ fn grammar_attributes_absent_from_the_fixture_corpus_are_accepted()
         r#" offset="0""#,
         r#" semanticType="Length""#,
     ] {
-        parse(&schema("", attr)).map_err(|e| format!("<data>{attr} must be accepted, got: {e}"))?;
+        parse(crate::SchemaSource::xml(&schema("", attr)))
+            .map_err(|e| format!("<data>{attr} must be accepted, got: {e}"))?;
     }
 
     // Grammar-declared field attributes no fixture happens to use.
@@ -3300,7 +3365,7 @@ fn grammar_attributes_absent_from_the_fixture_corpus_are_accepted()
         r#" epoch="unix""#,
         r#" timeUnit="nanosecond""#,
     ] {
-        parse(&schema(attr, ""))
+        parse(crate::SchemaSource::xml(&schema(attr, "")))
             .map_err(|e| format!("<field>{attr} must be accepted, got: {e}"))?;
     }
 
@@ -3336,7 +3401,7 @@ fn include_of_message_schema_wrapped_types_registers_types()
 </messageSchema>"#,
         inc.display()
     );
-    let ir = parse(&schema).unwrap();
+    let ir = parse(crate::SchemaSource::xml(&schema)).unwrap();
     assert!(
         ir.tokens
             .iter()
@@ -3348,7 +3413,7 @@ fn include_of_message_schema_wrapped_types_registers_types()
 }
 
 #[test]
-fn parse_file_with_deps_lists_root_nested_and_transitive_includes()
+fn parse_file_sources_list_root_nested_and_transitive_includes()
 -> Result<(), Box<dyn std::error::Error>> {
     let dir = std::env::temp_dir().join(format!(
         "ergon_xml_deps_{}_{}",
@@ -3399,10 +3464,9 @@ fn parse_file_with_deps_lists_root_nested_and_transitive_includes()
 "#,
     )?;
 
-    let parsed = parse_file_with_deps(&root)?;
+    let parsed = parse(&root)?;
     assert!(
         parsed
-            .ir
             .tokens
             .iter()
             .any(|t| t.name == "leaf" && t.signal == Signal::BeginField),
@@ -3410,7 +3474,7 @@ fn parse_file_with_deps_lists_root_nested_and_transitive_includes()
     );
 
     let names: Vec<String> = parsed
-        .dependencies
+        .sources
         .iter()
         .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
         .collect();
@@ -3418,13 +3482,49 @@ fn parse_file_with_deps_lists_root_nested_and_transitive_includes()
     assert!(names.contains(&"mid.xml".to_string()), "{names:?}");
     assert!(names.contains(&"leaf.xml".to_string()), "{names:?}");
     assert_eq!(names.len(), 3, "each path once: {names:?}");
-    let again = parse_file_with_deps(&root)?;
+    let again = parse(&root)?;
     assert_eq!(
-        parsed.dependencies, again.dependencies,
+        parsed.sources, again.sources,
         "dependency order must be deterministic"
     );
 
     let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// `with_xsd_validation` runs the XSD check for file and XML sources. Both
+/// checks reject a missing `@id`, but with different variants, so the variant
+/// shows which one ran.
+#[test]
+fn with_xsd_validation_runs_the_xsd_check_for_file_and_xml()
+-> Result<(), Box<dyn std::error::Error>> {
+    let xml = r#"<messageSchema package="t" version="0" byteOrder="littleEndian"><types/></messageSchema>"#;
+    let dir = std::env::temp_dir().join(format!("ergon_xml_xsd_file_{}", std::process::id()));
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("no-id.xml");
+    std::fs::write(&path, xml)?;
+    let results = [
+        (
+            parse(SchemaSource::file(&path)),
+            parse(SchemaSource::file(&path).with_xsd_validation()),
+        ),
+        (
+            parse(SchemaSource::xml(xml)),
+            parse(SchemaSource::xml(xml).with_xsd_validation()),
+        ),
+    ];
+    std::fs::remove_dir_all(&dir)?;
+    for (plain, checked) in results {
+        assert!(
+            matches!(plain, Err(ParseError::Missing { .. })),
+            "{plain:?}"
+        );
+        assert!(
+            matches!(&checked, Err(ParseError::Invalid { what, value, .. })
+                if what == "SBE schema" && value.contains("`id`")),
+            "{checked:?}"
+        );
+    }
     Ok(())
 }
 
@@ -3440,7 +3540,7 @@ fn include_without_href_is_ignored() -> Result<(), Box<dyn std::error::Error>> {
   </message>
 </messageSchema>"#
     );
-    parse(&schema).unwrap();
+    parse(crate::SchemaSource::xml(&schema)).unwrap();
 
     Ok(())
 }
@@ -3458,7 +3558,7 @@ fn char_constant_with_matching_length_parses() -> Result<(), Box<dyn std::error:
   </message>
 </messageSchema>"#
     );
-    parse(&schema).unwrap();
+    parse(crate::SchemaSource::xml(&schema)).unwrap();
 
     Ok(())
 }
@@ -3483,7 +3583,7 @@ fn composite_member_with_primitive_type_attr_inlines_encoding()
   </message>
 </messageSchema>"#
     );
-    let ir = parse(&schema).unwrap();
+    let ir = parse(crate::SchemaSource::xml(&schema)).unwrap();
     assert!(
         ir.tokens
             .iter()
@@ -3515,7 +3615,7 @@ fn composite_member_without_any_type_attr_is_parsed_inline()
     // The composite is never referenced by a message, so whether the
     // overall parse succeeds is a resolver decision; the member itself
     // must not panic and must take the inline-parse path.
-    let _ = parse(&schema);
+    let _ = parse(crate::SchemaSource::xml(&schema));
 
     Ok(())
 }
@@ -3537,7 +3637,7 @@ fn enum_valid_value_equal_to_registered_null_sentinel_is_error()
   </message>
 </messageSchema>"#
     );
-    let err = parse(&schema).unwrap_err();
+    let err = parse(crate::SchemaSource::xml(&schema)).unwrap_err();
     assert!(matches!(err, ParseError::Invalid { .. }));
 
     Ok(())
@@ -3559,7 +3659,7 @@ fn enum_with_unknown_child_element_is_ignored() -> Result<(), Box<dyn std::error
   </message>
 </messageSchema>"#
     );
-    parse(&schema).unwrap();
+    parse(crate::SchemaSource::xml(&schema)).unwrap();
 
     Ok(())
 }
@@ -3580,7 +3680,7 @@ fn set_with_unknown_child_element_is_ignored() -> Result<(), Box<dyn std::error:
   </message>
 </messageSchema>"#
     );
-    parse(&schema).unwrap();
+    parse(crate::SchemaSource::xml(&schema)).unwrap();
 
     Ok(())
 }
@@ -3600,7 +3700,7 @@ fn set_choice_non_numeric_bit_index_is_error() -> Result<(), Box<dyn std::error:
   </message>
 </messageSchema>"#
     );
-    let err = parse(&schema).unwrap_err();
+    let err = parse(crate::SchemaSource::xml(&schema)).unwrap_err();
     assert!(matches!(err, ParseError::Invalid { .. }));
 
     Ok(())
@@ -3622,7 +3722,7 @@ fn message_children_with_missing_or_unparseable_attrs_reach_second_pass()
   </message>
 </messageSchema>"#
     );
-    let err = parse(&schema).unwrap_err();
+    let err = parse(crate::SchemaSource::xml(&schema)).unwrap_err();
     assert!(matches!(
         err,
         ParseError::Missing { .. } | ParseError::Invalid { .. }
@@ -3647,7 +3747,7 @@ fn block_length_tracking_skips_fields_without_computable_size()
     );
     // The field itself fails to resolve in the second pass — the point is
     // the block-length pre-pass tolerated the unknown size first.
-    let err = parse(&schema).unwrap_err();
+    let err = parse(crate::SchemaSource::xml(&schema)).unwrap_err();
     assert!(matches!(err, ParseError::Invalid { .. }));
 
     Ok(())
@@ -3664,7 +3764,7 @@ fn null_value_on_required_field_warns_but_parses() -> Result<(), Box<dyn std::er
   </message>
 </messageSchema>"#
     );
-    parse(&schema).unwrap();
+    parse(crate::SchemaSource::xml(&schema)).unwrap();
 
     Ok(())
 }
@@ -3699,7 +3799,7 @@ fn include_with_non_types_sibling_elements_is_tolerated() -> Result<(), Box<dyn 
 </messageSchema>"#,
         inc.display()
     );
-    parse(&schema).unwrap();
+    parse(crate::SchemaSource::xml(&schema)).unwrap();
     std::fs::remove_file(&inc).ok();
 
     Ok(())
@@ -3730,7 +3830,7 @@ fn include_whose_root_is_a_message_is_an_error() -> Result<(), Box<dyn std::erro
 </messageSchema>"#,
         inc.display()
     );
-    let result = parse(&schema);
+    let result = parse(crate::SchemaSource::xml(&schema));
     std::fs::remove_file(&inc).ok();
     let Err(err) = result else {
         return Err("an included <message> must not be dropped silently".into());
@@ -3755,7 +3855,7 @@ fn char_constant_without_text_is_tolerated_at_parse_time() -> Result<(), Box<dyn
   </message>
 </messageSchema>"#
     );
-    let _ = parse(&schema);
+    let _ = parse(crate::SchemaSource::xml(&schema));
 
     Ok(())
 }
@@ -3778,7 +3878,7 @@ fn composite_member_with_unknown_type_and_primitive_type_falls_back_inline()
   </message>
 </messageSchema>"#
     );
-    let _ = parse(&schema);
+    let _ = parse(crate::SchemaSource::xml(&schema));
 
     Ok(())
 }
@@ -3802,7 +3902,7 @@ fn enum_valid_value_unparseable_with_null_sentinel_skips_check()
   </message>
 </messageSchema>"#
     );
-    let _ = parse(&schema);
+    let _ = parse(crate::SchemaSource::xml(&schema));
 
     Ok(())
 }
@@ -3821,7 +3921,7 @@ fn field_with_unparseable_offset_attr_is_tolerated_by_prevalidation()
   </message>
 </messageSchema>"#
     );
-    let _ = parse(&schema);
+    let _ = parse(crate::SchemaSource::xml(&schema));
 
     Ok(())
 }
@@ -3842,7 +3942,7 @@ fn block_length_tracker_skips_type_without_computable_size()
   </message>
 </messageSchema>"#
     );
-    let _ = parse(&schema);
+    let _ = parse(crate::SchemaSource::xml(&schema));
 
     Ok(())
 }
@@ -3858,7 +3958,7 @@ fn message_with_non_numeric_id_is_error() -> Result<(), Box<dyn std::error::Erro
   </message>
 </messageSchema>"#
     );
-    let err = parse(&schema).unwrap_err();
+    let err = parse(crate::SchemaSource::xml(&schema)).unwrap_err();
     assert!(matches!(err, ParseError::Invalid { .. }));
 
     Ok(())
@@ -3877,7 +3977,7 @@ fn type_with_non_numeric_since_version_is_error() -> Result<(), Box<dyn std::err
   </message>
 </messageSchema>"#
     );
-    let err = parse(&schema).unwrap_err();
+    let err = parse(crate::SchemaSource::xml(&schema)).unwrap_err();
     assert!(matches!(err, ParseError::Invalid { .. }));
 
     Ok(())
@@ -3896,7 +3996,7 @@ fn type_with_non_numeric_length_is_error() -> Result<(), Box<dyn std::error::Err
   </message>
 </messageSchema>"#
     );
-    let err = parse(&schema).unwrap_err();
+    let err = parse(crate::SchemaSource::xml(&schema)).unwrap_err();
     assert!(matches!(err, ParseError::Invalid { .. }));
 
     Ok(())
@@ -3924,7 +4024,10 @@ fn mini_msg_xml(field_attrs: &str) -> String {
 
 #[test]
 fn malformed_field_offset_is_error() -> Result<(), Box<dyn std::error::Error>> {
-    let err = parse(&mini_msg_xml(r#"offset="not-a-number""#)).expect_err("garbage offset");
+    let err = parse(crate::SchemaSource::xml(&mini_msg_xml(
+        r#"offset="not-a-number""#,
+    )))
+    .expect_err("garbage offset");
     let s = format!("{err:?}");
     assert!(s.contains("offset") || s.contains("Invalid"), "{s}");
     Ok(())
@@ -3932,7 +4035,8 @@ fn malformed_field_offset_is_error() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn negative_field_offset_is_error() -> Result<(), Box<dyn std::error::Error>> {
-    let err = parse(&mini_msg_xml(r#"offset="-1""#)).expect_err("negative offset");
+    let err = parse(crate::SchemaSource::xml(&mini_msg_xml(r#"offset="-1""#)))
+        .expect_err("negative offset");
     let s = format!("{err:?}");
     assert!(s.contains("offset") || s.contains("Invalid"), "{s}");
     Ok(())
@@ -3940,8 +4044,10 @@ fn negative_field_offset_is_error() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn overflowing_field_offset_is_error() -> Result<(), Box<dyn std::error::Error>> {
-    let err = parse(&mini_msg_xml(r#"offset="999999999999999999999999999999""#))
-        .expect_err("overflow offset");
+    let err = parse(crate::SchemaSource::xml(&mini_msg_xml(
+        r#"offset="999999999999999999999999999999""#,
+    )))
+    .expect_err("overflow offset");
     let s = format!("{err:?}");
     assert!(s.contains("offset") || s.contains("Invalid"), "{s}");
     Ok(())
@@ -3970,7 +4076,7 @@ fn malformed_group_block_length_is_error() -> Result<(), Box<dyn std::error::Err
             </group>
           </sbe:message>
         </sbe:messageSchema>"#;
-    let err = parse(xml).expect_err("garbage blockLength");
+    let err = parse(crate::SchemaSource::xml(xml)).expect_err("garbage blockLength");
     let s = format!("{err:?}");
     assert!(s.contains("blockLength") || s.contains("Invalid"), "{s}");
     Ok(())
@@ -3978,7 +4084,7 @@ fn malformed_group_block_length_is_error() -> Result<(), Box<dyn std::error::Err
 
 #[test]
 fn valid_explicit_offset_still_parses() -> Result<(), Box<dyn std::error::Error>> {
-    let ir = parse(&mini_msg_xml(r#"offset="4""#))?;
+    let ir = parse(crate::SchemaSource::xml(&mini_msg_xml(r#"offset="4""#)))?;
     assert!(!ir.tokens.is_empty());
     Ok(())
 }
@@ -4000,7 +4106,7 @@ fn deprecated_true_string_is_error() -> Result<(), Box<dyn std::error::Error>> {
           </types>
           <sbe:message name="M" id="1"><field name="a" id="1" type="Old"/></sbe:message>
         </sbe:messageSchema>"#;
-    let err = parse(xml).expect_err("deprecated=true");
+    let err = parse(crate::SchemaSource::xml(xml)).expect_err("deprecated=true");
     let s = format!("{err:?}");
     assert!(s.contains("deprecated") || s.contains("Invalid"), "{s}");
     Ok(())
@@ -4021,7 +4127,7 @@ fn deprecated_negative_is_error() -> Result<(), Box<dyn std::error::Error>> {
           </types>
           <sbe:message name="M" id="1"><field name="a" id="1" type="Old"/></sbe:message>
         </sbe:messageSchema>"#;
-    assert!(parse(xml).is_err());
+    assert!(parse(crate::SchemaSource::xml(xml)).is_err());
     Ok(())
 }
 
@@ -4040,7 +4146,7 @@ fn deprecated_overflow_is_error() -> Result<(), Box<dyn std::error::Error>> {
           </types>
           <sbe:message name="M" id="1"><field name="a" id="1" type="Old"/></sbe:message>
         </sbe:messageSchema>"#;
-    let err = parse(xml).expect_err("deprecated overflow");
+    let err = parse(crate::SchemaSource::xml(xml)).expect_err("deprecated overflow");
     let s = format!("{err}");
     assert!(s.contains("deprecated") || s.contains("Invalid"), "{s}");
     Ok(())
@@ -4061,7 +4167,7 @@ fn malformed_null_value_is_error() -> Result<(), Box<dyn std::error::Error>> {
           </types>
           <sbe:message name="M" id="1"><field name="a" id="1" type="Opt"/></sbe:message>
         </sbe:messageSchema>"#;
-    let err = parse(xml).expect_err("bad nullValue");
+    let err = parse(crate::SchemaSource::xml(xml)).expect_err("bad nullValue");
     let s = format!("{err:?}");
     assert!(s.contains("nullValue") || s.contains("Invalid"), "{s}");
     Ok(())
@@ -4087,7 +4193,11 @@ fn opt_uint8_schema(attr: &str, value: &str) -> String {
 
 #[test]
 fn uint8_null_value_256_is_error() -> Result<(), Box<dyn std::error::Error>> {
-    let err = parse(&opt_uint8_schema("nullValue", "256")).expect_err("uint8 nullValue=256");
+    let err = parse(crate::SchemaSource::xml(&opt_uint8_schema(
+        "nullValue",
+        "256",
+    )))
+    .expect_err("uint8 nullValue=256");
     let s = format!("{err:?}");
     assert!(
         s.contains("nullValue") || s.contains("out of range") || s.contains("Invalid"),
@@ -4098,7 +4208,10 @@ fn uint8_null_value_256_is_error() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn uint8_min_value_256_is_error() -> Result<(), Box<dyn std::error::Error>> {
-    let err = parse(&opt_uint8_schema("minValue", "256")).expect_err("uint8 minValue=256");
+    let err = parse(crate::SchemaSource::xml(&opt_uint8_schema(
+        "minValue", "256",
+    )))
+    .expect_err("uint8 minValue=256");
     let s = format!("{err:?}");
     assert!(
         s.contains("minValue") || s.contains("out of range") || s.contains("Invalid"),
@@ -4109,7 +4222,10 @@ fn uint8_min_value_256_is_error() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn uint8_max_value_256_is_error() -> Result<(), Box<dyn std::error::Error>> {
-    let err = parse(&opt_uint8_schema("maxValue", "256")).expect_err("uint8 maxValue=256");
+    let err = parse(crate::SchemaSource::xml(&opt_uint8_schema(
+        "maxValue", "256",
+    )))
+    .expect_err("uint8 maxValue=256");
     let s = format!("{err:?}");
     assert!(
         s.contains("maxValue") || s.contains("out of range") || s.contains("Invalid"),
@@ -4171,7 +4287,7 @@ fn int8_enum_value_minus_one_is_inside_minus_five_to_five() -> Result<(), Box<dy
           </types>
           <sbe:message name="M" id="1"><field name="a" id="1" type="E"/></sbe:message>
         </sbe:messageSchema>"#;
-    parse(xml).map_err(|e| format!("{e:?}"))?;
+    parse(crate::SchemaSource::xml(xml)).map_err(|e| format!("{e:?}"))?;
     Ok(())
 }
 
@@ -4194,7 +4310,7 @@ fn int8_enum_value_six_is_above_max_five() -> Result<(), Box<dyn std::error::Err
           </types>
           <sbe:message name="M" id="1"><field name="a" id="1" type="E"/></sbe:message>
         </sbe:messageSchema>"#;
-    let err = parse(xml).expect_err("6 is above maxValue=5");
+    let err = parse(crate::SchemaSource::xml(xml)).expect_err("6 is above maxValue=5");
     let s = format!("{err:?}");
     assert!(
         s.contains("validValue") || s.contains("range") || s.contains("Invalid"),

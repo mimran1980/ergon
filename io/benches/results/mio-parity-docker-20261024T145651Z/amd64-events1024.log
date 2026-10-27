@@ -1,0 +1,35 @@
+Linux 7.0.14-linuxkit x86_64
+
+running 2 tests
+test linux::round_trip_parity_one_socket ... mio parity, N = 1: 7 pairs; per pair and arm 2000 warm-up + 10000 timed round trips in 10 alternating blocks; 64 B at 10000/s, client CPU 9, echo CPU 8; µs p50 / p99 / max
+pair 0 (epoll-spin first): epoll-spin 8.83 / 71.83 / 1655.0  mio 14.62 / 65.79 / 999.0  mio - epoll-spin p50, paired +6.08 (pooled +5.79, tolerance 1.17)
+pair 1 (mio first): epoll-spin 5.67 / 108.25 / 1871.8  mio 14.54 / 118.33 / 9904.1  mio - epoll-spin p50, paired +7.12 (pooled +8.88, tolerance 1.01)
+pair 2 (epoll-spin first): epoll-spin 8.96 / 65.71 / 993.1  mio 14.83 / 96.25 / 3336.8  mio - epoll-spin p50, paired +7.73 (pooled +5.87, tolerance 1.19)
+pair 3 (mio first): epoll-spin 9.54 / 59.67 / 1137.6  mio 15.21 / 72.00 / 511.7  mio - epoll-spin p50, paired +6.12 (pooled +5.67, tolerance 1.24)
+pair 4 (epoll-spin first): epoll-spin 7.38 / 59.04 / 1087.7  mio 14.83 / 89.21 / 1171.8  mio - epoll-spin p50, paired +6.81 (pooled +7.46, tolerance 1.11)
+pair 5 (mio first): epoll-spin 9.12 / 50.42 / 833.6  mio 14.58 / 57.96 / 287.1  mio - epoll-spin p50, paired +5.94 (pooled +5.46, tolerance 1.19)
+pair 6 (epoll-spin first): epoll-spin 5.71 / 209.17 / 9943.1  mio 14.25 / 281.25 / 4553.5  mio - epoll-spin p50, paired +8.02 (pooled +8.54, tolerance 1.00)
+N = 1: EpollAhead(7)
+Error: "N = 1: epoll-spin ahead of mio beyond the tolerance in 7 of 7 pairs: a suspected defect (the mio loop doing extra work, or the Driver timing less)"
+FAILED
+test linux::round_trip_parity_sixteen_sockets ... mio parity, N = 16: 7 pairs; per pair and arm 2000 warm-up + 10000 timed round trips in 10 alternating blocks; 64 B at 10000/s, client CPU 9, echo CPU 8; µs p50 / p99 / max
+pair 0 (epoll-spin first): epoll-spin 9.17 / 131.62 / 8438.0  mio 14.79 / 156.33 / 1989.5  mio - epoll-spin p50, paired +8.35 (pooled +5.62, tolerance 1.20)
+pair 1 (mio first): epoll-spin 5.67 / 51.46 / 524.5  mio 15.00 / 63.54 / 335.2  mio - epoll-spin p50, paired +9.10 (pooled +9.33, tolerance 1.03)
+pair 2 (epoll-spin first): epoll-spin 9.50 / 69.00 / 1019.9  mio 15.08 / 115.42 / 2553.8  mio - epoll-spin p50, paired +6.79 (pooled +5.58, tolerance 1.23)
+pair 3 (mio first): epoll-spin 9.62 / 209.42 / 4146.6  mio 15.46 / 159.71 / 17954.3  mio - epoll-spin p50, paired +5.73 (pooled +5.83, tolerance 1.25)
+pair 4 (epoll-spin first): epoll-spin 8.71 / 92.25 / 5735.7  mio 14.92 / 103.58 / 8929.3  mio - epoll-spin p50, paired +7.06 (pooled +6.21, tolerance 1.18)
+pair 5 (mio first): epoll-spin 5.83 / 80.67 / 1690.4  mio 15.79 / 91.00 / 4366.0  mio - epoll-spin p50, paired +8.48 (pooled +9.96, tolerance 1.08)
+pair 6 (epoll-spin first): epoll-spin 6.96 / 53.33 / 1405.0  mio 15.67 / 110.75 / 1532.3  mio - epoll-spin p50, paired +8.12 (pooled +8.71, tolerance 1.13)
+N = 16: EpollAhead(7)
+Error: "N = 16: epoll-spin ahead of mio beyond the tolerance in 7 of 7 pairs: a suspected defect (the mio loop doing extra work, or the Driver timing less)"
+FAILED
+
+failures:
+
+failures:
+    linux::round_trip_parity_one_socket
+    linux::round_trip_parity_sixteen_sockets
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 7 filtered out; finished in 34.27s
+
+error: test failed, to rerun pass `--test mio_parity`

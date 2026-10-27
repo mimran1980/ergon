@@ -15,13 +15,19 @@
 //!   on its CPU). Work handed to it while parked costs the polling thread
 //!   one futex wake, a system call; a connect costs far more on the loop
 //!   (`Driver::connect`), and closing a connection is not the hot path.
+//!   The mailbox is bounded and allocated once ([`MAILBOX`] messages): the
+//!   polling thread's sends never allocate. A connection to free that finds
+//!   it full is freed on the polling thread instead; a connect that finds it
+//!   full fails with [`Error::Busy`].
 //!   While dials are in flight it steps them at the interval it was started
 //!   with ([`crate::placement::dial_step`]: 50 µs on a CPU of its own,
 //!   1 ms when it shares `uring-sqpoll`'s spinning CPU, where every wakeup
 //!   is a preemption of the spinner), woken early by new work.
 
 use std::net::{IpAddr, SocketAddr};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
+use std::sync::mpsc::{
+    self, Receiver, RecvTimeoutError, Sender, SyncSender, TryRecvError, TrySendError,
+};
 use std::time::Duration;
 
 use std::os::fd::RawFd;
@@ -98,10 +104,13 @@ pub(super) struct Done<E> {
     pub(super) result: Result<E>,
 }
 
+/// Messages the helper's mailbox holds; allocated when the helper starts.
+pub(super) const MAILBOX: usize = 1024;
+
 /// The helper thread's mailbox. Dropping it stops the thread once its jobs are
 /// done; results nobody receives are dropped there (their sockets close).
 pub(super) struct Background<E> {
-    msgs: Sender<Msg<E>>,
+    msgs: SyncSender<Msg<E>>,
     done: Receiver<Done<E>>,
     /// Connects submitted and not yet received: (slot, generation).
     outstanding: Vec<(usize, u32)>,
@@ -113,7 +122,7 @@ impl<E: Send + 'static> Background<E> {
     /// only). `step` is how often a dial in flight is stepped
     /// ([`crate::placement::dial_step`]).
     pub(super) fn start(cpus: &[usize], dns: DnsConfig, step: Duration) -> Result<Self> {
-        let (msgs, msg_rx) = mpsc::channel::<Msg<E>>();
+        let (msgs, msg_rx) = mpsc::sync_channel::<Msg<E>>(MAILBOX);
         let (done_tx, done) = mpsc::channel::<Done<E>>();
         crate::sys::spawn_pinned("ergon-io-dial", cpus, move || {
             run(&msg_rx, &done_tx, Resolver::new(dns), step);
@@ -134,7 +143,7 @@ impl<E: Send + 'static> Background<E> {
         timeout: Duration,
     ) -> Result<()> {
         self.msgs
-            .send(Msg::Dial(Job {
+            .try_send(Msg::Dial(Job {
                 slot,
                 generation,
                 dial,
@@ -143,16 +152,23 @@ impl<E: Send + 'static> Background<E> {
                     .saturating_add(i64::try_from(timeout.as_nanos()).unwrap_or(i64::MAX)),
                 started: false,
             }))
-            .map_err(|_| Error::Config("background connect thread stopped".into()))?;
+            .map_err(|e| match e {
+                TrySendError::Full(_) => Error::Busy("background connect mailbox full"),
+                TrySendError::Disconnected(_) => {
+                    Error::Config("background connect thread stopped".into())
+                }
+            })?;
         self.outstanding.push((slot, generation));
         Ok(())
     }
 }
 
 impl<E> Background<E> {
-    /// Frees `conn` on the helper thread (here, if the thread has stopped).
+    /// Frees `conn` on the helper thread (here, if the thread has stopped
+    /// or its mailbox is full). Never allocates: the mailbox is bounded.
     pub(super) fn free(&self, conn: E) {
-        let _ = self.msgs.send(Msg::Free(conn));
+        // Dropped here on failure: the message holds the connection.
+        let _ = self.msgs.try_send(Msg::Free(conn));
     }
 
     /// Whether connects are still to be taken.

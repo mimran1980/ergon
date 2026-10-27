@@ -64,6 +64,9 @@ pub struct rusteron_dpdk_config_t {
     /// `RUSTERON_DPDK_CLOCK_CHOICE_*`: 0 the counter ([`CLOCK_CHOICE_COUNTER`]),
     /// 1 `CLOCK_MONOTONIC` ([`CLOCK_CHOICE_MONOTONIC`]).
     pub clock: u8,
+    pub tx_fast_free: u8,
+    pub rx_free_thresh: u16,
+    pub tx_free_thresh: u16,
 }
 
 // The C layout, field by field (asserted in native/dpdk/rusteron_dpdk_transport.c
@@ -93,7 +96,10 @@ const _: () = {
     assert!(offset_of!(C, receiver_mac) == 4306);
     assert!(offset_of!(C, rx_hw_timestamp) == 4324);
     assert!(offset_of!(C, clock) == 4325);
-    assert!(size_of::<C>() == 4328);
+    assert!(offset_of!(C, tx_fast_free) == 4326);
+    assert!(offset_of!(C, rx_free_thresh) == 4328);
+    assert!(offset_of!(C, tx_free_thresh) == 4330);
+    assert!(size_of::<C>() == 4336);
 };
 
 /// The config's clock choices (`RUSTERON_DPDK_CLOCK_CHOICE_*`).
@@ -180,6 +186,9 @@ impl rusteron_dpdk_config_t {
             receiver_mac: [0; 18],
             rx_hw_timestamp: 0,
             clock: CLOCK_CHOICE_COUNTER,
+            tx_fast_free: 0,
+            rx_free_thresh: 0,
+            tx_free_thresh: 0,
         };
         fill_cstr(&mut c.file_prefix, "rusteron-ena");
         fill_cstr(&mut c.hugepage_dir, "/dev/hugepages");
@@ -310,6 +319,27 @@ impl TestEnv {
     /// write-combined after reset).
     pub fn set_ena_llq(&self, state: c_int) {
         unsafe { rusteron_dpdk_fake_set_ena_llq(state) };
+    }
+
+    /// The extended statistics a net_netvsc port reports once its
+    /// accelerated-networking VF is attached: its own per-queue stats, then
+    /// the VF's, each prefixed `vf_` (DPDK's hn_vf_xstats_get_names). After
+    /// reset the fake reports none, as netvsc does without a VF.
+    pub fn attach_netvsc_vf(&self) {
+        let names = [
+            CString::new("rx_good_packets").unwrap(),
+            CString::new("tx_q0_good_packets").unwrap(),
+            CString::new("vf_rx_good_packets").unwrap(),
+            CString::new("vf_tx_good_packets").unwrap(),
+        ];
+        let ptrs: Vec<*const c_char> = names.iter().map(|n| n.as_ptr()).collect();
+        unsafe { transport::rusteron_dpdk_fake_set_xstats(ptrs.as_ptr(), ptr::null(), ptrs.len() as u32) };
+    }
+
+    /// The first `reads` xstats counts report none, whatever is installed: a
+    /// VF netvsc attaches after the port starts (its 1 s retry). 0 after reset.
+    pub fn set_xstats_hidden_reads(&self, reads: u32) {
+        unsafe { rusteron_dpdk_fake_set_xstats_hidden_reads(reads) };
     }
 
     /// The DPDK version the fake EAL reports (25.11 after reset), which picks
@@ -473,6 +503,7 @@ unsafe extern "C" {
     fn rusteron_dpdk_fake_log_at(index: c_int, buf: *mut c_char, buflen: usize);
     fn rusteron_dpdk_fake_eal_reset();
     fn rusteron_dpdk_fake_set_ena_llq(state: c_int);
+    fn rusteron_dpdk_fake_set_xstats_hidden_reads(reads: u32);
     fn rusteron_dpdk_fake_set_eal_version(year: c_int, month: c_int);
     /// How `bdf`'s BAR 2 is mapped in the memory map at `maps_path`
     /// (`ENA_LLQ_*`; native/dpdk/rusteron_dpdk_runtime.c).

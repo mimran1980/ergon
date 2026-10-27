@@ -8,7 +8,7 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
+use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
 
 const SCHEMA: &str = include_str!("../schemas/car-schema.xml");
 
@@ -21,7 +21,7 @@ fn human_size(n: usize) -> String {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let ir = parse(SCHEMA)?;
+    let ir = parse(SchemaSource::xml(SCHEMA))?;
     let schema = Schema::from_ir(ir);
     let modules = Generator::new(GenerationConfig::new("car_codec")).generate(&schema)?;
 

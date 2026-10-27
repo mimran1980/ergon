@@ -1,0 +1,44 @@
+Linux 7.0.14-linuxkit aarch64
+10
+info: syncing channel updates for 1.99.0-aarch64-unknown-linux-gnu
+info: latest update on 2026-10-01 for version 1.99.0 (b940084d7 2026-09-28)
+info: downloading 3 components
+
+running 9 tests
+test linux::epoll_spin_waits_with_a_zero_timeout_and_reads_once_per_ready_socket ... ergon-io info: T3 info: transparent hugepages are `always`: the kernel thread khugepaged scans and collapses pages in the background, and its work can run on a busy-spinning thread's CPU (not measured with archived data); ergon-io's own benchmarks ran under `madvise`. Fix: `echo never > /sys/kernel/mm/transparent_hugepage/enabled`, or boot with `transparent_hugepage=never` (evidence: Linux Documentation/admin-guide/mm/transhuge.rst (khugepaged, enabled: always/madvise/never); not measured with archived data)
+epoll-spin N = 1: 2000 round trips, 184711 polls, 184711 epoll_wait, 2000 recvmsg (0 EAGAIN)
+epoll-spin N = 1: 20000 idle polls in 9.351708ms, 20000 epoll_wait, 0 recvmsg
+epoll-spin N = 16: 2000 round trips, 262487 polls, 262487 epoll_wait, 2000 recvmsg (0 EAGAIN)
+epoll-spin N = 16: 20000 idle polls in 13.279417ms, 20000 epoll_wait, 0 recvmsg
+ok
+test linux::mio_reads_twice_per_event_data_then_would_block ... mio N = 1: 2000 round trips, 4000 reads (2000 WouldBlock): 2.0x epoll-spin's
+mio N = 16: 2000 round trips, 4000 reads (2000 WouldBlock): 2.0x epoll-spin's
+ok
+test linux::round_trip_parity_one_socket ... mio parity, N = 1: 7 pairs; per pair and arm 2000 warm-up + 10000 timed round trips in 10 alternating blocks; 64 B at 10000/s, client CPU 9, echo CPU 8; µs p50 / p99 / max
+pair 0 (epoll-spin first): epoll-spin 10.58 / 1917.88 / 104220.7  mio 11.33 / 3055.04 / 65400.3  mio - epoll-spin p50, paired +0.54 (pooled +0.75, tolerance 0.55)
+pair 1 (mio first): epoll-spin 9.62 / 3091.21 / 47735.8  mio 10.25 / 3040.04 / 93190.2  mio - epoll-spin p50, paired +0.33 (pooled +0.62, tolerance 0.50)
+pair 2 (epoll-spin first): epoll-spin 10.21 / 2080.96 / 51171.4  mio 10.42 / 2180.00 / 78281.3  mio - epoll-spin p50, paired -0.17 (pooled +0.21, tolerance 0.52)
+pair 3 (mio first): epoll-spin 11.08 / 2794.21 / 96108.5  mio 11.42 / 3039.46 / 70482.3  mio - epoll-spin p50, paired -0.10 (pooled +0.33, tolerance 0.56)
+pair 4 (epoll-spin first): epoll-spin 9.96 / 2753.88 / 144081.3  mio 10.50 / 2694.62 / 90718.7  mio - epoll-spin p50, paired +0.87 (pooled +0.54, tolerance 0.51)
+pair 5 (mio first): epoll-spin 11.08 / 2119.12 / 155094.0  mio 11.54 / 2924.25 / 76717.0  mio - epoll-spin p50, paired +0.69 (pooled +0.46, tolerance 0.56)
+pair 6 (epoll-spin first): epoll-spin 10.62 / 1793.04 / 56502.3  mio 10.21 / 2685.50 / 82018.5  mio - epoll-spin p50, paired -0.69 (pooled -0.42, tolerance 0.52)
+N = 1: Level { epoll_ahead: 2, mio_ahead: 1 }
+ok
+test linux::round_trip_parity_sixteen_sockets ... mio parity, N = 16: 7 pairs; per pair and arm 2000 warm-up + 10000 timed round trips in 10 alternating blocks; 64 B at 10000/s, client CPU 9, echo CPU 8; µs p50 / p99 / max
+pair 0 (epoll-spin first): epoll-spin 11.29 / 2774.08 / 145209.8  mio 10.58 / 2974.42 / 36056.1  mio - epoll-spin p50, paired -0.21 (pooled -0.71, tolerance 0.55)
+pair 1 (mio first): epoll-spin 10.88 / 2126.04 / 125425.7  mio 11.75 / 3328.62 / 177891.8  mio - epoll-spin p50, paired +0.25 (pooled +0.88, tolerance 0.56)
+pair 2 (epoll-spin first): epoll-spin 11.12 / 3073.33 / 58155.7  mio 12.88 / 1801.17 / 49187.5  mio - epoll-spin p50, paired +1.73 (pooled +1.75, tolerance 0.60)
+pair 3 (mio first): epoll-spin 10.62 / 2361.92 / 57739.9  mio 10.71 / 2207.00 / 57674.0  mio - epoll-spin p50, paired +0.42 (pooled +0.08, tolerance 0.53)
+pair 4 (epoll-spin first): epoll-spin 11.54 / 1488.67 / 45505.6  mio 11.25 / 2778.83 / 102560.0  mio - epoll-spin p50, paired -0.33 (pooled -0.29, tolerance 0.57)
+pair 5 (mio first): epoll-spin 12.67 / 2113.92 / 68880.0  mio 11.08 / 1815.12 / 105639.7  mio - epoll-spin p50, paired -1.79 (pooled -1.58, tolerance 0.59)
+pair 6 (epoll-spin first): epoll-spin 13.12 / 2027.67 / 78603.0  mio 12.00 / 1778.46 / 58329.3  mio - epoll-spin p50, paired -0.71 (pooled -1.12, tolerance 0.63)
+N = 16: Level { epoll_ahead: 1, mio_ahead: 2 }
+ok
+test rule::tests::five_of_seven_or_wins_inside_the_tolerance_pass ... ok
+test rule::tests::percentiles_are_nearest_rank_over_the_sorted_round ... ok
+test rule::tests::six_of_seven_beyond_the_tolerance_fails_either_way ... ok
+test rule::tests::the_pair_difference_is_the_median_of_its_sub_pairs ... ok
+test rule::tests::tolerance_is_the_floor_or_the_percentage_whichever_is_larger ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 54.32s
+

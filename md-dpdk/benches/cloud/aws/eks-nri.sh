@@ -20,8 +20,11 @@
 # and the shared pool, 1 = NIC IRQs) plus 2 isolated CPUs for the latency
 # pod. Cost gate, before anything is created: the estimated hourly rate
 # must be at most $0.30/h and EKS_MAX_MINUTES at most 180; the estimate is
-# printed first. On-demand fallback is OFF (EC2 Fleet spot only), so this
-# never silently pays on-demand.
+# printed first. Spot is tried first, across every enabled region. If no
+# region can place 2 spot instances of a 4-vCPU no-SMT Graviton, the script
+# tries c9g.xlarge and then c7g.xlarge (same pin map: CPU 0 shared, 1 IRQs,
+# 2–3 isolated) and only then on-demand, up to EKS_ONDEMAND_MAX_HOURLY.
+# On-demand is logged. It is never a silent fleet setting.
 #
 # Then, in $EKS_REGION, everything tagged owner=ergon-lab and run=<stamp>
 # and named ergon-lab-<stamp>: two IAM roles and an instance profile; a VPC
@@ -31,8 +34,10 @@
 # template whose user data is eks-nri-userdata.sh's (kernel command line with
 # hugepages and the isolated CPUs, kubelet with the static CPU manager and
 # reservedSystemCPUs, NRI's default validator, one reboot before kubelet);
-# and 2 x $EKS_TYPE SPOT through one EC2 Fleet request per zone
-# (price-capacity-optimized or capacity-optimized, OnDemandTargetCapacity=0).
+# and 2 x $EKS_TYPE through one EC2 Fleet request per zone
+# (price-capacity-optimized or capacity-optimized). Spot requests set
+# OnDemandTargetCapacity=0. On-demand is a separate request, used only after
+# spot could not be placed.
 #
 # It deploys the shared-cpus DaemonSet + ConfigMap (sharedCpus 0, opt-in
 # annotations, namespace ergon-latency-pods), the latency namespace's validating
@@ -48,12 +53,22 @@
 # TERM after EKS_MAX_MINUTES), in dependency order, and verified by tag and
 # by name for what carries no tag.
 #
-#   EKS_REGION (us-east-1) EKS_TYPE (c8g.xlarge; Graviton, 4 vCPU, no SMT)
+#   EKS_REGION (us-east-1, tried first; every enabled region is searched for spot)
+#   EKS_TYPE (c8g.xlarge; Graviton, 4 vCPU, no SMT)
 #   EKS_K8S (1.36) EKS_REPS (3; 5 if the clock allows) EKS_MAX_MINUTES (120; the hard cap is 180)
+#   EKS_ONDEMAND_MAX_HOURLY (0.55; ceiling for the on-demand fallback only)
 #   EKS_SPOT_STRATEGY (price-capacity-optimized; capacity-optimized works too)
 #   EKS_MODES (M0 M1 M2 M3 M4 M5 M6) EKS_HUGEPAGES (256 2 MiB pages a node)
 #   EKS_CHECK_ONLY=1 stops after the estimate; EKS_DELETE=<stamp> deletes.
 #   RTT_MESSAGES (300000) RTT_WARMUP (50000) RTT_SECONDS (60)
+#   EKS_PHASE_X (1: before the modes, phase X: the EKS-lane checks of
+#   k8s/nri-shared-cpus/RELEASE.md, placement evidence, a helper's wake-up wait
+#   on the shared CPU idle and under load with 1 ns and 50 us timer slack, the
+#   pin's cost, and the SQPOLL placements; 0 skips it) X_SECONDS (20 a cell)
+#   EKS_HOLD_MINUTES (0): after the report, keep the cluster up to that many
+#   minutes (inside EKS_MAX_MINUTES) for work by hand; `touch <out>/release`
+#   ends the hold and deletes everything. EKS_HOLD_ON_FAIL (0): the same hold
+#   when the run fails, before the teardown, to look at a live failure.
 #
 # Modes (latency-build-plan.md §9). SCHED_FIFO is deliberately absent: the one
 # AWS A/B was inconclusive (io/benches/BENCHMARK.md). Rlimits (MEMLOCK) ride along
@@ -75,18 +90,27 @@ repo=${EKS_REPO:-$(cd "$here/../../../.." && pwd)}
 # edit to the checkout mid-run would otherwise break this run (and its teardown).
 if [[ -z ${EKS_SNAPSHOT:-} ]]; then
     snapshot=$(mktemp -d)
-    cp -R "$here/.." "$snapshot/cloud" || { echo "cannot snapshot the scripts into $snapshot" >&2; exit 1; }
+    # the quiet-CPU unit the user data installs (absent only in a fake repo)
+    { cp -R "$here/.." "$snapshot/cloud" && mkdir -p "$snapshot/quiet" &&
+        { [[ ! -d $repo/samples/low-latency-k8s/node ]] || cp -R "$repo/samples/low-latency-k8s/node/." "$snapshot/quiet/"; }; } ||
+        { echo "cannot snapshot the scripts into $snapshot" >&2; exit 1; }
     EKS_SNAPSHOT=$snapshot EKS_REPO=$repo exec bash "$snapshot/cloud/aws/eks-nri.sh" "$@"
 fi
 scripts=$EKS_SNAPSHOT/cloud/aws
 benches=$EKS_SNAPSHOT/cloud
 self=$repo/md-dpdk/benches/cloud/aws/eks-nri.sh # for messages: the checkout's path
 region=${EKS_REGION:-us-east-1}
+home_region=$region
 type=${EKS_TYPE:-c8g.xlarge}
+preferred_type=$type
 k8s=${EKS_K8S:-1.36}
 reps=${EKS_REPS:-3}
 max_minutes=${EKS_MAX_MINUTES:-120}
+ondemand_cap=${EKS_ONDEMAND_MAX_HOURLY:-0.55}
 spot_strategy=${EKS_SPOT_STRATEGY:-price-capacity-optimized}
+market=spot
+prefer_zone=
+lt_version=1
 modes=${EKS_MODES:-M0 M1 M2 M3 M4 M5 M6}
 hugepages=${EKS_HUGEPAGES:-256}
 check_only=${EKS_CHECK_ONLY:-}
@@ -94,6 +118,10 @@ delete=${EKS_DELETE:-}
 rtt_messages=${RTT_MESSAGES:-300000}
 rtt_warmup=${RTT_WARMUP:-50000}
 rtt_seconds=${RTT_SECONDS:-60}
+phase_x=${EKS_PHASE_X:-1}
+x_seconds=${X_SECONDS:-20}
+hold_minutes=${EKS_HOLD_MINUTES:-0}
+hold_on_fail=${EKS_HOLD_ON_FAIL:-0}
 
 # A unique stamp: eks-nri-YYYYmmdd-HHMMSS, never an eks.sh one (both tag
 # owner=ergon-lab, run=<stamp>), so EKS_DELETE can only select this lab's runs.
@@ -109,6 +137,10 @@ if ((max_minutes > 180)); then
     echo "EKS_MAX_MINUTES=$max_minutes: the cap is 180 minutes (cost discipline)" >&2
     exit 2
 fi
+if [[ ! $ondemand_cap =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    echo "EKS_ONDEMAND_MAX_HOURLY=$ondemand_cap: a USD amount" >&2
+    exit 2
+fi
 if ((reps < 0)); then
     echo "EKS_REPS=$reps: a count" >&2
     exit 2
@@ -120,7 +152,11 @@ reserved="0,1"   # 0 = system + the shared pool, 1 = NIC IRQs
 isolated="2,3"   # the latency pod's exclusive CPUs
 shared_cpus="0"  # the plugin's sharedCpus, inside reserved minus the IRQ CPU
 irq_cpu=1
-pod_cpus=2
+# One exclusive CPU a pod: 4 CPUs less 2 reserved leave 2000m allocatable, and
+# the node's own pods (aws-node, kube-proxy, the plugin) request part of it,
+# so a cpu: 2 Guaranteed pod never schedules (run eks-nri-20261025-082023:
+# "Insufficient cpu"). The gap spinner then has no CPU of its own and is off.
+pod_cpus=${EKS_POD_CPUS:-1}
 
 cluster_role=$N-cluster
 node_role=$N-node
@@ -155,7 +191,7 @@ wait_for() {
 nv() { local v="$1_$2"; echo "${!v:-}"; }
 nv_set() { printf -v "$1_$2" '%s' "$3"; }
 
-for t in aws kubectl docker python3; do command -v "$t" >/dev/null || die "$t is not on PATH"; done
+for t in aws kubectl docker python3 helm; do command -v "$t" >/dev/null || die "$t is not on PATH"; done
 ident=$(aws sts get-caller-identity --query '[Account,Arn]' --output text 2>/dev/null) || die "aws is not signed in (aws login)"
 read -r account caller <<<"$ident"
 registry=$account.dkr.ecr.$region.amazonaws.com
@@ -258,7 +294,9 @@ fleets_left() {
             [[ -z $id ]] && continue
             state=$(ec2 describe-fleets --fleet-ids "$id" --query 'Fleets[0].FleetState' --output text 2>/dev/null || true)
             case $state in
-                active|deleted_running|deleted_terminating) printf '%s\n' "$id" ;;
+                # deleted_terminating is a record whose instances are going: the
+                # instances check above covers them, and the record bills nothing
+                active|deleted_running) printf '%s\n' "$id" ;;
             esac
         done <"$out/fleet-ids"
     fi
@@ -331,8 +369,39 @@ verify_run() {
     return 1
 }
 
+# Best-effort delete of a probe that ran in a region other than $region.
+# The real teardown below still owns the region the cluster was created in.
+sweep_region_resources() {
+    local ids id
+    ids=$(instances_of_run 2>/dev/null || true)
+    if [[ -n ${ids// /} ]]; then
+        ec2 terminate-instances --instance-ids $ids >/dev/null 2>&1 || true
+        wait_for 180 10 "probe instances in $region to terminate" instances_gone || true
+    fi
+    for id in $(fleets_left 2>/dev/null); do
+        ec2 delete-fleets --fleet-ids "$id" --terminate-instances >/dev/null 2>&1 || true
+    done
+    for id in $(ec2 describe-launch-templates --filters "$(tagged)" --query 'LaunchTemplates[].LaunchTemplateId' --output text 2>/dev/null); do
+        [[ -z $id || $id == None ]] && continue
+        ec2 delete-launch-template --launch-template-id "$id" >/dev/null 2>&1 || true
+    done
+    for id in $(ec2 describe-vpcs --filters "$(tagged)" --query 'Vpcs[].VpcId' --output text 2>/dev/null); do
+        [[ -z $id || $id == None ]] && continue
+        vpc_delete_pass "$id" || true
+    done
+}
 teardown_run() {
     log "deleting run $stamp ($N) in $region"
+    if [[ -f $out/probe-regions.txt ]]; then
+        local keep=$region r
+        while read -r r; do
+            [[ -z $r || $r == "$keep" ]] && continue
+            region=$r
+            log "deleting probe leftovers tagged run=$stamp in $r"
+            sweep_region_resources
+        done <"$out/probe-regions.txt"
+        region=$keep
+    fi
     local ids id vpc deadline res
     local tries
     for tries in 1 2 3 4 5 6; do
@@ -395,13 +464,14 @@ teardown_run() {
     for id in $(ec2 describe-launch-templates --filters "$(tagged)" --query 'LaunchTemplates[].LaunchTemplateId' --output text 2>/dev/null); do
         ec2 delete-launch-template --launch-template-id "$id" >/dev/null && log "deleted launch template $id"
     done
-    if [[ -n $vpc ]]; then
+    for vpc in $(ec2 describe-vpcs --filters "$(tagged)" --query 'Vpcs[].VpcId' --output text 2>/dev/null); do
+        [[ -z $vpc || $vpc == None ]] && continue
         deadline=$((SECONDS + 600))
         until vpc_delete_pass "$vpc"; do
             ((SECONDS >= deadline)) && { log "VPC $vpc not deleted after 10 minutes"; break; }
             sleep 30
         done
-    fi
+    done
     verify_run
 }
 
@@ -432,9 +502,30 @@ bounded() {
     return "$rc"
 }
 
+# Keep the cluster for work by hand until <out>/release exists, the minutes
+# pass, or EKS_MAX_MINUTES (less a 10-minute margin for the teardown) is near.
+hold() {
+    local minutes=$1 why=$2 until_s cap_s
+    ((minutes > 0)) || return 0
+    until_s=$(($(date +%s) + minutes * 60))
+    cap_s=$((run_t0 + max_minutes * 60 - 600))
+    ((until_s > cap_s)) && until_s=$cap_s
+    {
+        echo "HOLD ($why) until epoch $until_s ($(((until_s - $(date +%s)) / 60)) min) or touch $out/release"
+        echo "KUBECONFIG=$out/kubeconfig"
+    } | tee "$out/HOLD" >&2
+    while (($(date +%s) < until_s)) && [[ ! -e $out/release ]]; do sleep 10; done
+    rm -f "$out/HOLD"
+    log "hold over"
+}
+run_t0=$(date +%s)
+
 teardown() {
     local rc=$?
     trap '' INT TERM HUP
+    if ((rc != 0 && created && hold_on_fail > 0)) && [[ ! -e $out/watchdog-fired && -s $out/kubeconfig ]]; then
+        hold "$hold_on_fail" "run failed, rc $rc"
+    fi
     [[ -n $watchdog_pid ]] && kill "$watchdog_pid" 2>/dev/null
     jobs -p | xargs kill 2>/dev/null
     if ((created)); then
@@ -501,9 +592,13 @@ sweep_leftovers() {
     else
         log "no ergon-lab leftovers in any region"
     fi
-    if grep -q ' eks-cluster ' "$out/leftovers.txt"; then
-        die "an ergon-lab EKS cluster exists (above): delete it first with EKS_DELETE=<its stamp> $self"
-    fi
+    # EKS_ALLOW_CLUSTERS: names of other live (or still deleting) runs' clusters to accept
+    local c others=
+    for c in $(awk '$2 == "eks-cluster" {print $3}' "$out/leftovers.txt"); do
+        [[ " ${EKS_ALLOW_CLUSTERS:-} " == *" $c "* ]] && { log "  $c: accepted (EKS_ALLOW_CLUSTERS)"; continue; }
+        others+=" $c"
+    done
+    [[ -z $others ]] || die "an ergon-lab EKS cluster exists (above:$others): delete it first with EKS_DELETE=<its stamp> $self"
 }
 sweep_leftovers
 
@@ -540,6 +635,312 @@ spot_price() {
         --query 'SpotPriceHistory[].SpotPrice' --output text 2>/dev/null |
         tr '\t' '\n' | grep -E '^[0-9.]+$' | sort -g | tail -1
 }
+# Newest price per zone, cheapest zone first. The fleet launches in one zone,
+# so the gate looks at that zone's price, not the dearest zone in the region.
+zone_spots() {
+    aws ec2 --region "$region" describe-spot-price-history --instance-types "$1" \
+        --product-descriptions "Linux/UNIX" \
+        --start-time "$(python3 -c 'import datetime;print((datetime.datetime.utcnow()-datetime.timedelta(hours=1)).isoformat())')" \
+        --query 'SpotPriceHistory[].[AvailabilityZone,SpotPrice]' --output text 2>/dev/null |
+        python3 -c '
+import sys
+seen = {}
+for line in sys.stdin:
+    parts = line.split()
+    if len(parts) != 2 or parts[0] in seen:
+        continue
+    try:
+        seen[parts[0]] = float(parts[1])
+    except ValueError:
+        pass
+for zone, price in sorted(seen.items(), key=lambda kv: kv[1]):
+    print("%s %.6f" % (zone, price))
+'
+}
+ami_for() {
+    aws ssm get-parameter --region "$1" \
+        --name "/aws/service/eks/optimized-ami/$k8s/amazon-linux-2023/arm64/standard/recommended/image_id" \
+        --query Parameter.Value --output text 2>/dev/null
+}
+# The benchmark pins CPU 0 (shared pool), 1 (NIC IRQs) and 2–3 (the latency
+# pod). That map is the same on every 4-vCPU Graviton with no SMT. A bigger
+# box or an SMT box would change it, so those types are not fallbacks.
+layout_ok() {
+    local t=$1 r=$2 line v c tp a
+    line=$(aws ec2 --region "$r" describe-instance-types --instance-types "$t" \
+        --query 'InstanceTypes[0].[VCpuInfo.DefaultVCpus,VCpuInfo.DefaultCores,VCpuInfo.DefaultThreadsPerCore,ProcessorInfo.SupportedArchitectures[0]]' \
+        --output text 2>/dev/null) || return 1
+    read -r v c tp a <<<"$line"
+    [[ $a == arm64 && $tp == 1 && $v == 4 ]]
+}
+fallback_shape_ok() {
+    layout_ok "$1" "$home_region" && return 0
+    [[ $home_region == us-east-1 ]] && return 1
+    layout_ok "$1" us-east-1
+}
+offered_zones() {
+    aws ec2 --region "$region" describe-instance-type-offerings --location-type availability-zone \
+        --filters "Name=instance-type,Values=$1" \
+        --query 'InstanceTypeOfferings[].Location' --output text 2>/dev/null | tr '\t' '\n' | sed '/^$/d'
+}
+# Prints the on-demand hourly total (2 nodes + $0.12) or returns non-zero when
+# it is above EKS_ONDEMAND_MAX_HOURLY or the price is missing.
+ondemand_hourly() {
+    local od
+    od=$(price "$1")
+    python3 -c 'import sys
+try:
+    od = float(sys.argv[1])
+except ValueError:
+    sys.exit(2)
+hourly = 2 * od + 0.12
+print("%.3f" % hourly)
+sys.exit(0 if hourly <= float(sys.argv[2]) else 1)
+' "$od" "$ondemand_cap"
+}
+# True when the cheapest zone of the preferred type in the current region
+# fits the spot gate. The estimate above uses the dearest zone; one expensive
+# zone must not hide a zone the fleet can actually buy.
+cheapest_zone_ok() {
+    local line price
+    line=$(zone_spots "$preferred_type" | head -1)
+    [[ -z $line ]] && return 1
+    price=${line#* }
+    python3 -c 'import sys; sys.exit(0 if 2*float(sys.argv[1])+0.12 <= 0.30 else 1)' "$price"
+}
+# True when some enabled region other than $home_region has a spot zone
+# inside the $0.30/h gate. The fake tests have one region.
+affordable_elsewhere() {
+    local r price home=$region line
+    while read -r r; do
+        [[ -z $r || $r == "$home" ]] && continue
+        region=$r
+        line=$(zone_spots "$preferred_type" | head -1)
+        region=$home
+        [[ -z $line ]] && continue
+        price=${line#* }
+        python3 -c 'import sys; sys.exit(0 if 2*float(sys.argv[1])+0.12 <= 0.30 else 1)' "$price" && return 0
+    done < <(aws ec2 --region "$home" describe-regions --query 'Regions[].RegionName' --output text | tr '\t' '\n')
+    region=$home
+    return 1
+}
+# Delete one capacity probe. Returns non-zero if the VPC is still there.
+probe_clean() {
+    local r=$1 vpc=$2 subnet=$3 lt=$4 fleet=$5
+    shift 5
+    local ids="$*" i eni left
+    if [[ -n ${ids// /} ]]; then
+        aws ec2 --region "$r" terminate-instances --instance-ids $ids >/dev/null 2>>"$out/probe.log" || true
+    fi
+    if [[ -n $fleet ]]; then
+        aws ec2 --region "$r" delete-fleets --fleet-ids "$fleet" --terminate-instances >/dev/null 2>>"$out/probe.log" || true
+    fi
+    if [[ -n ${ids// /} ]]; then
+        i=0
+        while ((i < 36)); do
+            left=$(aws ec2 --region "$r" describe-instances --instance-ids $ids \
+                --query 'Reservations[].Instances[?State.Name!=`terminated`].InstanceId' --output text 2>/dev/null || true)
+            [[ -z $left || $left == None ]] && break
+            sleep 10
+            i=$((i + 1))
+        done
+    fi
+    # A terminated instance keeps its ENI "in use" for a minute or more:
+    # the subnet and the VPC wait for that (up to 3 and 2 minutes).
+    if [[ -n $subnet ]]; then
+        i=0
+        while ((i < 36)); do
+            for eni in $(aws ec2 --region "$r" describe-network-interfaces --filters "Name=subnet-id,Values=$subnet" \
+                --query 'NetworkInterfaces[].NetworkInterfaceId' --output text 2>/dev/null); do
+                [[ -z $eni || $eni == None ]] && continue
+                aws ec2 --region "$r" delete-network-interface --network-interface-id "$eni" >/dev/null 2>>"$out/probe.log" || true
+            done
+            aws ec2 --region "$r" delete-subnet --subnet-id "$subnet" >/dev/null 2>>"$out/probe.log" && break
+            sleep 5
+            i=$((i + 1))
+        done
+    fi
+    if [[ -n $vpc ]]; then
+        i=0
+        while ((i < 24)); do
+            aws ec2 --region "$r" delete-vpc --vpc-id "$vpc" >/dev/null 2>>"$out/probe.log" && break
+            sleep 5
+            i=$((i + 1))
+        done
+        if aws ec2 --region "$r" describe-vpcs --vpc-ids "$vpc" --query 'Vpcs[0].VpcId' --output text 2>/dev/null | grep -q '^vpc-'; then
+            log "ERROR: probe VPC $vpc in $r is still present"
+            return 1
+        fi
+    fi
+    if [[ -n $lt ]]; then
+        aws ec2 --region "$r" delete-launch-template --launch-template-name "$lt" >/dev/null 2>>"$out/probe.log" || true
+    fi
+    return 0
+}
+# Launch 2 instances and delete them. Returns 0 only when the fleet actually
+# got both. A probe that cannot be deleted stops the run so the trap can
+# sweep the tagged leftovers.
+probe_fleet() {
+    local how=$1 r=$2 t=$3 zone=$4 pami=$5
+    local pvpc="" psub="" plt="" pfleet="" pids="" rc=1 clean_rc=0 target fj
+    plt="$N-probe-$RANDOM"
+    echo "$r" >>"$out/probe-regions.txt"
+    pvpc=$(aws ec2 --region "$r" create-vpc --cidr-block 10.42.0.0/16 \
+        --tag-specifications "$(tags vpc probe)" --query Vpc.VpcId --output text 2>>"$out/probe.log") || pvpc=""
+    if [[ -n $pvpc && $pvpc != None ]]; then
+        psub=$(aws ec2 --region "$r" create-subnet --vpc-id "$pvpc" --cidr-block 10.42.1.0/24 \
+            --availability-zone "$zone" --tag-specifications "$(tags subnet probe)" \
+            --query Subnet.SubnetId --output text 2>>"$out/probe.log") || psub=""
+    fi
+    if [[ -n $psub && $psub != None ]]; then
+        python3 - "$pami" "$t" "$stamp" "$N" >"$out/probe-lt.json" <<'PY'
+import json, sys
+ami, itype, stamp, name = sys.argv[1:5]
+def tag(role):
+    return {"ResourceType": role, "Tags": [
+        {"Key": "owner", "Value": "ergon-lab"},
+        {"Key": "run", "Value": stamp},
+        {"Key": "Name", "Value": "%s-probe-%s" % (name, role)},
+    ]}
+print(json.dumps({
+    "ImageId": ami,
+    "InstanceType": itype,
+    "BlockDeviceMappings": [{
+        "DeviceName": "/dev/xvda",
+        "Ebs": {"VolumeSize": 20, "VolumeType": "gp3", "DeleteOnTermination": True},
+    }],
+    "NetworkInterfaces": [{"DeviceIndex": 0, "AssociatePublicIpAddress": False}],
+    "TagSpecifications": [tag("instance"), tag("volume"), tag("network-interface")],
+    "MetadataOptions": {"HttpTokens": "required", "HttpEndpoint": "enabled"},
+    "InstanceInitiatedShutdownBehavior": "terminate",
+}))
+PY
+        if aws ec2 --region "$r" create-launch-template --launch-template-name "$plt" \
+            --launch-template-data "file://$out/probe-lt.json" \
+            --tag-specifications "$(tags launch-template probe)" >/dev/null 2>>"$out/probe.log"; then
+            fj=$out/probe-fleet-$r-$zone.json
+            if [[ $how == on-demand ]]; then
+                target="TotalTargetCapacity=2,DefaultTargetCapacityType=on-demand,OnDemandTargetCapacity=2"
+                aws ec2 --region "$r" create-fleet --type instant \
+                    --target-capacity-specification "$target" \
+                    --launch-template-config "LaunchTemplateSpecification={LaunchTemplateName=$plt,Version=1},Overrides=[{SubnetId=$psub}]" \
+                    --tag-specifications "$(tags fleet probe)" \
+                    --output json >"$fj" 2>>"$out/probe.log" || true
+            else
+                target="TotalTargetCapacity=2,DefaultTargetCapacityType=spot,OnDemandTargetCapacity=0"
+                aws ec2 --region "$r" create-fleet --type instant \
+                    --spot-options "AllocationStrategy=capacity-optimized" \
+                    --target-capacity-specification "$target" \
+                    --launch-template-config "LaunchTemplateSpecification={LaunchTemplateName=$plt,Version=1},Overrides=[{SubnetId=$psub}]" \
+                    --tag-specifications "$(tags fleet probe)" \
+                    --output json >"$fj" 2>>"$out/probe.log" || true
+            fi
+            if [[ -s $fj ]]; then
+                read -r pfleet pids <<<"$(python3 -c '
+import json, sys
+f = json.load(open(sys.argv[1]))
+ids = [i for inst in f.get("Instances", []) for i in inst.get("InstanceIds", [])]  # InstanceIds is a list of ids
+print((f.get("FleetId") or "-") + " " + " ".join(ids))
+' "$fj" 2>/dev/null || echo "-")"
+                [[ $pfleet == "-" ]] && pfleet=""
+                if [[ $(wc -w <<<"$pids") -eq 2 ]]; then rc=0; fi
+            fi
+        fi
+    fi
+    probe_clean "$r" "$pvpc" "$psub" "$plt" "$pfleet" $pids || clean_rc=1
+    if ((clean_rc != 0)); then
+        region=$r
+        die "probe in $r left a VPC (see $out/probe.log). Teardown will try again."
+    fi
+    return $rc
+}
+# Pick region, type and market before the cluster exists. Spot c8g.xlarge
+# first, then spot c9g.xlarge and c7g.xlarge when they keep the 4-core pin
+# map, then on-demand of those types. The first probe that receives 2
+# instances wins; the probe instances are deleted before this returns.
+select_capacity() {
+    local t r zone price ami_r hourly offered nzone types region_words line
+    mkdir -p "$out"
+    : >"$out/probe-regions.txt"
+    region_words=$home_region
+    while read -r r; do
+        [[ -z $r || $r == "$home_region" ]] && continue
+        region_words+=" $r"
+    done < <(aws ec2 --region "$home_region" describe-regions --query 'Regions[].RegionName' --output text | tr '\t' '\n' | sort)
+    types=$preferred_type
+    for t in c9g.xlarge c7g.xlarge c8g.xlarge; do
+        case " $types " in
+        *" $t "*) ;;
+        *) types+=" $t" ;;
+        esac
+    done
+    log "looking for spot capacity for 2 instances. $home_region first, then every enabled region."
+    for t in $types; do
+        if [[ $t != "$preferred_type" ]] && ! fallback_shape_ok "$t"; then
+            log "skip $t: not a 4-vCPU Graviton with no SMT. The pins stay CPU 0 shared, 1 IRQs, 2-3 isolated."
+            continue
+        fi
+        for r in $region_words; do
+            region=$r
+            ami_r=$(ami_for "$r") || { log "no Kubernetes $k8s arm64 AMI in $r"; continue; }
+            offered=$(offered_zones "$t" | tr '\n' ' ')
+            [[ -n ${offered// /} ]] || continue
+            while read -r zone price; do
+                [[ -z ${zone:-} ]] && continue
+                case " $offered " in
+                *" $zone "*) ;;
+                *) continue ;;
+                esac
+                python3 -c 'import sys; sys.exit(0 if 2*float(sys.argv[1])+0.12 <= 0.30 else 1)' "$price" || continue
+                log "probing spot: 2 x $t in $zone ($r), last price \$$price/h"
+                if probe_fleet spot "$r" "$t" "$zone" "$ami_r"; then
+                    type=$t
+                    market=spot
+                    prefer_zone=$zone
+                    ami=$ami_r
+                    region=$r
+                    log "spot capacity: 2 x $type in $prefer_zone ($region)"
+                    return 0
+                fi
+                log "no spot capacity for 2 x $t in $zone ($r)"
+            done < <(zone_spots "$t")
+        done
+    done
+    log "no spot capacity under the \$0.30/h gate for 2 x $preferred_type, c9g.xlarge or c7g.xlarge in any enabled region"
+    log "on-demand fallback, ceiling \$$ondemand_cap/h. c8g.xlarge first, so the documented machine is kept when it can be placed."
+    for t in $types; do
+        if [[ $t != "$preferred_type" ]] && ! fallback_shape_ok "$t"; then
+            continue
+        fi
+        for r in $region_words; do
+            region=$r
+            ami_r=$(ami_for "$r") || continue
+            hourly=$(ondemand_hourly "$t") || {
+                log "on-demand 2 x $t in $r is above the \$$ondemand_cap/h ceiling, or has no price"
+                continue
+            }
+            offered=$(offered_zones "$t" | tr '\n' ' ')
+            nzone=0
+            for zone in $offered; do
+                nzone=$((nzone + 1))
+                ((nzone > 3)) && break
+                log "probing on-demand: 2 x $t in $zone ($r), estimated \$$hourly/h"
+                if probe_fleet on-demand "$r" "$t" "$zone" "$ami_r"; then
+                    type=$t
+                    market=on-demand
+                    prefer_zone=$zone
+                    ami=$ami_r
+                    region=$r
+                    log "on-demand fallback: 2 x $type in $prefer_zone ($region), estimated \$$hourly/h"
+                    return 0
+                fi
+                log "no on-demand capacity for 2 x $t in $zone ($r)"
+            done
+        done
+    done
+    region=$home_region
+    die "no spot capacity in any enabled region, and on-demand could not place 2 instances of a 4-vCPU no-SMT Graviton under \$$ondemand_cap/h"
+}
 node_on_demand=$(price "$type")
 node_spot=$(spot_price "$type")
 estimate=$(python3 -c '
@@ -563,22 +964,41 @@ else:
 print(f"{hourly:.3f} {basis}")
 if hourly > gate:
     sys.exit(3)
-' "$node_on_demand" "$node_spot" 0.30) || {
-    rc=$?
-    if ((rc == 3)); then
+' "$node_on_demand" "$node_spot" 0.30)
+price_rc=$?
+if ((price_rc == 3)); then
+    if ! cheapest_zone_ok && ! affordable_elsewhere; then
         die "estimated hourly rate is above the \$0.30/h gate (2 x $type + the control plane). Spot is too expensive right now: try another region (EKS_REGION) or later. Refusing to start."
     fi
+    log "a spot zone is inside the \$0.30/h gate even though the dearest zone is not. The run uses a zone inside the gate."
+    if [[ -n $check_only ]]; then
+        log "EKS_CHECK_ONLY=1: nothing created."
+        exit 0
+    fi
+elif ((price_rc != 0)); then
     die "cannot price $type"
-}
-read -r hourly basis <<<"$estimate"
-log "cost estimate BEFORE anything is created:"
-log "  2 x $type SPOT ($basis) + EKS control plane \$0.10/h + public IPv4 and gp3"
-log "  estimated \$$hourly/h, deleted at exit; at most EKS_MAX_MINUTES=$max_minutes minutes"
-log "  gate: at most \$0.30/h and 180 minutes; on-demand fallback OFF (spot only)"
-if [[ -n $check_only ]]; then
-    log "EKS_CHECK_ONLY=1: nothing created. Estimated \$$hourly/h."
-    exit 0
+else
+    read -r hourly basis <<<"$estimate"
+    log "cost estimate BEFORE anything is created:"
+    log "  2 x $type SPOT ($basis) + EKS control plane \$0.10/h + public IPv4 and gp3"
+    log "  estimated \$$hourly/h, deleted at exit; at most EKS_MAX_MINUTES=$max_minutes minutes"
+    log "  gate: at most \$0.30/h for spot and 180 minutes. No spot in any region falls through to c9g.xlarge and c7g.xlarge, then on-demand up to \$$ondemand_cap/h."
+    if [[ -n $check_only ]]; then
+        log "EKS_CHECK_ONLY=1: nothing created. Estimated \$$hourly/h."
+        exit 0
+    fi
 fi
+
+# Capacity before the cluster, so a region with no spot does not bill a
+# control plane. The trap covers a probe that cannot delete itself.
+trap teardown EXIT
+trap 'exit 130' INT TERM
+trap 'exit 129' HUP
+created=1
+select_capacity
+registry=$account.dkr.ecr.$region.amazonaws.com
+ami=$(ami_for "$region") || die "no EKS AL2023 arm64 AMI for Kubernetes $k8s in $region"
+log "run $stamp: $market, 2 x $type, $region, zone $prefer_zone"
 
 # ---- images ------------------------------------------------------------------
 
@@ -613,10 +1033,6 @@ build_image shared-cpus "$plugin_ctx" "$plugin_ctx/Dockerfile"
 build_image workload "$repo" "$scripts/eks-nri-workload.Dockerfile"
 
 # ---- create ------------------------------------------------------------------
-
-trap teardown EXIT
-trap 'exit 130' INT TERM
-trap 'exit 129' HUP
 
 watchdog() {
     local t0 now next
@@ -740,8 +1156,11 @@ create_cluster() {
     local me
     me=$(curl -fsS -m 10 https://checkip.amazonaws.com | tr -d '[:space:]') || return 1
     [[ $me =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || { log "cannot tell this machine's public IPv4 ($me)"; return 1; }
+    # The /24 of this machine's address, not the /32: its egress can move
+    # between neighbouring addresses (seen: .116 and .117 within minutes), and
+    # a /32 then locks this machine out of its own cluster mid-run.
     eks create-cluster --name "$N" --kubernetes-version "$k8s" --role-arn "$cluster_role_arn" \
-        --resources-vpc-config "{\"subnetIds\":[$cluster_subnets],\"endpointPublicAccess\":true,\"publicAccessCidrs\":[\"$me/32\"],\"endpointPrivateAccess\":true}" \
+        --resources-vpc-config "{\"subnetIds\":[$cluster_subnets],\"endpointPublicAccess\":true,\"publicAccessCidrs\":[\"${me%.*}.0/24\"],\"endpointPrivateAccess\":true}" \
         --access-config authenticationMode=API,bootstrapClusterCreatorAdminPermissions=true \
         --upgrade-policy supportType=STANDARD \
         --logging '{"clusterLogging":[{"types":["api","audit","authenticator","controllerManager","scheduler"],"enabled":false}]}' \
@@ -775,8 +1194,9 @@ eks create-access-entry --cluster-name "$N" --principal-arn "$node_role_arn" --t
 # The launch template: user data from eks-nri-userdata.sh (kernel command
 # line, sysctls, one reboot, then nodeadm's NodeConfig), 20 GB gp3, public
 # IP, no key pair, terminate on shutdown (the dead-man's switch).
-bash "$scripts/eks-nri-userdata.sh" "$N" "$endpoint" "$ca" "$svc" "$reserved" "$isolated" "$hugepages" >"$out/userdata.gz" ||
-    die "eks-nri-userdata.sh failed (over the 16 KiB user-data limit?)"
+QUIET_DIR=$EKS_SNAPSHOT/quiet bash "$scripts/eks-nri-userdata.sh" "$N" "$endpoint" "$ca" "$svc" "$reserved" "$isolated" "$hugepages" "$irq_cpu" \
+    >"$out/userdata.gz" 2>"$out/userdata.log" || { cat "$out/userdata.log" >&2; die "eks-nri-userdata.sh failed (over the 16 KiB user-data limit?)"; }
+log "$(cat "$out/userdata.log")"
 python3 - "$ami" "$type" "$profile_arn" "$csg" "$sg" "$stamp" "$N" "$out/userdata.gz" >"$out/launch-template.json" <<'PY'
 import base64, json, sys
 ami, itype, profile, csg, sg, stamp, name, udpath = sys.argv[1:9]
@@ -811,75 +1231,126 @@ PY
 ec2 create-launch-template --launch-template-name "$lt" --launch-template-data "file://$out/launch-template.json" \
     --tag-specifications "$(tags launch-template lt)" >/dev/null || die "launch template"
 
-# 2 x $type SPOT, one zone at a time (so both nodes share a zone and the
-# round trip does not cross AZs), capacity-optimized inside the zone, and
-# OnDemandTargetCapacity=0: this never silently pays on-demand.
-zones=$(ec2 describe-instance-type-offerings --location-type availability-zone --filters "Name=instance-type,Values=$type" \
-    --query 'InstanceTypeOfferings[].Location' --output text | tr '\t' '\n' | sort)
-[[ -n $zones ]] || die "$type is not offered in $region"
-# Both nodes must land in one zone, so an instant fleet that cannot give both
-# is refused and the next zone is tried. Capacity moves minute to minute and
-# CreateFleet can also fail with MaxFleetCountExceeded on its own burst
-# bucket, so the whole zone list is retried a few times before giving up.
-launched=
-subnet_idx=10
-for pass in 1 2 3 4; do
-    ((pass > 1)) && { log "spot pass $pass after a wait"; sleep 30; }
-    for zone in $zones; do
-        # A fresh CIDR per attempt: a failed attempt's subnet can refuse to
-        # delete while a fleet still holds it, and the next create-subnet on
-        # the same CIDR would then kill the run on a conflict. 10.31.2.0/24
-        # and 10.31.3.0/24 are the cluster's own subnets.
-        subnet_idx=$((subnet_idx + 1))
-        nodes_subnet=$(ec2 create-subnet --vpc-id "$vpc" --cidr-block "10.31.$subnet_idx.0/24" --availability-zone "$zone" \
-            --tag-specifications "$(tags subnet nodes)" --query Subnet.SubnetId --output text 2>>"$out/subnet.log") || {
-            log "pass $pass zone $zone: no subnet: $(tail -1 "$out/subnet.log" 2>/dev/null)"
-            continue
-        }
-        ec2 modify-subnet-attribute --subnet-id "$nodes_subnet" --map-public-ip-on-launch || die "node subnet public IPs"
-        ec2 associate-route-table --route-table-id "$rt" --subnet-id "$nodes_subnet" >/dev/null || die "node subnet route"
-        fleet_json=$out/fleet-$pass-$zone.json
-        if ec2 create-fleet \
-            --type instant \
-            --spot-options "AllocationStrategy=$spot_strategy" \
-            --target-capacity-specification "TotalTargetCapacity=2,DefaultTargetCapacityType=spot,OnDemandTargetCapacity=0" \
-            --launch-template-config "LaunchTemplateSpecification={LaunchTemplateName=$lt,Version=1},Overrides=[{SubnetId=$nodes_subnet}]" \
-            --tag-specifications "$(tags fleet fleet)" \
-            --output json >"$fleet_json" 2>"$out/create-fleet-$pass-$zone.log"; then
+# Both nodes in one zone, so the round trip does not cross AZs. Spot
+# requests set OnDemandTargetCapacity=0. The probe already found a zone;
+# these passes cover the gap after those probe instances were released.
+# If spot still cannot be placed, try the other 4-core Graviton types and
+# then on-demand, in this region. The cluster already exists here.
+set_lt_type() {
+    ec2 create-launch-template-version --launch-template-name "$lt" --source-version 1 \
+        --launch-template-data "{\"InstanceType\":\"$1\"}" \
+        --query 'LaunchTemplateVersion.VersionNumber' --output text
+}
+seek_launch() {
+    local pass zone nodes_subnet fleet_json fleet_id n target passes=4
+    [[ $market == on-demand ]] && passes=2
+    zones=$(ec2 describe-instance-type-offerings --location-type availability-zone --filters "Name=instance-type,Values=$type" \
+        --query 'InstanceTypeOfferings[].Location' --output text | tr '\t' '\n' | sed '/^$/d' | sort)
+    [[ -n $zones ]] || { log "$type is not offered in $region"; return 1; }
+    if [[ -n $prefer_zone ]]; then
+        zones="$prefer_zone $(printf '%s\n' $zones | grep -vx "$prefer_zone" || true)"
+    fi
+    launched=
+    for pass in $(seq "$passes"); do
+        if ((pass > 1)); then log "$market pass $pass after a wait"; sleep 30; fi
+        for zone in $zones; do
+            # A fresh CIDR per attempt: a failed attempt's subnet can refuse to
+            # delete while a fleet still holds it. 10.31.2.0/24 and 10.31.3.0/24
+            # are the cluster's own subnets.
+            subnet_idx=$((subnet_idx + 1))
+            nodes_subnet=$(ec2 create-subnet --vpc-id "$vpc" --cidr-block "10.31.$subnet_idx.0/24" --availability-zone "$zone" \
+                --tag-specifications "$(tags subnet nodes)" --query Subnet.SubnetId --output text 2>>"$out/subnet.log") || {
+                log "pass $pass zone $zone: no subnet: $(tail -1 "$out/subnet.log" 2>/dev/null)"
+                continue
+            }
+            ec2 modify-subnet-attribute --subnet-id "$nodes_subnet" --map-public-ip-on-launch || die "node subnet public IPs"
+            ec2 associate-route-table --route-table-id "$rt" --subnet-id "$nodes_subnet" >/dev/null || die "node subnet route"
+            fleet_json=$out/fleet-$market-$pass-$zone.json
+            if [[ $market == on-demand ]]; then
+                target="TotalTargetCapacity=2,DefaultTargetCapacityType=on-demand,OnDemandTargetCapacity=2"
+                ec2 create-fleet --type instant \
+                    --target-capacity-specification "$target" \
+                    --launch-template-config "LaunchTemplateSpecification={LaunchTemplateName=$lt,Version=$lt_version},Overrides=[{SubnetId=$nodes_subnet}]" \
+                    --tag-specifications "$(tags fleet fleet)" \
+                    --output json >"$fleet_json" 2>"$out/create-fleet-$market-$pass-$zone.log" || true
+            else
+                target="TotalTargetCapacity=2,DefaultTargetCapacityType=spot,OnDemandTargetCapacity=0"
+                ec2 create-fleet --type instant \
+                    --spot-options "AllocationStrategy=$spot_strategy" \
+                    --target-capacity-specification "$target" \
+                    --launch-template-config "LaunchTemplateSpecification={LaunchTemplateName=$lt,Version=$lt_version},Overrides=[{SubnetId=$nodes_subnet}]" \
+                    --tag-specifications "$(tags fleet fleet)" \
+                    --output json >"$fleet_json" 2>"$out/create-fleet-$market-$pass-$zone.log" || true
+            fi
             fleet_id=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("FleetId") or "")' "$fleet_json" 2>/dev/null || true)
             [[ -n $fleet_id ]] && printf '%s\n' "$fleet_id" >>"$out/fleet-ids"
             ids=$(python3 -c '
 import json, sys
-f = json.load(open(sys.argv[1]))
-print("\n".join(i["InstanceId"] for inst in f.get("Instances", []) for i in inst.get("InstanceIds", [])))' "$fleet_json" 2>/dev/null)
+try:
+    f = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+print("\n".join(i for inst in f.get("Instances", []) for i in inst.get("InstanceIds", [])))  # a list of ids' "$fleet_json" 2>/dev/null || true)
             n=$(wc -w <<<"$ids")
             if ((n == 2)); then
                 launched=$zone
-                break
+                return 0
             fi
-            log "pass $pass zone $zone gave $n of 2 spot instances"
-            # A failed instant fleet stays active and holds its spot vCPUs.
-            # Delete it before the next zone, or a few misses exhaust the quota.
+            log "pass $pass zone $zone gave $n of 2 $market instances: $(tail -1 "$out/create-fleet-$market-$pass-$zone.log" 2>/dev/null)"
+            # A failed instant fleet stays active and holds its vCPUs. Delete
+            # it before the next zone, or a few misses exhaust the quota.
             if [[ -n $fleet_id ]]; then
                 ec2 delete-fleets --fleet-ids "$fleet_id" --terminate-instances >/dev/null 2>&1 ||
                     log "pass $pass zone $zone: could not delete fleet $fleet_id"
             fi
-        else
-            log "pass $pass zone $zone: $(tail -1 "$out/create-fleet-$pass-$zone.log" 2>/dev/null)"
-        fi
-        # Best effort: a fleet that created interfaces can hold the subnet
-        # for a moment. Teardown sweeps anything left by tag.
-        ec2 delete-subnet --subnet-id "$nodes_subnet" >/dev/null 2>&1 || true
+            ec2 delete-subnet --subnet-id "$nodes_subnet" >/dev/null 2>&1 || true
+        done
     done
-    [[ -n $launched ]] && break
-done
-[[ -n $launched ]] || die "no zone had spot capacity for 2 x $type after 4 passes (on-demand fallback is OFF, by design)"
+    return 1
+}
+launched=
+subnet_idx=10
+seek_launch || true
+if [[ -z $launched && $market == spot ]]; then
+    for alt in c9g.xlarge c7g.xlarge c8g.xlarge; do
+        [[ $alt == "$type" ]] && continue
+        if ! fallback_shape_ok "$alt"; then
+            log "skip $alt: not a 4-vCPU Graviton with no SMT, so the CPU pins would change"
+            continue
+        fi
+        log "no spot for 2 x $type in $region; trying spot $alt"
+        lt_version=$(set_lt_type "$alt") || continue
+        type=$alt
+        seek_launch && break
+    done
+fi
+if [[ -z $launched ]]; then
+    log "on-demand fallback in $region. Spot could not place 2 instances."
+    market=on-demand
+    if [[ $type != "$preferred_type" ]] && layout_ok "$preferred_type" "$region"; then
+        type=$preferred_type
+    fi
+    lt_version=$(set_lt_type "$type") || die "cannot set the launch template to $type"
+    seek_launch || true
+fi
+if [[ -z $launched ]]; then
+    for alt in c8g.xlarge c7g.xlarge c9g.xlarge; do
+        [[ $alt == "$type" ]] && continue
+        fallback_shape_ok "$alt" || continue
+        hourly=$(ondemand_hourly "$alt") || continue
+        log "on-demand $type did not launch; trying $alt (estimated \$$hourly/h)"
+        lt_version=$(set_lt_type "$alt") || continue
+        type=$alt
+        seek_launch && break
+    done
+fi
+[[ -n $launched ]] || die "could not place 2 instances in $region on $market after searching every enabled region"
 read -r ida idb <<<"$(tr '\n' ' ' <<<"$ids")"
-log "nodes $ida (a) $idb (b) spot in $launched; waiting for them to run"
+log "nodes $ida (a) $idb (b) $market in $launched; waiting for them to run"
 ec2 wait instance-running --instance-ids "$ida" "$idb" || die "the nodes did not start"
 {
     echo "cluster $N kubernetes $k8s"
-    echo "type $type zone $launched spot strategy $spot_strategy"
+    echo "type $type zone $launched market $market strategy $spot_strategy"
     echo "ami $ami"
     echo "images $registry/$N/{shared-cpus,workload}:$tag"
     echo "a $ida"
@@ -941,45 +1412,23 @@ spec:
 YAML
 sed -i.bak "s|PROBE_IMAGE|$registry/$N/workload:$tag|" "$out/k8s/probe.yaml" && rm -f "$out/k8s/probe.yaml.bak"
 
-# The shared-cpus plugin: the repo's manifests, its config rewritten for this
-# node group (shared CPU 0, the lab namespaces only, annotation opt-in).
-# devRoot and seccomp are part of that rewrite: the DaemonSet mounts the
-# host's /dev read-only at /host/dev, so the default /dev would have the
-# plugin look at its own /dev for the PHC and cpu_dma_latency; and the
-# io-uring widening defaults to off, which refuses the M3/M6 annotations.
-mkdir -p "$out/k8s/plugin"
-cp "$plugin_src/deploy/namespace.yaml" "$plugin_src/deploy/daemonset.yaml" "$out/k8s/plugin/" 2>/dev/null
-cat >"$out/k8s/plugin/configmap.yaml" <<YAML
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: ergon-shared-cpus
-  namespace: ergon-system
-data:
-  config.yaml: |
-    sharedCpus: "$shared_cpus"
-    oversubscription: 1
-    namespaces: [ergon-latency-pods, ergon-latency-pods-probe]
-    defaultAffinity: shared
-    hookPath: /opt/ergon/bin/ergon-cpus
-    annotationOptIn: true
-    metricsAddress: ":9466"
-    devRoot: /host/dev
-    seccomp:
-      ioUring: allow
-YAML
-cat >"$out/k8s/plugin/kustomization.yaml" <<YAML
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-resources:
-  - namespace.yaml
-  - configmap.yaml
-  - daemonset.yaml
-images:
-  - name: ergon-shared-cpus:dev
-    newName: $registry/$N/shared-cpus
-    newTag: "$tag"
-YAML
+# The shared-cpus plugin: this tree's chart (0.1.2) rendered with the book's
+# EKS AL2023 install (kubelet config.json plus its config.json.d drop-ins,
+# --kubelet-config-dir), the image built above from this tree and pushed to
+# the run's ECR repository (never GHCR). The config for this node group:
+# shared CPU 0, the lab namespaces only, annotation opt-in, and the grants the
+# modes ask for (rlimits memlock, seccomp io_uring, the NIC PHC); devRoot is
+# the chart's /host/dev (the host's /dev, read-only).
+mkdir -p "$out/k8s"
+helm template ergon-shared-cpus "$plugin_src/charts/ergon-shared-cpus" --namespace ergon-system \
+    --set image.repository="$registry/$N/shared-cpus" --set image.tag="$tag" \
+    --set-string config.sharedCpus="$shared_cpus" \
+    --set 'config.namespaces={ergon-latency-pods,ergon-latency-pods-probe}' \
+    --set config.annotationOptIn=true \
+    --set-string config.seccomp.ioUring=allow --set-string config.ptp=auto --set-string config.rlimits.memlock=inf \
+    --set hostContract.kubeletConfig.path=/etc/kubernetes/kubelet/config.json \
+    --set hostContract.kubeletConfigDir.enabled=true \
+    >"$out/k8s/plugin.yaml" 2>"$out/helm.log" || { cat "$out/helm.log" >&2; die "helm template of the shared-cpus chart"; }
 
 # The latency namespaces and the validating admission policy: no liveness
 # probes, readiness only httpGet/tcpSocket/grpc, no sidecars. The policy
@@ -1047,9 +1496,22 @@ spec:
   validationActions: ["Deny"]
 YAML
 
-k apply -f "$out/k8s/admission.yaml" >"$out/apply.log" 2>&1 || { cat "$out/apply.log" >&2; die "kubectl apply admission"; }
-k apply -k "$out/k8s/plugin" >>"$out/apply.log" 2>&1 || { cat "$out/apply.log" >&2; die "kubectl apply -k plugin"; }
-k apply -f "$out/k8s/probe.yaml" >>"$out/apply.log" 2>&1 || { cat "$out/apply.log" >&2; die "kubectl apply probe"; }
+# A fresh control plane can drop a TLS handshake (seen once: "TLS handshake
+# timeout" fetching the OpenAPI schema); each apply gets five tries.
+k_apply() { # <file> <what>
+    local try
+    for try in 1 2 3 4 5; do
+        k apply -f "$1" >>"$out/apply.log" 2>&1 && return 0
+        log "kubectl apply $2 failed (try $try); retrying"
+        sleep $((try * 10))
+    done
+    cat "$out/apply.log" >&2
+    die "kubectl apply $2"
+}
+: >"$out/apply.log"
+k_apply "$out/k8s/admission.yaml" admission
+k_apply "$out/k8s/plugin.yaml" plugin
+k_apply "$out/k8s/probe.yaml" probe
 # Each DaemonSet in the namespace it is deployed in: the shared-cpus plugin
 # ships in ergon-system (deploy/daemonset.yaml), the probe in default. A wait
 # on the wrong namespace finds nothing and the run dies before it measures.
@@ -1057,7 +1519,12 @@ for ds_ns in "ergon-shared-cpus ergon-system" "ergon-lab-probe default"; do
     ds=${ds_ns%% *}
     ns=${ds_ns##* }
     kubectl rollout status "ds/$ds" -n "$ns" --timeout=10m >>"$out/apply.log" 2>&1 ||
-        die "daemonset $ds in $ns did not roll out (logs follow in $out/logs)"
+        {
+            k describe ds "$ds" -n "$ns" >"$out/rollout-$ds.log" 2>&1
+            k describe pods -n "$ns" -l "app=$ds" >>"$out/rollout-$ds.log" 2>&1
+            k logs -n "$ns" -l "app=$ds" --tail=100 --all-containers >>"$out/rollout-$ds.log" 2>&1
+            die "daemonset $ds in $ns did not roll out (see $out/rollout-$ds.log)"
+        }
 done
 k get ds -A >>"$out/apply.log" 2>&1
 
@@ -1112,6 +1579,12 @@ for n in a b; do
     sed -n '/== containerd config dump/,/== cmdline/p' "$out/facts/$n.txt" | sed 's/^/    /' >&2
 done
 
+has_ptp=1
+if ! grep -q '^crw.*/dev/ptp' "$out/facts/a.txt" || ! grep -q '^crw.*/dev/ptp' "$out/facts/b.txt"; then
+    has_ptp=0
+    log "no /dev/ptp* on the nodes: M4 checks the refusal only, M6 runs without the PHC grant"
+fi
+
 # ---- mode manifests ----------------------------------------------------------
 
 # make_pod <mode> <which a|b> <ping_ep> <pong_ep>: one pod YAML on stdout.
@@ -1121,9 +1594,14 @@ done
 # forbids hostPath and Unconfined). cpu: 2 Guaranteed takes the isolated
 # CPUs; the shared-millicpus request is the opt-in to the plugin's shared
 # CPU. SCHED_FIFO is deliberately absent (inconclusive in the one AWS A/B).
+# The pod name of a role and mode: lowercase, as Kubernetes requires (M0 -> m0).
+pname() { echo "ergon-lab-$1-$(tr '[:upper:]' '[:lower:]' <<<"$2")"; }
+# Whether the nodes have a NIC PHC: without one, M6 is the all-on set less ptp
+# (recorded), and M4 is a refusal check only. Set from the node facts above.
 make_pod() {
     local mode=$1 which=$2 ping_ep=$3 pong_ep=$4
-    local name=ergon-lab-$which-$mode ns=ergon-latency-pods
+    local name ns=ergon-latency-pods
+    name=$(pname "$which" "$mode")
     local node=$node_a
     [[ $which == b ]] && node=$node_b
     local ann_hugepages="" ann_partition="" ann_seccomp="" ann_devices="" ann_rlimits=""
@@ -1149,16 +1627,17 @@ make_pod() {
     M3 | M6) ann_seccomp=$'    seccomp.ergon.io/app: "io-uring"\n' ;;
     esac
     case $mode in
-    M4 | M6) ann_devices=$'    ptp.ergon.io/app: "auto"\n' ;;
+    M4) ann_devices=$'    ptp.ergon.io/app: "auto"\n' ;;
+    M6) ((has_ptp)) && ann_devices=$'    ptp.ergon.io/app: "auto"\n' ;;
     esac
     local probe="" huge_res=""
     [[ $mode == M5 ]] && probe=$(cat <<'PYAML'
-          livenessProbe:
-            exec:
-              command: ["true"]
-            periodSeconds: 1
-            timeoutSeconds: 1
-            failureThreshold: 1000
+      livenessProbe:
+        exec:
+          command: ["true"]
+        periodSeconds: 1
+        timeoutSeconds: 1
+        failureThreshold: 1000
 PYAML
 )
     # Every mode but M5 is a latency pod: the validating policy matches this
@@ -1170,7 +1649,7 @@ PYAML
         # k8s isolates hugepages at container scope; the plugin's mount
         # size matches this limit. 256Mi = the node's 256 x 2 MiB pages.
         huge_res=$(cat <<'PYAML'
-              hugepages-2Mi: 256Mi
+          hugepages-2Mi: 256Mi
 PYAML
 )
     fi
@@ -1317,12 +1796,14 @@ admission_check || die "the admission policy is not in force (see $out/admission
 # Whether this plugin build grants rlimits and seccomp (the plan's plugin
 # extensions). Absent: the modes still run, and the run records that the
 # grant was missing (prelock fails closed).
-plugin_metrics() {
-    local pod
-    pod=$(k get pods -n ergon-system -l app=ergon-shared-cpus -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
-    [[ -n $pod ]] && k exec -n ergon-system "$pod" -- wget -qO- http://127.0.0.1:9466/metrics 2>/dev/null
+plugin_metrics() { # [which a|b]: the plugin pod's /metrics on that node, fetched from the node
+    local n=${1:-a} ip
+    ip=$(k get pods -n ergon-system -l app=ergon-shared-cpus --field-selector "spec.nodeName=$(nv node "$n")" \
+        -o jsonpath='{.items[0].status.podIP}' 2>/dev/null)
+    [[ -n $ip ]] || return 1
+    on_host "$n" <<<"curl -fsS -m 10 http://$ip:9466/metrics"
 }
-plugin_metrics >"$out/plugin-metrics.txt" 2>&1 || true
+plugin_metrics a >"$out/plugin-metrics.txt" 2>&1 || true
 rlimits_metric=no seccomp_metric=no
 grep -q ergon_shared_cpus_rlimits_granted "$out/plugin-metrics.txt" && rlimits_metric=yes
 grep -q ergon_shared_cpus_seccomp_granted "$out/plugin-metrics.txt" && seccomp_metric=yes
@@ -1369,8 +1850,8 @@ wait_pods_ready() { # <ns>
 
 # The rep's command inside the pod: the gap spinner on the second granted
 # exclusive CPU (to attribute every max), then the measured client on the
-# first. Both are moved into the isolated partition first — a task left
-# outside it cannot execute on those CPUs at all — and the rep refuses to
+# first. On a partition mode both start inside the isolated child — a task
+# left outside it cannot execute on those CPUs at all — and the rep refuses to
 # produce numbers unless the measured task is shown to be in the child and
 # on the CPU it was given. The CPUs come from the grant, never a literal.
 rep_cmd() { # <mode> <which> <ping_ep> <pong_ep>
@@ -1413,8 +1894,18 @@ fi
 [ -d "$child" ] || { echo "rep: this mode asked for a partition but no isolated cgroup is under ERGON_ISOLATED_CGROUP" >&2; exit 1; }
 [ "$(cat "$child/cpuset.cpus.partition" 2>/dev/null)" = isolated ] ||
     { echo "rep: $child/cpuset.cpus.partition is not isolated" >&2; exit 1; }
-# The whole process group goes into the partition before anything starts.
-echo $$ >"$child/cgroup.procs" || { echo "rep: cannot move $$ into $child" >&2; exit 1; }'
+# containerd mounts /sys/fs/cgroup read-only in an unprivileged container,
+# so this shell cannot write cgroup.procs. It publishes its pid and waits
+# for the lab to move it from the node (move_into_partition); everything
+# it starts afterwards inherits the child.
+echo $$ >/data/rep-'"$which"'.pid
+name=$(basename "$child")
+i=0
+until grep -q "/$name\$" /proc/$$/cgroup; do
+    i=$((i + 1))
+    [ $i -le 300 ] || { echo "rep: pid $$ was not moved into $child within 30 s" >&2; exit 1; }
+    sleep 0.1
+done'
         partition_prove='grep -q "^$app$" "$child/cgroup.threads" 2>/dev/null ||
     { echo "rep: pid $app is not in $child" >&2; kill $app $gap 2>/dev/null || true; exit 1; }'
     fi
@@ -1422,7 +1913,7 @@ echo $$ >"$child/cgroup.procs" || { echo "rep: cannot move $$ into $child" >&2; 
 $envs
 set -eu
 mkdir -p "\${AERON_DIR:-/data/aeron}"
-rm -f /data/gapspin-$which.log /data/load-spikes.csv /data/stalls-ping.csv /data/stalls-pong.csv /data/rtt-histogram.csv
+rm -f /data/rep-$which.pid /data/gapspin-$which.log /data/load-spikes.csv /data/stalls-ping.csv /data/stalls-pong.csv /data/rtt-histogram.csv
 
 # The exclusive CPUs the plugin granted this pod. Every mode gets these from
 # ergon-shared-cpus; only the partition annotation adds an isolated child.
@@ -1432,14 +1923,18 @@ expand() { echo "\$1" | tr ',' '\n' | while read -r r; do case \$r in *-*) seq "
 set -- \$(expand "\$iso")
 [ \$# -ge 1 ] || { echo "rep: ERGON_ISOLATED_CPUS=\$iso names no CPU" >&2; exit 1; }
 cpu_client=\$1
-cpu_gap=\${2:-\$1}
+cpu_gap=\${2:-}
 
 # The isolated child. The env carries the node's path; inside the pod's own
 # cgroup namespace the child is a directory of the namespace root.
 $partition_enter
 
-gapspin \$cpu_gap 50 > /data/gapspin-$which.log 2>&1 &
-gap=\$!
+# the gap spinner only on a second exclusive CPU, never beside the client
+gap=
+if [ -n "\$cpu_gap" ]; then
+    gapspin \$cpu_gap 50 > /data/gapspin-$which.log 2>&1 &
+    gap=\$!
+fi
 $cmd \$cpu_client &
 app=\$!
 
@@ -1454,6 +1949,52 @@ esac
 echo "rep: $which pid \$app on cpu \$cpu_client (affinity \$mask); gapspin \$gap on \$cpu_gap; $partition_note" >&2
 wait \$app
 EOF
+}
+
+# The node-side half of a partition mode's move. The pod cannot write its
+# own cgroup.procs (read-only cgroup mount), so the lab writes it from the
+# node: args <child> <pod pid>, the child as ERGON_ISOLATED_CGROUP names it
+# on the node. The pid is accepted only when exactly one task of that
+# container's cgroup has it as its innermost NSpid, and the child must be an
+# isolated partition. ERGON_LAB_PROC replaces /proc for the shell tests.
+partition_move_script() {
+    cat <<'EOF'
+set -u
+child=$1 nspid=$2 proc=${ERGON_LAB_PROC:-/proc}
+parent=$(dirname "$child")
+fail() { echo "move: $*" >&2; exit 1; }
+[ "$(cat "$child/cpuset.cpus.partition" 2>/dev/null)" = isolated ] ||
+    fail "$child/cpuset.cpus.partition is not isolated"
+host=""
+for p in $(cat "$parent/cgroup.procs" 2>/dev/null); do
+    ns=$(awk '/^NSpid:/ {print $NF}' "$proc/$p/status" 2>/dev/null)
+    [ "$ns" = "$nspid" ] || continue
+    [ -z "$host" ] || fail "pod pid $nspid matches node pids $host and $p in $parent"
+    host=$p
+done
+[ -n "$host" ] || fail "pod pid $nspid is not a task of $parent"
+echo "$host" >"$child/cgroup.procs" || fail "cannot write $host to $child/cgroup.procs"
+grep -qx "$host" "$child/cgroup.threads" || fail "node pid $host is not in $child after the move"
+echo "move: node pid $host (pod pid $nspid) is in $child"
+EOF
+}
+
+# Move one role's waiting rep shell into its pod's isolated child, from the
+# node through the privileged probe. Returns non-zero when the pid file, the
+# env or the move is missing; the rep then times out and exits 1 as well.
+move_into_partition() { # <which> <ns>
+    local which=$1 ns=$2 pod nspid="" child i
+    pod=$(pod_of "$which" "$ns")
+    [[ -n $pod ]] || { echo "move: no $which pod in $ns" >&2; return 1; }
+    for i in $(seq 100); do
+        nspid=$(kx -n "$ns" "$pod" -- cat "/data/rep-$which.pid" 2>/dev/null) || nspid=""
+        [[ $nspid =~ ^[0-9]+$ ]] && break
+        sleep 0.2
+    done
+    [[ $nspid =~ ^[0-9]+$ ]] || { echo "move: $pod wrote no /data/rep-$which.pid" >&2; return 1; }
+    child=$(kx -n "$ns" "$pod" -- printenv ERGON_ISOLATED_CGROUP 2>/dev/null)
+    [[ $child == /sys/fs/cgroup/* ]] || { echo "move: $pod has no node path in ERGON_ISOLATED_CGROUP ('$child')" >&2; return 1; }
+    partition_move_script | on_host "$which" "$child" "$nspid"
 }
 
 # What each extension actually granted, read back from inside the pods
@@ -1519,7 +2060,8 @@ functional_check() { # <mode> <ns> -> 0 when every promised grant is there
     M3 | M6) want="$want io_uring" ;;
     esac
     case $mode in
-    M4 | M6) want="$want ptp" ;;
+    M4) want="$want ptp" ;;
+    M6) ((has_ptp)) && want="$want ptp" ;;
     esac
     local w
     for w in $want; do
@@ -1555,6 +2097,246 @@ functional_check() { # <mode> <ns> -> 0 when every promised grant is there
     return 0
 }
 
+
+# ---- the EKS lane (k8s/nri-shared-cpus/RELEASE.md) ---------------------------
+
+# Each item the release gate lists as unproven on EKS, read on both nodes and
+# from the API, with a verdict: VERIFIED, FAILED (and why). The quiet-CPU
+# boot unit's --check is read here too.
+eks_lane() {
+    local n f=$out/eks-lane.md v
+    for n in a b; do
+        on_host "$n" >"$out/eks-lane-$n.txt" 2>&1 <<'SH'
+echo "== nri socket"; ls -l /var/run/nri/nri.sock 2>&1
+echo "== containerd nri"; containerd config dump 2>/dev/null | awk '/io.containerd.nri.v1.nri/{p=1} p&&/^\[/&&!/nri/{p=0} p' | head -30
+echo "== containerd drop-ins"; ls -l /etc/containerd/config.d/ 2>&1; grep -rn nri /etc/containerd/ 2>&1 | head -10
+echo "== kubelet argv"; tr '\0' ' ' </proc/"$(pgrep -xo kubelet)"/cmdline; echo
+echo "== kubelet drop-ins"; ls -l /etc/kubernetes/kubelet/config.json.d/ 2>&1; cat /etc/kubernetes/kubelet/config.json.d/*.conf 2>&1 | head -60
+echo "== kubelet base reservedSystemCPUs"; grep -o '"reservedSystemCPUs":[^,]*' /etc/kubernetes/kubelet/config.json 2>&1
+echo "== opt"; ls -l /opt/ergon/bin/ 2>&1; findmnt -T /opt -no SOURCE,OPTIONS 2>&1
+echo "== quiet unit"; echo "enabled $(systemctl is-enabled ergon-quiet-cpus.service 2>&1) active $(systemctl is-active ergon-quiet-cpus.service 2>&1)"
+/usr/local/sbin/ergon-quiet-cpus.sh --check 2>&1; echo "quiet-check rc=$?"
+echo "== cmdline"; cat /proc/cmdline
+echo "== isolated"; cat /sys/devices/system/cpu/isolated /sys/devices/system/cpu/nohz_full
+echo "== irqbalance"; systemctl is-active irqbalance 2>&1
+echo "== nic irqs (irq requested effective name)"
+for i in $(awk -F: '/eth|ens|ena|Tx|Rx|mgmnt/ {gsub(/ /, "", $1); print $1}' /proc/interrupts); do
+    echo "irq $i $(cat /proc/irq/$i/smp_affinity_list 2>/dev/null) $(cat /proc/irq/$i/effective_affinity_list 2>/dev/null) $(awk -v i="$i:" '$1 == i {print $NF}' /proc/interrupts)"
+done
+echo "== cpu_manager_state"; cat /var/lib/kubelet/cpu_manager_state 2>&1; echo
+SH
+    done
+    k get pods -n ergon-system -l app=ergon-shared-cpus \
+        -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.namespace} {.spec.priorityClassName} {.status.phase} {.spec.nodeName}{"\n"}{end}' \
+        >"$out/eks-lane-plugin-pods.txt" 2>&1
+    k logs -n ergon-system -l app=ergon-shared-cpus --tail=200 --prefix >"$out/plugin-logs-start.txt" 2>&1
+    for n in a b; do plugin_metrics "$n" >"$out/plugin-metrics-$n.txt" 2>&1 || true; done
+    {
+        echo "| item | node a | node b | evidence |"
+        echo "|---|---|---|---|"
+        lane_row() { # <item> <evidence> <test for a> <test for b>
+            local ra rb
+            ra=FAILED rb=FAILED
+            eval "$3" && ra=VERIFIED
+            eval "$4" && rb=VERIFIED
+            echo "| $1 | $ra | $rb | $2 |"
+        }
+        for n in a b; do
+            eval "m_$n=\$(cat \"$out/plugin-metrics-$n.txt\" 2>/dev/null)"
+            eval "h_$n=\$(cat \"$out/eks-lane-$n.txt\" 2>/dev/null)"
+        done
+        # A metric's value line, matched whole: a substring match also hits
+        # its "# HELP <name> 1 while ..." line, whatever the value.
+        metric_is_1() { grep -qx "$2 1" <<<"$1"; }
+        # The kubelet drop-in merge passed on a node: its contract is clean, or
+        # its last "node contract" warning names only NIC refusals (the plugin
+        # checks NIC affinity only after the merged kubelet config loads and
+        # passes, and joins every refusal with "; ").
+        dropin_ok() { # <metrics> <a|b>
+            local pod line
+            metric_is_1 "$1" ergon_shared_cpus_contract_ok && return 0
+            pod=$(awk -v n="$(nv node "$2")" '$5 == n {print $1}' "$out/eks-lane-plugin-pods.txt")
+            [[ -n $pod ]] || return 1
+            line=$(grep -F "pod/$pod/" "$out/plugin-logs-start.txt" | grep -F '"msg":"node contract"' | tail -1)
+            [[ $line == *'"error":"NIC '* ]] || return 1
+            ! sed 's/.*"error":"\([^"]*\)".*/\1/' <<<"$line" | tr ';' '\n' | sed 's/^ *//' | grep -v '^NIC ' | grep -q .
+        }
+        lane_row "NRI socket" "/var/run/nri/nri.sock is a socket; ergon_shared_cpus_nri_connected 1" \
+            '[[ $h_a == *"srw"*nri.sock* ]] && metric_is_1 "$m_a" ergon_shared_cpus_nri_connected' \
+            '[[ $h_b == *"srw"*nri.sock* ]] && metric_is_1 "$m_b" ergon_shared_cpus_nri_connected'
+        lane_row "nodeadm TOML merge" "containerd config dump shows the NodeConfig's NRI table (default_validator enable = true)" \
+            '[[ $h_a == *default_validator* && $h_a == *"enable = true"* ]]' \
+            '[[ $h_b == *default_validator* && $h_b == *"enable = true"* ]]'
+        lane_row "kubelet drop-in merge (--kubelet-config-dir)" "kubelet runs with --config-dir; ergon_shared_cpus_contract_ok 1, or the plugin's node-contract warning names only NIC refusals (the merged kubelet config loaded and passed)" \
+            '[[ $h_a == *--config-dir* ]] && dropin_ok "$m_a" a' \
+            '[[ $h_b == *--config-dir* ]] && dropin_ok "$m_b" b'
+        lane_row "/opt writable" "the plugin installed /opt/ergon/bin/ergon-cpus on the node" \
+            '[[ $h_a == *ergon-cpus* ]]' '[[ $h_b == *ergon-cpus* ]]'
+        lane_row "system-node-critical outside kube-system" "the plugin pod in ergon-system with priorityClassName system-node-critical, Running" \
+            "grep -q \" ergon-system system-node-critical Running $(nv node a)\" \"$out/eks-lane-plugin-pods.txt\"" \
+            "grep -q \" ergon-system system-node-critical Running $(nv node b)\" \"$out/eks-lane-plugin-pods.txt\""
+        lane_row "device plugin registered" "ergon_shared_cpus_device_plugin_registered 1" \
+            'metric_is_1 "$m_a" ergon_shared_cpus_device_plugin_registered' 'metric_is_1 "$m_b" ergon_shared_cpus_device_plugin_registered'
+        lane_row "quiet-CPU boot unit" "ergon-quiet-cpus.service enabled and active; quiet-cpus.sh --check rc 0" \
+            '[[ $h_a == *"enabled enabled active active"* && $h_a == *"quiet-check rc=0"* ]]' \
+            '[[ $h_b == *"enabled enabled active active"* && $h_b == *"quiet-check rc=0"* ]]'
+        echo
+        echo "User data: $(cat "$out/userdata.log" 2>/dev/null)"
+    } >"$f"
+    log "EKS lane:"
+    sed 's/^/    /' "$f" >&2
+}
+eks_lane
+
+# The VPC CNI attaches its warm ENI after boot, and that ENA's queue IRQs came
+# up with requested affinity 0-1 (irqaffinity=1 notwithstanding), which the
+# plugin refuses hot pods for (run eks-nri-20261025-082023, ens35). Re-pin
+# every movable IRQ to the IRQ CPU before each measurement.
+repin_irqs() {
+    local n
+    for n in a b; do
+        on_host "$n" >>"$out/repin.log" 2>&1 <<SH
+c=0; for f in /proc/irq/*/smp_affinity_list; do echo $irq_cpu > \$f 2>/dev/null && c=\$((c + 1)); done
+echo "\$(date +%T) $n: \$c IRQs on CPU $irq_cpu"
+SH
+    done
+}
+
+# ---- phase X -------------------------------------------------------------------
+#
+# Two latency pods (the M3 manifest: exclusive CPUs, the shared CPU, the
+# io_uring seccomp grant) and, for the loaded cells, a Burstable pod outside
+# the plugin's namespaces with spinners pinned to the shared CPU. kubectl exec
+# starts on the whole cpuset with the kernel's 50 us slack, so every probe here
+# names its CPU and slack itself.
+xcsv=$out/phase-x.csv
+: >"$xcsv"
+x_sh() { local w=$1; shift; kx -n ergon-latency-pods "$(pname "$w" M3)" -- sh -c "$*"; }
+load_on() { # <which> <spinners on the shared CPU>
+    local w=$1 c=$2 node
+    node=$(nv node "$w")
+    k apply -f - >>"$out/apply.log" 2>&1 <<YAML
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ergon-lab-load-$w
+  namespace: default
+  labels:
+    app: ergon-lab-load
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    kubernetes.io/hostname: "$node"
+  tolerations:
+    - operator: Exists
+  terminationGracePeriodSeconds: 1
+  containers:
+    - name: load
+      image: $registry/$N/workload:$tag
+      command: ["sh", "-c", "for i in \$(seq $c); do taskset -c $shared_cpus sh -c 'while :; do :; done' & done; wait"]
+      resources:
+        requests:
+          cpu: 100m
+          memory: 32Mi
+YAML
+    k wait --for=condition=Ready "pod/ergon-lab-load-$w" -n default --timeout=180s >>"$out/apply.log" 2>&1
+}
+load_off() { k delete pod -n default -l app=ergon-lab-load --ignore-not-found --wait=true >/dev/null 2>&1; }
+cpu_busy() { # <which>: the shared CPU's busy share over 2 s, from /proc/stat on the node
+    on_host "$1" <<SH
+a=\$(grep '^cpu$shared_cpus ' /proc/stat); sleep 2; b=\$(grep '^cpu$shared_cpus ' /proc/stat)
+echo "\$a" "\$b" | awk '{t1=0; for (i=2;i<=11;i++) t1+=\$i; t2=0; for (i=13;i<=22;i++) t2+=\$i; i1=\$5+\$6; i2=\$16+\$17; printf "%.0f\n", 100*(1-(i2-i1)/(t2-t1))}'
+SH
+}
+upp_script() { # <ping|pong> <busy|sqshared|sqexcl> <local port> <peer ip> <peer port> <seconds> <label>
+    cat <<EOF
+expand() { echo "\$1" | tr ',' '\n' | while read -r r; do case \$r in *-*) seq "\${r%%-*}" "\${r##*-}";; *) echo "\$r";; esac; done; }
+set -- \$(expand "\$ERGON_ISOLATED_CPUS")
+app=\$1; second=\${2:-}
+sh0=\$(expand "\$ERGON_SHARED_CPUS" | head -1)
+case $2 in
+busy) mode=busy sq=- ;;
+sqshared) mode=sqpoll sq=\$sh0 ;;
+sqexcl) [ -n "\$second" ] || { echo "no second exclusive CPU" >&2; exit 1; }; mode=sqpoll sq=\$second ;;
+esac
+exec uring-pp $1 $3 $4 $5 \$app \$mode \$sq $6 10000 10000 $7
+EOF
+}
+phase_x_run() {
+    local ok=0 w cell lay load port=23100 pong_bg
+    log "---- phase X: placement, wake-up wait, timer slack, pin cost, SQPOLL placement (${x_seconds}s a cell)"
+    repin_irqs
+    k delete pod -n ergon-latency-pods -l 'app in (ergon-lab-a,ergon-lab-b)' --ignore-not-found >/dev/null 2>&1
+    make_pod M3 a 0 0 >"$out/k8s/pod-a-X.yaml"
+    make_pod M3 b 0 0 >"$out/k8s/pod-b-X.yaml"
+    if ! k apply -f "$out/k8s/pod-a-X.yaml" >>"$out/apply.log" 2>&1 || ! k apply -f "$out/k8s/pod-b-X.yaml" >>"$out/apply.log" 2>&1 ||
+        ! wait_pods_ready ergon-latency-pods; then
+        k describe pod -n ergon-latency-pods -l 'app in (ergon-lab-a,ergon-lab-b)' >"$out/X-describe.log" 2>&1
+        log "WARNING: phase X: the pods did not run (see $out/X-describe.log)"
+        return 1
+    fi
+    # placement: what the hook gave PID 1, the container's cpuset, an exec'd
+    # shell, the env, and the node's view of a helper and a spinner
+    for w in a b; do
+        x_sh "$w" '
+            echo "== env"; env | grep ^ERGON_ | sort
+            echo "== pid 1 (started by the hook)"; grep Cpus_allowed_list /proc/1/status; echo "timerslack_ns $(cat /proc/1/timerslack_ns)"
+            echo "== container cpuset"; cat /sys/fs/cgroup/cpuset.cpus.effective
+            echo "== an exec shell"; grep Cpus_allowed_list /proc/self/status; echo "timerslack_ns $(cat /proc/self/timerslack_ns)"
+            echo "== seccomp"; grep Seccomp /proc/self/status' >"$out/X-placement-$w.txt" 2>&1
+        x_sh "$w" 'set -- $(echo "$ERGON_ISOLATED_CPUS" | tr "," " " | sed "s/-/ /"); (taskset -c "$1" sh -c "while :; do :; done" &) ; (taskset -c "${ERGON_SHARED_CPUS%%[,-]*}" sleep 30 &) ; sleep 1; ps -eLo pid,tid,psr,comm' \
+            >>"$out/X-placement-$w.txt" 2>&1
+        x_sh "$w" 'pkill -f "while :; do :; done"; pkill -f "sleep 30"' >/dev/null 2>&1 || true
+        log "phase X $w placement: $(grep -A1 'pid 1' "$out/X-placement-$w.txt" | tail -1 | tr -s '\t ' ' '); cpuset $(sed -n '/container cpuset/{n;p;}' "$out/X-placement-$w.txt")"
+    done
+    # wake-up wait on the shared CPU: idle (A/A), then one spinner loading it
+    for cell in "idle 50000 slack50us-A" "idle 1 slack1ns" "idle 50000 slack50us-B" "load 50000 load-slack50us" "load 1 load-slack1ns"; do
+        set -- $cell
+        if [[ $1 == load ]]; then
+            [[ -n $(k get pod -n default ergon-lab-load-a -o name 2>/dev/null) ]] || load_on a 1 || log "WARNING: no load pod"
+            log "phase X: shared CPU busy on a: $(cpu_busy a)%"
+        fi
+        x_sh a "taskset -c \"\$ERGON_SHARED_CPUS\" wakelat $x_seconds 1000 $2 $3" 2>>"$out/X-err.log" | tee -a "$xcsv" >&2
+    done
+    for cell in idle load; do
+        if [[ $cell == idle ]]; then load_off; else load_on a 1; fi
+        x_sh a "taskset -c \"\$ERGON_SHARED_CPUS\" pincost 10000" 2>>"$out/X-err.log" | sed "s/^pincost,/pincost-$cell,/" | tee -a "$xcsv" >&2
+    done
+    load_off
+    # SQPOLL placement, a round trip between the nodes at 10,000/s: no io_uring
+    # (A/A), SQPOLL on the shared CPU, SQPOLL on the second exclusive CPU; then
+    # the shared CPU loaded on both nodes
+    local cells=("busy - U0-busy-A" "sqshared - U1-sqpoll-shared" "busy - U0-busy-B" "sqshared - U1-sqpoll-shared-B"
+        "busy load U0-busy-load" "sqshared load U1-sqpoll-shared-load")
+    # SQPOLL on a second exclusive CPU needs a pod with two
+    ((pod_cpus >= 2)) && cells+=("sqexcl - U2-sqpoll-exclusive" "sqexcl load U2-sqpoll-exclusive-load")
+    for cell in "${cells[@]}"; do
+        set -- $cell
+        lay=$1 load=$2
+        if [[ $load == load ]]; then
+            for w in a b; do [[ -n $(k get pod -n default "ergon-lab-load-$w" -o name 2>/dev/null) ]] || load_on "$w" 1; done
+        fi
+        port=$((port + 2))
+        kx -n ergon-latency-pods "$(pname b M3)" -- sh -c "$(upp_script pong "$lay" $((port + 1)) "$ip_a" "$port" $((x_seconds + 20)) "$3")" \
+            >"$out/X-$3-pong.log" 2>&1 &
+        pong_bg=$!
+        sleep 2
+        x_sh a "$(upp_script ping "$lay" "$port" "$ip_b" $((port + 1)) "$x_seconds" "$3")" 2>"$out/X-$3-ping.err" | tee -a "$xcsv" >&2
+        wait "$pong_bg" 2>/dev/null
+        kx -n ergon-latency-pods "$(pname b M3)" -- pkill uring-pp >/dev/null 2>&1 || true
+        [[ -s $out/X-$3-ping.err ]] && log "phase X $3: $(tr '\n' ' ' <"$out/X-$3-ping.err")"
+    done
+    load_off
+    k logs -n ergon-system -l app=ergon-shared-cpus --tail=300 --prefix >"$out/plugin-logs-X.txt" 2>&1
+    k delete pod -n ergon-latency-pods -l 'app in (ergon-lab-a,ergon-lab-b)' --ignore-not-found >/dev/null 2>&1
+    grep -c . "$xcsv" >/dev/null && ok=1
+    ((ok)) && log "phase X: $(grep -c . "$xcsv") rows in $xcsv"
+    return 0
+}
+if ((phase_x)); then
+    phase_x_run || log "WARNING: phase X did not complete (the modes still run)"
+fi
+
 : >"$results"
 log "modes: $modes, $reps reps of ${rtt_seconds}s each"
 for mode in $modes; do
@@ -1565,6 +2347,7 @@ for mode in $modes; do
         run=$mode-$rep
         ping_ep=$ip_b:$((22200 + 2 * rep))
         pong_ep=$ip_a:$((22201 + 2 * rep))
+        repin_irqs
         make_pod "$mode" a "$ping_ep" "$pong_ep" >"$out/k8s/pod-a-$run.yaml"
         make_pod "$mode" b "$ping_ep" "$pong_ep" >"$out/k8s/pod-b-$run.yaml"
         if ! k apply -f "$out/k8s/pod-a-$run.yaml" >>"$out/apply.log" 2>&1 ||
@@ -1574,6 +2357,7 @@ for mode in $modes; do
             k get events -n "$ns" --sort-by=.lastTimestamp >"$out/$run-events.log" 2>&1
             log "WARNING: $mode rep $rep: the pods did not run (see $out/$run-describe.log; the plugin may have refused a grant). Skipping the rest of $mode."
             echo "mode $mode: not measured (pods did not run; see $run-describe.log)" >>"$out/skipped.txt"
+            [[ $mode == M0 ]] && die "the baseline M0 pods did not run ($out/$run-describe.log, $out/apply.log): nothing else can be compared"
             k delete pod -n "$ns" -l 'app in (ergon-lab-a,ergon-lab-b)' --ignore-not-found >/dev/null 2>&1
             break
         fi
@@ -1582,7 +2366,7 @@ for mode in $modes; do
         for which in a b; do
             want=$node_a
             [[ $which == b ]] && want=$node_b
-            got=$(k get pod -n "$ns" "ergon-lab-$which-$mode" -o jsonpath='{.spec.nodeName}' 2>/dev/null)
+            got=$(k get pod -n "$ns" "$(pname "$which" "$mode")" -o jsonpath='{.spec.nodeName}' 2>/dev/null)
             if [[ $got != "$want" ]]; then
                 echo "mode $mode rep $rep: pod $which on '$got', not '$want': the endpoints name the wrong process" >>"$out/skipped.txt"
                 die "$mode rep $rep: role $which is on '$got', not '$want' (see $out/skipped.txt)"
@@ -1603,17 +2387,31 @@ for mode in $modes; do
         # rep_cmd moves each measured task into the isolated partition and
         # pins it to a granted CPU; it prints nothing to stdout but the
         # client's own line, and nothing at all if the proof fails.
-        kx -n "$ns" "ergon-lab-b-$mode" -- sh -c "$(rep_cmd "$mode" b "$ping_ep" "$pong_ep")" \
+        kx -n "$ns" "$(pname b "$mode")" -- sh -c "$(rep_cmd "$mode" b "$ping_ep" "$pong_ep")" \
             >"$out/$run-pong.log" 2>&1 &
         pong_bg=$!
+        # A partition mode's reps wait to be moved into the isolated child
+        # from the node (the pod's cgroup mount is read-only).
+        move_a=""
+        case $mode in
+        M2 | M6)
+            move_into_partition b "$ns" >>"$out/$run-move.log" 2>&1 ||
+                die "$mode rep $rep: pong was not moved into its partition ($out/$run-move.log)"
+            move_into_partition a "$ns" >>"$out/$run-move.log" 2>&1 &
+            move_a=$!
+            ;;
+        esac
         sleep 3
-        kx -n "$ns" "ergon-lab-a-$mode" -- sh -c "$(rep_cmd "$mode" a "$ping_ep" "$pong_ep")" \
+        kx -n "$ns" "$(pname a "$mode")" -- sh -c "$(rep_cmd "$mode" a "$ping_ep" "$pong_ep")" \
             2>"$out/$run-ping-err.log" | sed "s/^/$rep,/" | tee -a "$results" >&2
         ping_rc=${PIPESTATUS[0]}
+        if [[ -n $move_a ]]; then
+            wait "$move_a" || die "$mode rep $rep: ping was not moved into its partition ($out/$run-move.log)"
+        fi
         if ((ping_rc != 0)); then
             die "$mode rep $rep: the measured client did not prove its placement (rc $ping_rc; $out/$run-ping-err.log)"
         fi
-        kx -n "$ns" "ergon-lab-b-$mode" -- pkill -f '[r]tt xpong' >/dev/null 2>&1 || true
+        kx -n "$ns" "$(pname b "$mode")" -- pkill -f '[r]tt xpong' >/dev/null 2>&1 || true
         wait "$pong_bg" 2>/dev/null
         # what the clients wrote, while the pods still live
         for which in a b; do
@@ -1640,14 +2438,14 @@ for mode in $modes; do
             $( [[ $mode == M5 ]] && echo "--probe-every 1" ) \
             --threshold-us 200 >"$out/$run-attribute.txt" 2>>"$out/$run-attribute.err" || true
         log "$mode rep $rep done: $(tail -1 "$out/$run-attribute.txt" 2>/dev/null)"
-        k delete pod -n "$ns" "ergon-lab-a-$mode" "ergon-lab-b-$mode" --ignore-not-found >/dev/null 2>&1
+        k delete pod -n "$ns" "$(pname a "$mode")" "$(pname b "$mode")" --ignore-not-found >/dev/null 2>&1
         sleep 3
     done
 done
 
 # ---- report ------------------------------------------------------------------
 
-grep -q ",rtt," "$results" 2>/dev/null || die "no round trip was measured (logs: $out/*-ping.log, $out/apply.log)"
+grep -q ",rtt," "$results" 2>/dev/null || log "WARNING: no mode round trip was measured (logs: $out/*-ping.log, $out/apply.log)"
 {
     python3 "$benches/analyse.py" "$results" 2>/dev/null || true
     python3 "$benches/spikes.py" "$out" 2>&1 || true
@@ -1657,9 +2455,9 @@ grep -q ",rtt," "$results" 2>/dev/null || die "no round trip was measured (logs:
 # with the loss counters and the max's attributed cause. The environment
 # block first: everything the numbers depend on.
 {
-    echo "# NRI latency-pod extensions: EKS AL2023 spot lab"
+    echo "# NRI latency-pod extensions: EKS AL2023 lab"
     echo
-    echo "Run $stamp: 2 x $type SPOT ($spot_strategy), Kubernetes $k8s, $region."
+    echo "Run $stamp: 2 x $type $market ($spot_strategy), Kubernetes $k8s, $region."
     echo "Node config: reservedSystemCPUs $reserved (0 = system/shared, 1 = NIC IRQs); isolated $isolated;"
     echo "sharedCpus $shared_cpus; hugepages $hugepages x 2 MiB a node; hostNetwork pods; HARNESS_DRIVER=invoker."
     echo "Plugin image $registry/$N/shared-cpus:$tag; workload $registry/$N/workload:$tag."
@@ -1675,9 +2473,9 @@ grep -q ",rtt," "$results" 2>/dev/null || die "no round trip was measured (logs:
     echo "## Results"
     echo
 } >"$out/benchmarks.md"
-python3 - "$results" "$out" "$modes" "$rlimits_metric" "$seccomp_metric" >>"$out/benchmarks.md" <<'PY'
+python3 - "$results" "$out" "$modes" "$rlimits_metric" "$seccomp_metric" "$type" >>"$out/benchmarks.md" <<'PY'
 import csv, os, re, sys
-results, out, modes, rlim, secc = sys.argv[1:6]
+results, out, modes, rlim, secc, itype = sys.argv[1:7]
 rows = []
 loss = {}
 with open(results) as f:
@@ -1761,7 +2559,7 @@ print("- all-on (M6): M1+M2+M3+M4 together.")
 print()
 print("## Not measured / open")
 print()
-print("- Whether c8g.xlarge exposes /dev/ptp* and is single-NUMA (see the node facts).")
+print("- Whether %s exposes /dev/ptp* and is single-NUMA (see the node facts). A missing PHC skips M4 and M6; the other modes still run." % itype)
 print("- The veth path (this lab runs hostNetwork).")
 print("- The partition-alone latency effect (the boot-arg bundle is measured elsewhere; this lab isolates the knob).")
 print("- Any max without a cause above stays OPEN, never dropped.")
@@ -1782,6 +2580,46 @@ if os.path.exists(os.path.join(out, "skipped.txt")):
         print(f"- {line.strip()}")
 PY
 
+{
+    echo
+    echo "## EKS lane (k8s/nri-shared-cpus/RELEASE.md)"
+    echo
+    cat "$out/eks-lane.md" 2>/dev/null || echo "not run"
+    echo
+    echo "## Phase X (microseconds)"
+    echo
+    python3 - "$out/phase-x.csv" <<'PY'
+import sys
+rows = [l.strip().split(",") for l in open(sys.argv[1]) if l.strip()]
+us = lambda x: f"{int(x) / 1000:.1f}"
+w = [r for r in rows if r[0] == "wakelat"]
+if w:
+    print("Wake-up wait of a 1 ms sleeper on the shared CPU (lateness past its deadline):")
+    print()
+    print("| cell | samples | p50 | p90 | p99 | p99.9 | p99.99 | max | mean | off shared | slack ns | CPUs |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|")
+    for r in w:
+        print("| " + " | ".join([r[1], r[2]] + [us(x) for x in r[3:9]] + [us(r[9]), r[10], r[11], r[12] if len(r) > 12 else ""]) + " |")
+    print()
+pc = [r for r in rows if r[0].startswith("pincost")]
+if pc:
+    print("Pin cost (getenv+parse ERGON_ISOLATED_CPUS; sched_setaffinity; call until running there):")
+    print()
+    print("| cell | what | samples | p50 | p90 | p99 | p99.9 | max | mean |")
+    print("|---|---|---|---|---|---|---|---|---|")
+    for r in pc:
+        print("| " + " | ".join([r[0].split("-", 1)[1], r[1], r[2]] + [us(x) for x in r[3:9]]) + " |")
+    print()
+u = [r for r in rows if r[0] == "uringpp"]
+if u:
+    print("Kernel-UDP round trip between the nodes, 10,000/s, app thread on the first exclusive CPU:")
+    print()
+    print("| cell | mode | samples | p50 | p90 | p99 | p99.9 | p99.99 | max | mean | lost | nivcsw | app CPU | SQPOLL CPU |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    for r in u:
+        print("| " + " | ".join([r[1], r[2], r[3]] + [us(x) for x in r[4:11]] + r[11:15]) + " |")
+PY
+} >>"$out/benchmarks.md" 2>&1
 log "round trip per mode (us):"
 awk -F, '$2 == "rtt" {
         printf "  %s rep %s: p50 %.1f  p90 %.1f  p99 %.1f  p99.9 %.1f  p99.99 %.1f  MAX %.1f  mean %.1f  (%s samples, %s lost)\n", $3, $1, $5 / 1e3, $6 / 1e3, $7 / 1e3, $8 / 1e3, $9 / 1e3, $10 / 1e3, $11 / 1e3, $12, $13
@@ -1798,3 +2636,4 @@ else
     log "$repo_bench exists: leaving it; this run's page is $out/benchmarks.md"
 fi
 cat "$out/benchmarks.md"
+hold "$hold_minutes" "after the report"

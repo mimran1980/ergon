@@ -1,0 +1,49 @@
+# A copy of md-dpdk/deploy/low-latency/pod.yaml as it was before this sample
+# replaced it: tests/manifests.rs keeps it as the case the rules must refuse.
+# SPDX-License-Identifier: Apache-2.0
+#
+# md-dpdk on a hot node: two exclusive CPUs from the static CPU manager,
+# plus ergon.io/shared-millicpus: "500".
+# 500 asks for one shared CPU. ceil(500/1000) is 1. That CPU is scheduler
+# accounting. It is not half a core, and it is not a fractional pin.
+# To receive every configured helper CPU, request M = 1000 × |S| with
+# oversubscription 1. This example does not do that.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: md-dpdk
+  namespace: trading
+  labels:
+    ergon.io/latency: hot
+  annotations:
+    required-plugins.noderesource.dev: '["ergon-shared-cpus"]'
+spec:
+  priorityClassName: ergon-hot
+  nodeSelector:
+    ergon.io/shared-cpus: "true"
+  containers:
+    - name: media-driver
+      # Build this image from the repository. It is not the published
+      # ergon-shared-cpus image.
+      image: ghcr.io/mimran1980/ergon-md-dpdk:local
+      resources:
+        requests:
+          cpu: "2"
+          memory: 1Gi
+          ergon.io/shared-millicpus: "500"
+        limits:
+          cpu: "2"
+          memory: 1Gi
+          ergon.io/shared-millicpus: "500"
+      resizePolicy:
+        - resourceName: cpu
+          restartPolicy: RestartContainer
+      env:
+        - name: AERON_DIR
+          value: /mnt/huge-aeron/aeron
+        - name: AERON_FILE_PAGE_SIZE
+          value: "2097152"
+        - name: AERON_TERM_BUFFER_SPARSE_FILE
+          value: "false"
+        - name: AERON_CLIENT_PRE_TOUCH_MAPPED_MEMORY
+          value: "true"

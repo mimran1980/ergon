@@ -74,14 +74,43 @@ pub(crate) mod sealed {
         fn on_handed(&mut self, n: usize) {
             let _ = n;
         }
+        /// A datagram endpoint (UDP): every read is one whole message (a
+        /// 0-byte read is an empty datagram, not a close), sends go out one
+        /// datagram at a time ([`Io::pending_tx`]), and no TCP option or
+        /// route check applies. Only `epoll-spin` drives one. The driver's
+        /// datagram paths are compiled out when `false`.
+        const DATAGRAM: bool = false;
+        /// Datagram endpoints: the next whole datagram to send, if any.
+        #[inline]
+        fn pending_tx(&mut self) -> Option<&[u8]> {
+            None
+        }
+        /// Datagram endpoints: the kernel took the datagram
+        /// [`Io::pending_tx`] returned.
+        #[inline]
+        fn sent_tx(&mut self) {}
+        /// Whether anything waits to be sent.
+        #[inline]
+        fn has_tx(&mut self) -> bool {
+            !self.tx_queue().is_empty()
+        }
+        /// Datagram endpoints: a datagram longer than the receive buffer
+        /// arrived (`MSG_TRUNC`); it was dropped.
+        #[inline]
+        fn on_truncated(&mut self) {}
+        /// Datagram endpoints: the kernel reported `ECONNREFUSED` (an ICMP
+        /// port unreachable from the peer) on a read or a send.
+        #[inline]
+        fn on_refused(&mut self) {}
         /// The socket.
         fn fd(&self) -> RawFd;
         /// The free part of the receive buffer. With `io_uring` the kernel
         /// writes into it after the call returns, so it must stay at the same
         /// address until `on_received`.
         fn rx_space(&mut self) -> &mut [u8];
-        /// Bytes waiting to be sent; the driver drains from the front.
-        fn tx_queue(&mut self) -> &mut Vec<u8>;
+        /// Bytes waiting to be sent; the driver sends from the front and
+        /// marks what the kernel took ([`crate::stream::TxQueue::sent`]).
+        fn tx_queue(&mut self) -> &mut crate::stream::TxQueue;
         /// Input received before the endpoint was added, not yet decoded.
         fn has_buffered_input(&self) -> bool;
         /// Records what the quick-ACK route check found, or the cell
@@ -173,7 +202,8 @@ pub(crate) mod sealed {
     }
 }
 
-/// A connection a driver can own: `WsConn`, `HttpConn` or `AnyConn`.
+/// A connection a driver can own: `WsConn`, `HttpConn`, `AnyConn`,
+/// `FrameConn` or `UdpConn`.
 ///
 /// Sealed: with `io_uring` the kernel writes into the receive buffer after the
 /// submitting call returns, so only this crate's types, whose buffers never move
@@ -257,7 +287,7 @@ pub struct DriverStats {
     pub recvmsg_calls: u64,
     /// `recvmsg` calls that returned `EAGAIN`.
     pub recvmsg_eagain: u64,
-    /// `epoll_wait` / `epoll_pwait2` calls.
+    /// `epoll_wait` calls.
     pub epoll_wait_calls: u64,
     /// `send` syscalls (epoll backends; `io_uring` sends are submitted through
     /// `io_uring_enter` or the `SQPOLL` thread and are not syscalls of their own).
@@ -292,6 +322,37 @@ pub struct DriverStats {
     pub route_check_ns: u64,
     /// The longest single one of those, in nanoseconds.
     pub route_check_max_ns: u64,
+    /// Passive `TCP_INFO` samples taken (`Config::tcp_info_interval_ms`).
+    pub tcp_info_samples: u64,
+    /// The longest single one of those `getsockopt` calls on the polling
+    /// thread, in nanoseconds.
+    pub tcp_info_max_ns: u64,
+}
+
+/// One connection's passive `TCP_INFO` sample.
+///
+/// Taken every `Config::tcp_info_interval_ms`, read with
+/// `Driver::tcp_info`: what the kernel's TCP state said at `at_ns`. Fields
+/// follow `struct tcp_info` (`include/uapi/linux/tcp.h`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TcpInfo {
+    /// When it was read, `CLOCK_MONOTONIC` ns.
+    pub at_ns: i64,
+    /// Smoothed round-trip time, µs (`tcpi_rtt`).
+    pub rtt_us: u32,
+    /// Round-trip time variation, µs (`tcpi_rttvar`).
+    pub rttvar_us: u32,
+    /// The lowest round-trip time seen over the kernel's window, µs
+    /// (`tcpi_min_rtt`); `None` before the first sample, or on a kernel
+    /// whose `tcp_info` stops short of it (before 4.6).
+    pub min_rtt_us: Option<u32>,
+    /// Segments retransmitted over the connection's life
+    /// (`tcpi_total_retrans`).
+    pub total_retrans: u32,
+    /// Segments the kernel currently counts as lost (`tcpi_lost`).
+    pub lost: u32,
+    /// The current retransmission timeout, µs (`tcpi_rto`).
+    pub rto_us: u32,
 }
 
 impl DriverStats {

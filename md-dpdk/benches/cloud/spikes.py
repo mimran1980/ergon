@@ -2,6 +2,10 @@
 """Where each latency spike, and each rep's max, came from, for one state of a lab run.
 
 spikes.py <run dir>/<state> [<threshold us>]
+spikes.py --transport <run dir>
+    the transport suite (transport-format.md): each point's max with its
+    cause, or unexplained (transport_cause), which fairness.py reports and
+    analyse.py --transport blocks on
 
 Reads the spike files the clients wrote (spikes-*.csv: round trips of 100 us
 or more, with their run's CLOCK_REALTIME start) and the diagnostics vm.sh
@@ -27,27 +31,63 @@ spinner on a spare CPU, a trace of the app and agent CPUs). A spike of at least
   stall there cannot be ruled out: such a spike's cause says so, and a note
   names the host.
 
+Then, for every round trip run, each rep's 10 largest round trips (at any
+size: the clients stamp idle round trips from LOAD_SPIKE_NS, 30 us cross-host)
+with every event whose interval overlaps it ([sent, echoed]), its ping index
+in the measured run and its echo's phase in the second and in 30 s. Events:
+either client's loop stalls, the gap spinner and traced preemptions as above,
+the DPDK transport's event log where a mode turned it on
+(RUSTERON_DPDK_EVENT_LOG, saved per round trip run as <host>-rings-<run>.log:
+the agents' loop gaps of 10 us or more, ARP, the housekeeping thread's 1 Hz
+sample, NIC statistics read and PMD timers, each with its length), and KNOISE (diag-fetch's knoise section: osnoise's irq,
+softirq, thread and NMI noise on the agent and app CPUs with their durations,
+IPIs sent to those CPUs by callsite, compaction and page migration). Each
+source's overlaps are set against chance: the rep's round trips shifted
+circularly by a random offset within the run (its round trips' sum, from the
+histogram), 1,000 times with a fixed seed, how many overlap then; p is the
+share of shifts overlapping at least as many.
+
+A same-host hairpin's runs (a mode with @HAIRPIN=1: both ends on host a, host
+b idle) are judged on host a's events alone. A paced run's (@RTT_GAP_US) length
+for the chance baseline is its round trips times the gap.
+
+Under precision-time, each rep's largest round trips split one way first
+(oneway-<state>-<mode>-<rep>.csv, rtt's RTT_ONE_WAY: both hosts' NIC
+receive timestamps, the clocks on the PTP hardware clock): out (sent to the
+pong's NIC), back (the pong's NIC to the ping's) and the ping's host (its NIC
+to the echo's arrival), so a spike is placed on one direction or one host.
+
 The match across hosts is on their wall clocks: where chrony's tracking was
 logged around each mode (vm.sh timesync, <host>-timesync-*.log), a note gives
 each host's largest offset from its source and that source's own bound
 against UTC, and their sum, how far apart the two clocks may be.
 """
+import bisect
 import collections
 import csv
 import glob
 import gzip
 import os
+import random
 import re
 import sys
+
+from transport_points import hosts_of as transport_hosts_of, irq_core_saturated, read_points, row_flags
 
 # the threads that busy-spin on traced CPUs: the dedicated agents, the shared
 # network agent ("[sender, receiver]", which the kernel cuts to 15 characters),
 # SHARED's one agent (the media driver's main thread; under the other modes the
 # conductor, on the untraced housekeeping CPU) and the clients
-BUSY = re.compile(r"^(sender|receiver|\[sender, |\[conductor, |media_driver|rtt|load|tput)")
+BUSY = re.compile(r"^(sender|receiver|\[sender, |\[conductor, |media_driver|rtt|load|tput|floor|purefloor)")
 EVENT = re.compile(r"\[(\d+)\].*?\s(\d+\.\d+): (\w+): (.*)")
 # a thread name may hold spaces ("[sender, receiv")
 SWITCH = re.compile(r"prev_comm=(.+?) prev_pid=\d+ prev_prio=\d+ prev_state=(\S+) ==> next_comm=(.+?) next_pid=")
+
+
+def text_lines(path):
+    """A file's lines, read and closed."""
+    with open(path, errors="replace") as f:
+        return f.readlines()
 
 
 def spike_files(folder):
@@ -63,10 +103,40 @@ def open_spikes(path):
     return gzip.open(path, "rt", newline="") if path.endswith(".gz") else open(path, newline="")
 
 
+# vm.sh diag-start and diag-fetch write "ergon-anchor <CLOCK_REALTIME ns>" to
+# the trace (trace_marker, on a traced CPU, the trace on CLOCK_MONOTONIC):
+# each a pair of the trace's clock and the wall clock, a few µs apart
+ANCHOR = re.compile(r"\s(\d+\.\d+): tracing_mark_write: ergon-anchor (\d+)")
+TASK = re.compile(r"^\s*(.+?)-(\d+)\s+\[(\d+)\]")
+
+
+def trace_clock(lines, uptime):
+    """The trace's clock onto the wall clock (seconds): through the first and
+    last of the trace's ergon-anchor markers (a line between them, so drift
+    between the two clocks cancels), one marker an offset; without one,
+    diag-fetch's UPTIME line (/proc/uptime, 10 ms resolution), an offset;
+    None with neither."""
+    anchors = []
+    for line in lines:
+        m = ANCHOR.search(line)
+        if m:
+            anchors.append((float(m.group(1)), int(m.group(2)) / 1e9))
+    if len(anchors) >= 2 and anchors[-1][0] > anchors[0][0]:
+        (t0, w0), (t1, w1) = anchors[0], anchors[-1]
+        rate = (w1 - w0) / (t1 - t0)
+        return lambda ts: w0 + (ts - t0) * rate
+    if anchors:
+        t0, w0 = anchors[0]
+        return lambda ts: w0 + (ts - t0)
+    if uptime:
+        return lambda ts: uptime[1] - (uptime[0] - ts)
+    return None
+
+
 def read_diag(path):
     """(spinner gaps [(start_s, end_s)], preemptions [(start_s, end_s, cpu, who, by)]) on the wall clock."""
     gaps, lines, anchor, section = [], [], None, None
-    for line in open(path, errors="replace"):
+    for line in text_lines(path):
         line = line.rstrip("\n")
         if line.startswith("== "):
             section = line[3:]
@@ -81,14 +151,15 @@ def read_diag(path):
             else:
                 lines.append(line)
     preempted, away, spinner_out = [], {}, []
-    for line in lines if anchor else []:
+    wall = trace_clock(lines, anchor)
+    for line in lines if wall else []:
         m = EVENT.search(line)
         if not m or m.group(3) != "sched_switch":
             continue
         s = SWITCH.search(m.group(4))
         if not s:
             continue
-        cpu, ts = int(m.group(1)), anchor[1] - (anchor[0] - float(m.group(2)))
+        cpu, ts = int(m.group(1)), wall(float(m.group(2)))
         prev, state, nxt = s.groups()
         # the spinner itself taken off its CPU by the guest: not a host stall
         if prev == "gapspin" and state.startswith("R"):
@@ -111,7 +182,7 @@ def spinner_blind(path):
     not run (vm.sh diag-start's "# no spinner": the whole state; SMT=off's
     "# paused <s>" to "# resumed <s>", or to the end)."""
     blind, paused, section = [], None, None
-    for line in open(path, errors="replace"):
+    for line in text_lines(path):
         line = line.rstrip("\n")
         if line.startswith("== "):
             section = line[3:]
@@ -125,6 +196,201 @@ def spinner_blind(path):
     if paused is not None:
         blind.append((paused, float("inf")))
     return blind
+
+
+# osnoise's noise events (Linux include/trace/events/osnoise.h): the source
+# (a thread's "comm:pid", an IRQ's "desc:vector", a softirq's "NAME:vector";
+# none for an NMI), its start on the trace clock and its net duration
+NOISE = re.compile(r"^\s*(?:(.*):(\d+) )?start (\d+)\.(\d+) duration (\d+) ns")
+IPI_MASK = re.compile(r"cpumask=(\S+) callsite=(\S+)")
+IPI_CPU = re.compile(r"cpu=(\d+) callsite=(\S+)")
+
+
+def cpu_list(text):
+    """{cpu} of a CPU list ("1-3,5")."""
+    out = set()
+    for part in text.split(","):
+        if part.strip():
+            lo, _, hi = part.partition("-")
+            out.update(range(int(lo), int(hi or lo) + 1))
+    return out
+
+
+def cpu_mask(text, form):
+    """{cpu} of a trace's cpumask: a list where the instance prints one
+    (its bitmask-list option), else hex in 32-bit groups, the highest first."""
+    if form == "list":
+        return cpu_list(text)
+    bits = int(text.replace(",", ""), 16)
+    return {c for c in range(bits.bit_length()) if bits >> c & 1}
+
+
+def read_knoise(path, host):
+    """KNOISE's events in a host's diagnostics (vm.sh diag-fetch's knoise
+    section) on the wall clock: [(start_s, end_s, source, label)]. Noise has
+    its duration; an IPI, a compaction or a page migration is an instant. The
+    busy threads' own runs (an agent, a client) are not noise, nor an IPI to
+    none of the agent and app CPUs (the section's "# cpus")."""
+    anchor, section, lines, cpus, form = None, None, [], set(), "hex"
+    for line in text_lines(path):
+        line = line.rstrip("\n")
+        if line.startswith("== "):
+            section = line[3:]
+        elif section == "trace" and line.startswith("UPTIME"):
+            f = line.split()
+            anchor = (float(f[1]), float(f[3]))
+        elif section == "knoise":
+            if line.startswith("# cpus "):
+                cpus = cpu_list(line[len("# cpus "):])
+            elif line.startswith("# cpumask "):
+                form = line.split()[2]
+            elif not line.startswith("#"):
+                lines.append(line)
+    if anchor is None:
+        return []
+    wall = lambda ts: anchor[1] - (anchor[0] - ts)
+    out = []
+    for line in lines:
+        m = EVENT.search(line)
+        if not m:
+            continue
+        cpu, ts, event, rest = int(m.group(1)), float(m.group(2)), m.group(3), m.group(4)
+        if event.endswith("_noise"):
+            n = NOISE.match(rest)
+            if not n:
+                continue
+            who = (n.group(1) or "").strip()
+            if event == "thread_noise" and (BUSY.match(who) or who.startswith("swapper")):
+                continue
+            t0 = wall(int(n.group(3)) + int(n.group(4).ljust(9, "0")[:9]) / 1e9)
+            dur = int(n.group(5)) / 1e9
+            name = f"{event} {who}:{n.group(2)}" if who else event
+            out.append((t0, t0 + dur, event, f"{name} {dur * 1e6:.1f} µs ({host} cpu {cpu})"))
+        elif event in ("ipi_send_cpumask", "ipi_send_cpu"):
+            i = IPI_MASK.search(rest) if event == "ipi_send_cpumask" else IPI_CPU.search(rest)
+            if not i:
+                continue
+            to = cpu_mask(i.group(1), form) if event == "ipi_send_cpumask" else {int(i.group(1))}
+            hit = to & cpus if cpus else to
+            if hit:
+                t = wall(ts)
+                out.append((t, t, "IPI", f"IPI {i.group(2).split('+')[0]} to {','.join(map(str, sorted(hit)))} ({host})"))
+        elif event == "mm_compaction_begin":
+            out.append((wall(ts), wall(ts), "compaction", f"compaction ({host})"))
+        elif event == "mm_migrate_pages":
+            # (include/trace/events/migrate.h: nr_succeeded=, older kernels succeeded=)
+            f = dict(kv.split("=", 1) for kv in rest.split() if "=" in kv)
+            done = f.get("nr_succeeded", f.get("succeeded", "?"))
+            out.append((wall(ts), wall(ts), "page migration",
+                        f"page migration succeeded={done} reason={f.get('reason', '?')} ({host})"))
+    return sorted(out)
+
+
+# the DPDK transport's event log's housekeeping kinds (rusteron_dpdk_events.h)
+RING_SOURCES = {"sample": "1 Hz sample", "nic-stats": "1 Hz NIC stats", "timers": "PMD timers"}
+
+
+def read_rings(path, host):
+    """The DPDK transport's event log for a run (RUSTERON_DPDK_EVENT_LOG,
+    saved as <host>-rings-<run>.log; rows kind,tsc,realtime_ns,value_ns,port,
+    agent, realtime_ns when the event ended, value_ns its length) on the wall
+    clock: ([(start_s, end_s, source, label)], events the rings dropped). An
+    agent's loop gap, a housekeeping call (the 1 Hz sample, the NIC
+    statistics read, the PMDs' timers) over its length; ARP an instant."""
+    out, dropped = [], 0
+    for row in csv.reader(text_lines(path)):
+        if len(row) != 6 or row[0].startswith("#") or not (row[2].isdigit() and row[3].isdigit()):
+            continue
+        kind, end, value, port, agent = row[0], int(row[2]), int(row[3]), row[4], row[5]
+        on_port = f" port {port}" if port != "-" else ""
+        if kind == "drops":
+            dropped += value
+        elif kind == "gap":
+            out.append(((end - value) / 1e9, end / 1e9, "agent gap", f"agent gap{on_port} {value / 1e3:.1f} µs ({host} tid {agent})"))
+        elif kind.startswith("arp-"):
+            out.append((end / 1e9, end / 1e9, "ARP", f"ARP {kind[4:]}{on_port} ({host})"))
+        else:
+            source = RING_SOURCES.get(kind, kind)
+            out.append(((end - value) / 1e9, end / 1e9, source, f"{source} {value / 1e3:.1f} µs ({host}{on_port})"))
+    return sorted(out), dropped
+
+
+TOP_RTT = 10  # each rep's largest round trips labelled with every overlapping event
+SHIFTS = 1000  # circular shifts for the chance baseline
+SEED = 1
+
+
+def overlaps(events, t0, t1):
+    """The events of [(start, end, ...)] sorted by start, `longest` their
+    longest duration, that overlap [t0, t1]."""
+    starts, longest, rows = events
+    lo = bisect.bisect_left(starts, t0 - longest)
+    hi = bisect.bisect_right(starts, t1)
+    return [r for r in rows[lo:hi] if r[1] >= t0]
+
+
+def by_source(events):
+    """{source: (starts, longest, rows)} of [(start, end, source, label)]."""
+    groups = collections.defaultdict(list)
+    for e in events:
+        groups[e[2]].append(e)
+    out = {}
+    for source, rows in groups.items():
+        rows.sort()
+        out[source] = ([r[0] for r in rows], max(r[1] - r[0] for r in rows), rows)
+    return out
+
+
+def chance(reps, sources, shifts=SHIFTS, seed=SEED):
+    """Per source: (observed, of, expected, p) over `reps`, each (round trips
+    [(t0, t1)], run start, run length s, its events by_source): how many round
+    trips an event of the source overlaps, and the same with each rep's round
+    trips shifted circularly by a random offset within its run, `shifts` times."""
+    rng = random.Random(seed)
+    offsets = [[rng.uniform(0, length) for _ in range(shifts)] for _, _, length, _ in reps]
+    out = {}
+    for source in sources:
+        def hits(shift_of):
+            n = 0
+            for r, (trips, start, length, events) in enumerate(reps):
+                if source not in events:
+                    continue
+                for t0, t1 in trips:
+                    s0 = start + (t0 - start + shift_of(r)) % length if shift_of else t0
+                    if overlaps(events[source], s0, s0 + (t1 - t0)):
+                        n += 1
+            return n
+        observed = hits(None)
+        counts = [hits(lambda r, k=k: offsets[r][k]) for k in range(shifts)]
+        out[source] = (observed, sum(len(t) for t, _, _, _ in reps), sum(counts) / shifts,
+                       (1 + sum(c >= observed for c in counts)) / (1 + shifts))
+    return out
+
+
+def hosts_of(stem):
+    """The hosts a run's spikes can come from: a hairpin's (@HAIRPIN=1) are
+    host a's alone, every other run's both."""
+    return "a" if re.search(r"@HAIRPIN=1(?=[@+-]|$)", stem) else "ab"
+
+
+def run_length(folder, run_tag, start, last):
+    """A round trip run's measured length in seconds: its round trips' sum
+    (histogram-<run>.csv, value_ns,count), or for a paced run (@RTT_GAP_US)
+    its round trips times the gap where that is longer; else to its last
+    event seen."""
+    path = os.path.join(folder, f"histogram-{run_tag}.csv")
+    gap = re.search(r"@RTT_GAP_US=(\d+)(?=[@+-]|$)", run_tag)
+    if os.path.exists(path):
+        total = count = 0
+        for row in csv.reader(text_lines(path)):
+            if len(row) == 2 and row[0].isdigit():
+                total += int(row[0]) * int(row[1])
+                count += int(row[1])
+        if gap:
+            total = max(total, count * int(gap.group(1)) * 1000)
+        if total:
+            return total / 1e9
+    return max(last - start, 1.0)
 
 
 BUCKETS = ("poll-cycle-gaps-20-50us", "poll-cycle-gaps-50-100us", "poll-cycle-gaps-over-100us")
@@ -157,6 +423,51 @@ def agent_gaps(dirs, run_tag):
     return out
 
 
+
+BURSTS = ("rx-burst-max-ns", "rx-bursts-over-1us", "rx-bursts-over-5us",
+          "tx-burst-max-ns", "tx-bursts-over-1us", "tx-bursts-over-5us")
+
+
+def pmd_bursts(dirs, run_tag):
+    """The PMD burst timing during a round trip run, per host
+    (RUSTERON_DPDK_GAP_ATTRIB=1 or burst), in BURSTS order, from the same jitter
+    snapshots as agent_gaps: each max-ns is the after-snapshot's largest over
+    the ports (a lifetime max, not differenced); each over-1us/5us count is
+    summed over the ports and differenced against the before-snapshot. None
+    where missing or all zero (GAP_ATTRIB off). Counter names are matched as
+    whole words: nic-arrival-to-rx-burst-max-ns is another counter."""
+    out = {}
+    for host in "ab":
+        snaps = {}
+        for when in ("before", "after"):
+            path = next((p for p in (os.path.join(d, f"{host}-jitter-{when}-rtt-{run_tag}.log") for d in dirs)
+                         if os.path.exists(p)), None)
+            if path is None:
+                break
+            values = {b: [] for b in BURSTS}
+            for line in open(path).read().splitlines():
+                words = line.split()
+                if line.startswith("counter ") and len(words) > 1 and words[1].lstrip("-").isdigit():
+                    for b in BURSTS:
+                        if b in words[2:]:
+                            values[b].append(int(words[1]))
+            if any(values.values()):
+                snaps[when] = values
+        if "after" not in snaps:
+            out[host] = None
+            continue
+        after, before = snaps["after"], snaps.get("before")
+        row = []
+        for b in BURSTS:
+            if b.endswith("-max-ns"):
+                row.append(max(after[b], default=0))
+            elif before is not None:
+                row.append(sum(after[b]) - sum(before[b]))
+            else:
+                row.append(None)
+        out[host] = None if all(v in (0, None) for v in row) else row
+    return out
+
 TRACKING = re.compile(r"^(System time|Root delay|Root dispersion)\s*:\s*([0-9.]+) seconds( (fast|slow))?")
 
 
@@ -172,7 +483,7 @@ def clock_offsets(dirs):
         offset, bound, n = 0.0, 0.0, 0
         for path in paths:
             got = {}
-            for line in open(path, errors="replace"):
+            for line in text_lines(path):
                 m = TRACKING.match(line)
                 if m:
                     got[m.group(1)] = float(m.group(2))
@@ -202,24 +513,59 @@ def clocks_note(offsets):
             f"{total * 1e6:.1f} µs (the sum).")
 
 
+ONE_WAY_TOP = 10  # a rep's largest round trips split one way
+
+
+def one_way(folder, state):
+    """Each rep's ONE_WAY_TOP largest round trips split one way (rtt's
+    RTT_ONE_WAY files), largest first: µs out, back and on the ping's host."""
+    rows = []
+    for path in sorted(glob.glob(os.path.join(folder, f"oneway-{state}-*.csv"))):
+        stem = os.path.basename(path)[len("oneway-"):].removesuffix(".csv")
+        m = re.match(r"^(.*)-(\d+)$", stem)
+        if not m:
+            continue
+        run, rep = m.group(1), int(m.group(2))
+        trips = []
+        with open(path, newline="") as f:
+            for row in csv.reader(f):
+                if len(row) == 5 and all(v.isdigit() for v in row):
+                    ping, sent, pong_rx, ping_rx, echoed = (int(v) for v in row)
+                    trips.append((echoed - sent, ping, pong_rx - sent, ping_rx - pong_rx, echoed - ping_rx))
+        for rtt, ping, out, back, host in sorted(trips, reverse=True)[:ONE_WAY_TOP]:
+            rows.append((run, rep, -rtt, ping, rtt, out, back, host))
+    if not rows:
+        return
+    print(f"\n## One-way split of the largest round trips, {state}\n")
+    print("Each rep's largest round trips (rtt's RTT_ONE_WAY, the hosts' NIC receive timestamps on CLOCK_REALTIME, "
+          "both on the PTP hardware clock): out is the ping's send to the pong host's NIC, back the pong host's NIC "
+          "to the ping host's (the pong's host and the way back), the ping's host its NIC to the echo's arrival. The "
+          "two hosts' clocks may differ by their sync error (timesync logs), which moves between out and back.\n")
+    print("| run | rep | ping | round trip (µs) | out (µs) | back (µs) | ping's host (µs) |")
+    print("| --- | --- | --- | --- | --- | --- | --- |")
+    for run, rep, _, ping, rtt, out, back, host in sorted(rows):
+        print(f"| {run} | {rep} | {ping} | {rtt / 1e3:.1f} | {out / 1e3:.1f} | {back / 1e3:.1f} | {host / 1e3:.1f} |")
+
+
 def main():
     folder = sys.argv[1]
     threshold = float(sys.argv[2]) if len(sys.argv) > 2 else 200.0
     state = os.path.basename(os.path.normpath(folder))
     run_dir = os.path.dirname(os.path.normpath(folder))
-    diag, blind = {}, {}
+    one_way(folder, state)
+    diag, blind, knoise = {}, {}, {}
     for host in "ab":
         for path in (os.path.join(run_dir, f"{host}-diag-{state}.log"), os.path.join(folder, f"{host}-diag-{state}.log")):
             if os.path.exists(path):
                 diag[host] = read_diag(path)
                 blind[host] = spinner_blind(path)
+                knoise[host] = read_knoise(path, host)
                 break
     if not diag:
         sys.exit(f"no {state} diagnostics (a-diag-{state}.log) next to {folder}")
     # intervals sorted by start, for a binary search: anything overlapping
     # [t0, t1] starts before t1 and, as none here lasts over a second, after
     # t0 - 1 s
-    import bisect
     gap_idx = {h: sorted(g) for h, (g, _) in diag.items()}
     pre_idx = {h: sorted(p) for h, (_, p) in diag.items()}
 
@@ -277,15 +623,16 @@ def main():
     clients = {}
     errors = []
 
-    def cause_of(t0, t1, base=BASE):
+    def cause_of(t0, t1, base=BASE, hosts="ab"):
         need = max(t1 - t0 - base, 0.0) / 2
         for who, stalls in clients.items():
             if any(g1 - g0 >= need for g0, g1 in overlapping(stalls, t0, t1)):
                 return f"{who} stall"
-        for host in diag:
+        seen = [h for h in diag if h in hosts]
+        for host in seen:
             if any(g1 - g0 >= need for g0, g1 in overlapping(gap_idx[host], t0, t1)):
                 return f"host stall ({host})"
-        for host in diag:
+        for host in seen:
             hit = [p for p in overlapping(pre_idx[host], t0, t1) if p[1] - p[0] >= need]
             if hit:
                 return f"guest preemption ({host}: {hit[0][3]} by {hit[0][4]})"
@@ -293,7 +640,7 @@ def main():
         if hit:
             return f"driver errors ({hit[0][2]}: {hit[0][3]} x{hit[0][4]:,})"
         # a host whose spinner did not run then: its stall not ruled out
-        unseen = [h for h in sorted(blind) if any(b0 < t1 and b1 > t0 for b0, b1 in blind[h])]
+        unseen = [h for h in sorted(blind) if h in hosts and any(b0 < t1 and b1 > t0 for b0, b1 in blind[h])]
         if unseen:
             return f"unexplained (no spinner on {', '.join(unseen)}: a host stall not ruled out)"
         return "unexplained"
@@ -332,7 +679,7 @@ def main():
                     recorded_total = int(line.split("=", 1)[1])
                     continue
                 parts = line.rstrip().split(",")
-                if len(parts) == 3 and parts[1].isdigit():
+                if len(parts) in (3, 4) and parts[1].isdigit():
                     rows.append((int(parts[2]) / 1e3, int(parts[1])))
         if start is None:
             continue
@@ -362,11 +709,12 @@ def main():
             mid[run].append((int(rt.group(2)), sum(1 for lat, _ in rows if 100 <= lat < 250)))
         # a localhost round trip is ~6 us, not ~50: its causes are judged against that
         base = 6e-6 if f"{state}-local-" in stem else BASE
+        hosts = hosts_of(stem)
         over = sum(1 for lat, _ in rows if lat >= threshold)
         for lat, due in rows[:TOP]:
             if lat >= threshold:
                 t0 = start + due / 1e9
-                totals[run][cause_of(t0, t0 + lat / 1e6, base)] += 1
+                totals[run][cause_of(t0, t0 + lat / 1e6, base, hosts)] += 1
         if over > TOP:
             totals[run]["not attributed (past the largest 50)"] += over - TOP
         if recorded_total is not None and recorded_total > len(rows):
@@ -374,7 +722,7 @@ def main():
         if rows:
             lat, due = rows[0]
             t0 = start + due / 1e9
-            maxima[run].append((lat, cause_of(t0, t0 + lat / 1e6, base), gaps_note, t0, bool(rt)))
+            maxima[run].append((lat, cause_of(t0, t0 + lat / 1e6, base, hosts), gaps_note, t0, bool(rt)))
         else:
             maxima[run].append((0.0, "under 100 us", gaps_note, None, bool(rt)))
     print(f"## Spikes of {threshold:.0f} us or more by cause, {state}\n")
@@ -455,5 +803,558 @@ def main():
               + " of the minute: a host event recurring once a minute. A run catches it only if it spans that second "
               "(LAB_RTT_ALIGN starts every round trip just after it).")
 
+    largest(folder, state, run_dir, diag, knoise)
+    traces = {}
+    for host in "ab":
+        for path in (os.path.join(run_dir, f"{host}-diag-{state}.log"), os.path.join(folder, f"{host}-diag-{state}.log")):
+            if os.path.exists(path):
+                traces[host] = read_trace(path)
+                break
+    agent_gap_causes(folder, state, run_dir, diag, traces)
+
+
+def stall_events(path, who):
+    """A client's loop stalls (stalls-<who>-<run>.csv) as [(start_s, end_s,
+    source, label)] on the wall clock, each labelled with its exact length."""
+    if not os.path.exists(path):
+        return []
+    with open(path) as f:
+        first = f.readline()
+        if not first.startswith("# start_realtime_ns="):
+            return []
+        base = int(first.split("=", 1)[1])
+        out = []
+        for line in f:
+            parts = line.strip().split(",")
+            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                end, gap = base + int(parts[0]), int(parts[1])
+                out.append(((end - gap) / 1e9, end / 1e9, f"{who} stall", f"{who} stall {gap / 1e3:.1f} µs"))
+    return sorted(out)
+
+
+def read_trace(path):
+    """A host's trace on the wall clock (diag-fetch's trace section):
+    ({pid: the CPU it ran on most}, {cpu: sorted [(start_s, end_s, name)]}
+    of its interrupts: each irq_handler_entry to its CPU's next
+    irq_handler_exit, each ipi_entry to its ipi_exit, an instant where the
+    exit is missing), or None without a trace clock."""
+    lines, uptime, section = [], None, None
+    for line in text_lines(path):
+        line = line.rstrip("\n")
+        if line.startswith("== "):
+            section = line[3:]
+        elif section == "trace":
+            if line.startswith("UPTIME"):
+                f = line.split()
+                uptime = (float(f[1]), float(f[3]))
+            else:
+                lines.append(line)
+    wall = trace_clock(lines, uptime)
+    if wall is None:
+        return None
+    seen = collections.defaultdict(collections.Counter)
+    irqs, open_irq = collections.defaultdict(list), {}
+    for line in lines:
+        m = EVENT.search(line)
+        if not m:
+            continue
+        cpu, ts, kind, rest = int(m.group(1)), wall(float(m.group(2))), m.group(3), m.group(4)
+        t = TASK.match(line)
+        if t and t.group(2) != "0":
+            seen[t.group(2)][cpu] += 1
+        if kind in ("irq_handler_entry", "ipi_entry"):
+            name = re.search(r"name=(\S+)", rest)
+            name = name.group(1) if name else rest.strip("() ")
+            if (cpu, kind) in open_irq:  # its exit never traced: an instant
+                t0, n = open_irq.pop((cpu, kind))
+                irqs[cpu].append((t0, t0, n))
+            open_irq[(cpu, kind)] = (ts, name)
+        elif kind in ("irq_handler_exit", "ipi_exit"):
+            entry = "irq_handler_entry" if kind == "irq_handler_exit" else "ipi_entry"
+            if (cpu, entry) in open_irq:
+                t0, n = open_irq.pop((cpu, entry))
+                irqs[cpu].append((t0, ts, n))
+    for (cpu, _), (t0, n) in open_irq.items():
+        irqs[cpu].append((t0, t0, n))
+    return ({pid: c.most_common(1)[0][0] for pid, c in seen.items()},
+            {cpu: sorted(v) for cpu, v in irqs.items()})
+
+
+GAP_CLASSES = ("guest preemption", "interrupts", "VM paused", "nothing in the guest")
+
+
+def agent_gap_causes(folder, state, run_dir, diag, traces):
+    """Every agent loop gap the DPDK event log stamped (<host>-rings-*.log,
+    10 us or more), on its agent's CPU, labelled by what overlapped it: a
+    traced preemption of the agent; interrupts on its CPU (their time inside
+    the gap); a gap of the spare CPU's spinner on the same host (the whole VM
+    paused); else nothing the guest saw (the agent's own work, or the
+    hypervisor taking this vCPU alone). Then each host's spinner gaps by
+    size."""
+    rows = collections.defaultdict(lambda: collections.defaultdict(list))  # host: class: [(len us, irq us, label)]
+    unmapped = collections.Counter()
+    for host in "ab":
+        paths = sorted(set(glob.glob(os.path.join(folder, f"{host}-rings-{state}-*.log"))
+                           + glob.glob(os.path.join(run_dir, f"{host}-rings-{state}-*.log"))))
+        if not paths or host not in diag:
+            continue
+        spin = sorted(diag[host][0])
+        pre = collections.defaultdict(list)
+        for t0, t1, cpu, who, by in diag[host][1]:
+            pre[cpu].append((t0, t1, by))
+        trace = traces.get(host)
+        cpu_of, irqs = trace if trace else ({}, {})
+        for path in paths:
+            for row in csv.reader(text_lines(path)):
+                if len(row) != 6 or row[0] != "gap" or not (row[2].isdigit() and row[3].isdigit()):
+                    continue
+                end, value, tid = int(row[2]) / 1e9, int(row[3]), row[5]
+                start = end - value / 1e9
+                cpu = cpu_of.get(tid)
+                if cpu is None:
+                    unmapped[host] += 1
+                    continue
+                by = [b for t0, t1, b in pre.get(cpu, []) if t0 < end and t1 > start]
+                hit = [(max(t0, start), min(t1, end), n) for t0, t1, n in irqs.get(cpu, [])
+                       if t0 <= end and t1 >= start]
+                irq_us = sum(t1 - t0 for t0, t1, _ in hit) * 1e6
+                if by:
+                    cls, label = "guest preemption", by[0]
+                elif hit:
+                    cls = "interrupts"
+                    label = ", ".join(sorted(collections.Counter(n for _, _, n in hit)))
+                elif any(g0 < end and g1 > start for g0, g1 in spin):
+                    cls, label = "VM paused", "spinner gap"
+                else:
+                    cls, label = "nothing in the guest", ""
+                rows[host][cls].append((value / 1e3, irq_us, label))
+    spinner = {h: [(g1 - g0) * 1e6 for g0, g1 in g] for h, (g, _) in diag.items()}
+    if not rows and not any(spinner.values()):
+        return
+    print(f"\n## Agent loop gaps by what overlapped them, {state}\n")
+    print("Every gap of an agent's loop the DPDK event log stamped (modes with @RUSTERON_DPDK_EVENT_LOG), on the")
+    print("agent's CPU: a traced preemption; else interrupts there (their time inside the gap); else a gap of the")
+    print("spare CPU's spinner on the same host (the whole VM paused); else nothing the guest saw: the agent's own")
+    print("work, or the hypervisor taking this vCPU alone. Lengths in µs: median (largest).\n")
+    print("| host | class | gaps | length | interrupt time inside | what |")
+    print("| --- | --- | --- | --- | --- | --- |")
+    for host in sorted(rows):
+        for cls in GAP_CLASSES:
+            g = rows[host].get(cls)
+            if not g:
+                continue
+            lens = sorted(x[0] for x in g)
+            irq = sorted(x[1] for x in g)
+            what = collections.Counter(x[2] for x in g if x[2]).most_common(3)
+            print(f"| {host} | {cls} | {len(g):,} | {lens[len(lens) // 2]:.1f} ({lens[-1]:.1f}) | "
+                  f"{irq[len(irq) // 2]:.1f} ({irq[-1]:.1f}) | {', '.join(f'{n} ({c})' for n, c in what) or '-'} |")
+    for host, n in sorted(unmapped.items()):
+        print(f"\n{host}: {n:,} gaps of an agent the trace never showed (no CPU known): not classed.")
+    print("\nThe spare CPU's gap spinner, each host, the whole state (vm.sh diag-start; its threshold is the")
+    print("diag log's threshold_us):\n")
+    print("| host | gaps | 10-20 µs | 20-50 µs | 50-100 µs | 100 µs or more | largest |")
+    print("| --- | --- | --- | --- | --- | --- | --- |")
+    for host, g in sorted(spinner.items()):
+        b = [sum(1 for x in g if lo <= x < hi) for lo, hi in ((10, 20), (20, 50), (50, 100), (100, float("inf")))]
+        print(f"| {host} | {len(g):,} | {' | '.join(f'{n:,}' for n in b)} | {max(g):.0f} |" if g else
+              f"| {host} | 0 | 0 | 0 | 0 | 0 | - |")
+
+
+def largest(folder, state, run_dir, diag, knoise):
+    """Each round trip run's TOP_RTT largest round trips per rep, every event
+    overlapping each, and each source's overlaps against chance."""
+    # the state's events on either host, whatever the run: spinner gaps,
+    # traced preemptions, KNOISE
+    by_host = collections.defaultdict(list)
+    for host, (gaps, preempted) in sorted(diag.items()):
+        # (their sources stamp whole microseconds)
+        by_host[host] += [(g0, g1, "host stall", f"host stall {(g1 - g0) * 1e6:.0f} µs ({host})") for g0, g1 in gaps]
+        by_host[host] += [(t0, t1, "guest preemption", f"{who} preempted by {by} {(t1 - t0) * 1e6:.0f} µs ({host} cpu {cpu})")
+                          for t0, t1, cpu, who, by in preempted]
+        by_host[host] += knoise.get(host, [])
+    table = []  # (run, rep, ping, latency ns, end ns, labels)
+    reps = collections.defaultdict(list)  # run: [(round trips, start, length, events by source)]
+    drops = []
+    for path, stem in spike_files(folder):
+        rt = re.match(rf"^({re.escape(state)}-.*)-rtt-(\d+)$", stem)
+        if not rt:
+            continue
+        run, rep = f"{rt.group(1)}-rtt", int(rt.group(2))
+        tag = f"{rt.group(1)}-{rep}"
+        hosts = hosts_of(stem)
+        host_events = [e for h in hosts for e in by_host.get(h, [])]
+        start_ns, rows = None, []
+        with open_spikes(path) as f:
+            for line in f:
+                if line.startswith("# start_realtime_ns="):
+                    start_ns = int(line.split("=", 1)[1])
+                    continue
+                parts = line.rstrip().split(",")
+                if len(parts) in (3, 4) and parts[1].isdigit() and parts[2].isdigit():
+                    ping = parts[3] if len(parts) == 4 else "-"
+                    rows.append((int(parts[2]), int(parts[1]), ping))
+        if start_ns is None:
+            continue
+        rows.sort(key=lambda r: -r[0])
+        top = rows[:TOP_RTT]
+        events = []
+        for who in ("ping", "pong"):
+            events += stall_events(os.path.join(folder, f"stalls-{who}-{tag}.csv"), who)
+        for host in hosts:
+            for base in (folder, run_dir):
+                ring = os.path.join(base, f"{host}-rings-{tag}.log")
+                if os.path.exists(ring):
+                    ring_events, dropped = read_rings(ring, host)
+                    events += ring_events
+                    if dropped:
+                        drops.append(f"{host}'s event log dropped {dropped:,} events in {tag} (full rings): an overlap there may be missing")
+                    break
+        start = start_ns / 1e9
+        last = max([start + (due + lat) / 1e9 for lat, due, _ in rows] + [e[1] for e in events if e[1] >= start] + [start])
+        length = run_length(folder, tag, start, last)
+        # what the run's window holds, for the baseline
+        window = [e for e in events + host_events if e[1] >= start and e[0] <= start + length]
+        sources = by_source(window)
+        trips = []
+        for lat, due, ping in top:
+            t0, t1 = start + due / 1e9, start + (due + lat) / 1e9
+            trips.append((t0, t1))
+            labels = sorted({e[3] for src in sources.values() for e in overlaps(src, t0, t1)})
+            table.append((run, rep, ping, lat, start_ns + due + lat, labels))
+        reps[run].append((trips, start, length, sources))
+    if not table:
+        return
+    print(f"\n## The {TOP_RTT} largest round trips of each rep and every event overlapping them, {state}\n")
+    print("A round trip is [sent, echoed] on the wall clock; an event overlaps it if its interval does (an IPI, a")
+    print("compaction or a page migration is an instant). Its phase is its echo's, in the second and in 30 s.\n")
+    print("| run | rep | ping | round trip (µs) | mod 1 s (ms) | mod 30 s (s) | overlapping events |")
+    print("| --- | --- | --- | --- | --- | --- | --- |")
+    for run, rep, ping, lat, end_ns, labels in sorted(table, key=lambda r: (r[0], r[1], -r[3])):
+        print(f"| {run} | {rep} | {ping} | {lat / 1e3:.1f} | {end_ns % 1_000_000_000 / 1e6:.3f} | "
+              f"{end_ns % 30_000_000_000 / 1e9:.3f} | {'; '.join(labels) or 'none'} |")
+    for note in drops:
+        print(f"\n{note}.")
+    print(f"\n## Overlaps against chance ({SHIFTS:,} circular shifts of each rep's round trips, seed {SEED}), {state}\n")
+    print("Each rep's round trips shifted together by a random offset within its run (its round trips' sum), so")
+    print("their spacing and every source's own timing stay; p is the share of shifts overlapping at least as many.\n")
+    print("| run | source | of the largest round trips | expected by chance | p |")
+    print("| --- | --- | --- | --- | --- |")
+    for run, run_reps in sorted(reps.items()):
+        names = sorted({src for _, _, _, sources in run_reps for src in sources})
+        for src, (observed, of, expected, p) in sorted(chance(run_reps, names).items(), key=lambda kv: (kv[1][3], kv[0])):
+            print(f"| {run} | {src} | {observed} of {of} | {expected:.2f} | {p:.3f} |")
+
+
+# The transport suite (transport-format.md): each point's max labelled with
+# its cause, in this order; the first that overlaps the max wins.
+TransportPoint = collections.namedtuple("TransportPoint", "set tag row manifest hosts")
+# Azure's per-minute stall cluster: maxima of MINUTE_MIN_NS or more inside
+# seconds :49 to :51 of a minute, when nothing more specific explains them
+MINUTE_WINDOW = (49.0, 52.0)
+MINUTE_MIN_NS = 100_000
+EVENT_KINDS = {"irq", "softirq", "ipi", "preempt", "nak", "retransmit", "tcp-rto", "tcp-tlp", "tcp-dsack", "tcp-retrans",
+               "tc-drop", "page-fault", "dpdk-refill", "host-pause", "stall"}
+# the kinds the tracefs instance records on a CPU (transport_events.py)
+TRACE_KINDS = {"irq", "softirq", "ipi", "preempt", "page-fault"}
+OVERRUN = re.compile(r"^trace overran on cpu(\d+):")
+# a gap spinner's own CPU: its switches say nothing of the measured path
+SPINNER_COMM = "gapspin:"
+_cache = {}
+
+
+def cached(key, load):
+    if key not in _cache:
+        _cache[key] = load()
+    return _cache[key]
+
+
+def transport_max(folder, tag, row_max):
+    """A point's max from its spike file (`# max=<due>,<latency>,<stream>`,
+    else the largest row when it equals the row's max): (start_ns, due_ns,
+    latency_ns), or None when it cannot be located."""
+    path = next((p for p in (os.path.join(folder, f"spikes-{tag}.csv"), os.path.join(folder, f"spikes-{tag}.csv.gz"))
+                 if os.path.exists(p)), None)
+    if path is None:
+        return None
+    start, marked, largest = None, None, None
+    with open_spikes(path) as f:
+        for line in f:
+            if line.startswith("# start_realtime_ns="):
+                start = int(line.split("=", 1)[1])
+            elif line.startswith("# max="):
+                v = line.split("=", 1)[1].strip().split(",")
+                if len(v) >= 2 and v[0].isdigit() and v[1].isdigit():
+                    marked = (int(v[0]), int(v[1]))
+            else:
+                parts = line.rstrip().split(",")
+                if len(parts) in (3, 4) and parts[1].isdigit() and parts[2].isdigit():
+                    if largest is None or int(parts[2]) > largest[1]:
+                        largest = (int(parts[1]), int(parts[2]))
+    if start is None:
+        return None
+    if marked:
+        return start, marked[0], marked[1]
+    if largest and row_max is not None and largest[1] == row_max:
+        return start, largest[0], largest[1]
+    return None
+
+
+def transport_events(folder, tag, hosts):
+    """[(start_s, end_s, kind, cpu or None, detail, host)] from each host's
+    events file for the point (<host>-events-<tag>.csv) and its DPDK event
+    log's refills (<host>-rings-<tag>.log)."""
+    return transport_host_events(folder, tag, hosts)[0]
+
+
+def transport_host_events(folder, tag, hosts):
+    """(events as transport_events gives them, {host: [notes]}): an events
+    file's `# note:` lines (what could not be recorded), and a note for a
+    host with no events file at all."""
+    def load():
+        out, notes = [], {}
+        for host in hosts:
+            path = os.path.join(folder, f"{host}-events-{tag}.csv")
+            notes[host] = []
+            if os.path.exists(path):
+                for line in text_lines(path):
+                    if line.startswith("# note: "):
+                        notes[host].append(line[len("# note: "):].strip())
+                for row in csv.reader(l for l in text_lines(path) if not l.startswith("#")):
+                    if len(row) == 5 and row[0] in EVENT_KINDS and row[1].isdigit() and row[2].isdigit():
+                        cpu = int(row[3]) if row[3].isdigit() else None
+                        out.append((int(row[1]) / 1e9, int(row[2]) / 1e9, row[0], cpu, row[4], host))
+            else:
+                notes[host].append("no events file")
+            ring = os.path.join(folder, f"{host}-rings-{tag}.log")
+            if os.path.exists(ring):
+                for t0, t1, source, label in read_rings(ring, host)[0]:
+                    if source == "refill":
+                        out.append((t0, t1, "dpdk-refill", None, label, host))
+        return out, notes
+    return cached(("events", os.path.abspath(folder), tag, tuple(hosts)), load)
+
+
+def transport_diag(folder, set_, host):
+    """A host's diag log for a set (<host>-diag-<set>.log in the set's folder
+    or the run's): (spinner gaps, trace IRQs by CPU, knoise events), each
+    empty where missing."""
+    def load():
+        for path in (os.path.join(folder, f"{host}-diag-{set_}.log"),
+                     os.path.join(os.path.dirname(os.path.normpath(folder)), f"{host}-diag-{set_}.log")):
+            if os.path.exists(path):
+                trace = read_trace(path)
+                return read_diag(path)[0], (trace[1] if trace else {}), read_knoise(path, host)
+        return [], {}, []
+    return cached(("diag", os.path.abspath(folder), set_, host), load)
+
+
+def own_tcp_info(manifest, host):
+    """The point's own TCP connections' counters on host over its window
+    (loss_counters.<host>.tcp_info: retrans, retrans_not_dsack, rtos...), or
+    None where the manifest has none. The events' per-second TCP counters are
+    the host's, every connection's (the runner's SSH session's too: in a
+    real session's UDP-only points they grew in the window every few
+    seconds), so they say something of the point only where these show its
+    connections retransmitted."""
+    t = (((manifest or {}).get("loss_counters") or {}).get(host) or {}).get("tcp_info")
+    return t if isinstance(t, dict) else None
+
+
+def trace_starts(events):
+    """{(host, cpu): wall s} of each CPU's first trace row (an IRQ, softirq,
+    IPI, switch or page fault; not a stall or a spinner's gap): where a CPU
+    whose trace buffer overran is complete from (the ring buffer overwrites
+    its oldest pages, so what survives runs to the end)."""
+    first = {}
+    for e in events:
+        if e[2] in TRACE_KINDS and e[3] is not None:
+            k = (e[5], e[3])
+            if k not in first or e[0] < first[k]:
+                first[k] = e[0]
+    return first
+
+
+def transport_cause(folder, point):
+    """What explains a transport point's max (transport-format.md), or
+    `unexplained (why)`: a flagged point's max is queueing (the IRQ core
+    saturated too); else the first of a host pause, a page fault, a busy
+    thread preempted, an IRQ on a hot CPU, a softirq there, an IPI there, a
+    DPDK refill, a NAK or retransmit, a TCP RTO, TLP or retransmit of the
+    point's own connections (own_tcp_info) after a netem drop in its second
+    or the one before, else as loss recovery, and the per-minute stall
+    cluster that overlaps it. An event with a length must account for half
+    of what the max adds to the p50. An unexplained max says what the events
+    do show: a stall of the measuring loop, what was not recorded (no events
+    file, the trace unavailable, an overrun reaching past the max's start),
+    and a host TCP counter no connection of the point's accounts for."""
+    why = transport_cause_found(folder, point)
+    if why != "unexplained":
+        return why
+    events, notes = transport_host_events(folder, point.tag, point.hosts)
+    loc = transport_max(folder, point.tag, point.row.get("max"))
+    reasons, after = [], []
+    t0 = None
+    if loc is not None:
+        start, due, lat = loc
+        t0, t1 = (start + due) / 1e9, (start + due + lat) / 1e9
+        need = max(lat - (point.row.get("p50") or 0), 0) / 2 / 1e9
+        for e in events:
+            if e[2] == "stall" and e[0] <= t1 and e[1] >= t0 and e[1] - e[0] >= need:
+                reasons.append(f"the {e[4]} on {e[5]} cpu {e[3]} with no traced event covering it: the thread did not "
+                               "run and the guest shows nothing, so the host or an untraced CPU")
+                break
+        # a host's per-second TCP counter in the max's window that the
+        # point's own connections there do not account for (own_tcp_info)
+        if "tcp" in set((point.manifest or {}).get("transport", "").split("+")):
+            for host in point.hosts:
+                own = own_tcp_info(point.manifest, host)
+                grew = any(e[5] == host and e[2] in ("tcp-rto", "tcp-tlp", "tcp-retrans") and e[0] <= t1 and e[1] >= t0
+                           for e in events)
+                if grew and own is not None and not (own.get("retrans") or own.get("rtos")):
+                    after.append(f"a TCP counter grew in that second on {host}, but the point's connections there "
+                                 "retransmitted nothing in the window: another connection's")
+    first = trace_starts(events)
+    for host in point.hosts:
+        for n in notes.get(host, []):
+            over = OVERRUN.match(n)
+            if over and t0 is not None and first.get((host, int(over.group(1))), float("inf")) <= t0:
+                continue  # what the overrun lost came before the max: the trace there covers it
+            if n == "no events file" or ("unavailable" in n and not n.startswith("osnoise")) or over \
+                    or n.startswith("trace empty"):
+                reasons.append(f"{host}: {n}")
+    if not reasons:
+        reasons.append("no recorded event overlaps it on either host")
+    return f"unexplained ({'; '.join(reasons + after)})"
+
+
+def transport_cause_found(folder, point):
+    """transport_cause's labels, or plain `unexplained`."""
+    row, manifest = point.row, point.manifest or {}
+    found = row_flags(row)
+    if "over capacity" in found:
+        return "past capacity (queueing)"
+    if "sender late" in found:
+        return "sender late (queueing)"
+    saturated = irq_core_saturated(manifest)
+    if saturated:
+        return f"IRQ core saturated (queueing: {', '.join(saturated)})"
+    loc = transport_max(folder, point.tag, row.get("max"))
+    if loc is None:
+        return "unexplained (max not located: no `# max=` line, and no spike row at the row's max)"
+    start, due, lat = loc
+    t0 = (start + due) / 1e9
+    t1 = t0 + lat / 1e9
+    need = max(lat - (row.get("p50") or 0), 0) / 2 / 1e9
+    cpus = manifest.get("cpus") or {}
+    hot = {h: set((cpus.get(h) or {}).get("hot") or []) for h in point.hosts}
+    on_hot = lambda host, cpu: cpu is not None and cpu in hot.get(host, set())
+    hit = lambda a, b: a <= t1 and b >= t0
+    enough = lambda a, b: b == a or b - a >= need
+    # a traced span (an IRQ, a switch, a spinner gap): its own length, never
+    # taken for an instant when it read 0
+    lasting = lambda a, b: b > a and b - a >= need
+    events = [e for e in transport_events(folder, point.tag, point.hosts) if hit(e[0], e[1])]
+    of = lambda *kinds: [e for e in events if e[2] in kinds]
+    diag = {h: transport_diag(folder, point.set, h) for h in point.hosts}
+
+    for host in point.hosts:
+        for g0, g1 in diag[host][0]:
+            if hit(g0, g1) and g1 - g0 >= need:
+                return f"host pause (gap spinner {(g1 - g0) * 1e6:.0f} µs, {host})"
+    for e in of("host-pause"):
+        if lasting(e[0], e[1]):
+            return f"host pause (gap spinner {(e[1] - e[0]) * 1e6:.0f} µs, {e[5]} cpu {e[3]})"
+    for e in of("page-fault"):
+        return f"page fault ({e[5]}{f' cpu {e[3]}' if e[3] is not None else ''}: {e[4]})"
+    for e in of("preempt"):
+        if on_hot(e[5], e[3]) and not e[4].startswith(SPINNER_COMM) and lasting(e[0], e[1]):
+            return f"busy thread off its CPU {(e[1] - e[0]) * 1e6:.0f} µs ({e[5]} cpu {e[3]}: {e[4]})"
+    for e in of("irq"):
+        if on_hot(e[5], e[3]) and lasting(e[0], e[1]):
+            return f"IRQ {e[4]} on hot CPU {e[3]} ({e[5]}, {(e[1] - e[0]) * 1e6:.0f} µs)"
+    for host in point.hosts:
+        for cpu, irqs in sorted(diag[host][1].items()):
+            if on_hot(host, cpu):
+                for a, b, name in irqs:
+                    if hit(a, b) and enough(a, b):
+                        return f"IRQ {name} on hot CPU {cpu} ({host})"
+    for e in of("softirq"):
+        if on_hot(e[5], e[3]) and lasting(e[0], e[1]):
+            return f"softirq {e[4]} ({e[5]} cpu {e[3]}, {(e[1] - e[0]) * 1e6:.0f} µs)"
+    for host in point.hosts:
+        for a, b, source, label in diag[host][2]:
+            if source == "softirq_noise" and hit(a, b) and enough(a, b):
+                return label.replace("softirq_noise ", "softirq ", 1)
+    for e in of("ipi"):
+        if on_hot(e[5], e[3]) and lasting(e[0], e[1]):
+            return f"IPI {e[4]} on hot CPU {e[3]} ({e[5]}, {(e[1] - e[0]) * 1e6:.0f} µs)"
+    for e in of("dpdk-refill"):
+        if enough(e[0], e[1]):
+            return f"DPDK refill ({e[5]}: {e[4]})"
+    # the per-second counters are the host's (the media driver's, every TCP
+    # connection's): each read only for a transport that has them
+    parts = set((manifest.get("transport") or "").split("+"))
+    aeron = any(p.startswith("aeron") for p in parts)
+    for e in of("nak", "retransmit") if aeron else ():
+        return f"NAK/retransmit ({e[5]}: {e[2]} x{e[4]} in that second)"
+    drops = [e for e in transport_events(folder, point.tag, point.hosts) if e[2] == "tc-drop"]
+    for e in of("tcp-rto", "tcp-tlp", "tcp-retrans") if "tcp" in parts else ():
+        what = {"tcp-rto": "RTO", "tcp-tlp": "TLP", "tcp-retrans": "retransmit"}[e[2]]
+        own = own_tcp_info(manifest, e[5])
+        if own is not None and not (own.get("retrans") or own.get("rtos")):
+            continue  # the host's counter, another connection's (transport_cause says so)
+        sec = int(e[0])
+        # the drop the timer recovers comes at least rto_min (or a probe
+        # timeout) before it: in its second or the one before
+        same = [d for d in drops if any(int(d[0]) <= s < int(d[0]) + max(1, round(d[1] - d[0])) for s in (sec, sec - 1))]
+        if same:
+            n = sum(int(d[4]) if d[4].isdigit() else 0 for d in same)
+            return f"TCP {what} after a netem drop ({e[5]}, {n:,} dropped in that second or the one before)"
+        if own is not None:
+            # the point's own connections retransmitted on that host, and no
+            # netem dropped: a loss on the path (fairness.py's loss rule
+            # reports it on a row without netem), recovered by this
+            return (f"TCP loss recovery ({e[5]}: {what} x{e[4]} in that second; the point's connections there "
+                    f"retransmitted {own.get('retrans') or 0} in the window, {own.get('retrans_not_dsack') or 0} not "
+                    "DSACK-reported; no netem drop: a loss on the path)")
+        return f"unexplained (TCP {what} on {e[5]} with no tc drop in that second or the one before)"
+    s0, s1 = t0 % 60, t0 % 60 + (t1 - t0)
+    if lat >= MINUTE_MIN_NS and s0 < MINUTE_WINDOW[1] and s1 >= MINUTE_WINDOW[0]:
+        return "per-minute stall cluster (:49-:51)"
+    return "unexplained"
+
+
+def transport_maxima(run_dir):
+    """[(Point, max ns, cause)] for every transport point of a run directory."""
+    out = []
+    for p in read_points(run_dir):
+        point = TransportPoint(p.set, p.tag, p.row, p.manifest or {}, transport_hosts_of(p.set))
+        out.append((p, p.row["max"], transport_cause(os.path.join(run_dir, p.set), point)))
+    return out
+
+
+def transport_main(run_dir):
+    maxima = transport_maxima(run_dir)
+    print("## Each point's max and its cause\n")
+    print("Labels, first that overlaps the max: a flagged point's queueing (late, over capacity, the IRQ core "
+          "saturated), a host pause (a gap spinner's gap the trace does not explain), a page fault of a busy thread, "
+          "a busy thread off its CPU (preempted or blocked), an IRQ, softirq or IPI on a hot CPU, a DPDK refill, a "
+          "NAK or retransmit, a TCP RTO, TLP or retransmit of the point's own connections (after a netem drop in its "
+          "second or the one before, else loss recovery), the per-minute stall cluster (:49-:51). An unexplained max "
+          "says what its events do show and blocks its cell's conclusion: rerun it traced.\n")
+    print("| set | label | kind | rate | rep | max (µs) | cause |")
+    print("| --- | --- | --- | --- | --- | --- | --- |")
+    for p, mx, cause in sorted(maxima, key=lambda x: (x[0].set, x[0].label, x[0].kind, x[0].rate, x[0].rep)):
+        shown = f"{mx / 1e3:.1f}" if mx is not None else "-"
+        print(f"| {p.set} | {p.label} | {p.kind} | {p.rate:,} | {p.rep} | {shown} | {cause} |")
+    counts = collections.Counter(c.split(" (")[0] for _, _, c in maxima)
+    print("\nBy cause: " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())) + ".")
+    bad = [f"{p.tag}" for p, _, c in maxima if c.startswith("unexplained")]
+    print("\nunexplained: " + (", ".join(bad) if bad else "none"))
+
+
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) == 3 and sys.argv[1] == "--transport":
+        transport_main(sys.argv[2])
+    else:
+        main()

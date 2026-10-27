@@ -12,6 +12,7 @@
 use std::error::Error;
 use std::fs::File;
 use std::io::{BufWriter, Write};
+use std::path::{Path, PathBuf};
 use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -72,6 +73,15 @@ pub struct ScenarioCfg {
     pub load_rps: u64,
     /// Where the receiver appends raw one-way latency samples (`None` = skip).
     pub latency_samples: Option<String>,
+    /// Where the script and this process meet for a held step: this process
+    /// creates `<role>.ready` and waits for `<role>.release`
+    /// (`RUSTERON_HARNESS_HOLD_DIR`; `hold` needs it, `pause_at` uses it).
+    pub hold_dir: Option<PathBuf>,
+    /// In the symmetric flow: hold before sending message number `pause_at`
+    /// (`RUSTERON_HARNESS_PAUSE_AT`), still receiving, until released.
+    pub pause_at: Option<u64>,
+    /// `silent_gateway`: how long the publication tries its destination.
+    pub hold_secs: Duration,
 }
 
 impl ScenarioCfg {
@@ -127,10 +137,17 @@ pub fn run(cfg: &ScenarioCfg, aeron: &Aeron) -> ScenarioResult {
         // Cross-transport scenarios run the same symmetric unicast flow — only
         // the media driver transport differs (script's `scenario_bidi` wires
         // DESTINATIONS/SUB_ENDPOINTS per transport).
-        "bidirectional_unicast" | "restart" | "dpdk_to_udp" | "udp_to_dpdk" | "loss_recovery" => {
-            symmetric_unicast(cfg, aeron)
-        }
+        "bidirectional_unicast"
+        | "restart"
+        | "dpdk_to_udp"
+        | "udp_to_dpdk"
+        | "loss_recovery"
+        | "peer_mac_move"
+        | "largest_mtu" => symmetric_unicast(cfg, aeron),
         "reconnect" => reconnect(cfg, aeron),
+        // Ports up, no traffic, until released: the script pings them.
+        "hold" | "icmp_ping" => hold(cfg, aeron),
+        "silent_gateway" => silent_gateway(cfg, aeron),
         "multi_endpoint" => multi_endpoint(cfg, aeron),
         "perf" => perf(cfg, aeron),
         other => return ScenarioResult::fail(format!("unknown scenario {other:?}")),
@@ -308,6 +325,28 @@ fn poll_once(sub: &AeronSubscription, expect_byte: u8, recv: &mut Recv) -> Resul
     Ok(())
 }
 
+/// Create `<dir>/<role>.ready`, then wait (calling `work` meanwhile) until
+/// `<dir>/<role>.release` exists; an error once `timeout` passes without it.
+fn wait_released(
+    dir: &Path,
+    role: &str,
+    timeout: Duration,
+    mut work: impl FnMut() -> Result<(), Box<dyn Error>>,
+) -> Result<(), Box<dyn Error>> {
+    File::create(dir.join(format!("{role}.ready")))?;
+    info!("[hold] {role} ready in {}", dir.display());
+    let release = dir.join(format!("{role}.release"));
+    let started = Instant::now();
+    while !release.exists() {
+        if started.elapsed() >= timeout {
+            return Err(format!("not released ({} absent) within {timeout:?}", release.display()).into());
+        }
+        work()?;
+        sleep(Duration::from_millis(1));
+    }
+    Ok(())
+}
+
 fn now_wall_ns() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -352,6 +391,17 @@ fn symmetric_unicast(cfg: &ScenarioCfg, aeron: &Aeron) -> ScenarioResult {
         let mut recv = Recv::default();
         let started = Instant::now();
         while (sent < cfg.msgs || recv.received < cfg.msgs) && started.elapsed() < cfg.timeout {
+            if cfg.pause_at == Some(sent) {
+                // Held mid-stream (the peer MAC move): still receiving.
+                let dir = cfg
+                    .hold_dir
+                    .as_deref()
+                    .ok_or("RUSTERON_HARNESS_PAUSE_AT needs RUSTERON_HARNESS_HOLD_DIR")?;
+                wait_released(dir, &cfg.role, cfg.timeout.saturating_sub(started.elapsed()), || {
+                    poll_once(&sub, cfg.expect_byte, &mut recv)
+                })?;
+                res.push(format!("held after {sent} messages until released"));
+            }
             if sent < cfg.msgs {
                 let msg = build_msg(cfg, sent);
                 offer_retry(&pub_, &msg, cfg.timeout)?;
@@ -582,6 +632,71 @@ fn multi_endpoint(cfg: &ScenarioCfg, aeron: &Aeron) -> ScenarioResult {
         })()
     };
 
+    match result {
+        Ok(()) => res.ok = true,
+        Err(e) => {
+            warn!("scenario failed: {e}");
+            res.error = Some(e.to_string());
+        }
+    }
+    res
+}
+
+/// The ports up and polled, no traffic of its own, until the script releases
+/// it: the publication's control endpoint (the sender port) and the
+/// subscription (the receiver port) are open, so both ports answer what the
+/// script sends them (ICMP echo) and count it.
+fn hold(cfg: &ScenarioCfg, aeron: &Aeron) -> ScenarioResult {
+    let mut res = ScenarioResult::default();
+    let result = (|| -> Result<(), Box<dyn Error>> {
+        let dir = cfg
+            .hold_dir
+            .as_deref()
+            .ok_or("the hold scenario needs RUSTERON_HARNESS_HOLD_DIR")?;
+        let _pub = open_publication(aeron, &cfg.pub_ctrl, cfg.stream, cfg.timeout)?;
+        let _sub = open_subscription(aeron, cfg.sub(), cfg.stream, cfg.timeout)?;
+        wait_released(dir, &cfg.role, cfg.timeout, || Ok(()))?;
+        res.push("held until released".to_string());
+        Ok(())
+    })();
+    match result {
+        Ok(()) => res.ok = true,
+        Err(e) => {
+            warn!("scenario failed: {e}");
+            res.error = Some(e.to_string());
+        }
+    }
+    res
+}
+
+/// A destination off the port's subnet, behind a gateway that never answers
+/// ARP: the publication must stay unconnected for `hold_secs` (its SETUP
+/// frames go nowhere: no broadcast, no guessed MAC), and the transport counts
+/// and reports the unanswered next hop (asserted on the counters and the
+/// error log by the script).
+fn silent_gateway(cfg: &ScenarioCfg, aeron: &Aeron) -> ScenarioResult {
+    let mut res = ScenarioResult::default();
+    let result = (|| -> Result<(), Box<dyn Error>> {
+        let pub_ = open_publication(aeron, &cfg.pub_ctrl, cfg.stream, cfg.timeout)?;
+        pub_.add_destination(&cfg.dest().udp_uri().into_c_string(), cfg.timeout)?;
+        let started = Instant::now();
+        while started.elapsed() < cfg.hold_secs {
+            if pub_.is_connected() {
+                return Err(format!(
+                    "connected to {} through a gateway that never answers",
+                    cfg.dest().udp_uri()
+                )
+                .into());
+            }
+            sleep(Duration::from_millis(10));
+        }
+        res.push(format!(
+            "not connected to {} after {:?}, as expected",
+            cfg.dest().udp_uri(),
+            cfg.hold_secs
+        ));
+        Ok(())
+    })();
     match result {
         Ok(()) => res.ok = true,
         Err(e) => {

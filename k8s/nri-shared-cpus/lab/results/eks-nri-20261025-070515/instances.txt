@@ -1,0 +1,7 @@
+cluster ergon-lab-eks-nri-20261025-070515 kubernetes 1.36
+type c8g.xlarge zone us-east-1d market spot strategy price-capacity-optimized
+ami ami-078e98ef0d3ba913c
+images <account>.dkr.ecr.us-east-1.amazonaws.com/ergon-lab-eks-nri-20261025-070515/{shared-cpus,workload}:0d5d47a173ca-e3b0c44298fc
+a i-083b55c569aac2083
+b i-070d56872199fbf1e
+reserved 0,1 isolated 2,3 shared 0 irq 1 hugepages 256

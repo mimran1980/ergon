@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: Apache-2.0
+# ergon.io/latency: hot on every pod: the plugin then checks each create
+# against the node's kubelet config, /sys and /proc (isolcpus, IRQs), and
+# the admission policy checks the pod spec. A node without isolcpus refuses
+# these pods at create: use it only on a node prepared as node/ says.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - target: {kind: DaemonSet, name: ll-media-driver}
+    patch: |-
+      - op: add
+        path: /spec/template/metadata/labels/ergon.io~1latency
+        value: hot
+  - target: {kind: Deployment, name: ll-pong}
+    patch: |-
+      - op: add
+        path: /spec/template/metadata/labels/ergon.io~1latency
+        value: hot
+  - target: {kind: Job, name: ll-ping}
+    patch: |-
+      - op: add
+        path: /spec/template/metadata/labels/ergon.io~1latency
+        value: hot

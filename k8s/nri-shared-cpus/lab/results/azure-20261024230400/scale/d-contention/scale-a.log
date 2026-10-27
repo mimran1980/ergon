@@ -1,0 +1,3 @@
+gapprobe: label=scale-a cpu=3 counter_hz=1000000000 threshold=1000ns seconds=100 udp_rate=0 helpers=process ERGON_ISOLATED_CPUS=3 ERGON_SHARED_CPUS=1 main_affinity=[1]
+gapprobe: scale-a cpu=3 samples=4165329408 p50=24 p90=24 p99=32 p99.9=32 p99.99=32 max=14968 ns max_end=1792883653457430373 gaps>=1000ns=8175 dropped=0 nvcsw=0 nivcsw=0 minflt=0 majflt=0 udp_received=0
+Terminated
