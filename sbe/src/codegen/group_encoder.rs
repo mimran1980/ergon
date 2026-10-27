@@ -149,7 +149,7 @@ pub(crate) fn generate_group_encoder(
     // Capacity / null-init prelude shared by both add forms.
     let mut capacity_body = quote::quote! {
         if self.written >= self.count {
-            core::hint::cold_path();
+            sbe_rt::cold();
             return Err(sbe_rt::EncodeError::GroupFull {
                 declared: sbe_rt::group_diag_count(self.count as u64)?,
                 attempted: sbe_rt::group_diag_count(self.written as u64)?
@@ -163,7 +163,7 @@ pub(crate) fn generate_group_encoder(
         }
         let block_len = Self::ENTRY_BLOCK_LENGTH;
         if self.offset.checked_add(block_len).is_none_or(|end| end > self.buf.len()) {
-            core::hint::cold_path();
+            sbe_rt::cold();
             return Err(sbe_rt::EncodeError::BufferTooShort {
                 field: "group entry",
                 needed: block_len,
@@ -262,7 +262,7 @@ pub(crate) fn generate_group_encoder(
             #[inline]
             pub fn start_entry(&mut self) -> Result<#entry_enc_ident<'_>, sbe_rt::EncodeError> {
                 if self.written as u64 >= self.count as u64 {
-                    core::hint::cold_path();
+                    sbe_rt::cold();
                     return Err(sbe_rt::EncodeError::GroupFull {
                         declared: sbe_rt::group_diag_count(self.count as u64)?,
                         attempted: sbe_rt::group_diag_count(self.written as u64)?
@@ -280,7 +280,7 @@ pub(crate) fn generate_group_encoder(
                     .map(|end| end > self.buf.len())
                     .unwrap_or(true)
                 {
-                    core::hint::cold_path();
+                    sbe_rt::cold();
                     return Err(sbe_rt::EncodeError::BufferTooShort {
                         field: "group entry",
                         needed: block_len,
@@ -439,7 +439,7 @@ pub(crate) fn generate_group_encoder(
                 #[inline]
                 pub fn add_struct(&mut self, entry: &#entry_struct_ident) -> Result<(), sbe_rt::EncodeError> {
                     if self.written as u64 >= self.count as u64 {
-                        core::hint::cold_path();
+                        sbe_rt::cold();
                         return Err(sbe_rt::EncodeError::GroupFull {
                             declared: sbe_rt::group_diag_count(self.count as u64)?,
                             attempted: sbe_rt::group_diag_count(self.written as u64)?
@@ -452,7 +452,7 @@ pub(crate) fn generate_group_encoder(
                     }
                     let block_len = Self::ENTRY_BLOCK_LENGTH;
                     if self.offset.checked_add(block_len).is_none_or(|end| end > self.buf.len()) {
-                        core::hint::cold_path();
+                        sbe_rt::cold();
                         return Err(sbe_rt::EncodeError::BufferTooShort {
                             field: "group entry",
                             needed: block_len,
@@ -483,7 +483,7 @@ pub(crate) fn generate_group_encoder(
                         .checked_add(count)
                         .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
                     if attempted > sbe_rt::count_to_usize(self.count as u64)? {
-                        core::hint::cold_path();
+                        sbe_rt::cold();
                         return Err(sbe_rt::EncodeError::GroupFull {
                             declared: sbe_rt::group_diag_count(self.count as u64)?,
                             attempted: sbe_rt::group_diag_count(attempted as u64)?,
@@ -502,7 +502,7 @@ pub(crate) fn generate_group_encoder(
                         .checked_add(needed)
                         .ok_or(sbe_rt::EncodeError::EncodedLengthOverflow)?;
                     if end > self.buf.len() {
-                        core::hint::cold_path();
+                        sbe_rt::cold();
                         return Err(sbe_rt::EncodeError::BufferTooShort {
                             field: "group entry",
                             needed,
@@ -756,7 +756,7 @@ pub(crate) fn generate_group_encoder(
                 F: FnOnce(&mut #ng_enc<'a>) -> sbe_rt::GroupResult,
             {
                 if self.offset + #ng_dim > self.buf.len() {
-                    core::hint::cold_path();
+                    sbe_rt::cold();
                     return Err(sbe_rt::EncodeError::BufferTooShort {
                         field: "group entry",
                         needed: #ng_dim,
@@ -775,7 +775,7 @@ pub(crate) fn generate_group_encoder(
                     f(&mut group)?;
                     let written = group.written();
                     if written != count {
-                        core::hint::cold_path();
+                        sbe_rt::cold();
                         return Err(sbe_rt::EncodeError::GroupCountMismatch {
                             declared: sbe_rt::group_diag_count(count as u64)?,
                             actual: sbe_rt::group_diag_count(written as u64)?,
@@ -797,7 +797,7 @@ pub(crate) fn generate_group_encoder(
                 F: FnOnce(&mut #ng_enc<'a>) -> sbe_rt::GroupResult,
             {
                 if self.offset + #ng_dim > self.buf.len() {
-                    core::hint::cold_path();
+                    sbe_rt::cold();
                     return Err(sbe_rt::EncodeError::BufferTooShort {
                         field: "group entry",
                         needed: #ng_dim,
@@ -840,7 +840,7 @@ pub(crate) fn generate_group_encoder(
             let max_lit = syn::LitInt::new(&max.to_string(), span);
             quote::quote! {
                 if data.len() > #max_lit {
-                    core::hint::cold_path();
+                    sbe_rt::cold();
                     return Err(sbe_rt::EncodeError::VarDataTooLong {
                         field: #vd_name_lit,
                         max_length: #max_lit,
@@ -872,7 +872,7 @@ pub(crate) fn generate_group_encoder(
                 #schema_max_check
                 let needed = #pfx + data.len();
                 if self.offset + needed > self.buf.len() {
-                    core::hint::cold_path();
+                    sbe_rt::cold();
                     return Err(sbe_rt::EncodeError::BufferTooShort {
                         field: "group entry",
                         needed,

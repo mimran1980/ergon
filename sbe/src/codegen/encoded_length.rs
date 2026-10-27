@@ -315,7 +315,7 @@ fn generate_staged(
                                     self.state.fail(sbe_rt::EncodeError::VarDataTooLong {
                                         field: #nvd_field, max_length: #max_lit, actual: byte_len,
                                     });
-                                    core::hint::cold_path();
+                                    sbe_rt::cold();
                                     return Err(sbe_rt::EncodeError::VarDataTooLong {
                                         field: #nvd_field, max_length: #max_lit, actual: byte_len,
                                     });
@@ -361,7 +361,7 @@ fn generate_staged(
                             self.state.fail(sbe_rt::EncodeError::VarDataTooLong {
                                 field: #field_name, max_length: #max_lit, actual: byte_len,
                             });
-                            core::hint::cold_path();
+                            sbe_rt::cold();
                             return Err(sbe_rt::EncodeError::VarDataTooLong {
                                 field: #field_name, max_length: #max_lit, actual: byte_len,
                             });
@@ -398,7 +398,7 @@ fn generate_staged(
                         -> Result<#next_name, sbe_rt::EncodeError>
                     {
                         if self.declared_count != 0 {
-                            core::hint::cold_path();
+                            sbe_rt::cold();
                             return Err(sbe_rt::EncodeError::GroupCountMismatch {
                                 declared: self.declared_count,
                                 actual: 0,
@@ -514,7 +514,7 @@ fn generate_staged(
                         f(&mut wrapper)?;
                         let actual = sbe_rt::group_diag_count(builder.written as u64)?;
                         if actual != declared {
-                            core::hint::cold_path();
+                            sbe_rt::cold();
                             return Err(sbe_rt::EncodeError::GroupCountMismatch {
                                 declared,
                                 actual,
@@ -543,7 +543,7 @@ fn generate_staged(
                         let mut wrapper = #wrapper_ident { b: &mut builder };
                         f(&mut wrapper)?;
                         if builder.written > max_count {
-                            core::hint::cold_path();
+                            sbe_rt::cold();
                             return Err(sbe_rt::EncodeError::GroupCountOverflow {
                                 maximum: sbe_rt::group_diag_count(#count_ty::MAX as u64)?,
                                 actual: sbe_rt::group_diag_count(builder.written as u64)?,
@@ -605,7 +605,7 @@ fn generate_staged(
             let max_lit = syn::LitInt::new(&max.to_string(), span);
             max_chk.extend(quote::quote! {
                 if byte_len > #max_lit {
-                    core::hint::cold_path();
+                    sbe_rt::cold();
                     return Err(sbe_rt::EncodeError::VarDataTooLong {
                         field: #field_name, max_length: #max_lit, actual: byte_len,
                     });
@@ -623,14 +623,14 @@ fn generate_staged(
                     let len = match self.state.len.checked_add(#ps_lit as usize) {
                         Some(v) => v,
                         None => {
-                            core::hint::cold_path();
+                            sbe_rt::cold();
                             return Err(sbe_rt::EncodeError::EncodedLengthOverflow);
                         }
                     };
                     let len = match len.checked_add(byte_len) {
                         Some(v) => v,
                         None => {
-                            core::hint::cold_path();
+                            sbe_rt::cold();
                             return Err(sbe_rt::EncodeError::EncodedLengthOverflow);
                         }
                     };
@@ -775,7 +775,7 @@ fn generate_direct(
             let pi = param_ident.clone();
             max_check.extend(quote::quote! {
                 if #pi > #max_lit {
-                    core::hint::cold_path();
+                    sbe_rt::cold();
                     return Err(sbe_rt::EncodeError::VarDataTooLong {
                         field: #vd_name,
                         max_length: #max_lit,
@@ -796,14 +796,14 @@ fn generate_direct(
             len = match len.checked_add(#ps as usize) {
                 Some(v) => v,
                 None => {
-                    core::hint::cold_path();
+                    sbe_rt::cold();
                     return Err(sbe_rt::EncodeError::EncodedLengthOverflow);
                 }
             };
             len = match len.checked_add(#pi_body) {
                 Some(v) => v,
                 None => {
-                    core::hint::cold_path();
+                    sbe_rt::cold();
                     return Err(sbe_rt::EncodeError::EncodedLengthOverflow);
                 }
             };
@@ -890,7 +890,7 @@ pub(super) fn generate_support() -> TokenStream {
             ) {
                 if self.error.is_some() { return; }
                 let Some(scaled) = repetitions.checked_mul(times) else {
-                    core::hint::cold_path();
+                    sbe_rt::cold();
                     self.error = Some(sbe_rt::EncodeError::EncodedLengthOverflow);
                     return;
                 };
@@ -902,11 +902,11 @@ pub(super) fn generate_support() -> TokenStream {
                 if self.error.is_some() { return; }
                 let contribution = match unit_len.checked_mul(repetitions) {
                     Some(c) => c,
-                    None => { core::hint::cold_path(); self.error = Some(sbe_rt::EncodeError::EncodedLengthOverflow); return; }
+                    None => { sbe_rt::cold(); self.error = Some(sbe_rt::EncodeError::EncodedLengthOverflow); return; }
                 };
                 self.len = match self.len.checked_add(contribution) {
                     Some(l) => l,
-                    None => { core::hint::cold_path(); self.error = Some(sbe_rt::EncodeError::EncodedLengthOverflow); self.len }
+                    None => { sbe_rt::cold(); self.error = Some(sbe_rt::EncodeError::EncodedLengthOverflow); self.len }
                 };
             }
 
@@ -918,7 +918,7 @@ pub(super) fn generate_support() -> TokenStream {
                 self.add_scaled(dimension_length, parent_multiplier);
                 self.multiplier = match parent_multiplier.checked_mul(count) {
                     Some(m) => m,
-                    None => { core::hint::cold_path(); self.error = Some(sbe_rt::EncodeError::EncodedLengthOverflow); 0 }
+                    None => { sbe_rt::cold(); self.error = Some(sbe_rt::EncodeError::EncodedLengthOverflow); 0 }
                 };
                 self.add_scaled(entry_block_length, self.multiplier);
                 parent_multiplier

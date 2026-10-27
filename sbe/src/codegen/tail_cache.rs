@@ -89,7 +89,7 @@ pub(crate) fn emit_tail_offsets(
             fn #walk_ident(&self, start: usize) -> Result<usize, sbe_rt::DecodeError> {
                 #version_skip
                 if start + #dim_size_lit > self.buf.len() {
-                    core::hint::cold_path();
+                    sbe_rt::cold();
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: #gn_lit,
                         needed: #dim_size_lit,
@@ -152,7 +152,7 @@ pub(crate) fn emit_tail_offsets(
             fn #walk_ident(&self, start: usize) -> Result<usize, sbe_rt::DecodeError> {
                 #version_skip
                 if #prefix_size_lit > self.buf.len().saturating_sub(start) {
-                    core::hint::cold_path();
+                    sbe_rt::cold();
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: #vd_name_lit,
                         needed: #prefix_size_lit,
