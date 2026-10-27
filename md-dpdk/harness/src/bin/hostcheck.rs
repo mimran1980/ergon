@@ -230,11 +230,21 @@ fn line(f: &Finding) -> String {
     f.to_string().replace(['\n', '\r'], " ")
 }
 
+/// Findings reported but never blocking: T11 (how `CLOCK_REALTIME` is kept,
+/// e.g. NTP rather than a PTP hardware clock, as on AWS) only bounds
+/// wall-clock stamps compared across hosts, and every latency this suite
+/// reports is taken on one host's counter (round trips, and one-way rows
+/// within one host).
+const REPORTED_ONLY: &[&str] = &["T11"];
+
 /// Whether a line keeps the host from being clean.
 fn blocks(line: &str) -> bool {
     let Some((id, rest)) = line.split_once(' ') else {
         return true;
     };
+    if REPORTED_ONLY.contains(&id) {
+        return false;
+    }
     rest.starts_with("warn:") || (rest.starts_with("unknown:") && unknown_stops_require(id))
 }
 
@@ -267,4 +277,19 @@ fn main() -> ExitCode {
         eprintln!("  {l}");
     }
     ExitCode::from(2)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::blocks;
+
+    #[test]
+    fn a_wall_clock_warning_is_reported_not_blocking() {
+        assert!(!blocks(
+            "T11 warn: CLOCK_REALTIME is not disciplined to a PTP hardware clock (chronyd tracks NTP server 169.254.169.123)"
+        ));
+        assert!(blocks("T1 warn: CPU 2 is not isolated"));
+        assert!(blocks("garbage"));
+        assert!(!blocks("T1 ok: isolated"));
+    }
 }
