@@ -228,7 +228,8 @@ elif [[ $1 == route && $2 == append ]]; then
     echo "$*" >>"$FAKE_ROUTES"
 fi
 SH
-# fake ethtool: rings settable up to 4096; coalescing unless FAKE_NO_COALESCE
+# fake ethtool: rings settable up to 4096; coalescing unless FAKE_NO_COALESCE;
+# FAKE_ENA: no adaptive TX (n/a), and a -C naming it is refused whole, as ENA's
 cat >"$tmp/fakebin/ethtool" <<'SH'
 #!/usr/bin/env bash
 echo "ethtool $*" >>"$FAKE_LOG"
@@ -238,8 +239,11 @@ case $1 in
 -g) read -r r t <"$st/ring-$2" 2>/dev/null || { r=512 t=512; }
     printf 'Ring parameters for %s:\nPre-set maximums:\nRX:\t\t4096\nTX:\t\t4096\nCurrent hardware settings:\nRX:\t\t%s\nTX:\t\t%s\n' "$2" "$r" "$t" ;;
 -c) [[ -n ${FAKE_NO_COALESCE:-} ]] && { echo "netlink error: Operation not supported" >&2; exit 76; }
-    if [[ -e $st/coal-$2 ]]; then printf 'Adaptive RX: off  TX: off\nrx-usecs: 0\ntx-usecs: 0\n'; else printf 'Adaptive RX: on  TX: on\nrx-usecs: 8\ntx-usecs: 8\n'; fi ;;
--C) [[ -z ${FAKE_COALESCE_STUCK:-} ]] && touch "$st/coal-$2"; exit 0 ;;
+    if [[ -n ${FAKE_ENA:-} ]]; then
+        if [[ -e $st/coal-$2 ]]; then printf 'Adaptive RX: off  TX: n/a\nrx-usecs: 0\ntx-usecs: 0\n'; else printf 'Adaptive RX: on  TX: n/a\nrx-usecs: 20\ntx-usecs: 64\n'; fi
+    elif [[ -e $st/coal-$2 ]]; then printf 'Adaptive RX: off  TX: off\nrx-usecs: 0\ntx-usecs: 0\n'; else printf 'Adaptive RX: on  TX: on\nrx-usecs: 8\ntx-usecs: 8\n'; fi ;;
+-C) [[ -n ${FAKE_ENA:-} && " $* " == *" adaptive-tx "* ]] && { echo "netlink error: Operation not supported" >&2; exit 76; }
+    [[ -z ${FAKE_COALESCE_STUCK:-} ]] && touch "$st/coal-$2"; exit 0 ;;
 esac
 SH
 # fake tc: one root qdisc an interface, its counters growing per show -s
@@ -371,14 +375,17 @@ got="ring: $(hostrun transport_ring enP1 1024 1024 2>&1; echo " rc $?")
 ring over: $(hostrun transport_ring enP1 8192 1024 >/dev/null 2>&1; echo "rc $?")
 coalesce: $(hostrun transport_coalesce_off enP1 2>&1; echo " rc $?")
 coalesce stuck: $(FAKE_COALESCE_STUCK=1 hostrun transport_coalesce_off enP2 >/dev/null 2>&1; echo "rc $?")
-coalesce none: $(FAKE_NO_COALESCE=1 hostrun transport_coalesce_off enP3 2>&1; echo " rc $?")"
-same "host.sh: rings set and read back (above the maximum refused), coalescing off and read back, none where the driver has none" "ring: ring enP1 rx 1024 tx 1024
+coalesce none: $(FAKE_NO_COALESCE=1 hostrun transport_coalesce_off enP3 2>&1; echo " rc $?")
+coalesce ena: $(FAKE_ENA=1 hostrun transport_coalesce_off enP4 2>&1; echo " rc $?")"
+same "host.sh: rings set and read back (above the maximum refused), coalescing off and read back (only what the driver has: ENA lacks adaptive TX), none where the driver has none" "ring: ring enP1 rx 1024 tx 1024
  rc 0
 ring over: rc 1
 coalesce: coalesce enP1 off (off off 0 0)
  rc 0
 coalesce stuck: rc 1
 coalesce none: coalesce enP3: none (the driver has no interrupt moderation)
+ rc 0
+coalesce ena: coalesce enP4 off (off n/a 0 0)
  rc 0" "$got"
 
 # netem on every data NIC: set and checked, the counters read, cleared

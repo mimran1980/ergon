@@ -1291,7 +1291,13 @@ transport_coalesce_off() {
         echo "coalesce $vf: ethtool -c failed: $cur" >&2
         return 1
     fi
-    sudo ethtool -C "$vf" adaptive-rx off adaptive-tx off rx-usecs 0 tx-usecs 0 >/dev/null 2>&1 || true
+    # only what the driver reports: ethtool refuses the whole -C for one
+    # setting the driver lacks (ENA has no adaptive-tx: "Adaptive TX: n/a")
+    local args
+    args=$(awk '/^Adaptive RX:/ {if ($3 != "n/a") a = a " adaptive-rx off"; if ($5 != "n/a") a = a " adaptive-tx off"}
+        /^rx-usecs:/ {if ($2 != "n/a") a = a " rx-usecs 0"} /^tx-usecs:/ {if ($2 != "n/a") a = a " tx-usecs 0"} END {print a}' <<<"$cur")
+    # shellcheck disable=SC2086
+    [[ -z $args ]] || sudo ethtool -C "$vf" $args >/dev/null 2>&1 || true
     cur=$(ethtool -c "$vf" 2>/dev/null | awk '/^Adaptive RX:/ {ar = $3; at = $5} /^rx-usecs:/ {r = $2} /^tx-usecs:/ {t = $2} END {print ar, at, r, t}')
     if [[ $cur =~ ^(off|n/a)\ (off|n/a)\ (0|n/a)\ (0|n/a)$ ]]; then echo "coalesce $vf off ($cur)"; return 0; fi
     echo "coalesce $vf: [$cur] (adaptive rx, tx, rx-usecs, tx-usecs) after asking off and 0" >&2
