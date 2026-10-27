@@ -10,6 +10,16 @@ use crate::error::ClusterError;
 /// Header, this field is fixed and never varies.
 const SBE_MESSAGE_HEADER_LENGTH: usize = 8;
 
+/// A [`ClusterError::ProtocolError`] for a malformed frame. Out of line so
+/// the per-fragment decode keeps the formatting off its hot path.
+#[cold]
+#[inline(never)]
+fn protocol_error(reason: std::fmt::Arguments<'_>) -> ClusterError {
+    ClusterError::ProtocolError {
+        reason: reason.to_string(),
+    }
+}
+
 /// A fully-decoded egress fragment, ready for listener dispatch.
 #[derive(Debug)]
 pub(crate) enum Fragment<'a> {
@@ -74,21 +84,17 @@ impl<'a> Fragment<'a> {
     /// 8-byte SBE header), invalid text, or buffer overruns.
     pub(crate) fn decode(data: &'a [u8]) -> Result<Option<Self>, ClusterError> {
         if data.len() < SBE_MESSAGE_HEADER_LENGTH {
-            return Err(ClusterError::ProtocolError {
-                reason: format!(
-                    "frame too short for SBE header: {} bytes (need at least {})",
-                    data.len(),
-                    SBE_MESSAGE_HEADER_LENGTH
-                ),
-            });
+            return Err(protocol_error(format_args!(
+                "frame too short for SBE header: {} bytes (need at least {})",
+                data.len(),
+                SBE_MESSAGE_HEADER_LENGTH
+            )));
         }
         let msg = match AnyMessage::decode(data, 0) {
             Ok(m) => m,
             Err(DecodeError::UnknownTemplateLength { .. }) => return Ok(None),
             Err(e) => {
-                return Err(ClusterError::ProtocolError {
-                    reason: format!("fragment decode: {e}"),
-                });
+                return Err(protocol_error(format_args!("fragment decode: {e}")));
             }
         };
 
@@ -98,9 +104,7 @@ impl<'a> Fragment<'a> {
                 // 8-byte frame header, not the full body. Reject truncated data
                 // before slicing the payload.
                 if data.len() < SessionMessageHeaderEncoder::ENCODED_LENGTH {
-                    return Err(ClusterError::ProtocolError {
-                        reason: "session message too short".into(),
-                    });
+                    return Err(protocol_error(format_args!("session message too short")));
                 }
                 let payload = decoder.get_metadata().remaining();
                 Self::Message {
@@ -117,9 +121,9 @@ impl<'a> Fragment<'a> {
                 let code = decoder.code();
                 // Read before `into_detail_as_str` consumes the decoder.
                 let leader_heartbeat_timeout_ns = decoder.leader_heartbeat_timeout_ns();
-                let (detail, _) = decoder.into_detail_as_str().map_err(|e| ClusterError::ProtocolError {
-                    reason: format!("session event detail: {e}"),
-                })?;
+                let (detail, _) = decoder
+                    .into_detail_as_str()
+                    .map_err(|e| protocol_error(format_args!("session event detail: {e}")))?;
                 Self::SessionEvent {
                     correlation_id: cid,
                     cluster_session_id: csid,
@@ -134,12 +138,9 @@ impl<'a> Fragment<'a> {
                 let csid = decoder.cluster_session_id();
                 let ltid = decoder.leadership_term_id();
                 let lmid = decoder.leader_member_id();
-                let (ingress_endpoints, _) =
-                    decoder
-                        .into_ingress_endpoints_as_str()
-                        .map_err(|e| ClusterError::ProtocolError {
-                            reason: format!("new leader endpoints: {e}"),
-                        })?;
+                let (ingress_endpoints, _) = decoder
+                    .into_ingress_endpoints_as_str()
+                    .map_err(|e| protocol_error(format_args!("new leader endpoints: {e}")))?;
                 Self::NewLeader {
                     cluster_session_id: csid,
                     leadership_term_id: ltid,
@@ -150,12 +151,9 @@ impl<'a> Fragment<'a> {
             AnyMessage::Challenge(decoder) => {
                 let cid = decoder.correlation_id();
                 let csid = decoder.cluster_session_id();
-                let (chal_bytes, _next) =
-                    decoder
-                        .into_encoded_challenge()
-                        .map_err(|e| ClusterError::ProtocolError {
-                            reason: format!("challenge payload: {e}"),
-                        })?;
+                let (chal_bytes, _next) = decoder
+                    .into_encoded_challenge()
+                    .map_err(|e| protocol_error(format_args!("challenge payload: {e}")))?;
                 Self::Challenge {
                     correlation_id: cid,
                     cluster_session_id: csid,
@@ -167,15 +165,14 @@ impl<'a> Fragment<'a> {
                 let cid = decoder.correlation_id();
                 let rt = decoder.request_type();
                 let rc = decoder.response_code();
-                let (msg_bytes, after_msg) = decoder.into_message().map_err(|e| ClusterError::ProtocolError {
-                    reason: format!("admin response message: {e:?}"),
-                })?;
-                let (payload_bytes, _) = after_msg.into_payload().map_err(|e| ClusterError::ProtocolError {
-                    reason: format!("admin response payload: {e:?}"),
-                })?;
-                let msg = std::str::from_utf8(msg_bytes).map_err(|e| ClusterError::ProtocolError {
-                    reason: format!("admin response not UTF-8: {e}"),
-                })?;
+                let (msg_bytes, after_msg) = decoder
+                    .into_message()
+                    .map_err(|e| protocol_error(format_args!("admin response message: {e:?}")))?;
+                let (payload_bytes, _) = after_msg
+                    .into_payload()
+                    .map_err(|e| protocol_error(format_args!("admin response payload: {e:?}")))?;
+                let msg = std::str::from_utf8(msg_bytes)
+                    .map_err(|e| protocol_error(format_args!("admin response not UTF-8: {e}")))?;
                 Self::AdminResponse {
                     cluster_session_id: csid,
                     correlation_id: cid,

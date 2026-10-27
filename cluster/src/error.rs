@@ -259,7 +259,7 @@ pub enum ClusterError {
 
 impl ClusterError {
     /// Wrap an [`AeronCError`] with a static context label.
-    #[inline]
+    #[cold]
     pub fn aeron(context: &'static str, e: AeronCError) -> Self {
         let message = e.to_string();
         let source = e.into();
@@ -271,7 +271,7 @@ impl ClusterError {
     }
 
     /// Connect-phase failure with a free-form reason.
-    #[inline]
+    #[cold]
     pub fn connect(reason: impl Into<String>) -> Self {
         Self::ConnectFailed { reason: reason.into() }
     }
@@ -298,7 +298,7 @@ impl ClusterError {
     /// Carries the reason as an Aeron message string. Not classified
     /// as a retryable sentinel — use `from_offer_raw`/`from_offer_error`
     /// for those.
-    #[inline]
+    #[cold]
     pub fn publication(reason: impl Into<String>) -> Self {
         Self::Aeron {
             context: "publication",
@@ -308,7 +308,7 @@ impl ClusterError {
     }
 
     /// Reconnect-phase failure with a free-form reason.
-    #[inline]
+    #[cold]
     pub fn reconnect(reason: impl Into<String>) -> Self {
         Self::ReconnectFailed { reason: reason.into() }
     }
@@ -325,6 +325,7 @@ impl ClusterError {
 }
 
 impl From<crate::codecs::session::sbe_rt::DecodeError> for ClusterError {
+    #[cold]
     fn from(e: crate::codecs::session::sbe_rt::DecodeError) -> Self {
         ClusterError::ProtocolError {
             reason: format!("decode: {e:?}"),
@@ -333,6 +334,7 @@ impl From<crate::codecs::session::sbe_rt::DecodeError> for ClusterError {
 }
 
 impl From<crate::codecs::session::sbe_rt::EncodeError> for ClusterError {
+    #[cold]
     fn from(e: crate::codecs::session::sbe_rt::EncodeError) -> Self {
         ClusterError::ProtocolError {
             reason: format!("encode: {e:?}"),
@@ -341,6 +343,7 @@ impl From<crate::codecs::session::sbe_rt::EncodeError> for ClusterError {
 }
 
 impl From<AeronCError> for ClusterError {
+    #[cold]
     fn from(e: AeronCError) -> Self {
         ClusterError::aeron("aeron", e)
     }

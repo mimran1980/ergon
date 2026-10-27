@@ -136,6 +136,7 @@ fn dispatch_regular<L: EgressListener>(ctx: &mut PollCtx<L>, data: &[u8], hdr: r
             return;
         }
         Err(e) => {
+            std::hint::cold_path();
             if ctx.decode_err.is_none() {
                 *ctx.decode_err = Some(e);
             }
@@ -150,6 +151,7 @@ fn dispatch_regular<L: EgressListener>(ctx: &mut PollCtx<L>, data: &[u8], hdr: r
             ingress_endpoints,
             cluster_session_id,
         } if *cluster_session_id == ctx.expected_session_id => {
+            std::hint::cold_path();
             *ctx.new_leader = Some(NewLeader {
                 leadership_term_id: *leadership_term_id,
                 leader_member_id: *leader_member_id,
@@ -162,6 +164,7 @@ fn dispatch_regular<L: EgressListener>(ctx: &mut PollCtx<L>, data: &[u8], hdr: r
             cluster_session_id,
             ..
         } if *cluster_session_id == ctx.expected_session_id => {
+            std::hint::cold_path();
             *ctx.session_closed = true;
         }
         _ => {}
@@ -864,6 +867,7 @@ impl AeronCluster {
     /// `AeronCluster.offer(buffer)`.
     pub fn offer(&mut self, payload: &[u8]) -> Result<i64, ClusterError> {
         if self.state != SessionState::Connected {
+            std::hint::cold_path();
             return Err(ClusterError::NotConnected);
         }
         let total = MSG_HDR_TOTAL
@@ -876,6 +880,7 @@ impl AeronCluster {
         // Reject frames that exceed the publication's max message length
         // before making any Aeron call.
         if total > self.max_message_length {
+            std::hint::cold_path();
             return Err(ClusterError::PayloadTooLarge {
                 operation: "offer",
                 requested: total,
@@ -921,9 +926,11 @@ impl AeronCluster {
     /// land.
     pub fn offer_vectors(&mut self, parts: &[&[u8]]) -> Result<i64, ClusterError> {
         if self.state != SessionState::Connected {
+            std::hint::cold_path();
             return Err(ClusterError::NotConnected);
         }
         if parts.len() >= MAX_OFFER_PARTS {
+            std::hint::cold_path();
             return Err(ClusterError::Publication {
                 failure: PublicationFailure::TooManyParts,
                 context: "offer_vectors",
@@ -946,6 +953,7 @@ impl AeronCluster {
             gathered[index + 1] = part;
         }
         if total > self.max_message_length {
+            std::hint::cold_path();
             return Err(ClusterError::PayloadTooLarge {
                 operation: "offer_vectors",
                 requested: total,
@@ -1000,6 +1008,7 @@ impl AeronCluster {
     ///
     /// [`Self::poll`] does not call this. Call it from the same loop
     /// that polls egress.
+    #[inline]
     pub fn keep_alive_if_due(&mut self) -> Result<(), ClusterError> {
         let now = Instant::now();
         if self.state == SessionState::Connected
@@ -1012,6 +1021,7 @@ impl AeronCluster {
     }
 
     /// Apply [`protocol::ingress_failure_state`] for one publication failure.
+    #[cold]
     fn note_ingress_failure(&mut self, failure: PublicationFailure) {
         let next = protocol::ingress_failure_state(self.state, failure);
         if next == self.state {
@@ -1031,6 +1041,7 @@ impl AeronCluster {
 
     /// Apply a typed `ClusterError::Publication` from `offer` / `try_claim`
     /// to the session state (Java `trackIngressPublicationResult`).
+    #[cold]
     fn track_publication_error(&mut self, err: ClusterError) -> ClusterError {
         if let ClusterError::Publication { failure, .. } = &err {
             self.note_ingress_failure(*failure);
@@ -1060,6 +1071,7 @@ impl AeronCluster {
         payload: &[u8],
     ) -> Result<i64, ClusterError> {
         if self.state != SessionState::Connected {
+            std::hint::cold_path();
             return Err(ClusterError::NotConnected);
         }
         let len = AdminRequestEncoder::compute_encoded_length_with_message_header(payload.len());
@@ -1068,6 +1080,7 @@ impl AeronCluster {
             .try_claim_owned(len)
             .map_err(|error| self.track_publication_error(ClusterError::from_offer_error("admin_request", error)))?;
         if claim.data().len() < len {
+            std::hint::cold_path();
             return Err(ClusterError::BufferTooSmall {
                 needed: len,
                 actual: claim.data().len(),
@@ -1165,6 +1178,7 @@ impl AeronCluster {
             self.on_new_leader_event(event)?;
         }
         if let Some(e) = decode_err {
+            std::hint::cold_path();
             return Err(e);
         }
         self.poll_state()
@@ -1177,6 +1191,7 @@ impl AeronCluster {
     /// [`Self::poll_pending_ingress`] swaps the connected publication in. A
     /// later event replaces a pending add. The fragment assemblers are kept:
     /// they buffer per session id, so the old leader's leftovers are harmless.
+    #[cold]
     fn on_new_leader_event(&mut self, event: NewLeader) -> Result<(), ClusterError> {
         if !matches!(self.state, SessionState::Connected | SessionState::AwaitingNewLeader) {
             return Ok(());
@@ -1253,16 +1268,19 @@ impl AeronCluster {
 
     /// The cluster-assigned session id (set after connect completes).
     #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
     pub fn cluster_session_id(&self) -> i64 {
         self.cluster_session_id
     }
     /// The current leadership term (set after connect completes).
     #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
     pub fn leadership_term_id(&self) -> i64 {
         self.leadership_term_id
     }
     /// The current leader's member id (set after connect completes).
     #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
     pub fn leader_member_id(&self) -> i32 {
         self.leader_member_id
     }
@@ -1430,6 +1448,7 @@ impl AeronCluster {
     /// ```
     pub fn try_claim(&mut self, payload_len: usize) -> Result<ClusterClaim, ClusterError> {
         if self.state != SessionState::Connected {
+            std::hint::cold_path();
             return Err(ClusterError::NotConnected);
         }
         // A claim is one frame, so Aeron also caps it at the max payload length.
@@ -1442,6 +1461,7 @@ impl AeronCluster {
                 maximum,
             })?;
         if total > maximum {
+            std::hint::cold_path();
             return Err(ClusterError::PayloadTooLarge {
                 operation: "try_claim",
                 requested: total,
@@ -1456,6 +1476,7 @@ impl AeronCluster {
         // Write the SessionMessageHeader (schema 111) into the claim's
         // first 32 bytes via the ergon encoder.
         if claim.data().len() < MSG_HDR_TOTAL {
+            std::hint::cold_path();
             return Err(ClusterError::BufferTooSmall {
                 needed: MSG_HDR_TOTAL,
                 actual: claim.data().len(),
@@ -1494,6 +1515,7 @@ pub(crate) fn apply_state_transition(
             if let Some(since) = *awaiting_leader_since
                 && since.elapsed() >= Duration::from_millis(awaiting.timeout_ms)
             {
+                std::hint::cold_path();
                 *state = SessionState::Closed;
                 return Err(ClusterError::Disconnected {
                     reason: format!("no {} ({}ms)", awaiting.what, awaiting.timeout_ms),
@@ -1519,6 +1541,7 @@ pub struct ClusterClaim {
 
 impl ClusterClaim {
     /// The writable payload region (after the SessionMessageHeader).
+    #[inline]
     pub fn payload_mut(&mut self) -> &mut [u8] {
         let start = MSG_HDR_TOTAL;
         &mut self.claim.data()[start..start + self.payload_len]
@@ -1526,6 +1549,7 @@ impl ClusterClaim {
 
     /// Stream position Aeron assigned to this claim.
     #[must_use = "discarding this value is almost always a mistake"]
+    #[inline]
     pub fn position(&self) -> i64 {
         self.claim.position()
     }
@@ -1535,11 +1559,13 @@ impl ClusterClaim {
     /// returns a generic Aeron error (`AeronCError`), not a publication
     /// sentinel like `offer`/`try_claim`. The caller should treat a failed
     /// commit as terminal for this claim.
+    #[inline]
     pub fn commit(self) -> Result<i64, ClusterError> {
         self.claim.commit().map_err(|e| ClusterError::aeron("claim_commit", e))
     }
 
     /// Abort the claim, discarding it as padding.
+    #[inline]
     pub fn abort(self) -> Result<(), ClusterError> {
         self.claim.abort().map_err(|e| ClusterError::aeron("claim_abort", e))
     }
