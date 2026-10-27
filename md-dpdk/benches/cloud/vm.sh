@@ -132,6 +132,10 @@
 # Roles: the data NIC with the lower private IP is the driver's sender port,
 # the higher its receiver port (both on the data subnet, DATA_SUBNET).
 set -euo pipefail
+# a command that fails outside a condition ends the script (set -e): said,
+# with its line, so no step stops silently (`driver dpdk` once did, in
+# pin_irqs, with nothing in the log)
+trap 'echo "vm.sh: line $LINENO: \"$BASH_COMMAND\" failed (exit $?): stopping" >&2' ERR
 # ethtool, sysctl and modprobe live in /usr/sbin, off a non-login ssh PATH
 export PATH=/usr/local/sbin:/usr/sbin:/sbin:$PATH
 self=$(readlink -f "$0")
@@ -551,8 +555,14 @@ pin_irqs() {
     # (irqs.sh irqs_pin_data), the NICs' interfaces and VFs
     # (fail closed; none to move only while DPDK holds every NIC)
     if [[ -s ${run:-}/transport-map ]]; then
-        local ifaces
-        ifaces=$(data_ifaces 2>/dev/null) || ifaces=
+        local ifaces i
+        # only interfaces the kernel has: a NIC on igb_uio has none, and
+        # `nics` then prints its line with the interface fields empty (so
+        # data_ifaces gave its MAC), which found no IRQ and failed
+        # `driver dpdk` silently under set -e
+        ifaces=$(data_ifaces 2>/dev/null | while read -r i; do
+            [[ -n $i && -e $LAB_SYS_ROOT/class/net/$i ]] && echo "$i"
+        done) || ifaces=
         read -r _ cpu _ <"$run/transport-map"
         [[ -n $ifaces ]] || { echo "irqs $1: no data NIC in the kernel's hands" >&2; return 0; }
         local rc=0

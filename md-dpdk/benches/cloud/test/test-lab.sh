@@ -2839,6 +2839,31 @@ if [[ $restored != "$want" ]]; then
 else
     pass "vm.sh: @IRQ=, @NAPI_DEFER= and @NAPI_BUSY= set for a mode and undone after it (queue IRQs back on housekeeping, the NAPIs' values and threading as before, nothing left)"
 fi
+# the transport suite under `driver dpdk`: DPDK holds both data NICs (on
+# igb_uio no interface is left, and `nics` prints its lines with those fields
+# empty, so data_ifaces gives MACs), so pin_irqs has none to move and says so,
+# 0; under set -e a 1 here had ended `driver dpdk` silently on AWS
+got=$(
+    set -e
+    exec 2>&1
+    LAB_PROC_ROOT=$rt/proc LAB_SYS_ROOT=$rt/sys
+    # shellcheck source=../irqs.sh
+    . "$cloud/irqs.sh" || exit 1
+    eval "$(vm_fn pin_irqs)"
+    run=$tmp/vm-dpdk-irqs HK_CPU=0
+    mkdir -p "$run"
+    echo "0 1 2,3,4,5,6,7" >"$run/transport-map"
+    irqs_pin() { :; }
+    data_ifaces() { printf '0a:00:00:00:00:01\n0a:00:00:00:00:02\n'; }
+    pin_irqs "before the driver starts"
+    echo "rc 0"
+)
+if [[ $got == "irqs before the driver starts: no data NIC in the kernel's hands
+rc 0" ]]; then
+    pass "vm.sh pin_irqs (transport suite): with DPDK holding every data NIC, none to move, said, not a silent failure under set -e"
+else
+    fail "vm.sh pin_irqs with DPDK holding the data NICs: $got"
+fi
 # SMT=off on a four-core x86 (c7i.2xlarge's fake /sys), as above: the
 # diagnostics' gap spinner on housekeeping's twin, CPU 4, which goes offline,
 # is stopped for the mode, the pause marked in its log for spikes.py; undone,
