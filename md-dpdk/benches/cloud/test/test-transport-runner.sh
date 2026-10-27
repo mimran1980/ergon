@@ -136,16 +136,23 @@ got=$(
     echo "ping: $(tr_bin_args fstack_lat ping 10.30.1.11 10.30.1.22)"
     echo "pong: $(tr_bin_args fstack_lat pong 10.30.1.22 10.30.1.11)"
     echo "knobs: $(tr_arm_knobs | tr '\n' ' ')"
+    hk=0 tr_bin_path=P
+    echo "start: $(tr_start r/pong.pid r/pong.out fstack_lat --role pong)"
+    setup=sockets
+    echo "start sockets: $(tr_start r/pong.pid r/pong.out tcp_lat --role pong)"
+    setup=fstack
     arms_file='' sets_file=$cloud/transport-aws-dpdk.tsv
     tr_wants_fstack && echo "aws-dpdk: fstack"
     sets_file=''
     tr_wants_fstack || echo "matrix: none"
 )
 sb_=$(. "$cloud/transport-settings.env"; echo "$TR_SOCKBUF")
-same "transport.sh setup fstack: no netem with a DPDK arm; fstack_lat's addresses as tcp_lat's, its PCI port, prefix and gateway from vm.sh nics, the socket buffers; F-Stack built only when a set runs it" \
-    "ping: --source 10.30.1.11 --connect 10.30.1.22:22000 --pci 0000:00:06.0 --prefix-len 24 --gateway 10.30.1.1 --nodelay --rcvbuf $sb_ --sndbuf $sb_
-pong: --listen 10.30.1.22:22000 --pci 0000:00:07.0 --prefix-len 24 --gateway 10.30.1.1 --nodelay --rcvbuf $sb_ --sndbuf $sb_
+same "transport.sh setup fstack: no netem with a DPDK arm; fstack_lat's addresses as tcp_lat's, its PCI port, prefix and gateway from vm.sh nics, delayed ACKs off (the kernel arms' quickack), the socket buffers; started under sudo setpriv with the EAL's capabilities ambient, under the user's own uid (no other arm is); F-Stack built only when a set runs it" \
+    "ping: --source 10.30.1.11 --connect 10.30.1.22:22000 --pci 0000:00:06.0 --prefix-len 24 --gateway 10.30.1.1 --nodelay --delayed-ack false --rcvbuf $sb_ --sndbuf $sb_
+pong: --listen 10.30.1.22:22000 --pci 0000:00:07.0 --prefix-len 24 --gateway 10.30.1.1 --nodelay --delayed-ack false --rcvbuf $sb_ --sndbuf $sb_
 knobs: sockbuf 
+start: sudo -n setpriv --reuid=\"\$(id -u)\" --regid=\"\$(id -g)\" --init-groups --reset-env --inh-caps=+sys_admin,+dac_override,+ipc_lock,+sys_rawio --ambient-caps=+sys_admin,+dac_override,+ipc_lock,+sys_rawio sh -c 'taskset -c 0 env PATH=P fstack_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
+start sockets: sh -c 'taskset -c 0 env PATH=P tcp_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
 aws-dpdk: fstack
 matrix: none" "$got"
 got="$(plan binom 300000 30 0.01) | $(plan binom 300000 80 0.01) | $(plan binom 1000 0 0) | $(plan binom 1000 1 0) | $(plan binom 1000 2 0.01) | $(plan binom 6000000 60000 1)"
@@ -1002,7 +1009,14 @@ nstat) n=$(cat "$st/s" 2>/dev/null || echo 0); n=$((n + 1)); echo $n >"$st/s"
 # both NICs alike: kernel-busy's driver sets 2/200000, kernel's 0/0;
 # transport-net the settings' TR_NAPI_DEFER/TR_GRO_FLUSH_NS under the arm's
 # TR_OVERRIDES (logged); napi reads them back as vm.sh napi prints them
-driver) case $2 in *@NAPI_DEFER=*) v=${2#*@NAPI_DEFER=}; v=${v%%@*}; echo "${v%/*} ${v#*/}" >"$st/napi" ;; kernel-busy*) echo "2 200000" >"$st/napi" ;; kernel | kernel@*) echo "0 0" >"$st/napi" ;; esac ;;
+driver) if [[ -n ${FAKE_DRIVER_FAIL:-} && $2 == "$FAKE_DRIVER_FAIL"* ]]; then
+        # as vm.sh's ERR trap says a step that failed under set -e; the
+        # driver's log the last one's
+        echo "fake driver: EAL: Error - a stale log" >"$HOME/bench/driver.log"
+        echo 'vm.sh: line 2096: "return $rc" failed (exit 1): stopping' >&2
+        exit 1
+    fi
+    case $2 in *@NAPI_DEFER=*) v=${2#*@NAPI_DEFER=}; v=${v%%@*}; echo "${v%/*} ${v#*/}" >"$st/napi" ;; kernel-busy*) echo "2 200000" >"$st/napi" ;; kernel | kernel@*) echo "0 0" >"$st/napi" ;; esac ;;
 transport-net)
     if [[ ${2:-} != check ]]; then
         v=$(. "$FAKE_CLOUD/transport-settings.env"; . "$FAKE_CLOUD/host.sh"; transport_overrides; echo "$TR_NAPI_DEFER $TR_GRO_FLUSH_NS")
@@ -1057,6 +1071,15 @@ settings="\"transport\": \"$transport\", \"streams\": \"$streams\", \"warmup_s\"
 [[ $role == oneway-send || $role == oneway-recv ]] && { echo "stub: --role $role is refused (one way is --role local)" >&2; exit 2; }
 [[ $role == ping ]] && kind=load
 if [[ $role == pong ]]; then
+    # one that exits before ready, as fstack_lat did on AWS as a plain user:
+    # F-Stack's config echo on stdout, the EAL's error on stderr
+    if [[ -n ${FAKE_PONG_EXIT:-} && $label == *"$FAKE_PONG_EXIT"* ]]; then
+        echo "[dpdk]: lcore_mask=4"
+        echo "EAL: Cannot use IOVA as 'PA' since physical addresses are not available" >&2
+        echo "EAL: Error - exiting with code: 1" >&2
+        echo "[freebsd.sysctl]: net.inet.tcp.delayed_ack=0"
+        exit 1
+    fi
     # ready once "bound", unless told to stay silent; a manifest when stopped
     [[ -n ${FAKE_PONG_SILENT:-} && $label == *"$FAKE_PONG_SILENT"* ]] || echo ready
     trap 'mkdir -p "$out"; echo "{\"settings\": {$settings}}" >"$out/manifest.json"; exit 0' TERM
@@ -1305,7 +1328,7 @@ python3 -c 'import json, sys; m = json.load(open(sys.argv[1])); e = m["events"];
 
 # a bad placement and netem counters off their loss are in the manifests
 # (and logged); a failed point recorded and the session's exit 1
-trun b 1 "" FAKE_PLACEMENT_BAD=1 FAKE_NETEM_BAD=1 FAKE_AERON_PAGE_BAD=1 FAKE_FAIL_LABEL='3c:mio-tcp@STREAMS=1@NETEM=0' FAKE_PONG_SILENT='3c:eio-tcp@STREAMS=1@NETEM=0' FAKE_SH_DELAY=0.3 && rrc=0 || rrc=$?
+trun b 1 "" FAKE_PLACEMENT_BAD=1 FAKE_NETEM_BAD=1 FAKE_AERON_PAGE_BAD=1 FAKE_FAIL_LABEL='3c:mio-tcp@STREAMS=1@NETEM=0' FAKE_PONG_SILENT='3c:eio-tcp@STREAMS=1@NETEM=0' FAKE_PONG_EXIT='3c:aeron-rel@STREAMS=1@NETEM=0' FAKE_DRIVER_FAIL=dpdk FAKE_SH_DELAY=0.3 && rrc=0 || rrc=$?
 why=
 [[ $rrc != 0 ]] || why+=" exit 0;"
 m=$(grep -l '^mode=aeron-rel@STREAMS=1@NETEM=1$' "$d"/manifest/*.env | head -1)
@@ -1319,9 +1342,17 @@ grep -q '^settings: 1: 1-aeron-ipc-huge@STREAMS=1-64-1-r10000: a knob.aeron_page
 # a pong that never says ready: its point failed, its ping never started
 [[ $(grep -c '^3c,1,0,eio-tcp,0,1$' "$d/failures.csv") == 1 ]] && ! grep -q '^a tcp_lat --role ping .*--label 3c:eio-tcp@STREAMS=1@NETEM=0 ' "$sb/runs" &&
     grep -q 'the pong did not say ready within 3 s' "$sb/run.out" || why+=" a silent pong: $(grep -c eio-tcp "$d/failures.csv") failures;"
+# a pong that exits before ready: its exit status and its error lines (the
+# EAL's, on stderr) in the log line, not its last two (F-Stack's config echo)
+[[ $(grep -c '^3c,1,0,aeron-rel,0,1$' "$d/failures.csv") == 1 ]] &&
+    grep -q "point 3c-r1-aeron-rel@STREAMS=1@NETEM=0-50000: the pong exited before it said ready (exit 1): EAL: Cannot use IOVA as 'PA' since physical addresses are not available EAL: Error - exiting with code: 1 *$" "$sb/run.out" ||
+    why+=" a pong that exited: $(grep 'exited before' "$sb/run.out" | head -1);"
+# a failed driver set-up: the step's error line in run.log, the driver's log kept
+grep -q 'host b: dpdk set-up failed: vm.sh: line 2096: "return $rc" failed (exit 1): stopping (.*/logs/setup-b.log, driver log .*/logs/driver-b-1.log)' "$sb/run.out" &&
+    grep -q 'fake driver: EAL: Error' "$d/logs/driver-b-1.log" || why+=" a failed driver set-up: $(grep 'set-up failed' "$sb/run.out" | head -1);"
 # every pong slow to write its PID file: waited for, not taken for an exit
-[[ $(grep -c . "$d/failures.csv") == 2 ]] && ! grep -q 'exited before it said ready' "$sb/run.out" || why+=" a slow pong taken for gone: $(tr '\n' ' ' <"$d/failures.csv");"
-[[ -z $why ]] && pass "transport.sh run: a failed placement or netem verdict in the manifest and logged, a failed point and a pong that never said ready in failures.csv (a pong slow to start waited for), the session's exit 1" ||
+[[ $(grep -vc ',dpdk-aeron-self,' "$d/failures.csv") == 3 ]] && ! grep 'exited before it said ready' "$sb/run.out" | grep -vq 'point 3c-r1-aeron-rel@' || why+=" a slow pong taken for gone: $(tr '\n' ' ' <"$d/failures.csv");"
+[[ -z $why ]] && pass "transport.sh run: a failed placement or netem verdict in the manifest and logged, a failed point, a pong that never said ready and one that exited (its exit status and error lines logged) in failures.csv (a pong slow to start waited for), the session's exit 1" ||
     fail "transport.sh run failures:$why"
 
 # a hostcheck warning stops the session before its first point

@@ -277,6 +277,59 @@ impl FstackConf {
     }
 }
 
+/// The capabilities a `--pci` port's EAL needs, with why.
+///
+/// `igb_uio` has no IOMMU, so the EAL takes IOVA as physical addresses, which
+/// `/proc/self/pagemap` shows only to `CAP_SYS_ADMIN` (without it the EAL
+/// stops with "Cannot use IOVA as 'PA'"); `/dev/uioN`, the BARs' sysfs
+/// `resource` files and `/dev/hugepages` are root's (`CAP_DAC_OVERRIDE`).
+pub const PCI_CAPS: [(u32, &str, &str); 2] = [
+    (
+        21,
+        "CAP_SYS_ADMIN",
+        "physical addresses from /proc/self/pagemap (IOVA as PA under igb_uio)",
+    ),
+    (
+        1,
+        "CAP_DAC_OVERRIDE",
+        "/dev/uioN, the BARs' sysfs resource files, /dev/hugepages",
+    ),
+];
+
+impl FstackConf {
+    /// Checks `/proc/self/status` (`status`) has every capability
+    /// [`PCI_CAPS`] lists in `CapEff`, for a `--pci` port with hugepages;
+    /// a `--vdev` or `--no-huge` end needs none of them.
+    ///
+    /// # Errors
+    /// [`Error::Transport`] naming each one missing (or `CapEff` unread),
+    /// before `ff_init`, whose EAL would otherwise exit the process.
+    pub fn check_caps(&self, status: &str) -> Result<(), Error> {
+        if self.pci.is_none() || self.no_huge {
+            return Ok(());
+        }
+        let eff = status
+            .lines()
+            .find_map(|l| l.strip_prefix("CapEff:"))
+            .and_then(|v| u64::from_str_radix(v.trim(), 16).ok())
+            .ok_or_else(|| Error::Transport("no CapEff in /proc/self/status".into()))?;
+        let missing: Vec<String> = PCI_CAPS
+            .iter()
+            .filter(|(bit, ..)| eff & (1 << bit) == 0)
+            .map(|(_, name, why)| format!("{name} ({why})"))
+            .collect();
+        if missing.is_empty() {
+            return Ok(());
+        }
+        Err(Error::Transport(format!(
+            "--pci {} needs {}: run it as root or with them ambient \
+             (transport.sh: sudo setpriv, tr_fstack_priv)",
+            self.pci.as_deref().unwrap_or(""),
+            missing.join(", ")
+        )))
+    }
+}
+
 /// `[dpdk]` keys every end runs with (the module's table).
 pub const FIXED_DPDK: [(&str, &str); 14] = [
     ("port_list", "0"),

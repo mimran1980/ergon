@@ -1,0 +1,10 @@
+# The AWS DPDK smoke (aws/lab.sh LAB_SUITE=transport LAB_PAIR=a LAB_REPS=1
+# LAB_SETS_FILE=<this file>): both DPDK arms, TCP on F-Stack (dpdk-tcp) and
+# Aeron reliable UDP on md-dpdk (dpdk-aeron-rel), beside kernel TCP and the
+# A/A arm, one stream at two loads, on one pair of c7a.2xlarge. It checks
+# setup fstack (igb_uio, fstack_lat's privileges, its EAL on the ENA) and
+# setup dpdk (the media driver on igb_uio) before a full
+# transport-aws-dpdk.tsv session. No netem: DPDK holds its NICs.
+
+# set   pair par host loads         streams  netem  arms
+set f1   a    -   ab   10000,50000   1        -      dpdk-tcp,dpdk-aeron-rel,mio-tcp,aa

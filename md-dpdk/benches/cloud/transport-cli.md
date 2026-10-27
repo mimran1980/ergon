@@ -54,7 +54,7 @@ own):
 | `aeron_lat` | `--aeron-dir <aeron_page's directory: $TR_AERON_DIR (tmpfs), at 2097152 $TR_AERON_HUGE_DIR (2 MiB hugetlbfs), the media driver's AERON_DIR too> --driver external --driver-busy-threads $TR_AERON_DRIVER_BUSY_THREADS (1 under SHARED) --term-length <term_length> --mtu $TR_MTU`; `--mode udp` arms also `--endpoint <pong's data IP>:$TR_PORT_BASE --reply <ping's data IP>:$TR_PORT_BASE --interface <own data IP>`; every run `--stream-id 1001+256k` (the k-th Aeron point of the set; a one-host point's round trip +128), ping and pong the same, so no lingering publication of an earlier run is the image a subscription takes |
 | `udp_lat` | `--local <own>:$TR_PORT_BASE --peer <other end>:$TR_PORT_BASE --rcvbuf/--sndbuf <sockbuf> --epoll-events <epoll_events> --busy-read-us <busy_read_us>`, `--datagram-burst <datagram_burst>` for `--impl ergon` |
 | `tcp_lat` | pong (and `local`, on its receiver NIC) `--listen <own>:port`, ping `--source <own> --connect <peer>:port` (`local` also `--source <own>`), then `--nodelay --quickack-per-read [false] --rto-min-us <rto_min_us> --delack-max-us --rcvbuf --sndbuf <sockbuf> --epoll-events <epoll_events> --busy-read-us <busy_read_us>` |
-| `fstack_lat` | pong `--listen <own>:port`, ping `--source <own> --connect <peer>:port`, then `--pci <the NIC with that address> --prefix-len <its prefix> --gateway <its subnet's first address>` (vm.sh nics) `--nodelay --rcvbuf --sndbuf <sockbuf>` |
+| `fstack_lat` | pong `--listen <own>:port`, ping `--source <own> --connect <peer>:port`, then `--pci <the NIC with that address> --prefix-len <its prefix> --gateway <its subnet's first address>` (vm.sh nics) `--nodelay --delayed-ack false --rcvbuf --sndbuf <sockbuf>` (FreeBSD's `delayed_ack=0`: the kernel arms' quickack) |
 | other (arms file) | `--local <own>:port --peer <other end>:port`; setup `sockets` also `--busy-read-us $TR_BUSY_READ --rcvbuf/--sndbuf $TR_SOCKBUF --nodelay --quickack-per-read --rto-min-us $TR_TCP_RTO_MIN_US --delack-max-us $TR_TCP_DELACK_MAX_US`: every socket and TCP setting the built-in arms get. Such a binary must take them all, apply each it uses, and report them in its manifest |
 
 The media driver's mode (`vm.sh driver`, `tr_driver_mode`): `<aeron_path>`
@@ -197,11 +197,23 @@ No media driver. `vm.sh fstack-up` moves both data NICs from `ena` to
 `igb_uio` (as `driver dpdk` does) after checking 512 free 2 MiB pages;
 `fstack_lat` takes its port by PCI address, so the ping holds host a's
 sender NIC and the pong host b's receiver NIC, the kernel TCP arms' path.
+`fstack_lat` runs under `sudo setpriv` (`tr_fstack_priv`): the user's own uid
+with ambient `CAP_SYS_ADMIN` (igb_uio has no IOMMU, so the EAL needs physical
+addresses from `/proc/self/pagemap`; without it the EAL stops with
+`Cannot use IOVA as 'PA'`), `CAP_DAC_OVERRIDE` (`/dev/uioN`, the BARs' sysfs
+files, `/dev/hugepages`), `CAP_IPC_LOCK` and `CAP_SYS_RAWIO`. `fstack_lat`
+refuses to start without the first two. Every binary's exit status lands in
+`<pid file>.rc`; a failed point's log line gives it and the binary's error lines.
 `tr_arm_down` runs `vm.sh stop`, which returns the NICs to the kernel and
 removes F-Stack's leftover hugepage files. AWS x86_64 only (`modes.sh`
 refuses it elsewhere before any cloud call). A set with a `dpdk` or
 `fstack` arm has netem `-` (`transport_plan.py` refuses another level).
 `transport-aws-dpdk.tsv` is the AWS DPDK session's `LAB_SETS_FILE`
 (`aws/lab.sh LAB_SUITE=transport LAB_PAIR=a`, two c7a.2xlarge).
+`transport-aws-fstack-smoke.tsv` is its short check at `LAB_REPS=1`: both DPDK
+arms (`dpdk-tcp`, `dpdk-aeron-rel`) beside `mio-tcp` and the A/A arm, one
+stream at 10k and 50k. A failed set-up's run.log line gives the step's error
+lines (vm.sh names any step that fails under `set -e`) and, under `kernel` or
+`dpdk`, keeps the media driver's log as `logs/driver-<host>-<n>.log`.
 `vm.sh transport-build fstack` (when `tr_wants_fstack`) builds F-Stack under
 `~/fstack` and `fstack_lat`.

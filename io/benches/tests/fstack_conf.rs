@@ -201,11 +201,11 @@ fn takes_exactly_the_runners_flags() {
     for (role, ends) in [
         (
             "ping",
-            "--source 10.30.1.11 --connect 10.30.1.22:22000 --pci 0000:00:06.0 --prefix-len 24 --gateway 10.30.1.1 --nodelay --rcvbuf 2097152 --sndbuf 2097152",
+            "--source 10.30.1.11 --connect 10.30.1.22:22000 --pci 0000:00:06.0 --prefix-len 24 --gateway 10.30.1.1 --nodelay --delayed-ack false --rcvbuf 2097152 --sndbuf 2097152",
         ),
         (
             "pong",
-            "--listen 10.30.1.22:22000 --pci 0000:00:07.0 --prefix-len 24 --gateway 10.30.1.1 --nodelay --rcvbuf 2097152 --sndbuf 2097152",
+            "--listen 10.30.1.22:22000 --pci 0000:00:07.0 --prefix-len 24 --gateway 10.30.1.1 --nodelay --delayed-ack false --rcvbuf 2097152 --sndbuf 2097152",
         ),
     ] {
         let mut f = flags(&format!("--role {role} {point} {ends}"));
@@ -215,5 +215,52 @@ fn takes_exactly_the_runners_flags() {
         assert_eq!(a.conf.rcvbuf, 2_097_152);
         assert_eq!(a.conf.sndbuf, Some(2_097_152));
         assert_eq!(a.conf.lcore, 2);
+        // the kernel TCP arms' quickack: every segment acknowledged at once
+        assert!(!a.conf.delayed_ack);
+        assert!(
+            a.conf
+                .render()
+                .lines()
+                .any(|l| l == "net.inet.tcp.delayed_ack=0")
+        );
     }
+}
+
+#[test]
+fn a_pci_port_needs_sys_admin_and_dac_override_before_ff_init() {
+    let mut f = flags(PONG);
+    let a = FstackArgs::parse(&mut f, Role::Pong, &[2]).unwrap();
+    // a plain user (the AWS run's: the EAL stopped with "Cannot use IOVA as 'PA'")
+    let e = a
+        .conf
+        .check_caps("Name:\tfstack_lat\nCapEff:\t0000000000000000\n")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        e.contains("CAP_SYS_ADMIN") && e.contains("CAP_DAC_OVERRIDE") && e.contains("0000:00:06.0"),
+        "{e}"
+    );
+    // CAP_DAC_OVERRIDE alone: CAP_SYS_ADMIN still missing
+    let e = a
+        .conf
+        .check_caps("CapEff:\t0000000000000002\n")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        e.contains("CAP_SYS_ADMIN") && !e.contains("CAP_DAC_OVERRIDE"),
+        "{e}"
+    );
+    // tr_fstack_priv's set (sys_admin, dac_override, ipc_lock, sys_rawio), and root's
+    a.conf.check_caps("CapEff:\t0000000000224002\n").unwrap();
+    a.conf.check_caps("CapEff:\t000001ffffffffff\n").unwrap();
+    assert!(a.conf.check_caps("Name:\tx\n").is_err());
+}
+
+#[test]
+fn a_vdev_or_no_huge_end_needs_no_capability() {
+    let mut f = flags(
+        "--listen 10.9.0.2:22000 --prefix-len 24 --gateway 10.9.0.254 --vdev net_af_packet0,iface=vb --no-huge",
+    );
+    let a = FstackArgs::parse(&mut f, Role::Pong, &[1]).unwrap();
+    a.conf.check_caps("CapEff:\t0000000000000000\n").unwrap();
 }

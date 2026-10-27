@@ -399,11 +399,13 @@ tr_bin_args() {
         # the address, so the NIC: its PCI address, prefix and gateway from
         # vm.sh nics) and socket buffers; no busy poll, epoll or kernel TCP
         # timers (F-Stack polls, and has none of them: the binary refuses
-        # them)
+        # them). The kernel TCP arms' TCP_NODELAY and quickack on every read
+        # are F-Stack's TCP_NODELAY and net.inet.tcp.delayed_ack=0: every
+        # segment acknowledged at once
         local a="--source $own --connect $peer:$port" pci len
         [[ $role == pong ]] && a="--listen $own:$port"
         pci=$(tr_nic_of "$own" 7) len=$(tr_nic_of "$own" 6)
-        out="$a --pci $pci --prefix-len $len --gateway $(tr_gateway "$own/$len") --nodelay --rcvbuf $sb --sndbuf $sb"
+        out="$a --pci $pci --prefix-len $len --gateway $(tr_gateway "$own/$len") --nodelay --delayed-ack false --rcvbuf $sb --sndbuf $sb"
         ;;
     *)
         # an arms file's binary: its addresses, and on the kernel's path
@@ -649,12 +651,43 @@ tr_label() {
 
 # tr_start <pid file> <out file> <binary> <args>...: the remote command that
 # runs a bench binary started on the housekeeping CPU (its Aeron client
-# conductor keeps that affinity; --cpus pins the busy threads), its PID
-# recorded first, so the runner's EXIT trap stops it by PID, never by name
+# conductor keeps that affinity; --cpus pins the busy threads), stdout to
+# <out file> (each caller adds stderr), its PID recorded (so the runner's
+# EXIT trap stops it by PID, never by name) and, once it ends, its exit
+# status in <pid file>.rc (128 + N: signal N), which the command exits with
+# too. Setup fstack's binary runs with tr_fstack_priv.
 tr_start() {
-    local pidf=$1 outf=$2
+    local pidf=$1 outf=$2 priv=
     shift 2
-    echo "sh -c 'echo \$\$ >$pidf; exec taskset -c $hk env PATH=$tr_bin_path $*' >$outf"
+    [[ ${setup:-} == fstack ]] && priv="$tr_fstack_priv "
+    echo "${priv}sh -c 'taskset -c $hk env PATH=$tr_bin_path $* & p=\$!; echo \$p >$pidf; wait \$p; r=\$?; echo \$r >$pidf.rc; exit \$r' >$outf"
+}
+
+# tr_fstack_priv: what fstack_lat's own DPDK needs on igb_uio, which the
+# media driver gets by running as root: CAP_SYS_ADMIN (physical addresses in
+# /proc/self/pagemap: igb_uio has no IOMMU, so the EAL takes IOVA as PA; as
+# a plain user it stops with "Cannot use IOVA as 'PA'"), CAP_DAC_OVERRIDE
+# (/dev/uioN, the BARs' sysfs resource files, /dev/hugepages: root's),
+# CAP_IPC_LOCK and CAP_SYS_RAWIO (iopl). Ambient, under the user's own uid,
+# so the runner stops it by PID and owns what it writes.
+tr_fstack_priv='sudo -n setpriv --reuid="$(id -u)" --regid="$(id -g)" --init-groups --reset-env --inh-caps=+sys_admin,+dac_override,+ipc_lock,+sys_rawio --ambient-caps=+sys_admin,+dac_override,+ipc_lock,+sys_rawio'
+
+# tr_exit_text <status>: an exit status (tr_start's .rc) in words
+tr_exit_text() {
+    case ${1:-} in
+    '') echo "no exit status recorded" ;;
+    *[!0-9]*) echo "exit status '$1'" ;;
+    *) if (($1 > 128)); then echo "killed by signal $(($1 - 128)) ($(kill -l $(($1 - 128)) 2>/dev/null || echo '?'))"; else echo "exit $1"; fi ;;
+    esac
+}
+
+# tr_why_lines <log>: a failed binary's log in one line: its error lines
+# (the EAL's, F-Stack's, the binary's own, sudo's), else its last two
+tr_why_lines() {
+    local l
+    l=$(grep -E 'EAL: (Error|Cannot)|[Ee]rror|fstack_lat:|panicked|rte_exit|Cannot |[Ff]ailed|^sudo:|^setpriv:' "$1" 2>/dev/null | tail -3)
+    [[ -n $l ]] || l=$(tail -2 "$1" 2>/dev/null)
+    tr '\n' ' ' <<<"$l"
 }
 
 # tr_netem_line <pid> <host>: the point's netem verdict on that host:
@@ -778,15 +811,35 @@ tr_arm_up() {
     shift
     ov=$(tr_host_overrides)
     [[ -z $ov ]] || ov="TR_OVERRIDES='$ov' "
+    local from
     for h in "$@"; do
+        from=$(($(cat "$dir/logs/setup-$h.log" 2>/dev/null | wc -l) + 1))
         case $setup in
         kernel) on "$(tr_host "$h")" "$(tr_arm_vm) driver $(tr_driver_mode) && ${ov}$vm transport-net check" ;;
         dpdk) on "$(tr_host "$h")" "$(tr_arm_vm) driver $(tr_driver_mode)" ;;
         sockets) on "$(tr_host "$h")" "${ov}$vm transport-net" ;;
         fstack) on "$(tr_host "$h")" "$vm fstack-up" ;;
         none) true ;;
-        esac >>"$dir/logs/setup-$h.log" 2>&1 || { log "host $h: $setup set-up failed ($dir/logs/setup-$h.log)"; return 1; }
+        esac >>"$dir/logs/setup-$h.log" 2>&1 || { tr_setup_failed "$setup" "$h" "$from"; return 1; }
     done
+}
+
+# tr_setup_failed <setup> <host> <first line>: a failed set-up in run.log
+# with its error lines (this set-up's part of the host's setup log, from
+# <first line>), and under kernel or dpdk the media driver's own log
+# (vm.sh's ~/bench/driver.log: this set-up's when it got as far as starting
+# one, else the last driver's) kept as logs/driver-<host>-<n>.log
+tr_setup_failed() {
+    local setup=$1 h=$2 why dl=
+    why=$(tail -n +"$3" "$dir/logs/setup-$h.log" 2>/dev/null |
+        grep -E 'stopping|[Ee]rror|[Ff]ailed|refused|EAL: |Cannot |^vm\.sh: line' | tail -3 | tr '\n' ' ')
+    if [[ $setup == kernel || $setup == dpdk ]]; then
+        dl=$dir/logs/driver-$h-$(($(ls "$dir"/logs/driver-"$h"-*.log 2>/dev/null | wc -l) + 1)).log
+        on "$(tr_host "$h")" "cat bench/driver.log" >"$dl" 2>&1 || true
+        [[ -n $why ]] || why=$(grep -E '[Ee]rror|EAL: |Cannot |[Ff]ailed|panicked' "$dl" 2>/dev/null | tail -3 | tr '\n' ' ')
+    fi
+    why=${why% }
+    log "host $h: $setup set-up failed: ${why:-no error line} ($dir/logs/setup-$h.log${dl:+, driver log $dl})"
 }
 # (a socket arm whose host settings differed: the hosts' own put back)
 tr_arm_down() {
@@ -910,8 +963,13 @@ tr_point() {
         *) why="the pong did not say ready within ${TRANSPORT_READY_TIMEOUT_S:-60} s" ;;
         esac
         if [[ -n $why ]]; then
+            # its exit status (tr_start's .rc; read before the kill, which
+            # would write TERM's) and its error lines, else its last two
+            local prc
+            [[ $why == *exited* ]] && prc=$(on "$B" "for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s $rdir/pong.pid.rc ] && break; sleep 0.1; done; cat $rdir/pong.pid.rc 2>/dev/null")
             on "$B" "kill -TERM \$(cat $rdir/pong.pid) 2>/dev/null; sleep 1; kill -KILL \$(cat $rdir/pong.pid) 2>/dev/null; cat $rdir/pong.out" >"$log.pong" 2>&1
-            log "point $pid: $why: $(tail -2 "$log.pong" | tr '\n' ' ')"
+            [[ $why == *exited* ]] && why+=" ($(tr_exit_text "$prc"))"
+            log "point $pid: $why: $(tr_why_lines "$log.pong")"
             tr_events stop "$pid"
             return 1
         fi
@@ -955,7 +1013,7 @@ tr_point() {
         [[ -s $dir/points/$pid/$v/results.csv ]] && got=$((got + 1))
     done
     if ((rc != 0 || got != ${#runs[@]})); then
-        log "point $pid: $bin exit $rc, $got of ${#runs[@]} runs with a row: $(tail -2 "$log.err" 2>/dev/null | tr '\n' ' ')"
+        log "point $pid: $bin $(tr_exit_text "$rc"), $got of ${#runs[@]} runs with a row: $(tr_why_lines "$log.out")$(tail -2 "$log.err" 2>/dev/null | tr '\n' ' ')"
         return 1
     fi
     for v in "${!runs[@]}"; do tr_row "$rep" <"$dir/points/$pid/$v/results.csv" >>"$dir/results.csv"; done

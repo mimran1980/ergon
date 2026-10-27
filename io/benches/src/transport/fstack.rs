@@ -43,6 +43,7 @@ use std::cell::RefCell;
 use std::ffi::{CString, c_char, c_int, c_ulong, c_void};
 use std::net::SocketAddrV4;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use ergon_latency_core::frame::{self, Deframer, FRAME_HEADER};
@@ -228,11 +229,45 @@ fn socket(conf: &FstackConf) -> Result<c_int, Error> {
     Ok(fd)
 }
 
+/// Set while `ff_init` runs: F-Stack and its EAL end the process with
+/// `rte_exit` (`exit`) on most failures, never returning to say so.
+static IN_FF_INIT: AtomicBool = AtomicBool::new(false);
+
+/// `atexit`: says the process ended inside `ff_init`, under the EAL's and
+/// F-Stack's own lines (stderr, unbuffered).
+extern "C" fn exit_in_ff_init() {
+    if IN_FF_INIT.load(Ordering::Relaxed) {
+        eprintln!(
+            "fstack_lat: F-Stack ended the process inside ff_init (rte_exit): the EAL and F-Stack lines above say why"
+        );
+    }
+}
+
+// glibc's C stdout, the stream F-Stack's config echo (printf) goes to
+unsafe extern "C" {
+    static mut stdout: *mut libc::FILE;
+}
+
 /// Starts F-Stack on this thread from `conf`, written to `path` first.
 #[allow(clippy::similar_names)] // args, argv, argc
 fn init(conf: &FstackConf, path: &std::path::Path, helpers: &[usize]) -> Result<(), Error> {
     std::fs::write(path, conf.render())
         .map_err(|e| Error::Transport(format!("writing {}: {e}", path.display())))?;
+    // a PCI port's EAL needs privileges a plain user lacks: said here, not
+    // left to the EAL's exit
+    let status = std::fs::read_to_string("/proc/self/status")
+        .map_err(|e| Error::Transport(format!("/proc/self/status: {e}")))?;
+    conf.check_caps(&status)?;
+    // F-Stack's printf to a file is block-buffered and flushed only at exit,
+    // after the EAL's stderr: line-buffered, the log keeps their order
+    // SAFETY: stdout is glibc's stream, set before any output on it.
+    unsafe { libc::setvbuf(stdout, std::ptr::null_mut(), libc::_IOLBF, 0) };
+    IN_FF_INIT.store(true, Ordering::Relaxed);
+    // SAFETY: registers a plain extern "C" fn that only reads an atomic and
+    // writes to stderr.
+    if unsafe { libc::atexit(exit_in_ff_init) } != 0 {
+        return Err(Error::Transport("atexit".into()));
+    }
     // the EAL takes its control threads' CPUs from this thread's affinity
     // less the lcore: widen it to the helper CPUs, the lcore last
     if !helpers.is_empty() {
@@ -267,8 +302,12 @@ fn init(conf: &FstackConf, path: &std::path::Path, helpers: &[usize]) -> Result<
     argv.push(std::ptr::null_mut());
     let argc = c_int::try_from(strings.len()).unwrap_or(0);
     // SAFETY: argv is argc NUL-terminated strings, never freed, and a NULL.
-    if unsafe { ff_init(argc, argv.as_ptr()) } != 0 {
-        return Err(Error::Transport("ff_init failed (its log is above)".into()));
+    let rc = unsafe { ff_init(argc, argv.as_ptr()) };
+    IN_FF_INIT.store(false, Ordering::Relaxed);
+    if rc != 0 {
+        return Err(Error::Transport(format!(
+            "ff_init returned {rc} (the EAL and F-Stack lines above say why)"
+        )));
     }
     // the EAL pinned this thread to the lcore; say so if not
     super::point::pin(Some(conf.lcore))
