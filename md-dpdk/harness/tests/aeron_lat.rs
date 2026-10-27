@@ -2,7 +2,8 @@
 //! embeds (`--driver embedded`, the kernel's UDP on 127.0.0.1): IPC, spy and
 //! UDP (reliable and not), one way and round trip, 8 streams, the
 //! cross-host shape (a `ping` and a `pong` process, each with its own
-//! driver), and the spy on a live UDP stream (`--mode spy-udp`: a `local`
+//! driver; and each with its driver invoked by its one measuring thread,
+//! `--driver invoker`), and the spy on a live UDP stream (`--mode spy-udp`: a `local`
 //! process and its sink, each with its own driver, every frame shown to
 //! cross UDP to the sink). Each point's row must read back through the analysis's own
 //! readers (md-dpdk/benches/cloud: `transport_points.read_points`,
@@ -60,16 +61,15 @@ fn free_ports(n: u16) -> Res<u16> {
 }
 
 fn command(out: &Path, dir: &Path, args: &[&str]) -> Res<Command> {
+    command_on("embedded", out, dir, args)
+}
+
+/// `aeron_lat` with `args` on a driver it runs itself (`--driver`
+/// `embedded` or `invoker`).
+fn command_on(driver: &str, out: &Path, dir: &Path, args: &[&str]) -> Res<Command> {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_aeron_lat"));
     cmd.args(args)
-        .args([
-            "--driver",
-            "embedded",
-            "--term-length",
-            TERM,
-            "--connect-timeout-s",
-            "20",
-        ])
+        .args(["--driver", driver, "--term-length", TERM, "--connect-timeout-s", "20"])
         .arg("--out")
         .arg(out)
         .arg("--aeron-dir")
@@ -515,10 +515,12 @@ fn wait(mut child: Child, limit: Duration) -> Res<Output> {
 }
 
 /// The cross-host shape on one host: a pong process and a ping process,
-/// each on a driver of its own, over UDP (reliable and not). The pong says
-/// `ready` once its channels are added (the runner starts the ping on it),
-/// ends by itself once the ping's images go, and writes its manifest alone.
-fn ping_pong(name: &str, reliable: &str) -> R {
+/// each on a driver of its own (`driver`: on a thread of its own, or
+/// invoked by the measuring thread), over UDP (reliable and not). The pong
+/// says `ready` once its channels are added (the runner starts the ping on
+/// it), ends by itself once the ping's images go, and writes its manifest
+/// alone.
+fn ping_pong(name: &str, reliable: &str, driver: &str) -> R {
     let root = scratch(name)?;
     let base = free_ports(16)?;
     let (ping_ep, reply_ep) = (format!("127.0.0.1:{base}"), format!("127.0.0.1:{}", base + 8));
@@ -538,7 +540,8 @@ fn ping_pong(name: &str, reliable: &str) -> R {
         &label,
     ];
     let pong_out = root.join("pong");
-    let mut pong = command(
+    let mut pong = command_on(
+        driver,
         &pong_out,
         &root.join("aeron-pong"),
         &[&["--role", "pong"][..], &common].concat(),
@@ -546,7 +549,8 @@ fn ping_pong(name: &str, reliable: &str) -> R {
     let pong = pong.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
     let rate = RATE.to_string();
     let ping_out = root.join("ping");
-    let ping = command(
+    let ping = command_on(
+        driver,
         &ping_out,
         &root.join("aeron-ping"),
         &[
@@ -574,13 +578,27 @@ fn ping_pong(name: &str, reliable: &str) -> R {
     );
     assert!(!pong_out.join("results.csv").exists(), "a pong writes no row");
     let m = std::fs::read_to_string(pong_out.join("manifest.json"))?;
+    // the pong's busy threads: its echo and, but invoked, the driver's three
+    let (busy, threading) = if driver == "invoker" {
+        (1, "INVOKER")
+    } else {
+        (4, "DEDICATED")
+    };
+    let pong_busy = format!("\"busy_threads\": \"{busy}\"");
+    let pong_driver = format!("\"driver\": \"{driver}\"");
+    let pong_threading = format!("\"driver_threading\": \"{threading}\"");
     for want in [
         "\"role\": \"pong\"",
         "\"hot_path_allocs\": \"0\"",
         "\"transport\": \"aeron-udp\"",
+        &pong_busy,
+        &pong_driver,
+        &pong_threading,
     ] {
         assert!(m.contains(want), "{want}: {m}");
     }
+    let pm = std::fs::read_to_string(ping_out.join("manifest.json"))?;
+    assert!(pm.contains(&pong_driver) && pm.contains(&pong_threading), "{pm}");
     assert!(row.starts_with("load,"), "{row}");
     check(
         &ping_out,
@@ -589,7 +607,7 @@ fn ping_pong(name: &str, reliable: &str) -> R {
             transport: "aeron-udp",
             channel: "udp",
             wire_bytes: 138,
-            busy_threads: 4,
+            busy_threads: busy,
             streams: 8,
         },
     )?;
@@ -599,12 +617,61 @@ fn ping_pong(name: &str, reliable: &str) -> R {
 
 #[test]
 fn udp_reliable_ping_pong_eight_streams() -> R {
-    ping_pong("pp-rel-8", "true")
+    ping_pong("pp-rel-8", "true", "embedded")
 }
 
 #[test]
 fn udp_unreliable_ping_pong_eight_streams() -> R {
-    ping_pong("pp-unrel-8", "false")
+    ping_pong("pp-unrel-8", "false", "embedded")
+}
+
+/// Each end's driver invoked by its one measuring thread: the ping's
+/// thread sends, runs its driver and client conductor, and reads the
+/// echoes; the pong's the same for the echo. No driver thread: one busy
+/// thread an end, every round trip back, nothing allocated while measuring.
+#[test]
+fn udp_reliable_ping_pong_on_invoked_drivers() -> R {
+    ping_pong("pp-rel-inv", "true", "invoker")
+}
+
+#[test]
+fn udp_unreliable_ping_pong_on_invoked_drivers() -> R {
+    ping_pong("pp-unrel-inv", "false", "invoker")
+}
+
+/// `--driver invoker` is one measuring thread a process over `--mode udp`:
+/// `--role local` (two threads), a spy-udp sink, IPC and a driver busy
+/// thread are refused before anything starts.
+#[test]
+fn an_invoked_driver_off_its_one_thread_is_refused() -> R {
+    let root = scratch("inv-refused")?;
+    let (out, dir) = (root.join("out"), root.join("aeron"));
+    let eps = ["--endpoint", "127.0.0.1:39000", "--reply", "127.0.0.1:39100"];
+    for (args, why) in [
+        (
+            &["--role", "local", "--round-trip", "--mode", "udp"][..],
+            "--role ping or pong",
+        ),
+        (&["--role", "local", "--mode", "ipc"][..], "--mode udp"),
+        (&["--role", "pong", "--mode", "spy-udp"][..], "--role ping or pong"),
+        (
+            &["--role", "ping", "--mode", "udp", "--driver-busy-threads", "3"][..],
+            "no thread of its own",
+        ),
+    ] {
+        let mut a = args.to_vec();
+        if a.contains(&"udp") || a.contains(&"spy-udp") {
+            a.extend(eps);
+        }
+        a.extend(["--rate", "10", "--label", "x:y"]);
+        let o = command_on("invoker", &out, &dir, &a)?.output()?;
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert!(!o.status.success() && o.stdout.is_empty(), "{args:?}: {err}");
+        assert!(err.contains(why), "{args:?}: {err}");
+        assert!(!dir.join("cnc.dat").exists(), "no driver started: {args:?}");
+    }
+    std::fs::remove_dir_all(root)?;
+    Ok(())
 }
 
 #[test]

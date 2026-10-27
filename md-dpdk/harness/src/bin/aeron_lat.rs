@@ -1,21 +1,32 @@
 //! The transport latency suite's Aeron arms: IPC, spy, spy on a live UDP
 //! stream, kernel UDP and DPDK.
 //!
-//! One binary against a media driver: the external one at `--aeron-dir`
-//! (the runner starts it `DEDICATED`, every agent busy-spinning; the DPDK
-//! arm is this binary against a DPDK driver), or with `--driver embedded`
-//! one this process starts on a thread of its own (local tests; configured
-//! from the environment as the bundled `media_driver` is, through
-//! `ergon_md_dpdk::driver::ConfiguredDriver`). Every measurement, the echo
-//! and the files are `io_bench::transport::point`'s, taken by path, so the
-//! Aeron arms measure exactly as the others do.
+//! One binary against a media driver (`--driver`):
+//!
+//! | `--driver` | the media driver | its agents |
+//! |---|---|---|
+//! | `external` (default) | a process of its own at `--aeron-dir` (the runner's `vm.sh driver`) | its threads, as that process's threading mode has them |
+//! | `embedded` | this process starts it on a thread of its own, which runs its first agent | the threads the environment's `AERON_THREADING_MODE` gives it (the conductor that thread; under `DEDICATED` a sender and a receiver thread too) |
+//! | `invoker` | this process starts it in Aeron's `INVOKER` mode on the measuring thread | none: the measuring thread runs the driver's agents and its own client's conductor itself, every pass of its loop, and after every offer (the sender's work, so the frame leaves at once) |
+//!
+//! An embedded or invoked driver is configured from the environment as the
+//! bundled `media_driver` is (`AERON_*`, `RUSTERON_DPDK_*`,
+//! `RUSTERON_MEDIA_DRIVER_TRANSPORT`), through
+//! `ergon_md_dpdk::driver::ConfiguredDriver`; the invoked one's threading
+//! mode is `INVOKER`, its conductor CPU (where Aeron pins the thread that
+//! starts it) the measuring thread's `--cpus`, and it never idles, whatever
+//! the environment says. `invoker` is `--role ping` or `pong` over `--mode
+//! udp` alone: one measuring thread a process, so no `local` (two) and no
+//! spy-udp sink. Every measurement, the echo and the files are
+//! `io_bench::transport::point`'s, taken by path, so the Aeron arms measure
+//! exactly as the others do.
 //!
 //! ```text
 //! aeron_lat --role <ping|pong|local> [--round-trip] --mode <ipc|spy|spy-udp|udp> --rate MSG_PER_S
-//!           --label TEXT --out DIR --aeron-dir PATH [--driver external|embedded]
+//!           --label TEXT --out DIR --aeron-dir PATH [--driver external|embedded|invoker]
 //!           [--reliable true|false] [--endpoint HOST:PORT] [--reply HOST:PORT]
 //!           [--interface IP] [--term-length 1048576] [--mtu 1408] [--stream-id 1001]
-//!           [--driver-busy-threads 3] [--connect-timeout-s 30]
+//!           [--driver-busy-threads 3 (invoker: 0)] [--connect-timeout-s 30]
 //!           [--streams N] [--warmup-s 30] [--duration-s 30] [--size 64] [--cpus CSV]
 //!           [--spike-ns 100000] [--stall-ns 10000]
 //! ```
@@ -35,7 +46,9 @@
 //!
 //! Each busy thread has its own Aeron client, created before it pins
 //! itself, so the client's conductor thread keeps the process's starting
-//! affinity (the runner starts the binary on a housekeeping CPU).
+//! affinity (the runner starts the binary on a housekeeping CPU). Under
+//! `--driver invoker` the one client's conductor is the measuring thread's
+//! to run (the agent invoker): no conductor thread.
 //!
 //! | `--mode` | stream `i`'s ping (stream id `S+i`) | its echo (stream id `S+10000+i`) |
 //! |---|---|---|
@@ -81,7 +94,7 @@ mod point;
 use ergon_latency_core::clock::TscClock;
 use ergon_latency_core::manifest::RunManifest;
 use ergon_latency_core::message::{MESSAGE_LEN, template};
-use ergon_md_dpdk::driver::ConfiguredDriver;
+use ergon_md_dpdk::driver::{ConfiguredDriver, EnvMediaDriver, threading_mode_name};
 use point::{
     Common, CountingAlloc, Error, Flags, POLL_LIMIT, Progress, Recorder, Report, Role, Rx, START_DELAY_NS, SendStats,
     Sent, Tx, thread_allocs,
@@ -89,7 +102,8 @@ use point::{
 use rusteron_client::{
     Aeron, AeronCError, AeronContext, AeronExclusivePublication, AeronImage, AeronSubscription, Handlers,
 };
-use rusteron_media_driver::AeronDriverContext;
+use rusteron_media_driver::bindings::aeron_threading_mode_t;
+use rusteron_media_driver::{AeronDriverContext, AeronIdleStrategyKind};
 use std::collections::BTreeMap;
 use std::ffi::CString;
 use std::process::ExitCode;
@@ -122,7 +136,7 @@ const WIRE_COUNTERS: [(&str, &str); 2] = [("Bytes sent", "bytes-sent"), ("Bytes 
 /// `--help`.
 const USAGE: &str = "\
 aeron_lat --role ping|pong|local [--round-trip] --mode ipc|spy|spy-udp|udp --rate MSG_PER_S --label SET:ARM --out DIR
-          --aeron-dir PATH [--driver external|embedded] [--driver-busy-threads 3] [--reliable true|false]
+          --aeron-dir PATH [--driver external|embedded|invoker] [--driver-busy-threads 3] [--reliable true|false]
           [--endpoint HOST:PORT] [--reply HOST:PORT] [--interface IP] [--term-length 1048576] [--mtu 1408]
           [--stream-id 1001] [--connect-timeout-s 30] [--streams 1] [--warmup-s 30] [--duration-s 30]
           [--size 64] [--cpus CSV] [--spike-ns 100000] [--stall-ns 10000]
@@ -134,7 +148,11 @@ aeron_lat --role ping|pong|local [--round-trip] --mode ipc|spy|spy-udp|udp --rat
   to --reply, both a sink's addresses on another host (reliable, ssc=false: the sink connects them);
   --role pong is that sink: it reads every frame of both channels and writes its counts (sink.*).
 --cpus: ping: ping; pong: echo; local: sender,receiver (--round-trip: ping,echo).
---driver-busy-threads: the external driver's busy threads (DEDICATED: 3), counted in the row's busy_threads.
+--driver: external (a media driver process at --aeron-dir), embedded (this process starts one on a thread
+  of its own, configured from the environment), invoker (Aeron's INVOKER mode: the measuring thread runs
+  the driver's agents and its client's conductor itself; --role ping or pong, --mode udp).
+--driver-busy-threads: the driver's busy threads (DEDICATED: 3; invoker: 0, its only value), counted in
+  the row's busy_threads.
 A pong prints `ready` once its channels are added, and no row.";
 /// The media driver's wildcard port ranges in the lab (vm.sh `common_env`).
 const WILDCARD_PORTS: std::ops::RangeInclusive<u32> = 20_000..=21_999;
@@ -164,6 +182,27 @@ enum Mode {
     Spy,
     SpyUdp,
     Udp,
+}
+
+/// `--driver`: where the media driver runs, and who runs its agents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Driver {
+    /// A process of its own at `--aeron-dir`.
+    External,
+    /// This process's, on a thread of its own.
+    Embedded,
+    /// This process's, run by the measuring thread (Aeron's `INVOKER`).
+    Invoker,
+}
+
+impl Driver {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::External => "external",
+            Self::Embedded => "embedded",
+            Self::Invoker => "invoker",
+        }
+    }
 }
 
 /// `HOST:PORT`, the port a base.
@@ -213,7 +252,7 @@ struct Aeronish {
     reply: Option<Endpoint>,
     interface: Option<String>,
     dir: String,
-    embedded: bool,
+    driver: Driver,
     term_length: u32,
     mtu: u32,
     stream_id: i32,
@@ -235,6 +274,12 @@ impl Aeronish {
             .map(|e| Endpoint::parse("endpoint", &e))
             .transpose()?;
         let reply = f.take("reply").map(|e| Endpoint::parse("reply", &e)).transpose()?;
+        let driver = match f.take("driver").as_deref() {
+            None | Some("external") => Driver::External,
+            Some("embedded") => Driver::Embedded,
+            Some("invoker") => Driver::Invoker,
+            Some(other) => return Err(Error::Usage(format!("--driver {other}: external, embedded or invoker"))),
+        };
         let a = Self {
             mode,
             reliable: f.bool("reliable", true)?,
@@ -242,15 +287,11 @@ impl Aeronish {
             reply,
             interface: f.take("interface"),
             dir: f.req("aeron-dir")?,
-            embedded: match f.take("driver").as_deref() {
-                None | Some("external") => false,
-                Some("embedded") => true,
-                Some(other) => return Err(Error::Usage(format!("--driver {other}: external or embedded"))),
-            },
+            driver,
             term_length: f.num("term-length", 1_048_576)?,
             mtu: f.num("mtu", 1408)?,
             stream_id: f.num("stream-id", 1001)?,
-            driver_busy_threads: f.num("driver-busy-threads", 3)?,
+            driver_busy_threads: f.num("driver-busy-threads", if driver == Driver::Invoker { 0 } else { 3 })?,
             connect_timeout: Duration::from_secs(f.num("connect-timeout-s", 30)?),
         };
         if matches!(mode, Mode::Udp | Mode::SpyUdp) {
@@ -266,6 +307,7 @@ impl Aeronish {
                 ));
             }
             a.check_spy_udp(c)?;
+            a.check_invoker(c)?;
         } else {
             if !a.reliable {
                 return Err(Error::Usage(format!(
@@ -292,6 +334,12 @@ impl Aeronish {
             return Err(Error::Usage(format!(
                 "--term-length {}: a power of two of at least 64 KiB",
                 a.term_length
+            )));
+        }
+        if a.driver == Driver::Invoker && a.mode != Mode::Udp {
+            return Err(Error::Usage(format!(
+                "--driver invoker is --mode udp's alone, not --mode {}",
+                a.mode_name()
             )));
         }
         if a.mtu < 64 + 32 {
@@ -330,6 +378,29 @@ impl Aeronish {
             return Err(Error::Usage(
                 "the spy-udp sink needs --reply HOST:PORT (the echoes' channel) too".into(),
             ));
+        }
+        Ok(())
+    }
+
+    /// `--driver invoker`'s own refusals: one measuring thread a process
+    /// (`--role ping` or `pong`; no spy-udp sink), and no driver thread.
+    fn check_invoker(&self, c: &Common) -> Result<(), Error> {
+        if self.driver != Driver::Invoker {
+            return Ok(());
+        }
+        if c.role == Role::Local || self.mode != Mode::Udp {
+            return Err(Error::Usage(format!(
+                "--driver invoker runs the driver on the measuring thread, one a process: --role ping or pong \
+                 over --mode udp, not --role {} --mode {}",
+                c.role.name(),
+                self.mode_name()
+            )));
+        }
+        if self.driver_busy_threads != 0 {
+            return Err(Error::Usage(format!(
+                "--driver-busy-threads {}: an invoked driver has no thread of its own (0)",
+                self.driver_busy_threads
+            )));
         }
         Ok(())
     }
@@ -434,48 +505,177 @@ impl Aeronish {
     }
 }
 
-/// A client of the driver at `dir`, its memory mapped and touched up front.
-fn client(dir: &str) -> Result<Aeron, Error> {
+/// A client of the driver at `dir`, its memory mapped and touched up front;
+/// with `invoker`, its conductor run by the caller ([`Client::duty`]), not a
+/// thread of its own.
+fn client(dir: &str, invoker: bool) -> Result<Aeron, Error> {
     let dir = CString::new(dir).map_err(|_| Error::Usage("--aeron-dir holds a NUL byte".into()))?;
     let ctx = AeronContext::new().map_err(aeron_err("the client's context"))?;
     ctx.set_dir(&dir).map_err(aeron_err("the client's directory"))?;
     ctx.set_pre_touch_mapped_memory(true)
         .map_err(aeron_err("pre-touching the client's mappings"))?;
+    if invoker {
+        ctx.set_use_conductor_agent_invoker(true)
+            .map_err(aeron_err("the client's conductor invoker"))?;
+    }
     let aeron = Aeron::new(&ctx).map_err(aeron_err("the client"))?;
     aeron.start().map_err(aeron_err("starting the client"))?;
     Ok(aeron)
 }
 
-/// Retries `add` while the driver says a previous run's endpoint is still
-/// closing ("please retry"), for 10 s.
-fn retry_closing<T>(what: &str, mut add: impl FnMut() -> Result<T, AeronCError>) -> Result<T, Error> {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        match add() {
-            Ok(added) => return Ok(added),
-            Err(e) if format!("{e:?}").contains("please retry") && Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(20));
+/// How long an add (a publication, a subscription) may take.
+const ADD_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// A measuring thread's Aeron: its client and, under `--driver invoker`,
+/// the media driver it runs itself.
+struct Client {
+    // Dropped first: the client closes before its driver does.
+    aeron: Aeron,
+    invoked: Option<EnvMediaDriver>,
+}
+
+impl Client {
+    /// A client of the driver at `dir`, its conductor on a thread of its own.
+    fn of(dir: &str) -> Result<Self, Error> {
+        Ok(Self {
+            aeron: client(dir, false)?,
+            invoked: None,
+        })
+    }
+
+    /// `--driver invoker`: a media driver in Aeron's INVOKER mode at `dir`,
+    /// configured from the environment as the bundled `media_driver` is, its
+    /// conductor CPU `cpu` (Aeron pins this thread there as it starts the
+    /// driver), never idling; then its client, whose conductor this thread
+    /// runs too. Both run on this thread alone ([`Self::duty`]).
+    fn invoker(dir: &str, cpu: Option<usize>) -> Result<Self, Error> {
+        let ctx = AeronDriverContext::new().map_err(aeron_err("the driver's context"))?;
+        let cdir = CString::new(dir).map_err(|_| Error::Usage("--aeron-dir holds a NUL byte".into()))?;
+        ctx.set_dir(&cdir).map_err(aeron_err("the driver's directory"))?;
+        ctx.set_dir_delete_on_start(true)
+            .map_err(aeron_err("the driver's directory"))?;
+        ctx.set_threading_mode(aeron_threading_mode_t::AERON_THREADING_MODE_INVOKER)
+            .map_err(aeron_err("the driver's threading mode"))?;
+        let cpu = cpu
+            .map_or(Ok(-1), i32::try_from)
+            .map_err(|_| Error::Usage("--cpus: a CPU past i32".into()))?;
+        ctx.set_conductor_cpu_affinity(cpu)
+            .map_err(aeron_err("the driver's conductor CPU"))?;
+        ctx.set_shared_idle_strategy_kind(AeronIdleStrategyKind::NoOp)
+            .map_err(aeron_err("the driver's idle strategy"))?;
+        let driver = ConfiguredDriver::from_env(ctx)
+            .and_then(ConfiguredDriver::start)
+            .map_err(|e| Error::Transport(format!("the invoked driver: {e}")))?;
+        let aeron = client(driver.dir(), true)?;
+        Ok(Self {
+            aeron,
+            invoked: Some(driver),
+        })
+    }
+
+    /// One duty cycle of this thread's client conductor and invoked driver
+    /// (every agent of it): the work they found. Nothing without an invoked
+    /// driver.
+    #[inline]
+    fn duty(&self) -> Result<i32, Error> {
+        let Some(driver) = &self.invoked else { return Ok(0) };
+        let client = self.aeron.main_do_work().map_err(aeron_err("the client's conductor"))?;
+        Ok(client
+            + driver
+                .do_work()
+                .map_err(|e| Error::Transport(format!("the invoked driver: {e}")))?)
+    }
+
+    /// One duty cycle of the invoked driver alone (after an offer: its
+    /// sender sends the frame at once). Nothing without one.
+    #[inline]
+    fn drive(&self) -> Result<(), Error> {
+        if let Some(driver) = &self.invoked {
+            driver
+                .do_work()
+                .map_err(|e| Error::Transport(format!("the invoked driver: {e}")))?;
+        }
+        Ok(())
+    }
+
+    /// Lets `period` pass outside the measured loop: asleep, or with an
+    /// invoked driver running the duty (resting a millisecond when it finds
+    /// nothing).
+    fn rest(&self, period: Duration) -> Result<(), Error> {
+        if self.invoked.is_none() {
+            std::thread::sleep(period);
+            return Ok(());
+        }
+        let until = Instant::now() + period;
+        while Instant::now() < until {
+            if self.duty()? == 0 {
+                std::thread::sleep(Duration::from_millis(1).min(period));
             }
-            Err(e) => return Err(Error::Transport(format!("adding the {what}: {e:?}"))),
+        }
+        Ok(())
+    }
+
+    /// An add `poll` completes: within [`ADD_TIMEOUT`], the duty run while
+    /// it waits.
+    fn resolve<T>(&self, what: &str, mut poll: impl FnMut() -> Result<Option<T>, AeronCError>) -> Result<T, Error> {
+        let deadline = Instant::now() + ADD_TIMEOUT;
+        loop {
+            if let Some(added) = poll().map_err(|e| Error::Transport(format!("adding the {what}: {e:?}")))? {
+                return Ok(added);
+            }
+            if Instant::now() > deadline {
+                return Err(Error::Timeout(format!(
+                    "adding the {what}: not done within {} s",
+                    ADD_TIMEOUT.as_secs()
+                )));
+            }
+            self.rest(Duration::from_millis(1))?;
         }
     }
 }
 
-fn publication(aeron: &Aeron, uri: &str, stream: i32) -> Result<AeronExclusivePublication, Error> {
+/// Retries `add` while the driver says a previous run's endpoint is still
+/// closing ("please retry"), for 10 s.
+fn retry_closing<T>(client: &Client, mut add: impl FnMut() -> Result<T, Error>) -> Result<T, Error> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match add() {
+            Ok(added) => return Ok(added),
+            Err(e) if e.to_string().contains("please retry") && Instant::now() < deadline => {
+                client.rest(Duration::from_millis(20))?;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+fn publication(client: &Client, uri: &str, stream: i32) -> Result<AeronExclusivePublication, Error> {
     let uri = CString::new(uri).map_err(|_| Error::Usage("a channel with a NUL byte".into()))?;
-    retry_closing("publication", || {
-        aeron
-            .async_add_exclusive_publication(&uri, stream)?
-            .poll_blocking(Duration::from_secs(5))
+    retry_closing(client, || {
+        let added = |e: AeronCError| Error::Transport(format!("adding the publication: {e:?}"));
+        let pending = client
+            .aeron
+            .async_add_exclusive_publication(&uri, stream)
+            .map_err(added)?;
+        if client.invoked.is_none() {
+            return pending.poll_blocking(ADD_TIMEOUT).map_err(added);
+        }
+        client.resolve("publication", || pending.poll())
     })
 }
 
-fn subscription(aeron: &Aeron, uri: &str, stream: i32) -> Result<AeronSubscription, Error> {
+fn subscription(client: &Client, uri: &str, stream: i32) -> Result<AeronSubscription, Error> {
     let uri = CString::new(uri).map_err(|_| Error::Usage("a channel with a NUL byte".into()))?;
-    retry_closing("subscription", || {
-        aeron
-            .async_add_subscription(&uri, stream, Handlers::NONE, Handlers::NONE)?
-            .poll_blocking(Duration::from_secs(5))
+    retry_closing(client, || {
+        let added = |e: AeronCError| Error::Transport(format!("adding the subscription: {e:?}"));
+        let pending = client
+            .aeron
+            .async_add_subscription(&uri, stream, Handlers::NONE, Handlers::NONE)
+            .map_err(added)?;
+        if client.invoked.is_none() {
+            return pending.poll_blocking(ADD_TIMEOUT).map_err(added);
+        }
+        client.resolve("subscription", || pending.poll())
     })
 }
 
@@ -524,16 +724,48 @@ impl Rx for AeronRx {
     }
 }
 
+/// Under `--driver invoker`, a transport end on the thread that runs the
+/// driver: each poll first runs one duty cycle (the client's conductor and
+/// every agent of the driver: what the receiver took off the wire lands in
+/// the image the poll then reads), and each send attempt is followed by one
+/// of the driver's (its sender sends the offered frame at once, and a
+/// back-pressured echo, retried inside a poll, lets the driver go on).
+struct Invoked<'a, T> {
+    end: &'a mut T,
+    client: &'a Client,
+}
+
+impl Tx for Invoked<'_, AeronTx> {
+    #[inline]
+    fn try_send(&mut self, stream: u32, msg: &[u8; MESSAGE_LEN]) -> Result<Sent, Error> {
+        let sent = self.end.try_send(stream, msg)?;
+        self.client.drive()?;
+        Ok(sent)
+    }
+}
+
+impl Rx for Invoked<'_, AeronRx> {
+    #[inline]
+    fn poll<F: FnMut(&[u8])>(&mut self, on: &mut F) -> Result<usize, Error> {
+        self.client.duty()?;
+        self.end.poll(on)
+    }
+
+    fn closed(&self) -> bool {
+        self.end.closed()
+    }
+}
+
 /// Publications on `channel(i)` for every stream.
 fn publications(
-    aeron: &Aeron,
+    client: &Client,
     streams: u32,
     channel: impl Fn(u32) -> Result<(String, String, i32), Error>,
 ) -> Result<AeronTx, Error> {
     let pubs = (0..streams)
         .map(|i| {
             let (uri, _, id) = channel(i)?;
-            let p = publication(aeron, &uri, id)?;
+            let p = publication(client, &uri, id)?;
             let max = p.max_payload_length().map_err(aeron_err("the max payload"))?;
             if max < MESSAGE_LEN {
                 return Err(Error::Usage(format!("{uri}: max payload {max} under {MESSAGE_LEN}")));
@@ -547,21 +779,26 @@ fn publications(
 /// Subscriptions on `channel(i)` for every stream; their images come later
 /// ([`ready`]).
 fn subscriptions(
-    aeron: &Aeron,
+    client: &Client,
     streams: u32,
     channel: impl Fn(u32) -> Result<(String, String, i32), Error>,
 ) -> Result<Vec<AeronSubscription>, Error> {
     (0..streams)
         .map(|i| {
             let (_, uri, id) = channel(i)?;
-            subscription(aeron, &uri, id)
+            subscription(client, &uri, id)
         })
         .collect()
 }
 
 /// Waits until every publication is connected and every subscription has
 /// an image, then takes the images.
-fn ready(tx: Option<&AeronTx>, subs: Vec<AeronSubscription>, timeout: Duration) -> Result<AeronRx, Error> {
+fn ready(
+    client: &Client,
+    tx: Option<&AeronTx>,
+    subs: Vec<AeronSubscription>,
+    timeout: Duration,
+) -> Result<AeronRx, Error> {
     let deadline = Instant::now() + timeout;
     loop {
         let pubs_up = tx.is_none_or(|t| t.pubs.iter().all(AeronExclusivePublication::is_connected));
@@ -577,7 +814,7 @@ fn ready(tx: Option<&AeronTx>, subs: Vec<AeronSubscription>, timeout: Duration) 
                 timeout.as_secs()
             )));
         }
-        std::thread::sleep(Duration::from_millis(1));
+        client.rest(Duration::from_millis(1))?;
     }
 }
 
@@ -613,16 +850,19 @@ fn counters_now(aeron: &Aeron) -> Counters {
 }
 
 /// The embedded driver: started on a thread of its own, which runs its
-/// first agent until stopped.
+/// first agent until stopped (its other agents on threads of their own, as
+/// its threading mode has them).
 struct Embedded {
     stop: std::sync::Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
+    /// The threading mode it started with (`AERON_THREADING_MODE`).
+    threading: &'static str,
 }
 
 impl Embedded {
     fn start(dir: &str) -> Result<Self, Error> {
         let stop = std::sync::Arc::new(AtomicBool::new(false));
-        let (tx, rx) = std::sync::mpsc::channel::<Result<(), Error>>();
+        let (tx, rx) = std::sync::mpsc::channel::<Result<&'static str, Error>>();
         let (dir, flag) = (dir.to_owned(), stop.clone());
         let thread = std::thread::Builder::new()
             .name("aeron-driver".into())
@@ -640,7 +880,7 @@ impl Embedded {
                 })();
                 let driver = match started {
                     Ok(d) => {
-                        let _ = tx.send(Ok(()));
+                        let _ = tx.send(Ok(threading_mode_name(d.threading_mode())));
                         d
                     }
                     Err(e) => {
@@ -659,11 +899,13 @@ impl Embedded {
                 }
             })
             .map_err(|e| Error::Transport(format!("the driver's thread: {e}")))?;
-        rx.recv()
+        let threading = rx
+            .recv()
             .map_err(|_| Error::Transport("the embedded driver's thread ended".into()))??;
         Ok(Self {
             stop,
             thread: Some(thread),
+            threading,
         })
     }
 }
@@ -698,9 +940,9 @@ fn local_oneway(c: &Common, a: &Aeronish, clock: &TscClock) -> Result<Ends, Erro
     std::thread::scope(|s| {
         let sender = s.spawn(move || {
             let setup = (|| -> Result<_, Error> {
-                let aeron = client(&a.dir)?;
+                let aeron = Client::of(&a.dir)?;
                 let tx = publications(&aeron, c.streams, |i| a.ping_channel(i))?;
-                ready(Some(&tx), Vec::new(), a.connect_timeout)?;
+                ready(&aeron, Some(&tx), Vec::new(), a.connect_timeout)?;
                 point::pin(c.cpu(0))?;
                 Ok((aeron, tx))
             })();
@@ -716,9 +958,9 @@ fn local_oneway(c: &Common, a: &Aeronish, clock: &TscClock) -> Result<Ends, Erro
         });
         let receiver = s.spawn(move || {
             let setup = (|| -> Result<_, Error> {
-                let aeron = client(&a.dir)?;
+                let aeron = Client::of(&a.dir)?;
                 let subs = subscriptions(&aeron, c.streams, |i| a.ping_channel(i))?;
-                let rx = ready(None, subs, a.connect_timeout)?;
+                let rx = ready(&aeron, None, subs, a.connect_timeout)?;
                 point::pin(c.cpu(1))?;
                 Ok((aeron, rx))
             })();
@@ -743,31 +985,48 @@ fn local_oneway(c: &Common, a: &Aeronish, clock: &TscClock) -> Result<Ends, Erro
     })
 }
 
-/// The ping end on this thread: its client, publications and echo
-/// subscriptions, then (after `barrier`, when given) the schedule.
+/// The ping end on this thread: its client (`invoked`'s, under `--driver
+/// invoker`, else one of its own), publications and echo subscriptions,
+/// then (after `barrier`, when given) the schedule.
 fn ping_end(
     c: &Common,
     a: &Aeronish,
     clock: &TscClock,
     cpu: Option<usize>,
     barrier: Option<&Barrier>,
+    invoked: Option<&Client>,
 ) -> Result<Ends, Error> {
     let setup = (|| -> Result<_, Error> {
-        let aeron = client(&a.dir)?;
-        let tx = publications(&aeron, c.streams, |i| a.ping_channel(i))?;
-        let subs = subscriptions(&aeron, c.streams, |i| a.echo_channel(i))?;
-        let rx = ready(Some(&tx), subs, a.connect_timeout)?;
+        let own = if invoked.is_some() {
+            None
+        } else {
+            Some(Client::of(&a.dir)?)
+        };
+        let client = invoked
+            .or(own.as_ref())
+            .ok_or_else(|| Error::Transport("no client".into()))?;
+        let tx = publications(client, c.streams, |i| a.ping_channel(i))?;
+        let subs = subscriptions(client, c.streams, |i| a.echo_channel(i))?;
+        let rx = ready(client, Some(&tx), subs, a.connect_timeout)?;
         point::pin(cpu)?;
-        Ok((aeron, tx, rx))
+        Ok((own, tx, rx))
     })();
     if let Some(b) = barrier {
         b.wait();
     }
-    let (_aeron, mut tx, mut rx) = setup?;
+    let (own, mut tx, mut rx) = setup?;
+    let client = invoked
+        .or(own.as_ref())
+        .ok_or_else(|| Error::Transport("no client".into()))?;
     let (t, rt) = point::start_at(clock, START_DELAY_NS);
     let mut rec = Recorder::new(clock, t, c)?;
     let a0 = thread_allocs();
-    let send = point::ping(clock, c, t, &mut tx, &mut rx, &mut rec)?;
+    let send = if client.invoked.is_some() {
+        let (mut tx, mut rx) = (Invoked { end: &mut tx, client }, Invoked { end: &mut rx, client });
+        point::ping(clock, c, t, &mut tx, &mut rx, &mut rec)?
+    } else {
+        point::ping(clock, c, t, &mut tx, &mut rx, &mut rec)?
+    };
     Ok(Ends {
         rec,
         send,
@@ -777,7 +1036,8 @@ fn ping_end(
     })
 }
 
-/// The echo end on this thread: its client, ping subscriptions and echo
+/// The echo end on this thread: its client (`invoked`'s, under `--driver
+/// invoker`, else one of its own), ping subscriptions and echo
 /// publications (then `added`), then (after `barrier`, when given) echoes
 /// until the pings go or `keep_going` says stop. Returns its hot-path
 /// allocations and the echoes it sent.
@@ -786,24 +1046,40 @@ fn echo_end(
     a: &Aeronish,
     cpu: Option<usize>,
     barrier: Option<&Barrier>,
+    invoked: Option<&Client>,
     added: &dyn Fn(),
     keep_going: &mut impl FnMut() -> bool,
 ) -> Result<(u64, u64), Error> {
     let setup = (|| -> Result<_, Error> {
-        let aeron = client(&a.dir)?;
-        let subs = subscriptions(&aeron, c.streams, |i| a.ping_channel(i))?;
-        let tx = publications(&aeron, c.streams, |i| a.echo_channel(i))?;
+        let own = if invoked.is_some() {
+            None
+        } else {
+            Some(Client::of(&a.dir)?)
+        };
+        let client = invoked
+            .or(own.as_ref())
+            .ok_or_else(|| Error::Transport("no client".into()))?;
+        let subs = subscriptions(client, c.streams, |i| a.ping_channel(i))?;
+        let tx = publications(client, c.streams, |i| a.echo_channel(i))?;
         added();
-        let rx = ready(Some(&tx), subs, a.connect_timeout)?;
+        let rx = ready(client, Some(&tx), subs, a.connect_timeout)?;
         point::pin(cpu)?;
-        Ok((aeron, tx, rx))
+        Ok((own, tx, rx))
     })();
     if let Some(b) = barrier {
         b.wait();
     }
-    let (_aeron, mut tx, mut rx) = setup?;
+    let (own, mut tx, mut rx) = setup?;
+    let client = invoked
+        .or(own.as_ref())
+        .ok_or_else(|| Error::Transport("no client".into()))?;
     let a0 = thread_allocs();
-    let echoes = point::echo(&mut rx, &mut tx, keep_going)?;
+    let echoes = if client.invoked.is_some() {
+        let (mut rx, mut tx) = (Invoked { end: &mut rx, client }, Invoked { end: &mut tx, client });
+        point::echo(&mut rx, &mut tx, keep_going)?
+    } else {
+        point::echo(&mut rx, &mut tx, keep_going)?
+    };
     Ok((thread_allocs() - a0, echoes))
 }
 
@@ -812,12 +1088,12 @@ fn local_round_trip(c: &Common, a: &Aeronish, clock: &TscClock) -> Result<Ends, 
     let (barrier, stop) = (&barrier, &stop);
     std::thread::scope(|s| {
         let echo = s.spawn(move || {
-            echo_end(c, a, c.cpu(1), Some(barrier), &|| {}, &mut || {
+            echo_end(c, a, c.cpu(1), Some(barrier), None, &|| {}, &mut || {
                 !stop.load(Ordering::Acquire)
             })
         });
         let ping = s.spawn(move || {
-            let r = ping_end(c, a, clock, c.cpu(0), Some(barrier));
+            let r = ping_end(c, a, clock, c.cpu(0), Some(barrier), None);
             stop.store(true, Ordering::Release);
             r
         });
@@ -829,13 +1105,13 @@ fn local_round_trip(c: &Common, a: &Aeronish, clock: &TscClock) -> Result<Ends, 
     })
 }
 
-fn manifest(c: &Common, a: &Aeronish, transport: &str) -> Result<RunManifest, Error> {
+fn manifest(c: &Common, a: &Aeronish, transport: &str, threading: Option<&str>) -> Result<RunManifest, Error> {
     let mut m = RunManifest::new(transport, &template(), a.wire_bytes());
     let (ping_publication, ping_subscription, ping_id) = a.ping_channel(0)?;
     m.setting("transport", transport)
         .setting("mode", a.mode_name())
         .setting("reliable", &a.reliable.to_string())
-        .setting("driver", if a.embedded { "embedded" } else { "external" })
+        .setting("driver", a.driver.name())
         .setting("aeron_dir", &a.dir)
         .setting("term_length", &a.term_length.to_string())
         .setting("mtu", &a.mtu.to_string())
@@ -847,6 +1123,11 @@ fn manifest(c: &Common, a: &Aeronish, transport: &str) -> Result<RunManifest, Er
         .setting("client_pre_touch", "true")
         .setting("idle", "busy-spin (the client's measuring threads)")
         .setting("thread_order", thread_order(c, a.mode));
+    // the threading mode of a driver this process runs (an external one's is
+    // its process's: the runner records it)
+    if let Some(t) = threading {
+        m.setting("driver_threading", t);
+    }
     if c.is_round_trip() {
         let (echo_publication, echo_subscription, _) = a.echo_channel(0)?;
         m.setting("echo_pub_uri", &echo_publication)
@@ -892,13 +1173,25 @@ fn run(c: &Common, a: &Aeronish) -> Result<Option<String>, Error> {
         Role::Local | Role::Ping | Role::Pong => {}
     }
     c.check_cpus(client_threads(c) as usize, thread_order(c, a.mode))?;
-    let _driver = if a.embedded {
+    let embedded = if a.driver == Driver::Embedded {
         Some(Embedded::start(&a.dir)?)
     } else {
         None
     };
-    let counters = client(&a.dir)?;
-    let before = counters_now(&counters);
+    // under --driver invoker the measuring thread's own client (this one,
+    // the driver started on it), which reads the counters too
+    let counters = if a.driver == Driver::Invoker {
+        Client::invoker(&a.dir, c.cpu(0))?
+    } else {
+        Client::of(&a.dir)?
+    };
+    let invoked = (a.driver == Driver::Invoker).then_some(&counters);
+    let threading = match a.driver {
+        Driver::External => None,
+        Driver::Embedded => embedded.as_ref().map(|e| e.threading),
+        Driver::Invoker => Some("INVOKER"),
+    };
+    let before = counters_now(&counters.aeron);
     let transport = match a.mode {
         Mode::Ipc => "aeron-ipc",
         Mode::Spy => "aeron-spy",
@@ -907,18 +1200,18 @@ fn run(c: &Common, a: &Aeronish) -> Result<Option<String>, Error> {
         Mode::Udp if before.dpdk => "aeron-dpdk",
         Mode::Udp => "aeron-udp",
     };
-    let mut m = manifest(c, a, transport)?;
+    let mut m = manifest(c, a, transport, threading)?;
     if c.role == Role::Pong {
         stop_on_sigterm();
         let allocs = if a.mode == Mode::SpyUdp {
             sink(c, a, &mut m)?
         } else {
-            echo_end(c, a, c.cpu(0), None, &|| println!("ready"), &mut || {
+            echo_end(c, a, c.cpu(0), None, invoked, &|| println!("ready"), &mut || {
                 !STOP.load(Ordering::Relaxed)
             })?
             .0
         };
-        record_counters(&mut m, &before, &counters_now(&counters));
+        record_counters(&mut m, &before, &counters_now(&counters.aeron));
         m.setting("hot_path_allocs", &allocs.to_string())
             .setting("busy_threads", &(client_threads(c) + a.driver_busy_threads).to_string());
         point::write_manifest(c, m)?;
@@ -926,12 +1219,12 @@ fn run(c: &Common, a: &Aeronish) -> Result<Option<String>, Error> {
     }
     let clock = TscClock::new();
     let ends = match c.role {
-        Role::Ping => ping_end(c, a, &clock, c.cpu(0), None)?,
+        Role::Ping => ping_end(c, a, &clock, c.cpu(0), None, invoked)?,
         _ if c.round_trip => local_round_trip(c, a, &clock)?,
         _ => local_oneway(c, a, &clock)?,
     };
     let end = clock.raw();
-    let retrans = record_counters(&mut m, &before, &counters_now(&counters));
+    let retrans = record_counters(&mut m, &before, &counters_now(&counters.aeron));
     if let Some(e) = ends.echoes {
         m.setting("echoes_sent", &e.to_string());
     }
@@ -1010,7 +1303,7 @@ const SINK_DRAIN: Duration = Duration::from_secs(4);
 /// come and gone. Its counts go to the manifest (`sink.*`); returns its
 /// allocations while reading.
 fn sink(c: &Common, a: &Aeronish, m: &mut RunManifest) -> Result<u64, Error> {
-    let aeron = client(&a.dir)?;
+    let aeron = Client::of(&a.dir)?;
     let mut subs = Vec::new();
     for flag in ["endpoint", "reply"] {
         for i in 0..c.streams {
