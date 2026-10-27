@@ -2949,11 +2949,13 @@ hostcheck)
         done
         echo "hostcheck: chrony $([[ -n $settled ]] && echo settled || echo 'not settled after 10 min'): $(chronyc -c tracking 2>/dev/null | cut -d, -f2,5,6,14)"
     fi
-    # (exit 2 not clean, 1 not run: either stops the session; a warn line too)
+    # (exit 2 not clean, 1 not run: either stops the session. The binary
+    # alone decides what blocks: a warn it reports without blocking, T11's
+    # wall-clock discipline, says so in its own doc)
     PATH=$tools:$PATH hostcheck --hot-cpus "$iso" --nic "$(data_ifaces | paste -sd, -)" --aeron-dir "${2:-$TR_AERON_DIR}" \
         --out "$run/hostcheck.txt" && rc=0 || rc=$?
     cat "$run/hostcheck.txt" 2>/dev/null
-    if ((rc)) || grep -qE '^[^ ]+ warn: ' "$run/hostcheck.txt" 2>/dev/null; then
+    if ((rc)); then
         echo "hostcheck: not clean (exit $rc)" >&2
         exit 1
     fi
