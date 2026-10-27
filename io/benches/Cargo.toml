@@ -24,8 +24,8 @@ ergon-latency-core = { path = "core" }
 # (parity/mio_parity.rs). `os-poll` and `net` are mio's Poll, UdpSocket and
 # TcpStream.
 mio = { version = "1", features = ["os-poll", "net"] }
-
-[dev-dependencies]
+# tcp_lat --source-port: a connecting socket bound to a fixed port, with
+# SO_REUSEADDR and SO_LINGER before connect.
 socket2 = "0.6"
 
 # The transport latency suite's arms (src/transport/): each sends

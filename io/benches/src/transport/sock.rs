@@ -118,31 +118,7 @@ pub trait Inspect {
     fn report(&self, out: &mut Vec<(String, String)>) -> Result<(), Error>;
 }
 
-/// The media driver's wildcard port ranges in the lab (sender 20000-20999,
-/// receiver 21000-21999: vm.sh `common_env`): no socket arm binds or sends
-/// to one.
-pub const DPDK_PORTS: std::ops::RangeInclusive<u16> = 20_000..=21_999;
-
-/// `base` with its port moved up by `i`.
-///
-/// # Errors
-/// [`Error::Usage`] for port 0, a port past 65 535, or one in
-/// [`DPDK_PORTS`].
-pub fn port_plus(base: SocketAddr, i: u32) -> Result<SocketAddr, Error> {
-    if base.port() == 0 {
-        return Err(Error::Usage(format!(
-            "{base}: a base port is needed (stream i uses port + i)"
-        )));
-    }
-    let port = u16::try_from(u32::from(base.port()) + i)
-        .map_err(|_| Error::Usage(format!("{base} + {i}: past port 65535")))?;
-    if DPDK_PORTS.contains(&port) {
-        return Err(Error::Usage(format!(
-            "port {port} (stream {i} of base {base}): 20000-21999 are the media driver's wildcard ranges"
-        )));
-    }
-    Ok(SocketAddr::new(base.ip(), port))
-}
+pub use super::{DPDK_PORTS, port_plus};
 
 /// The technology.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -746,9 +722,13 @@ tcp_lat --impl mio|ergon --role ping|pong|local [--round-trip] --rate MSG_PER_S 
         [--streams 1] [--warmup-s 30] [--duration-s 30] [--size 64] [--cpus CSV] [--spike-ns 100000]
         [--stall-ns 10000] [--rcvbuf 4194304] [--sndbuf BYTES] [--epoll-events 64] [--nodelay]
         [--quickack-per-read] [--rto-min-us US] [--delack-max-us US] [--busy-read-us 0]
-        [--connect-timeout-s 30]
+        [--connect-timeout-s 30] [--source-port PORT]
 stream i: connection i. local: the echo/receiver end listens, the other connects.
 --source: the connecting end binds it first (so leaves by the NIC that address routes by).
+--source-port: the connecting end binds stream i to PORT + i, so every arm run with it uses the
+        same addresses and ports (the same NIC queues and flow hash on both hosts), and closes
+        with a reset (SO_LINGER 0: no TIME_WAIT, the next arm reuses them at once). The
+        listening end takes the flag and ignores it; --role local refuses it.
 --cpus: ping: ping; pong: echo; local: sender,receiver (--round-trip: ping,echo).";
 
 /// `udp_lat`: parses `args` (without the program name) and runs the point;
@@ -932,6 +912,60 @@ pub fn connect_all(
     Ok(out)
 }
 
+/// Opens `n` connections to `to`, stream `i` from port `port` + `i`.
+///
+/// Each is bound to `source` (else the wildcard address) first, with
+/// `SO_REUSEADDR`, and `SO_LINGER` 0 so that closing it resets the
+/// connection and leaves no `TIME_WAIT` behind: the next run with the same
+/// ports connects at once. Each carries its stream index first, as
+/// [`connect_all`]'s.
+///
+/// # Errors
+/// A port out of range ([`port_plus`]), a socket option or bind fails, or a
+/// connect still fails when `wait` is up.
+pub fn connect_all_from_port(
+    to: SocketAddr,
+    source: Option<IpAddr>,
+    port: u16,
+    n: u32,
+    wait: Duration,
+) -> Result<Vec<TcpStream>, Error> {
+    use socket2::{Domain, Protocol, SockAddr, Socket, Type};
+    let until = Instant::now() + wait;
+    let ip = source.unwrap_or_else(|| {
+        if to.is_ipv6() {
+            IpAddr::from(std::net::Ipv6Addr::UNSPECIFIED)
+        } else {
+            IpAddr::from(std::net::Ipv4Addr::UNSPECIFIED)
+        }
+    });
+    let mut out = Vec::with_capacity(n as usize);
+    for i in 0..n {
+        let from = port_plus(SocketAddr::new(ip, port), i)?;
+        let fail =
+            |e: &dyn std::fmt::Display| Error::Transport(format!("connect {to} from {from}: {e}"));
+        let mut s: TcpStream = loop {
+            let s = Socket::new(Domain::for_address(to), Type::STREAM, Some(Protocol::TCP))
+                .map_err(|e| fail(&e))?;
+            s.set_reuse_address(true).map_err(|e| fail(&e))?;
+            s.set_linger(Some(Duration::ZERO)).map_err(|e| fail(&e))?;
+            s.bind(&SockAddr::from(from)).map_err(|e| fail(&e))?;
+            let left = until.saturating_duration_since(Instant::now());
+            match s.connect_timeout(&SockAddr::from(to), left.max(Duration::from_millis(1))) {
+                Ok(()) => break s.into(),
+                // refused (nothing listens yet) or timed out: again, within `wait`
+                Err(_) if Instant::now() < until => std::thread::sleep(Duration::from_millis(10)),
+                Err(e) => return Err(fail(&e)),
+            }
+        };
+        s.set_nonblocking(false).map_err(|e| os("O_NONBLOCK", e))?;
+        s.write_all(&i.to_le_bytes())
+            .map_err(|e| os("writing the stream index", e))?;
+        out.push(s);
+    }
+    Ok(out)
+}
+
 /// `tcp_lat`: parses `args` (without the program name) and runs the point;
 /// the row, or `None` for a pong.
 ///
@@ -958,6 +992,15 @@ pub fn tcp_main<I: IntoIterator<Item = String>>(args: I) -> Result<Option<String
     let delack_max_us = timer(&mut f, "delack-max-us")?;
     let listen = addr(&mut f, "listen", None)?;
     let connect = addr(&mut f, "connect", None)?;
+    let source_port: Option<u16> = f
+        .take("source-port")
+        .map(|v| {
+            v.parse()
+                .ok()
+                .filter(|&p: &u16| p != 0)
+                .ok_or_else(|| Error::Usage(format!("--source-port {v}: a port, 1-65535")))
+        })
+        .transpose()?;
     let source = f
         .take("source")
         .map(|v| {
@@ -966,6 +1009,12 @@ pub fn tcp_main<I: IntoIterator<Item = String>>(args: I) -> Result<Option<String
         })
         .transpose()?;
     f.finish()?;
+    if source_port.is_some() && c.role == Role::Local {
+        return Err(Error::Usage(
+            "--source-port: two hosts only (its abortive close could drop a local one-way end's unread bytes)"
+                .into(),
+        ));
+    }
     if source.is_some() && c.role != Role::Local && connect.is_none() {
         return Err(Error::Usage(
             "--source is the connecting end's (--connect, or --role local)".into(),
@@ -1011,7 +1060,10 @@ pub fn tcp_main<I: IntoIterator<Item = String>>(args: I) -> Result<Option<String
             (Role::Local, End::Ping, _, Some(t)) => connect_all(t, source, streams, wait),
             (Role::Local, ..) => Err(Error::Usage("--role local needs --listen".into())),
             (_, _, Some(l), None) => accept_all(l, streams, wait),
-            (_, _, None, Some(t)) => connect_all(t, source, streams, wait),
+            (_, _, None, Some(t)) => source_port.map_or_else(
+                || connect_all(t, source, streams, wait),
+                |p| connect_all_from_port(t, source, p, streams, wait),
+            ),
             _ => Err(Error::Usage("one of --listen or --connect".into())),
         }
     };
@@ -1028,6 +1080,10 @@ pub fn tcp_main<I: IntoIterator<Item = String>>(args: I) -> Result<Option<String
         (
             "source".to_owned(),
             source.map_or_else(|| "-".to_owned(), |ip| ip.to_string()),
+        ),
+        (
+            "source_port".to_owned(),
+            source_port.map_or_else(|| "-".to_owned(), |p| p.to_string()),
         ),
         ("rto_min_us_asked".to_owned(), opt(rto_min_us)),
         ("delack_max_us_asked".to_owned(), opt(delack_max_us)),

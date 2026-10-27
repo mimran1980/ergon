@@ -103,6 +103,8 @@ struct Run {
     /// (32768-60999): an earlier test's connecting socket, still closing,
     /// can hold a port in it and fail the bind (seen once, `EADDRINUSE`).
     port: u16,
+    /// The arm's own flags, given to every end (as the runner does).
+    extra: &'static [&'static str],
 }
 
 impl Run {
@@ -113,6 +115,7 @@ impl Run {
             streams,
             rate,
             port,
+            extra: &[],
         }
     }
 
@@ -123,6 +126,7 @@ impl Run {
             streams,
             rate,
             port,
+            extra: &[],
         }
     }
 
@@ -195,6 +199,7 @@ impl Run {
         let mut pong = Command::new(self.bin)
             .args(self.common("pong", cpus.map(|c| s(c.1)), &po))
             .args(self.addrs("pong"))
+            .args(self.extra)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?;
@@ -206,6 +211,7 @@ impl Run {
         let ping = Command::new(self.bin)
             .args(self.common("ping", cpus.map(|c| s(c.0)), &pi))
             .args(self.addrs("ping"))
+            .args(self.extra)
             .output()?;
         // a TCP pong stops once every peer closed; a UDP one on SIGTERM
         if self.bin == UDP || !ping.status.success() {
@@ -486,6 +492,32 @@ fn tcp_mio_128_streams() -> R {
 #[test]
 fn tcp_ergon_128_streams() -> R {
     every_role(&Run::tcp("ergon", 128, 2_560, 30_004))
+}
+
+/// `--source-port` pins the connecting end's ports, so arms run one after
+/// another use the same 4-tuples (the same NIC queues and flow hash): each
+/// run closes with a reset, leaving no `TIME_WAIT`, and the next one binds
+/// and connects at once. The listening end takes the flag and ignores it.
+#[test]
+fn tcp_source_port_is_reused_by_the_next_arm_at_once() -> R {
+    for imp in ["mio", "ergon", "mio", "ergon"] {
+        let mut run = Run::tcp(imp, 2, 1_000, 30_020);
+        run.extra = &["--source-port", "30120"];
+        let out = run.ping_pong()?;
+        check(&run, &out, "load", 1)?;
+        let m = std::fs::read_to_string(out.join("manifest.json"))?;
+        assert!(m.contains("\"source_port\": \"30120\""), "{imp}: {m}");
+        std::fs::remove_dir_all(out)?;
+    }
+    let out = scratch("tcp-source-port-local")?;
+    let run = Run::tcp("mio", 1, 1_000, 30_021);
+    let o = Command::new(TCP)
+        .args(run.common("local", None, &out))
+        .args(run.addrs("local"))
+        .args(["--source-port", "30121"])
+        .output()?;
+    assert!(!o.status.success(), "--role local took --source-port");
+    Ok(())
 }
 
 /// TCP's settings reach the socket the same way in both arms: per-read
