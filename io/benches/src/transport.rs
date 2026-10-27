@@ -11,6 +11,7 @@
 //! | [`mpsc`] | `std::sync::mpsc::sync_channel` (IPC baseline) |
 //! | [`mio_udp`], [`eio_udp`] | one connected UDP socket per stream (stream `i` on base port + `i`), raw mio and ergon-io |
 //! | [`mio_tcp`], [`eio_tcp`] | one TCP connection per stream, `ergon_latency_core::frame`'s u32 LE frames, raw mio and ergon-io |
+//! | [`fstack`] | one TCP connection per stream over F-Stack (FreeBSD's stack on DPDK), `--features fstack`; [`fstack_conf`] its flags, config and `tcp_info` |
 //! | [`sock`] | `udp_lat` and `tcp_lat`: their flags, connection set-up, threads and roles |
 //! | [`sockopt`] | the socket options the mio arms set and every socket arm reads back |
 //! | [`kstat`] | the namespace's TCP counters and a thread's run-queue wait, read around a point's traffic |
@@ -19,6 +20,9 @@
 pub mod eio_tcp;
 #[cfg(target_os = "linux")]
 pub mod eio_udp;
+#[cfg(all(target_os = "linux", feature = "fstack"))]
+pub mod fstack;
+pub mod fstack_conf;
 #[cfg(target_os = "linux")]
 pub mod kstat;
 #[cfg(target_os = "linux")]

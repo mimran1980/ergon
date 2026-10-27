@@ -71,11 +71,17 @@ got=$(
     echo -n "by setup:"; rc kbx@NETEM=1; rc kbx@STREAMS=1
     echo
     mode_check dpdk-aeron-rel@NETEM=1 remote x86_64 azure '' 2>&1 | grep -c 'DPDK bypasses the kernel' || true
+    # setup fstack: no netem, and AWS x86_64 alone (F-Stack's build, the ENA)
+    TRANSPORT_ARMS+="kfs=fstack/two "
+    f() { mode_check "$1" remote "$2" "$3" '' >/dev/null 2>&1; echo -n " $?"; }
+    echo -n "fstack:"; f kfs@STREAMS=8 x86_64 aws; f kfs@NETEM=1 x86_64 aws; f kfs@STREAMS=1 arm64 aws; f kfs@STREAMS=1 x86_64 azure
+    echo
 )
-same "modes.sh: an arm takes STREAMS, NETEM and AA alone; NETEM refused on every DPDK arm" "ok: 0 0 0 0 0
+same "modes.sh: an arm takes STREAMS, NETEM and AA alone; NETEM refused on every DPDK arm; an F-Stack arm on AWS x86_64 alone" "ok: 0 0 0 0 0
 refused: 2 2 2 2 2 2 2 2 2 2 2
 by setup: 2 0
-1" "$got"
+1
+fstack: 0 2 2 2" "$got"
 
 # ---- transport_plan.py ----
 got="$(plan count a 5 "$matrix") $(plan count b 5 "$matrix") $(plan count a 1 "$matrix")"
@@ -107,6 +113,35 @@ for case in "set z a - ab 1 1 - aa,mio-tcp|cannot be first" "set z a - ab 1 1 - 
 done
 [[ -z $refusals ]] && pass "transport_plan.py refuses aa first, an unknown or repeated arm, mixed hosts in a set, two sets at once on one host" ||
     fail "transport_plan.py refusals:$refusals"
+# setup fstack (dpdk-tcp, fstack_lat): no netem on a set with a DPDK arm;
+# fstack_lat's addresses as tcp_lat's, its port (PCI address, prefix,
+# gateway) from the NIC files, the socket buffers its one knob; F-Stack
+# built only for a session that runs it (tr_wants_fstack)
+printf '%s\n' "set z a - ab 1 1 0.1 dpdk-tcp" >"$bad"
+out=$(plan modes a "$matrix" "$bad" 2>&1) && fail "transport_plan.py: netem on dpdk-tcp accepted" ||
+    { [[ $out == *"netem cannot reach"* ]] || fail "transport_plan.py netem on dpdk-tcp: $out"; }
+got=$(
+    . "$cloud/transport.sh"
+    dir=$tmp/fstack
+    mkdir -p "$dir"
+    printf 'sender ens6 ens6 0a:00:00:00:00:01 10.30.1.11 24 0000:00:06.0\nreceiver ens7 ens7 0a:00:00:00:00:02 10.30.1.21 24 0000:00:07.0\n' >"$dir/nics-a.txt"
+    printf 'sender ens6 ens6 0a:00:00:00:00:03 10.30.1.12 24 0000:00:06.0\nreceiver ens7 ens7 0a:00:00:00:00:04 10.30.1.22 24 0000:00:07.0\n' >"$dir/nics-b.txt"
+    arm=dpdk-tcp bin=fstack_lat setup=fstack args=()
+    echo "ping: $(tr_bin_args fstack_lat ping 10.30.1.11 10.30.1.22)"
+    echo "pong: $(tr_bin_args fstack_lat pong 10.30.1.22 10.30.1.11)"
+    echo "knobs: $(tr_arm_knobs | tr '\n' ' ')"
+    arms_file='' sets_file=$cloud/transport-aws-dpdk.tsv
+    tr_wants_fstack && echo "aws-dpdk: fstack"
+    sets_file=''
+    tr_wants_fstack || echo "matrix: none"
+)
+sb_=$(. "$cloud/transport-settings.env"; echo "$TR_SOCKBUF")
+same "transport.sh setup fstack: no netem with a DPDK arm; fstack_lat's addresses as tcp_lat's, its PCI port, prefix and gateway from vm.sh nics, the socket buffers; F-Stack built only when a set runs it" \
+    "ping: --source 10.30.1.11 --connect 10.30.1.22:22000 --pci 0000:00:06.0 --prefix-len 24 --gateway 10.30.1.1 --nodelay --rcvbuf $sb_ --sndbuf $sb_
+pong: --listen 10.30.1.22:22000 --pci 0000:00:07.0 --prefix-len 24 --gateway 10.30.1.1 --nodelay --rcvbuf $sb_ --sndbuf $sb_
+knobs: sockbuf 
+aws-dpdk: fstack
+matrix: none" "$got"
 got="$(plan binom 300000 30 0.01) | $(plan binom 300000 80 0.01) | $(plan binom 1000 0 0) | $(plan binom 1000 1 0) | $(plan binom 1000 2 0.01) | $(plan binom 6000000 60000 1)"
 same "transport_plan.py binom: the dropped count against its 1-in-10,000 interval, exact at small means, none at 0 %" \
     "8 52 ok | 8 52 FAIL | 0 0 ok | 0 0 FAIL | 0 3 ok | 59051 60949 ok" "$got"

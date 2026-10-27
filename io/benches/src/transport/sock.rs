@@ -127,6 +127,8 @@ pub enum Impl {
     Mio,
     /// ergon-io.
     Ergon,
+    /// F-Stack (`fstack_lat` only: `--features fstack`).
+    Fstack,
 }
 
 impl Impl {
@@ -136,9 +138,13 @@ impl Impl {
         match self {
             Self::Mio => "mio",
             Self::Ergon => "ergon",
+            Self::Fstack => "fstack",
         }
     }
 }
+
+/// Why `--impl fstack` is refused here.
+const FSTACK_ELSEWHERE: &str = "--impl fstack: F-Stack is fstack_lat's (--features fstack)";
 
 /// Which end a thread builds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -786,6 +792,7 @@ pub fn udp_main<I: IntoIterator<Item = String>>(args: I) -> Result<Option<String
                 mio_udp::pair(l, p, streams, opts.clone())
             })
         }
+        Impl::Fstack => Err(Error::Usage(FSTACK_ELSEWHERE.into())),
         Impl::Ergon => {
             let helpers = helper_cpus(&c);
             run(&c, s.imp, "udp", &arm, false, |end, cpu| {
@@ -1103,6 +1110,7 @@ pub fn tcp_main<I: IntoIterator<Item = String>>(args: I) -> Result<Option<String
                 mio_tcp::pair(sockets(end)?, &opts)
             })
         }
+        Impl::Fstack => Err(Error::Usage(FSTACK_ELSEWHERE.into())),
         Impl::Ergon => {
             let helpers = helper_cpus(&c);
             run(&c, s.imp, "tcp", &arm, ready_said, |end, cpu| {

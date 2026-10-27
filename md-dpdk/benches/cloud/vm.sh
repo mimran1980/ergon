@@ -97,7 +97,10 @@
 #                            every interrupt on the IRQ CPU) and the sysctls, each read back; the
 #                            2 MiB hugetlbfs of aeron-ipc-huge's Aeron directory mounted and verified
 #   vm.sh transport-net [check]  a socket arm's kernel path (NAPI, busy poll, TCP), or only read back
-#   vm.sh transport-map      the map;  vm.sh transport-build  the bench binaries and LAB_EXTRA_SRC's
+#   vm.sh transport-map      the map;  vm.sh transport-build [fstack]  the bench binaries and LAB_EXTRA_SRC's
+#                            (fstack: F-Stack and fstack_lat too, x86_64 only)
+#   vm.sh fstack-up          setup fstack (transport.sh): no media driver, the data NICs on igb_uio for
+#                            fstack_lat's own DPDK; `stop` gives them back (AWS x86_64 only)
 #   vm.sh netem set <loss %>|clear|check <loss %|none>|stats   netem on every data NIC's egress
 #   vm.sh sample             every thread's CPU, judged against the isolated CPUs (first line)
 #   vm.sh irqsnap            /proc/interrupts;  vm.sh hostcheck [aeron dir]  the ergon-tune report
@@ -190,6 +193,8 @@ precision_time() { [[ $CLOUD == aws && $PLACEMENT == precision-time ]]; }
 DPDK_VERSION=25.11
 # (LAB_OPT_ROOT: /opt; test/test-lab.sh's fake)
 DPDK_PREFIX=${LAB_OPT_ROOT:-/opt}/dpdk-$DPDK_VERSION
+# fstack_lat's EAL memory in 2 MiB pages (its --memory-mb 1024: fstack-up)
+FSTACK_HUGE_PAGES=512
 if precision_time; then
     export PKG_CONFIG_PATH=$DPDK_PREFIX/lib/$ARCH-linux-gnu/pkgconfig
 fi
@@ -2313,6 +2318,9 @@ stop)
         rm -f "$run/floor"
     fi
     data_return_to_kernel
+    # fstack_lat's hugepage files, when none runs (a pong ended by SIGKILL
+    # leaves them, holding FSTACK_HUGE_PAGES pages until its next start)
+    pgrep -x fstack_lat >/dev/null || sudo rm -f /dev/hugepages/container-ergon-fstackmap_* 2>/dev/null || true
     restore_host
     data_kernel_up
     sudo sysctl -qw net.core.busy_read=0 net.core.busy_poll=0
@@ -2806,13 +2814,46 @@ transport-build)
     # the transport suite's bench binaries (transport-cli.md), then
     # LAB_EXTRA_SRC's tree (lib.sh copies it to ~/extra) by its own
     # lab-build.sh into ~/extra/bin
-    # (transport-build.sh: the local smoke builds them the same way)
+    # (transport-build.sh: the local smoke builds them the same way);
+    # `fstack` (an arm of the session runs on F-Stack: transport.sh
+    # tr_wants_fstack): F-Stack and its DPDK under ~/fstack, and fstack_lat
     export PATH=$HOME/.cargo/bin:$PATH
+    if [[ ${2:-} == fstack ]]; then
+        [[ $ARCH == x86_64 ]] || { echo "transport-build fstack: F-Stack builds on x86_64 only (io/benches/fstack/build-fstack.sh), not $ARCH" >&2; exit 2; }
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq meson ninja-build python3-pyelftools libnuma-dev libssl-dev zlib1g-dev >/dev/null
+        export TR_FSTACK_PREFIX=$HOME/fstack
+    fi
     bash "$(dirname "$self")/transport-build.sh" "$HOME/ergon" "$HOME/ergon/target" "$(client_features "$run/dpdk_unavailable")"
     if [[ -f $HOME/extra/lab-build.sh ]]; then
         mkdir -p "$HOME/extra/bin"
         (cd "$HOME/extra" && bash lab-build.sh "$HOME/extra/bin")
     fi
+    ;;
+fstack-up)
+    # setup fstack (transport.sh): no media driver; the data NICs move from
+    # the kernel's ena to igb_uio, as under `driver dpdk`, for fstack_lat's
+    # own DPDK (F-Stack's, static in the binary), which takes its port by
+    # PCI address (--pci); `stop` gives them back. AWS x86_64 only: F-Stack
+    # builds on x86_64 alone, and on Azure no PMD of it was tried. Its EAL
+    # takes FSTACK_HUGE_PAGES of 2 MiB (fstack_lat's --memory-mb 1024),
+    # refused when fewer are free and unreserved
+    [[ $CLOUD == aws && $ARCH == x86_64 ]] || { echo "fstack-up: AWS x86_64 only (this host: $CLOUD $ARCH)" >&2; exit 2; }
+    "$self" stop
+    hp=$LAB_SYS_ROOT/kernel/mm/hugepages/hugepages-2048kB
+    free=$(cat "$hp/free_hugepages") resv=$(cat "$hp/resv_hugepages")
+    ((free - resv >= FSTACK_HUGE_PAGES)) ||
+        { echo "fstack-up: $((free - resv)) 2 MiB hugepages free and unreserved, fstack_lat's EAL takes $FSTACK_HUGE_PAGES" >&2; exit 2; }
+    sudo modprobe uio
+    lsmod | grep -q '^igb_uio' || sudo insmod "$HOME/dpdk-kmods/linux/igb_uio/igb_uio.ko" wc_activate=1
+    data_nics=$(nics) || exit 1
+    while read -r _ iface _ _ _ _ bdf; do
+        sudo ip link set "$iface" down
+        echo igb_uio | sudo tee /sys/bus/pci/devices/"$bdf"/driver_override >/dev/null
+        echo "$bdf" | sudo tee /sys/bus/pci/devices/"$bdf"/driver/unbind >/dev/null
+        echo "$bdf" | sudo tee /sys/bus/pci/drivers_probe >/dev/null
+        [[ -e /sys/bus/pci/drivers/igb_uio/$bdf ]] || { echo "fstack-up: $bdf is not on igb_uio" >&2; exit 1; }
+    done <<<"$data_nics"
+    echo "fstack-up: data NICs $(awk '{print $7}' <<<"$data_nics" | paste -sd, -) on igb_uio"
     ;;
 netem)
     # netem on every data NIC's egress (the interfaces the kernel sends on;

@@ -1,0 +1,9 @@
+# The AWS DPDK session's sets (LAB_SETS_FILE, in place of the matrix's;
+# the arms are transport-matrix.tsv's): TCP on DPDK (F-Stack) beside kernel
+# TCP and Aeron reliable UDP on the kernel and on DPDK (md-dpdk), one pair
+# of x86_64 instances (F-Stack builds on x86_64 only). No netem: DPDK holds
+# its NICs, so loss rounds stay on the kernel-only Azure/AWS sets.
+#
+# set   pair par host loads               streams  netem  arms
+set d1   a    -   ab   10000,50000,200000  1        -      dpdk-tcp,mio-tcp,eio-tcp,aeron-rel,dpdk-aeron-rel,aa
+set d8   a    -   ab   10000,50000,200000  8        -      dpdk-tcp,mio-tcp,eio-tcp,aeron-rel,dpdk-aeron-rel,aa

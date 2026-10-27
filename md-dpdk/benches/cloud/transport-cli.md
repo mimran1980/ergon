@@ -2,8 +2,8 @@
 
 The runner (`transport.sh`) calls each bench binary by name from the VM's
 `PATH` (`~/ergon/target/release`, then `~/extra/bin`). The binaries are
-`aeron_lat`, `mpsc_lat`, `udp_lat`, `tcp_lat` and `hostcheck`, plus any binary
-an arms file names. One run measures one point: one load at one stream count.
+`aeron_lat`, `mpsc_lat`, `udp_lat`, `tcp_lat`, `fstack_lat` and `hostcheck`, plus
+any binary an arms file names. One run measures one point: one load at one stream count.
 `test/test-transport-runner.sh` runs the runner against stubs that follow this file.
 
 ## Common flags (every latency binary)
@@ -35,6 +35,7 @@ nonzero exit on any error. A partial row is never printed.
 | `aeron_lat` | `--mode <ipc\|spy\|udp>`, `--reliable <true\|false>` (`false` UDP only), `--endpoint HOST:PORT` (pings; stream i on PORT+i, stream id S+i), `--reply HOST:PORT` (echoes, stream id S+10000+i), `--interface IP` (the three UDP only: refused for ipc and spy), `--aeron-dir PATH`, `--driver external\|embedded`, `--driver-busy-threads N` (the external driver's, as the runner starts it), `--term-length BYTES`, `--mtu BYTES`, `--stream-id S` (1001), `--connect-timeout-s N` (30), `--round-trip` (`local` only) |
 | `udp_lat` | `--impl <mio\|ergon>`, `--local IP:PORT`, `--peer IP:PORT` (base ports, stream i on +i; `local`: the receiver binds `--peer`), `--busy-read-us N` (`SO_BUSY_POLL` on every socket, both impls: ergon-io by `busy_poll_us`), `--epoll-events N`, `--datagram-burst N` (ergon only), `--rcvbuf`/`--sndbuf BYTES` |
 | `tcp_lat` | `--impl <mio\|ergon>`, `--listen IP:PORT` (pong; `local` takes `--listen`, and `--source`) or `--connect IP:PORT` (ping; stream i is connection i), `--source IP` (the connecting end binds it first), `--source-port N` (an arm flag: the connecting end binds stream i to N + i and closes with a reset, so arms given the same N share 4-tuples; the listening end ignores it; not with `local`), `--nodelay` (always on), `--quickack-per-read`, `--rto-min-us N`, `--delack-max-us N`, `--busy-read-us N` (both impls), `--rcvbuf`/`--sndbuf BYTES` |
+| `fstack_lat` | TCP over F-Stack (FreeBSD's stack on DPDK), `ping` or `pong` only (one F-Stack a process, on its one `--cpus` CPU): `--listen IP:PORT` (pong) or `--source IP --connect IP:PORT` (ping), the F-Stack interface taking that address; `--pci BDF` (its port) or `--vdev SPEC` (a virtual one, tests), `--prefix-len N`, `--gateway IP`, `--nodelay` (always on), `--rcvbuf`/`--sndbuf BYTES`, `--delayed-ack true` and `--hz 100` (FreeBSD's), `--no-huge`, `--memory-mb 1024`, `--file-prefix ergon-fstack`. It refuses the kernel's socket flags (busy poll, epoll, quickack, TCP timers). It writes its whole F-Stack config to `<out>/f-stack-<role>.conf`, every key in its manifest (`fstack.conf.*`), with F-Stack's build (`fstack.build.*`). Built with `--features fstack` against `io/benches/fstack/build-fstack.sh`'s F-Stack v2.0 (x86_64 only) |
 | `hostcheck` | `--hot-cpus CSV`, `--out FILE`, `--nic IFACE,...`, `--aeron-dir PATH`; one finding a line (`<id> ok:`, `info:`, `warn:`, `unknown:`); exit 0 clean, 2 not clean, 1 not run |
 
 ## What the runner passes
@@ -53,6 +54,7 @@ own):
 | `aeron_lat` | `--aeron-dir <aeron_page's directory: $TR_AERON_DIR (tmpfs), at 2097152 $TR_AERON_HUGE_DIR (2 MiB hugetlbfs), the media driver's AERON_DIR too> --driver external --driver-busy-threads $TR_AERON_DRIVER_BUSY_THREADS (1 under SHARED) --term-length <term_length> --mtu $TR_MTU`; `--mode udp` arms also `--endpoint <pong's data IP>:$TR_PORT_BASE --reply <ping's data IP>:$TR_PORT_BASE --interface <own data IP>`; every run `--stream-id 1001+256k` (the k-th Aeron point of the set; a one-host point's round trip +128), ping and pong the same, so no lingering publication of an earlier run is the image a subscription takes |
 | `udp_lat` | `--local <own>:$TR_PORT_BASE --peer <other end>:$TR_PORT_BASE --rcvbuf/--sndbuf <sockbuf> --epoll-events <epoll_events> --busy-read-us <busy_read_us>`, `--datagram-burst <datagram_burst>` for `--impl ergon` |
 | `tcp_lat` | pong (and `local`, on its receiver NIC) `--listen <own>:port`, ping `--source <own> --connect <peer>:port` (`local` also `--source <own>`), then `--nodelay --quickack-per-read [false] --rto-min-us <rto_min_us> --delack-max-us --rcvbuf --sndbuf <sockbuf> --epoll-events <epoll_events> --busy-read-us <busy_read_us>` |
+| `fstack_lat` | pong `--listen <own>:port`, ping `--source <own> --connect <peer>:port`, then `--pci <the NIC with that address> --prefix-len <its prefix> --gateway <its subnet's first address>` (vm.sh nics) `--nodelay --rcvbuf --sndbuf <sockbuf>` |
 | other (arms file) | `--local <own>:port --peer <other end>:port`; setup `sockets` also `--busy-read-us $TR_BUSY_READ --rcvbuf/--sndbuf $TR_SOCKBUF --nodelay --quickack-per-read --rto-min-us $TR_TCP_RTO_MIN_US --delack-max-us $TR_TCP_DELACK_MAX_US`: every socket and TCP setting the built-in arms get. Such a binary must take them all, apply each it uses, and report them in its manifest |
 
 The media driver's mode (`vm.sh driver`, `tr_driver_mode`): `<aeron_path>`
@@ -188,3 +190,17 @@ Same format as `transport-matrix.tsv`: `arm` and `set` rows, added after the
 built-in ones. A name may not be used twice. `LAB_EXTRA_SRC` is a source tree
 copied to `~/extra` on both VMs, which then run `bash lab-build.sh ~/extra/bin`
 in it after the main build. Binaries placed there are found by name.
+
+## Setup fstack (`dpdk-tcp`)
+
+No media driver. `vm.sh fstack-up` moves both data NICs from `ena` to
+`igb_uio` (as `driver dpdk` does) after checking 512 free 2 MiB pages;
+`fstack_lat` takes its port by PCI address, so the ping holds host a's
+sender NIC and the pong host b's receiver NIC, the kernel TCP arms' path.
+`tr_arm_down` runs `vm.sh stop`, which returns the NICs to the kernel and
+removes F-Stack's leftover hugepage files. AWS x86_64 only (`modes.sh`
+refuses it elsewhere before any cloud call). A set with a `dpdk` or
+`fstack` arm has netem `-` (`transport_plan.py` refuses another level).
+`transport-aws-dpdk.tsv` is the AWS DPDK session's `LAB_SETS_FILE`.
+`vm.sh transport-build fstack` (when `tr_wants_fstack`) builds F-Stack under
+`~/fstack` and `fstack_lat`.

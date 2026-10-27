@@ -5,7 +5,10 @@
 # arm <name> <binary> <setup> <hosts> [<arguments>...]
 #   binary   a bench binary on the VMs' PATH (transport-cli.md)
 #   setup    none (no network), kernel or dpdk (a media driver: vm.sh driver),
-#            sockets (the kernel data path, busy poll: vm.sh sockets)
+#            sockets (the kernel data path, busy poll: vm.sh sockets), fstack
+#            (no media driver; the data NICs on igb_uio for the binary's own
+#            DPDK: vm.sh fstack-up; AWS x86_64 only). A set with a dpdk or
+#            fstack arm has netem - (netem cannot reach a NIC DPDK holds)
 #   hosts    one (both ends in one process on one host: rtt and one-way
 #            rows) or two (ping on host a, pong on host b: round trips)
 #   arguments  the arm's own flags, after the runner's (transport-cli.md)
@@ -45,6 +48,7 @@ arm  mio-udp          udp_lat    sockets  two  --impl mio
 arm  eio-udp          udp_lat    sockets  two  --impl ergon
 arm  mio-tcp          tcp_lat    sockets  two  --impl mio
 arm  eio-tcp          tcp_lat    sockets  two  --impl ergon
+arm  dpdk-tcp         fstack_lat fstack   two
 
 # set   pair par host loads                  streams      netem          arms
 set 1    b    p1  a    10000,1000000,5000000  1            -              mpsc,aeron-ipc,aeron-ipc-huge,aa
