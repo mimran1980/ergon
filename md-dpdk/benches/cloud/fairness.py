@@ -28,13 +28,20 @@ concerns. Rules:
                    knob excepted, and an arm at its technology's declared best:
                    best.knob.<name>, the data NICs' interrupt deferral); never
                    also shared
-  napi             a socket arm's point (sockets set-up, or a tcp/udp transport)
+  napi             a socket arm's point (sockets set-up, or a tcp/udp transport),
+                   and an Onload arm's (onload set-up: Onload polls the AF_XDP
+                   ring the NIC's NAPI fills at each interrupt),
                    with interrupt deferral off on every data NIC of every host
                    (knob.napi_defer read back 0, each NIC 0/0 where the runner
                    recorded them): its epoll never busy-polls, so a deferred
                    interrupt leaves each packet waiting for the gro_flush timer;
                    only a tuning session's frozen choice (the arm swept for it)
                    may run it on
+  onload           an Onload arm's point (onload set-up) had an Onload stack of
+                   its process (its binary, or the media driver) on every host
+                   mid-window (vm.sh onload-stacks: onload_<host> ok), ran
+                   under onload (onload_cmd), and in a round one onload_cmd
+                   and one Onload build a host (onload_build_<host>)
   declared         an arm declared another's twin but for one knob (aeron-ipc-huge:
                    aeron-ipc on 2 MiB pages) runs in every round with it, and
                    nothing else differs: its other per-arm knobs, transport, wire
@@ -229,6 +236,29 @@ def socket_point(p):
     return bool(parts) and all(x in SOCKET_TRANSPORTS for x in parts)
 
 
+def onload_point(p):
+    """Whether a point is an Onload arm's: the runner's onload set-up."""
+    return ((p.manifest or {}).get("runner") or {}).get("setup") == "onload"
+
+
+def onload_problems(p, hosts):
+    """What an Onload arm's point lacks (the onload rule): its run under
+    onload recorded, an Onload stack of its process on every host it used
+    (vm.sh onload-stacks, the runner's onload_<host>), its build read."""
+    runner = (p.manifest or {}).get("runner") or {}
+    out = []
+    if not runner.get("onload_cmd"):
+        out.append(f"{p.tag}: no onload_cmd: not shown to have run under onload")
+    for host in hosts:
+        real = ((p.manifest or {}).get("hosts") or {}).get(host, host)
+        v = runner.get(f"onload_{real}") or "unread"
+        if not v.startswith("ok"):
+            out.append(f"{p.tag}: {host}'s Onload stack mid-window: {v}")
+        if (runner.get(f"onload_build_{real}") or "unread") == "unread":
+            out.append(f"{p.tag}: {host}'s Onload build not read")
+    return out
+
+
 def napi_on(p, host):
     """What shows a point's data NICs on host deferring interrupts: the
     knob read back (knob.napi_defer) not 0, or a NIC the runner read
@@ -399,6 +429,15 @@ def check(run_dir, absences=None, notes=None):
         same("build", "core build", lambda p: p.manifest["core_build"])
         for k in ("rate", "duration_s", "warmup_s", "streams", "size"):
             same("schedule", k, lambda p, k=k: p.manifest[k])
+        # the round's Onload arms: one onload command and one build a host
+        ol = [p for p in ps if onload_point(p)]
+        for k in ("onload_cmd", "onload_build_a", "onload_build_b"):
+            seen = defaultdict(list)
+            for p in ol:
+                seen[(p.manifest.get("runner") or {}).get(k)].append(p.arm)
+            if len(seen) > 1:
+                add("onload", set_, [p.tag for p in ol], f"round {rid}: {k} differs across its Onload arms: "
+                    + "; ".join(f"{v} ({', '.join(sorted(set(a)))})" for v, a in sorted(seen.items(), key=str)))
 
         arms = {p.arm for p in ps}
         aas = [p for p in ps if p.manifest.get("aa")]
@@ -518,7 +557,7 @@ def check(run_dir, absences=None, notes=None):
             m, hosts = p.manifest, hosts_of(p.set)
             # a socket arm's NICs: interrupts not deferred (epoll never
             # busy-polls), but where a tuning session froze it on
-            if socket_point(p):
+            if socket_point(p) or onload_point(p):
                 arm = arm_key(p)
                 tuned = (env is not None and env[1].get(arm, {}).get("knob.napi_defer", "0") != "0"
                          and arm in env[2].get("knob.napi_defer", set()))
@@ -528,7 +567,13 @@ def check(run_dir, absences=None, notes=None):
                         add("napi", set_, [p.tag], f"{p.tag}: {host}'s data NICs' interrupt deferral not read back")
                     elif on and not tuned:
                         add("napi", set_, [p.tag], f"{p.tag}: {host}'s data NICs defer interrupts ({on}) under a "
-                            "socket arm: its epoll never busy-polls, so each packet waits for the gro_flush timer")
+                            + ("socket arm: its epoll never busy-polls, so each packet waits for the gro_flush timer"
+                               if not onload_point(p) else "an Onload arm: its AF_XDP ring is filled by the NIC's "
+                               "NAPI at each interrupt, so each packet waits for the gro_flush timer"))
+            # an Onload arm's: accelerated on every host, under onload
+            if onload_point(p):
+                for why in onload_problems(p, hosts):
+                    add("onload", set_, [p.tag], why)
             # wire bytes
             if p.row["wire_bytes"] != m["wire_bytes"]:
                 add("payload", set_, [p.tag], f"{p.tag}: row says {p.row['wire_bytes']} wire bytes, the manifest "

@@ -153,8 +153,12 @@
 #   (the session's files in transport/). LAB_TYPE defaults to c7a.2xlarge (8
 #   AMD cores, one thread each: vm.sh transport-isolate's map, CPU 0
 #   housekeeping, CPU 1 the data NICs' IRQs, 2-7 isolated), LAB_MAX_HOURS to
-#   5. x86_64 only (an F-Stack arm, setup fstack, builds there alone; refused
-#   on Graviton). Each type must take three ENIs (describe-instance-types'
+#   5. Graviton with LAB_ALLOW_ARM=1 (c8g.2xlarge: 8 cores, the same map), but
+#   an F-Stack arm (setup fstack) builds on x86_64 alone: refused there
+#   (modes.sh). An x86 type with SMT (c7i.4xlarge: 16 vCPUs, 8 cores) runs
+#   with SMT off (transport-tune), its map one CPU a core alike. The Onload
+#   session (../transport-aws-onload.tsv: setup onload, OpenOnload over
+#   AF_XDP on the ENA) runs on all three. Each type must take three ENIs (describe-instance-types'
 #   MaximumNetworkInterfaces, read before anything is created). LAB_SEED
 #   (random), LAB_ARMS_FILE, LAB_SETS_FILE (../transport-aws-dpdk.tsv: the AWS
 #   DPDK session), LAB_EXTRA_SRC, TRANSPORT_WARMUP_S, TRANSPORT_POINT_S and
@@ -459,7 +463,6 @@ if [[ $suite == transport && -z ${LAB_DELETE:-} ]]; then
     [[ -z ${LAB_TUNE:-} ]] || die "LAB_TUNE (the tuning sessions) runs on Azure (azure/lab.sh); not here"
     [[ $tr_pair == a || $tr_pair == b ]] ||
         die "LAB_PAIR is a or b with LAB_SUITE=transport (the session of transport-matrix.tsv to run), not [$tr_pair]"
-    [[ $arch == x86_64 ]] || die "LAB_SUITE=transport on AWS runs x86_64 (an F-Stack arm builds there alone), not Graviton ($type_a, $type_b)"
     [[ $placement == cluster ]] || die "LAB_SUITE=transport runs in one cluster placement group (LAB_PLACEMENT=cluster), not $placement"
     [[ ${LAB_MODES:-}${LAB_LOCAL_MODES:-} == "" ]] || die "LAB_MODES and LAB_LOCAL_MODES are the latency suite's: LAB_SUITE=transport runs transport-matrix.tsv's arms"
     [[ -z ${LAB_RUN_STAMP:-} ]] || die "LAB_RUN_STAMP is azure/lab.sh's: each AWS session claims a stamp of its own"
@@ -482,12 +485,13 @@ if [[ $suite == transport && -z ${LAB_DELETE:-} ]]; then
         cp "$arms_file" "$here/../.lab-arms-$$.tsv" || die "LAB_ARMS_FILE $arms_file: cannot copy"
         arms_file=$here/../.lab-arms-$$.tsv
     fi
-    # every mode judged for AWS (transport.sh tr_cloud)
-    tr_cloud=aws
+    # every mode judged for AWS and the instances' architecture (transport.sh
+    # tr_cloud, tr_arch): on Graviton an F-Stack arm is refused (modes.sh)
+    tr_cloud=aws tr_arch=$arch
     # shellcheck source=../transport.sh
     . "$here/../transport.sh"
     points=$(tr_check "$tr_pair" "$arms_file" 2>&1) || die "$points"
-    for m in "kernel-busy$TR_AERON_MODE_SUFFIX" "dpdk$TR_AERON_MODE_SUFFIX"; do
+    for m in "kernel-busy$TR_AERON_MODE_SUFFIX" "dpdk$TR_AERON_MODE_SUFFIX" "onload$TR_AERON_MODE_SUFFIX"; do
         why=$(spare_types_check "$m" aws "$type_a" "$type_b" 2>&1) || die "$why"
     done
     for v in TRANSPORT_WARMUP_S TRANSPORT_POINT_S TRANSPORT_SWITCH_S; do

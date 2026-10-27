@@ -97,10 +97,18 @@
 #                            every interrupt on the IRQ CPU) and the sysctls, each read back; the
 #                            2 MiB hugetlbfs of aeron-ipc-huge's Aeron directory mounted and verified
 #   vm.sh transport-net [check]  a socket arm's kernel path (NAPI, busy poll, TCP), or only read back
-#   vm.sh transport-map      the map;  vm.sh transport-build [fstack]  the bench binaries and LAB_EXTRA_SRC's
-#                            (fstack: F-Stack and fstack_lat too, x86_64 only)
+#   vm.sh transport-map      the map;  vm.sh transport-build [fstack] [onload]  the bench binaries and
+#                            LAB_EXTRA_SRC's (fstack: F-Stack and fstack_lat too, x86_64 only; onload:
+#                            OpenOnload built and installed, onload-build.sh)
 #   vm.sh fstack-up          setup fstack (transport.sh): no media driver, the data NICs on igb_uio for
 #                            fstack_lat's own DPDK; `stop` gives them back (AWS x86_64 only)
+#   vm.sh onload-up          setup onload (transport.sh): the kernel path as transport-net has it, then
+#                            each data NIC on one queue at Onload's MTU, registered with Onload's AF_XDP
+#                            (its XDP program read back); `stop` undoes it (AWS only; `driver onload`
+#                            runs it, then the media driver under onload)
+#   vm.sh onload-info        the Onload build installed (version, commit, patch, kernel), fail closed
+#   vm.sh onload-stacks <name>  "ok"/"FAIL": an Onload stack of a process of that name (the mid-window check)
+#   vm.sh onload-idle        no Onload stack left (orphans killed; before each Onload socket arm's point)
 #   vm.sh netem set <loss %>|clear|check <loss %|none>|stats   netem on every data NIC's egress
 #   vm.sh sample             every thread's CPU, judged against the isolated CPUs (first line)
 #   vm.sh irqsnap            /proc/interrupts;  vm.sh hostcheck [aeron dir]  the ergon-tune report
@@ -199,6 +207,10 @@ DPDK_VERSION=25.11
 DPDK_PREFIX=${LAB_OPT_ROOT:-/opt}/dpdk-$DPDK_VERSION
 # fstack_lat's EAL memory in 2 MiB pages (its --memory-mb 1024: fstack-up)
 FSTACK_HUGE_PAGES=512
+# OpenOnload's source (onload-build.sh) and what onload-up changed on each
+# data NIC (host.sh onload_nic_up), for `stop` to undo
+ONLOAD_SRC=$HOME/onload
+ONLOAD_STATE=$run/onload
 if precision_time; then
     export PKG_CONFIG_PATH=$DPDK_PREFIX/lib/$ARCH-linux-gnu/pkgconfig
 fi
@@ -1511,6 +1523,63 @@ knoise_stop() {
     rmdir "$t/instances/knoise" 2>/dev/null || true
 }
 
+# onload_up: setup onload (transport.sh): the kernel path as transport-net
+# sets it (the sysctls read back as every arm's), Onload's modules loaded with
+# its AF_XDP flow filters off, then each data NIC on one queue at Onload's
+# MTU and registered (host.sh onload_nic_up), the IRQs on the IRQ CPU again
+# and the NICs' settings read back (transport_nics); fail closed, undoing it
+onload_up() {
+    [[ $CLOUD == aws ]] || { echo "onload-up: AWS only (ENA's native XDP under Onload's AF_XDP; this host: $CLOUD)" >&2; return 2; }
+    command -v onload >/dev/null || { echo "onload-up: Onload is not installed (vm.sh transport-build onload)" >&2; return 2; }
+    [[ -s $run/transport-map ]] || { echo "onload-up: no transport map" >&2; return 2; }
+    data_kernel_up
+    transport_cc_load
+    transport_sysctls_apply >/dev/null || return 1
+    if ! lsmod | grep -q '^onload '; then sudo onload_tool reload --onload-only || { echo "onload-up: onload_tool reload --onload-only failed" >&2; return 1; }; fi
+    # no ntuple filters on the ENA: none asked for (one queue takes all)
+    echo 0 | sudo tee "$LAB_SYS_ROOT/module/sfc_resource/parameters/enable_af_xdp_flow_filters" >/dev/null ||
+        { echo "onload-up: sfc_resource's enable_af_xdp_flow_filters not set to 0" >&2; return 1; }
+    local i
+    for i in $(data_ifaces); do
+        onload_nic_up "$i" "$ONLOAD_STATE" || { onload_down >/dev/null 2>&1 || true; return 1; }
+    done
+    pin_irqs "after Onload took the data NICs"
+    transport_nics >/dev/null || { echo "onload-up: the data NICs' settings did not hold after Onload took them (transport_nics)" >&2; onload_down >/dev/null 2>&1 || true; return 1; }
+    echo "onload-up: data NICs $(data_ifaces | paste -sd, -) under Onload's AF_XDP, $(onload --version 2>/dev/null | head -1)"
+}
+
+# onload_idle [<seconds>]: no Onload stack left. Each data NIC has one
+# queue, so one AF_XDP socket and one stack at a time: an orphan stack (its
+# process gone, kept by a closed TCP connection's TIME_WAIT or FIN_WAIT for
+# up to a minute) would leave the next point's process none. Orphans killed
+# (onload_stackdump -z kill: only stacks no process holds), then up to
+# <seconds> (30) for every stack to go; 1 listing any left
+onload_idle() {
+    command -v onload_stackdump >/dev/null || return 0
+    local left=
+    for _ in $(seq $((${1:-30} * 4))); do
+        left=$(sudo onload_stackdump stacks 2>/dev/null | awk '!/^#/ && $1 ~ /^[0-9]+$/')
+        [[ -n $left ]] || return 0
+        sudo onload_stackdump -z kill >/dev/null 2>&1 || true
+        sleep 0.25
+    done
+    echo "onload: stacks left: $(tr '\n' ';' <<<"$left")" >&2
+    return 1
+}
+
+# onload_down: onload_up undone (vm.sh stop): every Onload stack gone first
+# (onload_idle; none unregistered under a live stack), then each data NIC
+# unregistered, its queues and MTU back (host.sh onload_nic_down); 1 when
+# one did not come back
+onload_down() {
+    [[ -d $ONLOAD_STATE ]] || return 0
+    local i rc=0
+    onload_idle || { echo "onload: data NICs left registered: a stack still holds them" >&2; return 1; }
+    for i in $(data_ifaces 2>/dev/null); do onload_nic_down "$i" "$ONLOAD_STATE" || rc=1; done
+    if ((rc == 0)); then rm -rf "$ONLOAD_STATE"; fi
+    return $rc
+}
+
 case ${1:-} in
 bootstrap)
     # x86_64; aarch64 (Graviton) only with lab.sh's LAB_ALLOW_ARM=1, which
@@ -1919,7 +1988,7 @@ ready)
     ;;
 nics) nics ;;
 driver)
-    mode=${2:?kernel, kernel-busy, dpdk or dpdk-spin, optionally -mono, then @KEY=value overrides}
+    mode=${2:?kernel, kernel-busy, dpdk or dpdk-spin, optionally -mono, or onload, then @KEY=value overrides}
     "$self" stop
     # `stop` removed any earlier run's BIN: this run's own, if any, follows
     bin=${BENCH_BIN:-$tools}
@@ -1978,6 +2047,14 @@ driver)
         done
         # the data NICs named, so the driver's NIC checks run (under DPDK they
         # are the ports, by PCI address, and the variable is ignored)
+        data_nics_env >>"$env_file" || { echo "$mode: the data NICs not read for RUSTERON_MEDIA_DRIVER_DATA_NICS" >&2; exit 2; }
+        ;;
+    onload)
+        # the transport suite's Onload arms: the kernel's UDP transport with
+        # the driver under onload (below), on the data NICs onload-up gives
+        # Onload's AF_XDP; the sysctls as transport-tune set them (Onload's
+        # sockets never busy-poll the kernel's NAPI: its own spin instead)
+        onload_up || exit $?
         data_nics_env >>"$env_file" || { echo "$mode: the data NICs not read for RUSTERON_MEDIA_DRIVER_DATA_NICS" >&2; exit 2; }
         ;;
     dpdk)
@@ -2160,7 +2237,11 @@ driver)
     # driver's files (cnc.dat, the log buffers) writable by them (umask 0)
     umask_cmd=
     [[ -s $run/transport-map ]] && umask_cmd='umask 0000 && '
-    sudo bash -c "$umask_cmd. '$env_file' && exec taskset -c $HK_CPU '$bin/media_driver'" >"$run/driver.log" 2>&1 &
+    # onload: the driver under the onload launcher, with the Onload arms'
+    # profile and settings (transport-settings.env TR_ONLOAD_*)
+    launcher=
+    [[ $mode == onload ]] && launcher="env $TR_ONLOAD_ENV onload --profile=$TR_ONLOAD_PROFILE "
+    sudo bash -c "$umask_cmd. '$env_file' && exec taskset -c $HK_CPU $launcher'$bin/media_driver'" >"$run/driver.log" 2>&1 &
     pid=$!
     for _ in $(seq 120); do
         grep -q "media driver started" "$run/driver.log" 2>/dev/null && break
@@ -2327,6 +2408,9 @@ stop)
         for _ in $(seq 40); do pgrep -x 'floor|purefloor' >/dev/null || break; sleep 0.25; done
         rm -f "$run/floor"
     fi
+    # Onload's AF_XDP off the data NICs, their queues and MTU back
+    # (onload-up's): fail closed, as every set-up that follows stops first
+    onload_down || { echo "stop: Onload's changes to the data NICs not all undone ($ONLOAD_STATE)" >&2; exit 1; }
     data_return_to_kernel
     # fstack_lat's hugepage files, when none runs (a pong ended by SIGKILL
     # leaves them, holding FSTACK_HUGE_PAGES pages until its next start)
@@ -2751,6 +2835,14 @@ transport-isolate)
     echo "$map" >"$run/transport-map"
     transport_layout "$map" >"$run/layout-transport"
     args=$(transport_boot_args "$map")
+    # `onload` (a session with an Onload arm): Onload's AF_XDP set-up calls
+    # bpf() from its module through the syscall table, which it will not use
+    # under kernel IBT (its syscall_x86.c: "require disablement of IBT with
+    # ibt=off"); so ibt=off where the CPU has IBT (Intel), for every arm of
+    # the session alike, in the boot line its points record
+    if [[ ${2:-} == onload && $ARCH == x86_64 ]] && grep -qw ibt "$LAB_PROC_ROOT/cpuinfo" 2>/dev/null; then
+        args+=" ibt=off"
+    fi
     sudo mkdir -p /etc/default/grub.d
     echo "GRUB_CMDLINE_LINUX_DEFAULT=\"\$GRUB_CMDLINE_LINUX_DEFAULT $args\"" |
         sudo tee /etc/default/grub.d/99-ergon-isolation.cfg >/dev/null
@@ -2796,6 +2888,9 @@ transport-net)
     # TR_OVERRIDES: transport.sh tr_host_overrides), every sysctl;
     # `check`: only read back (after a driver started on the kernel's path)
     [[ -s $run/transport-map ]] || { echo "transport-net: no transport map" >&2; exit 2; }
+    # the kernel's path, never Onload's: any of it left, undone first (stop
+    # fails closed when it cannot be)
+    if [[ ${2:-} != check && -d $ONLOAD_STATE ]]; then "$self" stop; fi
     if [[ ${2:-} == check ]]; then
         transport_sysctls_apply check >/dev/null || exit 1
         transport_nics >/dev/null || exit 1
@@ -2827,12 +2922,24 @@ transport-build)
     # (transport-build.sh: the local smoke builds them the same way);
     # `fstack` (an arm of the session runs on F-Stack: transport.sh
     # tr_wants_fstack): F-Stack and its DPDK under ~/fstack, and fstack_lat
+    # `onload` (an arm of the session runs under Onload: transport.sh
+    # tr_wants_setup onload): OpenOnload at TR_ONLOAD_COMMIT with
+    # onload-kernel-7.2.patch, built and installed (onload-build.sh); AWS only
     export PATH=$HOME/.cargo/bin:$PATH
-    if [[ ${2:-} == fstack ]]; then
-        [[ $ARCH == x86_64 ]] || { echo "transport-build fstack: F-Stack builds on x86_64 only (io/benches/fstack/build-fstack.sh), not $ARCH" >&2; exit 2; }
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq meson ninja-build python3-pyelftools libnuma-dev libssl-dev zlib1g-dev >/dev/null
-        export TR_FSTACK_PREFIX=$HOME/fstack
-    fi
+    for what in "${@:2}"; do
+        case $what in
+        fstack)
+            [[ $ARCH == x86_64 ]] || { echo "transport-build fstack: F-Stack builds on x86_64 only (io/benches/fstack/build-fstack.sh), not $ARCH" >&2; exit 2; }
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq meson ninja-build python3-pyelftools libnuma-dev libssl-dev zlib1g-dev >/dev/null
+            export TR_FSTACK_PREFIX=$HOME/fstack
+            ;;
+        onload)
+            [[ $CLOUD == aws ]] || { echo "transport-build onload: AWS only (ENA's native XDP under Onload's AF_XDP), not $CLOUD" >&2; exit 2; }
+            bash "$(dirname "$self")/onload-build.sh" "$ONLOAD_SRC" "$TR_ONLOAD_REPO" "$TR_ONLOAD_COMMIT" "$(dirname "$self")/onload-kernel-7.2.patch"
+            ;;
+        *) echo "transport-build: $what is neither fstack nor onload" >&2; exit 2 ;;
+        esac
+    done
     bash "$(dirname "$self")/transport-build.sh" "$HOME/ergon" "$HOME/ergon/target" "$(client_features "$run/dpdk_unavailable")"
     if [[ -f $HOME/extra/lab-build.sh ]]; then
         mkdir -p "$HOME/extra/bin"
@@ -2864,6 +2971,36 @@ fstack-up)
         [[ -e /sys/bus/pci/drivers/igb_uio/$bdf ]] || { echo "fstack-up: $bdf is not on igb_uio" >&2; exit 1; }
     done <<<"$data_nics"
     echo "fstack-up: data NICs $(awk '{print $7}' <<<"$data_nics" | paste -sd, -) on igb_uio"
+    ;;
+onload-up)
+    # setup onload (transport.sh): no media driver; the data NICs under
+    # Onload's AF_XDP for the binaries run under onload (onload_up); `stop`
+    # undoes it. AWS only
+    "$self" stop
+    onload_up || exit $?
+    ;;
+onload-info)
+    # the Onload build the session's Onload arms run on: its version line,
+    # then the commit and patch onload-build.sh built, the kernel, and the
+    # modules' versions (transport.sh: each point's onload_build_<host>); 1
+    # when it is not installed
+    command -v onload >/dev/null || { echo "onload-info: no onload launcher (vm.sh transport-build onload)" >&2; exit 1; }
+    stamp=$(cat "$ONLOAD_SRC/.ergon-onload-stamp" 2>/dev/null) || { echo "onload-info: no build stamp in $ONLOAD_SRC" >&2; exit 1; }
+    read -r commit patch kver <<<"$stamp"
+    [[ $commit == "$TR_ONLOAD_COMMIT" && $kver == "$(uname -r)" ]] ||
+        { echo "onload-info: built $commit for $kver, not $TR_ONLOAD_COMMIT for $(uname -r)" >&2; exit 1; }
+    echo "onload ${commit:0:12} patch ${patch:0:12} kernel $kver $(onload --version 2>/dev/null | head -1)"
+    for m in onload sfc_resource sfc_char; do echo "module $m $(modinfo -F version "$m" 2>/dev/null || echo missing)"; done
+    ;;
+onload-stacks)
+    # "ok ..." when an Onload stack has a process named $2 (the arm's binary,
+    # or media_driver), else "FAIL ...", exit 1 (host.sh onload_stacks_verdict)
+    sudo onload_stackdump stacks 2>/dev/null | onload_stacks_verdict "${2:?the process name}"
+    ;;
+onload-idle)
+    # before each point of an Onload socket arm (transport.sh): no stack of
+    # an earlier point's process left on the NICs' one queue (onload_idle)
+    onload_idle
     ;;
 netem)
     # netem on every data NIC's egress (the interfaces the kernel sends on;

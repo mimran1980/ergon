@@ -180,6 +180,9 @@ to it as `manifest/<point>.json` (a one-host point's round-trip run as
 | `placement_a`, `placement_b` | `ok <n> busy threads`, or `FAIL` and what broke: a busy thread off the isolated CPUs, or two on one CPU |
 | `netem_a`, `netem_b` | `none`, or `<offered>/<dropped> p=<pct> in [<lo>,<hi>] ok`, or the same ending `FAIL` |
 | `hostcheck_a`, `hostcheck_b` | the session's report file that covers the arm on each host (`hostcheck-<host>-hugepages.txt` for an arm on the hugetlbfs) |
+| `onload_cmd`, `onload_under` | setup `onload`: what the arm ran under (`env <TR_ONLOAD_ENV> onload --profile=<TR_ONLOAD_PROFILE>`), and which process (the binary, or `media_driver` for Aeron) |
+| `onload_build_a`, `onload_build_b` | setup `onload`: the Onload build on each host (`vm.sh onload-info`'s first line, read as the session starts) |
+| `onload_a`, `onload_b` | setup `onload`: `ok ...` when an Onload stack of the arm's process was there mid-window (`vm.sh onload-stacks`), else `FAIL ...` (fairness.py's onload rule) |
 
 The row the binary writes gets the rep in its first column (the binary is
 not given it), and goes to `results.csv`.
@@ -217,3 +220,28 @@ lines (vm.sh names any step that fails under `set -e`) and, under `kernel` or
 `dpdk`, keeps the media driver's log as `logs/driver-<host>-<n>.log`.
 `vm.sh transport-build fstack` (when `tr_wants_fstack`) builds F-Stack under
 `~/fstack` and `fstack_lat`.
+
+## Setup onload (`onload-*`)
+
+OpenOnload over AF_XDP on the ENA, AWS only (x86_64 and Graviton). The
+matrix's `onload-mio-tcp`, `onload-eio-tcp`, `onload-mio-udp`,
+`onload-eio-udp`, `onload-aeron-udp` and `onload-aeron-rel` are the kernel
+arms' binaries and arguments; only the stack differs.
+
+| what | how |
+|---|---|
+| build | `vm.sh transport-build onload` (when a set runs an Onload arm): `onload-build.sh`, Xilinx-CNS/onload at `TR_ONLOAD_COMMIT` with `onload-kernel-7.2.patch`, `--no-sfc`, installed without boot-time module loading |
+| boot line | `vm.sh transport-isolate onload` adds `ibt=off` on a CPU with IBT (Intel): Onload's module calls `bpf()` through the syscall table to set up AF_XDP |
+| NICs | `vm.sh onload-up` (`driver onload` runs it first): the kernel path as `transport-net` sets it, the modules loaded, AF_XDP flow filters off, each data NIC at 1 queue, MTU at most `TR_ONLOAD_MTU`, interrupts not deferred, registered, and its XDP program read back (maxmtu drops to 3498); `stop` unregisters and puts queues and MTU back |
+| socket arms | the binary under `env TR_ONLOAD_ENV onload --profile=TR_ONLOAD_PROFILE`; `--busy-read-us 0`; no `--rto-min-us` or `--delack-max-us` (Onload has neither option; `EF_RFC_RTO_MIN` instead) |
+| Aeron arms | `aeron_lat` as on the kernel; its media driver under onload (`vm.sh driver onload@...`) |
+| knobs | the kernel arm's knobs Onload honours, and `napi_defer` at `TR_ONLOAD_NAPI_DEFER` (read back) |
+| one stack | each data NIC has one queue, so one AF_XDP socket and one Onload stack: before each point of a socket arm `vm.sh onload-idle` kills orphan stacks (a closed TCP connection's TIME_WAIT keeps one) and waits up to 30 s for none, else the point fails; `stop` unregisters only with no stack left, else fails |
+| check | `vm.sh onload-stacks <process>` mid-window on each host; `EF_NO_FAIL=0` makes a socket Onload cannot accelerate fail instead of falling back |
+
+No netem (`transport_plan.py` refuses it): Onload's AF_XDP sends leave by
+`__dev_direct_xmit`, past the qdisc. `transport-aws-onload.tsv` is the
+session's `LAB_SETS_FILE` (`aws/lab.sh LAB_SUITE=transport LAB_PAIR=a`, on
+c7i.4xlarge, c8g.2xlarge with `LAB_ALLOW_ARM=1`, or c7a.2xlarge);
+`transport-aws-onload-smoke.tsv` runs every Onload arm once first
+(`LAB_REPS=1`).

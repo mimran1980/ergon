@@ -710,7 +710,9 @@ dpdk_busy_idle() { [[ $1 =~ ^(spin|noop|aeron_idle_strategy_busy_spinning|aeron_
 #                control's control);
 #                never on a DPDK arm (a dpdk* name, the dpdk or fstack setup): DPDK
 #                bypasses the kernel's qdiscs, so netem would drop nothing
-#                and the row would claim a loss it never saw
+#                and the row would claim a loss it never saw; nor on an
+#                Onload arm (setup onload): Onload's AF_XDP socket sends by
+#                the kernel's __dev_direct_xmit, which skips the qdisc too
 #   AA=1         the A/A arm: the round's first arm run again
 TRANSPORT_ARMS=${TRANSPORT_ARMS:-}
 ARM_SETTINGS=" STREAMS NETEM AA "
@@ -722,7 +724,7 @@ arm_of() {
     printf '%s' "$a"
 }
 
-# arm_setup <arm>: none, kernel, dpdk, sockets or fstack; arm_hosts <arm>: one or two
+# arm_setup <arm>: none, kernel, dpdk, sockets, fstack or onload; arm_hosts <arm>: one or two
 arm_setup() { local s=${TRANSPORT_ARMS#* "$1"=}; s=${s%% *}; printf '%s' "${s%/*}"; }
 arm_hosts() { local s=${TRANSPORT_ARMS#* "$1"=}; s=${s%% *}; printf '%s' "${s#*/}"; }
 
@@ -750,6 +752,10 @@ arm_check() {
                 echo "mode $m: NETEM on a DPDK arm: DPDK bypasses the kernel's qdiscs, so netem would drop nothing (no DPDK in loss rows)" >&2
                 return 2
             fi
+            if [[ $(arm_setup "$a") == onload ]]; then
+                echo "mode $m: NETEM on an Onload arm: its AF_XDP sends skip the kernel's qdiscs (__dev_direct_xmit), so netem would drop nothing (no Onload in loss rows)" >&2
+                return 2
+            fi
             ;;
         AA) [[ $value == 1 ]] || { echo "mode $m: AA=1 or nothing" >&2; return 2; } ;;
         esac
@@ -770,14 +776,24 @@ mode_check() {
             echo "mode $m: an F-Stack arm runs on AWS x86_64 only (here $cloud $arch)" >&2
             return 2
         fi
+        # setup onload: Onload over AF_XDP on ENA's native XDP (vm.sh
+        # onload-up), on x86_64 and Graviton; MANA was never tried
+        if [[ $(arm_setup "$(arm_of "$m")") == onload && $cloud != aws ]]; then
+            echo "mode $m: an Onload arm runs on AWS only (ENA's native XDP under Onload's AF_XDP; here $cloud)" >&2
+            return 2
+        fi
         arm_check "$m"
         return
     fi
     # the transport, as vm.sh driver takes it (any other stops the run there)
     transport=${m%+idle}
     transport=${transport%%@*}
-    [[ $transport =~ ^(kernel|kernel-busy|dpdk|dpdk-spin|dpdk-adaptive|dpdk-epoll|kernel-raw|dpdk-raw|dpdk-pure)(-mono)?$ ]] ||
-        { echo "mode $m: transport $transport: kernel, kernel-busy, dpdk, dpdk-spin, dpdk-adaptive, dpdk-epoll, the raw floor's kernel-raw or dpdk-raw, optionally -mono, or the pure floor's dpdk-pure (vm.sh refuses any other at the driver's start)" >&2; return 2; }
+    [[ $transport =~ ^(kernel|kernel-busy|dpdk|dpdk-spin|dpdk-adaptive|dpdk-epoll|kernel-raw|dpdk-raw|dpdk-pure)(-mono)?$ || $transport == onload ]] ||
+        { echo "mode $m: transport $transport: kernel, kernel-busy, dpdk, dpdk-spin, dpdk-adaptive, dpdk-epoll, the raw floor's kernel-raw or dpdk-raw, optionally -mono, the pure floor's dpdk-pure, or onload (the transport suite's: kernel UDP under Onload) (vm.sh refuses any other at the driver's start)" >&2; return 2; }
+    # onload: the transport suite's Onload arms' media driver (vm.sh driver
+    # onload, after vm.sh onload-up), AWS only
+    [[ $transport != onload || $cloud == aws ]] ||
+        { echo "mode $m: transport onload is AWS only (ENA's native XDP under Onload's AF_XDP; here $cloud)" >&2; return 2; }
     # the raw floor: no Aeron, so nothing only Aeron reads, and its round trip
     # alone, cross-host (floor.rs)
     if mode_raw "$m"; then

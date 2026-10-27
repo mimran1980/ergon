@@ -1319,6 +1319,120 @@ netem_clear() {
     done
 }
 
+# ---- Onload over AF_XDP (the transport suite's setup onload: vm.sh onload-up,
+# its undoing in vm.sh stop). Onload's sfc_resource registers a NIC by name
+# (/sys/module/sfc_resource/afxdp/register) and links its XDP program by the
+# driver's ndo_bpf. The ENA's native XDP takes it only with one buffer a frame
+# (MTU at most ENA_XDP_MAX_MTU, 3498 at 4 KiB pages: ena_xdp.h) and its queues
+# at most half its maximum (ena_xdp.c: "the Rx/Tx channel count should be at
+# most half"), and has no ntuple filters (no set_rxnfc), so Onload runs with
+# its flow filters off and the NIC on one queue: every TCP and UDP frame lands
+# on queue 0, the one Onload binds (its XDP program redirects by queue).
+# Onload adds the NIC even when its XDP set-up failed ("hardware init failed",
+# resource_driver.c efrm_nic_add, which carries on), and a stack on such a NIC
+# froze EC2 instances (Xilinx-CNS/onload#231, #210): so each precondition is
+# set first, and the XDP program's taking is read back (the ENA's maxmtu drops
+# to ENA_XDP_MAX_MTU while one is attached), fail closed.
+
+# onload_max_mtu <iface>: the interface's largest MTU now (ip -d: maxmtu)
+onload_max_mtu() {
+    ip -d -j link show dev "$1" 2>/dev/null | python3 -c 'import json, sys
+try:
+    print(json.load(sys.stdin)[0]["max_mtu"])
+except Exception:
+    pass'
+}
+
+# onload_combined <iface> [max]: the interface's combined queues now (max:
+# its maximum), from ethtool -l
+onload_combined() {
+    ethtool -l "$1" 2>/dev/null | awk -v want="${2:-current}" '/^Pre-set maximums/ {s = "max"} /^Current hardware settings/ {s = "current"}
+        /^Combined:/ && s == want {print $2}'
+}
+
+# onload_nic_up <iface> <state dir>: the interface on one queue, its MTU at
+# most TR_ONLOAD_MTU and its interrupts not deferred (TR_ONLOAD_NAPI_DEFER),
+# each one's value first kept in <state dir> for onload_nic_down, then
+# registered with Onload and its XDP program read back; 1 saying what failed
+onload_nic_up() {
+    local i=$1 st=$2 mtu max comb before after sysd=${LAB_SYS_ROOT:-/sys}/module/sfc_resource
+    mkdir -p "$st"
+    [[ -w $sysd/afxdp/register || -e $sysd/afxdp/register ]] || { echo "onload: $sysd/afxdp/register missing (the sfc_resource module not loaded)" >&2; return 1; }
+    mtu=$(cat "${LAB_SYS_ROOT:-/sys}/class/net/$i/mtu") comb=$(onload_combined "$i") max=$(onload_combined "$i" max)
+    [[ $comb =~ ^[0-9]+$ && $max =~ ^[0-9]+$ ]] || { echo "onload: $i's combined queues not read (ethtool -l: [$comb] of [$max])" >&2; return 1; }
+    ((max >= 2)) || { echo "onload: $i takes at most $max queue: ENA's XDP needs its queues at most half the maximum" >&2; return 1; }
+    [[ -e $st/$i.mtu ]] || echo "$mtu" >"$st/$i.mtu"
+    [[ -e $st/$i.combined ]] || echo "$comb" >"$st/$i.combined"
+    if ((comb != 1)); then
+        local rc=0
+        sudo ethtool -L "$i" combined 1 2>"$st/ethtool.err" || rc=$?
+        [[ $rc == 0 || $rc == 80 ]] || { echo "onload: ethtool -L $i combined 1: $(cat "$st/ethtool.err")" >&2; return 1; }
+    fi
+    [[ $(onload_combined "$i") == 1 ]] || { echo "onload: $i has $(onload_combined "$i") combined queues after asking 1" >&2; return 1; }
+    if ((mtu > TR_ONLOAD_MTU)); then sudo ip link set dev "$i" mtu "$TR_ONLOAD_MTU" || { echo "onload: $i's MTU $TR_ONLOAD_MTU refused" >&2; return 1; }; fi
+    echo "$TR_ONLOAD_NAPI_DEFER" | sudo tee "${LAB_SYS_ROOT:-/sys}/class/net/$i/napi_defer_hard_irqs" >/dev/null
+    echo 0 | sudo tee "${LAB_SYS_ROOT:-/sys}/class/net/$i/gro_flush_timeout" >/dev/null
+    before=$(onload_max_mtu "$i")
+    # registered from here on, whatever follows: onload_nic_down unregisters it
+    : >"$st/$i.registered"
+    echo "$i" | sudo tee "$sysd/afxdp/register" >/dev/null || { echo "onload: registering $i with Onload's AF_XDP failed" >&2; return 1; }
+    after=$(onload_max_mtu "$i")
+    if [[ -z $after || $after == "$before" ]]; then
+        echo "onload: $i's XDP program not attached after registering it (maxmtu $before, then ${after:-unread}): Onload's AF_XDP set-up failed on it (dmesg: hardware init failed)" >&2
+        return 1
+    fi
+    echo "onload $i: registered, AF_XDP on its native XDP (maxmtu $before -> $after), 1 queue (was $comb of $max), MTU $(cat "${LAB_SYS_ROOT:-/sys}/class/net/$i/mtu") (was $mtu), napi_defer $TR_ONLOAD_NAPI_DEFER"
+}
+
+# onload_nic_down <iface> <state dir>: what onload_nic_up did, undone:
+# unregistered (its XDP program unlinked: maxmtu back up), then its queues and
+# MTU as they were; nothing for an interface it never touched; 1 saying what
+# did not come back
+onload_nic_down() {
+    local i=$1 st=$2 rc=0 sysd=${LAB_SYS_ROOT:-/sys}/module/sfc_resource v
+    if [[ -e $st/$i.registered ]]; then
+        if [[ -e $sysd/afxdp/unregister ]]; then
+            echo "$i" | sudo tee "$sysd/afxdp/unregister" >/dev/null || { echo "onload: unregistering $i failed" >&2; rc=1; }
+        fi
+        v=$(onload_max_mtu "$i")
+        if [[ -n $v ]] && ((v <= TR_ONLOAD_MTU)); then echo "onload: $i's maxmtu still $v after unregistering: its XDP program left attached" >&2; rc=1; fi
+        rm -f "$st/$i.registered"
+    fi
+    if [[ -e $st/$i.combined ]]; then
+        v=$(cat "$st/$i.combined")
+        if [[ $(onload_combined "$i") != "$v" ]]; then
+            local erc=0
+            sudo ethtool -L "$i" combined "$v" 2>"$st/ethtool.err" || erc=$?
+            [[ $erc == 0 || $erc == 80 ]] || { echo "onload: ethtool -L $i combined $v: $(cat "$st/ethtool.err")" >&2; rc=1; }
+        fi
+        [[ $(onload_combined "$i") == "$v" ]] && rm -f "$st/$i.combined" || { echo "onload: $i has $(onload_combined "$i") combined queues, not its $v" >&2; rc=1; }
+    fi
+    if [[ -e $st/$i.mtu ]]; then
+        v=$(cat "$st/$i.mtu")
+        [[ $(cat "${LAB_SYS_ROOT:-/sys}/class/net/$i/mtu") == "$v" ]] || sudo ip link set dev "$i" mtu "$v" || rc=1
+        [[ $(cat "${LAB_SYS_ROOT:-/sys}/class/net/$i/mtu") == "$v" ]] && rm -f "$st/$i.mtu" || { echo "onload: $i's MTU not back at $v" >&2; rc=1; }
+    fi
+    return $rc
+}
+
+# onload_stacks_verdict <process name>: onload_stackdump's stack list on
+# stdin: "ok <n> stack(s) of <name>: <stack:pids>..." when a stack has a
+# process of that name (its pids checked against ps), else "FAIL ..."
+onload_stacks_verdict() {
+    local name=$1 lines pid stack ok=() all=()
+    lines=$(awk '/^#/ {next} NF >= 3 && $1 ~ /^[0-9]+$/ {print $1, $3}' | tr -d '[]')
+    while read -r stack pids; do
+        [[ -n $stack ]] || continue
+        all+=("$stack:$pids")
+        for pid in ${pids//,/ }; do
+            [[ $(cat "${LAB_PROC_ROOT:-/proc}/$pid/comm" 2>/dev/null) == "$name" ]] && { ok+=("$stack:$pid"); break; }
+        done
+    done <<<"$lines"
+    if ((${#ok[@]})); then echo "ok ${#ok[@]} stack(s) of $name: ${ok[*]}"; return 0; fi
+    echo "FAIL no Onload stack of $name (stacks: ${all[*]:-none})"
+    return 1
+}
+
 # netem_check <loss %|none> <iface>...: 0 when each one's root qdisc is netem
 # at that loss (none: no netem on it), else 1 saying which
 netem_check() {

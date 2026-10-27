@@ -7,8 +7,11 @@
 #   setup    none (no network), kernel or dpdk (a media driver: vm.sh driver),
 #            sockets (the kernel data path, busy poll: vm.sh sockets), fstack
 #            (no media driver; the data NICs on igb_uio for the binary's own
-#            DPDK: vm.sh fstack-up; AWS x86_64 only). A set with a dpdk or
-#            fstack arm has netem - (netem cannot reach a NIC DPDK holds)
+#            DPDK: vm.sh fstack-up; AWS x86_64 only), onload (the binary, or
+#            an Aeron arm's media driver, under OpenOnload over AF_XDP on the
+#            data NICs: vm.sh onload-up; AWS only). A set with a dpdk, fstack
+#            or onload arm has netem - (netem cannot reach a NIC DPDK holds,
+#            nor Onload's AF_XDP sends)
 #   hosts    one (both ends in one process on one host: rtt and one-way
 #            rows) or two (ping on host a, pong on host b: round trips)
 #   arguments  the arm's own flags, after the runner's (transport-cli.md)
@@ -49,6 +52,13 @@ arm  eio-udp          udp_lat    sockets  two  --impl ergon
 arm  mio-tcp          tcp_lat    sockets  two  --impl mio
 arm  eio-tcp          tcp_lat    sockets  two  --impl ergon
 arm  dpdk-tcp         fstack_lat fstack   two
+# the socket and Aeron UDP arms again under Onload (transport-aws-onload.tsv)
+arm  onload-mio-tcp   tcp_lat    onload   two  --impl mio
+arm  onload-eio-tcp   tcp_lat    onload   two  --impl ergon
+arm  onload-mio-udp   udp_lat    onload   two  --impl mio
+arm  onload-eio-udp   udp_lat    onload   two  --impl ergon
+arm  onload-aeron-udp aeron_lat  onload   two  --mode udp --reliable false
+arm  onload-aeron-rel aeron_lat  onload   two  --mode udp --reliable true
 
 # set   pair par host loads                  streams      netem          arms
 set 1    b    p1  a    10000,1000000,5000000  1            -              mpsc,aeron-ipc,aeron-ipc-huge,aa

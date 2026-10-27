@@ -3,7 +3,14 @@
 # VM: fakes for az, ssh, scp, sleep, curl, vm.sh, the bench binaries, and
 # /sys and /proc trees. Checks that:
 #   * modes.sh takes an arm's STREAMS, NETEM and AA, refuses anything else,
-#     and refuses NETEM on every DPDK arm (by name or by its dpdk set-up);
+#     and refuses NETEM on every DPDK arm (by name or by its dpdk set-up) and
+#     every Onload arm, an Onload arm or driver off AWS, F-Stack on Graviton;
+#   * setup onload: transport.sh's flags (no kernel busy poll or TCP timers),
+#     launcher and knobs; host.sh's Onload steps against a fake ENA (one
+#     queue, Onload's MTU, the AF_XDP registration read back, undone) and its
+#     stack check; the Onload smoke on fake hosts through fairness.py's onload
+#     rule; the Onload session's estimate on c7i.4xlarge, c8g.2xlarge and
+#     c7a.2xlarge;
 #   * transport_plan.py counts the plan's points (510 for pair a, 420 for
 #     b), draws each round's arm order from its seed (reproducible, the A/A
 #     arm once a round, another order on another rep), and refuses a broken
@@ -154,6 +161,79 @@ knobs: sockbuf
 start: sudo -n setpriv --reuid=\"\$(id -u)\" --regid=\"\$(id -g)\" --init-groups --reset-env --inh-caps=+sys_admin,+dac_override,+ipc_lock,+sys_rawio --ambient-caps=+sys_admin,+dac_override,+ipc_lock,+sys_rawio sh -c 'taskset -c 0 env PATH=P fstack_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
 start sockets: sh -c 'taskset -c 0 env PATH=P tcp_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
 aws-dpdk: fstack
+matrix: none" "$got"
+# setup onload (the matrix's onload-* arms: transport-aws-onload.tsv): no
+# netem (its AF_XDP sends skip the qdisc); AWS only, x86_64 or Graviton;
+# the kernel arm's binary and flags under onload, but no kernel busy poll
+# (--busy-read-us 0) and no kernel TCP timers; aeron_lat itself not under
+# onload, its media driver is (driver mode onload); OpenOnload built and the
+# boot line asked for only when a set runs such an arm
+printf '%s\n' "set z a - ab 1 1 0.1 onload-eio-tcp" >"$bad"
+out=$(plan modes a "$matrix" "$bad" 2>&1) && fail "transport_plan.py: netem on onload-eio-tcp accepted" ||
+    { [[ $out == *"run on Onload, whose AF_XDP sends netem cannot reach"* ]] || fail "transport_plan.py netem on onload-eio-tcp: $out"; }
+got=$(
+    . "$cloud/modes.sh"
+    . "$cloud/transport-settings.env"
+    TRANSPORT_ARMS=$(plan arms "$matrix")
+    f() { mode_check "$1" remote "$2" "$3" '' >/dev/null 2>&1; echo -n " $?"; }
+    echo -n "arms:"; f onload-eio-tcp@STREAMS=8 x86_64 aws; f onload-aeron-rel@STREAMS=1 arm64 aws; f onload-mio-udp@NETEM=1 x86_64 aws; f onload-eio-tcp@STREAMS=1 x86_64 azure
+    echo
+    echo -n "driver:"; f "onload$TR_AERON_MODE_SUFFIX" x86_64 aws; f "onload$TR_AERON_MODE_SUFFIX" arm64 aws; f "onload$TR_AERON_MODE_SUFFIX" x86_64 azure
+    echo
+    mode_check onload-mio-udp@NETEM=1 remote x86_64 aws '' 2>&1 | grep -c 'skip the kernel' || true
+    # an F-Stack arm on Graviton, as aws/lab.sh now judges it (tr_arch)
+    f dpdk-tcp@STREAMS=1 arm64 aws
+    echo
+)
+same "modes.sh: an Onload arm takes STREAMS on AWS (x86_64 and Graviton), never NETEM, never Azure; the Onload driver mode AWS only; an F-Stack arm refused on Graviton" "arms: 0 0 2 2
+driver: 0 0 2
+1
+ 2" "$got"
+got=$(
+    . "$cloud/transport.sh"
+    dir=$tmp/onl
+    mkdir -p "$dir"
+    # both kernels have the TCP timers: the kernel arms ask for them, Onload's never
+    for h in a b; do printf 'net.ipv4.tcp_rto_min_us=8000\nnet.ipv4.tcp_delack_max_us=8000\n' >"$dir/settings-$h.txt"; done
+    hk=0 tr_bin_path=P
+    for a in eio-tcp onload-eio-tcp onload-mio-udp onload-eio-udp onload-aeron-rel; do
+        read -r bin setup _ rest <<<"$(tr_plan arm "$a")"
+        read -ra args <<<"$rest"
+        arm=$a
+        echo "$a: $(tr_bin_args "$bin" ping 10.30.1.11 10.30.1.22 "${args[@]}")"
+        echo "  knobs: $(tr_arm_knobs | tr '\n' ' ')napi $(tr_knob napi_defer); driver: $(tr_has_driver && tr_driver_mode || echo none)"
+        echo "  start: $(tr_start r/pong.pid r/pong.out "$bin" --role pong)"
+    done
+    arms_file='' sets_file=$cloud/transport-aws-onload.tsv
+    tr_wants_setup onload && echo "aws-onload: onload"
+    tr_wants_setup fstack || echo "aws-onload: no fstack"
+    sets_file=$cloud/transport-aws-onload-smoke.tsv
+    tr_wants_setup onload && echo "smoke: onload"
+    sets_file=''
+    tr_wants_setup onload || echo "matrix: none"
+)
+sb_=$(. "$cloud/transport-settings.env"; echo "$TR_SOCKBUF")
+sfx_=$(. "$cloud/transport-settings.env"; echo "$TR_AERON_MODE_SUFFIX")
+oc_=$(. "$cloud/transport-settings.env"; echo "env $TR_ONLOAD_ENV onload --profile=$TR_ONLOAD_PROFILE")
+same "transport.sh setup onload: the kernel arm's binary and flags under onload ($oc_), but --busy-read-us 0 and no TCP timers; the knobs Onload honours and the NICs' deferral at TR_ONLOAD_NAPI_DEFER; Aeron's arm not under onload itself, its media driver (driver mode onload) is; Onload wanted only by a set that runs it" \
+"eio-tcp: --source 10.30.1.11 --connect 10.30.1.22:22000 --nodelay --quickack-per-read --rto-min-us 8000 --delack-max-us 8000 --busy-read-us 50 --rcvbuf $sb_ --sndbuf $sb_ --epoll-events 64
+  knobs: sockbuf epoll_events quickack_per_read congestion busy_read_us rto_min_us napi_defer napi 0; driver: none
+  start: sh -c 'taskset -c 0 env PATH=P tcp_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
+onload-eio-tcp: --source 10.30.1.11 --connect 10.30.1.22:22000 --nodelay --quickack-per-read --busy-read-us 0 --rcvbuf $sb_ --sndbuf $sb_ --epoll-events 64
+  knobs: sockbuf epoll_events quickack_per_read napi_defer napi 0; driver: none
+  start: sh -c 'taskset -c 0 env PATH=P $oc_ tcp_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
+onload-mio-udp: --local 10.30.1.11:22000 --peer 10.30.1.22:22000 --busy-read-us 0 --rcvbuf $sb_ --sndbuf $sb_ --epoll-events 64
+  knobs: sockbuf epoll_events napi_defer napi 0; driver: none
+  start: sh -c 'taskset -c 0 env PATH=P $oc_ udp_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
+onload-eio-udp: --local 10.30.1.11:22000 --peer 10.30.1.22:22000 --busy-read-us 0 --rcvbuf $sb_ --sndbuf $sb_ --epoll-events 64 --datagram-burst 64
+  knobs: sockbuf epoll_events datagram_burst napi_defer napi 0; driver: none
+  start: sh -c 'taskset -c 0 env PATH=P $oc_ udp_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
+onload-aeron-rel: --endpoint 10.30.1.22:22000 --reply 10.30.1.11:22000 --interface 10.30.1.11 --aeron-dir /dev/shm/aeron-bench --driver external --driver-busy-threads 3 --term-length 1048576 --mtu 1408
+  knobs: term_length aeron_page aeron_so_rcvbuf nak_delay_ns napi_defer napi 0; driver: onload$sfx_
+  start: sh -c 'taskset -c 0 env PATH=P aeron_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
+aws-onload: onload
+aws-onload: no fstack
+smoke: onload
 matrix: none" "$got"
 got="$(plan binom 300000 30 0.01) | $(plan binom 300000 80 0.01) | $(plan binom 1000 0 0) | $(plan binom 1000 1 0) | $(plan binom 1000 2 0.01) | $(plan binom 6000000 60000 1)"
 same "transport_plan.py binom: the dropped count against its 1-in-10,000 interval, exact at small means, none at 0 %" \
@@ -560,6 +640,103 @@ rc 0" "$settled
 $kicks
 $dead"
 
+# host.sh's Onload steps (vm.sh onload-up, stop) against a fake ENA: ethtool
+# -l/-L its queues (4 at most), ip its MTU and maxmtu (9216; ENA's
+# ENA_XDP_MAX_MTU, 3498, while an XDP program is attached), sfc_resource's
+# afxdp register and unregister attaching and detaching it (FAKE_XDP_FAIL:
+# Onload adds the NIC but its XDP set-up fails, maxmtu unchanged)
+on=$tmp/onload
+mkdir -p "$on/bin" "$on/sys/module/sfc_resource/afxdp" "$on/sys/module/sfc_resource/parameters" "$on/state"
+for i in ens6 ens7; do mkdir -p "$on/sys/class/net/$i"; echo 9001 >"$on/sys/class/net/$i/mtu"; echo 4 >"$on/state/$i.comb"; echo 9216 >"$on/state/$i.max"; : >"$on/sys/class/net/$i/napi_defer_hard_irqs"; : >"$on/sys/class/net/$i/gro_flush_timeout"; done
+: >"$on/sys/module/sfc_resource/afxdp/register"
+: >"$on/sys/module/sfc_resource/afxdp/unregister"
+cat >"$on/bin/sudo" <<'SH'
+#!/usr/bin/env bash
+echo "sudo $*" >>"$FAKE_LOG"
+if [[ $1 == tee && $2 == */afxdp/register ]]; then
+    i=$(cat); echo "$i" >>"$FAKE_ON/registered"
+    [[ -n ${FAKE_XDP_FAIL:-} ]] || echo 3498 >"$FAKE_ON/state/$i.max"
+    exit 0
+fi
+if [[ $1 == tee && $2 == */afxdp/unregister ]]; then
+    i=$(cat); echo "$i" >>"$FAKE_ON/unregistered"; echo 9216 >"$FAKE_ON/state/$i.max"; exit 0
+fi
+exec "$@"
+SH
+cat >"$on/bin/ethtool" <<'SH'
+#!/usr/bin/env bash
+echo "ethtool $*" >>"$FAKE_LOG"
+st=$FAKE_ON/state
+case $1 in
+-l) printf 'Channel parameters for %s:\nPre-set maximums:\nRX:\t\tn/a\nTX:\t\tn/a\nOther:\t\tn/a\nCombined:\t4\nCurrent hardware settings:\nRX:\t\tn/a\nTX:\t\tn/a\nOther:\t\tn/a\nCombined:\t%s\n' "$2" "$(cat "$st/$2.comb")" ;;
+-L) [[ $4 -le 4 ]] || { echo "Cannot set device channel parameters: Invalid argument" >&2; exit 1; }
+    # ENA's XDP: queues at most half the maximum while a program is attached
+    [[ $(cat "$st/$2.max") != 3498 || $4 -le 2 ]] || { echo "Cannot set device channel parameters: Invalid argument" >&2; exit 1; }
+    echo "$4" >"$st/$2.comb" ;;
+esac
+SH
+cat >"$on/bin/ip" <<'SH'
+#!/usr/bin/env bash
+echo "ip $*" >>"$FAKE_LOG"
+st=$FAKE_ON/state
+if [[ "$1 $2 $3 $4 $5" == "-d -j link show dev" ]]; then
+    printf '[{"ifname":"%s","mtu":%s,"max_mtu":%s}]\n' "$6" "$(cat "$LAB_SYS_ROOT/class/net/$6/mtu")" "$(cat "$st/$6.max")"
+elif [[ "$1 $2 $3" == "link set dev" && $5 == mtu ]]; then
+    (($6 <= $(cat "$st/$4.max"))) || { echo "Error: mtu greater than device maximum." >&2; exit 2; }
+    echo "$6" >"$LAB_SYS_ROOT/class/net/$4/mtu"
+fi
+SH
+chmod +x "$on/bin/"*
+onrun() { env PATH="$on/bin:$PATH" LAB_SYS_ROOT="$on/sys" FAKE_ON="$on" bash -c '. "$1/host.sh"; . "$1/transport-settings.env"; shift; "$@"' _ "$cloud" "$@"; }
+up=$(onrun onload_nic_up ens6 "$on/st" 2>&1; echo "rc $?")
+st6="$(cat "$on/sys/class/net/ens6/mtu") $(cat "$on/state/ens6.comb") $(cat "$on/state/ens6.max") $(cat "$on/sys/class/net/ens6/napi_defer_hard_irqs")/$(cat "$on/sys/class/net/ens6/gro_flush_timeout") kept $(cat "$on/st/ens6.mtu") $(cat "$on/st/ens6.combined")"
+down=$(onrun onload_nic_down ens6 "$on/st" 2>&1; echo "rc $?")
+back="$(cat "$on/sys/class/net/ens6/mtu") $(cat "$on/state/ens6.comb") $(cat "$on/state/ens6.max") left [$(ls "$on/st" | grep -v ethtool.err | tr '\n' ' ')] $(tr '\n' ' ' <"$on/unregistered")"
+again=$(onrun onload_nic_down ens7 "$on/st" 2>&1; echo "rc $?")
+xdpfail=$(FAKE_XDP_FAIL=1 onrun onload_nic_up ens7 "$on/st" 2>&1; echo "rc $?")
+undo=$(onrun onload_nic_down ens7 "$on/st" 2>&1; echo "rc $?")
+st7="$(cat "$on/sys/class/net/ens7/mtu") $(cat "$on/state/ens7.comb") $(tail -1 "$on/unregistered")"
+nomod=$(env PATH="$on/bin:$PATH" LAB_SYS_ROOT="$on/none" FAKE_ON="$on" bash -c '. "$1/host.sh"; . "$1/transport-settings.env"; onload_nic_up ens6 "$2"' _ "$cloud" "$on/st2" 2>&1; echo "rc $?")
+# the mid-window check: an Onload stack of the arm's process (by its name
+# in /proc/<pid>/comm), or none
+mkdir -p "$on/proc/4242" "$on/proc/4343"
+echo tcp_lat >"$on/proc/4242/comm"
+echo sshd >"$on/proc/4343/comm"
+dump='#stack-id stack-name      pids
+0         -               4242 
+1         -               4343,4344 '
+verdict="$(printf '%s\n' "$dump" | LAB_PROC_ROOT="$on/proc" bash -c '. "$1/host.sh"; onload_stacks_verdict tcp_lat' _ "$cloud"; echo " rc $?")
+$(printf '%s\n' "$dump" | LAB_PROC_ROOT="$on/proc" bash -c '. "$1/host.sh"; onload_stacks_verdict media_driver' _ "$cloud"; echo " rc $?")
+$(printf '' | LAB_PROC_ROOT="$on/proc" bash -c '. "$1/host.sh"; onload_stacks_verdict tcp_lat' _ "$cloud"; echo " rc $?")"
+same "host.sh Onload: a data NIC on one queue at Onload's MTU, interrupts not deferred, registered and its XDP program read back (maxmtu 3498), each first value kept; undone back to its 4 queues and 9001 (unregistered, maxmtu 9216); nothing for a NIC never touched; a failed XDP set-up fails closed and is unregistered all the same; no sfc_resource refused; the mid-window stack check by process name" \
+"onload ens6: registered, AF_XDP on its native XDP (maxmtu 9216 -> 3498), 1 queue (was 4 of 4), MTU 3498 (was 9001), napi_defer 0
+rc 0
+3498 1 3498 0/0 kept 9001 4
+rc 0
+9001 4 9216 left [] ens6 
+rc 0
+onload: ens7's XDP program not attached after registering it (maxmtu 9216, then 9216): Onload's AF_XDP set-up failed on it (dmesg: hardware init failed)
+rc 1
+rc 0
+9001 4 ens7
+onload: $on/none/module/sfc_resource/afxdp/register missing (the sfc_resource module not loaded)
+rc 1
+ok 1 stack(s) of tcp_lat: 0:4242
+ rc 0
+FAIL no Onload stack of media_driver (stacks: 0:4242 1:4343,4344)
+ rc 1
+FAIL no Onload stack of tcp_lat (stacks: none)
+ rc 1" "$up
+$st6
+$down
+$back
+$again
+$xdpfail
+$undo
+$st7
+$nomod
+$verdict"
+
 # ---- az.sh against a fake az of several groups ----
 mkdir -p "$tmp/fakeaz" "$tmp/azstate/groups"
 cat >"$tmp/fakeaz/az" <<'FAKEAZ'
@@ -786,7 +963,7 @@ chmod +x "$tmp/nocloud/aws"
 awslab() { env PATH="$tmp/nocloud:$PATH" HOME="$tmp/home" TMPDIR="$tmp/labtmp" LAB_REPO="$tmp/repo" LAB_SUITE=transport "$@" bash "$cloud/aws/lab.sh"; }
 why=
 for refused in "LAB_PAIR=#LAB_PAIR is a or b" "LAB_PAIR=c#LAB_PAIR is a or b" "LAB_PAIR=a LAB_TUNE=1#runs on Azure" \
-    "LAB_PAIR=a LAB_ALLOW_ARM=1 LAB_TYPE=c8g.2xlarge#runs x86_64" "LAB_PAIR=a LAB_PLACEMENT=cross-az LAB_NO_FLATOUT=1#cluster placement group" \
+    "LAB_PAIR=a LAB_ALLOW_ARM=1 LAB_TYPE=c8g.2xlarge LAB_SETS_FILE=$awsets#an F-Stack arm runs on AWS x86_64 only" "LAB_PAIR=a LAB_PLACEMENT=cross-az LAB_NO_FLATOUT=1#cluster placement group" \
     "LAB_PAIR=a LAB_MODES=kernel#latency suite's" "LAB_PAIR=a LAB_RUN_STAMP=20261025-120000#claims a stamp of its own" \
     "LAB_PAIR=a LAB_ARMS_FILE=$fx/none.tsv#not a readable file" "LAB_PAIR=a LAB_ARMS_FILE=$fx/dpdk-netem.tsv#netem cannot reach" \
     "LAB_PAIR=a LAB_SETS_FILE=$fx/none.tsv#not a readable file" "LAB_PAIR=a LAB_EXTRA_SRC=$fx/nobuild#a directory with a lab-build.sh" \
@@ -806,7 +983,7 @@ out=$(lab LAB_PAIR=a LAB_SETS_FILE="$awsets" 2>&1) && why+=" azure ran dpdk-tcp;
 [[ $out == *"an F-Stack arm runs on AWS x86_64 only"* ]] || why+=" azure dpdk-tcp: $(tail -1 <<<"$out");"
 [[ ! -s $tmp/cloud-calls ]] || why+=" a refusal called the cloud;"
 [[ -z $(ls -A "$tmp/labtmp") ]] || why+=" a snapshot left: $(ls "$tmp/labtmp");"
-[[ -z $why ]] && pass "aws/lab.sh LAB_SUITE=transport refuses a bad pair, tuning, Graviton, another placement, latency settings, a stamp, bad arms and sets files (NETEM on a DPDK arm too), extra tree, duration, deadline, spot fallback, detach and seed before any aws call; azure/lab.sh refuses the F-Stack arm" ||
+[[ -z $why ]] && pass "aws/lab.sh LAB_SUITE=transport refuses a bad pair, tuning, an F-Stack arm on Graviton, another placement, latency settings, a stamp, bad arms and sets files (NETEM on a DPDK arm too), extra tree, duration, deadline, spot fallback, detach and seed before any aws call; azure/lab.sh refuses the F-Stack arm" ||
     fail "aws/lab.sh transport refusals:$why"
 rm -f "$tmp/cloud-calls"
 est=$(awslab LAB_ESTIMATE=1 LAB_PAIR=a LAB_REPS=3 LAB_SETS_FILE="$awsets" 2>&1) && estrc=0 || estrc=$?
@@ -820,6 +997,25 @@ if [[ $estrc == 0 && $est == *"pair a: 141 points (sets d1, d8, u, pin)"*"instan
 else
     fail "aws/lab.sh transport estimate ($estrc, $estsrc, $estmrc): $est | $ests | $estm"
 fi
+
+# the AWS Onload session (transport-aws-onload.tsv) on each type it runs on:
+# Intel (c7i.4xlarge, SMT off), Graviton (c8g.2xlarge, LAB_ALLOW_ARM=1) and
+# AMD (c7a.2xlarge), near 2 h at LAB_REPS=3 with OpenOnload's build; its
+# smoke (transport-aws-onload-smoke.tsv) at LAB_REPS=1; no aws call
+onsets=$cloud/transport-aws-onload.tsv
+why=
+for t in c7i.4xlarge c8g.2xlarge c7a.2xlarge; do
+    allow=
+    [[ $t == c8g.* ]] && allow=1
+    e=$(awslab LAB_ESTIMATE=1 LAB_PAIR=a LAB_REPS=3 LAB_TYPE=$t ${allow:+LAB_ALLOW_ARM=1} LAB_SETS_FILE="$onsets" 2>&1) || why+=" $t: $(tail -1 <<<"$e");"
+    [[ $e == *"pair a: 81 points (sets t, r)"*"wall about 1.94 h"* && $e == *"a $t, b $t"* ]] || why+=" $t: $(sed -n 2p <<<"$e");"
+    printf '%s\n' "$e" >"$tmp/onload-estimate-$t.txt"
+done
+e=$(awslab LAB_ESTIMATE=1 LAB_PAIR=a LAB_REPS=1 LAB_SETS_FILE="$cloud/transport-aws-onload-smoke.tsv" 2>&1) || why+=" smoke: $(tail -1 <<<"$e");"
+[[ $e == *"pair a: 20 points (sets ot, ou)"*"wall about 1.00 h"* ]] || why+=" smoke: $(sed -n 2p <<<"$e");"
+[[ ! -s $tmp/cloud-calls ]] || why+=" an estimate called the cloud;"
+[[ -z $why ]] && pass "aws/lab.sh LAB_SUITE=transport LAB_ESTIMATE=1: the Onload session on c7i.4xlarge, c8g.2xlarge (Graviton) and c7a.2xlarge, 81 points in about 1.94 h at 3 reps, and its smoke, 20 points in about 1 h; no aws call" ||
+    fail "aws/lab.sh Onload estimates:$why"
 
 awsbin=$tmp/awsbin
 mkdir -p "$awsbin"
@@ -1016,7 +1212,17 @@ driver) if [[ -n ${FAKE_DRIVER_FAIL:-} && $2 == "$FAKE_DRIVER_FAIL"* ]]; then
         echo 'vm.sh: line 2096: "return $rc" failed (exit 1): stopping' >&2
         exit 1
     fi
-    case $2 in *@NAPI_DEFER=*) v=${2#*@NAPI_DEFER=}; v=${v%%@*}; echo "${v%/*} ${v#*/}" >"$st/napi" ;; kernel-busy*) echo "2 200000" >"$st/napi" ;; kernel | kernel@*) echo "0 0" >"$st/napi" ;; esac ;;
+    case $2 in *@NAPI_DEFER=*) v=${2#*@NAPI_DEFER=}; v=${v%%@*}; echo "${v%/*} ${v#*/}" >"$st/napi" ;; kernel-busy*) echo "2 200000" >"$st/napi" ;; kernel | kernel@*) echo "0 0" >"$st/napi" ;;
+    # Onload's driver: onload-up first, the NICs' deferral off
+    onload@*) echo "0 0" >"$st/napi" ;; esac ;;
+# setup onload: the NICs under Onload, their deferral off; the build each
+# host has; an Onload stack of the arm's process mid-window (FAKE_ONLOAD_NOSTACK:
+# none on that host, as an unaccelerated socket would leave)
+onload-up) echo "0 0" >"$st/napi" ;;
+onload-idle) ;;
+onload-info) echo "onload a94512556626 patch 0123456789ab kernel 7.2.9+deb13-cloud-amd64 10.0.0 (fake)" ;;
+onload-stacks) if [[ ${FAKE_ONLOAD_NOSTACK:-} == "$FAKE_HOST" ]]; then echo "FAIL no Onload stack of $2 (stacks: none)"; exit 1; fi
+    echo "ok 1 stack(s) of $2: 0:4242" ;;
 transport-net)
     if [[ ${2:-} != check ]]; then
         v=$(. "$FAKE_CLOUD/transport-settings.env"; . "$FAKE_CLOUD/host.sh"; transport_overrides; echo "$TR_NAPI_DEFER $TR_GRO_FLUSH_NS")
@@ -1107,6 +1313,13 @@ cat >"$sb/bin/sh" <<'SH'
 case "$*" in *pong.pid*) [[ -n ${FAKE_SH_DELAY:-} ]] && /bin/sleep "$FAKE_SH_DELAY" ;; esac
 exec /bin/sh "$@"
 SH
+# the onload launcher: logged with the EF_ settings it was given, then the command
+cat >"$sb/bin/onload" <<'SH'
+#!/usr/bin/env bash
+echo "$FAKE_HOST onload $* | $(env | grep '^EF_' | sort | tr '\n' ' ')" >>"$FAKE_HOSTS/onload"
+while [[ ${1:-} == --* ]]; do shift; done
+exec "$@"
+SH
 cat >"$sb/bin/taskset" <<'SH'
 #!/usr/bin/env bash
 # taskset -c <cpu> <command>...: logged, then the command
@@ -1124,7 +1337,7 @@ mkhost() { # <host>
 trun() { # <pair> <reps> [<arms file>] [vars...]: transport.sh run on host a
     local pair=$1 reps=$2 af=${3:-}
     shift 3 || shift $#
-    rm -rf "$sb/a" "$sb/b" "$sb/calls" "$sb/runs" "$sb/taskset"
+    rm -rf "$sb/a" "$sb/b" "$sb/calls" "$sb/runs" "$sb/taskset" "$sb/onload"
     mkhost a
     mkhost b
     mkdir -p "$sb/a/bench/transport-$pair"
@@ -1141,6 +1354,7 @@ vm_b=g/b
 commit=abc
 dirty=0
 arms_file=$af
+sets_file=${TRUN_SETS:-}
 TRANSPORT_WARMUP_S=0
 TRANSPORT_POINT_S=0
 TRANSPORT_SWITCH_S=0
@@ -1491,6 +1705,60 @@ grep -q '^b tcp_lat --role pong .*--listen 10.20.1.6:22000 .*--impl mio$' "$sb/r
 ! grep -qE -- '--nics|\{(own|peer)_alt\}' "$sb/runs" || why+=" the runner's own arguments passed on;"
 [[ -z $why ]] && pass "transport.sh run: --nics alt puts an arm on each host's other data NIC (tcp_lat's ping bound to its source there), {own_alt}/{peer_alt} give an arms-file binary those addresses; neither passed on" ||
     fail "transport.sh run, the other data NICs:$why"
+
+# the Onload smoke (transport-aws-onload-smoke.tsv: every Onload arm beside
+# kernel arms) on the fake hosts: each socket arm's binary under the onload
+# launcher with the profile and TR_ONLOAD_ENV, --busy-read-us 0, no TCP
+# timers; aeron_lat never under it, its media driver started by `driver
+# onload@...`; onload-up before each other Onload arm and `stop` after every
+# one; each Onload point's manifest with its command, its build and its stacks
+# on both hosts, its NICs' deferral read back 0/0; fairness.py clean; then a
+# host without the arm's stack mid-window: in the manifest, logged, and
+# fairness.py's onload rule
+cp "$cloud/transport-aws-onload-smoke.tsv" "$tmp/onload-smoke.tsv"
+TRUN_SETS=$tmp/onload-smoke.tsv trun a 1 "" && orc=0 || orc=$?
+d=$sb/a/bench/transport-a
+why=
+[[ $orc == 0 && $(cat "$d/rc") == 0 ]] || why+=" exit $orc: $(tail -3 "$sb/run.out" | tr '\n' ' ');"
+n=$(TRUN_SETS= plan count a 1 "$matrix:arms" "$tmp/onload-smoke.tsv")
+[[ $(grep -c . "$d/results.csv") == "$n" ]] || why+=" $(grep -c . "$d/results.csv") rows, not $n;"
+for b in tcp_lat udp_lat; do
+    grep -q "^a onload --profile=latency $b --role ping .* | EF_AF_XDP_ZEROCOPY=0 EF_NO_FAIL=0 EF_RFC_RTO_MIN=8 $" "$sb/onload" &&
+        grep -q "^b onload --profile=latency $b --role pong .* | EF_AF_XDP_ZEROCOPY=0 EF_NO_FAIL=0 EF_RFC_RTO_MIN=8 $" "$sb/onload" || why+=" $b not under onload with its settings;"
+done
+! grep -q ' aeron_lat ' "$sb/onload" || why+=" aeron_lat under onload;"
+! grep -E '^. onload .* (mio-tcp|aeron-rel)@' "$sb/onload" | grep -q -- '--label ot:mio-tcp@\|--label ou:aeron-rel@' || why+=" a kernel arm under onload;"
+# 4 Onload socket arms and the 2 A/A arms repeating them, 2 loads, ping and pong
+[[ $(grep -c . "$sb/onload") == $((6 * 2 * 2)) ]] || why+=" $(grep -c . "$sb/onload") runs under onload, not 24;"
+! grep -E '^a tcp_lat --role ping .*--label ot:onload-' "$sb/runs" | grep -qv -- '--busy-read-us 0 ' || why+=" an Onload TCP ping with kernel busy poll;"
+! grep -E '^. udp_lat .*--label ou:onload-' "$sb/runs" | grep -qv -- '--busy-read-us 0 ' || why+=" an Onload UDP run with kernel busy poll;"
+grep -q '^a tcp_lat --role ping .*--busy-read-us 50 .*--label ot:mio-tcp@' "$sb/runs" || why+=" the kernel TCP arm without its busy poll;"
+for h in a b; do
+    grep -q "^$h vm.sh driver onload@CONDUCTOR=own@" "$sb/calls" || why+=" host $h: no Onload media driver;"
+    [[ $(grep -c "^$h vm.sh onload-up$" "$sb/calls") == 6 ]] || why+=" host $h: $(grep -c "^$h vm.sh onload-up$" "$sb/calls") onload-ups, not 6;"
+    grep -q "^$h vm.sh onload-info$" "$sb/calls" || why+=" host $h: its Onload build not read;"
+    # before every point of an Onload socket arm (4 arms and 2 A/A, 2 loads each), never an Aeron one's
+    [[ $(grep -c "^$h vm.sh onload-idle$" "$sb/calls") == 12 ]] || why+=" host $h: $(grep -c "^$h vm.sh onload-idle$" "$sb/calls") onload-idle checks, not 12;"
+    # each Onload arm's set-up stopped after it (onload-up, then the next call a stop)
+    awk -v h="$h" '$1 == h && $3 == "onload-up" {up = 1; next} $1 == h && up && $3 == "stop" {up = 0} END {exit up}' "$sb/calls" || why+=" host $h: an onload-up never stopped;"
+done
+for m in $(grep -l '^setup=onload$' "$d"/manifest/*.env); do
+    grep -q '^onload_cmd=env EF_AF_XDP_ZEROCOPY=0 EF_NO_FAIL=0 EF_RFC_RTO_MIN=8 onload --profile=latency$' "$m" &&
+        grep -q '^onload_a=ok 1 stack(s) of ' "$m" && grep -q '^onload_b=ok 1 stack(s) of ' "$m" &&
+        grep -q '^onload_build_a=onload a94512556626 ' "$m" && grep -q '^knob.napi_defer=0$' "$m" && grep -q '^napi_a=enP1:0/0,enP2:0/0$' "$m" &&
+        ! grep -q '^knob.busy_read_us' "$m" || why+=" $(grep '^mode=' "$m"): $(grep -E '^(onload|knob|napi_)' "$m" | tr '\n' ' ');"
+done
+m=$(grep -l '^arm=onload-aeron-rel$' "$d"/manifest/*.env | head -1)
+grep -q '^onload_under=media_driver$' "$m" && grep -q '^onload_a=ok 1 stack(s) of media_driver' "$m" && grep -q '^driver_mode=onload@' "$m" || why+=" the Onload Aeron point: $(grep -E '^(onload|driver)' "$m" | tr '\n' ' ');"
+fv=$(python3 "$cloud/fairness.py" "$d" 2>&1) || why+=" fairness: $(head -5 <<<"$fv" | tr '\n' ' ');"
+TRUN_SETS=$tmp/onload-smoke.tsv trun a 1 "" FAKE_ONLOAD_NOSTACK=b || true
+m=$(grep -l '^mode=onload-eio-tcp@STREAMS=1$' "$d"/manifest/*.env | head -1)
+grep -q '^onload_b=FAIL no Onload stack of tcp_lat' "$m" && grep -q "WARNING: point .*: host b's Onload stacks: FAIL" "$sb/run.out" || why+=" no stack not recorded: $(grep '^onload_b' "$m");"
+fv=$(python3 "$cloud/fairness.py" "$d" 2>&1 || true)
+grep -q "^onload: ot: .*onload-eio-tcp@STREAMS=1.*: b's Onload stack mid-window: FAIL no Onload stack of tcp_lat" <<<"$fv" || why+=" fairness's onload rule: $(grep -m2 '^onload' <<<"$fv");"
+! grep -E '^[a-z-]+:' <<<"$fv" | grep -qv '^onload:' || why+=" other violations: $(grep -E '^[a-z-]+:' <<<"$fv" | grep -v '^onload:' | head -2 | tr '\n' ' ');"
+[[ -z $why ]] && pass "transport.sh run, setup onload: each socket arm's binary under onload (profile, TR_ONLOAD_ENV), no kernel busy poll or TCP timers; Aeron's media driver under onload instead; onload-up and stop around each arm, no stack left before each socket point (onload-idle); each point's command, build, stacks and NIC deferral in its manifest; fairness clean, and its onload rule flags a host without the arm's stack" ||
+    fail "transport.sh run, setup onload:$why"
 
 # transport_prepare's steps on the operator machine (lib.sh's helpers faked):
 # the tree and the arms file to both VMs, the build, the map's boot line, a

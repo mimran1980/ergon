@@ -3246,6 +3246,36 @@ arm bootstrap without LAB_ALLOW_ARM: 2 0 [] 1"
     else
         pass "vm.sh in a sandbox: isolate on an isolated host covers every CPU, x86's line as before, Graviton's; bootstrap refuses aarch64 without LAB_ALLOW_ARM=1"
     fi
+    # transport-isolate onload (a session with an Onload arm): ibt=off on an
+    # x86 CPU with IBT (Onload's module calls bpf() through the syscall
+    # table), nowhere else; without onload never
+    tiso() { # <arch> <sys root> <cpu flags> [onload]: the grub line's last word
+        mkdir -p "$sb/proc"
+        printf 'processor\t: 0\nflags\t\t: fpu sse2 %s\n' "$3" >"$sb/proc/cpuinfo"
+        echo aws >"$sb/home/bench/cloud"
+        : >"$sb/log"
+        local rc=0
+        # shellcheck disable=SC2031
+        env -i PATH="$sb/bin:$PATH" HOME="$sb/home" FAKE_LOG="$sb/log" FAKE_ARCH="$1" LAB_SYS_ROOT="$sys/$2" LAB_PROC_ROOT="$sb/proc" \
+            bash "$cloud/vm.sh" transport-isolate ${4:-} >"$sb/out" 2>&1 || rc=$?
+        # shellcheck disable=SC2016
+        echo "$rc $(sed -n 's/^  GRUB_CMDLINE_LINUX_DEFAULT="\$GRUB_CMDLINE_LINUX_DEFAULT \(.*\)"$/\1/p' "$sb/log" | awk '{print $NF}')"
+    }
+    got="intel onload: $(tiso x86_64 aws-x86 'ibt user_shstk' onload)
+intel: $(tiso x86_64 aws-x86 'ibt user_shstk')
+amd onload: $(tiso x86_64 aws-x86 'user_shstk' onload)
+graviton onload: $(tiso aarch64 graviton 'ibt' onload)"
+    want="intel onload: 0 ibt=off
+intel: 0 irqaffinity=0
+amd onload: 0 irqaffinity=0
+graviton onload: 0 irqaffinity=0"
+    if [[ $got != "$want" ]]; then
+        fail "vm.sh transport-isolate onload"
+        diff -u <(echo "$want") <(echo "$got") >&2 || true
+        tail -3 "$sb/out" >&2
+    else
+        pass "vm.sh transport-isolate onload: ibt=off on the boot line where the x86 CPU has IBT (Intel), not on AMD or Graviton, never without onload"
+    fi
 fi
 
 # lib.sh loss_row: an INVOKER host's loss line is its embedded drivers'
@@ -4510,12 +4540,14 @@ datanics=$(
     nics() { echo "expected two data NICs on 10.20.1.0/24, found: " >&2; return 1; }
     echo "unread: [$(data_nics_env 2>/dev/null)]; rc $?"
     kernel=$(awk '/^    kernel \| kernel-busy\)$/ {on = 1} on {print} on && /^        ;;$/ {exit}' "$cloud/vm.sh")
-    echo "kernel modes: $(grep -c '^ *data_nics_env >>"$env_file" ||' <<<"$kernel"); every call: $(grep -c 'data_nics_env >>' "$cloud/vm.sh")"
+    # the transport suite's Onload driver: kernel UDP too, under onload
+    onload=$(awk '/^    onload\)$/ {on = 1} on {print} on && /^        ;;$/ {exit}' "$cloud/vm.sh")
+    echo "kernel modes: $(grep -c '^ *data_nics_env >>"$env_file" ||' <<<"$kernel"); onload: $(grep -c '^ *data_nics_env >>"$env_file" ||' <<<"$onload"); every call: $(grep -c 'data_nics_env >>' "$cloud/vm.sh")"
 )
 want="aws: export RUSTERON_MEDIA_DRIVER_DATA_NICS='ens6,ens7'; rc 0
 azure: export RUSTERON_MEDIA_DRIVER_DATA_NICS='eth1,enP30832s1,eth2,enP30833s2'; rc 0
 unread: []; rc 1
-kernel modes: 1; every call: 1"
+kernel modes: 1; onload: 1; every call: 2"
 if [[ $datanics == "$want" ]]; then
     pass "vm.sh: the kernel modes' driver environment names the data NICs (RUSTERON_MEDIA_DRIVER_DATA_NICS: each interface, Azure's VF too, never the management NIC), the DPDK mode's does not; unread NICs fail"
 else
@@ -4906,7 +4938,7 @@ pre=$(
 want="keys: 2 2 2 2 2 0 0 0 0
 transports: 2 2 0 0 0 0
 mode dpdk@CONDUCTUR=own: CONDUCTUR is neither a setting the lab knows (THP BIN CSTATE BUSY_POLL COALESCE RX_RING MIN_FREE_PCT CLOCKSOURCE RELIABLE AGENTS SMT JUMBO PUB_PARAMS SUB_PARAMS IRQ NAPI_DEFER NAPI_BUSY CONDUCTOR HAIRPIN RTT_GAP_US KEEPALIVE_US FLUSH_KB DPDK) nor an AERON_* or RUSTERON_* variable: vm.sh would export it to a driver that never reads it, and the mode would measure its baseline under another name
-mode kernal: transport kernal: kernel, kernel-busy, dpdk, dpdk-spin, dpdk-adaptive, dpdk-epoll, the raw floor's kernel-raw or dpdk-raw, optionally -mono, or the pure floor's dpdk-pure (vm.sh refuses any other at the driver's start)
+mode kernal: transport kernal: kernel, kernel-busy, dpdk, dpdk-spin, dpdk-adaptive, dpdk-epoll, the raw floor's kernel-raw or dpdk-raw, optionally -mono, the pure floor's dpdk-pure, or onload (the transport suite's: kernel UDP under Onload) (vm.sh refuses any other at the driver's start)
 rx: 0 0 2 2 2 2 0 2 0
 tx: 0 2 0 0 2 2 2 0 2 2
 cache, burst: 0 0 2 0 2 2

@@ -234,6 +234,12 @@ TRANSPORT_PREP_S, TRANSPORT_RUN_S, TRANSPORT_ROUND_S = 900, 15, 5
 # DPDK on both hosts at once (vm.sh transport-build fstack): not yet timed on
 # a run: DPDK's meson build and F-Stack's make on 8 cores, about 10 minutes
 TRANSPORT_FSTACK_BUILD_S = 600
+# a session with an Onload arm (setup onload) also builds and installs
+# OpenOnload on both hosts at once (vm.sh transport-build onload,
+# onload-build.sh): not yet timed on a run either; its kernel modules and
+# user-level libraries took 4 to 5 minutes natively in an arm64 container, so
+# 10 minutes on 8 cores with the packages and the clone
+TRANSPORT_ONLOAD_BUILD_S = 600
 # each point's events on its hosts (vm.sh events-start and events-stop: the
 # trace set up, read back and gzipped, the spinners and sampler started and
 # stopped), measured in the local smoke
@@ -256,8 +262,11 @@ def transport_estimate(pair, paths, reps, warmup_s, point_s, switch_s):
                  * len(longest["netem"]) * reps)
         rounds += len(longest["netem"]) * reps
     overhead = runs * TRANSPORT_RUN_S + rounds * TRANSPORT_ROUND_S + tp.count(sets, pair, reps) * TRANSPORT_EVENTS_S
-    if any(arms[a][1] == "fstack" for s in sets if s["pair"] == pair for a in s["arms"] if a != "aa"):
+    setups = {arms[a][1] for s in sets if s["pair"] == pair for a in s["arms"] if a != "aa"}
+    if "fstack" in setups:
         overhead += TRANSPORT_FSTACK_BUILD_S
+    if "onload" in setups:
+        overhead += TRANSPORT_ONLOAD_BUILD_S
     wall =SETUP_S + TRANSPORT_PREP_S + measuring + overhead + TEARDOWN_S
     return {"points": tp.count(sets, pair, reps), "sets": [s["id"] for s in sets if s["pair"] == pair],
             "measuring_s": measuring, "overhead_s": overhead, "wall_s": wall,

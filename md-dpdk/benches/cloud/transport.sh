@@ -80,6 +80,8 @@ tr_plan() {
 }
 
 # tr_check <pair> [<arms file>]: 0 and the pair's point count, or 2 saying why
+# (every mode judged for tr_cloud and tr_arch: x86_64 unless the caller sets
+# arm64, aws/lab.sh on Graviton)
 tr_check() {
     local pair=$1 m why n
     tr_arms_file=${2:-}
@@ -90,10 +92,13 @@ tr_check() {
     local modes
     modes=$(tr_plan modes "$pair") || return 2
     for m in $modes; do
-        why=$(mode_check "$m" remote x86_64 "${tr_cloud:-azure}" '' 2>&1) || { echo "$why" >&2; return 2; }
+        why=$(mode_check "$m" remote "${tr_arch:-x86_64}" "${tr_cloud:-azure}" '' 2>&1) || { echo "$why" >&2; return 2; }
     done
-    for m in "kernel-busy$TR_AERON_MODE_SUFFIX" "dpdk$TR_AERON_MODE_SUFFIX"; do
-        why=$(mode_check "$m" remote x86_64 "${tr_cloud:-azure}" '' 2>&1) || { echo "TR_AERON_MODE_SUFFIX: $why" >&2; return 2; }
+    local drivers="kernel-busy dpdk"
+    # the Onload arms' media driver: AWS's alone (modes.sh)
+    [[ ${tr_cloud:-azure} != aws ]] || drivers+=" onload"
+    for m in $drivers; do
+        why=$(mode_check "$m$TR_AERON_MODE_SUFFIX" remote "${tr_arch:-x86_64}" "${tr_cloud:-azure}" '' 2>&1) || { echo "TR_AERON_MODE_SUFFIX: $why" >&2; return 2; }
     done
     # the bench ports against the wildcard ranges and Linux's default
     # ephemeral range (each host's own is checked at transport-tune)
@@ -168,6 +173,16 @@ tr_huge_arms() {
         arm=$a
         [[ $(tr_knob aeron_page) != 2097152 ]] || echo "$a"
     done
+}
+
+# tr_setup_arms <setup> <rounds>: the arms of these rounds on that set-up,
+# one a line
+tr_setup_arms() {
+    local a
+    for a in $(cut -f9 <<<"$2" | tr ',' '\n' | sed 's/@.*//' | sort -u); do
+        [[ $(tr_plan arm "$a" 2>/dev/null | awk '{print $2}') == "$1" ]] && echo "$a"
+    done
+    return 0
 }
 
 # tr_aeron_dir: the current arm's Aeron directory (aeron_lat --aeron-dir,
@@ -248,31 +263,39 @@ transport_prepare() {
         fi
     done
     log "transport: bench binaries"
-    local fstack=
-    if tr_wants_fstack; then
+    local fstack= onload=
+    if tr_wants_setup fstack; then
         fstack=fstack
         log "transport: an arm runs on F-Stack: it and fstack_lat are built too (x86_64 only)"
     fi
-    detached transport-build transport-build $fstack || die "transport-build failed"
+    if tr_wants_setup onload; then
+        onload=onload
+        log "transport: an arm runs under Onload: OpenOnload $TR_ONLOAD_COMMIT is built and installed too (onload-build.sh)"
+    fi
+    detached transport-build transport-build $fstack $onload || die "transport-build failed"
     log "transport: CPU map and its boot line"
-    both transport-isolate transport-isolate || die "transport-isolate failed"
+    both transport-isolate transport-isolate $onload || die "transport-isolate failed"
     reboot_both
     both transport-tune transport-tune || die "transport-tune failed: a setting did not hold ($out/{a,b}-transport-tune.log)"
     remote_access
 }
 
-# tr_wants_fstack: 0 when a set of either pair runs an arm on F-Stack
-# (setup fstack): vm.sh transport-build then builds F-Stack and fstack_lat
-tr_wants_fstack() {
+# tr_wants_setup <setup>: 0 when a set of either pair runs an arm on that
+# set-up: fstack (vm.sh transport-build then builds F-Stack and fstack_lat)
+# or onload (OpenOnload built and installed, and vm.sh transport-isolate's
+# boot line takes what its in-kernel bpf() calls need)
+tr_wants_setup() {
     local p m tr_arms_file=${arms_file:-} tr_sets_file=${sets_file:-}
     for p in a b; do
         while read -r m; do
             [[ -n $m ]] || continue
-            [[ $(tr_plan arm "${m%%@*}" | awk '{print $2}') == fstack ]] && return 0
+            [[ $(tr_plan arm "${m%%@*}" | awk '{print $2}') == "$1" ]] && return 0
         done < <(tr_plan modes "$p" 2>/dev/null)
     done
     return 1
 }
+# tr_wants_fstack: tr_wants_setup fstack
+tr_wants_fstack() { tr_wants_setup fstack; }
 
 # transport_remote <pair>: the session on VM a (transport.sh run), detached
 # there; polled until it ends (as long as the VMs live), its results so far
@@ -350,12 +373,18 @@ tr_now() {
 # the ping connects from its own address (--source: each data NIC has a
 # routing table its address selects, so the address is the NIC).
 # --busy-read-us goes to both socket impls: SO_BUSY_POLL on every socket
-# (mio by setsockopt, ergon-io's epoll-spin by its busy_poll_us key).
+# (mio by setsockopt, ergon-io's epoll-spin by its busy_poll_us key). Under
+# Onload (setup onload) 0, and no TCP timers: Onload spins itself
+# (EF_POLL_USEC), its SO_BUSY_POLL is a spin time that reads back rounded
+# through the CPU's clock rate (the binaries refuse that), and it has no
+# TCP_RTO_MIN_US or TCP_DELACK_MAX_US (TR_ONLOAD_ENV's EF_RFC_RTO_MIN is its
+# minimum RTO)
 tr_bin_args() {
     local b=$1 role=$2 own=$3 peer=$4 port=$TR_PORT_BASE out=
     shift 4
     local args=" $* " busy= sb qa
     busy="--busy-read-us $(tr_knob busy_read_us) "
+    [[ ${setup:-} != onload ]] || busy="--busy-read-us 0 "
     sb=$(tr_knob sockbuf)
     qa="--quickack-per-read"
     [[ $(tr_knob quickack_per_read) == off ]] && qa+=" false"
@@ -392,7 +421,9 @@ tr_bin_args() {
         local a="--source $own --connect $peer:$port"
         [[ $role == pong ]] && a="--listen $own:$port"
         [[ $role == local ]] && a="--source $own --listen $peer:$port"
-        out="$a --nodelay $qa $(tr_timer_args)${busy}--rcvbuf $sb --sndbuf $sb --epoll-events $(tr_knob epoll_events)"
+        local timers=
+        [[ ${setup:-} == onload ]] || timers=$(tr_timer_args)
+        out="$a --nodelay $qa ${timers}${busy}--rcvbuf $sb --sndbuf $sb --epoll-events $(tr_knob epoll_events)"
         ;;
     fstack_lat)
         # TCP over F-Stack: tcp_lat's addresses (the F-Stack interface takes
@@ -473,7 +504,9 @@ tr_knob() {
     # an Aeron arm's: its media driver's (kernel-busy defers, kernel not);
     # a socket arm's own default (transport-settings.env TR_SOCKET_NAPI_DEFER)
     napi_defer)
-        if [[ $bin == aeron_lat ]]; then
+        if [[ ${setup:-} == onload ]]; then
+            echo "$TR_ONLOAD_NAPI_DEFER"
+        elif [[ $bin == aeron_lat ]]; then
             if [[ $(tr_knob aeron_path) == kernel-busy ]]; then echo "$TR_AERON_NAPI_DEFER"; else echo 0; fi
         else
             echo "$TR_SOCKET_NAPI_DEFER"
@@ -496,6 +529,25 @@ tr_base_arm() {
 # its points' manifests (knob.<name>=<value>) for transport_collect.py
 tr_arm_knobs() {
     local a=" ${args[*]:-} "
+    # an Onload arm: the kernel arm's knobs Onload honours (no kernel busy
+    # poll, no kernel TCP timers or congestion control: Onload's own TCP);
+    # its media driver's socket buffer and NAK delay; the data NICs'
+    # interrupt deferral (vm.sh onload-up), read back as a socket arm's
+    if [[ ${setup:-} == onload ]]; then
+        case $bin in
+        udp_lat)
+            echo sockbuf epoll_events
+            if [[ $a == *" --impl ergon "* ]]; then echo datagram_burst; fi
+            ;;
+        tcp_lat) echo sockbuf epoll_events quickack_per_read ;;
+        aeron_lat)
+            echo term_length aeron_page aeron_so_rcvbuf
+            [[ $a == *" --mode udp "* && $a == *" --reliable true "* ]] && echo nak_delay_ns
+            ;;
+        esac
+        echo napi_defer
+        return 0
+    fi
     case $bin in
     udp_lat)
         echo sockbuf epoll_events busy_read_us
@@ -526,14 +578,19 @@ tr_arm_knobs() {
 }
 
 # tr_driver_mode: the current Aeron arm's media driver mode (vm.sh driver):
-# its path (aeron_path: kernel-busy or kernel; dpdk) and
+# its path (aeron_path: kernel-busy or kernel; dpdk; onload) and
 # TR_AERON_MODE_SUFFIX, with its driver knobs where they differ from the
 # driver's own (the socket buffer, the NAK delay, DPDK's rx_free_thresh) and
 # aeron-ipc's SHARED threading (one agent: no conductor of its own)
 tr_driver_mode() {
     local m s=$TR_AERON_MODE_SUFFIX v k knobs
     knobs=" $(tr_arm_knobs | tr '\n' ' ') "
-    if [[ $setup == dpdk ]]; then m=dpdk; else m=kernel-busy; fi
+    case $setup in
+    dpdk) m=dpdk ;;
+    # Onload's: the kernel's UDP transport, the driver under onload (vm.sh driver onload)
+    onload) m=onload ;;
+    *) m=kernel-busy ;;
+    esac
     [[ $knobs == *" aeron_path "* ]] && m=$(tr_knob aeron_path)
     for k in aeron_so_rcvbuf nak_delay_ns rx_free_thresh; do
         [[ $knobs == *" $k "* ]] || continue
@@ -655,12 +712,26 @@ tr_label() {
 # <out file> (each caller adds stderr), its PID recorded (so the runner's
 # EXIT trap stops it by PID, never by name) and, once it ends, its exit
 # status in <pid file>.rc (128 + N: signal N), which the command exits with
-# too. Setup fstack's binary runs with tr_fstack_priv.
+# too. Setup fstack's binary runs with tr_fstack_priv; setup onload's (but
+# aeron_lat, whose media driver runs under Onload instead: vm.sh driver
+# onload) with tr_onload_cmd.
 tr_start() {
-    local pidf=$1 outf=$2 priv=
+    local pidf=$1 outf=$2 priv= pre=
     shift 2
     [[ ${setup:-} == fstack ]] && priv="$tr_fstack_priv "
-    echo "${priv}sh -c 'taskset -c $hk env PATH=$tr_bin_path $* & p=\$!; echo \$p >$pidf; wait \$p; r=\$?; echo \$r >$pidf.rc; exit \$r' >$outf"
+    [[ ${setup:-} == onload && ${bin:-} != aeron_lat ]] && pre="$(tr_onload_cmd) "
+    echo "${priv}sh -c 'taskset -c $hk env PATH=$tr_bin_path $pre$* & p=\$!; echo \$p >$pidf; wait \$p; r=\$?; echo \$r >$pidf.rc; exit \$r' >$outf"
+}
+
+# tr_onload_cmd: what a binary of an Onload arm runs under: the onload
+# launcher with the profile and TR_ONLOAD_ENV (transport-settings.env), the
+# same for every Onload arm and recorded in each manifest (onload_cmd)
+tr_onload_cmd() { echo "env $TR_ONLOAD_ENV onload --profile=$TR_ONLOAD_PROFILE"; }
+
+# tr_has_driver: 0 when the current arm runs a media driver (setup kernel or
+# dpdk, and an Onload arm's aeron_lat: its driver under Onload)
+tr_has_driver() {
+    [[ ${setup:-} == kernel || ${setup:-} == dpdk ]] || [[ ${setup:-} == onload && ${bin:-} == aeron_lat ]]
 }
 
 # tr_fstack_priv: what fstack_lat's own DPDK needs on igb_uio, which the
@@ -767,7 +838,22 @@ tr_manifest() {
         echo "base_arm=$(tr_base_arm)"
         echo "setup=$setup"
         for k in $(tr_arm_knobs); do echo "knob.$k=$(tr_knob "$k")"; done
-        [[ $setup == kernel || $setup == dpdk ]] && echo "driver_mode=$(tr_driver_mode)"
+        tr_has_driver && echo "driver_mode=$(tr_driver_mode)"
+        # an Onload arm: what it ran under (its binary, or its media
+        # driver), the build each host has (vm.sh onload-info, read as the
+        # session starts), and each host's Onload stacks mid-window (vm.sh
+        # onload-stacks: ok, or FAIL with none for the arm's process)
+        if [[ $setup == onload ]]; then
+            echo "onload_cmd=$(tr_onload_cmd)"
+            echo "onload_under=$(if [[ $bin == aeron_lat ]]; then echo media_driver; else echo "$bin"; fi)"
+            for h in "${run_hosts[@]}"; do
+                echo "onload_build_$h=$(head -1 "$dir/onload-$h.txt" 2>/dev/null || echo unread)"
+                v=$(head -1 "$dir/onload/$pid-$h" 2>/dev/null)
+                [[ $v == ok* || $v == FAIL* ]] || v=unread
+                echo "onload_$h=$v"
+                [[ $v == ok* ]] || log "WARNING: point $pid: host $h's Onload stacks: $v"
+            done
+        fi
         echo "start_ns=$4"
         echo "end_ns=$5"
         for h in a b; do
@@ -805,7 +891,9 @@ tr_manifest() {
 
 # tr_arm_up <setup> <host>...: the arm's host set-up on each: a media driver
 # (kernel: kernel-busy's path, then transport-net check; dpdk), the kernel
-# path (sockets: transport-net), or nothing; tr_arm_down: the driver stopped
+# path (sockets: transport-net), F-Stack's NICs (fstack), Onload's (onload:
+# onload-up, or for Aeron its driver under Onload), or nothing; tr_arm_down:
+# the driver stopped, the NICs given back
 tr_arm_up() {
     local setup=$1 h ov
     shift
@@ -819,6 +907,15 @@ tr_arm_up() {
         dpdk) on "$(tr_host "$h")" "$(tr_arm_vm) driver $(tr_driver_mode)" ;;
         sockets) on "$(tr_host "$h")" "${ov}$vm transport-net" ;;
         fstack) on "$(tr_host "$h")" "$vm fstack-up" ;;
+        # Onload over AF_XDP on the data NICs (vm.sh onload-up); an Aeron
+        # arm's media driver under it (vm.sh driver onload: onload-up first)
+        onload)
+            if [[ $bin == aeron_lat ]]; then
+                on "$(tr_host "$h")" "$(tr_arm_vm) driver $(tr_driver_mode)"
+            else
+                on "$(tr_host "$h")" "$vm onload-up"
+            fi
+            ;;
         none) true ;;
         esac >>"$dir/logs/setup-$h.log" 2>&1 || { tr_setup_failed "$setup" "$h" "$from"; return 1; }
     done
@@ -833,7 +930,7 @@ tr_setup_failed() {
     local setup=$1 h=$2 why dl=
     why=$(tail -n +"$3" "$dir/logs/setup-$h.log" 2>/dev/null |
         grep -E 'stopping|[Ee]rror|[Ff]ailed|refused|EAL: |Cannot |^vm\.sh: line' | tail -3 | tr '\n' ' ')
-    if [[ $setup == kernel || $setup == dpdk ]]; then
+    if tr_has_driver; then
         dl=$dir/logs/driver-$h-$(($(ls "$dir"/logs/driver-"$h"-*.log 2>/dev/null | wc -l) + 1)).log
         on "$(tr_host "$h")" "cat bench/driver.log" >"$dl" 2>&1 || true
         [[ -n $why ]] || why=$(grep -E '[Ee]rror|EAL: |Cannot |[Ff]ailed|panicked' "$dl" 2>/dev/null | tail -3 | tr '\n' ' ')
@@ -848,8 +945,9 @@ tr_arm_down() {
     if [[ $setup == sockets && -n $(tr_host_overrides) ]]; then
         for h in "$@"; do on "$(tr_host "$h")" "$vm transport-net" >>"$dir/logs/setup-$h.log" 2>&1 || log "host $h: settings not put back"; done
     fi
-    # fstack: the data NICs back from igb_uio to the kernel (vm.sh stop)
-    [[ $setup == kernel || $setup == dpdk || $setup == fstack ]] || return 0
+    # fstack: the data NICs back from igb_uio to the kernel; onload: back
+    # from AF_XDP, their queues and MTU as they were (vm.sh stop)
+    [[ $setup == kernel || $setup == dpdk || $setup == fstack || $setup == onload ]] || return 0
     for h in "$@"; do on "$(tr_host "$h")" "$(tr_arm_vm) stop" >>"$dir/logs/setup-$h.log" 2>&1 || log "host $h: vm.sh stop failed"; done
 }
 
@@ -865,7 +963,7 @@ tr_arm_down() {
 tr_events_cpus() {
     local h=$1 used=" " mine_used=" " c all out=() i=0 mine r
     IFS=, read -ra all <<<"$iso"
-    if [[ $setup == kernel || $setup == dpdk ]]; then used+="${all[0]} ${all[1]} ${all[2]} "; mine_used=$used; fi
+    if tr_has_driver; then used+="${all[0]} ${all[1]} ${all[2]} "; mine_used=$used; fi
     if [[ $kind == two ]]; then
         for r in ping pong; do
             c=$(tr_role_cpus $r)
@@ -898,7 +996,7 @@ tr_events_cpus() {
 # max then has no events to be labelled by, which spikes.py says.
 tr_events() {
     local what=$1 pid=$2 h ex=
-    [[ $setup == kernel || $setup == dpdk ]] && ex=aeron
+    tr_has_driver && ex=aeron
     for h in "${run_hosts[@]}"; do
         if [[ $what == start ]]; then
             on "$(tr_host "$h")" "$(tr_arm_vm) events-start $pid $(tr_events_cpus "$h") $ex" >>"$dir/logs/events-$h.log" 2>&1 ||
@@ -942,6 +1040,15 @@ tr_point() {
         tr_stream_seq=$((tr_stream_seq + 1))
     fi
     for h in "${run_hosts[@]}"; do on "$(tr_host "$h")" "rm -rf $rdir && mkdir -p $rdir" || return 1; done
+    # an Onload socket arm: no stack of the last point's processes left on
+    # either host (the NICs' one queue takes one; vm.sh onload-idle kills
+    # orphans), else the point fails; an Aeron arm's driver keeps its own
+    if [[ $setup == onload && $bin != aeron_lat ]]; then
+        for h in "${run_hosts[@]}"; do
+            on "$(tr_host "$h")" "$vm onload-idle" >>"$dir/logs/setup-$h.log" 2>&1 ||
+                { log "point $pid: host $h: an Onload stack of an earlier point still holds the data NICs ($dir/logs/setup-$h.log)"; return 1; }
+        done
+    fi
     # the point's events on each host, begun before any binary of it starts
     # (so before its warm-up), read back after its window (tr_events)
     tr_events start "$pid"
@@ -984,6 +1091,13 @@ tr_point() {
     (
         sleep "$(awk -v w="$warm" -v s="$TRANSPORT_POINT_S" 'BEGIN {print w + s / 2}')"
         for h in "${run_hosts[@]}"; do on "$(tr_host "$h")" "$vm sample" >"$dir/samples/$pid-$h" 2>/dev/null; done
+        # an Onload arm: its process's Onload stack on each host, mid-window
+        # (an unaccelerated socket would leave none; EF_NO_FAIL=0 fails it first)
+        if [[ $setup == onload ]]; then
+            local under=$bin
+            [[ $bin == aeron_lat ]] && under=media_driver
+            for h in "${run_hosts[@]}"; do on "$(tr_host "$h")" "$vm onload-stacks $under" >"$dir/onload/$pid-$h" 2>/dev/null; done
+        fi
     ) &
     local sampler=$!
     start=$(tr_now)
@@ -1237,7 +1351,7 @@ tr_run() {
     . "$tr_here/irqs.sh"
     # shellcheck source=host.sh
     . "$tr_here/host.sh"
-    mkdir -p "$dir/manifest" "$dir/points" "$dir/logs" "$dir/irq" "$dir/netem" "$dir/samples" "$dir/nstat" "$dir/settings" "$dir/events" "$dir/aeronpage" "$dir/napi"
+    mkdir -p "$dir/manifest" "$dir/points" "$dir/logs" "$dir/irq" "$dir/netem" "$dir/samples" "$dir/nstat" "$dir/settings" "$dir/events" "$dir/aeronpage" "$dir/napi" "$dir/onload"
     # LAB_LOCAL_SMOKE: both hosts homes on this box (tr_smoke_hooks)
     [[ -z ${LAB_LOCAL_SMOKE:-} ]] || tr_smoke_hooks
     : >"$dir/failures.csv"
@@ -1258,8 +1372,9 @@ tr_run() {
     # (and one on the hugetlbfs Aeron directory, where an arm of the plan
     # runs there: its points' report); a report with any warning stops the
     # session before its first point
-    local huge=
+    local huge= onload=
     [[ ! -s $dir/rounds.tsv ]] || huge=$(tr_huge_arms "$(cat "$dir/rounds.tsv")")
+    [[ ! -s $dir/rounds.tsv ]] || onload=$(tr_setup_arms onload "$(cat "$dir/rounds.tsv")")
     arm=
     for h in a b; do
         on "$(tr_host "$h")" "$vm transport-map" >"$dir/map-$h.txt" 2>"$dir/logs/map-$h.err" || die "host $h: no transport map"
@@ -1267,6 +1382,12 @@ tr_run() {
         on "$(tr_host "$h")" "$vm settings" >"$dir/settings-$h.txt" 2>/dev/null || die "host $h: settings not read"
         on "$(tr_host "$h")" "sha256sum ergon/target/release/* extra/bin/* 2>/dev/null" >"$dir/bins-$h.txt" 2>/dev/null
         on "$(tr_host "$h")" "$vm netem clear" >>"$dir/logs/netem-$h.log" 2>&1 || die "host $h: a netem qdisc not cleared before the session"
+        # the Onload arms' build on each host (its first line every point's
+        # onload_build_<host>): the version, commit, patch and kernel
+        if [[ -n $onload ]]; then
+            on "$(tr_host "$h")" "$vm onload-info" >"$dir/onload-$h.txt" 2>&1 ||
+                die "host $h: Onload, which $(echo $onload) run under, is not installed ($dir/onload-$h.txt: $(tail -1 "$dir/onload-$h.txt"))"
+        fi
         if ! on "$(tr_host "$h")" "$vm hostcheck" >"$dir/hostcheck-$h.txt" 2>&1; then
             # the smoke's box isolates nothing: its report stands, fairness.py flags it
             [[ -n ${LAB_LOCAL_SMOKE:-} ]] && { log "smoke: host $h's hostcheck report is not clean (no isolated CPUs here): recorded, not stopping"; continue; }

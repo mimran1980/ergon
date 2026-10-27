@@ -25,7 +25,7 @@ import math
 import random
 import sys
 
-SETUPS = ("none", "kernel", "dpdk", "sockets", "fstack")
+SETUPS = ("none", "kernel", "dpdk", "sockets", "fstack", "onload")
 # setups whose NICs DPDK holds: netem (a kernel qdisc) cannot reach them
 DPDK_SETUPS = ("dpdk", "fstack")
 HOSTS = ("one", "two")
@@ -101,6 +101,11 @@ def load(paths):
         if held and s["netem"] != ["-"]:
             raise PlanError(f"{s['where']}: set {s['id']}: {', '.join(held)} run on DPDK, which netem "
                             "cannot reach: such a set has netem -")
+        # Onload's AF_XDP socket sends by __dev_direct_xmit: past the qdisc too
+        xdp = sorted(a for a in s["arms"] if a != "aa" and arms[a][1] == "onload")
+        if xdp and s["netem"] != ["-"]:
+            raise PlanError(f"{s['where']}: set {s['id']}: {', '.join(xdp)} run on Onload, whose AF_XDP sends "
+                            "netem cannot reach (they skip the qdisc): such a set has netem -")
         kinds = {arms[a][2] for a in s["arms"] if a != "aa"}
         if kinds != ({"two"} if s["host"] == "ab" else {"one"}):
             raise PlanError(f"{s['where']}: set {s['id']}: host ab takes two-host arms, a or b one-host arms")
