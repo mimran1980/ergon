@@ -224,6 +224,7 @@ fn methods(
                 let frame = buf.get(offset..).unwrap_or(&[]);
                 let needed = #size;
                 if frame.len() < needed {
+                    core::hint::cold_path();
                     return Err(SchemaDecodeError::BufferTooShort { needed, available: frame.len() });
                 }
                 let mut bytes = [0u8; #size];

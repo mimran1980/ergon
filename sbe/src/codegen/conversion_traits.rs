@@ -87,6 +87,7 @@ fn decimal_impl_tokens(
                 let pow = 10i128.checked_pow(shift.unsigned_abs())
                     .ok_or("Decimal exponent overflow")?;
                 if mantissa % pow != 0 {
+                    core::hint::cold_path();
                     return Err("Decimal has more digits than the constant exponent allows");
                 }
                 mantissa / pow
@@ -725,6 +726,7 @@ pub(crate) fn composite_mapping_impl_tokens(
                         None => #null,
                         Some(val) => {
                             if #is_null {
+                                core::hint::cold_path();
                                 return Err(sbe_rt::MappingError::SomeNullValue {
                                     composite: #wire_lit,
                                     member: #member_lit,

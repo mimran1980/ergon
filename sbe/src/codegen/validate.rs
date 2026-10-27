@@ -93,11 +93,14 @@ pub(crate) fn read_helper_tokens() -> TokenStream {
                     out.copy_from_slice(bytes);
                     Ok(out)
                 }
-                None => Err(sbe_rt::ValidateError::Decode(sbe_rt::DecodeError::BufferTooShort {
-                    field,
-                    needed: N,
-                    available: buf.len().saturating_sub(offset),
-                })),
+                None => {
+                    core::hint::cold_path();
+                    Err(sbe_rt::ValidateError::Decode(sbe_rt::DecodeError::BufferTooShort {
+                        field,
+                        needed: N,
+                        available: buf.len().saturating_sub(offset),
+                    }))
+                }
             }
         }
     }
@@ -369,6 +372,7 @@ fn primitive_checks(
         quote! {
             let v = #value as i128;
             if #out_of_range {
+                core::hint::cold_path();
                 return Err(sbe_rt::ValidateError::ValueOutOfRange {
                     field: #field,
                     min: #min_lit,
@@ -436,6 +440,7 @@ fn enum_check(
     quote! {
         let raw = #raw;
         if matches!(#ty::from_raw(raw), #ty::NullVal) && raw != #ty::NullVal as #rt {
+            core::hint::cold_path();
             return Err(sbe_rt::ValidateError::UnknownEnum {
                 field: #field,
                 discriminant: raw as u64,
@@ -490,6 +495,7 @@ fn set_check(
     quote! {
         let bits = #raw & (#mask as #rt);
         if bits != 0 {
+            core::hint::cold_path();
             return Err(sbe_rt::ValidateError::UnknownSetBits {
                 field: #field,
                 bits: bits as u64,

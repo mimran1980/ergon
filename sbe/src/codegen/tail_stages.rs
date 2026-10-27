@@ -188,6 +188,7 @@ pub(crate) fn generate_owner_consuming_stages(
             let max_lit = syn::LitInt::new(&max.to_string(), span);
             max_check.extend(quote::quote! {
                 if len > #max_lit {
+                    core::hint::cold_path();
                     return Err(sbe_rt::DecodeError::InvalidVarDataLength {
                         field: #vd_name_lit,
                         length: len,
@@ -226,6 +227,7 @@ pub(crate) fn generate_owner_consuming_stages(
                     #absent_vardata
                     let offset = #se;
                     if offset.checked_add(#prefix_size_lit).is_none_or(|end| end > self.buf.len()) {
+                        core::hint::cold_path();
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #vd_name_lit,
                             needed: #prefix_size_lit,
@@ -267,6 +269,7 @@ pub(crate) fn generate_owner_consuming_stages(
                     #slice_cached_tail
                     let offset = #se;
                     if offset.checked_add(#prefix_size_lit).is_none_or(|end| end > self.buf.len()) {
+                        core::hint::cold_path();
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #vd_name_lit,
                             needed: #prefix_size_lit,
@@ -310,6 +313,7 @@ pub(crate) fn generate_owner_consuming_stages(
                             pub fn #as_str_ident(self) -> Result<(&'a str, #next_stage<'a>), sbe_rt::DecodeError> {
                                 let (bytes, next) = self.#into_ident()?;
                                 if !bytes.is_ascii() {
+                                    core::hint::cold_path();
                                     return Err(sbe_rt::DecodeError::InvalidAscii { field: #vd_name_lit });
                                 }
                                 let s = unsafe { core::str::from_utf8_unchecked(bytes) };
@@ -565,6 +569,7 @@ pub(crate) fn generate_owner_consuming_stages(
                         ) -> Result<#entry_complete_ident<'a>, E>,
                     {
                         if let Some(error) = self.poisoned {
+                            core::hint::cold_path();
                             return Err(E::from(error));
                         }
                         let count = self.total;
@@ -572,6 +577,7 @@ pub(crate) fn generate_owner_consuming_stages(
                         while self.count > 0 {
                             let available = self.buf.len().saturating_sub(self.offset);
                             if self.min_entry_extent > available {
+                                core::hint::cold_path();
                                 return Err(E::from(sbe_rt::DecodeError::BufferTooShort {
                                     field: #g_name_lit,
                                     needed: self.min_entry_extent,
@@ -727,6 +733,7 @@ pub(crate) fn generate_owner_consuming_stages(
         let poisoned_finish_guard = tg.entries_have_tails.then(|| {
             quote::quote! {
                 if let Some(error) = self.poisoned {
+                    core::hint::cold_path();
                     return Err(error);
                 }
             }

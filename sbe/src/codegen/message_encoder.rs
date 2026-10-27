@@ -361,6 +361,7 @@ pub(crate) fn generate_message_encoder(
             msg_offset: usize,
         ) -> Result<#name_encoder_ident<'a, sbe_rt::HeaderAbsent>, sbe_rt::EncodeError> {
             if #needed_lit > buf.len().saturating_sub(msg_offset) {
+                core::hint::cold_path();
                 return Err(Self::buffer_too_short(buf, msg_offset, #needed_lit));
             }
             // SAFETY: extent check above proved header + fixed body fit.
@@ -420,6 +421,7 @@ pub(crate) fn generate_message_encoder(
             offset: usize,
         ) -> Result<#name_encoder_ident<'a, sbe_rt::HeaderPresent>, sbe_rt::EncodeError> {
             if #needed_lit > buf.len().saturating_sub(offset) {
+                core::hint::cold_path();
                 return Err(Self::buffer_too_short(buf, offset, #needed_lit));
             }
             // SAFETY: extent check above proved header + fixed body fit.
@@ -488,6 +490,7 @@ pub(crate) fn generate_message_encoder(
                 buf: &'a mut [u8],
             ) -> Result<#name_encoder_ident<'a, sbe_rt::HeaderPresent>, sbe_rt::EncodeError> {
                 if buf.len() != Self::ENCODED_LENGTH {
+                    core::hint::cold_path();
                     return Err(sbe_rt::EncodeError::ClaimLengthMismatch {
                         expected: Self::ENCODED_LENGTH,
                         actual: buf.len(),
@@ -1329,6 +1332,7 @@ pub(crate) fn generate_message_encoder(
                                                 F: FnOnce(&mut #g_pascal_enc<'a>) -> sbe_rt::GroupResult,
                     {
                         if self.offset + #dim_size_lit > self.buf.len() {
+                            core::hint::cold_path();
                             return Err(sbe_rt::EncodeError::BufferTooShort {
                                 field: stringify!(#g_snake),
                                 needed: #dim_size_lit,
@@ -1346,6 +1350,7 @@ pub(crate) fn generate_message_encoder(
                         f(&mut group)?;
                         let written = group.written();
                         if written != count {
+                            core::hint::cold_path();
                             return Err(sbe_rt::EncodeError::GroupCountMismatch {
                                 declared: sbe_rt::group_diag_count(count as u64)?,
                                 actual: sbe_rt::group_diag_count(written as u64)?,
@@ -1370,6 +1375,7 @@ pub(crate) fn generate_message_encoder(
                                                 F: FnOnce(&mut #g_pascal_enc<'a>) -> sbe_rt::GroupResult,
                     {
                         if self.offset + #dim_size_lit > self.buf.len() {
+                            core::hint::cold_path();
                             return Err(sbe_rt::EncodeError::BufferTooShort {
                                 field: stringify!(#g_snake),
                                 needed: #dim_size_lit,
@@ -1442,6 +1448,7 @@ pub(crate) fn generate_message_encoder(
                 let vd_name_str = &vd.name;
                 checked_body.extend(quote::quote! {
                     if data.len() > #max_lit {
+                        core::hint::cold_path();
                         return Err(sbe_rt::EncodeError::VarDataTooLong {
                             field: #vd_name_str,
                             max_length: #max_lit,
@@ -1451,6 +1458,7 @@ pub(crate) fn generate_message_encoder(
                 });
                 with_checked_body.extend(quote::quote! {
                     if exact_len > #max_lit {
+                        core::hint::cold_path();
                         return Err(sbe_rt::EncodeError::VarDataTooLong {
                             field: #vd_name_str,
                             max_length: #max_lit,
@@ -1463,6 +1471,7 @@ pub(crate) fn generate_message_encoder(
             let shared_body = quote::quote! {
                 let needed = #prefix_size_lit + data.len();
                 if self.offset + needed > self.buf.len() {
+                    core::hint::cold_path();
                     return Err(sbe_rt::EncodeError::BufferTooShort {
                         field: stringify!(#vd_snake),
                         needed,
@@ -1552,6 +1561,7 @@ pub(crate) fn generate_message_encoder(
                         #with_checked_body
                         let needed = #prefix_size_lit + exact_len;
                         if self.offset + needed > self.buf.len() {
+                            core::hint::cold_path();
                             return Err(sbe_rt::EncodeError::BufferTooShort {
                                 field: stringify!(#vd_snake),
                                 needed,
@@ -1818,6 +1828,7 @@ pub(crate) fn vardata_encode_str_setter(
             },
             quote::quote! {
                 if !src.is_ascii() {
+                    core::hint::cold_path();
                     return Err(sbe_rt::EncodeError::InvalidAscii { field: #field_lit });
                 }
             },

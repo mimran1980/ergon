@@ -235,6 +235,7 @@ pub(crate) fn generate_memoized_decoder(
                     let data_start = offset + #prefix_lit;
                     let wire_length = (end - data_start) as u64;
                     if wire_length > #max_lit as u64 {
+                        core::hint::cold_path();
                         return Err(sbe_rt::DecodeError::InvalidVarDataLength {
                             field: stringify!(#vd_ident),
                             length: wire_length,
@@ -244,6 +245,7 @@ pub(crate) fn generate_memoized_decoder(
                     return Ok(&buf[data_start..end]);
                 }
                 if offset + #prefix_lit > buf.len() {
+                    core::hint::cold_path();
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: stringify!(#vd_ident),
                         needed: #prefix_lit,
@@ -254,6 +256,7 @@ pub(crate) fn generate_memoized_decoder(
                 let header = #type_pascal_ident(bytes);
                 let wire_length = header.#len_field_ident() as u64;
                 if wire_length > #max_lit as u64 {
+                    core::hint::cold_path();
                     return Err(sbe_rt::DecodeError::InvalidVarDataLength {
                         field: stringify!(#vd_ident),
                         length: wire_length,
