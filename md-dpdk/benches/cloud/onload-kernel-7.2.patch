@@ -1,0 +1,221 @@
+diff --git a/src/driver/linux_onload/ossock_calls.c b/src/driver/linux_onload/ossock_calls.c
+index 5fea2648..17ebe85f 100644
+--- a/src/driver/linux_onload/ossock_calls.c
++++ b/src/driver/linux_onload/ossock_calls.c
+@@ -992,7 +992,16 @@ int efab_tcp_helper_set_tcp_close_os_sock(tcp_helper_resource_t *thr,
+   sock = get_linux_socket(ep);
+   if( sock == NULL )
+     return  -EINVAL;
++#ifdef EFRM_HAVE_TCP_SET_STATE_EXPORT
+   tcp_set_state(sock->sk, TCP_CLOSE);
++#else
++  /* Linux 7.2 no longer exports tcp_set_state().  Its TCP_CLOSE work that a
++   * module can still do: unhash, then the state.  Not done: the CurrEstab
++   * counter and inet_put_port() for a port the OS chose (only after a failed
++   * connect(), the one caller). */
++  sock->sk->sk_prot->unhash(sock->sk);
++  inet_sk_set_state(sock->sk, TCP_CLOSE);
++#endif
+   put_linux_socket(sock);
+   return 0;
+ }
+diff --git a/src/driver/linux_resource/kernel_compat.sh b/src/driver/linux_resource/kernel_compat.sh
+index 7d474486..9ede68d3 100755
+--- a/src/driver/linux_resource/kernel_compat.sh
++++ b/src/driver/linux_resource/kernel_compat.sh
+@@ -164,6 +164,9 @@ EFRM_NEED_DEBUGFS_LOOKUP_AND_REMOVE nsymbol debugfs_lookup_and_remove include/li
+ EFRM_HAVE_WARN_FLUSHING_SYSTEMWIDE_WQ symbol __warn_flushing_systemwide_wq include/linux/workqueue.h
+ 
+ EFRM_NEED_STRSCPY	nsymbol	strscpy	include/linux/fortify-string.h	include/linux/string.h
++EFRM_NEED_STRNCPY	nsymbol	strncpy	include/linux/fortify-string.h	include/linux/string.h
++EFRM_HAVE_TCP_SET_STATE_EXPORT	export	tcp_set_state	include/net/tcp.h	net/ipv4/tcp.c
++EFRM_HAVE_RDMSRQ	symbol	rdmsrq	arch/x86/include/asm/msr.h
+ EFRM_HAVE_SET_RXFH_CONTEXT memtype struct_ethtool_ops set_rxfh_context include/linux/ethtool.h int (*)(struct net_device*, const u32*, const u8*, const u8, u32*, bool)
+ 
+ EFRM_HAVE_EPOLL_PWAIT2 symbol sys_epoll_pwait2 include/linux/syscalls.h
+diff --git a/src/driver/linux_resource/syscall_aarch64.c b/src/driver/linux_resource/syscall_aarch64.c
+index aaadb9d4..922cde2d 100644
+--- a/src/driver/linux_resource/syscall_aarch64.c
++++ b/src/driver/linux_resource/syscall_aarch64.c
+@@ -14,6 +14,10 @@
+ 
+ void** efrm_syscall_table = NULL;
+ EXPORT_SYMBOL(efrm_syscall_table);
++/* ON-17407 (74e62772) checks this at every in-kernel syscall; x86 sets it
++ * in syscall_x86.c, aarch64 here */
++bool efrm_syscall_table_found = false;
++EXPORT_SYMBOL(efrm_syscall_table_found);
+ 
+ 
+ /* The kernel contains some neat routines for doing AArch64 code inspection.
+@@ -42,9 +46,10 @@ static typeof(aarch64_insn_adrp_get_offset) *ci_aarch64_insn_adrp_get_offset;
+     }                                                \
+   } while (0);
+ 
+-/* Linux does not have any function to check for 'bti' instruction. So we
++/* Older kernels have no function to check for a 'bti' instruction (newer ones
++ * define aarch64_insn_is_bti, hence the ci_ prefix). So we
+  * define it by ourselves. */
+-static inline bool aarch64_insn_is_bti(u32 code)
++static inline bool ci_aarch64_insn_is_bti(u32 code)
+ {
+   u32 mask = 0xFFFFFF3F;
+   u32 val = 0xD503241F;
+@@ -260,7 +265,7 @@ find_el_svc_entry(void)
+   while (1) {
+     CI_AARCH64_INSN_READ(el_sync, insn);
+     /* Skip 'bti' instructions, which may be between 'bl's. */
+-    if (aarch64_insn_is_bti(insn)) {
++    if (ci_aarch64_insn_is_bti(insn)) {
+       el_sync += AARCH64_INSN_SIZE;
+       continue;
+     }
+@@ -447,6 +452,7 @@ static void *find_syscall_table(void)
+ int efrm_syscall_ctor(void)
+ {
+   efrm_syscall_table = find_syscall_table();
++  efrm_syscall_table_found = efrm_syscall_table != NULL;
+   if( efrm_syscall_table == NULL )
+     return -ENOENT;
+   return 0;
+diff --git a/src/driver/linux_resource/syscall_x86.c b/src/driver/linux_resource/syscall_x86.c
+index f324f0ed..e2593f50 100644
+--- a/src/driver/linux_resource/syscall_x86.c
++++ b/src/driver/linux_resource/syscall_x86.c
+@@ -44,7 +44,12 @@ static void* find_entry_SYSCALL_64(void)
+   /* This won't work for future CPUs that support FRED. Currently none are known
+    * to exist, and upstream kernel patch have only been run on simulators.
+    */
++#ifdef EFRM_HAVE_RDMSRQ
++  /* newer kernels (7.x) have rdmsrq() in place of rdmsrl() */
++  rdmsrq(MSR_LSTAR, result);
++#else
+   rdmsrl(MSR_LSTAR, result);
++#endif
+   return (void*)result;
+ }
+ 
+diff --git a/src/include/ci/efrm/syscall.h b/src/include/ci/efrm/syscall.h
+index cb4469b5..db7fa4a3 100644
+--- a/src/include/ci/efrm/syscall.h
++++ b/src/include/ci/efrm/syscall.h
+@@ -17,13 +17,14 @@
+ #endif
+ 
+ extern void** efrm_syscall_table;
++/* every architecture: af_xdp.c and linux_syscall.c check it */
++extern bool efrm_syscall_table_found;
+ 
+ #if defined(__x86_64__)
+ /* forward declaration needed for function pointer */
+ struct pt_regs;
+ typedef long (*syscall_fn_t)(const struct pt_regs *regs, unsigned int nr);
+ extern syscall_fn_t efrm_x64_sys_call;
+-extern bool efrm_syscall_table_found;
+ extern long efrm_syscall_table_call(const struct pt_regs *regs, unsigned int nr);
+ #endif
+ 
+diff --git a/src/include/ci/tools/platform/linux_kernel.h b/src/include/ci/tools/platform/linux_kernel.h
+index 27857b03..2d46ad30 100644
+--- a/src/include/ci/tools/platform/linux_kernel.h
++++ b/src/include/ci/tools/platform/linux_kernel.h
+@@ -65,6 +65,21 @@
+ 
+ #include <ci/tools/config.h>
+ 
++#ifdef EFRM_NEED_STRNCPY
++/* Linux 7.2 removed strncpy(); Onload's kernel code still calls it.  The
++ * same semantics: copy at most n bytes, then pad with NUL to n. */
++static inline char* ci_compat_strncpy(char* dst, const char* src, size_t n)
++{
++  size_t i = 0;
++  for( ; i < n && src[i] != '\0'; ++i )
++    dst[i] = src[i];
++  for( ; i < n; ++i )
++    dst[i] = '\0';
++  return dst;
++}
++#define strncpy ci_compat_strncpy
++#endif
++
+ #define ci_in_atomic     in_atomic
+ 
+ 
+diff --git a/src/lib/ciul/efcompat_vi.c b/src/lib/ciul/efcompat_vi.c
+index f517504c..0a646b55 100644
+--- a/src/lib/ciul/efcompat_vi.c
++++ b/src/lib/ciul/efcompat_vi.c
+@@ -17,7 +17,9 @@
+ #include <ci/tools/sysdep.h>
+ #include <ci/net/ethernet.h>
+ #include <stdlib.h>
+-#include <emmintrin.h>
++#if defined(__x86_64__) || defined(__i386__)
++#include <emmintrin.h> /* x86 only: nothing here needs it on aarch64 */
++#endif
+ #include <linux/ipv6.h>
+ #include <string.h>
+ 
+diff --git a/src/lib/cplane/mmake.mk b/src/lib/cplane/mmake.mk
+index d99b2c4e..9eb9e406 100644
+--- a/src/lib/cplane/mmake.mk
++++ b/src/lib/cplane/mmake.mk
+@@ -25,7 +25,10 @@ $(LIB_OBJS): $(CP_INTF_VER_HDR)
+ $(CPLANE_LIB): $(LIB_OBJS)
+ 	$(MMakeLinkStaticLib)
+ 
++# BMI2 (_pdep_u32) on x86 only: uapi_resolve.c has a portable pdep elsewhere
++ifneq ($(filter x86_64-% i386-% i686-%,$(shell $(CC) -dumpmachine)),)
+ uapi_resolve.o: MMAKE_CFLAGS+=-mbmi2
++endif
+ $(UAPI_LIB_OBJS) : $(CP_INTF_VER_HDR)
+ $(CPLANE_API_SHARED_REALNAME): $(UAPI_LIB_OBJS) $(CPLANE_LIB)
+ 	@(soname="$(CPLANE_API_SHARED_SONAME)" libs="$(LINK_CPLANE_LIB) $(LINK_CITOOLS_LIB)"; $(MMakeLinkDynamicLib))
+diff --git a/src/lib/cplane/uapi_resolve.c b/src/lib/cplane/uapi_resolve.c
+index 2c5d72b8..90066d2e 100644
+--- a/src/lib/cplane/uapi_resolve.c
++++ b/src/lib/cplane/uapi_resolve.c
+@@ -5,7 +5,23 @@
+ #include <netinet/ip.h>
+ #include <netinet/ip6.h>
+ #include <endian.h>
++#if defined(__x86_64__) || defined(__i386__)
+ #include <immintrin.h>
++#else
++/* BMI2's pdep, bit by bit: deposit the low bits of src at the set bits of
++ * mask, lowest first */
++static inline uint32_t _pdep_u32(uint32_t src, uint32_t mask)
++{
++  uint32_t out = 0, bit;
++  for( bit = 1; mask != 0; bit <<= 1 ) {
++    uint32_t lowest = mask & -mask;
++    if( src & bit )
++      out |= lowest;
++    mask &= mask - 1;
++  }
++  return out;
++}
++#endif
+ 
+ #define VLAN_HLEN 4
+ 
+diff --git a/src/tests/ef_vi/eflatency.c b/src/tests/ef_vi/eflatency.c
+index c0aa1193..40dec09d 100644
+--- a/src/tests/ef_vi/eflatency.c
++++ b/src/tests/ef_vi/eflatency.c
+@@ -34,8 +34,14 @@ static inline uint64_t frc64_get(void) {
+   asm volatile ( "rdtscp" : "=a" (low), "=d" (high), "=c" (aux) : : );
+   return (high << 32) | low;
+ }
++#elif defined(__aarch64__)
++static inline uint64_t frc64_get(void) {
++  uint64_t v;
++  asm volatile ( "isb; mrs %0, cntvct_el0" : "=r" (v) : : "memory" );
++  return v;
++}
+ #else
+-#error "X86_64 required"
++#error "X86_64 or AArch64 required"
+ #endif
+ 
+ static int measure_cpu_khz(unsigned* cpu_khz)
