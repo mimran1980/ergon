@@ -82,7 +82,7 @@ const HDR: usize = 8;
 /// `base.add(off..off + len)` must be in bounds of the allocation the caller
 /// owns, and the returned view must not be aliased by any other live `&mut`.
 #[inline(always)]
-unsafe fn slot_slice<'a>(base: *mut u8, off: usize, len: usize) -> &'a mut [u8] {
+const unsafe fn slot_slice<'a>(base: *mut u8, off: usize, len: usize) -> &'a mut [u8] {
     unsafe { core::slice::from_raw_parts_mut(base.add(off), len) }
 }
 

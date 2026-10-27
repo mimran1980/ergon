@@ -65,7 +65,7 @@ pub enum PublicationFailure {
 impl PublicationFailure {
     /// Map a raw Aeron offer/try_claim return (must be `< 0`).
     #[inline]
-    pub fn from_raw(code: i64) -> Self {
+    pub const fn from_raw(code: i64) -> Self {
         match code {
             -1 => Self::NotConnected,
             -2 => Self::BackPressured,
@@ -93,7 +93,7 @@ impl PublicationFailure {
     /// A retry (after idle / waiting for a subscriber) can succeed.
     #[must_use = "the retry decision is the point of calling this"]
     #[inline]
-    pub fn is_retryable(self) -> bool {
+    pub const fn is_retryable(self) -> bool {
         matches!(self, Self::NotConnected | Self::BackPressured | Self::AdminAction)
     }
 
@@ -102,7 +102,7 @@ impl PublicationFailure {
     /// Aeron return code exists, so there is no real sentinel to report.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn raw_code(self) -> Option<i64> {
+    pub const fn raw_code(self) -> Option<i64> {
         match self {
             Self::NotConnected => Some(-1),
             Self::BackPressured => Some(-2),

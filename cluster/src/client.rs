@@ -1269,19 +1269,19 @@ impl AeronCluster {
     /// The cluster-assigned session id (set after connect completes).
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn cluster_session_id(&self) -> i64 {
+    pub const fn cluster_session_id(&self) -> i64 {
         self.cluster_session_id
     }
     /// The current leadership term (set after connect completes).
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn leadership_term_id(&self) -> i64 {
+    pub const fn leadership_term_id(&self) -> i64 {
         self.leadership_term_id
     }
     /// The current leader's member id (set after connect completes).
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn leader_member_id(&self) -> i32 {
+    pub const fn leader_member_id(&self) -> i32 {
         self.leader_member_id
     }
 
@@ -1318,7 +1318,7 @@ impl AeronCluster {
     /// endpoint, so the limit holds across failover.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn ingress_max_message_length(&self) -> usize {
+    pub const fn ingress_max_message_length(&self) -> usize {
         self.max_message_length
     }
 
@@ -1331,7 +1331,7 @@ impl AeronCluster {
     /// larger.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn ingress_max_payload_length(&self) -> usize {
+    pub const fn ingress_max_payload_length(&self) -> usize {
         self.max_payload_length
     }
 
@@ -1411,7 +1411,7 @@ impl AeronCluster {
     }
     /// Current session state: `Connected`, `NotConnected`, `Closed`.
     #[must_use = "the state decision is the point of calling this"]
-    pub fn state(&self) -> SessionState {
+    pub const fn state(&self) -> SessionState {
         self.state
     }
 
@@ -1681,7 +1681,7 @@ impl AsyncClusterConnect {
     /// [`#[non_exhaustive]`](ConnectStep) so a release can add steps without
     /// breaking your `match`.
     #[must_use = "the connect-step decision is the point of calling this"]
-    pub fn step(&self) -> ConnectStep {
+    pub const fn step(&self) -> ConnectStep {
         self.step
     }
 

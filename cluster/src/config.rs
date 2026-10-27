@@ -202,13 +202,13 @@ impl SessionBuilder {
     }
 
     /// Override the ingress stream id (default: cluster-configured).
-    pub fn ingress_stream_id(mut self, stream_id: i32) -> Self {
+    pub const fn ingress_stream_id(mut self, stream_id: i32) -> Self {
         self.ingress_stream_id = stream_id;
         self
     }
 
     /// Override the egress stream id (default: cluster-configured).
-    pub fn egress_stream_id(mut self, stream_id: i32) -> Self {
+    pub const fn egress_stream_id(mut self, stream_id: i32) -> Self {
         self.egress_stream_id = stream_id;
         self
     }
