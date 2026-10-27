@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The transport latency suite (azure/lab.sh LAB_SUITE=transport): the matrix
+# The transport latency suite (azure/lab.sh and aws/lab.sh LAB_SUITE=transport): the matrix
 # (transport-matrix.tsv, plus LAB_ARMS_FILE's rows) as rounds of points on
 # the two VMs of one pair session (LAB_PAIR a or b). Each rep's round at a
 # netem level runs the set's arms in an order drawn from its own seed (the
@@ -31,8 +31,11 @@
 #                         durations; then transport_collect.py, fairness.py and
 #                         analyse.py --transport (test/transport-smoke-docker.sh runs it)
 #
-# Sourced (azure/lab.sh, the tests): functions only, among them
+# Sourced (azure/lab.sh, aws/lab.sh, the tests): functions only, among them
 # transport_prepare and transport_remote, the operator machine's side.
+# tr_cloud (azure unless the caller sets it; aws/lab.sh sets aws): the cloud
+# every mode_check judges a point's mode for (an F-Stack arm runs on AWS
+# x86_64 alone).
 #
 # Durations (env, else the plan's): TRANSPORT_WARMUP_S (30), TRANSPORT_POINT_S
 # (30), TRANSPORT_SWITCH_S (5), TRANSPORT_READY_TIMEOUT_S (60: the longest the
@@ -87,10 +90,10 @@ tr_check() {
     local modes
     modes=$(tr_plan modes "$pair") || return 2
     for m in $modes; do
-        why=$(mode_check "$m" remote x86_64 azure '' 2>&1) || { echo "$why" >&2; return 2; }
+        why=$(mode_check "$m" remote x86_64 "${tr_cloud:-azure}" '' 2>&1) || { echo "$why" >&2; return 2; }
     done
     for m in "kernel-busy$TR_AERON_MODE_SUFFIX" "dpdk$TR_AERON_MODE_SUFFIX"; do
-        why=$(mode_check "$m" remote x86_64 azure '' 2>&1) || { echo "TR_AERON_MODE_SUFFIX: $why" >&2; return 2; }
+        why=$(mode_check "$m" remote x86_64 "${tr_cloud:-azure}" '' 2>&1) || { echo "TR_AERON_MODE_SUFFIX: $why" >&2; return 2; }
     done
     # the bench ports against the wildcard ranges and Linux's default
     # ephemeral range (each host's own is checked at transport-tune)
@@ -208,11 +211,11 @@ tr_check_tune() {
             arm=$v
             [[ $setup == kernel || $setup == dpdk ]] || continue
             m=$(tr_driver_mode)
-            why=$(mode_check "$m" remote x86_64 azure '' 2>&1) || { echo "LAB_TUNE=1: variant $v's driver mode $m: $why" >&2; exit 2; }
+            why=$(mode_check "$m" remote x86_64 "${tr_cloud:-azure}" '' 2>&1) || { echo "LAB_TUNE=1: variant $v's driver mode $m: $why" >&2; exit 2; }
         done <"$tmpd/variants.txt"
         modes=$(tr_plan modes tune) || exit 2
         for m in $modes; do
-            why=$(mode_check "$m" remote x86_64 azure '' 2>&1) || { echo "$why" >&2; exit 2; }
+            why=$(mode_check "$m" remote x86_64 "${tr_cloud:-azure}" '' 2>&1) || { echo "$why" >&2; exit 2; }
         done
         tr_plan count tune 1
     ) || rc=2
@@ -220,7 +223,7 @@ tr_check_tune() {
     return $rc
 }
 
-# ---- the operator machine's side (azure/lab.sh, after lib.sh prepare_vms) ----
+# ---- the operator machine's side (azure/lab.sh and aws/lab.sh, after lib.sh prepare_vms) ----
 
 # transport_prepare: LAB_EXTRA_SRC's tree, LAB_ARMS_FILE and LAB_SETS_FILE on both VMs,
 # the bench binaries built (vm.sh transport-build), the CPU map's boot line,
@@ -245,12 +248,30 @@ transport_prepare() {
         fi
     done
     log "transport: bench binaries"
-    detached transport-build transport-build || die "transport-build failed"
+    local fstack=
+    if tr_wants_fstack; then
+        fstack=fstack
+        log "transport: an arm runs on F-Stack: it and fstack_lat are built too (x86_64 only)"
+    fi
+    detached transport-build transport-build $fstack || die "transport-build failed"
     log "transport: CPU map and its boot line"
     both transport-isolate transport-isolate || die "transport-isolate failed"
     reboot_both
     both transport-tune transport-tune || die "transport-tune failed: a setting did not hold ($out/{a,b}-transport-tune.log)"
     remote_access
+}
+
+# tr_wants_fstack: 0 when a set of either pair runs an arm on F-Stack
+# (setup fstack): vm.sh transport-build then builds F-Stack and fstack_lat
+tr_wants_fstack() {
+    local p m tr_arms_file=${arms_file:-} tr_sets_file=${sets_file:-}
+    for p in a b; do
+        while read -r m; do
+            [[ -n $m ]] || continue
+            [[ $(tr_plan arm "${m%%@*}" | awk '{print $2}') == fstack ]] && return 0
+        done < <(tr_plan modes "$p" 2>/dev/null)
+    done
+    return 1
 }
 
 # transport_remote <pair>: the session on VM a (transport.sh run), detached
@@ -300,6 +321,12 @@ tr_host() { if [[ $1 == a ]]; then echo "$A"; else echo "$B"; fi; }
 # tr_nic <a|b> <sender|receiver>: that host's data NIC address (vm.sh nics,
 # read once a session into nics-<host>.txt)
 tr_nic() { awk -v r="$2" '$1 == r {print $5}' "$dir/nics-$1.txt"; }
+# tr_nic_of <address> <field>: a field of the data NIC with that address on
+# either host (vm.sh nics: role iface vf mac address prefix pci)
+tr_nic_of() { awk -v ip="$1" -v f="$2" '$5 == ip {print $f; exit}' "$dir"/nics-[ab].txt; }
+# tr_gateway <address/prefix>: its subnet's router, the first address (AWS
+# and Azure both; host.sh subnet_gateway)
+tr_gateway() { python3 -c 'import ipaddress, sys; print(next(ipaddress.ip_network(sys.argv[1], strict=False).hosts()))' "$1"; }
 
 # tr_bin_path: the PATH a bench binary is found on, on either host
 tr_bin_path='"$HOME/ergon/target/release:$HOME/extra/bin:$PATH"'
@@ -366,6 +393,17 @@ tr_bin_args() {
         [[ $role == pong ]] && a="--listen $own:$port"
         [[ $role == local ]] && a="--source $own --listen $peer:$port"
         out="$a --nodelay $qa $(tr_timer_args)${busy}--rcvbuf $sb --sndbuf $sb --epoll-events $(tr_knob epoll_events)"
+        ;;
+    fstack_lat)
+        # TCP over F-Stack: tcp_lat's addresses (the F-Stack interface takes
+        # the address, so the NIC: its PCI address, prefix and gateway from
+        # vm.sh nics) and socket buffers; no busy poll, epoll or kernel TCP
+        # timers (F-Stack polls, and has none of them: the binary refuses
+        # them)
+        local a="--source $own --connect $peer:$port" pci len
+        [[ $role == pong ]] && a="--listen $own:$port"
+        pci=$(tr_nic_of "$own" 7) len=$(tr_nic_of "$own" 6)
+        out="$a --pci $pci --prefix-len $len --gateway $(tr_gateway "$own/$len") --nodelay --rcvbuf $sb --sndbuf $sb"
         ;;
     *)
         # an arms file's binary: its addresses, and on the kernel's path
@@ -477,6 +515,7 @@ tr_arm_knobs() {
         [[ $a == *" --mode udp "* && $a == *" --reliable true "* ]] && echo nak_delay_ns
         ;;
     mpsc_lat) echo capacity ;;
+    fstack_lat) echo sockbuf ;;
     esac
     # every arm on the kernel's sockets (an arms file's binary too): the data
     # NICs' interrupt deferral, its own host setting (tr_host_overrides)
@@ -744,6 +783,7 @@ tr_arm_up() {
         kernel) on "$(tr_host "$h")" "$(tr_arm_vm) driver $(tr_driver_mode) && ${ov}$vm transport-net check" ;;
         dpdk) on "$(tr_host "$h")" "$(tr_arm_vm) driver $(tr_driver_mode)" ;;
         sockets) on "$(tr_host "$h")" "${ov}$vm transport-net" ;;
+        fstack) on "$(tr_host "$h")" "$vm fstack-up" ;;
         none) true ;;
         esac >>"$dir/logs/setup-$h.log" 2>&1 || { log "host $h: $setup set-up failed ($dir/logs/setup-$h.log)"; return 1; }
     done
@@ -755,7 +795,8 @@ tr_arm_down() {
     if [[ $setup == sockets && -n $(tr_host_overrides) ]]; then
         for h in "$@"; do on "$(tr_host "$h")" "$vm transport-net" >>"$dir/logs/setup-$h.log" 2>&1 || log "host $h: settings not put back"; done
     fi
-    [[ $setup == kernel || $setup == dpdk ]] || return 0
+    # fstack: the data NICs back from igb_uio to the kernel (vm.sh stop)
+    [[ $setup == kernel || $setup == dpdk || $setup == fstack ]] || return 0
     for h in "$@"; do on "$(tr_host "$h")" "$(tr_arm_vm) stop" >>"$dir/logs/setup-$h.log" 2>&1 || log "host $h: vm.sh stop failed"; done
 }
 
@@ -1090,7 +1131,7 @@ tr_tune() {
         read -ra args <<<"${args:-}"
         [[ $setup == kernel || $setup == dpdk ]] || continue
         m=$(tr_driver_mode)
-        v=$(mode_check "$m" remote x86_64 azure '' 2>&1) || { log "tune: variant $arm's driver mode $m: $v"; return 1; }
+        v=$(mode_check "$m" remote x86_64 "${tr_cloud:-azure}" '' 2>&1) || { log "tune: variant $arm's driver mode $m: $v"; return 1; }
     done <"$dir/variants.txt"
     arm=
     tr_plan rounds tune "$seed" 1 >"$dir/rounds-sweep.tsv" || { log "tune: the sweep's rounds do not parse"; return 1; }

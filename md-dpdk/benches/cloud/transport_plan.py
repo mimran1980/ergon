@@ -25,7 +25,9 @@ import math
 import random
 import sys
 
-SETUPS = ("none", "kernel", "dpdk", "sockets")
+SETUPS = ("none", "kernel", "dpdk", "sockets", "fstack")
+# setups whose NICs DPDK holds: netem (a kernel qdisc) cannot reach them
+DPDK_SETUPS = ("dpdk", "fstack")
 HOSTS = ("one", "two")
 
 
@@ -95,6 +97,10 @@ def load(paths):
         for a in s["arms"]:
             if a != "aa" and a not in arms:
                 raise PlanError(f"{s['where']}: set {s['id']}: no arm {a}")
+        held = sorted(a for a in s["arms"] if a != "aa" and arms[a][1] in DPDK_SETUPS)
+        if held and s["netem"] != ["-"]:
+            raise PlanError(f"{s['where']}: set {s['id']}: {', '.join(held)} run on DPDK, which netem "
+                            "cannot reach: such a set has netem -")
         kinds = {arms[a][2] for a in s["arms"] if a != "aa"}
         if kinds != ({"two"} if s["host"] == "ab" else {"one"}):
             raise PlanError(f"{s['where']}: set {s['id']}: host ab takes two-host arms, a or b one-host arms")

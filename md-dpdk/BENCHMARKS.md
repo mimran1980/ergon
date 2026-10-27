@@ -459,6 +459,7 @@ just test-dpdk-lab                                           # the analysis agai
 just transport-smoke-docker                                  # the transport suite end to end on one box, no cloud
 LAB_SUITE=transport LAB_PAIR=a LAB_ESTIMATE=1 md-dpdk/benches/cloud/azure/lab.sh   # its cost, no cloud call
 LAB_SUITE=transport LAB_PAIR=a md-dpdk/benches/cloud/azure/lab.sh                  # one pair session
+LAB_SUITE=transport LAB_PAIR=a LAB_SETS_FILE=md-dpdk/benches/cloud/transport-aws-dpdk.tsv LAB_REPS=3 LAB_SPOT=1 md-dpdk/benches/cloud/aws/lab.sh   # AWS DPDK session (F-Stack), c7a.2xlarge
 ```
 
 `just transport-smoke-docker` (test/transport-smoke-docker.sh; Docker,

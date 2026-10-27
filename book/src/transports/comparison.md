@@ -769,6 +769,17 @@ LAB_SUITE=transport LAB_PAIR=a LAB_RUN_STAMP=$stamp md-dpdk/benches/cloud/azure/
 LAB_SUITE=transport LAB_PAIR=b LAB_RUN_STAMP=$stamp md-dpdk/benches/cloud/azure/lab.sh
 ```
 
+The AWS DPDK session (F-Stack TCP, Aeron and the socket arms on two
+c7a.2xlarge; its own stamp and tags, deleted and verified on exit, each
+instance powering itself off at `LAB_MAX_HOURS`):
+
+```sh
+export LAB_SUITE=transport LAB_PAIR=a LAB_REPS=3 LAB_SPOT=1 \
+    LAB_SETS_FILE=md-dpdk/benches/cloud/transport-aws-dpdk.tsv
+LAB_ESTIMATE=1 md-dpdk/benches/cloud/aws/lab.sh
+md-dpdk/benches/cloud/aws/lab.sh   # results in target/md-dpdk-bench/aws-<stamp>/transport
+```
+
 Analyse each pair's run directory:
 
 ```sh

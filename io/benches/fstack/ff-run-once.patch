@@ -1,0 +1,76 @@
+diff --git a/lib/ff_api.h b/lib/ff_api.h
+index 175dc47c..44f50c00 100644
+--- a/lib/ff_api.h
++++ b/lib/ff_api.h
+@@ -64,6 +64,9 @@ void ff_run(loop_func_t loop, void *arg);
+ 
+ void ff_stop_run(void);
+ 
++/* ergon: one pass of ff_run's loop with no user callback (ff_dpdk_if.c). */
++int ff_run_once(void);
++
+ /*
+  * Resident slim primary helpers (graceful_reload=1).
+  * ff_primary_conf_digest: digest of the config items the primary applies
+diff --git a/lib/ff_dpdk_if.c b/lib/ff_dpdk_if.c
+index f1dc0ac6..8d71152d 100644
+--- a/lib/ff_dpdk_if.c
++++ b/lib/ff_dpdk_if.c
+@@ -3713,6 +3713,10 @@ static int g_hw_user_state = -1;
+ static int g_hw_user_warned;
+ static int g_hw_locked_seen;
+ 
++/* ergon: ff_run_once() runs one pass of main_loop and returns, for a
++ * caller that owns its loop. */
++static __thread int ff_once;
++
+ static int
+ main_loop(void *arg)
+ {
+@@ -3732,9 +3736,12 @@ main_loop(void *arg)
+         drain_tsc = (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S * pkt_tx_delay;
+     }
+ 
+-    /* Interval between user loop() calls while idle; 0 = every pass. */
+-    idle_loop_tsc = (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S *
+-        idle_loop_interval;
++    /* Interval between user loop() calls while idle; 0 = every pass.
++     * ff_run_once has no user loop: no division per pass. */
++    if (lr->loop != NULL) {
++        idle_loop_tsc = (rte_get_tsc_hz() + US_PER_S - 1) / US_PER_S *
++            idle_loop_interval;
++    }
+ 
+     prev_tsc = 0;
+     usch_tsc = 0;
+@@ -4118,11 +4125,30 @@ main_loop(void *arg)
+         ff_top_status.idle_tsc += end_tsc - cur_tsc - usr_tsc - sys_tsc;
+ 
+         ff_top_status.loops++;
++
++        if (unlikely(ff_once)) {
++            break;
++        }
+     }
+ 
+     return 0;
+ }
+ 
++/* ergon: one pass of the loop ff_run runs (timers, TX drain, RX and the
++ * stack, HPTS), with no user callback, on the calling lcore thread. A
++ * pass always drains TX (pkt_tx_delay does not apply). Not for
++ * graceful_reload or thread_mode=1. */
++int
++ff_run_once(void)
++{
++    static __thread struct loop_routine lr;
++
++    ff_once = 1;
++    main_loop(&lr);
++    ff_once = 0;
++    return 0;
++}
++
+ int
+ ff_dpdk_if_up(void) {
+     int i;

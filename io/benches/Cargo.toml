@@ -42,6 +42,13 @@ path = "src/bin/udp_lat.rs"
 name = "tcp_lat"
 path = "src/bin/tcp_lat.rs"
 
+# TCP over F-Stack: needs F-Stack built by fstack/build-fstack.sh
+# (FSTACK_PREFIX), which build.rs links. x86_64 Linux only.
+[[bin]]
+name = "fstack_lat"
+path = "src/bin/fstack_lat.rs"
+required-features = ["fstack"]
+
 # The mio parity gate: a timed benchmark test, so it runs in release on its
 # own lane (test-lanes.tsv, `just io-parity`), never in the debug test runs.
 [[test]]
@@ -50,6 +57,8 @@ path = "parity/mio_parity.rs"
 test = false
 
 [features]
+# fstack_lat and transport::fstack (build.rs links FSTACK_PREFIX's F-Stack)
+fstack = []
 aws-lc = ["dep:aws-lc-rs", "rustls/aws_lc_rs"]
 openssl = ["dep:openssl"]
 

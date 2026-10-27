@@ -1,0 +1,25 @@
+# The AWS DPDK session's sets (aws/lab.sh LAB_SUITE=transport LAB_PAIR=a
+# LAB_SETS_FILE=<this file>, in place of the matrix's sets; the matrix's arms
+# are kept, and the two below added). One pair of x86_64 instances
+# (c7a.2xlarge: F-Stack builds on x86_64 only). No netem: DPDK holds its
+# NICs, so loss rounds stay on the kernel-only sets.
+#
+#   d1, d8   TCP on DPDK (F-Stack) beside kernel TCP, and Aeron reliable UDP
+#            on the kernel and on DPDK (md-dpdk)
+#   u        unreliable UDP: Aeron on DPDK and on the kernel, raw mio and ergon-io
+#   pin      the same-connection TCP A/B: mio and ergon-io on the same
+#            4-tuples (tcp_lat --source-port: stream i binds 31000 + i and
+#            closes with a reset), the A/A arm mio-tcp-pin again
+#
+# Trimmed to keep the session near 3 h at LAB_REPS=3 (LAB_ESTIMATE=1): u
+# runs 1 stream at 50k alone (no 8 streams, no 10k or 200k), pin 1 stream (no 8).
+#
+# arm   name         binary   setup    hosts  arguments
+arm  mio-tcp-pin  tcp_lat  sockets  two    --impl mio --source-port 31000
+arm  eio-tcp-pin  tcp_lat  sockets  two    --impl ergon --source-port 31000
+
+# set   pair par host loads               streams  netem  arms
+set d1   a    -   ab   10000,50000,200000  1        -      dpdk-tcp,mio-tcp,eio-tcp,aeron-rel,dpdk-aeron-rel,aa
+set d8   a    -   ab   10000,50000,200000  8        -      dpdk-tcp,mio-tcp,eio-tcp,aeron-rel,dpdk-aeron-rel,aa
+set u    a    -   ab   50000               1        -      dpdk-aeron-udp,aeron-udp,mio-udp,eio-udp,aa
+set pin  a    -   ab   10000,50000         1        -      mio-tcp-pin,eio-tcp-pin,aa

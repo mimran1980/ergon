@@ -708,7 +708,7 @@ dpdk_busy_idle() { [[ $1 =~ ^(spin|noop|aeron_idle_strategy_busy_spinning|aeron_
 #                100 (0: a netem qdisc that drops nothing, the control);
 #                none: no qdisc, checked, in a loss set's round (the
 #                control's control);
-#                never on a DPDK arm (a dpdk* name or the dpdk setup): DPDK
+#                never on a DPDK arm (a dpdk* name, the dpdk or fstack setup): DPDK
 #                bypasses the kernel's qdiscs, so netem would drop nothing
 #                and the row would claim a loss it never saw
 #   AA=1         the A/A arm: the round's first arm run again
@@ -722,7 +722,7 @@ arm_of() {
     printf '%s' "$a"
 }
 
-# arm_setup <arm>: none, kernel, dpdk or sockets; arm_hosts <arm>: one or two
+# arm_setup <arm>: none, kernel, dpdk, sockets or fstack; arm_hosts <arm>: one or two
 arm_setup() { local s=${TRANSPORT_ARMS#* "$1"=}; s=${s%% *}; printf '%s' "${s%/*}"; }
 arm_hosts() { local s=${TRANSPORT_ARMS#* "$1"=}; s=${s%% *}; printf '%s' "${s#*/}"; }
 
@@ -746,7 +746,7 @@ arm_check() {
             [[ $value == none ]] && continue
             [[ $value =~ ^(0|[1-9][0-9]?|100)(\.[0-9]{1,3})?$ ]] && awk -v v="$value" 'BEGIN {exit !(v <= 100)}' ||
                 { echo "mode $m: NETEM=$value: egress loss in %, 0 to 100, at most three decimals" >&2; return 2; }
-            if [[ $a == dpdk* || $(arm_setup "$a") == dpdk ]]; then
+            if [[ $a == dpdk* || $(arm_setup "$a") == dpdk || $(arm_setup "$a") == fstack ]]; then
                 echo "mode $m: NETEM on a DPDK arm: DPDK bypasses the kernel's qdiscs, so netem would drop nothing (no DPDK in loss rows)" >&2
                 return 2
             fi
@@ -764,6 +764,12 @@ mode_check() {
     [[ $m != *,* ]] || { echo "mode $m: a comma would split its results.csv rows (COALESCE takes <rx>/<tx>)" >&2; return 2; }
     # a transport suite arm: its own settings alone
     if arm_of "$m" >/dev/null; then
+        # setup fstack: F-Stack builds on x86_64 alone, and runs on AWS's ENA
+        # (io/benches/fstack/build-fstack.sh, vm.sh fstack-up)
+        if [[ $(arm_setup "$(arm_of "$m")") == fstack && ($arch != x86_64 || $cloud != aws) ]]; then
+            echo "mode $m: an F-Stack arm runs on AWS x86_64 only (here $cloud $arch)" >&2
+            return 2
+        fi
         arm_check "$m"
         return
     fi
