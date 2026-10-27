@@ -1,8 +1,9 @@
 //! The spike and stall buffers are written when built, so filling them in a
-//! measured run takes no first-touch page fault (Linux: the thread's minor
-//! faults, which only `getrusage` reports).
+//! measured run takes no first-touch page fault (the minor faults
+//! `getrusage` reports: the thread's on Linux, the process's elsewhere, so
+//! run single-threaded).
 
-#![cfg(target_os = "linux")]
+#![cfg(unix)]
 
 use ergon_latency_core::clock::TscClock;
 use ergon_latency_core::row::{Spikes, Stalls};
@@ -12,7 +13,11 @@ fn minor_faults() -> i64 {
     #[allow(unsafe_code)]
     let usage = unsafe {
         let mut u = std::mem::zeroed::<libc::rusage>();
-        assert_eq!(libc::getrusage(libc::RUSAGE_THREAD, &raw mut u), 0);
+        #[cfg(target_os = "linux")]
+        let who = libc::RUSAGE_THREAD;
+        #[cfg(not(target_os = "linux"))]
+        let who = libc::RUSAGE_SELF;
+        assert_eq!(libc::getrusage(who, &raw mut u), 0);
         u
     };
     usage.ru_minflt

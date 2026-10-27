@@ -137,9 +137,15 @@ impl Row<'_> {
 
 /// An empty vector of `capacity` whose every slot was written once, so a
 /// push during a measured run never takes a first-touch page fault.
+///
+/// `fill` goes through `black_box`: a fill the optimiser sees as zero turns
+/// the allocation and the fill into one zeroed allocation (`calloc`, whose
+/// fresh pages the kernel maps on first touch), as the release build did
+/// with [`Stalls`]' 16 MB: every 4 KiB of stall rows then faulted once in
+/// the run, hundreds a second on an overloaded point.
 fn prefaulted<T: Copy>(capacity: usize, fill: T) -> Vec<T> {
     let mut v = Vec::with_capacity(capacity);
-    v.resize(capacity, fill);
+    v.resize(capacity, std::hint::black_box(fill));
     std::hint::black_box(v.as_slice());
     v.clear();
     v
