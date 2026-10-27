@@ -394,7 +394,7 @@ fn generate_staged(
                     /// Complete this group when the entry count is zero.
                     /// Returns an error if the declared count is non-zero.
                     #[inline]
-                    pub fn finish_empty(self)
+                    pub const fn finish_empty(self)
                         -> Result<#next_name, sbe_rt::EncodeError>
                     {
                         if self.declared_count != 0 {
@@ -796,16 +796,16 @@ fn generate_direct(
             len = match len.checked_add(#ps as usize) {
                 Some(v) => v,
                 None => {
-                            core::hint::cold_path();
-                            return Err(sbe_rt::EncodeError::EncodedLengthOverflow);
-                        }
+                    core::hint::cold_path();
+                    return Err(sbe_rt::EncodeError::EncodedLengthOverflow);
+                }
             };
             len = match len.checked_add(#pi_body) {
                 Some(v) => v,
                 None => {
-                            core::hint::cold_path();
-                            return Err(sbe_rt::EncodeError::EncodedLengthOverflow);
-                        }
+                    core::hint::cold_path();
+                    return Err(sbe_rt::EncodeError::EncodedLengthOverflow);
+                }
             };
         });
     }
@@ -815,7 +815,7 @@ fn generate_direct(
         /// Group counts use the wire type (`u16` or `u8`); var-data lengths
         /// use `usize`.
         #[inline]
-        pub fn try_compute_encoded_length(
+        pub const fn try_compute_encoded_length(
             #(#checked_param_decls),*
         ) -> Result<usize, sbe_rt::EncodeError> {
             let mut len: usize = #block_len_lit;
@@ -964,13 +964,13 @@ pub(super) fn generate_support() -> TokenStream {
         }
 
         impl RaggedEntryBuilder {
-            fn new(state: EncodedLengthAccumulator, parent_multiplier: usize, entry_block_length: usize) -> Self {
+            const fn new(state: EncodedLengthAccumulator, parent_multiplier: usize, entry_block_length: usize) -> Self {
                 Self { state, parent_multiplier, entry_block_length, written: 0 }
             }
 
             /// Register one entry (adds entry block for unknown-size groups).
             #[inline]
-            pub fn add(&mut self) -> sbe_rt::GroupResult {
+            pub const fn add(&mut self) -> sbe_rt::GroupResult {
                 self.state.add_scaled(self.entry_block_length, self.parent_multiplier);
                 self.bump_written(1)
             }
@@ -980,7 +980,7 @@ pub(super) fn generate_support() -> TokenStream {
             /// Equivalent to `n` successful [`Self::add`] calls, including the
             /// boundary at which the entry count overflows.
             #[inline]
-            pub fn entries(&mut self, n: usize) -> sbe_rt::GroupResult {
+            pub const fn entries(&mut self, n: usize) -> sbe_rt::GroupResult {
                 // One scaled contribution, not `n` identical ones: the entries
                 // are the same fixed width by definition, so the loop only ever
                 // recomputed the same product. Constant-time, no new branch, no
@@ -994,7 +994,7 @@ pub(super) fn generate_support() -> TokenStream {
             /// wrap and report a count the caller never asked for, which the
             /// group's declared-count check would then silently accept.
             #[inline]
-            fn bump_written(&mut self, n: usize) -> sbe_rt::GroupResult {
+            const fn bump_written(&mut self, n: usize) -> sbe_rt::GroupResult {
                 match self.written.checked_add(n) {
                     Some(total) => {
                         self.written = total;

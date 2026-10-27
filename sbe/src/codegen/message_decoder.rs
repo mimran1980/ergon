@@ -303,7 +303,7 @@ pub(crate) fn generate_message_decoder(
         /// `message_start + 8`). ergo-sbe takes the **message** start so the
         /// same offset works for `wrap`, `decode`, and claim buffers.
         #[inline]
-        pub fn try_wrap(
+        pub const fn try_wrap(
             buf: &'a [u8],
             message_offset: usize,
             acting_block_length: usize,
@@ -381,7 +381,7 @@ pub(crate) fn generate_message_decoder(
         /// min_readable_fixed_extent(acting_version))` must not overflow
         /// and must be ≤ `buf.len()`.
         #[inline]
-        pub unsafe fn wrap_unchecked(
+        pub const unsafe fn wrap_unchecked(
             buf: &'a [u8],
             message_offset: usize,
             acting_block_length: usize,
@@ -874,7 +874,7 @@ pub(crate) fn generate_message_decoder(
                     impl_body.extend(quote::quote! {
                         #mu
                         #[inline]
-                        pub fn #fname_ident(&self) -> #target_decoder_name<'_> {
+                        pub const fn #fname_ident(&self) -> #target_decoder_name<'_> {
                             #target_decoder_name { buf: self.buf, offset: self.offset + #offset_lit }
                         }
                     });
@@ -1158,7 +1158,7 @@ pub(crate) fn generate_message_decoder(
     impl_body.extend(quote::quote! {
         /// Byte offset of the message body within `self.buf`.
         #[inline]
-        fn byte_offset(&self) -> usize {
+        const fn byte_offset(&self) -> usize {
             self.offset
         }
     });
@@ -1372,7 +1372,7 @@ pub(crate) fn generate_message_decoder(
             /// Consume this stage and return a fresh decoder at the initial
             /// message position. The consumed stage cannot be reused.
             #[inline]
-            pub fn rewind(self) -> Self {
+            pub const fn rewind(self) -> Self {
                 Self {
                     buf: self.buf,
                     offset: self.offset,
@@ -1744,7 +1744,7 @@ pub(crate) fn generate_message_decoder(
             /// within the underlying buffer.
             #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-            pub fn message_offset(&self) -> usize {
+            pub const fn message_offset(&self) -> usize {
                 self.decoder.byte_offset().saturating_sub(#decoder_ident::HEADER_LENGTH)
             }
             /// End of the **acting fixed block** (body start + acting block length).
@@ -1752,13 +1752,13 @@ pub(crate) fn generate_message_decoder(
             /// stage or inherent `encoded_length_with_header` after walking tails.
             #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-            pub fn limit(&self) -> usize {
+            pub const fn limit(&self) -> usize {
                 self.decoder.byte_offset() + self.decoder.acting_block_length
             }
             /// The full underlying buffer slice this decoder was wrapped on.
             #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
-            pub fn buffer(&self) -> &'a [u8] {
+            pub const fn buffer(&self) -> &'a [u8] {
                 self.decoder.buf
             }
             /// Bytes after the acting fixed block end. May still contain unread
@@ -1772,10 +1772,10 @@ pub(crate) fn generate_message_decoder(
             #meta_bytes
             /// Schema version from the header or wrap args, which `sinceVersion` fields follow.
             #[must_use = "discarding this value is almost always a mistake"]
-            #[inline] pub fn acting_version(&self) -> u16 { self.decoder.acting_version }
+            #[inline] pub const fn acting_version(&self) -> u16 { self.decoder.acting_version }
             /// Block length from the header or wrap args, which tail offsets use.
             #[must_use = "discarding this value is almost always a mistake"]
-            #[inline] pub fn acting_block_length(&self) -> usize { self.decoder.acting_block_length }
+            #[inline] pub const fn acting_block_length(&self) -> usize { self.decoder.acting_block_length }
         }
     });
 
@@ -1787,7 +1787,7 @@ pub(crate) fn generate_message_decoder(
             /// are scoped here so no schema field name can collide with them.
             #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
-            pub fn get_metadata(&self) -> #metadata_ident<'_, 'a> {
+            pub const fn get_metadata(&self) -> #metadata_ident<'_, 'a> {
                 #metadata_ident { decoder: self }
             }
 

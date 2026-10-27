@@ -342,7 +342,7 @@ pub(crate) fn generate_group_encoder(
             /// message — get the framing (header contents, `offset`, order)
             /// wrong and the result is a malformed group image.
             #[inline]
-            pub fn wrap(buf: &'a mut [u8], offset: usize, count: #count_ty) -> Self {
+            pub const fn wrap(buf: &'a mut [u8], offset: usize, count: #count_ty) -> Self {
                 Self { buf, offset, count, written: 0 }
             }
 
@@ -351,7 +351,7 @@ pub(crate) fn generate_group_encoder(
             /// Number of entries written so far (for `_unknown_size` back-patch).
             #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
-            pub fn written(&self) -> #count_ty {
+            pub const fn written(&self) -> #count_ty {
                 self.written
             }
         }
@@ -581,7 +581,7 @@ pub(crate) fn generate_group_encoder(
         /// `offset + ENTRY_BLOCK_LENGTH` must not overflow and must be ≤ `buf.len()`
         /// for the lifetime of the returned encoder.
         #[inline]
-        unsafe fn wrap(buf: &'a mut [u8], offset: usize) -> Self {
+        const unsafe fn wrap(buf: &'a mut [u8], offset: usize) -> Self {
             Self {
                 buf,
                 entry_start: offset,
@@ -594,7 +594,7 @@ pub(crate) fn generate_group_encoder(
         entry_methods.extend(quote::quote! {
             #complete_doc_tokens
             #[inline]
-            pub fn complete(self) -> #entry_complete_ident<'a> {
+            pub const fn complete(self) -> #entry_complete_ident<'a> {
                 #entry_complete_ident {
                     buf: self.buf,
                     entry_start: self.entry_start,
@@ -657,7 +657,7 @@ pub(crate) fn generate_group_encoder(
                 } else if prim_size == 1 {
                     entry_methods.extend(quote::quote! {
                         #[inline]
-                        pub fn #f_ident(&mut self, val: #r_ty) -> &mut Self {
+                        pub const fn #f_ident(&mut self, val: #r_ty) -> &mut Self {
                             self.buf[self.entry_start + #f_offset] = val as u8;
                             self
                         }
@@ -709,7 +709,7 @@ pub(crate) fn generate_group_encoder(
                     let f_name_bool = syn::Ident::new(&format!("{}_bool", f_snake), span);
                     entry_methods.extend(quote::quote! {
                         #[inline]
-                        pub fn #f_name_bool(&mut self, val: bool) -> &mut Self {
+                        pub const fn #f_name_bool(&mut self, val: bool) -> &mut Self {
                             self.buf[self.entry_start + #f_offset] = val as u8;
                             self
                         }

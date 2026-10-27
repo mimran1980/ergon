@@ -302,7 +302,7 @@ pub(crate) fn generate_group_decoder(
             /// body this group is nested in, and `offset` must be the byte
             /// position where this group would have started had it been present.
             #[inline]
-            unsafe fn wrap_absent_parent(
+            const unsafe fn wrap_absent_parent(
                 buf: &'a [u8],
                 offset: usize,
                 acting_version: u16,
@@ -327,7 +327,7 @@ pub(crate) fn generate_group_decoder(
 
             #mu
             #[inline]
-            pub fn is_empty(&self) -> bool {
+            pub const fn is_empty(&self) -> bool {
                 self.count == 0
             }
 
@@ -449,7 +449,7 @@ pub(crate) fn generate_group_decoder(
             /// start offset was validated at wrap time, so retrying from there
             /// is sound even after an entry failed.
             #[inline]
-            pub fn rewind(&mut self) -> &mut Self {
+            pub const fn rewind(&mut self) -> &mut Self {
                 self.offset = self.start;
                 self.count = self.total;
                 #clear_poison
@@ -586,7 +586,7 @@ pub(crate) fn generate_group_decoder(
         ts.extend(quote::quote! {
             impl<'a, C: sbe_rt::GroupContext> #decoder_ident<'a, C> {
                 #[inline]
-                pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
+                pub const fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
                     if n > self.count {
                         core::hint::cold_path();
                         return Err(sbe_rt::DecodeError::BufferTooShort {
@@ -889,7 +889,7 @@ pub(crate) fn generate_group_decoder(
             /// field offset used by accessors) must not overflow and must be
             /// ≤ `buf.len()`. Fixed-field getters may then use unchecked reads.
             #[inline]
-            unsafe fn wrap(
+            const unsafe fn wrap(
                 buf: &'a [u8],
                 offset: usize,
                 acting_block_length: usize,
@@ -913,7 +913,7 @@ pub(crate) fn generate_group_decoder(
             /// Fixed block at `offset` and every dynamic tail extent this entry
             /// will traverse must be fully in-bounds in `buf`.
             #[inline]
-            unsafe fn wrap(
+            const unsafe fn wrap(
                 buf: &'a [u8],
                 offset: usize,
                 acting_block_length: usize,
@@ -1171,7 +1171,7 @@ pub(crate) fn generate_group_decoder(
                     entry_body.extend(quote::quote! {
                         #mu
                         #[inline]
-                        pub fn #f_name_ident(&self) -> #target_decoder_name<'_> {
+                        pub const fn #f_name_ident(&self) -> #target_decoder_name<'_> {
                             let offset = self.offset + #offset_lit;
                             #target_decoder_name { buf: self.buf, offset: offset }
                         }
@@ -1775,11 +1775,11 @@ pub(crate) fn generate_group_decoder(
         entry_body.extend(quote::quote! {
             #mu
             #[inline]
-            pub fn encoded_length(&self) -> usize {
+            pub const fn encoded_length(&self) -> usize {
                 self.acting_block_length
             }
             #[inline]
-            pub fn skip(buf: &'a [u8], offset: usize, block_len: usize, _acting_version: u16) -> Result<usize, sbe_rt::DecodeError> {
+            pub const fn skip(buf: &'a [u8], offset: usize, block_len: usize, _acting_version: u16) -> Result<usize, sbe_rt::DecodeError> {
                 if block_len > buf.len().saturating_sub(offset) {
                     core::hint::cold_path();
                     return Err(sbe_rt::DecodeError::BufferTooShort {

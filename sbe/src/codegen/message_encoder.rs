@@ -330,7 +330,7 @@ pub(crate) fn generate_message_encoder(
         /// Cold error constructor — never inlined into the hot path.
         #[cold]
         #[inline(never)]
-        fn buffer_too_short(buf: &[u8], offset: usize, needed: usize) -> sbe_rt::EncodeError {
+        const fn buffer_too_short(buf: &[u8], offset: usize, needed: usize) -> sbe_rt::EncodeError {
             sbe_rt::EncodeError::BufferTooShort {
                 field: "message header+body",
                 needed,
@@ -356,7 +356,7 @@ pub(crate) fn generate_message_encoder(
         ///
         /// Prefer [`Self::wrap_and_apply_header`] when encoding a full frame.
         #[inline]
-        pub fn try_wrap(
+        pub const fn try_wrap(
             buf: &'a mut [u8],
             msg_offset: usize,
         ) -> Result<#name_encoder_ident<'a, sbe_rt::HeaderAbsent>, sbe_rt::EncodeError> {
@@ -393,7 +393,7 @@ pub(crate) fn generate_message_encoder(
         /// `msg_offset + HEADER_LENGTH + BLOCK_LENGTH` must not overflow
         /// and must be ≤ `buf.len()` for the lifetime of the encoder.
         #[inline]
-        pub unsafe fn wrap_unchecked(
+        pub const unsafe fn wrap_unchecked(
             buf: &'a mut [u8],
             msg_offset: usize,
         ) -> #name_encoder_ident<'a, sbe_rt::HeaderAbsent> {
@@ -416,7 +416,7 @@ pub(crate) fn generate_message_encoder(
         /// Optional-field nullification is **not** applied by default — call
         /// `apply_nulls()` if you want null sentinels.
         #[inline]
-        pub fn try_wrap_and_apply_header(
+        pub const fn try_wrap_and_apply_header(
             buf: &'a mut [u8],
             offset: usize,
         ) -> Result<#name_encoder_ident<'a, sbe_rt::HeaderPresent>, sbe_rt::EncodeError> {
@@ -454,7 +454,7 @@ pub(crate) fn generate_message_encoder(
         /// `offset + HEADER_LENGTH + BLOCK_LENGTH` must not overflow and must be
         /// ≤ `buf.len()` for the lifetime of the encoder.
         #[inline]
-        pub unsafe fn wrap_and_apply_header_unchecked(
+        pub const unsafe fn wrap_and_apply_header_unchecked(
             buf: &'a mut [u8],
             offset: usize,
         ) -> #name_encoder_ident<'a, sbe_rt::HeaderPresent> {
@@ -846,14 +846,14 @@ pub(crate) fn generate_message_encoder(
                     let f_name_bool = syn::Ident::new(&format!("{}_bool", f_name), span);
                     impl_contents.extend(quote::quote! {
                         #[inline]
-                        pub fn #f_name_bool(&mut self, val: bool) -> &mut Self {
+                        pub const fn #f_name_bool(&mut self, val: bool) -> &mut Self {
                             self.buf[#abs_offset] = val as u8;
                             self
                         }
                     });
                     raw_impl_contents.extend(quote::quote! {
                         #[inline]
-                        pub fn #f_name_bool(&mut self, val: bool) -> &mut Self {
+                        pub const fn #f_name_bool(&mut self, val: bool) -> &mut Self {
                             self.buf[#raw_abs] = val as u8;
                             self
                         }
@@ -1204,7 +1204,7 @@ pub(crate) fn generate_message_encoder(
             impl<'a, H: sbe_rt::HeaderState, F: sbe_rt::FieldsState> #name_encoder_ident<'a, H, F> {
                 #[must_use = "discarding this value is almost always a mistake"]
                 #[inline]
-                pub fn get_metadata(&self) -> #enc_metadata_ident<'_, H, F> {
+                pub const fn get_metadata(&self) -> #enc_metadata_ident<'_, H, F> {
                     #enc_metadata_ident {
                         encoder_msg_offset: self.msg_offset,
                         encoder_offset: self.offset,
@@ -1255,7 +1255,7 @@ pub(crate) fn generate_message_encoder(
             impl<'a, H: sbe_rt::HeaderState, F: sbe_rt::FieldsState> #name_encoder_ident<'a, H, F> {
                 #[must_use = "discarding this value is almost always a mistake"]
                 #[inline]
-                pub fn get_metadata(&self) -> #enc_metadata_ident<'_, H> {
+                pub const fn get_metadata(&self) -> #enc_metadata_ident<'_, H> {
                     #enc_metadata_ident {
                         encoder_msg_offset: self.msg_offset,
                         encoder_offset: self.offset,
@@ -1608,14 +1608,14 @@ pub(crate) fn generate_message_encoder(
                 /// SBE message body length (excluding the message header).
                 #[must_use = "discarding this value is almost always a mistake"]
                 #[inline]
-                pub fn encoded_length(&self) -> usize {
+                pub const fn encoded_length(&self) -> usize {
                     self.offset - self.msg_offset - #header_size_lit
                 }
                 /// Total SBE message length including the header region.
                 /// Pure arithmetic — available for body-only wraps too.
                 #[must_use = "discarding this value is almost always a mistake"]
                 #[inline]
-                pub fn encoded_length_with_header(&self) -> usize {
+                pub const fn encoded_length_with_header(&self) -> usize {
                     self.offset - self.msg_offset
                 }
                 /// Unwritten region after this message's write cursor to the end of
@@ -1655,14 +1655,14 @@ pub(crate) fn generate_message_encoder(
                 /// Only available after `fixed(&FixedFields)`.
                 #[must_use = "discarding this value is almost always a mistake"]
                 #[inline]
-                pub fn encoded_length(&self) -> usize {
+                pub const fn encoded_length(&self) -> usize {
                     self.offset - self.msg_offset - #header_size_lit
                 }
                 /// Total SBE message length including the header region.
                 /// Only available after `fixed(&FixedFields)`.
                 #[must_use = "discarding this value is almost always a mistake"]
                 #[inline]
-                pub fn encoded_length_with_header(&self) -> usize {
+                pub const fn encoded_length_with_header(&self) -> usize {
                     self.offset - self.msg_offset
                 }
                 /// Unwritten region after this message's write cursor to the end of

@@ -1,33 +1,33 @@
 # common_types.rs
+# [cfg (debug_assertions)] sbe_rt::TailBoundaryCache::const fn stats (& self) -> DecodeCacheStats
 # [cfg (debug_assertions)] sbe_rt::TailBoundaryCache::fn record_boundary (& self)
 # [cfg (debug_assertions)] sbe_rt::TailBoundaryCache::fn record_hit (& self)
 # [cfg (debug_assertions)] sbe_rt::TailBoundaryCache::fn record_miss (& self)
-# [cfg (debug_assertions)] sbe_rt::TailBoundaryCache::fn stats (& self) -> DecodeCacheStats
 # [must_use = "decoder must be read or advanced; dropping is fine only after use"] struct CommonMessageDecoder< 'a > {  }
 # [must_use = "discarding this value is almost always a mistake"] CommonMessageDecoder::const fn acting_block_length (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] CommonMessageDecoder::const fn acting_version (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] CommonMessageDecoder::const fn get_metadata (& self) -> CommonMessageDecoderMetadata < '_ , 'a >
+# [must_use = "discarding this value is almost always a mistake"] CommonMessageDecoder::const fn price (& self) -> DecimalDecoder < '_ >
 # [must_use = "discarding this value is almost always a mistake"] CommonMessageDecoder::fn as_body_bytes (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
 # [must_use = "discarding this value is almost always a mistake"] CommonMessageDecoder::fn as_bytes_with_header (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
 # [must_use = "discarding this value is almost always a mistake"] CommonMessageDecoder::fn encoded_length (& self) -> Result < usize , sbe_rt :: DecodeError >
 # [must_use = "discarding this value is almost always a mistake"] CommonMessageDecoder::fn encoded_length_with_header (& self) -> Result < usize , sbe_rt :: DecodeError >
-# [must_use = "discarding this value is almost always a mistake"] CommonMessageDecoder::fn get_metadata (& self) -> CommonMessageDecoderMetadata < '_ , 'a >
-# [must_use = "discarding this value is almost always a mistake"] CommonMessageDecoder::fn price (& self) -> DecimalDecoder < '_ >
 # [must_use = "discarding this value is almost always a mistake"] CommonMessageDecoder::fn price_value (& self) -> Decimal
 # [must_use = "discarding this value is almost always a mistake"] CommonMessageDecoder::fn raw_side (& self) -> u8
 # [must_use = "discarding this value is almost always a mistake"] CommonMessageDecoder::fn side (& self) -> Side
-# [must_use = "discarding this value is almost always a mistake"] CommonMessageDecoderMetadata::fn acting_block_length (& self) -> usize
-# [must_use = "discarding this value is almost always a mistake"] CommonMessageDecoderMetadata::fn acting_version (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] CommonMessageDecoderMetadata::const fn acting_block_length (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] CommonMessageDecoderMetadata::const fn acting_version (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] CommonMessageDecoderMetadata::const fn buffer (& self) -> & 'a [u8]
+# [must_use = "discarding this value is almost always a mistake"] CommonMessageDecoderMetadata::const fn limit (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] CommonMessageDecoderMetadata::const fn message_offset (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] CommonMessageDecoderMetadata::fn as_body_bytes (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
 # [must_use = "discarding this value is almost always a mistake"] CommonMessageDecoderMetadata::fn as_bytes_with_header (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
-# [must_use = "discarding this value is almost always a mistake"] CommonMessageDecoderMetadata::fn buffer (& self) -> & 'a [u8]
-# [must_use = "discarding this value is almost always a mistake"] CommonMessageDecoderMetadata::fn limit (& self) -> usize
-# [must_use = "discarding this value is almost always a mistake"] CommonMessageDecoderMetadata::fn message_offset (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] CommonMessageDecoderMetadata::fn remaining (& self) -> & 'a [u8]
+# [must_use = "discarding this value is almost always a mistake"] CommonMessageEncoder::const fn encoded_length (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] CommonMessageEncoder::const fn encoded_length_with_header (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] CommonMessageEncoder::const fn get_metadata (& self) -> CommonMessageEncoderMetadata < '_ , H , F >
 # [must_use = "discarding this value is almost always a mistake"] CommonMessageEncoder::fn as_body_bytes (& self) -> & [u8]
 # [must_use = "discarding this value is almost always a mistake"] CommonMessageEncoder::fn as_bytes_with_header (& self) -> & [u8]
-# [must_use = "discarding this value is almost always a mistake"] CommonMessageEncoder::fn encoded_length (& self) -> usize
-# [must_use = "discarding this value is almost always a mistake"] CommonMessageEncoder::fn encoded_length_with_header (& self) -> usize
-# [must_use = "discarding this value is almost always a mistake"] CommonMessageEncoder::fn get_metadata (& self) -> CommonMessageEncoderMetadata < '_ , H , F >
 # [must_use = "discarding this value is almost always a mistake"] CommonMessageEncoderMetadata::const fn buffer (& self) -> & [u8]
 # [must_use = "discarding this value is almost always a mistake"] CommonMessageEncoderMetadata::const fn limit (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] CommonMessageEncoderMetadata::const fn message_offset (& self) -> usize
@@ -51,7 +51,7 @@
 # [must_use = "discarding this value is almost always a mistake"] MessageHeaderDecoder::fn version (& self) -> u16
 # [must_use = "discarding this value is almost always a mistake"] Side::const fn as_option (self) -> Option < Self >
 # [must_use = "discarding this value is almost always a mistake"] Side::const fn as_str (self) -> & 'static str
-# [must_use = "discarding this value is almost always a mistake"] Side::fn raw (self) -> u8
+# [must_use = "discarding this value is almost always a mistake"] Side::const fn raw (self) -> u8
 # [must_use = "encoder must be consumed to write the message"] struct CommonMessageEncoder< 'a , H : sbe_rt :: HeaderState = sbe_rt :: HeaderPresent , F : sbe_rt :: FieldsState = sbe_rt :: FieldsUnfixed , > {  }
 # [must_use = "ordered stage must be advanced or remaining tails are skipped"] sbe_rt::struct Ordered< S > {  }
 # [must_use = "ordered stage must be advanced or remaining tails are skipped"] sbe_rt::struct OrderedFixed< S > {  }
@@ -62,7 +62,7 @@
 # [must_use = "the schema-matched template id is unused; ignoring it skips dispatch"] MessageHeader::fn peek_for_schema (data : & [u8] , expected_schema_id : u16) -> Option < u16 >
 # [must_use = "the slice after this message is unused; ignoring it skips payload framing"] CommonMessageDecoder::fn after_this_message (frame : & [u8]) -> Option < & [u8] >
 # [must_use = "this extent is the minimum readable body size; ignoring it skips a bounds check"] CommonMessageDecoder::const fn min_readable_fixed_extent (acting_version : u16) -> usize
-# [must_use] AnyMessage::fn into_common_message (self) -> Option < CommonMessageDecoder < 'a > >
+# [must_use] AnyMessage::const fn into_common_message (self) -> Option < CommonMessageDecoder < 'a > >
 # [must_use] CommonMessageEncoder::fn fixed (mut self , fixed : & CommonMessageFixedFields ,) -> CommonMessageEncoder < 'a , H , sbe_rt :: FieldsFixed >
 # [must_use] CommonMessageEncoder::fn raw_fixed (self) -> CommonMessageRawFixedWriter < 'a >
 # [must_use] sbe_rt::EntryInfo::const fn is_first (& self) -> bool
@@ -99,13 +99,13 @@ CommonMessageDecoder::const SIDE_SINCE_VERSION: u16
 CommonMessageDecoder::const TEMPLATE_ID: u16
 CommonMessageDecoder::const fn price_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> Option < & 'static str >
 CommonMessageDecoder::const fn side_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> Option < & 'static str >
+CommonMessageDecoder::const fn try_wrap (buf : & 'a [u8] , message_offset : usize , acting_block_length : usize , acting_version : u16 ,) -> Result < Self , sbe_rt :: DecodeError >
+CommonMessageDecoder::const unsafe fn wrap_unchecked (buf : & 'a [u8] , message_offset : usize , acting_block_length : usize , acting_version : u16 ,) -> Self
 CommonMessageDecoder::fn decode (buf : & 'a [u8] , offset : usize) -> Result < Self , sbe_rt :: DecodeError >
 CommonMessageDecoder::fn try_decode (buf : & 'a [u8] , offset : usize ,) -> Result < Self , sbe_rt :: DecodeError >
-CommonMessageDecoder::fn try_wrap (buf : & 'a [u8] , message_offset : usize , acting_block_length : usize , acting_version : u16 ,) -> Result < Self , sbe_rt :: DecodeError >
 CommonMessageDecoder::fn verify (buf : & [u8]) -> Result < () , sbe_rt :: VerifyError >
 CommonMessageDecoder::fn wrap (buf : & 'a [u8] , message_offset : usize , acting_block_length : usize , acting_version : u16 ,) -> Self
 CommonMessageDecoder::unsafe fn decode_unchecked (buf : & 'a [u8] , offset : usize ,) -> Result < Self , sbe_rt :: DecodeError >
-CommonMessageDecoder::unsafe fn wrap_unchecked (buf : & 'a [u8] , message_offset : usize , acting_block_length : usize , acting_version : u16 ,) -> Self
 CommonMessageEncoder::const BLOCK_LENGTH: usize
 CommonMessageEncoder::const ENCODED_LENGTH: usize
 CommonMessageEncoder::const HEADER_LENGTH: usize
@@ -125,18 +125,18 @@ CommonMessageEncoder::const TEMPLATE_ID: u16
 CommonMessageEncoder::const fn compute_length_with_header () -> usize
 CommonMessageEncoder::const fn price_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> Option < & 'static str >
 CommonMessageEncoder::const fn side_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> Option < & 'static str >
+CommonMessageEncoder::const fn try_wrap (buf : & 'a mut [u8] , msg_offset : usize ,) -> Result < CommonMessageEncoder < 'a , sbe_rt :: HeaderAbsent > , sbe_rt :: EncodeError >
+CommonMessageEncoder::const fn try_wrap_and_apply_header (buf : & 'a mut [u8] , offset : usize ,) -> Result < CommonMessageEncoder < 'a , sbe_rt :: HeaderPresent > , sbe_rt :: EncodeError >
+CommonMessageEncoder::const unsafe fn wrap_and_apply_header_unchecked (buf : & 'a mut [u8] , offset : usize ,) -> CommonMessageEncoder < 'a , sbe_rt :: HeaderPresent >
+CommonMessageEncoder::const unsafe fn wrap_unchecked (buf : & 'a mut [u8] , msg_offset : usize ,) -> CommonMessageEncoder < 'a , sbe_rt :: HeaderAbsent >
 CommonMessageEncoder::fn into_remaining_mut (self) -> & 'a mut [u8]
 CommonMessageEncoder::fn price (& mut self , val : Decimal) -> & mut Self
 CommonMessageEncoder::fn send < C , W > (claim : C , encode : W) -> Result < () , sbe_rt :: SendError < C :: Error > > where C : sbe_rt :: Claim , W : for < 'b > FnOnce (CommonMessageEncoder < 'b > ,) -> Result < CommonMessageEncoder < 'b , sbe_rt :: HeaderPresent , sbe_rt :: FieldsFixed > , sbe_rt :: EncodeError , > ,
 CommonMessageEncoder::fn send_fixed < C : sbe_rt :: Claim > (claim : C , fixed : & CommonMessageFixedFields ,) -> Result < () , sbe_rt :: SendError < C :: Error > >
 CommonMessageEncoder::fn side (& mut self , val : Side) -> & mut Self
-CommonMessageEncoder::fn try_wrap (buf : & 'a mut [u8] , msg_offset : usize ,) -> Result < CommonMessageEncoder < 'a , sbe_rt :: HeaderAbsent > , sbe_rt :: EncodeError >
-CommonMessageEncoder::fn try_wrap_and_apply_header (buf : & 'a mut [u8] , offset : usize ,) -> Result < CommonMessageEncoder < 'a , sbe_rt :: HeaderPresent > , sbe_rt :: EncodeError >
 CommonMessageEncoder::fn wrap (buf : & 'a mut [u8] , msg_offset : usize ,) -> CommonMessageEncoder < 'a , sbe_rt :: HeaderAbsent >
 CommonMessageEncoder::fn wrap_and_apply_header (buf : & 'a mut [u8] , offset : usize ,) -> CommonMessageEncoder < 'a , sbe_rt :: HeaderPresent >
 CommonMessageEncoder::fn wrap_into_claim (buf : & 'a mut [u8] ,) -> Result < CommonMessageEncoder < 'a , sbe_rt :: HeaderPresent > , sbe_rt :: EncodeError >
-CommonMessageEncoder::unsafe fn wrap_and_apply_header_unchecked (buf : & 'a mut [u8] , offset : usize ,) -> CommonMessageEncoder < 'a , sbe_rt :: HeaderPresent >
-CommonMessageEncoder::unsafe fn wrap_unchecked (buf : & 'a mut [u8] , msg_offset : usize ,) -> CommonMessageEncoder < 'a , sbe_rt :: HeaderAbsent >
 CommonMessageRawFixedWriter::fn price (& mut self , val : Decimal) -> & mut Self
 CommonMessageRawFixedWriter::fn side (& mut self , val : Side) -> & mut Self
 CommonMessageSchema::const BLOCK_LENGTH: usize
@@ -175,10 +175,10 @@ mod prelude
 mod sbe_rt
 sbe_rt::FieldPath::const MAX_ENTRIES: usize
 sbe_rt::OfferClaim::fn new (buf : & 'a mut [u8] , offer : F) -> Self
+sbe_rt::TailBoundaryCache::const fn end_of (& self , idx : usize) -> Option < usize >
+sbe_rt::TailBoundaryCache::const fn is_complete (& self) -> bool
+sbe_rt::TailBoundaryCache::const fn known_through (& self) -> usize
 sbe_rt::TailBoundaryCache::const fn new () -> Self
-sbe_rt::TailBoundaryCache::fn end_of (& self , idx : usize) -> Option < usize >
-sbe_rt::TailBoundaryCache::fn is_complete (& self) -> bool
-sbe_rt::TailBoundaryCache::fn known_through (& self) -> usize
 sbe_rt::TailBoundaryCache::fn publish (& self , idx : usize , abs_end : usize)
 sbe_rt::enum ConversionError
 sbe_rt::enum ConversionError::Custom(error_type: & 'static str)
@@ -288,6 +288,7 @@ type CommonMessageUnfixedEncoder< 'a , H = sbe_rt :: HeaderPresent > = CommonMes
 # [must_use = "decoder must be read or advanced; dropping is fine only after use"] struct QuoteDecoder< 'a > {  }
 # [must_use = "discarding this value is almost always a mistake"] QuoteDecoder::const fn acting_block_length (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] QuoteDecoder::const fn acting_version (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] QuoteDecoder::const fn get_metadata (& self) -> QuoteDecoderMetadata < '_ , 'a >
 # [must_use = "discarding this value is almost always a mistake"] QuoteDecoder::fn as_body_bytes (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
 # [must_use = "discarding this value is almost always a mistake"] QuoteDecoder::fn as_bytes_with_header (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
 # [must_use = "discarding this value is almost always a mistake"] QuoteDecoder::fn ask_mantissa (& self) -> i64
@@ -295,21 +296,20 @@ type CommonMessageUnfixedEncoder< 'a , H = sbe_rt :: HeaderPresent > = CommonMes
 # [must_use = "discarding this value is almost always a mistake"] QuoteDecoder::fn bid_side (& self) -> Side
 # [must_use = "discarding this value is almost always a mistake"] QuoteDecoder::fn encoded_length (& self) -> Result < usize , sbe_rt :: DecodeError >
 # [must_use = "discarding this value is almost always a mistake"] QuoteDecoder::fn encoded_length_with_header (& self) -> Result < usize , sbe_rt :: DecodeError >
-# [must_use = "discarding this value is almost always a mistake"] QuoteDecoder::fn get_metadata (& self) -> QuoteDecoderMetadata < '_ , 'a >
 # [must_use = "discarding this value is almost always a mistake"] QuoteDecoder::fn raw_bid_side (& self) -> u8
-# [must_use = "discarding this value is almost always a mistake"] QuoteDecoderMetadata::fn acting_block_length (& self) -> usize
-# [must_use = "discarding this value is almost always a mistake"] QuoteDecoderMetadata::fn acting_version (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] QuoteDecoderMetadata::const fn acting_block_length (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] QuoteDecoderMetadata::const fn acting_version (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] QuoteDecoderMetadata::const fn buffer (& self) -> & 'a [u8]
+# [must_use = "discarding this value is almost always a mistake"] QuoteDecoderMetadata::const fn limit (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] QuoteDecoderMetadata::const fn message_offset (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] QuoteDecoderMetadata::fn as_body_bytes (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
 # [must_use = "discarding this value is almost always a mistake"] QuoteDecoderMetadata::fn as_bytes_with_header (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
-# [must_use = "discarding this value is almost always a mistake"] QuoteDecoderMetadata::fn buffer (& self) -> & 'a [u8]
-# [must_use = "discarding this value is almost always a mistake"] QuoteDecoderMetadata::fn limit (& self) -> usize
-# [must_use = "discarding this value is almost always a mistake"] QuoteDecoderMetadata::fn message_offset (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] QuoteDecoderMetadata::fn remaining (& self) -> & 'a [u8]
+# [must_use = "discarding this value is almost always a mistake"] QuoteEncoder::const fn encoded_length (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] QuoteEncoder::const fn encoded_length_with_header (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] QuoteEncoder::const fn get_metadata (& self) -> QuoteEncoderMetadata < '_ , H , F >
 # [must_use = "discarding this value is almost always a mistake"] QuoteEncoder::fn as_body_bytes (& self) -> & [u8]
 # [must_use = "discarding this value is almost always a mistake"] QuoteEncoder::fn as_bytes_with_header (& self) -> & [u8]
-# [must_use = "discarding this value is almost always a mistake"] QuoteEncoder::fn encoded_length (& self) -> usize
-# [must_use = "discarding this value is almost always a mistake"] QuoteEncoder::fn encoded_length_with_header (& self) -> usize
-# [must_use = "discarding this value is almost always a mistake"] QuoteEncoder::fn get_metadata (& self) -> QuoteEncoderMetadata < '_ , H , F >
 # [must_use = "discarding this value is almost always a mistake"] QuoteEncoderMetadata::const fn buffer (& self) -> & [u8]
 # [must_use = "discarding this value is almost always a mistake"] QuoteEncoderMetadata::const fn limit (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] QuoteEncoderMetadata::const fn message_offset (& self) -> usize
@@ -320,7 +320,7 @@ type CommonMessageUnfixedEncoder< 'a , H = sbe_rt :: HeaderPresent > = CommonMes
 # [must_use = "the header schema id is unused; ignoring it skips dispatch"] fn fn schema_id_from_header (buf : & [u8]) -> Option < u16 >
 # [must_use = "the slice after this message is unused; ignoring it skips payload framing"] QuoteDecoder::fn after_this_message (frame : & [u8]) -> Option < & [u8] >
 # [must_use = "this extent is the minimum readable body size; ignoring it skips a bounds check"] QuoteDecoder::const fn min_readable_fixed_extent (acting_version : u16) -> usize
-# [must_use] AnyMessage::fn into_quote (self) -> Option < QuoteDecoder < 'a > >
+# [must_use] AnyMessage::const fn into_quote (self) -> Option < QuoteDecoder < 'a > >
 # [must_use] QuoteEncoder::fn fixed (mut self , fixed : & QuoteFixedFields ,) -> QuoteEncoder < 'a , H , sbe_rt :: FieldsFixed >
 # [must_use] QuoteEncoder::fn raw_fixed (self) -> QuoteRawFixedWriter < 'a >
 # [non_exhaustive] enum AnyMessage< 'a >
@@ -360,13 +360,13 @@ QuoteDecoder::const TEMPLATE_ID: u16
 QuoteDecoder::const fn ask_mantissa_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> Option < & 'static str >
 QuoteDecoder::const fn bid_mantissa_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> Option < & 'static str >
 QuoteDecoder::const fn bid_side_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> Option < & 'static str >
+QuoteDecoder::const fn try_wrap (buf : & 'a [u8] , message_offset : usize , acting_block_length : usize , acting_version : u16 ,) -> Result < Self , sbe_rt :: DecodeError >
+QuoteDecoder::const unsafe fn wrap_unchecked (buf : & 'a [u8] , message_offset : usize , acting_block_length : usize , acting_version : u16 ,) -> Self
 QuoteDecoder::fn decode (buf : & 'a [u8] , offset : usize) -> Result < Self , sbe_rt :: DecodeError >
 QuoteDecoder::fn try_decode (buf : & 'a [u8] , offset : usize ,) -> Result < Self , sbe_rt :: DecodeError >
-QuoteDecoder::fn try_wrap (buf : & 'a [u8] , message_offset : usize , acting_block_length : usize , acting_version : u16 ,) -> Result < Self , sbe_rt :: DecodeError >
 QuoteDecoder::fn verify (buf : & [u8]) -> Result < () , sbe_rt :: VerifyError >
 QuoteDecoder::fn wrap (buf : & 'a [u8] , message_offset : usize , acting_block_length : usize , acting_version : u16 ,) -> Self
 QuoteDecoder::unsafe fn decode_unchecked (buf : & 'a [u8] , offset : usize ,) -> Result < Self , sbe_rt :: DecodeError >
-QuoteDecoder::unsafe fn wrap_unchecked (buf : & 'a [u8] , message_offset : usize , acting_block_length : usize , acting_version : u16 ,) -> Self
 QuoteEncoder::const ASK_MANTISSA_ENCODING_LENGTH: usize
 QuoteEncoder::const ASK_MANTISSA_ENCODING_OFFSET: usize
 QuoteEncoder::const ASK_MANTISSA_ID: u16
@@ -397,19 +397,19 @@ QuoteEncoder::const fn ask_mantissa_meta_attribute (attr : sbe_rt :: MetaAttribu
 QuoteEncoder::const fn bid_mantissa_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> Option < & 'static str >
 QuoteEncoder::const fn bid_side_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> Option < & 'static str >
 QuoteEncoder::const fn compute_length_with_header () -> usize
+QuoteEncoder::const fn try_wrap (buf : & 'a mut [u8] , msg_offset : usize ,) -> Result < QuoteEncoder < 'a , sbe_rt :: HeaderAbsent > , sbe_rt :: EncodeError >
+QuoteEncoder::const fn try_wrap_and_apply_header (buf : & 'a mut [u8] , offset : usize ,) -> Result < QuoteEncoder < 'a , sbe_rt :: HeaderPresent > , sbe_rt :: EncodeError >
+QuoteEncoder::const unsafe fn wrap_and_apply_header_unchecked (buf : & 'a mut [u8] , offset : usize ,) -> QuoteEncoder < 'a , sbe_rt :: HeaderPresent >
+QuoteEncoder::const unsafe fn wrap_unchecked (buf : & 'a mut [u8] , msg_offset : usize ,) -> QuoteEncoder < 'a , sbe_rt :: HeaderAbsent >
 QuoteEncoder::fn ask_mantissa (& mut self , val : i64) -> & mut Self
 QuoteEncoder::fn bid_mantissa (& mut self , val : i64) -> & mut Self
 QuoteEncoder::fn bid_side (& mut self , val : Side) -> & mut Self
 QuoteEncoder::fn into_remaining_mut (self) -> & 'a mut [u8]
 QuoteEncoder::fn send < C , W > (claim : C , encode : W) -> Result < () , sbe_rt :: SendError < C :: Error > > where C : sbe_rt :: Claim , W : for < 'b > FnOnce (QuoteEncoder < 'b > ,) -> Result < QuoteEncoder < 'b , sbe_rt :: HeaderPresent , sbe_rt :: FieldsFixed > , sbe_rt :: EncodeError , > ,
 QuoteEncoder::fn send_fixed < C : sbe_rt :: Claim > (claim : C , fixed : & QuoteFixedFields ,) -> Result < () , sbe_rt :: SendError < C :: Error > >
-QuoteEncoder::fn try_wrap (buf : & 'a mut [u8] , msg_offset : usize ,) -> Result < QuoteEncoder < 'a , sbe_rt :: HeaderAbsent > , sbe_rt :: EncodeError >
-QuoteEncoder::fn try_wrap_and_apply_header (buf : & 'a mut [u8] , offset : usize ,) -> Result < QuoteEncoder < 'a , sbe_rt :: HeaderPresent > , sbe_rt :: EncodeError >
 QuoteEncoder::fn wrap (buf : & 'a mut [u8] , msg_offset : usize ,) -> QuoteEncoder < 'a , sbe_rt :: HeaderAbsent >
 QuoteEncoder::fn wrap_and_apply_header (buf : & 'a mut [u8] , offset : usize ,) -> QuoteEncoder < 'a , sbe_rt :: HeaderPresent >
 QuoteEncoder::fn wrap_into_claim (buf : & 'a mut [u8] ,) -> Result < QuoteEncoder < 'a , sbe_rt :: HeaderPresent > , sbe_rt :: EncodeError >
-QuoteEncoder::unsafe fn wrap_and_apply_header_unchecked (buf : & 'a mut [u8] , offset : usize ,) -> QuoteEncoder < 'a , sbe_rt :: HeaderPresent >
-QuoteEncoder::unsafe fn wrap_unchecked (buf : & 'a mut [u8] , msg_offset : usize ,) -> QuoteEncoder < 'a , sbe_rt :: HeaderAbsent >
 QuoteRawFixedWriter::fn ask_mantissa (& mut self , val : i64) -> & mut Self
 QuoteRawFixedWriter::fn bid_mantissa (& mut self , val : i64) -> & mut Self
 QuoteRawFixedWriter::fn bid_side (& mut self , val : Side) -> & mut Self

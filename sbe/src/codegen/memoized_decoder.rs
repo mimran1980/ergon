@@ -85,7 +85,7 @@ pub(crate) fn generate_memoized_decoder(
             /// separate empty cache.
             #[inline]
             #[must_use = "memoized() returns a new decoder; the original is consumed"]
-            pub fn memoized(self) -> #memo_ident<'a> {
+            pub const fn memoized(self) -> #memo_ident<'a> {
                 #memo_ident {
                     inner: self,
                     cache: sbe_rt::TailBoundaryCache::new(),
@@ -118,7 +118,7 @@ pub(crate) fn generate_memoized_decoder(
         /// Discard the cache and return the base decoder.
         #[inline]
         #[must_use = "discarding the returned decoder discards the message"]
-        pub fn into_inner(self) -> #decoder_ident<'a> {
+        pub const fn into_inner(self) -> #decoder_ident<'a> {
             self.inner
         }
     });

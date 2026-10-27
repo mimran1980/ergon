@@ -777,7 +777,7 @@ pub(crate) fn generate_owner_consuming_stages(
         ts.extend(quote::quote! {
             impl<'a> #g_decoder_ident<'a, sbe_rt::Attached> {
                 #[inline]
-                fn into_parent_stage(self, tail_start: usize) -> #next_stage<'a> {
+                const fn into_parent_stage(self, tail_start: usize) -> #next_stage<'a> {
                     #next_stage {
                         buf: self.buf,
                         offset: self.parent_pos,
@@ -938,14 +938,14 @@ pub(crate) fn generate_owner_consuming_stages(
             /// Body length (excluding header).
             #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
-            pub fn encoded_length(&self) -> usize {
+            pub const fn encoded_length(&self) -> usize {
                 self.tail_start - self.offset
             }
             /// Total message length including the schema-declared header.
             /// Pure arithmetic: body length + `HEADER_LENGTH`.
             #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
-            pub fn encoded_length_with_header(&self) -> usize {
+            pub const fn encoded_length_with_header(&self) -> usize {
                 self.tail_start - self.offset + #header_size_lit
             }
             /// Bytes after this message/entry.

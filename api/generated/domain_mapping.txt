@@ -1,8 +1,8 @@
-# [cfg (debug_assertions)] # [must_use = "discarding cache stats is almost always a mistake"] OrderMemoizedDecoder::fn decode_cache_stats (& self) -> sbe_rt :: DecodeCacheStats
+# [cfg (debug_assertions)] # [must_use = "discarding cache stats is almost always a mistake"] OrderMemoizedDecoder::const fn decode_cache_stats (& self) -> sbe_rt :: DecodeCacheStats
+# [cfg (debug_assertions)] sbe_rt::TailBoundaryCache::const fn stats (& self) -> DecodeCacheStats
 # [cfg (debug_assertions)] sbe_rt::TailBoundaryCache::fn record_boundary (& self)
 # [cfg (debug_assertions)] sbe_rt::TailBoundaryCache::fn record_hit (& self)
 # [cfg (debug_assertions)] sbe_rt::TailBoundaryCache::fn record_miss (& self)
-# [cfg (debug_assertions)] sbe_rt::TailBoundaryCache::fn stats (& self) -> DecodeCacheStats
 # [must_use = "call finish() or a following into_*/skip_* or remaining tails are skipped"] struct OrderFillsAllocsDecoderIter< 'a > {  }
 # [must_use = "complete the nested shape or call finish_empty()"] struct OrderFillsUniformEncodedLength {  }
 # [must_use = "decoder must be read or advanced; dropping is fine only after use"] struct HeartbeatDecoder< 'a > {  }
@@ -12,7 +12,7 @@
 # [must_use = "decoder stage must be advanced with into_*/skip_* or tails are skipped"] struct OrderDecoderComplete< 'a > {  }
 # [must_use = "decoder stage must be advanced with into_*/skip_* or tails are skipped"] struct OrderFillsEntryDecoderAfterAllocs< 'a > {  }
 # [must_use = "decoder stage must be advanced with into_*/skip_* or tails are skipped"] struct OrderFillsEntryDecoderComplete< 'a > {  }
-# [must_use = "discarding the returned decoder discards the message"] OrderMemoizedDecoder::fn into_inner (self) -> OrderDecoder < 'a >
+# [must_use = "discarding the returned decoder discards the message"] OrderMemoizedDecoder::const fn into_inner (self) -> OrderDecoder < 'a >
 # [must_use = "discarding this value is almost always a mistake"] Flags::const fn is_hidden (self) -> bool
 # [must_use = "discarding this value is almost always a mistake"] Flags::const fn is_post_only (self) -> bool
 # [must_use = "discarding this value is almost always a mistake"] Flags::const fn raw (self) -> u8
@@ -22,27 +22,27 @@
 # [must_use = "discarding this value is almost always a mistake"] GroupSizeEncodingDecoder::fn num_in_group (& self) -> u16
 # [must_use = "discarding this value is almost always a mistake"] HeartbeatDecoder::const fn acting_block_length (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] HeartbeatDecoder::const fn acting_version (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] HeartbeatDecoder::const fn get_metadata (& self) -> HeartbeatDecoderMetadata < '_ , 'a >
 # [must_use = "discarding this value is almost always a mistake"] HeartbeatDecoder::fn as_body_bytes (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
 # [must_use = "discarding this value is almost always a mistake"] HeartbeatDecoder::fn as_bytes_with_header (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
 # [must_use = "discarding this value is almost always a mistake"] HeartbeatDecoder::fn encoded_length (& self) -> Result < usize , sbe_rt :: DecodeError >
 # [must_use = "discarding this value is almost always a mistake"] HeartbeatDecoder::fn encoded_length_with_header (& self) -> Result < usize , sbe_rt :: DecodeError >
-# [must_use = "discarding this value is almost always a mistake"] HeartbeatDecoder::fn get_metadata (& self) -> HeartbeatDecoderMetadata < '_ , 'a >
 # [must_use = "discarding this value is almost always a mistake"] HeartbeatDecoder::fn raw_side (& self) -> u8
 # [must_use = "discarding this value is almost always a mistake"] HeartbeatDecoder::fn seq (& self) -> u64
 # [must_use = "discarding this value is almost always a mistake"] HeartbeatDecoder::fn side_wire (& self) -> Side
-# [must_use = "discarding this value is almost always a mistake"] HeartbeatDecoderMetadata::fn acting_block_length (& self) -> usize
-# [must_use = "discarding this value is almost always a mistake"] HeartbeatDecoderMetadata::fn acting_version (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] HeartbeatDecoderMetadata::const fn acting_block_length (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] HeartbeatDecoderMetadata::const fn acting_version (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] HeartbeatDecoderMetadata::const fn buffer (& self) -> & 'a [u8]
+# [must_use = "discarding this value is almost always a mistake"] HeartbeatDecoderMetadata::const fn limit (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] HeartbeatDecoderMetadata::const fn message_offset (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] HeartbeatDecoderMetadata::fn as_body_bytes (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
 # [must_use = "discarding this value is almost always a mistake"] HeartbeatDecoderMetadata::fn as_bytes_with_header (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
-# [must_use = "discarding this value is almost always a mistake"] HeartbeatDecoderMetadata::fn buffer (& self) -> & 'a [u8]
-# [must_use = "discarding this value is almost always a mistake"] HeartbeatDecoderMetadata::fn limit (& self) -> usize
-# [must_use = "discarding this value is almost always a mistake"] HeartbeatDecoderMetadata::fn message_offset (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] HeartbeatDecoderMetadata::fn remaining (& self) -> & 'a [u8]
+# [must_use = "discarding this value is almost always a mistake"] HeartbeatEncoder::const fn encoded_length (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] HeartbeatEncoder::const fn encoded_length_with_header (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] HeartbeatEncoder::const fn get_metadata (& self) -> HeartbeatEncoderMetadata < '_ , H , F >
 # [must_use = "discarding this value is almost always a mistake"] HeartbeatEncoder::fn as_body_bytes (& self) -> & [u8]
 # [must_use = "discarding this value is almost always a mistake"] HeartbeatEncoder::fn as_bytes_with_header (& self) -> & [u8]
-# [must_use = "discarding this value is almost always a mistake"] HeartbeatEncoder::fn encoded_length (& self) -> usize
-# [must_use = "discarding this value is almost always a mistake"] HeartbeatEncoder::fn encoded_length_with_header (& self) -> usize
-# [must_use = "discarding this value is almost always a mistake"] HeartbeatEncoder::fn get_metadata (& self) -> HeartbeatEncoderMetadata < '_ , H , F >
 # [must_use = "discarding this value is almost always a mistake"] HeartbeatEncoderMetadata::const fn buffer (& self) -> & [u8]
 # [must_use = "discarding this value is almost always a mistake"] HeartbeatEncoderMetadata::const fn limit (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] HeartbeatEncoderMetadata::const fn message_offset (& self) -> usize
@@ -73,67 +73,67 @@
 # [must_use = "discarding this value is almost always a mistake"] MessageHeaderDecoder::fn schema_id (& self) -> u16
 # [must_use = "discarding this value is almost always a mistake"] MessageHeaderDecoder::fn template_id (& self) -> u16
 # [must_use = "discarding this value is almost always a mistake"] MessageHeaderDecoder::fn version (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] OrderComplete::const fn encoded_length (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] OrderComplete::const fn encoded_length_with_header (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] OrderComplete::fn as_body_bytes (& self) -> & [u8]
 # [must_use = "discarding this value is almost always a mistake"] OrderComplete::fn as_bytes_with_header (& self) -> & [u8]
-# [must_use = "discarding this value is almost always a mistake"] OrderComplete::fn encoded_length (& self) -> usize
-# [must_use = "discarding this value is almost always a mistake"] OrderComplete::fn encoded_length_with_header (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] OrderDecoder::const fn acting_block_length (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] OrderDecoder::const fn acting_version (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] OrderDecoder::const fn get_metadata (& self) -> OrderDecoderMetadata < '_ , 'a >
+# [must_use = "discarding this value is almost always a mistake"] OrderDecoder::const fn leg_wire (& self) -> LegDecoder < '_ >
 # [must_use = "discarding this value is almost always a mistake"] OrderDecoder::fn as_body_bytes (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
 # [must_use = "discarding this value is almost always a mistake"] OrderDecoder::fn as_bytes_with_header (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
 # [must_use = "discarding this value is almost always a mistake"] OrderDecoder::fn encoded_length (& self) -> Result < usize , sbe_rt :: DecodeError >
 # [must_use = "discarding this value is almost always a mistake"] OrderDecoder::fn encoded_length_with_header (& self) -> Result < usize , sbe_rt :: DecodeError >
 # [must_use = "discarding this value is almost always a mistake"] OrderDecoder::fn fills (& self) -> Result < OrderFillsDecoder < 'a > , sbe_rt :: DecodeError >
-# [must_use = "discarding this value is almost always a mistake"] OrderDecoder::fn get_metadata (& self) -> OrderDecoderMetadata < '_ , 'a >
 # [must_use = "discarding this value is almost always a mistake"] OrderDecoder::fn leg_value (& self) -> Leg
-# [must_use = "discarding this value is almost always a mistake"] OrderDecoder::fn leg_wire (& self) -> LegDecoder < '_ >
 # [must_use = "discarding this value is almost always a mistake"] OrderDecoder::fn limit (& self) -> Option < i64 >
 # [must_use = "discarding this value is almost always a mistake"] OrderDecoder::fn order_id (& self) -> u64
 # [must_use = "discarding this value is almost always a mistake"] OrderDecoder::fn raw_side (& self) -> u8
 # [must_use = "discarding this value is almost always a mistake"] OrderDecoder::fn side_wire (& self) -> Side
+# [must_use = "discarding this value is almost always a mistake"] OrderDecoderComplete::const fn encoded_length (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] OrderDecoderComplete::const fn encoded_length_with_header (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] OrderDecoderComplete::fn as_body_bytes (& self) -> & 'a [u8]
 # [must_use = "discarding this value is almost always a mistake"] OrderDecoderComplete::fn as_bytes_with_header (& self) -> & 'a [u8]
-# [must_use = "discarding this value is almost always a mistake"] OrderDecoderComplete::fn encoded_length (& self) -> usize
-# [must_use = "discarding this value is almost always a mistake"] OrderDecoderComplete::fn encoded_length_with_header (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] OrderDecoderComplete::fn remaining (& self) -> & 'a [u8]
-# [must_use = "discarding this value is almost always a mistake"] OrderDecoderMetadata::fn acting_block_length (& self) -> usize
-# [must_use = "discarding this value is almost always a mistake"] OrderDecoderMetadata::fn acting_version (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] OrderDecoderMetadata::const fn acting_block_length (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] OrderDecoderMetadata::const fn acting_version (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] OrderDecoderMetadata::const fn buffer (& self) -> & 'a [u8]
+# [must_use = "discarding this value is almost always a mistake"] OrderDecoderMetadata::const fn limit (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] OrderDecoderMetadata::const fn message_offset (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] OrderDecoderMetadata::fn as_fixed_body_bytes (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
 # [must_use = "discarding this value is almost always a mistake"] OrderDecoderMetadata::fn as_fixed_region_with_header (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
-# [must_use = "discarding this value is almost always a mistake"] OrderDecoderMetadata::fn buffer (& self) -> & 'a [u8]
-# [must_use = "discarding this value is almost always a mistake"] OrderDecoderMetadata::fn limit (& self) -> usize
-# [must_use = "discarding this value is almost always a mistake"] OrderDecoderMetadata::fn message_offset (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] OrderDecoderMetadata::fn remaining (& self) -> & 'a [u8]
 # [must_use = "discarding this value is almost always a mistake"] OrderEncodedLengthComplete::const fn encoded_length (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] OrderEncodedLengthComplete::const fn encoded_length_with_header (& self) -> usize
-# [must_use = "discarding this value is almost always a mistake"] OrderEncoder::fn get_metadata (& self) -> OrderEncoderMetadata < '_ , H >
+# [must_use = "discarding this value is almost always a mistake"] OrderEncoder::const fn get_metadata (& self) -> OrderEncoderMetadata < '_ , H >
 # [must_use = "discarding this value is almost always a mistake"] OrderEncoderMetadata::const fn buffer (& self) -> & [u8]
 # [must_use = "discarding this value is almost always a mistake"] OrderEncoderMetadata::const fn limit (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] OrderEncoderMetadata::const fn message_offset (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] OrderEncoderMetadata::fn as_fixed_body_bytes (& self) -> & [u8]
 # [must_use = "discarding this value is almost always a mistake"] OrderEncoderMetadata::fn as_fixed_region_with_header (& self) -> & [u8]
+# [must_use = "discarding this value is almost always a mistake"] OrderFillsAllocsDecoder::const fn is_empty (& self) -> bool
 # [must_use = "discarding this value is almost always a mistake"] OrderFillsAllocsDecoder::const fn remaining (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] OrderFillsAllocsDecoder::const fn remaining_entries (& self) -> usize
-# [must_use = "discarding this value is almost always a mistake"] OrderFillsAllocsDecoder::fn is_empty (& self) -> bool
-# [must_use = "discarding this value is almost always a mistake"] OrderFillsAllocsEncoder::fn written (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] OrderFillsAllocsEncoder::const fn written (& self) -> u16
 # [must_use = "discarding this value is almost always a mistake"] OrderFillsAllocsEntryDecoder::const fn acting_block_length (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] OrderFillsAllocsEntryDecoder::const fn acting_version (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] OrderFillsAllocsEntryDecoder::const fn encoded_length (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] OrderFillsAllocsEntryDecoder::fn account (& self) -> u32
-# [must_use = "discarding this value is almost always a mistake"] OrderFillsAllocsEntryDecoder::fn encoded_length (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] OrderFillsDecoder::const fn is_empty (& self) -> bool
 # [must_use = "discarding this value is almost always a mistake"] OrderFillsDecoder::const fn remaining (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] OrderFillsDecoder::const fn remaining_entries (& self) -> usize
-# [must_use = "discarding this value is almost always a mistake"] OrderFillsDecoder::fn is_empty (& self) -> bool
-# [must_use = "discarding this value is almost always a mistake"] OrderFillsEncoder::fn written (& self) -> u16
+# [must_use = "discarding this value is almost always a mistake"] OrderFillsEncoder::const fn written (& self) -> u16
 # [must_use = "discarding this value is almost always a mistake"] OrderFillsEntryDecoder::const fn acting_block_length (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] OrderFillsEntryDecoder::const fn acting_version (& self) -> u16
 # [must_use = "discarding this value is almost always a mistake"] OrderFillsEntryDecoder::const fn raw_side (& self) -> u8
 # [must_use = "discarding this value is almost always a mistake"] OrderFillsEntryDecoder::fn px (& self) -> i64
 # [must_use = "discarding this value is almost always a mistake"] OrderFillsEntryDecoder::fn qty (& self) -> u32
 # [must_use = "discarding this value is almost always a mistake"] OrderFillsEntryDecoder::fn side_wire (& self) -> Side
+# [must_use = "discarding this value is almost always a mistake"] OrderFillsEntryDecoderComplete::const fn encoded_length (& self) -> usize
+# [must_use = "discarding this value is almost always a mistake"] OrderFillsEntryDecoderComplete::const fn encoded_length_with_header (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] OrderFillsEntryDecoderComplete::fn as_body_bytes (& self) -> & 'a [u8]
 # [must_use = "discarding this value is almost always a mistake"] OrderFillsEntryDecoderComplete::fn as_bytes_with_header (& self) -> & 'a [u8]
-# [must_use = "discarding this value is almost always a mistake"] OrderFillsEntryDecoderComplete::fn encoded_length (& self) -> usize
-# [must_use = "discarding this value is almost always a mistake"] OrderFillsEntryDecoderComplete::fn encoded_length_with_header (& self) -> usize
 # [must_use = "discarding this value is almost always a mistake"] OrderFillsEntryDecoderComplete::fn remaining (& self) -> & 'a [u8]
 # [must_use = "discarding this value is almost always a mistake"] OrderMemoizedDecoder::fn encoded_length (& self) -> Result < usize , sbe_rt :: DecodeError >
 # [must_use = "discarding this value is almost always a mistake"] OrderMemoizedDecoder::fn fills (& self) -> Result < OrderFillsDecoder < 'a > , sbe_rt :: DecodeError >
@@ -143,7 +143,7 @@
 # [must_use = "discarding this value is almost always a mistake"] PriceDecoder::fn mantissa (& self) -> i64
 # [must_use = "discarding this value is almost always a mistake"] Side::const fn as_option (self) -> Option < Self >
 # [must_use = "discarding this value is almost always a mistake"] Side::const fn as_str (self) -> & 'static str
-# [must_use = "discarding this value is almost always a mistake"] Side::fn raw (self) -> u8
+# [must_use = "discarding this value is almost always a mistake"] Side::const fn raw (self) -> u8
 # [must_use = "discarding this value is almost always a mistake"] VarStringEncoding::fn length (& self) -> u32
 # [must_use = "discarding this value is almost always a mistake"] VarStringEncoding::fn var_data (& self) -> [u8 ; 0]
 # [must_use = "discarding this value is almost always a mistake"] VarStringEncodingDecoder::fn length (& self) -> u32
@@ -160,7 +160,7 @@
 # [must_use = "length builder must be completed"] struct OrderEncodedLengthAfterFills {  }
 # [must_use = "length builder must be completed"] struct OrderEncodedLengthComplete {  }
 # [must_use = "length builder must be consumed"] struct OrderEncodedLength {  }
-# [must_use = "memoized() returns a new decoder; the original is consumed"] OrderDecoder::fn memoized (self) -> OrderMemoizedDecoder < 'a >
+# [must_use = "memoized() returns a new decoder; the original is consumed"] OrderDecoder::const fn memoized (self) -> OrderMemoizedDecoder < 'a >
 # [must_use = "ordered stage must be advanced or remaining tails are skipped"] sbe_rt::struct Ordered< S > {  }
 # [must_use = "ordered stage must be advanced or remaining tails are skipped"] sbe_rt::struct OrderedFixed< S > {  }
 # [must_use = "ragged builder must be consumed to advance the length"] struct OrderFillsAllocsRaggedBuilder< 'a > {  }
@@ -177,9 +177,9 @@
 # [must_use = "this extent is the minimum readable body size; ignoring it skips a bounds check"] OrderDecoder::const fn min_readable_fixed_extent (acting_version : u16) -> usize
 # [must_use = "this extent is the minimum readable body size; ignoring it skips a bounds check"] OrderFillsAllocsDecoder::const fn min_readable_fixed_extent (acting_version : u16) -> usize
 # [must_use = "this extent is the minimum readable body size; ignoring it skips a bounds check"] OrderFillsDecoder::const fn min_readable_fixed_extent (acting_version : u16) -> usize
-# [must_use] AnyMessage::fn into_heartbeat (self) -> Option < HeartbeatDecoder < 'a > >
-# [must_use] AnyMessage::fn into_order (self) -> Option < OrderDecoder < 'a > >
-# [must_use] AnyMessage::fn into_order_memoized (self) -> Option < OrderMemoizedDecoder < 'a > >
+# [must_use] AnyMessage::const fn into_heartbeat (self) -> Option < HeartbeatDecoder < 'a > >
+# [must_use] AnyMessage::const fn into_order (self) -> Option < OrderDecoder < 'a > >
+# [must_use] AnyMessage::const fn into_order_memoized (self) -> Option < OrderMemoizedDecoder < 'a > >
 # [must_use] HeartbeatEncoder::fn fixed (mut self , fixed : & HeartbeatFixedFields ,) -> HeartbeatEncoder < 'a , H , sbe_rt :: FieldsFixed >
 # [must_use] HeartbeatEncoder::fn raw_fixed (self) -> HeartbeatRawFixedWriter < 'a >
 # [must_use] OrderAfterFills::fn note (mut self , data : & [u8] ,) -> Result < OrderComplete < 'a , H > , sbe_rt :: EncodeError >
@@ -218,8 +218,8 @@ AnyMessage::fn encoded_length_with_header (& self) -> Result < usize , sbe_rt ::
 AnyMessage::fn try_decode (buf : & 'a [u8] , offset : usize ,) -> Result < Self , sbe_rt :: DecodeError >
 AnyMessage::fn visit < V : MessageVisitor > (& self , visitor : & mut V) -> V :: Output
 Flags::const fn default () -> Self
-Flags::fn hidden (& mut self , val : bool) -> & mut Self
-Flags::fn post_only (& mut self , val : bool) -> & mut Self
+Flags::const fn hidden (& mut self , val : bool) -> & mut Self
+Flags::const fn post_only (& mut self , val : bool) -> & mut Self
 FrameCursor::const fn new (buf : & 'a [u8] , framing : FramingPolicy) -> Self
 GroupSizeEncoding::fn new (block_length : u16 , num_in_group : u16) -> Self
 HeartbeatDecoder::const BLOCK_LENGTH: usize
@@ -242,14 +242,14 @@ HeartbeatDecoder::const SIDE_SINCE_VERSION: u16
 HeartbeatDecoder::const TEMPLATE_ID: u16
 HeartbeatDecoder::const fn seq_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> Option < & 'static str >
 HeartbeatDecoder::const fn side_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> Option < & 'static str >
+HeartbeatDecoder::const fn try_wrap (buf : & 'a [u8] , message_offset : usize , acting_block_length : usize , acting_version : u16 ,) -> Result < Self , sbe_rt :: DecodeError >
+HeartbeatDecoder::const unsafe fn wrap_unchecked (buf : & 'a [u8] , message_offset : usize , acting_block_length : usize , acting_version : u16 ,) -> Self
 HeartbeatDecoder::fn decode (buf : & 'a [u8] , offset : usize) -> Result < Self , sbe_rt :: DecodeError >
 HeartbeatDecoder::fn side (& self) -> Result < app :: Side , < app :: Side as TryFromSbe < Side > > :: Error >
 HeartbeatDecoder::fn try_decode (buf : & 'a [u8] , offset : usize ,) -> Result < Self , sbe_rt :: DecodeError >
-HeartbeatDecoder::fn try_wrap (buf : & 'a [u8] , message_offset : usize , acting_block_length : usize , acting_version : u16 ,) -> Result < Self , sbe_rt :: DecodeError >
 HeartbeatDecoder::fn verify (buf : & [u8]) -> Result < () , sbe_rt :: VerifyError >
 HeartbeatDecoder::fn wrap (buf : & 'a [u8] , message_offset : usize , acting_block_length : usize , acting_version : u16 ,) -> Self
 HeartbeatDecoder::unsafe fn decode_unchecked (buf : & 'a [u8] , offset : usize ,) -> Result < Self , sbe_rt :: DecodeError >
-HeartbeatDecoder::unsafe fn wrap_unchecked (buf : & 'a [u8] , message_offset : usize , acting_block_length : usize , acting_version : u16 ,) -> Self
 HeartbeatDomain::fn encode (& self , buf : & mut [u8]) -> Result < usize , sbe_rt :: EncodeError >
 HeartbeatDomain::fn encoded_length (& self) -> Result < usize , sbe_rt :: EncodeError >
 HeartbeatDomain::fn encoded_length_with_header (& self) -> Result < usize , sbe_rt :: EncodeError >
@@ -277,6 +277,10 @@ HeartbeatEncoder::const TEMPLATE_ID: u16
 HeartbeatEncoder::const fn compute_length_with_header () -> usize
 HeartbeatEncoder::const fn seq_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> Option < & 'static str >
 HeartbeatEncoder::const fn side_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> Option < & 'static str >
+HeartbeatEncoder::const fn try_wrap (buf : & 'a mut [u8] , msg_offset : usize ,) -> Result < HeartbeatEncoder < 'a , sbe_rt :: HeaderAbsent > , sbe_rt :: EncodeError >
+HeartbeatEncoder::const fn try_wrap_and_apply_header (buf : & 'a mut [u8] , offset : usize ,) -> Result < HeartbeatEncoder < 'a , sbe_rt :: HeaderPresent > , sbe_rt :: EncodeError >
+HeartbeatEncoder::const unsafe fn wrap_and_apply_header_unchecked (buf : & 'a mut [u8] , offset : usize ,) -> HeartbeatEncoder < 'a , sbe_rt :: HeaderPresent >
+HeartbeatEncoder::const unsafe fn wrap_unchecked (buf : & 'a mut [u8] , msg_offset : usize ,) -> HeartbeatEncoder < 'a , sbe_rt :: HeaderAbsent >
 HeartbeatEncoder::fn encode_from < S : HeartbeatSource + ? Sized > (mut self , src : & S ,) -> Result < HeartbeatEncoder < 'a , H , sbe_rt :: FieldsFixed > , sbe_rt :: EncodeError >
 HeartbeatEncoder::fn encoded_length_with_header_from < S : HeartbeatSource + ? Sized > (src : & S ,) -> Result < usize , sbe_rt :: EncodeError >
 HeartbeatEncoder::fn into_remaining_mut (self) -> & 'a mut [u8]
@@ -285,13 +289,9 @@ HeartbeatEncoder::fn send_fixed < C : sbe_rt :: Claim > (claim : C , fixed : & H
 HeartbeatEncoder::fn seq (& mut self , val : u64) -> & mut Self
 HeartbeatEncoder::fn side (& mut self , value : app :: Side ,) -> Result < & mut Self , < app :: Side as TryToSbe < Side > > :: Error >
 HeartbeatEncoder::fn side_wire (& mut self , val : Side) -> & mut Self
-HeartbeatEncoder::fn try_wrap (buf : & 'a mut [u8] , msg_offset : usize ,) -> Result < HeartbeatEncoder < 'a , sbe_rt :: HeaderAbsent > , sbe_rt :: EncodeError >
-HeartbeatEncoder::fn try_wrap_and_apply_header (buf : & 'a mut [u8] , offset : usize ,) -> Result < HeartbeatEncoder < 'a , sbe_rt :: HeaderPresent > , sbe_rt :: EncodeError >
 HeartbeatEncoder::fn wrap (buf : & 'a mut [u8] , msg_offset : usize ,) -> HeartbeatEncoder < 'a , sbe_rt :: HeaderAbsent >
 HeartbeatEncoder::fn wrap_and_apply_header (buf : & 'a mut [u8] , offset : usize ,) -> HeartbeatEncoder < 'a , sbe_rt :: HeaderPresent >
 HeartbeatEncoder::fn wrap_into_claim (buf : & 'a mut [u8] ,) -> Result < HeartbeatEncoder < 'a , sbe_rt :: HeaderPresent > , sbe_rt :: EncodeError >
-HeartbeatEncoder::unsafe fn wrap_and_apply_header_unchecked (buf : & 'a mut [u8] , offset : usize ,) -> HeartbeatEncoder < 'a , sbe_rt :: HeaderPresent >
-HeartbeatEncoder::unsafe fn wrap_unchecked (buf : & 'a mut [u8] , msg_offset : usize ,) -> HeartbeatEncoder < 'a , sbe_rt :: HeaderAbsent >
 HeartbeatRawFixedWriter::fn seq (& mut self , val : u64) -> & mut Self
 HeartbeatRawFixedWriter::fn side_wire (& mut self , val : Side) -> & mut Self
 HeartbeatSchema::const BLOCK_LENGTH: usize
@@ -335,7 +335,11 @@ OrderDecoder::const TEMPLATE_ID: u16
 OrderDecoder::const fn leg_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> Option < & 'static str >
 OrderDecoder::const fn limit_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> Option < & 'static str >
 OrderDecoder::const fn order_id_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> Option < & 'static str >
+OrderDecoder::const fn ordered (self) -> sbe_rt :: Ordered < Self >
+OrderDecoder::const fn rewind (self) -> Self
 OrderDecoder::const fn side_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> Option < & 'static str >
+OrderDecoder::const fn try_wrap (buf : & 'a [u8] , message_offset : usize , acting_block_length : usize , acting_version : u16 ,) -> Result < Self , sbe_rt :: DecodeError >
+OrderDecoder::const unsafe fn wrap_unchecked (buf : & 'a [u8] , message_offset : usize , acting_block_length : usize , acting_version : u16 ,) -> Self
 OrderDecoder::fn decode (buf : & 'a [u8] , offset : usize) -> Result < Self , sbe_rt :: DecodeError >
 OrderDecoder::fn fills_count (& self) -> Result < usize , sbe_rt :: DecodeError >
 OrderDecoder::fn into_fills < E , F > (self , mut visit : F) -> Result < OrderDecoderAfterFills < 'a > , E > where E : From < sbe_rt :: DecodeError > , F : FnMut (OrderFillsEntryDecoder < 'a > ,) -> Result < OrderFillsEntryDecoderComplete < 'a > , E > ,
@@ -343,17 +347,13 @@ OrderDecoder::fn leg (& self) -> Result < app :: Leg , < app :: Leg as TryFromSb
 OrderDecoder::fn note (& self) -> Result < & 'a [u8] , sbe_rt :: DecodeError >
 OrderDecoder::fn note_as_str (& self) -> Result < & 'a str , sbe_rt :: DecodeError >
 OrderDecoder::fn note_len (& self) -> Result < usize , sbe_rt :: DecodeError >
-OrderDecoder::fn ordered (self) -> sbe_rt :: Ordered < Self >
-OrderDecoder::fn rewind (self) -> Self
 OrderDecoder::fn side (& self) -> Result < app :: Side , < app :: Side as TryFromSbe < Side > > :: Error >
 OrderDecoder::fn skip_fills (self) -> Result < OrderDecoderAfterFills < 'a > , sbe_rt :: DecodeError >
 OrderDecoder::fn try_decode (buf : & 'a [u8] , offset : usize ,) -> Result < Self , sbe_rt :: DecodeError >
-OrderDecoder::fn try_wrap (buf : & 'a [u8] , message_offset : usize , acting_block_length : usize , acting_version : u16 ,) -> Result < Self , sbe_rt :: DecodeError >
 OrderDecoder::fn verify (buf : & [u8]) -> Result < () , sbe_rt :: VerifyError >
 OrderDecoder::fn wrap (buf : & 'a [u8] , message_offset : usize , acting_block_length : usize , acting_version : u16 ,) -> Self
 OrderDecoder::unsafe fn decode_unchecked (buf : & 'a [u8] , offset : usize ,) -> Result < Self , sbe_rt :: DecodeError >
 OrderDecoder::unsafe fn note_as_str_unchecked (& self) -> Result < & 'a str , sbe_rt :: DecodeError >
-OrderDecoder::unsafe fn wrap_unchecked (buf : & 'a [u8] , message_offset : usize , acting_block_length : usize , acting_version : u16 ,) -> Self
 OrderDecoderAfterFills::const fn acting_block_length (& self) -> usize
 OrderDecoderAfterFills::const fn acting_version (& self) -> u16
 OrderDecoderAfterFills::fn into_note (self ,) -> Result < (& 'a [u8] , OrderDecoderComplete < 'a >) , sbe_rt :: DecodeError >
@@ -424,6 +424,10 @@ OrderEncoder::const fn leg_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> 
 OrderEncoder::const fn limit_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> Option < & 'static str >
 OrderEncoder::const fn order_id_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> Option < & 'static str >
 OrderEncoder::const fn side_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> Option < & 'static str >
+OrderEncoder::const fn try_wrap (buf : & 'a mut [u8] , msg_offset : usize ,) -> Result < OrderEncoder < 'a , sbe_rt :: HeaderAbsent > , sbe_rt :: EncodeError >
+OrderEncoder::const fn try_wrap_and_apply_header (buf : & 'a mut [u8] , offset : usize ,) -> Result < OrderEncoder < 'a , sbe_rt :: HeaderPresent > , sbe_rt :: EncodeError >
+OrderEncoder::const unsafe fn wrap_and_apply_header_unchecked (buf : & 'a mut [u8] , offset : usize ,) -> OrderEncoder < 'a , sbe_rt :: HeaderPresent >
+OrderEncoder::const unsafe fn wrap_unchecked (buf : & 'a mut [u8] , msg_offset : usize ,) -> OrderEncoder < 'a , sbe_rt :: HeaderAbsent >
 OrderEncoder::fn apply_nulls (& mut self) -> & mut Self
 OrderEncoder::fn encode_from < S : OrderSource + ? Sized > (mut self , src : & S ,) -> Result < OrderComplete < 'a , H > , sbe_rt :: EncodeError >
 OrderEncoder::fn encoded_length_with_header_from < S : OrderSource + ? Sized > (src : & S ,) -> Result < usize , sbe_rt :: EncodeError >
@@ -434,18 +438,14 @@ OrderEncoder::fn order_id (& mut self , val : u64) -> & mut Self
 OrderEncoder::fn send < C , W > (claim : C , encode : W) -> Result < () , sbe_rt :: SendError < C :: Error > > where C : sbe_rt :: Claim , W : for < 'b > FnOnce (OrderEncoder < 'b > ,) -> Result < OrderComplete < 'b > , sbe_rt :: EncodeError > ,
 OrderEncoder::fn side (& mut self , value : app :: Side ,) -> Result < & mut Self , < app :: Side as TryToSbe < Side > > :: Error >
 OrderEncoder::fn side_wire (& mut self , val : Side) -> & mut Self
-OrderEncoder::fn try_wrap (buf : & 'a mut [u8] , msg_offset : usize ,) -> Result < OrderEncoder < 'a , sbe_rt :: HeaderAbsent > , sbe_rt :: EncodeError >
-OrderEncoder::fn try_wrap_and_apply_header (buf : & 'a mut [u8] , offset : usize ,) -> Result < OrderEncoder < 'a , sbe_rt :: HeaderPresent > , sbe_rt :: EncodeError >
 OrderEncoder::fn wrap (buf : & 'a mut [u8] , msg_offset : usize ,) -> OrderEncoder < 'a , sbe_rt :: HeaderAbsent >
 OrderEncoder::fn wrap_and_apply_header (buf : & 'a mut [u8] , offset : usize ,) -> OrderEncoder < 'a , sbe_rt :: HeaderPresent >
-OrderEncoder::unsafe fn wrap_and_apply_header_unchecked (buf : & 'a mut [u8] , offset : usize ,) -> OrderEncoder < 'a , sbe_rt :: HeaderPresent >
-OrderEncoder::unsafe fn wrap_unchecked (buf : & 'a mut [u8] , msg_offset : usize ,) -> OrderEncoder < 'a , sbe_rt :: HeaderAbsent >
 OrderFillsAllocsDecoder::const ENTRY_BLOCK_LENGTH: usize
+OrderFillsAllocsDecoder::const fn rewind (& mut self) -> & mut Self
+OrderFillsAllocsDecoder::const fn skip_n (& mut self , n : usize) -> Result < () , sbe_rt :: DecodeError >
 OrderFillsAllocsDecoder::fn bulk_decode (& mut self ,) -> Result < Vec < OrderFillsAllocsEntry > , sbe_rt :: DecodeError >
 OrderFillsAllocsDecoder::fn bulk_decode_into (& mut self , dst : & mut Vec < OrderFillsAllocsEntry > ,) -> Result < usize , sbe_rt :: DecodeError >
 OrderFillsAllocsDecoder::fn entry_at (& self , idx : usize ,) -> Result < OrderFillsAllocsEntryDecoder < 'a > , sbe_rt :: DecodeError >
-OrderFillsAllocsDecoder::fn rewind (& mut self) -> & mut Self
-OrderFillsAllocsDecoder::fn skip_n (& mut self , n : usize) -> Result < () , sbe_rt :: DecodeError >
 OrderFillsAllocsDecoder::fn wrap (buf : & 'a [u8] , offset : usize , acting_version : u16 ,) -> Result < OrderFillsAllocsDecoder < 'a , sbe_rt :: Detached > , sbe_rt :: DecodeError >
 OrderFillsAllocsDecoderIter::const fn remaining_entries (& self) -> usize
 OrderFillsAllocsDecoderIter::fn finish (self ,) -> Result < OrderFillsEntryDecoderAfterAllocs < 'a > , sbe_rt :: DecodeError >
@@ -453,11 +453,11 @@ OrderFillsAllocsDecoderIter::fn into_venue_ref (self ,) -> Result < (& 'a [u8] ,
 OrderFillsAllocsDecoderIter::fn into_venue_ref_as_str (self ,) -> Result < (& 'a str , OrderFillsEntryDecoderComplete < 'a >) , sbe_rt :: DecodeError >
 OrderFillsAllocsEncoder::const ENTRY_BLOCK_LENGTH: usize
 OrderFillsAllocsEncoder::const GROUP_DIM_TEMPLATE: [u8 ; 4]
+OrderFillsAllocsEncoder::const fn wrap (buf : & 'a mut [u8] , offset : usize , count : u16) -> Self
 OrderFillsAllocsEncoder::fn add_checked < 'b , F > (& 'b mut self , f : F) -> Result < () , sbe_rt :: EncodeError > where F : FnOnce (OrderFillsAllocsEntryEncoder < 'b > ,) -> Result < OrderFillsAllocsEntryComplete < 'b > , sbe_rt :: EncodeError > ,
 OrderFillsAllocsEncoder::fn add_struct (& mut self , entry : & OrderFillsAllocsEntry ,) -> Result < () , sbe_rt :: EncodeError >
 OrderFillsAllocsEncoder::fn bulk_add (& mut self , entries : & [OrderFillsAllocsEntry] ,) -> Result < () , sbe_rt :: EncodeError >
 OrderFillsAllocsEncoder::fn bulk_add_domain (& mut self , entries : & [OrderFillsEntryAllocsEntryDomain] ,) -> Result < () , sbe_rt :: EncodeError >
-OrderFillsAllocsEncoder::fn wrap (buf : & 'a mut [u8] , offset : usize , count : u16) -> Self
 OrderFillsAllocsEntryDecoder::const ACCOUNT_ENCODING_LENGTH: usize
 OrderFillsAllocsEntryDecoder::const ACCOUNT_ENCODING_OFFSET: usize
 OrderFillsAllocsEntryDecoder::const ACCOUNT_ID: u16
@@ -467,20 +467,20 @@ OrderFillsAllocsEntryDecoder::const ACCOUNT_NULL: u32
 OrderFillsAllocsEntryDecoder::const ACCOUNT_SINCE_VERSION: u16
 OrderFillsAllocsEntryDecoder::const ENTRY_BLOCK_LENGTH: usize
 OrderFillsAllocsEntryDecoder::const fn account_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> Option < & 'static str >
-OrderFillsAllocsEntryDecoder::fn skip (buf : & 'a [u8] , offset : usize , block_len : usize , _acting_version : u16 ,) -> Result < usize , sbe_rt :: DecodeError >
+OrderFillsAllocsEntryDecoder::const fn skip (buf : & 'a [u8] , offset : usize , block_len : usize , _acting_version : u16 ,) -> Result < usize , sbe_rt :: DecodeError >
 OrderFillsAllocsEntryEncoder::const ENTRY_BLOCK_LENGTH: usize
+OrderFillsAllocsEntryEncoder::const fn complete (self) -> OrderFillsAllocsEntryComplete < 'a >
 OrderFillsAllocsEntryEncoder::fn account (& mut self , val : u32) -> & mut Self
-OrderFillsAllocsEntryEncoder::fn complete (self) -> OrderFillsAllocsEntryComplete < 'a >
 OrderFillsAllocsRaggedBuilder::fn add (& mut self) -> Result < & mut Self , sbe_rt :: EncodeError >
 OrderFillsAllocsRaggedBuilder::fn uniform (& mut self , count : usize) -> Result < & mut Self , sbe_rt :: EncodeError >
 OrderFillsDecoder::const ENTRY_BLOCK_LENGTH: usize
-OrderFillsDecoder::fn rewind (& mut self) -> & mut Self
+OrderFillsDecoder::const fn rewind (& mut self) -> & mut Self
 OrderFillsDecoder::fn scan_entry_at (& self , idx : usize ,) -> Result < OrderFillsEntryDecoder < 'a > , sbe_rt :: DecodeError >
 OrderFillsDecoder::fn skip_n (& mut self , n : usize) -> Result < () , sbe_rt :: DecodeError >
 OrderFillsDecoder::fn wrap (buf : & 'a [u8] , offset : usize , acting_version : u16 ,) -> Result < OrderFillsDecoder < 'a , sbe_rt :: Detached > , sbe_rt :: DecodeError >
 OrderFillsEncoder::const ENTRY_BLOCK_LENGTH: usize
 OrderFillsEncoder::const GROUP_DIM_TEMPLATE: [u8 ; 4]
-OrderFillsEncoder::fn wrap (buf : & 'a mut [u8] , offset : usize , count : u16) -> Self
+OrderFillsEncoder::const fn wrap (buf : & 'a mut [u8] , offset : usize , count : u16) -> Self
 OrderFillsEntryAllocsEntryDomain::fn encode_into < 'a > (& self , enc : & mut OrderFillsAllocsEntryEncoder < 'a > ,) -> Result < () , sbe_rt :: EncodeError >
 OrderFillsEntryAllocsEntryDomain::fn length_contribution (& self) -> Result < usize , sbe_rt :: EncodeError >
 OrderFillsEntryAllocsEntryDomain::fn try_from_decoder (dec : OrderFillsAllocsEntryDecoder < '_ > ,) -> Result < Self , sbe_rt :: DecodeError >
@@ -504,6 +504,7 @@ OrderFillsEntryDecoder::const SIDE_ENCODING_OFFSET: usize
 OrderFillsEntryDecoder::const SIDE_ID: u16
 OrderFillsEntryDecoder::const SIDE_NULL: Side
 OrderFillsEntryDecoder::const SIDE_SINCE_VERSION: u16
+OrderFillsEntryDecoder::const fn ordered (self) -> sbe_rt :: Ordered < Self >
 OrderFillsEntryDecoder::const fn px_meta_attribute (attr : sbe_rt :: MetaAttribute) -> Option < & 'static str >
 OrderFillsEntryDecoder::const fn qty_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> Option < & 'static str >
 OrderFillsEntryDecoder::const fn side_meta_attribute (attr : sbe_rt :: MetaAttribute ,) -> Option < & 'static str >
@@ -511,7 +512,6 @@ OrderFillsEntryDecoder::fn allocs (& self) -> Result < OrderFillsAllocsDecoder <
 OrderFillsEntryDecoder::fn allocs_count (& self) -> Result < usize , sbe_rt :: DecodeError >
 OrderFillsEntryDecoder::fn encoded_length (& self) -> Result < usize , sbe_rt :: DecodeError >
 OrderFillsEntryDecoder::fn into_allocs (self ,) -> Result < OrderFillsAllocsDecoderIter < 'a > , sbe_rt :: DecodeError >
-OrderFillsEntryDecoder::fn ordered (self) -> sbe_rt :: Ordered < Self >
 OrderFillsEntryDecoder::fn side (& self) -> Result < app :: Side , < app :: Side as TryFromSbe < Side > > :: Error >
 OrderFillsEntryDecoder::fn skip (buf : & 'a [u8] , offset : usize , block_len : usize , acting_version : u16 ,) -> Result < usize , sbe_rt :: DecodeError >
 OrderFillsEntryDecoder::fn skip_allocs (self ,) -> Result < OrderFillsEntryDecoderAfterAllocs < 'a > , sbe_rt :: DecodeError >
@@ -543,8 +543,8 @@ OrderFillsRaggedBuilder::fn allocs < F > (& mut self , f : F) -> Result < & mut 
 OrderFillsRaggedBuilder::fn uniform (& mut self , count : usize) -> Result < & mut Self , sbe_rt :: EncodeError >
 OrderFillsRaggedBuilder::fn venue_ref (& mut self , len : usize) -> Result < & mut Self , sbe_rt :: EncodeError >
 OrderFillsUniformEncodedLength::const fn allocs (mut self , count : u16 ,) -> Result < OrderEncodedLengthAfterFills , sbe_rt :: EncodeError >
+OrderFillsUniformEncodedLength::const fn finish_empty (self ,) -> Result < OrderEncodedLengthAfterFills , sbe_rt :: EncodeError >
 OrderFillsUniformEncodedLength::const fn venue_ref (mut self , byte_len : usize ,) -> Result < OrderEncodedLengthAfterFills , sbe_rt :: EncodeError >
-OrderFillsUniformEncodedLength::fn finish_empty (self ,) -> Result < OrderEncodedLengthAfterFills , sbe_rt :: EncodeError >
 OrderMemoizedDecoder::const fn acting_block_length (& self) -> usize
 OrderMemoizedDecoder::const fn acting_version (& self) -> u16
 OrderMemoizedDecoder::const fn inner (& self) -> & OrderDecoder < 'a >
@@ -572,14 +572,14 @@ OrderSchema::const TEMPLATE_ID: u16
 OrderSchema::fn verify (buf : & [u8]) -> Result < () , sbe_rt :: VerifyError >
 Ordered::const fn acting_block_length (& self) -> usize
 Ordered::const fn acting_version (& self) -> u16
+Ordered::const fn done (self) -> OrderDecoderComplete < 'a >
+Ordered::const fn done (self) -> OrderFillsEntryDecoderComplete < 'a >
+Ordered::const fn encoded_length (& self) -> usize
+Ordered::const fn encoded_length_with_header (& self) -> usize
 Ordered::fn allocs < F > (self , mut f : F ,) -> Result < sbe_rt :: Ordered < OrderFillsEntryDecoderAfterAllocs < 'a > > , sbe_rt :: DecodeError , > where F : FnMut (OrderFillsAllocsEntryDecoder < 'a > , sbe_rt :: EntryInfo ,) -> Result < () , sbe_rt :: DecodeError > ,
 Ordered::fn allocs_count (& self) -> Result < usize , sbe_rt :: DecodeError >
 Ordered::fn as_body_bytes (& self) -> & 'a [u8]
 Ordered::fn as_bytes_with_header (& self) -> & 'a [u8]
-Ordered::fn done (self) -> OrderDecoderComplete < 'a >
-Ordered::fn done (self) -> OrderFillsEntryDecoderComplete < 'a >
-Ordered::fn encoded_length (& self) -> usize
-Ordered::fn encoded_length_with_header (& self) -> usize
 Ordered::fn fills < F , R > (self , mut f : F ,) -> Result < sbe_rt :: Ordered < OrderDecoderAfterFills < 'a > > , sbe_rt :: DecodeError > where F : FnMut (OrderFillsEntryDecoder < 'a > , sbe_rt :: EntryInfo ,) -> Result < R , sbe_rt :: DecodeError > , R : sbe_rt :: IntoEntryComplete < OrderFillsEntryDecoderComplete < 'a > > ,
 Ordered::fn fills_count (& self) -> Result < usize , sbe_rt :: DecodeError >
 Ordered::fn fixed < F > (self , f : F ,) -> Result < sbe_rt :: Ordered < sbe_rt :: OrderedFixed < OrderDecoder < 'a > > > , sbe_rt :: DecodeError , > where F : FnOnce (& OrderDecoderFixedView < '_ , 'a >) -> Result < () , sbe_rt :: DecodeError > ,
@@ -591,8 +591,8 @@ Ordered::fn venue_ref < F > (self , f : F ,) -> Result < sbe_rt :: Ordered < Ord
 Ordered::fn venue_ref_as_str < F > (self , f : F ,) -> Result < sbe_rt :: Ordered < OrderFillsEntryDecoderComplete < 'a > > , sbe_rt :: DecodeError > where F : FnOnce (& 'a str) -> Result < () , sbe_rt :: DecodeError > ,
 Ordered::fn venue_ref_len (& self) -> Result < usize , sbe_rt :: DecodeError >
 Price::fn new (mantissa : i64 , exponent : i8) -> Self
-RaggedEntryBuilder::fn add (& mut self) -> sbe_rt :: GroupResult
-RaggedEntryBuilder::fn entries (& mut self , n : usize) -> sbe_rt :: GroupResult
+RaggedEntryBuilder::const fn add (& mut self) -> sbe_rt :: GroupResult
+RaggedEntryBuilder::const fn entries (& mut self , n : usize) -> sbe_rt :: GroupResult
 RaggedEntryBuilder::fn group (& mut self , dim : usize , block : usize , count : usize ,) -> sbe_rt :: GroupResult
 RaggedEntryBuilder::fn group_ragged < F > (& mut self , dim : usize , entry_block : usize , f : F ,) -> sbe_rt :: GroupResult where F : FnOnce (& mut RaggedEntryBuilder) -> sbe_rt :: GroupResult ,
 RaggedEntryBuilder::fn var_data (& mut self , prefix : usize , byte_len : usize) -> sbe_rt :: GroupResult
@@ -627,10 +627,10 @@ order_field_meta::const FIELDS: & [FieldInfo]
 order_field_meta::struct FieldInfo { name: & 'static str, id: u16, offset: usize, since_version: u16, field_type: & 'static str, presence: & 'static str, null_value: Option < & 'static str >, semantic_type: Option < & 'static str >, description: Option < & 'static str > }
 sbe_rt::FieldPath::const MAX_ENTRIES: usize
 sbe_rt::OfferClaim::fn new (buf : & 'a mut [u8] , offer : F) -> Self
+sbe_rt::TailBoundaryCache::const fn end_of (& self , idx : usize) -> Option < usize >
+sbe_rt::TailBoundaryCache::const fn is_complete (& self) -> bool
+sbe_rt::TailBoundaryCache::const fn known_through (& self) -> usize
 sbe_rt::TailBoundaryCache::const fn new () -> Self
-sbe_rt::TailBoundaryCache::fn end_of (& self , idx : usize) -> Option < usize >
-sbe_rt::TailBoundaryCache::fn is_complete (& self) -> bool
-sbe_rt::TailBoundaryCache::fn known_through (& self) -> usize
 sbe_rt::TailBoundaryCache::fn publish (& self , idx : usize , abs_end : usize)
 sbe_rt::enum ConversionError
 sbe_rt::enum ConversionError::Custom(error_type: & 'static str)

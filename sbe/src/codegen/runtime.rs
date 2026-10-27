@@ -70,19 +70,19 @@ fn tail_boundary_cache_tokens() -> proc_macro2::TokenStream {
 
                 /// Count of published tail ends (`0..=N`).
                 #[inline]
-                pub fn known_through(&self) -> usize {
+                pub const fn known_through(&self) -> usize {
                     self.known_through.get()
                 }
 
                 /// True when every dynamic tail end has been published.
                 #[inline]
-                pub fn is_complete(&self) -> bool {
+                pub const fn is_complete(&self) -> bool {
                     self.known_through.get() == N
                 }
 
                 /// Absolute end of tail `idx` if the contiguous frontier covers it.
                 #[inline]
-                pub fn end_of(&self, idx: usize) -> Option<usize> {
+                pub const fn end_of(&self, idx: usize) -> Option<usize> {
                     if idx >= N || idx >= self.known_through.get() {
                         return None;
                     }
@@ -121,7 +121,7 @@ fn tail_boundary_cache_tokens() -> proc_macro2::TokenStream {
                 }
                 #[cfg(debug_assertions)]
                 #[inline]
-                pub fn stats(&self) -> DecodeCacheStats {
+                pub const fn stats(&self) -> DecodeCacheStats {
                     DecodeCacheStats {
                         hits: self.hits.get(),
                         misses: self.misses.get(),
@@ -1880,7 +1880,7 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
             /// Wire discriminant.
             #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
-            pub fn raw(self) -> #r_type_ty {
+            pub const fn raw(self) -> #r_type_ty {
                 self as #r_type_ty
             }
 
@@ -2056,7 +2056,7 @@ pub(crate) fn generate_set(src: &mut String, tokens: &[Token]) {
             }
 
             #[inline]
-            pub fn #set_bit_name(&mut self, val: bool) -> &mut Self {
+            pub const fn #set_bit_name(&mut self, val: bool) -> &mut Self {
                 if val {
                     self.0 |= 1 << #bit_lit;
                 } else {
@@ -3070,7 +3070,7 @@ pub(crate) fn generate_any_message(
                 #doc_base
                 #[inline]
                 #[must_use]
-                pub fn #into_base(self) -> Option<#decoder<'a>> {
+                pub const fn #into_base(self) -> Option<#decoder<'a>> {
                     match self {
                         Self::#variant(d) => Some(d),
                         _ => None,
@@ -3088,7 +3088,7 @@ pub(crate) fn generate_any_message(
                     #doc_memo
                     #[inline]
                     #[must_use]
-                    pub fn #into_memo(self) -> Option<#memo<'a>> {
+                    pub const fn #into_memo(self) -> Option<#memo<'a>> {
                         match self {
                             Self::#variant(d) => Some(d.memoized()),
                             _ => None,

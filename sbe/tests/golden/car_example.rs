@@ -1138,17 +1138,17 @@ pub mod sbe_rt {
         }
         /// Count of published tail ends (`0..=N`).
         #[inline]
-        pub fn known_through(&self) -> usize {
+        pub const fn known_through(&self) -> usize {
             self.known_through.get()
         }
         /// True when every dynamic tail end has been published.
         #[inline]
-        pub fn is_complete(&self) -> bool {
+        pub const fn is_complete(&self) -> bool {
             self.known_through.get() == N
         }
         /// Absolute end of tail `idx` if the contiguous frontier covers it.
         #[inline]
-        pub fn end_of(&self, idx: usize) -> Option<usize> {
+        pub const fn end_of(&self, idx: usize) -> Option<usize> {
             if idx >= N || idx >= self.known_through.get() {
                 return None;
             }
@@ -1187,7 +1187,7 @@ pub mod sbe_rt {
         ///Generated method `stats`.
         #[cfg(debug_assertions)]
         #[inline]
-        pub fn stats(&self) -> DecodeCacheStats {
+        pub const fn stats(&self) -> DecodeCacheStats {
             DecodeCacheStats {
                 hits: self.hits.get(),
                 misses: self.misses.get(),
@@ -1359,7 +1359,7 @@ impl BooleanType {
     /// Wire discriminant.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn raw(self) -> u8 {
+    pub const fn raw(self) -> u8 {
         self as u8
     }
     /// Reconstruct from a wire discriminant (`NullVal` for unknown).
@@ -1461,7 +1461,7 @@ impl Model {
     /// Wire discriminant.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn raw(self) -> u8 {
+    pub const fn raw(self) -> u8 {
         self as u8
     }
     /// Reconstruct from a wire discriminant (`NullVal` for unknown).
@@ -1541,7 +1541,7 @@ impl BoostType {
     /// Wire discriminant.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn raw(self) -> u8 {
+    pub const fn raw(self) -> u8 {
         self as u8
     }
     /// Reconstruct from a wire discriminant (`NullVal` for unknown).
@@ -1629,7 +1629,7 @@ impl OptionalExtras {
     }
     ///Generated method `sun_roof`.
     #[inline]
-    pub fn sun_roof(&mut self, val: bool) -> &mut Self {
+    pub const fn sun_roof(&mut self, val: bool) -> &mut Self {
         if val {
             self.0 |= 1 << 0;
         } else {
@@ -1645,7 +1645,7 @@ impl OptionalExtras {
     }
     ///Generated method `sports_pack`.
     #[inline]
-    pub fn sports_pack(&mut self, val: bool) -> &mut Self {
+    pub const fn sports_pack(&mut self, val: bool) -> &mut Self {
         if val {
             self.0 |= 1 << 1;
         } else {
@@ -1661,7 +1661,7 @@ impl OptionalExtras {
     }
     ///Generated method `cruise_control`.
     #[inline]
-    pub fn cruise_control(&mut self, val: bool) -> &mut Self {
+    pub const fn cruise_control(&mut self, val: bool) -> &mut Self {
         if val {
             self.0 |= 1 << 2;
         } else {
@@ -2439,7 +2439,7 @@ impl<'m, 'a> CarDecoderMetadata<'m, 'a> {
     /// within the underlying buffer.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn message_offset(&self) -> usize {
+    pub const fn message_offset(&self) -> usize {
         self.decoder.byte_offset().saturating_sub(CarDecoder::HEADER_LENGTH)
     }
     /// End of the **acting fixed block** (body start + acting block length).
@@ -2447,13 +2447,13 @@ impl<'m, 'a> CarDecoderMetadata<'m, 'a> {
     /// stage or inherent `encoded_length_with_header` after walking tails.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn limit(&self) -> usize {
+    pub const fn limit(&self) -> usize {
         self.decoder.byte_offset() + self.decoder.acting_block_length
     }
     /// The full underlying buffer slice this decoder was wrapped on.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn buffer(&self) -> &'a [u8] {
+    pub const fn buffer(&self) -> &'a [u8] {
         self.decoder.buf
     }
     /// Bytes after the acting fixed block end. May still contain unread
@@ -2506,13 +2506,13 @@ impl<'m, 'a> CarDecoderMetadata<'m, 'a> {
     /// Schema version from the header or wrap args, which `sinceVersion` fields follow.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn acting_version(&self) -> u16 {
+    pub const fn acting_version(&self) -> u16 {
         self.decoder.acting_version
     }
     /// Block length from the header or wrap args, which tail offsets use.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn acting_block_length(&self) -> usize {
+    pub const fn acting_block_length(&self) -> usize {
         self.decoder.acting_block_length
     }
 }
@@ -2523,7 +2523,7 @@ impl<'a> CarDecoder<'a> {
     /// are scoped here so no schema field name can collide with them.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn get_metadata(&self) -> CarDecoderMetadata<'_, 'a> {
+    pub const fn get_metadata(&self) -> CarDecoderMetadata<'_, 'a> {
         CarDecoderMetadata {
             decoder: self,
         }
@@ -2560,7 +2560,7 @@ impl<'a> CarDecoder<'a> {
     /// `message_start + 8`). ergo-sbe takes the **message** start so the
     /// same offset works for `wrap`, `decode`, and claim buffers.
     #[inline]
-    pub fn try_wrap(
+    pub const fn try_wrap(
         buf: &'a [u8],
         message_offset: usize,
         acting_block_length: usize,
@@ -2642,7 +2642,7 @@ impl<'a> CarDecoder<'a> {
     /// min_readable_fixed_extent(acting_version))` must not overflow
     /// and must be ≤ `buf.len()`.
     #[inline]
-    pub unsafe fn wrap_unchecked(
+    pub const unsafe fn wrap_unchecked(
         buf: &'a [u8],
         message_offset: usize,
         acting_block_length: usize,
@@ -3149,7 +3149,7 @@ impl<'a> CarDecoder<'a> {
     ///Generated method `engine`.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn engine(&self) -> EngineDecoder<'_> {
+    pub const fn engine(&self) -> EngineDecoder<'_> {
         EngineDecoder {
             buf: self.buf,
             offset: self.offset + 35,
@@ -3183,11 +3183,11 @@ impl<'a> CarDecoder<'a> {
     }
     /// Byte offset of the message body within `self.buf`.
     #[inline]
-    fn byte_offset(&self) -> usize {
+    const fn byte_offset(&self) -> usize {
         self.offset
     }
     #[inline]
-    fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
+    const fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
         Ok(self.byte_offset() + self.acting_block_length)
     }
     #[inline]
@@ -3573,7 +3573,7 @@ impl<'a> CarDecoder<'a> {
     /// Consume this stage and return a fresh decoder at the initial
     /// message position. The consumed stage cannot be reused.
     #[inline]
-    pub fn rewind(self) -> Self {
+    pub const fn rewind(self) -> Self {
         Self {
             buf: self.buf,
             offset: self.offset,
@@ -4009,7 +4009,7 @@ impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
     /// body this group is nested in, and `offset` must be the byte
     /// position where this group would have started had it been present.
     #[inline]
-    unsafe fn wrap_absent_parent(
+    const unsafe fn wrap_absent_parent(
         buf: &'a [u8],
         offset: usize,
         acting_version: u16,
@@ -4034,7 +4034,7 @@ impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
     ///Generated method `is_empty`.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.count == 0
     }
     /// Wire-declared entries not yet consumed.
@@ -4165,7 +4165,7 @@ impl<'a, C: sbe_rt::GroupContext> FuelFiguresDecoder<'a, C> {
     /// start offset was validated at wrap time, so retrying from there
     /// is sound even after an entry failed.
     #[inline]
-    pub fn rewind(&mut self) -> &mut Self {
+    pub const fn rewind(&mut self) -> &mut Self {
         self.offset = self.start;
         self.count = self.total;
         self.poisoned = None;
@@ -4364,7 +4364,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     /// Fixed block at `offset` and every dynamic tail extent this entry
     /// will traverse must be fully in-bounds in `buf`.
     #[inline]
-    unsafe fn wrap(
+    const unsafe fn wrap(
         buf: &'a [u8],
         offset: usize,
         acting_block_length: usize,
@@ -4445,7 +4445,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     ///Generated constant `MPG_MAX`.
     pub const MPG_MAX: f32 = f32::from_bits(2139095039u32);
     #[inline]
-    fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
+    const fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
         if self.acting_block_length > self.buf.len().saturating_sub(self.offset) {
             core::hint::cold_path();
             return Err(sbe_rt::DecodeError::BufferTooShort {
@@ -4804,14 +4804,14 @@ impl<'a> FuelFiguresEntryDecoderComplete<'a> {
     /// Body length (excluding header).
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn encoded_length(&self) -> usize {
+    pub const fn encoded_length(&self) -> usize {
         self.tail_start - self.offset
     }
     /// Total message length including the schema-declared header.
     /// Pure arithmetic: body length + `HEADER_LENGTH`.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn encoded_length_with_header(&self) -> usize {
+    pub const fn encoded_length_with_header(&self) -> usize {
         self.tail_start - self.offset + 0
     }
     /// Bytes after this message/entry.
@@ -4827,7 +4827,7 @@ impl<'a> FuelFiguresEntryDecoder<'a> {
     /// A façade over the staged `into_*` / `skip_*` stages: same single
     /// traversal, same compile-time ordering, one uniform spelling.
     #[inline]
-    pub fn ordered(self) -> sbe_rt::Ordered<Self> {
+    pub const fn ordered(self) -> sbe_rt::Ordered<Self> {
         sbe_rt::Ordered { inner: self }
     }
 }
@@ -4895,7 +4895,7 @@ impl<'a> sbe_rt::Ordered<FuelFiguresEntryDecoderComplete<'a>> {
     }
     ///The entry completion the parent's visit closure must hand back. A nested `ordered()` walk can return this wrapper directly; call `done()` only to unwrap the staged complete.
     #[inline]
-    pub fn done(self) -> FuelFiguresEntryDecoderComplete<'a> {
+    pub const fn done(self) -> FuelFiguresEntryDecoderComplete<'a> {
         self.inner
     }
 }
@@ -4994,7 +4994,7 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
     /// body this group is nested in, and `offset` must be the byte
     /// position where this group would have started had it been present.
     #[inline]
-    unsafe fn wrap_absent_parent(
+    const unsafe fn wrap_absent_parent(
         buf: &'a [u8],
         offset: usize,
         acting_version: u16,
@@ -5019,7 +5019,7 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
     ///Generated method `is_empty`.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.count == 0
     }
     /// Wire-declared entries not yet consumed.
@@ -5152,7 +5152,7 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresDecoder<'a, C> {
     /// start offset was validated at wrap time, so retrying from there
     /// is sound even after an entry failed.
     #[inline]
-    pub fn rewind(&mut self) -> &mut Self {
+    pub const fn rewind(&mut self) -> &mut Self {
         self.offset = self.start;
         self.count = self.total;
         self.poisoned = None;
@@ -5363,7 +5363,7 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
     /// Fixed block at `offset` and every dynamic tail extent this entry
     /// will traverse must be fully in-bounds in `buf`.
     #[inline]
-    unsafe fn wrap(
+    const unsafe fn wrap(
         buf: &'a [u8],
         offset: usize,
         acting_block_length: usize,
@@ -5411,7 +5411,7 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
     ///`OCTANE_RATING_MAX` = 110.
     pub const OCTANE_RATING_MAX: u8 = 110_u8;
     #[inline]
-    fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
+    const fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
         if self.acting_block_length > self.buf.len().saturating_sub(self.offset) {
             core::hint::cold_path();
             return Err(sbe_rt::DecodeError::BufferTooShort {
@@ -5663,7 +5663,7 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresAccelerationDecoder<'a, C> {
     /// body this group is nested in, and `offset` must be the byte
     /// position where this group would have started had it been present.
     #[inline]
-    unsafe fn wrap_absent_parent(
+    const unsafe fn wrap_absent_parent(
         buf: &'a [u8],
         offset: usize,
         acting_version: u16,
@@ -5686,7 +5686,7 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresAccelerationDecoder<'a, C> {
     ///Generated method `is_empty`.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.count == 0
     }
     /// Wire-declared entries not yet consumed.
@@ -5813,7 +5813,7 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresAccelerationDecoder<'a, C> {
     /// start offset was validated at wrap time, so retrying from there
     /// is sound even after an entry failed.
     #[inline]
-    pub fn rewind(&mut self) -> &mut Self {
+    pub const fn rewind(&mut self) -> &mut Self {
         self.offset = self.start;
         self.count = self.total;
         self
@@ -5822,7 +5822,7 @@ impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresAccelerationDecoder<'a, C> {
 impl<'a, C: sbe_rt::GroupContext> PerformanceFiguresAccelerationDecoder<'a, C> {
     ///Generated method `skip_n`.
     #[inline]
-    pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
+    pub const fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
         if n > self.count {
             core::hint::cold_path();
             return Err(sbe_rt::DecodeError::BufferTooShort {
@@ -6004,7 +6004,7 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
     /// field offset used by accessors) must not overflow and must be
     /// ≤ `buf.len()`. Fixed-field getters may then use unchecked reads.
     #[inline]
-    unsafe fn wrap(
+    const unsafe fn wrap(
         buf: &'a [u8],
         offset: usize,
         acting_block_length: usize,
@@ -6084,7 +6084,7 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
     ///Generated constant `SECONDS_MAX`.
     pub const SECONDS_MAX: f32 = f32::from_bits(2139095039u32);
     #[inline]
-    fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
+    const fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
         if self.acting_block_length > self.buf.len().saturating_sub(self.offset) {
             core::hint::cold_path();
             return Err(sbe_rt::DecodeError::BufferTooShort {
@@ -6098,12 +6098,12 @@ impl<'a> PerformanceFiguresAccelerationEntryDecoder<'a> {
     ///Generated method `encoded_length`.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn encoded_length(&self) -> usize {
+    pub const fn encoded_length(&self) -> usize {
         self.acting_block_length
     }
     ///Generated method `skip`.
     #[inline]
-    pub fn skip(
+    pub const fn skip(
         buf: &'a [u8],
         offset: usize,
         block_len: usize,
@@ -6230,7 +6230,7 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
 }
 impl<'a> PerformanceFiguresAccelerationDecoder<'a, sbe_rt::Attached> {
     #[inline]
-    fn into_parent_stage(
+    const fn into_parent_stage(
         self,
         tail_start: usize,
     ) -> PerformanceFiguresEntryDecoderComplete<'a> {
@@ -6307,14 +6307,14 @@ impl<'a> PerformanceFiguresEntryDecoderComplete<'a> {
     /// Body length (excluding header).
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn encoded_length(&self) -> usize {
+    pub const fn encoded_length(&self) -> usize {
         self.tail_start - self.offset
     }
     /// Total message length including the schema-declared header.
     /// Pure arithmetic: body length + `HEADER_LENGTH`.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn encoded_length_with_header(&self) -> usize {
+    pub const fn encoded_length_with_header(&self) -> usize {
         self.tail_start - self.offset + 0
     }
     /// Bytes after this message/entry.
@@ -6330,7 +6330,7 @@ impl<'a> PerformanceFiguresEntryDecoder<'a> {
     /// A façade over the staged `into_*` / `skip_*` stages: same single
     /// traversal, same compile-time ordering, one uniform spelling.
     #[inline]
-    pub fn ordered(self) -> sbe_rt::Ordered<Self> {
+    pub const fn ordered(self) -> sbe_rt::Ordered<Self> {
         sbe_rt::Ordered { inner: self }
     }
 }
@@ -6402,7 +6402,7 @@ impl<'a> sbe_rt::Ordered<PerformanceFiguresEntryDecoderComplete<'a>> {
     }
     ///The entry completion the parent's visit closure must hand back. A nested `ordered()` walk can return this wrapper directly; call `done()` only to unwrap the staged complete.
     #[inline]
-    pub fn done(self) -> PerformanceFiguresEntryDecoderComplete<'a> {
+    pub const fn done(self) -> PerformanceFiguresEntryDecoderComplete<'a> {
         self.inner
     }
 }
@@ -7038,7 +7038,10 @@ impl<'a> CarDecoder<'a> {
 }
 impl<'a> FuelFiguresDecoder<'a, sbe_rt::Attached> {
     #[inline]
-    fn into_parent_stage(self, tail_start: usize) -> CarDecoderAfterFuelFigures<'a> {
+    const fn into_parent_stage(
+        self,
+        tail_start: usize,
+    ) -> CarDecoderAfterFuelFigures<'a> {
         CarDecoderAfterFuelFigures {
             buf: self.buf,
             offset: self.parent_pos,
@@ -7205,7 +7208,7 @@ impl<'a> CarDecoderAfterFuelFigures<'a> {
 }
 impl<'a> PerformanceFiguresDecoder<'a, sbe_rt::Attached> {
     #[inline]
-    fn into_parent_stage(
+    const fn into_parent_stage(
         self,
         tail_start: usize,
     ) -> CarDecoderAfterPerformanceFigures<'a> {
@@ -7299,14 +7302,14 @@ impl<'a> CarDecoderComplete<'a> {
     /// Body length (excluding header).
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn encoded_length(&self) -> usize {
+    pub const fn encoded_length(&self) -> usize {
         self.tail_start - self.offset
     }
     /// Total message length including the schema-declared header.
     /// Pure arithmetic: body length + `HEADER_LENGTH`.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn encoded_length_with_header(&self) -> usize {
+    pub const fn encoded_length_with_header(&self) -> usize {
         self.tail_start - self.offset + 8
     }
     /// Bytes after this message/entry.
@@ -7322,7 +7325,7 @@ impl<'a> CarDecoder<'a> {
     /// A façade over the staged `into_*` / `skip_*` stages: same single
     /// traversal, same compile-time ordering, one uniform spelling.
     #[inline]
-    pub fn ordered(self) -> sbe_rt::Ordered<Self> {
+    pub const fn ordered(self) -> sbe_rt::Ordered<Self> {
         sbe_rt::Ordered { inner: self }
     }
 }
@@ -7711,7 +7714,7 @@ impl<'a> sbe_rt::Ordered<CarDecoderComplete<'a>> {
     }
     ///The completed staged decoder. Prefer [`Self::encoded_length_with_header`] / [`Self::as_bytes_with_header`] on this type — the message chain ends like encode, without `.done()`.
     #[inline]
-    pub fn done(self) -> CarDecoderComplete<'a> {
+    pub const fn done(self) -> CarDecoderComplete<'a> {
         self.inner
     }
     /// Body bytes (excluding the message header).
@@ -7726,12 +7729,12 @@ impl<'a> sbe_rt::Ordered<CarDecoderComplete<'a>> {
     }
     /// Body length (excluding header).
     #[inline]
-    pub fn encoded_length(&self) -> usize {
+    pub const fn encoded_length(&self) -> usize {
         self.inner.encoded_length()
     }
     /// Total message length including the schema-declared header.
     #[inline]
-    pub fn encoded_length_with_header(&self) -> usize {
+    pub const fn encoded_length_with_header(&self) -> usize {
         self.inner.encoded_length_with_header()
     }
     /// Bytes after this message.
@@ -8234,7 +8237,7 @@ impl<'a> CarDecoder<'a> {
     /// separate empty cache.
     #[inline]
     #[must_use = "memoized() returns a new decoder; the original is consumed"]
-    pub fn memoized(self) -> CarMemoizedDecoder<'a> {
+    pub const fn memoized(self) -> CarMemoizedDecoder<'a> {
         CarMemoizedDecoder {
             inner: self,
             cache: sbe_rt::TailBoundaryCache::new(),
@@ -8260,7 +8263,7 @@ impl<'a> CarMemoizedDecoder<'a> {
     /// Discard the cache and return the base decoder.
     #[inline]
     #[must_use = "discarding the returned decoder discards the message"]
-    pub fn into_inner(self) -> CarDecoder<'a> {
+    pub const fn into_inner(self) -> CarDecoder<'a> {
         self.inner
     }
     ///Generated method `serial_number`.
@@ -8369,7 +8372,7 @@ impl<'a> CarMemoizedDecoder<'a> {
     #[cfg(debug_assertions)]
     #[must_use = "discarding cache stats is almost always a mistake"]
     #[inline]
-    pub fn decode_cache_stats(&self) -> sbe_rt::DecodeCacheStats {
+    pub const fn decode_cache_stats(&self) -> sbe_rt::DecodeCacheStats {
         self.cache.stats()
     }
     /// Schema version from the header or wrap args, which `sinceVersion` fields follow.
@@ -8924,7 +8927,7 @@ impl<'a> CarRawFixedWriter<'a> {
     }
     ///Generated method `available_bool`.
     #[inline]
-    pub fn available_bool(&mut self, val: bool) -> &mut Self {
+    pub const fn available_bool(&mut self, val: bool) -> &mut Self {
         self.buf[self.msg_offset + 10] = val as u8;
         self
     }
@@ -9025,7 +9028,7 @@ impl<'a> CarEncoder<'a> {
     /// Cold error constructor — never inlined into the hot path.
     #[cold]
     #[inline(never)]
-    fn buffer_too_short(
+    const fn buffer_too_short(
         buf: &[u8],
         offset: usize,
         needed: usize,
@@ -9044,7 +9047,7 @@ impl<'a> CarEncoder<'a> {
     ///
     /// Prefer [`Self::wrap_and_apply_header`] when encoding a full frame.
     #[inline]
-    pub fn try_wrap(
+    pub const fn try_wrap(
         buf: &'a mut [u8],
         msg_offset: usize,
     ) -> Result<CarEncoder<'a, sbe_rt::HeaderAbsent>, sbe_rt::EncodeError> {
@@ -9077,7 +9080,7 @@ impl<'a> CarEncoder<'a> {
     /// `msg_offset + HEADER_LENGTH + BLOCK_LENGTH` must not overflow
     /// and must be ≤ `buf.len()` for the lifetime of the encoder.
     #[inline]
-    pub unsafe fn wrap_unchecked(
+    pub const unsafe fn wrap_unchecked(
         buf: &'a mut [u8],
         msg_offset: usize,
     ) -> CarEncoder<'a, sbe_rt::HeaderAbsent> {
@@ -9096,7 +9099,7 @@ impl<'a> CarEncoder<'a> {
     /// Optional-field nullification is **not** applied by default — call
     /// `apply_nulls()` if you want null sentinels.
     #[inline]
-    pub fn try_wrap_and_apply_header(
+    pub const fn try_wrap_and_apply_header(
         buf: &'a mut [u8],
         offset: usize,
     ) -> Result<CarEncoder<'a, sbe_rt::HeaderPresent>, sbe_rt::EncodeError> {
@@ -9130,7 +9133,7 @@ impl<'a> CarEncoder<'a> {
     /// `offset + HEADER_LENGTH + BLOCK_LENGTH` must not overflow and must be
     /// ≤ `buf.len()` for the lifetime of the encoder.
     #[inline]
-    pub unsafe fn wrap_and_apply_header_unchecked(
+    pub const unsafe fn wrap_and_apply_header_unchecked(
         buf: &'a mut [u8],
         offset: usize,
     ) -> CarEncoder<'a, sbe_rt::HeaderPresent> {
@@ -9389,7 +9392,7 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsUnfixed> {
     }
     ///Generated method `available_bool`.
     #[inline]
-    pub fn available_bool(&mut self, val: bool) -> &mut Self {
+    pub const fn available_bool(&mut self, val: bool) -> &mut Self {
         self.buf[self.msg_offset + 18] = val as u8;
         self
     }
@@ -9535,7 +9538,7 @@ impl<'a, H: sbe_rt::HeaderState> CarEncoder<'a, H, sbe_rt::FieldsFixed> {
     }
     ///Generated method `available_bool`.
     #[inline]
-    pub fn available_bool(&mut self, val: bool) -> &mut Self {
+    pub const fn available_bool(&mut self, val: bool) -> &mut Self {
         self.buf[self.msg_offset + 18] = val as u8;
         self
     }
@@ -9664,7 +9667,7 @@ impl<'a, H: sbe_rt::HeaderState, F: sbe_rt::FieldsState> CarEncoder<'a, H, F> {
     ///Generated method `get_metadata`.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn get_metadata(&self) -> CarEncoderMetadata<'_, H> {
+    pub const fn get_metadata(&self) -> CarEncoderMetadata<'_, H> {
         CarEncoderMetadata {
             encoder_msg_offset: self.msg_offset,
             encoder_offset: self.offset,
@@ -10373,14 +10376,14 @@ impl<'a, H: sbe_rt::HeaderState> CarComplete<'a, H> {
     /// SBE message body length (excluding the message header).
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn encoded_length(&self) -> usize {
+    pub const fn encoded_length(&self) -> usize {
         self.offset - self.msg_offset - 8
     }
     /// Total SBE message length including the header region.
     /// Pure arithmetic — available for body-only wraps too.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn encoded_length_with_header(&self) -> usize {
+    pub const fn encoded_length_with_header(&self) -> usize {
         self.offset - self.msg_offset
     }
     /// Unwritten region after this message's write cursor to the end of
@@ -10464,7 +10467,7 @@ impl<'a> FuelFiguresEncoder<'a> {
     /// message — get the framing (header contents, `offset`, order)
     /// wrong and the result is a malformed group image.
     #[inline]
-    pub fn wrap(buf: &'a mut [u8], offset: usize, count: u16) -> Self {
+    pub const fn wrap(buf: &'a mut [u8], offset: usize, count: u16) -> Self {
         Self {
             buf,
             offset,
@@ -10524,7 +10527,7 @@ impl<'a> FuelFiguresEncoder<'a> {
     /// Number of entries written so far (for `_unknown_size` back-patch).
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn written(&self) -> u16 {
+    pub const fn written(&self) -> u16 {
         self.written
     }
 }
@@ -10562,7 +10565,7 @@ impl<'a> FuelFiguresEntryEncoder<'a> {
     /// `offset + ENTRY_BLOCK_LENGTH` must not overflow and must be ≤ `buf.len()`
     /// for the lifetime of the returned encoder.
     #[inline]
-    unsafe fn wrap(buf: &'a mut [u8], offset: usize) -> Self {
+    const unsafe fn wrap(buf: &'a mut [u8], offset: usize) -> Self {
         Self {
             buf,
             entry_start: offset,
@@ -10687,7 +10690,7 @@ impl<'a> PerformanceFiguresEncoder<'a> {
     /// message — get the framing (header contents, `offset`, order)
     /// wrong and the result is a malformed group image.
     #[inline]
-    pub fn wrap(buf: &'a mut [u8], offset: usize, count: u16) -> Self {
+    pub const fn wrap(buf: &'a mut [u8], offset: usize, count: u16) -> Self {
         Self {
             buf,
             offset,
@@ -10749,7 +10752,7 @@ impl<'a> PerformanceFiguresEncoder<'a> {
     /// Number of entries written so far (for `_unknown_size` back-patch).
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn written(&self) -> u16 {
+    pub const fn written(&self) -> u16 {
         self.written
     }
 }
@@ -10788,7 +10791,7 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
     /// `offset + ENTRY_BLOCK_LENGTH` must not overflow and must be ≤ `buf.len()`
     /// for the lifetime of the returned encoder.
     #[inline]
-    unsafe fn wrap(buf: &'a mut [u8], offset: usize) -> Self {
+    const unsafe fn wrap(buf: &'a mut [u8], offset: usize) -> Self {
         Self {
             buf,
             entry_start: offset,
@@ -10797,7 +10800,7 @@ impl<'a> PerformanceFiguresEntryEncoder<'a> {
     }
     ///Generated method `octane_rating`.
     #[inline]
-    pub fn octane_rating(&mut self, val: u8) -> &mut Self {
+    pub const fn octane_rating(&mut self, val: u8) -> &mut Self {
         self.buf[self.entry_start + 0] = val as u8;
         self
     }
@@ -10941,7 +10944,7 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
     /// message — get the framing (header contents, `offset`, order)
     /// wrong and the result is a malformed group image.
     #[inline]
-    pub fn wrap(buf: &'a mut [u8], offset: usize, count: u16) -> Self {
+    pub const fn wrap(buf: &'a mut [u8], offset: usize, count: u16) -> Self {
         Self {
             buf,
             offset,
@@ -11096,7 +11099,7 @@ impl<'a> PerformanceFiguresAccelerationEncoder<'a> {
     /// Number of entries written so far (for `_unknown_size` back-patch).
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn written(&self) -> u16 {
+    pub const fn written(&self) -> u16 {
         self.written
     }
 }
@@ -11250,7 +11253,7 @@ impl<'a> PerformanceFiguresAccelerationEntryEncoder<'a> {
     /// `offset + ENTRY_BLOCK_LENGTH` must not overflow and must be ≤ `buf.len()`
     /// for the lifetime of the returned encoder.
     #[inline]
-    unsafe fn wrap(buf: &'a mut [u8], offset: usize) -> Self {
+    const unsafe fn wrap(buf: &'a mut [u8], offset: usize) -> Self {
         Self {
             buf,
             entry_start: offset,
@@ -11261,7 +11264,7 @@ impl<'a> PerformanceFiguresAccelerationEntryEncoder<'a> {
     ///
     ///Only for entries with no required tails — an entry that has them reaches this type through its last tail method instead.
     #[inline]
-    pub fn complete(self) -> PerformanceFiguresAccelerationEntryComplete<'a> {
+    pub const fn complete(self) -> PerformanceFiguresAccelerationEntryComplete<'a> {
         PerformanceFiguresAccelerationEntryComplete {
             buf: self.buf,
             entry_start: self.entry_start,
@@ -11482,7 +11485,7 @@ impl CarFuelFiguresUniformEncodedLength {
     /// Complete this group when the entry count is zero.
     /// Returns an error if the declared count is non-zero.
     #[inline]
-    pub fn finish_empty(
+    pub const fn finish_empty(
         self,
     ) -> Result<CarEncodedLengthAfterFuelFigures, sbe_rt::EncodeError> {
         if self.declared_count != 0 {
@@ -11656,7 +11659,7 @@ impl CarPerformanceFiguresUniformEncodedLength {
     /// Complete this group when the entry count is zero.
     /// Returns an error if the declared count is non-zero.
     #[inline]
-    pub fn finish_empty(
+    pub const fn finish_empty(
         self,
     ) -> Result<CarEncodedLengthAfterPerformanceFigures, sbe_rt::EncodeError> {
         if self.declared_count != 0 {
@@ -12586,7 +12589,7 @@ pub struct RaggedEntryBuilder {
     pub written: usize,
 }
 impl RaggedEntryBuilder {
-    fn new(
+    const fn new(
         state: EncodedLengthAccumulator,
         parent_multiplier: usize,
         entry_block_length: usize,
@@ -12600,7 +12603,7 @@ impl RaggedEntryBuilder {
     }
     /// Register one entry (adds entry block for unknown-size groups).
     #[inline]
-    pub fn add(&mut self) -> sbe_rt::GroupResult {
+    pub const fn add(&mut self) -> sbe_rt::GroupResult {
         self.state.add_scaled(self.entry_block_length, self.parent_multiplier);
         self.bump_written(1)
     }
@@ -12609,7 +12612,7 @@ impl RaggedEntryBuilder {
     /// Equivalent to `n` successful [`Self::add`] calls, including the
     /// boundary at which the entry count overflows.
     #[inline]
-    pub fn entries(&mut self, n: usize) -> sbe_rt::GroupResult {
+    pub const fn entries(&mut self, n: usize) -> sbe_rt::GroupResult {
         self.state
             .add_scaled_repeated(self.entry_block_length, self.parent_multiplier, n);
         self.bump_written(n)
@@ -12618,7 +12621,7 @@ impl RaggedEntryBuilder {
     /// wrap and report a count the caller never asked for, which the
     /// group's declared-count check would then silently accept.
     #[inline]
-    fn bump_written(&mut self, n: usize) -> sbe_rt::GroupResult {
+    const fn bump_written(&mut self, n: usize) -> sbe_rt::GroupResult {
         match self.written.checked_add(n) {
             Some(total) => {
                 self.written = total;
@@ -12785,7 +12788,7 @@ impl<'a> AnyMessage<'a> {
     ///Take the `Car` decoder, or `None` if this frame is a different template.
     #[inline]
     #[must_use]
-    pub fn into_car(self) -> Option<CarDecoder<'a>> {
+    pub const fn into_car(self) -> Option<CarDecoder<'a>> {
         match self {
             Self::Car(d) => Some(d),
             _ => None,
@@ -12794,7 +12797,7 @@ impl<'a> AnyMessage<'a> {
     ///Take the `Car` decoder straight into the memoized lane (repeated or out-of-order tail reads), or `None` if this frame is a different template.
     #[inline]
     #[must_use]
-    pub fn into_car_memoized(self) -> Option<CarMemoizedDecoder<'a>> {
+    pub const fn into_car_memoized(self) -> Option<CarMemoizedDecoder<'a>> {
         match self {
             Self::Car(d) => Some(d.memoized()),
             _ => None,

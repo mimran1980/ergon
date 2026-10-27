@@ -135,7 +135,7 @@ ergo-sbe = {{ path = "{sbe_path}", features = ["compact_str", "smol_str", "bytes
 fn generated_full_car_has_no_try_wrap_aliases() -> Result<(), Box<dyn Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "wf_stale");
     // try_wrap / try_wrap_and_apply_header are the checked constructors.
-    assert!(src.contains("pub fn try_wrap_and_apply_header("));
+    assert!(src.contains("pub const fn try_wrap_and_apply_header("));
     assert!(src.contains("pub fn wrap_and_apply_header("));
     assert!(src.contains("pub fn try_decode("));
     Ok(())

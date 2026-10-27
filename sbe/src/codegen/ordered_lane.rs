@@ -85,7 +85,7 @@ pub(crate) fn generate_ordered_lane(
             /// A façade over the staged `into_*` / `skip_*` stages: same single
             /// traversal, same compile-time ordering, one uniform spelling.
             #[inline]
-            pub fn ordered(self) -> sbe_rt::Ordered<Self> {
+            pub const fn ordered(self) -> sbe_rt::Ordered<Self> {
                 sbe_rt::Ordered { inner: self }
             }
         }
@@ -223,12 +223,12 @@ pub(crate) fn generate_ordered_lane(
             }
             /// Body length (excluding header).
             #[inline]
-            pub fn encoded_length(&self) -> usize {
+            pub const fn encoded_length(&self) -> usize {
                 self.inner.encoded_length()
             }
             /// Total message length including the schema-declared header.
             #[inline]
-            pub fn encoded_length_with_header(&self) -> usize {
+            pub const fn encoded_length_with_header(&self) -> usize {
                 self.inner.encoded_length_with_header()
             }
             /// Bytes after this message.
@@ -250,7 +250,7 @@ pub(crate) fn generate_ordered_lane(
             #last_acting
             #done_doc
             #[inline]
-            pub fn done(self) -> #last<'a> {
+            pub const fn done(self) -> #last<'a> {
                 self.inner
             }
             #extent

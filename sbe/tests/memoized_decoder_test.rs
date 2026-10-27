@@ -269,7 +269,7 @@ fn memoized_is_a_separate_lane_reached_by_consuming_the_base_decoder()
         "memoized lane must be its own type"
     );
     assert!(
-        src.contains("pub fn memoized(self)"),
+        src.contains("pub const fn memoized(self)"),
         "memoized() must consume the base decoder"
     );
     let mut body = encode_car_body().to_string();
@@ -418,9 +418,12 @@ fn schema_fields_named_after_lane_methods_are_renamed() -> Result<(), Box<dyn st
         src.contains("fn ordered_field("),
         "field named ordered must rename to ordered_field()"
     );
-    assert!(src.contains("pub fn memoized(self)"), "memoized() lost");
     assert!(
-        src.contains("pub fn ordered(self)"),
+        src.contains("pub const fn memoized(self)"),
+        "memoized() lost"
+    );
+    assert!(
+        src.contains("pub const fn ordered(self)"),
         "ordered() lane conversion must exist on the base decoder"
     );
 
