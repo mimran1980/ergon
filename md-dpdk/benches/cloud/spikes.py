@@ -72,7 +72,7 @@ import random
 import re
 import sys
 
-from transport_points import hosts_of as transport_hosts_of, irq_core_saturated, read_points, row_flags
+from transport_points import hosts_of_point as transport_hosts_of, irq_core_saturated, read_points, row_flags
 
 # the threads that busy-spin on traced CPUs: the dedicated agents, the shared
 # network agent ("[sender, receiver]", which the kernel cuts to 15 characters),
@@ -1328,7 +1328,7 @@ def transport_maxima(run_dir):
     """[(Point, max ns, cause)] for every transport point of a run directory."""
     out = []
     for p in read_points(run_dir):
-        point = TransportPoint(p.set, p.tag, p.row, p.manifest or {}, transport_hosts_of(p.set))
+        point = TransportPoint(p.set, p.tag, p.row, p.manifest or {}, transport_hosts_of(p))
         out.append((p, p.row["max"], transport_cause(os.path.join(run_dir, p.set), point)))
     return out
 

@@ -28,7 +28,9 @@ import sys
 SETUPS = ("none", "kernel", "dpdk", "sockets", "fstack")
 # setups whose NICs DPDK holds: netem (a kernel qdisc) cannot reach them
 DPDK_SETUPS = ("dpdk", "fstack")
-HOSTS = ("one", "two")
+# one: both ends in one process on the set's host; two: ping on a, pong on
+# b; sink: one's run on host a and a sink on b reading every frame it sends
+HOSTS = ("one", "two", "sink")
 
 
 class PlanError(Exception):
@@ -61,7 +63,7 @@ def load(paths):
                 if name in arms or name == "aa":
                     raise PlanError(f"{where}: arm {name} given twice (or named aa, the A/A arm's)")
                 if setup not in SETUPS or hosts not in HOSTS:
-                    raise PlanError(f"{where}: arm {name}: setup is one of {', '.join(SETUPS)}, hosts one or two")
+                    raise PlanError(f"{where}: arm {name}: setup is one of {', '.join(SETUPS)}, hosts one, two or sink")
                 if not all(c.isalnum() or c in "-_" for c in name + binary):
                     raise PlanError(f"{where}: arm {name}: names and binaries are letters, digits, - and _")
                 args = words[5:]
@@ -102,8 +104,14 @@ def load(paths):
             raise PlanError(f"{s['where']}: set {s['id']}: {', '.join(held)} run on DPDK, which netem "
                             "cannot reach: such a set has netem -")
         kinds = {arms[a][2] for a in s["arms"] if a != "aa"}
-        if kinds != ({"two"} if s["host"] == "ab" else {"one"}):
+        if s["host"] == "ab" and kinds != {"two"} or s["host"] != "ab" and not kinds <= {"one", "sink"}:
             raise PlanError(f"{s['where']}: set {s['id']}: host ab takes two-host arms, a or b one-host arms")
+        # a sink arm measures on host a and reads on b: its set holds both
+        # hosts (never run beside another), with no netem (set on a alone)
+        s["sink"] = "sink" in kinds
+        if s["sink"] and (s["host"] != "a" or s["netem"] != ["-"]):
+            raise PlanError(f"{s['where']}: set {s['id']}: a sink arm (its sink on b) runs in a set on host a, "
+                            "netem -")
     return arms, sets
 
 
@@ -133,7 +141,7 @@ def groups(sets, pair):
             tags[s["par"]] = len(out)
             out.append([s])
     for g in out:
-        hosts = [s["host"] for s in g]
+        hosts = ["ab" if s.get("sink") else s["host"] for s in g]
         if len(g) > 1 and ("ab" in hosts or len(set(hosts)) != len(hosts)):
             raise PlanError(f"sets {', '.join(s['id'] for s in g)} run at once: one-host sets on different hosts only")
     return out
@@ -163,7 +171,7 @@ def count(sets, pair, reps):
 def set_seconds(s, reps, warmup_s, point_s, switch_s):
     """A set's measuring time: each arm x stream count a warm-up, a switch
     and its points (each its window and a switch); a one-host set's points
-    twice (transport.sh runs one way, then the round trip)."""
+    (a sink arm's too) twice (transport.sh runs one way, then the round trip)."""
     runs = 1 if s["host"] == "ab" else 2
     return (runs * len(s["arms"]) * len(s["streams"]) * len(s["netem"]) * reps
             * (warmup_s + switch_s + len(s["loads"]) * (point_s + switch_s)))

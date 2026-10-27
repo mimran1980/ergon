@@ -58,6 +58,10 @@ concerns. Rules:
                    (path_loss), as an Aeron row's retransmits there are;
                    DSACK-reported (spurious) retransmits are reported, not loss
   lateness         scheduled and late counted, as the manifest says
+  sink             a sink arm's run (aeron_lat --mode spy-udp) has its sink's manifest,
+                   the sink read every ping the run sent (and in a round trip every
+                   echo), in order, and host a's driver sent at least every frame's
+                   bytes (driver.bytes-sent): the spy read a stream that crossed the wire
   max              every max labelled (spikes.py); unexplained blocks
   netem            a loss row's netem on every data NIC of every host at its
                    loss, its drops inside a 99.9 % binomial interval; none on
@@ -72,7 +76,7 @@ import sys
 from collections import defaultdict, namedtuple
 
 from spikes import transport_maxima
-from transport_points import hosts_of, irq_core_thread, read_points, tcp_loss
+from transport_points import hosts_of_point, irq_core_thread, read_points, tcp_loss
 
 Violation = namedtuple("Violation", "rule set tags detail")
 Violation.__str__ = lambda v: f"{v.rule}: {v.set or 'run'}: {v.detail}"
@@ -105,7 +109,10 @@ REQUIRED = ("set", "arm", "round", "rep", "rate", "streams", "size", "duration_s
             "wire_bytes", "core_build", "arm_order", "vms", "cpus", "threads", "irqs", "hostcheck", "settings",
             "loss_counters", "transport")
 LOSS_SOURCES = {"tcp": ("tcp_info", "nstat"), "udp": ("nstat",), "aeron-udp": ("aeron",), "aeron-dpdk": ("aeron",),
-                "aeron-ipc": ("aeron",), "aeron-spy": ("aeron",), "mpsc": ()}
+                "aeron-ipc": ("aeron",), "aeron-spy": ("aeron",), "aeron-spy-udp": ("aeron",),
+                "aeron-spy-dpdk": ("aeron",), "mpsc": ()}
+# Aeron's data frame: the message and its 32-byte header (aeron_lat.rs)
+AERON_FRAME = 96
 
 
 
@@ -123,6 +130,38 @@ def retransmits(transport):
     """Whether a transport (or a part of a +-joined one) retransmits, so its
     rows must count it: TCP and Aeron's."""
     return any(p == "tcp" or p.startswith("aeron") for p in (transport or "").split("+"))
+
+
+def sink_problems(p):
+    """A sink arm's run (the runner's arm_hosts=sink): what its sink's
+    manifest (collected as "sink") says against the run's own: a sink that
+    read fewer pings than the run sent (or, in a round trip, fewer echoes
+    than it echoed), out of order, or a driver on host a that sent fewer
+    bytes than the frames; [] for any other point."""
+    m = p.manifest or {}
+    if (m.get("runner") or {}).get("arm_hosts") != "sink":
+        return []
+    bs = (m.get("binary") or {}).get("settings") or {}
+    ss = (m.get("sink") or {}).get("settings")
+    if ss is None:
+        return [f"{p.tag}: no sink manifest: its frames' arrival on b unproven"]
+    num = lambda d, k: int(d[k]) if str(d.get(k, "")).isdigit() else None
+    sent, echoes = num(bs, "sent"), num(bs, "echoes_sent") if p.kind == "load" else 0
+    ping, echo = num(ss, "sink.ping_frames"), num(ss, "sink.echo_frames")
+    out = []
+    if None in (sent, echoes, ping, echo):
+        return [f"{p.tag}: sink or run counts not recorded (sent {sent}, echoes {echoes}, sink {ping}/{echo})"]
+    if ping < sent:
+        out.append(f"{p.tag}: the sink received {ping:,} of {sent:,} pings")
+    if echo < echoes:
+        out.append(f"{p.tag}: the sink received {echo:,} of {echoes:,} echoes")
+    for k in ("sink.gaps", "sink.behind", "sink.refused"):
+        if num(ss, k) != 0:
+            out.append(f"{p.tag}: the sink's {k[len('sink.'):]} {ss.get(k)}")
+    sent_bytes = num(bs, "driver.bytes-sent")
+    if sent_bytes is None or sent_bytes < (sent + echoes) * AERON_FRAME:
+        out.append(f"{p.tag}: host a's driver sent {sent_bytes} bytes for {sent + echoes:,} frames")
+    return out
 
 
 def guest_drops(p):
@@ -301,7 +340,7 @@ def binary_warnings(run_dir, p):
     out = {}
     if not point:
         return out
-    for suffix, host in ((".out", "a"), (".pong", hosts_of(p.set)[-1])):
+    for suffix, host in ((".out", "a"), (".pong", hosts_of_point(p)[-1])):
         path = os.path.join(run_dir, "logs", point + suffix)
         if not os.path.exists(path):
             continue
@@ -450,7 +489,7 @@ def check(run_dir, absences=None, notes=None):
             for p in ps:
                 arm = arm_key(p)
                 want = dict(shared, **per_arm.get(arm, {}))
-                for host in hosts_of(p.set):
+                for host in hosts_of_point(p):
                     got = p.manifest["settings"].get(host)
                     if got is None:
                         add("settings", set_, [p.tag], f"{p.tag}: no settings read back on {host}")
@@ -515,7 +554,9 @@ def check(run_dir, absences=None, notes=None):
                             + ", ".join(seen))
 
         for p in ps:
-            m, hosts = p.manifest, hosts_of(p.set)
+            m, hosts = p.manifest, hosts_of_point(p)
+            for why in sink_problems(p):
+                add("sink", set_, [p.tag], why)
             # a socket arm's NICs: interrupts not deferred (epoll never
             # busy-polls), but where a tuning session froze it on
             if socket_point(p):
@@ -665,14 +706,19 @@ def check(run_dir, absences=None, notes=None):
             if len(w) > 1:
                 add("payload", set_, [p.tag for p in ps if p.arm == arm],
                     f"{arm}'s wire bytes differ across rounds: {', '.join(map(str, sorted(w)))}")
-        pairs = defaultdict(list)
+        # each host on one VM: a one-host arm's points (host a alone) beside
+        # a sink arm's (a and b) in one set are one pair
+        pairs, by_host = defaultdict(list), defaultdict(set)
         for p in ps:
-            pairs[tuple(sorted((p.manifest["vms"] or {}).items()))].append(p.tag)
-        if len(pairs) > 1:
+            vms = p.manifest["vms"] or {}
+            pairs[tuple(sorted(vms.items()))].append(p.tag)
+            for h, v in vms.items():
+                by_host[h].add(v)
+        if any(len(v) > 1 for v in by_host.values()):
             add("vm-pair", set_, [], "points on more than one VM pair: "
                 + "; ".join(f"{dict(k)} ({len(v)})" for k, v in sorted(pairs.items())))
         for p in ps:
-            missing = [h for h in hosts_of(p.set) if not (p.manifest["vms"] or {}).get(h)]
+            missing = [h for h in hosts_of_point(p) if not (p.manifest["vms"] or {}).get(h)]
             if missing:
                 add("vm-pair", set_, [p.tag], f"{p.tag}: no VM id for {', '.join(missing)}")
 

@@ -16,7 +16,7 @@ is missing is a fairness violation, never a default.
 <run>/transport-settings.env      the settings each arm must run with (transport_collect.py)
 <run>/transport-settings.tr.env   the TR_* file the session sourced
 <run>/failures.csv                each failed run: set,rep,netem,arm,aa,<streams|setup> (transport.sh)
-<run>/logs/<point>.out, .pong     the measuring run's output (host a) and its echo's (b; a on a one-host set)
+<run>/logs/<point>.out, .pong     the measuring run's output (host a) and its echo's or sinks' (b; a on a one-host set)
 <run>/<set>/manifest-<tag>.json   one per point
 <run>/<set>/spikes-<tag>.csv      the point's spikes and its max
 <run>/<set>/<host>-events-<tag>.csv  timed events on a host during the point
@@ -28,7 +28,10 @@ is missing is a fairness violation, never a default.
 
 `<set>` is the matrix set (`1`, `2a`, `2b`, `3a`, `3b`, `3c`, `fan`).
 Manifest host keys: a two-host set's `a` and `b`; a one-host set's one host
-is `a` whichever VM it ran on (`hosts` in the manifest maps key to VM).
+is `a` whichever VM it ran on (`hosts` in the manifest maps key to VM). A
+sink arm's point (`runner.arm_hosts` `sink`, in a set on host a) has `a` and
+`b`; a one-host arm beside it in that set has `a` alone: fairness takes each
+point's hosts from `hosts`.
 `<tag>` is `<set>-<arm-mode>-<size>-<rep>-r<rate>`, the load point's name as
 lib.sh spells it (`file_name(label)-size-rep-point`); a one-way row's files
 add `-oneway`.
@@ -67,7 +70,7 @@ after their due time.
 |---|---|---|
 | `format` | 1 | |
 | `set`, `arm`, `label`, `kind` (`load`/`oneway`) | string | |
-| `transport` | `mpsc`, `aeron-ipc`, `aeron-spy`, `aeron-udp`, `aeron-dpdk`, `udp`, `tcp`, or several joined by `+` (`udp+tcp`: every part's loss sources) | loss accounting, no DPDK in loss rows |
+| `transport` | `mpsc`, `aeron-ipc`, `aeron-spy`, `aeron-spy-udp`, `aeron-spy-dpdk`, `aeron-udp`, `aeron-dpdk`, `udp`, `tcp`, or several joined by `+` (`udp+tcp`: every part's loss sources) | loss accounting, no DPDK in loss rows |
 | `round` | string | fairness groups points by it: one rep of one set, stream count, netem and rate, every arm |
 | `rep`, `rate`, `streams`, `size`, `duration_s`, `warmup_s` | int | same schedule |
 | `netem` | string or null | as the label's `@NETEM` |
@@ -75,7 +78,8 @@ after their due time.
 | `payload_sha256`, `wire_bytes` | string, int | same payload |
 | `core_build` | string | same core build (the core binary's hash) |
 | `seed`, `arm_order` | int, [arm] | randomised order; an arm of it with no row in the round is absent only with its failure there in failures.csv, and left out of that comparison |
-| `runner` | {knob: value} (`manifest/<point>.env`) | `point` names the logs a binary's own check warnings are read from (hostcheck) |
+| `runner` | {knob: value} (`manifest/<point>.env`) | `point` names the logs a binary's own check warnings are read from (hostcheck); `arm_hosts` the arm's hosts (`one`, `two`, `sink`) |
+| `binary`, `pong`, `sink` | the binaries' own manifests: the measuring run's, a two-host arm's pong's, a sink arm's run's sink's (`points/<point>/sink<run>`; else null) | sink: the sink's `sink.ping_frames`, `sink.echo_frames`, `sink.gaps`, `sink.behind`, `sink.refused` against the run's `sent`, `echoes_sent` and `driver.bytes-sent` |
 | `scheduled`, `late`, `max_send_lag_ns` | int | lateness |
 | `vms` | {host: VM id} | same VM pair |
 | `cpus` | {host: {housekeeping: [cpu], irq: [cpu], hot: [cpu]}} | placement, IRQs |
