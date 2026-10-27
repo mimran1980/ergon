@@ -23,9 +23,13 @@ jobs:
         with:
           submodules: recursive
 
+      # Every component rust-toolchain.toml names, installed here: book-ci's
+      # parallel self-tests would otherwise each ask rustup for the missing
+      # ones at once and collide on its download directory.
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.99.0"
+          components: rustfmt, clippy, rust-analyzer
 
       - uses: extractions/setup-just@v4
 
