@@ -245,6 +245,12 @@ class FairnessTest(unittest.TestCase):
             f.write("T15 warn: another process may run on CPU 4 (evidence: /proc/77/status)\n")
         self.assertOnly(run, "hostcheck")
 
+    def test_hostcheck_wall_clock_warning_is_reported_only(self):
+        run = Run(self)
+        with open(run.path("2a", "a-hostcheck.txt"), "a") as f:
+            f.write("T11 warn: CLOCK_REALTIME is not disciplined to a PTP hardware clock (chronyd tracks NTP)\n")
+        self.assertEqual(fairness.check(run.run), [])
+
     def test_hostcheck_unproven_blocking_check(self):
         run = Run(self)
         with open(run.path("2a", "a-hostcheck.txt"), "a") as f:

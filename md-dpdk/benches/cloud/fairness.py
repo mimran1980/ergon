@@ -247,6 +247,13 @@ def napi_on(p, host):
     return None
 
 
+# findings the hostcheck binary reports without blocking (REPORTED_ONLY in
+# md-dpdk/harness/src/bin/hostcheck.rs): T11, CLOCK_REALTIME's discipline,
+# bounds only wall-clock stamps compared across hosts; every latency here is
+# on one host's counter
+REPORTED_ONLY = {"T11"}
+
+
 def hostcheck_problems(path):
     """What keeps a hostcheck report from being clean ([] when clean)."""
     try:
@@ -259,6 +266,8 @@ def hostcheck_problems(path):
         return ["no findings"]
     out = []
     for m, line in zip(found, lines):
+        if m and m.group(1) in REPORTED_ONLY:
+            continue
         if m and m.group(2) == "warn":
             out.append(line)
         elif m and m.group(2) == "unknown" and m.group(1) not in SUBSYSTEM_CHECKS:
