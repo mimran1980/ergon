@@ -73,28 +73,28 @@ impl LeadershipAwareBook {
     }
 
     #[must_use]
-    pub fn is_serving(&self) -> bool {
+    pub const fn is_serving(&self) -> bool {
         self.serving
     }
 
     #[must_use]
-    pub fn stale_reason(&self) -> Option<StaleReason> {
+    pub const fn stale_reason(&self) -> Option<StaleReason> {
         if self.serving { None } else { Some(self.stale) }
     }
 
     #[must_use]
-    pub fn leadership_term_id(&self) -> Option<i64> {
+    pub const fn leadership_term_id(&self) -> Option<i64> {
         self.leadership_term_id
     }
 
     #[must_use]
-    pub fn last_seq(&self) -> u64 {
+    pub const fn last_seq(&self) -> u64 {
         self.last_seq
     }
 
     /// Live image only when serving; otherwise `None` (never silent last-good).
     #[must_use]
-    pub fn live_image(&self) -> Option<&BookImage> {
+    pub const fn live_image(&self) -> Option<&BookImage> {
         if self.serving {
             Some(&self.image)
         } else {
@@ -104,12 +104,12 @@ impl LeadershipAwareBook {
 
     /// Frozen last image for debug/UI only — must not be treated as live.
     #[must_use]
-    pub fn frozen_image(&self) -> &BookImage {
+    pub const fn frozen_image(&self) -> &BookImage {
         &self.image
     }
 
     /// Call on `NewLeaderEvent`, session reconnect, or session release.
-    pub fn on_leadership_release(&mut self) {
+    pub const fn on_leadership_release(&mut self) {
         self.serving = false;
         self.stale = StaleReason::LeadershipRelease;
         // Keep last image frozen for debug; do not clear term until snapshot

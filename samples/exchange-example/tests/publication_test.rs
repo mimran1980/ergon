@@ -10,14 +10,14 @@ use exchange_example::publication::{
     ClaimPublisher, DropReason, PublishOutcome, RecordingPublication,
 };
 
-fn lvl(pm: i64, pe: i8, sm: i64, se: i8) -> Level {
+const fn lvl(pm: i64, pe: i8, sm: i64, se: i8) -> Level {
     Level {
         price: WireDec::new(pm, pe),
         size: WireDec::new(sm, se),
     }
 }
 
-fn book_event<'a>(bids: &'a [Level], asks: &'a [Level]) -> NormalizedEventRef<'a> {
+const fn book_event<'a>(bids: &'a [Level], asks: &'a [Level]) -> NormalizedEventRef<'a> {
     NormalizedEventRef::L2Book {
         symbol: "BTCUSDT",
         exchange_ts_ns: 1_700_000_000_000_000_000,
