@@ -8,16 +8,19 @@
 
 /// `CLOCK_REALTIME` in nanoseconds.
 #[must_use]
+#[inline]
 pub fn realtime_ns() -> i64 {
     clock_ns(libc::CLOCK_REALTIME)
 }
 
 /// `CLOCK_MONOTONIC` in nanoseconds.
 #[must_use]
+#[inline]
 pub fn monotonic_ns() -> i64 {
     clock_ns(libc::CLOCK_MONOTONIC)
 }
 
+#[inline]
 fn clock_ns(id: libc::clockid_t) -> i64 {
     let mut ts = libc::timespec {
         tv_sec: 0,

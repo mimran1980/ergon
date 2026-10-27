@@ -549,10 +549,12 @@ impl HttpConn {
     #[inline]
     fn ready_for(&mut self, template: &RequestTemplate) -> Result<()> {
         if self.in_flight.len() >= self.opts.max_in_flight {
+            std::hint::cold_path();
             return Err(Error::Busy("max_in_flight requests outstanding"));
         }
         if template.id != self.template_ok {
             if template.fixed_headers() != self.fixed.as_slice() {
+                std::hint::cold_path();
                 return Err(Error::Http("request template is for another target".into()));
             }
             self.template_ok = template.id;
@@ -598,6 +600,7 @@ impl HttpConn {
         query: impl FnOnce(&mut Vec<u8>),
     ) -> Result<u64> {
         if self.in_flight.len() >= self.opts.max_in_flight {
+            std::hint::cold_path();
             return Err(Error::Busy("max_in_flight requests outstanding"));
         }
         validate_request(method, path, headers)?;
@@ -845,6 +848,7 @@ impl HttpConn {
                 return Ok(delivered);
             }
             let Some(req) = self.in_flight.front() else {
+                std::hint::cold_path();
                 return Err(Error::Http("response without a request".into()));
             };
             let at = At {
@@ -885,6 +889,7 @@ impl HttpConn {
         self.stream.consume(used);
         self.wire += used;
         if self.wire > at.limit {
+            std::hint::cold_path();
             return Err(Error::Http("response larger than the buffer".into()));
         }
         if !self.dechunk.done() {
@@ -949,6 +954,7 @@ impl HttpConn {
         let ascii = all_ascii(&window[..hl]);
         if !ascii {
             if self.opts.non_ascii_head == NonAsciiHead::Reject {
+                std::hint::cold_path();
                 return Err(Error::Http("non-ASCII byte in the response head".into()));
             }
             self.non_ascii_heads += 1;

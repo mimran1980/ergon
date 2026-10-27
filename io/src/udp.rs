@@ -199,13 +199,10 @@ impl UdpConn {
             ));
         }
         if payload.len() > self.max {
-            return Err(Error::Config(format!(
-                "udp datagram of {} bytes is over max_datagram {}",
-                payload.len(),
-                self.max
-            )));
+            return Err(over_max_datagram(payload.len(), self.max));
         }
         if self.queued == self.lens.len() {
+            std::hint::cold_path();
             self.stats.tx_full += 1;
             return Err(Error::Busy("udp send slots full"));
         }
@@ -338,4 +335,12 @@ impl<H: UdpHandler> Deliver<H> for UdpConn {
         self.stats.rx += 1;
         Ok(1)
     }
+}
+/// The refusal for a datagram over `max_datagram`, built out of line.
+#[cold]
+#[inline(never)]
+fn over_max_datagram(len: usize, max: usize) -> Error {
+    Error::Config(format!(
+        "udp datagram of {len} bytes is over max_datagram {max}"
+    ))
 }

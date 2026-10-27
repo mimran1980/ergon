@@ -221,6 +221,7 @@ impl<'a> Fragments<'a> {
 
     /// Slice `i`, in order.
     #[must_use]
+    #[inline]
     pub fn get(&self, i: usize) -> Option<&'a [u8]> {
         self.parts
             .get(i)
@@ -229,6 +230,7 @@ impl<'a> Fragments<'a> {
 
     /// The slices, in order.
     #[must_use]
+    #[inline]
     pub fn iter(&self) -> FragmentIter<'a> {
         FragmentIter {
             base: self.base,
@@ -239,6 +241,7 @@ impl<'a> Fragments<'a> {
     /// The payload as one slice, when it is one (a single fragment, or a
     /// message that fell back to a copy).
     #[must_use]
+    #[inline]
     pub fn contiguous(&self) -> Option<&'a [u8]> {
         if self.parts.len() == 1 {
             self.get(0)
@@ -250,6 +253,7 @@ impl<'a> Fragments<'a> {
     /// Copies the payload into the front of `out`; `None` when `out` is
     /// shorter than [`Fragments::len`] (nothing is copied then).
     #[must_use]
+    #[inline]
     pub fn copy_to(&self, out: &mut [u8]) -> Option<usize> {
         if out.len() < self.len {
             return None;
@@ -267,6 +271,7 @@ impl<'a> IntoIterator for &Fragments<'a> {
     type Item = &'a [u8];
     type IntoIter = FragmentIter<'a>;
 
+    #[inline]
     fn into_iter(self) -> FragmentIter<'a> {
         self.iter()
     }
@@ -282,11 +287,13 @@ pub struct FragmentIter<'a> {
 impl<'a> Iterator for FragmentIter<'a> {
     type Item = &'a [u8];
 
+    #[inline]
     fn next(&mut self) -> Option<&'a [u8]> {
         let p = self.parts.next()?;
         self.base.get(p.start..p.start + p.len)
     }
 
+    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         self.parts.size_hint()
     }
@@ -813,11 +820,13 @@ impl WsConn {
                 break;
             };
             if h.mask.is_some() {
+                std::hint::cold_path();
                 return Err(Error::Ws("server frame is masked"));
             }
             // Checked before waiting for the frame: one that can never fit
             // fails instead of stalling.
             if h.payload_len > self.frame_limit {
+                std::hint::cold_path();
                 return Err(self.too_large(h.payload_len));
             }
             // A held message must leave the buffer room for the rest: one
@@ -887,7 +896,10 @@ impl WsConn {
                     self.on_close(&body[..plen])?;
                     return Ok(count);
                 }
-                _ => return Err(Error::Ws("unexpected opcode")),
+                _ => {
+                    std::hint::cold_path();
+                    return Err(Error::Ws("unexpected opcode"));
+                }
             }
             self.stream.consume(h.frame_len());
         }
@@ -905,6 +917,7 @@ impl WsConn {
         handler: &mut H,
     ) -> Result<()> {
         if self.frag_op != 0 {
+            std::hint::cold_path();
             return Err(Error::Ws("new message inside a fragmented one"));
         }
         let payload = &self.stream.window()[h.header_len..h.frame_len()];
@@ -950,10 +963,12 @@ impl WsConn {
         handler: &mut H,
     ) -> Result<bool> {
         if self.frag_op == 0 {
+            std::hint::cold_path();
             return Err(Error::Ws("continuation without a first fragment"));
         }
         let payload = &self.stream.window()[h.header_len..h.frame_len()];
         if self.frag_len + payload.len() > self.max_message {
+            std::hint::cold_path();
             return Err(Error::Ws("message too large"));
         }
         self.frag_len += payload.len();
@@ -970,6 +985,7 @@ impl WsConn {
                 };
                 // The spill check before the frame keeps a free slot.
                 let Some(p) = self.parts.get_mut(self.nparts) else {
+                    std::hint::cold_path();
                     return Err(Error::Ws("fragment list overflow"));
                 };
                 *p = part;
@@ -1056,6 +1072,7 @@ impl WsConn {
                 self.unhandled += 1;
             }
             Flow::Unhandled => {
+                std::hint::cold_path();
                 return Err(Error::Ws(
                     "on_fragment returned Unhandled after the first fragment",
                 ));
@@ -1243,6 +1260,7 @@ impl WsConn {
             _ => return Err(bad_send()),
         }
         if self.closing {
+            std::hint::cold_path();
             return Err(Error::Ws("the connection is closing"));
         }
         self.queue(opcode, payload)

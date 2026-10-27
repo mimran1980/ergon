@@ -189,6 +189,7 @@ impl FrameConn {
     #[inline]
     pub fn send_frame(&mut self, payload: &[u8]) -> Result<()> {
         if payload.len() > self.max_frame {
+            std::hint::cold_path();
             return Err(Error::Frame("frame to send is over max_frame"));
         }
         let len = u32::try_from(payload.len())
@@ -303,6 +304,7 @@ impl FrameConn {
                 self.buf[h + 3],
             ]) as usize;
             if len > self.max_frame {
+                std::hint::cold_path();
                 return Err(Error::Frame("received frame is over max_frame"));
             }
             let end = h + HEADER_LEN + len;
