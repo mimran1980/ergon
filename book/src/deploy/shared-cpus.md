@@ -30,7 +30,7 @@ The kind e2e passed at its source. **Verified on EKS AL2023** (Kubernetes
 merge, the kubelet drop-in merge, `/opt` writable, `system-node-critical`
 outside `kube-system`. Latency of the spin loop is measured on one Azure VM;
 the helpers' wake-up wait and the pin on EKS. AKS cannot run it.
-Prior art: `k8s/nri-shared-cpus/README.md`.
+Related projects (credited): `k8s/nri-shared-cpus/README.md`.
 
 ## Use the public chart
 

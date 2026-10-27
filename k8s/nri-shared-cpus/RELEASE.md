@@ -82,7 +82,7 @@ namespace allowlist. Each has a test or a documented refusal.
 | item | state |
 |---|---|
 | README status names the released tag and this gate | done |
-| README `## Prior art` names CRI-O, `mixed-cpu-node-plugin`, `dra-driver-cpu` #103/#149/#305, `nri-plugins` and `nri-cpuset-partition`, and does not claim novelty | done |
+| README `## Related projects` credits CRI-O, `mixed-cpu-node-plugin`, `dra-driver-cpu` #103/#149/#305, `nri-plugins` and `nri-cpuset-partition`, does not claim novelty and does not criticise their work | done |
 | README `## Did the isolation actually hold?` is the IRQ-leak check (probe and socket on one exclusive CPU) | done |
 | book install runbook (`book/src/deploy/shared-cpus.md`) names the released tag | done |
 | contract (resource name, annotation keys, env names) | stated in the README; changes go in the repo `CHANGELOG.md` |
@@ -90,7 +90,8 @@ namespace allowlist. Each has a test or a documented refusal.
 
 ## 5. Claims
 
-Nothing published may claim this idea is new. The README `## Prior art`
+Nothing published may claim this idea is new or criticise another project's
+work: credit them and let readers choose. The README `## Related projects`
 section is the standing wording; keep it in step with these projects:
 
 | project | watch |
