@@ -34,4 +34,4 @@
 #
 # set   pair par host loads               streams  netem  arms
 set h    a    -   ab   10000,50000,200000  1        -      dpdk-aeron-rel,dpdk-aeron-rel-emb,dpdk-aeron-rel-shnet,dpdk-aeron-rel-shared,dpdk-aeron-rel-invoker,aa
-#set k   a    -   ab   50000               1        -      aeron-rel,aeron-rel-emb,aeron-rel-invoker,aa
+set k    a    -   ab   50000               1        -      aeron-rel,aeron-rel-emb,aeron-rel-invoker,aa
