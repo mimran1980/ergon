@@ -268,7 +268,7 @@ impl TestEnv {
     }
 
     /// A handle on the state an earlier `new()` reset, without resetting again.
-    pub fn adopt() -> Self {
+    pub const fn adopt() -> Self {
         Self
     }
 

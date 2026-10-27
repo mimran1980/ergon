@@ -78,7 +78,7 @@ fn default_driver() -> String {
     VFIO_PCI.into()
 }
 
-fn default_numa() -> i32 {
+const fn default_numa() -> i32 {
     -1
 }
 

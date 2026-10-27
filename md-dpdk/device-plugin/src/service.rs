@@ -199,7 +199,7 @@ impl device_plugin_server::DevicePlugin for DevicePluginService {
 /// Both ports on one known node, or one known and the other unknown (`-1`).
 /// Two different nodes are not one node: the topology manager would otherwise
 /// place the pod from the sender's node alone.
-fn pair_numa_ok(pair: &Pair) -> bool {
+const fn pair_numa_ok(pair: &Pair) -> bool {
     let sender = pair.sender.numa_node;
     let receiver = pair.receiver.numa_node;
     sender < 0 || receiver < 0 || sender == receiver

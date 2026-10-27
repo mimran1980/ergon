@@ -563,7 +563,7 @@ impl Clock {
 
     /// Which clock it is.
     #[allow(dead_code)] // the clients' and clockcheck's
-    pub fn kind(&self) -> ClockKind {
+    pub const fn kind(&self) -> ClockKind {
         match self.0 {
             Inner::Quanta { .. } => ClockKind::Quanta,
             Inner::Monotonic(_) => ClockKind::Monotonic,

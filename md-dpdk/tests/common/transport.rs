@@ -70,7 +70,7 @@ pub struct SockAddrIn {
 }
 
 impl SockAddrIn {
-    pub fn new(ip: [u8; 4], port: u16) -> Self {
+    pub const fn new(ip: [u8; 4], port: u16) -> Self {
         Self {
             sin_family: 2, // AF_INET
             sin_port: port.to_be(),
@@ -80,7 +80,7 @@ impl SockAddrIn {
             sin_zero: [0; 8],
         }
     }
-    pub fn storage_mut(&mut self) -> *mut sockaddr_storage {
+    pub const fn storage_mut(&mut self) -> *mut sockaddr_storage {
         self as *mut Self as *mut sockaddr_storage
     }
 }

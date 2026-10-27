@@ -213,7 +213,7 @@ impl Ethtool for Stub {
     }
 }
 
-fn stub(adaptive_rx: bool, rings: Option<(u32, u32)>) -> EthtoolCache<Stub> {
+const fn stub(adaptive_rx: bool, rings: Option<(u32, u32)>) -> EthtoolCache<Stub> {
     EthtoolCache::with_source(Stub {
         adaptive_rx: Some(adaptive_rx),
         rings,

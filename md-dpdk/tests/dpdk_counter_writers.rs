@@ -83,7 +83,7 @@ fn strip(src: &str) -> String {
     String::from_utf8(out).unwrap()
 }
 
-fn is_ident(c: u8) -> bool {
+const fn is_ident(c: u8) -> bool {
     c.is_ascii_alphanumeric() || c == b'_'
 }
 

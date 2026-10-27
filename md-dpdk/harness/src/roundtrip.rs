@@ -50,13 +50,13 @@ impl Pace {
 
     /// Whether pings are paced: the run's budget is then checked every ping.
     #[inline(always)]
-    pub fn paced(&self) -> bool {
+    pub const fn paced(&self) -> bool {
         self.gap != 0
     }
 
     /// Whether the next ping may go at `now` (the clock's).
     #[inline(always)]
-    pub fn ready(&self, now: u64) -> bool {
+    pub const fn ready(&self, now: u64) -> bool {
         self.gap == 0 || now >= self.next
     }
 
@@ -66,7 +66,7 @@ impl Pace {
     /// a gap late or more (a lost one's timeout, a stall) starts the
     /// schedule again a gap after it, never a burst to catch up.
     #[inline(always)]
-    pub fn sent(&mut self, at: u64) {
+    pub const fn sent(&mut self, at: u64) {
         let due = self.next;
         self.next = if due != 0 && at.wrapping_sub(due) < self.gap / 2 {
             due.wrapping_add(self.gap)
