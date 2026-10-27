@@ -428,7 +428,7 @@ fn composite_targets(
         .collect()
 }
 
-fn is_constant_member(m: &crate::structured_ir::CompositeMember) -> bool {
+const fn is_constant_member(m: &crate::structured_ir::CompositeMember) -> bool {
     matches!(
         m.member_type,
         crate::structured_ir::MemberType::Primitive {

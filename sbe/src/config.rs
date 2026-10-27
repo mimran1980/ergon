@@ -368,7 +368,7 @@ pub struct FieldInfo {
 impl FieldInfo {
     /// Classify this field as fixed, repeating group, or var-data.
     #[must_use]
-    pub fn kind(&self) -> FieldKind {
+    pub const fn kind(&self) -> FieldKind {
         self.kind
     }
 }
@@ -696,11 +696,11 @@ impl GenerationConfig {
     }
 
     #[must_use]
-    pub(crate) fn domain_objects_enabled(&self) -> bool {
+    pub(crate) const fn domain_objects_enabled(&self) -> bool {
         self.domain_objects
     }
 
-    pub(crate) fn has_conversions(&self) -> bool {
+    pub(crate) const fn has_conversions(&self) -> bool {
         // `with_bool_domain_type` is syntax sugar for `with_domain_type` on
         // each boolean enum — it must also emit TryFromSbe/TryToSbe traits.
         !self.conversions.is_empty() || !self.domain_types.is_empty() || self.auto_bool_domain
@@ -803,7 +803,7 @@ impl GenerationConfig {
     ///     .with_all_enums_as_option();
     /// ```
     #[must_use]
-    pub fn with_all_enums_as_option(mut self) -> Self {
+    pub const fn with_all_enums_as_option(mut self) -> Self {
         self.all_enums_as_option = true;
         self
     }
@@ -1033,7 +1033,7 @@ impl GenerationConfig {
     /// Cannot be combined with an [`Self::with_encode_version`] below the
     /// schema version.
     #[must_use]
-    pub fn with_source_traits(mut self, enable: bool) -> Self {
+    pub const fn with_source_traits(mut self, enable: bool) -> Self {
         self.source_traits = enable;
         self
     }
@@ -1059,7 +1059,7 @@ impl GenerationConfig {
     /// SBE) and var-data contents. A message, group, entry field or
     /// var-data named `validate` is `GenerateError::InvalidConfiguration`.
     #[must_use]
-    pub fn with_validate(mut self, enable: bool) -> Self {
+    pub const fn with_validate(mut self, enable: bool) -> Self {
         self.validate = enable;
         self
     }
@@ -1089,7 +1089,7 @@ impl GenerationConfig {
     ///
     /// → [`sbe/tests/domain_objects_test.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/domain_objects_test.rs)
     #[must_use]
-    pub fn with_domain_objects(mut self, var_data: DomainVarData) -> Self {
+    pub const fn with_domain_objects(mut self, var_data: DomainVarData) -> Self {
         self.domain_objects = true;
         self.domain_var_data = var_data;
         self
@@ -1132,7 +1132,7 @@ impl GenerationConfig {
     /// `Yes=5, No=3`) should use explicit [`ConversionSelector::named_type`]
     /// with [`GenerationConfig::with_conversion`] instead.
     #[must_use]
-    pub fn with_bool_domain_type(mut self, enable: bool) -> Self {
+    pub const fn with_bool_domain_type(mut self, enable: bool) -> Self {
         self.auto_bool_domain = enable;
         self
     }
@@ -1140,7 +1140,7 @@ impl GenerationConfig {
     /// Emit `#[deprecated(note = "deprecated since schema version N")]` on
     /// decoder getters of fields the schema marks `deprecated="N"`.
     #[must_use]
-    pub fn with_deprecated_attrs(mut self, enable: bool) -> Self {
+    pub const fn with_deprecated_attrs(mut self, enable: bool) -> Self {
         self.deprecated_attrs = enable;
         self
     }
@@ -1148,7 +1148,7 @@ impl GenerationConfig {
     /// Control generated `Debug` and `Display` impls (**enabled by default**).
     /// Pass `false` to omit them and shrink generated output.
     #[must_use]
-    pub fn with_display_debug(mut self, enable: bool) -> Self {
+    pub const fn with_display_debug(mut self, enable: bool) -> Self {
         self.enable_display_debug = enable;
         self
     }
@@ -1158,7 +1158,7 @@ impl GenerationConfig {
     /// `*_ENCODING_LENGTH`, `*_ID`, `*_SINCE_VERSION`, null/min/max field
     /// constants, and the per-message `*_field_meta` module.
     #[must_use]
-    pub fn with_meta_attributes(mut self, enable: bool) -> Self {
+    pub const fn with_meta_attributes(mut self, enable: bool) -> Self {
         self.enable_meta_attributes = enable;
         self
     }
@@ -1167,7 +1167,7 @@ impl GenerationConfig {
     /// (**enabled by default**). Pass `false` to omit — saves ~300 lines;
     /// only meaningful when you do not need multi-template frame dispatch.
     #[must_use]
-    pub fn with_dispatch(mut self, enable: bool) -> Self {
+    pub const fn with_dispatch(mut self, enable: bool) -> Self {
         self.enable_dispatch = enable;
         self
     }
@@ -1200,7 +1200,7 @@ impl GenerationConfig {
     /// let _ = GenerationConfig::new("l3_v1").with_encode_version(1);
     /// ```
     #[must_use]
-    pub fn with_encode_version(mut self, version: u16) -> Self {
+    pub const fn with_encode_version(mut self, version: u16) -> Self {
         self.encode_version = Some(version);
         self
     }
@@ -1225,7 +1225,7 @@ impl GenerationConfig {
     /// let _ = GenerationConfig::new("feed").profile(GenerationProfile::Lean);
     /// ```
     #[must_use]
-    pub fn profile(mut self, profile: GenerationProfile) -> Self {
+    pub const fn profile(mut self, profile: GenerationProfile) -> Self {
         match profile {
             GenerationProfile::Full => {
                 self.enable_display_debug = true;
