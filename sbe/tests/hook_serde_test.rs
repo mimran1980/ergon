@@ -36,7 +36,7 @@ const SCHEMA_XML: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 
 #[test]
 fn serde_enum_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
-    let ir = ergo_sbe::parse(SCHEMA_XML)?;
+    let ir = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(SCHEMA_XML))?;
     let schema = ergo_sbe::Schema::from_ir(ir);
 
     let config = ergo_sbe::GenerationConfig::new("hook_serde")

@@ -112,6 +112,18 @@ re-audited.
   belong in the tree.
 - One page owns a fact; other pages link to it.
 
+## Versioning
+
+Every crate is 0.x alpha. Any release may break the API, with no deprecation
+period and no compatibility shim. `CHANGELOG.md` records each break. This does
+not cover the wire: official SBE wire compatibility still outranks API
+convenience.
+
+`scripts/check-generated-public-api.sh` (in `just preflight` and CI) diffs
+generated codec surfaces against `api/generated/*.txt`, so a surface change is
+reviewed, not forbidden. After a reviewed change:
+`UPDATE_GENERATED_PUBLIC_API=1 cargo test -p ergo-sbe --test generated_public_api_test`.
+
 ## Package boundaries
 
 The publication candidates are `ergo-sbe`, `ergo-aeron-cluster`, `ergon-tune`,
@@ -120,7 +132,7 @@ The publication candidates are `ergo-sbe`, `ergo-aeron-cluster`, `ergon-tune`,
 `scripts/check-publish-set.sh` (in `just policy`) fails when a published crate
 depends on an unpublished one, on a path without a version, or on an older
 version than a published sibling's, or when the release recipe, workflow, dry
-runs or public-API gate leave a crate out or publish it before its
+runs or API manifest leave a crate out or publish it before its
 dependencies. A version bump therefore updates every `version` beside a
 workspace `path` with `[workspace.package]`: `ergo-sbe` in
 `[workspace.dependencies]` and the `ergon-tune` lines in `md-dpdk/` and `io/`.

@@ -26,14 +26,6 @@ pub fn compile_and_run_generated_tests(
     tests: &[GeneratedRustTest],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let base = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let tmp = base
-        .join("..")
-        .join("target")
-        .join("encoded_length_matrix")
-        .join(crate_name);
-
-    let _ = fs::remove_dir_all(&tmp);
-    fs::create_dir_all(tmp.join("src"))?;
 
     let mut seen = std::collections::HashSet::new();
     for t in tests {
@@ -52,10 +44,15 @@ pub fn compile_and_run_generated_tests(
         }
     }
 
+    let krate = super::scratch::ScratchCrate::new(crate_name, false);
+    let tmp = std::env::temp_dir().join(krate.name());
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(tmp.join("src"))?;
+
     // Cargo.toml — CARGO_MANIFEST_DIR is the sbe crate root
     let cargo_toml = format!(
         r#"[package]
-name = "{crate_name}"
+name = "{}"
 version = "0.1.0"
 edition = "2024"
 publish = false
@@ -68,9 +65,11 @@ ergo-sbe = {{ path = "{}", features = ["compact_str", "smol_str", "bytes"] }}
 [lib]
 path = "src/lib.rs"
 "#,
+        krate.name(),
         base.display(),
     );
     fs::write(tmp.join("Cargo.toml"), cargo_toml)?;
+    krate.write_lockfile(&tmp);
 
     // lib.rs: include generated source + all tests
     let mut lib_rs = String::new();
@@ -89,10 +88,8 @@ path = "src/lib.rs"
 
     fs::write(tmp.join("src").join("lib.rs"), lib_rs)?;
 
-    let output = super::scratch_cargo()
-        .args(["test", "--", "--test-threads=1"])
-        .current_dir(&tmp)
-        .output()
+    let output = krate
+        .exec(&tmp, super::scratch::Mode::Test(&["--test-threads=1"]))
         .map_err(|e| format!("failed to run cargo test: {e}"))?;
 
     if !output.status.success() {

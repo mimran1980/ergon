@@ -490,3 +490,82 @@ func TestParseAffinityMask(t *testing.T) {
 		t.Fatalf("mask = %s, want 2", got)
 	}
 }
+
+// vmbusNIC writes an Azure synthetic NIC (hv_netvsc): a device directory
+// with no msi_irqs and no irq file, only VMBus channels, each with the CPU
+// the host interrupts for it. cpus maps channel relid to its cpu file body;
+// an empty body leaves the file out.
+func vmbusNIC(t *testing.T, sysRoot, name string, cpus map[int]string) {
+	t.Helper()
+	for relid, body := range cpus {
+		dir := filepath.Join(sysRoot, "class/net", name, "device/channels", strconv.Itoa(relid))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if body == "" {
+			continue
+		}
+		if err := os.WriteFile(filepath.Join(dir, "cpu"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// An Azure VM: eth0 is hv_netvsc (VMBus channels, no PCI interrupt) and the
+// accelerated-networking VF is a PCI NIC with MSI-X. Reserved 0-1, shared 1,
+// so the IRQ destination is CPU 0.
+func azureFixture(t *testing.T) fixture {
+	t.Helper()
+	vf := fixIRQ{n: 30, requested: "0\n", effective: "0\n"}
+	return writeFixture(t, "0-7\n", "2-7\n", "2-7\n", staticKubelet("0-1", "true"), "", "",
+		[]fixNIC{{name: "enP30832s1", irqs: []fixIRQ{vf}}}, nil)
+}
+
+func TestVMBusNIC(t *testing.T) {
+	shared := mustShared(t, "1")
+	t.Run("channels on the IRQ CPU pass", func(t *testing.T) {
+		fx := azureFixture(t)
+		vmbusNIC(t, fx.src.SysRoot, "eth0", map[int]string{14: "0\n", 15: "0\n"})
+		rep, err := Evaluate(fx.src, shared)
+		if err != nil || rep.Err() != nil {
+			t.Fatalf("err %v refusal %v", err, rep.Err())
+		}
+	})
+	t.Run("a channel off the IRQ CPU is refused", func(t *testing.T) {
+		fx := azureFixture(t)
+		vmbusNIC(t, fx.src.SysRoot, "eth0", map[int]string{14: "0\n", 15: "3\n"})
+		rep, err := Evaluate(fx.src, shared)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "NIC eth0 vmbus channel 15 on CPU 3, allowed 0"
+		if rep.Err() == nil || !strings.Contains(rep.Err().Error(), want) {
+			t.Fatalf("err = %v, want %q", rep.Err(), want)
+		}
+	})
+	t.Run("an unreadable channel CPU is refused", func(t *testing.T) {
+		fx := azureFixture(t)
+		vmbusNIC(t, fx.src.SysRoot, "eth0", map[int]string{14: "0\n", 15: ""})
+		rep, err := Evaluate(fx.src, shared)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "NIC eth0 vmbus channel 15: unreadable cpu"
+		if rep.Err() == nil || !strings.Contains(rep.Err().Error(), want) {
+			t.Fatalf("err = %v, want %q", rep.Err(), want)
+		}
+	})
+	t.Run("a device with no interrupt and no channel is refused", func(t *testing.T) {
+		fx := azureFixture(t)
+		if err := os.MkdirAll(filepath.Join(fx.src.SysRoot, "class/net/eth0/device"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		rep, err := Evaluate(fx.src, shared)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rep.Err() == nil || !strings.Contains(rep.Err().Error(), "NIC eth0: no NIC interrupt found") {
+			t.Fatalf("err = %v", rep.Err())
+		}
+	})
+}

@@ -1,0 +1,3 @@
+ok:   allocatable ergon.io/shared-millicpus 2000 (sharedCpus 1-2, oversubscription 1)
+ok:   a pod asking 2100 stays Pending: 0/1 nodes are available: 1 Insufficient ergon.io/shared-millicpus. no new claims to deallocate, preemption: 0/1 nodes are available: 1 Preemption is not helpful for scheduling.
+ok:   a pod asking 2000 schedules (node ergon-lab-control-plane)

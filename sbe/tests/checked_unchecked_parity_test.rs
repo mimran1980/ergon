@@ -316,7 +316,7 @@ fn opaque_buffer_checked_encode() -> Result<(), Box<dyn Error>> {
 
 #[test]
 fn as_str_unchecked_returns_result_and_rejects_truncated() -> Result<(), Box<dyn Error>> {
-    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
+    use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
     let schema_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
     <sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
         package="t18" id="18" version="0" byteOrder="littleEndian">
@@ -336,7 +336,7 @@ fn as_str_unchecked_returns_result_and_rejects_truncated() -> Result<(), Box<dyn
         <data name="payload" id="1" type="varStringEncoding"/>
       </sbe:message>
     </sbe:messageSchema>"#;
-    let schema = Schema::from_ir(parse(schema_xml)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(schema_xml))?);
     let modules = Generator::new(GenerationConfig::new("t18")).generate(&schema)?;
     let src = &modules.modules().next().unwrap().source;
     compile_and_run(

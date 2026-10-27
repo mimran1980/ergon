@@ -1027,3 +1027,105 @@ fn parity_arms_use_identical_observation_barriers() -> Result<(), Box<dyn std::e
     }
     Ok(())
 }
+
+// ── NewOrder: encode_from against fixed(), mapped against raw ──────────
+
+const ENCODE_BENCH: &str = include_str!("../benches/encode_bench.rs");
+const DECODE_BENCH: &str = include_str!("../benches/decode_bench.rs");
+const LATENCY_DISTRIBUTION: &str = include_str!("../benches/latency_distribution.rs");
+
+#[test]
+fn new_order_encode_from_writes_the_bytes_fixed_writes() -> Result<(), Box<dyn std::error::Error>> {
+    use ergo_sbe_benchmarks::new_order_fixture::{BUY, FRAME_LEN, SELL, encode_fixed, encode_from};
+
+    for order in [&BUY, &SELL] {
+        // Different fill bytes: equal frames prove both arms wrote every byte.
+        let mut fixed = [0x00u8; 128];
+        let mut from = [0xAAu8; 128];
+        let fixed_len = encode_fixed(&mut fixed, order)?;
+        let from_len = encode_from(&mut from, order)?;
+        assert_eq!(fixed_len, FRAME_LEN);
+        assert_eq!(from_len, FRAME_LEN);
+        assert_eq!(fixed[..fixed_len], from[..from_len]);
+    }
+    Ok(())
+}
+
+#[test]
+fn new_order_mapped_accessors_read_the_raw_values() -> Result<(), Box<dyn std::error::Error>> {
+    use ergo_sbe_benchmarks::new_order_fixture::{
+        AppPrice, AppSide, BUY, FRAME_LEN, SELL, encode_fixed, read_mapped, read_raw,
+    };
+    use ergo_sbe_benchmarks::new_order_mapped::NewOrderDecoder;
+
+    for (order, side, raw_side) in [(&BUY, AppSide::Buy, 1u8), (&SELL, AppSide::Sell, 2u8)] {
+        let mut frame = [0u8; FRAME_LEN];
+        encode_fixed(&mut frame, order)?;
+        let decoder = NewOrderDecoder::try_from(&frame[..])?;
+        assert_eq!(
+            read_mapped(&decoder)?,
+            (
+                side,
+                AppPrice {
+                    mantissa: order.price
+                },
+                AppPrice {
+                    mantissa: order.qty
+                }
+            )
+        );
+        assert_eq!(read_raw(&decoder), (raw_side, order.price, order.qty));
+    }
+    Ok(())
+}
+
+/// A `NewOrder` bench function asserts equality and black-boxes its input
+/// before its first timed case.
+fn new_order_preflight(source: &str, name: &str) -> Result<(), String> {
+    let body = function_source(source, name).ok_or_else(|| format!("{name} missing"))?;
+    let first_timed = body
+        .find(".bench_function")
+        .ok_or_else(|| format!("{name} has no timed case"))?;
+    if !body[..first_timed].contains("assert_eq!") {
+        return Err(format!(
+            "{name} must assert equality before its first timed case"
+        ));
+    }
+    if !body[first_timed..].contains("black_box(") {
+        return Err(format!("{name} must black-box its timed inputs"));
+    }
+    Ok(())
+}
+
+#[test]
+fn new_order_benches_assert_before_timing() -> Result<(), Box<dyn std::error::Error>> {
+    new_order_preflight(ENCODE_BENCH, "bench_new_order_encode")?;
+    new_order_preflight(DECODE_BENCH, "bench_new_order_mapped_decode")?;
+    let unchecked = "\nfn bench_x(c: &mut Criterion) {\n    group.bench_function(\"a\", |b| b.iter(|| black_box(1)));\n    assert_eq!(1, 1);\n}\n";
+    assert!(
+        new_order_preflight(unchecked, "bench_x").is_err(),
+        "an assert after the first timed case must not satisfy the preflight"
+    );
+    Ok(())
+}
+
+#[test]
+fn latency_distribution_times_each_operation_and_reports_the_max() {
+    let source = strip_line_comments(LATENCY_DISTRIBUTION);
+    assert!(
+        !source.contains("Instant"),
+        "latency_distribution must time with quanta's counter, not Instant"
+    );
+    assert!(
+        source.contains("quanta::Clock"),
+        "latency_distribution must time with quanta"
+    );
+    assert!(
+        !source.contains("BATCH"),
+        "latency_distribution must record one sample per operation, not per batch"
+    );
+    assert!(
+        source.contains(".max()"),
+        "latency_distribution must print each histogram's max"
+    );
+}

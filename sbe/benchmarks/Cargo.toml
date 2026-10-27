@@ -24,6 +24,8 @@ chrono = { version = "0.4", optional = true }
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
 hdrhistogram = "7"
+# latency_distribution's per-operation clock: the CPU counter.
+quanta = { version = "0.13", default-features = false }
 
 [build-dependencies]
 ergo-sbe = { path = ".." }

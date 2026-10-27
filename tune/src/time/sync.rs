@@ -9,7 +9,7 @@ use std::fmt;
 use super::chrony::{ChronyError, ChronyReference, ChronyTracking};
 use super::clockbound::{ClockBoundError, ClockBoundReading};
 use super::kernel::KernelSync;
-use crate::finding::{CheckId, Finding, Severity};
+use crate::finding::{Finding, Severity};
 
 /// Where the T11 findings' claims come from.
 const T11_EVIDENCE: &str = "Linux kernel/time/ntp.c (adjtimex: STA_UNSYNC, maxerror, leap \
@@ -309,7 +309,7 @@ impl TimeSync {
                 .filter(|b| bound_warns(self.verdict, *b, limits.warn_over_ns))
             {
                 out.push(Finding::found(
-                    CheckId::T11,
+                    "T11",
                     Severity::Warn,
                     T11_EVIDENCE,
                     format!(
@@ -323,7 +323,7 @@ impl TimeSync {
         }
         if let Some(source) = leap_pending(o) {
             out.push(Finding::found(
-                CheckId::T11,
+                "T11",
                 Severity::Warn,
                 T11_EVIDENCE,
                 format!(
@@ -355,7 +355,7 @@ impl TimeSync {
                     }
                 });
                 Finding::ok(
-                    CheckId::T11,
+                    "T11",
                     Severity::Warn,
                     T11_EVIDENCE,
                     format!(
@@ -380,7 +380,7 @@ impl TimeSync {
                     ""
                 };
                 Finding::found(
-                    CheckId::T11,
+                    "T11",
                     Severity::Warn,
                     T11_EVIDENCE,
                     format!(
@@ -393,7 +393,7 @@ impl TimeSync {
                 )
             }
             SyncVerdict::Unsynchronised => Finding::found(
-                CheckId::T11,
+                "T11",
                 Severity::Warn,
                 T11_EVIDENCE,
                 format!(
@@ -405,7 +405,7 @@ impl TimeSync {
                 ),
             ),
             SyncVerdict::Unknown => Finding::unknown(
-                CheckId::T11,
+                "T11",
                 Severity::Warn,
                 T11_EVIDENCE,
                 "how CLOCK_REALTIME is kept is unknown".to_owned(),
@@ -868,7 +868,7 @@ impl Unsettled {
                 human_ns(last.map_or(0, i64::unsigned_abs))
             ),
         };
-        Finding::found(CheckId::T11, Severity::Warn, T11_EVIDENCE, message)
+        Finding::found("T11", Severity::Warn, T11_EVIDENCE, message)
     }
 }
 

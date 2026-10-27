@@ -330,7 +330,7 @@ fn bulk_rows_are_emitted_only_for_required_since_v0_flat_groups()
     </group>
   </message>
 </messageSchema>"#;
-    let ir = ergo_sbe::parse(ineligible)?;
+    let ir = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(ineligible))?;
     let schema = ergo_sbe::Schema::from_ir(ir);
     let src = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("bulkgate"))
         .generate(&schema)?
@@ -636,7 +636,7 @@ fn verify_walks_wire_block_length_and_acting_version() -> Result<(), Box<dyn std
     </group>
   </sbe:message>
 </sbe:messageSchema>"#;
-    let schema = ergo_sbe::Schema::from_ir(ergo_sbe::parse(xml)?);
+    let schema = ergo_sbe::Schema::from_ir(ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml))?);
     let src = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new("verify_walk"))
         .generate(&schema)?
         .modules()

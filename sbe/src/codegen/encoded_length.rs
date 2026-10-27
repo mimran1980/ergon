@@ -1145,7 +1145,7 @@ mod tests {
         path: &std::path::Path,
         message_name: &str,
     ) -> Result<LengthStrategy, Box<dyn std::error::Error>> {
-        let ir = crate::parse_file(path)?;
+        let ir = crate::parse(crate::SchemaSource::file(path))?;
         let elements = partition_tokens(&ir.tokens);
         let message_tokens = elements
             .messages

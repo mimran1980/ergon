@@ -35,7 +35,7 @@
 //! # Hot path
 //!
 //! 1. [`AeronCluster::try_claim`] — SessionMessageHeader into the claim via ergo-sbe
-//! 2. Egress decode (`egress` / `poller` / `controlled`) — SessionEvent, NewLeader, app
+//! 2. [`AeronCluster::poll`] — egress decode (SessionEvent, NewLeader, app) and session state
 //! 3. Keep-alive encode — periodic
 //! 4. Connect / auth / failover — cold path (correctness over nanoseconds)
 //!
@@ -116,25 +116,22 @@ pub mod cluster_codec_types {
 }
 /// [`SessionBuilder`] configuration for connect.
 pub mod config;
-/// Controlled egress poll (Java `ControlledEgressAdapter` analogue).
-pub mod controlled;
 /// Credential supplier traits for challenge-response auth.
 pub mod credentials;
 /// Session-message header applied to a raw publication.
 pub mod decorator;
-/// Egress adapter + listener dispatch for session and app messages.
+/// The egress listener [`AeronCluster::poll`] calls.
 pub mod egress;
 /// Multi-member ingress endpoint maps (`0=host:port,…`).
 pub mod endpoints;
 /// Cluster client error type.
 pub mod error;
-/// Shared fragment decode — canonical AnyMessage dispatch used by egress,
-/// controlled, and poller paths. Not public API.
+/// One decode of an egress fragment. Not public API.
 pub(crate) mod fragment;
 /// Poll-loop idle helpers ([`rusteron_client::IdleStrategy`]).
 pub mod idle;
-/// Low-level egress event parse helpers (SessionEvent, NewLeader, redirects).
-pub mod poller;
+/// Connect-time egress event parse (SessionEvent, NewLeader, redirects).
+mod poller;
 /// Connect-protocol constants shared by the blocking and polled handshakes.
 mod protocol;
 /// [`SessionState`] machine for connected / new-leader / closed.
@@ -144,14 +141,12 @@ mod uri;
 
 pub use client::{AeronCluster, AsyncClusterConnect, ClusterClaim, ConnectStep};
 pub use config::SessionBuilder;
-pub use controlled::{ControlledEgressAdapter, ControlledEgressListener, ControlledPollAction};
 pub use credentials::{CredentialsSupplier, NullCredentialsSupplier, StaticCredentials};
 pub use decorator::IngressSessionDecorator;
-pub use egress::{EgressAdapter, EgressListener, NullListener};
+pub use egress::{EgressListener, NullListener};
 pub use endpoints::{IngressEndpoint, parse_ingress_endpoints};
 pub use error::{AeronErrorSource, ClusterError, ClusterEvent, PublicationFailure};
 pub use idle::{default_idle, poll_connect_until_done};
-pub use poller::{EgressEvent, parse_event};
 pub use state::SessionState;
 pub use uri::AERON_IPC_STREAM;
 

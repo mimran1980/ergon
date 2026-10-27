@@ -15,8 +15,8 @@ use std::time::{Duration, Instant};
 
 use common::Fixture;
 use ergon_tune::{
-    BoundSource, CheckId, ClockSample, ClockWatch, Finding, Host, KernelSync, Status, SyncVerdict,
-    TimeSync, TimeSyncProbe,
+    BoundSource, ClockSample, ClockWatch, Finding, Host, KernelSync, Status, SyncVerdict, TimeSync,
+    TimeSyncProbe,
 };
 
 type R = Result<(), Box<dyn std::error::Error>>;
@@ -220,7 +220,7 @@ fn pause() {
     std::thread::sleep(Duration::from_millis(30));
 }
 
-fn ids(findings: &[Finding]) -> Vec<CheckId> {
+fn ids(findings: &[Finding]) -> Vec<&'static str> {
     findings.iter().map(|f| f.id).collect()
 }
 
@@ -241,11 +241,7 @@ fn the_watch_allocates_nothing_while_nothing_changes() -> R {
         ("not asked", None),
     ] {
         let (mut watch, start) = ClockWatch::open(&f.host(), &probe(addr));
-        assert_eq!(
-            ids(&start),
-            [CheckId::T11, CheckId::T12],
-            "{what}: {start:?}"
-        );
+        assert_eq!(ids(&start), ["T11", "T12"], "{what}: {start:?}");
         for pass in 0..4 {
             pause();
             let (found, allocations) = counted(|| watch.check());
@@ -295,7 +291,7 @@ fn a_change_of_reference_is_reported_one_pass_later() -> R {
     assert_eq!(watch.check(), [], "the answer to the earlier request");
     pause();
     let found = watch.check();
-    assert_eq!(ids(&found), [CheckId::T11], "{found:?}");
+    assert_eq!(ids(&found), ["T11"], "{found:?}");
     assert!(found[0].is_warning(), "{}", found[0]);
     assert!(found[0].message.contains("169.254.169.123"), "{}", found[0]);
     assert_eq!(watch.verdict(), SyncVerdict::NtpDisciplined);
@@ -321,7 +317,7 @@ fn a_clockbound_bound_going_untrusted_is_reported() -> R {
     assert_eq!(watch.check(), []);
     write_segment(&f, 20_000, 3)?;
     let found = watch.check();
-    assert_eq!(ids(&found), [CheckId::T11], "{found:?}");
+    assert_eq!(ids(&found), ["T11"], "{found:?}");
     assert_eq!(watch.bound().map(|b| b.source), Some(BoundSource::Chrony));
     pause();
     assert_eq!(watch.check(), []);
@@ -334,15 +330,12 @@ fn a_clockbound_bound_going_untrusted_is_reported() -> R {
 fn a_clock_source_switch_warns_once() -> R {
     let f = host_tree("watch-clocksource")?;
     let (mut watch, start) = ClockWatch::open(&f.host(), &probe(None));
-    let t12 = start
-        .iter()
-        .find(|x| x.id == CheckId::T12)
-        .ok_or("no T12")?;
+    let t12 = start.iter().find(|x| x.id == "T12").ok_or("no T12")?;
     assert_eq!(t12.status, Status::Ok, "{t12}");
     assert_eq!(watch.check(), []);
     f.file(CLOCKSOURCE, "hpet\n")?;
     let found = watch.check();
-    assert_eq!(ids(&found), [CheckId::T12], "{found:?}");
+    assert_eq!(ids(&found), ["T12"], "{found:?}");
     assert!(found[0].is_warning(), "{}", found[0]);
     assert!(
         found[0].message.contains("changed from tsc to hpet"),
@@ -352,7 +345,7 @@ fn a_clock_source_switch_warns_once() -> R {
     assert_eq!(watch.check(), []);
     f.file(CLOCKSOURCE, "tsc\n")?;
     let found = watch.check();
-    assert_eq!(ids(&found), [CheckId::T12], "{found:?}");
+    assert_eq!(ids(&found), ["T12"], "{found:?}");
     assert_eq!(found[0].status, Status::Ok, "{}", found[0]);
     Ok(())
 }

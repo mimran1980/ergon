@@ -1,0 +1,2 @@
+label	arm	rep	cpu	samples	p50_ns	p90_ns	p99_ns	p999_ns	p9999_ns	max_ns	max_end_ns	gaps	dropped	nvcsw	nivcsw	start_ns	end_ns	minflt	majflt
+scale-c	d-contention	1	5	4161360218	24	24	32	32	32	11736	1792883657555399996	9718	0	0	0	1792883655719807560	1792883755723412385	0	0

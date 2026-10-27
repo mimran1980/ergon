@@ -10,7 +10,7 @@
 use std::fmt::Write as _;
 use std::fs::File;
 
-use crate::finding::{CheckId, Finding, Severity};
+use crate::finding::{Finding, Severity};
 use crate::host::{Host, ReadError};
 
 /// The cgroup hierarchy the CPU controller is on.
@@ -275,7 +275,7 @@ fn so_far(host: &Host, version: CgroupVersion, dir: &str) -> String {
 /// [`ThrottleWatch`] reads its effect in `cpu.stat.local`.
 #[must_use]
 pub fn t9_cpu_quota(host: &Host) -> Finding {
-    let id = CheckId::T9;
+    let id = "T9";
     let sev = Severity::Warn;
     let cg = match cpu_cgroup(host) {
         Ok(cg) => cg,
@@ -642,7 +642,7 @@ impl ThrottleWatch {
                 }
                 self.failed = true;
                 return Some(Finding::unknown(
-                    CheckId::T9,
+                    "T9",
                     Severity::Warn,
                     T9_EVIDENCE,
                     "cannot read this process's throttling counters".to_owned(),
@@ -685,11 +685,6 @@ impl ThrottleWatch {
                 ms(d.local_throttled_us.unwrap_or(0))
             )
         };
-        Some(Finding::found(
-            CheckId::T9,
-            Severity::Warn,
-            T9_EVIDENCE,
-            message,
-        ))
+        Some(Finding::found("T9", Severity::Warn, T9_EVIDENCE, message))
     }
 }

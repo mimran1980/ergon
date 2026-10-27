@@ -7,8 +7,8 @@ mod common;
 
 use common::Fixture;
 use ergon_tune::{
-    CheckId, Finding, HotSet, Needs, Nic, Role, Status, Thread, in_pod, k8s_checks,
-    t7_sched_policy, t9_cpu_quota,
+    Finding, HotSet, Needs, Nic, Role, Status, Thread, in_pod, k8s_checks, t7_sched_policy,
+    t9_cpu_quota,
 };
 
 type R = Result<(), Box<dyn std::error::Error>>;
@@ -43,7 +43,7 @@ const fn needs() -> Needs {
     Needs::new(Thread::Current, Role::Loop)
 }
 
-fn by_id(v: &[Finding], id: CheckId) -> Result<&Finding, Box<dyn std::error::Error>> {
+fn by_id<'a>(v: &'a [Finding], id: &str) -> Result<&'a Finding, Box<dyn std::error::Error>> {
     v.iter()
         .find(|f| f.id == id)
         .ok_or_else(|| format!("{id} missing from {v:#?}").into())
@@ -74,7 +74,7 @@ fn the_group_only_runs_in_a_pod() -> R {
 fn k1_is_ok_for_a_guaranteed_pod() -> R {
     let f = pod_at("k1-guaranteed", "/kubepods/pod8f3c2a1b", Some("2"))?;
     let v = k8s_checks(&f.host(), &hot(), &needs());
-    let k1 = by_id(&v, CheckId::K1)?;
+    let k1 = by_id(&v, "K1")?;
     assert_eq!(k1.status, Status::Ok, "{v:#?}");
     assert!(k1.message.contains("Guaranteed"), "{}", k1.message);
     // The systemd slice spelling of the same class.
@@ -84,7 +84,7 @@ fn k1_is_ok_for_a_guaranteed_pod() -> R {
         Some("2"),
     )?;
     let v = k8s_checks(&f.host(), &hot(), &needs());
-    assert_eq!(by_id(&v, CheckId::K1)?.status, Status::Ok, "{v:#?}");
+    assert_eq!(by_id(&v, "K1")?.status, Status::Ok, "{v:#?}");
     Ok(())
 }
 
@@ -92,7 +92,7 @@ fn k1_is_ok_for_a_guaranteed_pod() -> R {
 fn k1_warns_for_burstable_and_besteffort() -> R {
     let f = pod_at("k1-burstable", QOS_BURSTABLE, Some("2"))?;
     let v = k8s_checks(&f.host(), &hot(), &needs());
-    let k1 = by_id(&v, CheckId::K1)?;
+    let k1 = by_id(&v, "K1")?;
     assert!(k1.is_warning(), "{v:#?}");
     let m = &k1.message;
     assert!(m.contains("this pod is Burstable"), "{m}");
@@ -105,11 +105,11 @@ fn k1_warns_for_burstable_and_besteffort() -> R {
         Some("2"),
     )?;
     let v = k8s_checks(&f.host(), &hot(), &needs());
-    assert!(by_id(&v, CheckId::K1)?.is_warning(), "{v:#?}");
+    assert!(by_id(&v, "K1")?.is_warning(), "{v:#?}");
     assert!(
-        by_id(&v, CheckId::K1)?.message.contains("BestEffort"),
+        by_id(&v, "K1")?.message.contains("BestEffort"),
         "{}",
-        by_id(&v, CheckId::K1)?.message
+        by_id(&v, "K1")?.message
     );
     Ok(())
 }
@@ -123,7 +123,7 @@ fn k1_is_unknown_when_the_cgroup_path_hides_the_pod() -> R {
     assert_eq!(k8s_checks(&f.host(), &hot(), &needs()), [] as [Finding; 0]);
     f.dir("/var/run/secrets/kubernetes.io/serviceaccount")?;
     let v = k8s_checks(&f.host(), &hot(), &needs());
-    assert!(by_id(&v, CheckId::K1)?.is_unknown(), "{v:#?}");
+    assert!(by_id(&v, "K1")?.is_unknown(), "{v:#?}");
     Ok(())
 }
 
@@ -133,7 +133,7 @@ fn k1_is_unknown_when_the_cgroup_path_hides_the_pod() -> R {
 fn k2_warns_when_the_pod_has_the_shared_pool() -> R {
     let f = pod_at("k2-shared", QOS_BURSTABLE, Some("0-7"))?;
     let v = k8s_checks(&f.host(), &hot(), &needs());
-    let k2 = by_id(&v, CheckId::K2)?;
+    let k2 = by_id(&v, "K2")?;
     assert!(k2.is_warning(), "{v:#?}");
     let m = &k2.message;
     assert!(m.contains("shared pool"), "{m}");
@@ -154,7 +154,7 @@ fn k2_is_ok_on_exclusive_cpus() -> R {
         "isolated\n",
     )?;
     let v = k8s_checks(&f.host(), &hot(), &needs());
-    let k2 = by_id(&v, CheckId::K2)?;
+    let k2 = by_id(&v, "K2")?;
     assert_eq!(k2.status, Status::Ok, "{v:#?}");
     assert!(k2.message.contains("exclusive"), "{}", k2.message);
     assert!(k2.message.contains("partition=isolated"), "{}", k2.message);
@@ -169,7 +169,7 @@ fn k2_is_ok_when_the_exclusive_file_matches_the_cpuset() -> R {
         "2-3,6-7\n",
     )?;
     let v = k8s_checks(&f.host(), &hot(), &needs());
-    let k2 = by_id(&v, CheckId::K2)?;
+    let k2 = by_id(&v, "K2")?;
     assert_eq!(k2.status, Status::Ok, "{v:#?}");
     assert!(k2.message.contains("exclusive"), "{}", k2.message);
     Ok(())
@@ -181,7 +181,7 @@ fn k2_does_not_call_a_restricted_cpuset_exclusive_without_evidence() -> R {
     // owns them: exactly what a restricted shared pool looks like.
     let f = pod_at("k2-unevidenced", QOS_BURSTABLE, Some("2-3,6-7"))?;
     let v = k8s_checks(&f.host(), &hot(), &needs());
-    let k2 = by_id(&v, CheckId::K2)?;
+    let k2 = by_id(&v, "K2")?;
     assert!(
         !matches!(k2.status, Status::Ok),
         "exclusivity must not be claimed without evidence: {v:#?}"
@@ -195,7 +195,7 @@ fn k2_is_unknown_without_a_cpuset() -> R {
     let f = pod_at("k2-nocpuset", QOS_BURSTABLE, None)?;
     f.file("/sys/fs/cgroup/cpu.max", "max 100000\n")?;
     let v = k8s_checks(&f.host(), &hot(), &needs());
-    assert!(by_id(&v, CheckId::K2)?.is_unknown(), "{v:#?}");
+    assert!(by_id(&v, "K2")?.is_unknown(), "{v:#?}");
     Ok(())
 }
 
@@ -206,7 +206,7 @@ fn k3_warns_when_the_smt_sibling_is_outside_the_pod() -> R {
     // The loop is on CPU 2; its sibling is CPU 6.
     let f = pod_at("k3-outside", QOS_BURSTABLE, Some("2-3"))?;
     let v = k8s_checks(&f.host(), &hot(), &needs());
-    let k3 = by_id(&v, CheckId::K3)?;
+    let k3 = by_id(&v, "K3")?;
     assert!(k3.is_warning(), "{v:#?}");
     let m = &k3.message;
     assert!(m.contains("CPU 2 (loop): CPU 6"), "{m}");
@@ -220,7 +220,7 @@ fn k3_warns_when_the_smt_sibling_is_outside_the_pod() -> R {
 fn k3_is_ok_when_the_pod_owns_the_siblings() -> R {
     let f = pod_at("k3-inside", QOS_BURSTABLE, Some("2,6"))?;
     let v = k8s_checks(&f.host(), &hot(), &needs());
-    let k3 = by_id(&v, CheckId::K3)?;
+    let k3 = by_id(&v, "K3")?;
     assert_eq!(k3.status, Status::Ok, "{v:#?}");
     assert!(
         k3.message.contains("siblings are in this pod's cpuset"),
@@ -240,7 +240,7 @@ fn k3_is_ok_without_smt() -> R {
         )?;
     }
     let v = k8s_checks(&f.host(), &hot(), &needs());
-    let k3 = by_id(&v, CheckId::K3)?;
+    let k3 = by_id(&v, "K3")?;
     assert_eq!(k3.status, Status::Ok, "{v:#?}");
     assert!(
         k3.message.contains("no hot CPU has an SMT sibling"),
@@ -257,7 +257,7 @@ fn k3_is_unknown_when_the_topology_is_unreadable() -> R {
     let f = pod_at("k3-notopo", QOS_BURSTABLE, Some("2"))?;
     f.remove("/sys/devices/system/cpu/cpu2/topology/thread_siblings_list")?;
     let v = k8s_checks(&f.host(), &hot(), &needs());
-    let k3 = by_id(&v, CheckId::K3)?;
+    let k3 = by_id(&v, "K3")?;
     assert!(
         !matches!(k3.status, Status::Ok),
         "unreadable topology must not pass: {v:#?}"
@@ -272,7 +272,7 @@ fn k3_is_unknown_when_the_topology_is_unreadable() -> R {
 fn k4_warns_when_there_is_one_cpu_and_no_helpers_named() -> R {
     let f = pod_at("k4-one", QOS_BURSTABLE, Some("2"))?;
     let v = k8s_checks(&f.host(), &hot(), &needs());
-    let k4 = by_id(&v, CheckId::K4)?;
+    let k4 = by_id(&v, "K4")?;
     assert!(k4.is_warning(), "{v:#?}");
     let m = &k4.message;
     assert!(m.contains("one CPU (2)"), "{m}");
@@ -288,7 +288,7 @@ fn k4_is_ok_with_a_second_cpu() -> R {
     // helpers share that core rather than claim a whole core of their own.
     let f = pod_at("k4-two", QOS_BURSTABLE, Some("2,6"))?;
     let v = k8s_checks(&f.host(), &hot(), &needs());
-    let k4 = by_id(&v, CheckId::K4)?;
+    let k4 = by_id(&v, "K4")?;
     assert_eq!(k4.status, Status::Ok, "{v:#?}");
     let m = &k4.message;
     assert!(m.contains("for helpers"), "{m}");
@@ -302,7 +302,7 @@ fn k4_names_a_spare_on_another_core() -> R {
     // helpers get a core of their own.
     let f = pod_at("k4-cores", QOS_BURSTABLE, Some("2,3"))?;
     let v = k8s_checks(&f.host(), &hot(), &needs());
-    let k4 = by_id(&v, CheckId::K4)?;
+    let k4 = by_id(&v, "K4")?;
     assert_eq!(k4.status, Status::Ok, "{v:#?}");
     let m = &k4.message;
     assert!(m.contains("for helpers"), "{m}");
@@ -317,7 +317,7 @@ fn k4_warns_when_every_cpu_holds_a_spinning_role() -> R {
     let f = pod_at("k4-full", QOS_BURSTABLE, Some("2,6"))?;
     let hot = HotSet::new().with(2, Role::Loop).with(6, Role::Sender);
     let v = k8s_checks(&f.host(), &hot, &needs());
-    let k4 = by_id(&v, CheckId::K4)?;
+    let k4 = by_id(&v, "K4")?;
     assert!(k4.is_warning(), "{v:#?}");
     let m = &k4.message;
     assert!(m.contains("sender"), "{m}");
@@ -332,7 +332,7 @@ fn k4_accepts_a_cpu_that_only_runs_non_spinning_roles() -> R {
     let f = pod_at("k4-conductor", QOS_BURSTABLE, Some("2,6"))?;
     let hot = HotSet::new().with(2, Role::Loop).with(6, Role::Conductor);
     let v = k8s_checks(&f.host(), &hot, &needs());
-    let k4 = by_id(&v, CheckId::K4)?;
+    let k4 = by_id(&v, "K4")?;
     assert_eq!(k4.status, Status::Ok, "{v:#?}");
     assert!(k4.message.contains("for helpers"), "{}", k4.message);
     Ok(())
@@ -349,11 +349,11 @@ fn k5_warns_only_for_what_the_caller_uses() -> R {
     )?;
     // Nothing needed: no warning.
     let v = k8s_checks(&f.host(), &hot(), &needs());
-    let k5 = by_id(&v, CheckId::K5)?;
+    let k5 = by_id(&v, "K5")?;
     assert_eq!(k5.status, Status::Ok, "{v:#?}");
     // Busy polling needs CAP_NET_ADMIN (bit 12).
     let v = k8s_checks(&f.host(), &hot(), &needs().busy_polls());
-    let k5 = by_id(&v, CheckId::K5)?;
+    let k5 = by_id(&v, "K5")?;
     assert!(k5.is_warning(), "{v:#?}");
     assert!(k5.message.contains("NET_ADMIN"), "{}", k5.message);
     assert!(
@@ -368,7 +368,7 @@ fn k5_warns_only_for_what_the_caller_uses() -> R {
         "Name:\tergon\nCapEff:\t0000000000001000\n",
     )?;
     let v = k8s_checks(&f.host(), &hot(), &needs().busy_polls());
-    assert_eq!(by_id(&v, CheckId::K5)?.status, Status::Ok, "{v:#?}");
+    assert_eq!(by_id(&v, "K5")?.status, Status::Ok, "{v:#?}");
     Ok(())
 }
 
@@ -385,7 +385,7 @@ fn k5_takes_an_unlimited_memlock_for_mlockall() -> R {
          Max locked memory         65536                65536                bytes\n",
     )?;
     let v = k8s_checks(&f.host(), &hot(), &needs().mlock());
-    let k5 = by_id(&v, CheckId::K5)?;
+    let k5 = by_id(&v, "K5")?;
     assert!(k5.is_warning(), "{v:#?}");
     assert!(k5.message.contains("IPC_LOCK"), "{}", k5.message);
     f.file(
@@ -394,7 +394,7 @@ fn k5_takes_an_unlimited_memlock_for_mlockall() -> R {
          Max locked memory         unlimited            unlimited            bytes\n",
     )?;
     let v = k8s_checks(&f.host(), &hot(), &needs().mlock());
-    assert_eq!(by_id(&v, CheckId::K5)?.status, Status::Ok, "{v:#?}");
+    assert_eq!(by_id(&v, "K5")?.status, Status::Ok, "{v:#?}");
     Ok(())
 }
 
@@ -410,7 +410,7 @@ fn k6_is_ok_with_no_memory_high_and_no_pressure() -> R {
         "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\n",
     )?;
     let v = k8s_checks(&f.host(), &hot(), &needs());
-    let k6 = by_id(&v, CheckId::K6)?;
+    let k6 = by_id(&v, "K6")?;
     assert_eq!(k6.status, Status::Ok, "{v:#?}");
     assert!(k6.message.contains("no memory.high"), "{}", k6.message);
     Ok(())
@@ -426,7 +426,7 @@ fn k6_warns_on_memory_high_and_on_pressure() -> R {
         "some avg10=2.50 avg60=1.00 avg300=0.10 total=98765\n",
     )?;
     let v = k8s_checks(&f.host(), &hot(), &needs());
-    let k6 = by_id(&v, CheckId::K6)?;
+    let k6 = by_id(&v, "K6")?;
     assert!(k6.is_warning(), "{v:#?}");
     let m = &k6.message;
     assert!(m.contains("memory.high is `800000000`"), "{m}");
@@ -442,7 +442,7 @@ fn k6_is_unknown_when_there_is_no_pressure_evidence() -> R {
     // a cgroup that will not say. The check must not report success.
     let f = pod_at("k6-nofiles", QOS_BURSTABLE, Some("2"))?;
     let v = k8s_checks(&f.host(), &hot(), &needs());
-    let k6 = by_id(&v, CheckId::K6)?;
+    let k6 = by_id(&v, "K6")?;
     assert!(
         !matches!(k6.status, Status::Ok),
         "missing pressure evidence must not pass: {v:#?}"
@@ -458,7 +458,7 @@ fn k7_is_ok_without_a_nic_and_on_the_nics_node() -> R {
     let f = pod_at("k7-nonic", QOS_BURSTABLE, Some("2"))?;
     f.numa(&["0-3", "4-7"], Some("1"))?;
     let v = k8s_checks(&f.host(), &hot(), &needs());
-    let k7 = by_id(&v, CheckId::K7)?;
+    let k7 = by_id(&v, "K7")?;
     assert_eq!(k7.status, Status::Ok, "{v:#?}");
     assert!(k7.message.contains("no NIC named"), "{}", k7.message);
     // The NIC on the CPUs' node.
@@ -468,7 +468,7 @@ fn k7_is_ok_without_a_nic_and_on_the_nics_node() -> R {
         &hot(),
         &needs().with_nic(Nic::Pci("0000:00:06.0".into())),
     );
-    let k7 = by_id(&v, CheckId::K7)?;
+    let k7 = by_id(&v, "K7")?;
     assert_eq!(k7.status, Status::Ok, "{v:#?}");
     assert!(k7.message.contains("(node 0)"), "{}", k7.message);
     Ok(())
@@ -484,7 +484,7 @@ fn k7_warns_when_the_cpus_are_on_another_node() -> R {
         &hot(),
         &needs().with_nic(Nic::Pci("0000:00:06.0".into())),
     );
-    let k7 = by_id(&v, CheckId::K7)?;
+    let k7 = by_id(&v, "K7")?;
     assert!(k7.is_warning(), "{v:#?}");
     let m = &k7.message;
     assert!(m.contains("NIC"), "{m}");
@@ -503,15 +503,15 @@ fn the_group_reuses_t7_and_t9() -> R {
     f.file(&format!("{dir}/cpu.max"), "200000 100000\n")?;
     let v = k8s_checks(&f.host(), &hot(), &needs());
     assert_eq!(
-        by_id(&v, CheckId::T9)?.message,
+        by_id(&v, "T9")?.message,
         t9_cpu_quota(&f.host()).message,
         "T9 runs in the group"
     );
     assert_eq!(
-        by_id(&v, CheckId::T7)?.message,
+        by_id(&v, "T7")?.message,
         t7_sched_policy(&f.host(), Thread::Current, Role::Loop).message,
         "T7 runs in the group"
     );
-    assert!(by_id(&v, CheckId::T9)?.is_warning(), "{v:#?}");
+    assert!(by_id(&v, "T9")?.is_warning(), "{v:#?}");
     Ok(())
 }

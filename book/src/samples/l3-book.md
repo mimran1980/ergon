@@ -193,7 +193,7 @@ cursor: [Decoder lanes](../sbe/feature-tour/decode-stages.md).
 | Path | Role |
 |------|------|
 | `schemas/l3-book.xml` | Nested bids/asks, orders, var-data tails |
-| `build.rs` | `generate_to_dir` into `src/generated/` + domain objects / `with_domain_type` (**build-dep only**) |
+| `build.rs` | `generate(..)?.write_to(..)` into `src/generated/` + domain objects / `with_domain_type` (**build-dep only**) |
 | `src/lib.rs` | `#[path = "generated/l3_codec.rs"]` + EncodedLength helpers |
 | `src/main.rs` | Runnable demos |
 | `tests/l3_tests.rs` | Round-trips, exact-length proofs, and the four-lane decode comparison |

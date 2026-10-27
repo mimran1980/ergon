@@ -206,7 +206,7 @@ fn generate_fixed_only(module: &str) -> Result<String, Box<dyn Error>> {
             <field name="clusterSessionId" id="2" type="int64"/>
           </sbe:message>
         </sbe:messageSchema>"#;
-    let schema = ergo_sbe::Schema::from_ir(ergo_sbe::parse(xml)?);
+    let schema = ergo_sbe::Schema::from_ir(ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml))?);
     let src = ergo_sbe::Generator::new(ergo_sbe::GenerationConfig::new(module))
         .generate(&schema)?
         .modules()
@@ -278,7 +278,8 @@ fn car_full_generated_source_size_budget() -> Result<(), Box<dyn Error>> {
     let bytes = src.len();
     // Full Car has historically been hundreds of KiB of pretty source. Bound
     // growth without inventing a tiny number that fails on every docstring.
-    const MAX_BYTES: usize = 450_000;
+    // 460 KB since `sbe_rt::ValidateError` (~3.2 KB) joined the runtime.
+    const MAX_BYTES: usize = 460_000;
     const MIN_BYTES: usize = 20_000;
     assert!(
         bytes <= MAX_BYTES,

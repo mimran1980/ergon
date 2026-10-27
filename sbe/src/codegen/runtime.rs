@@ -291,6 +291,55 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 }
             }
 
+            /// Why an opt-in `validate()` refused a bounds-valid frame
+            /// (`GenerationConfig::with_validate`). Kept apart from
+            /// [`DecodeError`] so the decode path's error stays small.
+            /// `field` is the schema path, e.g. `"Order.legs.qty"`.
+            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+            pub enum ValidateError {
+                /// Value outside the schema's declared `minValue` / `maxValue`.
+                /// `min` / `max` are the effective bounds; an undeclared one is
+                /// the SBE default and was not checked.
+                ValueOutOfRange { field: &'static str, min: i128, max: i128, actual: i128 },
+                /// Enum discriminant that is neither a `validValue` nor the enum's null.
+                UnknownEnum { field: &'static str, discriminant: u64 },
+                /// Set bits that no `choice` declares (`bits` holds only those).
+                UnknownSetBits { field: &'static str, bits: u64 },
+                /// `AnyMessage::Unknown`: no schema message to check against.
+                UnknownTemplate { template_id: u16 },
+                /// Walking a group or var-data tail failed.
+                Decode(DecodeError),
+            }
+
+            impl core::fmt::Display for ValidateError {
+                #[cold]
+                fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                    match self {
+                        Self::ValueOutOfRange { field, min, max, actual } => write!(f, "field '{}': value {} outside schema range [{}, {}]", field, actual, min, max),
+                        Self::UnknownEnum { field, discriminant } => write!(f, "field '{}': undeclared enum discriminant {discriminant:#x}", field),
+                        Self::UnknownSetBits { field, bits } => write!(f, "field '{}': undeclared set bits {bits:#x}", field),
+                        Self::UnknownTemplate { template_id } => write!(f, "template id {} is not in this schema", template_id),
+                        Self::Decode(e) => write!(f, "decode error during validation: {e}"),
+                    }
+                }
+            }
+
+            impl From<DecodeError> for ValidateError {
+                #[inline]
+                fn from(e: DecodeError) -> Self {
+                    ValidateError::Decode(e)
+                }
+            }
+
+            impl core::error::Error for ValidateError {
+                fn source(&self) -> Option<&(dyn core::error::Error + 'static)> {
+                    match self {
+                        Self::Decode(e) => Some(e),
+                        _ => None,
+                    }
+                }
+            }
+
             #[derive(Debug, Clone, Copy, PartialEq, Eq)]
             pub enum EncodeError {
                 /// Encode buffer shorter than needed for `field` (`needed` vs `available`).
@@ -303,7 +352,9 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 FixedArrayTooLong { field: &'static str, max_length: usize, actual: usize },
                 /// ASCII fixed-array `*_str` received a non-ASCII `&str`.
                 InvalidAscii { field: &'static str },
-                /// Domain/DTO value outside the schema min/max range.
+                /// Value outside the schema's declared `minValue` / `maxValue`, or a
+                /// group longer than its count type. `min` / `max` are the effective
+                /// bounds; an undeclared one is the SBE default and was not checked.
                 ValueOutOfRange { field: &'static str, min: i128, max: i128, actual: i128 },
                 /// Tried to write more group entries than the declared count.
                 GroupFull { declared: u32, attempted: u32 },
@@ -1031,23 +1082,17 @@ pub(crate) struct GenerationContext {
     pub(crate) sealed_path: syn::Path,
 }
 
-/// The private sealing module declaration for a generated module that owns the
-/// runtime. `exported` widens it to `pub(super)` so sibling modules generated
-/// against a shared runtime can still implement it; a self-contained module
-/// keeps it fully private, which is what makes `SbeMessage` unimplementable
-/// outside the generated module.
-pub(crate) fn generate_sealed_module_src(exported: bool) -> String {
-    // Always pub(crate): sibling generated modules in the same crate can
-    // still name `super::shared::__sbe_message_sealed`, but external crates
-    // cannot implement SbeMessage. The `pub mod` path was a metadata-forgery
-    // risk when the shared module itself is public.
-    let _ = exported; // kept for API compatibility, always crate-private
-    let visibility = "pub(crate) ";
+/// The sealing module declaration for a generated module that owns the
+/// runtime. Always `pub(crate)`: sibling generated modules in the same crate
+/// (multi-schema shared runtime) can name `super::shared::__sbe_message_sealed`,
+/// but no other crate can implement `SbeMessage`. A `pub mod` would let
+/// consumers forge message metadata when the shared module itself is public.
+pub(crate) fn generate_sealed_module_src() -> String {
     format!(
         "/// Sealing marker for [`sbe_rt::SbeMessage`]. Private to this generated\n\
          /// module: no consumer can name it, so no consumer can forge message\n\
          /// metadata by implementing `SbeMessage` for its own type.\n\
-         {visibility}mod {SEALED_MODULE} {{\n    \
+         pub(crate) mod {SEALED_MODULE} {{\n    \
          pub trait Sealed {{}}\n\
          }}\n\n"
     )
@@ -3574,7 +3619,7 @@ pub(crate) fn canonical_token_fingerprint(
         if let Some(ref st) = e.semantic_type {
             let _ = write!(fp, "st{}:", st);
         }
-        if e.deprecated {
+        if e.deprecated.is_some() {
             let _ = write!(fp, "dep:");
         }
     }
@@ -3639,13 +3684,16 @@ pub(crate) fn doc_lines_tokens(text: &str) -> proc_macro2::TokenStream {
     out
 }
 
-/// `#[deprecated]` when the item is schema-deprecated AND
-/// `with_deprecated_attrs()` is active. Exact version notes are a 1.0 change.
-pub(crate) fn deprecated_attr_tokens(deprecated: bool) -> proc_macro2::TokenStream {
-    if deprecated && deprecated_attrs_enabled() {
-        quote::quote! { #[deprecated] }
-    } else {
-        quote::quote! {}
+/// `#[deprecated(note = "deprecated since schema version N")]` when the item
+/// is schema-deprecated (in version `N`) AND `with_deprecated_attrs()` is
+/// active.
+pub(crate) fn deprecated_attr_tokens(deprecated: Option<u16>) -> proc_macro2::TokenStream {
+    match deprecated {
+        Some(version) if deprecated_attrs_enabled() => {
+            let note = format!("deprecated since schema version {version}");
+            quote::quote! { #[deprecated(note = #note)] }
+        }
+        _ => quote::quote! {},
     }
 }
 

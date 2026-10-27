@@ -2,7 +2,8 @@
 //!
 //! Measures decode latency for the entry point, individual field accessors
 //! (both checked and raw/unchecked variants), group iteration, and latency-oriented
-//! tight-loop / field-stride / alloc-free decode patterns.
+//! tight-loop / field-stride / alloc-free decode patterns. `decode/new_order`
+//! times mapped enum / composite accessors against raw (`new_order_fixture`).
 
 // Generated code generates lots of diagnostics; suppress across the crate.
 #![allow(
@@ -430,6 +431,51 @@ fn bench_tail_access(c: &mut Criterion) {
     group.finish();
 }
 
+/// `NewOrder` with `Side` and `Decimal9` mapped to application types: the
+/// mapped accessors against the wire enum and the raw `u8` / mantissa. One
+/// decoder, wrapped untimed; each arm reloads it through `black_box`.
+fn bench_new_order_mapped_decode(c: &mut Criterion) {
+    use ergo_sbe_benchmarks::new_order_fixture::{
+        AppPrice, AppSide, BUY, FRAME_LEN, encode_fixed, read_mapped, read_raw,
+    };
+    use ergo_sbe_benchmarks::new_order_mapped::{NewOrderDecoder, Side};
+
+    let mut frame = [0u8; FRAME_LEN];
+    assert_eq!(encode_fixed(&mut frame, &BUY).unwrap(), FRAME_LEN);
+    let decoder = NewOrderDecoder::try_from(&frame[..]).unwrap();
+    let price = AppPrice {
+        mantissa: BUY.price,
+    };
+    let qty = AppPrice { mantissa: BUY.qty };
+    assert_eq!(read_mapped(&decoder).unwrap(), (AppSide::Buy, price, qty));
+    assert_eq!(read_raw(&decoder), (1, BUY.price, BUY.qty));
+    assert_eq!(decoder.side_wire(), Side::Buy);
+
+    let mut group = c.benchmark_group("decode/new_order");
+    group.bench_function("mapped", |b| {
+        b.iter(|| black_box(read_mapped(black_box(&decoder))));
+    });
+    group.bench_function("raw", |b| {
+        b.iter(|| black_box(read_raw(black_box(&decoder))));
+    });
+    group.bench_function("side_mapped", |b| {
+        b.iter(|| black_box(black_box(&decoder).side()));
+    });
+    group.bench_function("side_wire", |b| {
+        b.iter(|| black_box(black_box(&decoder).side_wire()));
+    });
+    group.bench_function("side_raw", |b| {
+        b.iter(|| black_box(black_box(&decoder).raw_side()));
+    });
+    group.bench_function("price_mapped", |b| {
+        b.iter(|| black_box(black_box(&decoder).price()));
+    });
+    group.bench_function("price_raw", |b| {
+        b.iter(|| black_box(black_box(&decoder).price_value().mantissa()));
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_try_from,
@@ -445,5 +491,6 @@ criterion_group!(
     bench_decode_frame,
     bench_skip,
     bench_tail_access,
+    bench_new_order_mapped_decode,
 );
 criterion_main!(benches);

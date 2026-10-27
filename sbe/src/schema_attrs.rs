@@ -65,7 +65,7 @@ pub const FIELD_LIKE: &[&str] = &[
 ///
 /// `nullValue` is a schema-declared wire sentinel (sbe-tool accepts it and
 /// codegen emits it). The published XSD omits it; the validator still must
-/// accept it so `parse_with_xsd_validation` matches `parse`.
+/// accept it so XSD-validated parsing matches plain `parse`.
 pub const ENUM: &[&str] = &[
     "name",
     "encodingType",

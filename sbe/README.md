@@ -45,8 +45,25 @@ guide for ergo-sbe (also linked from this crate on
 
 ## Quick Example
 
+In `build.rs`, one call parses the schema, generates the codec and writes it
+into `OUT_DIR`:
+
+```rust,no_run
+fn main() -> ergo_sbe::miette::Result<()> {
+    ergo_sbe::generate(
+        ergo_sbe::SchemaSource::file("schemas/messages.xml"),
+        ergo_sbe::GenerationConfig::new("messages"),
+    )?
+    .write_to_out_dir()?;
+    Ok(())
+}
+```
+
+Then `ergo_sbe::sbe_mod!(messages);` in your crate. The same call works on
+inline XML without writing anything:
+
 ```rust
-use ergo_sbe::{parse, Schema, Generator, GenerationConfig};
+use ergo_sbe::{GenerationConfig, SchemaSource, generate};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let xml = r#"<?xml version="1.0"?>
@@ -64,11 +81,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
       </message>
     </messageSchema>"#;
 
-    let ir = parse(xml)?;
-    let schema = Schema::from_ir(ir);
-    let modules = Generator::new(GenerationConfig::new("demo_msgs"))
-        .generate(&schema)?;
-    // In a real project you'd use a build script.
+    let modules = generate(SchemaSource::xml(xml), GenerationConfig::new("demo_msgs"))?;
+    assert!(modules.modules().next().is_some());
     // Full guide: https://mimran1980.github.io/ergon/sbe/getting-started.html
     // Checked encode: MessageEncoder::try_wrap_and_apply_header(buf, 0)?
     // Trusted (panic if short): wrap_and_apply_header; unsafe: *_unchecked.

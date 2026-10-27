@@ -23,7 +23,7 @@ use cluster_ha_orderbook::publish::{
 };
 use ergo_aeron_cluster::SessionState;
 use ergo_aeron_cluster::cluster_codec_types::{AdminRequestType, AdminResponseCode, EventCode};
-use ergo_aeron_cluster::egress::{EgressAdapter, EgressListener};
+use ergo_aeron_cluster::egress::EgressListener;
 use ergo_aeron_cluster::{AeronCluster, SessionBuilder};
 use ergo_aeron_cluster_test_harness::TestCluster;
 use serial_test::serial;
@@ -150,14 +150,14 @@ fn encode_l2_payload(
 
 fn await_serving(
     client: &mut AeronCluster,
-    adapter: &mut EgressAdapter<BookCapture>,
+    listener: &mut BookCapture,
     timeout: Duration,
 ) -> Result<(), Box<dyn Error>> {
     let deadline = Instant::now() + timeout;
     loop {
         let _ = client.send_keep_alive();
-        let _ = client.poll_egress(adapter, 10);
-        if adapter.listener().follower.book().is_serving() {
+        let _ = client.poll(listener, 10);
+        if listener.follower.book().is_serving() {
             return Ok(());
         }
         if Instant::now() >= deadline {
@@ -178,19 +178,18 @@ fn kill_leader_never_serves_stale_book() -> Result<(), Box<dyn Error>> {
     let initial_leader = client.leader_member_id();
     assert!((0..3).contains(&initial_leader));
 
-    let mut adapter = EgressAdapter::new(BookCapture::new());
+    let mut listener = BookCapture::new();
     // Seed term from client after connect.
-    adapter.listener_mut().last_term = client.leadership_term_id();
+    listener.last_term = client.leadership_term_id();
 
     // --- Pre-failover snapshot ---
     let bids1 = vec![lvl(500, 1)];
     let asks1 = vec![lvl(501, 2)];
     let payload1 = encode_l2_payload(client.leadership_term_id(), "BTCUSDT", 1, &bids1, &asks1)?;
     client.offer(&payload1)?;
-    await_serving(&mut client, &mut adapter, Duration::from_secs(15))?;
-    assert!(adapter.listener().follower.book().is_serving());
-    let live = adapter
-        .listener()
+    await_serving(&mut client, &mut listener, Duration::from_secs(15))?;
+    assert!(listener.follower.book().is_serving());
+    let live = listener
         .follower
         .book()
         .live_image()
@@ -205,17 +204,15 @@ fn kill_leader_never_serves_stale_book() -> Result<(), Box<dyn Error>> {
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
         let _ = client.send_keep_alive();
-        client.poll_egress(&mut adapter, 10)?;
-        if adapter.listener().new_leader_member_id.is_some()
-            && client.state() == SessionState::Connected
-        {
+        client.poll(&mut listener, 10)?;
+        if listener.new_leader_member_id.is_some() && client.state() == SessionState::Connected {
             break;
         }
         if Instant::now() >= deadline {
             return Err(format!(
                 "no NewLeader+Connected within 60s (state={:?}, new_leader={:?})",
                 client.state(),
-                adapter.listener().new_leader_member_id
+                listener.new_leader_member_id
             )
             .into());
         }
@@ -224,15 +221,15 @@ fn kill_leader_never_serves_stale_book() -> Result<(), Box<dyn Error>> {
 
     // Never-stale: release must have frozen serving.
     assert!(
-        !adapter.listener().follower.book().is_serving(),
+        !listener.follower.book().is_serving(),
         "book must not serve across leadership release"
     );
     assert!(
-        adapter.listener().follower.book().live_image().is_none(),
+        listener.follower.book().live_image().is_none(),
         "live_image must be None while not serving"
     );
 
-    let new_leader = adapter.listener().new_leader_member_id.expect("new leader");
+    let new_leader = listener.new_leader_member_id.expect("new leader");
     assert_ne!(new_leader, initial_leader);
     assert_eq!(client.leader_member_id(), new_leader);
 
@@ -247,10 +244,9 @@ fn kill_leader_never_serves_stale_book() -> Result<(), Box<dyn Error>> {
         &ref_asks,
     )?;
     client.offer(&payload2)?;
-    await_serving(&mut client, &mut adapter, Duration::from_secs(15))?;
+    await_serving(&mut client, &mut listener, Duration::from_secs(15))?;
 
-    let live = adapter
-        .listener()
+    let live = listener
         .follower
         .book()
         .live_image()

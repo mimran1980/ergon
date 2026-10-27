@@ -33,7 +33,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 schema_path.display()
             );
         }
-        ergo_sbe::generate_to_out_dir(&schema_path, ergo_sbe::GenerationConfig::new(module))?;
+        ergo_sbe::generate(
+            ergo_sbe::SchemaSource::file(&schema_path),
+            ergo_sbe::GenerationConfig::new(module),
+        )?
+        .write_to_out_dir()?;
     }
 
     Ok(())

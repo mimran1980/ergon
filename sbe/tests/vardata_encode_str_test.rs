@@ -62,8 +62,8 @@ fn generated_source_from(
     module_name: &str,
     xml: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
-    let schema = Schema::from_ir(parse(xml)?);
+    use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
+    let schema = Schema::from_ir(parse(SchemaSource::xml(xml))?);
     let src = Generator::new(GenerationConfig::new(module_name))
         .generate(&schema)?
         .modules()

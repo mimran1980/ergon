@@ -1,0 +1,5 @@
+cell slack50us-A: cpu0 busy 1%
+cell slack1ns: cpu0 busy 1%
+cell slack50us-B: cpu0 busy 0%
+cell load-slack50us: cpu0 busy 100%
+cell load-slack1ns: cpu0 busy 100%

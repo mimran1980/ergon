@@ -70,7 +70,10 @@ just bench-diagnostics
 `cargo test -p ergo-sbe-benchmarks --test fairness_policy_test` is the
 mechanical source guard. It covers the maintained SBE and Cluster parity
 suites, requires `std::hint::black_box`, requires correctness assertions before
-timing, and pins the sceptical/LTO disclosures in this document. It supplements
+timing, and pins the sceptical/LTO disclosures in this document. It also
+proves the `NewOrder` arms (`src/new_order_fixture.rs`) write equal bytes and
+read equal values, and that `latency_distribution` times single operations
+with quanta and prints each max. It supplements
 the runtime byte/value assertions; it does not prove equal work by itself.
 
 ## Review red flags

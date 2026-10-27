@@ -112,35 +112,32 @@ fn flat_group_domain_bulk_encode_matches_wire_bulk_and_automatic_dto_encode()
         }
         assert_eq!(i, levels.len());
 
-        let invalid_levels = [BookSnapshotLevelsEntryDomain {
+        // `numOrders` declares no bound, so `u32::MAX` (the SBE default
+        // range's excluded null) is written as given by both paths; declared
+        // bounds are covered in source_trait_test.
+        let max_levels = [BookSnapshotLevelsEntryDomain {
             price: 10_003,
             qty: 1,
             num_orders: u32::MAX,
         }];
-        let mut invalid_buf = [0u8; BookSnapshotEncoder::compute_length_with_header(1)];
-        let err = BookSnapshotEncoder::try_wrap_and_apply_header(&mut invalid_buf, 0).unwrap()
+        let mut max_bulk_buf = [0u8; BookSnapshotEncoder::compute_length_with_header(1)];
+        let max_bulk_len = BookSnapshotEncoder::try_wrap_and_apply_header(&mut max_bulk_buf, 0).unwrap()
             .fixed(&BookSnapshotFixedFields {})
-            .levels(1, |group| group.bulk_add_domain(&invalid_levels))
-            .unwrap_err();
-        assert!(matches!(
-            err,
-            sbe_rt::EncodeError::ValueOutOfRange {
-                field: "numOrders",
-                ..
-            }
-        ));
+            .levels(1, |group| group.bulk_add_domain(&max_levels))?
+            .encoded_length_with_header();
 
-        let invalid_dto = BookSnapshotDomain {
-            levels: invalid_levels.to_vec(),
+        let max_dto = BookSnapshotDomain {
+            levels: max_levels.to_vec(),
         };
-        let err = invalid_dto.encode(&mut invalid_buf).unwrap_err();
-        assert!(matches!(
-            err,
-            sbe_rt::EncodeError::ValueOutOfRange {
-                field: "numOrders",
-                ..
-            }
-        ));
+        let mut max_dto_buf = [0u8; BookSnapshotEncoder::compute_length_with_header(1)];
+        let max_dto_len = max_dto.encode(&mut max_dto_buf)?;
+        assert_eq!(&max_dto_buf[..max_dto_len], &max_bulk_buf[..max_bulk_len]);
+        let mut back = BookSnapshotDecoder::try_from(&max_dto_buf[..max_dto_len])?.into_levels()?;
+        let mut read = Vec::new();
+        for level in &mut back {
+            read.push(level.num_orders());
+        }
+        assert_eq!(read, [u32::MAX]);
         "#,
     );
 
@@ -1281,7 +1278,7 @@ fn group_entry_domain_required_bool_invalid_discriminant_is_typed_error()
 #[test]
 fn all_enums_as_option_none_writes_null_on_reused_buffer() -> Result<(), Box<dyn std::error::Error>>
 {
-    use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse};
+    use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, SchemaSource, parse};
     const XML: &str = r#"<messageSchema package="review" id="1" version="0" byteOrder="littleEndian">
   <types>
     <composite name="messageHeader">
@@ -1297,7 +1294,7 @@ fn all_enums_as_option_none_writes_null_on_reused_buffer() -> Result<(), Box<dyn
   </types>
   <message name="M" id="1"><field name="status" id="1" type="Status"/></message>
 </messageSchema>"#;
-    let schema = Schema::from_ir(parse(XML)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(XML))?);
     let src = Generator::new(
         GenerationConfig::new("review")
             .with_domain_objects(DomainVarData::Bytes)
@@ -1354,7 +1351,7 @@ fn all_enums_as_option_none_writes_null_on_reused_buffer() -> Result<(), Box<dyn
 #[test]
 fn all_enums_as_option_flat_group_bulk_compiles_and_nulls() -> Result<(), Box<dyn std::error::Error>>
 {
-    use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse};
+    use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, SchemaSource, parse};
     const XML: &str = r#"<messageSchema package="reviewg" id="1" version="0" byteOrder="littleEndian">
   <types>
     <composite name="messageHeader">
@@ -1378,7 +1375,7 @@ fn all_enums_as_option_flat_group_bulk_compiles_and_nulls() -> Result<(), Box<dy
     </group>
   </message>
 </messageSchema>"#;
-    let schema = Schema::from_ir(parse(XML)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(XML))?);
     let src = Generator::new(
         GenerationConfig::new("reviewg")
             .with_domain_objects(DomainVarData::Bytes)
@@ -1448,7 +1445,7 @@ fn all_enums_as_option_flat_group_bulk_compiles_and_nulls() -> Result<(), Box<dy
 /// cells do not prove this location.
 #[test]
 fn nested_entry_enum_none_writes_null() -> Result<(), Box<dyn std::error::Error>> {
-    use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse};
+    use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, SchemaSource, parse};
     const XML: &str = r#"<messageSchema package="reviewn" id="1" version="0" byteOrder="littleEndian">
   <types>
     <composite name="messageHeader">
@@ -1474,7 +1471,7 @@ fn nested_entry_enum_none_writes_null() -> Result<(), Box<dyn std::error::Error>
     </group>
   </message>
 </messageSchema>"#;
-    let schema = Schema::from_ir(parse(XML)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(XML))?);
     let src = Generator::new(
         GenerationConfig::new("reviewn")
             .with_domain_objects(DomainVarData::Bytes)
@@ -1517,7 +1514,7 @@ fn nested_entry_enum_none_writes_null() -> Result<(), Box<dyn std::error::Error>
 #[test]
 fn versioned_required_enum_none_writes_null_on_reused_buffer()
 -> Result<(), Box<dyn std::error::Error>> {
-    use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse};
+    use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, SchemaSource, parse};
     const XML: &str = r#"<messageSchema package="reviewv" id="1" version="1" byteOrder="littleEndian">
   <types>
     <composite name="messageHeader">
@@ -1535,7 +1532,7 @@ fn versioned_required_enum_none_writes_null_on_reused_buffer()
     <field name="status" id="1" type="Status" sinceVersion="1"/>
   </message>
 </messageSchema>"#;
-    let schema = Schema::from_ir(parse(XML)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(XML))?);
     let src =
         Generator::new(GenerationConfig::new("reviewv").with_domain_objects(DomainVarData::Bytes))
             .generate(&schema)?
@@ -1570,7 +1567,8 @@ fn versioned_required_enum_none_writes_null_on_reused_buffer()
 #[test]
 fn domain_typed_enum_none_writes_null_on_reused_buffer() -> Result<(), Box<dyn std::error::Error>> {
     use ergo_sbe::{
-        ConversionSelector, DomainVarData, EnumMapping, GenerationConfig, Generator, Schema, parse,
+        ConversionSelector, DomainVarData, EnumMapping, GenerationConfig, Generator, Schema,
+        SchemaSource, parse,
     };
     const XML: &str = r#"<messageSchema package="reviewd" id="1" version="1" byteOrder="littleEndian">
   <types>
@@ -1600,7 +1598,7 @@ fn domain_typed_enum_none_writes_null_on_reused_buffer() -> Result<(), Box<dyn s
     </group>
   </message>
 </messageSchema>"#;
-    let schema = Schema::from_ir(parse(XML)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(XML))?);
     let src = Generator::new(
         GenerationConfig::new("reviewd")
             .with_domain_objects(DomainVarData::Bytes)

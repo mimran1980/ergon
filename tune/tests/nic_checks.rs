@@ -10,8 +10,8 @@ use std::collections::HashMap;
 
 use common::{azure, c7i_tuned, c9g_tuned, debian_default, pod};
 use ergon_tune::{
-    CheckId, Coalesce, Ethtool, EthtoolCache, EthtoolError, Finding, Host, Netlink, Rings,
-    Severity, Status, n1_adaptive_rx, n2_deferred_irqs, n3_azure_vf, n4_rx_ring,
+    Coalesce, Ethtool, EthtoolCache, EthtoolError, Finding, Host, Netlink, Rings, Severity, Status,
+    n1_adaptive_rx, n2_deferred_irqs, n3_azure_vf, n4_rx_ring,
 };
 
 type R = Result<(), Box<dyn std::error::Error>>;
@@ -77,7 +77,7 @@ fn n1_warns_while_ena_adaptive_moderation_is_on() -> R {
         k.coalesce.insert(3, Ok(adaptive(true)));
     });
     let v = n1_adaptive_rx(&f.host(), "ens6", &mut cache);
-    assert_eq!(v.id, CheckId::N1);
+    assert_eq!(v.id, "N1");
     assert!(v.is_warning(), "{v:?}");
     assert!(
         v.message.contains("ethtool -C ens6 adaptive-rx off"),
@@ -351,7 +351,7 @@ fn n4_warns_below_the_smaller_of_4096_and_the_nics_maximum() -> R {
         k.rings.insert(3, Ok(ring(1024, 8192)));
     });
     let v = n4_rx_ring(&f.host(), "ens6", &mut cache);
-    assert_eq!((v.id, v.severity), (CheckId::N4, Severity::Warn));
+    assert_eq!((v.id, v.severity), ("N4", Severity::Warn));
     assert!(v.is_warning(), "{v:?}");
     assert!(v.message.contains("RX ring 1024"), "{}", v.message);
     assert!(

@@ -394,8 +394,8 @@ fn schema_fields_named_after_lane_methods_are_renamed() -> Result<(), Box<dyn st
     <data name="label" id="8" type="varStringEncoding"/>
   </message>
 </messageSchema>"#;
-    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
-    let schema = Schema::from_ir(parse(XML)?);
+    use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
+    let schema = Schema::from_ir(parse(SchemaSource::xml(XML))?);
     let src = Generator::new(GenerationConfig::new("laneclash"))
         .generate(&schema)?
         .modules()
@@ -503,8 +503,8 @@ fn memoized_var_data_text_surface_matches_the_base_decoder()
     <data name="blob" id="4" type="varBinary"/>
   </message>
 </messageSchema>"#;
-    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
-    let schema = Schema::from_ir(parse(XML)?);
+    use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
+    let schema = Schema::from_ir(parse(SchemaSource::xml(XML))?);
     let src = Generator::new(GenerationConfig::new("textsurface"))
         .generate(&schema)?
         .modules()
@@ -607,8 +607,8 @@ fn entry_text_helper_yields_to_a_field_that_already_has_its_name()
     </group>
   </message>
 </messageSchema>"#;
-    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
-    let schema = Schema::from_ir(parse(XML)?);
+    use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
+    let schema = Schema::from_ir(parse(SchemaSource::xml(XML))?);
     let src = Generator::new(GenerationConfig::new("entryclash"))
         .generate(&schema)?
         .modules()
@@ -681,7 +681,7 @@ fn entry_text_helper_yields_to_a_field_that_already_has_its_name()
 #[test]
 fn memoized_var_data_rejects_over_max_after_encoded_length()
 -> Result<(), Box<dyn std::error::Error>> {
-    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
+    use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
     const XML: &str = r#"<messageSchema package="bounded" id="1" version="0" byteOrder="littleEndian">
   <types>
     <composite name="messageHeader">
@@ -697,7 +697,7 @@ fn memoized_var_data_rejects_over_max_after_encoded_length()
   </types>
   <message name="M" id="1"><data name="payload" id="1" type="boundedData"/></message>
 </messageSchema>"#;
-    let schema = Schema::from_ir(parse(XML)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(XML))?);
     let src = Generator::new(GenerationConfig::new("bounded"))
         .generate(&schema)?
         .modules()
@@ -730,7 +730,7 @@ fn memoized_var_data_rejects_over_max_after_encoded_length()
 #[test]
 fn group_entry_var_data_rejects_over_max_after_encoded_length()
 -> Result<(), Box<dyn std::error::Error>> {
-    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
+    use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
     const XML: &str = r#"<messageSchema package="gbounded" id="1" version="0" byteOrder="littleEndian">
   <types>
     <composite name="messageHeader">
@@ -754,7 +754,7 @@ fn group_entry_var_data_rejects_over_max_after_encoded_length()
     </group>
   </message>
 </messageSchema>"#;
-    let schema = Schema::from_ir(parse(XML)?);
+    let schema = Schema::from_ir(parse(SchemaSource::xml(XML))?);
     let src = Generator::new(GenerationConfig::new("gbounded"))
         .generate(&schema)?
         .modules()

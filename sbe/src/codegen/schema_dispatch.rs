@@ -54,7 +54,7 @@ fn validate(schemas: &[(&Schema, &str)], module_name: &str) -> Result<(), Genera
                 "schema module names produce colliding or reserved variants",
             ));
         }
-        if !ids.insert(schema.id) {
+        if !ids.insert(schema.ir.id) {
             return Err(invalid(name, "schema ids must be unique"));
         }
         let elements = partition_tokens(&schema.ir.tokens);
@@ -208,7 +208,7 @@ fn methods(
     };
     let schema_id = getter("schemaId")?;
     let template_id = getter("templateId")?;
-    let ids: Vec<_> = schemas.iter().map(|(schema, _)| schema.id).collect();
+    let ids: Vec<_> = schemas.iter().map(|(schema, _)| schema.ir.id).collect();
     Ok(quote! {
         impl<'a> AnySchemaMessage<'a> {
             /// Decode a single frame whose header starts at offset.

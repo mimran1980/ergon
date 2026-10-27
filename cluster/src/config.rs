@@ -229,7 +229,7 @@ impl SessionBuilder {
     /// lost (Java `Context.newLeaderTimeoutNs`). Unset, connect uses twice
     /// the leader heartbeat from the OK `SessionEvent`, or 20 seconds when
     /// that field is absent. A value set here wins. When it elapses,
-    /// [`crate::AeronCluster::poll_state_changes`] transitions the session to
+    /// [`crate::AeronCluster::poll`] transitions the session to
     /// [`crate::ClusterError::Disconnected`]. Once the event has come, the
     /// message timeout bounds the wait instead.
     ///

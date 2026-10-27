@@ -1,0 +1,33 @@
+[package]
+name = "ergon-gapprobe"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+description = "Busy-spin gap probe for the ergon-shared-cpus lab: every loop gap, its percentiles, and what overlaps the max"
+
+[[bin]]
+name = "gapprobe"
+path = "src/main.rs"
+
+[lints.rust]
+missing_docs = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+cast_possible_truncation = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+panic = "abort"
+
+# Its own workspace: not a member of the ergon workspace.
+[workspace]

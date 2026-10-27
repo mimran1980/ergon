@@ -8,7 +8,7 @@
 
 mod common;
 use common::{Paths, compile_and_run, generate};
-use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
+use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
 use std::fs;
 
 #[test]
@@ -17,7 +17,7 @@ fn test_generate_car_example() -> Result<(), Box<dyn std::error::Error>> {
 
     let xml_content = fs::read_to_string(&xml_path).expect("Failed to read example schema");
 
-    let ir = parse(&xml_content).expect("Failed to parse SBE schema");
+    let ir = parse(SchemaSource::xml(&xml_content)).expect("Failed to parse SBE schema");
     let schema = Schema::from_ir(ir);
 
     let mut generator = Generator::new(GenerationConfig::new("car_example"));

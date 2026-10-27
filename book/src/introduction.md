@@ -6,7 +6,7 @@ One line per module: what it is for, and the call you make.
 
 | module | what it does | how you use it |
 |---|---|---|
-| `ergo-sbe` | schema XML → Rust SBE codecs | `ergo_sbe::generate_to_out_dir(...)` in `build.rs`; then plain `include!`, or `ergo_sbe::sbe_mod!(name)` in your crate, which also needs `ergo-sbe` in `[dependencies]` ([chapter](sbe/getting-started/depend.md)) |
+| `ergo-sbe` | schema XML → Rust SBE codecs | `ergo_sbe::generate(source, config)?.write_to_out_dir()?` in `build.rs`; then plain `include!`, or `ergo_sbe::sbe_mod!(name)` in your crate, which also needs `ergo-sbe` in `[dependencies]` ([chapter](sbe/getting-started/depend.md)) |
 | `ergon-tune` | reads the host and names what will wreck your tail latency, and the fix | call at start-up; it changes nothing ([chapter](tune/overview.md)) |
 | `ergon-io` | WebSocket and HTTP/TLS on one busy-spinning thread | `poll()` from your loop; epoll or `io_uring` is configuration ([chapter](io/overview.md)) |
 | `ergo-aeron-cluster` | Aeron Cluster client | only if you need cluster; experimental, not a production substitute ([chapter](cluster/overview.md)) |
@@ -17,7 +17,7 @@ Kubernetes, if you deploy there. Tuning a node and pod for HFT:
 
 | module | what it does | how you use it |
 |---|---|---|
-| `k8s/nri-shared-cpus` | gives a pod its exclusive CPUs **and** the node's shared housekeeping CPUs, and starts every thread on the shared ones so the busy-spin loop keeps its core | `helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus --version 0.1.1`. Image `ghcr.io/mimran1980/ergon-shared-cpus:0.1.1`. Prepare the node first. Sample: `k8s/nri-shared-cpus/examples/try` ([chapter](deploy/shared-cpus.md)) |
+| `k8s/nri-shared-cpus` | gives a pod its exclusive CPUs **and** the node's shared housekeeping CPUs, and starts every thread on the shared ones so the busy-spin loop keeps its core | chart `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.2`, installed with the flags in the [chapter](deploy/shared-cpus.md#use-the-public-chart). Image `ghcr.io/mimran1980/ergon-shared-cpus:0.1.2`. Prepare the node first. Sample: `k8s/nri-shared-cpus/examples/try` ([chapter](deploy/shared-cpus.md)) |
 | `k8s/nri-latency-pods` | node tuning and the hot-pod admission policy (no exec probes, no always-restart sidecars). The grants live in the shared-cpus image. This directory is the YAML and the node units | apply `admission/priority-class.yaml` and `admission/validating-admission-policy.yaml` after the chart. Pod authors set annotations and the `ergon.io/latency: hot` label ([chapter](deploy/latency-pods.md)) |
 
 Start with `ergo-sbe`. Add another crate only for a need you have:
@@ -62,7 +62,9 @@ ergo-sbe = "0.1"   # only for sbe_mod! / include_sbe!
 | **Bulk groups** | `bulk_add(&[Entry])` / `bulk_decode()` for fixed-stride leaf groups |
 | **Runtime deps** | Generated codecs embed `sbe_rt` — no `ergo-sbe` on the hot path |
 
-0.x experimental. Pin versions. Exit criteria: [Road to 1.0](project/road-to-1.0.md).
+0.x alpha: any release may break the API, with no deprecation period. Pin
+exact versions and read the changelog before upgrading. Exit criteria:
+[Road to 1.0](project/road-to-1.0.md).
 
 It is **not** a line-for-line port of sbe-tool. The generated API is meant to be
 easier under Rust's borrow checker, safer at untrusted boundaries, and still

@@ -8,7 +8,7 @@
 //! `require` is a readiness gate, not a blanket refusal. It refuses on a
 //! **warning** (a check fired) and on an **unproven** check whose job is to
 //! prove a property of this pod or process
-//! ([`CheckId::unknown_stops_require`](crate::CheckId::unknown_stops_require)):
+//! ([`unknown_stops_require`]):
 //! starting on an unproven isolation claim is the false pass the check
 //! exists to stop. An unknown of a check whose subsystem the node may not
 //! have — PSI, a NUMA node, a NIC knob — is printed and allowed through,
@@ -24,6 +24,32 @@ pub const HOST_CHECKS_ENV: &str = "ERGON_HOST_CHECKS";
 /// What every printed warning line ends with.
 pub const SILENCE: &str = "(ERGON_HOST_CHECKS=off silences host-check warnings)";
 
+/// The checks whose unknown result does **not** stop a
+/// [`HostCheckPolicy::Require`] start: each reads a subsystem the node may
+/// not have (THP, tmpfs, NUMA, PSI and `memory.high`, a NIC knob, the time
+/// daemon a pod cannot see, node-wide noise read where the node lets a
+/// process see it: debugfs, other PID namespaces, steal accounting), so
+/// absent evidence is a host without it, not a
+/// gap in a proof.
+const SUBSYSTEM_CHECKS: [&str; 19] = [
+    "T3", "T4", "T5", "T6", "T11", "T13", "T14", "T15", "T16", "T17", "T18", "T19", "K6", "K7",
+    "N1", "N2", "N3", "N4", "M4",
+];
+
+/// Whether an unknown result of check `id` stops a
+/// [`HostCheckPolicy::Require`] start.
+///
+/// A check that proves a property of this pod or process (its CPUs are its
+/// own and isolated, no CPU quota, its helpers have a core) **blocks** when
+/// it cannot be answered: unproven is not "fine". A check of a subsystem the
+/// node may not have (T3, T4, T5, T6, T11, T13-T19, K6, K7, N1-N4, M4) does
+/// not.
+/// Every other id blocks, a caller's own included: unclassified fails closed.
+#[must_use]
+pub fn unknown_stops_require(id: &str) -> bool {
+    !SUBSYSTEM_CHECKS.contains(&id)
+}
+
 /// What [`HOST_CHECKS_ENV`] is set to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum HostCheckPolicy {
@@ -35,18 +61,16 @@ pub enum HostCheckPolicy {
     On,
     /// Print them, and make a warning an error at start. An **unproven** check
     /// is an error too, but only where the check must prove something: see
-    /// [`CheckId::unknown_stops_require`](crate::CheckId::unknown_stops_require).
+    /// [`unknown_stops_require`].
     Require,
 }
 
 /// What a caller does with a host-check policy or its report.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HostCheckError {
-    /// The variable is set to something other than `off`, `on`/`warn` or
-    /// `require`.
+    /// [`HOST_CHECKS_ENV`] is set to something other than `off`, `on`/`warn`
+    /// or `require`.
     Invalid {
-        /// Which variable (`ERGON_HOST_CHECKS`, or the media driver's).
-        variable: String,
         /// The value it is set to.
         value: String,
     },
@@ -63,11 +87,11 @@ pub enum HostCheckError {
 impl fmt::Display for HostCheckError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Invalid { variable, value } => write!(
+            Self::Invalid { value } => write!(
                 f,
-                "{variable}={value}: set {variable} to off, on or require (off prints no host-check \
-                 warning line; require refuses to start on a warning, or on a check that could not \
-                 be proven)"
+                "{HOST_CHECKS_ENV}={value}: set {HOST_CHECKS_ENV} to off, on or require (off prints \
+                 no host-check warning line; require refuses to start on a warning, or on a check \
+                 that could not be proven)"
             ),
             Self::Warnings { count, ids } => write!(
                 f,
@@ -82,77 +106,48 @@ impl fmt::Display for HostCheckError {
 impl std::error::Error for HostCheckError {}
 
 impl HostCheckPolicy {
-    /// `off`, `on` (or `warn`, the same as `on`) or `require`. Anything else
-    /// is [`HostCheckError::Invalid`], naming `variable`.
+    /// `off`, `on` (or `warn`, the same as `on`) or `require`, any case.
     ///
     /// # Errors
     ///
     /// [`HostCheckError::Invalid`] when `value` is none of those.
-    pub fn parse(variable: &str, value: &str) -> Result<Self, HostCheckError> {
+    pub fn parse(value: &str) -> Result<Self, HostCheckError> {
         match value.trim().to_ascii_lowercase().as_str() {
             "off" => Ok(Self::Off),
             "on" | "warn" => Ok(Self::On),
             "require" => Ok(Self::Require),
             _ => Err(HostCheckError::Invalid {
-                variable: variable.to_owned(),
                 value: value.to_owned(),
             }),
         }
     }
 
-    /// From two variable values: `primary` (always named
-    /// [`HOST_CHECKS_ENV`]) wins, else `alias` (named `alias_name`, the media
-    /// driver's old variable), else [`Self::On`].
+    /// From [`HOST_CHECKS_ENV`]'s value: [`Self::On`] when it is unset
+    /// (`None`), else [`Self::parse`].
     ///
     /// # Errors
     ///
-    /// [`HostCheckError::Invalid`] when a value that is read is none of
-    /// `off`, `on`, `warn` or `require`.
-    pub fn from_vars(
-        primary: Option<&str>,
-        alias_name: &str,
-        alias: Option<&str>,
-    ) -> Result<Self, HostCheckError> {
-        match (primary, alias) {
-            (Some(v), _) => Self::parse(HOST_CHECKS_ENV, v),
-            (None, Some(v)) => Self::parse(alias_name, v),
-            (None, None) => Ok(Self::On),
-        }
+    /// [`HostCheckError::Invalid`] when it is set to none of `off`, `on`,
+    /// `warn` or `require`.
+    pub fn from_var(value: Option<&str>) -> Result<Self, HostCheckError> {
+        value.map_or(Ok(Self::On), Self::parse)
     }
 
-    /// From the process environment: [`HOST_CHECKS_ENV`], the default
-    /// [`Self::On`] when it is unset. `alias`, when set, is read when
-    /// [`HOST_CHECKS_ENV`] is not (the media driver's old variable).
-    ///
-    /// # Errors
-    ///
-    /// [`HostCheckError::Invalid`] when a variable that is set holds none of
-    /// `off`, `on`, `warn` or `require`, or is not valid Unicode.
-    pub fn from_env_or(alias: &str) -> Result<Self, HostCheckError> {
-        let primary = std::env::var(HOST_CHECKS_ENV);
-        let alt = if alias.is_empty() {
-            None
-        } else {
-            std::env::var(alias).ok()
-        };
-        match primary {
-            Ok(v) => Self::from_vars(Some(&v), alias, alt.as_deref()),
-            Err(std::env::VarError::NotUnicode(_)) => Err(HostCheckError::Invalid {
-                variable: HOST_CHECKS_ENV.to_owned(),
-                value: "not valid Unicode".to_owned(),
-            }),
-            Err(std::env::VarError::NotPresent) => Self::from_vars(None, alias, alt.as_deref()),
-        }
-    }
-
-    /// From the process environment, [`HOST_CHECKS_ENV`] only.
+    /// From the process environment: [`HOST_CHECKS_ENV`], [`Self::On`] when
+    /// it is unset. No other variable is read.
     ///
     /// # Errors
     ///
     /// [`HostCheckError::Invalid`] when it is set to none of `off`, `on`,
     /// `warn` or `require`, or is not valid Unicode.
     pub fn from_env() -> Result<Self, HostCheckError> {
-        Self::from_env_or("")
+        match std::env::var(HOST_CHECKS_ENV) {
+            Ok(v) => Self::from_var(Some(&v)),
+            Err(std::env::VarError::NotPresent) => Self::from_var(None),
+            Err(std::env::VarError::NotUnicode(_)) => Err(HostCheckError::Invalid {
+                value: "not valid Unicode".to_owned(),
+            }),
+        }
     }
 
     /// The warning lines of `findings` under this policy, as the caller
@@ -184,7 +179,7 @@ impl HostCheckPolicy {
 
     /// Under [`Self::Require`], the error a start must fail with when any
     /// finding is a warning, or is an unknown of a check that must be proven
-    /// ([`CheckId::unknown_stops_require`](crate::CheckId::unknown_stops_require)).
+    /// ([`unknown_stops_require`]).
     /// An unknown of a check whose subsystem the node may not have is
     /// reported and allowed through: that is a real host, not a gap.
     #[must_use]
@@ -196,10 +191,10 @@ impl HostCheckPolicy {
         let mut count = 0;
         for f in findings
             .iter()
-            .filter(|f| f.is_warning() || (f.is_unknown() && f.id.unknown_stops_require()))
+            .filter(|f| f.is_warning() || (f.is_unknown() && unknown_stops_require(f.id)))
         {
             count += 1;
-            let id = f.id.as_str();
+            let id = f.id;
             if !ids.contains(&id) {
                 ids.push(id);
             }

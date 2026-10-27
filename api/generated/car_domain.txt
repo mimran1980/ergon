@@ -792,6 +792,12 @@ sbe_rt::enum SendError::Encode(0: EncodeError)
 sbe_rt::enum SendError::HeaderMismatch
 sbe_rt::enum SendError::LengthMismatch(claimed: usize, frame: usize)
 sbe_rt::enum SendError< E >
+sbe_rt::enum ValidateError
+sbe_rt::enum ValidateError::Decode(0: DecodeError)
+sbe_rt::enum ValidateError::UnknownEnum(field: & 'static str, discriminant: u64)
+sbe_rt::enum ValidateError::UnknownSetBits(field: & 'static str, bits: u64)
+sbe_rt::enum ValidateError::UnknownTemplate(template_id: u16)
+sbe_rt::enum ValidateError::ValueOutOfRange(field: & 'static str, min: i128, max: i128, actual: i128)
 sbe_rt::enum VerifyError
 sbe_rt::enum VerifyError::DecodeError(0: DecodeError)
 sbe_rt::enum VerifyError::GroupDimOutOfBounds(field: & 'static str, offset: usize)

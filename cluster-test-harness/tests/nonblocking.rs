@@ -22,10 +22,9 @@ use ergo_aeron_cluster::cluster_codec_types::{
     AnyMessage, EventCode, NewLeaderEventEncoder, NewLeaderEventFixedFields, SessionEventEncoder,
     SessionEventFixedFields, SessionMessageHeaderDecoder,
 };
-use ergo_aeron_cluster::egress::EgressAdapter;
 use ergo_aeron_cluster::{
-    AeronCluster, AsyncClusterConnect, ClusterError, ConnectStep, ControlledEgressAdapter,
-    ControlledEgressListener, ControlledPollAction, SessionBuilder, SessionState,
+    AeronCluster, AsyncClusterConnect, ClusterError, ConnectStep, NullListener, SessionBuilder,
+    SessionState,
 };
 use rusteron_client::{
     Aeron, AeronContext, AeronExclusivePublication, AeronSubscription, Handlers, cformat,
@@ -360,44 +359,20 @@ impl FakeCluster {
     }
 }
 
-/// Records the first NewLeaderEvent's leader on the controlled poll path.
-#[derive(Default)]
-struct ControlledCapture {
-    new_leader_member_id: Option<i32>,
-}
-
-impl ControlledEgressListener for ControlledCapture {
-    fn on_message(&mut self, _: i64, _: i64, _: &[u8]) -> ControlledPollAction {
-        ControlledPollAction::Continue
-    }
-    fn on_new_leader(&mut self, _: i64, _: i64, leader_member_id: i32, _: &str) {
-        self.new_leader_member_id.get_or_insert(leader_member_id);
-    }
-}
-
-/// Both poll paths handle NewLeaderEvent and must bind the same image.
-enum Egress {
-    Regular(EgressAdapter<Capture>),
-    Controlled(ControlledEgressAdapter<ControlledCapture>),
-}
+/// The test's egress listener, with poll helpers.
+struct Egress(Capture);
 
 impl Egress {
-    fn regular() -> Self {
-        Self::Regular(EgressAdapter::new(Capture::new()))
+    fn new() -> Self {
+        Self(Capture::new())
     }
 
     fn poll(&mut self, client: &mut AeronCluster) -> Result<i32, ClusterError> {
-        match self {
-            Self::Regular(adapter) => client.poll_egress(adapter, 10),
-            Self::Controlled(adapter) => client.poll_egress_controlled(adapter, 10),
-        }
+        client.poll(&mut self.0, 10)
     }
 
     fn new_leader_member_id(&self) -> Option<i32> {
-        match self {
-            Self::Regular(adapter) => adapter.listener().new_leader_member_id,
-            Self::Controlled(adapter) => adapter.listener().new_leader_member_id,
-        }
+        self.0.new_leader_member_id
     }
 
     /// Poll `client` until it reaches `state`.
@@ -455,7 +430,7 @@ fn assert_pending_add_dropped(
     )?;
     let started = Instant::now();
     while started.elapsed() < Duration::from_secs(1) {
-        client.poll_state_changes()?;
+        client.poll(&mut NullListener, 0)?;
         thread::sleep(Duration::from_millis(1));
     }
     assert_eq!(
@@ -628,18 +603,9 @@ fn failover_follows_the_session_egress_image_without_waiting(
 
 #[test]
 #[serial]
-fn failover_follows_the_session_egress_image_without_waiting_on_poll_egress()
--> Result<(), Box<dyn Error>> {
-    failover_follows_the_session_egress_image_without_waiting(Egress::regular())
-}
-
-#[test]
-#[serial]
-fn failover_follows_the_session_egress_image_without_waiting_on_poll_egress_controlled()
--> Result<(), Box<dyn Error>> {
-    failover_follows_the_session_egress_image_without_waiting(Egress::Controlled(
-        ControlledEgressAdapter::new(ControlledCapture::default()),
-    ))
+fn failover_follows_the_session_egress_image_without_waiting_on_poll() -> Result<(), Box<dyn Error>>
+{
+    failover_follows_the_session_egress_image_without_waiting(Egress::new())
 }
 
 #[test]
@@ -656,7 +622,7 @@ fn closed_after_a_new_leader_in_one_poll_ends_the_session() -> Result<(), Box<dy
     offer(&new_egress, &session_event(EventCode::CLOSED, 1, "", 0)?)?;
     let_land();
 
-    Egress::regular().poll(&mut client)?;
+    Egress::new().poll(&mut client)?;
     assert_eq!(client.state(), SessionState::Closed);
     assert_eq!(client.leadership_term_id(), 1);
     Ok(())
@@ -674,7 +640,7 @@ fn closed_while_a_new_leader_is_pending_ends_the_session() -> Result<(), Box<dyn
     let new_egress = cluster.egress()?;
     // Nothing subscribes at member 1's endpoint yet, so the add stays pending.
     offer(&new_egress, &new_leader_event(2, 1, LATE_MEMBER)?)?;
-    let mut egress = Egress::regular();
+    let mut egress = Egress::new();
     egress.poll_until(&mut client, SessionState::AwaitingNewLeader)?;
 
     offer(&new_egress, &session_event(EventCode::CLOSED, 1, "", 0)?)?;
@@ -700,7 +666,7 @@ fn close_while_a_new_leader_is_pending_drops_its_publication() -> Result<(), Box
     )?;
     let new_egress = cluster.egress()?;
     offer(&new_egress, &new_leader_event(2, 1, LATE_MEMBER)?)?;
-    Egress::regular().poll_until(&mut client, SessionState::AwaitingNewLeader)?;
+    Egress::new().poll_until(&mut client, SessionState::AwaitingNewLeader)?;
 
     client.close()?;
     assert_pending_add_dropped(&cluster, &mut client)
@@ -721,7 +687,7 @@ fn closed_beside_a_failing_new_leader_event_ends_the_session() -> Result<(), Box
     offer(&new_egress, &session_event(EventCode::CLOSED, 1, "", 0)?)?;
     let_land();
 
-    Egress::regular().poll(&mut client)?;
+    Egress::new().poll(&mut client)?;
     assert_eq!(client.state(), SessionState::Closed);
     Ok(())
 }
@@ -738,7 +704,7 @@ fn a_new_leader_whose_image_closes_waits_for_the_next_one() -> Result<(), Box<dy
     )?;
     let first = cluster.egress()?;
     offer(&first, &new_leader_event(2, 1, LATE_MEMBER)?)?;
-    let mut egress = Egress::regular();
+    let mut egress = Egress::new();
     egress.poll_until(&mut client, SessionState::AwaitingNewLeader)?;
     let event_at = Instant::now();
 
@@ -787,7 +753,7 @@ fn the_last_new_leader_event_in_one_poll_wins() -> Result<(), Box<dyn Error>> {
     offer(&new_egress, &new_leader_event(3, 0, ENDPOINTS)?)?;
     let_land();
 
-    let mut egress = Egress::regular();
+    let mut egress = Egress::new();
     wait_until(
         || {
             let _ = egress.poll(&mut client);
@@ -821,7 +787,7 @@ fn a_new_leader_that_never_connects_times_out() -> Result<(), Box<dyn Error>> {
 
     let_land();
 
-    let mut egress = Egress::regular();
+    let mut egress = Egress::new();
     let deadline = Instant::now() + Duration::from_secs(20);
     let mut event_at = None;
     loop {
@@ -870,7 +836,7 @@ fn a_failed_new_leader_add_is_reported_once() -> Result<(), Box<dyn Error>> {
     )?;
     let_land();
 
-    let mut egress = Egress::regular();
+    let mut egress = Egress::new();
     let mut failures = 0;
     let started = Instant::now();
     // After the failure the session waits out message_timeout, as Java's
@@ -919,7 +885,7 @@ fn a_new_leader_event_without_the_leader_changes_nothing() -> Result<(), Box<dyn
     let_land();
 
     assert!(matches!(
-        Egress::regular().poll(&mut client),
+        Egress::new().poll(&mut client),
         Err(ClusterError::ReconnectFailed { .. })
     ));
     assert_eq!(client.state(), SessionState::Connected);
@@ -931,6 +897,63 @@ fn a_new_leader_event_without_the_leader_changes_nothing() -> Result<(), Box<dyn
     assert_eq!(
         client.egress_image_session_id(),
         Some(session_id(&old_egress)?)
+    );
+    Ok(())
+}
+
+/// A `fragment_limit` of 0 reads no egress but still drives the session
+/// state: here it adopts a pending new leader once its publication connects.
+#[test]
+#[serial]
+fn a_zero_fragment_poll_drives_the_state_and_reads_nothing() -> Result<(), Box<dyn Error>> {
+    let client_driver = JavaDriver::launch("nonblocking-zero-limit")?;
+    let cluster = FakeCluster::launch()?;
+    let (mut client, _old_egress) = cluster.connect(
+        builder(Duration::from_secs(10), Duration::from_secs(60))?,
+        &client_driver,
+    )?;
+    let new_egress = cluster.egress()?;
+    offer(&new_egress, &new_leader_event(2, 1, LATE_MEMBER)?)?;
+    let_land();
+
+    // The NewLeaderEvent waits in the image: a zero-limit poll leaves it.
+    let mut listener = Capture::new();
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_millis(500) {
+        assert_eq!(client.poll(&mut listener, 0)?, 0);
+        thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(listener.new_leader_member_id, None);
+    assert_eq!(client.state(), SessionState::Connected);
+
+    // A real poll reads it; nothing listens at member 1 yet, so it waits.
+    wait_until(
+        || {
+            let _ = client.poll(&mut listener, 10);
+            client.state() == SessionState::AwaitingNewLeader
+        },
+        "the NewLeaderEvent to be read",
+    )?;
+    assert_eq!(listener.new_leader_member_id, Some(1));
+
+    // Member 1 comes up: zero-limit polls alone finish the failover.
+    let _late_member = cluster.aeron.add_subscription(
+        c"aeron:udp?endpoint=localhost:19234",
+        101,
+        Handlers::NONE,
+        Handlers::NONE,
+        Duration::from_secs(5),
+    )?;
+    wait_until(
+        || {
+            let _ = client.poll(&mut NullListener, 0);
+            client.state() == SessionState::Connected
+        },
+        "a zero-limit poll to adopt the new leader",
+    )?;
+    assert_eq!(
+        (client.leadership_term_id(), client.leader_member_id()),
+        (2, 1)
     );
     Ok(())
 }

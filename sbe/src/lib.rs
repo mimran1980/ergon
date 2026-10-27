@@ -51,7 +51,16 @@
 //! | Options | [`config`] | Module name, conversions, domain objects, … |
 //! | Codegen | [`codegen`] | Rust source modules |
 //!
-//! # Quick-start (`build.rs`) — doctest pins generated idioms
+//! # Front door
+//!
+//! | Job | Call |
+//! |---|---|
+//! | Parse + generate in a `build.rs` | [`generate`], then [`GeneratedModuleSet::write_to_out_dir`] |
+//! | Include the module | [`sbe_mod!`] |
+//! | Parse only (inspect the token IR) | [`parse`] with a [`SchemaSource`] |
+//! | Several schemas sharing types | [`parse`] each (consumers [`SchemaSource::with_shared`]), [`Generator::generate_multi`], [`GeneratedModuleSet::write_to_out_dir`] |
+//!
+//! # Quick-start — doctest pins generated idioms
 //!
 //! Generated *application* types do not exist in this crate at doctest time.
 //! The example below **runs the generator** on an inline schema and asserts on
@@ -62,7 +71,7 @@
 //! [`sbe/tests/golden/car_example.rs`](https://github.com/mimran1980/ergon/blob/main/sbe/tests/golden/car_example.rs).
 //!
 //! ```rust
-//! use ergo_sbe::{parse, Generator, GenerationConfig, Schema};
+//! use ergo_sbe::{GenerationConfig, SchemaSource, generate};
 //!
 //! let schema_xml = r#"<?xml version="1.0" encoding="UTF-8"?>
 //! <messageSchema package="example.sbe" id="1" version="0"
@@ -81,10 +90,7 @@
 //!   </message>
 //! </messageSchema>"#;
 //!
-//! let ir = parse(schema_xml).expect("parse schema");
-//! let schema = Schema::from_ir(ir);
-//! let output = Generator::new(GenerationConfig::new("my_messages"))
-//!     .generate(&schema)
+//! let output = generate(SchemaSource::xml(schema_xml), GenerationConfig::new("my_messages"))
 //!     .expect("generate");
 //! let src = &output.modules().next().expect("one module").source;
 //! assert!(src.contains("CarDecoder"));
@@ -92,7 +98,7 @@
 //! assert!(src.contains("CarFixedFields"));
 //! assert!(src.contains("wrap_and_apply_header"));
 //! assert!(src.contains("compute_length_with_header") || src.contains("ENCODED_LENGTH"));
-//! // write module.source to OUT_DIR and `include!` it from your crate
+//! // in build.rs: output.write_to_out_dir()?, then ergo_sbe::sbe_mod!(my_messages);
 //! ```
 //!
 //! # What gets generated (how to use it)
@@ -196,7 +202,8 @@
 //!
 //! ## XSD structural check
 //!
-//! Optional CI gate: [`validate_against_sbe_xsd`] or [`parse_with_xsd_validation`].
+//! Optional CI gate: [`validate_against_sbe_xsd`], or
+//! [`SchemaSource::with_xsd_validation`] to run it inside [`parse`].
 //! Official XSD text is embedded as [`SBE_XSD`].
 //!
 //! Note this is a *shape* check, not a full W3C engine, and it is opt-in.
@@ -220,7 +227,7 @@
 /// (source snippet + span) instead of the plain fallback.
 pub use miette;
 
-/// Cargo `build.rs` helpers ([`generate_to_out_dir`], [`sbe_mod!`]).
+/// The generate front door ([`generate`], [`sbe_mod!`]).
 #[allow(
     clippy::pedantic,
     clippy::nursery,
@@ -321,7 +328,7 @@ mod schema_attrs;
     clippy::cast_lossless
 )]
 pub(crate) mod structured_ir;
-/// XML parse ([`parse`], [`parse_file`]).
+/// The parse front door ([`parse`], [`SchemaSource`]).
 #[allow(
     unused,
     dead_code,
@@ -355,10 +362,7 @@ pub mod xml;
 )]
 pub mod xsd;
 
-pub use build::{
-    BuildError, SchemaFile, generate_multi_to_dir, generate_multi_to_out_dir, generate_str_to_dir,
-    generate_str_to_out_dir, generate_to_dir, generate_to_out_dir, out_dir,
-};
+pub use build::{BuildError, generate};
 pub use codegen::{GenerateError, GeneratedModule, GeneratedModuleSet, Generator};
 pub use config::{
     CompositeMapping, ConversionSelector, DomainImpl, DomainVarData, EnumMapping, EnumVariantInfo,
@@ -368,10 +372,7 @@ pub use config::{
 pub use ir::{ByteOrder, Encoding, Ir, Presence, PrimitiveType, Signal, Token};
 pub use resolve::{ResolveError, resolve_schema};
 pub use schema::Schema;
-pub use xml::{
-    IncludeCause, ParseError, parse, parse_file, parse_file_with_shared, parse_with_shared,
-    parse_with_xsd_validation,
-};
+pub use xml::{IncludeCause, ParseError, SchemaSource, parse};
 pub use xsd::{SBE_XSD, XsdValidationError, validate_against_sbe_xsd};
 
 /// Chrono timestamp converters — feature-gated behind `chrono`.

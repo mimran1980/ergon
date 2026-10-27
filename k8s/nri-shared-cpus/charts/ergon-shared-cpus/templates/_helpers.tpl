@@ -62,7 +62,7 @@ Security Standard. Always the chart's own namespace.
 {{- end -}}
 
 {{/*
-Operator fields of one configuration. Used for the legacy file and for each
+Operator fields of one configuration. Used for the flat file and for each
 named profile. It does not emit cgroupRoot, profiles, or nodeProfileLabel.
 */}}
 {{- define "ergon-shared-cpus.configBody" -}}

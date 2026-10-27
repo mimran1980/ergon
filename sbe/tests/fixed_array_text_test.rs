@@ -4,10 +4,10 @@
 
 mod common;
 use common::{Paths, compile_and_run, compile_fails_with_diagnostics, generate};
-use ergo_sbe::{GenerationConfig, Generator, Schema, parse_file};
+use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
 
 fn generate_demo() -> Result<String, Box<dyn std::error::Error>> {
-    let ir = parse_file(&Paths::fixed_array_schema())?;
+    let ir = parse(SchemaSource::file(&Paths::fixed_array_schema()))?;
     let schema = Schema::from_ir(ir);
     let (modules, _) = Generator::new(GenerationConfig::new("arr_txt"))
         .generate(&schema)?
@@ -45,7 +45,7 @@ fn fixed_text_helpers_yield_to_schema_fields_at_every_depth()
         </group>
     </sbe:message>
 </sbe:messageSchema>"#;
-    let mut ir = ergo_sbe::parse(xml)?;
+    let mut ir = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml))?;
     ergo_sbe::resolve_schema(&mut ir, Some(xml))?;
     let (modules, _) = Generator::new(GenerationConfig::new("collision"))
         .generate(&Schema::from_ir(ir))?
@@ -105,7 +105,7 @@ fn a_group_char_field_reads_and_writes_text() -> Result<(), Box<dyn std::error::
         </group>
     </sbe:message>
 </sbe:messageSchema>"#;
-    let mut ir = ergo_sbe::parse(xml)?;
+    let mut ir = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml))?;
     ergo_sbe::resolve_schema(&mut ir, Some(xml))?;
     let schema = Schema::from_ir(ir);
     let (modules, _) = Generator::new(GenerationConfig::new("grp_txt"))
@@ -281,7 +281,7 @@ fn field_name_ending_str_keeps_raw_and_suffixed_text_setter()
             <field name="code_str" id="1" type="Code"/>
           </message>
         </messageSchema>"#;
-    let ir = ergo_sbe::parse(xml)?;
+    let ir = ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml))?;
     let schema = Schema::from_ir(ir);
     let (modules, _) = Generator::new(GenerationConfig::new("nstr"))
         .generate(&schema)?

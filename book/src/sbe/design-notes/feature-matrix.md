@@ -4,7 +4,7 @@ Scannable map of capabilities. Use the **More** links for samples and tests.
 
 | Feature | What it does | How to use / more |
 |---------|--------------|-------------------|
-| **`build.rs` codegen** | Compile-time schema → Rust module in `OUT_DIR` | `generate_to_out_dir("schemas/….xml", config)?` · plain `include!` or `sbe_mod!(name)` · Quick start · [codegen examples](https://github.com/mimran1980/ergon/tree/main/samples/sbe-codegen-examples) |
+| **`build.rs` codegen** | Compile-time schema → Rust module in `OUT_DIR` | `generate(SchemaSource::file("schemas/….xml"), config)?.write_to_out_dir()?` · plain `include!` or `sbe_mod!(name)` · Quick start · [codegen examples](https://github.com/mimran1980/ergon/tree/main/samples/sbe-codegen-examples) |
 | **Wire compatibility** | Same on-wire layout as official SBE | Dual encode ergo vs sbe-tool · [sbe_tool_wire_parity_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/sbe_tool_wire_parity_test.rs) · golden fixtures · [Benchmarks](../benchmarks.md) · [baseline_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/baseline_test.rs) |
 | **Flyweight decode** | Zero-copy over `&[u8]` | `CarDecoder::try_from(buf)?; car.serial_number()` · [feature-tour](https://github.com/mimran1980/ergon/blob/main/samples/sbe-feature-tour/src/lib.rs) |
 | **Composite wire image** | `#[repr(transparent)] Engine([u8; N])` + LE accessors; flyweight default | Not a `repr(C)` overlay · Core ideas · [composite_layout_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/composite_layout_test.rs) |
@@ -38,7 +38,7 @@ Scannable map of capabilities. Use the **More** links for samples and tests.
 | **Schema identity** | Id / version / hashes | `SCHEMA_ID`, `SCHEMA_HASH`, `SCHEMA_SHA256_HEX` · generated module header |
 | **Multi-schema shared types** | Dedup across packages | `.with_shared_module` + `generate_multi` · [exchange-example](https://github.com/mimran1980/ergon/tree/main/samples/exchange-example) · [multi_schema_versioning_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/multi_schema_versioning_test.rs) |
 | **Keyword-safe names** | `type` → `type_` | `.with_keyword_append_token("_")` · [java_parity_features_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/java_parity_features_test.rs) |
-| **XSD-shaped validation** | Opt-in stricter check for schema authors | `validate_against_sbe_xsd` / `parse_with_xsd_validation` · [xsd.rs](https://github.com/mimran1980/ergon/blob/main/sbe/src/xsd.rs) |
+| **XSD-shaped validation** | Opt-in stricter check for schema authors | `validate_against_sbe_xsd` / `SchemaSource::with_xsd_validation` · [xsd.rs](https://github.com/mimran1980/ergon/blob/main/sbe/src/xsd.rs) |
 | **Zero-alloc hot path** | Flyweights + caller buffers; `bulk_decode() -> Vec` and `DomainVarData::Strings` do allocate | [allocation_count_test](https://github.com/mimran1980/ergon/blob/main/sbe/tests/allocation_count_test.rs) |
 | **Property round-trip** | Random messages encode→decode | `cargo test -p ergo-sbe --test proptest_roundtrip` · [proptest_roundtrip](https://github.com/mimran1980/ergon/blob/main/sbe/tests/proptest_roundtrip.rs) |
 | **NullVal → `Option<T>`** | Enum NullVal mapped to `Option`; wire-identical | `.with_null_as_option(…)` / `.with_all_enums_as_option()` — `dec.code() -> Option<EventCode>` · DTO `None` writes `NullVal`; bulk encode uses the same mapping · [NullVal design note](./nullval.md) · [Domain DTOs](../recipes/domain-dtos.md) |

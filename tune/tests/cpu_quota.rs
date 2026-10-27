@@ -7,8 +7,7 @@ mod common;
 
 use common::{c9g_tuned, pod};
 use ergon_tune::{
-    CgroupVersion, CheckId, CpuQuota, Severity, Status, ThrottleWatch, Throttling, cpu_cgroup,
-    t9_cpu_quota,
+    CgroupVersion, CpuQuota, Severity, Status, ThrottleWatch, Throttling, cpu_cgroup, t9_cpu_quota,
 };
 
 type R = Result<(), Box<dyn std::error::Error>>;
@@ -24,7 +23,7 @@ fn t9_is_ok_for_a_container_without_a_quota() -> R {
     f.cgroup_v2("/")?
         .file("/sys/fs/cgroup/cpu.max", "max 100000\n")?;
     let t9 = t9_cpu_quota(&f.host());
-    assert_eq!(t9.id, CheckId::T9);
+    assert_eq!(t9.id, "T9");
     assert_eq!(t9.status, Status::Ok, "{t9}");
     assert!(t9.message.contains("/sys/fs/cgroup/cpu.max"), "{t9}");
     assert!(t9.message.contains("cpu.max is `max 100000`"), "{t9}");
@@ -252,7 +251,7 @@ fn the_throttle_watch_reports_each_growth_once() -> R {
     f.cpu_stat("/sys/fs/cgroup", 160, 3, 12_500)?
         .file("/sys/fs/cgroup/cpu.stat.local", "throttled_usec 12500\n")?;
     let found = watch.check().ok_or("no finding for 3 throttled periods")?;
-    assert_eq!(found.id, CheckId::T9);
+    assert_eq!(found.id, "T9");
     assert!(found.is_warning(), "{found}");
     for part in [
         "throttled in 3 of the last 60 periods",

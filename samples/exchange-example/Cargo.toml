@@ -2,7 +2,7 @@
 name = "exchange-example"
 version = "0.1.0"
 edition = "2024"
-description = "Multi-exchange IPC sample: Bitget + Binance WebSocket → Aeron IPC (+ domain objects / DTOs)"
+description = "Multi-exchange IPC sample: Bitget WebSocket → Aeron IPC, with Bitget and Binance SBE schemas (+ domain objects / DTOs)"
 publish = false
 
 [dependencies]

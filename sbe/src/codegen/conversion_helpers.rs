@@ -532,17 +532,20 @@ pub(crate) fn warn_version_gated(
         "warning: shared type `{}` (schema {} id {}) has members at sinceVersion={max_since}. \
          Version numbers are per-schema — importing schemas at different versions may decode \
          these members incorrectly. Consider keeping shared types at version 0.",
-        type_name, schema.package, schema.id
+        type_name, schema.ir.package, schema.ir.id
     ))
 }
 
-/// The type name a [`ConversionSelector::NamedType`] compares against.
-fn selector_type_name(field: &MessageField) -> String {
+/// The type name a [`ConversionSelector::NamedType`] compares against: the
+/// composite, enum or set name, or a primitive field's `<type>` alias. A
+/// field of a bare built-in primitive has none, so `named_type("uint64")`
+/// selects nothing.
+fn selector_type_name(field: &MessageField) -> Option<&str> {
     match &field.field_type {
-        FieldType::Composite { name, .. } => name.clone(),
-        FieldType::Enum { name, .. } => name.clone(),
-        FieldType::Set { name, .. } => name.clone(),
-        FieldType::Primitive(pt, _) => rust_type(*pt).to_string(),
+        FieldType::Composite { name, .. }
+        | FieldType::Enum { name, .. }
+        | FieldType::Set { name, .. } => Some(name),
+        FieldType::Primitive(..) => field.type_alias.as_deref(),
     }
 }
 
@@ -555,7 +558,7 @@ pub(crate) fn selector_matches(sel: &crate::ConversionSelector, field: &MessageF
         crate::ConversionSelector::SemanticType(st) => {
             field.semantic_type.as_deref() == Some(st.as_str())
         }
-        crate::ConversionSelector::NamedType(n) => n == &selector_type_name(field),
+        crate::ConversionSelector::NamedType(n) => selector_type_name(field) == Some(n.as_str()),
     }
 }
 

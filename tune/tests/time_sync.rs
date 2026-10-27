@@ -12,11 +12,11 @@ use std::time::{Duration, Instant};
 
 use common::Fixture;
 use ergon_tune::{
-    Arch, BoundSource, CheckId, ChronyAnswer, ChronyError, ChronyReference, ChronyTracking,
+    Arch, BoundSource, ChronyAnswer, ChronyError, ChronyReference, ChronyTracking,
     ClockBoundAnswer, ClockBoundError, ClockBoundReading, ClockBoundStatus, Clocksource,
     ClocksourceKind, Finding, Host, HostCheckPolicy, KernelSync, Observed, PtpClock, ReadError,
     RefclockId, Severity, Status, SyncVerdict, TimeDaemon, TimeSync, TimeSyncLimits, TimeSyncProbe,
-    t11_time_sync, t12_clocksource, time_sync,
+    t11_time_sync, t12_clocksource, time_sync, unknown_stops_require,
 };
 
 type R = Result<(), Box<dyn std::error::Error>>;
@@ -129,7 +129,7 @@ fn findings(t: &TimeSync) -> Vec<Finding> {
 /// The one verdict finding: the first T11 finding.
 fn verdict_finding(t: &TimeSync) -> Result<Finding, Box<dyn std::error::Error>> {
     let all = findings(t);
-    assert!(all.iter().all(|f| f.id == CheckId::T11), "{all:?}");
+    assert!(all.iter().all(|f| f.id == "T11"), "{all:?}");
     Ok(all.into_iter().next().ok_or("no T11 finding")?)
 }
 
@@ -145,7 +145,7 @@ fn off_linux_the_verdict_is_unknown_with_its_reason() {
     let all = findings(&t);
     assert_eq!(all.len(), 1, "{all:?}");
     let f = &all[0];
-    assert_eq!(f.id, CheckId::T11);
+    assert_eq!(f.id, "T11");
     assert!(
         matches!(&f.status, Status::Unknown(why) if why.starts_with("not Linux")),
         "{f}"
@@ -1329,7 +1329,7 @@ fn x86(name: &str, invariant: Option<bool>) -> Clocksource {
 fn the_clocksource_finding_follows_the_source() {
     for name in ["tsc", "tsc\n"] {
         let f = x86(name, Some(true)).finding();
-        assert_eq!((f.id, &f.status), (CheckId::T12, &Status::Ok), "{f}");
+        assert_eq!((f.id, &f.status), ("T12", &Status::Ok), "{f}");
     }
     for source in ["hpet", "acpi_pm"] {
         let f = x86(source, Some(true)).finding();
@@ -1395,7 +1395,7 @@ fn t12_on_an_architecture_it_does_not_know_is_unknown() {
     };
     for name in ["riscv_clocksource", "timebase", "hpet"] {
         let f = other(name).finding();
-        assert_eq!(f.id, CheckId::T12);
+        assert_eq!(f.id, "T12");
         assert!(f.is_unknown() && !f.is_warning(), "{f}");
         assert!(
             matches!(&f.status, Status::Unknown(why) if why.contains(name)),
@@ -1440,7 +1440,7 @@ fn t12_reads_the_tree() -> R {
 fn t12_answers_on_the_running_host() {
     let f = t12_clocksource(&Host::system());
     println!("{f}");
-    assert_eq!(f.id, CheckId::T12);
+    assert_eq!(f.id, "T12");
     if cfg!(target_os = "linux") {
         assert!(!f.is_unknown(), "{f}");
     } else {
@@ -1459,8 +1459,8 @@ fn t12_answers_on_the_running_host() {
 /// the unknown's info line stays.
 #[test]
 fn require_refuses_a_t11_warning_and_a_t12_unknown_only() {
-    assert!(!CheckId::T11.unknown_stops_require());
-    assert!(CheckId::T12.unknown_stops_require());
+    assert!(!unknown_stops_require("T11"));
+    assert!(unknown_stops_require("T12"));
     let warn = findings(&judge(chrony_ntp(0.0, 0.0, 0.000_05, 0)));
     let unknown = findings(&judge(Observed::not_linux()));
     let t12_unknown = Clocksource {

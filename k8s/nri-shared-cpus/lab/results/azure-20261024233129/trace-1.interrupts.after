@@ -1,0 +1,24 @@
+           CPU0       CPU1       CPU2       CPU3       CPU4       CPU5       CPU6       CPU7       
+ 10:     635677     513815     590616        325        102        104        105        103     GICv3  20 Level     arch_timer
+ 12:          0          0          0          0          0          0          0          0     GICv3  33 Level     uart-pl011
+ 14:      53432       1617         40          0          0          0          0          0     GICv3  18 Edge      Hyper-V VMbus
+ 15:          0          0          0          0          0          0          0          0     GICv3  35 Edge      ACPI:Ged
+ 16:          0          0          0          0          0          0          0          0     GICv3  23 Level     arm-pmu
+ 17:       2323          0          0          0          0          0          0          0  Hyper-V PCIe MSI 6260585955328 Edge      mlx5_async0@pci:b635:00:02.0
+ 18:      21043          0          0          0          0          0          0          0  Hyper-V PCIe MSI 6260585955329 Edge      mlx5_comp0@pci:b635:00:02.0
+ 19:      10602         33          0          0          0          0          0          0  Hyper-V PCIe MSI 6260585955330 Edge      mlx5_comp1@pci:b635:00:02.0
+ 20:      11554          0        232          0          0          0          0          0  Hyper-V PCIe MSI 6260585955331 Edge      mlx5_comp2@pci:b635:00:02.0
+ 21:        389          0          0         13          0          0          0          0  Hyper-V PCIe MSI 6260585955332 Edge      mlx5_comp3@pci:b635:00:02.0
+ 22:       9662          0          0          0         32          0          0          0  Hyper-V PCIe MSI 6260585955333 Edge      mlx5_comp4@pci:b635:00:02.0
+ 23:      12820          0          0          0          0         61          0          0  Hyper-V PCIe MSI 6260585955334 Edge      mlx5_comp5@pci:b635:00:02.0
+ 24:      28570          0          0          0          0          0         52          0  Hyper-V PCIe MSI 6260585955335 Edge      mlx5_comp6@pci:b635:00:02.0
+ 25:      13576          0          0          0          0          0          0         42  Hyper-V PCIe MSI 6260585955336 Edge      mlx5_comp7@pci:b635:00:02.0
+IPI0:     43364      37707      47628        225          7          7          8          8       Rescheduling interrupts
+IPI1:    562624     483199     593975       2173       1955       1957       1956       1956       Function call interrupts
+IPI2:         0          0          0          0          0          0          0          0       CPU stop interrupts
+IPI3:         0          0          0          0          0          0          0          0       CPU stop NMIs
+IPI4:         0          0          0          0          0          0          0          0       Timer broadcast interrupts
+IPI5:        12         10         30         10          7         12         20          9       IRQ work interrupts
+IPI6:         0          0          0          0          0          0          0          0       CPU backtrace interrupts
+IPI7:         0          0          0          0          0          0          0          0       KGDB roundup interrupts
+Err:          0

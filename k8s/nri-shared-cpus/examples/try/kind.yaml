@@ -4,13 +4,14 @@
 # One schedulable control-plane node. The kubelet reserves CPUs 0 and 1.
 # The sample tells the public chart that CPU 0 is the shared housekeeping CPU.
 # This is not an EKS node: no boot-line isolation, no NIC IRQ pin, no hugepage
-# pool, and no PHC.
+# pool, and no PHC. Without isolcpus a pod labelled ergon.io/latency: hot is
+# refused at create; the shared-CPU grant works without that label.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: ergon-shared-cpus-try
 nodes:
   - role: control-plane
-    image: kindest/node:v1.33.0
+    image: kindest/node:v1.35.1@sha256:05d7bcdefbda08b4e038f644c4df690cdac3fba8b06f8289f30e10026720a1ab
     kubeadmConfigPatches:
       - |
         kind: InitConfiguration

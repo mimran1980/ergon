@@ -123,14 +123,6 @@ proptest! {
         prop_assert_eq!(dec.code(), EventCode::OK);
     }
 
-    #[test]
-    fn prop_arbitrary_bytes_dont_panic(data in prop::collection::vec(any::<u8>(), 0..256)) {
-        // Feeding arbitrary bytes through the egress adapter must never panic
-        use ergo_aeron_cluster::egress::{EgressAdapter, NullListener};
-        let mut adapter = EgressAdapter::new(NullListener);
-        let _ = adapter.on_fragment(&data); // must not panic
-    }
-
     /// Feed random bytes to SessionMessageHeaderDecoder Display/Debug — no panic.
     #[test]
     fn fuzz_session_message_header_display_debug(data in prop::collection::vec(any::<u8>(), 0..512)) {
@@ -165,20 +157,6 @@ proptest! {
                 let _ = format!("{dec}");
                 let _ = format!("{dec:?}");
         }
-    }
-
-    /// Feed random bytes to controlled egress adapter — no panic.
-    #[test]
-    fn fuzz_controlled_egress_no_panic(data in prop::collection::vec(any::<u8>(), 0..512)) {
-        use ergo_aeron_cluster::controlled::{ControlledEgressAdapter, ControlledEgressListener, ControlledPollAction};
-        struct NoOp;
-        impl ControlledEgressListener for NoOp {
-            fn on_message(&mut self, _: i64, _: i64, _: &[u8]) -> ControlledPollAction {
-                ControlledPollAction::Continue
-            }
-        }
-        let mut adapter = ControlledEgressAdapter::new(NoOp);
-        let _ = adapter.on_fragment(&data);
     }
 
     #[test]

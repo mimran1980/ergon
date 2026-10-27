@@ -1,5 +1,11 @@
 //! Shared test helpers for `ergon` integration tests.
 //!
+//! # Scratch crates share one target directory
+//!
+//! The `compile_and_run*` helpers build a throwaway crate per call. They all
+//! build into one persistent target directory ([`scratch`]), so `ergo-sbe` and
+//! its dependencies compile once, not once per call.
+//!
 //! # Never set `CARGO_NET_OFFLINE` on the scratch-crate builds
 //!
 //! The `compile_and_run*` helpers write a throwaway crate and `cargo build`
@@ -32,29 +38,25 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Cargo for a throwaway crate. Clears `CARGO_NET_OFFLINE` inherited from
-/// `cargo llvm-cov` (and similar harnesses) so extra scratch deps can download.
-pub fn scratch_cargo() -> Command {
-    let mut cmd = Command::new("cargo");
-    cmd.env_remove("CARGO_NET_OFFLINE");
-    cmd
-}
+pub mod scratch;
+pub use scratch::parallel_map;
+use scratch::{Mode, ScratchCrate};
 
-/// Scratch directory for one throwaway `compile_and_run*` crate.
+/// Source directory for one throwaway crate.
 ///
 /// `std::env::temp_dir()` is shared OS-wide, not per-process, and every
 /// `compile_and_run*` helper starts by `remove_dir_all`-ing its directory
 /// before recreating it. Two `cargo test` invocations racing on the same
-/// `prefix`/`name` pair — a local run overlapping CI, or `just test` and
-/// `just bench` both exercising this suite — can delete the *other* process's
-/// in-flight directory mid-build. Folding in this process's id makes the path
-/// private to the process that owns it, so concurrent suite runs never
-/// collide regardless of what name a test happens to reuse.
-fn scratch_dir(prefix: &str, name: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("{prefix}_{name}_{}", std::process::id()))
+/// name — a local run overlapping CI, or `just test` and `just bench` both
+/// exercising this suite — could delete the *other* process's in-flight
+/// directory mid-build. The crate's name folds in this process's id and a
+/// per-process counter ([`ScratchCrate::new`]), so the path is private to the
+/// call that owns it, whatever name a test happens to reuse.
+fn scratch_dir(krate: &ScratchCrate) -> PathBuf {
+    std::env::temp_dir().join(krate.name())
 }
 
-use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse_file};
+use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, SchemaSource, parse};
 
 pub struct Paths;
 
@@ -200,7 +202,8 @@ impl Paths {
 }
 
 pub fn generate(xml_path: &Path, module_name: &str) -> (Schema, String) {
-    let ir = parse_file(xml_path).unwrap_or_else(|e| panic!("parse {xml_path:?}: {e}"));
+    let ir =
+        parse(SchemaSource::file(xml_path)).unwrap_or_else(|e| panic!("parse {xml_path:?}: {e}"));
     let schema = Schema::from_ir(ir);
     let mut g = Generator::new(GenerationConfig::new(module_name));
     let (modules, _warnings) = g.generate(&schema).unwrap().into_parts();
@@ -299,7 +302,9 @@ pub fn compile_fails_with_diagnostics_excluding(
         !expected_diagnostics.is_empty(),
         "compile-fail test {module_name} must name its intended diagnostic"
     );
-    let dir = scratch_dir("ergo_test_cf", module_name);
+    // `true`: clear ambient RUSTFLAGS (see below).
+    let krate = ScratchCrate::new(&format!("{module_name}_cf"), true);
+    let dir = scratch_dir(&krate);
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     let src = dir.join("src");
@@ -319,28 +324,28 @@ pub fn compile_fails_with_diagnostics_excluding(
         .unwrap()
         .join("sbe");
     let cargo = format!(
-        "[package]\nname=\"{module_name}_cf\"\nversion=\"0.1.0\"\nedition=\"2024\"\n\
+        "[package]\nname=\"{}\"\nversion=\"0.1.0\"\nedition=\"2024\"\n\
          [dependencies]\n\
          ergo-sbe = {{ path = \"{}\", features = [\"compact_str\", \"smol_str\", \"bytes\", \"chrono\"] }}\n",
+        krate.name(),
         sbe_path.display(),
     );
     fs::write(dir.join("Cargo.toml"), &cargo).unwrap();
+    krate.write_lockfile(&dir);
 
-    let target_dir = dir.join("target_ci");
-    let out = scratch_cargo()
-        .args(["build"])
-        .current_dir(&dir)
-        .env("CARGO_TARGET_DIR", &target_dir)
+    // The crate's name is unique to this call, so the build below always
+    // compiles this fixture: a cached success can never stand in for it.
+    let out = krate
+        .exec(&dir, Mode::Build)
         // A compile-fail fixture asserts that a lint or type error FIRES. Ambient
         // RUSTFLAGS can silence exactly that: `cargo mutants` runs with
         // `cap_lints = true` (.cargo/mutants.toml), which caps every lint to
         // `allow`, so a `#[deny(unused_must_use)]` fixture compiled cleanly and
         // the test reported "expected a compile error, but the crate built
-        // successfully". Clear both spellings so the fixture's own attributes
-        // decide the outcome, not the environment that invoked the suite.
-        .env_remove("RUSTFLAGS")
-        .env_remove("CARGO_ENCODED_RUSTFLAGS")
-        .output()
+        // successfully". `krate` clears both spellings so the fixture's own
+        // attributes decide the outcome, not the environment that invoked the
+        // suite (the recorded rustc command of `exec` was recorded under the
+        // same cleared environment).
         .expect("cargo build failed");
 
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
@@ -375,7 +380,8 @@ pub fn run_doctests(
     root_items: &str,
     deps: &str,
 ) -> Result<(), String> {
-    let dir = scratch_dir("ergo_doctest", crate_name);
+    let krate = ScratchCrate::new(&format!("{crate_name}_doctest"), false);
+    let dir = scratch_dir(&krate);
     let _ = fs::remove_dir_all(&dir);
     let src = dir.join("src");
     fs::create_dir_all(&src).map_err(|e| e.to_string())?;
@@ -388,16 +394,18 @@ pub fn run_doctests(
     fs::write(src.join("lib.rs"), lib).map_err(|e| e.to_string())?;
     let sbe_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let cargo = format!(
-        "[package]\nname=\"{crate_name}_doctest\"\nversion=\"0.1.0\"\nedition=\"2024\"\n\
+        "[package]\nname=\"{}\"\nversion=\"0.1.0\"\nedition=\"2024\"\n\
          [dependencies]\n\
          ergo-sbe = {{ path = \"{}\", features = [\"compact_str\", \"smol_str\", \"bytes\", \"chrono\"] }}\n{deps}",
+        krate.name(),
         sbe_path.display(),
     );
     fs::write(dir.join("Cargo.toml"), cargo).map_err(|e| e.to_string())?;
-    let out = scratch_cargo()
+    krate.write_lockfile(&dir);
+    let out = krate
+        .cargo()
         .args(["test", "--doc"])
         .current_dir(&dir)
-        .env("CARGO_TARGET_DIR", dir.join("target_ci"))
         .output()
         .map_err(|e| e.to_string())?;
     let _ = fs::remove_dir_all(&dir);
@@ -425,7 +433,8 @@ fn _compile_and_run(
     features: &[&str],
     deps: &str,
 ) -> String {
-    let dir = scratch_dir("ergo_test", module_name);
+    let krate = ScratchCrate::new(&format!("{module_name}_test"), false);
+    let dir = scratch_dir(&krate);
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     let src = dir.join("src");
@@ -446,8 +455,9 @@ fn _compile_and_run(
         .unwrap()
         .join("sbe");
     let mut cargo = format!(
-        "[package]\nname=\"{module_name}_test\"\nversion=\"0.1.0\"\nedition=\"2024\"\n\
+        "[package]\nname=\"{}\"\nversion=\"0.1.0\"\nedition=\"2024\"\n\
          [dependencies]\n",
+        krate.name(),
     );
     // Only add ergo-sbe if the caller hasn't already provided a custom dep string.
     if !deps.contains("ergo-sbe") {
@@ -466,18 +476,10 @@ fn _compile_and_run(
         cargo.push_str(deps);
     }
     fs::write(dir.join("Cargo.toml"), &cargo).unwrap();
+    krate.write_lockfile(&dir);
 
-    let mut args: Vec<&str> = vec!["run"];
-    for f in features {
-        args.push("--features");
-        args.push(f);
-    }
-    let target_dir = dir.join("target_ci");
-    let out = scratch_cargo()
-        .args(&args)
-        .current_dir(&dir)
-        .env("CARGO_TARGET_DIR", &target_dir)
-        .output()
+    let out = krate
+        .exec(&dir, Mode::Run(features))
         .expect("cargo run failed");
 
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -514,9 +516,31 @@ pub fn run_fixture_test(name: &str, schema: &Path, fixture: &Path, code: &str) {
 ///
 /// The test body should encode the same logical payload with both generators
 /// and call `assert_frames_eq`.
+///
+/// `ergo` is generated with `with_validate(true)`, and `assert_frames_eq`
+/// also requires `AnyMessage::validate()` to accept every sbe-tool frame, so
+/// the whole parity corpus guards `validate()` against false rejects.
 pub fn dual_encode_run(test_name: &str, schema: &Path, tool_key: &str, code: &str) {
-    let (_, ergo_src) = generate(schema, "ergo");
-    dual_encode_run_modules(test_name, &[("ergo", &ergo_src)], tool_key, code);
+    let ir = parse(SchemaSource::file(schema)).unwrap_or_else(|e| panic!("parse {schema:?}: {e}"));
+    let generated = Generator::new(GenerationConfig::new("ergo").with_validate(true))
+        .generate(&Schema::from_ir(ir))
+        .unwrap_or_else(|e| panic!("generate {schema:?}: {e}"));
+    let ergo_src = generated
+        .modules()
+        .next()
+        .map(|m| m.source.clone())
+        .expect("one module");
+    let validate = r#"
+    match ergo::AnyMessage::decode(frame, 0) {
+        Ok(message) => {
+            if let Err(e) = message.validate() {
+                panic!("{label}: validate() rejected an sbe-tool frame: {e}");
+            }
+        }
+        Err(e) => panic!("{label}: AnyMessage::decode failed before validate(): {e}"),
+    }
+"#;
+    dual_encode_run_inner(test_name, &[("ergo", &ergo_src)], tool_key, code, validate);
 }
 
 /// Like [`dual_encode_run`] but with several ergo-sbe modules in one crate —
@@ -530,6 +554,18 @@ pub fn dual_encode_run_modules(
     modules: &[(&str, &str)],
     tool_key: &str,
     code: &str,
+) {
+    dual_encode_run_inner(test_name, modules, tool_key, code, "");
+}
+
+/// `validate_frame` is the body of `fn validate_frame(label, frame)`, which
+/// `assert_frames_eq` calls on the sbe-tool frame once the bytes match.
+fn dual_encode_run_inner(
+    test_name: &str,
+    modules: &[(&str, &str)],
+    tool_key: &str,
+    code: &str,
+    validate_frame: &str,
 ) {
     assert!(
         !modules.is_empty(),
@@ -549,7 +585,8 @@ pub fn dual_encode_run_modules(
     let tool_path_toml = tool_path_str.replace('\\', "/");
     let package = format!("parity_{tool_key}");
 
-    let dir = scratch_dir("ergo_dual", test_name);
+    let krate = ScratchCrate::new(&format!("{test_name}_dual"), false);
+    let dir = scratch_dir(&krate);
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     let src = dir.join("src");
@@ -587,6 +624,11 @@ fn assert_frames_eq(label: &str, ergo: &[u8], tool: &[u8]) {{
             &tool[..tool.len().min(64)],
         );
     }}
+    validate_frame(label, tool);
+}}
+
+fn validate_frame(label: &str, frame: &[u8]) {{
+{validate_frame}
 }}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {{
@@ -603,7 +645,7 @@ Ok(())
     let sbe_path_toml = Paths::sbe_dir().display().to_string().replace('\\', "\\\\");
     let cargo = format!(
         r#"[package]
-name = "{test_name}_dual"
+name = "{name}"
 version = "0.1.0"
 edition = "2024"
 
@@ -612,16 +654,14 @@ edition = "2024"
 [dependencies]
 tool = {{ path = "{tool_path_toml}", package = "{package}" }}
 ergo-sbe = {{ path = "{sbe_path_toml}", features = ["compact_str", "smol_str", "bytes", "chrono"] }}
-"#
+"#,
+        name = krate.name(),
     );
     fs::write(dir.join("Cargo.toml"), &cargo).unwrap();
+    krate.write_lockfile(&dir);
 
-    let target_dir = dir.join("target_ci");
-    let out = scratch_cargo()
-        .args(["run", "--quiet"])
-        .current_dir(&dir)
-        .env("CARGO_TARGET_DIR", &target_dir)
-        .output()
+    let out = krate
+        .exec(&dir, Mode::Run(&[]))
         .expect("cargo run failed to start");
 
     if !out.status.success() {
@@ -719,7 +759,8 @@ pub fn compile_and_run_modules(test_name: &str, modules: &[(&str, &str)], code: 
         !modules.is_empty(),
         "compile_and_run_modules({test_name}) requires at least one module"
     );
-    let dir = scratch_dir("ergo_test", test_name);
+    let krate = ScratchCrate::new(&format!("{test_name}_test"), false);
+    let dir = scratch_dir(&krate);
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     let src = dir.join("src");
@@ -743,20 +784,16 @@ pub fn compile_and_run_modules(test_name: &str, modules: &[(&str, &str)], code: 
         .unwrap()
         .join("sbe");
     let cargo = format!(
-        "[package]\nname=\"{test_name}_test\"\nversion=\"0.1.0\"\nedition=\"2024\"\n\
+        "[package]\nname=\"{}\"\nversion=\"0.1.0\"\nedition=\"2024\"\n\
          [dependencies]\n\
          ergo-sbe = {{ path = \"{}\", features = [\"compact_str\", \"smol_str\", \"bytes\", \"chrono\"] }}\n",
+        krate.name(),
         sbe_path.display(),
     );
     fs::write(dir.join("Cargo.toml"), &cargo).unwrap();
+    krate.write_lockfile(&dir);
 
-    let target_dir = dir.join("target_ci");
-    let out = scratch_cargo()
-        .args(["run"])
-        .current_dir(&dir)
-        .env("CARGO_TARGET_DIR", &target_dir)
-        .output()
-        .expect("cargo run failed");
+    let out = krate.exec(&dir, Mode::Run(&[])).expect("cargo run failed");
 
     let _ = fs::remove_dir_all(&dir);
 
@@ -778,7 +815,8 @@ pub fn generate_domain_with(
     module_name: &str,
     configure: impl FnOnce(GenerationConfig) -> GenerationConfig,
 ) -> (Schema, String) {
-    let ir = parse_file(xml_path).unwrap_or_else(|e| panic!("parse {xml_path:?}: {e}"));
+    let ir =
+        parse(SchemaSource::file(xml_path)).unwrap_or_else(|e| panic!("parse {xml_path:?}: {e}"));
     let schema = Schema::from_ir(ir);
     let config = configure(GenerationConfig::new(module_name));
     let mut g = Generator::new(config);

@@ -41,6 +41,13 @@ cores (SMT off, so one CPU is one core).
 | AWS Graviton, bare metal | `iommu.passthrough=1` | the same, on Arm |
 | EKS DPDK node (x86) | `nosmt transparent_hugepage=never hugepagesz=2M hugepages=<n>`; no C-state cap | `node/provision-node.sh`, step 6. No cap: [C-states](#c-states) |
 
+**At every boot, kernel 6.12 and later:** `0` into
+`/sys/kernel/debug/sched/fair_server/cpu<N>/runtime` for each isolated N,
+after debugfs is mounted (it is not persistent). The fair server's 1 s
+timer otherwise sends each isolated CPU a nohz kick and a reschedule IPI
+and keeps its tick on ([traced](https://github.com/mimran1980/ergon/blob/main/k8s/nri-shared-cpus/BENCHMARKS.md#what-reached-the-exclusive-cpu-and-the-fix)).
+Only where nothing real-time runs on those CPUs.
+
 `clocksource=tsc tsc=reliable` turns the kernel's TSC checks off. The EKS
 node takes it only on bare metal with `RUSTERON_FORCE_TSC=1`, never on a VM
 (`provision-node.sh`).
@@ -75,7 +82,7 @@ interrupts does.
 
 | setting | how | evidence |
 |---|---|---|
-| transparent hugepages off | `transparent_hugepage=never` on the boot line, or `never` into `/sys/kernel/mm/transparent_hugepage/enabled` | [transhuge](https://docs.kernel.org/admin-guide/mm/transhuge.html); not measured here |
+| transparent hugepages off | `transparent_hugepage=never` on the boot line, or `never` into `/sys/kernel/mm/transparent_hugepage/enabled` | [transhuge](https://docs.kernel.org/admin-guide/mm/transhuge.html); traced: `khugepaged` ran a kworker on an isolated CPU ([nri-shared-cpus](https://github.com/mimran1980/ergon/blob/main/k8s/nri-shared-cpus/BENCHMARKS.md#what-reached-the-exclusive-cpu-and-the-fix)) |
 | 2 MiB hugepage pool | `hugepagesz=2M hugepages=<n>` on the boot line, or `vm.nr_hugepages` | DPDK and Aeron's hugetlbfs draw from it |
 | Aeron's directory on a sized hugetlbfs | `mount -t hugetlbfs -o pagesize=2M,size=1G nodev /mnt/huge-aeron`; on the media driver `AERON_FILE_PAGE_SIZE=2097152`, `AERON_TERM_BUFFER_SPARSE_FILE=false` | without `size=` Aeron sees no free space and refuses every log buffer ([hft](hft.md#settings)) |
 | `net.core.rmem_max`, `wmem_max` | 16 MiB | needed only when Aeron's socket buffers are raised above the kernel's limit ([hft](hft.md#settings)) |

@@ -10,7 +10,8 @@
 #   - `just release-check` dry-runs each one with its published dependencies
 #     in the same invocation: the release publishes them all at one new
 #     version, so a dependency is never on crates.io yet when its dependents
-#     are verified;
+#     are verified. The dry runs live in `_release-check-extras`, which
+#     `release-check` depends on and `_release-post` runs;
 #   - api/public-api-baseline.toml lists exactly the published crates.
 # Usage: check-publish-set.sh [--metadata FILE] [--justfile FILE]
 #                             [--workflow FILE] [--api-manifest FILE]
@@ -107,6 +108,16 @@ def recipe(name):
     return []
 
 
+def recipe_dependencies(name):
+    """Recipe names a justfile recipe's header depends on."""
+    head = re.compile(rf"^@?{re.escape(name)}(\s[^:]*)?:(?!=)(.*)$")
+    for line in open(justfile_path).read().splitlines():
+        match = head.match(line)
+        if match:
+            return match.group(2).split()
+    return []
+
+
 def workflow_commands():
     """Shell lines of the workflow's run steps, continuations joined."""
     joined, pending = [], ""
@@ -175,8 +186,32 @@ check_order("_release-post", release)
 check_order(".github/workflows/release.yml",
             publishes("release.yml", workflow_commands(), dry=False))
 
+# Both release paths reach the dry runs: `release-check` through its
+# dependency, `_release-post` by running the recipe itself.
+DRY_RUN_RECIPE = "_release-check-extras"
+if DRY_RUN_RECIPE not in recipe_dependencies("release-check"):
+    errors.append(f"release-check does not depend on {DRY_RUN_RECIPE}")
+if not any(shlex.split(line, comments=True)[:2] == ["just", DRY_RUN_RECIPE]
+           for line in recipe("_release-post") if line):
+    errors.append(f"_release-post does not run just {DRY_RUN_RECIPE}")
+
+# `_release-post` no longer reruns `just test` (it runs only the extras), so
+# the release's one test run is `_release-pre`'s: both release recipes must run
+# `_release-pre` before `_release-post`, and `_release-pre` must run `just test`.
+def just_calls(name):
+    return [shlex.split(line, comments=True)[:2] for line in recipe(name) if line]
+
+
+if ["just", "test"] not in just_calls("_release-pre"):
+    errors.append("_release-pre does not run just test")
+for path in ("release", "release-verified"):
+    calls = just_calls(path)
+    pre, post = ["just", "_release-pre"], ["just", "_release-post"]
+    if pre not in calls or post not in calls or calls.index(pre) > calls.index(post):
+        errors.append(f"{path} does not run just _release-pre before just _release-post")
+
 dry_run = set()
-for group in publishes("release-check", recipe("release-check"), dry=True):
+for group in publishes("release-check", recipe(DRY_RUN_RECIPE), dry=True):
     dry_run.update(group)
     for crate in group:
         for dep in sorted(needs.get(crate, ())):

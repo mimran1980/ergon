@@ -7,7 +7,6 @@ mod common;
 
 use std::time::Duration;
 
-use ergo_aeron_cluster::egress::EgressAdapter;
 use ergo_aeron_cluster::{AeronCluster, SessionBuilder};
 use serial_test::serial;
 
@@ -32,9 +31,19 @@ fn connect(
 fn echo_service_round_trip() -> Result<(), Box<dyn std::error::Error>> {
     let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node();
     let mut client = connect(&cluster)?;
-    let mut adapter = EgressAdapter::new(Capture::new());
-    await_echo(&mut client, &mut adapter, b"echo-1", Duration::from_secs(5))?;
-    await_echo(&mut client, &mut adapter, b"echo-2", Duration::from_secs(5))?;
+    let mut listener = Capture::new();
+    await_echo(
+        &mut client,
+        &mut listener,
+        b"echo-1",
+        Duration::from_secs(5),
+    )?;
+    await_echo(
+        &mut client,
+        &mut listener,
+        b"echo-2",
+        Duration::from_secs(5),
+    )?;
     client.close()?;
     Ok(())
 }

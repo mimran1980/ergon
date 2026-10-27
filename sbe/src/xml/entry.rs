@@ -1,142 +1,217 @@
-//! Public parse entry points.
+//! The parse front door: [`parse`] and its input, [`SchemaSource`].
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use roxmltree::{Document, Node};
 
-use crate::ir::Ir;
+use crate::ir::{Ir, Signal};
 
 use super::error::{Fault, ParseError, named_source};
 use super::registry::TypeRegistry;
 use super::schema::{IncludeWalk, parse_schema};
 use super::warn::WarnState;
 
-/// Parse an SBE schema from a string. Returns a token [`Ir`] ready for
+/// Where a schema comes from, plus the two parse options.
+///
+/// | Constructor / option | Effect |
+/// |---|---|
+/// | [`SchemaSource::file`] (or `From<&Path>` / `From<PathBuf>`) | Read a file; `xi:include` resolves relative to it; [`Ir::sources`] lists the file and every include |
+/// | [`SchemaSource::xml`] | Inline XML text (e.g. `include_str!`); [`Ir::sources`] lists no file of its own |
+/// | [`with_shared`](Self::with_shared) | Resolve type references against an already-parsed schema, and copy its types (not its messages) into the result |
+/// | [`with_xsd_validation`](Self::with_xsd_validation) | Run [`crate::validate_against_sbe_xsd`] on the root document first |
+///
+/// A bare `&str` is deliberately not accepted: it could mean a path or XML
+/// text. Say which with [`SchemaSource::file`] or [`SchemaSource::xml`].
+///
+/// ```compile_fail
+/// // Does not compile: `&str` is not a `SchemaSource`.
+/// let _ = ergo_sbe::parse("schemas/messages.xml");
+/// ```
+#[derive(Clone, Debug)]
+pub struct SchemaSource<'a> {
+    input: Input<'a>,
+    shared: Option<&'a Ir>,
+    xsd: bool,
+}
+
+#[derive(Clone, Debug)]
+enum Input<'a> {
+    File(PathBuf),
+    Xml(&'a str),
+}
+
+impl<'a> SchemaSource<'a> {
+    /// A schema file on disk.
+    #[must_use]
+    pub fn file(path: impl AsRef<Path>) -> Self {
+        Self::from_input(Input::File(path.as_ref().to_path_buf()))
+    }
+
+    /// Inline schema XML text.
+    #[must_use]
+    pub const fn xml(xml: &'a str) -> Self {
+        Self::from_input(Input::Xml(xml))
+    }
+
+    const fn from_input(input: Input<'a>) -> Self {
+        Self {
+            input,
+            shared: None,
+            xsd: false,
+        }
+    }
+
+    /// Resolve type references against `shared` first, so this schema need
+    /// not `<include>` or redeclare them.
+    ///
+    /// The parsed [`Ir`] then also carries `shared`'s composites, enums and
+    /// sets (not its messages) and its [`Ir::sources`], so it generates on its
+    /// own or as a consumer in [`crate::Generator::generate_multi`].
+    ///
+    /// Bare top-level `<type>` typedefs are inlined and dropped during
+    /// parsing, so share them through a `<composite>`/`<enum>`/`<set>`.
+    #[must_use]
+    pub const fn with_shared(mut self, shared: &'a Ir) -> Self {
+        self.shared = Some(shared);
+        self
+    }
+
+    /// Check the root document against the embedded SBE XSD before parsing.
+    ///
+    /// A shape check for schema authors' CI, not a full W3C XSD engine (see
+    /// [`crate::xsd`]). Included files are not XSD-checked. [`parse`] alone
+    /// already rejects malformed XML, a bad root, unexpected elements and
+    /// unknown attributes.
+    #[must_use]
+    pub const fn with_xsd_validation(mut self) -> Self {
+        self.xsd = true;
+        self
+    }
+}
+
+impl From<&Path> for SchemaSource<'_> {
+    fn from(path: &Path) -> Self {
+        Self::file(path)
+    }
+}
+
+impl From<&PathBuf> for SchemaSource<'_> {
+    fn from(path: &PathBuf) -> Self {
+        Self::file(path)
+    }
+}
+
+impl From<PathBuf> for SchemaSource<'_> {
+    fn from(path: PathBuf) -> Self {
+        Self::from_input(Input::File(path))
+    }
+}
+
+/// Parse an SBE schema into a resolved token [`Ir`], ready for
 /// [`crate::Schema::from_ir`].
 ///
-/// # Errors
-/// [`ParseError`] with source spans when the XML is malformed or the schema
-/// is structurally invalid.
-pub fn parse(xml: &str) -> Result<Ir, ParseError> {
-    let warn_state = WarnState::new("<xml>".into());
-    parse_with_context(
-        xml,
-        None,
-        &mut IncludeWalk::new(),
-        TypeRegistry::new(),
-        &warn_state,
-        &mut Vec::new(),
-    )
-}
-
-/// [`parse`], resolving type references against an already-parsed shared
-/// schema's composites/enums/sets first — so `xml` need not `<include>` or
-/// redeclare them.
+/// ```rust
+/// use std::path::Path;
+/// use ergo_sbe::{SchemaSource, parse};
 ///
-/// Only composites, enums, and sets round-trip through `shared`'s [`Ir`];
-/// bare top-level `<type>` typedefs are inlined and dropped during parsing,
-/// so reference those via a `<composite>`/`<enum>`/`<set>` in the shared
-/// schema instead.
+/// # fn main() -> Result<(), ergo_sbe::ParseError> {
+/// let xml = r#"<messageSchema package="t" id="1" version="0" byteOrder="littleEndian">
+///   <types><composite name="messageHeader">
+///     <type name="blockLength" primitiveType="uint16"/>
+///     <type name="templateId" primitiveType="uint16"/>
+///     <type name="schemaId" primitiveType="uint16"/>
+///     <type name="version" primitiveType="uint16"/>
+///   </composite></types>
+/// </messageSchema>"#;
+/// let ir = parse(SchemaSource::xml(xml))?;
+/// assert_eq!(ir.id, 1);
+/// assert!(ir.sources.is_empty());
+/// assert!(parse(Path::new("missing.xml")).is_err());
+/// # Ok(())
+/// # }
+/// ```
 ///
 /// # Errors
 ///
-/// Same as [`parse`].
+/// [`ParseError`] with source spans when the file cannot be read, the XML is
+/// malformed, the XSD shape check fails (when requested), or the schema is
+/// structurally invalid.
 #[allow(clippy::result_large_err)]
-pub fn parse_with_shared(xml: &str, shared: &Ir) -> Result<Ir, ParseError> {
-    let warn_state = WarnState::new("<xml>".into());
-    parse_with_context(
-        xml,
-        None,
-        &mut IncludeWalk::new(),
-        TypeRegistry::from_parsed_schema(shared),
-        &warn_state,
-        &mut Vec::new(),
-    )
-}
-
-/// [`parse`] after [`crate::validate_against_sbe_xsd`].
-///
-/// Use in CI for schema authors. Still not a full W3C XSD engine — see
-/// [`crate::xsd`]. [`parse`] alone already rejects malformed XML, a bad
-/// root, unexpected elements, and unknown attributes; this adds the XSD's
-/// wider element/attribute shape check on top.
-///
-/// # Errors
-///
-/// XSD structural failures or any [`parse`] error.
-#[allow(clippy::result_large_err)]
-pub fn parse_with_xsd_validation(xml: &str) -> Result<Ir, ParseError> {
-    if let Err(e) = crate::xsd::validate_against_sbe_xsd(xml) {
-        return Err(match &e {
-            crate::xsd::XsdValidationError::MalformedXml(_) => {
-                ParseError::malformed_xml("<xml>", e.to_string(), xml)
+pub fn parse<'a>(source: impl Into<SchemaSource<'a>>) -> Result<Ir, ParseError> {
+    let source = source.into();
+    let registry = source
+        .shared
+        .map_or_else(TypeRegistry::new, TypeRegistry::from_parsed_schema);
+    let mut ir = match &source.input {
+        Input::Xml(xml) => {
+            if source.xsd {
+                xsd_check("<xml>", xml)?;
             }
-            _ => ParseError::Invalid {
-                what: "SBE schema".into(),
-                value: e.to_string(),
-                source_code: named_source("<xml>", xml),
-                span: None,
-            },
-        });
+            let warn_state = WarnState::new("<xml>".into());
+            parse_with_context(
+                xml,
+                None,
+                &mut IncludeWalk::new(),
+                registry,
+                &warn_state,
+                &mut Vec::new(),
+            )?
+        }
+        Input::File(path) => parse_path(path, registry, source.xsd)?,
+    };
+    if let Some(shared) = source.shared {
+        merge_shared(&mut ir, shared);
     }
-    parse(xml)
-}
-
-/// Schema parse result plus every file that contributed to it.
-///
-/// `parse_file` keeps returning [`Ir`] only. Build helpers use this so Cargo
-/// watches the root and every resolved include.
-pub(crate) struct ParsedFile {
-    pub ir: Ir,
-    /// Root first, then remaining resolved includes, each path once, sorted.
-    pub dependencies: Vec<PathBuf>,
-}
-
-/// Parse a schema file; resolve `xi:include` relative to the file's directory.
-///
-/// # Errors
-///
-/// I/O, XML, or schema validation failures as [`ParseError`].
-#[allow(clippy::result_large_err)]
-pub fn parse_file(path: impl AsRef<Path>) -> Result<Ir, ParseError> {
-    Ok(parse_file_with_deps(path)?.ir)
-}
-
-/// [`parse_file`], also returning the canonical root and every resolved include.
-#[allow(clippy::result_large_err)]
-pub(crate) fn parse_file_with_deps(path: impl AsRef<Path>) -> Result<ParsedFile, ParseError> {
-    parse_path_with_registry(path.as_ref(), TypeRegistry::new())
-}
-
-/// [`parse_file`], resolving type references against an already-parsed
-/// shared schema first — see [`parse_with_shared`].
-///
-/// # Errors
-///
-/// Same as [`parse_file`].
-#[allow(clippy::result_large_err)]
-pub fn parse_file_with_shared(path: impl AsRef<Path>, shared: &Ir) -> Result<Ir, ParseError> {
-    Ok(parse_file_with_shared_deps(path, shared)?.ir)
-}
-
-/// [`parse_file_with_shared`], also returning watched schema files.
-#[allow(clippy::result_large_err)]
-pub(crate) fn parse_file_with_shared_deps(
-    path: impl AsRef<Path>,
-    shared: &Ir,
-) -> Result<ParsedFile, ParseError> {
-    parse_path_with_registry(path.as_ref(), TypeRegistry::from_parsed_schema(shared))
+    Ok(ir)
 }
 
 #[allow(clippy::result_large_err)]
-fn parse_path_with_registry(
-    path: &Path,
-    initial_registry: TypeRegistry,
-) -> Result<ParsedFile, ParseError> {
+fn xsd_check(name: &str, xml: &str) -> Result<(), ParseError> {
+    match crate::xsd::validate_against_sbe_xsd(xml) {
+        Ok(()) => Ok(()),
+        Err(e @ crate::xsd::XsdValidationError::MalformedXml(_)) => {
+            Err(ParseError::malformed_xml(name, e.to_string(), xml))
+        }
+        Err(e) => Err(ParseError::Invalid {
+            what: "SBE schema".into(),
+            value: e.to_string(),
+            source_code: named_source(name, xml),
+            span: None,
+        }),
+    }
+}
+
+/// Prepend `shared`'s type tokens (everything outside its messages) and
+/// append its source files, so the consumer IR is self-contained.
+fn merge_shared(consumer: &mut Ir, shared: &Ir) {
+    let mut tokens = Vec::with_capacity(shared.tokens.len() + consumer.tokens.len());
+    let mut in_message = false;
+    for token in &shared.tokens {
+        match token.signal {
+            Signal::BeginMessage => in_message = true,
+            Signal::EndMessage => in_message = false,
+            _ if !in_message => tokens.push(token.clone()),
+            _ => {}
+        }
+    }
+    tokens.append(&mut consumer.tokens);
+    consumer.tokens = tokens;
+    for path in &shared.sources {
+        if !consumer.sources.contains(path) {
+            consumer.sources.push(path.clone());
+        }
+    }
+}
+
+#[allow(clippy::result_large_err)]
+fn parse_path(path: &Path, initial_registry: TypeRegistry, xsd: bool) -> Result<Ir, ParseError> {
     let name = path.display().to_string();
     let warn_state = WarnState::new(name.clone());
     let xml = std::fs::read_to_string(path).map_err(|e| ParseError::io(path, e))?;
+    if xsd {
+        xsd_check(&name, &xml)?;
+    }
     let base_dir = path.parent();
     let mut dependencies = Vec::new();
     // Seed the include stack with the main file so an include targeting it
@@ -144,7 +219,7 @@ fn parse_path_with_registry(
     let root = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     dependencies.push(root.clone());
     let mut walk = IncludeWalk::with_root(root);
-    let ir = parse_with_context(
+    let mut ir = parse_with_context(
         &xml,
         base_dir,
         &mut walk,
@@ -152,10 +227,8 @@ fn parse_path_with_registry(
         &warn_state,
         &mut dependencies,
     )?;
-    Ok(ParsedFile {
-        ir,
-        dependencies: stabilize_dependencies(path, dependencies),
-    })
+    ir.sources = stabilize_dependencies(path, dependencies);
+    Ok(ir)
 }
 
 /// Root first (canonical when possible), then remaining unique paths in

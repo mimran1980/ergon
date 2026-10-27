@@ -21,7 +21,7 @@ mod common;
 use common::{compile_and_run_modules, compile_fails_with_diagnostics};
 use ergo_sbe::{
     CompositeMapping, ConversionSelector, DomainVarData, EnumMapping, GenerateError,
-    GenerationConfig, Generator, Schema, parse_file,
+    GenerationConfig, Generator, Schema, SchemaSource, parse,
 };
 
 fn schema() -> Result<Schema, Box<dyn std::error::Error>> {
@@ -29,7 +29,7 @@ fn schema() -> Result<Schema, Box<dyn std::error::Error>> {
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/schemas/domain-mapping-schema.xml"
     );
-    Ok(Schema::from_ir(parse_file(path)?))
+    Ok(Schema::from_ir(parse(SchemaSource::file(path))?))
 }
 
 fn generate(config: GenerationConfig) -> Result<String, Box<dyn std::error::Error>> {
@@ -388,7 +388,7 @@ fn a_mapped_enum_on_an_optional_field_needs_null_as_option()
     </group>
   </message>
 </messageSchema>"#;
-    let schema = Schema::from_ir(ergo_sbe::parse(xml)?);
+    let schema = Schema::from_ir(ergo_sbe::parse(ergo_sbe::SchemaSource::xml(xml))?);
     let mapping = || EnumMapping::new("Side", "app::Side");
     let config = || {
         GenerationConfig::new("opt")
@@ -586,7 +586,7 @@ const CONSTANTS_XML: &str = r#"<messageSchema package="constants" id="31" versio
 #[test]
 fn a_constant_field_of_a_mapped_enum_has_a_domain_getter() -> Result<(), Box<dyn std::error::Error>>
 {
-    let schema = Schema::from_ir(ergo_sbe::parse(CONSTANTS_XML)?);
+    let schema = Schema::from_ir(ergo_sbe::parse(ergo_sbe::SchemaSource::xml(CONSTANTS_XML))?);
     let source = Generator::new(
         GenerationConfig::new("cq")
             .with_enum_mapping(
@@ -686,7 +686,9 @@ const CONSTANT_CONVERSIONS_XML: &str = r#"<messageSchema package="cc" id="13" ve
 #[test]
 fn constant_fields_get_the_decoder_side_of_any_conversion() -> Result<(), Box<dyn std::error::Error>>
 {
-    let schema = Schema::from_ir(ergo_sbe::parse(CONSTANT_CONVERSIONS_XML)?);
+    let schema = Schema::from_ir(ergo_sbe::parse(ergo_sbe::SchemaSource::xml(
+        CONSTANT_CONVERSIONS_XML,
+    ))?);
     let source = Generator::new(
         GenerationConfig::new("cc")
             .with_conversion(ConversionSelector::semantic_type("Version"))

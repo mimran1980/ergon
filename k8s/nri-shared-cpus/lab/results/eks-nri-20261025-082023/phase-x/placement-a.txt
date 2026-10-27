@@ -1,0 +1,11 @@
+ERGON_HELPER_CPUS=0
+ERGON_ISOLATED_CORES=2
+ERGON_ISOLATED_CPUS=2
+ERGON_SECCOMP=io-uring
+ERGON_SHARED_CPUS=0
+ERGON_SHARED_MILLICPUS=250
+pid1 Cpus_allowed_list:	0
+cpuset 0,2
+exec Cpus_allowed_list:	0,2
+Seccomp:	2
+Seccomp_filters:	1

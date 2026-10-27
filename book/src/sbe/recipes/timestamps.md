@@ -120,6 +120,12 @@ regardless of which you register first.
 Paths are `"Message.field"`, extended with the group names for fields inside a
 group: `"Order.legs.settledAt"`.
 
+A schema that names its timestamps with an alias instead of a
+`semanticType` — `<type name="Timestamp" primitiveType="uint64"/>` — is
+selected the same way through `ConversionSelector::named_type("Timestamp")`:
+every field declared `type="Timestamp"` gets the domain accessors, and the raw
+`*_wire` accessor stays.
+
 ## Mixed precisions, one app type — `DomainImpl::Manual`
 
 The built-in converters give nanos → `DateTime<Utc>` and micros →

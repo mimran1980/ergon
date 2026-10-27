@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  An order-entry message shaped like ergon-stack's trading.xml NewOrder: two
+  timestamps, an id, an enum, two Decimal9 composites and one var-data field.
+  Generated twice by build.rs: with source traits (fixed() + setters against
+  encode_from) and with Side / Decimal9 mapped to application types (mapped
+  accessors against raw).
+-->
+<sbe:messageSchema xmlns:sbe="http://fixprotocol.io/2016/sbe"
+                   package="bench_new_order"
+                   id="90"
+                   version="0"
+                   byteOrder="littleEndian">
+    <types>
+        <composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+        <composite name="groupSizeEncoding">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="numInGroup" primitiveType="uint16"/>
+        </composite>
+        <composite name="varString">
+            <type name="length" primitiveType="uint32" maxValue="1024"/>
+            <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
+        </composite>
+        <composite name="Decimal9">
+            <type name="mantissa" primitiveType="int64"/>
+            <type name="exponent" primitiveType="int8" presence="constant">-9</type>
+        </composite>
+        <type name="Timestamp" primitiveType="uint64" semanticType="UTCTimestamp"/>
+        <enum name="Side" encodingType="uint8">
+            <validValue name="Buy">1</validValue>
+            <validValue name="Sell">2</validValue>
+        </enum>
+    </types>
+
+    <sbe:message name="NewOrder" id="3">
+        <field name="ts" id="1" type="Timestamp"/>
+        <field name="tickTs" id="2" type="Timestamp"/>
+        <field name="orderId" id="3" type="uint64"/>
+        <field name="side" id="4" type="Side"/>
+        <field name="price" id="5" type="Decimal9"/>
+        <field name="qty" id="6" type="Decimal9"/>
+        <data name="asset" id="7" type="varString"/>
+    </sbe:message>
+</sbe:messageSchema>

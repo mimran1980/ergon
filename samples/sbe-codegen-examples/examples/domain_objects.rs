@@ -8,12 +8,12 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, parse};
+use ergo_sbe::{DomainVarData, GenerationConfig, Generator, Schema, SchemaSource, parse};
 
 const SCHEMA: &str = include_str!("../schemas/car-schema.xml");
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let ir = parse(SCHEMA)?;
+    let ir = parse(SchemaSource::xml(SCHEMA))?;
     let schema = Schema::from_ir(ir);
 
     let config = GenerationConfig::new("car_codec").with_domain_objects(DomainVarData::Strings);

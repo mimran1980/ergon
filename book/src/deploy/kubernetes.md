@@ -8,6 +8,11 @@ media driver,
 Its node and pod settings apply to any low-latency pod; its DPDK parts are a
 [proof of concept](../md-dpdk/overview.md), not for production.
 
+The whole stack in one place (this page's node and pod settings, the
+[shared-CPU plugin](shared-cpus.md), the DPDK driver, an Aeron ping/pong
+that prints its own latency, and a verifier for the thread layout) is the
+[`low-latency-k8s` sample](https://github.com/mimran1980/ergon/blob/main/samples/README.md#low-latency-k8s).
+
 Terms: [deployment glossary](overview.md#glossary),
 [network and DPDK glossary](../md-dpdk/overview.md#glossary).
 
@@ -167,7 +172,7 @@ fractional sidecar can run on the reserved CPUs. `strict-cpu-reservation:
 when nothing but the system (and threads you pin there yourself) may use
 them: it breaks anything that needs the shared pool by default, such as a
 fractional sidecar in a latency pod or ergon-stack's host-stats thread. The
-shared-CPU NRI plugin (`ghcr.io/mimran1980/ergon-shared-cpus:0.1.1`; chart `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.1`)
+shared-CPU NRI plugin (`ghcr.io/mimran1980/ergon-shared-cpus:0.1.2`; chart `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.2`)
 lends shared CPUs from `reservedSystemCPUs` to a pod's helper threads and expects the
 default, so leave `strict-cpu-reservation` off while using it.
 
@@ -217,10 +222,16 @@ topologyManagerPolicy: single-numa-node
 # cpuCFSQuota is not set: it stays true, so every pod keeps its CPU limit.
 ```
 
-**EKS, Amazon Linux 2023:** nodeadm merges `spec.kubelet.config` into its
-defaults. Put the `NodeConfig` in the launch template's user data, as a MIME
-part with `Content-Type: application/node.eks.aws`. The full one, with the
-cluster fields, is in [Nodes](#nodes).
+**EKS, Amazon Linux 2023:** nodeadm writes its defaults to
+`/etc/kubernetes/kubelet/config.json` and `spec.kubelet.config` to the
+drop-in `/etc/kubernetes/kubelet/config.json.d/40-nodeadm.conf`, and runs
+the kubelet with `--config-dir` on that directory, so the kubelet merges
+the drop-in over the file. Put the `NodeConfig` in the launch template's
+user data, as a MIME part with `Content-Type: application/node.eks.aws`.
+The full one, with the cluster fields, is in [Nodes](#nodes). The
+shared-CPU plugin reads both for its hot-pod check with
+`hostContract.kubeletConfigDir`:
+[EKS install](shared-cpus.md#use-the-public-chart).
 
 ```yaml
 apiVersion: node.eks.aws/v1alpha1

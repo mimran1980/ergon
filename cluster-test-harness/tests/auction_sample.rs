@@ -12,7 +12,6 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use ergo_aeron_cluster::egress::EgressAdapter;
 use ergo_aeron_cluster::{AeronCluster, ClusterError, SessionBuilder};
 use serial_test::serial;
 
@@ -77,12 +76,12 @@ fn parse_response(buf: &[u8]) -> Option<(i64, i64, i64, u8)> {
 /// Offer one bid and return `(winning_customer, best_price, succeeded)`.
 fn bid(
     client: &mut AeronCluster,
-    adapter: &mut EgressAdapter<Capture>,
+    listener: &mut Capture,
     correlation_id: i64,
     customer_id: i64,
     price: i64,
 ) -> Result<(i64, i64, bool), Box<dyn std::error::Error>> {
-    let before = adapter.listener().messages.len();
+    let before = listener.messages.len();
     offer_until(
         client,
         &bid_bytes(correlation_id, customer_id, price),
@@ -91,8 +90,8 @@ fn bid(
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let _ = client.send_keep_alive();
-        let _ = client.poll_egress(adapter, 10);
-        if let Some(msg) = adapter.listener().messages[before..].iter().find_map(|m| {
+        let _ = client.poll(listener, 10);
+        if let Some(msg) = listener.messages[before..].iter().find_map(|m| {
             let parsed = parse_response(m)?;
             (parsed.0 == correlation_id).then_some(parsed)
         }) {
@@ -101,7 +100,7 @@ fn bid(
         if Instant::now() >= deadline {
             return Err(format!(
                 "no auction response for correlation {correlation_id} (got {} messages)",
-                adapter.listener().messages.len().saturating_sub(before)
+                listener.messages.len().saturating_sub(before)
             )
             .into());
         }
@@ -114,15 +113,15 @@ fn bid(
 fn auction_higher_bid_wins_and_lower_bid_loses() -> Result<(), Box<dyn std::error::Error>> {
     let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node_auction();
     let mut client = connect(&cluster)?;
-    let mut adapter = EgressAdapter::new(Capture::new());
+    let mut listener = Capture::new();
 
-    let (winner, price, won) = bid(&mut client, &mut adapter, 1, 7, 10)?;
+    let (winner, price, won) = bid(&mut client, &mut listener, 1, 7, 10)?;
     assert_eq!((winner, price, won), (7, 10, true));
 
-    let (winner, price, won) = bid(&mut client, &mut adapter, 2, 8, 10)?;
+    let (winner, price, won) = bid(&mut client, &mut listener, 2, 8, 10)?;
     assert_eq!((winner, price, won), (7, 10, false));
 
-    let (winner, price, won) = bid(&mut client, &mut adapter, 3, 9, 11)?;
+    let (winner, price, won) = bid(&mut client, &mut listener, 3, 9, 11)?;
     assert_eq!((winner, price, won), (9, 11, true));
 
     client.close()?;

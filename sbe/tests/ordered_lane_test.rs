@@ -307,8 +307,8 @@ fn ordered_lane_without_groups_compiles() -> Result<(), Box<dyn std::error::Erro
     <data name="note" id="21" type="varStringEncoding"/>
   </sbe:message>
 </sbe:messageSchema>"#;
-    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
-    let schema = Schema::from_ir(parse(XML)?);
+    use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
+    let schema = Schema::from_ir(parse(SchemaSource::xml(XML))?);
     let src = Generator::new(GenerationConfig::new("nogroups"))
         .generate(&schema)?
         .modules()
@@ -466,8 +466,8 @@ fn entry_field_named_ordered_keeps_its_accessor() -> Result<(), Box<dyn std::err
     </group>
   </sbe:message>
 </sbe:messageSchema>"#;
-    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
-    let schema = Schema::from_ir(parse(XML)?);
+    use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
+    let schema = Schema::from_ir(parse(SchemaSource::xml(XML))?);
     let src = Generator::new(GenerationConfig::new("entryclash"))
         .generate(&schema)?
         .modules()
@@ -560,8 +560,8 @@ fn message_first_tail_named_fixed_compiles() -> Result<(), Box<dyn std::error::E
   </sbe:message>
 </sbe:messageSchema>"#
     );
-    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
-    let schema = Schema::from_ir(parse(&xml)?);
+    use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
+    let schema = Schema::from_ir(parse(SchemaSource::xml(&xml))?);
     let src = Generator::new(GenerationConfig::new("fixedclash"))
         .generate(&schema)?
         .modules()
@@ -623,8 +623,8 @@ fn message_first_tail_named_try_fixed_compiles() -> Result<(), Box<dyn std::erro
   </sbe:message>
 </sbe:messageSchema>"#
     );
-    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
-    let schema = Schema::from_ir(parse(&xml)?);
+    use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
+    let schema = Schema::from_ir(parse(SchemaSource::xml(&xml))?);
     let src = Generator::new(GenerationConfig::new("tryfixedclash"))
         .generate(&schema)?
         .modules()
@@ -678,8 +678,8 @@ fn last_tail_named_done_compiles() -> Result<(), Box<dyn std::error::Error>> {
   </sbe:message>
 </sbe:messageSchema>"#
     );
-    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
-    let schema = Schema::from_ir(parse(&xml)?);
+    use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
+    let schema = Schema::from_ir(parse(SchemaSource::xml(&xml))?);
     let src = Generator::new(GenerationConfig::new("doneclash"))
         .generate(&schema)?
         .modules()
@@ -728,8 +728,8 @@ fn converted_entry_field_named_ordered_keeps_the_lane() -> Result<(), Box<dyn st
   </sbe:message>
 </sbe:messageSchema>"#
     );
-    use ergo_sbe::{ConversionSelector, GenerationConfig, Generator, Schema, parse};
-    let schema = Schema::from_ir(parse(&xml)?);
+    use ergo_sbe::{ConversionSelector, GenerationConfig, Generator, Schema, SchemaSource, parse};
+    let schema = Schema::from_ir(parse(SchemaSource::xml(&xml))?);
     let src = Generator::new(
         GenerationConfig::new("ordconv")
             .with_conversion(ConversionSelector::field_path("Msg.rows.ordered")),
@@ -856,8 +856,8 @@ fn ordered_lane_three_level_dynamic() -> Result<(), Box<dyn std::error::Error>> 
   </sbe:message>
 </sbe:messageSchema>"#
     );
-    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
-    let schema = Schema::from_ir(parse(&xml)?);
+    use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
+    let schema = Schema::from_ir(parse(SchemaSource::xml(&xml))?);
     let src = Generator::new(GenerationConfig::new("threelevel"))
         .generate(&schema)?
         .modules()
@@ -1019,8 +1019,8 @@ fn entry_first_tail_named_fixed_compiles() -> Result<(), Box<dyn std::error::Err
     </group>
   </sbe:message>
 </sbe:messageSchema>"#;
-    use ergo_sbe::{GenerationConfig, Generator, Schema, parse};
-    let schema = Schema::from_ir(parse(XML)?);
+    use ergo_sbe::{GenerationConfig, Generator, Schema, SchemaSource, parse};
+    let schema = Schema::from_ir(parse(SchemaSource::xml(XML))?);
     let src = Generator::new(GenerationConfig::new("entryfixedclash"))
         .generate(&schema)?
         .modules()

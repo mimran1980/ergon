@@ -19,6 +19,25 @@ A selector matches by precedence — exact `FieldPath`, then `SemanticType`, the
 it reads, whatever order you register them in. Paths are `"Message.field"`,
 extended with group names inside a group (`"Order.legs.price"`).
 
+`named_type` matches a composite, enum or set by name, or a primitive alias:
+with `<type name="Timestamp" primitiveType="uint64"/>`,
+`named_type("Timestamp")` selects every field declared `type="Timestamp"`, in
+messages and groups. It never matches a bare primitive (`uint64`).
+
+A selector that cannot apply fails generation instead of being skipped:
+
+| Config | `GenerateError` |
+|---|---|
+| `field_path` / `semantic_type` that matches no field | `InvalidConversion`: "matches no field in the schema" |
+| `named_type` naming no composite, enum or set, and no alias a field uses | `InvalidConversion`: "no matching type found in schema" |
+| `with_domain_type` / `with_manual_domain_type` twice on one selector, different types | `InvalidConversion`: "mapped to both `A` and `B`" |
+| a domain-type selector whose every field a higher-precedence selector takes | `InvalidConversion`: "every field it matches takes a higher-precedence selector" |
+| `with_null_as_option` on anything but `named_type(<enum>)` | `InvalidConfiguration` |
+
+`generate_multi` resolves each selector against the union of its schemas. A
+later `with_enum_mapping` / `with_composite_mapping` for the same type still
+replaces an earlier one.
+
 What the accessor gives you depends on the field's shape, because it mirrors
 the raw accessor it delegates to:
 

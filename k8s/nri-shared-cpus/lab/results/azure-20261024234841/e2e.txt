@@ -1,0 +1,38 @@
+probe line: gapprobe: label=e2e-hot cpu=3 counter_hz=1000000000 threshold=1000ns seconds=120 udp_rate=20000 helpers=process ERGON_ISOLATED_CPUS=3,4 ERGON_SHARED_CPUS=1 main_affinity=[1]
+ok:   ERGON_SHARED_CPUS=1
+ok:   spin on CPU 3, the first of ERGON_ISOLATED_CPUS=3,4
+ok:   CPU 3 is isolated (3-7)
+placement snapshot 1:
+ok:   gapprobe 15148 on CPU 1, allowed 1
+ok:   gp-udp-sink 15149 on CPU 1, allowed 1
+ok:   gp-udp-src 15150 on CPU 1, allowed 1
+ok:   sh 15120 on CPU 1, allowed 1
+ok:   stress-ng-vm 15153 on CPU 1, allowed 1
+ok:   stress-ng 15146 on CPU 1, allowed 1
+ok:   stress-ng-vm 15152 on CPU 1, allowed 1
+ok:   stress-ng-cpu 15151 on CPU 1, allowed 1
+ok:   gapprobe 15147 on CPU 1, allowed 1
+ok:   gp-hot 15187 on CPU 3, allowed 3
+placement snapshot 2:
+ok:   gapprobe 15148 on CPU 1, allowed 1
+ok:   gp-udp-sink 15149 on CPU 1, allowed 1
+ok:   gp-udp-src 15150 on CPU 1, allowed 1
+ok:   sh 15120 on CPU 1, allowed 1
+ok:   stress-ng-vm 15153 on CPU 1, allowed 1
+ok:   stress-ng 15146 on CPU 1, allowed 1
+ok:   stress-ng-vm 15152 on CPU 1, allowed 1
+ok:   stress-ng-cpu 15151 on CPU 1, allowed 1
+ok:   gapprobe 15147 on CPU 1, allowed 1
+ok:   gp-hot 15187 on CPU 3, allowed 3
+placement snapshot 3:
+ok:   gapprobe 15148 on CPU 1, allowed 1
+ok:   gp-udp-sink 15149 on CPU 1, allowed 1
+ok:   gp-udp-src 15150 on CPU 1, allowed 1
+ok:   sh 15120 on CPU 1, allowed 1
+ok:   stress-ng-vm 15153 on CPU 1, allowed 1
+ok:   stress-ng 15146 on CPU 1, allowed 1
+ok:   stress-ng-vm 15152 on CPU 1, allowed 1
+ok:   stress-ng-cpu 15151 on CPU 1, allowed 1
+ok:   gapprobe 15147 on CPU 1, allowed 1
+ok:   gp-hot 15187 on CPU 3, allowed 3
+ok:   exec-probe hot pod denied

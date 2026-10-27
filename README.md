@@ -7,19 +7,46 @@
 
 Rust crates for low-latency trading: an SBE codec generator, an Aeron Cluster
 client, busy-spin network I/O, host checks and a DPDK transport for the Aeron
-media driver. 0.x and not production-ready: APIs may change. Exit criteria:
-[Road to 1.0](https://mimran1980.github.io/ergon/project/road-to-1.0.html).
+media driver. 0.x alpha, not production-ready: any release may break the API,
+with no deprecation period; [CHANGELOG.md](CHANGELOG.md) lists each break.
+Exit criteria: [Road to 1.0](https://mimran1980.github.io/ergon/project/road-to-1.0.html).
 
 > **AI assistance.** This repository was developed with heavy AI assistance.
 > Process notes for `ergo-sbe`:
 > [AI assistance disclosure](https://mimran1980.github.io/ergon/project/ai-assistance.html).
 
-**Tuning Kubernetes for HFT?
-[Kubernetes HFT tuning](https://mimran1980.github.io/ergon/deploy/hft.html)
-— start there.** It lists each setting, marks which ones were measured, and
-has the copy-paste blocks.
+## Kubernetes: shared CPUs for latency pods
 
-The [NRI plugin README](k8s/nri-shared-cpus/README.md) covers installation and configuration for Kubernetes shared CPUs.
+| Package | Get it |
+|---|---|
+| Helm chart | `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.2` |
+| Image (amd64, arm64) | `docker pull ghcr.io/mimran1980/ergon-shared-cpus:0.1.2` |
+
+```sh
+helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus \
+  --version 0.1.2 -n ergon-system --create-namespace \
+  --set-string config.sharedCpus=0 \
+  --set hostContract.kubeletConfig.enabled=true \
+  --set hostContract.sys.enabled=true \
+  --set hostContract.proc.enabled=true
+```
+
+A Guaranteed pod gets its exclusive CPUs plus the node's shared housekeeping
+CPUs, and every new thread starts on the shared ones, so the busy-spin loop
+keeps its core. The `hostContract` flags let the plugin check a pod
+labelled `ergon.io/latency: hot` against the node (isolated exclusive CPUs,
+static CPU manager, NIC IRQs on the IRQ CPUs only). Run on kind on one Azure
+Cobalt VM, with THP `never` and the fair server off on the isolated CPUs:
+the hot thread with helpers on the shared CPU held p50 0.02 µs, p99.99
+0.03 µs, max 4.81 to 5.52 µs, 0 involuntary switches a minute; 3.5 to
+5.5 µs is the hypervisor's floor. Node events (systemd timers, pod starts,
+logins) still reach isolated CPUs
+([benchmarks](k8s/nri-shared-cpus/BENCHMARKS.md)). The install is verified on EKS
+AL2023; a helper's wake-up wait on the shared CPU is measured there.
+
+- Node setup, install, configuration: [k8s/nri-shared-cpus](k8s/nri-shared-cpus/README.md).
+- Node and pod tuning, each setting marked measured or not, with copy-paste
+  blocks: [Kubernetes HFT tuning](https://mimran1980.github.io/ergon/deploy/hft.html).
 
 ## Crates
 

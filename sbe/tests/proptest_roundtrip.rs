@@ -15,7 +15,8 @@
 #![allow(unused)]
 
 mod common;
-use common::{Paths, generate, patch_source, scratch_cargo};
+use common::scratch::ScratchCrate;
+use common::{Paths, generate, patch_source};
 use std::fs;
 
 /// Like `compile_and_run` but creates a proper crate with `proptest` as a
@@ -26,7 +27,10 @@ use std::fs;
 /// `source`      — the raw generated Rust source (will be patched).
 /// `test_code`   — a complete `.rs` file placed in `tests/` of the temp crate.
 fn compile_and_run_proptest(test_label: &str, module_name: &str, source: &str, test_code: &str) {
-    let dir = std::env::temp_dir().join(format!("ergo_prop_{test_label}"));
+    // Unique package (and lib) name in the shared target dir; the test file
+    // reaches it under the name the test code uses, `prop_<module_name>`.
+    let krate = ScratchCrate::new(&format!("prop_{test_label}"), false);
+    let dir = std::env::temp_dir().join(krate.name());
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
 
@@ -44,7 +48,14 @@ fn compile_and_run_proptest(test_label: &str, module_name: &str, source: &str, t
 
     let tests_dir = dir.join("tests");
     fs::create_dir_all(&tests_dir).unwrap();
-    fs::write(tests_dir.join("roundtrip.rs"), test_code).unwrap();
+    fs::write(
+        tests_dir.join(format!("{}.rs", krate.name())),
+        format!(
+            "extern crate {} as prop_{module_name};\n{test_code}",
+            krate.name()
+        ),
+    )
+    .unwrap();
 
     // Cargo.toml — the generated module references `ergo_sbe::…` for the
     // optional string/byte types, so the dependency must be present whichever
@@ -57,7 +68,7 @@ fn compile_and_run_proptest(test_label: &str, module_name: &str, source: &str, t
         .to_path_buf();
     let cargo_toml = format!(
         "[package]\n\
-         name = \"prop_{module_name}\"\n\
+         name = \"{}\"\n\
          version = \"0.1.0\"\n\
          edition = \"2024\"\n\
          \n\
@@ -66,15 +77,16 @@ fn compile_and_run_proptest(test_label: &str, module_name: &str, source: &str, t
          \n\
          [dev-dependencies]\n\
          proptest = \"=1.11.0\"\n",
+        krate.name(),
         sbe_path.display(),
     );
     fs::write(dir.join("Cargo.toml"), &cargo_toml).unwrap();
+    krate.write_lockfile(&dir);
 
-    let target_dir = dir.join("target_ci");
-    let out = scratch_cargo()
-        .args(["test"])
+    let out = krate
+        .cargo()
         .current_dir(&dir)
-        .env("CARGO_TARGET_DIR", &target_dir)
+        .args(["test"])
         .output()
         .unwrap_or_else(|e| panic!("cargo test on temp crate {module_name}: {e}"));
 

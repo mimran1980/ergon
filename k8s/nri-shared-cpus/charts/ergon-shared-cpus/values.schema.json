@@ -74,11 +74,11 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "ioUring": { "type": "string", "enum": ["off", "allow"] }
+            "ioUring": { "$ref": "#/definitions/ioUring" }
           }
         },
         "seccompProfilePath": { "type": "string" },
-        "schedFifo": { "type": "string", "enum": ["off", "thread"] },
+        "schedFifo": { "$ref": "#/definitions/schedFifo" },
         "ptp": {
           "type": "string",
           "pattern": "^(off|auto|/dev/ptp[^/]*)$"
@@ -98,6 +98,7 @@
         "sys": { "$ref": "#/definitions/hostDir" },
         "proc": { "$ref": "#/definitions/hostDir" },
         "kubeletConfig": { "$ref": "#/definitions/hostFile" },
+        "kubeletConfigDir": { "$ref": "#/definitions/hostDir" },
         "kubeletConfigZ": { "$ref": "#/definitions/hostFile" },
         "kubeletOverrides": { "$ref": "#/definitions/hostTyped" }
       }
@@ -134,6 +135,22 @@
     }
   },
   "definitions": {
+    "ioUring": {
+      "description": "allow or off, or a YAML boolean (true = allow); any case",
+      "anyOf": [
+        { "type": "boolean" },
+        { "type": "integer", "enum": [0, 1] },
+        { "type": "string", "pattern": "^(?i:off|allow|true|false|yes|no|y|n|on|0|1)$" }
+      ]
+    },
+    "schedFifo": {
+      "description": "thread or off, or a YAML boolean (true = thread); any case",
+      "anyOf": [
+        { "type": "boolean" },
+        { "type": "integer", "enum": [0, 1] },
+        { "type": "string", "pattern": "^(?i:off|thread|true|false|yes|no|y|n|on|0|1)$" }
+      ]
+    },
     "profile": {
       "type": "object",
       "additionalProperties": false,
@@ -164,11 +181,11 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "ioUring": { "type": "string", "enum": ["off", "allow"] }
+            "ioUring": { "$ref": "#/definitions/ioUring" }
           }
         },
         "seccompProfilePath": { "type": "string" },
-        "schedFifo": { "type": "string", "enum": ["off", "thread"] },
+        "schedFifo": { "$ref": "#/definitions/schedFifo" },
         "ptp": { "type": "string", "pattern": "^(off|auto|/dev/ptp[^/]*)$" },
         "hugepagesAeronDir": { "type": "string", "pattern": "^$|^/" }
       }

@@ -1,0 +1,6 @@
+case=d-contention
+title=three pods, 100 shared millicpus and 4 busy helper threads each, started in turn: A (cpu 1) and B (cpu 1) get the two shared CPUs, C (cpu 2) the least loaded, A's
+shared=1-2
+exclusive=3-7
+window_ns=31177260393
+expect=A and C share one shared CPU, split by their cgroups' cpu.weight (from the cpu request: C's twice A's), not by their equal millicpus; B alone on the other

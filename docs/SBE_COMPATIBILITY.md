@@ -48,11 +48,52 @@ output in `type_mapping_test`, `source_trait_test` and `claim_send_test`.
   null value for `None` and refuses `Some` of it, which would read back as
   `None`.
 - `encode_from` writes the null image for an absent optional field, as
-  `fixed()` does, and applies the schema range check the domain DTO applies.
+  `fixed()` does, and applies the range check the domain DTO applies.
   Both refuse `Some` of an optional field's null value (NaN for a float
   without another `nullValue`), which would decode as absent
   (`EncodeError::SomeNullValue`). `fixed()` cannot fail: it writes such a
   `Some` as given, and it decodes as absent.
+- That range check covers integer and `char` scalar fields of a message or
+  group written as their wire type (a scalar with a domain type goes
+  through its conversion instead), and checks only the bounds the schema
+  declares, as `validate()` does:
+
+  | Field | Checked on encode |
+  |---|---|
+  | declares `minValue` and/or `maxValue` | each declared side; a value outside it is `EncodeError::ValueOutOfRange` |
+  | declares neither | nothing: any value of the Rust type is written (`u64::MAX`, `i32::MIN`, a control `char`) |
+  | declared bound equal to the Rust type's own limit | nothing on that side |
+  | optional field, `Some` of its null value | `SomeNullValue` (not a range question) |
+  | `float`, `double`, composite member, array element | nothing |
+
+  The SBE default range (which excludes the null value) is not applied on
+  encode. sbe-tool's flyweight setters check no range at all; its Java DTO
+  setters apply the default range, so a value such as `u64::MAX` in a
+  required `uint64` that sbe-tool's DTO refuses is written here. A
+  required field's null value is an ordinary value on the wire.
+  `ValueOutOfRange` reports the effective bounds: an undeclared side is
+  the SBE default and was not checked. The parsed IR records which bounds
+  the schema declared (`Encoding::min_value_declared` /
+  `max_value_declared`). `fixed()`, the plain setters and the decoder
+  check no range.
+- `with_validate(true)` adds an opt-in `validate()` to every message
+  decoder, group entry decoder and `AnyMessage`, for frames from older or
+  foreign producers. `try_decode` is unchanged (bounds only). `validate()`
+  is a second pass that returns the first `sbe_rt::ValidateError`:
+
+  | Wire value | Error |
+  |---|---|
+  | integer or `char` scalar, or integer array element, outside a **declared** `minValue` / `maxValue` | `ValueOutOfRange` |
+  | enum discriminant that is neither a `validValue` nor the enum's null | `UnknownEnum` |
+  | set bit that no `choice` declares | `UnknownSetBits` |
+  | `AnyMessage::Unknown` | `UnknownTemplate` |
+  | malformed group or var-data tail | `Decode` |
+
+  An optional field's null value and an enum's null discriminant pass. The
+  SBE default ranges above are not applied, and floats, fixed `char` arrays
+  (NUL padding is valid SBE) and var-data contents are not checked. Every
+  sbe-tool frame in `sbe_tool_multi_schema_wire_parity_test` passes
+  `validate()`.
 - `send` / `send_fixed` / `sbe_rt::send_frame` commit a frame only when it
   fills the claim exactly and starts with the message's header template;
   otherwise the claim is aborted.

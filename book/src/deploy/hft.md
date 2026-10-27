@@ -10,16 +10,19 @@ Terms: [deployment glossary](overview.md#glossary).
 
 This chapter is the list. It is not an image and it is not a second chart.
 The shared-CPU grant is [Shared CPUs](shared-cpus.md): public image
-`ghcr.io/mimran1980/ergon-shared-cpus:0.1.1` and chart
-`oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.1`.
+`ghcr.io/mimran1980/ergon-shared-cpus:0.1.2` and chart
+`oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.2`
+(EKS AL2023 hot pods need `kubeletConfigDir`:
+[EKS install](shared-cpus.md#use-the-public-chart)).
 The refusal of an exec probe on a pod labelled `ergon.io/latency: hot` is
 the admission policy in [Latency Pods](latency-pods.md). Hugepages, the
 isolated cpuset partition, io_uring seccomp and the NIC PHC are opt-in
-grants in that same image. Chart 0.1.1 writes `seccomp`, `ptp` and
-`schedFifo` as `"off"`. Chart 0.1.0 does not write those keys. The kind sample
+grants in that same image. The chart writes `seccomp`, `ptp` and
+`schedFifo` as `"off"`. The kind sample
 `k8s/nri-shared-cpus/examples/try` installs the public chart, prints the
-shared-CPU grant, and shows the admission denial. It does not measure the
-rows below.
+shared-CPU grant on an unlabelled pod, and shows the two hot-pod refusals:
+the plugin's (no `isolcpus` on kind) and the admission policy's. Not yet
+run on kind. It does not measure the rows below.
 
 ## Settings
 
@@ -35,7 +38,9 @@ rows below.
 | Guaranteed QoS, whole-number `cpu` | the only pods the static CPU manager gives exclusive CPUs | pod | Kubernetes CPU management page; not measured here | [pod block](#copy-paste) |
 | each busy thread pinned to one CPU of the pod's cpuset | the thread stays on its exclusive CPU | pod | the isolation runs pinned every loop; pinning alone is not measured | `sched_setaffinity` from `Cpus_allowed_list` ([io: Kubernetes](../io/kubernetes.md#pin-the-loop-thread-inside-the-pod)) |
 | `uring-sqpoll`: the SQPOLL thread on its own CPU | the kernel's polling thread does not share the loop's core | pod | measured at 10 and 100 connections: [SMT sibling](#smt-sibling) | ergon-io picks a CPU of the pod's own outside the shared CPUs ([shared CPUs](shared-cpus.md#pinning-by-index)) |
-| transparent hugepages `never` | no `khugepaged` merging under busy threads | node | [transhuge](https://docs.kernel.org/admin-guide/mm/transhuge.html); not measured here | `transparent_hugepage=never` on the boot line |
+| transparent hugepages `never` | no `khugepaged` (it runs under `madvise` too), whose `lru_add_drain_all` runs a kworker on every CPU with queued pages | node | traced: it was an isolated CPU's only context switch and its 16.25 µs max ([nri-shared-cpus](https://github.com/mimran1980/ergon/blob/main/k8s/nri-shared-cpus/BENCHMARKS.md#what-reached-the-exclusive-cpu-and-the-fix)) | `transparent_hugepage=never` on the boot line, or `never` into `/sys/kernel/mm/transparent_hugepage/enabled` at boot |
+| fair server off on the isolated CPUs | no 1 s deadline-server timer kicking them (a nohz kick and a reschedule IPI) and keeping their tick on | node | traced, kernel 6.12: 56 kicks a minute with gaps to 14.1 µs, then 0 after ([nri-shared-cpus](https://github.com/mimran1980/ergon/blob/main/k8s/nri-shared-cpus/BENCHMARKS.md#what-reached-the-exclusive-cpu-and-the-fix)) | `echo 0 > /sys/kernel/debug/sched/fair_server/cpu<N>/runtime` for each isolated N, at every boot after debugfs is mounted (not persistent; kernel 6.12+). Only where nothing real-time runs on those CPUs: not with `SCHED_FIFO` |
+| node events out of trading hours | `lru_add_drain_all` callers (block-device ioctls, `systemctl daemon-reload` and generators, `mlock`, page migration) and BPF loads (systemd units, container starts with seccomp, SSH logins) reach every isolated CPU | node (operations) | traced: a systemd daily timer gave a 40.60 µs max and one context switch ([nri-shared-cpus](https://github.com/mimran1980/ergon/blob/main/k8s/nri-shared-cpus/BENCHMARKS.md#remaining-risk-node-events)) | systemd timers moved off trading hours, no pod churn and no SSH logins on the node during trading |
 | Aeron directory on a sized 2 MiB hugetlbfs, `AERON_FILE_PAGE_SIZE=2097152`, `AERON_TERM_BUFFER_SPARSE_FILE=false` | no 4 KiB page faults on the log buffers | node (pool, mount) + driver pod | [hugetlbpage](https://docs.kernel.org/admin-guide/mm/hugetlbpage.html); not measured here. An unsized hugetlbfs reports no free space, which Aeron's storage check refuses (`aeron_fileutil.c:952-959` in rusteron-media-driver 0.2.11) | [hosts](hosts.md#memory); driver env as in `md-dpdk/deploy/aws-eks/media-driver-config.yaml` |
 | `AERON_CLIENT_PRE_TOUCH_MAPPED_MEMORY=true` | a client faults its mapped terms in at start | pod (client) | `aeronc.h:170` (rusteron-client 0.2.11); not measured here | [pod block](#copy-paste) |
 | `net.core.rmem_max`, `wmem_max` ≥ Aeron's socket buffers | lets the kernel grant `AERON_SOCKET_SO_RCVBUF` | node | functional, not latency: the driver refuses a window larger than the granted `SO_RCVBUF` (`aeron_driver.c:407-456`, rusteron-media-driver 0.2.11). Aeron's default is 128 KiB (`aeron_driver_context.c:191`); only a raised buffer, such as the EKS ConfigMap's 2 MiB, needs it | `sysctl -w net.core.rmem_max=16777216 net.core.wmem_max=16777216` |
@@ -87,8 +92,8 @@ two isolated lines.
 
 **Graviton** (fair run, `io/benches/results/flags-aws-20261019T175248Z/fair.md`,
 committed): WebSocket round trip, interrupt-driven backends (`epoll-spin`,
-`mio`, `uring-spin`), moderation off everywhere, two rounds. Six points'
-senders fell behind; the file's top note names them.
+`mio`, and `uring-spin`, since removed), moderation off everywhere, two
+rounds. Six points' senders fell behind; the file's top note names them.
 
 | connections | queue IRQs on the loop's CPU: p99 / max | on a core of their own: p99 / max |
 |---|---|---|
@@ -226,8 +231,8 @@ grep Cpus_allowed_list /proc/self/status
 #    (runs at start-up in ergon-io's Driver::new and the media driver)
 ```
 
-`ERGON_HOST_CHECKS=require` (media driver alias
-`RUSTERON_MEDIA_DRIVER_HOST_CHECK`) refuses to start while any check warns
+`ERGON_HOST_CHECKS=require` (ergon-io and the media driver) refuses to
+start while any check warns
 or a proof check stays unproven
 ([ergon-tune](../tune/overview.md#where-the-checks-run)). In a stock
 static-CPU-manager pod ergon-io's K2 stays unproven, so `require` refuses
@@ -235,9 +240,13 @@ it ([checks inside a pod](kubernetes.md#checks-inside-a-pod)).
 
 ## Open
 
-- No committed run measures THP, hugepages, the RX ring, NUMA settings or
-  the CPU quota on latency.
-- Most maxima above are not traced to a cause.
+- No committed run measures hugepages, the RX ring, NUMA settings or the
+  CPU quota on latency.
+- Most maxima above are not traced to a cause. The nri-shared-cpus lab
+  traced its own: after THP `never` and the fair server off, an isolated
+  CPU on one Azure Cobalt VM took max 4.81 to 5.52 µs and no context
+  switch in 60 s reps, the rest below the guest kernel (the hypervisor,
+  3.5 to 5.5 µs) ([benchmarks](https://github.com/mimran1980/ergon/blob/main/k8s/nri-shared-cpus/BENCHMARKS.md)).
 
 ## More
 

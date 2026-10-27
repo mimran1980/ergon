@@ -1,0 +1,2 @@
+ergon-shared-cpus-4kvjh ergon-system system-node-critical Running ip-10-31-11-58.ec2.internal
+ergon-shared-cpus-hqpcp ergon-system system-node-critical Running ip-10-31-11-28.ec2.internal

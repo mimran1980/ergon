@@ -155,10 +155,24 @@ pub struct Encoding {
     pub character_encoding: Option<String>,
     /// SBE semantic type annotation (e.g. `"Price"`, `"Qty"`); `None` when not declared.
     pub semantic_type: Option<String>,
-    /// Minimum valid value for the type; `None` when not declared.
+    /// Minimum valid value: the schema's `minValue`, or the SBE primitive
+    /// default that [`crate::resolve_schema`] fills in. `None` only before
+    /// resolution or for a non-primitive token.
     pub min_value: Option<u64>,
-    /// Maximum valid value for the type; `None` when not declared.
+    /// Maximum valid value: the schema's `maxValue`, or the SBE primitive
+    /// default that [`crate::resolve_schema`] fills in. `None` only before
+    /// resolution or for a non-primitive token.
     pub max_value: Option<u64>,
+    /// Whether [`Self::min_value`] came from the schema's `minValue` (set by
+    /// the XML parser) rather than the primitive default.
+    pub min_value_declared: bool,
+    /// Whether [`Self::max_value`] came from the schema's `maxValue` (set by
+    /// the XML parser) rather than the primitive default.
+    pub max_value_declared: bool,
+    /// The top-level `<type>` a primitive field (or composite member) refers
+    /// to, e.g. `Timestamp` for `<type name="Timestamp" primitiveType="uint64"/>`;
+    /// `None` for a built-in primitive and for every other token.
+    pub referenced_type: Option<String>,
     /// Human-readable description from XML; `None` when absent.
     pub description: Option<String>,
     /// Constant value for `presence="constant"` fields; `None` otherwise.
@@ -171,8 +185,9 @@ pub struct Encoding {
     pub time_unit: Option<String>,
     /// Whether this token's wire size is variable; used for var-data composites.
     pub is_variable_length: bool,
-    /// Whether this type or field is marked as deprecated in the schema.
-    pub deprecated: bool,
+    /// Schema version the type or field was deprecated in (XML `deprecated`);
+    /// `None` when not deprecated.
+    pub deprecated: Option<u16>,
 }
 
 /// One token in the flat IR stream.
@@ -210,4 +225,11 @@ pub struct Ir {
     pub header_type: String,
     /// Flat token stream.
     pub tokens: Vec<Token>,
+    /// Schema files read to build this IR, each once and canonical where
+    /// possible: the root file, then its resolved includes (sorted), then the
+    /// shared schema's files (see `SchemaSource::with_shared`). Empty for
+    /// inline XML without a shared file schema.
+    /// [`crate::GeneratedModuleSet::write_to`] watches these with
+    /// `cargo::rerun-if-changed`.
+    pub sources: Vec<std::path::PathBuf>,
 }

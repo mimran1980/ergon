@@ -6,7 +6,6 @@ mod common;
 
 use std::time::Duration;
 
-use ergo_aeron_cluster::egress::EgressAdapter;
 use ergo_aeron_cluster::{AeronCluster, SessionBuilder};
 use serial_test::serial;
 
@@ -22,8 +21,13 @@ fn ephemeral_egress_port_round_trip() -> Result<(), Box<dyn std::error::Error>> 
         .egress_channel("aeron:udp?endpoint=localhost:0")?
         .message_timeout(Duration::from_secs(10))?;
     let mut client = AeronCluster::connect(&builder, &driver.dir)?;
-    let mut adapter = EgressAdapter::new(Capture::new());
-    await_echo(&mut client, &mut adapter, b"port-0", Duration::from_secs(5))?;
+    let mut listener = Capture::new();
+    await_echo(
+        &mut client,
+        &mut listener,
+        b"port-0",
+        Duration::from_secs(5),
+    )?;
     client.close()?;
     Ok(())
 }
@@ -46,10 +50,10 @@ fn three_node_ingress_fanout_round_trip() -> Result<(), Box<dyn std::error::Erro
         .egress_channel("aeron:udp?endpoint=localhost:0")?
         .message_timeout(Duration::from_secs(20))?;
     let mut client = AeronCluster::connect(&builder, &driver.dir)?;
-    let mut adapter = EgressAdapter::new(Capture::new());
+    let mut listener = Capture::new();
     await_echo(
         &mut client,
-        &mut adapter,
+        &mut listener,
         b"fanout",
         Duration::from_secs(10),
     )?;

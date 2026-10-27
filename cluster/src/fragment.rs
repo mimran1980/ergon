@@ -1,7 +1,5 @@
-//! Shared egress fragment dispatch — one canonical decode path used by
-//! [`EgressAdapter`](crate::EgressAdapter),
-//! [`ControlledEgressAdapter`](crate::ControlledEgressAdapter), and the
-//! poller. Callers decide how to route the result.
+//! One decode of an egress fragment, shared by the poll's state tracking
+//! and listener dispatch.
 
 use crate::codecs::session::sbe_rt::DecodeError;
 use crate::codecs::session::{AdminRequestType, AdminResponseCode, AnyMessage, EventCode, SessionMessageHeaderEncoder};
@@ -57,6 +55,17 @@ pub(crate) enum Fragment<'a> {
 }
 
 impl<'a> Fragment<'a> {
+    /// The session the fragment is for.
+    pub(crate) const fn cluster_session_id(&self) -> i64 {
+        match self {
+            Self::Message { cluster_session_id, .. }
+            | Self::SessionEvent { cluster_session_id, .. }
+            | Self::NewLeader { cluster_session_id, .. }
+            | Self::Challenge { cluster_session_id, .. }
+            | Self::AdminResponse { cluster_session_id, .. } => *cluster_session_id,
+        }
+    }
+
     /// Decode one egress fragment from wire bytes.
     ///
     /// Returns `Ok(None)` for unknown template IDs (not an error — the

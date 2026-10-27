@@ -16,6 +16,13 @@
 //! | T10 | [`t10_smt_on`] | io, md |
 //! | T11 | [`t11_time_sync`] at start; [`ClockWatch`] while running | rt (start, housekeeping) |
 //! | T12 | [`t12_clocksource`] at start; [`ClockWatch`] while running | rt (start, housekeeping) |
+//! | T13 | [`t13_workqueue_cpumask`] | no caller in this repository |
+//! | T14 | [`t14_compaction`] (info) | no caller in this repository |
+//! | T15 | [`t15_host_tasks`] | no caller in this repository |
+//! | T16 | [`t16_instrumentation`] (info) | no caller in this repository |
+//! | T17 | [`t17_ksm`] | no caller in this repository |
+//! | T18 | [`t18_steal`] (info) | no caller in this repository |
+//! | T19 | [`FaultWatch`] while running | io (the polling thread, every 5 s from the warning thread) |
 //! | K1-K6 | [`k8s_checks`] (with T7 and T9), inside a pod only | io |
 //! | K7 | [`k8s_checks`] with [`Needs::with_nic`] | no caller in this repository names a NIC |
 //! | N1 (`nic`) | `n1_adaptive_rx` | io, md (kernel sockets) |
@@ -35,7 +42,9 @@
 //!   [`ThrottleWatch::check`] reads one open file (`cpu.stat` too once
 //!   throttling shows) and allocates only when it reports. T11 scans
 //!   `/proc` and waits at most 50 ms for chronyd; [`ClockWatch::check`]
-//!   never waits and allocates only when a finding changes.
+//!   never waits and allocates only when a finding changes. T15 reads two
+//!   files per task on the host; [`FaultWatch::check`] reads one open file
+//!   and allocates only when it reports.
 //! - **Evidence**: each finding's `evidence` names its source: a
 //!   settings-matrix table in git history (`git show
 //!   128747b9^:io/benches/results/<run>/tables.md`, with lines), or the
@@ -48,6 +57,7 @@
 
 mod cpu;
 mod cpuset;
+mod faults;
 mod finding;
 mod host;
 mod k8s;
@@ -55,6 +65,7 @@ mod mem;
 mod net;
 #[cfg(feature = "nic")]
 mod nic;
+mod noise;
 mod platform;
 mod quota;
 mod report;
@@ -65,7 +76,8 @@ pub use cpu::{
     thread_affinity, thread_policy,
 };
 pub use cpuset::{CPU_LIMIT, CpuSet, CpuSetError};
-pub use finding::{CheckId, Component, Finding, HotCpu, HotSet, Role, Severity, Status};
+pub use faults::{FaultWatch, Faults};
+pub use finding::{Component, Finding, HotCpu, HotSet, Role, Severity, Status};
 pub use host::{Host, ReadError};
 pub use k8s::{Needs, in_pod, k8s_checks};
 pub use mem::{FsMagic, fs_magic, t3_thp, t4_aeron_dir, t4_from, t5_numa_balancing};
@@ -77,12 +89,17 @@ pub use nic::{
     Coalesce, Ethtool, EthtoolCache, EthtoolError, Netlink, Rings, n1_adaptive_rx,
     n2_deferred_irqs, n3_azure_vf, n4_rx_ring,
 };
+pub use noise::{
+    CpuSteal, cpu_steal, t13_workqueue_cpumask, t14_compaction, t15_host_tasks,
+    t16_instrumentation, t17_ksm, t18_steal,
+};
 pub use platform::{Arch, Cloud, Platform};
 pub use quota::{
     CgroupVersion, CpuCgroup, CpuQuota, ThrottleWatch, Throttling, cpu_cgroup, t9_cpu_quota,
 };
 pub use report::{
-    HOST_CHECKS_ENV, HostCheckError, HostCheckPolicy, SILENCE, host_check_line, warn_line,
+    HOST_CHECKS_ENV, HostCheckError, HostCheckPolicy, SILENCE, host_check_line,
+    unknown_stops_require, warn_line,
 };
 pub use time::{
     Bound, BoundSource, ChronyAnswer, ChronyError, ChronyReference, ChronyTracking,

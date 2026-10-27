@@ -14,7 +14,7 @@ mod common;
 use common::Paths;
 use ergo_sbe::{
     CompositeMapping, DomainVarData, EnumMapping, GenerationConfig, GenerationProfile, Generator,
-    Schema, parse_file,
+    Schema, SchemaSource, parse,
 };
 
 /// Canonically serialise the semver-relevant `syn` surface of every public
@@ -516,8 +516,8 @@ fn generate_source(fix: &Fixture) -> Result<String, Box<dyn Error>> {
                 fix.name
             )
         })?;
-        let a = parse_file(&fix.schema)?;
-        let b = parse_file(shared)?;
+        let a = parse(SchemaSource::file(&fix.schema))?;
+        let b = parse(SchemaSource::file(shared))?;
         let schema_a = Schema::from_ir(a);
         let schema_b = Schema::from_ir(b);
         let (modules, _) = Generator::new(config_for(fix))
@@ -534,7 +534,7 @@ fn generate_source(fix: &Fixture) -> Result<String, Box<dyn Error>> {
         }
         return Ok(combined);
     }
-    let ir = parse_file(&fix.schema)?;
+    let ir = parse(SchemaSource::file(&fix.schema))?;
     let schema = Schema::from_ir(ir);
     let (modules, _) = Generator::new(config_for(fix))
         .generate(&schema)?

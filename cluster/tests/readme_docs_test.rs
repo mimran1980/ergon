@@ -3,8 +3,14 @@
 //! `rust,ignore` fences are rejected — use `rust,no_run` for Aeron-dependent
 //! examples that cannot execute in the test harness.
 
+// Shared scratch-crate target dir (tests/ is excluded from the package).
+// Formatted with sbe/'s rustfmt settings, not this crate's.
+#[rustfmt::skip]
+#[path = "../../sbe/tests/common/scratch.rs"]
+mod scratch;
+
+use scratch::ScratchCrate;
 use std::path::Path;
-use std::process::Command;
 
 /// Extract `rust` and `rust,no_run` fences from a markdown file.
 /// Returns `(fence_content, fence_info_tag)` for each fence.
@@ -57,7 +63,8 @@ fn readme_fences_compile() -> Result<(), Box<dyn std::error::Error>> {
 
     for (i, (content, _)) in to_compile.iter().enumerate() {
         // Compile as a temporary crate
-        let tmp = std::env::temp_dir().join(format!("ergo_cluster_readme_test_{i}"));
+        let krate = ScratchCrate::new(&format!("readme_test_{i}"), false);
+        let tmp = std::env::temp_dir().join(krate.name());
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(tmp.join("src"))?;
 
@@ -66,16 +73,18 @@ fn readme_fences_compile() -> Result<(), Box<dyn std::error::Error>> {
             tmp.join("Cargo.toml"),
             format!(
                 r#"[package]
-name = "readme_test_{i}"
+name = "{}"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 ergo-aeron-cluster = {{ path = "{}" }}
 "#,
+                krate.name(),
                 cluster_dir.display(),
             ),
         )?;
+        krate.write_lockfile(&tmp);
 
         // Wrap no_run fences in a main function if they don't have one
         let src = if content.contains("fn main()") {
@@ -85,10 +94,12 @@ ergo-aeron-cluster = {{ path = "{}" }}
         };
         std::fs::write(tmp.join("src/main.rs"), src)?;
 
-        let output = Command::new("cargo")
+        let output = krate
+            .cargo()
             .args(["check", "--quiet", "--manifest-path"])
             .arg(tmp.join("Cargo.toml"))
             .output()?;
+        let _ = std::fs::remove_dir_all(&tmp);
 
         assert!(
             output.status.success(),

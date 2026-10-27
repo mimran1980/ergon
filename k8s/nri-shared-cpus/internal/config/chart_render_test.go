@@ -169,13 +169,13 @@ func TestHelmChartRender(t *testing.T) {
 	if cfg.Shared.List() != "4" || cfg.DevRoot != "/host/dev" || cfg.SeccompProfilePath != DefaultSeccompProfilePath {
 		t.Fatalf("defaults did not reach the parser: %+v", cfg)
 	}
-	if !strings.Contains(def, "ghcr.io/mimran1980/ergon-shared-cpus:0.1.1") {
-		t.Fatal("default image must be the chart appVersion tag 0.1.1")
+	if !strings.Contains(def, "ghcr.io/mimran1980/ergon-shared-cpus:0.1.2") {
+		t.Fatal("default image must be the chart appVersion tag 0.1.2 (--kubelet-config-dir is new in that image)")
 	}
 	if strings.Contains(def, "@sha256:") {
 		t.Fatal("default render must not pin a digest")
 	}
-	t.Log("default image is the appVersion tag 0.1.1")
+	t.Log("default image is the appVersion tag 0.1.2")
 	objs := objects(t, def)
 	if kinds(objs)["ValidatingAdmissionPolicy"] != 0 || kinds(objs)["PriorityClass"] != 0 {
 		t.Fatal("default admission.create=false must not render the policy or PriorityClasses")
@@ -199,6 +199,11 @@ func TestHelmChartRender(t *testing.T) {
 	if strings.Contains(def, "ergon.io/layout-revision") {
 		t.Fatal("empty layoutRevision must not annotate the pod")
 	}
+	assertDefaultHostContract(t, def)
+	if !strings.Contains(def, "helm.sh/chart: ergon-shared-cpus-0.1.2") {
+		t.Fatal("chart version must be 0.1.2 (new hostContract defaults and kubeletConfigDir)")
+	}
+	t.Log("chart 0.1.2")
 
 	// A ConfigMap-only change must not alter the DaemonSet pod template.
 	// A values file, not --set: Helm splits a comma in 0,1 into two keys.
@@ -249,7 +254,7 @@ hostContract:
 	if !strings.Contains(full, "ghcr.io/mimran1980/ergon-shared-cpus@"+digest) {
 		t.Fatal("digest render must be repository@digest")
 	}
-	if strings.Contains(full, "ergon-shared-cpus:ignored") || strings.Contains(full, "ergon-shared-cpus:0.1.1") {
+	if strings.Contains(full, "ergon-shared-cpus:ignored") || strings.Contains(full, "ergon-shared-cpus:0.1.2") {
 		t.Fatal("digest render must not keep a tag")
 	}
 	t.Log("repository@digest")
@@ -378,6 +383,88 @@ config:
 	missing := exec.Command(helmBin(t), "template", "rel", chart, "--set", "config.nodeProfileLabel=ergon.io/node-profile")
 	if err := missing.Run(); err == nil {
 		t.Fatal("a label without profiles must fail the render")
+	}
+}
+
+// assertDefaultHostContract checks that the default render passes the hot-pod
+// contract its facts: without --kubelet-config every pod labelled
+// ergon.io/latency: hot is refused at create. The kubelet file, /sys and
+// /proc are on by default; configz and the overrides directory are not
+// (neither exists on a stock kubeadm node, and a File/Directory mount of a
+// missing path keeps the pod from starting).
+func assertDefaultHostContract(t *testing.T, rendered string) {
+	t.Helper()
+	ds := daemonPod(t, rendered)
+	for _, want := range []string{
+		"- --kubelet-config\n            - /host/kubelet-config",
+		"- --host-sys\n            - /host/sys",
+		"- --host-proc\n            - /host/proc",
+		"path: /var/lib/kubelet/config.yaml\n            type: File",
+		"path: /sys\n            type: Directory",
+		"path: /proc\n            type: Directory",
+		"mountPath: /host/kubelet-config\n              readOnly: true",
+		"mountPath: /host/sys\n              readOnly: true",
+		"mountPath: /host/proc\n              readOnly: true",
+	} {
+		if !strings.Contains(ds, want) {
+			t.Errorf("default render is missing %q\n%s", want, ds)
+		}
+	}
+	for _, flag := range []string{"--kubelet-configz", "--kubelet-overrides", "--kubelet-config-dir", "/host/kubelet-config-dir"} {
+		if strings.Contains(ds, flag) {
+			t.Errorf("default render must not pass %s", flag)
+		}
+	}
+	if t.Failed() {
+		t.FailNow()
+	}
+	t.Log("default render mounts the kubelet config, /sys and /proc for the hot-pod contract")
+
+	// The other common kubelet path is one --set away, and the switch still
+	// turns the mount off.
+	chart := chartRoot(t)
+	eks := daemonPod(t, helmOut(t, "template", "rel", chart,
+		"--set", "hostContract.kubeletConfig.path=/etc/kubernetes/kubelet/config.json"))
+	if !strings.Contains(eks, "path: /etc/kubernetes/kubelet/config.json\n            type: File") {
+		t.Fatalf("kubeletConfig.path override did not reach the hostPath\n%s", eks)
+	}
+	// EKS AL2023 (nodeadm): the base file plus its --config-dir, the drop-in
+	// directory mounted read-only as a Directory (never DirectoryOrCreate: an
+	// empty created directory would hide the node's real drop-ins).
+	eksDir := daemonPod(t, helmOut(t, "template", "rel", chart,
+		"--set", "hostContract.kubeletConfig.path=/etc/kubernetes/kubelet/config.json",
+		"--set", "hostContract.kubeletConfigDir.enabled=true"))
+	for _, want := range []string{
+		"- --kubelet-config\n            - /host/kubelet-config\n",
+		"- --kubelet-config-dir\n            - /host/kubelet-config-dir\n",
+		"path: /etc/kubernetes/kubelet/config.json\n            type: File",
+		"path: /etc/kubernetes/kubelet/config.json.d\n            type: Directory\n",
+		"mountPath: /host/kubelet-config-dir\n              readOnly: true",
+	} {
+		if !strings.Contains(eksDir, want) {
+			t.Errorf("EKS drop-in render is missing %q\n%s", want, eksDir)
+		}
+	}
+	if t.Failed() {
+		t.FailNow()
+	}
+	t.Log("kubeletConfigDir mounts the drop-in directory read-only and passes --kubelet-config-dir")
+	for _, bad := range [][]string{
+		{"--set", "hostContract.kubeletConfigDir.type=DirectoryOrCreate"},
+		{"--set", "hostContract.kubeletConfigDir.enabled=true", "--set", "hostContract.kubeletConfigDir.path="},
+		// A drop-in directory without its base file would refuse every hot
+		// create; the render fails instead.
+		{"--set", "hostContract.kubeletConfigDir.enabled=true", "--set", "hostContract.kubeletConfig.enabled=false"},
+	} {
+		args := append([]string{"template", "rel", chart}, bad...)
+		if err := exec.Command(helmBin(t), args...).Run(); err == nil {
+			t.Errorf("schema must refuse %v", bad)
+		}
+	}
+	off := daemonPod(t, helmOut(t, "template", "rel", chart,
+		"--set", "hostContract.kubeletConfig.enabled=false"))
+	if strings.Contains(off, "--kubelet-config") || strings.Contains(off, "/host/kubelet-config") {
+		t.Fatal("kubeletConfig.enabled=false must drop the flag and the mount")
 	}
 }
 

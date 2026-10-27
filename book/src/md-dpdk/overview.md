@@ -36,7 +36,7 @@ Terms this chapter uses. Host, Kubernetes and Java terms:
 | idle strategy, park | what an Aeron thread does with no work: `spin` and `noop` never sleep; `backoff` spins, yields, then parks (sleeps) ever longer | spinning needs a CPU of its own |
 | log buffer, term buffer | Aeron's memory-mapped file of one stream's messages, in three term buffers | [on hugepages, not sparse](configuration.md#aeron-settings) |
 | [receiver window, status message](configuration.md#aeron-settings) | window: the bytes a sender may have in flight. Status message: the receiver's "send more" | on MANA, sized to what the 256-entry ring holds (not measured here) |
-| heartbeat, keep-alive | heartbeat: Aeron's frame on a quiet stream. Keep-alive: your own small message | [why a keep-alive](configuration.md#aeron-settings); its effect is not measured here |
+| heartbeat, keep-alive | heartbeat: Aeron's frame on a quiet stream. Keep-alive: your own small message | [why a keep-alive](configuration.md#aeron-settings): below Aeron (raw floor), a quiet path is up to 9.8 µs slower at p50; one every 100 µs removes that |
 | [kernel UDP](#what-it-is) | the normal path: NIC interrupt, the kernel's network stack, a system call | no setup, every tool works ([tuning](#tuning-kernel-udp-first)) |
 | [kernel bypass](#why-bypass-is-faster-and-what-it-costs) | one process takes a NIC from the kernel and reads and writes its queues itself | lower median and max in these runs; costs cores, NICs, root setup and upkeep |
 | DPDK | the Data Plane Development Kit: the kernel-bypass library this crate uses | |
@@ -182,6 +182,37 @@ kernel transport would carry them
 So on one host the DPDK driver and Aeron's C driver take the same kernel path.
 No committed run compares the two drivers on one host.
 
+## Where a frame is lost
+
+Every place a frame can be lost or held, in order from the sending
+application to the receiving one, and the counter that shows it. Counters
+are the driver's (`AeronStat`, label `rusteron-dpdk role=... <name>`); type
+92 rows are the PMD's own extended statistics, named by the PMD.
+
+| layer | counter | fix |
+| --- | --- | --- |
+| send: transmit ring full | `tx-eagain`, `tx-queued`: held and sent first next, not lost | a larger `RUSTERON_DPDK_TX_DESCRIPTORS`, or less burst |
+| send: packet buffers exhausted | `nobufs`: the vector refused whole, Aeron sends it again | `RUSTERON_DPDK_MBUFS_PER_PORT` |
+| send: next hop unresolved or silent | `arp-miss`: waits during the first 3 s of resolution, then dropped (one `EHOSTUNREACH`) | the peer or gateway answering ARP; a silent gateway warns at start |
+| send: rate cap | `tx-paced`: deferred, not lost | raise `RUSTERON_DPDK_TX_RATE_MBPS` / `_TX_ROUTE_MBPS` |
+| send: datagram above the channel MTU | `error` | Aeron's MTU within `RUSTERON_DPDK_MAX_AERON_MTU` |
+| ENA Express, UDP over SRD | not lost: packets above 8,900 B go without SRD (a warning at start) | MTU 8,864 or less keeps every frame on SRD |
+| VPC: the instance's allowances (bandwidth, packets a second, connections) | ENA: type 92 `bw_in_allowance_exceeded`, `bw_out_allowance_exceeded`, `pps_allowance_exceeded`, `conntrack_allowance_exceeded`, `linklocal_allowance_exceeded`. MANA: none | a larger instance, or less traffic |
+| path: a link with a smaller MTU | `icmp-frag-needed`, and a line on stderr naming the router | a lower `RUSTERON_DPDK_MAX_AERON_MTU` |
+| NIC: link down | `nic-link-changes` (where the NIC raises link interrupts) | the network; the frames are gone |
+| NIC: device unwell | `nic-reset-requested`; the driver exits | restarted by its DaemonSet |
+| NIC receive ring full | ENA: `nic-rx-missed` (and `missed-packets`). MANA: none; `rx-ring-full-suspected` is a guess | keep the agent spinning on its own core; a larger `RUSTERON_DPDK_RX_DESCRIPTORS` |
+| NIC receive: buffers exhausted, errors | `nic-rx-nombuf`, `nic-rx-errors` | `RUSTERON_DPDK_MBUFS_PER_PORT` |
+| receive: frame not usable | `checksum-failure`, `fragmented`, `multi-segment`, `unsupported-ethertype`, `unsupported-protocol`, `discard` | the sender: no IP fragments, one frame within the MTU |
+| receive: nobody bound to the port | `queue-drop` (and `discard`); an ICMP port unreachable goes back | the subscription's channel and port |
+| receive: a connected channel, another peer | `not-connected-peer` | the channel's `endpoint` |
+| receive: a peer's MTU above ours | `peer-mtu-too-large`; its SETUP dropped, so its publication shows not connected | every peer's MTU within `RUSTERON_DPDK_MAX_AERON_MTU` |
+
+`nic-*` and type 92 values are read by housekeeping, every
+`RUSTERON_DPDK_NIC_STATS_MS` (1 s by default); the rest count as frames
+pass. Pod env sets every variable above; ENA Express and the instance size
+are infrastructure.
+
 ## Next
 
 - Building, running and tuning it: [Configuration](configuration.md).
@@ -189,5 +220,7 @@ No committed run compares the two drivers on one host.
   [Deployment: benchmarks](../deploy/benchmarks.md).
 - Running it in Kubernetes (node and pod settings, no CPU quota):
   [Kubernetes latency checklist](../deploy/kubernetes.md#latency-checklist).
+- Aeron kernel UDP and DPDK against mio, ergon-io and TCP:
+  [transport latency comparison](../transports/comparison.md).
 - Every run, setting and range:
   [`md-dpdk/BENCHMARKS.md`](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md).

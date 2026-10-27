@@ -1,6 +1,840 @@
 # Changelog
 
-## Unreleased
+## [0.1.34] — 2026-10-27
+
+### Added
+
+- `ergon-io`: `Config::busy_poll_us` (key `busy_poll_us`, default 0,
+  `epoll-spin` only, 0 to `i32::MAX`): `SO_BUSY_POLL` on every socket the
+  driver owns, and a socket read with data is read once more on the
+  next poll, so the empty read polls the NIC once, as mio's read to
+  `WouldBlock` with the same option does. Other backends, or a value above
+  `i32::MAX`, are `Error::Config`.
+- `ergon-io`: UDP, `udp::UdpConn` (`UdpOptions`, `UdpHandler::on_datagram`,
+  `UdpStats`), on `epoll-spin` only: `Driver::<UdpConn>::new` on
+  `recv-busy` or `uring-sqpoll` is `Error::Unsupported`. Connected
+  (`UdpConn::connect`) and receive-only (`UdpConn::bind`) sockets; whole
+  datagrams sent from preallocated slots (`Error::Busy` when full); 0-byte
+  datagrams delivered; a datagram over `max_datagram` (`MSG_TRUNC`) and
+  `ECONNREFUSED` counted, not a close. No TCP option or route check on a
+  datagram socket.
+- `ergon-io`: framed TCP, `frame::FrameConn` (`FrameDial`,
+  `FrameOptions`, `FrameHandler::on_frame`, `FrameStats`): `u32`
+  little-endian length-prefixed frames over plain TCP, on every backend,
+  dialled or from an accepted socket (`FrameConn::from_stream`, then
+  `Driver::add`). A received frame over `max_frame`, or a peer close inside
+  a frame, closes with the new `Error::Frame`. `TCP_NODELAY` always;
+  `FrameOptions::quickack_per_read` sets `TCP_QUICKACK` after each read
+  with data.
+- `ergon-io`: `Config::epoll_events` (key `epoll_events`, default 64), the
+  `epoll_wait` batch, and `Config::datagram_burst` (key `datagram_burst`,
+  default 16), the most datagrams one poll reads from one ready UDP socket.
+- `ergon-io`: source-IP binding. `Target::source` (`with_source`) binds
+  the socket to a local address before it connects, on every dial,
+  `Driver::connect`, `connect_background`, `HttpClient` and libcurl
+  (`CURLOPT_INTERFACE`); on Linux with `IP_BIND_ADDRESS_NO_PORT`. A
+  source of the other address family is `Error::Config` before any
+  connect.
+- `ergon-io`: several source IPs, each paced by the application.
+  `Reconnect::poll_sourced` / `poll_at_sourced` ask a gate for the IP of
+  every attempt (`Ok(ip)`, or `Err(wait_ns)` when none has room, not a
+  failed attempt) and bind the dial to it (`net::BindSource`, implemented
+  by `WsDial`, `HttpDial`, `AnyDial`); `Reconnect::source` names the IP.
+  `WsDial::target` and `HttpDial::target` return the dial's target.
+- `ergon-io`: `RxMeta::rx_read_ns`, ergon-io's own receive time
+  (`CLOCK_REALTIME`, the domain of `rx_sw_ns`), read right after each read
+  returns data when `Config::rx_read_timestamp` (key `rx_read_timestamp`)
+  is on. Off by default: no clock read, the field is 0. Bytes the
+  connection already held when the driver took it (read with the upgrade's
+  101, or by a blocking connect before `Driver::add`) are stamped when the
+  driver takes them, with a `read_seq` like any read.
+
+- `ergon-io` (repo only): a two-sided mio parity gate,
+  `io/benches/parity/mio_parity.rs` (`just io-parity`, CI on Linux x86_64
+  and aarch64, lane `io-parity`). Structural tests assert from the
+  `Driver`'s counters that `epoll-spin` makes one `epoll_wait` per poll with
+  a zero timeout and one `recvmsg` per ready socket, and that a mio loop
+  makes two reads per event. A loopback TLS WebSocket round trip through
+  the `Driver` and through a minimal mio loop doing the same work, the two
+  taking turns round trip by round trip, fails if either side's p50 is
+  ahead by more than 5 % in 6 of 7 pairs; 10 % added to either loop fails
+  it. The docs now state that `epoll-spin` is mio's (and so
+  tokio's) mechanism on Linux.
+- `samples/low-latency-k8s`: the Kubernetes reference for the low-latency
+  stack. The DPDK media driver runs Aeron `DEDICATED`, with sender and
+  receiver on two exclusive CPUs (`ergon-cpus isolated:0/1`) and everything
+  else on the shared CPU. An Aeron ping and pong each busy-spin on one
+  exclusive CPU, with 100 shared millicpus for the client conductor,
+  `ll-log` and `ll-stats`. Logging is `tracing-subscriber` fmt to stdout
+  through a lossy `tracing-appender` writer. `ll-probe` and
+  `scripts/verify.sh` print PASS/FAIL per thread and per exclusive CPU.
+  Also: the kustomize overlays `vdev-local`, `vdev-isolated`,
+  `eks-ena-arm64` and `eks-ena-x86`, Helm values for `ergon-shared-cpus`,
+  node preparation (`node/eks-userdata.sh` for EKS), a multi-arch
+  `baseline` image plus CPU tags, and a vdev e2e in Docker that has run on
+  linux/arm64. The `ll-latency` report is `v2` (`nic=`, `write_errors=`,
+  an exact `max`).
+  `md-dpdk/deploy/low-latency/pod.yaml` is removed (no hugepages, no Aeron
+  mount, no `ergon-cpus`); its README points at the sample.
+- `ergo-sbe`: `GenerationConfig::with_validate(true)` (off by default) emits
+  `validate()` on every message decoder, group entry decoder and
+  `AnyMessage`: an opt-in second pass after `try_decode` (unchanged) for
+  frames from older or foreign producers. It returns the new
+  `sbe_rt::ValidateError`: `ValueOutOfRange` (outside a declared
+  `minValue`/`maxValue`), `UnknownEnum`, `UnknownSetBits`, `UnknownTemplate`
+  (`AnyMessage::Unknown`) or `Decode` (a malformed tail). Optional nulls
+  pass. Not checked: undeclared bounds, floats, fixed char arrays and
+  var-data contents. A member named `validate` is
+  `GenerateError::InvalidConfiguration` when the option is on. Generated
+  `sbe_rt` always contains `ValidateError`.
+- `ergo-sbe`: `ConversionSelector::named_type` selects fields of a primitive
+  alias (`<type name="Timestamp" primitiveType="uint64"/>`); it no longer
+  reaches bare primitives.
+- `ergo-sbe` IR: `Encoding::min_value_declared`,
+  `Encoding::max_value_declared` (whether a bound came from the schema or is
+  the SBE default) and `Encoding::referenced_type` (the alias a primitive
+  field refers to).
+- `ergon-shared-cpus` 0.1.2 (image and chart): the
+  `--kubelet-config-dir` flag and chart value `hostContract.kubeletConfigDir`
+  (off by default; a read-only `Directory` mount; needs
+  `hostContract.kubeletConfig`). The hot-pod node check merges the
+  kubelet's `--config-dir` drop-ins over `--kubelet-config` the way the
+  kubelet does: only `*.conf` files, lexical order, subdirectories included,
+  each a JSON merge patch. A missing or unreadable directory, or a drop-in
+  the kubelet would reject, refuses hot creates. The `configz` and argv
+  cross-checks compare against the merged config. On EKS AL2023 (nodeadm's
+  `config.json.d/40-nodeadm.conf`) install with
+  `--set hostContract.kubeletConfig.path=/etc/kubernetes/kubelet/config.json
+  --set hostContract.kubeletConfigDir.enabled=true`. Verified on EKS 1.36
+  AL2023 `c8g.xlarge` (`k8s/nri-shared-cpus/RELEASE.md`).
+- `ergon-shared-cpus` 0.1.2: the hot-pod NIC check reads
+  a Hyper-V synthetic NIC (Azure `hv_netvsc`, which has no PCI interrupt)
+  by its VMBus channels: each `device/channels/<relid>/cpu` must be an IRQ
+  CPU, and an unreadable one refuses. Before, every hot pod on an Azure VM
+  was refused with `no NIC interrupt found`.
+- `ergon-io`: opt-in `tcp_rto_min_us` and `tcp_delack_max_us`
+  (`TCP_RTO_MIN_US`, `TCP_DELACK_MAX_US`, Linux 6.15+) on every connection
+  and libcurl socket, 2,000 to 200,000 µs. `Driver::new` and
+  `HttpClient::new` set them on a probe socket and refuse, typed, at start:
+  `Error::Unsupported` before 6.15, and `Error::Config` below two kernel
+  ticks or when the kernel would round the value (user space cannot read
+  `CONFIG_HZ`). Effect not measured.
+- `ergon-io`: opt-in passive `TCP_INFO` (`tcp_info_interval_ms`,
+  `Driver::tcp_info`, `TcpInfo`: RTT, RTT variation, min RTT, RTO, total
+  retransmits, lost). It reads one connection per 250 µs deadline check, so
+  at most one `getsockopt` per poll. Counters: `DriverStats::tcp_info_samples`
+  and `tcp_info_max_ns`.
+- `ergon-io`: the warning thread reads the polling thread's page faults
+  (T19, `ergon_tune::FaultWatch`) every 5 s and writes a line when it took
+  one. `Driver::new` opens it on the thread creating the driver, once per
+  thread.
+- `ergon-tune` checks the node's background noise on the busy-spinning CPUs:
+  T13 (the unbound workqueue cpumask includes a hot CPU, warn), T14
+  (`vm.compaction_proactiveness` or `vm.compact_unevictable_allowed` on,
+  info), T15 (another process's task may run on a hot CPU, read from
+  `/proc`, warn), T16 (kprobes, ftrace hooks or BPF programs loaded, info;
+  unknown without privilege or with `bpf_jit_harden` on), T17 (KSM running,
+  warn) and T18 (steal on a hot CPU since boot, info; `cpu_steal` reads it
+  per CPU). `FaultWatch` (T19) warns when a hot thread takes a page fault
+  while it runs. Each reads `/sys` and `/proc` only, and reports unknown,
+  never a warning, when it cannot read. An unknown from any of them does
+  not stop an `ERGON_HOST_CHECKS=require` start. T13–T18 have no caller in
+  ergon-io or the media driver yet.
+- `ergon-md-dpdk` diagnostics.
+  - `RUSTERON_DPDK_GAP_ATTRIB=1` now also times each `rx_burst` that
+    returns frames and each `tx_burst`: `rx-burst-max-ns`,
+    `rx-bursts-over-1us`, `rx-bursts-over-5us` and the `tx-` three (type 87).
+  - `RUSTERON_DPDK_EVENT_LOG=<file>` (lab only) writes stamped events. Agents
+    log loop gaps of 10 µs or more and ARP traffic. Housekeeping logs the
+    timer service, the 1 Hz sample and NIC statistics reads, each with its
+    duration. Each writer has a preallocated ring; the agents never write
+    the file.
+- `ergon-md-dpdk` queue tuning: `RUSTERON_DPDK_RX_FREE_THRESH` and
+  `RUSTERON_DPDK_TX_FREE_THRESH` set the queues' free thresholds (each queue
+  starts from the PMD's default configuration), and
+  `RUSTERON_DPDK_TX_FAST_FREE` turns on `RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE`
+  where the NIC offers it. Defaults are unchanged. No setting is
+  recommended yet.
+- `ergon-md-dpdk`: `RUSTERON_DPDK_EAL_IN_MEMORY=1` starts the EAL
+  `--in-memory` (no hugepage files, none left after an OOM kill; no
+  multi-process channel). EAL options in `RUSTERON_DPDK_EAL_ARGS` that
+  contradict the choice fail start with `DpdkError::InvalidEnvironment`.
+  Default off; latency effect not measured.
+- `ergon-md-dpdk`: an ENA running ENA Express with UDP over SRD
+  (`ena_srd_mode` bit 1) warns at start when `max_aeron_mtu` is above 8864:
+  SRD carries IP packets of at most 8900 bytes, and ENA sends larger ones
+  without SRD (measured with kernel UDP on c6gn.4xlarge: delivered, not dropped).
+- `ergon-md-dpdk`: `nic-link-changes` (type 79) counts link-status changes
+  where the NIC raises them (`RTE_ETH_DEV_INTR_LSC`); `port-info` says
+  `lsc=off` otherwise.
+- `ergon-md-dpdk`: `RUSTERON_DPDK_GAP_ATTRIB=burst` times the PMD's
+  `rx_burst` and `tx_burst` calls without the work/descheduling split. `1`
+  also reads the thread CPU clock on every poll, a system call with no vDSO
+  path (about 270 ns a poll in the fake-port bench); a latency run should use
+  `burst`.
+- `ergon-md-dpdk`: `RUSTERON_DPDK_TX_IDLE_CLEAN=<1..1024>` (off by default).
+  On a poll that received nothing, the agent reclaims up to that many sent
+  descriptors (`rte_eth_tx_done_cleanup`) once the last send is 5 µs old, so
+  the PMD rarely reaches its free threshold inside a send. An idle poll with
+  nothing outstanding makes no call. New counter `tx-idle-cleaned` (type 87);
+  `port-info` shows `tx-idle-clean=<n>`, or `tx-idle-clean=unsupported` where
+  the PMD lacks the op (found at start, left off and logged). Latency effect
+  not measured.
+- `ergon-md-dpdk`: `RUSTERON_DPDK_NIC_SLOW_STATS_MS` (unset by default: no
+  change) splits the NIC statistics reads. Every `RUSTERON_DPDK_NIC_STATS_MS`
+  only the PMD's software xstats are read, by id (on ENA the queue stats,
+  `wd_expired`, `dev_start`, `dev_stop` and `tx_drops`, with no admin
+  command); the basic drop counters and every xstat (ENI allowances, SRD) are
+  read every `NIC_SLOW_STATS_MS`, `0` meaning never. Latency effect not
+  measured.
+- Cloud lab: `@HAIRPIN=1` on a raw floor mode (`dpdk-raw@HAIRPIN=1`,
+  `kernel-raw@HAIRPIN=1`) runs the round trip on host a alone, from its
+  sender ENI to its receiver ENI and back (`floor xhairpin`: ping and pong in
+  one process, one port each; on the kernel wire vm.sh routes the host's own
+  addresses out of their NICs, checked fail closed). `@RTT_GAP_US=<us>`
+  (1 to 1000000) paces `rtt` and `floor` to one ping every that many
+  microseconds (`RTT_GAP_US`) on a fixed schedule, a rep of 20 to 60 s.
+  A hairpin needs four cores on both hosts. `analyse.py` adds a
+  hairpin-against-cross-host table and a round-trips-by-gap table; a paced
+  Aeron mode's floor is the floor paced alike.
+- Cloud lab: `@DPDK=stock|patched-refill` (AWS, DPDK modes) runs the media
+  driver and clients linked against DPDK 25.11 built from source on each VM
+  (`vm.sh build-dpdk`, any placement). `patched-refill` applies
+  `benches/cloud/dpdk-ena-deferred-refill.patch` (lab only, never shipped):
+  ENA's `rx_burst` stops refilling the RX ring in a burst that returns frames
+  until two thresholds are owed; the next empty burst refills. `vm.sh driver`
+  stops unless the driver log shows the PMD the build should load. New ENA
+  counters `rx_q<n>_refill_deferred` and `rx_q<n>_refill_floor`. `vm.sh host`
+  (the env file) records each build's DPDK prefix and patch hash.
+  `patched-refill` refuses an `RX_FREE_THRESH` of half the receive ring or
+  more. Latency effect not measured.
+- Cloud lab: raw floor modes `kernel-raw` and `dpdk-raw`. The new `floor`
+  client does `rtt`'s round trip with no Aeron, over kernel UDP or the DPDK
+  transport's bindings alone, with the same output files; `analyse.py`
+  reports each Aeron mode above its floor. Under precision-time, `rtt` splits
+  each spike one way by both hosts' NIC receive timestamps (`RTT_ONE_WAY`),
+  and `spikes.py` prints the split. `LAB_STATES` accepts a `-nodiag` suffix
+  (no tracepoints, kprobes, KNOISE or gapspin). A mode's
+  `@RUSTERON_DPDK_ENA_DEVARGS` joins several device arguments with `+`.
+  `estimate.py` prices `c8g.2xlarge`. Each run records the DPDK build
+  (`dpdk-build`), and the jitter snapshots record `sw-checksum-verified` and
+  `tx-idle-cleaned`.
+- Cloud lab: pure floor mode `dpdk-pure` (AWS, cross-host). The new
+  `purefloor` C client (`benches/cloud/purefloor.c`, built on the host by
+  `vm.sh build`) does the floor client's round trip over DPDK alone, without
+  ergon-md-dpdk: `rte_eth_rx_burst` and `rte_eth_tx_burst` on the receiver
+  port, ARP to the next hop, and a pong that swaps the 5-tuple and sends the
+  frame back. The port's rings, pool, LLQ policy, checksum offloads,
+  link-change interrupts and RX timestamps are set as the transport sets
+  them. It times with the TSC or `CNTVCT_EL0` and writes the same output
+  files. `analyse.py` reports `dpdk-raw` above it, and sets a mode with
+  overrides against the floor with the same overrides where that ran.
+- `ergon-md-dpdk` bench: `clock.rs` overhead adds a `poll_idle` path and
+  per-call p99.99 and max.
+- EKS lab (`eks-nri.sh`): when no zone of `EKS_REGION` can place two spot
+  nodes, it searches every enabled region, probing each candidate zone with
+  two instances it then deletes. Next it tries `c9g.xlarge` and
+  `c7g.xlarge`, which have the same 4-vCPU, no-SMT CPU pins, and only then
+  on-demand, capped by `EKS_ONDEMAND_MAX_HOURLY` (0.55). The market and type
+  that ran are logged and written to `instances.txt`. A failed instant fleet
+  is still deleted before the next zone.
+- Cloud lab: `LAB_GAPSPIN_US` (50 by default) sets the spare CPU's gap
+  spinner threshold. The diagnostics trace times each interrupt and IPI
+  (their exits too) on `CLOCK_MONOTONIC`, anchored to the wall clock by
+  trace markers. `spikes.py` labels every agent loop gap in the DPDK event
+  log by what overlapped it on the agent's CPU: a preemption, interrupts (with
+  their time inside the gap), a VM pause the spinner also saw, or nothing the
+  guest saw. It then counts each host's spinner gaps by size.
+- `ergon-md-dpdk`: `ConfiguredDriver::from_env` asks each port's gateway for
+  its MAC before the agents start (up to 1 s). A silent gateway is a warning
+  line; `ERGON_HOST_CHECKS=require` refuses to start on it.
+- `ergon-md-dpdk` on Graviton4 (c8g, CPU part 0xd4f) and Graviton5 (c9g,
+  0xd84) on the EKS DPDK path (VM types; Graviton bare metal is not
+  supported yet and `eks.sh` refuses it). `provision-node.sh` builds the
+  arm64 kernel line (no `nosmt`; `iommu.passthrough=1`) and fails closed on
+  any other CPU, on pages other than 4 KiB and without 2 MiB hugepages. The
+  media-driver and device-plugin images build for linux/arm64 as well as
+  linux/amd64. `eks.sh` defaults to c8g.2xlarge.
+- `media_driver --version` prints the architecture, Rust's target CPU and
+  the native C's flag.
+- `scripts/test-dpdk-vdev-rootless.sh` (`just test-dpdk-vdev-rootless`,
+  `verify-dpdk-docker --rootless`) runs every vdev scenario without root,
+  through user namespaces, `net_tap` and EAL `--no-huge`. It fails, naming
+  `kernel.apparmor_restrict_unprivileged_userns`, when the namespace is
+  refused. CI runs it beside the sudo lane on ubuntu-24.04 and
+  ubuntu-24.04-arm.
+- New vdev scenarios, asserted on counters and logs: `icmp_ping`,
+  `peer_mac_move`, `silent_gateway`, `largest_mtu` (8960; 8992 refused).
+  Property tests for the receive classifier.
+- Lab (`md-dpdk/benches/cloud`), attribution of idle maxima: the cross-host
+  round trip stamps every round trip of 30 µs or more and every client loop
+  stall of 10 µs or more (`LAB_RTT_SPIKE_NS`, `LAB_RTT_STALL_NS`; `vm.sh
+  client` now passes `LOOP_STALL_NS` through sudo). `rtt` spike rows carry
+  the ping index. `spikes.py` lists each rep's 10 largest round trips with
+  every overlapping event (client stalls, the DPDK event log, spinner gaps,
+  guest preemptions, KNOISE) and their phase in 1 s and 30 s, each source
+  set against chance (1,000 circular shifts, fixed seed). `diag-start` adds
+  KNOISE: osnoise with `NO_OSNOISE_WORKLOAD` on the agent and app CPUs, IPI
+  senders by callsite, compaction and page migration. It refuses while a
+  rep runs, and records `osnoise unavailable` where the kernel lacks the
+  tracer or cannot set `NO_OSNOISE_WORKLOAD` (before Linux 6.3). The jitter
+  snapshots keep the PMD burst counters, and `analyse.py --ab` prints them
+  per rep.
+
+- `ergon-io`: `WsHandler::on_message_start` (default `Interest::Keep`)
+  decides from a data message's first frame whether to keep it.
+  `Interest::Skip` drops it without a copy, a UTF-8 check or a delivery;
+  `Interest::Fragments` delivers a fragmented message to the new
+  `WsHandler::on_fragments` as `Fragments`, one slice of the receive buffer
+  per fragment (up to `MAX_FRAGMENTS`, 32), instead of copying it. A message
+  the buffer cannot hold that way falls back to one copy, counted in the new
+  `WsStats::frag_fallbacks`; `WsStats::skipped` counts dropped messages.
+  New types: `Interest`, `Fragments`, `FragmentIter`. `ws_bench` (in
+  `io/benches`) times parse-and-deliver per message for each case.
+- `ergon-io`: `RequestTemplate` holds a request's line around its path and
+  the endpoint's fixed headers (`Host`, `Target::headers`), built and
+  checked once. `HttpConn::request_with` and
+  `HttpConn::signed_request_with` (also on `ConnMut<HttpConn>`) write only
+  a target suffix, per-request headers, `Content-Length` and the body; the
+  bytes on the wire equal `HttpConn::request`'s (ciphertext compared at
+  every request size up to one record). A template from another target is
+  refused.
+- `ergon-io`: `HttpOptions::non_ascii_head` (`NonAsciiHead::Flag`, the
+  default, or `Reject`): a response head with a byte above 0x7F is delivered
+  with the new `Response::head_ascii` false and counted in
+  `HttpStats::non_ascii_heads`, or closes the connection.
+  `HttpStats::head_parses` counts head parses. `http_bench` (in
+  `io/benches`) times the previous and current HTTP paths interleaved.
+- `ergon-io`: one text check for WebSocket text and HTTP bodies, in the new
+  `text` module (re-exported at the crate root). `TextCheck` is `None` (the
+  default on both), `Utf8` (invalid text closes the connection), `Ascii`
+  or `AsciiChecked(NonAscii)`. `Ascii` is a trust declaration: the payload
+  is never read, costs the same as `None`, and is delivered unchanged as
+  `TextStatus::AssumedAscii`, whatever its bytes. `AsciiChecked` is one
+  pass checking every byte is below 0x80, a payload with another byte
+  closed on (`NonAscii::Close`), dropped (`Skip`, WebSocket only:
+  `HttpOptions` refuses it with `Error::Config`) or delivered flagged
+  (`DeliverUnchecked`, the default policy). The new `RxMeta::text:
+  TextStatus` (`Unchecked`, `Utf8`, `Ascii`, `AssumedAscii`, `NotAscii`)
+  says what was found; `Ascii` means every byte index is a character
+  boundary. `WsOptions::text_check` replaces `validate_utf8` and checks
+  kept messages only (`WsStats::non_ascii` counts non-ASCII text under
+  `AsciiChecked`); `HttpOptions::body_check` checks every response body. A
+  response head keeps its own rule (`non_ascii_head`).
+- `ergon-io`: `AsciiText<'a>`, a `Copy` byte view over `&'a [u8]` built
+  from a payload at no cost: `as_bytes`, `len`, `is_empty`, `get` and
+  `Index` by byte, `slice` by byte range, `find`, `position`,
+  `starts_with`, `split_at`; nothing allocates. The `unsafe`
+  `as_str_unchecked` returns a `&str` without a check (the caller vouches
+  the bytes are ASCII; debug builds assert it).
+- `ergon-io`: `Interest::Stream` hands each fragment of a fragmented
+  message to the new `WsHandler::on_fragment(conn, opcode, part, index,
+  fin, meta) -> Flow` as soon as it is complete, borrowed from the receive
+  buffer: no copy, nothing held, no fragment or size limit but
+  `max_message`. `Flow::SkipRest` drops the remaining fragments uncopied
+  and unchecked. Text checks run per fragment, a character cut between
+  fragments carried across (at most 3 bytes). Pings and Close inside are
+  handled as before.
+- `ergon-io`: `ws::push_frame`, `ws::push_header`, `ws::push_masked` and
+  `ws::header_bytes` build masked client frames onto a `Vec` without a
+  zero fill; `WsConn` sends with them, byte-identical to `encode_frame`
+  (`io/tests/ws_send.rs` compares every length from 1 to 16 KiB and frames
+  over several records).
+- `ergon-io` (repo only): `ws_bench --suite tx|text|frag|span`: send cost
+  per message old against new, `TextCheck` modes on ASCII and mixed text,
+  `Stream` against `Fragments` and `Keep`, and the split-frame join old
+  against new, each interleaved on the same input.
+- `ergon-io` (repo only): `http_bench --suite body` times one response per
+  row through the four `body_check` modes interleaved, on ASCII and mixed
+  bodies, each mode's flag checked first.
+- `ergon-shared-cpus` lab (repo only): a scale step (`vm.sh scale`,
+  `LAB_SCALE=1`) on two shared CPUs records per-CPU busy time, each
+  container cgroup's usage, `cpu.weight`, `cpu.max` and throttling, the
+  shared CPUs each pod got and where every thread ran, for pods at 100 and
+  1,001 millicpus, idle helpers and three pods started in turn, plus the
+  scheduler's accounting (`results/scale.md`). A traced plugin-on rep
+  (`LAB_TRACE=1`) enables ftrace events filtered to the spin's CPU, with
+  the sender's stack on every wakeup, IPI, cross-call and work item sent
+  there, and `gapprobe trace-report` names every switch, IPI, timer and
+  work item and ties each to the gap log (`results/trace-cpu<N>.md`).
+  `LAB_QUIET=1` applies the node settings of `lab_quiet_settings`. The
+  scale report also shows the pod cgroup's throttling (a pod-level quota
+  throttles there, not in the container's `cpu.stat`) and a placement
+  verdict per pod (every sample of the spin thread on its CPU alone, of
+  every other thread on that pod's shared CPUs); the step samples from the
+  IRQ CPU, and the contention pods spin 30 s longer each so the first one
+  outlasts the window. The traced rep waits 20 s more before its spin and
+  is a failure if tracing was armed after the spin started. Run on the lab
+  VM (runs 20261024230400 to 20261024234841).
+- `k8s/nri-shared-cpus/BENCHMARKS.md`: measured on one Azure Cobalt VM
+  with THP `never` and the fair server off on the isolated CPUs, helpers
+  on the shared CPU: p50 0.02 µs, p99.99 0.03 µs, max 4.81 to 5.52 µs over
+  3 reps of 60 s, 0 involuntary switches, no interrupt on the spin's CPU;
+  the gaps left (3.5 to 5.5 µs) have no guest kernel event: the
+  hypervisor's floor (run 20261024234841). What reached the isolated CPU
+  before, from the trace: `khugepaged`'s `lru_add_drain_all`, the fair
+  server's 1 s timer, SSH logins' seccomp JIT. A traced rep at a systemd
+  daily timer took a 40.60 µs max and one switch (a block-device ioctl's
+  `lru_add_drain_all`, and BPF loads). Shared-CPU scaling (run
+  20261024230400): `ceil(millicpus/1000)` shared CPUs, all of them when
+  busy (0.99 and 1.99 cores), 0.04 idle, two pods on one shared CPU split
+  0.33 : 0.66 by `cpu.weight` from the `cpu` request; a pod over the
+  allocatable 2000 stays Pending. Raw files under `lab/results/`.
+- `samples/low-latency-k8s`: `node/quiet-cpus.sh` and its oneshot unit
+  `node/ergon-quiet-cpus.service` set THP `never` and the fair server's
+  runtime 0 on every isolated CPU at each boot, after debugfs is mounted
+  (`--check` is read-only). `node/eks-userdata.sh` installs and enables
+  them before the node's reboot; `node/linux-vm-prep.sh` installs them and
+  checks both.
+
+- Transport comparison suite (repo only; `md-dpdk/benches/cloud/transport.sh`
+  and `io/benches`): `aeron_lat` (Aeron IPC, spy, kernel or DPDK UDP,
+  reliable or not), `udp_lat` and `tcp_lat` (mio or ergon-io), `mpsc_lat`
+  and `hostcheck`, every arm measured by one shared core
+  (`ergon-latency-core`): 64-byte messages, open-loop pacing, TSC stamps and
+  a manifest per point. The Azure runner applies `transport-settings.env`
+  and reads it back, sets netem, and runs each rep's arms in a seeded random
+  order with an A/A arm. `fairness.py`, `spikes.py --transport` and
+  `analyse.py --transport` check every point, label each max and build the
+  tables. `tcp_lat --source-port N` binds connection i to port N + i and
+  closes with a reset, so two arms can run on the same 4-tuples.
+
+### Changed
+
+- `ergon-io`: closing connections allocates nothing on the polling thread,
+  for one connection or many at once, a peer close, `Driver::close` or a
+  WebSocket Close handshake alike: the closed list has room for every
+  slot, a `WsConn` holds room for the server's Close from the start, and
+  `connect_background`'s helper mailbox is bounded and allocated once
+  (1 024 messages). `connect_background` fails with `Error::Busy` when that
+  mailbox is full; a closed connection that finds it full is freed on the
+  polling thread.
+- Breaking: `ergon-io` has no `limit` module (`Budget`, `BucketSpec`,
+  `Charge`, `Class`, `Ticket`, `Limited`, `Resend`, `Why`, `SourceIps`
+  and the rest) and no `outcome::Now`. Pacing to a venue's limits is the
+  application's: gate connects through
+  `Reconnect::poll_gated` and `ClientHandler::connect_gate` as before;
+  several source IPs through `Reconnect::poll_sourced(connector, gate)`,
+  whose gate picks the IP (`Ok(ip)`) or waits (`Err(wait_ns)`).
+  `Verdict::Throttled` and `Verdict::Banned` now carry
+  `retry_after_ms: Option<u64>` instead of a bucket and a hold end;
+  `outcome::generic(resp, server_now_ms)` and
+  `outcome::refused_upgrade(error)` no longer take a budget, and a 429
+  with a malformed `Retry-After` is only an `Error::Http`.
+  `io/benches`' `limit_bench` is gone with it.
+- Breaking: `ergon-io` keeps the three backends measured in a busy-spin
+  loop: `epoll-spin`, `recv-busy` and `uring-sqpoll`. `Backend::UringSpin`,
+  `Backend::EpollBusy` and `Backend::UringNapi` (`uring-spin`,
+  `epoll-busy`, `uring-napi`) are gone, so is `Backend::may_sleep`
+  (nothing sleeps), and `Backend::ALL` has 3 entries. `Config` loses
+  `busy_poll_us`, `wait_us`, `prefer_busy_poll` and `busy_poll_budget`,
+  and `Config::parse` refuses those keys as unknown: `recv-busy` sets
+  `SO_BUSY_POLL` to 1 µs and `uring-sqpoll` a 1 µs NAPI busy-poll timeout,
+  as their defaults did. `sys::set_prefer_busy_poll` and
+  `sys::set_busy_poll_budget` are gone. For `uring-spin`, use `epoll-spin`
+  (level in the fair run) or `uring-sqpoll`.
+- Breaking: `ergo-aeron-cluster` has one listener and one poll.
+  `AeronCluster::poll(&mut listener, fragment_limit)` replaces
+  `poll_egress`, `poll_egress_controlled` and `poll_state_changes`, and takes
+  the listener directly: `EgressAdapter` is gone and the client always drops
+  other sessions' messages. `EgressListener` needs only `on_message`; the
+  lifecycle callbacks default to no-ops. Removed: the `controlled` module
+  (`ControlledEgressAdapter`, `ControlledEgressListener`,
+  `ControlledPollAction`), the `poller` module with `parse_event` and
+  `EgressEvent`, and `offer_range` (slice the payload),
+  `send_admin_request` (use `send_admin_request_to_take_snapshot`) and
+  `track_ingress_publication_result`.
+- Breaking: `ergon-tune` drops `CheckId`. `Finding::id` is a `&'static str`
+  (`"T1"`, `"K2"`, `"M1"`), so a caller can add checks of its own.
+  `CheckId::unknown_stops_require` is now `unknown_stops_require(id)`, and an
+  id it does not know blocks a `require` start when unknown (fails closed).
+- Breaking: `ergo-sbe` has one parse and one generate entry point.
+  `parse(source)` takes a `SchemaSource`: `SchemaSource::file(path)` (or a
+  `&Path` / `PathBuf`) or `SchemaSource::xml(text)`, with optional
+  `.with_shared(&ir)` and `.with_xsd_validation()`. `generate(source,
+  config)` parses and generates in memory; write the result with
+  `GeneratedModuleSet::write_to_out_dir()` or `write_to(dir)`. A bare
+  `&str` is no longer accepted, because it could be a path or XML.
+
+  | Removed | Use |
+  |---|---|
+  | `parse(xml)` | `parse(SchemaSource::xml(xml))` |
+  | `parse_file(path)` | `parse(SchemaSource::file(path))` |
+  | `parse_with_shared(xml, &ir)` / `parse_file_with_shared(path, &ir)` | `parse(SchemaSource::xml(xml).with_shared(&ir))` / `SchemaSource::file(path).with_shared(&ir)` |
+  | `parse_with_xsd_validation(xml)` | `parse(SchemaSource::xml(xml).with_xsd_validation())` |
+  | `generate_to_out_dir(path, config)` | `generate(SchemaSource::file(path), config)?.write_to_out_dir()` |
+  | `generate_to_dir(path, config, dir)` | `generate(SchemaSource::file(path), config)?.write_to(dir)` |
+  | `generate_str_to_out_dir` / `generate_str_to_dir` | `generate(SchemaSource::xml(xml), config)?` then a writer |
+  | `generate_multi_to_out_dir` / `generate_multi_to_dir`, `SchemaFile` | `parse` each consumer `with_shared`, `Generator::generate_multi` with `GenerationConfig::with_shared_module(name)` (the helper set it for you; without it each module emits its own copy of the shared types), then a writer |
+  | `out_dir()` | `write_to_out_dir()` reads `OUT_DIR` |
+
+- Breaking: `Ir` has a `sources` field: the schema file, every resolved
+  include and the shared schema's files. The writers print
+  `cargo::rerun-if-changed` for each, so multi-schema builds through
+  `Generator::generate_multi` watch every file too. A struct literal needs
+  `sources: Vec::new()`. The watched paths are canonical (absolute), not the
+  path as passed, and two `Ir`s parsed from the same text via a file and via
+  `SchemaSource::xml` are no longer `==`.
+- Breaking: a consumer parsed `with_shared` also carries the shared schema's
+  composites, enums and sets (not its messages), so it generates on its own.
+- `GenerateError` implements `miette::Diagnostic`, so a `build.rs` returning
+  `miette::Result` can use `?` on `Generator` results.
+- `ergon-shared-cpus`: `schedFifo` takes the same spellings as
+  `seccomp.ioUring`: its mode word or a YAML boolean, any case
+  (`true`/`yes`/`y`/`on`/`1` = `thread`; `false`/`no`/`n`/`off`/`0` = `off`).
+  Unquoted `schedFifo: off` no longer fails at start. The chart schema
+  accepts a boolean, `0`/`1` or those words for both fields. Mode words are
+  now case-insensitive in both.
+- `ergon-io` (Breaking): `Target` has a new public field `source`,
+  `RxMeta` a new field `rx_read_ns` and `Config` a new field
+  `rx_read_timestamp`, so struct literals that name every field need
+  them. `net::connect_nonblocking` takes the source as a second argument.
+- `ergon-io` docs: `TextCheck::None`, the default for `WsOptions::text_check`
+  and `HttpOptions::body_check`, is documented as what it is: no check, the
+  payload delivered as bytes with no ASCII or UTF-8 promise, the default
+  because it reads nothing. Under `Interest::Stream` with
+  `AsciiChecked(NonAscii::Skip)`, a message whose later fragment is not
+  ASCII stops mid-way with no `fin` fragment and no callback, and the next
+  message starts at index 0; a test pins it. The first such drop on a
+  connection now writes one warning line (queued to the warning thread).
+
+- `ergon-shared-cpus` lab (repo only): one boot line serves one shared
+  CPU (e2e, bench) and two (scale): exclusive CPUs 3 to the last,
+  `reservedSystemCPUs: 0-2`, so the bench's spin moves from CPU 2 to 3 and
+  the lab needs 7 vCPUs or more. The plugin-off arm runs only on request
+  (`LAB_ARMS="plugin-on plugin-off"`; default `plugin-on`); the default
+  plan is about 75 minutes and $0.44. `gapprobe` writes its gap log and
+  histogram before the spin thread pins itself (filling the old log faulted
+  one page in on the hot CPU per 256 gaps), counts the loop's page faults,
+  and runs its UDP helpers in a child process by default (`--helpers
+  process`; `LAB_HELPERS=thread` for the old layout). Its summary row has
+  four more fields; `report` still reads the 16-field rows.
+- `ergon-shared-cpus` lab (repo only): `LAB_QUIET=1` also sets
+  `transparent_hugepage/enabled` `never` and
+  `/sys/kernel/debug/sched/fair_server/cpu<N>/runtime` 0 on each exclusive
+  CPU; SSH to the VM goes over one multiplexed connection (each login's
+  seccomp JIT interrupted every CPU); the traced rep reads tracefs as root
+  (it is mode 700); the backstop-timer check waits for cloud-init.
+- Breaking: `ergon-md-dpdk` asks every ENA port for large LLQ entries
+  (`llq_policy=3`, 256 bytes, from DPDK 24.11; before, `llq_policy=1`, the
+  device's recommendation), and `RUSTERON_DPDK_TX_DESCRIPTORS` defaults to
+  256 (was 512), the most an ENA TX ring takes under them. On a
+  `c9g.2xlarge` pair, idle 32 B round trips were 0.7 µs lower at p50 and
+  1.0 µs lower at p99, with rep ranges apart; max unchanged
+  (`aws-20261023-231150`). `RUSTERON_DPDK_ENA_DEVARGS=llq_policy=1` restores
+  the old policy, and with it a 512-descriptor ring. The EKS ConfigMap sets
+  256.
+- Breaking: `ergo-sbe` `encode_from`, DTO `encode` and `bulk_add_domain`
+  check only the `minValue`/`maxValue` a schema declares, the same bounds
+  `validate()` checks. An undeclared side is not checked, so any value of
+  the Rust type is written as given (`u64::MAX` in a plain `uint64`,
+  `i32::MIN` in an `int32`), as sbe-tool's flyweight encoder does. Before,
+  every integer and `char` scalar was checked against the SBE default range.
+  A value outside a declared bound is still `EncodeError::ValueOutOfRange`;
+  `Some` of an optional field's null value is still `SomeNullValue`.
+- Breaking: `ergo-sbe` `Encoding::deprecated` and `FieldInfo::deprecated` are
+  `Option<u16>`: the schema version from the XML `deprecated` attribute, or
+  `None`. A field that inherits a type's deprecation takes the earlier
+  version. `with_deprecated_attrs(true)` emits
+  `#[deprecated(note = "deprecated since schema version N")]` on decoder
+  getters instead of a bare `#[deprecated]`.
+- Tests: the ergo-sbe and cluster scratch-crate tests share one build
+  directory (`<target>/ergon-scratch/`, `sbe/tests/common/scratch.rs`)
+  instead of a fresh `target_ci` per test, so ergo-sbe and its dependencies
+  compile once. ergo-sbe tests then run at default threads (local and CI;
+  other crates keep `--test-threads=1`), scratch crates compile with cargo's
+  recorded rustc command outside cargo's build lock (at most one compile per
+  core; `ERGON_SCRATCH_VIA_CARGO=1` forces cargo), doc fences and the
+  codegen-matrix and header-order loops check cases in parallel and still
+  report the first failing case, and dependencies build at `opt-level = 2`
+  in dev and test. `cargo test -p ergo-sbe --all-features` drops from about
+  3.75 h to about 2 min warm on a 10-core Mac; every test and assertion is
+  unchanged.
+- Release path faster, every gate as strong. `just release` runs `just test`
+  once: `release-check` is `test` plus `_release-check-extras` (coverage, book
+  checks, publish dry runs, packaged checks, codegen cold path), and the
+  release runs only the extras after its own `just test`;
+  `check-publish-set.sh` fails if either path stops reaching the tests or the
+  dry runs. `just release` starts with `_reset-sources` (submodules at their
+  pins, `git clean -fdx`, sample codecs regenerated) instead of `just clean`,
+  so warm target directories are kept; run `just clean` first for a cold
+  build. The sbe-tool reference check is one Gradle run instead of 47 (33 s
+  to 11 s). `just policy` and `just preflight` run independent scripts at the
+  same time (`scripts/run-parallel.sh`: every script runs to the end, any
+  failure fails; scripts that share a file stay in one command): policy 27 s
+  to 7 s, preflight 76 s to 19 s warm. Fuzz replay builds once and runs the
+  six targets at once, 30 s each (`scripts/run-fuzz-replay.sh`; about 4.8 min
+  to 35 s). The coverage ratchet runs at default threads (618 s to 182 s,
+  same TOTAL, same 1,219 tests). Gated benches pass `--noplot` (sampling
+  unchanged); the LTO parity benches reuse the binaries `just test` built;
+  `bench-historic` deletes its old estimates first and reads Criterion's
+  output under `CARGO_TARGET_DIR`, so a stale estimate can no longer pass.
+  `just test` no longer reruns ergo-sbe's doctests and `docs_validation_test`.
+  `measure-codegen-cold-path.sh` works with `CARGO_TARGET_DIR` set.
+- Breaking: `ergo-sbe` conversion selectors fail closed. A `field_path` or
+  `semantic_type` that matches no field, a second `with_domain_type` /
+  `with_manual_domain_type` type for one selector, and a domain-type
+  selector that a higher-precedence selector takes on every field it matches
+  are `GenerateError::InvalidConversion`. `with_null_as_option` on anything
+  but `named_type(<enum>)` is `GenerateError::InvalidConfiguration`. All of
+  these previously generated silently without the mapping.
+- Breaking policy: 0.x has no backwards-compatibility gate. Any release may
+  break the API, with no deprecation period, and this changelog records each
+  break (CONTRIBUTING.md "Versioning", book "Road to 1.0"). Official SBE
+  wire compatibility is unaffected.
+- Breaking: `ergon-md-dpdk` no longer reads
+  `RUSTERON_MEDIA_DRIVER_HOST_CHECK`. `ERGON_HOST_CHECKS` is the only switch
+  for the media driver's host checks, as for ergon-io: `on`/`warn`
+  (default), `off` (no check runs) or `require`. Rename the old variable;
+  it is ignored if set. `checks::HOST_CHECK_ENV` is removed.
+- Breaking: `ergon-tune`: `HostCheckPolicy::from_env_or` and
+  `HostCheckPolicy::from_vars` are removed. `HostCheckPolicy::parse` takes
+  only the value; the new `HostCheckPolicy::from_var(Option<&str>)` maps
+  unset to `On`, and `from_env` uses it. `HostCheckError::Invalid` loses its
+  `variable` field.
+- `ergon-shared-cpus` chart 0.1.2: `hostContract.kubeletConfig`,
+  `hostContract.sys` and `hostContract.proc` are on by default, so the
+  DaemonSet passes `--kubelet-config`, `--host-sys` and `--host-proc` and
+  mounts `/var/lib/kubelet/config.yaml` (File), `/sys` and `/proc`
+  read-only. A pod labelled `ergon.io/latency: hot` is checked against the
+  node instead of always refused with `kubelet configuration is not
+  mounted`. A node without that kubelet file must set
+  `hostContract.kubeletConfig.path`, or the plugin pod does not start.
+  `appVersion` is 0.1.2, so the default image is 0.1.2. `deploy/daemonset.yaml`
+  (`:dev`) also mounts `/sys` and `/proc`.
+- `ergon-shared-cpus`: a key in the kubelet `--config` file that matches
+  `cpuManagerPolicy`, `cpuCFSQuota`, `reservedSystemCPUs` or `featureGates`
+  only when case is ignored is no longer taken; the kubelet decodes that
+  file case-sensitively.
+- `ergon-io`: `Driver::poll` sends what was queued since the last poll
+  (through `get_mut`) before its receive pass. An order queued in idle work
+  no longer waits behind `epoll_wait` and every ready feed's decoding. Cost:
+  one more scan of the connections in a poll after a `get_mut`, and on
+  `uring-spin`/`uring-napi` one more `io_uring_enter` when completions are
+  also waiting. Not measured.
+- `ergon-io`: the driver keeps a send set, the slots that may have bytes
+  queued, in place of one flag and a scan of every slot. `get_mut`, a
+  receive, a timer and an endpoint installed with bytes queued list a slot;
+  a send pass visits only the listed slots and keeps those with bytes left
+  (a full socket, an `io_uring` send in flight). A poll's send side costs
+  O(queued), not O(connections), on every backend; the receive side is
+  unchanged (`recv-busy` still reads every socket). The set is sized with
+  the slots in `add`/`connect`, so `poll` never allocates for it. The send
+  pass before the receive pass still runs only after a `get_mut` or an
+  install. Not re-measured.
+- `ergon-io` API break (struct literals of `Config` and `DriverStats`): new
+  pub fields `Config::{tcp_rto_min_us, tcp_delack_max_us,
+  tcp_info_interval_ms}`, `DriverStats::{tcp_info_samples,
+  tcp_info_max_ns}`; new `TcpInfo`, `Driver::tcp_info`, `sys::{TcpTimer,
+  set_tcp_timer, tcp_timer, probe_tcp_timers, apply_tcp_timers, tcp_info}`.
+- `ergon-md-dpdk` API break: `DpdkTransportConfig` gains `rx_free_thresh`,
+  `tx_free_thresh` and `tx_fast_free`. The native config struct grows from
+  4328 to 4336 bytes.
+- `ergon-md-dpdk`: the counter set's housekeeping-written sample times sit
+  on a cache line of their own, apart from the agents' counter addresses
+  (asserted at compile time).
+- `ergon-md-dpdk`: an ARP refresh request goes out after the data frames of
+  the send that found it due, and ARP/ICMP replies after a receive burst's
+  data frames, never before them.
+- `ergon-md-dpdk`: counters that only their port's agent writes are bumped
+  with a relaxed load and a release store instead of an atomic add (about
+  −3.5 ns per send and −8 ns per poll in the arm64 fake-port bench).
+  `tests/dpdk_counter_writers.rs` derives each counter's writer threads from
+  the native sources and fails unless the shared kinds are listed.
+- `ergon-md-dpdk`: the `tx bytes` counter (type 83) counted the caller's
+  running total instead of each send's bytes, over-counting on Aeron's
+  multi-destination path. Fixed.
+- `ergon-md-dpdk`: a SETUP whose MTU exceeds ours and an ICMP
+  fragmentation-needed are formatted and recorded by housekeeping (a stderr
+  line; one distinct-error-log entry per kind), not on the receiver agent.
+  Fragmentation-needed now also reaches the driver's error log.
+- `ergon-md-dpdk`: housekeeping no longer holds its lock across NIC
+  statistics reads, so closing a transport never waits for an ENA admin
+  command.
+- `ergon-md-dpdk`: a failed native create keeps its type: a contradictory
+  environment is `InvalidEnvironment`, a configuration the NIC cannot carry
+  is `InvalidConfiguration` (was `Native`).
+- `ergon-md-dpdk`: the native C follows Rust's target CPU: the last
+  `-C target-cpu` in `RUSTFLAGS` becomes `-mcpu` (aarch64) or `-march`
+  (x86_64), which `cc` does not pass on. A CPU name the C compiler rejects
+  stops the build.
+- Vdev fixture: a DPDK role sends only once its taps are bridged (an ARP
+  race had cost `dpdk_to_udp` about 31 s); the bridge has a fixed MAC; stale
+  reports are removed.
+- `latency_distribution` times each operation between two ordered reads of
+  quanta's counter, instead of 1,000-message batches with `Instant`. It
+  prints p50, p99, p99.9 and max, the max's sample index, the samples at or
+  above 1 µs and a first guess at the max's cause, against an empty `clock`
+  arm. Medians shorter than one counter tick read 0, so take them from
+  Criterion.
+- `encode_bench` times a `NewOrder` frame through `fixed()` + `asset`
+  against `encode_from`. `decode_bench` times mapped `Side` / `Decimal9`
+  accessors against the wire enum, `raw_side()` and the mantissas. Both
+  check bytes or values equal before timing. Neither is gated.
+
+- Breaking: `ergon-io` `WsStats` has two more fields, `frag_fallbacks`
+  and `skipped`: a struct literal of it no longer compiles.
+- `ergon-io`: `WsOptions::validate_utf8` checks a text message only once
+  the handler keeps it, after `on_message_start` and before delivery. Invalid
+  UTF-8 in a skipped message no longer closes the connection (a deliberate
+  relaxation of RFC 6455 §8.1). The check scans for ASCII first, then runs
+  `str::from_utf8`.
+- Breaking: `ergon-io` `WsOptions::validate_utf8` is gone: set
+  `text_check: TextCheck::Utf8` for `true`. `RxMeta` has a new field
+  `text`, and `WsStats` two more, `non_ascii` and `unhandled`: struct
+  literals of them no longer compile. `WsHandler::on_fragments` returns
+  `Flow`.
+- `ergon-io`: a handler that returns `Interest::Fragments` or
+  `Interest::Stream` without implementing `on_fragments` or `on_fragment`
+  (whose defaults return `Flow::Unhandled`) gets the message joined by copy
+  through `on_message`, counted in `WsStats::unhandled` and
+  `frag_copy_bytes`. It used to be dropped.
+- `ergon-io`: a frame cut across two TLS records is joined by moving the
+  smaller side: the leftover (held fragments included, as one block)
+  forward to the new plaintext when it is shorter, else the new plaintext
+  back. `span_copy_bytes` counts the bytes moved.
+- `ergon-io`: the send queue is drained from a head offset: a partial
+  `epoll` send no longer moves the unsent bytes; the queue is compacted
+  when it empties or its spare capacity runs low. A `WsConn`'s send queue
+  and each `io_uring` send buffer are written once at setup, so the first
+  sends take no page faults.
+- `ergon-io`: `recv-busy` with `per_queue` looks a socket's NAPI id up after
+  its first data and on the look-again every 4096 polls, no longer every
+  poll while an id is unknown (loopback, a plain veth: one `getsockopt` per
+  socket and an allocation per poll before).
+- Breaking: `ergon-io` `Response` has a `head_ascii` field, `HttpOptions`
+  has `non_ascii_head` and `body_check`, and `HttpStats` has `head_parses`
+  and `non_ascii_heads`: struct literals of them no longer compile (add
+  `..HttpOptions::default()`).
+- `ergon-io` HTTP receive: a chunked body still arriving is copied out
+  chunk by chunk as records come (its head first), once per byte, instead
+  of being de-chunked again from the start on every record; the window
+  empties, so later records are read in place. A chunked body sent as one
+  chunk, whole in the buffer, is borrowed (no copy). A head is parsed once:
+  a response whose body arrives in later records keeps its head as offsets.
+  `HttpStats::chunk_copy_bytes` now counts every byte the de-chunking moved,
+  a streamed response's head included (it counted only the last pass's
+  body). The de-chunk buffer is allocated on first use, at `buf_size` minus
+  two records, instead of 64 KiB at connect.
+- `ergon-io`: `HttpConn`'s 64 KiB send queue is written once at connect
+  (as `WsConn`'s is), so the first requests take no page fault. Header
+  checks are faster (a token table, CR/LF/NUL scanned eight bytes at a
+  time); what they accept is unchanged.
+- `ergon-shared-cpus` 0.1.2 is on GHCR. Image
+  `ghcr.io/mimran1980/ergon-shared-cpus:0.1.2` and `:latest` (index digest
+  `sha256:33ddd06f6b2e58bae6a2bf13092366482b5a292bc50a01223b0b383b66026da6`).
+  Chart version `0.1.2` (appVersion `0.1.2`) digest
+  `sha256:145054055d604e8a866bf86556cd3a1b46b92b1b6e3347183b8033dd7112b14d`.
+  `--version` on linux/amd64 and linux/arm64 printed
+  `ergon-shared-cpus 0.1.2 85098f8b16e17d80747c73d6069c1ec07d70496a nri=v0.12.3`.
+  Actions run 40173324072. The kind e2e passed at that source.
+- Breaking: `ergon-md-dpdk`'s type-81 counters are renamed
+  `nic-arrival-to-rx-burst-*` to `nic-arrival-to-dispatch-*` and now measure
+  each NIC-stamped frame to its own dispatch. The host clock is read once per
+  stamped frame instead of once a burst, so a frame later in a burst includes
+  its wait behind the earlier ones. Without `RUSTERON_DPDK_RX_HW_TIMESTAMP=1`
+  nothing is read.
+- The harness's `load` percentiles include every measured message that was
+  owed and due by the run's end. A message sent without an echo, or never
+  offered, is recorded at its lower bound (the run's end minus its due time)
+  and counted in `censored`. `samples` counts these as well as the echoes.
+- The EKS NRI lab (`eks-nri.sh`) moves a partition mode's measured
+  processes into the isolated child from the node through the privileged
+  probe, because containerd mounts `/sys/fs/cgroup` read-only in an
+  unprivileged pod. A pid that is not a task of that container's cgroup is
+  refused. `just test-dpdk-lab` runs the EKS runner shell tests.
+
+### Fixed
+
+- `ergon-md-dpdk`: an Azure `net_netvsc` port with no accelerated-networking
+  VF attached fails start with the new `DpdkError::NoAcceleratedVf`, naming
+  the port, the cause and the fix. It ran on the synthetic VMBus path
+  instead, slower than kernel UDP while looking like DPDK (seen with
+  Mellanox VFs, which this set-up does not support; MANA VFs only).
+  `RUSTERON_DPDK_ALLOW_SYNTHETIC=1` starts it anyway, with a warning, for
+  diagnosis only. Breaking: `DpdkError` has a new variant.
+- `ergon-io`: the warning thread writes each line in one `write(2)`, its
+  newline included (it wrote the text, then the newline). Where stdout and
+  stderr share one file, another thread's line could land between the two:
+  a `udp_lat` pong's `ready` became `...the polling CPU is 2.ready`, and
+  the transport runner, waiting for the line `ready`, timed out on a pong
+  that was echoing.
+
+- Transport bench (repo only): `ergon-latency-core` prefaults its spike and
+  stall buffers through `black_box`. A release build had folded the zero fill
+  into a lazily mapped `calloc`, so under overload every 4 KiB of stall rows
+  page-faulted on the measuring thread, in mio's arms and ergon-io's alike.
+- Transport bench (repo only): the `eio-tcp` arm's pong stages room for both
+  of a poll's reads per connection and reads nothing while echoes wait.
+  Overloaded, it had spun in its echo loop and the point failed (9 points at
+  200,000 msg/s on Azure).
+
+### Removed
+
+- Breaking: `ergo-sbe` `GenerationConfig::with_error_from_impls`. Implement
+  `From<generated::sbe_rt::EncodeError>` and
+  `From<generated::sbe_rt::DecodeError>` on your error type instead (keeps
+  `needed`/`available`).
+- Breaking: `ergo-sbe` public fields `Schema::package`, `Schema::id` and
+  `Schema::version`. Read `schema.ir.package`, `schema.ir.id` and
+  `schema.ir.version`.
+- The cargo-semver-checks gate: `scripts/check-public-api.sh`, its self-test
+  `scripts/tests/test-public-api.sh`, CI's `semver` job and the semver step
+  in `lint`, and `baseline_tag`/`first_release` in
+  `api/public-api-baseline.toml`. `scripts/check-generated-public-api.sh`
+  still diffs generated codec surfaces against `api/generated/*.txt` for
+  review; CI's lint job now runs it directly.
+
+### Docs
+
+- The book's transport latency comparison has its final Azure results, with
+  mio and ergon-io at equal busy polling: unreliable UDP at 1 to 128
+  streams, Aeron reliable against TCP without and under 0.01, 0.1 and 1 %
+  loss, every max attributed or listed as unexplained, and a conclusion.
+  ergon-io's UDP p50 is 0.1 to 0.9 µs behind mio's; over TCP there is no
+  verdict (run-to-run noise; a same-connection A/B is due on AWS). The
+  first sessions' socket rows and the TCP fan-in set are dropped (unequal
+  busy polling). `io/README.md`, `io/benches/BENCHMARK.md` and
+  `md-dpdk/BENCHMARKS.md` carry the matching answers and counters. DPDK
+  results stay out on Azure (synthetic VMBus path on mlx5 VFs); a DPDK rerun
+  is planned on AWS.
+- `docs/SBE_COMPATIBILITY.md`: `encode_from` and DTO `encode` check the
+  declared bounds of integer and char scalar fields of messages and groups
+  only; composite members and array elements are not checked on encode.
+- `ergon-shared-cpus`: the root README has a short packages section (chart
+  and image 0.1.1), which both GHCR package pages show. The plugin README is
+  reordered (status, numbered quick start, chart values, develop last). The
+  chart ships its own README (`helm show readme`). The shared-cpus and
+  latency-pods docs, chart comments and kind sample describe the latest
+  release only (no per-version notes; the CHANGELOG is the history). Every
+  shared-cpus install command passes
+  `--set hostContract.kubeletConfig.enabled=true --set
+  hostContract.sys.enabled=true --set hostContract.proc.enabled=true`
+  (valid for 0.1.1 and 0.1.2), and the prerequisites tables name what a hot
+  pod needs from the node. The kind sample runs an unlabelled pod for the
+  shared-CPU grant and shows a hot pod refused with `exclusive CPU not
+  isolated` (kind has no `isolcpus`); not yet run on kind.
+- The `ergon-shared-cpus` publish workflow sets the image description,
+  source and licence as manifest-index annotations, so the GHCR image page
+  shows a description from the next published tag. The chart job fails if
+  that description is over 512 characters. The Dockerfile source label is
+  now the repository root.
+- `ergon-io`: the book records mio as measured and not a backend (the
+  fair-run numbers, the reasons, and the maxima still without a cause).
+  Corrected: every backend's loop pass grows with sockets, because the
+  `Driver` checks each connection for queued sends on every pass. The book
+  had said `epoll-spin`, `uring-spin` and `uring-sqpoll` did not scan idle
+  sockets, and that `per_queue`'s cost stops at the queue count (its NIC
+  polling does). The loop and receive-window counters cited are in
+  `io/benches/results/flags-aws-20261019T175248Z/loop-counters.md`.
+- `ergon-md-dpdk`: one "where a frame is lost" table in the book.
+- Node tuning (`k8s/nri-shared-cpus/README.md`, the book's HFT, hosts,
+  shared-CPU and latency-pod pages, `k8s/nri-latency-pods/node-checks.md`):
+  THP `never` and the fair server's runtime 0 on isolated CPUs (kernel
+  6.12+, debugfs, not persistent, only where nothing real-time runs
+  there), with the trace that names each; keep systemd timers, pod churn
+  and SSH logins out of trading hours, since `lru_add_drain_all` callers and
+  BPF loads still reach every isolated CPU.
 
 ## [0.1.33] — 2026-10-23
 

@@ -5,7 +5,7 @@ use std::fmt;
 
 use crate::cpu::{housekeeping, isolated_cpus};
 use crate::cpuset::CpuSet;
-use crate::finding::{CheckId, Finding, HotSet, Severity};
+use crate::finding::{Finding, HotSet, Severity};
 use crate::host::{Host, ReadError};
 use crate::mem::nodes_online;
 
@@ -294,7 +294,7 @@ fn t2_irq(
         Ok(a) => a,
         Err(e) => {
             return Some(Finding::unknown(
-                CheckId::T2,
+                "T2",
                 Severity::Warn,
                 T2_EVIDENCE,
                 format!("cannot tell where {} may fire", irq.label()),
@@ -319,7 +319,7 @@ fn t2_irq(
             ("", "")
         };
         return Some(Finding::found(
-            CheckId::T2,
+            "T2",
             Severity::Warn,
             T2_EVIDENCE,
             format!(
@@ -340,7 +340,7 @@ fn t2_irq(
     let still = effective.intersection(spinning);
     (!still.is_empty()).then(|| {
         Finding::found(
-            CheckId::T2,
+            "T2",
             Severity::Info,
             T2_EVIDENCE,
             format!(
@@ -361,7 +361,7 @@ fn t2_irq(
 /// interrupt.
 #[must_use]
 pub fn t2_nic_irqs(host: &Host, nic: &Nic, cpus: &HotSet) -> Vec<Finding> {
-    let id = CheckId::T2;
+    let id = "T2";
     let sev = Severity::Warn;
     let spinning = cpus.spinning();
     if spinning.is_empty() {
@@ -435,7 +435,7 @@ const T6_EVIDENCE: &str = "DPDK's documentation (NUMA placement of ports, cores 
 /// call it).
 #[must_use]
 pub fn t6_nic_node(host: &Host, nic: &Nic, cpus: &HotSet) -> Vec<Finding> {
-    let id = CheckId::T6;
+    let id = "T6";
     let sev = Severity::Warn;
     let unknown =
         |what: String, e: &dyn fmt::Display| vec![Finding::unknown(id, sev, T6_EVIDENCE, what, e)];

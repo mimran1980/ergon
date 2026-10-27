@@ -4,7 +4,7 @@
 //! this full file is what the book-fence test compiles to keep the examples
 //! in sync with the real API.
 
-use ergo_sbe::{ConversionSelector, GenerationConfig, Generator, Schema, parse};
+use ergo_sbe::{ConversionSelector, GenerationConfig, Generator, Schema, SchemaSource, parse};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // -- setup: parse a minimal schema that has a Decimal composite ---------
@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         <field name="price" id="1" type="Decimal" offset="0"/>
       </message>
     </messageSchema>"#;
-    let ir = parse(xml)?;
+    let ir = parse(SchemaSource::xml(xml))?;
     let schema = Schema::from_ir(ir);
 
     // ANCHOR: with_conversion

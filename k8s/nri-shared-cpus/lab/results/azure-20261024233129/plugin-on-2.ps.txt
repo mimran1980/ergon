@@ -1,0 +1,11 @@
+plugin-on-2 placement, mid-run:
+ok:   stress-ng-cpu 17211 on CPU 1, allowed 1
+ok:   gapprobe 17207 on CPU 1, allowed 1
+ok:   gp-hot 17302 on CPU 3, allowed 3
+ok:   sh 17181 on CPU 1, allowed 1
+ok:   stress-ng-vm 17212 on CPU 1, allowed 1
+ok:   stress-ng 17206 on CPU 1, allowed 1
+ok:   gapprobe 17208 on CPU 1, allowed 1
+ok:   gp-udp-sink 17209 on CPU 1, allowed 1
+ok:   gp-udp-src 17210 on CPU 1, allowed 1
+ok:   stress-ng-vm 17213 on CPU 1, allowed 1

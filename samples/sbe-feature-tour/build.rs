@@ -22,7 +22,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "rust_decimal::Decimal",
         );
 
-    ergo_sbe::generate_to_dir("schemas/feature-tour.xml", config, &generated_dir)?;
+    ergo_sbe::generate(
+        ergo_sbe::SchemaSource::file("schemas/feature-tour.xml"),
+        config,
+    )?
+    .write_to(&generated_dir)?;
     // ANCHOR_END: build_rs_example
     Ok(())
 }

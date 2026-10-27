@@ -13,18 +13,18 @@ flags default to the value shown.
 | `with_enum_mapping(EnumMapping)` | — | Generated `TryFromSbe`/`TryToSbe` between an SBE enum and your enum, an exhaustive `match` with renames; `NullVal` (and an unknown value) is an error ([App Types](../recipes/app-types-composites.md)) |
 | `with_composite_mapping(CompositeMapping)` | — | Generated struct-literal mapping between a composite and your struct, member by member with renames; constants skipped, optional members `Option` |
 | `with_source_traits(enable: bool)` | `false` | `{Message}Source` trait per message; `encode_from(&src)` encodes your own type, groups and var-data included, without allocating |
+| `with_validate(enable: bool)` | `false` | Opt-in `validate()` on message decoders, group entries and `AnyMessage`: declared value ranges, enum discriminants, set bits (`sbe_rt::ValidateError`; [Trust Boundary](../core-concepts/trust-boundary.md#value-validation-opt-in)) |
 | `with_domain_objects(var_data)` | off | Owned `*Domain` + `encode`; `Strings` → `String` (bad UTF-8 → `InvalidUtf8`), `Bytes` → `Vec<u8>` |
 | `with_display_debug(enable: bool)` | `true` | Emit `Debug`/`Display` impls on generated types |
 | `with_meta_attributes(enable: bool)` | `true` | Emit `*_ENCODING_OFFSET`, `*_ID`, `*_META_ATTRIBUTE` etc. |
 | `with_dispatch(enable: bool)` | `true` | Emit `AnyMessage`/`FrameCursor`/`MessageVisitor` dispatch |
 | `with_bool_domain_type(enable: bool)` | `false` | Auto-register `bool` converters for every boolean enum (name, `semanticType`, or `{0,1}` value pair) |
-| `with_null_as_option(selector)` | — | `NullVal` → `None` for matching enum fields; getter returns `Option<Enum>` |
+| `with_null_as_option(selector)` | — | `NullVal` → `None` for the enum's fields; getter returns `Option<Enum>`. Only `named_type(<enum>)`; any other selector is `InvalidConfiguration` |
 | `with_all_enums_as_option()` | `false` | All enums → `Option<Enum>`; blanket form of `with_null_as_option` |
 | `profile(GenerationProfile)` | `Full` | Preset: `Full` (default conveniences) or `Lean` (off: Display/Debug, meta attrs, dispatch; domains stay off unless re-enabled). Individual `with_*` overrides still apply after `profile`. |
-| `with_deprecated_attrs(enable: bool)` | `false` | `#[deprecated]` on schema-deprecated items |
+| `with_deprecated_attrs(enable: bool)` | `false` | `#[deprecated(note = "deprecated since schema version N")]` on decoder getters of `deprecated="N"` fields |
 | `with_shared_module(name)` | — | Multi-schema shared types module |
 | `with_external_sbe_rt(path)` | — | Share one `sbe_rt` runtime module instead of inlining |
-| `with_error_from_impls(path)` | — | Deprecated: `From<EncodeError> for YourError` via `String`; prefer a typed `From` (see below) |
 | `with_keyword_append_token(token)` | `"_"` | Schema `type` → Rust `type_` |
 | `with_encode_version(version)` | — | Encoder writes `version` and omits members above it; the decoder still reads every version in the schema |
 | `with_hook(fn)` | — | Register a code-generation hook (serde, custom traits, …) |
@@ -50,9 +50,8 @@ tried and removed; the deciding measurement was not archived. Lanes:
 
 ## Typed error conversions
 
-`GenerationConfig::with_error_from_impls` is deprecated and scheduled for
-removal in 1.0. It formats through `String`, so `needed`/`available` are
-lost. Prefer a typed `From` on the generated `sbe_rt` types:
+Implement `From` on the generated `sbe_rt` types so `?` converts and
+`needed`/`available` survive:
 
 ```rust,no_run
 enum AppError {

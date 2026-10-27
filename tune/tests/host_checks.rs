@@ -8,11 +8,10 @@ use std::path::Path;
 
 use common::{Fixture, azure, c7i_tuned, c9g_tuned, debian_default, irq, pod};
 use ergon_tune::{
-    Arch, CheckId, Cloud, Component, CpuSet, Finding, FsMagic, HostCheckPolicy, HotSet, Nic,
-    Platform, ReadError, Role, SchedPolicy, Severity, Status, Thread, busy_poll_sysctls,
-    carrier_changes, nic_irqs, t1_isolation, t2_nic_irqs, t3_thp, t4_aeron_dir, t4_from,
-    t5_numa_balancing, t6_nic_node, t7_sched_policy, t8_smt_siblings, t10_smt_on, thread_affinity,
-    thread_policy,
+    Arch, Cloud, Component, CpuSet, Finding, FsMagic, HostCheckPolicy, HotSet, Nic, Platform,
+    ReadError, Role, SchedPolicy, Severity, Status, Thread, busy_poll_sysctls, carrier_changes,
+    nic_irqs, t1_isolation, t2_nic_irqs, t3_thp, t4_aeron_dir, t4_from, t5_numa_balancing,
+    t6_nic_node, t7_sched_policy, t8_smt_siblings, t10_smt_on, thread_affinity, thread_policy,
 };
 
 type R = Result<(), Box<dyn std::error::Error>>;
@@ -26,7 +25,7 @@ fn unknowns(v: &[Finding]) -> Vec<&Finding> {
 }
 
 /// Exactly one result, `Ok`, for `id`.
-fn assert_only_ok(v: &[Finding], id: CheckId) {
+fn assert_only_ok(v: &[Finding], id: &str) {
     assert_eq!(v.len(), 1, "{v:#?}");
     assert_eq!(v[0].id, id);
     assert_eq!(v[0].status, Status::Ok, "{v:#?}");
@@ -41,12 +40,12 @@ fn t1_is_ok_on_tuned_hosts() -> R {
     let f = c9g_tuned("t1-c9g")?;
     assert_only_ok(
         &t1_isolation(&f.host(), &HotSet::new().with(3, Role::Loop)),
-        CheckId::T1,
+        "T1",
     );
     let f = c7i_tuned("t1-c7i")?;
     let hot = HotSet::new().with(2, Role::Sender).with(3, Role::Receiver);
     let v = t1_isolation(&f.host(), &hot);
-    assert_only_ok(&v, CheckId::T1);
+    assert_only_ok(&v, "T1");
     assert!(
         v[0].message
             .ends_with("isolated, nohz_full and outside default_smp_affinity"),
@@ -66,7 +65,7 @@ fn t1_warns_separately_for_isolation_nohz_and_default_affinity_on_an_untuned_hos
     assert!(
         found
             .iter()
-            .all(|f| f.id == CheckId::T1 && f.severity == Severity::Warn)
+            .all(|f| f.id == "T1" && f.severity == Severity::Warn)
     );
     let fix = "isolcpus=nohz,domain,managed_irq,2 nohz_full=2 rcu_nocbs=2 irqaffinity=0-1,3-7";
     let domain = found
@@ -139,7 +138,7 @@ fn t1_counts_a_cgroup_isolated_partition_as_isolated() -> R {
         .file("/proc/irq/default_smp_affinity", "fb\n")?;
     assert_only_ok(
         &t1_isolation(&f.host(), &HotSet::new().with(2, Role::Loop)),
-        CheckId::T1,
+        "T1",
     );
     Ok(())
 }
@@ -153,7 +152,7 @@ fn t1_does_not_ask_nohz_full_of_an_sqpoll_cpu() -> R {
     f.file("/sys/devices/system/cpu/nohz_full", "1-3\n")?;
     let hot = HotSet::new().with(2, Role::Loop).with(6, Role::SqPoll);
     let v = t1_isolation(&f.host(), &hot);
-    assert_only_ok(&v, CheckId::T1);
+    assert_only_ok(&v, "T1");
     assert!(
         v[0].message
             .contains("nohz_full but for CPU 6 (SQPOLL thread)"),
@@ -220,9 +219,9 @@ fn t1_checks_only_busy_spinning_cpus() -> R {
         .with(0, Role::EalLcore)
         .with(4, Role::Housekeeping)
         .with(2, Role::Sender);
-    assert_only_ok(&t1_isolation(&f.host(), &hot), CheckId::T1);
+    assert_only_ok(&t1_isolation(&f.host(), &hot), "T1");
     let v = t1_isolation(&f.host(), &HotSet::new().with(0, Role::Conductor));
-    assert_only_ok(&v, CheckId::T1);
+    assert_only_ok(&v, "T1");
     assert!(v[0].message.contains("no busy-spinning CPU"), "{v:#?}");
     Ok(())
 }
@@ -267,7 +266,7 @@ fn t2_is_ok_when_every_nic_irq_is_on_housekeeping() -> R {
         &Nic::Interface("ens6".into()),
         &HotSet::new().with(3, Role::Loop),
     );
-    assert_only_ok(&v, CheckId::T2);
+    assert_only_ok(&v, "T2");
     assert!(v[0].message.contains("3 interrupts"), "{v:#?}");
     Ok(())
 }
@@ -483,7 +482,7 @@ fn t2_says_so_when_a_device_has_no_interrupts() -> R {
         &Nic::Pci("0000:00:08.0".into()),
         &HotSet::new().with(2, Role::Sender),
     );
-    assert_only_ok(&v, CheckId::T2);
+    assert_only_ok(&v, "T2");
     assert!(v[0].message.contains("has no interrupts"), "{v:#?}");
     assert!(!v[0].message.contains("()"), "{v:#?}");
     Ok(())
@@ -494,14 +493,14 @@ fn t2_says_so_when_a_device_has_no_interrupts() -> R {
 #[test]
 fn t3_is_ok_with_every_size_off() -> R {
     let f = c9g_tuned("t3-ok")?;
-    assert_only_ok(&t3_thp(&f.host(), Component::Md), CheckId::T3);
+    assert_only_ok(&t3_thp(&f.host(), Component::Md), "T3");
     // A size only shmem can use (order 1, Linux 6.12 on arm64): no
     // `enabled`, only `shmem_enabled`.
     f.file(
         "/sys/kernel/mm/transparent_hugepage/hugepages-8kB/shmem_enabled",
         "always inherit within_size advise [never] deny force\n",
     )?;
-    assert_only_ok(&t3_thp(&f.host(), Component::Md), CheckId::T3);
+    assert_only_ok(&t3_thp(&f.host(), Component::Md), "T3");
     Ok(())
 }
 
@@ -575,7 +574,7 @@ fn t3_finds_an_mthp_size_turned_on_when_the_top_level_is_off() -> R {
         "/sys/kernel/mm/transparent_hugepage/hugepages-64kB/enabled",
         "always [inherit] madvise never\n",
     )?;
-    assert_only_ok(&t3_thp(&f.host(), Component::Rt), CheckId::T3);
+    assert_only_ok(&t3_thp(&f.host(), Component::Rt), "T3");
     Ok(())
 }
 
@@ -583,7 +582,7 @@ fn t3_finds_an_mthp_size_turned_on_when_the_top_level_is_off() -> R {
 fn t3_without_thp_and_unreadable() -> R {
     let f = c9g_tuned("t3-nothp")?;
     f.remove("/sys/kernel/mm/transparent_hugepage")?;
-    assert_only_ok(&t3_thp(&f.host(), Component::Md), CheckId::T3);
+    assert_only_ok(&t3_thp(&f.host(), Component::Md), "T3");
     f.remove("/sys/kernel/mm")?;
     let v = t3_thp(&f.host(), Component::Md);
     assert!(v.len() == 1 && v[0].is_unknown(), "{v:#?}");
@@ -689,7 +688,7 @@ fn t6_warns_when_the_nic_is_on_another_node() -> R {
     f.file("/sys/bus/pci/devices/0000:00:06.0/numa_node", "0\n")?;
     assert_only_ok(
         &t6_nic_node(&f.host(), &Nic::Pci("0000:00:06.0".into()), &hot),
-        CheckId::T6,
+        "T6",
     );
     f.file("/sys/bus/pci/devices/0000:00:06.0/numa_node", "-1\n")?;
     let v = t6_nic_node(&f.host(), &Nic::Pci("0000:00:06.0".into()), &hot);
@@ -705,7 +704,7 @@ fn t6_does_not_apply_on_one_node() -> R {
         &Nic::Interface("ens6".into()),
         &HotSet::new().with(3, Role::Loop),
     );
-    assert_only_ok(&v, CheckId::T6);
+    assert_only_ok(&v, "T6");
     assert!(v[0].message.contains("one NUMA node"), "{v:#?}");
     Ok(())
 }
@@ -778,7 +777,7 @@ fn t8_never_fires_without_smt() -> R {
     let f = c9g_tuned("t8-graviton")?;
     let hot = HotSet::new().with(2, Role::Sender).with(3, Role::Receiver);
     let v = t8_smt_siblings(&f.host(), &hot);
-    assert_only_ok(&v, CheckId::T8);
+    assert_only_ok(&v, "T8");
     assert!(v[0].message.contains("Graviton"), "{v:#?}");
     Ok(())
 }
@@ -787,7 +786,7 @@ fn t8_never_fires_without_smt() -> R {
 fn t8_is_ok_when_siblings_are_isolated_and_idle() -> R {
     let f = c7i_tuned("t8-ok")?;
     let hot = HotSet::new().with(2, Role::Sender).with(3, Role::Receiver);
-    assert_only_ok(&t8_smt_siblings(&f.host(), &hot), CheckId::T8);
+    assert_only_ok(&t8_smt_siblings(&f.host(), &hot), "T8");
     Ok(())
 }
 
@@ -828,7 +827,7 @@ fn t8_warns_once_for_two_busy_threads_on_one_core() -> R {
 fn t8_allows_sqpoll_on_the_loops_sibling() -> R {
     let f = c7i_tuned("t8-sqpoll")?;
     let hot = HotSet::new().with(2, Role::Loop).with(6, Role::SqPoll);
-    assert_only_ok(&t8_smt_siblings(&f.host(), &hot), CheckId::T8);
+    assert_only_ok(&t8_smt_siblings(&f.host(), &hot), "T8");
     Ok(())
 }
 
@@ -916,7 +915,7 @@ fn findings_print_as_one_line_each() {
 fn t10_is_ok_on_graviton() -> R {
     let f = c9g_tuned("t10-c9g")?;
     let v = t10_smt_on(&f.host());
-    assert!(v.id == CheckId::T10 && v.status == Status::Ok, "{v:#?}");
+    assert!(v.id == "T10" && v.status == Status::Ok, "{v:#?}");
     assert!(v.message.contains("Graviton"), "{}", v.message);
     Ok(())
 }
@@ -926,7 +925,7 @@ fn t10_is_ok_when_smt_is_off_on_x86() -> R {
     let f = c7i_tuned("t10-off")?;
     f.file("/sys/devices/system/cpu/smt/active", "0\n")?;
     let v = t10_smt_on(&f.host());
-    assert!(v.id == CheckId::T10 && v.status == Status::Ok, "{v:#?}");
+    assert!(v.id == "T10" && v.status == Status::Ok, "{v:#?}");
     assert!(v.message.contains("SMT is off"), "{}", v.message);
     Ok(())
 }
@@ -997,7 +996,7 @@ fn t10_falls_back_to_the_sibling_lists() -> R {
     g.platform("Intel", "m5.large", false)?
         .cpus(4, |c| c.to_string())?;
     let v = t10_smt_on(&g.host());
-    assert!(v.id == CheckId::T10 && v.status == Status::Ok, "{v:#?}");
+    assert!(v.id == "T10" && v.status == Status::Ok, "{v:#?}");
     Ok(())
 }
 

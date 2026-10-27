@@ -1,9 +1,11 @@
 //! Cargo rebuilds generated codecs when only an included schema file changes.
 
+#[path = "common/scratch.rs"]
+mod scratch;
+
+use scratch::ScratchCrate;
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 fn write_types(path: &std::path::Path, primitive: &str) -> Result<(), Box<dyn std::error::Error>> {
     fs::write(
@@ -25,15 +27,48 @@ fn write_types(path: &std::path::Path, primitive: &str) -> Result<(), Box<dyn st
     Ok(())
 }
 
+/// The stdout Cargo recorded for the scratch crate's build script.
+fn build_script_output(krate: &ScratchCrate) -> Result<String, Box<dyn std::error::Error>> {
+    let prefix = format!("{}-", krate.name());
+    for entry in fs::read_dir(krate.target_dir().join("debug/build"))? {
+        let path = entry?.path().join("output");
+        let is_ours = path
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with(&prefix));
+        if is_ours && path.is_file() {
+            return Ok(fs::read_to_string(path)?);
+        }
+    }
+    Err(format!("no build-script output for {}", krate.name()).into())
+}
+
+/// Without explicit rerun-if-changed lines Cargo reruns the script on any
+/// package edit, so the rebuild alone would not prove the schemas are watched.
+fn assert_watches_schemas(krate: &ScratchCrate) -> Result<(), Box<dyn std::error::Error>> {
+    let output = build_script_output(krate)?;
+    for name in ["root.xml", "types.xml"] {
+        assert!(
+            output
+                .lines()
+                .any(|l| l.starts_with("cargo::rerun-if-changed=")
+                    && l.ends_with(&format!("schemas/{name}"))),
+            "build script must watch schemas/{name}:\n{output}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn cargo_rebuilds_generated_source_after_include_only_edit()
 -> Result<(), Box<dyn std::error::Error>> {
     let sbe_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "ergo_sbe_include_rebuild_{}_{stamp}",
-        std::process::id()
-    ));
+    // A unique package in the shared scratch target dir: its first build is a
+    // fresh build of this crate, so the second proves the include edit alone
+    // reruns the build script.
+    let krate = ScratchCrate::new("include_rebuild", true);
+    let dir = std::env::temp_dir().join(krate.name());
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("schemas"))?;
     fs::create_dir_all(dir.join("src/generated"))?;
@@ -55,11 +90,7 @@ fn cargo_rebuilds_generated_source_after_include_only_edit()
         dir.join("build.rs"),
         r#"fn main() -> ergo_sbe::miette::Result<()> {
     let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/generated");
-    ergo_sbe::generate_to_dir(
-        "schemas/root.xml",
-        ergo_sbe::GenerationConfig::new("ping"),
-        &out,
-    )?;
+    ergo_sbe::generate(ergo_sbe::SchemaSource::file("schemas/root.xml"), ergo_sbe::GenerationConfig::new("ping"))?.write_to(&out)?;
     Ok(())
 }
 "#,
@@ -75,7 +106,7 @@ pub use ping::*;
         dir.join("Cargo.toml"),
         format!(
             r#"[package]
-name = "include_rebuild"
+name = "{name}"
 version = "0.1.0"
 edition = "2024"
 build = "build.rs"
@@ -86,29 +117,22 @@ ergo-sbe = {{ path = "{sbe}" }}
 [build-dependencies]
 ergo-sbe = {{ path = "{sbe}" }}
 "#,
+            name = krate.name(),
             sbe = sbe_dir.display()
         ),
     )?;
+    krate.write_lockfile(&dir);
 
-    let target = dir.join("target_ci");
-    let cargo = |dir: &std::path::Path, target: &std::path::Path| {
-        Command::new("cargo")
-            .args(["build"])
-            .current_dir(dir)
-            .env("CARGO_TARGET_DIR", target)
-            .env_remove("CARGO_NET_OFFLINE")
-            .env_remove("RUSTFLAGS")
-            .env_remove("CARGO_ENCODED_RUSTFLAGS")
-            .output()
-    };
+    let cargo = |dir: &std::path::Path| krate.cargo().current_dir(dir).args(["build"]).output();
 
-    let first = cargo(&dir, &target)?;
+    let first = cargo(&dir)?;
     assert!(
         first.status.success(),
         "first cargo build failed:\n{}\n{}",
         String::from_utf8_lossy(&first.stdout),
         String::from_utf8_lossy(&first.stderr)
     );
+    assert_watches_schemas(&krate)?;
     let generated = dir.join("src/generated/ping.rs");
     let before = fs::read_to_string(&generated)?;
     assert!(
@@ -117,7 +141,7 @@ ergo-sbe = {{ path = "{sbe}" }}
     );
 
     write_types(&dir.join("schemas/types.xml"), "uint64")?;
-    let second = cargo(&dir, &target)?;
+    let second = cargo(&dir)?;
     assert!(
         second.status.success(),
         "second cargo build failed:\n{}\n{}",
@@ -127,7 +151,7 @@ ergo-sbe = {{ path = "{sbe}" }}
     let after = fs::read_to_string(&generated)?;
     assert!(
         after.contains("u64"),
-        "include-only edit must rerun generate_to_dir and emit uint64 Seq:\n{after}"
+        "include-only edit must rerun the build script and emit uint64 Seq:\n{after}"
     );
 
     let _ = fs::remove_dir_all(&dir);

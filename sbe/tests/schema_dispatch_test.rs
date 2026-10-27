@@ -1,7 +1,7 @@
 //! Compile and execute cross-schema dispatch with real generated codecs.
 mod common;
 
-use ergo_sbe::{GenerateError, GenerationConfig, Generator, Schema, parse};
+use ergo_sbe::{GenerateError, GenerationConfig, Generator, Schema, SchemaSource, parse};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -26,12 +26,12 @@ fn schema_with_header(
            <type name="schemaId" primitiveType="uint16"/>
            <type name="version" primitiveType="uint16"/>"#
     };
-    Ok(Schema::from_ir(parse(&format!(
+    Ok(Schema::from_ir(parse(SchemaSource::xml(&format!(
         r#"<messageSchema package="dispatch" id="{id}" version="0" byteOrder="{order}" headerType="{name}">
         <types><composite name="{name}">{header}</composite></types>
         <message name="Ping" id="1"><field name="value" id="1" type="uint32"/></message>
         </messageSchema>"#
-    ))?))
+    )))?))
 }
 
 #[test]
@@ -162,7 +162,7 @@ fn ambiguous_dispatch_sets_are_rejected() -> TestResult {
 #[test]
 fn forwarding_retains_a_new_versions_trailing_fields() -> TestResult {
     let old = schema(11, "littleEndian", false)?;
-    let future = Schema::from_ir(parse(
+    let future = Schema::from_ir(parse(SchemaSource::xml(
         r#"
         <messageSchema package="dispatch" id="11" version="1" byteOrder="littleEndian">
         <types>
@@ -182,7 +182,7 @@ fn forwarding_retains_a_new_versions_trailing_fields() -> TestResult {
           <data name="extra" id="2" type="varString" sinceVersion="1"/>
         </message>
         </messageSchema>"#,
-    )?);
+    ))?);
     let generator = Generator::new(GenerationConfig::new("a"));
     let set = generator.generate_multi(&[(&old, "a"), (&future, "future")])?;
     let dispatcher = generator.generate_schema_dispatch(&[(&old, "a")], "all")?;
@@ -217,7 +217,7 @@ fn forwarding_retains_a_new_versions_trailing_fields() -> TestResult {
 #[test]
 fn constant_schema_id_with_a_decoy_member_is_rejected() -> TestResult {
     for decoy in ["", r#"<type name="extraSchemaId" primitiveType="uint16"/>"#] {
-        let schema = Schema::from_ir(parse(&format!(
+        let schema = Schema::from_ir(parse(SchemaSource::xml(&format!(
             r#"
             <messageSchema package="dispatch" id="11" version="0" byteOrder="littleEndian">
             <types><composite name="messageHeader">
@@ -229,7 +229,7 @@ fn constant_schema_id_with_a_decoy_member_is_rejected() -> TestResult {
             </composite></types>
             <message name="Ping" id="1"><field name="value" id="1" type="uint32"/></message>
             </messageSchema>"#
-        ))?);
+        )))?);
         let generator = Generator::new(GenerationConfig::new("a"));
         assert!(matches!(
             generator.generate_schema_dispatch(&[(&schema, "a")], "all"),
@@ -247,7 +247,7 @@ fn encoded_identity_members_with_decoys_are_rejected() -> TestResult {
         "extraBlockLength",
         "extraVersion",
     ] {
-        let schema = Schema::from_ir(parse(&format!(
+        let schema = Schema::from_ir(parse(SchemaSource::xml(&format!(
             r#"
             <messageSchema package="dispatch" id="11" version="0" byteOrder="littleEndian">
             <types><composite name="messageHeader">
@@ -259,7 +259,7 @@ fn encoded_identity_members_with_decoys_are_rejected() -> TestResult {
             </composite></types>
             <message name="Ping" id="1"><field name="value" id="1" type="uint32"/></message>
             </messageSchema>"#
-        ))?);
+        )))?);
         let generator = Generator::new(GenerationConfig::new("a"));
         assert!(matches!(
             generator.generate_schema_dispatch(&[(&schema, "a")], "all"),
@@ -272,7 +272,7 @@ fn encoded_identity_members_with_decoys_are_rejected() -> TestResult {
 
 #[test]
 fn wide_header_identity_is_checked_without_truncation() -> TestResult {
-    let schema = Schema::from_ir(parse(
+    let schema = Schema::from_ir(parse(SchemaSource::xml(
         r#"
         <messageSchema package="dispatch" id="11" version="0" byteOrder="littleEndian">
         <types><composite name="messageHeader">
@@ -283,7 +283,7 @@ fn wide_header_identity_is_checked_without_truncation() -> TestResult {
         </composite></types>
         <message name="Ping" id="1"><field name="value" id="1" type="uint32"/></message>
         </messageSchema>"#,
-    )?);
+    ))?);
     let generator = Generator::new(GenerationConfig::new("a"));
     let set = generator.generate(&schema)?;
     let module = set.modules().next().ok_or("missing schema module")?;

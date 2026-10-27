@@ -5,7 +5,7 @@
 //! messages. See `sbe/src/codegen/runtime.rs::GenerationContext`.
 #![allow(clippy::restriction)]
 
-use ergo_sbe::{GenerationConfig, Generator, ItemContext, Schema, parse};
+use ergo_sbe::{GenerationConfig, Generator, ItemContext, Schema, SchemaSource, parse};
 
 const TWO_MESSAGE_SCHEMA: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <messageSchema package="reentrant" id="1" version="0" byteOrder="littleEndian">
@@ -49,7 +49,7 @@ fn nested_generate_hook(ctx: &ItemContext) -> Vec<proc_macro2::TokenStream> {
     {
         // Run a complete nested generation with a DIFFERENT sealed path
         // than the outer one, synchronously, from inside the hook.
-        let nested_ir = parse(NESTED_SCHEMA).expect("parse nested schema");
+        let nested_ir = parse(SchemaSource::xml(NESTED_SCHEMA)).expect("parse nested schema");
         let nested_schema = Schema::from_ir(nested_ir);
         let nested_config =
             GenerationConfig::new("nested").with_external_sbe_rt("crate::nested_owner::sbe_rt");
@@ -68,7 +68,7 @@ fn nested_generate_hook(ctx: &ItemContext) -> Vec<proc_macro2::TokenStream> {
 #[test]
 fn nested_generation_does_not_leak_sealed_path_into_outer_messages()
 -> Result<(), Box<dyn std::error::Error>> {
-    let ir = parse(TWO_MESSAGE_SCHEMA)?;
+    let ir = parse(SchemaSource::xml(TWO_MESSAGE_SCHEMA))?;
     let schema = Schema::from_ir(ir);
     let config = GenerationConfig::new("reentrant_outer").with_hook(nested_generate_hook);
     let modules = Generator::new(config).generate(&schema)?;
@@ -103,7 +103,7 @@ fn nested_local_generation_does_not_leak_into_outer_external_path()
         if let ItemContext::MessageDecoder { name, .. } = ctx
             && name == "First"
         {
-            let nested_ir = parse(NESTED_SCHEMA).expect("parse nested schema");
+            let nested_ir = parse(SchemaSource::xml(NESTED_SCHEMA)).expect("parse nested schema");
             let nested_schema = Schema::from_ir(nested_ir);
             // Nested generation is LOCAL this time (no external_sbe_rt).
             Generator::new(GenerationConfig::new("nested_local"))
@@ -113,7 +113,7 @@ fn nested_local_generation_does_not_leak_into_outer_external_path()
         vec![]
     }
 
-    let ir = parse(TWO_MESSAGE_SCHEMA)?;
+    let ir = parse(SchemaSource::xml(TWO_MESSAGE_SCHEMA))?;
     let schema = Schema::from_ir(ir);
     let config = GenerationConfig::new("reentrant_outer_ext")
         .with_external_sbe_rt("crate::outer_owner::sbe_rt")

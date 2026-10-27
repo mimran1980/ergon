@@ -13,7 +13,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use ergo_aeron_cluster::egress::EgressAdapter;
 use ergo_aeron_cluster::{AeronCluster, SessionBuilder};
 use ergo_aeron_cluster_test_harness::{TestCluster, jvm};
 use serial_test::serial;
@@ -232,16 +231,16 @@ fn a_cluster_node_with_the_recommended_settings_serves_a_client() -> Result<(), 
         .egress_channel(cluster.egress_channel.clone())?
         .message_timeout(Duration::from_secs(5))?;
     let mut client = AeronCluster::connect(&builder, dir)?;
-    let mut adapter = EgressAdapter::new(Capture::new());
+    let mut listener = Capture::new();
     await_echo(
         &mut client,
-        &mut adapter,
+        &mut listener,
         b"tuned-1",
         Duration::from_secs(10),
     )?;
     await_echo(
         &mut client,
-        &mut adapter,
+        &mut listener,
         b"tuned-2",
         Duration::from_secs(10),
     )?;

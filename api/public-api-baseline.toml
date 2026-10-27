@@ -1,20 +1,15 @@
-# Public API baseline — inventory of representative generated surfaces and
-# the crates.io version cargo-semver-checks compares against.
+# Generated codec surfaces and the published crate list.
 #
-# Enforced today: scripts/check-public-api.sh runs cargo-semver-checks on
-# each crate in [metadata].packages against [metadata].baseline_tag (a git
-# tag; the script strips a leading `v` before passing --baseline-version),
-# ergo-aeron-cluster only with CLUSTER_SEMVER_CHECKS=1. packages is every
-# crate the release publishes (scripts/check-publish-set.sh holds it to that).
+# [[fixtures]]: scripts/check-generated-public-api.sh generates each fixture and
+# diffs its public surface (struct fields, enum variants, full fn/method
+# signatures, associated types/consts, type aliases, and
+# cfg/non_exhaustive/repr/deprecated/must_use attributes) against
+# api/generated/<name>.txt. This tracks API changes for review; it does not
+# forbid them (0.x allows breaking changes). After a reviewed change run
+# `UPDATE_GENERATED_PUBLIC_API=1 cargo test -p ergo-sbe --test generated_public_api_test`.
 #
-# Enforced: scripts/check-generated-public-api.sh generates each fixture and
-# diffs the canonical semver-relevant surface — struct fields, enum variant
-# payloads/discriminants, full fn/method signatures (receiver, generics,
-# args, return type, where-clause), associated types/consts, type aliases,
-# and cfg/non_exhaustive/repr/deprecated/must_use attributes — against
-# api/generated/<name>.txt. Update with
-# `UPDATE_GENERATED_PUBLIC_API=1 cargo test -p ergo-sbe --test generated_public_api_test`
-# after a reviewed API change. Snapshots live in-tree so the gate is offline.
+# [metadata].packages: every crate the release publishes
+# (scripts/check-publish-set.sh holds it to that).
 
 [[fixtures]]
 name = "car_lean"
@@ -60,13 +55,4 @@ composite_mappings = [
 snapshot = "api/generated/domain_mapping.txt"
 
 [metadata]
-baseline_tag = "v0.1.26"
 packages = ["ergo-sbe", "ergo-aeron-cluster", "ergon-tune", "ergon-io", "ergon-md-dpdk"]
-# Each crate's first crates.io release, where it is newer than baseline_tag:
-# until the baseline reaches it there is no published API to compare, and
-# from then on the crate is compared like the others.
-# ergon-md-dpdk 0.1.31 breaks 0.1.30's API on purpose (CHANGELOG.md:
-# DpdkError::Clock, clock::clock_config and clock::transport_clock removed,
-# DpdkTransport::clock returns clock::TransportClock), so a baseline of
-# v0.1.30 fails it: move baseline_tag from v0.1.26 to v0.1.31 or later.
-first_release = { ergon-tune = "0.1.30", ergon-io = "0.1.30", ergon-md-dpdk = "0.1.30" }

@@ -672,8 +672,8 @@ fn each_snapshot_encodes_and_later_decoders_read_earlier_wire()
 
 #[test]
 fn encode_version_beyond_schema_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
-    use ergo_sbe::{GenerateError, GenerationConfig, Generator, Schema, parse_file};
-    let ir = parse_file(&Paths::versioned_l3_schema(3))?;
+    use ergo_sbe::{GenerateError, GenerationConfig, Generator, Schema, SchemaSource, parse};
+    let ir = parse(SchemaSource::file(&Paths::versioned_l3_schema(3)))?;
     let schema = Schema::from_ir(ir);
     let err = Generator::new(GenerationConfig::new("too_new").with_encode_version(99))
         .generate(&schema)
@@ -692,9 +692,9 @@ fn encode_version_below_schema_rejects_domain_objects_and_conversions()
 -> Result<(), Box<dyn std::error::Error>> {
     use ergo_sbe::{
         ConversionSelector, DomainVarData, GenerateError, GenerationConfig, Generator, Schema,
-        parse_file,
+        SchemaSource, parse,
     };
-    let ir = parse_file(&Paths::versioned_l3_schema(3))?;
+    let ir = parse(SchemaSource::file(&Paths::versioned_l3_schema(3)))?;
     let schema = Schema::from_ir(ir);
     let reason = "cannot drop members while generating domain objects or conversions";
     for (label, config) in [

@@ -16,7 +16,7 @@ fn generate_schema(
         config = config.with_conversion(ergo_sbe::ConversionSelector::named_type("Decimal"));
     }
     // ANCHOR_END: with_conversion_config
-    ergo_sbe::generate_to_dir(xml_path, config, out)?;
+    ergo_sbe::generate(ergo_sbe::SchemaSource::file(xml_path), config)?.write_to(out)?;
     Ok(())
 }
 

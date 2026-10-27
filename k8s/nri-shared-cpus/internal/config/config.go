@@ -64,7 +64,8 @@ type File struct {
 	// PM QoS nodes the container image does not carry; granted paths stay the
 	// container's /dev/... names.
 	DevRoot string `json:"devRoot,omitempty"`
-	// SchedFifo is "off" or "thread" (hot thread only, never container-wide).
+	// SchedFifo is "off" or "thread" (hot thread only, never container-wide),
+	// or a YAML boolean (true = thread).
 	SchedFifo string `json:"schedFifo,omitempty"`
 	// Ptp is "off", "auto" or a /dev/ptp* path the node has.
 	Ptp string `json:"ptp,omitempty"`
@@ -126,7 +127,7 @@ type RlimitsFile struct {
 
 // SeccompFile is the YAML seccomp block.
 type SeccompFile struct {
-	// IOUring is "allow" or "off".
+	// IOUring is "allow" or "off", or a YAML boolean (true = allow).
 	IOUring string `json:"ioUring,omitempty"`
 }
 
@@ -287,22 +288,18 @@ func Parse(data []byte) (*Config, error) {
 			}
 		}
 	}
-	// YAML 1.1 turns unquoted off/on/true/false into booleans, and
-	// sigs.k8s.io/yaml then stringifies them. Accept both spellings.
-	switch strings.ToLower(f.Seccomp.GetIOUring()) {
-	case "", "off", "false", "0", "no":
-	case "allow", "true", "1", "yes", "on":
-		c.SeccompIOUring = true
-	default:
-		return nil, fmt.Errorf("config: seccomp.ioUring %q must be %q or %q", f.Seccomp.GetIOUring(), "allow", "off")
+	ioUring, err := parseSwitch("seccomp.ioUring", f.Seccomp.GetIOUring(), "allow")
+	if err != nil {
+		return nil, err
 	}
-	switch f.SchedFifo {
-	case "", SchedFifoOff:
-		c.SchedFifo = SchedFifoOff
-	case SchedFifoThread:
+	c.SeccompIOUring = ioUring
+	fifo, err := parseSwitch("schedFifo", f.SchedFifo, SchedFifoThread)
+	if err != nil {
+		return nil, err
+	}
+	c.SchedFifo = SchedFifoOff
+	if fifo {
 		c.SchedFifo = SchedFifoThread
-	default:
-		return nil, fmt.Errorf("config: schedFifo %q must be %q or %q", f.SchedFifo, SchedFifoOff, SchedFifoThread)
 	}
 	switch f.Ptp {
 	case "", "off":
@@ -334,6 +331,22 @@ func Parse(data []byte) (*Config, error) {
 		c.DevRoot = f.DevRoot
 	}
 	return c, nil
+}
+
+// parseSwitch reads an off/on field: empty, "off" or a YAML 1.1 false
+// (false/no/n/off/0) is off; onMode or a YAML 1.1 true (true/yes/y/on/1)
+// is on. Any case. YAML 1.1 turns unquoted spellings into booleans and
+// sigs.k8s.io/yaml stringifies them to "true"/"false", so both forms land
+// here.
+func parseSwitch(field, v, onMode string) (bool, error) {
+	switch strings.ToLower(v) {
+	case "", "off", "false", "no", "n", "0":
+		return false, nil
+	case onMode, "true", "yes", "y", "on", "1":
+		return true, nil
+	}
+	return false, fmt.Errorf("config: %s %q must be %q or %q (or a YAML boolean: true/false, yes/no, y/n, on/off, 1/0)",
+		field, v, onMode, "off")
 }
 
 // GetIOUring is a nil-safe accessor for the YAML seccomp block.

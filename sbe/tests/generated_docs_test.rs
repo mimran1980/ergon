@@ -3,8 +3,11 @@
 #![allow(clippy::all, clippy::pedantic, clippy::restriction, clippy::nursery)]
 
 mod common;
-use common::{Paths, generate, scratch_cargo};
-use ergo_sbe::{DomainVarData, GenerationConfig, GenerationProfile, Generator, Schema, parse_file};
+use common::scratch::ScratchCrate;
+use common::{Paths, generate};
+use ergo_sbe::{
+    DomainVarData, GenerationConfig, GenerationProfile, Generator, Schema, SchemaSource, parse,
+};
 
 /// Walk public items and return `(path, has_doc)`.
 fn check_docs(source: &str) -> Vec<(String, bool)> {
@@ -198,7 +201,7 @@ fn generate_with(
     module: &str,
     f: impl FnOnce(GenerationConfig) -> GenerationConfig,
 ) -> String {
-    let ir = parse_file(path).unwrap();
+    let ir = parse(SchemaSource::file(path)).unwrap();
     let schema = Schema::from_ir(ir);
     let (modules, _) = Generator::new(f(GenerationConfig::new(module)))
         .generate(&schema)
@@ -241,8 +244,12 @@ fn domain_object_public_surface_is_documented() {
 
 #[test]
 fn multi_schema_public_surface_is_documented() -> Result<(), Box<dyn std::error::Error>> {
-    let a = parse_file(&Paths::sbe_tool_test_resource("multi-schema-a.xml"))?;
-    let b = parse_file(&Paths::sbe_tool_test_resource("multi-schema-b.xml"))?;
+    let a = parse(SchemaSource::file(&Paths::sbe_tool_test_resource(
+        "multi-schema-a.xml",
+    )))?;
+    let b = parse(SchemaSource::file(&Paths::sbe_tool_test_resource(
+        "multi-schema-b.xml",
+    )))?;
     let schema_a = Schema::from_ir(a);
     let schema_b = Schema::from_ir(b);
     let (modules, _) =
@@ -259,7 +266,8 @@ fn multi_schema_public_surface_is_documented() -> Result<(), Box<dyn std::error:
 fn deny_missing_docs_consumer_compiles() {
     use std::fs;
     let (_, src) = generate(&Paths::example_schema(), "docs_deny");
-    let dir = std::env::temp_dir().join(format!("ergo_docs_deny_{}", std::process::id()));
+    let krate = ScratchCrate::new("docs_deny", true);
+    let dir = std::env::temp_dir().join(krate.name());
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("src")).unwrap();
     fs::write(dir.join("src/docs_deny.rs"), &src).unwrap();
@@ -278,23 +286,24 @@ pub use docs_deny::*;
         dir.join("Cargo.toml"),
         format!(
             r#"[package]
-name = "docs_deny"
+name = "{}"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 ergo-sbe = {{ path = "{}", features = ["compact_str", "smol_str", "bytes", "chrono"] }}
 "#,
+            krate.name(),
             sbe.display()
         ),
     )
     .unwrap();
-    let out = scratch_cargo()
-        .args(["build"])
+    krate.write_lockfile(&dir);
+    // Cleared ambient RUSTFLAGS: the crate's own `#![deny(missing_docs)]` decides.
+    let out = krate
+        .cargo()
         .current_dir(&dir)
-        .env("CARGO_TARGET_DIR", dir.join("target_ci"))
-        .env_remove("RUSTFLAGS")
-        .env_remove("CARGO_ENCODED_RUSTFLAGS")
+        .args(["build"])
         .output()
         .unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);

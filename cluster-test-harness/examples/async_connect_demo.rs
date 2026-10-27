@@ -6,9 +6,7 @@
 //! ```
 
 use ergo_aeron_cluster::{
-    AeronCluster, SessionBuilder,
-    cluster_codec_types::EventCode,
-    egress::{EgressAdapter, EgressListener},
+    AeronCluster, SessionBuilder, cluster_codec_types::EventCode, egress::EgressListener,
 };
 use std::time::Duration;
 
@@ -88,10 +86,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  Claimed + committed at position {pos}");
 
     // 3. Poll egress for the echo
-    let mut adapter = EgressAdapter::new(L(0));
+    let mut listener = L(0);
     for _ in 0..30 {
-        let _ = client.poll_egress(&mut adapter, 10);
-        if adapter.listener().0 >= 1 {
+        let _ = client.poll(&mut listener, 10);
+        if listener.0 >= 1 {
             break;
         }
         std::thread::sleep(Duration::from_millis(50));

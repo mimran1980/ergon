@@ -6,10 +6,10 @@ library at runtime.
 
 | Pattern | `build-dependencies` | `dependencies` | Typical use |
 |---------|----------------------|----------------|-------------|
-| **Build only** (**samples default**) | `ergo-sbe` | — | `generate_to_dir` → `src/generated/` (gitignored, unpublished) + `#[path = "generated/….rs"]` |
-| **OUT_DIR only** | `ergo-sbe` | — | `generate_to_out_dir` + `include!(concat!(env!("OUT_DIR"), …))` — the product shape without macros |
-| **Build + runtime** (**product default**) | `ergo-sbe` | `ergo-sbe` | `generate_to_out_dir` + `sbe_mod!` (expands to that `include!`) — what `cluster/build.rs` and the introduction do |
-| **Runtime only** | — | `ergo-sbe` | Call `parse` / `Generator` as a library (no `build.rs`) |
+| **Build only** (**samples default**) | `ergo-sbe` | — | `generate(..)?.write_to("src/generated")` → `src/generated/` (gitignored, unpublished) + `#[path = "generated/….rs"]` |
+| **OUT_DIR only** | `ergo-sbe` | — | `generate(..)?.write_to_out_dir()` + `include!(concat!(env!("OUT_DIR"), …))` — the product shape without macros |
+| **Build + runtime** (**product default**) | `ergo-sbe` | `ergo-sbe` | `generate(..)?.write_to_out_dir()` + `sbe_mod!` (expands to that `include!`) — what `cluster/build.rs` and the introduction do |
+| **Runtime only** | — | `ergo-sbe` | Call `generate`, or `parse` + `Generator`, as a library (no `build.rs`) |
 
 ### Seeing generated code (without committing it)
 
@@ -33,7 +33,8 @@ Root `.gitignore` has `**/src/generated/`. Do **not** commit those trees
 ```rust,ignore
   // build.rs
   let out = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/generated");
-  ergo_sbe::generate_to_dir("schemas/messages.xml", config, &out)?;
+  ergo_sbe::generate(ergo_sbe::SchemaSource::file("schemas/messages.xml"), config)?
+    .write_to(&out)?;
 
   // src/lib.rs — real path → IDE go-to-definition works
   #[allow(dead_code, unused_imports, non_camel_case_types, non_snake_case, clippy::all, warnings)]

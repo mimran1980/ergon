@@ -8,7 +8,6 @@ mod common;
 use std::error::Error;
 use std::time::Duration;
 
-use ergo_aeron_cluster::egress::EgressAdapter;
 use serial_test::serial;
 
 use common::{Capture, await_echo, connect_own_driver, launch_own_driver};
@@ -30,12 +29,12 @@ fn test_quorum_loss_stops_serving() -> Result<(), Box<dyn Error>> {
         (0..3).contains(&leader),
         "leader member id {leader} out of range"
     );
-    let mut adapter = EgressAdapter::new(Capture::new());
+    let mut listener = Capture::new();
 
     // Sanity: the cluster is serving before we break quorum.
     await_echo(
         &mut client,
-        &mut adapter,
+        &mut listener,
         b"BEFORE-QUORUM-LOSS",
         Duration::from_secs(15),
     )?;
@@ -54,7 +53,7 @@ fn test_quorum_loss_stops_serving() -> Result<(), Box<dyn Error>> {
     // against.
     let result = await_echo(
         &mut client,
-        &mut adapter,
+        &mut listener,
         b"AFTER-QUORUM-LOSS",
         Duration::from_secs(10),
     );
@@ -86,10 +85,10 @@ fn test_cluster_restart_and_reconnect() -> Result<(), Box<dyn Error>> {
         let mut cluster_a = ergo_aeron_cluster_test_harness::TestCluster::three_node();
         let driver = launch_own_driver("restart-a")?;
         let mut client = connect_own_driver(&cluster_a.ingress_channel, 19320, &driver.dir)?;
-        let mut adapter = EgressAdapter::new(Capture::new());
+        let mut listener = Capture::new();
         await_echo(
             &mut client,
-            &mut adapter,
+            &mut listener,
             b"ON-CLUSTER-A",
             Duration::from_secs(15),
         )?;
@@ -104,10 +103,10 @@ fn test_cluster_restart_and_reconnect() -> Result<(), Box<dyn Error>> {
     let cluster_b = ergo_aeron_cluster_test_harness::TestCluster::three_node();
     let driver = launch_own_driver("restart-b")?;
     let mut client = connect_own_driver(&cluster_b.ingress_channel, 19321, &driver.dir)?;
-    let mut adapter = EgressAdapter::new(Capture::new());
+    let mut listener = Capture::new();
     await_echo(
         &mut client,
-        &mut adapter,
+        &mut listener,
         b"ON-CLUSTER-B",
         Duration::from_secs(15),
     )?;
@@ -127,10 +126,10 @@ fn test_log_recovery_restart() -> Result<(), Box<dyn Error>> {
     let base_port = cluster_a.base_port();
     let driver_a = launch_own_driver("logrec-a")?;
     let mut client_a = connect_own_driver(&cluster_a.ingress_channel, 19330, &driver_a.dir)?;
-    let mut adapter_a = EgressAdapter::new(Capture::new());
+    let mut listener_a = Capture::new();
     await_echo(
         &mut client_a,
-        &mut adapter_a,
+        &mut listener_a,
         b"PRE-RECOVERY",
         Duration::from_secs(15),
     )?;
@@ -158,10 +157,10 @@ fn test_log_recovery_restart() -> Result<(), Box<dyn Error>> {
     let cluster_b = restart.restart_keep_dirs();
     let driver_b = launch_own_driver("logrec-b")?;
     let mut client_b = connect_own_driver(&cluster_b.ingress_channel, 19331, &driver_b.dir)?;
-    let mut adapter_b = EgressAdapter::new(Capture::new());
+    let mut listener_b = Capture::new();
     await_echo(
         &mut client_b,
-        &mut adapter_b,
+        &mut listener_b,
         b"POST-RECOVERY",
         Duration::from_secs(15),
     )?;

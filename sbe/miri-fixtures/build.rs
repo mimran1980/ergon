@@ -7,11 +7,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ("schemas/nested.xml", "nested"),
     ] {
         let schema = manifest_dir.join(schema);
-        ergo_sbe::generate_to_dir(
-            &schema,
+        ergo_sbe::generate(
+            ergo_sbe::SchemaSource::file(&schema),
             ergo_sbe::GenerationConfig::new(module),
-            &output,
-        )?;
+        )?
+        .write_to(&output)?;
         println!("cargo::rerun-if-changed={}", schema.display());
     }
     Ok(())

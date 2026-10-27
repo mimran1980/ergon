@@ -20,7 +20,8 @@ checks the rest:
   file the path names (a bare name resolves upward from the citing file).
 
 Scanned: the book source and every Markdown and source file under the
-repository, except .git, target, node_modules, git submodules and a file
+repository, except .git, target, node_modules, git submodules, any other
+checkout inside it (a directory holding its own .git, such as a worktree) and a file
 whose first 10 lines say "check-repo-links: fixtures" (a self-test that
 writes dead links on purpose). Links are
 checked inside code too: a reader follows a URL wherever it is printed.
@@ -134,6 +135,10 @@ def walk(repo):
         for entry in sorted(here.iterdir()):
             if entry.is_dir():
                 if entry.name in SKIP_DIRS or entry.resolve() in skip or entry.is_symlink():
+                    continue
+                # Another checkout (a git worktree has a .git file): its own
+                # repository, with its own links.
+                if (entry / ".git").exists():
                     continue
                 stack.append(entry)
             elif entry.is_file():

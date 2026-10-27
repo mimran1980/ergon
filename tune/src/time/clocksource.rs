@@ -8,7 +8,7 @@
 
 use std::fmt;
 
-use crate::finding::{CheckId, Finding, Severity};
+use crate::finding::{Finding, Severity};
 use crate::host::{Host, ReadError};
 use crate::platform::{Arch, arch_of};
 
@@ -104,7 +104,7 @@ impl Clocksource {
             Ok(n) => n.trim(),
             Err(e) => {
                 return Finding::unknown(
-                    CheckId::T12,
+                    "T12",
                     Severity::Warn,
                     T12_EVIDENCE,
                     "the kernel's clock source".to_owned(),
@@ -114,13 +114,13 @@ impl Clocksource {
         };
         match ClocksourceKind::of(name) {
             ClocksourceKind::Counter => Finding::ok(
-                CheckId::T12,
+                "T12",
                 Severity::Warn,
                 T12_EVIDENCE,
                 format!("clocksource {name}: the hardware counter, read through the vDSO"),
             ),
             ClocksourceKind::Paravirt => Finding::found(
-                CheckId::T12,
+                "T12",
                 Severity::Info,
                 T12_EVIDENCE,
                 format!(
@@ -129,7 +129,7 @@ impl Clocksource {
                 ),
             ),
             ClocksourceKind::Other if self.arch == Arch::Unknown => Finding::unknown(
-                CheckId::T12,
+                "T12",
                 Severity::Warn,
                 T12_EVIDENCE,
                 "the kernel's clock source".to_owned(),
@@ -140,7 +140,7 @@ impl Clocksource {
                 ),
             ),
             ClocksourceKind::Other => Finding::found(
-                CheckId::T12,
+                "T12",
                 Severity::Warn,
                 T12_EVIDENCE,
                 format!(

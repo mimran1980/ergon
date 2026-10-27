@@ -46,7 +46,7 @@ in a custom idle strategy.
 
 No poll waits on the media driver. `AsyncClusterConnect::poll` adds the egress
 subscription and ingress publication, and the publication a REDIRECT asks
-for, with Aeron's async add and picks them up on later polls. `poll_egress`
+for, with Aeron's async add and picks them up on later polls. `poll`
 handles a `NewLeaderEvent` the same way: the session stays `AwaitingNewLeader`
 until the new leader's publication has connected, for up to the message
 timeout. Only the first `poll`, which creates the Aeron client, can wait, and
