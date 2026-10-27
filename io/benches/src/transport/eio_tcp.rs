@@ -13,7 +13,12 @@
 //!   ([`TCP_TX_BUF`](super::TCP_TX_BUF)), then `Driver::flush` writes at
 //!   once. A full queue is busy.
 //! - Echo: as the UDP arm, staged while the driver polls and sent right
-//!   after that poll.
+//!   after that poll, in room for every frame one poll can read
+//!   ([`tcp_echo_capacity`]). Echoes the kernel has no room for stay
+//!   staged, and the next pass sends them before it reads anything: a read
+//!   while they wait could bring more than the room left, and an echo
+//!   cannot leave inside the poll. A peer's reset (`--source-port`'s
+//!   abortive close) is a close, as in the mio arm.
 //! - Driver keys: `rcvbuf`, `epoll_events`, `busy_poll_us`, `tcp_rto_min_us`,
 //!   `tcp_delack_max_us` (checked against the kernel at `Driver::new`);
 //!   `FrameOptions::quickack_per_read`, `sndbuf`. `TCP_NODELAY` always.
@@ -33,7 +38,6 @@ use std::os::fd::AsRawFd;
 use std::rc::Rc;
 
 use ergon_io::{ConnId, Driver, FrameConn, FrameHandler, FrameOptions, Handler, RxMeta};
-use ergon_latency_core::frame::FRAME_HEADER;
 use ergon_latency_core::message::MESSAGE_LEN;
 
 use super::eio_udp::{Staged, base_config, eio};
@@ -41,7 +45,7 @@ use super::mio_tcp::tcp_wire_bytes;
 use super::point::{Error, Rx, Sent, Tx};
 use super::sock::Inspect;
 use super::sockopt::{self, TcpCounters, os};
-use super::{MAX_FRAME, TCP_RX_BUF, TCP_TX_BUF};
+use super::{MAX_FRAME, TCP_RX_BUF, TCP_TX_BUF, tcp_echo_capacity};
 
 /// The ergon-io TCP arm's settings.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -129,10 +133,9 @@ pub fn pair(socks: Vec<TcpStream>, opts: EioTcpOptions) -> Result<(EioTcpTx, Eio
         let c = FrameConn::from_stream(s, fopts).map_err(|e| eio("FrameConn", e))?;
         ids.push(d.add(c).map_err(|e| eio("Driver::add", e))?);
     }
-    // one read per ready connection per poll, of at most the receive
-    // buffer: at most this many whole frames
-    let per_read = TCP_RX_BUF / (FRAME_HEADER + MESSAGE_LEN) + 1;
-    let per_poll = (opts.epoll_events as usize).min(n) * per_read;
+    // a poll's reads: each reported connection, and with SO_BUSY_POLL each
+    // one read with data in the poll before, again
+    let per_poll = tcp_echo_capacity(n, opts.epoll_events as usize, opts.busy_poll_us > 0);
     let s = Rc::new(Shared {
         d: RefCell::new(d),
         staged: RefCell::new(Staged::new(per_poll)),
@@ -197,6 +200,9 @@ impl<F> Handler for Deliver<'_, F> {
     fn on_closed(&mut self, id: ConnId, error: ergon_io::Error) {
         match error {
             ergon_io::Error::Closed => self.gone += 1,
+            ergon_io::Error::Io(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {
+                self.gone += 1;
+            }
             e => {
                 if self.err.is_none() {
                     self.err = Some(Error::Transport(format!("tcp {id:?} closed: {e}")));
@@ -218,6 +224,18 @@ impl Rx for EioTcpRx {
     fn poll<F: FnMut(&[u8])>(&mut self, on: &mut F) -> Result<usize, Error> {
         let s = &*self.s;
         let mut d = s.d.borrow_mut();
+        {
+            // echoes left from a full socket go first; nothing is read
+            // until every one went
+            let mut staged = s.staged.borrow_mut();
+            if staged.len > 0 {
+                d.flush().map_err(|e| eio("flush", e))?;
+                staged.drain(|stream, m| send_now(&mut d, &s.ids, stream, m))?;
+                if staged.len > 0 {
+                    return Ok(0);
+                }
+            }
+        }
         let mut h = Deliver {
             on,
             gone: 0,
@@ -275,6 +293,10 @@ impl Inspect for EioTcpRx {
             ("tcp.rx_buf", TCP_RX_BUF.to_string()),
             ("tcp.tx_buf", TCP_TX_BUF.to_string()),
             ("tcp.frames_per_pass", "one read".to_owned()),
+            (
+                "tcp.echo_room",
+                self.s.staged.borrow().batch.len().to_string(),
+            ),
             ("nodelay", "true".to_owned()),
             (
                 "quickack_per_read",
