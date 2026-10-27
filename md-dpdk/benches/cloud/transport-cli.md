@@ -201,6 +201,7 @@ sender NIC and the pong host b's receiver NIC, the kernel TCP arms' path.
 removes F-Stack's leftover hugepage files. AWS x86_64 only (`modes.sh`
 refuses it elsewhere before any cloud call). A set with a `dpdk` or
 `fstack` arm has netem `-` (`transport_plan.py` refuses another level).
-`transport-aws-dpdk.tsv` is the AWS DPDK session's `LAB_SETS_FILE`.
+`transport-aws-dpdk.tsv` is the AWS DPDK session's `LAB_SETS_FILE`
+(`aws/lab.sh LAB_SUITE=transport LAB_PAIR=a`, two c7a.2xlarge).
 `vm.sh transport-build fstack` (when `tr_wants_fstack`) builds F-Stack under
 `~/fstack` and `fstack_lat`.

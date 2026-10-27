@@ -23,6 +23,12 @@
 #     side by side (their own groups, run and pair tags, each deleting and
 #     counting only its own), Spot's arguments and an eviction ending the run
 #     through its teardown, exit 75;
+#   * aws/lab.sh LAB_SUITE=transport (against fake_aws.py): refusals before
+#     any aws call, the AWS DPDK session's estimate (on demand and spot), the
+#     ENI check before anything is created (too few refused), a session
+#     tagged owner, run and pair on c7a.2xlarge in one cluster group, a TERM
+#     mid-run, spot with no capacity (and LAB_SPOT_FALLBACK's on-demand
+#     launch) and a detached run, each deleted and verified by tag;
 #   * transport.sh run against fake hosts: every point of pair b once (rows,
 #     manifests, rounds and orders recorded), netem set and cleared around
 #     each lossy round and never under a DPDK arm, the binaries' flags as
@@ -643,7 +649,7 @@ printf 'arm  fixture-dpdk  fixture_lat  dpdk  two\nset  fd  a  -  ab  1000  1  0
 mkdir -p "$fx/nobuild"
 why=
 for refused in "LAB_PAIR=#LAB_PAIR is a or b" "LAB_PAIR=c#LAB_PAIR is a or b" "LAB_PAIR=a LAB_PRIORITY=Low#LAB_PRIORITY Low" \
-    "LAB_PAIR=a LAB_ARMS_FILE=$fx/none.tsv#not a readable file" "LAB_PAIR=a LAB_ARMS_FILE=$fx/dpdk-netem.tsv#NETEM on a DPDK arm" \
+    "LAB_PAIR=a LAB_ARMS_FILE=$fx/none.tsv#not a readable file" "LAB_PAIR=a LAB_ARMS_FILE=$fx/dpdk-netem.tsv#netem cannot reach" \
     "LAB_PAIR=a LAB_EXTRA_SRC=$fx/nobuild#a directory with a lab-build.sh" "LAB_PAIR=a LAB_MODES=kernel#latency suite's" \
     "LAB_PAIR=a LAB_RUN_STAMP=today#LAB_RUN_STAMP" "LAB_PAIR=a TRANSPORT_POINT_S=x#TRANSPORT_POINT_S is a whole number" \
     "LAB_PAIR=a LAB_MAX_HOURS=5#give LAB_MAX_HOURS="; do
@@ -753,6 +759,185 @@ evg=$(grep -o 'creating ergon-lab-transport-b-[0-9-]*' "$tmp/evict.out" | head -
 [[ -z $why ]] && pass "azure/lab.sh: a Spot VM Azure evicts ends the run through its teardown (exit 75), the group deleted and verified, the backstop stopped" ||
     fail "azure/lab.sh eviction:$why $(tail -3 "$tmp/evict.out")"
 rm -f "$tmp/fakecli/ssh" "$tmp/fakecli/scp"
+
+# ---- aws/lab.sh LAB_SUITE=transport ----
+# Refusals and the estimate against an aws that logs and fails (nothing may
+# reach it); then whole runs against fake_aws.py (stateful: it creates, lists
+# and deletes what lab.sh asks), ssh and scp that succeed, a curl that fails
+# and a sleep of 10 ms: a run creates and launches everything, then stops at
+# packing the checkout (no git repository) and tears down by tag.
+awsets=$cloud/transport-aws-dpdk.tsv
+printf '#!/bin/sh\necho "$0 $*" >>"%s/cloud-calls"\nexit 1\n' "$tmp" >"$tmp/nocloud/aws"
+chmod +x "$tmp/nocloud/aws"
+awslab() { env PATH="$tmp/nocloud:$PATH" HOME="$tmp/home" TMPDIR="$tmp/labtmp" LAB_REPO="$tmp/repo" LAB_SUITE=transport "$@" bash "$cloud/aws/lab.sh"; }
+why=
+for refused in "LAB_PAIR=#LAB_PAIR is a or b" "LAB_PAIR=c#LAB_PAIR is a or b" "LAB_PAIR=a LAB_TUNE=1#runs on Azure" \
+    "LAB_PAIR=a LAB_ALLOW_ARM=1 LAB_TYPE=c8g.2xlarge#runs x86_64" "LAB_PAIR=a LAB_PLACEMENT=cross-az LAB_NO_FLATOUT=1#cluster placement group" \
+    "LAB_PAIR=a LAB_MODES=kernel#latency suite's" "LAB_PAIR=a LAB_RUN_STAMP=20261025-120000#claims a stamp of its own" \
+    "LAB_PAIR=a LAB_ARMS_FILE=$fx/none.tsv#not a readable file" "LAB_PAIR=a LAB_ARMS_FILE=$fx/dpdk-netem.tsv#netem cannot reach" \
+    "LAB_PAIR=a LAB_SETS_FILE=$fx/none.tsv#not a readable file" "LAB_PAIR=a LAB_EXTRA_SRC=$fx/nobuild#a directory with a lab-build.sh" \
+    "LAB_PAIR=a TRANSPORT_POINT_S=x#TRANSPORT_POINT_S is a whole number" "LAB_PAIR=a LAB_SETS_FILE=$awsets LAB_MAX_HOURS=2#give LAB_MAX_HOURS=" \
+    "LAB_PAIR=a LAB_SPOT_FALLBACK=1#LAB_SPOT_FALLBACK is 1 (with LAB_SPOT=1" "LAB_PAIR=a LAB_DETACH=2#LAB_DETACH is 0, 1 or unset" \
+    "LAB_PAIR=a LAB_SEED=a.b#LAB_SEED is letters"; do
+    rm -f "$tmp/cloud-calls"
+    # shellcheck disable=SC2086
+    out=$(awslab ${refused%#*} 2>&1) && why+=" ran with [${refused%#*}];"
+    [[ $out == *"${refused#*#}"* ]] || why+=" [${refused%#*}]: $(tail -1 <<<"$out");"
+    [[ ! -s $tmp/cloud-calls ]] || why+=" [${refused%#*}] called the cloud;"
+done
+out=$(LAB_SUITE= awslab LAB_SUITE=latency LAB_PAIR=a 2>&1) && why+=" latency with LAB_PAIR ran;"
+[[ $out == *"transport suite's"* ]] || why+=" latency with LAB_PAIR: $(tail -1 <<<"$out");"
+# the AWS DPDK session's F-Stack arm on Azure: refused there, by its setup
+out=$(lab LAB_PAIR=a LAB_SETS_FILE="$awsets" 2>&1) && why+=" azure ran dpdk-tcp;"
+[[ $out == *"an F-Stack arm runs on AWS x86_64 only"* ]] || why+=" azure dpdk-tcp: $(tail -1 <<<"$out");"
+[[ ! -s $tmp/cloud-calls ]] || why+=" a refusal called the cloud;"
+[[ -z $(ls -A "$tmp/labtmp") ]] || why+=" a snapshot left: $(ls "$tmp/labtmp");"
+[[ -z $why ]] && pass "aws/lab.sh LAB_SUITE=transport refuses a bad pair, tuning, Graviton, another placement, latency settings, a stamp, bad arms and sets files (NETEM on a DPDK arm too), extra tree, duration, deadline, spot fallback, detach and seed before any aws call; azure/lab.sh refuses the F-Stack arm" ||
+    fail "aws/lab.sh transport refusals:$why"
+rm -f "$tmp/cloud-calls"
+est=$(awslab LAB_ESTIMATE=1 LAB_PAIR=a LAB_REPS=3 LAB_SETS_FILE="$awsets" 2>&1) && estrc=0 || estrc=$?
+ests=$(awslab LAB_ESTIMATE=1 LAB_PAIR=a LAB_REPS=3 LAB_SETS_FILE="$awsets" LAB_SPOT=1 2>&1) && estsrc=0 || estsrc=$?
+estm=$(awslab LAB_ESTIMATE=1 LAB_PAIR=b 2>&1) && estmrc=0 || estmrc=$?
+if [[ $estrc == 0 && $est == *"pair a: 141 points (sets d1, d8, u, pin)"*"instance-hours, about \$"*" on demand"* &&
+    $est == *"a c7a.2xlarge, b c7a.2xlarge, on-demand, 3 reps"* && $est == *"c7a.2xlarge \$0.41056/h"* && $est == *"detaches it"* &&
+    $estsrc == 0 && $ests == *"at spot prices"*"c7a.2xlarge \$0.1907/h"*"describe-spot-price-history"* &&
+    $estmrc == 0 && $estm == *"pair b: 420 points"* && ! -s $tmp/cloud-calls ]]; then
+    pass "aws/lab.sh LAB_SUITE=transport LAB_ESTIMATE=1: the AWS DPDK session's points, hours, instance-hours and dollars on c7a.2xlarge (on demand, spot with LAB_SPOT=1), the matrix's pair b; no aws call"
+else
+    fail "aws/lab.sh transport estimate ($estrc, $estsrc, $estmrc): $est | $ests | $estm"
+fi
+
+awsbin=$tmp/awsbin
+mkdir -p "$awsbin"
+printf '#!/bin/sh\nexec python3 "%s" "$@"\n' "$here/fake_aws.py" >"$awsbin/aws"
+printf '#!/bin/sh\nexit 0\n' >"$awsbin/ssh"
+printf '#!/bin/sh\nexit 0\n' >"$awsbin/scp"
+printf '#!/bin/sh\nexit 7\n' >"$awsbin/curl"
+# a poll's pause, short (the address follower's 20 s ends its loop)
+printf '#!/bin/sh\n[ "$1" = 20 ] && exit 1\nexec /bin/sleep 0.01\n' >"$awsbin/sleep"
+chmod +x "$awsbin"/*
+# awsfull <name> [VAR=value...]: aws/lab.sh LAB_SUITE=transport LAB_PAIR=a
+# with the AWS DPDK sets against the fake, in $tmp/aws-<name>: raw (its
+# calls), out, rc, state.json; killed after 300 s (a hang fails)
+awsfull() {
+    local d=$tmp/aws-$1 rc=0
+    shift
+    rm -rf "$d"
+    mkdir -p "$d/home/.ssh" "$d/tmp" "$d/repo"
+    echo 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA lab-test' >"$d/home/.ssh/id_ed25519.pub"
+    : >"$d/raw"
+    perl -e 'alarm shift; exec @ARGV' 300 \
+        env PATH="$awsbin:$PATH" TMPDIR="$d/tmp" HOME="$d/home" LAB_REPO="$d/repo" LAB_SSH_FROM=192.0.2.10 \
+        AWS_CALLS="$d/raw" FAKE_AWS_STATE="$d/state.json" LAB_SUITE=transport LAB_PAIR=a LAB_REPS=3 \
+        LAB_SETS_FILE="$awsets" LAB_DETACH=0 "$@" bash "$cloud/aws/lab.sh" >"$d/out" 2>&1 || rc=$?
+    echo "$rc" >"$d/rc"
+}
+# awsleft <state.json>: what the fake still holds (terminated, closed and
+# cancelled are gone)
+awsleft() {
+    python3 -c 'import json, sys
+s = json.load(open(sys.argv[1]))
+print(" ".join(sorted(i for i, r in s["res"].items()
+                      if not r.get("deleted") and r.get("state") not in ("terminated", "closed", "cancelled"))))' "$1"
+}
+# awsclean <name>: "" when the run's teardown deleted everything and said
+# so, verified by tag; else why not
+awsclean() {
+    local d=$tmp/aws-$1 w=
+    [[ -z $(awsleft "$d/state.json" 2>/dev/null) ]] || w+=" left $(awsleft "$d/state.json");"
+    grep -q 'verified: nothing tagged run=.* remains in us-east-1' "$d/out" || w+=" not verified;"
+    [[ -z $(ls -A "$d/tmp" | grep -v '^ergon-lab-aws.lock$') ]] || w+=" snapshot left: $(ls "$d/tmp");"
+    echo "$w"
+}
+
+# a whole session against the fake: the ENI check before anything is made,
+# c7a.2xlarge in a cluster group, every resource tagged owner, run and
+# pair, the data ENIs at .4-.7, then (no checkout to pack) its teardown
+awsfull run
+d=$tmp/aws-run
+why=$(awsclean run)
+[[ $(cat "$d/rc") != 0 ]] || why+=" exit 0 with no checkout;"
+grep -q 'cannot list the checkout' "$d/out" || why+=" not stopped at the checkout: $(tail -2 "$d/out");"
+first_eni=$(grep -n 'MaximumNetworkInterfaces' "$d/raw" | head -1 | cut -d: -f1)
+first_vpc=$(grep -n ' create-vpc ' "$d/raw" | head -1 | cut -d: -f1)
+[[ -n $first_eni && -n $first_vpc && $first_eni -lt $first_vpc ]] || why+=" the ENI check not before the VPC ($first_eni, $first_vpc);"
+creates=$(grep -- '--tag-specifications' "$d/raw" || true)
+[[ $(grep -c . <<<"$creates") -ge 10 ]] || why+=" $(grep -c . <<<"$creates") tagged creates;"
+stamp_=$(sed -n 's/.*{Key=run,Value=\([0-9-]*\)}.*/\1/p' <<<"$creates" | sort -u)
+[[ $(grep -c . <<<"$stamp_") == 1 && -d $d/repo/target/md-dpdk-bench/aws-$stamp_ ]] || why+=" run tags [$stamp_] not the run's directory;"
+while IFS= read -r line; do
+    for spec in $(grep -o 'ResourceType=[^ ]*' <<<"$line"); do
+        [[ $spec == *"{Key=owner,Value=ergon-lab},{Key=run,Value=$stamp_},{Key=pair,Value=a},"* ]] || why+=" untagged: $spec;"
+    done
+done <<<"$creates"
+grep 'run-instances' "$d/raw" | grep -q -- '--instance-type c7a.2xlarge' || why+=" not c7a.2xlarge;"
+! grep 'run-instances' "$d/raw" | grep -qv -- '--placement GroupName=ergon-md-dpdk-' || why+=" an instance outside the cluster group;"
+[[ $(grep -c 'create-network-interface' "$d/raw") == 4 ]] || why+=" $(grep -c 'create-network-interface' "$d/raw") data ENIs;"
+for ip in 10.30.1.4 10.30.1.5 10.30.1.6 10.30.1.7; do grep -q -- "--private-ip-address $ip " "$d/raw" || why+=" no ENI at $ip;"; done
+grep -q 'ResourceType=volume' <<<"$creates" || why+=" volumes untagged;"
+[[ $(cat "$d/repo/target/md-dpdk-bench/aws-$stamp_/pair" 2>/dev/null) == a && $(cat "$d/repo/target/md-dpdk-bench/aws-$stamp_/suite" 2>/dev/null) == transport ]] ||
+    why+=" its directory does not say transport pair a;"
+grep -q 'transport pair a seed' "$d/repo/target/md-dpdk-bench/aws-$stamp_/instances.txt" || why+=" instances.txt without the pair;"
+[[ -z $why ]] && pass "aws/lab.sh LAB_SUITE=transport end to end: ENIs checked first, two c7a.2xlarge in one cluster group, every resource tagged owner, run and pair, four data ENIs, then deleted and verified by tag, the snapshot removed" ||
+    fail "aws/lab.sh transport end to end:$why $(tail -3 "$d/out")"
+
+# refusals that need AWS's answer: a type taking fewer than three ENIs
+awsfull enis FAKE_MAX_ENIS=2
+d=$tmp/aws-enis
+why=
+[[ $(cat "$d/rc") != 0 ]] || why+=" exit 0;"
+grep -q 'takes 2 ENIs and the lab needs 3' "$d/out" || why+=" not said: $(tail -1 "$d/out");"
+! grep -qE ' create-| run-instances | import-key-pair ' "$d/raw" || why+=" something created;"
+[[ -z $(ls -A "$d/repo/target/md-dpdk-bench" 2>/dev/null) ]] || why+=" a run directory claimed;"
+[[ -z $why ]] && pass "aws/lab.sh LAB_SUITE=transport: a type taking fewer than three ENIs refused before anything is created" ||
+    fail "aws/lab.sh transport ENI check:$why"
+
+# an operator's TERM mid-run (once the first data ENI is attached): the trap's
+# teardown deletes and verifies everything, the run ends 130
+awsfull term FAKE_TERM_AT=attach-network-interface
+d=$tmp/aws-term
+why=$(awsclean term)
+[[ $(cat "$d/rc") == 130 ]] || why+=" exit $(cat "$d/rc");"
+grep -q 'cannot list the checkout' "$d/out" && why+=" ran on past the TERM;"
+[[ -z $why ]] && pass "aws/lab.sh LAB_SUITE=transport: a TERM mid-run ends it through its teardown (exit 130), everything deleted and verified" ||
+    fail "aws/lab.sh transport TERM:$why $(tail -3 "$d/out")"
+
+# spot: no zone with spot capacity: refused as before without the
+# fallback; with LAB_SPOT_FALLBACK=1 both launch on demand, said so
+awsfull nospot LAB_SPOT=1 FAKE_NO_SPOT_CAPACITY="us-east-1a us-east-1b"
+d=$tmp/aws-nospot
+why=$(awsclean nospot)
+grep -q 'no zone had capacity for c7a.2xlarge and c7a.2xlarge' "$d/out" || why+=" not said: $(tail -1 "$d/out");"
+! grep 'run-instances' "$d/raw" | grep -vq -- '--instance-market-options' || why+=" an on-demand launch;"
+awsfull fallback LAB_SPOT=1 LAB_SPOT_FALLBACK=1 FAKE_NO_SPOT_CAPACITY="us-east-1a us-east-1b"
+d=$tmp/aws-fallback
+why+=$(awsclean fallback)
+grep -q 'LAB_SPOT_FALLBACK=1, launching them on demand' "$d/out" || why+=" fallback not said;"
+[[ $(grep 'run-instances' "$d/raw" | grep -vc -- '--instance-market-options') == 2 ]] || why+=" not two on-demand launches;"
+grep -q '^market on-demand$' "$d"/repo/target/md-dpdk-bench/aws-*/instances.txt || why+=" instances.txt not on-demand;"
+grep -q 'describe-spot-instance-requests' "$d/raw" || why+=" the spot requests not swept;"
+[[ -z $why ]] && pass "aws/lab.sh LAB_SPOT=1: no spot capacity in any zone ends the run (deleted, verified); LAB_SPOT_FALLBACK=1 launches both on demand, said so and recorded, spot requests still swept" ||
+    fail "aws/lab.sh transport spot fallback:$why"
+
+# detached (LAB_DETACH=1): the parent claims the directory, says so and
+# exits 0 with nothing created; the detached run in that directory creates,
+# fails at the checkout and tears down, verified, its snapshot removed
+awsfull detach LAB_DETACH=1
+d=$tmp/aws-detach
+why=
+[[ $(cat "$d/rc") == 0 ]] || why+=" parent exit $(cat "$d/rc");"
+grep -q 'detached: about' "$d/out" || why+=" not said: $(tail -1 "$d/out");"
+ddir=$(ls -d "$d"/repo/target/md-dpdk-bench/aws-* 2>/dev/null | head -1)
+dpid=$(cat "$ddir/lab.pid" 2>/dev/null)
+for _ in $(seq 600); do kill -0 "$dpid" 2>/dev/null || break; /bin/sleep 0.1; done
+kill -0 "$dpid" 2>/dev/null && { why+=" still running after 60 s;"; kill -TERM "$dpid"; }
+cp "$ddir/lab.log" "$d/out" 2>/dev/null || why+=" no lab.log;"
+why+=$(awsclean detach)
+grep -q 'cannot list the checkout' "$d/out" || why+=" the detached run did not run on: $(tail -1 "$d/out");"
+[[ $(grep -c "{Key=run,Value=${ddir##*/aws-}}" "$d/raw") -ge 10 ]] || why+=" not the claimed directory's stamp;"
+[[ $(ls -d "$d"/repo/target/md-dpdk-bench/aws-* | grep -c .) == 1 ]] || why+=" a second directory claimed;"
+[[ -z $why ]] && pass "aws/lab.sh LAB_DETACH=1: the parent claims the run's directory and exits; the detached run, in it and with its stamp, deletes and verifies everything, its snapshot removed" ||
+    fail "aws/lab.sh transport detach:$why"
 
 # ---- transport.sh run on fake hosts ----
 # VM a and VM b are homes in the sandbox; the fake ssh runs a command in the
@@ -1300,7 +1485,7 @@ both transport-tune
 key
 1" "$steps"
 
-for script in transport.sh azure/lab.sh azure/az.sh host.sh irqs.sh vm.sh modes.sh; do
+for script in transport.sh azure/lab.sh azure/az.sh aws/lab.sh host.sh irqs.sh vm.sh modes.sh; do
     bash -n "$cloud/$script" && pass "bash -n $script" || fail "bash -n $script"
 done
 if command -v shellcheck >/dev/null; then

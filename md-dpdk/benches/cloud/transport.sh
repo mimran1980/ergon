@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The transport latency suite (azure/lab.sh LAB_SUITE=transport): the matrix
+# The transport latency suite (azure/lab.sh and aws/lab.sh LAB_SUITE=transport): the matrix
 # (transport-matrix.tsv, plus LAB_ARMS_FILE's rows) as rounds of points on
 # the two VMs of one pair session (LAB_PAIR a or b). Each rep's round at a
 # netem level runs the set's arms in an order drawn from its own seed (the
@@ -31,8 +31,11 @@
 #                         durations; then transport_collect.py, fairness.py and
 #                         analyse.py --transport (test/transport-smoke-docker.sh runs it)
 #
-# Sourced (azure/lab.sh, the tests): functions only, among them
+# Sourced (azure/lab.sh, aws/lab.sh, the tests): functions only, among them
 # transport_prepare and transport_remote, the operator machine's side.
+# tr_cloud (azure unless the caller sets it; aws/lab.sh sets aws): the cloud
+# every mode_check judges a point's mode for (an F-Stack arm runs on AWS
+# x86_64 alone).
 #
 # Durations (env, else the plan's): TRANSPORT_WARMUP_S (30), TRANSPORT_POINT_S
 # (30), TRANSPORT_SWITCH_S (5), TRANSPORT_READY_TIMEOUT_S (60: the longest the
@@ -87,10 +90,10 @@ tr_check() {
     local modes
     modes=$(tr_plan modes "$pair") || return 2
     for m in $modes; do
-        why=$(mode_check "$m" remote x86_64 azure '' 2>&1) || { echo "$why" >&2; return 2; }
+        why=$(mode_check "$m" remote x86_64 "${tr_cloud:-azure}" '' 2>&1) || { echo "$why" >&2; return 2; }
     done
     for m in "kernel-busy$TR_AERON_MODE_SUFFIX" "dpdk$TR_AERON_MODE_SUFFIX"; do
-        why=$(mode_check "$m" remote x86_64 azure '' 2>&1) || { echo "TR_AERON_MODE_SUFFIX: $why" >&2; return 2; }
+        why=$(mode_check "$m" remote x86_64 "${tr_cloud:-azure}" '' 2>&1) || { echo "TR_AERON_MODE_SUFFIX: $why" >&2; return 2; }
     done
     # the bench ports against the wildcard ranges and Linux's default
     # ephemeral range (each host's own is checked at transport-tune)
@@ -208,11 +211,11 @@ tr_check_tune() {
             arm=$v
             [[ $setup == kernel || $setup == dpdk ]] || continue
             m=$(tr_driver_mode)
-            why=$(mode_check "$m" remote x86_64 azure '' 2>&1) || { echo "LAB_TUNE=1: variant $v's driver mode $m: $why" >&2; exit 2; }
+            why=$(mode_check "$m" remote x86_64 "${tr_cloud:-azure}" '' 2>&1) || { echo "LAB_TUNE=1: variant $v's driver mode $m: $why" >&2; exit 2; }
         done <"$tmpd/variants.txt"
         modes=$(tr_plan modes tune) || exit 2
         for m in $modes; do
-            why=$(mode_check "$m" remote x86_64 azure '' 2>&1) || { echo "$why" >&2; exit 2; }
+            why=$(mode_check "$m" remote x86_64 "${tr_cloud:-azure}" '' 2>&1) || { echo "$why" >&2; exit 2; }
         done
         tr_plan count tune 1
     ) || rc=2
@@ -220,7 +223,7 @@ tr_check_tune() {
     return $rc
 }
 
-# ---- the operator machine's side (azure/lab.sh, after lib.sh prepare_vms) ----
+# ---- the operator machine's side (azure/lab.sh and aws/lab.sh, after lib.sh prepare_vms) ----
 
 # transport_prepare: LAB_EXTRA_SRC's tree, LAB_ARMS_FILE and LAB_SETS_FILE on both VMs,
 # the bench binaries built (vm.sh transport-build), the CPU map's boot line,
@@ -1128,7 +1131,7 @@ tr_tune() {
         read -ra args <<<"${args:-}"
         [[ $setup == kernel || $setup == dpdk ]] || continue
         m=$(tr_driver_mode)
-        v=$(mode_check "$m" remote x86_64 azure '' 2>&1) || { log "tune: variant $arm's driver mode $m: $v"; return 1; }
+        v=$(mode_check "$m" remote x86_64 "${tr_cloud:-azure}" '' 2>&1) || { log "tune: variant $arm's driver mode $m: $v"; return 1; }
     done <"$dir/variants.txt"
     arm=
     tr_plan rounds tune "$seed" 1 >"$dir/rounds-sweep.tsv" || { log "tune: the sweep's rounds do not parse"; return 1; }
