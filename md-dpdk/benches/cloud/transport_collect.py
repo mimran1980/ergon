@@ -13,7 +13,8 @@ row:
 
   <set>/manifest-<tag>.json   the fields transport-format.md lists, plus the
                               runner's point manifest ("runner") and the
-                              binaries' own ("binary", "pong")
+                              binaries' own ("binary", "pong"; a sink arm's
+                              run's sink as "sink": points/<point>/sink<run>)
   <set>/spikes-<tag>.csv      the measuring run's spikes file
   <set>/<host>-events-<tag>.csv  each host's events over the point
                               (transport_events.py: events/<point>-<host>.log.gz,
@@ -339,8 +340,11 @@ def collect(d):
                 skipped.append(f"{pid} run {r}")
                 continue
             aa = pe.get("aa") == "1"
-            # each host's own binary manifest: the measuring run's on a, the pong's on b
-            own = {"a": bm, "b": pong}
+            # a sink arm's run: its own sink on b (None: none written)
+            sink = (read_json(os.path.join(d, "points", pid, f"sink{r}", "manifest.json"))
+                    if pe.get("arm_hosts") == "sink" else None)
+            # each host's own binary manifest: the measuring run's on a, the pong's (or sink's) on b
+            own = {"a": bm, "b": pong if pe.get("arm_hosts") != "sink" else sink}
             # the arm's per-arm knobs (the runner's knob.* lines), each read
             # back from the binary that reports it, else as the runner set it
             run_settings = {k: dict(v) for k, v in settings.items()}
@@ -404,7 +408,7 @@ def collect(d):
                     if (g := (root_qdiscs(snap("netem", h, "after")) if netem == "none" else
                               netem_growth(snap("netem", h, "before"), snap("netem", h, "after"), netem))) is not None},
                 "loss_counters": loss,
-                "hosts": keys, "point": pid, "runner": pe, "binary": bm, "pong": pong,
+                "hosts": keys, "point": pid, "runner": pe, "binary": bm, "pong": pong, "sink": sink,
             }
             # each host's events over the point (transport_events.py): the
             # measuring host's with its loop's stalls (its last busy CPU)

@@ -7,7 +7,8 @@
 # first arm again, @AA=1) among them. Each point is one run of the arm's
 # bench binary (transport-cli.md) at one load: for two-host arms its pong on
 # host b (the ping starts once it says ready), then its ping on host a;
-# one-host arms --role local. The first load
+# one-host arms --role local; sink arms --role local on host a, each run with
+# a sink on host b (started before it, stopped after it). The first load
 # of an arm and stream count warms up 30 s, each later one 5 s (the switch).
 # Around every point, on each host it uses: the IRQ counts (deltas on the
 # isolated CPUs), a thread placement sample mid-window, and under netem the
@@ -368,7 +369,9 @@ tr_now() {
 # TR_PORT_BASE, stream i on port + i. aeron_lat --mode udp: --endpoint is the
 # pong's address (ping: the peer; pong: its own), --reply the ping's, and
 # --interface this end's own; --mode ipc and spy take no address (the binary
-# refuses one). udp_lat: --local own, --peer the other end (local: the
+# refuses one). aeron_lat --mode spy-udp: --endpoint and --reply are both the
+# sink's (local: the peer; its sink, pong: its own), the echoes TR_PORT_SPAN/2
+# above the pings; --interface as UDP's. udp_lat: --local own, --peer the other end (local: the
 # receiver binds --peer). tcp_lat: the pong (and local's receiver) listens,
 # the ping connects from its own address (--source: each data NIC has a
 # routing table its address selects, so the address is the NIC).
@@ -392,7 +395,13 @@ tr_bin_args() {
     mpsc_lat) out="--capacity $(tr_knob capacity)" ;;
     aeron_lat)
         out="--aeron-dir $(tr_aeron_dir) --driver external --driver-busy-threads $(tr_driver_busy) --term-length $(tr_knob term_length) --mtu $TR_MTU"
-        if [[ $args == *" --mode udp "* ]]; then
+        if [[ $args == *" --mode spy-udp "* ]]; then
+            # both channels to the sink's address (DPDK: no kernel interface)
+            local sk=$peer
+            [[ $role == pong ]] && sk=$own
+            out="--endpoint $sk:$port --reply $sk:$((port + TR_PORT_SPAN / 2)) $out"
+            [[ ${setup:-} == dpdk ]] || out="${out/ --aeron-dir / --interface $own --aeron-dir }"
+        elif [[ $args == *" --mode udp "* ]]; then
             local ep=$peer rp=$own
             [[ $role == pong ]] && ep=$own rp=$peer
             # the kernel's path: the data NIC by its address; DPDK's transport
@@ -828,6 +837,7 @@ tr_manifest() {
         echo "vm_a=$vm_a"
         echo "vm_b=$vm_b"
         echo "bin=$bin"
+        echo "arm_hosts=$kind"
         echo "args=${args[*]:-}"
         for h in "${run_hosts[@]}"; do echo "bin_sha256_$h=$(awk -v b="$bin" '$2 ~ "/" b "$" {print $1}' "$dir/bins-$h.txt")"; done
         echo "commit=$commit"
@@ -964,11 +974,14 @@ tr_events_cpus() {
     local h=$1 used=" " mine_used=" " c all out=() i=0 mine r
     IFS=, read -ra all <<<"$iso"
     if tr_has_driver; then used+="${all[0]} ${all[1]} ${all[2]} "; mine_used=$used; fi
-    if [[ $kind == two ]]; then
-        for r in ping pong; do
-            c=$(tr_role_cpus $r)
-            [[ $r == ping && $h == a || $r == pong && $h == b ]] && mine_used+="$c "
-            [[ -z ${LAB_LOCAL_SMOKE:-} && ! ($r == ping && $h == a || $r == pong && $h == b) ]] || used+="$c "
+    if [[ $kind == two || $kind == sink ]]; then
+        # a sink arm: --role local's two on a, the sink (the pong's CPU) on b
+        local ra=ping
+        [[ $kind == sink ]] && ra=local
+        for r in $ra pong; do
+            c=$(tr_role_cpus $r | tr , ' ')
+            [[ $r == "$ra" && $h == a || $r == pong && $h == b ]] && mine_used+="$c "
+            [[ -z ${LAB_LOCAL_SMOKE:-} && ! ($r == "$ra" && $h == a || $r == pong && $h == b) ]] || used+="$c "
         done
     else
         used+="$(tr_role_cpus local | tr , ' ') "
@@ -978,7 +991,7 @@ tr_events_cpus() {
     [[ $h == b ]] && mine=1
     for c in "${all[@]}"; do
         [[ $used == *" $c "* ]] && continue
-        if [[ -n ${LAB_LOCAL_SMOKE:-} && $kind == two ]]; then
+        if [[ -n ${LAB_LOCAL_SMOKE:-} && $kind != one ]]; then
             ((i++ % 2 == mine)) || continue
         fi
         out+=("$c")
@@ -1012,18 +1025,21 @@ tr_events() {
 # the snapshots around it, a placement sample half way through its window,
 # its rows (rep in their first column, the point column <channel>-r<rate>)
 # into results.csv and its --out directories into points/<point>/ (the
-# pong's as points/<point>/pong); 1 when it failed. A two-host arm's point is
+# pong's as points/<point>/pong, a sink's as points/<point>/sink<run>); 1 when
+# it failed. A two-host arm's point is
 # one run: its pong on b, which must print one `ready` line within
 # TRANSPORT_READY_TIMEOUT_S, then its ping on a (round trips). A one-host
 # arm's is two, one after the other: --role local (one way, the same TSC) and
-# --role local --round-trip. The first point of an arm and stream count warms
+# --role local --round-trip; a sink arm's the same two on host a, each with
+# its own sink on b (--role pong on the run's stream ids, ready before the
+# run starts, stopped after it ends). The first point of an arm and stream count warms
 # up TRANSPORT_WARMUP_S, each later one TRANSPORT_SWITCH_S (the new load,
 # unrecorded).
 tr_point() {
     local k=$1 load=${loads[$1]} warm pid rdir=bench/transport-$pair/run-$sid rc=0 meas log common pong= start end v runs=()
     # the arm's NICs: the ping's (and local's own) sender NIC and the pong's
     # (local's peer) receiver NIC, or each host's other one (--nics alt)
-    local ns=sender nr=receiver pargs rargs
+    local ns=sender nr=receiver pargs rargs sinkargs
     if ((${nics_alt:-0})); then ns=receiver nr=sender; fi
     warm=$TRANSPORT_SWITCH_S
     ((k == 0)) && warm=$TRANSPORT_WARMUP_S
@@ -1061,26 +1077,17 @@ tr_point() {
         on "$B" "nohup $(tr_start "$rdir/pong.pid" "$rdir/pong.out" "$bin --role pong $common$sid0 --cpus $(tr_role_cpus pong) --out $rdir/out-pong $(tr_bin_args "$bin" pong "$(tr_nic b "$nr")" "$(tr_nic a "$ns")" "${args[@]}") $pargs") 2>&1 </dev/null &" ||
             { log "point $pid: pong did not start on b"; return 1; }
         pong=1
-        local why
-        tr_pong_ready "$rdir"
-        case $? in
-        0) why= ;;
-        2) why="the pong exited before it said ready" ;;
-        3) why="the pong said ready twice" ;;
-        *) why="the pong did not say ready within ${TRANSPORT_READY_TIMEOUT_S:-60} s" ;;
-        esac
-        if [[ -n $why ]]; then
-            # its exit status (tr_start's .rc; read before the kill, which
-            # would write TERM's) and its error lines, else its last two
-            local prc
-            [[ $why == *exited* ]] && prc=$(on "$B" "for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s $rdir/pong.pid.rc ] && break; sleep 0.1; done; cat $rdir/pong.pid.rc 2>/dev/null")
-            on "$B" "kill -TERM \$(cat $rdir/pong.pid) 2>/dev/null; sleep 1; kill -KILL \$(cat $rdir/pong.pid) 2>/dev/null; cat $rdir/pong.out" >"$log.pong" 2>&1
-            [[ $why == *exited* ]] && why+=" ($(tr_exit_text "$prc"))"
-            log "point $pid: $why: $(tr_why_lines "$log.pong")"
-            tr_events stop "$pid"
-            return 1
-        fi
+        tr_pong_wait pong || { tr_events stop "$pid"; return 1; }
         runs=("--role ping --cpus $(tr_role_cpus ping) $(tr_bin_args "$bin" ping "$(tr_nic a "$ns")" "$(tr_nic b "$nr")" "${args[@]}")$sid0")
+    elif [[ $kind == sink ]]; then
+        # --role local on a to the sink's address on b (as a two-host
+        # ping's to its pong), each run's sink started in the loop below
+        meas=a
+        rargs=$(tr_alt_args a "$ns" b "$nr")
+        pargs=$(tr_alt_args b "$nr" a "$ns")
+        sinkargs=$(tr_bin_args "$bin" pong "$(tr_nic b "$nr")" "$(tr_nic a "$ns")" "${args[@]}")
+        v=$(tr_bin_args "$bin" local "$(tr_nic a "$ns")" "$(tr_nic b "$nr")" "${args[@]}")
+        runs=("--role local --cpus $(tr_role_cpus local) $v$sid0" "--role local --round-trip --cpus $(tr_role_cpus local) $v$sid1")
     else
         meas=$host
         rargs=$(tr_alt_args "$host" "$ns" "$host" "$nr")
@@ -1103,9 +1110,12 @@ tr_point() {
     start=$(tr_now)
     : >"$log.out"
     : >"$log.err"
+    local sids=("$sid0" "$sid1")
     for v in "${!runs[@]}"; do
+        if [[ $kind == sink ]] && ! tr_sink_up "$v"; then rc=1; break; fi
         on "$(tr_host "$meas")" "$(tr_start "$rdir/run.pid" "$rdir/run$v.out" "$bin ${runs[$v]} $common --out $rdir/out$v $rargs") 2>&1" >>"$log.out" 2>>"$log.err" || rc=$?
         on "$(tr_host "$meas")" "cat $rdir/run$v.out" >>"$log.out" 2>/dev/null
+        [[ $kind != sink ]] || tr_sink_down "$v"
         ((rc == 0)) || break
     done
     end=$(tr_now)
@@ -1131,6 +1141,47 @@ tr_point() {
         return 1
     fi
     for v in "${!runs[@]}"; do tr_row "$rep" <"$dir/points/$pid/$v/results.csv" >>"$dir/results.csv"; done
+}
+
+# tr_pong_wait <pong|sink>: 0 once the pong (or a sink) on b says ready
+# (tr_pong_ready); else 1, it stopped, its output in <log>.pong and why it
+# failed logged (its exit status, tr_start's .rc read before the kill, which
+# would write TERM's, and its error lines, else its last two)
+tr_pong_wait() {
+    local who=$1 why prc
+    tr_pong_ready "$rdir"
+    case $? in
+    0) return 0 ;;
+    2) why="the $who exited before it said ready" ;;
+    3) why="the $who said ready twice" ;;
+    *) why="the $who did not say ready within ${TRANSPORT_READY_TIMEOUT_S:-60} s" ;;
+    esac
+    [[ $why == *exited* ]] && prc=$(on "$B" "for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s $rdir/pong.pid.rc ] && break; sleep 0.1; done; cat $rdir/pong.pid.rc 2>/dev/null")
+    on "$B" "kill -TERM \$(cat $rdir/pong.pid) 2>/dev/null; sleep 1; kill -KILL \$(cat $rdir/pong.pid) 2>/dev/null; cat $rdir/pong.out" >>"$log.pong" 2>&1
+    [[ $why == *exited* ]] && why+=" ($(tr_exit_text "$prc"))"
+    log "point $pid: $why: $(tr_why_lines "$log.pong")"
+    return 1
+}
+
+# tr_sink_up <run>: a sink arm's sink for run <run> of the point (tr_point's
+# variables) on b, on that run's stream ids: 0 once it says ready
+tr_sink_up() {
+    local v=$1
+    on "$B" "rm -f $rdir/pong.out $rdir/pong.pid $rdir/pong.pid.rc" >/dev/null 2>&1
+    on "$B" "nohup $(tr_start "$rdir/pong.pid" "$rdir/pong.out" "$bin --role pong $common${sids[$v]} --cpus $(tr_role_cpus pong) --out $rdir/out-sink$v $sinkargs $pargs") 2>&1 </dev/null &" ||
+        { log "point $pid: sink $v did not start on b"; return 1; }
+    tr_pong_wait sink
+}
+
+# tr_sink_down <run>: that sink stopped (TERM: it reads on until its frames
+# stop coming, 4 s at most; KILL after 5 s), its output in <log>.pong and its
+# --out directory in points/<point>/sink<run>
+tr_sink_down() {
+    local v=$1
+    on "$B" "kill -TERM \$(cat $rdir/pong.pid) 2>/dev/null; for _ in \$(seq 50); do kill -0 \$(cat $rdir/pong.pid) 2>/dev/null || break; sleep 0.1; done; kill -KILL \$(cat $rdir/pong.pid) 2>/dev/null; true" >/dev/null 2>&1
+    on "$B" "cat $rdir/pong.out" >>"$log.pong" 2>&1
+    mkdir -p "$dir/points/$pid/sink$v"
+    on "$B" "tar -C $rdir/out-sink$v -cf - . 2>/dev/null" | tar -xf - -C "$dir/points/$pid/sink$v" 2>/dev/null
 }
 
 # tr_stream_base: the next run's aeron_lat --stream-id: 1001 + 256 k for the
@@ -1166,7 +1217,7 @@ tr_invoke() {
     ((aa)) && mode+="@AA=1"
     tag="$sid-r$rep-$(file_mode "$mode")"
     label=$(tr_label "$sid" "$arm" "$aa" "$n" "$netem")
-    if [[ $kind == two ]]; then run_hosts=(a b); else run_hosts=("$host"); fi
+    if [[ $kind == two || $kind == sink ]]; then run_hosts=(a b); else run_hosts=("$host"); fi
     cpus=$(transport_clients "$map" "$setup")
     for k in "${!loads[@]}"; do tr_point "$k" || rc=1; done
     return $rc
@@ -1195,7 +1246,7 @@ tr_netem_off() {
 # tr_set <set id>: every round of the set, in rounds.tsv's order
 tr_set() {
     local want=$1 gi sid host rep netem rseed loadlist streamlist order position armspec arm aa
-    local bin setup kind args loads streams rhosts failures=0 spec nics_alt=0
+    local bin setup kind args loads streams rhosts ahosts failures=0 spec nics_alt=0
     while IFS=$'\t' read -r -u 9 gi sid host rep netem rseed loadlist streamlist order; do
         [[ $sid == "$want" ]] || continue
         IFS=, read -ra loads <<<"$loadlist"
@@ -1225,7 +1276,10 @@ tr_set() {
                 kept+=("${args[i]}")
             done
             args=(${kept[@]+"${kept[@]}"})
-            if ! tr_arm_up "$setup" "${rhosts[@]}"; then
+            # a sink arm's set-up on its sink's host too
+            ahosts=("${rhosts[@]}")
+            [[ $kind != sink ]] || ahosts=(a b)
+            if ! tr_arm_up "$setup" "${ahosts[@]}"; then
                 echo "$sid,$rep,$netem,$arm,$aa,setup" >>"$dir/failures.csv"
                 failures=$((failures + 1))
             else
@@ -1237,7 +1291,7 @@ tr_set() {
                     ((failures < ${TRANSPORT_MAX_FAILURES:-3})) || break
                 done
             fi
-            tr_arm_down "$setup" "${rhosts[@]}"
+            tr_arm_down "$setup" "${ahosts[@]}"
             ((failures < ${TRANSPORT_MAX_FAILURES:-3})) || { log "set $sid: $failures failed runs in a row: stopping the session"; [[ $netem == - ]] || tr_netem_off "${rhosts[@]}"; return 1; }
         done
         [[ $netem == - ]] || tr_netem_off "${rhosts[@]}" || return 1

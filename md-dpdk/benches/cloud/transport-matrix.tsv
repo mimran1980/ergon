@@ -13,7 +13,10 @@
 #            or onload arm has netem - (netem cannot reach a NIC DPDK holds,
 #            nor Onload's AF_XDP sends)
 #   hosts    one (both ends in one process on one host: rtt and one-way
-#            rows) or two (ping on host a, pong on host b: round trips)
+#            rows), two (ping on host a, pong on host b: round trips) or
+#            sink (one's runs on host a, each with a sink on host b reading
+#            every frame its publications send: --mode spy-udp; a set on
+#            host a, netem -, run alone)
 #   arguments  the arm's own flags, after the runner's (transport-cli.md)
 #
 # set <id> <pair> <par> <host> <loads> <streams> <netem> <arms>
@@ -32,6 +35,11 @@
 #
 # Points: arms x loads x streams x netem levels x 5 reps.
 #
+# aeron-spy's publications have no destination: it sends nothing on the
+# wire, so it measures IPC through a UDP publication's term buffer.
+# aeron-spy-udp is the same round trip on publications that send every frame
+# to a sink on host b (reliable, ssc=false: the sink connects them).
+#
 # aeron-ipc-huge is aeron-ipc with its Aeron directory on a 2 MiB hugetlbfs
 # (TR_AERON_HUGE_DIR) in place of tmpfs: transport-settings.env's
 # TR_DECLARED names that its one difference, and fairness.py checks nothing
@@ -41,6 +49,8 @@ arm  mpsc             mpsc_lat   none     one
 arm  aeron-ipc        aeron_lat  kernel   one  --mode ipc
 arm  aeron-ipc-huge   aeron_lat  kernel   one  --mode ipc
 arm  aeron-spy        aeron_lat  kernel   one  --mode spy
+arm  aeron-spy-udp    aeron_lat  kernel   sink --mode spy-udp
+arm  dpdk-aeron-spy-udp aeron_lat dpdk    sink --mode spy-udp
 arm  aeron-self       aeron_lat  kernel   one  --mode udp --reliable false
 arm  dpdk-aeron-self  aeron_lat  dpdk     one  --mode udp --reliable false
 arm  aeron-udp        aeron_lat  kernel   two  --mode udp --reliable false

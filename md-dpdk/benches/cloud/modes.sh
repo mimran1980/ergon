@@ -724,7 +724,7 @@ arm_of() {
     printf '%s' "$a"
 }
 
-# arm_setup <arm>: none, kernel, dpdk, sockets, fstack or onload; arm_hosts <arm>: one or two
+# arm_setup <arm>: none, kernel, dpdk, sockets, fstack or onload; arm_hosts <arm>: one, two or sink
 arm_setup() { local s=${TRANSPORT_ARMS#* "$1"=}; s=${s%% *}; printf '%s' "${s%/*}"; }
 arm_hosts() { local s=${TRANSPORT_ARMS#* "$1"=}; s=${s%% *}; printf '%s' "${s#*/}"; }
 

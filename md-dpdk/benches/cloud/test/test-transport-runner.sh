@@ -15,7 +15,8 @@
 #     b), draws each round's arm order from its seed (reproducible, the A/A
 #     arm once a round, another order on another rep), and refuses a broken
 #     matrix: aa first, an unknown or repeated arm, one- and two-host arms in
-#     one set, two sets at once on one host; its binomial interval;
+#     one set, two sets at once on one host, a sink arm off host a or under
+#     netem; its binomial interval;
 #   * host.sh against a fake D16s_v6 (16 CPUs, twins adjacent): the CPU map
 #     with SMT on and off, the boot line and its check, SMT off verified (and
 #     refused when the kernel keeps it on), the quiet settings, the sysctls
@@ -46,7 +47,9 @@
 #     (transport_collect.py), the ping started only once its pong says ready
 #     (a pong that never does fails its point), a placement or netem verdict
 #     that fails in the manifest, a failed point recorded, a hostcheck
-#     warning stopping the session before its first point; LAB_ARMS_FILE and
+#     warning stopping the session before its first point; a sink arm
+#     (aeron_lat --mode spy-udp) on a with a sink on b for each run, beside
+#     a one-host arm in its set, and fairness.py's sink rule; LAB_ARMS_FILE and
 #     LAB_EXTRA_SRC's hooks with a neutral fixture (transport_prepare's steps
 #     too).
 #
@@ -1276,6 +1279,19 @@ esac
 settings="\"transport\": \"$transport\", \"streams\": \"$streams\", \"warmup_s\": \"$warm\", \"duration_s\": \"$dur\", \"scheduled\": \"0\", \"late\": \"0\", \"max_send_lag_ns\": \"0\", \"retrans\": \"0\"$extra"
 [[ $role == oneway-send || $role == oneway-recv ]] && { echo "stub: --role $role is refused (one way is --role local)" >&2; exit 2; }
 [[ $role == ping ]] && kind=load
+# --mode spy-udp: the run's frames (100 pings, a round trip's 100 echoes) and
+# its driver's bytes; its sink (--role pong) the frames it read (90 pings
+# for a label FAKE_SINK_SHORT names)
+if [[ $mode == spy-udp ]]; then
+    if [[ $role == pong ]]; then
+        pings=100
+        [[ -n ${FAKE_SINK_SHORT:-} && $label == *"$FAKE_SINK_SHORT"* ]] && pings=90
+        settings+=", \"sink.ping_frames\": \"$pings\", \"sink.echo_frames\": \"100\", \"sink.gaps\": \"0\", \"sink.behind\": \"0\", \"sink.refused\": \"0\""
+    else
+        settings+=', "sent": "100", "driver.bytes-sent": "19200"'
+        [[ $kind == load ]] && settings+=', "echoes_sent": "100"'
+    fi
+fi
 if [[ $role == pong ]]; then
     # one that exits before ready, as fstack_lat did on AWS as a plain user:
     # F-Stack's config echo on stdout, the EAL's error on stderr
@@ -1568,6 +1584,84 @@ grep -q 'host b: dpdk set-up failed: vm.sh: line 2096: "return $rc" failed (exit
 [[ $(grep -vc ',dpdk-aeron-self,' "$d/failures.csv") == 3 ]] && ! grep 'exited before it said ready' "$sb/run.out" | grep -vq 'point 3c-r1-aeron-rel@' || why+=" a slow pong taken for gone: $(tr '\n' ' ' <"$d/failures.csv");"
 [[ -z $why ]] && pass "transport.sh run: a failed placement or netem verdict in the manifest and logged, a failed point, a pong that never said ready and one that exited (its exit status and error lines logged) in failures.csv (a pong slow to start waited for), the session's exit 1" ||
     fail "transport.sh run failures:$why"
+
+# ---- sink arms (aeron_lat --mode spy-udp) ----
+# the plan: a sink arm runs in a set on host a, netem -, and holds host b
+# too (never beside a set on b); a one-host arm may share its set
+refusals=
+for case in "set z b - b 1 1 - aeron-spy-udp|runs in a set on host a" "set z a - a 1 1 0.1 aeron-spy-udp|runs in a set on host a" \
+    "set z a - ab 1 1 - aeron-spy-udp|host ab takes" "set z a p1 a 1 1 - aeron-spy-udp
+set y a p1 b 1 1 - aeron-spy|one-host sets on different hosts"; do
+    printf '%s\n' "${case%|*}" >"$bad"
+    if out=$(plan modes a "$matrix" "$bad" 2>&1); then refusals+=" accepted[${case%|*}]"; fi
+    [[ $out == *"${case#*|}"* ]] || refusals+=" [${case%|*}: $out]"
+done
+printf '%s\n' "set z a - a 1 1 - aeron-spy-udp,aeron-spy,aa" >"$bad"
+plan modes a "$matrix:arms" "$bad" >/dev/null 2>&1 || refusals+=" a sink arm beside a one-host arm refused;"
+[[ -z $refusals ]] && pass "transport_plan.py: a sink arm only in a set on host a with no netem, beside one-host arms, never at once with a set on b" ||
+    fail "transport_plan.py sink refusals:$refusals"
+# a session of the spy set: aeron-spy (one host), aeron-spy-udp and
+# dpdk-aeron-spy-udp (sink arms: --role local on a, a sink on b for each
+# run), and the A/A of aeron-spy-udp
+spysets=$tmp/spy-sets.tsv
+echo "set spy a - a 10000 1 - aeron-spy-udp,aeron-spy,dpdk-aeron-spy-udp,aa" >"$spysets"
+trun a 1 "" sets_file="$spysets" && rrc=0 || rrc=$?
+d=$sb/a/bench/transport-a
+why=
+[[ $rrc == 0 && $(cat "$d/rc") == 0 ]] || why+=" exit $rrc rc $(cat "$d/rc" 2>/dev/null): $(tail -3 "$sb/run.out" | tr '\n' ' ');"
+[[ $(grep -c . "$d/results.csv") == 8 ]] || why+=" $(grep -c . "$d/results.csv") rows, not 8 (4 arms, one way and round trip);"
+# the measuring runs on a to the sink's address on b (the receiver NIC, the
+# echoes TR_PORT_SPAN/2 above), a's own sender NIC its kernel interface
+grep -q '^a aeron_lat --role local --round-trip --cpus 10,12 --endpoint 10.20.1.7:22000 --reply 10.20.1.7:22512 --interface 10.20.1.4 --aeron-dir .*--label spy:aeron-spy-udp@STREAMS=1 .*--mode spy-udp$' "$sb/runs" ||
+    why+=" spy-udp local flags: $(grep -m1 'role local .*spy-udp' "$sb/runs");"
+grep -q '^b aeron_lat --role pong --streams 1 .*--label spy:aeron-spy-udp@STREAMS=1 .*--cpus 10 --out .*out-sink0 --endpoint 10.20.1.7:22000 --reply 10.20.1.7:22512 --interface 10.20.1.7 --aeron-dir .*--mode spy-udp$' "$sb/runs" ||
+    why+=" sink flags: $(grep -m1 'role pong' "$sb/runs");"
+! grep -E 'aeron_lat .*spy:dpdk-aeron-spy-udp' "$sb/runs" | grep -q -- '--interface' || why+=" a DPDK sink arm given --interface;"
+! grep -q '^b aeron_lat --role local' "$sb/runs" && ! grep -q '^a aeron_lat --role pong' "$sb/runs" || why+=" a sink arm's ends on the wrong hosts;"
+# two sinks a sink arm's point (one a run), each on its run's stream ids;
+# none for aeron-spy
+[[ $(grep -c '^b aeron_lat --role pong ' "$sb/runs") == 6 ]] || why+=" $(grep -c '^b aeron_lat --role pong ' "$sb/runs") sinks, not 6;"
+for sidv in $(grep '^b aeron_lat --role pong ' "$sb/runs" | sed 's/.*--stream-id \([0-9]*\).*/\1/'); do
+    grep -q "^a aeron_lat --role local .*--stream-id $sidv " "$sb/runs" || why+=" sink stream id $sidv not a run's;"
+done
+! grep -q '^b aeron_lat .*spy:aeron-spy@' "$sb/runs" || why+=" a sink for aeron-spy;"
+# media drivers on b for the sink arms alone (3 rounds: kernel, dpdk, the A/A)
+[[ $(grep -c '^b vm.sh driver ' "$sb/calls") == 3 && $(grep -c '^a vm.sh driver ' "$sb/calls") == 4 ]] ||
+    why+=" drivers: a $(grep -c '^a vm.sh driver ' "$sb/calls"), b $(grep -c '^b vm.sh driver ' "$sb/calls");"
+# events: spinners on the hot CPUs each host leaves idle: on a the local
+# ends' (10, 12) and the driver's in use, on b the sink's (10) and the driver's
+grep -q '^spy-r1-aeron-spy-udp@STREAMS=1-10000 4,6,8,10,12,14 14 aeron$' "$sb/a/state/events-started" &&
+    grep -q '^spy-r1-aeron-spy-udp@STREAMS=1-10000 4,6,8,10,12,14 12,14 aeron$' "$sb/b/state/events-started" &&
+    ! grep -q 'aeron-spy@' "$sb/b/state/events-started" || why+=" events: a $(grep -m1 spy-udp "$sb/a/state/events-started"), b $(grep -m1 spy-udp "$sb/b/state/events-started");"
+m=$(grep -l '^mode=aeron-spy-udp@STREAMS=1$' "$d"/manifest/*.env | head -1)
+grep -q '^arm_hosts=sink$' "$m" && grep -q '^placement_b=ok' "$m" || why+=" sink arm runner manifest: $(grep -E '^(arm_hosts|placement_)' "$m" | tr '\n' ' ');"
+[[ -s $d/points/spy-r1-aeron-spy-udp@STREAMS=1-10000/sink0/manifest.json && -s $d/points/spy-r1-aeron-spy-udp@STREAMS=1-10000/sink1/manifest.json ]] || why+=" sinks' manifests not kept;"
+python3 -c '
+import json, sys
+sys.path.insert(0, sys.argv[2])
+import transport_points as tp
+ps = tp.read_points(sys.argv[1])
+assert len(ps) == 8, len(ps)
+for p in ps:
+    m = p.manifest
+    if p.arm == "aeron-spy":
+        assert m["hosts"] == {"a": "a"} and m["sink"] is None and tp.hosts_of_point(p) == ("a",), m["hosts"]
+    else:
+        assert m["hosts"] == {"a": "a", "b": "b"} and tp.hosts_of_point(p) == ("a", "b"), (p.tag, m["hosts"])
+        assert m["sink"]["settings"]["sink.ping_frames"] == "100", m["sink"]
+        assert m["loss_counters"]["b"]["aeron"]["naks-sent"] == 0, m["loss_counters"]
+' "$d" "$cloud" 2>/dev/null || why+=" collected sink manifests or hosts;"
+fv=$(python3 "$cloud/fairness.py" "$d" 2>&1) || why+=" fairness: $(head -5 <<<"$fv" | tr '\n' ' ');"
+tables=$(python3 "$cloud/analyse.py" --transport "$d" 2>&1) || why+=" analyse.py --transport failed: $(tail -2 <<<"$tables");"
+grep -q '^### Set spy, ' <<<"$tables" && ! grep -q '^Refused' <<<"$tables" || why+=" no set spy table, or one refused;"
+# a sink that read fewer pings than its run sent: the sink rule
+trun a 1 "" sets_file="$spysets" FAKE_SINK_SHORT=spy:aa
+fv=$(python3 "$cloud/fairness.py" "$d" 2>&1 || true)
+[[ $(grep -c '^sink: spy: .*the sink received 90 of 100 pings$' <<<"$fv") == 2 ]] && ! grep '^sink:' <<<"$fv" | grep -qv 'spy-aa@' ||
+    why+=" a short sink not flagged (or another): $(grep '^sink' <<<"$fv" | head -3 | tr '\n' ' ');"
+[[ -z $why ]] && pass "transport.sh run: a sink arm runs on a with a sink on b for each run (its run's stream ids, the sink's address, a driver on b), aeron-spy beside it on a alone; the sinks' manifests collected, fairness.py clean, and its sink rule flags a sink short of the pings sent" ||
+    fail "transport.sh run sink arms:$why"
+d=$sb/a/bench/transport-b
 
 # a hostcheck warning stops the session before its first point
 trun b 1 "" FAKE_HOSTCHECK_WARN=b && rrc=0 || rrc=$?

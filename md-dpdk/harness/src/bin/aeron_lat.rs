@@ -1,4 +1,5 @@
-//! The transport latency suite's Aeron arms: IPC, spy, kernel UDP and DPDK.
+//! The transport latency suite's Aeron arms: IPC, spy, spy on a live UDP
+//! stream, kernel UDP and DPDK.
 //!
 //! One binary against a media driver: the external one at `--aeron-dir`
 //! (the runner starts it `DEDICATED`, every agent busy-spinning; the DPDK
@@ -10,7 +11,7 @@
 //! Aeron arms measure exactly as the others do.
 //!
 //! ```text
-//! aeron_lat --role <ping|pong|local> [--round-trip] --mode <ipc|spy|udp> --rate MSG_PER_S
+//! aeron_lat --role <ping|pong|local> [--round-trip] --mode <ipc|spy|spy-udp|udp> --rate MSG_PER_S
 //!           --label TEXT --out DIR --aeron-dir PATH [--driver external|embedded]
 //!           [--reliable true|false] [--endpoint HOST:PORT] [--reply HOST:PORT]
 //!           [--interface IP] [--term-length 1048576] [--mtu 1408] [--stream-id 1001]
@@ -25,6 +26,7 @@
 //! | `local --round-trip` | ping, echo | `load` |
 //! | `ping` | ping (sends, polls the echoes) | `load` |
 //! | `pong` | echo | none: `manifest.json` alone |
+//! | `pong --mode spy-udp` | sink (reads every frame, echoes nothing) | none: `manifest.json` alone |
 //!
 //! A `pong` prints one `ready` line once its subscriptions and publications
 //! are added (the runner starts the ping on it); its echo then waits for the
@@ -39,7 +41,21 @@
 //! |---|---|---|
 //! | `ipc` | `aeron:ipc` | `aeron:ipc` |
 //! | `spy` | a manual-MDC UDP publication with no destinations (`ssc=true`, `tags=` its stream id), read by `aeron-spy:` on that tag | the same |
+//! | `spy-udp` | `endpoint=<--endpoint host>:<port+i>` (`ssc=false`), read by `aeron-spy:` on that channel | `endpoint=<--reply host>:<port+i>`, the same |
 //! | `udp` | `endpoint=<--endpoint host>:<port+i>` | `endpoint=<--reply host>:<port+i>` |
+//!
+//! `spy` sends nothing on the wire: its publication has no destination, so
+//! the spy reads it as IPC through a UDP publication's term buffer.
+//! `spy-udp` measures the same path (`--role local`: publication, spy,
+//! echo, spy) on publications that each send every frame to another host:
+//! there `--role pong --mode spy-udp` is a sink subscribed to both channels
+//! (`--endpoint` and `--reply` are both its addresses). The publications are
+//! reliable (Aeron's default) and `ssc=false`, so only the sink's status
+//! messages connect them and drive their flow control, never the spy: a
+//! `--role local` with no sink times out waiting for them. The sink checks
+//! each stream's sequence numbers and writes its counts to its manifest
+//! (`sink.*`); the measuring end records `echoes_sent` and the driver's
+//! `driver.bytes-sent`, which fairness.py holds the sink's counts against.
 //!
 //! Every publication: `term-length`, `mtu` and `sparse=false`; `--interface`
 //! is added to the UDP publications. `--reliable false` (UDP only) adds the
@@ -99,10 +115,13 @@ const LOSS_COUNTERS: [(&str, &str); 6] = [
     ("Short sends", "short-sends"),
     ("Errors", "errors"),
 ];
+/// The driver's traffic counters the manifest records (`driver.<key>`):
+/// what this host's driver put on and took off the wire.
+const WIRE_COUNTERS: [(&str, &str); 2] = [("Bytes sent", "bytes-sent"), ("Bytes received", "bytes-received")];
 
 /// `--help`.
 const USAGE: &str = "\
-aeron_lat --role ping|pong|local [--round-trip] --mode ipc|spy|udp --rate MSG_PER_S --label SET:ARM --out DIR
+aeron_lat --role ping|pong|local [--round-trip] --mode ipc|spy|spy-udp|udp --rate MSG_PER_S --label SET:ARM --out DIR
           --aeron-dir PATH [--driver external|embedded] [--driver-busy-threads 3] [--reliable true|false]
           [--endpoint HOST:PORT] [--reply HOST:PORT] [--interface IP] [--term-length 1048576] [--mtu 1408]
           [--stream-id 1001] [--connect-timeout-s 30] [--streams 1] [--warmup-s 30] [--duration-s 30]
@@ -111,6 +130,9 @@ aeron_lat --role ping|pong|local [--round-trip] --mode ipc|spy|udp --rate MSG_PE
   (S+10000+i); ping and pong take the same --endpoint (the pong's address) and --reply (the ping's), and
   --interface is this end's own address. --endpoint, --reply and --interface are UDP only. Ports
   20000-21999 (the media driver's wildcard ranges) are refused.
+--mode spy-udp: --role local measures as --mode spy does, its pings published to --endpoint and its echoes
+  to --reply, both a sink's addresses on another host (reliable, ssc=false: the sink connects them);
+  --role pong is that sink: it reads every frame of both channels and writes its counts (sink.*).
 --cpus: ping: ping; pong: echo; local: sender,receiver (--round-trip: ping,echo).
 --driver-busy-threads: the external driver's busy threads (DEDICATED: 3), counted in the row's busy_threads.
 A pong prints `ready` once its channels are added, and no row.";
@@ -140,6 +162,7 @@ fn aeron_err<E: std::fmt::Debug>(what: &str) -> impl Fn(E) -> Error + '_ {
 enum Mode {
     Ipc,
     Spy,
+    SpyUdp,
     Udp,
 }
 
@@ -203,8 +226,9 @@ impl Aeronish {
         let mode = match f.req("mode")?.as_str() {
             "ipc" => Mode::Ipc,
             "spy" => Mode::Spy,
+            "spy-udp" => Mode::SpyUdp,
             "udp" => Mode::Udp,
-            other => return Err(Error::Usage(format!("--mode {other}: ipc, spy or udp"))),
+            other => return Err(Error::Usage(format!("--mode {other}: ipc, spy, spy-udp or udp"))),
         };
         let endpoint = f
             .take("endpoint")
@@ -229,15 +253,19 @@ impl Aeronish {
             driver_busy_threads: f.num("driver-busy-threads", 3)?,
             connect_timeout: Duration::from_secs(f.num("connect-timeout-s", 30)?),
         };
-        if mode == Mode::Udp {
+        if matches!(mode, Mode::Udp | Mode::SpyUdp) {
             if a.endpoint.is_none() {
-                return Err(Error::Usage("--mode udp needs --endpoint HOST:PORT".into()));
+                return Err(Error::Usage(format!(
+                    "--mode {} needs --endpoint HOST:PORT",
+                    a.mode_name()
+                )));
             }
             if c.is_round_trip() && a.reply.is_none() {
                 return Err(Error::Usage(
                     "a UDP round trip needs --reply HOST:PORT for the echoes".into(),
                 ));
             }
+            a.check_spy_udp(c)?;
         } else {
             if !a.reliable {
                 return Err(Error::Usage(format!(
@@ -282,10 +310,35 @@ impl Aeronish {
         Ok(a)
     }
 
+    /// `--mode spy-udp`'s own refusals: reliable alone, `--role local`
+    /// measuring and `--role pong` its sink (both channels).
+    fn check_spy_udp(&self, c: &Common) -> Result<(), Error> {
+        if self.mode != Mode::SpyUdp {
+            return Ok(());
+        }
+        if !self.reliable {
+            return Err(Error::Usage(
+                "--mode spy-udp is reliable (Aeron's default): --reliable false is refused".into(),
+            ));
+        }
+        if c.role == Role::Ping {
+            return Err(Error::Usage(
+                "--mode spy-udp measures with --role local; --role pong is its sink".into(),
+            ));
+        }
+        if c.role == Role::Pong && self.reply.is_none() {
+            return Err(Error::Usage(
+                "the spy-udp sink needs --reply HOST:PORT (the echoes' channel) too".into(),
+            ));
+        }
+        Ok(())
+    }
+
     const fn mode_name(&self) -> &'static str {
         match self.mode {
             Mode::Ipc => "ipc",
             Mode::Spy => "spy",
+            Mode::SpyUdp => "spy-udp",
             Mode::Udp => "udp",
         }
     }
@@ -295,32 +348,41 @@ impl Aeronish {
         format!("term-length={}|mtu={}|sparse=false", self.term_length, self.mtu)
     }
 
+    /// `endpoint=<e>` and, when given, `|interface=<--interface>`: a UDP
+    /// publication's address (and its spy's: the same canonical form).
+    fn udp_address(&self, endpoint: Option<&str>) -> String {
+        let mut uri = format!("endpoint={}", endpoint.unwrap_or_default());
+        if let Some(i) = &self.interface {
+            uri.push_str("|interface=");
+            uri.push_str(i);
+        }
+        uri
+    }
+
     /// Stream id `id`'s publication: on `endpoint` (UDP), or the mode's
     /// channel. A spy's publication is tagged with its stream id: a
     /// manual-MDC channel with no endpoint or control gets a unique
-    /// canonical form, so a spy finds it by its tag alone.
+    /// canonical form, so a spy finds it by its tag alone. A spy-udp
+    /// publication sends to `endpoint` and is connected only by a receiver
+    /// there (`ssc=false`).
     fn pub_uri(&self, endpoint: Option<&str>, id: i32) -> String {
         let p = self.pub_params();
         match (self.mode, endpoint) {
             (Mode::Ipc, _) => format!("aeron:ipc?{p}"),
             (Mode::Spy, _) => format!("aeron:udp?control-mode=manual|tags={id}|ssc=true|{p}"),
-            (Mode::Udp, e) => {
-                let mut uri = format!("aeron:udp?endpoint={}|{p}", e.unwrap_or_default());
-                if let Some(i) = &self.interface {
-                    uri.push_str("|interface=");
-                    uri.push_str(i);
-                }
-                uri
-            }
+            (Mode::SpyUdp, e) => format!("aeron:udp?{}|ssc=false|{p}", self.udp_address(e)),
+            (Mode::Udp, e) => format!("aeron:udp?{}|{p}", self.udp_address(e)),
         }
     }
 
     /// Stream id `id`'s subscription: on `endpoint` (UDP), or the mode's
-    /// channel (a spy's by its publication's tag).
+    /// channel (a spy's by its publication's tag; a spy-udp spy by its
+    /// publication's address).
     fn sub_uri(&self, endpoint: Option<&str>, id: i32) -> String {
         match (self.mode, endpoint) {
             (Mode::Ipc, _) => "aeron:ipc".to_owned(),
             (Mode::Spy, _) => format!("aeron-spy:aeron:udp?control-mode=manual|tags={id}"),
+            (Mode::SpyUdp, e) => format!("aeron-spy:aeron:udp?{}", self.udp_address(e)),
             (Mode::Udp, e) => {
                 let mut uri = format!("aeron:udp?endpoint={}", e.unwrap_or_default());
                 if !self.reliable {
@@ -350,11 +412,24 @@ impl Aeronish {
         self.stream_id + offset + i32::try_from(i).unwrap_or(0)
     }
 
+    /// The spy-udp sink's subscription to stream `i` of `channel`
+    /// (`endpoint` or `reply`): a plain UDP subscription on its address.
+    fn sink_channel(&self, flag: &str, i: u32) -> Result<(String, i32), Error> {
+        let (e, offset) = match flag {
+            "endpoint" => (self.endpoint.as_ref(), 0),
+            _ => (self.reply.as_ref(), ECHO_OFFSET),
+        };
+        let e = e
+            .ok_or_else(|| Error::Usage(format!("the sink needs --{flag}")))?
+            .of(flag, i)?;
+        Ok((format!("aeron:udp?endpoint={e}"), self.stream(i, offset)))
+    }
+
     const fn wire_bytes(&self) -> u64 {
         let frame = MESSAGE_LEN as u64 + DATA_HEADER;
         match self.mode {
             Mode::Ipc | Mode::Spy => frame,
-            Mode::Udp => frame + UDP_IP_ETH,
+            Mode::SpyUdp | Mode::Udp => frame + UDP_IP_ETH,
         }
     }
 }
@@ -506,23 +581,35 @@ fn ready(tx: Option<&AeronTx>, subs: Vec<AeronSubscription>, timeout: Duration) 
     }
 }
 
-/// The driver's loss counters now, summed by key.
-fn loss_counters(aeron: &Aeron) -> (BTreeMap<&'static str, i64>, bool) {
-    let mut totals: BTreeMap<&'static str, i64> = LOSS_COUNTERS.iter().map(|(_, k)| (*k, 0)).collect();
-    let mut dpdk = false;
+/// The driver's counters now: the loss counters and the traffic counters,
+/// each summed by key, and whether the driver is md-dpdk's.
+struct Counters {
+    loss: BTreeMap<&'static str, i64>,
+    wire: BTreeMap<&'static str, i64>,
+    dpdk: bool,
+}
+
+fn counters_now(aeron: &Aeron) -> Counters {
+    let mut c = Counters {
+        loss: LOSS_COUNTERS.iter().map(|(_, k)| (*k, 0)).collect(),
+        wire: WIRE_COUNTERS.iter().map(|(_, k)| (*k, 0)).collect(),
+        dpdk: false,
+    };
     aeron
         .counters_reader()
         .foreach_counter_fn(|value, _id, _type, _key, label| {
             if label.starts_with("rusteron-dpdk") {
-                dpdk = true;
+                c.dpdk = true;
             }
-            if let Some((_, k)) = LOSS_COUNTERS.iter().find(|(prefix, _)| label.starts_with(prefix))
-                && let Some(t) = totals.get_mut(k)
-            {
-                *t += value;
+            for (list, totals) in [(&LOSS_COUNTERS[..], &mut c.loss), (&WIRE_COUNTERS[..], &mut c.wire)] {
+                if let Some((_, k)) = list.iter().find(|(prefix, _)| label.starts_with(prefix))
+                    && let Some(t) = totals.get_mut(k)
+                {
+                    *t += value;
+                }
             }
         });
-    (totals, dpdk)
+    c
 }
 
 /// The embedded driver: started on a thread of its own, which runs its
@@ -596,6 +683,8 @@ struct Ends {
     send: SendStats,
     allocs: u64,
     start_realtime_ns: u128,
+    /// The echoes the echo thread sent (local round trip).
+    echoes: Option<u64>,
 }
 
 fn joined<T>(r: std::thread::Result<Result<T, Error>>, who: &str) -> Result<T, Error> {
@@ -649,6 +738,7 @@ fn local_oneway(c: &Common, a: &Aeronish, clock: &TscClock) -> Result<Ends, Erro
             send,
             allocs: sa + ra,
             start_realtime_ns: u128::from(start_rt.load(Ordering::Acquire)),
+            echoes: None,
         })
     })
 }
@@ -683,13 +773,14 @@ fn ping_end(
         send,
         allocs: thread_allocs() - a0,
         start_realtime_ns: rt,
+        echoes: None,
     })
 }
 
 /// The echo end on this thread: its client, ping subscriptions and echo
 /// publications (then `added`), then (after `barrier`, when given) echoes
 /// until the pings go or `keep_going` says stop. Returns its hot-path
-/// allocations.
+/// allocations and the echoes it sent.
 fn echo_end(
     c: &Common,
     a: &Aeronish,
@@ -697,7 +788,7 @@ fn echo_end(
     barrier: Option<&Barrier>,
     added: &dyn Fn(),
     keep_going: &mut impl FnMut() -> bool,
-) -> Result<u64, Error> {
+) -> Result<(u64, u64), Error> {
     let setup = (|| -> Result<_, Error> {
         let aeron = client(&a.dir)?;
         let subs = subscriptions(&aeron, c.streams, |i| a.ping_channel(i))?;
@@ -712,8 +803,8 @@ fn echo_end(
     }
     let (_aeron, mut tx, mut rx) = setup?;
     let a0 = thread_allocs();
-    point::echo(&mut rx, &mut tx, keep_going)?;
-    Ok(thread_allocs() - a0)
+    let echoes = point::echo(&mut rx, &mut tx, keep_going)?;
+    Ok((thread_allocs() - a0, echoes))
 }
 
 fn local_round_trip(c: &Common, a: &Aeronish, clock: &TscClock) -> Result<Ends, Error> {
@@ -731,7 +822,9 @@ fn local_round_trip(c: &Common, a: &Aeronish, clock: &TscClock) -> Result<Ends, 
             r
         });
         let mut ends = joined(ping.join(), "ping")?;
-        ends.allocs += joined(echo.join(), "echo")?;
+        let (allocs, echoes) = joined(echo.join(), "echo")?;
+        ends.allocs += allocs;
+        ends.echoes = Some(echoes);
         Ok(ends)
     })
 }
@@ -753,7 +846,7 @@ fn manifest(c: &Common, a: &Aeronish, transport: &str) -> Result<RunManifest, Er
         .setting("driver_busy_threads", &a.driver_busy_threads.to_string())
         .setting("client_pre_touch", "true")
         .setting("idle", "busy-spin (the client's measuring threads)")
-        .setting("thread_order", thread_order(c));
+        .setting("thread_order", thread_order(c, a.mode));
     if c.is_round_trip() {
         let (echo_publication, echo_subscription, _) = a.echo_channel(0)?;
         m.setting("echo_pub_uri", &echo_publication)
@@ -771,11 +864,12 @@ fn manifest(c: &Common, a: &Aeronish, transport: &str) -> Result<RunManifest, Er
     Ok(m)
 }
 
-const fn thread_order(c: &Common) -> &'static str {
+fn thread_order(c: &Common, mode: Mode) -> &'static str {
     match (c.role, c.round_trip) {
         (Role::Local, false) => "sender,receiver",
         (Role::Local, true) => "ping,echo",
         (Role::Ping, _) => "ping",
+        _ if mode == Mode::SpyUdp => "sink",
         _ => "echo",
     }
 }
@@ -797,28 +891,34 @@ fn run(c: &Common, a: &Aeronish) -> Result<Option<String>, Error> {
         }
         Role::Local | Role::Ping | Role::Pong => {}
     }
-    c.check_cpus(client_threads(c) as usize, thread_order(c))?;
+    c.check_cpus(client_threads(c) as usize, thread_order(c, a.mode))?;
     let _driver = if a.embedded {
         Some(Embedded::start(&a.dir)?)
     } else {
         None
     };
     let counters = client(&a.dir)?;
-    let (before, dpdk) = loss_counters(&counters);
+    let before = counters_now(&counters);
     let transport = match a.mode {
         Mode::Ipc => "aeron-ipc",
         Mode::Spy => "aeron-spy",
-        Mode::Udp if dpdk => "aeron-dpdk",
+        Mode::SpyUdp if before.dpdk => "aeron-spy-dpdk",
+        Mode::SpyUdp => "aeron-spy-udp",
+        Mode::Udp if before.dpdk => "aeron-dpdk",
         Mode::Udp => "aeron-udp",
     };
     let mut m = manifest(c, a, transport)?;
     if c.role == Role::Pong {
         stop_on_sigterm();
-        let allocs = echo_end(c, a, c.cpu(0), None, &|| println!("ready"), &mut || {
-            !STOP.load(Ordering::Relaxed)
-        })?;
-        let (after, _) = loss_counters(&counters);
-        record_counters(&mut m, &before, &after);
+        let allocs = if a.mode == Mode::SpyUdp {
+            sink(c, a, &mut m)?
+        } else {
+            echo_end(c, a, c.cpu(0), None, &|| println!("ready"), &mut || {
+                !STOP.load(Ordering::Relaxed)
+            })?
+            .0
+        };
+        record_counters(&mut m, &before, &counters_now(&counters));
         m.setting("hot_path_allocs", &allocs.to_string())
             .setting("busy_threads", &(client_threads(c) + a.driver_busy_threads).to_string());
         point::write_manifest(c, m)?;
@@ -831,8 +931,10 @@ fn run(c: &Common, a: &Aeronish) -> Result<Option<String>, Error> {
         _ => local_oneway(c, a, &clock)?,
     };
     let end = clock.raw();
-    let (after, _) = loss_counters(&counters);
-    let retrans = record_counters(&mut m, &before, &after);
+    let retrans = record_counters(&mut m, &before, &counters_now(&counters));
+    if let Some(e) = ends.echoes {
+        m.setting("echoes_sent", &e.to_string());
+    }
     let row = point::finish(
         c,
         &clock,
@@ -852,17 +954,134 @@ fn run(c: &Common, a: &Aeronish) -> Result<Option<String>, Error> {
     Ok(Some(row))
 }
 
-/// Each loss counter's growth into the manifest; returns the retransmits'.
-fn record_counters(m: &mut RunManifest, before: &BTreeMap<&str, i64>, after: &BTreeMap<&str, i64>) -> u64 {
+/// Each loss counter's growth into the manifest (`aeron.<key>`), and each
+/// traffic counter's (`driver.<key>`); returns the retransmits'.
+fn record_counters(m: &mut RunManifest, before: &Counters, after: &Counters) -> u64 {
     let mut retrans = 0;
-    for (k, v) in after {
-        let grew = v - before.get(k).copied().unwrap_or(0);
+    for (k, v) in &after.loss {
+        let grew = v - before.loss.get(k).copied().unwrap_or(0);
         m.setting(&format!("aeron.{k}"), &grew.to_string());
         if *k == "retransmits-sent" {
             retrans = u64::try_from(grew).unwrap_or(0);
         }
     }
+    for (k, v) in &after.wire {
+        let grew = v - before.wire.get(k).copied().unwrap_or(0);
+        m.setting(&format!("driver.{k}"), &grew.to_string());
+    }
     retrans
+}
+
+/// One sink subscription's count: frames, the next sequence number due,
+/// and what came out of order.
+#[derive(Default)]
+struct SinkStream {
+    frames: u64,
+    next: u64,
+    gaps: u64,
+    behind: u64,
+    refused: u64,
+    seen: bool,
+}
+
+impl SinkStream {
+    fn on(&mut self, payload: &[u8]) {
+        self.frames += 1;
+        match ergon_latency_core::message::Message::decode(payload) {
+            Ok(msg) if msg.seq == self.next => self.next += 1,
+            Ok(msg) if msg.seq > self.next => {
+                self.gaps += msg.seq - self.next;
+                self.next = msg.seq + 1;
+            }
+            Ok(_) => self.behind += 1,
+            Err(_) => self.refused += 1,
+        }
+    }
+}
+
+/// How long a stopped sink keeps reading while frames still come (the
+/// publications draining), and at most.
+const SINK_QUIET: Duration = Duration::from_millis(500);
+const SINK_DRAIN: Duration = Duration::from_secs(4);
+
+/// The spy-udp sink: subscribes to every stream's ping channel (`--endpoint`)
+/// and echo channel (`--reply`), says `ready`, then reads every frame until
+/// SIGTERM (and the quiet after it) or until every ping channel's image has
+/// come and gone. Its counts go to the manifest (`sink.*`); returns its
+/// allocations while reading.
+fn sink(c: &Common, a: &Aeronish, m: &mut RunManifest) -> Result<u64, Error> {
+    let aeron = client(&a.dir)?;
+    let mut subs = Vec::new();
+    for flag in ["endpoint", "reply"] {
+        for i in 0..c.streams {
+            let (uri, id) = a.sink_channel(flag, i)?;
+            subs.push((flag, subscription(&aeron, &uri, id)?, SinkStream::default()));
+        }
+    }
+    let (uri, _) = a.sink_channel("endpoint", 0)?;
+    m.setting("sink_sub_uri", &uri);
+    println!("ready");
+    point::pin(c.cpu(0))?;
+    let a0 = thread_allocs();
+    let (mut stopped, mut last_read, mut idle) = (None::<Instant>, Instant::now(), 0u32);
+    loop {
+        let mut read = 0;
+        for (_, sub, st) in &mut subs {
+            let n = sub
+                .poll_fn(|payload: &[u8], _header| st.on(payload), POLL_LIMIT)
+                .map_err(aeron_err("polling a sink subscription"))?;
+            read += usize::try_from(n).unwrap_or(0);
+        }
+        if read > 0 {
+            idle = 0;
+            continue;
+        }
+        idle = idle.wrapping_add(1);
+        if !idle.is_multiple_of(1024) {
+            continue;
+        }
+        let now = Instant::now();
+        if idle == 1024 {
+            last_read = now;
+        }
+        // every ping channel's image came, and every image went
+        let mut gone = true;
+        for (flag, sub, st) in &mut subs {
+            let images = sub.image_count().unwrap_or(0);
+            st.seen |= images > 0;
+            if images > 0 || (*flag == "endpoint" && !st.seen) {
+                gone = false;
+            }
+        }
+        if gone {
+            break;
+        }
+        if stopped.is_none() && STOP.load(Ordering::Relaxed) {
+            stopped = Some(now);
+        }
+        if let Some(t) = stopped
+            && (now.duration_since(last_read) >= SINK_QUIET || now.duration_since(t) >= SINK_DRAIN)
+        {
+            break;
+        }
+    }
+    let allocs = thread_allocs() - a0;
+    let sum = |dir: &str, f: fn(&SinkStream) -> u64| -> u64 {
+        subs.iter().filter(|(d, _, _)| *d == dir).map(|(_, _, s)| f(s)).sum()
+    };
+    let all = |f: fn(&SinkStream) -> u64| sum("endpoint", f) + sum("reply", f);
+    m.setting("sink.ping_frames", &sum("endpoint", |s| s.frames).to_string())
+        .setting("sink.echo_frames", &sum("reply", |s| s.frames).to_string())
+        .setting("sink.gaps", &all(|s| s.gaps).to_string())
+        .setting("sink.behind", &all(|s| s.behind).to_string())
+        .setting("sink.refused", &all(|s| s.refused).to_string())
+        .setting(
+            "sink.images",
+            &subs.iter().filter(|(_, _, s)| s.seen).count().to_string(),
+        );
+    drop(subs);
+    drop(aeron);
+    Ok(allocs)
 }
 
 fn main() -> ExitCode {

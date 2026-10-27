@@ -244,6 +244,10 @@ TRANSPORT_ONLOAD_BUILD_S = 600
 # trace set up, read back and gzipped, the spinners and sampler started and
 # stopped), measured in the local smoke
 TRANSPORT_EVENTS_S = 6
+# a sink arm's point (hosts sink: aeron_lat --mode spy-udp) starts a sink on
+# host b for each of its two runs and stops it after (its ready line, then
+# TERM and up to 4 s of reading on): not yet timed on a run, taken at 5 s each
+TRANSPORT_SINK_S = 5
 
 
 def transport_estimate(pair, paths, reps, warmup_s, point_s, switch_s):
@@ -263,6 +267,11 @@ def transport_estimate(pair, paths, reps, warmup_s, point_s, switch_s):
         rounds += len(longest["netem"]) * reps
     overhead = runs * TRANSPORT_RUN_S + rounds * TRANSPORT_ROUND_S + tp.count(sets, pair, reps) * TRANSPORT_EVENTS_S
     setups = {arms[a][1] for s in sets if s["pair"] == pair for a in s["arms"] if a != "aa"}
+    # sink arms' points (the A/A of one too): two sinks each
+    sink_points = sum(len(s["loads"]) * len(s["streams"]) * len(s["netem"]) * reps
+                      for s in sets if s["pair"] == pair
+                      for a in s["arms"] if arms[s["arms"][0] if a == "aa" else a][2] == "sink")
+    overhead += sink_points * 2 * TRANSPORT_SINK_S
     if "fstack" in setups:
         overhead += TRANSPORT_FSTACK_BUILD_S
     if "onload" in setups:

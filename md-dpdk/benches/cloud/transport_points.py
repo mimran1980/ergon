@@ -103,6 +103,14 @@ def hosts_of(set_):
     return ("a",) if set_.split(".")[0] in ONE_HOST_SETS else ("a", "b")
 
 
+def hosts_of_point(p):
+    """The hosts point p used, as its manifest keys them (a one-host arm's
+    one; a two-host or sink arm's a and b), else its set's (hosts_of): a set
+    may hold one-host and sink arms (transport_plan.py)."""
+    used = (p.manifest or {}).get("hosts")
+    return tuple(sorted(used)) if used else hosts_of(p.set)
+
+
 def irq_core_thread(t, cpus):
     """Whether placement sample entry t is the IRQ CPU's own softirq thread
     (ksoftirqd/<n> on IRQ CPU n, cpus a manifest's cpus.<host>) over
