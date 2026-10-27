@@ -51,7 +51,11 @@
 #     (aeron_lat --mode spy-udp) on a with a sink on b for each run, beside
 #     a one-host arm in its set, and fairness.py's sink rule; LAB_ARMS_FILE and
 #     LAB_EXTRA_SRC's hooks with a neutral fixture (transport_prepare's steps
-#     too).
+#     too); the hand-off arms (transport-aws-aeron-handoff.tsv): each its
+#     twin's driver mode but for its threading or DRIVER=embedded, aeron_lat's
+#     --driver and busy threads, an embedded driver's binary with driver.env
+#     under sudo setpriv, the session on fake hosts through fairness.py's
+#     declared rule (a twin chain; a driver mode differing beyond its knob).
 #
 # Run from anywhere:  bash md-dpdk/benches/cloud/test/test-transport-runner.sh
 set -euo pipefail
@@ -238,6 +242,66 @@ aws-onload: onload
 aws-onload: no fstack
 smoke: onload
 matrix: none" "$got"
+# the hand-off arms (transport-aws-aeron-handoff.tsv): dpdk-aeron-rel and
+# aeron-rel but for their driver's threading or place, each declared its
+# twin (TR_DECLARED, a chain for -invoker); their driver modes pass
+# mode_check (DRIVER=embedded: vm.sh starts no driver), aeron_lat's
+# --driver and --driver-busy-threads follow them, an embedded driver's
+# binary runs with driver.env under fstack_lat's privileges, and the
+# events leave a driver's idle CPUs to the gap spinners
+got=$(
+    . "$cloud/transport.sh"
+    tr_cloud=aws
+    dir=$tmp/fstack hk=0 tr_bin_path=P iso=4,6,8,10,12,14 kind=two cpus=10,12,14
+    for a in dpdk-aeron-rel dpdk-aeron-rel-emb dpdk-aeron-rel-shnet dpdk-aeron-rel-shared dpdk-aeron-rel-invoker aeron-rel-emb aeron-rel-invoker; do
+        read -r bin setup _ rest <<<"$(tr_plan arm "$a")"
+        read -ra args <<<"$rest"
+        arm=$a
+        m=$(tr_driver_mode)
+        echo "$a: ${m/$(. "$cloud/transport-settings.env"; echo "$TR_AERON_MODE_SUFFIX")/<suffix>}"
+        echo "  check $(mode_check "$m" remote x86_64 aws '' >/dev/null 2>&1; echo $?); knobs threading $(tr_knob aeron_threading) driver $(tr_knob aeron_driver); $(tr_bin_args "$bin" ping 10.30.1.11 10.30.1.22 "${args[@]}" | grep -o -- '--driver .* --driver-busy-threads [0-9]*'); events $(tr_events_cpus a)"
+        echo "  start: $(tr_start r/pong.pid r/pong.out "$bin" --role pong | sed 's/ --inh-caps.*sys_rawio//')"
+    done
+    # INVOKER with the driver not the binary's, and a twin chain that goes round
+    tr_sets_file=$cloud/transport-aws-aeron-handoff.tsv reps=3
+    arm=dpdk-aeron-rel-shnet
+    read -r bin setup _ rest <<<"$(tr_plan arm "$arm")"; read -ra args <<<"$rest"
+    TR_DECLARED="dpdk-aeron-rel-shnet:dpdk-aeron-rel:aeron_threading=INVOKER" tr_driver_modes_check a 2>&1 >/dev/null | sed 's/^/refused: /' || true
+    TR_DECLARED="dpdk-aeron-rel-emb:dpdk-aeron-rel-invoker:aeron_driver=embedded dpdk-aeron-rel-invoker:dpdk-aeron-rel-emb:aeron_threading=INVOKER" tr_declared_check 2>&1 | sed 's/^/refused: /' || true
+    echo "handoff check: $(tr_check a 2>&1)"
+)
+same "transport.sh, the hand-off arms: each its twin's driver mode but for its threading (SHARED_NETWORK keeps the conductor's core, SHARED and INVOKER drop it) or DRIVER=embedded, each passing mode_check; aeron_lat's --driver (embedded, invoker) and busy threads (3, 2, 1, 0) from it; an embedded driver's binary started with ~/bench/driver.env under sudo setpriv; the events' spinners on the CPUs the driver leaves; INVOKER without the driver embedded and a twin chain going round refused; the sets file checks (54 points at 3 reps)" \
+"dpdk-aeron-rel: dpdk<suffix>
+  check 0; knobs threading DEDICATED driver external; --driver external --driver-busy-threads 3; events 4,6,8,10,12,14 12,14
+  start: sh -c 'taskset -c 0 env PATH=P aeron_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
+dpdk-aeron-rel-emb: dpdk<suffix>@DRIVER=embedded
+  check 0; knobs threading DEDICATED driver embedded; --driver embedded --driver-busy-threads 3; events 4,6,8,10,12,14 12,14
+  start: sudo -n setpriv --reuid=\"\$(id -u)\" --regid=\"\$(id -g)\" --init-groups --reset-env sh -c '. ~/bench/driver.env; taskset -c 0 env PATH=P aeron_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
+dpdk-aeron-rel-shnet: dpdk@CONDUCTOR=own@AERON_TERM_BUFFER_LENGTH=1048576@AERON_IPC_TERM_BUFFER_LENGTH=1048576@AERON_CONDUCTOR_IDLE_STRATEGY=spin@AERON_THREADING_MODE=SHARED_NETWORK
+  check 0; knobs threading SHARED_NETWORK driver external; --driver external --driver-busy-threads 2; events 4,6,8,10,12,14 6,12,14
+  start: sh -c 'taskset -c 0 env PATH=P aeron_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
+dpdk-aeron-rel-shared: dpdk@AERON_TERM_BUFFER_LENGTH=1048576@AERON_IPC_TERM_BUFFER_LENGTH=1048576@AERON_THREADING_MODE=SHARED
+  check 0; knobs threading SHARED driver external; --driver external --driver-busy-threads 1; events 4,6,8,10,12,14 6,8,12,14
+  start: sh -c 'taskset -c 0 env PATH=P aeron_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
+dpdk-aeron-rel-invoker: dpdk@AERON_TERM_BUFFER_LENGTH=1048576@AERON_IPC_TERM_BUFFER_LENGTH=1048576@AERON_THREADING_MODE=INVOKER@DRIVER=embedded
+  check 0; knobs threading INVOKER driver embedded; --driver invoker --driver-busy-threads 0; events 4,6,8,10,12,14 4,6,8,12,14
+  start: sudo -n setpriv --reuid=\"\$(id -u)\" --regid=\"\$(id -g)\" --init-groups --reset-env sh -c '. ~/bench/driver.env; taskset -c 0 env PATH=P aeron_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
+aeron-rel-emb: kernel-busy<suffix>@NAPI_DEFER=0/0@DRIVER=embedded
+  check 0; knobs threading DEDICATED driver embedded; --driver embedded --driver-busy-threads 3; events 4,6,8,10,12,14 12,14
+  start: sudo -n setpriv --reuid=\"\$(id -u)\" --regid=\"\$(id -g)\" --init-groups --reset-env sh -c '. ~/bench/driver.env; taskset -c 0 env PATH=P aeron_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
+aeron-rel-invoker: kernel-busy@AERON_TERM_BUFFER_LENGTH=1048576@AERON_IPC_TERM_BUFFER_LENGTH=1048576@NAPI_DEFER=0/0@AERON_THREADING_MODE=INVOKER@DRIVER=embedded
+  check 0; knobs threading INVOKER driver embedded; --driver invoker --driver-busy-threads 0; events 4,6,8,10,12,14 4,6,8,12,14
+  start: sudo -n setpriv --reuid=\"\$(id -u)\" --regid=\"\$(id -g)\" --init-groups --reset-env sh -c '. ~/bench/driver.env; taskset -c 0 env PATH=P aeron_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
+refused: arm dpdk-aeron-rel-shnet: aeron_threading INVOKER with aeron_driver external: an INVOKER driver is the binary's own (aeron_driver embedded)
+refused: TR_DECLARED dpdk-aeron-rel-emb: its twins go round ( dpdk-aeron-rel-emb dpdk-aeron-rel-invoker dpdk-aeron-rel-emb)
+handoff check: 54" "$got"
+got=$(
+    . "$cloud/modes.sh"
+    rc() { mode_check "$1" remote x86_64 aws '' >/dev/null 2>&1; echo -n " $?"; }
+    echo -n "DRIVER:"; rc dpdk@DRIVER=embedded; rc kernel-busy@AERON_THREADING_MODE=INVOKER@DRIVER=embedded; rc dpdk@DRIVER=external; rc dpdk-raw@DRIVER=embedded; rc dpdk@DRIVER=embedded+idle; rc dpdk@DRIVER=embedded@DRIVER=embedded
+    echo
+)
+same "modes.sh: DRIVER=embedded (no driver process; the bench binary's) under any threading mode; any other value, a raw floor's, +idle's and a second one refused" "DRIVER: 0 0 2 2 2 2" "$got"
 got="$(plan binom 300000 30 0.01) | $(plan binom 300000 80 0.01) | $(plan binom 1000 0 0) | $(plan binom 1000 1 0) | $(plan binom 1000 2 0.01) | $(plan binom 6000000 60000 1)"
 same "transport_plan.py binom: the dropped count against its 1-in-10,000 interval, exact at small means, none at 0 %" \
     "8 52 ok | 8 52 FAIL | 0 0 ok | 0 0 FAIL | 0 3 ok | 59051 60949 ok" "$got"
@@ -1215,6 +1279,9 @@ driver) if [[ -n ${FAKE_DRIVER_FAIL:-} && $2 == "$FAKE_DRIVER_FAIL"* ]]; then
         echo 'vm.sh: line 2096: "return $rc" failed (exit 1): stopping' >&2
         exit 1
     fi
+    # the driver's environment (vm.sh's ~/bench/driver.env), which an
+    # embedded driver's binary sources: here its mode alone
+    echo "export FAKE_DRIVER_ENV='$2'" >"$HOME/bench/driver.env"
     case $2 in *@NAPI_DEFER=*) v=${2#*@NAPI_DEFER=}; v=${v%%@*}; echo "${v%/*} ${v#*/}" >"$st/napi" ;; kernel-busy*) echo "2 200000" >"$st/napi" ;; kernel | kernel@*) echo "0 0" >"$st/napi" ;;
     # Onload's driver: onload-up first, the NICs' deferral off
     onload@*) echo "0 0" >"$st/napi" ;; esac ;;
@@ -1260,7 +1327,8 @@ cat >"$sb/bin/stub" <<'SH'
 #!/usr/bin/env bash
 # a bench binary as transport-cli.md has it
 me=${0##*/}
-echo "$FAKE_HOST $me $*" >>"$FAKE_HOSTS/runs"
+# (with the driver's environment, when it was sourced: an embedded driver's binary)
+echo "$FAKE_HOST $me $*${FAKE_DRIVER_ENV:+ [driver.env $FAKE_DRIVER_ENV]}" >>"$FAKE_HOSTS/runs"
 role= out= label= rate= kind=oneway streams=1 warm=0 dur=0 mode= impl=
 while (($#)); do
     case $1 in --role) role=$2 ;; --out) out=$2 ;; --label) label=$2 ;; --rate) rate=$2 ;; --round-trip) kind=load ;;
@@ -1336,6 +1404,18 @@ echo "$FAKE_HOST onload $* | $(env | grep '^EF_' | sort | tr '\n' ' ')" >>"$FAKE
 while [[ ${1:-} == --* ]]; do shift; done
 exec "$@"
 SH
+# sudo -n setpriv <options> <command>: logged, then the command as this
+# user (an embedded driver's binary, as fstack_lat, runs under it)
+cat >"$sb/bin/sudo" <<'SH'
+#!/usr/bin/env bash
+echo "$FAKE_HOST sudo $*" >>"$FAKE_HOSTS/sudo"
+[[ ${1:-} == -n ]] && shift
+if [[ ${1:-} == setpriv ]]; then
+    shift
+    while [[ ${1:-} == --* ]]; do shift; done
+fi
+exec "$@"
+SH
 cat >"$sb/bin/taskset" <<'SH'
 #!/usr/bin/env bash
 # taskset -c <cpu> <command>...: logged, then the command
@@ -1353,7 +1433,7 @@ mkhost() { # <host>
 trun() { # <pair> <reps> [<arms file>] [vars...]: transport.sh run on host a
     local pair=$1 reps=$2 af=${3:-}
     shift 3 || shift $#
-    rm -rf "$sb/a" "$sb/b" "$sb/calls" "$sb/runs" "$sb/taskset" "$sb/onload"
+    rm -rf "$sb/a" "$sb/b" "$sb/calls" "$sb/runs" "$sb/taskset" "$sb/onload" "$sb/sudo"
     mkhost a
     mkhost b
     mkdir -p "$sb/a/bench/transport-$pair"
@@ -1853,6 +1933,68 @@ grep -q "^onload: ot: .*onload-eio-tcp@STREAMS=1.*: b's Onload stack mid-window:
 ! grep -E '^[a-z-]+:' <<<"$fv" | grep -qv '^onload:' || why+=" other violations: $(grep -E '^[a-z-]+:' <<<"$fv" | grep -v '^onload:' | head -2 | tr '\n' ' ');"
 [[ -z $why ]] && pass "transport.sh run, setup onload: each socket arm's binary under onload (profile, TR_ONLOAD_ENV), no kernel busy poll or TCP timers; Aeron's media driver under onload instead; onload-up and stop around each arm, no stack left before each socket point (onload-idle); each point's command, build, stacks and NIC deferral in its manifest; fairness clean, and its onload rule flags a host without the arm's stack" ||
     fail "transport.sh run, setup onload:$why"
+
+# the hand-off session (transport-aws-aeron-handoff.tsv) on the fake hosts:
+# each arm's driver mode set up on both hosts (DRIVER=embedded: vm.sh starts
+# none), aeron_lat's --driver and busy threads by arm, an embedded driver's
+# binary under sudo setpriv with the driver's environment sourced (no other
+# arm's), the knobs and driver mode in each manifest, fairness.py clean
+# (the declared rule takes each arm as its twin's but for its knob, the
+# invoker's through its chain); then an emb point whose driver mode differs
+# beyond DRIVER: the declared rule flags it
+# (its kernel set k too, which the file leaves commented out)
+sed 's/^#set k   /set k    /' "$cloud/transport-aws-aeron-handoff.tsv" >"$tmp/handoff.tsv"
+grep -q '^set k ' "$tmp/handoff.tsv" || fail "transport-aws-aeron-handoff.tsv: no set k to uncomment"
+TRUN_SETS=$tmp/handoff.tsv trun a 1 "" && hrc=0 || hrc=$?
+d=$sb/a/bench/transport-a
+why=
+[[ $hrc == 0 && $(cat "$d/rc") == 0 ]] || why+=" exit $hrc: $(tail -3 "$sb/run.out" | tr '\n' ' ');"
+n=$(TRUN_SETS= plan count a 1 "$matrix:arms" "$tmp/handoff.tsv")
+[[ $(grep -c . "$d/results.csv") == "$n" ]] || why+=" $(grep -c . "$d/results.csv") rows, not $n;"
+for h in a b; do
+    for m in 'dpdk@CONDUCTOR=own@.*_IDLE_STRATEGY=noop' 'dpdk@CONDUCTOR=own@.*_IDLE_STRATEGY=noop@DRIVER=embedded' 'dpdk@CONDUCTOR=own@.*@AERON_THREADING_MODE=SHARED_NETWORK' \
+        'dpdk@AERON_TERM_BUFFER_LENGTH=[0-9]*@AERON_IPC_TERM_BUFFER_LENGTH=[0-9]*@AERON_THREADING_MODE=SHARED' 'dpdk@AERON_TERM_BUFFER_LENGTH=[0-9]*@AERON_IPC_TERM_BUFFER_LENGTH=[0-9]*@AERON_THREADING_MODE=INVOKER@DRIVER=embedded' \
+        'kernel-busy@CONDUCTOR=own@.*@NAPI_DEFER=0/0@DRIVER=embedded' 'kernel-busy@AERON_TERM_BUFFER_LENGTH=[0-9]*@AERON_IPC_TERM_BUFFER_LENGTH=[0-9]*@NAPI_DEFER=0/0@AERON_THREADING_MODE=INVOKER@DRIVER=embedded'; do
+        grep -q "^$h vm.sh driver $m$" "$sb/calls" || why+=" host $h: no driver $m;"
+    done
+done
+for e in 'dpdk-aeron-rel@|external --driver-busy-threads 3' 'dpdk-aeron-rel-emb@|embedded --driver-busy-threads 3' 'dpdk-aeron-rel-shnet@|external --driver-busy-threads 2' \
+    'dpdk-aeron-rel-shared@|external --driver-busy-threads 1' 'dpdk-aeron-rel-invoker@|invoker --driver-busy-threads 0' 'aeron-rel-emb@|embedded --driver-busy-threads 3' \
+    'aeron-rel-invoker@|invoker --driver-busy-threads 0'; do
+    for r in 'a aeron_lat --role ping' 'b aeron_lat --role pong'; do
+        grep "^$r " "$sb/runs" | grep -- ":${e%|*}" | grep -q -- "--driver ${e#*|} " || why+=" ${r%% *} ${e%|*}: not --driver ${e#*|};"
+    done
+done
+# an embedded driver's runs (emb and invoker, h's 3 loads and k's 1, ping and
+# pong) with the driver's environment and under sudo setpriv; no other run
+emb=$(grep -cE -- '--driver (embedded|invoker) ' "$sb/runs")
+[[ $emb == 16 ]] || why+=" $emb embedded runs, not 16;"
+[[ $(grep -cE -- '--driver (embedded|invoker) .*\[driver.env (dpdk|kernel-busy)@.*@DRIVER=embedded\]$' "$sb/runs") == 16 ]] || why+=" an embedded run without its driver.env;"
+! grep -- '--driver external ' "$sb/runs" | grep -q 'driver.env' || why+=" an external driver's run sourced driver.env;"
+[[ $(grep -c '^. sudo -n setpriv .*--ambient-caps=+sys_admin,+dac_override,+ipc_lock,+sys_rawio sh -c ' "$sb/sudo" 2>/dev/null) == 16 ]] ||
+    why+=" $(grep -c . "$sb/sudo" 2>/dev/null) runs under sudo setpriv, not 16;"
+for m in "$d"/manifest/*.env; do
+    a=$(sed -n 's/^arm=//p' "$m")
+    case $a in
+    *-invoker) want='aeron_threading=INVOKER aeron_driver=embedded' ;;
+    *-emb) want='aeron_threading=DEDICATED aeron_driver=embedded' ;;
+    *-shnet) want='aeron_threading=SHARED_NETWORK aeron_driver=external' ;;
+    *-shared) want='aeron_threading=SHARED aeron_driver=external' ;;
+    *) want='aeron_threading=DEDICATED aeron_driver=external' ;;
+    esac
+    [[ "$(grep -E '^knob\.aeron_(threading|driver)=' "$m" | sed 's/^knob\.//' | paste -sd' ' -)" == "$want" ]] || why+=" $a: knobs $(grep -E '^knob.aeron_(threading|driver)' "$m" | tr '\n' ' ');"
+    grep -q '^driver_mode=' "$m" || why+=" $a: no driver mode;"
+done
+fv=$(python3 "$cloud/fairness.py" "$d" 2>&1) || why+=" fairness: $(head -5 <<<"$fv" | tr '\n' ' ');"
+grep -q '^declared\.dpdk-aeron-rel-invoker=dpdk-aeron-rel-emb:knob\.aeron_threading$' "$d/transport-settings.env" ||
+    why+=" the invoker's declaration not collected;"
+m=$(grep -l '^arm=dpdk-aeron-rel-emb$' "$d"/manifest/*.env | head -1)
+sed -i.bak 's/^\(driver_mode=.*\)@DRIVER=embedded$/\1@RUSTERON_DPDK_BURST_SIZE=32@DRIVER=embedded/' "$m" && rm -f "$m.bak"
+python3 "$cloud/transport_collect.py" "$d" >/dev/null 2>&1 || true
+fv=$(python3 "$cloud/fairness.py" "$d" 2>&1 || true)
+grep -q "^declared: h: .*dpdk-aeron-rel-emb and its twin dpdk-aeron-rel differ in media driver mode" <<<"$fv" || why+=" a driver mode beyond DRIVER not flagged: $(grep -m2 '^declared' <<<"$fv");"
+[[ -z $why ]] && pass "transport.sh run, the hand-off session: each arm's driver mode on both hosts (DRIVER=embedded: no process), aeron_lat's --driver and busy threads by arm, an embedded driver's binary with driver.env under sudo setpriv (no other), knobs and driver mode in every manifest; fairness.py clean (each declared twin, the invoker's through -emb), and a driver mode differing beyond DRIVER flagged" ||
+    fail "transport.sh run, the hand-off session:$why"
 
 # transport_prepare's steps on the operator machine (lib.sh's helpers faked):
 # the tree and the arms file to both VMs, the build, the map's boot line, a

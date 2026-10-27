@@ -57,6 +57,15 @@ arm  aeron-udp        aeron_lat  kernel   two  --mode udp --reliable false
 arm  dpdk-aeron-udp   aeron_lat  dpdk     two  --mode udp --reliable false
 arm  aeron-rel        aeron_lat  kernel   two  --mode udp --reliable true
 arm  dpdk-aeron-rel   aeron_lat  dpdk     two  --mode udp --reliable true
+# the hand-off arms: dpdk-aeron-rel's and aeron-rel's rows, each declared its
+# twin but for its driver's place or threading (transport-settings.env
+# TR_DECLARED; transport-aws-aeron-handoff.tsv)
+arm  dpdk-aeron-rel-emb     aeron_lat  dpdk    two  --mode udp --reliable true
+arm  dpdk-aeron-rel-shnet   aeron_lat  dpdk    two  --mode udp --reliable true
+arm  dpdk-aeron-rel-shared  aeron_lat  dpdk    two  --mode udp --reliable true
+arm  dpdk-aeron-rel-invoker aeron_lat  dpdk    two  --mode udp --reliable true
+arm  aeron-rel-emb          aeron_lat  kernel  two  --mode udp --reliable true
+arm  aeron-rel-invoker      aeron_lat  kernel  two  --mode udp --reliable true
 arm  mio-udp          udp_lat    sockets  two  --impl mio
 arm  eio-udp          udp_lat    sockets  two  --impl ergon
 arm  mio-tcp          tcp_lat    sockets  two  --impl mio

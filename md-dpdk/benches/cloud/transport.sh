@@ -108,8 +108,30 @@ tr_check() {
     n=$(tr_plan count "$pair" "${reps:-5}") || return 2
     ((n > 0)) || { echo "LAB_PAIR $pair: no point to run in $(tr_files "$tr_arms_file" | tr '\n' ' ')" >&2; return 2; }
     tr_declared_check || return 2
+    tr_driver_modes_check "$pair" || return 2
     tr_huge_check "$pair" || return 2
     echo "$n"
+}
+
+# tr_driver_modes_check <pair>: each Aeron arm of the pair's rounds on a
+# media driver (setup kernel or dpdk) has a driver mode modes.sh's
+# mode_check passes (its threading and placement knobs: aeron_threading,
+# aeron_driver), and INVOKER only with the driver embedded (the binary's
+# measuring thread runs it: aeron_lat --driver invoker); 2 saying why not
+tr_driver_modes_check() {
+    local a m why arm bin setup args
+    for a in $(tr_plan rounds "$1" 1 1 | cut -f9 | tr ',' '\n' | sed 's/@.*//' | sort -u); do
+        read -r bin setup _ args <<<"$(tr_plan arm "$a" 2>/dev/null)"
+        [[ $bin == aeron_lat && ($setup == kernel || $setup == dpdk) ]] || continue
+        read -ra args <<<"${args:-}"
+        arm=$a
+        if [[ $(tr_knob aeron_threading 2>/dev/null) == INVOKER && $(tr_knob aeron_driver 2>/dev/null) != embedded ]]; then
+            echo "arm $a: aeron_threading INVOKER with aeron_driver $(tr_knob aeron_driver): an INVOKER driver is the binary's own (aeron_driver embedded)" >&2
+            return 2
+        fi
+        m=$(tr_driver_mode) || { echo "arm $a: its driver mode: see above" >&2; return 2; }
+        why=$(mode_check "$m" remote "${tr_arch:-x86_64}" "${tr_cloud:-azure}" '' 2>&1) || { echo "arm $a: driver mode $m: $why" >&2; return 2; }
+    done
 }
 
 # tr_declared <arm>: "<twin> <knob> <value>", the arm's TR_DECLARED entry
@@ -144,6 +166,17 @@ tr_declared_check() {
             { echo "TR_DECLARED $a: $k is not a per-arm knob of $bin (transport-settings.env's list)" >&2; return 2; }
         [[ $k != aeron_page || $v == 4096 || $v == 2097152 ]] ||
             { echo "TR_DECLARED $a: aeron_page $v: 4096 (TR_AERON_DIR, tmpfs) or 2097152 (TR_AERON_HUGE_DIR, 2 MiB hugetlbfs)" >&2; return 2; }
+        [[ $k != aeron_threading || $v =~ ^(DEDICATED|SHARED_NETWORK|SHARED|INVOKER)$ ]] ||
+            { echo "TR_DECLARED $a: aeron_threading $v: DEDICATED, SHARED_NETWORK, SHARED or INVOKER" >&2; return 2; }
+        [[ $k != aeron_driver || $v == external || $v == embedded ]] ||
+            { echo "TR_DECLARED $a: aeron_driver $v: external or embedded" >&2; return 2; }
+        # a twin may be declared another's (its knob then the twin's own
+        # difference on top): never round to itself
+        local seen=" $a $twin " t=$twin
+        while read -r t _ _ < <(tr_declared "$t"); do
+            [[ $seen != *" $t "* ]] || { echo "TR_DECLARED $a: its twins go round ($seen$t)" >&2; return 2; }
+            seen+="$t "
+        done
     done
 }
 
@@ -394,7 +427,7 @@ tr_bin_args() {
     case $b in
     mpsc_lat) out="--capacity $(tr_knob capacity)" ;;
     aeron_lat)
-        out="--aeron-dir $(tr_aeron_dir) --driver external --driver-busy-threads $(tr_driver_busy) --term-length $(tr_knob term_length) --mtu $TR_MTU"
+        out="--aeron-dir $(tr_aeron_dir) --driver $(tr_aeron_driver) --driver-busy-threads $(tr_driver_busy) --term-length $(tr_knob term_length) --mtu $TR_MTU"
         if [[ $args == *" --mode spy-udp "* ]]; then
             # both channels to the sink's address (DPDK: no kernel interface)
             local sk=$peer
@@ -487,10 +520,13 @@ tr_knob() {
         [[ -z $v ]] || { echo "$v"; return; }
     fi
     base=$(tr_base_arm)
-    if read -r twin dk dv < <(tr_declared "$base"); then
+    # a declared twin's own knob, else its twin's (a twin may be another's:
+    # dpdk-aeron-rel-invoker is dpdk-aeron-rel-emb's, which is dpdk-aeron-rel's)
+    local depth=0
+    while ((depth++ < 8)) && read -r twin dk dv < <(tr_declared "$base"); do
         [[ $dk == "$k" ]] && { echo "$dv"; return; }
         base=$twin
-    fi
+    done
     for kv in ${TR_ARM_KNOBS:-}; do
         [[ $kv == "$base:$k="* ]] && { echo "${kv#*=}"; return; }
     done
@@ -507,7 +543,8 @@ tr_knob() {
     aeron_so_rcvbuf) echo "$TR_AERON_SO_RCVBUF" ;;
     nak_delay_ns) echo "$TR_AERON_NAK_DELAY_NS" ;;
     rx_free_thresh) echo "$TR_DPDK_RX_FREE_THRESH" ;;
-    aeron_threading) echo "$TR_AERON_IPC_THREADING" ;;
+    aeron_threading) echo "$TR_AERON_THREADING" ;;
+    aeron_driver) echo "$TR_AERON_DRIVER" ;;
     capacity) echo "$TR_MPSC_CAPACITY" ;;
     aeron_page) echo "$TR_AERON_PAGE" ;;
     # an Aeron arm's: its media driver's (kernel-busy defers, kernel not);
@@ -576,6 +613,9 @@ tr_arm_knobs() {
             echo aeron_path aeron_so_rcvbuf napi_defer
         fi
         [[ $a == *" --mode udp "* && $a == *" --reliable true "* ]] && echo nak_delay_ns
+        # a UDP arm's driver: its threading, and whether the binary runs it
+        # (embedded; INVOKER's measuring thread)
+        [[ $a == *" --mode udp "* ]] && echo aeron_threading aeron_driver
         ;;
     mpsc_lat) echo capacity ;;
     fstack_lat) echo sockbuf ;;
@@ -616,20 +656,86 @@ tr_driver_mode() {
         v=$(tr_knob napi_defer)
         if [[ $v == 0 ]]; then s+="@NAPI_DEFER=0/0"; elif [[ $v != "$TR_NAPI_DEFER" ]]; then s+="@NAPI_DEFER=$v/$TR_GRO_FLUSH_NS"; fi
     fi
-    if [[ $knobs == *" aeron_threading "* && $(tr_knob aeron_threading) == SHARED ]]; then
-        s=${s//@CONDUCTOR=own/}
-        s=${s//@AERON_CONDUCTOR_IDLE_STRATEGY=spin/}
-        s=${s//@AERON_SENDER_IDLE_STRATEGY=noop/}
-        s=${s//@AERON_RECEIVER_IDLE_STRATEGY=noop/}
-        s+="@AERON_THREADING_MODE=SHARED"
+    # the driver's threading (aeron_threading): SHARED_NETWORK one network
+    # agent (sender and receiver; the conductor kept on its own core),
+    # SHARED and INVOKER one agent for everything (no conductor of its own);
+    # the idle strategies of agents a mode has not got dropped
+    if [[ $knobs == *" aeron_threading "* ]]; then
+        v=$(tr_knob aeron_threading)
+        case $v in
+        DEDICATED) ;;
+        SHARED_NETWORK)
+            s=${s//@AERON_SENDER_IDLE_STRATEGY=noop/}
+            s=${s//@AERON_RECEIVER_IDLE_STRATEGY=noop/}
+            s+="@AERON_THREADING_MODE=SHARED_NETWORK"
+            ;;
+        SHARED | INVOKER)
+            s=${s//@CONDUCTOR=own/}
+            s=${s//@AERON_CONDUCTOR_IDLE_STRATEGY=spin/}
+            s=${s//@AERON_SENDER_IDLE_STRATEGY=noop/}
+            s=${s//@AERON_RECEIVER_IDLE_STRATEGY=noop/}
+            s+="@AERON_THREADING_MODE=$v"
+            ;;
+        *) echo "tr_driver_mode: aeron_threading $v: DEDICATED, SHARED_NETWORK, SHARED or INVOKER" >&2; return 2 ;;
+        esac
     fi
+    # the binary starts the driver in its own process (aeron_driver
+    # embedded): vm.sh sets everything up but starts none
+    [[ $knobs == *" aeron_driver "* && $(tr_knob aeron_driver) == embedded ]] && s+="@DRIVER=embedded"
     echo "$m$s"
 }
 
-# tr_driver_busy: the external driver's busy threads (aeron_lat
-# --driver-busy-threads): TR_AERON_DRIVER_BUSY_THREADS, one under SHARED
+# tr_aeron_driver: aeron_lat's --driver for the current arm: invoker (its
+# driver INVOKER, the binary's), embedded (the binary's, on threads of its
+# own), else external (vm.sh's media driver process)
+tr_aeron_driver() {
+    local m
+    m=$(tr_driver_mode) || return 2
+    case $m in
+    *@DRIVER=embedded*@AERON_THREADING_MODE=INVOKER* | *@AERON_THREADING_MODE=INVOKER*@DRIVER=embedded*) echo invoker ;;
+    *@DRIVER=embedded*) echo embedded ;;
+    *) echo external ;;
+    esac
+}
+
+# tr_driver_threading: the current arm's driver's threading mode, from its
+# driver mode (DEDICATED unless it names another)
+tr_driver_threading() {
+    local m t
+    m=$(tr_driver_mode) || return 2
+    t=${m#*@AERON_THREADING_MODE=}
+    [[ $t != "$m" ]] || { echo DEDICATED; return; }
+    echo "${t%%@*}"
+}
+
+# tr_driver_busy: the driver's busy threads (aeron_lat
+# --driver-busy-threads), in the driver's process or the binary's alike:
+# TR_AERON_DRIVER_BUSY_THREADS (DEDICATED: sender, receiver, the conductor
+# on its own core); SHARED_NETWORK one fewer (one network agent); SHARED
+# one (the shared agent); INVOKER none (the binary's measuring thread)
 tr_driver_busy() {
-    if [[ $(tr_driver_mode) == *@AERON_THREADING_MODE=SHARED* ]]; then echo 1; else echo "$TR_AERON_DRIVER_BUSY_THREADS"; fi
+    case $(tr_driver_threading) in
+    SHARED_NETWORK) echo $((TR_AERON_DRIVER_BUSY_THREADS - 1)) ;;
+    SHARED) echo 1 ;;
+    INVOKER) echo 0 ;;
+    *) echo "$TR_AERON_DRIVER_BUSY_THREADS" ;;
+    esac
+}
+
+# tr_driver_cpus: the isolated CPUs ($iso) the current arm's driver
+# busy-spins on (host.sh transport_layout: sender, receiver and conductor
+# the first three): DEDICATED all three; SHARED_NETWORK the network agent's
+# (the sender's) and the conductor's; SHARED the shared agent's (the
+# sender's); INVOKER none (the binary's own CPU); a space-separated list
+tr_driver_cpus() {
+    local all
+    IFS=, read -ra all <<<"$iso"
+    case $(tr_driver_threading) in
+    SHARED_NETWORK) echo "${all[0]} ${all[2]}" ;;
+    SHARED) echo "${all[0]}" ;;
+    INVOKER) echo ;;
+    *) echo "${all[0]} ${all[1]} ${all[2]}" ;;
+    esac
 }
 
 # tr_host_overrides: the TR_OVERRIDES the current arm's host set-up runs
@@ -723,13 +829,20 @@ tr_label() {
 # status in <pid file>.rc (128 + N: signal N), which the command exits with
 # too. Setup fstack's binary runs with tr_fstack_priv; setup onload's (but
 # aeron_lat, whose media driver runs under Onload instead: vm.sh driver
-# onload) with tr_onload_cmd.
+# onload) with tr_onload_cmd. An Aeron arm whose driver is the binary's
+# (aeron_driver embedded: vm.sh driver ...@DRIVER=embedded started none)
+# runs with the driver's environment (~/bench/driver.env, sourced first)
+# and fstack_lat's privileges: the media driver it replaces runs as root,
+# and DPDK's EAL needs them.
 tr_start() {
-    local pidf=$1 outf=$2 priv= pre=
+    local pidf=$1 outf=$2 priv= pre= src=
     shift 2
     [[ ${setup:-} == fstack ]] && priv="$tr_fstack_priv "
     [[ ${setup:-} == onload && ${bin:-} != aeron_lat ]] && pre="$(tr_onload_cmd) "
-    echo "${priv}sh -c 'taskset -c $hk env PATH=$tr_bin_path $pre$* & p=\$!; echo \$p >$pidf; wait \$p; r=\$?; echo \$r >$pidf.rc; exit \$r' >$outf"
+    if [[ ${bin:-} == aeron_lat ]] && tr_has_driver && [[ $(tr_aeron_driver) != external ]]; then
+        priv="$tr_fstack_priv " src=". ~/bench/driver.env; "
+    fi
+    echo "${priv}sh -c '${src}taskset -c $hk env PATH=$tr_bin_path $pre$* & p=\$!; echo \$p >$pidf; wait \$p; r=\$?; echo \$r >$pidf.rc; exit \$r' >$outf"
 }
 
 # tr_onload_cmd: what a binary of an Onload arm runs under: the onload
@@ -743,8 +856,9 @@ tr_has_driver() {
     [[ ${setup:-} == kernel || ${setup:-} == dpdk ]] || [[ ${setup:-} == onload && ${bin:-} == aeron_lat ]]
 }
 
-# tr_fstack_priv: what fstack_lat's own DPDK needs on igb_uio, which the
-# media driver gets by running as root: CAP_SYS_ADMIN (physical addresses in
+# tr_fstack_priv: what fstack_lat's own DPDK needs on igb_uio (and
+# aeron_lat's, with its driver embedded), which the media driver gets by
+# running as root: CAP_SYS_ADMIN (physical addresses in
 # /proc/self/pagemap: igb_uio has no IOMMU, so the EAL takes IOVA as PA; as
 # a plain user it stops with "Cannot use IOVA as 'PA'"), CAP_DAC_OVERRIDE
 # (/dev/uioN, the BARs' sysfs resource files, /dev/hugepages: root's),
@@ -963,8 +1077,8 @@ tr_arm_down() {
 
 # tr_events_cpus <host>: "<traced cpus> <spinner cpus|->" for this point on
 # <host>, each a list: traced, the hot CPUs the point's busy threads run on
-# there (the media driver's three under kernel and dpdk: host.sh
-# transport_layout; the binary's: tr_role_cpus) and the spinners'; the
+# there (the media driver's under kernel and dpdk, as its threading has
+# them: tr_driver_cpus; the binary's: tr_role_cpus) and the spinners'; the
 # spinners', the map's isolated CPUs the point leaves idle (- with none).
 # Under LAB_LOCAL_SMOKE one box is both hosts: neither host spins on a CPU
 # either end uses, a two-host point's idle ones are dealt between a and b in
@@ -973,7 +1087,10 @@ tr_arm_down() {
 tr_events_cpus() {
     local h=$1 used=" " mine_used=" " c all out=() i=0 mine r
     IFS=, read -ra all <<<"$iso"
-    if tr_has_driver; then used+="${all[0]} ${all[1]} ${all[2]} "; mine_used=$used; fi
+    if tr_has_driver; then
+        for c in $(tr_driver_cpus); do used+="$c "; done
+        mine_used=$used
+    fi
     if [[ $kind == two || $kind == sink ]]; then
         # a sink arm: --role local's two on a, the sink (the pong's CPU) on b
         local ra=ping

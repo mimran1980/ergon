@@ -98,6 +98,14 @@
 #        closed). Cross-host only, under DEDICATED or SHARED_NETWORK (SHARED's
 #        conductor is the shared agent; INVOKER has no conductor thread), never
 #        with IRQ=spare or NAPI_BUSY=spare, which would share its core
+#   DRIVER=embedded  (the transport suite's Aeron arms: transport.sh's knob
+#        aeron_driver) no media driver process: everything else set up as
+#        for one (the NICs, the host settings, driver.env, the agents' CPUs
+#        and threading mode), and the bench binary (aeron_lat --driver
+#        embedded, or invoker under INVOKER) starts the driver in its own
+#        process with driver.env. Never the lab clients' (vm.sh client
+#        refuses it: rtt, load and tput embed one only as INVOKER's
+#        HARNESS_DRIVER=invoker), nor the raw floors'
 # Any other upper-case @KEY must be an environment variable of the driver's,
 # AERON_* or RUSTERON_*: anything else would be exported to a driver that never
 # reads it, the mode measuring its baseline under another name (mode_check).
@@ -591,7 +599,7 @@ precision_modes_check() {
 # The settings vm.sh host_setting takes (a mode's @KEY=value for the host, the
 # clients or the driver's placement); any other key must be an environment
 # variable the driver reads, AERON_* (Aeron's) or RUSTERON_* (the transport's)
-LAB_SETTINGS=" THP BIN CSTATE BUSY_POLL COALESCE RX_RING MIN_FREE_PCT CLOCKSOURCE RELIABLE AGENTS SMT JUMBO PUB_PARAMS SUB_PARAMS IRQ NAPI_DEFER NAPI_BUSY CONDUCTOR HAIRPIN RTT_GAP_US KEEPALIVE_US FLUSH_KB DPDK "
+LAB_SETTINGS=" THP BIN CSTATE BUSY_POLL COALESCE RX_RING MIN_FREE_PCT CLOCKSOURCE RELIABLE AGENTS SMT JUMBO PUB_PARAMS SUB_PARAMS IRQ NAPI_DEFER NAPI_BUSY CONDUCTOR HAIRPIN RTT_GAP_US KEEPALIVE_US FLUSH_KB DPDK DRIVER "
 
 # @DPDK=<build>: the media driver and clients linked against DPDK 25.11 built
 # from source for the mode (vm.sh build-dpdk, into ~/bin-dpdk-<build>): stock,
@@ -802,7 +810,7 @@ mode_check() {
         while IFS= read -r p; do
             key=${p%%=*}
             case $key in
-            AERON_* | PUB_PARAMS | SUB_PARAMS | RELIABLE | CONDUCTOR)
+            AERON_* | PUB_PARAMS | SUB_PARAMS | RELIABLE | CONDUCTOR | DRIVER)
                 echo "mode $m: $key is Aeron's, and the raw floor runs no Aeron (no media driver, no client): it would measure its baseline under another name" >&2
                 return 2
                 ;;
@@ -841,7 +849,7 @@ mode_check() {
             ;;
         esac
         case $key in
-        IRQ | NAPI_DEFER | NAPI_BUSY | CONDUCTOR | HAIRPIN | RTT_GAP_US | KEEPALIVE_US | FLUSH_KB | DPDK)
+        IRQ | NAPI_DEFER | NAPI_BUSY | CONDUCTOR | HAIRPIN | RTT_GAP_US | KEEPALIVE_US | FLUSH_KB | DPDK | DRIVER)
             [[ $seen != *" $key "* ]] || { echo "mode $m: one $key at most" >&2; return 2; }
             seen+="$key "
             ;;
@@ -873,6 +881,12 @@ mode_check() {
             [[ $value == own ]] || { echo "mode $m: CONDUCTOR=own (the conductor on the layout's fifth core, spinning) or nothing" >&2; return 2; }
             [[ $where != local ]] ||
                 { echo "mode $m: CONDUCTOR=own with both ends on one host (localhost): the run takes the fifth core for its second end" >&2; return 2; }
+            ;;
+        DRIVER)
+            [[ $value == embedded ]] ||
+                { echo "mode $m: DRIVER=embedded (the bench binary starts the driver in its own process) or nothing" >&2; return 2; }
+            [[ $m != *+idle ]] ||
+                { echo "mode $m: DRIVER=embedded with +idle: the idle subscription's client has no driver to join" >&2; return 2; }
             ;;
         HAIRPIN)
             [[ $value == 1 ]] || { echo "mode $m: HAIRPIN=1 or nothing" >&2; return 2; }

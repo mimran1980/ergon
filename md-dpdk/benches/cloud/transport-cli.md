@@ -32,7 +32,7 @@ nonzero exit on any error. A partial row is never printed.
 | binary | flags |
 |---|---|
 | `mpsc_lat` | `--capacity N` (sync_channel); role `local` only, `--round-trip` for the round trip |
-| `aeron_lat` | `--mode <ipc\|spy\|spy-udp\|udp>`, `--reliable <true\|false>` (`false` UDP only), `--endpoint HOST:PORT` (pings; stream i on PORT+i, stream id S+i), `--reply HOST:PORT` (echoes, stream id S+10000+i), `--interface IP` (the three UDP and spy-udp only: refused for ipc and spy). `spy-udp`: `local` measures as `spy` does, on reliable `ssc=false` publications to `--endpoint` and `--reply`, both the sink's addresses; `pong` is that sink (reads every frame, writes `sink.*` counts, echoes nothing); `ping` refused. Every manifest has the driver's `driver.bytes-sent` and `driver.bytes-received`, a local round trip's `echoes_sent`, `--aeron-dir PATH`, `--driver external\|embedded`, `--driver-busy-threads N` (the external driver's, as the runner starts it), `--term-length BYTES`, `--mtu BYTES`, `--stream-id S` (1001), `--connect-timeout-s N` (30), `--round-trip` (`local` only) |
+| `aeron_lat` | `--mode <ipc\|spy\|spy-udp\|udp>`, `--reliable <true\|false>` (`false` UDP only), `--endpoint HOST:PORT` (pings; stream i on PORT+i, stream id S+i), `--reply HOST:PORT` (echoes, stream id S+10000+i), `--interface IP` (the three UDP and spy-udp only: refused for ipc and spy). `spy-udp`: `local` measures as `spy` does, on reliable `ssc=false` publications to `--endpoint` and `--reply`, both the sink's addresses; `pong` is that sink (reads every frame, writes `sink.*` counts, echoes nothing); `ping` refused. Every manifest has the driver's `driver.bytes-sent` and `driver.bytes-received`, a local round trip's `echoes_sent`, `--aeron-dir PATH`, `--driver external\|embedded\|invoker` (a driver process at `--aeron-dir`; one this process starts on a thread of its own, configured from the environment; or one in Aeron's INVOKER mode that the measuring thread runs with its client's conductor, every poll and after every offer: `ping` and `pong` over `udp` only), `--driver-busy-threads N` (the driver's, as the runner sets it up; invoker 0, its only value), `--term-length BYTES`, `--mtu BYTES`, `--stream-id S` (1001), `--connect-timeout-s N` (30), `--round-trip` (`local` only) |
 | `udp_lat` | `--impl <mio\|ergon>`, `--local IP:PORT`, `--peer IP:PORT` (base ports, stream i on +i; `local`: the receiver binds `--peer`), `--busy-read-us N` (`SO_BUSY_POLL` on every socket, both impls: ergon-io by `busy_poll_us`), `--epoll-events N`, `--datagram-burst N` (ergon only), `--rcvbuf`/`--sndbuf BYTES` |
 | `tcp_lat` | `--impl <mio\|ergon>`, `--listen IP:PORT` (pong; `local` takes `--listen`, and `--source`) or `--connect IP:PORT` (ping; stream i is connection i), `--source IP` (the connecting end binds it first), `--source-port N` (an arm flag: the connecting end binds stream i to N + i and closes with a reset, so arms given the same N share 4-tuples; the listening end ignores it; not with `local`), `--nodelay` (always on), `--quickack-per-read`, `--rto-min-us N`, `--delack-max-us N`, `--busy-read-us N` (both impls), `--rcvbuf`/`--sndbuf BYTES` |
 | `fstack_lat` | TCP over F-Stack (FreeBSD's stack on DPDK), `ping` or `pong` only (one F-Stack a process, on its one `--cpus` CPU): `--listen IP:PORT` (pong) or `--source IP --connect IP:PORT` (ping), the F-Stack interface taking that address; `--pci BDF` (its port) or `--vdev SPEC` (a virtual one, tests), `--prefix-len N`, `--gateway IP`, `--nodelay` (always on), `--rcvbuf`/`--sndbuf BYTES`, `--delayed-ack true` and `--hz 100` (FreeBSD's), `--no-huge`, `--memory-mb 1024`, `--file-prefix ergon-fstack`. It refuses the kernel's socket flags (busy poll, epoll, quickack, TCP timers). It writes its whole F-Stack config to `<out>/f-stack-<role>.conf`, every key in its manifest (`fstack.conf.*`), with F-Stack's build (`fstack.build.*`). Built with `--features fstack` against `io/benches/fstack/build-fstack.sh`'s F-Stack v2.0 (x86_64 only) |
@@ -51,7 +51,7 @@ own):
 | binary | runner's flags |
 |---|---|
 | `mpsc_lat` | `--capacity <capacity>` |
-| `aeron_lat` | `--aeron-dir <aeron_page's directory: $TR_AERON_DIR (tmpfs), at 2097152 $TR_AERON_HUGE_DIR (2 MiB hugetlbfs), the media driver's AERON_DIR too> --driver external --driver-busy-threads $TR_AERON_DRIVER_BUSY_THREADS (1 under SHARED) --term-length <term_length> --mtu $TR_MTU`; `--mode udp` arms also `--endpoint <pong's data IP>:$TR_PORT_BASE --reply <ping's data IP>:$TR_PORT_BASE --interface <own data IP>`; every run `--stream-id 1001+256k` (the k-th Aeron point of the set; a one-host point's round trip +128), ping and pong the same, so no lingering publication of an earlier run is the image a subscription takes |
+| `aeron_lat` | `--aeron-dir <aeron_page's directory: $TR_AERON_DIR (tmpfs), at 2097152 $TR_AERON_HUGE_DIR (2 MiB hugetlbfs), the media driver's AERON_DIR too> --driver <external; embedded or invoker with aeron_driver embedded> --driver-busy-threads <tr_driver_busy: $TR_AERON_DRIVER_BUSY_THREADS, SHARED_NETWORK one fewer, SHARED 1, INVOKER 0> --term-length <term_length> --mtu $TR_MTU`; `--mode udp` arms also `--endpoint <pong's data IP>:$TR_PORT_BASE --reply <ping's data IP>:$TR_PORT_BASE --interface <own data IP>`; every run `--stream-id 1001+256k` (the k-th Aeron point of the set; a one-host point's round trip +128), ping and pong the same, so no lingering publication of an earlier run is the image a subscription takes |
 | `udp_lat` | `--local <own>:$TR_PORT_BASE --peer <other end>:$TR_PORT_BASE --rcvbuf/--sndbuf <sockbuf> --epoll-events <epoll_events> --busy-read-us <busy_read_us>`, `--datagram-burst <datagram_burst>` for `--impl ergon` |
 | `tcp_lat` | pong (and `local`, on its receiver NIC) `--listen <own>:port`, ping `--source <own> --connect <peer>:port` (`local` also `--source <own>`), then `--nodelay --quickack-per-read [false] --rto-min-us <rto_min_us> --delack-max-us --rcvbuf --sndbuf <sockbuf> --epoll-events <epoll_events> --busy-read-us <busy_read_us>` |
 | `fstack_lat` | pong `--listen <own>:port`, ping `--source <own> --connect <peer>:port`, then `--pci <the NIC with that address> --prefix-len <its prefix> --gateway <its subnet's first address>` (vm.sh nics) `--nodelay --delayed-ack false --rcvbuf --sndbuf <sockbuf>` (FreeBSD's `delayed_ack=0`: the kernel arms' quickack) |
@@ -62,8 +62,15 @@ The media driver's mode (`vm.sh driver`, `tr_driver_mode`): `<aeron_path>`
 `@AERON_SOCKET_SO_RCVBUF=<aeron_so_rcvbuf>`,
 `@AERON_NAK_UNICAST_DELAY=<nak_delay_ns>` and
 `@RUSTERON_DPDK_RX_FREE_THRESH=<rx_free_thresh>` where they differ from the
-driver's own; aeron-ipc's `aeron_threading=SHARED` takes the conductor's core
-and idle settings out and adds `@AERON_THREADING_MODE=SHARED`. A host
+driver's own. `aeron_threading` (aeron-ipc's, and every `--mode udp` arm's):
+`SHARED_NETWORK` drops the sender's and receiver's idle settings and adds
+`@AERON_THREADING_MODE=SHARED_NETWORK` (the conductor keeps its core);
+`SHARED` and `INVOKER` also take the conductor's core and idle setting out.
+`aeron_driver=embedded` adds `@DRIVER=embedded`: `vm.sh driver` sets
+everything up but starts no process, and `aeron_lat` (`--driver embedded`,
+or `invoker` under INVOKER) runs with `~/bench/driver.env` sourced, under
+`fstack_lat`'s `sudo setpriv` capabilities. The events' gap spinners take
+the isolated CPUs the driver's threading leaves idle. A host
 setting an arm's knob sets otherwise (`congestion`; the kernel path's busy
 poll) goes to `vm.sh transport-net` as `TR_OVERRIDES`, and back after the
 arm. Each point's `manifest/<point>.env` records `base_arm`, `bin`, `args`,
@@ -73,7 +80,11 @@ every `knob.<name>`, `driver_mode`, and for an Aeron arm `aeron_page_<host>`
 A declared twin (`TR_DECLARED "<arm>:<twin>:<knob>=<value>"`) is its twin's
 arm row run with the twin's value of every other knob, the tuned section's
 included, and its own value of the one knob: `aeron-ipc-huge` is
-`aeron-ipc` with `aeron_page=2097152`. Its driver, `aeron_lat` and its events
+`aeron-ipc` with `aeron_page=2097152`. A twin may be another's:
+`dpdk-aeron-rel-invoker` is `dpdk-aeron-rel-emb` (`aeron_driver=embedded`)
+with `aeron_threading=INVOKER`; `fairness.py` takes each knob along the
+chain as the arm's own, and compares driver modes less a driver knob's own
+part (`AERON_THREADING_MODE` and the agents it drops; `DRIVER`). Its driver, `aeron_lat` and its events
 use `$TR_AERON_HUGE_DIR`, on the hugetlbfs `vm.sh transport-tune` mounts at
 `$TR_AERON_HUGE_MOUNT` on each host (`TR_AERON_HUGE_PAGES` pages of 2 MiB,
 reserved with `min_size`; refused when the kernel has fewer free; verified

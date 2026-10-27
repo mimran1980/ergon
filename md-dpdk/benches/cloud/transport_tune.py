@@ -57,7 +57,7 @@ KNOBS = {
     "sockbuf": "TR_SOCKBUF", "quickack_per_read": "TR_QUICKACK_PER_READ", "rto_min_us": "TR_TCP_RTO_MIN_US",
     "congestion": "TR_TCP_CONGESTION", "term_length": "TR_TERM_LENGTH", "aeron_path": "TR_AERON_PATH",
     "aeron_so_rcvbuf": "TR_AERON_SO_RCVBUF", "nak_delay_ns": "TR_AERON_NAK_DELAY_NS",
-    "rx_free_thresh": "TR_DPDK_RX_FREE_THRESH", "aeron_threading": "TR_AERON_IPC_THREADING",
+    "rx_free_thresh": "TR_DPDK_RX_FREE_THRESH", "aeron_threading": "TR_AERON_THREADING", "aeron_driver": "TR_AERON_DRIVER",
     "capacity": "TR_MPSC_CAPACITY", "napi_defer": "TR_SOCKET_NAPI_DEFER",
 }
 # the hosts' own, one value for every arm that has it (frozen as its TR_ variable)

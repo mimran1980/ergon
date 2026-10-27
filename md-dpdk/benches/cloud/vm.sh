@@ -45,6 +45,10 @@
 #                            for its LLQ check, then stops it): everything else is set up, and
 #                            each client embeds the driver (vm.sh client); the kernel modes name
 #                            the data NICs (RUSTERON_MEDIA_DRIVER_DATA_NICS) for its NIC checks;
+#                            @DRIVER=embedded starts none either: everything else is set up (its
+#                            threading mode's agents' CPUs too), and the transport suite's bench binary
+#                            starts the driver in its own process with driver.env (aeron_lat --driver
+#                            embedded or invoker; ~/bench/driver_embedded says so until `stop`);
 #                            the raw floor's kernel-raw and dpdk-raw start none either: kernel-busy's
 #                            or dpdk's set-up under INVOKER's threading (one thread sends and
 #                            receives), for the floor client (no Aeron), its wire in ~/bench/floor;
@@ -2007,12 +2011,21 @@ driver)
     # CPUs (host.sh threading_env), set before the other overrides, which can
     # then change an idle strategy
     threading=$(threading_of "$overrides") || exit 2
+    # @DRIVER=embedded: no media driver process (below); the transport
+    # suite's binary starts the driver itself with driver.env
+    embedded=
+    case "@$overrides@" in
+    *@DRIVER=embedded@*) embedded=1 ;;
+    *@DRIVER=*) echo "$mode: DRIVER=embedded or nothing" >&2; exit 2 ;;
+    esac
+    rm -f "$run/driver_embedded"
     # kernel-raw, dpdk-raw: the raw floor (the floor client, no Aeron) on
     # kernel-busy's or dpdk's set-up (modes.sh raw_base), its one thread
     # sending and receiving as INVOKER's does (threading_env); no media
     # driver, as under INVOKER (below)
     raw=$(raw_base "$mode") floor_wire=
     if [[ -n $raw ]]; then
+        [[ -z $embedded ]] || { echo "$mode: DRIVER=embedded: the raw floor runs no Aeron" >&2; exit 2; }
         threading=INVOKER floor_wire=${raw%-busy}
     fi
     # dpdk-pure: dpdk's set-up for purefloor (DPDK alone), its wire pure,
@@ -2136,8 +2149,8 @@ driver)
         IFS=@ read -ra pairs <<<"$overrides"
         for pair in "${pairs[@]}"; do
             [[ $pair =~ ^[A-Z][A-Z0-9_]*=[^\'[:space:]]*$ ]] || { echo "bad override $pair" >&2; exit 2; }
-            # in common_env already
-            [[ $pair == AERON_THREADING_MODE=* ]] && continue
+            # in common_env already; DRIVER above
+            [[ $pair == AERON_THREADING_MODE=* || $pair == DRIVER=* ]] && continue
             # a host setting (host_setting) for this run, which `stop` undoes;
             # anything else is the driver's environment
             host_setting "${pair%%=*}" "${pair#*=}" "$mode" && continue
@@ -2191,11 +2204,15 @@ driver)
     # INVOKER: no media driver process. Everything above stands (the NICs,
     # the host settings, the environment in driver.env); each client embeds
     # the driver with it (`client`), and `loss` keeps a ledger of the embedded
-    # drivers' counters (host.sh invoker_ledger_total)
-    if [[ $threading == INVOKER ]]; then
+    # drivers' counters (host.sh invoker_ledger_total). DRIVER=embedded:
+    # none either, under any threading mode; the transport suite's binary
+    # starts it with driver.env (it never runs through `client`)
+    if [[ $threading == INVOKER || -n $embedded ]]; then
         if [[ -n $floor_wire ]]; then
             # the floor client's wire (`client`, `stop`): no embedded driver
             echo "${floor_wire}" >"$run/floor"
+        elif [[ -n $embedded ]]; then
+            echo aeron_lat >"$run/driver_embedded"
         else
             echo invoker >"$run/harness_driver"
             rm -rf "$run/invoker-ledger"
@@ -2225,6 +2242,11 @@ driver)
         if [[ -n $floor_wire ]]; then
             echo "raw floor: no media driver process; each floor client logs its transport's lines to its output" >>"$run/driver.log"
             log "driver: raw floor ($floor_wire): no media driver process; the floor clients run with driver.env, no Aeron"
+            exit 0
+        fi
+        if [[ -n $embedded ]]; then
+            echo "DRIVER=embedded (${threading:-DEDICATED}): no media driver process; the bench binary's embedded driver logs to its output" >>"$run/driver.log"
+            log "driver: DRIVER=embedded (${threading:-DEDICATED}): no media driver process; the transport suite's binary starts it with driver.env"
             exit 0
         fi
         echo "INVOKER: no media driver process; each client's embedded driver logs to the client's output" >>"$run/driver.log"
@@ -2315,6 +2337,11 @@ client)
     # HARNESS_DRIVER=invoker; refused while the last client's embedded driver
     # was never read by `loss` (its counters would go with its CnC file)
     launch=()
+    # DRIVER=embedded: the transport suite's binary starts the driver, no client here
+    if [[ -s $run/driver_embedded ]]; then
+        log "client: $prog: the driver is DRIVER=embedded, the transport suite's (aeron_lat starts it): vm.sh driver <mode> without it first"
+        exit 2
+    fi
     if invoker; then
         if id=$(cnc_now); then invoker_client_ready "$run/cnc.head" "$run/invoker-ledger" || exit 2; fi
         launch=(bash -c '. "$1"; shift; exec "$@"' _ "$run/driver.env" env HARNESS_DRIVER=invoker)
@@ -2400,6 +2427,14 @@ stop)
         for c in rtt load tput; do sudo pkill -x "$c" 2>/dev/null || true; done
         for _ in $(seq 40); do pgrep -x 'rtt|load|tput' >/dev/null || break; sleep 0.25; done
         rm -rf "$run/harness_driver" "$run/invoker-ledger"
+    fi
+    # DRIVER=embedded: a bench binary still running holds the NICs (its
+    # embedded driver's). The runner stops each by its PID, never by name
+    # (another run's binary may share it): wait for them, then say so
+    if [[ -s $run/driver_embedded ]]; then
+        for _ in $(seq 40); do pgrep -x "$(cat "$run/driver_embedded")" >/dev/null || break; sleep 0.25; done
+        pgrep -x "$(cat "$run/driver_embedded")" >/dev/null && log "stop: $(cat "$run/driver_embedded") still runs (DRIVER=embedded): its driver may still hold the data NICs"
+        rm -f "$run/driver_embedded"
     fi
     # the raw floor: a floor client still running holds the NICs (DPDK's)
     if [[ -s $run/floor ]]; then

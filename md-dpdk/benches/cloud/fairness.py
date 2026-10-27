@@ -46,6 +46,11 @@ concerns. Rules:
                    aeron-ipc on 2 MiB pages) runs in every round with it, and
                    nothing else differs: its other per-arm knobs, transport, wire
                    bytes, binary, arguments and media driver mode are the twin's
+                   (a driver knob's own part of the mode apart: aeron_threading's
+                   AERON_THREADING_MODE and the agents it drops, aeron_driver's
+                   DRIVER). A twin may be another's (dpdk-aeron-rel-invoker:
+                   dpdk-aeron-rel-emb's, which is dpdk-aeron-rel's): each knob
+                   along the chain is the arm's own difference
   order            a seed and the round's arms in its recorded order; seeds
                    distinct and orders not all the same across reps. An arm
                    the order names with no row in the round is absent, not a
@@ -231,6 +236,26 @@ def path_loss(p):
         return (f"{p.tag}: Aeron retransmitted {p.row['retrans']} (NAKed gaps) on a row without netem: lost below "
                 "the guest's stack")
     return None
+
+
+# a driver knob's own part of a media driver mode (transport.sh
+# tr_driver_mode): the @KEY= overrides it sets or drops
+DRIVER_MODE_KEYS = {
+    "knob.aeron_threading": ("AERON_THREADING_MODE", "CONDUCTOR", "AERON_CONDUCTOR_IDLE_STRATEGY",
+                             "AERON_SENDER_IDLE_STRATEGY", "AERON_RECEIVER_IDLE_STRATEGY"),
+    "knob.aeron_driver": ("DRIVER",),
+}
+
+
+def driver_mode_less(mode, knob):
+    """A media driver mode (<transport>@KEY=value@...) without the
+    overrides `knob` itself sets or drops (DRIVER_MODE_KEYS); as it is for
+    any other knob."""
+    keys = DRIVER_MODE_KEYS.get(knob)
+    if not keys or not isinstance(mode, str):
+        return mode
+    head, *pairs = mode.split("@")
+    return "@".join([head] + [p for p in pairs if p.partition("=")[0] not in keys])
 
 
 def read_env(path):
@@ -548,10 +573,17 @@ def check(run_dir, absences=None, notes=None):
             round_arms = {arm_key(p) for p in ps}
 
             def own(arm, k):
-                """k is arm's declared difference from a twin in the round:
-                its value is what the pair compares (the declared rule
-                checks the rest)."""
-                return declared.get(arm, (None, None))[1] == k and declared[arm][0] in round_arms
+                """k is arm's declared difference from a twin in the round,
+                or its twin's from that twin's (a chain of twins): its value
+                is what the pair compares (the declared rule checks the
+                rest)."""
+                seen = set()
+                while arm in declared and arm not in seen and declared[arm][0] in round_arms:
+                    seen.add(arm)
+                    if declared[arm][1] == k:
+                        return True
+                    arm = declared[arm][0]
+                return False
 
             for k in sorted({k for arm in round_arms for k in per_arm.get(arm, {})}):
                 have = (reported[k] | {arm for arm in round_arms if k in per_arm.get(arm, {})})
@@ -586,7 +618,8 @@ def check(run_dir, absences=None, notes=None):
                                     ("binary", lambda p: (p.manifest.get("runner") or {}).get("bin")),
                                     ("arguments", lambda p: (p.manifest.get("runner") or {}).get("args")),
                                     ("media driver mode",
-                                     lambda p: (p.manifest.get("runner") or {}).get("driver_mode"))):
+                                     lambda p, k=k: driver_mode_less(
+                                         (p.manifest.get("runner") or {}).get("driver_mode"), k))):
                     seen = sorted({repr(value(p)) for p in pair})
                     if len(seen) > 1:
                         add("declared", set_, tags, f"round {rid}: {arm} and its twin {twin} differ in {what}: "

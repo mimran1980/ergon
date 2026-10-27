@@ -1,0 +1,37 @@
+# The AWS Aeron hand-off session's sets (aws/lab.sh LAB_SUITE=transport
+# LAB_PAIR=a LAB_SETS_FILE=<this file>, in place of the matrix's sets; the
+# matrix's arms are kept). One pair of c7a.2xlarge (spot). No netem: DPDK
+# holds its NICs.
+#
+# How much of DPDK Aeron's round trip is the hand-offs between threads:
+# each arm is dpdk-aeron-rel (reliable UDP, the media driver DEDICATED, every
+# agent busy-spinning, the conductor on its own core) but for one thing
+# (transport-settings.env TR_DECLARED, checked by fairness.py's declared rule):
+#
+#   arm                     driver                        busy threads a host
+#   dpdk-aeron-rel          its own process, DEDICATED    4 (sender, receiver, conductor; ping or echo)
+#   dpdk-aeron-rel-emb      the binary's process, DEDICATED  4 (the same threads, one process)
+#   dpdk-aeron-rel-shnet    its own process, SHARED_NETWORK  3 (sender and receiver one thread)
+#   dpdk-aeron-rel-shared   its own process, SHARED       2 (one driver thread for all)
+#   dpdk-aeron-rel-invoker  the binary's, INVOKER         1 (the ping or echo thread runs the driver)
+#
+# Each arm keeps the CPUs the baseline gives it (host.sh transport_layout);
+# one with fewer busy threads leaves the rest idle (the gap spinners run
+# there). The A/A arm repeats dpdk-aeron-rel.
+#
+#   h    the DPDK arms, 1 stream, 10k, 50k and 200k msg/s (200k: where
+#        F-Stack's one thread fell to ~50 us p50 in aws-20261027-062105,
+#        against 32-34 below it, while dpdk-aeron-rel held 27-32: whether
+#        one thread doing the driver's work too holds up)
+#   k    (commented out) the kernel's: aeron-rel, its driver in the
+#        binary's process (aeron-rel-emb) and run by the measuring thread
+#        (aeron-rel-invoker), 1 stream, 50k msg/s alone, its A/A repeating
+#        aeron-rel
+#
+# Trimmed to keep the session under 1.5 h at LAB_REPS=3 (LAB_ESTIMATE=1 on
+# c7a.2xlarge spot): h alone, 54 points, about 1.34 h. Uncomment k for the
+# kernel arms too: 66 points, about 1.64 h.
+#
+# set   pair par host loads               streams  netem  arms
+set h    a    -   ab   10000,50000,200000  1        -      dpdk-aeron-rel,dpdk-aeron-rel-emb,dpdk-aeron-rel-shnet,dpdk-aeron-rel-shared,dpdk-aeron-rel-invoker,aa
+#set k   a    -   ab   50000               1        -      aeron-rel,aeron-rel-emb,aeron-rel-invoker,aa
