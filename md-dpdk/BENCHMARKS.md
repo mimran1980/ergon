@@ -348,7 +348,8 @@ interrupts a point, against under 600 for the kernel arms. Those rows
 measure the fallback path, so they are excluded. `ergon-md-dpdk` now fails
 at start on a `net_netvsc` port without an attached VF
 (`DpdkError::NoAcceleratedVf`; `RUSTERON_DPDK_ALLOW_SYNTHETIC=1` allows it
-for diagnosis). A DPDK rerun beside kernel UDP is planned on AWS (ENA).
+for diagnosis). The DPDK rows are from AWS (ENA):
+[below](#transport-comparison-on-aws-aeron-on-dpdk).
 
 Aeron's results, round trip, µs, the median of 3 reps (range); `max` the
 median of the reps' maxima:
@@ -397,6 +398,64 @@ The NAKed losses without netem came with no guest drop counter growing on
 either host: lost below the guest, as TCP's retransmits in the same
 sessions. 2a's short sends are not traced to a cause; no message was lost.
 
+## Transport comparison on AWS: Aeron on DPDK
+
+<!-- RESULTS: md-dpdk aeron-dpdk aws -->
+
+Session `aws-20261027-062105`: two `c7a.2xlarge` spot instances (AMD
+Genoa, 8 cores, no SMT), one cluster placement group, us-east-1, Debian 13,
+commit `b67ad62b`. The same transport suite as Azure: CPU 0 housekeeping,
+CPU 1 the data NICs' interrupts, CPUs 2 to 7 isolated; 64-byte messages,
+round trips, 3 reps. Tables, F-Stack TCP and the socket arms beside these
+rows, fairness flags and every max:
+[the book's AWS section](https://mimran1980.github.io/ergon/transports/comparison.html#aws-dpdk-f-stack-and-kernel).
+
+Round trip, µs, the median of 3 reps (range); `max` the median of the
+reps' maxima (range). 4 busy threads a host in every row.
+
+| set | arm | streams | load, msg/s | p50 | p99 | p99.99 | max |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| d1, reliable | `dpdk-aeron-rel` | 1 | 10,000 | 29.6 (29.4–30.6) | 36.6 | 125 (109–134) | 170 (158–178) |
+| | | | 50,000 | 28.1 (28.0–28.2) | 35.5 | 110 (110–135) | 211 (164–252) |
+| | | | 200,000 | 27.5 (27.4–31.8) | 37.9 | 162 (150–176) | 297 (273–342) |
+| | `aeron-rel` (kernel) | 1 | 10,000 | 42.7 (42.5–42.7) | 49.8 | 143 (123–157) | 180 (160–250) |
+| | | | 50,000 | 40.5 (40.4–40.6) | 48.0 | 147 (144–148) | 209 (196–238) |
+| | | | 200,000 | 47.8 (43.9–49.1) | 67.8 | 210 (176–1,967) | 856 (404–2,336) |
+| d8, reliable | `dpdk-aeron-rel` | 8 | 10,000 | 30.7 (30.5–31.0) | 38.2 | 115 (104–141) | 186 (156–192) |
+| | | | 50,000 | 29.4 (29.1–30.4) | 37.1 | 139 (123–142) | 225 (195–236) |
+| | | | 200,000 | 28.8 (28.4–29.4) | 38.7 | 152 (133–152) | 259 (219–306) |
+| | `aeron-rel` (kernel) | 8 | 10,000 | 52.5 (52.3–52.8) | 61.7 | 171 (165–190) | 405 (282–2,213) |
+| | | | 50,000 | 53.3 (52.6–54.5) | 64.1 | 180 (178–181) | 315 (288–484) |
+| | | | 200,000, IRQ CPU saturated in 2 reps | 86.0 (82.1–86.9) | 120 | 240 (237–256) | 363 (350–594) |
+| u, unreliable | `dpdk-aeron-udp` | 1 | 50,000 | 28.0 (28.0–28.7) | 35.4 | 131 (106–139) | 177 (169–178) |
+| | `aeron-udp` (kernel) | 1 | 50,000 | 40.9 (40.8–40.9) | 48.6 | 148 (145–162) | 420 (414–445) |
+
+- **DPDK against kernel UDP:** p50 lower by 12.3 to 13.1 at 1 stream to
+  50,000 msg/s, 20.4 at 200,000, 21.8 to 23.9 at 8 streams; 12.8 lower
+  unreliable. p99 lower by 12.5 to 30. p99.99 lower by 37 to 57 in 3 of
+  the 5 reliable comparisons (8 streams at 200,000 msg/s is not compared:
+  kernel's IRQ CPU saturated), the rest not separated; max: no verdict
+  (unexplained maxima).
+- **Flat with streams and load:** DPDK's p50 stays 27.5 to 30.7 from 1 to
+  8 streams and 10,000 to 200,000 msg/s. Kernel UDP's rises to 86.0 at 8
+  streams and 200,000, where CPU 1, which takes every data-NIC interrupt,
+  saturated in 2 of 3 reps.
+- **Against F-Stack TCP** (TCP on DPDK, 1 busy thread): DPDK Aeron's p50
+  is 3.9 to 5.9 lower, 23.0 at 1 stream and 200,000 msg/s.
+
+Aeron's own counters (each point's manifest, 3 reps summed):
+
+| arms | points | NAKs sent | retransmits | loss-gap fills | short sends |
+| --- | --- | --- | --- | --- | --- |
+| `dpdk-aeron-rel`, `dpdk-aeron-udp` and its A/A | 24 | 0 | 0 | 0 | 24: 2 in each of 12 points |
+| `aeron-rel`, `aeron-udp` | 21 | 6, in one point (8 streams, 10,000 msg/s) | 0 | 0 | 0 |
+
+No message was lost in any Aeron arm. The 6 NAKs got no retransmit: the
+frames came late, not lost; that point's max is 2,213 µs. One DPDK max
+(342 µs) is a page fault of a busy thread; most Aeron maxima, DPDK and
+kernel, are unexplained (the book lists what was ruled out). The DPDK
+short sends are not traced to a cause.
+
 ## Recommended configuration
 
 Kernel UDP in production ([README](README.md)). Only settings with a
@@ -444,6 +503,10 @@ not as an Aeron message.
   caches' 1.8 µs need one.
 - What sends host a's frames to closed ports between load points
   (`noport-dpdk-queue-drop`).
+- `fairness.py` flags the DPDK arms' points because the kernel's
+  `busy_read` and `busy_poll` read 0 there (240 in `aws-20261027-062105`);
+  no kernel socket is on a DPDK arm's path, but the rule does not yet
+  exempt them.
 
 ## How to run
 

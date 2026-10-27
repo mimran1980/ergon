@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Docs
+
+- The book's transport latency comparison has an AWS section (two
+  `c7a.2xlarge`, ENA): Aeron on DPDK (md-dpdk), F-Stack TCP on DPDK, kernel
+  Aeron, mio and ergon-io, at 1 and 8 streams. Aeron on DPDK is lowest
+  (p50 27.5 to 30.7 µs, flat to 200,000 msg/s); F-Stack's p50 is 17 to 28
+  µs below kernel TCP and it carries 200,000 msg/s where kernel TCP does
+  not. mio against ergon-io over TCP, on one shared connection: no
+  difference (the Azure gap was unequal busy polling); overloaded,
+  ergon-io drains slower. Every max is attributed or listed as unexplained.
+  `md-dpdk/BENCHMARKS.md`, `io/README.md` and `io/benches/BENCHMARK.md`
+  carry the matching rows and answers. DPDK on Azure stays excluded.
+
 ## [0.1.34] — 2026-10-27
 
 ### Added

@@ -13,19 +13,21 @@ Terms: [ergon-io glossary](../io/overview.md#glossary),
 [network and DPDK glossary](../md-dpdk/overview.md#glossary),
 [how to read a number](../deploy/benchmarks.md#how-to-read-a-number).
 
-> **No DPDK results.** The Azure VMs here have Mellanox (mlx5) VFs, and
-> md-dpdk's Azure set-up supports only MANA. DPDK fell back to the synthetic
-> VMBus path (1 to 6 million hypervisor interrupts a point, against under 600
-> for the kernel arms), so the `dpdk-*` rows measured that path, not DPDK on
-> the NIC. They are left out. md-dpdk now refuses to start on that path
-> (`DpdkError::NoAcceleratedVf`). A DPDK rerun on AWS (ENA) is planned.
+> **DPDK figures come from AWS only.** The Azure VMs here have Mellanox
+> (mlx5) VFs, and md-dpdk's Azure set-up supports only MANA. DPDK fell back
+> to the synthetic VMBus path (1 to 6 million hypervisor interrupts a point,
+> against under 600 for the kernel arms), so the Azure `dpdk-*` rows
+> measured that path, not DPDK on the NIC, and are left out. md-dpdk now
+> refuses to start on that path (`DpdkError::NoAcceleratedVf`). DPDK
+> (md-dpdk's Aeron and F-Stack TCP) against the kernel arms on AWS ENA:
+> [AWS: DPDK, F-Stack and kernel](#aws-dpdk-f-stack-and-kernel).
 
 ## The answer
 
-µs, 64-byte messages, Azure x86 (AMD Genoa). Round trip between hosts,
-from each message's intended send time. Each figure is the median of 3
-reps; `max` is the median of the reps' maxima, with the range across reps in
-brackets after it.
+µs, 64-byte messages, AMD Genoa x86: Azure for the kernel paths, AWS for
+DPDK (rows marked AWS). Round trip between hosts, from each message's
+intended send time. Each figure is the median of 3 reps; `max` is the
+median of the reps' maxima, with the range across reps in brackets after it.
 
 <!-- RESULTS: answer -->
 
@@ -38,8 +40,10 @@ brackets after it.
 | Reliable, no loss: Aeron reliable UDP or TCP? | Aeron reliable. p50 lower by 7.1 to 14.5 (54.8 to 57.6 against 64.7 to 69.8); p99 59.9 to 64.3 against 79 to 225; p99.99 lower by 3.8 to 5.5 ms in 4 of 8 comparisons, the rest not separated. Max: no verdict (unexplained). At 200,000 msg/s Aeron holds p50 57.6 to 60.5; TCP carries 106,000 to 151,000 msg/s. Costs: Aeron 4 busy threads a host, TCP 1 | [3c](#set-3c-the-netem-control), [3a](#set-3a-reliable-no-loss) |
 | Reliable under 0.01, 0.1 and 1 % loss? | No single winner in the tail. p50: Aeron 52.7 to 61.6, TCP 64.1 to 68.5. p99: Aeron lower at 0.01 and 0.1 % and at 1 % / 10,000 msg/s; TCP lower at 1 % / 50,000 msg/s (4.8 to 5.5 ms against 9.4). p99.99: Aeron lower at 0.01 % (by 3.5 to 7.1 ms), not separated at 0.1 and 1 %. The tails follow each protocol's repair: Aeron's maxima sit at its 10 ms retransmit linger, TCP's come from its retransmits (8 ms minimum RTO). At 200,000 msg/s only Aeron keeps up | [3b](#set-3b-reliable-under-loss) |
 | What does a 0 % netem qdisc cost? | Nothing measured: each arm's 0 % and no-qdisc p50 differ by 0.2 to 4.6, inside the A/A spread (3.7 to 8.8) | [3c](#set-3c-the-netem-control) |
-| TCP, 1 connection: mio or ergon-io? | No verdict. The median p50 gaps run from ergon-io 2.4 ahead to 4.0 behind, inside each arm's own spread across reps (up to 6.1 for mio, 10.7 for ergon-io). A same-connection A/B is scheduled on AWS | [3c](#mio-against-ergon-io-over-tcp-no-verdict) |
-| TCP with 8 to 128 connections into one loop: mio or ergon-io? | Not measured fairly: the one session gave the arms unequal busy polling, and the set was not rerun | [Not covered](#not-covered) |
+| TCP: mio or ergon-io? | No difference. On the same connection (AWS, same 4-tuple) p50 52.2 against 53.4 at 10,000 msg/s (mio 1.2 lower, past the A/A spread of 0.8) and not separated at 50,000; with fresh connections not separated at 1 stream, mio 0.6 to 1.0 lower at 8; p99 and p99.99 not separated but once (ergon-io 4.5 lower at p99). Same calls a message: 2 reads, 1 send, 1 quick-ACK re-arm. The Azure gap was unequal busy polling, since fixed (`busy_poll_us`). Overloaded at 200,000 msg/s, ergon-io drains slower: 104,000 to 134,000 msg/s carried against mio's 113,000 to 154,000 | [AWS](#mio-against-ergon-io-the-verdict) |
+| TCP with 8 to 128 connections into one loop: mio or ergon-io? | Not measured fairly on Azure. On AWS, 8 connections into one loop: p50 within 0.6 to 1.0 (mio lower) | [AWS](#mio-against-ergon-io-the-verdict) |
+| Between hosts, lowest latency (AWS, DPDK allowed)? | Aeron on DPDK (md-dpdk). Reliable p50 27.5 to 30.7 at 1 and 8 streams, 10,000 to 200,000 msg/s: 3.9 to 5.9 below F-Stack TCP (23 at 1 stream, 200,000 msg/s) and 12.3 to 23.9 below kernel Aeron. Unreliable p50 28.0 against kernel Aeron 40.9, mio 47.7, ergon-io 48.4 (50,000 msg/s). Costs: 4 busy threads a host | [AWS](#aws-dpdk-f-stack-and-kernel) |
+| TCP on DPDK (F-Stack) or kernel TCP (AWS)? | F-Stack. p50 lower by 17 to 19 at 10,000 msg/s and 26 to 28 at 50,000 (32.1 to 35.0 against 52.2 to 61.1), and below kernel Aeron reliable by 8.4 to 19.5. At 200,000 msg/s F-Stack keeps up (p50 50.4 at 1 stream, 34.7 at 8) while kernel TCP falls 5 to 16 s behind. 1 busy thread | [AWS](#aws-dpdk-f-stack-and-kernel) |
 
 ## What was compared
 
@@ -51,6 +55,9 @@ brackets after it.
 | 3a | reliable, no loss, Aeron only (its TCP rows are superseded by 3c) | `aeron-rel` (kernel) | 1 | 10,000; 50,000; 200,000 | round trip |
 | 3b | reliable under loss | `aeron-rel`, `mio-tcp`, `eio-tcp`; netem 0.01, 0.1 and 1 % | 1 | 10,000; 50,000; 200,000 | round trip |
 | 3c | the netem control, and reliable without loss | `aeron-rel`, `mio-tcp`, `eio-tcp` (framed TCP); netem 0 %, and no qdisc | 1 | 10,000; 50,000; 200,000 | round trip |
+| AWS d1, d8 | reliable on DPDK and the kernel | `dpdk-tcp` (F-Stack), `mio-tcp`, `eio-tcp`, `aeron-rel`, `dpdk-aeron-rel` (md-dpdk) | 1, 8 | 10,000; 50,000; 200,000 | round trip |
+| AWS u | unreliable UDP on DPDK and the kernel | `dpdk-aeron-udp`, `aeron-udp`, `mio-udp`, `eio-udp` | 1 | 50,000 | round trip |
+| AWS pin | mio against ergon-io on one connection | `mio-tcp-pin`, `eio-tcp-pin` (`tcp_lat --source-port 31000`: the same 4-tuple) | 1 | 10,000; 50,000 | round trip |
 
 Every set adds an A/A arm (`aa`: one of its arms run again in the same
 round), so a difference smaller than two runs of the same arm is never
@@ -304,6 +311,7 @@ Run ids, VMs and commits:
 | 3a (Aeron rows) | `20261026-172859-transport-a` | `F8als_v6`, `F8ams_v6` | West US 3 | `aefe999d` |
 | 2a | `20261026-221959-transport-a` | `F8als_v6`, `F8ams_v6` | North Central US | `63cf9e25` |
 | 3b, 3c | `20261026-222001-transport-a` | `F8als_v6`, `F8ams_v6` | West US 2 | `63cf9e25` |
+| AWS d1, d8, u, pin | `aws-20261027-062105` | `c7a.2xlarge`, `c7a.2xlarge` (spot) | us-east-1 | `b67ad62b` |
 
 `63cf9e25` predates two fixes to the bench, not to ergon-io: the latency
 core's prefaulted stall buffer (`3b285a9b`, see [set 2a](#set-2a-unreliable-udp-between-hosts))
@@ -703,9 +711,11 @@ that rate all failed (the pong bug above).
   (`20261026-172859`, another VM pair, unequal busy polling) had p99.99 405
   to 711. 54 of 3c's 68 maxima are unexplained (above).
 
-#### mio against ergon-io over TCP: no verdict
+#### mio against ergon-io over TCP on Azure: no verdict
 
-The first sessions showed ergon-io 4.6 to 7.5 behind mio at p50 (set 3a,
+Superseded by the AWS same-connection A/B:
+[the verdict](#mio-against-ergon-io-the-verdict) is no difference. The
+first sessions showed ergon-io 4.6 to 7.5 behind mio at p50 (set 3a,
 `20261026-172859`): the unfair set-up (ergon-io's `SO_BUSY_POLL` 0). With
 both at 50 µs, the no-loss rows above:
 
@@ -718,20 +728,237 @@ both at 50 µs, the no-loss rows above:
 
 So the gap is within run-to-run noise: no verdict. Each TCP point opens a
 new connection from a fresh source port, so each can hash to another NIC
-queue and flow path; that alone can move a point by several µs. A
-same-connection A/B (`tcp_lat --source-port`: both arms on the same
-4-tuples) is scheduled on AWS. A code audit found no per-message system
+queue and flow path; that alone can move a point by several µs. A code
+audit found no per-message system
 call or socket option that differs: both make `epoll_wait(0)`, one `recv`
 of up to 128 KiB, `TCP_QUICKACK`, one `send`, and one empty read (the
 busy-poll pass). Their counters agree: 1.9 to 2.0 reads, 1 send and 0.99
 to 1.0 quick-ACK re-arms a message on both, with no loss.
 
+## AWS: DPDK, F-Stack and kernel
+
+<!-- RESULTS: aws -->
+
+Session `aws-20261027-062105`: 141 points, 0 failures, 3 reps, commit
+`b67ad62b`. Compare these rows only with each other, never with the Azure
+tables above (other cloud, other NIC, other network).
+
+### Hosts and settings
+
+| what | value |
+|---|---|
+| instances | two `c7a.2xlarge` (AMD EPYC 9R14, Genoa; 8 cores, no SMT), spot, one cluster placement group, us-east-1a; Debian 13, kernel 7.2; ENA, two data NICs each |
+| CPUs | as on Azure: CPU 0 housekeeping, CPU 1 every data-NIC interrupt, CPUs 2 to 7 isolated |
+| kernel arms | `busy_read` and `busy_poll` 50 µs, interrupt deferral off, coalescing off (ENA has no adaptive TX), `TCP_NODELAY`, `TCP_QUICKACK` after every read, `tcp_rto_min_us` 8,000; mio and ergon-io both `SO_BUSY_POLL` 50 µs, read back from every socket |
+| `dpdk-tcp` | F-Stack v2.0 (FreeBSD's TCP on DPDK 24.11), `net.inet.tcp.delayed_ack` 0, cubic, SACK on; one busy thread, as the kernel TCP arms |
+| `dpdk-*aeron*` | Aeron on md-dpdk: the media driver's UDP on DPDK (ENA PMD), the Aeron settings of the Azure arms; 4 busy threads a host |
+| clock | the TSC. Round trips are on host a's counter alone. The hosts' `CLOCK_REALTIME` is NTP (chrony, error bound 122 to 155 µs): ergon-tune T11 warns, which blocks nothing here |
+
+Why `c7a.2xlarge`: F-Stack builds on x86_64 only, so Graviton is out, and
+`c7i.2xlarge` has 4 cores once SMT is off; the CPU map needs 8. Cost:
+spot about $0.19 an instance-hour; the session took 2 h 37 min from launch
+to verified deletion (two instances, about $1). An earlier session the same
+morning (`aws-20261027-043119`, 45 min) lost every DPDK arm to a set-up
+failure and has no A/A; its kernel rows agree with these and are not used.
+
+### Reliable: F-Stack, kernel TCP and Aeron (d1, d8)
+
+Round trip (µs). A/A: `dpdk-tcp` again. Busy threads a host: Aeron 4,
+TCP 1. A row marked **flagged** is past what the arm carries (or, for
+`aeron-rel` at 8 streams and 200,000 msg/s, its IRQ CPU saturated in 2 of
+3 reps) and is never compared.
+
+| msg/s | streams | arm | min | p50 | p99 | p99.99 | max | max causes (3 reps) |
+|---|---|---|---|---|---|---|---|---|
+| 10,000 | 1 | `dpdk-aeron-rel` | 25.4 (25.2–25.5) | 29.6 (29.4–30.6) | 36.6 (36.5–39.3) | 125 (109–134) | 170 (158–178) | unexplained 3 |
+| | | `dpdk-tcp` | 29.3 (29.0–29.6) | 33.9 (33.9–34.1) | 40.4 (40.2–40.9) | 111 (110–129) | 165 (163–172) | :49–:51 cluster 1, unexplained 2 |
+| | | A/A | 29.6 (29.6–29.9) | 34.1 (34.1–35.4) | 40.4 (40.4–44.0) | 116 (104–136) | 164 (164–174) | unexplained 3 |
+| | | `aeron-rel` | 36.7 (36.7–37.2) | 42.7 (42.5–42.7) | 49.8 (49.8–50.0) | 143 (123–157) | 180 (160–250) | :49–:51 cluster 1, unexplained 2 |
+| | | `mio-tcp` | 43.5 (43.2–44.4) | 52.3 (52.2–52.9) | 64.5 (62.2–70.3) | 153 (152–171) | 298 (241–317) | unexplained 3 |
+| | | `eio-tcp` | 44.5 (44.2–44.7) | 53.2 (52.9–53.5) | 63.6 (61.5–65.5) | 145 (123–167) | 374 (231–509) | unexplained 3 |
+| | 8 | `dpdk-aeron-rel` | 25.9 (25.6–25.9) | 30.7 (30.5–31.0) | 38.2 (38.2–38.6) | 115 (104–141) | 186 (156–192) | unexplained 3 |
+| | | `dpdk-tcp` | 29.7 (29.7–29.9) | 35.0 (34.9–35.0) | 42.1 (41.5–42.3) | 131 (126–134) | 175 (156–204) | unexplained 3 |
+| | | A/A | 29.6 (29.5–29.8) | 35.1 (35.1–35.5) | 43.8 (43.5–44.5) | 124 (118–149) | 189 (165–243) | :49–:51 cluster 1, unexplained 2 |
+| | | `aeron-rel` | 46.4 (45.5–46.5) | 52.5 (52.3–52.8) | 61.7 (60.2–61.8) | 171 (165–190) | 405 (282–2,213) | NAK 1, unexplained 2 |
+| | | `mio-tcp` | 44.9 (44.3–45.4) | 52.2 (51.5–52.2) | 64.0 (63.9–66.6) | 174 (174–198) | 363 (302–470) | unexplained 3 |
+| | | `eio-tcp` | 44.8 (44.5–44.8) | 52.8 (52.6–54.0) | 65.6 (64.7–67.0) | 160 (144–163) | 380 (221–400) | unexplained 3 |
+| 50,000 | 1 | `dpdk-aeron-rel` | 24.3 (24.1–24.4) | 28.1 (28.0–28.2) | 35.5 (35.1–35.8) | 110 (110–135) | 211 (164–252) | unexplained 3 |
+| | | `dpdk-tcp` | 27.7 (27.5–27.7) | 32.1 (32.0–32.4) | 40.2 (40.1–42.2) | 131 (106–139) | 201 (163–201) | unexplained 3 |
+| | | A/A | 27.7 (27.6–27.8) | 32.1 (32.0–32.2) | 40.5 (40.2–40.8) | 135 (124–140) | 180 (180–188) | unexplained 3 |
+| | | `aeron-rel` | 34.8 (34.6–34.9) | 40.5 (40.4–40.6) | 48.0 (47.5–48.4) | 147 (144–148) | 209 (196–238) | unexplained 3 |
+| | | `mio-tcp` | 40.0 (39.8–40.1) | 60.5 (59.1–67.8) | 83.1 (80.0–92.2) | 196 (193–229) | 536 (343–2,524) | unexplained 3 |
+| | | `eio-tcp` | 39.9 (39.3–40.7) | 58.7 (58.7–59.8) | 78.6 (78.4–79.0) | 177 (166–193) | 300 (254–322) | unexplained 3 |
+| | 8 | `dpdk-aeron-rel` | 25.0 (24.6–25.6) | 29.4 (29.1–30.4) | 37.1 (36.6–37.8) | 139 (123–142) | 225 (195–236) | :49–:51 cluster 1, unexplained 2 |
+| | | `dpdk-tcp` | 28.0 (28.0–28.7) | 33.8 (33.4–34.0) | 41.1 (40.7–43.1) | 139 (127–141) | 187 (178–296) | unexplained 3 |
+| | | A/A | 28.2 (28.0–28.6) | 33.6 (33.3–33.6) | 41.2 (40.9–42.7) | 132 (99.2–152) | 233 (175–1,839) | unexplained 3 |
+| | | `aeron-rel` | 42.2 (39.3–43.0) | 53.3 (52.6–54.5) | 64.1 (64.0–64.6) | 180 (178–181) | 315 (288–484) | unexplained 3 |
+| | | `mio-tcp` | 41.6 (41.1–41.8) | 60.1 (59.1–60.4) | 82.2 (80.9–87.6) | 201 (185–207) | 315 (309–410) | unexplained 3 |
+| | | `eio-tcp` | 41.5 (41.1–44.1) | 61.1 (60.8–62.9) | 85.0 (83.3–88.1) | 211 (195–214) | 333 (284–588) | unexplained 3 |
+| 200,000 | 1 | `dpdk-aeron-rel` | 23.2 (23.1–24.0) | 27.5 (27.4–31.8) | 37.9 (37.1–47.4) | 162 (150–176) | 297 (273–342) | page fault 1, unexplained 2 |
+| | | `dpdk-tcp` | 33.9 (33.6–34.4) | 50.4 (49.4–52.9) | 83.8 (79.5–89.7) | 207 (191–212) | 297 (270–316) | unexplained 3 |
+| | | A/A | 33.5 (33.5–33.6) | 49.1 (48.6–49.1) | 78.7 (77.7–81.3) | 183 (183–192) | 285 (273–314) | unexplained 3 |
+| | | `aeron-rel` | 36.7 (35.1–37.0) | 47.8 (43.9–49.1) | 67.8 (60.9–74.4) | 210 (176–1,967) | 856 (404–2,336) | unexplained 3 |
+| | 8 | `dpdk-aeron-rel` | 24.0 (23.7–24.0) | 28.8 (28.4–29.4) | 38.7 (37.3–38.7) | 152 (133–152) | 259 (219–306) | unexplained 3 |
+| | | `dpdk-tcp` | 27.9 (27.9–27.9) | 34.7 (34.2–36.1) | 48.6 (45.7–53.0) | 157 (141–161) | 261 (248–268) | unexplained 3 |
+| | | A/A | 27.7 (27.6–27.7) | 34.9 (34.4–35.9) | 49.6 (47.4–54.2) | 152 (137–180) | 340 (246–342) | unexplained 3 |
+| | | `aeron-rel` **flagged** | 41.0 (40.8–42.1) | 86.0 (82.1–86.9) | 120 (116–126) | 240 (237–256) | 363 (350–594) | IRQ CPU saturated 2, :49–:51 cluster 1 |
+
+Kernel TCP at 200,000 msg/s, past capacity in every rep (sender late,
+under 98 % of the rate), never compared:
+
+| streams | arm | achieved, msg/s | p50 (backlog) |
+|---|---|---|---|
+| 1 | `mio-tcp` | 147,274 to 153,776 | 5.2 to 6.1 s |
+| | `eio-tcp` | 119,027 to 134,125 | 8.5 to 11.6 s |
+| 8 | `mio-tcp` | 113,359 to 121,313 | 11.1 to 13.1 s |
+| | `eio-tcp` | 104,470 to 111,679 | 13.5 to 15.8 s |
+
+A/A spread at p50: 1.50 (1 stream, 10,000), 0.16 (50,000), 3.78
+(200,000); 0.48, 0.35, 0.22 at 8 streams.
+
+- **F-Stack against kernel TCP:** p50 lower by 17.2 to 19.3 at 10,000
+  msg/s and 26.3 to 28.5 at 50,000; p99 lower by 21.9 to 24.1 and 38.4 to
+  43.9; p99.99 lower by 29 to 73 in 7 of 8 comparisons (`eio-tcp` at 1
+  stream and 10,000 not separated). Same busy threads (1), same wire bytes
+  (134).
+- **F-Stack against kernel Aeron reliable:** p50 lower by 8.4 to 8.7 at 1
+  stream and 17.5 to 19.5 at 8. At 1 stream and 200,000 msg/s F-Stack's
+  p50 rises to 50.4 and the two are not separated at p50; kernel Aeron's
+  p99 is lower there by 16.0.
+- **At 200,000 msg/s** F-Stack carries the full rate at 1 and 8 streams;
+  kernel TCP falls 5 to 16 s behind, ergon-io more than mio (it carries
+  18 % less at 1 connection, 7 % less at 8; not traced).
+- **Aeron on DPDK is the lowest:** p50 27.5 to 30.7 at every stream count
+  and load. Against F-Stack: p50 lower by 3.9 to 4.4 at 10,000 and 50,000,
+  5.9 at 8 streams and 200,000, 23.0 at 1 stream and 200,000; p99 lower by
+  3.9 to 10.0, 46 at 1 stream and 200,000, not separated at 1 stream and
+  10,000. Against kernel Aeron: p50 lower by 12.3 to 13.1 at 1 stream,
+  20.4 at 200,000, and 21.8 to 23.9 at 8 streams.
+- **Kernel Aeron grows with streams and load:** p50 40.5 to 47.8 at 1
+  stream, 52.5 to 53.3 at 8 streams to 50,000 msg/s, 86.0 (82.1–86.9) at
+  8 streams and 200,000, where CPU 1, which takes every data-NIC
+  interrupt, saturated in 2 of 3 reps. md-dpdk takes no interrupt.
+- **Loss:** none in any arm. Aeron retransmitted nothing (6 NAKs, one
+  point, above). F-Stack retransmitted one segment, in one A/A point at
+  200,000 msg/s.
+
+### Unreliable UDP (u)
+
+Round trip (µs), 1 stream, 50,000 msg/s. A/A: `dpdk-aeron-udp` again
+(spread at p50 0.75). Busy threads a host: Aeron 4, sockets 1.
+
+| arm | min | p50 | p99 | p99.99 | max | max causes (3 reps) |
+|---|---|---|---|---|---|---|
+| `dpdk-aeron-udp` | 24.4 (24.2–24.4) | 28.0 (28.0–28.7) | 35.4 (35.2–37.5) | 131 (106–139) | 177 (169–178) | unexplained 3 |
+| A/A | 24.1 (24.1–24.5) | 28.0 (27.9–28.7) | 35.3 (35.3–37.4) | 132 (127–134) | 173 (164–194) | unexplained 3 |
+| `aeron-udp` | 34.7 (34.6–35.1) | 40.9 (40.8–40.9) | 48.6 (48.3–49.9) | 148 (145–162) | 420 (414–445) | unexplained 3 |
+| `mio-udp` | 35.7 (35.3–36.0) | 47.7 (47.4–47.8) | 60.8 (60.6–61.1) | 150 (133–164) | 521 (236–609) | unexplained 3 |
+| `eio-udp` | 37.7 (37.0–38.1) | 48.4 (48.3–48.5) | 60.9 (58.4–61.8) | 155 (147–159) | 420 (226–553) | unexplained 3 |
+
+- DPDK Aeron's p50 is 12.8 below kernel Aeron's and 19.7 to 20.4 below the
+  sockets'; p99 13.2 and 25.4 to 25.5 lower. Kernel Aeron's p50 is 6.9 to
+  7.5 below the sockets'.
+- mio and ergon-io: p50, p99 and p99.99 not separated; mio's min 2.0
+  lower. 0 lost; 175 (mio) and 301 (ergon-io) reordered over 3 reps.
+
+### mio against ergon-io: the verdict
+
+**No difference.** Set pin runs both on the same connection 4-tuple
+(`tcp_lat --source-port 31000`, both to `10.30.1.7:22000`, read back in
+each manifest), so the NIC queue and flow path are the same. A/A:
+`mio-tcp-pin` again.
+
+| msg/s | arm | min | p50 | p99 | p99.99 | max | max causes (3 reps) |
+|---|---|---|---|---|---|---|---|
+| 10,000 | `mio-tcp-pin` | 44.1 (43.8–44.3) | 52.2 (51.4–52.4) | 61.8 (61.5–63.2) | 161 (154–171) | 266 (194–273) | unexplained 3 |
+| | A/A | 43.4 (43.2–43.8) | 52.2 (52.1–52.3) | 61.9 (61.0–62.9) | 153 (152–163) | 311 (187–404) | :49–:51 cluster 1, unexplained 2 |
+| | `eio-tcp-pin` | 44.6 (44.4–44.7) | 53.4 (53.3–53.6) | 62.1 (61.8–62.1) | 143 (136–155) | 198 (192–374) | unexplained 3 |
+| 50,000 | `mio-tcp-pin` | 39.7 (39.5–39.9) | 56.3 (55.7–59.8) | 79.5 (77.6–81.8) | 213 (176–217) | 331 (244–1,579) | unexplained 3 |
+| | A/A | 39.8 (39.5–39.9) | 59.1 (56.1–59.7) | 79.0 (76.7–79.4) | 157 (151–162) | 541 (217–620) | unexplained 3 |
+| | `eio-tcp-pin` | 40.0 (39.8–40.6) | 59.0 (58.4–59.6) | 78.3 (78.1–79.7) | 180 (171–181) | 276 (270–544) | unexplained 3 |
+
+| comparison | p50 | p99 | p99.99 |
+|---|---|---|---|
+| same connection, 10,000 msg/s | mio 1.2 lower (A/A 0.8) | not separated | not separated |
+| same connection, 50,000 msg/s | not separated (A/A 3.4) | not separated | not separated |
+| fresh connections, 1 stream, 10,000 / 50,000 | not separated | not separated / ergon-io 4.5 lower | not separated |
+| fresh connections, 8 streams, 10,000 / 50,000 | mio 0.6 / 1.0 lower | not separated | not separated |
+
+- The largest separated p50 gap is 1.2 µs (2 %), mio's way; ergon-io leads
+  once at p99. No tail separates. Calls a message at 10,000 msg/s, both
+  arms: 2.00 reads (one empty: the busy-poll pass), 1.00 send, 1.00
+  `TCP_QUICKACK` re-arm; 0 RTOs, 0 retransmits.
+- The Azure gap (ergon-io 4.6 to 7.5 behind) was unequal busy polling:
+  ergon-io's `epoll-spin` forced `SO_BUSY_POLL` 0. Fixed with
+  `Config::busy_poll_us`; with both at 50 µs the gap is gone on both
+  clouds.
+- Overloaded (200,000 msg/s, above) ergon-io drains slower: it carried
+  104,000 to 134,000 msg/s against mio's 113,000 to 154,000. Neither keeps
+  up.
+
+### Maxima
+
+Each point's max (`spikes.py --transport`), 141 points:
+
+| cause | maxima | what it is |
+|---|---|---|
+| past capacity | 12 | kernel TCP at 200,000 msg/s |
+| IRQ CPU saturated | 2 | kernel Aeron, 8 streams, 200,000 msg/s |
+| NAK | 1 | kernel Aeron, 8 streams, 10,000 msg/s: 2,213 µs; host a sent 6 NAKs in that second, with no retransmit and no loss-gap fill, so the frames it waited for came late, not lost |
+| page fault of a busy thread | 1 | DPDK Aeron, 1 stream, 200,000 msg/s: 342 µs, host b CPU 3 |
+| seconds :49 to :51 | 6 | the window `spikes.py` names for Azure's per-minute stall; on AWS not shown to be the same cause |
+| **unexplained** | 119 | below |
+
+Of the 129 maxima not past capacity, 123 are 620 µs or less (median 266).
+The six above 620 µs:
+
+| point | max, µs | cause |
+|---|---|---|
+| `mio-tcp`, 1 stream, 50,000 msg/s | 2,524 | unexplained: no event on either host; a TCP counter grew on host a in that second, but the point's connection retransmitted nothing |
+| `aeron-rel`, 1 stream, 200,000 msg/s | 2,336 (856 in another rep) | unexplained: no event on either host, no NAK |
+| `aeron-rel`, 8 streams, 10,000 msg/s | 2,213 | NAKs for frames that came late (above) |
+| A/A (`dpdk-tcp`), 8 streams, 50,000 msg/s | 1,839 | unexplained: no event on either host |
+| `mio-tcp-pin`, 50,000 msg/s | 1,579 | unexplained: no event on either host |
+
+The unexplained ones, and what was ruled out:
+
+| kind | maxima | ruled out | not observable |
+|---|---|---|---|
+| no recorded event overlaps the max on either host | 88 | a gap spinner's gap on an idle isolated CPU (a host pause); preemption, IRQ, softirq and page fault on the traced hot CPUs; the client loops' stalls; Aeron NAKs, retransmits and driver errors; the point's own TCP retransmits | the IRQ CPU and the housekeeping CPU (not traced); a pause of a busy vCPU (no spinner shares it); the ENA and AWS's network |
+| the ping's receive loop did not run for 65 to 291 µs on CPU 2 and the guest's trace shows nothing there | 24 | the same | a hypervisor pause of that busy CPU |
+| a TCP counter grew in that second on another connection | 7 | the point's own connections retransmitted nothing | |
+
+No max verdict is drawn: every comparison's max column is blocked by an
+unexplained max.
+
+### Fairness flags
+
+`fairness.py` reports 460 violations, so every AWS table is shown with
+`--show-invalid`. None moves a median:
+
+| rule | count | what |
+|---|---|---|
+| `max` | 119 | the unexplained maxima above |
+| `settings` | 240 | `busy_read` and `busy_poll` read 0, not 50, on the DPDK arms' points (F-Stack, md-dpdk and their A/As): the set-up before a DPDK arm resets them, and DPDK owns the data NIC, so no kernel socket on its path reads them. `fairness.py` does not yet exempt DPDK arms |
+| `loss-accounting` | 72 | F-Stack's `tcp_info` (FreeBSD's) has no DSACK split, so its retransmits (1 in all its points) cannot be split into spurious and real |
+| `irq` | 29 | one data-NIC interrupt in a 30 s point on an isolated CPU, on the kernel arms |
+
+Thread placement was not read mid-window on one or both hosts in 7 points
+(the runner logged `thread placement: unread`), so it is unverified there:
+rep 2 of `d1` `eio-tcp` and `mio-tcp` at 50,000 msg/s and `mio-tcp` at
+200,000 (past capacity anyway), rep 2 of `u` `eio-udp`, and at 50,000
+msg/s `pin` `eio-tcp-pin` (rep 2) and the `mio-tcp-pin` A/A (reps 2 and 3).
+All but one sit inside their arm's other reps; `mio-tcp`'s rep 2 at 1
+stream and 50,000 msg/s is its slowest (p50 67.8 against 59.1 and 60.5),
+which widens that arm's range, not its median.
+
 ## Conclusion
 
 <!-- CONCLUSION -->
 
-On Azure x86 (AMD Genoa, 8 cores), 64-byte messages, kernel network
-paths only (no DPDK result yet):
+On AMD Genoa x86, 8 cores, 64-byte messages: Azure for the kernel paths,
+AWS (`c7a.2xlarge`, ENA) where a row names DPDK or F-Stack. Compare
+numbers only within one cloud:
 
 | need | use | numbers, µs (p50 / p99 / p99.99 / max) | cost |
 |---|---|---|---|
@@ -741,7 +968,9 @@ paths only (no DPDK result yet):
 | one stream between hosts, lowest latency | Aeron kernel UDP | 1 stream, 10,000 to 200,000 msg/s: 55.6–59.5 / 60.7–63.7 / 77–387 / 89–2,186; mio and ergon-io at 10,000 and 50,000: 61.8–62.9 / 66.0–68.9 / 140–458 / 213–2,886 | Aeron 4 busy threads a host, sockets 1 |
 | 32 or more streams between hosts, up to 50,000 msg/s (measured) | plain sockets, mio or ergon-io (one loop, one socket a stream) | sockets 57.8–60.3 / 65.2–66.6 / 166–286 / 200–671; Aeron 62.3–70.0 / 70.8–80.0 / 176–201 / 231–626 (10,000 and 50,000 msg/s) | 1 busy thread a host, against 4 |
 | 200,000 msg/s between hosts | Aeron: both socket libraries fall seconds behind (151,000 to 195,000 msg/s carried, one `send` a message) | Aeron 55.8–86.3 / 63.7–115 / 147–387 / 324–2,186 at 1 to 128 streams | 4 busy threads a host |
-| mio or ergon-io | either: UDP p50 within 0.1–0.9 (ergon-io behind), TCP no verdict | see [2a](#set-2a-unreliable-udp-between-hosts), [3c](#mio-against-ergon-io-over-tcp-no-verdict) | 1 busy thread each |
+| mio or ergon-io | either: no difference. UDP p50 within 0.1–0.9 (Azure) and not separated (AWS); TCP on one connection within 1.2 (AWS), tails not separated. Overloaded, ergon-io drains slower | see [2a](#set-2a-unreliable-udp-between-hosts), [the verdict](#mio-against-ergon-io-the-verdict) | 1 busy thread each |
+| lowest latency between hosts, DPDK allowed (AWS) | Aeron on DPDK (md-dpdk), reliable or not; flat from 1 to 8 streams and to 200,000 msg/s | reliable 27.5–30.7 / 35.5–38.7 / 110–162 / 170–297; unreliable 28.0 / 35.4 / 131 / 177 | 4 busy threads a host |
+| TCP between hosts (AWS) | F-Stack (TCP on DPDK): 17–28 below kernel TCP at p50, below kernel Aeron reliable, and keeps up at 200,000 msg/s | F-Stack 32.1–50.4 / 40.2–83.8 / 111–207 / 165–297; kernel TCP 52.2–61.1 / 63.6–85.0 / 145–211 / 298–536 (to 50,000) | 1 busy thread |
 | reliable delivery between hosts, no loss | Aeron reliable UDP, for its p50, its p99 and its headroom | Aeron 54.8–57.6 / 59.9–64.3 / 269–1,335 / 902–3,725; TCP 64.7–69.8 / 79–225 / 559–6,017 / 1,366–8,027 (10,000 and 50,000 msg/s); TCP past capacity at 200,000 | Aeron 4 busy threads a host, TCP 1 |
 | reliable under loss | compare the tails at your loss rate: neither wins everywhere. Aeron keeps the lower p50 and, to 0.1 %, the lower p99; its maxima sit at its 10 ms retransmit linger, TCP's come from its retransmits (8 ms minimum RTO) | 0.1 %: Aeron 53.1–61.6 / 67.7–90.1 / 7,246–8,675 / 10,147–10,240; TCP 65.0–68.5 / 127–148 / 3,379–13,132 / 5,615–15,470 | as above |
 
@@ -755,6 +984,9 @@ paths only (no DPDK result yet):
   socket answers 200 µs sooner at light load; on, TCP carried 200,000 msg/s
   where without it 1 connection carried 106,000 to 151,000. Not swept.
 - Aeron's lead costs three more busy cores a host.
+- On AWS the kernel's one IRQ CPU is the limit: kernel Aeron at 8 streams
+  and 200,000 msg/s saturates it (p50 86.0); DPDK, which polls the NIC,
+  stays at 28.8.
 
 ## Reproduce
 
@@ -806,9 +1038,12 @@ What the runner writes and the analysis reads:
 
 - ergon-io's other backends (`recv-busy`, `uring-sqpoll`): the socket arms
   run `epoll-spin` only.
-- TCP fan-in (8 to 128 connections into one loop): its one session gave
-  mio and ergon-io unequal busy polling, and it was not rerun.
-- Graviton, AWS, bare metal: one Azure x86 size only.
+- TCP fan-in beyond 8 connections into one loop: Azure's session gave mio
+  and ergon-io unequal busy polling and was not rerun; AWS ran 8.
+- Graviton (F-Stack does not build there) and bare metal; one instance size
+  a cloud. On AWS: no netem, no 8-stream unreliable UDP, and the `pin`
+  set at 1 stream only (the session was trimmed to about 3 h).
+- Kernel bypass for the socket arms (Onload): not in this session.
 - Kubernetes pods: the VMs run the arms directly. The node and pod settings
   they need: [Kubernetes latency checklist](../deploy/kubernetes.md#latency-checklist).
 - Payloads other than 64 bytes, IPv6, multicast, TLS and WebSocket.

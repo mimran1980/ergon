@@ -15,7 +15,8 @@ Every ergon-io latency figure lives here, once, except the in-memory WebSocket r
 | `connect_background` or `Driver::connect`? | Background: the loop's worst poll per connect is 6–12 µs p50 (max 98–102) against about 105 µs inline (max 775, the first connect). | [Connection set-up](#connection-set-up) |
 | mio as a backend? | No. On Linux it is `epoll-spin`'s mechanism: level on round trips, with 2.0× the `recvmsg` calls; a two-sided CI gate fails on a 10 % slowdown of either ([`mio-parity-docker-20261024T154626Z`](results/mio-parity-docker-20261024T154626Z/summary.md)). Its market-data arm was confounded. Reasons and its maxima without a cause: the book's [mio: measured, not a backend](https://mimran1980.github.io/ergon/io/backends.html#mio-measured-not-a-backend). | [Fair run](#interrupt-against-nic-polling-the-fair-run-graviton), [loop pass](#loop-pass-by-socket-count-graviton) |
 | UDP or TCP, between two hosts? | Not compared directly: the UDP and TCP sets ran on different Azure VM pairs. 1 stream, p50: UDP 61.8–62.9 µs, TCP 64.7–69.8 µs, each with no loss. | [Transport comparison](#transport-comparison-udp-tcp-mio-and-ergon-io) |
-| mio or ergon-io, for UDP and framed TCP? | UDP: ergon-io's p50 0.1–0.9 µs behind mio's in every rep; tails not separated. TCP: no verdict, the gap is inside run-to-run noise; a same-connection A/B is scheduled on AWS. Both read twice and send once a message. | [Transport comparison](#transport-comparison-udp-tcp-mio-and-ergon-io) |
+| mio or ergon-io, for UDP and framed TCP? | No difference. UDP: ergon-io's p50 0.1–0.9 µs behind mio's on Azure, not separated on AWS. TCP on one shared connection (AWS): mio 1.2 µs lower at p50 at 10,000 msg/s (A/A 0.8), not separated at 50,000; tails not separated. Both read twice and send once a message. Overloaded, ergon-io drains slower. | [Transport comparison](#transport-comparison-udp-tcp-mio-and-ergon-io) |
+| Kernel TCP or F-Stack (TCP on DPDK)? | F-Stack: p50 17–28 µs lower on AWS, and it carries 200,000 msg/s where kernel TCP does not. | [Transport comparison](#transport-comparison-udp-tcp-mio-and-ergon-io) |
 | ENA adaptive moderation? | Off stopped the polling loop's involuntary preemptions (about 8,900 in 8 min to 0) and cut WebSocket p99.99 from 117–119 to 72–76 µs. HTTP p99.99 did not move. | [Host and NIC settings](#host-and-nic-settings-aws-x86) |
 
 ## Hosts and runs
@@ -296,6 +297,42 @@ connection):
   its echo loop once overloaded. A bench bug, not ergon-io's; fixed in
   `55bee73a`.
 
+**AWS** (session `aws-20261027-062105`, two `c7a.2xlarge`, AMD Genoa, ENA,
+the same settings; sets d1, d8 and pin): framed TCP beside F-Stack (TCP on
+DPDK, 1 busy thread). Set pin binds both libraries to the same 4-tuple
+(`tcp_lat --source-port 31000`), so the NIC queue and flow path match.
+
+| counter, per message | `eio-tcp` | `mio-tcp` |
+|---|---|---|
+| reads (`recv`), 10,000 msg/s | 2.00 | 2.00 |
+| reads, 50,000 msg/s, 1 connection (fresh / pin) | 1.74–1.76 / 1.75–1.76 | 1.65–1.76 / 1.77–1.83 |
+| reads, 200,000 msg/s, 1 connection (past capacity) | 0.57–0.73 | 0.53–0.71 |
+| sends | 1.00 | 1.00 |
+| `TCP_QUICKACK` re-arms, 10,000 / 50,000 msg/s | 1.00 / 0.98–1.00 | 1.00 / 0.94–1.00 |
+| RTOs, retransmits | 0 | 0 |
+
+| p50, µs (median of 3 reps) | `eio-tcp` | `mio-tcp` | F-Stack |
+|---|---|---|---|
+| 1 connection, 10,000 msg/s | 53.2 | 52.3 | 33.9 |
+| 1 connection, 50,000 msg/s | 58.7 | 60.5 | 32.1 |
+| 8 connections, 10,000 msg/s | 52.8 | 52.2 | 35.0 |
+| 8 connections, 50,000 msg/s | 61.1 | 60.1 | 33.8 |
+| same connection (pin), 10,000 / 50,000 msg/s | 53.4 / 59.0 | 52.2 / 56.3 | |
+| 200,000 msg/s, carried (1 / 8 connections) | 119,027–134,125 / 104,470–111,679 | 147,274–153,776 / 113,359–121,313 | full rate |
+
+- **mio against ergon-io: no difference.** Separated at p50 only at 8
+  connections (mio 0.6 and 1.0 lower) and on the pin set at 10,000 msg/s
+  (mio 1.2 lower, A/A 0.8); ergon-io's p99 lower by 4.5 once; nothing else
+  separates. The Azure gap was unequal busy polling.
+- **Overloaded, ergon-io drains slower.** At 200,000 msg/s both fall
+  seconds behind (p50 backlog 5.2–6.1 s mio, 8.5–11.6 s ergon-io, 1
+  connection); ergon-io carries 18 % less at 1 connection and 7 % less at
+  8 (medians). Both loops then read several frames a read (0.53 to 0.73
+  reads a message), so the read count does not explain it. Not traced
+  further.
+- **F-Stack** is 17–28 µs lower at p50 than either and carries the full
+  200,000 msg/s; ergon-io has no DPDK backend.
+
 ## Worst cases
 
 - **Azure, once a minute:** loop stalls and slow samples bunch at seconds :49–:51 of every minute, on both hosts, in every workload and in a loop that only reads the counter, up to 2.1 ms ([`rows.md`](results/flags-azure-20261014T144146Z/rows.md), run `flags-azure-20261014T144146Z`).
@@ -306,7 +343,7 @@ connection):
 - Graviton against x86: not compared. x86 interrupt against polling: no fair run.
 - The fair run's `md-mio-c1` points show a sender batch up to 40 ms late on 0.07 % of batches, mio at one connection only (`work-counts.md`). No cause yet. It is listed with mio's other maxima still without a cause in the book's [mio: measured, not a backend](https://mimran1980.github.io/ergon/io/backends.html#mio-measured-not-a-backend).
 - Azure's once-a-minute stall: no kernel event explains it.
-- mio against ergon-io over TCP: no verdict on Azure (each point a new connection and source port). A same-connection A/B (`tcp_lat --source-port`) is scheduled on AWS.
+- Why ergon-io drains a TCP connection slower than mio once past capacity (200,000 msg/s on AWS).
 
 ## Reproduce
 

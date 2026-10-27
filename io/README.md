@@ -181,17 +181,20 @@ The full table, the evidence and the node settings: the book's
 ## UDP or TCP, ergon-io or mio
 
 UDP and framed TCP, each through raw mio and through ergon-io, are measured
-beside Aeron on the same hosts, cores and settings (Azure x86, 64-byte
-messages, round trips, both arms `SO_BUSY_POLL` 50 µs): UDP at 1 to 128
-streams, TCP with and without loss. Tables and conclusion: the book's
+beside Aeron on the same hosts, cores and settings (64-byte messages,
+round trips, both arms `SO_BUSY_POLL` 50 µs): on Azure x86, UDP at 1 to
+128 streams and TCP with and without loss; on AWS `c7a.2xlarge`, TCP on
+one shared connection, and beside F-Stack (TCP on DPDK) and Aeron on DPDK.
+Tables and conclusion: the book's
 [transport latency comparison](https://mimran1980.github.io/ergon/transports/comparison.html).
 
 <!-- RESULTS: io README -->
 
 | question | answer |
 |---|---|
-| mio or ergon-io, UDP? | Either. ergon-io's p50 is 0.1 to 0.9 µs behind mio's (behind in every rep); p99.99 and max not separated |
-| mio or ergon-io, TCP? | No verdict: the median p50 gaps (ergon-io 2.4 µs ahead to 4.0 behind) are inside each arm's own spread across reps (up to 10.7 µs). A same-connection A/B (`tcp_lat --source-port`) is scheduled on AWS |
+| mio or ergon-io? | Either: no difference. UDP p50 within 0.1 to 0.9 µs (Azure), not separated (AWS). TCP on the same connection (AWS): p50 52.2 against 53.4 µs at 10,000 msg/s, not separated at 50,000; tails not separated. Both make 2 reads, 1 send and 1 `TCP_QUICKACK` re-arm a message. The earlier Azure TCP gap was unequal busy polling, fixed by `Config::busy_poll_us` |
+| overloaded (200,000 msg/s on one TCP loop)? | Neither keeps up; ergon-io drains slower: 104,000 to 134,000 msg/s carried against mio's 113,000 to 154,000 (AWS) |
+| kernel TCP or F-Stack (TCP on DPDK)? | F-Stack, where kernel bypass is allowed: p50 17 to 19 µs lower at 10,000 msg/s and 26 to 28 at 50,000 (AWS), and it carries 200,000 msg/s. ergon-io drives kernel sockets only |
 | sockets or Aeron UDP? | One stream: Aeron (p50 55.6 against 61.8 µs at 50,000 msg/s). 32 to 128 streams: sockets (p50 lower by 3.7 to 10.5 µs), on 1 busy thread against Aeron's 4 |
 | at 200,000 msg/s? | Neither socket library keeps up (one `send` a message on one thread; 151,000 to 195,000 msg/s carried); Aeron does |
 | TCP or Aeron reliable? | Aeron's p50 is 7 to 15 µs lower without loss. Under loss neither tail wins everywhere: Aeron's maxima sit at its 10 ms retransmit linger, TCP's come from its retransmits (8 ms minimum RTO) |
