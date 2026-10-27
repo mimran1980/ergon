@@ -357,7 +357,7 @@ median of the reps' maxima:
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1, IPC (one host) | `aeron-ipc` | 10,000 | 0.22 (0.21–0.22) | 0.39 | 40.8 (15.7–48.8) | 146 (78.4–165) | 5 |
 | | | 5,000,000 | 0.25 (0.25–0.26) | 0.38 | 82.2 (75.4–101) | 175 (164–181) | 5 |
-| 2b, one host | `aeron-spy` | 10,000 to 200,000 | 0.26 | 0.32–0.42 | 2.11–17.1 | 3.92–108 | 5 |
+| 2b, one host | `aeron-spy` (no destination: nothing on the wire) | 10,000 to 200,000 | 0.26 | 0.32–0.42 | 2.11–17.1 | 3.92–108 | 5 |
 | | `aeron-self` (kernel UDP to its own address) | 10,000 to 200,000 | 10.3–13.9 | 11.9–19.8 | 19.2–58.0 | 31.3–181 | 5 |
 | 2a, between hosts | `aeron-udp` (kernel UDP, unreliable), 1 stream | 10,000 | 59.5 (59.2–59.7) | 63.7 | 77.1 (75.9–92.2) | 88.6 (84.9–198) | 4 a host |
 | | | 200,000 | 55.8 (55.4–56.5) | 63.7 | 387 (177–899) | 2,186 (427–2,885) | 4 a host |
@@ -371,7 +371,9 @@ median of the reps' maxima:
 Sessions: 1 and 2b `20261026-120448-transport-b`, 3a
 `20261026-172859-transport-a`, 2a `20261026-221959-transport-a`, 3b
 `20261026-222001-transport-a`. Directory on 2 MiB pages (`aeron-ipc-huge`)
-and on tmpfs were not separated at any load. Kernel UDP's p50 grows with
+and on tmpfs were not separated at any load. `aeron-spy`'s its publications had no destination, so they sent nothing on the wire: it measures IPC through a UDP publication's term buffer, not a spy on a stream that also goes to another host; a
+spy whose publications have a live UDP destination (`aeron-spy-udp`) is
+being measured. Kernel UDP's p50 grows with
 streams (one publication, subscription and channel each); at 32 and 128
 streams mio and ergon-io sockets are 3.7 to 10.5 µs lower at p50, but at
 200,000 msg/s only Aeron keeps up. Under 0.1 % loss Aeron's max is 10.1 to
