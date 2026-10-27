@@ -568,8 +568,9 @@ pub(crate) fn generate_owner_consuming_stages(
                             sbe_rt::EntryInfo,
                         ) -> Result<#entry_complete_ident<'a>, E>,
                     {
+                        // No `sbe_rt::cold()` on this loop's checks: it changed the
+                        // loop's layout and measured slower on the group parity bench.
                         if let Some(error) = self.poisoned {
-                            sbe_rt::cold();
                             return Err(E::from(error));
                         }
                         let count = self.total;
@@ -577,7 +578,6 @@ pub(crate) fn generate_owner_consuming_stages(
                         while self.count > 0 {
                             let available = self.buf.len().saturating_sub(self.offset);
                             if self.min_entry_extent > available {
-                                sbe_rt::cold();
                                 return Err(E::from(sbe_rt::DecodeError::BufferTooShort {
                                     field: #g_name_lit,
                                     needed: self.min_entry_extent,

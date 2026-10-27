@@ -6944,7 +6944,6 @@ impl<'a> FuelFiguresDecoder<'a, sbe_rt::Attached> {
         ) -> Result<FuelFiguresEntryDecoderComplete<'a>, E>,
     {
         if let Some(error) = self.poisoned {
-            sbe_rt::cold();
             return Err(E::from(error));
         }
         let count = self.total;
@@ -6952,7 +6951,6 @@ impl<'a> FuelFiguresDecoder<'a, sbe_rt::Attached> {
         while self.count > 0 {
             let available = self.buf.len().saturating_sub(self.offset);
             if self.min_entry_extent > available {
-                sbe_rt::cold();
                 return Err(
                     E::from(sbe_rt::DecodeError::BufferTooShort {
                         field: "fuelFigures",
@@ -7114,7 +7112,6 @@ impl<'a> PerformanceFiguresDecoder<'a, sbe_rt::Attached> {
         ) -> Result<PerformanceFiguresEntryDecoderComplete<'a>, E>,
     {
         if let Some(error) = self.poisoned {
-            sbe_rt::cold();
             return Err(E::from(error));
         }
         let count = self.total;
@@ -7122,7 +7119,6 @@ impl<'a> PerformanceFiguresDecoder<'a, sbe_rt::Attached> {
         while self.count > 0 {
             let available = self.buf.len().saturating_sub(self.offset);
             if self.min_entry_extent > available {
-                sbe_rt::cold();
                 return Err(
                     E::from(sbe_rt::DecodeError::BufferTooShort {
                         field: "performanceFigures",
