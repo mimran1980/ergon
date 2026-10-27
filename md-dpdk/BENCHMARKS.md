@@ -328,19 +328,55 @@ arms; flat out 3.03 M msgs/s (G7c lines 44 on, 186 on). The VPC allowance
 counters (type 92) are not in G7c's committed output, so whether the
 packets-a-second allowance was the limit is not shown.
 
-## Transport comparison on Azure: Aeron kernel UDP and DPDK
+## Transport comparison on Azure: Aeron kernel UDP
 
-Aeron's arms (IPC, spy, kernel UDP and DPDK, reliable and not) against
-`std::sync::mpsc`, mio and ergon-io, UDP and TCP, on `Standard_D16s_v6`
-pairs. The latency tables, the fairness rules and the conclusion live in the
+Aeron's arms (IPC, spy, kernel UDP, reliable and not) against
+`std::sync::mpsc`, mio and ergon-io, UDP and TCP, on `Standard_F8as_v6` /
+`F8als_v6` with `F8ams_v6` pairs (AMD Genoa, 8 cores, Mellanox mlx5 VFs).
+The latency tables, the fairness rules and the conclusion live in the
 book's
 [transport latency comparison](https://mimran1980.github.io/ergon/transports/comparison.html).
 This section holds the Aeron arms' own counters per run: NAKs, retransmits,
-loss-gap fills and short sends (each point's manifest), and the DPDK arms'
-ring events (`<host>-rings-<tag>.log`).
+loss-gap fills and short sends (each point's manifest).
 
 <!-- RESULTS: md-dpdk aeron-dpdk -->
-Results pending.
+
+**No DPDK rows.** md-dpdk's Azure set-up supports MANA only (the `mac=`
+devarg, `mana_ib`). On these mlx5 VFs it found no accelerated VF and ran
+DPDK over the synthetic VMBus path: 1 to 6 million hypervisor (`HYP`)
+interrupts a point, against under 600 for the kernel arms. Those rows
+measure the fallback path, so they are excluded. `ergon-md-dpdk` now fails
+at start on a `net_netvsc` port without an attached VF
+(`DpdkError::NoAcceleratedVf`; `RUSTERON_DPDK_ALLOW_SYNTHETIC=1` allows it
+for diagnosis). mlx5 support and DPDK results beside kernel UDP follow the
+release.
+
+Aeron's results, round trip, µs, the median of 3 reps (range); `max` the
+median of the reps' maxima:
+
+| set | arm | load, msg/s | p50 | p99 | p99.99 | max | busy threads |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1, IPC (one host) | `aeron-ipc` | 10,000 | 0.22 (0.21–0.22) | 0.39 | 40.8 (15.7–48.8) | 146 (78.4–165) | 5 |
+| | | 5,000,000 | 0.25 (0.25–0.26) | 0.38 | 82.2 (75.4–101) | 175 (164–181) | 5 |
+| 2b, one host | `aeron-spy` | 10,000 to 200,000 | 0.26 | 0.32–0.42 | 2.11–17.1 | 3.92–108 | 5 |
+| | `aeron-self` (kernel UDP to its own address) | 10,000 to 200,000 | 10.3–13.9 | 11.9–19.8 | 19.2–58.0 | 31.3–181 | 5 |
+| 3a, between hosts | `aeron-rel` (kernel UDP, reliable) | 10,000 | 56.1 (53.9–61.3) | 63.0 | 225 (212–244) | 286 (278–610) | 4 a host |
+| | | 200,000 | 56.4 (54.5–61.9) | 80.4 | 470 (325–1,167) | 1,703 (743–2,575) | 4 a host |
+
+2a (kernel UDP, unreliable, 1 to 128 streams) and 3b (under loss) are
+pending. Directory on 2 MiB pages (`aeron-ipc-huge`) and on tmpfs were not
+separated at any load. Every max here is a host pause or unexplained, as
+the book's page says.
+
+Aeron's own counters (both hosts, 3 reps summed; `dpdk-*` left out):
+
+| set | arms | NAKs | retransmits | loss-gap fills | short sends |
+| --- | --- | --- | --- | --- | --- |
+| 1, 2b | `aeron-ipc`, `aeron-ipc-huge`, `aeron-spy`, `aeron-self` | 0 | 0 | 0 | 0 |
+| 3a, no netem | `aeron-rel` and its A/A | 1 in each of two 200,000 msg/s points | 1 in each of the same two | 0 | 0 |
+
+The two NAKed losses came with no guest drop counter growing on either
+host: lost below the guest, as TCP's retransmits in the same session.
 
 ## Recommended configuration
 
