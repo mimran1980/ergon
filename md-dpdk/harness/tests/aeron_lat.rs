@@ -41,11 +41,14 @@ fn cloud() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../benches/cloud")
 }
 
-/// A base port with `n` free UDP ports from it on 127.0.0.1.
+/// A base port with `n` (at most 20) free UDP ports from it on 127.0.0.1,
+/// in 22000-31999: above the driver's wildcard ranges (20000-21999) and
+/// below Linux's ephemeral range (32768-60999), which the kernel hands to
+/// any socket bound to port 0 between this check and the driver's bind.
 fn free_ports(n: u16) -> Res<u16> {
-    let seed = u16::try_from(std::process::id() % 1000)?;
+    let seed = u16::try_from(std::process::id() % 500)?;
     for k in 0..200u16 {
-        let base = 30_000 + ((seed + k * 37) % 1000) * 20;
+        let base = 22_000 + ((seed + k * 37) % 500) * 20;
         let held: Result<Vec<UdpSocket>, _> = (0..n).map(|i| UdpSocket::bind(("127.0.0.1", base + i))).collect();
         if held.is_ok() {
             return Ok(base);
