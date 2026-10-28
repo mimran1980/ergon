@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Changed
+
+- Breaking: `ergon-md-dpdk`'s `clock` counter is type 1080 (was 80) and its
+  `nic-arrival-to-dispatch-*` counters type 1081 (was 81), in Aeron's custom
+  range: Aeron leaves 80 and 81 unassigned. Its other counters keep Aeron's
+  DPDK type IDs.
+
 ### Docs
 
 - The book's transport latency comparison has an AWS section (two

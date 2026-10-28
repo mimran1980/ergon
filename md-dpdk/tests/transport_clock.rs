@@ -166,7 +166,7 @@ mod native {
 
     /// The counter path: with the EAL giving the counter's own rate, which
     /// the start-up measurement confirms to 100 ppm, the transport reads the
-    /// counter (counter type 80's source for this architecture) at that
+    /// counter (counter type 1080's source for this architecture) at that
     /// rate, in nanoseconds since boot (its first read within 50 us of
     /// `CLOCK_MONOTONIC`), advancing as `CLOCK_MONOTONIC` does to 0.1% over
     /// 100 ms; a read is never more than a microsecond behind the one before

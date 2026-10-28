@@ -141,7 +141,7 @@ pub const WHY_NOT_INVARIANT: c_int = 3;
 pub const WHY_NOT_CNTFRQ: c_int = 4;
 pub const WHY_NOT_STARTED: c_int = 5;
 
-/// The clock sources (`RUSTERON_DPDK_CLOCK_*`, counter type 80's values).
+/// The clock sources (`RUSTERON_DPDK_CLOCK_*`, counter type 1080's values).
 pub const SOURCE_MONOTONIC: c_int = 0;
 pub const SOURCE_TSC: c_int = 1;
 pub const SOURCE_CNTVCT: c_int = 2;
