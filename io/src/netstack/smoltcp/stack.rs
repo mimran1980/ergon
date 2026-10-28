@@ -41,8 +41,6 @@ const LINGER_S: u64 = 10;
 #[derive(Clone, Copy)]
 pub struct Clock {
     start_ns: i64,
-    /// Virtual µs per real ns, 32-bit fixed point: `1000 / rto_min_us`.
-    mult: u128,
     rto_min_us: u32,
 }
 
@@ -50,15 +48,16 @@ impl Clock {
     pub fn new(rto_min_us: u32, now_ns: i64) -> Self {
         Self {
             start_ns: now_ns,
-            mult: (1000u128 << 32) / u128::from(rto_min_us.max(1)),
-            rto_min_us,
+            rto_min_us: rto_min_us.max(1),
         }
     }
 
     /// smoltcp's time at real time `ns` (`CLOCK_MONOTONIC`).
     pub fn at(&self, ns: i64) -> Instant {
-        let real = u128::try_from(ns.saturating_sub(self.start_ns)).unwrap_or(0);
-        Instant::from_micros(i64::try_from((real * self.mult) >> 32).unwrap_or(i64::MAX))
+        // Virtual µs = real ns × 1000 / rto_min_us, exact (no drift).
+        let real = u64::try_from(ns.saturating_sub(self.start_ns)).unwrap_or(0);
+        let v = u128::from(real) * 1000 / u128::from(self.rto_min_us);
+        Instant::from_micros(i64::try_from(v).unwrap_or(i64::MAX))
     }
 
     /// A real duration in smoltcp's clock.

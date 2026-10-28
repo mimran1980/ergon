@@ -7,7 +7,7 @@
 # Usage: io/native/dpdk/test/verify-smoltcp.sh [--amd64] [--build] [--check | --vdev [filter...]]
 #   --build   (re)build the image from this directory's Dockerfile
 #   --check   fmt, clippy with and without the feature, rustdoc, and the
-#             crate's tests with the feature (the default)
+#             crate's tests without and with it (the default)
 #   --vdev    the vdev lane: scripts/test-io-smoltcp-vdev.sh as a non-root
 #             user (root builds the binaries); --security-opt
 #             seccomp=unconfined and apparmor=unconfined for unshare, not
@@ -38,9 +38,11 @@ if [[ $BUILD == 1 ]]; then
     docker build --platform "$PLATFORM" -t "$IMAGE" "$HERE"
 fi
 
-FLAGS=()
+# seccomp unconfined: Docker's default profile refuses io_uring (the
+# uring-sqpoll tests) and unshare (the vdev lane).
+FLAGS=(--security-opt seccomp=unconfined)
 if [[ $MODE == vdev ]]; then
-    FLAGS=(--security-opt seccomp=unconfined --security-opt apparmor=unconfined)
+    FLAGS+=(--security-opt apparmor=unconfined)
     COMMANDS="cargo build --locked -p ergon-io --features smoltcp-dpdk --test smoltcp_vdev --example smoltcp_peer \
         --message-format=json-render-diagnostics > /target/vdev-build.json \
         && chmod -R a+rX /target \
@@ -54,6 +56,7 @@ else
         && cargo clippy --locked -p ergon-io --all-targets --features smoltcp-dpdk -- -D warnings \
         && cargo clippy --locked -p ergon-io --features smoltcp-dpdk --test smoltcp_vdev --example smoltcp_peer -- -D warnings \
         && RUSTDOCFLAGS='-D warnings' cargo doc --locked -p ergon-io --features smoltcp-dpdk,webpki-roots --no-deps \
+        && cargo test --locked -p ergon-io -- --test-threads=1 \
         && cargo test --locked -p ergon-io --features smoltcp-dpdk -- --test-threads=1"
 fi
 
