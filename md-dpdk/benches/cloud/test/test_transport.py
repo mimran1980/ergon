@@ -837,6 +837,24 @@ class MixedLoadTest(unittest.TestCase):
             m["nic_counters"] = None
         self.assertRule(fn, "mixed-nic", "a's data NIC counters not recorded")
 
+    def test_nicstats_traffic_among_the_moderation_and_driver_lines(self):
+        # vm.sh nicstats' one format: the traffic line the mixed-nic rule
+        # sums, the c7i diagnosis's coalesce and stat lines beside it
+        from transport_collect import nic_growth
+
+        def snap(n):
+            return "".join(
+                f"{role} {nic} tx_bytes={n * 1000} rx_bytes={n * 2000} tx_packets={n} rx_packets={n * 2} "
+                f"pps_allowance_exceeded={n - 1}\n{role} {nic} coalesce off n/a 20 64\n"
+                f"{role} {nic} stat queue_0_tx_unmask_interrupt {n * 7}\n{role} {nic} stat tx_bytes 999\n"
+                for role, nic in (("sender", "ens6"), ("receiver", "ens7")))
+        self.assertEqual(nic_growth(snap(1), snap(4), None),
+                         {"source": "kernel", "tx_bytes": 6000, "rx_bytes": 12000, "tx_packets": 6,
+                          "rx_packets": 12, "allowance_exceeded": 6})
+        dpdk = "sender ens6 dpdk\nreceiver ens7 dpdk\n"
+        self.assertIsNone(nic_growth(dpdk, dpdk, {}))
+        self.assertEqual(nic_growth(dpdk, dpdk, {"nic.tx_bytes": "5"})["source"], "dpdk")
+
     def test_backpressure_with_no_saturation_is_unexplained(self):
         def fn(m):
             m["binary"]["settings"]["mixed.bp_measured"] = "0,0,0,0,5,0,0,0"

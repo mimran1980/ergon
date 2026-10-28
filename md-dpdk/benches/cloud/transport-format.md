@@ -25,18 +25,22 @@ is missing is a fairness violation, never a default.
 <run>/<set>/hostcheck-<a|b>.txt   each host's session hostcheck report
 <run>/<set>/hostcheck-<a|b>-hugepages.txt  the one on the hugetlbfs Aeron directory (aeron-ipc-huge's)
 <run>/idle/<point>-<host>-<before|after>  the housekeeping and IRQ CPUs' cpuidle states (vm.sh idle), read only
-<run>/nicstats/<point>-<host>-<before|after>  the data NICs' moderation and driver counters (vm.sh nicstats), read only
+<run>/nicstats/<point>-<host>-<before|after>  the data NICs' traffic, moderation and driver counters (vm.sh nicstats)
 ```
 
 `idle/` has `driver <cpuidle driver> governor <governor> max_cstate <n|->`,
 then a line a state: `cpu<N> <hk|irq> <index> <name> <disabled> <exit
 latency us> <target residency us> <usage> <time us>` (no state lines without
 a cpuidle driver). The usage and time deltas over a point say how often and
-how long each CPU slept in each state. `nicstats/` has `<nic> coalesce
-<adaptive rx> <adaptive tx> <rx-usecs> <tx-usecs>` as `ethtool -c` reports
-them, then `<nic> <counter> <value>` for each `ethtool -S` counter (ENA's
-per-queue `unmask_interrupt`, `napi_comp`, `queue_stop`, `queue_wakeup`,
-`missed_tx`, and the `*_allowance_exceeded` counters).
+how long each CPU slept in each state. `nicstats/` has, for each data NIC
+(every line `<role> <nic> ...`, role `sender` or `receiver`):
+
+| Line | From |
+|---|---|
+| `<role> <iface> tx_bytes=<n> rx_bytes=<n> tx_packets=<n> rx_packets=<n> [<name>_allowance_exceeded=<n> ...]` | the kernel's interface statistics and ENA's allowance counters; `nic_counters`' `kernel` growth |
+| `<role> <nic> coalesce <adaptive rx> <adaptive tx> <rx-usecs> <tx-usecs>` | `ethtool -c` (`coalesce none` on the local smoke's lo) |
+| `<role> <nic> stat <counter> <value>` | each `ethtool -S` counter: ENA's per-queue `unmask_interrupt`, `napi_comp`, `queue_stop`, `queue_wakeup`, `missed_tx` |
+| `<role> <iface> dpdk` | alone, where DPDK holds the NIC (`nic_counters` then from the binary's `nic.*`) |
 
 `<set>` is the matrix set (`1`, `2a`, `2b`, `3a`, `3b`, `3c`, `fan`).
 Manifest host keys: a two-host set's `a` and `b`; a one-host set's one host
@@ -102,7 +106,7 @@ after their due time.
 | `netem_counters` | {host: {nic: {qdisc, loss_pct, sent_pkts, dropped}}} | netem verified; tc -s on every data NIC |
 | `loss_counters` | {host: {source: {counter: growth}}} | sources `tcp_info`, `nstat`, `aeron` |
 | `events` | {host: {file, rows, notes}} | the events file, its row count and what could not be recorded |
-| `nic_counters` | {host: {source, tx_bytes, rx_bytes, ...}} or null | a mixed-load point's data NICs over it: `kernel` (vm.sh nicstats' growth, every data NIC summed, `allowance_exceeded` the ENA's allowance counters) or `dpdk` (the binary's own `nic.*`: transport bytes and frames, `rx_missed`, `rx_nombuf`, `queue_drop`, `allowance_exceeded`); fairness.py's mixed-nic rule |
+| `nic_counters` | {host: {source, tx_bytes, rx_bytes, ...}} or null | a point's data NICs over it: `kernel` (vm.sh nicstats' traffic lines' growth, every data NIC summed, `allowance_exceeded` the ENA's allowance counters) or `dpdk` (the binary's own `nic.*`: transport bytes and frames, `rx_missed`, `rx_nombuf`, `queue_drop`, `allowance_exceeded`; a mixed-load point's alone); fairness.py's mixed-nic rule on a mixed-load point |
 
 A TCP arm's own manifest (`tcp_lat`) also carries, per end, the traffic's
 and the set-up's counters apart: `tcp.retrans`, `tcp.dsack_dups` (the

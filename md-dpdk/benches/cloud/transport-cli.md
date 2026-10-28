@@ -119,9 +119,10 @@ arm. Each point's `manifest/<point>.env` records `base_arm`, `bin`, `args`,
 every `knob.<name>`, `driver_mode`, and for an Aeron arm `aeron_page_<host>`
 (the Aeron directory's page size read back on the host: `vm.sh aeron-page`).
 A mixed-load arm's mode adds `@AERON_DRIVER_<CONDUCTOR|SENDER|RECEIVER>_CYCLE_THRESHOLD=$TR_MIX_CYCLE_THRESHOLD_NS`
-under every threading model, its `--cpus` are two a host, and around each
-of its points the runner reads each host's data NIC counters (`vm.sh
-nicstats`, `nicstats/<point>-<host>-<before|after>`), and its events trace the
+under every threading model, its `--cpus` are two a host (the runner
+reads every point's data NIC counters, `vm.sh nicstats`,
+`nicstats/<point>-<host>-<before|after>`, which fairness.py's mixed-nic rule
+checks against a mixed-load point's driver), and its events trace the
 housekeeping and IRQ CPUs too (osnoise stays on the isolated ones), where an
 embedded driver's helper threads and the clients' conductors run. Every
 point's 1 Hz sampler reads the driver agents' duty-cycle counters (`counters
