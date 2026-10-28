@@ -597,6 +597,48 @@ fn busy_read_reaches_both_arms_sockets() -> R {
     Ok(())
 }
 
+/// `tcp_lat --impl ergon --backend uring-sqpoll`: both ends' drivers on
+/// io_uring, each `SQPOLL` thread on `--sqpoll-cpu` (a CPU off `--cpus`),
+/// `--busy-read-us 0`; the row reads back as every other arm's and the
+/// manifest records the backend and the `SQPOLL` CPU. Needs three CPUs:
+/// the two ends' and the `SQPOLL` threads'.
+#[test]
+fn tcp_ergon_uring_sqpoll_round_trip() -> R {
+    let c = cpus();
+    assert!(
+        c.len() >= 3,
+        "uring-sqpoll needs a CPU off the two ends' ({c:?}): run on 3 or more CPUs"
+    );
+    let (a, b, sq) = (c[c.len() - 2], c[c.len() - 1], c[0]);
+    let run = Run::tcp("ergon", 1, 1_000, 30_210);
+    let out = scratch("tcp-uring-sqpoll")?;
+    let o = Command::new(TCP)
+        .args(run.common("local", Some(format!("{a},{b}")), &out))
+        .args(run.addrs("local"))
+        .args([
+            "--round-trip",
+            "--busy-read-us",
+            "0",
+            "--backend",
+            "uring-sqpoll",
+            "--sqpoll-cpu",
+            &sq.to_string(),
+        ])
+        .output()?;
+    finished("uring-sqpoll", &o)?;
+    check(&run, &out, "load", 2)?;
+    let m = std::fs::read_to_string(out.join("manifest.json"))?;
+    for want in [
+        "\"ergon.backend\": \"uring-sqpoll\"".to_owned(),
+        format!("\"ergon.sqpoll_cpu\": \"{sq}\""),
+        "\"busy_read_us\": \"0\"".to_owned(),
+    ] {
+        assert!(m.contains(&want), "no {want} in {m}");
+    }
+    std::fs::remove_dir_all(out)?;
+    Ok(())
+}
+
 fn refused(bin: &str, args: &[&str], why: &str) -> R {
     let o = Command::new(bin).args(args).output()?;
     let err = String::from_utf8_lossy(&o.stderr);
@@ -679,6 +721,45 @@ fn settings_an_arm_cannot_take_are_refused() -> R {
         UDP,
         &with(&udp, &["--impl", "mio", "--datagram-burst", "8"]),
         "--datagram-burst",
+    )?;
+    // the backend flags: ergon-io's, uring-sqpoll with its SQPOLL CPU and
+    // no SO_BUSY_POLL, and nothing else
+    refused(
+        TCP,
+        &with(&tcp, &["--impl", "mio", "--backend", "uring-sqpoll"]),
+        "--impl ergon",
+    )?;
+    refused(
+        TCP,
+        &with(&tcp, &["--impl", "ergon", "--backend", "recv-busy"]),
+        "--backend recv-busy",
+    )?;
+    refused(
+        TCP,
+        &with(&tcp, &["--impl", "ergon", "--backend", "uring-sqpoll"]),
+        "needs --sqpoll-cpu",
+    )?;
+    refused(
+        TCP,
+        &with(
+            &tcp,
+            &[
+                "--impl",
+                "ergon",
+                "--backend",
+                "uring-sqpoll",
+                "--sqpoll-cpu",
+                "0",
+                "--busy-read-us",
+                "50",
+            ],
+        ),
+        "--busy-read-us 50",
+    )?;
+    refused(
+        TCP,
+        &with(&tcp, &["--impl", "ergon", "--sqpoll-cpu", "0"]),
+        "--sqpoll-cpu is uring-sqpoll's",
     )?;
     refused(
         UDP,

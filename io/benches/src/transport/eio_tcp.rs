@@ -1,6 +1,8 @@
-//! ergon-io framed TCP on the epoll-spin backend: one `FrameConn` per
-//! stream on one `Driver`, the same u32 LE length frames as
-//! `ergon_latency_core::frame`.
+//! ergon-io framed TCP: one `FrameConn` per stream on one `Driver`.
+//!
+//! The same u32 LE length frames as `ergon_latency_core::frame`. The
+//! backend is `epoll-spin` (the default) or `uring-sqpoll` (`tcp_lat
+//! --backend`), its `SQPOLL` thread on `--sqpoll-cpu`.
 //!
 //! - Receive ([`EioTcpRx`]): `Driver::poll`, one read per ready
 //!   connection a pass; each frame is handed over in
@@ -19,9 +21,15 @@
 //!   while they wait could bring more than the room left, and an echo
 //!   cannot leave inside the poll. A peer's reset (`--source-port`'s
 //!   abortive close) is a close, as in the mio arm.
-//! - Driver keys: `rcvbuf`, `epoll_events`, `busy_poll_us`, `tcp_rto_min_us`,
-//!   `tcp_delack_max_us` (checked against the kernel at `Driver::new`);
+//! - Driver keys: `rcvbuf`, `epoll_events`, `busy_poll_us` (`epoll-spin`
+//!   only: `uring-sqpoll`'s kernel thread polls the NIC itself and the
+//!   driver refuses the key there), `tcp_rto_min_us`, `tcp_delack_max_us`
+//!   (checked against the kernel at `Driver::new`), `sqpoll_cpu`;
 //!   `FrameOptions::quickack_per_read`, `sndbuf`. `TCP_NODELAY` always.
+//! - `uring-sqpoll` keeps one single-shot receive armed per connection, so
+//!   a poll reads each connection at most once, and once more when its
+//!   re-armed receive completes inside the same poll: the echo room is
+//!   [`tcp_echo_capacity`] with every stream reported and the second pass.
 #![deny(unsafe_code, missing_docs)]
 #![warn(
     clippy::all,
@@ -37,7 +45,7 @@ use std::net::TcpStream;
 use std::os::fd::AsRawFd;
 use std::rc::Rc;
 
-use ergon_io::{ConnId, Driver, FrameConn, FrameHandler, FrameOptions, Handler, RxMeta};
+use ergon_io::{Backend, ConnId, Driver, FrameConn, FrameHandler, FrameOptions, Handler, RxMeta};
 use ergon_latency_core::message::MESSAGE_LEN;
 
 use super::eio_udp::{Staged, base_config, eio};
@@ -68,6 +76,10 @@ pub struct EioTcpOptions {
     pub loop_cpu: Option<u32>,
     /// `Config::helper_cpus` (empty: ergon-io chooses).
     pub helper_cpus: Vec<u32>,
+    /// `Config::backend`: `epoll-spin` or `uring-sqpoll`.
+    pub backend: Backend,
+    /// `Config::sqpoll_cpu` (`uring-sqpoll` only).
+    pub sqpoll_cpu: Option<u32>,
 }
 
 struct Shared {
@@ -113,7 +125,9 @@ pub fn pair(socks: Vec<TcpStream>, opts: EioTcpOptions) -> Result<(EioTcpTx, Eio
         opts.loop_cpu,
         &opts.helper_cpus,
     );
+    cfg.backend = opts.backend;
     cfg.busy_poll_us = opts.busy_poll_us;
+    cfg.sqpoll_cpu = opts.sqpoll_cpu;
     cfg.tcp_rto_min_us = opts.rto_min_us;
     cfg.tcp_delack_max_us = opts.delack_max_us;
     cfg.validate().map_err(|e| eio("config", e))?;
@@ -134,8 +148,13 @@ pub fn pair(socks: Vec<TcpStream>, opts: EioTcpOptions) -> Result<(EioTcpTx, Eio
         ids.push(d.add(c).map_err(|e| eio("Driver::add", e))?);
     }
     // a poll's reads: each reported connection, and with SO_BUSY_POLL each
-    // one read with data in the poll before, again
-    let per_poll = tcp_echo_capacity(n, opts.epoll_events as usize, opts.busy_poll_us > 0);
+    // one read with data in the poll before, again; uring-sqpoll: each
+    // connection's one armed receive, and its re-armed one
+    let per_poll = if opts.backend == Backend::UringSqpoll {
+        tcp_echo_capacity(n, n, true)
+    } else {
+        tcp_echo_capacity(n, opts.epoll_events as usize, opts.busy_poll_us > 0)
+    };
     let s = Rc::new(Shared {
         d: RefCell::new(d),
         staged: RefCell::new(Staged::new(per_poll)),
@@ -309,6 +328,7 @@ impl Inspect for EioTcpRx {
             ("epoll_events", cfg.epoll_events.to_string()),
             ("busy_read_us", cfg.busy_poll_us.to_string()),
             ("ergon.backend", cfg.backend.to_string()),
+            ("ergon.sqpoll_cpu", opt(cfg.sqpoll_cpu)),
             ("ergon.rx_timestamps", cfg.rx_timestamps.to_string()),
             ("ergon.keepalive_idle_s", cfg.keepalive_idle_s.to_string()),
             (
