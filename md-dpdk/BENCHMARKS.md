@@ -519,6 +519,49 @@ target is AMD Solarflare NICs, not offered on AWS. The runner's `onload-*`
 arms stay, marked experimental. Details and links:
 [the book](https://mimran1980.github.io/ergon/transports/comparison.html#onload-on-ena-not-viable).
 
+## c7i: the IRQ CPU's idle depth
+
+Session `aws-20261028-092158`: two `c7i.4xlarge` on demand (Intel Sapphire
+Rapids), Debian 13, kernel 7.2.9, cpuidle driver `intel_idle`, SMT off; CPU
+1 takes every data-NIC interrupt, CPU 0 is housekeeping. mio TCP ping/pong,
+1 stream, 10k msg/s, 64 B, 3 reps, 18 rows. Each arm is `mio-tcp` but for
+one setting (`benches/cloud/transport-aws-c7i-diag.tsv`). Every point read
+CPU 1's cpuidle `usage` and `time` before and after (`idle/`).
+
+| arm | setting | p50 µs | p99 µs | CPU 1 asleep per 60 s point |
+| --- | --- | --- | --- | --- |
+| `mio-tcp` | every idle state enabled (then the default) | 43–160 | 315–559 | C1E 25–52 s, C6 4–28 s |
+| `mio-tcp-br0` | no busy poll | 44–165 | 438–545 | C1E 23–49 s, C6 6–30 s |
+| `mio-tcp-c1` | CPU 1 capped at C1 | 37.3–39.0 | 44.3–48.9 | C1 55–56 s; C1E, C6 0 |
+| `mio-tcp-c0` | CPU 1 never idle (poll) | 37.0–38.2 | 43.6–44.5 | poll 61 s |
+| `eio-tcp-sqpoll-core` | control: the SQPOLL thread polls the NIC | 34.3–35.6 | 41.7–46.3 | C1E 43–50 s, C6 7–12 s |
+
+- The wake is the cost. Within the uncapped arms p50 follows CPU 1's C6
+  time (exit latency 190 µs, C1E 2 µs): `mio-tcp` 43 and 46 µs at 4–8 s of
+  C6, 160 µs at 27 s; the A/A arm 140–182 µs at 27–32 s. Busy polling off
+  changed nothing.
+- The cap holds: under `-c1` CPU 1 entered C1 about 2.0–2.4 million times a
+  point and C1E and C6 never; under `-c0` it polled.
+- AWS `c7a` (AMD, `acpi_idle`) showed no such cost. Idle-to-idle ping
+  between the hosts, minimum: `c7i` 223–258 µs, `c7a` 101–114 µs (each
+  session's `env-*.txt`).
+- TCP autocorking rode on it: with CPU 1 in C6 the uncapped points corked
+  15k–143k sends a host (nstat `TCPAutoCorking`; 49k–164k in
+  `aws-20261028-071640`), the capped ones 42–149. A corked send waits for
+  the previous one's transmit completion.
+- Setting: the lab's `TR_IRQ_IDLE=auto` caps the IRQ CPU at C1 on
+  `intel_idle` hosts and leaves `acpi_idle` and Graviton alone, the same
+  for every arm of a session, read back per point; `TR_TCP_AUTOCORKING=0`
+  for every TCP arm. ergon-tune T20 and T21 report both on any host.
+- Separate and unexplained: millisecond tails in most arms, capped ones
+  included (p99.99 0.07–12.3 ms, max to 14.9 ms). They fall at one second
+  of each minute, the same second for a pair and different between pairs
+  (:20 here, :29 in `aws-20261028-071700`, :50 in `aws-20261028-071640`):
+  a path outage of about 15 ms once a minute. Not investigated.
+- The SMT comparison (`transport-aws-smt-off.tsv`, `transport-aws-smt.tsv`)
+  ran uncapped; its 10k msg/s points need rerunning with the cap (both
+  sets now require `irq_idle 1`).
+
 ## Recommended configuration
 
 Kernel UDP in production ([README](README.md)). Only settings with a
@@ -531,6 +574,7 @@ separating result above are listed.
 | DPDK (lab only): receiver IO vectors 16 | `aws-20261014-113947`, platform not recorded | pod env `AERON_RECEIVER_IO_VECTOR_CAPACITY` |
 | DPDK (lab only): large ENA LLQ entries, 256 TX descriptors | G4 table above | the transport's default (`llq_policy=3`) |
 | a keep-alive every 100 µs on sparse, latency-critical streams | G7b, sparse flows above (raw floor) | the application |
+| x86 `intel_idle` hosts with interrupt-driven kernel receive: the CPU that takes the NIC interrupts capped at C1; TCP autocorking off | [c7i: the IRQ CPU's idle depth](#c7i-the-irq-cpus-idle-depth) | node: cpuidle `state<i>/disable` per CPU or `intel_idle.max_cstate=1`; `net.ipv4.tcp_autocorking` in the sender's network namespace (ergon-tune T20, T21) |
 
 A lost frame on a quiet stream is noticed at Aeron's next heartbeat, 100 ms
 in the C driver (`aeron_network_publication.h:38` in the locked
@@ -566,6 +610,8 @@ not as an Aeron message.
   caches' 1.8 µs need one.
 - What sends host a's frames to closed ports between load points
   (`noport-dpdk-queue-drop`).
+- The `c7i` sessions' once-a-minute millisecond tails (about 15 ms, at a
+  fixed second per pair): unexplained ([above](#c7i-the-irq-cpus-idle-depth)).
 - `aeron-rel-emb`'s millisecond maxima (kernel UDP, in-process driver):
   unexplained ([above](#aws-spy-driver-threading-and-onload)).
 - `aeron_lat` labels a DPDK point `aeron-udp` when its one read of the

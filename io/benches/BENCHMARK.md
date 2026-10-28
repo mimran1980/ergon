@@ -239,7 +239,7 @@ Run `flags-aws-20261015T062428Z`: NIC interrupts on the loop's CPU (`irqlocal`) 
 | market data, arrival → decoded | 2.9–3.4 / 7.9–8.1 (p99) / 36–48 | 4.7–6.5 / 20.1–26.1 (p99) / 74–99 |
 | HTTP round trip | 37.6–37.7 / 46.1–46.2 (p99) / 1,010–1,050 | 38.5–38.6 / 49.8–52.4 (p99) / 449–556 |
 
-The same run tried one NIC queue (`onequeue`) and capped idle states (`cstate`): their changes differ in sign between workloads. No conclusion.
+The same run tried one NIC queue (`onequeue`) and capped idle states (`cstate`): their changes differ in sign between workloads. No conclusion. For interrupt-driven receive the CPU that takes the NIC interrupts is what matters: capped at C1 on `c7i` it cut mio TCP's p50 from 43–160 to 37–39 µs ([md-dpdk BENCHMARKS.md](../../md-dpdk/BENCHMARKS.md#c7i-the-irq-cpus-idle-depth)).
 
 Not measured here: `prefer_busy_poll`, `busy_poll_budget`, route `quickack` and `rto_min` (every run used `quickack 1 rto_min 5ms`).
 

@@ -765,6 +765,30 @@ to verified deletion (two instances, about $1). An earlier session the same
 morning (`aws-20261027-043119`, 45 min) lost every DPDK arm to a set-up
 failure and has no A/A; its kernel rows agree with these and are not used.
 
+### c7i: the IRQ CPU's idle depth (SMT sessions to rerun)
+
+On `c7i.4xlarge` (Intel, cpuidle `intel_idle`) interrupt-driven TCP
+receive waits for CPU 1, which takes the NIC interrupts, to wake. mio TCP,
+1 stream, 10k msg/s, 3 reps (`aws-20261028-092158`):
+
+| CPU 1 | p50 µs | p99 µs |
+|---|---|---|
+| every idle state enabled (C6: 190 µs exit) | 43–160 | 315–559 |
+| capped at C1 | 37.3–39.0 | 44.3–48.9 |
+| never idle | 37.0–38.2 | 43.6–44.5 |
+| uring-sqpoll (polls the NIC) | 34.3–35.6 | 41.7–46.3 |
+
+Busy polling off did not help (44–165 / 438–545). `c7a` (AMD,
+`acpi_idle`) showed no such cost. The lab now caps the IRQ CPU at C1 on
+`intel_idle` hosts for every arm of a session and turns TCP autocorking
+off for every TCP arm; `c7a` sessions are unchanged by the cap. The SMT
+comparison on `c7i` ran uncapped and is to be rerun with the cap on both
+halves. The millisecond tails in many `c7i` arms (p99.99 to 12 ms, capped
+arms included) are separate: about 15 ms once a minute at a fixed second
+per pair, unexplained. Details:
+[BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#c7i-the-irq-cpus-idle-depth);
+the host check: [ergon-tune](../tune/overview.md) T20 and T21.
+
 ### Reliable: F-Stack, kernel TCP and Aeron (d1, d8)
 
 Round trip (µs). A/A: `dpdk-tcp` again. Busy threads a host: Aeron 4,

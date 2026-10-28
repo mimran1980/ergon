@@ -112,7 +112,7 @@ book/src/sbe/recipes/timestamps.md:158 — deliberate; see page context
 book/src/sbe/recipes/timestamps.md:182 — deliberate; see page context
 book/src/sbe/recipes/timestamps.md:244 — deliberate; see page context
 book/src/sbe/recipes.md:23 — deliberate; see page context
-book/src/tune/overview.md:231 — deliberate; {{#include}} of tune/tests/live.rs (ergon-tune), a test file the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-tune builds and runs it.
-book/src/tune/overview.md:239 — deliberate; {{#include}} of tune/tests/live.rs (ergon-tune, feature nic, Linux), a fragment of a test the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-tune --all-features builds and runs it on Linux.
-book/src/tune/overview.md:289 — deliberate; {{#include}} of tune/tests/host_checks.rs (ergon-tune), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-tune builds and runs it.
+book/src/tune/overview.md:237 — deliberate; {{#include}} of tune/tests/live.rs (ergon-tune), a test file the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-tune builds and runs it.
+book/src/tune/overview.md:245 — deliberate; {{#include}} of tune/tests/live.rs (ergon-tune, feature nic, Linux), a fragment of a test the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-tune --all-features builds and runs it on Linux.
+book/src/tune/overview.md:295 — deliberate; {{#include}} of tune/tests/host_checks.rs (ergon-tune), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-tune builds and runs it.
 book/src/project/ai-assistance/what-did-not-work.md:39 — historical fabricated specification example, not executable library code; retained as disclosure evidence.

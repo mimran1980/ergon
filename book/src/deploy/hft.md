@@ -46,7 +46,9 @@ run on kind. It does not measure the rows below.
 | `net.core.rmem_max`, `wmem_max` ≥ Aeron's socket buffers | lets the kernel grant `AERON_SOCKET_SO_RCVBUF` | node | functional, not latency: the driver refuses a window larger than the granted `SO_RCVBUF` (`aeron_driver.c:407-456`, rusteron-media-driver 0.2.11). Aeron's default is 128 KiB (`aeron_driver_context.c:191`); only a raised buffer, such as the EKS ConfigMap's 2 MiB, needs it | `sysctl -w net.core.rmem_max=16777216 net.core.wmem_max=16777216` |
 | automatic NUMA balancing off | no balancing page faults on pinned threads | node | not measured here (every lab host had one NUMA node) | `sysctl -w kernel.numa_balancing=0` |
 | topology manager `single-numa-node` | a pod's CPUs and devices on one NUMA node | node | Kubernetes topology manager docs; not measured here (one-node lab hosts) | [kubelet block](#copy-paste) |
-| C-states capped at C1 (x86) | an idle housekeeping core wakes faster | node | VM: measured, **mixed** ([C-states](#c-states)); metal: no gain ([hosts](hosts.md#c-states)). Not recommended on this evidence | leave unset (the EKS node sets no cap) |
+| the CPU that takes the NIC interrupts capped at C1 (`intel_idle`) | an interrupt does not wait for that CPU to wake from C6 | node | measured, AWS c7i, interrupt-driven TCP at 10k msg/s: p50 43–160 → 37–39 µs, p99 315–559 → 44–49 µs ([C-states](#c-states)). `acpi_idle` (AWS c7a): nothing deeper than C1 to cap. ergon-tune T20 | per CPU `echo 1 > /sys/devices/system/cpu/cpu<N>/cpuidle/state<i>/disable` for every state past C1, or `pm_qos_resume_latency_us` 1; `intel_idle.max_cstate=1` caps every CPU |
+| C-states capped at C1 on every CPU (x86) | an idle housekeeping core wakes faster | node | VM, polling loop: measured, **mixed** ([C-states](#c-states)); metal: no gain ([hosts](hosts.md#c-states)). Not recommended on this evidence | leave unset beyond the IRQ CPU |
+| TCP autocorking off | a small send goes out at once, not after the previous one's transmit completes (`TCP_NODELAY` does not stop autocorking) | pod netns, or node for `hostNetwork` | counted, not timed: c7i corked 49k–164k of ~600k sends a host per point with the IRQ CPU in C6, 42–149 at C1 ([C-states](#c-states)). ergon-tune T21 | `sysctl -w net.ipv4.tcp_autocorking=0`; in a pod `securityContext.sysctls`, allowed by the kubelet's `--allowed-unsafe-sysctls` |
 | `SCHED_FIFO` on the loop | real-time priority | pod | measured, **mixed**: [SCHED_FIFO](#sched_fifo). Off by default | `ergon-cpus --fifo` ([latency pods](latency-pods.md#real-time-scheduling-built-default-off)) |
 | ENA receive ring `rx 4096` | room for bursts | node | not measured here | `ethtool -G <if> rx 4096` |
 | global busy polling (`net.core.busy_read`, `busy_poll`) | every socket read on the host spins | node | ergon-io: not measured as a global sysctl; `recv-busy` sets `SO_BUSY_POLL` per socket instead ([fair run](#interrupt-placement)). Aeron's media driver, kernel UDP: measured, polling not isolated. x86 round 7, with a 4,096 ring, lower p50 than plain kernel UDP (two settings differ); Graviton G1 lost at 1 M msgs/s in 5 of 5 reps (four settings differ) ([BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#measured-but-no-setting-recommended)) | not recommended on this evidence: leave unset. `ergon-md-dpdk` check M4 reports the state as information |
@@ -162,6 +164,28 @@ deeper than C1 off, AWS c7i VM. Rounds 1 / 2.
 
 WebSocket worse at p50 and p99.99, HTTP better at p99.99: no consistent
 gain.
+
+The CPU that takes the NIC interrupts is a different case: with
+interrupt-driven receive every packet waits for that CPU to wake. Lab
+session `aws-20261028-092158` (two `c7i.4xlarge`, `intel_idle`, kernel 7.2,
+SMT off, CPU 1 takes every data-NIC interrupt): mio TCP round trips, 1
+stream, 10k msg/s, 3 reps, each arm mio-tcp but for one setting
+([BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#c7i-the-irq-cpus-idle-depth)).
+
+| arm | p50 µs | p99 µs | CPU 1's idle per 60 s point |
+|---|---|---|---|
+| every state enabled | 43–160 | 315–559 | C1E 25–52 s, C6 4–28 s |
+| no busy poll | 44–165 | 438–545 | C1E 23–49 s, C6 6–30 s |
+| capped at C1 | 37.3–39.0 | 44.3–48.9 | C1 55–56 s, nothing deeper |
+| never idle (poll) | 37.0–38.2 | 43.6–44.5 | poll 61 s |
+| SQPOLL (control) | 34.3–35.6 | 41.7–46.3 | C1E 43–50 s, C6 7–12 s |
+
+p50 follows CPU 1's time in C6 (exit 190 µs). Busy polling off made no
+difference, so the cost is the wake, not the poll. ergon-tune T20 reports
+an IRQ CPU that may sleep past C1. Autocorking compounds it: a small send
+waits for the previous one's transmit completion, which needs the same
+CPU awake; those points corked 15k–143k sends a host, the capped ones
+42–149. ergon-tune T21 reports autocorking on.
 
 ### SCHED_FIFO
 
