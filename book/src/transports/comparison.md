@@ -759,7 +759,7 @@ tables above (other cloud, other NIC, other network).
 | `dpdk-*aeron*` | Aeron on md-dpdk: the media driver's UDP on DPDK (ENA PMD), the Aeron settings of the Azure arms; 4 busy threads a host |
 | clock | the TSC. Round trips are on host a's counter alone. The hosts' `CLOCK_REALTIME` is NTP (chrony, error bound 122 to 155 µs): ergon-tune T11 warns, which blocks nothing here |
 
-Why `c7a.2xlarge`: F-Stack builds on x86_64 only, so Graviton is out, and
+Why `c7a.2xlarge`: the session ran before F-Stack built on arm64, and
 `c7i.2xlarge` has 4 cores once SMT is off; the CPU map needs 8. Cost:
 spot about $0.19 an instance-hour; the session took 2 h 37 min from launch
 to verified deletion (two instances, about $1). An earlier session the same
@@ -1638,6 +1638,11 @@ LAB_ESTIMATE=1 md-dpdk/benches/cloud/aws/lab.sh
 md-dpdk/benches/cloud/aws/lab.sh   # results in target/md-dpdk-bench/aws-<stamp>/transport
 ```
 
+On Graviton, add `LAB_ALLOW_ARM=1 LAB_TYPE=c8g.2xlarge`. Run
+`transport-aws-fstack-smoke.tsv` at `LAB_REPS=1` there first: F-Stack's arm64
+build has passed only `io/benches/fstack/docker-test.sh` (af_packet), not
+the ENA.
+
 Analyse each pair's run directory:
 
 ```sh
@@ -1658,8 +1663,8 @@ What the runner writes and the analysis reads:
   run `epoll-spin` only.
 - TCP fan-in beyond 8 connections into one loop: Azure's session gave mio
   and ergon-io unequal busy polling and was not rerun; AWS ran 8.
-- Graviton (F-Stack does not build there) and bare metal; one instance size
-  a cloud. On AWS: no netem, no 8-stream unreliable UDP, and the `pin`
+- Graviton's DPDK session (F-Stack builds there now; no session has run)
+  and bare metal; one instance size a cloud. On AWS: no netem, no 8-stream unreliable UDP, and the `pin`
   set at 1 stream only (the session was trimmed to about 3 h).
 - Kernel bypass for the socket arms (Onload): not viable on ENA, no latency measured ([Onload on ENA](#onload-on-ena-not-viable)).
 - Aeron driver threading under mixed load: no hot-stream stage trace, so the rise is not split across the hand-offs ([mixed load](#aeron-threading-under-mixed-load-intel-graviton)).

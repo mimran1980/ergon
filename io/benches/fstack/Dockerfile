@@ -6,5 +6,5 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         meson ninja-build python3-pyelftools libnuma-dev libssl-dev zlib1g-dev pkg-config make gcc gawk \
         iproute2 git ca-certificates python3 \
     && rm -rf /var/lib/apt/lists/*
-COPY build-fstack.sh ff-run-once.patch /opt/fstack-build/
+COPY build-fstack.sh ff-run-once.patch ff-arm64.patch /opt/fstack-build/
 RUN bash /opt/fstack-build/build-fstack.sh /opt/fstack generic

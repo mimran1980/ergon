@@ -106,10 +106,10 @@
 #   vm.sh irq-idle [resolve] the IRQ core's idle depth TR_IRQ_IDLE (every other arm's set-up), or
 #                            only what it is here (auto: 1 under intel_idle, else all)
 #   vm.sh transport-map      the map;  vm.sh transport-build [fstack] [onload]  the bench binaries and
-#                            LAB_EXTRA_SRC's (fstack: F-Stack and fstack_lat too, x86_64 only; onload:
+#                            LAB_EXTRA_SRC's (fstack: F-Stack and fstack_lat too; onload:
 #                            OpenOnload built and installed, onload-build.sh)
 #   vm.sh fstack-up          setup fstack (transport.sh): no media driver, the data NICs on igb_uio for
-#                            fstack_lat's own DPDK; `stop` gives them back (AWS x86_64 only)
+#                            fstack_lat's own DPDK; `stop` gives them back (AWS only)
 #   vm.sh onload-up          setup onload (transport.sh): the kernel path as transport-net has it, then
 #                            each data NIC on one queue at Onload's MTU, registered with Onload's AF_XDP
 #                            (its XDP program read back); `stop` undoes it (AWS only; `driver onload`
@@ -3043,7 +3043,6 @@ transport-build)
     for what in "${@:2}"; do
         case $what in
         fstack)
-            [[ $ARCH == x86_64 ]] || { echo "transport-build fstack: F-Stack builds on x86_64 only (io/benches/fstack/build-fstack.sh), not $ARCH" >&2; exit 2; }
             sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq meson ninja-build python3-pyelftools libnuma-dev libssl-dev zlib1g-dev >/dev/null
             export TR_FSTACK_PREFIX=$HOME/fstack
             ;;
@@ -3064,11 +3063,11 @@ fstack-up)
     # setup fstack (transport.sh): no media driver; the data NICs move from
     # the kernel's ena to igb_uio, as under `driver dpdk`, for fstack_lat's
     # own DPDK (F-Stack's, static in the binary), which takes its port by
-    # PCI address (--pci); `stop` gives them back. AWS x86_64 only: F-Stack
-    # builds on x86_64 alone, and on Azure no PMD of it was tried. Its EAL
+    # PCI address (--pci); `stop` gives them back. AWS only (x86_64 and
+    # Graviton): on Azure no PMD of it was tried. Its EAL
     # takes FSTACK_HUGE_PAGES of 2 MiB (fstack_lat's --memory-mb 1024),
     # refused when fewer are free and unreserved
-    [[ $CLOUD == aws && $ARCH == x86_64 ]] || { echo "fstack-up: AWS x86_64 only (this host: $CLOUD $ARCH)" >&2; exit 2; }
+    [[ $CLOUD == aws ]] || { echo "fstack-up: AWS only (this host: $CLOUD)" >&2; exit 2; }
     "$self" stop
     hp=$LAB_SYS_ROOT/kernel/mm/hugepages/hugepages-2048kB
     free=$(cat "$hp/free_hugepages") resv=$(cat "$hp/resv_hugepages")

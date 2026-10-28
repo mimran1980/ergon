@@ -36,7 +36,7 @@
 # transport_prepare and transport_remote, the operator machine's side.
 # tr_cloud (azure unless the caller sets it; aws/lab.sh sets aws): the cloud
 # every mode_check judges a point's mode for (an F-Stack arm runs on AWS
-# x86_64 alone).
+# alone).
 #
 # Durations (env, else the plan's): TRANSPORT_WARMUP_S (30), TRANSPORT_POINT_S
 # (30), TRANSPORT_SWITCH_S (5), TRANSPORT_READY_TIMEOUT_S (60: the longest the
@@ -369,7 +369,7 @@ transport_prepare() {
     local fstack= onload=
     if tr_wants_setup fstack; then
         fstack=fstack
-        log "transport: an arm runs on F-Stack: it and fstack_lat are built too (x86_64 only)"
+        log "transport: an arm runs on F-Stack: it and fstack_lat are built too"
     fi
     if tr_wants_setup onload; then
         onload=onload

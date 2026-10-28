@@ -4,7 +4,7 @@
 # /sys and /proc trees. Checks that:
 #   * modes.sh takes an arm's STREAMS, NETEM and AA, refuses anything else,
 #     and refuses NETEM on every DPDK arm (by name or by its dpdk set-up) and
-#     every Onload arm, an Onload arm or driver off AWS, F-Stack on Graviton;
+#     every Onload arm, an Onload arm or driver off AWS, F-Stack off AWS;
 #   * setup onload: transport.sh's flags (no kernel busy poll or TCP timers),
 #     launcher and knobs; host.sh's Onload steps against a fake ENA (one
 #     queue, Onload's MTU, the AF_XDP registration read back, undone) and its
@@ -98,17 +98,17 @@ got=$(
     echo -n "by setup:"; rc kbx@NETEM=1; rc kbx@STREAMS=1
     echo
     mode_check dpdk-aeron-rel@NETEM=1 remote x86_64 azure '' 2>&1 | grep -c 'DPDK bypasses the kernel' || true
-    # setup fstack: no netem, and AWS x86_64 alone (F-Stack's build, the ENA)
+    # setup fstack: no netem, and AWS alone (the ENA), x86_64 and Graviton
     TRANSPORT_ARMS+="kfs=fstack/two "
     f() { mode_check "$1" remote "$2" "$3" '' >/dev/null 2>&1; echo -n " $?"; }
     echo -n "fstack:"; f kfs@STREAMS=8 x86_64 aws; f kfs@NETEM=1 x86_64 aws; f kfs@STREAMS=1 arm64 aws; f kfs@STREAMS=1 x86_64 azure
     echo
 )
-same "modes.sh: an arm takes STREAMS, NETEM and AA alone; NETEM refused on every DPDK arm; an F-Stack arm on AWS x86_64 alone" "ok: 0 0 0 0 0
+same "modes.sh: an arm takes STREAMS, NETEM and AA alone; NETEM refused on every DPDK arm; an F-Stack arm on AWS alone, x86_64 and Graviton" "ok: 0 0 0 0 0
 refused: 2 2 2 2 2 2 2 2 2 2 2
 by setup: 2 0
 1
-fstack: 0 2 2 2" "$got"
+fstack: 0 2 0 2" "$got"
 
 # ---- transport_plan.py ----
 got="$(plan count a 5 "$matrix") $(plan count b 5 "$matrix") $(plan count a 1 "$matrix")"
@@ -195,14 +195,14 @@ got=$(
     echo -n "driver:"; f "onload$TR_AERON_MODE_SUFFIX" x86_64 aws; f "onload$TR_AERON_MODE_SUFFIX" arm64 aws; f "onload$TR_AERON_MODE_SUFFIX" x86_64 azure
     echo
     mode_check onload-mio-udp@NETEM=1 remote x86_64 aws '' 2>&1 | grep -c 'skip the kernel' || true
-    # an F-Stack arm on Graviton, as aws/lab.sh now judges it (tr_arch)
+    # an F-Stack arm on Graviton, as aws/lab.sh judges it (tr_arch): taken
     f dpdk-tcp@STREAMS=1 arm64 aws
     echo
 )
-same "modes.sh: an Onload arm takes STREAMS on AWS (x86_64 and Graviton), never NETEM, never Azure; the Onload driver mode AWS only; an F-Stack arm refused on Graviton" "arms: 0 0 2 2
+same "modes.sh: an Onload arm takes STREAMS on AWS (x86_64 and Graviton), never NETEM, never Azure; the Onload driver mode AWS only; an F-Stack arm taken on Graviton" "arms: 0 0 2 2
 driver: 0 0 2
 1
- 2" "$got"
+ 0" "$got"
 got=$(
     . "$cloud/transport.sh"
     dir=$tmp/onl
@@ -1082,7 +1082,7 @@ chmod +x "$tmp/nocloud/aws"
 awslab() { env PATH="$tmp/nocloud:$PATH" HOME="$tmp/home" TMPDIR="$tmp/labtmp" LAB_REPO="$tmp/repo" LAB_SUITE=transport "$@" bash "$cloud/aws/lab.sh"; }
 why=
 for refused in "LAB_PAIR=#LAB_PAIR is a or b" "LAB_PAIR=c#LAB_PAIR is a or b" "LAB_PAIR=a LAB_TUNE=1#runs on Azure" \
-    "LAB_PAIR=a LAB_ALLOW_ARM=1 LAB_TYPE=c8g.2xlarge LAB_SETS_FILE=$awsets#an F-Stack arm runs on AWS x86_64 only" "LAB_PAIR=a LAB_PLACEMENT=cross-az LAB_NO_FLATOUT=1#cluster placement group" \
+    "LAB_PAIR=a LAB_PLACEMENT=cross-az LAB_NO_FLATOUT=1#cluster placement group" \
     "LAB_PAIR=a LAB_MODES=kernel#latency suite's" "LAB_PAIR=a LAB_RUN_STAMP=20261025-120000#claims a stamp of its own" \
     "LAB_PAIR=a LAB_ARMS_FILE=$fx/none.tsv#not a readable file" "LAB_PAIR=a LAB_ARMS_FILE=$fx/dpdk-netem.tsv#netem cannot reach" \
     "LAB_PAIR=a LAB_SETS_FILE=$fx/none.tsv#not a readable file" "LAB_PAIR=a LAB_EXTRA_SRC=$fx/nobuild#a directory with a lab-build.sh" \
@@ -1099,22 +1099,25 @@ out=$(LAB_SUITE= awslab LAB_SUITE=latency LAB_PAIR=a 2>&1) && why+=" latency wit
 [[ $out == *"transport suite's"* ]] || why+=" latency with LAB_PAIR: $(tail -1 <<<"$out");"
 # the AWS DPDK session's F-Stack arm on Azure: refused there, by its setup
 out=$(lab LAB_PAIR=a LAB_SETS_FILE="$awsets" 2>&1) && why+=" azure ran dpdk-tcp;"
-[[ $out == *"an F-Stack arm runs on AWS x86_64 only"* ]] || why+=" azure dpdk-tcp: $(tail -1 <<<"$out");"
+[[ $out == *"an F-Stack arm runs on AWS only"* ]] || why+=" azure dpdk-tcp: $(tail -1 <<<"$out");"
 [[ ! -s $tmp/cloud-calls ]] || why+=" a refusal called the cloud;"
 [[ -z $(ls -A "$tmp/labtmp") ]] || why+=" a snapshot left: $(ls "$tmp/labtmp");"
-[[ -z $why ]] && pass "aws/lab.sh LAB_SUITE=transport refuses a bad pair, tuning, an F-Stack arm on Graviton, another placement, latency settings, a stamp, bad arms and sets files (NETEM on a DPDK arm too), extra tree, duration, deadline, spot fallback, detach and seed before any aws call; azure/lab.sh refuses the F-Stack arm" ||
+[[ -z $why ]] && pass "aws/lab.sh LAB_SUITE=transport refuses a bad pair, tuning, another placement, latency settings, a stamp, bad arms and sets files (NETEM on a DPDK arm too), extra tree, duration, deadline, spot fallback, detach and seed before any aws call; azure/lab.sh refuses the F-Stack arm" ||
     fail "aws/lab.sh transport refusals:$why"
 rm -f "$tmp/cloud-calls"
 est=$(awslab LAB_ESTIMATE=1 LAB_PAIR=a LAB_REPS=3 LAB_SETS_FILE="$awsets" 2>&1) && estrc=0 || estrc=$?
 ests=$(awslab LAB_ESTIMATE=1 LAB_PAIR=a LAB_REPS=3 LAB_SETS_FILE="$awsets" LAB_SPOT=1 2>&1) && estsrc=0 || estsrc=$?
 estm=$(awslab LAB_ESTIMATE=1 LAB_PAIR=b 2>&1) && estmrc=0 || estmrc=$?
+estg=$(awslab LAB_ESTIMATE=1 LAB_PAIR=a LAB_REPS=3 LAB_ALLOW_ARM=1 LAB_TYPE=c8g.2xlarge LAB_SETS_FILE="$awsets" 2>&1) && estgrc=0 || estgrc=$?
 if [[ $estrc == 0 && $est == *"pair a: 141 points (sets d1, d8, u, pin)"*"instance-hours, about \$"*" on demand"* &&
     $est == *"a c7a.2xlarge, b c7a.2xlarge, on-demand, 3 reps"* && $est == *"c7a.2xlarge \$0.41056/h"* && $est == *"detaches it"* &&
     $estsrc == 0 && $ests == *"at spot prices"*"c7a.2xlarge \$0.1907/h"*"describe-spot-price-history"* &&
-    $estmrc == 0 && $estm == *"pair b: 420 points"* && ! -s $tmp/cloud-calls ]]; then
-    pass "aws/lab.sh LAB_SUITE=transport LAB_ESTIMATE=1: the AWS DPDK session's points, hours, instance-hours and dollars on c7a.2xlarge (on demand, spot with LAB_SPOT=1), the matrix's pair b; no aws call"
+    $estmrc == 0 && $estm == *"pair b: 420 points"* &&
+    $estgrc == 0 && $estg == *"pair a: 141 points (sets d1, d8, u, pin)"* && $estg == *"a c8g.2xlarge, b c8g.2xlarge"* &&
+    ! -s $tmp/cloud-calls ]]; then
+    pass "aws/lab.sh LAB_SUITE=transport LAB_ESTIMATE=1: the AWS DPDK session's points, hours, instance-hours and dollars on c7a.2xlarge (on demand, spot with LAB_SPOT=1) and on Graviton (F-Stack arm included), the matrix's pair b; no aws call"
 else
-    fail "aws/lab.sh transport estimate ($estrc, $estsrc, $estmrc): $est | $ests | $estm"
+    fail "aws/lab.sh transport estimate ($estrc, $estsrc, $estmrc, $estgrc): $est | $ests | $estm | $estg"
 fi
 
 # the SMT sessions on c7i.4xlarge (transport-aws-smt-off.tsv, then
