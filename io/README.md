@@ -240,7 +240,7 @@ Tables and conclusion: the book's
 | `uring` | on | the `io_uring` backend, `uring-sqpoll` (Linux); without it, choosing it returns `Error::Unsupported` |
 | `webpki-roots` | off | Mozilla's root store, `tls::webpki_roots` (CDLA-Permissive-2.0, so opt-in) |
 | `curl` | off | libcurl as an `HttpClient` implementation (the system libcurl, through pkg-config). It refuses every method but GET, HEAD, OPTIONS and DELETE unless `curl_allow_non_idempotent_methods` is set: libcurl can send a request twice |
-| `smoltcp-dpdk` | off | the `smoltcp-spin` backend (Linux x86_64 or aarch64): smoltcp 0.14.0 over a DPDK port, compiled against the system's libdpdk >= 23.11 (pkg-config); elsewhere it compiles and `Stack::init` returns `Error::Unsupported` |
+| `smoltcp-dpdk` | off | the `smoltcp-spin` backend (Linux `x86_64` or `aarch64`): smoltcp 0.14.0 over a DPDK port, compiled against the system's libdpdk >= 23.11 (pkg-config); elsewhere it compiles and `Stack::init` returns `Error::Unsupported` |
 | `fstack` | off | the `fstack-spin` backend (Linux): links F-Stack and its DPDK from `FSTACK_PREFIX` ([`build-fstack.sh`](https://github.com/mimran1980/ergon/blob/main/io/benches/fstack/build-fstack.sh)); without it the feature compiles and `fstack-spin` returns `Error::Unsupported` |
 
 Install with the features you need:

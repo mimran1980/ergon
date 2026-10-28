@@ -16,7 +16,7 @@
 //!   (`FrameDial::<SmolTcp>::on_stack`) and `Driver::connect` (TLS is rustls
 //!   over the stack's byte stream, as on the kernel). Like F-Stack's,
 //!   `SmolTcp` is not `Send`, so there is no `connect_background`. UDP:
-//!   `UdpConn<SmolUdp>` from [`Stack::udp_connect`] or [`Stack::udp_bind`].
+//!   `UdpConn<SmolUdp>` from `Stack::udp_connect` or `Stack::udp_bind`.
 //!   A driver refuses endpoints of another stack. Names are resolved by the
 //!   driver's resolver over the kernel's network.
 //! - IPv4 only, one address and an optional default gateway, Ethernet.
@@ -358,7 +358,7 @@ pub(crate) fn fmt_mac(mac: [u8; 6]) -> String {
     mac.map(|b| format!("{b:02x}")).join(":")
 }
 
-/// The stack's counters ([`Stack::stats`]).
+/// The stack's counters (`Stack::stats`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct StackStats {
     /// Stack passes (one per `Driver::poll` of each driver on it).
@@ -401,7 +401,7 @@ pub struct StackStats {
     pub port: [u64; 6],
 }
 
-/// One TCP connection's state and counters ([`Stack::tcp_stats`]).
+/// One TCP connection's state and counters (`Stack::tcp_stats`).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TcpStats {
     /// The TCP state, as smoltcp names it (`ESTABLISHED`, `SYN-SENT`, ...).
