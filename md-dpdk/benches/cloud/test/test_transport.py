@@ -1090,13 +1090,15 @@ class SpikesLabelTest(unittest.TestCase):
             f.write("kind,start_ns,end_ns,cpu,detail\n" + "".join(l + "\n" for l in lines))
 
     def cause(self, achieved=10_000, late=0, transport="udp"):
+        return spikes.transport_cause(self.folder, self.point(achieved, late, transport))
+
+    def point(self, achieved=10_000, late=0, transport="udp"):
         row = dict.fromkeys(COLUMNS)
         row.update(p50=self.P50, max=self.MAX, rate=10_000, achieved=achieved, scheduled=300_000, late=late,
                    samples=300_000)
         manifest = {"transport": transport, "cpus": {h: {"housekeeping": [0], "irq": [2], "hot": [4, 6]}
                                                      for h in "ab"}}
-        point = spikes.TransportPoint(set="2a", tag=self.tag, row=row, manifest=manifest, hosts=("a", "b"))
-        return spikes.transport_cause(self.folder, point)
+        return spikes.TransportPoint(set="2a", tag=self.tag, row=row, manifest=manifest, hosts=("a", "b"))
 
     def test_host_pause_from_the_gap_spinner(self):
         with open(os.path.join(self.folder, "b-diag-2a.log"), "w") as f:
@@ -1108,13 +1110,80 @@ class SpikesLabelTest(unittest.TestCase):
             f.write(f"== gapspin\n{(self.mid + 10_000) / 1e9:.6f} 20\n")
         self.assertTrue(self.cause().startswith("unexplained"))
 
+    def session(self, *phases, arms=("mio-udp", "aeron-kernel", "aa"), lat=0.012, scatter=40):
+        """A session's maxima (spikes.session_periodic): for each phase
+        (seconds into a minute) one max a minute, the arms in turn, `lat`
+        long; then `scatter` maxima at phases spread over the minute."""
+        out = []
+        for i, ph in enumerate(phases):
+            t0 = fx.BASE_S + 600 + i * 60 + ph
+            out.append((t0, t0 + lat, arms[i % len(arms)], f"p{i}"))
+        for j in range(scatter):
+            t0 = fx.BASE_S + 7200 + j * 61.37 + (j * 7.919) % 60
+            out.append((t0, t0 + 0.0002, arms[j % len(arms)], f"s{j}"))
+        return spikes.session_periodic(out)
+
     def test_per_minute_cluster(self):
         self.write_spikes(due=30.0)  # :50 of the minute
-        self.assertTrue(self.cause().startswith("per-minute stall"), self.cause())
+        # the session's maxima recur in :49-:51 well above chance
+        got = spikes.transport_cause(self.folder, self.point(), self.session(49.2, 50.7, 51.4, 49.9, 50.1, 51.8, 49.5, 50.4, 51.1, 50.9))
+        self.assertTrue(got.startswith("per-minute stall"), got)
+
+    def test_per_minute_window_alone_is_no_evidence(self):
+        # one max in :49-:51, the session's others anywhere: chance
+        self.write_spikes(due=30.0)
+        self.assertTrue(self.cause().startswith("unexplained"), self.cause())
+        got = spikes.transport_cause(self.folder, self.point(), self.session(50.0))
+        self.assertTrue(got.startswith("unexplained"), got)
 
     def test_outside_the_per_minute_window(self):
         self.write_spikes(due=33.0)  # :53
-        self.assertTrue(self.cause().startswith("unexplained"))
+        got = spikes.transport_cause(self.folder, self.point(), self.session(49.2, 50.7, 51.4, 49.9, 50.1, 51.8, 49.5, 50.4, 51.1, 50.9))
+        self.assertTrue(got.startswith("unexplained"), got)
+
+    def test_periodic_path_outage(self):
+        # c7i: once a minute at one second on a VM pair, 4 to 16 ms, across
+        # arms and floors; this point's max starts there (:26 of the minute)
+        self.MAX = 9_000_000
+        self.write_spikes(due=6.0)
+        s = self.session(*[25.999 + k * 0.001 for k in range(8)])
+        self.assertEqual([c["second"] for c in s["clusters"]], [26], s)
+        self.assertFalse(s["minute"])
+        got = spikes.transport_cause(self.folder, self.point(), s)
+        self.assertEqual(got, "periodic path outage (second :26)")
+
+    def test_periodic_outage_elsewhere_explains_nothing_here(self):
+        self.write_spikes(due=13.0)  # :33
+        got = spikes.transport_cause(self.folder, self.point(), self.session(*[26.0] * 8))
+        self.assertTrue(got.startswith("unexplained"), got)
+
+    def test_a_periodic_cluster_in_the_minute_window_keeps_the_azure_label(self):
+        self.write_spikes(due=30.0)  # :50
+        s = self.session(*[50.0] * 8)
+        got = spikes.transport_cause(self.folder, self.point(), s)
+        self.assertTrue(got.startswith("per-minute stall"), got)
+
+    def test_no_periodic_cluster_from_scattered_maxima(self):
+        s = self.session(scatter=80)
+        self.assertEqual((s["clusters"], s["minute"]), ([], False))
+
+    def test_no_periodic_cluster_from_too_few(self):
+        self.assertEqual(self.session(*[25.0] * 3)["clusters"], [])
+
+    def test_no_periodic_cluster_from_one_arm(self):
+        self.assertEqual(self.session(*[25.0] * 10, arms=("mio-udp",))["clusters"], [])
+
+    def test_two_periodic_clusters(self):
+        s = self.session(*([35.29] * 6 + [44.24] * 7), lat=0.004)
+        self.assertEqual(sorted(c["second"] for c in s["clusters"]), [35, 44], s)
+
+    def test_recurring_maxima_under_a_millisecond_are_no_outage(self):
+        # a sub-millisecond max at one phase a minute is not the path's
+        # outage: left unexplained
+        self.assertEqual(self.session(*[26.0] * 10, lat=0.0003)["clusters"], [])
+        self.write_spikes(due=6.0)
+        got = spikes.transport_cause(self.folder, self.point(), self.session(*[26.0] * 8))
+        self.assertTrue(got.startswith("unexplained"), got)  # this point's max: 200 µs
 
     def test_irq_on_a_hot_cpu(self):
         self.events("a", f"irq,{self.mid - 50_000},{self.mid + 50_000},4,mana_q1")

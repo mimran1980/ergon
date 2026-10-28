@@ -679,7 +679,8 @@ not as an Aeron message.
 - What sends host a's frames to closed ports between load points
   (`noport-dpdk-queue-drop`).
 - The `c7i` sessions' once-a-minute millisecond tails (about 15 ms, at a
-  fixed second per pair): unexplained ([above](#c7i-the-irq-cpus-idle-depth)).
+  fixed second per pair): `spikes.py` labels them `periodic path outage
+  (second :SS)`; their cause is unknown ([above](#c7i-the-irq-cpus-idle-depth)).
 - `aeron-rel-emb`'s millisecond maxima (kernel UDP, in-process driver):
   unexplained ([above](#aws-spy-driver-threading-and-onload)).
 - `aeron_lat` labels a DPDK point `aeron-udp` when its one read of the
