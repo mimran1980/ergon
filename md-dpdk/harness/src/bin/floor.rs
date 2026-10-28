@@ -1364,20 +1364,41 @@ RUSTERON_MEDIA_DRIVER_TRANSPORT=dpdk-ena (the driver's environment), one stream,
     }
 
     /// Echoes every datagram (a ping turned into its echo, a probe as it
-    /// came) until SIGTERM; the pings echoed.
+    /// came) until SIGTERM; the pings echoed. A send that cannot go yet
+    /// (`false`: the DPDK transport's first send to a next hop while its ARP
+    /// resolution is in flight, or a full ring) is retried after a poll,
+    /// never in a tight loop of sends: the ARP answer and the ring's
+    /// completions come in on the poll, and without one the resolution
+    /// times out into a hard error (aws-20261028-090309: the pong's first
+    /// echo, "next hop unreachable (ARP failed)"). What arrives meanwhile
+    /// queues behind the echoes held, up to `BURST`.
     fn pong<W: Wire>(wire: &RefCell<W>) -> Result<u64, Error> {
         let mut pending = [[0u8; DATAGRAM]; BURST];
+        let (mut sent, mut count) = (0usize, 0usize);
         let mut echoes = 0u64;
         while !lab::STOP.load(Ordering::Relaxed) {
-            let mut count = 0;
+            if sent < count {
+                if wire
+                    .borrow_mut()
+                    .send(&pending[sent])
+                    .map_err(|e| Error::Transport(format!("send: {e}")))?
+                {
+                    sent += 1;
+                    continue;
+                }
+                std::hint::spin_loop();
+            } else {
+                (sent, count) = (0, 0);
+            }
+            let first = count;
             let mut bad = None;
             wire.borrow_mut()
                 .poll(|d| {
-                    if count < BURST && d.len() == DATAGRAM {
-                        pending[count].copy_from_slice(d);
-                        count += 1;
-                    } else if d.len() != DATAGRAM {
+                    if d.len() != DATAGRAM {
                         bad = Some(d.len());
+                    } else if let Some(slot) = pending.get_mut(count) {
+                        slot.copy_from_slice(d);
+                        count += 1;
                     }
                 })
                 .map_err(|e| Error::Transport(format!("poll: {e}")))?;
@@ -1387,7 +1408,7 @@ RUSTERON_MEDIA_DRIVER_TRANSPORT=dpdk-ena (the driver's environment), one stream,
                     first: format!("a {len}-byte datagram, not {DATAGRAM}"),
                 });
             }
-            for d in pending.iter_mut().take(count) {
+            for d in pending.iter_mut().take(count).skip(first) {
                 if d[0] == DATA {
                     let msg: &mut [u8; MESSAGE_LEN] = (&mut d[HEADER..])
                         .try_into()
@@ -1395,18 +1416,96 @@ RUSTERON_MEDIA_DRIVER_TRANSPORT=dpdk-ena (the driver's environment), one stream,
                     echo_in_place(msg)?;
                     echoes += 1;
                 }
-                while !wire
-                    .borrow_mut()
-                    .send(d)
-                    .map_err(|e| Error::Transport(format!("send: {e}")))?
-                {
-                    if lab::STOP.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    std::hint::spin_loop();
-                }
             }
         }
         Ok(echoes)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use ergon_latency_core::message::Message;
+        use std::collections::VecDeque;
+        use std::io;
+
+        /// A wire whose sends wait, as the DPDK transport's do while the
+        /// echo's next hop is being ARP'd (`send` 0), until a poll has taken
+        /// the ARP answer in; sent to 1000 times with no poll between, it
+        /// fails as that transport does once the resolution times out
+        /// ("next hop unreachable (ARP failed)", aws-20261028-090309).
+        struct Arp {
+            inbox: VecDeque<[u8; DATAGRAM]>,
+            asked: bool,
+            resolved: bool,
+            unpolled_sends: u32,
+            idle_polls: u32,
+            sent: Vec<Vec<u8>>,
+            expect: usize,
+        }
+
+        impl Wire for Arp {
+            fn send(&mut self, datagram: &[u8]) -> io::Result<bool> {
+                if !self.resolved {
+                    self.asked = true;
+                    self.unpolled_sends += 1;
+                    if self.unpolled_sends > 1000 {
+                        return Err(io::Error::other("next hop unreachable (ARP failed)"));
+                    }
+                    return Ok(false);
+                }
+                self.sent.push(datagram.to_vec());
+                if self.sent.len() == self.expect {
+                    lab::STOP.store(true, Ordering::Relaxed);
+                }
+                Ok(true)
+            }
+
+            fn poll<F: FnMut(&[u8])>(&mut self, mut on: F) -> io::Result<usize> {
+                // the ARP answer comes in on the poll after the request
+                self.resolved |= self.asked;
+                self.unpolled_sends = 0;
+                if let Some(d) = self.inbox.pop_front() {
+                    self.idle_polls = 0;
+                    on(&d);
+                    return Ok(1);
+                }
+                // a datagram the pong dropped would never be echoed: end
+                self.idle_polls += 1;
+                if self.idle_polls > 1_000_000 {
+                    lab::STOP.store(true, Ordering::Relaxed);
+                }
+                Ok(0)
+            }
+        }
+
+        #[test]
+        fn the_pong_polls_while_its_echo_waits_for_arp_and_loses_nothing_meanwhile() -> Result<(), Error> {
+            let mut probe = [0u8; DATAGRAM];
+            probe[0] = PROBE;
+            let mut ping = [0u8; DATAGRAM];
+            ping[0] = DATA;
+            ping[HEADER..].copy_from_slice(&template());
+            // the probe comes first; the ping arrives while its echo waits
+            let wire = RefCell::new(Arp {
+                inbox: VecDeque::from([probe, ping]),
+                asked: false,
+                resolved: false,
+                unpolled_sends: 0,
+                idle_polls: 0,
+                sent: Vec::new(),
+                expect: 2,
+            });
+            lab::STOP.store(false, Ordering::Relaxed);
+            let echoes = pong(&wire);
+            lab::STOP.store(false, Ordering::Relaxed);
+            assert_eq!(echoes?, 1, "the ping echoed, the probe sent back as it came");
+            let sent = &wire.borrow().sent;
+            assert_eq!(sent.len(), 2, "both went back: {sent:?}");
+            assert_eq!(sent[0].as_slice(), probe.as_slice(), "the probe first, as it came");
+            assert_eq!(sent[1][0], DATA);
+            let echo = Message::decode(&sent[1][HEADER..]).map_err(|e| Error::Transport(format!("{e:?}")))?;
+            assert_eq!(echo.kind, ergon_latency_core::message::Kind::Echo);
+            Ok(())
+        }
     }
 }
