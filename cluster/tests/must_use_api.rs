@@ -62,7 +62,7 @@ fn must_use_default_idle() {
 fn cluster_claim_position_has_must_use_attribute() {
     let src = include_str!("../src/client.rs");
     let fn_pos = src
-        .find("pub fn position(&self) -> i64")
+        .find("pub const fn position(&self) -> i64")
         .expect("ClusterClaim::position not found");
     let before = &src[fn_pos.saturating_sub(120)..fn_pos];
     assert!(
