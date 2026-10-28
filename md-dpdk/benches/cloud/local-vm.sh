@@ -21,8 +21,9 @@
 #                                     CPUs (host.sh transport_layout), busy-spinning; dpdk refused
 #   local-vm.sh stop                  the media driver stopped (if running)
 #   local-vm.sh transport-net [check] the sysctls written (check: read) back; an IRQ core idle
-#                                     cap (TR_IRQ_IDLE other than all) refused: the box's idle
-#                                     is not the smoke's to set
+#                                     cap (TR_IRQ_IDLE other than all or auto) refused: the box's
+#                                     idle is not the smoke's to set
+#   local-vm.sh irq-idle [resolve]    as transport-net's cap (resolve: auto is all here)
 #   local-vm.sh netem set <pct>|clear|check <pct|none>|stats   netem on lo
 #   local-vm.sh sample | irqsnap | nstat | settings | napi   as vm.sh's (napi: lo's own)
 #   local-vm.sh idle | nicstats       as vm.sh's lines: no cpuidle state (so no cap: all); lo's
@@ -129,7 +130,7 @@ stop)
     ;;
 transport-net)
     if [[ ${2:-} == check ]]; then transport_sysctls_apply check >/dev/null && echo "transport-net: settings hold"; exit; fi
-    [[ $TR_IRQ_IDLE == all ]] || { echo "transport-net: irq_idle $TR_IRQ_IDLE: the local smoke caps no idle state" >&2; exit 2; }
+    [[ $TR_IRQ_IDLE == all || $TR_IRQ_IDLE == auto ]] || { echo "transport-net: irq_idle $TR_IRQ_IDLE: the local smoke caps no idle state" >&2; exit 2; }
     transport_cc_load
     transport_sysctls_apply
     ;;
@@ -163,6 +164,11 @@ napi)
     done
     ;;
 idle) echo "driver none governor none max_cstate - (local smoke: the box's idle is its own)" ;;
+# auto is all here (no cpuidle state the smoke may cap); any cap refused
+irq-idle)
+    if [[ ${2:-} == resolve ]]; then [[ $TR_IRQ_IDLE == auto ]] && echo all || echo "$TR_IRQ_IDLE"; exit 0; fi
+    [[ $TR_IRQ_IDLE == all || $TR_IRQ_IDLE == auto ]] || { echo "irq-idle: irq_idle $TR_IRQ_IDLE: the local smoke caps no idle state" >&2; exit 2; }
+    ;;
 nicstats)
     # as vm.sh's: lo's interface statistics, and no moderation or driver
     # counters (coalesce none)

@@ -11,8 +11,16 @@
 #                        isolated core ({next_core}), no SO_BUSY_POLL
 #   aa                   mio-tcp again
 #
+# Both halves run with the IRQ core capped at C1 (TR_IRQ_IDLE=auto: C1 under
+# intel_idle, c7i's driver; every arm, read back per point and recorded in
+# transport-settings.tr.env); `irq_idle 1` stops a session whose hosts would
+# give anything else before its first point. The first SMT sessions ran uncapped, and the
+# c7i diagnosis (transport-aws-c7i-diag.tsv) showed the IRQ core's wake from
+# C6 dominating their 10k msg/s points: rerun both halves, never one.
+#
 # One stream, ping/pong round trips at 10k, 50k and 200k msg/s, LAB_REPS=3:
 # 36 points (LAB_ESTIMATE=1 gives the hours).
 smt off
+irq_idle 1
 # set     pair par host loads              streams netem arms
 set smtoff a   -   ab   10000,50000,200000 1       -     mio-tcp,eio-tcp,eio-tcp-sqpoll-core,aa

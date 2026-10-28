@@ -8,13 +8,18 @@
 # mio's and eio's segments busy-polled at 10k (TcpExt BusyPollRxPackets
 # against InSegs), the rest taken in the IRQ core's softirq after an
 # interrupt; 80-86 % of sqpoll's busy-polled by its SQPOLL thread. Every
-# arm here is mio-tcp but for one thing (transport-settings.env TR_DECLARED):
+# arm here is mio-tcp but for one thing (transport-settings.env TR_DECLARED).
+# Since aws-20261028-092158 every arm's IRQ core is at the session's depth
+# (TR_IRQ_IDLE=auto: C1 on intel_idle), so mio-tcp is capped as -c1 is and
+# -call is the uncapped baseline:
 #
-#   mio-tcp       the baseline (SO_BUSY_POLL 50: one NAPI pass after each read)
+#   mio-tcp       SO_BUSY_POLL 50 (one NAPI pass after each read), the
+#                 session's idle depth
 #   mio-tcp-br0   busy_read_us=0: no NAPI pass at all, interrupts alone
 #   mio-tcp-c1    irq_idle=1: the IRQ core's idle states past the first halt
 #                 state disabled (on intel_idle, C1E and C6 off)
 #   mio-tcp-c0    irq_idle=0: the IRQ core polls when idle (no halt)
+#   mio-tcp-call  irq_idle=all: every idle state the driver offers
 #   eio-tcp-sqpoll-core  the control: its SQPOLL thread polls the NIC
 #   aa            mio-tcp again
 #
@@ -27,7 +32,12 @@
 # mio-tcp. If a busy-poll pass leaves the queue's interrupt masked: -br0
 # good, -c1 and -c0 bad.
 #
-# One stream, ping/pong round trips at 10k msg/s, LAB_REPS=3: 18 points
+# Result (aws-20261028-092158, 3 reps; md-dpdk/BENCHMARKS.md): the wake
+# from idle was the cost. p50/p99 us: mio-tcp (then uncapped) 43-160 /
+# 315-559, -br0 44-165 / 438-545, -c1 37.3-39.0 / 44.3-48.9, -c0 37.0-38.2 /
+# 43.6-44.5, sqpoll 34.3-35.6 / 41.7-46.3.
+#
+# One stream, ping/pong round trips at 10k msg/s, LAB_REPS=3: 21 points
 # (LAB_ESTIMATE=1 gives the hours).
 # set  pair par host loads streams netem arms
-set c7i   a    -   ab   10000 1       -     mio-tcp,mio-tcp-br0,mio-tcp-c1,mio-tcp-c0,eio-tcp-sqpoll-core,aa
+set c7i   a    -   ab   10000 1       -     mio-tcp,mio-tcp-br0,mio-tcp-c1,mio-tcp-c0,mio-tcp-call,eio-tcp-sqpoll-core,aa

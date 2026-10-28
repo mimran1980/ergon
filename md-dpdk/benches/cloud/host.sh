@@ -1209,6 +1209,7 @@ net/ipv4/tcp_congestion_control $TR_TCP_CONGESTION required
 net/ipv4/tcp_sack $TR_TCP_SACK required
 net/ipv4/tcp_timestamps $TR_TCP_TIMESTAMPS required
 net/ipv4/tcp_slow_start_after_idle $TR_TCP_SLOW_START_AFTER_IDLE required
+net/ipv4/tcp_autocorking $TR_TCP_AUTOCORKING required
 net/ipv4/tcp_rmem $TR_TCP_RMEM required
 net/ipv4/tcp_wmem $TR_TCP_WMEM required
 net/core/rmem_max $TR_CORE_RMEM_MAX required
@@ -1291,14 +1292,27 @@ transport_idle_read() {
     done
 }
 
-# transport_irq_idle_apply <IRQ CPUs> <all|n>: on each CPU every cpuidle
+# transport_irq_idle_auto: TR_IRQ_IDLE=auto's value on this host, each
+# platform's fair best: 1 (the first halt state, C1) under intel_idle, whose
+# C1E and C6 the c7i sessions' interrupt-driven receive paid for at every
+# wake (aws-20261028-092158: mio-tcp at 10k msg/s p50 43-160 us, 37-39
+# capped); all under any other driver (acpi_idle: c7a showed no wake-up
+# cost) or none (Graviton: the hypervisor owns idle)
+transport_irq_idle_auto() {
+    local sys=${LAB_SYS_ROOT:-/sys}
+    if [[ $(cat "$sys/devices/system/cpu/cpuidle/current_driver" 2>/dev/null) == intel_idle ]]; then echo 1; else echo all; fi
+}
+
+# transport_irq_idle_apply <IRQ CPUs> <all|n|auto>: on each CPU every cpuidle
 # state deeper than the n-th disabled and the rest enabled (all: every one
-# enabled), each read back; "irq_idle <v> on CPU(s) <list> (<k> states)", 1
-# when one reads back otherwise or n asks a cap where there is no cpuidle
-# driver (nothing could hold it), 2 for a value that is neither
+# enabled; auto: transport_irq_idle_auto's), each read back; "irq_idle <v>
+# on CPU(s) <list> (<k> states)", 1 when one reads back otherwise or n asks
+# a cap where there is no cpuidle driver (nothing could hold it), 2 for a
+# value that is none of them
 transport_irq_idle_apply() {
     local sys=${LAB_SYS_ROOT:-/sys} v=$2 c st i want got n=0 rc=0
-    [[ $v == all || $v =~ ^[0-9]+$ ]] || { echo "irq_idle $v: all or a state index" >&2; return 2; }
+    [[ $v != auto ]] || v=$(transport_irq_idle_auto)
+    [[ $v == all || $v =~ ^[0-9]+$ ]] || { echo "irq_idle $v: all, auto or a state index" >&2; return 2; }
     for c in ${1//,/ }; do
         for st in "$sys/devices/system/cpu/cpu$c/cpuidle"/state[0-9]*; do
             [[ -d $st ]] || continue

@@ -103,6 +103,8 @@
 #                            2 MiB hugetlbfs of aeron-ipc-huge's Aeron directory mounted and verified
 #   vm.sh transport-net [check]  a socket arm's kernel path (NAPI, busy poll, TCP, the IRQ core's
 #                            idle depth TR_IRQ_IDLE), or only read back
+#   vm.sh irq-idle [resolve] the IRQ core's idle depth TR_IRQ_IDLE (every other arm's set-up), or
+#                            only what it is here (auto: 1 under intel_idle, else all)
 #   vm.sh transport-map      the map;  vm.sh transport-build [fstack] [onload]  the bench binaries and
 #                            LAB_EXTRA_SRC's (fstack: F-Stack and fstack_lat too, x86_64 only; onload:
 #                            OpenOnload built and installed, onload-build.sh)
@@ -2999,8 +3001,21 @@ transport-net)
     done
     transport_cc_load
     transport_sysctls_apply
-    # the IRQ core's idle depth (TR_IRQ_IDLE: all, or a socket arm's own cap
-    # by TR_OVERRIDES), put back to all at the next arm's
+    # the IRQ core's idle depth (TR_IRQ_IDLE: the session's, auto resolved
+    # here, or a twin's own by TR_OVERRIDES), set again at the next arm's
+    read -r _ irqcpus _ <"$run/transport-map"
+    transport_irq_idle_apply "$irqcpus" "$TR_IRQ_IDLE" || exit 1
+    ;;
+irq-idle)
+    # the IRQ core's idle depth (TR_IRQ_IDLE, an arm's own by TR_OVERRIDES)
+    # at an arm's set-up other than the sockets' (transport-net sets
+    # theirs): every arm of a session at one value; `resolve`: only what
+    # TR_IRQ_IDLE is on this host (auto: host.sh transport_irq_idle_auto)
+    if [[ ${2:-} == resolve ]]; then
+        if [[ $TR_IRQ_IDLE == auto ]]; then transport_irq_idle_auto; else echo "$TR_IRQ_IDLE"; fi
+        exit 0
+    fi
+    [[ -s $run/transport-map ]] || { echo "irq-idle: no transport map" >&2; exit 2; }
     read -r _ irqcpus _ <"$run/transport-map"
     transport_irq_idle_apply "$irqcpus" "$TR_IRQ_IDLE" || exit 1
     ;;

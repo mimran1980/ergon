@@ -682,7 +682,7 @@ tr_arm_knobs() {
             [[ $a == *" --mode udp "* && $a == *" --reliable true "* ]] && echo nak_delay_ns
             ;;
         esac
-        echo napi_defer
+        echo napi_defer irq_idle
         return 0
     fi
     case $bin in
@@ -714,9 +714,11 @@ tr_arm_knobs() {
     fstack_lat) echo sockbuf ;;
     esac
     # every arm on the kernel's sockets (an arms file's binary too): the data
-    # NICs' interrupt deferral and the IRQ core's idle depth, its own host
-    # settings (tr_host_overrides)
-    [[ ${setup:-} != sockets ]] || echo napi_defer irq_idle
+    # NICs' interrupt deferral, its own host setting (tr_host_overrides)
+    [[ ${setup:-} != sockets ]] || echo napi_defer
+    # every arm: the IRQ core's idle depth, the session's (TR_IRQ_IDLE,
+    # tr_irq_idle_session) unless a twin's own, set at each arm's set-up
+    echo irq_idle
     return 0
 }
 
@@ -890,7 +892,8 @@ tr_driver_cpus() {
 # hosts' default, under the kernel path (no busy poll) the busy-poll
 # sysctls kernel's driver sets (0) for transport-net check, and a socket
 # arm's data-NIC interrupt deferral where not the hosts' (napi_defer: 0 is
-# 0/0, n is n/TR_GRO_FLUSH_NS)
+# 0/0, n is n/TR_GRO_FLUSH_NS); any arm's IRQ core idle depth where not the
+# session's (a declared twin's)
 tr_host_overrides() {
     local o= knobs n g
     knobs=" $(tr_arm_knobs | tr '\n' ' ') "
@@ -901,7 +904,7 @@ tr_host_overrides() {
         [[ $n == 0 ]] || g=$TR_GRO_FLUSH_NS
         [[ $n == "$TR_NAPI_DEFER" && $g == "$TR_GRO_FLUSH_NS" ]] || o+="TR_NAPI_DEFER=$n TR_GRO_FLUSH_NS=$g "
     fi
-    [[ ${setup:-} == sockets && $knobs == *" irq_idle "* && $(tr_knob irq_idle) != "$TR_IRQ_IDLE" ]] && o+="TR_IRQ_IDLE=$(tr_knob irq_idle) "
+    [[ $knobs == *" irq_idle "* && $(tr_knob irq_idle) != "$TR_IRQ_IDLE" ]] && o+="TR_IRQ_IDLE=$(tr_knob irq_idle) "
     echo "${o% }"
 }
 
@@ -1224,24 +1227,27 @@ tr_arm_up() {
     local from
     for h in "$@"; do
         from=$(($(cat "$dir/logs/setup-$h.log" 2>/dev/null | wc -l) + 1))
+        # each set-up then the IRQ core's idle depth (vm.sh irq-idle;
+        # transport-net sets a socket arm's): every arm at the session's
+        # TR_IRQ_IDLE, a declared twin at its own (TR_OVERRIDES)
         case $setup in
-        kernel) on "$(tr_host "$h")" "$(tr_arm_vm) driver $(tr_driver_mode) && ${ov}$vm transport-net check" ;;
-        dpdk) on "$(tr_host "$h")" "$(tr_arm_vm) driver $(tr_driver_mode)" ;;
+        kernel) on "$(tr_host "$h")" "$(tr_arm_vm) driver $(tr_driver_mode) && ${ov}$vm transport-net check && ${ov}$vm irq-idle" ;;
+        dpdk) on "$(tr_host "$h")" "$(tr_arm_vm) driver $(tr_driver_mode) && ${ov}$vm irq-idle" ;;
         # the raw floor's: the NICs on DPDK, no driver (its binary runs the
         # transport's bindings itself with driver.env)
-        dpdk-raw) on "$(tr_host "$h")" "$vm driver dpdk-raw" ;;
+        dpdk-raw) on "$(tr_host "$h")" "$vm driver dpdk-raw && ${ov}$vm irq-idle" ;;
         sockets) on "$(tr_host "$h")" "${ov}$vm transport-net" ;;
-        fstack) on "$(tr_host "$h")" "$vm fstack-up" ;;
+        fstack) on "$(tr_host "$h")" "$vm fstack-up && ${ov}$vm irq-idle" ;;
         # Onload over AF_XDP on the data NICs (vm.sh onload-up); an Aeron
         # arm's media driver under it (vm.sh driver onload: onload-up first)
         onload)
             if [[ $bin == aeron_lat ]]; then
-                on "$(tr_host "$h")" "$(tr_arm_vm) driver $(tr_driver_mode)"
+                on "$(tr_host "$h")" "$(tr_arm_vm) driver $(tr_driver_mode) && ${ov}$vm irq-idle"
             else
-                on "$(tr_host "$h")" "$vm onload-up"
+                on "$(tr_host "$h")" "$vm onload-up && ${ov}$vm irq-idle"
             fi
             ;;
-        none) true ;;
+        none) on "$(tr_host "$h")" "${ov}$vm irq-idle" ;;
         esac >>"$dir/logs/setup-$h.log" 2>&1 || { tr_setup_failed "$setup" "$h" "$from"; return 1; }
     done
 }
@@ -1736,6 +1742,30 @@ tr_tune() {
     return $rc
 }
 
+# tr_irq_idle_session: the session's TR_IRQ_IDLE, every arm's (a declared
+# twin's own apart): auto resolved on each host (vm.sh irq-idle resolve:
+# 1 under intel_idle, else all), which must agree and be what a sets file's
+# irq_idle row requires, then recorded at the end of
+# transport-settings.tr.env (its last assignment, fairness.py's and
+# transport_collect.py's) and logged; 1 when the hosts disagree, one cannot
+# say, or the row asks another
+tr_irq_idle_session() {
+    local h v got= want
+    want=$(tr_plan irq_idle) || { log "the sets file's irq_idle row does not parse"; return 1; }
+    for h in a b; do
+        v=$(on "$(tr_host "$h")" "$vm irq-idle resolve" 2>>"$dir/logs/irq-idle-$h.err") && [[ $v == all || $v =~ ^[0-9]+$ ]] ||
+            { log "host $h: no IRQ idle depth for TR_IRQ_IDLE=$TR_IRQ_IDLE (${v:-nothing}; $dir/logs/irq-idle-$h.err)"; return 1; }
+        [[ -z $got || $got == "$v" ]] || { log "the hosts' IRQ idle depths differ: a $got, b $v (TR_IRQ_IDLE=$TR_IRQ_IDLE)"; return 1; }
+        got=$v
+    done
+    [[ $want == auto || $want == "$got" ]] ||
+        { log "the sets file asks irq_idle $want, the hosts give $got (TR_IRQ_IDLE=$TR_IRQ_IDLE)"; return 1; }
+    printf '# the session'"'"'s IRQ core idle depth, every arm'"'"'s (transport.sh tr_irq_idle_session: TR_IRQ_IDLE=%s on these hosts)\nTR_IRQ_IDLE=%s\n' \
+        "$TR_IRQ_IDLE" "$got" >>"$dir/transport-settings.tr.env"
+    log "session $session: IRQ core idle depth $got for every arm (TR_IRQ_IDLE=$TR_IRQ_IDLE)"
+    TR_IRQ_IDLE=$got
+}
+
 # tr_run <pair>: the session on VM a
 tr_run() {
     pair=$1
@@ -1783,7 +1813,6 @@ tr_run() {
         echo "devices/system/cpu/smt/active $([[ $smt == on ]] && echo 1 || echo 0) optional" >>"$dir/declared-sysctls.txt"
     fi
     log "session $session: SMT $smt"
-    settings_sha=$(sha256sum "$dir/transport-settings.tr.env" 2>/dev/null | awk '{print $1}')
     # the map, the NICs, the binaries and the ergon-tune report of each host
     # (and one on the hugetlbfs Aeron directory, where an arm of the plan
     # runs there: its points' report); a report with any warning stops the
@@ -1815,6 +1844,8 @@ tr_run() {
     done
     cmp -s "$dir/map-a.txt" "$dir/map-b.txt" || die "the hosts' CPU maps differ: $(cat "$dir/map-a.txt") and $(cat "$dir/map-b.txt")"
     map=$(cat "$dir/map-a.txt")
+    tr_irq_idle_session || die "the IRQ core's idle depth: see above"
+    settings_sha=$(sha256sum "$dir/transport-settings.tr.env" 2>/dev/null | awk '{print $1}')
     read -r hk _ iso <<<"$map"
     if [[ $pair == tune-? ]]; then
         tr_tune || rc=1

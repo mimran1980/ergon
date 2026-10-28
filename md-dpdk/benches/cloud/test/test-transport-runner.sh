@@ -171,7 +171,7 @@ sb_=$(. "$cloud/transport-settings.env"; echo "$TR_SOCKBUF")
 same "transport.sh setup fstack: no netem with a DPDK arm; fstack_lat's addresses as tcp_lat's, its PCI port, prefix and gateway from vm.sh nics, delayed ACKs off (the kernel arms' quickack), the socket buffers; started under sudo setpriv with the EAL's capabilities ambient, under the user's own uid (no other arm is); F-Stack built only when a set runs it" \
     "ping: --source 10.30.1.11 --connect 10.30.1.22:22000 --pci 0000:00:06.0 --prefix-len 24 --gateway 10.30.1.1 --nodelay --delayed-ack false --rcvbuf $sb_ --sndbuf $sb_
 pong: --listen 10.30.1.22:22000 --pci 0000:00:07.0 --prefix-len 24 --gateway 10.30.1.1 --nodelay --delayed-ack false --rcvbuf $sb_ --sndbuf $sb_
-knobs: sockbuf 
+knobs: sockbuf irq_idle 
 start: sudo -n setpriv --reuid=\"\$(id -u)\" --regid=\"\$(id -g)\" --init-groups --reset-env --inh-caps=+sys_admin,+dac_override,+ipc_lock,+sys_rawio --ambient-caps=+sys_admin,+dac_override,+ipc_lock,+sys_rawio sh -c 'taskset -c 0 env PATH=P fstack_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
 start sockets: sh -c 'taskset -c 0 env PATH=P tcp_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
 aws-dpdk: fstack
@@ -234,16 +234,16 @@ same "transport.sh setup onload: the kernel arm's binary and flags under onload 
   knobs: sockbuf epoll_events quickack_per_read congestion busy_read_us rto_min_us napi_defer irq_idle napi 0; driver: none
   start: sh -c 'taskset -c 0 env PATH=P tcp_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
 onload-eio-tcp: --source 10.30.1.11 --connect 10.30.1.22:22000 --nodelay --quickack-per-read --busy-read-us 0 --rcvbuf $sb_ --sndbuf $sb_ --epoll-events 64
-  knobs: sockbuf epoll_events quickack_per_read napi_defer napi 0; driver: none
+  knobs: sockbuf epoll_events quickack_per_read napi_defer irq_idle napi 0; driver: none
   start: sh -c 'taskset -c 0 env PATH=P $oc_ tcp_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
 onload-mio-udp: --local 10.30.1.11:22000 --peer 10.30.1.22:22000 --busy-read-us 0 --rcvbuf $sb_ --sndbuf $sb_ --epoll-events 64
-  knobs: sockbuf epoll_events napi_defer napi 0; driver: none
+  knobs: sockbuf epoll_events napi_defer irq_idle napi 0; driver: none
   start: sh -c 'taskset -c 0 env PATH=P $oc_ udp_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
 onload-eio-udp: --local 10.30.1.11:22000 --peer 10.30.1.22:22000 --busy-read-us 0 --rcvbuf $sb_ --sndbuf $sb_ --epoll-events 64 --datagram-burst 64
-  knobs: sockbuf epoll_events datagram_burst napi_defer napi 0; driver: none
+  knobs: sockbuf epoll_events datagram_burst napi_defer irq_idle napi 0; driver: none
   start: sh -c 'taskset -c 0 env PATH=P $oc_ udp_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
 onload-aeron-rel: --endpoint 10.30.1.22:22000 --reply 10.30.1.11:22000 --interface 10.30.1.11 --aeron-dir /dev/shm/aeron-bench --driver external --driver-busy-threads 3 --term-length 1048576 --mtu 1408 --wire kernel
-  knobs: term_length aeron_page aeron_so_rcvbuf nak_delay_ns napi_defer napi 0; driver: onload$sfx_
+  knobs: term_length aeron_page aeron_so_rcvbuf nak_delay_ns napi_defer irq_idle napi 0; driver: onload$sfx_
   start: sh -c 'taskset -c 0 env PATH=P aeron_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
 aws-onload: onload
 aws-onload: no fstack
@@ -515,7 +515,7 @@ fi
 
 # the sysctls: written and read back; the optional ones absent on an older
 # kernel; one that reads back otherwise refused
-for f in ipv4/tcp_congestion_control ipv4/tcp_sack ipv4/tcp_timestamps ipv4/tcp_slow_start_after_idle ipv4/tcp_rmem ipv4/tcp_wmem core/rmem_max core/wmem_max core/busy_read core/busy_poll; do
+for f in ipv4/tcp_congestion_control ipv4/tcp_sack ipv4/tcp_timestamps ipv4/tcp_slow_start_after_idle ipv4/tcp_autocorking ipv4/tcp_rmem ipv4/tcp_wmem core/rmem_max core/wmem_max core/busy_read core/busy_poll; do
     echo 0 >"$proc/sys/net/$f"
 done
 s=$(hostrun transport_sysctls_apply 2>&1) && src=0 || src=$?
@@ -525,7 +525,7 @@ wrong=$(hostrun transport_sysctls_apply check 2>&1) && wrongrc=0 || wrongrc=$?
 touch "$proc/sys/net/ipv4/tcp_rto_min_us"
 rm "$proc/sys/net/core/busy_poll"
 missing=$(hostrun transport_sysctls_apply 2>&1) && missrc=0 || missrc=$?
-if [[ $src == 0 && $(grep -c '^sysctl ' <<<"$s") == 12 && $s == *"tcp_rmem 4096 1048576 16777216"* && $s == *"tcp_rto_min_us absent"* &&
+if [[ $src == 0 && $(grep -c '^sysctl ' <<<"$s") == 13 && $s == *"tcp_rmem 4096 1048576 16777216"* && $s == *"sysctl net/ipv4/tcp_autocorking 0"* && $s == *"tcp_rto_min_us absent"* &&
     $chkrc == 0 && $wrongrc == 1 && $wrong == *"WRONG net/ipv4/tcp_congestion_control: [bbr]"* &&
     $missrc == 1 && $missing == *"MISSING net/core/busy_poll"* && $(cat "$proc/sys/net/ipv4/tcp_rto_min_us") == 8000 ]]; then
     pass "host.sh: the TCP and busy-poll sysctls written and read back (the 6.15 ones optional), a wrong or missing required one refused"
@@ -571,6 +571,30 @@ coalesce ena: coalesce enP4 off (off n/a 0 0)
  rc 0" "$got"
 
 # netem on every data NIC: set and checked, the counters read, cleared
+# the IRQ core's idle depth: auto is 1 (C1) under intel_idle and all under
+# acpi_idle or no driver; applied with auto, every state past C1 disabled on
+# the IRQ CPU (intel_idle) or every state enabled (acpi_idle), read back
+idl=$sys/devices/system/cpu
+for i in 0 1 2 3; do
+    mkdir -p "$idl/cpu2/cpuidle/state$i"
+    echo 0 >"$idl/cpu2/cpuidle/state$i/disable"
+done
+mkdir -p "$idl/cpuidle"
+echo intel_idle >"$idl/cpuidle/current_driver"
+got="intel: $(hostrun transport_irq_idle_auto) $(hostrun transport_irq_idle_apply 2 auto 2>&1) $(cat "$idl"/cpu2/cpuidle/state*/disable | tr -d '\n')"
+echo acpi_idle >"$idl/cpuidle/current_driver"
+got+="
+acpi: $(hostrun transport_irq_idle_auto) $(hostrun transport_irq_idle_apply 2 auto 2>&1) $(cat "$idl"/cpu2/cpuidle/state*/disable | tr -d '\n')"
+rm "$idl/cpuidle/current_driver"
+got+="
+none: $(hostrun transport_irq_idle_auto)
+bad: $(hostrun transport_irq_idle_apply 2 C1 2>&1; echo " rc $?")"
+rm -rf "$idl/cpuidle" "$idl"/cpu2/cpuidle
+same "host.sh: TR_IRQ_IDLE=auto is C1 under intel_idle and all elsewhere, applied to the IRQ CPU and read back; another value refused" "intel: 1 irq_idle 1 on CPU(s) 2 (4 states) 0011
+acpi: all irq_idle all on CPU(s) 2 (4 states) 0000
+none: all
+bad: irq_idle C1: all, auto or a state index
+ rc 2" "$got"
 got="set: $(hostrun netem_set 0.1 eth1 eth2; hostrun netem_check 0.1 eth1 eth2 2>&1; echo " rc $?")
 wrong: $(hostrun netem_check 1 eth1 eth2 >/dev/null 2>&1; echo "rc $?")
 none while set: $(hostrun netem_check none eth1 >/dev/null 2>&1; echo "rc $?")
@@ -1284,6 +1308,19 @@ echo "$FAKE_HOST vm.sh $*" >>"$FAKE_HOSTS/calls"
 case $1 in driver | stop | events-start | aeron-page) echo "$FAKE_HOST $1-dir ${LAB_AERON_DIR:-unset}" >>"$FAKE_HOSTS/calls" ;; esac
 st=$HOME/state
 mkdir -p "$st"
+# the host's cpuidle driver (FAKE_IDLE_DRIVER: acpi_idle unless a test says
+# intel_idle), in a /sys of its own for host.sh's resolver
+fsys=$st/sys
+mkdir -p "$fsys/devices/system/cpu/cpuidle"
+fdrv=${FAKE_IDLE_DRIVER:-acpi_idle}
+[[ $FAKE_HOST != b || -z ${FAKE_IDLE_DRIVER_B:-} ]] || fdrv=$FAKE_IDLE_DRIVER_B
+echo "$fdrv" >"$fsys/devices/system/cpu/cpuidle/current_driver"
+# the cap TR_IRQ_IDLE asks under the arm's TR_OVERRIDES, auto resolved as
+# host.sh transport_irq_idle_apply does
+fake_idle_cap() {
+    (. "$FAKE_CLOUD/transport-settings.env"; . "$FAKE_CLOUD/host.sh"; transport_overrides
+     if [[ $TR_IRQ_IDLE == auto ]]; then LAB_SYS_ROOT=$fsys transport_irq_idle_auto; else echo "$TR_IRQ_IDLE"; fi)
+}
 case $1 in
 transport-map) echo "${FAKE_MAP:-0 2 4,6,8,10,12,14}" ;;
 nics) if [[ $FAKE_HOST == a ]]; then printf 'sender eth1 enP1 m 10.20.1.4 24 x\nreceiver eth2 enP2 m 10.20.1.5 24 y\n'
@@ -1363,19 +1400,30 @@ transport-net)
         echo "$FAKE_HOST transport-net napi $v" >>"$FAKE_HOSTS/calls"
         # the IRQ core's idle cap (TR_IRQ_IDLE), logged; FAKE_IDLE_STUCK: the
         # host keeps every state enabled whatever it is asked
-        v=$(. "$FAKE_CLOUD/transport-settings.env"; . "$FAKE_CLOUD/host.sh"; transport_overrides; echo "$TR_IRQ_IDLE")
+        v=$(fake_idle_cap)
         [[ -z ${FAKE_IDLE_STUCK:-} ]] && echo "$v" >"$st/idle" || echo all >"$st/idle"
         echo "$FAKE_HOST transport-net irq_idle $v" >>"$FAKE_HOSTS/calls"
     fi ;;
+# every other set-up's IRQ core idle cap, as transport-net's; resolve: what
+# auto is under FAKE_IDLE_DRIVER (host.sh's own rule)
+irq-idle)
+    if [[ ${2:-} == resolve ]]; then
+        (. "$FAKE_CLOUD/transport-settings.env"; . "$FAKE_CLOUD/host.sh"; transport_overrides
+         if [[ $TR_IRQ_IDLE == auto ]]; then LAB_SYS_ROOT=$fsys transport_irq_idle_auto; else echo "$TR_IRQ_IDLE"; fi)
+        exit 0
+    fi
+    v=$(fake_idle_cap)
+    [[ -z ${FAKE_IDLE_STUCK:-} ]] && echo "$v" >"$st/idle" || echo all >"$st/idle"
+    echo "$FAKE_HOST irq-idle $v" >>"$FAKE_HOSTS/calls" ;;
 napi) read -r n ns <"$st/napi" 2>/dev/null || { n=2 ns=200000; }; printf 'enP1 %s %s\nenP2 %s %s\n' "$n" "$ns" "$n" "$ns" ;;
 stop) rm -f "$st/dpdk" ;;
 events-stop-all) ;;
 # the housekeeping and IRQ CPUs' idle states as host.sh transport_idle_read
 # prints them (four states each, intel_idle's names), the IRQ CPU's past
-# the cap transport-net set disabled; each call's usage one more
+# the cap transport-net or irq-idle set disabled; each call's usage one more
 idle) read -r hk irq _ <<<"${FAKE_MAP:-0 2 4,6,8,10,12,14}"
     c=$(cat "$st/idle" 2>/dev/null || echo all); u=$(cat "$st/u" 2>/dev/null || echo 0); u=$((u + 1)); echo $u >"$st/u"
-    echo "driver intel_idle governor menu max_cstate 9"
+    echo "driver $fdrv governor menu max_cstate 9"
     for i in 0 1 2 3; do
         n=(POLL C1 C1E C6)
         echo "cpu$hk hk $i ${n[i]} 0 $((i * 100)) $((i * 300)) $u $((u * 10))"
@@ -1630,6 +1678,21 @@ python3 -c 'import json, sys; m = json.load(open(sys.argv[1])); assert all(m["lo
 # the labels as the analysis parses them: every row its manifest, the one-host sets (1, 2b) one host each
 python3 -c 'import sys; sys.path.insert(0, sys.argv[2]); import transport_points as tp; ps = tp.read_points(sys.argv[1]); assert ps and all(p.manifest for p in ps); assert {p.set for p in ps if tp.hosts_of(p.set) == ("a",)} == {"1", "2b"}; assert all(sorted(p.manifest["vms"]) == list(tp.hosts_of(p.set)) for p in ps); assert {p.arm for p in ps if p.manifest["aa"]} == {"aa"}' "$d" "$cloud" 2>/dev/null || why+=" transport_points.read_points: labels or hosts;"
 [[ $(grep -c . "$d/order.csv") == "$(grep -c . "$d/rounds.tsv")" ]] || why+=" orders not recorded a round;"
+# the IRQ core's idle depth: TR_IRQ_IDLE=auto resolved on both hosts (all
+# under acpi_idle), recorded, and every arm's, set at every set-up (Aeron's,
+# DPDK's and the one-host arms' too, by irq-idle) and read back per point
+grep -q 'IRQ core idle depth all for every arm (TR_IRQ_IDLE=auto)' "$sb/run.out" || why+=" the session's idle depth not logged;"
+[[ $(tail -1 "$d/transport-settings.tr.env") == TR_IRQ_IDLE=all ]] || why+=" the session's idle depth not recorded: $(tail -1 "$d/transport-settings.tr.env");"
+nob=$(grep -L '^knob.irq_idle=all$' "$d"/manifest/*.env | head -3)
+[[ -z $nob ]] || why+=" points without knob.irq_idle=all: $nob;"
+nob=$(for m in "$d"/manifest/*.env; do grep -qE '^irq_idle_[ab]=all$' "$m" && ! grep -E '^irq_idle_[ab]=' "$m" | grep -qv '=all$' || echo "$m"; done | head -3)
+[[ -z $nob ]] || why+=" points without irq_idle_<host>=all read back: $nob;"
+for st in kernel dpdk none; do
+    m=$(grep -l "^setup=$st\$" "$d"/manifest/*.env | head -1)
+    [[ -n $m ]] && grep -q '^knob.irq_idle=all$' "$m" || why+=" no $st point at the session's depth;"
+done
+[[ $(grep -c '^a irq-idle all$' "$sb/calls") -gt 0 && $(grep -c '^b irq-idle all$' "$sb/calls") -gt 0 ]] || why+=" irq-idle never set on a non-socket arm;"
+! grep -q 'irq-idle [0-9]' "$sb/calls" || why+=" a cap set under acpi_idle;"
 [[ $(cut -f6 "$d/rounds.tsv" | sort -u | grep -c .) == "$(grep -c . "$d/rounds.tsv")" ]] || why+=" round seeds not each its own;"
 # netem: set before each lossy round's first point and cleared after it, on both hosts, never under a DPDK arm
 for lv in 0.01 0.1 1 0; do
@@ -1885,6 +1948,14 @@ if [[ $rrc != 0 && $(cat "$d/rc" 2>/dev/null) == 1 && ! -s $sb/runs ]] && grep -
 else
     fail "transport.sh run with a hostcheck warning: exit $rrc, $(grep -c . "$sb/runs" 2>/dev/null) runs, $(tail -1 "$sb/run.out")"
 fi
+# hosts whose idle depths differ (a's intel_idle, b's acpi_idle): the
+# session stops before its first point
+trun b 1 "" FAKE_IDLE_DRIVER=intel_idle FAKE_IDLE_DRIVER_B=acpi_idle && rrc=0 || rrc=$?
+if [[ $rrc != 0 && $(cat "$d/rc" 2>/dev/null) == 1 && ! -s $sb/runs ]] && grep -q "the hosts' IRQ idle depths differ: a 1, b all" "$sb/run.out"; then
+    pass "transport.sh run: hosts whose IRQ idle depth (TR_IRQ_IDLE=auto) differs stop the session before its first point"
+else
+    fail "transport.sh run with differing idle depths: exit $rrc, $(grep -c . "$sb/runs" 2>/dev/null) runs, $(tail -1 "$sb/run.out")"
+fi
 # the SMT sessions (transport-aws-smt-off.tsv, transport-aws-smt.tsv) at 1
 # rep: SMT off, uring-sqpoll's SQPOLL thread on the next isolated core
 # ({next_core}); SMT on (`smt on`, each isolated core whole in the map),
@@ -1894,8 +1965,19 @@ fi
 # point, fairness.py clean (T10 and the SQPOLL thread exempt only where they
 # belong) and every table there
 why=
-TRUN_SETS=$cloud/transport-aws-smt-off.tsv trun a 1 "" FAKE_SQPOLL="eio-tcp-sqpoll-core:6" && rrc=0 || rrc=$?
+# smtcap <session>: every point's IRQ core at C1 on both hosts, as auto
+# gives under intel_idle (the c7i rerun's), recorded for the session
+smtcap() {
+    local bad
+    grep -q 'IRQ core idle depth 1 for every arm (TR_IRQ_IDLE=auto)' "$sb/run.out" && [[ $(tail -1 "$d/transport-settings.tr.env") == TR_IRQ_IDLE=1 ]] || why+=" $1: the session's depth not 1;"
+    bad=$(for m in "$d"/manifest/*.env; do grep -q '^knob.irq_idle=1$' "$m" && grep -q '^irq_idle_a=1$' "$m" && grep -q '^irq_idle_b=1$' "$m" || echo "$m"; done | head -2)
+    [[ -z $bad ]] || why+=" $1: points not capped at C1: $bad;"
+    m=$(ls "$d"/manifest/*.env | head -1)
+    grep -q '^cpu[0-9]* irq 2 C1E 1 ' "$d/idle/$(basename "$m" .env)-b-after" || why+=" $1: C1E not read back disabled;"
+}
+TRUN_SETS=$cloud/transport-aws-smt-off.tsv trun a 1 "" FAKE_SQPOLL="eio-tcp-sqpoll-core:6" FAKE_IDLE_DRIVER=intel_idle && rrc=0 || rrc=$?
 d=$sb/a/bench/transport-a
+smtcap "smt off"
 [[ $rrc == 0 && $(cat "$d/rc") == 0 ]] || why+=" smt off: exit $rrc: $(tail -3 "$sb/run.out" | tr '\n' ' ');"
 grep -q 'SMT off' "$sb/run.out" || why+=" smt off: not logged;"
 grep -q '^devices/system/cpu/smt/active 0 optional$' "$d/declared-sysctls.txt" || why+=" smt off: not declared 0;"
@@ -1910,11 +1992,12 @@ fv=$(python3 "$cloud/fairness.py" "$d" 2>&1) || why+=" smt off fairness: $(head 
 tables=$(python3 "$cloud/analyse.py" --transport "$d" 2>&1) || why+=" smt off analyse.py: $(tail -2 <<<"$tables");"
 grep -q '^### Set smtoff, ' <<<"$tables" && ! grep -q '^Refused' <<<"$tables" || why+=" smt off: no table, or one refused;"
 # the SQPOLL thread never seen on its CPU: the sqpoll rule
-TRUN_SETS=$cloud/transport-aws-smt-off.tsv trun a 1 "" FAKE_SQPOLL="eio-tcp-sqpoll-core:8"
+TRUN_SETS=$cloud/transport-aws-smt-off.tsv trun a 1 "" FAKE_SQPOLL="eio-tcp-sqpoll-core:8" FAKE_IDLE_DRIVER=intel_idle
 fv=$(python3 "$cloud/fairness.py" "$d" 2>&1 || true)
 grep -q '^sqpoll: smtoff: .*no SQPOLL thread (iou-sqp-\*) busy on --sqpoll-cpu 6' <<<"$fv" || why+=" smt off: an SQPOLL thread off its CPU not flagged: $(head -2 <<<"$fv" | tr '\n' ' ');"
 smtmap="0 1 2,10,3,11,4,12,5,13,6,14,7,15"
-TRUN_SETS=$cloud/transport-aws-smt.tsv trun a 1 "" FAKE_MAP="$smtmap" FAKE_SMT_ACTIVE=1 FAKE_PING_CPU=2 FAKE_SQPOLL="eio-tcp-sqpoll-sib:10" && rrc=0 || rrc=$?
+TRUN_SETS=$cloud/transport-aws-smt.tsv trun a 1 "" FAKE_MAP="$smtmap" FAKE_SMT_ACTIVE=1 FAKE_PING_CPU=2 FAKE_SQPOLL="eio-tcp-sqpoll-sib:10" FAKE_IDLE_DRIVER=intel_idle && rrc=0 || rrc=$?
+smtcap "smt on"
 [[ $rrc == 0 && $(cat "$d/rc") == 0 ]] || why+=" smt on: exit $rrc: $(tail -3 "$sb/run.out" | tr '\n' ' ');"
 grep -q 'SMT on' "$sb/run.out" || why+=" smt on: not logged;"
 grep -q '^devices/system/cpu/smt/active 1 optional$' "$d/declared-sysctls.txt" || why+=" smt on: not declared 1;"
@@ -1928,7 +2011,7 @@ fv=$(python3 "$cloud/fairness.py" "$d" 2>&1) || why+=" smt on fairness: $(head -
 tables=$(python3 "$cloud/analyse.py" --transport "$d" 2>&1) || why+=" smt on analyse.py: $(tail -2 <<<"$tables");"
 grep -q '^### Set smton, ' <<<"$tables" && ! grep -q '^Refused' <<<"$tables" || why+=" smt on: no table, or one refused;"
 # the same session's SMT read back off at its points: the settings rule
-TRUN_SETS=$cloud/transport-aws-smt.tsv trun a 1 "" FAKE_MAP="$smtmap" FAKE_PING_CPU=2 FAKE_SQPOLL="eio-tcp-sqpoll-sib:10"
+TRUN_SETS=$cloud/transport-aws-smt.tsv trun a 1 "" FAKE_MAP="$smtmap" FAKE_PING_CPU=2 FAKE_SQPOLL="eio-tcp-sqpoll-sib:10" FAKE_IDLE_DRIVER=intel_idle
 fv=$(python3 "$cloud/fairness.py" "$d" 2>&1 || true)
 grep -q '^settings: smton: .*devices.system.cpu.smt.active=0, the env gives 1' <<<"$fv" || why+=" smt on: SMT read back off not flagged: $(head -2 <<<"$fv" | tr '\n' ' ');"
 # an SMT-on sets file takes two-host socket arms alone, and {loop_sibling} needs one
@@ -1941,35 +2024,48 @@ c=$( (. "$cloud/transport.sh"; tr_sets_file=$tmp/smt-sib-off.tsv tr_check a 2>&1
 grep -q 'arm eio-tcp-sqpoll-sib: {loop_sibling} (the loop CPU.s SMT sibling) needs a sets file with smt on' <<<"$c" || why+=" sib without smt on: $c;"
 c=$(plan smt "$matrix:arms" "$tmp/smt-both.tsv" 2>&1) && why+=" disagreeing smt rows taken;"
 grep -q 'smt rows disagree' <<<"$c" || why+=" smt rows: $c;"
-[[ -z $why ]] && pass "transport.sh run: the SMT sessions: SMT off with uring-sqpoll's SQPOLL thread on the next core, SMT on (each isolated core whole) with it on the loop's sibling; no SO_BUSY_POLL for uring-sqpoll, the SQPOLL CPU and the loop's sibling never a spinner's, the declared SMT read back, fairness.py clean and its smt, sqpoll and settings rules flagging a misplaced SQPOLL thread and SMT read back off; check refuses an Aeron arm under smt on and {loop_sibling} without it" ||
+# irq_idle: the SMT halves require C1; a host that gives another (acpi_idle:
+# all) stops the session before its first point; a bad or second row refused
+[[ $(plan irq_idle "$matrix:arms" "$cloud/transport-aws-smt-off.tsv") == 1 && $(plan irq_idle "$matrix:arms" "$cloud/transport-aws-smt.tsv") == 1 && $(plan irq_idle "$matrix") == auto ]] || why+=" irq_idle rows not read;"
+TRUN_SETS=$cloud/transport-aws-smt-off.tsv trun a 1 "" FAKE_SQPOLL="eio-tcp-sqpoll-core:6" && rrc=0 || rrc=$?
+[[ $rrc != 0 && ! -s $sb/runs ]] && grep -q 'the sets file asks irq_idle 1, the hosts give all' "$sb/run.out" || why+=" smt off on acpi_idle ran: $(tail -1 "$sb/run.out");"
+printf 'irq_idle 1\nirq_idle all\nset x a - ab 10000 1 - mio-tcp,aa\n' >"$tmp/idle-both.tsv"
+printf 'irq_idle C1\nset x a - ab 10000 1 - mio-tcp,aa\n' >"$tmp/idle-bad.tsv"
+c=$(plan irq_idle "$matrix:arms" "$tmp/idle-both.tsv" 2>&1) && why+=" disagreeing irq_idle rows taken;"
+grep -q 'irq_idle rows disagree' <<<"$c" || why+=" irq_idle rows: $c;"
+c=$(plan count a 1 "$matrix:arms" "$tmp/idle-bad.tsv" 2>&1) && why+=" irq_idle C1 taken;"
+grep -q 'irq_idle all, auto or a state index' <<<"$c" || why+=" irq_idle C1: $c;"
+[[ -z $why ]] && pass "transport.sh run: the SMT sessions: SMT off with uring-sqpoll's SQPOLL thread on the next core, SMT on (each isolated core whole) with it on the loop's sibling; on intel_idle hosts every point of both with the IRQ core capped at C1, as their irq_idle rows require (an acpi_idle host refused before the first point); no SO_BUSY_POLL for uring-sqpoll, the SQPOLL CPU and the loop's sibling never a spinner's, the declared SMT read back, fairness.py clean and its smt, sqpoll and settings rules flagging a misplaced SQPOLL thread and SMT read back off; check refuses an Aeron arm under smt on and {loop_sibling} without it" ||
     fail "transport.sh run SMT sessions:$why"
 
-# the c7i diagnosis (transport-aws-c7i-diag.tsv) at 1 rep: mio-tcp and its
-# declared twins, no SO_BUSY_POLL (-br0) and the IRQ core's idle capped at
-# the first halt state (-c1) or at polling (-c0), beside uring-sqpoll and the
-# A/A. Each twin's one knob (its arguments, or transport-net's TR_IRQ_IDLE
-# put back to all at the next arm), read back per point (irq_idle_<host>),
-# every point's idle states before and after and its NICs' moderation after,
-# fairness.py clean, its settings rule flagging a cap the host did not hold,
-# and the session's points and hours on c7i.4xlarge on demand
+# the c7i diagnosis (transport-aws-c7i-diag.tsv) at 1 rep on intel_idle
+# hosts: the session's depth C1 (auto), mio-tcp and its declared twins, no
+# SO_BUSY_POLL (-br0) and the IRQ core's idle capped at the first halt state
+# (-c1), at polling (-c0) or not at all (-call), beside uring-sqpoll and the
+# A/A. Each twin's one knob (its arguments, or transport-net's TR_IRQ_IDLE,
+# the session's set again at the next arm), read back per point
+# (irq_idle_<host>), every point's idle states before and after and its NICs'
+# moderation after, fairness.py clean, its settings rule flagging a cap the
+# host did not hold, and the session's points and hours on c7i.4xlarge on
+# demand
 why=
 c7i=$cloud/transport-aws-c7i-diag.tsv
-TRUN_SETS=$c7i trun a 1 "" FAKE_SQPOLL="eio-tcp-sqpoll-core:6" && rrc=0 || rrc=$?
+TRUN_SETS=$c7i trun a 1 "" FAKE_SQPOLL="eio-tcp-sqpoll-core:6" FAKE_IDLE_DRIVER=intel_idle && rrc=0 || rrc=$?
 d=$sb/a/bench/transport-a
 [[ $rrc == 0 && $(cat "$d/rc") == 0 ]] || why+=" exit $rrc: $(tail -3 "$sb/run.out" | tr '\n' ' ');"
 grep -q '^a tcp_lat --role ping .*--busy-read-us 0 .*--impl mio' "$sb/runs" || why+=" mio-tcp-br0's ping without SO_BUSY_POLL;"
-for a in mio-tcp mio-tcp-br0 mio-tcp-c1 mio-tcp-c0; do
+for a in mio-tcp mio-tcp-br0 mio-tcp-c1 mio-tcp-c0 mio-tcp-call; do
     m=$(grep -l "^arm=$a\$" "$d"/manifest/*.env 2>/dev/null | head -1 || true)
-    case $a in mio-tcp-c1) want=1 br=50 ;; mio-tcp-c0) want=0 br=50 ;; mio-tcp-br0) want=all br=0 ;; *) want=all br=50 ;; esac
+    case $a in mio-tcp-c0) want=0 br=50 ;; mio-tcp-call) want=all br=50 ;; mio-tcp-br0) want=1 br=0 ;; *) want=1 br=50 ;; esac
     [[ -n $m ]] && grep -q "^knob.irq_idle=$want\$" "$m" && grep -q "^irq_idle_a=$want\$" "$m" && grep -q "^irq_idle_b=$want\$" "$m" &&
         grep -q "^knob.busy_read_us=$br\$" "$m" || why+=" $a: $(grep -hE '^(knob.irq_idle|irq_idle|knob.busy_read)' "$m" 2>/dev/null | tr '\n' ' ');"
 done
 m=$(grep -l '^arm=eio-tcp-sqpoll-core$' "$d"/manifest/*.env 2>/dev/null | head -1 || true)
-[[ -n $m ]] && grep -q '^knob.irq_idle=all$' "$m" && grep -q '^irq_idle_a=all$' "$m" || why+=" sqpoll's idle: $(grep irq_idle "$m" | tr '\n' ' ');"
-# each arm's cap on both hosts, all put back after a capped arm
+[[ -n $m ]] && grep -q '^knob.irq_idle=1$' "$m" && grep -q '^irq_idle_a=1$' "$m" || why+=" sqpoll's idle: $(grep irq_idle "$m" | tr '\n' ' ');"
+# each arm's cap on both hosts, the session's (1) set again after a twin's own
 for h in a b; do
     s=$(grep "^$h transport-net irq_idle " "$sb/calls" | cut -d' ' -f4 | tr '\n' ' ')
-    [[ $s == *"0 all "* && $s == *"1 all "* && $(tr ' ' '\n' <<<"$s" | grep -c '^[01]$') == 2 ]] || why+=" host $h's transport-net idle caps: $s;"
+    [[ $s == *"0 1 "* && $s == *"all 1 "* && $(tr ' ' '\n' <<<"$s" | grep -c '^0$') == 1 && $(tr ' ' '\n' <<<"$s" | grep -c '^all$') == 1 ]] || why+=" host $h's transport-net idle caps: $s;"
 done
 n=0
 for f in "$d"/manifest/*.env; do
@@ -1989,14 +2085,14 @@ fv=$(python3 "$cloud/fairness.py" "$d" 2>&1) || why+=" fairness: $(head -5 <<<"$
 tables=$(python3 "$cloud/analyse.py" --transport "$d" 2>&1) || why+=" analyse.py: $(tail -2 <<<"$tables");"
 grep -q '^### Set c7i, ' <<<"$tables" && ! grep -q '^Refused' <<<"$tables" || why+=" no table, or one refused;"
 # a host that does not hold the cap: the settings rule
-TRUN_SETS=$c7i trun a 1 "" FAKE_SQPOLL="eio-tcp-sqpoll-core:6" FAKE_IDLE_STUCK=1
+TRUN_SETS=$c7i trun a 1 "" FAKE_SQPOLL="eio-tcp-sqpoll-core:6" FAKE_IDLE_DRIVER=intel_idle FAKE_IDLE_STUCK=1
 fv=$(python3 "$cloud/fairness.py" "$d" 2>&1 || true)
 grep -q '^settings: c7i: .*knob.irq_idle=all, the env gives 1' <<<"$fv" || why+=" a cap not held not flagged: $(head -2 <<<"$fv" | tr '\n' ' ');"
 rm -f "$tmp/cloud-calls"
 out=$(awslab LAB_ESTIMATE=1 LAB_PAIR=a LAB_REPS=3 LAB_TYPE=c7i.4xlarge LAB_SETS_FILE="$c7i" 2>&1) || why+=" estimate: $(tail -1 <<<"$out");"
-[[ $out == *"pair a: 18 points (sets c7i)"*"wall about "* && $out == *"a c7i.4xlarge, b c7i.4xlarge, on-demand, 3 reps"* ]] || why+=" estimate: $out;"
+[[ $out == *"pair a: 21 points (sets c7i)"*"wall about "* && $out == *"a c7i.4xlarge, b c7i.4xlarge, on-demand, 3 reps"* ]] || why+=" estimate: $out;"
 [[ ! -s $tmp/cloud-calls ]] || why+=" an aws call;"
-[[ -z $why ]] && pass "transport.sh run: the c7i diagnosis: mio-tcp's twins without SO_BUSY_POLL and with the IRQ core's idle capped at C1 or polling, each cap set by transport-net, read back per point and put back after, every point's idle states and NIC moderation and counters recorded, fairness.py clean and its settings rule flagging a cap not held; 18 points on c7i.4xlarge on demand, no aws call" ||
+[[ -z $why ]] && pass "transport.sh run: the c7i diagnosis on intel_idle: the session at C1, mio-tcp's twins without SO_BUSY_POLL and with the IRQ core's idle capped at C1, polling or uncapped, each cap set by transport-net, read back per point and the session's set again after, every point's idle states and NIC moderation and counters recorded, fairness.py clean and its settings rule flagging a cap not held; 21 points on c7i.4xlarge on demand, no aws call" ||
     fail "transport.sh run c7i diagnosis:$why"
 
 # the tuning session (LAB_TUNE=1: pair tune-a), cut down to two knobs of

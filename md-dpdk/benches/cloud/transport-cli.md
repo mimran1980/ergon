@@ -305,6 +305,21 @@ C7a-family types.
 `transport-aws-smt-off.tsv` and `transport-aws-smt.tsv` are the two halves
 of the SMT question, each a session of its own on c7i.4xlarge.
 
+## The IRQ core's idle depth (`irq_idle`)
+
+`TR_IRQ_IDLE` (`transport-settings.env`) is every arm's IRQ core idle
+depth: `all`, a state index `n` (deeper states disabled; 1 is C1), or
+`auto`, the default: 1 under `intel_idle`, `all` under any other driver or
+none (`host.sh transport_irq_idle_auto`). The runner asks both hosts
+(`vm.sh irq-idle resolve`) before the first point, refuses hosts that
+disagree, and appends the value to `transport-settings.tr.env`. Every arm's
+set-up applies it (`transport-net` for socket arms, `vm.sh irq-idle` for the
+rest; a declared twin's own by `TR_OVERRIDES`), and every point reads it
+back (`knob.irq_idle`, `irq_idle_<host>`). A sets file's `irq_idle <v>` row
+(`transport_plan.py irq_idle`) makes the session require `v`: both SMT
+halves carry `irq_idle 1`, so on a host that would not cap they stop before
+the first point.
+
 ## Setup fstack (`dpdk-tcp`)
 
 No media driver. `vm.sh fstack-up` moves both data NICs from `ena` to

@@ -166,7 +166,7 @@ at 0 (`fairness.py` `KERNEL_SOCKET_KNOBS`). transport_collect.py writes:
   napi` after the point: `n` where every NIC has `n`/`TR_GRO_FLUSH_NS`, 0
   for 0/0, else each NIC's `<nic>:<n>/<ns>`; the runner's `napi_<host>`
   keeps each NIC's as read), and `knob.irq_idle`, the IRQ core's idle depth
-  of every socket arm (the runner's `irq_idle_<host>` from `idle/` after the
+  of every arm (the session's `TR_IRQ_IDLE`, a twin's own; the runner's `irq_idle_<host>` from `idle/` after the
   point: `all` where no IRQ CPU's state is disabled or the host has no
   cpuidle driver, `n` where every IRQ CPU has its states up to the n-th
   enabled and the rest disabled, else each CPU's `cpu<N>:<disabled flags>`).
