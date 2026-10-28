@@ -63,12 +63,12 @@ pub fn channel_cstr(uri: &str) -> Result<CString, ClusterError> {
 }
 
 /// The ingress channel for the member at `endpoint` after a REDIRECT or a
-/// NewLeaderEvent, as Java builds it: a unicast UDP channel keeps every
+/// `NewLeaderEvent`, as Java builds it: a unicast UDP channel keeps every
 /// setting but the endpoint (`term-length` and `mtu` fix the message limits),
 /// while an IPC or multicast channel, which every member listens on, is
 /// re-added unchanged. Without a configured channel the result is
 /// `aeron:udp?endpoint={endpoint}`.
-pub(crate) fn ingress_channel_for_endpoint(template: Option<&CStr>, endpoint: &str) -> Result<CString, ClusterError> {
+pub fn ingress_channel_for_endpoint(template: Option<&CStr>, endpoint: &str) -> Result<CString, ClusterError> {
     let Some(template) = template else {
         return udp_endpoint_cstr(endpoint);
     };
@@ -103,7 +103,7 @@ fn has_multicast_endpoint(channel: &CStr) -> bool {
 ///
 /// Java forces `rejoin=false` on a UDP egress channel so a dropped image is
 /// not silently replaced. IPC and every other media stay as configured.
-pub(crate) fn egress_channel_disabling_rejoin(channel: &CStr) -> Result<CString, ClusterError> {
+pub fn egress_channel_disabling_rejoin(channel: &CStr) -> Result<CString, ClusterError> {
     let bytes = channel.to_bytes();
     if bytes != b"aeron:udp" && !bytes.starts_with(b"aeron:udp?") {
         return Ok(channel.to_owned());
@@ -123,13 +123,13 @@ pub fn udp_endpoint_cstr(endpoint: &str) -> Result<CString, ClusterError> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
 
     #[test]
-    fn rusteron_ipc_is_aeron_ipc() -> Result<(), Box<dyn std::error::Error>> {
+    fn rusteron_ipc_is_aeron_ipc() {
         assert_eq!(AERON_IPC_STREAM.to_bytes(), b"aeron:ipc");
-        Ok(())
     }
 
     #[test]

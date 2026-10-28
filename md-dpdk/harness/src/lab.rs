@@ -25,6 +25,7 @@ use rusteron_client::{Aeron, AeronCError, AeronContext, AeronErrorType, AeronExc
 use rusteron_client::{AeronImage, Handlers, IntoCString};
 use rusteron_media_driver::bindings::aeron_threading_mode_t;
 use rusteron_media_driver::{AeronDriverContext, AeronIdleStrategyKind};
+use std::error::Error;
 use std::ffi::{CStr, CString};
 use std::hint::spin_loop;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -42,6 +43,10 @@ extern "C" fn on_sigterm(_signal: libc::c_int) {
 
 /// Takes SIGTERM as [`STOP`] from now on.
 #[allow(dead_code)] // rtt xpong's, which writes what it recorded as it stops
+#[allow(
+    unsafe_code,
+    reason = "libc::signal has no safe std equivalent; the handler only stores to an atomic"
+)]
 pub fn stop_on_sigterm() {
     // SAFETY: the handler only stores to an atomic, which is async-signal-safe.
     unsafe { libc::signal(libc::SIGTERM, on_sigterm as *const () as libc::sighandler_t) };
@@ -56,7 +61,7 @@ pub const NOT_CONNECTED_LIMIT: Duration = Duration::from_secs(1);
 
 /// Why a back-pressured retry was given up ([`Retry`]).
 #[allow(dead_code)] // rtt's and load's
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Halt {
     /// SIGTERM ([`STOP`]): the lab ended the run.
     Stopped,
@@ -64,15 +69,18 @@ pub enum Halt {
     ImageClosed,
     /// The publication not connected for longer than [`NOT_CONNECTED_LIMIT`].
     NotConnected,
+    /// The claim or its commit failed for a reason no retry mends.
+    Failed(String),
 }
 
 impl std::fmt::Display for Halt {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Stopped => "SIGTERM",
-            Self::ImageClosed => "the other side's image closed",
-            Self::NotConnected => "the publication not connected for over 1 s",
-        })
+        match self {
+            Self::Stopped => f.write_str("SIGTERM"),
+            Self::ImageClosed => f.write_str("the other side's image closed"),
+            Self::NotConnected => f.write_str("the publication not connected for over 1 s"),
+            Self::Failed(why) => f.write_str(why),
+        }
     }
 }
 
@@ -133,8 +141,10 @@ pub fn echo(
         match publication.try_claim_owned(message.len()) {
             Ok(mut claim) => {
                 claim.data().copy_from_slice(message);
-                claim.commit().unwrap();
-                return Ok(());
+                return claim
+                    .commit()
+                    .map(|_| ())
+                    .map_err(|e| Halt::Failed(format!("commit: {e:?}")));
             }
             Err(e) if e.is_retryable() => {
                 retry.check(publication, image)?;
@@ -142,42 +152,54 @@ pub fn echo(
                     spin_loop();
                 }
             }
-            Err(e) => panic!("claim: {e:?}"),
+            Err(e) => return Err(Halt::Failed(format!("claim: {e:?}"))),
         }
     }
 }
 
 /// Pins the calling thread to `cpu`; `None` leaves it where it is.
 #[cfg(target_os = "linux")]
-pub fn pin(cpu: Option<usize>) {
-    let Some(cpu) = cpu else { return };
+#[allow(unsafe_code, reason = "sched_setaffinity has no safe std equivalent")]
+pub fn pin(cpu: Option<usize>) -> Result<(), Box<dyn Error>> {
+    let Some(cpu) = cpu else { return Ok(()) };
     // SAFETY: a zeroed cpu_set_t is the empty set, and the call only reads it.
-    unsafe {
+    let rc = unsafe {
         let mut set: libc::cpu_set_t = std::mem::zeroed();
         libc::CPU_SET(cpu, &mut set);
-        let rc = libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set);
-        assert_eq!(rc, 0, "could not pin to cpu {cpu}");
+        libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &raw const set)
+    };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(format!("could not pin to cpu {cpu}: {}", std::io::Error::last_os_error()).into())
     }
 }
 
 /// Thread pinning is Linux only; elsewhere the clients run unpinned (smoke tests).
 #[cfg(not(target_os = "linux"))]
-pub fn pin(_cpu: Option<usize>) {}
+#[allow(clippy::unnecessary_wraps, reason = "the Linux build's signature, which can fail")]
+pub const fn pin(_cpu: Option<usize>) -> Result<(), Box<dyn Error>> {
+    Ok(())
+}
 
 /// `-` or a CPU number.
-pub fn cpu_arg(arg: Option<String>) -> Option<usize> {
-    arg.filter(|a| a != "-").map(|a| a.parse().expect("cpu number or -"))
+pub fn cpu_arg(arg: Option<String>) -> Result<Option<usize>, Box<dyn Error>> {
+    match arg.filter(|a| a != "-") {
+        None => Ok(None),
+        Some(a) => Ok(Some(a.parse().map_err(|e| format!("cpu {a:?}: a number or -: {e}"))?)),
+    }
 }
 
 /// The external driver's dir, from `AERON_DIR`.
-pub fn aeron_dir() -> CString {
-    CString::new(std::env::var("AERON_DIR").expect("AERON_DIR: the external driver's dir")).unwrap()
+pub fn aeron_dir() -> Result<CString, Box<dyn Error>> {
+    let dir = std::env::var("AERON_DIR").map_err(|e| format!("AERON_DIR: the external driver's dir: {e}"))?;
+    Ok(CString::new(dir)?)
 }
 
 /// A subscription's channel: `channel` with `SUB_CHANNEL_PARAMS` appended when
 /// set (e.g. `reliable=false|group=false|tether=false`: no NAKs, gaps filled),
 /// for experiments on the receiving side only.
-pub fn sub_channel(channel: &std::ffi::CStr) -> CString {
+pub fn sub_channel(channel: &std::ffi::CStr) -> Result<CString, Box<dyn Error>> {
     with_params(channel, "SUB_CHANNEL_PARAMS")
 }
 
@@ -185,16 +207,27 @@ pub fn sub_channel(channel: &std::ffi::CStr) -> CString {
 /// set (`key=value|key=value`, e.g. `term-length=65536`), as
 /// `SUB_CHANNEL_PARAMS` is to a subscription's, for experiments on the sending
 /// side. [`Lab::add_publication`] applies it to every publication.
-pub fn pub_channel(channel: &std::ffi::CStr) -> CString {
+pub fn pub_channel(channel: &std::ffi::CStr) -> Result<CString, Box<dyn Error>> {
     with_params(channel, "PUB_CHANNEL_PARAMS")
 }
 
 /// `channel` with the parameters in `var` appended, when it is set and not empty.
-fn with_params(channel: &std::ffi::CStr, var: &str) -> CString {
+fn with_params(channel: &std::ffi::CStr, var: &str) -> Result<CString, Box<dyn Error>> {
     match std::env::var(var).ok().filter(|p| !p.is_empty()) {
-        Some(params) => CString::new(format!("{}|{params}", channel.to_string_lossy())).unwrap(),
-        None => channel.to_owned(),
+        Some(params) => Ok(CString::new(format!("{}|{params}", channel.to_string_lossy()))?),
+        None => Ok(channel.to_owned()),
     }
+}
+
+/// The eight bytes of `message` at `at` as a little-endian `u64`; 0 where the
+/// message is too short to hold them.
+#[allow(dead_code)] // the round-trip clients'
+#[inline]
+pub fn le_u64(message: &[u8], at: usize) -> u64 {
+    message
+        .get(at..at + 8)
+        .and_then(|b| <[u8; 8]>::try_from(b).ok())
+        .map_or(0, u64::from_le_bytes)
 }
 
 /// What a measuring loop runs, every pass, besides the client's own work.
@@ -208,6 +241,10 @@ pub trait Duty {
 pub struct External;
 
 impl Duty for External {
+    #[allow(
+        clippy::inline_always,
+        reason = "called in every pass of a measured loop: kept inline whatever the inliner decides"
+    )]
     #[inline(always)]
     fn run(&self) -> i32 {
         0
@@ -222,6 +259,10 @@ pub struct Invoker<'a> {
 }
 
 impl Duty for Invoker<'_> {
+    #[allow(
+        clippy::inline_always,
+        reason = "called in every pass of a measured loop: kept inline whatever the inliner decides"
+    )]
     #[inline(always)]
     fn run(&self) -> i32 {
         let client = self
@@ -238,6 +279,10 @@ impl Duty for Invoker<'_> {
 
 #[cold]
 #[inline(never)]
+#[allow(
+    clippy::panic,
+    reason = "a failed duty cycle inside a measuring loop, which has no error path: the run ends, as a run that went on would report nothing true"
+)]
 fn invoker_failed(what: &str, error: &dyn std::fmt::Debug) -> ! {
     panic!("{what} failed: {error:?}")
 }
@@ -275,20 +320,20 @@ impl Lab {
     /// CPU argument: under `invoker` the embedded driver's conductor CPU, so
     /// Aeron pins this thread there as the driver starts. Panics, naming the
     /// variable, for any other `HARNESS_DRIVER` than `external` or `invoker`.
-    pub fn connect(cpu: Option<usize>) -> Self {
+    pub fn connect(cpu: Option<usize>) -> Result<Self, Box<dyn Error>> {
         match std::env::var("HARNESS_DRIVER").as_deref() {
             Err(_) | Ok("" | "external") => {
-                let dir = aeron_dir();
+                let dir = aeron_dir()?;
                 eprintln!("harness driver: external dir={}", dir.to_string_lossy());
-                Self {
-                    aeron: client(&dir, false),
+                Ok(Self {
+                    aeron: client(&dir, false)?,
                     embedded: None,
-                }
+                })
             }
             Ok("invoker") => {
-                let driver = embed(cpu).unwrap_or_else(|e| panic!("HARNESS_DRIVER=invoker: {e}"));
+                let driver = embed(cpu).map_err(|e| format!("HARNESS_DRIVER=invoker: {e}"))?;
                 let dir = driver.dir().to_string();
-                let aeron = client(&dir.clone().into_c_string(), true);
+                let aeron = client(&dir.clone().into_c_string(), true)?;
                 // what the driver runs with, as it was started
                 let conductor = driver.conductor_cpu_affinity();
                 eprintln!(
@@ -301,12 +346,12 @@ impl Lab {
                         conductor.to_string()
                     },
                 );
-                Self {
+                Ok(Self {
                     aeron,
                     embedded: Some(Embedded(Some(driver))),
-                }
+                })
             }
-            Ok(other) => panic!("HARNESS_DRIVER={other:?}: external (or unset) or invoker"),
+            Ok(other) => Err(format!("HARNESS_DRIVER={other:?}: external (or unset) or invoker").into()),
         }
     }
 
@@ -336,36 +381,39 @@ impl Lab {
     }
 
     /// Waits on `ready` until it holds, failing after `secs`.
-    pub fn wait_until(&self, what: &str, secs: u64, mut ready: impl FnMut() -> bool) {
+    pub fn wait_until(&self, what: &str, secs: u64, mut ready: impl FnMut() -> bool) -> Result<(), Box<dyn Error>> {
         let deadline = Instant::now() + Duration::from_secs(secs);
         while !ready() {
-            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            if Instant::now() >= deadline {
+                return Err(format!("timed out waiting for {what}").into());
+            }
             self.idle_for(Duration::from_millis(1));
         }
+        Ok(())
     }
 
     /// An exclusive publication on `channel` with `PUB_CHANNEL_PARAMS`.
-    pub fn add_publication(&self, channel: &CStr, stream: i32) -> AeronExclusivePublication {
-        let channel = pub_channel(channel);
+    pub fn add_publication(&self, channel: &CStr, stream: i32) -> Result<AeronExclusivePublication, Box<dyn Error>> {
+        let channel = pub_channel(channel)?;
         self.retry_closing("publication", || {
             let pending = self.aeron.async_add_exclusive_publication(&channel, stream)?;
-            match self.invoker() {
-                None => pending.poll_blocking(Duration::from_secs(5)),
-                Some(duty) => resolve(&duty, || pending.poll()),
-            }
+            self.invoker().map_or_else(
+                || pending.poll_blocking(Duration::from_secs(5)),
+                |duty| resolve(&duty, || pending.poll()),
+            )
         })
     }
 
     /// A subscription on `channel` (`sub_channel` is the caller's).
-    pub fn add_subscription(&self, channel: &CStr, stream: i32) -> AeronSubscription {
+    pub fn add_subscription(&self, channel: &CStr, stream: i32) -> Result<AeronSubscription, Box<dyn Error>> {
         self.retry_closing("subscription", || {
             let pending = self
                 .aeron
                 .async_add_subscription(channel, stream, Handlers::NONE, Handlers::NONE)?;
-            match self.invoker() {
-                None => pending.poll_blocking(Duration::from_secs(5)),
-                Some(duty) => resolve(&duty, || pending.poll()),
-            }
+            self.invoker().map_or_else(
+                || pending.poll_blocking(Duration::from_secs(5)),
+                |duty| resolve(&duty, || pending.poll()),
+            )
         })
     }
 
@@ -375,15 +423,19 @@ impl Lab {
     /// an embedded driver run meanwhile. Any other error, or one past that,
     /// fails the client: a run that silently lost its publication would
     /// report nothing as a measurement.
-    fn retry_closing<T>(&self, what: &str, mut add: impl FnMut() -> Result<T, AeronCError>) -> T {
+    fn retry_closing<T>(
+        &self,
+        what: &str,
+        mut add: impl FnMut() -> Result<T, AeronCError>,
+    ) -> Result<T, Box<dyn Error>> {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             match add() {
-                Ok(added) => return added,
+                Ok(added) => return Ok(added),
                 Err(e) if format!("{e:?}").contains("please retry") && Instant::now() < deadline => {
                     self.idle_for(Duration::from_millis(20));
                 }
-                Err(e) => panic!("adding the {what}: {e:?}"),
+                Err(e) => return Err(format!("adding the {what}: {e:?}").into()),
             }
         }
     }
@@ -419,15 +471,15 @@ fn embed(cpu: Option<usize>) -> Result<EnvMediaDriver, Box<dyn std::error::Error
 
 /// A client of the driver at `dir`, its conductor on a thread of its own or,
 /// with `invoker`, run by the caller ([`Duty`]).
-fn client(dir: &CStr, invoker: bool) -> Aeron {
-    let context = AeronContext::new().unwrap();
-    context.set_dir(dir).unwrap();
+fn client(dir: &CStr, invoker: bool) -> Result<Aeron, Box<dyn Error>> {
+    let context = AeronContext::new()?;
+    context.set_dir(dir)?;
     if invoker {
-        context.set_use_conductor_agent_invoker(true).unwrap();
+        context.set_use_conductor_agent_invoker(true)?;
     }
-    let aeron = Aeron::new(&context).unwrap();
-    aeron.start().unwrap();
-    aeron
+    let aeron = Aeron::new(&context)?;
+    aeron.start()?;
+    Ok(aeron)
 }
 
 /// `LABEL`, which names the run in the result line.
@@ -455,19 +507,20 @@ fn vmlck_kb() -> u64 {
 /// ([`ergon_md_dpdk::lock_memory_from_env`]), then verifies the running
 /// process actually holds it: `mlockall` before an `exec` is gone by the time
 /// the target runs, so a wrapper cannot lock for it. Prints one
-/// `harness memory:` line. Panics where a lock was asked for and is not there
+/// `harness memory:` line. Fails where a lock was asked for and is not there
 /// (fail closed: the benchmark records the missing grant, it never runs as if
 /// it were).
 #[allow(dead_code)] // every client's main
-pub fn lock_memory() {
+pub fn lock_memory() -> Result<(), Box<dyn Error>> {
     let asked = std::env::var("RUSTERON_MEDIA_DRIVER_MLOCKALL").is_ok_and(|v| v == "1");
-    let locked = ergon_md_dpdk::lock_memory_from_env().unwrap_or_else(|e| panic!("harness memory: {e}"));
+    let locked = ergon_md_dpdk::lock_memory_from_env().map_err(|e| format!("harness memory: {e}"))?;
     let vmlck = vmlck_kb();
     if asked && (!locked || vmlck == 0) {
-        panic!(
+        return Err(format!(
             "harness memory: RUSTERON_MEDIA_DRIVER_MLOCKALL=1 but the running process holds \
              nothing (VmLck: {vmlck} kB); mlockall does not survive execve, so it has to run here"
-        );
+        )
+        .into());
     }
     eprintln!(
         "harness memory: {}",
@@ -477,6 +530,7 @@ pub fn lock_memory() {
             "not locked (RUSTERON_MEDIA_DRIVER_MLOCKALL unset or 0)".to_owned()
         }
     );
+    Ok(())
 }
 
 /// The clients' clock, in nanoseconds since [`Clock::calibrate`]: quanta's
@@ -572,6 +626,10 @@ impl Clock {
 
     /// A latency stamp, ns: the ordered read.
     #[allow(dead_code)] // rtt's and load's; tput times windows alone
+    #[allow(
+        clippy::inline_always,
+        reason = "called in every pass of a measured loop: kept inline whatever the inliner decides"
+    )]
     #[inline(always)]
     pub fn stamp(&self) -> u64 {
         match &self.0 {
@@ -584,6 +642,10 @@ impl Clock {
     }
 
     /// The time now, ns, unordered: pacing, deadlines, loop gaps.
+    #[allow(
+        clippy::inline_always,
+        reason = "called in every pass of a measured loop: kept inline whatever the inliner decides"
+    )]
     #[inline(always)]
     pub fn now(&self) -> u64 {
         match &self.0 {
@@ -594,6 +656,10 @@ impl Clock {
 }
 
 /// Nanoseconds since `origin`.
+#[allow(
+    clippy::inline_always,
+    reason = "called in every pass of a measured loop: kept inline whatever the inliner decides"
+)]
 #[inline(always)]
 fn elapsed_ns(origin: Instant) -> u64 {
     u64::try_from(origin.elapsed().as_nanos()).unwrap_or(u64::MAX)
@@ -601,7 +667,15 @@ fn elapsed_ns(origin: Instant) -> u64 {
 
 /// Holds the counter read that follows until every earlier instruction has
 /// completed: quanta's raw read is unordered.
+#[allow(
+    clippy::inline_always,
+    reason = "called in every pass of a measured loop: kept inline whatever the inliner decides"
+)]
 #[inline(always)]
+#[allow(
+    unsafe_code,
+    reason = "the fence before a counter read is an intrinsic or inline assembly"
+)]
 fn ordering_fence() {
     #[cfg(target_arch = "x86_64")]
     // SAFETY: `lfence` is SSE2, part of every x86-64 CPU; it touches no memory.
@@ -611,6 +685,6 @@ fn ordering_fence() {
     #[cfg(target_arch = "aarch64")]
     // SAFETY: `isb` only flushes the pipeline; it touches no memory or stack.
     unsafe {
-        core::arch::asm!("isb", options(nostack, preserves_flags))
-    };
+        core::arch::asm!("isb", options(nostack, preserves_flags));
+    }
 }

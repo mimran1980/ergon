@@ -1,5 +1,7 @@
 //! Downstream compile-fail fixtures: `#[must_use]` values must not be silently
 //! discarded. Each fixture is compiled under `#![deny(unused_must_use)]`.
+// Test code: a failed unwrap, expect or panic is the test failing
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 #[test]
 fn must_use_session_builder() {
@@ -69,7 +71,7 @@ fn cluster_claim_position_has_must_use_attribute() {
     );
 }
 
-/// ClusterClaim can't be constructed without a live Aeron connection, so
+/// `ClusterClaim` can't be constructed without a live Aeron connection, so
 /// there's no trybuild fixture. This test proves the `#[must_use]`
 /// attribute is present — downstream crates with `#![deny(unused_must_use)]`
 /// will still catch a discarded claim.

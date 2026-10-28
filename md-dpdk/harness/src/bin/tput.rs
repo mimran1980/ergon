@@ -11,7 +11,7 @@
 //! tput,<label>,udp,<median msgs/s>,<min>,<max>,<received>,<lost>,<window start ns>,<window end ns>
 //! the window being the samples' span on the wall clock (`CLOCK_REALTIME`, ns
 //! since the epoch), so the lab can check that several subscribers' measured
-//! seconds overlapped (md-dpdk/benches/cloud/lib.sh multi_flow_max)
+//! seconds overlapped (`md-dpdk/benches/cloud/lib.sh` `multi_flow_max`)
 //!
 //! `HARNESS_DRIVER=invoker` embeds the media driver instead (`lab.rs`): the
 //! measuring thread (xpub's main thread then, while another only times the
@@ -23,7 +23,8 @@
 mod lab;
 
 use lab::{Clock, Duty, External, Invoker, Lab, cpu_arg, label, pin, sub_channel};
-use rusteron_client::*;
+use rusteron_client::{AeronCError, AeronSubscription};
+use std::error::Error;
 use std::ffi::{CStr, CString};
 use std::hint::spin_loop;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -33,19 +34,23 @@ const STREAM_ID: i32 = 1001;
 const MESSAGE_LENGTH: usize = 32;
 const FRAGMENT_COUNT_LIMIT: usize = 256;
 
-fn main() {
-    lab::lock_memory();
+fn main() -> Result<(), Box<dyn Error>> {
+    lab::lock_memory()?;
     let mut args = std::env::args().skip(1);
-    let mode = args.next().expect("xsub or xpub");
-    let channel = CString::new(format!("aeron:udp?endpoint={}", args.next().expect("host:port"))).unwrap();
-    let seconds: usize = args.next().expect("seconds").parse().unwrap();
-    let cpu = cpu_arg(args.next());
-    let size: usize = args.next().map_or(MESSAGE_LENGTH, |s| s.parse().unwrap());
+    let mode = args.next().ok_or("xsub or xpub")?;
+    let endpoint = args.next().ok_or("an endpoint: host:port")?;
+    let channel = CString::new(format!("aeron:udp?endpoint={endpoint}"))?;
+    let seconds = args.next().ok_or("seconds")?;
+    let seconds: u64 = seconds.parse().map_err(|e| format!("seconds {seconds:?}: {e}"))?;
+    let cpu = cpu_arg(args.next())?;
+    let size = args.next().map_or(Ok(MESSAGE_LENGTH), |s| {
+        s.parse::<usize>().map_err(|e| format!("size {s:?}: {e}"))
+    })?;
     match mode.as_str() {
         "xpub" => {
             let running = AtomicBool::new(true);
             let stop_after = || {
-                std::thread::sleep(Duration::from_secs(seconds as u64));
+                std::thread::sleep(Duration::from_secs(seconds));
                 running.store(false, Ordering::Release);
             };
             std::thread::scope(|scope| {
@@ -53,18 +58,22 @@ fn main() {
                     // the driver's thread publishes, the main one, as a lab
                     // client's measuring thread always is under INVOKER
                     scope.spawn(stop_after);
-                    publish(&running, &channel, cpu, size);
+                    publish(&running, &channel, cpu, size)
                 } else {
-                    scope.spawn(|| publish(&running, &channel, cpu, size));
+                    // its error as text: a boxed error does not cross threads
+                    let publisher = scope.spawn(|| publish(&running, &channel, cpu, size).map_err(|e| e.to_string()));
                     stop_after();
+                    let outcome = publisher.join().map_err(|_| "the publisher's thread failed")?;
+                    Ok(outcome?)
                 }
-            });
+            })
         }
         "xsub" => {
-            let lab = Lab::connect(cpu);
-            let subscription = lab.add_subscription(&sub_channel(&channel), STREAM_ID);
-            lab.wait_until("publisher", 60, || subscription.image_at_index(0).is_some());
-            pin(cpu);
+            let lab = Lab::connect(cpu)?;
+            let subscription = lab.add_subscription(&sub_channel(&channel)?, STREAM_ID)?;
+            lab.wait_until("publisher", 60, || subscription.image_at_index(0).is_some())?;
+            pin(cpu)?;
+            let seconds = usize::try_from(seconds)?;
             let measured = match lab.invoker() {
                 Some(duty) => measure(
                     &Driven {
@@ -72,12 +81,13 @@ fn main() {
                         duty: &duty,
                     },
                     seconds,
-                ),
-                None => measure(&subscription, seconds),
+                )?,
+                None => measure(&subscription, seconds)?,
             };
             println!("{}", measured.line(&label()));
+            Ok(())
         }
-        other => panic!("unknown mode {other}: xsub or xpub"),
+        other => Err(format!("unknown mode {other}: xsub or xpub").into()),
     }
 }
 
@@ -85,14 +95,17 @@ fn main() {
 /// the subscription's handler inlines into the measuring loop as before.
 trait Poll {
     /// Hands up to `FRAGMENT_COUNT_LIMIT` messages to `on_message`; how many.
-    fn poll(&self, on_message: impl FnMut(&[u8])) -> i32;
+    fn poll(&self, on_message: impl FnMut(&[u8])) -> Result<i32, AeronCError>;
 }
 
 impl Poll for AeronSubscription {
+    #[allow(
+        clippy::inline_always,
+        reason = "called in every pass of a measured loop: kept inline whatever the inliner decides"
+    )]
     #[inline(always)]
-    fn poll(&self, mut on_message: impl FnMut(&[u8])) -> i32 {
+    fn poll(&self, mut on_message: impl FnMut(&[u8])) -> Result<i32, AeronCError> {
         self.poll_fn(|message, _header| on_message(message), FRAGMENT_COUNT_LIMIT)
-            .unwrap()
     }
 }
 
@@ -105,10 +118,14 @@ struct Driven<'a> {
 }
 
 impl Poll for Driven<'_> {
+    #[allow(
+        clippy::inline_always,
+        reason = "called in every pass of a measured loop: kept inline whatever the inliner decides"
+    )]
     #[inline(always)]
-    fn poll(&self, on_message: impl FnMut(&[u8])) -> i32 {
+    fn poll(&self, on_message: impl FnMut(&[u8])) -> Result<i32, AeronCError> {
         let work = self.duty.run();
-        Poll::poll(self.subscription, on_message) + work
+        Ok(Poll::poll(self.subscription, on_message)? + work)
     }
 }
 
@@ -147,7 +164,7 @@ impl Measured {
 /// warmup, sorted, then the messages received over those samples, how many
 /// never arrived, and the samples' span on the wall clock: read once as the
 /// warmup ends and once after the last sample, nothing more in the loop.
-fn measure(subscription: &impl Poll, seconds: usize) -> Measured {
+fn measure(subscription: &impl Poll, seconds: usize) -> Result<Measured, AeronCError> {
     const SECOND_NS: u64 = 1_000_000_000;
     let clock = Clock::calibrate();
     let mut count = 0u64;
@@ -163,12 +180,12 @@ fn measure(subscription: &impl Poll, seconds: usize) -> Measured {
         let fragments = subscription.poll(|message| {
             count += 1;
             if measuring {
-                let seq = u64::from_le_bytes(message[..8].try_into().unwrap());
+                let seq = lab::le_u64(message, 0);
                 first = first.min(seq);
                 highest = highest.max(seq);
                 received += 1;
             }
-        });
+        })?;
         if fragments == 0 {
             spin_loop();
         }
@@ -182,6 +199,10 @@ fn measure(subscription: &impl Poll, seconds: usize) -> Measured {
                 start_realtime = realtime_ns();
             }
         } else if now - window_start >= SECOND_NS {
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "a rate to report: 2^52 messages or ns is far past a second's"
+            )]
             samples.push(count as f64 * 1e9 / (now - window_start) as f64);
             count = 0;
             window_start = now;
@@ -194,39 +215,47 @@ fn measure(subscription: &impl Poll, seconds: usize) -> Measured {
     } else {
         (highest - first + 1).saturating_sub(received)
     };
-    Measured {
+    Ok(Measured {
         samples,
         received,
         lost,
         window: (start_realtime, end_realtime),
-    }
+    })
 }
 
 /// `CLOCK_REALTIME` in ns since the epoch: one clock for every subscriber on a
-/// host, so their windows compare.
+/// host, so their windows compare (0 for a clock before the epoch).
 fn realtime_ns() -> u128 {
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos())
 }
 
 /// Publishes on the driver `HARNESS_DRIVER` picks until `running` clears.
-fn publish(running: &AtomicBool, channel: &CStr, cpu: Option<usize>, size: usize) {
-    let lab = Lab::connect(cpu);
-    match lab.invoker() {
-        Some(duty) => publish_on(&lab, &duty, running, channel, cpu, size),
-        None => publish_on(&lab, &External, running, channel, cpu, size),
-    }
+fn publish(running: &AtomicBool, channel: &CStr, cpu: Option<usize>, size: usize) -> Result<(), Box<dyn Error>> {
+    let lab = Lab::connect(cpu)?;
+    lab.invoker().map_or_else(
+        || publish_on(&lab, &External, running, channel, cpu, size),
+        |duty| publish_on(&lab, &duty, running, channel, cpu, size),
+    )
 }
 
-fn publish_on(lab: &Lab, duty: &impl Duty, running: &AtomicBool, channel: &CStr, cpu: Option<usize>, size: usize) {
-    let publication = lab.add_publication(channel, STREAM_ID);
-    lab.wait_until("subscriber", 60, || publication.is_connected());
-    let max_payload = publication.max_payload_length().unwrap();
-    assert!(
-        size <= max_payload,
-        "size {size} > max payload {max_payload}: it would fragment"
-    );
-    pin(cpu);
-    assert!(size >= 8, "size {size} < 8: the sequence number needs 8 bytes");
+fn publish_on(
+    lab: &Lab,
+    duty: &impl Duty,
+    running: &AtomicBool,
+    channel: &CStr,
+    cpu: Option<usize>,
+    size: usize,
+) -> Result<(), Box<dyn Error>> {
+    let publication = lab.add_publication(channel, STREAM_ID)?;
+    lab.wait_until("subscriber", 60, || publication.is_connected())?;
+    let max_payload = publication.max_payload_length()?;
+    if size > max_payload {
+        return Err(format!("size {size} > max payload {max_payload}: it would fragment").into());
+    }
+    pin(cpu)?;
+    if size < 8 {
+        return Err(format!("size {size} < 8: the sequence number needs 8 bytes").into());
+    }
     let mut message = vec![0u8; size];
     let mut seq = 0_u64;
     while running.load(Ordering::Relaxed) {
@@ -240,9 +269,10 @@ fn publish_on(lab: &Lab, duty: &impl Duty, running: &AtomicBool, channel: &CStr,
                     spin_loop();
                 }
             }
-            Err(e) => panic!("offer: {e:?}"),
+            Err(e) => return Err(format!("offer: {e:?}").into()),
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -254,11 +284,11 @@ mod tests {
     struct Endless(Cell<u64>);
 
     impl Poll for Endless {
-        fn poll(&self, mut on_message: impl FnMut(&[u8])) -> i32 {
+        fn poll(&self, mut on_message: impl FnMut(&[u8])) -> Result<i32, AeronCError> {
             let seq = self.0.get();
             self.0.set(seq + 1);
             on_message(&seq.to_le_bytes());
-            1
+            Ok(1)
         }
     }
 
@@ -269,9 +299,9 @@ mod tests {
     const SLACK_NS: u128 = 250_000_000;
 
     #[test]
-    fn the_window_is_the_samples_span_on_the_wall_clock_after_the_warm_up() {
+    fn the_window_is_the_samples_span_on_the_wall_clock_after_the_warm_up() -> Result<(), AeronCError> {
         let before = realtime_ns();
-        let measured = measure(&Endless(Cell::new(0)), 2);
+        let measured = measure(&Endless(Cell::new(0)), 2)?;
         let after = realtime_ns();
         let (start, end) = measured.window;
         assert!(
@@ -292,6 +322,7 @@ mod tests {
         assert_eq!(measured.samples.len(), 2);
         assert!(measured.received > 0);
         assert_eq!(measured.lost, 0);
+        Ok(())
     }
 
     #[test]

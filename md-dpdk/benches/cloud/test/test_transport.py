@@ -272,6 +272,48 @@ class FairnessTest(unittest.TestCase):
         run.edit(ONE, lambda m: m["settings"]["b"].update({"socket.rcvbuf": "4194304"}))
         self.assertOnly(run, "settings")
 
+    # a kernel-bypass arm (DPDK owns the data NIC: setup dpdk or fstack)
+    # never reads the kernel's socket busy-poll sysctls, and its set-up
+    # (vm.sh stop first) leaves them at 0
+    BUSY = {"net.core.busy_read": "0", "net.core.busy_poll": "0"}
+    DPDK = lambda m: m.get("arm") == "aeron-dpdk"
+
+    def test_kernel_bypass_arm_busy_poll_off_is_clean(self):
+        for setup in ("dpdk", "fstack", None):
+            with self.subTest(setup=setup):
+                run = Run(self)
+                run.edit(FairnessTest.DPDK, lambda m: (
+                    [s.update(self.BUSY) for s in m["settings"].values()],
+                    setup and m.update(runner={"setup": setup})), first=False)
+                self.assertEqual(run.rules(), [], "\n".join(str(v) for v in fairness.check(run.run)))
+
+    def test_kernel_arm_busy_poll_off_is_still_flagged(self):
+        for setup in ("sockets", "kernel", "onload", None):
+            with self.subTest(setup=setup):
+                run = Run(self)
+                run.edit(ONE, lambda m: (m["settings"]["a"].update({"net.core.busy_read": "0"}),
+                                         setup and m.update(runner={"setup": setup})))
+                got = fairness.check(run.run)
+                self.assertIn("settings", {v.rule for v in got})
+                self.assertTrue(any("net.core.busy_read=0" in v.detail for v in got if v.rule == "settings"))
+
+    def test_kernel_bypass_arm_needs_no_busy_poll_sweep(self):
+        # busy poll per arm (aeron-kernel's path at 0, swept), every other arm
+        # at 50 swept too, but aeron-dpdk, which bypasses the kernel
+        run = Run(self)
+        env = read(run.path("transport-settings.env"))
+        env = env.replace("shared.net.core.busy_poll=50\nshared.net.core.busy_read=50\n", "")
+        arms = sorted(fx.ARMS)
+        for k in self.BUSY:
+            env += "".join(f"{a}.{k}={0 if a == 'aeron-kernel' else 50}\n" for a in arms)
+            env += f"sweep.{k}={','.join(a for a in arms if a != 'aeron-dpdk')}\n"
+        write(run.path("transport-settings.env"), env)
+        run.edit(lambda m: "aeron-kernel" in (m["arm"], m.get("aa_of")),
+                 lambda m: [s.update(self.BUSY) for s in m["settings"].values()], first=False)
+        run.edit(FairnessTest.DPDK, lambda m: ([s.update(self.BUSY) for s in m["settings"].values()],
+                                               m.update(runner={"setup": "dpdk"})), first=False)
+        self.assertEqual(run.rules(), [], "\n".join(str(v) for v in fairness.check(run.run)))
+
     def test_settings_env_missing(self):
         run = Run(self)
         os.remove(run.path("transport-settings.env"))

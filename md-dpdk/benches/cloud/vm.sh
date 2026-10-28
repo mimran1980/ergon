@@ -2839,7 +2839,7 @@ base-rtt)
     sudo ping -q -c 200 -i 0.01 -I "$src" "$peer" | ping_stats
     ;;
 rx-hw-delay)
-    # the receiver port's NIC-arrival-to-dispatch counters (type 81), as
+    # the receiver port's NIC-arrival-to-dispatch counters (type 1081), as
     # "<mean ns>,<max ns>,<frames>,<min ns>,<negative>": the mean over the
     # frames in the sum; apart, the frames the NIC stamped after the host
     # clock read at their dispatch (PHC and host clock skew). The endpoint is

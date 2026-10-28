@@ -53,9 +53,8 @@ fn readme_fences_compile() -> Result<(), Box<dyn std::error::Error>> {
     assert!(!fences.is_empty(), "README.md must contain at least one Rust fence");
 
     // Reject rust,ignore — use rust,no_run for non-executable examples
-    let ignored: Vec<_> = fences.iter().filter(|(_, tag)| tag == "rust,ignore").collect();
     assert!(
-        ignored.is_empty(),
+        !fences.iter().any(|(_, tag)| tag == "rust,ignore"),
         "README.md contains rust,ignore fence(s); use rust,no_run instead"
     );
 
@@ -90,7 +89,7 @@ ergo-aeron-cluster = {{ path = "{}" }}
         let src = if content.contains("fn main()") {
             content.clone()
         } else {
-            format!("fn main() {{\n{}}}\n", content)
+            format!("fn main() {{\n{content}}}\n")
         };
         std::fs::write(tmp.join("src/main.rs"), src)?;
 

@@ -4556,7 +4556,7 @@ else
 fi
 
 # vm.sh rx-hw-delay: the receiver port's NIC-arrival-to-rx-burst counters
-# (type 81, by their exact labels, never a near miss) as "<mean ns>,<max
+# (type 1081, by their exact labels, never a near miss) as "<mean ns>,<max
 # ns>,<frames>,<min ns>,<negative>": the mean over the frames in the sum, and
 # apart the frames the NIC stamped after the host clock read at their burst
 # (PHC and host clock skew). The endpoint is the receive burst that carried

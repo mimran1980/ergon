@@ -10,7 +10,7 @@ use std::time::Duration;
 #[test]
 #[serial]
 fn test_embedded_archive_driver_starts() -> Result<(), Box<dyn std::error::Error>> {
-    let archive = ergo_aeron_cluster_test_harness::EmbeddedArchiveDriver::start(9800);
+    let archive = ergo_aeron_cluster_test_harness::EmbeddedArchiveDriver::start(9800)?;
     assert!(archive.aeron_dir.exists());
 
     Ok(())
@@ -20,8 +20,8 @@ fn test_embedded_archive_driver_starts() -> Result<(), Box<dyn std::error::Error
 #[serial]
 fn test_archive_and_cluster_can_coexist() -> Result<(), Box<dyn std::error::Error>> {
     // Start both an archive and a cluster — verify no port conflicts
-    let _archive = ergo_aeron_cluster_test_harness::EmbeddedArchiveDriver::start(9801);
-    let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node();
+    let _archive = ergo_aeron_cluster_test_harness::EmbeddedArchiveDriver::start(9801)?;
+    let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node()?;
 
     let dir_cstr = cformat!("{}", cluster.aeron_dir().display());
     let ctx = rusteron_client::AeronContext::new()?;

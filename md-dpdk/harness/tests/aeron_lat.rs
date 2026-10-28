@@ -10,6 +10,13 @@
 //! `analyse.read_results`, `spikes.transport_max`), lose nothing, carry the
 //! manifest the fairness checks compare, and show that the busy threads
 //! allocated nothing while measuring.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "an integration test fails by panicking: unwrap, expect and panic! are its assertions (as md-dpdk/tests)"
+)]
+#![allow(clippy::similar_names, reason = "ping and pong name the two ends of each round trip")]
 
 use std::net::UdpSocket;
 use std::path::{Path, PathBuf};
@@ -60,13 +67,13 @@ fn free_ports(n: u16) -> Res<u16> {
     Err("no free run of UDP ports".into())
 }
 
-fn command(out: &Path, dir: &Path, args: &[&str]) -> Res<Command> {
+fn command(out: &Path, dir: &Path, args: &[&str]) -> Command {
     command_on("embedded", out, dir, args)
 }
 
 /// `aeron_lat` with `args` on a driver it runs itself (`--driver`
 /// `embedded` or `invoker`).
-fn command_on(driver: &str, out: &Path, dir: &Path, args: &[&str]) -> Res<Command> {
+fn command_on(driver: &str, out: &Path, dir: &Path, args: &[&str]) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_aeron_lat"));
     cmd.args(args)
         .args(["--driver", driver, "--term-length", TERM, "--connect-timeout-s", "20"])
@@ -78,7 +85,7 @@ fn command_on(driver: &str, out: &Path, dir: &Path, args: &[&str]) -> Res<Comman
         .env_remove("AERON_THREADING_MODE")
         .env_remove("RUSTERON_MEDIA_DRIVER_TRANSPORT")
         .env_remove("RUSTERON_MEDIA_DRIVER_DIR");
-    Ok(cmd)
+    cmd
 }
 
 fn ok(what: &str, o: &Output) -> Res<String> {
@@ -190,7 +197,7 @@ fn local(name: &str, set: &str, streams: u32, extra: &[&str], e: &Expect<'_>) ->
     let mut args = vec!["--role", "local", "--rate", &rate, "--streams", &n];
     args.extend(["--warmup-s", "1", "--duration-s", "1", "--label", &label]);
     args.extend(extra);
-    let o = command(&out, &dir, &args)?.output()?;
+    let o = command(&out, &dir, &args).output()?;
     let row = ok(name, &o)?;
     assert_eq!(
         row,
@@ -295,7 +302,7 @@ fn spy_round_trip_sends_nothing_on_the_wire() -> R {
         "--label",
         "2b:aeron-spy",
     ];
-    ok("spy", &command(&out, &dir, &args)?.output()?)?;
+    ok("spy", &command(&out, &dir, &args).output()?)?;
     let m = std::fs::read_to_string(out.join("manifest.json"))?;
     let (sent, echoes, bytes) = (
         number(&m, "sent")?,
@@ -335,7 +342,7 @@ fn spy_udp(name: &str, round_trip: bool) -> R {
         &sink_out,
         &root.join("aeron-sink"),
         &[&["--role", "pong"][..], &common].concat(),
-    )?
+    )
     .stdout(Stdio::piped())
     .stderr(Stdio::piped())
     .spawn()?;
@@ -354,7 +361,7 @@ fn spy_udp(name: &str, round_trip: bool) -> R {
     if round_trip {
         args.push("--round-trip");
     }
-    let local = command(&out, &root.join("aeron-local"), &[&args[..], &common].concat())?.output();
+    let local = command(&out, &root.join("aeron-local"), &[&args[..], &common].concat()).output();
     // the sink ends by itself once the publications' images go
     let sink = wait(sink, Duration::from_secs(60))?;
     let row = ok("local", &local?)?;
@@ -545,7 +552,7 @@ fn ping_pong(name: &str, reliable: &str, driver: &str) -> R {
         &pong_out,
         &root.join("aeron-pong"),
         &[&["--role", "pong"][..], &common].concat(),
-    )?;
+    );
     let pong = pong.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
     let rate = RATE.to_string();
     let ping_out = root.join("ping");
@@ -567,7 +574,7 @@ fn ping_pong(name: &str, reliable: &str, driver: &str) -> R {
             &common,
         ]
         .concat(),
-    )?
+    )
     .output();
     let pong = wait(pong, Duration::from_secs(60))?;
     let row = ok("ping", &ping?)?;
@@ -664,7 +671,7 @@ fn an_invoked_driver_off_its_one_thread_is_refused() -> R {
             a.extend(eps);
         }
         a.extend(["--rate", "10", "--label", "x:y"]);
-        let o = command_on("invoker", &out, &dir, &a)?.output()?;
+        let o = command_on("invoker", &out, &dir, &a).output()?;
         let err = String::from_utf8_lossy(&o.stderr);
         assert!(!o.status.success() && o.stdout.is_empty(), "{args:?}: {err}");
         assert!(err.contains(why), "{args:?}: {err}");
@@ -719,7 +726,7 @@ fn flags_that_cannot_make_a_fair_point_are_refused() -> R {
         ],
         &["--role", "pong", "--mode", "spy-udp", "--endpoint", "127.0.0.1:39000"],
     ] {
-        let o = command(&out, &dir, &[args, &base].concat())?.output()?;
+        let o = command(&out, &dir, &[args, &base].concat()).output()?;
         assert!(!o.status.success(), "{args:?}");
         assert!(o.stdout.is_empty(), "no row: {args:?}");
         assert!(!out.join("results.csv").exists(), "{args:?}");
@@ -774,7 +781,7 @@ fn a_udp_port_in_the_drivers_wildcard_ranges_is_refused() -> R {
         args.extend(["--endpoint", "127.0.0.1:39000", "--reply", "127.0.0.1:39100"]);
         let at = args.iter().position(|a| *a == flag).ok_or("no flag")?;
         args[at + 1] = ep;
-        let o = command(&out, &dir, &args)?.output()?;
+        let o = command(&out, &dir, &args).output()?;
         let err = String::from_utf8_lossy(&o.stderr);
         assert!(!o.status.success() && o.stdout.is_empty(), "{flag} {ep}: {err}");
         assert!(err.contains("20000-21999"), "{flag} {ep}: {err}");

@@ -429,6 +429,15 @@ kernel UDP sockets.
   keeps every frame on SRD (8864). ENA Express is set on the ENI
   (infrastructure), not in the pod.
 
+## Counter type IDs
+
+A counter Aeron's own DPDK transport also has takes Aeron's type ID for it
+(`AeronCounters` `DPDK_*_TYPE_ID`, 75 to 79 and 82 to 95), so a tool that
+knows those reads these. The two only md-dpdk has are in Aeron's custom range
+(1000 and up; below 1000 is Aeron's): `clock` 1080 and the
+`nic-arrival-to-dispatch-*` counters 1081. The lab scripts read counters by
+label, not type.
+
 ## Bandwidth allowance
 
 Clouds drop traffic over a VM's allowance; Aeron then retransmits and
@@ -534,7 +543,7 @@ the CPU. DPDK rounds that measurement to the nearest 10 MHz on 23.11 (up to
 0.2% off at 2.5 GHz) and to the nearest 100 kHz from 24.11. On aarch64 it
 must be `CNTFRQ_EL0` (above), the generic timer's stated rate.
 
-**Which one ran:** each port's `clock` counter (type 80) reads 1 TSC,
+**Which one ran:** each port's `clock` counter (type 1080) reads 1 TSC,
 2 `CNTVCT_EL0`, 0 `CLOCK_MONOTONIC`. `DpdkTransport::clock()` returns a
 `TransportClock`:
 
@@ -551,7 +560,7 @@ must be `CNTFRQ_EL0` (above), the generic timer's stated rate.
   DPDK 25.11+. Azure MANA has none.
 - **What it measures:** per port, NIC arrival to the frame's own dispatch to
   Aeron, against `CLOCK_REALTIME` read for each stamped frame after its
-  classify and just before the hand-off (type 81:
+  classify and just before the hand-off (type 1081:
   `nic-arrival-to-dispatch-max-ns`, `-min-ns`, `-sum-ns`, `-count`). A frame
   later in a burst includes its wait behind the earlier ones. The read costs
   one clock read per stamped frame; with the flag off no frame is stamped and

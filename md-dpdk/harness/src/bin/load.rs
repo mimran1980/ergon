@@ -59,8 +59,10 @@ mod lab;
 
 use hdrhistogram::Histogram;
 use lab::{Clock, Duty, External, Halt, Lab, cpu_arg, label, pin, sub_channel};
-use rusteron_client::*;
+use rusteron_client::{AeronExclusivePublication, AeronImage, AeronOfferError};
+use std::error::Error;
 use std::ffi::CString;
+use std::fmt::Write as _;
 use std::hint::spin_loop;
 
 // rtt's streams, so `rtt xpong` echoes for xping
@@ -77,8 +79,17 @@ const SPIKE_CAPACITY: usize = 100_000;
 /// at least this, so a max at the bound is a floor, not the slowest round trip.
 const HISTOGRAM_MAX_NS: u64 = 60_000_000_000;
 
-fn udp(endpoint: Option<String>) -> CString {
-    CString::new(format!("aeron:udp?endpoint={}", endpoint.expect("host:port"))).unwrap()
+fn udp(endpoint: Option<String>) -> Result<CString, Box<dyn Error>> {
+    let endpoint = endpoint.ok_or("an endpoint: host:port")?;
+    Ok(CString::new(format!("aeron:udp?endpoint={endpoint}"))?)
+}
+
+/// `arg` parsed as a `T`, or an error naming `what`.
+fn parse<T: std::str::FromStr>(arg: &str, what: &str) -> Result<T, Box<dyn Error>>
+where
+    T::Err: std::fmt::Display,
+{
+    arg.parse().map_err(|e| format!("{what} {arg:?}: {e}").into())
 }
 
 /// One offered stream: what to send, and on which streams.
@@ -93,40 +104,45 @@ struct Spec {
 
 impl Spec {
     /// `name:stream:msgs/s:size[:burst]`
-    fn parse(arg: &str) -> Self {
+    fn parse(arg: &str) -> Result<Self, Box<dyn Error>> {
         let parts: Vec<&str> = arg.split(':').collect();
-        assert!(
-            (4..=5).contains(&parts.len()),
-            "stream spec {arg}: name:stream:msgs/s:size[:burst]"
-        );
-        let stream: i32 = parts[1].parse().expect("stream id");
-        Self {
+        if !(4..=5).contains(&parts.len()) {
+            return Err(format!("stream spec {arg}: name:stream:msgs/s:size[:burst]").into());
+        }
+        let stream: i32 = parse(parts[1], "stream id")?;
+        Ok(Self {
             name: Some(parts[0].to_owned()),
             ping_stream: stream,
             pong_stream: stream + ECHO_OFFSET,
-            rate: parts[2].parse().expect("msgs/s"),
-            size: parts[3].parse().expect("size"),
-            burst: parts.get(4).map_or(1, |b| b.parse::<u64>().expect("burst")).max(1),
-        }
+            rate: parse(parts[2], "msgs/s")?,
+            size: parse(parts[3], "size")?,
+            burst: parts.get(4).map_or(Ok(1), |b| parse::<u64>(b, "burst"))?.max(1),
+        })
     }
 }
 
-fn main() {
-    lab::lock_memory();
+#[allow(
+    clippy::similar_names,
+    reason = "ping and pong name the two directions of a round trip"
+)]
+fn main() -> Result<(), Box<dyn Error>> {
+    lab::lock_memory()?;
     let mut args = std::env::args().skip(1);
     let usage = "load xping <ping> <pong> <rate> <seconds> <size> <cpu> [burst] | \
                  load xmix <ping> <pong> <seconds> <cpu> <name:stream:rate:size[:burst]>... | \
                  load xecho <ping> <pong> <cpu> <stream>...";
-    let mode = args.next().unwrap_or_else(|| panic!("{usage}"));
-    let (ping_channel, pong_channel) = (udp(args.next()), udp(args.next()));
-    let number = |a: Option<String>, what: &str| -> u64 { a.unwrap_or_else(|| panic!("{what}")).parse().unwrap() };
+    let mode = args.next().ok_or(usage)?;
+    let (ping_channel, pong_channel) = (udp(args.next())?, udp(args.next())?);
+    let number = |a: Option<String>, what: &str| -> Result<u64, Box<dyn Error>> {
+        parse(&a.ok_or_else(|| format!("{what}: {usage}"))?, what)
+    };
     match mode.as_str() {
         "xping" => {
-            let rate = number(args.next(), "msgs/s");
-            let seconds = number(args.next(), "seconds");
-            let size = usize::try_from(number(args.next(), "size")).unwrap();
-            let cpu = cpu_arg(args.next());
-            let burst = args.next().map_or(1, |b| b.parse::<u64>().unwrap()).max(1);
+            let rate = number(args.next(), "msgs/s")?;
+            let seconds = number(args.next(), "seconds")?;
+            let size = usize::try_from(number(args.next(), "size")?)?;
+            let cpu = cpu_arg(args.next())?;
+            let burst = args.next().map_or(Ok(1), |b| parse::<u64>(&b, "burst"))?.max(1);
             let spec = Spec {
                 name: None,
                 ping_stream: PING_STREAM_ID,
@@ -135,26 +151,32 @@ fn main() {
                 size,
                 burst,
             };
-            offer(&ping_channel, &pong_channel, vec![spec], seconds, cpu);
+            offer(&ping_channel, &pong_channel, vec![spec], seconds, cpu)
         }
         "xmix" => {
-            let seconds = number(args.next(), "seconds");
-            let cpu = cpu_arg(args.next());
-            let specs: Vec<Spec> = args.map(|a| Spec::parse(&a)).collect();
-            assert!(!specs.is_empty(), "{usage}");
-            offer(&ping_channel, &pong_channel, specs, seconds, cpu);
+            let seconds = number(args.next(), "seconds")?;
+            let cpu = cpu_arg(args.next())?;
+            let specs = args.map(|a| Spec::parse(&a)).collect::<Result<Vec<_>, _>>()?;
+            if specs.is_empty() {
+                return Err(usage.into());
+            }
+            offer(&ping_channel, &pong_channel, specs, seconds, cpu)
         }
         "xecho" => {
-            let cpu = cpu_arg(args.next());
-            let streams: Vec<i32> = args.map(|a| a.parse().expect("stream id")).collect();
-            assert!(!streams.is_empty(), "{usage}");
-            let lab = Lab::connect(cpu);
-            match lab.invoker() {
-                Some(duty) => echo(&lab, &duty, &ping_channel, &pong_channel, &streams, cpu),
-                None => echo(&lab, &External, &ping_channel, &pong_channel, &streams, cpu),
+            let cpu = cpu_arg(args.next())?;
+            let streams = args
+                .map(|a| parse::<i32>(&a, "stream id"))
+                .collect::<Result<Vec<_>, _>>()?;
+            if streams.is_empty() {
+                return Err(usage.into());
             }
+            let lab = Lab::connect(cpu)?;
+            lab.invoker().map_or_else(
+                || echo(&lab, &External, &ping_channel, &pong_channel, &streams, cpu),
+                |duty| echo(&lab, &duty, &ping_channel, &pong_channel, &streams, cpu),
+            )
         }
-        other => panic!("unknown mode {other}: {usage}"),
+        other => Err(format!("unknown mode {other}: {usage}").into()),
     }
 }
 
@@ -190,7 +212,10 @@ struct Offered {
 /// 32.32 fixed point so a long run does not drift.
 #[inline]
 fn due(start: u64, interval_fp: u128, burst: u64, n: u64) -> u64 {
-    start + ((interval_fp * u128::from(n / burst)) >> 32) as u64
+    // 32.32 fixed point back to ns: a run's offsets fit in u64 for 584 years
+    #[allow(clippy::cast_possible_truncation, reason = "a run's offset in ns fits in u64")]
+    let offset = ((interval_fp * u128::from(n / burst)) >> 32) as u64;
+    start + offset
 }
 
 /// Whether the offer of message `n` at `now` found the *following* slot already
@@ -224,7 +249,12 @@ fn achieved_rate(sent: u64, warmup: u64, due_start: u64, send_end: u64, run_end:
         // infinity from a one-nanosecond floor
         return 0.0;
     }
-    (sent - warmup) as f64 * 1e9 / window as f64
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "a rate to report: 2^52 messages or ns is far past any run"
+    )]
+    let rate = (sent - warmup) as f64 * 1e9 / window as f64;
+    rate
 }
 
 /// Records each measured message whose echo never came at what it is known
@@ -270,17 +300,37 @@ struct Spikes {
 }
 
 /// Offers `specs` on the driver `HARNESS_DRIVER` picks.
-fn offer(ping_channel: &CString, pong_channel: &CString, specs: Vec<Spec>, seconds: u64, cpu: Option<usize>) {
+#[allow(
+    clippy::similar_names,
+    reason = "ping and pong name the two directions of a round trip"
+)]
+fn offer(
+    ping_channel: &CString,
+    pong_channel: &CString,
+    specs: Vec<Spec>,
+    seconds: u64,
+    cpu: Option<usize>,
+) -> Result<(), Box<dyn Error>> {
     for spec in &specs {
-        assert!(spec.rate > 0 && spec.size >= HEADER, "rate > 0, size >= {HEADER}");
+        if spec.rate == 0 || spec.size < HEADER {
+            return Err(format!("rate > 0, size >= {HEADER}").into());
+        }
     }
-    let lab = Lab::connect(cpu);
+    let lab = Lab::connect(cpu)?;
     match lab.invoker() {
         Some(duty) => run(&lab, &duty, ping_channel, pong_channel, specs, seconds, cpu),
         None => run(&lab, &External, ping_channel, pong_channel, specs, seconds, cpu),
     }
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "one measured run, set-up to report, kept in one place so its timing reads top to bottom"
+)]
+#[allow(
+    clippy::similar_names,
+    reason = "ping and pong name the two directions of a round trip"
+)]
 fn run(
     lab: &Lab,
     duty: &impl Duty,
@@ -289,33 +339,31 @@ fn run(
     specs: Vec<Spec>,
     seconds: u64,
     cpu: Option<usize>,
-) {
+) -> Result<(), Box<dyn Error>> {
     let mut pending = Vec::new();
     for spec in specs {
-        let publication = lab.add_publication(ping_channel, spec.ping_stream);
-        let subscription = lab.add_subscription(&sub_channel(pong_channel), spec.pong_stream);
+        let publication = lab.add_publication(ping_channel, spec.ping_stream)?;
+        let subscription = lab.add_subscription(&sub_channel(pong_channel)?, spec.pong_stream)?;
         pending.push((spec, publication, subscription));
     }
     lab.wait_until("pong", 30, || {
         pending
             .iter()
             .all(|(_, p, s)| p.is_connected() && s.image_at_index(0).is_some())
-    });
-    pin(cpu);
+    })?;
+    pin(cpu)?;
     let clock = Clock::calibrate();
     let mut streams: Vec<Offered> = pending
         .into_iter()
-        .map(|(spec, publication, subscription)| {
-            let image = subscription.image_at_index(0).unwrap();
-            let max_payload = publication.max_payload_length().unwrap();
-            assert!(
-                spec.size <= max_payload,
-                "size {} > max payload {max_payload}: it would fragment",
-                spec.size
-            );
+        .map(|(spec, publication, subscription)| -> Result<Offered, Box<dyn Error>> {
+            let image = subscription.image_at_index(0).ok_or("the pong's image went")?;
+            let max_payload = publication.max_payload_length()?;
+            if spec.size > max_payload {
+                return Err(format!("size {} > max payload {max_payload}: it would fragment", spec.size).into());
+            }
             // ns per burst interval, in 32.32 fixed point so long runs do not drift
             let interval_fp = (u128::from(SECOND_NS) << 32) * u128::from(spec.burst) / u128::from(spec.rate);
-            Offered {
+            Ok(Offered {
                 message: vec![0u8; spec.size],
                 interval_fp,
                 total: spec.rate * (seconds + 1), // the first second is warm-up
@@ -327,25 +375,28 @@ fn run(
                 late: 0,
                 censored: 0,
                 send_end: 0,
-                histogram: Histogram::<u64>::new_with_bounds(1, HISTOGRAM_MAX_NS, 3).unwrap(),
+                histogram: Histogram::<u64>::new_with_bounds(1, HISTOGRAM_MAX_NS, 3)?,
                 received: 0,
                 spec,
                 publication,
                 image,
-            }
+            })
         })
-        .collect();
-    let mut spikes = std::env::var("LOAD_SPIKES").ok().filter(|p| !p.is_empty()).map(|path| {
-        let threshold_ns = std::env::var("LOAD_SPIKE_NS").map_or(100_000, |v| v.parse().expect("LOAD_SPIKE_NS"));
-        (
-            path,
-            Spikes {
-                threshold_ns,
-                rows: Vec::with_capacity(SPIKE_CAPACITY),
-                dropped: 0,
-            },
-        )
-    });
+        .collect::<Result<_, _>>()?;
+    let mut spikes = match std::env::var("LOAD_SPIKES").ok().filter(|p| !p.is_empty()) {
+        None => None,
+        Some(path) => {
+            let threshold_ns = std::env::var("LOAD_SPIKE_NS").map_or(Ok(100_000), |v| parse(&v, "LOAD_SPIKE_NS"))?;
+            Some((
+                path,
+                Spikes {
+                    threshold_ns,
+                    rows: Vec::with_capacity(SPIKE_CAPACITY),
+                    dropped: 0,
+                },
+            ))
+        }
+    };
 
     let start = clock.now();
     let start_realtime = std::time::SystemTime::now()
@@ -406,12 +457,12 @@ fn run(
                         }
                         break;
                     }
-                    Err(e) => panic!("offer: {e:?}"),
+                    Err(e) => return Err(format!("offer: {e:?}").into()),
                 }
             }
         }
         let work = duty.run();
-        if poll_all(&mut streams, &clock, start, spikes.as_mut().map(|(_, s)| s)) == 0 && work == 0 {
+        if poll_all(&mut streams, &clock, start, spikes.as_mut().map(|(_, s)| s))? == 0 && work == 0 {
             spin_loop();
         }
     }
@@ -430,7 +481,7 @@ fn run(
     let drain_until = clock.now() + 2 * SECOND_NS;
     while !gone && streams.iter().any(|s| s.received < s.sent) && clock.now() < drain_until {
         let work = duty.run();
-        if poll_all(&mut streams, &clock, start, spikes.as_mut().map(|(_, s)| s)) == 0 && work == 0 {
+        if poll_all(&mut streams, &clock, start, spikes.as_mut().map(|(_, s)| s))? == 0 && work == 0 {
             spin_loop();
         }
     }
@@ -454,10 +505,11 @@ fn run(
 
     for (s, achieved) in streams.iter().zip(&achieved) {
         let q = |quantile| s.histogram.value_at_quantile(quantile);
-        let (kind, name) = match &s.spec.name {
-            Some(n) => ("mix", format!("udp-{n}")),
-            None => ("load", "udp".to_owned()),
-        };
+        let (kind, name) = s
+            .spec
+            .name
+            .as_ref()
+            .map_or_else(|| ("load", "udp".to_owned()), |n| ("mix", format!("udp-{n}")));
         println!(
             "{kind},{},{name},{},{},{},{},{},{},{},{},{},{:.0},{},{},{},{},{achieved:.0},{},{},{},{}",
             label(),
@@ -490,9 +542,9 @@ fn run(
     if let Some(path) = std::env::var("RTT_HISTOGRAM").ok().filter(|p| !p.is_empty()) {
         let mut rows = String::from("value_ns,count\n");
         for v in streams[0].histogram.iter_recorded() {
-            rows.push_str(&format!("{},{}\n", v.value_iterated_to(), v.count_at_value()));
+            writeln!(rows, "{},{}", v.value_iterated_to(), v.count_at_value())?;
         }
-        std::fs::write(&path, rows).unwrap_or_else(|e| panic!("RTT_HISTOGRAM {path}: {e}"));
+        std::fs::write(&path, rows).map_err(|e| format!("RTT_HISTOGRAM {path}: {e}"))?;
     }
     if let Some((path, spikes)) = spikes {
         // the wall-clock time due_ns counts from, to line spikes up with traces
@@ -500,15 +552,21 @@ fn run(
         let mut rows =
             format!("# start_realtime_ns={start_realtime}\n# spikes_total={total}\nstream,due_ns,latency_ns\n");
         for (stream, due, latency) in &spikes.rows {
-            rows.push_str(&format!("{stream},{due},{latency}\n"));
+            writeln!(rows, "{stream},{due},{latency}")?;
         }
-        std::fs::write(&path, rows).unwrap_or_else(|e| panic!("LOAD_SPIKES {path}: {e}"));
+        std::fs::write(&path, rows).map_err(|e| format!("LOAD_SPIKES {path}: {e}"))?;
     }
+    Ok(())
 }
 
 /// Reads every stream's echoes once; the fragments read.
 #[inline]
-fn poll_all(streams: &mut [Offered], clock: &Clock, start: u64, mut spikes: Option<&mut Spikes>) -> i32 {
+fn poll_all(
+    streams: &mut [Offered],
+    clock: &Clock,
+    start: u64,
+    mut spikes: Option<&mut Spikes>,
+) -> Result<i32, Box<dyn Error>> {
     let mut fragments = 0;
     for s in streams.iter_mut() {
         let (histogram, received, censored, warmup, stream) = (
@@ -518,43 +576,43 @@ fn poll_all(streams: &mut [Offered], clock: &Clock, start: u64, mut spikes: Opti
             s.warmup,
             s.spec.ping_stream,
         );
-        let mut spikes = spikes.as_deref_mut();
-        fragments += s
-            .image
-            .poll_fn(
-                |reply, _header| {
-                    let intended = u64::from_le_bytes(reply[..8].try_into().unwrap());
-                    let sequence = u64::from_le_bytes(reply[8..16].try_into().unwrap());
-                    if sequence >= warmup {
-                        let latency = clock.stamp().wrapping_sub(intended);
-                        histogram.saturating_record(latency);
-                        // `saturating_record` keeps a longer round trip at the
-                        // bound: its true value is only known to be at least
-                        // that, so it is counted, not left to read as the max
-                        if latency >= HISTOGRAM_MAX_NS {
-                            *censored += 1;
-                        }
-                        if let Some(spikes) = spikes.as_deref_mut()
-                            && latency >= spikes.threshold_ns
-                        {
-                            if spikes.rows.len() < SPIKE_CAPACITY {
-                                spikes.rows.push((stream, intended.wrapping_sub(start), latency));
-                            } else {
-                                spikes.dropped += 1;
-                            }
+        let mut sink = spikes.as_deref_mut();
+        fragments += s.image.poll_fn(
+            |reply, _header| {
+                let (intended, sequence) = (lab::le_u64(reply, 0), lab::le_u64(reply, 8));
+                if sequence >= warmup {
+                    let latency = clock.stamp().wrapping_sub(intended);
+                    histogram.saturating_record(latency);
+                    // `saturating_record` keeps a longer round trip at the
+                    // bound: its true value is only known to be at least
+                    // that, so it is counted, not left to read as the max
+                    if latency >= HISTOGRAM_MAX_NS {
+                        *censored += 1;
+                    }
+                    if let Some(spikes) = sink.as_deref_mut()
+                        && latency >= spikes.threshold_ns
+                    {
+                        if spikes.rows.len() < SPIKE_CAPACITY {
+                            spikes.rows.push((stream, intended.wrapping_sub(start), latency));
+                        } else {
+                            spikes.dropped += 1;
                         }
                     }
-                    *received += 1;
-                },
-                FRAGMENT_COUNT_LIMIT,
-            )
-            .unwrap();
+                }
+                *received += 1;
+            },
+            FRAGMENT_COUNT_LIMIT,
+        )?;
     }
-    fragments
+    Ok(fragments)
 }
 
-/// Echoes each stream back on stream + ECHO_OFFSET until every ping image
+/// Echoes each stream back on stream + `ECHO_OFFSET` until every ping image
 /// goes, or an echo is given up (`lab::echo`); says why on stderr.
+#[allow(
+    clippy::similar_names,
+    reason = "ping and pong name the two directions of a round trip"
+)]
 fn echo(
     lab: &Lab,
     duty: &impl Duty,
@@ -562,39 +620,34 @@ fn echo(
     pong_channel: &CString,
     streams: &[i32],
     cpu: Option<usize>,
-) {
+) -> Result<(), Box<dyn Error>> {
     let mut pairs = Vec::new();
     for &stream in streams {
-        let publication = lab.add_publication(pong_channel, stream + ECHO_OFFSET);
-        let subscription = lab.add_subscription(&sub_channel(ping_channel), stream);
+        let publication = lab.add_publication(pong_channel, stream + ECHO_OFFSET)?;
+        let subscription = lab.add_subscription(&sub_channel(ping_channel)?, stream)?;
         pairs.push((publication, subscription));
     }
-    lab.wait_until("ping", 60, || pairs.iter().all(|(_, s)| s.image_at_index(0).is_some()));
+    lab.wait_until("ping", 60, || pairs.iter().all(|(_, s)| s.image_at_index(0).is_some()))?;
     let pairs: Vec<(AeronExclusivePublication, AeronImage)> = pairs
         .into_iter()
-        .map(|(p, s)| {
-            let image = s.image_at_index(0).unwrap();
-            (p, image)
-        })
-        .collect();
-    pin(cpu);
+        .map(|(p, s)| Ok::<_, Box<dyn Error>>((p, s.image_at_index(0).ok_or("a ping's image went")?)))
+        .collect::<Result<_, _>>()?;
+    pin(cpu)?;
     let mut halt = None;
     while halt.is_none() && pairs.iter().any(|(_, image)| !image.is_closed()) {
         let mut fragments = 0;
         let work = duty.run();
         for (publication, image) in &pairs {
-            fragments += image
-                .poll_fn(
-                    |ping, _header| {
-                        if halt.is_none()
-                            && let Err(why) = lab::echo(duty, publication, image, ping)
-                        {
-                            halt = Some(why);
-                        }
-                    },
-                    FRAGMENT_COUNT_LIMIT,
-                )
-                .unwrap();
+            fragments += image.poll_fn(
+                |ping, _header| {
+                    if halt.is_none()
+                        && let Err(why) = lab::echo(duty, publication, image, ping)
+                    {
+                        halt = Some(why);
+                    }
+                },
+                FRAGMENT_COUNT_LIMIT,
+            )?;
         }
         if fragments == 0 && work == 0 {
             spin_loop();
@@ -605,8 +658,10 @@ fn echo(
         Some(Halt::ImageClosed) => "a ping's image closed while its echo was back-pressured",
         Some(Halt::NotConnected) => "an echo's publication not connected for over 1 s, its echoes unread",
         Some(Halt::Stopped) => "SIGTERM",
+        Some(Halt::Failed(why)) => return Err(format!("load: echo failed: {why}").into()),
     };
     eprintln!("load: echo ended: {why}");
+    Ok(())
 }
 
 #[cfg(test)]
@@ -614,8 +669,10 @@ mod tests {
     use super::{HISTOGRAM_MAX_NS, SECOND_NS, achieved_rate, due, is_late, record_incomplete};
     use hdrhistogram::Histogram;
 
-    fn histogram() -> Histogram<u64> {
-        Histogram::<u64>::new_with_bounds(1, HISTOGRAM_MAX_NS, 3).unwrap()
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    fn histogram() -> Result<Histogram<u64>, hdrhistogram::CreationError> {
+        Histogram::<u64>::new_with_bounds(1, HISTOGRAM_MAX_NS, 3)
     }
 
     /// A measured message whose echo never came is in the distribution at
@@ -623,48 +680,52 @@ mod tests {
     /// Sent with no echo and never offered at all are the same: both were
     /// owed. Echoed messages and warm-up are not added again.
     #[test]
-    fn a_message_whose_echo_never_came_is_recorded_at_its_lower_bound() {
+    fn a_message_whose_echo_never_came_is_recorded_at_its_lower_bound() -> TestResult {
         // 10 messages, one a second from 0; warm-up 2, echoes for 0..6
-        let interval_fp = (SECOND_NS as u128) << 32;
-        let mut h = histogram();
+        let interval_fp = u128::from(SECOND_NS) << 32;
+        let mut h = histogram()?;
         let end = 20 * SECOND_NS;
         let n = record_incomplete(&mut h, |n| due(0, interval_fp, 1, n), 2, 6, 10, end);
         assert_eq!(n, 4, "messages 6..10");
         assert_eq!(h.len(), 4);
         assert!(h.equivalent(h.min(), 11 * SECOND_NS), "message 9: {}", h.min());
         assert!(h.equivalent(h.max(), 14 * SECOND_NS), "message 6: {}", h.max());
+        Ok(())
     }
 
     /// Warm-up that never came back is not measured, so it stays out.
     #[test]
-    fn warm_up_without_an_echo_stays_out() {
-        let interval_fp = (SECOND_NS as u128) << 32;
-        let mut h = histogram();
+    fn warm_up_without_an_echo_stays_out() -> TestResult {
+        let interval_fp = u128::from(SECOND_NS) << 32;
+        let mut h = histogram()?;
         let n = record_incomplete(&mut h, |n| due(0, interval_fp, 1, n), 5, 3, 7, 20 * SECOND_NS);
         assert_eq!(n, 2, "messages 5 and 6 only");
+        Ok(())
     }
 
     /// A message not yet due when the run ended (the peer went away early)
     /// has no lower bound above zero, so it is not recorded as a fast trip.
     #[test]
-    fn a_message_not_yet_due_at_the_end_is_not_recorded() {
-        let interval_fp = (SECOND_NS as u128) << 32;
-        let mut h = histogram();
+    fn a_message_not_yet_due_at_the_end_is_not_recorded() -> TestResult {
+        let interval_fp = u128::from(SECOND_NS) << 32;
+        let mut h = histogram()?;
         let n = record_incomplete(&mut h, |n| due(0, interval_fp, 1, n), 0, 0, 10, 4 * SECOND_NS);
         assert_eq!(n, 4, "messages 0..4 were due before the end");
         assert!(h.equivalent(h.min(), SECOND_NS), "message 3: {}", h.min());
+        Ok(())
     }
 
     /// Every echo came back: nothing to add.
     #[test]
-    fn a_complete_run_adds_nothing() {
-        let interval_fp = (SECOND_NS as u128) << 32;
-        let mut h = histogram();
+    fn a_complete_run_adds_nothing() -> TestResult {
+        let interval_fp = u128::from(SECOND_NS) << 32;
+        let mut h = histogram()?;
         assert_eq!(
             record_incomplete(&mut h, |n| due(0, interval_fp, 1, n), 2, 10, 10, 20 * SECOND_NS),
             0
         );
         assert_eq!(h.len(), 0);
+        Ok(())
     }
 
     /// A stream's own send end, not the run's. A finished its 1000 messages
@@ -705,7 +766,7 @@ mod tests {
     #[test]
     fn a_run_keeping_its_schedule_reports_nothing_late() {
         // 1000 msgs/s, one per slot: interval 1 ms, 32.32 fixed point.
-        let interval_fp = (SECOND_NS as u128) << 32;
+        let interval_fp = u128::from(SECOND_NS) << 32;
         let start = 100;
         // on time, and a little past its own slot but before the next is due
         assert!(!is_late(1, interval_fp, start, 0, due(start, interval_fp, 1, 0)));
@@ -716,7 +777,7 @@ mod tests {
     /// caught up does not, because it went out before the following slot was due.
     #[test]
     fn a_catch_up_burst_reports_the_overtaken_slots_as_late() {
-        let interval_fp = (SECOND_NS as u128) << 32;
+        let interval_fp = u128::from(SECOND_NS) << 32;
         let start = 100;
         // a stall until three intervals past the start, then four sends
         let now = start + 3 * SECOND_NS;
@@ -733,7 +794,7 @@ mod tests {
     /// its slot is not late until the *next* burst's slot is due.
     #[test]
     fn a_burst_is_late_only_once_the_next_bursts_slot_is_due() {
-        let interval_fp = (SECOND_NS as u128) << 32; // 1 ms per burst
+        let interval_fp = u128::from(SECOND_NS) << 32; // 1 ms per burst
         let start = 0;
         // messages 0 and 1 are one burst; the next burst (2,3) is due at 1 ms
         assert!(!is_late(2, interval_fp, start, 0, SECOND_NS - 1));

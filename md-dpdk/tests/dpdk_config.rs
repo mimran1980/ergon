@@ -981,7 +981,7 @@ fn install_succeeds_on_configured_context() {
 /// rules it out, as `kernel_refuses_counter` says), or at the rate measured
 /// at start where the EAL's is 0.2% off; `monotonic` is `CLOCK_MONOTONIC`,
 /// and with no rate from the EAL the counter falls back, saying why. Counter
-/// type 80's source agrees. Any other value refuses before any native work.
+/// type 1080's source agrees. Any other value refuses before any native work.
 #[cfg(feature = "dpdk")]
 #[serial]
 #[test]

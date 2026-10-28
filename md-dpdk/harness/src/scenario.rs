@@ -29,12 +29,16 @@ pub struct Endpoint {
 
 impl Endpoint {
     /// Parse `host:port`.
-    pub fn parse(s: &str) -> Self {
-        let (host, port) = s.rsplit_once(':').expect("endpoint must be host:port");
-        Endpoint {
+    pub fn parse(s: &str) -> Result<Self, Box<dyn Error>> {
+        let (host, port) = s
+            .rsplit_once(':')
+            .ok_or_else(|| format!("endpoint {s:?} must be host:port"))?;
+        Ok(Self {
             host: host.to_string(),
-            port: port.parse().expect("endpoint port must be numeric"),
-        }
+            port: port
+                .parse()
+                .map_err(|e| format!("endpoint {s:?}: the port must be numeric: {e}"))?,
+        })
     }
 
     /// `aeron:udp?endpoint=host:port` — a subscription or MDC destination URI.
@@ -119,7 +123,7 @@ pub struct ScenarioResult {
 
 impl ScenarioResult {
     fn fail(msg: impl Into<String>) -> Self {
-        ScenarioResult {
+        Self {
             ok: false,
             error: Some(msg.into()),
             ..Default::default()
@@ -154,13 +158,31 @@ pub fn run(cfg: &ScenarioCfg, aeron: &Aeron) -> ScenarioResult {
     };
     // The sender's throughput is its own offers; the receiver's is its deliveries.
     if res.sent > 0 && res.duration_ms > 0 {
-        res.offered_per_sec = res.sent as f64 / (res.duration_ms as f64 / 1000.0);
+        res.offered_per_sec = per_sec(res.sent, res.duration_ms);
     }
     if res.received > 0 && res.duration_ms > 0 {
-        res.delivered_per_sec = res.received as f64 / (res.duration_ms as f64 / 1000.0);
+        res.delivered_per_sec = per_sec(res.received, res.duration_ms);
     }
-    res.duration_ms = started.elapsed().as_millis() as u64;
+    res.duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     res
+}
+
+/// `count` over `duration`, per second.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "a rate to report: 2^52 messages is far past any run"
+)]
+fn rate(count: u64, duration: Duration) -> f64 {
+    count as f64 / duration.as_secs_f64()
+}
+
+/// `count` over `ms` milliseconds, per second.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "a rate to report: 2^52 messages or ms is far past any run"
+)]
+fn per_sec(count: u64, ms: u64) -> f64 {
+    count as f64 / (ms as f64 / 1000.0)
 }
 
 // ---------------------------------------------------------------------------
@@ -246,14 +268,14 @@ struct Recv {
 }
 
 impl Recv {
-    fn new(latency_samples: Option<&str>) -> Result<Recv, Box<dyn Error>> {
+    fn new(latency_samples: Option<&str>) -> Result<Self, Box<dyn Error>> {
         let samples = match latency_samples {
             Some(path) => Some(BufWriter::new(File::create(path)?)),
             None => None,
         };
         // 1 ns .. 10 s, 3 significant digits — a 60s @ saturation run of 1 MiB
         // messages must not overflow the histogram.
-        Ok(Recv {
+        Ok(Self {
             received: 0,
             bytes: 0,
             bad_payload: 0,
@@ -273,12 +295,6 @@ impl Recv {
     }
 }
 
-impl Default for Recv {
-    fn default() -> Self {
-        Self::new(None).unwrap()
-    }
-}
-
 /// Drain `sub` once, validating the payload pattern, tracking sequence gaps,
 /// and recording one-way latency. The sender stamps wall-clock nanoseconds at
 /// [8..16] (both nodes NTP-synchronise on EKS; a stable clock skew cancels out
@@ -289,7 +305,7 @@ fn poll_once(sub: &AeronSubscription, expect_byte: u8, recv: &mut Recv) -> Resul
             if data.len() < 17 {
                 return;
             }
-            let seq = u64::from_le_bytes(data[0..8].try_into().unwrap());
+            let seq = le_u64(data, 0);
             if let Some(last) = recv.last_seq {
                 // Each sub in multi_endpoint owns a disjoint, monotonic range
                 // (round-robin distribution), so a repeat is a retransmit that
@@ -304,7 +320,7 @@ fn poll_once(sub: &AeronSubscription, expect_byte: u8, recv: &mut Recv) -> Resul
             }
             recv.last_seq = Some(seq);
 
-            let ts = u64::from_le_bytes(data[8..16].try_into().unwrap());
+            let ts = le_u64(data, 8);
             let now = now_wall_ns();
             if now >= ts {
                 let lat = now - ts;
@@ -347,11 +363,18 @@ fn wait_released(
     Ok(())
 }
 
+/// The eight bytes of `data` at `at` as a little-endian `u64`; 0 where `data`
+/// is too short to hold them.
+fn le_u64(data: &[u8], at: usize) -> u64 {
+    data.get(at..at + 8)
+        .and_then(|b| <[u8; 8]>::try_from(b).ok())
+        .map_or(0, u64::from_le_bytes)
+}
+
 fn now_wall_ns() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0)
+        .map_or(0, |d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
 }
 
 fn build_msg(cfg: &ScenarioCfg, seq: u64) -> Vec<u8> {
@@ -388,7 +411,7 @@ fn symmetric_unicast(cfg: &ScenarioCfg, aeron: &Aeron) -> ScenarioResult {
         add_and_wait(&pub_, cfg.dest(), cfg.timeout)?;
 
         let mut sent: u64 = 0;
-        let mut recv = Recv::default();
+        let mut recv = Recv::new(None)?;
         let started = Instant::now();
         while (sent < cfg.msgs || recv.received < cfg.msgs) && started.elapsed() < cfg.timeout {
             if cfg.pause_at == Some(sent) {
@@ -440,18 +463,18 @@ fn symmetric_unicast(cfg: &ScenarioCfg, aeron: &Aeron) -> ScenarioResult {
     res
 }
 
+/// How long a primary that only sends keeps its publication up after its
+/// final offer. Until its driver stops, the sender's heartbeats tell each
+/// receiver how far the stream goes, so a lost frame, including the last one,
+/// is asked for again (a NAK) and retransmitted. Aeron's NAK delay and
+/// retransmit are well under this.
+const SENDER_TAIL: Duration = Duration::from_secs(3);
+
 /// §11.2 transport reconnect: the primary closes its publication to the first
 /// destination and opens a fresh one to a second destination; the secondary
 /// receives both batches across its two subscriptions. The first batch must
 /// not be corrupted by the reconnect, and the second must land on the new
 /// transport — no caller-pointer retention in the copied remote address.
-/// How long a primary that only sends keeps its publication up after its
-/// final offer. Until its driver stops, the sender's heartbeats tell each
-/// receiver how far the stream goes, so a lost frame, including the last one,
-/// is NAKed and retransmitted. Aeron's NAK delay and retransmit are well
-/// under this.
-const SENDER_TAIL: Duration = Duration::from_secs(3);
-
 fn reconnect(cfg: &ScenarioCfg, aeron: &Aeron) -> ScenarioResult {
     let mut res = ScenarioResult::default();
     let split = cfg.msgs / 3;
@@ -483,7 +506,7 @@ fn reconnect(cfg: &ScenarioCfg, aeron: &Aeron) -> ScenarioResult {
         (|| -> Result<(), Box<dyn Error>> {
             let sub0 = open_subscription(aeron, &cfg.sub_endpoints[0], cfg.stream, cfg.timeout)?;
             let sub1 = open_subscription(aeron, &cfg.sub_endpoints[1], cfg.stream, cfg.timeout)?;
-            let mut recv = Recv::default();
+            let mut recv = Recv::new(None)?;
             let started = Instant::now();
             while recv.received < cfg.msgs && started.elapsed() < cfg.timeout {
                 poll_once(&sub0, cfg.expect_byte, &mut recv)?;
@@ -588,7 +611,9 @@ fn multi_endpoint(cfg: &ScenarioCfg, aeron: &Aeron) -> ScenarioResult {
             // stream is its own monotonic copy, so track them separately: a
             // shared `last_seq` would conflate three streams that each advance
             // by ~1 per poll round and mis-count gaps.
-            let mut recvs: Vec<Recv> = (0..subs.len()).map(|_| Recv::default()).collect();
+            let mut recvs = (0..subs.len())
+                .map(|_| Recv::new(None))
+                .collect::<Result<Vec<_>, _>>()?;
             let started = Instant::now();
             loop {
                 let done: u64 = recvs.iter().map(|r| r.received).sum();
@@ -735,7 +760,7 @@ fn perf(cfg: &ScenarioCfg, aeron: &Aeron) -> ScenarioResult {
                     // Coarse pacing: hold each offer to its slot (ponytail: fine
                     // for hitting a target offered rate; the HDR latency is the
                     // measurement that matters).
-                    let elapsed_ns = started.elapsed().as_nanos() as u64;
+                    let elapsed_ns = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
                     if elapsed_ns < next_slot {
                         sleep(Duration::from_nanos(next_slot - elapsed_ns));
                         continue;
@@ -758,7 +783,7 @@ fn perf(cfg: &ScenarioCfg, aeron: &Aeron) -> ScenarioResult {
             res.push(format!(
                 "offered {sent} messages in {}s ({} msg/s, {backpressure} backpressure ops)",
                 duration.as_secs(),
-                sent as f64 / duration.as_secs_f64()
+                rate(sent, duration)
             ));
             Ok(())
         })()
@@ -800,7 +825,7 @@ fn perf(cfg: &ScenarioCfg, aeron: &Aeron) -> ScenarioResult {
             res.push(format!(
                 "received {} messages ({} msg/s, {} gaps, p50={}ns p99={}ns max={}ns)",
                 recv.received,
-                recv.received as f64 / duration.as_secs_f64(),
+                rate(recv.received, duration),
                 res.gaps,
                 res.latency_p50_ns,
                 res.latency_p99_ns,

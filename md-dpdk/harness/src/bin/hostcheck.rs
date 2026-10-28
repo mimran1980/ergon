@@ -30,15 +30,6 @@
 //! Exit 0: clean (no `warn`, and no `unknown` of a check that must prove
 //! something, ergon-tune's `unknown_stops_require`). Exit 2: not clean.
 //! Exit 1: the check could not run (a flag, the file).
-#![deny(unsafe_code, missing_docs)]
-#![warn(
-    clippy::all,
-    clippy::pedantic,
-    clippy::nursery,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic
-)]
 
 use ergon_latency_core::clock::{TscClock, cross_cpu_check};
 use ergon_tune::{

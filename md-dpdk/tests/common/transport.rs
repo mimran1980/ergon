@@ -31,8 +31,6 @@ pub const TYPE_TRANSPORT: i32 = 76;
 pub const TYPE_NOBUFS: i32 = 77;
 pub const TYPE_TX_EAGAIN: i32 = 78;
 pub const TYPE_ERROR: i32 = 79;
-pub const TYPE_CLOCK: i32 = 80;
-pub const TYPE_RX_HW_DELAY: i32 = 81;
 pub const TYPE_PKTS: i32 = 82;
 pub const TYPE_BYTES: i32 = 83;
 pub const TYPE_MISSED_PACKETS: i32 = 84;
@@ -46,6 +44,9 @@ pub const TYPE_EXTENDED_STATS: i32 = 92;
 pub const TYPE_UNSUPPORTED_ETHERTYPE: i32 = 93;
 pub const TYPE_UNSUPPORTED_PROTOCOL: i32 = 94;
 pub const TYPE_RX_RECEIVER_DISCARD: i32 = 95;
+// md-dpdk's own, in Aeron's custom range (1000 and up)
+pub const TYPE_CLOCK: i32 = 1080;
+pub const TYPE_RX_HW_DELAY: i32 = 1081;
 
 // ---------------------------------------------------------------------------
 // Native test hooks (fakes + runtime).

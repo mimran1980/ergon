@@ -39,7 +39,7 @@ impl EgressListener for L {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== async_connect + try_claim demo ===\n");
-    let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node();
+    let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node()?;
 
     let builder = SessionBuilder::default()
         .ingress_channel(cluster.ingress_channel.clone())?

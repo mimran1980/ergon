@@ -31,7 +31,7 @@ impl EgressListener for Leaders {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Live 3-node failover (own-driver UDP) ===\n");
-    let mut cluster = TestCluster::three_node();
+    let mut cluster = TestCluster::three_node()?;
 
     // The client's own embedded driver.
     let client_dir = std::env::temp_dir().join(format!("fo-{pid}", pid = std::process::id()));

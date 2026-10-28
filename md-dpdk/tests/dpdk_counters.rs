@@ -109,6 +109,36 @@ fn counters_registered_with_type_ids_and_labels() {
     assert_no_leak();
 }
 
+/// Every counter md-dpdk registers has a type ID Aeron assigns to its DPDK
+/// transport (`AeronCounters` `DPDK_*_TYPE_ID`: 75 to 79 and 82 to 95; 80 and
+/// 81 are unassigned, Aeron Premium's former discard counters), or one of
+/// Aeron's custom range (1000 and up) for the counters only md-dpdk has, so
+/// no reader takes one for another's.
+#[test]
+#[serial]
+fn counter_type_ids_are_aerons_dpdk_ids_or_custom() {
+    const AERON_DPDK: [i32; 19] = [
+        75, 76, 77, 78, 79, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95,
+    ];
+    let mut h = Harness::new();
+    h.init_tx(SENDER_IP, 40000, None, 1472);
+    h.init_rx(RECEIVER_IP, 60000, 1472);
+    let ids = h.counters.ids_labelled("rusteron-dpdk");
+    assert!(!ids.is_empty(), "no md-dpdk counter registered");
+    let mut custom = 0;
+    for id in ids {
+        let (_, t, label) = h.counters.read(id);
+        assert!(
+            AERON_DPDK.contains(&t) || t >= 1000,
+            "counter `{label}` has type {t}: neither Aeron's DPDK type IDs nor the custom range"
+        );
+        custom += usize::from(t >= 1000);
+    }
+    // the clock counter is md-dpdk's own
+    assert!(custom >= 2, "clock counters not in the custom range");
+    assert_no_leak();
+}
+
 /// A port's counters outlive its transports: when the last one closes (on
 /// the conductor, as the driver closes endpoints) they stay allocated and
 /// dormant, still reading their totals, so a reading taken between channels
@@ -226,7 +256,7 @@ fn counts_carry_over_when_a_port_reregisters() {
     assert_no_leak();
 }
 
-/// Each port publishes which clock the transport reads (type 80): 1 for the
+/// Each port publishes which clock the transport reads (type 1080): 1 for the
 /// x86_64 TSC, 2 for the aarch64 generic timer's virtual counter
 /// (`CNTVCT_EL0`), 0 for `CLOCK_MONOTONIC` (here: no rate from the EAL).
 #[test]
@@ -1654,7 +1684,7 @@ fn wildcard_replies_leave_from_the_address_the_peer_used() {
     assert_no_leak();
 }
 
-/// The receiver port's NIC-arrival-to-dispatch counters (type 81), by label.
+/// The receiver port's NIC-arrival-to-dispatch counters (type 1081), by label.
 /// The endpoint is the frame's own dispatch: the host clock is read for each
 /// NIC-stamped frame after it is classified and just before it is handed to
 /// Aeron.

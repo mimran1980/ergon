@@ -2,7 +2,7 @@
 //!
 //! Loads the pair inventory written by `deploy/aws-eks/node/
 //! bootstrap-dpdk-ena.sh`, serves the kubelet v1beta1 Registration and
-//! DevicePlugin services on a unix socket under /var/lib/kubelet/device-plugins/,
+//! `DevicePlugin` services on a unix socket under `/var/lib/kubelet/device-plugins/`,
 //! and keeps re-registering while the kubelet is up (including after kubelet
 //! restarts, when its socket reappears). The plugin exits nonzero rather than
 //! register an unsafe inventory, re-reads the inventory whenever the file
@@ -29,8 +29,12 @@ use tower::service_fn;
 mod v1beta1 {
     include!(concat!(env!("OUT_DIR"), "/v1beta1.rs"));
 }
-#[allow(unused_imports)]
-use v1beta1::*;
+use v1beta1::{
+    AllocateRequest, AllocateResponse, ContainerAllocateResponse, Device, DevicePluginOptions, DeviceSpec, Empty,
+    ListAndWatchResponse, NumaNode, PreStartContainerRequest, PreStartContainerResponse, PreferredAllocationRequest,
+    PreferredAllocationResponse, RegisterRequest, TopologyInfo, device_plugin_server, registration_client,
+    registration_server,
+};
 
 const RESOURCE_NAME: &str = "rusteron.io/dpdk-ena-pair";
 const API_VERSION: &str = "v1beta1";
@@ -98,9 +102,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// Serve the Registration and DevicePlugin services on `listener` until
+/// Serve the Registration and `DevicePlugin` services on `listener` until
 /// `shutdown` resolves, then return at once. Not tonic's graceful shutdown:
-/// it waits for every open stream to end, and kubelet's ListAndWatch stream
+/// it waits for every open stream to end, and kubelet's `ListAndWatch` stream
 /// ends only with the plugin, so the stop would wait for the SIGKILL.
 async fn serve(
     listener: UnixListener,
@@ -112,7 +116,7 @@ async fn serve(
         .add_service(device_plugin_server::DevicePluginServer::new(service))
         .serve_with_incoming(UnixListenerStream::new(listener));
     tokio::select! {
-        served = server => served,
+        result = server => result,
         () = shutdown => Ok(()),
     }
 }
@@ -180,12 +184,14 @@ async fn register(kubelet_sock: &std::path::Path, request: &RegisterRequest) -> 
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use crate::inventory::fixtures::{ScratchDir, fixture};
     use crate::service::SysfsRoots;
+    use crate::v1beta1::device_plugin_client;
 
-    /// Kubelet holds a ListAndWatch stream open for as long as the plugin runs,
+    /// Kubelet holds a `ListAndWatch` stream open for as long as the plugin runs,
     /// so a stop that waits for every stream to end never comes before the
     /// grace period's SIGKILL.
     #[tokio::test]

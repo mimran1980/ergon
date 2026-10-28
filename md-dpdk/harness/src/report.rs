@@ -2,6 +2,8 @@
 //! workspace minimum, plan §16). `scripts/test-dpdk-vdev.sh` combines the
 //! per-process reports and asserts on the `ok`/`sent`/`received` fields.
 
+use std::fmt::Write as _;
+
 /// Per-process scenario outcome, serialised to the path given by `--report`.
 #[derive(Default, Debug)]
 pub struct Report {
@@ -57,50 +59,46 @@ pub struct Report {
 impl Report {
     /// `to_json` is deliberately format-stable: the script greps the fields by
     /// name, so changing this output is a breaking change to the harness.
-    pub fn to_json(&self) -> String {
+    pub fn to_json(&self) -> Result<String, std::fmt::Error> {
         let mut s = String::new();
         s.push_str("{\n");
-        s.push_str(&format!("  \"role\": {},\n", json_str(&self.role)));
-        s.push_str(&format!("  \"scenario\": {},\n", json_str(&self.scenario)));
-        s.push_str(&format!("  \"transport\": {},\n", json_str(&self.transport)));
-        s.push_str(&format!("  \"ok\": {},\n", self.ok));
-        s.push_str(&format!("  \"sent\": {},\n", self.sent));
-        s.push_str(&format!("  \"received\": {},\n", self.received));
-        s.push_str(&format!("  \"bytes\": {},\n", self.bytes));
-        s.push_str(&format!("  \"duration_ms\": {},\n", self.duration_ms));
-        s.push_str(&format!("  \"latency_p50_ns\": {},\n", self.latency_p50_ns));
-        s.push_str(&format!("  \"latency_p99_ns\": {},\n", self.latency_p99_ns));
-        s.push_str(&format!("  \"latency_max_ns\": {},\n", self.latency_max_ns));
-        s.push_str(&format!("  \"offered_per_sec\": {},\n", self.offered_per_sec));
-        s.push_str(&format!("  \"delivered_per_sec\": {},\n", self.delivered_per_sec));
-        s.push_str(&format!("  \"backpressure_ops\": {},\n", self.backpressure_ops));
-        s.push_str(&format!("  \"gaps\": {},\n", self.gaps));
-        s.push_str(&format!("  \"clock\": {},\n", json_str(&self.clock)));
-        s.push_str(&format!("  \"clock_hz\": {},\n", self.clock_hz));
-        s.push_str(&format!("  \"clock_rate\": {},\n", json_str(&self.clock_rate)));
-        s.push_str(&format!("  \"clock_eal_hz\": {},\n", self.clock_eal_hz));
-        s.push_str(&format!("  \"clock_measured_hz\": {},\n", self.clock_measured_hz));
-        s.push_str(&format!("  \"clock_reason\": {},\n", json_str(&self.clock_reason)));
-        s.push_str(&format!("  \"cntfrq_hz\": {},\n", self.cntfrq_hz));
-        s.push_str(&format!("  \"dpdk_counters\": {},\n", json_str(&self.dpdk_counters)));
-        s.push_str(&format!("  \"driver_errors\": {},\n", json_str(&self.driver_errors)));
+        writeln!(s, "  \"role\": {},", json_str(&self.role))?;
+        writeln!(s, "  \"scenario\": {},", json_str(&self.scenario))?;
+        writeln!(s, "  \"transport\": {},", json_str(&self.transport))?;
+        writeln!(s, "  \"ok\": {},", self.ok)?;
+        writeln!(s, "  \"sent\": {},", self.sent)?;
+        writeln!(s, "  \"received\": {},", self.received)?;
+        writeln!(s, "  \"bytes\": {},", self.bytes)?;
+        writeln!(s, "  \"duration_ms\": {},", self.duration_ms)?;
+        writeln!(s, "  \"latency_p50_ns\": {},", self.latency_p50_ns)?;
+        writeln!(s, "  \"latency_p99_ns\": {},", self.latency_p99_ns)?;
+        writeln!(s, "  \"latency_max_ns\": {},", self.latency_max_ns)?;
+        writeln!(s, "  \"offered_per_sec\": {},", self.offered_per_sec)?;
+        writeln!(s, "  \"delivered_per_sec\": {},", self.delivered_per_sec)?;
+        writeln!(s, "  \"backpressure_ops\": {},", self.backpressure_ops)?;
+        writeln!(s, "  \"gaps\": {},", self.gaps)?;
+        writeln!(s, "  \"clock\": {},", json_str(&self.clock))?;
+        writeln!(s, "  \"clock_hz\": {},", self.clock_hz)?;
+        writeln!(s, "  \"clock_rate\": {},", json_str(&self.clock_rate))?;
+        writeln!(s, "  \"clock_eal_hz\": {},", self.clock_eal_hz)?;
+        writeln!(s, "  \"clock_measured_hz\": {},", self.clock_measured_hz)?;
+        writeln!(s, "  \"clock_reason\": {},", json_str(&self.clock_reason))?;
+        writeln!(s, "  \"cntfrq_hz\": {},", self.cntfrq_hz)?;
+        writeln!(s, "  \"dpdk_counters\": {},", json_str(&self.dpdk_counters))?;
+        writeln!(s, "  \"driver_errors\": {},", json_str(&self.driver_errors))?;
         s.push_str("  \"detail\": [\n");
         for (i, d) in self.detail.iter().enumerate() {
-            s.push_str(&format!("    {}", json_str(d)));
+            write!(s, "    {}", json_str(d))?;
             if i + 1 < self.detail.len() {
                 s.push(',');
             }
             s.push('\n');
         }
         s.push_str("  ],\n");
-        let err = self
-            .error
-            .as_deref()
-            .map(json_str)
-            .unwrap_or_else(|| "null".to_string());
-        s.push_str(&format!("  \"error\": {}\n", err));
+        let err = self.error.as_deref().map_or_else(|| "null".to_string(), json_str);
+        writeln!(s, "  \"error\": {err}")?;
         s.push_str("}\n");
-        s
+        Ok(s)
     }
 }
 
@@ -182,24 +180,25 @@ mod tests {
     }
 
     #[test]
-    fn the_report_carries_counters_and_errors() {
+    fn the_report_carries_counters_and_errors() -> Result<(), std::fmt::Error> {
         let report = Report {
             dpdk_counters: "sender.rx.icmp-echo=5".to_string(),
             driver_errors: "next hop 10.9.0.254 does not answer ARP".to_string(),
             ..Report::default()
         };
-        let json = report.to_json();
+        let json = report.to_json()?;
         assert!(json.contains("\"dpdk_counters\": \"sender.rx.icmp-echo=5\","), "{json}");
         assert!(
             json.contains("\"driver_errors\": \"next hop 10.9.0.254 does not answer ARP\","),
             "{json}"
         );
+        Ok(())
     }
 
     /// The vdev script reads `"<field>": <value>` up to the next comma: the
     /// transport's clock, its rate and `CNTFRQ_EL0` come out that way.
     #[test]
-    fn the_report_carries_the_transports_clock() {
+    fn the_report_carries_the_transports_clock() -> Result<(), std::fmt::Error> {
         let report = Report {
             transport: "dpdk".to_string(),
             clock: "counter".to_string(),
@@ -210,7 +209,7 @@ mod tests {
             cntfrq_hz: 1_000_000_000,
             ..Report::default()
         };
-        let json = report.to_json();
+        let json = report.to_json()?;
         for line in [
             "\"clock\": \"counter\",",
             "\"clock_hz\": 1000000000,",
@@ -222,5 +221,6 @@ mod tests {
         ] {
             assert!(json.contains(line), "{line} in {json}");
         }
+        Ok(())
     }
 }

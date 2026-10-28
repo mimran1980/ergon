@@ -27,7 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ── 1. Launch a test cluster and connect ─────────────────────────────
     // In production you'd connect to an already-running Aeron Cluster over
     // its configured ingress/egress channels.
-    let cluster = TestCluster::single_node();
+    let cluster = TestCluster::single_node()?;
     let aeron_dir = cluster.aeron_dir().to_string_lossy().into_owned();
 
     let builder = SessionBuilder::default()

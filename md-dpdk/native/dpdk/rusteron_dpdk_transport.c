@@ -55,10 +55,6 @@ static int rusteron_dpdk_transport_init_delegated(
 #define RUSTERON_DPDK_BINDINGS_NAME "rusteron-dpdk-ena"
 #define RUSTERON_DPDK_BINDINGS_TYPE "media"
 
-/* Aeron never passes more than AERON_NETWORK_PUBLICATION_MAX_MESSAGES_PER_SEND
- * iovecs to one send; the batch buffer must hold a full burst regardless. */
-#define RUSTERON_DPDK_MAX_MESSAGES_PER_SEND 16
-
 /* The transport layout lives in rusteron_dpdk_internal.h. */
 
 /* Process-lifetime native runtime. EAL can be initialized exactly once, so

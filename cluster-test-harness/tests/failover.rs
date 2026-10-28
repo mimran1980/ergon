@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-//! Live 3-node spawn/connect coverage against the Java ClusterLauncher.
+//! Live 3-node spawn/connect coverage against the Java `ClusterLauncher`.
 
 use ergo_aeron_cluster::cluster_codec_types::{
     SessionConnectRequestEncoder, SessionConnectRequestFixedFields,
@@ -12,7 +12,7 @@ use std::time::Duration;
 #[test]
 #[serial]
 fn test_three_node_cluster_spawns() -> Result<(), Box<dyn std::error::Error>> {
-    let cluster = TestCluster::three_node();
+    let cluster = TestCluster::three_node()?;
     assert!(cluster.ingress_channel.contains("aeron:udp"));
     assert!(cluster.egress_channel.contains("aeron:udp"));
 
@@ -22,7 +22,7 @@ fn test_three_node_cluster_spawns() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 #[serial]
 fn test_connect_to_three_node_cluster() -> Result<(), Box<dyn std::error::Error>> {
-    let cluster = TestCluster::three_node();
+    let cluster = TestCluster::three_node()?;
     let dir_cstr = cformat!("{}", cluster.aeron_dir().display());
 
     let ctx = rusteron_client::AeronContext::new()?;

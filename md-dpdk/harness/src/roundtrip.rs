@@ -24,6 +24,8 @@
 
 use crate::lab::{Clock, label};
 use hdrhistogram::Histogram;
+use std::error::Error;
+use std::fmt::Write as _;
 
 const SPIKE_CAPACITY: usize = 100_000;
 const STALL_CAPACITY: usize = 1_000_000;
@@ -37,24 +39,29 @@ pub struct Pace {
 
 impl Pace {
     /// From `RTT_GAP_US` (whole microseconds, up to 60 s).
-    pub fn from_env() -> Self {
-        let gap = match std::env::var("RTT_GAP_US") {
-            Err(_) => 0,
-            Ok(v) => match v.parse::<u64>() {
-                Ok(us) if us <= 60_000_000 => us * 1000,
-                _ => panic!("RTT_GAP_US={v}: whole microseconds, 0 to 60000000"),
-            },
-        };
-        Self { gap, next: 0 }
+    pub fn from_env() -> Result<Self, Box<dyn Error>> {
+        let gap = std::env::var("RTT_GAP_US").map_or(Ok(0), |v| match v.parse::<u64>() {
+            Ok(us) if us <= 60_000_000 => Ok(us * 1000),
+            _ => Err(format!("RTT_GAP_US={v}: whole microseconds, 0 to 60000000")),
+        })?;
+        Ok(Self { gap, next: 0 })
     }
 
     /// Whether pings are paced: the run's budget is then checked every ping.
+    #[allow(
+        clippy::inline_always,
+        reason = "called in every pass of a measured loop: kept inline whatever the inliner decides"
+    )]
     #[inline(always)]
     pub const fn paced(&self) -> bool {
         self.gap != 0
     }
 
     /// Whether the next ping may go at `now` (the clock's).
+    #[allow(
+        clippy::inline_always,
+        reason = "called in every pass of a measured loop: kept inline whatever the inliner decides"
+    )]
     #[inline(always)]
     pub const fn ready(&self, now: u64) -> bool {
         self.gap == 0 || now >= self.next
@@ -65,6 +72,10 @@ impl Pace {
     /// `RTT_SECONDS` holds its seconds over the gap of pings); a ping half
     /// a gap late or more (a lost one's timeout, a stall) starts the
     /// schedule again a gap after it, never a burst to catch up.
+    #[allow(
+        clippy::inline_always,
+        reason = "called in every pass of a measured loop: kept inline whatever the inliner decides"
+    )]
     #[inline(always)]
     pub const fn sent(&mut self, at: u64) {
         let due = self.next;
@@ -88,20 +99,26 @@ pub struct Stalls {
 
 impl Stalls {
     /// `None` unless `LOOP_STALLS_DIR` is set.
-    pub fn new(clock: &Clock) -> Option<Self> {
-        std::env::var("LOOP_STALLS_DIR").ok().filter(|d| !d.is_empty())?;
-        let threshold: u64 = std::env::var("LOOP_STALL_NS").map_or(20_000, |v| v.parse().expect("LOOP_STALL_NS"));
+    pub fn new(clock: &Clock) -> Result<Option<Self>, Box<dyn Error>> {
+        if !std::env::var("LOOP_STALLS_DIR").is_ok_and(|d| !d.is_empty()) {
+            return Ok(None);
+        }
+        let threshold = env_u64("LOOP_STALL_NS", 20_000)?;
         let t0 = clock.now();
-        Some(Self {
+        Ok(Some(Self {
             threshold,
             last: t0,
             t0,
             t0_realtime: realtime_ns(),
             rows: Vec::with_capacity(STALL_CAPACITY),
-        })
+        }))
     }
 
     /// One pass of the loop, at `now`.
+    #[allow(
+        clippy::inline_always,
+        reason = "called in every pass of a measured loop: kept inline whatever the inliner decides"
+    )]
     #[inline(always)]
     pub fn pass(&mut self, now: u64) {
         let gap = now.wrapping_sub(self.last);
@@ -112,17 +129,25 @@ impl Stalls {
     }
 
     /// Writes them to `name` in `LOOP_STALLS_DIR`.
-    pub fn write(&self, name: &str) {
+    pub fn write(&self, name: &str) -> Result<(), Box<dyn Error>> {
         let Some(dir) = std::env::var("LOOP_STALLS_DIR").ok() else {
-            return;
+            return Ok(());
         };
         let mut rows = format!("# start_realtime_ns={}\nend_ns,gap_ns\n", self.t0_realtime);
         for (end, gap) in &self.rows {
-            rows.push_str(&format!("{end},{gap}\n"));
+            writeln!(rows, "{end},{gap}")?;
         }
         let path = format!("{dir}/{name}");
-        std::fs::write(&path, rows).unwrap_or_else(|e| panic!("LOOP_STALLS_DIR {path}: {e}"));
+        std::fs::write(&path, rows).map_err(|e| format!("LOOP_STALLS_DIR {path}: {e}"))?;
+        Ok(())
     }
+}
+
+/// `var` as a whole number, `default` when unset.
+pub fn env_u64(var: &str, default: u64) -> Result<u64, Box<dyn Error>> {
+    std::env::var(var).map_or(Ok(default), |v| {
+        v.parse().map_err(|e| format!("{var}={v}: a whole number: {e}").into())
+    })
 }
 
 /// `CLOCK_REALTIME` now, in nanoseconds since the epoch.
@@ -147,18 +172,18 @@ pub struct Results {
 impl Results {
     /// Empty, from the environment (`LOAD_SPIKES`, `LOAD_SPIKE_NS`); call
     /// [`start`](Self::start) as the measured run begins.
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self, Box<dyn Error>> {
         let spikes_path = std::env::var("LOAD_SPIKES").ok().filter(|p| !p.is_empty());
-        let spike_ns: u64 = std::env::var("LOAD_SPIKE_NS").map_or(100_000, |v| v.parse().expect("LOAD_SPIKE_NS"));
-        Self {
-            histogram: Histogram::<u64>::new_with_bounds(1, 60_000_000_000, 3).unwrap(),
+        let spike_ns = env_u64("LOAD_SPIKE_NS", 100_000)?;
+        Ok(Self {
+            histogram: Histogram::<u64>::new_with_bounds(1, 60_000_000_000, 3)?,
             spikes: Vec::with_capacity(if spikes_path.is_some() { SPIKE_CAPACITY } else { 0 }),
             spikes_path,
             spike_ns,
             spikes_total: 0,
             t0: 0,
             t0_realtime: 0,
-        }
+        })
     }
 
     /// The measured run starts now: spikes' `due_ns` count from here.
@@ -169,6 +194,10 @@ impl Results {
 
     /// Ping `ping` (its index in the measured run) came back after `rtt` ns;
     /// `clock` is read only for a spike.
+    #[allow(
+        clippy::inline_always,
+        reason = "called in every pass of a measured loop: kept inline whatever the inliner decides"
+    )]
     #[inline(always)]
     pub fn record(&mut self, clock: &Clock, rtt: u64, ping: usize) {
         self.histogram.saturating_record(rtt);
@@ -201,14 +230,14 @@ impl Results {
 
     /// Prints the result line and writes `RTT_HISTOGRAM` and `LOAD_SPIKES`
     /// (`stream`: the spikes' stream column).
-    pub fn report(&self, lost: u64, stream: i32) {
+    pub fn report(&self, lost: u64, stream: i32) -> Result<(), Box<dyn Error>> {
         println!("{}", self.line(lost));
         if let Some(path) = std::env::var("RTT_HISTOGRAM").ok().filter(|p| !p.is_empty()) {
             let mut rows = String::from("value_ns,count\n");
             for v in self.histogram.iter_recorded() {
-                rows.push_str(&format!("{},{}\n", v.value_iterated_to(), v.count_at_value()));
+                writeln!(rows, "{},{}", v.value_iterated_to(), v.count_at_value())?;
             }
-            std::fs::write(&path, rows).unwrap_or_else(|e| panic!("RTT_HISTOGRAM {path}: {e}"));
+            std::fs::write(&path, rows).map_err(|e| format!("RTT_HISTOGRAM {path}: {e}"))?;
         }
         if let Some(path) = &self.spikes_path {
             // the wall-clock time due_ns counts from, to line spikes up with traces
@@ -217,10 +246,11 @@ impl Results {
                 self.t0_realtime, self.spikes_total
             );
             for (due, latency, ping) in &self.spikes {
-                rows.push_str(&format!("{stream},{due},{latency},{ping}\n"));
+                writeln!(rows, "{stream},{due},{latency},{ping}")?;
             }
-            std::fs::write(path, rows).unwrap_or_else(|e| panic!("LOAD_SPIKES {path}: {e}"));
+            std::fs::write(path, rows).map_err(|e| format!("LOAD_SPIKES {path}: {e}"))?;
         }
+        Ok(())
     }
 }
 

@@ -126,7 +126,7 @@ impl DpdkTransport {
     }
 
     /// The clock the native transport reads ([`crate::clock`]): the CPU
-    /// counter and its rate, or `CLOCK_MONOTONIC` and why. Counter type 80
+    /// counter and its rate, or `CLOCK_MONOTONIC` and why. Counter type 1080
     /// reports the same source.
     #[must_use]
     pub const fn clock(&self) -> &TransportClock {
