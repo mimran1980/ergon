@@ -9,6 +9,13 @@
   as `FrameConn<FstackTcp>`, `WsConn<FstackTcp>`, `HttpConn<FstackTcp>`
   (dials' `on_stack`), configured by `Config`'s `fstack_*` keys
   (`fstack::FstackConf`). Lab-tested in Docker only.
+- `ergon-io` `smoltcp-spin` (feature `smoltcp-dpdk`, Linux x86_64 and
+  aarch64): TCP and UDP on smoltcp 0.14.0 over a DPDK port, started by
+  `smoltcp_dpdk::Stack::init`; `FrameConn<SmolTcp>`, `WsConn<SmolTcp>`,
+  `HttpConn<SmolTcp>`, `UdpConn<SmolUdp>`. A 10 ms TCP RTO floor
+  (`StackConfig::rto_min_us`; smoltcp's own is 1 s), immediate ACKs, no
+  Nagle, timestamps; ARP entries refreshed or the gateway MAC pinned.
+  Lab-tested in Docker only.
 - `ergon-io` `FrameDial::connect_blocking` and `WsDial::connect_blocking`
   (`HttpDial`'s exists), `Backend::KERNEL`, `Backend::bypasses_kernel`.
 - `ergon-tune` T20 (`t20_irq_idle`): warns when a CPU that takes the data NICs'
@@ -22,8 +29,9 @@
 - Breaking: `ergon-io`'s TCP endpoints and dials take their socket type,
   `FrameConn<T = TcpStream>` (and `FrameDial`, `WsConn`, `WsDial`,
   `HttpConn`, `HttpDial`); code naming them without `T` is unchanged.
-  `Backend::ALL` has four backends (`fstack-spin` added; `Backend::KERNEL` is
-  the old three), and `Config` has an `fstack` field.
+  `Backend::ALL` has five backends (`fstack-spin` and `smoltcp-spin` added;
+  `Backend::KERNEL` is the old three), and `Config` has an `fstack` field.
+  `UdpConn<D = UdpSocket>` takes its socket type too.
 - Breaking: `ergon-md-dpdk`'s `clock` counter is type 1080 (was 80) and its
   `nic-arrival-to-dispatch-*` counters type 1081 (was 81), in Aeron's custom
   range: Aeron leaves 80 and 81 unassigned. Its other counters keep Aeron's

@@ -21,6 +21,13 @@
 //! `HttpConn<FstackTcp>`), needs the `fstack` feature (Linux), and is
 //! lab-tested only.
 //!
+//! A fifth, `smoltcp-spin` ([`crate::smoltcp_dpdk`]), also bypasses the
+//! kernel: smoltcp, a TCP/IP stack in this process, over a DPDK port it
+//! polls once per poll. It drives TCP endpoints made on it
+//! (`FrameConn<SmolTcp>`, `WsConn<SmolTcp>`, `HttpConn<SmolTcp>`) and UDP
+//! (`UdpConn<SmolUdp>`), needs the `smoltcp-dpdk` feature (Linux) and a
+//! stack started on the polling thread, and is lab-tested only.
+//!
 //! Count every socket the loop thread polls (feeds, order connections,
 //! `HttpClient` pools).
 //!
@@ -60,15 +67,19 @@ pub enum Backend {
     /// F-Stack (FreeBSD's TCP/IP stack on DPDK) on a NIC of its own, one
     /// pass per poll on the polling thread ([`crate::fstack`]).
     FstackSpin,
+    /// smoltcp, a TCP/IP stack in this process, over a DPDK port polled
+    /// once per poll ([`crate::smoltcp_dpdk`]).
+    SmoltcpSpin,
 }
 
 impl Backend {
     /// Every backend.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::EpollSpin,
         Self::RecvBusy,
         Self::UringSqpoll,
         Self::FstackSpin,
+        Self::SmoltcpSpin,
     ];
 
     /// The backends over the kernel's sockets.
@@ -82,30 +93,34 @@ impl Backend {
             Self::RecvBusy => "recv-busy",
             Self::UringSqpoll => "uring-sqpoll",
             Self::FstackSpin => "fstack-spin",
+            Self::SmoltcpSpin => "smoltcp-spin",
         }
     }
 
     /// Whether the backend polls the NIC instead of waiting for interrupts.
     #[must_use]
     pub const fn polls_nic(self) -> bool {
-        matches!(self, Self::RecvBusy | Self::UringSqpoll | Self::FstackSpin)
+        matches!(
+            self,
+            Self::RecvBusy | Self::UringSqpoll | Self::FstackSpin | Self::SmoltcpSpin
+        )
     }
 
-    /// Whether the backend's TCP/IP stack is in user space (F-Stack on its
-    /// own NIC), not the kernel's: the kernel's routes, devices and socket
-    /// options do not apply.
+    /// Whether the backend's TCP/IP stack is in user space (F-Stack or
+    /// smoltcp, each on a DPDK port of its own), not the kernel's: the
+    /// kernel's routes, devices and socket options do not apply.
     #[must_use]
     pub const fn bypasses_kernel(self) -> bool {
-        matches!(self, Self::FstackSpin)
+        matches!(self, Self::FstackSpin | Self::SmoltcpSpin)
     }
 
     /// The stack whose sockets it drives.
     #[cfg_attr(not(target_os = "linux"), allow(dead_code))] // the driver's
     pub(crate) const fn stack(self) -> crate::netstack::StackId {
-        if self.bypasses_kernel() {
-            crate::netstack::StackId::Fstack
-        } else {
-            crate::netstack::StackId::Kernel
+        match self {
+            Self::FstackSpin => crate::netstack::StackId::Fstack,
+            Self::SmoltcpSpin => crate::netstack::StackId::Smoltcp,
+            _ => crate::netstack::StackId::Kernel,
         }
     }
 
@@ -288,10 +303,11 @@ impl Config {
     /// Defaults for `backend`. `fstack-spin` starts with no receive
     /// timestamps (F-Stack has none), the quick-ACK route check off (F-Stack
     /// acknowledges at once: `FstackConf::delayed_ack`) and no
-    /// `TCP_USER_TIMEOUT` (FreeBSD has none).
+    /// `TCP_USER_TIMEOUT` (FreeBSD has none). `smoltcp-spin` starts with the
+    /// quick-ACK route check off (it acknowledges every segment at once).
     #[must_use]
     pub const fn new(backend: Backend) -> Self {
-        let user_space = backend.bypasses_kernel();
+        let user_space = matches!(backend, Backend::FstackSpin);
         Self {
             backend,
             loop_cpu: None,
@@ -307,7 +323,7 @@ impl Config {
             helper_cpus: Vec::new(),
             inline_connect_fallback: false,
             per_queue: false,
-            quickack_check: if user_space {
+            quickack_check: if backend.bypasses_kernel() {
                 QuickAckCheck::Off
             } else {
                 QuickAckCheck::Warn
@@ -400,15 +416,17 @@ impl Config {
                 self.backend
             )));
         }
-        if self.backend.bypasses_kernel() {
+        if self.backend == Backend::FstackSpin {
             self.validate_user_space()
-        } else if self.fstack.is_default() {
-            Ok(())
-        } else {
+        } else if !self.fstack.is_default() {
             Err(Error::Config(format!(
                 "the fstack_* keys apply to fstack-spin, not {}",
                 self.backend
             )))
+        } else if self.backend == Backend::SmoltcpSpin {
+            self.validate_smoltcp()
+        } else {
+            Ok(())
         }
     }
 
@@ -438,6 +456,38 @@ impl Config {
         }
         if self.rx_timestamps {
             return refuse("rx_timestamps", "F-Stack has no receive timestamps");
+        }
+        Ok(())
+    }
+
+    /// `smoltcp-spin`: what its stack cannot do per socket is refused.
+    fn validate_smoltcp(&self) -> Result<()> {
+        if self.tcp_rto_min_us.is_some() {
+            return Err(Error::Config(
+                "tcp_rto_min_us is the kernel's; smoltcp-spin takes the RTO floor from \
+                 smoltcp_dpdk::StackConfig::rto_min_us"
+                    .into(),
+            ));
+        }
+        if self.quickack_check == QuickAckCheck::Require {
+            return Err(Error::Config(
+                "quickack_check=require checks kernel routes; smoltcp-spin acknowledges every \
+                 segment at once and has no kernel route (use off or warn)"
+                    .into(),
+            ));
+        }
+        // smoltcp's timeout counts from the last segment heard, idle or not:
+        // only keepalive probes, sent more often, keep a quiet connection
+        // alive under it.
+        if self.tcp_user_timeout_ms > 0
+            && (self.keepalive_idle_s == 0
+                || u64::from(self.keepalive_idle_s) * 1000 >= u64::from(self.tcp_user_timeout_ms))
+        {
+            return Err(Error::Config(format!(
+                "smoltcp-spin aborts a connection that hears nothing for tcp_user_timeout_ms \
+                 ({} ms), idle or not: keepalive_idle_s ({} s) must be on and shorter",
+                self.tcp_user_timeout_ms, self.keepalive_idle_s
+            )));
         }
         Ok(())
     }

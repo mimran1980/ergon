@@ -10,7 +10,8 @@ HTTP/1.1 over TLS 1.3, length-prefixed frames over plain TCP, and UDP.
 - One non-blocking `poll` moves bytes between your loop and the kernel.
 - The kernel interface (epoll or `io_uring`, with or without NIC polling) is
   configuration, chosen at run time; so is kernel bypass, TCP on
-  F-Stack (`fstack-spin`, feature `fstack`, lab-tested only).
+  F-Stack (`fstack-spin`, feature `fstack`) or TCP and UDP on smoltcp
+  over DPDK (`smoltcp-spin`, feature `smoltcp-dpdk`), both lab-tested only.
 - TLS records are decrypted in place and messages parsed in place: one copy
   per byte.
 
@@ -183,6 +184,14 @@ thread polls (feeds, order connections, `HttpClient` pool connections):
   F-Stack built (`FSTACK_PREFIX`), hugepages and DPDK's privileges; a
   binary using it links with `-C link-arg=-Wl,-z,nostart-stop-gc`.
   Lab-tested only: [`fstack-spin`](https://mimran1980.github.io/ergon/io/backends.html#fstack-spin-tcp-on-f-stack).
+- `smoltcp-spin`: TCP and UDP on [smoltcp](https://github.com/smoltcp-rs/smoltcp)
+  (0BSD, a stack in the process) over a DPDK port; `FrameConn<SmolTcp>`,
+  `WsConn<SmolTcp>`, `HttpConn<SmolTcp>`, `UdpConn<SmolUdp>`, after
+  `smoltcp_dpdk::Stack::init` on the polling thread. Needs the
+  `smoltcp-dpdk` feature and libdpdk; IPv4 only; a 10 ms RTO floor by
+  default (smoltcp's own is 1 s); no RACK/TLP, received SACK blocks
+  ignored. Lab-tested only:
+  [`smoltcp-spin`](https://mimran1980.github.io/ergon/io/backends.html#smoltcp-spin-tcp-and-udp-on-smoltcp-over-dpdk).
 
 The full table, the evidence and the node settings: the book's
 [choosing a backend](https://mimran1980.github.io/ergon/io/overview.html#choosing-a-backend).
@@ -231,6 +240,7 @@ Tables and conclusion: the book's
 | `uring` | on | the `io_uring` backend, `uring-sqpoll` (Linux); without it, choosing it returns `Error::Unsupported` |
 | `webpki-roots` | off | Mozilla's root store, `tls::webpki_roots` (CDLA-Permissive-2.0, so opt-in) |
 | `curl` | off | libcurl as an `HttpClient` implementation (the system libcurl, through pkg-config). It refuses every method but GET, HEAD, OPTIONS and DELETE unless `curl_allow_non_idempotent_methods` is set: libcurl can send a request twice |
+| `smoltcp-dpdk` | off | the `smoltcp-spin` backend (Linux `x86_64` or `aarch64`): smoltcp 0.14.0 over a DPDK port, compiled against the system's libdpdk >= 23.11 (pkg-config); elsewhere it compiles and `Stack::init` returns `Error::Unsupported` |
 | `fstack` | off | the `fstack-spin` backend (Linux): links F-Stack and its DPDK from `FSTACK_PREFIX` ([`build-fstack.sh`](https://github.com/mimran1980/ergon/blob/main/io/benches/fstack/build-fstack.sh)); without it the feature compiles and `fstack-spin` returns `Error::Unsupported` |
 
 Install with the features you need:

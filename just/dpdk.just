@@ -41,3 +41,14 @@ transport-smoke-docker *args:
 # The DPDK tests in Docker, amd64 emulation or `--arm64` (Graviton's architecture, native on Apple silicon); `--build` the image, `--all` for check-dpdk, `--rootless` for the vdev scenarios as a non-root user, else a test filter
 verify-dpdk-docker *args:
     bash md-dpdk/native/dpdk/test/verify-dpdk.sh {{args}}
+
+# ergon-io's smoltcp-spin backend (feature smoltcp-dpdk): clippy, its tests and the veth vdev lane (Linux + libdpdk, unprivileged user namespaces, sch_netem)
+check-io-smoltcp:
+    cargo clippy -p ergon-io --all-targets --features smoltcp-dpdk -- -D warnings
+    cargo clippy -p ergon-io --features smoltcp-dpdk --test smoltcp_vdev --example smoltcp_peer -- -D warnings
+    cargo test -p ergon-io --features smoltcp-dpdk -- --test-threads=1
+    scripts/test-io-smoltcp-vdev.sh
+
+# The same in Docker: `--check` (fmt, clippy with and without the feature, rustdoc, tests) or `--vdev`; arm64 native on Apple silicon, `--amd64` emulated, `--build` the image
+verify-io-smoltcp-docker *args:
+    bash io/native/dpdk/test/verify-smoltcp.sh {{args}}

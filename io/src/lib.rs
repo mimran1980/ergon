@@ -32,6 +32,8 @@
 //!   WebSocket and HTTP on one driver), [`clock`], [`error`].
 //! - [`fstack`]: the `fstack-spin` backend's settings and, with the
 //!   `fstack` feature on Linux, F-Stack itself (`FstackTcp`, `init`).
+//! - [`smoltcp_dpdk`]: the `smoltcp-spin` backend's stack (smoltcp over a
+//!   DPDK port, the `smoltcp-dpdk` feature): `Stack`, `SmolTcp`, `SmolUdp`.
 //!
 //! `Driver`, `HttpClient`, `sys` and `warnings` are Linux-only, so they are
 //! named here without links.
@@ -52,6 +54,7 @@ pub mod outcome;
 pub mod placement;
 pub mod reconnect;
 pub mod route;
+pub mod smoltcp_dpdk;
 mod stream;
 pub mod text;
 pub mod tls;
