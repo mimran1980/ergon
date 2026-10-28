@@ -405,6 +405,14 @@ conductor_cycle_threshold() {
 # the threshold has to clear the park of whatever idle strategy those
 # overrides left in play. An explicit threshold that does not is refused
 # before the driver starts, naming both values and the one to use.
+# The park is that of the agent that runs the conductor's duty cycle
+# (Aeron 1.53.3 aeron_driver.c aeron_driver_init): DEDICATED's and
+# SHARED_NETWORK's conductor agent, AERON_CONDUCTOR_IDLE_STRATEGY; SHARED's
+# one shared agent, AERON_SHARED_IDLE_STRATEGY (the conductor's own strategy
+# is never used); INVOKER's, the client thread that calls
+# aeron_driver_main_do_work, which this lab's clients never idle through
+# the driver (aeron_lat, lab.rs, floor: shared NoOp, main_do_work alone),
+# so no park.
 # override_export <KEY=value>: a mode's override as the driver environment's
 # export line. A mode's name cannot hold a comma (it would split its
 # results.csv rows: modes.sh mode_check), so RUSTERON_DPDK_ENA_DEVARGS, a
@@ -418,7 +426,7 @@ override_export() {
 }
 
 conductor_cycle_threshold_apply() {
-    local env_file=${1-} got strategy args threshold park want have
+    local env_file=${1-} got threading strategy args threshold park want have var=AERON_CONDUCTOR_IDLE_STRATEGY whose=
     [[ -f $env_file ]] || return 2
     # the file is `export K='v'` lines the driver's shell sources: read it
     # that way, so a later line wins as it will at start
@@ -426,17 +434,29 @@ conductor_cycle_threshold_apply() {
         set +eu
         # shellcheck disable=SC1090
         . "$env_file" >/dev/null 2>&1 || exit 2
-        printf '%s|%s|%s\n' \
+        printf '%s|%s|%s|%s|%s|%s\n' \
+            "${AERON_THREADING_MODE-DEDICATED}" \
             "${AERON_CONDUCTOR_IDLE_STRATEGY-backoff}" \
             "${AERON_CONDUCTOR_IDLE_STRATEGY_INIT_ARGS-}" \
+            "${AERON_SHARED_IDLE_STRATEGY-backoff}" \
+            "${AERON_SHARED_IDLE_STRATEGY_INIT_ARGS-}" \
             "${AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD-}"
     ) || return 2
-    IFS='|' read -r strategy args threshold <<<"$got" || true
+    local shared_strategy shared_args
+    IFS='|' read -r threading strategy args shared_strategy shared_args threshold <<<"$got" || true
+    case $threading in
+    SHARED)
+        var=AERON_SHARED_IDLE_STRATEGY strategy=$shared_strategy args=$shared_args
+        whose=", the SHARED agent's ($var)"
+        ;;
+    # no driver idle: the client thread's own loop, which never parks
+    INVOKER) strategy=noop args= ;;
+    esac
     if ! park=$(conductor_max_park_ns "$strategy" "$args"); then
         if [[ $strategy == backoff ]]; then
-            echo "conductor: AERON_CONDUCTOR_IDLE_STRATEGY='$strategy' AERON_CONDUCTOR_IDLE_STRATEGY_INIT_ARGS='$args': the park is not readable (backoff's init args are maxSpins-maxYields-minPark-maxPark, e.g. 100-10-1us-20us)" >&2
+            echo "conductor: $var='$strategy' ${var}_INIT_ARGS='$args': the park is not readable (backoff's init args are maxSpins-maxYields-minPark-maxPark, e.g. 100-10-1us-20us)" >&2
         else
-            echo "conductor: AERON_CONDUCTOR_IDLE_STRATEGY='$strategy': not one whose longest park this lab knows (backoff, spin, noop)" >&2
+            echo "conductor: $var='$strategy': not one whose longest park this lab knows (backoff, spin, noop)" >&2
         fi
         return 2
     fi
@@ -447,7 +467,7 @@ conductor_cycle_threshold_apply() {
             return 2
         fi
         if ((have <= park)); then
-            echo "conductor: AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='$threshold' ($have ns) is not above $strategy's longest park ($park ns): every full park would count as a stall. Use '$want' or leave it unset." >&2
+            echo "conductor: AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='$threshold' ($have ns) is not above $strategy's longest park ($park ns)$whose: every full park would count as a stall. Use '$want' or leave it unset." >&2
             return 2
         fi
         return 0

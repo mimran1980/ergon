@@ -5301,6 +5301,21 @@ thr=$(
     threshold_case bad-threshold "export AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='1x'"
     threshold_case later-wins "export AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='1ms'" "export AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='10ms'"
     threshold_case unknown-strategy "export AERON_CONDUCTOR_IDLE_STRATEGY='sleeping'"
+    # the conductor's cycle is the agent's that runs it: SHARED's shared
+    # agent (AERON_SHARED_IDLE_STRATEGY, aeron_driver.c), never its own
+    # AERON_CONDUCTOR_IDLE_STRATEGY; INVOKER's client thread, which the
+    # harness never idles (shared NoOp, main_do_work alone); the mixed
+    # arms' 10 us threshold (aws-20261028-090239 lost aeron-mix-shared to it)
+    threshold_case shared-noop "export AERON_THREADING_MODE='SHARED'" "export AERON_SHARED_IDLE_STRATEGY='noop'" "export AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='10000'"
+    threshold_case shared-own-strategy-unused "export AERON_THREADING_MODE='SHARED'" "export AERON_SHARED_IDLE_STRATEGY='noop'" "export AERON_CONDUCTOR_IDLE_STRATEGY='sleeping'"
+    threshold_case shared-default "export AERON_THREADING_MODE='SHARED'"
+    threshold_case shared-tight "export AERON_THREADING_MODE='SHARED'" "export AERON_SHARED_IDLE_STRATEGY='backoff'" "export AERON_SHARED_IDLE_STRATEGY_INIT_ARGS='100-10-1us-20us'" "export AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='10000'"
+    threshold_case shared-unknown "export AERON_THREADING_MODE='SHARED'" "export AERON_SHARED_IDLE_STRATEGY='sleeping'"
+    threshold_case invoker "export AERON_THREADING_MODE='INVOKER'" "export AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='10000'"
+    threshold_case invoker-default "export AERON_THREADING_MODE='INVOKER'" "export AERON_CONDUCTOR_IDLE_STRATEGY='sleeping'"
+    threshold_case shnet-own "export AERON_THREADING_MODE='SHARED_NETWORK'" "export AERON_CONDUCTOR_IDLE_STRATEGY='spin'" "export AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='10000'"
+    threshold_case shnet-backoff "export AERON_THREADING_MODE='SHARED_NETWORK'" "export AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='10000'"
+    threshold_case dedicated-backoff "export AERON_THREADING_MODE='DEDICATED'" "export AERON_SHARED_IDLE_STRATEGY='noop'" "export AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='10000'"
 ) || true
 want="defined duration_ns
 defined format_duration_ns
@@ -5335,12 +5350,22 @@ apply tight: refused conductor: AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='1us' (10
 apply bad-init: refused conductor: AERON_CONDUCTOR_IDLE_STRATEGY='backoff' AERON_CONDUCTOR_IDLE_STRATEGY_INIT_ARGS='1-2-3': the park is not readable (backoff's init args are maxSpins-maxYields-minPark-maxPark, e.g. 100-10-1us-20us)
 apply bad-threshold: refused conductor: AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='1x': not an Aeron duration (bare ns, or the suffixes s, ms, us, ns)
 apply later-wins: kept 10ms
-apply unknown-strategy: refused conductor: AERON_CONDUCTOR_IDLE_STRATEGY='sleeping': not one whose longest park this lab knows (backoff, spin, noop)"
+apply unknown-strategy: refused conductor: AERON_CONDUCTOR_IDLE_STRATEGY='sleeping': not one whose longest park this lab knows (backoff, spin, noop)
+apply shared-noop: kept 10000
+apply shared-own-strategy-unused: appended 1ms
+apply shared-default: appended 2ms
+apply shared-tight: refused conductor: AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='10000' (10000 ns) is not above backoff's longest park (20000 ns), the SHARED agent's (AERON_SHARED_IDLE_STRATEGY): every full park would count as a stall. Use '1ms' or leave it unset.
+apply shared-unknown: refused conductor: AERON_SHARED_IDLE_STRATEGY='sleeping': not one whose longest park this lab knows (backoff, spin, noop)
+apply invoker: kept 10000
+apply invoker-default: appended 1ms
+apply shnet-own: kept 10000
+apply shnet-backoff: refused conductor: AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='10000' (10000 ns) is not above backoff's longest park (1000000 ns): every full park would count as a stall. Use '2ms' or leave it unset.
+apply dedicated-backoff: refused conductor: AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='10000' (10000 ns) is not above backoff's longest park (1000000 ns): every full park would count as a stall. Use '2ms' or leave it unset."
 if [[ $thr != "$want" ]]; then
     fail "the conductor's duty-cycle threshold above its idle strategy's longest park, derived after the overrides and refused where it does not clear it"
     diff -u <(echo "$want") <(echo "$thr") >&2 || true
 else
-    pass "the conductor's duty-cycle threshold derived from the idle strategy's longest park (twice it, never below 1 ms), applied after the mode's overrides, and an explicit threshold that does not clear the park refused before the driver starts, naming both values and the one to use"
+    pass "the conductor's duty-cycle threshold derived from the longest park of the agent that runs the conductor (its own under DEDICATED and SHARED_NETWORK, SHARED's shared agent, none under INVOKER; twice it, never below 1 ms), applied after the mode's overrides, and an explicit threshold that does not clear the park refused before the driver starts, naming both values and the one to use"
 fi
 # vm.sh loss in a sandbox (a media driver running; fake counters print a loss
 # line for `counters loss` and every counter for `counters ''`): the line

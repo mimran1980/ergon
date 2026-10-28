@@ -2353,6 +2353,63 @@ grep -q "^mixed-counts: ka: .*aeron-mix-shared@STREAMS=32.*: background stream 1
     pass "fairness.py mixed-counts: a fan-out subscription that read one message short is flagged" ||
     fail "fairness.py mixed-counts: a short fan-out subscription not flagged: $(head -3 <<<"$fv")"
 
+# every mixed arm's driver mode, as vm.sh driver turns it into the
+# driver's environment (host.sh threading_env, then the mode's Aeron
+# overrides), clears vm.sh's conductor check with the one 10 us threshold
+# every threading model shares: the park is that of the agent that runs
+# the conductor's cycle (SHARED's shared agent, noop; INVOKER's client
+# thread, never idled), not AERON_CONDUCTOR_IDLE_STRATEGY's default backoff
+# that SHARED and INVOKER never run (aws-20261028-090239 lost
+# aeron-mix-shared, and would have lost -invoker, to that)
+got=$(
+    . "$cloud/transport.sh"
+    . "$cloud/host.sh"
+    eval "$(for f in duration_ns format_duration_ns conductor_max_park_ns conductor_cycle_threshold conductor_cycle_threshold_apply; do
+        awk -v f="$f() {" '$0 == f {on = 1} on {print} on && $0 == "}" {exit}' "$cloud/vm.sh"
+    done)"
+    tr_cloud=aws dir=$tmp/mixenv hk=0 tr_bin_path=P iso=4,6,8,10,12,14 kind=two cpus=10,12
+    mkdir -p "$dir"
+    for a in aeron-mix aeron-mix-emb aeron-mix-shnet aeron-mix-shared aeron-mix-invoker \
+        dpdk-aeron-mix dpdk-aeron-mix-emb dpdk-aeron-mix-shnet dpdk-aeron-mix-shared dpdk-aeron-mix-invoker; do
+        read -r bin setup _ rest <<<"$(tr_plan arm "$a")"
+        read -ra args <<<"$rest"
+        arm=$a
+        m=$(tr_driver_mode)
+        threading=DEDICATED
+        [[ $m =~ @AERON_THREADING_MODE=([A-Z_]+) ]] && threading=${BASH_REMATCH[1]}
+        f=$dir/$a.env
+        threading_env "$threading" 0 2 3 >"$f"
+        IFS=@ read -ra pairs <<<"${m#*@}"
+        for p in "${pairs[@]}"; do
+            [[ $p == AERON_* && $p != AERON_THREADING_MODE=* ]] && echo "export ${p%%=*}='${p#*=}'" >>"$f"
+        done
+        if conductor_cycle_threshold_apply "$f" 2>"$dir/err"; then
+            echo "$a $threading: $(sed -n "s/^export AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='\(.*\)'$/\1/p" "$f" | tail -1)"
+        else
+            echo "$a $threading: refused $(cat "$dir/err")"
+        fi
+    done
+)
+same "vm.sh's conductor check on every mixed arm's driver environment: each threading model's own conductor agent (SHARED's shared agent, INVOKER's client thread), so every arm keeps the one 10 us threshold" \
+"aeron-mix DEDICATED: 10000
+aeron-mix-emb DEDICATED: 10000
+aeron-mix-shnet SHARED_NETWORK: 10000
+aeron-mix-shared SHARED: 10000
+aeron-mix-invoker INVOKER: 10000
+dpdk-aeron-mix DEDICATED: 10000
+dpdk-aeron-mix-emb DEDICATED: 10000
+dpdk-aeron-mix-shnet SHARED_NETWORK: 10000
+dpdk-aeron-mix-shared SHARED: 10000
+dpdk-aeron-mix-invoker INVOKER: 10000" "$got"
+# the follow-up session (transport-aws-aeron-mixed-rerun.tsv): the lost
+# points alone, both stacks on pair a, every point a row
+TRUN_SETS=$cloud/transport-aws-aeron-mixed-rerun.tsv trun a 1 "" && rrc=0 || rrc=$?
+d=$sb/a/bench/transport-a
+n=$(plan count a 1 "$matrix:arms" "$cloud/transport-aws-aeron-mixed-rerun.tsv")
+[[ $rrc == 0 && $n == 23 && $(grep -c . "$d/results.csv") == "$n" ]] &&
+    pass "transport.sh run, the mixed follow-up session: the dpdk-raw floor with mio-udp, and SHARED and INVOKER of both stacks, every point a row (23 at one rep)" ||
+    fail "transport.sh run, the mixed follow-up session: exit $rrc, $(grep -c . "$d/results.csv" 2>/dev/null) rows, $n planned (23): $(tail -3 "$sb/run.out" | tr '\n' ' ')"
+
 # transport_prepare's steps on the operator machine (lib.sh's helpers faked):
 # the tree and the arms file to both VMs, the build, the map's boot line, a
 # reboot, transport-tune on both, VM a's key
