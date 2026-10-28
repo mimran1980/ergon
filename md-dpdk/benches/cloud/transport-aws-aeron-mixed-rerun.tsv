@@ -1,0 +1,22 @@
+# The mixed-load sessions' follow-up (aws/lab.sh LAB_SUITE=transport
+# LAB_PAIR=a LAB_SETS_FILE=<this file>, LAB_SPOT=1, c7a.2xlarge): only
+# the points aws-20261028-090239 (kernel) and aws-20261028-090309 (DPDK)
+# lost, both stacks in one session on one VM pair. The arms and the loads
+# are transport-aws-aeron-mixed.tsv's.
+#
+#   dpdk-raw  every floor point of both sessions: the pong's first echo
+#             waited for ARP in a loop of sends with no poll, so the answer
+#             never came in and the send failed ("next hop unreachable (ARP
+#             failed)"; floor.rs transport::pong now polls between retries)
+#   -shared, -invoker  every point of both stacks: vm.sh refused the mixed
+#             arms' 10 us conductor threshold against the conductor's own
+#             idle strategy (backoff, 1 ms park), which SHARED and INVOKER
+#             never run (vm.sh conductor_cycle_threshold_apply now reads the
+#             agent that runs the conductor's cycle)
+#
+# mio-udp ran in both sessions: here it ties this VM pair to theirs. The
+# floor's A/A repeats dpdk-raw; the mixed set's repeats aeron-mix-shared.
+#
+# set   pair par host loads         streams  netem  arms
+set fr   a    -   ab   10000         1        -      dpdk-raw,mio-udp,aa
+set kr   a    -   ab   50000,200000  32,128   -      aeron-mix-shared,aeron-mix-invoker,dpdk-aeron-mix-shared,dpdk-aeron-mix-invoker,aa

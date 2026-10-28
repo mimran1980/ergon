@@ -2323,6 +2323,14 @@ dpdk-aeron-mix-emb DEDICATED: 10000
 dpdk-aeron-mix-shnet SHARED_NETWORK: 10000
 dpdk-aeron-mix-shared SHARED: 10000
 dpdk-aeron-mix-invoker INVOKER: 10000" "$got"
+# the follow-up session (transport-aws-aeron-mixed-rerun.tsv): the lost
+# points alone, both stacks on pair a, every point a row
+TRUN_SETS=$cloud/transport-aws-aeron-mixed-rerun.tsv trun a 1 "" && rrc=0 || rrc=$?
+d=$sb/a/bench/transport-a
+n=$(plan count a 1 "$matrix:arms" "$cloud/transport-aws-aeron-mixed-rerun.tsv")
+[[ $rrc == 0 && $n == 23 && $(grep -c . "$d/results.csv") == "$n" ]] &&
+    pass "transport.sh run, the mixed follow-up session: the dpdk-raw floor with mio-udp, and SHARED and INVOKER of both stacks, every point a row (23 at one rep)" ||
+    fail "transport.sh run, the mixed follow-up session: exit $rrc, $(grep -c . "$d/results.csv" 2>/dev/null) rows, $n planned (23): $(tail -3 "$sb/run.out" | tr '\n' ' ')"
 
 # transport_prepare's steps on the operator machine (lib.sh's helpers faked):
 # the tree and the arms file to both VMs, the build, the map's boot line, a
