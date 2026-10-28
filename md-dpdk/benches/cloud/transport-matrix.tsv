@@ -89,6 +89,17 @@ arm  dpdk-aeron-mix-emb     aeron_lat  dpdk    two  --mode udp --reliable true -
 arm  dpdk-aeron-mix-shnet   aeron_lat  dpdk    two  --mode udp --reliable true --load mixed --hot-rate 10000
 arm  dpdk-aeron-mix-shared  aeron_lat  dpdk    two  --mode udp --reliable true --load mixed --hot-rate 10000
 arm  dpdk-aeron-mix-invoker aeron_lat  dpdk    two  --mode udp --reliable true --load mixed --hot-rate 10000
+# the same traced (transport-aws-aeron-mixed-trace.tsv: aeron_lat's and the
+# driver's stage trace, every 64th message), declared twins of each stack's
+# first in the same way
+arm  aeron-mix-trace              aeron_lat  kernel  two  --mode udp --reliable true --load mixed --hot-rate 10000 --stage-trace 64
+arm  aeron-mix-emb-trace          aeron_lat  kernel  two  --mode udp --reliable true --load mixed --hot-rate 10000 --stage-trace 64
+arm  aeron-mix-shared-trace       aeron_lat  kernel  two  --mode udp --reliable true --load mixed --hot-rate 10000 --stage-trace 64
+arm  aeron-mix-invoker-trace      aeron_lat  kernel  two  --mode udp --reliable true --load mixed --hot-rate 10000 --stage-trace 64
+arm  dpdk-aeron-mix-trace         aeron_lat  dpdk    two  --mode udp --reliable true --load mixed --hot-rate 10000 --stage-trace 64
+arm  dpdk-aeron-mix-emb-trace     aeron_lat  dpdk    two  --mode udp --reliable true --load mixed --hot-rate 10000 --stage-trace 64
+arm  dpdk-aeron-mix-shared-trace  aeron_lat  dpdk    two  --mode udp --reliable true --load mixed --hot-rate 10000 --stage-trace 64
+arm  dpdk-aeron-mix-invoker-trace aeron_lat  dpdk    two  --mode udp --reliable true --load mixed --hot-rate 10000 --stage-trace 64
 # the raw DPDK floor: floor --role ping/pong over ergon-md-dpdk's packet path
 # alone (no Aeron), one thread an end, on dpdk-raw's set-up (vm.sh driver
 # dpdk-raw: the NICs on DPDK, no driver); mio-udp is the kernel's

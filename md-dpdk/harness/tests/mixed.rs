@@ -420,6 +420,18 @@ fn mixed_load_stage_traces_the_hot_stream() -> R {
     mixed("stage", "embedded", None, 3, Some("4"))
 }
 
+/// The same with one agent running the whole driver (`SHARED`).
+#[test]
+fn mixed_load_stage_traces_the_hot_stream_on_shared_drivers() -> R {
+    mixed("stage-shared", "embedded", Some("SHARED"), 1, Some("4"))
+}
+
+/// The same with the hot stream's thread running its driver (`INVOKER`).
+#[test]
+fn mixed_load_stage_traces_the_hot_stream_on_invoked_drivers() -> R {
+    mixed("stage-inv", "invoker", None, 0, Some("4"))
+}
+
 #[test]
 fn a_mix_that_cannot_run_is_refused() -> R {
     let root = scratch("refused")?;

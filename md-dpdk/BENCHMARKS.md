@@ -689,7 +689,8 @@ not as an Aeron message.
   data-NIC interrupts, p50 28 to 31).
 - Intel DPDK's external-driver arms: `nic-rx-missed` 8,940 to 17,698 a run
   at 128 streams with 0 NAKs and 0 retransmits (`aws-20261028-123929`).
-- The mixed arms' hot-stream stage trace under `SHARED` and `INVOKER`.
+- The mixed arms' hot-stream stage trace under `SHARED` and `INVOKER`:
+  not yet run (`transport-aws-aeron-mixed-trace.tsv`).
 
 ## How to run
 
