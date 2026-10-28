@@ -11,6 +11,8 @@ check-dpdk:
     cargo test -p ergon-md-dpdk --features dpdk -- --test-threads=1
     cargo test -p ergon-md-dpdk --features static,dpdk -- --test-threads=1
     cargo test -p ergon-md-dpdk-harness -- --test-threads=1
+    # the stage trace end to end: aeron_lat's and its embedded drivers' (the socket transport's, traced natively)
+    cargo test -p ergon-md-dpdk-harness --features dpdk --test aeron_lat_stages -- --test-threads=1
 
 # Interop over DPDK tap devices on a Linux bridge (root, /dev/net/tun, hugepages)
 test-dpdk-vdev *args:
