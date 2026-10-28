@@ -9,7 +9,8 @@ HTTP/1.1 over TLS 1.3, length-prefixed frames over plain TCP, and UDP.
 
 - One non-blocking `poll` moves bytes between your loop and the kernel.
 - The kernel interface (epoll or `io_uring`, with or without NIC polling) is
-  configuration, chosen at run time.
+  configuration, chosen at run time; so is kernel bypass, TCP on
+  F-Stack (`fstack-spin`, feature `fstack`, lab-tested only).
 - TLS records are decrypted in place and messages parsed in place: one copy
   per byte.
 
@@ -175,6 +176,14 @@ thread polls (feeds, order connections, `HttpClient` pool connections):
   needed; a NIC with NAPI ids is (not loopback or a plain veth):
   [busy polling on `epoll-spin`](https://mimran1980.github.io/ergon/io/backends.html#busy-polling-on-epoll-spin).
 
+- `fstack-spin`: TCP on [F-Stack](https://github.com/F-Stack/f-stack)
+  (FreeBSD's stack on DPDK) on a NIC of the process's own; framed TCP,
+  WebSocket and HTTP over TLS as `FrameConn<FstackTcp>`,
+  `WsConn<FstackTcp>`, `HttpConn<FstackTcp>`. Needs the `fstack` feature,
+  F-Stack built (`FSTACK_PREFIX`), hugepages and DPDK's privileges; a
+  binary using it links with `-C link-arg=-Wl,-z,nostart-stop-gc`.
+  Lab-tested only: [`fstack-spin`](https://mimran1980.github.io/ergon/io/backends.html#fstack-spin-tcp-on-f-stack).
+
 The full table, the evidence and the node settings: the book's
 [choosing a backend](https://mimran1980.github.io/ergon/io/overview.html#choosing-a-backend).
 
@@ -194,7 +203,7 @@ Tables and conclusion: the book's
 |---|---|
 | mio or ergon-io? | Either: no difference. UDP p50 within 0.1 to 0.9 µs (Azure), not separated (AWS). TCP on the same connection (AWS): p50 52.2 against 53.4 µs at 10,000 msg/s, not separated at 50,000; tails not separated. Both make 2 reads, 1 send and 1 `TCP_QUICKACK` re-arm a message. The earlier Azure TCP gap was unequal busy polling, fixed by `Config::busy_poll_us` |
 | overloaded (200,000 msg/s on one TCP loop)? | Neither keeps up; ergon-io drains slower: 104,000 to 134,000 msg/s carried against mio's 113,000 to 154,000 (AWS) |
-| kernel TCP or F-Stack (TCP on DPDK)? | F-Stack, where kernel bypass is allowed: p50 17 to 19 µs lower at 10,000 msg/s and 26 to 28 at 50,000 (AWS), and it carries 200,000 msg/s. ergon-io drives kernel sockets only |
+| kernel TCP or F-Stack (TCP on DPDK)? | F-Stack, where kernel bypass is allowed: p50 17 to 19 µs lower at 10,000 msg/s and 26 to 28 at 50,000 (AWS), and it carries 200,000 msg/s. ergon-io's `fstack-spin` runs its endpoints on F-Stack, lab-tested and not yet measured |
 | sockets or Aeron UDP? | One stream: Aeron (p50 55.6 against 61.8 µs at 50,000 msg/s). 32 to 128 streams: sockets (p50 lower by 3.7 to 10.5 µs), on 1 busy thread against Aeron's 4 |
 | at 200,000 msg/s? | Neither socket library keeps up (one `send` a message on one thread; 151,000 to 195,000 msg/s carried); Aeron does |
 | TCP or Aeron reliable? | Aeron's p50 is 7 to 15 µs lower without loss. Under loss neither tail wins everywhere: Aeron's maxima sit at its 10 ms retransmit linger, TCP's come from its retransmits (8 ms minimum RTO) |
@@ -222,6 +231,7 @@ Tables and conclusion: the book's
 | `uring` | on | the `io_uring` backend, `uring-sqpoll` (Linux); without it, choosing it returns `Error::Unsupported` |
 | `webpki-roots` | off | Mozilla's root store, `tls::webpki_roots` (CDLA-Permissive-2.0, so opt-in) |
 | `curl` | off | libcurl as an `HttpClient` implementation (the system libcurl, through pkg-config). It refuses every method but GET, HEAD, OPTIONS and DELETE unless `curl_allow_non_idempotent_methods` is set: libcurl can send a request twice |
+| `fstack` | off | the `fstack-spin` backend (Linux): links F-Stack and its DPDK from `FSTACK_PREFIX` ([`build-fstack.sh`](https://github.com/mimran1980/ergon/blob/main/io/benches/fstack/build-fstack.sh)); without it the feature compiles and `fstack-spin` returns `Error::Unsupported` |
 
 Install with the features you need:
 

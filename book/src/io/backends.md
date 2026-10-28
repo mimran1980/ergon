@@ -9,9 +9,11 @@ configuration, so one binary can run with each. Which to pick:
 | `epoll-spin` | `epoll_wait(0)` every poll, then one `recvmsg` per ready socket: [mio's mechanism](#mio-measured-not-a-backend) | no (interrupts); with `busy_poll_us`, once per socket after each receive | no |
 | `recv-busy` | non-blocking `recvmsg` on every socket every poll, with `SO_BUSY_POLL` (with `per_queue`: one read per NIC queue, then the sockets epoll reports ready) | yes, one pass per socket (or queue) per poll | no |
 | `uring-sqpoll` | an `SQPOLL` kernel thread submits, completes and polls the NIC | yes, on the kernel thread | yes |
+| `fstack-spin` | no kernel: one [F-Stack](#fstack-spin-tcp-on-f-stack) pass every poll, then its kqueue | yes, F-Stack's DPDK queue | no (a NIC of its own) |
 
-- **None sleeps in the kernel.** These are the three backends the
-  benchmarks measured in a busy-spin loop.
+- **None sleeps in the kernel.** The first three are the backends the
+  benchmarks measured in a busy-spin loop; `fstack-spin` is lab-tested
+  only.
 - **UDP (`UdpConn`) runs on `epoll-spin` only.** The other two refuse a UDP
   driver at `Driver::new` (`Error::Unsupported`); framed TCP and the TLS
   endpoints run on all three ([UDP](udp.md)).
@@ -178,12 +180,82 @@ Every figure, the A/A controls and the fairness checks:
 [SMT sibling cost](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#smt-sibling-cost).
 In a pod: [x86 with SMT, `cpu: 2`](kubernetes.md#x86-with-smt-cpu-2-one-physical-core).
 
+## `fstack-spin`: TCP on F-Stack
+
+Kernel bypass: [F-Stack](https://github.com/F-Stack/f-stack) (FreeBSD's
+TCP/IP stack on DPDK, Apache-2.0/BSD; ergon-io builds v2.0) owns a NIC of
+its own, and the polling thread runs it. **Status: lab-tested only** (two
+F-Stack processes over a veth pair in Docker); an AWS benchmark against
+`epoll-spin` is pending.
+
+| | |
+|---|---|
+| a poll | one F-Stack pass (`ff_run_once`: NIC receive burst, the stack, timers, transmit), its kqueue (`epoll-spin`'s loop: level-triggered, zero timeout), one read per ready socket, the send pass, then a second pass so replies leave in the same poll |
+| endpoints | `FrameConn<FstackTcp>`, `WsConn<FstackTcp>`, `HttpConn<FstackTcp>`, from `FrameDial::<FstackTcp>::on_stack`, `WsDial::<FstackTcp>::on_stack`, `HttpDial::<FstackTcp>::on_stack` (with `Driver::connect`, or `connect_blocking` then `Driver::add`). TCP over IPv4; no UDP |
+| type safety | the socket type is the endpoint's parameter: dropping an endpoint closes it with `ff_close`, never `close(2)`; `Driver::new` refuses endpoints of the other stack |
+| threads | F-Stack is single-threaded: `fstack::init` (called by `Driver::new` if not yet) binds it to the polling thread, once per process. F-Stack endpoints are not `Send`, so there is no `connect_background`; every `Driver` of the process runs on that thread |
+| allocation | none once warm (tested on framed TCP and WebSocket over TLS); F-Stack's own buffers are DPDK's |
+
+Configuration: `fstack-spin` and the `fstack_*` keys (`FstackConf`), from
+which ergon-io writes F-Stack's config file (`fstack::initialised()` keeps
+the text):
+
+```text
+fstack-spin,loop_cpu=3,fstack_addr=10.0.1.20,fstack_prefix_len=24,fstack_gateway=10.0.1.1,fstack_pci=0000:00:06.0
+```
+
+| key | |
+|---|---|
+| `fstack_addr`, `fstack_prefix_len` (24), `fstack_gateway` | the interface; required |
+| `fstack_pci` or `fstack_vdev` | the port: a PCI address, or a DPDK virtual device (commas written `;`: `net_af_packet0;iface=eth1`) |
+| `loop_cpu` | F-Stack's lcore; else the CPU the thread is pinned to. `helper_cpus` take the EAL's control threads |
+| `fstack_no_huge`, `fstack_memory_mb` (1024), `fstack_file_prefix` | the EAL's memory and runtime files (one prefix per process on a host) |
+| `fstack_hz` (100), `fstack_delayed_ack` (false), `fstack_sysctl=name=value` | FreeBSD's clock tick, delayed ACKs, any other FreeBSD sysctl |
+
+Fixed: `pkt_tx_delay=0` and `idle_sleep=0` (no transmit hold, no sleep),
+TSO and LRO off. FreeBSD's other settings are F-Stack's shipped ones.
+
+What the kernel backends have and F-Stack does not:
+
+| kernel | `fstack-spin` |
+|---|---|
+| quick-ACK route check | off: `fstack_delayed_ack=false` acknowledges at once |
+| `TCP_NODELAY` | set on every socket |
+| `TCP_USER_TIMEOUT`, `tcp_rto_min_us`, `tcp_delack_max_us` | refused by `Config::validate`; `fstack_sysctl=net.inet.tcp.rexmit_min=…` sets the RTO floor (ms) for the stack |
+| receive timestamps | none (`rx_read_timestamp` still works) |
+| route, egress-device and NAPI checks | skipped: they describe kernel devices. The CPU checks still run |
+| `TCP_INFO` | FreeBSD's: RTT, RTT variation, RTO, retransmits (`Driver::tcp_info`). FreeBSD keeps RTT in clock ticks (`fstack_hz`): below one tick it reads a fixed value |
+| keepalive | the same keys (`SO_KEEPALIVE`, `TCP_KEEPIDLE` / `INTVL` / `CNT`) |
+| DNS | the kernel's resolver (control path); or `Target::with_addr` |
+
+Requirements:
+
+| need | why |
+|---|---|
+| Linux, the `fstack` feature, `FSTACK_PREFIX` at build time | build.rs links F-Stack and its DPDK, both static, from the prefix [`build-fstack.sh`](https://github.com/mimran1980/ergon/blob/main/io/benches/fstack/build-fstack.sh) builds (x86_64; arm64 is in progress). Without `FSTACK_PREFIX` the feature compiles and `fstack::init` returns `Error::Unsupported` |
+| `-C link-arg=-Wl,-z,nostart-stop-gc` in the binary's `RUSTFLAGS` | lld otherwise drops FreeBSD's linker sets and `ff_init` crashes; a dependency cannot pass it on |
+| a NIC of its own (on AWS a second ENI) bound to `vfio-pci` or `igb_uio` | DPDK takes the device from the kernel |
+| hugepages | DPDK's memory (`fstack_no_huge` is for tests) |
+| privileges | `igb_uio`: `CAP_SYS_ADMIN` (physical addresses) and `CAP_DAC_OVERRIDE` (`/dev/uioN`, sysfs, hugepages); `vfio-pci`: the `/dev/vfio` group and `CAP_IPC_LOCK` |
+
+The EAL exits the process (`rte_exit`) on most start-up failures instead of
+returning; its own lines say why.
+
+Kubernetes: the pod gets the NIC from a device plugin (an SR-IOV virtual
+function, or an ENA ENI bound to DPDK as [ergon-md-dpdk](../md-dpdk/overview.md)'s plugin hands one out),
+`hugepages-2Mi` (or `-1Gi`) as a resource, the capabilities above, and
+whole CPUs (Guaranteed QoS, static CPU manager): `loop_cpu` inside the
+pod's cpuset, with a second CPU for the EAL's control threads
+(`helper_cpus`). Nothing node-level (interrupts, moderation) applies: the
+NIC raises none.
+
 ## Kernel
 
 | backend | needs |
 |---|---|
 | `epoll-spin`, `recv-busy` | any supported kernel |
 | `uring-sqpoll` | Linux 6.9+ (NAPI registration) and the `uring` feature |
+| `fstack-spin` | what DPDK 24.11 runs on, the `fstack` feature and F-Stack linked ([above](#fstack-spin-tcp-on-f-stack)) |
 
 An older kernel gives `Error::Unsupported` from `Driver::new`.
 
