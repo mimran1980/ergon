@@ -1,0 +1,18 @@
+# The SMT session's first half (aws/lab.sh LAB_SUITE=transport LAB_PAIR=a
+# LAB_SETS_FILE=<this file>; the matrix's arms are kept): SMT off, as every
+# other session (vm.sh transport-tune), on c7i.4xlarge (Intel, 8 cores x 2
+# threads; with SMT off 8 CPUs, one a core). transport-aws-smt.tsv is the
+# other half, SMT on, on its own pair of the same type. TCP only: ergon-io's
+# UDP has no uring backend.
+#
+#   mio-tcp              mio, epoll with SO_BUSY_POLL 50 us: the baseline
+#   eio-tcp              ergon-io epoll-spin, busy_poll_us 50
+#   eio-tcp-sqpoll-core  ergon-io uring-sqpoll, its SQPOLL thread on the next
+#                        isolated core ({next_core}), no SO_BUSY_POLL
+#   aa                   mio-tcp again
+#
+# One stream, ping/pong round trips at 10k, 50k and 200k msg/s, LAB_REPS=3:
+# 36 points (LAB_ESTIMATE=1 gives the hours).
+smt off
+# set     pair par host loads              streams netem arms
+set smtoff a   -   ab   10000,50000,200000 1       -     mio-tcp,eio-tcp,eio-tcp-sqpoll-core,aa

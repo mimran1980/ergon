@@ -110,7 +110,76 @@ tr_check() {
     tr_declared_check || return 2
     tr_driver_modes_check "$pair" || return 2
     tr_huge_check "$pair" || return 2
+    tr_smt_check "$pair" || return 2
     echo "$n"
+}
+
+# tr_smt_check <pair>: the session's SMT (a sets file's `smt` row,
+# transport_plan.py smt) fits its arms: with `smt on` every arm a two-host
+# socket arm (the CPU map lists each isolated core whole, its threads
+# neighbours: a media driver's threads or a one-host arm's two ends would
+# land on one core's two hyperthreads); {loop_sibling} only with it. 2
+# saying why not
+tr_smt_check() {
+    local smt a b st k rest
+    smt=$(tr_plan smt) || return 2
+    for a in $(tr_plan rounds "$1" 1 1 | cut -f9 | tr ',' '\n' | sed 's/@.*//' | sort -u); do
+        read -r b st k rest <<<"$(tr_plan arm "$a")"
+        if [[ $smt == on ]]; then
+            [[ $st == sockets && $k == two ]] || {
+                echo "smt on: arm $a ($b, setup $st, hosts $k): an SMT-on session runs two-host socket arms only (each isolated core whole in the CPU map: a media driver's threads or a one-host arm's two ends would share a core)" >&2
+                return 2
+            }
+        elif [[ " ${rest:-} " == *"{loop_sibling}"* ]]; then
+            echo "arm $a: {loop_sibling} (the loop CPU's SMT sibling) needs a sets file with smt on" >&2
+            return 2
+        fi
+    done
+}
+
+# tr_cpu_arg <arg> <arm CPUs>: one arm argument with {next_core} (the first
+# CPU of the arm's next isolated core: the second of its CPUs with SMT off,
+# the third with it on) and {loop_sibling} (the loop CPU's SMT sibling, the
+# second of its CPUs: SMT on only, tr_smt_check) replaced; the loop's CPU is
+# the first (tr_role_cpus ping and pong). The map is the same on both hosts
+# (tr_run), so the CPU is the ping's and the pong's alike
+tr_cpu_arg() {
+    local a=$1 c
+    IFS=, read -ra c <<<"$2"
+    if [[ ${smt:-off} == on ]]; then
+        a=${a//\{loop_sibling\}/${c[1]:-}}
+        a=${a//\{next_core\}/${c[2]:-}}
+    else
+        a=${a//\{next_core\}/${c[1]:-}}
+    fi
+    echo "$a"
+}
+
+# tr_uring_sqpoll: 0 when the current arm runs ergon-io's uring-sqpoll
+# (tcp_lat --backend uring-sqpoll): no SO_BUSY_POLL (its SQPOLL thread polls
+# the NIC; ergon-io refuses the option), so no busy_read_us knob
+tr_uring_sqpoll() { [[ " ${args[*]:-} " == *" --backend uring-sqpoll "* ]]; }
+
+# tr_sqpoll_cpu: the current arm's SQPOLL CPU (--sqpoll-cpu's), or nothing
+tr_sqpoll_cpu() {
+    local i
+    for ((i = 0; i < ${#args[@]}; i++)); do
+        [[ ${args[i]} == --sqpoll-cpu ]] && { echo "${args[i + 1]:-}"; return 0; }
+    done
+    return 0
+}
+
+# tr_smt_partner <cpu>: under smt on, the map's other thread of <cpu>'s core
+# (each isolated core whole and its threads neighbours: transport_cpu_map),
+# else nothing
+tr_smt_partner() {
+    [[ ${smt:-off} == on ]] || return 0
+    local c i
+    IFS=, read -ra c <<<"$iso"
+    for ((i = 0; i < ${#c[@]}; i++)); do
+        [[ ${c[i]} == "$1" ]] && { echo "${c[i ^ 1]:-}"; return 0; }
+    done
+    return 0
 }
 
 # tr_driver_modes_check <pair>: each Aeron arm of the pair's rounds on a
@@ -307,8 +376,12 @@ transport_prepare() {
         log "transport: an arm runs under Onload: OpenOnload $TR_ONLOAD_COMMIT is built and installed too (onload-build.sh)"
     fi
     detached transport-build transport-build $fstack $onload || die "transport-build failed"
-    log "transport: CPU map and its boot line"
-    both transport-isolate transport-isolate $onload || die "transport-isolate failed"
+    # the session's SMT (a sets file's `smt on`: kept on, each isolated core
+    # whole in the map; else off, as every other session)
+    local smt
+    smt=$(tr_arms_file=${arms_file:-} tr_sets_file=${sets_file:-} tr_plan smt) || die "the sets file's smt row does not parse"
+    log "transport: CPU map and its boot line (SMT $smt)"
+    both transport-isolate transport-isolate $onload "smt-$smt" || die "transport-isolate failed"
     reboot_both
     both transport-tune transport-tune || die "transport-tune failed: a setting did not hold ($out/{a,b}-transport-tune.log)"
     remote_access
@@ -421,6 +494,7 @@ tr_bin_args() {
     local args=" $* " busy= sb qa
     busy="--busy-read-us $(tr_knob busy_read_us) "
     [[ ${setup:-} != onload ]] || busy="--busy-read-us 0 "
+    ! tr_uring_sqpoll || busy="--busy-read-us 0 "
     sb=$(tr_knob sockbuf)
     qa="--quickack-per-read"
     [[ $(tr_knob quickack_per_read) == off ]] && qa+=" false"
@@ -600,7 +674,9 @@ tr_arm_knobs() {
         if [[ $a == *" --impl ergon "* ]]; then echo datagram_burst; fi
         ;;
     tcp_lat)
-        echo sockbuf epoll_events quickack_per_read congestion busy_read_us
+        echo sockbuf epoll_events quickack_per_read congestion
+        # uring-sqpoll: no SO_BUSY_POLL (its SQPOLL thread polls the NIC)
+        tr_uring_sqpoll || echo busy_read_us
         [[ $(tr_timer_args) == *--rto-min-us* ]] && echo rto_min_us
         ;;
     aeron_lat)
@@ -1104,6 +1180,22 @@ tr_events_cpus() {
         used+="$(tr_role_cpus local | tr , ' ') "
         mine_used=$used
     fi
+    # the arm's SQPOLL threads (uring-sqpoll: one a host, on --sqpoll-cpu):
+    # traced, never a spinner's
+    c=$(tr_sqpoll_cpu)
+    [[ -z $c ]] || { used+="$c "; mine_used+="$c "; }
+    # SMT on: the SMT sibling of every CPU the point uses stays as the arm
+    # left it (idle, or its SQPOLL thread): traced, never a spinner's
+    if [[ ${smt:-off} == on ]]; then
+        for c in $used; do
+            r=$(tr_smt_partner "$c")
+            [[ -z $r || $used == *" $r "* ]] || used+="$r "
+        done
+        for c in $mine_used; do
+            r=$(tr_smt_partner "$c")
+            [[ -z $r || $mine_used == *" $r "* ]] || mine_used+="$r "
+        done
+    fi
     mine=0
     [[ $h == b ]] && mine=1
     for c in "${all[@]}"; do
@@ -1393,6 +1485,10 @@ tr_set() {
                 kept+=("${args[i]}")
             done
             args=(${kept[@]+"${kept[@]}"})
+            # {next_core} and {loop_sibling}: the arm's CPUs' (tr_cpu_arg)
+            local acpus
+            acpus=$(transport_clients "$map" "$setup")
+            for ((i = 0; i < ${#args[@]}; i++)); do args[i]=$(tr_cpu_arg "${args[i]}" "$acpus"); done
             # a sink arm's set-up on its sink's host too
             ahosts=("${rhosts[@]}")
             [[ $kind != sink ]] || ahosts=(a b)
@@ -1538,6 +1634,15 @@ tr_run() {
     # transport-settings.env, fairness.py's form of them
     cp "$tr_here/transport-settings.env" "$dir/transport-settings.tr.env"
     transport_sysctls >"$dir/declared-sysctls.txt"
+    # the session's SMT (a sets file's `smt on`, else off): every point reads
+    # smt/active back on each host (vm.sh settings), held to this (optional:
+    # absent where the kernel has no SMT control at all; the local smoke's
+    # box is not ours to declare)
+    smt=$(tr_plan smt) || die "the sets file's smt row does not parse"
+    if [[ -z ${LAB_LOCAL_SMOKE:-} ]]; then
+        echo "devices/system/cpu/smt/active $([[ $smt == on ]] && echo 1 || echo 0) optional" >>"$dir/declared-sysctls.txt"
+    fi
+    log "session $session: SMT $smt"
     settings_sha=$(sha256sum "$dir/transport-settings.tr.env" 2>/dev/null | awk '{print $1}')
     # the map, the NICs, the binaries and the ergon-tune report of each host
     # (and one on the hugetlbfs Aeron directory, where an arm of the plan

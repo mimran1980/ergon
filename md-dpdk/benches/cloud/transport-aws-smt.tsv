@@ -1,0 +1,21 @@
+# The SMT session's second half (aws/lab.sh LAB_SUITE=transport LAB_PAIR=a
+# LAB_SETS_FILE=<this file>; the matrix's arms are kept): SMT on, on its own
+# pair of c7i.4xlarge (Intel, 8 cores x 2 threads). transport-aws-smt-off.tsv
+# is the first half, SMT off, with mio-tcp, the baseline this compares with.
+# `smt on`: SMT stays on through the isolation reboot, the CPU map isolates
+# each core whole (0 1 2,10,3,11,...: housekeeping core 0, IRQ core 1), the
+# loop on a core's first thread and its sibling isolated beside it; the
+# hostcheck and ergon-io's T10 (SMT on) reported, not refused, and
+# fairness.py's smt rule holds each busy thread's sibling to idle or the
+# arm's own SQPOLL thread. TCP only: ergon-io's UDP has no uring backend.
+#
+#   eio-tcp-sqpoll-sib   ergon-io uring-sqpoll, its SQPOLL thread on the loop
+#                        CPU's SMT sibling ({loop_sibling}), no SO_BUSY_POLL
+#   mio-tcp-smt          mio as mio-tcp, its loop's sibling idle
+#   aa                   eio-tcp-sqpoll-sib again
+#
+# One stream, ping/pong round trips at 10k, 50k and 200k msg/s, LAB_REPS=3:
+# 27 points (LAB_ESTIMATE=1 gives the hours).
+smt on
+# set    pair par host loads              streams netem arms
+set smton a   -   ab   10000,50000,200000 1       -     eio-tcp-sqpoll-sib,mio-tcp-smt,aa

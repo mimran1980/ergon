@@ -21,7 +21,17 @@ concerns. Rules:
   hostcheck        every host's report clean (no warn, no unproven blocking check),
                    and no warning of a binary's own checks in the point's logs
                    (<run>/logs/<runner point>.out on a, .pong on its echo's host:
-                   ergon-io's `warning: <id> warn:` lines)
+                   ergon-io's `warning: <id> warn:` lines). The one exemption: a
+                   run that declares SMT on (shared.devices.system.cpu.smt.active=1,
+                   a sets file's `smt on`) takes T10 (SMT on) as reported, the
+                   rule below holding what it measures instead
+  smt              a run that declares SMT on: on every host and sample, the SMT
+                   sibling of each busy thread's CPU (its neighbour in the map's
+                   hot list: each isolated core whole) holds nothing over 5 % of
+                   a CPU, but a uring-sqpoll arm's own SQPOLL thread (iou-sqp-*)
+  sqpoll           a uring-sqpoll arm (tcp_lat --backend uring-sqpoll): its SQPOLL
+                   thread seen busy on --sqpoll-cpu on every host, and on no other
+                   CPU
   settings         every knob as transport-settings.env gives it, none it does not
   shared-knob      a per-arm knob the round's arms run at different values swept
                    for every arm of the round that has it (a declared arm's own
@@ -110,6 +120,12 @@ GUEST_DROPS = {"TcpExtTCPBacklogDrop", "TcpExtTCPRcvQDrop", "TcpExtTCPOFODrop", 
                "TcpExtListenDrops", "TcpExtTCPReqQFullDrop", "IpInDiscards", "IpInHdrErrors", "IpInAddrErrors",
                "TcpInErrs", "TcpInCsumErrors", "UdpRcvbufErrors", "UdpInErrors", "UdpMemErrors"}
 
+# io_uring's SQPOLL kernel thread, a task of the process that set the ring up
+SQPOLL_COMM = "iou-sqp-"
+# the declared SMT state (transport.sh tr_run, read back by vm.sh settings)
+SMT_KNOB = "devices.system.cpu.smt.active"
+# a binary's own check that a run declaring SMT on reports, not refuses
+SMT_ON_REPORTED = {"T10"}
 BUSY = 0.9  # a thread over this share of a CPU is a busy thread
 ALONE = 0.05  # another thread over this share of the busy thread's CPU shares it
 Z = 3.29  # the binomial interval's half-width in standard deviations (99.9 %, two-sided)
@@ -348,8 +364,9 @@ def napi_on(p, host):
 REPORTED_ONLY = {"T11"}
 
 
-def hostcheck_problems(path):
-    """What keeps a hostcheck report from being clean ([] when clean)."""
+def hostcheck_problems(path, smt_on=False):
+    """What keeps a hostcheck report from being clean ([] when clean); with
+    smt_on (the run declares SMT on), T10 is reported, not a problem."""
     try:
         with open(path) as f:
             lines = f.read().splitlines()
@@ -360,7 +377,7 @@ def hostcheck_problems(path):
         return ["no findings"]
     out = []
     for m, line in zip(found, lines):
-        if m and m.group(1) in REPORTED_ONLY:
+        if m and (m.group(1) in REPORTED_ONLY or smt_on and m.group(1) in SMT_ON_REPORTED):
             continue
         if m and m.group(2) == "warn":
             out.append(line)
@@ -383,14 +400,15 @@ def read_failures(run_dir):
     return out
 
 
-def binary_warnings(run_dir, p):
+def binary_warnings(run_dir, p, smt_on=False):
     """{host: {check id: [finding]}}: the warnings of the point's binaries'
     own checks in the runner's logs (logs/<runner point>.out: the measuring
     run, host a; .pong: its echo, host b, or a on a one-host set), each
     finding cut at its first sentence; {} where the logs are not kept. The
     first of a log's T19 warnings (the loop thread's page faults since the
     last check, every 5 s) covers the process's start, set-up and warm-up,
-    not the window: left out."""
+    not the window: left out. With smt_on (the run declares SMT on), T10's
+    warning (SMT on) is left out too."""
     point = ((p.manifest or {}).get("runner") or {}).get("point")
     out = {}
     if not point:
@@ -403,13 +421,73 @@ def binary_warnings(run_dir, p):
         with open(path, errors="replace") as f:
             for line in f:
                 m = BINARY_WARN.search(line.rstrip("\n"))
-                if not m:
+                if not m or smt_on and m.group(1) in SMT_ON_REPORTED:
                     continue
                 if m.group(1) in START_CHECKS and m.group(1) not in seen:
                     seen.add(m.group(1))
                     continue
                 finding = m.group(2).split(". Fix:")[0].split(". ")[0]
                 out.setdefault(host, {}).setdefault(m.group(1), []).append(finding)
+    return out
+
+
+def smt_partner(hot, cpu):
+    """The other thread of cpu's core in an SMT-on map's hot list (each
+    isolated core whole, its threads neighbours: host.sh transport_cpu_map),
+    or None."""
+    if cpu not in hot:
+        return None
+    j = hot.index(cpu) ^ 1
+    return hot[j] if j < len(hot) else None
+
+
+def sqpoll_cpu(p):
+    """A uring-sqpoll arm's --sqpoll-cpu (the runner's args), else None."""
+    words = ((p.manifest.get("runner") or {}).get("args") or "").split()
+    flags = dict(zip(words, words[1:]))
+    if flags.get("--backend") != "uring-sqpoll":
+        return None
+    cpu = flags.get("--sqpoll-cpu", "")
+    return int(cpu) if cpu.isdigit() else -1
+
+
+def smt_problems(p, hosts, smt_on):
+    """[(rule, why)]: the smt rule's (smt_on) and the sqpoll rule's for one point."""
+    m, out = p.manifest, []
+    sq = sqpoll_cpu(p)
+    who = lambda h, t: f"{h} {t.get('comm')} ({t.get('tid')}) at {t.get('util', 0):.0%} on CPU {t.get('cpu')}"
+    for host in hosts:
+        hot = list((m["cpus"].get(host) or {}).get("hot") or [])
+        samples = m["threads"].get(host) or []
+        seen = False
+        for i, sample in enumerate(samples):
+            sqp = [t for t in sample if str(t.get("comm", "")).startswith(SQPOLL_COMM) and t.get("util", 0) > ALONE]
+            if sq is not None:
+                for t in sqp:
+                    if t.get("cpu") == sq and t.get("util", 0) > BUSY:
+                        seen = True
+                    elif t.get("cpu") != sq:
+                        out.append(("sqpoll", f"{p.tag}: sample {i}: {who(host, t)}, not on --sqpoll-cpu {sq}"))
+            if not smt_on:
+                continue
+            for t in sample:
+                if t.get("util", 0) <= BUSY or str(t.get("comm", "")).startswith(SQPOLL_COMM):
+                    continue
+                s = smt_partner(hot, t.get("cpu"))
+                if s is None:
+                    continue
+                for o in sample:
+                    if o is t or o.get("cpu") != s or o.get("util", 0) <= ALONE:
+                        continue
+                    if sq is not None and str(o.get("comm", "")).startswith(SQPOLL_COMM):
+                        continue
+                    out.append(("smt", f"{p.tag}: sample {i}: {who(host, o)}, the SMT sibling of "
+                                f"{t.get('comm')}'s CPU {t.get('cpu')}: "
+                                + ("only the arm's SQPOLL thread may run there" if sq is not None
+                                   else "the sibling stays idle")))
+        if sq is not None and samples and not seen:
+            out.append(("sqpoll", f"{p.tag}: {host}: no SQPOLL thread ({SQPOLL_COMM}*) busy on --sqpoll-cpu {sq} "
+                        "in any sample"))
     return out
 
 
@@ -438,6 +516,9 @@ def check(run_dir, absences=None, notes=None):
     env = read_env(os.path.join(run_dir, "transport-settings.env"))
     if env is None:
         add("settings", None, (), "transport-settings.env missing")
+    # the run declares SMT on (a sets file's `smt on`): the hostcheck rule's
+    # one exemption (T10) and the smt rule
+    smt_on = env is not None and env[0].get(SMT_KNOB) == "1"
 
     # manifests without a row
     tags = {p.tag for p in points}
@@ -688,10 +769,12 @@ def check(run_dir, absences=None, notes=None):
                 # hostcheck
                 rel = m["hostcheck"].get(host)
                 problems = (["not recorded"] if not rel
-                            else hostcheck_problems(os.path.join(run_dir, p.set, rel)))
+                            else hostcheck_problems(os.path.join(run_dir, p.set, rel), smt_on))
                 if problems:
                     add("hostcheck", set_, [p.tag], f"{p.tag}: {host} hostcheck {rel}: {'; '.join(problems)}")
-            for host, checks in sorted(binary_warnings(run_dir, p).items()):
+            for rule, why in smt_problems(p, hosts, smt_on):
+                add(rule, set_, [p.tag], why)
+            for host, checks in sorted(binary_warnings(run_dir, p, smt_on).items()):
                 for cid, findings in sorted(checks.items()):
                     add("hostcheck", set_, [p.tag], f"{p.tag}: {host} {p.arm}'s own check {cid} warned "
                         f"{len(findings)}x: {findings[0]}")

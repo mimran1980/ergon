@@ -9,8 +9,17 @@
 //!
 //! ```text
 //! hostcheck --hot-cpus CSV --out FILE [--nic IFACE,...] [--aeron-dir PATH]
-//!           [--root DIR] [--clock-rounds 100000]
+//!           [--smt off|on] [--root DIR] [--clock-rounds 100000]
 //! ```
+//!
+//! `--smt on`: the session declares SMT on (a transport sets file's `smt
+//! on`, the SMT-on arms: a loop on one hyperthread, its sibling idle or
+//! running that loop's `uring-sqpoll` `SQPOLL` thread). Of each pair of hot
+//! CPUs that are SMT siblings, the core's first thread is checked as a loop
+//! and the other as its `SQPOLL` thread (T8 then refuses any other busy
+//! pairing, and T1 still wants both isolated), and T10 (SMT on) is reported,
+//! not blocking. The report's first line, `S1 info:`, records the
+//! exemption. Default `off`: every hot CPU a loop, T10 blocking.
 //!
 //! `--out` gets one line per finding, ergon-tune's own: `<id> ok: ...`,
 //! `<id> info: ...`, `<id> warn: ... (evidence: ...)` or
@@ -55,12 +64,14 @@ struct Args {
     aeron_dir: Option<PathBuf>,
     root: Option<PathBuf>,
     clock_rounds: u64,
+    /// `--smt on`: the session declares SMT on.
+    smt_on: bool,
 }
 
 fn usage(why: &str) -> String {
     format!(
-        "{why}\nusage: hostcheck --hot-cpus CSV --out FILE [--nic IFACE,...] [--aeron-dir PATH] [--root DIR] \
-         [--clock-rounds N]"
+        "{why}\nusage: hostcheck --hot-cpus CSV --out FILE [--nic IFACE,...] [--aeron-dir PATH] [--smt off|on] \
+         [--root DIR] [--clock-rounds N]"
     )
 }
 
@@ -100,6 +111,11 @@ fn parse(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
         clock_rounds: map.remove("clock-rounds").map_or(Ok(100_000), |v| {
             v.parse().map_err(|_| usage("--clock-rounds: a number"))
         })?,
+        smt_on: match map.remove("smt").as_deref() {
+            None | Some("off") => false,
+            Some("on") => true,
+            Some(v) => return Err(usage(&format!("--smt {v}: off or on"))),
+        },
     };
     if let Some(k) = map.keys().next() {
         return Err(usage(&format!("unknown flag --{k}")));
@@ -180,12 +196,42 @@ fn clock_findings(host: &Host, cpus: &[u32], rounds: u64) -> Vec<String> {
         .collect()
 }
 
-/// Every ergon-tune check for `a`.
-fn findings(host: &Host, a: &Args) -> Vec<Finding> {
+/// The first thread of `cpu`'s core (`thread_siblings_list`'s first CPU),
+/// or `cpu` itself where that cannot be read.
+fn first_thread(host: &Host, cpu: u32) -> u32 {
+    let path = host
+        .root()
+        .join(format!("sys/devices/system/cpu/cpu{cpu}/topology/thread_siblings_list"));
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| s.trim().split([',', '-']).next().and_then(|c| c.parse().ok()))
+        .unwrap_or(cpu)
+}
+
+/// The hot CPUs' roles: each a loop; with `--smt on`, a hot CPU whose
+/// core's first thread is hot too is that loop's `SQPOLL` thread.
+fn hot_set(host: &Host, a: &Args) -> HotSet {
     let mut set = HotSet::new();
     for &cpu in &a.hot {
-        set.push(cpu, Role::Loop);
+        let first = first_thread(host, cpu);
+        let role = if a.smt_on && first != cpu && a.hot.contains(&first) {
+            Role::SqPoll
+        } else {
+            Role::Loop
+        };
+        set.push(cpu, role);
     }
+    set
+}
+
+/// `--smt on`'s record in the report.
+const SMT_ON_LINE: &str = "S1 info: SMT on by the session's declaration (--smt on): of each pair of hot SMT \
+                           siblings the core's first thread is checked as a loop and the other as its SQPOLL \
+                           thread (T8), and T10 is reported, not blocking";
+
+/// Every ergon-tune check for `a`.
+fn findings(host: &Host, a: &Args) -> Vec<Finding> {
+    let set = hot_set(host, a);
     let mut f = Vec::new();
     f.extend(t1_isolation(host, &set));
     f.extend(t3_thp(host, Component::Md));
@@ -237,12 +283,16 @@ fn line(f: &Finding) -> String {
 /// within one host).
 const REPORTED_ONLY: &[&str] = &["T11"];
 
-/// Whether a line keeps the host from being clean.
-fn blocks(line: &str) -> bool {
+/// Reported but never blocking under `--smt on`: T10 (SMT on), which the
+/// session measures on purpose.
+const REPORTED_ONLY_SMT_ON: &[&str] = &["T10"];
+
+/// Whether a line keeps the host from being clean (`smt_on`: `--smt on`).
+fn blocks(line: &str, smt_on: bool) -> bool {
     let Some((id, rest)) = line.split_once(' ') else {
         return true;
     };
-    if REPORTED_ONLY.contains(&id) {
+    if REPORTED_ONLY.contains(&id) || (smt_on && REPORTED_ONLY_SMT_ON.contains(&id)) {
         return false;
     }
     rest.starts_with("warn:") || (rest.starts_with("unknown:") && unknown_stops_require(id))
@@ -257,7 +307,11 @@ fn main() -> ExitCode {
         }
     };
     let host = a.root.as_ref().map_or_else(Host::system, Host::at);
-    let mut lines: Vec<String> = findings(&host, &a).iter().map(line).collect();
+    let mut lines: Vec<String> = Vec::new();
+    if a.smt_on {
+        lines.push(SMT_ON_LINE.to_owned());
+    }
+    lines.extend(findings(&host, &a).iter().map(line));
     lines.extend(clock_findings(&host, &a.hot, a.clock_rounds));
     let mut body = String::new();
     for l in &lines {
@@ -267,7 +321,7 @@ fn main() -> ExitCode {
         eprintln!("hostcheck: {}: {e}", a.out.display());
         return ExitCode::FAILURE;
     }
-    let bad: Vec<&String> = lines.iter().filter(|l| blocks(l)).collect();
+    let bad: Vec<&String> = lines.iter().filter(|l| blocks(l, a.smt_on)).collect();
     if bad.is_empty() {
         eprintln!("hostcheck: clean, {} lines in {}", lines.len(), a.out.display());
         return ExitCode::SUCCESS;
@@ -281,15 +335,66 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::blocks;
+    use super::{Args, blocks, hot_set, parse};
+    use ergon_tune::{Host, Role};
 
     #[test]
     fn a_wall_clock_warning_is_reported_not_blocking() {
         assert!(!blocks(
-            "T11 warn: CLOCK_REALTIME is not disciplined to a PTP hardware clock (chronyd tracks NTP server 169.254.169.123)"
+            "T11 warn: CLOCK_REALTIME is not disciplined to a PTP hardware clock (chronyd tracks NTP server 169.254.169.123)",
+            false
         ));
-        assert!(blocks("T1 warn: CPU 2 is not isolated"));
-        assert!(blocks("garbage"));
-        assert!(!blocks("T1 ok: isolated"));
+        assert!(blocks("T1 warn: CPU 2 is not isolated", false));
+        assert!(blocks("garbage", false));
+        assert!(!blocks("T1 ok: isolated", false));
+    }
+
+    /// T10 blocks unless the session declared SMT on; nothing else changes.
+    #[test]
+    fn smt_on_reports_t10_and_blocks_the_rest() {
+        let t10 = "T10 warn: SMT is on: on x86 a Kubernetes `cpu: 2` is one physical core";
+        assert!(blocks(t10, false));
+        assert!(!blocks(t10, true));
+        assert!(blocks("T8 warn: CPU 2 and CPU 10 are hyperthreads of one core", true));
+        assert!(blocks("T1 warn: CPU 10 is not isolated", true));
+    }
+
+    fn args(v: &[&str]) -> Result<Args, String> {
+        parse(v.iter().map(|s| (*s).to_owned()))
+    }
+
+    /// `--smt`: off by default, on or off, nothing else.
+    #[test]
+    fn the_smt_flag_is_off_or_on() -> Result<(), String> {
+        let base = ["--hot-cpus", "2,10", "--out", "x"];
+        assert!(!args(&base)?.smt_on);
+        assert!(args(&[&base[..], &["--smt", "on"]].concat())?.smt_on);
+        assert!(!args(&[&base[..], &["--smt", "off"]].concat())?.smt_on);
+        assert!(args(&[&base[..], &["--smt", "yes"]].concat()).is_err());
+        Ok(())
+    }
+
+    /// Under `--smt on`, a hot CPU whose core's first thread is hot is that
+    /// loop's SQPOLL thread; off, every hot CPU is a loop. A fixture tree:
+    /// CPUs 2 and 10 one core, 3 alone.
+    #[test]
+    fn smt_on_pairs_each_loop_with_its_sibling() -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir().join(format!("hostcheck-smt-{}", std::process::id()));
+        for (cpu, sib) in [(2, "2,10"), (10, "2,10"), (3, "3")] {
+            let d = root.join(format!("sys/devices/system/cpu/cpu{cpu}/topology"));
+            std::fs::create_dir_all(&d)?;
+            std::fs::write(d.join("thread_siblings_list"), format!("{sib}\n"))?;
+        }
+        let host = Host::at(&root);
+        let mut a = args(&["--hot-cpus", "2,10,3", "--out", "x", "--smt", "on"])?;
+        let set = hot_set(&host, &a);
+        assert_eq!(set.roles(2), vec![Role::Loop]);
+        assert_eq!(set.roles(10), vec![Role::SqPoll]);
+        assert_eq!(set.roles(3), vec![Role::Loop]);
+        a.smt_on = false;
+        let set = hot_set(&host, &a);
+        assert_eq!(set.roles(10), vec![Role::Loop]);
+        std::fs::remove_dir_all(root)?;
+        Ok(())
     }
 }

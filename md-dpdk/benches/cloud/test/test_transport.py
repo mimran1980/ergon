@@ -942,6 +942,108 @@ class A2SessionTest(unittest.TestCase):
             "I/O too (not measured here)"])
 
 
+def smt_on(run):
+    """The run as an SMT-on session's (a sets file's `smt on`): the declared
+    SMT state, read back at every point, and each hot CPU's SMT sibling (CPU
+    + 100) its neighbour in the map's hot list, every sibling idle."""
+    write(run.path("transport-settings.env"), read(run.path("transport-settings.env"))
+          + f"shared.{fairness.SMT_KNOB}=1\n")
+
+    def on(m):
+        for h, c in m["cpus"].items():
+            c["hot"] = [x for cpu in c["hot"] for x in (cpu, cpu + 100)]
+        for st in m["settings"].values():
+            st[fairness.SMT_KNOB] = "1"
+
+    run.edit(lambda m: True, on, first=False)
+
+
+def sqpoll_arm(cpu, on_cpu=None):
+    """fn(manifest): ONE's point as a uring-sqpoll arm with --sqpoll-cpu cpu,
+    its SQPOLL thread spinning on on_cpu (default cpu; False: none sampled)."""
+    def fn(m):
+        m["runner"] = {"args": f"--impl ergon --backend uring-sqpoll --sqpoll-cpu {cpu}"}
+        if on_cpu is False:
+            return
+        for samples in m["threads"].values():
+            for sample in samples:
+                sample.append({"tid": 700, "comm": "iou-sqp-650", "cpu": cpu if on_cpu is None else on_cpu,
+                               "util": 1.0})
+    return fn
+
+
+class SmtTest(unittest.TestCase):
+    """A session that declares SMT on: T10 reported, not refused; every busy
+    thread's SMT sibling idle, or running a uring-sqpoll arm's own SQPOLL
+    thread; a uring-sqpoll arm's SQPOLL thread on its --sqpoll-cpu."""
+
+    T10 = "T10 warn: SMT is on: on x86 a Kubernetes `cpu: 2` is one physical core, not two"
+
+    def test_an_smt_on_run_with_idle_siblings_is_clean(self):
+        run = Run(self)
+        smt_on(run)
+        self.assertEqual([str(v) for v in fairness.check(run.run)], [])
+
+    def test_t10_is_reported_only_where_the_run_declares_smt_on(self):
+        for declared in (False, True):
+            run = Run(self)
+            if declared:
+                smt_on(run)
+            for set_ in ("2a", "3b", "2b"):
+                for h in ("a", "b"):
+                    path = run.path(set_, f"{h}-hostcheck.txt")
+                    if os.path.exists(path):
+                        write(path, read(path).replace("T10 ok: SMT is off", self.T10))
+            os.makedirs(run.path("logs"))
+            write(run.path("logs", "2a-r1-mio-udp-10000.out"), f"ergon-io warning: {self.T10}. Fix: off\n")
+            run.edit(ONE, lambda m: m.update(runner={"point": "2a-r1-mio-udp-10000"}))
+            self.assertEqual(run.rules(), [] if declared else ["hostcheck"])
+
+    def test_a_busy_sibling_breaks_smt(self):
+        run = Run(self)
+        smt_on(run)
+        # mio-udp's busy0 is on CPU 4: its sibling, 104, runs something
+        run.edit(ONE, lambda m: m["threads"]["b"][1].append({"tid": 9, "comm": "gapspin", "cpu": 104, "util": 0.5}))
+        found = [str(v) for v in fairness.check(run.run)]
+        self.assertEqual(found, ["smt: 2a: 2a-mio-udp-64-1-r10000: sample 1: b gapspin (9) at 50% on CPU 104, the "
+                                 "SMT sibling of busy0's CPU 4: the sibling stays idle"])
+
+    def test_without_smt_on_the_sibling_is_not_checked(self):
+        run = Run(self)
+        run.edit(ONE, lambda m: m["threads"]["b"][1].append({"tid": 9, "comm": "sshd", "cpu": 104, "util": 0.5}))
+        self.assertEqual(run.rules(), [])
+
+    def test_the_sqpoll_thread_on_the_loops_sibling_is_clean(self):
+        run = Run(self)
+        smt_on(run)
+        run.edit(ONE, sqpoll_arm(104))
+        self.assertEqual([str(v) for v in fairness.check(run.run)], [])
+
+    def test_another_thread_beside_the_sqpoll_thread_breaks_smt(self):
+        run = Run(self)
+        smt_on(run)
+        run.edit(ONE, sqpoll_arm(104))
+        run.edit(ONE, lambda m: m["threads"]["a"][0].append({"tid": 9, "comm": "kworker/104:1", "cpu": 104,
+                                                            "util": 0.2}))
+        self.assertIn("smt", run.rules())
+
+    def test_the_sqpoll_thread_off_its_cpu_breaks_sqpoll(self):
+        run = Run(self)
+        smt_on(run)
+        run.edit(ONE, sqpoll_arm(104, on_cpu=108))
+        found = [str(v) for v in fairness.check(run.run)]
+        self.assertEqual(sorted({v.split(":")[0] for v in found}), ["sqpoll"], "\n".join(found))
+        self.assertIn("sqpoll: 2a: 2a-mio-udp-64-1-r10000: a: no SQPOLL thread (iou-sqp-*) busy on --sqpoll-cpu 104 "
+                      "in any sample", found)
+        self.assertIn("sqpoll: 2a: 2a-mio-udp-64-1-r10000: sample 0: a iou-sqp-650 (700) at 100% on CPU 108, not on "
+                      "--sqpoll-cpu 104", found)
+
+    def test_an_sqpoll_thread_never_sampled_breaks_sqpoll_smt_off_too(self):
+        run = Run(self)
+        run.edit(ONE, sqpoll_arm(10, on_cpu=False))
+        self.assertEqual(run.rules(), ["sqpoll"])
+
+
 class AnalyseTest(unittest.TestCase):
     def analyse(self, *args):
         out = io.StringIO()

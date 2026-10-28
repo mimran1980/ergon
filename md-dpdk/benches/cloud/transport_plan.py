@@ -12,8 +12,16 @@ timings. Commands:
                                      group set host rep netem round-seed loads streams arms
                                      (arms: the round's order; aa as <first arm>@AA=1)
   count <pair> <reps> <files>...     the points the pair runs
+  smt <files>...                     the session's SMT, off or on (a sets file's `smt on`
+                                     row; off without one)
   binom <offered> <dropped> <loss %> "<lo> <hi> ok|FAIL": the dropped count's
                                      interval at that loss (two-sided, 1 in 10,000)
+
+A sets file may hold one `smt <off|on>` row: the session's SMT (vm.sh
+transport-isolate). With `on`, SMT stays on, each isolated core is listed
+whole in the CPU map, and every arm of the session is a two-host socket arm
+(transport.sh tr_check): a loop on one hyperthread, its sibling idle or
+running that loop's uring-sqpoll SQPOLL thread.
 
 A round is one pass over a set's arms at one rep and netem level, in an order
 drawn from that round's own seed: sha256 of "<session seed>:<set>:<rep>:<netem>",
@@ -70,8 +78,11 @@ def load(paths):
                 if "--nics" in args and args[args.index("--nics") + 1:args.index("--nics") + 2] != ["alt"]:
                     raise PlanError(f"{where}: arm {name}: --nics takes alt (each host's other data NIC)")
                 arms[name] = (binary, setup, hosts, args)
-            elif words[0] == "set" and arms_only:
+            elif words[0] in ("set", "smt") and arms_only:
                 continue
+            elif words[0] == "smt":
+                if len(words) != 2 or words[1] not in ("off", "on"):
+                    raise PlanError(f"{where}: smt off or smt on")
             elif words[0] == "set":
                 if len(words) != 9:
                     raise PlanError(f"{where}: set <id> <pair> <par> <host> <loads> <streams> <netem> <arms>")
@@ -92,7 +103,7 @@ def load(paths):
                 sets.append(dict(id=sid, pair=pair, par=par, host=host, loads=loads, streams=streams,
                                  netem=levels, arms=names, where=where))
             else:
-                raise PlanError(f"{where}: a row is arm or set, not {words[0]}")
+                raise PlanError(f"{where}: a row is arm, set or smt, not {words[0]}")
     for s in sets:
         if s["arms"][0] == "aa":
             raise PlanError(f"{s['where']}: set {s['id']}: aa repeats the set's first arm, so it cannot be first")
@@ -118,6 +129,24 @@ def load(paths):
             raise PlanError(f"{s['where']}: set {s['id']}: a sink arm (its sink on b) runs in a set on host a, "
                             "netem -")
     return arms, sets
+
+
+def smt(paths):
+    """The session's SMT, "off" or "on": the files' `smt` rows (a path
+    ending :arms gives none), which agree; "off" without one."""
+    load(paths)
+    seen = {}
+    for path in paths:
+        if not path or path.endswith(":arms"):
+            continue
+        with open(path) as f:
+            for n, line in enumerate(f, 1):
+                words = line.split("#", 1)[0].split()
+                if words and words[0] == "smt":
+                    seen[f"{path}:{n}"] = words[1]
+    if len(set(seen.values())) > 1:
+        raise PlanError("smt rows disagree: " + ", ".join(f"{w} {v}" for w, v in seen.items()))
+    return next(iter(seen.values()), "off")
 
 
 def seed_of(text):
@@ -256,6 +285,8 @@ def main(argv):
                 print("\t".join([str(gi), s["id"], s["host"], str(rep), netem, str(rs),
                                  ",".join(map(str, s["loads"])), ",".join(map(str, s["streams"])),
                                  ",".join(a + ("@AA=1" if aa else "") for a, aa in order)]))
+        elif cmd == "smt":
+            print(smt(args))
         elif cmd == "count":
             _, sets = load(args[2:])
             print(count(sets, args[0], int(args[1])))

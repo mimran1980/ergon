@@ -34,7 +34,7 @@ nonzero exit on any error. A partial row is never printed.
 | `mpsc_lat` | `--capacity N` (sync_channel); role `local` only, `--round-trip` for the round trip |
 | `aeron_lat` | `--mode <ipc\|spy\|spy-udp\|udp>`, `--reliable <true\|false>` (`false` UDP only), `--endpoint HOST:PORT` (pings; stream i on PORT+i, stream id S+i), `--reply HOST:PORT` (echoes, stream id S+10000+i), `--interface IP` (the three UDP and spy-udp only: refused for ipc and spy). `spy-udp`: `local` measures as `spy` does, on reliable `ssc=false` publications to `--endpoint` and `--reply`, both the sink's addresses; `pong` is that sink (reads every frame, writes `sink.*` counts, echoes nothing); `ping` refused. Every manifest has the driver's `driver.bytes-sent` and `driver.bytes-received`, a local round trip's `echoes_sent`, `--aeron-dir PATH`, `--driver external\|embedded\|invoker` (a driver process at `--aeron-dir`; one this process starts on a thread of its own, configured from the environment; or one in Aeron's INVOKER mode that the measuring thread runs with its client's conductor, every poll and after every offer: `ping` and `pong` over `udp` only), `--driver-busy-threads N` (the driver's, as the runner sets it up; invoker 0, its only value), `--term-length BYTES`, `--mtu BYTES`, `--stream-id S` (1001), `--connect-timeout-s N` (30), `--round-trip` (`local` only) |
 | `udp_lat` | `--impl <mio\|ergon>`, `--local IP:PORT`, `--peer IP:PORT` (base ports, stream i on +i; `local`: the receiver binds `--peer`), `--busy-read-us N` (`SO_BUSY_POLL` on every socket, both impls: ergon-io by `busy_poll_us`), `--epoll-events N`, `--datagram-burst N` (ergon only), `--rcvbuf`/`--sndbuf BYTES` |
-| `tcp_lat` | `--impl <mio\|ergon>`, `--listen IP:PORT` (pong; `local` takes `--listen`, and `--source`) or `--connect IP:PORT` (ping; stream i is connection i), `--source IP` (the connecting end binds it first), `--source-port N` (an arm flag: the connecting end binds stream i to N + i and closes with a reset, so arms given the same N share 4-tuples; the listening end ignores it; not with `local`), `--nodelay` (always on), `--quickack-per-read`, `--rto-min-us N`, `--delack-max-us N`, `--busy-read-us N` (both impls), `--rcvbuf`/`--sndbuf BYTES` |
+| `tcp_lat` | `--impl <mio\|ergon>`, `--listen IP:PORT` (pong; `local` takes `--listen`, and `--source`) or `--connect IP:PORT` (ping; stream i is connection i), `--source IP` (the connecting end binds it first), `--source-port N` (an arm flag: the connecting end binds stream i to N + i and closes with a reset, so arms given the same N share 4-tuples; the listening end ignores it; not with `local`), `--nodelay` (always on), `--quickack-per-read`, `--rto-min-us N`, `--delack-max-us N`, `--busy-read-us N` (both impls), `--rcvbuf`/`--sndbuf BYTES`, `--backend epoll-spin\|uring-sqpoll` and `--sqpoll-cpu N` (ergon only: ergon-io's backend, `epoll-spin` by default; `uring-sqpoll` needs `--sqpoll-cpu`, its `SQPOLL` kernel thread's CPU, and `--busy-read-us 0`: that thread polls the NIC) |
 | `fstack_lat` | TCP over F-Stack (FreeBSD's stack on DPDK), `ping` or `pong` only (one F-Stack a process, on its one `--cpus` CPU): `--listen IP:PORT` (pong) or `--source IP --connect IP:PORT` (ping), the F-Stack interface taking that address; `--pci BDF` (its port) or `--vdev SPEC` (a virtual one, tests), `--prefix-len N`, `--gateway IP`, `--nodelay` (always on), `--rcvbuf`/`--sndbuf BYTES`, `--delayed-ack true` and `--hz 100` (FreeBSD's), `--no-huge`, `--memory-mb 1024`, `--file-prefix ergon-fstack`. It refuses the kernel's socket flags (busy poll, epoll, quickack, TCP timers). It writes its whole F-Stack config to `<out>/f-stack-<role>.conf`, every key in its manifest (`fstack.conf.*`), with F-Stack's build (`fstack.build.*`). Built with `--features fstack` against `io/benches/fstack/build-fstack.sh`'s F-Stack v2.0 (x86_64 only) |
 | `hostcheck` | `--hot-cpus CSV`, `--out FILE`, `--nic IFACE,...`, `--aeron-dir PATH`; one finding a line (`<id> ok:`, `info:`, `warn:`, `unknown:`); exit 0 clean, 2 not clean, 1 not run |
 
@@ -53,7 +53,7 @@ own):
 | `mpsc_lat` | `--capacity <capacity>` |
 | `aeron_lat` | `--aeron-dir <aeron_page's directory: $TR_AERON_DIR (tmpfs), at 2097152 $TR_AERON_HUGE_DIR (2 MiB hugetlbfs), the media driver's AERON_DIR too> --driver <external; embedded or invoker with aeron_driver embedded> --driver-busy-threads <tr_driver_busy: $TR_AERON_DRIVER_BUSY_THREADS, SHARED_NETWORK one fewer, SHARED 1, INVOKER 0> --term-length <term_length> --mtu $TR_MTU`; `--mode udp` arms also `--endpoint <pong's data IP>:$TR_PORT_BASE --reply <ping's data IP>:$TR_PORT_BASE --interface <own data IP>`; every run `--stream-id 1001+256k` (the k-th Aeron point of the set; a one-host point's round trip +128), ping and pong the same, so no lingering publication of an earlier run is the image a subscription takes |
 | `udp_lat` | `--local <own>:$TR_PORT_BASE --peer <other end>:$TR_PORT_BASE --rcvbuf/--sndbuf <sockbuf> --epoll-events <epoll_events> --busy-read-us <busy_read_us>`, `--datagram-burst <datagram_burst>` for `--impl ergon` |
-| `tcp_lat` | pong (and `local`, on its receiver NIC) `--listen <own>:port`, ping `--source <own> --connect <peer>:port` (`local` also `--source <own>`), then `--nodelay --quickack-per-read [false] --rto-min-us <rto_min_us> --delack-max-us --rcvbuf --sndbuf <sockbuf> --epoll-events <epoll_events> --busy-read-us <busy_read_us>` |
+| `tcp_lat` | pong (and `local`, on its receiver NIC) `--listen <own>:port`, ping `--source <own> --connect <peer>:port` (`local` also `--source <own>`), then `--nodelay --quickack-per-read [false] --rto-min-us <rto_min_us> --delack-max-us --rcvbuf --sndbuf <sockbuf> --epoll-events <epoll_events> --busy-read-us <busy_read_us>`; an arm with `--backend uring-sqpoll` `--busy-read-us 0` and no `busy_read_us` knob |
 | `fstack_lat` | pong `--listen <own>:port`, ping `--source <own> --connect <peer>:port`, then `--pci <the NIC with that address> --prefix-len <its prefix> --gateway <its subnet's first address>` (vm.sh nics) `--nodelay --delayed-ack false --rcvbuf --sndbuf <sockbuf>` (FreeBSD's `delayed_ack=0`: the kernel arms' quickack) |
 | other (arms file) | `--local <own>:port --peer <other end>:port`; setup `sockets` also `--busy-read-us $TR_BUSY_READ --rcvbuf/--sndbuf $TR_SOCKBUF --nodelay --quickack-per-read --rto-min-us $TR_TCP_RTO_MIN_US --delack-max-us $TR_TCP_DELACK_MAX_US`: every socket and TCP setting the built-in arms get. Such a binary must take them all, apply each it uses, and report them in its manifest |
 
@@ -103,6 +103,21 @@ Each data NIC has a routing table its own address selects (`vm.sh
 data_kernel_up`), so the address a socket binds is the NIC it leaves by:
 `udp_lat` binds `--local`, `tcp_lat`'s connecting end `--source`, its
 listening end `--listen`.
+
+Two CPU placeholders in an arm's arguments are replaced by the runner
+(`tr_cpu_arg`), from the arm's CPUs (`transport_clients`), the loop's the
+first: the map is the same on both hosts, so the CPU is the ping's and the
+pong's alike.
+
+- `{next_core}`: the first CPU of the next isolated core (the second of the
+  arm's CPUs with SMT off, the third with it on): `eio-tcp-sqpoll-core`'s
+  `--sqpoll-cpu`.
+- `{loop_sibling}`: the loop CPU's SMT sibling (the second of the arm's CPUs
+  with SMT on); only in a session with `smt on` (`transport.sh check`
+  refuses it otherwise): `eio-tcp-sqpoll-sib`'s `--sqpoll-cpu`.
+
+An arm's `--sqpoll-cpu` is traced in its events and never a gap spinner's;
+under `smt on` neither is the SMT sibling of any CPU the point uses.
 
 Two arm arguments are the runner's own, not passed on:
 
@@ -204,6 +219,27 @@ Same format as `transport-matrix.tsv`: `arm` and `set` rows, added after the
 built-in ones. A name may not be used twice. `LAB_EXTRA_SRC` is a source tree
 copied to `~/extra` on both VMs, which then run `bash lab-build.sh ~/extra/bin`
 in it after the main build. Binaries placed there are found by name.
+
+## SMT on (`smt on`)
+
+A sets file's `smt on` row (`transport_plan.py smt`; off without one)
+makes the session keep SMT on: `vm.sh transport-isolate smt-on` builds the
+CPU map with each isolated core whole, its first thread then its siblings
+(c7i.4xlarge: `0 1 2,10,3,11,4,12,5,13,6,14,7,15`), and `transport-tune`
+verifies SMT on (`host.sh transport_smt_on`) where every other session turns
+it off. `transport.sh check` takes only two-host socket arms then (a media
+driver's threads, or a one-host arm's two ends, would share a core), and
+`aws/lab.sh` refuses it with `LAB_THREADS_PER_CORE=1`, on Graviton and on
+C7a-family types.
+
+| what | how |
+|---|---|
+| declared | `devices/system/cpu/smt/active` 1 (0 in every other session) in `declared-sysctls.txt`; `vm.sh settings` reads it back at every point (`transport_smt_read`), fairness.py's settings rule |
+| hostcheck | `hostcheck --smt on`: of each pair of hot SMT siblings the first thread a loop and the other its `SQPOLL` thread (T8), T10 reported, not blocking; its first line `S1 info:` records it |
+| fairness | T10 (the hostcheck's, and a binary's own) reported only under `smt on`; the `smt` rule: each busy thread's sibling (its neighbour in the hot list) idle, or the arm's own `SQPOLL` thread (`iou-sqp-*`) |
+
+`transport-aws-smt-off.tsv` and `transport-aws-smt.tsv` are the two halves
+of the SMT question, each a session of its own on c7i.4xlarge.
 
 ## Setup fstack (`dpdk-tcp`)
 

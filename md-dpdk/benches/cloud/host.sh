@@ -890,23 +890,45 @@ UNIT
 # Every function reads and writes under $LAB_SYS_ROOT and $LAB_PROC_ROOT, so
 # test/test-transport-runner.sh runs them against fake trees.
 
-# transport_cpu_map: "<housekeeping> <irq> <isolated,...>": the first thread
-# of each core in core order (an offline CPU, SMT off's twins, has no
-# topology and is no core): the first core housekeeping, the second every
-# data-NIC IRQ, the rest isolated. Standard_D16s_v6 with SMT off: 0 2
+# transport_cpu_map [off|on]: "<housekeeping> <irq> <isolated,...>": the
+# first thread of each core in core order (an offline CPU, SMT off's twins,
+# has no topology and is no core): the first core housekeeping, the second
+# every data-NIC IRQ, the rest isolated. Standard_D16s_v6 with SMT off: 0 2
 # 4,6,8,10,12,14. 2 with fewer than six cores (an Aeron arm needs four
 # isolated ones: its sender, receiver and conductor, and a client thread).
+# `on` (a session whose sets file says `smt on`): SMT stays on, and each
+# isolated core is listed whole, its first thread then its siblings, so a
+# loop's CPU and its SMT sibling are both isolated and neighbours in the
+# list (c7i.4xlarge: 0 1 2,10,3,11,4,12,5,13,6,14,7,15); the housekeeping and
+# IRQ cores' siblings are in no list (not isolated, nothing pinned there).
+# 2 when no core has a sibling (no SMT to keep on).
 transport_cpu_map() {
-    local dir=$LAB_SYS_ROOT/devices/system/cpu cpu siblings cores=()
+    local smt=${1:-off} dir=$LAB_SYS_ROOT/devices/system/cpu cpu siblings cores=() whole=() part s pair=0
     for cpu in $(printf '%s\n' "$dir"/cpu[0-9]* | sed 's/.*cpu//' | sort -n); do
         [[ -r $dir/cpu$cpu/topology/thread_siblings_list ]] || continue
         siblings=$(cat "$dir/cpu$cpu/topology/thread_siblings_list")
-        [[ ${siblings%%[,-]*} == "$cpu" ]] && cores+=("$cpu")
+        [[ ${siblings%%[,-]*} == "$cpu" ]] || continue
+        cores+=("$cpu")
+        # the core's threads, its first one first
+        s=$cpu
+        # (an offline sibling, without topology, is none)
+        for part in $(cpulist_expand "$siblings"); do
+            [[ $part != "$cpu" && -r $dir/cpu$part/topology/thread_siblings_list ]] || continue
+            s+=",$part" pair=1
+        done
+        whole+=("$s")
     done
     ((${#cores[@]} >= 6)) ||
         { echo "transport: ${#cores[@]} cores: the map needs six (housekeeping, IRQ, an Aeron arm's four isolated)" >&2; return 2; }
     local iso
-    iso=$(IFS=,; echo "${cores[*]:2}")
+    case $smt in
+    off) iso=$(IFS=,; echo "${cores[*]:2}") ;;
+    on)
+        ((pair)) || { echo "transport: smt on: no core has an SMT sibling (one thread a core): nothing to keep on" >&2; return 2; }
+        iso=$(IFS=,; echo "${whole[*]:2}")
+        ;;
+    *) echo "transport_cpu_map: smt $smt: off or on" >&2; return 2 ;;
+    esac
     echo "${cores[0]} ${cores[1]} $iso"
 }
 
@@ -956,7 +978,9 @@ cpulist_expand() {
 transport_boot_check() {
     local iso want got nohz
     read -r _ _ iso <<<"$1"
-    want=$(cpulist_expand "$iso")
+    # (as sets: an SMT-on map lists each core's threads together, the
+    # kernel in CPU order)
+    want=$(cpulist_expand "$iso" | tr ' ' '\n' | sort -n | paste -sd' ' -)
     got=$(cpulist_expand "$(cat "$LAB_SYS_ROOT/devices/system/cpu/isolated" 2>/dev/null)")
     nohz=$(cpulist_expand "$(cat "$LAB_SYS_ROOT/devices/system/cpu/nohz_full" 2>/dev/null)")
     if [[ -n $want && $got == "$want" && $nohz == "$want" ]]; then
@@ -1062,6 +1086,30 @@ transport_smt_off() {
     fi
     echo "smt: control [$c] active [$a] after writing off: SMT still on" >&2
     return 1
+}
+
+# transport_smt_on: SMT kept on (a session whose sets file says `smt on`)
+# and verified: control on and smt/active 1. 1 when it is off, or the CPU
+# has none.
+transport_smt_on() {
+    local d=$LAB_SYS_ROOT/devices/system/cpu/smt c a
+    c=$(cat "$d/control" 2>/dev/null) || { echo "smt: no $d/control: SMT state unknown" >&2; return 1; }
+    a=$(cat "$d/active" 2>/dev/null)
+    if [[ $c == on && $a == 1 ]]; then
+        echo "smt: on as the session declares (control $c active $a online $(cat "$LAB_SYS_ROOT/devices/system/cpu/online" 2>/dev/null))"
+        return 0
+    fi
+    echo "smt: control [$c] active [$a]: the session declares SMT on" >&2
+    return 1
+}
+
+# transport_smt_read: the SMT state every point reads back on each host
+# (vm.sh settings), "devices.system.cpu.smt.active=<0|1|absent>": the
+# session declares it (transport.sh tr_smt_declared), fairness.py's settings
+# rule holds every point to it
+transport_smt_read() {
+    local f=$LAB_SYS_ROOT/devices/system/cpu/smt/active
+    if [[ -r $f ]]; then echo "devices.system.cpu.smt.active=$(cat "$f")"; else echo "devices.system.cpu.smt.active=absent"; fi
 }
 
 # transport_quiet_settings <housekeeping cpulist> <isolated cpulist>: the

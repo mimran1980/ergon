@@ -19,6 +19,11 @@
 #            host a, netem -, run alone)
 #   arguments  the arm's own flags, after the runner's (transport-cli.md)
 #
+# smt <off|on>  (a sets file's, once) the session's SMT: off without it (vm.sh
+#          transport-tune turns it off); on keeps it on, each isolated core
+#          whole in the CPU map (host.sh transport_cpu_map), every arm a
+#          two-host socket arm, T10 reported and the smt rule (fairness.py)
+#
 # set <id> <pair> <par> <host> <loads> <streams> <netem> <arms>
 #   pair     the session (LAB_PAIR) that runs it: a or b
 #   par      sets of one pair with the same tag run at once (one-host sets on
@@ -71,6 +76,15 @@ arm  eio-udp          udp_lat    sockets  two  --impl ergon
 arm  mio-tcp          tcp_lat    sockets  two  --impl mio
 arm  eio-tcp          tcp_lat    sockets  two  --impl ergon
 arm  dpdk-tcp         fstack_lat fstack   two
+# ergon-io's uring-sqpoll on TCP (transport-aws-smt-off.tsv, transport-aws-smt.tsv):
+# its SQPOLL kernel thread on {next_core} (the first CPU of the next isolated
+# core) or {loop_sibling} (the loop CPU's SMT sibling: a sets file with smt
+# on); no SO_BUSY_POLL (the SQPOLL thread polls the NIC). mio-tcp-smt is
+# mio-tcp's row, named for the SMT-on session (its loop's sibling idle).
+# UDP has no uring arm: ergon-io's UDP runs on epoll-spin only
+arm  eio-tcp-sqpoll-core tcp_lat sockets two --impl ergon --backend uring-sqpoll --sqpoll-cpu {next_core}
+arm  eio-tcp-sqpoll-sib  tcp_lat sockets two --impl ergon --backend uring-sqpoll --sqpoll-cpu {loop_sibling}
+arm  mio-tcp-smt      tcp_lat    sockets  two  --impl mio
 # the socket and Aeron UDP arms again under Onload (transport-aws-onload.tsv)
 arm  onload-mio-tcp   tcp_lat    onload   two  --impl mio
 arm  onload-eio-tcp   tcp_lat    onload   two  --impl ergon

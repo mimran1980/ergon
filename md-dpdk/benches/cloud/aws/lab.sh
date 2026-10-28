@@ -156,7 +156,10 @@
 #   5. Graviton with LAB_ALLOW_ARM=1 (c8g.2xlarge: 8 cores, the same map), but
 #   an F-Stack arm (setup fstack) builds on x86_64 alone: refused there
 #   (modes.sh). An x86 type with SMT (c7i.4xlarge: 16 vCPUs, 8 cores) runs
-#   with SMT off (transport-tune), its map one CPU a core alike. The Onload
+#   with SMT off (transport-tune), its map one CPU a core alike, unless its
+#   sets file says `smt on` (../transport-aws-smt.tsv: SMT kept on, each
+#   isolated core whole in the map; refused with LAB_THREADS_PER_CORE=1, on
+#   Graviton and on C7a-family types). The Onload
 #   session (../transport-aws-onload.tsv: setup onload, OpenOnload over
 #   AF_XDP on the ENA) runs on all three. Each type must take three ENIs (describe-instance-types'
 #   MaximumNetworkInterfaces, read before anything is created). LAB_SEED
@@ -491,6 +494,15 @@ if [[ $suite == transport && -z ${LAB_DELETE:-} ]]; then
     # shellcheck source=../transport.sh
     . "$here/../transport.sh"
     points=$(tr_check "$tr_pair" "$arms_file" 2>&1) || die "$points"
+    # a sets file's `smt on` (SMT kept on: transport.sh tr_smt_check): an x86
+    # type with SMT, launched with it
+    if [[ $(tr_plan smt 2>/dev/null) == on ]]; then
+        [[ -z $threads_per_core ]] || die "LAB_SETS_FILE says smt on: not with LAB_THREADS_PER_CORE=1 (SMT off from launch)"
+        for t in "$type_a" "$type_b"; do
+            ! arm_type "$t" || die "LAB_SETS_FILE says smt on: $t is Graviton, which has no SMT"
+            [[ ! ${t%%.*} =~ ^(c7a|m7a|r7a|c8a|m8a|r8a)$ ]] || die "LAB_SETS_FILE says smt on: $t has one thread a core (AMD Zen 4/5 C7a-family types)"
+        done
+    fi
     for m in "kernel-busy$TR_AERON_MODE_SUFFIX" "dpdk$TR_AERON_MODE_SUFFIX" "onload$TR_AERON_MODE_SUFFIX"; do
         why=$(spare_types_check "$m" aws "$type_a" "$type_b" 2>&1) || die "$why"
     done

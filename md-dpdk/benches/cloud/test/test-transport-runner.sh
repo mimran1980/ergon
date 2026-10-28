@@ -270,7 +270,7 @@ got=$(
     TR_DECLARED="dpdk-aeron-rel-emb:dpdk-aeron-rel-invoker:aeron_driver=embedded dpdk-aeron-rel-invoker:dpdk-aeron-rel-emb:aeron_threading=INVOKER" tr_declared_check 2>&1 | sed 's/^/refused: /' || true
     echo "handoff check: $(tr_check a 2>&1)"
 )
-same "transport.sh, the hand-off arms: each its twin's driver mode but for its threading (SHARED_NETWORK keeps the conductor's core, SHARED and INVOKER drop it) or DRIVER=embedded, each passing mode_check; aeron_lat's --driver (embedded, invoker) and busy threads (3, 2, 1, 0) from it; an embedded driver's binary started with ~/bench/driver.env under sudo setpriv; the events' spinners on the CPUs the driver leaves; INVOKER without the driver embedded and a twin chain going round refused; the sets file checks (54 points at 3 reps)" \
+same "transport.sh, the hand-off arms: each its twin's driver mode but for its threading (SHARED_NETWORK keeps the conductor's core, SHARED and INVOKER drop it) or DRIVER=embedded, each passing mode_check; aeron_lat's --driver (embedded, invoker) and busy threads (3, 2, 1, 0) from it; an embedded driver's binary started with ~/bench/driver.env under sudo setpriv; the events' spinners on the CPUs the driver leaves; INVOKER without the driver embedded and a twin chain going round refused; the sets file checks (66 points at 3 reps)" \
 "dpdk-aeron-rel: dpdk<suffix>
   check 0; knobs threading DEDICATED driver external; --driver external --driver-busy-threads 3; events 4,6,8,10,12,14 12,14
   start: sh -c 'taskset -c 0 env PATH=P aeron_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
@@ -294,7 +294,7 @@ aeron-rel-invoker: kernel-busy@AERON_TERM_BUFFER_LENGTH=1048576@AERON_IPC_TERM_B
   start: sudo -n setpriv --reuid=\"\$(id -u)\" --regid=\"\$(id -g)\" --init-groups --reset-env sh -c '. ~/bench/driver.env; taskset -c 0 env PATH=P aeron_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
 refused: arm dpdk-aeron-rel-shnet: aeron_threading INVOKER with aeron_driver external: an INVOKER driver is the binary's own (aeron_driver embedded)
 refused: TR_DECLARED dpdk-aeron-rel-emb: its twins go round ( dpdk-aeron-rel-emb dpdk-aeron-rel-invoker dpdk-aeron-rel-emb)
-handoff check: 54" "$got"
+handoff check: 66" "$got"
 got=$(
     . "$cloud/modes.sh"
     rc() { mode_check "$1" remote x86_64 aws '' >/dev/null 2>&1; echo -n " $?"; }
@@ -433,10 +433,22 @@ boot check: $(hostrun transport_boot_check "0 2 4,6,8,10,12,14" 2>&1; echo " rc 
 echo "4-14" >"$sys/devices/system/cpu/isolated"
 got+="
 boot wrong: $(hostrun transport_boot_check "0 2 4,6,8,10,12,14" >/dev/null 2>&1; echo "rc $?")"
+# a session that declares SMT on (a sets file's `smt on`): each isolated
+# core whole in the map, SMT verified on, the boot check over the set
+got+="
+map smt on: $(hostrun transport_cpu_map on)
+smt on: $(hostrun transport_smt_on 2>&1; echo " rc $?")"
+echo "4-15" >"$sys/devices/system/cpu/isolated"
+echo "4-15" >"$sys/devices/system/cpu/nohz_full"
+got+="
+boot check smt on: $(hostrun transport_boot_check "0 2 4,5,6,7,8,9,10,11,12,13,14,15" 2>&1; echo " rc $?")
+map smt bad: $(hostrun transport_cpu_map maybe >/dev/null 2>&1; echo "rc $?")"
 got+="
 smt stuck: $(FAKE_SMT_STUCK=1 hostrun transport_smt_off >/dev/null 2>&1; echo "rc $?")
 smt: $(hostrun transport_smt_off 2>&1; echo " rc $?")
-map smt off: $(hostrun transport_cpu_map)"
+map smt off: $(hostrun transport_cpu_map)
+smt on after off: $(hostrun transport_smt_on >/dev/null 2>&1; echo "rc $?")
+map smt on, no sibling: $(hostrun transport_cpu_map on 2>&1; echo " rc $?")"
 mkdir -p "$tmp/sys4/devices/system/cpu/cpu0/topology"
 echo 0 >"$tmp/sys4/devices/system/cpu/cpu0/topology/thread_siblings_list"
 got+="
@@ -448,10 +460,19 @@ boot: isolcpus=nohz,domain,managed_irq,4,6,8,10,12,14 nohz_full=4,6,8,10,12,14 r
 boot check: boot: isolated and nohz_full 4,6,8,10,12,14
  rc 0
 boot wrong: rc 1
+map smt on: 0 2 4,5,6,7,8,9,10,11,12,13,14,15
+smt on: smt: on as the session declares (control on active 1 online 0-15)
+ rc 0
+boot check smt on: boot: isolated and nohz_full 4,5,6,7,8,9,10,11,12,13,14,15
+ rc 0
+map smt bad: rc 2
 smt stuck: rc 1
 smt: smt: control off active 0 online 0,2,4,6,8,10,12,14
  rc 0
 map smt off: 0 2 4,6,8,10,12,14
+smt on after off: rc 1
+map smt on, no sibling: transport: smt on: no core has an SMT sibling (one thread a core): nothing to keep on
+ rc 2
 too few cores: rc 2" "$got"
 
 # the quiet settings: those this kernel has written and read back, the rest
@@ -1065,6 +1086,26 @@ else
     fail "aws/lab.sh transport estimate ($estrc, $estsrc, $estmrc): $est | $ests | $estm"
 fi
 
+# the SMT sessions on c7i.4xlarge (transport-aws-smt-off.tsv, then
+# transport-aws-smt.tsv's `smt on`): their points and hours, no aws call;
+# `smt on` refused with LAB_THREADS_PER_CORE=1, on Graviton and on C7a
+rm -f "$tmp/cloud-calls"
+why=
+smtoff=$cloud/transport-aws-smt-off.tsv smton=$cloud/transport-aws-smt.tsv
+out=$(awslab LAB_ESTIMATE=1 LAB_PAIR=a LAB_REPS=3 LAB_SPOT=1 LAB_SPOT_FALLBACK=1 LAB_TYPE=c7i.4xlarge LAB_SETS_FILE="$smtoff" 2>&1) || why+=" smt off estimate: $(tail -1 <<<"$out");"
+[[ $out == *"pair a: 36 points (sets smtoff)"*"wall about "* && $out == *"a c7i.4xlarge, b c7i.4xlarge, spot, 3 reps"* ]] || why+=" smt off estimate: $out;"
+out=$(awslab LAB_ESTIMATE=1 LAB_PAIR=a LAB_REPS=3 LAB_SPOT=1 LAB_SPOT_FALLBACK=1 LAB_TYPE=c7i.4xlarge LAB_SETS_FILE="$smton" 2>&1) || why+=" smt on estimate: $(tail -1 <<<"$out");"
+[[ $out == *"pair a: 27 points (sets smton)"*"wall about "* ]] || why+=" smt on estimate: $out;"
+for refused in "LAB_TYPE=c7i.4xlarge LAB_THREADS_PER_CORE=1#not with LAB_THREADS_PER_CORE=1" \
+    "LAB_TYPE=c8g.2xlarge LAB_ALLOW_ARM=1#Graviton, which has no SMT" "LAB_TYPE=c7a.2xlarge#one thread a core"; do
+    # shellcheck disable=SC2086
+    out=$(awslab LAB_PAIR=a LAB_SETS_FILE="$smton" ${refused%#*} 2>&1) && why+=" smt on ran with [${refused%#*}];"
+    [[ $out == *"${refused#*#}"* ]] || why+=" smt on [${refused%#*}]: $(tail -1 <<<"$out");"
+done
+[[ ! -s $tmp/cloud-calls ]] || why+=" an aws call;"
+[[ -z $why ]] && pass "aws/lab.sh LAB_SUITE=transport: the SMT sessions' estimates on c7i.4xlarge (36 points SMT off, 27 SMT on); smt on refused with LAB_THREADS_PER_CORE=1, on Graviton and on C7a; no aws call" ||
+    fail "aws/lab.sh SMT sessions:$why"
+
 # the AWS Onload session (transport-aws-onload.tsv) on each type it runs on:
 # Intel (c7i.4xlarge, SMT off), Graviton (c8g.2xlarge, LAB_ALLOW_ARM=1) and
 # AMD (c7a.2xlarge), near 2 h at LAB_REPS=3 with OpenOnload's build; its
@@ -1237,7 +1278,7 @@ case $1 in driver | stop | events-start | aeron-page) echo "$FAKE_HOST $1-dir ${
 st=$HOME/state
 mkdir -p "$st"
 case $1 in
-transport-map) echo "0 2 4,6,8,10,12,14" ;;
+transport-map) echo "${FAKE_MAP:-0 2 4,6,8,10,12,14}" ;;
 nics) if [[ $FAKE_HOST == a ]]; then printf 'sender eth1 enP1 m 10.20.1.4 24 x\nreceiver eth2 enP2 m 10.20.1.5 24 y\n'
       else printf 'sender eth1 enP1 m 10.20.1.6 24 x\nreceiver eth2 enP2 m 10.20.1.7 24 y\n'; fi ;;
 hostcheck) if [[ ${FAKE_HOSTCHECK_WARN:-} == "$FAKE_HOST" ]]; then echo "T3 warn: cpu 6 has its tick (evidence: LOC 1000/s)"; exit 1; fi
@@ -1261,11 +1302,19 @@ netem)
     esac ;;
 irqsnap) n=$(cat "$st/i" 2>/dev/null || echo 0); n=$((n + 1)); echo $n >"$st/i"
     printf '           CPU0       CPU2       CPU4       CPU6\nLOC:  %d  %d  %d  %d  Local timer interrupts\n' $n $n $n $n ;;
+# the ping on FAKE_PING_CPU (4); a uring-sqpoll point's SQPOLL thread on
+# the CPU FAKE_SQPOLL ("<arm part>:<cpu> ...") gives the point's arm (the
+# point events-start last named on this host)
 sample) if [[ -n ${FAKE_PLACEMENT_BAD:-} ]]; then echo "FAIL ping(9) on CPU 0, not isolated;"; else echo "ok 2 busy threads"; fi
-    echo "  101   4 99.5 ping"; echo "    1   0  0.1 sshd" ;;
+    echo "  101 ${FAKE_PING_CPU:-4} 99.5 ping"; echo "    1   0  0.1 sshd"
+    for e in ${FAKE_SQPOLL:-}; do
+        [[ $(tail -1 "$st/events-started" 2>/dev/null) == *"-${e%%:*}"* ]] && echo "  700 ${e#*:} 100.0 iou-sqp-650"
+    done ;;
 # every transport sysctl at its declared value, the optional ones absent
+# and the SMT state (vm.sh transport_smt_read): FAKE_SMT_ACTIVE, else 0
 settings) (. "$FAKE_CLOUD/transport-settings.env"; . "$FAKE_CLOUD/host.sh"; transport_sysctls) |
-    awk '{k = $1; gsub("/", ".", k); v = $2; for (i = 3; i < NF; i++) v = v " " $i; print k "=" ($NF == "optional" ? "absent" : v)}' ;;
+    awk '{k = $1; gsub("/", ".", k); v = $2; for (i = 3; i < NF; i++) v = v " " $i; print k "=" ($NF == "optional" ? "absent" : v)}'
+    echo "devices.system.cpu.smt.active=${FAKE_SMT_ACTIVE:-0}" ;;
 nstat) n=$(cat "$st/s" 2>/dev/null || echo 0); n=$((n + 1)); echo $n >"$st/s"
     printf 'Tcp: RetransSegs InSegs\nTcp: %d %d\nUdp: InErrors\nUdp: 0\n' "$n" "$((n * 100))" ;;
 # the data NICs' interrupt deferral (napi_defer_hard_irqs, gro_flush_timeout),
@@ -1750,6 +1799,65 @@ if [[ $rrc != 0 && $(cat "$d/rc" 2>/dev/null) == 1 && ! -s $sb/runs ]] && grep -
 else
     fail "transport.sh run with a hostcheck warning: exit $rrc, $(grep -c . "$sb/runs" 2>/dev/null) runs, $(tail -1 "$sb/run.out")"
 fi
+# the SMT sessions (transport-aws-smt-off.tsv, transport-aws-smt.tsv) at 1
+# rep: SMT off, uring-sqpoll's SQPOLL thread on the next isolated core
+# ({next_core}); SMT on (`smt on`, each isolated core whole in the map),
+# its SQPOLL thread on the loop CPU's sibling ({loop_sibling}). Each: the
+# arguments (no SO_BUSY_POLL for uring-sqpoll), the SQPOLL CPU and the
+# loop's sibling never a gap spinner's, the declared SMT read back at every
+# point, fairness.py clean (T10 and the SQPOLL thread exempt only where they
+# belong) and every table there
+why=
+TRUN_SETS=$cloud/transport-aws-smt-off.tsv trun a 1 "" FAKE_SQPOLL="eio-tcp-sqpoll-core:6" && rrc=0 || rrc=$?
+d=$sb/a/bench/transport-a
+[[ $rrc == 0 && $(cat "$d/rc") == 0 ]] || why+=" smt off: exit $rrc: $(tail -3 "$sb/run.out" | tr '\n' ' ');"
+grep -q 'SMT off' "$sb/run.out" || why+=" smt off: not logged;"
+grep -q '^devices/system/cpu/smt/active 0 optional$' "$d/declared-sysctls.txt" || why+=" smt off: not declared 0;"
+grep -q '^a tcp_lat --role ping --cpus 4 .*--busy-read-us 0 .*--impl ergon --backend uring-sqpoll --sqpoll-cpu 6' "$sb/runs" || why+=" smt off: the sqpoll-core ping's arguments: $(grep sqpoll "$sb/runs" | head -1);"
+grep -q '^b tcp_lat --role pong .*--cpus 4 .*--busy-read-us 0 .*--sqpoll-cpu 6' "$sb/runs" || why+=" smt off: the sqpoll-core pong's arguments;"
+grep -q '^a tcp_lat --role ping .*--busy-read-us 50 .*--impl mio' "$sb/runs" || why+=" smt off: mio-tcp's busy poll;"
+# host a's events: the spinners on the isolated CPUs less the ping's (4) and
+# the SQPOLL thread's (6)
+grep -q -- '-eio-tcp-sqpoll-core.* 8,10,12,14 $' "$sb/a/state/events-started" || why+=" smt off: events $(grep sqpoll "$sb/a/state/events-started" | head -1);"
+grep -q '^knob.busy_read_us=' "$d"/manifest/smtoff-r1-eio-tcp-sqpoll-core*.env && why+=" smt off: a busy_read_us knob for uring-sqpoll;"
+fv=$(python3 "$cloud/fairness.py" "$d" 2>&1) || why+=" smt off fairness: $(head -5 <<<"$fv" | tr '\n' ' ');"
+tables=$(python3 "$cloud/analyse.py" --transport "$d" 2>&1) || why+=" smt off analyse.py: $(tail -2 <<<"$tables");"
+grep -q '^### Set smtoff, ' <<<"$tables" && ! grep -q '^Refused' <<<"$tables" || why+=" smt off: no table, or one refused;"
+# the SQPOLL thread never seen on its CPU: the sqpoll rule
+TRUN_SETS=$cloud/transport-aws-smt-off.tsv trun a 1 "" FAKE_SQPOLL="eio-tcp-sqpoll-core:8"
+fv=$(python3 "$cloud/fairness.py" "$d" 2>&1 || true)
+grep -q '^sqpoll: smtoff: .*no SQPOLL thread (iou-sqp-\*) busy on --sqpoll-cpu 6' <<<"$fv" || why+=" smt off: an SQPOLL thread off its CPU not flagged: $(head -2 <<<"$fv" | tr '\n' ' ');"
+smtmap="0 1 2,10,3,11,4,12,5,13,6,14,7,15"
+TRUN_SETS=$cloud/transport-aws-smt.tsv trun a 1 "" FAKE_MAP="$smtmap" FAKE_SMT_ACTIVE=1 FAKE_PING_CPU=2 FAKE_SQPOLL="eio-tcp-sqpoll-sib:10" && rrc=0 || rrc=$?
+[[ $rrc == 0 && $(cat "$d/rc") == 0 ]] || why+=" smt on: exit $rrc: $(tail -3 "$sb/run.out" | tr '\n' ' ');"
+grep -q 'SMT on' "$sb/run.out" || why+=" smt on: not logged;"
+grep -q '^devices/system/cpu/smt/active 1 optional$' "$d/declared-sysctls.txt" || why+=" smt on: not declared 1;"
+grep -q '^a tcp_lat --role ping --cpus 2 .*--busy-read-us 0 .*--backend uring-sqpoll --sqpoll-cpu 10' "$sb/runs" || why+=" smt on: the sqpoll-sib ping's arguments: $(grep sqpoll "$sb/runs" | head -1);"
+grep -q '^b tcp_lat --role pong .*--cpus 2 .*--sqpoll-cpu 10' "$sb/runs" || why+=" smt on: the sqpoll-sib pong's arguments;"
+# the loop's sibling (10) traced and never a spinner's, under either arm
+for a in eio-tcp-sqpoll-sib mio-tcp-smt; do
+    grep -q -- "-$a.* 3,11,4,12,5,13,6,14,7,15 \$" "$sb/a/state/events-started" || why+=" smt on: $a's events $(grep -- "-$a" "$sb/a/state/events-started" | head -1);"
+done
+fv=$(python3 "$cloud/fairness.py" "$d" 2>&1) || why+=" smt on fairness: $(head -5 <<<"$fv" | tr '\n' ' ');"
+tables=$(python3 "$cloud/analyse.py" --transport "$d" 2>&1) || why+=" smt on analyse.py: $(tail -2 <<<"$tables");"
+grep -q '^### Set smton, ' <<<"$tables" && ! grep -q '^Refused' <<<"$tables" || why+=" smt on: no table, or one refused;"
+# the same session's SMT read back off at its points: the settings rule
+TRUN_SETS=$cloud/transport-aws-smt.tsv trun a 1 "" FAKE_MAP="$smtmap" FAKE_PING_CPU=2 FAKE_SQPOLL="eio-tcp-sqpoll-sib:10"
+fv=$(python3 "$cloud/fairness.py" "$d" 2>&1 || true)
+grep -q '^settings: smton: .*devices.system.cpu.smt.active=0, the env gives 1' <<<"$fv" || why+=" smt on: SMT read back off not flagged: $(head -2 <<<"$fv" | tr '\n' ' ');"
+# an SMT-on sets file takes two-host socket arms alone, and {loop_sibling} needs one
+printf 'smt on\nset x a - ab 10000 1 - aeron-rel,mio-tcp,aa\n' >"$tmp/smt-aeron.tsv"
+printf 'set x a - ab 10000 1 - eio-tcp-sqpoll-sib,mio-tcp,aa\n' >"$tmp/smt-sib-off.tsv"
+printf 'smt on\nsmt off\nset x a - ab 10000 1 - mio-tcp,aa\n' >"$tmp/smt-both.tsv"
+c=$( (. "$cloud/transport.sh"; tr_sets_file=$tmp/smt-aeron.tsv tr_check a 2>&1) ) && why+=" an Aeron arm under smt on taken;"
+grep -q 'smt on: arm aeron-rel (aeron_lat, setup kernel, hosts two): an SMT-on session runs two-host socket arms only' <<<"$c" || why+=" smt on Aeron: $c;"
+c=$( (. "$cloud/transport.sh"; tr_sets_file=$tmp/smt-sib-off.tsv tr_check a 2>&1) ) && why+=" {loop_sibling} without smt on taken;"
+grep -q 'arm eio-tcp-sqpoll-sib: {loop_sibling} (the loop CPU.s SMT sibling) needs a sets file with smt on' <<<"$c" || why+=" sib without smt on: $c;"
+c=$(plan smt "$matrix:arms" "$tmp/smt-both.tsv" 2>&1) && why+=" disagreeing smt rows taken;"
+grep -q 'smt rows disagree' <<<"$c" || why+=" smt rows: $c;"
+[[ -z $why ]] && pass "transport.sh run: the SMT sessions: SMT off with uring-sqpoll's SQPOLL thread on the next core, SMT on (each isolated core whole) with it on the loop's sibling; no SO_BUSY_POLL for uring-sqpoll, the SQPOLL CPU and the loop's sibling never a spinner's, the declared SMT read back, fairness.py clean and its smt, sqpoll and settings rules flagging a misplaced SQPOLL thread and SMT read back off; check refuses an Aeron arm under smt on and {loop_sibling} without it" ||
+    fail "transport.sh run SMT sessions:$why"
+
 # the tuning session (LAB_TUNE=1: pair tune-a), cut down to two knobs of
 # pair a's one-host arms: mpsc's capacity (1024 the stub's better p99.99)
 # and aeron-ipc's threading (no difference): the sweep, then the

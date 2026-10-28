@@ -94,9 +94,10 @@
 #                            "<min> <avg> <max> <mdev> (ns) <replies>/<sent>"
 #
 # The transport suite (transport.sh; settings from transport-settings.env):
-#   vm.sh transport-isolate  the CPU map (housekeeping, IRQ, isolated: host.sh transport_cpu_map),
-#                            the driver's layout under it, and its boot line from the next boot
-#   vm.sh transport-tune     after that boot: SMT off, the boot line checked, the quiet settings,
+#   vm.sh transport-isolate [onload] [smt-on|smt-off]  the CPU map (housekeeping, IRQ, isolated:
+#                            host.sh transport_cpu_map; smt-on: each isolated core whole), the driver's
+#                            layout under it, and its boot line from the next boot
+#   vm.sh transport-tune     after that boot: SMT off (smt-on: verified on), the boot line checked, the quiet settings,
 #                            irqbalance off, the data NICs (rings, coalescing off, quickack routes,
 #                            every interrupt on the IRQ CPU) and the sysctls, each read back; the
 #                            2 MiB hugetlbfs of aeron-ipc-huge's Aeron directory mounted and verified
@@ -2863,10 +2864,23 @@ rx-hw-delay)
         }'
     ;;
 transport-isolate)
-    # the transport suite's CPU map (host.sh transport_cpu_map), kept for
-    # every later command, its layout for the media driver, and its boot
-    # line (replacing `isolate`'s) from the next boot
-    map=$(transport_cpu_map) || exit 2
+    # transport-isolate [onload] [smt-on|smt-off]: the transport suite's CPU
+    # map (host.sh transport_cpu_map), kept for every later command, its
+    # layout for the media driver, and its boot line (replacing `isolate`'s)
+    # from the next boot. smt-on (a sets file's `smt on`: transport.sh
+    # transport_prepare): SMT stays on, each isolated core whole in the map;
+    # kept in $run/transport-smt for transport-tune and hostcheck
+    smt=off
+    for a in "${@:2}"; do
+        case $a in
+        onload) ;;
+        smt-on) smt=on ;;
+        smt-off) smt=off ;;
+        *) echo "transport-isolate: $a: onload, smt-on or smt-off" >&2; exit 2 ;;
+        esac
+    done
+    map=$(transport_cpu_map "$smt") || exit 2
+    echo "$smt" >"$run/transport-smt"
     echo "$map" >"$run/transport-map"
     transport_layout "$map" >"$run/layout-transport"
     args=$(transport_boot_args "$map")
@@ -2875,30 +2889,34 @@ transport-isolate)
     # under kernel IBT (its syscall_x86.c: "require disablement of IBT with
     # ibt=off"); so ibt=off where the CPU has IBT (Intel), for every arm of
     # the session alike, in the boot line its points record
-    if [[ ${2:-} == onload && $ARCH == x86_64 ]] && grep -qw ibt "$LAB_PROC_ROOT/cpuinfo" 2>/dev/null; then
+    if [[ " ${*:2} " == *" onload "* && $ARCH == x86_64 ]] && grep -qw ibt "$LAB_PROC_ROOT/cpuinfo" 2>/dev/null; then
         args+=" ibt=off"
     fi
     sudo mkdir -p /etc/default/grub.d
     echo "GRUB_CMDLINE_LINUX_DEFAULT=\"\$GRUB_CMDLINE_LINUX_DEFAULT $args\"" |
         sudo tee /etc/default/grub.d/99-ergon-isolation.cfg >/dev/null
     sudo update-grub >/dev/null 2>&1
-    echo "transport-isolate: map $map (housekeeping, IRQ, isolated); layout $(cat "$run/layout-transport"); $args from the next boot"
+    echo "transport-isolate: SMT $smt; map $map (housekeeping, IRQ, isolated); layout $(cat "$run/layout-transport"); $args from the next boot"
     ;;
 transport-tune)
-    # after the boot transport-isolate set up: SMT off, the boot line
-    # checked, the quiet settings, irqbalance off, the data NICs (rings,
-    # coalescing, quickack routes, every interrupt on the IRQ CPU) and the
-    # sysctls, each read back; its record bench/transport-tune.txt; 1 at the
-    # first setting that does not hold
+    # after the boot transport-isolate set up: SMT off (or, where the
+    # session declares SMT on, verified on), the boot line checked, the
+    # quiet settings, irqbalance off, the data NICs (rings, coalescing,
+    # quickack routes, every interrupt on the IRQ CPU) and the sysctls, each
+    # read back; its record bench/transport-tune.txt; 1 at the first setting
+    # that does not hold
     [[ -s $run/transport-map ]] || { echo "transport-tune: no transport map (vm.sh transport-isolate first)" >&2; exit 2; }
     map=$(cat "$run/transport-map")
+    smt=$(cat "$run/transport-smt" 2>/dev/null || echo off)
     read -r hk irq iso <<<"$map"
     tune_steps() {
-        echo "map $map"
-        transport_smt_off || return 1
+        echo "map $map (SMT $smt)"
+        if [[ $smt == on ]]; then transport_smt_on || return 1; else transport_smt_off || return 1; fi
         local now
-        now=$(transport_cpu_map) && [[ $now == "$map" ]] ||
-            { echo "transport-tune: the CPU map with SMT off is [$now], not [$map]" >&2; return 1; }
+        # (SMT on: the map is rebuilt from the topology, so each core's
+        # threads in it are its SMT siblings)
+        now=$(transport_cpu_map "$smt") && [[ $now == "$map" ]] ||
+            { echo "transport-tune: the CPU map with SMT $smt is [$now], not [$map]" >&2; return 1; }
         transport_boot_check "$map" || return 1
         transport_quiet_apply "$hk,$irq" "$iso" || return 1
         sudo systemctl disable --now irqbalance >/dev/null 2>&1 || true
@@ -3073,7 +3091,10 @@ napi)
     done
     ;;
 nstat) transport_nstat ;;
-settings) transport_settings_read ;;
+settings)
+    transport_settings_read
+    transport_smt_read
+    ;;
 events-start)
     # events-start <point> <traced cpus> <spinner cpus|-> [aeron]: before the
     # point's binaries start (transport.sh), so before their warm-up: host.sh
@@ -3134,8 +3155,10 @@ hostcheck)
     # (exit 2 not clean, 1 not run: either stops the session. The binary
     # alone decides what blocks: a warn it reports without blocking, T11's
     # wall-clock discipline, says so in its own doc)
+    # (a session that declares SMT on: hostcheck --smt on, its exemption
+    # recorded in the report)
     PATH=$tools:$PATH hostcheck --hot-cpus "$iso" --nic "$(data_ifaces | paste -sd, -)" --aeron-dir "${2:-$TR_AERON_DIR}" \
-        --out "$run/hostcheck.txt" && rc=0 || rc=$?
+        --smt "$(cat "$run/transport-smt" 2>/dev/null || echo off)" --out "$run/hostcheck.txt" && rc=0 || rc=$?
     cat "$run/hostcheck.txt" 2>/dev/null
     if ((rc)); then
         echo "hostcheck: not clean (exit $rc)" >&2
