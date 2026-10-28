@@ -20,7 +20,7 @@
 //!   proxies, sending fragmented messages. The handshake offers no extension
 //!   and refuses a server that picks one.
 
-use std::io::{ErrorKind, Read};
+use std::io::ErrorKind;
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 
@@ -32,7 +32,7 @@ use crate::endpoint::sealed::{Deliver, DialIo, Io};
 use crate::endpoint::{ConnId, ConnMut, Handler};
 use crate::error::{Error, Result};
 pub use crate::net::Target;
-use crate::net::{TlsDial, flush_nonblocking};
+use crate::net::{StreamSocket, TlsDial, flush_nonblocking};
 use crate::stream::{TlsStream, TxQueue, prefault};
 use crate::text::{NonAscii, Scan, TextCheck, TextStatus, high_bits};
 use crate::tls::{self, MAX_RECORD, Opened, RecordLayer};
@@ -416,8 +416,8 @@ impl WsOptions {
 
 /// A connected, upgraded TLS WebSocket. Hand it to a `Driver`; the
 /// socket closes when it is dropped.
-pub struct WsConn {
-    stream: TlsStream,
+pub struct WsConn<T = TcpStream> {
+    stream: TlsStream<T>,
     frag: Vec<u8>,
     /// Opcode of the fragmented message in progress, 0 when none.
     frag_op: u8,
@@ -547,8 +547,55 @@ pub const MIN_BUF: usize = 8 * MAX_RECORD;
 const ONE_RECORD: usize = (1 << 14) - 8;
 
 impl WsConn {
+    /// [`WsConn::connect_with`] with default options and this receive buffer.
+    ///
+    /// # Errors
+    /// As [`WsConn::connect_with`].
+    pub fn connect(target: &Target, cfg: Arc<ClientConfig>, buf_size: usize) -> Result<Self> {
+        Self::connect_with(
+            target,
+            cfg,
+            WsOptions {
+                buf_size,
+                ..WsOptions::default()
+            },
+        )
+    }
+
+    /// Connects, runs the TLS handshake and the WebSocket upgrade, waiting until
+    /// done: a convenience for tools and tests. In a busy-spin loop use
+    /// [`WsDial`] with `Driver::connect`, which never waits. Without
+    /// [`Target::addr`] the host is resolved with the system resolver (blocking).
+    ///
+    /// # Errors
+    /// Bad options, resolution, connect, TLS or upgrade failure
+    /// ([`Error::Upgrade`] for a refusal), or no progress for 30 s.
+    pub fn connect_with(target: &Target, cfg: Arc<ClientConfig>, opts: WsOptions) -> Result<Self> {
+        let addr = match target.addr {
+            Some(a) => a,
+            None => (target.host.as_str(), target.port)
+                .to_socket_addrs()?
+                .find(SocketAddr::is_ipv4)
+                .ok_or_else(|| Error::Dns(format!("{}: no IPv4 address", target.host)))?,
+        };
+        let mut dial = WsDial::with_options(target.clone(), cfg, opts)?;
+        dial.start(addr)?;
+        let start = std::time::Instant::now();
+        loop {
+            if let Some(c) = dial.step()? {
+                return Ok(c);
+            }
+            if start.elapsed() > std::time::Duration::from_secs(30) {
+                return Err(Error::Timeout("websocket connect"));
+            }
+            std::thread::yield_now();
+        }
+    }
+}
+
+impl<T: StreamSocket> WsConn<T> {
     /// A connection over an upgraded stream.
-    fn build(stream: TlsStream, opts: &WsOptions, rng: u64, protocol: Option<String>) -> Self {
+    fn build(stream: TlsStream<T>, opts: &WsOptions, rng: u64, protocol: Option<String>) -> Self {
         let buf_len = stream.capacity();
         let max_message = match opts.max_message {
             0 => max_frame(buf_len),
@@ -595,7 +642,7 @@ impl WsConn {
     /// # Errors
     /// Bad options.
     #[doc(hidden)]
-    pub fn from_record_layer(sock: TcpStream, tls: RecordLayer, opts: &WsOptions) -> Result<Self> {
+    pub fn from_record_layer(sock: T, tls: RecordLayer, opts: &WsOptions) -> Result<Self> {
         opts.check()?;
         let buf = vec![1u8; opts.buf_size].into_boxed_slice();
         let stream = TlsStream::new(sock, buf, 0, 0, tls, TxQueue::prefaulted(1 << 16));
@@ -682,51 +729,6 @@ impl WsConn {
     #[must_use]
     pub fn queued_tx(&self) -> &[u8] {
         self.stream.queued_tx()
-    }
-
-    /// [`WsConn::connect_with`] with default options and this receive buffer.
-    ///
-    /// # Errors
-    /// As [`WsConn::connect_with`].
-    pub fn connect(target: &Target, cfg: Arc<ClientConfig>, buf_size: usize) -> Result<Self> {
-        Self::connect_with(
-            target,
-            cfg,
-            WsOptions {
-                buf_size,
-                ..WsOptions::default()
-            },
-        )
-    }
-
-    /// Connects, runs the TLS handshake and the WebSocket upgrade, waiting until
-    /// done: a convenience for tools and tests. In a busy-spin loop use
-    /// [`WsDial`] with `Driver::connect`, which never waits. Without
-    /// [`Target::addr`] the host is resolved with the system resolver (blocking).
-    ///
-    /// # Errors
-    /// Bad options, resolution, connect, TLS or upgrade failure
-    /// ([`Error::Upgrade`] for a refusal), or no progress for 30 s.
-    pub fn connect_with(target: &Target, cfg: Arc<ClientConfig>, opts: WsOptions) -> Result<Self> {
-        let addr = match target.addr {
-            Some(a) => a,
-            None => (target.host.as_str(), target.port)
-                .to_socket_addrs()?
-                .find(SocketAddr::is_ipv4)
-                .ok_or_else(|| Error::Dns(format!("{}: no IPv4 address", target.host)))?,
-        };
-        let mut dial = WsDial::with_options(target.clone(), cfg, opts)?;
-        dial.start(addr)?;
-        let start = std::time::Instant::now();
-        loop {
-            if let Some(c) = dial.step()? {
-                return Ok(c);
-            }
-            if start.elapsed() > std::time::Duration::from_secs(30) {
-                return Err(Error::Timeout("websocket connect"));
-            }
-            std::thread::yield_now();
-        }
     }
 
     /// Counters.
@@ -1570,7 +1572,7 @@ const fn utf8_width(lead: u8) -> usize {
 }
 
 /// A driver-owned [`WsConn`]: the same send and close methods.
-impl ConnMut<'_, WsConn> {
+impl<T: StreamSocket> ConnMut<'_, WsConn<T>> {
     /// [`WsConn::send_frame`].
     ///
     /// # Errors
@@ -1618,11 +1620,11 @@ impl ConnMut<'_, WsConn> {
 /// A WebSocket connection being set up without blocking: TCP connect, TLS
 /// handshake and upgrade, each advanced by the driver's `poll`. Hand it to
 /// `Driver::connect`.
-pub struct WsDial {
+pub struct WsDial<T = TcpStream> {
     target: Target,
     opts: WsOptions,
-    tls: TlsDial,
-    up: Option<Box<Upgrade>>,
+    tls: TlsDial<T>,
+    up: Option<Box<Upgrade<T>>>,
 }
 
 impl WsDial {
@@ -1648,6 +1650,17 @@ impl WsDial {
     /// header the upgrade request cannot carry (CR/LF, a bad name, or a
     /// field the handshake sets itself).
     pub fn with_options(target: Target, cfg: Arc<ClientConfig>, opts: WsOptions) -> Result<Self> {
+        Self::on_stack(target, cfg, opts)
+    }
+}
+
+impl<T: StreamSocket> WsDial<T> {
+    /// [`WsDial::with_options`] on the stack of socket type `T`
+    /// (`WsDial::<FstackTcp>::on_stack` for F-Stack).
+    ///
+    /// # Errors
+    /// As [`WsDial::with_options`].
+    pub fn on_stack(target: Target, cfg: Arc<ClientConfig>, opts: WsOptions) -> Result<Self> {
         opts.check()?;
         // The path and headers go into the upgrade request verbatim: no CR/LF,
         // valid tokens, and none of the fields the handshake sets itself.
@@ -1675,23 +1688,43 @@ impl WsDial {
     }
 }
 
-impl WsDial {
+impl<T: StreamSocket> WsDial<T> {
     /// Where it connects: the target it was built with, its source set by
     /// [`crate::net::BindSource`] if that was called.
     #[must_use]
     pub const fn target(&self) -> &Target {
         &self.target
     }
+
+    /// Connects to [`Target::addr`] (needed: no DNS here), runs the TLS
+    /// handshake and the upgrade, waiting at most 30 s on the calling
+    /// thread, which runs the stack meanwhile (for F-Stack: its polling
+    /// thread): a convenience for tools and tests.
+    ///
+    /// # Errors
+    /// No `Target::addr`; connect, TLS or upgrade failure, or the time limit.
+    pub fn connect_blocking(mut self) -> Result<WsConn<T>> {
+        let addr = self
+            .target
+            .addr
+            .ok_or_else(|| Error::Config("connect_blocking needs Target::addr".into()))?;
+        self.start(addr)?;
+        crate::net::wait_for::<T, _>(
+            std::time::Duration::from_secs(30),
+            "websocket connect",
+            || self.step(),
+        )
+    }
 }
 
-impl crate::net::BindSource for WsDial {
+impl<T: StreamSocket> crate::net::BindSource for WsDial<T> {
     fn bind_source(&mut self, ip: std::net::IpAddr) {
         self.target.source = Some(ip);
     }
 }
 
-impl DialIo for WsDial {
-    type Conn = WsConn;
+impl<T: StreamSocket> DialIo for WsDial<T> {
+    type Conn = WsConn<T>;
 
     fn host(&self) -> &str {
         &self.target.host
@@ -1709,7 +1742,7 @@ impl DialIo for WsDial {
         self.tls.start(addr, self.target.source)
     }
 
-    fn step(&mut self) -> Result<Option<WsConn>> {
+    fn step(&mut self) -> Result<Option<WsConn<T>>> {
         if self.up.is_none() {
             let Some((sock, tls, rest)) = self.tls.step()? else {
                 return Ok(None);
@@ -1752,8 +1785,8 @@ impl DialIo for WsDial {
 }
 
 /// The upgrade request in flight and the response being read.
-struct Upgrade {
-    sock: TcpStream,
+struct Upgrade<T> {
+    sock: T,
     buf: Box<[u8]>,
     head: usize,
     tail: usize,
@@ -1765,11 +1798,11 @@ struct Upgrade {
     upgraded: Option<ws::Upgraded>,
 }
 
-impl Upgrade {
+impl<T: StreamSocket> Upgrade<T> {
     fn new(
         target: &Target,
         opts: &WsOptions,
-        sock: TcpStream,
+        sock: T,
         mut tls: RecordLayer,
         rest: &[u8],
     ) -> Result<Self> {
@@ -1856,7 +1889,7 @@ impl Upgrade {
         }
     }
 
-    fn finish(self, opts: &WsOptions) -> Result<WsConn> {
+    fn finish(self, opts: &WsOptions) -> Result<WsConn<T>> {
         let up = self
             .upgraded
             .ok_or(Error::Http("upgrade not complete".into()))?;
@@ -1888,8 +1921,9 @@ impl Upgrade {
     }
 }
 
-impl Io for WsConn {
+impl<T: StreamSocket> Io for WsConn<T> {
     const DEADLINES: bool = true;
+    const STACK: crate::netstack::StackId = T::STACK;
 
     #[inline]
     fn fd(&self) -> std::os::fd::RawFd {
@@ -1920,7 +1954,7 @@ impl Io for WsConn {
     }
 }
 
-impl<H: WsHandler> Deliver<H> for WsConn {
+impl<T: StreamSocket, H: WsHandler> Deliver<H> for WsConn<T> {
     #[inline]
     fn on_received(
         &mut self,

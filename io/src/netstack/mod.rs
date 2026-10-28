@@ -13,6 +13,13 @@
 //!   is zero-sized and every method is `#[inline]`, so code generic over a
 //!   stack and instantiated with `Kernel` compiles to the direct system
 //!   calls.
+//! - [`Socket`]: a connected stream socket of one stack, as the TCP
+//!   endpoints hold it (`FrameConn<T>`, `WsConn<T>`, `HttpConn<T>`):
+//!   `std::net::TcpStream` (the kernel's) or, with the `fstack` feature,
+//!   `FstackTcp`. Dropping one closes it through its own stack, so a kernel
+//!   `close(2)` never reaches an F-Stack descriptor.
+//! - `fstack` (Linux, the `fstack` feature): F-Stack, FreeBSD's TCP/IP
+//!   stack on DPDK, behind `fstack-spin`.
 //!
 //! The epoll backends (`epoll-spin`, `recv-busy`) and the driver's send
 //! passes are generic over `NetStack`, defaulting to `Kernel`; `Driver<E>`
@@ -20,17 +27,76 @@
 //! and the timestamp-keeper socket stay kernel-only. Sockets are plain
 //! `c_int` handles, as both the kernel's and F-Stack's are.
 
-#[cfg(target_os = "linux")]
 use std::io;
 use std::net::{IpAddr, SocketAddr};
+use std::os::fd::RawFd;
 
 use crate::error::Result;
 
+#[cfg(all(target_os = "linux", feature = "fstack"))]
+pub mod fstack;
+pub mod fstack_conf;
 mod kernel;
 
 /// The Linux kernel's TCP/IP stack.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Kernel;
+
+/// Which stack owns a socket (and so which calls may touch it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StackId {
+    /// The kernel's: `std::net::TcpStream`.
+    Kernel,
+    /// F-Stack's: `FstackTcp`.
+    Fstack,
+}
+
+impl StackId {
+    /// The stack's name, for errors.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Kernel => "the kernel's",
+            Self::Fstack => "F-Stack's",
+        }
+    }
+}
+
+/// A connected (or connecting) non-blocking TCP socket of one stack, as an
+/// endpoint holds it. Reading and writing go through the stack; dropping it
+/// closes it there.
+pub trait Socket: io::Read + io::Write + Sized + 'static {
+    /// The stack that owns it.
+    const STACK: StackId;
+
+    /// The stack's handle (a kernel descriptor, or F-Stack's).
+    fn fd(&self) -> RawFd;
+
+    /// Starts a non-blocking connect (`TCP_NODELAY` set), from `source`
+    /// when given.
+    ///
+    /// # Errors
+    /// As [`Sockets::tcp_connect`].
+    fn start_connect(addr: SocketAddr, source: Option<IpAddr>) -> Result<Self>;
+
+    /// Whether the connect has finished (`Ok(false)`: in progress).
+    ///
+    /// # Errors
+    /// The connect failed.
+    fn connect_finished(&self) -> Result<bool>;
+
+    /// Makes a socket handed in (accepted elsewhere) ready for an endpoint:
+    /// non-blocking, `TCP_NODELAY`, and `SO_SNDBUF` when given.
+    ///
+    /// # Errors
+    /// An option fails, or `sndbuf` does not fit.
+    fn configure(&self, sndbuf: Option<u32>) -> Result<()>;
+
+    /// Runs the stack once, for the blocking helpers (`connect_blocking`)
+    /// that wait on the calling thread: nothing for the kernel, which runs
+    /// on its own; one F-Stack pass (`ff_run_once`).
+    fn pump() {}
+}
 
 /// How a stack makes sockets.
 pub trait Sockets {
@@ -199,4 +265,10 @@ pub trait NetStack {
     /// # Errors
     /// The query fails.
     fn tcp_info(fd: libc::c_int) -> io::Result<crate::TcpInfo>;
+
+    /// One pass of a user-space stack (NIC receive burst, timers, transmit
+    /// drain), at the start of every poll and after a send pass that sent:
+    /// nothing for the kernel, which runs on its own.
+    #[inline]
+    fn run_once() {}
 }

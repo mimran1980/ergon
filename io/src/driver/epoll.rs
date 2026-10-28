@@ -20,7 +20,9 @@
 //!   NAPI id (loopback, a plain veth) costs no lookup in between.
 //!
 //! Both run over a [`NetStack`] (`Kernel` by default): every socket, poller
-//! and receive call goes through it.
+//! and receive call goes through it. `fstack-spin` is `epoll-spin` over
+//! F-Stack: each poll starts with one pass of the stack
+//! ([`NetStack::run_once`], nothing for the kernel), then its kqueue.
 
 use std::os::fd::RawFd;
 
@@ -167,6 +169,9 @@ impl<S: NetStack> Epoll<S> {
         E: Receive<H>,
         H: Handler,
     {
+        // A user-space stack's pass (RX burst, timers, TX drain); nothing
+        // for the kernel.
+        S::run_once();
         if self.mode == Mode::Recv && !self.per_queue {
             for i in 0..conns.len_slots() {
                 self.recv_index(conns, i, handler, stats, reads);

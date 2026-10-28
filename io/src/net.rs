@@ -3,13 +3,13 @@
 
 use std::io::{ErrorKind, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream};
-use std::os::fd::{AsRawFd, RawFd};
+use std::os::fd::RawFd;
 use std::sync::Arc;
 
 use rustls::ClientConfig;
 
 use crate::error::{Error, Result};
-use crate::netstack::{Kernel, Sockets};
+use crate::netstack::{Kernel, Socket, Sockets};
 use crate::route::RouteCheck;
 use crate::tls::{RecordLayer, TlsHandshake};
 
@@ -92,6 +92,19 @@ pub trait BindSource {
     fn bind_source(&mut self, ip: IpAddr);
 }
 
+/// The TCP socket an endpoint is built on: the kernel's
+/// [`std::net::TcpStream`] (every endpoint's default), or with the `fstack`
+/// feature `ergon_io::fstack::FstackTcp`, a socket of F-Stack's user-space
+/// stack. `FrameConn<T>`, `WsConn<T>` and `HttpConn<T>` (and their dials)
+/// take it as their type parameter: an endpoint is made, read, written and
+/// closed through its own stack, and a `Driver` refuses an endpoint whose
+/// stack is not its backend's.
+///
+/// Sealed: only this crate's socket types implement it.
+#[allow(private_bounds)] // sealed on purpose: the bound is unnameable outside the crate
+pub trait StreamSocket: Socket {}
+impl<T: Socket> StreamSocket for T {}
+
 /// Starts a non-blocking TCP connect (`TCP_NODELAY` set), from `source`
 /// when given ([`Target::source`]).
 ///
@@ -111,20 +124,21 @@ pub fn connect_finished(sock: &TcpStream) -> Result<bool> {
     Kernel::connect_finished(sock)
 }
 
-enum Stage {
+enum Stage<T> {
     Idle,
-    Tcp(TcpStream),
+    Tcp(T),
     /// TCP is connected; the TLS handshake waits for the route check.
-    Gated(TcpStream),
-    Tls(TcpStream, Box<TlsHandshake>),
+    Gated(T),
+    Tls(T, Box<TlsHandshake>),
     Done,
 }
 
-/// TCP connect then TLS handshake, advanced by [`TlsDial::step`].
-pub(crate) struct TlsDial {
+/// TCP connect then TLS handshake, advanced by [`TlsDial::step`], over
+/// socket type `T`.
+pub(crate) struct TlsDial<T = TcpStream> {
     cfg: Arc<ClientConfig>,
     sni: String,
-    stage: Stage,
+    stage: Stage<T>,
     /// Stop at TCP connect until the route is checked
     /// ([`TlsDial::gate_route`]).
     gate: bool,
@@ -132,7 +146,7 @@ pub(crate) struct TlsDial {
     route: Option<RouteCheck>,
 }
 
-impl TlsDial {
+impl<T: Socket> TlsDial<T> {
     pub(crate) fn new(cfg: Arc<ClientConfig>, sni: String) -> Result<Self> {
         crate::tls::check_client_config(&cfg)?;
         Ok(Self {
@@ -145,7 +159,7 @@ impl TlsDial {
     }
 
     pub(crate) fn start(&mut self, addr: SocketAddr, source: Option<IpAddr>) -> Result<()> {
-        self.stage = Stage::Tcp(connect_nonblocking(addr, source)?);
+        self.stage = Stage::Tcp(T::start_connect(addr, source)?);
         Ok(())
     }
 
@@ -158,7 +172,7 @@ impl TlsDial {
     /// The socket, while the dial waits for its route check.
     pub(crate) fn awaiting_route(&self) -> Option<RawFd> {
         match &self.stage {
-            Stage::Gated(sock) => Some(sock.as_raw_fd()),
+            Stage::Gated(sock) => Some(sock.fd()),
             _ => None,
         }
     }
@@ -175,7 +189,7 @@ impl TlsDial {
 
     /// `Some` once TLS is established: the socket, the record layer and bytes
     /// already received after the handshake.
-    pub(crate) fn step(&mut self) -> Result<Option<(TcpStream, RecordLayer, Vec<u8>)>> {
+    pub(crate) fn step(&mut self) -> Result<Option<(T, RecordLayer, Vec<u8>)>> {
         loop {
             match std::mem::replace(&mut self.stage, Stage::Done) {
                 Stage::Idle => {
@@ -183,7 +197,7 @@ impl TlsDial {
                     return Ok(None);
                 }
                 Stage::Tcp(sock) => {
-                    if !connect_finished(&sock)? {
+                    if !sock.connect_finished()? {
                         self.stage = Stage::Tcp(sock);
                         return Ok(None);
                     }
@@ -212,7 +226,7 @@ impl TlsDial {
 }
 
 /// Writes as much of `q` as the socket takes; `true` when it is empty.
-pub(crate) fn flush_nonblocking(sock: &mut TcpStream, q: &mut Vec<u8>) -> Result<bool> {
+pub(crate) fn flush_nonblocking<W: Write>(sock: &mut W, q: &mut Vec<u8>) -> Result<bool> {
     while !q.is_empty() {
         match sock.write(q) {
             Ok(0) => return Err(Error::Closed),
@@ -224,4 +238,29 @@ pub(crate) fn flush_nonblocking(sock: &mut TcpStream, q: &mut Vec<u8>) -> Result
         }
     }
     Ok(true)
+}
+
+/// Steps a dial over socket type `T` until it yields, running `T`'s stack
+/// between steps (F-Stack: one pass), for at most `limit`.
+///
+/// # Errors
+/// What `step` returns, or [`Error::Timeout`] (`what`) after `limit`.
+pub(crate) fn wait_for<T: Socket, C>(
+    limit: std::time::Duration,
+    what: &'static str,
+    mut step: impl FnMut() -> Result<Option<C>>,
+) -> Result<C> {
+    let start = std::time::Instant::now();
+    loop {
+        if let Some(c) = step()? {
+            return Ok(c);
+        }
+        if start.elapsed() > limit {
+            return Err(Error::Timeout(what));
+        }
+        T::pump();
+        if T::STACK == crate::netstack::StackId::Kernel {
+            std::thread::yield_now();
+        }
+    }
 }

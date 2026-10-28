@@ -73,7 +73,7 @@ fn poll_until(d: &mut Driver<WsConn>, h: &mut Collect, done: impl Fn(&Collect) -
 
 fn each_backend(test: impl Fn(Backend) -> R) -> R {
     let mut ran = 0;
-    for b in Backend::ALL {
+    for b in Backend::KERNEL {
         eprintln!("backend {b}");
         match test(b) {
             Ok(()) => ran += 1,
@@ -85,7 +85,7 @@ fn each_backend(test: impl Fn(Backend) -> R) -> R {
             Err(e) => return Err(format!("{b}: {e}").into()),
         }
     }
-    assert!(ran >= Backend::ALL.len() - 1, "only {ran} backends ran");
+    assert!(ran >= Backend::KERNEL.len() - 1, "only {ran} backends ran");
     Ok(())
 }
 
@@ -566,7 +566,7 @@ fn tokio_registers_the_socket_without_busy_poll() -> R {
 
 #[test]
 fn send_failures_found_by_flush_reach_the_next_poll() -> R {
-    for b in Backend::ALL {
+    for b in Backend::KERNEL {
         let lab = Lab::new()?;
         let mut d = match driver(b) {
             Ok(d) => d,
@@ -886,7 +886,7 @@ fn background_dns_waits_never_hold_up_other_connects() -> R {
 
 #[test]
 fn spin_backends_never_sleep_when_idle() -> R {
-    for b in Backend::ALL {
+    for b in Backend::KERNEL {
         let lab = Lab::new()?;
         let mut d = match driver(b) {
             Ok(d) => d,
@@ -1954,4 +1954,44 @@ fn rx_read_ns_stamps_frames_read_with_the_upgrade() -> R {
         }
         Ok(())
     })
+}
+
+/// `fstack-spin` drives F-Stack's sockets only: without the `fstack`
+/// feature it is unsupported, and with it a kernel endpoint is refused
+/// before F-Stack starts. A build with the feature but without F-Stack
+/// linked refuses to start it.
+#[test]
+fn fstack_spin_refuses_what_it_cannot_drive() -> R {
+    let cfg = Config::parse(
+        "fstack-spin,loop_cpu=0,fstack_addr=10.9.0.1,fstack_gateway=10.9.0.254,\
+         fstack_vdev=net_af_packet0;iface=nope,fstack_no_huge=true",
+    )?;
+    let e = Driver::<ergon_io::FrameConn>::new(cfg.clone())
+        .err()
+        .ok_or("fstack-spin took kernel endpoints")?;
+    #[cfg(not(feature = "fstack"))]
+    assert!(
+        matches!(e, Error::Unsupported(m) if m.contains("feature")),
+        "{e}"
+    );
+    #[cfg(feature = "fstack")]
+    assert!(
+        matches!(&e, Error::Config(m) if m.contains("FstackTcp")),
+        "{e}"
+    );
+    #[cfg(all(feature = "fstack", not(ergon_fstack_linked)))]
+    {
+        let e = ergon_io::fstack::init(&cfg)
+            .err()
+            .ok_or("started unlinked")?;
+        assert!(
+            matches!(e, Error::Unsupported(m) if m.contains("FSTACK_PREFIX")),
+            "{e}"
+        );
+        assert!(!ergon_io::fstack::linked());
+    }
+    // And a kernel backend refuses F-Stack's keys.
+    let e = Config::parse("epoll-spin,fstack_addr=10.9.0.1").err();
+    assert!(matches!(e, Some(Error::Config(_))), "{e:?}");
+    Ok(())
 }

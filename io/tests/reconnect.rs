@@ -1014,7 +1014,7 @@ mod with_driver {
     #[test]
     fn a_closed_websocket_is_reopened_on_every_backend() -> R {
         let mut ran = 0;
-        for b in Backend::ALL {
+        for b in Backend::KERNEL {
             match backend(b) {
                 Ok(()) => ran += 1,
                 // A pod with one CPU has no core for `uring-sqpoll`'s kernel
@@ -1028,7 +1028,7 @@ mod with_driver {
                 Err(e) => return Err(format!("{b}: {e}").into()),
             }
         }
-        assert!(ran >= Backend::ALL.len() - 1, "only {ran} backends ran");
+        assert!(ran >= Backend::KERNEL.len() - 1, "only {ran} backends ran");
         Ok(())
     }
 }

@@ -107,7 +107,7 @@ fn per_queue_as_struct_fields() {
 #[test]
 fn the_quickack_check_is_a_key_on_every_backend() -> R {
     use ergon_io::route::QuickAckCheck;
-    for b in Backend::ALL {
+    for b in Backend::KERNEL {
         assert_eq!(Config::new(b).quickack_check, QuickAckCheck::Warn, "{b}");
         for p in [
             QuickAckCheck::Off,
@@ -130,7 +130,7 @@ fn the_quickack_check_is_a_key_on_every_backend() -> R {
 
 #[test]
 fn tcp_keepalive_is_on_by_default_and_configurable() -> R {
-    for b in Backend::ALL {
+    for b in Backend::KERNEL {
         let c = Config::new(b);
         assert_eq!(c.keepalive_idle_s, 10, "{b}");
         assert_eq!(c.keepalive_interval_s, 5, "{b}");
@@ -244,13 +244,24 @@ fn tcp_timers_and_tcp_info_are_off_by_default_and_bounded() -> R {
     Ok(())
 }
 
-/// Only the backends the benchmarks measured in a busy-spin loop are left:
-/// `epoll-spin` (interrupt-driven), `recv-busy` and `uring-sqpoll` (NIC
-/// polling). `uring-spin`, `epoll-busy` and `uring-napi` are unknown names.
+/// Only the kernel backends the benchmarks measured in a busy-spin loop are
+/// left: `epoll-spin` (interrupt-driven), `recv-busy` and `uring-sqpoll`
+/// (NIC polling); `fstack-spin` is the one kernel-bypass backend.
+/// `uring-spin`, `epoll-busy` and `uring-napi` are unknown names.
 #[test]
 fn only_the_three_measured_backends_exist() -> R {
-    let names: Vec<&str> = Backend::ALL.iter().map(|b| b.name()).collect();
+    let names: Vec<&str> = Backend::KERNEL.iter().map(|b| b.name()).collect();
     assert_eq!(names, ["epoll-spin", "recv-busy", "uring-sqpoll"]);
+    let all: Vec<&str> = Backend::ALL.iter().map(|b| b.name()).collect();
+    assert_eq!(
+        all,
+        ["epoll-spin", "recv-busy", "uring-sqpoll", "fstack-spin"]
+    );
+    assert!(
+        Backend::ALL
+            .iter()
+            .all(|b| b.bypasses_kernel() == !Backend::KERNEL.contains(b))
+    );
     for gone in ["uring-spin", "epoll-busy", "uring-napi"] {
         let e = gone
             .parse::<Backend>()
@@ -352,5 +363,89 @@ fn epoll_events_and_datagram_burst_parse_and_are_bounded() -> R {
     let mut c = Config::new(Backend::EpollSpin);
     c.datagram_burst = 0;
     assert!(c.validate().is_err(), "a zero burst validated");
+    Ok(())
+}
+
+/// `fstack-spin`'s defaults leave out what F-Stack lacks (receive
+/// timestamps, the kernel's quick-ACK route check, `TCP_USER_TIMEOUT`); its
+/// `fstack_*` keys parse (a vdev's commas written `;`), and are refused on
+/// every other backend.
+#[test]
+fn fstack_spin_defaults_and_keys() -> R {
+    use ergon_io::route::QuickAckCheck;
+    let c = Config::new(Backend::FstackSpin);
+    assert!(!c.rx_timestamps);
+    assert_eq!(c.quickack_check, QuickAckCheck::Off);
+    assert_eq!(c.tcp_user_timeout_ms, 0);
+    assert_eq!(
+        (
+            c.keepalive_idle_s,
+            c.keepalive_interval_s,
+            c.keepalive_count
+        ),
+        (10, 5, 3)
+    );
+    assert!(c.fstack.is_default());
+    let c = Config::parse(
+        "fstack-spin,loop_cpu=2,fstack_addr=10.9.0.1,fstack_prefix_len=24,fstack_gateway=10.9.0.254,\
+         fstack_vdev=net_af_packet0;iface=va,fstack_no_huge=true,fstack_memory_mb=512,\
+         fstack_file_prefix=client,fstack_sysctl=net.inet.tcp.blackhole=0,fstack_hz=1000",
+    )?;
+    let f = &c.fstack;
+    assert_eq!(f.addr, Some([10, 9, 0, 1].into()));
+    assert_eq!(f.gateway, Some([10, 9, 0, 254].into()));
+    assert_eq!(f.vdev.as_deref(), Some("net_af_packet0,iface=va"));
+    assert!(f.no_huge && f.pci.is_none());
+    assert_eq!(
+        (f.memory_mb, f.hz, f.file_prefix.as_str()),
+        (512, 1000, "client")
+    );
+    assert_eq!(
+        f.sysctl,
+        [("net.inet.tcp.blackhole".to_owned(), "0".to_owned())]
+    );
+    f.check()?;
+    for b in Backend::KERNEL {
+        let s = format!("{b},fstack_addr=10.9.0.1");
+        let e = Config::parse(&s)
+            .err()
+            .ok_or_else(|| format!("{s:?} accepted"))?;
+        assert!(
+            matches!(&e, ergon_io::Error::Config(m) if m.contains("fstack-spin")),
+            "{s}: {e}"
+        );
+    }
+    Ok(())
+}
+
+/// What the kernel has and F-Stack does not is refused typed, naming what
+/// F-Stack does instead.
+#[test]
+fn fstack_spin_refuses_kernel_only_keys() -> R {
+    for bad in [
+        "fstack-spin,tcp_user_timeout_ms=1000",
+        "fstack-spin,tcp_rto_min_us=5000",
+        "fstack-spin,tcp_delack_max_us=5000",
+        "fstack-spin,quickack_check=warn",
+        "fstack-spin,rx_timestamps=true",
+        "fstack-spin,per_queue=true",
+        "fstack-spin,busy_poll_us=1",
+        "fstack-spin,fstack_addr=10.9.0",
+        "fstack-spin,fstack_sysctl=novalue",
+    ] {
+        let e = Config::parse(bad)
+            .err()
+            .ok_or_else(|| format!("{bad:?} accepted"))?;
+        assert!(matches!(e, ergon_io::Error::Config(_)), "{bad:?}: {e}");
+    }
+    // Incomplete settings parse (a `Config` is built up), and are refused
+    // where F-Stack would start.
+    let c = Config::parse("fstack-spin,fstack_addr=10.9.0.1")?;
+    let e = c
+        .fstack
+        .check()
+        .err()
+        .ok_or("no gateway or port accepted")?;
+    assert!(e.to_string().contains("fstack_gateway"), "{e}");
     Ok(())
 }

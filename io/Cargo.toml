@@ -17,6 +17,7 @@ categories = ["network-programming"]
 include = [
     "/Cargo.toml",
     "/README.md",
+    "/build.rs",
     "/src/**/*.rs",
 ]
 # benches/ is the standalone benchmark crate, not bench targets of this one.
@@ -33,6 +34,11 @@ webpki-roots = ["dep:webpki-roots"]
 # the curl crate; the system libcurl through pkg-config). A binary that wants
 # libcurl built in statically enables `curl/static-curl` itself.
 curl = ["dep:curl"]
+# The `fstack-spin` backend (Linux): TCP over F-Stack, FreeBSD's TCP/IP stack
+# on DPDK. build.rs links F-Stack and its DPDK, both static, from
+# FSTACK_PREFIX (io/benches/fstack/build-fstack.sh's prefix); without
+# FSTACK_PREFIX it compiles unlinked and `fstack::init` refuses.
+fstack = []
 
 [dependencies]
 rustls = { version = "0.23.46", default-features = false, features = ["std", "ring"] }
