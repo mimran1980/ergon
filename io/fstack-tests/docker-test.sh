@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # docker-test.sh [--arch amd64|arm64] [--in-container]: ergon-io's
-# fstack-spin end to end (io/tests/fstack.rs) without a NIC. On the host it
+# fstack-spin end to end (io/fstack-tests/end_to_end.rs) without a NIC. On the host it
 # runs itself in io/benches/fstack's image (F-Stack and its DPDK under
 # /opt/fstack, built by build-fstack.sh), the repo mounted at /w; IMAGE
 # names a prebuilt one instead of building it. Inside: builds the test with
@@ -13,7 +13,7 @@
 # CARGO_HOME are passed through (one cache volume: CACHE_VOLUME).
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
-repo=$(cd "$here/../../.." && pwd)
+repo=$(cd "$here/../.." && pwd)
 arch=amd64
 inside=false
 while [[ $# -gt 0 ]]; do
@@ -34,7 +34,7 @@ if ! $inside; then
         vol=(-v "$CACHE_VOLUME":/cache -e CARGO_TARGET_DIR=/cache/target-$arch -e CARGO_HOME=/cache/cargo)
     fi
     exec docker run --rm --platform "linux/$arch" --privileged "${vol[@]}" -v "$repo":/w "$image" \
-        bash /w/io/tests/fstack/docker-test.sh --arch "$arch" --in-container
+        bash /w/io/fstack-tests/docker-test.sh --arch "$arch" --in-container
 fi
 
 export PATH=/usr/local/cargo/bin:$PATH

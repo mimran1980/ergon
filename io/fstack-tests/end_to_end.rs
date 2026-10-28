@@ -1,6 +1,6 @@
 //! `fstack-spin` end to end: two processes, each with its own F-Stack on one
 //! end of a veth pair (DPDK's `net_af_packet` PMD, no hugepages), as
-//! `io/tests/fstack/docker-test.sh` runs them. One is the peer (an echo
+//! `io/fstack-tests/docker-test.sh` runs them. One is the peer (an echo
 //! server on F-Stack's own sockets: framed TCP, WebSocket over TLS, HTTP
 //! over TLS), the other drives ergon-io's endpoints over F-Stack:
 //!
@@ -82,7 +82,7 @@ const TRIPS: usize = 2_000;
 
 fn env(k: &str) -> R<String> {
     std::env::var(k).map_err(|_| {
-        format!("{k} unset: io/tests/fstack/docker-test.sh runs this test (two F-Stack processes)")
+        format!("{k} unset: io/fstack-tests/docker-test.sh runs this test (two F-Stack processes)")
             .into()
     })
 }

@@ -57,6 +57,13 @@ ergon-tune = { version = "0.1.34", path = "../tune", features = ["nic"] }
 io-uring = { version = "0.7", optional = true }
 curl = { version = "0.4.51", optional = true, default-features = false, features = ["ssl"] }
 
+# `fstack-spin` end to end: two F-Stack processes over a veth pair, run by
+# fstack-tests/docker-test.sh (test-lanes.tsv `fstack`). Built only with
+# F-Stack linked (cfg ergon_fstack_linked); empty otherwise.
+[[test]]
+name = "fstack"
+path = "fstack-tests/end_to_end.rs"
+
 [dev-dependencies]
 rcgen = "0.14"
 # `ws_receive.rs`: random fragmentation and record splits, fixed seed.
