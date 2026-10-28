@@ -4,6 +4,13 @@
 
 ### Added
 
+- `ergon-io` `fstack-spin` (feature `fstack`, Linux): TCP on F-Stack, FreeBSD's
+  stack on DPDK, on a NIC of its own; framed TCP, WebSocket and HTTP over TLS
+  as `FrameConn<FstackTcp>`, `WsConn<FstackTcp>`, `HttpConn<FstackTcp>`
+  (dials' `on_stack`), configured by `Config`'s `fstack_*` keys
+  (`fstack::FstackConf`). Lab-tested in Docker only.
+- `ergon-io` `FrameDial::connect_blocking` and `WsDial::connect_blocking`
+  (`HttpDial`'s exists), `Backend::KERNEL`, `Backend::bypasses_kernel`.
 - `ergon-tune` T20 (`t20_irq_idle`): warns when a CPU that takes the data NICs'
   interrupts may sleep deeper than C1 (C1E, C6), with the per-CPU, boot-line
   and `/dev/cpu_dma_latency` fixes; info on `acpi_idle` stopping at C1.
@@ -12,6 +19,11 @@
 
 ### Changed
 
+- Breaking: `ergon-io`'s TCP endpoints and dials take their socket type,
+  `FrameConn<T = TcpStream>` (and `FrameDial`, `WsConn`, `WsDial`,
+  `HttpConn`, `HttpDial`); code naming them without `T` is unchanged.
+  `Backend::ALL` has four backends (`fstack-spin` added; `Backend::KERNEL` is
+  the old three), and `Config` has an `fstack` field.
 - Breaking: `ergon-md-dpdk`'s `clock` counter is type 1080 (was 80) and its
   `nic-arrival-to-dispatch-*` counters type 1081 (was 81), in Aeron's custom
   range: Aeron leaves 80 and 81 unassigned. Its other counters keep Aeron's
