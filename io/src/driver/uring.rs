@@ -35,6 +35,7 @@ use crate::backend::Config;
 use crate::endpoint::sealed::Io;
 use crate::endpoint::{DriverStats, Endpoint, Handler, Receive};
 use crate::error::{Error, Result};
+use crate::netstack::Kernel;
 use crate::sys::{self, MsgSlot};
 
 const RECV: u64 = 0;
@@ -373,7 +374,7 @@ impl Uring {
         let outcome = match usize::try_from(res) {
             Ok(0) => Err(Error::Closed),
             Ok(len) => {
-                let meta = reads.next(&slot.msg);
+                let meta = reads.next::<Kernel>(&slot.msg);
                 stats.completions += 1;
                 let r = conn
                     .on_received(id, len, &meta, handler)

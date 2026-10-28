@@ -7,9 +7,9 @@ use std::os::fd::{AsRawFd, RawFd};
 use std::sync::Arc;
 
 use rustls::ClientConfig;
-use socket2::{Domain, Protocol, Socket, Type};
 
 use crate::error::{Error, Result};
+use crate::netstack::{Kernel, Sockets};
 use crate::route::RouteCheck;
 use crate::tls::{RecordLayer, TlsHandshake};
 
@@ -100,30 +100,7 @@ pub trait BindSource {
 /// the bind (`AddrNotAvailable`: not an address of this host), or an
 /// immediate connect failure.
 pub fn connect_nonblocking(addr: SocketAddr, source: Option<IpAddr>) -> Result<TcpStream> {
-    if let Some(ip) = source
-        && ip.is_ipv4() != addr.is_ipv4()
-    {
-        return Err(Error::Config(format!(
-            "source {ip} is not of the destination {addr}'s address family"
-        )));
-    }
-    let s = Socket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP))?;
-    s.set_nonblocking(true)?;
-    s.set_tcp_nodelay(true)?;
-    if let Some(ip) = source {
-        // The port is picked at connect, per destination, not at bind.
-        #[cfg(target_os = "linux")]
-        crate::sys::set_bind_address_no_port(s.as_raw_fd())?;
-        s.bind(&SocketAddr::new(ip, 0).into())?;
-    }
-    match s.connect(&addr.into()) {
-        Ok(()) => {}
-        Err(e)
-            if e.raw_os_error() == Some(libc::EINPROGRESS) || e.kind() == ErrorKind::WouldBlock => {
-        }
-        Err(e) => return Err(e.into()),
-    }
-    Ok(s.into())
+    Kernel::tcp_connect(addr, source)
 }
 
 /// Whether a non-blocking connect has finished (`Ok(false)`: still in progress).
@@ -131,14 +108,7 @@ pub fn connect_nonblocking(addr: SocketAddr, source: Option<IpAddr>) -> Result<T
 /// # Errors
 /// The connect failed.
 pub fn connect_finished(sock: &TcpStream) -> Result<bool> {
-    if let Some(e) = sock.take_error()? {
-        return Err(e.into());
-    }
-    match sock.peer_addr() {
-        Ok(_) => Ok(true),
-        Err(e) if e.kind() == ErrorKind::NotConnected => Ok(false),
-        Err(e) => Err(e.into()),
-    }
+    Kernel::connect_finished(sock)
 }
 
 enum Stage {

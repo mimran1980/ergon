@@ -44,6 +44,7 @@ pub mod error;
 pub mod frame;
 pub mod http;
 pub mod net;
+mod netstack;
 pub mod outcome;
 pub mod placement;
 pub mod reconnect;
