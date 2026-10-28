@@ -46,6 +46,7 @@ Checks of a Linux host's low-latency settings, for start-up and housekeeping.
 | T17 | KSM not running (`/sys/kernel/mm/ksm/run` 0 or 2) |
 | T18 | no steal on the busy-spinning CPUs since boot (`/proc/stat`; info) |
 | T19 | `FaultWatch`: a hot thread takes no page fault while it runs |
+| T20 | the CPUs that take the data NICs' interrupts sleep no deeper than C1 (exit latency 1 µs; cpuidle `disable` and `pm_qos_resume_latency_us` counted). Warns for an IRQ CPU that may enter C1E or C6, with the per-CPU `disable` lines, `intel_idle.max_cstate=1` / `processor.max_cstate=1` and `/dev/cpu_dma_latency` as fixes (node settings on Kubernetes). Info for `acpi_idle` stopping at C1, and for a hot CPU that sleeps (the conductor). No cpuidle driver (Graviton) is ok |
 | N1-N4 (`nic`) | ENA adaptive RX moderation, deferred interrupts without a busy poller, the Azure accelerated-networking VF, the kernel RX ring |
 
 A finding names its fix. T1 on a stock host with its loop on CPU 2 of 8
@@ -70,7 +71,7 @@ pass those checks exist to stop. An unknown of a check whose subsystem the
 node may not have — PSI and `memory.high`, a NUMA node, a NIC knob, THP — is
 printed and allowed through: that is a real host, and refusing there would
 stop every start on it. `unknown_stops_require(id)` says which: T3, T4, T5,
-T6, T11, T13-T19, K6, K7, N1-N4 and M4 do not block; every other id does, a
+T6, T11, T13-T20, K6, K7, N1-N4 and M4 do not block; every other id does, a
 caller's own included.
 Under `require`, T10 refuses every x86 host with SMT on, and K2 refuses a
 stock static-CPU-manager pod: it proves exclusive CPUs only from an isolated
@@ -111,10 +112,11 @@ pure functions over a `Host`.
   Kernel queries (T4's `statfs`, T11's `adjtimex`, N1's and N4's ethtool)
   reach only the running host; on a tree they report unknown.
 - **Evidence named.** Each finding's `evidence` names its source: an AWS
-  `c7i` A/B table in `io/benches/results/` (T1, T2, T7, T10, N1), or
+  `c7i` A/B table in `io/benches/results/` (T1, T2, T7, T10, N1) or the lab's transport suite (T20: `md-dpdk/BENCHMARKS.md`), or
   documentation and "not measured here". Hosts differ: measure yours.
-- **Only what the table lists.** CPU idle states and frequency are not
-  checked.
+- **Only what the table lists.** CPU frequency is not checked. T20 never
+  opens `/dev/cpu_dma_latency` (opening it registers a request), so a
+  process holding it is not seen.
 
 ## How to use it
 

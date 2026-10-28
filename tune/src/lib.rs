@@ -23,6 +23,7 @@
 //! | T17 | [`t17_ksm`] | no caller in this repository |
 //! | T18 | [`t18_steal`] (info) | no caller in this repository |
 //! | T19 | [`FaultWatch`] while running | io (the polling thread, every 5 s from the warning thread) |
+//! | T20 | [`t20_irq_idle`] | no caller in this repository (the lab's transport suite caps the IRQ CPU itself) |
 //! | K1-K6 | [`k8s_checks`] (with T7 and T9), inside a pod only | io |
 //! | K7 | [`k8s_checks`] with [`Needs::with_nic`] | no caller in this repository names a NIC |
 //! | N1 (`nic`) | `n1_adaptive_rx` | io, md (kernel sockets) |
@@ -60,6 +61,7 @@ mod cpuset;
 mod faults;
 mod finding;
 mod host;
+mod idle;
 mod k8s;
 mod mem;
 mod net;
@@ -79,6 +81,10 @@ pub use cpuset::{CPU_LIMIT, CpuSet, CpuSetError};
 pub use faults::{FaultWatch, Faults};
 pub use finding::{Component, Finding, HotCpu, HotSet, Role, Severity, Status};
 pub use host::{Host, ReadError};
+pub use idle::{
+    IdleState, ResumeLimit, T20_MAX_EXIT_LATENCY_US, cpu_idle_states, cpuidle_driver, resume_limit,
+    t20_irq_idle,
+};
 pub use k8s::{Needs, in_pod, k8s_checks};
 pub use mem::{FsMagic, fs_magic, t3_thp, t4_aeron_dir, t4_from, t5_numa_balancing};
 pub use net::{

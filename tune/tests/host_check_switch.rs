@@ -274,12 +274,12 @@ fn unknown_stops_require_classifies_every_built_in_check() {
     let blocks = [
         "T1", "T2", "T7", "T8", "T9", "T10", "T12", "K1", "K2", "K3", "K4", "K5", "M1", "M2", "M3",
     ];
-    // T13-T19: node-wide noise, read where the node lets a process read it
+    // T13-T20: node-wide noise and idle depth, read where the node lets a process read it
     // (debugfs, other PID namespaces, steal accounting); none proves a
     // property of this pod.
     let allowed = [
-        "T3", "T4", "T5", "T6", "T11", "T13", "T14", "T15", "T16", "T17", "T18", "T19", "K6", "K7",
-        "N1", "N2", "N3", "N4", "M4",
+        "T3", "T4", "T5", "T6", "T11", "T13", "T14", "T15", "T16", "T17", "T18", "T19", "T20",
+        "K6", "K7", "N1", "N2", "N3", "N4", "M4",
     ];
     for id in blocks {
         assert!(unknown_stops_require(id), "{id} must block when unknown");

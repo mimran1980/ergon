@@ -189,7 +189,7 @@ pass those checks exist to stop. An unknown of a check whose subsystem the
 node may not have (PSI and `memory.high`, a NUMA node, a NIC knob, THP) is
 printed and allowed through: that is a real host, and refusing there would
 stop every start on it. `unknown_stops_require(id)` says which: T3, T4, T5,
-T6, T11, T13-T19, K6, K7, N1-N4 and M4 do not block; every other id does, a
+T6, T11, T13-T20, K6, K7, N1-N4 and M4 do not block; every other id does, a
 caller's own included.
 
 Two consequences under `require`:

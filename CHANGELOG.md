@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- `ergon-tune` T20 (`t20_irq_idle`): warns when a CPU that takes the data NICs'
+  interrupts may sleep deeper than C1 (C1E, C6), with the per-CPU, boot-line
+  and `/dev/cpu_dma_latency` fixes; info on `acpi_idle` stopping at C1.
+
 ### Changed
 
 - Breaking: `ergon-md-dpdk`'s `clock` counter is type 1080 (was 80) and its
