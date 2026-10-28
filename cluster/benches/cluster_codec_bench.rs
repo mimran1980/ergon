@@ -36,6 +36,11 @@
 //!
 //! Diagnostic-only (not a ≤1.00 gate): NewLeaderEvent decode, connect request.
 #![allow(unused_must_use, unused_imports)]
+// The head-to-head gate's measured loops (the unchecked tier's `unsafe`,
+// `#[inline(always)]`, the casts both arms make) stay as the gate measured
+// them: as sbe/benchmarks' benches and cluster_perf_probe, no workspace lints
+#![allow(unsafe_code)]
+#![allow(clippy::all, clippy::pedantic, clippy::nursery, clippy::restriction)]
 
 use std::hint::black_box;
 use std::time::Duration;

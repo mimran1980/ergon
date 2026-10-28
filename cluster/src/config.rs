@@ -47,7 +47,7 @@ pub struct SessionBuilder {
     pub(crate) ingress_stream_id: i32,
     pub(crate) egress_stream_id: i32,
     pub(crate) message_timeout_ms: u64,
-    /// Deadline (ms) for awaiting a NewLeaderEvent before the session is
+    /// Deadline (ms) for awaiting a `NewLeaderEvent` before the session is
     /// deemed dead. `None` is Java's NULL: connect uses twice the leader
     /// heartbeat, or 20s when the cluster does not send one.
     pub(crate) new_leader_timeout_ms: Option<u64>,
@@ -326,6 +326,10 @@ impl SessionBuilder {
     }
 
     /// Synchronous connect — equivalent to [`crate::AeronCluster::connect`].
+    ///
+    /// # Errors
+    ///
+    /// As [`crate::AeronCluster::connect`].
     pub fn connect(self, aeron_dir: &str) -> Result<crate::AeronCluster, ClusterError> {
         crate::AeronCluster::connect(&self, aeron_dir)
     }
@@ -336,6 +340,12 @@ impl SessionBuilder {
     }
 
     /// Validate required fields and that channel URIs are valid.
+    ///
+    /// # Errors
+    ///
+    /// [`ClusterError::ConnectFailed`] when neither an ingress channel nor ingress
+    /// endpoints are set, the egress channel is not set, the ingress endpoints do
+    /// not parse, or an IPC ingress channel comes with ingress endpoints.
     pub fn validate(&self) -> Result<(), ClusterError> {
         let has_ingress = self.ingress_c.is_some();
         let has_endpoints = self.ingress_endpoints.as_ref().is_some_and(|s| !s.is_empty());
@@ -385,24 +395,23 @@ impl SessionBuilder {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_defaults_match_java() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_defaults_match_java() {
         let b = SessionBuilder::default();
         assert_eq!(b.ingress_stream_id, 101);
         assert_eq!(b.egress_stream_id, 102);
         assert_eq!(b.message_timeout_ms, 5_000);
         assert!(b.new_leader_timeout_ms.is_none());
-        Ok(())
     }
 
     #[test]
-    fn test_validate_rejects_empty_channels() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_validate_rejects_empty_channels() {
         let b = SessionBuilder::default();
         assert!(b.validate().is_err());
-        Ok(())
     }
 
     #[test]
@@ -417,7 +426,7 @@ mod tests {
     }
 
     #[test]
-    fn ingress_endpoints_rejects_malformed_maps_at_the_setter() -> Result<(), Box<dyn std::error::Error>> {
+    fn ingress_endpoints_rejects_malformed_maps_at_the_setter() {
         for bad in [
             "",
             "0localhost:9012",                    // missing '='
@@ -433,7 +442,6 @@ mod tests {
                 "expected {bad:?} to be rejected at the setter"
             );
         }
-        Ok(())
     }
 
     #[test]
@@ -607,12 +615,11 @@ mod tests {
     }
 
     #[test]
-    fn malformed_channel_fails_at_the_setter() -> Result<(), Box<dyn std::error::Error>> {
+    fn malformed_channel_fails_at_the_setter() {
         let err = SessionBuilder::default()
             .ingress_channel("not a uri")
             .expect_err("malformed URI must fail at the setter");
-        assert!(!err.to_string().is_empty());
-        Ok(())
+        assert_ne!(err.to_string(), "");
     }
 
     #[test]

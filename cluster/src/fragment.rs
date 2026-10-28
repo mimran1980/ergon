@@ -21,8 +21,8 @@ fn protocol_error(reason: std::fmt::Arguments<'_>) -> ClusterError {
 }
 
 /// A fully-decoded egress fragment, ready for listener dispatch.
-#[derive(Debug)]
-pub(crate) enum Fragment<'a> {
+#[derive(Debug, Clone, Copy)]
+pub enum Fragment<'a> {
     /// Application message with its payload slice.
     Message {
         cluster_session_id: i64,
@@ -114,10 +114,10 @@ impl<'a> Fragment<'a> {
                 }
             }
             AnyMessage::SessionEvent(decoder) => {
-                let cid = decoder.correlation_id();
-                let csid = decoder.cluster_session_id();
-                let ltid = decoder.leadership_term_id();
-                let lmid = decoder.leader_member_id();
+                let correlation_id = decoder.correlation_id();
+                let cluster_session_id = decoder.cluster_session_id();
+                let leadership_term_id = decoder.leadership_term_id();
+                let leader_member_id = decoder.leader_member_id();
                 let code = decoder.code();
                 // Read before `into_detail_as_str` consumes the decoder.
                 let leader_heartbeat_timeout_ns = decoder.leader_heartbeat_timeout_ns();
@@ -125,71 +125,71 @@ impl<'a> Fragment<'a> {
                     .into_detail_as_str()
                     .map_err(|e| protocol_error(format_args!("session event detail: {e}")))?;
                 Self::SessionEvent {
-                    correlation_id: cid,
-                    cluster_session_id: csid,
-                    leadership_term_id: ltid,
-                    leader_member_id: lmid,
+                    correlation_id,
+                    cluster_session_id,
+                    leadership_term_id,
+                    leader_member_id,
                     code,
                     detail,
                     leader_heartbeat_timeout_ns,
                 }
             }
             AnyMessage::NewLeaderEvent(decoder) => {
-                let csid = decoder.cluster_session_id();
-                let ltid = decoder.leadership_term_id();
-                let lmid = decoder.leader_member_id();
+                let cluster_session_id = decoder.cluster_session_id();
+                let leadership_term_id = decoder.leadership_term_id();
+                let leader_member_id = decoder.leader_member_id();
                 let (ingress_endpoints, _) = decoder
                     .into_ingress_endpoints_as_str()
                     .map_err(|e| protocol_error(format_args!("new leader endpoints: {e}")))?;
                 Self::NewLeader {
-                    cluster_session_id: csid,
-                    leadership_term_id: ltid,
-                    leader_member_id: lmid,
+                    cluster_session_id,
+                    leadership_term_id,
+                    leader_member_id,
                     ingress_endpoints,
                 }
             }
             AnyMessage::Challenge(decoder) => {
-                let cid = decoder.correlation_id();
-                let csid = decoder.cluster_session_id();
-                let (chal_bytes, _next) = decoder
+                let correlation_id = decoder.correlation_id();
+                let cluster_session_id = decoder.cluster_session_id();
+                let (encoded_challenge, _next) = decoder
                     .into_encoded_challenge()
                     .map_err(|e| protocol_error(format_args!("challenge payload: {e}")))?;
                 Self::Challenge {
-                    correlation_id: cid,
-                    cluster_session_id: csid,
-                    encoded_challenge: chal_bytes,
+                    correlation_id,
+                    cluster_session_id,
+                    encoded_challenge,
                 }
             }
             AnyMessage::AdminResponse(decoder) => {
-                let csid = decoder.cluster_session_id();
-                let cid = decoder.correlation_id();
-                let rt = decoder.request_type();
-                let rc = decoder.response_code();
+                let cluster_session_id = decoder.cluster_session_id();
+                let correlation_id = decoder.correlation_id();
+                let request_type = decoder.request_type();
+                let response_code = decoder.response_code();
                 let (msg_bytes, after_msg) = decoder
                     .into_message()
                     .map_err(|e| protocol_error(format_args!("admin response message: {e:?}")))?;
-                let (payload_bytes, _) = after_msg
+                let (payload, _) = after_msg
                     .into_payload()
                     .map_err(|e| protocol_error(format_args!("admin response payload: {e:?}")))?;
-                let msg = std::str::from_utf8(msg_bytes)
+                let message = std::str::from_utf8(msg_bytes)
                     .map_err(|e| protocol_error(format_args!("admin response not UTF-8: {e}")))?;
                 Self::AdminResponse {
-                    cluster_session_id: csid,
-                    correlation_id: cid,
-                    request_type: rt,
-                    response_code: rc,
-                    message: msg,
-                    payload: payload_bytes,
+                    cluster_session_id,
+                    correlation_id,
+                    request_type,
+                    response_code,
+                    message,
+                    payload,
                 }
             }
-            AnyMessage::Unknown { .. } => return Ok(None),
+            // AnyMessage::Unknown and the templates not projected here
             _ => return Ok(None),
         }))
     }
 }
 
 /// Header fields of a frame the schema does not decode, for an extension hook.
-pub(crate) struct ExtensionView<'a> {
+pub struct ExtensionView<'a> {
     /// Acting block length from the SBE header.
     pub acting_block_length: u16,
     /// Template id from the SBE header.
@@ -204,7 +204,7 @@ pub(crate) struct ExtensionView<'a> {
 
 /// Split an 8-byte SBE header from its payload. `None` when `data` is shorter
 /// than a header; [`Fragment::decode`] already reports that as an error.
-pub(crate) fn extension_view(data: &[u8]) -> Option<ExtensionView<'_>> {
+pub fn extension_view(data: &[u8]) -> Option<ExtensionView<'_>> {
     if data.len() < SBE_MESSAGE_HEADER_LENGTH {
         return None;
     }

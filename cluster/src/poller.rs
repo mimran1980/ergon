@@ -8,7 +8,7 @@ use crate::codecs::session::{EventCode, MessageHeader};
 /// One captured egress event from a poll.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EgressEvent {
-    /// A SessionEvent — connect result / state change.
+    /// A `SessionEvent` — connect result / state change.
     SessionEvent {
         /// Echo of the connect request correlation id.
         correlation_id: i64,
@@ -18,7 +18,7 @@ pub enum EgressEvent {
         leadership_term_id: i64,
         /// Current leader member id.
         leader_member_id: i32,
-        /// Status code (OK, ERROR, REDIRECT, AUTH_REJECTED).
+        /// Status code (OK, ERROR, REDIRECT, `AUTH_REJECTED`).
         code: EventCode,
         /// Human-readable detail string from the cluster.
         detail: String,
@@ -67,12 +67,9 @@ pub fn parse_event(data: &[u8]) -> Result<EgressEvent, ClusterError> {
     // not-projected path below must report the real template id.
     let template_id = MessageHeader::peek_template_id(data).unwrap_or(0);
 
-    let fragment = match Fragment::decode(data)? {
-        Some(f) => f,
-        None => {
-            // Not an error — the cluster may send templates outside our schema.
-            return Ok(EgressEvent::Other { template_id });
-        }
+    let Some(fragment) = Fragment::decode(data)? else {
+        // Not an error — the cluster may send templates outside our schema.
+        return Ok(EgressEvent::Other { template_id });
     };
 
     Ok(match fragment {
@@ -141,6 +138,7 @@ pub fn parse_leader_endpoint(endpoints: &str, leader_member_id: i32) -> Result<O
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use crate::codecs::session::{
@@ -166,20 +164,18 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_event_short_header_is_error() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_parse_event_short_header_is_error() {
         // Fail-closed: frames shorter than the 8-byte SBE header are protocol errors,
         // not silent "no event" — matches Fragment::decode.
         let err = parse_event(&[0u8; 4]).expect_err("short header");
         assert!(matches!(err, ClusterError::ProtocolError { .. }), "got {err:?}");
         let msg = err.to_string();
         assert!(msg.contains("too short") || msg.contains("header"), "{msg}");
-        Ok(())
     }
 
     #[test]
-    fn test_parse_event_empty_is_error() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_parse_event_empty_is_error() {
         assert!(parse_event(&[]).is_err());
-        Ok(())
     }
 
     #[test]
@@ -292,7 +288,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_event_session_message_header_too_short() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_parse_event_session_message_header_too_short() {
         // Header-only claim of SessionMessageHeader without fixed body.
         let mut buf = [0u8; SessionMessageHeaderEncoder::ENCODED_LENGTH];
         SessionMessageHeaderEncoder::wrap_and_apply_header(&mut buf, 0)
@@ -302,11 +298,10 @@ mod tests {
         // Drop the last body byte so the full fixed extent is incomplete.
         let short = &buf[..buf.len().saturating_sub(1)];
         if short.len() < 8 {
-            return Ok(()); // encoder length edge — header path still covered elsewhere
+            return; // encoder length edge — header path still covered elsewhere
         }
         let err = parse_event(short).expect_err("short session message");
         assert!(matches!(err, ClusterError::ProtocolError { .. }), "got {err:?}");
-        Ok(())
     }
 
     #[test]
@@ -403,7 +398,7 @@ mod fail_closed {
     use super::*;
     use crate::codecs::session::{EventCode, SessionEventEncoder};
 
-    /// T-16: a REDIRECT SessionEvent still decodes; resolution is a separate step.
+    /// T-16: a REDIRECT `SessionEvent` still decodes; resolution is a separate step.
     #[test]
     fn redirect_session_event_decodes_then_resolution_fails() -> Result<(), Box<dyn std::error::Error>> {
         let detail = b"0=localhost:9012"; // leader 1 absent

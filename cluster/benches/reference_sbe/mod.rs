@@ -1,5 +1,8 @@
 #![forbid(unsafe_code)]
-#![allow(clippy::all)]
+// sbe-tool 1.39.0's generated output, kept as it generated it: the bench's
+// other arm, so not ours to restyle (the workspace's pedantic, nursery and
+// unwrap/expect/panic lints included)
+#![allow(clippy::all, clippy::pedantic, clippy::nursery, clippy::restriction)]
 #![allow(non_camel_case_types)]
 #![allow(dead_code)]
 #![allow(ambiguous_glob_reexports)]

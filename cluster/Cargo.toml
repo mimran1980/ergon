@@ -49,8 +49,8 @@ trybuild = "1"
 [build-dependencies]
 ergo-sbe = { workspace = true }
 
-[lints.rust]
-missing_docs = "warn"
+[lints]
+workspace = true
 
 [[bench]]
 name = "cluster_codec_bench"
