@@ -692,11 +692,9 @@ not as an Aeron message.
   no kernel socket is on a DPDK arm's path, but the rule does not yet
   exempt them. `dpdk-raw` and its A/A are still flagged so
   (`aws-20261028-123929`).
-- The mixed load (`aeron_lat --load mixed`) counts a retried
-  `ADMIN_ACTION` (term rotation) as back-pressure, so `analyse.py` flags
-  and refuses every mixed point; and `transport_collect.py` builds no NIC
-  counters for a DPDK host (`vm.sh nicstats` prints nothing there), so
-  every DPDK mixed point breaks `mixed-nic`.
+- `transport_collect.py` builds no NIC counters for a DPDK host (`vm.sh
+  nicstats` prints nothing there), so every DPDK mixed point breaks
+  `mixed-nic`.
 - Intel DPDK's external-driver arms: `nic-rx-missed` 8,940 to 17,698 a run
   at 128 streams with 0 NAKs and 0 retransmits (`aws-20261028-123929`).
 - The mixed arms' hot-stream stage trace under `SHARED` and `INVOKER`.

@@ -65,12 +65,16 @@ Files beside it: `histogram-bg-<label>.csv`, `histogram-all-<label>.csv`.
 Manifest (both ends): the profile (`mixed.profile`, `mixed.classes`,
 `mixed.publishers`, `mixed.fanout`, `mixed.period_ns`, `hot_rate`), comma
 lists one entry a background stream (ping: `mixed.scheduled`, `.sent`,
-`.echoes`, `.bp`, `.bp_measured`, `.echo_gaps`, `.echo_behind`,
+`.echoes`, `.bp`, `.bp_measured` (offers back-pressured: `BACK_PRESSURED`,
+`NOT_CONNECTED`), `.admin`, `.admin_measured` (Aeron's `ADMIN_ACTION`, a
+term rotation: not back-pressure, retried at once), `.position` (the
+publications' final positions), `.echo_gaps`, `.echo_behind`,
 `.payload_bytes`; pong: `mixed.recv` with `/` between a stream's
 subscriptions, `.echoed`, `.recv_gaps`, `.recv_behind`, `.recv_refused`),
 the frames' bytes (`mixed.hot_frame_bytes`, `.frame_bytes_sent`,
 `.echo_frame_bytes_received`, `.frame_bytes_received`, `.frames_sent`), the
-hot stream's (`mixed.hot_sent`, `mixed.hot_echoes`), latency summaries
+hot stream's (`mixed.hot_sent`, `mixed.hot_echoes`; its slots that met
+`ADMIN_ACTION`, `admin_actions`, apart from `backpressured`), latency summaries
 (`bg.*`, `all.*`), the background thread's passes and busy passes
 (`mixed.bg.*`), an invoking thread's duty cycles and those with work
 (`mixed.invoker.*`), the driver's duty cycles (`driver.cycle.<agent>.max_ns`

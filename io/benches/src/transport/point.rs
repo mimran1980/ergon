@@ -540,11 +540,19 @@ unsafe impl GlobalAlloc for CountingAlloc {
 
 /// What a send attempt did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(
+    clippy::enum_variant_names,
+    reason = "Sent::Sent reads as what it is at every call site"
+)]
 pub enum Sent {
     /// The message went.
     Sent,
     /// The transport is full or busy: try again.
     Busy,
+    /// The transport took an administrative step instead (Aeron's
+    /// `ADMIN_ACTION`, a term rotation): try again at once. Not
+    /// back-pressure, counted apart.
+    Admin,
 }
 
 /// A transport's sending side, one stream per index.
@@ -721,8 +729,45 @@ pub struct SendStats {
     pub pacer: Pacer,
     /// Slots that met back-pressure at least once.
     pub backpressured: u64,
+    /// Slots whose offer met an administrative step ([`Sent::Admin`]) at
+    /// least once.
+    pub admin_actions: u64,
     /// Raw counter when the last slot went (0: it never did).
     pub send_end_tsc: u64,
+}
+
+/// A sending loop's counts as it goes.
+#[derive(Debug, Clone, Copy)]
+struct SendCounts {
+    backpressured: u64,
+    /// The slot last back-pressured.
+    bp_slot: u64,
+    admin_actions: u64,
+    /// The slot last met by an administrative step.
+    admin_slot: u64,
+    /// Raw counter when the last slot went.
+    end_tsc: u64,
+}
+
+impl SendCounts {
+    const fn new() -> Self {
+        Self {
+            backpressured: 0,
+            bp_slot: u64::MAX,
+            admin_actions: 0,
+            admin_slot: u64::MAX,
+            end_tsc: 0,
+        }
+    }
+
+    const fn stats(self, pacer: Pacer) -> SendStats {
+        SendStats {
+            pacer,
+            backpressured: self.backpressured,
+            admin_actions: self.admin_actions,
+            send_end_tsc: self.end_tsc,
+        }
+    }
 }
 
 /// Both ends' results; when both failed, the cause, not the end that
@@ -786,7 +831,7 @@ fn send_due<T: Tx>(
     tx: &mut T,
     now: u64,
     kind: Kind,
-    stats: &mut (u64, u64, u64),
+    stats: &mut SendCounts,
 ) -> Result<bool, Error> {
     let Some(slot) = pacer.poll(now) else {
         return Ok(!pacer.done());
@@ -798,13 +843,19 @@ fn send_due<T: Tx>(
         Sent::Sent => {
             pacer.sent(clock, &slot, send_tsc)?;
             if pacer.done() {
-                stats.2 = send_tsc;
+                stats.end_tsc = send_tsc;
             }
         }
         Sent::Busy => {
-            if stats.1 != slot.index {
-                stats.1 = slot.index;
-                stats.0 += 1;
+            if stats.bp_slot != slot.index {
+                stats.bp_slot = slot.index;
+                stats.backpressured += 1;
+            }
+        }
+        Sent::Admin => {
+            if stats.admin_slot != slot.index {
+                stats.admin_slot = slot.index;
+                stats.admin_actions += 1;
             }
         }
     }
@@ -834,8 +885,7 @@ pub fn ping<T: Tx, R: Rx>(
         c.measured_slots()?,
     )?;
     let deadline = c.deadline(clock, start_tsc);
-    // (backpressured, the slot last back-pressured, send end)
-    let mut stats = (0u64, u64::MAX, 0u64);
+    let mut stats = SendCounts::new();
     loop {
         let now = clock.raw();
         rec.pass(now);
@@ -862,11 +912,7 @@ pub fn ping<T: Tx, R: Rx>(
             rec.on_payload(p, recv);
         })?;
     }
-    Ok(SendStats {
-        pacer,
-        backpressured: stats.0,
-        send_end_tsc: stats.2,
-    })
+    Ok(stats.stats(pacer))
 }
 
 /// The one-way sending end: sends each slot when due, then tells the
@@ -892,7 +938,7 @@ pub fn send_oneway<T: Tx>(
             c.measured_slots()?,
         )?;
         let deadline = c.deadline(clock, start_tsc);
-        let mut stats = (0u64, u64::MAX, 0u64);
+        let mut stats = SendCounts::new();
         loop {
             let now = clock.raw();
             if !send_due(clock, &mut pacer, tx, now, Kind::Oneway, &mut stats)? {
@@ -905,11 +951,7 @@ pub fn send_oneway<T: Tx>(
                 return Err(timeout("oneway sender"));
             }
         }
-        Ok(SendStats {
-            pacer,
-            backpressured: stats.0,
-            send_end_tsc: stats.2,
-        })
+        Ok(stats.stats(pacer))
     };
     match run() {
         Ok(s) => {
@@ -1011,7 +1053,7 @@ pub fn echo<R: Rx, T: Tx>(
             loop {
                 match tx.try_send(m.stream, &buf) {
                     Ok(Sent::Sent) => break,
-                    Ok(Sent::Busy) => {
+                    Ok(Sent::Busy | Sent::Admin) => {
                         spins = spins.wrapping_add(1);
                         if spins.is_multiple_of(1024) && !keep_going() {
                             failed = Some(Error::Transport(
@@ -1320,6 +1362,7 @@ pub fn finish_shown(
         .setting("dup", &loss.duplicate.to_string())
         .setting("stale", &loss.stale.to_string())
         .setting("backpressured", &send.backpressured.to_string())
+        .setting("admin_actions", &send.admin_actions.to_string())
         .setting("achieved", &format!("{achieved:.0}"))
         .setting("max_ns", &latency.max.to_string())
         .setting("max_from_send_ns", &from_send.max.to_string())

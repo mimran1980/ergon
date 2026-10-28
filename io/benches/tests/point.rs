@@ -70,6 +70,7 @@ fn sent(
         SendStats {
             pacer,
             backpressured: 0,
+            admin_actions: 0,
             send_end_tsc: end,
         },
         msgs,

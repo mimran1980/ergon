@@ -111,7 +111,12 @@ concerns. Rules:
                    driver duty cycle over its threshold, the background thread busy
                    90 % of its time or an invoking thread's driver with work in 90 %
                    of its duty cycles (else unexplained); a
-                   saturated point is flagged, shown and never compared
+                   saturated point is flagged, shown and never compared. Aeron's
+                   ADMIN_ACTION (a term rotation) is not back-pressure: counted
+                   apart (mixed.admin, admin_actions), each publication's no more
+                   than the terms it filled; an older binary's counts that equal
+                   the terms filled are taken as those (transport_points.py
+                   mixed_offers)
   budget           no host ran more busy threads (over 90 % of a CPU, the gap
                    spinners and the IRQ core's ksoftirqd apart) than the arm's
                    declared budget (busy_threads: its client threads and its
@@ -130,7 +135,8 @@ import sys
 from collections import defaultdict, namedtuple
 
 from spikes import transport_maxima
-from transport_points import hosts_of_point, irq_core_thread, read_points, tcp_loss
+from transport_points import hosts_of_point, hot_rotations, irq_core_thread, mixed_backpressured, read_points, \
+    tcp_loss
 
 Violation = namedtuple("Violation", "rule set tags detail")
 Violation.__str__ = lambda v: f"{v.rule}: {v.set or 'run'}: {v.detail}"
@@ -456,8 +462,34 @@ def mixed_backpressure(p):
     m = p.manifest or {}
     ps = ((m.get("binary") or {}).get("settings")) or {}
     qs = ((m.get("pong") or {}).get("settings")) or {}
-    bp = (p.row.get("backpressured") or 0) + sum(ints_of(ps, "mixed.bp_measured") or [])
-    return bp, mixed_saturation(ps, qs)
+    return mixed_backpressured(p), mixed_saturation(ps, qs)
+
+
+def mixed_admin_problems(tag, ps):
+    """A mixed point's ADMIN_ACTIONs (term rotations, counted apart from
+    back-pressure) against the terms its publications filled: a stream's
+    mixed.admin its publications' final positions over the term length
+    (mixed.position; a publication whose last message ended its term has
+    not rotated yet), the hot stream's admin_actions its 96-byte frames'
+    (hot_rotations); [] for a binary that did not count them apart."""
+    if "mixed.admin" not in ps:
+        return []
+    out = []
+    term = int_of(ps, "term_length")
+    admin, measured = ints_of(ps, "mixed.admin"), ints_of(ps, "mixed.admin_measured")
+    pos, pubs = ints_of(ps, "mixed.position"), ints_of(ps, "mixed.publishers")
+    if not term or None in (admin, measured, pos, pubs) or not len(admin) == len(measured) == len(pos) == len(pubs):
+        return [f"{tag}: admin actions or the publications' positions not recorded"]
+    for i, (a, am, x, k) in enumerate(zip(admin, measured, pos, pubs)):
+        most = x // term
+        if not most - k <= a <= most or am > a:
+            out.append(f"{tag}: background stream {i + 1}: {a:,} admin actions ({am:,} measured), its "
+                       f"publications filled {most:,} terms: an admin action that was not a term rotation")
+    hot, got = int_of(ps, "mixed.hot_sent"), int_of(ps, "admin_actions")
+    if hot is not None and got is not None and got != hot_rotations(hot, term):
+        out.append(f"{tag}: the hot stream: {got:,} admin actions, its {hot:,} frames filled "
+                   f"{hot_rotations(hot, term):,} terms")
+    return out
 
 
 def busy_budget(p, host):
@@ -1056,6 +1088,8 @@ def check(run_dir, absences=None, notes=None):
                     add("mixed-wire", set_, [p.tag], why)
                 for why in mixed_nic_problems(p.tag, m, ps_, qs_):
                     add("mixed-nic", set_, [p.tag], why)
+                for why in mixed_admin_problems(p.tag, ps_):
+                    add("backpressure", set_, [p.tag], why)
                 bp, sat = mixed_backpressure(p)
                 if bp and not sat:
                     add("backpressure", set_, [p.tag], f"{p.tag}: {bp:,} offers back-pressured in the measured "

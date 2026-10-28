@@ -109,7 +109,8 @@ use point::{
     Sent, Tx, thread_allocs,
 };
 use rusteron_client::{
-    Aeron, AeronCError, AeronContext, AeronExclusivePublication, AeronImage, AeronSubscription, Handlers,
+    Aeron, AeronCError, AeronContext, AeronExclusivePublication, AeronImage, AeronOfferError, AeronSubscription,
+    Handlers,
 };
 use rusteron_media_driver::bindings::aeron_threading_mode_t;
 use rusteron_media_driver::{AeronDriverContext, AeronIdleStrategyKind};
@@ -786,6 +787,8 @@ impl Tx for AeronTx {
             .ok_or_else(|| Error::Transport(format!("no publication for stream {stream}")))?;
         match p.offer(msg) {
             Ok(_) => Ok(Sent::Sent),
+            // a term rotation: not back-pressure (point.rs counts it apart)
+            Err(AeronOfferError::AdminAction) => Ok(Sent::Admin),
             Err(e) if e.is_retryable() => Ok(Sent::Busy),
             Err(e) => Err(Error::Transport(format!("offer on stream {stream}: {e:?}"))),
         }
@@ -967,7 +970,7 @@ impl<T: Tx> Tx for StagedTx<'_, T> {
                     });
                 }
             }
-            Sent::Busy => {
+            Sent::Busy | Sent::Admin => {
                 if !matches!(self.pending, Some((s, q, _)) if s == stream && q == seq) {
                     self.pending = Some((stream, seq, t0));
                 }

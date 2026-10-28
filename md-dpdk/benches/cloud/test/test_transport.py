@@ -620,6 +620,10 @@ FANOUT = [2, 3, 4, 1, 2, 3, 4, 1]
 PUBLISHERS = [1, 1, 1, 1, 1, 1, 1, 2]
 PER_STREAM = 1000
 FRAME = 320  # each background message 288 B, a 320-byte frame
+TERM = 65536
+# a stream's terms filled: 1,000 frames of 320 B over 64 KiB terms (the
+# two publishers' stream too: 500 each, two terms each)
+ROTATIONS = PER_STREAM * FRAME // TERM
 
 
 def mixed_ends(row, busy):
@@ -629,6 +633,7 @@ def mixed_ends(row, busy):
     lst = lambda v: ",".join(str(v) for _ in range(BG))
     f = BG * PER_STREAM * FRAME
     hot = row["sent"]
+    hot_rot = max(hot - 1, 0) // (TERM // 96)
     profile = {"load": "mixed", "mixed.profile": "mixed-v1", "mixed.classes": "SSSSBBIM",
                "mixed.publishers": ",".join(map(str, PUBLISHERS)), "mixed.fanout": ",".join(map(str, FANOUT)),
                "mixed.period_ns": lst(1_000_000), "streams": str(BG + 1), "hot_rate": "10000", "warmup_s": "30",
@@ -636,6 +641,10 @@ def mixed_ends(row, busy):
     ps = dict(profile, **{
         "mixed.scheduled": lst(PER_STREAM), "mixed.sent": lst(PER_STREAM), "mixed.echoes": lst(PER_STREAM),
         "mixed.echo_gaps": lst(0), "mixed.echo_behind": lst(0), "mixed.bp_measured": lst(0), "mixed.bp": lst(0),
+        "mixed.admin": lst(ROTATIONS), "mixed.admin_measured": lst(ROTATIONS // 2), "admin_actions": str(hot_rot),
+        "mixed.admin_total": str(BG * ROTATIONS), "mixed.position": lst(PER_STREAM * FRAME),
+        "mixed.payload_bytes": lst(PER_STREAM * (FRAME - 32)), "term_length": str(TERM), "mtu": "1408",
+        "sent": str(hot), "backpressured": "0",
         "mixed.hot_sent": str(hot), "mixed.hot_frame_bytes": str(hot * 96), "mixed.frame_bytes_sent": str(f),
         "mixed.echo_frame_bytes_received": str(f), "mixed.frames_sent": str(BG * PER_STREAM),
         "driver.bytes-sent": str(f + hot * 96), "driver.bytes-received": str(f + row["received"] * 96),
@@ -860,6 +869,81 @@ class MixedLoadTest(unittest.TestCase):
             m["binary"]["settings"]["mixed.bp_measured"] = "0,0,0,0,5,0,0,0"
         self.assertRule(fn, "backpressure", "5 offers back-pressured in the measured window")
 
+    # Aeron's ADMIN_ACTION (a term rotation) is not back-pressure: counted
+    # apart (mixed.admin, admin_actions), held against the terms filled
+
+    def test_admin_actions_alone_are_not_backpressure(self):
+        from transport_points import flags, mixed_offers
+        run = self.mixed()
+        [p] = [p for p in read_points(run.run) if MIXED(p.manifest)]
+        self.assertNotIn("back-pressured", flags(p))
+        self.assertEqual(mixed_offers(p)["bp"], 0)
+        self.assertEqual(mixed_offers(p)["admin"], BG * ROTATIONS + int(
+            p.manifest["binary"]["settings"]["admin_actions"]))
+
+    def test_backpressure_beside_admin_actions_is_still_flagged(self):
+        from transport_points import flags
+        def fn(m):
+            m["binary"]["settings"]["mixed.bp_measured"] = "0,0,3,0,0,0,0,0"
+        run, vs = self.broken(fn)
+        self.assertEqual({v.rule for v in vs}, {"backpressure"}, [str(v) for v in vs])
+        self.assertTrue(any("3 offers back-pressured" in v.detail for v in vs), [str(v) for v in vs])
+        [p] = [p for p in read_points(run.run) if MIXED(p.manifest)]
+        self.assertIn("back-pressured", flags(p))
+
+    def test_admin_actions_beyond_the_terms_filled(self):
+        def fn(m):
+            m["binary"]["settings"]["mixed.admin"] = f"{ROTATIONS + 3}," + ",".join([str(ROTATIONS)] * (BG - 1))
+        self.assertRule(fn, "backpressure", "background stream 1: 7 admin actions (2 measured), its publications filled 4 terms")
+
+    def test_hot_admin_actions_beyond_the_terms_filled(self):
+        def fn(m):
+            m["binary"]["settings"]["admin_actions"] = "9"
+        self.assertRule(fn, "backpressure", "the hot stream: 9 admin actions")
+
+    def legacy(self, bp, hot_bp=None):
+        """A point from a binary that counted every retryable offer result
+        as back-pressure (no mixed.admin): its whole-run counts `bp` a
+        stream, measured half of each; the hot stream's (its row's) its
+        terms filled unless `hot_bp`. (run, violations)"""
+        run = self.mixed()
+        hot = {}
+
+        def fn(m):
+            s = m["binary"]["settings"]
+            for k in ("mixed.admin", "mixed.admin_measured", "mixed.admin_total", "mixed.position", "admin_actions"):
+                del s[k]
+            s["mixed.bp"] = ",".join(map(str, bp))
+            s["mixed.bp_measured"] = ",".join(str(b // 2) for b in bp)
+            hot["bp"] = max(int(s["sent"]) - 1, 0) // (TERM // 96) if hot_bp is None else hot_bp
+            s["backpressured"] = str(hot["bp"])
+        run.edit(MIXED, fn)
+
+        def row(r):
+            r[COLUMNS.index("backpressured")] = str(hot["bp"])
+        run.rows(lambda d: d["label"] == "2a:aeron-kernel" and d["rep"] == "1", row)
+        return run, fairness.check(run.run)
+
+    def test_legacy_counts_equal_to_the_term_rotations_are_admin_actions(self):
+        from transport_points import flags, mixed_offers
+        run, vs = self.legacy([ROTATIONS] * BG)
+        self.assertEqual([str(v) for v in vs], [])
+        [p] = [p for p in read_points(run.run) if MIXED(p.manifest)]
+        self.assertNotIn("back-pressured", flags(p))
+        self.assertEqual(mixed_offers(p)["how"], "term rotations")
+
+    def test_legacy_counts_beyond_the_term_rotations_stay_backpressure(self):
+        from transport_points import flags, mixed_offers
+        run, vs = self.legacy([ROTATIONS] * 4 + [ROTATIONS + 6] + [ROTATIONS] * 3)
+        self.assertEqual({v.rule for v in vs}, {"backpressure"}, [str(v) for v in vs])
+        [p] = [p for p in read_points(run.run) if MIXED(p.manifest)]
+        self.assertIn("back-pressured", flags(p))
+        self.assertGreater(mixed_offers(p)["bp"], 0)
+
+    def test_legacy_hot_count_beyond_its_rotations_stays_backpressure(self):
+        run, vs = self.legacy([ROTATIONS] * BG, hot_bp=500)
+        self.assertEqual({v.rule for v in vs}, {"backpressure"}, [str(v) for v in vs])
+
     def test_backpressure_with_long_duty_cycles_is_explained_and_flagged(self):
         from transport_points import flags
         def fn(m):
@@ -918,7 +1002,8 @@ class MixedLoadTest(unittest.TestCase):
         self.assertIn("- **aeron-kernel**", text)
         self.assertIn("every message accounted for (sent = read by every subscription = echoed = back)? yes", text)
         self.assertIn("A/A agrees? its repeat differs by up to", text)
-        self.assertIn("back-pressure? none in any measured window", text)
+        self.assertIn("back-pressure? none in any measured window (", text)
+        self.assertIn("admin actions, term rotations: not back-pressure)", text)
 
     def test_the_analysis_names_a_broken_rule_in_the_checklist(self):
         def fn(m):

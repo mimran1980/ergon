@@ -145,7 +145,9 @@ assert row["busy_threads"] == int(busy) and row["lost"] == 0 and row["censored"]
 m = {"binary": binary, "pong": pong_m, "runner": {"arm_hosts": "two"}}
 problems = fairness.mixed_count_problems("t", row, binary["settings"], pong_m["settings"])
 problems += fairness.mixed_wire_problems("t", row, binary["settings"], pong_m["settings"], int(mtu))
+problems += fairness.mixed_admin_problems("t", binary["settings"])
 assert problems == [], problems
+assert binary["settings"].get("mixed.admin") is not None and int(binary["settings"]["mixed.admin_total"]) > 0
 s = binary["settings"]
 assert int(s["bg.count"]) > 0 and int(s["all.count"]) == int(s["bg.count"]) + row["samples"], s
 assert int(s["all.max_ns"]) >= max(int(s["bg.max_ns"]), row["max"]), s
@@ -272,6 +274,7 @@ fn mixed(name: &str, driver: &str, threading: Option<&str>, driver_busy: u32, st
         bp.len() == 8 && bp.iter().zip(&bpm).all(|(a, b)| b <= a),
         "{bp:?} {bpm:?}"
     );
+    term_rotations(&m)?;
     // the sizes mixed: more frames than messages (4096 B goes in three), and
     // a steady stream's mean size above the smallest
     let (frames, total) = (number(&m, "mixed.frames_sent")?, number(&m, "mixed.sent_total")?);
@@ -302,6 +305,38 @@ fn mixed(name: &str, driver: &str, threading: Option<&str>, driver_busy: u32, st
         hot_stages(&ping_out, &pong_out, every, number(&m, "mixed.hot_sent")?)?;
     }
     std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+/// Aeron's `ADMIN_ACTION` offer results (a term rotation) counted apart from
+/// back-pressure: each publication's one per term it filled, so a stream's
+/// `mixed.admin` is its publications' terms filled (`mixed.position`, every
+/// publication's final position, over the term length; a publication
+/// whose last message ended its term exactly has not rotated yet), the
+/// measured window's within the whole's; the hot stream's `admin_actions`
+/// its 96-byte frames' terms filled.
+fn term_rotations(m: &str) -> R {
+    let term: u64 = TERM.parse()?;
+    let (admin, measured) = (list(m, "mixed.admin")?, list(m, "mixed.admin_measured")?);
+    let (pos, pubs) = (list(m, "mixed.position")?, list(m, "mixed.publishers")?);
+    assert!(admin.len() == 8 && pos.len() == 8, "{admin:?} {pos:?}");
+    for i in 0..8 {
+        // a publication's terms filled: its position over the term length,
+        // and a stream's publications each rotate their own
+        let most = pos[i] / term;
+        assert!(
+            admin[i] <= most && admin[i] + pubs[i] >= most && measured[i] <= admin[i],
+            "stream {}: {} admin actions, {} measured, position {} ({most} terms)",
+            i + 1,
+            admin[i],
+            measured[i],
+            pos[i]
+        );
+    }
+    assert!(admin.iter().sum::<u64>() > 0, "no term rotated: {admin:?}");
+    assert_eq!(number(m, "mixed.admin_total")?, admin.iter().sum::<u64>());
+    let hot = number(m, "mixed.hot_sent")?;
+    assert_eq!(number(m, "admin_actions")?, hot.saturating_sub(1) / (term / 96), "{m}");
     Ok(())
 }
 
