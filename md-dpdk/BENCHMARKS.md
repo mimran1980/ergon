@@ -497,7 +497,8 @@ Threading modes, 1 stream, round trip p50 (µs) and max:
 - DPDK: the modes are not separated at 10,000 and 50,000 msg/s; at
   200,000 `SHARED` is 0.64 to 0.91 higher at p50 and 2.75 to 3.01 at p99.
   Kernel: `INVOKER` 3.1 to 8.4 higher at p50. 1 stream does not load the
-  driver's loops: a many-stream, mixed-load test is being built. An earlier
+  driver's loops; with 32 and 128 streams it does cost
+  ([below](#aeron-threading-under-mixed-load-intel-graviton)). An earlier
   session (data lost) had the same pattern at lower absolute values
   (DPDK p50 22 to 26): compare within one session only.
 - `aeron-rel-emb`'s millisecond maxima (all 3 reps; 7 stalls of 294 to
@@ -518,6 +519,70 @@ latency gain from AF_XDP; the freeze on EC2 is open as #231. Onload's
 target is AMD Solarflare NICs, not offered on AWS. The runner's `onload-*`
 arms stay, marked experimental. Details and links:
 [the book](https://mimran1980.github.io/ergon/transports/comparison.html#onload-on-ena-not-viable).
+
+## Aeron threading under mixed load (Intel, Graviton)
+
+<!-- RESULTS: md-dpdk aws mixed threading -->
+
+Four on-demand sessions, commit `47536706`, 3 reps, 81 rows each, 0
+failures, Debian 13, kernel 7.2.11, 8 cores a host: `aws-20261028-123929`
+(DPDK) and `aws-20261028-123909` (kernel UDP) on `c7i.4xlarge` pairs, SMT
+off, us-east-1a; `aws-20261028-125527` (DPDK, us-east-2a) and
+`aws-20261028-123949` (kernel, us-east-1d) on `c8g.2xlarge` pairs. A hot
+stream (64 B, 10,000 msg/s, its own channel and busy thread) beside 31 or
+127 background streams (steady, bursty, idle then a burst, two publishers;
+64 to 4,096 B; 1 to 4 subscriptions; one busy thread), 50,000 or 200,000
+msg/s in all. Tables, validity and every max:
+[the book](https://mimran1980.github.io/ergon/transports/comparison.html#aeron-threading-under-mixed-load-intel-graviton).
+
+Hot round-trip p50 (µs): dedicated's, then each mode's difference from it
+(`~`: not separated; busy threads a host, the hot and background threads
+included):
+
+| arm | busy | Intel DPDK 32 / 50k | 32 / 200k | 128 / 50k | 128 / 200k | Intel kernel 32 / 50k | 32 / 200k | 128 / 50k | 128 / 200k | Graviton DPDK 32 / 50k | 32 / 200k | 128 / 50k | 128 / 200k | Graviton kernel 32 / 50k | 32 / 200k | 128 / 50k | 128 / 200k |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| dedicated | 5 | 32.9 | 32.5 | 36.5 | 36.6 | 47.2 | 58.2 | 52.3 | 69.7 | 31.4 | 31.5 | 40.3 | 41.0 | 39.9 | 42.5 | 49.2 | 54.9 |
+| `-emb` | 5 | -0.7 | -0.1~ | +0.7~ | +1.3~ | +0.7~ | -2.1~ | -0.4~ | +1.8~ | -0.2~ | +0.1~ | +0.5 | +0.9 | -0.4~ | +0.0~ | +0.4~ | +0.4~ |
+| `-shnet` | 4 | +2.0 | +1.9~ | +7.3 | +8.2 | +1.9 | +5.0~ | +8.2 | +23.7 | +3.8 | +4.1 | +15.7 | +18.0 | +4.1 | +7.6 | +18.2 | +32.6 |
+| `-shared` | 3 | +3.1 | +4.2 | +15.7 | +21.9 | +4.1 | +10.0 | +14.7 | +45.2 | +9.1 | +10.2 | +38.7 | +46.5 | +10.0 | +17.7 | +41.8 | +73.7 |
+| `-invoker` | 2 | +4.9 | +5.8 | +25.0 | +29.3 | +5.8 | +17.5 | +26.2 | +73.4 | +13.3 | +15.0 | +57.0 | +66.5 | +14.3 | +22.6 | +60.4 | +130.8 |
+
+Floors (1 stream, 10,000 msg/s), `dpdk-raw` p50: Intel 30.0 (DPDK pair)
+and 29.0 (kernel pair), Graviton 27.1 and 25.8.
+
+- **Dedicated wins once there are many streams.** Every mode with fewer
+  driver threads is slower at every point, in the same order; only
+  `SHARED_NETWORK` at 32 streams, 200,000 msg/s on Intel is not separated.
+  The in-process dedicated driver (`-emb`) is the same as its own process.
+- **Why:** one thread runs the conductor, sender and receiver in turn,
+  and each scans every stream. At 128 streams `INVOKER`'s driver had work
+  in 86 to 99 % of the hot thread's duty calls (Graviton; Intel at
+  200,000 msg/s), each call 22 to 37 µs on Graviton; `SHARED`'s thread ran
+  36,000 to 83,000 cycles over 10 µs a second (Intel DPDK at 50,000
+  msg/s: 11,000 to 16,000). The hot minimum rises with
+  the mode (Graviton DPDK, 128 streams: 27.4, 33.2, 43.9, 63.5), so every
+  message waits. No stage trace was recorded to split the wait by hand-off.
+- **Platforms and stacks:** Graviton pays 1.4 to 2.9 times Intel's cost
+  for the same mode. Kernel and DPDK pay about the same at 50,000 msg/s
+  (within 3.4); at 200,000 msg/s the kernel pays more. Over each pair's
+  `dpdk-raw` floor DPDK is lower than the kernel in every mode, and Intel
+  lower than Graviton on DPDK in every mode.
+- **Use:** dedicated (3 driver threads) for latency with many streams;
+  `SHARED_NETWORK` gives one core back for +1.9 to +4.1 at 32 streams,
+  50,000 msg/s (+7.3 to +18.2 at 128); `SHARED` +3.1 to +10.0 (+14.7 to
+  +41.8); `INVOKER` saturates at 128 streams (+25.0 to +130.8).
+- **`c7a.2xlarge`** (AMD, kernel; `aws-20261028-090239`, its `SHARED` and
+  `INVOKER` arms lost to set-up failures, and `aws-20261028-110833`): the
+  same order at 50,000 msg/s; at 200,000 `SHARED` and `INVOKER` fell
+  behind (full socket buffers dropped 65,997 to 4,405,411 datagrams a
+  point on a host).
+- **Validity:** every message accounted for in all 288 mixed points; no
+  real back-pressure (every count the harness reports equals the
+  publication's term rotations, Aeron's `ADMIN_ACTION`); DPDK NIC bytes
+  within bounds from the binaries' own counters (`fairness.py` did not get
+  them). Intel kernel: 25 outages of 4.2 to 16.2 ms, each at second 25 of
+  a minute, 4 of them with NAKs (frames lost below the guest); they set
+  its p99.99 and max only.
 
 ## c7i: the IRQ CPU's idle depth
 
@@ -556,8 +621,9 @@ CPU 1's cpuidle `usage` and `time` before and after (`idle/`).
 - Separate and unexplained: millisecond tails in most arms, capped ones
   included (p99.99 0.07–12.3 ms, max to 14.9 ms). They fall at one second
   of each minute, the same second for a pair and different between pairs
-  (:20 here, :29 in `aws-20261028-071700`, :50 in `aws-20261028-071640`):
-  a path outage of about 15 ms once a minute. Not investigated.
+  (:20 here, :29 in `aws-20261028-071700`, :50 in `aws-20261028-071640`,
+  :25 in `aws-20261028-123909`): a path outage of about 15 ms once a
+  minute. Not investigated.
 - The SMT comparison (`transport-aws-smt-off.tsv`, `transport-aws-smt.tsv`)
   ran uncapped; its 10k msg/s points need rerunning with the cap (both
   sets now require `irq_idle 1`).
@@ -574,6 +640,7 @@ separating result above are listed.
 | DPDK (lab only): receiver IO vectors 16 | `aws-20261014-113947`, platform not recorded | pod env `AERON_RECEIVER_IO_VECTOR_CAPACITY` |
 | DPDK (lab only): large ENA LLQ entries, 256 TX descriptors | G4 table above | the transport's default (`llq_policy=3`) |
 | a keep-alive every 100 µs on sparse, latency-critical streams | G7b, sparse flows above (raw floor) | the application |
+| Aeron's driver threads dedicated (`AERON_THREADING_MODE=DEDICATED`, in its own process or in-process) when a host carries 32 or more streams; a shared mode only where its latency is acceptable | [mixed load](#aeron-threading-under-mixed-load-intel-graviton) | the media driver's configuration, a core per agent |
 | x86 `intel_idle` hosts with interrupt-driven kernel receive: the CPU that takes the NIC interrupts capped at C1; TCP autocorking off | [c7i: the IRQ CPU's idle depth](#c7i-the-irq-cpus-idle-depth) | node: cpuidle `state<i>/disable` per CPU or `intel_idle.max_cstate=1`; `net.ipv4.tcp_autocorking` in the sender's network namespace (ergon-tune T20, T21) |
 
 A lost frame on a quiet stream is noticed at Aeron's next heartbeat, 100 ms
@@ -590,7 +657,9 @@ not as an Aeron message.
 
 - Graviton against x86: never in one run. Pairs, days and builds differ, and
   Graviton builds with `-mcpu=native` while x86 Rust stays generic
-  (`benches/cloud/host.sh:46-59`). Not compared.
+  (`benches/cloud/host.sh:46-59`; Aeron's C is `-march=native` on both).
+  Compared only through each pair's floors
+  ([mixed load](#aeron-threading-under-mixed-load-intel-graviton)).
 - Interrupt moderation on against off: no A/B on any platform.
 - Kernel polling against interrupts: no single-setting A/B.
 - 4,096 RX descriptors (the code default, `src/config.rs:82`): no separating
@@ -621,7 +690,16 @@ not as an Aeron message.
 - `fairness.py` flags the DPDK arms' points because the kernel's
   `busy_read` and `busy_poll` read 0 there (240 in `aws-20261027-062105`);
   no kernel socket is on a DPDK arm's path, but the rule does not yet
-  exempt them.
+  exempt them. `dpdk-raw` and its A/A are still flagged so
+  (`aws-20261028-123929`).
+- The mixed load (`aeron_lat --load mixed`) counts a retried
+  `ADMIN_ACTION` (term rotation) as back-pressure, so `analyse.py` flags
+  and refuses every mixed point; and `transport_collect.py` builds no NIC
+  counters for a DPDK host (`vm.sh nicstats` prints nothing there), so
+  every DPDK mixed point breaks `mixed-nic`.
+- Intel DPDK's external-driver arms: `nic-rx-missed` 8,940 to 17,698 a run
+  at 128 streams with 0 NAKs and 0 retransmits (`aws-20261028-123929`).
+- The mixed arms' hot-stream stage trace under `SHARED` and `INVOKER`.
 
 ## How to run
 

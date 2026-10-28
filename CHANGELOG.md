@@ -33,11 +33,18 @@
   send every frame over UDP (kernel or DPDK) to another host: p50 unchanged
   (0.26 µs round trip, 0.14 one way), every frame verified at the sink.
   This replaces the note that the published spy arm sent nothing.
-- Aeron driver threading modes at 1 stream on AWS: DPDK's modes are not
-  separated to 50,000 msg/s, fully `SHARED` is 0.6 to 0.9 µs higher at
-  200,000; kernel `INVOKER` is 3.1 to 8.4 µs higher at p50. The embedded
-  kernel driver's millisecond maxima are listed as unexplained, with what
-  was ruled out.
+- Aeron driver threading on AWS, now under mixed load (`c7i` and `c8g`,
+  kernel UDP and DPDK, 32 and 128 streams, 50,000 and 200,000 msg/s): once
+  there are many streams every thread taken from the driver costs latency.
+  Hot p50 above dedicated: `SHARED_NETWORK` +1.9 to +32.6 µs, `SHARED`
+  +3.1 to +73.7, `INVOKER` +4.9 to +130.8; the in-process dedicated driver
+  is the same as its own process. At 128 streams `SHARED` and `INVOKER`
+  saturate their one thread; Graviton pays 1.4 to 2.9 times what Intel
+  pays. This replaces the 1-stream result as the guidance (at 1 stream
+  DPDK's modes were not separated to 50,000 msg/s, kernel `INVOKER` was
+  3.1 to 8.4 µs higher). The `c7i` once-a-minute path outage recurred
+  (second :25, 4.2 to 16.2 ms). The embedded kernel driver's 1-stream
+  millisecond maxima stay listed as unexplained.
 - Onload over AF_XDP on AWS ENA: not viable (kernel fault at NIC
   registration, instance froze), no latency measured; the Onload runner
   arms are marked experimental.
