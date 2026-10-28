@@ -150,7 +150,7 @@ impl<E: Endpoint + Receive<Sum>> Rig<E> {
 /// Runs `test` on every backend; `uring-sqpoll` may refuse typed on a
 /// process with one CPU (driver.rs covers that refusal).
 fn each_backend(test: impl Fn(Backend) -> R) -> R {
-    for b in Backend::ALL {
+    for b in Backend::KERNEL {
         match test(b) {
             Ok(()) => {}
             Err(e) if b == Backend::UringSqpoll && support::refused(&*e, HelperThread::SqPoll) => {}

@@ -240,7 +240,7 @@ mod driver {
     /// `uring-sqpoll` typed (no core for its kernel thread).
     fn each_backend(test: impl Fn(Backend) -> R) -> R {
         let mut ran = 0;
-        for b in Backend::ALL {
+        for b in Backend::KERNEL {
             match test(b) {
                 Ok(()) => ran += 1,
                 Err(e)
@@ -258,7 +258,7 @@ mod driver {
                 Err(e) => return Err(format!("{b}: {e}").into()),
             }
         }
-        assert!(ran >= Backend::ALL.len() - 1, "only {ran} backends ran");
+        assert!(ran >= Backend::KERNEL.len() - 1, "only {ran} backends ran");
         Ok(())
     }
 

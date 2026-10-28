@@ -48,7 +48,7 @@ use crate::clock::monotonic_ns;
 use crate::endpoint::sealed::{Deliver, DialIo, Io};
 use crate::endpoint::{ConnId, ConnMut, Handler};
 use crate::error::{Error, Result};
-use crate::net::{Target, TlsDial};
+use crate::net::{StreamSocket, Target, TlsDial};
 use crate::stream::{TlsStream, TxQueue};
 use crate::text::{NonAscii, Scan, TextCheck, TextStatus};
 use crate::tls::MAX_RECORD;
@@ -433,8 +433,8 @@ struct InFlight {
 
 /// A connected HTTP/1.1 client connection. Hand it to a `Driver`; the socket
 /// closes when it is dropped.
-pub struct HttpConn {
-    stream: TlsStream,
+pub struct HttpConn<T = std::net::TcpStream> {
+    stream: TlsStream<T>,
     /// `Host` and the target's headers, serialised once.
     fixed: Vec<u8>,
     in_flight: VecDeque<InFlight>,
@@ -462,7 +462,7 @@ pub struct HttpConn {
     handed: u64,
 }
 
-impl HttpConn {
+impl<T: StreamSocket> HttpConn<T> {
     /// Queues a request for the driver's next `poll` or `flush` and returns its
     /// id. `headers` come after the connection's fixed headers;
     /// `Content-Length` is added when there is a body or the method is `POST`,
@@ -700,7 +700,7 @@ impl HttpConn {
         self.stream.route()
     }
 
-    fn build(stream: TlsStream, fixed: Vec<u8>, opts: HttpOptions) -> Self {
+    fn build(stream: TlsStream<T>, fixed: Vec<u8>, opts: HttpOptions) -> Self {
         Self {
             stream,
             fixed,
@@ -731,7 +731,7 @@ impl HttpConn {
     /// Bad options, or a target header with CR/LF.
     #[doc(hidden)]
     pub fn from_record_layer(
-        sock: std::net::TcpStream,
+        sock: T,
         tls: crate::tls::RecordLayer,
         target: &Target,
         opts: HttpOptions,
@@ -1194,7 +1194,7 @@ impl Head {
 }
 
 /// A driver-owned [`HttpConn`]: the same request methods.
-impl ConnMut<'_, HttpConn> {
+impl<T: StreamSocket> ConnMut<'_, HttpConn<T>> {
     /// [`HttpConn::request`].
     ///
     /// # Errors
@@ -1542,7 +1542,10 @@ fn send_queue() -> TxQueue {
 /// Seals one request (`build` writes its plaintext) into one TLS record at
 /// the end of the send queue.
 #[inline]
-fn seal_request(stream: &mut TlsStream, build: impl FnOnce(&mut Vec<u8>)) -> Result<()> {
+fn seal_request<T: StreamSocket>(
+    stream: &mut TlsStream<T>,
+    build: impl FnOnce(&mut Vec<u8>),
+) -> Result<()> {
     stream.seal_build(|out| {
         let start = out.len();
         build(out);
@@ -1572,12 +1575,12 @@ fn push_decimal(out: &mut Vec<u8>, mut v: usize) {
 
 /// An HTTP connection being set up without blocking (TCP connect, TLS). Hand it
 /// to `Driver::connect`.
-pub struct HttpDial {
+pub struct HttpDial<T = std::net::TcpStream> {
     target: Target,
     /// `Host` and the target's headers, serialised once.
     fixed: Vec<u8>,
     opts: HttpOptions,
-    tls: TlsDial,
+    tls: TlsDial<T>,
 }
 
 impl HttpDial {
@@ -1586,6 +1589,17 @@ impl HttpDial {
     /// # Errors
     /// The buffer in `opts` is too small, or a header contains CR/LF.
     pub fn new(target: Target, cfg: Arc<ClientConfig>, opts: HttpOptions) -> Result<Self> {
+        Self::on_stack(target, cfg, opts)
+    }
+}
+
+impl<T: StreamSocket> HttpDial<T> {
+    /// [`HttpDial::new`] on the stack of socket type `T`
+    /// (`HttpDial::<FstackTcp>::on_stack` for F-Stack).
+    ///
+    /// # Errors
+    /// As [`HttpDial::new`].
+    pub fn on_stack(target: Target, cfg: Arc<ClientConfig>, opts: HttpOptions) -> Result<Self> {
         check_options(&opts)?;
         let fixed = fixed_headers(&target)?;
         let sni = target.host.clone();
@@ -1636,8 +1650,8 @@ fn fixed_headers(target: &Target) -> Result<Vec<u8>> {
     Ok(f)
 }
 
-impl DialIo for HttpDial {
-    type Conn = HttpConn;
+impl<T: StreamSocket> DialIo for HttpDial<T> {
+    type Conn = HttpConn<T>;
 
     fn host(&self) -> &str {
         &self.target.host
@@ -1655,7 +1669,7 @@ impl DialIo for HttpDial {
         self.tls.start(addr, self.target.source)
     }
 
-    fn step(&mut self) -> Result<Option<HttpConn>> {
+    fn step(&mut self) -> Result<Option<HttpConn<T>>> {
         let Some((sock, tls, rest)) = self.tls.step()? else {
             return Ok(None);
         };
@@ -1686,13 +1700,13 @@ impl DialIo for HttpDial {
     }
 }
 
-impl crate::net::BindSource for HttpDial {
+impl<T: StreamSocket> crate::net::BindSource for HttpDial<T> {
     fn bind_source(&mut self, ip: std::net::IpAddr) {
         self.target.source = Some(ip);
     }
 }
 
-impl HttpDial {
+impl<T: StreamSocket> HttpDial<T> {
     /// Where it connects: the target it was built with, its source set by
     /// [`crate::net::BindSource`] if that was called.
     #[must_use]
@@ -1702,11 +1716,13 @@ impl HttpDial {
 
     /// Connects and runs the TLS handshake, waiting until done: a convenience
     /// for tools and tests. In a busy-spin loop use `Driver::connect`. Without
-    /// [`Target::addr`] the host is resolved with the system resolver (blocking).
+    /// [`Target::addr`] the host is resolved with the system resolver
+    /// (blocking). The calling thread runs the socket's stack meanwhile
+    /// (for F-Stack: its polling thread).
     ///
     /// # Errors
     /// Resolution, connect or TLS failure, or no progress for 30 s.
-    pub fn connect_blocking(mut self) -> Result<HttpConn> {
+    pub fn connect_blocking(mut self) -> Result<HttpConn<T>> {
         let addr = match self.target.addr {
             Some(a) => a,
             None => std::net::ToSocketAddrs::to_socket_addrs(&(
@@ -1717,21 +1733,15 @@ impl HttpDial {
             .ok_or_else(|| Error::Dns(format!("{}: no IPv4 address", self.target.host)))?,
         };
         self.start(addr)?;
-        let start = std::time::Instant::now();
-        loop {
-            if let Some(c) = self.step()? {
-                return Ok(c);
-            }
-            if start.elapsed() > std::time::Duration::from_secs(30) {
-                return Err(Error::Timeout("http connect"));
-            }
-            std::thread::yield_now();
-        }
+        crate::net::wait_for::<T, _>(std::time::Duration::from_secs(30), "http connect", || {
+            self.step()
+        })
     }
 }
 
-impl Io for HttpConn {
+impl<T: StreamSocket> Io for HttpConn<T> {
     const DEADLINES: bool = true;
+    const STACK: crate::netstack::StackId = T::STACK;
 
     #[inline]
     fn fd(&self) -> std::os::fd::RawFd {
@@ -1783,7 +1793,7 @@ impl Io for HttpConn {
     }
 }
 
-impl<H: HttpHandler> Deliver<H> for HttpConn {
+impl<T: StreamSocket, H: HttpHandler> Deliver<H> for HttpConn<T> {
     #[inline]
     fn on_received(
         &mut self,

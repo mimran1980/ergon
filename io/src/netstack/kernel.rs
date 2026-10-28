@@ -3,11 +3,41 @@
 
 use std::io::ErrorKind;
 use std::net::{IpAddr, SocketAddr, TcpStream, UdpSocket};
+use std::os::fd::{AsRawFd, RawFd};
 
-use socket2::{Domain, Protocol, Socket, Type};
+use socket2::{Domain, Protocol, SockRef, Socket, Type};
 
-use super::{Kernel, Sockets};
+use super::{Kernel, Sockets, StackId};
 use crate::error::{Error, Result};
+
+impl super::Socket for TcpStream {
+    const STACK: StackId = StackId::Kernel;
+
+    #[inline]
+    fn fd(&self) -> RawFd {
+        self.as_raw_fd()
+    }
+
+    fn start_connect(addr: SocketAddr, source: Option<IpAddr>) -> Result<Self> {
+        Kernel::tcp_connect(addr, source)
+    }
+
+    fn connect_finished(&self) -> Result<bool> {
+        Kernel::connect_finished(self)
+    }
+
+    fn configure(&self, sndbuf: Option<u32>) -> Result<()> {
+        self.set_nonblocking(true)?;
+        self.set_nodelay(true)?;
+        if let Some(b) = sndbuf {
+            SockRef::from(self)
+                .set_send_buffer_size(usize::try_from(b).map_err(|_| {
+                    Error::Config(format!("sndbuf {b} does not fit this platform"))
+                })?)?;
+        }
+        Ok(())
+    }
+}
 
 impl Sockets for Kernel {
     type Tcp = TcpStream;

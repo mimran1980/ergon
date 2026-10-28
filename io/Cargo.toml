@@ -17,6 +17,7 @@ categories = ["network-programming"]
 include = [
     "/Cargo.toml",
     "/README.md",
+    "/build.rs",
     "/src/**/*.rs",
 ]
 # benches/ is the standalone benchmark crate, not bench targets of this one.
@@ -33,6 +34,11 @@ webpki-roots = ["dep:webpki-roots"]
 # the curl crate; the system libcurl through pkg-config). A binary that wants
 # libcurl built in statically enables `curl/static-curl` itself.
 curl = ["dep:curl"]
+# The `fstack-spin` backend (Linux): TCP over F-Stack, FreeBSD's TCP/IP stack
+# on DPDK. build.rs links F-Stack and its DPDK, both static, from
+# FSTACK_PREFIX (io/benches/fstack/build-fstack.sh's prefix); without
+# FSTACK_PREFIX it compiles unlinked and `fstack::init` refuses.
+fstack = []
 
 [dependencies]
 rustls = { version = "0.23.46", default-features = false, features = ["std", "ring"] }
@@ -50,6 +56,13 @@ ergon-tune = { version = "0.1.34", path = "../tune", features = ["nic"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 io-uring = { version = "0.7", optional = true }
 curl = { version = "0.4.51", optional = true, default-features = false, features = ["ssl"] }
+
+# `fstack-spin` end to end: two F-Stack processes over a veth pair, run by
+# fstack-tests/docker-test.sh (test-lanes.tsv `fstack`). Built only with
+# F-Stack linked (cfg ergon_fstack_linked); empty otherwise.
+[[test]]
+name = "fstack"
+path = "fstack-tests/end_to_end.rs"
 
 [dev-dependencies]
 rcgen = "0.14"

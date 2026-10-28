@@ -41,7 +41,9 @@ use crate::dns::{DnsConfig, Lookup, Resolver};
 use crate::endpoint::sealed::{Io, RouteSlot};
 use crate::endpoint::{ConnId, ConnMut, Dial, DriverStats, Endpoint, Handler, Receive, TcpInfo};
 use crate::error::{Error, Result};
-use crate::netstack::{Kernel, NetStack};
+#[cfg(feature = "fstack")]
+use crate::netstack::fstack::{self, Fstack};
+use crate::netstack::{Kernel, NetStack, StackId};
 use crate::placement::{self, CpuError};
 use crate::route::{self, Flow, QuickAckCheck, QuickAckError, RouteCheck};
 use crate::{RxMeta, sys};
@@ -292,15 +294,47 @@ enum Imp {
     Epoll(epoll::Epoll),
     #[cfg(feature = "uring")]
     Uring(uring::Uring),
+    /// `fstack-spin`: the epoll-spin loop over F-Stack.
+    #[cfg(feature = "fstack")]
+    Fstack(epoll::Epoll<Fstack>),
 }
 
 impl Imp {
+    /// The backend `cfg` names.
+    fn new(cfg: &Config) -> Result<Self> {
+        Ok(match cfg.backend {
+            Backend::EpollSpin | Backend::RecvBusy => Self::Epoll(epoll::Epoll::new(cfg)?),
+            #[cfg(feature = "uring")]
+            Backend::UringSqpoll => Self::Uring(uring::Uring::new(cfg)?),
+            #[cfg(not(feature = "uring"))]
+            Backend::UringSqpoll => {
+                return Err(Error::Unsupported(
+                    "io_uring backends need the `uring` feature",
+                ));
+            }
+            // F-Stack on this thread (once per process), then its loop.
+            #[cfg(feature = "fstack")]
+            Backend::FstackSpin => {
+                fstack::init(cfg)?;
+                Self::Fstack(epoll::Epoll::new(cfg)?)
+            }
+            #[cfg(not(feature = "fstack"))]
+            Backend::FstackSpin => {
+                return Err(Error::Unsupported(
+                    "fstack-spin needs ergon-io's `fstack` feature (Linux)",
+                ));
+            }
+        })
+    }
+
     /// The connection's `TCP_INFO`, from the backend's stack.
     fn tcp_info(&self, fd: RawFd) -> std::io::Result<TcpInfo> {
         match self {
             Self::Epoll(e) => e.tcp_info(fd),
             #[cfg(feature = "uring")]
             Self::Uring(_) => sys::tcp_info(fd),
+            #[cfg(feature = "fstack")]
+            Self::Fstack(e) => e.tcp_info(fd),
         }
     }
 
@@ -311,6 +345,8 @@ impl Imp {
             Self::Epoll(e) => e.napi_id(fd),
             #[cfg(feature = "uring")]
             Self::Uring(_) => sys::incoming_napi_id(fd).unwrap_or(0),
+            #[cfg(feature = "fstack")]
+            Self::Fstack(e) => e.napi_id(fd),
         }
     }
 }
@@ -370,7 +406,7 @@ impl SockOpts {
             busy_poll_us: match cfg.backend {
                 Backend::RecvBusy => 1,
                 Backend::EpollSpin => cfg.busy_poll_us,
-                Backend::UringSqpoll => 0,
+                Backend::UringSqpoll | Backend::FstackSpin => 0,
             },
             quickack: cfg.quickack_check,
             backend: cfg.backend,
@@ -433,6 +469,13 @@ impl SockOpts {
         on_loop: bool,
     ) -> Result<RouteCost> {
         let fd = ep.fd();
+        if E::STACK == StackId::Fstack {
+            // F-Stack's options; no kernel route, device or `TCP_CORK`
+            // check applies (its sockets are made with `TCP_NODELAY`).
+            #[cfg(feature = "fstack")]
+            self.apply::<Fstack>(fd, false)?;
+            return Ok(RouteCost::default());
+        }
         // The kernel's: connections are set up on kernel sockets only.
         self.apply::<Kernel>(fd, E::DATAGRAM)?;
         if E::DATAGRAM {
@@ -483,6 +526,33 @@ impl SockOpts {
             ticks: rdtsc().wrapping_sub(t0),
         })
     }
+}
+
+/// What `Driver::new` checks of endpoints of type `E` against `cfg`: the
+/// backend is built in, validates, takes `E`'s kind (datagram endpoints on
+/// `epoll-spin` only) and drives `E`'s stack.
+fn check_endpoints<E: Endpoint>(cfg: &Config) -> Result<()> {
+    if cfg.backend == Backend::FstackSpin && !cfg!(feature = "fstack") {
+        return Err(Error::Unsupported(
+            "fstack-spin needs ergon-io's `fstack` feature (Linux)",
+        ));
+    }
+    cfg.validate()?;
+    if E::DATAGRAM && cfg.backend != Backend::EpollSpin {
+        return Err(Error::Unsupported(
+            "UDP endpoints (UdpConn) run on the epoll-spin backend only",
+        ));
+    }
+    if E::STACK != cfg.backend.stack() {
+        return Err(Error::Config(format!(
+            "{} drives {} sockets; these endpoints are on {} (an F-Stack endpoint is \
+             FrameConn<FstackTcp>, WsConn<FstackTcp> or HttpConn<FstackTcp>)",
+            cfg.backend,
+            cfg.backend.stack().name(),
+            E::STACK.name()
+        )));
+    }
+    Ok(())
 }
 
 /// The route check of a dial gated under `require` (see `advance_one`):
@@ -626,15 +696,13 @@ impl<E: Endpoint> Driver<E> {
         dns: DnsConfig,
         host: &ergon_tune::Host,
     ) -> Result<Self> {
-        cfg.validate()?;
-        if E::DATAGRAM && cfg.backend != Backend::EpollSpin {
-            return Err(Error::Unsupported(
-                "UDP endpoints (UdpConn) run on the epoll-spin backend only",
-            ));
-        }
+        check_endpoints::<E>(&cfg)?;
+        let user_space = cfg.backend.bypasses_kernel();
         // A timer this kernel lacks, refuses or would round fails now, not
         // at the first connection.
-        sys::probe_tcp_timers(cfg.tcp_rto_min_us, cfg.tcp_delack_max_us)?;
+        if !user_space {
+            sys::probe_tcp_timers(cfg.tcp_rto_min_us, cfg.tcp_delack_max_us)?;
+        }
         // The one switch over every host-check warning (`ERGON_HOST_CHECKS`).
         let policy = ergon_tune::HostCheckPolicy::from_env()?;
         // I-host and I3 (see `crate::checks`), and where the helper threads
@@ -672,6 +740,7 @@ impl<E: Endpoint> Driver<E> {
             return Err(e.into());
         }
         if let Some(asked) = cfg.rcvbuf
+            && !user_space
             && let Ok(granted) = sys::granted_rcvbuf(asked)
             && let Some(l) = checks::rcvbuf_line(asked, granted)
         {
@@ -679,17 +748,7 @@ impl<E: Endpoint> Driver<E> {
         }
         let ctx = Arc::new(DevContext::new(&cfg, report.hot.clone()));
         let tpu = ticks_per_us();
-        let imp = match cfg.backend {
-            Backend::EpollSpin | Backend::RecvBusy => Imp::Epoll(epoll::Epoll::new(&cfg)?),
-            #[cfg(feature = "uring")]
-            Backend::UringSqpoll => Imp::Uring(uring::Uring::new(&cfg)?),
-            #[cfg(not(feature = "uring"))]
-            Backend::UringSqpoll => {
-                return Err(Error::Unsupported(
-                    "io_uring backends need the `uring` feature",
-                ));
-            }
-        };
+        let imp = Imp::new(&cfg)?;
         Ok(Self {
             imp,
             conns: Conns::with_capacity(INITIAL_SLOTS),
@@ -705,7 +764,9 @@ impl<E: Endpoint> Driver<E> {
             dns,
             report,
             ctx,
-            _timestamp_keeper: cfg.rx_timestamps.then(timestamp_keeper).flatten(),
+            _timestamp_keeper: (cfg.rx_timestamps && !user_space)
+                .then(timestamp_keeper)
+                .flatten(),
             // Calibrated once here, not on the first connect.
             ticks_per_us: tpu,
             next_expiry: 0,
@@ -1013,6 +1074,8 @@ impl<E: Endpoint> Driver<E> {
             Imp::Epoll(e) => e.add(fd, id),
             #[cfg(feature = "uring")]
             Imp::Uring(u) => u.add(&mut ep, i),
+            #[cfg(feature = "fstack")]
+            Imp::Fstack(e) => e.add(fd, id),
         };
         if let Err(e) = added {
             // Nothing was armed: freed with the other closed connections.
@@ -1140,7 +1203,10 @@ impl<E: Endpoint> Driver<E> {
     /// packet).
     #[must_use]
     pub fn nic_polling_active(&self) -> bool {
-        self.cfg.backend.polls_nic() && self.iter().all(|(_, c)| self.imp.napi_id(c.fd()) != 0)
+        // F-Stack polls its one queue every poll, whatever the connections.
+        self.cfg.backend.bypasses_kernel()
+            || (self.cfg.backend.polls_nic()
+                && self.iter().all(|(_, c)| self.imp.napi_id(c.fd()) != 0))
     }
 
     /// One iteration: send what was queued since the last poll (through
@@ -1201,6 +1267,11 @@ impl<E: Endpoint> Driver<E> {
                 // and sends share one io_uring_enter.
                 #[cfg(feature = "uring")]
                 Imp::Uring(u) => u.poll(&mut self.conns, handler, &mut self.stats, &mut self.reads),
+                // One F-Stack pass first (in `poll`), then its kqueue.
+                #[cfg(feature = "fstack")]
+                Imp::Fstack(e) => {
+                    e.poll(&mut self.conns, handler, &mut self.stats, &mut self.reads)
+                }
             };
         }
         // What the receive pass queued (replies, pongs) goes out now, and
@@ -1209,6 +1280,16 @@ impl<E: Endpoint> Driver<E> {
         // pass.)
         if r.is_ok() && matches!(self.imp, Imp::Epoll(_)) && !self.conns.tx_dirty.is_empty() {
             r = self.send_queued(handler);
+        }
+        // F-Stack: the replies go out now (a second pass drains its TX),
+        // not at the next poll's first pass.
+        #[cfg(feature = "fstack")]
+        if r.is_ok() && matches!(self.imp, Imp::Fstack(_)) && !self.conns.tx_dirty.is_empty() {
+            let sent = self.stats.send_calls;
+            r = self.send_queued(handler);
+            if self.stats.send_calls != sent {
+                Fstack::run_once();
+            }
         }
         self.tx_fresh = false;
         // After receiving, so a response already in the socket is not timed out.
@@ -1379,6 +1460,11 @@ impl<E: Endpoint> Driver<E> {
     #[inline]
     pub fn flush_with<H: Handler>(&mut self, handler: &mut H) -> Result<()> {
         let r = self.send_queued(handler);
+        // F-Stack: one pass, so what was written leaves now.
+        #[cfg(feature = "fstack")]
+        if matches!(self.imp, Imp::Fstack(_)) {
+            Fstack::run_once();
+        }
         if !self.conns.closed.is_empty() {
             self.free_closed();
         }
@@ -1400,6 +1486,11 @@ impl<E: Endpoint> Driver<E> {
             }
             #[cfg(feature = "uring")]
             Imp::Uring(u) => u.flush(&mut self.conns, &mut self.stats),
+            #[cfg(feature = "fstack")]
+            Imp::Fstack(e) => {
+                send_stream(e, &mut self.conns, &mut self.stats, handler);
+                Ok(())
+            }
         }
     }
 }
@@ -1548,6 +1639,13 @@ fn close_index<E: Endpoint>(imp: &mut Imp, conns: &mut Conns<E>, i: usize) {
         }
         #[cfg(feature = "uring")]
         Imp::Uring(u) => u.close(conns, i),
+        #[cfg(feature = "fstack")]
+        Imp::Fstack(e) => {
+            if let Some(fd) = conns.at(i).map(|c| c.fd()) {
+                e.remove(fd);
+                conns.remove(i);
+            }
+        }
     }
 }
 

@@ -103,7 +103,7 @@ fn dial(lab: &Lab, opts: HttpOptions) -> R<HttpDial> {
 
 #[test]
 fn keep_alive_requests_on_every_backend() -> R {
-    for b in Backend::ALL {
+    for b in Backend::KERNEL {
         let lab = Lab::new()?;
         let mut d = match http_driver(b) {
             Ok(d) => d,
@@ -346,7 +346,7 @@ fn a_close_with_a_request_in_flight_says_it_was_handed() -> R {
 #[test]
 fn requests_never_handed_to_the_kernel_are_named() -> R {
     const N: usize = 1_000;
-    for b in Backend::ALL {
+    for b in Backend::KERNEL {
         let lab = Lab::new()?;
         let mut d = match http_driver(b) {
             Ok(d) => d,
@@ -424,7 +424,7 @@ fn requests_never_handed_to_the_kernel_are_named() -> R {
 /// once the server has read everything, none.
 #[test]
 fn a_short_send_then_a_request_names_the_first_unsent_exactly() -> R {
-    for b in Backend::ALL {
+    for b in Backend::KERNEL {
         for drain in [false, true] {
             let lab = Lab::new()?;
             let mut d = match http_driver(b) {

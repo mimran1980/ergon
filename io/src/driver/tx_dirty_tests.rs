@@ -148,9 +148,9 @@ fn driver(b: Backend) -> R<Option<Driver<Stub>>> {
 /// one-CPU host); without the `uring` feature, the epoll ones.
 fn backends_needed() -> usize {
     if cfg!(feature = "uring") {
-        Backend::ALL.len() - 1
+        Backend::KERNEL.len() - 1
     } else {
-        Backend::ALL
+        Backend::KERNEL
             .iter()
             .filter(|b| !b.name().starts_with("uring"))
             .count()
@@ -206,7 +206,7 @@ impl Lcg {
 #[test]
 fn the_send_set_matches_a_full_scan() -> R {
     let mut ran = 0;
-    for b in Backend::ALL {
+    for b in Backend::KERNEL {
         let Some(mut d) = driver(b)? else {
             eprintln!("backend {b}: not on this host");
             continue;
@@ -319,7 +319,7 @@ fn the_send_set_matches_a_full_scan() -> R {
 #[test]
 fn a_send_queued_on_an_idle_slot_still_goes_out() -> R {
     let mut ran = 0;
-    for b in Backend::ALL {
+    for b in Backend::KERNEL {
         let Some(mut d) = driver(b)? else {
             eprintln!("backend {b}: not on this host");
             continue;
@@ -381,7 +381,7 @@ type Case = (&'static str, fn(&mut Stub), &'static [u8]);
 #[test]
 fn sends_queued_without_get_mut_go_out() -> R {
     let mut ran = 0;
-    for b in Backend::ALL {
+    for b in Backend::KERNEL {
         let Some(mut d) = driver(b)? else {
             eprintln!("backend {b}: not on this host");
             continue;
@@ -437,7 +437,7 @@ fn sends_queued_without_get_mut_go_out() -> R {
 #[test]
 fn a_partial_send_leaves_the_unsent_tail_in_place() -> R {
     let mut ran = 0;
-    for b in Backend::ALL {
+    for b in Backend::KERNEL {
         let Some(mut d) = driver(b)? else {
             eprintln!("backend {b}: not on this host");
             continue;
