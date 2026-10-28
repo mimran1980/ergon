@@ -1,24 +1,27 @@
 #!/usr/bin/env bash
 # docker-test.sh [--in-container]: fstack_lat end to end without a NIC. On
-# the host it builds this directory's image (linux/amd64: F-Stack v2.0 does
-# not build on arm64, build-fstack.sh) and runs itself inside it with the
-# repo mounted; inside, it builds fstack_lat against /opt/fstack, joins two
-# F-Stack processes by a veth pair (DPDK's af_packet PMD, no hugepages) and
-# runs one ping/pong point at RATE msg/s, then checks what the runner relies
-# on: one `ready` line from the pong, one 33-column row from the ping with
-# every ping answered, both manifests, the stack's own TCP_INFO (established,
-# timestamps, a sane MSS and RTT) and the config every key was applied from.
+# the host it builds this directory's image (the host's own architecture, or
+# PLATFORM, e.g. linux/amd64 under emulation on Apple Silicon) and runs
+# itself inside it with the repo mounted; inside, it builds fstack_lat
+# against /opt/fstack, joins two F-Stack processes by a veth pair (DPDK's
+# af_packet PMD, no hugepages) and runs one ping/pong point at RATE msg/s,
+# then checks what the runner relies on: one `ready` line from the pong, one
+# 33-column row from the ping with every ping answered, both manifests, the
+# stack's own TCP_INFO (established, timestamps, a sane MSS and RTT) and the
+# config every key was applied from.
 #
-# Slow under emulation (an Apple Silicon host): the latencies mean nothing,
-# only that the arm works. RATE (1000), DURATION (5), STREAMS (1).
+# The latencies mean nothing (a VM, af_packet, and slow under emulation),
+# only that the arm works. RATE (1000), DURATION (5), STREAMS (1), PLATFORM.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../../.." && pwd)
 
 if [[ ${1:-} != --in-container ]]; then
-    docker build --platform linux/amd64 -t ergon-fstack-test "$here"
-    exec docker run --rm --platform linux/amd64 --privileged -e RATE -e DURATION -e STREAMS \
-        -v "$repo":/w ergon-fstack-test bash /w/io/benches/fstack/docker-test.sh --in-container
+    platform=${PLATFORM:-linux/$(docker version -f '{{.Server.Arch}}')}
+    tag=ergon-fstack-test:${platform##*/}
+    docker build --platform "$platform" -t "$tag" "$here"
+    exec docker run --rm --platform "$platform" --privileged -e RATE -e DURATION -e STREAMS \
+        -v "$repo":/w "$tag" bash /w/io/benches/fstack/docker-test.sh --in-container
 fi
 
 export PATH=/usr/local/cargo/bin:$PATH

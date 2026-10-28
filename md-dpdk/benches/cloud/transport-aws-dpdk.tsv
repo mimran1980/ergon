@@ -1,8 +1,8 @@
 # The AWS DPDK session's sets (aws/lab.sh LAB_SUITE=transport LAB_PAIR=a
 # LAB_SETS_FILE=<this file>, in place of the matrix's sets; the matrix's arms
-# are kept, and the two below added). One pair of x86_64 instances
-# (c7a.2xlarge: F-Stack builds on x86_64 only). No netem: DPDK holds its
-# NICs, so loss rounds stay on the kernel-only sets.
+# are kept, and the two below added). One pair of instances: c7a.2xlarge,
+# or Graviton with LAB_ALLOW_ARM=1 LAB_TYPE=c8g.2xlarge. No netem: DPDK
+# holds its NICs, so loss rounds stay on the kernel-only sets.
 #
 #   d1, d8   TCP on DPDK (F-Stack) beside kernel TCP, and Aeron reliable UDP
 #            on the kernel and on DPDK (md-dpdk)

@@ -1,0 +1,149 @@
+diff --git a/freebsd/arm64/include/pcpu.h b/freebsd/arm64/include/pcpu.h
+index ce2894a9..85072689 100644
+--- a/freebsd/arm64/include/pcpu.h
++++ b/freebsd/arm64/include/pcpu.h
+@@ -57,6 +57,7 @@ struct debug_monitor_state;
+ struct pcb;
+ struct pcpu;
+ 
++#ifndef FSTACK
+ register struct pcpu *pcpup __asm ("x18");
+ 
+ static inline struct pcpu *
+@@ -77,6 +78,8 @@ get_curthread(void)
+ 	return (td);
+ }
+ 
++#endif /* !FSTACK */
++
+ #define	curthread get_curthread()
+ #ifdef FSTACK
+ #undef	curthread
+diff --git a/lib/Makefile b/lib/Makefile
+index edec7d06..2cd60159 100644
+--- a/lib/Makefile
++++ b/lib/Makefile
+@@ -407,14 +407,14 @@ KERN_MSRCS+=		\
+ 	linker_if.m
+ 
+ ifeq (${MACHINE_CPUARCH},arm64)
++# gsb_crc32.c: its FSTACK build is the portable one on arm64 too
+ LIBKERN_SRCS+=		 \
+ 	bcd.c		 \
++	gsb_crc32.c	 \
+ 	inet_ntoa.c	 \
+ 	jenkins_hash.c   \
+ 	strlcpy.c	 \
+-	strnlen.c        \
+-	fls.c		 \
+-	flsl.c
++	strnlen.c
+ else
+ LIBKERN_SRCS+=		 \
+ 	bcd.c		 \
+diff --git a/lib/ff_dpdk_pcap.c b/lib/ff_dpdk_pcap.c
+index 6c223542..cabab400 100644
+--- a/lib/ff_dpdk_pcap.c
++++ b/lib/ff_dpdk_pcap.c
+@@ -24,7 +24,9 @@
+  *
+  */
+ 
++#include <sys/types.h>
+ #include <sys/time.h>
++#include <stdlib.h>
+ #include <time.h>
+ #include <unistd.h>
+ #include <errno.h>
+diff --git a/lib/ff_freebsd_init.c b/lib/ff_freebsd_init.c
+index c7a2b193..3eb17eeb 100644
+--- a/lib/ff_freebsd_init.c
++++ b/lib/ff_freebsd_init.c
+@@ -109,7 +109,9 @@ ff_pcpu_thread_init(int cpuid)
+ 
+     pcpup = malloc(sizeof(struct pcpu), M_DEVBUF, M_ZERO);
+     pcpu_init(pcpup, cpuid, sizeof(struct pcpu));
++#ifndef __aarch64__
+     PCPU_SET(prvspace, pcpup);
++#endif
+ }
+ 
+ /*
+diff --git a/lib/ff_host_interface.c b/lib/ff_host_interface.c
+index 1e45b4a4..76f559e9 100644
+--- a/lib/ff_host_interface.c
++++ b/lib/ff_host_interface.c
+@@ -622,3 +622,19 @@ void ff_os_errno(int error)
+ 
+ }
+ 
++
++#ifdef __aarch64__
++#include <sys/auxv.h>
++
++/*
++ * FreeBSD arm64 atomic.h picks LSE or LL/SC atomics on lse_supported, which
++ * its kernel sets from ID_AA64ISAR0; here the CPU says so through HWCAP.
++ */
++_Bool lse_supported;
++
++static void __attribute__((constructor))
++ff_lse_init(void)
++{
++    lse_supported = (getauxval(AT_HWCAP) & HWCAP_ATOMICS) != 0;
++}
++#endif
+diff --git a/lib/ff_stub_14_extra.c b/lib/ff_stub_14_extra.c
+index 3794b91c..5d8d2963 100644
+--- a/lib/ff_stub_14_extra.c
++++ b/lib/ff_stub_14_extra.c
+@@ -256,7 +256,14 @@ void ktrexterr(struct thread *td)
+     
+ }
+ 
++#ifndef __aarch64__
+ struct kva_layout_s kva_layout = {0};
++#else
++/* arm64 vmparam.h: the direct map, unused by F-Stack (no UMA_USE_DMAP) */
++vm_paddr_t dmap_phys_base;
++vm_paddr_t dmap_phys_max;
++vm_offset_t dmap_max_addr;
++#endif
+ 
+ MALLOC_DEFINE(M_NVLIST, "nvlist", "kernel nvlist");
+ 
+diff --git a/lib/include/amd64/include/pcpu.h b/lib/include/amd64/include/pcpu.h
+index d1a5152d..134b3087 100644
+--- a/lib/include/amd64/include/pcpu.h
++++ b/lib/include/amd64/include/pcpu.h
+@@ -55,7 +55,11 @@ ff_pcpu_get(void)
+ 	return (pcpup);
+ }
+ 
++#ifdef __aarch64__
++#define	get_pcpu()              (ff_pcpu_get())
++#else
+ #define	get_pcpu()              (ff_pcpu_get()->pc_ ## prvspace)
++#endif
+ 
+ #define PCPU_GET(member)         (ff_pcpu_get()->pc_ ## member)
+ #define PCPU_ADD(member, val)    (ff_pcpu_get()->pc_ ## member += (val))
+diff --git a/mk/kern.pre.mk b/mk/kern.pre.mk
+index 2141a039..c25d4835 100644
+--- a/mk/kern.pre.mk
++++ b/mk/kern.pre.mk
+@@ -28,6 +28,14 @@ COPTFLAGS?=-O2 -fno-strict-aliasing -frename-registers -pipe -Wno-maybe-uninitia
+ else
+ COPTFLAGS?=-O2 -pipe
+ endif
++else ifeq (${MACHINE_CPUARCH},aarch64)
++# ergon: GCC 14 on arm64 flags the same false positives as on amd64, and
++# more (fields read only under a flag, e.g. tcp_output's to.to_tsval)
++ifneq (${COMPILER_TYPE},clang)
++COPTFLAGS?=-O2 -fno-strict-aliasing -frename-registers -pipe -Wno-maybe-uninitialized -Wno-error=uninitialized
++else
++COPTFLAGS?=-O2 -pipe
++endif
+ else
+ COPTFLAGS?=${_MINUS_O} -pipe
+ endif

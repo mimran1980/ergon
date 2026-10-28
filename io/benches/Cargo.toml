@@ -43,7 +43,7 @@ name = "tcp_lat"
 path = "src/bin/tcp_lat.rs"
 
 # TCP over F-Stack: needs F-Stack built by fstack/build-fstack.sh
-# (FSTACK_PREFIX), which build.rs links. x86_64 Linux only.
+# (FSTACK_PREFIX), which build.rs links. Linux x86_64 and aarch64.
 [[bin]]
 name = "fstack_lat"
 path = "src/bin/fstack_lat.rs"

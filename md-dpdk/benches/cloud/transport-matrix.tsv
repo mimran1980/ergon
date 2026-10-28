@@ -9,7 +9,7 @@
 #            dpdk-raw; the raw floor's binary takes the driver's environment),
 #            sockets (the kernel data path, busy poll: vm.sh sockets), fstack
 #            (no media driver; the data NICs on igb_uio for the binary's own
-#            DPDK: vm.sh fstack-up; AWS x86_64 only), onload (the binary, or
+#            DPDK: vm.sh fstack-up; AWS only), onload (the binary, or
 #            an Aeron arm's media driver, under OpenOnload over AF_XDP on the
 #            data NICs: vm.sh onload-up; AWS only). A set with a dpdk, fstack
 #            or onload arm has netem - (netem cannot reach a NIC DPDK holds,

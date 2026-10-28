@@ -778,10 +778,10 @@ mode_check() {
     [[ $m != *,* ]] || { echo "mode $m: a comma would split its results.csv rows (COALESCE takes <rx>/<tx>)" >&2; return 2; }
     # a transport suite arm: its own settings alone
     if arm_of "$m" >/dev/null; then
-        # setup fstack: F-Stack builds on x86_64 alone, and runs on AWS's ENA
+        # setup fstack: F-Stack runs on AWS's ENA, on x86_64 and Graviton
         # (io/benches/fstack/build-fstack.sh, vm.sh fstack-up)
-        if [[ $(arm_setup "$(arm_of "$m")") == fstack && ($arch != x86_64 || $cloud != aws) ]]; then
-            echo "mode $m: an F-Stack arm runs on AWS x86_64 only (here $cloud $arch)" >&2
+        if [[ $(arm_setup "$(arm_of "$m")") == fstack && $cloud != aws ]]; then
+            echo "mode $m: an F-Stack arm runs on AWS only (its ENA; here $cloud)" >&2
             return 2
         fi
         # setup onload: Onload over AF_XDP on ENA's native XDP (vm.sh

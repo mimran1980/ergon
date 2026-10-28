@@ -60,8 +60,13 @@ fn main() {
             println!("cargo:rustc-link-arg={tok}");
         }
     }
+    // -lc and -lgcc last, for aarch64: F-Stack's stack protector reads
+    // glibc's global __stack_chk_guard, which lives in ld.so and is reached
+    // only through libc.so's AS_NEEDED entry, and the C built with
+    // -moutline-atomics calls libgcc.a's __aarch64_* helpers (rustc links
+    // libgcc_s alone). Both resolve nothing on x86_64.
     for l in [
-        "-lrt", "-lm", "-ldl", "-lcrypto", "-lz", "-pthread", "-lnuma",
+        "-lrt", "-lm", "-ldl", "-lcrypto", "-lz", "-pthread", "-lnuma", "-lc", "-lgcc",
     ] {
         println!("cargo:rustc-link-arg={l}");
     }

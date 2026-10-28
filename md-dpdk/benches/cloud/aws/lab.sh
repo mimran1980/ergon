@@ -153,13 +153,12 @@
 #   (the session's files in transport/). LAB_TYPE defaults to c7a.2xlarge (8
 #   AMD cores, one thread each: vm.sh transport-isolate's map, CPU 0
 #   housekeeping, CPU 1 the data NICs' IRQs, 2-7 isolated), LAB_MAX_HOURS to
-#   5. Graviton with LAB_ALLOW_ARM=1 (c8g.2xlarge: 8 cores, the same map), but
-#   an F-Stack arm (setup fstack) builds on x86_64 alone: refused there
-#   (modes.sh). An x86 type with SMT (c7i.4xlarge: 16 vCPUs, 8 cores) runs
-#   with SMT off (transport-tune), its map one CPU a core alike, unless its
-#   sets file says `smt on` (../transport-aws-smt.tsv: SMT kept on, each
-#   isolated core whole in the map; refused with LAB_THREADS_PER_CORE=1, on
-#   Graviton and on C7a-family types). The Onload
+#   5. Graviton with LAB_ALLOW_ARM=1 (c8g.2xlarge: 8 cores, the same map),
+#   F-Stack arms (setup fstack) included. An x86 type with SMT (c7i.4xlarge:
+#   16 vCPUs, 8 cores) runs with SMT off (transport-tune), its map one CPU a
+#   core alike, unless its sets file says `smt on` (../transport-aws-smt.tsv:
+#   SMT kept on, each isolated core whole in the map; refused with
+#   LAB_THREADS_PER_CORE=1, on Graviton and on C7a-family types). The Onload
 #   session (../transport-aws-onload.tsv: setup onload, OpenOnload over
 #   AF_XDP on the ENA) runs on all three. Each type must take three ENIs (describe-instance-types'
 #   MaximumNetworkInterfaces, read before anything is created). LAB_SEED
@@ -460,7 +459,7 @@ fi
 if [[ $suite == transport && -z ${LAB_DELETE:-} ]]; then
     # the pair, the arms and sets files and the extra tree, and every
     # point's mode (transport.sh tr_check: modes.sh's arm settings, NETEM
-    # refused on DPDK arms, an F-Stack arm on AWS x86_64 alone), the Aeron
+    # refused on DPDK arms, an F-Stack arm on AWS alone), the Aeron
     # arms' driver modes and their conductor's core on both types, before
     # any cloud call (as azure/lab.sh)
     [[ -z ${LAB_TUNE:-} ]] || die "LAB_TUNE (the tuning sessions) runs on Azure (azure/lab.sh); not here"
@@ -489,7 +488,7 @@ if [[ $suite == transport && -z ${LAB_DELETE:-} ]]; then
         arms_file=$here/../.lab-arms-$$.tsv
     fi
     # every mode judged for AWS and the instances' architecture (transport.sh
-    # tr_cloud, tr_arch): on Graviton an F-Stack arm is refused (modes.sh)
+    # tr_cloud, tr_arch)
     tr_cloud=aws tr_arch=$arch
     # shellcheck source=../transport.sh
     . "$here/../transport.sh"

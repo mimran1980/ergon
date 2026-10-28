@@ -36,7 +36,7 @@ nonzero exit on any error. A partial row is never printed.
 | `floor` | the raw floor, no Aeron (`--role ping\|pong`, one stream): `--endpoint HOST:PORT` (the pong's), `--reply HOST:PORT` (the ping's), `--connect-timeout-s N` (30). Its wire is the driver environment's (`RUSTERON_MEDIA_DRIVER_TRANSPORT`: kernel UDP sockets, or ergon-md-dpdk's packet path alone); a 96-byte datagram (a 32-byte header where Aeron's is, then the message), `wire_bytes` 138 as Aeron's; transport `raw-udp` or `raw-dpdk`; the ping probes until the pong echoes before its schedule; nothing repairs a loss |
 | `udp_lat` | `--impl <mio\|ergon>`, `--local IP:PORT`, `--peer IP:PORT` (base ports, stream i on +i; `local`: the receiver binds `--peer`), `--busy-read-us N` (`SO_BUSY_POLL` on every socket, both impls: ergon-io by `busy_poll_us`), `--epoll-events N`, `--datagram-burst N` (ergon only), `--rcvbuf`/`--sndbuf BYTES` |
 | `tcp_lat` | `--impl <mio\|ergon>`, `--listen IP:PORT` (pong; `local` takes `--listen`, and `--source`) or `--connect IP:PORT` (ping; stream i is connection i), `--source IP` (the connecting end binds it first), `--source-port N` (an arm flag: the connecting end binds stream i to N + i and closes with a reset, so arms given the same N share 4-tuples; the listening end ignores it; not with `local`), `--nodelay` (always on), `--quickack-per-read`, `--rto-min-us N`, `--delack-max-us N`, `--busy-read-us N` (both impls), `--rcvbuf`/`--sndbuf BYTES`, `--backend epoll-spin\|uring-sqpoll` and `--sqpoll-cpu N` (ergon only: ergon-io's backend, `epoll-spin` by default; `uring-sqpoll` needs `--sqpoll-cpu`, its `SQPOLL` kernel thread's CPU, and `--busy-read-us 0`: that thread polls the NIC) |
-| `fstack_lat` | TCP over F-Stack (FreeBSD's stack on DPDK), `ping` or `pong` only (one F-Stack a process, on its one `--cpus` CPU): `--listen IP:PORT` (pong) or `--source IP --connect IP:PORT` (ping), the F-Stack interface taking that address; `--pci BDF` (its port) or `--vdev SPEC` (a virtual one, tests), `--prefix-len N`, `--gateway IP`, `--nodelay` (always on), `--rcvbuf`/`--sndbuf BYTES`, `--delayed-ack true` and `--hz 100` (FreeBSD's), `--no-huge`, `--memory-mb 1024`, `--file-prefix ergon-fstack`. It refuses the kernel's socket flags (busy poll, epoll, quickack, TCP timers). It writes its whole F-Stack config to `<out>/f-stack-<role>.conf`, every key in its manifest (`fstack.conf.*`), with F-Stack's build (`fstack.build.*`). Built with `--features fstack` against `io/benches/fstack/build-fstack.sh`'s F-Stack v2.0 (x86_64 only) |
+| `fstack_lat` | TCP over F-Stack (FreeBSD's stack on DPDK), `ping` or `pong` only (one F-Stack a process, on its one `--cpus` CPU): `--listen IP:PORT` (pong) or `--source IP --connect IP:PORT` (ping), the F-Stack interface taking that address; `--pci BDF` (its port) or `--vdev SPEC` (a virtual one, tests), `--prefix-len N`, `--gateway IP`, `--nodelay` (always on), `--rcvbuf`/`--sndbuf BYTES`, `--delayed-ack true` and `--hz 100` (FreeBSD's), `--no-huge`, `--memory-mb 1024`, `--file-prefix ergon-fstack`. It refuses the kernel's socket flags (busy poll, epoll, quickack, TCP timers). It writes its whole F-Stack config to `<out>/f-stack-<role>.conf`, every key in its manifest (`fstack.conf.*`), with F-Stack's build (`fstack.build.*`). Built with `--features fstack` against `io/benches/fstack/build-fstack.sh`'s F-Stack v2.0 (x86_64 and arm64; `ff-arm64.patch` makes it build on arm64) |
 | `hostcheck` | `--hot-cpus CSV`, `--out FILE`, `--nic IFACE,...`, `--aeron-dir PATH`; one finding a line (`<id> ok:`, `info:`, `warn:`, `unknown:`); exit 0 clean, 2 not clean, 1 not run |
 
 ### `aeron_lat --load mixed`
@@ -334,11 +334,12 @@ files, `/dev/hugepages`), `CAP_IPC_LOCK` and `CAP_SYS_RAWIO`. `fstack_lat`
 refuses to start without the first two. Every binary's exit status lands in
 `<pid file>.rc`; a failed point's log line gives it and the binary's error lines.
 `tr_arm_down` runs `vm.sh stop`, which returns the NICs to the kernel and
-removes F-Stack's leftover hugepage files. AWS x86_64 only (`modes.sh`
-refuses it elsewhere before any cloud call). A set with a `dpdk` or
+removes F-Stack's leftover hugepage files. AWS only, x86_64 and Graviton
+(`modes.sh` refuses it elsewhere before any cloud call). A set with a `dpdk` or
 `fstack` arm has netem `-` (`transport_plan.py` refuses another level).
 `transport-aws-dpdk.tsv` is the AWS DPDK session's `LAB_SETS_FILE`
-(`aws/lab.sh LAB_SUITE=transport LAB_PAIR=a`, two c7a.2xlarge).
+(`aws/lab.sh LAB_SUITE=transport LAB_PAIR=a`, two c7a.2xlarge, or two
+c8g.2xlarge with `LAB_ALLOW_ARM=1 LAB_TYPE=c8g.2xlarge`).
 `transport-aws-fstack-smoke.tsv` is its short check at `LAB_REPS=1`: both DPDK
 arms (`dpdk-tcp`, `dpdk-aeron-rel`) beside `mio-tcp` and the A/A arm, one
 stream at 10k and 50k. A failed set-up's run.log line gives the step's error

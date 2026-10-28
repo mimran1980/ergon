@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # build-fstack.sh <prefix> [native|generic]: F-Stack, pinned, with
-# ff-run-once.patch, and the DPDK it bundles, both static, under <prefix>
-# (fstack_lat's build.rs reads FSTACK_PREFIX=<prefix>).
+# ff-run-once.patch and ff-arm64.patch, and the DPDK it bundles, both
+# static, under <prefix> (fstack_lat's build.rs reads FSTACK_PREFIX=<prefix>).
+# x86_64 and arm64 (Graviton).
 #
 # F-Stack does not build against a stock DPDK: its lib calls
 # rte_timer_meta_init, which only its bundled DPDK (24.11.8 plus a few
@@ -16,15 +17,9 @@
 set -euo pipefail
 
 prefix=${1:?usage: build-fstack.sh <prefix> [native|generic]}
-# x86_64 only. On arm64 (Graviton) neither v2.0 nor v1.25 builds with
-# Debian 13's GCC 14: F-Stack's arm64 per-CPU glue declares pcpup as a
-# global register variable in x18 (lib/include/machine/pcpu.h), refused as
-# call-clobbered (v1.25) or clashing with its __thread pcpup (v2.0, which
-# also lists libkern fls.c/flsl.c that FreeBSD 15 removed). Checked
-# 2026-10-26 in Docker (arm64 native).
 case $(uname -m) in
-x86_64) ;;
-*) echo "build-fstack: F-Stack builds on x86_64 only (not $(uname -m)): see this script's header" >&2; exit 2 ;;
+x86_64 | aarch64) ;;
+*) echo "build-fstack: F-Stack builds on x86_64 and aarch64 only (not $(uname -m))" >&2; exit 2 ;;
 esac
 platform=${2:-native}
 here=$(cd "$(dirname "$0")" && pwd)
@@ -46,6 +41,16 @@ got=$(git -C "$src" rev-parse HEAD)
 # loop owns the thread (as ergon's runtime would) instead of ff_run.
 if ! grep -q ff_run_once "$src/lib/ff_api.h"; then
     git -C "$src" apply "$here/ff-run-once.patch"
+fi
+# ff-arm64.patch: v2.0 does not build on arm64 as released. Its arm64
+# per-CPU glue keeps FreeBSD's pcpup in register x18, which clashes with
+# F-Stack's own __thread pcpup; it lists libkern fls.c/flsl.c, which
+# FreeBSD 15 removed, and leaves out gsb_crc32.c; and it lacks the kernel
+# globals arm64's headers name (lse_supported, set here from HWCAP_ATOMICS;
+# the unused direct map). GCC 14 also needs amd64's -Wno-maybe-uninitialized.
+# Every change is arm64-only bar two missing includes in ff_dpdk_pcap.c.
+if ! grep -q lse_supported "$src/lib/ff_host_interface.c"; then
+    git -C "$src" apply "$here/ff-arm64.patch"
 fi
 # F-Stack's DPDK builds its igb_uio on Linux whatever enable_kmods says
 # (it comments out upstream's `if is_freebsd`), which needs the running
@@ -75,7 +80,9 @@ cp "$src/lib/ff_api.h" "$src/lib/ff_event.h" "$src/lib/ff_errno.h" "$src/lib/ff_
     echo "fstack_tag=$FSTACK_TAG"
     echo "fstack_commit=$FSTACK_COMMIT"
     echo "fstack_patch_sha256=$(sha256sum "$here/ff-run-once.patch" | cut -d' ' -f1)"
+    echo "fstack_arm64_patch_sha256=$(sha256sum "$here/ff-arm64.patch" | cut -d' ' -f1)"
+    echo "arch=$(uname -m)"
     echo "dpdk=$(pkg-config --modversion libdpdk)"
     echo "platform=$platform"
 } >"$prefix/BUILD"
-echo "build-fstack: $prefix/lib/libfstack.a ($FSTACK_TAG, patched)"
+echo "build-fstack: $prefix/lib/libfstack.a ($FSTACK_TAG, patched, $(uname -m))"
