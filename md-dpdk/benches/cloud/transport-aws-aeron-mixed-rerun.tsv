@@ -19,4 +19,4 @@
 #
 # set   pair par host loads         streams  netem  arms
 set fr   a    -   ab   10000         1        -      dpdk-raw,mio-udp,aa
-set kr   a    -   ab   50000,200000  32,128   -      aeron-mix-shared,aeron-mix-invoker,dpdk-aeron-mix-shared,dpdk-aeron-mix-invoker,aa
+set kr   a    -   ab   50000,200000  32,128   -      aeron-mix,aeron-mix-shared,aeron-mix-invoker,aa
