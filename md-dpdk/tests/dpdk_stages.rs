@@ -241,7 +241,11 @@ fn a_refused_frame_is_stamped_when_the_nic_takes_it() {
     assert_eq!(h.send_to((PEER_IP, 40123), &[&a, &b]).0, 2, "{}", last_error());
     unsafe { rusteron_dpdk_lab_drain() };
     let m = by_message(&read(&file).0);
-    assert_eq!(m.keys().copied().collect::<Vec<_>>(), vec![(STREAM, 0)], "only the one the ring took");
+    assert_eq!(
+        m.keys().copied().collect::<Vec<_>>(),
+        vec![(STREAM, 0)],
+        "only the one the ring took"
+    );
     unsafe { rusteron_dpdk_fake_set_tx_burst_cap(64) };
     let mut bytes = 0i64;
     let mut rx: Vec<RxDatagram> = Vec::new();

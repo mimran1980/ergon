@@ -32,7 +32,7 @@ nonzero exit on any error. A partial row is never printed.
 | binary | flags |
 |---|---|
 | `mpsc_lat` | `--capacity N` (sync_channel); role `local` only, `--round-trip` for the round trip |
-| `aeron_lat` | `--mode <ipc\|spy\|spy-udp\|udp>`, `--reliable <true\|false>` (`false` UDP only), `--endpoint HOST:PORT` (pings; stream i on PORT+i, stream id S+i), `--reply HOST:PORT` (echoes, stream id S+10000+i), `--interface IP` (the three UDP and spy-udp only: refused for ipc and spy). `spy-udp`: `local` measures as `spy` does, on reliable `ssc=false` publications to `--endpoint` and `--reply`, both the sink's addresses; `pong` is that sink (reads every frame, writes `sink.*` counts, echoes nothing); `ping` refused. Every manifest has the driver's `driver.bytes-sent` and `driver.bytes-received`, a local round trip's `echoes_sent`, `--aeron-dir PATH`, `--driver external\|embedded\|invoker` (a driver process at `--aeron-dir`; one this process starts on a thread of its own, configured from the environment; or one in Aeron's INVOKER mode that the measuring thread runs with its client's conductor, every poll and after every offer: `ping` and `pong` over `udp` only), `--driver-busy-threads N` (the driver's, as the runner sets it up; invoker 0, its only value), `--term-length BYTES`, `--mtu BYTES`, `--stream-id S` (1001), `--connect-timeout-s N` (30), `--round-trip` (`local` only) |
+| `aeron_lat` | `--mode <ipc\|spy\|spy-udp\|udp>`, `--reliable <true\|false>` (`false` UDP only), `--endpoint HOST:PORT` (pings; stream i on PORT+i, stream id S+i), `--reply HOST:PORT` (echoes, stream id S+10000+i), `--interface IP` (the three UDP and spy-udp only: refused for ipc and spy). `spy-udp`: `local` measures as `spy` does, on reliable `ssc=false` publications to `--endpoint` and `--reply`, both the sink's addresses; `pong` is that sink (reads every frame, writes `sink.*` counts, echoes nothing); `ping` refused. Every manifest has the driver's `driver.bytes-sent` and `driver.bytes-received`, a local round trip's `echoes_sent`, `--aeron-dir PATH`, `--driver external\|embedded\|invoker` (a driver process at `--aeron-dir`; one this process starts on a thread of its own, configured from the environment; or one in Aeron's INVOKER mode that the measuring thread runs with its client's conductor, every poll and after every offer: `ping` and `pong` over `udp` only), `--driver-busy-threads N` (the driver's, as the runner sets it up; invoker 0, its only value), `--term-length BYTES`, `--mtu BYTES`, `--stream-id S` (1001), `--connect-timeout-s N` (30), `--round-trip` (`local` only), `--stage-trace N` (a power of two: every Nth message by seq stamped at its offer and read into `<out>/stages-app.csv`; ping, pong, `local --round-trip`) |
 | `udp_lat` | `--impl <mio\|ergon>`, `--local IP:PORT`, `--peer IP:PORT` (base ports, stream i on +i; `local`: the receiver binds `--peer`), `--busy-read-us N` (`SO_BUSY_POLL` on every socket, both impls: ergon-io by `busy_poll_us`), `--epoll-events N`, `--datagram-burst N` (ergon only), `--rcvbuf`/`--sndbuf BYTES` |
 | `tcp_lat` | `--impl <mio\|ergon>`, `--listen IP:PORT` (pong; `local` takes `--listen`, and `--source`) or `--connect IP:PORT` (ping; stream i is connection i), `--source IP` (the connecting end binds it first), `--source-port N` (an arm flag: the connecting end binds stream i to N + i and closes with a reset, so arms given the same N share 4-tuples; the listening end ignores it; not with `local`), `--nodelay` (always on), `--quickack-per-read`, `--rto-min-us N`, `--delack-max-us N`, `--busy-read-us N` (both impls), `--rcvbuf`/`--sndbuf BYTES` |
 | `fstack_lat` | TCP over F-Stack (FreeBSD's stack on DPDK), `ping` or `pong` only (one F-Stack a process, on its one `--cpus` CPU): `--listen IP:PORT` (pong) or `--source IP --connect IP:PORT` (ping), the F-Stack interface taking that address; `--pci BDF` (its port) or `--vdev SPEC` (a virtual one, tests), `--prefix-len N`, `--gateway IP`, `--nodelay` (always on), `--rcvbuf`/`--sndbuf BYTES`, `--delayed-ack true` and `--hz 100` (FreeBSD's), `--no-huge`, `--memory-mb 1024`, `--file-prefix ergon-fstack`. It refuses the kernel's socket flags (busy poll, epoll, quickack, TCP timers). It writes its whole F-Stack config to `<out>/f-stack-<role>.conf`, every key in its manifest (`fstack.conf.*`), with F-Stack's build (`fstack.build.*`). Built with `--features fstack` against `io/benches/fstack/build-fstack.sh`'s F-Stack v2.0 (x86_64 only) |
@@ -104,7 +104,20 @@ data_kernel_up`), so the address a socket binds is the NIC it leaves by:
 `udp_lat` binds `--local`, `tcp_lat`'s connecting end `--source`, its
 listening end `--listen`.
 
-Two arm arguments are the runner's own, not passed on:
+An arm argument `--stage-trace N` (aeron_lat's own) also traces the arm's
+media driver: `@RUSTERON_DPDK_STAGE_TRACE=N` in its mode, `vm.sh driver`
+points the file at `~/bench/stages.csv`, and after each point the runner
+keeps each host's copy as `points/<point>/stages-driver-<host>.csv.gz`.
+`transport_stages.py run <session>` breaks every traced point down
+(`stages.md`, `stages.csv`) and holds the traced arm against the A/A spread.
+
+Three arm arguments are the runner's own, not passed on:
+
+- `--capture-ms <start>:<length>` (a dpdk arm): its driver captures every
+  frame for `<length>` ms from `<start>` ms after it starts
+  (`@RUSTERON_DPDK_CAPTURE_WINDOW_MS`, into `~/bench/capture.pcapng`), set so
+  it falls in the arm's first point's warm-up; kept from that point as
+  `points/<point>/capture-<host>.pcapng.gz`.
 
 - `--nics alt`: the arm on each host's other data NIC (ping: a's receiver
   NIC to b's sender NIC; `local`: its receiver NIC to its sender NIC).

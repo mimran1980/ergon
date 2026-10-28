@@ -18,6 +18,8 @@ use std::time::{Duration, Instant};
 
 type R = Result<(), Box<dyn std::error::Error>>;
 type Res<T> = Result<T, Box<dyn std::error::Error>>;
+/// A stage row's stage, stream id, seq and ring.
+type Row = (String, i64, u64, u32);
 
 fn scratch(name: &str) -> Res<PathBuf> {
     let dir = std::env::temp_dir().join(format!("aeron-lat-stages-{name}-{}", std::process::id()));
@@ -92,7 +94,7 @@ fn ok(what: &str, o: &Output) -> Res<String> {
 }
 
 /// (stage, stream id, seq, ring) of each row, and the `#` lines.
-fn rows(path: &Path) -> Res<(Vec<(String, i64, u64, u32)>, Vec<String>)> {
+fn rows(path: &Path) -> Res<(Vec<Row>, Vec<String>)> {
     let text = std::fs::read_to_string(path)?;
     let mut out = Vec::new();
     let mut notes = Vec::new();
@@ -183,9 +185,7 @@ fn a_ping_and_a_pong_stamp_every_nth_message() -> R {
         assert!(head.contains(want), "{want}: {head}");
     }
     // 2000 messages a run, 1000 a stream (seq 0..999): seq % 4 == 0 is 250 a stream
-    let count = |r: &[(String, i64, u64, u32)], stage: &str, stream: i64| {
-        r.iter().filter(|x| x.0 == stage && x.1 == stream).count()
-    };
+    let count = |r: &[Row], stage: &str, stream: i64| r.iter().filter(|x| x.0 == stage && x.1 == stream).count();
     for stream in [1001, 1002] {
         assert_eq!(count(&pr, "app-offer", stream), 250, "ping offers on {stream}");
         assert_eq!(count(&pr, "app-offered", stream), 250);

@@ -682,7 +682,50 @@ tr_driver_mode() {
     # the binary starts the driver in its own process (aeron_driver
     # embedded): vm.sh sets everything up but starts none
     [[ $knobs == *" aeron_driver "* && $(tr_knob aeron_driver) == embedded ]] && s+="@DRIVER=embedded"
+    s+=$(tr_lab_suffix)
     echo "$m$s"
+}
+
+# tr_lab_suffix: the media driver's part of the arm's stage trace and capture
+# (md-dpdk's RUSTERON_DPDK_STAGE_TRACE and RUSTERON_DPDK_CAPTURE_WINDOW_MS;
+# vm.sh driver points each at its file in ~/bench): the arm argument
+# `--stage-trace N` (aeron_lat's own too) and the runner's `--capture-ms
+# <start>:<length>` (tr_set takes it off the binary's arguments into
+# capture_ms), else nothing
+tr_lab_suffix() {
+    local i out= cap=${capture_ms:-} a=(${args[@]+"${args[@]}"})
+    for ((i = 0; i < ${#a[@]}; i++)); do
+        case ${a[i]} in
+        --stage-trace) out+="@RUSTERON_DPDK_STAGE_TRACE=${a[i + 1]:-}" ;;
+        --capture-ms) cap=${a[i + 1]:-} ;;
+        esac
+    done
+    [[ -z $cap ]] || out+="@RUSTERON_DPDK_CAPTURE_WINDOW_MS=$cap"
+    echo "$out"
+}
+
+# tr_lab_fetch <point> <k>: an arm with a stage trace: each run host's
+# driver file as it stands (the arm's driver's, every point of it so far:
+# transport_stages.py takes the point's own stream ids) gzipped into
+# points/<point>/stages-driver-<host>.csv.gz; with a capture, on the arm's
+# first point (k 0: its window falls in that point's warm-up), each host's
+# capture-<host>.pcapng.gz. A missing file is logged, never fatal
+tr_lab_fetch() {
+    local pid=$1 k=$2 h f
+    for h in "${run_hosts[@]}"; do
+        if [[ " ${args[*]:-} " == *" --stage-trace "* ]]; then
+            f=$dir/points/$pid/stages-driver-$h.csv.gz
+            mkdir -p "$dir/points/$pid"
+            on "$(tr_host "$h")" "test -s bench/stages.csv && gzip -c bench/stages.csv" >"$f" 2>/dev/null ||
+                { rm -f "$f"; log "WARNING: point $pid: host $h has no driver stage trace (bench/stages.csv)"; }
+        fi
+        if [[ -n ${capture_ms:-} && $k == 0 ]]; then
+            f=$dir/points/$pid/capture-$h.pcapng.gz
+            mkdir -p "$dir/points/$pid"
+            on "$(tr_host "$h")" "test -s bench/capture.pcapng && gzip -c bench/capture.pcapng" >"$f" 2>/dev/null ||
+                { rm -f "$f"; log "WARNING: point $pid: host $h has no capture (bench/capture.pcapng)"; }
+        fi
+    done
 }
 
 # tr_aeron_driver: aeron_lat's --driver for the current arm: invoker (its
@@ -1239,6 +1282,7 @@ tr_point() {
     wait "$sampler" 2>/dev/null
     tr_snap after "$pid"
     tr_events stop "$pid"
+    tr_lab_fetch "$pid" "$k"
     if [[ -n $pong ]]; then
         on "$B" "kill -TERM \$(cat $rdir/pong.pid) 2>/dev/null; for _ in \$(seq 50); do kill -0 \$(cat $rdir/pong.pid) 2>/dev/null || break; sleep 0.1; done; kill -KILL \$(cat $rdir/pong.pid) 2>/dev/null; true" >/dev/null 2>&1
         on "$B" "cat $rdir/pong.out" >"$log.pong" 2>&1
@@ -1363,7 +1407,7 @@ tr_netem_off() {
 # tr_set <set id>: every round of the set, in rounds.tsv's order
 tr_set() {
     local want=$1 gi sid host rep netem rseed loadlist streamlist order position armspec arm aa
-    local bin setup kind args loads streams rhosts ahosts failures=0 spec nics_alt=0
+    local bin setup kind args loads streams rhosts ahosts failures=0 spec nics_alt=0 capture_ms=
     while IFS=$'\t' read -r -u 9 gi sid host rep netem rseed loadlist streamlist order; do
         [[ $sid == "$want" ]] || continue
         IFS=, read -ra loads <<<"$loadlist"
@@ -1383,11 +1427,19 @@ tr_set() {
             # --nics alt is the runner's (tr_point): the arm on each host's
             # other data NIC; not passed on
             local i kept=()
-            nics_alt=0
+            nics_alt=0 capture_ms=
             for ((i = 0; i < ${#args[@]}; i++)); do
                 if [[ ${args[i]} == --nics ]]; then
                     [[ ${args[i + 1]:-} == alt ]] || { log "arm $arm: --nics takes alt"; return 1; }
                     nics_alt=1 i=$((i + 1))
+                    continue
+                fi
+                # --capture-ms <start>:<length> is the runner's too: the
+                # DPDK driver's capture window (tr_lab_suffix, tr_lab_fetch)
+                if [[ ${args[i]} == --capture-ms ]]; then
+                    [[ ${args[i + 1]:-} =~ ^[0-9]+:[1-9][0-9]*$ && $setup == dpdk ]] ||
+                        { log "arm $arm: --capture-ms takes <start>:<length> (ms), on a dpdk arm"; return 1; }
+                    capture_ms=${args[i + 1]} i=$((i + 1))
                     continue
                 fi
                 kept+=("${args[i]}")

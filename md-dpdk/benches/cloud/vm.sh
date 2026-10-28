@@ -1999,6 +1999,8 @@ driver)
     # the last run's DPDK event log (a mode's @RUSTERON_DPDK_EVENT_LOG=
     # <home>/bench/events.csv): a run without it must leave none to fetch
     rm -f "$run/events.csv"
+    # the same for md-dpdk's stage trace and capture (below)
+    rm -f "$run/stages.csv" "$run/capture.pcapng"
     env_file=$run/driver.env
     # <mode>@KEY=value@...: environment overrides for one experiment, applied
     # last so they win (e.g. dpdk@RUSTERON_DPDK_BURST_SIZE=32)
@@ -2156,6 +2158,16 @@ driver)
             host_setting "${pair%%=*}" "${pair#*=}" "$mode" && continue
             override_export "$pair" >>"$env_file"
         done
+    fi
+    # md-dpdk's stage trace and capture (@RUSTERON_DPDK_STAGE_TRACE=<N>,
+    # @RUSTERON_DPDK_CAPTURE_WINDOW_MS=<start>:<length>: the transport
+    # suite's --stage-trace and --capture-ms arms): each its file here, where
+    # transport.sh fetches them (bench/stages.csv, bench/capture.pcapng)
+    if grep -q '^export RUSTERON_DPDK_STAGE_TRACE=' "$env_file" && ! grep -q '^export RUSTERON_DPDK_STAGE_TRACE_FILE=' "$env_file"; then
+        echo "export RUSTERON_DPDK_STAGE_TRACE_FILE='$run/stages.csv'" >>"$env_file"
+    fi
+    if grep -q '^export RUSTERON_DPDK_CAPTURE_WINDOW_MS=' "$env_file" && ! grep -q '^export RUSTERON_DPDK_CAPTURE_FILE=' "$env_file"; then
+        echo "export RUSTERON_DPDK_CAPTURE_FILE='$run/capture.pcapng'" >>"$env_file"
     fi
     # The conductor's duty-cycle threshold, derived from whatever idle
     # strategy the overrides above left in play: too low and every full park

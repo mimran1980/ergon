@@ -1,0 +1,35 @@
+# The AWS stage-trace session's sets (aws/lab.sh LAB_SUITE=transport
+# LAB_PAIR=a LAB_SETS_FILE=<this file>, in place of the matrix's sets; the
+# matrix's arms are kept and the two below added). One pair of c7a.2xlarge
+# (spot). No netem: DPDK holds its NICs.
+#
+# Where DPDK Aeron's round trip goes: md-dpdk's stage trace (README "Stage
+# trace") stamps every 64th message on both hosts at each stage, in the
+# driver (RUSTERON_DPDK_STAGE_TRACE) and in aeron_lat (--stage-trace), and
+# transport_stages.py breaks each point down (each host's steps, the wire as
+# the rest of the round trip, flags past what each step should take).
+#
+#   dpdk-aeron-rel        the baseline, untraced (DEDICATED, every agent
+#                         busy-spinning, the conductor on its own core)
+#   dpdk-aeron-rel-trace  the same traced; its driver also captures every
+#                         frame for 1 s from 10 s after it starts (the first
+#                         point's warm-up, outside every measured window:
+#                         --capture-ms 10000:1000, the runner's own argument)
+#   aeron-rel-trace       kernel UDP's Aeron traced the same way (stamped at
+#                         its sendmmsg and receive callback), for comparison
+#   aa                    dpdk-aeron-rel again: the A/A spread the traced
+#                         arm's shift is held against (transport_stages.py
+#                         run: tracing must not move p50 or p99 past it)
+#
+#   t1    1 stream at 10k and 50k msg/s
+#   t32   32 streams at 50k msg/s
+#
+# LAB_REPS=3: 36 points, about 1.22 h wall and $0.46 (LAB_ESTIMATE=1 on c7a.2xlarge spot).
+#
+# arm   name                  binary     setup   hosts  arguments
+arm  dpdk-aeron-rel-trace  aeron_lat  dpdk    two    --mode udp --reliable true --stage-trace 64 --capture-ms 10000:1000
+arm  aeron-rel-trace       aeron_lat  kernel  two    --mode udp --reliable true --stage-trace 64
+
+# set   pair par host loads         streams  netem  arms
+set t1   a    -   ab   10000,50000   1        -      dpdk-aeron-rel,dpdk-aeron-rel-trace,aeron-rel-trace,aa
+set t32  a    -   ab   50000         32       -      dpdk-aeron-rel,dpdk-aeron-rel-trace,aeron-rel-trace,aa
