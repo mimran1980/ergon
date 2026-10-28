@@ -46,6 +46,7 @@ Terms this chapter uses. Each links to the section that explains it.
 | [`per_queue`](backends.md#per_queue-one-read-per-nic-queue) | A `recv-busy` option: one read per NIC queue, then only the ready sockets. | Its NIC polling stops growing at the queue count. The one-CPU pick past 4 sockets. |
 | [`io_uring`](backends.md#kernel) | A Linux interface: requests and results pass through rings shared with the kernel. | Needs feature `uring` (on by default) and Linux 6.9+ (NAPI). |
 | [`fstack-spin`](backends.md#fstack-spin-tcp-on-f-stack) | TCP on F-Stack (FreeBSD's stack on DPDK) on a NIC of its own; the polling thread runs the stack. | Kernel bypass, feature `fstack`. Lab-tested only: not yet benchmarked against the kernel backends. |
+| [`smoltcp-spin`](backends.md#smoltcp-spin-tcp-and-udp-on-smoltcp-over-dpdk) | TCP and UDP on smoltcp, a stack in the process, over a DPDK port; the polling thread runs it. | Kernel bypass, feature `smoltcp-dpdk`, x86 and Graviton. Lab-tested only. |
 | [`uring-sqpoll`](backends.md) | A kernel thread (SQPOLL) spins for the ring: submits, completes, polls the NIC. | Its kernel thread polls NIC queues, not sockets; the loop's own pass still grows with sockets ([cost per poll](backends.md#cost-per-poll)). Needs a second CPU or the loop's sibling. |
 | [crossover](backends.md#find-the-crossover-on-your-own-host) | The socket count where one backend stops beating another. | Depends on the NIC, its queue count, the interrupt path and the traffic: measure it on your host. |
 | [`TCP_NODELAY`](#defaults) | Turns off Nagle's algorithm, which holds a small send until earlier data is ACKed. | On for every socket: each send goes out at once. |
@@ -123,7 +124,9 @@ Evidence:
 (1–256 connections).
 
 A NIC of the process's own, where kernel bypass is allowed:
-[`fstack-spin`](backends.md#fstack-spin-tcp-on-f-stack) (lab-tested only).
+[`fstack-spin`](backends.md#fstack-spin-tcp-on-f-stack) or
+[`smoltcp-spin`](backends.md#smoltcp-spin-tcp-and-udp-on-smoltcp-over-dpdk)
+(both lab-tested only).
 
 - **Plain `recv-busy` reads every socket on every poll.** Its poll grows
   with sockets, so a message waits longer for its socket's turn. It leads

@@ -249,6 +249,105 @@ pod's cpuset, with a second CPU for the EAL's control threads
 (`helper_cpus`). Nothing node-level (interrupts, moderation) applies: the
 NIC raises none.
 
+## `smoltcp-spin`: TCP and UDP on smoltcp over DPDK
+
+Kernel bypass with a TCP/IP stack in the process:
+[smoltcp](https://github.com/smoltcp-rs/smoltcp) 0.14.0 (0BSD) over one
+DPDK port, driven by the polling thread. Pure Rust, so it runs on Graviton
+as on x86. **Status: lab-tested only** (a DPDK `net_af_packet` port against
+the kernel's stack across a veth pair, in Docker, arm64); an AWS benchmark
+is pending.
+
+| | |
+|---|---|
+| a poll | one stack pass (one RX burst of up to 32 frames, smoltcp's ingress and egress, one TX burst), the ready sockets (level-triggered), one read each, the send pass, then smoltcp's egress so replies leave in the same poll |
+| endpoints | `FrameConn<SmolTcp>`, `WsConn<SmolTcp>`, `HttpConn<SmolTcp>` from the dials' `on_stack` (`FrameDial::<SmolTcp>::on_stack`); UDP as `UdpConn<SmolUdp>` from `Stack::udp_connect` / `udp_bind`. IPv4 only |
+| type safety | as `fstack-spin`: the socket type is the endpoint's parameter, dropping an endpoint closes it on the stack, `Driver::new` refuses endpoints of another stack |
+| threads | `smoltcp_dpdk::Stack::init` starts DPDK (once per process), the port and the stack on the polling thread; every `smoltcp-spin` driver on that thread shares it. Endpoints are not `Send`: no `connect_background` |
+| copies | receive: NIC to mbuf (DMA), smoltcp's socket buffer, the endpoint's buffer; send: the reverse. One more copy each way than the kernel's path |
+| allocation | none once warm (tested: 5,000 framed round trips, 0 allocations); closed sockets are kept with their buffers for the next connect |
+
+Start the stack, then the driver:
+
+```rust,ignore
+use ergon_io::smoltcp_dpdk::{SmolTcp, Stack, StackConfig};
+use ergon_io::{Config, Driver, FrameConn, FrameDial, FrameOptions, Target};
+
+let stack = Stack::init(&StackConfig::parse(
+    "port=0000:00:06.0,ip=10.0.1.20/24,gw=10.0.1.1,eal=-a 0000:00:06.0",
+)?)?;
+let mut driver: Driver<FrameConn<SmolTcp>> = Driver::new(Config::parse("smoltcp-spin")?)?;
+let target = Target::new("venue", 9000, "/").with_addr(venue_addr);
+let id = driver.connect(FrameDial::<SmolTcp>::on_stack(target, FrameOptions::default())?)?;
+```
+
+`StackConfig` keys (`key=value,...`, `eal=` last, taking the rest):
+
+| key | |
+|---|---|
+| `port` | the DPDK device name (`0000:00:06.0`, `net_af_packet0`) or port index |
+| `ip` (`a.b.c.d/len`), `gw`, `gw_mac` | the address; the default gateway; its MAC pinned (no ARP for it) |
+| `mtu` (1500, up to 9001 on ENA), `rx_desc`, `tx_desc` (1024), `mbufs` (8191) | the port |
+| `max_sockets` (64), `tcp_rx_buf`, `tcp_tx_buf` (256 KiB), `udp_buf` (256 KiB), `udp_packets` (256) | the sockets |
+| `rto_min_us` (10 000), `cc` (`reno`, `none`), `timestamps` (true) | TCP |
+| `tx_csum_offload` (true) | IPv4, TCP and UDP transmit checksums on the NIC when it has all three (ENA does); received checksums are checked in software |
+| `eal` | EAL arguments; the stack adds `--lcores=0@(<the thread's CPUs>)`, `--no-telemetry`, and `--in-memory` (`--no-shconf` with `--no-huge`) unless given |
+
+TCP, against smoltcp's defaults:
+
+| setting | `smoltcp-spin` | smoltcp |
+|---|---|---|
+| Nagle | off | on |
+| delayed ACK | off; `tcp_delack_max_us` sets one | 10 ms |
+| RTO floor | `rto_min_us`, 10 ms | 1 s, a constant |
+| timestamps (RFC 7323) | on | off |
+| window scaling | from `tcp_rx_buf` (256 KiB: shift 3) | the same |
+| SACK | offered; SACK blocks sent for out-of-order data | the same |
+| congestion control | Reno | Reno |
+| keepalive, user timeout | `keepalive_idle_s` (one interval, no probe count), `tcp_user_timeout_ms` | off |
+
+The RTO floor: smoltcp's is a constant 1 s, so the stack runs smoltcp's
+clock `1 s / rto_min_us` times faster than real time (100× at 10 ms), and
+every smoltcp timer scales with it: the first RTO before an RTT sample is
+`rto_min_us`, the RTO cap is 600 ms, TIME-WAIT 100 ms, an ARP entry 600 ms
+(the stack sends an ARP request for the gateway and on-link peers every
+200 ms, or feeds smoltcp the pinned gateway MAC, so no entry lapses).
+Keepalive, user timeout and delayed ACK are set in real time.
+
+Under loss (`tc netem` on the veth, the vdev test
+`a_lossy_link_recovers_within_the_rto_floor`), a lost segment costs one
+floor, and a lost retransmission doubles it: the worst round trip stays a
+few floors (tens of ms at 10 ms), where smoltcp's own 1 s floor stalls a
+lost last segment for a second or more.
+
+What smoltcp does not do, against Linux's or FreeBSD's TCP:
+
+| | |
+|---|---|
+| SACK | received SACK blocks are ignored: fast retransmit (3 duplicate ACKs) resends one segment, a timeout goes back to the first unacknowledged byte |
+| loss recovery | no RACK, TLP, F-RTO or PRR: a lost last segment waits for the RTO |
+| first RTO | the floor, before any RTT sample: a peer further than `rto_min_us` sees a spurious SYN and first-segment retransmission (raise `rto_min_us` for such peers) |
+| peer delayed ACKs | a floor below a peer's delayed-ACK timer (Linux 40 ms) can resend a lone segment the peer holds its ACK for; a reply carries the ACK sooner |
+| other | no ECN, pacing, TSO or LRO; IPv4 fragments dropped; no listening sockets; no `TCP_INFO` (`Stack::tcp_stats`: state, retransmits counted as they leave, queues) |
+| user timeout | smoltcp aborts a connection that hears nothing for `tcp_user_timeout_ms`, idle or not: `Config::validate` requires keepalive on and shorter |
+
+Also: `rx_sw_ns` is the receive time of the RX burst that brought the
+frames (`CLOCK_REALTIME`); `quickack_check` is off (`require` refused);
+`tcp_rto_min_us` is refused (the floor is the stack's).
+
+Requirements: Linux x86_64 or aarch64; the `smoltcp-dpdk` feature;
+libdpdk >= 23.11 through pkg-config (Ubuntu 24.04's `libdpdk-dev`);
+a port DPDK can take (an ENA ENI bound to `vfio-pci`, as for
+[ergon-md-dpdk](../md-dpdk/overview.md)), hugepages, and the `vfio`
+privileges. It cannot be linked beside `fstack` with `FSTACK_PREFIX` (two
+DPDKs).
+
+Kubernetes: as for `fstack-spin`: the port from a device plugin,
+`hugepages-2Mi` as a resource, `CAP_IPC_LOCK`, whole CPUs (Guaranteed QoS,
+static CPU manager), the polling thread pinned to one before
+`Stack::init`. Housekeeping (closed sockets, ARP refreshes, the PMD's
+timers) runs on the polling thread once a millisecond, a few µs each.
+
 ## Kernel
 
 | backend | needs |
