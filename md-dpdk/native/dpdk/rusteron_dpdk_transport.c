@@ -312,9 +312,11 @@ int rusteron_dpdk_transport_install(
         return -1;
     }
 
+    /* Where the agents run: Aeron resolves cpuset offsets into *_resolved. */
+
     if (rusteron_dpdk_runtime_agents_known(
-            transport, (int)context->threading_mode, context->conductor_cpu_affinity_no,
-            context->sender_cpu_affinity_no, context->receiver_cpu_affinity_no,
+            transport, (int)context->threading_mode, context->conductor_cpu_affinity_resolved,
+            context->sender_cpu_affinity_resolved, context->receiver_cpu_affinity_resolved,
             context->conductor_idle_strategy_name) < 0)
     {
         return -1;
@@ -1382,6 +1384,8 @@ static inline __attribute__((always_inline)) int rusteron_dpdk_transport_send_re
     size_t built = 0;
     int oversized = 0;
     int nobufs = 0;
+    /* The channel's socket-tos (Aeron's unset: negative) as the IPv4 ToS. */
+    const uint8_t tos = client->params.socket_tos < 0 ? 0 : (uint8_t)client->params.socket_tos;
 
     /* Every iovec is one datagram (plan §7.4): build them all first, so the
      * vector is sent or queued whole. */
@@ -1400,7 +1404,7 @@ static inline __attribute__((always_inline)) int rusteron_dpdk_transport_send_re
         }
         if (rusteron_dpdk_packet_build_udp(
                 m, dst_mac, port->mac, dst_ip, src_ip,
-                client->local_udp_port, dst_port, &iov[i], 1, client->mtu,
+                client->local_udp_port, dst_port, tos, &iov[i], 1, client->mtu,
                 port->tx_udp_csum_offload) < 0)
         {
             ops->mbuf_release(m);

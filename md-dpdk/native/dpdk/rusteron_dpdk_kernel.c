@@ -6,7 +6,7 @@
  * addressed to those go through an ordinary kernel UDP socket instead, set up
  * as Aeron's own kernel transport sets up its sockets
  * (media/aeron_udp_channel_transport.c): non-blocking, SO_RCVBUF/SO_SNDBUF
- * from the channel's params, optionally connected; recvmmsg into the caller's
+ * and IP_TOS from the channel's params, optionally connected; recvmmsg into the caller's
  * buffers with a zero timeout; sendmmsg. EINTR/EAGAIN/ECONNREFUSED are not
  * errors, as there. None of this runs on a DPDK channel's data path.
  */
@@ -29,9 +29,8 @@
 
 #define RUSTERON_DPDK_KERNEL_MAX_SEND 64
 /* Datagrams one read stamps for a channel asking for media receive
- * timestamps: Aeron's receiver vectors at most this many
- * (AERON_DRIVER_RECEIVER_IO_VECTOR_LENGTH_MAX). */
-#define RUSTERON_DPDK_KERNEL_MAX_STAMPED 16
+ * timestamps: Aeron's receiver vectors at most this many. */
+#define RUSTERON_DPDK_KERNEL_MAX_STAMPED AERON_DRIVER_RECEIVER_IO_VECTOR_LENGTH_MAX
 
 int rusteron_dpdk_kernel_open(
     int *fd_out,
@@ -57,6 +56,13 @@ int rusteron_dpdk_kernel_open(
         setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &params->socket_sndbuf, sizeof(params->socket_sndbuf)) < 0)
     {
         AERON_SET_ERR(errno, "%s", "DPDK transport kernel path: SO_SNDBUF");
+        close(fd);
+        return -1;
+    }
+    if (NULL != params && params->socket_tos >= 0 &&
+        setsockopt(fd, IPPROTO_IP, IP_TOS, &params->socket_tos, sizeof(params->socket_tos)) < 0)
+    {
+        AERON_SET_ERR(errno, "%s", "DPDK transport kernel path: IP_TOS");
         close(fd);
         return -1;
     }

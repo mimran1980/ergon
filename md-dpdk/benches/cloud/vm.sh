@@ -288,7 +288,7 @@ cnc_now() {
 # common_env [threading mode]: the agents' threads, CPUs and idle strategies
 # for that Aeron threading mode (DEDICATED unless a mode says otherwise:
 # host.sh threading_env), and two of the duty-cycle thresholds Aeron counts
-# each agent's stalls against (Aeron 1.53.3's C names and duration syntax,
+# each agent's stalls against (Aeron 1.54.0's C names and duration syntax,
 # aeron_driver_context.c: AERON_DRIVER_*_CYCLE_THRESHOLD, 100 ms each by
 # default): the sender's and receiver's 50 us. The conductor's is NOT set
 # here. It has to sit strictly above whatever park the idle strategy left in
@@ -408,7 +408,7 @@ conductor_cycle_threshold() {
 # overrides left in play. An explicit threshold that does not is refused
 # before the driver starts, naming both values and the one to use.
 # The park is that of the agent that runs the conductor's duty cycle
-# (Aeron 1.53.3 aeron_driver.c aeron_driver_init): DEDICATED's and
+# (Aeron 1.54.0 aeron_driver.c aeron_driver_init): DEDICATED's and
 # SHARED_NETWORK's conductor agent, AERON_CONDUCTOR_IDLE_STRATEGY; SHARED's
 # one shared agent, AERON_SHARED_IDLE_STRATEGY (the conductor's own strategy
 # is never used); INVOKER's, the client thread that calls

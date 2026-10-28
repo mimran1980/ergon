@@ -335,8 +335,9 @@ env: [{ name: AERON_THREADING_MODE, value: DEDICATED }]
 
 Leave `AERON_CONDUCTOR_CPU_AFFINITY` and
 `AERON_DRIVER_NATIVE_RESOURCE_AGENT_CPU_AFFINITY` unset: those agents start
-on the shared CPUs. Keep `AERON_DRIVER_CPUSET_AFFINITY` false; the wrapper
-refuses to translate Aeron variables when it is true.
+on the shared CPUs. Keep `AERON_THREAD_AFFINITY_USE_CPUSET_OFFSETS` (before
+Aeron 1.54: `AERON_DRIVER_CPUSET_AFFINITY`) false; the wrapper refuses to
+translate Aeron variables when either is true.
 
 ## Chart values
 

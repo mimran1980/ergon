@@ -544,11 +544,11 @@ step7_ergon_cpus() {
     check "bad:0 says unknown spec kind" bash -c "grep -q 'unknown spec kind' <<<\"$out\""
 
     rc=0
-    out=$(kube exec a -n "$NS" -- sh -c 'AERON_DRIVER_CPUSET_AFFINITY=true ergon-cpus --env AERON_RECEIVER_CPU_AFFINITY=isolated:0 -- true' 2>&1) || rc=$?
-    say "  | AERON_DRIVER_CPUSET_AFFINITY=true -> rc=$rc  $out"
-    check "cpuset-affinity mode exits 1" test "$rc" -eq 1
-    check "cpuset-affinity mode names the variable" \
-        bash -c "grep -q 'AERON_DRIVER_CPUSET_AFFINITY' <<<\"$out\""
+    out=$(kube exec a -n "$NS" -- sh -c 'AERON_THREAD_AFFINITY_USE_CPUSET_OFFSETS=true ergon-cpus --env AERON_RECEIVER_CPU_AFFINITY=isolated:0 -- true' 2>&1) || rc=$?
+    say "  | AERON_THREAD_AFFINITY_USE_CPUSET_OFFSETS=true -> rc=$rc  $out"
+    check "cpuset-offsets mode exits 1" test "$rc" -eq 1
+    check "cpuset-offsets mode names the variable" \
+        bash -c "grep -q 'AERON_THREAD_AFFINITY_USE_CPUSET_OFFSETS' <<<\"$out\""
     return $step_failed
 }
 

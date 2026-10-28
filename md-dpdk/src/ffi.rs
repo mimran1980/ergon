@@ -921,20 +921,31 @@ fn validate_dedicated_agents(context: &AeronDriverContext) -> Result<(), DpdkErr
 /// `AERON_RECEIVER_CPU_AFFINITY` or their setters), as Aeron's `aeronmd` does.
 ///
 /// Aeron's C driver only parses those values; `aeronmd` applies them by
-/// installing `aeron_set_thread_affinity_on_start` as the agent start hook,
-/// which rusteron's driver does not. Without it the agents float, and under
-/// DPDK they inherit the CPU the EAL pinned its main thread to, which puts the
-/// sender and receiver on one core. [`DpdkTransport::install`] calls this; call
-/// it yourself for the socket transport. It replaces any agent start hook the
-/// context already has. Call it before the driver is created.
+/// resolving them (`aeron_driver_validate_and_apply_affinity_configuration`:
+/// cpuset offsets under `AERON_THREAD_AFFINITY_USE_CPUSET_OFFSETS`, topology
+/// warnings on stderr) and installing `aeron_set_thread_affinity_on_start` as
+/// the agent start hook, which pins from the resolved CPUs. rusteron's driver
+/// does neither. Without both the agents float, and under DPDK they inherit
+/// the CPU the EAL pinned its main thread to, which puts the sender and
+/// receiver on one core. [`DpdkTransport::install`] calls this; call it
+/// yourself for the socket transport. It replaces any agent start hook the
+/// context already has. Call it after the last affinity setter and before the
+/// driver is created.
 ///
 /// # Errors
 ///
-/// [`DpdkError::Aeron`] if the context rejects the hook.
+/// [`DpdkError::Aeron`] if Aeron rejects the affinity configuration (with
+/// `AERON_THREAD_AFFINITY_FAIL_ON_VALIDATION_ERRORS`, any warning) or the
+/// context rejects the hook.
 pub fn pin_agents_to_configured_cpus(context: &AeronDriverContext) -> Result<(), DpdkError> {
     use rusteron_media_driver::bindings::{
         aeron_driver_context_set_agent_on_start_function, aeron_set_thread_affinity_on_start,
     };
+    context.apply_cgroup_cpuset_affinity().map_err(|e| {
+        DpdkError::Aeron(format!(
+            "aeron_driver_validate_and_apply_affinity_configuration failed: {e:?}"
+        ))
+    })?;
     let inner = context.get_inner();
     // SAFETY: Aeron's hook reads the driver context it is given as state, and
     // the agents it runs on are started from, and joined before, that context.
@@ -947,6 +958,32 @@ pub fn pin_agents_to_configured_cpus(context: &AeronDriverContext) -> Result<(),
         )));
     }
     Ok(())
+}
+
+/// The CPUs the conductor, sender and receiver are pinned to, or -1: on
+/// Linux the resolved ones [`pin_agents_to_configured_cpus`] leaves in the
+/// context (configured values may be cpuset offsets), elsewhere the
+/// configured ones.
+pub(crate) fn agent_cpus(context: &AeronDriverContext) -> [i32; 3] {
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: the context is live; these are plain fields the driver
+        // reads only once it starts, and nothing writes them concurrently.
+        let c = unsafe { &*context.get_inner() };
+        [
+            c.conductor_cpu_affinity_resolved,
+            c.sender_cpu_affinity_resolved,
+            c.receiver_cpu_affinity_resolved,
+        ]
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        [
+            context.get_conductor_cpu_affinity(),
+            context.get_sender_cpu_affinity(),
+            context.get_receiver_cpu_affinity(),
+        ]
+    }
 }
 
 /// The idle strategy the agent actually runs. Aeron's context init loads the

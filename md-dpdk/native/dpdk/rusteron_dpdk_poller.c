@@ -991,7 +991,6 @@ int rusteron_dpdk_poller_init(
     aeron_driver_context_t *context,
     aeron_udp_channel_transport_affinity_t affinity)
 {
-    (void)context;
     (void)affinity;
 
     if (NULL == poller)
@@ -1003,6 +1002,10 @@ int rusteron_dpdk_poller_init(
     poller->transports.array = NULL;
     poller->transports.length = 0;
     poller->transports.capacity = 0;
+    /* Aeron's socket poller's knobs, kept for its layout: this poller reads a
+     * port's burst and a ready kernel socket once a cycle instead. */
+    poller->iteration_threshold = NULL != context ? context->udp_channel_transport_poller_iteration_threshold : 0;
+    poller->socket_poll_limit = NULL != context ? context->udp_channel_transport_poller_socket_poll_limit : 0;
     poller->fd = -1;
 
     rusteron_dpdk_poller_state_t *state = NULL;

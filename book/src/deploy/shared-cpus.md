@@ -659,7 +659,7 @@ rejected by Aeron. That is why the size comes from the annotation.
 | `AERON_RECEIVER_CPU_AFFINITY` | receiver | `isolated:1` |
 | `AERON_CONDUCTOR_CPU_AFFINITY` | conductor | leave unset: it starts on the shared CPUs |
 | `AERON_DRIVER_NATIVE_RESOURCE_AGENT_CPU_AFFINITY` | native resource agent | leave unset |
-| `AERON_DRIVER_CPUSET_AFFINITY` | makes the four above indexes into the cgroup cpuset | keep `false`; the wrapper refuses to translate when it is true |
+| `AERON_THREAD_AFFINITY_USE_CPUSET_OFFSETS` (before Aeron 1.54: `AERON_DRIVER_CPUSET_AFFINITY`) | makes the four above offsets into the cgroup cpuset | keep `false`; the wrapper refuses to translate when either is true |
 
 `ergon-cpus` turns `isolated:<i>` into a real CPU number before exec. It
 also sets its own affinity to the shared CPUs, so the driver starts there.

@@ -65,7 +65,7 @@ run not_on_shared refuse "not the shared CPUs" "${GOOD[@]}"
 status 1
 run page_64k refuse "base page size 65536" "${GOOD[@]}" LL_PAGESIZE=65536
 run conductor_pinned refuse "AERON_CONDUCTOR_CPU_AFFINITY is set" "${GOOD[@]}" AERON_CONDUCTOR_CPU_AFFINITY=2
-run cpuset_affinity refuse "AERON_DRIVER_CPUSET_AFFINITY must stay false" "${GOOD[@]}" AERON_DRIVER_CPUSET_AFFINITY=true
+run cpuset_offsets refuse "AERON_THREAD_AFFINITY_USE_CPUSET_OFFSETS must stay false" "${GOOD[@]}" AERON_THREAD_AFFINITY_USE_CPUSET_OFFSETS=true
 
 echo "entrypoint fixtures: $pass passed, $fail failed"
 [[ $fail == 0 ]]

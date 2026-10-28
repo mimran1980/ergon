@@ -145,6 +145,7 @@ int rusteron_dpdk_packet_build_udp(
     const uint8_t src_mac[RUSTERON_DPDK_ETH_ADDR_LEN],
     uint32_t dst_ip, uint32_t src_ip,
     uint16_t src_port, uint16_t dst_port,
+    uint8_t tos, /* the IPv4 ToS byte: the channel's socket-tos, else 0 */
     const struct iovec *iov, size_t iov_count,
     size_t max_payload,
     int hw_csum); /* 1: the NIC completes both checksums; 0: computed here */

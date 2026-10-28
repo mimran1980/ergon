@@ -323,6 +323,53 @@ fn shared_threading_modes_pin_their_agents_to_the_configured_cpus() {
     }
 }
 
+/// CPUs given through the context's setters, not the environment, pin the
+/// agents too. Since Aeron 1.54 the setters write `*_cpu_affinity_no` while
+/// Aeron's hook pins from `*_cpu_affinity_resolved`, which only the affinity
+/// validation fills, so `pin_agents_to_configured_cpus` must run it.
+#[cfg(target_os = "linux")]
+#[serial]
+#[test]
+fn setter_cpus_pin_the_dedicated_agents() {
+    use rusteron_media_driver::bindings::aeron_threading_mode_t;
+    use rusteron_media_driver::{AeronDriver, AeronDriverContext};
+
+    let cpus = allowed_cpus(&std::fs::read_to_string("/proc/self/status").unwrap());
+    assert!(cpus.len() >= 2, "two CPUs are needed to tell the pins apart: {cpus:?}");
+    let (sender, receiver) = (cpus[0], cpus[cpus.len() - 1]);
+    let dir = std::ffi::CString::new(aeron_dir("pin-setters")).unwrap();
+    let context = AeronDriverContext::new().unwrap();
+    context.set_dir(&dir).unwrap();
+    context.set_dir_delete_on_start(true).unwrap();
+    context.set_dir_delete_on_shutdown(true).unwrap();
+    context
+        .set_threading_mode(aeron_threading_mode_t::AERON_THREADING_MODE_DEDICATED)
+        .unwrap();
+    context.set_sender_cpu_affinity(i32::try_from(sender).unwrap()).unwrap();
+    context
+        .set_receiver_cpu_affinity(i32::try_from(receiver).unwrap())
+        .unwrap();
+    ergon_md_dpdk::pin_agents_to_configured_cpus(&context).unwrap();
+    let driver = AeronDriver::launch_embedded_guard(context, false);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let (pinned, threads) = loop {
+        let threads = threads_of(std::process::id());
+        let on = |role: &str, cpu: usize| {
+            threads
+                .iter()
+                .any(|(_, name, allowed)| name == role && allowed[..] == [cpu])
+        };
+        let pinned = (on("sender", sender) || on("aeron-md-snd", sender))
+            && (on("receiver", receiver) || on("aeron-md-rcv", receiver));
+        if pinned || Instant::now() > deadline {
+            break (pinned, threads);
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    drop(driver);
+    assert!(pinned, "sender on {sender} and receiver on {receiver}: {threads:?}");
+}
+
 // --- Receiver IO vectors: 16 only under dpdk-ena --------------------------------
 
 #[serial]

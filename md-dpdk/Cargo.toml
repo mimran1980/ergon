@@ -30,7 +30,7 @@ include = [
 # 0.2.11 is the first release whose `links = "aeron_driver"` key hands this
 # crate's build script the headers of the Aeron it builds (DEP_AERON_DRIVER_*)
 # and whose context exposes `set_udp_channel_transport_bindings`.
-rusteron-media-driver = "0.2.13"
+rusteron-media-driver = "0.2.15"
 ctrlc = { version = "3.5", features = ["termination"] }
 libc = "0.2"
 log = "0.4"

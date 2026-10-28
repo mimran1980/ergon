@@ -11,7 +11,7 @@ use crate::client::AsyncClusterConnect;
 /// Default adaptive backoff for cluster clients (Aeron's backoff parameters).
 #[must_use = "the idle strategy is unused; ignoring it skips poll-loop backoff"]
 #[inline]
-pub fn default_idle() -> BackoffIdleStrategy {
+pub const fn default_idle() -> BackoffIdleStrategy {
     BackoffIdleStrategy::new()
 }
 

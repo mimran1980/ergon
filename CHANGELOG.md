@@ -23,9 +23,26 @@
   and `/dev/cpu_dma_latency` fixes; info on `acpi_idle` stopping at C1.
 - `ergon-tune` T21 (`t21_tcp_autocorking`): warns when `net.ipv4.tcp_autocorking`
   is on for a caller sending latency-sensitive TCP, with the per-namespace fix.
+- `ergon-tune` T22 (`t22_aeron_affinity_names`): warns when an Aeron affinity
+  setting uses its pre-1.54 name (`AERON_DRIVER_CPUSET_AFFINITY`,
+  `AERON_DRIVER_CPUSET_WARNINGS_AS_ERRORS`), which Aeron 1.54 ignores. The
+  `ergon-md-dpdk` media driver runs it at start.
+- `ergon-md-dpdk` honours a channel's `socket-tos` (`AERON_SOCKET_TOS`, Aeron
+  1.54): the IPv4 ToS byte of DPDK frames, `IP_TOS` on its kernel sockets.
 
 ### Changed
 
+- Aeron 1.54.0 (rusteron 0.2.15) throughout: the `aeron` submodule, the Java
+  jars the cluster harness runs, and every crate and sample. Aeron's Gradle
+  9.8.2 builds on JDK 17 to 27.
+- `ergon-md-dpdk` pins the driver's agents to CPUs set through the context's
+  setters again: `pin_agents_to_configured_cpus` now runs Aeron's affinity
+  resolution (cpuset offsets, topology warnings), which Aeron 1.54's pinning
+  hook reads. Without it the sender and receiver floated. Housekeeping
+  placement and the host checks use the resolved CPUs.
+- `ergon-cpus` (nri-shared-cpus) refuses to translate `AERON_*_CPU_AFFINITY`
+  when `AERON_THREAD_AFFINITY_USE_CPUSET_OFFSETS` (Aeron 1.54's name) or
+  `AERON_DRIVER_CPUSET_AFFINITY` is true.
 - Breaking: `ergon-io`'s TCP endpoints and dials take their socket type,
   `FrameConn<T = TcpStream>` (and `FrameDial`, `WsConn`, `WsDial`,
   `HttpConn`, `HttpDial`); code naming them without `T` is unchanged.

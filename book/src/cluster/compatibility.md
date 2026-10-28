@@ -4,9 +4,9 @@
 
 | Component | Version | Notes |
 |-----------|---------|-------|
-| Aeron Java/C media driver | 1.53.3 | `aeron` submodule tag; archive + consensus module |
-| Aeron Cluster Java | 1.53.3 | clustered service container |
-| rusteron (Rust bindings) | 0.2.13 (workspace `Cargo.toml`) | `rusteron-client`, `rusteron-media-driver`; bundles Aeron C 1.53.3 (the tutorial sample also uses `rusteron-archive`) |
+| Aeron Java/C media driver | 1.54.0 | `aeron` submodule tag; archive + consensus module |
+| Aeron Cluster Java | 1.54.0 | clustered service container |
+| rusteron (Rust bindings) | 0.2.15 (workspace `Cargo.toml`) | `rusteron-client`, `rusteron-media-driver`; bundles Aeron C 1.54.0 (the tutorial sample also uses `rusteron-archive`) |
 | ergo-sbe (codec generator) | 0.1.x | schema 111 session + mark codecs |
 | Rust | 1.99+ | the workspace `rust-version` (the cluster `Cargo.toml` declares none); edition 2024. CI builds the cluster crate with 1.99.0; the MSRV job checks `ergo-sbe` only |
 | OS | Linux x86-64 and arm64 | CI runs the cluster unit tests on `ubuntu-24.04` and `ubuntu-24.04-arm`, and the live-cluster harness on `ubuntu-24.04` only. macOS is not run in CI |
@@ -45,7 +45,7 @@ The client handles these documented transitions:
 ## What CI runs against a live cluster
 
 The harness (`cluster-test-harness/tests/`) runs in `ci.yml`
-(`aeron-cluster-integration`, Aeron 1.53.3, Java 25) and in
+(`aeron-cluster-integration`, Aeron 1.54.0, Java 25) and in
 `cluster-compatibility.yml` (Aeron 1.46.8, Java 21, when `cluster/` or
 `sbe/src/` changes).
 

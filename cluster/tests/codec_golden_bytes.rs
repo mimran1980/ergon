@@ -6,7 +6,7 @@
 //! re-proven solely via **ergon** production encoders (`session`).
 //! Protocol goldens no longer require sbe-tool at runtime.
 //!
-//! Schema pin: aeron submodule 1.53.3, schema id 111 v17. Body bytes match the
+//! Schema pin: aeron submodule 1.54.0, schema id 111 v17. Body bytes match the
 //! 2026-07-18 capture; the header schema version is 17.
 
 #![allow(unused_must_use)]

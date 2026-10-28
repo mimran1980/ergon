@@ -692,7 +692,7 @@ invoker_ledger_total() {
 
 # aeron_telemetry: every counter of a driver (`counters ''`: "<value> <type>
 # <label>" a line) on stdin; one "info-<key>=<value>;..." line of Aeron's
-# stall and flow-control telemetry, matched by Aeron 1.53.3's labels exactly
+# stall and flow-control telemetry, matched by Aeron 1.54.0's labels exactly
 # (aeron_system_counters.c; the conductor appends ": <threading mode>" to the
 # agents' longest cycles and ": threshold=<duration> <threading mode>" to
 # their cycles over it, aeron_driver_conductor.c), system counters (type 0)

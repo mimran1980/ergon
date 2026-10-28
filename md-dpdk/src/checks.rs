@@ -58,7 +58,7 @@ use ergon_tune::{
     BusyPoll, Component, CpuSet, Ethtool, EthtoolCache, Finding, HOST_CHECKS_ENV, Host, HotSet, Netlink, Nic, Role,
     Severity, Status, Thread, busy_poll_sysctls, carrier_changes, host_check_line, n1_adaptive_rx, n2_deferred_irqs,
     n4_rx_ring, t1_isolation, t2_nic_irqs, t3_thp, t4_aeron_dir, t5_numa_balancing, t6_nic_node, t7_sched_policy,
-    t8_smt_siblings, t9_cpu_quota, t10_smt_on, thread_affinity,
+    t8_smt_siblings, t9_cpu_quota, t10_smt_on, t22_aeron_affinity_names, thread_affinity,
 };
 use rusteron_media_driver::AeronDriverContext;
 use rusteron_media_driver::bindings::aeron_threading_mode_t;
@@ -204,11 +204,12 @@ impl Agents {
     #[must_use]
     pub fn from_context(context: &AeronDriverContext) -> Self {
         let cpu = |c: i32| u32::try_from(c).ok();
+        let [conductor, sender, receiver] = crate::ffi::agent_cpus(context);
         Self {
             mode: context.get_threading_mode(),
-            conductor_cpu: cpu(context.get_conductor_cpu_affinity()),
-            sender_cpu: cpu(context.get_sender_cpu_affinity()),
-            receiver_cpu: cpu(context.get_receiver_cpu_affinity()),
+            conductor_cpu: cpu(conductor),
+            sender_cpu: cpu(sender),
+            receiver_cpu: cpu(receiver),
             conductor_idle: effective_idle_strategy(
                 context.get_conductor_idle_strategy(),
                 "AERON_CONDUCTOR_IDLE_STRATEGY",
@@ -818,6 +819,10 @@ pub fn host_report<E: Ethtool>(host: &Host, inputs: &Inputs, cache: &mut Ethtool
     findings.push(t7_sched_policy(host, Thread::Current, agents.creating_role()));
     findings.extend(t3_thp(host, Component::Md));
     findings.push(t4_aeron_dir(host, &inputs.aeron_dir));
+    // this process's environment, which only the running host has
+    findings.push(t22_aeron_affinity_names(|name| {
+        host.is_live().then(|| std::env::var(name).ok()).flatten()
+    }));
     findings.push(t5_numa_balancing(host));
     findings.push(t9_cpu_quota(host));
     match &inputs.nics {

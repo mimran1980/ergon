@@ -1588,7 +1588,7 @@ impl ClusterClaim {
     /// Stream position Aeron assigned to this claim.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn position(&self) -> i64 {
+    pub const fn position(&self) -> i64 {
         self.claim.position()
     }
 

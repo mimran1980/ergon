@@ -89,7 +89,7 @@ export RUSTERON_MEDIA_DRIVER_TRANSPORT="${RUSTERON_MEDIA_DRIVER_TRANSPORT:-dpdk-
 export RUSTERON_DPDK_EAL_ARGS="${RUSTERON_DPDK_EAL_ARGS:--l $HK${LL_EAL_EXTRA:+ $LL_EAL_EXTRA}}"
 export RUSTERON_DPDK_FILE_PREFIX="${RUSTERON_DPDK_FILE_PREFIX:-ll-${HOSTNAME:-driver}}"
 [[ -z "${AERON_CONDUCTOR_CPU_AFFINITY:-}" ]] || die "AERON_CONDUCTOR_CPU_AFFINITY is set: leave it unset, the conductor belongs on the shared CPUs"
-[[ "${AERON_DRIVER_CPUSET_AFFINITY:-false}" == false ]] || die "AERON_DRIVER_CPUSET_AFFINITY must stay false"
+[[ "${AERON_THREAD_AFFINITY_USE_CPUSET_OFFSETS:-false}" == false ]] || die "AERON_THREAD_AFFINITY_USE_CPUSET_OFFSETS must stay false"
 
 echo "ll-driver: isolated=$ERGON_ISOLATED_CPUS shared=$ERGON_SHARED_CPUS sender=$S receiver=$R housekeeping=$HK allowed=$allowed pagesize=$pagesize transport=$RUSTERON_MEDIA_DRIVER_TRANSPORT vdev_bridge=${LL_VDEV_BRIDGE:-0}"
 if [[ "${RUSTERON_ENTRYPOINT_PRINT_ONLY:-0}" == 1 ]]; then

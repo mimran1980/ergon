@@ -16,11 +16,11 @@ use std::sync::OnceLock;
 
 use ergo_aeron_cluster::ClusterError;
 
-/// The oldest Java Aeron 1.53.3 runs on: its jars are Java 17 bytecode.
+/// The oldest Java Aeron 1.54.0 runs on: its jars are Java 17 bytecode.
 pub const MIN_JAVA: u32 = 17;
 
 /// The Java the harness is tested on and the book recommends: Java 25, the
-/// newest LTS release in Aeron 1.53.3's own CI matrix (17, 21 and 25).
+/// newest LTS release in Aeron 1.54.0's own CI matrix (17, 21 and 25).
 pub const RECOMMENDED_JAVA: u32 = 25;
 
 /// `jvm/test.jvm`, the java argument file every Java process the harness

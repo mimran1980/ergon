@@ -188,7 +188,7 @@
 #   * @CONDUCTOR=own in vm.sh (the conductor alone on the fifth core,
 #     spinning, housekeeping named apart, undone by `stop`, refused where it
 #     cannot be) and the fail-closed check of its thread at the driver's start;
-#   * Aeron's stall telemetry: the duty-cycle thresholds by Aeron 1.53.3's C
+#   * Aeron's stall telemetry: the duty-cycle thresholds by Aeron 1.54.0's C
 #     names, the counters read by their exact labels (no near miss, no other
 #     type), vm.sh loss carrying them, lib.sh's aeron rows beside unchanged
 #     loss rows (INVOKER's ledger taking the longest cycle), analyse.py's
@@ -5160,7 +5160,7 @@ else
 fi
 
 # Aeron's stall telemetry. The driver's environment (vm.sh common_env) sets
-# Aeron 1.53.3's duty-cycle thresholds by their C names and duration syntax
+# Aeron 1.54.0's duty-cycle thresholds by their C names and duration syntax
 # (aeron_driver_context.c: AERON_DRIVER_{CONDUCTOR,SENDER,RECEIVER}_CYCLE_THRESHOLD,
 # aeron_config_parse_duration_ns): the conductor's 1 ms, the sender's and
 # receiver's 50 us. host.sh aeron_telemetry reads them back from every counter

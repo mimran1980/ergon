@@ -110,7 +110,7 @@
 # AERON_* or RUSTERON_*: anything else would be exported to a driver that never
 # reads it, the mode measuring its baseline under another name (mode_check).
 #
-# The Aeron 1.53.3 URI parameters that matter over a long round trip (from
+# The Aeron 1.54.0 URI parameters that matter over a long round trip (from
 # its aeron_uri.h and the driver's aeron_driver_uri.c, which reads each into
 # a publication's or a subscription's parameters; the driver-wide defaults
 # are the AERON_* environment variables named, settable in a mode as
@@ -156,7 +156,7 @@
 #                  (AERON_CONGESTIONCONTROL_SUPPLIER,
 #                  AERON_CUBICCONGESTIONCONTROL_* for cubic's RTT measurement)
 #     nak-delay    how long the receiver waits on a gap before NAKing it
-#                  (AERON_NAK_UNICAST_DELAY: 1 us in Aeron 1.53.3's C driver,
+#                  (AERON_NAK_UNICAST_DELAY: 1 us in Aeron 1.54.0's C driver,
 #                  its minimum, aeron_driver_context.c; each retry
 #                  AERON_NAK_UNICAST_RETRY_DELAY_RATIO times it, 100: every
 #                  100 us). The sender's side of a NAK is
