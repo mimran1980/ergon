@@ -73,7 +73,7 @@ mod warn;
 /// The `fstack-spin` backend: TCP over F-Stack, FreeBSD's TCP/IP stack on
 /// DPDK (<https://github.com/F-Stack/f-stack>), on a NIC of its own.
 ///
-/// - [`FstackConf`] (every platform): the interface and EAL settings,
+/// - [`FstackConf`](crate::fstack::FstackConf) (every platform): the interface and EAL settings,
 ///   `Config`'s `fstack_*` keys.
 /// - With the `fstack` feature on Linux: `FstackTcp`, the socket type of
 ///   F-Stack endpoints (`FrameConn<FstackTcp>`, `WsConn<FstackTcp>`,
