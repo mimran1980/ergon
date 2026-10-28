@@ -28,5 +28,5 @@ name = "async_connect_demo"
 [[example]]
 name = "failover_demo"
 
-[lints.rust]
-missing_docs = "warn"
+[lints]
+workspace = true

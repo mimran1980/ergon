@@ -29,7 +29,7 @@ fn connect(
 #[test]
 #[serial]
 fn echo_service_round_trip() -> Result<(), Box<dyn std::error::Error>> {
-    let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node();
+    let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node()?;
     let mut client = connect(&cluster)?;
     let mut listener = Capture::new();
     await_echo(

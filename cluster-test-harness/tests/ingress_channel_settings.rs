@@ -71,7 +71,7 @@ fn member_channel(base_port: u16, member: i32) -> String {
 #[test]
 #[serial]
 fn failover_keeps_the_ingress_channel_settings() -> Result<(), Box<dyn std::error::Error>> {
-    let mut cluster = ergo_aeron_cluster_test_harness::TestCluster::three_node();
+    let mut cluster = ergo_aeron_cluster_test_harness::TestCluster::three_node()?;
     let driver = launch_own_driver("settings-failover")?;
     let mut client = connect_own_driver(
         &format!("{}{SETTINGS}", cluster.ingress_channel),
@@ -120,7 +120,7 @@ fn failover_keeps_the_ingress_channel_settings() -> Result<(), Box<dyn std::erro
 #[test]
 #[serial]
 fn redirect_keeps_the_ingress_channel_settings() -> Result<(), Box<dyn std::error::Error>> {
-    let cluster = ergo_aeron_cluster_test_harness::TestCluster::three_node();
+    let cluster = ergo_aeron_cluster_test_harness::TestCluster::three_node()?;
     let driver = launch_own_driver("settings-redirect")?;
     let probe = connect_own_driver(&cluster.ingress_channel, 19211, &driver.dir)?;
     let leader = probe.leader_member_id();
@@ -138,7 +138,7 @@ fn redirect_keeps_the_ingress_channel_settings() -> Result<(), Box<dyn std::erro
         .ingress_channel(&follower_channel)?
         .egress_channel("aeron:udp?endpoint=localhost:19213")?
         .message_timeout(Duration::from_secs(10))?;
-    let mut connecting = builder.connect_async(driver.dir.clone());
+    let mut connecting = builder.connect_async(driver.dir);
     poll_connect_until_done(&mut connecting, &mut default_idle())?;
     let mut polled = connecting.finish()?;
     assert_eq!(polled.leader_member_id(), leader);

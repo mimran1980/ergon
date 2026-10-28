@@ -33,8 +33,8 @@ impl registration_server::Registration for RegistrationService {
 }
 
 /// Host paths the live health probe inspects. Both are overridable so tests
-/// can point at fixtures. `vfio_root` is the host's /dev/vfio, the only device
-/// directory the plugin mounts; igb_uio liveness comes from sysfs alone.
+/// can point at fixtures. `vfio_root` is the host's `/dev/vfio`, the only device
+/// directory the plugin mounts; `igb_uio` liveness comes from sysfs alone.
 #[derive(Clone, Debug)]
 pub struct SysfsRoots {
     pub sys_root: PathBuf,
@@ -51,7 +51,7 @@ pub fn sysfs_health(roots: &SysfsRoots, pair: &Pair) -> bool {
 
 /// The BDF's `driver` link must name exactly `port.driver`, and the port's
 /// device node must be live. For vfio-pci, `/dev/vfio/<group>` must exist. For
-/// igb_uio, the BDF's `uio/<uioN>/dev` attribute must exist: it is present only
+/// `igb_uio`, the BDF's `uio/<uioN>/dev` attribute must exist: it is present only
 /// while the uio class device is registered with a char device, which is when
 /// devtmpfs provides `/dev/<uioN>`, and it pins that number to this BDF (UIO
 /// numbers follow bind order, so a rebind can move them).
@@ -69,7 +69,7 @@ fn port_health(roots: &SysfsRoots, port: &Port) -> bool {
         }
 }
 
-/// DevicePlugin service implementation.
+/// `DevicePlugin` service implementation.
 #[derive(Clone)]
 pub struct DevicePluginService {
     inventory: Arc<Mutex<InventoryFile>>,
@@ -223,7 +223,7 @@ fn pair_numa_node(pair: &Pair) -> Option<i64> {
 
 /// Build the Allocate response for one pair: both roles' DPDK env plus the
 /// device nodes. vfio-pci ports get the VFIO control device and each distinct
-/// IOMMU group device (plan §10.3); igb_uio ports get their `/dev/uioN`.
+/// IOMMU group device (plan §10.3); `igb_uio` ports get their `/dev/uioN`.
 fn allocation_for(pair: &Pair) -> ContainerAllocateResponse {
     let mut envs = HashMap::new();
     envs.insert("RUSTERON_MEDIA_DRIVER_TRANSPORT".to_string(), "dpdk-ena".to_string());
@@ -286,6 +286,7 @@ fn device_spec(path: &str) -> DeviceSpec {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use crate::inventory::fixtures::{ScratchDir, fixture, rewrite, uio_fixture};
@@ -358,7 +359,7 @@ mod tests {
     #[test]
     fn only_healthy_pairs_are_advertised() {
         assert_eq!(service(always_healthy).healthy_devices().len(), 1);
-        assert!(service(never_healthy).healthy_devices().is_empty());
+        assert_eq!(service(never_healthy).healthy_devices(), []);
         let dev = service(always_healthy).healthy_devices().remove(0);
         assert_eq!(dev.id, "dpdk-pair-0");
         assert_eq!(dev.health, "Healthy");
@@ -396,7 +397,7 @@ mod tests {
     fn a_split_numa_pair_is_not_advertised() {
         let mut inventory = fixture();
         inventory.pairs[0].receiver.numa_node = 1;
-        assert!(devices_of(inventory).is_empty());
+        assert_eq!(devices_of(inventory), []);
     }
 
     fn uio_nodes(resp: &ContainerAllocateResponse) -> Vec<&str> {
@@ -438,7 +439,7 @@ mod tests {
         // Deleted (a bootstrap run in progress, or one that failed): nothing
         // advertised, nothing allocated.
         std::fs::remove_file(&path).unwrap();
-        assert!(svc.healthy_devices().is_empty());
+        assert_eq!(svc.healthy_devices(), []);
         assert!(svc.allocate_container(&pair).is_err());
         rewrite(&path, &serde_json::to_string(&moved).unwrap(), 3_000);
         assert_eq!(svc.healthy_devices().len(), 1);

@@ -2,7 +2,7 @@
 //! Probe: own-driver UDP with a SEPARATE egress port (Java pattern).
 //! Client egress on localhost:9100 (ephemeral-style, non-conflicting),
 //! ingress to cluster's 9002, responseChannel=9100 so the cluster
-//! sends SessionEvent back to the client's sub.
+//! sends `SessionEvent` back to the client's sub.
 
 use ergo_aeron_cluster::cluster_codec_types::{
     SessionConnectRequestEncoder, SessionConnectRequestFixedFields,
@@ -14,7 +14,7 @@ use std::time::Duration;
 #[test]
 #[serial]
 fn test_own_driver_udp_ephemeral_egress() -> Result<(), Box<dyn std::error::Error>> {
-    let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node();
+    let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node()?;
     let client_dir = std::env::temp_dir().join(format!("eph-{pid}", pid = std::process::id()));
     let _ = std::fs::create_dir_all(&client_dir);
     let dir_cstr = cformat!("{}", client_dir.display());

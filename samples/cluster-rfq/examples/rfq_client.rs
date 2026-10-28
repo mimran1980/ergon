@@ -31,7 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Schema: protocol-codecs.xml (schema 101, version 1)");
     println!("Source: aeron-io/aeron-cookbook-code (vendored)\n");
 
-    let cluster = TestCluster::single_node();
+    let cluster = TestCluster::single_node()?;
     let dir = cformat!("{}", cluster.aeron_dir().display());
     let ctx = rusteron_client::AeronContext::new()?;
     ctx.set_dir(&dir)?;
