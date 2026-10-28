@@ -55,7 +55,14 @@
 #     twin's driver mode but for its threading or DRIVER=embedded, aeron_lat's
 #     --driver and busy threads, an embedded driver's binary with driver.env
 #     under sudo setpriv, the session on fake hosts through fairness.py's
-#     declared rule (a twin chain; a driver mode differing beyond its knob).
+#     declared rule (a twin chain; a driver mode differing beyond its knob);
+#     the mixed-load sessions (transport-aws-aeron-mixed.tsv, both pairs):
+#     each mixed arm's driver mode with the duty-cycle thresholds, two CPUs
+#     a host (hot, background), its NIC counters snapshotted around each
+#     point and collected, the raw DPDK floor (floor on dpdk-raw's set-up,
+#     the driver's environment, sudo setpriv), fairness.py clean (its
+#     mixed-load rules flagging a fan-out subscription short), analyse.py's
+#     mixed table and checklist.
 #
 # Run from anywhere:  bash md-dpdk/benches/cloud/test/test-transport-runner.sh
 set -euo pipefail
@@ -270,7 +277,7 @@ got=$(
     TR_DECLARED="dpdk-aeron-rel-emb:dpdk-aeron-rel-invoker:aeron_driver=embedded dpdk-aeron-rel-invoker:dpdk-aeron-rel-emb:aeron_threading=INVOKER" tr_declared_check 2>&1 | sed 's/^/refused: /' || true
     echo "handoff check: $(tr_check a 2>&1)"
 )
-same "transport.sh, the hand-off arms: each its twin's driver mode but for its threading (SHARED_NETWORK keeps the conductor's core, SHARED and INVOKER drop it) or DRIVER=embedded, each passing mode_check; aeron_lat's --driver (embedded, invoker) and busy threads (3, 2, 1, 0) from it; an embedded driver's binary started with ~/bench/driver.env under sudo setpriv; the events' spinners on the CPUs the driver leaves; INVOKER without the driver embedded and a twin chain going round refused; the sets file checks (54 points at 3 reps)" \
+same "transport.sh, the hand-off arms: each its twin's driver mode but for its threading (SHARED_NETWORK keeps the conductor's core, SHARED and INVOKER drop it) or DRIVER=embedded, each passing mode_check; aeron_lat's --driver (embedded, invoker) and busy threads (3, 2, 1, 0) from it; an embedded driver's binary started with ~/bench/driver.env under sudo setpriv; the events' spinners on the CPUs the driver leaves; INVOKER without the driver embedded and a twin chain going round refused; the sets file checks (66 points at 3 reps: h and k)" \
 "dpdk-aeron-rel: dpdk<suffix>
   check 0; knobs threading DEDICATED driver external; --driver external --driver-busy-threads 3; events 4,6,8,10,12,14 12,14
   start: sh -c 'taskset -c 0 env PATH=P aeron_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
@@ -294,7 +301,7 @@ aeron-rel-invoker: kernel-busy@AERON_TERM_BUFFER_LENGTH=1048576@AERON_IPC_TERM_B
   start: sudo -n setpriv --reuid=\"\$(id -u)\" --regid=\"\$(id -g)\" --init-groups --reset-env sh -c '. ~/bench/driver.env; taskset -c 0 env PATH=P aeron_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
 refused: arm dpdk-aeron-rel-shnet: aeron_threading INVOKER with aeron_driver external: an INVOKER driver is the binary's own (aeron_driver embedded)
 refused: TR_DECLARED dpdk-aeron-rel-emb: its twins go round ( dpdk-aeron-rel-emb dpdk-aeron-rel-invoker dpdk-aeron-rel-emb)
-handoff check: 54" "$got"
+handoff check: 66" "$got"
 got=$(
     . "$cloud/modes.sh"
     rc() { mode_check "$1" remote x86_64 aws '' >/dev/null 2>&1; echo -n " $?"; }
@@ -1282,6 +1289,8 @@ driver) if [[ -n ${FAKE_DRIVER_FAIL:-} && $2 == "$FAKE_DRIVER_FAIL"* ]]; then
     # the driver's environment (vm.sh's ~/bench/driver.env), which an
     # embedded driver's binary sources: here its mode alone
     echo "export FAKE_DRIVER_ENV='$2'" >"$HOME/bench/driver.env"
+    # the data NICs DPDK's (vm.sh nicstats then says so) until stop
+    case $2 in dpdk*) touch "$st/dpdk" ;; *) rm -f "$st/dpdk" ;; esac
     case $2 in *@NAPI_DEFER=*) v=${2#*@NAPI_DEFER=}; v=${v%%@*}; echo "${v%/*} ${v#*/}" >"$st/napi" ;; kernel-busy*) echo "2 200000" >"$st/napi" ;; kernel | kernel@*) echo "0 0" >"$st/napi" ;;
     # Onload's driver: onload-up first, the NICs' deferral off
     onload@*) echo "0 0" >"$st/napi" ;; esac ;;
@@ -1300,7 +1309,16 @@ transport-net)
         echo "$FAKE_HOST transport-net napi $v" >>"$FAKE_HOSTS/calls"
     fi ;;
 napi) read -r n ns <"$st/napi" 2>/dev/null || { n=2 ns=200000; }; printf 'enP1 %s %s\nenP2 %s %s\n' "$n" "$ns" "$n" "$ns" ;;
-stop | events-stop-all) ;;
+stop) rm -f "$st/dpdk" ;;
+events-stop-all) ;;
+# each data NIC's counters, 1 MB more each way a call (a point's growth 2 MB
+# a host), or dpdk while DPDK holds them
+nicstats) n=$(cat "$st/nic" 2>/dev/null || echo 0); n=$((n + 1)); echo $n >"$st/nic"
+    if [[ -e $st/dpdk ]]; then echo "sender eth1 dpdk"; echo "receiver eth2 dpdk"; else
+        for r in "sender eth1" "receiver eth2"; do
+            echo "$r tx_bytes=$((n * 1000000)) rx_bytes=$((n * 1000000)) tx_packets=$((n * 1000)) rx_packets=$((n * 1000)) bw_out_allowance_exceeded=0 pps_allowance_exceeded=0"
+        done
+    fi ;;
 cc-available) echo "reno cubic" ;;
 # a point's events: begun (logged), then read back as host.sh events_stop
 # prints them: the trace's clock the wall clock's, and on the host that
@@ -1329,16 +1347,18 @@ cat >"$sb/bin/stub" <<'SH'
 me=${0##*/}
 # (with the driver's environment, when it was sourced: an embedded driver's binary)
 echo "$FAKE_HOST $me $*${FAKE_DRIVER_ENV:+ [driver.env $FAKE_DRIVER_ENV]}" >>"$FAKE_HOSTS/runs"
-role= out= label= rate= kind=oneway streams=1 warm=0 dur=0 mode= impl=
+role= out= label= rate= kind=oneway streams=1 warm=0 dur=0 mode= impl= load= hot= dbusy=
 while (($#)); do
     case $1 in --role) role=$2 ;; --out) out=$2 ;; --label) label=$2 ;; --rate) rate=$2 ;; --round-trip) kind=load ;;
-    --streams) streams=$2 ;; --warmup-s) warm=$2 ;; --duration-s) dur=$2 ;; --mode) mode=$2 ;; --impl) impl=$2 ;; esac
+    --streams) streams=$2 ;; --warmup-s) warm=$2 ;; --duration-s) dur=$2 ;; --mode) mode=$2 ;; --impl) impl=$2 ;;
+    --load) load=$2 ;; --hot-rate) hot=$2 ;; --driver-busy-threads) dbusy=$2 ;; esac
     shift
 done
 # the manifest's settings as the binaries write them: the transport, the
 # schedule, the counters each host's loss accounting reads
 case $me in
 aeron_lat) transport=aeron-$mode extra=', "aeron.naks-sent": "0", "aeron.retransmits-sent": "0"' ;;
+floor) transport=raw-dpdk extra= ;;
 tcp_lat) transport=tcp extra=', "tcp.retrans": "0", "tcp.dsack_dups": "0", "tcp.retrans_not_dsack": "0", "tcp.lost_end": "0"' ;;
 mpsc_lat) transport=mpsc extra= ;;
 *) transport=udp extra= ;;
@@ -1346,6 +1366,36 @@ esac
 [[ $me == udp_lat || $me == tcp_lat ]] && extra+=', "busy_read_us": "50"'
 settings="\"transport\": \"$transport\", \"streams\": \"$streams\", \"warmup_s\": \"$warm\", \"duration_s\": \"$dur\", \"scheduled\": \"0\", \"late\": \"0\", \"max_send_lag_ns\": \"0\", \"retrans\": \"0\"$extra"
 [[ $role == oneway-send || $role == oneway-recv ]] && { echo "stub: --role $role is refused (one way is --role local)" >&2; exit 2; }
+# --load mixed: both ends' counts as mixed.rs writes them, every message
+# accounted for (each background stream's sent, read by each subscription,
+# echoed and back), the drivers' bytes those its frames give (about 1.5 MB:
+# inside the fake NICs' 2 MB a host), the DPDK transport's own counters
+if [[ $load == mixed ]]; then
+    n=$((streams - 1)) per=$((1500000 / ((streams - 1) * 320)))
+    classes= pubs= fan= sent= zeros= recv= period=
+    for ((i = 1; i <= n; i++)); do
+        c=$(((i - 1) % 8)) f=$((1 + i % 4))
+        classes+=$(echo SSSSBBIM | cut -c$((c + 1)))
+        pubs+=,$(((c == 7) + 1)) fan+=,$f sent+=,$per zeros+=,0 period+=,1000000
+        r=$per
+        for ((k = 1; k < f; k++)); do r+=/$per; done
+        recv+=,$r
+    done
+    fb=$((n * per * 320))
+    settings+=", \"load\": \"mixed\", \"mixed.profile\": \"mixed-v1\", \"mixed.classes\": \"$classes\", \"mixed.publishers\": \"${pubs#,}\""
+    settings+=", \"mixed.fanout\": \"${fan#,}\", \"mixed.period_ns\": \"${period#,}\", \"hot_rate\": \"$hot\", \"busy_threads\": \"$((2 + dbusy))\""
+    settings+=", \"driver.bytes-sent\": \"$((fb + 96))\", \"driver.bytes-received\": \"$((fb + 96))\", \"mixed.frame_bytes_sent\": \"$fb\", \"mixed.frames_sent\": \"$((n * per))\""
+    settings+=", \"nic.tx_bytes\": \"$((fb + 100000))\", \"nic.rx_bytes\": \"$((fb + 100000))\", \"nic.rx_missed\": \"0\", \"nic.allowance_exceeded\": \"0\""
+    if [[ $role == pong ]]; then
+        settings+=", \"mixed.recv\": \"${recv#,}\", \"mixed.echoed\": \"${sent#,}\", \"mixed.recv_gaps\": \"${zeros#,}\", \"mixed.recv_behind\": \"${zeros#,}\""
+        settings+=", \"mixed.recv_refused\": \"${zeros#,}\", \"mixed.hot_echoes\": \"1\", \"mixed.frame_bytes_received\": \"$fb\""
+        [[ -n ${FAKE_FANOUT_SHORT:-} && $label == *"$FAKE_FANOUT_SHORT"* ]] && settings=${settings/\"mixed.recv\": \"$per\/$per,/\"mixed.recv\": \"$per\/$((per - 1)),}
+    else
+        settings+=", \"mixed.scheduled\": \"${sent#,}\", \"mixed.sent\": \"${sent#,}\", \"mixed.echoes\": \"${sent#,}\", \"mixed.echo_gaps\": \"${zeros#,}\""
+        settings+=", \"mixed.echo_behind\": \"${zeros#,}\", \"mixed.bp_measured\": \"${zeros#,}\", \"mixed.hot_sent\": \"1\", \"mixed.hot_frame_bytes\": \"96\""
+        settings+=", \"mixed.echo_frame_bytes_received\": \"$fb\", \"all.p50_ns\": \"2\", \"all.p99_ns\": \"3\", \"all.p9999_ns\": \"5\", \"all.max_ns\": \"150000\""
+    fi
+fi
 [[ $role == ping ]] && kind=load
 # --mode spy-udp: the run's frames (100 pings, a round trip's 100 echoes) and
 # its driver's bytes; its sink (--role pong) the frames it read (90 pings
@@ -1428,7 +1478,7 @@ mkhost() { # <host>
     local h=$sb/$1
     mkdir -p "$h/ergon/md-dpdk/benches/cloud" "$h/ergon/target/release" "$h/bench" "$h/extra"
     ln -sf "$sb/bin/fakevm" "$h/ergon/md-dpdk/benches/cloud/vm.sh"
-    for b in aeron_lat mpsc_lat udp_lat tcp_lat; do ln -sf "$sb/bin/stub" "$h/ergon/target/release/$b"; done
+    for b in aeron_lat mpsc_lat udp_lat tcp_lat floor; do ln -sf "$sb/bin/stub" "$h/ergon/target/release/$b"; done
 }
 trun() { # <pair> <reps> [<arms file>] [vars...]: transport.sh run on host a
     local pair=$1 reps=$2 af=${3:-}
@@ -1462,7 +1512,8 @@ ENV
 # the runner stops only the PIDs it started, never by name
 mkdir -p "$tmp/bystander"
 ln -s /bin/sleep "$tmp/bystander/aeron_lat"
-"$tmp/bystander/aeron_lat" 600 &
+# (it outlives the sessions run before it is checked, however slow the host)
+"$tmp/bystander/aeron_lat" 3600 &
 bystander=$!
 trun b 1 "" && rrc=0 || rrc=$?
 d=$sb/a/bench/transport-b
@@ -1995,6 +2046,65 @@ fv=$(python3 "$cloud/fairness.py" "$d" 2>&1 || true)
 grep -q "^declared: h: .*dpdk-aeron-rel-emb and its twin dpdk-aeron-rel differ in media driver mode" <<<"$fv" || why+=" a driver mode beyond DRIVER not flagged: $(grep -m2 '^declared' <<<"$fv");"
 [[ -z $why ]] && pass "transport.sh run, the hand-off session: each arm's driver mode on both hosts (DRIVER=embedded: no process), aeron_lat's --driver and busy threads by arm, an embedded driver's binary with driver.env under sudo setpriv (no other), knobs and driver mode in every manifest; fairness.py clean (each declared twin, the invoker's through -emb), and a driver mode differing beyond DRIVER flagged" ||
     fail "transport.sh run, the hand-off session:$why"
+
+# the mixed-load sessions (transport-aws-aeron-mixed.tsv) on the fake hosts,
+# each pair (a the kernel's, b DPDK's): every point a row; each mixed arm's
+# driver mode with the duty-cycle thresholds (each threading's own keys
+# apart), --load mixed --hot-rate and two CPUs a host (hot, background); the
+# NIC counters read around each mixed point (no floor's) and collected (a
+# DPDK host's the binary's own); the raw DPDK floor on dpdk-raw's set-up with
+# the driver's environment under sudo setpriv; fairness.py clean, its
+# mixed-load rules then flagging a fan-out subscription short; analyse.py's
+# mixed table and checklist
+for pair in a b; do
+    TRUN_SETS=$cloud/transport-aws-aeron-mixed.tsv trun "$pair" 1 "" && mrc=0 || mrc=$?
+    d=$sb/a/bench/transport-$pair
+    why=
+    [[ $mrc == 0 && $(cat "$d/rc") == 0 ]] || why+=" exit $mrc: $(tail -3 "$sb/run.out" | tr '\n' ' ');"
+    n=$(plan count "$pair" 1 "$matrix:arms" "$cloud/transport-aws-aeron-mixed.tsv")
+    [[ $n == 27 && $(grep -c . "$d/results.csv") == "$n" ]] || why+=" $(grep -c . "$d/results.csv") rows, $n planned (27);"
+    stack=kernel-busy
+    [[ $pair == b ]] && stack=dpdk
+    for h in a b; do
+        [[ $(grep -c "^$h vm.sh driver $stack@.*@AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD=10000@AERON_DRIVER_SENDER_CYCLE_THRESHOLD=10000@AERON_DRIVER_RECEIVER_CYCLE_THRESHOLD=10000" "$sb/calls") -ge 5 ]] ||
+            why+=" host $h: no driver mode with the thresholds;"
+        grep -q "^$h vm.sh driver dpdk-raw$" "$sb/calls" || why+=" host $h: no dpdk-raw set-up;"
+    done
+    for r in 'a aeron_lat --role ping' 'b aeron_lat --role pong'; do
+        [[ $(grep "^$r " "$sb/runs" | grep -c -- '--cpus 10,12 .*--load mixed --hot-rate 10000') == 24 ]] ||
+            why+=" ${r%% *}: not 24 mixed runs on CPUs 10,12: $(grep "^$r " "$sb/runs" | head -1);"
+    done
+    # the floor set's dpdk-raw (and on b its A/A)
+    floors=1
+    [[ $pair == b ]] && floors=2
+    [[ $(grep -c "^b floor --role pong .*--endpoint .* --reply .*\[driver.env dpdk-raw\]$" "$sb/runs") == "$floors" ]] ||
+        why+=" not $floors floor pongs with the driver's environment: $(grep floor "$sb/runs" | head -1);"
+    grep -q 'setpriv .*floor --role ping' "$sb/sudo" || why+=" the floor not under sudo setpriv;"
+    mixed_pts=$(grep -l -- '--load mixed' "$d"/manifest/*.env | wc -l | tr -d ' ')
+    [[ $mixed_pts == 24 && $(ls "$d"/nicstats | wc -l | tr -d ' ') == $((mixed_pts * 4)) ]] ||
+        why+=" $(ls "$d"/nicstats | wc -l) NIC snapshots for $mixed_pts mixed points (4 each, no floor's);"
+    src=$(python3 -c 'import glob, json, sys
+for f in sorted(glob.glob(sys.argv[1] + "/*/manifest-*.json")):
+    m = json.load(open(f))
+    if (m.get("binary") or {}).get("settings", {}).get("load") == "mixed":
+        print(" ".join(sorted({c["source"] for c in (m.get("nic_counters") or {}).values()})) or "none")' "$d" | sort -u | tr '\n' ' ')
+    want=kernel
+    [[ $pair == b ]] && want=dpdk
+    [[ $src == "$want " ]] || why+=" NIC counters' sources $src, not $want;"
+    fv=$(python3 "$cloud/fairness.py" "$d" 2>&1) || why+=" fairness: $(head -5 <<<"$fv" | tr '\n' ' ');"
+    an=$(python3 "$cloud/analyse.py" --transport "$d" 2>&1) || why+=" analyse.py failed: $(tail -2 <<<"$an");"
+    grep -q '^## Mixed load: hot stream beside a background mix' <<<"$an" || why+=" no mixed table;"
+    [[ $(grep -c '^- \*\*' <<<"$an") == 6 ]] || why+=" $(grep -c '^- \*\*' <<<"$an") arms in the checklist, not 6 (five and the A/A);"
+    grep -q 'floor-relative overhead: hot p50 .* − dpdk-raw floor\|floor-relative overhead: hot p50 .* − mio-udp floor' <<<"$an" || why+=" no floor-relative line;"
+    [[ -z $why ]] && pass "transport.sh run, the mixed-load session, pair $pair: every point a row; the mixed arms' driver modes with the duty-cycle thresholds, --load mixed on CPUs 10,12 each end; NIC counters around each mixed point ($want); the raw DPDK floor on dpdk-raw with driver.env under sudo setpriv; fairness.py clean; analyse.py's mixed table, checklist and floor lines" ||
+        fail "transport.sh run, the mixed-load session, pair $pair:$why"
+done
+TRUN_SETS=$cloud/transport-aws-aeron-mixed.tsv trun a 1 "" FAKE_FANOUT_SHORT=ka:aeron-mix-shared@STREAMS=32 || true
+d=$sb/a/bench/transport-a
+fv=$(python3 "$cloud/fairness.py" "$d" 2>&1 || true)
+grep -q "^mixed-counts: ka: .*aeron-mix-shared@STREAMS=32.*: background stream 1 subscription 1 read" <<<"$fv" &&
+    pass "fairness.py mixed-counts: a fan-out subscription that read one message short is flagged" ||
+    fail "fairness.py mixed-counts: a short fan-out subscription not flagged: $(head -3 <<<"$fv")"
 
 # transport_prepare's steps on the operator machine (lib.sh's helpers faked):
 # the tree and the arms file to both VMs, the build, the map's boot line, a

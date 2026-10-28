@@ -74,6 +74,30 @@ concerns. Rules:
                    the sink read every ping the run sent (and in a round trip every
                    echo), in order, and host a's driver sent at least every frame's
                    bytes (driver.bytes-sent): the spy read a stream that crossed the wire
+  mixed-counts     a mixed-load point (aeron_lat --load mixed, mixed.rs): both ends'
+                   manifests, one profile; every background message scheduled sent,
+                   read by every subscription of the pong's fan-out, the first's
+                   echoed and every echo back at the ping, in order, none refused;
+                   the hot stream's every ping echoed
+  mixed-wire       each host's media driver sent and received at least the frames'
+                   bytes the counts give (Aeron's 32-byte header, 32-byte alignment,
+                   fragments at the MTU), and no more than those, its retransmits,
+                   2 % and a heartbeat allowance
+  mixed-nic        each host's data NICs (kernel: vm.sh nicstats; DPDK: the transport's
+                   counters) moved at least the driver's bytes and no more than them
+                   with every datagram's headers and the status messages; the ENA's
+                   allowance counters and the receive drops (kernel UdpRcvbufErrors,
+                   UdpInErrors; DPDK nic-rx-missed, nic-rx-nombuf, queue-drop) still
+  backpressure     an offer back-pressured in the measured window (the hot stream's
+                   or a background one's) only where the point shows saturation: a
+                   driver duty cycle over its threshold, the background thread busy
+                   90 % of its time or an invoking thread's driver with work in 90 %
+                   of its duty cycles (else unexplained); a
+                   saturated point is flagged, shown and never compared
+  budget           no host ran more busy threads (over 90 % of a CPU, the gap
+                   spinners and the IRQ core's ksoftirqd apart) than the arm's
+                   declared budget (busy_threads: its client threads and its
+                   driver's); fewer is a note
   max              every max labelled (spikes.py); unexplained blocks
   netem            a loss row's netem on every data NIC of every host at its
                    loss, its drops inside a 99.9 % binomial interval; none on
@@ -122,7 +146,10 @@ REQUIRED = ("set", "arm", "round", "rep", "rate", "streams", "size", "duration_s
             "loss_counters", "transport")
 LOSS_SOURCES = {"tcp": ("tcp_info", "nstat"), "udp": ("nstat",), "aeron-udp": ("aeron",), "aeron-dpdk": ("aeron",),
                 "aeron-ipc": ("aeron",), "aeron-spy": ("aeron",), "aeron-spy-udp": ("aeron",),
-                "aeron-spy-dpdk": ("aeron",), "mpsc": ()}
+                "aeron-spy-dpdk": ("aeron",), "mpsc": (),
+                # the raw floor (floor --role ping/pong): no retransmits; a kernel
+                # one's drops are nstat's, a DPDK one's the binary's own counts
+                "raw-udp": ("nstat",), "raw-dpdk": ()}
 # Aeron's data frame: the message and its 32-byte header (aeron_lat.rs)
 AERON_FRAME = 96
 
@@ -174,6 +201,255 @@ def sink_problems(p):
     if sent_bytes is None or sent_bytes < (sent + echoes) * AERON_FRAME:
         out.append(f"{p.tag}: host a's driver sent {sent_bytes} bytes for {sent + echoes:,} frames")
     return out
+
+
+# a mixed-load point (aeron_lat --load mixed): the profile its counts follow
+MIXED_PROFILE = "mixed-v1"
+# the media driver's bytes beyond the frames the counts give: padding at a
+# term's end, setup and RTT frames (a share), and a heartbeat (one 32-byte
+# frame each 100 ms) of every publication, idle or not, over the process's
+# life (its set-up, warm-up, window and drain: MIXED_LIFE_S beyond them)
+WIRE_SLACK = 0.02
+HEARTBEAT_BYTES_S = 10 * 32
+MIXED_LIFE_S = 60
+WIRE_SLACK_BYTES = 256 * 1024
+# a datagram's UDP, IPv4 and Ethernet headers; a status message's datagram
+DATAGRAM_HEADERS = 42
+STATUS_MESSAGE = 36 + DATAGRAM_HEADERS
+# what else may cross a data NIC in a point (ARP, ICMP): bytes
+NIC_SLACK_BYTES = 1 << 20
+# busy shares that show a thread saturated (the background's passes with
+# work, an invoking thread's duty cycles with work)
+SATURATED_SHARE = 0.9
+# a thread no budget counts: the runner's gap spinners on the idle hot CPUs
+NOT_BUDGET = {"gapspin"}
+
+
+def mixed_point(p):
+    """Whether a point is a mixed-load one (its binary's load=mixed)."""
+    return (((p.manifest or {}).get("binary") or {}).get("settings") or {}).get("load") == "mixed"
+
+
+def ints_of(s, key):
+    """A manifest setting that is a comma list of integers, or None."""
+    v = (s or {}).get(key)
+    if v is None:
+        return None
+    try:
+        return [int(x) for x in str(v).split(",")]
+    except ValueError:
+        return None
+
+
+def int_of(s, key):
+    v = (s or {}).get(key)
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def mixed_count_problems(tag, row, ps, qs):
+    """A mixed point's counts (the mixed-counts rule): the ping's settings
+    ps, the pong's qs, the row; [] when every message is accounted for."""
+    if qs is None:
+        return [f"{tag}: no pong manifest: the background's arrival on b unproven"]
+    out = []
+    for k in ("mixed.profile", "mixed.classes", "mixed.publishers", "mixed.fanout", "mixed.period_ns", "streams",
+              "hot_rate"):
+        if ps.get(k) != qs.get(k):
+            out.append(f"{tag}: the ends ran different mixes: {k} {ps.get(k)!r} against {qs.get(k)!r}")
+    if ps.get("mixed.profile") != MIXED_PROFILE:
+        out.append(f"{tag}: profile {ps.get('mixed.profile')!r}, not {MIXED_PROFILE}")
+    if out:
+        return out
+    sched, sent, echoes = ints_of(ps, "mixed.scheduled"), ints_of(ps, "mixed.sent"), ints_of(ps, "mixed.echoes")
+    fanout, echoed = ints_of(ps, "mixed.fanout"), ints_of(qs, "mixed.echoed")
+    recv = [[int(x) for x in subs.split("/")] for subs in str(qs.get("mixed.recv", "")).split(",") if subs]
+    lists = {"mixed.scheduled": sched, "mixed.sent": sent, "mixed.echoes": echoes, "mixed.fanout": fanout,
+             "pong mixed.echoed": echoed}
+    missing = [k for k, v in lists.items() if v is None]
+    n = len(fanout or [])
+    if missing or any(len(v) != n for v in lists.values() if v is not None) or len(recv) != n:
+        return [f"{tag}: per-stream counts missing or of the wrong length ({', '.join(missing) or 'mixed.recv'})"]
+    for i in range(n):
+        s = i + 1
+        if sent[i] != sched[i]:
+            out.append(f"{tag}: background stream {s} sent {sent[i]:,} of the {sched[i]:,} it owed")
+        if len(recv[i]) != fanout[i]:
+            out.append(f"{tag}: background stream {s} read by {len(recv[i])} subscriptions, its fan-out {fanout[i]}")
+        for k, r in enumerate(recv[i]):
+            if r != sent[i]:
+                out.append(f"{tag}: background stream {s} subscription {k} read {r:,} of {sent[i]:,}")
+        if echoed[i] != (recv[i][0] if recv[i] else 0):
+            out.append(f"{tag}: background stream {s} echoed {echoed[i]:,}, its first subscription read "
+                       f"{recv[i][0] if recv[i] else 0:,}")
+        if echoes[i] != echoed[i]:
+            out.append(f"{tag}: background stream {s}: {echoes[i]:,} echoes back of {echoed[i]:,} echoed")
+    for side, s_, keys in (("ping", ps, ("mixed.echo_gaps", "mixed.echo_behind")),
+                           ("pong", qs, ("mixed.recv_gaps", "mixed.recv_behind", "mixed.recv_refused"))):
+        for k in keys:
+            v = ints_of(s_, k)
+            if v is None or any(v):
+                out.append(f"{tag}: the {side}'s {k[len('mixed.'):]} {s_.get(k)!r}")
+    hot_sent, hot_echoes = int_of(ps, "mixed.hot_sent"), int_of(qs, "mixed.hot_echoes")
+    if hot_sent is None or hot_echoes != hot_sent:
+        out.append(f"{tag}: the hot stream: {hot_echoes} pings echoed of {hot_sent} sent")
+    if row is not None and (row.get("lost") or 0) != 0:
+        out.append(f"{tag}: the hot stream lost {row['lost']}")
+    return out
+
+
+def wire_window(expect, retrans, pubs, life_s):
+    """(lo, hi): what a driver's byte counter may read for frames of
+    `expect` bytes, its retransmitted bytes and `pubs` publications'
+    heartbeats over `life_s` seconds."""
+    return expect, int(expect * (1 + WIRE_SLACK)) + retrans + pubs * HEARTBEAT_BYTES_S * life_s + WIRE_SLACK_BYTES
+
+
+def mixed_expect(ps, qs, row):
+    """{host: (frame bytes sent, frame bytes received, frames sent, publications)}
+    a mixed point's counts give each host's driver, or None where missing."""
+    a_sent = (int_of(ps, "mixed.hot_frame_bytes"), int_of(ps, "mixed.frame_bytes_sent"))
+    a_recv = (int_of(ps, "mixed.echo_frame_bytes_received"),)
+    hot_echoes = int_of(qs, "mixed.hot_echoes")
+    b_sent = (int_of(qs, "mixed.frame_bytes_sent"), hot_echoes)
+    b_recv = (int_of(qs, "mixed.frame_bytes_received"), hot_echoes)
+    pubs_a = 1 + sum(ints_of(ps, "mixed.publishers") or [])
+    pubs_b = 1 + len(ints_of(qs, "mixed.publishers") or [])
+    received = (row or {}).get("received")
+    if None in a_sent + a_recv + b_sent + b_recv or received is None:
+        return None
+    return {"a": (a_sent[0] + a_sent[1], a_recv[0] + received * AERON_FRAME,
+                  (int_of(ps, "mixed.hot_sent") or 0) + (int_of(ps, "mixed.frames_sent") or 0), pubs_a),
+            "b": (b_sent[0] + hot_echoes * AERON_FRAME, b_recv[0] + hot_echoes * AERON_FRAME,
+                  hot_echoes + (int_of(qs, "mixed.frames_sent") or 0), pubs_b)}
+
+
+def mixed_life_s(ps):
+    return (int_of(ps, "warmup_s") or 0) + (int_of(ps, "duration_s") or 0) + MIXED_LIFE_S
+
+
+def mixed_wire_problems(tag, row, ps, qs, mtu=None):
+    """Each host's driver bytes against the frames its counts give (the
+    mixed-wire rule): sent and received each within wire_window."""
+    exp = mixed_expect(ps, qs or {}, row)
+    if exp is None:
+        return [f"{tag}: the frames' bytes not recorded on both ends"]
+    out = []
+    life = mixed_life_s(ps)
+    other = {"a": "b", "b": "a"}
+    for host, s_ in (("a", ps), ("b", qs)):
+        sent, recv, _, pubs = exp[host]
+        for what, want, k, retrans_of in (("sent", sent, "driver.bytes-sent", s_),
+                                          ("received", recv, "driver.bytes-received",
+                                           ps if host == "b" else qs)):
+            got = int_of(s_, k)
+            retrans = int_of(retrans_of, "driver.retransmitted-bytes") or 0
+            lo, hi = wire_window(want, retrans, exp[host][3] if what == "sent" else exp[other[host]][3], life)
+            if got is None:
+                out.append(f"{tag}: {host}'s {k} not recorded")
+            elif not lo <= got <= hi:
+                out.append(f"{tag}: {host}'s driver {what} {got:,} bytes, its frames {want:,} "
+                           f"(allowed {lo:,} to {hi:,})")
+    return out
+
+
+def mixed_nic_problems(tag, m, ps, qs):
+    """Each host's data NICs against its driver (the mixed-nic rule): the
+    runner's nic_counters (transport_collect.py: vm.sh nicstats' growth on a
+    kernel host, the DPDK transport's own counters from the binaries'
+    manifests), and each host's receive drops."""
+    nic = m.get("nic_counters") or {}
+    out = []
+    for host, s_ in (("a", ps), ("b", qs or {})):
+        c = nic.get(host)
+        if not c:
+            out.append(f"{tag}: {host}'s data NIC counters not recorded")
+            continue
+        sent, recv = int_of(s_, "driver.bytes-sent"), int_of(s_, "driver.bytes-received")
+        frames = (int_of(ps, "mixed.hot_sent") or 0) + (int_of(ps, "mixed.frames_sent") or 0) if host == "a" else \
+            (int_of(qs, "mixed.hot_echoes") or 0) + (int_of(qs, "mixed.frames_sent") or 0)
+        frames += int_of(s_, "driver.heartbeats-sent") or 0
+        sms_out = int_of(s_, "driver.status-messages-sent") or 0
+        sms_in = int_of(s_, "driver.status-messages-received") or 0
+        other = ps if host == "b" else (qs or {})
+        frames_in = (int_of(other, "mixed.hot_sent") or 0) + (int_of(other, "mixed.frames_sent") or 0) \
+            if host == "b" else (int_of(qs, "mixed.hot_echoes") or 0) + (int_of(qs, "mixed.frames_sent") or 0)
+        frames_in += int_of(other, "driver.heartbeats-sent") or 0
+        for what, drv, n, sms, k in (("sent", sent, frames, sms_out, "tx_bytes"),
+                                     ("received", recv, frames_in, sms_in, "rx_bytes")):
+            got = c.get(k)
+            if drv is None or got is None:
+                out.append(f"{tag}: {host}'s {k} or driver bytes {what} not recorded")
+                continue
+            hi = drv + n * DATAGRAM_HEADERS + sms * STATUS_MESSAGE + NIC_SLACK_BYTES
+            if not drv <= got <= hi:
+                out.append(f"{tag}: {host}'s data NICs {what} {got:,} bytes, its driver {drv:,} (allowed {drv:,} "
+                           f"to {hi:,}: every datagram's headers and the status messages)")
+        if c.get("allowance_exceeded"):
+            out.append(f"{tag}: {host}'s ENA allowance counters grew by {c['allowance_exceeded']:,}: the instance's "
+                       "network limits shaped the point")
+        for k in ("rx_missed", "rx_nombuf", "queue_drop"):
+            if c.get(k):
+                out.append(f"{tag}: {host}'s DPDK {k} grew by {c[k]:,}")
+        drops = {k: v for k, v in (((m.get("loss_counters") or {}).get(host) or {}).get("nstat") or {}).items()
+                 if k in ("UdpRcvbufErrors", "UdpInErrors", "UdpMemErrors") and v}
+        if drops:
+            out.append(f"{tag}: {host}'s kernel dropped UDP: " + ", ".join(f"{k} {v:,}" for k, v in sorted(drops.items())))
+    return out
+
+
+def share(s, num, den):
+    a, b = int_of(s, num), int_of(s, den)
+    return a / b if a is not None and b else None
+
+
+def mixed_saturation(ps, qs):
+    """What shows a mixed point's threads saturated, on either host: a
+    driver agent's duty cycles over its threshold, the background thread
+    busy (in passes that did work) SATURATED_SHARE of its time, an invoking
+    thread whose driver had work in that share of its duty cycles; [] when
+    nothing does."""
+    out = []
+    for host, s_ in (("a", ps), ("b", qs or {})):
+        for agent in ("conductor", "sender", "receiver"):
+            n = int_of(s_, f"driver.cycle.{agent}.exceeded")
+            if n:
+                out.append(f"{host} {agent} cycles over threshold {n:,}")
+        for what, num, den in (("background busy", "mixed.bg.busy_ns", "mixed.bg.loop_ns"),
+                               ("invoker busy", "mixed.invoker.busy_calls", "mixed.invoker.duty_calls")):
+            v = share(s_, num, den)
+            if v is not None and v >= SATURATED_SHARE:
+                out.append(f"{host} {what} {v:.0%}")
+    return out
+
+
+def mixed_backpressure(p):
+    """(back-pressure in the measured window, what shows saturation) of a
+    mixed point: the hot stream's (its row) and the background's
+    (mixed.bp_measured)."""
+    m = p.manifest or {}
+    ps = ((m.get("binary") or {}).get("settings")) or {}
+    qs = ((m.get("pong") or {}).get("settings")) or {}
+    bp = (p.row.get("backpressured") or 0) + sum(ints_of(ps, "mixed.bp_measured") or [])
+    return bp, mixed_saturation(ps, qs)
+
+
+def busy_budget(p, host):
+    """(observed, declared) busy threads of a host: threads over BUSY of a
+    CPU in any sample but the gap spinners and the IRQ core's own ksoftirqd
+    (the most in one sample), against the binary's busy_threads there."""
+    m = p.manifest or {}
+    own = (m.get("binary") if host == "a" else m.get("pong")) or {}
+    declared = int_of(own.get("settings"), "busy_threads")
+    c = (m.get("cpus") or {}).get(host) or {}
+    seen = 0
+    for sample in (m.get("threads") or {}).get(host) or []:
+        n = sum(1 for t in sample if t.get("util", 0) > BUSY and t.get("comm") not in NOT_BUDGET
+                and not irq_core_thread(t, c))
+        seen = max(seen, n)
+    return seen, declared
 
 
 def guest_drops(p):
@@ -629,6 +905,30 @@ def check(run_dir, absences=None, notes=None):
             m, hosts = p.manifest, hosts_of_point(p)
             for why in sink_problems(p):
                 add("sink", set_, [p.tag], why)
+            if mixed_point(p):
+                ps_ = (m.get("binary") or {}).get("settings") or {}
+                qs_ = (m.get("pong") or {}).get("settings")
+                for why in mixed_count_problems(p.tag, p.row, ps_, qs_):
+                    add("mixed-counts", set_, [p.tag], why)
+                for why in mixed_wire_problems(p.tag, p.row, ps_, qs_):
+                    add("mixed-wire", set_, [p.tag], why)
+                for why in mixed_nic_problems(p.tag, m, ps_, qs_):
+                    add("mixed-nic", set_, [p.tag], why)
+                bp, sat = mixed_backpressure(p)
+                if bp and not sat:
+                    add("backpressure", set_, [p.tag], f"{p.tag}: {bp:,} offers back-pressured in the measured "
+                        "window with no saturation shown (no driver cycle over its threshold, no thread busy "
+                        f"{SATURATED_SHARE:.0%} of the time)")
+                for host in hosts:
+                    seen, declared = busy_budget(p, host)
+                    if declared is None:
+                        add("budget", set_, [p.tag], f"{p.tag}: {host}'s busy-thread budget not recorded")
+                    elif seen > declared:
+                        add("budget", set_, [p.tag], f"{p.tag}: {host} ran {seen} busy threads, its budget "
+                            f"{declared}: a busy thread the arm does not declare")
+                    elif seen < declared and m["threads"].get(host):
+                        note("budget", set_, [p.tag], f"{p.tag}: {host} ran {seen} busy threads, its budget "
+                             f"{declared}")
             # a socket arm's NICs: interrupts not deferred (epoll never
             # busy-polls), but where a tuning session froze it on
             if socket_point(p) or onload_point(p):

@@ -8,7 +8,8 @@
 #                         io/benches's release profile (panic abort, debug
 #                         info), so every arm's measuring code is built alike;
 #                         counters too (the per-point events' sampler reads
-#                         the media driver's loss counters with it)
+#                         the media driver's loss counters with it), and floor
+#                         (the dpdk-raw arm's raw floor)
 #   mpsc_lat, udp_lat, tcp_lat  io/benches, a workspace of its own (the root
 #                         one excludes it), by its manifest
 #   fstack_lat            with TR_FSTACK_PREFIX (vm.sh transport-build fstack):
@@ -20,9 +21,9 @@ repo=${1:?checkout} target=${2:?target dir} features=${3:-}
 cd "$repo"
 CARGO_PROFILE_RELEASE_PANIC=abort CARGO_PROFILE_RELEASE_DEBUG=1 \
     cargo build --release --target-dir "$target" -p ergon-md-dpdk-harness ${features:+--features "$features"} \
-    --bin aeron_lat --bin hostcheck --bin counters
+    --bin aeron_lat --bin hostcheck --bin counters --bin floor
 cargo build --release --manifest-path io/benches/Cargo.toml --target-dir "$target" --bin mpsc_lat --bin udp_lat --bin tcp_lat
-bins="aeron_lat hostcheck counters mpsc_lat udp_lat tcp_lat"
+bins="aeron_lat hostcheck counters floor mpsc_lat udp_lat tcp_lat"
 if [[ -n ${TR_FSTACK_PREFIX:-} ]]; then
     bash io/benches/fstack/build-fstack.sh "$TR_FSTACK_PREFIX" native
     FSTACK_PREFIX=$TR_FSTACK_PREFIX cargo build --release --manifest-path io/benches/Cargo.toml --target-dir "$target" \

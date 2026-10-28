@@ -25,9 +25,9 @@ import math
 import random
 import sys
 
-SETUPS = ("none", "kernel", "dpdk", "sockets", "fstack", "onload")
+SETUPS = ("none", "kernel", "dpdk", "dpdk-raw", "sockets", "fstack", "onload")
 # setups whose NICs DPDK holds: netem (a kernel qdisc) cannot reach them
-DPDK_SETUPS = ("dpdk", "fstack")
+DPDK_SETUPS = ("dpdk", "dpdk-raw", "fstack")
 # one: both ends in one process on the set's host; two: ping on a, pong on
 # b; sink: one's run on host a and a sink on b reading every frame it sends
 HOSTS = ("one", "two", "sink")

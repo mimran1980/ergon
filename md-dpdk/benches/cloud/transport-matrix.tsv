@@ -5,6 +5,8 @@
 # arm <name> <binary> <setup> <hosts> [<arguments>...]
 #   binary   a bench binary on the VMs' PATH (transport-cli.md)
 #   setup    none (no network), kernel or dpdk (a media driver: vm.sh driver),
+#            dpdk-raw (the data NICs on DPDK and no driver: vm.sh driver
+#            dpdk-raw; the raw floor's binary takes the driver's environment),
 #            sockets (the kernel data path, busy poll: vm.sh sockets), fstack
 #            (no media driver; the data NICs on igb_uio for the binary's own
 #            DPDK: vm.sh fstack-up; AWS x86_64 only), onload (the binary, or
@@ -66,6 +68,26 @@ arm  dpdk-aeron-rel-shared  aeron_lat  dpdk    two  --mode udp --reliable true
 arm  dpdk-aeron-rel-invoker aeron_lat  dpdk    two  --mode udp --reliable true
 arm  aeron-rel-emb          aeron_lat  kernel  two  --mode udp --reliable true
 arm  aeron-rel-invoker      aeron_lat  kernel  two  --mode udp --reliable true
+# the mixed-load arms (transport-aws-aeron-mixed.tsv): a 64-byte hot stream at
+# 10k msg/s measured beside background streams of steady, bursty and
+# idle-then-burst traffic, 64 to 4096 B, fan-out 1 to 4 on the pong
+# (aeron_lat --load mixed, mixed.rs); the set's load is every stream's. Each
+# stack's in the five threading models, declared twins of its first
+# (TR_DECLARED), as the hand-off arms
+arm  aeron-mix              aeron_lat  kernel  two  --mode udp --reliable true --load mixed --hot-rate 10000
+arm  aeron-mix-emb          aeron_lat  kernel  two  --mode udp --reliable true --load mixed --hot-rate 10000
+arm  aeron-mix-shnet        aeron_lat  kernel  two  --mode udp --reliable true --load mixed --hot-rate 10000
+arm  aeron-mix-shared       aeron_lat  kernel  two  --mode udp --reliable true --load mixed --hot-rate 10000
+arm  aeron-mix-invoker      aeron_lat  kernel  two  --mode udp --reliable true --load mixed --hot-rate 10000
+arm  dpdk-aeron-mix         aeron_lat  dpdk    two  --mode udp --reliable true --load mixed --hot-rate 10000
+arm  dpdk-aeron-mix-emb     aeron_lat  dpdk    two  --mode udp --reliable true --load mixed --hot-rate 10000
+arm  dpdk-aeron-mix-shnet   aeron_lat  dpdk    two  --mode udp --reliable true --load mixed --hot-rate 10000
+arm  dpdk-aeron-mix-shared  aeron_lat  dpdk    two  --mode udp --reliable true --load mixed --hot-rate 10000
+arm  dpdk-aeron-mix-invoker aeron_lat  dpdk    two  --mode udp --reliable true --load mixed --hot-rate 10000
+# the raw DPDK floor: floor --role ping/pong over ergon-md-dpdk's packet path
+# alone (no Aeron), one thread an end, on dpdk-raw's set-up (vm.sh driver
+# dpdk-raw: the NICs on DPDK, no driver); mio-udp is the kernel's
+arm  dpdk-raw         floor      dpdk-raw two
 arm  mio-udp          udp_lat    sockets  two  --impl mio
 arm  eio-udp          udp_lat    sockets  two  --impl ergon
 arm  mio-tcp          tcp_lat    sockets  two  --impl mio

@@ -455,6 +455,15 @@ tr_bin_args() {
             fi
         fi
         ;;
+    floor)
+        # the raw floor (setup dpdk-raw): aeron_lat --mode udp's addresses on
+        # DPDK (the echo back to the ping host's receiver NIC, where DPDK
+        # receives), none of Aeron's settings
+        local ep=$peer rp
+        [[ $role == pong ]] && ep=$own
+        rp=$(tr_nic a receiver)
+        out="--endpoint $ep:$port --reply $rp:$port"
+        ;;
     udp_lat)
         out="--local $own:$port --peer $peer:$port ${busy}--rcvbuf $sb --sndbuf $sb --epoll-events $(tr_knob epoll_events)"
         [[ $args == *" --impl ergon "* ]] && out+=" --datagram-burst $(tr_knob datagram_burst)"
@@ -656,6 +665,12 @@ tr_driver_mode() {
         v=$(tr_knob napi_defer)
         if [[ $v == 0 ]]; then s+="@NAPI_DEFER=0/0"; elif [[ $v != "$TR_NAPI_DEFER" ]]; then s+="@NAPI_DEFER=$v/$TR_GRO_FLUSH_NS"; fi
     fi
+    # a mixed-load arm's driver counts its agents' duty cycles over
+    # TR_MIX_CYCLE_THRESHOLD_NS (the saturation its analysis reads), every
+    # threading model alike
+    if tr_mixed; then
+        for k in CONDUCTOR SENDER RECEIVER; do s+="@AERON_DRIVER_${k}_CYCLE_THRESHOLD=$TR_MIX_CYCLE_THRESHOLD_NS"; done
+    fi
     # the driver's threading (aeron_threading): SHARED_NETWORK one network
     # agent (sender and receiver; the conductor kept on its own core),
     # SHARED and INVOKER one agent for everything (no conductor of its own);
@@ -684,6 +699,10 @@ tr_driver_mode() {
     [[ $knobs == *" aeron_driver "* && $(tr_knob aeron_driver) == embedded ]] && s+="@DRIVER=embedded"
     echo "$m$s"
 }
+
+# tr_mixed: 0 when the current arm is a mixed-load one (aeron_lat --load
+# mixed: a hot stream's thread and a background's a host)
+tr_mixed() { [[ " ${args[*]:-} " == *" --load mixed "* ]]; }
 
 # tr_aeron_driver: aeron_lat's --driver for the current arm: invoker (its
 # driver INVOKER, the binary's), embedded (the binary's, on threads of its
@@ -799,15 +818,22 @@ tr_timer_args() {
 
 # tr_role_cpus <role>: the --cpus of a run, from the arm's CPUs ($cpus,
 # transport_clients): one per busy thread, in each binary's thread order:
-# local two (sender and receiver, or ping and echo), ping and pong one.
-# Under LAB_LOCAL_SMOKE both ends share one box, so the pong takes the last.
+# local two (sender and receiver, or ping and echo), ping and pong one; a
+# mixed-load arm's ping and pong two (the hot stream's, the background's).
+# Under LAB_LOCAL_SMOKE both ends share one box, so the pong takes the last
+# (a mixed one's the last two).
 tr_role_cpus() {
-    local c
+    local c n
     IFS=, read -ra c <<<"$cpus"
+    n=${#c[@]}
     case $1 in
     local) echo "${c[0]},${c[1]}" ;;
-    pong) if [[ -n ${LAB_LOCAL_SMOKE:-} ]]; then echo "${c[${#c[@]} - 1]}"; else echo "${c[0]}"; fi ;;
-    *) echo "${c[0]}" ;;
+    pong)
+        if tr_mixed; then
+            if [[ -n ${LAB_LOCAL_SMOKE:-} ]]; then echo "${c[n - 2]},${c[n - 1]}"; else echo "${c[0]},${c[1]}"; fi
+        elif [[ -n ${LAB_LOCAL_SMOKE:-} ]]; then echo "${c[n - 1]}"; else echo "${c[0]}"; fi
+        ;;
+    *) if tr_mixed; then echo "${c[0]},${c[1]}"; else echo "${c[0]}"; fi ;;
     esac
 }
 
@@ -842,6 +868,9 @@ tr_start() {
     if [[ ${bin:-} == aeron_lat ]] && tr_has_driver && [[ $(tr_aeron_driver) != external ]]; then
         priv="$tr_fstack_priv " src=". ~/bench/driver.env; "
     fi
+    # the raw floor on DPDK: the transport from the driver's environment
+    # (vm.sh driver dpdk-raw's), the EAL's privileges
+    [[ ${setup:-} == dpdk-raw ]] && priv="$tr_fstack_priv " src=". ~/bench/driver.env; "
     echo "${priv}sh -c '${src}taskset -c $hk env PATH=$tr_bin_path $pre$* & p=\$!; echo \$p >$pidf; wait \$p; r=\$?; echo \$r >$pidf.rc; exit \$r' >$outf"
 }
 
@@ -923,6 +952,9 @@ tr_snap() {
         [[ $1 == before || $bin != aeron_lat ]] || on "$(tr_host "$h")" "$(tr_arm_vm) aeron-page" >"$dir/aeronpage/$2-$h" 2>/dev/null
         # the data NICs' interrupt deferral, where the arm has it as a knob
         [[ $1 == before || " $(tr_arm_knobs | tr '\n' ' ') " != *" napi_defer "* ]] || on "$(tr_host "$h")" "$vm napi" >"$dir/napi/$2-$h" 2>/dev/null
+        # a mixed-load arm's data NIC counters (vm.sh nicstats), against
+        # its driver's bytes (fairness.py's mixed-nic rule)
+        ! tr_mixed || on "$(tr_host "$h")" "$vm nicstats" >"$dir/nicstats/$2-$h-$1" 2>/dev/null
     done
 }
 
@@ -1029,6 +1061,9 @@ tr_arm_up() {
         case $setup in
         kernel) on "$(tr_host "$h")" "$(tr_arm_vm) driver $(tr_driver_mode) && ${ov}$vm transport-net check" ;;
         dpdk) on "$(tr_host "$h")" "$(tr_arm_vm) driver $(tr_driver_mode)" ;;
+        # the raw floor's: the NICs on DPDK, no driver (its binary runs the
+        # transport's bindings itself with driver.env)
+        dpdk-raw) on "$(tr_host "$h")" "$vm driver dpdk-raw" ;;
         sockets) on "$(tr_host "$h")" "${ov}$vm transport-net" ;;
         fstack) on "$(tr_host "$h")" "$vm fstack-up" ;;
         # Onload over AF_XDP on the data NICs (vm.sh onload-up); an Aeron
@@ -1071,7 +1106,7 @@ tr_arm_down() {
     fi
     # fstack: the data NICs back from igb_uio to the kernel; onload: back
     # from AF_XDP, their queues and MTU as they were (vm.sh stop)
-    [[ $setup == kernel || $setup == dpdk || $setup == fstack || $setup == onload ]] || return 0
+    [[ $setup == kernel || $setup == dpdk || $setup == dpdk-raw || $setup == fstack || $setup == onload ]] || return 0
     for h in "$@"; do on "$(tr_host "$h")" "$(tr_arm_vm) stop" >>"$dir/logs/setup-$h.log" 2>&1 || log "host $h: vm.sh stop failed"; done
 }
 
@@ -1522,7 +1557,7 @@ tr_run() {
     . "$tr_here/irqs.sh"
     # shellcheck source=host.sh
     . "$tr_here/host.sh"
-    mkdir -p "$dir/manifest" "$dir/points" "$dir/logs" "$dir/irq" "$dir/netem" "$dir/samples" "$dir/nstat" "$dir/settings" "$dir/events" "$dir/aeronpage" "$dir/napi" "$dir/onload"
+    mkdir -p "$dir/manifest" "$dir/points" "$dir/logs" "$dir/irq" "$dir/netem" "$dir/samples" "$dir/nstat" "$dir/settings" "$dir/events" "$dir/aeronpage" "$dir/napi" "$dir/onload" "$dir/nicstats"
     # LAB_LOCAL_SMOKE: both hosts homes on this box (tr_smoke_hooks)
     [[ -z ${LAB_LOCAL_SMOKE:-} ]] || tr_smoke_hooks
     : >"$dir/failures.csv"

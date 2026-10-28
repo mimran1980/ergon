@@ -52,7 +52,10 @@ analyse.py --transport [--show-invalid] <run dir | results.csv>
     the transport suite's tables (transport-format.md): per set, stream count,
     netem and rate, each arm's min, p50, p99, p99.99 and max with the A/A
     spread and a verdict per pair of arms; stream-count tables; refused where
-    fairness.py finds a violation, unless --show-invalid
+    fairness.py finds a violation, unless --show-invalid; for the mixed-load
+    arms (aeron_lat --load mixed) a table per set, stream count and load of
+    each arm's busy-core budget, hot-stream and all-streams percentiles,
+    saturation and validity, then an adversarial checklist per arm
 analyse.py --ab <mode A> <mode B> <results.csv>
     one mode against another (each bare, compared within every state that has
     both, or as <state>:<mode>): per metric both medians and ranges and whether
@@ -1567,6 +1570,165 @@ def transport(args):
                         + ["flags"], rows))
         if gone:
             print(f"\nRefused stream counts: {', '.join(gone)}.")
+    mixed_section(points, violations, notes, show_invalid)
+
+
+# each stack's floor arm in the same session (the hot stream's size and
+# rate, no Aeron): the kernel's raw UDP (udp_lat's mio) and the DPDK packet
+# path alone (floor --role ping/pong)
+FLOOR_OF = {"kernel": "mio-udp", "dpdk": "dpdk-raw"}
+# the mixed-load rules (fairness.py)
+MIXED_RULES = ("mixed-counts", "mixed-wire", "mixed-nic", "backpressure", "budget")
+
+
+def mixed_section(points, violations, notes, show_invalid):
+    """The mixed-load arms (aeron_lat --load mixed): per set, stream count and
+    load, each arm's budget, hot-stream and all-streams latency, saturation
+    and validity; then each arm's adversarial checklist."""
+    import fairness
+    from transport_points import flags, is_aa, mixed_backpressured
+
+    mixed = [p for p in points if fairness.mixed_point(p)]
+    if not mixed:
+        return
+    us = lambda ns: f"{ns / 1000:.1f}"
+    med = lambda vs: statistics.median(vs) if vs else None
+
+    def cellv(vs):
+        vs = [v for v in vs if v is not None]
+        if not vs:
+            return "-"
+        return f"{us(med(vs))}" + (f" ({us(min(vs))}–{us(max(vs))})" if min(vs) != max(vs) else "")
+
+    def s_(p, host):
+        m = p.manifest or {}
+        return (((m.get("binary") if host == "a" else m.get("pong")) or {}).get("settings")) or {}
+
+    def num(p, host, k):
+        return fairness.int_of(s_(p, host), k)
+
+    def name_of(p):
+        r = (p.manifest or {}).get("runner") or {}
+        stack = r.get("setup") or "?"
+        return stack, r.get("knob.aeron_threading") or "?", r.get("knob.aeron_driver") or "?"
+
+    def tag_rules(tag):
+        return sorted({v.rule for v in violations if tag in v.tags and v.rule in MIXED_RULES})
+
+    bad_tags = {t for v in violations for t in v.tags}
+    print("\n## Mixed load: hot stream beside a background mix (µs)\n")
+    print("aeron_lat --load mixed (mixed.rs): a 64-byte hot stream on its own channel and thread at each end, "
+          "measured from its intended send time, beside background streams of steady, bursty and idle-then-burst "
+          "traffic (64 to 4096 B, fan-out 1 to 4, two publishers on some) on a thread of their own; the load is "
+          "every stream's. `budget` is each host's busy threads as declared (the client's two and the driver's) and, "
+          "in brackets, as the mid-window sample saw them. `hot` is the row's (the hot stream alone), `all` every "
+          "stream's echoes together, `bg max` the background's. `cycles>thr` counts the media driver's duty cycles "
+          "over its threshold on a / b (TR_MIX_CYCLE_THRESHOLD_NS), `bg busy` the share of the background thread's "
+          "time in passes that did work, `inv busy` an invoking thread's duty cycles with work (a / b). `validity` names every fairness "
+          "rule a rep broke. Medians across reps, ranges in brackets.\n")
+    groups = defaultdict(list)
+    for p in mixed:
+        groups[(p.set, p.streams, p.rate)].append(p)
+    floors = defaultdict(list)
+    for p in points:
+        arm = p.manifest.get("aa_of") if is_aa(p) and p.manifest else p.arm
+        if arm in FLOOR_OF.values() and p.kind == "load" and p.tag not in bad_tags:
+            floors[arm].append(p)
+    by_arm_all = defaultdict(list)
+    for (set_, streams, rate), ps in sorted(groups.items()):
+        print(f"\n### Set {set_}, {streams} streams, {rate:,} msg/s (hot {ps[0].manifest['binary']['settings'].get('hot_rate', '?')} msg/s)\n")
+        arms = sorted({p.arm for p in ps}, key=lambda a: (any(is_aa(p) for p in ps if p.arm == a), a))
+        rows = []
+        for a in arms:
+            reps = sorted((p for p in ps if p.arm == a), key=lambda p: p.rep)
+            by_arm_all[a].extend(reps)
+            stack, threading, driver = name_of(reps[0])
+            declared = [f"{num(reps[0], h, 'busy_threads') or '?'}" for h in ("a", "b")]
+            seen = [max((fairness.busy_budget(p, h)[0] for p in reps), default=0) for h in ("a", "b")]
+            def cycles(p, h):
+                return sum(num(p, h, f"driver.cycle.{g}.exceeded") or 0 for g in ("conductor", "sender", "receiver"))
+
+            cyc = [f"{cycles(p, 'a'):,}/{cycles(p, 'b'):,}" for p in reps]
+            bgb = [fairness.share(s_(p, "a"), "mixed.bg.busy_ns", "mixed.bg.loop_ns") for p in reps]
+            inv = ["/".join(f"{v:.0%}" if (v := fairness.share(s_(p, h), "mixed.invoker.busy_calls",
+                                                                "mixed.invoker.duty_calls")) is not None else "-"
+                            for h in ("a", "b")) for p in reps]
+            bp = sum(mixed_backpressured(p) for p in reps)
+            rules = sorted({r for p in reps for r in tag_rules(p.tag)})
+            other = sorted({v.rule for v in violations if set(v.tags) & {p.tag for p in reps}} - set(rules))
+            fl = sorted({f for p in reps for f in flags(p)})
+            name = a + (f" (A/A of {reps[0].manifest.get('aa_of')})" if is_aa(reps[0]) else "")
+            rows.append([name, f"{stack} {threading} {driver}", str(len(reps)),
+                         f"{'/'.join(declared)} ({'/'.join(map(str, seen))})"]
+                        + [cellv([p.row[f] for p in reps]) for f in ("min", "p50", "p99", "p99.99", "max")]
+                        + [cellv([num(p, "a", f"all.{k}") for p in reps])
+                           for k in ("min_ns", "p50_ns", "p99_ns", "p9999_ns", "max_ns")]
+                        + [cellv([num(p, "a", "bg.max_ns") for p in reps]),
+                           ", ".join(cyc), ", ".join(f"{v:.0%}" for v in bgb if v is not None) or "-", ", ".join(inv),
+                           f"{bp:,}",
+                           ("ok" if not rules and not other else ", ".join(rules + other)) + (f"; {', '.join(fl)}" if fl else "")])
+        print(table(["arm", "stack threading driver", "reps", "budget a/b (seen)", "hot min", "hot p50", "hot p99",
+                     "hot p99.99", "hot max", "all min", "all p50", "all p99", "all p99.99", "all max", "bg max",
+                     "cycles>thr a/b", "bg busy",
+                     "inv busy a/b", "bp", "validity"], rows))
+    # the adversarial checklist, one block an arm across its points
+    print("\n### Adversarial checklist, per arm\n")
+    print("Each arm's mixed points across sets, stream counts and loads. A line that is not `yes` is a reason not "
+          "to trust that arm's numbers as they stand.\n")
+    for a, reps in sorted(by_arm_all.items(), key=lambda kv: (any(is_aa(p) for p in kv[1]), kv[0])):
+        stack, threading, driver = name_of(reps[0])
+        tags = {p.tag for p in reps}
+        broke = lambda rule: [v for v in violations if v.rule == rule and set(v.tags) & tags]
+        say = lambda rule, ok_text: (f"no: {len(broke(rule))} violation{'s' if len(broke(rule)) != 1 else ''}, "
+                                    f"the first: {broke(rule)[0].detail}") if broke(rule) else ok_text
+        bps = [(p, *fairness.mixed_backpressure(p)) for p in reps]
+        bp_n = sum(b for _, b, _ in bps)
+        print(f"- **{a}** ({stack}, {threading}, driver {driver}; budget a/b "
+              f"{num(reps[0], 'a', 'busy_threads')}/{num(reps[0], 'b', 'busy_threads')} busy threads; {len(reps)} points)")
+        print(f"  - every message accounted for (sent = read by every subscription = echoed = back)? "
+              f"{say('mixed-counts', 'yes')}")
+        print(f"  - wire bytes match the counts (each host's driver)? {say('mixed-wire', 'yes')}")
+        print(f"  - NIC counters agree, no allowance exceeded, no receive drops? {say('mixed-nic', 'yes')}")
+        if bp_n == 0:
+            print("  - back-pressure? none in any measured window")
+        else:
+            sat = sorted({x for _, b, ss in bps if b for x in ss})
+            print(f"  - back-pressure? {bp_n:,} offers in measured windows; "
+                  + (f"explained by saturation ({'; '.join(sat[:4])}){'...' if len(sat) > 4 else ''}: its points are "
+                     "flagged and not compared" if sat else "UNEXPLAINED (no saturation shown): " + say('backpressure', '')))
+        pl, bud = broke("placement") + broke("irq"), broke("budget")
+        why = ([f"{len(pl)} placement or IRQ violations, the first: {pl[0].detail}"] if pl else []) + \
+            ([f"over budget: {bud[0].detail}"] if bud else [])
+        print(f"  - placement and IRQs as declared, within the budget? {'no: ' + '; '.join(why) if why else 'yes'}")
+        aa = [p for p in mixed if is_aa(p) and p.manifest.get("aa_of") == a]
+        if aa:
+            diffs = []
+            for x in aa:
+                ref = [y for y in reps if (y.set, y.streams, y.rate, y.rep) == (x.set, x.streams, x.rate, x.rep)]
+                if ref:
+                    diffs.append(abs(x.row["p50"] - ref[0].row["p50"]))
+                    diffs.append(abs(x.row["p99"] - ref[0].row["p99"]))
+            print(f"  - A/A agrees? its repeat differs by up to {us(max(diffs))} µs at p50 or p99 over "
+                  f"{len(diffs) // 2} points: a difference between arms no larger is not one" if diffs else
+                  "  - A/A agrees? no paired rep to compare")
+        elif not is_aa(reps[0]):
+            print("  - A/A agrees? not this arm's (the A/A repeats its set's first arm)")
+        fa = FLOOR_OF.get(stack)
+        if is_aa(reps[0]):
+            pass
+        elif fa and floors.get(fa):
+            f50 = med([p.row["p50"] for p in floors[fa]])
+            f99 = med([p.row["p99"] for p in floors[fa]])
+            h50 = med([p.row["p50"] for p in reps])
+            h99 = med([p.row["p99"] for p in reps])
+            print(f"  - floor-relative overhead: hot p50 {us(h50)} − {fa} floor {us(f50)} = {us(h50 - f50)} µs; "
+                  f"p99 {us(h99)} − {us(f99)} = {us(h99 - f99)} µs (the floor at the hot stream's rate and size, "
+                  f"{len(floors[fa])} points, this session)")
+        else:
+            print(f"  - floor-relative overhead: no clean {fa or 'floor'} point in this run")
+        warm = sorted({p.manifest.get("warmup_s") for p in reps})
+        print(f"  - warm-up: {', '.join(map(str, warm))} s (a set's first load warms up longer than the next: "
+              "the same for every arm)")
 
 
 if __name__ == "__main__":
