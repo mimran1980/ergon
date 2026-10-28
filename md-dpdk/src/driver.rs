@@ -29,7 +29,7 @@ use crate::checks::{
     HostCheckPolicy, HostReport, Inputs, OFF_NOTE, RecheckThread, data_nics_from_env, host_report, start_rechecks,
 };
 use crate::error::DpdkError;
-use crate::ffi::{CloseOnDrop, DpdkTransport, lock_memory_from_env, pin_agents_to_configured_cpus};
+use crate::ffi::{CloseOnDrop, DpdkTransport, KernelStageTrace, lock_memory_from_env, pin_agents_to_configured_cpus};
 use ergon_tune::{EthtoolCache, Host};
 use rusteron_media_driver::bindings::aeron_threading_mode_t;
 use rusteron_media_driver::{AeronDriver, AeronDriverContext};
@@ -63,6 +63,9 @@ pub struct ConfiguredDriver {
     // context is not what the driver was built with.
     threading: aeron_threading_mode_t,
     transport: Option<CloseOnDrop>,
+    // The lab's stage trace on the socket transport (none under DPDK, whose
+    // runtime has its own): closed after any driver started from `context`.
+    stage_trace: Option<KernelStageTrace>,
     report: Option<HostReport>,
     rechecks: Option<RecheckThread>,
 }
@@ -107,6 +110,13 @@ impl ConfiguredDriver {
         // SAFETY: no driver exists yet; `start` moves the wrapper out before one
         // is created, so it only ever drops while the context is driver-free.
         let transport = transport.map(|t| unsafe { CloseOnDrop::wrap(t) });
+        // The socket transport's lab stage trace (RUSTERON_DPDK_STAGE_TRACE):
+        // Aeron's UDP bindings wrapped; under DPDK the runtime traces itself.
+        let stage_trace = if transport.is_none() {
+            KernelStageTrace::from_env(&context)?
+        } else {
+            None
+        };
         if transport.is_some() && std::env::var_os(RECEIVER_IO_VECTOR_CAPACITY_ENV).is_none() {
             context
                 .set_receiver_io_vector_capacity(DPDK_RECEIVER_IO_VECTOR_CAPACITY)
@@ -141,6 +151,7 @@ impl ConfiguredDriver {
             threading: context.get_threading_mode(),
             context,
             transport,
+            stage_trace,
             report,
             rechecks,
         })
@@ -209,6 +220,7 @@ impl ConfiguredDriver {
             context,
             threading,
             transport,
+            stage_trace,
             report,
             rechecks,
         } = self;
@@ -222,6 +234,7 @@ impl ConfiguredDriver {
             memory_locked,
             report,
             rechecks,
+            stage_trace,
             // Last field: the free runs after the driver above has closed and
             // joined its agents.
             transport,
@@ -327,6 +340,9 @@ pub struct EnvMediaDriver {
     report: Option<HostReport>,
     // md's re-check thread, stopped and joined as the driver drops.
     rechecks: Option<RecheckThread>,
+    // The socket transport's lab stage trace: its file closed once the driver
+    // above has closed and joined every agent that records.
+    stage_trace: Option<KernelStageTrace>,
     // Last, so the free runs only once the driver above has closed and joined
     // every agent that could call the bindings.
     transport: Option<CloseOnDrop>,
@@ -450,10 +466,14 @@ impl EnvMediaDriver {
                     context,
                     transport,
                     rechecks,
+                    stage_trace,
                     ..
                 } = self;
                 std::mem::forget(driver);
                 std::mem::forget(context);
+                // Every agent ran on this thread, which stops here: the
+                // stage trace's last records reach its file.
+                drop(stage_trace);
                 // Frees the native runtime. Sound here because every agent of a
                 // SHARED or INVOKER driver under the manual main loop runs on
                 // this thread, `self` is consumed so no further `do_work` can

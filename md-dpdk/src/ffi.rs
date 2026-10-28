@@ -301,6 +301,71 @@ impl Drop for CloseOnDrop {
     }
 }
 
+/// The lab's stage trace on the socket transport (`RUSTERON_DPDK_STAGE_TRACE`
+/// and `RUSTERON_DPDK_STAGE_TRACE_FILE`, as under DPDK: the README's "Stage
+/// trace"): Aeron's own UDP bindings wrapped so that each send and receive of
+/// a sampled message is stamped. [`ConfiguredDriver::from_env`](crate::ConfiguredDriver::from_env)
+/// installs it when no DPDK transport is installed; dropping it stops its
+/// writer and closes the file, so it drops after the driver.
+pub(crate) struct KernelStageTrace(());
+
+/// The variables that turn the lab's stage trace or capture on.
+const LAB_VARS: [&str; 4] = [
+    "RUSTERON_DPDK_STAGE_TRACE",
+    "RUSTERON_DPDK_STAGE_TRACE_FILE",
+    "RUSTERON_DPDK_CAPTURE_FILE",
+    "RUSTERON_DPDK_CAPTURE_WINDOW_MS",
+];
+
+impl KernelStageTrace {
+    /// `None` unless one of its variables is set; then the wrapped bindings
+    /// in `context`.
+    ///
+    /// # Errors
+    ///
+    /// [`DpdkError::InvalidEnvironment`] for a malformed value, a file that
+    /// cannot be written, a capture asked of the socket transport, or a build
+    /// without the `dpdk` feature (the trace is the native code's).
+    pub(crate) fn from_env(context: &AeronDriverContext) -> Result<Option<Self>, DpdkError> {
+        if !LAB_VARS
+            .iter()
+            .any(|v| std::env::var_os(v).is_some_and(|x| !x.is_empty()))
+        {
+            return Ok(None);
+        }
+        #[cfg(feature = "dpdk")]
+        {
+            // SAFETY: the context pointer is live for the borrow of `context`,
+            // and no driver has been created from it yet.
+            let rc = unsafe { rusteron_dpdk_stage_kernel_install(context.get_inner()) };
+            if rc != 0 {
+                return Err(DpdkError::InvalidEnvironment(last_error()));
+            }
+            Ok(Some(Self(())))
+        }
+        #[cfg(not(feature = "dpdk"))]
+        {
+            let _ = context;
+            Err(DpdkError::InvalidEnvironment(format!(
+                "{} set: the stage trace is ergon-md-dpdk's native code, built with the `dpdk` feature only",
+                LAB_VARS.join(" or ")
+            )))
+        }
+    }
+}
+
+impl Drop for KernelStageTrace {
+    fn drop(&mut self) {
+        // SAFETY: dropped after the driver closed and joined its agents (the
+        // field order of `ConfiguredDriver` and `EnvMediaDriver`), so nothing
+        // records any more.
+        #[cfg(feature = "dpdk")]
+        unsafe {
+            rusteron_dpdk_lab_close();
+        }
+    }
+}
+
 #[cfg(feature = "dpdk")]
 impl NativeTransport {
     fn create(config: &DpdkTransportConfig, clock: crate::clock::ClockChoice) -> Result<Self, DpdkError> {
@@ -510,6 +575,10 @@ unsafe extern "C" {
     fn rusteron_dpdk_transport_gateway_check(transport: *mut c_void, timeout_ms: u32, answered: *mut i32) -> c_int;
     fn rusteron_dpdk_eal_main_cpu() -> c_int;
     fn rusteron_dpdk_clock_report(report: *mut rusteron_dpdk_clock_report_t);
+    fn rusteron_dpdk_stage_kernel_install(
+        context: *mut rusteron_media_driver::bindings::aeron_driver_context_t,
+    ) -> c_int;
+    fn rusteron_dpdk_lab_close();
 }
 
 #[cfg(feature = "dpdk")]

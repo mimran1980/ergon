@@ -39,6 +39,7 @@
 #include "rusteron_dpdk_arp.h"
 #include "rusteron_dpdk_endpoint_map.h"
 #include "rusteron_dpdk_events.h"
+#include "rusteron_dpdk_stages.h"
 
 /* Aeron types for the poller callbacks and the shared receive loop (poller.c):
  * the affinity enum, the transport struct, the recv/recvmmsg function typedefs

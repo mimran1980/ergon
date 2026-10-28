@@ -313,6 +313,111 @@ mod bench {
         }
         let _ = std::fs::remove_file(&log);
     }
+
+    unsafe extern "C" {
+        fn rusteron_dpdk_lab_test_set_no_thread(no_thread: c_int);
+    }
+
+    /// An Aeron data frame holding aeron_lat's 64-byte message `seq`.
+    fn data_frame(seq: u64) -> [u8; 96] {
+        let mut f = [0u8; 96];
+        f[0..4].copy_from_slice(&96i32.to_le_bytes());
+        f[5] = 0xc0;
+        f[6..8].copy_from_slice(&1u16.to_le_bytes());
+        f[16..20].copy_from_slice(&1001i32.to_le_bytes());
+        f[32..40].copy_from_slice(&seq.to_le_bytes());
+        f[60..64].copy_from_slice(&1u32.to_le_bytes());
+        f
+    }
+
+    /// What the stage trace (RUSTERON_DPDK_STAGE_TRACE=64, its writer thread
+    /// draining to a file as in the lab) costs a 96-byte aeron_lat frame's
+    /// send and receive: off (twice, first and last, the A/A spread), on
+    /// for a message it does not sample (seq 1: the hook and the frame's
+    /// walk, 63 of every 64), and on for one it samples (seq 0: three
+    /// stamps a send, tx-send, tx-call and tx-done; three a receive,
+    /// rx-burst, rx-dispatch and rx-inserted). The per-stamp cost is the
+    /// sampled row less the off row, over three. Rows as `overhead`'s.
+    pub fn stages(_c: &mut Criterion) {
+        let file = std::env::temp_dir().join(format!("ergon-md-dpdk-bench-stages-{}.csv", std::process::id()));
+        let file = file.to_string_lossy().into_owned();
+        let arms: [(&str, Option<u64>); 4] = [
+            ("off", None),
+            ("trace, unsampled", Some(1)),
+            ("trace, sampled", Some(0)),
+            ("off-again", None),
+        ];
+        let hz = measured_counter_hz();
+        println!(
+            "stages (ns per call: p50 / p99 / max of the means of 2,000 batches of 1,000; then per call, \
+             p99.99 / max of 1,000,000 calls each timed alone)"
+        );
+        let mut p50s = std::collections::BTreeMap::new();
+        for (path, label) in [(0, "send_96b"), (1, "poll_96b")] {
+            for (arm, seq) in arms {
+                let _unset = (
+                    EnvGuard::unset("RUSTERON_DPDK_STAGE_TRACE"),
+                    EnvGuard::unset("RUSTERON_DPDK_STAGE_TRACE_FILE"),
+                );
+                let _set: Vec<EnvGuard> = if seq.is_some() {
+                    vec![
+                        EnvGuard::set("RUSTERON_DPDK_STAGE_TRACE", "64"),
+                        EnvGuard::set("RUSTERON_DPDK_STAGE_TRACE_FILE", &file),
+                    ]
+                } else {
+                    Vec::new()
+                };
+                let env = env_at(hz);
+                // the writer thread on, as in the lab: the rings drained
+                unsafe { rusteron_dpdk_lab_test_set_no_thread(0) };
+                let mut h = Harness::build_after(env, rusteron_dpdk_config_t::valid());
+                assert_clock(COUNTER_ROW, hz);
+                let frame = data_frame(seq.unwrap_or(1));
+                let (mut samples, mut calls) = if path == 0 {
+                    h.init_tx(SENDER_IP, 40000, None, 1472);
+                    h.arp_seed(PEER_IP, PEER_MAC);
+                    let mut dst = SockAddrIn::new(PEER_IP, 40123);
+                    let mut iov = [iovec {
+                        iov_base: frame.as_ptr() as *mut c_void,
+                        iov_len: frame.len(),
+                    }];
+                    let mut bytes = 0i64;
+                    assert_eq!(h.send_iov(&mut dst, &mut iov, &mut bytes), 1, "send: {}", last_error());
+                    passes(hz, || h.send_iov(&mut dst, &mut iov, &mut bytes))
+                } else {
+                    h.init_rx(RECEIVER_IP, 60000, 1472);
+                    let mut p = h.poller();
+                    p.add(&mut *h.rx);
+                    let udp = build_udp_frame(RECEIVER_MAC, PEER_MAC, PEER_IP, RECEIVER_IP, 7000, 60000, &frame);
+                    let mut msgvec = vec![unsafe { std::mem::zeroed::<RealMmsghdr>() }; 16];
+                    let mut count = 0u64;
+                    let clientd = &mut count as *mut u64 as *mut c_void;
+                    let mut bytes = 0i64;
+                    let one = || {
+                        unsafe { rusteron_dpdk_fake_rx_inject(RECEIVER_PORT, udp.as_ptr(), udp.len(), RX_GOOD, 1) };
+                        p.poll_into(&mut msgvec, Some(count_cb), clientd, &mut bytes)
+                    };
+                    passes(hz, one)
+                };
+                let (p50, p99, max) = percentiles(&mut samples);
+                calls.sort_by(f64::total_cmp);
+                let (p9999, call_max) = (quantile(&calls, 0.9999), calls[calls.len() - 1]);
+                println!(
+                    "{label:<9} {arm:<17} {p50:>7.1} / {p99:>7.1} / {max:>8.1}   per call {p9999:>8.1} / {call_max:>9.1}"
+                );
+                p50s.insert((label, arm), p50);
+                drop(h);
+                assert_no_leak();
+            }
+            let off = p50s[&(label, "off")].min(p50s[&(label, "off-again")]);
+            println!(
+                "{label:<9} per stamp (sampled less off, over 3): {:.1} ns; unsampled message: {:+.1} ns",
+                (p50s[&(label, "trace, sampled")] - off) / 3.0,
+                p50s[&(label, "trace, unsampled")] - off
+            );
+        }
+        let _ = std::fs::remove_file(&file);
+    }
 }
 
 #[cfg(all(
@@ -320,7 +425,14 @@ mod bench {
     target_os = "linux",
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
-criterion::criterion_group!(benches, bench::reads, bench::send, bench::poll, bench::overhead);
+criterion::criterion_group!(
+    benches,
+    bench::reads,
+    bench::send,
+    bench::poll,
+    bench::overhead,
+    bench::stages
+);
 #[cfg(all(
     feature = "dpdk",
     target_os = "linux",
