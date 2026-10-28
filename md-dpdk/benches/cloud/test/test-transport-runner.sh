@@ -242,7 +242,7 @@ onload-mio-udp: --local 10.30.1.11:22000 --peer 10.30.1.22:22000 --busy-read-us 
 onload-eio-udp: --local 10.30.1.11:22000 --peer 10.30.1.22:22000 --busy-read-us 0 --rcvbuf $sb_ --sndbuf $sb_ --epoll-events 64 --datagram-burst 64
   knobs: sockbuf epoll_events datagram_burst napi_defer napi 0; driver: none
   start: sh -c 'taskset -c 0 env PATH=P $oc_ udp_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
-onload-aeron-rel: --endpoint 10.30.1.22:22000 --reply 10.30.1.11:22000 --interface 10.30.1.11 --aeron-dir /dev/shm/aeron-bench --driver external --driver-busy-threads 3 --term-length 1048576 --mtu 1408
+onload-aeron-rel: --endpoint 10.30.1.22:22000 --reply 10.30.1.11:22000 --interface 10.30.1.11 --aeron-dir /dev/shm/aeron-bench --driver external --driver-busy-threads 3 --term-length 1048576 --mtu 1408 --wire kernel
   knobs: term_length aeron_page aeron_so_rcvbuf nak_delay_ns napi_defer napi 0; driver: onload$sfx_
   start: sh -c 'taskset -c 0 env PATH=P aeron_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
 aws-onload: onload
@@ -1347,17 +1347,19 @@ cat >"$sb/bin/stub" <<'SH'
 me=${0##*/}
 # (with the driver's environment, when it was sourced: an embedded driver's binary)
 echo "$FAKE_HOST $me $*${FAKE_DRIVER_ENV:+ [driver.env $FAKE_DRIVER_ENV]}" >>"$FAKE_HOSTS/runs"
-role= out= label= rate= kind=oneway streams=1 warm=0 dur=0 mode= impl= load= hot= dbusy=
+role= out= label= rate= kind=oneway streams=1 warm=0 dur=0 mode= impl= load= hot= dbusy= wire=
 while (($#)); do
     case $1 in --role) role=$2 ;; --out) out=$2 ;; --label) label=$2 ;; --rate) rate=$2 ;; --round-trip) kind=load ;;
     --streams) streams=$2 ;; --warmup-s) warm=$2 ;; --duration-s) dur=$2 ;; --mode) mode=$2 ;; --impl) impl=$2 ;;
-    --load) load=$2 ;; --hot-rate) hot=$2 ;; --driver-busy-threads) dbusy=$2 ;; esac
+    --load) load=$2 ;; --hot-rate) hot=$2 ;; --driver-busy-threads) dbusy=$2 ;; --wire) wire=$2 ;; esac
     shift
 done
 # the manifest's settings as the binaries write them: the transport, the
 # schedule, the counters each host's loss accounting reads
 case $me in
-aeron_lat) transport=aeron-$mode extra=', "aeron.naks-sent": "0", "aeron.retransmits-sent": "0"' ;;
+aeron_lat) transport=aeron-$mode extra=', "aeron.naks-sent": "0", "aeron.retransmits-sent": "0"'
+    # labelled by the wire it was given (aeron_lat --wire, checked against its driver)
+    [[ $wire != dpdk ]] || transport=${transport/%-udp/-dpdk} ;;
 floor) transport=raw-dpdk extra= ;;
 tcp_lat) transport=tcp extra=', "tcp.retrans": "0", "tcp.dsack_dups": "0", "tcp.retrans_not_dsack": "0", "tcp.lost_end": "0"' ;;
 mpsc_lat) transport=mpsc extra= ;;
@@ -2091,12 +2093,20 @@ for f in sorted(glob.glob(sys.argv[1] + "/*/manifest-*.json")):
     want=kernel
     [[ $pair == b ]] && want=dpdk
     [[ $src == "$want " ]] || why+=" NIC counters' sources $src, not $want;"
+    w=kernel
+    [[ $pair == b ]] && w=dpdk
+    [[ $(grep -- "aeron_lat --role .*--load mixed" "$sb/runs" | grep -c -- "--wire $w ") == 48 ]] || why+=" not every mixed run given --wire $w;"
+    # a mixed point traces the housekeeping and IRQ CPUs too (0 and 2 here)
+    for h in a b; do
+        [[ $(awk '$1 ~ /aeron-mix/ && ("," $2 ",") ~ /^,0,2,/' "$sb/$h/state/events-started" | wc -l | tr -d ' ') == 24 ]] ||
+            why+=" host $h: mixed points' traced CPUs not with 0 and 2: $(grep -m1 aeron-mix "$sb/$h/state/events-started");"
+    done
     fv=$(python3 "$cloud/fairness.py" "$d" 2>&1) || why+=" fairness: $(head -5 <<<"$fv" | tr '\n' ' ');"
     an=$(python3 "$cloud/analyse.py" --transport "$d" 2>&1) || why+=" analyse.py failed: $(tail -2 <<<"$an");"
     grep -q '^## Mixed load: hot stream beside a background mix' <<<"$an" || why+=" no mixed table;"
     [[ $(grep -c '^- \*\*' <<<"$an") == 6 ]] || why+=" $(grep -c '^- \*\*' <<<"$an") arms in the checklist, not 6 (five and the A/A);"
     grep -q 'floor-relative overhead: hot p50 .* − dpdk-raw floor\|floor-relative overhead: hot p50 .* − mio-udp floor' <<<"$an" || why+=" no floor-relative line;"
-    [[ -z $why ]] && pass "transport.sh run, the mixed-load session, pair $pair: every point a row; the mixed arms' driver modes with the duty-cycle thresholds, --load mixed on CPUs 10,12 each end; NIC counters around each mixed point ($want); the raw DPDK floor on dpdk-raw with driver.env under sudo setpriv; fairness.py clean; analyse.py's mixed table, checklist and floor lines" ||
+    [[ -z $why ]] && pass "transport.sh run, the mixed-load session, pair $pair: every point a row; the mixed arms' driver modes with the duty-cycle thresholds, --load mixed on CPUs 10,12 each end, --wire by set-up, the housekeeping and IRQ CPUs traced; NIC counters around each mixed point ($want); the raw DPDK floor on dpdk-raw with driver.env under sudo setpriv; fairness.py clean; analyse.py's mixed table, checklist and floor lines" ||
         fail "transport.sh run, the mixed-load session, pair $pair:$why"
 done
 TRUN_SETS=$cloud/transport-aws-aeron-mixed.tsv trun a 1 "" FAKE_FANOUT_SHORT=ka:aeron-mix-shared@STREAMS=32 || true

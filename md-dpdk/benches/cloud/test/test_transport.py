@@ -636,6 +636,37 @@ def make_mixed(run, arm="aeron-kernel"):
 MIXED = lambda m: m["set"] == "2a" and m["arm"] == "aeron-kernel" and m["streams"] == 1 and m["rep"] == 1
 
 
+class TransportLabelTest(unittest.TestCase):
+    """fairness.py's transport rule: a row's transport against its arm's
+    set-up and its pong's."""
+
+    def check(self, setup, transport, pong=None):
+        run = Run(self)
+
+        def fn(m):
+            m["runner"] = dict(m.get("runner") or {}, setup=setup)
+            m["transport"] = transport
+            if pong:
+                m["pong"] = {"settings": {"transport": pong}}
+        run.edit(lambda m: m["set"] == "2a" and m["arm"] == "aeron-dpdk" and m["rep"] == 1, fn)
+        return [str(v) for v in fairness.check(run.run) if v.rule == "transport"]
+
+    def test_a_dpdk_arm_labelled_aeron_udp_is_flagged(self):
+        got = self.check("dpdk", "aeron-udp")
+        self.assertEqual(len(got), 1, got)
+        self.assertIn("transport 'aeron-udp' on set-up dpdk", got[0])
+
+    def test_a_kernel_arm_labelled_dpdk_is_flagged(self):
+        self.assertIn("a kernel arm's row labelled DPDK", " ".join(self.check("kernel", "aeron-dpdk")))
+
+    def test_ends_naming_different_transports_are_flagged(self):
+        self.assertIn("its pong's 'aeron-udp'", " ".join(self.check("dpdk", "aeron-dpdk", "aeron-udp")))
+
+    def test_an_agreeing_label_is_clean(self):
+        self.assertEqual(self.check("dpdk", "aeron-dpdk", "aeron-dpdk"), [])
+        self.assertEqual(self.check("dpdk-raw", "raw-dpdk"), [])
+
+
 class MixedLoadTest(unittest.TestCase):
     """fairness.py's mixed-load rules (mixed-counts, mixed-wire, mixed-nic,
     backpressure, budget) on the clean fixture's aeron-kernel points made
@@ -1380,6 +1411,23 @@ class EventsTest(unittest.TestCase):
         self.assertTrue(notes[0].startswith("events unavailable: no events log"), notes)
         rows, notes = te.events(self.log(notes=("events: trace unavailable: no tracefs at /sys/kernel/tracing",)))
         self.assertIn("trace unavailable: no tracefs at /sys/kernel/tracing", notes)
+
+
+class AgentCycleEventsTest(unittest.TestCase):
+    """transport_events.py: the 1 Hz sampler's driver duty-cycle counters
+    (counters loss' info-cycle-* keys) as events: cycles over the threshold
+    in a second, and a second where an agent's longest cycle rose."""
+
+    def test_an_agents_stall_placed_in_its_second(self):
+        import transport_events as te
+        t0 = 1_800_000_000 * 10**9
+        a = "info-cycle-conductor-max-ns=50000;info-cycle-sender-max-ns=9000;info-cycle-receiver-max-ns=8000"
+        line = lambda t, mx, ex: (f"t={t} tc=- tcp=- aeron=naks-sent=0;{a.replace('9000', str(mx))};"
+                                  f"info-cycle-sender-exceeded={ex};info-cycle-conductor-exceeded=0;"
+                                  "info-cycle-receiver-exceeded=0")
+        rows = te.sample_events([line(t0, 9000, 0), line(t0 + 10**9, 9000, 0), line(t0 + 2 * 10**9, 1_100_000, 3)])
+        self.assertEqual(rows, [("agent-cycle", t0 + 10**9, t0 + 2 * 10**9, None, "3"),
+                                ("agent-cycle-max", t0 + 10**9, t0 + 2 * 10**9, None, "sender 1100000")])
 
 
 class TuneTest(unittest.TestCase):

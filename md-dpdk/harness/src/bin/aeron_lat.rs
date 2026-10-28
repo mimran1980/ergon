@@ -265,6 +265,33 @@ struct Aeronish {
     stream_id: i32,
     driver_busy_threads: u32,
     connect_timeout: Duration,
+    /// `--wire`: the wire the runner set the arm up on (UDP modes).
+    wire: Option<Wire>,
+}
+
+/// `--wire`: kernel UDP or DPDK under the driver.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Wire {
+    Kernel,
+    Dpdk,
+}
+
+impl Wire {
+    fn parse(v: Option<&str>) -> Result<Option<Self>, Error> {
+        match v {
+            None => Ok(None),
+            Some("kernel") => Ok(Some(Self::Kernel)),
+            Some("dpdk") => Ok(Some(Self::Dpdk)),
+            Some(other) => Err(Error::Usage(format!("--wire {other}: kernel or dpdk"))),
+        }
+    }
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Kernel => "kernel",
+            Self::Dpdk => "dpdk",
+        }
+    }
 }
 
 impl Aeronish {
@@ -300,7 +327,11 @@ impl Aeronish {
             stream_id: f.num("stream-id", 1001)?,
             driver_busy_threads: f.num("driver-busy-threads", if driver == Driver::Invoker { 0 } else { 3 })?,
             connect_timeout: Duration::from_secs(f.num("connect-timeout-s", 30)?),
+            wire: Wire::parse(f.take("wire").as_deref())?,
         };
+        if a.wire.is_some() && !matches!(mode, Mode::Udp | Mode::SpyUdp) {
+            return Err(Error::Usage(format!("--wire is UDP's, not --mode {}", a.mode_name())));
+        }
         if matches!(mode, Mode::Udp | Mode::SpyUdp) {
             if a.endpoint.is_none() {
                 return Err(Error::Usage(format!(
@@ -1254,15 +1285,12 @@ fn run(c: &Common, a: &Aeronish, profile: Option<&mixed::Profile>) -> Result<Opt
         Driver::Embedded => embedded.as_ref().map(|e| e.threading),
         Driver::Invoker => Some("INVOKER"),
     };
-    let before = counters_now(&counters.aeron);
-    let transport = match a.mode {
-        Mode::Ipc => "aeron-ipc",
-        Mode::Spy => "aeron-spy",
-        Mode::SpyUdp if before.dpdk => "aeron-spy-dpdk",
-        Mode::SpyUdp => "aeron-spy-udp",
-        Mode::Udp if before.dpdk => "aeron-dpdk",
-        Mode::Udp => "aeron-udp",
+    let before = Before {
+        counters: counters_now(&counters.aeron),
+        extra: mixed::counters_now(&counters.aeron),
     };
+    // provisional: settled once the point's channels exist (close)
+    let transport = transport_name(a.mode, a.wire == Some(Wire::Dpdk));
     let mut m = manifest(c, a, transport, threading, is_mixed)?;
     if let Some(p) = profile {
         return run_mixed(c, a, p, &counters, m, &before);
@@ -1287,7 +1315,7 @@ fn run(c: &Common, a: &Aeronish, profile: Option<&mixed::Profile>) -> Result<Opt
             )?
             .0
         };
-        record_counters(&mut m, &before, &counters_now(&counters.aeron));
+        close(&mut m, a, &counters, &before, false)?;
         m.setting("hot_path_allocs", &allocs.to_string()).setting(
             "busy_threads",
             &(client_threads(c, false) + a.driver_busy_threads).to_string(),
@@ -1302,7 +1330,7 @@ fn run(c: &Common, a: &Aeronish, profile: Option<&mixed::Profile>) -> Result<Opt
         _ => local_oneway(c, a, &clock)?,
     };
     let end = clock.raw();
-    let retrans = record_counters(&mut m, &before, &counters_now(&counters.aeron));
+    let retrans = close(&mut m, a, &counters, &before, false)?;
     if let Some(e) = ends.echoes {
         m.setting("echoes_sent", &e.to_string());
     }
@@ -1336,10 +1364,9 @@ fn run_mixed(
     profile: &mixed::Profile,
     counters: &Client,
     mut m: RunManifest,
-    before: &Counters,
+    before: &Before,
 ) -> Result<Option<String>, Error> {
     let invoked = (a.driver == Driver::Invoker).then_some(counters);
-    let extra_before = mixed::counters_now(&counters.aeron);
     let hot = Common {
         streams: 1,
         rate: profile.hot_rate,
@@ -1348,16 +1375,11 @@ fn run_mixed(
     profile.settings(&mut m);
     let gate = mixed::Gate::default();
     let busy = client_threads(c, true) + a.driver_busy_threads;
-    // the counters after: under DPDK the PMD's statistics (the allowance
-    // counters) refresh about once a second, so wait that long first
-    let after = |m: &mut RunManifest| -> u64 {
-        if before.dpdk {
-            std::thread::sleep(Duration::from_millis(1200));
-        }
-        mixed::record_counters(m, &extra_before, &mixed::counters_now(&counters.aeron));
+    // the counters after (under DPDK once the PMD's statistics refreshed)
+    let after = |m: &mut RunManifest| -> Result<u64, Error> {
         m.setting("mixed.invoker.duty_calls", &counters.duty_calls.get().to_string())
             .setting("mixed.invoker.busy_calls", &counters.duty_busy.get().to_string());
-        record_counters(m, before, &counters_now(&counters.aeron))
+        close(m, a, counters, before, true)
     };
     if c.role == Role::Pong {
         stop_on_sigterm();
@@ -1382,7 +1404,7 @@ fn run_mixed(
             (hot_end, joined(bg.join(), "background"))
         });
         let ((allocs, echoes), bg) = point::both(hot_end, bg)?;
-        after(&mut m);
+        after(&mut m)?;
         mixed::put_all(&mut m, &bg.settings);
         let bg_allocs: u64 = bg
             .settings
@@ -1407,7 +1429,7 @@ fn run_mixed(
     });
     let (ends, bg) = point::both(hot_end, bg)?;
     let end = clock.raw();
-    let retrans = after(&mut m);
+    let retrans = after(&mut m)?;
     mixed::put_all(&mut m, &bg.settings);
     let hot_sent = ends.send.pacer.stats().sent;
     let hot_bytes = hot_sent * mixed::frame_bytes(MESSAGE_LEN, a.mtu as usize) as u64;
@@ -1442,6 +1464,68 @@ fn run_mixed(
         }),
     )?;
     Ok(Some(row))
+}
+
+/// The driver's counters as a point began: the loss and traffic ones, and
+/// its agents' duty cycles and control traffic (mixed.rs `counters_now`).
+struct Before {
+    counters: Counters,
+    extra: BTreeMap<String, i64>,
+}
+
+/// The transport's name for `mode`, on DPDK or not.
+const fn transport_name(mode: Mode, dpdk: bool) -> &'static str {
+    match mode {
+        Mode::Ipc => "aeron-ipc",
+        Mode::Spy => "aeron-spy",
+        Mode::SpyUdp if dpdk => "aeron-spy-dpdk",
+        Mode::SpyUdp => "aeron-spy-udp",
+        Mode::Udp if dpdk => "aeron-dpdk",
+        Mode::Udp => "aeron-udp",
+    }
+}
+
+/// The point's end on the driver's counters: each counter's growth into
+/// the manifest (the loss and traffic ones; every agent's duty cycles, a
+/// max as it is after and before; flow control and control traffic), and
+/// the transport settled. The driver is DPDK's when its counters show
+/// md-dpdk's (read after the point too: a driver registers them once its
+/// channels open, so at the start of a point a fresh one has none). A wire
+/// the runner gave (`--wire`) that the driver does not show is refused, so
+/// no row is labelled with a wire it did not run on. `wait_nic`: under
+/// DPDK, wait for the PMD's once-a-second statistics first. Returns the
+/// retransmits' growth.
+fn close(m: &mut RunManifest, a: &Aeronish, client: &Client, before: &Before, wait_nic: bool) -> Result<u64, Error> {
+    let mut after = counters_now(&client.aeron);
+    let seen = before.counters.dpdk || after.dpdk;
+    if seen && wait_nic {
+        std::thread::sleep(Duration::from_millis(1200));
+        after = counters_now(&client.aeron);
+    }
+    mixed::record_counters(m, &before.extra, &mixed::counters_now(&client.aeron));
+    let retrans = record_counters(m, &before.counters, &after);
+    if matches!(a.mode, Mode::Udp | Mode::SpyUdp) {
+        let seen_name = if seen { Wire::Dpdk } else { Wire::Kernel }.name();
+        if let Some(w) = a.wire
+            && w.name() != seen_name
+        {
+            return Err(Error::Transport(format!(
+                "--wire {} but the driver shows {}: refused rather than labelled with a wire it did not run on",
+                w.name(),
+                if seen {
+                    "md-dpdk's DPDK counters"
+                } else {
+                    "no DPDK counters"
+                }
+            )));
+        }
+        let name = transport_name(a.mode, seen);
+        name.clone_into(&mut m.arm);
+        m.setting("transport", name)
+            .setting("wire", a.wire.map_or("unstated", Wire::name))
+            .setting("wire_seen", seen_name);
+    }
+    Ok(retrans)
 }
 
 /// Each loss counter's growth into the manifest (`aeron.<key>`), and each

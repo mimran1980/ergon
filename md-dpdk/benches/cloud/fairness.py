@@ -74,6 +74,11 @@ concerns. Rules:
                    the sink read every ping the run sent (and in a round trip every
                    echo), in order, and host a's driver sent at least every frame's
                    bytes (driver.bytes-sent): the spy read a stream that crossed the wire
+  transport        a point's transport agrees with the set-up its arm ran on (dpdk and
+                   dpdk-raw: a DPDK transport; kernel, onload, sockets: none), and a
+                   two-host point's ends name the same one (aeron_lat labels a row by
+                   the wire it was given and saw: a DPDK arm labelled aeron-udp is one
+                   whose label was guessed)
   mixed-counts     a mixed-load point (aeron_lat --load mixed, mixed.rs): both ends'
                    manifests, one profile; every background message scheduled sent,
                    read by every subscription of the pong's fan-out, the first's
@@ -450,6 +455,28 @@ def busy_budget(p, host):
                 and not irq_core_thread(t, c))
         seen = max(seen, n)
     return seen, declared
+
+
+# set-ups whose transport is DPDK's, and those whose is the kernel's
+DPDK_RUN = {"dpdk", "dpdk-raw", "fstack"}
+KERNEL_RUN = {"kernel", "onload", "sockets"}
+
+
+def transport_problems(p):
+    """What makes a point's transport disagree with its arm's set-up, or its
+    two ends' transports with each other (the transport rule)."""
+    m = p.manifest or {}
+    setup = (m.get("runner") or {}).get("setup")
+    t = m.get("transport") or ""
+    out = []
+    if setup in DPDK_RUN and "dpdk" not in t:
+        out.append(f"{p.tag}: transport {t!r} on set-up {setup}: a DPDK arm's row labelled as another wire")
+    if setup in KERNEL_RUN and "dpdk" in t:
+        out.append(f"{p.tag}: transport {t!r} on set-up {setup}: a kernel arm's row labelled DPDK")
+    pt = (((m.get("pong") or {}).get("settings")) or {}).get("transport")
+    if pt and t and pt != t:
+        out.append(f"{p.tag}: the ping's transport {t!r}, its pong's {pt!r}")
+    return out
 
 
 def guest_drops(p):
@@ -905,6 +932,8 @@ def check(run_dir, absences=None, notes=None):
             m, hosts = p.manifest, hosts_of_point(p)
             for why in sink_problems(p):
                 add("sink", set_, [p.tag], why)
+            for why in transport_problems(p):
+                add("transport", set_, [p.tag], why)
             if mixed_point(p):
                 ps_ = (m.get("binary") or {}).get("settings") or {}
                 qs_ = (m.get("pong") or {}).get("settings")

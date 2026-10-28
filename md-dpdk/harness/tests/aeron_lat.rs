@@ -782,3 +782,79 @@ fn a_udp_port_in_the_drivers_wildcard_ranges_is_refused() -> R {
     std::fs::remove_dir_all(root)?;
     Ok(())
 }
+
+/// The transport a row is labelled with is the wire the runner set the arm
+/// up on (`--wire`), checked against the driver after the point (once its
+/// channels exist, its DPDK counters do too): a DPDK arm whose driver shows
+/// no DPDK counters is refused, never labelled `aeron-udp`; a kernel one is
+/// `aeron-udp`, its manifest saying both the wire asked for and the one seen.
+#[test]
+fn the_transport_label_is_the_wire_asked_for_and_checked() -> R {
+    let root = scratch("wire")?;
+    let base = free_ports(4)?;
+    let (ping, reply) = (format!("127.0.0.1:{base}"), format!("127.0.0.1:{}", base + 2));
+    let rate = RATE.to_string();
+    for (wire, ok_) in [("kernel", true), ("dpdk", false)] {
+        let out = root.join(wire);
+        let args = [
+            "--role",
+            "local",
+            "--round-trip",
+            "--mode",
+            "udp",
+            "--endpoint",
+            &ping,
+            "--reply",
+            &reply,
+            "--rate",
+            &rate,
+            "--warmup-s",
+            "1",
+            "--duration-s",
+            "1",
+            "--label",
+            "2a:aeron-rel",
+            "--wire",
+            wire,
+        ];
+        let o = command(&out, &root.join(format!("aeron-{wire}")), &args)?.output()?;
+        let err = String::from_utf8_lossy(&o.stderr);
+        if ok_ {
+            ok(wire, &o)?;
+            let m = std::fs::read_to_string(out.join("manifest.json"))?;
+            assert_eq!(setting(&m, "transport")?, "aeron-udp", "{m}");
+            assert_eq!(setting(&m, "wire")?, "kernel", "{m}");
+            assert_eq!(setting(&m, "wire_seen")?, "kernel", "{m}");
+            assert!(m.contains("\"arm\": \"aeron-udp\""), "{m}");
+        } else {
+            assert!(!o.status.success() && o.stdout.is_empty(), "{err}");
+            assert!(err.contains("--wire dpdk") && err.contains("no DPDK counters"), "{err}");
+            assert!(!out.join("results.csv").exists(), "no row for a mislabelled point");
+        }
+    }
+    let o = command(
+        &root.join("bad"),
+        &root.join("aeron-bad"),
+        &[
+            "--role",
+            "local",
+            "--mode",
+            "udp",
+            "--endpoint",
+            &ping,
+            "--rate",
+            "10",
+            "--label",
+            "x:y",
+            "--wire",
+            "rdma",
+        ],
+    )?
+    .output()?;
+    assert!(
+        !o.status.success() && String::from_utf8_lossy(&o.stderr).contains("--wire rdma"),
+        "{o:?}"
+    );
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}

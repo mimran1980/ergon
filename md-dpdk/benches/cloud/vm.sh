@@ -3098,7 +3098,12 @@ events-start)
     # it), gap spinners on the spinner CPUs, the sampler on the housekeeping
     # CPU, the media driver's counters with aeron
     [[ -s $run/transport-map ]] || { echo "events-start: no transport map" >&2; exit 2; }
-    read -r hk _ _ <"$run/transport-map"
+    read -r hk irqc _ <"$run/transport-map"
+    # osnoise (where the kernel has it) on the traced isolated CPUs alone:
+    # never its workload on the housekeeping or IRQ CPU, which a mixed-load
+    # point traces too
+    EVENTS_KNOISE_CPUS=$(tr , '\n' <<<"${3:?traced cpus}" | awk -v a="$hk" -v b="$irqc" '$1 != a && $1 != b' | paste -sd, -)
+    export EVENTS_KNOISE_CPUS
     [[ -x $run/gapspin ]] || gcc -O2 -o "$run/gapspin" "$(dirname "$self")/gapspin.c" || exit 1
     adir=-
     # the arm's own directory (transport.sh passes it as LAB_AERON_DIR)

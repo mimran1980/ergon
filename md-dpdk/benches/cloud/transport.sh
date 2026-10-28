@@ -434,6 +434,7 @@ tr_bin_args() {
             [[ $role == pong ]] && sk=$own
             out="--endpoint $sk:$port --reply $sk:$((port + TR_PORT_SPAN / 2)) $out"
             [[ ${setup:-} == dpdk ]] || out="${out/ --aeron-dir / --interface $own --aeron-dir }"
+            out+=" --wire $(tr_wire)"
         elif [[ $args == *" --mode udp "* ]]; then
             local ep=$peer rp=$own
             [[ $role == pong ]] && ep=$own rp=$peer
@@ -453,6 +454,7 @@ tr_bin_args() {
             else
                 out="--endpoint $ep:$port --reply $rp:$port --interface $own $out"
             fi
+            out+=" --wire $(tr_wire)"
         fi
         ;;
     floor)
@@ -500,6 +502,11 @@ tr_bin_args() {
     esac
     echo "$out"
 }
+
+# tr_wire: aeron_lat --wire for the current arm, the wire its set-up runs
+# the driver on (dpdk; the kernel's UDP for kernel and onload): the binary
+# checks its driver against it and labels the row by it, never by a guess
+tr_wire() { if [[ ${setup:-} == dpdk ]]; then echo dpdk; else echo kernel; fi; }
 
 # tr_other_nic <sender|receiver>: the other data NIC's role
 tr_other_nic() { if [[ $1 == sender ]]; then echo receiver; else echo sender; fi; }
@@ -1149,8 +1156,14 @@ tr_events_cpus() {
         out+=("$c")
     done
     [[ -z ${LAB_LOCAL_SMOKE:-} ]] || out=("${out[@]:0:1}")
+    # a mixed-load arm's housekeeping and IRQ CPUs too (the map's first two),
+    # where an embedded driver's helper threads and the clients' conductors
+    # run: a stall of its loops can be read against them (no spinner there,
+    # and no osnoise: vm.sh events-start keeps it to the isolated CPUs)
+    local quiet=
+    tr_mixed && quiet=$(awk '{print $1, $2}' <<<"${map:-}")
     local traced
-    traced=$(printf '%s\n' $mine_used "${out[@]}" | sort -nu | paste -sd, -)
+    traced=$(printf '%s\n' $mine_used $quiet "${out[@]}" | sort -nu | paste -sd, -)
     if ((${#out[@]})); then echo "$traced $(IFS=,; echo "${out[*]}")"; else echo "$traced -"; fi
 }
 

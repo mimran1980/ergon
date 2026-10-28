@@ -8,7 +8,11 @@
 //! `counters loss` prints instead one `key=value;...` line of every counter
 //! that records loss or its repair: Aeron's NAKs, retransmits, short sends,
 //! loss gap fills, invalid packets and errors, and the DPDK transport's drop
-//! counters summed over its ports. lab.sh takes it before and after each run.
+//! counters summed over its ports, then (telemetry, never loss: `info-`)
+//! each driver agent's longest duty cycle since the driver started and its
+//! cycles over the driver's threshold. lab.sh takes it before and after each
+//! run, the transport suite's events each second (a duty-cycle stall placed
+//! in time).
 //! `counters errors` prints the driver's distinct error log and loss report.
 //!
 //! Every mode reads the driver's `CnC` file directly, as no client of the
@@ -34,6 +38,31 @@ const AERON_LOSS: [(&str, &str); 8] = [
     ("Invalid packets", "invalid-packets"),
     ("Errors", "errors"),
     ("Failed offers to ReceiverProxy", "failed-receiver-offers"),
+];
+/// The driver agents' duty-cycle counters, by label prefix: `info-` keys
+/// (telemetry the loss rows leave out), a max as it reads, a count summed.
+const AERON_CYCLES: [(&str, &str); 6] = [
+    (
+        "Conductor max cycle time doing its work in ns",
+        "info-cycle-conductor-max-ns",
+    ),
+    ("Sender max cycle time doing its work in ns", "info-cycle-sender-max-ns"),
+    (
+        "Receiver max cycle time doing its work in ns",
+        "info-cycle-receiver-max-ns",
+    ),
+    (
+        "Conductor work cycle exceeded threshold count",
+        "info-cycle-conductor-exceeded",
+    ),
+    (
+        "Sender work cycle exceeded threshold count",
+        "info-cycle-sender-exceeded",
+    ),
+    (
+        "Receiver work cycle exceeded threshold count",
+        "info-cycle-receiver-exceeded",
+    ),
 ];
 /// The DPDK transport's drop counters, by the name ending their label
 /// (`missed-packets` mirrors the same NIC miss as `nic-rx-missed`, so only
@@ -115,6 +144,7 @@ fn loss() {
         .iter()
         .map(|(_, k)| ((*k).to_string(), 0))
         .chain(DPDK_LOSS.iter().map(|k| (dpdk_key(k), 0)))
+        .chain(AERON_CYCLES.iter().map(|(_, k)| ((*k).to_string(), 0)))
         .collect();
     cnc.counters_reader()
         .foreach_counter_fn(|value, _id, _type_id, _key, label| {
@@ -126,6 +156,7 @@ fn loss() {
             } else {
                 AERON_LOSS
                     .iter()
+                    .chain(AERON_CYCLES.iter())
                     .find(|(prefix, _)| label.starts_with(prefix))
                     .map(|(_, k)| (*k).to_string())
             };
