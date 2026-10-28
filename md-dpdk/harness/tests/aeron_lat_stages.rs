@@ -148,30 +148,30 @@ fn ping_pong(root: &Path, driver_trace: bool) -> Res<(Output, Output)> {
                 .env("RUSTERON_DPDK_STAGE_TRACE_FILE", root.join(format!("driver-{end}.csv")));
         }
     };
-    let mut pong = command(
+    let mut responder_cmd = command(
         &root.join("pong"),
         &root.join("aeron-pong"),
         &[&["--role", "pong"][..], &common].concat(),
     );
-    traced(&mut pong, "pong");
-    let pong = pong.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
-    let mut ping = command(
+    traced(&mut responder_cmd, "pong");
+    let responder = responder_cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    let mut initiator_cmd = command(
         &root.join("ping"),
         &root.join("aeron-ping"),
         &[&["--role", "ping"][..], &common].concat(),
     );
-    traced(&mut ping, "ping");
-    let ping = ping.output()?;
-    let pong = wait(pong, Duration::from_secs(60))?;
-    Ok((ping, pong))
+    traced(&mut initiator_cmd, "ping");
+    let initiator_out = initiator_cmd.output()?;
+    let responder_out = wait(responder, Duration::from_secs(60))?;
+    Ok((initiator_out, responder_out))
 }
 
 #[test]
 fn a_ping_and_a_pong_stamp_every_nth_message() -> R {
     let root = scratch("app")?;
-    let (ping, pong) = ping_pong(&root, false)?;
-    ok("ping", &ping)?;
-    ok("pong", &pong)?;
+    let (initiator_out, responder_out) = ping_pong(&root, false)?;
+    ok("ping", &initiator_out)?;
+    ok("pong", &responder_out)?;
     let (pr, notes) = rows(&root.join("ping/stages-app.csv"))?;
     let head = notes.join("\n");
     for want in [
