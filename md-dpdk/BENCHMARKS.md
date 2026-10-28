@@ -625,8 +625,9 @@ CPU 1's cpuidle `usage` and `time` before and after (`idle/`).
   :25 in `aws-20261028-123909`): a path outage of about 15 ms once a
   minute. Not investigated.
 - The SMT comparison (`transport-aws-smt-off.tsv`, `transport-aws-smt.tsv`)
-  ran uncapped; its 10k msg/s points need rerunning with the cap (both
-  sets now require `irq_idle 1`).
+  first ran uncapped and was rerun with the cap on both halves
+  (`aws-20261028-150900`, `aws-20261028-150920`; both sets require
+  `irq_idle 1`): [SMT sibling cost](../io/benches/BENCHMARK.md#smt-sibling-cost).
 
 ## Recommended configuration
 

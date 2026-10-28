@@ -38,7 +38,7 @@ every platform.)*
 | key | default | meaning |
 |---|---|---|
 | `loop_cpu` | unset | the loop's CPU, for the host checks; unset: the CPU the calling thread is pinned to (ergon-io never pins it) |
-| `sqpoll_cpu` | unset | the SQPOLL kernel thread's CPU; unset: the first helper CPU ([placement](kubernetes.md#why-a-pod-has-no-housekeeping-cpus)). A core of its own or the loop's SMT sibling: [what the sibling costs](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#smt-sibling-cost) |
+| `sqpoll_cpu` | unset | the SQPOLL kernel thread's CPU; unset: the first helper CPU ([placement](kubernetes.md#why-a-pod-has-no-housekeeping-cpus)). A core of its own or the loop's SMT sibling: [what the sibling costs](#uring-sqpoll-on-the-loops-smt-sibling-x86) |
 | `sqpoll_idle_ms` | 600,000 | idle time before the SQPOLL thread sleeps; NIC polling does not count as work, so keep it long |
 | `ring_entries` | 256 | `io_uring` submission queue size |
 | `per_queue` | `false` | `recv-busy` only: one busy-polled read per NIC queue, then the sockets epoll reports ready |
@@ -145,6 +145,38 @@ $B/analyse --warmup-s 2 res/c100-*
 
 Measured against plain `recv-busy` and `uring-sqpoll` at 1–256
 connections: [polling backends](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#polling-backends-by-socket-count-x86).
+
+## `uring-sqpoll` on the loop's SMT sibling (x86)
+
+With SMT on, one physical core is two hyperthreads. The loop spins on one;
+the SQPOLL kernel thread can spin on the other, so the pair costs one core,
+the same as mio or `epoll-spin` with SMT off.
+
+TCP round trip, 1 connection, 64 B, AWS `c7i.4xlarge` (Intel), the NIC
+interrupts on a core of their own capped at C1, 3 reps. µs, p50 / p99,
+range over reps:
+
+| arm | cores | 10,000 msg/s | 50,000 | 200,000 |
+|---|---|---|---|---|
+| mio, SMT off | 1 | 40.0–41.4 / 47.1–48.7 | 44.5–45.2 / 55.0–56.6 | 70.3–71.6 / 94.3–97.6 |
+| `epoll-spin`, SMT off | 1 | 39.7–40.9 / 47.5–48.5 | 44.2 / 51.7–55.0 | 70.0–71.5 / 96.3–102.5 |
+| **`uring-sqpoll`, SQPOLL on the sibling** | 1 | **35.7–36.9 / 40.7–42.0** | **34.7–36.5 / 43.0–47.3** | **64.5–67.5 / 84.4–88.7** |
+| `uring-sqpoll`, SQPOLL on another core, SMT off | 2 | 36.6–38.6 / 41.2–46.1 | 35.8–37.7 / 43.3–47.4 | 61.4–62.5 / 79.0–81.6 |
+
+- **The sibling beats mio.** On the same hosts (mio with its sibling idle)
+  `uring-sqpoll` is 2.3 / 7.3 / 5.0 µs lower at p50 and 5.4 / 8.5 / 15.4 at
+  p99. SMT on and SMT off ran on two host pairs; mio measured on both puts
+  the pairs 1.1–2.4 µs apart at 10–50k.
+- **A core of its own is better only at high rates:** level at 10–50k,
+  about 4–6 µs p50 and 8 µs p99 lower at 200,000 msg/s.
+- **`epoll-spin` and mio are level.** Neither polls the NIC; both wait for
+  the interrupt.
+- **Tails are not ranked:** every arm had millisecond round trips (24 of 63
+  points, to 8.7 ms), most with no recorded cause.
+
+Every figure, the A/A controls and the fairness checks:
+[SMT sibling cost](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#smt-sibling-cost).
+In a pod: [x86 with SMT, `cpu: 2`](kubernetes.md#x86-with-smt-cpu-2-one-physical-core).
 
 ## Kernel
 

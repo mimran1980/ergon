@@ -45,6 +45,16 @@
   3.1 to 8.4 µs higher). The `c7i` once-a-minute path outage recurred
   (second :25, 4.2 to 16.2 ms). The embedded kernel driver's 1-stream
   millisecond maxima stay listed as unexplained.
+- `uring-sqpoll` with its SQPOLL thread on the loop's SMT sibling, against
+  mio with SMT off, both on one physical core (TCP round trip, 1
+  connection, AWS `c7i.4xlarge`, the IRQ CPU capped at C1): the sibling
+  layout is 2.3 to 7.3 µs lower at p50 and 5.4 to 15.4 µs at p99 than mio
+  on the same hosts at 10,000 to 200,000 msg/s, and level with SQPOLL on
+  a core of its own to 50,000 msg/s (4 to 6 µs dearer at 200,000).
+  `epoll-spin` and mio are level. Tails are not ranked: millisecond round
+  trips in every arm, most unexplained. The book's backends page and the
+  Kubernetes x86 `cpu: 2` layout recommend it for one busy connection on
+  one core; `io/benches/BENCHMARK.md` has every figure.
 - Onload over AF_XDP on AWS ENA: not viable (kernel fault at NIC
   registration, instance froze), no latency measured; the Onload runner
   arms are marked experimental.

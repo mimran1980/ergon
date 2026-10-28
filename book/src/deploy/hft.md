@@ -152,6 +152,12 @@ and 100 connections the own core is
 lower at p50 and p99 in every round. This is one busy sibling (SQPOLL);
 other sibling loads are not measured.
 
+TCP round trips at 1 connection (`c7i.4xlarge`, 2026-10-28): the loop and
+SQPOLL on two hyperthreads of one core are 2.3–7.3 µs lower at p50 than mio
+on one core of the same hosts (3.8–8.4 against mio with SMT off), and level with SQPOLL on a core of its own to
+50,000 msg/s ([`uring-sqpoll` on the loop's SMT sibling](../io/backends.md#uring-sqpoll-on-the-loops-smt-sibling-x86)).
+SMT off still keeps one pod's sibling from another pod's work.
+
 ### C-states
 
 `…/flags-aws-20261015T062428Z/tables.md`, `cstate` arm: every idle state

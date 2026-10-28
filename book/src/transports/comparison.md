@@ -766,7 +766,7 @@ to verified deletion (two instances, about $1). An earlier session the same
 morning (`aws-20261027-043119`, 45 min) lost every DPDK arm to a set-up
 failure and has no A/A; its kernel rows agree with these and are not used.
 
-### c7i: the IRQ CPU's idle depth (SMT sessions to rerun)
+### c7i: the IRQ CPU's idle depth
 
 On `c7i.4xlarge` (Intel, cpuidle `intel_idle`) interrupt-driven TCP
 receive waits for CPU 1, which takes the NIC interrupts, to wake. mio TCP,
@@ -783,8 +783,8 @@ Busy polling off did not help (44–165 / 438–545). `c7a` (AMD,
 `acpi_idle`) showed no such cost. The lab now caps the IRQ CPU at C1 on
 `intel_idle` hosts for every arm of a session and turns TCP autocorking
 off for every TCP arm; `c7a` sessions are unchanged by the cap. The SMT
-comparison on `c7i` ran uncapped and is to be rerun with the cap on both
-halves. The millisecond tails in many `c7i` arms (p99.99 to 12 ms, capped
+comparison on `c7i` was rerun with the cap on both halves
+([`uring-sqpoll` on the loop's SMT sibling](../io/backends.md#uring-sqpoll-on-the-loops-smt-sibling-x86)). The millisecond tails in many `c7i` arms (p99.99 to 12 ms, capped
 arms included) are separate: about 15 ms once a minute at a fixed second
 per pair, unexplained. Details:
 [BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#c7i-the-irq-cpus-idle-depth);
@@ -1218,7 +1218,7 @@ network: compare across sessions only through the floors measured in each.
 | `aws-20261028-123949` | 2 × `c8g.2xlarge` | kernel UDP | us-east-1d | 25.8 / 34.3 | 33.4 / 41.8 |
 
 The `c7i` hosts cap the IRQ CPU at C1 and turn TCP autocorking off
-([c7i: the IRQ CPU's idle depth](#c7i-the-irq-cpus-idle-depth-smt-sessions-to-rerun)).
+([c7i: the IRQ CPU's idle depth](#c7i-the-irq-cpus-idle-depth)).
 Floors: 1 stream, 10,000 msg/s, 64 B. `mio-udp` in the DPDK sessions had
 millisecond tails (p99.99 0.5 ms on Intel, 4.5 ms on Graviton, not
 explained); it is shown, not used.
