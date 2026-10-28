@@ -1156,6 +1156,26 @@ fn write_files(c: &Common, rec: &Recorder, start_realtime_ns: u128) -> Result<()
     )
 }
 
+/// A point whose row stands for more streams than the one it measured.
+///
+/// `aeron_lat --load mixed`: a hot stream measured as every arm's is, beside
+/// background streams of their own schedule. The row and the manifest's
+/// `rate` and `streams` are the point's, every stream's; its latency
+/// columns the measured stream's; its achieved rate theirs together.
+#[derive(Debug)]
+pub struct Shown<'a> {
+    /// msg/s over every stream (the row's rate).
+    pub rate: u64,
+    /// Every stream.
+    pub streams: u32,
+    /// What the other streams achieved, msg/s, added to the measured one's.
+    pub achieved_extra: f64,
+    /// The other streams' latencies: `histogram-bg-<label>.csv`, and with
+    /// the measured stream's `histogram-all-<label>.csv` (`bg.*` and `all.*`
+    /// in the manifest).
+    pub others: &'a Latency,
+}
+
 /// Ends the point at raw `end` and writes its files; returns the row.
 ///
 /// What the schedule owed and never sent is recorded censored. `--out` gets
@@ -1169,11 +1189,47 @@ fn write_files(c: &Common, rec: &Recorder, start_realtime_ns: u128) -> Result<()
 pub fn finish(
     c: &Common,
     clock: &TscClock,
+    rec: Recorder,
+    send: SendStats,
+    start_realtime_ns: u128,
+    end: u64,
+    report: Report<'_>,
+) -> Result<String, Error> {
+    finish_shown(c, clock, rec, send, start_realtime_ns, end, report, None)
+}
+
+/// A latency summary into the manifest as `<prefix>.<stat>`.
+fn summary_settings(m: &mut RunManifest, prefix: &str, s: &ergon_latency_core::hist::Summary) {
+    for (k, v) in [
+        ("min_ns", s.min),
+        ("p50_ns", s.p50),
+        ("p90_ns", s.p90),
+        ("p99_ns", s.p99),
+        ("p999_ns", s.p999),
+        ("p9999_ns", s.p9999),
+        ("max_ns", s.max),
+        ("count", s.count),
+        ("censored", s.censored),
+    ] {
+        m.setting(&format!("{prefix}.{k}"), &v.to_string());
+    }
+}
+
+/// [`finish`], the row and manifest standing for `shown`'s streams where
+/// given (`c` is then the measured stream's own schedule).
+///
+/// # Errors
+/// As [`finish`].
+#[allow(clippy::too_many_arguments)]
+pub fn finish_shown(
+    c: &Common,
+    clock: &TscClock,
     mut rec: Recorder,
     mut send: SendStats,
     start_realtime_ns: u128,
     end: u64,
     report: Report<'_>,
+    shown: Option<&Shown<'_>>,
 ) -> Result<String, Error> {
     if rec.refused > 0 {
         return Err(Error::Payload {
@@ -1187,8 +1243,11 @@ pub fn finish(
     let Ended {
         pace,
         loss,
-        achieved,
+        mut achieved,
     } = end_point(c, clock, &mut rec, &mut send, end)?;
+    if let Some(s) = shown {
+        achieved += s.achieved_extra;
+    }
     let latency = rec.latency.from_intended.summary();
     let line = Row {
         kind: if c.is_round_trip() {
@@ -1199,7 +1258,7 @@ pub fn finish(
         label: &c.label,
         channel: report.channel,
         size: c.size,
-        rate: c.rate,
+        rate: shown.map_or(c.rate, |s| s.rate),
         latency,
         stream0: rec.stream0.summary(),
         pace,
@@ -1220,6 +1279,24 @@ pub fn finish(
     write_files(c, &rec, start_realtime_ns)?;
     let mut m = report.manifest;
     c.settings(&mut m);
+    if let Some(s) = shown {
+        let mut all = rec.latency.from_intended.clone();
+        all.add(s.others)?;
+        write(
+            c.out.join(format!("histogram-bg-{}.csv", c.label)),
+            &s.others.csv(),
+        )?;
+        write(
+            c.out.join(format!("histogram-all-{}.csv", c.label)),
+            &all.csv(),
+        )?;
+        m.setting("measured_rate", &c.rate.to_string())
+            .setting("measured_streams", &c.streams.to_string())
+            .setting("rate", &s.rate.to_string())
+            .setting("streams", &s.streams.to_string());
+        summary_settings(&mut m, "bg", &s.others.summary());
+        summary_settings(&mut m, "all", &all.summary());
+    }
     let from_send = rec.latency.from_send.summary();
     let retrans = report
         .retrans

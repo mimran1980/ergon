@@ -60,7 +60,14 @@ COUNTERS = {
     "tcp-dsack": ("tcp", ("TCPDSACKRecv", "TCPDSACKOfoRecv")),
     "nak": ("aeron", ("naks-sent", "naks-received")),
     "retransmit": ("aeron", ("retransmits-sent",)),
+    # a media driver agent's duty cycles over the driver's threshold
+    # (counters loss' info- keys): a stall of the driver's loop, placed in time
+    "agent-cycle": ("aeron", ("info-cycle-conductor-exceeded", "info-cycle-sender-exceeded",
+                              "info-cycle-receiver-exceeded")),
 }
+# a driver agent's longest duty cycle (since its driver started): a second
+# where it rose holds the stall that raised it ("<agent> <ns>")
+AGENT_MAX = ("conductor", "sender", "receiver")
 SPINNER = "gapspin"
 TASK = re.compile(r"^\s*(.+?)-(\d+)\s+(?:\(\s*\S+\)\s+)?\[\d+\]")
 # the kinds that happen on one CPU (the rest are the host's, per second)
@@ -302,6 +309,10 @@ def sample_events(lines):
                 d = sum(cur[src].get(k, 0) - prev[src].get(k, cur[src].get(k, 0)) for k in keys)
                 if d > 0:
                     rows.append((kind, t0, t1, None, str(d)))
+            for agent in AGENT_MAX:
+                k = f"info-cycle-{agent}-max-ns"
+                if k in cur["aeron"] and k in prev["aeron"] and cur["aeron"][k] > prev["aeron"][k]:
+                    rows.append(("agent-cycle-max", t0, t1, None, f"{agent} {cur['aeron'][k]}"))
         prev = cur
     return rows
 

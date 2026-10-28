@@ -121,6 +121,10 @@
 #   vm.sh aeron-page         the page size (statfs's block size) of AERON_DIR's filesystem
 #   vm.sh napi               each data NIC's interrupt deferral as it is now, "<nic>
 #                            <napi_defer_hard_irqs> <gro_flush_timeout ns>" a line
+#   vm.sh nicstats           each data NIC's traffic counters as they are now (a mixed-load point's, before
+#                            and after): "<role> <iface> tx_bytes=<n> rx_bytes=<n> tx_packets=<n> rx_packets=<n>"
+#                            and its ENA allowance counters (<name>=<n>), or "<role> <iface> dpdk" where DPDK
+#                            holds it (the bench binary reads the transport's own counters then)
 #   vm.sh nstat              the kernel's protocol counters;  vm.sh settings  every transport sysctl
 #                            as it is now, <knob>=<value> (host.sh transport_settings_read)
 #   vm.sh events-start <point> <traced cpus> <spinner cpus|-> [aeron]   a point's events begun before
@@ -3102,6 +3106,19 @@ napi)
         echo "$vf $(cat "$LAB_SYS_ROOT/class/net/$vf/napi_defer_hard_irqs") $(cat "$LAB_SYS_ROOT/class/net/$vf/gro_flush_timeout")"
     done
     ;;
+nicstats)
+    # a mixed-load point's NIC side (transport.sh tr_snap; fairness.py's
+    # mixed-nic rule): the kernel's interface statistics and the ENA's
+    # allowance counters (ethtool -S), or dpdk where DPDK holds the NIC
+    nics | while read -r role iface _; do
+        st=$LAB_SYS_ROOT/class/net/$iface/statistics
+        if [[ ! -r $st/tx_bytes ]]; then
+            echo "$role $iface dpdk"
+            continue
+        fi
+        echo "$role $iface tx_bytes=$(cat "$st/tx_bytes") rx_bytes=$(cat "$st/rx_bytes") tx_packets=$(cat "$st/tx_packets") rx_packets=$(cat "$st/rx_packets")$({ ethtool -S "$iface" 2>/dev/null || true; } | awk '$1 ~ /allowance_exceeded:$/ {printf " %s=%s", substr($1, 1, length($1) - 1), $2}')"
+    done
+    ;;
 nstat) transport_nstat ;;
 settings)
     transport_settings_read
@@ -3114,7 +3131,12 @@ events-start)
     # it), gap spinners on the spinner CPUs, the sampler on the housekeeping
     # CPU, the media driver's counters with aeron
     [[ -s $run/transport-map ]] || { echo "events-start: no transport map" >&2; exit 2; }
-    read -r hk _ _ <"$run/transport-map"
+    read -r hk irqc _ <"$run/transport-map"
+    # osnoise (where the kernel has it) on the traced isolated CPUs alone:
+    # never its workload on the housekeeping or IRQ CPU, which a mixed-load
+    # point traces too
+    EVENTS_KNOISE_CPUS=$(tr , '\n' <<<"${3:?traced cpus}" | awk -v a="$hk" -v b="$irqc" '$1 != a && $1 != b' | paste -sd, -)
+    export EVENTS_KNOISE_CPUS
     [[ -x $run/gapspin ]] || gcc -O2 -o "$run/gapspin" "$(dirname "$self")/gapspin.c" || exit 1
     adir=-
     # the arm's own directory (transport.sh passes it as LAB_AERON_DIR)

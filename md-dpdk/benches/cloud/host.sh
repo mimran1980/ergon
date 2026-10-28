@@ -1712,7 +1712,8 @@ events_start() {
     echo "$cpus" >"$d/cpus"
     sudo env LAB_SYS_ROOT="$LAB_SYS_ROOT" bash -c "$(declare -f events_trace_start events_trace_stop); events_trace_start $name $cpus $kb" >"$d/notes" 2>&1
     if declare -F knoise_start >/dev/null; then
-        sudo env LAB_SYS_ROOT="$LAB_SYS_ROOT" bash -c "$(declare -f knoise_start); knoise_start $cpus" 2>&1 | sed 's/^/events: /' >>"$d/notes"
+        # (EVENTS_KNOISE_CPUS: the caller's subset, never a housekeeping CPU)
+        sudo env LAB_SYS_ROOT="$LAB_SYS_ROOT" bash -c "$(declare -f knoise_start); knoise_start ${EVENTS_KNOISE_CPUS:-$cpus}" 2>&1 | sed 's/^/events: /' >>"$d/notes"
     else
         echo "events: osnoise not tried: ${EVENTS_NO_OSNOISE:-this host runs no osnoise}" >>"$d/notes"
     fi

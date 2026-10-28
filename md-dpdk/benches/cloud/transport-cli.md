@@ -32,11 +32,52 @@ nonzero exit on any error. A partial row is never printed.
 | binary | flags |
 |---|---|
 | `mpsc_lat` | `--capacity N` (sync_channel); role `local` only, `--round-trip` for the round trip |
-| `aeron_lat` | `--mode <ipc\|spy\|spy-udp\|udp>`, `--reliable <true\|false>` (`false` UDP only), `--endpoint HOST:PORT` (pings; stream i on PORT+i, stream id S+i), `--reply HOST:PORT` (echoes, stream id S+10000+i), `--interface IP` (the three UDP and spy-udp only: refused for ipc and spy). `spy-udp`: `local` measures as `spy` does, on reliable `ssc=false` publications to `--endpoint` and `--reply`, both the sink's addresses; `pong` is that sink (reads every frame, writes `sink.*` counts, echoes nothing); `ping` refused. Every manifest has the driver's `driver.bytes-sent` and `driver.bytes-received`, a local round trip's `echoes_sent`, `--aeron-dir PATH`, `--driver external\|embedded\|invoker` (a driver process at `--aeron-dir`; one this process starts on a thread of its own, configured from the environment; or one in Aeron's INVOKER mode that the measuring thread runs with its client's conductor, every poll and after every offer: `ping` and `pong` over `udp` only), `--driver-busy-threads N` (the driver's, as the runner sets it up; invoker 0, its only value), `--term-length BYTES`, `--mtu BYTES`, `--stream-id S` (1001), `--connect-timeout-s N` (30), `--round-trip` (`local` only), `--stage-trace N` (a power of two: every Nth message by seq stamped at its offer and read into `<out>/stages-app.csv`; ping, pong, `local --round-trip`) |
+| `aeron_lat` | `--mode <ipc\|spy\|spy-udp\|udp>`, `--reliable <true\|false>` (`false` UDP only), `--endpoint HOST:PORT` (pings; stream i on PORT+i, stream id S+i), `--reply HOST:PORT` (echoes, stream id S+10000+i), `--interface IP` (the three UDP and spy-udp only: refused for ipc and spy). `spy-udp`: `local` measures as `spy` does, on reliable `ssc=false` publications to `--endpoint` and `--reply`, both the sink's addresses; `pong` is that sink (reads every frame, writes `sink.*` counts, echoes nothing); `ping` refused. Every manifest has the driver's `driver.bytes-sent` and `driver.bytes-received`, a local round trip's `echoes_sent`, `--aeron-dir PATH`, `--driver external\|embedded\|invoker` (a driver process at `--aeron-dir`; one this process starts on a thread of its own, configured from the environment; or one in Aeron's INVOKER mode that the measuring thread runs with its client's conductor, every poll and after every offer: `ping` and `pong` over `udp` only), `--driver-busy-threads N` (the driver's, as the runner sets it up; invoker 0, its only value), `--term-length BYTES`, `--mtu BYTES`, `--stream-id S` (1001), `--connect-timeout-s N` (30), `--round-trip` (`local` only), `--stage-trace N` (a power of two: every Nth message by seq stamped at its offer and read into `<out>/stages-app.csv`; ping, pong, `local --round-trip`; with `--load mixed`, the hot stream's), `--load uniform\|mixed` and `--hot-rate N` (below), `--wire kernel\|dpdk` (UDP modes: the wire the runner set the arm up on; the row's transport is the wire the driver shows once the point's channels exist, its md-dpdk counters or none, and one that disagrees with `--wire` is refused, no row; the manifest's `wire` and `wire_seen`). Every manifest also has each driver agent's duty cycles (`driver.cycle.<agent>.max_ns`, its `_before`, `.exceeded`) |
+| `floor` | the raw floor, no Aeron (`--role ping\|pong`, one stream): `--endpoint HOST:PORT` (the pong's), `--reply HOST:PORT` (the ping's), `--connect-timeout-s N` (30). Its wire is the driver environment's (`RUSTERON_MEDIA_DRIVER_TRANSPORT`: kernel UDP sockets, or ergon-md-dpdk's packet path alone); a 96-byte datagram (a 32-byte header where Aeron's is, then the message), `wire_bytes` 138 as Aeron's; transport `raw-udp` or `raw-dpdk`; the ping probes until the pong echoes before its schedule; nothing repairs a loss |
 | `udp_lat` | `--impl <mio\|ergon>`, `--local IP:PORT`, `--peer IP:PORT` (base ports, stream i on +i; `local`: the receiver binds `--peer`), `--busy-read-us N` (`SO_BUSY_POLL` on every socket, both impls: ergon-io by `busy_poll_us`), `--epoll-events N`, `--datagram-burst N` (ergon only), `--rcvbuf`/`--sndbuf BYTES` |
 | `tcp_lat` | `--impl <mio\|ergon>`, `--listen IP:PORT` (pong; `local` takes `--listen`, and `--source`) or `--connect IP:PORT` (ping; stream i is connection i), `--source IP` (the connecting end binds it first), `--source-port N` (an arm flag: the connecting end binds stream i to N + i and closes with a reset, so arms given the same N share 4-tuples; the listening end ignores it; not with `local`), `--nodelay` (always on), `--quickack-per-read`, `--rto-min-us N`, `--delack-max-us N`, `--busy-read-us N` (both impls), `--rcvbuf`/`--sndbuf BYTES`, `--backend epoll-spin\|uring-sqpoll` and `--sqpoll-cpu N` (ergon only: ergon-io's backend, `epoll-spin` by default; `uring-sqpoll` needs `--sqpoll-cpu`, its `SQPOLL` kernel thread's CPU, and `--busy-read-us 0`: that thread polls the NIC) |
 | `fstack_lat` | TCP over F-Stack (FreeBSD's stack on DPDK), `ping` or `pong` only (one F-Stack a process, on its one `--cpus` CPU): `--listen IP:PORT` (pong) or `--source IP --connect IP:PORT` (ping), the F-Stack interface taking that address; `--pci BDF` (its port) or `--vdev SPEC` (a virtual one, tests), `--prefix-len N`, `--gateway IP`, `--nodelay` (always on), `--rcvbuf`/`--sndbuf BYTES`, `--delayed-ack true` and `--hz 100` (FreeBSD's), `--no-huge`, `--memory-mb 1024`, `--file-prefix ergon-fstack`. It refuses the kernel's socket flags (busy poll, epoll, quickack, TCP timers). It writes its whole F-Stack config to `<out>/f-stack-<role>.conf`, every key in its manifest (`fstack.conf.*`), with F-Stack's build (`fstack.build.*`). Built with `--features fstack` against `io/benches/fstack/build-fstack.sh`'s F-Stack v2.0 (x86_64 only) |
 | `hostcheck` | `--hot-cpus CSV`, `--out FILE`, `--nic IFACE,...`, `--aeron-dir PATH`; one finding a line (`<id> ok:`, `info:`, `warn:`, `unknown:`); exit 0 clean, 2 not clean, 1 not run |
+
+### `aeron_lat --load mixed`
+
+`--role ping` or `pong` over `--mode udp` (`aeron_lat.rs`, `mixed.rs`).
+Stream 0 is the hot stream: the 64-byte message at `--hot-rate`, on its own
+channel (port + 0) and thread, paced, echoed and recorded as every arm's.
+Streams 1 to `--streams` - 1 are the background, `--rate` less `--hot-rate`
+msg/s together, on a thread of their own at each end and four to a channel
+(port + 1 + (i - 1) / 4):
+
+| `(i - 1) mod 8` | class | burst | sizes ‰ of 64 / 288 / 1344 / 4096 B |
+|---|---|---|---|
+| 0-3 | steady, weight 1, 2, 4 or 8 | 1 | 550 / 300 / 130 / 20 |
+| 4-5 | bursty, weight 4 | 8 | 600 / 300 / 100 / 0 |
+| 6 | idle then a burst, weight 1 | 128 | 700 / 300 / 0 / 0 |
+| 7 | two publishers, weight 4 | 1 | 550 / 300 / 130 / 20 |
+
+A message's size is a hash of its stream, publisher and sequence, so both
+ends know it. The pong subscribes `1 + i mod 4` times to stream `i` (fan-out
+1 to 4); the first echoes it. `--cpus` is `hot,background`; `busy_threads`
+2 plus the driver's. Under `--driver invoker` the background has a client of
+its own of the driver the hot thread runs. The row: the hot stream's
+latency, every stream's `rate` and `streams`, every stream's achieved rate.
+Files beside it: `histogram-bg-<label>.csv`, `histogram-all-<label>.csv`.
+Manifest (both ends): the profile (`mixed.profile`, `mixed.classes`,
+`mixed.publishers`, `mixed.fanout`, `mixed.period_ns`, `hot_rate`), comma
+lists one entry a background stream (ping: `mixed.scheduled`, `.sent`,
+`.echoes`, `.bp`, `.bp_measured`, `.echo_gaps`, `.echo_behind`,
+`.payload_bytes`; pong: `mixed.recv` with `/` between a stream's
+subscriptions, `.echoed`, `.recv_gaps`, `.recv_behind`, `.recv_refused`),
+the frames' bytes (`mixed.hot_frame_bytes`, `.frame_bytes_sent`,
+`.echo_frame_bytes_received`, `.frame_bytes_received`, `.frames_sent`), the
+hot stream's (`mixed.hot_sent`, `mixed.hot_echoes`), latency summaries
+(`bg.*`, `all.*`), the background thread's passes and busy passes
+(`mixed.bg.*`), an invoking thread's duty cycles and those with work
+(`mixed.invoker.*`), the driver's duty cycles (`driver.cycle.<agent>.max_ns`
+and `_before`, a max since the driver started; `driver.cycle.<agent>.exceeded`,
+the growth), its flow control and control traffic (`driver.*`), and under
+DPDK the transport's own NIC counters (`nic.*`, read 1.2 s after the
+schedule: the PMD refreshes them once a second).
 
 ## What the runner passes
 
@@ -51,10 +92,11 @@ own):
 | binary | runner's flags |
 |---|---|
 | `mpsc_lat` | `--capacity <capacity>` |
-| `aeron_lat` | `--aeron-dir <aeron_page's directory: $TR_AERON_DIR (tmpfs), at 2097152 $TR_AERON_HUGE_DIR (2 MiB hugetlbfs), the media driver's AERON_DIR too> --driver <external; embedded or invoker with aeron_driver embedded> --driver-busy-threads <tr_driver_busy: $TR_AERON_DRIVER_BUSY_THREADS, SHARED_NETWORK one fewer, SHARED 1, INVOKER 0> --term-length <term_length> --mtu $TR_MTU`; `--mode udp` arms also `--endpoint <pong's data IP>:$TR_PORT_BASE --reply <ping's data IP>:$TR_PORT_BASE --interface <own data IP>`; every run `--stream-id 1001+256k` (the k-th Aeron point of the set; a one-host point's round trip +128), ping and pong the same, so no lingering publication of an earlier run is the image a subscription takes |
+| `aeron_lat` | `--aeron-dir <aeron_page's directory: $TR_AERON_DIR (tmpfs), at 2097152 $TR_AERON_HUGE_DIR (2 MiB hugetlbfs), the media driver's AERON_DIR too> --driver <external; embedded or invoker with aeron_driver embedded> --driver-busy-threads <tr_driver_busy: $TR_AERON_DRIVER_BUSY_THREADS, SHARED_NETWORK one fewer, SHARED 1, INVOKER 0> --term-length <term_length> --mtu $TR_MTU`; `--mode udp` arms also `--endpoint <pong's data IP>:$TR_PORT_BASE --reply <ping's data IP>:$TR_PORT_BASE --interface <own data IP> --wire <dpdk on setup dpdk, else kernel>`; every run `--stream-id 1001+256k` (the k-th Aeron point of the set; a one-host point's round trip +128), ping and pong the same, so no lingering publication of an earlier run is the image a subscription takes |
 | `udp_lat` | `--local <own>:$TR_PORT_BASE --peer <other end>:$TR_PORT_BASE --rcvbuf/--sndbuf <sockbuf> --epoll-events <epoll_events> --busy-read-us <busy_read_us>`, `--datagram-burst <datagram_burst>` for `--impl ergon` |
 | `tcp_lat` | pong (and `local`, on its receiver NIC) `--listen <own>:port`, ping `--source <own> --connect <peer>:port` (`local` also `--source <own>`), then `--nodelay --quickack-per-read [false] --rto-min-us <rto_min_us> --delack-max-us --rcvbuf --sndbuf <sockbuf> --epoll-events <epoll_events> --busy-read-us <busy_read_us>`; an arm with `--backend uring-sqpoll` `--busy-read-us 0` and no `busy_read_us` knob |
 | `fstack_lat` | pong `--listen <own>:port`, ping `--source <own> --connect <peer>:port`, then `--pci <the NIC with that address> --prefix-len <its prefix> --gateway <its subnet's first address>` (vm.sh nics) `--nodelay --delayed-ack false --rcvbuf --sndbuf <sockbuf>` (FreeBSD's `delayed_ack=0`: the kernel arms' quickack) |
+| `floor` | `--endpoint <pong's data IP>:$TR_PORT_BASE --reply <host a's receiver NIC's IP>:$TR_PORT_BASE` (DPDK receives on the receiver port alone); setup `dpdk-raw`: `vm.sh driver dpdk-raw` puts the NICs on DPDK and starts no driver, and the binary runs with `~/bench/driver.env` sourced under `fstack_lat`'s `sudo setpriv` capabilities |
 | other (arms file) | `--local <own>:port --peer <other end>:port`; setup `sockets` also `--busy-read-us $TR_BUSY_READ --rcvbuf/--sndbuf $TR_SOCKBUF --nodelay --quickack-per-read --rto-min-us $TR_TCP_RTO_MIN_US --delack-max-us $TR_TCP_DELACK_MAX_US`: every socket and TCP setting the built-in arms get. Such a binary must take them all, apply each it uses, and report them in its manifest |
 
 The media driver's mode (`vm.sh driver`, `tr_driver_mode`): `<aeron_path>`
@@ -76,6 +118,15 @@ poll) goes to `vm.sh transport-net` as `TR_OVERRIDES`, and back after the
 arm. Each point's `manifest/<point>.env` records `base_arm`, `bin`, `args`,
 every `knob.<name>`, `driver_mode`, and for an Aeron arm `aeron_page_<host>`
 (the Aeron directory's page size read back on the host: `vm.sh aeron-page`).
+A mixed-load arm's mode adds `@AERON_DRIVER_<CONDUCTOR|SENDER|RECEIVER>_CYCLE_THRESHOLD=$TR_MIX_CYCLE_THRESHOLD_NS`
+under every threading model, its `--cpus` are two a host, and around each
+of its points the runner reads each host's data NIC counters (`vm.sh
+nicstats`, `nicstats/<point>-<host>-<before|after>`), and its events trace the
+housekeeping and IRQ CPUs too (osnoise stays on the isolated ones), where an
+embedded driver's helper threads and the clients' conductors run. Every
+point's 1 Hz sampler reads the driver agents' duty-cycle counters (`counters
+loss`' `info-cycle-*`), so an agent's stall shows in the events file in its
+second (`agent-cycle`, `agent-cycle-max`).
 
 A declared twin (`TR_DECLARED "<arm>:<twin>:<knob>=<value>"`) is its twin's
 arm row run with the twin's value of every other knob, the tuned section's

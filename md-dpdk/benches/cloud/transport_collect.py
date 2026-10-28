@@ -228,6 +228,57 @@ def nstat_growth(before, after):
     return out
 
 
+# a data NIC's counters a mixed-load point reads (vm.sh nicstats; the DPDK
+# transport's own, nic.* in the binaries' manifests)
+NIC_KEYS = ("tx_bytes", "rx_bytes", "tx_packets", "rx_packets")
+DPDK_NIC_KEYS = ("tx_bytes", "rx_bytes", "tx_pkts", "rx_pkts", "rx_missed", "rx_nombuf", "queue_drop", "tx_eagain",
+                 "allowance_exceeded")
+
+
+def nicstats(text):
+    """vm.sh nicstats' lines as {iface: {counter: n}}, a NIC DPDK holds as
+    {iface: "dpdk"}; None when unread."""
+    if not text:
+        return None
+    out = {}
+    for line in text.splitlines():
+        w = line.split()
+        if len(w) < 3:
+            continue
+        if w[2] == "dpdk":
+            out[w[1]] = "dpdk"
+            continue
+        out[w[1]] = {k: int(v) for k, _, v in (x.partition("=") for x in w[2:]) if v.lstrip("-").isdigit()}
+    return out
+
+
+def nic_growth(before, after, binary_settings):
+    """A host's data NICs over a point, every NIC summed: {source: kernel,
+    tx_bytes, rx_bytes, tx_packets, rx_packets, allowance_exceeded} from
+    vm.sh nicstats, or where DPDK holds them {source: dpdk, ...} from the
+    binary's own nic.* counters; None when unread."""
+    b, a = nicstats(before), nicstats(after)
+    if b is None or a is None:
+        return None
+    if any(v == "dpdk" for v in a.values()):
+        s = binary_settings or {}
+        if not any(f"nic.{k}" in s for k in DPDK_NIC_KEYS):
+            return None
+        return dict({"source": "dpdk"}, **{k: ints(s.get(f"nic.{k}")) or 0 for k in DPDK_NIC_KEYS})
+    out = {"source": "kernel", "allowance_exceeded": 0}
+    for k in NIC_KEYS:
+        out[k] = 0
+    for iface, c in a.items():
+        was = b.get(iface) if isinstance(b.get(iface), dict) else {}
+        for k, v in c.items():
+            d = v - was.get(k, 0)
+            if k in NIC_KEYS:
+                out[k] += d
+            elif k.endswith("allowance_exceeded"):
+                out["allowance_exceeded"] += d
+    return out
+
+
 def netem_growth(before, after, pct):
     """{nic: {qdisc, loss_pct, sent_pkts, dropped}} from vm.sh netem stats before and after."""
     if before is None or after is None:
@@ -384,6 +435,10 @@ def collect(d):
                     src["aeron"] = aeron
                 loss[key] = src
             nics = {key: nic_names(os.path.join(d, f"nics-{h}.txt")) for key, h in keys.items()}
+            # a mixed-load point's data NIC counters (vm.sh nicstats), each host's
+            nic = {key: g for key, h in keys.items()
+                   if (g := nic_growth(snap("nicstats", h, "before"), snap("nicstats", h, "after"),
+                                       (own.get(key) or {}).get("settings"))) is not None}
             manifest = {
                 "format": 1, "set": set_, "arm": label.partition(":")[2].split("@")[0], "label": label,
                 "kind": kind, "transport": bs.get("transport"), "channel": channel,
@@ -408,6 +463,7 @@ def collect(d):
                     if (g := (root_qdiscs(snap("netem", h, "after")) if netem == "none" else
                               netem_growth(snap("netem", h, "before"), snap("netem", h, "after"), netem))) is not None},
                 "loss_counters": loss,
+                "nic_counters": nic or None,
                 "hosts": keys, "point": pid, "runner": pe, "binary": bm, "pong": pong, "sink": sink,
             }
             # each host's events over the point (transport_events.py): the

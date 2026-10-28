@@ -248,6 +248,12 @@ TRANSPORT_EVENTS_S = 6
 # host b for each of its two runs and stops it after (its ready line, then
 # TERM and up to 4 s of reading on): not yet timed on a run, taken at 5 s each
 TRANSPORT_SINK_S = 5
+# a mixed-load point (aeron_lat --load mixed): 32 or 128 streams'
+# publications and fan-out subscriptions added and connected on both hosts
+# (an embedded or invoked DPDK driver's EAL started with them), its DPDK
+# counters' refresh awaited, each host's NIC counters read before and after:
+# not yet timed on a run, taken at 20 s
+TRANSPORT_MIXED_S = 20
 
 
 def transport_estimate(pair, paths, reps, warmup_s, point_s, switch_s):
@@ -272,6 +278,12 @@ def transport_estimate(pair, paths, reps, warmup_s, point_s, switch_s):
                       for s in sets if s["pair"] == pair
                       for a in s["arms"] if arms[s["arms"][0] if a == "aa" else a][2] == "sink")
     overhead += sink_points * 2 * TRANSPORT_SINK_S
+    # mixed-load points (the A/A of one too)
+    mixed = lambda a: " --load mixed " in " " + " ".join(arms[a][3]) + " "
+    mixed_points = sum(len(s["loads"]) * len(s["streams"]) * len(s["netem"]) * reps
+                       for s in sets if s["pair"] == pair
+                       for a in s["arms"] if mixed(s["arms"][0] if a == "aa" else a))
+    overhead += mixed_points * TRANSPORT_MIXED_S
     if "fstack" in setups:
         overhead += TRANSPORT_FSTACK_BUILD_S
     if "onload" in setups:

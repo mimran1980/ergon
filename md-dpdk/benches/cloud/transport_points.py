@@ -130,12 +130,32 @@ def irq_core_saturated(manifest):
                   if any(irq_core_thread(t, (m.get("cpus") or {}).get(h)) for s in samples or [] for t in s))
 
 
+def mixed_backpressured(p):
+    """A mixed-load point's (aeron_lat --load mixed) offers back-pressured in
+    its measured window: the hot stream's (its row) and the background's
+    (mixed.bp_measured); 0 for any other point."""
+    s = (((p.manifest or {}).get("binary") or {}).get("settings")) or {}
+    if s.get("load") != "mixed":
+        return 0
+    try:
+        bg = sum(int(x) for x in str(s.get("mixed.bp_measured", "0")).split(","))
+    except ValueError:
+        bg = 0
+    return (p.row.get("backpressured") or 0) + bg
+
+
 def flags(p):
-    """A point's flags: shown, never compared. The row's (row_flags), and
+    """A point's flags: shown, never compared. The row's (row_flags),
     `IRQ core saturated` where a host's IRQ CPU's ksoftirqd ran over
     SATURATED of it (irq_core_saturated): the point measures the IRQ core's
-    queue, not the transport."""
-    return row_flags(p.row) + (["IRQ core saturated"] if irq_core_saturated(p.manifest) else [])
+    queue, not the transport; and a mixed-load point's `back-pressured`
+    (mixed_backpressured): its offers queued behind flow control, so its
+    latency is the queue's (fairness.py's backpressure rule requires the
+    saturation that explains it)."""
+    out = row_flags(p.row) + (["IRQ core saturated"] if irq_core_saturated(p.manifest) else [])
+    if mixed_backpressured(p):
+        out.append("back-pressured")
+    return out
 
 
 def row_flags(r):

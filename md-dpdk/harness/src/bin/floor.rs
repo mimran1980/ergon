@@ -48,12 +48,39 @@
 //! echoes until SIGTERM, then writes its stalls and says why it ended. With
 //! `RUSTERON_HARNESS_START_FILE` set (the vdev runner's) a DPDK side waits
 //! for that file, its taps bridged, before it sends.
+//!
+//! The transport suite's raw floor (its `dpdk-raw` arm, the same wire
+//! choice): `floor --role ping|pong` with the suite's flags
+//! (transport-cli.md, `io/benches`'s `point.rs`: the schedule, the
+//! recording, the row and the files every arm writes):
+//!
+//! ```text
+//! floor --role <ping|pong> --rate MSG_PER_S --label SET:ARM --out DIR --endpoint HOST:PORT --reply HOST:PORT
+//!       [--warmup-s 30] [--duration-s 30] [--size 64] [--cpus CPU] [--spike-ns 100000] [--stall-ns 10000]
+//!       [--connect-timeout-s 30]
+//! ```
+//!
+//! One stream, one busy thread an end: the ping sends to `--endpoint` (the
+//! pong's address) and reads its echoes on `--reply` (its own). A datagram
+//! is 96 bytes, an Aeron data frame of the suite's 64-byte message: a
+//! 32-byte header (byte 0: 1 a ping or echo, 2 a probe) where Aeron's would
+//! be, then the message. The ping probes until the pong echoes one before
+//! the schedule starts; nothing repairs a lost datagram (the row's `lost`).
 
 #[path = "../lab.rs"]
 #[allow(dead_code)]
 mod lab;
 #[path = "../roundtrip.rs"]
 mod roundtrip;
+
+// io/benches formats it (rustfmt's defaults), not this crate (max_width 120).
+#[path = "../../../../io/benches/src/transport/point.rs"]
+#[rustfmt::skip]
+#[allow(dead_code)]
+mod point;
+
+#[global_allocator]
+static ALLOC: point::CountingAlloc = point::CountingAlloc;
 
 use lab::{Clock, STOP, cpu_arg, pin};
 use roundtrip::{Pace, Results, Stalls, env_u64};
@@ -170,6 +197,9 @@ const NO_DPDK: &str =
 #[allow(clippy::similar_names, reason = "ping and pong name the two ends of a round trip")]
 fn main() -> Result<(), Box<dyn Error>> {
     lab::lock_memory()?;
+    if std::env::args().nth(1).is_some_and(|a| a.starts_with("--")) {
+        std::process::exit(transport::main());
+    }
     let mut args = std::env::args().skip(1);
     let mode = args.next().ok_or("xping|xpong|xhairpin")?;
     let (ping, pong) = (endpoint(args.next())?, endpoint(args.next())?);
@@ -1083,5 +1113,300 @@ mod dpdk {
             }
             Ok(target.count)
         }
+    }
+}
+
+/// The transport suite's raw floor: `floor --role ping|pong` (the module
+/// docs' second half).
+mod transport {
+    use super::point::{self, Common, Error, Flags, Recorder, Report, Role, Rx, Sent, Tx, thread_allocs};
+    use super::{Wire, lab};
+    use ergon_latency_core::clock::TscClock;
+    use ergon_latency_core::manifest::RunManifest;
+    use ergon_latency_core::message::{MESSAGE_LEN, echo_in_place, template};
+    use std::cell::RefCell;
+    use std::net::SocketAddrV4;
+    use std::sync::atomic::Ordering;
+    use std::time::{Duration, Instant};
+
+    /// The datagram: a 32-byte header where Aeron's would be, the message.
+    const HEADER: usize = 32;
+    const DATAGRAM: usize = HEADER + MESSAGE_LEN;
+    /// UDP, IPv4 and Ethernet headers under a datagram.
+    const UDP_IP_ETH: u64 = 8 + 20 + 14;
+    const DATA: u8 = 1;
+    const PROBE: u8 = 2;
+    /// Echoes held from one poll before they go back.
+    const BURST: usize = 16;
+
+    const USAGE: &str = "\
+floor --role ping|pong --rate MSG_PER_S --label SET:ARM --out DIR --endpoint HOST:PORT --reply HOST:PORT
+      [--warmup-s 30] [--duration-s 30] [--size 64] [--cpus CPU] [--spike-ns 100000] [--stall-ns 10000]
+      [--connect-timeout-s 30]
+The raw floor (no Aeron): kernel UDP sockets, or ergon-md-dpdk's packet path alone under
+RUSTERON_MEDIA_DRIVER_TRANSPORT=dpdk-ena (the driver's environment), one stream, one busy thread an end.";
+
+    /// The ends' shared wire, sent on and polled in turn by one thread.
+    struct End<'a, W>(&'a RefCell<W>, [u8; DATAGRAM]);
+
+    impl<W: Wire> Tx for End<'_, W> {
+        #[inline]
+        fn try_send(&mut self, stream: u32, msg: &[u8; MESSAGE_LEN]) -> Result<Sent, Error> {
+            if stream != 0 {
+                return Err(Error::Transport(format!("the raw floor has one stream, not {stream}")));
+            }
+            self.1[0] = DATA;
+            self.1[HEADER..].copy_from_slice(msg);
+            match self.0.borrow_mut().send(&self.1) {
+                Ok(true) => Ok(Sent::Sent),
+                Ok(false) => Ok(Sent::Busy),
+                Err(e) => Err(Error::Transport(format!("send: {e}"))),
+            }
+        }
+    }
+
+    impl<W: Wire> Rx for End<'_, W> {
+        #[inline]
+        fn poll<F: FnMut(&[u8])>(&mut self, on: &mut F) -> Result<usize, Error> {
+            self.0
+                .borrow_mut()
+                .poll(|d| {
+                    // a probe's echo, late, is not a ping's
+                    if d.len() == DATAGRAM && d[0] == DATA {
+                        on(&d[HEADER..]);
+                    }
+                })
+                .map_err(|e| Error::Transport(format!("poll: {e}")))
+        }
+    }
+
+    fn address(f: &mut Flags, flag: &str) -> Result<SocketAddrV4, Error> {
+        let v = f.req(flag)?;
+        v.parse()
+            .map_err(|_| Error::Usage(format!("--{flag} {v}: an IPv4 HOST:PORT")))
+    }
+
+    /// The transport's name in the manifest and its wire's.
+    fn transport() -> Result<(&'static str, &'static str), Error> {
+        match ergon_md_dpdk::env::selector().map_err(|e| Error::Usage(e.to_string()))? {
+            ergon_md_dpdk::Selector::Default => Ok(("raw-udp", "kernel")),
+            ergon_md_dpdk::Selector::DpdkEna => Ok(("raw-dpdk", "dpdk")),
+        }
+    }
+
+    pub fn main() -> i32 {
+        if std::env::args().skip(1).any(|a| a == "--help") {
+            println!("{USAGE}");
+            return 0;
+        }
+        let go = || -> Result<Option<String>, Error> {
+            let mut f = Flags::parse(std::env::args().skip(1))?;
+            let c = Common::parse(&mut f)?;
+            let endpoint = address(&mut f, "endpoint")?;
+            let reply = address(&mut f, "reply")?;
+            let connect = Duration::from_secs(f.num("connect-timeout-s", 30)?);
+            f.finish()?;
+            if !matches!(c.role, Role::Ping | Role::Pong) || c.streams != 1 {
+                return Err(Error::Usage(
+                    "the raw floor is one stream between two hosts: --role ping or pong, --streams 1".into(),
+                ));
+            }
+            c.check_cpus(1, if c.role == Role::Ping { "ping" } else { "echo" })?;
+            let (name, wire_name) = transport()?;
+            let mut m = RunManifest::new(name, &template(), DATAGRAM as u64 + UDP_IP_ETH);
+            m.setting("transport", name)
+                .setting("mode", "raw")
+                .setting("wire", wire_name)
+                .setting("driver", "none")
+                .setting("datagram", &DATAGRAM.to_string())
+                .setting("endpoint", &endpoint.to_string())
+                .setting("reply", &reply.to_string())
+                .setting("thread_order", if c.role == Role::Ping { "ping" } else { "echo" });
+            // each end listens on its own address and sends to the other's
+            let (listen, peer) = if c.role == Role::Ping {
+                (reply, endpoint)
+            } else {
+                (endpoint, reply)
+            };
+            match ergon_md_dpdk::env::selector().map_err(|e| Error::Usage(e.to_string()))? {
+                ergon_md_dpdk::Selector::Default => {
+                    let wire = super::KernelWire::open(listen, peer)
+                        .map_err(|e| Error::Transport(format!("kernel UDP: {e}")))?;
+                    run(&c, wire, peer, connect, m)
+                }
+                ergon_md_dpdk::Selector::DpdkEna => dpdk(&c, listen, peer, connect, m),
+            }
+        };
+        match go() {
+            Ok(row) => {
+                if let Some(row) = row {
+                    println!("{row}");
+                }
+                0
+            }
+            Err(e) => {
+                eprintln!("floor: {e}");
+                1
+            }
+        }
+    }
+
+    #[cfg(all(feature = "dpdk", target_os = "linux"))]
+    fn dpdk(
+        c: &Common,
+        listen: SocketAddrV4,
+        peer: SocketAddrV4,
+        connect: Duration,
+        m: RunManifest,
+    ) -> Result<Option<String>, Error> {
+        let mut shared = super::dpdk::DpdkShared::open(c.cpu(0)).map_err(|e| Error::Transport(format!("DPDK: {e}")))?;
+        let wire = shared
+            .cross(listen, peer)
+            .map_err(|e| Error::Transport(format!("DPDK: {e}")))?;
+        let r = run(c, wire, peer, connect, m);
+        // the native runtime's threads may still read what it holds
+        std::mem::forget(shared);
+        r
+    }
+
+    #[cfg(not(all(feature = "dpdk", target_os = "linux")))]
+    fn dpdk(
+        _c: &Common,
+        _listen: SocketAddrV4,
+        _peer: SocketAddrV4,
+        _connect: Duration,
+        _m: RunManifest,
+    ) -> Result<Option<String>, Error> {
+        Err(Error::Usage(
+            "RUSTERON_MEDIA_DRIVER_TRANSPORT=dpdk-ena, but this build has no DPDK (the harness's dpdk feature, Linux)"
+                .into(),
+        ))
+    }
+
+    /// Probes every 10 ms until the pong echoes one, within `limit`.
+    fn probe<W: Wire>(wire: &RefCell<W>, peer: SocketAddrV4, limit: Duration) -> Result<(), Error> {
+        let deadline = Instant::now() + limit;
+        let mut probe = [0u8; DATAGRAM];
+        probe[0] = PROBE;
+        let mut last = None;
+        while Instant::now() < deadline {
+            if let Err(e) = wire.borrow_mut().send(&probe) {
+                last = Some(e);
+            }
+            let until = Instant::now() + Duration::from_millis(10);
+            while Instant::now() < until {
+                let mut echoed = false;
+                match wire
+                    .borrow_mut()
+                    .poll(|d| echoed |= d.len() == DATAGRAM && d[0] == PROBE)
+                {
+                    Ok(_) if echoed => return Ok(()),
+                    Ok(_) => {}
+                    Err(e) => last = Some(e),
+                }
+            }
+        }
+        Err(Error::Timeout(format!(
+            "no echo from the pong at {peer} within {} s{}",
+            limit.as_secs(),
+            last.map(|e| format!(" (last error: {e})")).unwrap_or_default()
+        )))
+    }
+
+    fn run<W: Wire>(
+        c: &Common,
+        wire: W,
+        peer: SocketAddrV4,
+        connect: Duration,
+        mut m: RunManifest,
+    ) -> Result<Option<String>, Error> {
+        let wire = RefCell::new(wire);
+        if c.role == Role::Pong {
+            lab::stop_on_sigterm();
+            println!("ready");
+            point::pin(c.cpu(0))?;
+            let a0 = thread_allocs();
+            let echoes = pong(&wire)?;
+            let allocs = thread_allocs() - a0;
+            m.setting("echoes_sent", &echoes.to_string())
+                .setting("hot_path_allocs", &allocs.to_string())
+                .setting("busy_threads", "1");
+            point::write_manifest(c, m)?;
+            return Ok(None);
+        }
+        probe(&wire, peer, connect)?;
+        point::pin(c.cpu(0))?;
+        let clock = TscClock::new();
+        let (t, rt) = point::start_at(&clock, point::START_DELAY_NS);
+        let mut rec = Recorder::new(&clock, t, c)?;
+        let (mut tx, mut rx) = (End(&wire, [0u8; DATAGRAM]), End(&wire, [0u8; DATAGRAM]));
+        let a0 = thread_allocs();
+        let send = point::ping(&clock, c, t, &mut tx, &mut rx, &mut rec)?;
+        let allocs = thread_allocs() - a0;
+        let end = clock.raw();
+        point::finish(
+            c,
+            &clock,
+            rec,
+            send,
+            rt,
+            end,
+            Report {
+                channel: "udp",
+                retrans: None,
+                wire_bytes: DATAGRAM as u64 + UDP_IP_ETH,
+                busy_threads: 1,
+                hot_path_allocs: allocs,
+                manifest: m,
+            },
+        )
+        .map(Some)
+    }
+
+    /// Echoes every datagram (a ping turned into its echo, a probe as it
+    /// came) until SIGTERM; the pings echoed.
+    fn pong<W: Wire>(wire: &RefCell<W>) -> Result<u64, Error> {
+        let mut pending = [[0u8; DATAGRAM]; BURST];
+        let mut echoes = 0u64;
+        while !lab::STOP.load(Ordering::Relaxed) {
+            let mut count = 0;
+            let mut bad = None;
+            wire.borrow_mut()
+                .poll(|d| {
+                    if count < BURST && d.len() == DATAGRAM {
+                        pending[count].copy_from_slice(d);
+                        count += 1;
+                    } else if d.len() != DATAGRAM {
+                        bad = Some(d.len());
+                    }
+                })
+                .map_err(|e| Error::Transport(format!("poll: {e}")))?;
+            if let Some(len) = bad {
+                return Err(Error::Payload {
+                    count: 1,
+                    first: format!("a {len}-byte datagram, not {DATAGRAM}"),
+                });
+            }
+            for d in pending.iter_mut().take(count) {
+                if d[0] == DATA {
+                    let msg: &mut [u8; MESSAGE_LEN] = (&mut d[HEADER..])
+                        .try_into()
+                        .map_err(|_| Error::Transport("a datagram's message".into()))?;
+                    echo_in_place(msg)?;
+                    echoes += 1;
+                }
+                while !wire
+                    .borrow_mut()
+                    .send(d)
+                    .map_err(|e| Error::Transport(format!("send: {e}")))?
+                {
+                    if lab::STOP.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    std::hint::spin_loop();
+                }
+            }
+        }
+        Ok(echoes)
     }
 }

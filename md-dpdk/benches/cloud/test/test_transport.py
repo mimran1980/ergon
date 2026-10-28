@@ -612,6 +612,308 @@ class FairnessTest(unittest.TestCase):
         self.assertEqual(clean.returncode, 0, clean.stdout + clean.stderr)
 
 
+# a mixed-load point's ends as aeron_lat --load mixed writes them (mixed.rs):
+# nine streams, the background's eight one of each class, every message
+# accounted for, the drivers' and NICs' bytes those the counts give
+BG = 8
+FANOUT = [2, 3, 4, 1, 2, 3, 4, 1]
+PUBLISHERS = [1, 1, 1, 1, 1, 1, 1, 2]
+PER_STREAM = 1000
+FRAME = 320  # each background message 288 B, a 320-byte frame
+
+
+def mixed_ends(row, busy):
+    """(ping settings, pong settings, nic_counters) of a clean mixed point
+    whose hot stream's row is `row` (sent, received), `busy` busy threads a
+    host."""
+    lst = lambda v: ",".join(str(v) for _ in range(BG))
+    f = BG * PER_STREAM * FRAME
+    hot = row["sent"]
+    profile = {"load": "mixed", "mixed.profile": "mixed-v1", "mixed.classes": "SSSSBBIM",
+               "mixed.publishers": ",".join(map(str, PUBLISHERS)), "mixed.fanout": ",".join(map(str, FANOUT)),
+               "mixed.period_ns": lst(1_000_000), "streams": str(BG + 1), "hot_rate": "10000", "warmup_s": "30",
+               "duration_s": "30", "busy_threads": str(busy)}
+    ps = dict(profile, **{
+        "mixed.scheduled": lst(PER_STREAM), "mixed.sent": lst(PER_STREAM), "mixed.echoes": lst(PER_STREAM),
+        "mixed.echo_gaps": lst(0), "mixed.echo_behind": lst(0), "mixed.bp_measured": lst(0), "mixed.bp": lst(0),
+        "mixed.hot_sent": str(hot), "mixed.hot_frame_bytes": str(hot * 96), "mixed.frame_bytes_sent": str(f),
+        "mixed.echo_frame_bytes_received": str(f), "mixed.frames_sent": str(BG * PER_STREAM),
+        "driver.bytes-sent": str(f + hot * 96), "driver.bytes-received": str(f + row["received"] * 96),
+        "driver.status-messages-sent": "100", "driver.status-messages-received": "100",
+        "driver.cycle.sender.exceeded": "0", "driver.cycle.receiver.exceeded": "0",
+        "driver.cycle.conductor.exceeded": "0", "mixed.bg.busy_ns": "10", "mixed.bg.loop_ns": "100",
+        "mixed.invoker.busy_calls": "0", "mixed.invoker.duty_calls": "0",
+        "all.p50_ns": "20000", "all.p99_ns": "30000", "all.p9999_ns": "40000", "all.max_ns": "250000",
+        "bg.max_ns": "250000"})
+    qs = dict(profile, **{
+        "mixed.recv": ",".join("/".join([str(PER_STREAM)] * n) for n in FANOUT), "mixed.echoed": lst(PER_STREAM),
+        "mixed.recv_gaps": lst(0), "mixed.recv_behind": lst(0), "mixed.recv_refused": lst(0),
+        "mixed.hot_echoes": str(hot), "mixed.frame_bytes_sent": str(f), "mixed.frame_bytes_received": str(f),
+        "mixed.frames_sent": str(BG * PER_STREAM), "driver.bytes-sent": str(f + hot * 96),
+        "driver.bytes-received": str(f + hot * 96), "driver.status-messages-sent": "100",
+        "driver.status-messages-received": "100"})
+    nic = {h: {"source": "kernel", "tx_bytes": int(s["driver.bytes-sent"]) + 10_000,
+               "rx_bytes": int(s["driver.bytes-received"]) + 10_000, "tx_packets": 1, "rx_packets": 1,
+               "allowance_exceeded": 0} for h, s in (("a", ps), ("b", qs))}
+    return ps, qs, nic
+
+
+def make_mixed(run, arm="aeron-kernel"):
+    """Every point of `arm` in set 2a (and its A/A's) a clean mixed-load one."""
+    rows = {}
+    for r in csv.reader(read(run.path("results.csv")).splitlines()):
+        if len(r) == len(COLUMNS):
+            d = dict(zip(COLUMNS, r))
+            rows[tag_of(d["label"], int(d["size"]), int(d["rep"]), int(d["rate"]), d["kind"])] = d
+
+    def fn(m):
+        d = rows[tag_of(m["label"], m["size"], m["rep"], m["rate"], m["kind"])]
+        ps, qs, nic = mixed_ends({"sent": int(d["sent"]), "received": int(d["received"])}, int(d["busy_threads"]))
+        m["binary"] = {"settings": ps}
+        m["pong"] = {"settings": qs}
+        m["nic_counters"] = nic
+    run.edit(lambda m: m["set"] == "2a" and arm in (m["arm"], m.get("aa_of")), fn, first=False)
+
+
+MIXED = lambda m: m["set"] == "2a" and m["arm"] == "aeron-kernel" and m["streams"] == 1 and m["rep"] == 1
+
+
+class TransportLabelTest(unittest.TestCase):
+    """fairness.py's transport rule: a row's transport against its arm's
+    set-up and its pong's."""
+
+    def check(self, setup, transport, pong=None):
+        run = Run(self)
+
+        def fn(m):
+            m["runner"] = dict(m.get("runner") or {}, setup=setup)
+            m["transport"] = transport
+            if pong:
+                m["pong"] = {"settings": {"transport": pong}}
+        run.edit(lambda m: m["set"] == "2a" and m["arm"] == "aeron-dpdk" and m["rep"] == 1, fn)
+        return [str(v) for v in fairness.check(run.run) if v.rule == "transport"]
+
+    def test_a_dpdk_arm_labelled_aeron_udp_is_flagged(self):
+        got = self.check("dpdk", "aeron-udp")
+        self.assertEqual(len(got), 1, got)
+        self.assertIn("transport 'aeron-udp' on set-up dpdk", got[0])
+
+    def test_a_kernel_arm_labelled_dpdk_is_flagged(self):
+        self.assertIn("a kernel arm's row labelled DPDK", " ".join(self.check("kernel", "aeron-dpdk")))
+
+    def test_ends_naming_different_transports_are_flagged(self):
+        self.assertIn("its pong's 'aeron-udp'", " ".join(self.check("dpdk", "aeron-dpdk", "aeron-udp")))
+
+    def test_an_agreeing_label_is_clean(self):
+        self.assertEqual(self.check("dpdk", "aeron-dpdk", "aeron-dpdk"), [])
+        self.assertEqual(self.check("dpdk-raw", "raw-dpdk"), [])
+
+
+class MixedLoadTest(unittest.TestCase):
+    """fairness.py's mixed-load rules (mixed-counts, mixed-wire, mixed-nic,
+    backpressure, budget) on the clean fixture's aeron-kernel points made
+    mixed-load ones, one thing broken at a time; and analyse.py's mixed
+    table and checklist."""
+
+    def mixed(self):
+        run = Run(self)
+        make_mixed(run)
+        return run
+
+    def broken(self, fn, pred=MIXED):
+        run = self.mixed()
+        run.edit(pred, fn)
+        return run, [v for v in fairness.check(run.run)]
+
+    def assertRule(self, fn, rule, text, pred=MIXED):
+        run, vs = self.broken(fn, pred)
+        self.assertEqual(sorted({v.rule for v in vs}), [rule], [str(v) for v in vs])
+        self.assertTrue(any(text in v.detail for v in vs), [str(v) for v in vs])
+
+    def test_clean_mixed_points_break_no_rule(self):
+        run = self.mixed()
+        self.assertEqual([str(v) for v in fairness.check(run.run)], [])
+
+    def test_a_message_never_sent(self):
+        def fn(m):
+            m["binary"]["settings"]["mixed.sent"] = "999" + m["binary"]["settings"]["mixed.sent"][4:]
+        run, vs = self.broken(fn)
+        self.assertIn("mixed-counts", {v.rule for v in vs})
+        self.assertTrue(any("background stream 1 sent 999 of the 1,000 it owed" in v.detail for v in vs))
+
+    def test_a_fanout_subscription_short(self):
+        def fn(m):
+            subs = m["pong"]["settings"]["mixed.recv"].split(",")
+            subs[2] = "1000/1000/999/1000"
+            m["pong"]["settings"]["mixed.recv"] = ",".join(subs)
+        self.assertRule(fn, "mixed-counts", "background stream 3 subscription 2 read 999 of 1,000")
+
+    def test_a_subscription_missing_from_the_fanout(self):
+        def fn(m):
+            subs = m["pong"]["settings"]["mixed.recv"].split(",")
+            subs[1] = "1000/1000"
+            m["pong"]["settings"]["mixed.recv"] = ",".join(subs)
+        self.assertRule(fn, "mixed-counts", "read by 2 subscriptions, its fan-out 3")
+
+    def test_an_echo_lost_on_the_way_back(self):
+        def fn(m):
+            m["binary"]["settings"]["mixed.echoes"] = "1000,1000,1000,1000,1000,1000,1000,998"
+        self.assertRule(fn, "mixed-counts", "background stream 8: 998 echoes back of 1,000 echoed")
+
+    def test_gaps_and_refusals_on_the_pong(self):
+        def fn(m):
+            m["pong"]["settings"]["mixed.recv_refused"] = "0,0,1,0,0,0,0,0"
+        self.assertRule(fn, "mixed-counts", "the pong's recv_refused")
+
+    def test_the_ends_ran_different_mixes(self):
+        def fn(m):
+            m["pong"]["settings"]["mixed.fanout"] = "1,1,1,1,1,1,1,1"
+        self.assertRule(fn, "mixed-counts", "the ends ran different mixes: mixed.fanout")
+
+    def test_no_pong_manifest(self):
+        def fn(m):
+            m["pong"] = None
+        run, vs = self.broken(fn)
+        self.assertIn("no pong manifest", " ".join(v.detail for v in vs))
+
+    def test_the_hot_streams_pings_not_all_echoed(self):
+        def fn(m):
+            m["pong"]["settings"]["mixed.hot_echoes"] = str(int(m["pong"]["settings"]["mixed.hot_echoes"]) - 1)
+        run, vs = self.broken(fn)
+        self.assertIn("mixed-counts", {v.rule for v in vs})
+        self.assertTrue(any("the hot stream" in v.detail for v in vs))
+
+    def test_a_driver_that_sent_less_than_the_frames(self):
+        def fn(m):
+            s = m["binary"]["settings"]
+            s["driver.bytes-sent"] = str(int(s["driver.bytes-sent"]) - 32)
+        run, vs = self.broken(fn)
+        self.assertIn("mixed-wire", {v.rule for v in vs})
+        self.assertTrue(any("a's driver sent" in v.detail for v in vs), [str(v) for v in vs])
+
+    def test_a_driver_that_sent_far_more_than_the_frames(self):
+        def fn(m):
+            s = m["pong"]["settings"]
+            s["driver.bytes-sent"] = str(int(s["driver.bytes-sent"]) * 2)
+        run, vs = self.broken(fn)
+        self.assertIn("mixed-wire", {v.rule for v in vs})
+        self.assertTrue(any("b's driver sent" in v.detail for v in vs), [str(v) for v in vs])
+
+    def test_retransmits_and_heartbeats_are_allowed_bytes(self):
+        def fn(m):
+            s = m["binary"]["settings"]
+            s["driver.retransmitted-bytes"] = "50000"
+            s["driver.bytes-sent"] = str(int(s["driver.bytes-sent"]) + 50_000 + 10_000)
+        run, vs = self.broken(fn)
+        self.assertNotIn("mixed-wire", {v.rule for v in vs}, [str(v) for v in vs])
+
+    def test_nic_counters_below_the_drivers(self):
+        def fn(m):
+            m["nic_counters"]["b"]["rx_bytes"] = 100
+        self.assertRule(fn, "mixed-nic", "b's data NICs received 100 bytes")
+
+    def test_nic_counters_far_above_the_drivers(self):
+        def fn(m):
+            m["nic_counters"]["a"]["tx_bytes"] += 50_000_000
+        self.assertRule(fn, "mixed-nic", "a's data NICs sent")
+
+    def test_an_allowance_exceeded(self):
+        def fn(m):
+            m["nic_counters"]["a"]["allowance_exceeded"] = 12
+        self.assertRule(fn, "mixed-nic", "allowance counters grew by 12")
+
+    def test_a_dpdk_receive_drop(self):
+        def fn(m):
+            m["nic_counters"]["b"] = dict(m["nic_counters"]["b"], source="dpdk", rx_missed=3)
+        self.assertRule(fn, "mixed-nic", "b's DPDK rx_missed grew by 3")
+
+    def test_the_kernel_dropped_udp(self):
+        def fn(m):
+            m["loss_counters"]["b"]["nstat"] = {"UdpRcvbufErrors": 7}
+        self.assertRule(fn, "mixed-nic", "b's kernel dropped UDP: UdpRcvbufErrors 7")
+
+    def test_nic_counters_not_recorded(self):
+        def fn(m):
+            m["nic_counters"] = None
+        self.assertRule(fn, "mixed-nic", "a's data NIC counters not recorded")
+
+    def test_backpressure_with_no_saturation_is_unexplained(self):
+        def fn(m):
+            m["binary"]["settings"]["mixed.bp_measured"] = "0,0,0,0,5,0,0,0"
+        self.assertRule(fn, "backpressure", "5 offers back-pressured in the measured window")
+
+    def test_backpressure_with_long_duty_cycles_is_explained_and_flagged(self):
+        from transport_points import flags
+        def fn(m):
+            m["binary"]["settings"]["mixed.bp_measured"] = "0,0,0,0,5,0,0,0"
+            m["pong"]["settings"]["driver.cycle.receiver.exceeded"] = "40"
+        run, vs = self.broken(fn)
+        self.assertNotIn("backpressure", {v.rule for v in vs}, [str(v) for v in vs])
+        [p] = [p for p in read_points(run.run) if MIXED(p.manifest)]
+        self.assertIn("back-pressured", flags(p))
+        self.assertEqual(fairness.mixed_backpressure(p)[1], ["b receiver cycles over threshold 40"])
+
+    def test_a_saturated_invoking_thread_explains_backpressure(self):
+        def fn(m):
+            s = m["binary"]["settings"]
+            s["mixed.bp_measured"] = "1,0,0,0,0,0,0,0"
+            s["mixed.invoker.busy_calls"], s["mixed.invoker.duty_calls"] = "95", "100"
+        run, vs = self.broken(fn)
+        self.assertNotIn("backpressure", {v.rule for v in vs}, [str(v) for v in vs])
+
+    def test_a_busy_thread_beyond_the_budget(self):
+        # (the fixture's hot CPUs all taken: placement flags where it ran too)
+        def fn(m):
+            for sample in m["threads"]["a"]:
+                sample.append({"tid": 999, "comm": "local-io", "cpu": 14, "util": 0.97})
+        run, vs = self.broken(fn)
+        self.assertTrue(any(v.rule == "budget" and "a ran 5 busy threads, its budget 4" in v.detail for v in vs),
+                        [str(v) for v in vs])
+
+    def test_gap_spinners_are_not_the_arms(self):
+        def fn(m):
+            for sample in m["threads"]["a"]:
+                sample.append({"tid": 999, "comm": "gapspin", "cpu": 14, "util": 1.0})
+        run, vs = self.broken(fn)
+        self.assertNotIn("budget", {v.rule for v in vs}, [str(v) for v in vs])
+
+    def test_fewer_busy_threads_than_the_budget_is_a_note(self):
+        def fn(m):
+            for sample in m["threads"]["b"]:
+                sample[:] = sample[1:]
+        run = self.mixed()
+        run.edit(MIXED, fn)
+        notes = []
+        self.assertEqual([str(v) for v in fairness.check(run.run, notes=notes)], [])
+        self.assertTrue(any(n.rule == "budget" and "b ran 3 busy threads, its budget 4" in n.detail for n in notes))
+
+    def test_the_analysis_shows_the_mixed_table_and_checklist(self):
+        run = self.mixed()
+        # a floor of the kernel's stack in the run: mio-udp's points
+        out = io.StringIO()
+        with redirect_stdout(out):
+            analyse.transport([run.run])
+        text = out.getvalue()
+        self.assertIn("## Mixed load: hot stream beside a background mix", text)
+        self.assertIn("budget a/b (seen)", text)
+        self.assertIn("### Adversarial checklist, per arm", text)
+        self.assertIn("- **aeron-kernel**", text)
+        self.assertIn("every message accounted for (sent = read by every subscription = echoed = back)? yes", text)
+        self.assertIn("A/A agrees? its repeat differs by up to", text)
+        self.assertIn("back-pressure? none in any measured window", text)
+
+    def test_the_analysis_names_a_broken_rule_in_the_checklist(self):
+        def fn(m):
+            m["nic_counters"]["a"]["allowance_exceeded"] = 3
+        run, _ = self.broken(fn)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            analyse.transport(["--show-invalid", run.run])
+        text = out.getvalue()
+        self.assertIn("NIC counters agree, no allowance exceeded, no receive drops? no: 1 violation", text)
+        self.assertRegex(text, r"\| aeron-kernel .*\| mixed-nic")
+
+
 class SpikesLabelTest(unittest.TestCase):
     """One point, its max at a known time, one source of evidence at a time."""
     START = fx.BASE_S + 20
@@ -1253,6 +1555,23 @@ class EventsTest(unittest.TestCase):
         self.assertTrue(notes[0].startswith("events unavailable: no events log"), notes)
         rows, notes = te.events(self.log(notes=("events: trace unavailable: no tracefs at /sys/kernel/tracing",)))
         self.assertIn("trace unavailable: no tracefs at /sys/kernel/tracing", notes)
+
+
+class AgentCycleEventsTest(unittest.TestCase):
+    """transport_events.py: the 1 Hz sampler's driver duty-cycle counters
+    (counters loss' info-cycle-* keys) as events: cycles over the threshold
+    in a second, and a second where an agent's longest cycle rose."""
+
+    def test_an_agents_stall_placed_in_its_second(self):
+        import transport_events as te
+        t0 = 1_800_000_000 * 10**9
+        a = "info-cycle-conductor-max-ns=50000;info-cycle-sender-max-ns=9000;info-cycle-receiver-max-ns=8000"
+        line = lambda t, mx, ex: (f"t={t} tc=- tcp=- aeron=naks-sent=0;{a.replace('9000', str(mx))};"
+                                  f"info-cycle-sender-exceeded={ex};info-cycle-conductor-exceeded=0;"
+                                  "info-cycle-receiver-exceeded=0")
+        rows = te.sample_events([line(t0, 9000, 0), line(t0 + 10**9, 9000, 0), line(t0 + 2 * 10**9, 1_100_000, 3)])
+        self.assertEqual(rows, [("agent-cycle", t0 + 10**9, t0 + 2 * 10**9, None, "3"),
+                                ("agent-cycle-max", t0 + 10**9, t0 + 2 * 10**9, None, "sender 1100000")])
 
 
 class TuneTest(unittest.TestCase):

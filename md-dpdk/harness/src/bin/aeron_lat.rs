@@ -97,6 +97,9 @@
 #[rustfmt::skip]
 mod point;
 
+#[path = "aeron_lat/mixed.rs"]
+mod mixed;
+
 use ergon_latency_core::clock::TscClock;
 use ergon_latency_core::manifest::RunManifest;
 use ergon_latency_core::message::{MESSAGE_LEN, template};
@@ -110,6 +113,7 @@ use rusteron_client::{
 };
 use rusteron_media_driver::bindings::aeron_threading_mode_t;
 use rusteron_media_driver::{AeronDriverContext, AeronIdleStrategyKind};
+use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::ffi::CString;
 use std::process::ExitCode;
@@ -146,8 +150,10 @@ aeron_lat --role ping|pong|local [--round-trip] --mode ipc|spy|spy-udp|udp --rat
           [--endpoint HOST:PORT] [--reply HOST:PORT] [--interface IP] [--term-length 1048576] [--mtu 1408]
           [--stream-id 1001] [--connect-timeout-s 30] [--streams 1] [--warmup-s 30] [--duration-s 30]
           [--size 64] [--cpus CSV] [--spike-ns 100000] [--stall-ns 10000] [--stage-trace N]
+          [--load uniform|mixed --hot-rate MSG_PER_S]
 --stage-trace N: stamp every Nth message (a power of two, by seq) at offer and read into <out>/stages-app.csv
-  (ping, pong, local --round-trip): the application's end of md-dpdk's RUSTERON_DPDK_STAGE_TRACE.
+  (ping, pong, local --round-trip; under --load mixed the hot stream's): the application's end of md-dpdk's
+  RUSTERON_DPDK_STAGE_TRACE.
 --mode udp: stream i's pings go to --endpoint port + i (stream id S+i), its echoes to --reply port + i
   (S+10000+i); ping and pong take the same --endpoint (the pong's address) and --reply (the ping's), and
   --interface is this end's own address. --endpoint, --reply and --interface are UDP only. Ports
@@ -161,6 +167,9 @@ aeron_lat --role ping|pong|local [--round-trip] --mode ipc|spy|spy-udp|udp --rat
   the driver's agents and its client's conductor itself; --role ping or pong, --mode udp).
 --driver-busy-threads: the driver's busy threads (DEDICATED: 3; invoker: 0, its only value), counted in
   the row's busy_threads.
+--load mixed (--role ping or pong, --mode udp): stream 0 the hot stream at --hot-rate (the row's latency), streams
+  1 to --streams - 1 a background of steady, bursty and idle-then-burst streams of 64 to 4096 B, two publishers on
+  some, fan-out 1 to 4 on the pong, together --rate (the row's); --cpus hot,background (mixed.rs).
 A pong prints `ready` once its channels are added, and no row.";
 /// The media driver's wildcard port ranges in the lab (vm.sh `common_env`).
 const WILDCARD_PORTS: std::ops::RangeInclusive<u32> = 20_000..=21_999;
@@ -268,6 +277,33 @@ struct Aeronish {
     connect_timeout: Duration,
     /// `--stage-trace N`: every Nth message stamped (0: off).
     stage_every: u64,
+    /// `--wire`: the wire the runner set the arm up on (UDP modes).
+    wire: Option<Wire>,
+}
+
+/// `--wire`: kernel UDP or DPDK under the driver.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Wire {
+    Kernel,
+    Dpdk,
+}
+
+impl Wire {
+    fn parse(v: Option<&str>) -> Result<Option<Self>, Error> {
+        match v {
+            None => Ok(None),
+            Some("kernel") => Ok(Some(Self::Kernel)),
+            Some("dpdk") => Ok(Some(Self::Dpdk)),
+            Some(other) => Err(Error::Usage(format!("--wire {other}: kernel or dpdk"))),
+        }
+    }
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Kernel => "kernel",
+            Self::Dpdk => "dpdk",
+        }
+    }
 }
 
 impl Aeronish {
@@ -304,8 +340,12 @@ impl Aeronish {
             driver_busy_threads: f.num("driver-busy-threads", if driver == Driver::Invoker { 0 } else { 3 })?,
             connect_timeout: Duration::from_secs(f.num("connect-timeout-s", 30)?),
             stage_every: f.num("stage-trace", 0)?,
+            wire: Wire::parse(f.take("wire").as_deref())?,
         };
         a.check_stage_trace(c)?;
+        if a.wire.is_some() && !matches!(mode, Mode::Udp | Mode::SpyUdp) {
+            return Err(Error::Usage(format!("--wire is UDP's, not --mode {}", a.mode_name())));
+        }
         if matches!(mode, Mode::Udp | Mode::SpyUdp) {
             if a.endpoint.is_none() {
                 return Err(Error::Usage(format!(
@@ -565,6 +605,9 @@ struct Client {
     // Dropped first: the client closes before its driver does.
     aeron: Aeron,
     invoked: Option<EnvMediaDriver>,
+    /// Duty cycles run (an invoked driver's), and those that found work.
+    duty_calls: Cell<u64>,
+    duty_busy: Cell<u64>,
 }
 
 impl Client {
@@ -573,6 +616,8 @@ impl Client {
         Ok(Self {
             aeron: client(dir, false)?,
             invoked: None,
+            duty_calls: Cell::new(0),
+            duty_busy: Cell::new(0),
         })
     }
 
@@ -603,6 +648,8 @@ impl Client {
         Ok(Self {
             aeron,
             invoked: Some(driver),
+            duty_calls: Cell::new(0),
+            duty_busy: Cell::new(0),
         })
     }
 
@@ -613,10 +660,22 @@ impl Client {
     fn duty(&self) -> Result<i32, Error> {
         let Some(driver) = &self.invoked else { return Ok(0) };
         let client = self.aeron.main_do_work().map_err(aeron_err("the client's conductor"))?;
-        Ok(client
+        let work = client
             + driver
                 .do_work()
-                .map_err(|e| Error::Transport(format!("the invoked driver: {e}")))?)
+                .map_err(|e| Error::Transport(format!("the invoked driver: {e}")))?;
+        self.count(work);
+        Ok(work)
+    }
+
+    /// Counts a duty cycle and whether it found work (an integer add each:
+    /// what the invoking thread's share of the driver's work is read from).
+    #[inline]
+    fn count(&self, work: i32) {
+        self.duty_calls.set(self.duty_calls.get() + 1);
+        if work > 0 {
+            self.duty_busy.set(self.duty_busy.get() + 1);
+        }
     }
 
     /// One duty cycle of the invoked driver alone (after an offer: its
@@ -624,9 +683,10 @@ impl Client {
     #[inline]
     fn drive(&self) -> Result<(), Error> {
         if let Some(driver) = &self.invoked {
-            driver
+            let work = driver
                 .do_work()
                 .map_err(|e| Error::Transport(format!("the invoked driver: {e}")))?;
+            self.count(work);
         }
         Ok(())
     }
@@ -1316,7 +1376,8 @@ fn local_oneway(c: &Common, a: &Aeronish, clock: &TscClock) -> Result<Ends, Erro
 
 /// The ping end on this thread: its client (`invoked`'s, under `--driver
 /// invoker`, else one of its own), publications and echo subscriptions,
-/// then (after `barrier`, when given) the schedule.
+/// then (after `barrier`, when given; and with `gate`, once the mixed
+/// load's background is ready, which then starts with it) the schedule.
 fn ping_end(
     c: &Common,
     a: &Aeronish,
@@ -1324,6 +1385,7 @@ fn ping_end(
     cpu: Option<usize>,
     barrier: Option<&Barrier>,
     invoked: Option<&Client>,
+    gate: Option<&mixed::Gate>,
 ) -> Result<Ends, Error> {
     let setup = (|| -> Result<_, Error> {
         let own = if invoked.is_some() {
@@ -1348,7 +1410,10 @@ fn ping_end(
         .or(own.as_ref())
         .ok_or_else(|| Error::Transport("no client".into()))?;
     let mut stages = Stages::new(c, a, a.stream(0, 0), a.stream(0, ECHO_OFFSET));
-    let (t, rt) = point::start_at(clock, START_DELAY_NS);
+    let (t, rt) = match gate {
+        Some(g) => mixed::start(client, clock, g)?,
+        None => point::start_at(clock, START_DELAY_NS),
+    };
     let mut rec = Recorder::new(clock, t, c)?;
     let a0 = thread_allocs();
     let send = if client.invoked.is_some() {
@@ -1357,10 +1422,14 @@ fn ping_end(
     } else {
         ping_staged(clock, c, t, &mut tx, &mut rx, &mut rec, stages.as_mut())?
     };
+    let allocs = thread_allocs() - a0;
+    if let Some(g) = gate {
+        mixed::drive_until_done(client, g)?;
+    }
     Ok(Ends {
         rec,
         send,
-        allocs: thread_allocs() - a0,
+        allocs,
         start_realtime_ns: rt,
         echoes: None,
         stages: stages.into_iter().collect(),
@@ -1370,9 +1439,10 @@ fn ping_end(
 /// The echo end on this thread: its client (`invoked`'s, under `--driver
 /// invoker`, else one of its own), ping subscriptions and echo
 /// publications (then `added`), then (after `barrier`, when given) echoes
-/// until the pings go or `keep_going` says stop. Returns its hot-path
-/// allocations, the echoes it sent and, with `--stage-trace` (`clock`
-/// given), its stage logs.
+/// until the pings go or `keep_going` says stop; with `gate` (the mixed
+/// load's), under `--driver invoker`, it then runs the driver until the
+/// background is done. Returns its hot-path allocations, the echoes it sent
+/// and, with `--stage-trace` (`clock` given), its stage logs.
 #[allow(clippy::too_many_arguments)]
 fn echo_end(
     c: &Common,
@@ -1380,9 +1450,10 @@ fn echo_end(
     cpu: Option<usize>,
     barrier: Option<&Barrier>,
     invoked: Option<&Client>,
-    added: &dyn Fn(),
+    added: &dyn Fn(&Client) -> Result<(), Error>,
     keep_going: &mut impl FnMut() -> bool,
     clock: Option<&TscClock>,
+    gate: Option<&mixed::Gate>,
 ) -> Result<(u64, u64, Option<Stages>), Error> {
     let setup = (|| -> Result<_, Error> {
         let own = if invoked.is_some() {
@@ -1395,7 +1466,7 @@ fn echo_end(
             .ok_or_else(|| Error::Transport("no client".into()))?;
         let subs = subscriptions(client, c.streams, |i| a.ping_channel(i))?;
         let tx = publications(client, c.streams, |i| a.echo_channel(i))?;
-        added();
+        added(client)?;
         let rx = ready(client, Some(&tx), subs, a.connect_timeout)?;
         point::pin(cpu)?;
         Ok((own, tx, rx))
@@ -1416,7 +1487,11 @@ fn echo_end(
     } else {
         echo_staged(&mut rx, &mut tx, keep_going, logs)?
     };
-    Ok((thread_allocs() - a0, echoes, stages))
+    let allocs = thread_allocs() - a0;
+    if let Some(g) = gate {
+        mixed::drive_until_done(client, g)?;
+    }
+    Ok((allocs, echoes, stages))
 }
 
 fn local_round_trip(c: &Common, a: &Aeronish, clock: &TscClock) -> Result<Ends, Error> {
@@ -1430,13 +1505,14 @@ fn local_round_trip(c: &Common, a: &Aeronish, clock: &TscClock) -> Result<Ends, 
                 c.cpu(1),
                 Some(barrier),
                 None,
-                &|| {},
+                &|_| Ok(()),
                 &mut || !stop.load(Ordering::Acquire),
                 Some(clock),
+                None,
             )
         });
         let ping = s.spawn(move || {
-            let r = ping_end(c, a, clock, c.cpu(0), Some(barrier), None);
+            let r = ping_end(c, a, clock, c.cpu(0), Some(barrier), None, None);
             stop.store(true, Ordering::Release);
             r
         });
@@ -1449,7 +1525,13 @@ fn local_round_trip(c: &Common, a: &Aeronish, clock: &TscClock) -> Result<Ends, 
     })
 }
 
-fn manifest(c: &Common, a: &Aeronish, transport: &str, threading: Option<&str>) -> Result<RunManifest, Error> {
+fn manifest(
+    c: &Common,
+    a: &Aeronish,
+    transport: &str,
+    threading: Option<&str>,
+    mixed: bool,
+) -> Result<RunManifest, Error> {
     let mut m = RunManifest::new(transport, &template(), a.wire_bytes());
     let (ping_publication, ping_subscription, ping_id) = a.ping_channel(0)?;
     m.setting("transport", transport)
@@ -1466,7 +1548,7 @@ fn manifest(c: &Common, a: &Aeronish, transport: &str, threading: Option<&str>) 
         .setting("driver_busy_threads", &a.driver_busy_threads.to_string())
         .setting("client_pre_touch", "true")
         .setting("idle", "busy-spin (the client's measuring threads)")
-        .setting("thread_order", thread_order(c, a.mode));
+        .setting("thread_order", thread_order(c, a.mode, mixed));
     // the threading mode of a driver this process runs (an external one's is
     // its process's: the runner records it)
     if let Some(t) = threading {
@@ -1489,7 +1571,10 @@ fn manifest(c: &Common, a: &Aeronish, transport: &str, threading: Option<&str>) 
     Ok(m)
 }
 
-fn thread_order(c: &Common, mode: Mode) -> &'static str {
+fn thread_order(c: &Common, mode: Mode, mixed: bool) -> &'static str {
+    if mixed {
+        return "hot,background";
+    }
     match (c.role, c.round_trip) {
         (Role::Local, false) => "sender,receiver",
         (Role::Local, true) => "ping,echo",
@@ -1499,14 +1584,17 @@ fn thread_order(c: &Common, mode: Mode) -> &'static str {
     }
 }
 
-const fn client_threads(c: &Common) -> u32 {
+const fn client_threads(c: &Common, mixed: bool) -> u32 {
     match c.role {
         Role::Local => 2,
+        // the hot stream's thread and the background's
+        _ if mixed => 2,
         _ => 1,
     }
 }
 
-fn run(c: &Common, a: &Aeronish) -> Result<Option<String>, Error> {
+#[allow(clippy::too_many_lines)]
+fn run(c: &Common, a: &Aeronish, profile: Option<&mixed::Profile>) -> Result<Option<String>, Error> {
     match c.role {
         Role::OnewaySend | Role::OnewayRecv => {
             return Err(Error::Usage(format!(
@@ -1516,7 +1604,8 @@ fn run(c: &Common, a: &Aeronish) -> Result<Option<String>, Error> {
         }
         Role::Local | Role::Ping | Role::Pong => {}
     }
-    c.check_cpus(client_threads(c) as usize, thread_order(c, a.mode))?;
+    let is_mixed = profile.is_some();
+    c.check_cpus(client_threads(c, is_mixed) as usize, thread_order(c, a.mode, is_mixed))?;
     let embedded = if a.driver == Driver::Embedded {
         Some(Embedded::start(&a.dir)?)
     } else {
@@ -1535,16 +1624,16 @@ fn run(c: &Common, a: &Aeronish) -> Result<Option<String>, Error> {
         Driver::Embedded => embedded.as_ref().map(|e| e.threading),
         Driver::Invoker => Some("INVOKER"),
     };
-    let before = counters_now(&counters.aeron);
-    let transport = match a.mode {
-        Mode::Ipc => "aeron-ipc",
-        Mode::Spy => "aeron-spy",
-        Mode::SpyUdp if before.dpdk => "aeron-spy-dpdk",
-        Mode::SpyUdp => "aeron-spy-udp",
-        Mode::Udp if before.dpdk => "aeron-dpdk",
-        Mode::Udp => "aeron-udp",
+    let before = Before {
+        counters: counters_now(&counters.aeron),
+        extra: mixed::counters_now(&counters.aeron),
     };
-    let mut m = manifest(c, a, transport, threading)?;
+    // provisional: settled once the point's channels exist (close)
+    let transport = transport_name(a.mode, a.wire == Some(Wire::Dpdk));
+    let mut m = manifest(c, a, transport, threading, is_mixed)?;
+    if let Some(p) = profile {
+        return run_mixed(c, a, p, &counters, m, &before);
+    }
     if c.role == Role::Pong {
         stop_on_sigterm();
         let allocs = if a.mode == Mode::SpyUdp {
@@ -1559,9 +1648,13 @@ fn run(c: &Common, a: &Aeronish) -> Result<Option<String>, Error> {
                 c.cpu(0),
                 None,
                 invoked,
-                &|| println!("ready"),
+                &|_| {
+                    println!("ready");
+                    Ok(())
+                },
                 &mut || !STOP.load(Ordering::Relaxed),
                 clock.as_ref(),
+                None,
             )?;
             if let (Some(st), Some(clock)) = (stages, &clock) {
                 write_stages(c, a, clock, &[st])?;
@@ -1569,20 +1662,22 @@ fn run(c: &Common, a: &Aeronish) -> Result<Option<String>, Error> {
             }
             allocs
         };
-        record_counters(&mut m, &before, &counters_now(&counters.aeron));
-        m.setting("hot_path_allocs", &allocs.to_string())
-            .setting("busy_threads", &(client_threads(c) + a.driver_busy_threads).to_string());
+        close(&mut m, a, &counters, &before, false)?;
+        m.setting("hot_path_allocs", &allocs.to_string()).setting(
+            "busy_threads",
+            &(client_threads(c, false) + a.driver_busy_threads).to_string(),
+        );
         point::write_manifest(c, m)?;
         return Ok(None);
     }
     let clock = TscClock::new();
     let ends = match c.role {
-        Role::Ping => ping_end(c, a, &clock, c.cpu(0), None, invoked)?,
+        Role::Ping => ping_end(c, a, &clock, c.cpu(0), None, invoked, None)?,
         _ if c.round_trip => local_round_trip(c, a, &clock)?,
         _ => local_oneway(c, a, &clock)?,
     };
     let end = clock.raw();
-    let retrans = record_counters(&mut m, &before, &counters_now(&counters.aeron));
+    let retrans = close(&mut m, a, &counters, &before, false)?;
     if let Some(e) = ends.echoes {
         m.setting("echoes_sent", &e.to_string());
     }
@@ -1603,12 +1698,200 @@ fn run(c: &Common, a: &Aeronish) -> Result<Option<String>, Error> {
             channel: if a.mode == Mode::Ipc { "ipc" } else { "udp" },
             retrans: Some(retrans),
             wire_bytes: a.wire_bytes(),
-            busy_threads: client_threads(c) + a.driver_busy_threads,
+            busy_threads: client_threads(c, false) + a.driver_busy_threads,
             hot_path_allocs: ends.allocs,
             manifest: m,
         },
     )?;
     Ok(Some(row))
+}
+
+/// A `--load mixed` point (mixed.rs): the hot stream on this thread as any
+/// ping or pong runs it, the background on a thread of its own with a
+/// client of its own; their counts, the driver's counters around them, and
+/// (the ping) the row: the hot stream's latency, every stream's rate.
+#[allow(clippy::too_many_lines)]
+fn run_mixed(
+    c: &Common,
+    a: &Aeronish,
+    profile: &mixed::Profile,
+    counters: &Client,
+    mut m: RunManifest,
+    before: &Before,
+) -> Result<Option<String>, Error> {
+    let invoked = (a.driver == Driver::Invoker).then_some(counters);
+    let hot = Common {
+        streams: 1,
+        rate: profile.hot_rate,
+        ..c.clone()
+    };
+    profile.settings(&mut m);
+    let gate = mixed::Gate::default();
+    let busy = client_threads(c, true) + a.driver_busy_threads;
+    // the counters after (under DPDK once the PMD's statistics refreshed)
+    let after = |m: &mut RunManifest| -> Result<u64, Error> {
+        m.setting("mixed.invoker.duty_calls", &counters.duty_calls.get().to_string())
+            .setting("mixed.invoker.busy_calls", &counters.duty_busy.get().to_string());
+        close(m, a, counters, before, true)
+    };
+    if c.role == Role::Pong {
+        stop_on_sigterm();
+        // the stage trace's counter scale (a 20 ms calibration), before the
+        // echo starts: the hot stream's
+        let clock = (a.stage_every > 0).then(TscClock::new);
+        let (hot_end, bg) = std::thread::scope(|s| {
+            let bg = s.spawn(|| mixed::pong(c, a, profile, &gate));
+            let hot_end = echo_end(
+                &hot,
+                a,
+                c.cpu(0),
+                None,
+                invoked,
+                &|client| {
+                    while !gate.ready()? {
+                        client.rest(Duration::from_millis(1))?;
+                    }
+                    println!("ready");
+                    Ok(())
+                },
+                &mut || !STOP.load(Ordering::Relaxed),
+                clock.as_ref(),
+                Some(&gate),
+            );
+            (hot_end, joined(bg.join(), "background"))
+        });
+        let ((allocs, echoes, stages), bg) = point::both(hot_end, bg)?;
+        after(&mut m)?;
+        if let (Some(st), Some(clock)) = (stages, &clock) {
+            write_stages(&hot, a, clock, &[st])?;
+            m.setting("stage_trace", &a.stage_every.to_string());
+        }
+        mixed::put_all(&mut m, &bg.settings);
+        let bg_allocs: u64 = bg
+            .settings
+            .get("mixed.bg.allocs")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        m.setting("mixed.hot_echoes", &echoes.to_string())
+            .setting("mixed.hot_allocs", &allocs.to_string())
+            .setting("hot_path_allocs", &(allocs + bg_allocs).to_string())
+            .setting("busy_threads", &busy.to_string());
+        point::write_manifest(c, m)?;
+        return Ok(None);
+    }
+    let clock = TscClock::new();
+    let (hot_end, bg) = std::thread::scope(|s| {
+        let bg = s.spawn(|| mixed::ping(c, a, profile, &clock, &gate));
+        let hot_end = ping_end(&hot, a, &clock, c.cpu(0), None, invoked, Some(&gate));
+        if hot_end.is_err() {
+            gate.fail();
+        }
+        (hot_end, joined(bg.join(), "background"))
+    });
+    let (ends, bg) = point::both(hot_end, bg)?;
+    let end = clock.raw();
+    let retrans = after(&mut m)?;
+    mixed::put_all(&mut m, &bg.settings);
+    let hot_sent = ends.send.pacer.stats().sent;
+    let hot_bytes = hot_sent * mixed::frame_bytes(MESSAGE_LEN, a.mtu as usize) as u64;
+    // the stage trace: the hot stream's
+    if !ends.stages.is_empty() {
+        write_stages(&hot, a, &clock, &ends.stages)?;
+        m.setting("stage_trace", &a.stage_every.to_string());
+    }
+    m.setting("mixed.hot_sent", &hot_sent.to_string())
+        .setting("mixed.hot_frame_bytes", &hot_bytes.to_string())
+        .setting("mixed.hot_allocs", &ends.allocs.to_string());
+    let bg_allocs: u64 = bg
+        .settings
+        .get("mixed.bg.allocs")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let row = point::finish_shown(
+        &hot,
+        &clock,
+        ends.rec,
+        ends.send,
+        ends.start_realtime_ns,
+        end,
+        Report {
+            channel: "udp",
+            retrans: Some(retrans),
+            wire_bytes: a.wire_bytes(),
+            busy_threads: busy,
+            hot_path_allocs: ends.allocs + bg_allocs,
+            manifest: m,
+        },
+        Some(&point::Shown {
+            rate: c.rate,
+            streams: c.streams,
+            achieved_extra: bg.achieved,
+            others: &bg.hist,
+        }),
+    )?;
+    Ok(Some(row))
+}
+
+/// The driver's counters as a point began: the loss and traffic ones, and
+/// its agents' duty cycles and control traffic (mixed.rs `counters_now`).
+struct Before {
+    counters: Counters,
+    extra: BTreeMap<String, i64>,
+}
+
+/// The transport's name for `mode`, on DPDK or not.
+const fn transport_name(mode: Mode, dpdk: bool) -> &'static str {
+    match mode {
+        Mode::Ipc => "aeron-ipc",
+        Mode::Spy => "aeron-spy",
+        Mode::SpyUdp if dpdk => "aeron-spy-dpdk",
+        Mode::SpyUdp => "aeron-spy-udp",
+        Mode::Udp if dpdk => "aeron-dpdk",
+        Mode::Udp => "aeron-udp",
+    }
+}
+
+/// The point's end on the driver's counters: each counter's growth into
+/// the manifest (the loss and traffic ones; every agent's duty cycles, a
+/// max as it is after and before; flow control and control traffic), and
+/// the transport settled. The driver is DPDK's when its counters show
+/// md-dpdk's (read after the point too: a driver registers them once its
+/// channels open, so at the start of a point a fresh one has none). A wire
+/// the runner gave (`--wire`) that the driver does not show is refused, so
+/// no row is labelled with a wire it did not run on. `wait_nic`: under
+/// DPDK, wait for the PMD's once-a-second statistics first. Returns the
+/// retransmits' growth.
+fn close(m: &mut RunManifest, a: &Aeronish, client: &Client, before: &Before, wait_nic: bool) -> Result<u64, Error> {
+    let mut after = counters_now(&client.aeron);
+    let seen = before.counters.dpdk || after.dpdk;
+    if seen && wait_nic {
+        std::thread::sleep(Duration::from_millis(1200));
+        after = counters_now(&client.aeron);
+    }
+    mixed::record_counters(m, &before.extra, &mixed::counters_now(&client.aeron));
+    let retrans = record_counters(m, &before.counters, &after);
+    if matches!(a.mode, Mode::Udp | Mode::SpyUdp) {
+        let seen_name = if seen { Wire::Dpdk } else { Wire::Kernel }.name();
+        if let Some(w) = a.wire
+            && w.name() != seen_name
+        {
+            return Err(Error::Transport(format!(
+                "--wire {} but the driver shows {}: refused rather than labelled with a wire it did not run on",
+                w.name(),
+                if seen {
+                    "md-dpdk's DPDK counters"
+                } else {
+                    "no DPDK counters"
+                }
+            )));
+        }
+        let name = transport_name(a.mode, seen);
+        name.clone_into(&mut m.arm);
+        m.setting("transport", name)
+            .setting("wire", a.wire.map_or("unstated", Wire::name))
+            .setting("wire_seen", seen_name);
+    }
+    Ok(retrans)
 }
 
 /// Each loss counter's growth into the manifest (`aeron.<key>`), and each
@@ -1750,8 +2033,9 @@ fn main() -> ExitCode {
         let mut f = Flags::parse(std::env::args().skip(1))?;
         let c = Common::parse(&mut f)?;
         let a = Aeronish::parse(&mut f, &c)?;
+        let profile = mixed::parse(&mut f, &c, &a)?;
         f.finish()?;
-        run(&c, &a)
+        run(&c, &a, profile.as_ref())
     };
     match go() {
         Ok(row) => {

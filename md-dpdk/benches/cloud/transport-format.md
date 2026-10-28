@@ -90,6 +90,7 @@ after their due time.
 | `netem_counters` | {host: {nic: {qdisc, loss_pct, sent_pkts, dropped}}} | netem verified; tc -s on every data NIC |
 | `loss_counters` | {host: {source: {counter: growth}}} | sources `tcp_info`, `nstat`, `aeron` |
 | `events` | {host: {file, rows, notes}} | the events file, its row count and what could not be recorded |
+| `nic_counters` | {host: {source, tx_bytes, rx_bytes, ...}} or null | a mixed-load point's data NICs over it: `kernel` (vm.sh nicstats' growth, every data NIC summed, `allowance_exceeded` the ENA's allowance counters) or `dpdk` (the binary's own `nic.*`: transport bytes and frames, `rx_missed`, `rx_nombuf`, `queue_drop`, `allowance_exceeded`); fairness.py's mixed-nic rule |
 
 A TCP arm's own manifest (`tcp_lat`) also carries, per end, the traffic's
 and the set-up's counters apart: `tcp.retrans`, `tcp.dsack_dups` (the
