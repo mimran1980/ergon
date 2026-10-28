@@ -92,6 +92,21 @@ impl Latency {
         self.put(ns);
     }
 
+    /// Adds every value `other` recorded (its censored count, min and max
+    /// too): two threads' histograms of one point as one.
+    ///
+    /// # Errors
+    /// [`Error::Histogram`] if `HdrHistogram` refuses the addition.
+    pub fn add(&mut self, other: &Self) -> Result<(), Error> {
+        self.hist
+            .add(&other.hist)
+            .map_err(|e| Error::Histogram(format!("{e:?}")))?;
+        self.min = self.min.min(other.min);
+        self.max = self.max.max(other.max);
+        self.censored += other.censored;
+        Ok(())
+    }
+
     /// The percentiles, each within the exact min and max.
     #[must_use]
     pub fn summary(&self) -> Summary {

@@ -489,3 +489,82 @@ fn floor_hairpin_runs_ping_and_pong_in_one_process() {
     assert!(same.stderr.contains("two endpoints"), "it says why:\n{}", same.stderr);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// The transport suite's raw floor (`floor --role ping|pong`, its arm
+/// `dpdk-raw` on DPDK; the kernel's wire here, over 127.0.0.1): one stream
+/// at a rate, the pong ready before the ping probes it, every ping's echo
+/// back, the row the analysis reads (34 columns with the rep, 138 wire
+/// bytes, one busy thread), its manifest the suite's (`raw-udp`, nothing
+/// allocated while measuring), the pong's echoes all the pings.
+#[test]
+fn floor_runs_the_transport_suites_point() {
+    let dir = scratch("transport");
+    let (ping_port, pong_port) = (free_port(), free_port());
+    let (endpoint, reply) = (format!("127.0.0.1:{pong_port}"), format!("127.0.0.1:{ping_port}"));
+    let common = [
+        "--endpoint",
+        &endpoint,
+        "--reply",
+        &reply,
+        "--label",
+        "f:dpdk-raw",
+        "--warmup-s",
+        "1",
+        "--duration-s",
+        "1",
+    ];
+    let pong_out = format!("{dir}/pong");
+    let pong = start(
+        FLOOR,
+        &[&["--role", "pong", "--out", &pong_out][..], &common].concat(),
+        &dir,
+        false,
+        &[],
+    );
+    let ping_out = format!("{dir}/ping");
+    let ping = start(
+        FLOOR,
+        &[&["--role", "ping", "--rate", "2000", "--out", &ping_out][..], &common].concat(),
+        &dir,
+        false,
+        &[],
+    )
+    .finish(60);
+    ping.assert_ok("floor --role ping");
+    let pong = pong.terminate(10);
+    pong.assert_ok("floor --role pong");
+    assert_eq!(pong.stdout, "ready\n", "one ready line, no row");
+    let row = ping.stdout.trim();
+    let cols: Vec<&str> = row.split(',').collect();
+    assert_eq!(cols.len(), 33, "{row}");
+    assert_eq!(
+        (cols[0], cols[1], cols[2], cols[3], cols[4]),
+        ("load", "f:dpdk-raw", "udp", "64", "2000"),
+        "{row}"
+    );
+    // sent, received, lost, wire bytes, busy threads
+    assert_eq!((cols[14], cols[15]), ("4000", "4000"), "{row}");
+    assert_eq!((cols[23], cols[27], cols[28]), ("0", "138", "1"), "{row}");
+    let m = std::fs::read_to_string(format!("{ping_out}/manifest.json")).unwrap();
+    for want in [
+        "\"transport\": \"raw-udp\"",
+        "\"wire\": \"kernel\"",
+        "\"hot_path_allocs\": \"0\"",
+        "\"kind\": \"load\"",
+    ] {
+        assert!(m.contains(want), "{want}: {m}");
+    }
+    let p = std::fs::read_to_string(format!("{pong_out}/manifest.json")).unwrap();
+    assert!(
+        p.contains("\"echoes_sent\": \"4000\"") && p.contains("\"hot_path_allocs\": \"0\""),
+        "{p} {}",
+        pong.stderr
+    );
+    for f in ["histogram", "spikes", "stalls"] {
+        assert!(
+            std::path::Path::new(&format!("{ping_out}/{f}-f:dpdk-raw.csv")).exists(),
+            "{f}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}

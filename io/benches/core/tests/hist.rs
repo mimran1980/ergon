@@ -103,3 +103,27 @@ fn a_point_records_from_the_intended_and_from_the_actual_send() -> R {
     );
     Ok(())
 }
+
+#[test]
+fn add_merges_two_histograms_as_one() -> R {
+    let (mut a, mut b, mut both) = (Latency::new()?, Latency::new()?, Latency::new()?);
+    for v in [500u64, 1_000, 2_000] {
+        a.record(v);
+        both.record(v);
+    }
+    for v in [100u64, 9_000, 3_000] {
+        b.record(v);
+        both.record(v);
+    }
+    b.record_censored(70_000);
+    both.record_censored(70_000);
+    a.add(&b)?;
+    let (got, want) = (a.summary(), both.summary());
+    assert_eq!(got, want);
+    assert_eq!(
+        (got.min, got.max, got.count, got.censored),
+        (100, 70_000, 7, 1)
+    );
+    assert_eq!(a.csv(), both.csv());
+    Ok(())
+}
