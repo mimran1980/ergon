@@ -836,6 +836,18 @@ class MixedLoadTest(unittest.TestCase):
             m["nic_counters"]["b"] = dict(m["nic_counters"]["b"], source="dpdk", rx_missed=3)
         self.assertRule(fn, "mixed-nic", "b's DPDK rx_missed grew by 3")
 
+    def test_dpdk_frames_to_a_closed_port_are_a_note(self):
+        # queue-drop: frames to a port nobody listens on (an endpoint not yet
+        # open or already closed), as the kernel's UdpNoPorts: not loss
+        def fn(m):
+            m["nic_counters"]["a"] = dict(m["nic_counters"]["a"], source="dpdk", queue_drop=5450)
+        run = self.mixed()
+        run.edit(MIXED, fn)
+        notes = []
+        self.assertEqual([str(v) for v in fairness.check(run.run, notes=notes)], [])
+        self.assertTrue(any(n.rule == "mixed-nic" and "a's DPDK queue_drop grew by 5,450" in n.detail
+                            for n in notes), [str(n) for n in notes])
+
     def test_the_kernel_dropped_udp(self):
         def fn(m):
             m["loss_counters"]["b"]["nstat"] = {"UdpRcvbufErrors": 7}
@@ -863,6 +875,21 @@ class MixedLoadTest(unittest.TestCase):
         dpdk = "sender ens6 dpdk\nreceiver ens7 dpdk\n"
         self.assertIsNone(nic_growth(dpdk, dpdk, {}))
         self.assertEqual(nic_growth(dpdk, dpdk, {"nic.tx_bytes": "5"})["source"], "dpdk")
+
+    def test_dpdk_nic_counters_come_from_the_binaries_when_nicstats_is_empty(self):
+        # under DPDK the kernel has no data NICs, so vm.sh nicstats finds
+        # none and prints nothing: the binaries' own nic.* counters stand
+        from transport_collect import nic_growth
+        own = {"nic.tx_bytes": "938138940", "nic.rx_bytes": "938176260", "nic.tx_pkts": "2524239",
+               "nic.rx_pkts": "2527436", "nic.rx_missed": "0", "nic.rx_nombuf": "0", "nic.queue_drop": "1105",
+               "nic.tx_eagain": "0", "nic.allowance_exceeded": "0"}
+        for before, after in (("", ""), (None, None), ("", None)):
+            got = nic_growth(before, after, own)
+            self.assertEqual(got, {"source": "dpdk", "tx_bytes": 938138940, "rx_bytes": 938176260,
+                                   "tx_pkts": 2524239, "rx_pkts": 2527436, "rx_missed": 0, "rx_nombuf": 0,
+                                   "queue_drop": 1105, "tx_eagain": 0, "allowance_exceeded": 0}, (before, after))
+        self.assertIsNone(nic_growth("", "", {}))
+        self.assertIsNone(nic_growth(None, None, None))
 
     def test_backpressure_with_no_saturation_is_unexplained(self):
         def fn(m):

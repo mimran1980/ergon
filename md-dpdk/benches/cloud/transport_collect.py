@@ -260,15 +260,15 @@ def nic_growth(before, after, binary_settings):
     """A host's data NICs over a point, every NIC summed: {source: kernel,
     tx_bytes, rx_bytes, tx_packets, rx_packets, allowance_exceeded} from
     vm.sh nicstats, or where DPDK holds them {source: dpdk, ...} from the
-    binary's own nic.* counters; None when unread."""
-    b, a = nicstats(before), nicstats(after)
-    if b is None or a is None:
-        return None
-    if any(v == "dpdk" for v in a.values()):
-        s = binary_settings or {}
-        if not any(f"nic.{k}" in s for k in DPDK_NIC_KEYS):
-            return None
+    binary's own nic.* counters; None when unread. The binary's counters
+    stand wherever it wrote them: under DPDK the kernel has no data NIC, so
+    vm.sh nicstats finds none and prints nothing (or "dpdk")."""
+    s = binary_settings or {}
+    if any(f"nic.{k}" in s for k in DPDK_NIC_KEYS):
         return dict({"source": "dpdk"}, **{k: ints(s.get(f"nic.{k}")) or 0 for k in DPDK_NIC_KEYS})
+    b, a = nicstats(before), nicstats(after)
+    if b is None or a is None or any(v == "dpdk" for v in a.values()):
+        return None
     out = {"source": "kernel", "allowance_exceeded": 0}
     for k in NIC_KEYS:
         out[k] = 0

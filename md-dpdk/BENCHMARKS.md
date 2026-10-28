@@ -579,8 +579,7 @@ and 29.0 (kernel pair), Graviton 27.1 and 25.8.
 - **Validity:** every message accounted for in all 288 mixed points; no
   real back-pressure (every count the harness reports equals the
   publication's term rotations, Aeron's `ADMIN_ACTION`); DPDK NIC bytes
-  within bounds from the binaries' own counters (`fairness.py` did not get
-  them). Intel kernel: 25 outages of 4.2 to 16.2 ms, each at second 25 of
+  within bounds from the binaries' own counters. Intel kernel: 25 outages of 4.2 to 16.2 ms, each at second 25 of
   a minute, 4 of them with NAKs (frames lost below the guest); they set
   its p99.99 and max only.
 
@@ -692,9 +691,6 @@ not as an Aeron message.
   no kernel socket is on a DPDK arm's path, but the rule does not yet
   exempt them. `dpdk-raw` and its A/A are still flagged so
   (`aws-20261028-123929`).
-- `transport_collect.py` builds no NIC counters for a DPDK host (`vm.sh
-  nicstats` prints nothing there), so every DPDK mixed point breaks
-  `mixed-nic`.
 - Intel DPDK's external-driver arms: `nic-rx-missed` 8,940 to 17,698 a run
   at 128 streams with 0 NAKs and 0 retransmits (`aws-20261028-123929`).
 - The mixed arms' hot-stream stage trace under `SHARED` and `INVOKER`.

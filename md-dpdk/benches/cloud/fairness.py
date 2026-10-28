@@ -105,7 +105,9 @@ concerns. Rules:
                    counters) moved at least the driver's bytes and no more than them
                    with every datagram's headers and the status messages; the ENA's
                    allowance counters and the receive drops (kernel UdpRcvbufErrors,
-                   UdpInErrors; DPDK nic-rx-missed, nic-rx-nombuf, queue-drop) still
+                   UdpInErrors; DPDK nic-rx-missed, nic-rx-nombuf) still; DPDK's
+                   queue-drop (frames to a port nobody listens on, an endpoint not
+                   yet open or closed, as the kernel's UdpNoPorts) a note
   backpressure     an offer back-pressured in the measured window (the hot stream's
                    or a background one's) only where the point shows saturation: a
                    driver duty cycle over its threshold, the background thread busy
@@ -420,7 +422,7 @@ def mixed_nic_problems(tag, m, ps, qs):
         if c.get("allowance_exceeded"):
             out.append(f"{tag}: {host}'s ENA allowance counters grew by {c['allowance_exceeded']:,}: the instance's "
                        "network limits shaped the point")
-        for k in ("rx_missed", "rx_nombuf", "queue_drop"):
+        for k in ("rx_missed", "rx_nombuf"):
             if c.get(k):
                 out.append(f"{tag}: {host}'s DPDK {k} grew by {c[k]:,}")
         drops = {k: v for k, v in (((m.get("loss_counters") or {}).get(host) or {}).get("nstat") or {}).items()
@@ -428,6 +430,14 @@ def mixed_nic_problems(tag, m, ps, qs):
         if drops:
             out.append(f"{tag}: {host}'s kernel dropped UDP: " + ", ".join(f"{k} {v:,}" for k, v in sorted(drops.items())))
     return out
+
+
+def mixed_nic_notes(tag, m):
+    """A mixed point's DPDK frames to a closed port (queue_drop: an endpoint
+    not yet open or already closed, as the kernel's UdpNoPorts): not loss,
+    the mixed-counts rule proves every message arrived; a note."""
+    return [f"{tag}: {host}'s DPDK queue_drop grew by {c['queue_drop']:,} (frames to a port nobody listened on)"
+            for host, c in sorted((m.get("nic_counters") or {}).items()) if (c or {}).get("queue_drop")]
 
 
 def share(s, num, den):
@@ -1088,6 +1098,8 @@ def check(run_dir, absences=None, notes=None):
                     add("mixed-wire", set_, [p.tag], why)
                 for why in mixed_nic_problems(p.tag, m, ps_, qs_):
                     add("mixed-nic", set_, [p.tag], why)
+                for why in mixed_nic_notes(p.tag, m):
+                    note("mixed-nic", set_, [p.tag], why)
                 for why in mixed_admin_problems(p.tag, ps_):
                     add("backpressure", set_, [p.tag], why)
                 bp, sat = mixed_backpressure(p)
