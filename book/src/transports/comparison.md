@@ -235,7 +235,7 @@ point that breaks a rule.
 | placement | a busy thread shares a CPU, or runs on a housekeeping or IRQ CPU |
 | irq | a data-NIC interrupt lands on an isolated CPU |
 | hostcheck | a host's ergon-tune report is not clean |
-| settings, shared-knob | a setting differs from `transport-settings.env`, or one arm gets a knob the others were not swept for |
+| settings, shared-knob | a setting differs from `transport-settings.env`, or one arm gets a knob the others were not swept for (a DPDK or F-Stack arm's kernel busy poll is not checked: no kernel socket on its path) |
 | order, aa | no seed, no randomised order, or no A/A arm |
 | loss-accounting | a loss column or a host's counters are missing |
 | lateness | sends scheduled or late not counted |
@@ -939,7 +939,7 @@ unexplained max.
 | rule | count | what |
 |---|---|---|
 | `max` | 119 | the unexplained maxima above |
-| `settings` | 240 | `busy_read` and `busy_poll` read 0, not 50, on the DPDK arms' points (F-Stack, md-dpdk and their A/As): the set-up before a DPDK arm resets them, and DPDK owns the data NIC, so no kernel socket on its path reads them. `fairness.py` does not yet exempt DPDK arms |
+| `settings` | 240 | `busy_read` and `busy_poll` read 0, not 50, on the DPDK arms' points (F-Stack, md-dpdk and their A/As): the set-up before a DPDK arm resets them, and DPDK owns the data NIC, so no kernel socket on its path reads them. `fairness.py` now leaves both out for kernel-bypass arms, so it no longer flags these |
 | `loss-accounting` | 72 | F-Stack's `tcp_info` (FreeBSD's) has no DSACK split, so its retransmits (1 in all its points) cannot be split into spurious and real |
 | `irq` | 29 | one data-NIC interrupt in a 30 s point on an isolated CPU, on the kernel arms |
 

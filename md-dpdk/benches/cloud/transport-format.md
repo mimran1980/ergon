@@ -126,7 +126,12 @@ best.<knob>=<arm>:<value>,...  each arm's technology's best value of a knob (TR_
 ```
 
 An arm reporting a knob the file does not give it, or a different value,
-breaks the settings rule. transport_collect.py writes:
+breaks the settings rule. A kernel-bypass arm's point (the runner's
+`setup=dpdk` or `setup=fstack`, else an `aeron-dpdk` or `aeron-spy-dpdk`
+transport: DPDK owns the data NIC) is not checked for `net.core.busy_read`
+and `net.core.busy_poll`, here or in the shared-knob rule: no kernel socket
+on its data path reads them, and its set-up (`vm.sh stop` first) leaves them
+at 0 (`fairness.py` `KERNEL_SOCKET_KNOBS`). transport_collect.py writes:
 
 - `shared.<sysctl>`: every transport sysctl (`host.sh transport_sysctls`) at
   its TR_* value, each host reading them back after every point (`vm.sh

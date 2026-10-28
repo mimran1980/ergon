@@ -22,7 +22,10 @@ concerns. Rules:
                    and no warning of a binary's own checks in the point's logs
                    (<run>/logs/<runner point>.out on a, .pong on its echo's host:
                    ergon-io's `warning: <id> warn:` lines)
-  settings         every knob as transport-settings.env gives it, none it does not
+  settings         every knob as transport-settings.env gives it, none it does not;
+                   a kernel-bypass arm's point (bypass_point: DPDK owns the data
+                   NIC) leaves out the kernel's socket busy poll
+                   (KERNEL_SOCKET_KNOBS), here and in shared-knob
   shared-knob      a per-arm knob the round's arms run at different values swept
                    for every arm of the round that has it (a declared arm's own
                    knob excepted, and an arm at its technology's declared best:
@@ -300,6 +303,29 @@ def socket_point(p):
     return bool(parts) and all(x in SOCKET_TRANSPORTS for x in parts)
 
 
+# Kernel bypass: an arm whose data path never meets a kernel socket, as DPDK
+# owns the data NIC (setup dpdk: md-dpdk's media driver, a sink arm's on both
+# hosts; setup fstack: F-Stack's own TCP on DPDK). The kernel's socket busy
+# poll acts only on a kernel socket's read of a NIC's NAPI queue, so it has
+# no effect there, and the set-up before such an arm (vm.sh stop) leaves it
+# at 0: the settings and shared-knob rules leave these knobs out for its
+# points. Onload is no bypass here: the NIC's NAPI fills its AF_XDP ring.
+BYPASS_SETUPS = {"dpdk", "fstack"}
+# with no set-up recorded, a transport only DPDK carries
+BYPASS_TRANSPORTS = {"aeron-dpdk", "aeron-spy-dpdk"}
+KERNEL_SOCKET_KNOBS = {"net.core.busy_read", "net.core.busy_poll"}
+
+
+def bypass_point(p):
+    """Whether a point is a kernel-bypass arm's: the runner's dpdk or fstack
+    set-up, else (no set-up recorded) a transport only DPDK carries."""
+    setup = ((p.manifest or {}).get("runner") or {}).get("setup")
+    if setup:
+        return setup in BYPASS_SETUPS
+    parts = (p.manifest or {}).get("transport", "").split("+")
+    return bool(parts) and all(x in BYPASS_TRANSPORTS for x in parts)
+
+
 def onload_point(p):
     """Whether a point is an Onload arm's: the runner's onload set-up."""
     return ((p.manifest or {}).get("runner") or {}).get("setup") == "onload"
@@ -550,14 +576,18 @@ def check(run_dir, absences=None, notes=None):
                 for host, knobs in p.manifest["settings"].items():
                     for k in knobs:
                         reported[k].add(arm_key(p))
+            bypass = {arm_key(p) for p in ps if bypass_point(p)}
             for p in ps:
                 arm = arm_key(p)
-                want = dict(shared, **per_arm.get(arm, {}))
+                # a kernel-bypass arm's: no kernel socket busy poll
+                skip = KERNEL_SOCKET_KNOBS if bypass_point(p) else set()
+                want = {k: v for k, v in dict(shared, **per_arm.get(arm, {})).items() if k not in skip}
                 for host in hosts_of_point(p):
                     got = p.manifest["settings"].get(host)
                     if got is None:
                         add("settings", set_, [p.tag], f"{p.tag}: no settings read back on {host}")
                         continue
+                    got = {k: v for k, v in got.items() if k not in skip}
                     for k, v in sorted(want.items()):
                         if k not in got:
                             add("settings", set_, [p.tag], f"{p.tag}: {host} {k} not read back (want {v})")
@@ -588,6 +618,8 @@ def check(run_dir, absences=None, notes=None):
             for k in sorted({k for arm in round_arms for k in per_arm.get(arm, {})}):
                 have = (reported[k] | {arm for arm in round_arms if k in per_arm.get(arm, {})})
                 have = {arm for arm in have if not own(arm, k)}
+                if k in KERNEL_SOCKET_KNOBS:
+                    have -= bypass
                 values = {per_arm[arm][k] for arm in have if k in per_arm.get(arm, {})}
                 # an arm at its technology's declared best (best.<knob>): its
                 # own value, needing no sweep; the others still do
