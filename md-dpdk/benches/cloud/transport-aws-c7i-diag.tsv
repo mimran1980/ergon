@@ -1,0 +1,33 @@
+# The c7i diagnosis (aws/lab.sh LAB_SUITE=transport LAB_PAIR=a
+# LAB_SETS_FILE=<this file> LAB_TYPE=c7i.4xlarge, on demand; the matrix's
+# arms are kept). SMT off, as transport-aws-smt-off.tsv.
+#
+# aws-20261028-071640 (c7i.4xlarge, SMT off): mio-tcp and eio-tcp at 10k
+# msg/s had p50 44-172 us and p99 425-540 us, at 50k 40-48 and 58-80;
+# eio-tcp-sqpoll-core at 10k 33.5-35.1 and 41-45. Their RX: 1.5-5 % of
+# mio's and eio's segments busy-polled at 10k (TcpExt BusyPollRxPackets
+# against InSegs), the rest taken in the IRQ core's softirq after an
+# interrupt; 80-86 % of sqpoll's busy-polled by its SQPOLL thread. Every
+# arm here is mio-tcp but for one thing (transport-settings.env TR_DECLARED):
+#
+#   mio-tcp       the baseline (SO_BUSY_POLL 50: one NAPI pass after each read)
+#   mio-tcp-br0   busy_read_us=0: no NAPI pass at all, interrupts alone
+#   mio-tcp-c1    irq_idle=1: the IRQ core's idle states past the first halt
+#                 state disabled (on intel_idle, C1E and C6 off)
+#   mio-tcp-c0    irq_idle=0: the IRQ core polls when idle (no halt)
+#   eio-tcp-sqpoll-core  the control: its SQPOLL thread polls the NIC
+#   aa            mio-tcp again
+#
+# Every point records the housekeeping and IRQ CPUs' cpuidle states before
+# and after (idle/: each state's cap, exit latency, usage and time) and the
+# data NICs' moderation and ethtool -S counters (nicstats/: per queue
+# unmask_interrupt, napi_comp, queue_stop and queue_wakeup, the allowance
+# counters). If the IRQ core's wake
+# from idle is the cost: -c1 or -c0 at sqpoll's ~35 us, -br0 as bad as
+# mio-tcp. If a busy-poll pass leaves the queue's interrupt masked: -br0
+# good, -c1 and -c0 bad.
+#
+# One stream, ping/pong round trips at 10k msg/s, LAB_REPS=3: 18 points
+# (LAB_ESTIMATE=1 gives the hours).
+# set  pair par host loads streams netem arms
+set c7i   a    -   ab   10000 1       -     mio-tcp,mio-tcp-br0,mio-tcp-c1,mio-tcp-c0,eio-tcp-sqpoll-core,aa

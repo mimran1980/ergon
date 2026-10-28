@@ -621,6 +621,7 @@ tr_knob() {
     aeron_driver) echo "$TR_AERON_DRIVER" ;;
     capacity) echo "$TR_MPSC_CAPACITY" ;;
     aeron_page) echo "$TR_AERON_PAGE" ;;
+    irq_idle) echo "$TR_IRQ_IDLE" ;;
     # an Aeron arm's: its media driver's (kernel-busy defers, kernel not);
     # a socket arm's own default (transport-settings.env TR_SOCKET_NAPI_DEFER)
     napi_defer)
@@ -697,8 +698,9 @@ tr_arm_knobs() {
     fstack_lat) echo sockbuf ;;
     esac
     # every arm on the kernel's sockets (an arms file's binary too): the data
-    # NICs' interrupt deferral, its own host setting (tr_host_overrides)
-    [[ ${setup:-} != sockets ]] || echo napi_defer
+    # NICs' interrupt deferral and the IRQ core's idle depth, its own host
+    # settings (tr_host_overrides)
+    [[ ${setup:-} != sockets ]] || echo napi_defer irq_idle
     return 0
 }
 
@@ -873,7 +875,36 @@ tr_host_overrides() {
         [[ $n == 0 ]] || g=$TR_GRO_FLUSH_NS
         [[ $n == "$TR_NAPI_DEFER" && $g == "$TR_GRO_FLUSH_NS" ]] || o+="TR_NAPI_DEFER=$n TR_GRO_FLUSH_NS=$g "
     fi
+    [[ ${setup:-} == sockets && $knobs == *" irq_idle "* && $(tr_knob irq_idle) != "$TR_IRQ_IDLE" ]] && o+="TR_IRQ_IDLE=$(tr_knob irq_idle) "
     echo "${o% }"
+}
+
+# tr_idle_value <file>: the knob irq_idle as a host's IRQ CPUs had it (vm.sh
+# idle: "cpu<N> <role> <index> <name> <disabled> ..." a state): all where no
+# IRQ CPU's state is disabled (or the host has no cpuidle driver: nothing
+# to cap), n where every IRQ CPU has its states up to the n-th enabled and
+# every deeper one disabled, else "<cpu>:<disabled flags>,..." as read (no
+# knob value: the settings rule refuses it), unread for no file
+tr_idle_value() {
+    [[ -s $1 ]] || { echo unread; return; }
+    awk '$1 ~ /^cpu[0-9]+$/ && $2 == "irq" {
+            cpu[$1] = 1; d[$1, $3] = $5; if (!($1 in top) || $3 + 0 > top[$1]) top[$1] = $3 + 0
+        }
+        END {
+            v = ""; raw = ""
+            for (c in cpu) {
+                cut = ""; ok = 1; flags = ""
+                for (i = 0; i <= top[c]; i++) {
+                    flags = flags d[c, i]
+                    if (d[c, i] == 1 && cut == "") cut = i - 1
+                    else if (d[c, i] != 1 && cut != "") ok = 0
+                }
+                w = (!ok || cut == -1) ? "x" : (cut == "" ? "all" : cut)
+                v = v == "" ? w : (v == w ? v : "x")
+                raw = raw (raw == "" ? "" : ",") c ":" flags
+            }
+            print (v == "" ? "all" : (v == "x" ? raw : v))
+        }' "$1"
 }
 
 # tr_napi_value <file>: the knob napi_defer as a host's data NICs had it
@@ -909,7 +940,7 @@ tr_napi_raw() {
 tr_timer_args() {
     local k v out=
     for k in rto_min delack_max; do
-        grep -q "^net.ipv4.tcp_${k}_us=absent$" "$dir/settings-a.txt" "$dir/settings-b.txt" 2>/dev/null && continue
+        grep -q "^net.ipv4.tcp_${k}_us=absent$" "${dir:-}/settings-a.txt" "${dir:-}/settings-b.txt" 2>/dev/null && continue
         if [[ $k == rto_min ]]; then v=$(tr_knob rto_min_us); else v=$TR_TCP_DELACK_MAX_US; fi
         out+="--${k//_/-}-us $v "
     done
@@ -1042,6 +1073,12 @@ tr_snap() {
         [[ $1 == before || $bin != aeron_lat ]] || on "$(tr_host "$h")" "$(tr_arm_vm) aeron-page" >"$dir/aeronpage/$2-$h" 2>/dev/null
         # the data NICs' interrupt deferral, where the arm has it as a knob
         [[ $1 == before || " $(tr_arm_knobs | tr '\n' ' ') " != *" napi_defer "* ]] || on "$(tr_host "$h")" "$vm napi" >"$dir/napi/$2-$h" 2>/dev/null
+        # the housekeeping and IRQ CPUs' idle states (their cap, usage and
+        # time: how often and how long each slept), and the data NICs'
+        # interrupt moderation and driver counters (per queue: interrupts
+        # unmasked, NAPI completions, queue stops; allowance counters)
+        on "$(tr_host "$h")" "$vm idle" >"$dir/idle/$2-$h-$1" 2>/dev/null || true
+        on "$(tr_host "$h")" "$vm nicstats" >"$dir/nicstats/$2-$h-$1" 2>/dev/null || true
     done
 }
 
@@ -1123,6 +1160,10 @@ tr_manifest() {
             if [[ " $(tr_arm_knobs | tr '\n' ' ') " == *" napi_defer "* ]]; then
                 echo "napi_$h=$(tr_napi_raw "$dir/napi/$pid-$h")"
                 echo "napi_defer_$h=$(tr_napi_value "$dir/napi/$pid-$h" 2>/dev/null || echo unread)"
+            fi
+            # the IRQ core's idle depth read back (the settings rule)
+            if [[ " $(tr_arm_knobs | tr '\n' ' ') " == *" irq_idle "* ]]; then
+                echo "irq_idle_$h=$(tr_idle_value "$dir/idle/$pid-$h-after" 2>/dev/null || echo unread)"
             fi
             [[ $nline != *FAIL ]] || log "WARNING: point $pid: host $h's netem counters off its loss: $nline"
             [[ $place == ok* ]] || log "WARNING: point $pid: host $h's thread placement: $place"
@@ -1670,7 +1711,7 @@ tr_run() {
     . "$tr_here/irqs.sh"
     # shellcheck source=host.sh
     . "$tr_here/host.sh"
-    mkdir -p "$dir/manifest" "$dir/points" "$dir/logs" "$dir/irq" "$dir/netem" "$dir/samples" "$dir/nstat" "$dir/settings" "$dir/events" "$dir/aeronpage" "$dir/napi" "$dir/onload"
+    mkdir -p "$dir/manifest" "$dir/points" "$dir/logs" "$dir/irq" "$dir/netem" "$dir/samples" "$dir/nstat" "$dir/settings" "$dir/events" "$dir/aeronpage" "$dir/napi" "$dir/onload" "$dir/idle" "$dir/nicstats"
     # LAB_LOCAL_SMOKE: both hosts homes on this box (tr_smoke_hooks)
     [[ -z ${LAB_LOCAL_SMOKE:-} ]] || tr_smoke_hooks
     : >"$dir/failures.csv"

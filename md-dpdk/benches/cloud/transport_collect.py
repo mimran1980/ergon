@@ -65,8 +65,9 @@ READBACK = {"busy_read_us": "busy_read_us", "epoll_events": "epoll_events", "dat
 BOOL = {"true": "on", "false": "off"}
 # a per-arm knob read back on each host after the point (manifest/<point>.env's
 # <name>_<host>: vm.sh aeron-page, the Aeron directory's page size)
-# and vm.sh napi, the data NICs' interrupt deferral (transport.sh tr_napi_value)
-HOST_READBACK = {"aeron_page": "aeron_page", "napi_defer": "napi_defer"}
+# vm.sh napi, the data NICs' interrupt deferral (transport.sh tr_napi_value),
+# and vm.sh idle, the IRQ core's idle depth (transport.sh tr_idle_value)
+HOST_READBACK = {"aeron_page": "aeron_page", "napi_defer": "napi_defer", "irq_idle": "irq_idle"}
 # the hosts' own knob (a sysctl, read back as one): never a per-arm knob.* line
 HOST_WIDE = {"congestion"}
 # what a knob's value implies of the hosts' sysctls (vm.sh driver kernel: no

@@ -1262,6 +1262,61 @@ transport_settings_read() {
     done < <(transport_sysctls)
 }
 
+# transport_idle_read <housekeeping CPUs> <IRQ CPUs>: "driver <cpuidle
+# driver> governor <governor> max_cstate <intel_idle's cap, - without it>",
+# then each CPU's cpuidle states, "cpu<N> <hk|irq> <index> <name> <disabled>
+# <exit latency us> <target residency us> <usage> <time us>" a line (none
+# without a cpuidle driver: the hypervisor owns idle). Read before and after
+# each point (vm.sh idle): the usage and time deltas say how often and how
+# deep the IRQ core slept between the NIC's interrupts
+transport_idle_read() {
+    local sys=${LAB_SYS_ROOT:-/sys} role cpus c st f v line
+    local cpuidle=$sys/devices/system/cpu/cpuidle
+    echo "driver $(cat "$cpuidle/current_driver" 2>/dev/null || echo none)" \
+        "governor $(cat "$cpuidle/current_governor" 2>/dev/null || cat "$cpuidle/current_governor_ro" 2>/dev/null || echo none)" \
+        "max_cstate $(cat "$sys/module/intel_idle/parameters/max_cstate" 2>/dev/null || echo -)"
+    for role in hk irq; do
+        if [[ $role == hk ]]; then cpus=$1; else cpus=$2; fi
+        for c in ${cpus//,/ }; do
+            for st in "$sys/devices/system/cpu/cpu$c/cpuidle"/state[0-9]*; do
+                [[ -d $st ]] || continue
+                line="cpu$c $role ${st##*state}"
+                for f in name disable latency residency usage time; do
+                    v=$(tr -d ' \t' <"$st/$f" 2>/dev/null)
+                    line+=" ${v:--}"
+                done
+                echo "$line"
+            done
+        done
+    done
+}
+
+# transport_irq_idle_apply <IRQ CPUs> <all|n>: on each CPU every cpuidle
+# state deeper than the n-th disabled and the rest enabled (all: every one
+# enabled), each read back; "irq_idle <v> on CPU(s) <list> (<k> states)", 1
+# when one reads back otherwise or n asks a cap where there is no cpuidle
+# driver (nothing could hold it), 2 for a value that is neither
+transport_irq_idle_apply() {
+    local sys=${LAB_SYS_ROOT:-/sys} v=$2 c st i want got n=0 rc=0
+    [[ $v == all || $v =~ ^[0-9]+$ ]] || { echo "irq_idle $v: all or a state index" >&2; return 2; }
+    for c in ${1//,/ }; do
+        for st in "$sys/devices/system/cpu/cpu$c/cpuidle"/state[0-9]*; do
+            [[ -d $st ]] || continue
+            i=${st##*state} n=$((n + 1)) want=0
+            if [[ $v != all ]] && ((i > v)); then want=1; fi
+            echo "$want" | sudo tee "$st/disable" >/dev/null 2>&1 || true
+            got=$(cat "$st/disable" 2>/dev/null)
+            [[ $got == "$want" ]] || { echo "irq_idle $v: cpu$c state$i disable reads $got, wanted $want" >&2; rc=1; }
+        done
+    done
+    if ((n == 0)) && [[ $v != all ]]; then
+        echo "irq_idle $v: no cpuidle state on CPU(s) $1 (no cpuidle driver: the hypervisor owns idle)" >&2
+        return 1
+    fi
+    echo "irq_idle $v on CPU(s) $1 ($n states)"
+    return $rc
+}
+
 # transport_nstat: the kernel's protocol counters as nstat reads them
 # (/proc/net/snmp and /proc/net/netstat: a header line of names, then a line
 # of values, per protocol), for their growth over a point (transport_collect.py)

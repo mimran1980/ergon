@@ -20,9 +20,13 @@
 #                                     sender, receiver and conductor on the map's first three isolated
 #                                     CPUs (host.sh transport_layout), busy-spinning; dpdk refused
 #   local-vm.sh stop                  the media driver stopped (if running)
-#   local-vm.sh transport-net [check] the sysctls written (check: read) back
+#   local-vm.sh transport-net [check] the sysctls written (check: read) back; an IRQ core idle
+#                                     cap (TR_IRQ_IDLE other than all) refused: the box's idle
+#                                     is not the smoke's to set
 #   local-vm.sh netem set <pct>|clear|check <pct|none>|stats   netem on lo
 #   local-vm.sh sample | irqsnap | nstat | settings | napi   as vm.sh's (napi: lo's own)
+#   local-vm.sh idle | nicstats       as vm.sh's lines, with nothing in them: no cpuidle state
+#                                     (so no cap: all), lo has no interrupt moderation or counters
 #   local-vm.sh events-start <point> <traced cpus> <spinner cpus|-> [aeron] | events-stop <point>   as vm.sh's,
 #                                     each host its own trace instance; osnoise host a's alone
 set -euo pipefail
@@ -125,6 +129,7 @@ stop)
     ;;
 transport-net)
     if [[ ${2:-} == check ]]; then transport_sysctls_apply check >/dev/null && echo "transport-net: settings hold"; exit; fi
+    [[ $TR_IRQ_IDLE == all ]] || { echo "transport-net: irq_idle $TR_IRQ_IDLE: the local smoke caps no idle state" >&2; exit 2; }
     transport_cc_load
     transport_sysctls_apply
     ;;
@@ -157,6 +162,8 @@ napi)
         echo "$vf $(cat "/sys/class/net/$vf/napi_defer_hard_irqs" 2>/dev/null || echo 0) $(cat "/sys/class/net/$vf/gro_flush_timeout" 2>/dev/null || echo 0)"
     done
     ;;
+idle) echo "driver none governor none max_cstate - (local smoke: the box's idle is its own)" ;;
+nicstats) nics | while read -r _ _ vf _; do echo "$vf coalesce none"; done ;;
 nstat) transport_nstat ;;
 settings) transport_settings_read ;;
 events-start)

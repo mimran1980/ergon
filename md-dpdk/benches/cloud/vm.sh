@@ -101,7 +101,8 @@
 #                            irqbalance off, the data NICs (rings, coalescing off, quickack routes,
 #                            every interrupt on the IRQ CPU) and the sysctls, each read back; the
 #                            2 MiB hugetlbfs of aeron-ipc-huge's Aeron directory mounted and verified
-#   vm.sh transport-net [check]  a socket arm's kernel path (NAPI, busy poll, TCP), or only read back
+#   vm.sh transport-net [check]  a socket arm's kernel path (NAPI, busy poll, TCP, the IRQ core's
+#                            idle depth TR_IRQ_IDLE), or only read back
 #   vm.sh transport-map      the map;  vm.sh transport-build [fstack] [onload]  the bench binaries and
 #                            LAB_EXTRA_SRC's (fstack: F-Stack and fstack_lat too, x86_64 only; onload:
 #                            OpenOnload built and installed, onload-build.sh)
@@ -121,6 +122,10 @@
 #   vm.sh aeron-page         the page size (statfs's block size) of AERON_DIR's filesystem
 #   vm.sh napi               each data NIC's interrupt deferral as it is now, "<nic>
 #                            <napi_defer_hard_irqs> <gro_flush_timeout ns>" a line
+#   vm.sh idle               the housekeeping and IRQ CPUs' cpuidle states now: each one's cap, exit
+#                            latency, usage and time (host.sh transport_idle_read)
+#   vm.sh nicstats           each data NIC's interrupt moderation (ethtool -c: adaptive rx and tx,
+#                            rx-usecs, tx-usecs) and driver counters (ethtool -S) now
 #   vm.sh nstat              the kernel's protocol counters;  vm.sh settings  every transport sysctl
 #                            as it is now, <knob>=<value> (host.sh transport_settings_read)
 #   vm.sh events-start <point> <traced cpus> <spinner cpus|-> [aeron]   a point's events begun before
@@ -2969,6 +2974,10 @@ transport-net)
     done
     transport_cc_load
     transport_sysctls_apply
+    # the IRQ core's idle depth (TR_IRQ_IDLE: all, or a socket arm's own cap
+    # by TR_OVERRIDES), put back to all at the next arm's
+    read -r _ irqcpus _ <"$run/transport-map"
+    transport_irq_idle_apply "$irqcpus" "$TR_IRQ_IDLE" || exit 1
     ;;
 transport-map)
     # "<housekeeping> <irq> <isolated,...>" as transport-isolate kept it
@@ -3091,6 +3100,22 @@ sample)
     cat "$run/sample.ps"
     ;;
 irqsnap) cat "$LAB_PROC_ROOT/interrupts" ;;
+idle)
+    # the housekeeping and IRQ CPUs' idle states now (host.sh
+    # transport_idle_read; transport.sh tr_idle_value)
+    [[ -s $run/transport-map ]] || { echo "idle: no transport map" >&2; exit 2; }
+    read -r hk irqcpus _ <"$run/transport-map"
+    transport_idle_read "$hk" "$irqcpus"
+    ;;
+nicstats)
+    # each data NIC's interrupt moderation as the driver reports it now
+    # (ethtool -c), "<nic> coalesce <adaptive rx> <adaptive tx> <rx-usecs>
+    # <tx-usecs>", then its driver counters (ethtool -S), "<nic> <name> <value>"
+    nics | while read -r _ _ vf _; do
+        echo "$vf coalesce $(ethtool -c "$vf" 2>/dev/null | awk '/^Adaptive RX:/ {ar = $3; at = $5} /^rx-usecs:/ {r = $2} /^tx-usecs:/ {t = $2} END {print ar, at, r, t}')"
+        ethtool -S "$vf" 2>/dev/null | awk -v n="$vf" -F: 'NR > 1 {gsub(/ /, "", $1); gsub(/ /, "", $2); print n, $1, $2}'
+    done
+    ;;
 aeron-page)
     # the page size of the filesystem AERON_DIR is on (statfs's block size:
     # 4096 on tmpfs, 2097152 on a 2 MiB hugetlbfs), while its driver runs
