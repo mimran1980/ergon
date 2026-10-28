@@ -352,6 +352,13 @@ fn snapshot_driver(dir: &str) -> Result<(String, String), Box<dyn Error>> {
         reason = "CNTFRQ_EL0 is read with one instruction, which only inline assembly gives"
     )
 )]
+#[cfg_attr(
+    not(target_arch = "aarch64"),
+    allow(
+        clippy::missing_const_for_fn,
+        reason = "one signature on every architecture; the aarch64 body reads a register"
+    )
+)]
 fn cntfrq_hz() -> u64 {
     #[cfg(target_arch = "aarch64")]
     {
