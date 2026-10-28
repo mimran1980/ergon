@@ -680,8 +680,8 @@ fn ordering_fence() {
     #[cfg(target_arch = "x86_64")]
     // SAFETY: `lfence` is SSE2, part of every x86-64 CPU; it touches no memory.
     unsafe {
-        core::arch::x86_64::_mm_lfence()
-    };
+        core::arch::x86_64::_mm_lfence();
+    }
     #[cfg(target_arch = "aarch64")]
     // SAFETY: `isb` only flushes the pipeline; it touches no memory or stack.
     unsafe {
