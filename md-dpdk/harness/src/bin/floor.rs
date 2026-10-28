@@ -56,7 +56,8 @@ mod lab;
 mod roundtrip;
 
 use lab::{Clock, STOP, cpu_arg, pin};
-use roundtrip::{Pace, Results, Stalls};
+use roundtrip::{Pace, Results, Stalls, env_u64};
+use std::error::Error;
 use std::hint::spin_loop;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
@@ -99,31 +100,27 @@ struct Between {
 }
 
 impl Between {
-    fn from_env() -> Self {
-        let us = |name: &str| -> u64 {
-            std::env::var(name).map_or(0, |v| v.parse().unwrap_or_else(|e| panic!("{name}={v}: {e}")))
-        };
-        let gap_ns = us("RTT_GAP_US") * 1000;
-        let keepalive_ns = us("KEEPALIVE_US") * 1000;
-        assert!(
-            keepalive_ns == 0 || (gap_ns != 0 && keepalive_ns < gap_ns),
-            "floor: KEEPALIVE_US needs RTT_GAP_US, and a keep-alive more often than the pings"
-        );
-        let flush_kb = us("FLUSH_KB");
-        let flush = vec![0u8; usize::try_from(flush_kb * 1024).expect("FLUSH_KB")];
+    fn from_env() -> Result<Self, Box<dyn Error>> {
+        let gap_ns = env_u64("RTT_GAP_US", 0)? * 1000;
+        let keepalive_ns = env_u64("KEEPALIVE_US", 0)? * 1000;
+        if keepalive_ns != 0 && (gap_ns == 0 || keepalive_ns >= gap_ns) {
+            return Err("floor: KEEPALIVE_US needs RTT_GAP_US, and a keep-alive more often than the pings".into());
+        }
+        let flush_kb = env_u64("FLUSH_KB", 0)?;
+        let flush = vec![0u8; usize::try_from(flush_kb * 1024).map_err(|e| format!("FLUSH_KB={flush_kb}: {e}"))?];
         if keepalive_ns != 0 || !flush.is_empty() {
             eprintln!(
                 "floor: between pings: keep-alive every {} us, flush {flush_kb} KiB",
                 keepalive_ns / 1000
             );
         }
-        Self {
+        Ok(Self {
             gap_ns,
             keepalive_ns,
             last_ping: 0,
             last_keepalive: 0,
             flush,
-        }
+        })
     }
 
     /// A keep-alive is due at `now` (and not too close to the next ping).
@@ -142,7 +139,9 @@ impl Between {
             return;
         }
         for line in self.flush.chunks_mut(64) {
-            line[0] = line[0].wrapping_add(1);
+            if let Some(byte) = line.first_mut() {
+                *byte = byte.wrapping_add(1);
+            }
         }
         std::hint::black_box(&self.flush);
     }
@@ -156,70 +155,84 @@ trait Wire {
     fn poll<F: FnMut(&[u8])>(&mut self, on: F) -> io::Result<usize>;
 }
 
-fn endpoint(arg: Option<String>) -> SocketAddrV4 {
-    let arg = arg.expect("host:port");
-    arg.parse()
-        .unwrap_or_else(|e| panic!("endpoint {arg}: {e} (an IPv4 host:port)"))
+fn endpoint(arg: Option<String>) -> Result<SocketAddrV4, Box<dyn Error>> {
+    let arg = arg.ok_or("an endpoint: host:port")?;
+    Ok(arg
+        .parse()
+        .map_err(|e| format!("endpoint {arg}: {e} (an IPv4 host:port)"))?)
 }
 
-fn main() {
-    lab::lock_memory();
+/// What a build without DPDK says when the environment selects it.
+#[cfg(not(all(feature = "dpdk", target_os = "linux")))]
+const NO_DPDK: &str =
+    "floor: RUSTERON_MEDIA_DRIVER_TRANSPORT=dpdk-ena, but this build has no DPDK (the harness's dpdk feature, Linux)";
+
+#[allow(clippy::similar_names, reason = "ping and pong name the two ends of a round trip")]
+fn main() -> Result<(), Box<dyn Error>> {
+    lab::lock_memory()?;
     let mut args = std::env::args().skip(1);
-    let mode = args.next().expect("xping|xpong|xhairpin");
-    let (ping, pong) = (endpoint(args.next()), endpoint(args.next()));
+    let mode = args.next().ok_or("xping|xpong|xhairpin")?;
+    let (ping, pong) = (endpoint(args.next())?, endpoint(args.next())?);
     let (messages, warmup) = if mode == "xping" || mode == "xhairpin" {
-        let number = |a: Option<String>| -> usize { a.expect("messages and warmup").parse().unwrap() };
-        (number(args.next()), number(args.next()))
+        let number = |a: Option<String>| -> Result<usize, Box<dyn Error>> {
+            let a = a.ok_or("messages and warmup")?;
+            Ok(a.parse().map_err(|e| format!("{a:?}: a count: {e}"))?)
+        };
+        (number(args.next())?, number(args.next())?)
     } else {
         (0, 0)
     };
-    let cpu = cpu_arg(args.next());
+    let cpu = cpu_arg(args.next())?;
     if mode == "xhairpin" {
-        hairpin(ping, pong, messages, warmup, cpu, cpu_arg(args.next()));
-        return;
+        return hairpin(ping, pong, messages, warmup, cpu, cpu_arg(args.next())?);
     }
     // each side listens on its own endpoint and sends to the other's
     let (listen, peer) = match mode.as_str() {
         "xpong" => (ping, pong),
         "xping" => (pong, ping),
-        other => panic!("unknown mode {other}: xping, xpong or xhairpin"),
+        other => return Err(format!("unknown mode {other}: xping, xpong or xhairpin").into()),
     };
-    match ergon_md_dpdk::env::selector().unwrap_or_else(|e| panic!("floor: {e}")) {
+    match ergon_md_dpdk::env::selector().map_err(|e| format!("floor: {e}"))? {
         ergon_md_dpdk::Selector::Default => {
-            let mut wire = KernelWire::open(listen, peer).unwrap_or_else(|e| panic!("floor: kernel UDP: {e}"));
+            let mut wire = KernelWire::open(listen, peer).map_err(|e| format!("floor: kernel UDP: {e}"))?;
             eprintln!("floor: kernel UDP sockets, no Aeron (listen {listen}, peer {peer})");
-            run(&mode, &mut wire, peer, messages, warmup, cpu);
+            run(&mode, &mut wire, peer, messages, warmup, cpu)
         }
         ergon_md_dpdk::Selector::DpdkEna => {
             #[cfg(all(feature = "dpdk", target_os = "linux"))]
             {
-                let mut shared = dpdk::DpdkShared::open(cpu).unwrap_or_else(|e| panic!("floor: DPDK: {e}"));
-                let mut wire = shared
-                    .cross(listen, peer)
-                    .unwrap_or_else(|e| panic!("floor: DPDK: {e}"));
-                run(&mode, &mut wire, peer, messages, warmup, cpu);
+                let mut shared = dpdk::DpdkShared::open(cpu).map_err(|e| format!("floor: DPDK: {e}"))?;
+                let mut wire = shared.cross(listen, peer).map_err(|e| format!("floor: DPDK: {e}"))?;
+                let ran = run(&mode, &mut wire, peer, messages, warmup, cpu);
                 // the native runtime's threads may still read what it holds
                 std::mem::forget(wire);
                 std::mem::forget(shared);
+                ran
             }
             #[cfg(not(all(feature = "dpdk", target_os = "linux")))]
-            panic!(
-                "floor: RUSTERON_MEDIA_DRIVER_TRANSPORT=dpdk-ena, but this build has no DPDK (the harness's dpdk feature, Linux)"
-            );
+            Err(NO_DPDK.into())
         }
     }
 }
 
-fn run(mode: &str, wire: &mut impl Wire, peer: SocketAddrV4, messages: usize, warmup: usize, cpu: Option<usize>) {
+fn run(
+    mode: &str,
+    wire: &mut impl Wire,
+    peer: SocketAddrV4,
+    messages: usize,
+    warmup: usize,
+    cpu: Option<usize>,
+) -> Result<(), Box<dyn Error>> {
     if mode == "xping" {
-        run_ping(wire, peer, messages, warmup, cpu);
+        run_ping(wire, peer, messages, warmup, cpu)
     } else {
-        run_pong(wire, cpu);
+        run_pong(wire, cpu)
     }
 }
 
 /// `xhairpin`: both ends here, each on its own endpoint (a data NIC each),
 /// the pong on a thread of its own.
+#[allow(clippy::similar_names, reason = "ping and pong name the two ends of a round trip")]
 fn hairpin(
     ping: SocketAddrV4,
     pong: SocketAddrV4,
@@ -227,48 +240,50 @@ fn hairpin(
     warmup: usize,
     ping_cpu: Option<usize>,
     pong_cpu: Option<usize>,
-) {
-    assert!(
-        ping != pong,
-        "floor: xhairpin takes two endpoints, one on each data NIC (the pong's, then the ping's): {ping} twice would never leave the host"
-    );
+) -> Result<(), Box<dyn Error>> {
+    if ping == pong {
+        return Err(format!(
+            "floor: xhairpin takes two endpoints, one on each data NIC (the pong's, then the ping's): \
+             {ping} twice would never leave the host"
+        )
+        .into());
+    }
     eprintln!(
         "floor: hairpin: ping and pong in one process (the pong listens on {ping}, the ping on {pong}; pong cpu {})",
-        pong_cpu.map_or("-".to_string(), |c| c.to_string())
+        pong_cpu.map_or_else(|| "-".to_string(), |c| c.to_string())
     );
-    match ergon_md_dpdk::env::selector().unwrap_or_else(|e| panic!("floor: {e}")) {
+    match ergon_md_dpdk::env::selector().map_err(|e| format!("floor: {e}"))? {
         ergon_md_dpdk::Selector::Default => {
             // each end sends from its own address: out of its own NIC
             let ping_wire = KernelWire::open_from(pong, ping, Some(*pong.ip()))
-                .unwrap_or_else(|e| panic!("floor: kernel UDP, the ping's: {e}"));
+                .map_err(|e| format!("floor: kernel UDP, the ping's: {e}"))?;
             let pong_wire = KernelWire::open_from(ping, pong, Some(*ping.ip()))
-                .unwrap_or_else(|e| panic!("floor: kernel UDP, the pong's: {e}"));
+                .map_err(|e| format!("floor: kernel UDP, the pong's: {e}"))?;
             eprintln!("floor: kernel UDP sockets, no Aeron (each end bound to its own address)");
-            run_hairpin(ping_wire, pong_wire, ping, messages, warmup, ping_cpu, pong_cpu);
+            run_hairpin(ping_wire, pong_wire, ping, messages, warmup, ping_cpu, pong_cpu)?;
         }
         ergon_md_dpdk::Selector::DpdkEna => {
             #[cfg(all(feature = "dpdk", target_os = "linux"))]
             {
                 use rusteron_media_driver::bindings::aeron_udp_channel_transport_affinity_t as Affinity;
-                let mut shared = dpdk::DpdkShared::open(ping_cpu).unwrap_or_else(|e| panic!("floor: DPDK: {e}"));
+                let mut shared = dpdk::DpdkShared::open(ping_cpu).map_err(|e| format!("floor: DPDK: {e}"))?;
                 let ping_wire = shared
                     .port(pong, ping, Affinity::AERON_UDP_CHANNEL_TRANSPORT_AFFINITY_SENDER)
-                    .unwrap_or_else(|e| panic!("floor: DPDK, the ping's (sender) port: {e}"));
+                    .map_err(|e| format!("floor: DPDK, the ping's (sender) port: {e}"))?;
                 let pong_wire = shared
                     .port(ping, pong, Affinity::AERON_UDP_CHANNEL_TRANSPORT_AFFINITY_RECEIVER)
-                    .unwrap_or_else(|e| panic!("floor: DPDK, the pong's (receiver) port: {e}"));
+                    .map_err(|e| format!("floor: DPDK, the pong's (receiver) port: {e}"))?;
                 let wires = run_hairpin(ping_wire, pong_wire, ping, messages, warmup, ping_cpu, pong_cpu);
                 // the native runtime's threads may still read what it holds
-                std::mem::forget(wires);
                 std::mem::forget(shared);
+                std::mem::forget(wires?);
             }
             #[cfg(not(all(feature = "dpdk", target_os = "linux")))]
-            panic!(
-                "floor: RUSTERON_MEDIA_DRIVER_TRANSPORT=dpdk-ena, but this build has no DPDK (the harness's dpdk feature, Linux)"
-            );
+            return Err(NO_DPDK.into());
         }
     }
     eprintln!("floor: pong ended: the ping's run done");
+    Ok(())
 }
 
 /// Sets [`STOP`] when dropped: the hairpin's pong ends with the ping's run,
@@ -283,6 +298,7 @@ impl Drop for StopOnDrop {
 
 /// The ping here, the pong on a scoped thread until the ping is done; the
 /// wires back, for the caller to keep or drop.
+#[allow(clippy::similar_names, reason = "ping and pong name the two ends of a round trip")]
 fn run_hairpin<W: Wire + Send>(
     mut ping_wire: W,
     mut pong_wire: W,
@@ -291,43 +307,49 @@ fn run_hairpin<W: Wire + Send>(
     warmup: usize,
     ping_cpu: Option<usize>,
     pong_cpu: Option<usize>,
-) -> (W, W) {
+) -> Result<(W, W), Box<dyn Error>> {
     std::thread::scope(|scope| {
         let ponger = std::thread::Builder::new()
             .name("floor-pong".into())
             .spawn_scoped(scope, move || {
-                pong_loop(&mut pong_wire, pong_cpu);
-                pong_wire
+                // its error as text: a boxed error does not cross threads
+                let ended = pong_loop(&mut pong_wire, pong_cpu).map_err(|e| e.to_string());
+                (pong_wire, ended)
             })
-            .unwrap_or_else(|e| panic!("floor: the pong's thread: {e}"));
+            .map_err(|e| format!("floor: the pong's thread: {e}"))?;
         let stop = StopOnDrop;
-        run_ping(&mut ping_wire, peer, messages, warmup, ping_cpu);
+        let pinged = run_ping(&mut ping_wire, peer, messages, warmup, ping_cpu);
         drop(stop);
-        let pong_wire = ponger
-            .join()
-            .unwrap_or_else(|_| panic!("floor: the pong's thread failed"));
-        (ping_wire, pong_wire)
+        let (pong_wire, ponged) = ponger.join().map_err(|_| "floor: the pong's thread failed")?;
+        pinged?;
+        ponged.map_err(|e| format!("floor: the pong: {e}"))?;
+        Ok((ping_wire, pong_wire))
     })
 }
 
-fn run_ping(wire: &mut impl Wire, peer: SocketAddrV4, messages: usize, warmup: usize, cpu: Option<usize>) {
-    connect(wire, peer);
-    pin(cpu);
+fn run_ping(
+    wire: &mut impl Wire,
+    peer: SocketAddrV4,
+    messages: usize,
+    warmup: usize,
+    cpu: Option<usize>,
+) -> Result<(), Box<dyn Error>> {
+    connect(wire, peer)?;
+    pin(cpu)?;
     let clock = Clock::calibrate();
 
-    let budget = Duration::from_secs(std::env::var("RTT_SECONDS").map_or(20, |s| s.parse().unwrap()));
-    let mut results = Results::new();
+    let budget = Duration::from_secs(env_u64("RTT_SECONDS", 20)?);
+    let mut results = Results::new()?;
     let mut buffer = [0u8; DATAGRAM];
     // raw UDP repairs nothing: a ping or echo lost is counted lost after
-    // this long, and the next sent
-    let timeout_ns: u64 = match std::env::var("RTT_LOST_TIMEOUT_US").map(|v| v.parse::<u64>()) {
-        Ok(Ok(us)) if us > 0 => us * 1000,
-        Ok(Err(e)) => panic!("RTT_LOST_TIMEOUT_US: {e}"),
-        _ => 50_000_000,
+    // this long (0 or unset: 50 ms), and the next sent
+    let timeout_ns = match env_u64("RTT_LOST_TIMEOUT_US", 0)? {
+        0 => 50_000_000,
+        us => us.saturating_mul(1000),
     };
     let mut seq = 0_u64;
-    let mut pace = Pace::from_env();
-    let mut between = Between::from_env();
+    let mut pace = Pace::from_env()?;
+    let mut between = Between::from_env()?;
     let start = Instant::now();
     for i in 0..warmup {
         seq += 1;
@@ -341,7 +363,7 @@ fn run_ping(wire: &mut impl Wire, peer: SocketAddrV4, messages: usize, warmup: u
             seq,
             timeout_ns,
             |_| {},
-        );
+        )?;
         between.flush();
         if (pace.paced() || i % 64 == 0) && start.elapsed() > budget / 4 {
             break;
@@ -349,7 +371,7 @@ fn run_ping(wire: &mut impl Wire, peer: SocketAddrV4, messages: usize, warmup: u
     }
     let start = Instant::now();
     results.start(&clock);
-    let mut stalls = Stalls::new(&clock);
+    let mut stalls = Stalls::new(&clock)?;
     let mut lost = 0_u64;
     for i in 0..messages {
         seq += 1;
@@ -365,7 +387,7 @@ fn run_ping(wire: &mut impl Wire, peer: SocketAddrV4, messages: usize, warmup: u
             |rtt| {
                 results.record(&clock, rtt, i);
             },
-        );
+        )?;
         if !echoed {
             lost += 1;
         }
@@ -375,17 +397,18 @@ fn run_ping(wire: &mut impl Wire, peer: SocketAddrV4, messages: usize, warmup: u
         }
     }
 
-    results.report(lost, PING_STREAM_ID);
+    results.report(lost, PING_STREAM_ID)?;
     if let Some(stalls) = &stalls {
-        stalls.write("stalls-ping.csv");
+        stalls.write("stalls-ping.csv")?;
     }
+    Ok(())
 }
 
 /// Probes (sequence 0) every 10 ms until the pong echoes one, for up to
 /// `FLOOR_CONNECT_SECS` (30): until then a refused or unresolved send is
 /// the pong not up yet, and retried.
-fn connect(wire: &mut impl Wire, peer: SocketAddrV4) {
-    let secs: u64 = std::env::var("FLOOR_CONNECT_SECS").map_or(30, |v| v.parse().expect("FLOOR_CONNECT_SECS"));
+fn connect(wire: &mut impl Wire, peer: SocketAddrV4) -> Result<(), Box<dyn Error>> {
+    let secs = env_u64("FLOOR_CONNECT_SECS", 30)?;
     let deadline = Instant::now() + Duration::from_secs(secs);
     let probe = [0u8; DATAGRAM];
     let mut last = None;
@@ -398,21 +421,22 @@ fn connect(wire: &mut impl Wire, peer: SocketAddrV4) {
             let mut echoed = false;
             let polled = wire.poll(|reply| echoed |= reply.len() >= DATAGRAM && seq_of(reply) == 0);
             if echoed {
-                return;
+                return Ok(());
             }
             if let Err(e) = polled {
                 last = Some(e);
             }
         }
     }
-    panic!(
+    Err(format!(
         "floor: no echo from the pong at {peer} within {secs} s{}",
         last.map(|e| format!(" (last error: {e})")).unwrap_or_default()
-    );
+    )
+    .into())
 }
 
 fn seq_of(datagram: &[u8]) -> u64 {
-    u64::from_le_bytes(datagram[SEQ..SEQ + 8].try_into().unwrap())
+    lab::le_u64(datagram, SEQ)
 }
 
 /// One round trip of datagram `seq`, as `rtt`'s: `true` once its echo is
@@ -433,7 +457,7 @@ fn round_trip(
     seq: u64,
     timeout_ns: u64,
     mut record: impl FnMut(u64),
-) -> bool {
+) -> Result<bool, Box<dyn Error>> {
     if let Some(s) = stalls.as_mut() {
         s.pass(clock.now());
     }
@@ -448,10 +472,10 @@ fn round_trip(
         if between.keepalive_due(now) {
             buffer[SEQ..SEQ + 8].copy_from_slice(&KEEPALIVE_SEQ.to_le_bytes());
             // a full ring or an ARP wait skips this one: the next is due anyway
-            let _ = wire.send(buffer).unwrap_or_else(|e| wire_failed("send", &e));
+            wire.send(buffer).map_err(|e| wire_failed("send", &e))?;
             between.last_keepalive = now;
         }
-        if wire.poll(|_| {}).unwrap_or_else(|e| wire_failed("poll", &e)) == 0 {
+        if wire.poll(|_| {}).map_err(|e| wire_failed("poll", &e))? == 0 {
             spin_loop();
         }
     }
@@ -467,10 +491,10 @@ fn round_trip(
             }
             Ok(false) => {
                 // nothing of this ping can be in flight yet
-                wire.poll(|_| {}).unwrap_or_else(|e| wire_failed("poll", &e));
+                wire.poll(|_| {}).map_err(|e| wire_failed("poll", &e))?;
                 spin_loop();
             }
-            Err(e) => wire_failed("send", &e),
+            Err(e) => return Err(wire_failed("send", &e)),
         }
     };
     let mut echoed = false;
@@ -481,66 +505,67 @@ fn round_trip(
         let received = wire
             .poll(|reply| {
                 if reply.len() >= DATAGRAM && seq_of(reply) == seq {
-                    let sent = u64::from_le_bytes(reply[STAMP..STAMP + 8].try_into().unwrap());
+                    let sent = lab::le_u64(reply, STAMP);
                     record(clock.stamp().wrapping_sub(sent));
                     echoed = true;
                 }
             })
-            .unwrap_or_else(|e| wire_failed("poll", &e));
+            .map_err(|e| wire_failed("poll", &e))?;
         if received == 0 {
             if clock.now().wrapping_sub(started) > timeout_ns {
-                return false;
+                return Ok(false);
             }
             spin_loop();
         }
     }
-    true
+    Ok(true)
 }
 
 #[cold]
 #[inline(never)]
-fn wire_failed(what: &str, error: &io::Error) -> ! {
-    panic!("floor: {what}: {error}")
+fn wire_failed(what: &str, error: &io::Error) -> Box<dyn Error> {
+    format!("floor: {what}: {error}").into()
 }
 
 /// Echoes every datagram until SIGTERM; says so on stderr.
-fn run_pong(wire: &mut impl Wire, cpu: Option<usize>) {
+fn run_pong(wire: &mut impl Wire, cpu: Option<usize>) -> Result<(), Box<dyn Error>> {
     lab::stop_on_sigterm();
-    pong_loop(wire, cpu);
+    pong_loop(wire, cpu)?;
     eprintln!("floor: pong ended: SIGTERM");
+    Ok(())
 }
 
 /// Echoes every datagram, pinned to `cpu`, until [`STOP`]; then writes its
 /// loop's stalls.
-fn pong_loop(wire: &mut impl Wire, cpu: Option<usize>) {
-    pin(cpu);
+fn pong_loop(wire: &mut impl Wire, cpu: Option<usize>) -> Result<(), Box<dyn Error>> {
+    pin(cpu)?;
     let clock = Clock::calibrate();
-    let mut stalls = Stalls::new(&clock);
+    let mut stalls = Stalls::new(&clock)?;
     let mut pending = [[0u8; DATAGRAM]; BURST];
     let mut lengths = [0usize; BURST];
-    let mut between = Between::from_env();
+    let mut between = Between::from_env()?;
     while !STOP.load(Ordering::Relaxed) {
         if let Some(s) = stalls.as_mut() {
             s.pass(clock.now());
         }
         let mut count = 0;
         wire.poll(|ping| {
-            if count < BURST {
+            if let (Some(slot), Some(length)) = (pending.get_mut(count), lengths.get_mut(count)) {
                 let n = ping.len().min(DATAGRAM);
-                pending[count][..n].copy_from_slice(&ping[..n]);
-                lengths[count] = n;
+                slot[..n].copy_from_slice(&ping[..n]);
+                *length = n;
                 count += 1;
             }
         })
-        .unwrap_or_else(|e| wire_failed("poll", &e));
+        .map_err(|e| wire_failed("poll", &e))?;
         for (echo, &n) in pending.iter().zip(&lengths).take(count) {
             // a ping waits for its echo before the next, so a retry's poll
             // finds nothing of this run to lose
-            while !wire.send(&echo[..n]).unwrap_or_else(|e| wire_failed("send", &e)) {
+            while !wire.send(&echo[..n]).map_err(|e| wire_failed("send", &e))? {
                 if STOP.load(Ordering::Relaxed) {
                     break;
                 }
-                wire.poll(|_| {}).unwrap_or_else(|e| wire_failed("poll", &e));
+                wire.poll(|_| {}).map_err(|e| wire_failed("poll", &e))?;
                 spin_loop();
             }
         }
@@ -557,8 +582,9 @@ fn pong_loop(wire: &mut impl Wire, cpu: Option<usize>) {
         }
     }
     if let Some(stalls) = &stalls {
-        stalls.write("stalls-pong.csv");
+        stalls.write("stalls-pong.csv")?;
     }
+    Ok(())
 }
 
 /// Kernel UDP: a socket bound to this side's endpoint, read without
@@ -615,10 +641,19 @@ impl Wire for KernelWire {
 
 /// ergon-md-dpdk's bindings, driven directly.
 #[cfg(all(feature = "dpdk", target_os = "linux"))]
+#[allow(
+    unsafe_code,
+    reason = "the raw floor drives ergon-md-dpdk's C transport bindings directly, with no Aeron driver between"
+)]
 mod dpdk {
     use super::{BURST, Wire};
     use ergon_md_dpdk::DpdkTransport;
-    use rusteron_media_driver::bindings::*;
+    use rusteron_media_driver::bindings::{
+        aeron_clock_cache_t, aeron_counters_manager_init, aeron_counters_manager_t, aeron_driver_context_t,
+        aeron_threading_mode_t, aeron_udp_channel_data_paths_t, aeron_udp_channel_transport_affinity_t,
+        aeron_udp_channel_transport_bindings_t, aeron_udp_channel_transport_params_t, aeron_udp_channel_transport_t,
+        aeron_udp_transport_poller_t, iovec, sockaddr_storage, timespec,
+    };
     use rusteron_media_driver::{AeronDriverContext, AeronIdleStrategyKind};
     use std::ffi::{CStr, c_char, c_void};
     use std::io;
@@ -654,8 +689,8 @@ mod dpdk {
 
     impl Counters {
         fn new() -> io::Result<Self> {
-            let metadata = vec![0u64; COUNTER_SLOTS * METADATA_LENGTH / 8].into_boxed_slice();
-            let values = vec![0u64; COUNTER_SLOTS * VALUE_LENGTH / 8].into_boxed_slice();
+            let mut metadata = vec![0u64; COUNTER_SLOTS * METADATA_LENGTH / 8].into_boxed_slice();
+            let mut values = vec![0u64; COUNTER_SLOTS * VALUE_LENGTH / 8].into_boxed_slice();
             // SAFETY: a plain C struct of integers, all zero a valid state.
             let mut clock: Box<aeron_clock_cache_t> = Box::new(unsafe { std::mem::zeroed() });
             // SAFETY: as above; aeron_counters_manager_init fills it.
@@ -664,12 +699,12 @@ mod dpdk {
             // while the transport runs), and their lengths are theirs.
             let rc = unsafe {
                 aeron_counters_manager_init(
-                    &mut *manager,
-                    metadata.as_ptr() as *mut u8,
+                    &raw mut *manager,
+                    metadata.as_mut_ptr().cast::<u8>(),
                     metadata.len() * 8,
-                    values.as_ptr() as *mut u8,
+                    values.as_mut_ptr().cast::<u8>(),
                     values.len() * 8,
-                    &mut *clock,
+                    &raw mut *clock,
                     10_000,
                 )
             };
@@ -686,6 +721,14 @@ mod dpdk {
     }
 
     /// An IPv4 address as the bindings take it.
+    #[allow(
+        clippy::unnecessary_box_returns,
+        reason = "the bindings keep pointers to it, so it lives at one address while the wire holding it moves"
+    )]
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "AF_INET is 2, which every sa_family_t holds"
+    )]
     fn sockaddr(addr: SocketAddrV4) -> Box<libc::sockaddr_storage> {
         // SAFETY: all zero is a valid sockaddr_storage.
         let mut storage: Box<libc::sockaddr_storage> = Box::new(unsafe { std::mem::zeroed() });
@@ -735,6 +778,10 @@ mod dpdk {
     // thread that holds it (a hairpin's pong takes its own to its thread),
     // each port's queues by one thread, as an Aeron driver's sender and
     // receiver threads use theirs; the shared state outlives every wire.
+    #[allow(
+        clippy::non_send_fields_in_send_ty,
+        reason = "its raw pointers are the installed bindings' table and the wire's own boxed C state, used by one thread at a time"
+    )]
     unsafe impl Send for DpdkWire {}
 
     impl DpdkShared {
@@ -810,13 +857,16 @@ mod dpdk {
                 // SAFETY: all zero is a valid parameter set; the MTU is the context's.
                 let mut params: aeron_udp_channel_transport_params_t = std::mem::zeroed();
                 params.mtu_length = self.mtu;
-                (*self.bindings).init_func.expect("init_func")(
-                    &mut *transport,
+                let init = (*self.bindings)
+                    .init_func
+                    .ok_or_else(|| io::Error::other("no init_func"))?;
+                init(
+                    &raw mut *transport,
                     (&raw mut *bind).cast(),
                     (&raw mut *any).cast(),
                     connect.as_mut().map_or(ptr::null_mut(), |c| (&raw mut **c).cast()),
-                    &mut params,
-                    &mut *self.init_context,
+                    &raw mut params,
+                    &raw mut *self.init_context,
                     affinity,
                 )
             };
@@ -837,16 +887,22 @@ mod dpdk {
             // the transports are live, and live as long as the wire.
             unsafe {
                 let b = &*self.bindings;
-                if b.poller_init_func.expect("poller_init_func")(
-                    &mut *poller,
-                    &mut *self.init_context,
+                let init = b
+                    .poller_init_func
+                    .ok_or_else(|| io::Error::other("no poller_init_func"))?;
+                let add = b
+                    .poller_add_func
+                    .ok_or_else(|| io::Error::other("no poller_add_func"))?;
+                if init(
+                    &raw mut *poller,
+                    &raw mut *self.init_context,
                     aeron_udp_channel_transport_affinity_t::AERON_UDP_CHANNEL_TRANSPORT_AFFINITY_RECEIVER,
                 ) < 0
                 {
                     return Err(last_error("the poller"));
                 }
                 for t in transports {
-                    if b.poller_add_func.expect("poller_add_func")(&mut *poller, &mut **t) < 0 {
+                    if add(&raw mut *poller, &raw mut **t) < 0 {
                         return Err(last_error("adding a transport to the poller"));
                     }
                 }
@@ -970,19 +1026,24 @@ mod dpdk {
         #[inline]
         fn send(&mut self, datagram: &[u8]) -> io::Result<bool> {
             let mut iov = iovec {
-                iov_base: datagram.as_ptr() as *mut c_void,
+                // the send reads the datagram, never writes it
+                iov_base: datagram.as_ptr().cast_mut().cast::<c_void>(),
                 iov_len: datagram.len(),
             };
             let mut bytes: i64 = 0;
+            // SAFETY: the bindings are the installed table, live as long as the wire.
+            let Some(send) = (unsafe { (*self.bindings).send_func }) else {
+                return Err(io::Error::other("no send_func"));
+            };
             // SAFETY: the transport and address are live; one iovec over `datagram`.
             let rc = unsafe {
-                (*self.bindings).send_func.expect("send_func")(
-                    &mut *self.data_paths,
-                    &mut *self.tx,
+                send(
+                    &raw mut *self.data_paths,
+                    &raw mut *self.tx,
                     (&raw mut *self.peer).cast(),
-                    &mut iov,
+                    &raw mut iov,
                     1,
-                    &mut bytes,
+                    &raw mut bytes,
                 )
             };
             match rc {
@@ -1000,14 +1061,18 @@ mod dpdk {
             };
             let mut target = Target { rx, on, count: 0 };
             let mut bytes: i64 = 0;
+            // SAFETY: the bindings are the installed table, live as long as the wire.
+            let Some(poll) = (unsafe { (*self.bindings).poller_poll_func }) else {
+                return Err(io::Error::other("no poller_poll_func"));
+            };
             // SAFETY: the poller and its transports are live; the msgvec has
             // BURST entries; `target` outlives the call.
             let rc = unsafe {
-                (*self.bindings).poller_poll_func.expect("poller_poll_func")(
-                    &mut *self.poller,
+                poll(
+                    &raw mut *self.poller,
                     self.msgvec.as_mut_ptr().cast(),
                     BURST,
-                    &mut bytes,
+                    &raw mut bytes,
                     Some(received::<F>),
                     None,
                     (&raw mut target).cast(),

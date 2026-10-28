@@ -11,6 +11,13 @@
 //! of SIGTERM in every state, and by itself once the other end is gone: its
 //! own publication not connected for over a second, or (a ping, between
 //! polls) its image of the other end closed.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "an integration test fails by panicking: unwrap, expect and panic! are its assertions (as md-dpdk/tests)"
+)]
+#![allow(clippy::similar_names, reason = "ping and pong name the two ends of each round trip")]
 
 use rusteron_client::{Aeron, AeronContext, AeronExclusivePublication, AeronSubscription, Handlers};
 use rusteron_media_driver::{AeronDriver, AeronDriverContext};
@@ -72,7 +79,7 @@ impl Driver {
         context.set_term_buffer_length(65536).unwrap();
         context.set_publication_connection_timeout_ns(1_000_000_000).unwrap();
         context.set_image_liveness_timeout_ns(2_000_000_000).unwrap();
-        let driver = AeronDriver::launch_embedded_guard(context.clone(), false);
+        let driver = AeronDriver::launch_embedded_guard(context, false);
         Self { dir, _driver: driver }
     }
 }
@@ -416,7 +423,7 @@ fn a_back_pressured_load_echo_ends_once_its_publication_has_been_not_connected_f
 }
 
 /// `rtt xping` stuck back-pressured, and its pong peer: with lost round
-/// trips timed out (an unreliable channel's RTT_LOST_TIMEOUT_US, here
+/// trips timed out (an unreliable channel's `RTT_LOST_TIMEOUT_US`, here
 /// 0.1 ms) against a pong that echoes nothing and reads nothing, the ping
 /// keeps sending until back-pressured, then retries past its one-second
 /// budget.

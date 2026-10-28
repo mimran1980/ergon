@@ -79,5 +79,5 @@ dpdk = ["ergon-md-dpdk/dpdk"]
 # builds, which run the binaries directly, off cargo's library path).
 static = ["ergon-md-dpdk/static", "rusteron-client/static", "rusteron-media-driver/static"]
 
-[lints.rust]
-missing_docs = "warn"
+[lints]
+workspace = true

@@ -62,8 +62,18 @@ fn env_u64(key: &str, default: u64) -> u64 {
 }
 
 /// `host:port`-list env var, comma-separated.
-fn env_endpoints(key: &str, default: &str) -> Vec<Endpoint> {
+fn env_endpoints(key: &str, default: &str) -> Result<Vec<Endpoint>, Box<dyn Error>> {
     env_str(key, default).split(',').map(Endpoint::parse).collect()
+}
+
+/// `key` as a `T` (`default` when unset or not a number), or an error where it
+/// does not fit one.
+fn env_num<T: TryFrom<u64>>(key: &str, default: u64) -> Result<T, Box<dyn Error>>
+where
+    T::Error: std::fmt::Display,
+{
+    let v = env_u64(key, default);
+    T::try_from(v).map_err(|e| format!("{key}={v}: {e}").into())
 }
 
 fn fill_byte(role: &str) -> u8 {
@@ -83,7 +93,11 @@ fn main() {
 
     match run(&args) {
         Ok(report) => {
-            if let Err(e) = std::fs::write(&args.report, report.to_json()) {
+            let written = report
+                .to_json()
+                .map_err(|e| e.to_string())
+                .and_then(|json| std::fs::write(&args.report, json).map_err(|e| e.to_string()));
+            if let Err(e) = written {
                 eprintln!("failed to write report {}: {e}", args.report);
                 std::process::exit(1);
             }
@@ -98,7 +112,7 @@ fn main() {
                 report.duration_ms,
                 report.backpressure_ops
             );
-            std::process::exit(if report.ok { 0 } else { 1 });
+            std::process::exit(i32::from(!report.ok));
         }
         Err(e) => {
             eprintln!("harness failed: {e}");
@@ -107,30 +121,31 @@ fn main() {
     }
 }
 
-fn run(args: &Args) -> Result<Report, Box<dyn Error>> {
+/// The scenario's configuration, from `args` and the environment.
+fn config(args: &Args) -> Result<ScenarioCfg, Box<dyn Error>> {
     let default_ctrl = env_str("RUSTERON_HARNESS_PUB_CTRL", "127.0.0.1:40101");
     let default_ctrl2 = env_str("RUSTERON_HARNESS_PUB_CTRL2", "");
 
-    let cfg = ScenarioCfg {
+    Ok(ScenarioCfg {
         role: args.role.clone(),
         name: args.scenario.clone(),
-        pub_ctrl: Endpoint::parse(&default_ctrl),
+        pub_ctrl: Endpoint::parse(&default_ctrl)?,
         pub_ctrl2: if default_ctrl2.is_empty() {
-            let mut ep = Endpoint::parse(&default_ctrl);
+            let mut ep = Endpoint::parse(&default_ctrl)?;
             ep.port = ep.port.saturating_add(1);
             ep
         } else {
-            Endpoint::parse(&default_ctrl2)
+            Endpoint::parse(&default_ctrl2)?
         },
-        sub_endpoints: env_endpoints("RUSTERON_HARNESS_SUB_ENDPOINTS", "127.0.0.1:40102"),
-        destinations: env_endpoints("RUSTERON_HARNESS_DESTINATIONS", "127.0.0.1:40102"),
+        sub_endpoints: env_endpoints("RUSTERON_HARNESS_SUB_ENDPOINTS", "127.0.0.1:40102")?,
+        destinations: env_endpoints("RUSTERON_HARNESS_DESTINATIONS", "127.0.0.1:40102")?,
         msgs: env_u64("RUSTERON_HARNESS_MSGS", 1000),
-        payload: env_u64("RUSTERON_HARNESS_PAYLOAD", 130) as usize,
-        stream: env_u64("RUSTERON_HARNESS_STREAM", 32931) as i32,
+        payload: env_num("RUSTERON_HARNESS_PAYLOAD", 130)?,
+        stream: env_num("RUSTERON_HARNESS_STREAM", 32931)?,
         timeout: Duration::from_secs(env_u64("RUSTERON_HARNESS_TIMEOUT_SECS", 30)),
         fill_byte: fill_byte(&args.role),
         expect_byte: fill_byte(if args.role == "primary" { "secondary" } else { "primary" }),
-        mtu: env_u64("RUSTERON_HARNESS_MTU", 1408) as usize,
+        mtu: env_num("RUSTERON_HARNESS_MTU", 1408)?,
         duration: {
             let d = env_u64("RUSTERON_HARNESS_DURATION_SECS", 0);
             if d > 0 { Some(Duration::from_secs(d)) } else { None }
@@ -148,7 +163,43 @@ fn run(args: &Args) -> Result<Report, Box<dyn Error>> {
             .ok()
             .and_then(|v| v.parse().ok()),
         hold_secs: Duration::from_secs(env_u64("RUSTERON_HARNESS_HOLD_SECS", 6)),
-    };
+    })
+}
+
+/// The embedded DPDK transport's clock into `report`.
+fn record_clock(report: &mut Report, clock: &TransportClock) {
+    match clock {
+        TransportClock::Counter {
+            hz,
+            rate,
+            eal_hz,
+            measured_hz,
+        } => {
+            report.clock = "counter".to_string();
+            report.clock_hz = *hz;
+            report.clock_rate = match rate {
+                RateSource::Eal => "eal",
+                RateSource::Measured => "measured",
+            }
+            .to_string();
+            report.clock_eal_hz = *eal_hz;
+            report.clock_measured_hz = *measured_hz;
+        }
+        TransportClock::Monotonic { reason } => {
+            report.clock = "monotonic".to_string();
+            report.clock_reason = reason.to_string();
+        }
+        // A clock this harness does not know yet: named, never taken
+        // for the counter.
+        other => {
+            report.clock = "unknown".to_string();
+            report.clock_reason = other.to_string();
+        }
+    }
+}
+
+fn run(args: &Args) -> Result<Report, Box<dyn Error>> {
+    let cfg = config(args)?;
 
     let mut report = Report {
         role: cfg.role.clone(),
@@ -191,8 +242,8 @@ fn run(args: &Args) -> Result<Report, Box<dyn Error>> {
             )
             .into_c_string(),
         )?;
-        driver_ctx.set_sender_cpu_affinity(env_u64("RUSTERON_HARNESS_SENDER_CPU", 1) as i32)?;
-        driver_ctx.set_receiver_cpu_affinity(env_u64("RUSTERON_HARNESS_RECEIVER_CPU", 2) as i32)?;
+        driver_ctx.set_sender_cpu_affinity(env_num("RUSTERON_HARNESS_SENDER_CPU", 1)?)?;
+        driver_ctx.set_receiver_cpu_affinity(env_num("RUSTERON_HARNESS_RECEIVER_CPU", 2)?)?;
         driver_ctx.set_sender_idle_strategy_kind(AeronIdleStrategyKind::BusySpin)?;
         driver_ctx.set_receiver_idle_strategy_kind(AeronIdleStrategyKind::BusySpin)?;
         driver_ctx.set_sender_wildcard_port_range(20000, 20999)?;
@@ -210,34 +261,7 @@ fn run(args: &Args) -> Result<Report, Box<dyn Error>> {
             // The clock the real EAL's rate gave the transport (the vdev
             // script asserts the counter, at CNTFRQ_EL0's rate on aarch64).
             info!("[transport] clock: {}", transport.clock());
-            match transport.clock() {
-                TransportClock::Counter {
-                    hz,
-                    rate,
-                    eal_hz,
-                    measured_hz,
-                } => {
-                    report.clock = "counter".to_string();
-                    report.clock_hz = *hz;
-                    report.clock_rate = match rate {
-                        RateSource::Eal => "eal",
-                        RateSource::Measured => "measured",
-                    }
-                    .to_string();
-                    report.clock_eal_hz = *eal_hz;
-                    report.clock_measured_hz = *measured_hz;
-                }
-                TransportClock::Monotonic { reason } => {
-                    report.clock = "monotonic".to_string();
-                    report.clock_reason = reason.to_string();
-                }
-                // A clock this harness does not know yet: named, never taken
-                // for the counter.
-                other => {
-                    report.clock = "unknown".to_string();
-                    report.clock_reason = other.to_string();
-                }
-            }
+            record_clock(&mut report, transport.clock());
             report.cntfrq_hz = cntfrq_hz();
         }
 
@@ -321,6 +345,13 @@ fn snapshot_driver(dir: &str) -> Result<(String, String), Box<dyn Error>> {
 
 /// The generic timer's rate, `CNTFRQ_EL0`, read here (0 off aarch64): what
 /// the transport's counter rate must equal there.
+#[cfg_attr(
+    target_arch = "aarch64",
+    allow(
+        unsafe_code,
+        reason = "CNTFRQ_EL0 is read with one instruction, which only inline assembly gives"
+    )
+)]
 fn cntfrq_hz() -> u64 {
     #[cfg(target_arch = "aarch64")]
     {

@@ -76,15 +76,6 @@
 //! subscriptions. The row's `retrans` is the growth of the driver's
 //! `Retransmits sent` counter over the point (this host's driver), and the
 //! manifest records its NAK, loss-gap-fill and short-send counters too.
-#![deny(unsafe_code, missing_docs)]
-#![warn(
-    clippy::all,
-    clippy::pedantic,
-    clippy::nursery,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic
-)]
 
 // io/benches formats it (rustfmt's defaults), not this crate (max_width 120).
 #[path = "../../../../io/benches/src/transport/point.rs"]

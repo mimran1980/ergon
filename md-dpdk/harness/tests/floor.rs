@@ -4,6 +4,13 @@
 //! lab reads a floor mode's rep as it reads an Aeron one's. `rtt` runs beside
 //! it here, its driver embedded (`HARNESS_DRIVER=invoker`), for the
 //! comparison. The DPDK wire is the vdev runner's (`raw_floor`).
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "an integration test fails by panicking: unwrap, expect and panic! are its assertions (as md-dpdk/tests)"
+)]
+#![allow(clippy::similar_names, reason = "ping and pong name the two ends of each round trip")]
 
 use std::io::Read;
 use std::process::{Child, Command, ExitStatus, Stdio};

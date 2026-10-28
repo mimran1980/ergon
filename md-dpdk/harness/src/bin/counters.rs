@@ -22,7 +22,8 @@
 mod lab;
 
 use lab::aeron_dir;
-use rusteron_client::*;
+use rusteron_client::AeronCnc;
+use std::error::Error;
 
 /// Aeron's system counters that count loss or its repair, by label prefix.
 const AERON_LOSS: [(&str, &str); 8] = [
@@ -65,31 +66,29 @@ const DPDK_LOSS: [&str; 14] = [
     "rx-ring-full-suspected",
 ];
 
-fn main() {
+fn main() -> Result<(), Box<dyn Error>> {
     let filter = std::env::args().nth(1).unwrap_or_else(|| "rusteron-dpdk".into());
     if filter == "loss" {
-        loss();
-        return;
+        return loss();
     }
     if filter == "errors" {
-        errors();
-        return;
+        return errors();
     }
-    AeronCnc::open(&aeron_dir())
-        .unwrap()
+    AeronCnc::open(&aeron_dir()?)?
         .counters_reader()
         .foreach_counter_fn(|value, _id, type_id, _key, label| {
             if label.contains(filter.as_str()) {
                 println!("{value:>12} {type_id:>4} {label}");
             }
         });
+    Ok(())
 }
 
-/// The driver's distinct error log and loss report, read from its CnC file
+/// The driver's distinct error log and loss report, read from its `CnC` file
 /// (also after the driver stopped, until the next one deletes the directory):
 /// what Aeron's `errors` counter and its NAKs were about.
-fn errors() {
-    let cnc = AeronCnc::open(&aeron_dir()).unwrap();
+fn errors() -> Result<(), Box<dyn Error>> {
+    let cnc = AeronCnc::open(&aeron_dir()?)?;
     cnc.error_log_read_fn(
         |count: i32, first_ns: i64, last_ns: i64, error: &str| {
             println!(
@@ -105,12 +104,12 @@ fn errors() {
                 "loss count={count} bytes={bytes} first={first_ns} last={last_ns} session={session} stream={stream} channel={channel} source={source}"
             );
         },
-    )
-    .unwrap();
+    )?;
+    Ok(())
 }
 
-fn loss() {
-    let cnc = AeronCnc::open(&aeron_dir()).unwrap();
+fn loss() -> Result<(), Box<dyn Error>> {
+    let cnc = AeronCnc::open(&aeron_dir()?)?;
     let mut totals: Vec<(String, i64)> = AERON_LOSS
         .iter()
         .map(|(_, k)| ((*k).to_string(), 0))
@@ -137,6 +136,7 @@ fn loss() {
         });
     let line: Vec<String> = totals.iter().map(|(k, v)| format!("{k}={v}")).collect();
     println!("{}", line.join(";"));
+    Ok(())
 }
 
 /// `dpdk-<name>` for a drop, `sat-dpdk-<name>` for a saturation signal,
