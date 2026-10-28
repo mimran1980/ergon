@@ -1516,7 +1516,9 @@ if [[ $load == mixed ]]; then
     settings+=", \"load\": \"mixed\", \"mixed.profile\": \"mixed-v1\", \"mixed.classes\": \"$classes\", \"mixed.publishers\": \"${pubs#,}\""
     settings+=", \"mixed.fanout\": \"${fan#,}\", \"mixed.period_ns\": \"${period#,}\", \"hot_rate\": \"$hot\", \"busy_threads\": \"$((2 + dbusy))\""
     settings+=", \"driver.bytes-sent\": \"$((fb + 96))\", \"driver.bytes-received\": \"$((fb + 96))\", \"mixed.frame_bytes_sent\": \"$fb\", \"mixed.frames_sent\": \"$((n * per))\""
-    settings+=", \"nic.tx_bytes\": \"$((fb + 100000))\", \"nic.rx_bytes\": \"$((fb + 100000))\", \"nic.rx_missed\": \"0\", \"nic.allowance_exceeded\": \"0\""
+    # the DPDK transport's own NIC counters (aeron_lat writes none on a kernel wire)
+    [[ $wire != dpdk ]] ||
+        settings+=", \"nic.tx_bytes\": \"$((fb + 100000))\", \"nic.rx_bytes\": \"$((fb + 100000))\", \"nic.rx_missed\": \"0\", \"nic.allowance_exceeded\": \"0\""
     if [[ $role == pong ]]; then
         settings+=", \"mixed.recv\": \"${recv#,}\", \"mixed.echoed\": \"${sent#,}\", \"mixed.recv_gaps\": \"${zeros#,}\", \"mixed.recv_behind\": \"${zeros#,}\""
         settings+=", \"mixed.recv_refused\": \"${zeros#,}\", \"mixed.hot_echoes\": \"1\", \"mixed.frame_bytes_received\": \"$fb\""
