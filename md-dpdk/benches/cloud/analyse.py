@@ -1586,7 +1586,7 @@ def mixed_section(points, violations, notes, show_invalid):
     load, each arm's budget, hot-stream and all-streams latency, saturation
     and validity; then each arm's adversarial checklist."""
     import fairness
-    from transport_points import flags, is_aa, mixed_backpressured
+    from transport_points import flags, is_aa, mixed_backpressured, mixed_offers
 
     mixed = [p for p in points if fairness.mixed_point(p)]
     if not mixed:
@@ -1683,6 +1683,12 @@ def mixed_section(points, violations, notes, show_invalid):
                                     f"the first: {broke(rule)[0].detail}") if broke(rule) else ok_text
         bps = [(p, *fairness.mixed_backpressure(p)) for p in reps]
         bp_n = sum(b for _, b, _ in bps)
+        offers = [mixed_offers(p) or {} for p in reps]
+        admin = sum(o.get("admin", 0) for o in offers)
+        how = sorted({o.get("how") for o in offers if o.get("admin")})
+        admin_say = (f" ({admin:,} admin actions, term rotations"
+                     + (", from older counts equal to the terms filled" if "term rotations" in how else "")
+                     + ": not back-pressure)") if admin else ""
         print(f"- **{a}** ({stack}, {threading}, driver {driver}; budget a/b "
               f"{num(reps[0], 'a', 'busy_threads')}/{num(reps[0], 'b', 'busy_threads')} busy threads; {len(reps)} points)")
         print(f"  - every message accounted for (sent = read by every subscription = echoed = back)? "
@@ -1690,10 +1696,10 @@ def mixed_section(points, violations, notes, show_invalid):
         print(f"  - wire bytes match the counts (each host's driver)? {say('mixed-wire', 'yes')}")
         print(f"  - NIC counters agree, no allowance exceeded, no receive drops? {say('mixed-nic', 'yes')}")
         if bp_n == 0:
-            print("  - back-pressure? none in any measured window")
+            print("  - back-pressure? none in any measured window" + admin_say)
         else:
             sat = sorted({x for _, b, ss in bps if b for x in ss})
-            print(f"  - back-pressure? {bp_n:,} offers in measured windows; "
+            print(f"  - back-pressure? {bp_n:,} offers in measured windows{admin_say}; "
                   + (f"explained by saturation ({'; '.join(sat[:4])}){'...' if len(sat) > 4 else ''}: its points are "
                      "flagged and not compared" if sat else "UNEXPLAINED (no saturation shown): " + say('backpressure', '')))
         pl, bud = broke("placement") + broke("irq"), broke("budget")

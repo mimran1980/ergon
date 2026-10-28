@@ -107,13 +107,20 @@ concerns. Rules:
                    counters) moved at least the driver's bytes and no more than them
                    with every datagram's headers and the status messages; the ENA's
                    allowance counters and the receive drops (kernel UdpRcvbufErrors,
-                   UdpInErrors; DPDK nic-rx-missed, nic-rx-nombuf, queue-drop) still
+                   UdpInErrors; DPDK nic-rx-missed, nic-rx-nombuf) still; DPDK's
+                   queue-drop (frames to a port nobody listens on, an endpoint not
+                   yet open or closed, as the kernel's UdpNoPorts) a note
   backpressure     an offer back-pressured in the measured window (the hot stream's
                    or a background one's) only where the point shows saturation: a
                    driver duty cycle over its threshold, the background thread busy
                    90 % of its time or an invoking thread's driver with work in 90 %
                    of its duty cycles (else unexplained); a
-                   saturated point is flagged, shown and never compared
+                   saturated point is flagged, shown and never compared. Aeron's
+                   ADMIN_ACTION (a term rotation) is not back-pressure: counted
+                   apart (mixed.admin, admin_actions), each publication's no more
+                   than the terms it filled; an older binary's counts that equal
+                   the terms filled are taken as those (transport_points.py
+                   mixed_offers)
   budget           no host ran more busy threads (over 90 % of a CPU, the gap
                    spinners and the IRQ core's ksoftirqd apart) than the arm's
                    declared budget (busy_threads: its client threads and its
@@ -132,7 +139,8 @@ import sys
 from collections import defaultdict, namedtuple
 
 from spikes import transport_maxima
-from transport_points import hosts_of_point, irq_core_thread, read_points, tcp_loss
+from transport_points import hosts_of_point, hot_rotations, irq_core_thread, mixed_backpressured, read_points, \
+    tcp_loss
 
 Violation = namedtuple("Violation", "rule set tags detail")
 Violation.__str__ = lambda v: f"{v.rule}: {v.set or 'run'}: {v.detail}"
@@ -416,7 +424,7 @@ def mixed_nic_problems(tag, m, ps, qs):
         if c.get("allowance_exceeded"):
             out.append(f"{tag}: {host}'s ENA allowance counters grew by {c['allowance_exceeded']:,}: the instance's "
                        "network limits shaped the point")
-        for k in ("rx_missed", "rx_nombuf", "queue_drop"):
+        for k in ("rx_missed", "rx_nombuf"):
             if c.get(k):
                 out.append(f"{tag}: {host}'s DPDK {k} grew by {c[k]:,}")
         drops = {k: v for k, v in (((m.get("loss_counters") or {}).get(host) or {}).get("nstat") or {}).items()
@@ -424,6 +432,14 @@ def mixed_nic_problems(tag, m, ps, qs):
         if drops:
             out.append(f"{tag}: {host}'s kernel dropped UDP: " + ", ".join(f"{k} {v:,}" for k, v in sorted(drops.items())))
     return out
+
+
+def mixed_nic_notes(tag, m):
+    """A mixed point's DPDK frames to a closed port (queue_drop: an endpoint
+    not yet open or already closed, as the kernel's UdpNoPorts): not loss,
+    the mixed-counts rule proves every message arrived; a note."""
+    return [f"{tag}: {host}'s DPDK queue_drop grew by {c['queue_drop']:,} (frames to a port nobody listened on)"
+            for host, c in sorted((m.get("nic_counters") or {}).items()) if (c or {}).get("queue_drop")]
 
 
 def share(s, num, den):
@@ -458,8 +474,34 @@ def mixed_backpressure(p):
     m = p.manifest or {}
     ps = ((m.get("binary") or {}).get("settings")) or {}
     qs = ((m.get("pong") or {}).get("settings")) or {}
-    bp = (p.row.get("backpressured") or 0) + sum(ints_of(ps, "mixed.bp_measured") or [])
-    return bp, mixed_saturation(ps, qs)
+    return mixed_backpressured(p), mixed_saturation(ps, qs)
+
+
+def mixed_admin_problems(tag, ps):
+    """A mixed point's ADMIN_ACTIONs (term rotations, counted apart from
+    back-pressure) against the terms its publications filled: a stream's
+    mixed.admin its publications' final positions over the term length
+    (mixed.position; a publication whose last message ended its term has
+    not rotated yet), the hot stream's admin_actions its 96-byte frames'
+    (hot_rotations); [] for a binary that did not count them apart."""
+    if "mixed.admin" not in ps:
+        return []
+    out = []
+    term = int_of(ps, "term_length")
+    admin, measured = ints_of(ps, "mixed.admin"), ints_of(ps, "mixed.admin_measured")
+    pos, pubs = ints_of(ps, "mixed.position"), ints_of(ps, "mixed.publishers")
+    if not term or None in (admin, measured, pos, pubs) or not len(admin) == len(measured) == len(pos) == len(pubs):
+        return [f"{tag}: admin actions or the publications' positions not recorded"]
+    for i, (a, am, x, k) in enumerate(zip(admin, measured, pos, pubs)):
+        most = x // term
+        if not most - k <= a <= most or am > a:
+            out.append(f"{tag}: background stream {i + 1}: {a:,} admin actions ({am:,} measured), its "
+                       f"publications filled {most:,} terms: an admin action that was not a term rotation")
+    hot, got = int_of(ps, "mixed.hot_sent"), int_of(ps, "admin_actions")
+    if hot is not None and got is not None and got != hot_rotations(hot, term):
+        out.append(f"{tag}: the hot stream: {got:,} admin actions, its {hot:,} frames filled "
+                   f"{hot_rotations(hot, term):,} terms")
+    return out
 
 
 def busy_budget(p, host):
@@ -626,14 +668,15 @@ def socket_point(p):
 
 # Kernel bypass: an arm whose data path never meets a kernel socket, as DPDK
 # owns the data NIC (setup dpdk: md-dpdk's media driver, a sink arm's on both
-# hosts; setup fstack: F-Stack's own TCP on DPDK). The kernel's socket busy
+# hosts; setup fstack: F-Stack's own TCP on DPDK; setup dpdk-raw: the
+# dpdk-raw floor, ergon-md-dpdk's packet path alone). The kernel's socket busy
 # poll acts only on a kernel socket's read of a NIC's NAPI queue, so it has
 # no effect there, and the set-up before such an arm (vm.sh stop) leaves it
 # at 0: the settings and shared-knob rules leave these knobs out for its
 # points. Onload is no bypass here: the NIC's NAPI fills its AF_XDP ring.
-BYPASS_SETUPS = {"dpdk", "fstack"}
+BYPASS_SETUPS = {"dpdk", "fstack", "dpdk-raw"}
 # with no set-up recorded, a transport only DPDK carries
-BYPASS_TRANSPORTS = {"aeron-dpdk", "aeron-spy-dpdk"}
+BYPASS_TRANSPORTS = {"aeron-dpdk", "aeron-spy-dpdk", "raw-dpdk"}
 KERNEL_SOCKET_KNOBS = {"net.core.busy_read", "net.core.busy_poll"}
 
 
@@ -1061,6 +1104,10 @@ def check(run_dir, absences=None, notes=None):
                     add("mixed-wire", set_, [p.tag], why)
                 for why in mixed_nic_problems(p.tag, m, ps_, qs_):
                     add("mixed-nic", set_, [p.tag], why)
+                for why in mixed_nic_notes(p.tag, m):
+                    note("mixed-nic", set_, [p.tag], why)
+                for why in mixed_admin_problems(p.tag, ps_):
+                    add("backpressure", set_, [p.tag], why)
                 bp, sat = mixed_backpressure(p)
                 if bp and not sat:
                     add("backpressure", set_, [p.tag], f"{p.tag}: {bp:,} offers back-pressured in the measured "

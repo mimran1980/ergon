@@ -54,7 +54,7 @@ use ergon_latency_core::hist::Latency;
 use ergon_latency_core::manifest::RunManifest;
 use point::{Role, thread_allocs};
 use rusteron_client::{
-    Aeron, AeronExclusivePublication, AeronFragmentClosureAssembler, AeronHeader, AeronSubscription,
+    Aeron, AeronExclusivePublication, AeronFragmentClosureAssembler, AeronHeader, AeronOfferError, AeronSubscription,
 };
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -648,6 +648,9 @@ struct Pub {
     bp: u64,
     bp_measured: u64,
     bp_seq: u64,
+    admin: u64,
+    admin_measured: u64,
+    admin_seq: u64,
     bytes: u64,
     frames: u64,
     frame_bytes: u64,
@@ -753,6 +756,9 @@ pub fn ping(
                 bp: 0,
                 bp_measured: 0,
                 bp_seq: u64::MAX,
+                admin: 0,
+                admin_measured: 0,
+                admin_seq: u64::MAX,
                 bytes: 0,
                 frames: 0,
                 frame_bytes: 0,
@@ -827,6 +833,17 @@ pub fn ping(
                         due_at[i] = if p.next < p.total { due(p) } else { u64::MAX };
                         work += 1;
                     }
+                    // a term rotation, not back-pressure: counted apart,
+                    // retried at once
+                    Err(AeronOfferError::AdminAction) => {
+                        if p.admin_seq != p.next {
+                            p.admin_seq = p.next;
+                            p.admin += 1;
+                            if header.intended >= measured_from {
+                                p.admin_measured += 1;
+                            }
+                        }
+                    }
                     Err(e) if e.is_retryable() => {
                         if p.bp_seq != p.next {
                             p.bp_seq = p.next;
@@ -889,6 +906,20 @@ pub fn ping(
         "mixed.bp_measured",
         per_stream(n, &pubs, |p| p.stream, |p| p.bp_measured),
     );
+    put("mixed.admin", per_stream(n, &pubs, |p| p.stream, |p| p.admin));
+    put(
+        "mixed.admin_measured",
+        per_stream(n, &pubs, |p| p.stream, |p| p.admin_measured),
+    );
+    put(
+        "mixed.position",
+        per_stream(
+            n,
+            &pubs,
+            |p| p.stream,
+            |p| u64::try_from(p.publication.position()).unwrap_or(0),
+        ),
+    );
     put("mixed.payload_bytes", per_stream(n, &pubs, |p| p.stream, |p| p.bytes));
     put(
         "mixed.echoes",
@@ -918,6 +949,7 @@ pub fn ping(
     put("mixed.scheduled_total", total(&|p| p.total).to_string());
     put("mixed.sent_total", sent.to_string());
     put("mixed.bp_total", total(&|p| p.bp).to_string());
+    put("mixed.admin_total", total(&|p| p.admin).to_string());
     put(
         "mixed.echoes_total",
         echoes.iter().map(|e| e.count.received).sum::<u64>().to_string(),

@@ -579,8 +579,7 @@ and 29.0 (kernel pair), Graviton 27.1 and 25.8.
 - **Validity:** every message accounted for in all 288 mixed points; no
   real back-pressure (every count the harness reports equals the
   publication's term rotations, Aeron's `ADMIN_ACTION`); DPDK NIC bytes
-  within bounds from the binaries' own counters (`fairness.py` did not get
-  them). Intel kernel: 25 outages of 4.2 to 16.2 ms, each at second 25 of
+  within bounds from the binaries' own counters. Intel kernel: 25 outages of 4.2 to 16.2 ms, each at second 25 of
   a minute, 4 of them with NAKs (frames lost below the guest); they set
   its p99.99 and max only.
 
@@ -681,26 +680,18 @@ not as an Aeron message.
 - What sends host a's frames to closed ports between load points
   (`noport-dpdk-queue-drop`).
 - The `c7i` sessions' once-a-minute millisecond tails (about 15 ms, at a
-  fixed second per pair): unexplained ([above](#c7i-the-irq-cpus-idle-depth)).
+  fixed second per pair): `spikes.py` labels them `periodic path outage
+  (second :SS)`; their cause is unknown ([above](#c7i-the-irq-cpus-idle-depth)).
 - `aeron-rel-emb`'s millisecond maxima (kernel UDP, in-process driver):
   unexplained ([above](#aws-spy-driver-threading-and-onload)).
 - `aeron_lat` labels a DPDK point `aeron-udp` when its one read of the
   driver's counters at start finds no `rusteron-dpdk` counter: 30 of 54
   in `aws-20261028-052745` (6 `declared` flags). Each ran DPDK (0
   data-NIC interrupts, p50 28 to 31).
-- `fairness.py` flags the DPDK arms' points because the kernel's
-  `busy_read` and `busy_poll` read 0 there (240 in `aws-20261027-062105`);
-  no kernel socket is on a DPDK arm's path, but the rule does not yet
-  exempt them. `dpdk-raw` and its A/A are still flagged so
-  (`aws-20261028-123929`).
-- The mixed load (`aeron_lat --load mixed`) counts a retried
-  `ADMIN_ACTION` (term rotation) as back-pressure, so `analyse.py` flags
-  and refuses every mixed point; and `transport_collect.py` builds no NIC
-  counters for a DPDK host (`vm.sh nicstats` prints nothing there), so
-  every DPDK mixed point breaks `mixed-nic`.
 - Intel DPDK's external-driver arms: `nic-rx-missed` 8,940 to 17,698 a run
   at 128 streams with 0 NAKs and 0 retransmits (`aws-20261028-123929`).
-- The mixed arms' hot-stream stage trace under `SHARED` and `INVOKER`.
+- The mixed arms' hot-stream stage trace under `SHARED` and `INVOKER`:
+  not yet run (`transport-aws-aeron-mixed-trace.tsv`).
 
 ## How to run
 

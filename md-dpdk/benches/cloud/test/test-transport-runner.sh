@@ -1519,7 +1519,9 @@ if [[ $load == mixed ]]; then
     settings+=", \"load\": \"mixed\", \"mixed.profile\": \"mixed-v1\", \"mixed.classes\": \"$classes\", \"mixed.publishers\": \"${pubs#,}\""
     settings+=", \"mixed.fanout\": \"${fan#,}\", \"mixed.period_ns\": \"${period#,}\", \"hot_rate\": \"$hot\", \"busy_threads\": \"$((2 + dbusy))\""
     settings+=", \"driver.bytes-sent\": \"$((fb + 96))\", \"driver.bytes-received\": \"$((fb + 96))\", \"mixed.frame_bytes_sent\": \"$fb\", \"mixed.frames_sent\": \"$((n * per))\""
-    settings+=", \"nic.tx_bytes\": \"$((fb + 100000))\", \"nic.rx_bytes\": \"$((fb + 100000))\", \"nic.rx_missed\": \"0\", \"nic.allowance_exceeded\": \"0\""
+    # the DPDK transport's own NIC counters (aeron_lat writes none on a kernel wire)
+    [[ $wire != dpdk ]] ||
+        settings+=", \"nic.tx_bytes\": \"$((fb + 100000))\", \"nic.rx_bytes\": \"$((fb + 100000))\", \"nic.rx_missed\": \"0\", \"nic.allowance_exceeded\": \"0\""
     if [[ $role == pong ]]; then
         settings+=", \"mixed.recv\": \"${recv#,}\", \"mixed.echoed\": \"${sent#,}\", \"mixed.recv_gaps\": \"${zeros#,}\", \"mixed.recv_behind\": \"${zeros#,}\""
         settings+=", \"mixed.recv_refused\": \"${zeros#,}\", \"mixed.hot_echoes\": \"1\", \"mixed.frame_bytes_received\": \"$fb\""
@@ -2444,6 +2446,48 @@ for f in sorted(glob.glob(sys.argv[1] + "/*/manifest-*.json")):
     grep -q 'floor-relative overhead: hot p50 .* − dpdk-raw floor\|floor-relative overhead: hot p50 .* − mio-udp floor' <<<"$an" || why+=" no floor-relative line;"
     [[ -z $why ]] && pass "transport.sh run, the mixed-load session, pair $pair: every point a row; the mixed arms' driver modes with the duty-cycle thresholds, --load mixed on CPUs 10,12 each end, --wire by set-up, the housekeeping and IRQ CPUs traced; NIC counters around every point, a mixed one's collected ($want); the raw DPDK floor on dpdk-raw with driver.env under sudo setpriv; fairness.py clean; analyse.py's mixed table, checklist and floor lines" ||
         fail "transport.sh run, the mixed-load session, pair $pair:$why"
+done
+# The mixed-load stage-trace sessions (transport-aws-aeron-mixed-trace.tsv),
+# each pair: every arm's runs under --load mixed with --stage-trace 64 at
+# both ends (the INVOKER arm's under --driver invoker), each threading
+# model's driver asked for the stage trace (the embedded ones' through
+# driver.env), every point's driver files from both hosts and the binaries'
+# stages files kept; fairness.py clean (each declared twin, the invoker's
+# through -emb-trace) and transport_stages.py run over every point
+for pair in a b; do
+    TRUN_SETS=$cloud/transport-aws-aeron-mixed-trace.tsv trun "$pair" 1 "" && trc=0 || trc=$?
+    d=$sb/a/bench/transport-$pair
+    why=
+    [[ $trc == 0 && $(cat "$d/rc") == 0 ]] || why+=" exit $trc: $(tail -3 "$sb/run.out" | tr '\n' ' ');"
+    n=$(TRUN_SETS= plan count "$pair" 1 "$matrix:arms" "$cloud/transport-aws-aeron-mixed-trace.tsv")
+    [[ $n == 5 && $(grep -c . "$d/results.csv") == "$n" ]] || why+=" $(grep -c . "$d/results.csv") rows, plan $n (not 5);"
+    stack=kernel-busy
+    [[ $pair == b ]] && stack=dpdk
+    for h in a b; do
+        # DEDICATED (its own process, then embedded), SHARED, INVOKER (embedded)
+        for m in "CONDUCTOR=own@.*_CYCLE_THRESHOLD=10000" "CONDUCTOR=own@.*_CYCLE_THRESHOLD=10000@DRIVER=embedded" \
+            "AERON_THREADING_MODE=SHARED" "AERON_THREADING_MODE=INVOKER@DRIVER=embedded"; do
+            grep -q "^$h vm.sh driver $stack@.*$m@RUSTERON_DPDK_STAGE_TRACE=64$" "$sb/calls" ||
+                why+=" host $h: no traced driver $m;"
+        done
+        ! grep "^$h vm.sh driver " "$sb/calls" | grep -v "^$h vm.sh driver dpdk-raw$" | grep -qv 'RUSTERON_DPDK_STAGE_TRACE=64' ||
+            why+=" host $h: an untraced driver;"
+    done
+    for r in 'a aeron_lat --role ping' 'b aeron_lat --role pong'; do
+        [[ $(grep "^$r " "$sb/runs" | grep -c -- '--load mixed --hot-rate 10000 --stage-trace 64') == 5 ]] ||
+            why+=" ${r%% *}: not 5 mixed runs with --stage-trace 64: $(grep "^$r " "$sb/runs" | head -1);"
+        [[ $(grep "^$r " "$sb/runs" | grep -c -- '--driver invoker') == 1 ]] || why+=" ${r%% *}: not one invoker run;"
+    done
+    for p in "$d"/points/*; do
+        for h in a b; do [[ -s $p/stages-driver-$h.csv.gz ]] || why+=" ${p##*/}: no stages-driver-$h;"; done
+    done
+    [[ $(ls "$d"/points/*/0/stages-app.csv "$d"/points/*/pong/stages-app.csv 2>/dev/null | wc -l | tr -d ' ') == 10 ]] ||
+        why+=" the binaries' stages files not kept;"
+    fv=$(python3 "$cloud/fairness.py" "$d" 2>&1) || why+=" fairness: $(head -5 <<<"$fv" | tr '\n' ' ');"
+    sv=$(python3 "$cloud/transport_stages.py" run "$d" 2>&1) || why+=" transport_stages.py run: $(tail -3 <<<"$sv" | tr '\n' ' ');"
+    [[ -s $d/stages.md && $(grep -c '^### ' "$d/stages.md") == 5 ]] || why+=" stages.md: $(grep -c '^### ' "$d/stages.md" 2>/dev/null) points, not 5;"
+    [[ -z $why ]] && pass "transport.sh run, the mixed-load stage-trace session, pair $pair: every arm's mixed runs traced at both ends (INVOKER's under --driver invoker), each threading model's driver traced, every point's driver files and the binaries' stages files kept; fairness.py clean, transport_stages.py run over it" ||
+        fail "transport.sh run, the mixed-load stage-trace session, pair $pair:$why"
 done
 TRUN_SETS=$cloud/transport-aws-aeron-mixed.tsv trun a 1 "" FAKE_FANOUT_SHORT=ka:aeron-mix-shared@STREAMS=32 || true
 d=$sb/a/bench/transport-a

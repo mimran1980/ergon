@@ -314,7 +314,8 @@ start and warm-up and is left out) breaks the hostcheck rule.
 | netem verified | drops within 3.29 σ + 1 of `offered × loss` (99.9 %), pooled over a host's data NICs; 0 % drops nothing |
 | a cause with a length | at least half of what the max adds to the p50 |
 | a host pause | a spinner gap's untraced part, at least `TR_EVENTS_GAPSPIN_US` and half the gap |
-| per-minute stall cluster | a max of 100 µs or more overlapping seconds :49 to :51 of its minute, nothing more specific found |
+| per-minute stall cluster | a max of 100 µs or more overlapping seconds :49 to :51 of its minute, nothing more specific found, where the session's maxima of 100 µs or more fall there above chance (binomial, p < 0.001) |
+| periodic path outage (second :SS) | a max of 1 ms or more overlapping a 100 ms phase of the minute where the session's maxima of 1 ms or more recur: at least 4, from 2 arms or more, binomial p < 0.001 over every phase tried; nothing more specific found |
 | TCP RTO/TLP/retransmit | only where the point's own `tcp_info` on that host retransmitted; a `tc-drop` on either host in its second or the one before makes it netem's, none a loss on the path |
 | IRQ core saturated | the IRQ CPU's `ksoftirqd` over 90 % in a placement sample (shown, never compared) |
 | absent arm | named by a round's order, no row, its failure in failures.csv for that rep, netem and stream count (or `setup`) |
