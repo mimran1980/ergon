@@ -386,6 +386,41 @@ periodic runs on them.
   events; it never locks, allocates or writes the file, and a full ring drops
   the newest event. Housekeeping writes the file every 100 ms; close writes
   the rest. Start fails, naming the variable, if the file cannot be opened.
+- **Stage trace.** `RUSTERON_DPDK_STAGE_TRACE=<N>` (a power of two) with
+  `RUSTERON_DPDK_STAGE_TRACE_FILE=<file>` (lab only) stamps every Aeron data
+  frame whose payload is an aeron_lat message with `seq % N == 0`, on the CPU
+  counter, at each stage it passes. The choice is the payload's, so both hosts
+  sample the same messages, keyed by (stream id, seq):
+
+  | Stage | Where |
+  |---|---|
+  | `tx-send` | the send's entry: the sender agent picked the frame up |
+  | `tx-call`, `tx-done` | around the `rte_eth_tx_burst` that took it |
+  | `rx-burst` | the `rte_eth_rx_burst` that returned it |
+  | `rx-hw` | with NIC RX timestamps: `value` is ns from the NIC's stamp to the `CLOCK_REALTIME` read before dispatch |
+  | `rx-dispatch`, `rx-inserted` | around Aeron's receive callback: after it, the frame is in the image |
+
+  The socket transport is traced the same way through wrapped Aeron bindings
+  (`tx-send` and `tx-call` at the `sendmmsg`, `rx-burst` and `rx-dispatch` at
+  the receive callback). Rows are `stage,tsc,stream_id,seq,term_offset,value,ring`
+  after `#` lines (the clock at open and close, each ring's thread, drops).
+  Each recording thread has a preallocated, pre-touched ring of 65,536 records;
+  it never locks, allocates or writes the file, and a full ring drops the
+  newest. A writer thread drains every ring every 10 ms; it inherits the
+  opening thread's CPUs. Off: one relaxed load and a branch per send and per
+  poll. On, a message not sampled costs about 5 ns more per send or poll and
+  a stamp 1 to 3 ns (`benches/clock.rs` `stages`, aarch64). `aeron_lat
+  --stage-trace N` stamps the application's end; `benches/cloud/transport_stages.py`
+  joins both hosts into a per-stage breakdown.
+- **Capture.** `RUSTERON_DPDK_CAPTURE_FILE=<file>` with
+  `RUSTERON_DPDK_CAPTURE_WINDOW_MS=<start>:<length>` (from the transport's
+  start; default `0:1000`) copies the first 160 bytes of every frame each port
+  receives and sends in the window into the agent's own ring, and the writer
+  thread writes pcapng: one interface per port, each packet's direction in its
+  flags, ns timestamps on `CLOCK_REALTIME`. Outside the window the hook is off.
+  DPDK only. In-process, not `dpdk-pdump`: pdump needs the multi-process
+  channel `RUSTERON_DPDK_EAL_IN_MEMORY` removes and a `rte_pdump_init` server,
+  and `rte_pcapng_copy` allocates an mbuf a frame on the agent.
 
 ## Kernel socket semantics
 

@@ -67,7 +67,8 @@ elif [[ $ALL == 1 ]]; then
   COMMANDS="cargo clippy -p ergon-md-dpdk -p ergon-md-dpdk-harness --all-targets --features ergon-md-dpdk/dpdk,ergon-md-dpdk-harness/dpdk -- -D warnings \
     && cargo test -p ergon-md-dpdk --features dpdk -- --test-threads=1 \
     && cargo test -p ergon-md-dpdk --features static,dpdk -- --test-threads=1 \
-    && cargo test -p ergon-md-dpdk-harness -- --test-threads=1"
+    && cargo test -p ergon-md-dpdk-harness -- --test-threads=1 \
+    && cargo test -p ergon-md-dpdk-harness --features dpdk --test aeron_lat_stages -- --test-threads=1"
 else
   [[ ${#FILTER[@]} -gt 0 ]] || FILTER=(--test dpdk_abi)
   COMMANDS="cargo test -p ergon-md-dpdk --features dpdk ${FILTER[*]} -- --test-threads=1"

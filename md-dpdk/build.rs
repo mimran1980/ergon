@@ -147,6 +147,7 @@ fn build_dpdk_native() {
         .file(native_dir.join("rusteron_dpdk_poller.c"))
         .file(native_dir.join("rusteron_dpdk_kernel.c"))
         .file(native_dir.join("rusteron_dpdk_events.c"))
+        .file(native_dir.join("rusteron_dpdk_stages.c"))
         // AERON_SET_ERR routes through aeron_err_set, which lives in the client
         // util and is not exported by the driver-only libaeron_driver. Compile
         // the error, thread and alloc helpers from the same Aeron sources so the

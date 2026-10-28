@@ -270,7 +270,7 @@ got=$(
     TR_DECLARED="dpdk-aeron-rel-emb:dpdk-aeron-rel-invoker:aeron_driver=embedded dpdk-aeron-rel-invoker:dpdk-aeron-rel-emb:aeron_threading=INVOKER" tr_declared_check 2>&1 | sed 's/^/refused: /' || true
     echo "handoff check: $(tr_check a 2>&1)"
 )
-same "transport.sh, the hand-off arms: each its twin's driver mode but for its threading (SHARED_NETWORK keeps the conductor's core, SHARED and INVOKER drop it) or DRIVER=embedded, each passing mode_check; aeron_lat's --driver (embedded, invoker) and busy threads (3, 2, 1, 0) from it; an embedded driver's binary started with ~/bench/driver.env under sudo setpriv; the events' spinners on the CPUs the driver leaves; INVOKER without the driver embedded and a twin chain going round refused; the sets file checks (66 points at 3 reps)" \
+same "transport.sh, the hand-off arms: each its twin's driver mode but for its threading (SHARED_NETWORK keeps the conductor's core, SHARED and INVOKER drop it) or DRIVER=embedded, each passing mode_check; aeron_lat's --driver (embedded, invoker) and busy threads (3, 2, 1, 0) from it; an embedded driver's binary started with ~/bench/driver.env under sudo setpriv; the events' spinners on the CPUs the driver leaves; INVOKER without the driver embedded and a twin chain going round refused; the sets file checks (66 points at 3 reps: set k on too)" \
 "dpdk-aeron-rel: dpdk<suffix>
   check 0; knobs threading DEDICATED driver external; --driver external --driver-busy-threads 3; events 4,6,8,10,12,14 12,14
   start: sh -c 'taskset -c 0 env PATH=P aeron_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
@@ -1331,6 +1331,11 @@ driver) if [[ -n ${FAKE_DRIVER_FAIL:-} && $2 == "$FAKE_DRIVER_FAIL"* ]]; then
     # the driver's environment (vm.sh's ~/bench/driver.env), which an
     # embedded driver's binary sources: here its mode alone
     echo "export FAKE_DRIVER_ENV='$2'" >"$HOME/bench/driver.env"
+    # md-dpdk's stage trace and capture, as vm.sh points them at ~/bench:
+    # the driver's files there (a header, a pcapng's first bytes), none else
+    rm -f "$HOME/bench/stages.csv" "$HOME/bench/capture.pcapng"
+    [[ $2 != *@RUSTERON_DPDK_STAGE_TRACE=* ]] || printf '# ergon md-dpdk stage trace v1\nstage,tsc,stream_id,seq,term_offset,value,ring\n' >"$HOME/bench/stages.csv"
+    [[ $2 != *@RUSTERON_DPDK_CAPTURE_WINDOW_MS=* ]] || printf '\n\r\r\n' >"$HOME/bench/capture.pcapng"
     case $2 in *@NAPI_DEFER=*) v=${2#*@NAPI_DEFER=}; v=${v%%@*}; echo "${v%/*} ${v#*/}" >"$st/napi" ;; kernel-busy*) echo "2 200000" >"$st/napi" ;; kernel | kernel@*) echo "0 0" >"$st/napi" ;;
     # Onload's driver: onload-up first, the NICs' deferral off
     onload@*) echo "0 0" >"$st/napi" ;; esac ;;
@@ -1378,12 +1383,17 @@ cat >"$sb/bin/stub" <<'SH'
 me=${0##*/}
 # (with the driver's environment, when it was sourced: an embedded driver's binary)
 echo "$FAKE_HOST $me $*${FAKE_DRIVER_ENV:+ [driver.env $FAKE_DRIVER_ENV]}" >>"$FAKE_HOSTS/runs"
-role= out= label= rate= kind=oneway streams=1 warm=0 dur=0 mode= impl=
+role= out= label= rate= kind=oneway streams=1 warm=0 dur=0 mode= impl= stage=
 while (($#)); do
     case $1 in --role) role=$2 ;; --out) out=$2 ;; --label) label=$2 ;; --rate) rate=$2 ;; --round-trip) kind=load ;;
-    --streams) streams=$2 ;; --warmup-s) warm=$2 ;; --duration-s) dur=$2 ;; --mode) mode=$2 ;; --impl) impl=$2 ;; esac
+    --streams) streams=$2 ;; --warmup-s) warm=$2 ;; --duration-s) dur=$2 ;; --mode) mode=$2 ;; --impl) impl=$2 ;;
+    --stage-trace) stage=$2 ;;
+    # the runner's own (the DPDK driver's capture window): never the binary's
+    --capture-ms) echo "stub: --capture-ms is the runner's, not aeron_lat's" >&2; exit 2 ;; esac
     shift
 done
+# aeron_lat --stage-trace: its stages file (a header alone)
+stages() { [[ -z $stage ]] || { mkdir -p "$out"; printf '# ergon aeron_lat stage trace v1\n# role=%s every=%s streams=%s stream_id=1001 echo_offset=10000 ticks_per_ns=2.0 measure_from_tsc=0\nstage,tsc,stream_id,seq,term_offset,value,ring\n' "$role" "$stage" "$streams" >"$out/stages-app.csv"; }; }
 # the manifest's settings as the binaries write them: the transport, the
 # schedule, the counters each host's loss accounting reads
 case $me in
@@ -1421,11 +1431,12 @@ if [[ $role == pong ]]; then
     fi
     # ready once "bound", unless told to stay silent; a manifest when stopped
     [[ -n ${FAKE_PONG_SILENT:-} && $label == *"$FAKE_PONG_SILENT"* ]] || echo ready
-    trap 'mkdir -p "$out"; echo "{\"settings\": {$settings}}" >"$out/manifest.json"; exit 0' TERM
+    trap 'mkdir -p "$out"; stages; echo "{\"settings\": {$settings}}" >"$out/manifest.json"; exit 0' TERM
     while :; do sleep 0.05; done
 fi
 [[ -n ${FAKE_FAIL_LABEL:-} && $label == *"$FAKE_FAIL_LABEL"* ]] && { echo "stub: failing $label" >&2; exit 1; }
 mkdir -p "$out"
+stages
 # the row as the binaries write it: kind first, the channel, no rep
 # the max 150 us, due at second :50 of a minute (the per-minute cluster
 # explains it: spikes.py), every other latency 1 to 5 ns
@@ -2103,6 +2114,46 @@ fv=$(python3 "$cloud/fairness.py" "$d" 2>&1 || true)
 grep -q "^declared: h: .*dpdk-aeron-rel-emb and its twin dpdk-aeron-rel differ in media driver mode" <<<"$fv" || why+=" a driver mode beyond DRIVER not flagged: $(grep -m2 '^declared' <<<"$fv");"
 [[ -z $why ]] && pass "transport.sh run, the hand-off session: each arm's driver mode on both hosts (DRIVER=embedded: no process), aeron_lat's --driver and busy threads by arm, an embedded driver's binary with driver.env under sudo setpriv (no other), knobs and driver mode in every manifest; fairness.py clean (each declared twin, the invoker's through -emb), and a driver mode differing beyond DRIVER flagged" ||
     fail "transport.sh run, the hand-off session:$why"
+
+# The stage-trace session (transport-aws-dpdk-trace.tsv): the traced arms'
+# drivers asked for md-dpdk's stage trace (and the DPDK one its capture
+# window), the untraced arms' not; aeron_lat --stage-trace on the traced
+# arms' runs alone, --capture-ms never (the runner's); each traced point's
+# driver files fetched from both hosts, the capture on an arm's first point
+# alone; fairness.py clean, and transport_stages.py run over the session
+TRUN_SETS=$cloud/transport-aws-dpdk-trace.tsv trun a 1 "" && src=0 || src=$?
+d=$sb/a/bench/transport-a
+why=
+[[ $src == 0 && $(cat "$d/rc") == 0 ]] || why+=" exit $src: $(tail -3 "$sb/run.out" | tr '\n' ' ');"
+n=$(TRUN_SETS= plan count a 1 "$matrix:arms" "$cloud/transport-aws-dpdk-trace.tsv")
+[[ $n == 12 && $(grep -c . "$d/results.csv") == "$n" ]] || why+=" $(grep -c . "$d/results.csv") rows, plan $n (not 12);"
+for h in a b; do
+    grep -q "^$h vm.sh driver dpdk@CONDUCTOR=own@.*_IDLE_STRATEGY=noop@RUSTERON_DPDK_STAGE_TRACE=64@RUSTERON_DPDK_CAPTURE_WINDOW_MS=10000:1000$" "$sb/calls" || why+=" host $h: no traced DPDK driver;"
+    grep -q "^$h vm.sh driver kernel-busy@CONDUCTOR=own@.*@NAPI_DEFER=0/0@RUSTERON_DPDK_STAGE_TRACE=64$" "$sb/calls" || why+=" host $h: no traced kernel driver;"
+    grep -q "^$h vm.sh driver dpdk@CONDUCTOR=own@.*_IDLE_STRATEGY=noop$" "$sb/calls" || why+=" host $h: no untraced DPDK driver;"
+done
+[[ $(grep -c -- '--stage-trace 64' "$sb/runs") == 12 ]] || why+=" $(grep -c -- '--stage-trace 64' "$sb/runs") runs with --stage-trace, not 12 (6 traced points, ping and pong);"
+! grep -- '--stage-trace' "$sb/runs" | grep -qv -- '-trace@\|-trace ' || why+=" an untraced arm's run with --stage-trace;"
+! grep -q -- '--capture-ms' "$sb/runs" || why+=" --capture-ms passed to a binary;"
+for p in "$d"/points/*; do
+    pid=${p##*/}
+    case $pid in
+    *-trace*) for h in a b; do [[ -s $p/stages-driver-$h.csv.gz ]] || why+=" $pid: no stages-driver-$h;"; done ;;
+    *) ! ls "$p"/stages-driver-* >/dev/null 2>&1 || why+=" $pid: an untraced point's driver stages;" ;;
+    esac
+    case $pid in
+    t1-*dpdk-aeron-rel-trace*-10000 | t32-*dpdk-aeron-rel-trace*-50000)
+        for h in a b; do [[ -s $p/capture-$h.pcapng.gz ]] || why+=" $pid: no capture-$h;"; done ;;
+    *) ! ls "$p"/capture-* >/dev/null 2>&1 || why+=" $pid: a capture past the arm's first point;" ;;
+    esac
+done
+[[ $(ls "$d"/points/*/0/stages-app.csv "$d"/points/*/pong/stages-app.csv 2>/dev/null | wc -l | tr -d ' ') == 12 ]] || why+=" the binaries' stages files not kept;"
+grep -q '^args=--mode udp --reliable true --stage-trace 64$' "$d"/manifest/t1-r1-dpdk-aeron-rel-trace*-10000.env || why+=" the traced arm's manifest args;"
+fv=$(python3 "$cloud/fairness.py" "$d" 2>&1) || why+=" fairness: $(head -5 <<<"$fv" | tr '\n' ' ');"
+sv=$(python3 "$cloud/transport_stages.py" run "$d" 2>&1) || why+=" transport_stages.py run: $(tail -3 <<<"$sv" | tr '\n' ' ');"
+[[ -s $d/stages.md && $(grep -c '^### ' "$d/stages.md") == 6 ]] || why+=" stages.md: $(grep -c '^### ' "$d/stages.md" 2>/dev/null) points, not 6;"
+[[ -z $why ]] && pass "transport.sh run, the stage-trace session: the traced arms' drivers traced (the DPDK one's capture window too), aeron_lat --stage-trace on their runs alone, --capture-ms the runner's, each traced point's driver files from both hosts and the capture on an arm's first point alone; fairness.py clean, transport_stages.py run over it" ||
+    fail "transport.sh run, the stage-trace session:$why"
 
 # transport_prepare's steps on the operator machine (lib.sh's helpers faked):
 # the tree and the arms file to both VMs, the build, the map's boot line, a

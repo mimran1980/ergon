@@ -28,7 +28,7 @@
 //!           [--interface IP] [--term-length 1048576] [--mtu 1408] [--stream-id 1001]
 //!           [--driver-busy-threads 3 (invoker: 0)] [--connect-timeout-s 30]
 //!           [--streams N] [--warmup-s 30] [--duration-s 30] [--size 64] [--cpus CSV]
-//!           [--spike-ns 100000] [--stall-ns 10000]
+//!           [--spike-ns 100000] [--stall-ns 10000] [--stage-trace N]
 //! ```
 //!
 //! | role | busy threads, in `--cpus` order | row |
@@ -76,6 +76,21 @@
 //! subscriptions. The row's `retrans` is the growth of the driver's
 //! `Retransmits sent` counter over the point (this host's driver), and the
 //! manifest records its NAK, loss-gap-fill and short-send counters too.
+//!
+//! `--stage-trace N` (a power of two; ping, pong and `--role local
+//! --round-trip`): the application's end of md-dpdk's stage trace
+//! (`RUSTERON_DPDK_STAGE_TRACE`, the README's "Stage trace"). Every message
+//! whose seq is a multiple of N is stamped on the CPU counter as its offer
+//! starts (`app-offer`, the first attempt) and returns (`app-offered`), and
+//! as its poll hands it over (`app-read`, `value` the payload's `send_tsc`),
+//! into a preallocated log of each measuring thread's (no allocation while
+//! measuring; a full log drops and counts). After the run they go to
+//! `<out>/stages-app.csv`: `#` lines (role, N, the counter's ticks per ns,
+//! the schedule's start and the first measured slot's counter on a ping),
+//! then `stage,tsc,stream_id,seq,term_offset,value,ring` rows, the media
+//! driver's columns (stream id the Aeron stream's, term offset 0, ring 0 the
+//! sending log, 1 the receiving one). md-dpdk/benches/cloud/transport_stages.py
+//! joins them with each host's driver file.
 
 // io/benches formats it (rustfmt's defaults), not this crate (max_width 120).
 #[path = "../../../../io/benches/src/transport/point.rs"]
@@ -130,7 +145,9 @@ aeron_lat --role ping|pong|local [--round-trip] --mode ipc|spy|spy-udp|udp --rat
           --aeron-dir PATH [--driver external|embedded|invoker] [--driver-busy-threads 3] [--reliable true|false]
           [--endpoint HOST:PORT] [--reply HOST:PORT] [--interface IP] [--term-length 1048576] [--mtu 1408]
           [--stream-id 1001] [--connect-timeout-s 30] [--streams 1] [--warmup-s 30] [--duration-s 30]
-          [--size 64] [--cpus CSV] [--spike-ns 100000] [--stall-ns 10000]
+          [--size 64] [--cpus CSV] [--spike-ns 100000] [--stall-ns 10000] [--stage-trace N]
+--stage-trace N: stamp every Nth message (a power of two, by seq) at offer and read into <out>/stages-app.csv
+  (ping, pong, local --round-trip): the application's end of md-dpdk's RUSTERON_DPDK_STAGE_TRACE.
 --mode udp: stream i's pings go to --endpoint port + i (stream id S+i), its echoes to --reply port + i
   (S+10000+i); ping and pong take the same --endpoint (the pong's address) and --reply (the ping's), and
   --interface is this end's own address. --endpoint, --reply and --interface are UDP only. Ports
@@ -249,6 +266,8 @@ struct Aeronish {
     stream_id: i32,
     driver_busy_threads: u32,
     connect_timeout: Duration,
+    /// `--stage-trace N`: every Nth message stamped (0: off).
+    stage_every: u64,
 }
 
 impl Aeronish {
@@ -284,7 +303,9 @@ impl Aeronish {
             stream_id: f.num("stream-id", 1001)?,
             driver_busy_threads: f.num("driver-busy-threads", if driver == Driver::Invoker { 0 } else { 3 })?,
             connect_timeout: Duration::from_secs(f.num("connect-timeout-s", 30)?),
+            stage_every: f.num("stage-trace", 0)?,
         };
+        a.check_stage_trace(c)?;
         if matches!(mode, Mode::Udp | Mode::SpyUdp) {
             if a.endpoint.is_none() {
                 return Err(Error::Usage(format!(
@@ -347,6 +368,27 @@ impl Aeronish {
             )));
         }
         Ok(a)
+    }
+
+    /// `--stage-trace N`: a power of two up to 2^20, on an end that both
+    /// offers and reads (ping, pong, `--role local --round-trip`), never the
+    /// spy-udp sink.
+    fn check_stage_trace(&self, c: &Common) -> Result<(), Error> {
+        if self.stage_every == 0 {
+            return Ok(());
+        }
+        if !self.stage_every.is_power_of_two() || self.stage_every > 1 << 20 {
+            return Err(Error::Usage(format!(
+                "--stage-trace {}: a power of two from 1 to 1048576",
+                self.stage_every
+            )));
+        }
+        if (c.role == Role::Local && !c.is_round_trip()) || (c.role == Role::Pong && self.mode == Mode::SpyUdp) {
+            return Err(Error::Usage(
+                "--stage-trace: ping, pong and --role local --round-trip (an end that offers and reads)".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// `--mode spy-udp`'s own refusals: reliable alone, `--role local`
@@ -747,6 +789,299 @@ impl Rx for Invoked<'_, AeronRx> {
     }
 }
 
+/// One application stamp of the stage trace.
+#[derive(Debug, Clone, Copy, Default)]
+struct AppStamp {
+    stage: u8,
+    tsc: u64,
+    stream_id: i32,
+    seq: u64,
+    value: u64,
+}
+
+const APP_OFFER: u8 = 1;
+const APP_OFFERED: u8 = 2;
+const APP_READ: u8 = 3;
+/// The most stamps one log holds (32 MiB at 32 bytes): beyond, dropped.
+const STAGE_LOG_MAX: usize = 1 << 20;
+
+/// A measuring thread's stage log, one end's (its sends or its reads):
+/// preallocated and written through, so recording never allocates.
+#[derive(Debug)]
+struct StageLog {
+    mask: u64,
+    /// The Aeron stream id of stream index 0 on this end.
+    base: i32,
+    stamps: Vec<AppStamp>,
+    len: usize,
+    dropped: u64,
+}
+
+impl StageLog {
+    /// A log for every `every`th message of `c`'s schedule, its stream ids
+    /// from `base`, with room for `per_message` stamps of each.
+    fn new(c: &Common, every: u64, base: i32, per_message: u64) -> Self {
+        let messages = c
+            .rate
+            .saturating_mul(c.warmup_s.saturating_add(c.duration_s).saturating_add(10))
+            / every.max(1);
+        let cap = usize::try_from(messages.saturating_add(1024).saturating_mul(per_message))
+            .unwrap_or(STAGE_LOG_MAX)
+            .min(STAGE_LOG_MAX);
+        Self {
+            mask: every.max(1) - 1,
+            base,
+            // written through now: no page faults while measuring
+            stamps: vec![AppStamp::default(); cap],
+            len: 0,
+            dropped: 0,
+        }
+    }
+
+    #[inline]
+    const fn sampled(&self, seq: u64) -> bool {
+        seq & self.mask == 0
+    }
+
+    #[inline]
+    fn push(&mut self, stamp: AppStamp) {
+        if let Some(slot) = self.stamps.get_mut(self.len) {
+            *slot = stamp;
+            self.len += 1;
+        } else {
+            self.dropped += 1;
+        }
+    }
+
+    fn stream_id(&self, msg: &[u8]) -> i32 {
+        let index = msg
+            .get(24..28)
+            .and_then(|b| b.try_into().ok())
+            .map_or(0, u32::from_le_bytes);
+        self.base.saturating_add(i32::try_from(index).unwrap_or(0))
+    }
+}
+
+/// A message's seq (payload bytes 0..8), if it holds one.
+#[inline]
+fn msg_u64(msg: &[u8], at: usize) -> Option<u64> {
+    msg.get(at..at + 8)
+        .and_then(|b| b.try_into().ok())
+        .map(u64::from_le_bytes)
+}
+
+/// A sending end that stamps its sampled messages' offers.
+struct StagedTx<'a, T> {
+    end: &'a mut T,
+    clock: &'a TscClock,
+    log: &'a mut StageLog,
+    /// A sampled message whose offer was refused (busy): its stream, seq and
+    /// first attempt's counter, kept for its `app-offer`.
+    pending: Option<(u32, u64, u64)>,
+}
+
+impl<T: Tx> Tx for StagedTx<'_, T> {
+    #[inline]
+    fn try_send(&mut self, stream: u32, msg: &[u8; MESSAGE_LEN]) -> Result<Sent, Error> {
+        let seq = msg_u64(msg, 0).unwrap_or(1);
+        if !self.log.sampled(seq) {
+            return self.end.try_send(stream, msg);
+        }
+        let t0 = self.clock.raw();
+        let sent = self.end.try_send(stream, msg)?;
+        match sent {
+            Sent::Sent => {
+                let t1 = self.clock.raw();
+                let first = match self.pending.take() {
+                    Some((s, q, t)) if s == stream && q == seq => t,
+                    _ => t0,
+                };
+                let stream_id = self.log.stream_id(msg);
+                for (stage, tsc) in [(APP_OFFER, first), (APP_OFFERED, t1)] {
+                    self.log.push(AppStamp {
+                        stage,
+                        tsc,
+                        stream_id,
+                        seq,
+                        value: 0,
+                    });
+                }
+            }
+            Sent::Busy => {
+                if !matches!(self.pending, Some((s, q, _)) if s == stream && q == seq) {
+                    self.pending = Some((stream, seq, t0));
+                }
+            }
+        }
+        Ok(sent)
+    }
+}
+
+/// A receiving end that stamps its sampled messages as its poll hands them
+/// over, before the measuring code sees them.
+struct StagedRx<'a, R> {
+    end: &'a mut R,
+    clock: &'a TscClock,
+    log: &'a mut StageLog,
+}
+
+impl<R: Rx> Rx for StagedRx<'_, R> {
+    #[inline]
+    fn poll<F: FnMut(&[u8])>(&mut self, on: &mut F) -> Result<usize, Error> {
+        let (clock, log) = (self.clock, &mut *self.log);
+        self.end.poll(&mut |p: &[u8]| {
+            if let Some(seq) = msg_u64(p, 0)
+                && log.sampled(seq)
+            {
+                let tsc = clock.raw();
+                let stream_id = log.stream_id(p);
+                log.push(AppStamp {
+                    stage: APP_READ,
+                    tsc,
+                    stream_id,
+                    seq,
+                    value: msg_u64(p, 8).unwrap_or(0),
+                });
+            }
+            on(p);
+        })
+    }
+
+    fn closed(&self) -> bool {
+        self.end.closed()
+    }
+}
+
+/// A measuring thread's two stage logs: its offers', its reads'.
+#[derive(Debug)]
+struct Stages {
+    tx: StageLog,
+    rx: StageLog,
+    /// The schedule's start on a ping (raw counter), 0 elsewhere.
+    start_tsc: u64,
+}
+
+impl Stages {
+    /// `--stage-trace`'s logs for an end sending on stream ids from
+    /// `tx_base` and reading from `rx_base`; `None` when off.
+    fn new(c: &Common, a: &Aeronish, tx_base: i32, rx_base: i32) -> Option<Self> {
+        (a.stage_every > 0).then(|| Self {
+            tx: StageLog::new(c, a.stage_every, tx_base, 2),
+            rx: StageLog::new(c, a.stage_every, rx_base, 1),
+            start_tsc: 0,
+        })
+    }
+}
+
+/// `<out>/stages-app.csv` from every measuring thread's logs (thread k's
+/// offers ring 2k, its reads 2k + 1).
+fn write_stages(c: &Common, a: &Aeronish, clock: &TscClock, all: &[Stages]) -> Result<(), Error> {
+    use std::fmt::Write as _;
+    let tpn = clock.ticks_per_ns();
+    let start_tsc = all.iter().map(|s| s.start_tsc).find(|&t| t != 0).unwrap_or(0);
+    let measure_from = if start_tsc == 0 {
+        0
+    } else {
+        start_tsc.saturating_add(clock.ns_to_ticks(c.warmup_s.saturating_mul(1_000_000_000)))
+    };
+    let dropped: u64 = all.iter().map(|s| s.tx.dropped + s.rx.dropped).sum();
+    let stamps: usize = all.iter().map(|s| s.tx.len + s.rx.len).sum();
+    let mut text = String::with_capacity(stamps * 48 + 512);
+    let _ = writeln!(text, "# ergon aeron_lat stage trace v1");
+    let _ = writeln!(
+        text,
+        "# role={} every={} streams={} rate={} warmup_s={} duration_s={} ticks_per_ns={tpn:.9} start_tsc={start_tsc} \
+         measure_from_tsc={measure_from} stream_id={} echo_offset={ECHO_OFFSET} dropped={dropped}",
+        c.role.name(),
+        a.stage_every,
+        c.streams,
+        c.rate,
+        c.warmup_s,
+        c.duration_s,
+        a.stream_id,
+    );
+    let _ = writeln!(text, "stage,tsc,stream_id,seq,term_offset,value,ring");
+    for (k, st) in all.iter().enumerate() {
+        for (ring, log) in [(2 * k, &st.tx), (2 * k + 1, &st.rx)] {
+            for x in log.stamps.iter().take(log.len) {
+                let name = match x.stage {
+                    APP_OFFER => "app-offer",
+                    APP_OFFERED => "app-offered",
+                    _ => "app-read",
+                };
+                let _ = writeln!(text, "{name},{},{},{},0,{},{ring}", x.tsc, x.stream_id, x.seq, x.value);
+            }
+        }
+    }
+    std::fs::create_dir_all(&c.out).map_err(|source| Error::Io {
+        path: c.out.clone(),
+        source,
+    })?;
+    let path = c.out.join("stages-app.csv");
+    std::fs::write(&path, text).map_err(|source| Error::Io { path, source })
+}
+
+/// The round trip's ping through `tx` and `rx`, each stamped into
+/// `stages` when on.
+fn ping_staged<T: Tx, R: Rx>(
+    clock: &TscClock,
+    c: &Common,
+    t: u64,
+    tx: &mut T,
+    rx: &mut R,
+    rec: &mut Recorder,
+    stages: Option<&mut Stages>,
+) -> Result<SendStats, Error> {
+    match stages {
+        None => point::ping(clock, c, t, tx, rx, rec),
+        Some(st) => {
+            st.start_tsc = t;
+            let (mut tx, mut rx) = (
+                StagedTx {
+                    end: tx,
+                    clock,
+                    log: &mut st.tx,
+                    pending: None,
+                },
+                StagedRx {
+                    end: rx,
+                    clock,
+                    log: &mut st.rx,
+                },
+            );
+            point::ping(clock, c, t, &mut tx, &mut rx, rec)
+        }
+    }
+}
+
+/// The echo through `rx` and `tx`, each stamped into `stages` when on.
+fn echo_staged<R: Rx, T: Tx>(
+    rx: &mut R,
+    tx: &mut T,
+    keep_going: &mut impl FnMut() -> bool,
+    stages: Option<(&mut Stages, &TscClock)>,
+) -> Result<u64, Error> {
+    match stages {
+        None => point::echo(rx, tx, keep_going),
+        Some((st, clock)) => {
+            let (mut rx, mut tx) = (
+                StagedRx {
+                    end: rx,
+                    clock,
+                    log: &mut st.rx,
+                },
+                StagedTx {
+                    end: tx,
+                    clock,
+                    log: &mut st.tx,
+                    pending: None,
+                },
+            );
+            point::echo(&mut rx, &mut tx, keep_going)
+        }
+    }
+}
+
 /// Publications on `channel(i)` for every stream.
 fn publications(
     client: &Client,
@@ -918,6 +1253,8 @@ struct Ends {
     start_realtime_ns: u128,
     /// The echoes the echo thread sent (local round trip).
     echoes: Option<u64>,
+    /// `--stage-trace`'s logs: the ping's, and a local round trip's echo's.
+    stages: Vec<Stages>,
 }
 
 fn joined<T>(r: std::thread::Result<Result<T, Error>>, who: &str) -> Result<T, Error> {
@@ -972,6 +1309,7 @@ fn local_oneway(c: &Common, a: &Aeronish, clock: &TscClock) -> Result<Ends, Erro
             allocs: sa + ra,
             start_realtime_ns: u128::from(start_rt.load(Ordering::Acquire)),
             echoes: None,
+            stages: Vec::new(),
         })
     })
 }
@@ -1009,14 +1347,15 @@ fn ping_end(
     let client = invoked
         .or(own.as_ref())
         .ok_or_else(|| Error::Transport("no client".into()))?;
+    let mut stages = Stages::new(c, a, a.stream(0, 0), a.stream(0, ECHO_OFFSET));
     let (t, rt) = point::start_at(clock, START_DELAY_NS);
     let mut rec = Recorder::new(clock, t, c)?;
     let a0 = thread_allocs();
     let send = if client.invoked.is_some() {
         let (mut tx, mut rx) = (Invoked { end: &mut tx, client }, Invoked { end: &mut rx, client });
-        point::ping(clock, c, t, &mut tx, &mut rx, &mut rec)?
+        ping_staged(clock, c, t, &mut tx, &mut rx, &mut rec, stages.as_mut())?
     } else {
-        point::ping(clock, c, t, &mut tx, &mut rx, &mut rec)?
+        ping_staged(clock, c, t, &mut tx, &mut rx, &mut rec, stages.as_mut())?
     };
     Ok(Ends {
         rec,
@@ -1024,6 +1363,7 @@ fn ping_end(
         allocs: thread_allocs() - a0,
         start_realtime_ns: rt,
         echoes: None,
+        stages: stages.into_iter().collect(),
     })
 }
 
@@ -1031,7 +1371,9 @@ fn ping_end(
 /// invoker`, else one of its own), ping subscriptions and echo
 /// publications (then `added`), then (after `barrier`, when given) echoes
 /// until the pings go or `keep_going` says stop. Returns its hot-path
-/// allocations and the echoes it sent.
+/// allocations, the echoes it sent and, with `--stage-trace` (`clock`
+/// given), its stage logs.
+#[allow(clippy::too_many_arguments)]
 fn echo_end(
     c: &Common,
     a: &Aeronish,
@@ -1040,7 +1382,8 @@ fn echo_end(
     invoked: Option<&Client>,
     added: &dyn Fn(),
     keep_going: &mut impl FnMut() -> bool,
-) -> Result<(u64, u64), Error> {
+    clock: Option<&TscClock>,
+) -> Result<(u64, u64, Option<Stages>), Error> {
     let setup = (|| -> Result<_, Error> {
         let own = if invoked.is_some() {
             None
@@ -1064,14 +1407,16 @@ fn echo_end(
     let client = invoked
         .or(own.as_ref())
         .ok_or_else(|| Error::Transport("no client".into()))?;
+    let mut stages = clock.and_then(|_| Stages::new(c, a, a.stream(0, ECHO_OFFSET), a.stream(0, 0)));
+    let logs = stages.as_mut().zip(clock);
     let a0 = thread_allocs();
     let echoes = if client.invoked.is_some() {
         let (mut rx, mut tx) = (Invoked { end: &mut rx, client }, Invoked { end: &mut tx, client });
-        point::echo(&mut rx, &mut tx, keep_going)?
+        echo_staged(&mut rx, &mut tx, keep_going, logs)?
     } else {
-        point::echo(&mut rx, &mut tx, keep_going)?
+        echo_staged(&mut rx, &mut tx, keep_going, logs)?
     };
-    Ok((thread_allocs() - a0, echoes))
+    Ok((thread_allocs() - a0, echoes, stages))
 }
 
 fn local_round_trip(c: &Common, a: &Aeronish, clock: &TscClock) -> Result<Ends, Error> {
@@ -1079,9 +1424,16 @@ fn local_round_trip(c: &Common, a: &Aeronish, clock: &TscClock) -> Result<Ends, 
     let (barrier, stop) = (&barrier, &stop);
     std::thread::scope(|s| {
         let echo = s.spawn(move || {
-            echo_end(c, a, c.cpu(1), Some(barrier), None, &|| {}, &mut || {
-                !stop.load(Ordering::Acquire)
-            })
+            echo_end(
+                c,
+                a,
+                c.cpu(1),
+                Some(barrier),
+                None,
+                &|| {},
+                &mut || !stop.load(Ordering::Acquire),
+                Some(clock),
+            )
         });
         let ping = s.spawn(move || {
             let r = ping_end(c, a, clock, c.cpu(0), Some(barrier), None);
@@ -1089,9 +1441,10 @@ fn local_round_trip(c: &Common, a: &Aeronish, clock: &TscClock) -> Result<Ends, 
             r
         });
         let mut ends = joined(ping.join(), "ping")?;
-        let (allocs, echoes) = joined(echo.join(), "echo")?;
+        let (allocs, echoes, stages) = joined(echo.join(), "echo")?;
         ends.allocs += allocs;
         ends.echoes = Some(echoes);
+        ends.stages.extend(stages);
         Ok(ends)
     })
 }
@@ -1197,10 +1550,24 @@ fn run(c: &Common, a: &Aeronish) -> Result<Option<String>, Error> {
         let allocs = if a.mode == Mode::SpyUdp {
             sink(c, a, &mut m)?
         } else {
-            echo_end(c, a, c.cpu(0), None, invoked, &|| println!("ready"), &mut || {
-                !STOP.load(Ordering::Relaxed)
-            })?
-            .0
+            // the stage trace's counter scale (a 20 ms calibration), before
+            // the echo starts
+            let clock = (a.stage_every > 0).then(TscClock::new);
+            let (allocs, _, stages) = echo_end(
+                c,
+                a,
+                c.cpu(0),
+                None,
+                invoked,
+                &|| println!("ready"),
+                &mut || !STOP.load(Ordering::Relaxed),
+                clock.as_ref(),
+            )?;
+            if let (Some(st), Some(clock)) = (stages, &clock) {
+                write_stages(c, a, clock, &[st])?;
+                m.setting("stage_trace", &a.stage_every.to_string());
+            }
+            allocs
         };
         record_counters(&mut m, &before, &counters_now(&counters.aeron));
         m.setting("hot_path_allocs", &allocs.to_string())
@@ -1218,6 +1585,12 @@ fn run(c: &Common, a: &Aeronish) -> Result<Option<String>, Error> {
     let retrans = record_counters(&mut m, &before, &counters_now(&counters.aeron));
     if let Some(e) = ends.echoes {
         m.setting("echoes_sent", &e.to_string());
+    }
+    // the stage trace: the ping's log (a local round trip's echo's merged
+    // into the same file, its rings 2 and 3)
+    if !ends.stages.is_empty() {
+        write_stages(c, a, &clock, &ends.stages)?;
+        m.setting("stage_trace", &a.stage_every.to_string());
     }
     let row = point::finish(
         c,

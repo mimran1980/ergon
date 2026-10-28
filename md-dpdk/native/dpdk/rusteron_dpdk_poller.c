@@ -457,7 +457,10 @@ static void rusteron_dpdk_rx_count(
  * with the UDP payload, a reconstructed source sockaddr_in and the media
  * receive timestamp (NULL when no channel on the NIC asks for one; Aeron's
  * image writes it only into a channel that does) and return 1. */
-static int rusteron_dpdk_dispatch_frame(
+/* Always inlined into both its callers: the ordinary receive loop's and the
+ * stage trace's (rusteron_dpdk_dispatch_staged), so a second caller never
+ * moves the ordinary path's dispatch out of line. */
+static inline __attribute__((always_inline)) int rusteron_dpdk_dispatch_frame(
     rusteron_dpdk_client_t *client,
     aeron_udp_channel_transport_t *only_transport,
     const rusteron_dpdk_endpoint_map_t *endpoints,
@@ -556,6 +559,46 @@ static int rusteron_dpdk_dispatch_frame(
     *bytes_rcved += (int64_t)frame->payload_len;
     client->port->rx_stats.accepted++;
     return 1;
+}
+
+/* The stage trace's dispatch (rusteron_dpdk_stages.h): the frame's sampled
+ * messages stamped at its burst's return (`rx_tsc`), just before Aeron's
+ * receive callback and after it returned (the frame in the image), and with
+ * a NIC arrival stamp (`hw_delay_ns` >= 0) the ns from it to the
+ * CLOCK_REALTIME read just before this dispatch. Out of line: tracing only. */
+static __attribute__((noinline, cold)) int rusteron_dpdk_dispatch_staged(
+    rusteron_dpdk_client_t *client,
+    aeron_udp_channel_transport_t *only_transport,
+    const rusteron_dpdk_endpoint_map_t *endpoints,
+    const rusteron_dpdk_mbuf_t *m,
+    const rusteron_dpdk_parsed_frame_t *frame,
+    struct mmsghdr *msgvec,
+    int64_t *bytes_rcved,
+    aeron_udp_transport_recv_func_t recv_func,
+    void *clientd,
+    struct timespec *media_timestamp,
+    uint64_t rx_tsc,
+    int64_t hw_delay_ns)
+{
+    const uint64_t pre = rusteron_dpdk_counter();
+    const int dispatched = rusteron_dpdk_dispatch_frame(
+        client, only_transport, endpoints, m, frame, msgvec, bytes_rcved, recv_func, clientd, media_timestamp);
+    const uint64_t post = rusteron_dpdk_counter();
+    if (dispatched)
+    {
+        static const uint8_t stages[3] = {
+            RUSTERON_DPDK_STAGE_RX_BURST, RUSTERON_DPDK_STAGE_RX_DISPATCH, RUSTERON_DPDK_STAGE_RX_INSERTED};
+        const uint64_t tscs[3] = {rx_tsc, pre, post};
+        rusteron_dpdk_stage_datagram(frame->payload, frame->payload_len, stages, tscs, 3, 0);
+        if (hw_delay_ns >= 0)
+        {
+            static const uint8_t hw[1] = {RUSTERON_DPDK_STAGE_RX_HW};
+            const uint64_t at[1] = {pre};
+            const uint32_t delay = hw_delay_ns > (int64_t)UINT32_MAX ? UINT32_MAX : (uint32_t)hw_delay_ns;
+            rusteron_dpdk_stage_datagram(frame->payload, frame->payload_len, hw, at, 1, delay);
+        }
+    }
+    return dispatched;
 }
 
 /* Counts a gap of 20 µs or more since the agent's last cycle on `port`
@@ -745,10 +788,22 @@ int rusteron_dpdk_poller_receive(
      * MANA, overflowing without a count). */
     size_t total = 0;
     int full = 0;
+    /* The lab's stage trace and capture (rusteron_dpdk_stages.h): one load a
+     * poll and one branch a burst while off. */
+    const uint32_t lab = rusteron_dpdk_lab_on();
     for (uint32_t burst = 0; burst < native->rx_max_bursts; burst++)
     {
         const uint64_t burst_ns = attrib ? rusteron_dpdk_clock_now() : 0;
         const uint16_t received = ops->rx_burst(port->port_id, port->rx_queue_id, batch, (uint16_t)limit);
+        uint64_t rx_tsc = 0;
+        if (__builtin_expect(0 != lab, 0) && received > 0)
+        {
+            rx_tsc = rusteron_dpdk_counter();
+            if (0 != (lab & RUSTERON_DPDK_LAB_CAPTURE))
+            {
+                rusteron_dpdk_capture_views(port->role, 0, views, received, rx_tsc);
+            }
+        }
         if (attrib && received > 0)
         {
             /* ENA refills the ring inside the call before returning the
@@ -791,6 +846,7 @@ int rusteron_dpdk_poller_receive(
                 }
                 struct timespec *media_timestamp = burst_media_ts;
                 struct timespec nic_ts;
+                int64_t hw_delay = -1; /* the stage trace's rx-hw */
                 if (0 != m->hw_rx_ns)
                 {
                     /* NIC arrival to this frame's dispatch: the NIC stamps
@@ -802,6 +858,7 @@ int rusteron_dpdk_poller_receive(
                      * so without it this costs nothing. */
                     const uint64_t dispatch_ns = rusteron_dpdk_realtime_ns();
                     const int64_t delay = (int64_t)(dispatch_ns - m->hw_rx_ns);
+                    hw_delay = delay;
                     if (delay < 0)
                     {
                         hw_negative++;
@@ -823,9 +880,13 @@ int rusteron_dpdk_poller_receive(
                         media_timestamp = &nic_ts;
                     }
                 }
-                const int dispatched = rusteron_dpdk_dispatch_frame(
-                    client, only_transport, endpoints, m, &frame, msgvec, bytes_rcved, recv_func, clientd,
-                    media_timestamp);
+                const int dispatched = __builtin_expect(0 != (lab & RUSTERON_DPDK_LAB_STAGES), 0)
+                    ? rusteron_dpdk_dispatch_staged(
+                          client, only_transport, endpoints, m, &frame, msgvec, bytes_rcved, recv_func, clientd,
+                          media_timestamp, rx_tsc, hw_delay)
+                    : rusteron_dpdk_dispatch_frame(
+                          client, only_transport, endpoints, m, &frame, msgvec, bytes_rcved, recv_func, clientd,
+                          media_timestamp);
                 work_count += dispatched;
                 rx_bytes += dispatched ? (int64_t)frame.payload_len : 0;
             }
