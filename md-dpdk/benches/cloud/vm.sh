@@ -101,7 +101,8 @@
 #                            irqbalance off, the data NICs (rings, coalescing off, quickack routes,
 #                            every interrupt on the IRQ CPU) and the sysctls, each read back; the
 #                            2 MiB hugetlbfs of aeron-ipc-huge's Aeron directory mounted and verified
-#   vm.sh transport-net [check]  a socket arm's kernel path (NAPI, busy poll, TCP), or only read back
+#   vm.sh transport-net [check]  a socket arm's kernel path (NAPI, busy poll, TCP, the IRQ core's
+#                            idle depth TR_IRQ_IDLE), or only read back
 #   vm.sh transport-map      the map;  vm.sh transport-build [fstack] [onload]  the bench binaries and
 #                            LAB_EXTRA_SRC's (fstack: F-Stack and fstack_lat too, x86_64 only; onload:
 #                            OpenOnload built and installed, onload-build.sh)
@@ -121,10 +122,15 @@
 #   vm.sh aeron-page         the page size (statfs's block size) of AERON_DIR's filesystem
 #   vm.sh napi               each data NIC's interrupt deferral as it is now, "<nic>
 #                            <napi_defer_hard_irqs> <gro_flush_timeout ns>" a line
-#   vm.sh nicstats           each data NIC's traffic counters as they are now (a mixed-load point's, before
-#                            and after): "<role> <iface> tx_bytes=<n> rx_bytes=<n> tx_packets=<n> rx_packets=<n>"
-#                            and its ENA allowance counters (<name>=<n>), or "<role> <iface> dpdk" where DPDK
-#                            holds it (the bench binary reads the transport's own counters then)
+#   vm.sh idle               the housekeeping and IRQ CPUs' cpuidle states now: each one's cap, exit
+#                            latency, usage and time (host.sh transport_idle_read)
+#   vm.sh nicstats           each data NIC's counters now, every line "<role> <nic> ...":
+#                            "<role> <iface> tx_bytes=<n> rx_bytes=<n> tx_packets=<n> rx_packets=<n>"
+#                            plus its ENA allowance counters (<name>=<n>), then its interrupt moderation
+#                            "<role> <nic> coalesce <adaptive rx> <adaptive tx> <rx-usecs> <tx-usecs>"
+#                            (ethtool -c) and each driver counter "<role> <nic> stat <name> <n>"
+#                            (ethtool -S); or "<role> <iface> dpdk" alone where DPDK holds it (the
+#                            bench binary reads the transport's own counters then)
 #   vm.sh nstat              the kernel's protocol counters;  vm.sh settings  every transport sysctl
 #                            as it is now, <knob>=<value> (host.sh transport_settings_read)
 #   vm.sh events-start <point> <traced cpus> <spinner cpus|-> [aeron]   a point's events begun before
@@ -2973,6 +2979,10 @@ transport-net)
     done
     transport_cc_load
     transport_sysctls_apply
+    # the IRQ core's idle depth (TR_IRQ_IDLE: all, or a socket arm's own cap
+    # by TR_OVERRIDES), put back to all at the next arm's
+    read -r _ irqcpus _ <"$run/transport-map"
+    transport_irq_idle_apply "$irqcpus" "$TR_IRQ_IDLE" || exit 1
     ;;
 transport-map)
     # "<housekeeping> <irq> <isolated,...>" as transport-isolate kept it
@@ -3095,6 +3105,13 @@ sample)
     cat "$run/sample.ps"
     ;;
 irqsnap) cat "$LAB_PROC_ROOT/interrupts" ;;
+idle)
+    # the housekeeping and IRQ CPUs' idle states now (host.sh
+    # transport_idle_read; transport.sh tr_idle_value)
+    [[ -s $run/transport-map ]] || { echo "idle: no transport map" >&2; exit 2; }
+    read -r hk irqcpus _ <"$run/transport-map"
+    transport_idle_read "$hk" "$irqcpus"
+    ;;
 aeron-page)
     # the page size of the filesystem AERON_DIR is on (statfs's block size:
     # 4096 on tmpfs, 2097152 on a 2 MiB hugetlbfs), while its driver runs
@@ -3107,16 +3124,22 @@ napi)
     done
     ;;
 nicstats)
-    # a mixed-load point's NIC side (transport.sh tr_snap; fairness.py's
-    # mixed-nic rule): the kernel's interface statistics and the ENA's
-    # allowance counters (ethtool -S), or dpdk where DPDK holds the NIC
-    nics | while read -r role iface _; do
+    # each data NIC's counters (transport.sh tr_snap, every point before and
+    # after), every line "<role> <nic> ...": the kernel's interface statistics
+    # and the ENA's allowance counters (fairness.py's mixed-nic rule), then
+    # the interrupt moderation as the driver reports it (ethtool -c:
+    # "coalesce <adaptive rx> <adaptive tx> <rx-usecs> <tx-usecs>") and its
+    # driver counters (ethtool -S: "stat <name> <value>"); or dpdk alone where
+    # DPDK holds the NIC (transport_collect.py nicstats)
+    nics | while read -r role iface vf _; do
         st=$LAB_SYS_ROOT/class/net/$iface/statistics
         if [[ ! -r $st/tx_bytes ]]; then
             echo "$role $iface dpdk"
             continue
         fi
         echo "$role $iface tx_bytes=$(cat "$st/tx_bytes") rx_bytes=$(cat "$st/rx_bytes") tx_packets=$(cat "$st/tx_packets") rx_packets=$(cat "$st/rx_packets")$({ ethtool -S "$iface" 2>/dev/null || true; } | awk '$1 ~ /allowance_exceeded:$/ {printf " %s=%s", substr($1, 1, length($1) - 1), $2}')"
+        echo "$role $vf coalesce $({ ethtool -c "$vf" 2>/dev/null || true; } | awk '/^Adaptive RX:/ {ar = $3; at = $5} /^rx-usecs:/ {r = $2} /^tx-usecs:/ {t = $2} END {print ar, at, r, t}')"
+        { ethtool -S "$vf" 2>/dev/null || true; } | awk -v p="$role $vf" -F: 'NR > 1 {gsub(/ /, "", $1); gsub(/ /, "", $2); print p, "stat", $1, $2}'
     done
     ;;
 nstat) transport_nstat ;;

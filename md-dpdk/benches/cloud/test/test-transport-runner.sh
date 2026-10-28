@@ -231,7 +231,7 @@ sfx_=$(. "$cloud/transport-settings.env"; echo "$TR_AERON_MODE_SUFFIX")
 oc_=$(. "$cloud/transport-settings.env"; echo "env $TR_ONLOAD_ENV onload --profile=$TR_ONLOAD_PROFILE")
 same "transport.sh setup onload: the kernel arm's binary and flags under onload ($oc_), but --busy-read-us 0 and no TCP timers; the knobs Onload honours and the NICs' deferral at TR_ONLOAD_NAPI_DEFER; Aeron's arm not under onload itself, its media driver (driver mode onload) is; Onload wanted only by a set that runs it" \
 "eio-tcp: --source 10.30.1.11 --connect 10.30.1.22:22000 --nodelay --quickack-per-read --rto-min-us 8000 --delack-max-us 8000 --busy-read-us 50 --rcvbuf $sb_ --sndbuf $sb_ --epoll-events 64
-  knobs: sockbuf epoll_events quickack_per_read congestion busy_read_us rto_min_us napi_defer napi 0; driver: none
+  knobs: sockbuf epoll_events quickack_per_read congestion busy_read_us rto_min_us napi_defer irq_idle napi 0; driver: none
   start: sh -c 'taskset -c 0 env PATH=P tcp_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
 onload-eio-tcp: --source 10.30.1.11 --connect 10.30.1.22:22000 --nodelay --quickack-per-read --busy-read-us 0 --rcvbuf $sb_ --sndbuf $sb_ --epoll-events 64
   knobs: sockbuf epoll_events quickack_per_read napi_defer napi 0; driver: none
@@ -1361,16 +1361,38 @@ transport-net)
         v=$(. "$FAKE_CLOUD/transport-settings.env"; . "$FAKE_CLOUD/host.sh"; transport_overrides; echo "$TR_NAPI_DEFER $TR_GRO_FLUSH_NS")
         echo "$v" >"$st/napi"
         echo "$FAKE_HOST transport-net napi $v" >>"$FAKE_HOSTS/calls"
+        # the IRQ core's idle cap (TR_IRQ_IDLE), logged; FAKE_IDLE_STUCK: the
+        # host keeps every state enabled whatever it is asked
+        v=$(. "$FAKE_CLOUD/transport-settings.env"; . "$FAKE_CLOUD/host.sh"; transport_overrides; echo "$TR_IRQ_IDLE")
+        [[ -z ${FAKE_IDLE_STUCK:-} ]] && echo "$v" >"$st/idle" || echo all >"$st/idle"
+        echo "$FAKE_HOST transport-net irq_idle $v" >>"$FAKE_HOSTS/calls"
     fi ;;
 napi) read -r n ns <"$st/napi" 2>/dev/null || { n=2 ns=200000; }; printf 'enP1 %s %s\nenP2 %s %s\n' "$n" "$ns" "$n" "$ns" ;;
 stop) rm -f "$st/dpdk" ;;
 events-stop-all) ;;
-# each data NIC's counters, 1 MB more each way a call (a point's growth 2 MB
-# a host), or dpdk while DPDK holds them
+# the housekeeping and IRQ CPUs' idle states as host.sh transport_idle_read
+# prints them (four states each, intel_idle's names), the IRQ CPU's past
+# the cap transport-net set disabled; each call's usage one more
+idle) read -r hk irq _ <<<"${FAKE_MAP:-0 2 4,6,8,10,12,14}"
+    c=$(cat "$st/idle" 2>/dev/null || echo all); u=$(cat "$st/u" 2>/dev/null || echo 0); u=$((u + 1)); echo $u >"$st/u"
+    echo "driver intel_idle governor menu max_cstate 9"
+    for i in 0 1 2 3; do
+        n=(POLL C1 C1E C6)
+        echo "cpu$hk hk $i ${n[i]} 0 $((i * 100)) $((i * 300)) $u $((u * 10))"
+        dis=0; [[ $c != all ]] && ((i > c)) && dis=1
+        echo "cpu$irq irq $i ${n[i]} $dis $((i * 100)) $((i * 300)) $u $((u * 10))"
+    done ;;
+# each data NIC's counters as vm.sh nicstats prints them: its traffic, 1 MB
+# more each way a call (a point's growth 2 MB a host), its moderation and
+# driver counters (the queue's interrupts unmasked, 7 more a call); or dpdk
+# alone while DPDK holds them
 nicstats) n=$(cat "$st/nic" 2>/dev/null || echo 0); n=$((n + 1)); echo $n >"$st/nic"
     if [[ -e $st/dpdk ]]; then echo "sender eth1 dpdk"; echo "receiver eth2 dpdk"; else
         for r in "sender eth1" "receiver eth2"; do
             echo "$r tx_bytes=$((n * 1000000)) rx_bytes=$((n * 1000000)) tx_packets=$((n * 1000)) rx_packets=$((n * 1000)) bw_out_allowance_exceeded=0 pps_allowance_exceeded=0"
+            echo "$r coalesce off n/a 0 0"
+            echo "$r stat queue_0_tx_unmask_interrupt $((n * 7))"
+            echo "$r stat pps_allowance_exceeded 0"
         done
     fi ;;
 cc-available) echo "reno cubic" ;;
@@ -1401,11 +1423,11 @@ cat >"$sb/bin/stub" <<'SH'
 me=${0##*/}
 # (with the driver's environment, when it was sourced: an embedded driver's binary)
 echo "$FAKE_HOST $me $*${FAKE_DRIVER_ENV:+ [driver.env $FAKE_DRIVER_ENV]}" >>"$FAKE_HOSTS/runs"
-role= out= label= rate= kind=oneway streams=1 warm=0 dur=0 mode= impl= stage= load= hot= dbusy= wire=
+role= out= label= rate= kind=oneway streams=1 warm=0 dur=0 mode= impl= stage= load= hot= dbusy= wire= busy=
 while (($#)); do
     case $1 in --role) role=$2 ;; --out) out=$2 ;; --label) label=$2 ;; --rate) rate=$2 ;; --round-trip) kind=load ;;
     --streams) streams=$2 ;; --warmup-s) warm=$2 ;; --duration-s) dur=$2 ;; --mode) mode=$2 ;; --impl) impl=$2 ;;
-    --stage-trace) stage=$2 ;;
+    --stage-trace) stage=$2 ;; --busy-read-us) busy=$2 ;;
     --load) load=$2 ;; --hot-rate) hot=$2 ;; --driver-busy-threads) dbusy=$2 ;; --wire) wire=$2 ;;
     # the runner's own (the DPDK driver's capture window): never the binary's
     --capture-ms) echo "stub: --capture-ms is the runner's, not aeron_lat's" >&2; exit 2 ;; esac
@@ -1424,7 +1446,7 @@ tcp_lat) transport=tcp extra=', "tcp.retrans": "0", "tcp.dsack_dups": "0", "tcp.
 mpsc_lat) transport=mpsc extra= ;;
 *) transport=udp extra= ;;
 esac
-[[ $me == udp_lat || $me == tcp_lat ]] && extra+=', "busy_read_us": "50"'
+[[ $me == udp_lat || $me == tcp_lat ]] && extra+=", \"busy_read_us\": \"${busy:-50}\""
 settings="\"transport\": \"$transport\", \"streams\": \"$streams\", \"warmup_s\": \"$warm\", \"duration_s\": \"$dur\", \"scheduled\": \"0\", \"late\": \"0\", \"max_send_lag_ns\": \"0\", \"retrans\": \"0\"$extra"
 [[ $role == oneway-send || $role == oneway-recv ]] && { echo "stub: --role $role is refused (one way is --role local)" >&2; exit 2; }
 # --load mixed: both ends' counts as mixed.rs writes them, every message
@@ -1922,6 +1944,61 @@ grep -q 'smt rows disagree' <<<"$c" || why+=" smt rows: $c;"
 [[ -z $why ]] && pass "transport.sh run: the SMT sessions: SMT off with uring-sqpoll's SQPOLL thread on the next core, SMT on (each isolated core whole) with it on the loop's sibling; no SO_BUSY_POLL for uring-sqpoll, the SQPOLL CPU and the loop's sibling never a spinner's, the declared SMT read back, fairness.py clean and its smt, sqpoll and settings rules flagging a misplaced SQPOLL thread and SMT read back off; check refuses an Aeron arm under smt on and {loop_sibling} without it" ||
     fail "transport.sh run SMT sessions:$why"
 
+# the c7i diagnosis (transport-aws-c7i-diag.tsv) at 1 rep: mio-tcp and its
+# declared twins, no SO_BUSY_POLL (-br0) and the IRQ core's idle capped at
+# the first halt state (-c1) or at polling (-c0), beside uring-sqpoll and the
+# A/A. Each twin's one knob (its arguments, or transport-net's TR_IRQ_IDLE
+# put back to all at the next arm), read back per point (irq_idle_<host>),
+# every point's idle states before and after and its NICs' moderation after,
+# fairness.py clean, its settings rule flagging a cap the host did not hold,
+# and the session's points and hours on c7i.4xlarge on demand
+why=
+c7i=$cloud/transport-aws-c7i-diag.tsv
+TRUN_SETS=$c7i trun a 1 "" FAKE_SQPOLL="eio-tcp-sqpoll-core:6" && rrc=0 || rrc=$?
+d=$sb/a/bench/transport-a
+[[ $rrc == 0 && $(cat "$d/rc") == 0 ]] || why+=" exit $rrc: $(tail -3 "$sb/run.out" | tr '\n' ' ');"
+grep -q '^a tcp_lat --role ping .*--busy-read-us 0 .*--impl mio' "$sb/runs" || why+=" mio-tcp-br0's ping without SO_BUSY_POLL;"
+for a in mio-tcp mio-tcp-br0 mio-tcp-c1 mio-tcp-c0; do
+    m=$(grep -l "^arm=$a\$" "$d"/manifest/*.env 2>/dev/null | head -1 || true)
+    case $a in mio-tcp-c1) want=1 br=50 ;; mio-tcp-c0) want=0 br=50 ;; mio-tcp-br0) want=all br=0 ;; *) want=all br=50 ;; esac
+    [[ -n $m ]] && grep -q "^knob.irq_idle=$want\$" "$m" && grep -q "^irq_idle_a=$want\$" "$m" && grep -q "^irq_idle_b=$want\$" "$m" &&
+        grep -q "^knob.busy_read_us=$br\$" "$m" || why+=" $a: $(grep -hE '^(knob.irq_idle|irq_idle|knob.busy_read)' "$m" 2>/dev/null | tr '\n' ' ');"
+done
+m=$(grep -l '^arm=eio-tcp-sqpoll-core$' "$d"/manifest/*.env 2>/dev/null | head -1 || true)
+[[ -n $m ]] && grep -q '^knob.irq_idle=all$' "$m" && grep -q '^irq_idle_a=all$' "$m" || why+=" sqpoll's idle: $(grep irq_idle "$m" | tr '\n' ' ');"
+# each arm's cap on both hosts, all put back after a capped arm
+for h in a b; do
+    s=$(grep "^$h transport-net irq_idle " "$sb/calls" | cut -d' ' -f4 | tr '\n' ' ')
+    [[ $s == *"0 all "* && $s == *"1 all "* && $(tr ' ' '\n' <<<"$s" | grep -c '^[01]$') == 2 ]] || why+=" host $h's transport-net idle caps: $s;"
+done
+n=0
+for f in "$d"/manifest/*.env; do
+    pid=$(basename "$f" .env)
+    for h in a b; do
+        [[ -s $d/idle/$pid-$h-before && -s $d/idle/$pid-$h-after && -s $d/nicstats/$pid-$h-before && -s $d/nicstats/$pid-$h-after ]] || n=$((n + 1))
+    done
+done
+[[ $n == 0 ]] || why+=" $n point-hosts without idle or NIC counters read back;"
+m=$(grep -l '^arm=mio-tcp-c1$' "$d"/manifest/*.env 2>/dev/null | head -1 || true)
+[[ -n $m ]] && grep -q '^cpu2 irq 3 C6 1 ' "$d/idle/$(basename "$m" .env)-a-after" || why+=" the IRQ CPU's states not read;"
+# nicstats' one format: traffic, moderation and driver counters per NIC
+f=$d/nicstats/$(basename "$m" .env)-a-after
+[[ -n $m ]] && grep -q '^sender eth1 tx_bytes=[0-9]* ' "$f" && grep -q '^receiver eth2 coalesce off n/a 0 0$' "$f" &&
+    grep -q '^sender eth1 stat queue_0_tx_unmask_interrupt [0-9]*$' "$f" || why+=" nicstats without traffic, moderation or driver counters;"
+fv=$(python3 "$cloud/fairness.py" "$d" 2>&1) || why+=" fairness: $(head -5 <<<"$fv" | tr '\n' ' ');"
+tables=$(python3 "$cloud/analyse.py" --transport "$d" 2>&1) || why+=" analyse.py: $(tail -2 <<<"$tables");"
+grep -q '^### Set c7i, ' <<<"$tables" && ! grep -q '^Refused' <<<"$tables" || why+=" no table, or one refused;"
+# a host that does not hold the cap: the settings rule
+TRUN_SETS=$c7i trun a 1 "" FAKE_SQPOLL="eio-tcp-sqpoll-core:6" FAKE_IDLE_STUCK=1
+fv=$(python3 "$cloud/fairness.py" "$d" 2>&1 || true)
+grep -q '^settings: c7i: .*knob.irq_idle=all, the env gives 1' <<<"$fv" || why+=" a cap not held not flagged: $(head -2 <<<"$fv" | tr '\n' ' ');"
+rm -f "$tmp/cloud-calls"
+out=$(awslab LAB_ESTIMATE=1 LAB_PAIR=a LAB_REPS=3 LAB_TYPE=c7i.4xlarge LAB_SETS_FILE="$c7i" 2>&1) || why+=" estimate: $(tail -1 <<<"$out");"
+[[ $out == *"pair a: 18 points (sets c7i)"*"wall about "* && $out == *"a c7i.4xlarge, b c7i.4xlarge, on-demand, 3 reps"* ]] || why+=" estimate: $out;"
+[[ ! -s $tmp/cloud-calls ]] || why+=" an aws call;"
+[[ -z $why ]] && pass "transport.sh run: the c7i diagnosis: mio-tcp's twins without SO_BUSY_POLL and with the IRQ core's idle capped at C1 or polling, each cap set by transport-net, read back per point and put back after, every point's idle states and NIC moderation and counters recorded, fairness.py clean and its settings rule flagging a cap not held; 18 points on c7i.4xlarge on demand, no aws call" ||
+    fail "transport.sh run c7i diagnosis:$why"
+
 # the tuning session (LAB_TUNE=1: pair tune-a), cut down to two knobs of
 # pair a's one-host arms: mpsc's capacity (1024 the stub's better p99.99)
 # and aeron-ipc's threading (no difference): the sweep, then the
@@ -2212,7 +2289,7 @@ sv=$(python3 "$cloud/transport_stages.py" run "$d" 2>&1) || why+=" transport_sta
 # each pair (a the kernel's, b DPDK's): every point a row; each mixed arm's
 # driver mode with the duty-cycle thresholds (each threading's own keys
 # apart), --load mixed --hot-rate and two CPUs a host (hot, background); the
-# NIC counters read around each mixed point (no floor's) and collected (a
+# NIC counters read around every point and a mixed one's collected (a
 # DPDK host's the binary's own); the raw DPDK floor on dpdk-raw's set-up with
 # the driver's environment under sudo setpriv; fairness.py clean, its
 # mixed-load rules then flagging a fan-out subscription short; analyse.py's
@@ -2242,8 +2319,9 @@ for pair in a b; do
         why+=" not $floors floor pongs with the driver's environment: $(grep floor "$sb/runs" | head -1);"
     grep -q 'setpriv .*floor --role ping' "$sb/sudo" || why+=" the floor not under sudo setpriv;"
     mixed_pts=$(grep -l -- '--load mixed' "$d"/manifest/*.env | wc -l | tr -d ' ')
-    [[ $mixed_pts == 24 && $(ls "$d"/nicstats | wc -l | tr -d ' ') == $((mixed_pts * 4)) ]] ||
-        why+=" $(ls "$d"/nicstats | wc -l) NIC snapshots for $mixed_pts mixed points (4 each, no floor's);"
+    all_pts=$(ls "$d"/manifest/*.env | wc -l | tr -d ' ')
+    [[ $mixed_pts == 24 && $(ls "$d"/nicstats | wc -l | tr -d ' ') == $((all_pts * 4)) ]] ||
+        why+=" $(ls "$d"/nicstats | wc -l) NIC snapshots for $all_pts points, $mixed_pts mixed (4 each);"
     src=$(python3 -c 'import glob, json, sys
 for f in sorted(glob.glob(sys.argv[1] + "/*/manifest-*.json")):
     m = json.load(open(f))
@@ -2265,7 +2343,7 @@ for f in sorted(glob.glob(sys.argv[1] + "/*/manifest-*.json")):
     grep -q '^## Mixed load: hot stream beside a background mix' <<<"$an" || why+=" no mixed table;"
     [[ $(grep -c '^- \*\*' <<<"$an") == 6 ]] || why+=" $(grep -c '^- \*\*' <<<"$an") arms in the checklist, not 6 (five and the A/A);"
     grep -q 'floor-relative overhead: hot p50 .* − dpdk-raw floor\|floor-relative overhead: hot p50 .* − mio-udp floor' <<<"$an" || why+=" no floor-relative line;"
-    [[ -z $why ]] && pass "transport.sh run, the mixed-load session, pair $pair: every point a row; the mixed arms' driver modes with the duty-cycle thresholds, --load mixed on CPUs 10,12 each end, --wire by set-up, the housekeeping and IRQ CPUs traced; NIC counters around each mixed point ($want); the raw DPDK floor on dpdk-raw with driver.env under sudo setpriv; fairness.py clean; analyse.py's mixed table, checklist and floor lines" ||
+    [[ -z $why ]] && pass "transport.sh run, the mixed-load session, pair $pair: every point a row; the mixed arms' driver modes with the duty-cycle thresholds, --load mixed on CPUs 10,12 each end, --wire by set-up, the housekeeping and IRQ CPUs traced; NIC counters around every point, a mixed one's collected ($want); the raw DPDK floor on dpdk-raw with driver.env under sudo setpriv; fairness.py clean; analyse.py's mixed table, checklist and floor lines" ||
         fail "transport.sh run, the mixed-load session, pair $pair:$why"
 done
 TRUN_SETS=$cloud/transport-aws-aeron-mixed.tsv trun a 1 "" FAKE_FANOUT_SHORT=ka:aeron-mix-shared@STREAMS=32 || true

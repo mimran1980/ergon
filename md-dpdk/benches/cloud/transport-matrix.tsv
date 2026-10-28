@@ -107,6 +107,13 @@ arm  dpdk-tcp         fstack_lat fstack   two
 arm  eio-tcp-sqpoll-core tcp_lat sockets two --impl ergon --backend uring-sqpoll --sqpoll-cpu {next_core}
 arm  eio-tcp-sqpoll-sib  tcp_lat sockets two --impl ergon --backend uring-sqpoll --sqpoll-cpu {loop_sibling}
 arm  mio-tcp-smt      tcp_lat    sockets  two  --impl mio
+# mio-tcp's row three times for the c7i diagnosis (transport-aws-c7i-diag.tsv),
+# each declared its twin but for one knob (transport-settings.env
+# TR_DECLARED): no SO_BUSY_POLL (-br0), the IRQ core's idle capped at the
+# first halt state (-c1) or at polling (-c0)
+arm  mio-tcp-br0      tcp_lat    sockets  two  --impl mio
+arm  mio-tcp-c1       tcp_lat    sockets  two  --impl mio
+arm  mio-tcp-c0       tcp_lat    sockets  two  --impl mio
 # the socket and Aeron UDP arms again under Onload (transport-aws-onload.tsv)
 # (experimental: not viable on ENA, see transport-aws-onload.tsv)
 arm  onload-mio-tcp   tcp_lat    onload   two  --impl mio

@@ -65,8 +65,9 @@ READBACK = {"busy_read_us": "busy_read_us", "epoll_events": "epoll_events", "dat
 BOOL = {"true": "on", "false": "off"}
 # a per-arm knob read back on each host after the point (manifest/<point>.env's
 # <name>_<host>: vm.sh aeron-page, the Aeron directory's page size)
-# and vm.sh napi, the data NICs' interrupt deferral (transport.sh tr_napi_value)
-HOST_READBACK = {"aeron_page": "aeron_page", "napi_defer": "napi_defer"}
+# vm.sh napi, the data NICs' interrupt deferral (transport.sh tr_napi_value),
+# and vm.sh idle, the IRQ core's idle depth (transport.sh tr_idle_value)
+HOST_READBACK = {"aeron_page": "aeron_page", "napi_defer": "napi_defer", "irq_idle": "irq_idle"}
 # the hosts' own knob (a sysctl, read back as one): never a per-arm knob.* line
 HOST_WIDE = {"congestion"}
 # what a knob's value implies of the hosts' sysctls (vm.sh driver kernel: no
@@ -236,14 +237,17 @@ DPDK_NIC_KEYS = ("tx_bytes", "rx_bytes", "tx_pkts", "rx_pkts", "rx_missed", "rx_
 
 
 def nicstats(text):
-    """vm.sh nicstats' lines as {iface: {counter: n}}, a NIC DPDK holds as
-    {iface: "dpdk"}; None when unread."""
+    """vm.sh nicstats' traffic lines ("<role> <iface> tx_bytes=<n> ...") as
+    {iface: {counter: n}}, a NIC DPDK holds as {iface: "dpdk"}; None when
+    unread. Its moderation and driver counter lines ("<role> <nic> coalesce
+    ..." and "<role> <nic> stat <name> <n>", the c7i diagnosis's) are left
+    to the raw nicstats/ files."""
     if not text:
         return None
     out = {}
     for line in text.splitlines():
         w = line.split()
-        if len(w) < 3:
+        if len(w) < 3 or w[2] in ("coalesce", "stat"):
             continue
         if w[2] == "dpdk":
             out[w[1]] = "dpdk"
@@ -435,7 +439,8 @@ def collect(d):
                     src["aeron"] = aeron
                 loss[key] = src
             nics = {key: nic_names(os.path.join(d, f"nics-{h}.txt")) for key, h in keys.items()}
-            # a mixed-load point's data NIC counters (vm.sh nicstats), each host's
+            # the point's data NIC traffic (vm.sh nicstats), each host's: a
+            # mixed-load point's against its driver (fairness.py mixed-nic)
             nic = {key: g for key, h in keys.items()
                    if (g := nic_growth(snap("nicstats", h, "before"), snap("nicstats", h, "after"),
                                        (own.get(key) or {}).get("settings"))) is not None}

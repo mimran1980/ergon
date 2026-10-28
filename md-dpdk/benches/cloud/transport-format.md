@@ -24,7 +24,19 @@ is missing is a fairness violation, never a default.
 <run>/<set>/<host>-rings-<tag>.log   DPDK event log (dpdk arms)
 <run>/<set>/hostcheck-<a|b>.txt   each host's session hostcheck report
 <run>/<set>/hostcheck-<a|b>-hugepages.txt  the one on the hugetlbfs Aeron directory (aeron-ipc-huge's)
+<run>/idle/<point>-<host>-<before|after>  the housekeeping and IRQ CPUs' cpuidle states (vm.sh idle), read only
+<run>/nicstats/<point>-<host>-<before|after>  the data NICs' moderation and driver counters (vm.sh nicstats), read only
 ```
+
+`idle/` has `driver <cpuidle driver> governor <governor> max_cstate <n|->`,
+then a line a state: `cpu<N> <hk|irq> <index> <name> <disabled> <exit
+latency us> <target residency us> <usage> <time us>` (no state lines without
+a cpuidle driver). The usage and time deltas over a point say how often and
+how long each CPU slept in each state. `nicstats/` has `<nic> coalesce
+<adaptive rx> <adaptive tx> <rx-usecs> <tx-usecs>` as `ethtool -c` reports
+them, then `<nic> <counter> <value>` for each `ethtool -S` counter (ENA's
+per-queue `unmask_interrupt`, `napi_comp`, `queue_stop`, `queue_wakeup`,
+`missed_tx`, and the `*_allowance_exceeded` counters).
 
 `<set>` is the matrix set (`1`, `2a`, `2b`, `3a`, `3b`, `3c`, `fan`).
 Manifest host keys: a two-host set's `a` and `b`; a one-host set's one host
@@ -149,7 +161,11 @@ at 0 (`fairness.py` `KERNEL_SOCKET_KNOBS`). transport_collect.py writes:
   interrupt deferral of every socket arm and Aeron kernel UDP arm (`vm.sh
   napi` after the point: `n` where every NIC has `n`/`TR_GRO_FLUSH_NS`, 0
   for 0/0, else each NIC's `<nic>:<n>/<ns>`; the runner's `napi_<host>`
-  keeps each NIC's as read).
+  keeps each NIC's as read), and `knob.irq_idle`, the IRQ core's idle depth
+  of every socket arm (the runner's `irq_idle_<host>` from `idle/` after the
+  point: `all` where no IRQ CPU's state is disabled or the host has no
+  cpuidle driver, `n` where every IRQ CPU has its states up to the n-th
+  enabled and the rest disabled, else each CPU's `cpu<N>:<disabled flags>`).
 - `sweep.<knob>`: the arms a tuning session swept for it: the tuned
   section's `TR_TUNED_SWEPT`, and in a tuning session its variants.
 - `declared.<arm>`: each `TR_DECLARED` arm that ran, its twin and the
