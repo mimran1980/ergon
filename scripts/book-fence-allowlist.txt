@@ -7,10 +7,10 @@ book/src/cluster/chained-decoding.md:49 — deliberate; hidden cluster codec sea
 book/src/cluster/chained-decoding.md:87 — deliberate; hidden cluster codec seam requires the cluster crate, which is outside the SBE book harness
 book/src/cluster/session-builder.md:5 — deliberate; see page context
 book/src/cluster/session-builder.md:67 — deliberate; see page context
-book/src/io/backends.md:32 — deliberate; {{#include}} of io/tests/backend_config.rs (ergon-io), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it.
-book/src/io/backends.md:92 — deliberate; {{#include}} of io/tests/backend_config.rs (ergon-io), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it.
-book/src/io/backends.md:121 — deliberate; {{#include}} of io/tests/backend_config.rs (ergon-io), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it.
-book/src/io/backends.md:128 — deliberate; {{#include}} of io/tests/backend_config.rs (ergon-io), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it.
+book/src/io/backends.md:34 — deliberate; {{#include}} of io/tests/backend_config.rs (ergon-io), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it.
+book/src/io/backends.md:94 — deliberate; {{#include}} of io/tests/backend_config.rs (ergon-io), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it.
+book/src/io/backends.md:123 — deliberate; {{#include}} of io/tests/backend_config.rs (ergon-io), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it.
+book/src/io/backends.md:130 — deliberate; {{#include}} of io/tests/backend_config.rs (ergon-io), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it.
 book/src/io/framed-tcp.md:20 — deliberate; {{#include}} of io/tests/frame.rs (ergon-io, Linux), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it on Linux, on every backend.
 book/src/io/udp.md:20 — deliberate; {{#include}} of io/tests/udp.rs (ergon-io, Linux), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it on Linux.
 book/src/io/http-client.md:20 — deliberate; {{#include}} of io/tests/client.rs (ergon-io, Linux), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it on Linux.
