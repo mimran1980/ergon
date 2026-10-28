@@ -45,7 +45,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: k8s/nri-shared-cpus/go.mod
           cache-dependency-path: k8s/nri-shared-cpus/go.sum
