@@ -9,7 +9,7 @@
 //! constructors), as `pkg-config --static --libs libdpdk` lists them. These
 //! travel to every binary that links ergon-io. One link argument cannot:
 //! `-z nostart-stop-gc`, without which lld (rustc's default linker on
-//! x86_64 Linux) drops the linker sets reached only through
+//! `x86_64` Linux) drops the linker sets reached only through
 //! `__start_`/`__stop_` symbols and `ff_init` crashes. It is set here for
 //! ergon-io's own tests; a binary that uses `fstack-spin` sets it itself
 //! (`-C link-arg=-Wl,-z,nostart-stop-gc`, see the crate README).
@@ -82,16 +82,16 @@ fn main() {
                     };
                     println!("cargo:rustc-link-lib={kind}={name}");
                     seen.push(name);
-                } else if let Some(name) = tok.strip_prefix("-l") {
-                    if !seen.iter().any(|s| s == name) {
-                        let kind = if name.starts_with("rte_") {
-                            "static:-bundle"
-                        } else {
-                            "dylib"
-                        };
-                        println!("cargo:rustc-link-lib={kind}={name}");
-                        seen.push(name.to_owned());
-                    }
+                } else if let Some(name) = tok.strip_prefix("-l")
+                    && !seen.iter().any(|s| s == name)
+                {
+                    let kind = if name.starts_with("rte_") {
+                        "static:-bundle"
+                    } else {
+                        "dylib"
+                    };
+                    println!("cargo:rustc-link-lib={kind}={name}");
+                    seen.push(name.to_owned());
                 }
                 // Other linker flags (`--as-needed`, `--export-dynamic`):
                 // not needed for a static link.

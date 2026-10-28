@@ -1962,11 +1962,13 @@ fn rx_read_ns_stamps_frames_read_with_the_upgrade() -> R {
 /// linked refuses to start it.
 #[test]
 fn fstack_spin_refuses_what_it_cannot_drive() -> R {
-    let cfg = Config::parse(
-        "fstack-spin,loop_cpu=0,fstack_addr=10.9.0.1,fstack_gateway=10.9.0.254,\
-         fstack_vdev=net_af_packet0;iface=nope,fstack_no_huge=true",
-    )?;
-    let e = Driver::<ergon_io::FrameConn>::new(cfg.clone())
+    let cfg = || {
+        Config::parse(
+            "fstack-spin,loop_cpu=0,fstack_addr=10.9.0.1,fstack_gateway=10.9.0.254,\
+             fstack_vdev=net_af_packet0;iface=nope,fstack_no_huge=true",
+        )
+    };
+    let e = Driver::<ergon_io::FrameConn>::new(cfg()?)
         .err()
         .ok_or("fstack-spin took kernel endpoints")?;
     #[cfg(not(feature = "fstack"))]
@@ -1981,7 +1983,7 @@ fn fstack_spin_refuses_what_it_cannot_drive() -> R {
     );
     #[cfg(all(feature = "fstack", not(ergon_fstack_linked)))]
     {
-        let e = ergon_io::fstack::init(&cfg)
+        let e = ergon_io::fstack::init(&cfg()?)
             .err()
             .ok_or("started unlinked")?;
         assert!(

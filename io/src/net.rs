@@ -92,10 +92,11 @@ pub trait BindSource {
     fn bind_source(&mut self, ip: IpAddr);
 }
 
-/// The TCP socket an endpoint is built on: the kernel's
-/// [`std::net::TcpStream`] (every endpoint's default), or with the `fstack`
-/// feature `ergon_io::fstack::FstackTcp`, a socket of F-Stack's user-space
-/// stack. `FrameConn<T>`, `WsConn<T>` and `HttpConn<T>` (and their dials)
+/// The TCP socket an endpoint is built on, and so its stack.
+///
+/// The kernel's [`std::net::TcpStream`] (every endpoint's default), or with
+/// the `fstack` feature `ergon_io::fstack::FstackTcp`, a socket of
+/// F-Stack's user-space stack. `FrameConn<T>`, `WsConn<T>` and `HttpConn<T>` (and their dials)
 /// take it as their type parameter: an endpoint is made, read, written and
 /// closed through its own stack, and a `Driver` refuses an endpoint whose
 /// stack is not its backend's.

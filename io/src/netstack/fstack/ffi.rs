@@ -220,9 +220,9 @@ static ZERO: libc::timespec = libc::timespec {
 /// `ff_init(argv)`; `argv` must stay alive for the process (F-Stack and
 /// the EAL may keep its strings).
 pub fn init(argv: &'static [*mut c_char]) -> c_int {
-    let argc = c_int::try_from(argv.len().saturating_sub(1)).unwrap_or(0);
-    // SAFETY: `argv` is `argc` NUL-terminated strings and a NULL, never freed.
-    unsafe { sys::ff_init(argc, argv.as_ptr()) }
+    let count = c_int::try_from(argv.len().saturating_sub(1)).unwrap_or(0);
+    // SAFETY: `argv` is `count` NUL-terminated strings and a NULL, never freed.
+    unsafe { sys::ff_init(count, argv.as_ptr()) }
 }
 
 /// One F-Stack pass (`ff_run_once`).

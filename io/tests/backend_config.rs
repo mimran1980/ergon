@@ -260,7 +260,7 @@ fn only_the_three_measured_backends_exist() -> R {
     assert!(
         Backend::ALL
             .iter()
-            .all(|b| b.bypasses_kernel() == !Backend::KERNEL.contains(b))
+            .all(|b| b.bypasses_kernel() != Backend::KERNEL.contains(b))
     );
     for gone in ["uring-spin", "epoll-busy", "uring-napi"] {
         let e = gone
@@ -373,46 +373,46 @@ fn epoll_events_and_datagram_burst_parse_and_are_bounded() -> R {
 #[test]
 fn fstack_spin_defaults_and_keys() -> R {
     use ergon_io::route::QuickAckCheck;
-    let c = Config::new(Backend::FstackSpin);
-    assert!(!c.rx_timestamps);
-    assert_eq!(c.quickack_check, QuickAckCheck::Off);
-    assert_eq!(c.tcp_user_timeout_ms, 0);
+    let defaults = Config::new(Backend::FstackSpin);
+    assert!(!defaults.rx_timestamps);
+    assert_eq!(defaults.quickack_check, QuickAckCheck::Off);
+    assert_eq!(defaults.tcp_user_timeout_ms, 0);
     assert_eq!(
         (
-            c.keepalive_idle_s,
-            c.keepalive_interval_s,
-            c.keepalive_count
+            defaults.keepalive_idle_s,
+            defaults.keepalive_interval_s,
+            defaults.keepalive_count
         ),
         (10, 5, 3)
     );
-    assert!(c.fstack.is_default());
-    let c = Config::parse(
+    assert!(defaults.fstack.is_default());
+    let parsed = Config::parse(
         "fstack-spin,loop_cpu=2,fstack_addr=10.9.0.1,fstack_prefix_len=24,fstack_gateway=10.9.0.254,\
          fstack_vdev=net_af_packet0;iface=va,fstack_no_huge=true,fstack_memory_mb=512,\
          fstack_file_prefix=client,fstack_sysctl=net.inet.tcp.blackhole=0,fstack_hz=1000",
     )?;
-    let f = &c.fstack;
-    assert_eq!(f.addr, Some([10, 9, 0, 1].into()));
-    assert_eq!(f.gateway, Some([10, 9, 0, 254].into()));
-    assert_eq!(f.vdev.as_deref(), Some("net_af_packet0,iface=va"));
-    assert!(f.no_huge && f.pci.is_none());
+    let fs = &parsed.fstack;
+    assert_eq!(fs.addr, Some([10, 9, 0, 1].into()));
+    assert_eq!(fs.gateway, Some([10, 9, 0, 254].into()));
+    assert_eq!(fs.vdev.as_deref(), Some("net_af_packet0,iface=va"));
+    assert!(fs.no_huge && fs.pci.is_none());
     assert_eq!(
-        (f.memory_mb, f.hz, f.file_prefix.as_str()),
+        (fs.memory_mb, fs.hz, fs.file_prefix.as_str()),
         (512, 1000, "client")
     );
     assert_eq!(
-        f.sysctl,
+        fs.sysctl,
         [("net.inet.tcp.blackhole".to_owned(), "0".to_owned())]
     );
-    f.check()?;
+    fs.check()?;
     for b in Backend::KERNEL {
-        let s = format!("{b},fstack_addr=10.9.0.1");
-        let e = Config::parse(&s)
+        let line = format!("{b},fstack_addr=10.9.0.1");
+        let e = Config::parse(&line)
             .err()
-            .ok_or_else(|| format!("{s:?} accepted"))?;
+            .ok_or_else(|| format!("{line:?} accepted"))?;
         assert!(
             matches!(&e, ergon_io::Error::Config(m) if m.contains("fstack-spin")),
-            "{s}: {e}"
+            "{line}: {e}"
         );
     }
     Ok(())

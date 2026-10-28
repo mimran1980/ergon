@@ -86,6 +86,10 @@ impl FstackInit {
 
 static INIT: OnceLock<FstackInit> = OnceLock::new();
 
+/// Set by the first [`init`] to get past the checks: a second thread's
+/// meanwhile is refused.
+static STARTING: AtomicBool = AtomicBool::new(false);
+
 /// Set while `ff_init` runs: the EAL ends the process (`rte_exit`) on most
 /// failures, and the `atexit` hook then says so.
 static IN_FF_INIT: AtomicBool = AtomicBool::new(false);
@@ -104,9 +108,10 @@ pub fn initialised() -> Option<&'static FstackInit> {
     INIT.get()
 }
 
-/// Starts F-Stack on the calling thread, which becomes its one lcore and
-/// must make every later F-Stack call (the driver's polling thread):
-/// writes the config file rendered from `cfg.fstack` (and the lcore) and
+/// Starts F-Stack on the calling thread, once per process.
+///
+/// The thread becomes F-Stack's one lcore and must make every later
+/// F-Stack call (the driver's polling thread). Writes the config file rendered from `cfg.fstack` (and the lcore) and
 /// calls `ff_init`. Once per process: a second call on the same thread
 /// with the same settings returns the first's record; anything else is
 /// refused. `Driver::new` calls it for `fstack-spin` when it has not run.
@@ -161,7 +166,6 @@ pub fn init(cfg: &Config) -> Result<&'static FstackInit> {
             ))
         };
     }
-    static STARTING: AtomicBool = AtomicBool::new(false);
     if STARTING.swap(true, Ordering::AcqRel) {
         return Err(Error::Config(
             "F-Stack is starting on another thread".into(),
@@ -184,22 +188,22 @@ pub fn init(cfg: &Config) -> Result<&'static FstackInit> {
         cpus.push(lcore);
         crate::sys::set_affinity(&cpus)?;
     }
-    let args = [
+    let words = [
         "ergon-io".to_owned(),
         format!("--conf={}", path.display()),
         "--proc-type=primary".to_owned(),
         "--proc-id=0".to_owned(),
     ];
-    let strings: Vec<CString> = args
+    let strings: Vec<CString> = words
         .iter()
         .map(|a| CString::new(a.as_str()))
         .collect::<std::result::Result<_, _>>()
         .map_err(|_| Error::Config("a NUL in the F-Stack config path".into()))?;
     // Kept for the process's life: F-Stack and the EAL may hold argv.
     let strings: &'static [CString] = strings.leak();
-    let mut argv: Vec<*mut c_char> = strings.iter().map(|a| a.as_ptr().cast_mut()).collect();
-    argv.push(std::ptr::null_mut());
-    let argv: &'static [*mut c_char] = argv.leak();
+    let mut ptrs: Vec<*mut c_char> = strings.iter().map(|a| a.as_ptr().cast_mut()).collect();
+    ptrs.push(std::ptr::null_mut());
+    let argv: &'static [*mut c_char] = ptrs.leak();
     IN_FF_INIT.store(true, Ordering::Relaxed);
     register_atexit();
     let rc = ffi::init(argv);
@@ -251,7 +255,7 @@ fn pinned_cpu() -> Option<usize> {
 /// # Errors
 /// [`Error::Unsupported`]: F-Stack has not started, or this is another
 /// thread.
-pub(crate) fn on_lcore() -> Result<()> {
+pub fn on_lcore() -> Result<()> {
     match INIT.get() {
         Some(i) if i.thread == std::thread::current().id() => Ok(()),
         Some(_) => Err(Error::Unsupported(
@@ -290,7 +294,7 @@ fn sockaddr(a: SocketAddrV4) -> libc::sockaddr_in {
     }
 }
 
-fn v4(addr: SocketAddr) -> Result<SocketAddrV4> {
+const fn v4(addr: SocketAddr) -> Result<SocketAddrV4> {
     match addr {
         SocketAddr::V4(a) => Ok(a),
         SocketAddr::V6(_) => Err(Error::Unsupported(
@@ -308,9 +312,10 @@ fn to_int(v: u32, what: &str) -> io::Result<c_int> {
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, format!("{what} {v}")))
 }
 
-/// A TCP socket of F-Stack's: what an F-Stack endpoint holds
-/// (`FrameConn<FstackTcp>`, `WsConn<FstackTcp>`, `HttpConn<FstackTcp>`).
-/// Its handle is F-Stack's, not a kernel descriptor; dropping it closes it
+/// A TCP socket of F-Stack's.
+///
+/// What an F-Stack endpoint holds (`FrameConn<FstackTcp>`,
+/// `WsConn<FstackTcp>`, `HttpConn<FstackTcp>`). Its handle is F-Stack's, not a kernel descriptor; dropping it closes it
 /// with `ff_close`. Neither `Send` nor `Sync`: F-Stack runs on one thread.
 #[derive(Debug)]
 pub struct FstackTcp {

@@ -300,6 +300,33 @@ enum Imp {
 }
 
 impl Imp {
+    /// The backend `cfg` names.
+    fn new(cfg: &Config) -> Result<Self> {
+        Ok(match cfg.backend {
+            Backend::EpollSpin | Backend::RecvBusy => Self::Epoll(epoll::Epoll::new(cfg)?),
+            #[cfg(feature = "uring")]
+            Backend::UringSqpoll => Self::Uring(uring::Uring::new(cfg)?),
+            #[cfg(not(feature = "uring"))]
+            Backend::UringSqpoll => {
+                return Err(Error::Unsupported(
+                    "io_uring backends need the `uring` feature",
+                ));
+            }
+            // F-Stack on this thread (once per process), then its loop.
+            #[cfg(feature = "fstack")]
+            Backend::FstackSpin => {
+                fstack::init(cfg)?;
+                Self::Fstack(epoll::Epoll::new(cfg)?)
+            }
+            #[cfg(not(feature = "fstack"))]
+            Backend::FstackSpin => {
+                return Err(Error::Unsupported(
+                    "fstack-spin needs ergon-io's `fstack` feature (Linux)",
+                ));
+            }
+        })
+    }
+
     /// The connection's `TCP_INFO`, from the backend's stack.
     fn tcp_info(&self, fd: RawFd) -> std::io::Result<TcpInfo> {
         match self {
@@ -501,6 +528,33 @@ impl SockOpts {
     }
 }
 
+/// What `Driver::new` checks of endpoints of type `E` against `cfg`: the
+/// backend is built in, validates, takes `E`'s kind (datagram endpoints on
+/// `epoll-spin` only) and drives `E`'s stack.
+fn check_endpoints<E: Endpoint>(cfg: &Config) -> Result<()> {
+    if cfg.backend == Backend::FstackSpin && !cfg!(feature = "fstack") {
+        return Err(Error::Unsupported(
+            "fstack-spin needs ergon-io's `fstack` feature (Linux)",
+        ));
+    }
+    cfg.validate()?;
+    if E::DATAGRAM && cfg.backend != Backend::EpollSpin {
+        return Err(Error::Unsupported(
+            "UDP endpoints (UdpConn) run on the epoll-spin backend only",
+        ));
+    }
+    if E::STACK != cfg.backend.stack() {
+        return Err(Error::Config(format!(
+            "{} drives {} sockets; these endpoints are on {} (an F-Stack endpoint is \
+             FrameConn<FstackTcp>, WsConn<FstackTcp> or HttpConn<FstackTcp>)",
+            cfg.backend,
+            cfg.backend.stack().name(),
+            E::STACK.name()
+        )));
+    }
+    Ok(())
+}
+
 /// The route check of a dial gated under `require` (see `advance_one`):
 /// `route::check_socket`, which tests replace with a stand-in.
 fn require_route(fd: RawFd) -> std::result::Result<RouteCheck, QuickAckError> {
@@ -642,26 +696,7 @@ impl<E: Endpoint> Driver<E> {
         dns: DnsConfig,
         host: &ergon_tune::Host,
     ) -> Result<Self> {
-        if cfg.backend == Backend::FstackSpin && !cfg!(feature = "fstack") {
-            return Err(Error::Unsupported(
-                "fstack-spin needs ergon-io's `fstack` feature (Linux)",
-            ));
-        }
-        cfg.validate()?;
-        if E::DATAGRAM && cfg.backend != Backend::EpollSpin {
-            return Err(Error::Unsupported(
-                "UDP endpoints (UdpConn) run on the epoll-spin backend only",
-            ));
-        }
-        if E::STACK != cfg.backend.stack() {
-            return Err(Error::Config(format!(
-                "{} drives {} sockets; these endpoints are on {} (an F-Stack endpoint is \
-                 FrameConn<FstackTcp>, WsConn<FstackTcp> or HttpConn<FstackTcp>)",
-                cfg.backend,
-                cfg.backend.stack().name(),
-                E::STACK.name()
-            )));
-        }
+        check_endpoints::<E>(&cfg)?;
         let user_space = cfg.backend.bypasses_kernel();
         // A timer this kernel lacks, refuses or would round fails now, not
         // at the first connection.
@@ -713,29 +748,7 @@ impl<E: Endpoint> Driver<E> {
         }
         let ctx = Arc::new(DevContext::new(&cfg, report.hot.clone()));
         let tpu = ticks_per_us();
-        let imp = match cfg.backend {
-            Backend::EpollSpin | Backend::RecvBusy => Imp::Epoll(epoll::Epoll::new(&cfg)?),
-            #[cfg(feature = "uring")]
-            Backend::UringSqpoll => Imp::Uring(uring::Uring::new(&cfg)?),
-            #[cfg(not(feature = "uring"))]
-            Backend::UringSqpoll => {
-                return Err(Error::Unsupported(
-                    "io_uring backends need the `uring` feature",
-                ));
-            }
-            // F-Stack on this thread (once per process), then its loop.
-            #[cfg(feature = "fstack")]
-            Backend::FstackSpin => {
-                fstack::init(&cfg)?;
-                Imp::Fstack(epoll::Epoll::new(&cfg)?)
-            }
-            #[cfg(not(feature = "fstack"))]
-            Backend::FstackSpin => {
-                return Err(Error::Unsupported(
-                    "fstack-spin needs ergon-io's `fstack` feature (Linux)",
-                ));
-            }
-        };
+        let imp = Imp::new(&cfg)?;
         Ok(Self {
             imp,
             conns: Conns::with_capacity(INITIAL_SLOTS),

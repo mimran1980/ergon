@@ -16,7 +16,14 @@
 //! in a build with F-Stack linked, the test fails: run the script.
 //! Only with F-Stack linked (`FSTACK_PREFIX` at build time).
 #![cfg(all(target_os = "linux", feature = "fstack", ergon_fstack_linked))]
-#![allow(missing_docs, unsafe_code, clippy::cast_possible_truncation)]
+#![allow(
+    missing_docs,
+    unsafe_code,
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::many_single_char_names
+)]
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -330,10 +337,22 @@ fn server() -> R {
     );
     std::fs::write(cert_path()?, cert.as_ref())?;
     let listeners = [
-        (Kind::Echo, FstackListener::bind(SocketAddrV4::new(SERVER, ECHO))?),
-        (Kind::Ws, FstackListener::bind(SocketAddrV4::new(SERVER, WS))?),
-        (Kind::Http, FstackListener::bind(SocketAddrV4::new(SERVER, HTTP))?),
-        (Kind::Ctl, FstackListener::bind(SocketAddrV4::new(SERVER, CTL))?),
+        (
+            Kind::Echo,
+            FstackListener::bind(SocketAddrV4::new(SERVER, ECHO))?,
+        ),
+        (
+            Kind::Ws,
+            FstackListener::bind(SocketAddrV4::new(SERVER, WS))?,
+        ),
+        (
+            Kind::Http,
+            FstackListener::bind(SocketAddrV4::new(SERVER, HTTP))?,
+        ),
+        (
+            Kind::Ctl,
+            FstackListener::bind(SocketAddrV4::new(SERVER, CTL))?,
+        ),
     ];
     println!("fstack-test: ready");
     let mut peers: Vec<Peer> = Vec::new();
@@ -487,8 +506,13 @@ fn frames(d: &mut Driver<FrameConn<FstackTcp>>) -> R {
     let mut h = Events::default();
     h.last.reserve(64);
     // A connect through the driver (non-blocking, advanced by poll).
-    let a = d.connect(FrameDial::<FstackTcp>::on_stack(target(ECHO, "/"), FrameOptions::default())?)?;
-    poll_until(d, &mut h, Duration::from_secs(30), "frame connect", |h| !h.opened.is_empty())?;
+    let a = d.connect(FrameDial::<FstackTcp>::on_stack(
+        target(ECHO, "/"),
+        FrameOptions::default(),
+    )?)?;
+    poll_until(d, &mut h, Duration::from_secs(30), "frame connect", |h| {
+        !h.opened.is_empty()
+    })?;
     assert_eq!(h.opened, [a]);
     // And one made on this thread, then added.
     let c = FrameDial::<FstackTcp>::on_stack(target(ECHO, "/"), FrameOptions::default())?
@@ -496,8 +520,12 @@ fn frames(d: &mut Driver<FrameConn<FstackTcp>>) -> R {
     let b = d.add(c)?;
     for id in [a, b] {
         let before = h.frames;
-        d.get_mut(id).ok_or("gone")?.send_frame(b"hello over F-Stack")?;
-        poll_until(d, &mut h, Duration::from_secs(10), "frame echo", |h| h.frames > before)?;
+        d.get_mut(id)
+            .ok_or("gone")?
+            .send_frame(b"hello over F-Stack")?;
+        poll_until(d, &mut h, Duration::from_secs(10), "frame echo", |h| {
+            h.frames > before
+        })?;
         assert_eq!(h.last, b"hello over F-Stack");
     }
 
@@ -524,12 +552,20 @@ fn frames(d: &mut Driver<FrameConn<FstackTcp>>) -> R {
     }
     let grew = allocs() - allocs_after_warmup;
     // `rtt` was sized up front; nothing else may allocate.
-    assert_eq!(grew, 0, "{grew} allocations in {TRIPS} warm framed round trips");
-    println!("fstack-test: framed echo over F-Stack: {}", summary(&mut rtt));
+    assert_eq!(
+        grew, 0,
+        "{grew} allocations in {TRIPS} warm framed round trips"
+    );
+    println!(
+        "fstack-test: framed echo over F-Stack: {}",
+        summary(&mut rtt)
+    );
 
     // The peer closes (after echoing BYE): Error::Closed, the other stays.
     d.get_mut(b).ok_or("gone")?.send_frame(BYE)?;
-    poll_until(d, &mut h, Duration::from_secs(10), "peer close", |h| !h.closed.is_empty())?;
+    poll_until(d, &mut h, Duration::from_secs(10), "peer close", |h| {
+        !h.closed.is_empty()
+    })?;
     let (id, e) = h.closed.pop().ok_or("no close")?;
     assert_eq!(id, b);
     assert!(matches!(e, Error::Closed), "{e}");
@@ -539,16 +575,32 @@ fn frames(d: &mut Driver<FrameConn<FstackTcp>>) -> R {
     d.close(a);
     assert!(d.is_empty());
     h.opened.clear();
-    let c = d.connect(FrameDial::<FstackTcp>::on_stack(target(ECHO, "/"), FrameOptions::default())?)?;
-    poll_until(d, &mut h, Duration::from_secs(30), "reconnect", |h| !h.opened.is_empty())?;
+    let c = d.connect(FrameDial::<FstackTcp>::on_stack(
+        target(ECHO, "/"),
+        FrameOptions::default(),
+    )?)?;
+    poll_until(d, &mut h, Duration::from_secs(30), "reconnect", |h| {
+        !h.opened.is_empty()
+    })?;
     let before = h.frames;
     d.get_mut(c).ok_or("gone")?.send_frame(b"again")?;
-    poll_until(d, &mut h, Duration::from_secs(10), "echo after reconnect", |h| h.frames > before)?;
+    poll_until(
+        d,
+        &mut h,
+        Duration::from_secs(10),
+        "echo after reconnect",
+        |h| h.frames > before,
+    )?;
     assert_eq!(h.last, b"again");
 
     // A refused connect: the peer's RST, mapped from FreeBSD's errno.
-    let r = d.connect(FrameDial::<FstackTcp>::on_stack(target(CLOSED, "/"), FrameOptions::default())?)?;
-    poll_until(d, &mut h, Duration::from_secs(30), "refused connect", |h| !h.closed.is_empty())?;
+    let r = d.connect(FrameDial::<FstackTcp>::on_stack(
+        target(CLOSED, "/"),
+        FrameOptions::default(),
+    )?)?;
+    poll_until(d, &mut h, Duration::from_secs(30), "refused connect", |h| {
+        !h.closed.is_empty()
+    })?;
     let (id, e) = h.closed.pop().ok_or("no close")?;
     assert_eq!(id, r);
     match &e {
@@ -576,11 +628,17 @@ fn websocket(cfg: &Config) -> R {
         Arc::clone(&tls_cfg),
         WsOptions::default(),
     )?)?;
-    poll_until(&mut d, &mut h, Duration::from_secs(30), "ws connect", |h| !h.opened.is_empty())?;
+    poll_until(&mut d, &mut h, Duration::from_secs(30), "ws connect", |h| {
+        !h.opened.is_empty()
+    })?;
     assert_eq!(h.opened, [a]);
     let before = h.frames;
-    d.get_mut(a).ok_or("gone")?.send_text("hello over TLS on F-Stack")?;
-    poll_until(&mut d, &mut h, Duration::from_secs(10), "ws echo", |h| h.frames > before)?;
+    d.get_mut(a)
+        .ok_or("gone")?
+        .send_text("hello over TLS on F-Stack")?;
+    poll_until(&mut d, &mut h, Duration::from_secs(10), "ws echo", |h| {
+        h.frames > before
+    })?;
     assert_eq!(h.last, b"hello over TLS on F-Stack");
     d.get_mut(a).ok_or("gone")?.ping(b"p")?;
 
@@ -605,9 +663,15 @@ fn websocket(cfg: &Config) -> R {
         }
     }
     let grew = allocs() - allocs_after_warmup;
-    assert_eq!(grew, 0, "{grew} allocations in {TRIPS} warm WebSocket round trips");
+    assert_eq!(
+        grew, 0,
+        "{grew} allocations in {TRIPS} warm WebSocket round trips"
+    );
     assert_eq!(h.last, msg);
-    println!("fstack-test: WebSocket+TLS echo over F-Stack: {}", summary(&mut rtt));
+    println!(
+        "fstack-test: WebSocket+TLS echo over F-Stack: {}",
+        summary(&mut rtt)
+    );
     let info = d.tcp_info(a).ok_or("no TCP_INFO sample")?;
     assert!(info.rtt_us > 0 && info.rto_us > 0, "{info:?}");
     println!("fstack-test: TCP_INFO {info:?}");
@@ -619,9 +683,14 @@ fn websocket(cfg: &Config) -> R {
     for id in [a, b] {
         d.get_mut(id).ok_or("gone")?.close(1000, "done")?;
     }
-    poll_until(&mut d, &mut h, Duration::from_secs(10), "ws close", |h| h.closed.len() == 2)?;
+    poll_until(&mut d, &mut h, Duration::from_secs(10), "ws close", |h| {
+        h.closed.len() == 2
+    })?;
     for (_, e) in &h.closed {
-        assert!(matches!(e, Error::WsClose(c) if c.code == Some(1000)), "{e}");
+        assert!(
+            matches!(e, Error::WsClose(c) if c.code == Some(1000)),
+            "{e}"
+        );
     }
     println!("fstack-test: WebSocket over TLS ok");
     Ok(())
@@ -638,20 +707,40 @@ fn http(cfg: &Config) -> R {
         Arc::clone(&tls_cfg),
         HttpOptions::default(),
     )?)?;
-    poll_until(&mut d, &mut h, Duration::from_secs(30), "http connect", |h| !h.opened.is_empty())?;
+    poll_until(
+        &mut d,
+        &mut h,
+        Duration::from_secs(30),
+        "http connect",
+        |h| !h.opened.is_empty(),
+    )?;
     for i in 0..20 {
         let path = format!("/hello?i={i}");
-        d.get_mut(a).ok_or("gone")?.request("GET", &path, &[], b"")?;
-        poll_until(&mut d, &mut h, Duration::from_secs(10), "http response", |h| {
-            h.responses.len() > i
-        })?;
+        d.get_mut(a)
+            .ok_or("gone")?
+            .request("GET", &path, &[], b"")?;
+        poll_until(
+            &mut d,
+            &mut h,
+            Duration::from_secs(10),
+            "http response",
+            |h| h.responses.len() > i,
+        )?;
         assert_eq!(h.responses[i], (200, path.into_bytes()));
     }
     let c = HttpDial::<FstackTcp>::on_stack(target(HTTP, "/"), tls_cfg, HttpOptions::default())?
         .connect_blocking()?;
     let b = d.add(c)?;
-    d.get_mut(b).ok_or("gone")?.request("GET", "/added", &[], b"")?;
-    poll_until(&mut d, &mut h, Duration::from_secs(10), "http response", |h| h.responses.len() == 21)?;
+    d.get_mut(b)
+        .ok_or("gone")?
+        .request("GET", "/added", &[], b"")?;
+    poll_until(
+        &mut d,
+        &mut h,
+        Duration::from_secs(10),
+        "http response",
+        |h| h.responses.len() == 21,
+    )?;
     assert_eq!(h.responses[20], (200, b"/added".to_vec()));
     d.close(a);
     d.close(b);
