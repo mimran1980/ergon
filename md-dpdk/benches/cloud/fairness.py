@@ -28,8 +28,10 @@ concerns. Rules:
   smt              a run that declares SMT on: on every host and sample, the SMT
                    sibling of each busy thread's CPU (its neighbour in the map's
                    hot list: each isolated core whole) holds nothing over 5 % of
-                   a CPU, but a uring-sqpoll arm's own SQPOLL thread (iou-sqp-*)
-  sqpoll           a uring-sqpoll arm (tcp_lat --backend uring-sqpoll): its SQPOLL
+                   a CPU, but a uring-sqpoll arm's own SQPOLL thread (iou-sqp-*).
+                   The runner's gap spinners (on the cores the point left idle)
+                   are not busy threads; one on a busy thread's sibling breaks it
+  sqpoll          a uring-sqpoll arm (tcp_lat --backend uring-sqpoll): its SQPOLL
                    thread seen busy on --sqpoll-cpu on every host, and on no other
                    CPU
   settings         every knob as transport-settings.env gives it, none it does not;
@@ -800,7 +802,10 @@ def smt_problems(p, hosts, smt_on):
             if not smt_on:
                 continue
             for t in sample:
-                if t.get("util", 0) <= BUSY or str(t.get("comm", "")).startswith(SQPOLL_COMM):
+                # the runner's gap spinners fill the hot CPUs the point left
+                # idle, both threads of such a core: not a measured thread
+                if (t.get("util", 0) <= BUSY or str(t.get("comm", "")).startswith(SQPOLL_COMM)
+                        or t.get("comm") in NOT_BUDGET):
                     continue
                 s = smt_partner(hot, t.get("cpu"))
                 if s is None:

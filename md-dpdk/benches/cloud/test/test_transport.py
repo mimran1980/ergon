@@ -1370,6 +1370,15 @@ class SmtTest(unittest.TestCase):
         self.assertEqual(found, ["smt: 2a: 2a-mio-udp-64-1-r10000: sample 1: b gapspin (9) at 50% on CPU 104, the "
                                  "SMT sibling of busy0's CPU 4: the sibling stays idle"])
 
+    def test_gap_spinners_filling_a_core_the_point_left_idle_are_clean(self):
+        run = Run(self)
+        smt_on(run)
+        # the runner's gap spinners on both threads of a core no arm uses
+        # (CPU 10 and its sibling 110): neither is a measured busy thread
+        run.edit(ONE, lambda m: m["threads"]["b"][1].extend(
+            {"tid": t, "comm": "gapspin", "cpu": c, "util": 1.0} for t, c in ((9, 10), (10, 110))))
+        self.assertEqual([str(v) for v in fairness.check(run.run)], [])
+
     def test_without_smt_on_the_sibling_is_not_checked(self):
         run = Run(self)
         run.edit(ONE, lambda m: m["threads"]["b"][1].append({"tid": 9, "comm": "sshd", "cpu": 104, "util": 0.5}))
