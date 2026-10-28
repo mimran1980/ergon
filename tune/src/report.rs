@@ -31,9 +31,9 @@ pub const SILENCE: &str = "(ERGON_HOST_CHECKS=off silences host-check warnings)"
 /// process see it: debugfs, other PID namespaces, steal accounting), so
 /// absent evidence is a host without it, not a
 /// gap in a proof.
-const SUBSYSTEM_CHECKS: [&str; 20] = [
-    "T3", "T4", "T5", "T6", "T11", "T13", "T14", "T15", "T16", "T17", "T18", "T19", "T20", "K6",
-    "K7", "N1", "N2", "N3", "N4", "M4",
+const SUBSYSTEM_CHECKS: [&str; 21] = [
+    "T3", "T4", "T5", "T6", "T11", "T13", "T14", "T15", "T16", "T17", "T18", "T19", "T20", "T21",
+    "K6", "K7", "N1", "N2", "N3", "N4", "M4",
 ];
 
 /// Whether an unknown result of check `id` stops a
@@ -42,7 +42,7 @@ const SUBSYSTEM_CHECKS: [&str; 20] = [
 /// A check that proves a property of this pod or process (its CPUs are its
 /// own and isolated, no CPU quota, its helpers have a core) **blocks** when
 /// it cannot be answered: unproven is not "fine". A check of a subsystem the
-/// node may not have (T3, T4, T5, T6, T11, T13-T20, K6, K7, N1-N4, M4) does
+/// node may not have (T3, T4, T5, T6, T11, T13-T21, K6, K7, N1-N4, M4) does
 /// not.
 /// Every other id blocks, a caller's own included: unclassified fails closed.
 #[must_use]

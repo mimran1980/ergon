@@ -24,6 +24,7 @@
 //! | T18 | [`t18_steal`] (info) | no caller in this repository |
 //! | T19 | [`FaultWatch`] while running | io (the polling thread, every 5 s from the warning thread) |
 //! | T20 | [`t20_irq_idle`] | no caller in this repository (the lab's transport suite caps the IRQ CPU itself) |
+//! | T21 | [`t21_tcp_autocorking`] | no caller in this repository (the lab's transport suite sets it off itself) |
 //! | K1-K6 | [`k8s_checks`] (with T7 and T9), inside a pod only | io |
 //! | K7 | [`k8s_checks`] with [`Needs::with_nic`] | no caller in this repository names a NIC |
 //! | N1 (`nic`) | `n1_adaptive_rx` | io, md (kernel sockets) |
@@ -71,6 +72,7 @@ mod noise;
 mod platform;
 mod quota;
 mod report;
+mod tcp;
 mod time;
 
 pub use cpu::{
@@ -107,6 +109,7 @@ pub use report::{
     HOST_CHECKS_ENV, HostCheckError, HostCheckPolicy, SILENCE, host_check_line,
     unknown_stops_require, warn_line,
 };
+pub use tcp::t21_tcp_autocorking;
 pub use time::{
     Bound, BoundSource, ChronyAnswer, ChronyError, ChronyReference, ChronyTracking,
     ClockBoundAnswer, ClockBoundError, ClockBoundReading, ClockBoundStatus, ClockSample,

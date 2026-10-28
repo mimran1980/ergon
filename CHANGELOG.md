@@ -7,6 +7,8 @@
 - `ergon-tune` T20 (`t20_irq_idle`): warns when a CPU that takes the data NICs'
   interrupts may sleep deeper than C1 (C1E, C6), with the per-CPU, boot-line
   and `/dev/cpu_dma_latency` fixes; info on `acpi_idle` stopping at C1.
+- `ergon-tune` T21 (`t21_tcp_autocorking`): warns when `net.ipv4.tcp_autocorking`
+  is on for a caller sending latency-sensitive TCP, with the per-namespace fix.
 
 ### Changed
 
