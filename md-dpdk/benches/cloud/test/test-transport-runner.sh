@@ -270,7 +270,7 @@ got=$(
     TR_DECLARED="dpdk-aeron-rel-emb:dpdk-aeron-rel-invoker:aeron_driver=embedded dpdk-aeron-rel-invoker:dpdk-aeron-rel-emb:aeron_threading=INVOKER" tr_declared_check 2>&1 | sed 's/^/refused: /' || true
     echo "handoff check: $(tr_check a 2>&1)"
 )
-same "transport.sh, the hand-off arms: each its twin's driver mode but for its threading (SHARED_NETWORK keeps the conductor's core, SHARED and INVOKER drop it) or DRIVER=embedded, each passing mode_check; aeron_lat's --driver (embedded, invoker) and busy threads (3, 2, 1, 0) from it; an embedded driver's binary started with ~/bench/driver.env under sudo setpriv; the events' spinners on the CPUs the driver leaves; INVOKER without the driver embedded and a twin chain going round refused; the sets file checks (54 points at 3 reps)" \
+same "transport.sh, the hand-off arms: each its twin's driver mode but for its threading (SHARED_NETWORK keeps the conductor's core, SHARED and INVOKER drop it) or DRIVER=embedded, each passing mode_check; aeron_lat's --driver (embedded, invoker) and busy threads (3, 2, 1, 0) from it; an embedded driver's binary started with ~/bench/driver.env under sudo setpriv; the events' spinners on the CPUs the driver leaves; INVOKER without the driver embedded and a twin chain going round refused; the sets file checks (66 points at 3 reps)" \
 "dpdk-aeron-rel: dpdk<suffix>
   check 0; knobs threading DEDICATED driver external; --driver external --driver-busy-threads 3; events 4,6,8,10,12,14 12,14
   start: sh -c 'taskset -c 0 env PATH=P aeron_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
@@ -294,7 +294,7 @@ aeron-rel-invoker: kernel-busy@AERON_TERM_BUFFER_LENGTH=1048576@AERON_IPC_TERM_B
   start: sudo -n setpriv --reuid=\"\$(id -u)\" --regid=\"\$(id -g)\" --init-groups --reset-env sh -c '. ~/bench/driver.env; taskset -c 0 env PATH=P aeron_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
 refused: arm dpdk-aeron-rel-shnet: aeron_threading INVOKER with aeron_driver external: an INVOKER driver is the binary's own (aeron_driver embedded)
 refused: TR_DECLARED dpdk-aeron-rel-emb: its twins go round ( dpdk-aeron-rel-emb dpdk-aeron-rel-invoker dpdk-aeron-rel-emb)
-handoff check: 54" "$got"
+handoff check: 66" "$got"
 got=$(
     . "$cloud/modes.sh"
     rc() { mode_check "$1" remote x86_64 aws '' >/dev/null 2>&1; echo -n " $?"; }

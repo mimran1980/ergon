@@ -23,14 +23,13 @@
 #        F-Stack's one thread fell to ~50 us p50 in aws-20261027-062105,
 #        against 32-34 below it, while dpdk-aeron-rel held 27-32: whether
 #        one thread doing the driver's work too holds up)
-#   k    (commented out) the kernel's: aeron-rel, its driver in the
+#   k    the kernel's: aeron-rel, its driver in the
 #        binary's process (aeron-rel-emb) and run by the measuring thread
 #        (aeron-rel-invoker), 1 stream, 50k msg/s alone, its A/A repeating
 #        aeron-rel
 #
-# Trimmed to keep the session under 1.5 h at LAB_REPS=3 (LAB_ESTIMATE=1 on
-# c7a.2xlarge spot): h alone, 54 points, about 1.34 h. Uncomment k for the
-# kernel arms too: 66 points, about 1.64 h.
+# At LAB_REPS=3 (LAB_ESTIMATE=1 on c7a.2xlarge spot): h and k, 66 points,
+# about 1.64 h (h alone: 54 points, about 1.34 h).
 #
 # set   pair par host loads               streams  netem  arms
 set h    a    -   ab   10000,50000,200000  1        -      dpdk-aeron-rel,dpdk-aeron-rel-emb,dpdk-aeron-rel-shnet,dpdk-aeron-rel-shared,dpdk-aeron-rel-invoker,aa
