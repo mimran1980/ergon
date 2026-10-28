@@ -246,7 +246,7 @@ fn tcp_timers_and_tcp_info_are_off_by_default_and_bounded() -> R {
 
 /// Only the kernel backends the benchmarks measured in a busy-spin loop are
 /// left: `epoll-spin` (interrupt-driven), `recv-busy` and `uring-sqpoll`
-/// (NIC polling); `fstack-spin` is the one kernel-bypass backend.
+/// (NIC polling); `fstack-spin` and `smoltcp-spin` bypass the kernel.
 /// `uring-spin`, `epoll-busy` and `uring-napi` are unknown names.
 #[test]
 fn only_the_three_measured_backends_exist() -> R {
@@ -255,7 +255,13 @@ fn only_the_three_measured_backends_exist() -> R {
     let all: Vec<&str> = Backend::ALL.iter().map(|b| b.name()).collect();
     assert_eq!(
         all,
-        ["epoll-spin", "recv-busy", "uring-sqpoll", "fstack-spin"]
+        [
+            "epoll-spin",
+            "recv-busy",
+            "uring-sqpoll",
+            "fstack-spin",
+            "smoltcp-spin"
+        ]
     );
     assert!(
         Backend::ALL
@@ -447,5 +453,133 @@ fn fstack_spin_refuses_kernel_only_keys() -> R {
         .err()
         .ok_or("no gateway or port accepted")?;
     assert!(e.to_string().contains("fstack_gateway"), "{e}");
+    Ok(())
+}
+
+/// `smoltcp-spin`: the kernel's per-socket keys it cannot honour are
+/// refused, the rest parse; its stack's settings are `StackConfig`'s.
+#[test]
+fn smoltcp_spin_refuses_what_its_stack_cannot_do() -> R {
+    let c = Config::parse("smoltcp-spin")?;
+    assert_eq!(c.backend, Backend::SmoltcpSpin);
+    assert!(c.backend.polls_nic());
+    for bad in [
+        // The RTO floor is the stack's (StackConfig::rto_min_us).
+        "smoltcp-spin,tcp_rto_min_us=8000",
+        "smoltcp-spin,quickack_check=require",
+        "smoltcp-spin,per_queue=true",
+        "smoltcp-spin,busy_poll_us=50",
+        // smoltcp aborts a connection that hears nothing for the user
+        // timeout, idle or not: keepalive must be on and shorter.
+        "smoltcp-spin,keepalive_idle_s=0",
+        "smoltcp-spin,keepalive_idle_s=30,tcp_user_timeout_ms=25000",
+    ] {
+        let e = Config::parse(bad)
+            .err()
+            .ok_or_else(|| format!("{bad:?} accepted"))?;
+        assert!(matches!(e, ergon_io::Error::Config(_)), "{bad}: {e}");
+    }
+    for good in [
+        "smoltcp-spin,tcp_delack_max_us=5000",
+        "smoltcp-spin,keepalive_idle_s=0,tcp_user_timeout_ms=0",
+        "smoltcp-spin,keepalive_idle_s=5,tcp_user_timeout_ms=6000",
+        "smoltcp-spin,quickack_check=off,rcvbuf=0,rx_timestamps=false",
+    ] {
+        Config::parse(good)?;
+    }
+    Ok(())
+}
+
+/// `StackConfig::parse`: every key, `eal=` last and taking the rest
+/// (commas included), and the checks.
+#[test]
+fn the_smoltcp_stack_config_parses_and_checks() -> R {
+    use ergon_io::smoltcp_dpdk::{Congestion, StackConfig};
+    let c = StackConfig::parse(
+        "port=0000:00:06.0,ip=10.1.2.3/20,gw=10.1.0.1,gw_mac=02:aa:bb:cc:dd:ee,mtu=9001,\
+         rx_desc=2048,tx_desc=512,mbufs=16383,max_sockets=8,tcp_rx_buf=65536,tcp_tx_buf=32768,\
+         udp_buf=4096,udp_packets=16,rto_min_us=8000,cc=none,timestamps=false,\
+         tx_csum_offload=false,link_wait_ms=100,eal=-a 0000:00:06.0,llq_policy=1 --huge-dir /mnt/h",
+    )?;
+    assert_eq!(c.port, "0000:00:06.0");
+    assert_eq!((c.ip, c.prefix_len), ("10.1.2.3".parse()?, 20));
+    assert_eq!(c.gateway, Some("10.1.0.1".parse()?));
+    assert_eq!(c.gateway_mac, Some([2, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]));
+    assert_eq!(
+        (c.mtu, c.rx_desc, c.tx_desc, c.mbufs),
+        (9001, 2048, 512, 16383)
+    );
+    assert_eq!(
+        (c.max_sockets, c.tcp_rx_buf, c.tcp_tx_buf),
+        (8, 65536, 32768)
+    );
+    assert_eq!((c.udp_buf, c.udp_packets, c.rto_min_us), (4096, 16, 8000));
+    assert_eq!(c.congestion, Congestion::None);
+    assert!(!c.tcp_timestamps && !c.tx_checksum_offload);
+    assert_eq!(c.link_wait_ms, 100);
+    assert_eq!(
+        c.eal_args,
+        ["-a", "0000:00:06.0,llq_policy=1", "--huge-dir", "/mnt/h"]
+    );
+    assert!((c.clock_scale() - 125.0).abs() < 1e-9);
+    assert!(c.on_link("10.1.15.255".parse()?) && !c.on_link("10.1.16.1".parse()?));
+
+    // Defaults: a /24, a 10 ms RTO floor, Reno, timestamps on.
+    let d = StackConfig::parse("ip=192.168.7.9")?;
+    assert_eq!((d.prefix_len, d.rto_min_us, d.mtu), (24, 10_000, 1500));
+    assert_eq!(d.congestion, Congestion::Reno);
+    assert!(d.tcp_timestamps && d.tx_checksum_offload && d.eal_args.is_empty());
+    assert_eq!(
+        d,
+        StackConfig {
+            ip: "192.168.7.9".parse()?,
+            ..StackConfig::default()
+        }
+    );
+
+    for bad in [
+        "",                                                 // no address
+        "ip=0.0.0.0",                                       // not unicast
+        "ip=10.0.0.2/33",                                   // prefix
+        "ip=10.0.0.2,gw=10.0.1.1",                          // gateway off the prefix
+        "ip=10.0.0.2,gw=10.0.0.2",                          // gateway is us
+        "ip=10.0.0.2,gw_mac=02:00:00:00:00:01",             // MAC without a gateway
+        "ip=10.0.0.2,gw=10.0.0.1,gw_mac=01:00:5e:00:00:01", // multicast MAC
+        "ip=10.0.0.2,gw=10.0.0.1,gw_mac=02:00:00:00:00",    // short MAC
+        "ip=10.0.0.2,mtu=500",
+        "ip=10.0.0.2,mtu=70000",
+        "ip=10.0.0.2,rto_min_us=1000",
+        "ip=10.0.0.2,rto_min_us=2000000",
+        "ip=10.0.0.2,mbufs=100",
+        "ip=10.0.0.2,max_sockets=0",
+        "ip=10.0.0.2,tcp_rx_buf=100",
+        "ip=10.0.0.2,udp_packets=0",
+        "ip=10.0.0.2,cc=cubic",
+        "ip=10.0.0.2,timestamps=yes",
+        "ip=10.0.0.2,port=",
+        "ip=10.0.0.2,nope=1",
+        "ip=10.0.0.2,mtu",
+    ] {
+        let e = StackConfig::parse(bad)
+            .err()
+            .ok_or_else(|| format!("{bad:?} accepted"))?;
+        assert!(matches!(e, ergon_io::Error::Config(_)), "{bad}: {e}");
+    }
+    Ok(())
+}
+
+/// Without the `smoltcp-dpdk` feature, or off Linux, the stack cannot start
+/// and neither can a `smoltcp-spin` driver: `Error::Unsupported`, after the
+/// settings are checked.
+#[cfg(not(all(target_os = "linux", feature = "smoltcp-dpdk")))]
+#[test]
+fn without_the_feature_the_stack_is_unsupported() -> R {
+    use ergon_io::smoltcp_dpdk::{Stack, StackConfig};
+    let cfg = StackConfig::parse("ip=10.0.0.2")?;
+    let e = Stack::init(&cfg).err().ok_or("a stack started")?;
+    assert!(matches!(e, ergon_io::Error::Unsupported(_)), "{e}");
+    let bad = StackConfig::default();
+    let e = Stack::init(&bad).err().ok_or("a stack started")?;
+    assert!(matches!(e, ergon_io::Error::Config(_)), "{e}");
     Ok(())
 }

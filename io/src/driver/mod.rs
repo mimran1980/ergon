@@ -43,6 +43,8 @@ use crate::endpoint::{ConnId, ConnMut, Dial, DriverStats, Endpoint, Handler, Rec
 use crate::error::{Error, Result};
 #[cfg(feature = "fstack")]
 use crate::netstack::fstack::{self, Fstack};
+#[cfg(feature = "smoltcp-dpdk")]
+use crate::netstack::smoltcp::{self as smol, Smol};
 use crate::netstack::{Kernel, NetStack, StackId};
 use crate::placement::{self, CpuError};
 use crate::route::{self, Flow, QuickAckCheck, QuickAckError, RouteCheck};
@@ -297,9 +299,23 @@ enum Imp {
     /// `fstack-spin`: the epoll-spin loop over F-Stack.
     #[cfg(feature = "fstack")]
     Fstack(epoll::Epoll<Fstack>),
+    /// `smoltcp-spin`: the epoll-spin loop over the thread's smoltcp stack.
+    #[cfg(feature = "smoltcp-dpdk")]
+    Smoltcp(epoll::Epoll<Smol>),
 }
 
 impl Imp {
+    /// Whether the driver's send pass after the receive pass is this
+    /// backend's (the epoll loop over the kernel or smoltcp; `io_uring`
+    /// sends inside its pass, F-Stack's runs below with its stack pass).
+    const fn sends_after_poll(&self) -> bool {
+        #[cfg(feature = "smoltcp-dpdk")]
+        if matches!(self, Self::Smoltcp(_)) {
+            return true;
+        }
+        matches!(self, Self::Epoll(_))
+    }
+
     /// The backend `cfg` names.
     fn new(cfg: &Config) -> Result<Self> {
         Ok(match cfg.backend {
@@ -324,6 +340,24 @@ impl Imp {
                     "fstack-spin needs ergon-io's `fstack` feature (Linux)",
                 ));
             }
+            // The thread's stack (`smoltcp_dpdk::Stack::init`), then its loop.
+            #[cfg(feature = "smoltcp-dpdk")]
+            Backend::SmoltcpSpin => {
+                if !smol::present() {
+                    return Err(Error::Config(
+                        "smoltcp-spin: no stack on this thread: start one with \
+                         ergon_io::smoltcp_dpdk::Stack::init on the polling thread first"
+                            .into(),
+                    ));
+                }
+                Self::Smoltcp(epoll::Epoll::new(cfg)?)
+            }
+            #[cfg(not(feature = "smoltcp-dpdk"))]
+            Backend::SmoltcpSpin => {
+                return Err(Error::Unsupported(
+                    "smoltcp-spin needs ergon-io's `smoltcp-dpdk` feature (Linux)",
+                ));
+            }
         })
     }
 
@@ -335,6 +369,8 @@ impl Imp {
             Self::Uring(_) => sys::tcp_info(fd),
             #[cfg(feature = "fstack")]
             Self::Fstack(e) => e.tcp_info(fd),
+            #[cfg(feature = "smoltcp-dpdk")]
+            Self::Smoltcp(e) => e.tcp_info(fd),
         }
     }
 
@@ -347,6 +383,8 @@ impl Imp {
             Self::Uring(_) => sys::incoming_napi_id(fd).unwrap_or(0),
             #[cfg(feature = "fstack")]
             Self::Fstack(e) => e.napi_id(fd),
+            #[cfg(feature = "smoltcp-dpdk")]
+            Self::Smoltcp(e) => e.napi_id(fd),
         }
     }
 }
@@ -406,7 +444,7 @@ impl SockOpts {
             busy_poll_us: match cfg.backend {
                 Backend::RecvBusy => 1,
                 Backend::EpollSpin => cfg.busy_poll_us,
-                Backend::UringSqpoll | Backend::FstackSpin => 0,
+                Backend::UringSqpoll | Backend::FstackSpin | Backend::SmoltcpSpin => 0,
             },
             quickack: cfg.quickack_check,
             backend: cfg.backend,
@@ -469,6 +507,13 @@ impl SockOpts {
         on_loop: bool,
     ) -> Result<RouteCost> {
         let fd = ep.fd();
+        if E::STACK == StackId::Smoltcp {
+            // The stack's options (keepalive, user timeout, delayed ACK,
+            // read stamps); no kernel route, device or `TCP_CORK` check.
+            #[cfg(feature = "smoltcp-dpdk")]
+            self.apply::<Smol>(fd, E::DATAGRAM)?;
+            return Ok(RouteCost::default());
+        }
         if E::STACK == StackId::Fstack {
             // F-Stack's options; no kernel route, device or `TCP_CORK`
             // check applies (its sockets are made with `TCP_NODELAY`).
@@ -538,9 +583,9 @@ fn check_endpoints<E: Endpoint>(cfg: &Config) -> Result<()> {
         ));
     }
     cfg.validate()?;
-    if E::DATAGRAM && cfg.backend != Backend::EpollSpin {
+    if E::DATAGRAM && !matches!(cfg.backend, Backend::EpollSpin | Backend::SmoltcpSpin) {
         return Err(Error::Unsupported(
-            "UDP endpoints (UdpConn) run on the epoll-spin backend only",
+            "UDP endpoints (UdpConn) run on the epoll-spin and smoltcp-spin backends only",
         ));
     }
     if E::STACK != cfg.backend.stack() {
@@ -1076,6 +1121,8 @@ impl<E: Endpoint> Driver<E> {
             Imp::Uring(u) => u.add(&mut ep, i),
             #[cfg(feature = "fstack")]
             Imp::Fstack(e) => e.add(fd, id),
+            #[cfg(feature = "smoltcp-dpdk")]
+            Imp::Smoltcp(e) => e.add(fd, id),
         };
         if let Err(e) = added {
             // Nothing was armed: freed with the other closed connections.
@@ -1272,13 +1319,18 @@ impl<E: Endpoint> Driver<E> {
                 Imp::Fstack(e) => {
                     e.poll(&mut self.conns, handler, &mut self.stats, &mut self.reads)
                 }
+                // One smoltcp pass first (in `poll`), then its ready sockets.
+                #[cfg(feature = "smoltcp-dpdk")]
+                Imp::Smoltcp(e) => {
+                    e.poll(&mut self.conns, handler, &mut self.stats, &mut self.reads)
+                }
             };
         }
         // What the receive pass queued (replies, pongs) goes out now, and
         // anything left unsent (a full socket) is retried here on every
         // poll: both are in the send set. (`io_uring` sends inside its
         // pass.)
-        if r.is_ok() && matches!(self.imp, Imp::Epoll(_)) && !self.conns.tx_dirty.is_empty() {
+        if r.is_ok() && self.imp.sends_after_poll() && !self.conns.tx_dirty.is_empty() {
             r = self.send_queued(handler);
         }
         // F-Stack: the replies go out now (a second pass drains its TX),
@@ -1491,6 +1543,18 @@ impl<E: Endpoint> Driver<E> {
                 send_stream(e, &mut self.conns, &mut self.stats, handler);
                 Ok(())
             }
+            // smoltcp queues in its sockets: the pass's bytes leave now, in
+            // one TX burst, not at the next poll's stack pass.
+            #[cfg(feature = "smoltcp-dpdk")]
+            Imp::Smoltcp(e) => {
+                if E::DATAGRAM {
+                    send_datagrams(e, &mut self.conns, &mut self.stats, handler);
+                } else {
+                    send_stream(e, &mut self.conns, &mut self.stats, handler);
+                }
+                smol::egress();
+                Ok(())
+            }
         }
     }
 }
@@ -1641,6 +1705,13 @@ fn close_index<E: Endpoint>(imp: &mut Imp, conns: &mut Conns<E>, i: usize) {
         Imp::Uring(u) => u.close(conns, i),
         #[cfg(feature = "fstack")]
         Imp::Fstack(e) => {
+            if let Some(fd) = conns.at(i).map(|c| c.fd()) {
+                e.remove(fd);
+                conns.remove(i);
+            }
+        }
+        #[cfg(feature = "smoltcp-dpdk")]
+        Imp::Smoltcp(e) => {
             if let Some(fd) = conns.at(i).map(|c| c.fd()) {
                 e.remove(fd);
                 conns.remove(i);

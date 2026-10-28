@@ -20,6 +20,10 @@
 //!   `close(2)` never reaches an F-Stack descriptor.
 //! - `fstack` (Linux, the `fstack` feature): F-Stack, FreeBSD's TCP/IP
 //!   stack on DPDK, behind `fstack-spin`.
+//! - [`Datagram`]: a UDP socket of one stack, as `UdpConn<D>` holds it:
+//!   `std::net::UdpSocket`, or `SmolUdp`.
+//! - `smoltcp` (Linux, the `smoltcp-dpdk` feature): smoltcp over a DPDK
+//!   port, behind `smoltcp-spin` (`SmolTcp`, `SmolUdp`).
 //!
 //! The epoll backends (`epoll-spin`, `recv-busy`) and the driver's send
 //! passes are generic over `NetStack`, defaulting to `Kernel`; `Driver<E>`
@@ -37,6 +41,8 @@ use crate::error::Result;
 pub mod fstack;
 pub mod fstack_conf;
 mod kernel;
+#[cfg(all(target_os = "linux", feature = "smoltcp-dpdk"))]
+pub mod smoltcp;
 
 /// The Linux kernel's TCP/IP stack.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -49,6 +55,8 @@ pub enum StackId {
     Kernel,
     /// F-Stack's: `FstackTcp`.
     Fstack,
+    /// smoltcp's on a DPDK port: `SmolTcp`, `SmolUdp`.
+    Smoltcp,
 }
 
 impl StackId {
@@ -58,6 +66,7 @@ impl StackId {
         match self {
             Self::Kernel => "the kernel's",
             Self::Fstack => "F-Stack's",
+            Self::Smoltcp => "smoltcp's",
         }
     }
 }
@@ -96,6 +105,31 @@ pub trait Socket: io::Read + io::Write + Sized + 'static {
     /// that wait on the calling thread: nothing for the kernel, which runs
     /// on its own; one F-Stack pass (`ff_run_once`).
     fn pump() {}
+}
+
+/// A UDP socket of one stack, as `UdpConn` holds it. Dropping it closes it
+/// through its own stack.
+pub trait Datagram: Sized + 'static {
+    /// The stack that owns it.
+    const STACK: StackId;
+
+    /// The stack's handle.
+    fn fd(&self) -> RawFd;
+
+    /// The bound address.
+    ///
+    /// # Errors
+    /// The stack cannot say.
+    fn local_addr(&self) -> Result<SocketAddr>;
+
+    /// The peer of a connected socket.
+    fn peer_addr(&self) -> Option<SocketAddr>;
+
+    /// The receive buffer's size, bytes.
+    ///
+    /// # Errors
+    /// The stack cannot say.
+    fn recv_buffer_size(&self) -> Result<usize>;
 }
 
 /// How a stack makes sockets.

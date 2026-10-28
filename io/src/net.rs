@@ -9,7 +9,7 @@ use std::sync::Arc;
 use rustls::ClientConfig;
 
 use crate::error::{Error, Result};
-use crate::netstack::{Kernel, Socket, Sockets};
+use crate::netstack::{Datagram, Kernel, Socket, Sockets};
 use crate::route::RouteCheck;
 use crate::tls::{RecordLayer, TlsHandshake};
 
@@ -105,6 +105,15 @@ pub trait BindSource {
 #[allow(private_bounds)] // sealed on purpose: the bound is unnameable outside the crate
 pub trait StreamSocket: Socket {}
 impl<T: Socket> StreamSocket for T {}
+
+/// The UDP socket a `UdpConn` is built on, and so its stack: the kernel's
+/// [`std::net::UdpSocket`] (the default), or with the `smoltcp-dpdk`
+/// feature `ergon_io::smoltcp_dpdk::SmolUdp`.
+///
+/// Sealed: only this crate's socket types implement it.
+#[allow(private_bounds)] // sealed on purpose: the bound is unnameable outside the crate
+pub trait DatagramSocket: Datagram {}
+impl<T: Datagram> DatagramSocket for T {}
 
 /// Starts a non-blocking TCP connect (`TCP_NODELAY` set), from `source`
 /// when given ([`Target::source`]).

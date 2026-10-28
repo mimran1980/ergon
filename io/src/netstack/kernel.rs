@@ -39,6 +39,27 @@ impl super::Socket for TcpStream {
     }
 }
 
+impl super::Datagram for UdpSocket {
+    const STACK: StackId = StackId::Kernel;
+
+    #[inline]
+    fn fd(&self) -> RawFd {
+        self.as_raw_fd()
+    }
+
+    fn local_addr(&self) -> Result<SocketAddr> {
+        Ok(Self::local_addr(self)?)
+    }
+
+    fn peer_addr(&self) -> Option<SocketAddr> {
+        Self::peer_addr(self).ok()
+    }
+
+    fn recv_buffer_size(&self) -> Result<usize> {
+        Ok(SockRef::from(self).recv_buffer_size()?)
+    }
+}
+
 impl Sockets for Kernel {
     type Tcp = TcpStream;
     type Udp = UdpSocket;
