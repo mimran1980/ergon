@@ -1,3 +1,7 @@
+# EXPERIMENTAL: on AWS ENA, Onload's AF_XDP mode froze a c7i.4xlarge at
+# NIC registration (aws-20261027-100813); no latency measured. See the book's
+# transport comparison, "Onload on ENA: not viable".
+#
 # The AWS Onload session's sets (aws/lab.sh LAB_SUITE=transport LAB_PAIR=a
 # LAB_SETS_FILE=<this file>, in place of the matrix's sets): the matrix's
 # Onload arms (onload-*: OpenOnload over AF_XDP on the ENA, setup onload,

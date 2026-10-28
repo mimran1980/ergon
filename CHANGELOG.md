@@ -21,6 +21,18 @@
   ergon-io drains slower. Every max is attributed or listed as unexplained.
   `md-dpdk/BENCHMARKS.md`, `io/README.md` and `io/benches/BENCHMARK.md`
   carry the matching rows and answers. DPDK on Azure stays excluded.
+- The transport comparison measures an Aeron spy whose publications also
+  send every frame over UDP (kernel or DPDK) to another host: p50 unchanged
+  (0.26 µs round trip, 0.14 one way), every frame verified at the sink.
+  This replaces the note that the published spy arm sent nothing.
+- Aeron driver threading modes at 1 stream on AWS: DPDK's modes are not
+  separated to 50,000 msg/s, fully `SHARED` is 0.6 to 0.9 µs higher at
+  200,000; kernel `INVOKER` is 3.1 to 8.4 µs higher at p50. The embedded
+  kernel driver's millisecond maxima are listed as unexplained, with what
+  was ruled out.
+- Onload over AF_XDP on AWS ENA: not viable (kernel fault at NIC
+  registration, instance froze), no latency measured; the Onload runner
+  arms are marked experimental.
 
 ## [0.1.34] — 2026-10-27
 

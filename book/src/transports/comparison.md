@@ -36,7 +36,8 @@ median of the reps' maxima, with the range across reps in brackets after it.
 | In one process: `std::sync::mpsc` or Aeron IPC? | Aeron IPC. Round trip p50 0.22 against 0.33 at 10,000 msg/s. At 1,000,000 msg/s the two are not separated. At 5,000,000 msg/s `mpsc`'s round trip falls behind (sender late, p50 27 µs) while Aeron IPC holds p50 0.25. Tails are not separated: p99.99 18 to 99, max 105 to 294 in both, each max a host pause or a stop the guest does not show. Costs: Aeron 5 busy threads, `mpsc` 2 | [1](#set-1-ipc-on-one-host) |
 | Between hosts, unreliable UDP, 1 stream: Aeron kernel, mio or ergon-io? | Aeron. p50 55.6 against 61.8 to 61.9 at 50,000 msg/s; at 10,000 msg/s 59.5 against 62.3 to 62.9, lower in both Aeron runs but inside the A/A spread (3.8). At 200,000 msg/s only Aeron keeps up (p50 55.8); mio and ergon-io fall seconds behind. mio and ergon-io are within 0.1 to 0.9 of each other at p50 (ergon-io behind in every rep). Max: no verdict (unexplained). Costs: Aeron 4 busy threads a host, sockets 1 | [2a](#set-2a-unreliable-udp-between-hosts) |
 | Does the answer change from 1 to 128 streams? | Yes. At 8 streams the three are not separated. At 32 and 128 streams plain sockets are lower: p50 by 3.7 to 4.8 (32) and 9.1 to 10.5 (128), p99 by 4.8 to 14. Aeron's p50 rises from 56 to 60 at 1 stream to 68 to 70 at 128; the sockets' stays 58 to 63. At 200,000 msg/s only Aeron keeps up at every stream count (p50 56 to 86) | [2a](#set-2a-unreliable-udp-between-hosts) |
-| On one host: Aeron spy, or UDP to itself? | Spy. Round trip p50 0.26 against 10.3 to 13.9 for kernel UDP to the host's own address, at every load. p99.99 2.1 against 55 at 10,000 msg/s, not separated above that; max 4 to 181, no verdict (unexplained). Both 5 busy threads. Caveat: the spy arm's its publications had no destination, so they sent nothing on the wire: it measures IPC through a UDP publication's term buffer, not a spy on a stream that also goes to another host. A spy whose publication has a live UDP destination (`aeron-spy-udp`) is being measured | [2b](#set-2b-one-host-spy-and-self-udp) |
+| On one host: Aeron spy, or UDP to itself? | Spy. Round trip p50 0.26 against 10.3 to 13.9 for kernel UDP to the host's own address, at every load. p99.99 2.1 against 55 at 10,000 msg/s, not separated above that; max 4 to 181, no verdict (unexplained). Both 5 busy threads. That spy's publications had no destination. On AWS a spy whose publications also send every frame over UDP to another host (`aeron-spy-udp`, kernel or DPDK) gives the same: round trip p50 0.26, one way 0.14 to 0.15, not separated from the no-destination spy at p50 | [2b](#set-2b-one-host-spy-and-self-udp), [AWS spy](#spy-with-a-live-udp-destination-spy) |
+| Aeron driver threading at 1 stream (AWS): dedicated, shared or invoker? | DPDK: no difference at 10,000 and 50,000 msg/s (p50 28.7 to 30.8 in every mode); at 200,000 fully `SHARED` is 0.6 to 0.9 higher at p50 and 2.8 to 3.0 at p99. Kernel: `INVOKER` is 3.1 to 8.4 higher at p50. 1 stream does not load the driver's loops: a many-stream mixed-load test is being built | [AWS threading](#driver-threading-modes-at-1-stream-h-k) |
 | Reliable, no loss: Aeron reliable UDP or TCP? | Aeron reliable. p50 lower by 7.1 to 14.5 (54.8 to 57.6 against 64.7 to 69.8); p99 59.9 to 64.3 against 79 to 225; p99.99 lower by 3.8 to 5.5 ms in 4 of 8 comparisons, the rest not separated. Max: no verdict (unexplained). At 200,000 msg/s Aeron holds p50 57.6 to 60.5; TCP carries 106,000 to 151,000 msg/s. Costs: Aeron 4 busy threads a host, TCP 1 | [3c](#set-3c-the-netem-control), [3a](#set-3a-reliable-no-loss) |
 | Reliable under 0.01, 0.1 and 1 % loss? | No single winner in the tail. p50: Aeron 52.7 to 61.6, TCP 64.1 to 68.5. p99: Aeron lower at 0.01 and 0.1 % and at 1 % / 10,000 msg/s; TCP lower at 1 % / 50,000 msg/s (4.8 to 5.5 ms against 9.4). p99.99: Aeron lower at 0.01 % (by 3.5 to 7.1 ms), not separated at 0.1 and 1 %. The tails follow each protocol's repair: Aeron's maxima sit at its 10 ms retransmit linger, TCP's come from its retransmits (8 ms minimum RTO). At 200,000 msg/s only Aeron keeps up | [3b](#set-3b-reliable-under-loss) |
 | What does a 0 % netem qdisc cost? | Nothing measured: each arm's 0 % and no-qdisc p50 differ by 0.2 to 4.6, inside the A/A spread (3.7 to 8.8) | [3c](#set-3c-the-netem-control) |
@@ -58,6 +59,8 @@ median of the reps' maxima, with the range across reps in brackets after it.
 | AWS d1, d8 | reliable on DPDK and the kernel | `dpdk-tcp` (F-Stack), `mio-tcp`, `eio-tcp`, `aeron-rel`, `dpdk-aeron-rel` (md-dpdk) | 1, 8 | 10,000; 50,000; 200,000 | round trip |
 | AWS u | unreliable UDP on DPDK and the kernel | `dpdk-aeron-udp`, `aeron-udp`, `mio-udp`, `eio-udp` | 1 | 50,000 | round trip |
 | AWS pin | mio against ergon-io on one connection | `mio-tcp-pin`, `eio-tcp-pin` (`tcp_lat --source-port 31000`: the same 4-tuple) | 1 | 10,000; 50,000 | round trip |
+| AWS spy | a spy whose publications also send over UDP | `aeron-spy` (no destination), `aeron-spy-udp` (kernel, to a sink on host b), `dpdk-aeron-spy-udp` | 1 | 50,000 | one way and round trip |
+| AWS h, k | the driver's threading modes | `dpdk-aeron-rel` and `aeron-rel` with the driver dedicated, in-process (`-emb`), `SHARED_NETWORK` (`-shnet`), `SHARED` (`-shared`), `INVOKER` (`-invoker`) | 1 | h: 10,000; 50,000; 200,000. k: 50,000 | round trip |
 
 Every set adds an A/A arm (`aa`: one of its arms run again in the same
 round), so a difference smaller than two runs of the same arm is never
@@ -312,6 +315,8 @@ Run ids, VMs and commits:
 | 2a | `20261026-221959-transport-a` | `F8als_v6`, `F8ams_v6` | North Central US | `63cf9e25` |
 | 3b, 3c | `20261026-222001-transport-a` | `F8als_v6`, `F8ams_v6` | West US 2 | `63cf9e25` |
 | AWS d1, d8, u, pin | `aws-20261027-062105` | `c7a.2xlarge`, `c7a.2xlarge` (spot) | us-east-1 | `b67ad62b` |
+| AWS spy | `aws-20261028-052725` | `c7a.2xlarge`, `c7a.2xlarge` (spot) | us-east-1 | `2f8d5c21` |
+| AWS h, k | `aws-20261028-052745` | `c7a.2xlarge`, `c7a.2xlarge` (spot) | us-east-1 | `2f8d5c21` |
 
 `63cf9e25` predates two fixes to the bench, not to ergon-io: the latency
 core's prefaulted stall buffer (`3b285a9b`, see [set 2a](#set-2a-unreliable-udp-between-hosts))
@@ -504,13 +509,12 @@ and under 98 % of the rate), so never compared:
 
 <!-- RESULTS: set 2b -->
 
-**The spy arm sent nothing on the wire.** `aeron-spy`'s publications were
-manual-MDC UDP with no destination (`ssc=true`), so the driver's sender put
-no frame on the network (`driver.bytes-sent` 0 in the harness test): the
-figures below are IPC through a UDP publication's term buffer, not a spy on
-a stream that also goes to another host. A spy whose publications send every
-frame over UDP to a sink on the other host (`aeron-spy-udp`,
-`transport-aws-spy.tsv`) is being measured.
+`aeron-spy`'s publications here are manual-MDC UDP with no destination
+(`ssc=true`): the driver's sender puts no frame on the network
+(`driver.bytes-sent` 0). The same spy with publications that send every
+frame to a sink on another host is measured on AWS:
+[spy with a live UDP destination](#spy-with-a-live-udp-destination-spy).
+Its p50 matches the no-destination spy's.
 
 Round trip (µs). A/A: `aeron-spy` again. Both arms 5 busy threads.
 `dpdk-aeron-self` is left out (see the note at the top).
@@ -952,6 +956,203 @@ All but one sit inside their arm's other reps; `mio-tcp`'s rep 2 at 1
 stream and 50,000 msg/s is its slowest (p50 67.8 against 59.1 and 60.5),
 which widens that arm's range, not its median.
 
+## AWS: spy, driver threading and Onload
+
+<!-- RESULTS: aws spy threading -->
+
+Two sessions run side by side on two pairs, commit `2f8d5c21`, 3 reps, 0
+failures, the hosts, CPUs and kernel settings of
+[the AWS session above](#hosts-and-settings) (Debian 13, kernel 7.2.11).
+Compare each table only within its own session.
+
+| session | sets | rows | sets file |
+|---|---|---|---|
+| `aws-20261028-052725` | spy | 24 | `transport-aws-spy.tsv` |
+| `aws-20261028-052745` | h, k | 66 | `transport-aws-aeron-handoff.tsv` |
+
+### Spy with a live UDP destination (spy)
+
+1 stream, 50,000 msg/s, one host (a) measuring, 5 busy threads in every
+arm. A/A: `aeron-spy-udp` again.
+
+| arm | publications send |
+|---|---|
+| `aeron-spy` | nothing: no destination (the arm of [set 2b](#set-2b-one-host-spy-and-self-udp)) |
+| `aeron-spy-udp` | every frame over kernel UDP to a sink on host b (reliable, `ssc=false`: the sink's status messages drive flow control) |
+| `dpdk-aeron-spy-udp` | the same over md-dpdk's DPDK transport |
+
+Round trip (µs):
+
+| arm | min | p50 | p99 | p99.99 | max | max causes (3 reps) |
+|---|---|---|---|---|---|---|
+| `aeron-spy` | 0.18 (0.16–0.18) | 0.25 (0.25–0.26) | 0.32 (0.32–0.35) | 0.57 (0.56–5.97) | 24.2 (18.0–28.3) | host pause 2, unexplained 1 |
+| `aeron-spy-udp` | 0.17 (0.16–0.18) | 0.26 (0.26–0.27) | 0.34 (0.33–0.34) | 0.65 (0.62–5.07) | 21.6 (12.0–56.9) | unexplained 3 |
+| `dpdk-aeron-spy-udp` | 0.17 (0.15–0.18) | 0.26 (0.26–0.26) | 0.36 (0.36–0.37) | 6.63 (5.01–6.68) | 20.3 (16.7–23.5) | host pause 3 |
+| A/A | 0.18 (0.17–0.18) | 0.26 (0.26–0.26) | 0.33 (0.33–0.33) | 0.79 (0.60–5.16) | 64.5 (22.4–67.5) | host pause 1, softirq TIMER 1, unexplained 1 |
+
+One way (µs):
+
+| arm | min | p50 | p99 | p99.99 | max | max causes (3 reps) |
+|---|---|---|---|---|---|---|
+| `aeron-spy` | 0.08 (0.08–0.09) | 0.14 (0.14–0.14) | 0.17 (0.17–0.17) | 0.43 (0.41–5.28) | 26.2 (10.6–27.2) | host pause 2, unexplained 1 |
+| `aeron-spy-udp` | 0.09 (0.08–0.09) | 0.14 (0.14–0.14) | 0.19 (0.19–0.19) | 0.44 (0.41–5.75) | 30.8 (18.6–63.7) | host pause 2, softirq TIMER 1 |
+| `dpdk-aeron-spy-udp` | 0.09 (0.09–0.09) | 0.15 (0.15–0.15) | 0.20 (0.20–0.23) | 1.56 (0.42–8.60) | 25.4 (18.2–29.7) | host pause 3 |
+| A/A | 0.09 (0.07–0.09) | 0.14 (0.14–0.14) | 0.19 (0.18–0.19) | 0.41 (0.41–4.78) | 27.5 (19.7–31.9) | host pause 3 |
+
+- **A live destination costs the spy nothing at p50:** 0.25 to 0.26 round
+  trip, 0.14 to 0.15 one way, in every arm (A/A spread 0.01). The spy
+  reads the term buffer; the driver's sender sends from it on its own
+  thread. An earlier session (`aws-20261027-203145`, data lost) gave the
+  same p50s (0.26, 0.14): reproduced.
+- **p99:** the spies without DPDK are 0.03 to 0.04 lower round trip than
+  `dpdk-aeron-spy-udp`, 0.01 to 0.03 one way. p99.99 not separated (A/A
+  spread 0.14 round trip, 5.34 one way, overlapping ranges).
+- **Every frame reached the sink.** Per run: 3,000,000 frames sent, the
+  sink on host b counted 3,000,000 (one way) or 3,000,000 pings and
+  3,000,000 echoes (round trip), 0 gaps, 0 behind, 0 refused
+  (`fairness.py`'s sink rule clean). Host a's `driver.bytes-sent`:
+  288,008,800 one way (96 bytes a frame: 64 + Aeron's 32-byte header),
+  576,017,632 to 576,017,856 round trip; `aeron-spy` 0. 0 NAKs, 0
+  retransmits; `dpdk-aeron-spy-udp` 1 short send in each one-way run.
+- **Maxima** (24): host pause 16 (a gap spinner's 24 to 32 µs gap on host
+  a's CPU 7), softirq TIMER 2 (46 to 47 µs, host a CPU 2), unexplained 6.
+  Of those, 5 are the receive loop on host a's CPU 6 not running for 11.6
+  to 76.0 µs with no traced event there (a pause of that busy vCPU, which
+  no spinner shares, or an untraced CPU); 4 of them, and the sixth (A/A,
+  67.5 µs), also had host b's trace overrun on CPU 3 (50,000 to 1,126,810
+  events lost).
+- **Fairness flags** (16): 6 `max` (above), 10 `irq` (one data-NIC
+  interrupt on an isolated CPU in 5 runs, counted per row).
+
+### Driver threading modes at 1 stream (h, k)
+
+How much of Aeron's round trip is the hand-off between the driver's
+threads. Each arm is `dpdk-aeron-rel` (set h) or `aeron-rel` (set k) but for
+the driver's threading; the CPUs are the baseline's, and a mode with fewer
+busy threads leaves its spare CPUs to the gap spinners. A/A: the baseline
+again.
+
+| arm | driver | busy threads a host |
+|---|---|---|
+| `dpdk-aeron-rel`, `aeron-rel` | its own process, `DEDICATED` | 4 |
+| `-emb` | in the measuring process, `DEDICATED` | 4 |
+| `-shnet` (DPDK only) | its own process, `SHARED_NETWORK` | 3 |
+| `-shared` (DPDK only) | its own process, `SHARED` | 2 |
+| `-invoker` | the measuring thread runs it, `INVOKER` | 1 |
+
+DPDK, round trip (µs), 1 stream:
+
+| msg/s | arm | min | p50 | p99 | p99.99 | max |
+|---|---|---|---|---|---|---|
+| 10,000 | `dpdk-aeron-rel` | 27.0 (26.5–27.3) | 30.8 (30.1–31.0) | 36.1 (35.3–36.9) | 57.1 (54.4–59.2) | 140 (131–166) |
+| | `-emb` | 26.7 (26.5–27.0) | 30.1 (29.9–30.3) | 35.4 (35.2–35.6) | 53.6 (52.2–56.1) | 155 (105–197) |
+| | `-shnet` | 26.8 (26.6–26.8) | 30.1 (30.1–30.2) | 35.6 (35.2–35.6) | 55.7 (54.3–55.7) | 137 (98.2–196) |
+| | `-shared` | 27.0 (26.9–27.0) | 30.4 (30.3–30.4) | 35.7 (35.6–35.9) | 54.6 (53.3–56.7) | 134 (117–159) |
+| | `-invoker` | 26.7 (26.6–26.8) | 30.1 (30.1–31.1) | 35.3 (35.2–37.0) | 54.7 (51.8–56.5) | 110 (83.9–118) |
+| | A/A | 27.1 (26.7–27.2) | 30.8 (30.1–30.9) | 36.7 (35.8–37.0) | 64.6 (52.6–64.7) | 116 (98.5–143) |
+| 50,000 | `dpdk-aeron-rel` | 25.3 (25.2–26.2) | 29.0 (28.3–30.9) | 35.3 (33.4–39.0) | 60.7 (55.2–74.8) | 149 (109–197) |
+| | `-emb` | 25.5 (25.4–25.5) | 29.1 (28.7–29.2) | 35.5 (33.7–35.6) | 60.6 (57.1–63.1) | 154 (125–200) |
+| | `-shnet` | 25.5 (25.4–25.6) | 28.7 (28.6–28.7) | 33.9 (33.6–34.0) | 55.2 (55.0–55.5) | 124 (123–125) |
+| | `-shared` | 25.6 (25.4–25.6) | 28.8 (28.7–29.4) | 34.1 (33.9–35.9) | 56.0 (55.8–65.8) | 210 (195–216) |
+| | `-invoker` | 25.7 (25.2–26.0) | 29.0 (28.5–30.1) | 34.1 (33.6–35.5) | 57.0 (56.3–57.3) | 127 (120–129) |
+| | A/A | 25.3 (25.3–25.5) | 28.6 (28.5–29.1) | 33.7 (33.5–35.6) | 55.7 (55.4–65.7) | 204 (195–268) |
+| 200,000 | `dpdk-aeron-rel` | 24.4 (24.1–24.5) | 27.9 (27.9–28.2) | 33.6 (33.6–35.8) | 63.7 (60.5–66.4) | 152 (123–199) |
+| | `-emb` | 24.3 (24.2–24.3) | 27.8 (27.6–27.8) | 33.7 (33.2–33.8) | 61.9 (60.4–62.8) | 206 (133–209) |
+| | `-shnet` | 24.4 (24.4–24.6) | 28.1 (27.9–28.7) | 33.9 (33.7–37.3) | 63.2 (59.9–77.2) | 220 (137–232) |
+| | `-shared` | 24.5 (24.3–24.6) | 28.7 (28.6–28.7) | 36.6 (36.6–36.7) | 73.7 (68.6–74.2) | 147 (137–224) |
+| | `-invoker` | 24.4 (24.4–24.6) | 28.0 (27.9–28.1) | 33.9 (33.7–34.2) | 61.8 (60.6–62.4) | 131 (126–138) |
+| | A/A | 24.3 (24.3–24.3) | 27.8 (27.7–27.9) | 33.5 (33.3–33.8) | 62.0 (61.2–83.7) | 200 (138–202) |
+
+Kernel UDP, round trip (µs), 1 stream, 50,000 msg/s:
+
+| arm | min | p50 | p99 | p99.99 | max |
+|---|---|---|---|---|---|
+| `aeron-rel` | 35.7 (35.5–35.7) | 41.1 (41.1–41.7) | 47.2 (46.3–48.2) | 70.7 (69.7–85.2) | 144 (136–159) |
+| `-emb` | 35.9 (35.6–35.9) | 41.4 (41.3–41.5) | 47.5 (46.5–48.0) | 87.2 (82.0–331) | **1,191 (768–1,319)** |
+| `-invoker` | 36.3 (36.1–36.9) | 45.9 (44.8–49.5) | 54.7 (54.2–55.6) | 77.1 (76.5–93.7) | 190 (143–299) |
+| A/A | 35.8 (35.7–36.1) | 41.4 (41.0–41.9) | 47.4 (46.2–48.3) | 76.0 (73.2–81.9) | 178 (154–228) |
+
+- **DPDK: the modes level at 1 stream.** At 10,000 and 50,000 msg/s no
+  pair separates at min, p50, p99 or p99.99 (A/A spread at p50 0.75 and
+  2.48). At 200,000 msg/s fully `SHARED` is higher than `DEDICATED`,
+  `-emb` and `-invoker`: p50 by 0.64 to 0.91, p99 by 2.75 to 3.01 (A/A
+  0.38 and 2.30); against `-shnet` not separated. One driver thread
+  doing the conductor's, sender's and receiver's work starts to show
+  there.
+- **Kernel: `INVOKER` is slower.** p50 3.1 to 8.4 higher than `aeron-rel`
+  rep for rep (4.80 on the medians), p99 7.49 higher; `-emb` against the
+  baseline not separated below the max. With kernel sockets the measuring
+  thread pays each `sendmsg` and `recvmsg` itself.
+- **1 stream does not load the driver's loops**, so this shows the
+  hand-off cost, not what sharing a thread costs under load. It is not
+  evidence that threading never matters: a many-stream, mixed-load test
+  is being built.
+- An earlier session (data lost) showed the same pattern with lower
+  absolute DPDK figures (p50 22 to 26 against 28 to 31 here): compare
+  only within one session.
+- **Loss:** 0 NAKs, 0 retransmits, 0 loss-gap fills in every point.
+
+#### The embedded kernel driver's millisecond maxima: unexplained
+
+`aeron-rel-emb`'s max was 1,191, 1,319 and 768 µs in its 3 reps; every
+other kernel point (9) stayed at 136 to 299 µs, and DPDK's `-emb` at 105 to
+209, with the same medians. What the data shows:
+
+| evidence | finding |
+|---|---|
+| stalls of 300 µs or more | 7, all in `aeron-rel-emb`, none in the other 63 points: rep 1 one (1,191), rep 2 four (1,140, 381, 1,319, 1,204), rep 3 two (294, 768). Rep 2's three largest are exactly 10.24 s apart (35.34, 45.58, 55.82 s into the run); reps 1 and 3 show no such period |
+| shape | after each stall the latency falls by about 18.4 µs a message (messages are 20 µs apart): the backlog is released at once and drained one message every 1.6 µs. Frames were held, not lost: 0 NAKs, 0 retransmits |
+| the measuring thread (host a) | its own loop-gap record shows no gap at any stall (its gaps are 10 to 28 µs at a steady 2 to 4 s cadence, as in the baseline): the ping kept offering |
+
+Ruled out:
+
+| candidate | why |
+|---|---|
+| thread placement | sender, receiver, conductor and client on CPUs 2, 3, 4 and 5 on both hosts, each about 100 % busy, the same as the external driver's; the client conductor threads (`aeron-client`) and `aeron-md-nra` on CPU 0 in both |
+| a thread off its CPU, IRQ, softirq, IPI on a hot CPU | no traced event on CPUs 2 to 7 of either host overlaps any stall |
+| page faults, preemption | none on a hot CPU in the measured 30 s of any kernel point; host a's faults (about 4,900) are at start-up and warm-up, the same count in every arm |
+| a host pause | the gap spinners on CPUs 6 and 7 of both hosts saw no gap at any stall |
+| TLB-shootdown IPIs from sharing the client's address space | the extra `call_function` IPIs on the driver's CPUs (about 125 on host a) all come at the end of the run, at teardown |
+| NIC queue (RSS) placement | in reps 1 and 2 host b's ping and echo shared one queue (10 times the `NET_RX` softirqs on CPU 3); rep 3 split them and still stalled; A/A reps 1 and 3 shared one queue on host a without stalling |
+| arm order | `-emb` ran first, third and first in its rounds |
+| warm-up | stalls fall 35 to 56 s into the run, after the 30 s warm-up |
+| settings | the point's runner environment, sysctls and Aeron settings match the baseline's but for `DRIVER=embedded` |
+
+Not observable in this session: CPUs 0 and 1 (not traced), where the
+in-process client's conductor and the driver's `aeron-md-nra` thread run
+on the same address space and file table as the sender and receiver; a
+thread waiting in the kernel without sleeping (a spinlock or a lock's
+optimistic spin), which leaves no scheduler event; the driver agents' own
+duty-cycle gaps (not recorded); a pause of one busy vCPU. The DPDK `-emb`
+arm, whose sender and receiver make no system calls, shows none of it.
+Next: trace CPUs 0 and 1 too, and record the agents' duty-cycle gaps.
+
+- **Fairness flags** (82): 64 `max` (unexplained: no recorded event
+  overlaps it on either host), 12 `hostcheck` (the in-process kernel
+  drivers' own N4 warning: RX ring 1,024 of 8,192), 6 `declared`. The
+  `declared` ones are a harness labelling fault, not a different
+  transport: `aeron_lat` tells DPDK from kernel UDP by a `rusteron-dpdk`
+  counter it reads once at start, which missed DPDK in 30 of the 54 DPDK
+  points (every arm at 10,000 msg/s, `-emb` and `-invoker` at every
+  rate). Every one of them ran DPDK: 0 data-NIC interrupts in the point,
+  DPDK's EAL start in each in-process point's log, and p50 28 to 31
+  against the kernel's 41 to 46.
+
+### Onload on ENA: not viable
+
+OpenOnload over AF_XDP on AWS ENA was tried and not pursued. No latency
+was measured.
+
+| | |
+|---|---|
+| session | `aws-20261027-100813`: `c7i.4xlarge` (Intel), Debian 13, kernel 7.2.9, OpenOnload master `a945125` with this repo's `onload-kernel-7.2.patch`. An earlier attempt (`aws-20261027-085814`) lost its spot instance before any result |
+| what happened | registering `enp40s0` with AF_XDP hit a kernel NULL pointer dereference (`BUG: kernel NULL pointer dereference, address: 0000000000000000`, RIP 0x0) in `sfc_resource`: `af_xdp_nic_init_hardware+0x1b7/0x750` ← `efrm_nic_bringup` ← `efrm_nic_add` ← `efrm_nondl_add_device` ← `efrm_nondl_try_add_device` ← `efrm_nondl_register_netdev`. The instance froze (SSH timed out; AWS status checks still passed) |
+| upstream | Onload's README: AF_XDP support is "a community-supported work in progress that is not currently at release quality" ([onload](https://github.com/Xilinx-CNS/onload)). The in-tree ENA driver's documentation lists XDP and RSS, with no AF_XDP zero-copy and no ntuple filters ([ENA](https://docs.kernel.org/networking/device_drivers/ethernet/amazon/ena.html)). On AWS latency, a maintainer: "Latency is not expected to benefit from AF_XDP Onload at all" ([#139](https://github.com/Xilinx-CNS/onload/issues/139)). The same freeze on EC2 is open as [#231](https://github.com/Xilinx-CNS/onload/issues/231) |
+
+Onload's own target is AMD Solarflare NICs, which AWS does not offer. The
+runner's Onload arms (`onload-*`, `transport-aws-onload.tsv`) stay,
+marked experimental.
+
 ## Conclusion
 
 <!-- CONCLUSION -->
@@ -964,7 +1165,7 @@ numbers only within one cloud:
 |---|---|---|---|
 | IPC, one host, under 1,000,000 msg/s | Aeron IPC or `std::sync::mpsc`: round trips within 0.11 of each other | Aeron 0.22 / 0.30–0.39 / 18–41 / 118–146; `mpsc` 0.30–0.33 / 0.45 / 30–33 / 106–143 | Aeron 5 busy threads, `mpsc` 2 |
 | IPC at 5,000,000 msg/s | Aeron IPC: `mpsc`'s round trip falls behind | Aeron 0.25 / 0.38 / 82 / 175 | 5 busy threads |
-| one host, a process boundary | Aeron spy, not UDP to the host's own address (measured with no UDP destination: IPC through the term buffer, see [2b](#set-2b-one-host-spy-and-self-udp)) | 0.26 / 0.32–0.42 / 2.1–17 / 4–108, against 10.3–13.9 / 12–20 / 19–58 / 31–181 | 5 busy threads |
+| one host, a process boundary | Aeron spy, not UDP to the host's own address; a live UDP destination on the same publication leaves its p50 unchanged (AWS: 0.26 round trip, 0.14 one way, [spy](#spy-with-a-live-udp-destination-spy)) | 0.26 / 0.32–0.42 / 2.1–17 / 4–108, against 10.3–13.9 / 12–20 / 19–58 / 31–181 | 5 busy threads |
 | one stream between hosts, lowest latency | Aeron kernel UDP | 1 stream, 10,000 to 200,000 msg/s: 55.6–59.5 / 60.7–63.7 / 77–387 / 89–2,186; mio and ergon-io at 10,000 and 50,000: 61.8–62.9 / 66.0–68.9 / 140–458 / 213–2,886 | Aeron 4 busy threads a host, sockets 1 |
 | 32 or more streams between hosts, up to 50,000 msg/s (measured) | plain sockets, mio or ergon-io (one loop, one socket a stream) | sockets 57.8–60.3 / 65.2–66.6 / 166–286 / 200–671; Aeron 62.3–70.0 / 70.8–80.0 / 176–201 / 231–626 (10,000 and 50,000 msg/s) | 1 busy thread a host, against 4 |
 | 200,000 msg/s between hosts | Aeron: both socket libraries fall seconds behind (151,000 to 195,000 msg/s carried, one `send` a message) | Aeron 55.8–86.3 / 63.7–115 / 147–387 / 324–2,186 at 1 to 128 streams | 4 busy threads a host |
@@ -1043,7 +1244,8 @@ What the runner writes and the analysis reads:
 - Graviton (F-Stack does not build there) and bare metal; one instance size
   a cloud. On AWS: no netem, no 8-stream unreliable UDP, and the `pin`
   set at 1 stream only (the session was trimmed to about 3 h).
-- Kernel bypass for the socket arms (Onload): not in this session.
+- Kernel bypass for the socket arms (Onload): not viable on ENA, no latency measured ([Onload on ENA](#onload-on-ena-not-viable)).
+- Aeron driver threading under load: only 1 stream was run ([h, k](#driver-threading-modes-at-1-stream-h-k)); a many-stream, mixed-load test is being built.
 - Kubernetes pods: the VMs run the arms directly. The node and pod settings
   they need: [Kubernetes latency checklist](../deploy/kubernetes.md#latency-checklist).
 - Payloads other than 64 bytes, IPv6, multicast, TLS and WebSocket.

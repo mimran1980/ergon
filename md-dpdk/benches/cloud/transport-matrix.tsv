@@ -86,6 +86,7 @@ arm  eio-tcp-sqpoll-core tcp_lat sockets two --impl ergon --backend uring-sqpoll
 arm  eio-tcp-sqpoll-sib  tcp_lat sockets two --impl ergon --backend uring-sqpoll --sqpoll-cpu {loop_sibling}
 arm  mio-tcp-smt      tcp_lat    sockets  two  --impl mio
 # the socket and Aeron UDP arms again under Onload (transport-aws-onload.tsv)
+# (experimental: not viable on ENA, see transport-aws-onload.tsv)
 arm  onload-mio-tcp   tcp_lat    onload   two  --impl mio
 arm  onload-eio-tcp   tcp_lat    onload   two  --impl ergon
 arm  onload-mio-udp   udp_lat    onload   two  --impl mio

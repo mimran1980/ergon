@@ -372,9 +372,9 @@ median of the reps' maxima:
 Sessions: 1 and 2b `20261026-120448-transport-b`, 3a
 `20261026-172859-transport-a`, 2a `20261026-221959-transport-a`, 3b
 `20261026-222001-transport-a`. Directory on 2 MiB pages (`aeron-ipc-huge`)
-and on tmpfs were not separated at any load. `aeron-spy`'s its publications had no destination, so they sent nothing on the wire: it measures IPC through a UDP publication's term buffer, not a spy on a stream that also goes to another host; a
-spy whose publications have a live UDP destination (`aeron-spy-udp`) is
-being measured. Kernel UDP's p50 grows with
+and on tmpfs were not separated at any load. `aeron-spy`'s publications had no destination (`driver.bytes-sent` 0).
+With a live UDP destination on AWS its p50 is unchanged
+([below](#aws-spy-driver-threading-and-onload)). Kernel UDP's p50 grows with
 streams (one publication, subscription and channel each); at 32 and 128
 streams mio and ergon-io sockets are 3.7 to 10.5 µs lower at p50, but at
 200,000 msg/s only Aeron keeps up. Under 0.1 % loss Aeron's max is 10.1 to
@@ -456,6 +456,69 @@ frames came late, not lost; that point's max is 2,213 µs. One DPDK max
 kernel, are unexplained (the book lists what was ruled out). The DPDK
 short sends are not traced to a cause.
 
+## AWS: spy, driver threading and Onload
+
+<!-- RESULTS: md-dpdk aws spy threading -->
+
+Sessions `aws-20261028-052725` (spy) and `aws-20261028-052745` (h, k): two
+`c7a.2xlarge` spot pairs, us-east-1, commit `2f8d5c21`, 3 reps, 0 failures,
+the CPU map above. Tables, every max and the fairness flags:
+[the book](https://mimran1980.github.io/ergon/transports/comparison.html#aws-spy-driver-threading-and-onload).
+
+Spy, 1 stream, 50,000 msg/s, µs, the median of 3 reps (range); 5 busy
+threads:
+
+| arm | publications send | round trip p50 | p99 | one way p50 | p99 | max (round trip) |
+| --- | --- | --- | --- | --- | --- | --- |
+| `aeron-spy` | nothing (no destination) | 0.25 (0.25–0.26) | 0.32 | 0.14 (0.14–0.14) | 0.17 | 24.2 (18.0–28.3) |
+| `aeron-spy-udp` | every frame, kernel UDP, to a sink on host b | 0.26 (0.26–0.27) | 0.34 | 0.14 (0.14–0.14) | 0.19 | 21.6 (12.0–56.9) |
+| `dpdk-aeron-spy-udp` | the same over DPDK | 0.26 (0.26–0.26) | 0.36 | 0.15 (0.15–0.15) | 0.20 | 20.3 (16.7–23.5) |
+
+- A live destination leaves the spy's p50 unchanged (A/A spread 0.01);
+  the earlier session's p50s (0.26, 0.14; data lost) reproduced.
+- The sink received every frame: 3,000,000 a run (and 3,000,000 echoes
+  round trip), 0 gaps. Host a's `driver.bytes-sent` 288,008,800 one way
+  (96 bytes a frame), 576,017,632 to 576,017,856 round trip; `aeron-spy` 0.
+  0 NAKs, 0 retransmits; DPDK 1 short send in each one-way run.
+
+Threading modes, 1 stream, round trip p50 (µs) and max:
+
+| set | arm | 10,000 msg/s | 50,000 | 200,000 | max (50,000) |
+| --- | --- | --- | --- | --- | --- |
+| h | `dpdk-aeron-rel` (dedicated, own process) | 30.8 | 29.0 | 27.9 | 149 (109–197) |
+| | `-emb` (dedicated, in-process) | 30.1 | 29.1 | 27.8 | 154 (125–200) |
+| | `-shnet` (`SHARED_NETWORK`) | 30.1 | 28.7 | 28.1 | 124 (123–125) |
+| | `-shared` (`SHARED`) | 30.4 | 28.8 | 28.7 | 210 (195–216) |
+| | `-invoker` (`INVOKER`) | 30.1 | 29.0 | 28.0 | 127 (120–129) |
+| k | `aeron-rel` (kernel UDP) | | 41.1 (41.1–41.7) | | 144 (136–159) |
+| | `aeron-rel-emb` | | 41.4 (41.3–41.5) | | 1,191 (768–1,319) |
+| | `aeron-rel-invoker` | | 45.9 (44.8–49.5) | | 190 (143–299) |
+
+- DPDK: the modes are not separated at 10,000 and 50,000 msg/s; at
+  200,000 `SHARED` is 0.64 to 0.91 higher at p50 and 2.75 to 3.01 at p99.
+  Kernel: `INVOKER` 3.1 to 8.4 higher at p50. 1 stream does not load the
+  driver's loops: a many-stream, mixed-load test is being built. An earlier
+  session (data lost) had the same pattern at lower absolute values
+  (DPDK p50 22 to 26): compare within one session only.
+- `aeron-rel-emb`'s millisecond maxima (all 3 reps; 7 stalls of 294 to
+  1,319 µs, none in the other 63 points) are unexplained. Ruled out:
+  placement, any traced event on CPUs 2 to 7 of either host, page faults,
+  host pauses, NAKs, RSS queue sharing, arm order. The untraced CPUs 0 and
+  1 (the in-process client's conductor) and the driver agents' duty-cycle
+  gaps are the next things to record.
+
+Onload over AF_XDP on ENA: not viable, no latency measured. On
+`c7i.4xlarge` (`aws-20261027-100813`, kernel 7.2.9, OpenOnload `a945125`
+with `benches/cloud/onload-kernel-7.2.patch`), registering the data NIC hit
+a kernel NULL pointer dereference in `sfc_resource`
+(`af_xdp_nic_init_hardware`) and the instance froze. Upstream calls AF_XDP
+a community-supported work in progress, the in-tree ENA driver has no
+AF_XDP zero-copy or ntuple filters, and Onload issue #139 expects no
+latency gain from AF_XDP; the freeze on EC2 is open as #231. Onload's
+target is AMD Solarflare NICs, not offered on AWS. The runner's `onload-*`
+arms stay, marked experimental. Details and links:
+[the book](https://mimran1980.github.io/ergon/transports/comparison.html#onload-on-ena-not-viable).
+
 ## Recommended configuration
 
 Kernel UDP in production ([README](README.md)). Only settings with a
@@ -503,6 +566,12 @@ not as an Aeron message.
   caches' 1.8 µs need one.
 - What sends host a's frames to closed ports between load points
   (`noport-dpdk-queue-drop`).
+- `aeron-rel-emb`'s millisecond maxima (kernel UDP, in-process driver):
+  unexplained ([above](#aws-spy-driver-threading-and-onload)).
+- `aeron_lat` labels a DPDK point `aeron-udp` when its one read of the
+  driver's counters at start finds no `rusteron-dpdk` counter: 30 of 54
+  in `aws-20261028-052745` (6 `declared` flags). Each ran DPDK (0
+  data-NIC interrupts, p50 28 to 31).
 - `fairness.py` flags the DPDK arms' points because the kernel's
   `busy_read` and `busy_poll` read 0 there (240 in `aws-20261027-062105`);
   no kernel socket is on a DPDK arm's path, but the rule does not yet
