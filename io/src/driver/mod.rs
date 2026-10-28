@@ -41,6 +41,7 @@ use crate::dns::{DnsConfig, Lookup, Resolver};
 use crate::endpoint::sealed::{Io, RouteSlot};
 use crate::endpoint::{ConnId, ConnMut, Dial, DriverStats, Endpoint, Handler, Receive, TcpInfo};
 use crate::error::{Error, Result};
+use crate::netstack::{Kernel, NetStack};
 use crate::placement::{self, CpuError};
 use crate::route::{self, Flow, QuickAckCheck, QuickAckError, RouteCheck};
 use crate::{RxMeta, sys};
@@ -293,6 +294,27 @@ enum Imp {
     Uring(uring::Uring),
 }
 
+impl Imp {
+    /// The connection's `TCP_INFO`, from the backend's stack.
+    fn tcp_info(&self, fd: RawFd) -> std::io::Result<TcpInfo> {
+        match self {
+            Self::Epoll(e) => e.tcp_info(fd),
+            #[cfg(feature = "uring")]
+            Self::Uring(_) => sys::tcp_info(fd),
+        }
+    }
+
+    /// The NIC queue of the socket's last packet (0: none known), from the
+    /// backend's stack.
+    fn napi_id(&self, fd: RawFd) -> u32 {
+        match self {
+            Self::Epoll(e) => e.napi_id(fd),
+            #[cfg(feature = "uring")]
+            Self::Uring(_) => sys::incoming_napi_id(fd).unwrap_or(0),
+        }
+    }
+}
+
 /// How often deadlines and timers are checked, in microseconds (only for
 /// endpoints with deadlines).
 const EXPIRY_CHECK_US: u32 = 250;
@@ -364,27 +386,28 @@ impl SockOpts {
         }
     }
 
-    /// `datagram`: a UDP socket, which takes the socket-level options only
-    /// (timestamps, `SO_RCVBUF`, `SO_BUSY_POLL`), no TCP one.
-    fn apply(&self, fd: RawFd, datagram: bool) -> Result<()> {
+    /// Sets the options on `fd`, through stack `S`. `datagram`: a UDP
+    /// socket, which takes the socket-level options only (timestamps,
+    /// `SO_RCVBUF`, `SO_BUSY_POLL`), no TCP one.
+    fn apply<S: NetStack>(&self, fd: RawFd, datagram: bool) -> Result<()> {
         if self.timestamps {
-            sys::enable_rx_timestamps(fd)?;
+            S::enable_rx_timestamps(fd)?;
         }
         if let Some(b) = self.rcvbuf {
-            sys::set_rcvbuf(fd, b)?;
+            S::set_rcvbuf(fd, b)?;
         }
-        sys::set_busy_poll(fd, self.busy_poll_us)?;
+        S::set_busy_poll(fd, self.busy_poll_us)?;
         if datagram {
             return Ok(());
         }
         let (idle, interval, count) = self.keepalive;
         if idle > 0 {
-            sys::set_tcp_keepalive(fd, idle, interval, count)?;
+            S::set_tcp_keepalive(fd, idle, interval, count)?;
         }
         if self.user_timeout_ms > 0 {
-            sys::set_tcp_user_timeout(fd, self.user_timeout_ms)?;
+            S::set_tcp_user_timeout(fd, self.user_timeout_ms)?;
         }
-        sys::apply_tcp_timers(fd, self.rto_min_us, self.delack_max_us)?;
+        S::apply_tcp_timers(fd, self.rto_min_us, self.delack_max_us)?;
         Ok(())
     }
 
@@ -410,7 +433,8 @@ impl SockOpts {
         on_loop: bool,
     ) -> Result<RouteCost> {
         let fd = ep.fd();
-        self.apply(fd, E::DATAGRAM)?;
+        // The kernel's: connections are set up on kernel sockets only.
+        self.apply::<Kernel>(fd, E::DATAGRAM)?;
         if E::DATAGRAM {
             return Ok(RouteCost::default());
         }
@@ -1116,10 +1140,7 @@ impl<E: Endpoint> Driver<E> {
     /// packet).
     #[must_use]
     pub fn nic_polling_active(&self) -> bool {
-        self.cfg.backend.polls_nic()
-            && self
-                .iter()
-                .all(|(_, c)| sys::incoming_napi_id(c.fd()).unwrap_or(0) != 0)
+        self.cfg.backend.polls_nic() && self.iter().all(|(_, c)| self.imp.napi_id(c.fd()) != 0)
     }
 
     /// One iteration: send what was queued since the last poll (through
@@ -1243,7 +1264,7 @@ impl<E: Endpoint> Driver<E> {
                 continue;
             };
             let t0 = rdtsc();
-            let read = sys::tcp_info(fd);
+            let read = self.imp.tcp_info(fd);
             let ns = ticks_ns(rdtsc().wrapping_sub(t0), self.ticks_per_us);
             self.stats.tcp_info_samples += 1;
             self.stats.tcp_info_max_ns = self.stats.tcp_info_max_ns.max(ns);
@@ -1369,48 +1390,11 @@ impl<E: Endpoint> Driver<E> {
     fn send_queued<H: Handler>(&mut self, handler: &mut H) -> Result<()> {
         self.tx_fresh = false;
         match &mut self.imp {
-            Imp::Epoll(e) if E::DATAGRAM => {
-                send_datagrams(e, &mut self.conns, &mut self.stats, handler);
-                Ok(())
-            }
             Imp::Epoll(e) => {
-                // The send set only: a connection stays listed while bytes
-                // are left (a full socket) and leaves once it has none.
-                let mut k = 0;
-                while let Some(&i) = self.conns.tx_dirty.get(k) {
-                    let open = self.conns.is_open(i);
-                    let Some(c) = self.conns.at(i).filter(|_| open) else {
-                        self.conns.unlist_tx(k);
-                        continue;
-                    };
-                    if c.tx_queue().is_empty() {
-                        self.conns.unlist_tx(k);
-                        continue;
-                    }
-                    self.stats.send_calls += 1;
-                    self.stats.sends += 1;
-                    let fd = c.fd();
-                    match sys::send(fd, c.tx_queue().pending()) {
-                        Ok(n) => {
-                            // Moves the head only: the unsent tail stays put.
-                            c.tx_queue().sent(n);
-                            c.on_handed(n);
-                            if c.tx_queue().is_empty() {
-                                self.conns.unlist_tx(k);
-                            } else {
-                                k += 1;
-                            }
-                        }
-                        Err(err) => {
-                            let err = c.close_reason(err.into());
-                            let id = self.conns.id(i);
-                            e.remove(fd);
-                            self.conns.remove(i);
-                            self.conns.unlist_tx(k);
-                            self.stats.closed += 1;
-                            handler.on_closed(id, err);
-                        }
-                    }
+                if E::DATAGRAM {
+                    send_datagrams(e, &mut self.conns, &mut self.stats, handler);
+                } else {
+                    send_stream(e, &mut self.conns, &mut self.stats, handler);
                 }
                 Ok(())
             }
@@ -1442,14 +1426,62 @@ fn timestamp_keeper() -> Option<socket2::Socket> {
     Some(s)
 }
 
+/// The send pass of stream endpoints (`epoll-spin`, `recv-busy`), through
+/// stack `S`: the send set only. A connection stays listed while bytes are
+/// left (a full socket) and leaves once it has none.
+#[inline]
+fn send_stream<S: NetStack, E: Endpoint, H: Handler>(
+    e: &mut epoll::Epoll<S>,
+    conns: &mut Conns<E>,
+    stats: &mut DriverStats,
+    handler: &mut H,
+) {
+    let mut k = 0;
+    while let Some(&i) = conns.tx_dirty.get(k) {
+        let open = conns.is_open(i);
+        let Some(c) = conns.at(i).filter(|_| open) else {
+            conns.unlist_tx(k);
+            continue;
+        };
+        if c.tx_queue().is_empty() {
+            conns.unlist_tx(k);
+            continue;
+        }
+        stats.send_calls += 1;
+        stats.sends += 1;
+        let fd = c.fd();
+        match S::send(fd, c.tx_queue().pending()) {
+            Ok(n) => {
+                // Moves the head only: the unsent tail stays put.
+                c.tx_queue().sent(n);
+                c.on_handed(n);
+                if c.tx_queue().is_empty() {
+                    conns.unlist_tx(k);
+                } else {
+                    k += 1;
+                }
+            }
+            Err(err) => {
+                let err = c.close_reason(err.into());
+                let id = conns.id(i);
+                e.remove(fd);
+                conns.remove(i);
+                conns.unlist_tx(k);
+                stats.closed += 1;
+                handler.on_closed(id, err);
+            }
+        }
+    }
+}
+
 /// The send pass of datagram endpoints (`epoll-spin`): each datagram of a
 /// connection in the send set goes to the kernel whole, in order, until its
 /// ring is empty (it leaves the set) or the socket's send buffer is full
 /// (it stays). `ECONNREFUSED` is counted, not a close: it reports an
 /// earlier datagram's ICMP port unreachable, the kernel sent nothing, and
 /// the datagram is tried once more in this pass.
-fn send_datagrams<E: Endpoint, H: Handler>(
-    e: &mut epoll::Epoll,
+fn send_datagrams<S: NetStack, E: Endpoint, H: Handler>(
+    e: &mut epoll::Epoll<S>,
     conns: &mut Conns<E>,
     stats: &mut DriverStats,
     handler: &mut H,
@@ -1472,13 +1504,13 @@ fn send_datagrams<E: Endpoint, H: Handler>(
             };
             stats.send_calls += 1;
             stats.sends += 1;
-            match sys::send_datagram(fd, d) {
+            match S::send_datagram(fd, d) {
                 Ok(true) => {
                     c.sent_tx();
                     retried = false;
                 }
                 Ok(false) => break,
-                Err(err) if err.raw_os_error() == Some(libc::ECONNREFUSED) => {
+                Err(err) if S::refused(&err) => {
                     c.on_refused();
                     if retried {
                         break;
@@ -1568,11 +1600,11 @@ pub struct Reads {
 }
 
 impl Reads {
-    /// [`RxMeta`] for a read that returned data through `slot`: the next
-    /// sequence number, the kernel's stamps, and with `stamp` the time now
-    /// (read first, nearest the read). Off, no clock is read.
+    /// [`RxMeta`] for a read that returned data through `slot` of stack
+    /// `S`: the next sequence number, the stack's stamps, and with `stamp`
+    /// the time now (read first, nearest the read). Off, no clock is read.
     #[inline]
-    pub fn next(&mut self, slot: &sys::MsgSlot) -> RxMeta {
+    pub fn next<S: NetStack>(&mut self, slot: &S::RxSlot) -> RxMeta {
         let rx_read_ns = if self.stamp {
             crate::clock::realtime_ns()
         } else {
@@ -1581,7 +1613,7 @@ impl Reads {
         self.seq += 1;
         RxMeta {
             rx_read_ns,
-            ..slot.meta(self.seq)
+            ..S::rx_meta(slot, self.seq)
         }
     }
 
@@ -1606,23 +1638,24 @@ impl Reads {
     }
 }
 
-/// Reads once from `conn` through `slot` and delivers what arrived: `true`
-/// when bytes were delivered (which may have queued a send).
-fn recv_one<E, H>(
+/// Reads once from `conn` through `slot` of stack `S` and delivers what
+/// arrived: `true` when bytes were delivered (which may have queued a send).
+fn recv_one<S, E, H>(
     conn: &mut E,
     id: ConnId,
-    slot: &mut sys::MsgSlot,
+    slot: &mut S::RxSlot,
     handler: &mut H,
     stats: &mut DriverStats,
     reads: &mut Reads,
 ) -> Result<bool>
 where
+    S: NetStack,
     E: Receive<H>,
     H: Handler,
 {
-    slot.arm(conn.rx_space());
+    S::arm(slot, conn.rx_space());
     stats.recvmsg_calls += 1;
-    match sys::recvmsg(conn.fd(), slot) {
+    match S::recv(conn.fd(), slot) {
         Ok(None) => {
             stats.recvmsg_eagain += 1;
             Ok(false)
@@ -1630,19 +1663,19 @@ where
         // A stream's end; a datagram endpoint's empty datagram.
         Ok(Some(0)) if !E::DATAGRAM => Err(Error::Closed),
         // Longer than the buffer: the kernel cut it. Dropped, counted.
-        Ok(Some(_)) if E::DATAGRAM && slot.truncated() => {
+        Ok(Some(_)) if E::DATAGRAM && S::truncated(slot) => {
             conn.on_truncated();
             Ok(true)
         }
         Ok(Some(n)) => {
-            let meta = reads.next(slot);
+            let meta = reads.next::<S>(slot);
             stats.completions += 1;
             stats.messages += conn.on_received(id, n, &meta, handler)? as u64;
             Ok(true)
         }
         // An ICMP port unreachable for an earlier datagram: counted, the
         // socket stays open.
-        Err(e) if E::DATAGRAM && e.raw_os_error() == Some(libc::ECONNREFUSED) => {
+        Err(e) if E::DATAGRAM && S::refused(&e) => {
             conn.on_refused();
             Ok(true)
         }

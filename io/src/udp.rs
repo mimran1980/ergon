@@ -23,12 +23,13 @@
 use std::net::{SocketAddr, UdpSocket};
 use std::os::fd::{AsRawFd, RawFd};
 
-use socket2::{Domain, Protocol, SockRef, Socket, Type};
+use socket2::SockRef;
 
 use crate::RxMeta;
 use crate::endpoint::sealed::{Deliver, Io, RouteSlot};
 use crate::endpoint::{ConnId, ConnMut, Handler};
 use crate::error::{Error, Result};
+use crate::netstack::{Kernel, Sockets};
 use crate::stream::TxQueue;
 
 /// The largest UDP payload over IPv4 (65 535 less the IP and UDP headers).
@@ -150,15 +151,7 @@ impl UdpConn {
 
     fn socket(local: SocketAddr, opts: &UdpOptions) -> Result<UdpSocket> {
         opts.check()?;
-        let s = Socket::new(Domain::for_address(local), Type::DGRAM, Some(Protocol::UDP))?;
-        s.set_nonblocking(true)?;
-        if let Some(b) = opts.sndbuf {
-            s.set_send_buffer_size(usize::try_from(b).map_err(|_| {
-                Error::Config(format!("udp sndbuf {b} does not fit this platform"))
-            })?)?;
-        }
-        s.bind(&local.into())?;
-        Ok(s.into())
+        Kernel::udp_bind(local, opts.sndbuf)
     }
 
     fn build(sock: UdpSocket, connected: bool, opts: &UdpOptions) -> Result<Self> {
