@@ -666,14 +666,15 @@ def socket_point(p):
 
 # Kernel bypass: an arm whose data path never meets a kernel socket, as DPDK
 # owns the data NIC (setup dpdk: md-dpdk's media driver, a sink arm's on both
-# hosts; setup fstack: F-Stack's own TCP on DPDK). The kernel's socket busy
+# hosts; setup fstack: F-Stack's own TCP on DPDK; setup dpdk-raw: the
+# dpdk-raw floor, ergon-md-dpdk's packet path alone). The kernel's socket busy
 # poll acts only on a kernel socket's read of a NIC's NAPI queue, so it has
 # no effect there, and the set-up before such an arm (vm.sh stop) leaves it
 # at 0: the settings and shared-knob rules leave these knobs out for its
 # points. Onload is no bypass here: the NIC's NAPI fills its AF_XDP ring.
-BYPASS_SETUPS = {"dpdk", "fstack"}
+BYPASS_SETUPS = {"dpdk", "fstack", "dpdk-raw"}
 # with no set-up recorded, a transport only DPDK carries
-BYPASS_TRANSPORTS = {"aeron-dpdk", "aeron-spy-dpdk"}
+BYPASS_TRANSPORTS = {"aeron-dpdk", "aeron-spy-dpdk", "raw-dpdk"}
 KERNEL_SOCKET_KNOBS = {"net.core.busy_read", "net.core.busy_poll"}
 
 

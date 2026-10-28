@@ -686,11 +686,6 @@ not as an Aeron message.
   driver's counters at start finds no `rusteron-dpdk` counter: 30 of 54
   in `aws-20261028-052745` (6 `declared` flags). Each ran DPDK (0
   data-NIC interrupts, p50 28 to 31).
-- `fairness.py` flags the DPDK arms' points because the kernel's
-  `busy_read` and `busy_poll` read 0 there (240 in `aws-20261027-062105`);
-  no kernel socket is on a DPDK arm's path, but the rule does not yet
-  exempt them. `dpdk-raw` and its A/A are still flagged so
-  (`aws-20261028-123929`).
 - Intel DPDK's external-driver arms: `nic-rx-missed` 8,940 to 17,698 a run
   at 128 streams with 0 NAKs and 0 retransmits (`aws-20261028-123929`).
 - The mixed arms' hot-stream stage trace under `SHARED` and `INVOKER`.

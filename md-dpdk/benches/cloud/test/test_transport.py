@@ -287,6 +287,22 @@ class FairnessTest(unittest.TestCase):
                     setup and m.update(runner={"setup": setup})), first=False)
                 self.assertEqual(run.rules(), [], "\n".join(str(v) for v in fairness.check(run.run)))
 
+    def test_dpdk_raw_floor_busy_poll_off_is_clean(self):
+        # the dpdk-raw floor (floor.rs: ergon-md-dpdk's packet path alone,
+        # set-up dpdk-raw, transport raw-dpdk) holds the NIC as DPDK does
+        for runner, transport in (({"setup": "dpdk-raw"}, "raw-dpdk"), (None, "raw-dpdk")):
+            with self.subTest(runner=runner):
+                run = Run(self)
+
+                def fn(m):
+                    for s in m["settings"].values():
+                        s.update(self.BUSY)
+                    m["transport"] = transport
+                    if runner:
+                        m["runner"] = dict(m.get("runner") or {}, **runner)
+                run.edit(FairnessTest.DPDK, fn, first=False)
+                self.assertNotIn("settings", run.rules(), "\n".join(str(v) for v in fairness.check(run.run)))
+
     def test_kernel_arm_busy_poll_off_is_still_flagged(self):
         for setup in ("sockets", "kernel", "onload", None):
             with self.subTest(setup=setup):
