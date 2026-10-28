@@ -227,9 +227,9 @@ fn a_ping_and_a_pong_stamp_every_nth_message() -> R {
 #[test]
 fn the_drivers_stamps_join_the_apps_into_a_breakdown() -> R {
     let root = scratch("joined")?;
-    let (ping, pong) = ping_pong(&root, true)?;
-    ok("ping", &ping)?;
-    ok("pong", &pong)?;
+    let (initiator_out, responder_out) = ping_pong(&root, true)?;
+    ok("ping", &initiator_out)?;
+    ok("pong", &responder_out)?;
     let (dr, notes) = rows(&root.join("driver-ping.csv"))?;
     assert!(notes.iter().any(|n| n.contains("transport=kernel")), "{notes:?}");
     assert!(
