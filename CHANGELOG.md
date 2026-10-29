@@ -104,9 +104,15 @@
   comparison. The ranking uses the cells whose echo was pinned: UDP, and
   F-Stack TCP (`fstack_spin_lat`). Kernel TCP, smoltcp TCP and every
   WebSocket echo stayed on the housekeeping CPU, so those rows are not
-  ranked. This matrix does not show the mixed-load `c7i` outage at
-  second :25. The `c8g` pair has a separate cluster at second :05 on
-  kernel UDP (echo pinned). Every pinned max is labelled.
+  ranked. UDP p99 stays under 52 µs (kernel) and under 46 (smoltcp) at
+  0, 0.1% and 1% loss; F-Stack TCP's p99 and max rise with loss (at 1%,
+  p99 2,216 to 255,984 µs, max 20,057 to 417,929). The same page's `c7a`
+  UDP set is the Aeron comparison: DPDK p99 35.4, kernel Aeron p99 48.6,
+  ergon-io kernel UDP p99 58.4 to 61.8. smoltcp was not in that session.
+  F-Stack and smoltcp do not detect the address, gateway or port. This
+  matrix does not show the mixed-load `c7i` outage at second :25. The
+  `c8g` pair has a separate cluster at second :05 on kernel UDP (echo
+  pinned). Every pinned max is labelled.
 - `uring-sqpoll` with its SQPOLL thread on the loop's SMT sibling, against
   mio with SMT off, both on one physical core (TCP round trip, 1
   connection, AWS `c7i.4xlarge`, the IRQ CPU capped at C1): the sibling

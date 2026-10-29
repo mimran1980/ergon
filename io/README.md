@@ -196,6 +196,27 @@ thread polls (feeds, order connections, `HttpClient` pool connections):
   ignored. Docker lab test, and the same AWS runs: the UDP echo was
   pinned; its TCP and WebSocket echoes were on the housekeeping CPU.
 
+Neither backend detects the address, the gateway or the port. DPDK takes
+the NIC from the kernel, so read those values before the bind and name
+the data NIC. F-Stack requires `fstack_addr`, `fstack_gateway` and exactly
+one of `fstack_pci` and `fstack_vdev` (prefix defaults to 24; the gateway
+is required even for a peer on that subnet):
+
+```text
+fstack-spin,fstack_addr=10.0.1.20,fstack_gateway=10.0.1.1,fstack_pci=0000:00:06.0
+```
+
+smoltcp requires only `ip` (prefix defaults to 24). Leave `gw` out when
+the peer is on that prefix. On a real NIC allowlist it:
+
+```text
+port=0000:00:06.0,ip=10.0.1.20/24,eal=-a 0000:00:06.0
+```
+
+One binary links one of the two DPDKs, not both. The book's
+[backends](https://mimran1980.github.io/ergon/io/backends.html#fstack-spin-tcp-on-f-stack)
+page has every key and its default.
+
 The full table, the evidence and the node settings: the book's
 [choosing a backend](https://mimran1980.github.io/ergon/io/overview.html#choosing-a-backend).
 
@@ -215,8 +236,10 @@ Tables and conclusion: the book's
 |---|---|
 | mio or ergon-io? | Either: no difference. UDP p50 within 0.1 to 0.9 µs (Azure), not separated (AWS). TCP on the same connection (AWS): p50 52.2 against 53.4 µs at 10,000 msg/s, not separated at 50,000; tails not separated. Both make 2 reads, 1 send and 1 `TCP_QUICKACK` re-arm a message. The earlier Azure TCP gap was unequal busy polling, fixed by `Config::busy_poll_us` |
 | overloaded (200,000 msg/s on one TCP loop)? | Neither keeps up; ergon-io drains slower: 104,000 to 134,000 msg/s carried against mio's 113,000 to 154,000 (AWS) |
-| kernel TCP or F-Stack (TCP on DPDK)? | F-Stack, where kernel bypass is allowed: p50 17 to 19 µs lower at 10,000 msg/s and 26 to 28 at 50,000 (AWS `c7a`, the md-dpdk arm), and it carries 200,000 msg/s. ergon-io's `fstack-spin` TCP echo is measured on `c7i` and `c8g` with the echo pinned (no-loss max 134.6 to 359.3 µs). That session leaves kernel TCP, smoltcp TCP and WebSocket unranked: their echo stayed on the housekeeping CPU |
-| sockets or Aeron UDP? | One stream: Aeron (p50 55.6 against 61.8 µs at 50,000 msg/s). 32 to 128 streams: sockets (p50 lower by 3.7 to 10.5 µs), on 1 busy thread against Aeron's 4 |
+| kernel TCP or F-Stack (TCP on DPDK)? | F-Stack, where kernel bypass is allowed: p50 17 to 19 µs lower at 10,000 msg/s and 26 to 28 at 50,000 (AWS `c7a`, the md-dpdk arm), and it carries 200,000 msg/s. ergon-io's `fstack-spin` TCP echo is measured on `c7i` and `c8g` with the echo pinned (no-loss p99 38.8 to 53.2 µs, max 134.6 to 359.3). That session leaves kernel TCP, smoltcp TCP and WebSocket unranked: their echo stayed on the housekeeping CPU |
+| pinned tails, UDP and F-Stack TCP | UDP p99 stays under 52 µs (kernel) and under 46 (smoltcp) at 0, 0.1% and 1% loss. UDP max stays under 2,300 except the `c8g` kernel second-:05 cluster (5,499 to 9,298). F-Stack TCP at 0.1% reaches p99 395 and max 19,907; at 1% p99 2,216 to 255,984 and max 20,057 to 417,929 (one page fault, and retransmits) |
+| sockets or Aeron kernel UDP? (Azure) | One stream, 50,000 msg/s: Aeron p50 55.6, p99 60.7, max 231 to 243, against the sockets' p50 61.8 to 61.9, p99 67.6 to 68.9, max 637 to 2,915. At 32 and 128 streams the sockets' p50 is lower by 3.7 to 10.5. Aeron uses 4 busy threads, sockets 1 |
+| kernel UDP or Aeron, on one AWS session? (`c7a`, 1 stream, 50,000) | Aeron on DPDK: p50 28.0, p99 35.4, max 169 to 178. Aeron on the kernel: p50 40.9, p99 48.6, max 414 to 445. ergon-io kernel UDP: p50 48.4, p99 58.4 to 61.8, max 226 to 553. smoltcp UDP was not in this session |
 | at 200,000 msg/s? | Neither socket library keeps up (one `send` a message on one thread; 151,000 to 195,000 msg/s carried); Aeron does |
 | TCP or Aeron reliable? | Aeron's p50 is 7 to 15 µs lower without loss. Under loss neither tail wins everywhere: Aeron's maxima sit at its 10 ms retransmit linger, TCP's come from its retransmits (8 ms minimum RTO) |
 

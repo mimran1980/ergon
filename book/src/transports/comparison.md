@@ -47,6 +47,8 @@ median of the reps' maxima, with the range across reps in brackets after it.
 | TCP on DPDK (F-Stack) or kernel TCP (AWS)? | F-Stack. p50 lower by 17 to 19 at 10,000 msg/s and 26 to 28 at 50,000 (32.1 to 35.0 against 52.2 to 61.1), and below kernel Aeron reliable by 8.4 to 19.5. At 200,000 msg/s F-Stack keeps up (p50 50.4 at 1 stream, 34.7 at 8) while kernel TCP falls 5 to 16 s behind. 1 busy thread | [AWS](#aws-dpdk-f-stack-and-kernel) |
 | ergon-io TCP, no loss: kernel `epoll-spin`, smoltcp or F-Stack? (`c7i` and `c8g`, one rep, no A/A arm) | No ranking. F-Stack TCP's echo was pinned: no-loss p99 38.8 to 53.2, p99.99 68.7 to 112.1, max 134.6 to 359.3, each unexplained. Kernel TCP, smoltcp TCP and every WebSocket echo stayed on the housekeeping CPU, so those rows stay in the run directory | [io bypass](#ergon-io-kernel-smoltcp-and-f-stack) |
 | UDP: kernel `epoll-spin` or smoltcp? | smoltcp. No loss, p50 5.70 to 7.49 below on `c7i` and 3.78 to 4.02 below on `c8g`. Both lose the kernel peer's drops and nothing at 0% | [io bypass](#ergon-io-kernel-smoltcp-and-f-stack) |
+| Pinned p99 and max, UDP and F-Stack TCP, including loss? | UDP p99 stays under 52 (kernel) and under 46 (smoltcp) at 0, 0.1% and 1%. UDP max stays under 2,300 except the `c8g` kernel second-:05 cluster (5,499 to 9,298). F-Stack TCP no-loss p99 38.8 to 53.2, max 134.6 to 359.3. At 0.1% its p99 reaches 395 and its max 19,907. At 1% its p99 is 2,216 to 255,984 and its max 20,057 to 417,929 (one page fault, and retransmits). Kernel TCP and smoltcp TCP are not in these ranges | [io bypass](#ergon-io-kernel-smoltcp-and-f-stack) |
+| ergon-io UDP against Aeron kernel UDP and Aeron on DPDK? | Same session only. AWS `c7a`, 1 stream, 50,000 msg/s: Aeron on DPDK p99 35.4 (max 169 to 178), Aeron on the kernel p99 48.6 (max 414 to 445), ergon-io kernel UDP p99 58.4 to 61.8 (max 226 to 553). smoltcp UDP was measured on `c7i` and `c8g`, not in that session | [unreliable UDP](#unreliable-udp-u) |
 | Does this `c7i` pair show the once-a-minute ~15 ms outage? | No. `spikes.py` names no periodic cluster in the 96 points, and none in the 36 whose echo was pinned (UDP and F-Stack TCP). Among those 36, maxima of 20 ms and more are 1% loss: three TCP retransmits (20,057 to 51,890) and one page fault of the measuring thread (417,929). The second-:25 outage remains the mixed-load session | [io bypass](#ergon-io-kernel-smoltcp-and-f-stack), [mixed load](#maxima-and-the-c7i-path-outages) |
 | Graviton, once a minute, in this bypass run? | Eight kernel `epoll-spin` UDP points, echo pinned, max 5,499 to 9,298, all at second :05. p50 stays 33.2 to 34.1. smoltcp UDP and F-Stack TCP are outside it. Two kernel WebSocket points at 10,000 msg/s share that second; their echo stayed on the housekeeping CPU | [io bypass](#ergon-io-kernel-smoltcp-and-f-stack) |
 
@@ -1678,6 +1680,40 @@ at those rates are 0.200% and 1.990%. The row's retransmit column is
 empty: the bypass binaries do not fill it. `spikes.py` still reads the
 hosts' TCP counters.
 
+p99 and max on the pinned cells, both machines, all four loads. UDP does
+not retransmit, so its p99 barely moves as the loss rises. F-Stack TCP
+does retransmit, and that is the tail that grows. Kernel TCP and smoltcp
+TCP are omitted: their echo stayed on the housekeeping CPU.
+
+| arm | loss | p99 | max |
+|---|---|---|---|
+| `fstack-spin` TCP | 0 | 38.8 to 53.2 | 134.6 to 359.3 |
+| `fstack-spin` TCP | 0.1% | 43.0 to 395.3 | 737.1 to 19,907.2 |
+| `fstack-spin` TCP | 1% | 2,215.9 to 255,983.6 | 20,057.2 to 417,928.9 |
+| `epoll-spin` UDP | 0 | 39.8 to 50.6 | 153.1 to 9,298.2 |
+| `epoll-spin` UDP | 0.1% | 40.5 to 51.9 | 162.6 to 9,285.0 |
+| `epoll-spin` UDP | 1% | 40.4 to 51.5 | 145.9 to 9,265.4 |
+| `smoltcp-spin` UDP | 0 | 36.2 to 42.8 | 117.5 to 1,331.9 |
+| `smoltcp-spin` UDP | 0.1% | 36.0 to 43.8 | 108.2 to 2,297.8 |
+| `smoltcp-spin` UDP | 1% | 36.2 to 45.4 | 95.6 to 578.4 |
+
+The UDP maxima above a couple of milliseconds are the `c8g` kernel
+second-:05 cluster (all three loss levels) and two `c7i` smoltcp points
+(no loss, max 1,331.9; 0.1%, max 2,297.8). The F-Stack 1% top, p99
+255,983.6 and max 417,928.9, is the page fault in the table below (there
+rounded to the microsecond). The other 1% F-Stack maxima are
+retransmits, 20,057.2 to 210,817.8.
+
+### Against Aeron
+
+This session did not run Aeron. The comparison that did is the `c7a`
+unreliable-UDP set, 1 stream, 50,000 msg/s, three reps: Aeron on DPDK
+p50 28.0, p99 35.4, max 169 to 178; Aeron on the kernel p50 40.9, p99
+48.6, max 414 to 445; ergon-io's kernel UDP p50 48.4, p99 58.4 to 61.8,
+max 226 to 553. smoltcp's UDP figures above are from `c7i` and `c8g`,
+so they are not ranked against either Aeron arm.
+[Unreliable UDP (u)](#unreliable-udp-u).
+
 ### Every max
 
 `spikes.py --transport` on each run directory, counted on the 72 pinned
@@ -1737,7 +1773,7 @@ numbers only within one cloud:
 | mio or ergon-io | either: no difference. UDP p50 within 0.1–0.9 (Azure) and not separated (AWS); TCP on one connection within 1.2 (AWS), tails not separated. Overloaded, ergon-io drains slower | see [2a](#set-2a-unreliable-udp-between-hosts), [the verdict](#mio-against-ergon-io-the-verdict) | 1 busy thread each |
 | lowest latency between hosts, DPDK allowed (AWS) | Aeron on DPDK (md-dpdk), reliable or not; flat from 1 to 8 streams and to 200,000 msg/s | reliable 27.5–30.7 / 35.5–38.7 / 110–162 / 170–297; unreliable 28.0 / 35.4 / 131 / 177 | 4 busy threads a host |
 | TCP between hosts (AWS) | F-Stack (TCP on DPDK): 17–28 below kernel TCP at p50, below kernel Aeron reliable, and keeps up at 200,000 msg/s | F-Stack 32.1–50.4 / 40.2–83.8 / 111–207 / 165–297; kernel TCP 52.2–61.1 / 63.6–85.0 / 145–211 / 298–536 (to 50,000) | 1 busy thread |
-| ergon-io on `c7i` and `c8g` (one rep, pinned echo) | UDP: smoltcp, no-loss p50 5.70 to 7.49 below kernel `epoll-spin` on `c7i` and 3.78 to 4.02 below on `c8g`. F-Stack TCP, no-loss max 135 to 359. Kernel TCP, smoltcp TCP and WebSocket echoes in this session stayed on the housekeeping CPU, so they are not ranked. Separate from the md-dpdk F-Stack row above | [io bypass](#ergon-io-kernel-smoltcp-and-f-stack) | 1 busy thread |
+| ergon-io on `c7i` and `c8g` (one rep, pinned echo) | UDP: smoltcp, no-loss p50 5.70 to 7.49 below kernel `epoll-spin` on `c7i` and 3.78 to 4.02 below on `c8g`. UDP p99 stays under 52 (kernel) and under 46 (smoltcp) at every loss. F-Stack TCP no-loss p99 38.8 to 53.2, max 135 to 359; at 1% loss max 20,057 to 417,929. Kernel TCP, smoltcp TCP and WebSocket are not ranked. Not the same session as Aeron on DPDK | [io bypass](#ergon-io-kernel-smoltcp-and-f-stack) | 1 busy thread |
 | reliable delivery between hosts, no loss | Aeron reliable UDP, for its p50, its p99 and its headroom | Aeron 54.8–57.6 / 59.9–64.3 / 269–1,335 / 902–3,725; TCP 64.7–69.8 / 79–225 / 559–6,017 / 1,366–8,027 (10,000 and 50,000 msg/s); TCP past capacity at 200,000 | Aeron 4 busy threads a host, TCP 1 |
 | reliable under loss | compare the tails at your loss rate: neither wins everywhere. Aeron keeps the lower p50 and, to 0.1 %, the lower p99; its maxima sit at its 10 ms retransmit linger, TCP's come from its retransmits (8 ms minimum RTO) | 0.1 %: Aeron 53.1–61.6 / 67.7–90.1 / 7,246–8,675 / 10,147–10,240; TCP 65.0–68.5 / 127–148 / 3,379–13,132 / 5,615–15,470 | as above |
 | Aeron driver threading with 32 or more streams (AWS `c7i`, `c8g`, kernel and DPDK) | dedicated driver threads, in their own process or in the application: each thread taken from the driver adds latency, more with more streams and on Graviton ([mixed load](#aeron-threading-under-mixed-load-intel-graviton)) | p50 above dedicated: `SHARED_NETWORK` +1.9 to +32.6, `SHARED` +3.1 to +73.7, `INVOKER` +4.9 to +130.8 | dedicated 3 driver threads a host; 2, 1 and 0 |
