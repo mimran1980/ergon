@@ -465,7 +465,7 @@ every CPU with queued pages.
 The Kubernetes sample sets the sized directory and `transparent_hugepage=never`
 because of the start-up requirement and this tail evidence. It does not
 set them as a measured p50 improvement.
-[Which overlay that is](https://github.com/mimran1980/ergon/blob/main/samples/README.md#low-latency-k8s).
+[AWS Kubernetes](https://github.com/mimran1980/ergon/blob/main/samples/README.md#aws-k8s).
 
 ### Set 2a: unreliable UDP between hosts
 
@@ -1845,6 +1845,14 @@ numbers only within one cloud:
   and 200,000 msg/s saturates it (p50 86.0); DPDK, which polls the NIC,
   stays at 28.8.
 
+The row "lowest latency between hosts, DPDK allowed" is the AWS
+Kubernetes layout: overlays `eks-ena-x86` (`c7i.4xlarge`) and
+`eks-ena-arm64` (`c9g.2xlarge`), render and lint only. The numbers in
+this table are from VMs.
+[AWS Kubernetes sample](https://github.com/mimran1980/ergon/blob/main/samples/README.md#aws-k8s).
+Kernel UDP, WebSocket, ergon-io TCP and ergon-io on DPDK have no overlay
+there yet.
+
 ## Reproduce
 
 No cloud: the runner and the analysis against their fixtures.
@@ -1921,8 +1929,10 @@ What the runner writes and the analysis reads:
   [ergon-io bypass set](#ergon-io-kernel-smoltcp-and-f-stack), not that session.
 - Kernel bypass for the socket arms (Onload): not viable on ENA, no latency measured ([Onload on ENA](#onload-on-ena-not-viable)).
 - Aeron driver threading under mixed load: no hot-stream stage trace, so the rise is not split across the hand-offs ([mixed load](#aeron-threading-under-mixed-load-intel-graviton)).
-- Kubernetes pods: the VMs run the arms directly. The node and pod settings
-  they need: [Kubernetes latency checklist](../deploy/kubernetes.md#latency-checklist).
+- Kubernetes pods: the VMs run the arms directly. Node and pod settings:
+  [Kubernetes latency checklist](../deploy/kubernetes.md#latency-checklist).
+  The Aeron-on-DPDK layout those settings belong to:
+  [AWS Kubernetes sample](https://github.com/mimran1980/ergon/blob/main/samples/README.md#aws-k8s).
 - Payloads other than 64 bytes, IPv6, multicast. WebSocket-over-TLS is the
   [ergon-io bypass set](#ergon-io-kernel-smoltcp-and-f-stack) only.
 - DPDK under loss (see above), and Aeron over IPC with more than one stream.

@@ -30,7 +30,8 @@ guide, with which transport to use when:
 [the book](https://mimran1980.github.io/ergon/md-dpdk/overview.html).
 The Kubernetes reference (driver on two exclusive CPUs plus a shared one,
 Aeron apps, node settings, a layout verifier) is the
-[low-latency-k8s sample](../samples/README.md#low-latency-k8s).
+[low-latency-k8s sample](../samples/README.md#aws-k8s)
+(`eks-ena-x86` on c7i.4xlarge, `eks-ena-arm64` on c9g.2xlarge).
 
 > **AI assistance.** Like the rest of ergon, this crate was written **with heavy
 > AI assistance**. See

@@ -119,7 +119,8 @@
   hugepages off cut an Azure idle tail (p99.99 67 to 53 µs, max 546 to
   106) and a traced 16.25 µs `khugepaged` max; one AWS run overlaps. The
   Kubernetes sample documents that Aeron-on-DPDK layout on the existing
-  `eks-ena` overlays (render only). WebSocket, ergon-io TCP and ergon-io
+  `eks-ena` overlays (render only). The book and the READMEs link it at
+  `samples/README.md#aws-k8s`. WebSocket, ergon-io TCP and ergon-io
   on DPDK stay without an overlay until their echoes are pinned.
 - `uring-sqpoll` with its SQPOLL thread on the loop's SMT sibling, against
   mio with SMT off, both on one physical core (TCP round trip, 1

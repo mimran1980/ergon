@@ -173,7 +173,30 @@ in production (`md-dpdk/BENCHMARKS.md`, the opening note and
 [Recommended configuration](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#recommended-configuration)).
 Every DPDK setting below is lab only.
 
-### Which measured path these overlays run
+<a id="aws-k8s"></a>
+### AWS Kubernetes
+
+The book's lowest 1-stream path, when DPDK is allowed, is Aeron on DPDK.
+On EKS that layout is `eks-ena-x86` (`c7i.4xlarge`) or `eks-ena-arm64`
+(`c9g.2xlarge`). The book and the READMEs link here. Both overlays render
+and lint only: they have not been run on EKS, so the latency figures stay
+the VM sessions.
+
+```sh
+kubectl apply -k samples/low-latency-k8s/k8s/overlays/eks-ena-x86
+# eks-ena-arm64 is the Graviton overlay
+```
+
+Fill `k8s/overlays/eks-ena-<arch>/endpoints.env` and replace `REGISTRY/`
+before applying. The quick start below is the node, the plugin and the
+images.
+
+| measured need | where to run it |
+|---|---|
+| 1 stream between hosts, lowest latency, DPDK allowed (AWS `c7a`: p99 35.4, 4 busy threads) | `eks-ena-x86` or `eks-ena-arm64`, this section |
+| kernel UDP in production | no overlay. [BENCHMARKS](../md-dpdk/BENCHMARKS.md#recommended-configuration) recommend kernel UDP; those runs were VMs |
+| 32 or more streams, up to 50,000 msg/s | no overlay. On Azure, mio or ergon-io kernel UDP, 1 busy thread, p50 3.7 to 10.5 µs below Aeron |
+| WebSocket, ergon-io kernel TCP, smoltcp TCP, ergon-io on DPDK | no overlay until the pinned remeasure is in |
 
 The overlays are the Aeron-on-DPDK lab layout. On AWS `c7a`, 1 stream,
 50,000 msg/s, same session, that path's p99 is 35.4 (max 169 to 178),

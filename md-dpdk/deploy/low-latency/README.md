@@ -1,7 +1,7 @@
 # Low-latency Kubernetes deployment of md-dpdk
 
 The pod that was here moved into a full sample:
-[samples/low-latency-k8s](../../../samples/README.md#low-latency-k8s). That sample has the
+[samples/low-latency-k8s](../../../samples/README.md#aws-k8s). That sample has the
 media driver (sender and receiver on two exclusive CPUs, everything else on
 the shared CPU), two Aeron apps, the ergon-shared-cpus chart values, the node
 settings and a verifier that proves the thread layout. The old `pod.yaml`

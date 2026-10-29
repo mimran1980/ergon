@@ -127,7 +127,10 @@ Evidence:
 A NIC of the process's own, where kernel bypass is allowed:
 [`fstack-spin`](backends.md#fstack-spin-tcp-on-f-stack) or
 [`smoltcp-spin`](backends.md#smoltcp-spin-tcp-and-udp-on-smoltcp-over-dpdk)
-(both lab-tested only).
+(both lab-tested only). The AWS Kubernetes layout for Aeron on DPDK,
+the measured 1-stream path when DPDK is allowed, is
+[samples/README.md#aws-k8s](https://github.com/mimran1980/ergon/blob/main/samples/README.md#aws-k8s).
+ergon-io on DPDK has no overlay until its pinned echoes are in.
 
 - **Plain `recv-busy` reads every socket on every poll.** Its poll grows
   with sockets, so a message waits longer for its socket's turn. It leads

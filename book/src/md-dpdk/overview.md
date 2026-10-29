@@ -220,6 +220,8 @@ are infrastructure.
   [Deployment: benchmarks](../deploy/benchmarks.md).
 - Running it in Kubernetes (node and pod settings, no CPU quota):
   [Kubernetes latency checklist](../deploy/kubernetes.md#latency-checklist).
+  The EKS overlays for this driver (`eks-ena-x86`, `eks-ena-arm64`):
+  [AWS Kubernetes sample](https://github.com/mimran1980/ergon/blob/main/samples/README.md#aws-k8s).
 - Aeron kernel UDP and DPDK against mio, ergon-io and TCP:
   [transport latency comparison](../transports/comparison.md).
 - Every run, setting and range:

@@ -242,6 +242,7 @@ Tables and conclusion: the book's
 | kernel UDP or Aeron, on one AWS session? (`c7a`, 1 stream, 50,000) | Aeron on DPDK: p50 28.0, p99 35.4, max 169 to 178. Aeron on the kernel: p50 40.9, p99 48.6, max 414 to 445. ergon-io kernel UDP: p50 48.4, p99 58.4 to 61.8, max 226 to 553. smoltcp UDP was not in this session |
 | at 200,000 msg/s? | Neither socket library keeps up (one `send` a message on one thread; 151,000 to 195,000 msg/s carried); Aeron does |
 | TCP or Aeron reliable? | Aeron's p50 is 7 to 15 µs lower without loss. Under loss neither tail wins everywhere: Aeron's maxima sit at its 10 ms retransmit linger, TCP's come from its retransmits (8 ms minimum RTO) |
+| where is the AWS Kubernetes layout? | Aeron on DPDK, the `c7a` 1-stream row: [`samples/README.md#aws-k8s`](../samples/README.md#aws-k8s) (`eks-ena-x86`, `eks-ena-arm64`). No overlay yet for WebSocket, ergon-io TCP or ergon-io on DPDK |
 
 ## Rate limits and errors
 

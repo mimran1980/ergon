@@ -630,7 +630,10 @@ CPU 1's cpuidle `usage` and `time` before and after (`idle/`).
 
 ## Recommended configuration
 
-Kernel UDP in production ([README](README.md)). Only settings with a
+Kernel UDP in production ([README](README.md)). The lab DPDK layout on
+EKS is
+[samples/README.md#aws-k8s](../samples/README.md#aws-k8s)
+(`eks-ena-x86`, `eks-ena-arm64`, render only). Only settings with a
 separating result above are listed.
 
 | setting | evidence | where it is set |

@@ -19,6 +19,7 @@ Every ergon-io latency figure lives here, once, except the in-memory WebSocket r
 | Kernel TCP or F-Stack (TCP on DPDK)? | F-Stack (the md-dpdk arm): p50 17–28 µs lower on AWS, and it carries 200,000 msg/s where kernel TCP does not. | [Transport comparison](#transport-comparison-udp-tcp-mio-and-ergon-io) |
 | ergon-io `fstack-spin`, `smoltcp-spin` or kernel `epoll-spin`? | UDP, both echoes pinned: smoltcp's no-loss p50 is 5.70–7.49 µs below the kernel on `c7i` and 3.78–4.02 µs below on `c8g`. UDP p99 stays under 52 (kernel) and under 46 (smoltcp) at 0, 0.1% and 1% loss. F-Stack TCP, echo pinned: no-loss p99 38.8–53.2, max 134.6–359.3; at 1% loss p99 2,216–255,984 and max 20,057–417,929. Kernel TCP, smoltcp TCP and WebSocket echoes stayed on the housekeeping CPU, so they are not ranked. | [ergon-io bypass](#ergon-io-kernel-smoltcp-and-f-stack) |
 | ENA adaptive moderation? | Off stopped the polling loop's involuntary preemptions (about 8,900 in 8 min to 0) and cut WebSocket p99.99 from 117–119 to 72–76 µs. HTTP p99.99 did not move. | [Host and NIC settings](#host-and-nic-settings-aws-x86) |
+| AWS Kubernetes for the measured 1-stream path? | Aeron on DPDK: [samples/README.md#aws-k8s](../../samples/README.md#aws-k8s) (`eks-ena-x86`, `eks-ena-arm64`). This page's ergon-io TCP and WebSocket rows are not an overlay. | [ergon-io bypass](#ergon-io-kernel-smoltcp-and-f-stack) |
 
 ## Hosts and runs
 
