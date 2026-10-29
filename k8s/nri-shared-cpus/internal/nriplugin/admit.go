@@ -101,6 +101,9 @@ type Grants struct {
 	Hugepage *latency.HugepageSpec
 	// HugepageEnvs are the env pairs that go with Hugepage.
 	HugepageEnvs []latency.KV
+	// DpdkEnvs are the five copied NIC-pair keys (dpdk.ergon.io), or nil
+	// for none.
+	DpdkEnvs []latency.KV
 	// CpuPartition asks the createRuntime hook for cpuset.cpus.partition=
 	// isolated on the exclusive CPUs.
 	CpuPartition bool

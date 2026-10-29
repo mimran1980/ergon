@@ -59,7 +59,9 @@ The plugin mounts a **sized** hugetlbfs at `/dev/hugepages` and exports
 and `AERON_TERM_BUFFER_SPARSE_FILE=false`. It does **not** set `AERON_DIR`.
 The app creates `$ERGON_HUGEPAGES_DIR/aeron` and points `AERON_DIR` there.
 It does not set `AERON_PERFORM_STORAGE_CHECKS=false`. The address, the
-gateway and the PCI address are not filled in.
+gateway and the PCI address are not filled in by this grant; the opt-in
+`dpdk.ergon.io` ride-along below copies them from the pair the ENA device
+plugin granted.
 
 `emptyDir: {medium: HugePages-2Mi}` is the wrong shape: Kubernetes mounts it
 without a `size=`, and Aeron refuses an unsized hugetlbfs. A sized hugetlbfs
@@ -81,6 +83,29 @@ the `hugepages-2Mi` request draws from) or `nr_overcommit_hugepages`. K8s
 accounts the preallocated pool, so size the request to the pool you actually
 have. Allocation is **mmap-only** — `write()` on hugetlbfs returns `EINVAL`
 even with a full pool, so the storage layer has to map and fault.
+
+### Allowed ride-along: the ENA NIC pair (`dpdk.ergon.io`)
+
+Default **off**: without the annotation the five keys below stay unset. With
+`dpdk.ergon.io/<ctr>: "ena-pair"`, the plugin **copies** the NIC pair the ENA
+device plugin already granted this container
+(`RUSTERON_DPDK_SENDER_{PCI,IPV4_CIDR,GATEWAY}`) into:
+
+| env the app sees | value from the granted pair |
+|---|---|
+| `ERGON_IO_FSTACK` | `fstack-spin,fstack_addr=10.0.1.20,fstack_gateway=10.0.1.1,fstack_pci=0000:00:06.0` |
+| `ERGON_IO_SMOLTCP` | `port=0000:00:06.0,ip=10.0.1.20/24,eal=-a 0000:00:06.0` |
+| `ERGON_DPDK_PCI` | `0000:00:06.0` |
+| `ERGON_DPDK_ADDR` | `10.0.1.20` — the address parsed out of the cidr |
+| `ERGON_DPDK_GATEWAY` | `10.0.1.1` |
+
+The two lines are the shortest real-NIC lines from the
+[backends page](https://mimran1980.github.io/ergon/io/backends.html), copied
+from the granted pair, never guessed. The pod is refused, naming the key,
+when the annotation is set and any of the three is missing, empty or does not
+parse. The plugin never scans sysfs, never runs `dpdk-devbind`, never takes a
+value from the node's default route (that is the management NIC), and sets no
+`AERON_DIR`, no pre-touch and no `RUSTERON_DPDK_HUGE_DIR`.
 
 ### Item 2: move-then-pin
 
@@ -199,6 +224,7 @@ Why it is off: its one committed A/B (run `070339Z`, `rt` arm) is mixed, and und
 | annotation | value | env the app sees |
 |---|---|---|
 | `hugepages.ergon.io/<ctr>` | `2M` | `ERGON_HUGEPAGES_DIR`, `ERGON_HUGEPAGE_SIZE`, `AERON_FILE_PAGE_SIZE`, `AERON_TERM_BUFFER_SPARSE_FILE` (the app sets `AERON_DIR`) |
+| `dpdk.ergon.io/<ctr>` | `ena-pair` | `ERGON_IO_FSTACK`, `ERGON_IO_SMOLTCP`, `ERGON_DPDK_PCI`, `ERGON_DPDK_ADDR`, `ERGON_DPDK_GATEWAY` (copied from the ENA device plugin's pair; default off) |
 | `cpu-partition.ergon.io/<ctr>` | `isolated` | `ERGON_ISOLATED_CGROUP`, `ERGON_ISOLATED_CPUS`, `ERGON_SHARED_CPUS` |
 | `seccomp.ergon.io/<ctr>` | `io-uring` or `runtime-default` | `ERGON_SECCOMP` |
 | `ptp.ergon.io/<ctr>` | `off`, `auto`, or `/dev/ptpN` | `ERGON_PTP_DEVICE`, `ERGON_NODE_FACTS` |

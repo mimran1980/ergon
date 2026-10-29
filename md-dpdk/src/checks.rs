@@ -13,7 +13,7 @@
 //! | **M2** | Term buffers are not sparse | warn |
 //! | **M3** | `AERON_SOCKET_SO_RCVBUF`/`SNDBUF` granted as asked (a probe socket) | socket transport: warn; DPDK (host-local channels only): info |
 //! | **M4** | Kernel busy polling for the socket transport: its state and what was measured, no setting recommended | info |
-//! | **M-host** | T1 and T8 on the agents' CPUs (and the conductor's and EAL main lcore's for T8), T3, T4 (the driver's own directory), T5, T7, T9 (no CPU quota on the driver's cgroup), T22 and T23 (old Aeron affinity names, and the 2 MiB page size when the directory is on hugetlbfs) | as ergon-tune gives them |
+//! | **M-host** | T1 and T8 on the agents' CPUs (and the conductor's and EAL main lcore's for T8), T3, T4 (the driver's own directory), T5, T7, T9 (no CPU quota on the driver's cgroup), T22 and T23 (old Aeron affinity names, and the 2 MiB page size when the directory is on hugetlbfs), T24 (the device plugin's NIC pair under dpdk-ena) | as ergon-tune gives them |
 //! | **M-nic** | T2 and T6 on the data NICs; for the socket transport also N1, N2, and N4 with busy polling | as ergon-tune gives them |
 //! | **M-run** | N1 and T2 again for a socket-transport data NIC once its `carrier_changes` moved and settled | warn |
 //!
@@ -59,7 +59,7 @@ use ergon_tune::{
     Role, Severity, Status, Thread, busy_poll_sysctls, carrier_changes, fs_magic, host_check_line, n1_adaptive_rx,
     n2_deferred_irqs, n4_rx_ring, t1_isolation, t2_nic_irqs, t3_thp, t4_aeron_dir, t5_numa_balancing, t6_nic_node,
     t7_sched_policy, t8_smt_siblings, t9_cpu_quota, t10_smt_on, t22_aeron_affinity_names, t23_aeron_hugepage_env,
-    thread_affinity,
+    t24_dpdk_nic_pair, thread_affinity,
 };
 use rusteron_media_driver::AeronDriverContext;
 use rusteron_media_driver::bindings::aeron_threading_mode_t;
@@ -826,6 +826,7 @@ pub fn host_report<E: Ethtool>(host: &Host, inputs: &Inputs, cache: &mut Ethtool
     findings.push(t22_aeron_affinity_names(read_env));
     let on_hugepages = matches!(fs_magic(host, &inputs.aeron_dir), Ok(FsMagic::HUGETLBFS));
     findings.push(t23_aeron_hugepage_env(on_hugepages, read_env));
+    findings.push(t24_dpdk_nic_pair(inputs.dpdk, read_env));
     findings.push(t5_numa_balancing(host));
     findings.push(t9_cpu_quota(host));
     match &inputs.nics {

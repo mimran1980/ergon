@@ -232,6 +232,26 @@ ergon-io on DPDK (`fstack-spin`, `smoltcp-spin`). The remeasure is in
 faults and unexplained maxima. F-Stack TCP in the `c7a` table is an
 md-dpdk bench arm, not this sample's driver.
 
+The ENA device plugin is what fills PCI, address and gateway for the
+Aeron driver: the `ena-driver` component requests
+`rusteron.io/dpdk-ena-pair`, which injects
+`RUSTERON_DPDK_SENDER_PCI`, `RUSTERON_DPDK_SENDER_IPV4_CIDR` and
+`RUSTERON_DPDK_SENDER_GATEWAY` into the driver container. The minimum
+ergon-io lines built from that pair are:
+
+```text
+fstack-spin,fstack_addr=10.0.1.20,fstack_gateway=10.0.1.1,fstack_pci=0000:00:06.0
+port=0000:00:06.0,ip=10.0.1.20/24,eal=-a 0000:00:06.0
+```
+
+ergon-io does not read those env vars: it takes the line as config. The
+copies (`ERGON_IO_FSTACK`, `ERGON_IO_SMOLTCP`, `ERGON_DPDK_PCI`,
+`ERGON_DPDK_ADDR`, `ERGON_DPDK_GATEWAY`) are only in a container whose
+pod sets `dpdk.ergon.io/<container>: "ena-pair"` (the NRI plugin's
+opt-in, default off — `../k8s/nri-latency-pods/README.md`), so without
+the annotation there is nothing to read. These overlays are still
+render-and-lint only.
+
 ### What has run, and where
 
 | where | what ran | proves |

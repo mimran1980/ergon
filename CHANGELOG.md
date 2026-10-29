@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.1.36] — 2026-10-29
+
+### Added
+
+- `ergon-tune` T24 (`t24_dpdk_nic_pair`): on the DPDK backends and the
+  `dpdk-ena` media driver, warns when the ENA device plugin's NIC pair
+  (`RUSTERON_DPDK_SENDER_{PCI,IPV4_CIDR,GATEWAY}`) is missing, empty or
+  unparsable, naming the exact keys. With all three set the finding prints
+  the shortest `fstack-spin` and `smoltcp-spin` lines built from them. No
+  pair granted is ok, not a guessed address; never unknown. Read-only: it
+  exports nothing, binds no NIC and sets no `AERON_DIR`.
+- The shared-CPU NRI plugin's opt-in `dpdk.ergon.io/<container>: "ena-pair"`
+  annotation: copies the granted NIC pair into `ERGON_IO_FSTACK`,
+  `ERGON_IO_SMOLTCP`, `ERGON_DPDK_PCI`, `ERGON_DPDK_ADDR` and
+  `ERGON_DPDK_GATEWAY`. Off by default; a missing, empty or unparsable
+  value refuses the pod and names the key. No sysfs scan, no dpdk-devbind,
+  no default-route fill.
+
+### Docs
+
+- `samples/README.md` (aws-k8s) and the `ena-driver` component name the
+  device plugin as what fills PCI, address and gateway for the Aeron driver,
+  and give the two minimum lines; the ergon-io backends page now says the
+  address, gateway and port are not guessed but copied from a granted pair.
+
 ## [0.1.35] — 2026-10-29
 
 ### Added

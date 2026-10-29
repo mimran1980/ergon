@@ -1,6 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # The driver on an ENA pair from md-dpdk's device plugin (rusteron.io/dpdk-ena-pair),
-# which injects the pair's PCI addresses, CIDRs and gateways at allocation.
+# which injects RUSTERON_DPDK_SENDER_{PCI,IPV4_CIDR,GATEWAY} at allocation: the
+# plugin is what fills PCI, address and gateway for the Aeron driver.
+# The shortest lines built from that pair (samples/README.md, aws-k8s):
+#   fstack-spin,fstack_addr=10.0.1.20,fstack_gateway=10.0.1.1,fstack_pci=0000:00:06.0
+#   port=0000:00:06.0,ip=10.0.1.20/24,eal=-a 0000:00:06.0
+# The ERGON_IO_FSTACK/ERGON_DPDK_* copies appear only when the pod sets
+# dpdk.ergon.io/<container>: "ena-pair" (the NRI plugin, default off).
 # Lab only (md-dpdk/BENCHMARKS.md: kernel UDP in production).
 apiVersion: kustomize.config.k8s.io/v1alpha1
 kind: Component

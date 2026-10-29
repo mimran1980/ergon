@@ -27,6 +27,7 @@
 //! | T21 | [`t21_tcp_autocorking`] | no caller in this repository (the lab's transport suite sets it off itself) |
 //! | T22 | [`t22_aeron_affinity_names`] | md |
 //! | T23 | [`t23_aeron_hugepage_env`] | md |
+//! | T24 | [`t24_dpdk_nic_pair`] | io (fstack-spin, smoltcp-spin), md (dpdk-ena) |
 //! | K1-K6 | [`k8s_checks`] (with T7 and T9), inside a pod only | io |
 //! | K7 | [`k8s_checks`] with [`Needs::with_nic`] | no caller in this repository names a NIC |
 //! | N1 (`nic`) | `n1_adaptive_rx` | io, md (kernel sockets) |
@@ -62,6 +63,7 @@
 mod aeron;
 mod cpu;
 mod cpuset;
+mod dpdk;
 mod faults;
 mod finding;
 mod host;
@@ -84,6 +86,7 @@ pub use cpu::{
     thread_affinity, thread_policy,
 };
 pub use cpuset::{CPU_LIMIT, CpuSet, CpuSetError};
+pub use dpdk::t24_dpdk_nic_pair;
 pub use faults::{FaultWatch, Faults};
 pub use finding::{Component, Finding, HotCpu, HotSet, Role, Severity, Status};
 pub use host::{Host, ReadError};

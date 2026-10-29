@@ -219,7 +219,9 @@ fstack-spin,loop_cpu=3,fstack_addr=10.0.1.20,fstack_prefix_len=24,fstack_gateway
 Fixed: `pkt_tx_delay=0` and `idle_sleep=0` (no transmit hold, no sleep),
 TSO and LRO off. FreeBSD's other settings are F-Stack's shipped ones.
 
-ergon-io does not detect the address, the gateway or the port.
+ergon-io does not guess the address, the gateway or the port: with the
+pod's `dpdk.ergon.io` opt-in they are copied from the pair the ENA device
+plugin granted, and without one you set them yourself.
 `FstackConf::check` refuses a config that omits `fstack_addr`,
 `fstack_gateway`, or exactly one of `fstack_pci` and `fstack_vdev`.
 The prefix defaults to 24. A peer on that subnet still needs
@@ -318,7 +320,8 @@ let id = driver.connect(FrameDial::<SmolTcp>::on_stack(target, FrameOptions::def
 is a /24 with no gateway: on-link peers are reached by ARP. Set `gw` when
 the peer is on another subnet. `gw_mac` skips ARP for that gateway and is
 refused without `gw`. `port` defaults to `0`, the first DPDK port. These
-values are not detected. On a real NIC pass `eal=-a <pci>` last so DPDK
+values are not guessed either: with the pod's `dpdk.ergon.io` opt-in they
+are copied from the pair the ENA device plugin granted. On a real NIC pass `eal=-a <pci>` last so DPDK
 allowlists that device, and name the data NIC before it is bound, as for
 `fstack-spin`. The shortest real-NIC line is
 `port=0000:00:06.0,ip=10.0.1.20/24,eal=-a 0000:00:06.0`.

@@ -89,6 +89,17 @@ Why: an unsized hugetlbfs is what an emptyDir `medium: HugePages` gives
 you, and Aeron refuses it. A 4 KiB `AERON_DIR` takes a page fault on each
 first touch of a page. Latency effect not measured here.
 
+**The ENA NIC pair** (`dpdk.ergon.io/<ctr>: "ena-pair"`, off by default).
+The device plugin has already put
+`RUSTERON_DPDK_SENDER_{PCI,IPV4_CIDR,GATEWAY}` in the container's env;
+this opt-in copies them into `ERGON_IO_FSTACK` and `ERGON_IO_SMOLTCP`
+(the two shortest real-NIC lines from the
+[backends page](../io/backends.md)) plus `ERGON_DPDK_PCI`,
+`ERGON_DPDK_ADDR` and `ERGON_DPDK_GATEWAY`. A missing, empty or
+unparsable value refuses the pod and names the key. Nothing here scans
+sysfs, runs `dpdk-devbind`, reads the node's default route (that is the
+management NIC), or sets `AERON_DIR`.
+
 ### 2. Isolated partition
 
 `cpuset.cpus.partition=isolated` makes the kernel treat the set as

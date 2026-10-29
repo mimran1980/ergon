@@ -9,6 +9,7 @@ package latency
 
 import (
 	"fmt"
+	"net/netip"
 	"sort"
 	"strconv"
 	"strings"
@@ -491,6 +492,70 @@ func CheckCpuPartitionValue(v string) error {
 	return nil
 }
 
+// The trio the ENA device plugin injects with rusteron.io/dpdk-ena-pair.
+// DpdkEnaPair reads these three and never fills any of them in.
+const (
+	senderPCI     = "RUSTERON_DPDK_SENDER_PCI"
+	senderCIDR    = "RUSTERON_DPDK_SENDER_IPV4_CIDR"
+	senderGateway = "RUSTERON_DPDK_SENDER_GATEWAY"
+)
+
+// DpdkEnaPair is the env the plugin exports for
+// `dpdk.ergon.io/<container>: "ena-pair"`: the two shortest ergon-io lines
+// built from the sender trio the ENA device plugin already put in this
+// container's env, plus the parsed pair. ask is the annotation value, env
+// the container's environment. A bad value, a missing or empty key or an
+// unparsable value is a typed refusal (fail closed) that names the key.
+// The plugin copies only: it never scans sysfs, never calls dpdk-devbind
+// and never fills a value from the node's default route (that is the
+// management NIC), so it sets no AERON_DIR, no pre-touch and no
+// RUSTERON_DPDK_HUGE_DIR.
+func DpdkEnaPair(ask string, env map[string]string) ([]KV, error) {
+	if ask != "ena-pair" {
+		return nil, grantErr("dpdk", "dpdk.ergon.io: %q is not supported; the only value is \"ena-pair\"", ask)
+	}
+	// trimmed, so "  " counts as missing like "".
+	pci := strings.TrimSpace(env[senderPCI])
+	cidr := strings.TrimSpace(env[senderCIDR])
+	gateway := strings.TrimSpace(env[senderGateway])
+	var missing []string
+	for _, kv := range [][2]string{{senderPCI, pci}, {senderCIDR, cidr}, {senderGateway, gateway}} {
+		if kv[1] == "" {
+			missing = append(missing, kv[0])
+		}
+	}
+	if len(missing) > 0 {
+		return nil, grantErr("dpdk",
+			"dpdk.ergon.io: ena-pair copies the NIC pair the ENA device plugin granted this container, but %s is missing or empty; the plugin never guesses a value. Fix: give the pod the rusteron.io/dpdk-ena-pair resource",
+			strings.Join(missing, ", "))
+	}
+	addr, prefix, hasSlash := strings.Cut(cidr, "/")
+	n, convErr := strconv.Atoi(prefix)
+	if !hasSlash || convErr != nil || n < 0 || n > 32 || !isIPv4(addr) {
+		return nil, grantErr("dpdk",
+			"dpdk.ergon.io: %s=%q is not an IPv4 cidr a.b.c.d/len with a prefix of 0 to 32", senderCIDR, cidr)
+	}
+	if !isIPv4(gateway) {
+		return nil, grantErr("dpdk", "dpdk.ergon.io: %s=%q is not an IPv4 address", senderGateway, gateway)
+	}
+	if strings.ContainsAny(pci, " \t,=") {
+		return nil, grantErr("dpdk", "dpdk.ergon.io: %s=%q is not a PCI address or a DPDK device name", senderPCI, pci)
+	}
+	return []KV{
+		{EnvIOFstack, "fstack-spin,fstack_addr=" + addr + ",fstack_gateway=" + gateway + ",fstack_pci=" + pci},
+		{EnvIOSmoltcp, "port=" + pci + ",ip=" + cidr + ",eal=-a " + pci},
+		{EnvDpdkPCI, pci},
+		{EnvDpdkAddr, addr},
+		{EnvDpdkGateway, gateway},
+	}, nil
+}
+
+// isIPv4 reports whether s is a dotted-quad IPv4 address.
+func isIPv4(s string) bool {
+	a, err := netip.ParseAddr(s)
+	return err == nil && a.Is4()
+}
+
 // PartitionGrant is the child-cgroup isolated partition the createRuntime hook
 // set up for the container's exclusive CPUs.
 type PartitionGrant struct {
@@ -522,6 +587,11 @@ const (
 	EnvAeronDir       = "AERON_DIR"
 	EnvAeronPageSize  = "AERON_FILE_PAGE_SIZE"
 	EnvAeronSparse    = "AERON_TERM_BUFFER_SPARSE_FILE"
+	EnvIOFstack       = "ERGON_IO_FSTACK"
+	EnvIOSmoltcp      = "ERGON_IO_SMOLTCP"
+	EnvDpdkPCI        = "ERGON_DPDK_PCI"
+	EnvDpdkAddr       = "ERGON_DPDK_ADDR"
+	EnvDpdkGateway    = "ERGON_DPDK_GATEWAY"
 )
 
 // EnvGrant is the grant set one container got. A zero field means "not
@@ -545,6 +615,8 @@ type EnvGrant struct {
 	NodeFacts string
 	// HugepageEnvs are the env pairs from HugepageMount, or nil.
 	HugepageEnvs []KV
+	// DpdkEnvs are the env pairs from DpdkEnaPair, or nil.
+	DpdkEnvs []KV
 }
 
 // GrantEnv builds the environment the plugin exports for the grants it gave.
@@ -582,5 +654,6 @@ func GrantEnv(g EnvGrant) []KV {
 		out = append(out, KV{EnvNodeFacts, g.NodeFacts})
 	}
 	out = append(out, g.HugepageEnvs...)
+	out = append(out, g.DpdkEnvs...)
 	return out
 }
