@@ -1,4 +1,4 @@
-//! Cluster SBE codecs — ergo-sbe-generated from Aeron schemas (OUT_DIR).
+//! Cluster SBE codecs — ergo-sbe-generated from Aeron schemas (`OUT_DIR`).
 //!
 //! - `session` — Aeron cluster session schema 111
 //! - `mark`    — cluster mark schema
@@ -22,4 +22,5 @@ ergo_sbe::sbe_mod!(pub session);
 ergo_sbe::sbe_mod!(pub mark);
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests;

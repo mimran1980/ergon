@@ -12,8 +12,31 @@ timings. Commands:
                                      group set host rep netem round-seed loads streams arms
                                      (arms: the round's order; aa as <first arm>@AA=1)
   count <pair> <reps> <files>...     the points the pair runs
+  smt <files>...                     the session's SMT, off or on (a sets file's `smt on`
+                                     row; off without one)
+  irq_idle <files>...                the IRQ core idle depth the session requires (a sets
+                                     file's `irq_idle` row; auto without one)
+  loss <files>...                    where a round's netem is applied (a sets file's
+                                     `loss` row; both without one, or kernel-peer)
   binom <offered> <dropped> <loss %> "<lo> <hi> ok|FAIL": the dropped count's
                                      interval at that loss (two-sided, 1 in 10,000)
+
+A sets file may hold one `smt <off|on>` row: the session's SMT (vm.sh
+transport-isolate). With `on`, SMT stays on, each isolated core is listed
+whole in the CPU map, and every arm of the session is a two-host socket arm
+(transport.sh tr_check): a loop on one hyperthread, its sibling idle or
+running that loop's uring-sqpoll SQPOLL thread.
+
+A sets file may hold one `irq_idle <all|n|auto>` row: the IRQ core idle
+depth its session must run every arm at (transport-settings.env
+TR_IRQ_IDLE, resolved on the hosts: transport.sh tr_irq_idle_session). A
+session whose hosts give another stops before its first point; auto (the
+default) takes what they give.
+
+A sets file may hold one `loss <both|kernel-peer>` row. `both` (the default)
+is netem on every host of the round. `kernel-peer` is host b only, the
+kernel peer: egress and an ifb ingress, so a bypass arm's DPDK NIC on host
+a has no qdisc.
 
 A round is one pass over a set's arms at one rep and netem level, in an order
 drawn from that round's own seed: sha256 of "<session seed>:<set>:<rep>:<netem>",
@@ -25,8 +48,12 @@ import math
 import random
 import sys
 
-SETUPS = ("none", "kernel", "dpdk", "sockets")
-HOSTS = ("one", "two")
+SETUPS = ("none", "kernel", "dpdk", "dpdk-raw", "sockets", "fstack", "onload")
+# setups whose NICs DPDK holds: netem (a kernel qdisc) cannot reach them
+DPDK_SETUPS = ("dpdk", "dpdk-raw", "fstack")
+# one: both ends in one process on the set's host; two: ping on a, pong on
+# b; sink: one's run on host a and a sink on b reading every frame it sends
+HOSTS = ("one", "two", "sink")
 
 
 class PlanError(Exception):
@@ -59,15 +86,24 @@ def load(paths):
                 if name in arms or name == "aa":
                     raise PlanError(f"{where}: arm {name} given twice (or named aa, the A/A arm's)")
                 if setup not in SETUPS or hosts not in HOSTS:
-                    raise PlanError(f"{where}: arm {name}: setup is one of {', '.join(SETUPS)}, hosts one or two")
+                    raise PlanError(f"{where}: arm {name}: setup is one of {', '.join(SETUPS)}, hosts one, two or sink")
                 if not all(c.isalnum() or c in "-_" for c in name + binary):
                     raise PlanError(f"{where}: arm {name}: names and binaries are letters, digits, - and _")
                 args = words[5:]
                 if "--nics" in args and args[args.index("--nics") + 1:args.index("--nics") + 2] != ["alt"]:
                     raise PlanError(f"{where}: arm {name}: --nics takes alt (each host's other data NIC)")
                 arms[name] = (binary, setup, hosts, args)
-            elif words[0] == "set" and arms_only:
+            elif words[0] in ("set", "smt", "irq_idle", "loss") and arms_only:
                 continue
+            elif words[0] == "smt":
+                if len(words) != 2 or words[1] not in ("off", "on"):
+                    raise PlanError(f"{where}: smt off or smt on")
+            elif words[0] == "irq_idle":
+                if len(words) != 2 or not (words[1] in ("all", "auto") or words[1].isdigit()):
+                    raise PlanError(f"{where}: irq_idle all, auto or a state index")
+            elif words[0] == "loss":
+                if len(words) != 2 or words[1] not in ("both", "kernel-peer"):
+                    raise PlanError(f"{where}: loss both or loss kernel-peer")
             elif words[0] == "set":
                 if len(words) != 9:
                     raise PlanError(f"{where}: set <id> <pair> <par> <host> <loads> <streams> <netem> <arms>")
@@ -88,17 +124,65 @@ def load(paths):
                 sets.append(dict(id=sid, pair=pair, par=par, host=host, loads=loads, streams=streams,
                                  netem=levels, arms=names, where=where))
             else:
-                raise PlanError(f"{where}: a row is arm or set, not {words[0]}")
+                raise PlanError(f"{where}: a row is arm, set, smt, irq_idle or loss, not {words[0]}")
     for s in sets:
         if s["arms"][0] == "aa":
             raise PlanError(f"{s['where']}: set {s['id']}: aa repeats the set's first arm, so it cannot be first")
         for a in s["arms"]:
             if a != "aa" and a not in arms:
                 raise PlanError(f"{s['where']}: set {s['id']}: no arm {a}")
+        held = sorted(a for a in s["arms"] if a != "aa" and arms[a][1] in DPDK_SETUPS)
+        if held and s["netem"] != ["-"]:
+            raise PlanError(f"{s['where']}: set {s['id']}: {', '.join(held)} run on DPDK, which netem "
+                            "cannot reach: such a set has netem -")
+        # Onload's AF_XDP socket sends by __dev_direct_xmit: past the qdisc too
+        xdp = sorted(a for a in s["arms"] if a != "aa" and arms[a][1] == "onload")
+        if xdp and s["netem"] != ["-"]:
+            raise PlanError(f"{s['where']}: set {s['id']}: {', '.join(xdp)} run on Onload, whose AF_XDP sends "
+                            "netem cannot reach (they skip the qdisc): such a set has netem -")
         kinds = {arms[a][2] for a in s["arms"] if a != "aa"}
-        if kinds != ({"two"} if s["host"] == "ab" else {"one"}):
+        if s["host"] == "ab" and kinds != {"two"} or s["host"] != "ab" and not kinds <= {"one", "sink"}:
             raise PlanError(f"{s['where']}: set {s['id']}: host ab takes two-host arms, a or b one-host arms")
+        # a sink arm measures on host a and reads on b: its set holds both
+        # hosts (never run beside another), with no netem (set on a alone)
+        s["sink"] = "sink" in kinds
+        if s["sink"] and (s["host"] != "a" or s["netem"] != ["-"]):
+            raise PlanError(f"{s['where']}: set {s['id']}: a sink arm (its sink on b) runs in a set on host a, "
+                            "netem -")
     return arms, sets
+
+
+def session_row(paths, key, default):
+    """A session-wide row's value: the files' `<key>` rows (a path ending
+    :arms gives none), which agree; the default without one."""
+    load(paths)
+    seen = {}
+    for path in paths:
+        if not path or path.endswith(":arms"):
+            continue
+        with open(path) as f:
+            for n, line in enumerate(f, 1):
+                words = line.split("#", 1)[0].split()
+                if words and words[0] == key:
+                    seen[f"{path}:{n}"] = words[1]
+    if len(set(seen.values())) > 1:
+        raise PlanError(f"{key} rows disagree: " + ", ".join(f"{w} {v}" for w, v in seen.items()))
+    return next(iter(seen.values()), default)
+
+
+def smt(paths):
+    """The session's SMT, "off" or "on" ("off" without a row)."""
+    return session_row(paths, "smt", "off")
+
+
+def irq_idle(paths):
+    """The IRQ core idle depth the session requires ("auto" without a row)."""
+    return session_row(paths, "irq_idle", "auto")
+
+
+def loss(paths):
+    """Where a round's netem is applied ("both" without a row, or "kernel-peer")."""
+    return session_row(paths, "loss", "both")
 
 
 def seed_of(text):
@@ -127,7 +211,7 @@ def groups(sets, pair):
             tags[s["par"]] = len(out)
             out.append([s])
     for g in out:
-        hosts = [s["host"] for s in g]
+        hosts = ["ab" if s.get("sink") else s["host"] for s in g]
         if len(g) > 1 and ("ab" in hosts or len(set(hosts)) != len(hosts)):
             raise PlanError(f"sets {', '.join(s['id'] for s in g)} run at once: one-host sets on different hosts only")
     return out
@@ -157,7 +241,7 @@ def count(sets, pair, reps):
 def set_seconds(s, reps, warmup_s, point_s, switch_s):
     """A set's measuring time: each arm x stream count a warm-up, a switch
     and its points (each its window and a switch); a one-host set's points
-    twice (transport.sh runs one way, then the round trip)."""
+    (a sink arm's too) twice (transport.sh runs one way, then the round trip)."""
     runs = 1 if s["host"] == "ab" else 2
     return (runs * len(s["arms"]) * len(s["streams"]) * len(s["netem"]) * reps
             * (warmup_s + switch_s + len(s["loads"]) * (point_s + switch_s)))
@@ -237,6 +321,12 @@ def main(argv):
                 print("\t".join([str(gi), s["id"], s["host"], str(rep), netem, str(rs),
                                  ",".join(map(str, s["loads"])), ",".join(map(str, s["streams"])),
                                  ",".join(a + ("@AA=1" if aa else "") for a, aa in order)]))
+        elif cmd == "smt":
+            print(smt(args))
+        elif cmd == "irq_idle":
+            print(irq_idle(args))
+        elif cmd == "loss":
+            print(loss(args))
         elif cmd == "count":
             _, sets = load(args[2:])
             print(count(sets, args[0], int(args[1])))

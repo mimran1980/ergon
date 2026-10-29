@@ -142,6 +142,42 @@
 #   take until that step ends; TERM runs the teardown as soon as the step returns.
 #   Once the teardown has begun, TERM and Ctrl-C are ignored until it has deleted and
 #   verified everything (kill -KILL abandons it: then LAB_DELETE=<stamp> lab.sh).
+#
+#   The transport latency suite, LAB_SUITE=transport (latency: the above, by
+#   default): one pair session of ../transport-matrix.tsv (../transport.sh;
+#   the bench binaries' CLI ../transport-cli.md) in place of the modes and
+#   states, as azure/lab.sh runs it, on the same EC2 set-up (cluster
+#   placement only). LAB_PAIR (a or b, required): the session. Each session
+#   claims a stamp of its own, so its run tag is its own, and every resource
+#   also carries pair=<pair>; its directory is target/md-dpdk-bench/aws-<stamp>
+#   (the session's files in transport/). LAB_TYPE defaults to c7a.2xlarge (8
+#   AMD cores, one thread each: vm.sh transport-isolate's map, CPU 0
+#   housekeeping, CPU 1 the data NICs' IRQs, 2-7 isolated), LAB_MAX_HOURS to
+#   5. Graviton with LAB_ALLOW_ARM=1 (c8g.2xlarge: 8 cores, the same map),
+#   F-Stack arms (setup fstack) included. An x86 type with SMT (c7i.4xlarge:
+#   16 vCPUs, 8 cores) runs with SMT off (transport-tune), its map one CPU a
+#   core alike, unless its sets file says `smt on` (../transport-aws-smt.tsv:
+#   SMT kept on, each isolated core whole in the map; refused with
+#   LAB_THREADS_PER_CORE=1, on Graviton and on C7a-family types). The Onload
+#   session (../transport-aws-onload.tsv: setup onload, OpenOnload over
+#   AF_XDP on the ENA) runs on all three. Each type must take three ENIs (describe-instance-types'
+#   MaximumNetworkInterfaces, read before anything is created). LAB_SEED
+#   (random), LAB_ARMS_FILE, LAB_SETS_FILE (../transport-aws-dpdk.tsv: the AWS
+#   DPDK session), LAB_EXTRA_SRC, TRANSPORT_WARMUP_S, TRANSPORT_POINT_S and
+#   TRANSPORT_SWITCH_S: as azure/lab.sh. LAB_TUNE (the tuning sessions) is
+#   Azure's. LAB_ESTIMATE=1 prints the session's hours, instance-hours and
+#   dollars (on demand, and at spot prices with LAB_SPOT=1). A plan estimated
+#   over 2 h detaches (LAB_DETACH: unset, 1 always, 0 never): a nohup
+#   subshell, its log <dir>/lab.log, its pid <dir>/lab.pid, so it outlives the
+#   shell or session that started it; the run's directory is claimed first.
+#   LAB_SPOT_FALLBACK=1 (with LAB_SPOT=1, cluster or precision-time placement):
+#   when no zone has spot capacity for both, launch them on demand instead,
+#   said so, the market in instances.txt (the teardown still sweeps the run's
+#   spot requests). The backstop is each instance's own deadline (above):
+#   at LAB_MAX_HOURS it powers off and so terminates, its disk, data ENIs and
+#   public address with it; what it leaves (VPC, subnets, security group,
+#   gateway, key pair, placement group) bills nothing, and LAB_DELETE=<stamp>
+#   lab.sh deletes it.
 set -uo pipefail
 export AWS_PAGER=""
 # The original stderr, kept for the teardown: a TERM (an operator's, or the
@@ -179,8 +215,23 @@ remove_snapshot() {
 }
 # until the teardown's own trap (below) takes over, which calls it last
 trap remove_snapshot EXIT
+# the suite: the Aeron transports' latency lab (the default), or the
+# transport latency suite (../transport.sh), one pair session of it
+suite=${LAB_SUITE:-latency}
+case $suite in
+latency) default_type=c7i.2xlarge default_hours=8 ;;
+transport) default_type=c7a.2xlarge default_hours=5 ;;
+*) echo "LAB_SUITE $suite: latency (the default) or transport" >&2; exit 2 ;;
+esac
+# the transport suite's session (LAB_PAIR; `pair` is the run's instances, below)
+tr_pair=${LAB_PAIR:-}
+arms_file=${LAB_ARMS_FILE:-}
+sets_file=${LAB_SETS_FILE:-}
+extra_src=${LAB_EXTRA_SRC:-}
+detach=${LAB_DETACH:-}
+spot_fallback=${LAB_SPOT_FALLBACK:-}
 region=${LAB_REGION:-us-east-1}
-type=${LAB_TYPE:-c7i.2xlarge}
+type=${LAB_TYPE:-$default_type}
 type_a=${LAB_TYPE_A:-$type}
 type_b=${LAB_TYPE_B:-$type}
 # Graviton (Arm) types only with LAB_ALLOW_ARM=1: production runs on x86.
@@ -244,7 +295,7 @@ gapspin_us=${LAB_GAPSPIN_US:-50}
 base=${LAB_BASE:-}
 # the instances' own deadline (hours from launch), in case this machine never
 # gets to delete them (it slept, lost its network): see deadline-userdata.sh
-max_hours=${LAB_MAX_HOURS:-8}
+max_hours=${LAB_MAX_HOURS:-$default_hours}
 # a warm-up load before each mode's first ladder, unrecorded (lib.sh
 # load_sweep): its seconds and messages a second (Aeron's own harness warms
 # 30 s at 25,000); none by default
@@ -254,6 +305,11 @@ tput_seconds=${TPUT_SECONDS:-5}
 user=admin
 stamp=${LAB_DELETE:-$(date +%Y%m%d-%H%M%S)}
 out=$repo/target/md-dpdk-bench/aws-$stamp
+# a detached run (LAB_DETACHED, set only by this script): the directory, and
+# so the stamp, its parent claimed
+if [[ -n ${LAB_DETACHED:-} && -z ${LAB_DELETE:-} ]]; then
+    out=${LAB_DETACHED_OUT:?LAB_DETACHED without its directory} stamp=${LAB_DETACHED_OUT##*/aws-}
+fi
 known=$out/known_hosts
 data_subnet=10.30.1.0/24
 created=0
@@ -269,7 +325,10 @@ aws_cli() {
         "${TMPDIR:-/tmp}/ergon-lab-aws.lock" aws "$@"
 }
 ec2() { aws_cli ec2 --region "$region" "$@"; }
-tags() { echo "ResourceType=$1,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=$stamp},{Key=Name,Value=ergon-md-dpdk-$2}]"; }
+# (the transport suite's resources carry their session's pair too)
+tags() { echo "ResourceType=$1,Tags=[{Key=owner,Value=ergon-lab},{Key=run,Value=$stamp}${pair_tag:-},{Key=Name,Value=ergon-md-dpdk-$2}]"; }
+pair_tag=
+[[ $suite == transport && -z ${LAB_DELETE:-} ]] && pair_tag=",{Key=pair,Value=$tr_pair}"
 tagged() { echo "Name=tag:run,Values=$stamp"; }
 
 # a base revision that cannot be built is found before anything is created
@@ -390,6 +449,71 @@ if [[ -z ${LAB_DELETE:-} ]]; then
         ((fits)) || die "message size $size B fits no mode's MTU: give one @JUMBO=1 (up to $(($(jumbo_mtus "$placement" | cut -d' ' -f2) - 32)) B)"
     done
 fi
+if [[ -z ${LAB_DELETE:-} ]]; then
+    [[ -z $spot_fallback || ($spot_fallback == 1 && $spot == 1) ]] ||
+        die "LAB_SPOT_FALLBACK is 1 (with LAB_SPOT=1: on demand when no zone has spot capacity) or unset"
+    [[ -z $spot_fallback || $placement == cluster || $placement == precision-time ]] ||
+        die "LAB_SPOT_FALLBACK=1 is for the cluster and precision-time placements"
+    [[ -z $detach || $detach == 0 || $detach == 1 ]] || die "LAB_DETACH is 0, 1 or unset, not $detach"
+fi
+if [[ $suite == transport && -z ${LAB_DELETE:-} ]]; then
+    # the pair, the arms and sets files and the extra tree, and every
+    # point's mode (transport.sh tr_check: modes.sh's arm settings, NETEM
+    # refused on DPDK arms, an F-Stack arm on AWS alone), the Aeron
+    # arms' driver modes and their conductor's core on both types, before
+    # any cloud call (as azure/lab.sh)
+    [[ -z ${LAB_TUNE:-} ]] || die "LAB_TUNE (the tuning sessions) runs on Azure (azure/lab.sh); not here"
+    [[ $tr_pair == a || $tr_pair == b ]] ||
+        die "LAB_PAIR is a or b with LAB_SUITE=transport (the session of transport-matrix.tsv to run), not [$tr_pair]"
+    [[ $placement == cluster ]] || die "LAB_SUITE=transport runs in one cluster placement group (LAB_PLACEMENT=cluster), not $placement"
+    [[ ${LAB_MODES:-}${LAB_LOCAL_MODES:-} == "" ]] || die "LAB_MODES and LAB_LOCAL_MODES are the latency suite's: LAB_SUITE=transport runs transport-matrix.tsv's arms"
+    [[ -z ${LAB_RUN_STAMP:-} ]] || die "LAB_RUN_STAMP is azure/lab.sh's: each AWS session claims a stamp of its own"
+    if [[ -n $sets_file ]]; then
+        [[ -r $sets_file ]] || die "LAB_SETS_FILE $sets_file: not a readable file"
+        # a copy taken now, beside this run's script snapshot: an edit to
+        # the checkout while the run goes on never changes what it runs
+        sets_file=$(cd "$(dirname "$sets_file")" && pwd)/${sets_file##*/}
+        cp "$sets_file" "$here/../.lab-sets-$$.tsv" || die "LAB_SETS_FILE $sets_file: cannot copy"
+        sets_file=$here/../.lab-sets-$$.tsv
+    fi
+    tr_sets_file=$sets_file
+    if [[ -n $extra_src ]]; then
+        [[ -d $extra_src && -f $extra_src/lab-build.sh ]] || die "LAB_EXTRA_SRC $extra_src: a directory with a lab-build.sh (the VMs build it with: bash lab-build.sh <bin dir>)"
+        extra_src=$(cd "$extra_src" && pwd)
+    fi
+    [[ -z $arms_file ]] || arms_file=$(cd "$(dirname "$arms_file")" 2>/dev/null && pwd)/${arms_file##*/}
+    # (an unreadable one is left for transport.sh's own refusal)
+    if [[ -n $arms_file && -r $arms_file ]]; then
+        cp "$arms_file" "$here/../.lab-arms-$$.tsv" || die "LAB_ARMS_FILE $arms_file: cannot copy"
+        arms_file=$here/../.lab-arms-$$.tsv
+    fi
+    # every mode judged for AWS and the instances' architecture (transport.sh
+    # tr_cloud, tr_arch)
+    tr_cloud=aws tr_arch=$arch
+    # shellcheck source=../transport.sh
+    . "$here/../transport.sh"
+    points=$(tr_check "$tr_pair" "$arms_file" 2>&1) || die "$points"
+    # a sets file's `smt on` (SMT kept on: transport.sh tr_smt_check): an x86
+    # type with SMT, launched with it
+    if [[ $(tr_plan smt 2>/dev/null) == on ]]; then
+        [[ -z $threads_per_core ]] || die "LAB_SETS_FILE says smt on: not with LAB_THREADS_PER_CORE=1 (SMT off from launch)"
+        for t in "$type_a" "$type_b"; do
+            ! arm_type "$t" || die "LAB_SETS_FILE says smt on: $t is Graviton, which has no SMT"
+            [[ ! ${t%%.*} =~ ^(c7a|m7a|r7a|c8a|m8a|r8a)$ ]] || die "LAB_SETS_FILE says smt on: $t has one thread a core (AMD Zen 4/5 C7a-family types)"
+        done
+    fi
+    for m in "kernel-busy$TR_AERON_MODE_SUFFIX" "dpdk$TR_AERON_MODE_SUFFIX" "onload$TR_AERON_MODE_SUFFIX"; do
+        why=$(spare_types_check "$m" aws "$type_a" "$type_b" 2>&1) || die "$why"
+    done
+    for v in TRANSPORT_WARMUP_S TRANSPORT_POINT_S TRANSPORT_SWITCH_S; do
+        [[ -z ${!v:-} || ${!v} =~ ^[0-9]{1,5}$ ]] || die "$v is a whole number of seconds, not ${!v}"
+    done
+    seed=${LAB_SEED:-$(od -An -N4 -tu4 /dev/urandom | tr -d ' ')}
+    [[ $seed =~ ^[0-9A-Za-z_-]{1,40}$ ]] || die "LAB_SEED is letters, digits, - and _ (the session's seed), not $seed"
+elif [[ -z ${LAB_DELETE:-} ]]; then
+    [[ -z $tr_pair && -z $arms_file && -z $extra_src && -z $sets_file && -z $detach ]] ||
+        die "LAB_PAIR, LAB_ARMS_FILE, LAB_SETS_FILE, LAB_EXTRA_SRC and LAB_DETACH are the transport suite's (LAB_SUITE=transport)"
+fi
 # LAB_ESTIMATE=1: what the plan would cost (estimate.py: instance-hours, GB
 # between the hosts, dollars), then stop, before any cloud call
 plan=(--type-a "$type_a" --type-b "$type_b" --placement "$placement" --reps "$reps"
@@ -398,6 +522,15 @@ plan=(--type-a "$type_a" --type-b "$type_b" --placement "$placement" --reps "$re
     --mix-seconds "$mix_seconds" --tput-seconds "$tput_seconds" --tput-flows "${tput_flows:-0}"
     --rtt-messages "$rtt_messages" --rtt-warmup "$rtt_warmup" --no-flatout "$no_flatout" --max-hours "$max_hours"
     --market "$market" --warmup-seconds "$warmup_seconds" --warmup-rate "$warmup_rate")
+if [[ $suite == transport ]]; then
+    # the pair's sets, timed as transport.sh runs them (estimate.py
+    # transport_estimate), priced at AWS's prices (and spot's with LAB_SPOT=1)
+    plan=(--cloud aws --suite transport --pair "$tr_pair" --type-a "$type_a" --type-b "$type_b" --reps "$reps"
+        --max-hours "$max_hours" --market "$market" --transport-warmup-s "${TRANSPORT_WARMUP_S:-30}"
+        --transport-point-s "${TRANSPORT_POINT_S:-30}" --transport-switch-s "${TRANSPORT_SWITCH_S:-5}"
+        --matrix "$here/../transport-matrix.tsv${sets_file:+:arms}" ${sets_file:+--matrix "$sets_file"}
+        ${arms_file:+--matrix "$arms_file"})
+fi
 if [[ ${LAB_ESTIMATE:-} == 1 && -z ${LAB_DELETE:-} ]]; then
     python3 "$here/../estimate.py" "${plan[@]}"
     exit $?
@@ -407,10 +540,33 @@ fi
 if [[ -z ${LAB_DELETE:-} ]]; then
     why=$(python3 "$here/../estimate.py" "${plan[@]}" --refuse-over-deadline 2>&1) || die "$why"
 fi
+# the transport session's hours: one over 2 h detaches (below)
+if [[ $suite == transport && -z ${LAB_DELETE:-} ]]; then
+    hours=$(python3 "$here/../estimate.py" "${plan[@]}" --print-hours) || die "estimate.py: $hours"
+fi
 command -v aws >/dev/null || die "aws is not on PATH"
 aws_cli sts get-caller-identity >/dev/null 2>&1 || die "aws is not signed in (aws login)"
+# the transport suite: each type takes the management ENI and both data
+# ENIs (fail closed: one that takes fewer would fail at its attach, the
+# instances already billing), before anything is created
+if [[ $suite == transport && -z ${LAB_DELETE:-} ]]; then
+    nic_line=
+    for t in $(printf '%s\n' "$type_a" "$type_b" | sort -u); do
+        nics=$(ec2 describe-instance-types --instance-types "$t" \
+            --query 'InstanceTypes[0].NetworkInfo.MaximumNetworkInterfaces' --output text 2>&1) ||
+            die "cannot read $t's MaximumNetworkInterfaces in $region: $nics"
+        [[ $nics =~ ^[0-9]+$ ]] || die "$t's MaximumNetworkInterfaces in $region reads [$nics], not a number: refused (fail closed)"
+        ((nics >= 3)) || die "$t takes $nics ENIs and the lab needs 3 (management and two data ENIs): pick a type that takes 3"
+        nic_line+="${nic_line:+, }$t $nics"
+    done
+    log "ENIs: MaximumNetworkInterfaces $nic_line; the lab needs 3"
+fi
 if [[ -n ${LAB_DELETE:-} ]]; then
     mkdir -p "$out"
+elif [[ -n ${LAB_DETACHED:-} ]]; then
+    # its parent claimed the directory, and detached this run into it
+    [[ -d $out ]] || die "the detached run's directory $out is not there"
+    known=$out/known_hosts
 else
     # A run directory of its own, claimed (mkdir fails on one there): runs
     # started in one second (three pairs at once) would otherwise share a
@@ -424,6 +580,22 @@ else
         stamp=$(date +%Y%m%d-%H%M%S) out=$repo/target/md-dpdk-bench/aws-$stamp known=$out/known_hosts
     done
     [[ -n $claimed ]] || die "no run directory of its own under ${out%/*} in 60 tries"
+fi
+if [[ $suite == transport && -z ${LAB_DELETE:-} ]]; then
+    echo "$suite" >"$out/suite"
+    echo "$tr_pair" >"$out/pair"
+    # Detach a session over 2 h: a nohup subshell, parented to init, running
+    # this snapshot again in the directory just claimed (so with its stamp),
+    # so it outlives the shell or session that started it (a harness's
+    # background task dies at 2 h, mid-run or mid-teardown). The snapshot
+    # becomes the detached run's: it removes it. Nothing is created yet.
+    if [[ -z ${LAB_DETACHED:-} ]] && { [[ $detach == 1 ]] || { [[ -z $detach ]] && awk -v h="$hours" 'BEGIN {exit !(h > 2)}'; }; }; then
+        (LAB_DETACHED=1 LAB_DETACHED_OUT=$out LAB_SEED=$seed LAB_SETS_FILE=$sets_file LAB_ARMS_FILE=$arms_file \
+            nohup bash "$0" "$@" >"$out/lab.log" 2>&1 </dev/null & echo $! >"$out/lab.pid")
+        log "detached: about $hours h: run $stamp, pid $(cat "$out/lab.pid"), log $out/lab.log (stop it with kill -TERM $(cat "$out/lab.pid"); LAB_DETACH=0 runs in the foreground)"
+        trap - EXIT
+        exit 0
+    fi
 fi
 # LAB_DELETE of a spot run: its directory says so (lab.sh writes it before
 # creating anything), so its spot requests are swept even without LAB_SPOT=1
@@ -893,7 +1065,8 @@ launch() {
     fi
     # LAB_SPOT=1: a one-time spot instance, terminated on interruption (as on
     # instance-initiated shutdown, the deadline's), its spot request tagged
-    if [[ $spot == 1 ]]; then
+    # (on demand once LAB_SPOT_FALLBACK found no spot capacity: spot_launch 0)
+    if [[ $spot == 1 && ${spot_launch:-1} == 1 ]]; then
         market_opts=(--instance-market-options 'MarketType=spot,SpotOptions={SpotInstanceType=one-time,InstanceInterruptionBehavior=terminate}')
         spot_tags=("$(tags spot-instances-request spot)")
     fi
@@ -932,21 +1105,32 @@ case $placement in
 cluster | precision-time)
     # Launch both instances in one zone, trying each zone that offers the type
     # until one has the capacity.
-    for zone in $zones; do
-        mgmt=$(mgmt_subnet "$region" "$vpc" 10.30.0.0/24 "$zone" "$rt") || die "mgmt subnet"
-        data=$(subnet "$region" "$vpc" "$data_subnet" "$zone" data) || die "data subnet"
-        if ida=$(launch "$region" "$type_a" "$ami" "$root_device" "$mgmt" "$sg" "$zone" --placement "GroupName=ergon-md-dpdk-$stamp"); then
-            if idb=$(launch "$region" "$type_b" "$ami" "$root_device" "$mgmt" "$sg" "$zone" --placement "GroupName=ergon-md-dpdk-$stamp"); then
-                launched=$zone
-                break
+    in_zones() {
+        for zone in $zones; do
+            mgmt=$(mgmt_subnet "$region" "$vpc" 10.30.0.0/24 "$zone" "$rt") || die "mgmt subnet"
+            data=$(subnet "$region" "$vpc" "$data_subnet" "$zone" data) || die "data subnet"
+            if ida=$(launch "$region" "$type_a" "$ami" "$root_device" "$mgmt" "$sg" "$zone" --placement "GroupName=ergon-md-dpdk-$stamp"); then
+                if idb=$(launch "$region" "$type_b" "$ami" "$root_device" "$mgmt" "$sg" "$zone" --placement "GroupName=ergon-md-dpdk-$stamp"); then
+                    launched=$zone
+                    break
+                fi
+                # a alone in this zone: give it back before trying the next
+                give_back "$region" "$ida"
             fi
-            # a alone in this zone: give it back before trying the next
-            give_back "$region" "$ida"
-        fi
-        log "no capacity for $type_a and $type_b in $zone: $(tail -1 "$out/run-instances-$zone.log")"
-        ec2 delete-subnet --subnet-id "$mgmt"
-        ec2 delete-subnet --subnet-id "$data"
-    done
+            log "no capacity for $type_a and $type_b in $zone: $(tail -1 "$out/run-instances-$zone.log")"
+            ec2 delete-subnet --subnet-id "$mgmt"
+            ec2 delete-subnet --subnet-id "$data"
+        done
+    }
+    in_zones
+    # LAB_SPOT_FALLBACK=1: no zone had spot capacity for both: on demand,
+    # every zone again (market says so from here on; the run's directory
+    # keeps spot, so the teardown and LAB_DELETE still sweep its spot requests)
+    if [[ -z $launched && $spot_fallback == 1 ]]; then
+        log "no zone had spot capacity for $type_a and $type_b: LAB_SPOT_FALLBACK=1, launching them on demand"
+        spot_launch=0 market=on-demand
+        in_zones
+    fi
     [[ -n $launched ]] || die "no zone had capacity for $type_a and $type_b"
     data_a=$data data_b=$data
     data_subnet_a=$data_subnet data_subnet_b=$data_subnet
@@ -1045,10 +1229,21 @@ log "a=$A b=$B"
     echo "ami $ami${ami_b:+ b $ami_b}"
     echo "placement $placement"
     echo "market $market"
+    [[ $suite == transport ]] && echo "transport pair $tr_pair seed $seed"
     [[ -n $region2 ]] && echo "region a $region b $region2"
     [[ $threads_per_core == 1 ]] && echo "threads per core 1 (cores a $cores_a b $cores_b)"
 } >"$out/instances.txt"
 
 . "$here/../lib.sh"
 prepare_vms
-run_bench
+if [[ $suite == transport ]]; then
+    # the session as azure/lab.sh runs it (transport.sh): the hosts named by
+    # region and instance in its manifests
+    vm_a=$region/$ida vm_b=$region_b/$idb
+    echo "$seed" >"$out/seed"
+    transport_prepare
+    transport_remote "$tr_pair" || die "transport pair $tr_pair failed ($out/transport)"
+    log "transport pair $tr_pair: $(grep -c . "$out/transport/results.csv" 2>/dev/null || echo 0) rows in $out/transport/results.csv"
+else
+    run_bench
+fi

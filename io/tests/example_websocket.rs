@@ -95,7 +95,7 @@ fn backend(b: Backend) -> R {
 #[test]
 fn the_example_subscribes_reconnects_and_closes_cleanly() -> R {
     let mut ran = 0;
-    for b in Backend::ALL {
+    for b in Backend::KERNEL {
         match backend(b) {
             Ok(()) => ran += 1,
             // A pod with one CPU has no core for `uring-sqpoll`'s kernel
@@ -106,6 +106,6 @@ fn the_example_subscribes_reconnects_and_closes_cleanly() -> R {
             Err(e) => return Err(format!("{b}: {e}").into()),
         }
     }
-    assert!(ran >= Backend::ALL.len() - 1, "only {ran} backends ran");
+    assert!(ran >= Backend::KERNEL.len() - 1, "only {ran} backends ran");
     Ok(())
 }

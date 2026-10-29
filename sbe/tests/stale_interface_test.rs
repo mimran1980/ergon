@@ -13,7 +13,7 @@ mod common;
 use common::{Paths, generate};
 
 const STALE_GENERATED: &[&str] = &[
-    "pub fn try_wrap_and_apply_header(&self", // decoders only
+    "fn try_wrap_and_apply_header(&self", // decoders only, const or not
 ];
 
 /// Substrings that must not appear in inventory docs (case-sensitive where noted).
@@ -142,7 +142,7 @@ fn car_generated_source_rejects_stale_0_1_names() -> Result<(), Box<dyn Error>> 
         );
     }
     assert!(
-        src.contains("pub fn try_wrap_and_apply_header("),
+        src.contains("pub const fn try_wrap_and_apply_header("),
         "checked wah missing"
     );
     assert!(

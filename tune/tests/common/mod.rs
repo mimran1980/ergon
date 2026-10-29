@@ -308,7 +308,52 @@ impl Fixture {
             ),
         )
     }
+
+    /// cpuidle: the driver (`current_driver`), and on each CPU of `cpus`
+    /// the states `(name, exit latency µs, disabled)`, state0 first, as
+    /// `/sys/devices/system/cpu/cpu<N>/cpuidle/state<i>` has them.
+    pub fn cpuidle(&self, driver: &str, cpus: &[u32], states: &[IdleState]) -> R<&Self> {
+        self.file(
+            "/sys/devices/system/cpu/cpuidle/current_driver",
+            &format!("{driver}\n"),
+        )?;
+        for c in cpus {
+            for (i, (name, latency, disabled)) in states.iter().enumerate() {
+                let d = format!("/sys/devices/system/cpu/cpu{c}/cpuidle/state{i}");
+                self.file(&format!("{d}/name"), &format!("{name}\n"))?;
+                self.file(&format!("{d}/latency"), &format!("{latency}\n"))?;
+                self.file(&format!("{d}/residency"), &format!("{}\n", latency * 3))?;
+                self.file(
+                    &format!("{d}/disable"),
+                    if *disabled { "1\n" } else { "0\n" },
+                )?;
+                self.file(&format!("{d}/usage"), "100\n")?;
+                self.file(&format!("{d}/time"), "1000\n")?;
+            }
+        }
+        Ok(self)
+    }
+
+    /// One idle state of CPU `cpu` disabled (`1`) or enabled (`0`).
+    pub fn idle_disable(&self, cpu: u32, state: u32, disabled: bool) -> R<&Self> {
+        self.file(
+            &format!("/sys/devices/system/cpu/cpu{cpu}/cpuidle/state{state}/disable"),
+            if disabled { "1\n" } else { "0\n" },
+        )
+    }
 }
+
+/// An idle state in a fixture: name, exit latency (µs), disabled.
+pub type IdleState = (&'static str, u32, bool);
+
+/// `intel_idle`'s states on AWS c7i (Sapphire Rapids, kernel 7.2), every one
+/// enabled: as lab session aws-20261028-092158 read them.
+pub const INTEL_SPR: [IdleState; 4] = [
+    ("POLL", 0, false),
+    ("C1", 1, false),
+    ("C1E", 2, false),
+    ("C6", 190, false),
+];
 
 /// An interrupt in a fixture.
 #[derive(Clone, Copy)]

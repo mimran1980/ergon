@@ -88,12 +88,31 @@ warning thread take the other. Nothing to configure.
 {{#include ../../../io/tests/placement_book.rs:x86_two_cpus}}
 ```
 
-What the SQPOLL thread on the sibling costs against a core of its own:
-[SMT sibling cost](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#smt-sibling-cost).
+**For one busy connection this is the best use of one core.** TCP round
+trip, 1 connection, AWS `c7i.4xlarge`, p50 µs
+([measured](backends.md#uring-sqpoll-on-the-loops-smt-sibling-x86)):
 
-- It needs both hyperthreads and nothing else on the sibling.
-- For a core of its own instead: a `cpu: 4` pod (two physical cores) with
-  `sqpoll_cpu` on the second core, or SMT off on the node.
+| one physical core | 10,000 msg/s | 50,000 | 200,000 |
+|---|---|---|---|
+| `uring-sqpoll`, loop + SQPOLL on its sibling | 35.7–36.9 | 34.7–36.5 | 64.5–67.5 |
+| mio (or `epoll-spin`), SMT off | 40.0–41.4 | 44.5–45.2 | 70.3–71.6 |
+
+On the same hosts the sibling layout is 2.3–7.3 µs lower at p50 and
+5.4–15.4 µs at p99 than mio. Caveats:
+
+- It needs both hyperthreads and nothing else busy on the sibling. The
+  measured sibling held only the SQPOLL thread; the dial helper and the
+  warning thread share it here, and a TLS handshake there (each connect
+  or reconnect) was not measured.
+- Measured with one connection on Intel. At many connections on the
+  receive side the sibling cost +2.3–2.5 µs p50 and +9–12 µs p99 against
+  a core of its own
+  ([data](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#market-data-receive-side-2026-10-15)).
+- A core of its own is lower only at high rates (about 4–6 µs p50 at
+  200,000 msg/s): a `cpu: 4` pod (two physical cores) with `sqpoll_cpu` on
+  the second core, or SMT off on the node and `cpu: 2`.
+- Tails (p99.99, max) were not separated: every layout had millisecond
+  round trips on these hosts.
 
 ### Graviton, `cpu: 2`: two cores
 

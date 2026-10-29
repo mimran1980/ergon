@@ -54,6 +54,7 @@ pub fn decode(buf: &[u8], max_frame: usize) -> Result<Option<(&[u8], usize)>, Er
         max: max_frame,
     })?;
     if n > max_frame {
+        std::hint::cold_path();
         return Err(Error::FrameTooLarge {
             len: u64::from(len),
             max: max_frame,
@@ -129,6 +130,7 @@ impl Deframer {
     pub const fn filled(&mut self, n: usize) -> Result<(), Error> {
         let have = self.buf.len() - self.end;
         if n > have {
+            std::hint::cold_path();
             return Err(Error::FrameBuffer { need: n, have });
         }
         self.end += n;

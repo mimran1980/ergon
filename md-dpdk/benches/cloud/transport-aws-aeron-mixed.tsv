@@ -1,0 +1,63 @@
+# The AWS mixed-load sessions' sets (aws/lab.sh LAB_SUITE=transport
+# LAB_SETS_FILE=<this file>, in place of the matrix's sets; the matrix's
+# arms are kept): Aeron's threading models under a realistic load, one
+# stack a session, the two sessions in parallel (LAB_PAIR=a the kernel's,
+# LAB_PAIR=b DPDK's), each a pair of c7a.2xlarge (spot). No netem: DPDK
+# holds its NICs.
+#
+# Every mixed point (aeron_lat --load mixed, mixed.rs) measures a 64-byte
+# hot stream at 10k msg/s, on its own channel and thread at each end,
+# beside 31 or 127 background streams on a thread of their own: steady
+# (weights 1 to 8), bursty (8 at once), idle-then-burst (128 at once, a
+# burst every 0.07 to 1.4 s), two publishers on one in eight; 64, 288, 1344
+# and 4096 B (the last three frames at MTU 1408; 1344 the largest that
+# fits one), fan-out 1 to 4 on the pong, four streams to a channel. The
+# load is every stream's, echoed: each host sends and receives it.
+#
+#   arm                     driver                         busy threads a host
+#   aeron-mix, dpdk-aeron-mix          its own process, DEDICATED    5 (sender, receiver, conductor; hot, background)
+#   ...-emb                 the binary's process, DEDICATED  5
+#   ...-shnet               its own process, SHARED_NETWORK  4
+#   ...-shared              its own process, SHARED          3
+#   ...-invoker             the binary's, INVOKER (the hot   2
+#                           thread runs it for every stream)
+#
+# Each arm keeps the CPUs the baseline gives it (host.sh transport_layout:
+# on c7a.2xlarge CPUs 2-4 the driver's, 5 the hot thread, 6 the
+# background, 7 idle); one with fewer busy threads leaves the rest idle (the
+# gap spinners run there). The A/A arm repeats the dedicated arm.
+#
+# Loads: 50k msg/s and 200k msg/s, every stream and both directions: at
+# about 330 B a background message (400 B a frame and its headers), 200k is
+# about 650 Mbit/s each way, a fifth of c7a.2xlarge's 3.125 Gbit/s
+# baseline, and at most 200k frames a second each way (Aeron's sender
+# batches a burst's frames into fewer datagrams); a channel's flow at most
+# ~35 Mbit/s. The ENA's allowance counters (pps, bandwidth, conntrack) and
+# the receive drops are checked per point (fairness.py mixed-nic): a point
+# shaped by the instance's network limits is refused, not reported. 200k is
+# where F-Stack's one thread fell over (aws-20261027-062105) and four times
+# the earlier hand-off sets' middle load: it loads the driver's loops, not
+# the network.
+#
+# Floors, at the hot stream's size and rate (10k msg/s, 1 stream), first in
+# each session: mio-udp (raw kernel UDP, busy-polled sockets) and dpdk-raw
+# (ergon-md-dpdk's packet path alone, no Aeron), both in both sessions, so
+# the sessions' VM pairs can be compared through them; each A/A repeats
+# the session's own stack's floor.
+#
+#   fa, ka   pair a: the floors, then the kernel's five arms and A/A at 32
+#            and 128 streams, 50k and 200k msg/s
+#   fb, db   pair b: the floors, then DPDK's
+#
+# At LAB_REPS=3 (LAB_ESTIMATE=1 on c7a.2xlarge spot) each session is 81
+# points (9 floor, 72 mixed), about 2.4 h wall and $0.92 at spot prices; one
+# session for both stacks would be about 4.6 h, so one file, two sessions at
+# once. A set's second load warms up 5 s (TRANSPORT_SWITCH_S) after its
+# first's 30, the same for every arm; each point is a new process (an
+# embedded or invoked driver a new driver).
+#
+# set   pair par host loads         streams  netem  arms
+set fa   a    -   ab   10000         1        -      mio-udp,dpdk-raw,aa
+set ka   a    -   ab   50000,200000  32,128   -      aeron-mix,aeron-mix-emb,aeron-mix-shnet,aeron-mix-shared,aeron-mix-invoker,aa
+set fb   b    -   ab   10000         1        -      dpdk-raw,mio-udp,aa
+set db   b    -   ab   50000,200000  32,128   -      dpdk-aeron-mix,dpdk-aeron-mix-emb,dpdk-aeron-mix-shnet,dpdk-aeron-mix-shared,dpdk-aeron-mix-invoker,aa

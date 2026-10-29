@@ -56,7 +56,7 @@ MULT = {"min": 0.8, "p50": 1.0, "p90": 1.1, "p99": 1.5, "p99.9": 2.0, "p99.99": 
 # what explains each arm's max, by set and arm (cycled over its points)
 CAUSES = {("2a", "aeron-kernel"): ["nak", "retransmit"], ("2a", "aa"): ["host-pause"],
           ("2a", "aeron-dpdk"): ["dpdk-refill"], ("2a", "mio-udp"): ["irq", "softirq"],
-          ("2a", "eio-udp"): ["page-fault", "minute", "page-fault"], ("3b", "aeron-kernel"): ["retransmit"],
+          ("2a", "eio-udp"): ["page-fault"], ("3b", "aeron-kernel"): ["retransmit"],
           ("3b", "mio-tcp"): ["tcp-rto"], ("3b", "aa"): ["tcp-tlp"], ("2b", "aeron-spy"): ["page-fault"],
           ("2b", "aeron-self-udp"): ["irq"], ("2b", "aa"): ["host-pause"]}
 # (set, arm, streams, rep): the flagged points
@@ -172,7 +172,9 @@ def make(run):
                     n = seen.get((set_, arm), 0)
                     seen[(set_, arm)] = n + 1
                     cause = causes[n % len(causes)]
-                    due_s = 29.9 if cause == "minute" else 5.0 + rep
+                    # each max at its own phase of the minute: none recurs
+                    # (spikes.py session_periodic)
+                    due_s = 5.0 + rep + round(index * 7.31 % 20, 2)
                     t0 = start_s + due_s
                     t1 = t0 + lat["max"] / 1e9
                     mid_ns = int((t0 + (t1 - t0) / 2) * 1e9)

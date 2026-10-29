@@ -285,6 +285,9 @@ fn shared_modes_never_wait_out_a_pacing_debt() {
         h.context.conductor_cpu_affinity_no = -1;
         h.context.sender_cpu_affinity_no = -1;
         h.context.receiver_cpu_affinity_no = -1;
+        h.context.conductor_cpu_affinity_resolved = -1;
+        h.context.sender_cpu_affinity_resolved = -1;
+        h.context.receiver_cpu_affinity_resolved = -1;
         assert_eq!(
             unsafe { rusteron_dpdk_transport_install(h.native, &mut *h.context) },
             0,
@@ -325,6 +328,9 @@ fn shared_modes_never_wait_out_a_pacing_debt() {
         h.context.conductor_cpu_affinity_no = -1;
         h.context.sender_cpu_affinity_no = -1;
         h.context.receiver_cpu_affinity_no = -1;
+        h.context.conductor_cpu_affinity_resolved = -1;
+        h.context.sender_cpu_affinity_resolved = -1;
+        h.context.receiver_cpu_affinity_resolved = -1;
         assert_eq!(
             unsafe { rusteron_dpdk_transport_install(h.native, &mut *h.context) },
             -1,
@@ -521,9 +527,15 @@ fn installed_housekeeping_and_local_io_avoid_each_modes_spinning_core() {
     for mode in [SHARED, INVOKER, SHARED_NETWORK] {
         let mut h = Harness::new();
         h.context.threading_mode = mode;
-        h.context.conductor_cpu_affinity_no = last as i32;
+        // The CPUs the agents run on are the resolved ones; the configured
+        // values may be cpuset offsets (AERON_THREAD_AFFINITY_USE_CPUSET_OFFSETS),
+        // so here they deliberately name other CPUs.
+        h.context.conductor_cpu_affinity_resolved = last as i32;
+        h.context.conductor_cpu_affinity_no = first as i32;
         // SHARED_NETWORK's network agent; no agent's under SHARED and INVOKER
-        h.context.sender_cpu_affinity_no = if mode == SHARED_NETWORK { first as i32 } else { -1 };
+        h.context.sender_cpu_affinity_resolved = if mode == SHARED_NETWORK { first as i32 } else { -1 };
+        h.context.sender_cpu_affinity_no = if mode == SHARED_NETWORK { last as i32 } else { -1 };
+        h.context.receiver_cpu_affinity_resolved = -1;
         h.context.receiver_cpu_affinity_no = -1;
         assert_eq!(
             unsafe { rusteron_dpdk_transport_install(h.native, &mut *h.context) },

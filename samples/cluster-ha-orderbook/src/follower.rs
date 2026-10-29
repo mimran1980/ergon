@@ -34,7 +34,7 @@ impl BookFollower {
     }
 
     #[must_use]
-    pub fn book(&self) -> &LeadershipAwareBook {
+    pub const fn book(&self) -> &LeadershipAwareBook {
         &self.book
     }
 

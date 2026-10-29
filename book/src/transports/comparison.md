@@ -13,19 +13,21 @@ Terms: [ergon-io glossary](../io/overview.md#glossary),
 [network and DPDK glossary](../md-dpdk/overview.md#glossary),
 [how to read a number](../deploy/benchmarks.md#how-to-read-a-number).
 
-> **No DPDK results.** The Azure VMs here have Mellanox (mlx5) VFs, and
-> md-dpdk's Azure set-up supports only MANA. DPDK fell back to the synthetic
-> VMBus path (1 to 6 million hypervisor interrupts a point, against under 600
-> for the kernel arms), so the `dpdk-*` rows measured that path, not DPDK on
-> the NIC. They are left out. md-dpdk now refuses to start on that path
-> (`DpdkError::NoAcceleratedVf`). A DPDK rerun on AWS (ENA) is planned.
+> **DPDK figures come from AWS only.** The Azure VMs here have Mellanox
+> (mlx5) VFs, and md-dpdk's Azure set-up supports only MANA. DPDK fell back
+> to the synthetic VMBus path (1 to 6 million hypervisor interrupts a point,
+> against under 600 for the kernel arms), so the Azure `dpdk-*` rows
+> measured that path, not DPDK on the NIC, and are left out. md-dpdk now
+> refuses to start on that path (`DpdkError::NoAcceleratedVf`). DPDK
+> (md-dpdk's Aeron and F-Stack TCP) against the kernel arms on AWS ENA:
+> [AWS: DPDK, F-Stack and kernel](#aws-dpdk-f-stack-and-kernel).
 
 ## The answer
 
-µs, 64-byte messages, Azure x86 (AMD Genoa). Round trip between hosts,
-from each message's intended send time. Each figure is the median of 3
-reps; `max` is the median of the reps' maxima, with the range across reps in
-brackets after it.
+µs, 64-byte messages, AMD Genoa x86: Azure for the kernel paths, AWS for
+DPDK (rows marked AWS). Round trip between hosts, from each message's
+intended send time. Each figure is the median of 3 reps; `max` is the
+median of the reps' maxima, with the range across reps in brackets after it.
 
 <!-- RESULTS: answer -->
 
@@ -34,12 +36,19 @@ brackets after it.
 | In one process: `std::sync::mpsc` or Aeron IPC? | Aeron IPC. Round trip p50 0.22 against 0.33 at 10,000 msg/s. At 1,000,000 msg/s the two are not separated. At 5,000,000 msg/s `mpsc`'s round trip falls behind (sender late, p50 27 µs) while Aeron IPC holds p50 0.25. Tails are not separated: p99.99 18 to 99, max 105 to 294 in both, each max a host pause or a stop the guest does not show. Costs: Aeron 5 busy threads, `mpsc` 2 | [1](#set-1-ipc-on-one-host) |
 | Between hosts, unreliable UDP, 1 stream: Aeron kernel, mio or ergon-io? | Aeron. p50 55.6 against 61.8 to 61.9 at 50,000 msg/s; at 10,000 msg/s 59.5 against 62.3 to 62.9, lower in both Aeron runs but inside the A/A spread (3.8). At 200,000 msg/s only Aeron keeps up (p50 55.8); mio and ergon-io fall seconds behind. mio and ergon-io are within 0.1 to 0.9 of each other at p50 (ergon-io behind in every rep). Max: no verdict (unexplained). Costs: Aeron 4 busy threads a host, sockets 1 | [2a](#set-2a-unreliable-udp-between-hosts) |
 | Does the answer change from 1 to 128 streams? | Yes. At 8 streams the three are not separated. At 32 and 128 streams plain sockets are lower: p50 by 3.7 to 4.8 (32) and 9.1 to 10.5 (128), p99 by 4.8 to 14. Aeron's p50 rises from 56 to 60 at 1 stream to 68 to 70 at 128; the sockets' stays 58 to 63. At 200,000 msg/s only Aeron keeps up at every stream count (p50 56 to 86) | [2a](#set-2a-unreliable-udp-between-hosts) |
-| On one host: Aeron spy, or UDP to itself? | Spy. Round trip p50 0.26 against 10.3 to 13.9 for kernel UDP to the host's own address, at every load. p99.99 2.1 against 55 at 10,000 msg/s, not separated above that; max 4 to 181, no verdict (unexplained). Both 5 busy threads | [2b](#set-2b-one-host-spy-and-self-udp) |
+| On one host: Aeron spy, or UDP to itself? | Spy. Round trip p50 0.26 against 10.3 to 13.9 for kernel UDP to the host's own address, at every load. p99.99 2.1 against 55 at 10,000 msg/s, not separated above that; max 4 to 181, no verdict (unexplained). Both 5 busy threads. That spy's publications had no destination. On AWS a spy whose publications also send every frame over UDP to another host (`aeron-spy-udp`, kernel or DPDK) gives the same: round trip p50 0.26, one way 0.14 to 0.15, not separated from the no-destination spy at p50 | [2b](#set-2b-one-host-spy-and-self-udp), [AWS spy](#spy-with-a-live-udp-destination-spy) |
+| Aeron driver threading (AWS): dedicated, shared or invoker? | Dedicated, once there are many streams. With 32 or 128 streams of mixed traffic every thread taken from the driver costs latency, in this order: `SHARED_NETWORK` +1.9 to +32.6 at p50, `SHARED` +3.1 to +73.7, `INVOKER` +4.9 to +130.8; dedicated in-process (`-emb`) is the same as dedicated. At 128 streams `SHARED` and `INVOKER` saturate their one thread; Graviton pays 1.4 to 2.9 times what Intel pays. At 1 stream DPDK's modes were not separated to 50,000 msg/s; kernel `INVOKER` was 3.1 to 8.4 higher | [mixed load](#aeron-threading-under-mixed-load-intel-graviton), [1 stream](#driver-threading-modes-at-1-stream-h-k) |
 | Reliable, no loss: Aeron reliable UDP or TCP? | Aeron reliable. p50 lower by 7.1 to 14.5 (54.8 to 57.6 against 64.7 to 69.8); p99 59.9 to 64.3 against 79 to 225; p99.99 lower by 3.8 to 5.5 ms in 4 of 8 comparisons, the rest not separated. Max: no verdict (unexplained). At 200,000 msg/s Aeron holds p50 57.6 to 60.5; TCP carries 106,000 to 151,000 msg/s. Costs: Aeron 4 busy threads a host, TCP 1 | [3c](#set-3c-the-netem-control), [3a](#set-3a-reliable-no-loss) |
 | Reliable under 0.01, 0.1 and 1 % loss? | No single winner in the tail. p50: Aeron 52.7 to 61.6, TCP 64.1 to 68.5. p99: Aeron lower at 0.01 and 0.1 % and at 1 % / 10,000 msg/s; TCP lower at 1 % / 50,000 msg/s (4.8 to 5.5 ms against 9.4). p99.99: Aeron lower at 0.01 % (by 3.5 to 7.1 ms), not separated at 0.1 and 1 %. The tails follow each protocol's repair: Aeron's maxima sit at its 10 ms retransmit linger, TCP's come from its retransmits (8 ms minimum RTO). At 200,000 msg/s only Aeron keeps up | [3b](#set-3b-reliable-under-loss) |
 | What does a 0 % netem qdisc cost? | Nothing measured: each arm's 0 % and no-qdisc p50 differ by 0.2 to 4.6, inside the A/A spread (3.7 to 8.8) | [3c](#set-3c-the-netem-control) |
-| TCP, 1 connection: mio or ergon-io? | No verdict. The median p50 gaps run from ergon-io 2.4 ahead to 4.0 behind, inside each arm's own spread across reps (up to 6.1 for mio, 10.7 for ergon-io). A same-connection A/B is scheduled on AWS | [3c](#mio-against-ergon-io-over-tcp-no-verdict) |
-| TCP with 8 to 128 connections into one loop: mio or ergon-io? | Not measured fairly: the one session gave the arms unequal busy polling, and the set was not rerun | [Not covered](#not-covered) |
+| TCP: mio or ergon-io? | No difference. On the same connection (AWS, same 4-tuple) p50 52.2 against 53.4 at 10,000 msg/s (mio 1.2 lower, past the A/A spread of 0.8) and not separated at 50,000; with fresh connections not separated at 1 stream, mio 0.6 to 1.0 lower at 8; p99 and p99.99 not separated but once (ergon-io 4.5 lower at p99). Same calls a message: 2 reads, 1 send, 1 quick-ACK re-arm. The Azure gap was unequal busy polling, since fixed (`busy_poll_us`). Overloaded at 200,000 msg/s, ergon-io drains slower: 104,000 to 134,000 msg/s carried against mio's 113,000 to 154,000 | [AWS](#mio-against-ergon-io-the-verdict) |
+| TCP with 8 to 128 connections into one loop: mio or ergon-io? | Not measured fairly on Azure. On AWS, 8 connections into one loop: p50 within 0.6 to 1.0 (mio lower) | [AWS](#mio-against-ergon-io-the-verdict) |
+| Between hosts, lowest latency (AWS, DPDK allowed)? | Aeron on DPDK (md-dpdk). Reliable p50 27.5 to 30.7 at 1 and 8 streams, 10,000 to 200,000 msg/s: 3.9 to 5.9 below F-Stack TCP (23 at 1 stream, 200,000 msg/s) and 12.3 to 23.9 below kernel Aeron. Unreliable p50 28.0 against kernel Aeron 40.9, mio 47.7, ergon-io 48.4 (50,000 msg/s). Costs: 4 busy threads a host | [AWS](#aws-dpdk-f-stack-and-kernel) |
+| TCP on DPDK (F-Stack) or kernel TCP (AWS)? | F-Stack. p50 lower by 17 to 19 at 10,000 msg/s and 26 to 28 at 50,000 (32.1 to 35.0 against 52.2 to 61.1), and below kernel Aeron reliable by 8.4 to 19.5. At 200,000 msg/s F-Stack keeps up (p50 50.4 at 1 stream, 34.7 at 8) while kernel TCP falls 5 to 16 s behind. 1 busy thread | [AWS](#aws-dpdk-f-stack-and-kernel) |
+| ergon-io TCP, no loss: kernel `epoll-spin`, smoltcp or F-Stack? (`c7i` and `c8g`, one rep, no A/A arm) | F-Stack for the tail. Its TCP max is 134.6 to 359.3; kernel and smoltcp p99.99 sit at 2,189 to 3,254 and their max at 2,624 to 3,853, each unexplained. p50 at 8 connections: F-Stack 6.75 to 9.01 below the kernel and smoltcp 5.92 to 8.78, on both machines, both rates and all three loss levels. At 1 connection F-Stack is 1.20 to 4.45 below, except the `c7i` 1% / 50,000 cell whose measuring thread faulted (p50 47.6 against the kernel's 45.6). smoltcp's p50 stays with F-Stack. WebSocket-over-TLS keeps the p50 gap and not F-Stack's tail | [io bypass](#ergon-io-kernel-smoltcp-and-f-stack) |
+| UDP: kernel `epoll-spin` or smoltcp? | smoltcp. No loss, p50 5.70 to 7.49 below on `c7i` and 3.78 to 4.02 below on `c8g`. Both lose the kernel peer's drops and nothing at 0% | [io bypass](#ergon-io-kernel-smoltcp-and-f-stack) |
+| Does this `c7i` pair show the once-a-minute ~15 ms outage? | No. No periodic cluster in the 96 points. Maxima of 20 ms and more are loss cells: a TCP retransmit after a netem drop, a page fault of the measuring thread, or unexplained (no recorded event). Two are 0.1% loss and the rest are 1%. The second-:25 outage remains the mixed-load session | [io bypass](#ergon-io-kernel-smoltcp-and-f-stack), [mixed load](#maxima-and-the-c7i-path-outages) |
+| Graviton, once a minute, in this bypass run? | A different cluster. Ten kernel `epoll-spin` points (UDP, and two WebSocket at 10,000 msg/s), max 4,676 to 9,298, all at second :05. p50 does not move. smoltcp and F-Stack are not in it | [io bypass](#ergon-io-kernel-smoltcp-and-f-stack) |
 
 ## What was compared
 
@@ -47,21 +56,31 @@ brackets after it.
 |---|---|---|---|---|---|
 | 1 | IPC on one host | `mpsc` (`sync_channel`, `try_send` / `try_recv` spin), `aeron-ipc`, `aeron-ipc-huge` (Aeron IPC with its directory on 2 MiB pages) | 1 | 10,000; 1,000,000; 5,000,000 | one way and round trip |
 | 2a | unreliable UDP between hosts | `aeron-udp` (kernel, `reliable=false`), `mio-udp`, `eio-udp` | 1, 8, 32, 128 | 10,000; 50,000; 200,000 | round trip |
-| 2b | one host | `aeron-spy`, `aeron-self` (kernel UDP to the host's own receiver address; the kernel delivers it locally, 2 to 5 data-NIC interrupts a point), `dpdk-aeron-self` | 1 | 10,000; 50,000; 200,000 | one way and round trip |
+| 2b | one host | `aeron-spy` (publications with no destination: nothing on the wire), `aeron-self` (kernel UDP to the host's own receiver address; the kernel delivers it locally, 2 to 5 data-NIC interrupts a point), `dpdk-aeron-self` | 1 | 10,000; 50,000; 200,000 | one way and round trip |
 | 3a | reliable, no loss, Aeron only (its TCP rows are superseded by 3c) | `aeron-rel` (kernel) | 1 | 10,000; 50,000; 200,000 | round trip |
 | 3b | reliable under loss | `aeron-rel`, `mio-tcp`, `eio-tcp`; netem 0.01, 0.1 and 1 % | 1 | 10,000; 50,000; 200,000 | round trip |
 | 3c | the netem control, and reliable without loss | `aeron-rel`, `mio-tcp`, `eio-tcp` (framed TCP); netem 0 %, and no qdisc | 1 | 10,000; 50,000; 200,000 | round trip |
+| AWS d1, d8 | reliable on DPDK and the kernel | `dpdk-tcp` (F-Stack), `mio-tcp`, `eio-tcp`, `aeron-rel`, `dpdk-aeron-rel` (md-dpdk) | 1, 8 | 10,000; 50,000; 200,000 | round trip |
+| AWS u | unreliable UDP on DPDK and the kernel | `dpdk-aeron-udp`, `aeron-udp`, `mio-udp`, `eio-udp` | 1 | 50,000 | round trip |
+| AWS pin | mio against ergon-io on one connection | `mio-tcp-pin`, `eio-tcp-pin` (`tcp_lat --source-port 31000`: the same 4-tuple) | 1 | 10,000; 50,000 | round trip |
+| AWS spy | a spy whose publications also send over UDP | `aeron-spy` (no destination), `aeron-spy-udp` (kernel, to a sink on host b), `dpdk-aeron-spy-udp` | 1 | 50,000 | one way and round trip |
+| AWS h, k | the driver's threading modes | `dpdk-aeron-rel` and `aeron-rel` with the driver dedicated, in-process (`-emb`), `SHARED_NETWORK` (`-shnet`), `SHARED` (`-shared`), `INVOKER` (`-invoker`) | 1 | h: 10,000; 50,000; 200,000. k: 50,000 | round trip |
+| AWS mixed (`c7i`, `c8g`) | the driver's threading modes under mixed load | `dpdk-aeron-mix` and `aeron-mix` with the same five threadings | 32, 128 (1 hot, the rest background) | 50,000; 200,000 | round trip, hot stream and all streams |
+| AWS io (`c7i`, `c8g`) | ergon-io kernel against smoltcp and F-Stack | `epoll-spin`, `smoltcp-spin`, `fstack-spin`; TCP echo and WebSocket-over-TLS for all three; UDP for the kernel and smoltcp. Loss on the kernel peer, not on the bypass NIC. No A/A arm | 1, 8 | 10,000; 50,000 | round trip, one rep |
 
-Every set adds an A/A arm (`aa`: one of its arms run again in the same
-round), so a difference smaller than two runs of the same arm is never
-called a result.
+Every set except AWS io adds an A/A arm (`aa`: one of its arms run again
+in the same round), so a difference smaller than two runs of the same arm
+is never called a result. The AWS io set is one rep and has no A/A arm.
 
 - **Loss** (3b, 3c): `tc netem` on the egress of every data NIC of both
   hosts, checked against the qdisc's counters after each point.
 - **No DPDK under loss.** DPDK takes the NIC from the kernel, so its frames
   never pass a qdisc and netem would drop nothing. A DPDK row there would
   compare a lossless path with lossy ones. `modes.sh` refuses `@NETEM` on a
-  DPDK arm.
+  DPDK arm. The [ergon-io bypass set](#ergon-io-kernel-smoltcp-and-f-stack)
+  still applies loss, and only on the kernel peer: `tc netem` on that
+  host's egress and an ifb qdisc on its ingress. The bypass NIC is not
+  under a qdisc.
 - **Streams.** UDP and Aeron stream `i` is its own socket or channel, on base
   port + `i`. TCP stream `i` is connection `i`. The sender sends slot `k` on
   stream `k mod N`.
@@ -228,7 +247,7 @@ point that breaks a rule.
 | placement | a busy thread shares a CPU, or runs on a housekeeping or IRQ CPU |
 | irq | a data-NIC interrupt lands on an isolated CPU |
 | hostcheck | a host's ergon-tune report is not clean |
-| settings, shared-knob | a setting differs from `transport-settings.env`, or one arm gets a knob the others were not swept for |
+| settings, shared-knob | a setting differs from `transport-settings.env`, or one arm gets a knob the others were not swept for (a DPDK or F-Stack arm's kernel busy poll is not checked: no kernel socket on its path) |
 | order, aa | no seed, no randomised order, or no A/A arm |
 | loss-accounting | a loss column or a host's counters are missing |
 | lateness | sends scheduled or late not counted |
@@ -304,13 +323,19 @@ Run ids, VMs and commits:
 | 3a (Aeron rows) | `20261026-172859-transport-a` | `F8als_v6`, `F8ams_v6` | West US 3 | `aefe999d` |
 | 2a | `20261026-221959-transport-a` | `F8als_v6`, `F8ams_v6` | North Central US | `63cf9e25` |
 | 3b, 3c | `20261026-222001-transport-a` | `F8als_v6`, `F8ams_v6` | West US 2 | `63cf9e25` |
+| AWS d1, d8, u, pin | `aws-20261027-062105` | `c7a.2xlarge`, `c7a.2xlarge` (spot) | us-east-1 | `b67ad62b` |
+| AWS spy | `aws-20261028-052725` | `c7a.2xlarge`, `c7a.2xlarge` (spot) | us-east-1 | `2f8d5c21` |
+| AWS h, k | `aws-20261028-052745` | `c7a.2xlarge`, `c7a.2xlarge` (spot) | us-east-1 | `2f8d5c21` |
+| AWS io | `aws-20261029-040029` | `c7i.4xlarge`, `c7i.4xlarge` (on demand) | us-east-1a | `5d7516a3` plus the bypass loops this release ships |
+| AWS io | `aws-20261029-055245` | `c8g.2xlarge`, `c8g.2xlarge` (on demand) | us-east-1a | the same tree |
 
 `63cf9e25` predates two fixes to the bench, not to ergon-io: the latency
 core's prefaulted stall buffer (`3b285a9b`, see [set 2a](#set-2a-unreliable-udp-between-hosts))
 and the `eio-tcp` pong's overload loop (`55bee73a`, see [set 3b](#set-3b-reliable-under-loss)).
 
-Arms are compared only inside one session, on one VM pair. 3 reps; each
-rep's arm order is drawn from the session's seed.
+Arms are compared only inside one session, on one VM pair. 3 reps, except
+the two AWS io sessions, which are one rep each; each rep's arm order is
+drawn from the session's seed.
 
 **Every table is marked invalid by `fairness.py`**, for the reasons listed
 under it, and is shown with `analyse.py --transport --show-invalid`. The
@@ -495,6 +520,13 @@ and under 98 % of the rate), so never compared:
 ### Set 2b: one host, spy and self-UDP
 
 <!-- RESULTS: set 2b -->
+
+`aeron-spy`'s publications here are manual-MDC UDP with no destination
+(`ssc=true`): the driver's sender puts no frame on the network
+(`driver.bytes-sent` 0). The same spy with publications that send every
+frame to a sink on another host is measured on AWS:
+[spy with a live UDP destination](#spy-with-a-live-udp-destination-spy).
+Its p50 matches the no-destination spy's.
 
 Round trip (µs). A/A: `aeron-spy` again. Both arms 5 busy threads.
 `dpdk-aeron-self` is left out (see the note at the top).
@@ -695,9 +727,11 @@ that rate all failed (the pong bug above).
   (`20261026-172859`, another VM pair, unequal busy polling) had p99.99 405
   to 711. 54 of 3c's 68 maxima are unexplained (above).
 
-#### mio against ergon-io over TCP: no verdict
+#### mio against ergon-io over TCP on Azure: no verdict
 
-The first sessions showed ergon-io 4.6 to 7.5 behind mio at p50 (set 3a,
+Superseded by the AWS same-connection A/B:
+[the verdict](#mio-against-ergon-io-the-verdict) is no difference. The
+first sessions showed ergon-io 4.6 to 7.5 behind mio at p50 (set 3a,
 `20261026-172859`): the unfair set-up (ergon-io's `SO_BUSY_POLL` 0). With
 both at 50 µs, the no-loss rows above:
 
@@ -710,32 +744,1056 @@ both at 50 µs, the no-loss rows above:
 
 So the gap is within run-to-run noise: no verdict. Each TCP point opens a
 new connection from a fresh source port, so each can hash to another NIC
-queue and flow path; that alone can move a point by several µs. A
-same-connection A/B (`tcp_lat --source-port`: both arms on the same
-4-tuples) is scheduled on AWS. A code audit found no per-message system
+queue and flow path; that alone can move a point by several µs. A code
+audit found no per-message system
 call or socket option that differs: both make `epoll_wait(0)`, one `recv`
 of up to 128 KiB, `TCP_QUICKACK`, one `send`, and one empty read (the
 busy-poll pass). Their counters agree: 1.9 to 2.0 reads, 1 send and 0.99
 to 1.0 quick-ACK re-arms a message on both, with no loss.
 
+## AWS: DPDK, F-Stack and kernel
+
+<!-- RESULTS: aws -->
+
+Session `aws-20261027-062105`: 141 points, 0 failures, 3 reps, commit
+`b67ad62b`. Compare these rows only with each other, never with the Azure
+tables above (other cloud, other NIC, other network).
+
+### Hosts and settings
+
+| what | value |
+|---|---|
+| instances | two `c7a.2xlarge` (AMD EPYC 9R14, Genoa; 8 cores, no SMT), spot, one cluster placement group, us-east-1a; Debian 13, kernel 7.2; ENA, two data NICs each |
+| CPUs | as on Azure: CPU 0 housekeeping, CPU 1 every data-NIC interrupt, CPUs 2 to 7 isolated |
+| kernel arms | `busy_read` and `busy_poll` 50 µs, interrupt deferral off, coalescing off (ENA has no adaptive TX), `TCP_NODELAY`, `TCP_QUICKACK` after every read, `tcp_rto_min_us` 8,000; mio and ergon-io both `SO_BUSY_POLL` 50 µs, read back from every socket |
+| `dpdk-tcp` | F-Stack v2.0 (FreeBSD's TCP on DPDK 24.11), `net.inet.tcp.delayed_ack` 0, cubic, SACK on; one busy thread, as the kernel TCP arms |
+| `dpdk-*aeron*` | Aeron on md-dpdk: the media driver's UDP on DPDK (ENA PMD), the Aeron settings of the Azure arms; 4 busy threads a host |
+| clock | the TSC. Round trips are on host a's counter alone. The hosts' `CLOCK_REALTIME` is NTP (chrony, error bound 122 to 155 µs): ergon-tune T11 warns, which blocks nothing here |
+
+Why `c7a.2xlarge`: the session ran before F-Stack built on arm64, and
+`c7i.2xlarge` has 4 cores once SMT is off; the CPU map needs 8. Cost:
+spot about $0.19 an instance-hour; the session took 2 h 37 min from launch
+to verified deletion (two instances, about $1). An earlier session the same
+morning (`aws-20261027-043119`, 45 min) lost every DPDK arm to a set-up
+failure and has no A/A; its kernel rows agree with these and are not used.
+
+### c7i: the IRQ CPU's idle depth
+
+On `c7i.4xlarge` (Intel, cpuidle `intel_idle`) interrupt-driven TCP
+receive waits for CPU 1, which takes the NIC interrupts, to wake. mio TCP,
+1 stream, 10k msg/s, 3 reps (`aws-20261028-092158`):
+
+| CPU 1 | p50 µs | p99 µs |
+|---|---|---|
+| every idle state enabled (C6: 190 µs exit) | 43–160 | 315–559 |
+| capped at C1 | 37.3–39.0 | 44.3–48.9 |
+| never idle | 37.0–38.2 | 43.6–44.5 |
+| uring-sqpoll (polls the NIC) | 34.3–35.6 | 41.7–46.3 |
+
+Busy polling off did not help (44–165 / 438–545). `c7a` (AMD,
+`acpi_idle`) showed no such cost. The lab now caps the IRQ CPU at C1 on
+`intel_idle` hosts for every arm of a session and turns TCP autocorking
+off for every TCP arm; `c7a` sessions are unchanged by the cap. The SMT
+comparison on `c7i` was rerun with the cap on both halves
+([`uring-sqpoll` on the loop's SMT sibling](../io/backends.md#uring-sqpoll-on-the-loops-smt-sibling-x86)). The millisecond tails in many `c7i` arms (p99.99 to 12 ms, capped
+arms included) are separate: about 15 ms once a minute at a fixed second
+per pair, unexplained. Details:
+[BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#c7i-the-irq-cpus-idle-depth);
+the host check: [ergon-tune](../tune/overview.md) T20 and T21.
+
+### Reliable: F-Stack, kernel TCP and Aeron (d1, d8)
+
+Round trip (µs). A/A: `dpdk-tcp` again. Busy threads a host: Aeron 4,
+TCP 1. A row marked **flagged** is past what the arm carries (or, for
+`aeron-rel` at 8 streams and 200,000 msg/s, its IRQ CPU saturated in 2 of
+3 reps) and is never compared.
+
+| msg/s | streams | arm | min | p50 | p99 | p99.99 | max | max causes (3 reps) |
+|---|---|---|---|---|---|---|---|---|
+| 10,000 | 1 | `dpdk-aeron-rel` | 25.4 (25.2–25.5) | 29.6 (29.4–30.6) | 36.6 (36.5–39.3) | 125 (109–134) | 170 (158–178) | unexplained 3 |
+| | | `dpdk-tcp` | 29.3 (29.0–29.6) | 33.9 (33.9–34.1) | 40.4 (40.2–40.9) | 111 (110–129) | 165 (163–172) | :49–:51 cluster 1, unexplained 2 |
+| | | A/A | 29.6 (29.6–29.9) | 34.1 (34.1–35.4) | 40.4 (40.4–44.0) | 116 (104–136) | 164 (164–174) | unexplained 3 |
+| | | `aeron-rel` | 36.7 (36.7–37.2) | 42.7 (42.5–42.7) | 49.8 (49.8–50.0) | 143 (123–157) | 180 (160–250) | :49–:51 cluster 1, unexplained 2 |
+| | | `mio-tcp` | 43.5 (43.2–44.4) | 52.3 (52.2–52.9) | 64.5 (62.2–70.3) | 153 (152–171) | 298 (241–317) | unexplained 3 |
+| | | `eio-tcp` | 44.5 (44.2–44.7) | 53.2 (52.9–53.5) | 63.6 (61.5–65.5) | 145 (123–167) | 374 (231–509) | unexplained 3 |
+| | 8 | `dpdk-aeron-rel` | 25.9 (25.6–25.9) | 30.7 (30.5–31.0) | 38.2 (38.2–38.6) | 115 (104–141) | 186 (156–192) | unexplained 3 |
+| | | `dpdk-tcp` | 29.7 (29.7–29.9) | 35.0 (34.9–35.0) | 42.1 (41.5–42.3) | 131 (126–134) | 175 (156–204) | unexplained 3 |
+| | | A/A | 29.6 (29.5–29.8) | 35.1 (35.1–35.5) | 43.8 (43.5–44.5) | 124 (118–149) | 189 (165–243) | :49–:51 cluster 1, unexplained 2 |
+| | | `aeron-rel` | 46.4 (45.5–46.5) | 52.5 (52.3–52.8) | 61.7 (60.2–61.8) | 171 (165–190) | 405 (282–2,213) | NAK 1, unexplained 2 |
+| | | `mio-tcp` | 44.9 (44.3–45.4) | 52.2 (51.5–52.2) | 64.0 (63.9–66.6) | 174 (174–198) | 363 (302–470) | unexplained 3 |
+| | | `eio-tcp` | 44.8 (44.5–44.8) | 52.8 (52.6–54.0) | 65.6 (64.7–67.0) | 160 (144–163) | 380 (221–400) | unexplained 3 |
+| 50,000 | 1 | `dpdk-aeron-rel` | 24.3 (24.1–24.4) | 28.1 (28.0–28.2) | 35.5 (35.1–35.8) | 110 (110–135) | 211 (164–252) | unexplained 3 |
+| | | `dpdk-tcp` | 27.7 (27.5–27.7) | 32.1 (32.0–32.4) | 40.2 (40.1–42.2) | 131 (106–139) | 201 (163–201) | unexplained 3 |
+| | | A/A | 27.7 (27.6–27.8) | 32.1 (32.0–32.2) | 40.5 (40.2–40.8) | 135 (124–140) | 180 (180–188) | unexplained 3 |
+| | | `aeron-rel` | 34.8 (34.6–34.9) | 40.5 (40.4–40.6) | 48.0 (47.5–48.4) | 147 (144–148) | 209 (196–238) | unexplained 3 |
+| | | `mio-tcp` | 40.0 (39.8–40.1) | 60.5 (59.1–67.8) | 83.1 (80.0–92.2) | 196 (193–229) | 536 (343–2,524) | unexplained 3 |
+| | | `eio-tcp` | 39.9 (39.3–40.7) | 58.7 (58.7–59.8) | 78.6 (78.4–79.0) | 177 (166–193) | 300 (254–322) | unexplained 3 |
+| | 8 | `dpdk-aeron-rel` | 25.0 (24.6–25.6) | 29.4 (29.1–30.4) | 37.1 (36.6–37.8) | 139 (123–142) | 225 (195–236) | :49–:51 cluster 1, unexplained 2 |
+| | | `dpdk-tcp` | 28.0 (28.0–28.7) | 33.8 (33.4–34.0) | 41.1 (40.7–43.1) | 139 (127–141) | 187 (178–296) | unexplained 3 |
+| | | A/A | 28.2 (28.0–28.6) | 33.6 (33.3–33.6) | 41.2 (40.9–42.7) | 132 (99.2–152) | 233 (175–1,839) | unexplained 3 |
+| | | `aeron-rel` | 42.2 (39.3–43.0) | 53.3 (52.6–54.5) | 64.1 (64.0–64.6) | 180 (178–181) | 315 (288–484) | unexplained 3 |
+| | | `mio-tcp` | 41.6 (41.1–41.8) | 60.1 (59.1–60.4) | 82.2 (80.9–87.6) | 201 (185–207) | 315 (309–410) | unexplained 3 |
+| | | `eio-tcp` | 41.5 (41.1–44.1) | 61.1 (60.8–62.9) | 85.0 (83.3–88.1) | 211 (195–214) | 333 (284–588) | unexplained 3 |
+| 200,000 | 1 | `dpdk-aeron-rel` | 23.2 (23.1–24.0) | 27.5 (27.4–31.8) | 37.9 (37.1–47.4) | 162 (150–176) | 297 (273–342) | page fault 1, unexplained 2 |
+| | | `dpdk-tcp` | 33.9 (33.6–34.4) | 50.4 (49.4–52.9) | 83.8 (79.5–89.7) | 207 (191–212) | 297 (270–316) | unexplained 3 |
+| | | A/A | 33.5 (33.5–33.6) | 49.1 (48.6–49.1) | 78.7 (77.7–81.3) | 183 (183–192) | 285 (273–314) | unexplained 3 |
+| | | `aeron-rel` | 36.7 (35.1–37.0) | 47.8 (43.9–49.1) | 67.8 (60.9–74.4) | 210 (176–1,967) | 856 (404–2,336) | unexplained 3 |
+| | 8 | `dpdk-aeron-rel` | 24.0 (23.7–24.0) | 28.8 (28.4–29.4) | 38.7 (37.3–38.7) | 152 (133–152) | 259 (219–306) | unexplained 3 |
+| | | `dpdk-tcp` | 27.9 (27.9–27.9) | 34.7 (34.2–36.1) | 48.6 (45.7–53.0) | 157 (141–161) | 261 (248–268) | unexplained 3 |
+| | | A/A | 27.7 (27.6–27.7) | 34.9 (34.4–35.9) | 49.6 (47.4–54.2) | 152 (137–180) | 340 (246–342) | unexplained 3 |
+| | | `aeron-rel` **flagged** | 41.0 (40.8–42.1) | 86.0 (82.1–86.9) | 120 (116–126) | 240 (237–256) | 363 (350–594) | IRQ CPU saturated 2, :49–:51 cluster 1 |
+
+Kernel TCP at 200,000 msg/s, past capacity in every rep (sender late,
+under 98 % of the rate), never compared:
+
+| streams | arm | achieved, msg/s | p50 (backlog) |
+|---|---|---|---|
+| 1 | `mio-tcp` | 147,274 to 153,776 | 5.2 to 6.1 s |
+| | `eio-tcp` | 119,027 to 134,125 | 8.5 to 11.6 s |
+| 8 | `mio-tcp` | 113,359 to 121,313 | 11.1 to 13.1 s |
+| | `eio-tcp` | 104,470 to 111,679 | 13.5 to 15.8 s |
+
+A/A spread at p50: 1.50 (1 stream, 10,000), 0.16 (50,000), 3.78
+(200,000); 0.48, 0.35, 0.22 at 8 streams.
+
+- **F-Stack against kernel TCP:** p50 lower by 17.2 to 19.3 at 10,000
+  msg/s and 26.3 to 28.5 at 50,000; p99 lower by 21.9 to 24.1 and 38.4 to
+  43.9; p99.99 lower by 29 to 73 in 7 of 8 comparisons (`eio-tcp` at 1
+  stream and 10,000 not separated). Same busy threads (1), same wire bytes
+  (134).
+- **F-Stack against kernel Aeron reliable:** p50 lower by 8.4 to 8.7 at 1
+  stream and 17.5 to 19.5 at 8. At 1 stream and 200,000 msg/s F-Stack's
+  p50 rises to 50.4 and the two are not separated at p50; kernel Aeron's
+  p99 is lower there by 16.0.
+- **At 200,000 msg/s** F-Stack carries the full rate at 1 and 8 streams;
+  kernel TCP falls 5 to 16 s behind, ergon-io more than mio (it carries
+  18 % less at 1 connection, 7 % less at 8; not traced).
+- **Aeron on DPDK is the lowest:** p50 27.5 to 30.7 at every stream count
+  and load. Against F-Stack: p50 lower by 3.9 to 4.4 at 10,000 and 50,000,
+  5.9 at 8 streams and 200,000, 23.0 at 1 stream and 200,000; p99 lower by
+  3.9 to 10.0, 46 at 1 stream and 200,000, not separated at 1 stream and
+  10,000. Against kernel Aeron: p50 lower by 12.3 to 13.1 at 1 stream,
+  20.4 at 200,000, and 21.8 to 23.9 at 8 streams.
+- **Kernel Aeron grows with streams and load:** p50 40.5 to 47.8 at 1
+  stream, 52.5 to 53.3 at 8 streams to 50,000 msg/s, 86.0 (82.1–86.9) at
+  8 streams and 200,000, where CPU 1, which takes every data-NIC
+  interrupt, saturated in 2 of 3 reps. md-dpdk takes no interrupt.
+- **Loss:** none in any arm. Aeron retransmitted nothing (6 NAKs, one
+  point, above). F-Stack retransmitted one segment, in one A/A point at
+  200,000 msg/s.
+
+### Unreliable UDP (u)
+
+Round trip (µs), 1 stream, 50,000 msg/s. A/A: `dpdk-aeron-udp` again
+(spread at p50 0.75). Busy threads a host: Aeron 4, sockets 1.
+
+| arm | min | p50 | p99 | p99.99 | max | max causes (3 reps) |
+|---|---|---|---|---|---|---|
+| `dpdk-aeron-udp` | 24.4 (24.2–24.4) | 28.0 (28.0–28.7) | 35.4 (35.2–37.5) | 131 (106–139) | 177 (169–178) | unexplained 3 |
+| A/A | 24.1 (24.1–24.5) | 28.0 (27.9–28.7) | 35.3 (35.3–37.4) | 132 (127–134) | 173 (164–194) | unexplained 3 |
+| `aeron-udp` | 34.7 (34.6–35.1) | 40.9 (40.8–40.9) | 48.6 (48.3–49.9) | 148 (145–162) | 420 (414–445) | unexplained 3 |
+| `mio-udp` | 35.7 (35.3–36.0) | 47.7 (47.4–47.8) | 60.8 (60.6–61.1) | 150 (133–164) | 521 (236–609) | unexplained 3 |
+| `eio-udp` | 37.7 (37.0–38.1) | 48.4 (48.3–48.5) | 60.9 (58.4–61.8) | 155 (147–159) | 420 (226–553) | unexplained 3 |
+
+- DPDK Aeron's p50 is 12.8 below kernel Aeron's and 19.7 to 20.4 below the
+  sockets'; p99 13.2 and 25.4 to 25.5 lower. Kernel Aeron's p50 is 6.9 to
+  7.5 below the sockets'.
+- mio and ergon-io: p50, p99 and p99.99 not separated; mio's min 2.0
+  lower. 0 lost; 175 (mio) and 301 (ergon-io) reordered over 3 reps.
+
+### mio against ergon-io: the verdict
+
+**No difference.** Set pin runs both on the same connection 4-tuple
+(`tcp_lat --source-port 31000`, both to `10.30.1.7:22000`, read back in
+each manifest), so the NIC queue and flow path are the same. A/A:
+`mio-tcp-pin` again.
+
+| msg/s | arm | min | p50 | p99 | p99.99 | max | max causes (3 reps) |
+|---|---|---|---|---|---|---|---|
+| 10,000 | `mio-tcp-pin` | 44.1 (43.8–44.3) | 52.2 (51.4–52.4) | 61.8 (61.5–63.2) | 161 (154–171) | 266 (194–273) | unexplained 3 |
+| | A/A | 43.4 (43.2–43.8) | 52.2 (52.1–52.3) | 61.9 (61.0–62.9) | 153 (152–163) | 311 (187–404) | :49–:51 cluster 1, unexplained 2 |
+| | `eio-tcp-pin` | 44.6 (44.4–44.7) | 53.4 (53.3–53.6) | 62.1 (61.8–62.1) | 143 (136–155) | 198 (192–374) | unexplained 3 |
+| 50,000 | `mio-tcp-pin` | 39.7 (39.5–39.9) | 56.3 (55.7–59.8) | 79.5 (77.6–81.8) | 213 (176–217) | 331 (244–1,579) | unexplained 3 |
+| | A/A | 39.8 (39.5–39.9) | 59.1 (56.1–59.7) | 79.0 (76.7–79.4) | 157 (151–162) | 541 (217–620) | unexplained 3 |
+| | `eio-tcp-pin` | 40.0 (39.8–40.6) | 59.0 (58.4–59.6) | 78.3 (78.1–79.7) | 180 (171–181) | 276 (270–544) | unexplained 3 |
+
+| comparison | p50 | p99 | p99.99 |
+|---|---|---|---|
+| same connection, 10,000 msg/s | mio 1.2 lower (A/A 0.8) | not separated | not separated |
+| same connection, 50,000 msg/s | not separated (A/A 3.4) | not separated | not separated |
+| fresh connections, 1 stream, 10,000 / 50,000 | not separated | not separated / ergon-io 4.5 lower | not separated |
+| fresh connections, 8 streams, 10,000 / 50,000 | mio 0.6 / 1.0 lower | not separated | not separated |
+
+- The largest separated p50 gap is 1.2 µs (2 %), mio's way; ergon-io leads
+  once at p99. No tail separates. Calls a message at 10,000 msg/s, both
+  arms: 2.00 reads (one empty: the busy-poll pass), 1.00 send, 1.00
+  `TCP_QUICKACK` re-arm; 0 RTOs, 0 retransmits.
+- The Azure gap (ergon-io 4.6 to 7.5 behind) was unequal busy polling:
+  ergon-io's `epoll-spin` forced `SO_BUSY_POLL` 0. Fixed with
+  `Config::busy_poll_us`; with both at 50 µs the gap is gone on both
+  clouds.
+- Overloaded (200,000 msg/s, above) ergon-io drains slower: it carried
+  104,000 to 134,000 msg/s against mio's 113,000 to 154,000. Neither keeps
+  up.
+
+### Maxima
+
+Each point's max (`spikes.py --transport`), 141 points:
+
+| cause | maxima | what it is |
+|---|---|---|
+| past capacity | 12 | kernel TCP at 200,000 msg/s |
+| IRQ CPU saturated | 2 | kernel Aeron, 8 streams, 200,000 msg/s |
+| NAK | 1 | kernel Aeron, 8 streams, 10,000 msg/s: 2,213 µs; host a sent 6 NAKs in that second, with no retransmit and no loss-gap fill, so the frames it waited for came late, not lost |
+| page fault of a busy thread | 1 | DPDK Aeron, 1 stream, 200,000 msg/s: 342 µs, host b CPU 3 |
+| seconds :49 to :51 | 6 | the window `spikes.py` names for Azure's per-minute stall; on AWS not shown to be the same cause |
+| **unexplained** | 119 | below |
+
+Of the 129 maxima not past capacity, 123 are 620 µs or less (median 266).
+The six above 620 µs:
+
+| point | max, µs | cause |
+|---|---|---|
+| `mio-tcp`, 1 stream, 50,000 msg/s | 2,524 | unexplained: no event on either host; a TCP counter grew on host a in that second, but the point's connection retransmitted nothing |
+| `aeron-rel`, 1 stream, 200,000 msg/s | 2,336 (856 in another rep) | unexplained: no event on either host, no NAK |
+| `aeron-rel`, 8 streams, 10,000 msg/s | 2,213 | NAKs for frames that came late (above) |
+| A/A (`dpdk-tcp`), 8 streams, 50,000 msg/s | 1,839 | unexplained: no event on either host |
+| `mio-tcp-pin`, 50,000 msg/s | 1,579 | unexplained: no event on either host |
+
+The unexplained ones, and what was ruled out:
+
+| kind | maxima | ruled out | not observable |
+|---|---|---|---|
+| no recorded event overlaps the max on either host | 88 | a gap spinner's gap on an idle isolated CPU (a host pause); preemption, IRQ, softirq and page fault on the traced hot CPUs; the client loops' stalls; Aeron NAKs, retransmits and driver errors; the point's own TCP retransmits | the IRQ CPU and the housekeeping CPU (not traced); a pause of a busy vCPU (no spinner shares it); the ENA and AWS's network |
+| the ping's receive loop did not run for 65 to 291 µs on CPU 2 and the guest's trace shows nothing there | 24 | the same | a hypervisor pause of that busy CPU |
+| a TCP counter grew in that second on another connection | 7 | the point's own connections retransmitted nothing | |
+
+No max verdict is drawn: every comparison's max column is blocked by an
+unexplained max.
+
+### Fairness flags
+
+`fairness.py` reports 460 violations, so every AWS table is shown with
+`--show-invalid`. None moves a median:
+
+| rule | count | what |
+|---|---|---|
+| `max` | 119 | the unexplained maxima above |
+| `settings` | 240 | `busy_read` and `busy_poll` read 0, not 50, on the DPDK arms' points (F-Stack, md-dpdk and their A/As): the set-up before a DPDK arm resets them, and DPDK owns the data NIC, so no kernel socket on its path reads them. `fairness.py` now leaves both out for kernel-bypass arms, so it no longer flags these |
+| `loss-accounting` | 72 | F-Stack's `tcp_info` (FreeBSD's) has no DSACK split, so its retransmits (1 in all its points) cannot be split into spurious and real |
+| `irq` | 29 | one data-NIC interrupt in a 30 s point on an isolated CPU, on the kernel arms |
+
+Thread placement was not read mid-window on one or both hosts in 7 points
+(the runner logged `thread placement: unread`), so it is unverified there:
+rep 2 of `d1` `eio-tcp` and `mio-tcp` at 50,000 msg/s and `mio-tcp` at
+200,000 (past capacity anyway), rep 2 of `u` `eio-udp`, and at 50,000
+msg/s `pin` `eio-tcp-pin` (rep 2) and the `mio-tcp-pin` A/A (reps 2 and 3).
+All but one sit inside their arm's other reps; `mio-tcp`'s rep 2 at 1
+stream and 50,000 msg/s is its slowest (p50 67.8 against 59.1 and 60.5),
+which widens that arm's range, not its median.
+
+## AWS: spy, driver threading and Onload
+
+<!-- RESULTS: aws spy threading -->
+
+Two sessions run side by side on two pairs, commit `2f8d5c21`, 3 reps, 0
+failures, the hosts, CPUs and kernel settings of
+[the AWS session above](#hosts-and-settings) (Debian 13, kernel 7.2.11).
+Compare each table only within its own session.
+
+| session | sets | rows | sets file |
+|---|---|---|---|
+| `aws-20261028-052725` | spy | 24 | `transport-aws-spy.tsv` |
+| `aws-20261028-052745` | h, k | 66 | `transport-aws-aeron-handoff.tsv` |
+
+### Spy with a live UDP destination (spy)
+
+1 stream, 50,000 msg/s, one host (a) measuring, 5 busy threads in every
+arm. A/A: `aeron-spy-udp` again.
+
+| arm | publications send |
+|---|---|
+| `aeron-spy` | nothing: no destination (the arm of [set 2b](#set-2b-one-host-spy-and-self-udp)) |
+| `aeron-spy-udp` | every frame over kernel UDP to a sink on host b (reliable, `ssc=false`: the sink's status messages drive flow control) |
+| `dpdk-aeron-spy-udp` | the same over md-dpdk's DPDK transport |
+
+Round trip (µs):
+
+| arm | min | p50 | p99 | p99.99 | max | max causes (3 reps) |
+|---|---|---|---|---|---|---|
+| `aeron-spy` | 0.18 (0.16–0.18) | 0.25 (0.25–0.26) | 0.32 (0.32–0.35) | 0.57 (0.56–5.97) | 24.2 (18.0–28.3) | host pause 2, unexplained 1 |
+| `aeron-spy-udp` | 0.17 (0.16–0.18) | 0.26 (0.26–0.27) | 0.34 (0.33–0.34) | 0.65 (0.62–5.07) | 21.6 (12.0–56.9) | unexplained 3 |
+| `dpdk-aeron-spy-udp` | 0.17 (0.15–0.18) | 0.26 (0.26–0.26) | 0.36 (0.36–0.37) | 6.63 (5.01–6.68) | 20.3 (16.7–23.5) | host pause 3 |
+| A/A | 0.18 (0.17–0.18) | 0.26 (0.26–0.26) | 0.33 (0.33–0.33) | 0.79 (0.60–5.16) | 64.5 (22.4–67.5) | host pause 1, softirq TIMER 1, unexplained 1 |
+
+One way (µs):
+
+| arm | min | p50 | p99 | p99.99 | max | max causes (3 reps) |
+|---|---|---|---|---|---|---|
+| `aeron-spy` | 0.08 (0.08–0.09) | 0.14 (0.14–0.14) | 0.17 (0.17–0.17) | 0.43 (0.41–5.28) | 26.2 (10.6–27.2) | host pause 2, unexplained 1 |
+| `aeron-spy-udp` | 0.09 (0.08–0.09) | 0.14 (0.14–0.14) | 0.19 (0.19–0.19) | 0.44 (0.41–5.75) | 30.8 (18.6–63.7) | host pause 2, softirq TIMER 1 |
+| `dpdk-aeron-spy-udp` | 0.09 (0.09–0.09) | 0.15 (0.15–0.15) | 0.20 (0.20–0.23) | 1.56 (0.42–8.60) | 25.4 (18.2–29.7) | host pause 3 |
+| A/A | 0.09 (0.07–0.09) | 0.14 (0.14–0.14) | 0.19 (0.18–0.19) | 0.41 (0.41–4.78) | 27.5 (19.7–31.9) | host pause 3 |
+
+- **A live destination costs the spy nothing at p50:** 0.25 to 0.26 round
+  trip, 0.14 to 0.15 one way, in every arm (A/A spread 0.01). The spy
+  reads the term buffer; the driver's sender sends from it on its own
+  thread. An earlier session (`aws-20261027-203145`, data lost) gave the
+  same p50s (0.26, 0.14): reproduced.
+- **p99:** the spies without DPDK are 0.03 to 0.04 lower round trip than
+  `dpdk-aeron-spy-udp`, 0.01 to 0.03 one way. p99.99 not separated (A/A
+  spread 0.14 round trip, 5.34 one way, overlapping ranges).
+- **Every frame reached the sink.** Per run: 3,000,000 frames sent, the
+  sink on host b counted 3,000,000 (one way) or 3,000,000 pings and
+  3,000,000 echoes (round trip), 0 gaps, 0 behind, 0 refused
+  (`fairness.py`'s sink rule clean). Host a's `driver.bytes-sent`:
+  288,008,800 one way (96 bytes a frame: 64 + Aeron's 32-byte header),
+  576,017,632 to 576,017,856 round trip; `aeron-spy` 0. 0 NAKs, 0
+  retransmits; `dpdk-aeron-spy-udp` 1 short send in each one-way run.
+- **Maxima** (24): host pause 16 (a gap spinner's 24 to 32 µs gap on host
+  a's CPU 7), softirq TIMER 2 (46 to 47 µs, host a CPU 2), unexplained 6.
+  Of those, 5 are the receive loop on host a's CPU 6 not running for 11.6
+  to 76.0 µs with no traced event there (a pause of that busy vCPU, which
+  no spinner shares, or an untraced CPU); 4 of them, and the sixth (A/A,
+  67.5 µs), also had host b's trace overrun on CPU 3 (50,000 to 1,126,810
+  events lost).
+- **Fairness flags** (16): 6 `max` (above), 10 `irq` (one data-NIC
+  interrupt on an isolated CPU in 5 runs, counted per row).
+
+### Driver threading modes at 1 stream (h, k)
+
+How much of Aeron's round trip is the hand-off between the driver's
+threads. Each arm is `dpdk-aeron-rel` (set h) or `aeron-rel` (set k) but for
+the driver's threading; the CPUs are the baseline's, and a mode with fewer
+busy threads leaves its spare CPUs to the gap spinners. A/A: the baseline
+again.
+
+| arm | driver | busy threads a host |
+|---|---|---|
+| `dpdk-aeron-rel`, `aeron-rel` | its own process, `DEDICATED` | 4 |
+| `-emb` | in the measuring process, `DEDICATED` | 4 |
+| `-shnet` (DPDK only) | its own process, `SHARED_NETWORK` | 3 |
+| `-shared` (DPDK only) | its own process, `SHARED` | 2 |
+| `-invoker` | the measuring thread runs it, `INVOKER` | 1 |
+
+DPDK, round trip (µs), 1 stream:
+
+| msg/s | arm | min | p50 | p99 | p99.99 | max |
+|---|---|---|---|---|---|---|
+| 10,000 | `dpdk-aeron-rel` | 27.0 (26.5–27.3) | 30.8 (30.1–31.0) | 36.1 (35.3–36.9) | 57.1 (54.4–59.2) | 140 (131–166) |
+| | `-emb` | 26.7 (26.5–27.0) | 30.1 (29.9–30.3) | 35.4 (35.2–35.6) | 53.6 (52.2–56.1) | 155 (105–197) |
+| | `-shnet` | 26.8 (26.6–26.8) | 30.1 (30.1–30.2) | 35.6 (35.2–35.6) | 55.7 (54.3–55.7) | 137 (98.2–196) |
+| | `-shared` | 27.0 (26.9–27.0) | 30.4 (30.3–30.4) | 35.7 (35.6–35.9) | 54.6 (53.3–56.7) | 134 (117–159) |
+| | `-invoker` | 26.7 (26.6–26.8) | 30.1 (30.1–31.1) | 35.3 (35.2–37.0) | 54.7 (51.8–56.5) | 110 (83.9–118) |
+| | A/A | 27.1 (26.7–27.2) | 30.8 (30.1–30.9) | 36.7 (35.8–37.0) | 64.6 (52.6–64.7) | 116 (98.5–143) |
+| 50,000 | `dpdk-aeron-rel` | 25.3 (25.2–26.2) | 29.0 (28.3–30.9) | 35.3 (33.4–39.0) | 60.7 (55.2–74.8) | 149 (109–197) |
+| | `-emb` | 25.5 (25.4–25.5) | 29.1 (28.7–29.2) | 35.5 (33.7–35.6) | 60.6 (57.1–63.1) | 154 (125–200) |
+| | `-shnet` | 25.5 (25.4–25.6) | 28.7 (28.6–28.7) | 33.9 (33.6–34.0) | 55.2 (55.0–55.5) | 124 (123–125) |
+| | `-shared` | 25.6 (25.4–25.6) | 28.8 (28.7–29.4) | 34.1 (33.9–35.9) | 56.0 (55.8–65.8) | 210 (195–216) |
+| | `-invoker` | 25.7 (25.2–26.0) | 29.0 (28.5–30.1) | 34.1 (33.6–35.5) | 57.0 (56.3–57.3) | 127 (120–129) |
+| | A/A | 25.3 (25.3–25.5) | 28.6 (28.5–29.1) | 33.7 (33.5–35.6) | 55.7 (55.4–65.7) | 204 (195–268) |
+| 200,000 | `dpdk-aeron-rel` | 24.4 (24.1–24.5) | 27.9 (27.9–28.2) | 33.6 (33.6–35.8) | 63.7 (60.5–66.4) | 152 (123–199) |
+| | `-emb` | 24.3 (24.2–24.3) | 27.8 (27.6–27.8) | 33.7 (33.2–33.8) | 61.9 (60.4–62.8) | 206 (133–209) |
+| | `-shnet` | 24.4 (24.4–24.6) | 28.1 (27.9–28.7) | 33.9 (33.7–37.3) | 63.2 (59.9–77.2) | 220 (137–232) |
+| | `-shared` | 24.5 (24.3–24.6) | 28.7 (28.6–28.7) | 36.6 (36.6–36.7) | 73.7 (68.6–74.2) | 147 (137–224) |
+| | `-invoker` | 24.4 (24.4–24.6) | 28.0 (27.9–28.1) | 33.9 (33.7–34.2) | 61.8 (60.6–62.4) | 131 (126–138) |
+| | A/A | 24.3 (24.3–24.3) | 27.8 (27.7–27.9) | 33.5 (33.3–33.8) | 62.0 (61.2–83.7) | 200 (138–202) |
+
+Kernel UDP, round trip (µs), 1 stream, 50,000 msg/s:
+
+| arm | min | p50 | p99 | p99.99 | max |
+|---|---|---|---|---|---|
+| `aeron-rel` | 35.7 (35.5–35.7) | 41.1 (41.1–41.7) | 47.2 (46.3–48.2) | 70.7 (69.7–85.2) | 144 (136–159) |
+| `-emb` | 35.9 (35.6–35.9) | 41.4 (41.3–41.5) | 47.5 (46.5–48.0) | 87.2 (82.0–331) | **1,191 (768–1,319)** |
+| `-invoker` | 36.3 (36.1–36.9) | 45.9 (44.8–49.5) | 54.7 (54.2–55.6) | 77.1 (76.5–93.7) | 190 (143–299) |
+| A/A | 35.8 (35.7–36.1) | 41.4 (41.0–41.9) | 47.4 (46.2–48.3) | 76.0 (73.2–81.9) | 178 (154–228) |
+
+- **DPDK: the modes level at 1 stream.** At 10,000 and 50,000 msg/s no
+  pair separates at min, p50, p99 or p99.99 (A/A spread at p50 0.75 and
+  2.48). At 200,000 msg/s fully `SHARED` is higher than `DEDICATED`,
+  `-emb` and `-invoker`: p50 by 0.64 to 0.91, p99 by 2.75 to 3.01 (A/A
+  0.38 and 2.30); against `-shnet` not separated. One driver thread
+  doing the conductor's, sender's and receiver's work starts to show
+  there.
+- **Kernel: `INVOKER` is slower.** p50 3.1 to 8.4 higher than `aeron-rel`
+  rep for rep (4.80 on the medians), p99 7.49 higher; `-emb` against the
+  baseline not separated below the max. With kernel sockets the measuring
+  thread pays each `sendmsg` and `recvmsg` itself.
+- **1 stream does not load the driver's loops**, so this shows the
+  hand-off cost, not what sharing a thread costs under load. With 32 and
+  128 streams it does cost:
+  [Aeron threading under mixed load](#aeron-threading-under-mixed-load-intel-graviton).
+- An earlier session (data lost) showed the same pattern with lower
+  absolute DPDK figures (p50 22 to 26 against 28 to 31 here): compare
+  only within one session.
+- **Loss:** 0 NAKs, 0 retransmits, 0 loss-gap fills in every point.
+
+#### The embedded kernel driver's millisecond maxima: unexplained
+
+`aeron-rel-emb`'s max was 1,191, 1,319 and 768 µs in its 3 reps; every
+other kernel point (9) stayed at 136 to 299 µs, and DPDK's `-emb` at 105 to
+209, with the same medians. What the data shows:
+
+| evidence | finding |
+|---|---|
+| stalls of 300 µs or more | 7, all in `aeron-rel-emb`, none in the other 63 points: rep 1 one (1,191), rep 2 four (1,140, 381, 1,319, 1,204), rep 3 two (294, 768). Rep 2's three largest are exactly 10.24 s apart (35.34, 45.58, 55.82 s into the run); reps 1 and 3 show no such period |
+| shape | after each stall the latency falls by about 18.4 µs a message (messages are 20 µs apart): the backlog is released at once and drained one message every 1.6 µs. Frames were held, not lost: 0 NAKs, 0 retransmits |
+| the measuring thread (host a) | its own loop-gap record shows no gap at any stall (its gaps are 10 to 28 µs at a steady 2 to 4 s cadence, as in the baseline): the ping kept offering |
+
+Ruled out:
+
+| candidate | why |
+|---|---|
+| thread placement | sender, receiver, conductor and client on CPUs 2, 3, 4 and 5 on both hosts, each about 100 % busy, the same as the external driver's; the client conductor threads (`aeron-client`) and `aeron-md-nra` on CPU 0 in both |
+| a thread off its CPU, IRQ, softirq, IPI on a hot CPU | no traced event on CPUs 2 to 7 of either host overlaps any stall |
+| page faults, preemption | none on a hot CPU in the measured 30 s of any kernel point; host a's faults (about 4,900) are at start-up and warm-up, the same count in every arm |
+| a host pause | the gap spinners on CPUs 6 and 7 of both hosts saw no gap at any stall |
+| TLB-shootdown IPIs from sharing the client's address space | the extra `call_function` IPIs on the driver's CPUs (about 125 on host a) all come at the end of the run, at teardown |
+| NIC queue (RSS) placement | in reps 1 and 2 host b's ping and echo shared one queue (10 times the `NET_RX` softirqs on CPU 3); rep 3 split them and still stalled; A/A reps 1 and 3 shared one queue on host a without stalling |
+| arm order | `-emb` ran first, third and first in its rounds |
+| warm-up | stalls fall 35 to 56 s into the run, after the 30 s warm-up |
+| settings | the point's runner environment, sysctls and Aeron settings match the baseline's but for `DRIVER=embedded` |
+
+Not observable in this session: CPUs 0 and 1 (not traced), where the
+in-process client's conductor and the driver's `aeron-md-nra` thread run
+on the same address space and file table as the sender and receiver; a
+thread waiting in the kernel without sleeping (a spinlock or a lock's
+optimistic spin), which leaves no scheduler event; the driver agents' own
+duty-cycle gaps (not recorded); a pause of one busy vCPU. The DPDK `-emb`
+arm, whose sender and receiver make no system calls, shows none of it.
+Next: trace CPUs 0 and 1 too, and record the agents' duty-cycle gaps.
+
+- **Fairness flags** (82): 64 `max` (unexplained: no recorded event
+  overlaps it on either host), 12 `hostcheck` (the in-process kernel
+  drivers' own N4 warning: RX ring 1,024 of 8,192), 6 `declared`. The
+  `declared` ones are a harness labelling fault, not a different
+  transport: `aeron_lat` tells DPDK from kernel UDP by a `rusteron-dpdk`
+  counter it reads once at start, which missed DPDK in 30 of the 54 DPDK
+  points (every arm at 10,000 msg/s, `-emb` and `-invoker` at every
+  rate). Every one of them ran DPDK: 0 data-NIC interrupts in the point,
+  DPDK's EAL start in each in-process point's log, and p50 28 to 31
+  against the kernel's 41 to 46.
+
+### Onload on ENA: not viable
+
+OpenOnload over AF_XDP on AWS ENA was tried and not pursued. No latency
+was measured.
+
+| | |
+|---|---|
+| session | `aws-20261027-100813`: `c7i.4xlarge` (Intel), Debian 13, kernel 7.2.9, OpenOnload master `a945125` with this repo's `onload-kernel-7.2.patch`. An earlier attempt (`aws-20261027-085814`) lost its spot instance before any result |
+| what happened | registering `enp40s0` with AF_XDP hit a kernel NULL pointer dereference (`BUG: kernel NULL pointer dereference, address: 0000000000000000`, RIP 0x0) in `sfc_resource`: `af_xdp_nic_init_hardware+0x1b7/0x750` ← `efrm_nic_bringup` ← `efrm_nic_add` ← `efrm_nondl_add_device` ← `efrm_nondl_try_add_device` ← `efrm_nondl_register_netdev`. The instance froze (SSH timed out; AWS status checks still passed) |
+| upstream | Onload's README: AF_XDP support is "a community-supported work in progress that is not currently at release quality" ([onload](https://github.com/Xilinx-CNS/onload)). The in-tree ENA driver's documentation lists XDP and RSS, with no AF_XDP zero-copy and no ntuple filters ([ENA](https://docs.kernel.org/networking/device_drivers/ethernet/amazon/ena.html)). On AWS latency, a maintainer: "Latency is not expected to benefit from AF_XDP Onload at all" ([#139](https://github.com/Xilinx-CNS/onload/issues/139)). The same freeze on EC2 is open as [#231](https://github.com/Xilinx-CNS/onload/issues/231) |
+
+Onload's own target is AMD Solarflare NICs, which AWS does not offer. The
+runner's Onload arms (`onload-*`, `transport-aws-onload.tsv`) stay,
+marked experimental.
+
+## Aeron threading under mixed load (Intel, Graviton)
+
+<!-- RESULTS: aws mixed threading -->
+
+Does sharing the media driver's threads cost latency once the driver has
+real work? At 1 stream it did not
+([h, k](#driver-threading-modes-at-1-stream-h-k)); here the driver carries
+32 or 128 streams of mixed traffic. Aeron's threading modes are Real
+Logic's ([Aeron configuration](https://github.com/real-logic/aeron/wiki/Configuration-Options)).
+
+**Answer.** With 32 or more streams, every thread you take from the driver
+costs latency, and the cost grows with the stream count and the load:
+
+| driver threading | busy threads a host | hot p50 above dedicated, 32 streams | 128 streams |
+|---|---|---|---|
+| dedicated, own process or in-process (`-emb`) | 5 | reference; `-emb` the same | reference; `-emb` the same |
+| `SHARED_NETWORK` | 4 | +1.9 to +7.6 (2 of 8 not separated) | +7.3 to +32.6 |
+| `SHARED` | 3 | +3.1 to +17.7 | +14.7 to +73.7 |
+| `INVOKER` (the hot thread runs the driver) | 2 | +4.9 to +22.6 | +25.0 to +130.8 |
+
+Ranges span both platforms, both stacks and both loads (µs, round trip).
+`-emb` is not separated from dedicated at 13 of 16 points and within 0.9
+at the other 3. Graviton pays 1.4 to 2.9 times what Intel pays for the
+same mode; the kernel and DPDK stacks pay about the same at 50,000 msg/s.
+
+### Sessions
+
+Four sessions, commit `47536706`, 3 reps, 81 rows each, 0 failures, on
+demand, Debian 13, kernel 7.2.11, 8 cores a host (CPU 0 housekeeping,
+CPU 1 the NIC interrupts, CPUs 2 to 7 isolated). Each pair has its own
+network: compare across sessions only through the floors measured in each.
+
+| session | instances | stack | zone | floor `dpdk-raw` p50 / p99 | floor `mio-udp` p50 / p99 |
+|---|---|---|---|---|---|
+| `aws-20261028-123929` | 2 × `c7i.4xlarge` (Intel), SMT off | DPDK (md-dpdk) | us-east-1a | 30.0 / 40.7 | 42.8 / 53.4 |
+| `aws-20261028-123909` | 2 × `c7i.4xlarge`, SMT off | kernel UDP | us-east-1a | 29.0 / 35.4 | 41.1 / 47.1 |
+| `aws-20261028-125527` | 2 × `c8g.2xlarge` (Graviton) | DPDK | us-east-2a | 27.1 / 33.4 | 34.7 / 40.5 |
+| `aws-20261028-123949` | 2 × `c8g.2xlarge` | kernel UDP | us-east-1d | 25.8 / 34.3 | 33.4 / 41.8 |
+
+The `c7i` hosts cap the IRQ CPU at C1 and turn TCP autocorking off
+([c7i: the IRQ CPU's idle depth](#c7i-the-irq-cpus-idle-depth)).
+Floors: 1 stream, 10,000 msg/s, 64 B. `mio-udp` in the DPDK sessions had
+millisecond tails (p99.99 0.5 ms on Intel, 4.5 ms on Graviton, not
+explained); it is shown, not used.
+
+The load (`aeron_lat --load mixed`, sets `transport-aws-aeron-mixed.tsv`):
+a hot stream, 64 B at 10,000 msg/s on its own channel and its own busy
+thread at each end, measured from each message's intended send time,
+beside 31 or 127 background streams on one more busy thread: steady,
+bursty (8 at once), idle then 128 at once, and two publishers on one
+stream; 64, 288, 1,344 and 4,096 B; 1 to 4 subscriptions each. Every
+stream together carries 50,000 or 200,000 msg/s. Reliable UDP, 1 MiB
+terms, MTU 1,408. 30 s measured after 30 s warm-up (5 s for a set's
+second load). `all` is every stream's round trips together.
+
+| arm | Aeron threading | driver | busy threads a host |
+|---|---|---|---|
+| dedicated (`aeron-mix`, `dpdk-aeron-mix`) | `DEDICATED` | own process | 5 |
+| `-emb` | `DEDICATED` | in the measuring process | 5 |
+| `-shnet` | `SHARED_NETWORK` | own process | 4 |
+| `-shared` | `SHARED` | own process | 3 |
+| `-invoker` | `INVOKER`: the hot thread runs the driver between its own work | in the measuring process | 2 |
+| A/A | dedicated again | own process | 5 |
+
+### Validity
+
+Every point was checked by `fairness.py` and by hand against the raw
+manifests.
+
+| check | result | effect |
+|---|---|---|
+| every message accounted for: sent, read by every subscription, echoed, back | yes, all 288 mixed points | none |
+| driver bytes against the counts (`mixed-wire`) | within bounds everywhere | none |
+| NIC bytes against the driver (`mixed-nic`) | kernel: within bounds, no ENA allowance exceeded, no UDP receive drops. DPDK: `fairness.py` found no NIC counters (the collector reads a DPDK host's NIC from `vm.sh nicstats`, which has nothing there); the binaries' own `nic.*` counters, put through the same rule: bytes within bounds on both hosts, 0 allowance exceeded, 0 `rx_nombuf` | none |
+| frames to a closed UDP port on host a | every point, both stacks: DPDK `queue-drop` 305 to 9,175 a run, kernel `UdpNoPorts` 568 to 7,581, growing with the stream count | not the measured traffic (every message accounted for); source open |
+| DPDK `nic-rx-missed` | Intel only, the external-driver arms (dedicated, `-shnet`, `-shared`, A/A) at 128 streams: 8,940 to 17,698 a run on host a, with 0 NAKs, 0 retransmits and the embedded arms' frame counts; 0 everywhere else | not the measured traffic (the counters span the whole client run, start-up included); unexplained |
+| back-pressure | `analyse.py` flags every point, so it compares none. Every count equals the publication's term rotations: Aeron returns `ADMIN_ACTION` there, which the harness retries and counts as back-pressure. Checked on all 22,752 background streams and the hot stream; flow-control limits 0 | none: no point was back-pressured |
+| saturation | `-shared` and `-invoker` at 128 streams ([below](#why-sharing-costs)) | the effect measured, not a fault |
+| busy threads | as budgeted wherever sampled; 9 points' mid-window sample unread | none |
+| placement, IRQs | as declared; floors: 1 or 2 data-NIC interrupts on a host's hot CPUs in 6 points (an IRQ moves to its new CPU at its next interrupt) | none |
+| settings | `dpdk-raw` and its A/A read the kernel's `busy_poll` 0, as no kernel socket is on their path (`fairness.py` exempts the `dpdk` and `fstack` set-ups, not `dpdk-raw`) | none |
+| sender late (over 100 µs) | at most 0.54 % of a point's hot sends (Graviton kernel `-invoker`, 128 streams, 200,000 msg/s); the flag is 1 % | none |
+| loss | Intel kernel: 71 to 309 NAKs in 4 points at 200,000 msg/s, all during a path outage ([maxima](#maxima-and-the-c7i-path-outages)), lost below the guest; 0 elsewhere | those points' tails only |
+| A/A, p50 spread | 0.35 to 2.8, except Intel at 32 streams and 200,000 msg/s (DPDK 4.1, kernel 6.1) | the bar for separation |
+
+Two arms are **separated** below when their rep ranges do not overlap and
+their medians differ by more than that point's A/A spread; `~` marks a
+difference that is not.
+
+### Hot p50 against dedicated
+
+Hot-stream round-trip p50 (µs): the dedicated arm's, then each arm's
+difference from it.
+
+| arm | busy | Intel DPDK 32 / 50k | 32 / 200k | 128 / 50k | 128 / 200k | Intel kernel 32 / 50k | 32 / 200k | 128 / 50k | 128 / 200k | Graviton DPDK 32 / 50k | 32 / 200k | 128 / 50k | 128 / 200k | Graviton kernel 32 / 50k | 32 / 200k | 128 / 50k | 128 / 200k |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| dedicated | 5 | 32.9 | 32.5 | 36.5 | 36.6 | 47.2 | 58.2 | 52.3 | 69.7 | 31.4 | 31.5 | 40.3 | 41.0 | 39.9 | 42.5 | 49.2 | 54.9 |
+| `-emb` | 5 | -0.7 | -0.1~ | +0.7~ | +1.3~ | +0.7~ | -2.1~ | -0.4~ | +1.8~ | -0.2~ | +0.1~ | +0.5 | +0.9 | -0.4~ | +0.0~ | +0.4~ | +0.4~ |
+| `-shnet` | 4 | +2.0 | +1.9~ | +7.3 | +8.2 | +1.9 | +5.0~ | +8.2 | +23.7 | +3.8 | +4.1 | +15.7 | +18.0 | +4.1 | +7.6 | +18.2 | +32.6 |
+| `-shared` | 3 | +3.1 | +4.2 | +15.7 | +21.9 | +4.1 | +10.0 | +14.7 | +45.2 | +9.1 | +10.2 | +38.7 | +46.5 | +10.0 | +17.7 | +41.8 | +73.7 |
+| `-invoker` | 2 | +4.9 | +5.8 | +25.0 | +29.3 | +5.8 | +17.5 | +26.2 | +73.4 | +13.3 | +15.0 | +57.0 | +66.5 | +14.3 | +22.6 | +60.4 | +130.8 |
+
+- **Every mode with fewer threads is slower, and the order never
+  changes**: dedicated and `-emb`, then `SHARED_NETWORK`, `SHARED`,
+  `INVOKER`. No arm with fewer busy threads beats dedicated at any point.
+  The only differences that are not separated are `SHARED_NETWORK` at 32
+  streams and 200,000 msg/s on Intel, where the A/A spread is 4.1 and 6.1.
+- **The stream count drives it**: from 32 to 128 streams at 50,000 msg/s
+  `SHARED`'s rise goes from +3.1 to +15.7 (Intel DPDK) and from +9.1 to
+  +38.7 (Graviton DPDK). Dedicated itself rises 3.6 (Intel DPDK) to 9.3
+  (Graviton kernel) over the same step.
+- **p99 rises more than p50**: at 128 streams, 50,000 msg/s, `INVOKER`'s
+  hot p99 is 34.7 above dedicated on Intel DPDK and 97.0 above on Graviton
+  DPDK.
+- The `all` columns (every stream's round trips) keep the same order,
+  except that `INVOKER`'s all-streams p50 is 0.1 to 1.3 below `SHARED`'s
+  at 3 points (Intel at 128 streams, 200,000 msg/s; Graviton kernel at 32
+  streams, 200,000).
+
+### Each platform and stack
+
+Round trip (µs): the median of 3 reps, the range across reps in
+brackets. `busy`: busy threads a host. Intel kernel p99.99 and max of
+milliseconds are path outages and stalls, [below](#maxima-and-the-c7i-path-outages).
+
+#### Intel DPDK
+
+| streams | msg/s | arm | busy | hot p50 | hot p99 | hot p99.99 | hot max | all p50 | all p99 |
+|---|---|---|---|---|---|---|---|---|---|
+| 32 | 50,000 | dedicated | 5 | 32.9 (32.4–33.0) | 41.2 (40.9–41.3) | 72.6 (68.4–91.2) | 167 (128–220) | 34.9 (34.4–35.1) | 66.8 (64.7–71.0) |
+| | | `-emb` | 5 | 32.2 (32.1–32.2) | 40.8 (39.8–42.4) | 80.9 (72.0–83.5) | 215 (207–217) | 34.6 (34.3–34.7) | 64.1 (63.9–66.8) |
+| | | `-shnet` | 4 | 34.9 (34.0–35.3) | 45.7 (43.1–45.9) | 86.5 (77.2–91.8) | 183 (174–190) | 37.3 (36.4–38.4) | 68.9 (66.9–70.5) |
+| | | `-shared` | 3 | 36.0 (35.6–36.1) | 47.8 (45.1–48.7) | 84.4 (72.4–106) | 213 (208–270) | 37.6 (37.4–37.9) | 76.3 (75.3–76.4) |
+| | | `-invoker` | 2 | 37.8 (36.7–38.3) | 50.8 (49.2–53.2) | 84.3 (75.1–119) | 189 (115–218) | 38.9 (38.0–39.2) | 76.5 (76.2–80.3) |
+| | | A/A | 5 | 32.9 (32.7–32.9) | 41.7 (41.5–43.8) | 81.9 (75.6–96.6) | 163 (157–191) | 34.4 (34.4–35.2) | 63.5 (62.6–65.9) |
+| 32 | 200,000 | dedicated | 5 | 32.5 (32.0–35.2) | 41.5 (39.5–51.5) | 76.4 (70.3–104) | 131 (120–265) | 36.5 (34.4–38.2) | 68.7 (65.5–78.8) |
+| | | `-emb` | 5 | 32.4 (32.3–32.9) | 42.2 (41.1–50.3) | 77.6 (76.3–142) | 190 (169–260) | 35.2 (34.5–35.3) | 68.9 (64.7–70.3) |
+| | | `-shnet` | 4 | 34.4 (34.3–35.1) | 46.6 (44.6–49.9) | 100.0 (80.4–120) | 225 (182–270) | 37.3 (37.2–39.0) | 71.3 (69.9–73.2) |
+| | | `-shared` | 3 | 36.7 (36.5–37.5) | 49.5 (49.2–54.7) | 98.9 (80.8–286) | 379 (265–736) | 38.9 (38.2–40.5) | 82.9 (79.3–85.3) |
+| | | `-invoker` | 2 | 38.3 (37.6–38.7) | 55.9 (54.0–58.3) | 106 (81.7–107) | 212 (201–297) | 39.5 (39.5–39.5) | 82.6 (82.5–83.1) |
+| | | A/A | 5 | 31.5 (31.1–33.6) | 41.5 (40.4–54.6) | 90.4 (80.2–301) | 277 (182–447) | 34.3 (34.0–35.5) | 65.5 (64.7–75.7) |
+| 128 | 50,000 | dedicated | 5 | 36.5 (35.9–36.9) | 44.7 (44.1–45.1) | 75.6 (71.4–81.3) | 176 (136–233) | 43.0 (42.1–43.3) | 74.2 (73.4–78.4) |
+| | | `-emb` | 5 | 37.2 (36.5–37.8) | 45.7 (44.8–48.5) | 79.2 (70.8–90.9) | 257 (118–289) | 43.8 (43.0–44.4) | 76.5 (74.5–78.6) |
+| | | `-shnet` | 4 | 43.8 (43.3–45.2) | 54.6 (53.7–58.4) | 80.9 (80.8–104) | 147 (134–149) | 49.9 (49.1–51.5) | 88.2 (86.1–91.9) |
+| | | `-shared` | 3 | 52.2 (51.7–53.7) | 66.4 (65.9–70.3) | 95.7 (91.3–117) | 174 (148–217) | 56.2 (56.1–57.5) | 103 (102–105) |
+| | | `-invoker` | 2 | 61.5 (61.2–61.8) | 79.4 (79.0–79.8) | 127 (106–127) | 223 (165–239) | 60.4 (60.3–60.6) | 107 (107–110) |
+| | | A/A | 5 | 36.6 (36.6–37.6) | 45.0 (44.4–47.2) | 76.2 (74.9–87.5) | 186 (126–338) | 42.9 (42.8–43.7) | 73.9 (73.7–80.0) |
+| 128 | 200,000 | dedicated | 5 | 36.6 (35.9–37.8) | 46.0 (45.9–48.4) | 83.3 (82.1–86.4) | 162 (154–268) | 43.7 (43.5–44.6) | 77.9 (76.4–79.3) |
+| | | `-emb` | 5 | 37.9 (37.0–39.0) | 48.1 (46.6–64.2) | 85.3 (80.4–333) | 155 (131–478) | 44.5 (44.1–46.6) | 80.3 (78.5–88.4) |
+| | | `-shnet` | 4 | 44.7 (44.4–44.9) | 58.1 (57.2–61.1) | 96.0 (87.4–165) | 202 (161–396) | 52.6 (52.2–53.1) | 95.0 (94.5–98.2) |
+| | | `-shared` | 3 | 58.5 (58.4–61.0) | 80.1 (80.1–85.6) | 127 (114–200) | 305 (197–348) | 63.7 (62.8–63.8) | 125 (121–126) |
+| | | `-invoker` | 2 | 65.9 (64.8–66.0) | 90.9 (89.0–94.2) | 144 (129–156) | 279 (249–388) | 63.5 (63.2–64.4) | 121 (120–123) |
+| | | A/A | 5 | 36.9 (36.0–37.8) | 46.0 (45.3–52.4) | 80.6 (76.7–253) | 235 (129–850) | 43.9 (43.8–45.2) | 78.1 (76.8–81.8) |
+
+#### Intel kernel
+
+| streams | msg/s | arm | busy | hot p50 | hot p99 | hot p99.99 | hot max | all p50 | all p99 |
+|---|---|---|---|---|---|---|---|---|---|
+| 32 | 50,000 | dedicated | 5 | 47.2 (46.7–47.3) | 66.6 (65.8–68.6) | 3,054 (102–12,042) | 4,193 (401–14,973) | 50.5 (50.5–51.3) | 109 (108–109) |
+| | | `-emb` | 5 | 47.8 (47.3–48.0) | 67.8 (65.2–69.5) | 107 (101–12,394) | 324 (193–15,330) | 50.6 (50.6–50.8) | 107 (106–111) |
+| | | `-shnet` | 4 | 49.1 (48.6–51.7) | 70.3 (66.8–75.3) | 111 (99.5–12,976) | 495 (342–15,272) | 52.2 (52.2–54.7) | 131 (128–138) |
+| | | `-shared` | 3 | 51.3 (51.2–53.2) | 75.5 (73.1–75.5) | 116 (106–3,197) | 632 (316–4,227) | 54.4 (53.9–54.9) | 143 (142–147) |
+| | | `-invoker` | 2 | 53.0 (52.9–53.3) | 77.9 (76.6–79.2) | 117 (115–13,287) | 317 (167–15,575) | 55.0 (55.0–55.1) | 146 (146–148) |
+| | | A/A | 5 | 48.1 (47.2–48.4) | 68.5 (66.2–70.6) | 12,042 (98.4–12,182) | 14,987 (347–15,116) | 51.0 (50.5–51.2) | 105 (104–105) |
+| 32 | 200,000 | dedicated | 5 | 58.2 (56.5–60.1) | 94.6 (90.9–97.0) | 158 (150–13,681) | 417 (416–15,481) | 62.8 (62.5–63.0) | 137 (135–140) |
+| | | `-emb` | 5 | 56.1 (56.0–58.4) | 88.2 (88.1–91.1) | 145 (132–6,038) | 442 (295–8,046) | 61.0 (59.6–62.2) | 130 (129–133) |
+| | | `-shnet` | 4 | 63.3 (63.0–69.1) | 100 (97.8–110) | 169 (138–3,406) | 387 (344–4,238) | 71.5 (69.9–73.4) | 202 (193–204) |
+| | | `-shared` | 3 | 68.3 (68.2–69.2) | 109 (107–111) | 163 (152–164) | 340 (208–710) | 75.4 (72.1–76.2) | 227 (221–229) |
+| | | `-invoker` | 2 | 75.7 (75.5–75.9) | 127 (125–128) | 176 (174–13,009) | 226 (224–14,992) | 77.4 (73.9–78.0) | 235 (231–238) |
+| | | A/A | 5 | 61.1 (57.9–62.5) | 97.4 (93.0–102) | 146 (143–13,672) | 322 (192–15,630) | 64.3 (60.5–64.4) | 138 (128–144) |
+| 128 | 50,000 | dedicated | 5 | 52.3 (51.6–53.5) | 73.7 (71.5–75.5) | 122 (119–12,452) | 415 (167–15,223) | 59.4 (59.3–60.2) | 121 (121–123) |
+| | | `-emb` | 5 | 51.8 (51.5–52.4) | 71.9 (71.7–74.2) | 121 (115–12,607) | 272 (186–14,891) | 59.7 (59.3–60.2) | 122 (121–123) |
+| | | `-shnet` | 4 | 60.4 (59.4–60.4) | 85.6 (84.5–86.5) | 132 (128–137) | 325 (323–389) | 67.8 (67.8–68.5) | 194 (192–196) |
+| | | `-shared` | 3 | 67.0 (66.8–68.0) | 94.9 (93.2–96.2) | 140 (134–14,729) | 395 (185–16,248) | 72.8 (72.6–74.6) | 228 (222–229) |
+| | | `-invoker` | 2 | 78.5 (76.7–81.3) | 115 (110–118) | 161 (155–169) | 234 (182–308) | 78.8 (77.1–80.8) | 242 (239–255) |
+| | | A/A | 5 | 51.0 (50.7–53.5) | 71.7 (71.4–76.2) | 110 (109–135) | 315 (208–369) | 58.8 (58.6–60.4) | 121 (118–123) |
+| 128 | 200,000 | dedicated | 5 | 69.7 (67.1–70.6) | 113 (112–114) | 274 (169–13,574) | 1,919 (400–15,642) | 79.2 (78.7–79.4) | 167 (165–167) |
+| | | `-emb` | 5 | 71.5 (69.6–73.1) | 117 (112–119) | 175 (163–13,689) | 553 (310–15,818) | 79.9 (78.3–81.2) | 170 (164–173) |
+| | | `-shnet` | 4 | 93.4 (89.6–94.5) | 151 (145–152) | 231 (227–15,663) | 446 (421–15,761) | 105 (101–108) | 346 (340–356) |
+| | | `-shared` | 3 | 115 (112–121) | 180 (173–185) | 1,195 (242–10,109) | 2,179 (301–11,884) | 125 (121–132) | 477 (463–507) |
+| | | `-invoker` | 2 | 143 (127–143) | 204 (201–210) | 286 (281–305) | 430 (325–472) | 123 (123–129) | 455 (454–481) |
+| | | A/A | 5 | 69.4 (68.7–70.1) | 113 (113–113) | 163 (157–166) | 347 (241–424) | 77.9 (77.4–79.4) | 163 (161–167) |
+
+#### Graviton DPDK
+
+| streams | msg/s | arm | busy | hot p50 | hot p99 | hot p99.99 | hot max | all p50 | all p99 |
+|---|---|---|---|---|---|---|---|---|---|
+| 32 | 50,000 | dedicated | 5 | 31.4 (31.2–31.8) | 39.5 (38.8–40.8) | 65.1 (63.5–65.9) | 122 (104–156) | 35.1 (34.9–35.4) | 61.3 (61.1–61.7) |
+| | | `-emb` | 5 | 31.2 (31.1–31.5) | 39.0 (38.1–39.1) | 57.5 (55.5–58.9) | 118 (114–120) | 35.1 (35.0–35.2) | 61.9 (61.4–62.9) |
+| | | `-shnet` | 4 | 35.2 (34.6–35.6) | 43.8 (43.5–45.0) | 66.4 (62.7–124) | 111 (109–227) | 38.5 (38.5–38.7) | 69.8 (69.7–70.3) |
+| | | `-shared` | 3 | 40.5 (40.4–40.7) | 50.8 (50.1–51.8) | 80.0 (79.5–146) | 214 (192–267) | 43.1 (43.0–43.5) | 79.5 (78.9–79.6) |
+| | | `-invoker` | 2 | 44.6 (44.5–44.8) | 56.4 (55.7–57.1) | 80.1 (77.9–157) | 146 (120–287) | 44.5 (43.9–44.8) | 80.1 (79.4–80.6) |
+| | | A/A | 5 | 31.3 (31.0–31.6) | 39.0 (38.8–39.6) | 63.9 (55.2–65.0) | 114 (99.8–136) | 34.9 (34.7–35.3) | 62.2 (60.7–62.4) |
+| 32 | 200,000 | dedicated | 5 | 31.5 (31.0–31.6) | 38.8 (38.5–40.2) | 57.8 (56.7–170) | 144 (111–274) | 35.8 (35.6–35.9) | 64.4 (63.5–64.4) |
+| | | `-emb` | 5 | 31.6 (31.6–32.3) | 40.8 (38.1–41.6) | 73.8 (55.6–80.8) | 143 (94.3–161) | 36.0 (35.9–36.5) | 63.5 (63.4–64.2) |
+| | | `-shnet` | 4 | 35.6 (35.1–35.8) | 45.7 (45.4–46.2) | 69.7 (68.0–89.9) | 137 (125–225) | 39.9 (39.9–40.1) | 73.3 (73.2–73.7) |
+| | | `-shared` | 3 | 41.7 (41.5–41.9) | 53.5 (53.3–56.2) | 104 (71.4–108) | 208 (146–231) | 45.4 (44.8–45.5) | 85.1 (84.2–86.1) |
+| | | `-invoker` | 2 | 46.5 (46.0–46.7) | 64.0 (63.0–64.2) | 103 (101–106) | 161 (126–208) | 45.7 (45.7–45.9) | 86.8 (86.4–87.9) |
+| | | A/A | 5 | 31.4 (30.9–31.6) | 39.4 (38.4–39.7) | 64.9 (56.2–107) | 157 (119–245) | 35.6 (35.3–35.7) | 62.6 (62.6–63.8) |
+| 128 | 50,000 | dedicated | 5 | 40.3 (39.9–40.4) | 50.4 (50.0–50.5) | 66.7 (66.2–102) | 138 (126–222) | 53.7 (53.6–53.7) | 93.0 (92.4–93.2) |
+| | | `-emb` | 5 | 40.9 (40.4–40.9) | 51.3 (50.8–51.4) | 103 (65.4–119) | 235 (116–262) | 54.1 (54.0–54.5) | 93.2 (93.1–93.9) |
+| | | `-shnet` | 4 | 56.0 (56.0–56.5) | 72.1 (72.0–72.2) | 94.7 (86.5–116) | 149 (124–370) | 67.7 (67.6–67.9) | 122 (121–122) |
+| | | `-shared` | 3 | 79.0 (78.8–79.6) | 97.9 (97.2–98.7) | 121 (121–123) | 173 (170–190) | 86.5 (86.3–87.0) | 152 (152–153) |
+| | | `-invoker` | 2 | 97.3 (96.4–99.0) | 147 (146–148) | 180 (180–182) | 210 (202–250) | 90.8 (90.0–92.5) | 158 (156–159) |
+| | | A/A | 5 | 40.1 (40.0–40.2) | 50.1 (49.8–50.7) | 64.0 (63.8–74.9) | 108 (102–135) | 53.7 (53.4–53.7) | 92.4 (92.2–92.6) |
+| 128 | 200,000 | dedicated | 5 | 41.0 (40.9–41.2) | 52.0 (51.5–52.3) | 72.9 (68.4–89.2) | 145 (123–376) | 56.7 (56.5–57.0) | 97.9 (97.4–98.2) |
+| | | `-emb` | 5 | 41.9 (41.8–42.0) | 53.2 (53.0–53.4) | 80.4 (79.0–204) | 172 (135–326) | 57.2 (57.0–57.2) | 98.3 (98.2–98.4) |
+| | | `-shnet` | 4 | 58.9 (58.9–59.2) | 78.3 (78.1–78.8) | 99.3 (93.6–100) | 147 (145–351) | 73.3 (73.2–73.5) | 133 (133–133) |
+| | | `-shared` | 3 | 87.5 (87.1–87.6) | 111 (110–111) | 142 (137–149) | 183 (173–216) | 96.8 (96.3–97.0) | 174 (174–175) |
+| | | `-invoker` | 2 | 108 (107–108) | 163 (161–163) | 204 (202–210) | 228 (215–285) | 98.9 (98.0–99.0) | 178 (177–179) |
+| | | A/A | 5 | 41.2 (40.6–41.2) | 52.3 (51.2–52.3) | 69.7 (68.5–86.0) | 134 (118–260) | 56.6 (56.6–56.7) | 97.5 (97.3–98.0) |
+
+#### Graviton kernel
+
+| streams | msg/s | arm | busy | hot p50 | hot p99 | hot p99.99 | hot max | all p50 | all p99 |
+|---|---|---|---|---|---|---|---|---|---|
+| 32 | 50,000 | dedicated | 5 | 39.9 (39.4–39.9) | 52.0 (51.7–53.0) | 122 (121–125) | 209 (149–253) | 43.3 (43.2–43.3) | 97.3 (96.5–98.5) |
+| | | `-emb` | 5 | 39.6 (39.4–39.6) | 52.3 (52.2–52.5) | 124 (114–126) | 188 (177–232) | 43.4 (43.3–43.4) | 97.7 (97.7–99.0) |
+| | | `-shnet` | 4 | 44.0 (43.9–44.7) | 57.9 (57.5–58.8) | 120 (106–130) | 196 (194–207) | 47.9 (47.9–48.0) | 131 (130–132) |
+| | | `-shared` | 3 | 50.0 (49.6–50.0) | 65.2 (64.9–65.2) | 133 (120–139) | 211 (200–215) | 52.4 (52.4–52.6) | 154 (154–155) |
+| | | `-invoker` | 2 | 54.2 (54.1–54.4) | 71.7 (71.6–71.9) | 127 (126–142) | 187 (186–227) | 53.9 (53.7–53.9) | 156 (155–156) |
+| | | A/A | 5 | 39.4 (39.4–39.6) | 52.1 (51.6–53.0) | 113 (104–128) | 193 (183–212) | 43.3 (43.3–43.4) | 97.8 (97.3–98.0) |
+| 32 | 200,000 | dedicated | 5 | 42.5 (42.2–42.7) | 59.6 (59.3–62.2) | 122 (114–146) | 186 (186–193) | 46.9 (46.9–47.1) | 110 (110–110) |
+| | | `-emb` | 5 | 42.6 (42.5–42.7) | 61.1 (60.1–61.3) | 151 (128–152) | 211 (190–218) | 46.8 (46.8–47.0) | 110 (109–110) |
+| | | `-shnet` | 4 | 50.1 (50.1–50.7) | 73.2 (71.2–73.7) | 149 (144–163) | 223 (191–230) | 55.2 (54.8–55.8) | 170 (168–172) |
+| | | `-shared` | 3 | 60.2 (60.0–60.2) | 84.9 (84.2–86.1) | 154 (148–162) | 246 (225–256) | 64.4 (63.5–64.4) | 224 (222–228) |
+| | | `-invoker` | 2 | 65.1 (64.5–65.2) | 93.1 (93.0–94.1) | 165 (164–166) | 245 (224–252) | 64.3 (64.1–64.5) | 223 (221–223) |
+| | | A/A | 5 | 42.6 (42.3–43.2) | 61.0 (59.8–61.9) | 140 (136–145) | 210 (203–240) | 46.7 (46.7–46.9) | 110 (109–110) |
+| 128 | 50,000 | dedicated | 5 | 49.2 (48.9–49.6) | 63.9 (63.8–64.9) | 129 (117–142) | 191 (166–206) | 62.7 (62.6–62.7) | 149 (148–150) |
+| | | `-emb` | 5 | 49.6 (49.5–50.0) | 65.1 (64.7–65.2) | 123 (122–128) | 186 (166–204) | 63.4 (63.2–63.4) | 156 (154–157) |
+| | | `-shnet` | 4 | 67.4 (67.2–67.9) | 89.8 (88.9–90.0) | 157 (139–160) | 213 (204–216) | 79.4 (79.2–79.8) | 265 (264–270) |
+| | | `-shared` | 3 | 90.9 (89.9–91.5) | 125 (124–126) | 175 (168–184) | 255 (233–318) | 99.6 (98.8–100) | 372 (368–374) |
+| | | `-invoker` | 2 | 110 (109–111) | 169 (169–171) | 199 (197–208) | 269 (263–282) | 105 (105–106) | 377 (377–378) |
+| | | A/A | 5 | 49.1 (48.9–49.5) | 64.4 (63.2–64.8) | 144 (122–151) | 214 (206–214) | 62.7 (62.7–63.1) | 148 (148–149) |
+| 128 | 200,000 | dedicated | 5 | 54.9 (53.9–54.9) | 77.4 (76.2–77.5) | 153 (150–163) | 244 (229–268) | 69.6 (69.5–70.1) | 175 (172–175) |
+| | | `-emb` | 5 | 55.4 (54.8–55.5) | 78.7 (77.7–78.8) | 166 (151–177) | 261 (238–276) | 70.1 (69.8–70.1) | 175 (175–175) |
+| | | `-shnet` | 4 | 87.5 (86.8–87.6) | 127 (127–128) | 196 (191–203) | 293 (258–297) | 104 (104–105) | 389 (388–392) |
+| | | `-shared` | 3 | 129 (128–129) | 178 (177–179) | 239 (226–246) | 304 (290–311) | 146 (145–146) | 601 (596–601) |
+| | | `-invoker` | 2 | 186 (185–187) | 233 (229–262) | 421 (379–525) | 552 (512–651) | 150 (149–152) | 611 (609–625) |
+| | | A/A | 5 | 54.8 (54.3–54.9) | 77.2 (76.4–77.7) | 156 (147–166) | 213 (203–225) | 70.0 (69.5–70.0) | 175 (172–175) |
+
+### Why sharing costs
+
+The driver's agents (conductor, sender, receiver) scan every publication
+and image each duty cycle, so a cycle's work grows with the stream count.
+Dedicated, each agent has its own core. Shared, one thread runs them in
+turn, and a hot message waits for that thread at each of the round trip's
+four hand-offs (sender and receiver on each host). The sessions' own
+counters (Aeron's duty-cycle tracker, threshold 10 µs, over the whole
+client run):
+
+| platform, stack | streams | msg/s | `SHARED` thread: cycles over 10 µs a second, a / b | `INVOKER`: duty calls with driver work, a / b | `INVOKER`: mean duty call µs, a / b | `INVOKER`: calls over 10 µs, a / b | p50 rise: `SHARED_NETWORK` / `SHARED` / `INVOKER` |
+|---|---|---|---|---|---|---|---|
+| Intel DPDK | 32 | 50,000 | 114 / 141 | 16 % / 14 % | 2.3 / 2.1 | 0 % / 0 % | +2.0 / +3.1 / +4.9 |
+| Intel DPDK | 32 | 200,000 | 640 / 708 | 53 % / 41 % | 2.7 / 2.2 | 0 % / 0 % | +1.9 / +4.2 / +5.8 |
+| Intel DPDK | 128 | 50,000 | 10,564 / 15,520 | 53 % / 42 % | 9.5 / 7.9 | 18 % / 79 % | +7.3 / +15.7 / +25.0 |
+| Intel DPDK | 128 | 200,000 | 76,963 / 82,859 | 96 % / 54 % | 11.5 / 6.7 | 89 % / 55 % | +8.2 / +21.9 / +29.3 |
+| Intel kernel | 32 | 50,000 | 634 / 806 | 22 % / 16 % | 3.1 / 2.4 | 0 % / 0 % | +1.9 / +4.1 / +5.8 |
+| Intel kernel | 32 | 200,000 | 14,735 / 15,916 | 78 % / 44 % | 6.2 / 3.4 | 11 % / 5 % | +5.0 / +10.0 / +17.5 |
+| Intel kernel | 128 | 50,000 | 46,136 / 37,067 | 62 % / 41 % | 11.6 / 7.7 | 73 % / 47 % | +8.2 / +14.7 / +26.2 |
+| Intel kernel | 128 | 200,000 | 49,213 / 46,964 | 99 % / 41 % | 22.4 / 8.9 | 100 % / 43 % | +23.7 / +45.2 / +73.4 |
+| Graviton DPDK | 32 | 50,000 | 186 / 193 | 34 % / 27 % | 5.4 / 4.3 | 0 % / 0 % | +3.8 / +9.1 / +13.3 |
+| Graviton DPDK | 32 | 200,000 | 963 / 1,006 | 85 % / 59 % | 5.9 / 4.2 | 1 % / 1 % | +4.1 / +10.2 / +15.0 |
+| Graviton DPDK | 128 | 50,000 | 51,510 / 68,232 | 86 % / 59 % | 21.9 / 14.8 | 100 % / 96 % | +15.7 / +38.7 / +57.0 |
+| Graviton DPDK | 128 | 200,000 | 50,922 / 79,228 | 99 % / 55 % | 25.0 / 12.9 | 100 % / 93 % | +18.0 / +46.5 / +66.5 |
+| Graviton kernel | 32 | 50,000 | 1,379 / 3,189 | 42 % / 31 % | 6.4 / 5.0 | 1 % / 2 % | +4.1 / +10.0 / +14.3 |
+| Graviton kernel | 32 | 200,000 | 35,918 / 45,637 | 95 % / 59 % | 9.4 / 5.8 | 34 % / 24 % | +7.6 / +17.7 / +22.6 |
+| Graviton kernel | 128 | 50,000 | 45,887 / 63,700 | 90 % / 59 % | 24.8 / 15.9 | 100 % / 97 % | +18.2 / +41.8 / +60.4 |
+| Graviton kernel | 128 | 200,000 | 35,807 / 63,541 | 99 % / 44 % | 37.1 / 16.0 | 100 % / 94 % | +32.6 / +73.7 / +130.8 |
+
+- **`INVOKER` saturates at 128 streams.** Its driver had work in 86 to
+  99 % of the hot thread's duty calls on host a (Graviton at both loads,
+  Intel at 200,000 msg/s; Intel at 50,000: 53 to 62 %), and on Graviton
+  every call took over 10 µs: about 22 to 37 µs each. At 32 streams the
+  mean call is 2.1 to 9.4 µs and 0 to 11 % of calls exceed 10 µs (34 %
+  on Graviton kernel at 200,000 msg/s).
+- **`SHARED` likewise.** At 128 streams its one thread ran 35,807 to
+  82,859 cycles over 10 µs a second on a host, so about 36 to 83 % of its
+  time went to cycles that long (Intel DPDK at 50,000 msg/s: 10,564 and
+  15,520, about 11 to 16 %). At 32 streams: 114 to 3,189 a second, except
+  the kernel at 200,000 msg/s (14,735 to 45,637).
+- **Every message waits, not only some.** The hot minimum rises with the
+  mode: at 128 streams, 50,000 msg/s on Graviton DPDK, dedicated 27.4,
+  `SHARED_NETWORK` 33.2, `SHARED` 43.9, `INVOKER` 63.5. Queueing behind
+  an occasional burst would leave the minimum where it was.
+- **The rise follows the cycle.** It is of the order of one duty cycle a
+  host or more (Graviton DPDK, 128 streams, 50,000 msg/s: `INVOKER`'s mean
+  call 21.9 and 14.8 µs, rise 57.0), and it is largest where the cycle is
+  longest: Graviton over Intel, 128 streams over 32, 200,000 msg/s over
+  50,000.
+- **Not the background.** Its thread was busy 3 to 84 % of its time
+  (never over 90 %) and sent every message on schedule in every arm.
+- **Kernel and DPDK pay the same at 50,000 msg/s** (within 3.4 for every
+  mode at both stream counts): the cost is the driver's own loop, not the
+  socket calls. At 200,000 msg/s the kernel pays more (128 streams:
+  `SHARED` +45.2 against +21.9 on Intel, +73.7 against +46.5 on Graviton),
+  consistent with the socket calls running on the shared thread too (not
+  traced).
+- Not measured: the split of the rise across the four hand-offs. These
+  sessions recorded no hot-stream stage trace; that is the next run.
+
+### Across stacks and platforms
+
+Each pair has its own network, so the comparison goes through each
+session's `dpdk-raw` floor (raw DPDK UDP, the same binary on every pair).
+Hot p50 above the pair's `dpdk-raw` floor (µs):
+
+| arm | Intel DPDK 32 / 50k | 32 / 200k | 128 / 50k | 128 / 200k | Intel kernel 32 / 50k | 32 / 200k | 128 / 50k | 128 / 200k | Graviton DPDK 32 / 50k | 32 / 200k | 128 / 50k | 128 / 200k | Graviton kernel 32 / 50k | 32 / 200k | 128 / 50k | 128 / 200k |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| dedicated | 2.9 | 2.5 | 6.5 | 6.6 | 18.2 | 29.2 | 23.3 | 40.7 | 4.3 | 4.4 | 13.3 | 13.9 | 14.1 | 16.7 | 23.4 | 29.1 |
+| `-emb` | 2.2 | 2.4 | 7.2 | 7.9 | 18.8 | 27.1 | 22.8 | 42.5 | 4.1 | 4.5 | 13.8 | 14.8 | 13.7 | 16.8 | 23.8 | 29.6 |
+| `-shnet` | 4.9 | 4.4 | 13.8 | 14.8 | 20.0 | 34.3 | 31.4 | 64.4 | 8.1 | 8.5 | 29.0 | 31.9 | 18.2 | 24.3 | 41.6 | 61.7 |
+| `-shared` | 6.0 | 6.7 | 22.2 | 28.5 | 22.3 | 39.3 | 38.0 | 85.9 | 13.4 | 14.6 | 52.0 | 60.4 | 24.1 | 34.4 | 65.1 | 102.8 |
+| `-invoker` | 7.8 | 8.4 | 31.5 | 35.9 | 24.0 | 46.7 | 49.5 | 114.1 | 17.6 | 19.4 | 70.2 | 80.5 | 28.4 | 39.3 | 83.8 | 159.9 |
+
+- **Kernel against DPDK, same platform**: DPDK is lower in every mode.
+  Dedicated, 128 streams, 50,000 msg/s: 6.5 against 23.3 above the floor
+  on Intel, 13.3 against 23.4 on Graviton. Raw kernel UDP sockets cost
+  12.1 (Intel) and 7.6 (Graviton) more than `dpdk-raw` in the same
+  sessions' floors.
+- **Intel against Graviton, DPDK**: Intel is lower in every mode; the
+  gap grows with sharing (128 streams, 50,000 msg/s: dedicated 6.5
+  against 13.3, `SHARED` 22.2 against 52.0, `INVOKER` 31.5 against 70.2).
+  The raw p50 at 32 streams is lower on Graviton (31.4 against 32.9) only
+  because its pair's network is 2.9 faster.
+- **Intel against Graviton, kernel**: no single order. Graviton is lower
+  for dedicated (3 of 4 points, even at the fourth) and for every mode at
+  32 streams, 200,000 msg/s, where Intel's A/A spread is 6.1; Intel is
+  lower for `SHARED` and `INVOKER` at 128 streams, by 17 to 46. Intel's
+  kernel socket floor is 4.4 further above `dpdk-raw` than Graviton's.
+- One session per platform and stack, each on its own pair (Graviton's
+  two in different regions): a platform difference below the A/A spreads
+  is not claimed. Aeron's C, which runs the driver's loops, is built for
+  the host CPU on both platforms; the lab's Rust and md-dpdk's C are
+  generic on x86 and native on Graviton (`benches/cloud/host.sh`).
+
+### Maxima and the c7i path outages
+
+- **Intel kernel**: 25 hot-stream outages of 4.2 to 16.2 ms (20 of them
+  over 10 ms), in the floors and in every arm. Each began at second 25 of
+  a UTC minute, to the millisecond: 25 of the 58 minute marks that fell
+  inside a run. Four of them, at 200,000 msg/s, came with 71 to 309 NAKs
+  and no guest drop counter: the frames were lost below the guest. They
+  set the session's p99.99 and max and leave p50 and p99 alone. This is
+  the once-a-minute `c7i` outage seen before, at a fixed second per pair;
+  the Graviton sessions had none. The later ergon-io bypass runs are
+  separate: their `c7i` pair has no such cluster, and their `c8g` pair has
+  one at second :05 (4.7 to 9.3 ms, kernel UDP and two kernel WebSocket
+  points; [ergon-io](#ergon-io-kernel-smoltcp-and-f-stack)). 11 smaller stalls (1.3 to 5.7 ms) fell
+  at other seconds, unexplained.
+- **Intel DPDK** (the other pair, same zone, same hours): no mixed point's
+  hot stream over 1 ms (max 850 µs). The background streams' max was 4.2
+  to 15.7 ms in 27 of the 72 points, in every arm; their latencies are
+  not time-stamped, so they are not placed.
+- **Every other max** (DPDK 94 to 850 µs, Graviton kernel 149 to
+  651 µs): over the four sessions' 324 maxima, `spikes.py` names 6 host
+  pauses, 3 page faults and 10 timer softirqs; the rest are unexplained.
+  Most cannot be placed because the trace overran on CPU 0 or 1 (the
+  housekeeping and IRQ CPUs) at these packet rates; the others overlap no
+  recorded event on either host. Its 10 "per-minute stall cluster
+  (:49-:51)" labels are Azure's rule: 10 maxima within 3 seconds of 60 is
+  chance (about 16 expected), so they count as unexplained here.
+
+### What to use
+
+| need | use | cost |
+|---|---|---|
+| lowest latency, many streams (32 or more) | dedicated driver threads, in its own process or in the application (`-emb`: the same latency) | 3 driver cores a host |
+| one core back, a few µs acceptable | `SHARED_NETWORK`: +1.9 to +4.1 at 32 streams, 50,000 msg/s; +7.3 to +18.2 at 128 | 2 driver cores |
+| cores matter more than tens of µs | `SHARED`: +3.1 to +10.0 at 32 streams, 50,000 msg/s; +14.7 to +41.8 at 128; more at 200,000 msg/s | 1 driver core |
+| one stream | DPDK: any mode, not separated to 50,000 msg/s; kernel: not `INVOKER` (+3.1 to +8.4) ([h, k](#driver-threading-modes-at-1-stream-h-k)) | 0 to 3 driver cores |
+| `INVOKER` | only where the hot thread has spare time: at 128 streams it saturates (p50 +25.0 to +130.8, p99 +34.7 to +155.5) | no driver core |
+
+On Graviton, expect about twice the shared modes' cost on Intel. With
+the kernel stack at 200,000 msg/s, expect more again. On `c7a.2xlarge`
+(AMD, kernel UDP, secondary sessions below), `SHARED` and `INVOKER` did
+not keep up at 200,000 msg/s.
+
+- **AMD footnote.** `c7a.2xlarge`, kernel UDP, two sessions
+  (`aws-20261028-090239`, 54 rows, its `SHARED` and `INVOKER` arms failed
+  set-up in every rep; `aws-20261028-110833`, 57 rows): the same order at
+  50,000 msg/s (`SHARED_NETWORK` +3.6 and +12.8, `SHARED` +8.6 and +27.5,
+  `INVOKER` +11.5 and +41.3 at 32 and 128 streams). At 200,000 msg/s
+  `SHARED` and `INVOKER` fell behind: the kernel dropped 65,997 to
+  4,405,411 datagrams a point for full socket buffers, offers were truly
+  back-pressured and `INVOKER` sent late; at 128 streams `SHARED`'s hot
+  p50 was 761 µs and `INVOKER`'s seconds.
+- Open: what sends host a's frames to closed ports; Intel DPDK's
+  `nic-rx-missed` on the external-driver arms; the hot stream's stage
+  trace under `SHARED` and `INVOKER`. Harness fixes: count `ADMIN_ACTION`
+  apart from back-pressure, read a DPDK host's NIC counters from the
+  binaries, exempt `dpdk-raw` from the kernel busy-poll settings, and give
+  `spikes.py` the `c7i` pair's outage second.
+
+## ergon-io: kernel, smoltcp and F-Stack
+
+<!-- RESULTS: aws io bypass -->
+
+ergon-io's own backends, not the md-dpdk F-Stack arm above. The ping is
+the named stack on host A. The pong is kernel `epoll-spin` on host B, for
+every arm, including F-Stack and smoltcp. Round trip, µs, from the
+intended send time, 64-byte payload, one busy thread a host. One rep
+(`LAB_REPS=1`): each figure is that rep, not a median of three, and the
+set has no A/A arm, so a gap of a couple of microseconds is the measured
+difference and is not separated from run-to-run noise. The 8-connection
+gap below is the one that repeats.
+
+| session | hosts | region | points |
+|---|---|---|---|
+| `aws-20261029-040029` | two `c7i.4xlarge`, on demand | us-east-1a | 96, 0 failures |
+| `aws-20261029-055245` | two `c8g.2xlarge`, on demand | us-east-1a | 96, 0 failures |
+
+The pairs ran one after the other. Both were deleted and the lab's
+verified line is empty of instances, volumes, snapshots, addresses, NAT
+gateways and load balancers. The tree is `feat/0.1.35` at `5d7516a3`
+plus the bypass measuring loops this release ships. Minimum RTO is 8 ms
+on every TCP arm (kernel `tcp_rto_min_us`, smoltcp `StackConfig::rto_min_us`,
+F-Stack `net.inet.tcp.rexmit_min` at a 1000 Hz clock, so 8 ms is 8 ticks).
+Every point carried its offered rate. Loss is `tc netem` on the kernel
+peer only, egress and ifb ingress. The bypass NIC has no qdisc.
+
+Wire bytes from the row: kernel and smoltcp TCP 122 (no TCP timestamps),
+F-Stack TCP 134 (timestamps on), WebSocket-over-TLS 129 on all three,
+UDP 106. That 12-byte timestamp difference is F-Stack's TCP, and it is
+not what the tail below is.
+
+smoltcp and F-Stack are the stacks under test. The kernel's `epoll-spin`
+is the baseline on the same hosts.
+
+### No loss
+
+`fstack-spin` TCP is the arm whose tail stays in microseconds: p99 38.8
+to 53.2, p99.99 68.7 to 112.1, max 134.6 to 359.3, both machines and all
+four loads. Kernel and smoltcp TCP, and every WebSocket arm, have p99.99
+at 2,084 to 3,422 and a max of 2,593 to 4,172, except two Graviton kernel
+points that hit the second-:05 outage below (max 4,676 and 8,504).
+smoltcp's p50 sits with F-Stack. Its no-loss tail sits with the kernel.
+
+At 8 connections, TCP p50 against kernel `epoll-spin` is 6.75 to 9.01
+lower for F-Stack and 5.92 to 8.78 lower for smoltcp, on both machines,
+both rates and all three loss levels (the loss cells too: the median
+does not move). At 1 connection F-Stack is 1.20 to 4.45 lower, except
+the `c7i` 1% / 50,000 cell in the page-fault table (p50 47.6 against
+the kernel's 45.6). WebSocket-over-TLS at 8 connections is 7.39 to 9.66
+lower for F-Stack and 6.53 to 10.11 lower for smoltcp; at 1 connection
+0.10 to 4.10 and 2.91 to 5.73. F-Stack's WebSocket tail does not follow
+its TCP tail.
+
+UDP, no loss: smoltcp's p50 is 5.70 to 7.49 below the kernel on `c7i`
+and 3.78 to 4.02 below on `c8g`. p99 stays under 51 on the kernel and
+under 43 on smoltcp.
+
+#### Intel `c7i.4xlarge`, no loss
+
+| conn | msg/s | arm | min | p50 | p99 | p99.99 | max | max cause |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 10,000 | `epoll-spin` TCP | 35.7 | 40.8 | 82.0 | 2,234.4 | 2,753.5 | unexplained (no recorded event) |
+|  |  | `smoltcp-spin` TCP | 31.7 | 37.2 | 82.0 | 2,252.8 | 2,801.0 | unexplained (host TCP counter, no netem drop) |
+|  |  | `fstack-spin` TCP | 32.9 | 37.5 | 43.5 | 68.7 | 142.1 | unexplained (no recorded event) |
+|  |  | `epoll-spin` WS+TLS | 37.0 | 42.2 | 107.5 | 2,083.8 | 2,593.1 | unexplained (no recorded event) |
+|  |  | `smoltcp-spin` WS+TLS | 32.8 | 38.0 | 84.8 | 2,179.1 | 2,650.1 | unexplained (no recorded event) |
+|  |  | `fstack-spin` WS+TLS | 33.8 | 38.5 | 92.4 | 2,209.8 | 2,640.9 | unexplained (no recorded event) |
+|  |  | `epoll-spin` UDP | 37.2 | 42.0 | 47.6 | 95.0 | 1,955.0 | unexplained (no recorded event) |
+|  |  | `smoltcp-spin` UDP | 31.3 | 36.2 | 41.9 | 70.1 | 181.5 | softirq TIMER (host b CPU 2, 202 µs) |
+| 1 | 50,000 | `epoll-spin` TCP | 32.8 | 44.5 | 194.0 | 2,256.9 | 2,672.4 | unexplained (no recorded event) |
+|  |  | `smoltcp-spin` TCP | 30.3 | 41.3 | 206.3 | 2,242.6 | 2,726.3 | unexplained (no recorded event) |
+|  |  | `fstack-spin` TCP | 30.8 | 42.6 | 53.2 | 104.8 | 359.3 | unexplained (host TCP counter, no netem drop) |
+|  |  | `epoll-spin` WS+TLS | 33.3 | 45.9 | 278.0 | 2,285.6 | 2,740.9 | unexplained (no recorded event) |
+|  |  | `smoltcp-spin` WS+TLS | 31.0 | 42.9 | 234.5 | 2,175.0 | 2,743.5 | unexplained (no recorded event) |
+|  |  | `fstack-spin` WS+TLS | 30.6 | 42.4 | 248.3 | 2,213.9 | 2,734.0 | unexplained (no recorded event) |
+|  |  | `epoll-spin` UDP | 33.4 | 41.0 | 49.9 | 103.4 | 320.4 | unexplained (no recorded event) |
+|  |  | `smoltcp-spin` UDP | 30.4 | 35.2 | 41.8 | 90.6 | 1,331.9 | unexplained (no recorded event) |
+| 8 | 10,000 | `epoll-spin` TCP | 38.6 | 47.1 | 96.8 | 2,248.7 | 2,623.6 | unexplained (no recorded event) |
+|  |  | `smoltcp-spin` TCP | 33.4 | 40.3 | 90.9 | 2,246.7 | 3,146.2 | unexplained (host TCP counter, no netem drop) |
+|  |  | `fstack-spin` TCP | 33.5 | 39.6 | 47.8 | 77.5 | 140.1 | unexplained (no recorded event) |
+|  |  | `epoll-spin` WS+TLS | 38.8 | 48.3 | 99.9 | 2,285.6 | 2,776.2 | unexplained (no recorded event) |
+|  |  | `smoltcp-spin` WS+TLS | 34.9 | 41.2 | 107.1 | 2,254.8 | 2,678.9 | unexplained (no recorded event) |
+|  |  | `fstack-spin` WS+TLS | 34.8 | 40.7 | 96.1 | 2,275.3 | 2,720.6 | unexplained (no recorded event) |
+|  |  | `epoll-spin` UDP | 37.0 | 42.4 | 48.2 | 70.6 | 153.1 | unexplained (no recorded event) |
+|  |  | `smoltcp-spin` UDP | 32.2 | 36.7 | 42.8 | 67.8 | 188.3 | unexplained (no recorded event) |
+| 8 | 50,000 | `epoll-spin` TCP | 33.7 | 50.5 | 177.0 | 2,293.8 | 2,985.1 | unexplained (no recorded event) |
+|  |  | `smoltcp-spin` TCP | 34.0 | 44.6 | 151.6 | 2,189.3 | 2,723.3 | unexplained (no recorded event) |
+|  |  | `fstack-spin` TCP | 32.6 | 43.0 | 51.8 | 91.1 | 181.3 | unexplained (no recorded event) |
+|  |  | `epoll-spin` WS+TLS | 36.7 | 52.7 | 211.8 | 2,365.4 | 2,967.9 | unexplained (no recorded event) |
+|  |  | `smoltcp-spin` WS+TLS | 32.4 | 44.6 | 180.4 | 2,406.4 | 3,059.2 | unexplained (no recorded event) |
+|  |  | `fstack-spin` WS+TLS | 32.4 | 44.1 | 186.6 | 2,408.4 | 3,027.6 | unexplained (no recorded event) |
+|  |  | `epoll-spin` UDP | 34.5 | 43.0 | 50.6 | 101.1 | 234.2 | unexplained (no recorded event) |
+|  |  | `smoltcp-spin` UDP | 31.2 | 35.5 | 42.6 | 75.7 | 211.8 | unexplained (no recorded event) |
+
+#### Graviton `c8g.2xlarge`, no loss
+
+| conn | msg/s | arm | min | p50 | p99 | p99.99 | max | max cause |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 10,000 | `epoll-spin` TCP | 31.6 | 34.1 | 75.1 | 2,967.6 | 3,544.2 | unexplained (no recorded event) |
+|  |  | `smoltcp-spin` TCP | 28.8 | 31.0 | 57.1 | 3,147.8 | 3,416.1 | unexplained (no recorded event) |
+|  |  | `fstack-spin` TCP | 29.7 | 31.9 | 38.8 | 91.1 | 134.6 | unexplained (no recorded event) |
+|  |  | `epoll-spin` WS+TLS | 33.0 | 35.7 | 139.1 | 3,321.9 | 4,676.0 | periodic path outage, second :05 |
+|  |  | `smoltcp-spin` WS+TLS | 29.7 | 32.5 | 91.2 | 3,117.1 | 3,536.1 | unexplained (no recorded event) |
+|  |  | `fstack-spin` WS+TLS | 30.3 | 32.6 | 71.9 | 3,098.6 | 3,588.6 | unexplained (no recorded event) |
+|  |  | `epoll-spin` UDP | 31.6 | 33.7 | 39.8 | 90.5 | 240.6 | unexplained (no recorded event) |
+|  |  | `smoltcp-spin` UDP | 27.7 | 29.9 | 36.2 | 90.2 | 225.1 | unexplained (no recorded event) |
+| 1 | 50,000 | `epoll-spin` TCP | 30.4 | 33.2 | 211.5 | 2,965.5 | 3,517.3 | unexplained (no recorded event) |
+|  |  | `smoltcp-spin` TCP | 27.8 | 30.4 | 165.2 | 3,254.3 | 3,635.4 | unexplained (no recorded event) |
+|  |  | `fstack-spin` TCP | 29.4 | 31.5 | 40.3 | 112.1 | 204.7 | unexplained (no recorded event) |
+|  |  | `epoll-spin` WS+TLS | 31.9 | 34.5 | 262.4 | 3,194.9 | 3,634.6 | unexplained (no recorded event) |
+|  |  | `smoltcp-spin` WS+TLS | 29.2 | 31.3 | 259.7 | 3,145.7 | 3,692.1 | unexplained (no recorded event) |
+|  |  | `fstack-spin` WS+TLS | 29.6 | 31.7 | 256.9 | 3,147.8 | 3,624.9 | unexplained (no recorded event) |
+|  |  | `epoll-spin` UDP | 31.1 | 33.2 | 40.5 | 6,610.9 | 9,215.0 | periodic path outage, second :05 |
+|  |  | `smoltcp-spin` UDP | 27.4 | 29.4 | 36.2 | 101.8 | 187.3 | unexplained (no recorded event) |
+| 8 | 10,000 | `epoll-spin` TCP | 34.0 | 40.8 | 73.0 | 3,057.7 | 3,583.6 | unexplained (no recorded event) |
+|  |  | `smoltcp-spin` TCP | 29.7 | 32.5 | 56.7 | 3,186.7 | 3,658.1 | unexplained (no recorded event) |
+|  |  | `fstack-spin` TCP | 30.0 | 32.3 | 39.6 | 78.8 | 168.9 | unexplained (host TCP counter, no netem drop) |
+|  |  | `epoll-spin` WS+TLS | 34.3 | 42.7 | 78.3 | 3,557.4 | 8,504.1 | periodic path outage, second :05 |
+|  |  | `smoltcp-spin` WS+TLS | 30.5 | 33.6 | 64.0 | 3,184.6 | 3,522.3 | unexplained (no recorded event) |
+|  |  | `fstack-spin` WS+TLS | 30.9 | 34.0 | 106.0 | 3,375.1 | 4,171.9 | unexplained (no recorded event) |
+|  |  | `epoll-spin` UDP | 31.7 | 34.0 | 41.1 | 6,463.5 | 9,298.2 | periodic path outage, second :05 |
+|  |  | `smoltcp-spin` UDP | 27.8 | 30.1 | 36.7 | 95.1 | 117.5 | unexplained (no recorded event) |
+| 8 | 50,000 | `epoll-spin` TCP | 32.3 | 41.1 | 156.0 | 3,158.0 | 3,801.1 | unexplained (no recorded event) |
+|  |  | `smoltcp-spin` TCP | 29.5 | 32.6 | 132.4 | 3,203.1 | 3,853.1 | unexplained (host TCP counter, no netem drop) |
+|  |  | `fstack-spin` TCP | 29.7 | 32.3 | 39.8 | 98.4 | 174.3 | unexplained (no recorded event) |
+|  |  | `epoll-spin` WS+TLS | 33.7 | 43.5 | 187.0 | 3,373.1 | 3,902.5 | unexplained (no recorded event) |
+|  |  | `smoltcp-spin` WS+TLS | 30.3 | 33.4 | 150.7 | 3,422.2 | 3,909.7 | unexplained (no recorded event) |
+|  |  | `fstack-spin` WS+TLS | 30.2 | 33.9 | 175.0 | 3,178.5 | 3,910.0 | unexplained (no recorded event) |
+|  |  | `epoll-spin` UDP | 31.1 | 33.8 | 42.5 | 3,450.9 | 5,688.8 | periodic path outage, second :05 |
+|  |  | `smoltcp-spin` UDP | 27.5 | 29.8 | 37.2 | 96.3 | 197.3 | unexplained (no recorded event) |
+
+### Under loss
+
+TCP and WebSocket lost nothing. UDP lost 0.193% to 0.215% of the point's
+messages at 0.1% netem and 1.959% to 2.019% at 1% (warm-up included in
+the loss count, both machines). Both directions of the peer at those
+rates are 0.200% and 1.990%. The row's retransmit column is empty: the
+bypass binaries do not fill it. `spikes.py` still reads the hosts' TCP
+counters.
+
+### Every max
+
+`spikes.py --transport` on each run directory. The 192 labels:
+
+| cause | `c7i` | `c8g` | what the label means |
+|---|---|---|---|
+| unexplained (no recorded event on either host) | 66 | 59 | IRQ, softirq, preemption, page fault and a gap-spinner pause were recorded and none overlaps the max |
+| TCP retransmit after a netem drop | 23 | 24 | the host's TCP retransmit counter and a netem drop share that second, or the one before. The tool does not require the max to be as long as an RTO: 7 of the `c7i` labels and 4 of the `c8g` labels are under 8 ms, so those are a same-second overlap. 12 on each machine are 20 ms or more |
+| periodic path outage, second :05 | 0 | 10 | the session's maxima of 1 ms or more recur at one phase of the minute, above chance. All ten are kernel `epoll-spin`: eight UDP, at both rates, and two WebSocket at 10,000 msg/s. Max 4,676 to 9,298. p50 stays 33.2 to 42.7 |
+| unexplained (a host TCP counter ticked, no netem drop) | 3 | 2 | the point's own connection counters are not what the label uses, and there was no qdisc drop. All five are no-loss TCP, max 168.9 to 3,146.2 |
+| page fault of the measuring thread, host A CPU 2 | 2 | 1 | below |
+| softirq TIMER on the kernel peer's CPU 2 | 2 | 0 | `c7i` smoltcp UDP, 1 connection, 10,000, no loss: max 181.5, softirq 202 µs. `c7i` kernel UDP, 8 connections, 50,000, 0.1%: max 480.6, softirq 407 µs |
+
+The `c7i` pair has no periodic cluster. The seconds of its maxima of 1 ms
+or more are spread over the minute, and `spikes.py` names none. This is
+not the mixed-load session's once-a-minute outage at second :25.
+
+The three page faults. p50 barely moves; p99 does, because a fault of
+a few hundred milliseconds delays the messages in flight behind it:
+
+| host | arm | conn | loss | msg/s | p50 | p99 | max | fault |
+|---|---|---|---|---|---|---|---|---|
+| `c7i` | `fstack-spin` TCP | 1 | 1% | 50,000 | 47.6 | 255,984 | 417,929 | user, `0x7f1fa4862000` |
+| `c7i` | `fstack-spin` WS+TLS | 1 | 1% | 50,000 | 48.5 | 318,767 | 416,413 | user, `0x7f20aca5f000` |
+| `c8g` | `fstack-spin` WS+TLS | 1 | 1% | 50,000 | 33.4 | 250,741 | 342,691 | `handle_mm_fault` |
+
+ergon-tune T14 already reports that compaction can unmap a hot thread's
+page. These traces show the fault and not that compaction caused it, so
+no new check is added. The other no-loss F-Stack TCP maxima stay 134.6
+to 359.3.
+
+Every other max of 20 ms or more is 1% loss, except two `c7i` cells at
+0.1%: kernel TCP, 1 connection, 10,000 msg/s, max 21,405 (a retransmit),
+and smoltcp WebSocket, 8 connections, 10,000 msg/s, max 20,628 (no
+recorded event).
+Where the label is a retransmit, the max is that recovery after the
+peer's drops in the same second: 20,057 to 51,890 on `c7i`, and 20,956
+to 210,818 on `c8g` (the 210,818 is `fstack-spin` TCP, 1 connection,
+50,000, with 1,662 drops counted on the kernel peer in that second).
+The ones `spikes.py` leaves unexplained have no recorded event. They are
+not labelled as the `c7i` outage, and their seconds do not share one
+phase. Largest unexplained: `c7i` smoltcp WebSocket, 8 connections, 1%,
+50,000, max 99,145; `c8g` smoltcp WebSocket, 1 connection, 1%, 50,000,
+max 56,219.
+
+No max on this page is left without one of those labels.
+
 ## Conclusion
 
 <!-- CONCLUSION -->
 
-On Azure x86 (AMD Genoa, 8 cores), 64-byte messages, kernel network
-paths only (no DPDK result yet):
+On AMD Genoa x86, 8 cores, 64-byte messages: Azure for the kernel paths,
+AWS (`c7a.2xlarge`, ENA) where a row names DPDK or F-Stack. Compare
+numbers only within one cloud:
 
 | need | use | numbers, µs (p50 / p99 / p99.99 / max) | cost |
 |---|---|---|---|
 | IPC, one host, under 1,000,000 msg/s | Aeron IPC or `std::sync::mpsc`: round trips within 0.11 of each other | Aeron 0.22 / 0.30–0.39 / 18–41 / 118–146; `mpsc` 0.30–0.33 / 0.45 / 30–33 / 106–143 | Aeron 5 busy threads, `mpsc` 2 |
 | IPC at 5,000,000 msg/s | Aeron IPC: `mpsc`'s round trip falls behind | Aeron 0.25 / 0.38 / 82 / 175 | 5 busy threads |
-| one host, a process boundary | Aeron spy, not UDP to the host's own address | 0.26 / 0.32–0.42 / 2.1–17 / 4–108, against 10.3–13.9 / 12–20 / 19–58 / 31–181 | 5 busy threads |
+| one host, a process boundary | Aeron spy, not UDP to the host's own address; a live UDP destination on the same publication leaves its p50 unchanged (AWS: 0.26 round trip, 0.14 one way, [spy](#spy-with-a-live-udp-destination-spy)) | 0.26 / 0.32–0.42 / 2.1–17 / 4–108, against 10.3–13.9 / 12–20 / 19–58 / 31–181 | 5 busy threads |
 | one stream between hosts, lowest latency | Aeron kernel UDP | 1 stream, 10,000 to 200,000 msg/s: 55.6–59.5 / 60.7–63.7 / 77–387 / 89–2,186; mio and ergon-io at 10,000 and 50,000: 61.8–62.9 / 66.0–68.9 / 140–458 / 213–2,886 | Aeron 4 busy threads a host, sockets 1 |
 | 32 or more streams between hosts, up to 50,000 msg/s (measured) | plain sockets, mio or ergon-io (one loop, one socket a stream) | sockets 57.8–60.3 / 65.2–66.6 / 166–286 / 200–671; Aeron 62.3–70.0 / 70.8–80.0 / 176–201 / 231–626 (10,000 and 50,000 msg/s) | 1 busy thread a host, against 4 |
 | 200,000 msg/s between hosts | Aeron: both socket libraries fall seconds behind (151,000 to 195,000 msg/s carried, one `send` a message) | Aeron 55.8–86.3 / 63.7–115 / 147–387 / 324–2,186 at 1 to 128 streams | 4 busy threads a host |
-| mio or ergon-io | either: UDP p50 within 0.1–0.9 (ergon-io behind), TCP no verdict | see [2a](#set-2a-unreliable-udp-between-hosts), [3c](#mio-against-ergon-io-over-tcp-no-verdict) | 1 busy thread each |
+| mio or ergon-io | either: no difference. UDP p50 within 0.1–0.9 (Azure) and not separated (AWS); TCP on one connection within 1.2 (AWS), tails not separated. Overloaded, ergon-io drains slower | see [2a](#set-2a-unreliable-udp-between-hosts), [the verdict](#mio-against-ergon-io-the-verdict) | 1 busy thread each |
+| lowest latency between hosts, DPDK allowed (AWS) | Aeron on DPDK (md-dpdk), reliable or not; flat from 1 to 8 streams and to 200,000 msg/s | reliable 27.5–30.7 / 35.5–38.7 / 110–162 / 170–297; unreliable 28.0 / 35.4 / 131 / 177 | 4 busy threads a host |
+| TCP between hosts (AWS) | F-Stack (TCP on DPDK): 17–28 below kernel TCP at p50, below kernel Aeron reliable, and keeps up at 200,000 msg/s | F-Stack 32.1–50.4 / 40.2–83.8 / 111–207 / 165–297; kernel TCP 52.2–61.1 / 63.6–85.0 / 145–211 / 298–536 (to 50,000) | 1 busy thread |
+| ergon-io TCP, smoltcp or F-Stack (`c7i`, `c8g`, one rep) | F-Stack when the tail matters: its TCP max stays 135 to 359 with no loss, where the kernel and smoltcp sit at 2.6 to 3.9 ms. p50 at 8 connections is 6.8 to 9.0 below the kernel for F-Stack; smoltcp's p50 matches it and its tail matches the kernel. Not the md-dpdk F-Stack gap above | [io bypass](#ergon-io-kernel-smoltcp-and-f-stack) | 1 busy thread |
 | reliable delivery between hosts, no loss | Aeron reliable UDP, for its p50, its p99 and its headroom | Aeron 54.8–57.6 / 59.9–64.3 / 269–1,335 / 902–3,725; TCP 64.7–69.8 / 79–225 / 559–6,017 / 1,366–8,027 (10,000 and 50,000 msg/s); TCP past capacity at 200,000 | Aeron 4 busy threads a host, TCP 1 |
 | reliable under loss | compare the tails at your loss rate: neither wins everywhere. Aeron keeps the lower p50 and, to 0.1 %, the lower p99; its maxima sit at its 10 ms retransmit linger, TCP's come from its retransmits (8 ms minimum RTO) | 0.1 %: Aeron 53.1–61.6 / 67.7–90.1 / 7,246–8,675 / 10,147–10,240; TCP 65.0–68.5 / 127–148 / 3,379–13,132 / 5,615–15,470 | as above |
+| Aeron driver threading with 32 or more streams (AWS `c7i`, `c8g`, kernel and DPDK) | dedicated driver threads, in their own process or in the application: each thread taken from the driver adds latency, more with more streams and on Graviton ([mixed load](#aeron-threading-under-mixed-load-intel-graviton)) | p50 above dedicated: `SHARED_NETWORK` +1.9 to +32.6, `SHARED` +3.1 to +73.7, `INVOKER` +4.9 to +130.8 | dedicated 3 driver threads a host; 2, 1 and 0 |
 
 - The tail on this cloud is the host as much as the transport: without
   loss, p99 stays under 0.5 µs in IPC and at 225 µs or less between hosts,
@@ -747,6 +1805,9 @@ paths only (no DPDK result yet):
   socket answers 200 µs sooner at light load; on, TCP carried 200,000 msg/s
   where without it 1 connection carried 106,000 to 151,000. Not swept.
 - Aeron's lead costs three more busy cores a host.
+- On AWS the kernel's one IRQ CPU is the limit: kernel Aeron at 8 streams
+  and 200,000 msg/s saturates it (p50 86.0); DPDK, which polls the NIC,
+  stays at 28.8.
 
 ## Reproduce
 
@@ -769,6 +1830,30 @@ LAB_SUITE=transport LAB_PAIR=a LAB_RUN_STAMP=$stamp md-dpdk/benches/cloud/azure/
 LAB_SUITE=transport LAB_PAIR=b LAB_RUN_STAMP=$stamp md-dpdk/benches/cloud/azure/lab.sh
 ```
 
+The AWS DPDK session (F-Stack TCP, Aeron and the socket arms on two
+c7a.2xlarge; its own stamp and tags, deleted and verified on exit, each
+instance powering itself off at `LAB_MAX_HOURS`):
+
+```sh
+export LAB_SUITE=transport LAB_PAIR=a LAB_REPS=3 LAB_SPOT=1 \
+    LAB_SETS_FILE=md-dpdk/benches/cloud/transport-aws-dpdk.tsv
+LAB_ESTIMATE=1 md-dpdk/benches/cloud/aws/lab.sh
+md-dpdk/benches/cloud/aws/lab.sh   # results in target/md-dpdk-bench/aws-<stamp>/transport
+```
+
+On Graviton, add `LAB_ALLOW_ARM=1 LAB_TYPE=c8g.2xlarge`. The io-bypass
+set has run F-Stack on ENA there (`c8g.2xlarge`, one rep, on demand, the
+pairs one after the other, `LAB_MAX_HOURS=3`):
+
+```sh
+export LAB_SUITE=transport LAB_PAIR=a LAB_REPS=1 LAB_MAX_HOURS=3 \
+    LAB_SETS_FILE=md-dpdk/benches/cloud/transport-aws-io-bypass.tsv
+LAB_ESTIMATE=1 md-dpdk/benches/cloud/aws/lab.sh
+md-dpdk/benches/cloud/aws/lab.sh
+```
+
+`transport-aws-fstack-smoke.tsv` is a narrower first step, not that result.
+
 Analyse each pair's run directory:
 
 ```sh
@@ -787,11 +1872,18 @@ What the runner writes and the analysis reads:
 
 - ergon-io's other backends (`recv-busy`, `uring-sqpoll`): the socket arms
   run `epoll-spin` only.
-- TCP fan-in (8 to 128 connections into one loop): its one session gave
-  mio and ergon-io unequal busy polling, and it was not rerun.
-- Graviton, AWS, bare metal: one Azure x86 size only.
+- TCP fan-in beyond 8 connections into one loop: Azure's session gave mio
+  and ergon-io unequal busy polling and was not rerun; AWS ran 8.
+- The md-dpdk Graviton session (Aeron on DPDK) has not run, nor has bare
+  metal; one instance size a cloud. The AWS DPDK session (`c7a`) had no
+  netem, no 8-stream unreliable UDP, and the `pin` set at 1 stream only
+  (trimmed to about 3 h). F-Stack on Graviton ENA is the
+  [ergon-io bypass set](#ergon-io-kernel-smoltcp-and-f-stack), not that session.
+- Kernel bypass for the socket arms (Onload): not viable on ENA, no latency measured ([Onload on ENA](#onload-on-ena-not-viable)).
+- Aeron driver threading under mixed load: no hot-stream stage trace, so the rise is not split across the hand-offs ([mixed load](#aeron-threading-under-mixed-load-intel-graviton)).
 - Kubernetes pods: the VMs run the arms directly. The node and pod settings
   they need: [Kubernetes latency checklist](../deploy/kubernetes.md#latency-checklist).
-- Payloads other than 64 bytes, IPv6, multicast, TLS and WebSocket.
+- Payloads other than 64 bytes, IPv6, multicast. WebSocket-over-TLS is the
+  [ergon-io bypass set](#ergon-io-kernel-smoltcp-and-f-stack) only.
 - DPDK under loss (see above), and Aeron over IPC with more than one stream.
 - Throughput maxima: every point is a fixed rate.

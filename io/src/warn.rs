@@ -390,11 +390,13 @@ fn write_line(line: &str) {
 /// running. There is one writer per process, parked in `recv`: each line costs
 /// the caller an allocation and a futex wake, so callers bound how often
 /// they warn.
+#[cold]
 pub fn emit(line: String) {
     send(Msg::Line(line));
 }
 
 /// Queues `line`, written once per process.
+#[cold]
 pub fn once(line: String) {
     send(Msg::Once(line));
 }
@@ -408,6 +410,7 @@ pub fn run(job: impl FnOnce(&mut State) + Send + 'static) {
 /// Queues `what: error` for a connect failure the application does not
 /// handle itself, at most once every 10 s across the process (with the
 /// number held back).
+#[cold]
 pub fn connect_failure(what: &str, error: &Error) {
     let now = monotonic_ns();
     let last = LAST_NS.load(Ordering::Relaxed);

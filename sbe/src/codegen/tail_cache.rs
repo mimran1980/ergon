@@ -41,7 +41,7 @@ pub(crate) fn emit_tail_offsets(
     let mut ts = proc_macro2::TokenStream::new();
     ts.extend(quote::quote! {
         #[inline]
-        fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
+        const fn tail_offset_0(&self) -> Result<usize, sbe_rt::DecodeError> {
             #tail0
         }
     });
@@ -89,6 +89,7 @@ pub(crate) fn emit_tail_offsets(
             fn #walk_ident(&self, start: usize) -> Result<usize, sbe_rt::DecodeError> {
                 #version_skip
                 if start + #dim_size_lit > self.buf.len() {
+                    sbe_rt::cold();
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: #gn_lit,
                         needed: #dim_size_lit,
@@ -151,6 +152,7 @@ pub(crate) fn emit_tail_offsets(
             fn #walk_ident(&self, start: usize) -> Result<usize, sbe_rt::DecodeError> {
                 #version_skip
                 if #prefix_size_lit > self.buf.len().saturating_sub(start) {
+                    sbe_rt::cold();
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: #vd_name_lit,
                         needed: #prefix_size_lit,
@@ -280,7 +282,7 @@ pub(crate) fn emit_cached_tail_offsets(
         #[cfg(debug_assertions)]
         #[must_use = "discarding cache stats is almost always a mistake"]
         #[inline]
-        pub fn decode_cache_stats(&self) -> sbe_rt::DecodeCacheStats {
+        pub const fn decode_cache_stats(&self) -> sbe_rt::DecodeCacheStats {
             self.cache.stats()
         }
     });

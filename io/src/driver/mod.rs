@@ -41,6 +41,11 @@ use crate::dns::{DnsConfig, Lookup, Resolver};
 use crate::endpoint::sealed::{Io, RouteSlot};
 use crate::endpoint::{ConnId, ConnMut, Dial, DriverStats, Endpoint, Handler, Receive, TcpInfo};
 use crate::error::{Error, Result};
+#[cfg(feature = "fstack")]
+use crate::netstack::fstack::{self, Fstack};
+#[cfg(feature = "smoltcp-dpdk")]
+use crate::netstack::smoltcp::{self as smol, Smol};
+use crate::netstack::{Kernel, NetStack, StackId};
 use crate::placement::{self, CpuError};
 use crate::route::{self, Flow, QuickAckCheck, QuickAckError, RouteCheck};
 use crate::{RxMeta, sys};
@@ -291,6 +296,97 @@ enum Imp {
     Epoll(epoll::Epoll),
     #[cfg(feature = "uring")]
     Uring(uring::Uring),
+    /// `fstack-spin`: the epoll-spin loop over F-Stack.
+    #[cfg(feature = "fstack")]
+    Fstack(epoll::Epoll<Fstack>),
+    /// `smoltcp-spin`: the epoll-spin loop over the thread's smoltcp stack.
+    #[cfg(feature = "smoltcp-dpdk")]
+    Smoltcp(epoll::Epoll<Smol>),
+}
+
+impl Imp {
+    /// Whether the driver's send pass after the receive pass is this
+    /// backend's (the epoll loop over the kernel or smoltcp; `io_uring`
+    /// sends inside its pass, F-Stack's runs below with its stack pass).
+    const fn sends_after_poll(&self) -> bool {
+        #[cfg(feature = "smoltcp-dpdk")]
+        if matches!(self, Self::Smoltcp(_)) {
+            return true;
+        }
+        matches!(self, Self::Epoll(_))
+    }
+
+    /// The backend `cfg` names.
+    fn new(cfg: &Config) -> Result<Self> {
+        Ok(match cfg.backend {
+            Backend::EpollSpin | Backend::RecvBusy => Self::Epoll(epoll::Epoll::new(cfg)?),
+            #[cfg(feature = "uring")]
+            Backend::UringSqpoll => Self::Uring(uring::Uring::new(cfg)?),
+            #[cfg(not(feature = "uring"))]
+            Backend::UringSqpoll => {
+                return Err(Error::Unsupported(
+                    "io_uring backends need the `uring` feature",
+                ));
+            }
+            // F-Stack on this thread (once per process), then its loop.
+            #[cfg(feature = "fstack")]
+            Backend::FstackSpin => {
+                fstack::init(cfg)?;
+                Self::Fstack(epoll::Epoll::new(cfg)?)
+            }
+            #[cfg(not(feature = "fstack"))]
+            Backend::FstackSpin => {
+                return Err(Error::Unsupported(
+                    "fstack-spin needs ergon-io's `fstack` feature (Linux)",
+                ));
+            }
+            // The thread's stack (`smoltcp_dpdk::Stack::init`), then its loop.
+            #[cfg(feature = "smoltcp-dpdk")]
+            Backend::SmoltcpSpin => {
+                if !smol::present() {
+                    return Err(Error::Config(
+                        "smoltcp-spin: no stack on this thread: start one with \
+                         ergon_io::smoltcp_dpdk::Stack::init on the polling thread first"
+                            .into(),
+                    ));
+                }
+                Self::Smoltcp(epoll::Epoll::new(cfg)?)
+            }
+            #[cfg(not(feature = "smoltcp-dpdk"))]
+            Backend::SmoltcpSpin => {
+                return Err(Error::Unsupported(
+                    "smoltcp-spin needs ergon-io's `smoltcp-dpdk` feature (Linux)",
+                ));
+            }
+        })
+    }
+
+    /// The connection's `TCP_INFO`, from the backend's stack.
+    fn tcp_info(&self, fd: RawFd) -> std::io::Result<TcpInfo> {
+        match self {
+            Self::Epoll(e) => e.tcp_info(fd),
+            #[cfg(feature = "uring")]
+            Self::Uring(_) => sys::tcp_info(fd),
+            #[cfg(feature = "fstack")]
+            Self::Fstack(e) => e.tcp_info(fd),
+            #[cfg(feature = "smoltcp-dpdk")]
+            Self::Smoltcp(e) => e.tcp_info(fd),
+        }
+    }
+
+    /// The NIC queue of the socket's last packet (0: none known), from the
+    /// backend's stack.
+    fn napi_id(&self, fd: RawFd) -> u32 {
+        match self {
+            Self::Epoll(e) => e.napi_id(fd),
+            #[cfg(feature = "uring")]
+            Self::Uring(_) => sys::incoming_napi_id(fd).unwrap_or(0),
+            #[cfg(feature = "fstack")]
+            Self::Fstack(e) => e.napi_id(fd),
+            #[cfg(feature = "smoltcp-dpdk")]
+            Self::Smoltcp(e) => e.napi_id(fd),
+        }
+    }
 }
 
 /// How often deadlines and timers are checked, in microseconds (only for
@@ -348,7 +444,7 @@ impl SockOpts {
             busy_poll_us: match cfg.backend {
                 Backend::RecvBusy => 1,
                 Backend::EpollSpin => cfg.busy_poll_us,
-                Backend::UringSqpoll => 0,
+                Backend::UringSqpoll | Backend::FstackSpin | Backend::SmoltcpSpin => 0,
             },
             quickack: cfg.quickack_check,
             backend: cfg.backend,
@@ -364,27 +460,28 @@ impl SockOpts {
         }
     }
 
-    /// `datagram`: a UDP socket, which takes the socket-level options only
-    /// (timestamps, `SO_RCVBUF`, `SO_BUSY_POLL`), no TCP one.
-    fn apply(&self, fd: RawFd, datagram: bool) -> Result<()> {
+    /// Sets the options on `fd`, through stack `S`. `datagram`: a UDP
+    /// socket, which takes the socket-level options only (timestamps,
+    /// `SO_RCVBUF`, `SO_BUSY_POLL`), no TCP one.
+    fn apply<S: NetStack>(&self, fd: RawFd, datagram: bool) -> Result<()> {
         if self.timestamps {
-            sys::enable_rx_timestamps(fd)?;
+            S::enable_rx_timestamps(fd)?;
         }
         if let Some(b) = self.rcvbuf {
-            sys::set_rcvbuf(fd, b)?;
+            S::set_rcvbuf(fd, b)?;
         }
-        sys::set_busy_poll(fd, self.busy_poll_us)?;
+        S::set_busy_poll(fd, self.busy_poll_us)?;
         if datagram {
             return Ok(());
         }
         let (idle, interval, count) = self.keepalive;
         if idle > 0 {
-            sys::set_tcp_keepalive(fd, idle, interval, count)?;
+            S::set_tcp_keepalive(fd, idle, interval, count)?;
         }
         if self.user_timeout_ms > 0 {
-            sys::set_tcp_user_timeout(fd, self.user_timeout_ms)?;
+            S::set_tcp_user_timeout(fd, self.user_timeout_ms)?;
         }
-        sys::apply_tcp_timers(fd, self.rto_min_us, self.delack_max_us)?;
+        S::apply_tcp_timers(fd, self.rto_min_us, self.delack_max_us)?;
         Ok(())
     }
 
@@ -410,7 +507,22 @@ impl SockOpts {
         on_loop: bool,
     ) -> Result<RouteCost> {
         let fd = ep.fd();
-        self.apply(fd, E::DATAGRAM)?;
+        if E::STACK == StackId::Smoltcp {
+            // The stack's options (keepalive, user timeout, delayed ACK,
+            // read stamps); no kernel route, device or `TCP_CORK` check.
+            #[cfg(feature = "smoltcp-dpdk")]
+            self.apply::<Smol>(fd, E::DATAGRAM)?;
+            return Ok(RouteCost::default());
+        }
+        if E::STACK == StackId::Fstack {
+            // F-Stack's options; no kernel route, device or `TCP_CORK`
+            // check applies (its sockets are made with `TCP_NODELAY`).
+            #[cfg(feature = "fstack")]
+            self.apply::<Fstack>(fd, false)?;
+            return Ok(RouteCost::default());
+        }
+        // The kernel's: connections are set up on kernel sockets only.
+        self.apply::<Kernel>(fd, E::DATAGRAM)?;
         if E::DATAGRAM {
             return Ok(RouteCost::default());
         }
@@ -459,6 +571,33 @@ impl SockOpts {
             ticks: rdtsc().wrapping_sub(t0),
         })
     }
+}
+
+/// What `Driver::new` checks of endpoints of type `E` against `cfg`: the
+/// backend is built in, validates, takes `E`'s kind (datagram endpoints on
+/// `epoll-spin` only) and drives `E`'s stack.
+fn check_endpoints<E: Endpoint>(cfg: &Config) -> Result<()> {
+    if cfg.backend == Backend::FstackSpin && !cfg!(feature = "fstack") {
+        return Err(Error::Unsupported(
+            "fstack-spin needs ergon-io's `fstack` feature (Linux)",
+        ));
+    }
+    cfg.validate()?;
+    if E::DATAGRAM && !matches!(cfg.backend, Backend::EpollSpin | Backend::SmoltcpSpin) {
+        return Err(Error::Unsupported(
+            "UDP endpoints (UdpConn) run on the epoll-spin and smoltcp-spin backends only",
+        ));
+    }
+    if E::STACK != cfg.backend.stack() {
+        return Err(Error::Config(format!(
+            "{} drives {} sockets; these endpoints are on {} (an F-Stack endpoint is \
+             FrameConn<FstackTcp>, WsConn<FstackTcp> or HttpConn<FstackTcp>)",
+            cfg.backend,
+            cfg.backend.stack().name(),
+            E::STACK.name()
+        )));
+    }
+    Ok(())
 }
 
 /// The route check of a dial gated under `require` (see `advance_one`):
@@ -602,15 +741,13 @@ impl<E: Endpoint> Driver<E> {
         dns: DnsConfig,
         host: &ergon_tune::Host,
     ) -> Result<Self> {
-        cfg.validate()?;
-        if E::DATAGRAM && cfg.backend != Backend::EpollSpin {
-            return Err(Error::Unsupported(
-                "UDP endpoints (UdpConn) run on the epoll-spin backend only",
-            ));
-        }
+        check_endpoints::<E>(&cfg)?;
+        let user_space = cfg.backend.bypasses_kernel();
         // A timer this kernel lacks, refuses or would round fails now, not
         // at the first connection.
-        sys::probe_tcp_timers(cfg.tcp_rto_min_us, cfg.tcp_delack_max_us)?;
+        if !user_space {
+            sys::probe_tcp_timers(cfg.tcp_rto_min_us, cfg.tcp_delack_max_us)?;
+        }
         // The one switch over every host-check warning (`ERGON_HOST_CHECKS`).
         let policy = ergon_tune::HostCheckPolicy::from_env()?;
         // I-host and I3 (see `crate::checks`), and where the helper threads
@@ -648,6 +785,7 @@ impl<E: Endpoint> Driver<E> {
             return Err(e.into());
         }
         if let Some(asked) = cfg.rcvbuf
+            && !user_space
             && let Ok(granted) = sys::granted_rcvbuf(asked)
             && let Some(l) = checks::rcvbuf_line(asked, granted)
         {
@@ -655,17 +793,7 @@ impl<E: Endpoint> Driver<E> {
         }
         let ctx = Arc::new(DevContext::new(&cfg, report.hot.clone()));
         let tpu = ticks_per_us();
-        let imp = match cfg.backend {
-            Backend::EpollSpin | Backend::RecvBusy => Imp::Epoll(epoll::Epoll::new(&cfg)?),
-            #[cfg(feature = "uring")]
-            Backend::UringSqpoll => Imp::Uring(uring::Uring::new(&cfg)?),
-            #[cfg(not(feature = "uring"))]
-            Backend::UringSqpoll => {
-                return Err(Error::Unsupported(
-                    "io_uring backends need the `uring` feature",
-                ));
-            }
-        };
+        let imp = Imp::new(&cfg)?;
         Ok(Self {
             imp,
             conns: Conns::with_capacity(INITIAL_SLOTS),
@@ -681,7 +809,9 @@ impl<E: Endpoint> Driver<E> {
             dns,
             report,
             ctx,
-            _timestamp_keeper: cfg.rx_timestamps.then(timestamp_keeper).flatten(),
+            _timestamp_keeper: (cfg.rx_timestamps && !user_space)
+                .then(timestamp_keeper)
+                .flatten(),
             // Calibrated once here, not on the first connect.
             ticks_per_us: tpu,
             next_expiry: 0,
@@ -989,6 +1119,10 @@ impl<E: Endpoint> Driver<E> {
             Imp::Epoll(e) => e.add(fd, id),
             #[cfg(feature = "uring")]
             Imp::Uring(u) => u.add(&mut ep, i),
+            #[cfg(feature = "fstack")]
+            Imp::Fstack(e) => e.add(fd, id),
+            #[cfg(feature = "smoltcp-dpdk")]
+            Imp::Smoltcp(e) => e.add(fd, id),
         };
         if let Err(e) = added {
             // Nothing was armed: freed with the other closed connections.
@@ -1116,10 +1250,10 @@ impl<E: Endpoint> Driver<E> {
     /// packet).
     #[must_use]
     pub fn nic_polling_active(&self) -> bool {
-        self.cfg.backend.polls_nic()
-            && self
-                .iter()
-                .all(|(_, c)| sys::incoming_napi_id(c.fd()).unwrap_or(0) != 0)
+        // F-Stack polls its one queue every poll, whatever the connections.
+        self.cfg.backend.bypasses_kernel()
+            || (self.cfg.backend.polls_nic()
+                && self.iter().all(|(_, c)| self.imp.napi_id(c.fd()) != 0))
     }
 
     /// One iteration: send what was queued since the last poll (through
@@ -1180,14 +1314,34 @@ impl<E: Endpoint> Driver<E> {
                 // and sends share one io_uring_enter.
                 #[cfg(feature = "uring")]
                 Imp::Uring(u) => u.poll(&mut self.conns, handler, &mut self.stats, &mut self.reads),
+                // One F-Stack pass first (in `poll`), then its kqueue.
+                #[cfg(feature = "fstack")]
+                Imp::Fstack(e) => {
+                    e.poll(&mut self.conns, handler, &mut self.stats, &mut self.reads)
+                }
+                // One smoltcp pass first (in `poll`), then its ready sockets.
+                #[cfg(feature = "smoltcp-dpdk")]
+                Imp::Smoltcp(e) => {
+                    e.poll(&mut self.conns, handler, &mut self.stats, &mut self.reads)
+                }
             };
         }
         // What the receive pass queued (replies, pongs) goes out now, and
         // anything left unsent (a full socket) is retried here on every
         // poll: both are in the send set. (`io_uring` sends inside its
         // pass.)
-        if r.is_ok() && matches!(self.imp, Imp::Epoll(_)) && !self.conns.tx_dirty.is_empty() {
+        if r.is_ok() && self.imp.sends_after_poll() && !self.conns.tx_dirty.is_empty() {
             r = self.send_queued(handler);
+        }
+        // F-Stack: the replies go out now (a second pass drains its TX),
+        // not at the next poll's first pass.
+        #[cfg(feature = "fstack")]
+        if r.is_ok() && matches!(self.imp, Imp::Fstack(_)) && !self.conns.tx_dirty.is_empty() {
+            let sent = self.stats.send_calls;
+            r = self.send_queued(handler);
+            if self.stats.send_calls != sent {
+                Fstack::run_once();
+            }
         }
         self.tx_fresh = false;
         // After receiving, so a response already in the socket is not timed out.
@@ -1243,7 +1397,7 @@ impl<E: Endpoint> Driver<E> {
                 continue;
             };
             let t0 = rdtsc();
-            let read = sys::tcp_info(fd);
+            let read = self.imp.tcp_info(fd);
             let ns = ticks_ns(rdtsc().wrapping_sub(t0), self.ticks_per_us);
             self.stats.tcp_info_samples += 1;
             self.stats.tcp_info_max_ns = self.stats.tcp_info_max_ns.max(ns);
@@ -1358,6 +1512,11 @@ impl<E: Endpoint> Driver<E> {
     #[inline]
     pub fn flush_with<H: Handler>(&mut self, handler: &mut H) -> Result<()> {
         let r = self.send_queued(handler);
+        // F-Stack: one pass, so what was written leaves now.
+        #[cfg(feature = "fstack")]
+        if matches!(self.imp, Imp::Fstack(_)) {
+            Fstack::run_once();
+        }
         if !self.conns.closed.is_empty() {
             self.free_closed();
         }
@@ -1369,53 +1528,33 @@ impl<E: Endpoint> Driver<E> {
     fn send_queued<H: Handler>(&mut self, handler: &mut H) -> Result<()> {
         self.tx_fresh = false;
         match &mut self.imp {
-            Imp::Epoll(e) if E::DATAGRAM => {
-                send_datagrams(e, &mut self.conns, &mut self.stats, handler);
-                Ok(())
-            }
             Imp::Epoll(e) => {
-                // The send set only: a connection stays listed while bytes
-                // are left (a full socket) and leaves once it has none.
-                let mut k = 0;
-                while let Some(&i) = self.conns.tx_dirty.get(k) {
-                    let open = self.conns.is_open(i);
-                    let Some(c) = self.conns.at(i).filter(|_| open) else {
-                        self.conns.unlist_tx(k);
-                        continue;
-                    };
-                    if c.tx_queue().is_empty() {
-                        self.conns.unlist_tx(k);
-                        continue;
-                    }
-                    self.stats.send_calls += 1;
-                    self.stats.sends += 1;
-                    let fd = c.fd();
-                    match sys::send(fd, c.tx_queue().pending()) {
-                        Ok(n) => {
-                            // Moves the head only: the unsent tail stays put.
-                            c.tx_queue().sent(n);
-                            c.on_handed(n);
-                            if c.tx_queue().is_empty() {
-                                self.conns.unlist_tx(k);
-                            } else {
-                                k += 1;
-                            }
-                        }
-                        Err(err) => {
-                            let err = c.close_reason(err.into());
-                            let id = self.conns.id(i);
-                            e.remove(fd);
-                            self.conns.remove(i);
-                            self.conns.unlist_tx(k);
-                            self.stats.closed += 1;
-                            handler.on_closed(id, err);
-                        }
-                    }
+                if E::DATAGRAM {
+                    send_datagrams(e, &mut self.conns, &mut self.stats, handler);
+                } else {
+                    send_stream(e, &mut self.conns, &mut self.stats, handler);
                 }
                 Ok(())
             }
             #[cfg(feature = "uring")]
             Imp::Uring(u) => u.flush(&mut self.conns, &mut self.stats),
+            #[cfg(feature = "fstack")]
+            Imp::Fstack(e) => {
+                send_stream(e, &mut self.conns, &mut self.stats, handler);
+                Ok(())
+            }
+            // smoltcp queues in its sockets: the pass's bytes leave now, in
+            // one TX burst, not at the next poll's stack pass.
+            #[cfg(feature = "smoltcp-dpdk")]
+            Imp::Smoltcp(e) => {
+                if E::DATAGRAM {
+                    send_datagrams(e, &mut self.conns, &mut self.stats, handler);
+                } else {
+                    send_stream(e, &mut self.conns, &mut self.stats, handler);
+                }
+                smol::egress();
+                Ok(())
+            }
         }
     }
 }
@@ -1442,14 +1581,62 @@ fn timestamp_keeper() -> Option<socket2::Socket> {
     Some(s)
 }
 
+/// The send pass of stream endpoints (`epoll-spin`, `recv-busy`), through
+/// stack `S`: the send set only. A connection stays listed while bytes are
+/// left (a full socket) and leaves once it has none.
+#[inline]
+fn send_stream<S: NetStack, E: Endpoint, H: Handler>(
+    e: &mut epoll::Epoll<S>,
+    conns: &mut Conns<E>,
+    stats: &mut DriverStats,
+    handler: &mut H,
+) {
+    let mut k = 0;
+    while let Some(&i) = conns.tx_dirty.get(k) {
+        let open = conns.is_open(i);
+        let Some(c) = conns.at(i).filter(|_| open) else {
+            conns.unlist_tx(k);
+            continue;
+        };
+        if c.tx_queue().is_empty() {
+            conns.unlist_tx(k);
+            continue;
+        }
+        stats.send_calls += 1;
+        stats.sends += 1;
+        let fd = c.fd();
+        match S::send(fd, c.tx_queue().pending()) {
+            Ok(n) => {
+                // Moves the head only: the unsent tail stays put.
+                c.tx_queue().sent(n);
+                c.on_handed(n);
+                if c.tx_queue().is_empty() {
+                    conns.unlist_tx(k);
+                } else {
+                    k += 1;
+                }
+            }
+            Err(err) => {
+                let err = c.close_reason(err.into());
+                let id = conns.id(i);
+                e.remove(fd);
+                conns.remove(i);
+                conns.unlist_tx(k);
+                stats.closed += 1;
+                handler.on_closed(id, err);
+            }
+        }
+    }
+}
+
 /// The send pass of datagram endpoints (`epoll-spin`): each datagram of a
 /// connection in the send set goes to the kernel whole, in order, until its
 /// ring is empty (it leaves the set) or the socket's send buffer is full
 /// (it stays). `ECONNREFUSED` is counted, not a close: it reports an
 /// earlier datagram's ICMP port unreachable, the kernel sent nothing, and
 /// the datagram is tried once more in this pass.
-fn send_datagrams<E: Endpoint, H: Handler>(
-    e: &mut epoll::Epoll,
+fn send_datagrams<S: NetStack, E: Endpoint, H: Handler>(
+    e: &mut epoll::Epoll<S>,
     conns: &mut Conns<E>,
     stats: &mut DriverStats,
     handler: &mut H,
@@ -1472,13 +1659,13 @@ fn send_datagrams<E: Endpoint, H: Handler>(
             };
             stats.send_calls += 1;
             stats.sends += 1;
-            match sys::send_datagram(fd, d) {
+            match S::send_datagram(fd, d) {
                 Ok(true) => {
                     c.sent_tx();
                     retried = false;
                 }
                 Ok(false) => break,
-                Err(err) if err.raw_os_error() == Some(libc::ECONNREFUSED) => {
+                Err(err) if S::refused(&err) => {
                     c.on_refused();
                     if retried {
                         break;
@@ -1516,6 +1703,20 @@ fn close_index<E: Endpoint>(imp: &mut Imp, conns: &mut Conns<E>, i: usize) {
         }
         #[cfg(feature = "uring")]
         Imp::Uring(u) => u.close(conns, i),
+        #[cfg(feature = "fstack")]
+        Imp::Fstack(e) => {
+            if let Some(fd) = conns.at(i).map(|c| c.fd()) {
+                e.remove(fd);
+                conns.remove(i);
+            }
+        }
+        #[cfg(feature = "smoltcp-dpdk")]
+        Imp::Smoltcp(e) => {
+            if let Some(fd) = conns.at(i).map(|c| c.fd()) {
+                e.remove(fd);
+                conns.remove(i);
+            }
+        }
     }
 }
 
@@ -1568,11 +1769,11 @@ pub struct Reads {
 }
 
 impl Reads {
-    /// [`RxMeta`] for a read that returned data through `slot`: the next
-    /// sequence number, the kernel's stamps, and with `stamp` the time now
-    /// (read first, nearest the read). Off, no clock is read.
+    /// [`RxMeta`] for a read that returned data through `slot` of stack
+    /// `S`: the next sequence number, the stack's stamps, and with `stamp`
+    /// the time now (read first, nearest the read). Off, no clock is read.
     #[inline]
-    pub fn next(&mut self, slot: &sys::MsgSlot) -> RxMeta {
+    pub fn next<S: NetStack>(&mut self, slot: &S::RxSlot) -> RxMeta {
         let rx_read_ns = if self.stamp {
             crate::clock::realtime_ns()
         } else {
@@ -1581,7 +1782,7 @@ impl Reads {
         self.seq += 1;
         RxMeta {
             rx_read_ns,
-            ..slot.meta(self.seq)
+            ..S::rx_meta(slot, self.seq)
         }
     }
 
@@ -1606,23 +1807,24 @@ impl Reads {
     }
 }
 
-/// Reads once from `conn` through `slot` and delivers what arrived: `true`
-/// when bytes were delivered (which may have queued a send).
-fn recv_one<E, H>(
+/// Reads once from `conn` through `slot` of stack `S` and delivers what
+/// arrived: `true` when bytes were delivered (which may have queued a send).
+fn recv_one<S, E, H>(
     conn: &mut E,
     id: ConnId,
-    slot: &mut sys::MsgSlot,
+    slot: &mut S::RxSlot,
     handler: &mut H,
     stats: &mut DriverStats,
     reads: &mut Reads,
 ) -> Result<bool>
 where
+    S: NetStack,
     E: Receive<H>,
     H: Handler,
 {
-    slot.arm(conn.rx_space());
+    S::arm(slot, conn.rx_space());
     stats.recvmsg_calls += 1;
-    match sys::recvmsg(conn.fd(), slot) {
+    match S::recv(conn.fd(), slot) {
         Ok(None) => {
             stats.recvmsg_eagain += 1;
             Ok(false)
@@ -1630,19 +1832,19 @@ where
         // A stream's end; a datagram endpoint's empty datagram.
         Ok(Some(0)) if !E::DATAGRAM => Err(Error::Closed),
         // Longer than the buffer: the kernel cut it. Dropped, counted.
-        Ok(Some(_)) if E::DATAGRAM && slot.truncated() => {
+        Ok(Some(_)) if E::DATAGRAM && S::truncated(slot) => {
             conn.on_truncated();
             Ok(true)
         }
         Ok(Some(n)) => {
-            let meta = reads.next(slot);
+            let meta = reads.next::<S>(slot);
             stats.completions += 1;
             stats.messages += conn.on_received(id, n, &meta, handler)? as u64;
             Ok(true)
         }
         // An ICMP port unreachable for an earlier datagram: counted, the
         // socket stays open.
-        Err(e) if E::DATAGRAM && e.raw_os_error() == Some(libc::ECONNREFUSED) => {
+        Err(e) if E::DATAGRAM && S::refused(&e) => {
             conn.on_refused();
             Ok(true)
         }

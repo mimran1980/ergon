@@ -431,6 +431,7 @@ void rusteron_dpdk_test_reset(void)
     rusteron_dpdk_test_thread_cpu_ns_value = 0;
     rusteron_dpdk_gap_attrib = 0;
     rusteron_dpdk_events_test_reset();
+    rusteron_dpdk_lab_test_reset();
     rusteron_dpdk_reports_test_reset();
     rusteron_dpdk_housekeeping_enabled = 0;
     rusteron_dpdk_transport_test_reset();
@@ -2792,6 +2793,14 @@ int rusteron_dpdk_runtime_init(rusteron_dpdk_transport_t *native)
         rusteron_dpdk_runtime_cleanup(native);
         return -1;
     }
+    /* The lab's stage trace and capture (RUSTERON_DPDK_STAGE_TRACE,
+     * RUSTERON_DPDK_CAPTURE_FILE): their rings and writer thread before any
+     * agent sends or polls. */
+    if (rusteron_dpdk_lab_open(0) < 0)
+    {
+        rusteron_dpdk_runtime_cleanup(native);
+        return -1;
+    }
 
     if (rusteron_dpdk_housekeeping_enabled && rusteron_dpdk_housekeeping_start(native) < 0)
     {
@@ -2858,6 +2867,7 @@ void rusteron_dpdk_runtime_cleanup(rusteron_dpdk_transport_t *native)
     rusteron_dpdk_local_io_stop(native);
     /* What the agents logged since housekeeping's last pass, then the file. */
     rusteron_dpdk_events_close(native);
+    rusteron_dpdk_lab_close();
     free(native->host_ips);
     native->host_ips = NULL;
     native->host_ip_count = 0;

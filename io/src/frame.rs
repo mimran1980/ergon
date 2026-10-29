@@ -18,19 +18,20 @@
 //!   `tcp_rto_min_us`, `tcp_delack_max_us`) apply as to every TCP
 //!   connection. [`FrameOptions::quickack_per_read`] sets `TCP_QUICKACK`
 //!   again after every read with data.
-//! - Every backend drives it.
+//! - Every backend drives it. Over F-Stack (`fstack-spin`) it is
+//!   `FrameConn<FstackTcp>`, made by [`FrameDial::on_stack`] or
+//!   [`FrameConn::from_stream`].
 
 use std::net::{SocketAddr, TcpStream};
-use std::os::fd::{AsRawFd, RawFd};
+use std::os::fd::RawFd;
 use std::time::Duration;
-
-use socket2::SockRef;
 
 use crate::RxMeta;
 use crate::endpoint::sealed::{Deliver, DialIo, Io, RouteSlot};
 use crate::endpoint::{ConnId, ConnMut, Handler};
 use crate::error::{Error, Result};
-use crate::net::{BindSource, Target, connect_finished, connect_nonblocking};
+use crate::net::{BindSource, StreamSocket, Target};
+use crate::netstack::StackId;
 use crate::route::RouteCheck;
 use crate::stream::TxQueue;
 
@@ -60,8 +61,9 @@ pub struct FrameOptions {
     /// Sets `TCP_QUICKACK` after every read that returned data (one
     /// `setsockopt` each, counted in [`FrameStats::quickacks`]): the
     /// kernel leaves quick-ACK mode on its own once it judges the
-    /// connection interactive, and this puts it back. Linux only. Default
-    /// off.
+    /// connection interactive, and this puts it back. Linux kernel sockets
+    /// only (F-Stack's delayed ACKs are off: `fstack-spin` refuses it).
+    /// Default off.
     pub quickack_per_read: bool,
 }
 
@@ -100,6 +102,17 @@ impl FrameOptions {
         }
         Ok(())
     }
+
+    /// [`FrameOptions::check`], and what `stack` cannot honour.
+    fn check_for(&self, stack: StackId) -> Result<()> {
+        self.check()?;
+        if self.quickack_per_read && stack != StackId::Kernel {
+            return Err(Error::Unsupported(
+                "frame quickack_per_read: TCP_QUICKACK is the kernel's (F-Stack runs with delayed ACKs off)",
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Per-connection counters.
@@ -118,9 +131,10 @@ pub struct FrameStats {
 }
 
 /// A connected TCP socket that carries length-prefixed frames. Hand it to a
-/// `Driver`; the socket closes when it is dropped.
-pub struct FrameConn {
-    sock: TcpStream,
+/// `Driver`; the socket closes when it is dropped. `T` is the socket's
+/// stack ([`StreamSocket`]): the kernel's `TcpStream` by default.
+pub struct FrameConn<T = TcpStream> {
+    sock: T,
     buf: Box<[u8]>,
     /// Unparsed bytes are `head..tail`.
     head: usize,
@@ -138,7 +152,7 @@ pub struct FrameConn {
 impl FrameConn {
     /// Connects to `addr`, waiting at most 10 s: a convenience for tools and
     /// tests. In a busy-spin loop use [`FrameDial`] with `Driver::connect`,
-    /// which never waits.
+    /// which never waits. Other stacks: [`FrameDial::connect_blocking`].
     ///
     /// # Errors
     /// Bad options, or the connect fails or times out.
@@ -147,22 +161,21 @@ impl FrameConn {
         let sock = TcpStream::connect_timeout(&addr, Duration::from_secs(10))?;
         Self::from_stream(sock, opts)
     }
+}
 
+impl<T: StreamSocket> FrameConn<T> {
     /// A connection over `sock`, a connected TCP socket (one a listener
     /// accepted, say): made non-blocking, `TCP_NODELAY` set. Hand it to
     /// `Driver::add`.
     ///
     /// # Errors
     /// Bad options, or a socket option fails.
-    pub fn from_stream(sock: TcpStream, opts: FrameOptions) -> Result<Self> {
-        opts.check()?;
-        sock.set_nonblocking(true)?;
-        sock.set_nodelay(true)?;
-        if let Some(b) = opts.sndbuf {
-            SockRef::from(&sock).set_send_buffer_size(usize::try_from(b).map_err(|_| {
-                Error::Config(format!("frame sndbuf {b} does not fit this platform"))
-            })?)?;
-        }
+    pub fn from_stream(sock: T, opts: FrameOptions) -> Result<Self> {
+        opts.check_for(T::STACK)?;
+        sock.configure(opts.sndbuf).map_err(|e| match e {
+            Error::Config(m) => Error::Config(format!("frame {m}")),
+            e => e,
+        })?;
         Ok(Self {
             sock,
             // Non-zero fill writes every page now (zeroed memory is mapped
@@ -189,6 +202,7 @@ impl FrameConn {
     #[inline]
     pub fn send_frame(&mut self, payload: &[u8]) -> Result<()> {
         if payload.len() > self.max_frame {
+            std::hint::cold_path();
             return Err(Error::Frame("frame to send is over max_frame"));
         }
         let len = u32::try_from(payload.len())
@@ -222,9 +236,10 @@ impl FrameConn {
     }
 
     /// The socket descriptor (for inspection; the driver owns the socket).
+    /// An F-Stack socket's is F-Stack's own handle, not a kernel descriptor.
     #[must_use]
     pub fn raw_fd(&self) -> RawFd {
-        self.sock.as_raw_fd()
+        self.sock.fd()
     }
 
     /// What the quick-ACK route check found ([`crate::route`]), or
@@ -287,10 +302,11 @@ impl FrameConn {
     ) -> Result<usize> {
         self.tail = (self.tail + n).min(self.buf.len());
         self.stats.bytes_in += n as u64;
-        // Off Linux `FrameOptions::check` refuses the option.
+        // Off Linux `FrameOptions::check` refuses the option, and on another
+        // stack `check_for` does.
         #[cfg(target_os = "linux")]
-        if self.quickack_per_read && n > 0 {
-            crate::sys::set_quickack(self.sock.as_raw_fd())?;
+        if T::STACK == StackId::Kernel && self.quickack_per_read && n > 0 {
+            crate::sys::set_quickack(self.sock.fd())?;
             self.stats.quickacks += 1;
         }
         let mut delivered = 0;
@@ -303,6 +319,7 @@ impl FrameConn {
                 self.buf[h + 3],
             ]) as usize;
             if len > self.max_frame {
+                std::hint::cold_path();
                 return Err(Error::Frame("received frame is over max_frame"));
             }
             let end = h + HEADER_LEN + len;
@@ -337,7 +354,7 @@ impl FrameConn {
 }
 
 /// A driver-owned [`FrameConn`]: the same send.
-impl ConnMut<'_, FrameConn> {
+impl<T: StreamSocket> ConnMut<'_, FrameConn<T>> {
     /// [`FrameConn::send_frame`].
     ///
     /// # Errors
@@ -348,10 +365,12 @@ impl ConnMut<'_, FrameConn> {
     }
 }
 
-impl Io for FrameConn {
+impl<T: StreamSocket> Io for FrameConn<T> {
+    const STACK: StackId = T::STACK;
+
     #[inline]
     fn fd(&self) -> RawFd {
-        self.sock.as_raw_fd()
+        self.sock.fd()
     }
     #[inline]
     fn rx_space(&mut self) -> &mut [u8] {
@@ -380,7 +399,7 @@ impl Io for FrameConn {
     }
 }
 
-impl<H: FrameHandler> Deliver<H> for FrameConn {
+impl<T: StreamSocket, H: FrameHandler> Deliver<H> for FrameConn<T> {
     #[inline]
     fn on_received(
         &mut self,
@@ -393,20 +412,21 @@ impl<H: FrameHandler> Deliver<H> for FrameConn {
     }
 }
 
-enum Stage {
+enum Stage<T> {
     Idle,
-    Tcp(TcpStream),
+    Tcp(T),
     /// Connected; waits for the route check under `require`.
-    Gated(TcpStream),
+    Gated(T),
     Done,
 }
 
 /// A framed-TCP connection being set up without blocking: the TCP connect,
-/// advanced by the driver's `poll`. Hand it to `Driver::connect`.
-pub struct FrameDial {
+/// advanced by the driver's `poll`. Hand it to `Driver::connect`. `T` is
+/// the socket's stack, as for [`FrameConn`].
+pub struct FrameDial<T = TcpStream> {
     target: Target,
     opts: FrameOptions,
-    stage: Stage,
+    stage: Stage<T>,
     gate: bool,
     route: Option<RouteCheck>,
 }
@@ -419,7 +439,18 @@ impl FrameDial {
     /// # Errors
     /// Bad options.
     pub fn new(target: Target, opts: FrameOptions) -> Result<Self> {
-        opts.check()?;
+        Self::on_stack(target, opts)
+    }
+}
+
+impl<T: StreamSocket> FrameDial<T> {
+    /// [`FrameDial::new`] on the stack of socket type `T`
+    /// (`FrameDial::<FstackTcp>::on_stack` for F-Stack).
+    ///
+    /// # Errors
+    /// Bad options, or one `T`'s stack cannot honour.
+    pub fn on_stack(target: Target, opts: FrameOptions) -> Result<Self> {
+        opts.check_for(T::STACK)?;
         Ok(Self {
             target,
             opts,
@@ -434,16 +465,31 @@ impl FrameDial {
     pub const fn target(&self) -> &Target {
         &self.target
     }
+
+    /// Connects to [`Target::addr`] (needed: no DNS here), waiting at most
+    /// 10 s on the calling thread, which runs the stack meanwhile (for
+    /// F-Stack: its polling thread): a convenience for tools and tests.
+    ///
+    /// # Errors
+    /// No `Target::addr`, or the connect fails or times out.
+    pub fn connect_blocking(mut self) -> Result<FrameConn<T>> {
+        let addr = self
+            .target
+            .addr
+            .ok_or_else(|| Error::Config("connect_blocking needs Target::addr".into()))?;
+        self.start(addr)?;
+        crate::net::wait_for::<T, _>(Duration::from_secs(10), "frame connect", || self.step())
+    }
 }
 
-impl BindSource for FrameDial {
+impl<T: StreamSocket> BindSource for FrameDial<T> {
     fn bind_source(&mut self, ip: std::net::IpAddr) {
         self.target.source = Some(ip);
     }
 }
 
-impl DialIo for FrameDial {
-    type Conn = FrameConn;
+impl<T: StreamSocket> DialIo for FrameDial<T> {
+    type Conn = FrameConn<T>;
 
     fn host(&self) -> &str {
         &self.target.host
@@ -458,11 +504,11 @@ impl DialIo for FrameDial {
     }
 
     fn start(&mut self, addr: SocketAddr) -> Result<()> {
-        self.stage = Stage::Tcp(connect_nonblocking(addr, self.target.source)?);
+        self.stage = Stage::Tcp(T::start_connect(addr, self.target.source)?);
         Ok(())
     }
 
-    fn step(&mut self) -> Result<Option<FrameConn>> {
+    fn step(&mut self) -> Result<Option<FrameConn<T>>> {
         loop {
             match std::mem::replace(&mut self.stage, Stage::Done) {
                 Stage::Idle => {
@@ -470,7 +516,7 @@ impl DialIo for FrameDial {
                     return Ok(None);
                 }
                 Stage::Tcp(sock) => {
-                    if !connect_finished(&sock)? {
+                    if !sock.connect_finished()? {
                         self.stage = Stage::Tcp(sock);
                         return Ok(None);
                     }
@@ -498,7 +544,7 @@ impl DialIo for FrameDial {
 
     fn awaiting_route(&self) -> Option<RawFd> {
         match &self.stage {
-            Stage::Gated(sock) if self.gate && self.route.is_none() => Some(sock.as_raw_fd()),
+            Stage::Gated(sock) if self.gate && self.route.is_none() => Some(sock.fd()),
             _ => None,
         }
     }

@@ -18,15 +18,19 @@
 //!   passes (or interrupts) made ready. A socket's queue is looked up after
 //!   its first data and on a look-again every 4096 polls; a socket with no
 //!   NAPI id (loopback, a plain veth) costs no lookup in between.
-#![allow(unsafe_code)]
+//!
+//! Both run over a [`NetStack`] (`Kernel` by default): every socket, poller
+//! and receive call goes through it. `fstack-spin` is `epoll-spin` over
+//! F-Stack: each poll starts with one pass of the stack
+//! ([`NetStack::run_once`], nothing for the kernel), then its kqueue.
 
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::os::fd::RawFd;
 
 use super::{Conns, recv_one};
 use crate::backend::{Backend, Config};
 use crate::endpoint::{ConnId, DriverStats, Endpoint, Handler, Receive};
 use crate::error::{Error, Result};
-use crate::sys::{self, MsgSlot};
+use crate::netstack::{Kernel, NetStack};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -35,7 +39,7 @@ enum Mode {
 }
 
 #[allow(clippy::struct_excessive_bools)] // independent switches from the configuration
-pub(super) struct Epoll {
+pub(super) struct Epoll<S: NetStack = Kernel> {
     mode: Mode,
     /// `recv-busy` with `Config::per_queue`.
     per_queue: bool,
@@ -62,10 +66,10 @@ pub(super) struct Epoll {
     /// representative and lost busy polling until the end of the run.
     rebind: bool,
     polls: u64,
-    ep: Option<OwnedFd>,
-    slot: Box<MsgSlot>,
+    ep: Option<S::Poller>,
+    slot: Box<S::RxSlot>,
     /// `Config::epoll_events` entries.
-    events: Box<[libc::epoll_event]>,
+    events: Box<[S::Event]>,
     /// `Config::datagram_burst`: reads per ready datagram socket per poll.
     burst: u32,
     /// `epoll-spin` with `Config::busy_poll_us`: a socket read with data is
@@ -82,7 +86,7 @@ pub(super) struct Epoll {
     again_pass: bool,
 }
 
-impl Epoll {
+impl<S: NetStack> Epoll<S> {
     pub(super) fn new(cfg: &Config) -> Result<Self> {
         let mode = if cfg.backend == Backend::RecvBusy {
             Mode::Recv
@@ -93,13 +97,7 @@ impl Epoll {
         let ep = if mode == Mode::Recv && !per_queue {
             None
         } else {
-            // SAFETY: plain syscall.
-            let fd = unsafe { libc::epoll_create1(libc::EPOLL_CLOEXEC) };
-            if fd < 0 {
-                return Err(std::io::Error::last_os_error().into());
-            }
-            // SAFETY: `fd` is a fresh descriptor we own.
-            Some(unsafe { OwnedFd::from_raw_fd(fd) })
+            Some(S::poller()?)
         };
         Ok(Self {
             mode,
@@ -114,9 +112,8 @@ impl Epoll {
             rebind: true,
             polls: 0,
             ep,
-            slot: MsgSlot::new(),
-            events: vec![libc::epoll_event { events: 0, u64: 0 }; cfg.epoll_events as usize]
-                .into_boxed_slice(),
+            slot: S::rx_slot(),
+            events: vec![S::empty_event(); cfg.epoll_events as usize].into_boxed_slice(),
             burst: cfg.datagram_burst,
             drain: mode == Mode::Spin && cfg.busy_poll_us > 0,
             again: Vec::new(),
@@ -147,14 +144,7 @@ impl Epoll {
         let Some(ep) = &self.ep else {
             return Ok(());
         };
-        let mut ev = libc::epoll_event {
-            events: libc::EPOLLIN.cast_unsigned(),
-            u64: id.index() as u64,
-        };
-        // SAFETY: valid epoll fd, socket fd and event.
-        if unsafe { libc::epoll_ctl(ep.as_raw_fd(), libc::EPOLL_CTL_ADD, fd, &raw mut ev) } != 0 {
-            return Err(std::io::Error::last_os_error().into());
-        }
+        S::register(ep, fd, id.index() as u64)?;
         Ok(())
     }
 
@@ -163,15 +153,7 @@ impl Epoll {
         // Whoever takes this slot next must learn its own queue.
         self.rebind = true;
         if let Some(ep) = &self.ep {
-            // SAFETY: valid fds; a null event is allowed for DEL.
-            unsafe {
-                libc::epoll_ctl(
-                    ep.as_raw_fd(),
-                    libc::EPOLL_CTL_DEL,
-                    fd,
-                    std::ptr::null_mut(),
-                )
-            };
+            S::deregister(ep, fd);
         }
     }
 
@@ -187,6 +169,9 @@ impl Epoll {
         E: Receive<H>,
         H: Handler,
     {
+        // A user-space stack's pass (RX burst, timers, TX drain); nothing
+        // for the kernel.
+        S::run_once();
         if self.mode == Mode::Recv && !self.per_queue {
             for i in 0..conns.len_slots() {
                 self.recv_index(conns, i, handler, stats, reads);
@@ -199,7 +184,7 @@ impl Epoll {
             }
             let n = self.wait(stats)?;
             for k in 0..n {
-                let i = usize::try_from(self.events[k].u64).unwrap_or(usize::MAX);
+                let i = usize::try_from(S::token(&self.events[k])).unwrap_or(usize::MAX);
                 // Read already this poll (anything left is reported again).
                 if self.polled.get(i).copied().unwrap_or(false) {
                     continue;
@@ -223,7 +208,7 @@ impl Epoll {
             }
             let n = self.wait(stats)?;
             for k in 0..n {
-                let i = usize::try_from(self.events[k].u64).unwrap_or(usize::MAX);
+                let i = usize::try_from(S::token(&self.events[k])).unwrap_or(usize::MAX);
                 self.recv_index(conns, i, handler, stats, reads);
             }
         }
@@ -274,7 +259,7 @@ impl Epoll {
         let Some(conn) = conns.at(i) else {
             return;
         };
-        let mut r = recv_one(conn, id, &mut self.slot, handler, stats, reads);
+        let mut r = recv_one::<S, _, _>(conn, id, &mut self.slot, handler, stats, reads);
         // With `drain`, a datagram socket epoll reports is read once and
         // its burst runs from the again list on the next poll, so the empty
         // read that ends it (the NIC poll) comes after this poll's replies.
@@ -284,7 +269,7 @@ impl Epoll {
             let mut left = self.burst;
             while matches!(r, Ok(true)) && left > 1 {
                 left -= 1;
-                r = recv_one(conn, id, &mut self.slot, handler, stats, reads);
+                r = recv_one::<S, _, _>(conn, id, &mut self.slot, handler, stats, reads);
             }
         }
         match r {
@@ -336,7 +321,7 @@ impl Epoll {
                 continue;
             };
             if self.napi[i] == 0 {
-                self.napi[i] = sys::incoming_napi_id(c.fd()).unwrap_or(0);
+                self.napi[i] = S::napi_id(c.fd()).unwrap_or(0);
             }
             let id = self.napi[i];
             if id != 0 {
@@ -359,23 +344,25 @@ impl Epoll {
             return Ok(0);
         };
         stats.epoll_wait_calls += 1;
-        // At most 65 536 (`Config::validate`).
-        let max = libc::c_int::try_from(self.events.len()).unwrap_or(libc::c_int::MAX);
-        // SAFETY: `events` has room for `max` entries.
-        let n = unsafe { libc::epoll_wait(ep.as_raw_fd(), self.events.as_mut_ptr(), max, 0) };
-        if let Ok(n) = usize::try_from(n) {
-            return Ok(n);
-        }
-        let e = std::io::Error::last_os_error();
-        if e.raw_os_error() == Some(libc::EINTR) {
-            Ok(0)
-        } else {
-            Err(Error::Io(e))
-        }
+        S::poll_now(ep, &mut self.events).map_err(Error::Io)
+    }
+
+    /// The connection's `TCP_INFO`, from this backend's stack.
+    #[allow(clippy::unused_self)] // the stack is the backend's type
+    pub(super) fn tcp_info(&self, fd: RawFd) -> std::io::Result<crate::TcpInfo> {
+        S::tcp_info(fd)
+    }
+
+    /// The NIC queue of the socket's last packet (0: none known), from this
+    /// backend's stack.
+    #[allow(clippy::unused_self)] // the stack is the backend's type
+    pub(super) fn napi_id(&self, fd: RawFd) -> u32 {
+        S::napi_id(fd).unwrap_or(0)
     }
 }
 
 #[cfg(test)]
+#[allow(unsafe_code)] // socketpair(2) for the stand-in sockets
 mod tests {
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 

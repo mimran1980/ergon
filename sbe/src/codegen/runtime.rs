@@ -70,19 +70,19 @@ fn tail_boundary_cache_tokens() -> proc_macro2::TokenStream {
 
                 /// Count of published tail ends (`0..=N`).
                 #[inline]
-                pub fn known_through(&self) -> usize {
+                pub const fn known_through(&self) -> usize {
                     self.known_through.get()
                 }
 
                 /// True when every dynamic tail end has been published.
                 #[inline]
-                pub fn is_complete(&self) -> bool {
+                pub const fn is_complete(&self) -> bool {
                     self.known_through.get() == N
                 }
 
                 /// Absolute end of tail `idx` if the contiguous frontier covers it.
                 #[inline]
-                pub fn end_of(&self, idx: usize) -> Option<usize> {
+                pub const fn end_of(&self, idx: usize) -> Option<usize> {
                     if idx >= N || idx >= self.known_through.get() {
                         return None;
                     }
@@ -121,7 +121,7 @@ fn tail_boundary_cache_tokens() -> proc_macro2::TokenStream {
                 }
                 #[cfg(debug_assertions)]
                 #[inline]
-                pub fn stats(&self) -> DecodeCacheStats {
+                pub const fn stats(&self) -> DecodeCacheStats {
                     DecodeCacheStats {
                         hits: self.hits.get(),
                         misses: self.misses.get(),
@@ -237,6 +237,13 @@ pub(crate) fn generate_sbe_rt_src() -> String {
     let tail_boundary_cache = tail_boundary_cache_tokens();
     let module = quote::quote! {
         pub mod sbe_rt {
+            /// Marks the branch it is called in as unlikely: error and refusal
+            /// paths. A short spelling of `core::hint::cold_path`, which it inlines to.
+            #[inline(always)]
+            pub(crate) const fn cold() {
+                core::hint::cold_path();
+            }
+
             #[derive(Debug, Clone, Copy, PartialEq, Eq)]
             pub enum DecodeError {
                 /// Buffer shorter than needed for `field` (`needed` vs `available` bytes).
@@ -655,9 +662,11 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                     let claimed = buf.len();
                     let frame = encode(&mut *buf)?;
                     if frame != claimed {
+                        cold();
                         return Err(SendError::LengthMismatch { claimed, frame });
                     }
                     if buf.get(..header.len()) != Some(header) {
+                        cold();
                         return Err(SendError::HeaderMismatch);
                     }
                 }
@@ -711,9 +720,11 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 ascii: bool,
             ) -> Result<[u8; N], EncodeError> {
                 if ascii && !src.is_ascii() {
+                    cold();
                     return Err(EncodeError::InvalidAscii { field });
                 }
                 if src.len() > N {
+                    cold();
                     return Err(EncodeError::FixedArrayTooLong {
                         field,
                         max_length: N,
@@ -736,6 +747,7 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 let end = bytes.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
                 let text = &bytes[..end];
                 if ascii && !text.is_ascii() {
+                    cold();
                     return Err(DecodeError::InvalidAscii { field });
                 }
                 core::str::from_utf8(text)
@@ -833,6 +845,7 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                     },
                 )?;
                 if data_end > buffer_length {
+                    cold();
                     return Err(DecodeError::BufferTooShort {
                         field,
                         needed: prefix_size.saturating_add(length),
@@ -875,6 +888,7 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 value: u64,
             ) -> Result<usize, DecodeError> {
                 if value > u32::MAX as u64 {
+                    cold();
                     return Err(DecodeError::InvalidHeaderValue {
                         field,
                         value,
@@ -895,6 +909,7 @@ pub(crate) fn generate_sbe_rt_src() -> String {
                 let count = checked_group_count("numInGroup", wire_count)?;
                 let block_length = checked_header_usize("blockLength", wire_block_length)?;
                 if count > 0 && block_length < min_fixed {
+                    cold();
                     return Err(DecodeError::BufferTooShort {
                         field,
                         needed: min_fixed,
@@ -912,6 +927,7 @@ pub(crate) fn generate_sbe_rt_src() -> String {
             #[inline]
             pub(crate) const fn group_diag_count(count: u64) -> Result<u32, EncodeError> {
                 if count > u32::MAX as u64 {
+                    cold();
                     Err(EncodeError::GroupCountOverflow {
                         maximum: u32::MAX,
                         actual: u32::MAX,
@@ -925,6 +941,7 @@ pub(crate) fn generate_sbe_rt_src() -> String {
             #[inline]
             pub(crate) const fn count_to_usize(count: u64) -> Result<usize, EncodeError> {
                 if count > usize::MAX as u64 {
+                    cold();
                     Err(EncodeError::EncodedLengthOverflow)
                 } else {
                     Ok(count as usize)
@@ -936,7 +953,10 @@ pub(crate) fn generate_sbe_rt_src() -> String {
             pub(crate) const fn checked_len_mul(a: usize, b: usize) -> Result<usize, EncodeError> {
                 match a.checked_mul(b) {
                     Some(v) => Ok(v),
-                    None => Err(EncodeError::EncodedLengthOverflow),
+                    None => {
+                        cold();
+                        Err(EncodeError::EncodedLengthOverflow)
+                    }
                 }
             }
 
@@ -945,7 +965,10 @@ pub(crate) fn generate_sbe_rt_src() -> String {
             pub(crate) const fn checked_len_add(a: usize, b: usize) -> Result<usize, EncodeError> {
                 match a.checked_add(b) {
                     Some(v) => Ok(v),
-                    None => Err(EncodeError::EncodedLengthOverflow),
+                    None => {
+                        cold();
+                        Err(EncodeError::EncodedLengthOverflow)
+                    }
                 }
             }
 
@@ -1864,7 +1887,7 @@ pub(crate) fn generate_enum(src: &mut String, tokens: &[Token]) {
             /// Wire discriminant.
             #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
-            pub fn raw(self) -> #r_type_ty {
+            pub const fn raw(self) -> #r_type_ty {
                 self as #r_type_ty
             }
 
@@ -2040,7 +2063,7 @@ pub(crate) fn generate_set(src: &mut String, tokens: &[Token]) {
             }
 
             #[inline]
-            pub fn #set_bit_name(&mut self, val: bool) -> &mut Self {
+            pub const fn #set_bit_name(&mut self, val: bool) -> &mut Self {
                 if val {
                     self.0 |= 1 << #bit_lit;
                 } else {
@@ -2130,6 +2153,7 @@ pub(crate) fn generate_set(src: &mut String, tokens: &[Token]) {
                         }
                     )*
                     if !matched {
+                        sbe_rt::cold();
                         return Err(());
                     }
                 }
@@ -2992,6 +3016,7 @@ pub(crate) fn generate_any_message(
     } else {
         quote::quote! {
             if schema_id != #schema_id_lit {
+                sbe_rt::cold();
                 return Err(sbe_rt::DecodeError::WrongSchema {
                     expected: #schema_id_lit,
                     actual: schema_id,
@@ -3052,7 +3077,7 @@ pub(crate) fn generate_any_message(
                 #doc_base
                 #[inline]
                 #[must_use]
-                pub fn #into_base(self) -> Option<#decoder<'a>> {
+                pub const fn #into_base(self) -> Option<#decoder<'a>> {
                     match self {
                         Self::#variant(d) => Some(d),
                         _ => None,
@@ -3070,7 +3095,7 @@ pub(crate) fn generate_any_message(
                     #doc_memo
                     #[inline]
                     #[must_use]
-                    pub fn #into_memo(self) -> Option<#memo<'a>> {
+                    pub const fn #into_memo(self) -> Option<#memo<'a>> {
                         match self {
                             Self::#variant(d) => Some(d.memoized()),
                             _ => None,
@@ -3146,6 +3171,7 @@ pub(crate) fn generate_any_message(
                         if 4 > self.buf.len().saturating_sub(self.offset) {
                             let available = self.buf.len().saturating_sub(self.offset);
                             self.offset = terminal;
+                            sbe_rt::cold();
                             return Some(Err(sbe_rt::DecodeError::BufferTooShort {
                                 field: "length prefix",
                                 needed: 4,
@@ -3160,6 +3186,7 @@ pub(crate) fn generate_any_message(
                         if 2 > self.buf.len().saturating_sub(self.offset) {
                             let available = self.buf.len().saturating_sub(self.offset);
                             self.offset = terminal;
+                            sbe_rt::cold();
                             return Some(Err(sbe_rt::DecodeError::BufferTooShort {
                                 field: "length prefix",
                                 needed: 2,
@@ -3178,6 +3205,7 @@ pub(crate) fn generate_any_message(
                     Some(value) => value,
                     None => {
                         self.offset = terminal;
+                        sbe_rt::cold();
                         return Some(Err(sbe_rt::DecodeError::BufferTooShort {
                             field: "frame bounds",
                             needed: usize::MAX,
@@ -3189,6 +3217,7 @@ pub(crate) fn generate_any_message(
                     Some(value) => value,
                     None => {
                         self.offset = terminal;
+                        sbe_rt::cold();
                         return Some(Err(sbe_rt::DecodeError::BufferTooShort {
                             field: "frame bounds",
                             needed: usize::MAX,
@@ -3198,6 +3227,7 @@ pub(crate) fn generate_any_message(
                 };
                 if frame_end > self.buf.len() {
                     self.offset = terminal;
+                    sbe_rt::cold();
                     return Some(Err(sbe_rt::DecodeError::BufferTooShort {
                         field: "frame bounds",
                         needed: header_len.saturating_add(frame_len),
@@ -3251,6 +3281,7 @@ pub(crate) fn generate_any_message(
                 #[inline]
                 pub fn try_decode(buf: &'a [u8], offset: usize) -> Result<Self, sbe_rt::DecodeError> {
                     if #header_size_lit > buf.len().saturating_sub(offset) {
+                        sbe_rt::cold();
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: "message header",
                             needed: #header_size_lit,
@@ -3322,6 +3353,7 @@ pub(crate) fn generate_any_message(
                         }
                     )?;
                     if frame_end > buf.len() {
+                        sbe_rt::cold();
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #field_name,
                             needed: frame_len,
@@ -3357,6 +3389,7 @@ pub(crate) fn generate_any_message(
                     let frame_end = match offset.checked_add(frame_len) {
                         Some(end) => end,
                         None => {
+                            sbe_rt::cold();
                             return Err(sbe_rt::DecodeError::BufferTooShort {
                                 field: "message header",
                                 needed: #header_size_lit,
@@ -3365,6 +3398,7 @@ pub(crate) fn generate_any_message(
                         }
                     };
                     if frame_end > buf.len() {
+                        sbe_rt::cold();
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: "message header",
                             needed: frame_len,
@@ -3372,6 +3406,7 @@ pub(crate) fn generate_any_message(
                         });
                     }
                     if frame_len < #header_size_lit {
+                        sbe_rt::cold();
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: "message header",
                             needed: #header_size_lit,
@@ -3479,6 +3514,7 @@ pub(crate) fn generate_any_message(
                     let len = d.encoded_length_with_header()?;
                     // `len` is header-inclusive; copy the full frame, not body-only.
                     if len > buf.len() {
+                        sbe_rt::cold();
                         return Err(sbe_rt::EncodeError::BufferTooShort {
                                 field: "AnyMessage::encode",
                                 needed: len,
@@ -3502,6 +3538,7 @@ pub(crate) fn generate_any_message(
                         #encode_arms
                         Self::Unknown { frame, .. } => {
                             if frame.len() > buf.len() {
+                                sbe_rt::cold();
                                 return Err(sbe_rt::EncodeError::BufferTooShort {
                                     field: "AnyMessage::encode",
                                     needed: frame.len(),

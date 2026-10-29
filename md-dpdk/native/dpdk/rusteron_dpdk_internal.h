@@ -39,6 +39,7 @@
 #include "rusteron_dpdk_arp.h"
 #include "rusteron_dpdk_endpoint_map.h"
 #include "rusteron_dpdk_events.h"
+#include "rusteron_dpdk_stages.h"
 
 /* Aeron types for the poller callbacks and the shared receive loop (poller.c):
  * the affinity enum, the transport struct, the recv/recvmmsg function typedefs
@@ -111,8 +112,9 @@ typedef struct rusteron_dpdk_rx_stats_stct
 #define RUSTERON_DPDK_MAX_EXTRA_IPS 8
 #define RUSTERON_DPDK_MAX_KSOCKS 1024
 #define RUSTERON_DPDK_MAX_TX_ROUTES 16
-/* The most datagrams one send takes (Aeron offers at most 16): also how many
- * refused frames a NIC can hold queued, one vector's worth. */
+/* The most datagrams one send takes (above Aeron's
+ * AERON_NETWORK_PUBLICATION_MAX_MESSAGES_PER_SEND): also how many refused
+ * frames a NIC can hold queued, one vector's worth. */
 #define RUSTERON_DPDK_TX_VECTOR_MAX 256
 #define RUSTERON_DPDK_MAX_TX_LOW 16 /* RUSTERON_DPDK_TX_LOW_STREAMS ranges */
 
@@ -821,7 +823,7 @@ void rusteron_dpdk_transport_test_reset(void);
  * it, the clock is CLOCK_MONOTONIC. Either way, nanoseconds since boot. Tests
  * pin it with the setter so ARP rate limiting, expiry and the counter sample
  * gate are deterministic; reset clears the pin and returns the clock to its
- * boot default. The source values are what counter type 80 reports, so they
+ * boot default. The source values are what counter type 1080 reports, so they
  * never change: 0 CLOCK_MONOTONIC, 1 the TSC, 2 CNTVCT_EL0. */
 #define RUSTERON_DPDK_CLOCK_MONOTONIC 0
 #define RUSTERON_DPDK_CLOCK_TSC 1

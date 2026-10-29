@@ -152,7 +152,7 @@ const char *rusteron_dpdk_last_error(void);
 
 /*
  * The clock the transport started (at create; process-lifetime): its source,
- * as counter type 80 reports it, its rate and where that came from, and why
+ * as counter type 1080 reports it, its rate and where that came from, and why
  * it is CLOCK_MONOTONIC when it is. Before any transport starts it,
  * CLOCK_MONOTONIC, why NOT_STARTED.
  */
@@ -173,7 +173,7 @@ typedef struct rusteron_dpdk_clock_report_stct
     uint64_t eal_hz;      /* rte_get_tsc_hz() at start; 0 without an EAL */
     uint64_t cntfrq;      /* aarch64: CNTFRQ_EL0 at start; 0 on x86_64 */
     uint64_t measured_hz; /* the counter against CLOCK_MONOTONIC_RAW at start; 0 on CLOCK_MONOTONIC */
-    int32_t source;       /* 0 CLOCK_MONOTONIC, 1 the TSC, 2 CNTVCT_EL0 (counter type 80) */
+    int32_t source;       /* 0 CLOCK_MONOTONIC, 1 the TSC, 2 CNTVCT_EL0 (counter type 1080) */
     int32_t why;          /* RUSTERON_DPDK_CLOCK_WHY_* */
     int32_t invariant;    /* x86_64: CPUID's invariant-TSC bit; 0 on aarch64 */
     int32_t rate;         /* RUSTERON_DPDK_CLOCK_RATE_*: which rate hz is (EAL on CLOCK_MONOTONIC) */

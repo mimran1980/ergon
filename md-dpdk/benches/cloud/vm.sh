@@ -45,6 +45,10 @@
 #                            for its LLQ check, then stops it): everything else is set up, and
 #                            each client embeds the driver (vm.sh client); the kernel modes name
 #                            the data NICs (RUSTERON_MEDIA_DRIVER_DATA_NICS) for its NIC checks;
+#                            @DRIVER=embedded starts none either: everything else is set up (its
+#                            threading mode's agents' CPUs too), and the transport suite's bench binary
+#                            starts the driver in its own process with driver.env (aeron_lat --driver
+#                            embedded or invoker; ~/bench/driver_embedded says so until `stop`);
 #                            the raw floor's kernel-raw and dpdk-raw start none either: kernel-busy's
 #                            or dpdk's set-up under INVOKER's threading (one thread sends and
 #                            receives), for the floor client (no Aeron), its wire in ~/bench/floor;
@@ -90,14 +94,29 @@
 #                            "<min> <avg> <max> <mdev> (ns) <replies>/<sent>"
 #
 # The transport suite (transport.sh; settings from transport-settings.env):
-#   vm.sh transport-isolate  the CPU map (housekeeping, IRQ, isolated: host.sh transport_cpu_map),
-#                            the driver's layout under it, and its boot line from the next boot
-#   vm.sh transport-tune     after that boot: SMT off, the boot line checked, the quiet settings,
+#   vm.sh transport-isolate [onload] [smt-on|smt-off]  the CPU map (housekeeping, IRQ, isolated:
+#                            host.sh transport_cpu_map; smt-on: each isolated core whole), the driver's
+#                            layout under it, and its boot line from the next boot
+#   vm.sh transport-tune     after that boot: SMT off (smt-on: verified on), the boot line checked, the quiet settings,
 #                            irqbalance off, the data NICs (rings, coalescing off, quickack routes,
 #                            every interrupt on the IRQ CPU) and the sysctls, each read back; the
 #                            2 MiB hugetlbfs of aeron-ipc-huge's Aeron directory mounted and verified
-#   vm.sh transport-net [check]  a socket arm's kernel path (NAPI, busy poll, TCP), or only read back
-#   vm.sh transport-map      the map;  vm.sh transport-build  the bench binaries and LAB_EXTRA_SRC's
+#   vm.sh transport-net [check]  a socket arm's kernel path (NAPI, busy poll, TCP, the IRQ core's
+#                            idle depth TR_IRQ_IDLE), or only read back
+#   vm.sh irq-idle [resolve] the IRQ core's idle depth TR_IRQ_IDLE (every other arm's set-up), or
+#                            only what it is here (auto: 1 under intel_idle, else all)
+#   vm.sh transport-map      the map;  vm.sh transport-build [fstack] [onload]  the bench binaries and
+#                            LAB_EXTRA_SRC's (fstack: F-Stack and fstack_lat too; onload:
+#                            OpenOnload built and installed, onload-build.sh)
+#   vm.sh fstack-up          setup fstack (transport.sh): no media driver, the data NICs on igb_uio for
+#                            fstack_lat's own DPDK; `stop` gives them back (AWS only)
+#   vm.sh onload-up          setup onload (transport.sh): the kernel path as transport-net has it, then
+#                            each data NIC on one queue at Onload's MTU, registered with Onload's AF_XDP
+#                            (its XDP program read back); `stop` undoes it (AWS only; `driver onload`
+#                            runs it, then the media driver under onload)
+#   vm.sh onload-info        the Onload build installed (version, commit, patch, kernel), fail closed
+#   vm.sh onload-stacks <name>  "ok"/"FAIL": an Onload stack of a process of that name (the mid-window check)
+#   vm.sh onload-idle        no Onload stack left (orphans killed; before each Onload socket arm's point)
 #   vm.sh netem set <loss %>|clear|check <loss %|none>|stats   netem on every data NIC's egress
 #   vm.sh sample             every thread's CPU, judged against the isolated CPUs (first line)
 #   vm.sh irqsnap            /proc/interrupts;  vm.sh hostcheck [aeron dir]  the ergon-tune report
@@ -105,6 +124,15 @@
 #   vm.sh aeron-page         the page size (statfs's block size) of AERON_DIR's filesystem
 #   vm.sh napi               each data NIC's interrupt deferral as it is now, "<nic>
 #                            <napi_defer_hard_irqs> <gro_flush_timeout ns>" a line
+#   vm.sh idle               the housekeeping and IRQ CPUs' cpuidle states now: each one's cap, exit
+#                            latency, usage and time (host.sh transport_idle_read)
+#   vm.sh nicstats           each data NIC's counters now, every line "<role> <nic> ...":
+#                            "<role> <iface> tx_bytes=<n> rx_bytes=<n> tx_packets=<n> rx_packets=<n>"
+#                            plus its ENA allowance counters (<name>=<n>), then its interrupt moderation
+#                            "<role> <nic> coalesce <adaptive rx> <adaptive tx> <rx-usecs> <tx-usecs>"
+#                            (ethtool -c) and each driver counter "<role> <nic> stat <name> <n>"
+#                            (ethtool -S); or "<role> <iface> dpdk" alone where DPDK holds it (the
+#                            bench binary reads the transport's own counters then)
 #   vm.sh nstat              the kernel's protocol counters;  vm.sh settings  every transport sysctl
 #                            as it is now, <knob>=<value> (host.sh transport_settings_read)
 #   vm.sh events-start <point> <traced cpus> <spinner cpus|-> [aeron]   a point's events begun before
@@ -129,6 +157,10 @@
 # Roles: the data NIC with the lower private IP is the driver's sender port,
 # the higher its receiver port (both on the data subnet, DATA_SUBNET).
 set -euo pipefail
+# a command that fails outside a condition ends the script (set -e): said,
+# with its line, so no step stops silently (`driver dpdk` once did, in
+# pin_irqs, with nothing in the log)
+trap 'echo "vm.sh: line $LINENO: \"$BASH_COMMAND\" failed (exit $?): stopping" >&2' ERR
 # ethtool, sysctl and modprobe live in /usr/sbin, off a non-login ssh PATH
 export PATH=/usr/local/sbin:/usr/sbin:/sbin:$PATH
 self=$(readlink -f "$0")
@@ -190,6 +222,12 @@ precision_time() { [[ $CLOUD == aws && $PLACEMENT == precision-time ]]; }
 DPDK_VERSION=25.11
 # (LAB_OPT_ROOT: /opt; test/test-lab.sh's fake)
 DPDK_PREFIX=${LAB_OPT_ROOT:-/opt}/dpdk-$DPDK_VERSION
+# fstack_lat's EAL memory in 2 MiB pages (its --memory-mb 1024: fstack-up)
+FSTACK_HUGE_PAGES=512
+# OpenOnload's source (onload-build.sh) and what onload-up changed on each
+# data NIC (host.sh onload_nic_up), for `stop` to undo
+ONLOAD_SRC=$HOME/onload
+ONLOAD_STATE=$run/onload
 if precision_time; then
     export PKG_CONFIG_PATH=$DPDK_PREFIX/lib/$ARCH-linux-gnu/pkgconfig
 fi
@@ -250,7 +288,7 @@ cnc_now() {
 # common_env [threading mode]: the agents' threads, CPUs and idle strategies
 # for that Aeron threading mode (DEDICATED unless a mode says otherwise:
 # host.sh threading_env), and two of the duty-cycle thresholds Aeron counts
-# each agent's stalls against (Aeron 1.53.3's C names and duration syntax,
+# each agent's stalls against (Aeron 1.54.0's C names and duration syntax,
 # aeron_driver_context.c: AERON_DRIVER_*_CYCLE_THRESHOLD, 100 ms each by
 # default): the sender's and receiver's 50 us. The conductor's is NOT set
 # here. It has to sit strictly above whatever park the idle strategy left in
@@ -369,6 +407,14 @@ conductor_cycle_threshold() {
 # the threshold has to clear the park of whatever idle strategy those
 # overrides left in play. An explicit threshold that does not is refused
 # before the driver starts, naming both values and the one to use.
+# The park is that of the agent that runs the conductor's duty cycle
+# (Aeron 1.54.0 aeron_driver.c aeron_driver_init): DEDICATED's and
+# SHARED_NETWORK's conductor agent, AERON_CONDUCTOR_IDLE_STRATEGY; SHARED's
+# one shared agent, AERON_SHARED_IDLE_STRATEGY (the conductor's own strategy
+# is never used); INVOKER's, the client thread that calls
+# aeron_driver_main_do_work, which this lab's clients never idle through
+# the driver (aeron_lat, lab.rs, floor: shared NoOp, main_do_work alone),
+# so no park.
 # override_export <KEY=value>: a mode's override as the driver environment's
 # export line. A mode's name cannot hold a comma (it would split its
 # results.csv rows: modes.sh mode_check), so RUSTERON_DPDK_ENA_DEVARGS, a
@@ -382,7 +428,7 @@ override_export() {
 }
 
 conductor_cycle_threshold_apply() {
-    local env_file=${1-} got strategy args threshold park want have
+    local env_file=${1-} got threading strategy args threshold park want have var=AERON_CONDUCTOR_IDLE_STRATEGY whose=
     [[ -f $env_file ]] || return 2
     # the file is `export K='v'` lines the driver's shell sources: read it
     # that way, so a later line wins as it will at start
@@ -390,17 +436,29 @@ conductor_cycle_threshold_apply() {
         set +eu
         # shellcheck disable=SC1090
         . "$env_file" >/dev/null 2>&1 || exit 2
-        printf '%s|%s|%s\n' \
+        printf '%s|%s|%s|%s|%s|%s\n' \
+            "${AERON_THREADING_MODE-DEDICATED}" \
             "${AERON_CONDUCTOR_IDLE_STRATEGY-backoff}" \
             "${AERON_CONDUCTOR_IDLE_STRATEGY_INIT_ARGS-}" \
+            "${AERON_SHARED_IDLE_STRATEGY-backoff}" \
+            "${AERON_SHARED_IDLE_STRATEGY_INIT_ARGS-}" \
             "${AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD-}"
     ) || return 2
-    IFS='|' read -r strategy args threshold <<<"$got" || true
+    local shared_strategy shared_args
+    IFS='|' read -r threading strategy args shared_strategy shared_args threshold <<<"$got" || true
+    case $threading in
+    SHARED)
+        var=AERON_SHARED_IDLE_STRATEGY strategy=$shared_strategy args=$shared_args
+        whose=", the SHARED agent's ($var)"
+        ;;
+    # no driver idle: the client thread's own loop, which never parks
+    INVOKER) strategy=noop args= ;;
+    esac
     if ! park=$(conductor_max_park_ns "$strategy" "$args"); then
         if [[ $strategy == backoff ]]; then
-            echo "conductor: AERON_CONDUCTOR_IDLE_STRATEGY='$strategy' AERON_CONDUCTOR_IDLE_STRATEGY_INIT_ARGS='$args': the park is not readable (backoff's init args are maxSpins-maxYields-minPark-maxPark, e.g. 100-10-1us-20us)" >&2
+            echo "conductor: $var='$strategy' ${var}_INIT_ARGS='$args': the park is not readable (backoff's init args are maxSpins-maxYields-minPark-maxPark, e.g. 100-10-1us-20us)" >&2
         else
-            echo "conductor: AERON_CONDUCTOR_IDLE_STRATEGY='$strategy': not one whose longest park this lab knows (backoff, spin, noop)" >&2
+            echo "conductor: $var='$strategy': not one whose longest park this lab knows (backoff, spin, noop)" >&2
         fi
         return 2
     fi
@@ -411,7 +469,7 @@ conductor_cycle_threshold_apply() {
             return 2
         fi
         if ((have <= park)); then
-            echo "conductor: AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='$threshold' ($have ns) is not above $strategy's longest park ($park ns): every full park would count as a stall. Use '$want' or leave it unset." >&2
+            echo "conductor: AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='$threshold' ($have ns) is not above $strategy's longest park ($park ns)$whose: every full park would count as a stall. Use '$want' or leave it unset." >&2
             return 2
         fi
         return 0
@@ -546,8 +604,14 @@ pin_irqs() {
     # (irqs.sh irqs_pin_data), the NICs' interfaces and VFs
     # (fail closed; none to move only while DPDK holds every NIC)
     if [[ -s ${run:-}/transport-map ]]; then
-        local ifaces
-        ifaces=$(data_ifaces 2>/dev/null) || ifaces=
+        local ifaces i
+        # only interfaces the kernel has: a NIC on igb_uio has none, and
+        # `nics` then prints its line with the interface fields empty (so
+        # data_ifaces gave its MAC), which found no IRQ and failed
+        # `driver dpdk` silently under set -e
+        ifaces=$(data_ifaces 2>/dev/null | while read -r i; do
+            [[ -n $i && -e $LAB_SYS_ROOT/class/net/$i ]] && echo "$i"
+        done) || ifaces=
         read -r _ cpu _ <"$run/transport-map"
         [[ -n $ifaces ]] || { echo "irqs $1: no data NIC in the kernel's hands" >&2; return 0; }
         local rc=0
@@ -1496,6 +1560,63 @@ knoise_stop() {
     rmdir "$t/instances/knoise" 2>/dev/null || true
 }
 
+# onload_up: setup onload (transport.sh): the kernel path as transport-net
+# sets it (the sysctls read back as every arm's), Onload's modules loaded with
+# its AF_XDP flow filters off, then each data NIC on one queue at Onload's
+# MTU and registered (host.sh onload_nic_up), the IRQs on the IRQ CPU again
+# and the NICs' settings read back (transport_nics); fail closed, undoing it
+onload_up() {
+    [[ $CLOUD == aws ]] || { echo "onload-up: AWS only (ENA's native XDP under Onload's AF_XDP; this host: $CLOUD)" >&2; return 2; }
+    command -v onload >/dev/null || { echo "onload-up: Onload is not installed (vm.sh transport-build onload)" >&2; return 2; }
+    [[ -s $run/transport-map ]] || { echo "onload-up: no transport map" >&2; return 2; }
+    data_kernel_up
+    transport_cc_load
+    transport_sysctls_apply >/dev/null || return 1
+    if ! lsmod | grep -q '^onload '; then sudo onload_tool reload --onload-only || { echo "onload-up: onload_tool reload --onload-only failed" >&2; return 1; }; fi
+    # no ntuple filters on the ENA: none asked for (one queue takes all)
+    echo 0 | sudo tee "$LAB_SYS_ROOT/module/sfc_resource/parameters/enable_af_xdp_flow_filters" >/dev/null ||
+        { echo "onload-up: sfc_resource's enable_af_xdp_flow_filters not set to 0" >&2; return 1; }
+    local i
+    for i in $(data_ifaces); do
+        onload_nic_up "$i" "$ONLOAD_STATE" || { onload_down >/dev/null 2>&1 || true; return 1; }
+    done
+    pin_irqs "after Onload took the data NICs"
+    transport_nics >/dev/null || { echo "onload-up: the data NICs' settings did not hold after Onload took them (transport_nics)" >&2; onload_down >/dev/null 2>&1 || true; return 1; }
+    echo "onload-up: data NICs $(data_ifaces | paste -sd, -) under Onload's AF_XDP, $(onload --version 2>/dev/null | head -1)"
+}
+
+# onload_idle [<seconds>]: no Onload stack left. Each data NIC has one
+# queue, so one AF_XDP socket and one stack at a time: an orphan stack (its
+# process gone, kept by a closed TCP connection's TIME_WAIT or FIN_WAIT for
+# up to a minute) would leave the next point's process none. Orphans killed
+# (onload_stackdump -z kill: only stacks no process holds), then up to
+# <seconds> (30) for every stack to go; 1 listing any left
+onload_idle() {
+    command -v onload_stackdump >/dev/null || return 0
+    local left=
+    for _ in $(seq $((${1:-30} * 4))); do
+        left=$(sudo onload_stackdump stacks 2>/dev/null | awk '!/^#/ && $1 ~ /^[0-9]+$/')
+        [[ -n $left ]] || return 0
+        sudo onload_stackdump -z kill >/dev/null 2>&1 || true
+        sleep 0.25
+    done
+    echo "onload: stacks left: $(tr '\n' ';' <<<"$left")" >&2
+    return 1
+}
+
+# onload_down: onload_up undone (vm.sh stop): every Onload stack gone first
+# (onload_idle; none unregistered under a live stack), then each data NIC
+# unregistered, its queues and MTU back (host.sh onload_nic_down); 1 when
+# one did not come back
+onload_down() {
+    [[ -d $ONLOAD_STATE ]] || return 0
+    local i rc=0
+    onload_idle || { echo "onload: data NICs left registered: a stack still holds them" >&2; return 1; }
+    for i in $(data_ifaces 2>/dev/null); do onload_nic_down "$i" "$ONLOAD_STATE" || rc=1; done
+    if ((rc == 0)); then rm -rf "$ONLOAD_STATE"; fi
+    return $rc
+}
+
 case ${1:-} in
 bootstrap)
     # x86_64; aarch64 (Graviton) only with lab.sh's LAB_ALLOW_ARM=1, which
@@ -1904,13 +2025,15 @@ ready)
     ;;
 nics) nics ;;
 driver)
-    mode=${2:?kernel, kernel-busy, dpdk or dpdk-spin, optionally -mono, then @KEY=value overrides}
+    mode=${2:?kernel, kernel-busy, dpdk or dpdk-spin, optionally -mono, or onload, then @KEY=value overrides}
     "$self" stop
     # `stop` removed any earlier run's BIN: this run's own, if any, follows
     bin=${BENCH_BIN:-$tools}
     # the last run's DPDK event log (a mode's @RUSTERON_DPDK_EVENT_LOG=
     # <home>/bench/events.csv): a run without it must leave none to fetch
     rm -f "$run/events.csv"
+    # the same for md-dpdk's stage trace and capture (below)
+    rm -f "$run/stages.csv" "$run/capture.pcapng"
     env_file=$run/driver.env
     # <mode>@KEY=value@...: environment overrides for one experiment, applied
     # last so they win (e.g. dpdk@RUSTERON_DPDK_BURST_SIZE=32)
@@ -1923,12 +2046,21 @@ driver)
     # CPUs (host.sh threading_env), set before the other overrides, which can
     # then change an idle strategy
     threading=$(threading_of "$overrides") || exit 2
+    # @DRIVER=embedded: no media driver process (below); the transport
+    # suite's binary starts the driver itself with driver.env
+    embedded=
+    case "@$overrides@" in
+    *@DRIVER=embedded@*) embedded=1 ;;
+    *@DRIVER=*) echo "$mode: DRIVER=embedded or nothing" >&2; exit 2 ;;
+    esac
+    rm -f "$run/driver_embedded"
     # kernel-raw, dpdk-raw: the raw floor (the floor client, no Aeron) on
     # kernel-busy's or dpdk's set-up (modes.sh raw_base), its one thread
     # sending and receiving as INVOKER's does (threading_env); no media
     # driver, as under INVOKER (below)
     raw=$(raw_base "$mode") floor_wire=
     if [[ -n $raw ]]; then
+        [[ -z $embedded ]] || { echo "$mode: DRIVER=embedded: the raw floor runs no Aeron" >&2; exit 2; }
         threading=INVOKER floor_wire=${raw%-busy}
     fi
     # dpdk-pure: dpdk's set-up for purefloor (DPDK alone), its wire pure,
@@ -1963,6 +2095,14 @@ driver)
         done
         # the data NICs named, so the driver's NIC checks run (under DPDK they
         # are the ports, by PCI address, and the variable is ignored)
+        data_nics_env >>"$env_file" || { echo "$mode: the data NICs not read for RUSTERON_MEDIA_DRIVER_DATA_NICS" >&2; exit 2; }
+        ;;
+    onload)
+        # the transport suite's Onload arms: the kernel's UDP transport with
+        # the driver under onload (below), on the data NICs onload-up gives
+        # Onload's AF_XDP; the sysctls as transport-tune set them (Onload's
+        # sockets never busy-poll the kernel's NAPI: its own spin instead)
+        onload_up || exit $?
         data_nics_env >>"$env_file" || { echo "$mode: the data NICs not read for RUSTERON_MEDIA_DRIVER_DATA_NICS" >&2; exit 2; }
         ;;
     dpdk)
@@ -2044,13 +2184,23 @@ driver)
         IFS=@ read -ra pairs <<<"$overrides"
         for pair in "${pairs[@]}"; do
             [[ $pair =~ ^[A-Z][A-Z0-9_]*=[^\'[:space:]]*$ ]] || { echo "bad override $pair" >&2; exit 2; }
-            # in common_env already
-            [[ $pair == AERON_THREADING_MODE=* ]] && continue
+            # in common_env already; DRIVER above
+            [[ $pair == AERON_THREADING_MODE=* || $pair == DRIVER=* ]] && continue
             # a host setting (host_setting) for this run, which `stop` undoes;
             # anything else is the driver's environment
             host_setting "${pair%%=*}" "${pair#*=}" "$mode" && continue
             override_export "$pair" >>"$env_file"
         done
+    fi
+    # md-dpdk's stage trace and capture (@RUSTERON_DPDK_STAGE_TRACE=<N>,
+    # @RUSTERON_DPDK_CAPTURE_WINDOW_MS=<start>:<length>: the transport
+    # suite's --stage-trace and --capture-ms arms): each its file here, where
+    # transport.sh fetches them (bench/stages.csv, bench/capture.pcapng)
+    if grep -q '^export RUSTERON_DPDK_STAGE_TRACE=' "$env_file" && ! grep -q '^export RUSTERON_DPDK_STAGE_TRACE_FILE=' "$env_file"; then
+        echo "export RUSTERON_DPDK_STAGE_TRACE_FILE='$run/stages.csv'" >>"$env_file"
+    fi
+    if grep -q '^export RUSTERON_DPDK_CAPTURE_WINDOW_MS=' "$env_file" && ! grep -q '^export RUSTERON_DPDK_CAPTURE_FILE=' "$env_file"; then
+        echo "export RUSTERON_DPDK_CAPTURE_FILE='$run/capture.pcapng'" >>"$env_file"
     fi
     # The conductor's duty-cycle threshold, derived from whatever idle
     # strategy the overrides above left in play: too low and every full park
@@ -2099,11 +2249,15 @@ driver)
     # INVOKER: no media driver process. Everything above stands (the NICs,
     # the host settings, the environment in driver.env); each client embeds
     # the driver with it (`client`), and `loss` keeps a ledger of the embedded
-    # drivers' counters (host.sh invoker_ledger_total)
-    if [[ $threading == INVOKER ]]; then
+    # drivers' counters (host.sh invoker_ledger_total). DRIVER=embedded:
+    # none either, under any threading mode; the transport suite's binary
+    # starts it with driver.env (it never runs through `client`)
+    if [[ $threading == INVOKER || -n $embedded ]]; then
         if [[ -n $floor_wire ]]; then
             # the floor client's wire (`client`, `stop`): no embedded driver
             echo "${floor_wire}" >"$run/floor"
+        elif [[ -n $embedded ]]; then
+            echo aeron_lat >"$run/driver_embedded"
         else
             echo invoker >"$run/harness_driver"
             rm -rf "$run/invoker-ledger"
@@ -2135,6 +2289,11 @@ driver)
             log "driver: raw floor ($floor_wire): no media driver process; the floor clients run with driver.env, no Aeron"
             exit 0
         fi
+        if [[ -n $embedded ]]; then
+            echo "DRIVER=embedded (${threading:-DEDICATED}): no media driver process; the bench binary's embedded driver logs to its output" >>"$run/driver.log"
+            log "driver: DRIVER=embedded (${threading:-DEDICATED}): no media driver process; the transport suite's binary starts it with driver.env"
+            exit 0
+        fi
         echo "INVOKER: no media driver process; each client's embedded driver logs to the client's output" >>"$run/driver.log"
         log "driver: INVOKER: no media driver process; each client embeds the driver (HARNESS_DRIVER=invoker) with driver.env"
         exit 0
@@ -2145,7 +2304,11 @@ driver)
     # driver's files (cnc.dat, the log buffers) writable by them (umask 0)
     umask_cmd=
     [[ -s $run/transport-map ]] && umask_cmd='umask 0000 && '
-    sudo bash -c "$umask_cmd. '$env_file' && exec taskset -c $HK_CPU '$bin/media_driver'" >"$run/driver.log" 2>&1 &
+    # onload: the driver under the onload launcher, with the Onload arms'
+    # profile and settings (transport-settings.env TR_ONLOAD_*)
+    launcher=
+    [[ $mode == onload ]] && launcher="env $TR_ONLOAD_ENV onload --profile=$TR_ONLOAD_PROFILE "
+    sudo bash -c "$umask_cmd. '$env_file' && exec taskset -c $HK_CPU $launcher'$bin/media_driver'" >"$run/driver.log" 2>&1 &
     pid=$!
     for _ in $(seq 120); do
         grep -q "media driver started" "$run/driver.log" 2>/dev/null && break
@@ -2219,6 +2382,11 @@ client)
     # HARNESS_DRIVER=invoker; refused while the last client's embedded driver
     # was never read by `loss` (its counters would go with its CnC file)
     launch=()
+    # DRIVER=embedded: the transport suite's binary starts the driver, no client here
+    if [[ -s $run/driver_embedded ]]; then
+        log "client: $prog: the driver is DRIVER=embedded, the transport suite's (aeron_lat starts it): vm.sh driver <mode> without it first"
+        exit 2
+    fi
     if invoker; then
         if id=$(cnc_now); then invoker_client_ready "$run/cnc.head" "$run/invoker-ledger" || exit 2; fi
         launch=(bash -c '. "$1"; shift; exec "$@"' _ "$run/driver.env" env HARNESS_DRIVER=invoker)
@@ -2305,6 +2473,14 @@ stop)
         for _ in $(seq 40); do pgrep -x 'rtt|load|tput' >/dev/null || break; sleep 0.25; done
         rm -rf "$run/harness_driver" "$run/invoker-ledger"
     fi
+    # DRIVER=embedded: a bench binary still running holds the NICs (its
+    # embedded driver's). The runner stops each by its PID, never by name
+    # (another run's binary may share it): wait for them, then say so
+    if [[ -s $run/driver_embedded ]]; then
+        for _ in $(seq 40); do pgrep -x "$(cat "$run/driver_embedded")" >/dev/null || break; sleep 0.25; done
+        pgrep -x "$(cat "$run/driver_embedded")" >/dev/null && log "stop: $(cat "$run/driver_embedded") still runs (DRIVER=embedded): its driver may still hold the data NICs"
+        rm -f "$run/driver_embedded"
+    fi
     # the raw floor: a floor client still running holds the NICs (DPDK's)
     if [[ -s $run/floor ]]; then
         sudo pkill -x floor 2>/dev/null || true
@@ -2312,7 +2488,13 @@ stop)
         for _ in $(seq 40); do pgrep -x 'floor|purefloor' >/dev/null || break; sleep 0.25; done
         rm -f "$run/floor"
     fi
+    # Onload's AF_XDP off the data NICs, their queues and MTU back
+    # (onload-up's): fail closed, as every set-up that follows stops first
+    onload_down || { echo "stop: Onload's changes to the data NICs not all undone ($ONLOAD_STATE)" >&2; exit 1; }
     data_return_to_kernel
+    # fstack_lat's hugepage files, when none runs (a pong ended by SIGKILL
+    # leaves them, holding FSTACK_HUGE_PAGES pages until its next start)
+    pgrep -x fstack_lat >/dev/null || sudo rm -f /dev/hugepages/container-ergon-fstackmap_* 2>/dev/null || true
     restore_host
     data_kernel_up
     sudo sysctl -qw net.core.busy_read=0 net.core.busy_poll=0
@@ -2701,7 +2883,7 @@ base-rtt)
     sudo ping -q -c 200 -i 0.01 -I "$src" "$peer" | ping_stats
     ;;
 rx-hw-delay)
-    # the receiver port's NIC-arrival-to-dispatch counters (type 81), as
+    # the receiver port's NIC-arrival-to-dispatch counters (type 1081), as
     # "<mean ns>,<max ns>,<frames>,<min ns>,<negative>": the mean over the
     # frames in the sum; apart, the frames the NIC stamped after the host
     # clock read at their dispatch (PHC and host clock skew). The endpoint is
@@ -2726,34 +2908,59 @@ rx-hw-delay)
         }'
     ;;
 transport-isolate)
-    # the transport suite's CPU map (host.sh transport_cpu_map), kept for
-    # every later command, its layout for the media driver, and its boot
-    # line (replacing `isolate`'s) from the next boot
-    map=$(transport_cpu_map) || exit 2
+    # transport-isolate [onload] [smt-on|smt-off]: the transport suite's CPU
+    # map (host.sh transport_cpu_map), kept for every later command, its
+    # layout for the media driver, and its boot line (replacing `isolate`'s)
+    # from the next boot. smt-on (a sets file's `smt on`: transport.sh
+    # transport_prepare): SMT stays on, each isolated core whole in the map;
+    # kept in $run/transport-smt for transport-tune and hostcheck
+    smt=off
+    for a in "${@:2}"; do
+        case $a in
+        onload) ;;
+        smt-on) smt=on ;;
+        smt-off) smt=off ;;
+        *) echo "transport-isolate: $a: onload, smt-on or smt-off" >&2; exit 2 ;;
+        esac
+    done
+    map=$(transport_cpu_map "$smt") || exit 2
+    echo "$smt" >"$run/transport-smt"
     echo "$map" >"$run/transport-map"
     transport_layout "$map" >"$run/layout-transport"
     args=$(transport_boot_args "$map")
+    # `onload` (a session with an Onload arm): Onload's AF_XDP set-up calls
+    # bpf() from its module through the syscall table, which it will not use
+    # under kernel IBT (its syscall_x86.c: "require disablement of IBT with
+    # ibt=off"); so ibt=off where the CPU has IBT (Intel), for every arm of
+    # the session alike, in the boot line its points record
+    if [[ " ${*:2} " == *" onload "* && $ARCH == x86_64 ]] && grep -qw ibt "$LAB_PROC_ROOT/cpuinfo" 2>/dev/null; then
+        args+=" ibt=off"
+    fi
     sudo mkdir -p /etc/default/grub.d
     echo "GRUB_CMDLINE_LINUX_DEFAULT=\"\$GRUB_CMDLINE_LINUX_DEFAULT $args\"" |
         sudo tee /etc/default/grub.d/99-ergon-isolation.cfg >/dev/null
     sudo update-grub >/dev/null 2>&1
-    echo "transport-isolate: map $map (housekeeping, IRQ, isolated); layout $(cat "$run/layout-transport"); $args from the next boot"
+    echo "transport-isolate: SMT $smt; map $map (housekeeping, IRQ, isolated); layout $(cat "$run/layout-transport"); $args from the next boot"
     ;;
 transport-tune)
-    # after the boot transport-isolate set up: SMT off, the boot line
-    # checked, the quiet settings, irqbalance off, the data NICs (rings,
-    # coalescing, quickack routes, every interrupt on the IRQ CPU) and the
-    # sysctls, each read back; its record bench/transport-tune.txt; 1 at the
-    # first setting that does not hold
+    # after the boot transport-isolate set up: SMT off (or, where the
+    # session declares SMT on, verified on), the boot line checked, the
+    # quiet settings, irqbalance off, the data NICs (rings, coalescing,
+    # quickack routes, every interrupt on the IRQ CPU) and the sysctls, each
+    # read back; its record bench/transport-tune.txt; 1 at the first setting
+    # that does not hold
     [[ -s $run/transport-map ]] || { echo "transport-tune: no transport map (vm.sh transport-isolate first)" >&2; exit 2; }
     map=$(cat "$run/transport-map")
+    smt=$(cat "$run/transport-smt" 2>/dev/null || echo off)
     read -r hk irq iso <<<"$map"
     tune_steps() {
-        echo "map $map"
-        transport_smt_off || return 1
+        echo "map $map (SMT $smt)"
+        if [[ $smt == on ]]; then transport_smt_on || return 1; else transport_smt_off || return 1; fi
         local now
-        now=$(transport_cpu_map) && [[ $now == "$map" ]] ||
-            { echo "transport-tune: the CPU map with SMT off is [$now], not [$map]" >&2; return 1; }
+        # (SMT on: the map is rebuilt from the topology, so each core's
+        # threads in it are its SMT siblings)
+        now=$(transport_cpu_map "$smt") && [[ $now == "$map" ]] ||
+            { echo "transport-tune: the CPU map with SMT $smt is [$now], not [$map]" >&2; return 1; }
         transport_boot_check "$map" || return 1
         transport_quiet_apply "$hk,$irq" "$iso" || return 1
         sudo systemctl disable --now irqbalance >/dev/null 2>&1 || true
@@ -2778,6 +2985,9 @@ transport-net)
     # TR_OVERRIDES: transport.sh tr_host_overrides), every sysctl;
     # `check`: only read back (after a driver started on the kernel's path)
     [[ -s $run/transport-map ]] || { echo "transport-net: no transport map" >&2; exit 2; }
+    # the kernel's path, never Onload's: any of it left, undone first (stop
+    # fails closed when it cannot be)
+    if [[ ${2:-} != check && -d $ONLOAD_STATE ]]; then "$self" stop; fi
     if [[ ${2:-} == check ]]; then
         transport_sysctls_apply check >/dev/null || exit 1
         transport_nics >/dev/null || exit 1
@@ -2791,6 +3001,23 @@ transport-net)
     done
     transport_cc_load
     transport_sysctls_apply
+    # the IRQ core's idle depth (TR_IRQ_IDLE: the session's, auto resolved
+    # here, or a twin's own by TR_OVERRIDES), set again at the next arm's
+    read -r _ irqcpus _ <"$run/transport-map"
+    transport_irq_idle_apply "$irqcpus" "$TR_IRQ_IDLE" || exit 1
+    ;;
+irq-idle)
+    # the IRQ core's idle depth (TR_IRQ_IDLE, an arm's own by TR_OVERRIDES)
+    # at an arm's set-up other than the sockets' (transport-net sets
+    # theirs): every arm of a session at one value; `resolve`: only what
+    # TR_IRQ_IDLE is on this host (auto: host.sh transport_irq_idle_auto)
+    if [[ ${2:-} == resolve ]]; then
+        if [[ $TR_IRQ_IDLE == auto ]]; then transport_irq_idle_auto; else echo "$TR_IRQ_IDLE"; fi
+        exit 0
+    fi
+    [[ -s $run/transport-map ]] || { echo "irq-idle: no transport map" >&2; exit 2; }
+    read -r _ irqcpus _ <"$run/transport-map"
+    transport_irq_idle_apply "$irqcpus" "$TR_IRQ_IDLE" || exit 1
     ;;
 transport-map)
     # "<housekeeping> <irq> <isolated,...>" as transport-isolate kept it
@@ -2806,27 +3033,103 @@ transport-build)
     # the transport suite's bench binaries (transport-cli.md), then
     # LAB_EXTRA_SRC's tree (lib.sh copies it to ~/extra) by its own
     # lab-build.sh into ~/extra/bin
-    # (transport-build.sh: the local smoke builds them the same way)
+    # (transport-build.sh: the local smoke builds them the same way);
+    # `fstack` (an arm of the session runs on F-Stack: transport.sh
+    # tr_wants_fstack): F-Stack and its DPDK under ~/fstack, and fstack_lat
+    # `onload` (an arm of the session runs under Onload: transport.sh
+    # tr_wants_setup onload): OpenOnload at TR_ONLOAD_COMMIT with
+    # onload-kernel-7.2.patch, built and installed (onload-build.sh); AWS only
     export PATH=$HOME/.cargo/bin:$PATH
+    for what in "${@:2}"; do
+        case $what in
+        fstack)
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -yq meson ninja-build python3-pyelftools libnuma-dev libssl-dev zlib1g-dev >/dev/null
+            export TR_FSTACK_PREFIX=$HOME/fstack
+            ;;
+        onload)
+            [[ $CLOUD == aws ]] || { echo "transport-build onload: AWS only (ENA's native XDP under Onload's AF_XDP), not $CLOUD" >&2; exit 2; }
+            bash "$(dirname "$self")/onload-build.sh" "$ONLOAD_SRC" "$TR_ONLOAD_REPO" "$TR_ONLOAD_COMMIT" "$(dirname "$self")/onload-kernel-7.2.patch"
+            ;;
+        *) echo "transport-build: $what is neither fstack nor onload" >&2; exit 2 ;;
+        esac
+    done
     bash "$(dirname "$self")/transport-build.sh" "$HOME/ergon" "$HOME/ergon/target" "$(client_features "$run/dpdk_unavailable")"
     if [[ -f $HOME/extra/lab-build.sh ]]; then
         mkdir -p "$HOME/extra/bin"
         (cd "$HOME/extra" && bash lab-build.sh "$HOME/extra/bin")
     fi
     ;;
+fstack-up)
+    # setup fstack (transport.sh): no media driver; the data NICs move from
+    # the kernel's ena to igb_uio, as under `driver dpdk`, for fstack_lat's
+    # own DPDK (F-Stack's, static in the binary), which takes its port by
+    # PCI address (--pci); `stop` gives them back. AWS only (x86_64 and
+    # Graviton): on Azure no PMD of it was tried. Its EAL
+    # takes FSTACK_HUGE_PAGES of 2 MiB (fstack_lat's --memory-mb 1024),
+    # refused when fewer are free and unreserved
+    [[ $CLOUD == aws ]] || { echo "fstack-up: AWS only (this host: $CLOUD)" >&2; exit 2; }
+    "$self" stop
+    hp=$LAB_SYS_ROOT/kernel/mm/hugepages/hugepages-2048kB
+    free=$(cat "$hp/free_hugepages") resv=$(cat "$hp/resv_hugepages")
+    ((free - resv >= FSTACK_HUGE_PAGES)) ||
+        { echo "fstack-up: $((free - resv)) 2 MiB hugepages free and unreserved, fstack_lat's EAL takes $FSTACK_HUGE_PAGES" >&2; exit 2; }
+    sudo modprobe uio
+    lsmod | grep -q '^igb_uio' || sudo insmod "$HOME/dpdk-kmods/linux/igb_uio/igb_uio.ko" wc_activate=1
+    data_nics=$(nics) || exit 1
+    while read -r _ iface _ _ _ _ bdf; do
+        sudo ip link set "$iface" down
+        echo igb_uio | sudo tee /sys/bus/pci/devices/"$bdf"/driver_override >/dev/null
+        echo "$bdf" | sudo tee /sys/bus/pci/devices/"$bdf"/driver/unbind >/dev/null
+        echo "$bdf" | sudo tee /sys/bus/pci/drivers_probe >/dev/null
+        [[ -e /sys/bus/pci/drivers/igb_uio/$bdf ]] || { echo "fstack-up: $bdf is not on igb_uio" >&2; exit 1; }
+    done <<<"$data_nics"
+    echo "fstack-up: data NICs $(awk '{print $7}' <<<"$data_nics" | paste -sd, -) on igb_uio"
+    ;;
+onload-up)
+    # setup onload (transport.sh): no media driver; the data NICs under
+    # Onload's AF_XDP for the binaries run under onload (onload_up); `stop`
+    # undoes it. AWS only
+    "$self" stop
+    onload_up || exit $?
+    ;;
+onload-info)
+    # the Onload build the session's Onload arms run on: its version line,
+    # then the commit and patch onload-build.sh built, the kernel, and the
+    # modules' versions (transport.sh: each point's onload_build_<host>); 1
+    # when it is not installed
+    command -v onload >/dev/null || { echo "onload-info: no onload launcher (vm.sh transport-build onload)" >&2; exit 1; }
+    stamp=$(cat "$ONLOAD_SRC/.ergon-onload-stamp" 2>/dev/null) || { echo "onload-info: no build stamp in $ONLOAD_SRC" >&2; exit 1; }
+    read -r commit patch kver <<<"$stamp"
+    [[ $commit == "$TR_ONLOAD_COMMIT" && $kver == "$(uname -r)" ]] ||
+        { echo "onload-info: built $commit for $kver, not $TR_ONLOAD_COMMIT for $(uname -r)" >&2; exit 1; }
+    echo "onload ${commit:0:12} patch ${patch:0:12} kernel $kver $(onload --version 2>/dev/null | head -1)"
+    for m in onload sfc_resource sfc_char; do echo "module $m $(modinfo -F version "$m" 2>/dev/null || echo missing)"; done
+    ;;
+onload-stacks)
+    # "ok ..." when an Onload stack has a process named $2 (the arm's binary,
+    # or media_driver), else "FAIL ...", exit 1 (host.sh onload_stacks_verdict)
+    sudo onload_stackdump stacks 2>/dev/null | onload_stacks_verdict "${2:?the process name}"
+    ;;
+onload-idle)
+    # before each point of an Onload socket arm (transport.sh): no stack of
+    # an earlier point's process left on the NICs' one queue (onload_idle)
+    onload_idle
+    ;;
 netem)
     # netem on every data NIC's egress (the interfaces the kernel sends on;
     # under accelerated networking the VF below forwards what they send):
-    # netem set <loss %> | clear | check <loss %|none> | stats (host.sh)
+    # netem set <loss %> | set-peer <loss %> (egress plus ifb ingress, the
+    # kernel peer of a bypass arm) | clear | check <loss %|none> | stats (host.sh)
     mapfile -t ifaces < <(nics | awk '{print $2}')
     ((${#ifaces[@]})) || { echo "netem: no data NIC in the kernel's hands" >&2; exit 1; }
     case ${2:-} in
     set) netem_set "${3:?loss %}" "${ifaces[@]}" && netem_check "$3" "${ifaces[@]}" ;;
+    set-peer) netem_set_peer "${3:?loss %}" "${ifaces[@]}" && netem_check "$3" "${ifaces[@]}" ;;
     clear) netem_clear "${ifaces[@]}" && netem_check none "${ifaces[@]}" ;;
     check) netem_check "${3:?loss % or none}" "${ifaces[@]}" ;;
     stats) netem_stats "${ifaces[@]}" ;;
     show) netem_show "${ifaces[@]}" ;;
-    *) echo "netem set <loss %> | clear | check <loss %|none> | stats | show" >&2; exit 2 ;;
+    *) echo "netem set <loss %> | set-peer <loss %> | clear | check <loss %|none> | stats | show" >&2; exit 2 ;;
     esac
     ;;
 sample)
@@ -2838,6 +3141,13 @@ sample)
     cat "$run/sample.ps"
     ;;
 irqsnap) cat "$LAB_PROC_ROOT/interrupts" ;;
+idle)
+    # the housekeeping and IRQ CPUs' idle states now (host.sh
+    # transport_idle_read; transport.sh tr_idle_value)
+    [[ -s $run/transport-map ]] || { echo "idle: no transport map" >&2; exit 2; }
+    read -r hk irqcpus _ <"$run/transport-map"
+    transport_idle_read "$hk" "$irqcpus"
+    ;;
 aeron-page)
     # the page size of the filesystem AERON_DIR is on (statfs's block size:
     # 4096 on tmpfs, 2097152 on a 2 MiB hugetlbfs), while its driver runs
@@ -2849,8 +3159,30 @@ napi)
         echo "$vf $(cat "$LAB_SYS_ROOT/class/net/$vf/napi_defer_hard_irqs") $(cat "$LAB_SYS_ROOT/class/net/$vf/gro_flush_timeout")"
     done
     ;;
+nicstats)
+    # each data NIC's counters (transport.sh tr_snap, every point before and
+    # after), every line "<role> <nic> ...": the kernel's interface statistics
+    # and the ENA's allowance counters (fairness.py's mixed-nic rule), then
+    # the interrupt moderation as the driver reports it (ethtool -c:
+    # "coalesce <adaptive rx> <adaptive tx> <rx-usecs> <tx-usecs>") and its
+    # driver counters (ethtool -S: "stat <name> <value>"); or dpdk alone where
+    # DPDK holds the NIC (transport_collect.py nicstats)
+    nics | while read -r role iface vf _; do
+        st=$LAB_SYS_ROOT/class/net/$iface/statistics
+        if [[ ! -r $st/tx_bytes ]]; then
+            echo "$role $iface dpdk"
+            continue
+        fi
+        echo "$role $iface tx_bytes=$(cat "$st/tx_bytes") rx_bytes=$(cat "$st/rx_bytes") tx_packets=$(cat "$st/tx_packets") rx_packets=$(cat "$st/rx_packets")$({ ethtool -S "$iface" 2>/dev/null || true; } | awk '$1 ~ /allowance_exceeded:$/ {printf " %s=%s", substr($1, 1, length($1) - 1), $2}')"
+        echo "$role $vf coalesce $({ ethtool -c "$vf" 2>/dev/null || true; } | awk '/^Adaptive RX:/ {ar = $3; at = $5} /^rx-usecs:/ {r = $2} /^tx-usecs:/ {t = $2} END {print ar, at, r, t}')"
+        { ethtool -S "$vf" 2>/dev/null || true; } | awk -v p="$role $vf" -F: 'NR > 1 {gsub(/ /, "", $1); gsub(/ /, "", $2); print p, "stat", $1, $2}'
+    done
+    ;;
 nstat) transport_nstat ;;
-settings) transport_settings_read ;;
+settings)
+    transport_settings_read
+    transport_smt_read
+    ;;
 events-start)
     # events-start <point> <traced cpus> <spinner cpus|-> [aeron]: before the
     # point's binaries start (transport.sh), so before their warm-up: host.sh
@@ -2858,7 +3190,12 @@ events-start)
     # it), gap spinners on the spinner CPUs, the sampler on the housekeeping
     # CPU, the media driver's counters with aeron
     [[ -s $run/transport-map ]] || { echo "events-start: no transport map" >&2; exit 2; }
-    read -r hk _ _ <"$run/transport-map"
+    read -r hk irqc _ <"$run/transport-map"
+    # osnoise (where the kernel has it) on the traced isolated CPUs alone:
+    # never its workload on the housekeeping or IRQ CPU, which a mixed-load
+    # point traces too
+    EVENTS_KNOISE_CPUS=$(tr , '\n' <<<"${3:?traced cpus}" | awk -v a="$hk" -v b="$irqc" '$1 != a && $1 != b' | paste -sd, -)
+    export EVENTS_KNOISE_CPUS
     [[ -x $run/gapspin ]] || gcc -O2 -o "$run/gapspin" "$(dirname "$self")/gapspin.c" || exit 1
     adir=-
     # the arm's own directory (transport.sh passes it as LAB_AERON_DIR)
@@ -2908,11 +3245,15 @@ hostcheck)
         done
         echo "hostcheck: chrony $([[ -n $settled ]] && echo settled || echo 'not settled after 10 min'): $(chronyc -c tracking 2>/dev/null | cut -d, -f2,5,6,14)"
     fi
-    # (exit 2 not clean, 1 not run: either stops the session; a warn line too)
+    # (exit 2 not clean, 1 not run: either stops the session. The binary
+    # alone decides what blocks: a warn it reports without blocking, T11's
+    # wall-clock discipline, says so in its own doc)
+    # (a session that declares SMT on: hostcheck --smt on, its exemption
+    # recorded in the report)
     PATH=$tools:$PATH hostcheck --hot-cpus "$iso" --nic "$(data_ifaces | paste -sd, -)" --aeron-dir "${2:-$TR_AERON_DIR}" \
-        --out "$run/hostcheck.txt" && rc=0 || rc=$?
+        --smt "$(cat "$run/transport-smt" 2>/dev/null || echo off)" --out "$run/hostcheck.txt" && rc=0 || rc=$?
     cat "$run/hostcheck.txt" 2>/dev/null
-    if ((rc)) || grep -qE '^[^ ]+ warn: ' "$run/hostcheck.txt" 2>/dev/null; then
+    if ((rc)); then
         echo "hostcheck: not clean (exit $rc)" >&2
         exit 1
     fi

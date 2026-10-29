@@ -17,6 +17,8 @@ categories = ["network-programming"]
 include = [
     "/Cargo.toml",
     "/README.md",
+    "/build.rs",
+    "/native/dpdk/*.c",
     "/src/**/*.rs",
 ]
 # benches/ is the standalone benchmark crate, not bench targets of this one.
@@ -33,6 +35,16 @@ webpki-roots = ["dep:webpki-roots"]
 # the curl crate; the system libcurl through pkg-config). A binary that wants
 # libcurl built in statically enables `curl/static-curl` itself.
 curl = ["dep:curl"]
+# The `fstack-spin` backend (Linux): TCP over F-Stack, FreeBSD's TCP/IP stack
+# on DPDK. build.rs links F-Stack and its DPDK, both static, from
+# FSTACK_PREFIX (io/benches/fstack/build-fstack.sh's prefix); without
+# FSTACK_PREFIX it compiles unlinked and `fstack::init` refuses.
+fstack = []
+# The `smoltcp-spin` backend: the smoltcp TCP/IP stack (0BSD) in this
+# process, over a DPDK port (Linux x86_64 or aarch64; libdpdk >= 23.11 found
+# through pkg-config, as ergon-md-dpdk's `dpdk` feature). Elsewhere it builds
+# and `smoltcp_dpdk::Stack::init` returns `Error::Unsupported`.
+smoltcp-dpdk = ["dep:smoltcp", "dep:cc", "dep:pkg-config"]
 
 [dependencies]
 rustls = { version = "0.23.46", default-features = false, features = ["std", "ring"] }
@@ -45,11 +57,53 @@ webpki-roots = { version = "1", optional = true }
 # The host and NIC checks (`checks`): `Driver::new` runs T1, T3, T7 and T8;
 # ergon-io's warning thread runs T2, N1, N2 and N3 on each route's egress
 # device. Pure functions over sysfs and procfs, plus ethtool over netlink.
-ergon-tune = { version = "0.1.34", path = "../tune", features = ["nic"] }
+ergon-tune = { version = "0.1.35", path = "../tune", features = ["nic"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 io-uring = { version = "0.7", optional = true }
 curl = { version = "0.4.51", optional = true, default-features = false, features = ["ssl"] }
+# Pinned: the backend's TCP tuning (src/netstack/smoltcp) depends on this
+# release's timer constants (RFC 6298's 1 s RTO floor, 60 s neighbour
+# lifetime). IPv4 over Ethernet, TCP with Reno, UDP; no IPv6, DHCP, DNS or
+# fragmentation; `auto-icmp-echo-reply` so the stack's address answers ping.
+smoltcp = { version = "=0.14.0", optional = true, default-features = false, features = [
+    "std",
+    "medium-ethernet",
+    "proto-ipv4",
+    "socket-tcp",
+    "socket-udp",
+    "socket-tcp-reno",
+    "auto-icmp-echo-reply",
+    "iface-neighbor-cache-count-16",
+    "assembler-max-segment-count-32",
+] }
+
+[build-dependencies]
+cc = { version = "1.2", optional = true }
+pkg-config = { version = "0.3", optional = true }
+
+# `fstack-spin` end to end: two F-Stack processes over a veth pair, run by
+# fstack-tests/docker-test.sh (test-lanes.tsv `fstack`). Built only with
+# F-Stack linked (cfg ergon_fstack_linked); empty otherwise.
+[[test]]
+name = "fstack"
+path = "fstack-tests/end_to_end.rs"
+
+# The smoltcp-spin backend over a DPDK net_af_packet port, against the
+# kernel's stack across a veth pair: it needs the network namespace that
+# scripts/test-io-smoltcp-vdev.sh builds, so `cargo test` leaves it out
+# (`test = false`) and that script runs it (test-lanes.tsv, lane dpdk).
+[[test]]
+name = "smoltcp_vdev"
+path = "tests-dpdk/smoltcp_vdev.rs"
+test = false
+required-features = ["smoltcp-dpdk"]
+
+# The vdev test's kernel-side echo peer (another process).
+[[example]]
+name = "smoltcp_peer"
+path = "tests-dpdk/smoltcp_peer.rs"
+required-features = ["smoltcp-dpdk"]
 
 [dev-dependencies]
 rcgen = "0.14"

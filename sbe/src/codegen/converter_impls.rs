@@ -81,6 +81,7 @@ fn domain_bodies(
         }},
         encode_rescale: quote::quote! {
             if wire % #ns != 0 {
+                sbe_rt::cold();
                 return Err("timestamp is more precise than the field's timeUnit");
             }
             let wire = wire / #ns;

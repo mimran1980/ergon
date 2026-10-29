@@ -14,7 +14,7 @@ use common::{Capture, await_echo, launch_own_driver};
 #[test]
 #[serial]
 fn ephemeral_egress_port_round_trip() -> Result<(), Box<dyn std::error::Error>> {
-    let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node();
+    let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node()?;
     let driver = launch_own_driver("ephemeral-egress")?;
     let builder = SessionBuilder::default()
         .ingress_channel(cluster.ingress_channel.clone())?
@@ -35,7 +35,7 @@ fn ephemeral_egress_port_round_trip() -> Result<(), Box<dyn std::error::Error>> 
 #[test]
 #[serial]
 fn three_node_ingress_fanout_round_trip() -> Result<(), Box<dyn std::error::Error>> {
-    let cluster = ergo_aeron_cluster_test_harness::TestCluster::three_node();
+    let cluster = ergo_aeron_cluster_test_harness::TestCluster::three_node()?;
     let driver = launch_own_driver("fanout-egress")?;
     let base = cluster.base_port();
     let endpoints = format!(

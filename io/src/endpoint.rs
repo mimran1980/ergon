@@ -80,6 +80,9 @@ pub(crate) mod sealed {
         /// route check applies. Only `epoll-spin` drives one. The driver's
         /// datagram paths are compiled out when `false`.
         const DATAGRAM: bool = false;
+        /// The stack the socket belongs to: a `Driver` drives only the
+        /// endpoints of its backend's stack.
+        const STACK: crate::netstack::StackId = crate::netstack::StackId::Kernel;
         /// Datagram endpoints: the next whole datagram to send, if any.
         #[inline]
         fn pending_tx(&mut self) -> Option<&[u8]> {

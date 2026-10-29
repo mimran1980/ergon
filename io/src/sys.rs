@@ -876,6 +876,72 @@ pub fn send_datagram(fd: RawFd, buf: &[u8]) -> io::Result<bool> {
     }
 }
 
+/// A new epoll instance (`EPOLL_CLOEXEC`).
+///
+/// # Errors
+/// `epoll_create1` fails.
+pub(crate) fn epoll_create() -> io::Result<OwnedFd> {
+    // SAFETY: plain syscall.
+    let fd = unsafe { libc::epoll_create1(libc::EPOLL_CLOEXEC) };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `fd` is a fresh descriptor we own.
+    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
+/// Registers `fd` with `ep` for `EPOLLIN` (level-triggered), reported as
+/// `token`.
+///
+/// # Errors
+/// `epoll_ctl` fails.
+pub(crate) fn epoll_add(ep: &OwnedFd, fd: RawFd, token: u64) -> io::Result<()> {
+    let mut ev = libc::epoll_event {
+        events: libc::EPOLLIN.cast_unsigned(),
+        u64: token,
+    };
+    // SAFETY: valid epoll fd, socket fd and event.
+    if unsafe { libc::epoll_ctl(ep.as_raw_fd(), libc::EPOLL_CTL_ADD, fd, &raw mut ev) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// Removes `fd` from `ep`; an error is ignored (the socket is closing).
+pub(crate) fn epoll_del(ep: &OwnedFd, fd: RawFd) {
+    // SAFETY: valid fds; a null event is allowed for DEL.
+    unsafe {
+        libc::epoll_ctl(
+            ep.as_raw_fd(),
+            libc::EPOLL_CTL_DEL,
+            fd,
+            std::ptr::null_mut(),
+        )
+    };
+}
+
+/// `epoll_wait` with a zero timeout into `events`: the number filled in, 0
+/// when interrupted (`EINTR`).
+///
+/// # Errors
+/// Any other `epoll_wait` error.
+#[inline]
+pub(crate) fn epoll_wait_now(ep: &OwnedFd, events: &mut [libc::epoll_event]) -> io::Result<usize> {
+    // At most 65 536 (`Config::validate`).
+    let max = libc::c_int::try_from(events.len()).unwrap_or(libc::c_int::MAX);
+    // SAFETY: `events` has room for `max` entries.
+    let n = unsafe { libc::epoll_wait(ep.as_raw_fd(), events.as_mut_ptr(), max, 0) };
+    if let Ok(n) = usize::try_from(n) {
+        return Ok(n);
+    }
+    let e = io::Error::last_os_error();
+    if e.raw_os_error() == Some(libc::EINTR) {
+        Ok(0)
+    } else {
+        Err(e)
+    }
+}
+
 /// Sets `TCP_QUICKACK`: the kernel acknowledges at once (any delayed ACK
 /// goes out now) until it next decides the connection is interactive.
 /// One `setsockopt`.

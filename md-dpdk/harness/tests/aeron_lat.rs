@@ -1,12 +1,22 @@
 //! `aeron_lat` end to end at a low rate, each run on a media driver it
 //! embeds (`--driver embedded`, the kernel's UDP on 127.0.0.1): IPC, spy and
-//! UDP (reliable and not), one way and round trip, 8 streams, and the
+//! UDP (reliable and not), one way and round trip, 8 streams, the
 //! cross-host shape (a `ping` and a `pong` process, each with its own
-//! driver). Each point's row must read back through the analysis's own
+//! driver; and each with its driver invoked by its one measuring thread,
+//! `--driver invoker`), and the spy on a live UDP stream (`--mode spy-udp`: a `local`
+//! process and its sink, each with its own driver, every frame shown to
+//! cross UDP to the sink). Each point's row must read back through the analysis's own
 //! readers (md-dpdk/benches/cloud: `transport_points.read_points`,
 //! `analyse.read_results`, `spikes.transport_max`), lose nothing, carry the
 //! manifest the fairness checks compare, and show that the busy threads
 //! allocated nothing while measuring.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "an integration test fails by panicking: unwrap, expect and panic! are its assertions (as md-dpdk/tests)"
+)]
+#![allow(clippy::similar_names, reason = "ping and pong name the two ends of each round trip")]
 
 use std::net::UdpSocket;
 use std::path::{Path, PathBuf};
@@ -57,17 +67,16 @@ fn free_ports(n: u16) -> Res<u16> {
     Err("no free run of UDP ports".into())
 }
 
-fn command(out: &Path, dir: &Path, args: &[&str]) -> Res<Command> {
+fn command(out: &Path, dir: &Path, args: &[&str]) -> Command {
+    command_on("embedded", out, dir, args)
+}
+
+/// `aeron_lat` with `args` on a driver it runs itself (`--driver`
+/// `embedded` or `invoker`).
+fn command_on(driver: &str, out: &Path, dir: &Path, args: &[&str]) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_aeron_lat"));
     cmd.args(args)
-        .args([
-            "--driver",
-            "embedded",
-            "--term-length",
-            TERM,
-            "--connect-timeout-s",
-            "20",
-        ])
+        .args(["--driver", driver, "--term-length", TERM, "--connect-timeout-s", "20"])
         .arg("--out")
         .arg(out)
         .arg("--aeron-dir")
@@ -76,7 +85,7 @@ fn command(out: &Path, dir: &Path, args: &[&str]) -> Res<Command> {
         .env_remove("AERON_THREADING_MODE")
         .env_remove("RUSTERON_MEDIA_DRIVER_TRANSPORT")
         .env_remove("RUSTERON_MEDIA_DRIVER_DIR");
-    Ok(cmd)
+    cmd
 }
 
 fn ok(what: &str, o: &Output) -> Res<String> {
@@ -188,7 +197,7 @@ fn local(name: &str, set: &str, streams: u32, extra: &[&str], e: &Expect<'_>) ->
     let mut args = vec!["--role", "local", "--rate", &rate, "--streams", &n];
     args.extend(["--warmup-s", "1", "--duration-s", "1", "--label", &label]);
     args.extend(extra);
-    let o = command(&out, &dir, &args)?.output()?;
+    let o = command(&out, &dir, &args).output()?;
     let row = ok(name, &o)?;
     assert_eq!(
         row,
@@ -259,6 +268,204 @@ fn spy_one_way_eight_streams() -> R {
     )
 }
 
+/// A manifest's setting `key` (the core's JSON: `"key": "value"`).
+fn setting(json: &str, key: &str) -> Res<String> {
+    let at = format!("\"{key}\": \"");
+    let from = json.find(&at).ok_or_else(|| format!("no {key} in {json}"))? + at.len();
+    let len = json[from..].find('"').ok_or("an unterminated value")?;
+    Ok(json[from..from + len].to_owned())
+}
+
+fn number(json: &str, key: &str) -> Res<u64> {
+    Ok(setting(json, key)?.parse()?)
+}
+
+/// The published spy arm's publication has no destination: its driver
+/// sends no byte, whatever the spy reads (`driver.bytes-sent` 0).
+#[test]
+fn spy_round_trip_sends_nothing_on_the_wire() -> R {
+    let base = scratch("spy-wire")?;
+    let (out, dir) = (base.join("out"), base.join("aeron"));
+    let rate = RATE.to_string();
+    let args = [
+        "--role",
+        "local",
+        "--round-trip",
+        "--mode",
+        "spy",
+        "--rate",
+        &rate,
+        "--warmup-s",
+        "1",
+        "--duration-s",
+        "1",
+        "--label",
+        "2b:aeron-spy",
+    ];
+    ok("spy", &command(&out, &dir, &args).output()?)?;
+    let m = std::fs::read_to_string(out.join("manifest.json"))?;
+    let (sent, echoes, bytes) = (
+        number(&m, "sent")?,
+        number(&m, "echoes_sent")?,
+        number(&m, "driver.bytes-sent")?,
+    );
+    assert!(sent > 0 && echoes == sent, "{m}");
+    assert_eq!(bytes, 0, "the spy arm's driver sent {bytes} bytes");
+    std::fs::remove_dir_all(base)?;
+    Ok(())
+}
+
+/// `--mode spy-udp` on one host: the sink (`--role pong`) on a driver of its
+/// own, the measuring `local` on another, the two channels on loopback. The
+/// row reads back as every other; the sink got every ping (and every echo)
+/// in order, and the measuring end's driver sent at least every frame's
+/// bytes: the spy read publications that really sent.
+fn spy_udp(name: &str, round_trip: bool) -> R {
+    let root = scratch(name)?;
+    let base = free_ports(16)?;
+    let (ping_ep, reply_ep) = (format!("127.0.0.1:{base}"), format!("127.0.0.1:{}", base + 8));
+    let label = label("aeron-spy-udp", "spy", 8);
+    let common = [
+        "--mode",
+        "spy-udp",
+        "--endpoint",
+        &ping_ep,
+        "--reply",
+        &reply_ep,
+        "--streams",
+        "8",
+        "--label",
+        &label,
+    ];
+    let sink_out = root.join("sink");
+    let sink = command(
+        &sink_out,
+        &root.join("aeron-sink"),
+        &[&["--role", "pong"][..], &common].concat(),
+    )
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn()?;
+    let rate = RATE.to_string();
+    let out = root.join("local");
+    let mut args = vec![
+        "--role",
+        "local",
+        "--rate",
+        &rate,
+        "--warmup-s",
+        "1",
+        "--duration-s",
+        "1",
+    ];
+    if round_trip {
+        args.push("--round-trip");
+    }
+    let local = command(&out, &root.join("aeron-local"), &[&args[..], &common].concat()).output();
+    // the sink ends by itself once the publications' images go
+    let sink = wait(sink, Duration::from_secs(60))?;
+    let row = ok("local", &local?)?;
+    assert_eq!(ok("sink", &sink)?, "ready\n", "a sink prints one ready line and no row");
+    assert!(!sink_out.join("results.csv").exists(), "a sink writes no row");
+    let kind = if round_trip { "load" } else { "oneway" };
+    assert!(row.starts_with(&format!("{kind},")), "{row}");
+    check(&out, &expect(kind, "aeron-spy-udp", "udp", 138, 8))?;
+    let m = std::fs::read_to_string(out.join("manifest.json"))?;
+    let s = std::fs::read_to_string(sink_out.join("manifest.json"))?;
+    assert!(
+        setting(&m, "ping_pub_uri")?.contains(&format!("endpoint={ping_ep}|ssc=false|")),
+        "{m}"
+    );
+    assert!(
+        setting(&m, "ping_sub_uri")?.starts_with(&format!("aeron-spy:aeron:udp?endpoint={ping_ep}")),
+        "{m}"
+    );
+    assert_eq!(setting(&m, "reliable")?, "true");
+    assert_eq!(setting(&s, "thread_order")?, "sink");
+    let sent = number(&m, "sent")?;
+    let echoes = if round_trip { number(&m, "echoes_sent")? } else { 0 };
+    assert!(sent > 0 && (!round_trip || echoes == sent), "{m}");
+    assert_eq!(
+        number(&s, "sink.ping_frames")?,
+        sent,
+        "every ping crossed UDP to the sink: {s}"
+    );
+    assert_eq!(
+        number(&s, "sink.echo_frames")?,
+        echoes,
+        "every echo crossed UDP to the sink: {s}"
+    );
+    for k in ["sink.gaps", "sink.behind", "sink.refused"] {
+        assert_eq!(number(&s, k)?, 0, "{k}: {s}");
+    }
+    assert_eq!(number(&s, "sink.images")?, if round_trip { 16 } else { 8 }, "{s}");
+    let bytes = number(&m, "driver.bytes-sent")?;
+    assert!(
+        bytes >= (sent + echoes) * 96,
+        "the measuring end's driver sent {bytes} bytes for {sent} + {echoes} frames"
+    );
+    assert!(number(&s, "driver.bytes-received")? >= (sent + echoes) * 96, "{s}");
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
+fn spy_udp_round_trip_eight_streams_reaches_its_sink() -> R {
+    spy_udp("spy-udp-rtt-8", true)
+}
+
+#[test]
+fn spy_udp_one_way_eight_streams_reaches_its_sink() -> R {
+    spy_udp("spy-udp-8", false)
+}
+
+/// Without its sink a spy-udp publication never connects: the spy alone
+/// does not (`ssc=false`), so the point fails rather than measuring a
+/// publication that sends nowhere.
+#[test]
+fn spy_udp_without_a_sink_never_connects() -> R {
+    let root = scratch("spy-udp-nosink")?;
+    let base = free_ports(2)?;
+    let (ping_ep, reply_ep) = (format!("127.0.0.1:{base}"), format!("127.0.0.1:{}", base + 1));
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_aeron_lat"));
+    cmd.args([
+        "--role",
+        "local",
+        "--round-trip",
+        "--mode",
+        "spy-udp",
+        "--rate",
+        "100",
+        "--label",
+        "spy:x",
+    ])
+    .args([
+        "--endpoint",
+        &ping_ep,
+        "--reply",
+        &reply_ep,
+        "--driver",
+        "embedded",
+        "--term-length",
+        TERM,
+    ])
+    .args(["--connect-timeout-s", "3", "--warmup-s", "1", "--duration-s", "1"])
+    .arg("--out")
+    .arg(root.join("out"))
+    .arg("--aeron-dir")
+    .arg(root.join("aeron"))
+    .env("ERGON_HOST_CHECKS", "off")
+    .env_remove("AERON_THREADING_MODE")
+    .env_remove("RUSTERON_MEDIA_DRIVER_TRANSPORT")
+    .env_remove("RUSTERON_MEDIA_DRIVER_DIR");
+    let o = cmd.output()?;
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(!o.status.success() && o.stdout.is_empty(), "{err}");
+    assert!(err.contains("publications connected false"), "{err}");
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
 #[test]
 fn spy_round_trip_eight_streams() -> R {
     local(
@@ -315,10 +522,12 @@ fn wait(mut child: Child, limit: Duration) -> Res<Output> {
 }
 
 /// The cross-host shape on one host: a pong process and a ping process,
-/// each on a driver of its own, over UDP (reliable and not). The pong says
-/// `ready` once its channels are added (the runner starts the ping on it),
-/// ends by itself once the ping's images go, and writes its manifest alone.
-fn ping_pong(name: &str, reliable: &str) -> R {
+/// each on a driver of its own (`driver`: on a thread of its own, or
+/// invoked by the measuring thread), over UDP (reliable and not). The pong
+/// says `ready` once its channels are added (the runner starts the ping on
+/// it), ends by itself once the ping's images go, and writes its manifest
+/// alone.
+fn ping_pong(name: &str, reliable: &str, driver: &str) -> R {
     let root = scratch(name)?;
     let base = free_ports(16)?;
     let (ping_ep, reply_ep) = (format!("127.0.0.1:{base}"), format!("127.0.0.1:{}", base + 8));
@@ -338,15 +547,17 @@ fn ping_pong(name: &str, reliable: &str) -> R {
         &label,
     ];
     let pong_out = root.join("pong");
-    let mut pong = command(
+    let mut pong = command_on(
+        driver,
         &pong_out,
         &root.join("aeron-pong"),
         &[&["--role", "pong"][..], &common].concat(),
-    )?;
+    );
     let pong = pong.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
     let rate = RATE.to_string();
     let ping_out = root.join("ping");
-    let ping = command(
+    let ping = command_on(
+        driver,
         &ping_out,
         &root.join("aeron-ping"),
         &[
@@ -363,7 +574,7 @@ fn ping_pong(name: &str, reliable: &str) -> R {
             &common,
         ]
         .concat(),
-    )?
+    )
     .output();
     let pong = wait(pong, Duration::from_secs(60))?;
     let row = ok("ping", &ping?)?;
@@ -374,13 +585,27 @@ fn ping_pong(name: &str, reliable: &str) -> R {
     );
     assert!(!pong_out.join("results.csv").exists(), "a pong writes no row");
     let m = std::fs::read_to_string(pong_out.join("manifest.json"))?;
+    // the pong's busy threads: its echo and, but invoked, the driver's three
+    let (busy, threading) = if driver == "invoker" {
+        (1, "INVOKER")
+    } else {
+        (4, "DEDICATED")
+    };
+    let pong_busy = format!("\"busy_threads\": \"{busy}\"");
+    let pong_driver = format!("\"driver\": \"{driver}\"");
+    let pong_threading = format!("\"driver_threading\": \"{threading}\"");
     for want in [
         "\"role\": \"pong\"",
         "\"hot_path_allocs\": \"0\"",
         "\"transport\": \"aeron-udp\"",
+        &pong_busy,
+        &pong_driver,
+        &pong_threading,
     ] {
         assert!(m.contains(want), "{want}: {m}");
     }
+    let pm = std::fs::read_to_string(ping_out.join("manifest.json"))?;
+    assert!(pm.contains(&pong_driver) && pm.contains(&pong_threading), "{pm}");
     assert!(row.starts_with("load,"), "{row}");
     check(
         &ping_out,
@@ -389,7 +614,7 @@ fn ping_pong(name: &str, reliable: &str) -> R {
             transport: "aeron-udp",
             channel: "udp",
             wire_bytes: 138,
-            busy_threads: 4,
+            busy_threads: busy,
             streams: 8,
         },
     )?;
@@ -399,12 +624,61 @@ fn ping_pong(name: &str, reliable: &str) -> R {
 
 #[test]
 fn udp_reliable_ping_pong_eight_streams() -> R {
-    ping_pong("pp-rel-8", "true")
+    ping_pong("pp-rel-8", "true", "embedded")
 }
 
 #[test]
 fn udp_unreliable_ping_pong_eight_streams() -> R {
-    ping_pong("pp-unrel-8", "false")
+    ping_pong("pp-unrel-8", "false", "embedded")
+}
+
+/// Each end's driver invoked by its one measuring thread: the ping's
+/// thread sends, runs its driver and client conductor, and reads the
+/// echoes; the pong's the same for the echo. No driver thread: one busy
+/// thread an end, every round trip back, nothing allocated while measuring.
+#[test]
+fn udp_reliable_ping_pong_on_invoked_drivers() -> R {
+    ping_pong("pp-rel-inv", "true", "invoker")
+}
+
+#[test]
+fn udp_unreliable_ping_pong_on_invoked_drivers() -> R {
+    ping_pong("pp-unrel-inv", "false", "invoker")
+}
+
+/// `--driver invoker` is one measuring thread a process over `--mode udp`:
+/// `--role local` (two threads), a spy-udp sink, IPC and a driver busy
+/// thread are refused before anything starts.
+#[test]
+fn an_invoked_driver_off_its_one_thread_is_refused() -> R {
+    let root = scratch("inv-refused")?;
+    let (out, dir) = (root.join("out"), root.join("aeron"));
+    let eps = ["--endpoint", "127.0.0.1:39000", "--reply", "127.0.0.1:39100"];
+    for (args, why) in [
+        (
+            &["--role", "local", "--round-trip", "--mode", "udp"][..],
+            "--role ping or pong",
+        ),
+        (&["--role", "local", "--mode", "ipc"][..], "--mode udp"),
+        (&["--role", "pong", "--mode", "spy-udp"][..], "--role ping or pong"),
+        (
+            &["--role", "ping", "--mode", "udp", "--driver-busy-threads", "3"][..],
+            "no thread of its own",
+        ),
+    ] {
+        let mut a = args.to_vec();
+        if a.contains(&"udp") || a.contains(&"spy-udp") {
+            a.extend(eps);
+        }
+        a.extend(["--rate", "10", "--label", "x:y"]);
+        let o = command_on("invoker", &out, &dir, &a).output()?;
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert!(!o.status.success() && o.stdout.is_empty(), "{args:?}: {err}");
+        assert!(err.contains(why), "{args:?}: {err}");
+        assert!(!dir.join("cnc.dat").exists(), "no driver started: {args:?}");
+    }
+    std::fs::remove_dir_all(root)?;
+    Ok(())
 }
 
 #[test]
@@ -429,8 +703,30 @@ fn flags_that_cannot_make_a_fair_point_are_refused() -> R {
         &["--role", "local", "--mode", "ipc", "--cpus", "1"],
         &["--role", "local", "--mode", "ipc", "--bogus"],
         &["--role", "local", "--mode", "tcp"],
+        &["--role", "local", "--mode", "spy-udp"],
+        &[
+            "--role",
+            "local",
+            "--mode",
+            "spy-udp",
+            "--endpoint",
+            "127.0.0.1:39000",
+            "--reliable",
+            "false",
+        ],
+        &[
+            "--role",
+            "ping",
+            "--mode",
+            "spy-udp",
+            "--endpoint",
+            "127.0.0.1:39000",
+            "--reply",
+            "127.0.0.1:39100",
+        ],
+        &["--role", "pong", "--mode", "spy-udp", "--endpoint", "127.0.0.1:39000"],
     ] {
-        let o = command(&out, &dir, &[args, &base].concat())?.output()?;
+        let o = command(&out, &dir, &[args, &base].concat()).output()?;
         assert!(!o.status.success(), "{args:?}");
         assert!(o.stdout.is_empty(), "no row: {args:?}");
         assert!(!out.join("results.csv").exists(), "{args:?}");
@@ -485,11 +781,87 @@ fn a_udp_port_in_the_drivers_wildcard_ranges_is_refused() -> R {
         args.extend(["--endpoint", "127.0.0.1:39000", "--reply", "127.0.0.1:39100"]);
         let at = args.iter().position(|a| *a == flag).ok_or("no flag")?;
         args[at + 1] = ep;
-        let o = command(&out, &dir, &args)?.output()?;
+        let o = command(&out, &dir, &args).output()?;
         let err = String::from_utf8_lossy(&o.stderr);
         assert!(!o.status.success() && o.stdout.is_empty(), "{flag} {ep}: {err}");
         assert!(err.contains("20000-21999"), "{flag} {ep}: {err}");
     }
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+/// The transport a row is labelled with is the wire the runner set the arm
+/// up on (`--wire`), checked against the driver after the point (once its
+/// channels exist, its DPDK counters do too): a DPDK arm whose driver shows
+/// no DPDK counters is refused, never labelled `aeron-udp`; a kernel one is
+/// `aeron-udp`, its manifest saying both the wire asked for and the one seen.
+#[test]
+fn the_transport_label_is_the_wire_asked_for_and_checked() -> R {
+    let root = scratch("wire")?;
+    let base = free_ports(4)?;
+    let (ping, reply) = (format!("127.0.0.1:{base}"), format!("127.0.0.1:{}", base + 2));
+    let rate = RATE.to_string();
+    for (wire, ok_) in [("kernel", true), ("dpdk", false)] {
+        let out = root.join(wire);
+        let args = [
+            "--role",
+            "local",
+            "--round-trip",
+            "--mode",
+            "udp",
+            "--endpoint",
+            &ping,
+            "--reply",
+            &reply,
+            "--rate",
+            &rate,
+            "--warmup-s",
+            "1",
+            "--duration-s",
+            "1",
+            "--label",
+            "2a:aeron-rel",
+            "--wire",
+            wire,
+        ];
+        let o = command(&out, &root.join(format!("aeron-{wire}")), &args).output()?;
+        let err = String::from_utf8_lossy(&o.stderr);
+        if ok_ {
+            ok(wire, &o)?;
+            let m = std::fs::read_to_string(out.join("manifest.json"))?;
+            assert_eq!(setting(&m, "transport")?, "aeron-udp", "{m}");
+            assert_eq!(setting(&m, "wire")?, "kernel", "{m}");
+            assert_eq!(setting(&m, "wire_seen")?, "kernel", "{m}");
+            assert!(m.contains("\"arm\": \"aeron-udp\""), "{m}");
+        } else {
+            assert!(!o.status.success() && o.stdout.is_empty(), "{err}");
+            assert!(err.contains("--wire dpdk") && err.contains("no DPDK counters"), "{err}");
+            assert!(!out.join("results.csv").exists(), "no row for a mislabelled point");
+        }
+    }
+    let o = command(
+        &root.join("bad"),
+        &root.join("aeron-bad"),
+        &[
+            "--role",
+            "local",
+            "--mode",
+            "udp",
+            "--endpoint",
+            &ping,
+            "--rate",
+            "10",
+            "--label",
+            "x:y",
+            "--wire",
+            "rdma",
+        ],
+    )
+    .output()?;
+    assert!(
+        !o.status.success() && String::from_utf8_lossy(&o.stderr).contains("--wire rdma"),
+        "{o:?}"
+    );
     std::fs::remove_dir_all(root)?;
     Ok(())
 }

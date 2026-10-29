@@ -1,0 +1,24 @@
+# The AWS spy session's set (aws/lab.sh LAB_SUITE=transport LAB_PAIR=a
+# LAB_SETS_FILE=<this file>, in place of the matrix's sets; the matrix's arms
+# are kept). One pair of c7a.2xlarge (spot). No netem: a sink arm's set has
+# none, and DPDK holds its NICs.
+#
+#   aeron-spy           the published spy arm, for continuity: its
+#                       publications have no destination and send nothing
+#                       on the wire (IPC through a UDP publication's term buffer)
+#   aeron-spy-udp       the same round trip on publications that send every
+#                       frame over kernel UDP to a sink on host b (reliable,
+#                       ssc=false: the sink's status messages connect them and
+#                       drive their flow control); the A/A arm repeats it
+#   dpdk-aeron-spy-udp  the same on md-dpdk's DPDK transport
+#
+# Each arm runs one way and round trip on host a (--role local); a sink arm's
+# runs each have a sink on host b, whose frame counts fairness.py holds
+# against what the run sent (the sink rule).
+#
+# Trimmed to keep the session near 1 h at LAB_REPS=3 (LAB_ESTIMATE=1: about
+# 1.08 h, 12 points): one stream at 50,000 msg/s alone (no 8 streams, no
+# 10,000 or 200,000). Without dpdk-aeron-spy-udp it is about 0.93 h.
+#
+# set   pair par host loads  streams  netem  arms
+set spy  a    -   a    50000  1        -      aeron-spy-udp,aeron-spy,dpdk-aeron-spy-udp,aa

@@ -6,6 +6,13 @@
 //! publication carries `PUB_CHANNEL_PARAMS`; and an embedded driver's `CnC`
 //! stays readable after its process exits, every counter in it, so the lab's
 //! `counters` snapshots read it unchanged.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "an integration test fails by panicking: unwrap, expect and panic! are its assertions (as md-dpdk/tests)"
+)]
+#![allow(clippy::similar_names, reason = "ping and pong name the two ends of each round trip")]
 
 use std::ffi::CString;
 use std::io::Read;
@@ -266,7 +273,7 @@ fn an_invoker_client_round_trips_with_one_on_an_external_driver() {
     context.set_dir_delete_on_start(true).unwrap();
     context.set_dir_delete_on_shutdown(true).unwrap();
     context.set_term_buffer_length(65536).unwrap();
-    let external = AeronDriver::launch_embedded_guard(context.clone(), false);
+    let external = AeronDriver::launch_embedded_guard(context, false);
 
     let rtt = env!("CARGO_BIN_EXE_rtt");
     let ponger = start(rtt, &["xpong", &ping, &pong, "-"], None, &external_dir, &[]);

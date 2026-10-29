@@ -85,7 +85,7 @@ impl BitgetIngestor {
         Self::default()
     }
 
-    pub fn counters(&self) -> &Counters {
+    pub const fn counters(&self) -> &Counters {
         &self.counters
     }
 

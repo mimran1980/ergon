@@ -227,6 +227,7 @@ fn some_null_refusal(
         {
             let val = #value;
             if #is_null {
+                sbe_rt::cold();
                 return Err(sbe_rt::EncodeError::SomeNullValue { at: sbe_rt::FieldPath::new(#path) });
             }
         }
@@ -353,6 +354,7 @@ pub(crate) fn dto_range_check_tokens(
         {
             let __v = #value_expr as i128;
             if #out_of_range {
+                sbe_rt::cold();
                 return Err(sbe_rt::EncodeError::ValueOutOfRange {
                     field: #field_lit,
                     min: #min_lit,
@@ -892,6 +894,7 @@ pub(crate) fn generate_domain_recursive(
                         Ok(data) => match core::str::from_utf8(data) {
                             Ok(s) => s.to_owned(),
                             Err(error) => {
+                                sbe_rt::cold();
                                 return Err(sbe_rt::DecodeError::InvalidUtf8 {
                                     field: #field_name_lit,
                                     error,
@@ -927,6 +930,7 @@ pub(crate) fn generate_domain_recursive(
                         Ok(data) => match core::str::from_utf8(data) {
                             Ok(s) => ergo_sbe::compact_str::CompactString::new(s),
                             Err(error) => {
+                                sbe_rt::cold();
                                 return Err(sbe_rt::DecodeError::InvalidUtf8 {
                                     field: #field_name_lit,
                                     error,
@@ -949,6 +953,7 @@ pub(crate) fn generate_domain_recursive(
                         Ok(data) => match core::str::from_utf8(data) {
                             Ok(s) => ergo_sbe::smol_str::SmolStr::new(s),
                             Err(error) => {
+                                sbe_rt::cold();
                                 return Err(sbe_rt::DecodeError::InvalidUtf8 {
                                     field: #field_name_lit,
                                     error,
@@ -1179,6 +1184,7 @@ pub(crate) fn generate_domain_recursive(
                 let vd_name = &vd.name;
                 len_stmts.extend(quote::quote! {
                     if self.#vd_snake.len() > #max_lit {
+                        sbe_rt::cold();
                         return Err(sbe_rt::EncodeError::VarDataTooLong {
                             field: #vd_name,
                             max_length: #max_lit,
@@ -1323,6 +1329,7 @@ pub(crate) fn generate_domain_recursive(
                 let vd_name = &vd.name;
                 msg_len_stmts.extend(quote::quote! {
                     if self.#vd_snake.len() > #max_lit {
+                        sbe_rt::cold();
                         return Err(sbe_rt::EncodeError::VarDataTooLong {
                             field: #vd_name,
                             max_length: #max_lit,
@@ -1658,6 +1665,7 @@ fn source_tail_lengths(
             let name_lit = syn::LitStr::new(&vd.name, span);
             quote::quote! {
                 if __data.len() > #max_lit {
+                    sbe_rt::cold();
                     return Err(sbe_rt::EncodeError::VarDataTooLong {
                         field: #name_lit,
                         max_length: #max_lit,

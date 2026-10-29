@@ -126,7 +126,7 @@ impl DpdkTransport {
     }
 
     /// The clock the native transport reads ([`crate::clock`]): the CPU
-    /// counter and its rate, or `CLOCK_MONOTONIC` and why. Counter type 80
+    /// counter and its rate, or `CLOCK_MONOTONIC` and why. Counter type 1080
     /// reports the same source.
     #[must_use]
     pub const fn clock(&self) -> &TransportClock {
@@ -297,6 +297,71 @@ impl Drop for CloseOnDrop {
         if let Some(transport) = self.0.take() {
             // SAFETY: promised by `wrap`.
             let _ = unsafe { transport.close() };
+        }
+    }
+}
+
+/// The lab's stage trace on the socket transport (`RUSTERON_DPDK_STAGE_TRACE`
+/// and `RUSTERON_DPDK_STAGE_TRACE_FILE`, as under DPDK: the README's "Stage
+/// trace"): Aeron's own UDP bindings wrapped so that each send and receive of
+/// a sampled message is stamped. [`ConfiguredDriver::from_env`](crate::ConfiguredDriver::from_env)
+/// installs it when no DPDK transport is installed; dropping it stops its
+/// writer and closes the file, so it drops after the driver.
+pub(crate) struct KernelStageTrace(());
+
+/// The variables that turn the lab's stage trace or capture on.
+const LAB_VARS: [&str; 4] = [
+    "RUSTERON_DPDK_STAGE_TRACE",
+    "RUSTERON_DPDK_STAGE_TRACE_FILE",
+    "RUSTERON_DPDK_CAPTURE_FILE",
+    "RUSTERON_DPDK_CAPTURE_WINDOW_MS",
+];
+
+impl KernelStageTrace {
+    /// `None` unless one of its variables is set; then the wrapped bindings
+    /// in `context`.
+    ///
+    /// # Errors
+    ///
+    /// [`DpdkError::InvalidEnvironment`] for a malformed value, a file that
+    /// cannot be written, a capture asked of the socket transport, or a build
+    /// without the `dpdk` feature (the trace is the native code's).
+    pub(crate) fn from_env(context: &AeronDriverContext) -> Result<Option<Self>, DpdkError> {
+        if !LAB_VARS
+            .iter()
+            .any(|v| std::env::var_os(v).is_some_and(|x| !x.is_empty()))
+        {
+            return Ok(None);
+        }
+        #[cfg(feature = "dpdk")]
+        {
+            // SAFETY: the context pointer is live for the borrow of `context`,
+            // and no driver has been created from it yet.
+            let rc = unsafe { rusteron_dpdk_stage_kernel_install(context.get_inner()) };
+            if rc != 0 {
+                return Err(DpdkError::InvalidEnvironment(last_error()));
+            }
+            Ok(Some(Self(())))
+        }
+        #[cfg(not(feature = "dpdk"))]
+        {
+            let _ = context;
+            Err(DpdkError::InvalidEnvironment(format!(
+                "{} set: the stage trace is ergon-md-dpdk's native code, built with the `dpdk` feature only",
+                LAB_VARS.join(" or ")
+            )))
+        }
+    }
+}
+
+impl Drop for KernelStageTrace {
+    fn drop(&mut self) {
+        // SAFETY: dropped after the driver closed and joined its agents (the
+        // field order of `ConfiguredDriver` and `EnvMediaDriver`), so nothing
+        // records any more.
+        #[cfg(feature = "dpdk")]
+        unsafe {
+            rusteron_dpdk_lab_close();
         }
     }
 }
@@ -510,6 +575,10 @@ unsafe extern "C" {
     fn rusteron_dpdk_transport_gateway_check(transport: *mut c_void, timeout_ms: u32, answered: *mut i32) -> c_int;
     fn rusteron_dpdk_eal_main_cpu() -> c_int;
     fn rusteron_dpdk_clock_report(report: *mut rusteron_dpdk_clock_report_t);
+    fn rusteron_dpdk_stage_kernel_install(
+        context: *mut rusteron_media_driver::bindings::aeron_driver_context_t,
+    ) -> c_int;
+    fn rusteron_dpdk_lab_close();
 }
 
 #[cfg(feature = "dpdk")]
@@ -852,20 +921,31 @@ fn validate_dedicated_agents(context: &AeronDriverContext) -> Result<(), DpdkErr
 /// `AERON_RECEIVER_CPU_AFFINITY` or their setters), as Aeron's `aeronmd` does.
 ///
 /// Aeron's C driver only parses those values; `aeronmd` applies them by
-/// installing `aeron_set_thread_affinity_on_start` as the agent start hook,
-/// which rusteron's driver does not. Without it the agents float, and under
-/// DPDK they inherit the CPU the EAL pinned its main thread to, which puts the
-/// sender and receiver on one core. [`DpdkTransport::install`] calls this; call
-/// it yourself for the socket transport. It replaces any agent start hook the
-/// context already has. Call it before the driver is created.
+/// resolving them (`aeron_driver_validate_and_apply_affinity_configuration`:
+/// cpuset offsets under `AERON_THREAD_AFFINITY_USE_CPUSET_OFFSETS`, topology
+/// warnings on stderr) and installing `aeron_set_thread_affinity_on_start` as
+/// the agent start hook, which pins from the resolved CPUs. rusteron's driver
+/// does neither. Without both the agents float, and under DPDK they inherit
+/// the CPU the EAL pinned its main thread to, which puts the sender and
+/// receiver on one core. [`DpdkTransport::install`] calls this; call it
+/// yourself for the socket transport. It replaces any agent start hook the
+/// context already has. Call it after the last affinity setter and before the
+/// driver is created.
 ///
 /// # Errors
 ///
-/// [`DpdkError::Aeron`] if the context rejects the hook.
+/// [`DpdkError::Aeron`] if Aeron rejects the affinity configuration (with
+/// `AERON_THREAD_AFFINITY_FAIL_ON_VALIDATION_ERRORS`, any warning) or the
+/// context rejects the hook.
 pub fn pin_agents_to_configured_cpus(context: &AeronDriverContext) -> Result<(), DpdkError> {
     use rusteron_media_driver::bindings::{
         aeron_driver_context_set_agent_on_start_function, aeron_set_thread_affinity_on_start,
     };
+    context.apply_cgroup_cpuset_affinity().map_err(|e| {
+        DpdkError::Aeron(format!(
+            "aeron_driver_validate_and_apply_affinity_configuration failed: {e:?}"
+        ))
+    })?;
     let inner = context.get_inner();
     // SAFETY: Aeron's hook reads the driver context it is given as state, and
     // the agents it runs on are started from, and joined before, that context.
@@ -878,6 +958,32 @@ pub fn pin_agents_to_configured_cpus(context: &AeronDriverContext) -> Result<(),
         )));
     }
     Ok(())
+}
+
+/// The CPUs the conductor, sender and receiver are pinned to, or -1: on
+/// Linux the resolved ones [`pin_agents_to_configured_cpus`] leaves in the
+/// context (configured values may be cpuset offsets), elsewhere the
+/// configured ones.
+pub(crate) fn agent_cpus(context: &AeronDriverContext) -> [i32; 3] {
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: the context is live; these are plain fields the driver
+        // reads only once it starts, and nothing writes them concurrently.
+        let c = unsafe { &*context.get_inner() };
+        [
+            c.conductor_cpu_affinity_resolved,
+            c.sender_cpu_affinity_resolved,
+            c.receiver_cpu_affinity_resolved,
+        ]
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        [
+            context.get_conductor_cpu_affinity(),
+            context.get_sender_cpu_affinity(),
+            context.get_receiver_cpu_affinity(),
+        ]
+    }
 }
 
 /// The idle strategy the agent actually runs. Aeron's context init loads the

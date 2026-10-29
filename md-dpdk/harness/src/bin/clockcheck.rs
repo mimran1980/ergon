@@ -29,6 +29,7 @@ mod lab;
 
 use hdrhistogram::Histogram;
 use lab::{Clock, ClockKind};
+use std::error::Error;
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
@@ -37,7 +38,11 @@ const READS: u64 = 10_000_000;
 /// Where Linux names the clock source the kernel keeps time with.
 const CLOCKSOURCE: &str = "/sys/devices/system/clocksource/clocksource0/current_clocksource";
 
-fn measure(name: &str, ns_per_unit: f64, mut read: impl FnMut() -> u64) {
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "a diagnostic's ns and ppm figures: f64's 52-bit mantissa holds 52 days of ns exactly, and a ratio needs no more"
+)]
+fn measure(name: &str, ns_per_unit: f64, mut read: impl FnMut() -> u64) -> Result<(), Box<dyn Error>> {
     for _ in 0..1_000_000 {
         black_box(read());
     }
@@ -47,7 +52,7 @@ fn measure(name: &str, ns_per_unit: f64, mut read: impl FnMut() -> u64) {
     }
     let mean = start.elapsed().as_nanos() as f64 / READS as f64;
 
-    let mut gaps = Histogram::<u64>::new_with_bounds(1, 10_000_000_000, 3).unwrap();
+    let mut gaps = Histogram::<u64>::new_with_bounds(1, 10_000_000_000, 3)?;
     let mut backwards = 0u64;
     let mut last = read();
     for _ in 0..READS {
@@ -55,6 +60,12 @@ fn measure(name: &str, ns_per_unit: f64, mut read: impl FnMut() -> u64) {
         if now < last {
             backwards += 1;
         } else {
+            // a gap in ns: not negative, and saturating where it would not fit
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a non-negative gap, saturated by the cast"
+            )]
             gaps.saturating_record(((now - last) as f64 * ns_per_unit) as u64);
         }
         last = now;
@@ -65,15 +76,25 @@ fn measure(name: &str, ns_per_unit: f64, mut read: impl FnMut() -> u64) {
         gaps.value_at_quantile(0.99),
         gaps.max()
     );
+    Ok(())
 }
 
 /// `clock_gettime(clock)`, ns.
+#[allow(
+    unsafe_code,
+    reason = "CLOCK_MONOTONIC_RAW and a direct clock_gettime have no safe std equivalent"
+)]
 fn clock_gettime_ns(clock: libc::clockid_t) -> u64 {
     let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     // SAFETY: clock_gettime writes only the timespec it is given.
-    let rc = unsafe { libc::clock_gettime(clock, &mut ts) };
+    let rc = unsafe { libc::clock_gettime(clock, &raw mut ts) };
     assert_eq!(rc, 0, "clock_gettime({clock})");
-    ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
+    ts.tv_sec.cast_unsigned() * 1_000_000_000 + ts.tv_nsec.cast_unsigned()
+}
+
+/// `d` in ns, saturating at `u64::MAX` (584 years).
+fn ns(d: Duration) -> u64 {
+    u64::try_from(d.as_nanos()).unwrap_or(u64::MAX)
 }
 
 /// `CLOCK_MONOTONIC_RAW`, ns: the counter as the kernel scales it, with no
@@ -82,18 +103,26 @@ fn monotonic_raw_ns() -> u64 {
     clock_gettime_ns(libc::CLOCK_MONOTONIC_RAW)
 }
 
-fn main() {
-    let seconds: u64 = std::env::args().nth(1).map_or(60, |s| s.parse().expect("seconds"));
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "a diagnostic's ns and ppm figures: f64's 52-bit mantissa holds 52 days of ns exactly, and a ratio needs no more"
+)]
+fn main() -> Result<(), Box<dyn Error>> {
+    let seconds: u64 = std::env::args()
+        .nth(1)
+        .map_or(Ok(60), |s| s.parse().map_err(|e| format!("seconds {s:?}: {e}")))?;
     let clocksource = std::fs::read_to_string(CLOCKSOURCE).unwrap_or_default();
     println!("host,clocksource,{}", clocksource.trim());
 
     measure("clock_gettime_monotonic", 1.0, || {
         clock_gettime_ns(libc::CLOCK_MONOTONIC)
-    });
+    })?;
     let origin = Instant::now();
-    measure("std_instant", 1.0, || origin.elapsed().as_nanos() as u64);
-    measure("clock_gettime_realtime", 1.0, || clock_gettime_ns(libc::CLOCK_REALTIME));
-    measure("aeron_nano_clock", 1.0, || rusteron_client::Aeron::nano_clock() as u64);
+    measure("std_instant", 1.0, || ns(origin.elapsed()))?;
+    measure("clock_gettime_realtime", 1.0, || clock_gettime_ns(libc::CLOCK_REALTIME))?;
+    measure("aeron_nano_clock", 1.0, || {
+        rusteron_client::Aeron::nano_clock().cast_unsigned()
+    })?;
 
     // quanta's own reads, then the clients' clock on it (whatever BENCH_CLOCK)
     let quanta = quanta::Clock::new();
@@ -101,13 +130,11 @@ fn main() {
     // ns per raw unit, through quanta's calibrated factor
     let ns_per_tick = quanta.delta_as_nanos(0, 1 << 32) as f64 / (1u64 << 32) as f64;
     println!("host,quanta_ghz,{:.4}", 1.0 / ns_per_tick);
-    measure("quanta_raw", ns_per_tick, || quanta.raw());
+    measure("quanta_raw", ns_per_tick, || quanta.raw())?;
     let anchor = quanta.now();
-    measure("quanta_now", 1.0, || {
-        quanta.now().duration_since(anchor).as_nanos() as u64
-    });
-    measure("harness_stamp", 1.0, || clock.stamp());
-    measure("harness_now", 1.0, || clock.now());
+    measure("quanta_now", 1.0, || ns(quanta.now().duration_since(anchor)))?;
+    measure("harness_stamp", 1.0, || clock.stamp())?;
+    measure("harness_now", 1.0, || clock.now())?;
 
     // drift of the clients' clock against CLOCK_MONOTONIC and CLOCK_MONOTONIC_RAW
     let (t0, i0, r0) = (clock.now(), Instant::now(), monotonic_raw_ns());
@@ -126,6 +153,7 @@ fn main() {
             (mono_ns - raw) / raw * 1e6
         );
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -169,7 +197,7 @@ mod tests {
     /// reads is its own choice (it has no public way to say): the stamps are
     /// what is checked.
     #[test]
-    fn a_stamp_pair_measures_a_known_sleep() {
+    fn a_stamp_pair_measures_a_known_sleep() -> Result<(), std::num::TryFromIntError> {
         for kind in KINDS {
             let clock = Clock::new(kind);
             for sleep_ms in [1u64, 20, 100] {
@@ -178,7 +206,7 @@ mod tests {
                 let s0 = clock.stamp();
                 std::thread::sleep(Duration::from_millis(sleep_ms));
                 let s1 = clock.stamp();
-                let outer = u64::try_from(i0.elapsed().as_nanos()).unwrap();
+                let outer = u64::try_from(i0.elapsed().as_nanos())?;
                 let measured = s1.wrapping_sub(s0);
                 assert!(
                     measured + sleep_ns / 1000 + 1_000 >= sleep_ns,
@@ -190,20 +218,21 @@ mod tests {
                 );
             }
         }
+        Ok(())
     }
 
     /// The unordered read (pacing, deadlines, loop gaps) counts nanoseconds
     /// from the clock's calibration that track `CLOCK_MONOTONIC` within 0.1%
     /// over 50 ms, with either clock.
     #[test]
-    fn the_clock_tracks_real_time() {
+    fn the_clock_tracks_real_time() -> Result<(), std::num::TryFromIntError> {
         for kind in KINDS {
             let start = Instant::now();
             let clock = Clock::new(kind);
             let made = start.elapsed();
             let (i0, c0) = sample(&clock);
             // ns since the clock was made, which `Instant` brackets
-            let (since, made) = ((i0 - start).as_nanos() as u64, made.as_nanos() as u64);
+            let (since, made) = (u64::try_from((i0 - start).as_nanos())?, u64::try_from(made.as_nanos())?);
             assert!(
                 c0 <= since + since / 1000 + 1_000 && c0 + made + since / 1000 + 1_000 >= since,
                 "{kind:?}: {c0} ns since the clock was made, {since} ns since before it ({made} ns to make)"
@@ -212,7 +241,7 @@ mod tests {
                 std::hint::spin_loop();
             }
             let (i1, c1) = sample(&clock);
-            let mono = u64::try_from((i1 - i0).as_nanos()).unwrap();
+            let mono = u64::try_from((i1 - i0).as_nanos())?;
             let err = (c1 - c0).abs_diff(mono);
             assert!(
                 err * 1000 <= mono,
@@ -220,5 +249,6 @@ mod tests {
                 c1 - c0
             );
         }
+        Ok(())
     }
 }

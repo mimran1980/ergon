@@ -67,12 +67,14 @@ import collections
 import csv
 import glob
 import gzip
+import math
 import os
 import random
 import re
+import statistics
 import sys
 
-from transport_points import hosts_of as transport_hosts_of, irq_core_saturated, read_points, row_flags
+from transport_points import hosts_of_point as transport_hosts_of, irq_core_saturated, read_points, row_flags
 
 # the threads that busy-spin on traced CPUs: the dedicated agents, the shared
 # network agent ("[sender, receiver]", which the kernel cuts to 15 characters),
@@ -1050,8 +1052,22 @@ def largest(folder, state, run_dir, diag, knoise):
 TransportPoint = collections.namedtuple("TransportPoint", "set tag row manifest hosts")
 # Azure's per-minute stall cluster: maxima of MINUTE_MIN_NS or more inside
 # seconds :49 to :51 of a minute, when nothing more specific explains them
+# and the session's maxima of that size fall there above chance (binomial,
+# PERIODIC_P: the window's share of the minute)
 MINUTE_WINDOW = (49.0, 52.0)
 MINUTE_MIN_NS = 100_000
+# A periodic event on a VM pair (c7i's path outage: once a minute at a fixed
+# second, 4 to 16 ms; aws-20261028-123909 at :25): a phase of the minute
+# PERIODIC_WINDOW_S wide where the session's maxima of PERIODIC_MIN_NS or
+# more (every point's, across arms and floors) recur above chance: at least PERIODIC_MIN of them, from
+# PERIODIC_ARMS arms or more, the binomial tail under PERIODIC_P with every
+# window of the minute tried (Bonferroni); one cluster at a time, its maxima
+# then set aside for the next.
+PERIODIC_WINDOW_S = 0.1
+PERIODIC_MIN_NS = 1_000_000
+PERIODIC_MIN = 4
+PERIODIC_ARMS = 2
+PERIODIC_P = 0.001
 EVENT_KINDS = {"irq", "softirq", "ipi", "preempt", "nak", "retransmit", "tcp-rto", "tcp-tlp", "tcp-dsack", "tcp-retrans",
                "tc-drop", "page-fault", "dpdk-refill", "host-pause", "stall"}
 # the kinds the tracefs instance records on a CPU (transport_events.py)
@@ -1066,6 +1082,57 @@ def cached(key, load):
     if key not in _cache:
         _cache[key] = load()
     return _cache[key]
+
+
+def binomial_tail(n, k, p):
+    """P(X >= k), X binomial(n, p)."""
+    if k <= 0:
+        return 1.0
+    p = min(max(p, 0.0), 1.0)
+    return sum(math.comb(n, i) * p ** i * (1 - p) ** (n - i) for i in range(k, n + 1))
+
+
+def phase_hits(maxima, a, b):
+    """The maxima ((t0, t1, ...) in seconds) whose span, taken modulo the
+    minute, meets [a, b) (a in [0, 60))."""
+    out = []
+    for m in maxima:
+        s0 = m[0] % 60
+        s1 = s0 + max(m[1] - m[0], 0)
+        if any(s0 + w < b and s1 + w >= a for w in (-60, 0, 60)):
+            out.append(m)
+    return out
+
+
+def session_periodic(maxima):
+    """A session's periodic events from its points' maxima [(t0_s, t1_s,
+    arm, tag)]: {clusters: [{second, phase: (a, b), tags, n, of, p}] (see
+    PERIODIC_*), minute: whether its maxima of MINUTE_MIN_NS or more fall in
+    MINUTE_WINDOW above chance (Azure's per-minute stall's own evidence)}."""
+    big = [m for m in maxima if m[1] - m[0] >= MINUTE_MIN_NS / 1e9]
+    a, b = MINUTE_WINDOW
+    k = len(phase_hits(big, a, b))
+    dur = statistics.mean(m[1] - m[0] for m in big) if big else 0
+    minute = k >= 3 and binomial_tail(len(big), k, (b - a + dur) / 60) < PERIODIC_P
+    clusters, left = [], [m for m in maxima if m[1] - m[0] >= PERIODIC_MIN_NS / 1e9]
+    tries = 60 / PERIODIC_WINDOW_S
+    while len(left) >= PERIODIC_MIN:
+        # each max's start a candidate window's; the fullest (the earliest
+        # of equals)
+        start, best = max(((x, phase_hits(left, x, x + PERIODIC_WINDOW_S))
+                           for x in sorted(m[0] % 60 for m in left)), key=lambda c: (len(c[1]), -c[0]))
+        n = len(left)
+        dur = statistics.mean(m[1] - m[0] for m in left)
+        p = binomial_tail(n, len(best), (PERIODIC_WINDOW_S + dur) / 60) * tries
+        if len(best) < PERIODIC_MIN or len({m[2] for m in best}) < PERIODIC_ARMS or p >= PERIODIC_P:
+            break
+        # its second: the median of its maxima's midpoints, from the window's start
+        mid = start + statistics.median(((m[0] + m[1]) / 2 - start + 30) % 60 - 30 for m in best)
+        clusters.append({"second": int(mid % 60), "phase": (start, start + PERIODIC_WINDOW_S),
+                         "tags": sorted(m[3] for m in best), "n": len(best), "of": n, "p": p})
+        hit = {id(m) for m in best}
+        left = [m for m in left if id(m) not in hit]
+    return {"clusters": clusters, "minute": minute}
 
 
 def transport_max(folder, tag, row_max):
@@ -1174,20 +1241,22 @@ def trace_starts(events):
     return first
 
 
-def transport_cause(folder, point):
+def transport_cause(folder, point, periodic=None):
     """What explains a transport point's max (transport-format.md), or
     `unexplained (why)`: a flagged point's max is queueing (the IRQ core
     saturated too); else the first of a host pause, a page fault, a busy
     thread preempted, an IRQ on a hot CPU, a softirq there, an IPI there, a
     DPDK refill, a NAK or retransmit, a TCP RTO, TLP or retransmit of the
     point's own connections (own_tcp_info) after a netem drop in its second
-    or the one before, else as loss recovery, and the per-minute stall
-    cluster that overlaps it. An event with a length must account for half
+    or the one before, else as loss recovery, and a periodic event of the
+    session (`periodic`, session_periodic) that overlaps it: Azure's
+    per-minute stall cluster (:49-:51) where the session's maxima show it,
+    else a periodic path outage at its second. An event with a length must account for half
     of what the max adds to the p50. An unexplained max says what the events
     do show: a stall of the measuring loop, what was not recorded (no events
     file, the trace unavailable, an overrun reaching past the max's start),
     and a host TCP counter no connection of the point's accounts for."""
-    why = transport_cause_found(folder, point)
+    why = transport_cause_found(folder, point, periodic)
     if why != "unexplained":
         return why
     events, notes = transport_host_events(folder, point.tag, point.hosts)
@@ -1227,7 +1296,7 @@ def transport_cause(folder, point):
     return f"unexplained ({'; '.join(reasons + after)})"
 
 
-def transport_cause_found(folder, point):
+def transport_cause_found(folder, point, periodic=None):
     """transport_cause's labels, or plain `unexplained`."""
     row, manifest = point.row, point.manifest or {}
     found = row_flags(row)
@@ -1318,18 +1387,35 @@ def transport_cause_found(folder, point):
                     f"retransmitted {own.get('retrans') or 0} in the window, {own.get('retrans_not_dsack') or 0} not "
                     "DSACK-reported; no netem drop: a loss on the path)")
         return f"unexplained (TCP {what} on {e[5]} with no tc drop in that second or the one before)"
-    s0, s1 = t0 % 60, t0 % 60 + (t1 - t0)
-    if lat >= MINUTE_MIN_NS and s0 < MINUTE_WINDOW[1] and s1 >= MINUTE_WINDOW[0]:
+    periodic = periodic or {"clusters": [], "minute": False}
+    if periodic["minute"] and lat >= MINUTE_MIN_NS and phase_hits([(t0, t1)], *MINUTE_WINDOW):
         return "per-minute stall cluster (:49-:51)"
+    for c in periodic["clusters"]:
+        if lat >= PERIODIC_MIN_NS and phase_hits([(t0, t1)], *c["phase"]):
+            return f"periodic path outage (second :{c['second']:02d})"
     return "unexplained"
+
+
+def transport_periodic(run_dir, points):
+    """session_periodic over every point's located max (transport_max)."""
+    maxima = []
+    for p in points:
+        loc = transport_max(os.path.join(run_dir, p.set), p.tag, p.row.get("max"))
+        if loc is not None:
+            start, due, lat = loc
+            t0 = (start + due) / 1e9
+            maxima.append((t0, t0 + lat / 1e9, p.manifest.get("aa_of") or p.arm if p.manifest else p.arm, p.tag))
+    return session_periodic(maxima)
 
 
 def transport_maxima(run_dir):
     """[(Point, max ns, cause)] for every transport point of a run directory."""
+    points = read_points(run_dir)
+    periodic = transport_periodic(run_dir, points)
     out = []
-    for p in read_points(run_dir):
-        point = TransportPoint(p.set, p.tag, p.row, p.manifest or {}, transport_hosts_of(p.set))
-        out.append((p, p.row["max"], transport_cause(os.path.join(run_dir, p.set), point)))
+    for p in points:
+        point = TransportPoint(p.set, p.tag, p.row, p.manifest or {}, transport_hosts_of(p))
+        out.append((p, p.row["max"], transport_cause(os.path.join(run_dir, p.set), point, periodic)))
     return out
 
 
@@ -1340,7 +1426,8 @@ def transport_main(run_dir):
           "saturated), a host pause (a gap spinner's gap the trace does not explain), a page fault of a busy thread, "
           "a busy thread off its CPU (preempted or blocked), an IRQ, softirq or IPI on a hot CPU, a DPDK refill, a "
           "NAK or retransmit, a TCP RTO, TLP or retransmit of the point's own connections (after a netem drop in its "
-          "second or the one before, else loss recovery), the per-minute stall cluster (:49-:51). An unexplained max "
+          "second or the one before, else loss recovery), a periodic event the session's maxima show (Azure's "
+          "per-minute stall cluster at :49-:51, else a periodic path outage at its second). An unexplained max "
           "says what its events do show and blocks its cell's conclusion: rerun it traced.\n")
     print("| set | label | kind | rate | rep | max (µs) | cause |")
     print("| --- | --- | --- | --- | --- | --- | --- |")

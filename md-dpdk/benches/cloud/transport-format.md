@@ -16,7 +16,7 @@ is missing is a fairness violation, never a default.
 <run>/transport-settings.env      the settings each arm must run with (transport_collect.py)
 <run>/transport-settings.tr.env   the TR_* file the session sourced
 <run>/failures.csv                each failed run: set,rep,netem,arm,aa,<streams|setup> (transport.sh)
-<run>/logs/<point>.out, .pong     the measuring run's output (host a) and its echo's (b; a on a one-host set)
+<run>/logs/<point>.out, .pong     the measuring run's output (host a) and its echo's or sinks' (b; a on a one-host set)
 <run>/<set>/manifest-<tag>.json   one per point
 <run>/<set>/spikes-<tag>.csv      the point's spikes and its max
 <run>/<set>/<host>-events-<tag>.csv  timed events on a host during the point
@@ -24,11 +24,30 @@ is missing is a fairness violation, never a default.
 <run>/<set>/<host>-rings-<tag>.log   DPDK event log (dpdk arms)
 <run>/<set>/hostcheck-<a|b>.txt   each host's session hostcheck report
 <run>/<set>/hostcheck-<a|b>-hugepages.txt  the one on the hugetlbfs Aeron directory (aeron-ipc-huge's)
+<run>/idle/<point>-<host>-<before|after>  the housekeeping and IRQ CPUs' cpuidle states (vm.sh idle), read only
+<run>/nicstats/<point>-<host>-<before|after>  the data NICs' traffic, moderation and driver counters (vm.sh nicstats)
 ```
+
+`idle/` has `driver <cpuidle driver> governor <governor> max_cstate <n|->`,
+then a line a state: `cpu<N> <hk|irq> <index> <name> <disabled> <exit
+latency us> <target residency us> <usage> <time us>` (no state lines without
+a cpuidle driver). The usage and time deltas over a point say how often and
+how long each CPU slept in each state. `nicstats/` has, for each data NIC
+(every line `<role> <nic> ...`, role `sender` or `receiver`):
+
+| Line | From |
+|---|---|
+| `<role> <iface> tx_bytes=<n> rx_bytes=<n> tx_packets=<n> rx_packets=<n> [<name>_allowance_exceeded=<n> ...]` | the kernel's interface statistics and ENA's allowance counters; `nic_counters`' `kernel` growth |
+| `<role> <nic> coalesce <adaptive rx> <adaptive tx> <rx-usecs> <tx-usecs>` | `ethtool -c` (`coalesce none` on the local smoke's lo) |
+| `<role> <nic> stat <counter> <value>` | each `ethtool -S` counter: ENA's per-queue `unmask_interrupt`, `napi_comp`, `queue_stop`, `queue_wakeup`, `missed_tx` |
+| `<role> <iface> dpdk` | alone, where DPDK holds the NIC (`nic_counters` then from the binary's `nic.*`) |
 
 `<set>` is the matrix set (`1`, `2a`, `2b`, `3a`, `3b`, `3c`, `fan`).
 Manifest host keys: a two-host set's `a` and `b`; a one-host set's one host
-is `a` whichever VM it ran on (`hosts` in the manifest maps key to VM).
+is `a` whichever VM it ran on (`hosts` in the manifest maps key to VM). A
+sink arm's point (`runner.arm_hosts` `sink`, in a set on host a) has `a` and
+`b`; a one-host arm beside it in that set has `a` alone: fairness takes each
+point's hosts from `hosts`.
 `<tag>` is `<set>-<arm-mode>-<size>-<rep>-r<rate>`, the load point's name as
 lib.sh spells it (`file_name(label)-size-rep-point`); a one-way row's files
 add `-oneway`.
@@ -67,7 +86,7 @@ after their due time.
 |---|---|---|
 | `format` | 1 | |
 | `set`, `arm`, `label`, `kind` (`load`/`oneway`) | string | |
-| `transport` | `mpsc`, `aeron-ipc`, `aeron-spy`, `aeron-udp`, `aeron-dpdk`, `udp`, `tcp`, or several joined by `+` (`udp+tcp`: every part's loss sources) | loss accounting, no DPDK in loss rows |
+| `transport` | `mpsc`, `aeron-ipc`, `aeron-spy`, `aeron-spy-udp`, `aeron-spy-dpdk`, `aeron-udp`, `aeron-dpdk`, `udp`, `tcp`, or several joined by `+` (`udp+tcp`: every part's loss sources) | loss accounting, no DPDK in loss rows |
 | `round` | string | fairness groups points by it: one rep of one set, stream count, netem and rate, every arm |
 | `rep`, `rate`, `streams`, `size`, `duration_s`, `warmup_s` | int | same schedule |
 | `netem` | string or null | as the label's `@NETEM` |
@@ -75,7 +94,8 @@ after their due time.
 | `payload_sha256`, `wire_bytes` | string, int | same payload |
 | `core_build` | string | same core build (the core binary's hash) |
 | `seed`, `arm_order` | int, [arm] | randomised order; an arm of it with no row in the round is absent only with its failure there in failures.csv, and left out of that comparison |
-| `runner` | {knob: value} (`manifest/<point>.env`) | `point` names the logs a binary's own check warnings are read from (hostcheck) |
+| `runner` | {knob: value} (`manifest/<point>.env`) | `point` names the logs a binary's own check warnings are read from (hostcheck); `arm_hosts` the arm's hosts (`one`, `two`, `sink`) |
+| `binary`, `pong`, `sink` | the binaries' own manifests: the measuring run's, a two-host arm's pong's, a sink arm's run's sink's (`points/<point>/sink<run>`; else null) | sink: the sink's `sink.ping_frames`, `sink.echo_frames`, `sink.gaps`, `sink.behind`, `sink.refused` against the run's `sent`, `echoes_sent` and `driver.bytes-sent` |
 | `scheduled`, `late`, `max_send_lag_ns` | int | lateness |
 | `vms` | {host: VM id} | same VM pair |
 | `cpus` | {host: {housekeeping: [cpu], irq: [cpu], hot: [cpu]}} | placement, IRQs |
@@ -86,6 +106,7 @@ after their due time.
 | `netem_counters` | {host: {nic: {qdisc, loss_pct, sent_pkts, dropped}}} | netem verified; tc -s on every data NIC |
 | `loss_counters` | {host: {source: {counter: growth}}} | sources `tcp_info`, `nstat`, `aeron` |
 | `events` | {host: {file, rows, notes}} | the events file, its row count and what could not be recorded |
+| `nic_counters` | {host: {source, tx_bytes, rx_bytes, ...}} or null | a point's data NICs over it: `kernel` (vm.sh nicstats' traffic lines' growth, every data NIC summed, `allowance_exceeded` the ENA's allowance counters) or `dpdk` (the binary's own `nic.*`: transport bytes and frames, `rx_missed`, `rx_nombuf`, `queue_drop`, `allowance_exceeded`; a mixed-load point's alone); fairness.py's mixed-nic rule on a mixed-load point |
 
 A TCP arm's own manifest (`tcp_lat`) also carries, per end, the traffic's
 and the set-up's counters apart: `tcp.retrans`, `tcp.dsack_dups` (the
@@ -122,7 +143,12 @@ best.<knob>=<arm>:<value>,...  each arm's technology's best value of a knob (TR_
 ```
 
 An arm reporting a knob the file does not give it, or a different value,
-breaks the settings rule. transport_collect.py writes:
+breaks the settings rule. A kernel-bypass arm's point (the runner's
+`setup=dpdk` or `setup=fstack`, else an `aeron-dpdk` or `aeron-spy-dpdk`
+transport: DPDK owns the data NIC) is not checked for `net.core.busy_read`
+and `net.core.busy_poll`, here or in the shared-knob rule: no kernel socket
+on its data path reads them, and its set-up (`vm.sh stop` first) leaves them
+at 0 (`fairness.py` `KERNEL_SOCKET_KNOBS`). transport_collect.py writes:
 
 - `shared.<sysctl>`: every transport sysctl (`host.sh transport_sysctls`) at
   its TR_* value, each host reading them back after every point (`vm.sh
@@ -139,7 +165,11 @@ breaks the settings rule. transport_collect.py writes:
   interrupt deferral of every socket arm and Aeron kernel UDP arm (`vm.sh
   napi` after the point: `n` where every NIC has `n`/`TR_GRO_FLUSH_NS`, 0
   for 0/0, else each NIC's `<nic>:<n>/<ns>`; the runner's `napi_<host>`
-  keeps each NIC's as read).
+  keeps each NIC's as read), and `knob.irq_idle`, the IRQ core's idle depth
+  of every arm (the session's `TR_IRQ_IDLE`, a twin's own; the runner's `irq_idle_<host>` from `idle/` after the
+  point: `all` where no IRQ CPU's state is disabled or the host has no
+  cpuidle driver, `n` where every IRQ CPU has its states up to the n-th
+  enabled and the rest disabled, else each CPU's `cpu<N>:<disabled flags>`).
 - `sweep.<knob>`: the arms a tuning session swept for it: the tuned
   section's `TR_TUNED_SWEPT`, and in a tuning session its variants.
 - `declared.<arm>`: each `TR_DECLARED` arm that ran, its twin and the
@@ -284,7 +314,8 @@ start and warm-up and is left out) breaks the hostcheck rule.
 | netem verified | drops within 3.29 σ + 1 of `offered × loss` (99.9 %), pooled over a host's data NICs; 0 % drops nothing |
 | a cause with a length | at least half of what the max adds to the p50 |
 | a host pause | a spinner gap's untraced part, at least `TR_EVENTS_GAPSPIN_US` and half the gap |
-| per-minute stall cluster | a max of 100 µs or more overlapping seconds :49 to :51 of its minute, nothing more specific found |
+| per-minute stall cluster | a max of 100 µs or more overlapping seconds :49 to :51 of its minute, nothing more specific found, where the session's maxima of 100 µs or more fall there above chance (binomial, p < 0.001) |
+| periodic path outage (second :SS) | a max of 1 ms or more overlapping a 100 ms phase of the minute where the session's maxima of 1 ms or more recur: at least 4, from 2 arms or more, binomial p < 0.001 over every phase tried; nothing more specific found |
 | TCP RTO/TLP/retransmit | only where the point's own `tcp_info` on that host retransmitted; a `tc-drop` on either host in its second or the one before makes it netem's, none a loss on the path |
 | IRQ core saturated | the IRQ CPU's `ksoftirqd` over 90 % in a placement sample (shown, never compared) |
 | absent arm | named by a round's order, no row, its failure in failures.csv for that rep, netem and stream count (or `setup`) |

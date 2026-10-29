@@ -127,6 +127,8 @@ pub enum Impl {
     Mio,
     /// ergon-io.
     Ergon,
+    /// F-Stack (`fstack_lat` only: `--features fstack`).
+    Fstack,
 }
 
 impl Impl {
@@ -136,9 +138,13 @@ impl Impl {
         match self {
             Self::Mio => "mio",
             Self::Ergon => "ergon",
+            Self::Fstack => "fstack",
         }
     }
 }
+
+/// Why `--impl fstack` is refused here.
+const FSTACK_ELSEWHERE: &str = "--impl fstack: F-Stack is fstack_lat's (--features fstack)";
 
 /// Which end a thread builds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -712,6 +718,12 @@ udp_lat --impl mio|ergon --role ping|pong|local [--round-trip] --rate MSG_PER_S 
         [--size 64] [--cpus CSV] [--spike-ns 100000] [--stall-ns 10000] [--rcvbuf 4194304] [--sndbuf BYTES]
         [--epoll-events 64] [--busy-read-us 0] [--datagram-burst 64 (ergon)]
 stream i: --local port + i <-> --peer port + i (local: the echo/receiver end binds --peer).
+--backend: ergon-io's (--impl ergon). epoll-spin (the default) is the kernel.
+        smoltcp-spin measures when this binary is built with smoltcp-dpdk
+        (StackConfig::rto_min_us from --rto-min-us, plus --source, --pci or
+        --vdev, --prefix-len and --gateway). Without the feature the flag is
+        refused and a kernel socket is not labelled smoltcp-spin. fstack-spin
+        and uring-sqpoll have no UDP arm. --sqpoll-cpu is refused.
 --cpus: ping: ping; pong: echo; local: sender,receiver (--round-trip: ping,echo).";
 
 /// `tcp_lat`'s usage.
@@ -723,12 +735,16 @@ tcp_lat --impl mio|ergon --role ping|pong|local [--round-trip] --rate MSG_PER_S 
         [--stall-ns 10000] [--rcvbuf 4194304] [--sndbuf BYTES] [--epoll-events 64] [--nodelay]
         [--quickack-per-read] [--rto-min-us US] [--delack-max-us US] [--busy-read-us 0]
         [--connect-timeout-s 30] [--source-port PORT]
+        [--backend epoll-spin|uring-sqpoll] [--sqpoll-cpu CPU]
 stream i: connection i. local: the echo/receiver end listens, the other connects.
 --source: the connecting end binds it first (so leaves by the NIC that address routes by).
 --source-port: the connecting end binds stream i to PORT + i, so every arm run with it uses the
         same addresses and ports (the same NIC queues and flow hash on both hosts), and closes
         with a reset (SO_LINGER 0: no TIME_WAIT, the next arm reuses them at once). The
         listening end takes the flag and ignores it; --role local refuses it.
+--backend, --sqpoll-cpu: ergon-io's (--impl ergon): epoll-spin (the default), or uring-sqpoll
+        with its SQPOLL kernel thread on --sqpoll-cpu (required; never a --cpus CPU) and
+        --busy-read-us 0 (the SQPOLL thread polls the NIC).
 --cpus: ping: ping; pong: echo; local: sender,receiver (--round-trip: ping,echo).";
 
 /// `udp_lat`: parses `args` (without the program name) and runs the point;
@@ -757,6 +773,7 @@ pub fn udp_main<I: IntoIterator<Item = String>>(args: I) -> Result<Option<String
             .parse()
             .map_err(|_| Error::Usage(format!("--datagram-burst {v}: a number")))?,
     };
+    let choice = super::bypass::udp_choice(&mut f, c.role, s.imp == Impl::Ergon, local)?;
     f.finish()?;
     // every stream's ports checked before any thread starts
     for i in 0..c.streams {
@@ -786,26 +803,33 @@ pub fn udp_main<I: IntoIterator<Item = String>>(args: I) -> Result<Option<String
                 mio_udp::pair(l, p, streams, opts.clone())
             })
         }
-        Impl::Ergon => {
-            let helpers = helper_cpus(&c);
-            run(&c, s.imp, "udp", &arm, false, |end, cpu| {
-                let (l, p) = ends(end);
-                eio_udp::pair(
-                    l,
-                    p,
-                    streams,
-                    EioUdpOptions {
-                        rcvbuf: s.rcvbuf,
-                        sndbuf: s.sndbuf,
-                        epoll_events: s.epoll_events,
-                        datagram_burst,
-                        busy_poll_us: s.busy_read_us,
-                        loop_cpu: cpu.and_then(|c| u32::try_from(c).ok()),
-                        helper_cpus: helpers.clone(),
-                    },
-                )
-            })
-        }
+        Impl::Fstack => Err(Error::Usage(FSTACK_ELSEWHERE.into())),
+        Impl::Ergon => match choice {
+            super::bypass::UdpChoice::Kernel => {
+                let helpers = helper_cpus(&c);
+                run(&c, s.imp, "udp", &arm, false, |end, cpu| {
+                    let (l, p) = ends(end);
+                    eio_udp::pair(
+                        l,
+                        p,
+                        streams,
+                        EioUdpOptions {
+                            rcvbuf: s.rcvbuf,
+                            sndbuf: s.sndbuf,
+                            epoll_events: s.epoll_events,
+                            datagram_burst,
+                            busy_poll_us: s.busy_read_us,
+                            loop_cpu: cpu.and_then(|c| u32::try_from(c).ok()),
+                            helper_cpus: helpers.clone(),
+                        },
+                    )
+                })
+            }
+            #[cfg(feature = "smoltcp-dpdk")]
+            super::bypass::UdpChoice::Smoltcp(nic) => {
+                super::smoltcp_spin::udp(&c, nic, local, peer, s.rcvbuf, s.sndbuf, datagram_burst)
+            }
+        },
     }
 }
 
@@ -990,6 +1014,7 @@ pub fn tcp_main<I: IntoIterator<Item = String>>(args: I) -> Result<Option<String
     };
     let rto_min_us = timer(&mut f, "rto-min-us")?;
     let delack_max_us = timer(&mut f, "delack-max-us")?;
+    let (backend, sqpoll_cpu) = eio_backend(&mut f, &s)?;
     let listen = addr(&mut f, "listen", None)?;
     let connect = addr(&mut f, "connect", None)?;
     let source_port: Option<u16> = f
@@ -1103,6 +1128,7 @@ pub fn tcp_main<I: IntoIterator<Item = String>>(args: I) -> Result<Option<String
                 mio_tcp::pair(sockets(end)?, &opts)
             })
         }
+        Impl::Fstack => Err(Error::Usage(FSTACK_ELSEWHERE.into())),
         Impl::Ergon => {
             let helpers = helper_cpus(&c);
             run(&c, s.imp, "tcp", &arm, ready_said, |end, cpu| {
@@ -1118,9 +1144,71 @@ pub fn tcp_main<I: IntoIterator<Item = String>>(args: I) -> Result<Option<String
                         delack_max_us,
                         loop_cpu: cpu.and_then(|c| u32::try_from(c).ok()),
                         helper_cpus: helpers.clone(),
+                        backend,
+                        sqpoll_cpu,
                     },
                 )
             })
         }
+    }
+}
+
+/// `tcp_lat`'s `--backend` (ergon-io's: `epoll-spin`, the default, or
+/// `uring-sqpoll`) and `--sqpoll-cpu` (`uring-sqpoll` only: its `SQPOLL`
+/// kernel thread's CPU). `uring-sqpoll` polls the NIC on that thread, and
+/// ergon-io refuses `SO_BUSY_POLL` with it: `--busy-read-us` must be 0.
+fn eio_backend(f: &mut Flags, s: &Sock) -> Result<(ergon_io::Backend, Option<u32>), Error> {
+    let backend = f.take("backend");
+    let sqpoll = f.take("sqpoll-cpu");
+    if s.imp != Impl::Ergon && (backend.is_some() || sqpoll.is_some()) {
+        return Err(Error::Usage(
+            "--backend and --sqpoll-cpu are ergon-io's (--impl ergon)".into(),
+        ));
+    }
+    let backend = match backend.as_deref() {
+        None | Some("epoll-spin") => ergon_io::Backend::EpollSpin,
+        Some("uring-sqpoll") => ergon_io::Backend::UringSqpoll,
+        Some("smoltcp-spin") => {
+            return Err(Error::Usage(
+                "--backend smoltcp-spin is ergon-io's userspace UDP (StackConfig::rto_min_us). \
+                 A kernel socket will not be labelled smoltcp-spin"
+                    .into(),
+            ));
+        }
+        Some("fstack-spin") => {
+            return Err(Error::Usage(
+                "--backend fstack-spin has no UDP arm. A kernel socket will not be labelled \
+                 fstack-spin"
+                    .into(),
+            ));
+        }
+        Some(b) => {
+            return Err(Error::Usage(format!(
+                "--backend {b}: epoll-spin or uring-sqpoll"
+            )));
+        }
+    };
+    let sqpoll_cpu = sqpoll
+        .map(|v| {
+            v.parse::<u32>()
+                .map_err(|_| Error::Usage(format!("--sqpoll-cpu {v}: a CPU number")))
+        })
+        .transpose()?;
+    match backend {
+        ergon_io::Backend::UringSqpoll if sqpoll_cpu.is_none() => Err(Error::Usage(
+            "--backend uring-sqpoll needs --sqpoll-cpu (the SQPOLL thread's CPU, never ergon-io's \
+             choice here)"
+                .into(),
+        )),
+        ergon_io::Backend::UringSqpoll if s.busy_read_us != 0 => Err(Error::Usage(format!(
+            "--busy-read-us {}: uring-sqpoll's SQPOLL thread polls the NIC, and ergon-io refuses \
+             SO_BUSY_POLL with it: 0",
+            s.busy_read_us
+        ))),
+        ergon_io::Backend::UringSqpoll => Ok((backend, sqpoll_cpu)),
+        _ if sqpoll_cpu.is_some() => Err(Error::Usage(
+            "--sqpoll-cpu is uring-sqpoll's (--backend uring-sqpoll)".into(),
+        )),
+        _ => Ok((backend, None)),
     }
 }

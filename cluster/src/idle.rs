@@ -11,7 +11,7 @@ use crate::client::AsyncClusterConnect;
 /// Default adaptive backoff for cluster clients (Aeron's backoff parameters).
 #[must_use = "the idle strategy is unused; ignoring it skips poll-loop backoff"]
 #[inline]
-pub fn default_idle() -> BackoffIdleStrategy {
+pub const fn default_idle() -> BackoffIdleStrategy {
     BackoffIdleStrategy::new()
 }
 
@@ -37,6 +37,10 @@ pub fn default_idle() -> BackoffIdleStrategy {
 ///     connecting.finish()
 /// }
 /// ```
+///
+/// # Errors
+///
+/// The first error [`AsyncClusterConnect::poll`] returns.
 pub fn poll_connect_until_done(
     connect: &mut AsyncClusterConnect,
     idle: &mut impl IdleStrategy,
@@ -53,14 +57,15 @@ fn drive_connect_poll(
     idle: &mut impl IdleStrategy,
 ) -> Result<(), ClusterError> {
     loop {
-        match poll()? {
-            false => return Ok(()),
-            true => idle.idle(0),
+        if !poll()? {
+            return Ok(());
         }
+        idle.idle(0);
     }
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
 
@@ -75,12 +80,11 @@ mod tests {
     }
 
     #[test]
-    fn default_idle_constructs() -> Result<(), Box<dyn std::error::Error>> {
+    fn default_idle_constructs() {
         let mut idle = default_idle();
         idle.idle(0);
         idle.idle(1);
         idle.reset();
-        Ok(())
     }
 
     #[test]

@@ -3,6 +3,13 @@
 //! and an unreadable one are not (exit 2, the lines saying why), and a
 //! command line it cannot run exits 1. Every line is ergon-tune's
 //! `<id> <ok|info|warn|unknown>: ...`.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "an integration test fails by panicking: unwrap, expect and panic! are its assertions (as md-dpdk/tests)"
+)]
+#![allow(clippy::similar_names, reason = "ping and pong name the two ends of each round trip")]
 
 // tune formats it (rustfmt's defaults), not this crate (max_width 120).
 #[path = "../../../tune/tests/common/mod.rs"]
@@ -31,7 +38,7 @@ fn lines(out: &Path) -> Result<Vec<String>, Box<dyn std::error::Error>> {
 
 /// Each line is `<id> <status>: ...` with a status the analysis reads.
 fn well_formed(ls: &[String]) {
-    assert!(!ls.is_empty());
+    assert!(!ls.is_empty(), "no line");
     for l in ls {
         let (id, rest) = l.split_once(' ').unwrap_or_default();
         assert!(!id.is_empty(), "{l}");
@@ -44,7 +51,7 @@ fn well_formed(ls: &[String]) {
     }
 }
 
-/// A tuned c9g (ergon-tune's fixture: CPUs 1-7 isolated and nohz_full,
+/// A tuned c9g (ergon-tune's fixture: CPUs 1-7 isolated and `nohz_full`,
 /// THP never, no SMT, the data NIC's IRQs on CPU 0), with what the host-wide
 /// checks read besides: no CPU quota on the process's cgroup, a TSC clock
 /// source, no unbound workqueue on the hot CPUs, compaction and KSM off.

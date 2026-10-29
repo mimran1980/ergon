@@ -13,7 +13,8 @@ row:
 
   <set>/manifest-<tag>.json   the fields transport-format.md lists, plus the
                               runner's point manifest ("runner") and the
-                              binaries' own ("binary", "pong")
+                              binaries' own ("binary", "pong"; a sink arm's
+                              run's sink as "sink": points/<point>/sink<run>)
   <set>/spikes-<tag>.csv      the measuring run's spikes file
   <set>/<host>-events-<tag>.csv  each host's events over the point
                               (transport_events.py: events/<point>-<host>.log.gz,
@@ -64,8 +65,9 @@ READBACK = {"busy_read_us": "busy_read_us", "epoll_events": "epoll_events", "dat
 BOOL = {"true": "on", "false": "off"}
 # a per-arm knob read back on each host after the point (manifest/<point>.env's
 # <name>_<host>: vm.sh aeron-page, the Aeron directory's page size)
-# and vm.sh napi, the data NICs' interrupt deferral (transport.sh tr_napi_value)
-HOST_READBACK = {"aeron_page": "aeron_page", "napi_defer": "napi_defer"}
+# vm.sh napi, the data NICs' interrupt deferral (transport.sh tr_napi_value),
+# and vm.sh idle, the IRQ core's idle depth (transport.sh tr_idle_value)
+HOST_READBACK = {"aeron_page": "aeron_page", "napi_defer": "napi_defer", "irq_idle": "irq_idle"}
 # the hosts' own knob (a sysctl, read back as one): never a per-arm knob.* line
 HOST_WIDE = {"congestion"}
 # what a knob's value implies of the hosts' sysctls (vm.sh driver kernel: no
@@ -227,6 +229,60 @@ def nstat_growth(before, after):
     return out
 
 
+# a data NIC's counters a mixed-load point reads (vm.sh nicstats; the DPDK
+# transport's own, nic.* in the binaries' manifests)
+NIC_KEYS = ("tx_bytes", "rx_bytes", "tx_packets", "rx_packets")
+DPDK_NIC_KEYS = ("tx_bytes", "rx_bytes", "tx_pkts", "rx_pkts", "rx_missed", "rx_nombuf", "queue_drop", "tx_eagain",
+                 "allowance_exceeded")
+
+
+def nicstats(text):
+    """vm.sh nicstats' traffic lines ("<role> <iface> tx_bytes=<n> ...") as
+    {iface: {counter: n}}, a NIC DPDK holds as {iface: "dpdk"}; None when
+    unread. Its moderation and driver counter lines ("<role> <nic> coalesce
+    ..." and "<role> <nic> stat <name> <n>", the c7i diagnosis's) are left
+    to the raw nicstats/ files."""
+    if not text:
+        return None
+    out = {}
+    for line in text.splitlines():
+        w = line.split()
+        if len(w) < 3 or w[2] in ("coalesce", "stat"):
+            continue
+        if w[2] == "dpdk":
+            out[w[1]] = "dpdk"
+            continue
+        out[w[1]] = {k: int(v) for k, _, v in (x.partition("=") for x in w[2:]) if v.lstrip("-").isdigit()}
+    return out
+
+
+def nic_growth(before, after, binary_settings):
+    """A host's data NICs over a point, every NIC summed: {source: kernel,
+    tx_bytes, rx_bytes, tx_packets, rx_packets, allowance_exceeded} from
+    vm.sh nicstats, or where DPDK holds them {source: dpdk, ...} from the
+    binary's own nic.* counters; None when unread. The binary's counters
+    stand wherever it wrote them: under DPDK the kernel has no data NIC, so
+    vm.sh nicstats finds none and prints nothing (or "dpdk")."""
+    s = binary_settings or {}
+    if any(f"nic.{k}" in s for k in DPDK_NIC_KEYS):
+        return dict({"source": "dpdk"}, **{k: ints(s.get(f"nic.{k}")) or 0 for k in DPDK_NIC_KEYS})
+    b, a = nicstats(before), nicstats(after)
+    if b is None or a is None or any(v == "dpdk" for v in a.values()):
+        return None
+    out = {"source": "kernel", "allowance_exceeded": 0}
+    for k in NIC_KEYS:
+        out[k] = 0
+    for iface, c in a.items():
+        was = b.get(iface) if isinstance(b.get(iface), dict) else {}
+        for k, v in c.items():
+            d = v - was.get(k, 0)
+            if k in NIC_KEYS:
+                out[k] += d
+            elif k.endswith("allowance_exceeded"):
+                out["allowance_exceeded"] += d
+    return out
+
+
 def netem_growth(before, after, pct):
     """{nic: {qdisc, loss_pct, sent_pkts, dropped}} from vm.sh netem stats before and after."""
     if before is None or after is None:
@@ -339,8 +395,11 @@ def collect(d):
                 skipped.append(f"{pid} run {r}")
                 continue
             aa = pe.get("aa") == "1"
-            # each host's own binary manifest: the measuring run's on a, the pong's on b
-            own = {"a": bm, "b": pong}
+            # a sink arm's run: its own sink on b (None: none written)
+            sink = (read_json(os.path.join(d, "points", pid, f"sink{r}", "manifest.json"))
+                    if pe.get("arm_hosts") == "sink" else None)
+            # each host's own binary manifest: the measuring run's on a, the pong's (or sink's) on b
+            own = {"a": bm, "b": pong if pe.get("arm_hosts") != "sink" else sink}
             # the arm's per-arm knobs (the runner's knob.* lines), each read
             # back from the binary that reports it, else as the runner set it
             run_settings = {k: dict(v) for k, v in settings.items()}
@@ -380,6 +439,11 @@ def collect(d):
                     src["aeron"] = aeron
                 loss[key] = src
             nics = {key: nic_names(os.path.join(d, f"nics-{h}.txt")) for key, h in keys.items()}
+            # the point's data NIC traffic (vm.sh nicstats), each host's: a
+            # mixed-load point's against its driver (fairness.py mixed-nic)
+            nic = {key: g for key, h in keys.items()
+                   if (g := nic_growth(snap("nicstats", h, "before"), snap("nicstats", h, "after"),
+                                       (own.get(key) or {}).get("settings"))) is not None}
             manifest = {
                 "format": 1, "set": set_, "arm": label.partition(":")[2].split("@")[0], "label": label,
                 "kind": kind, "transport": bs.get("transport"), "channel": channel,
@@ -404,7 +468,8 @@ def collect(d):
                     if (g := (root_qdiscs(snap("netem", h, "after")) if netem == "none" else
                               netem_growth(snap("netem", h, "before"), snap("netem", h, "after"), netem))) is not None},
                 "loss_counters": loss,
-                "hosts": keys, "point": pid, "runner": pe, "binary": bm, "pong": pong,
+                "nic_counters": nic or None,
+                "hosts": keys, "point": pid, "runner": pe, "binary": bm, "pong": pong, "sink": sink,
             }
             # each host's events over the point (transport_events.py): the
             # measuring host's with its loop's stalls (its last busy CPU)

@@ -1545,7 +1545,7 @@ impl Generator {
     }
 }
 
-fn item_is_public(vis: &syn::Visibility) -> bool {
+const fn item_is_public(vis: &syn::Visibility) -> bool {
     matches!(vis, syn::Visibility::Public(_))
 }
 

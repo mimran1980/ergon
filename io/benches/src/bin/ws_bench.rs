@@ -213,7 +213,7 @@ struct Row {
     max_preempted: bool,
 }
 
-fn id() -> ConnId {
+const fn id() -> ConnId {
     ConnId::from_parts(0, 0)
 }
 
@@ -480,7 +480,7 @@ fn rx_suite(a: &Args, sizes: &[usize], samples: usize, out: &mut String) -> BoxR
     Ok(())
 }
 
-fn preempted(p: bool) -> &'static str {
+const fn preempted(p: bool) -> &'static str {
     if !cfg!(target_os = "linux") {
         "n/a"
     } else if p {

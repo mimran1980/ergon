@@ -73,10 +73,10 @@ static void rusteron_dpdk_write_eth(
 /* IPv4 header with DF set, checksum field zeroed for hardware offload. The
  * identification field is left zero; the NIC does not require it. */
 static void rusteron_dpdk_write_ipv4(
-    uint8_t *dst, uint32_t dst_ip, uint32_t src_ip, uint16_t total_len, uint8_t ttl)
+    uint8_t *dst, uint32_t dst_ip, uint32_t src_ip, uint16_t total_len, uint8_t ttl, uint8_t tos)
 {
     dst[0] = 0x45;                                  /* IPv4, 20-byte header */
-    dst[1] = 0;                                     /* DSCP/ECN */
+    dst[1] = tos;                                   /* DSCP/ECN */
     dst[2] = (uint8_t)(total_len >> 8);
     dst[3] = (uint8_t)(total_len & 0xFF);
     dst[4] = 0;                                     /* identification (unused) */
@@ -112,6 +112,7 @@ int rusteron_dpdk_packet_build_udp(
     const uint8_t src_mac[RUSTERON_DPDK_ETH_ADDR_LEN],
     uint32_t dst_ip, uint32_t src_ip,
     uint16_t src_port, uint16_t dst_port,
+    uint8_t tos,
     const struct iovec *iov, size_t iov_count,
     size_t max_payload,
     int hw_csum)
@@ -134,7 +135,7 @@ int rusteron_dpdk_packet_build_udp(
 
     uint8_t *p = m->data;
     rusteron_dpdk_write_eth(p, dst_mac, src_mac, RUSTERON_DPDK_ETH_TYPE_IPV4);
-    rusteron_dpdk_write_ipv4(p + RUSTERON_DPDK_ETH_HDR_LEN, dst_ip, src_ip, (uint16_t)frame_len - RUSTERON_DPDK_ETH_HDR_LEN, 64);
+    rusteron_dpdk_write_ipv4(p + RUSTERON_DPDK_ETH_HDR_LEN, dst_ip, src_ip, (uint16_t)frame_len - RUSTERON_DPDK_ETH_HDR_LEN, 64, tos);
 
     uint16_t udp_len = RUSTERON_DPDK_UDP_HDR_LEN + (uint16_t)payload_len;
     uint16_t pseudo_csum = rusteron_dpdk_udp_pseudo_csum(src_ip, dst_ip, udp_len);
@@ -271,7 +272,7 @@ int rusteron_dpdk_packet_build_icmp(
     uint8_t *p = m->data;
     rusteron_dpdk_write_eth(p, dst_mac, src_mac, RUSTERON_DPDK_ETH_TYPE_IPV4);
     uint8_t *ip = p + RUSTERON_DPDK_ETH_HDR_LEN;
-    rusteron_dpdk_write_ipv4(ip, dst_ip, src_ip, (uint16_t)(RUSTERON_DPDK_IPV4_HDR_LEN + icmp_len), 64);
+    rusteron_dpdk_write_ipv4(ip, dst_ip, src_ip, (uint16_t)(RUSTERON_DPDK_IPV4_HDR_LEN + icmp_len), 64, 0);
     ip[6] = 0; /* no DF: ICMP may be fragmented */
     ip[9] = RUSTERON_DPDK_IP_PROTO_ICMP;
     const uint16_t ip_csum = rusteron_dpdk_inet_csum(ip, RUSTERON_DPDK_IPV4_HDR_LEN);

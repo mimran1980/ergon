@@ -692,7 +692,7 @@ invoker_ledger_total() {
 
 # aeron_telemetry: every counter of a driver (`counters ''`: "<value> <type>
 # <label>" a line) on stdin; one "info-<key>=<value>;..." line of Aeron's
-# stall and flow-control telemetry, matched by Aeron 1.53.3's labels exactly
+# stall and flow-control telemetry, matched by Aeron 1.54.0's labels exactly
 # (aeron_system_counters.c; the conductor appends ": <threading mode>" to the
 # agents' longest cycles and ": threshold=<duration> <threading mode>" to
 # their cycles over it, aeron_driver_conductor.c), system counters (type 0)
@@ -890,23 +890,45 @@ UNIT
 # Every function reads and writes under $LAB_SYS_ROOT and $LAB_PROC_ROOT, so
 # test/test-transport-runner.sh runs them against fake trees.
 
-# transport_cpu_map: "<housekeeping> <irq> <isolated,...>": the first thread
-# of each core in core order (an offline CPU, SMT off's twins, has no
-# topology and is no core): the first core housekeeping, the second every
-# data-NIC IRQ, the rest isolated. Standard_D16s_v6 with SMT off: 0 2
+# transport_cpu_map [off|on]: "<housekeeping> <irq> <isolated,...>": the
+# first thread of each core in core order (an offline CPU, SMT off's twins,
+# has no topology and is no core): the first core housekeeping, the second
+# every data-NIC IRQ, the rest isolated. Standard_D16s_v6 with SMT off: 0 2
 # 4,6,8,10,12,14. 2 with fewer than six cores (an Aeron arm needs four
 # isolated ones: its sender, receiver and conductor, and a client thread).
+# `on` (a session whose sets file says `smt on`): SMT stays on, and each
+# isolated core is listed whole, its first thread then its siblings, so a
+# loop's CPU and its SMT sibling are both isolated and neighbours in the
+# list (c7i.4xlarge: 0 1 2,10,3,11,4,12,5,13,6,14,7,15); the housekeeping and
+# IRQ cores' siblings are in no list (not isolated, nothing pinned there).
+# 2 when no core has a sibling (no SMT to keep on).
 transport_cpu_map() {
-    local dir=$LAB_SYS_ROOT/devices/system/cpu cpu siblings cores=()
+    local smt=${1:-off} dir=$LAB_SYS_ROOT/devices/system/cpu cpu siblings cores=() whole=() part s pair=0
     for cpu in $(printf '%s\n' "$dir"/cpu[0-9]* | sed 's/.*cpu//' | sort -n); do
         [[ -r $dir/cpu$cpu/topology/thread_siblings_list ]] || continue
         siblings=$(cat "$dir/cpu$cpu/topology/thread_siblings_list")
-        [[ ${siblings%%[,-]*} == "$cpu" ]] && cores+=("$cpu")
+        [[ ${siblings%%[,-]*} == "$cpu" ]] || continue
+        cores+=("$cpu")
+        # the core's threads, its first one first
+        s=$cpu
+        # (an offline sibling, without topology, is none)
+        for part in $(cpulist_expand "$siblings"); do
+            [[ $part != "$cpu" && -r $dir/cpu$part/topology/thread_siblings_list ]] || continue
+            s+=",$part" pair=1
+        done
+        whole+=("$s")
     done
     ((${#cores[@]} >= 6)) ||
         { echo "transport: ${#cores[@]} cores: the map needs six (housekeeping, IRQ, an Aeron arm's four isolated)" >&2; return 2; }
     local iso
-    iso=$(IFS=,; echo "${cores[*]:2}")
+    case $smt in
+    off) iso=$(IFS=,; echo "${cores[*]:2}") ;;
+    on)
+        ((pair)) || { echo "transport: smt on: no core has an SMT sibling (one thread a core): nothing to keep on" >&2; return 2; }
+        iso=$(IFS=,; echo "${whole[*]:2}")
+        ;;
+    *) echo "transport_cpu_map: smt $smt: off or on" >&2; return 2 ;;
+    esac
     echo "${cores[0]} ${cores[1]} $iso"
 }
 
@@ -956,7 +978,9 @@ cpulist_expand() {
 transport_boot_check() {
     local iso want got nohz
     read -r _ _ iso <<<"$1"
-    want=$(cpulist_expand "$iso")
+    # (as sets: an SMT-on map lists each core's threads together, the
+    # kernel in CPU order)
+    want=$(cpulist_expand "$iso" | tr ' ' '\n' | sort -n | paste -sd' ' -)
     got=$(cpulist_expand "$(cat "$LAB_SYS_ROOT/devices/system/cpu/isolated" 2>/dev/null)")
     nohz=$(cpulist_expand "$(cat "$LAB_SYS_ROOT/devices/system/cpu/nohz_full" 2>/dev/null)")
     if [[ -n $want && $got == "$want" && $nohz == "$want" ]]; then
@@ -1064,6 +1088,30 @@ transport_smt_off() {
     return 1
 }
 
+# transport_smt_on: SMT kept on (a session whose sets file says `smt on`)
+# and verified: control on and smt/active 1. 1 when it is off, or the CPU
+# has none.
+transport_smt_on() {
+    local d=$LAB_SYS_ROOT/devices/system/cpu/smt c a
+    c=$(cat "$d/control" 2>/dev/null) || { echo "smt: no $d/control: SMT state unknown" >&2; return 1; }
+    a=$(cat "$d/active" 2>/dev/null)
+    if [[ $c == on && $a == 1 ]]; then
+        echo "smt: on as the session declares (control $c active $a online $(cat "$LAB_SYS_ROOT/devices/system/cpu/online" 2>/dev/null))"
+        return 0
+    fi
+    echo "smt: control [$c] active [$a]: the session declares SMT on" >&2
+    return 1
+}
+
+# transport_smt_read: the SMT state every point reads back on each host
+# (vm.sh settings), "devices.system.cpu.smt.active=<0|1|absent>": the
+# session declares it (transport.sh tr_smt_declared), fairness.py's settings
+# rule holds every point to it
+transport_smt_read() {
+    local f=$LAB_SYS_ROOT/devices/system/cpu/smt/active
+    if [[ -r $f ]]; then echo "devices.system.cpu.smt.active=$(cat "$f")"; else echo "devices.system.cpu.smt.active=absent"; fi
+}
+
 # transport_quiet_settings <housekeeping cpulist> <isolated cpulist>: the
 # lab's quiet node settings (k8s/nri-shared-cpus/lab/lib.sh
 # lab_quiet_settings: one list for both labs), "path|value|why" a line
@@ -1161,6 +1209,7 @@ net/ipv4/tcp_congestion_control $TR_TCP_CONGESTION required
 net/ipv4/tcp_sack $TR_TCP_SACK required
 net/ipv4/tcp_timestamps $TR_TCP_TIMESTAMPS required
 net/ipv4/tcp_slow_start_after_idle $TR_TCP_SLOW_START_AFTER_IDLE required
+net/ipv4/tcp_autocorking $TR_TCP_AUTOCORKING required
 net/ipv4/tcp_rmem $TR_TCP_RMEM required
 net/ipv4/tcp_wmem $TR_TCP_WMEM required
 net/core/rmem_max $TR_CORE_RMEM_MAX required
@@ -1212,6 +1261,74 @@ transport_settings_read() {
             echo "${path//\//.}=absent"
         fi
     done < <(transport_sysctls)
+}
+
+# transport_idle_read <housekeeping CPUs> <IRQ CPUs>: "driver <cpuidle
+# driver> governor <governor> max_cstate <intel_idle's cap, - without it>",
+# then each CPU's cpuidle states, "cpu<N> <hk|irq> <index> <name> <disabled>
+# <exit latency us> <target residency us> <usage> <time us>" a line (none
+# without a cpuidle driver: the hypervisor owns idle). Read before and after
+# each point (vm.sh idle): the usage and time deltas say how often and how
+# deep the IRQ core slept between the NIC's interrupts
+transport_idle_read() {
+    local sys=${LAB_SYS_ROOT:-/sys} role cpus c st f v line
+    local cpuidle=$sys/devices/system/cpu/cpuidle
+    echo "driver $(cat "$cpuidle/current_driver" 2>/dev/null || echo none)" \
+        "governor $(cat "$cpuidle/current_governor" 2>/dev/null || cat "$cpuidle/current_governor_ro" 2>/dev/null || echo none)" \
+        "max_cstate $(cat "$sys/module/intel_idle/parameters/max_cstate" 2>/dev/null || echo -)"
+    for role in hk irq; do
+        if [[ $role == hk ]]; then cpus=$1; else cpus=$2; fi
+        for c in ${cpus//,/ }; do
+            for st in "$sys/devices/system/cpu/cpu$c/cpuidle"/state[0-9]*; do
+                [[ -d $st ]] || continue
+                line="cpu$c $role ${st##*state}"
+                for f in name disable latency residency usage time; do
+                    v=$(tr -d ' \t' <"$st/$f" 2>/dev/null)
+                    line+=" ${v:--}"
+                done
+                echo "$line"
+            done
+        done
+    done
+}
+
+# transport_irq_idle_auto: TR_IRQ_IDLE=auto's value on this host, each
+# platform's fair best: 1 (the first halt state, C1) under intel_idle, whose
+# C1E and C6 the c7i sessions' interrupt-driven receive paid for at every
+# wake (aws-20261028-092158: mio-tcp at 10k msg/s p50 43-160 us, 37-39
+# capped); all under any other driver (acpi_idle: c7a showed no wake-up
+# cost) or none (Graviton: the hypervisor owns idle)
+transport_irq_idle_auto() {
+    local sys=${LAB_SYS_ROOT:-/sys}
+    if [[ $(cat "$sys/devices/system/cpu/cpuidle/current_driver" 2>/dev/null) == intel_idle ]]; then echo 1; else echo all; fi
+}
+
+# transport_irq_idle_apply <IRQ CPUs> <all|n|auto>: on each CPU every cpuidle
+# state deeper than the n-th disabled and the rest enabled (all: every one
+# enabled; auto: transport_irq_idle_auto's), each read back; "irq_idle <v>
+# on CPU(s) <list> (<k> states)", 1 when one reads back otherwise or n asks
+# a cap where there is no cpuidle driver (nothing could hold it), 2 for a
+# value that is none of them
+transport_irq_idle_apply() {
+    local sys=${LAB_SYS_ROOT:-/sys} v=$2 c st i want got n=0 rc=0
+    [[ $v != auto ]] || v=$(transport_irq_idle_auto)
+    [[ $v == all || $v =~ ^[0-9]+$ ]] || { echo "irq_idle $v: all, auto or a state index" >&2; return 2; }
+    for c in ${1//,/ }; do
+        for st in "$sys/devices/system/cpu/cpu$c/cpuidle"/state[0-9]*; do
+            [[ -d $st ]] || continue
+            i=${st##*state} n=$((n + 1)) want=0
+            if [[ $v != all ]] && ((i > v)); then want=1; fi
+            echo "$want" | sudo tee "$st/disable" >/dev/null 2>&1 || true
+            got=$(cat "$st/disable" 2>/dev/null)
+            [[ $got == "$want" ]] || { echo "irq_idle $v: cpu$c state$i disable reads $got, wanted $want" >&2; rc=1; }
+        done
+    done
+    if ((n == 0)) && [[ $v != all ]]; then
+        echo "irq_idle $v: no cpuidle state on CPU(s) $1 (no cpuidle driver: the hypervisor owns idle)" >&2
+        return 1
+    fi
+    echo "irq_idle $v on CPU(s) $1 ($n states)"
+    return $rc
 }
 
 # transport_nstat: the kernel's protocol counters as nstat reads them
@@ -1291,7 +1408,13 @@ transport_coalesce_off() {
         echo "coalesce $vf: ethtool -c failed: $cur" >&2
         return 1
     fi
-    sudo ethtool -C "$vf" adaptive-rx off adaptive-tx off rx-usecs 0 tx-usecs 0 >/dev/null 2>&1 || true
+    # only what the driver reports: ethtool refuses the whole -C for one
+    # setting the driver lacks (ENA has no adaptive-tx: "Adaptive TX: n/a")
+    local args
+    args=$(awk '/^Adaptive RX:/ {if ($3 != "n/a") a = a " adaptive-rx off"; if ($5 != "n/a") a = a " adaptive-tx off"}
+        /^rx-usecs:/ {if ($2 != "n/a") a = a " rx-usecs 0"} /^tx-usecs:/ {if ($2 != "n/a") a = a " tx-usecs 0"} END {print a}' <<<"$cur")
+    # shellcheck disable=SC2086
+    [[ -z $args ]] || sudo ethtool -C "$vf" $args >/dev/null 2>&1 || true
     cur=$(ethtool -c "$vf" 2>/dev/null | awk '/^Adaptive RX:/ {ar = $3; at = $5} /^rx-usecs:/ {r = $2} /^tx-usecs:/ {t = $2} END {print ar, at, r, t}')
     if [[ $cur =~ ^(off|n/a)\ (off|n/a)\ (0|n/a)\ (0|n/a)$ ]]; then echo "coalesce $vf off ($cur)"; return 0; fi
     echo "coalesce $vf: [$cur] (adaptive rx, tx, rx-usecs, tx-usecs) after asking off and 0" >&2
@@ -1306,11 +1429,146 @@ netem_set() {
     shift
     for i in "$@"; do sudo tc qdisc replace dev "$i" root netem limit 100000 loss "$p%" || return 1; done
 }
+# netem_set_peer <loss %> <iface>...: the kernel peer. Egress is netem_set.
+# Ingress is the same loss on an ifb device, fed by a mirred redirect, so
+# both directions are dropped. The caller passes kernel interfaces only:
+# a DPDK NIC is not in the kernel and is not given a qdisc.
+netem_set_peer() {
+    local p=$1 i ifbs=()
+    shift
+    netem_set "$p" "$@" || return 1
+    sudo modprobe ifb || return 1
+    for i in "$@"; do
+        sudo ip link add "ifb-$i" type ifb 2>/dev/null || true
+        sudo ip link set "ifb-$i" up || return 1
+        sudo tc qdisc replace dev "$i" handle ffff: ingress || return 1
+        sudo tc filter replace dev "$i" parent ffff: protocol all u32 match u32 0 0 action mirred egress redirect dev "ifb-$i" || return 1
+        sudo tc qdisc replace dev "ifb-$i" root netem limit 100000 loss "$p%" || return 1
+        ifbs+=("ifb-$i")
+    done
+    netem_check "$p" "${ifbs[@]}"
+}
 netem_clear() {
     local i
     for i in "$@"; do
         if tc qdisc show dev "$i" 2>/dev/null | grep -q '^qdisc netem .* root'; then sudo tc qdisc del dev "$i" root || return 1; fi
+        if tc qdisc show dev "$i" ingress 2>/dev/null | grep -q ingress; then sudo tc qdisc del dev "$i" ingress || return 1; fi
+        if ip link show "ifb-$i" >/dev/null 2>&1; then sudo ip link del "ifb-$i" || return 1; fi
     done
+}
+
+# ---- Onload over AF_XDP (the transport suite's setup onload: vm.sh onload-up,
+# its undoing in vm.sh stop). Onload's sfc_resource registers a NIC by name
+# (/sys/module/sfc_resource/afxdp/register) and links its XDP program by the
+# driver's ndo_bpf. The ENA's native XDP takes it only with one buffer a frame
+# (MTU at most ENA_XDP_MAX_MTU, 3498 at 4 KiB pages: ena_xdp.h) and its queues
+# at most half its maximum (ena_xdp.c: "the Rx/Tx channel count should be at
+# most half"), and has no ntuple filters (no set_rxnfc), so Onload runs with
+# its flow filters off and the NIC on one queue: every TCP and UDP frame lands
+# on queue 0, the one Onload binds (its XDP program redirects by queue).
+# Onload adds the NIC even when its XDP set-up failed ("hardware init failed",
+# resource_driver.c efrm_nic_add, which carries on), and a stack on such a NIC
+# froze EC2 instances (Xilinx-CNS/onload#231, #210): so each precondition is
+# set first, and the XDP program's taking is read back (the ENA's maxmtu drops
+# to ENA_XDP_MAX_MTU while one is attached), fail closed.
+
+# onload_max_mtu <iface>: the interface's largest MTU now (ip -d: maxmtu)
+onload_max_mtu() {
+    ip -d -j link show dev "$1" 2>/dev/null | python3 -c 'import json, sys
+try:
+    print(json.load(sys.stdin)[0]["max_mtu"])
+except Exception:
+    pass'
+}
+
+# onload_combined <iface> [max]: the interface's combined queues now (max:
+# its maximum), from ethtool -l
+onload_combined() {
+    ethtool -l "$1" 2>/dev/null | awk -v want="${2:-current}" '/^Pre-set maximums/ {s = "max"} /^Current hardware settings/ {s = "current"}
+        /^Combined:/ && s == want {print $2}'
+}
+
+# onload_nic_up <iface> <state dir>: the interface on one queue, its MTU at
+# most TR_ONLOAD_MTU and its interrupts not deferred (TR_ONLOAD_NAPI_DEFER),
+# each one's value first kept in <state dir> for onload_nic_down, then
+# registered with Onload and its XDP program read back; 1 saying what failed
+onload_nic_up() {
+    local i=$1 st=$2 mtu max comb before after sysd=${LAB_SYS_ROOT:-/sys}/module/sfc_resource
+    mkdir -p "$st"
+    [[ -w $sysd/afxdp/register || -e $sysd/afxdp/register ]] || { echo "onload: $sysd/afxdp/register missing (the sfc_resource module not loaded)" >&2; return 1; }
+    mtu=$(cat "${LAB_SYS_ROOT:-/sys}/class/net/$i/mtu") comb=$(onload_combined "$i") max=$(onload_combined "$i" max)
+    [[ $comb =~ ^[0-9]+$ && $max =~ ^[0-9]+$ ]] || { echo "onload: $i's combined queues not read (ethtool -l: [$comb] of [$max])" >&2; return 1; }
+    ((max >= 2)) || { echo "onload: $i takes at most $max queue: ENA's XDP needs its queues at most half the maximum" >&2; return 1; }
+    [[ -e $st/$i.mtu ]] || echo "$mtu" >"$st/$i.mtu"
+    [[ -e $st/$i.combined ]] || echo "$comb" >"$st/$i.combined"
+    if ((comb != 1)); then
+        local rc=0
+        sudo ethtool -L "$i" combined 1 2>"$st/ethtool.err" || rc=$?
+        [[ $rc == 0 || $rc == 80 ]] || { echo "onload: ethtool -L $i combined 1: $(cat "$st/ethtool.err")" >&2; return 1; }
+    fi
+    [[ $(onload_combined "$i") == 1 ]] || { echo "onload: $i has $(onload_combined "$i") combined queues after asking 1" >&2; return 1; }
+    if ((mtu > TR_ONLOAD_MTU)); then sudo ip link set dev "$i" mtu "$TR_ONLOAD_MTU" || { echo "onload: $i's MTU $TR_ONLOAD_MTU refused" >&2; return 1; }; fi
+    echo "$TR_ONLOAD_NAPI_DEFER" | sudo tee "${LAB_SYS_ROOT:-/sys}/class/net/$i/napi_defer_hard_irqs" >/dev/null
+    echo 0 | sudo tee "${LAB_SYS_ROOT:-/sys}/class/net/$i/gro_flush_timeout" >/dev/null
+    before=$(onload_max_mtu "$i")
+    # registered from here on, whatever follows: onload_nic_down unregisters it
+    : >"$st/$i.registered"
+    echo "$i" | sudo tee "$sysd/afxdp/register" >/dev/null || { echo "onload: registering $i with Onload's AF_XDP failed" >&2; return 1; }
+    after=$(onload_max_mtu "$i")
+    if [[ -z $after || $after == "$before" ]]; then
+        echo "onload: $i's XDP program not attached after registering it (maxmtu $before, then ${after:-unread}): Onload's AF_XDP set-up failed on it (dmesg: hardware init failed)" >&2
+        return 1
+    fi
+    echo "onload $i: registered, AF_XDP on its native XDP (maxmtu $before -> $after), 1 queue (was $comb of $max), MTU $(cat "${LAB_SYS_ROOT:-/sys}/class/net/$i/mtu") (was $mtu), napi_defer $TR_ONLOAD_NAPI_DEFER"
+}
+
+# onload_nic_down <iface> <state dir>: what onload_nic_up did, undone:
+# unregistered (its XDP program unlinked: maxmtu back up), then its queues and
+# MTU as they were; nothing for an interface it never touched; 1 saying what
+# did not come back
+onload_nic_down() {
+    local i=$1 st=$2 rc=0 sysd=${LAB_SYS_ROOT:-/sys}/module/sfc_resource v
+    if [[ -e $st/$i.registered ]]; then
+        if [[ -e $sysd/afxdp/unregister ]]; then
+            echo "$i" | sudo tee "$sysd/afxdp/unregister" >/dev/null || { echo "onload: unregistering $i failed" >&2; rc=1; }
+        fi
+        v=$(onload_max_mtu "$i")
+        if [[ -n $v ]] && ((v <= TR_ONLOAD_MTU)); then echo "onload: $i's maxmtu still $v after unregistering: its XDP program left attached" >&2; rc=1; fi
+        rm -f "$st/$i.registered"
+    fi
+    if [[ -e $st/$i.combined ]]; then
+        v=$(cat "$st/$i.combined")
+        if [[ $(onload_combined "$i") != "$v" ]]; then
+            local erc=0
+            sudo ethtool -L "$i" combined "$v" 2>"$st/ethtool.err" || erc=$?
+            [[ $erc == 0 || $erc == 80 ]] || { echo "onload: ethtool -L $i combined $v: $(cat "$st/ethtool.err")" >&2; rc=1; }
+        fi
+        [[ $(onload_combined "$i") == "$v" ]] && rm -f "$st/$i.combined" || { echo "onload: $i has $(onload_combined "$i") combined queues, not its $v" >&2; rc=1; }
+    fi
+    if [[ -e $st/$i.mtu ]]; then
+        v=$(cat "$st/$i.mtu")
+        [[ $(cat "${LAB_SYS_ROOT:-/sys}/class/net/$i/mtu") == "$v" ]] || sudo ip link set dev "$i" mtu "$v" || rc=1
+        [[ $(cat "${LAB_SYS_ROOT:-/sys}/class/net/$i/mtu") == "$v" ]] && rm -f "$st/$i.mtu" || { echo "onload: $i's MTU not back at $v" >&2; rc=1; }
+    fi
+    return $rc
+}
+
+# onload_stacks_verdict <process name>: onload_stackdump's stack list on
+# stdin: "ok <n> stack(s) of <name>: <stack:pids>..." when a stack has a
+# process of that name (its pids checked against ps), else "FAIL ..."
+onload_stacks_verdict() {
+    local name=$1 lines pid stack ok=() all=()
+    lines=$(awk '/^#/ {next} NF >= 3 && $1 ~ /^[0-9]+$/ {print $1, $3}' | tr -d '[]')
+    while read -r stack pids; do
+        [[ -n $stack ]] || continue
+        all+=("$stack:$pids")
+        for pid in ${pids//,/ }; do
+            [[ $(cat "${LAB_PROC_ROOT:-/proc}/$pid/comm" 2>/dev/null) == "$name" ]] && { ok+=("$stack:$pid"); break; }
+        done
+    done <<<"$lines"
+    if ((${#ok[@]})); then echo "ok ${#ok[@]} stack(s) of $name: ${ok[*]}"; return 0; fi
+    echo "FAIL no Onload stack of $name (stacks: ${all[*]:-none})"
+    return 1
 }
 
 # netem_check <loss %|none> <iface>...: 0 when each one's root qdisc is netem
@@ -1544,7 +1802,8 @@ events_start() {
     echo "$cpus" >"$d/cpus"
     sudo env LAB_SYS_ROOT="$LAB_SYS_ROOT" bash -c "$(declare -f events_trace_start events_trace_stop); events_trace_start $name $cpus $kb" >"$d/notes" 2>&1
     if declare -F knoise_start >/dev/null; then
-        sudo env LAB_SYS_ROOT="$LAB_SYS_ROOT" bash -c "$(declare -f knoise_start); knoise_start $cpus" 2>&1 | sed 's/^/events: /' >>"$d/notes"
+        # (EVENTS_KNOISE_CPUS: the caller's subset, never a housekeeping CPU)
+        sudo env LAB_SYS_ROOT="$LAB_SYS_ROOT" bash -c "$(declare -f knoise_start); knoise_start ${EVENTS_KNOISE_CPUS:-$cpus}" 2>&1 | sed 's/^/events: /' >>"$d/notes"
     else
         echo "events: osnoise not tried: ${EVENTS_NO_OSNOISE:-this host runs no osnoise}" >>"$d/notes"
     fi

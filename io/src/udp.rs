@@ -16,19 +16,21 @@
 //!   nothing allocates after [`UdpConn::connect`].
 //! - `ECONNREFUSED` (the peer's port answered ICMP unreachable) is counted
 //!   ([`UdpStats::refused`]) and the socket stays open.
+//! - On `smoltcp-spin` the socket is the stack's, `UdpConn<SmolUdp>`:
+//!   `smoltcp_dpdk::Stack::udp_connect` and `udp_bind` make it.
 //! - `Driver::<UdpConn>::new` refuses `recv-busy` and `uring-sqpoll`
 //!   ([`Error::Unsupported`]). No TCP option, keepalive or quick-ACK route
 //!   check applies; `SO_RCVBUF`, `SO_BUSY_POLL` and receive timestamps do.
 
 use std::net::{SocketAddr, UdpSocket};
-use std::os::fd::{AsRawFd, RawFd};
-
-use socket2::{Domain, Protocol, SockRef, Socket, Type};
+use std::os::fd::RawFd;
 
 use crate::RxMeta;
 use crate::endpoint::sealed::{Deliver, Io, RouteSlot};
 use crate::endpoint::{ConnId, ConnMut, Handler};
 use crate::error::{Error, Result};
+use crate::net::DatagramSocket;
+use crate::netstack::{Kernel, Sockets};
 use crate::stream::TxQueue;
 
 /// The largest UDP payload over IPv4 (65 535 less the IP and UDP headers).
@@ -101,8 +103,11 @@ pub struct UdpStats {
 }
 
 /// A UDP socket a `Driver` owns. The socket closes when it is dropped.
-pub struct UdpConn {
-    sock: UdpSocket,
+///
+/// `D` is the socket and so its stack ([`crate::net::DatagramSocket`]): the
+/// kernel's [`UdpSocket`], or `SmolUdp` on `smoltcp-spin`.
+pub struct UdpConn<D = UdpSocket> {
+    sock: D,
     /// Connected to a peer: sends are possible.
     connected: bool,
     rx: Box<[u8]>,
@@ -138,6 +143,11 @@ impl UdpConn {
         Self::build(sock, true, opts)
     }
 
+    fn socket(local: SocketAddr, opts: &UdpOptions) -> Result<UdpSocket> {
+        opts.check()?;
+        Kernel::udp_bind(local, opts.sndbuf)
+    }
+
     /// A receive-only socket bound to `local`: it takes datagrams from any
     /// sender, and [`UdpConn::send`] is refused.
     ///
@@ -147,21 +157,13 @@ impl UdpConn {
         let sock = Self::socket(local, opts)?;
         Self::build(sock, false, opts)
     }
+}
 
-    fn socket(local: SocketAddr, opts: &UdpOptions) -> Result<UdpSocket> {
+impl<D: DatagramSocket> UdpConn<D> {
+    /// A connection over `sock` (made by its stack), sending when
+    /// `connected`.
+    pub(crate) fn build(sock: D, connected: bool, opts: &UdpOptions) -> Result<Self> {
         opts.check()?;
-        let s = Socket::new(Domain::for_address(local), Type::DGRAM, Some(Protocol::UDP))?;
-        s.set_nonblocking(true)?;
-        if let Some(b) = opts.sndbuf {
-            s.set_send_buffer_size(usize::try_from(b).map_err(|_| {
-                Error::Config(format!("udp sndbuf {b} does not fit this platform"))
-            })?)?;
-        }
-        s.bind(&local.into())?;
-        Ok(s.into())
-    }
-
-    fn build(sock: UdpSocket, connected: bool, opts: &UdpOptions) -> Result<Self> {
         let max = opts.max_datagram;
         let ring_len = max
             .checked_mul(opts.tx_slots)
@@ -199,13 +201,10 @@ impl UdpConn {
             ));
         }
         if payload.len() > self.max {
-            return Err(Error::Config(format!(
-                "udp datagram of {} bytes is over max_datagram {}",
-                payload.len(),
-                self.max
-            )));
+            return Err(over_max_datagram(payload.len(), self.max));
         }
         if self.queued == self.lens.len() {
+            std::hint::cold_path();
             self.stats.tx_full += 1;
             return Err(Error::Busy("udp send slots full"));
         }
@@ -234,32 +233,33 @@ impl UdpConn {
     /// # Errors
     /// `getsockname` fails.
     pub fn local_addr(&self) -> Result<SocketAddr> {
-        Ok(self.sock.local_addr()?)
+        self.sock.local_addr()
     }
 
     /// The peer, for a connected socket.
     #[must_use]
     pub fn peer_addr(&self) -> Option<SocketAddr> {
-        self.sock.peer_addr().ok()
+        self.sock.peer_addr()
     }
 
     /// The socket descriptor (for inspection; the driver owns the socket).
     #[must_use]
     pub fn raw_fd(&self) -> RawFd {
-        self.sock.as_raw_fd()
+        self.sock.fd()
     }
 
-    /// `SO_RCVBUF` as the kernel granted it (twice the size it keeps).
+    /// `SO_RCVBUF` as the kernel granted it (twice the size it keeps); on
+    /// `smoltcp-spin`, the stack's UDP buffer (`StackConfig::udp_buf`).
     ///
     /// # Errors
     /// `getsockopt` fails.
     pub fn recv_buffer_size(&self) -> Result<usize> {
-        Ok(SockRef::from(&self.sock).recv_buffer_size()?)
+        self.sock.recv_buffer_size()
     }
 }
 
 /// A driver-owned [`UdpConn`]: the same send.
-impl ConnMut<'_, UdpConn> {
+impl<D: DatagramSocket> ConnMut<'_, UdpConn<D>> {
     /// [`UdpConn::send`].
     ///
     /// # Errors
@@ -270,12 +270,13 @@ impl ConnMut<'_, UdpConn> {
     }
 }
 
-impl Io for UdpConn {
+impl<D: DatagramSocket> Io for UdpConn<D> {
     const DATAGRAM: bool = true;
+    const STACK: crate::netstack::StackId = D::STACK;
 
     #[inline]
     fn fd(&self) -> RawFd {
-        self.sock.as_raw_fd()
+        self.sock.fd()
     }
     #[inline]
     fn rx_space(&mut self) -> &mut [u8] {
@@ -324,7 +325,7 @@ impl Io for UdpConn {
     }
 }
 
-impl<H: UdpHandler> Deliver<H> for UdpConn {
+impl<D: DatagramSocket, H: UdpHandler> Deliver<H> for UdpConn<D> {
     #[inline]
     fn on_received(
         &mut self,
@@ -338,4 +339,12 @@ impl<H: UdpHandler> Deliver<H> for UdpConn {
         self.stats.rx += 1;
         Ok(1)
     }
+}
+/// The refusal for a datagram over `max_datagram`, built out of line.
+#[cold]
+#[inline(never)]
+fn over_max_datagram(len: usize, max: usize) -> Error {
+    Error::Config(format!(
+        "udp datagram of {len} bytes is over max_datagram {max}"
+    ))
 }

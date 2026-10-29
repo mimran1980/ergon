@@ -1,0 +1,28 @@
+# EXPERIMENTAL: on AWS ENA, Onload's AF_XDP mode froze a c7i.4xlarge at
+# NIC registration (aws-20261027-100813); no latency measured. See the book's
+# transport comparison, "Onload on ENA: not viable".
+#
+# The AWS Onload session's sets (aws/lab.sh LAB_SUITE=transport LAB_PAIR=a
+# LAB_SETS_FILE=<this file>, in place of the matrix's sets): the matrix's
+# Onload arms (onload-*: OpenOnload over AF_XDP on the ENA, setup onload,
+# vm.sh onload-up) against its kernel arms, the same binaries with the same
+# flags but for what Onload has not got (kernel busy poll, kernel TCP timers:
+# transport.sh tr_bin_args), run under `onload --profile=latency` (TR_ONLOAD_*:
+# transport-settings.env, each point's manifest), so a pair differs only in
+# the stack. One pair of one type: c7i.4xlarge (Intel, SMT off), c8g.2xlarge
+# (Graviton, LAB_ALLOW_ARM=1) or c7a.2xlarge (AMD), all 8 cores, the same CPU
+# map. No netem: Onload's AF_XDP sends skip the kernel's qdiscs.
+#
+#   t   TCP, 1 and 8 connections: ergon-io under Onload and on the kernel
+#   r   Aeron reliable UDP, 1 stream: the media driver under Onload and on
+#       the kernel
+#
+# Trimmed to keep a session near 2 h at LAB_REPS=3 (LAB_ESTIMATE=1: each
+# arm at a stream count adds about 0.15 h): mio's arms and the unreliable
+# UDP arms (Aeron's and ergon-io's) run in no set here, only in
+# transport-aws-onload-smoke.tsv's check of every Onload arm, which runs
+# first (LAB_REPS=1).
+#
+# set   pair par host loads               streams  netem  arms
+set t    a    -   ab   10000,50000,200000  1,8      -      onload-eio-tcp,eio-tcp,aa
+set r    a    -   ab   10000,50000,200000  1        -      onload-aeron-rel,aeron-rel,aa

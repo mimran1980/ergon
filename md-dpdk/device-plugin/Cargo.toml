@@ -37,5 +37,5 @@ tower = "0.5"
 protox = "0.10"
 tonic-prost-build = "0.14"
 
-[lints.rust]
-missing_docs = "warn"
+[lints]
+workspace = true

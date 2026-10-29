@@ -19,6 +19,7 @@ pub struct AeronErrorSource(Arc<AeronCError>);
 
 impl AeronErrorSource {
     /// Borrow the wrapped [`AeronCError`].
+    #[must_use]
     pub fn as_aeron_error(&self) -> &AeronCError {
         &self.0
     }
@@ -63,9 +64,10 @@ pub enum PublicationFailure {
 }
 
 impl PublicationFailure {
-    /// Map a raw Aeron offer/try_claim return (must be `< 0`).
+    /// Map a raw Aeron offer / `try_claim` return (must be `< 0`).
     #[inline]
-    pub fn from_raw(code: i64) -> Self {
+    #[must_use]
+    pub const fn from_raw(code: i64) -> Self {
         match code {
             -1 => Self::NotConnected,
             -2 => Self::BackPressured,
@@ -78,6 +80,7 @@ impl PublicationFailure {
 
     /// From rusteron's typed offer error.
     #[inline]
+    #[must_use]
     pub fn from_offer_error(e: &AeronOfferError) -> Self {
         match e {
             AeronOfferError::NotConnected => Self::NotConnected,
@@ -93,7 +96,7 @@ impl PublicationFailure {
     /// A retry (after idle / waiting for a subscriber) can succeed.
     #[must_use = "the retry decision is the point of calling this"]
     #[inline]
-    pub fn is_retryable(self) -> bool {
+    pub const fn is_retryable(self) -> bool {
         matches!(self, Self::NotConnected | Self::BackPressured | Self::AdminAction)
     }
 
@@ -102,7 +105,7 @@ impl PublicationFailure {
     /// Aeron return code exists, so there is no real sentinel to report.
     #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-    pub fn raw_code(self) -> Option<i64> {
+    pub const fn raw_code(self) -> Option<i64> {
         match self {
             Self::NotConnected => Some(-1),
             Self::BackPressured => Some(-2),
@@ -205,7 +208,7 @@ pub enum ClusterError {
     ChannelUri {
         /// Description of the channel URI problem.
         reason: String,
-        /// The underlying AeronUriString parse error.
+        /// The underlying `AeronUriString` parse error.
         #[source]
         source: AeronErrorSource,
     },
@@ -259,7 +262,8 @@ pub enum ClusterError {
 
 impl ClusterError {
     /// Wrap an [`AeronCError`] with a static context label.
-    #[inline]
+    #[cold]
+    #[must_use]
     pub fn aeron(context: &'static str, e: AeronCError) -> Self {
         let message = e.to_string();
         let source = e.into();
@@ -271,14 +275,15 @@ impl ClusterError {
     }
 
     /// Connect-phase failure with a free-form reason.
-    #[inline]
+    #[cold]
     pub fn connect(reason: impl Into<String>) -> Self {
         Self::ConnectFailed { reason: reason.into() }
     }
 
-    /// Publication failure from a raw offer/try_claim return code (`code < 0`).
+    /// Publication failure from a raw offer / `try_claim` return code (`code < 0`).
     #[inline]
-    pub fn from_offer_raw(context: &'static str, code: i64) -> Self {
+    #[must_use]
+    pub const fn from_offer_raw(context: &'static str, code: i64) -> Self {
         Self::Publication {
             failure: PublicationFailure::from_raw(code),
             context,
@@ -287,6 +292,11 @@ impl ClusterError {
 
     /// Publication failure from rusteron [`AeronOfferError`].
     #[inline]
+    #[must_use]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "a constructor from an error takes it by value, as `From<AeronOfferError>` does"
+    )]
     pub fn from_offer_error(context: &'static str, e: AeronOfferError) -> Self {
         Self::Publication {
             failure: PublicationFailure::from_offer_error(&e),
@@ -298,7 +308,7 @@ impl ClusterError {
     /// Carries the reason as an Aeron message string. Not classified
     /// as a retryable sentinel — use `from_offer_raw`/`from_offer_error`
     /// for those.
-    #[inline]
+    #[cold]
     pub fn publication(reason: impl Into<String>) -> Self {
         Self::Aeron {
             context: "publication",
@@ -308,7 +318,7 @@ impl ClusterError {
     }
 
     /// Reconnect-phase failure with a free-form reason.
-    #[inline]
+    #[cold]
     pub fn reconnect(reason: impl Into<String>) -> Self {
         Self::ReconnectFailed { reason: reason.into() }
     }
@@ -316,7 +326,7 @@ impl ClusterError {
     /// Whether an idle/retry loop may succeed.
     #[must_use = "the retry decision is the point of calling this"]
     #[inline]
-    pub fn is_retryable(&self) -> bool {
+    pub const fn is_retryable(&self) -> bool {
         match self {
             Self::Publication { failure, .. } => failure.is_retryable(),
             _ => false,
@@ -325,30 +335,33 @@ impl ClusterError {
 }
 
 impl From<crate::codecs::session::sbe_rt::DecodeError> for ClusterError {
+    #[cold]
     fn from(e: crate::codecs::session::sbe_rt::DecodeError) -> Self {
-        ClusterError::ProtocolError {
+        Self::ProtocolError {
             reason: format!("decode: {e:?}"),
         }
     }
 }
 
 impl From<crate::codecs::session::sbe_rt::EncodeError> for ClusterError {
+    #[cold]
     fn from(e: crate::codecs::session::sbe_rt::EncodeError) -> Self {
-        ClusterError::ProtocolError {
+        Self::ProtocolError {
             reason: format!("encode: {e:?}"),
         }
     }
 }
 
 impl From<AeronCError> for ClusterError {
+    #[cold]
     fn from(e: AeronCError) -> Self {
-        ClusterError::aeron("aeron", e)
+        Self::aeron("aeron", e)
     }
 }
 
 impl From<AeronOfferError> for ClusterError {
     fn from(e: AeronOfferError) -> Self {
-        ClusterError::from_offer_error("offer", e)
+        Self::from_offer_error("offer", e)
     }
 }
 
@@ -380,24 +393,24 @@ impl std::fmt::Display for ClusterEvent {
 impl std::error::Error for ClusterEvent {}
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
 
     #[test]
-    fn offer_sentinels_are_classified() -> Result<(), Box<dyn std::error::Error>> {
+    fn offer_sentinels_are_classified() {
         assert!(ClusterError::from_offer_raw("offer", -1).is_retryable());
         assert!(ClusterError::from_offer_raw("offer", -2).is_retryable());
         assert!(ClusterError::from_offer_raw("offer", -3).is_retryable());
         assert!(!ClusterError::from_offer_raw("offer", -4).is_retryable());
         assert!(!ClusterError::from_offer_raw("offer", -5).is_retryable());
-        Ok(())
     }
 
     /// Every `AeronOfferError` variant maps to a `PublicationFailure`,
     /// retains its retryability, and `TooManyParts` gets no fabricated raw
     /// sentinel: `-100` is not a real Aeron offer code.
     #[test]
-    fn every_offer_error_maps_with_correct_retryability_and_raw_code() -> Result<(), Box<dyn std::error::Error>> {
+    fn every_offer_error_maps_with_correct_retryability_and_raw_code() {
         let cases: &[(AeronOfferError, PublicationFailure, bool, Option<i64>)] = &[
             (
                 AeronOfferError::NotConnected,
@@ -444,15 +457,12 @@ mod tests {
         assert_eq!(mapped, PublicationFailure::Other(-42));
         assert!(!mapped.is_retryable());
         assert_eq!(mapped.raw_code(), Some(-42));
-
-        Ok(())
     }
 
     #[test]
-    fn too_many_parts_display_never_mentions_a_fabricated_code() -> Result<(), Box<dyn std::error::Error>> {
+    fn too_many_parts_display_never_mentions_a_fabricated_code() {
         let msg = PublicationFailure::TooManyParts.to_string();
         assert!(!msg.contains("-100"), "{msg}");
         assert!(msg.contains("part"), "{msg}");
-        Ok(())
     }
 }

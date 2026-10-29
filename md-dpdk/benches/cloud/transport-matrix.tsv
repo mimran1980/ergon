@@ -5,10 +5,26 @@
 # arm <name> <binary> <setup> <hosts> [<arguments>...]
 #   binary   a bench binary on the VMs' PATH (transport-cli.md)
 #   setup    none (no network), kernel or dpdk (a media driver: vm.sh driver),
-#            sockets (the kernel data path, busy poll: vm.sh sockets)
+#            dpdk-raw (the data NICs on DPDK and no driver: vm.sh driver
+#            dpdk-raw; the raw floor's binary takes the driver's environment),
+#            sockets (the kernel data path, busy poll: vm.sh sockets), fstack
+#            (no media driver; the data NICs on igb_uio for the binary's own
+#            DPDK: vm.sh fstack-up; AWS only), onload (the binary, or
+#            an Aeron arm's media driver, under OpenOnload over AF_XDP on the
+#            data NICs: vm.sh onload-up; AWS only). A set with a dpdk, fstack
+#            or onload arm has netem - (netem cannot reach a NIC DPDK holds,
+#            nor Onload's AF_XDP sends)
 #   hosts    one (both ends in one process on one host: rtt and one-way
-#            rows) or two (ping on host a, pong on host b: round trips)
+#            rows), two (ping on host a, pong on host b: round trips) or
+#            sink (one's runs on host a, each with a sink on host b reading
+#            every frame its publications send: --mode spy-udp; a set on
+#            host a, netem -, run alone)
 #   arguments  the arm's own flags, after the runner's (transport-cli.md)
+#
+# smt <off|on>  (a sets file's, once) the session's SMT: off without it (vm.sh
+#          transport-tune turns it off); on keeps it on, each isolated core
+#          whole in the CPU map (host.sh transport_cpu_map), every arm a
+#          two-host socket arm, T10 reported and the smt rule (fairness.py)
 #
 # set <id> <pair> <par> <host> <loads> <streams> <netem> <arms>
 #   pair     the session (LAB_PAIR) that runs it: a or b
@@ -26,6 +42,11 @@
 #
 # Points: arms x loads x streams x netem levels x 5 reps.
 #
+# aeron-spy's publications have no destination: it sends nothing on the
+# wire, so it measures IPC through a UDP publication's term buffer.
+# aeron-spy-udp is the same round trip on publications that send every frame
+# to a sink on host b (reliable, ssc=false: the sink connects them).
+#
 # aeron-ipc-huge is aeron-ipc with its Aeron directory on a 2 MiB hugetlbfs
 # (TR_AERON_HUGE_DIR) in place of tmpfs: transport-settings.env's
 # TR_DECLARED names that its one difference, and fairness.py checks nothing
@@ -35,16 +56,84 @@ arm  mpsc             mpsc_lat   none     one
 arm  aeron-ipc        aeron_lat  kernel   one  --mode ipc
 arm  aeron-ipc-huge   aeron_lat  kernel   one  --mode ipc
 arm  aeron-spy        aeron_lat  kernel   one  --mode spy
+arm  aeron-spy-udp    aeron_lat  kernel   sink --mode spy-udp
+arm  dpdk-aeron-spy-udp aeron_lat dpdk    sink --mode spy-udp
 arm  aeron-self       aeron_lat  kernel   one  --mode udp --reliable false
 arm  dpdk-aeron-self  aeron_lat  dpdk     one  --mode udp --reliable false
 arm  aeron-udp        aeron_lat  kernel   two  --mode udp --reliable false
 arm  dpdk-aeron-udp   aeron_lat  dpdk     two  --mode udp --reliable false
 arm  aeron-rel        aeron_lat  kernel   two  --mode udp --reliable true
 arm  dpdk-aeron-rel   aeron_lat  dpdk     two  --mode udp --reliable true
+# the hand-off arms: dpdk-aeron-rel's and aeron-rel's rows, each declared its
+# twin but for its driver's place or threading (transport-settings.env
+# TR_DECLARED; transport-aws-aeron-handoff.tsv)
+arm  dpdk-aeron-rel-emb     aeron_lat  dpdk    two  --mode udp --reliable true
+arm  dpdk-aeron-rel-shnet   aeron_lat  dpdk    two  --mode udp --reliable true
+arm  dpdk-aeron-rel-shared  aeron_lat  dpdk    two  --mode udp --reliable true
+arm  dpdk-aeron-rel-invoker aeron_lat  dpdk    two  --mode udp --reliable true
+arm  aeron-rel-emb          aeron_lat  kernel  two  --mode udp --reliable true
+arm  aeron-rel-invoker      aeron_lat  kernel  two  --mode udp --reliable true
+# the mixed-load arms (transport-aws-aeron-mixed.tsv): a 64-byte hot stream at
+# 10k msg/s measured beside background streams of steady, bursty and
+# idle-then-burst traffic, 64 to 4096 B, fan-out 1 to 4 on the pong
+# (aeron_lat --load mixed, mixed.rs); the set's load is every stream's. Each
+# stack's in the five threading models, declared twins of its first
+# (TR_DECLARED), as the hand-off arms
+arm  aeron-mix              aeron_lat  kernel  two  --mode udp --reliable true --load mixed --hot-rate 10000
+arm  aeron-mix-emb          aeron_lat  kernel  two  --mode udp --reliable true --load mixed --hot-rate 10000
+arm  aeron-mix-shnet        aeron_lat  kernel  two  --mode udp --reliable true --load mixed --hot-rate 10000
+arm  aeron-mix-shared       aeron_lat  kernel  two  --mode udp --reliable true --load mixed --hot-rate 10000
+arm  aeron-mix-invoker      aeron_lat  kernel  two  --mode udp --reliable true --load mixed --hot-rate 10000
+arm  dpdk-aeron-mix         aeron_lat  dpdk    two  --mode udp --reliable true --load mixed --hot-rate 10000
+arm  dpdk-aeron-mix-emb     aeron_lat  dpdk    two  --mode udp --reliable true --load mixed --hot-rate 10000
+arm  dpdk-aeron-mix-shnet   aeron_lat  dpdk    two  --mode udp --reliable true --load mixed --hot-rate 10000
+arm  dpdk-aeron-mix-shared  aeron_lat  dpdk    two  --mode udp --reliable true --load mixed --hot-rate 10000
+arm  dpdk-aeron-mix-invoker aeron_lat  dpdk    two  --mode udp --reliable true --load mixed --hot-rate 10000
+# the same traced (transport-aws-aeron-mixed-trace.tsv: aeron_lat's and the
+# driver's stage trace, every 64th message), declared twins of each stack's
+# first in the same way
+arm  aeron-mix-trace              aeron_lat  kernel  two  --mode udp --reliable true --load mixed --hot-rate 10000 --stage-trace 64
+arm  aeron-mix-emb-trace          aeron_lat  kernel  two  --mode udp --reliable true --load mixed --hot-rate 10000 --stage-trace 64
+arm  aeron-mix-shared-trace       aeron_lat  kernel  two  --mode udp --reliable true --load mixed --hot-rate 10000 --stage-trace 64
+arm  aeron-mix-invoker-trace      aeron_lat  kernel  two  --mode udp --reliable true --load mixed --hot-rate 10000 --stage-trace 64
+arm  dpdk-aeron-mix-trace         aeron_lat  dpdk    two  --mode udp --reliable true --load mixed --hot-rate 10000 --stage-trace 64
+arm  dpdk-aeron-mix-emb-trace     aeron_lat  dpdk    two  --mode udp --reliable true --load mixed --hot-rate 10000 --stage-trace 64
+arm  dpdk-aeron-mix-shared-trace  aeron_lat  dpdk    two  --mode udp --reliable true --load mixed --hot-rate 10000 --stage-trace 64
+arm  dpdk-aeron-mix-invoker-trace aeron_lat  dpdk    two  --mode udp --reliable true --load mixed --hot-rate 10000 --stage-trace 64
+# the raw DPDK floor: floor --role ping/pong over ergon-md-dpdk's packet path
+# alone (no Aeron), one thread an end, on dpdk-raw's set-up (vm.sh driver
+# dpdk-raw: the NICs on DPDK, no driver); mio-udp is the kernel's
+arm  dpdk-raw         floor      dpdk-raw two
 arm  mio-udp          udp_lat    sockets  two  --impl mio
 arm  eio-udp          udp_lat    sockets  two  --impl ergon
 arm  mio-tcp          tcp_lat    sockets  two  --impl mio
 arm  eio-tcp          tcp_lat    sockets  two  --impl ergon
+arm  dpdk-tcp         fstack_lat fstack   two
+# ergon-io's uring-sqpoll on TCP (transport-aws-smt-off.tsv, transport-aws-smt.tsv):
+# its SQPOLL kernel thread on {next_core} (the first CPU of the next isolated
+# core) or {loop_sibling} (the loop CPU's SMT sibling: a sets file with smt
+# on); no SO_BUSY_POLL (the SQPOLL thread polls the NIC). mio-tcp-smt is
+# mio-tcp's row, named for the SMT-on session (its loop's sibling idle).
+# UDP has no uring arm: ergon-io's UDP runs on epoll-spin only
+arm  eio-tcp-sqpoll-core tcp_lat sockets two --impl ergon --backend uring-sqpoll --sqpoll-cpu {next_core}
+arm  eio-tcp-sqpoll-sib  tcp_lat sockets two --impl ergon --backend uring-sqpoll --sqpoll-cpu {loop_sibling}
+arm  mio-tcp-smt      tcp_lat    sockets  two  --impl mio
+# mio-tcp's row four times for the c7i diagnosis (transport-aws-c7i-diag.tsv),
+# each declared its twin but for one knob (transport-settings.env
+# TR_DECLARED): no SO_BUSY_POLL (-br0), the IRQ core's idle capped at the
+# first halt state (-c1), at polling (-c0), or every state enabled (-call)
+arm  mio-tcp-br0      tcp_lat    sockets  two  --impl mio
+arm  mio-tcp-c1       tcp_lat    sockets  two  --impl mio
+arm  mio-tcp-c0       tcp_lat    sockets  two  --impl mio
+arm  mio-tcp-call     tcp_lat    sockets  two  --impl mio
+# the socket and Aeron UDP arms again under Onload (transport-aws-onload.tsv)
+# (experimental: not viable on ENA, see transport-aws-onload.tsv)
+arm  onload-mio-tcp   tcp_lat    onload   two  --impl mio
+arm  onload-eio-tcp   tcp_lat    onload   two  --impl ergon
+arm  onload-mio-udp   udp_lat    onload   two  --impl mio
+arm  onload-eio-udp   udp_lat    onload   two  --impl ergon
+arm  onload-aeron-udp aeron_lat  onload   two  --mode udp --reliable false
+arm  onload-aeron-rel aeron_lat  onload   two  --mode udp --reliable true
 
 # set   pair par host loads                  streams      netem          arms
 set 1    b    p1  a    10000,1000000,5000000  1            -              mpsc,aeron-ipc,aeron-ipc-huge,aa

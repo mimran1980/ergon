@@ -21,7 +21,7 @@ pub struct Wire {
 }
 
 impl Wire {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             next: 0,
             carried: [0, 0],

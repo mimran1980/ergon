@@ -3,12 +3,20 @@
 # VM: fakes for az, ssh, scp, sleep, curl, vm.sh, the bench binaries, and
 # /sys and /proc trees. Checks that:
 #   * modes.sh takes an arm's STREAMS, NETEM and AA, refuses anything else,
-#     and refuses NETEM on every DPDK arm (by name or by its dpdk set-up);
+#     and refuses NETEM on every DPDK arm (by name or by its dpdk set-up) and
+#     every Onload arm, an Onload arm or driver off AWS, F-Stack off AWS;
+#   * setup onload: transport.sh's flags (no kernel busy poll or TCP timers),
+#     launcher and knobs; host.sh's Onload steps against a fake ENA (one
+#     queue, Onload's MTU, the AF_XDP registration read back, undone) and its
+#     stack check; the Onload smoke on fake hosts through fairness.py's onload
+#     rule; the Onload session's estimate on c7i.4xlarge, c8g.2xlarge and
+#     c7a.2xlarge;
 #   * transport_plan.py counts the plan's points (510 for pair a, 420 for
 #     b), draws each round's arm order from its seed (reproducible, the A/A
 #     arm once a round, another order on another rep), and refuses a broken
 #     matrix: aa first, an unknown or repeated arm, one- and two-host arms in
-#     one set, two sets at once on one host; its binomial interval;
+#     one set, two sets at once on one host, a sink arm off host a or under
+#     netem; its binomial interval;
 #   * host.sh against a fake D16s_v6 (16 CPUs, twins adjacent): the CPU map
 #     with SMT on and off, the boot line and its check, SMT off verified (and
 #     refused when the kernel keeps it on), the quiet settings, the sysctls
@@ -23,6 +31,12 @@
 #     side by side (their own groups, run and pair tags, each deleting and
 #     counting only its own), Spot's arguments and an eviction ending the run
 #     through its teardown, exit 75;
+#   * aws/lab.sh LAB_SUITE=transport (against fake_aws.py): refusals before
+#     any aws call, the AWS DPDK session's estimate (on demand and spot), the
+#     ENI check before anything is created (too few refused), a session
+#     tagged owner, run and pair on c7a.2xlarge in one cluster group, a TERM
+#     mid-run, spot with no capacity (and LAB_SPOT_FALLBACK's on-demand
+#     launch) and a detached run, each deleted and verified by tag;
 #   * transport.sh run against fake hosts: every point of pair b once (rows,
 #     manifests, rounds and orders recorded), netem set and cleared around
 #     each lossy round and never under a DPDK arm, the binaries' flags as
@@ -33,9 +47,22 @@
 #     (transport_collect.py), the ping started only once its pong says ready
 #     (a pong that never does fails its point), a placement or netem verdict
 #     that fails in the manifest, a failed point recorded, a hostcheck
-#     warning stopping the session before its first point; LAB_ARMS_FILE and
+#     warning stopping the session before its first point; a sink arm
+#     (aeron_lat --mode spy-udp) on a with a sink on b for each run, beside
+#     a one-host arm in its set, and fairness.py's sink rule; LAB_ARMS_FILE and
 #     LAB_EXTRA_SRC's hooks with a neutral fixture (transport_prepare's steps
-#     too).
+#     too); the hand-off arms (transport-aws-aeron-handoff.tsv): each its
+#     twin's driver mode but for its threading or DRIVER=embedded, aeron_lat's
+#     --driver and busy threads, an embedded driver's binary with driver.env
+#     under sudo setpriv, the session on fake hosts through fairness.py's
+#     declared rule (a twin chain; a driver mode differing beyond its knob);
+#     the mixed-load sessions (transport-aws-aeron-mixed.tsv, both pairs):
+#     each mixed arm's driver mode with the duty-cycle thresholds, two CPUs
+#     a host (hot, background), its NIC counters snapshotted around each
+#     point and collected, the raw DPDK floor (floor on dpdk-raw's set-up,
+#     the driver's environment, sudo setpriv), fairness.py clean (its
+#     mixed-load rules flagging a fan-out subscription short), analyse.py's
+#     mixed table and checklist.
 #
 # Run from anywhere:  bash md-dpdk/benches/cloud/test/test-transport-runner.sh
 set -euo pipefail
@@ -71,11 +98,17 @@ got=$(
     echo -n "by setup:"; rc kbx@NETEM=1; rc kbx@STREAMS=1
     echo
     mode_check dpdk-aeron-rel@NETEM=1 remote x86_64 azure '' 2>&1 | grep -c 'DPDK bypasses the kernel' || true
+    # setup fstack: no netem, and AWS alone (the ENA), x86_64 and Graviton
+    TRANSPORT_ARMS+="kfs=fstack/two "
+    f() { mode_check "$1" remote "$2" "$3" '' >/dev/null 2>&1; echo -n " $?"; }
+    echo -n "fstack:"; f kfs@STREAMS=8 x86_64 aws; f kfs@NETEM=1 x86_64 aws; f kfs@STREAMS=1 arm64 aws; f kfs@STREAMS=1 x86_64 azure
+    echo
 )
-same "modes.sh: an arm takes STREAMS, NETEM and AA alone; NETEM refused on every DPDK arm" "ok: 0 0 0 0 0
+same "modes.sh: an arm takes STREAMS, NETEM and AA alone; NETEM refused on every DPDK arm; an F-Stack arm on AWS alone, x86_64 and Graviton" "ok: 0 0 0 0 0
 refused: 2 2 2 2 2 2 2 2 2 2 2
 by setup: 2 0
-1" "$got"
+1
+fstack: 0 2 0 2" "$got"
 
 # ---- transport_plan.py ----
 got="$(plan count a 5 "$matrix") $(plan count b 5 "$matrix") $(plan count a 1 "$matrix")"
@@ -107,6 +140,175 @@ for case in "set z a - ab 1 1 - aa,mio-tcp|cannot be first" "set z a - ab 1 1 - 
 done
 [[ -z $refusals ]] && pass "transport_plan.py refuses aa first, an unknown or repeated arm, mixed hosts in a set, two sets at once on one host" ||
     fail "transport_plan.py refusals:$refusals"
+# setup fstack (dpdk-tcp, fstack_lat): no netem on a set with a DPDK arm;
+# fstack_lat's addresses as tcp_lat's, its port (PCI address, prefix,
+# gateway) from the NIC files, the socket buffers its one knob; F-Stack
+# built only for a session that runs it (tr_wants_fstack)
+printf '%s\n' "set z a - ab 1 1 0.1 dpdk-tcp" >"$bad"
+out=$(plan modes a "$matrix" "$bad" 2>&1) && fail "transport_plan.py: netem on dpdk-tcp accepted" ||
+    { [[ $out == *"netem cannot reach"* ]] || fail "transport_plan.py netem on dpdk-tcp: $out"; }
+got=$(
+    . "$cloud/transport.sh"
+    dir=$tmp/fstack
+    mkdir -p "$dir"
+    printf 'sender ens6 ens6 0a:00:00:00:00:01 10.30.1.11 24 0000:00:06.0\nreceiver ens7 ens7 0a:00:00:00:00:02 10.30.1.21 24 0000:00:07.0\n' >"$dir/nics-a.txt"
+    printf 'sender ens6 ens6 0a:00:00:00:00:03 10.30.1.12 24 0000:00:06.0\nreceiver ens7 ens7 0a:00:00:00:00:04 10.30.1.22 24 0000:00:07.0\n' >"$dir/nics-b.txt"
+    arm=dpdk-tcp bin=fstack_lat setup=fstack args=()
+    echo "ping: $(tr_bin_args fstack_lat ping 10.30.1.11 10.30.1.22)"
+    echo "pong: $(tr_bin_args fstack_lat pong 10.30.1.22 10.30.1.11)"
+    echo "knobs: $(tr_arm_knobs | tr '\n' ' ')"
+    hk=0 tr_bin_path=P
+    echo "start: $(tr_start r/pong.pid r/pong.out fstack_lat --role pong)"
+    setup=sockets
+    echo "start sockets: $(tr_start r/pong.pid r/pong.out tcp_lat --role pong)"
+    setup=fstack
+    arms_file='' sets_file=$cloud/transport-aws-dpdk.tsv
+    tr_wants_fstack && echo "aws-dpdk: fstack"
+    sets_file=''
+    tr_wants_fstack || echo "matrix: none"
+)
+sb_=$(. "$cloud/transport-settings.env"; echo "$TR_SOCKBUF")
+same "transport.sh setup fstack: no netem with a DPDK arm; fstack_lat's addresses as tcp_lat's, its PCI port, prefix and gateway from vm.sh nics, delayed ACKs off (the kernel arms' quickack), the socket buffers; started under sudo setpriv with the EAL's capabilities ambient, under the user's own uid (no other arm is); F-Stack built only when a set runs it" \
+    "ping: --source 10.30.1.11 --connect 10.30.1.22:22000 --pci 0000:00:06.0 --prefix-len 24 --gateway 10.30.1.1 --nodelay --delayed-ack false --rcvbuf $sb_ --sndbuf $sb_
+pong: --listen 10.30.1.22:22000 --pci 0000:00:07.0 --prefix-len 24 --gateway 10.30.1.1 --nodelay --delayed-ack false --rcvbuf $sb_ --sndbuf $sb_
+knobs: sockbuf irq_idle 
+start: sudo -n setpriv --reuid=\"\$(id -u)\" --regid=\"\$(id -g)\" --init-groups --reset-env --inh-caps=+sys_admin,+dac_override,+ipc_lock,+sys_rawio --ambient-caps=+sys_admin,+dac_override,+ipc_lock,+sys_rawio sh -c 'taskset -c 0 env PATH=P fstack_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
+start sockets: sh -c 'taskset -c 0 env PATH=P tcp_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
+aws-dpdk: fstack
+matrix: none" "$got"
+# setup onload (the matrix's onload-* arms: transport-aws-onload.tsv): no
+# netem (its AF_XDP sends skip the qdisc); AWS only, x86_64 or Graviton;
+# the kernel arm's binary and flags under onload, but no kernel busy poll
+# (--busy-read-us 0) and no kernel TCP timers; aeron_lat itself not under
+# onload, its media driver is (driver mode onload); OpenOnload built and the
+# boot line asked for only when a set runs such an arm
+printf '%s\n' "set z a - ab 1 1 0.1 onload-eio-tcp" >"$bad"
+out=$(plan modes a "$matrix" "$bad" 2>&1) && fail "transport_plan.py: netem on onload-eio-tcp accepted" ||
+    { [[ $out == *"run on Onload, whose AF_XDP sends netem cannot reach"* ]] || fail "transport_plan.py netem on onload-eio-tcp: $out"; }
+got=$(
+    . "$cloud/modes.sh"
+    . "$cloud/transport-settings.env"
+    TRANSPORT_ARMS=$(plan arms "$matrix")
+    f() { mode_check "$1" remote "$2" "$3" '' >/dev/null 2>&1; echo -n " $?"; }
+    echo -n "arms:"; f onload-eio-tcp@STREAMS=8 x86_64 aws; f onload-aeron-rel@STREAMS=1 arm64 aws; f onload-mio-udp@NETEM=1 x86_64 aws; f onload-eio-tcp@STREAMS=1 x86_64 azure
+    echo
+    echo -n "driver:"; f "onload$TR_AERON_MODE_SUFFIX" x86_64 aws; f "onload$TR_AERON_MODE_SUFFIX" arm64 aws; f "onload$TR_AERON_MODE_SUFFIX" x86_64 azure
+    echo
+    mode_check onload-mio-udp@NETEM=1 remote x86_64 aws '' 2>&1 | grep -c 'skip the kernel' || true
+    # an F-Stack arm on Graviton, as aws/lab.sh judges it (tr_arch): taken
+    f dpdk-tcp@STREAMS=1 arm64 aws
+    echo
+)
+same "modes.sh: an Onload arm takes STREAMS on AWS (x86_64 and Graviton), never NETEM, never Azure; the Onload driver mode AWS only; an F-Stack arm taken on Graviton" "arms: 0 0 2 2
+driver: 0 0 2
+1
+ 0" "$got"
+got=$(
+    . "$cloud/transport.sh"
+    dir=$tmp/onl
+    mkdir -p "$dir"
+    # both kernels have the TCP timers: the kernel arms ask for them, Onload's never
+    for h in a b; do printf 'net.ipv4.tcp_rto_min_us=8000\nnet.ipv4.tcp_delack_max_us=8000\n' >"$dir/settings-$h.txt"; done
+    hk=0 tr_bin_path=P
+    for a in eio-tcp onload-eio-tcp onload-mio-udp onload-eio-udp onload-aeron-rel; do
+        read -r bin setup _ rest <<<"$(tr_plan arm "$a")"
+        read -ra args <<<"$rest"
+        arm=$a
+        echo "$a: $(tr_bin_args "$bin" ping 10.30.1.11 10.30.1.22 "${args[@]}")"
+        echo "  knobs: $(tr_arm_knobs | tr '\n' ' ')napi $(tr_knob napi_defer); driver: $(tr_has_driver && tr_driver_mode || echo none)"
+        echo "  start: $(tr_start r/pong.pid r/pong.out "$bin" --role pong)"
+    done
+    arms_file='' sets_file=$cloud/transport-aws-onload.tsv
+    tr_wants_setup onload && echo "aws-onload: onload"
+    tr_wants_setup fstack || echo "aws-onload: no fstack"
+    sets_file=$cloud/transport-aws-onload-smoke.tsv
+    tr_wants_setup onload && echo "smoke: onload"
+    sets_file=''
+    tr_wants_setup onload || echo "matrix: none"
+)
+sb_=$(. "$cloud/transport-settings.env"; echo "$TR_SOCKBUF")
+sfx_=$(. "$cloud/transport-settings.env"; echo "$TR_AERON_MODE_SUFFIX")
+oc_=$(. "$cloud/transport-settings.env"; echo "env $TR_ONLOAD_ENV onload --profile=$TR_ONLOAD_PROFILE")
+same "transport.sh setup onload: the kernel arm's binary and flags under onload ($oc_), but --busy-read-us 0 and no TCP timers; the knobs Onload honours and the NICs' deferral at TR_ONLOAD_NAPI_DEFER; Aeron's arm not under onload itself, its media driver (driver mode onload) is; Onload wanted only by a set that runs it" \
+"eio-tcp: --source 10.30.1.11 --connect 10.30.1.22:22000 --nodelay --quickack-per-read --rto-min-us 8000 --delack-max-us 8000 --busy-read-us 50 --rcvbuf $sb_ --sndbuf $sb_ --epoll-events 64
+  knobs: sockbuf epoll_events quickack_per_read congestion busy_read_us rto_min_us napi_defer irq_idle napi 0; driver: none
+  start: sh -c 'taskset -c 0 env PATH=P tcp_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
+onload-eio-tcp: --source 10.30.1.11 --connect 10.30.1.22:22000 --nodelay --quickack-per-read --busy-read-us 0 --rcvbuf $sb_ --sndbuf $sb_ --epoll-events 64
+  knobs: sockbuf epoll_events quickack_per_read napi_defer irq_idle napi 0; driver: none
+  start: sh -c 'taskset -c 0 env PATH=P $oc_ tcp_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
+onload-mio-udp: --local 10.30.1.11:22000 --peer 10.30.1.22:22000 --busy-read-us 0 --rcvbuf $sb_ --sndbuf $sb_ --epoll-events 64
+  knobs: sockbuf epoll_events napi_defer irq_idle napi 0; driver: none
+  start: sh -c 'taskset -c 0 env PATH=P $oc_ udp_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
+onload-eio-udp: --local 10.30.1.11:22000 --peer 10.30.1.22:22000 --busy-read-us 0 --rcvbuf $sb_ --sndbuf $sb_ --epoll-events 64 --datagram-burst 64
+  knobs: sockbuf epoll_events datagram_burst napi_defer irq_idle napi 0; driver: none
+  start: sh -c 'taskset -c 0 env PATH=P $oc_ udp_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
+onload-aeron-rel: --endpoint 10.30.1.22:22000 --reply 10.30.1.11:22000 --interface 10.30.1.11 --aeron-dir /dev/shm/aeron-bench --driver external --driver-busy-threads 3 --term-length 1048576 --mtu 1408 --wire kernel
+  knobs: term_length aeron_page aeron_so_rcvbuf nak_delay_ns napi_defer irq_idle napi 0; driver: onload$sfx_
+  start: sh -c 'taskset -c 0 env PATH=P aeron_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
+aws-onload: onload
+aws-onload: no fstack
+smoke: onload
+matrix: none" "$got"
+# the hand-off arms (transport-aws-aeron-handoff.tsv): dpdk-aeron-rel and
+# aeron-rel but for their driver's threading or place, each declared its
+# twin (TR_DECLARED, a chain for -invoker); their driver modes pass
+# mode_check (DRIVER=embedded: vm.sh starts no driver), aeron_lat's
+# --driver and --driver-busy-threads follow them, an embedded driver's
+# binary runs with driver.env under fstack_lat's privileges, and the
+# events leave a driver's idle CPUs to the gap spinners
+got=$(
+    . "$cloud/transport.sh"
+    tr_cloud=aws
+    dir=$tmp/fstack hk=0 tr_bin_path=P iso=4,6,8,10,12,14 kind=two cpus=10,12,14
+    for a in dpdk-aeron-rel dpdk-aeron-rel-emb dpdk-aeron-rel-shnet dpdk-aeron-rel-shared dpdk-aeron-rel-invoker aeron-rel-emb aeron-rel-invoker; do
+        read -r bin setup _ rest <<<"$(tr_plan arm "$a")"
+        read -ra args <<<"$rest"
+        arm=$a
+        m=$(tr_driver_mode)
+        echo "$a: ${m/$(. "$cloud/transport-settings.env"; echo "$TR_AERON_MODE_SUFFIX")/<suffix>}"
+        echo "  check $(mode_check "$m" remote x86_64 aws '' >/dev/null 2>&1; echo $?); knobs threading $(tr_knob aeron_threading) driver $(tr_knob aeron_driver); $(tr_bin_args "$bin" ping 10.30.1.11 10.30.1.22 "${args[@]}" | grep -o -- '--driver .* --driver-busy-threads [0-9]*'); events $(tr_events_cpus a)"
+        echo "  start: $(tr_start r/pong.pid r/pong.out "$bin" --role pong | sed 's/ --inh-caps.*sys_rawio//')"
+    done
+    # INVOKER with the driver not the binary's, and a twin chain that goes round
+    tr_sets_file=$cloud/transport-aws-aeron-handoff.tsv reps=3
+    arm=dpdk-aeron-rel-shnet
+    read -r bin setup _ rest <<<"$(tr_plan arm "$arm")"; read -ra args <<<"$rest"
+    TR_DECLARED="dpdk-aeron-rel-shnet:dpdk-aeron-rel:aeron_threading=INVOKER" tr_driver_modes_check a 2>&1 >/dev/null | sed 's/^/refused: /' || true
+    TR_DECLARED="dpdk-aeron-rel-emb:dpdk-aeron-rel-invoker:aeron_driver=embedded dpdk-aeron-rel-invoker:dpdk-aeron-rel-emb:aeron_threading=INVOKER" tr_declared_check 2>&1 | sed 's/^/refused: /' || true
+    echo "handoff check: $(tr_check a 2>&1)"
+)
+same "transport.sh, the hand-off arms: each its twin's driver mode but for its threading (SHARED_NETWORK keeps the conductor's core, SHARED and INVOKER drop it) or DRIVER=embedded, each passing mode_check; aeron_lat's --driver (embedded, invoker) and busy threads (3, 2, 1, 0) from it; an embedded driver's binary started with ~/bench/driver.env under sudo setpriv; the events' spinners on the CPUs the driver leaves; INVOKER without the driver embedded and a twin chain going round refused; the sets file checks (66 points at 3 reps: h and k, set k on too)" \
+"dpdk-aeron-rel: dpdk<suffix>
+  check 0; knobs threading DEDICATED driver external; --driver external --driver-busy-threads 3; events 4,6,8,10,12,14 12,14
+  start: sh -c 'taskset -c 0 env PATH=P aeron_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
+dpdk-aeron-rel-emb: dpdk<suffix>@DRIVER=embedded
+  check 0; knobs threading DEDICATED driver embedded; --driver embedded --driver-busy-threads 3; events 4,6,8,10,12,14 12,14
+  start: sudo -n setpriv --reuid=\"\$(id -u)\" --regid=\"\$(id -g)\" --init-groups --reset-env sh -c '. ~/bench/driver.env; taskset -c 0 env PATH=P aeron_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
+dpdk-aeron-rel-shnet: dpdk@CONDUCTOR=own@AERON_TERM_BUFFER_LENGTH=1048576@AERON_IPC_TERM_BUFFER_LENGTH=1048576@AERON_CONDUCTOR_IDLE_STRATEGY=spin@AERON_THREADING_MODE=SHARED_NETWORK
+  check 0; knobs threading SHARED_NETWORK driver external; --driver external --driver-busy-threads 2; events 4,6,8,10,12,14 6,12,14
+  start: sh -c 'taskset -c 0 env PATH=P aeron_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
+dpdk-aeron-rel-shared: dpdk@AERON_TERM_BUFFER_LENGTH=1048576@AERON_IPC_TERM_BUFFER_LENGTH=1048576@AERON_THREADING_MODE=SHARED
+  check 0; knobs threading SHARED driver external; --driver external --driver-busy-threads 1; events 4,6,8,10,12,14 6,8,12,14
+  start: sh -c 'taskset -c 0 env PATH=P aeron_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
+dpdk-aeron-rel-invoker: dpdk@AERON_TERM_BUFFER_LENGTH=1048576@AERON_IPC_TERM_BUFFER_LENGTH=1048576@AERON_THREADING_MODE=INVOKER@DRIVER=embedded
+  check 0; knobs threading INVOKER driver embedded; --driver invoker --driver-busy-threads 0; events 4,6,8,10,12,14 4,6,8,12,14
+  start: sudo -n setpriv --reuid=\"\$(id -u)\" --regid=\"\$(id -g)\" --init-groups --reset-env sh -c '. ~/bench/driver.env; taskset -c 0 env PATH=P aeron_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
+aeron-rel-emb: kernel-busy<suffix>@NAPI_DEFER=0/0@DRIVER=embedded
+  check 0; knobs threading DEDICATED driver embedded; --driver embedded --driver-busy-threads 3; events 4,6,8,10,12,14 12,14
+  start: sudo -n setpriv --reuid=\"\$(id -u)\" --regid=\"\$(id -g)\" --init-groups --reset-env sh -c '. ~/bench/driver.env; taskset -c 0 env PATH=P aeron_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
+aeron-rel-invoker: kernel-busy@AERON_TERM_BUFFER_LENGTH=1048576@AERON_IPC_TERM_BUFFER_LENGTH=1048576@NAPI_DEFER=0/0@AERON_THREADING_MODE=INVOKER@DRIVER=embedded
+  check 0; knobs threading INVOKER driver embedded; --driver invoker --driver-busy-threads 0; events 4,6,8,10,12,14 4,6,8,12,14
+  start: sudo -n setpriv --reuid=\"\$(id -u)\" --regid=\"\$(id -g)\" --init-groups --reset-env sh -c '. ~/bench/driver.env; taskset -c 0 env PATH=P aeron_lat --role pong & p=\$!; echo \$p >r/pong.pid; wait \$p; r=\$?; echo \$r >r/pong.pid.rc; exit \$r' >r/pong.out
+refused: arm dpdk-aeron-rel-shnet: aeron_threading INVOKER with aeron_driver external: an INVOKER driver is the binary's own (aeron_driver embedded)
+refused: TR_DECLARED dpdk-aeron-rel-emb: its twins go round ( dpdk-aeron-rel-emb dpdk-aeron-rel-invoker dpdk-aeron-rel-emb)
+handoff check: 66" "$got"
+got=$(
+    . "$cloud/modes.sh"
+    rc() { mode_check "$1" remote x86_64 aws '' >/dev/null 2>&1; echo -n " $?"; }
+    echo -n "DRIVER:"; rc dpdk@DRIVER=embedded; rc kernel-busy@AERON_THREADING_MODE=INVOKER@DRIVER=embedded; rc dpdk@DRIVER=external; rc dpdk-raw@DRIVER=embedded; rc dpdk@DRIVER=embedded+idle; rc dpdk@DRIVER=embedded@DRIVER=embedded
+    echo
+)
+same "modes.sh: DRIVER=embedded (no driver process; the bench binary's) under any threading mode; any other value, a raw floor's, +idle's and a second one refused" "DRIVER: 0 0 2 2 2 2" "$got"
 got="$(plan binom 300000 30 0.01) | $(plan binom 300000 80 0.01) | $(plan binom 1000 0 0) | $(plan binom 1000 1 0) | $(plan binom 1000 2 0.01) | $(plan binom 6000000 60000 1)"
 same "transport_plan.py binom: the dropped count against its 1-in-10,000 interval, exact at small means, none at 0 %" \
     "8 52 ok | 8 52 FAIL | 0 0 ok | 0 0 FAIL | 0 3 ok | 59051 60949 ok" "$got"
@@ -187,7 +389,8 @@ elif [[ $1 == route && $2 == append ]]; then
     echo "$*" >>"$FAKE_ROUTES"
 fi
 SH
-# fake ethtool: rings settable up to 4096; coalescing unless FAKE_NO_COALESCE
+# fake ethtool: rings settable up to 4096; coalescing unless FAKE_NO_COALESCE;
+# FAKE_ENA: no adaptive TX (n/a), and a -C naming it is refused whole, as ENA's
 cat >"$tmp/fakebin/ethtool" <<'SH'
 #!/usr/bin/env bash
 echo "ethtool $*" >>"$FAKE_LOG"
@@ -197,8 +400,11 @@ case $1 in
 -g) read -r r t <"$st/ring-$2" 2>/dev/null || { r=512 t=512; }
     printf 'Ring parameters for %s:\nPre-set maximums:\nRX:\t\t4096\nTX:\t\t4096\nCurrent hardware settings:\nRX:\t\t%s\nTX:\t\t%s\n' "$2" "$r" "$t" ;;
 -c) [[ -n ${FAKE_NO_COALESCE:-} ]] && { echo "netlink error: Operation not supported" >&2; exit 76; }
-    if [[ -e $st/coal-$2 ]]; then printf 'Adaptive RX: off  TX: off\nrx-usecs: 0\ntx-usecs: 0\n'; else printf 'Adaptive RX: on  TX: on\nrx-usecs: 8\ntx-usecs: 8\n'; fi ;;
--C) [[ -z ${FAKE_COALESCE_STUCK:-} ]] && touch "$st/coal-$2"; exit 0 ;;
+    if [[ -n ${FAKE_ENA:-} ]]; then
+        if [[ -e $st/coal-$2 ]]; then printf 'Adaptive RX: off  TX: n/a\nrx-usecs: 0\ntx-usecs: 0\n'; else printf 'Adaptive RX: on  TX: n/a\nrx-usecs: 20\ntx-usecs: 64\n'; fi
+    elif [[ -e $st/coal-$2 ]]; then printf 'Adaptive RX: off  TX: off\nrx-usecs: 0\ntx-usecs: 0\n'; else printf 'Adaptive RX: on  TX: on\nrx-usecs: 8\ntx-usecs: 8\n'; fi ;;
+-C) [[ -n ${FAKE_ENA:-} && " $* " == *" adaptive-tx "* ]] && { echo "netlink error: Operation not supported" >&2; exit 76; }
+    [[ -z ${FAKE_COALESCE_STUCK:-} ]] && touch "$st/coal-$2"; exit 0 ;;
 esac
 SH
 # fake tc: one root qdisc an interface, its counters growing per show -s
@@ -234,10 +440,22 @@ boot check: $(hostrun transport_boot_check "0 2 4,6,8,10,12,14" 2>&1; echo " rc 
 echo "4-14" >"$sys/devices/system/cpu/isolated"
 got+="
 boot wrong: $(hostrun transport_boot_check "0 2 4,6,8,10,12,14" >/dev/null 2>&1; echo "rc $?")"
+# a session that declares SMT on (a sets file's `smt on`): each isolated
+# core whole in the map, SMT verified on, the boot check over the set
+got+="
+map smt on: $(hostrun transport_cpu_map on)
+smt on: $(hostrun transport_smt_on 2>&1; echo " rc $?")"
+echo "4-15" >"$sys/devices/system/cpu/isolated"
+echo "4-15" >"$sys/devices/system/cpu/nohz_full"
+got+="
+boot check smt on: $(hostrun transport_boot_check "0 2 4,5,6,7,8,9,10,11,12,13,14,15" 2>&1; echo " rc $?")
+map smt bad: $(hostrun transport_cpu_map maybe >/dev/null 2>&1; echo "rc $?")"
 got+="
 smt stuck: $(FAKE_SMT_STUCK=1 hostrun transport_smt_off >/dev/null 2>&1; echo "rc $?")
 smt: $(hostrun transport_smt_off 2>&1; echo " rc $?")
-map smt off: $(hostrun transport_cpu_map)"
+map smt off: $(hostrun transport_cpu_map)
+smt on after off: $(hostrun transport_smt_on >/dev/null 2>&1; echo "rc $?")
+map smt on, no sibling: $(hostrun transport_cpu_map on 2>&1; echo " rc $?")"
 mkdir -p "$tmp/sys4/devices/system/cpu/cpu0/topology"
 echo 0 >"$tmp/sys4/devices/system/cpu/cpu0/topology/thread_siblings_list"
 got+="
@@ -249,10 +467,19 @@ boot: isolcpus=nohz,domain,managed_irq,4,6,8,10,12,14 nohz_full=4,6,8,10,12,14 r
 boot check: boot: isolated and nohz_full 4,6,8,10,12,14
  rc 0
 boot wrong: rc 1
+map smt on: 0 2 4,5,6,7,8,9,10,11,12,13,14,15
+smt on: smt: on as the session declares (control on active 1 online 0-15)
+ rc 0
+boot check smt on: boot: isolated and nohz_full 4,5,6,7,8,9,10,11,12,13,14,15
+ rc 0
+map smt bad: rc 2
 smt stuck: rc 1
 smt: smt: control off active 0 online 0,2,4,6,8,10,12,14
  rc 0
 map smt off: 0 2 4,6,8,10,12,14
+smt on after off: rc 1
+map smt on, no sibling: transport: smt on: no core has an SMT sibling (one thread a core): nothing to keep on
+ rc 2
 too few cores: rc 2" "$got"
 
 # the quiet settings: those this kernel has written and read back, the rest
@@ -288,7 +515,7 @@ fi
 
 # the sysctls: written and read back; the optional ones absent on an older
 # kernel; one that reads back otherwise refused
-for f in ipv4/tcp_congestion_control ipv4/tcp_sack ipv4/tcp_timestamps ipv4/tcp_slow_start_after_idle ipv4/tcp_rmem ipv4/tcp_wmem core/rmem_max core/wmem_max core/busy_read core/busy_poll; do
+for f in ipv4/tcp_congestion_control ipv4/tcp_sack ipv4/tcp_timestamps ipv4/tcp_slow_start_after_idle ipv4/tcp_autocorking ipv4/tcp_rmem ipv4/tcp_wmem core/rmem_max core/wmem_max core/busy_read core/busy_poll; do
     echo 0 >"$proc/sys/net/$f"
 done
 s=$(hostrun transport_sysctls_apply 2>&1) && src=0 || src=$?
@@ -298,7 +525,7 @@ wrong=$(hostrun transport_sysctls_apply check 2>&1) && wrongrc=0 || wrongrc=$?
 touch "$proc/sys/net/ipv4/tcp_rto_min_us"
 rm "$proc/sys/net/core/busy_poll"
 missing=$(hostrun transport_sysctls_apply 2>&1) && missrc=0 || missrc=$?
-if [[ $src == 0 && $(grep -c '^sysctl ' <<<"$s") == 12 && $s == *"tcp_rmem 4096 1048576 16777216"* && $s == *"tcp_rto_min_us absent"* &&
+if [[ $src == 0 && $(grep -c '^sysctl ' <<<"$s") == 13 && $s == *"tcp_rmem 4096 1048576 16777216"* && $s == *"sysctl net/ipv4/tcp_autocorking 0"* && $s == *"tcp_rto_min_us absent"* &&
     $chkrc == 0 && $wrongrc == 1 && $wrong == *"WRONG net/ipv4/tcp_congestion_control: [bbr]"* &&
     $missrc == 1 && $missing == *"MISSING net/core/busy_poll"* && $(cat "$proc/sys/net/ipv4/tcp_rto_min_us") == 8000 ]]; then
     pass "host.sh: the TCP and busy-poll sysctls written and read back (the 6.15 ones optional), a wrong or missing required one refused"
@@ -330,17 +557,44 @@ got="ring: $(hostrun transport_ring enP1 1024 1024 2>&1; echo " rc $?")
 ring over: $(hostrun transport_ring enP1 8192 1024 >/dev/null 2>&1; echo "rc $?")
 coalesce: $(hostrun transport_coalesce_off enP1 2>&1; echo " rc $?")
 coalesce stuck: $(FAKE_COALESCE_STUCK=1 hostrun transport_coalesce_off enP2 >/dev/null 2>&1; echo "rc $?")
-coalesce none: $(FAKE_NO_COALESCE=1 hostrun transport_coalesce_off enP3 2>&1; echo " rc $?")"
-same "host.sh: rings set and read back (above the maximum refused), coalescing off and read back, none where the driver has none" "ring: ring enP1 rx 1024 tx 1024
+coalesce none: $(FAKE_NO_COALESCE=1 hostrun transport_coalesce_off enP3 2>&1; echo " rc $?")
+coalesce ena: $(FAKE_ENA=1 hostrun transport_coalesce_off enP4 2>&1; echo " rc $?")"
+same "host.sh: rings set and read back (above the maximum refused), coalescing off and read back (only what the driver has: ENA lacks adaptive TX), none where the driver has none" "ring: ring enP1 rx 1024 tx 1024
  rc 0
 ring over: rc 1
 coalesce: coalesce enP1 off (off off 0 0)
  rc 0
 coalesce stuck: rc 1
 coalesce none: coalesce enP3: none (the driver has no interrupt moderation)
+ rc 0
+coalesce ena: coalesce enP4 off (off n/a 0 0)
  rc 0" "$got"
 
 # netem on every data NIC: set and checked, the counters read, cleared
+# the IRQ core's idle depth: auto is 1 (C1) under intel_idle and all under
+# acpi_idle or no driver; applied with auto, every state past C1 disabled on
+# the IRQ CPU (intel_idle) or every state enabled (acpi_idle), read back
+idl=$sys/devices/system/cpu
+for i in 0 1 2 3; do
+    mkdir -p "$idl/cpu2/cpuidle/state$i"
+    echo 0 >"$idl/cpu2/cpuidle/state$i/disable"
+done
+mkdir -p "$idl/cpuidle"
+echo intel_idle >"$idl/cpuidle/current_driver"
+got="intel: $(hostrun transport_irq_idle_auto) $(hostrun transport_irq_idle_apply 2 auto 2>&1) $(cat "$idl"/cpu2/cpuidle/state*/disable | tr -d '\n')"
+echo acpi_idle >"$idl/cpuidle/current_driver"
+got+="
+acpi: $(hostrun transport_irq_idle_auto) $(hostrun transport_irq_idle_apply 2 auto 2>&1) $(cat "$idl"/cpu2/cpuidle/state*/disable | tr -d '\n')"
+rm "$idl/cpuidle/current_driver"
+got+="
+none: $(hostrun transport_irq_idle_auto)
+bad: $(hostrun transport_irq_idle_apply 2 C1 2>&1; echo " rc $?")"
+rm -rf "$idl/cpuidle" "$idl"/cpu2/cpuidle
+same "host.sh: TR_IRQ_IDLE=auto is C1 under intel_idle and all elsewhere, applied to the IRQ CPU and read back; another value refused" "intel: 1 irq_idle 1 on CPU(s) 2 (4 states) 0011
+acpi: all irq_idle all on CPU(s) 2 (4 states) 0000
+none: all
+bad: irq_idle C1: all, auto or a state index
+ rc 2" "$got"
 got="set: $(hostrun netem_set 0.1 eth1 eth2; hostrun netem_check 0.1 eth1 eth2 2>&1; echo " rc $?")
 wrong: $(hostrun netem_check 1 eth1 eth2 >/dev/null 2>&1; echo "rc $?")
 none while set: $(hostrun netem_check none eth1 >/dev/null 2>&1; echo "rc $?")
@@ -505,6 +759,103 @@ rc 0" "$settled
 $kicks
 $dead"
 
+# host.sh's Onload steps (vm.sh onload-up, stop) against a fake ENA: ethtool
+# -l/-L its queues (4 at most), ip its MTU and maxmtu (9216; ENA's
+# ENA_XDP_MAX_MTU, 3498, while an XDP program is attached), sfc_resource's
+# afxdp register and unregister attaching and detaching it (FAKE_XDP_FAIL:
+# Onload adds the NIC but its XDP set-up fails, maxmtu unchanged)
+on=$tmp/onload
+mkdir -p "$on/bin" "$on/sys/module/sfc_resource/afxdp" "$on/sys/module/sfc_resource/parameters" "$on/state"
+for i in ens6 ens7; do mkdir -p "$on/sys/class/net/$i"; echo 9001 >"$on/sys/class/net/$i/mtu"; echo 4 >"$on/state/$i.comb"; echo 9216 >"$on/state/$i.max"; : >"$on/sys/class/net/$i/napi_defer_hard_irqs"; : >"$on/sys/class/net/$i/gro_flush_timeout"; done
+: >"$on/sys/module/sfc_resource/afxdp/register"
+: >"$on/sys/module/sfc_resource/afxdp/unregister"
+cat >"$on/bin/sudo" <<'SH'
+#!/usr/bin/env bash
+echo "sudo $*" >>"$FAKE_LOG"
+if [[ $1 == tee && $2 == */afxdp/register ]]; then
+    i=$(cat); echo "$i" >>"$FAKE_ON/registered"
+    [[ -n ${FAKE_XDP_FAIL:-} ]] || echo 3498 >"$FAKE_ON/state/$i.max"
+    exit 0
+fi
+if [[ $1 == tee && $2 == */afxdp/unregister ]]; then
+    i=$(cat); echo "$i" >>"$FAKE_ON/unregistered"; echo 9216 >"$FAKE_ON/state/$i.max"; exit 0
+fi
+exec "$@"
+SH
+cat >"$on/bin/ethtool" <<'SH'
+#!/usr/bin/env bash
+echo "ethtool $*" >>"$FAKE_LOG"
+st=$FAKE_ON/state
+case $1 in
+-l) printf 'Channel parameters for %s:\nPre-set maximums:\nRX:\t\tn/a\nTX:\t\tn/a\nOther:\t\tn/a\nCombined:\t4\nCurrent hardware settings:\nRX:\t\tn/a\nTX:\t\tn/a\nOther:\t\tn/a\nCombined:\t%s\n' "$2" "$(cat "$st/$2.comb")" ;;
+-L) [[ $4 -le 4 ]] || { echo "Cannot set device channel parameters: Invalid argument" >&2; exit 1; }
+    # ENA's XDP: queues at most half the maximum while a program is attached
+    [[ $(cat "$st/$2.max") != 3498 || $4 -le 2 ]] || { echo "Cannot set device channel parameters: Invalid argument" >&2; exit 1; }
+    echo "$4" >"$st/$2.comb" ;;
+esac
+SH
+cat >"$on/bin/ip" <<'SH'
+#!/usr/bin/env bash
+echo "ip $*" >>"$FAKE_LOG"
+st=$FAKE_ON/state
+if [[ "$1 $2 $3 $4 $5" == "-d -j link show dev" ]]; then
+    printf '[{"ifname":"%s","mtu":%s,"max_mtu":%s}]\n' "$6" "$(cat "$LAB_SYS_ROOT/class/net/$6/mtu")" "$(cat "$st/$6.max")"
+elif [[ "$1 $2 $3" == "link set dev" && $5 == mtu ]]; then
+    (($6 <= $(cat "$st/$4.max"))) || { echo "Error: mtu greater than device maximum." >&2; exit 2; }
+    echo "$6" >"$LAB_SYS_ROOT/class/net/$4/mtu"
+fi
+SH
+chmod +x "$on/bin/"*
+onrun() { env PATH="$on/bin:$PATH" LAB_SYS_ROOT="$on/sys" FAKE_ON="$on" bash -c '. "$1/host.sh"; . "$1/transport-settings.env"; shift; "$@"' _ "$cloud" "$@"; }
+up=$(onrun onload_nic_up ens6 "$on/st" 2>&1; echo "rc $?")
+st6="$(cat "$on/sys/class/net/ens6/mtu") $(cat "$on/state/ens6.comb") $(cat "$on/state/ens6.max") $(cat "$on/sys/class/net/ens6/napi_defer_hard_irqs")/$(cat "$on/sys/class/net/ens6/gro_flush_timeout") kept $(cat "$on/st/ens6.mtu") $(cat "$on/st/ens6.combined")"
+down=$(onrun onload_nic_down ens6 "$on/st" 2>&1; echo "rc $?")
+back="$(cat "$on/sys/class/net/ens6/mtu") $(cat "$on/state/ens6.comb") $(cat "$on/state/ens6.max") left [$(ls "$on/st" | grep -v ethtool.err | tr '\n' ' ')] $(tr '\n' ' ' <"$on/unregistered")"
+again=$(onrun onload_nic_down ens7 "$on/st" 2>&1; echo "rc $?")
+xdpfail=$(FAKE_XDP_FAIL=1 onrun onload_nic_up ens7 "$on/st" 2>&1; echo "rc $?")
+undo=$(onrun onload_nic_down ens7 "$on/st" 2>&1; echo "rc $?")
+st7="$(cat "$on/sys/class/net/ens7/mtu") $(cat "$on/state/ens7.comb") $(tail -1 "$on/unregistered")"
+nomod=$(env PATH="$on/bin:$PATH" LAB_SYS_ROOT="$on/none" FAKE_ON="$on" bash -c '. "$1/host.sh"; . "$1/transport-settings.env"; onload_nic_up ens6 "$2"' _ "$cloud" "$on/st2" 2>&1; echo "rc $?")
+# the mid-window check: an Onload stack of the arm's process (by its name
+# in /proc/<pid>/comm), or none
+mkdir -p "$on/proc/4242" "$on/proc/4343"
+echo tcp_lat >"$on/proc/4242/comm"
+echo sshd >"$on/proc/4343/comm"
+dump='#stack-id stack-name      pids
+0         -               4242 
+1         -               4343,4344 '
+verdict="$(printf '%s\n' "$dump" | LAB_PROC_ROOT="$on/proc" bash -c '. "$1/host.sh"; onload_stacks_verdict tcp_lat' _ "$cloud"; echo " rc $?")
+$(printf '%s\n' "$dump" | LAB_PROC_ROOT="$on/proc" bash -c '. "$1/host.sh"; onload_stacks_verdict media_driver' _ "$cloud"; echo " rc $?")
+$(printf '' | LAB_PROC_ROOT="$on/proc" bash -c '. "$1/host.sh"; onload_stacks_verdict tcp_lat' _ "$cloud"; echo " rc $?")"
+same "host.sh Onload: a data NIC on one queue at Onload's MTU, interrupts not deferred, registered and its XDP program read back (maxmtu 3498), each first value kept; undone back to its 4 queues and 9001 (unregistered, maxmtu 9216); nothing for a NIC never touched; a failed XDP set-up fails closed and is unregistered all the same; no sfc_resource refused; the mid-window stack check by process name" \
+"onload ens6: registered, AF_XDP on its native XDP (maxmtu 9216 -> 3498), 1 queue (was 4 of 4), MTU 3498 (was 9001), napi_defer 0
+rc 0
+3498 1 3498 0/0 kept 9001 4
+rc 0
+9001 4 9216 left [] ens6 
+rc 0
+onload: ens7's XDP program not attached after registering it (maxmtu 9216, then 9216): Onload's AF_XDP set-up failed on it (dmesg: hardware init failed)
+rc 1
+rc 0
+9001 4 ens7
+onload: $on/none/module/sfc_resource/afxdp/register missing (the sfc_resource module not loaded)
+rc 1
+ok 1 stack(s) of tcp_lat: 0:4242
+ rc 0
+FAIL no Onload stack of media_driver (stacks: 0:4242 1:4343,4344)
+ rc 1
+FAIL no Onload stack of tcp_lat (stacks: none)
+ rc 1" "$up
+$st6
+$down
+$back
+$again
+$xdpfail
+$undo
+$st7
+$nomod
+$verdict"
+
 # ---- az.sh against a fake az of several groups ----
 mkdir -p "$tmp/fakeaz" "$tmp/azstate/groups"
 cat >"$tmp/fakeaz/az" <<'FAKEAZ'
@@ -608,7 +959,7 @@ printf 'arm  fixture-dpdk  fixture_lat  dpdk  two\nset  fd  a  -  ab  1000  1  0
 mkdir -p "$fx/nobuild"
 why=
 for refused in "LAB_PAIR=#LAB_PAIR is a or b" "LAB_PAIR=c#LAB_PAIR is a or b" "LAB_PAIR=a LAB_PRIORITY=Low#LAB_PRIORITY Low" \
-    "LAB_PAIR=a LAB_ARMS_FILE=$fx/none.tsv#not a readable file" "LAB_PAIR=a LAB_ARMS_FILE=$fx/dpdk-netem.tsv#NETEM on a DPDK arm" \
+    "LAB_PAIR=a LAB_ARMS_FILE=$fx/none.tsv#not a readable file" "LAB_PAIR=a LAB_ARMS_FILE=$fx/dpdk-netem.tsv#netem cannot reach" \
     "LAB_PAIR=a LAB_EXTRA_SRC=$fx/nobuild#a directory with a lab-build.sh" "LAB_PAIR=a LAB_MODES=kernel#latency suite's" \
     "LAB_PAIR=a LAB_RUN_STAMP=today#LAB_RUN_STAMP" "LAB_PAIR=a TRANSPORT_POINT_S=x#TRANSPORT_POINT_S is a whole number" \
     "LAB_PAIR=a LAB_MAX_HOURS=5#give LAB_MAX_HOURS="; do
@@ -719,6 +1070,227 @@ evg=$(grep -o 'creating ergon-lab-transport-b-[0-9-]*' "$tmp/evict.out" | head -
     fail "azure/lab.sh eviction:$why $(tail -3 "$tmp/evict.out")"
 rm -f "$tmp/fakecli/ssh" "$tmp/fakecli/scp"
 
+# ---- aws/lab.sh LAB_SUITE=transport ----
+# Refusals and the estimate against an aws that logs and fails (nothing may
+# reach it); then whole runs against fake_aws.py (stateful: it creates, lists
+# and deletes what lab.sh asks), ssh and scp that succeed, a curl that fails
+# and a sleep of 10 ms: a run creates and launches everything, then stops at
+# packing the checkout (no git repository) and tears down by tag.
+awsets=$cloud/transport-aws-dpdk.tsv
+printf '#!/bin/sh\necho "$0 $*" >>"%s/cloud-calls"\nexit 1\n' "$tmp" >"$tmp/nocloud/aws"
+chmod +x "$tmp/nocloud/aws"
+awslab() { env PATH="$tmp/nocloud:$PATH" HOME="$tmp/home" TMPDIR="$tmp/labtmp" LAB_REPO="$tmp/repo" LAB_SUITE=transport "$@" bash "$cloud/aws/lab.sh"; }
+why=
+for refused in "LAB_PAIR=#LAB_PAIR is a or b" "LAB_PAIR=c#LAB_PAIR is a or b" "LAB_PAIR=a LAB_TUNE=1#runs on Azure" \
+    "LAB_PAIR=a LAB_PLACEMENT=cross-az LAB_NO_FLATOUT=1#cluster placement group" \
+    "LAB_PAIR=a LAB_MODES=kernel#latency suite's" "LAB_PAIR=a LAB_RUN_STAMP=20261025-120000#claims a stamp of its own" \
+    "LAB_PAIR=a LAB_ARMS_FILE=$fx/none.tsv#not a readable file" "LAB_PAIR=a LAB_ARMS_FILE=$fx/dpdk-netem.tsv#netem cannot reach" \
+    "LAB_PAIR=a LAB_SETS_FILE=$fx/none.tsv#not a readable file" "LAB_PAIR=a LAB_EXTRA_SRC=$fx/nobuild#a directory with a lab-build.sh" \
+    "LAB_PAIR=a TRANSPORT_POINT_S=x#TRANSPORT_POINT_S is a whole number" "LAB_PAIR=a LAB_SETS_FILE=$awsets LAB_MAX_HOURS=2#give LAB_MAX_HOURS=" \
+    "LAB_PAIR=a LAB_SPOT_FALLBACK=1#LAB_SPOT_FALLBACK is 1 (with LAB_SPOT=1" "LAB_PAIR=a LAB_DETACH=2#LAB_DETACH is 0, 1 or unset" \
+    "LAB_PAIR=a LAB_SEED=a.b#LAB_SEED is letters"; do
+    rm -f "$tmp/cloud-calls"
+    # shellcheck disable=SC2086
+    out=$(awslab ${refused%#*} 2>&1) && why+=" ran with [${refused%#*}];"
+    [[ $out == *"${refused#*#}"* ]] || why+=" [${refused%#*}]: $(tail -1 <<<"$out");"
+    [[ ! -s $tmp/cloud-calls ]] || why+=" [${refused%#*}] called the cloud;"
+done
+out=$(LAB_SUITE= awslab LAB_SUITE=latency LAB_PAIR=a 2>&1) && why+=" latency with LAB_PAIR ran;"
+[[ $out == *"transport suite's"* ]] || why+=" latency with LAB_PAIR: $(tail -1 <<<"$out");"
+# the AWS DPDK session's F-Stack arm on Azure: refused there, by its setup
+out=$(lab LAB_PAIR=a LAB_SETS_FILE="$awsets" 2>&1) && why+=" azure ran dpdk-tcp;"
+[[ $out == *"an F-Stack arm runs on AWS only"* ]] || why+=" azure dpdk-tcp: $(tail -1 <<<"$out");"
+[[ ! -s $tmp/cloud-calls ]] || why+=" a refusal called the cloud;"
+[[ -z $(ls -A "$tmp/labtmp") ]] || why+=" a snapshot left: $(ls "$tmp/labtmp");"
+[[ -z $why ]] && pass "aws/lab.sh LAB_SUITE=transport refuses a bad pair, tuning, another placement, latency settings, a stamp, bad arms and sets files (NETEM on a DPDK arm too), extra tree, duration, deadline, spot fallback, detach and seed before any aws call; azure/lab.sh refuses the F-Stack arm" ||
+    fail "aws/lab.sh transport refusals:$why"
+rm -f "$tmp/cloud-calls"
+est=$(awslab LAB_ESTIMATE=1 LAB_PAIR=a LAB_REPS=3 LAB_SETS_FILE="$awsets" 2>&1) && estrc=0 || estrc=$?
+ests=$(awslab LAB_ESTIMATE=1 LAB_PAIR=a LAB_REPS=3 LAB_SETS_FILE="$awsets" LAB_SPOT=1 2>&1) && estsrc=0 || estsrc=$?
+estm=$(awslab LAB_ESTIMATE=1 LAB_PAIR=b 2>&1) && estmrc=0 || estmrc=$?
+estg=$(awslab LAB_ESTIMATE=1 LAB_PAIR=a LAB_REPS=3 LAB_ALLOW_ARM=1 LAB_TYPE=c8g.2xlarge LAB_SETS_FILE="$awsets" 2>&1) && estgrc=0 || estgrc=$?
+if [[ $estrc == 0 && $est == *"pair a: 141 points (sets d1, d8, u, pin)"*"instance-hours, about \$"*" on demand"* &&
+    $est == *"a c7a.2xlarge, b c7a.2xlarge, on-demand, 3 reps"* && $est == *"c7a.2xlarge \$0.41056/h"* && $est == *"detaches it"* &&
+    $estsrc == 0 && $ests == *"at spot prices"*"c7a.2xlarge \$0.1907/h"*"describe-spot-price-history"* &&
+    $estmrc == 0 && $estm == *"pair b: 420 points"* &&
+    $estgrc == 0 && $estg == *"pair a: 141 points (sets d1, d8, u, pin)"* && $estg == *"a c8g.2xlarge, b c8g.2xlarge"* &&
+    ! -s $tmp/cloud-calls ]]; then
+    pass "aws/lab.sh LAB_SUITE=transport LAB_ESTIMATE=1: the AWS DPDK session's points, hours, instance-hours and dollars on c7a.2xlarge (on demand, spot with LAB_SPOT=1) and on Graviton (F-Stack arm included), the matrix's pair b; no aws call"
+else
+    fail "aws/lab.sh transport estimate ($estrc, $estsrc, $estmrc, $estgrc): $est | $ests | $estm | $estg"
+fi
+
+# the SMT sessions on c7i.4xlarge (transport-aws-smt-off.tsv, then
+# transport-aws-smt.tsv's `smt on`): their points and hours, no aws call;
+# `smt on` refused with LAB_THREADS_PER_CORE=1, on Graviton and on C7a
+rm -f "$tmp/cloud-calls"
+why=
+smtoff=$cloud/transport-aws-smt-off.tsv smton=$cloud/transport-aws-smt.tsv
+out=$(awslab LAB_ESTIMATE=1 LAB_PAIR=a LAB_REPS=3 LAB_SPOT=1 LAB_SPOT_FALLBACK=1 LAB_TYPE=c7i.4xlarge LAB_SETS_FILE="$smtoff" 2>&1) || why+=" smt off estimate: $(tail -1 <<<"$out");"
+[[ $out == *"pair a: 36 points (sets smtoff)"*"wall about "* && $out == *"a c7i.4xlarge, b c7i.4xlarge, spot, 3 reps"* ]] || why+=" smt off estimate: $out;"
+out=$(awslab LAB_ESTIMATE=1 LAB_PAIR=a LAB_REPS=3 LAB_SPOT=1 LAB_SPOT_FALLBACK=1 LAB_TYPE=c7i.4xlarge LAB_SETS_FILE="$smton" 2>&1) || why+=" smt on estimate: $(tail -1 <<<"$out");"
+[[ $out == *"pair a: 27 points (sets smton)"*"wall about "* ]] || why+=" smt on estimate: $out;"
+for refused in "LAB_TYPE=c7i.4xlarge LAB_THREADS_PER_CORE=1#not with LAB_THREADS_PER_CORE=1" \
+    "LAB_TYPE=c8g.2xlarge LAB_ALLOW_ARM=1#Graviton, which has no SMT" "LAB_TYPE=c7a.2xlarge#one thread a core"; do
+    # shellcheck disable=SC2086
+    out=$(awslab LAB_PAIR=a LAB_SETS_FILE="$smton" ${refused%#*} 2>&1) && why+=" smt on ran with [${refused%#*}];"
+    [[ $out == *"${refused#*#}"* ]] || why+=" smt on [${refused%#*}]: $(tail -1 <<<"$out");"
+done
+[[ ! -s $tmp/cloud-calls ]] || why+=" an aws call;"
+[[ -z $why ]] && pass "aws/lab.sh LAB_SUITE=transport: the SMT sessions' estimates on c7i.4xlarge (36 points SMT off, 27 SMT on); smt on refused with LAB_THREADS_PER_CORE=1, on Graviton and on C7a; no aws call" ||
+    fail "aws/lab.sh SMT sessions:$why"
+
+# the AWS Onload session (transport-aws-onload.tsv) on each type it runs on:
+# Intel (c7i.4xlarge, SMT off), Graviton (c8g.2xlarge, LAB_ALLOW_ARM=1) and
+# AMD (c7a.2xlarge), near 2 h at LAB_REPS=3 with OpenOnload's build; its
+# smoke (transport-aws-onload-smoke.tsv) at LAB_REPS=1; no aws call
+onsets=$cloud/transport-aws-onload.tsv
+why=
+for t in c7i.4xlarge c8g.2xlarge c7a.2xlarge; do
+    allow=
+    [[ $t == c8g.* ]] && allow=1
+    e=$(awslab LAB_ESTIMATE=1 LAB_PAIR=a LAB_REPS=3 LAB_TYPE=$t ${allow:+LAB_ALLOW_ARM=1} LAB_SETS_FILE="$onsets" 2>&1) || why+=" $t: $(tail -1 <<<"$e");"
+    [[ $e == *"pair a: 81 points (sets t, r)"*"wall about 1.94 h"* && $e == *"a $t, b $t"* ]] || why+=" $t: $(sed -n 2p <<<"$e");"
+    printf '%s\n' "$e" >"$tmp/onload-estimate-$t.txt"
+done
+e=$(awslab LAB_ESTIMATE=1 LAB_PAIR=a LAB_REPS=1 LAB_SETS_FILE="$cloud/transport-aws-onload-smoke.tsv" 2>&1) || why+=" smoke: $(tail -1 <<<"$e");"
+[[ $e == *"pair a: 20 points (sets ot, ou)"*"wall about 1.00 h"* ]] || why+=" smoke: $(sed -n 2p <<<"$e");"
+[[ ! -s $tmp/cloud-calls ]] || why+=" an estimate called the cloud;"
+[[ -z $why ]] && pass "aws/lab.sh LAB_SUITE=transport LAB_ESTIMATE=1: the Onload session on c7i.4xlarge, c8g.2xlarge (Graviton) and c7a.2xlarge, 81 points in about 1.94 h at 3 reps, and its smoke, 20 points in about 1 h; no aws call" ||
+    fail "aws/lab.sh Onload estimates:$why"
+
+awsbin=$tmp/awsbin
+mkdir -p "$awsbin"
+printf '#!/bin/sh\nexec python3 "%s" "$@"\n' "$here/fake_aws.py" >"$awsbin/aws"
+printf '#!/bin/sh\nexit 0\n' >"$awsbin/ssh"
+printf '#!/bin/sh\nexit 0\n' >"$awsbin/scp"
+printf '#!/bin/sh\nexit 7\n' >"$awsbin/curl"
+# a poll's pause, short (the address follower's 20 s ends its loop)
+printf '#!/bin/sh\n[ "$1" = 20 ] && exit 1\nexec /bin/sleep 0.01\n' >"$awsbin/sleep"
+chmod +x "$awsbin"/*
+# awsfull <name> [VAR=value...]: aws/lab.sh LAB_SUITE=transport LAB_PAIR=a
+# with the AWS DPDK sets against the fake, in $tmp/aws-<name>: raw (its
+# calls), out, rc, state.json; killed after 300 s (a hang fails)
+awsfull() {
+    local d=$tmp/aws-$1 rc=0
+    shift
+    rm -rf "$d"
+    mkdir -p "$d/home/.ssh" "$d/tmp" "$d/repo"
+    echo 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA lab-test' >"$d/home/.ssh/id_ed25519.pub"
+    : >"$d/raw"
+    perl -e 'alarm shift; exec @ARGV' 300 \
+        env PATH="$awsbin:$PATH" TMPDIR="$d/tmp" HOME="$d/home" LAB_REPO="$d/repo" LAB_SSH_FROM=192.0.2.10 \
+        AWS_CALLS="$d/raw" FAKE_AWS_STATE="$d/state.json" LAB_SUITE=transport LAB_PAIR=a LAB_REPS=3 \
+        LAB_SETS_FILE="$awsets" LAB_DETACH=0 "$@" bash "$cloud/aws/lab.sh" >"$d/out" 2>&1 || rc=$?
+    echo "$rc" >"$d/rc"
+}
+# awsleft <state.json>: what the fake still holds (terminated, closed and
+# cancelled are gone)
+awsleft() {
+    python3 -c 'import json, sys
+s = json.load(open(sys.argv[1]))
+print(" ".join(sorted(i for i, r in s["res"].items()
+                      if not r.get("deleted") and r.get("state") not in ("terminated", "closed", "cancelled"))))' "$1"
+}
+# awsclean <name>: "" when the run's teardown deleted everything and said
+# so, verified by tag; else why not
+awsclean() {
+    local d=$tmp/aws-$1 w=
+    [[ -z $(awsleft "$d/state.json" 2>/dev/null) ]] || w+=" left $(awsleft "$d/state.json");"
+    grep -q 'verified: nothing tagged run=.* remains in us-east-1' "$d/out" || w+=" not verified;"
+    [[ -z $(ls -A "$d/tmp" | grep -v '^ergon-lab-aws.lock$') ]] || w+=" snapshot left: $(ls "$d/tmp");"
+    echo "$w"
+}
+
+# a whole session against the fake: the ENI check before anything is made,
+# c7a.2xlarge in a cluster group, every resource tagged owner, run and
+# pair, the data ENIs at .4-.7, then (no checkout to pack) its teardown
+awsfull run
+d=$tmp/aws-run
+why=$(awsclean run)
+[[ $(cat "$d/rc") != 0 ]] || why+=" exit 0 with no checkout;"
+grep -q 'cannot list the checkout' "$d/out" || why+=" not stopped at the checkout: $(tail -2 "$d/out");"
+first_eni=$(grep -n 'MaximumNetworkInterfaces' "$d/raw" | head -1 | cut -d: -f1)
+first_vpc=$(grep -n ' create-vpc ' "$d/raw" | head -1 | cut -d: -f1)
+[[ -n $first_eni && -n $first_vpc && $first_eni -lt $first_vpc ]] || why+=" the ENI check not before the VPC ($first_eni, $first_vpc);"
+creates=$(grep -- '--tag-specifications' "$d/raw" || true)
+[[ $(grep -c . <<<"$creates") -ge 10 ]] || why+=" $(grep -c . <<<"$creates") tagged creates;"
+stamp_=$(sed -n 's/.*{Key=run,Value=\([0-9-]*\)}.*/\1/p' <<<"$creates" | sort -u)
+[[ $(grep -c . <<<"$stamp_") == 1 && -d $d/repo/target/md-dpdk-bench/aws-$stamp_ ]] || why+=" run tags [$stamp_] not the run's directory;"
+while IFS= read -r line; do
+    for spec in $(grep -o 'ResourceType=[^ ]*' <<<"$line"); do
+        [[ $spec == *"{Key=owner,Value=ergon-lab},{Key=run,Value=$stamp_},{Key=pair,Value=a},"* ]] || why+=" untagged: $spec;"
+    done
+done <<<"$creates"
+grep 'run-instances' "$d/raw" | grep -q -- '--instance-type c7a.2xlarge' || why+=" not c7a.2xlarge;"
+! grep 'run-instances' "$d/raw" | grep -qv -- '--placement GroupName=ergon-md-dpdk-' || why+=" an instance outside the cluster group;"
+[[ $(grep -c 'create-network-interface' "$d/raw") == 4 ]] || why+=" $(grep -c 'create-network-interface' "$d/raw") data ENIs;"
+for ip in 10.30.1.4 10.30.1.5 10.30.1.6 10.30.1.7; do grep -q -- "--private-ip-address $ip " "$d/raw" || why+=" no ENI at $ip;"; done
+grep -q 'ResourceType=volume' <<<"$creates" || why+=" volumes untagged;"
+[[ $(cat "$d/repo/target/md-dpdk-bench/aws-$stamp_/pair" 2>/dev/null) == a && $(cat "$d/repo/target/md-dpdk-bench/aws-$stamp_/suite" 2>/dev/null) == transport ]] ||
+    why+=" its directory does not say transport pair a;"
+grep -q 'transport pair a seed' "$d/repo/target/md-dpdk-bench/aws-$stamp_/instances.txt" || why+=" instances.txt without the pair;"
+[[ -z $why ]] && pass "aws/lab.sh LAB_SUITE=transport end to end: ENIs checked first, two c7a.2xlarge in one cluster group, every resource tagged owner, run and pair, four data ENIs, then deleted and verified by tag, the snapshot removed" ||
+    fail "aws/lab.sh transport end to end:$why $(tail -3 "$d/out")"
+
+# refusals that need AWS's answer: a type taking fewer than three ENIs
+awsfull enis FAKE_MAX_ENIS=2
+d=$tmp/aws-enis
+why=
+[[ $(cat "$d/rc") != 0 ]] || why+=" exit 0;"
+grep -q 'takes 2 ENIs and the lab needs 3' "$d/out" || why+=" not said: $(tail -1 "$d/out");"
+! grep -qE ' create-| run-instances | import-key-pair ' "$d/raw" || why+=" something created;"
+[[ -z $(ls -A "$d/repo/target/md-dpdk-bench" 2>/dev/null) ]] || why+=" a run directory claimed;"
+[[ -z $why ]] && pass "aws/lab.sh LAB_SUITE=transport: a type taking fewer than three ENIs refused before anything is created" ||
+    fail "aws/lab.sh transport ENI check:$why"
+
+# an operator's TERM mid-run (once the first data ENI is attached): the trap's
+# teardown deletes and verifies everything, the run ends 130
+awsfull term FAKE_TERM_AT=attach-network-interface
+d=$tmp/aws-term
+why=$(awsclean term)
+[[ $(cat "$d/rc") == 130 ]] || why+=" exit $(cat "$d/rc");"
+grep -q 'cannot list the checkout' "$d/out" && why+=" ran on past the TERM;"
+[[ -z $why ]] && pass "aws/lab.sh LAB_SUITE=transport: a TERM mid-run ends it through its teardown (exit 130), everything deleted and verified" ||
+    fail "aws/lab.sh transport TERM:$why $(tail -3 "$d/out")"
+
+# spot: no zone with spot capacity: refused as before without the
+# fallback; with LAB_SPOT_FALLBACK=1 both launch on demand, said so
+awsfull nospot LAB_SPOT=1 FAKE_NO_SPOT_CAPACITY="us-east-1a us-east-1b"
+d=$tmp/aws-nospot
+why=$(awsclean nospot)
+grep -q 'no zone had capacity for c7a.2xlarge and c7a.2xlarge' "$d/out" || why+=" not said: $(tail -1 "$d/out");"
+! grep 'run-instances' "$d/raw" | grep -vq -- '--instance-market-options' || why+=" an on-demand launch;"
+awsfull fallback LAB_SPOT=1 LAB_SPOT_FALLBACK=1 FAKE_NO_SPOT_CAPACITY="us-east-1a us-east-1b"
+d=$tmp/aws-fallback
+why+=$(awsclean fallback)
+grep -q 'LAB_SPOT_FALLBACK=1, launching them on demand' "$d/out" || why+=" fallback not said;"
+[[ $(grep 'run-instances' "$d/raw" | grep -vc -- '--instance-market-options') == 2 ]] || why+=" not two on-demand launches;"
+grep -q '^market on-demand$' "$d"/repo/target/md-dpdk-bench/aws-*/instances.txt || why+=" instances.txt not on-demand;"
+grep -q 'describe-spot-instance-requests' "$d/raw" || why+=" the spot requests not swept;"
+[[ -z $why ]] && pass "aws/lab.sh LAB_SPOT=1: no spot capacity in any zone ends the run (deleted, verified); LAB_SPOT_FALLBACK=1 launches both on demand, said so and recorded, spot requests still swept" ||
+    fail "aws/lab.sh transport spot fallback:$why"
+
+# detached (LAB_DETACH=1): the parent claims the directory, says so and
+# exits 0 with nothing created; the detached run in that directory creates,
+# fails at the checkout and tears down, verified, its snapshot removed
+awsfull detach LAB_DETACH=1
+d=$tmp/aws-detach
+why=
+[[ $(cat "$d/rc") == 0 ]] || why+=" parent exit $(cat "$d/rc");"
+grep -q 'detached: about' "$d/out" || why+=" not said: $(tail -1 "$d/out");"
+ddir=$(ls -d "$d"/repo/target/md-dpdk-bench/aws-* 2>/dev/null | head -1)
+dpid=$(cat "$ddir/lab.pid" 2>/dev/null)
+for _ in $(seq 600); do kill -0 "$dpid" 2>/dev/null || break; /bin/sleep 0.1; done
+kill -0 "$dpid" 2>/dev/null && { why+=" still running after 60 s;"; kill -TERM "$dpid"; }
+cp "$ddir/lab.log" "$d/out" 2>/dev/null || why+=" no lab.log;"
+why+=$(awsclean detach)
+grep -q 'cannot list the checkout' "$d/out" || why+=" the detached run did not run on: $(tail -1 "$d/out");"
+[[ $(grep -c "{Key=run,Value=${ddir##*/aws-}}" "$d/raw") -ge 10 ]] || why+=" not the claimed directory's stamp;"
+[[ $(ls -d "$d"/repo/target/md-dpdk-bench/aws-* | grep -c .) == 1 ]] || why+=" a second directory claimed;"
+[[ -z $why ]] && pass "aws/lab.sh LAB_DETACH=1: the parent claims the run's directory and exits; the detached run, in it and with its stamp, deletes and verifies everything, its snapshot removed" ||
+    fail "aws/lab.sh transport detach:$why"
+
 # ---- transport.sh run on fake hosts ----
 # VM a and VM b are homes in the sandbox; the fake ssh runs a command in the
 # home of the host it names; vm.sh is a fake logging every call; the bench
@@ -739,8 +1311,21 @@ echo "$FAKE_HOST vm.sh $*" >>"$FAKE_HOSTS/calls"
 case $1 in driver | stop | events-start | aeron-page) echo "$FAKE_HOST $1-dir ${LAB_AERON_DIR:-unset}" >>"$FAKE_HOSTS/calls" ;; esac
 st=$HOME/state
 mkdir -p "$st"
+# the host's cpuidle driver (FAKE_IDLE_DRIVER: acpi_idle unless a test says
+# intel_idle), in a /sys of its own for host.sh's resolver
+fsys=$st/sys
+mkdir -p "$fsys/devices/system/cpu/cpuidle"
+fdrv=${FAKE_IDLE_DRIVER:-acpi_idle}
+[[ $FAKE_HOST != b || -z ${FAKE_IDLE_DRIVER_B:-} ]] || fdrv=$FAKE_IDLE_DRIVER_B
+echo "$fdrv" >"$fsys/devices/system/cpu/cpuidle/current_driver"
+# the cap TR_IRQ_IDLE asks under the arm's TR_OVERRIDES, auto resolved as
+# host.sh transport_irq_idle_apply does
+fake_idle_cap() {
+    (. "$FAKE_CLOUD/transport-settings.env"; . "$FAKE_CLOUD/host.sh"; transport_overrides
+     if [[ $TR_IRQ_IDLE == auto ]]; then LAB_SYS_ROOT=$fsys transport_irq_idle_auto; else echo "$TR_IRQ_IDLE"; fi)
+}
 case $1 in
-transport-map) echo "0 2 4,6,8,10,12,14" ;;
+transport-map) echo "${FAKE_MAP:-0 2 4,6,8,10,12,14}" ;;
 nics) if [[ $FAKE_HOST == a ]]; then printf 'sender eth1 enP1 m 10.20.1.4 24 x\nreceiver eth2 enP2 m 10.20.1.5 24 y\n'
       else printf 'sender eth1 enP1 m 10.20.1.6 24 x\nreceiver eth2 enP2 m 10.20.1.7 24 y\n'; fi ;;
 hostcheck) if [[ ${FAKE_HOSTCHECK_WARN:-} == "$FAKE_HOST" ]]; then echo "T3 warn: cpu 6 has its tick (evidence: LOC 1000/s)"; exit 1; fi
@@ -764,26 +1349,103 @@ netem)
     esac ;;
 irqsnap) n=$(cat "$st/i" 2>/dev/null || echo 0); n=$((n + 1)); echo $n >"$st/i"
     printf '           CPU0       CPU2       CPU4       CPU6\nLOC:  %d  %d  %d  %d  Local timer interrupts\n' $n $n $n $n ;;
+# the ping on FAKE_PING_CPU (4); a uring-sqpoll point's SQPOLL thread on
+# the CPU FAKE_SQPOLL ("<arm part>:<cpu> ...") gives the point's arm (the
+# point events-start last named on this host)
 sample) if [[ -n ${FAKE_PLACEMENT_BAD:-} ]]; then echo "FAIL ping(9) on CPU 0, not isolated;"; else echo "ok 2 busy threads"; fi
-    echo "  101   4 99.5 ping"; echo "    1   0  0.1 sshd" ;;
+    echo "  101 ${FAKE_PING_CPU:-4} 99.5 ping"; echo "    1   0  0.1 sshd"
+    for e in ${FAKE_SQPOLL:-}; do
+        [[ $(tail -1 "$st/events-started" 2>/dev/null) == *"-${e%%:*}"* ]] && echo "  700 ${e#*:} 100.0 iou-sqp-650"
+    done ;;
 # every transport sysctl at its declared value, the optional ones absent
+# and the SMT state (vm.sh transport_smt_read): FAKE_SMT_ACTIVE, else 0
 settings) (. "$FAKE_CLOUD/transport-settings.env"; . "$FAKE_CLOUD/host.sh"; transport_sysctls) |
-    awk '{k = $1; gsub("/", ".", k); v = $2; for (i = 3; i < NF; i++) v = v " " $i; print k "=" ($NF == "optional" ? "absent" : v)}' ;;
+    awk '{k = $1; gsub("/", ".", k); v = $2; for (i = 3; i < NF; i++) v = v " " $i; print k "=" ($NF == "optional" ? "absent" : v)}'
+    echo "devices.system.cpu.smt.active=${FAKE_SMT_ACTIVE:-0}" ;;
 nstat) n=$(cat "$st/s" 2>/dev/null || echo 0); n=$((n + 1)); echo $n >"$st/s"
     printf 'Tcp: RetransSegs InSegs\nTcp: %d %d\nUdp: InErrors\nUdp: 0\n' "$n" "$((n * 100))" ;;
 # the data NICs' interrupt deferral (napi_defer_hard_irqs, gro_flush_timeout),
 # both NICs alike: kernel-busy's driver sets 2/200000, kernel's 0/0;
 # transport-net the settings' TR_NAPI_DEFER/TR_GRO_FLUSH_NS under the arm's
 # TR_OVERRIDES (logged); napi reads them back as vm.sh napi prints them
-driver) case $2 in *@NAPI_DEFER=*) v=${2#*@NAPI_DEFER=}; v=${v%%@*}; echo "${v%/*} ${v#*/}" >"$st/napi" ;; kernel-busy*) echo "2 200000" >"$st/napi" ;; kernel | kernel@*) echo "0 0" >"$st/napi" ;; esac ;;
+driver) if [[ -n ${FAKE_DRIVER_FAIL:-} && $2 == "$FAKE_DRIVER_FAIL"* ]]; then
+        # as vm.sh's ERR trap says a step that failed under set -e; the
+        # driver's log the last one's
+        echo "fake driver: EAL: Error - a stale log" >"$HOME/bench/driver.log"
+        echo 'vm.sh: line 2096: "return $rc" failed (exit 1): stopping' >&2
+        exit 1
+    fi
+    # the driver's environment (vm.sh's ~/bench/driver.env), which an
+    # embedded driver's binary sources: here its mode alone
+    echo "export FAKE_DRIVER_ENV='$2'" >"$HOME/bench/driver.env"
+    # md-dpdk's stage trace and capture, as vm.sh points them at ~/bench:
+    # the driver's files there (a header, a pcapng's first bytes), none else
+    rm -f "$HOME/bench/stages.csv" "$HOME/bench/capture.pcapng"
+    [[ $2 != *@RUSTERON_DPDK_STAGE_TRACE=* ]] || printf '# ergon md-dpdk stage trace v1\nstage,tsc,stream_id,seq,term_offset,value,ring\n' >"$HOME/bench/stages.csv"
+    [[ $2 != *@RUSTERON_DPDK_CAPTURE_WINDOW_MS=* ]] || printf '\n\r\r\n' >"$HOME/bench/capture.pcapng"
+    # the data NICs DPDK's (vm.sh nicstats then says so) until stop
+    case $2 in dpdk*) touch "$st/dpdk" ;; *) rm -f "$st/dpdk" ;; esac
+    case $2 in *@NAPI_DEFER=*) v=${2#*@NAPI_DEFER=}; v=${v%%@*}; echo "${v%/*} ${v#*/}" >"$st/napi" ;; kernel-busy*) echo "2 200000" >"$st/napi" ;; kernel | kernel@*) echo "0 0" >"$st/napi" ;;
+    # Onload's driver: onload-up first, the NICs' deferral off
+    onload@*) echo "0 0" >"$st/napi" ;; esac ;;
+# setup onload: the NICs under Onload, their deferral off; the build each
+# host has; an Onload stack of the arm's process mid-window (FAKE_ONLOAD_NOSTACK:
+# none on that host, as an unaccelerated socket would leave)
+onload-up) echo "0 0" >"$st/napi" ;;
+onload-idle) ;;
+onload-info) echo "onload a94512556626 patch 0123456789ab kernel 7.2.9+deb13-cloud-amd64 10.0.0 (fake)" ;;
+onload-stacks) if [[ ${FAKE_ONLOAD_NOSTACK:-} == "$FAKE_HOST" ]]; then echo "FAIL no Onload stack of $2 (stacks: none)"; exit 1; fi
+    echo "ok 1 stack(s) of $2: 0:4242" ;;
 transport-net)
     if [[ ${2:-} != check ]]; then
         v=$(. "$FAKE_CLOUD/transport-settings.env"; . "$FAKE_CLOUD/host.sh"; transport_overrides; echo "$TR_NAPI_DEFER $TR_GRO_FLUSH_NS")
         echo "$v" >"$st/napi"
         echo "$FAKE_HOST transport-net napi $v" >>"$FAKE_HOSTS/calls"
+        # the IRQ core's idle cap (TR_IRQ_IDLE), logged; FAKE_IDLE_STUCK: the
+        # host keeps every state enabled whatever it is asked
+        v=$(fake_idle_cap)
+        [[ -z ${FAKE_IDLE_STUCK:-} ]] && echo "$v" >"$st/idle" || echo all >"$st/idle"
+        echo "$FAKE_HOST transport-net irq_idle $v" >>"$FAKE_HOSTS/calls"
     fi ;;
+# every other set-up's IRQ core idle cap, as transport-net's; resolve: what
+# auto is under FAKE_IDLE_DRIVER (host.sh's own rule)
+irq-idle)
+    if [[ ${2:-} == resolve ]]; then
+        (. "$FAKE_CLOUD/transport-settings.env"; . "$FAKE_CLOUD/host.sh"; transport_overrides
+         if [[ $TR_IRQ_IDLE == auto ]]; then LAB_SYS_ROOT=$fsys transport_irq_idle_auto; else echo "$TR_IRQ_IDLE"; fi)
+        exit 0
+    fi
+    v=$(fake_idle_cap)
+    [[ -z ${FAKE_IDLE_STUCK:-} ]] && echo "$v" >"$st/idle" || echo all >"$st/idle"
+    echo "$FAKE_HOST irq-idle $v" >>"$FAKE_HOSTS/calls" ;;
 napi) read -r n ns <"$st/napi" 2>/dev/null || { n=2 ns=200000; }; printf 'enP1 %s %s\nenP2 %s %s\n' "$n" "$ns" "$n" "$ns" ;;
-stop | events-stop-all) ;;
+stop) rm -f "$st/dpdk" ;;
+events-stop-all) ;;
+# the housekeeping and IRQ CPUs' idle states as host.sh transport_idle_read
+# prints them (four states each, intel_idle's names), the IRQ CPU's past
+# the cap transport-net or irq-idle set disabled; each call's usage one more
+idle) read -r hk irq _ <<<"${FAKE_MAP:-0 2 4,6,8,10,12,14}"
+    c=$(cat "$st/idle" 2>/dev/null || echo all); u=$(cat "$st/u" 2>/dev/null || echo 0); u=$((u + 1)); echo $u >"$st/u"
+    echo "driver $fdrv governor menu max_cstate 9"
+    for i in 0 1 2 3; do
+        n=(POLL C1 C1E C6)
+        echo "cpu$hk hk $i ${n[i]} 0 $((i * 100)) $((i * 300)) $u $((u * 10))"
+        dis=0; [[ $c != all ]] && ((i > c)) && dis=1
+        echo "cpu$irq irq $i ${n[i]} $dis $((i * 100)) $((i * 300)) $u $((u * 10))"
+    done ;;
+# each data NIC's counters as vm.sh nicstats prints them: its traffic, 1 MB
+# more each way a call (a point's growth 2 MB a host), its moderation and
+# driver counters (the queue's interrupts unmasked, 7 more a call); or dpdk
+# alone while DPDK holds them
+nicstats) n=$(cat "$st/nic" 2>/dev/null || echo 0); n=$((n + 1)); echo $n >"$st/nic"
+    if [[ -e $st/dpdk ]]; then echo "sender eth1 dpdk"; echo "receiver eth2 dpdk"; else
+        for r in "sender eth1" "receiver eth2"; do
+            echo "$r tx_bytes=$((n * 1000000)) rx_bytes=$((n * 1000000)) tx_packets=$((n * 1000)) rx_packets=$((n * 1000)) bw_out_allowance_exceeded=0 pps_allowance_exceeded=0"
+            echo "$r coalesce off n/a 0 0"
+            echo "$r stat queue_0_tx_unmask_interrupt $((n * 7))"
+            echo "$r stat pps_allowance_exceeded 0"
+        done
+    fi ;;
 cc-available) echo "reno cubic" ;;
 # a point's events: begun (logged), then read back as host.sh events_stop
 # prints them: the trace's clock the wall clock's, and on the host that
@@ -810,33 +1472,98 @@ cat >"$sb/bin/stub" <<'SH'
 #!/usr/bin/env bash
 # a bench binary as transport-cli.md has it
 me=${0##*/}
-echo "$FAKE_HOST $me $*" >>"$FAKE_HOSTS/runs"
-role= out= label= rate= kind=oneway streams=1 warm=0 dur=0 mode= impl=
+# (with the driver's environment, when it was sourced: an embedded driver's binary)
+echo "$FAKE_HOST $me $*${FAKE_DRIVER_ENV:+ [driver.env $FAKE_DRIVER_ENV]}" >>"$FAKE_HOSTS/runs"
+role= out= label= rate= kind=oneway streams=1 warm=0 dur=0 mode= impl= stage= load= hot= dbusy= wire= busy=
 while (($#)); do
     case $1 in --role) role=$2 ;; --out) out=$2 ;; --label) label=$2 ;; --rate) rate=$2 ;; --round-trip) kind=load ;;
-    --streams) streams=$2 ;; --warmup-s) warm=$2 ;; --duration-s) dur=$2 ;; --mode) mode=$2 ;; --impl) impl=$2 ;; esac
+    --streams) streams=$2 ;; --warmup-s) warm=$2 ;; --duration-s) dur=$2 ;; --mode) mode=$2 ;; --impl) impl=$2 ;;
+    --stage-trace) stage=$2 ;; --busy-read-us) busy=$2 ;;
+    --load) load=$2 ;; --hot-rate) hot=$2 ;; --driver-busy-threads) dbusy=$2 ;; --wire) wire=$2 ;;
+    # the runner's own (the DPDK driver's capture window): never the binary's
+    --capture-ms) echo "stub: --capture-ms is the runner's, not aeron_lat's" >&2; exit 2 ;; esac
     shift
 done
+# aeron_lat --stage-trace: its stages file (a header alone)
+stages() { [[ -z $stage ]] || { mkdir -p "$out"; printf '# ergon aeron_lat stage trace v1\n# role=%s every=%s streams=%s stream_id=1001 echo_offset=10000 ticks_per_ns=2.0 measure_from_tsc=0\nstage,tsc,stream_id,seq,term_offset,value,ring\n' "$role" "$stage" "$streams" >"$out/stages-app.csv"; }; }
 # the manifest's settings as the binaries write them: the transport, the
 # schedule, the counters each host's loss accounting reads
 case $me in
-aeron_lat) transport=aeron-$mode extra=', "aeron.naks-sent": "0", "aeron.retransmits-sent": "0"' ;;
+aeron_lat) transport=aeron-$mode extra=', "aeron.naks-sent": "0", "aeron.retransmits-sent": "0"'
+    # labelled by the wire it was given (aeron_lat --wire, checked against its driver)
+    [[ $wire != dpdk ]] || transport=${transport/%-udp/-dpdk} ;;
+floor) transport=raw-dpdk extra= ;;
 tcp_lat) transport=tcp extra=', "tcp.retrans": "0", "tcp.dsack_dups": "0", "tcp.retrans_not_dsack": "0", "tcp.lost_end": "0"' ;;
 mpsc_lat) transport=mpsc extra= ;;
 *) transport=udp extra= ;;
 esac
-[[ $me == udp_lat || $me == tcp_lat ]] && extra+=', "busy_read_us": "50"'
+[[ $me == udp_lat || $me == tcp_lat ]] && extra+=", \"busy_read_us\": \"${busy:-50}\""
 settings="\"transport\": \"$transport\", \"streams\": \"$streams\", \"warmup_s\": \"$warm\", \"duration_s\": \"$dur\", \"scheduled\": \"0\", \"late\": \"0\", \"max_send_lag_ns\": \"0\", \"retrans\": \"0\"$extra"
 [[ $role == oneway-send || $role == oneway-recv ]] && { echo "stub: --role $role is refused (one way is --role local)" >&2; exit 2; }
+# --load mixed: both ends' counts as mixed.rs writes them, every message
+# accounted for (each background stream's sent, read by each subscription,
+# echoed and back), the drivers' bytes those its frames give (about 1.5 MB:
+# inside the fake NICs' 2 MB a host), the DPDK transport's own counters
+if [[ $load == mixed ]]; then
+    n=$((streams - 1)) per=$((1500000 / ((streams - 1) * 320)))
+    classes= pubs= fan= sent= zeros= recv= period=
+    for ((i = 1; i <= n; i++)); do
+        c=$(((i - 1) % 8)) f=$((1 + i % 4))
+        classes+=$(echo SSSSBBIM | cut -c$((c + 1)))
+        pubs+=,$(((c == 7) + 1)) fan+=,$f sent+=,$per zeros+=,0 period+=,1000000
+        r=$per
+        for ((k = 1; k < f; k++)); do r+=/$per; done
+        recv+=,$r
+    done
+    fb=$((n * per * 320))
+    settings+=", \"load\": \"mixed\", \"mixed.profile\": \"mixed-v1\", \"mixed.classes\": \"$classes\", \"mixed.publishers\": \"${pubs#,}\""
+    settings+=", \"mixed.fanout\": \"${fan#,}\", \"mixed.period_ns\": \"${period#,}\", \"hot_rate\": \"$hot\", \"busy_threads\": \"$((2 + dbusy))\""
+    settings+=", \"driver.bytes-sent\": \"$((fb + 96))\", \"driver.bytes-received\": \"$((fb + 96))\", \"mixed.frame_bytes_sent\": \"$fb\", \"mixed.frames_sent\": \"$((n * per))\""
+    # the DPDK transport's own NIC counters (aeron_lat writes none on a kernel wire)
+    [[ $wire != dpdk ]] ||
+        settings+=", \"nic.tx_bytes\": \"$((fb + 100000))\", \"nic.rx_bytes\": \"$((fb + 100000))\", \"nic.rx_missed\": \"0\", \"nic.allowance_exceeded\": \"0\""
+    if [[ $role == pong ]]; then
+        settings+=", \"mixed.recv\": \"${recv#,}\", \"mixed.echoed\": \"${sent#,}\", \"mixed.recv_gaps\": \"${zeros#,}\", \"mixed.recv_behind\": \"${zeros#,}\""
+        settings+=", \"mixed.recv_refused\": \"${zeros#,}\", \"mixed.hot_echoes\": \"1\", \"mixed.frame_bytes_received\": \"$fb\""
+        [[ -n ${FAKE_FANOUT_SHORT:-} && $label == *"$FAKE_FANOUT_SHORT"* ]] && settings=${settings/\"mixed.recv\": \"$per\/$per,/\"mixed.recv\": \"$per\/$((per - 1)),}
+    else
+        settings+=", \"mixed.scheduled\": \"${sent#,}\", \"mixed.sent\": \"${sent#,}\", \"mixed.echoes\": \"${sent#,}\", \"mixed.echo_gaps\": \"${zeros#,}\""
+        settings+=", \"mixed.echo_behind\": \"${zeros#,}\", \"mixed.bp_measured\": \"${zeros#,}\", \"mixed.hot_sent\": \"1\", \"mixed.hot_frame_bytes\": \"96\""
+        settings+=", \"mixed.echo_frame_bytes_received\": \"$fb\", \"all.p50_ns\": \"2\", \"all.p99_ns\": \"3\", \"all.p9999_ns\": \"5\", \"all.max_ns\": \"150000\""
+    fi
+fi
 [[ $role == ping ]] && kind=load
+# --mode spy-udp: the run's frames (100 pings, a round trip's 100 echoes) and
+# its driver's bytes; its sink (--role pong) the frames it read (90 pings
+# for a label FAKE_SINK_SHORT names)
+if [[ $mode == spy-udp ]]; then
+    if [[ $role == pong ]]; then
+        pings=100
+        [[ -n ${FAKE_SINK_SHORT:-} && $label == *"$FAKE_SINK_SHORT"* ]] && pings=90
+        settings+=", \"sink.ping_frames\": \"$pings\", \"sink.echo_frames\": \"100\", \"sink.gaps\": \"0\", \"sink.behind\": \"0\", \"sink.refused\": \"0\""
+    else
+        settings+=', "sent": "100", "driver.bytes-sent": "19200"'
+        [[ $kind == load ]] && settings+=', "echoes_sent": "100"'
+    fi
+fi
 if [[ $role == pong ]]; then
+    # one that exits before ready, as fstack_lat did on AWS as a plain user:
+    # F-Stack's config echo on stdout, the EAL's error on stderr
+    if [[ -n ${FAKE_PONG_EXIT:-} && $label == *"$FAKE_PONG_EXIT"* ]]; then
+        echo "[dpdk]: lcore_mask=4"
+        echo "EAL: Cannot use IOVA as 'PA' since physical addresses are not available" >&2
+        echo "EAL: Error - exiting with code: 1" >&2
+        echo "[freebsd.sysctl]: net.inet.tcp.delayed_ack=0"
+        exit 1
+    fi
     # ready once "bound", unless told to stay silent; a manifest when stopped
     [[ -n ${FAKE_PONG_SILENT:-} && $label == *"$FAKE_PONG_SILENT"* ]] || echo ready
-    trap 'mkdir -p "$out"; echo "{\"settings\": {$settings}}" >"$out/manifest.json"; exit 0' TERM
+    trap 'mkdir -p "$out"; stages; echo "{\"settings\": {$settings}}" >"$out/manifest.json"; exit 0' TERM
     while :; do sleep 0.05; done
 fi
 [[ -n ${FAKE_FAIL_LABEL:-} && $label == *"$FAKE_FAIL_LABEL"* ]] && { echo "stub: failing $label" >&2; exit 1; }
 mkdir -p "$out"
+stages
 # the row as the binaries write it: kind first, the channel, no rep
 # the max 150 us, due at second :50 of a minute (the per-minute cluster
 # explains it: spikes.py), every other latency 1 to 5 ns
@@ -857,6 +1584,25 @@ cat >"$sb/bin/sh" <<'SH'
 case "$*" in *pong.pid*) [[ -n ${FAKE_SH_DELAY:-} ]] && /bin/sleep "$FAKE_SH_DELAY" ;; esac
 exec /bin/sh "$@"
 SH
+# the onload launcher: logged with the EF_ settings it was given, then the command
+cat >"$sb/bin/onload" <<'SH'
+#!/usr/bin/env bash
+echo "$FAKE_HOST onload $* | $(env | grep '^EF_' | sort | tr '\n' ' ')" >>"$FAKE_HOSTS/onload"
+while [[ ${1:-} == --* ]]; do shift; done
+exec "$@"
+SH
+# sudo -n setpriv <options> <command>: logged, then the command as this
+# user (an embedded driver's binary, as fstack_lat, runs under it)
+cat >"$sb/bin/sudo" <<'SH'
+#!/usr/bin/env bash
+echo "$FAKE_HOST sudo $*" >>"$FAKE_HOSTS/sudo"
+[[ ${1:-} == -n ]] && shift
+if [[ ${1:-} == setpriv ]]; then
+    shift
+    while [[ ${1:-} == --* ]]; do shift; done
+fi
+exec "$@"
+SH
 cat >"$sb/bin/taskset" <<'SH'
 #!/usr/bin/env bash
 # taskset -c <cpu> <command>...: logged, then the command
@@ -869,12 +1615,12 @@ mkhost() { # <host>
     local h=$sb/$1
     mkdir -p "$h/ergon/md-dpdk/benches/cloud" "$h/ergon/target/release" "$h/bench" "$h/extra"
     ln -sf "$sb/bin/fakevm" "$h/ergon/md-dpdk/benches/cloud/vm.sh"
-    for b in aeron_lat mpsc_lat udp_lat tcp_lat; do ln -sf "$sb/bin/stub" "$h/ergon/target/release/$b"; done
+    for b in aeron_lat mpsc_lat udp_lat tcp_lat floor; do ln -sf "$sb/bin/stub" "$h/ergon/target/release/$b"; done
 }
 trun() { # <pair> <reps> [<arms file>] [vars...]: transport.sh run on host a
     local pair=$1 reps=$2 af=${3:-}
     shift 3 || shift $#
-    rm -rf "$sb/a" "$sb/b" "$sb/calls" "$sb/runs" "$sb/taskset"
+    rm -rf "$sb/a" "$sb/b" "$sb/calls" "$sb/runs" "$sb/taskset" "$sb/onload" "$sb/sudo"
     mkhost a
     mkhost b
     mkdir -p "$sb/a/bench/transport-$pair"
@@ -891,6 +1637,7 @@ vm_b=g/b
 commit=abc
 dirty=0
 arms_file=$af
+sets_file=${TRUN_SETS:-}
 TRANSPORT_WARMUP_S=0
 TRANSPORT_POINT_S=0
 TRANSPORT_SWITCH_S=0
@@ -902,7 +1649,8 @@ ENV
 # the runner stops only the PIDs it started, never by name
 mkdir -p "$tmp/bystander"
 ln -s /bin/sleep "$tmp/bystander/aeron_lat"
-"$tmp/bystander/aeron_lat" 600 &
+# (it outlives the sessions run before it is checked, however slow the host)
+"$tmp/bystander/aeron_lat" 3600 &
 bystander=$!
 trun b 1 "" && rrc=0 || rrc=$?
 d=$sb/a/bench/transport-b
@@ -935,6 +1683,21 @@ python3 -c 'import json, sys; m = json.load(open(sys.argv[1])); assert all(m["lo
 # the labels as the analysis parses them: every row its manifest, the one-host sets (1, 2b) one host each
 python3 -c 'import sys; sys.path.insert(0, sys.argv[2]); import transport_points as tp; ps = tp.read_points(sys.argv[1]); assert ps and all(p.manifest for p in ps); assert {p.set for p in ps if tp.hosts_of(p.set) == ("a",)} == {"1", "2b"}; assert all(sorted(p.manifest["vms"]) == list(tp.hosts_of(p.set)) for p in ps); assert {p.arm for p in ps if p.manifest["aa"]} == {"aa"}' "$d" "$cloud" 2>/dev/null || why+=" transport_points.read_points: labels or hosts;"
 [[ $(grep -c . "$d/order.csv") == "$(grep -c . "$d/rounds.tsv")" ]] || why+=" orders not recorded a round;"
+# the IRQ core's idle depth: TR_IRQ_IDLE=auto resolved on both hosts (all
+# under acpi_idle), recorded, and every arm's, set at every set-up (Aeron's,
+# DPDK's and the one-host arms' too, by irq-idle) and read back per point
+grep -q 'IRQ core idle depth all for every arm (TR_IRQ_IDLE=auto)' "$sb/run.out" || why+=" the session's idle depth not logged;"
+[[ $(tail -1 "$d/transport-settings.tr.env") == TR_IRQ_IDLE=all ]] || why+=" the session's idle depth not recorded: $(tail -1 "$d/transport-settings.tr.env");"
+nob=$(grep -L '^knob.irq_idle=all$' "$d"/manifest/*.env | head -3)
+[[ -z $nob ]] || why+=" points without knob.irq_idle=all: $nob;"
+nob=$(for m in "$d"/manifest/*.env; do grep -qE '^irq_idle_[ab]=all$' "$m" && ! grep -E '^irq_idle_[ab]=' "$m" | grep -qv '=all$' || echo "$m"; done | head -3)
+[[ -z $nob ]] || why+=" points without irq_idle_<host>=all read back: $nob;"
+for st in kernel dpdk none; do
+    m=$(grep -l "^setup=$st\$" "$d"/manifest/*.env | head -1)
+    [[ -n $m ]] && grep -q '^knob.irq_idle=all$' "$m" || why+=" no $st point at the session's depth;"
+done
+[[ $(grep -c '^a irq-idle all$' "$sb/calls") -gt 0 && $(grep -c '^b irq-idle all$' "$sb/calls") -gt 0 ]] || why+=" irq-idle never set on a non-socket arm;"
+! grep -q 'irq-idle [0-9]' "$sb/calls" || why+=" a cap set under acpi_idle;"
 [[ $(cut -f6 "$d/rounds.tsv" | sort -u | grep -c .) == "$(grep -c . "$d/rounds.tsv")" ]] || why+=" round seeds not each its own;"
 # netem: set before each lossy round's first point and cleared after it, on both hosts, never under a DPDK arm
 for lv in 0.01 0.1 1 0; do
@@ -1078,7 +1841,7 @@ python3 -c 'import json, sys; m = json.load(open(sys.argv[1])); e = m["events"];
 
 # a bad placement and netem counters off their loss are in the manifests
 # (and logged); a failed point recorded and the session's exit 1
-trun b 1 "" FAKE_PLACEMENT_BAD=1 FAKE_NETEM_BAD=1 FAKE_AERON_PAGE_BAD=1 FAKE_FAIL_LABEL='3c:mio-tcp@STREAMS=1@NETEM=0' FAKE_PONG_SILENT='3c:eio-tcp@STREAMS=1@NETEM=0' FAKE_SH_DELAY=0.3 && rrc=0 || rrc=$?
+trun b 1 "" FAKE_PLACEMENT_BAD=1 FAKE_NETEM_BAD=1 FAKE_AERON_PAGE_BAD=1 FAKE_FAIL_LABEL='3c:mio-tcp@STREAMS=1@NETEM=0' FAKE_PONG_SILENT='3c:eio-tcp@STREAMS=1@NETEM=0' FAKE_PONG_EXIT='3c:aeron-rel@STREAMS=1@NETEM=0' FAKE_DRIVER_FAIL=dpdk FAKE_SH_DELAY=0.3 && rrc=0 || rrc=$?
 why=
 [[ $rrc != 0 ]] || why+=" exit 0;"
 m=$(grep -l '^mode=aeron-rel@STREAMS=1@NETEM=1$' "$d"/manifest/*.env | head -1)
@@ -1092,10 +1855,96 @@ grep -q '^settings: 1: 1-aeron-ipc-huge@STREAMS=1-64-1-r10000: a knob.aeron_page
 # a pong that never says ready: its point failed, its ping never started
 [[ $(grep -c '^3c,1,0,eio-tcp,0,1$' "$d/failures.csv") == 1 ]] && ! grep -q '^a tcp_lat --role ping .*--label 3c:eio-tcp@STREAMS=1@NETEM=0 ' "$sb/runs" &&
     grep -q 'the pong did not say ready within 3 s' "$sb/run.out" || why+=" a silent pong: $(grep -c eio-tcp "$d/failures.csv") failures;"
+# a pong that exits before ready: its exit status and its error lines (the
+# EAL's, on stderr) in the log line, not its last two (F-Stack's config echo)
+[[ $(grep -c '^3c,1,0,aeron-rel,0,1$' "$d/failures.csv") == 1 ]] &&
+    grep -q "point 3c-r1-aeron-rel@STREAMS=1@NETEM=0-50000: the pong exited before it said ready (exit 1): EAL: Cannot use IOVA as 'PA' since physical addresses are not available EAL: Error - exiting with code: 1 *$" "$sb/run.out" ||
+    why+=" a pong that exited: $(grep 'exited before' "$sb/run.out" | head -1);"
+# a failed driver set-up: the step's error line in run.log, the driver's log kept
+grep -q 'host b: dpdk set-up failed: vm.sh: line 2096: "return $rc" failed (exit 1): stopping (.*/logs/setup-b.log, driver log .*/logs/driver-b-1.log)' "$sb/run.out" &&
+    grep -q 'fake driver: EAL: Error' "$d/logs/driver-b-1.log" || why+=" a failed driver set-up: $(grep 'set-up failed' "$sb/run.out" | head -1);"
 # every pong slow to write its PID file: waited for, not taken for an exit
-[[ $(grep -c . "$d/failures.csv") == 2 ]] && ! grep -q 'exited before it said ready' "$sb/run.out" || why+=" a slow pong taken for gone: $(tr '\n' ' ' <"$d/failures.csv");"
-[[ -z $why ]] && pass "transport.sh run: a failed placement or netem verdict in the manifest and logged, a failed point and a pong that never said ready in failures.csv (a pong slow to start waited for), the session's exit 1" ||
+[[ $(grep -vc ',dpdk-aeron-self,' "$d/failures.csv") == 3 ]] && ! grep 'exited before it said ready' "$sb/run.out" | grep -vq 'point 3c-r1-aeron-rel@' || why+=" a slow pong taken for gone: $(tr '\n' ' ' <"$d/failures.csv");"
+[[ -z $why ]] && pass "transport.sh run: a failed placement or netem verdict in the manifest and logged, a failed point, a pong that never said ready and one that exited (its exit status and error lines logged) in failures.csv (a pong slow to start waited for), the session's exit 1" ||
     fail "transport.sh run failures:$why"
+
+# ---- sink arms (aeron_lat --mode spy-udp) ----
+# the plan: a sink arm runs in a set on host a, netem -, and holds host b
+# too (never beside a set on b); a one-host arm may share its set
+refusals=
+for case in "set z b - b 1 1 - aeron-spy-udp|runs in a set on host a" "set z a - a 1 1 0.1 aeron-spy-udp|runs in a set on host a" \
+    "set z a - ab 1 1 - aeron-spy-udp|host ab takes" "set z a p1 a 1 1 - aeron-spy-udp
+set y a p1 b 1 1 - aeron-spy|one-host sets on different hosts"; do
+    printf '%s\n' "${case%|*}" >"$bad"
+    if out=$(plan modes a "$matrix" "$bad" 2>&1); then refusals+=" accepted[${case%|*}]"; fi
+    [[ $out == *"${case#*|}"* ]] || refusals+=" [${case%|*}: $out]"
+done
+printf '%s\n' "set z a - a 1 1 - aeron-spy-udp,aeron-spy,aa" >"$bad"
+plan modes a "$matrix:arms" "$bad" >/dev/null 2>&1 || refusals+=" a sink arm beside a one-host arm refused;"
+[[ -z $refusals ]] && pass "transport_plan.py: a sink arm only in a set on host a with no netem, beside one-host arms, never at once with a set on b" ||
+    fail "transport_plan.py sink refusals:$refusals"
+# a session of the spy set: aeron-spy (one host), aeron-spy-udp and
+# dpdk-aeron-spy-udp (sink arms: --role local on a, a sink on b for each
+# run), and the A/A of aeron-spy-udp
+spysets=$tmp/spy-sets.tsv
+echo "set spy a - a 10000 1 - aeron-spy-udp,aeron-spy,dpdk-aeron-spy-udp,aa" >"$spysets"
+TRUN_SETS="$spysets" trun a 1 "" && rrc=0 || rrc=$?
+d=$sb/a/bench/transport-a
+why=
+[[ $rrc == 0 && $(cat "$d/rc") == 0 ]] || why+=" exit $rrc rc $(cat "$d/rc" 2>/dev/null): $(tail -3 "$sb/run.out" | tr '\n' ' ');"
+[[ $(grep -c . "$d/results.csv") == 8 ]] || why+=" $(grep -c . "$d/results.csv") rows, not 8 (4 arms, one way and round trip);"
+# the measuring runs on a to the sink's address on b (the receiver NIC, the
+# echoes TR_PORT_SPAN/2 above), a's own sender NIC its kernel interface
+grep -q '^a aeron_lat --role local --round-trip --cpus 10,12 --endpoint 10.20.1.7:22000 --reply 10.20.1.7:22512 --interface 10.20.1.4 --aeron-dir .*--label spy:aeron-spy-udp@STREAMS=1 .*--mode spy-udp$' "$sb/runs" ||
+    why+=" spy-udp local flags: $(grep -m1 'role local .*spy-udp' "$sb/runs");"
+grep -q '^b aeron_lat --role pong --streams 1 .*--label spy:aeron-spy-udp@STREAMS=1 .*--cpus 10 --out .*out-sink0 --endpoint 10.20.1.7:22000 --reply 10.20.1.7:22512 --interface 10.20.1.7 --aeron-dir .*--mode spy-udp$' "$sb/runs" ||
+    why+=" sink flags: $(grep -m1 'role pong' "$sb/runs");"
+! grep -E 'aeron_lat .*spy:dpdk-aeron-spy-udp' "$sb/runs" | grep -q -- '--interface' || why+=" a DPDK sink arm given --interface;"
+! grep -q '^b aeron_lat --role local' "$sb/runs" && ! grep -q '^a aeron_lat --role pong' "$sb/runs" || why+=" a sink arm's ends on the wrong hosts;"
+# two sinks a sink arm's point (one a run), each on its run's stream ids;
+# none for aeron-spy
+[[ $(grep -c '^b aeron_lat --role pong ' "$sb/runs") == 6 ]] || why+=" $(grep -c '^b aeron_lat --role pong ' "$sb/runs") sinks, not 6;"
+for sidv in $(grep '^b aeron_lat --role pong ' "$sb/runs" | sed 's/.*--stream-id \([0-9]*\).*/\1/'); do
+    grep -q "^a aeron_lat --role local .*--stream-id $sidv " "$sb/runs" || why+=" sink stream id $sidv not a run's;"
+done
+! grep -q '^b aeron_lat .*spy:aeron-spy@' "$sb/runs" || why+=" a sink for aeron-spy;"
+# media drivers on b for the sink arms alone (3 rounds: kernel, dpdk, the A/A)
+[[ $(grep -c '^b vm.sh driver ' "$sb/calls") == 3 && $(grep -c '^a vm.sh driver ' "$sb/calls") == 4 ]] ||
+    why+=" drivers: a $(grep -c '^a vm.sh driver ' "$sb/calls"), b $(grep -c '^b vm.sh driver ' "$sb/calls");"
+# events: spinners on the hot CPUs each host leaves idle: on a the local
+# ends' (10, 12) and the driver's in use, on b the sink's (10) and the driver's
+grep -q '^spy-r1-aeron-spy-udp@STREAMS=1-10000 4,6,8,10,12,14 14 aeron$' "$sb/a/state/events-started" &&
+    grep -q '^spy-r1-aeron-spy-udp@STREAMS=1-10000 4,6,8,10,12,14 12,14 aeron$' "$sb/b/state/events-started" &&
+    ! grep -q 'aeron-spy@' "$sb/b/state/events-started" || why+=" events: a $(grep -m1 spy-udp "$sb/a/state/events-started"), b $(grep -m1 spy-udp "$sb/b/state/events-started");"
+m=$(grep -l '^mode=aeron-spy-udp@STREAMS=1$' "$d"/manifest/*.env | head -1)
+grep -q '^arm_hosts=sink$' "$m" && grep -q '^placement_b=ok' "$m" || why+=" sink arm runner manifest: $(grep -E '^(arm_hosts|placement_)' "$m" | tr '\n' ' ');"
+[[ -s $d/points/spy-r1-aeron-spy-udp@STREAMS=1-10000/sink0/manifest.json && -s $d/points/spy-r1-aeron-spy-udp@STREAMS=1-10000/sink1/manifest.json ]] || why+=" sinks' manifests not kept;"
+python3 -c '
+import json, sys
+sys.path.insert(0, sys.argv[2])
+import transport_points as tp
+ps = tp.read_points(sys.argv[1])
+assert len(ps) == 8, len(ps)
+for p in ps:
+    m = p.manifest
+    if p.arm == "aeron-spy":
+        assert m["hosts"] == {"a": "a"} and m["sink"] is None and tp.hosts_of_point(p) == ("a",), m["hosts"]
+    else:
+        assert m["hosts"] == {"a": "a", "b": "b"} and tp.hosts_of_point(p) == ("a", "b"), (p.tag, m["hosts"])
+        assert m["sink"]["settings"]["sink.ping_frames"] == "100", m["sink"]
+        assert m["loss_counters"]["b"]["aeron"]["naks-sent"] == 0, m["loss_counters"]
+' "$d" "$cloud" 2>/dev/null || why+=" collected sink manifests or hosts;"
+fv=$(python3 "$cloud/fairness.py" "$d" 2>&1) || why+=" fairness: $(head -5 <<<"$fv" | tr '\n' ' ');"
+tables=$(python3 "$cloud/analyse.py" --transport "$d" 2>&1) || why+=" analyse.py --transport failed: $(tail -2 <<<"$tables");"
+grep -q '^### Set spy, ' <<<"$tables" && ! grep -q '^Refused' <<<"$tables" || why+=" no set spy table, or one refused;"
+# a sink that read fewer pings than its run sent: the sink rule
+TRUN_SETS="$spysets" trun a 1 "" FAKE_SINK_SHORT=spy:aa
+fv=$(python3 "$cloud/fairness.py" "$d" 2>&1 || true)
+[[ $(grep -c '^sink: spy: .*the sink received 90 of 100 pings$' <<<"$fv") == 2 ]] && ! grep '^sink:' <<<"$fv" | grep -qv 'spy-aa@' ||
+    why+=" a short sink not flagged (or another): $(grep '^sink' <<<"$fv" | head -3 | tr '\n' ' ');"
+[[ -z $why ]] && pass "transport.sh run: a sink arm runs on a with a sink on b for each run (its run's stream ids, the sink's address, a driver on b), aeron-spy beside it on a alone; the sinks' manifests collected, fairness.py clean, and its sink rule flags a sink short of the pings sent" ||
+    fail "transport.sh run sink arms:$why"
+d=$sb/a/bench/transport-b
 
 # a hostcheck warning stops the session before its first point
 trun b 1 "" FAKE_HOSTCHECK_WARN=b && rrc=0 || rrc=$?
@@ -1104,6 +1953,153 @@ if [[ $rrc != 0 && $(cat "$d/rc" 2>/dev/null) == 1 && ! -s $sb/runs ]] && grep -
 else
     fail "transport.sh run with a hostcheck warning: exit $rrc, $(grep -c . "$sb/runs" 2>/dev/null) runs, $(tail -1 "$sb/run.out")"
 fi
+# hosts whose idle depths differ (a's intel_idle, b's acpi_idle): the
+# session stops before its first point
+trun b 1 "" FAKE_IDLE_DRIVER=intel_idle FAKE_IDLE_DRIVER_B=acpi_idle && rrc=0 || rrc=$?
+if [[ $rrc != 0 && $(cat "$d/rc" 2>/dev/null) == 1 && ! -s $sb/runs ]] && grep -q "the hosts' IRQ idle depths differ: a 1, b all" "$sb/run.out"; then
+    pass "transport.sh run: hosts whose IRQ idle depth (TR_IRQ_IDLE=auto) differs stop the session before its first point"
+else
+    fail "transport.sh run with differing idle depths: exit $rrc, $(grep -c . "$sb/runs" 2>/dev/null) runs, $(tail -1 "$sb/run.out")"
+fi
+# the SMT sessions (transport-aws-smt-off.tsv, transport-aws-smt.tsv) at 1
+# rep: SMT off, uring-sqpoll's SQPOLL thread on the next isolated core
+# ({next_core}); SMT on (`smt on`, each isolated core whole in the map),
+# its SQPOLL thread on the loop CPU's sibling ({loop_sibling}). Each: the
+# arguments (no SO_BUSY_POLL for uring-sqpoll), the SQPOLL CPU and the
+# loop's sibling never a gap spinner's, the declared SMT read back at every
+# point, fairness.py clean (T10 and the SQPOLL thread exempt only where they
+# belong) and every table there
+why=
+# smtcap <session>: every point's IRQ core at C1 on both hosts, as auto
+# gives under intel_idle (the c7i rerun's), recorded for the session
+smtcap() {
+    local bad
+    grep -q 'IRQ core idle depth 1 for every arm (TR_IRQ_IDLE=auto)' "$sb/run.out" && [[ $(tail -1 "$d/transport-settings.tr.env") == TR_IRQ_IDLE=1 ]] || why+=" $1: the session's depth not 1;"
+    bad=$(for m in "$d"/manifest/*.env; do grep -q '^knob.irq_idle=1$' "$m" && grep -q '^irq_idle_a=1$' "$m" && grep -q '^irq_idle_b=1$' "$m" || echo "$m"; done | head -2)
+    [[ -z $bad ]] || why+=" $1: points not capped at C1: $bad;"
+    m=$(ls "$d"/manifest/*.env | head -1)
+    grep -q '^cpu[0-9]* irq 2 C1E 1 ' "$d/idle/$(basename "$m" .env)-b-after" || why+=" $1: C1E not read back disabled;"
+}
+TRUN_SETS=$cloud/transport-aws-smt-off.tsv trun a 1 "" FAKE_SQPOLL="eio-tcp-sqpoll-core:6" FAKE_IDLE_DRIVER=intel_idle && rrc=0 || rrc=$?
+d=$sb/a/bench/transport-a
+smtcap "smt off"
+[[ $rrc == 0 && $(cat "$d/rc") == 0 ]] || why+=" smt off: exit $rrc: $(tail -3 "$sb/run.out" | tr '\n' ' ');"
+grep -q 'SMT off' "$sb/run.out" || why+=" smt off: not logged;"
+grep -q '^devices/system/cpu/smt/active 0 optional$' "$d/declared-sysctls.txt" || why+=" smt off: not declared 0;"
+grep -q '^a tcp_lat --role ping --cpus 4 .*--busy-read-us 0 .*--impl ergon --backend uring-sqpoll --sqpoll-cpu 6' "$sb/runs" || why+=" smt off: the sqpoll-core ping's arguments: $(grep sqpoll "$sb/runs" | head -1);"
+grep -q '^b tcp_lat --role pong .*--cpus 4 .*--busy-read-us 0 .*--sqpoll-cpu 6' "$sb/runs" || why+=" smt off: the sqpoll-core pong's arguments;"
+grep -q '^a tcp_lat --role ping .*--busy-read-us 50 .*--impl mio' "$sb/runs" || why+=" smt off: mio-tcp's busy poll;"
+# host a's events: the spinners on the isolated CPUs less the ping's (4) and
+# the SQPOLL thread's (6)
+grep -q -- '-eio-tcp-sqpoll-core.* 8,10,12,14 $' "$sb/a/state/events-started" || why+=" smt off: events $(grep sqpoll "$sb/a/state/events-started" | head -1);"
+grep -q '^knob.busy_read_us=' "$d"/manifest/smtoff-r1-eio-tcp-sqpoll-core*.env && why+=" smt off: a busy_read_us knob for uring-sqpoll;"
+fv=$(python3 "$cloud/fairness.py" "$d" 2>&1) || why+=" smt off fairness: $(head -5 <<<"$fv" | tr '\n' ' ');"
+tables=$(python3 "$cloud/analyse.py" --transport "$d" 2>&1) || why+=" smt off analyse.py: $(tail -2 <<<"$tables");"
+grep -q '^### Set smtoff, ' <<<"$tables" && ! grep -q '^Refused' <<<"$tables" || why+=" smt off: no table, or one refused;"
+# the SQPOLL thread never seen on its CPU: the sqpoll rule
+TRUN_SETS=$cloud/transport-aws-smt-off.tsv trun a 1 "" FAKE_SQPOLL="eio-tcp-sqpoll-core:8" FAKE_IDLE_DRIVER=intel_idle
+fv=$(python3 "$cloud/fairness.py" "$d" 2>&1 || true)
+grep -q '^sqpoll: smtoff: .*no SQPOLL thread (iou-sqp-\*) busy on --sqpoll-cpu 6' <<<"$fv" || why+=" smt off: an SQPOLL thread off its CPU not flagged: $(head -2 <<<"$fv" | tr '\n' ' ');"
+smtmap="0 1 2,10,3,11,4,12,5,13,6,14,7,15"
+TRUN_SETS=$cloud/transport-aws-smt.tsv trun a 1 "" FAKE_MAP="$smtmap" FAKE_SMT_ACTIVE=1 FAKE_PING_CPU=2 FAKE_SQPOLL="eio-tcp-sqpoll-sib:10" FAKE_IDLE_DRIVER=intel_idle && rrc=0 || rrc=$?
+smtcap "smt on"
+[[ $rrc == 0 && $(cat "$d/rc") == 0 ]] || why+=" smt on: exit $rrc: $(tail -3 "$sb/run.out" | tr '\n' ' ');"
+grep -q 'SMT on' "$sb/run.out" || why+=" smt on: not logged;"
+grep -q '^devices/system/cpu/smt/active 1 optional$' "$d/declared-sysctls.txt" || why+=" smt on: not declared 1;"
+grep -q '^a tcp_lat --role ping --cpus 2 .*--busy-read-us 0 .*--backend uring-sqpoll --sqpoll-cpu 10' "$sb/runs" || why+=" smt on: the sqpoll-sib ping's arguments: $(grep sqpoll "$sb/runs" | head -1);"
+grep -q '^b tcp_lat --role pong .*--cpus 2 .*--sqpoll-cpu 10' "$sb/runs" || why+=" smt on: the sqpoll-sib pong's arguments;"
+# the loop's sibling (10) traced and never a spinner's, under either arm
+for a in eio-tcp-sqpoll-sib mio-tcp-smt; do
+    grep -q -- "-$a.* 3,11,4,12,5,13,6,14,7,15 \$" "$sb/a/state/events-started" || why+=" smt on: $a's events $(grep -- "-$a" "$sb/a/state/events-started" | head -1);"
+done
+fv=$(python3 "$cloud/fairness.py" "$d" 2>&1) || why+=" smt on fairness: $(head -5 <<<"$fv" | tr '\n' ' ');"
+tables=$(python3 "$cloud/analyse.py" --transport "$d" 2>&1) || why+=" smt on analyse.py: $(tail -2 <<<"$tables");"
+grep -q '^### Set smton, ' <<<"$tables" && ! grep -q '^Refused' <<<"$tables" || why+=" smt on: no table, or one refused;"
+# the same session's SMT read back off at its points: the settings rule
+TRUN_SETS=$cloud/transport-aws-smt.tsv trun a 1 "" FAKE_MAP="$smtmap" FAKE_PING_CPU=2 FAKE_SQPOLL="eio-tcp-sqpoll-sib:10" FAKE_IDLE_DRIVER=intel_idle
+fv=$(python3 "$cloud/fairness.py" "$d" 2>&1 || true)
+grep -q '^settings: smton: .*devices.system.cpu.smt.active=0, the env gives 1' <<<"$fv" || why+=" smt on: SMT read back off not flagged: $(head -2 <<<"$fv" | tr '\n' ' ');"
+# an SMT-on sets file takes two-host socket arms alone, and {loop_sibling} needs one
+printf 'smt on\nset x a - ab 10000 1 - aeron-rel,mio-tcp,aa\n' >"$tmp/smt-aeron.tsv"
+printf 'set x a - ab 10000 1 - eio-tcp-sqpoll-sib,mio-tcp,aa\n' >"$tmp/smt-sib-off.tsv"
+printf 'smt on\nsmt off\nset x a - ab 10000 1 - mio-tcp,aa\n' >"$tmp/smt-both.tsv"
+c=$( (. "$cloud/transport.sh"; tr_sets_file=$tmp/smt-aeron.tsv tr_check a 2>&1) ) && why+=" an Aeron arm under smt on taken;"
+grep -q 'smt on: arm aeron-rel (aeron_lat, setup kernel, hosts two): an SMT-on session runs two-host socket arms only' <<<"$c" || why+=" smt on Aeron: $c;"
+c=$( (. "$cloud/transport.sh"; tr_sets_file=$tmp/smt-sib-off.tsv tr_check a 2>&1) ) && why+=" {loop_sibling} without smt on taken;"
+grep -q 'arm eio-tcp-sqpoll-sib: {loop_sibling} (the loop CPU.s SMT sibling) needs a sets file with smt on' <<<"$c" || why+=" sib without smt on: $c;"
+c=$(plan smt "$matrix:arms" "$tmp/smt-both.tsv" 2>&1) && why+=" disagreeing smt rows taken;"
+grep -q 'smt rows disagree' <<<"$c" || why+=" smt rows: $c;"
+# irq_idle: the SMT halves require C1; a host that gives another (acpi_idle:
+# all) stops the session before its first point; a bad or second row refused
+[[ $(plan irq_idle "$matrix:arms" "$cloud/transport-aws-smt-off.tsv") == 1 && $(plan irq_idle "$matrix:arms" "$cloud/transport-aws-smt.tsv") == 1 && $(plan irq_idle "$matrix") == auto ]] || why+=" irq_idle rows not read;"
+TRUN_SETS=$cloud/transport-aws-smt-off.tsv trun a 1 "" FAKE_SQPOLL="eio-tcp-sqpoll-core:6" && rrc=0 || rrc=$?
+[[ $rrc != 0 && ! -s $sb/runs ]] && grep -q 'the sets file asks irq_idle 1, the hosts give all' "$sb/run.out" || why+=" smt off on acpi_idle ran: $(tail -1 "$sb/run.out");"
+printf 'irq_idle 1\nirq_idle all\nset x a - ab 10000 1 - mio-tcp,aa\n' >"$tmp/idle-both.tsv"
+printf 'irq_idle C1\nset x a - ab 10000 1 - mio-tcp,aa\n' >"$tmp/idle-bad.tsv"
+c=$(plan irq_idle "$matrix:arms" "$tmp/idle-both.tsv" 2>&1) && why+=" disagreeing irq_idle rows taken;"
+grep -q 'irq_idle rows disagree' <<<"$c" || why+=" irq_idle rows: $c;"
+c=$(plan count a 1 "$matrix:arms" "$tmp/idle-bad.tsv" 2>&1) && why+=" irq_idle C1 taken;"
+grep -q 'irq_idle all, auto or a state index' <<<"$c" || why+=" irq_idle C1: $c;"
+[[ -z $why ]] && pass "transport.sh run: the SMT sessions: SMT off with uring-sqpoll's SQPOLL thread on the next core, SMT on (each isolated core whole) with it on the loop's sibling; on intel_idle hosts every point of both with the IRQ core capped at C1, as their irq_idle rows require (an acpi_idle host refused before the first point); no SO_BUSY_POLL for uring-sqpoll, the SQPOLL CPU and the loop's sibling never a spinner's, the declared SMT read back, fairness.py clean and its smt, sqpoll and settings rules flagging a misplaced SQPOLL thread and SMT read back off; check refuses an Aeron arm under smt on and {loop_sibling} without it" ||
+    fail "transport.sh run SMT sessions:$why"
+
+# the c7i diagnosis (transport-aws-c7i-diag.tsv) at 1 rep on intel_idle
+# hosts: the session's depth C1 (auto), mio-tcp and its declared twins, no
+# SO_BUSY_POLL (-br0) and the IRQ core's idle capped at the first halt state
+# (-c1), at polling (-c0) or not at all (-call), beside uring-sqpoll and the
+# A/A. Each twin's one knob (its arguments, or transport-net's TR_IRQ_IDLE,
+# the session's set again at the next arm), read back per point
+# (irq_idle_<host>), every point's idle states before and after and its NICs'
+# moderation after, fairness.py clean, its settings rule flagging a cap the
+# host did not hold, and the session's points and hours on c7i.4xlarge on
+# demand
+why=
+c7i=$cloud/transport-aws-c7i-diag.tsv
+TRUN_SETS=$c7i trun a 1 "" FAKE_SQPOLL="eio-tcp-sqpoll-core:6" FAKE_IDLE_DRIVER=intel_idle && rrc=0 || rrc=$?
+d=$sb/a/bench/transport-a
+[[ $rrc == 0 && $(cat "$d/rc") == 0 ]] || why+=" exit $rrc: $(tail -3 "$sb/run.out" | tr '\n' ' ');"
+grep -q '^a tcp_lat --role ping .*--busy-read-us 0 .*--impl mio' "$sb/runs" || why+=" mio-tcp-br0's ping without SO_BUSY_POLL;"
+for a in mio-tcp mio-tcp-br0 mio-tcp-c1 mio-tcp-c0 mio-tcp-call; do
+    m=$(grep -l "^arm=$a\$" "$d"/manifest/*.env 2>/dev/null | head -1 || true)
+    case $a in mio-tcp-c0) want=0 br=50 ;; mio-tcp-call) want=all br=50 ;; mio-tcp-br0) want=1 br=0 ;; *) want=1 br=50 ;; esac
+    [[ -n $m ]] && grep -q "^knob.irq_idle=$want\$" "$m" && grep -q "^irq_idle_a=$want\$" "$m" && grep -q "^irq_idle_b=$want\$" "$m" &&
+        grep -q "^knob.busy_read_us=$br\$" "$m" || why+=" $a: $(grep -hE '^(knob.irq_idle|irq_idle|knob.busy_read)' "$m" 2>/dev/null | tr '\n' ' ');"
+done
+m=$(grep -l '^arm=eio-tcp-sqpoll-core$' "$d"/manifest/*.env 2>/dev/null | head -1 || true)
+[[ -n $m ]] && grep -q '^knob.irq_idle=1$' "$m" && grep -q '^irq_idle_a=1$' "$m" || why+=" sqpoll's idle: $(grep irq_idle "$m" | tr '\n' ' ');"
+# each arm's cap on both hosts, the session's (1) set again after a twin's own
+for h in a b; do
+    s=$(grep "^$h transport-net irq_idle " "$sb/calls" | cut -d' ' -f4 | tr '\n' ' ')
+    [[ $s == *"0 1 "* && $s == *"all 1 "* && $(tr ' ' '\n' <<<"$s" | grep -c '^0$') == 1 && $(tr ' ' '\n' <<<"$s" | grep -c '^all$') == 1 ]] || why+=" host $h's transport-net idle caps: $s;"
+done
+n=0
+for f in "$d"/manifest/*.env; do
+    pid=$(basename "$f" .env)
+    for h in a b; do
+        [[ -s $d/idle/$pid-$h-before && -s $d/idle/$pid-$h-after && -s $d/nicstats/$pid-$h-before && -s $d/nicstats/$pid-$h-after ]] || n=$((n + 1))
+    done
+done
+[[ $n == 0 ]] || why+=" $n point-hosts without idle or NIC counters read back;"
+m=$(grep -l '^arm=mio-tcp-c1$' "$d"/manifest/*.env 2>/dev/null | head -1 || true)
+[[ -n $m ]] && grep -q '^cpu2 irq 3 C6 1 ' "$d/idle/$(basename "$m" .env)-a-after" || why+=" the IRQ CPU's states not read;"
+# nicstats' one format: traffic, moderation and driver counters per NIC
+f=$d/nicstats/$(basename "$m" .env)-a-after
+[[ -n $m ]] && grep -q '^sender eth1 tx_bytes=[0-9]* ' "$f" && grep -q '^receiver eth2 coalesce off n/a 0 0$' "$f" &&
+    grep -q '^sender eth1 stat queue_0_tx_unmask_interrupt [0-9]*$' "$f" || why+=" nicstats without traffic, moderation or driver counters;"
+fv=$(python3 "$cloud/fairness.py" "$d" 2>&1) || why+=" fairness: $(head -5 <<<"$fv" | tr '\n' ' ');"
+tables=$(python3 "$cloud/analyse.py" --transport "$d" 2>&1) || why+=" analyse.py: $(tail -2 <<<"$tables");"
+grep -q '^### Set c7i, ' <<<"$tables" && ! grep -q '^Refused' <<<"$tables" || why+=" no table, or one refused;"
+# a host that does not hold the cap: the settings rule
+TRUN_SETS=$c7i trun a 1 "" FAKE_SQPOLL="eio-tcp-sqpoll-core:6" FAKE_IDLE_DRIVER=intel_idle FAKE_IDLE_STUCK=1
+fv=$(python3 "$cloud/fairness.py" "$d" 2>&1 || true)
+grep -q '^settings: c7i: .*knob.irq_idle=all, the env gives 1' <<<"$fv" || why+=" a cap not held not flagged: $(head -2 <<<"$fv" | tr '\n' ' ');"
+rm -f "$tmp/cloud-calls"
+out=$(awslab LAB_ESTIMATE=1 LAB_PAIR=a LAB_REPS=3 LAB_TYPE=c7i.4xlarge LAB_SETS_FILE="$c7i" 2>&1) || why+=" estimate: $(tail -1 <<<"$out");"
+[[ $out == *"pair a: 21 points (sets c7i)"*"wall about "* && $out == *"a c7i.4xlarge, b c7i.4xlarge, on-demand, 3 reps"* ]] || why+=" estimate: $out;"
+[[ ! -s $tmp/cloud-calls ]] || why+=" an aws call;"
+[[ -z $why ]] && pass "transport.sh run: the c7i diagnosis on intel_idle: the session at C1, mio-tcp's twins without SO_BUSY_POLL and with the IRQ core's idle capped at C1, polling or uncapped, each cap set by transport-net, read back per point and the session's set again after, every point's idle states and NIC moderation and counters recorded, fairness.py clean and its settings rule flagging a cap not held; 21 points on c7i.4xlarge on demand, no aws call" ||
+    fail "transport.sh run c7i diagnosis:$why"
+
 # the tuning session (LAB_TUNE=1: pair tune-a), cut down to two knobs of
 # pair a's one-host arms: mpsc's capacity (1024 the stub's better p99.99)
 # and aeron-ipc's threading (no difference): the sweep, then the
@@ -1234,6 +2230,329 @@ grep -q '^b tcp_lat --role pong .*--listen 10.20.1.6:22000 .*--impl mio$' "$sb/r
 [[ -z $why ]] && pass "transport.sh run: --nics alt puts an arm on each host's other data NIC (tcp_lat's ping bound to its source there), {own_alt}/{peer_alt} give an arms-file binary those addresses; neither passed on" ||
     fail "transport.sh run, the other data NICs:$why"
 
+# the Onload smoke (transport-aws-onload-smoke.tsv: every Onload arm beside
+# kernel arms) on the fake hosts: each socket arm's binary under the onload
+# launcher with the profile and TR_ONLOAD_ENV, --busy-read-us 0, no TCP
+# timers; aeron_lat never under it, its media driver started by `driver
+# onload@...`; onload-up before each other Onload arm and `stop` after every
+# one; each Onload point's manifest with its command, its build and its stacks
+# on both hosts, its NICs' deferral read back 0/0; fairness.py clean; then a
+# host without the arm's stack mid-window: in the manifest, logged, and
+# fairness.py's onload rule
+cp "$cloud/transport-aws-onload-smoke.tsv" "$tmp/onload-smoke.tsv"
+TRUN_SETS=$tmp/onload-smoke.tsv trun a 1 "" && orc=0 || orc=$?
+d=$sb/a/bench/transport-a
+why=
+[[ $orc == 0 && $(cat "$d/rc") == 0 ]] || why+=" exit $orc: $(tail -3 "$sb/run.out" | tr '\n' ' ');"
+n=$(TRUN_SETS= plan count a 1 "$matrix:arms" "$tmp/onload-smoke.tsv")
+[[ $(grep -c . "$d/results.csv") == "$n" ]] || why+=" $(grep -c . "$d/results.csv") rows, not $n;"
+for b in tcp_lat udp_lat; do
+    grep -q "^a onload --profile=latency $b --role ping .* | EF_AF_XDP_ZEROCOPY=0 EF_NO_FAIL=0 EF_RFC_RTO_MIN=8 $" "$sb/onload" &&
+        grep -q "^b onload --profile=latency $b --role pong .* | EF_AF_XDP_ZEROCOPY=0 EF_NO_FAIL=0 EF_RFC_RTO_MIN=8 $" "$sb/onload" || why+=" $b not under onload with its settings;"
+done
+! grep -q ' aeron_lat ' "$sb/onload" || why+=" aeron_lat under onload;"
+! grep -E '^. onload .* (mio-tcp|aeron-rel)@' "$sb/onload" | grep -q -- '--label ot:mio-tcp@\|--label ou:aeron-rel@' || why+=" a kernel arm under onload;"
+# 4 Onload socket arms and the 2 A/A arms repeating them, 2 loads, ping and pong
+[[ $(grep -c . "$sb/onload") == $((6 * 2 * 2)) ]] || why+=" $(grep -c . "$sb/onload") runs under onload, not 24;"
+! grep -E '^a tcp_lat --role ping .*--label ot:onload-' "$sb/runs" | grep -qv -- '--busy-read-us 0 ' || why+=" an Onload TCP ping with kernel busy poll;"
+! grep -E '^. udp_lat .*--label ou:onload-' "$sb/runs" | grep -qv -- '--busy-read-us 0 ' || why+=" an Onload UDP run with kernel busy poll;"
+grep -q '^a tcp_lat --role ping .*--busy-read-us 50 .*--label ot:mio-tcp@' "$sb/runs" || why+=" the kernel TCP arm without its busy poll;"
+for h in a b; do
+    grep -q "^$h vm.sh driver onload@CONDUCTOR=own@" "$sb/calls" || why+=" host $h: no Onload media driver;"
+    [[ $(grep -c "^$h vm.sh onload-up$" "$sb/calls") == 6 ]] || why+=" host $h: $(grep -c "^$h vm.sh onload-up$" "$sb/calls") onload-ups, not 6;"
+    grep -q "^$h vm.sh onload-info$" "$sb/calls" || why+=" host $h: its Onload build not read;"
+    # before every point of an Onload socket arm (4 arms and 2 A/A, 2 loads each), never an Aeron one's
+    [[ $(grep -c "^$h vm.sh onload-idle$" "$sb/calls") == 12 ]] || why+=" host $h: $(grep -c "^$h vm.sh onload-idle$" "$sb/calls") onload-idle checks, not 12;"
+    # each Onload arm's set-up stopped after it (onload-up, then the next call a stop)
+    awk -v h="$h" '$1 == h && $3 == "onload-up" {up = 1; next} $1 == h && up && $3 == "stop" {up = 0} END {exit up}' "$sb/calls" || why+=" host $h: an onload-up never stopped;"
+done
+for m in $(grep -l '^setup=onload$' "$d"/manifest/*.env); do
+    grep -q '^onload_cmd=env EF_AF_XDP_ZEROCOPY=0 EF_NO_FAIL=0 EF_RFC_RTO_MIN=8 onload --profile=latency$' "$m" &&
+        grep -q '^onload_a=ok 1 stack(s) of ' "$m" && grep -q '^onload_b=ok 1 stack(s) of ' "$m" &&
+        grep -q '^onload_build_a=onload a94512556626 ' "$m" && grep -q '^knob.napi_defer=0$' "$m" && grep -q '^napi_a=enP1:0/0,enP2:0/0$' "$m" &&
+        ! grep -q '^knob.busy_read_us' "$m" || why+=" $(grep '^mode=' "$m"): $(grep -E '^(onload|knob|napi_)' "$m" | tr '\n' ' ');"
+done
+m=$(grep -l '^arm=onload-aeron-rel$' "$d"/manifest/*.env | head -1)
+grep -q '^onload_under=media_driver$' "$m" && grep -q '^onload_a=ok 1 stack(s) of media_driver' "$m" && grep -q '^driver_mode=onload@' "$m" || why+=" the Onload Aeron point: $(grep -E '^(onload|driver)' "$m" | tr '\n' ' ');"
+fv=$(python3 "$cloud/fairness.py" "$d" 2>&1) || why+=" fairness: $(head -5 <<<"$fv" | tr '\n' ' ');"
+TRUN_SETS=$tmp/onload-smoke.tsv trun a 1 "" FAKE_ONLOAD_NOSTACK=b || true
+m=$(grep -l '^mode=onload-eio-tcp@STREAMS=1$' "$d"/manifest/*.env | head -1)
+grep -q '^onload_b=FAIL no Onload stack of tcp_lat' "$m" && grep -q "WARNING: point .*: host b's Onload stacks: FAIL" "$sb/run.out" || why+=" no stack not recorded: $(grep '^onload_b' "$m");"
+fv=$(python3 "$cloud/fairness.py" "$d" 2>&1 || true)
+grep -q "^onload: ot: .*onload-eio-tcp@STREAMS=1.*: b's Onload stack mid-window: FAIL no Onload stack of tcp_lat" <<<"$fv" || why+=" fairness's onload rule: $(grep -m2 '^onload' <<<"$fv");"
+! grep -E '^[a-z-]+:' <<<"$fv" | grep -qv '^onload:' || why+=" other violations: $(grep -E '^[a-z-]+:' <<<"$fv" | grep -v '^onload:' | head -2 | tr '\n' ' ');"
+[[ -z $why ]] && pass "transport.sh run, setup onload: each socket arm's binary under onload (profile, TR_ONLOAD_ENV), no kernel busy poll or TCP timers; Aeron's media driver under onload instead; onload-up and stop around each arm, no stack left before each socket point (onload-idle); each point's command, build, stacks and NIC deferral in its manifest; fairness clean, and its onload rule flags a host without the arm's stack" ||
+    fail "transport.sh run, setup onload:$why"
+
+# the hand-off session (transport-aws-aeron-handoff.tsv) on the fake hosts:
+# each arm's driver mode set up on both hosts (DRIVER=embedded: vm.sh starts
+# none), aeron_lat's --driver and busy threads by arm, an embedded driver's
+# binary under sudo setpriv with the driver's environment sourced (no other
+# arm's), the knobs and driver mode in each manifest, fairness.py clean
+# (the declared rule takes each arm as its twin's but for its knob, the
+# invoker's through its chain); then an emb point whose driver mode differs
+# beyond DRIVER: the declared rule flags it
+# (its kernel set k too, which the file leaves commented out)
+sed 's/^#set k   /set k    /' "$cloud/transport-aws-aeron-handoff.tsv" >"$tmp/handoff.tsv"
+grep -q '^set k ' "$tmp/handoff.tsv" || fail "transport-aws-aeron-handoff.tsv: no set k to uncomment"
+TRUN_SETS=$tmp/handoff.tsv trun a 1 "" && hrc=0 || hrc=$?
+d=$sb/a/bench/transport-a
+why=
+[[ $hrc == 0 && $(cat "$d/rc") == 0 ]] || why+=" exit $hrc: $(tail -3 "$sb/run.out" | tr '\n' ' ');"
+n=$(TRUN_SETS= plan count a 1 "$matrix:arms" "$tmp/handoff.tsv")
+[[ $(grep -c . "$d/results.csv") == "$n" ]] || why+=" $(grep -c . "$d/results.csv") rows, not $n;"
+for h in a b; do
+    for m in 'dpdk@CONDUCTOR=own@.*_IDLE_STRATEGY=noop' 'dpdk@CONDUCTOR=own@.*_IDLE_STRATEGY=noop@DRIVER=embedded' 'dpdk@CONDUCTOR=own@.*@AERON_THREADING_MODE=SHARED_NETWORK' \
+        'dpdk@AERON_TERM_BUFFER_LENGTH=[0-9]*@AERON_IPC_TERM_BUFFER_LENGTH=[0-9]*@AERON_THREADING_MODE=SHARED' 'dpdk@AERON_TERM_BUFFER_LENGTH=[0-9]*@AERON_IPC_TERM_BUFFER_LENGTH=[0-9]*@AERON_THREADING_MODE=INVOKER@DRIVER=embedded' \
+        'kernel-busy@CONDUCTOR=own@.*@NAPI_DEFER=0/0@DRIVER=embedded' 'kernel-busy@AERON_TERM_BUFFER_LENGTH=[0-9]*@AERON_IPC_TERM_BUFFER_LENGTH=[0-9]*@NAPI_DEFER=0/0@AERON_THREADING_MODE=INVOKER@DRIVER=embedded'; do
+        grep -q "^$h vm.sh driver $m$" "$sb/calls" || why+=" host $h: no driver $m;"
+    done
+done
+for e in 'dpdk-aeron-rel@|external --driver-busy-threads 3' 'dpdk-aeron-rel-emb@|embedded --driver-busy-threads 3' 'dpdk-aeron-rel-shnet@|external --driver-busy-threads 2' \
+    'dpdk-aeron-rel-shared@|external --driver-busy-threads 1' 'dpdk-aeron-rel-invoker@|invoker --driver-busy-threads 0' 'aeron-rel-emb@|embedded --driver-busy-threads 3' \
+    'aeron-rel-invoker@|invoker --driver-busy-threads 0'; do
+    for r in 'a aeron_lat --role ping' 'b aeron_lat --role pong'; do
+        grep "^$r " "$sb/runs" | grep -- ":${e%|*}" | grep -q -- "--driver ${e#*|} " || why+=" ${r%% *} ${e%|*}: not --driver ${e#*|};"
+    done
+done
+# an embedded driver's runs (emb and invoker, h's 3 loads and k's 1, ping and
+# pong) with the driver's environment and under sudo setpriv; no other run
+emb=$(grep -cE -- '--driver (embedded|invoker) ' "$sb/runs")
+[[ $emb == 16 ]] || why+=" $emb embedded runs, not 16;"
+[[ $(grep -cE -- '--driver (embedded|invoker) .*\[driver.env (dpdk|kernel-busy)@.*@DRIVER=embedded\]$' "$sb/runs") == 16 ]] || why+=" an embedded run without its driver.env;"
+! grep -- '--driver external ' "$sb/runs" | grep -q 'driver.env' || why+=" an external driver's run sourced driver.env;"
+[[ $(grep -c '^. sudo -n setpriv .*--ambient-caps=+sys_admin,+dac_override,+ipc_lock,+sys_rawio sh -c ' "$sb/sudo" 2>/dev/null) == 16 ]] ||
+    why+=" $(grep -c . "$sb/sudo" 2>/dev/null) runs under sudo setpriv, not 16;"
+for m in "$d"/manifest/*.env; do
+    a=$(sed -n 's/^arm=//p' "$m")
+    case $a in
+    *-invoker) want='aeron_threading=INVOKER aeron_driver=embedded' ;;
+    *-emb) want='aeron_threading=DEDICATED aeron_driver=embedded' ;;
+    *-shnet) want='aeron_threading=SHARED_NETWORK aeron_driver=external' ;;
+    *-shared) want='aeron_threading=SHARED aeron_driver=external' ;;
+    *) want='aeron_threading=DEDICATED aeron_driver=external' ;;
+    esac
+    [[ "$(grep -E '^knob\.aeron_(threading|driver)=' "$m" | sed 's/^knob\.//' | paste -sd' ' -)" == "$want" ]] || why+=" $a: knobs $(grep -E '^knob.aeron_(threading|driver)' "$m" | tr '\n' ' ');"
+    grep -q '^driver_mode=' "$m" || why+=" $a: no driver mode;"
+done
+fv=$(python3 "$cloud/fairness.py" "$d" 2>&1) || why+=" fairness: $(head -5 <<<"$fv" | tr '\n' ' ');"
+grep -q '^declared\.dpdk-aeron-rel-invoker=dpdk-aeron-rel-emb:knob\.aeron_threading$' "$d/transport-settings.env" ||
+    why+=" the invoker's declaration not collected;"
+m=$(grep -l '^arm=dpdk-aeron-rel-emb$' "$d"/manifest/*.env | head -1)
+sed -i.bak 's/^\(driver_mode=.*\)@DRIVER=embedded$/\1@RUSTERON_DPDK_BURST_SIZE=32@DRIVER=embedded/' "$m" && rm -f "$m.bak"
+python3 "$cloud/transport_collect.py" "$d" >/dev/null 2>&1 || true
+fv=$(python3 "$cloud/fairness.py" "$d" 2>&1 || true)
+grep -q "^declared: h: .*dpdk-aeron-rel-emb and its twin dpdk-aeron-rel differ in media driver mode" <<<"$fv" || why+=" a driver mode beyond DRIVER not flagged: $(grep -m2 '^declared' <<<"$fv");"
+[[ -z $why ]] && pass "transport.sh run, the hand-off session: each arm's driver mode on both hosts (DRIVER=embedded: no process), aeron_lat's --driver and busy threads by arm, an embedded driver's binary with driver.env under sudo setpriv (no other), knobs and driver mode in every manifest; fairness.py clean (each declared twin, the invoker's through -emb), and a driver mode differing beyond DRIVER flagged" ||
+    fail "transport.sh run, the hand-off session:$why"
+
+# The stage-trace session (transport-aws-dpdk-trace.tsv): the traced arms'
+# drivers asked for md-dpdk's stage trace (and the DPDK one its capture
+# window), the untraced arms' not; aeron_lat --stage-trace on the traced
+# arms' runs alone, --capture-ms never (the runner's); each traced point's
+# driver files fetched from both hosts, the capture on an arm's first point
+# alone; fairness.py clean, and transport_stages.py run over the session
+TRUN_SETS=$cloud/transport-aws-dpdk-trace.tsv trun a 1 "" && src=0 || src=$?
+d=$sb/a/bench/transport-a
+why=
+[[ $src == 0 && $(cat "$d/rc") == 0 ]] || why+=" exit $src: $(tail -3 "$sb/run.out" | tr '\n' ' ');"
+n=$(TRUN_SETS= plan count a 1 "$matrix:arms" "$cloud/transport-aws-dpdk-trace.tsv")
+[[ $n == 12 && $(grep -c . "$d/results.csv") == "$n" ]] || why+=" $(grep -c . "$d/results.csv") rows, plan $n (not 12);"
+for h in a b; do
+    grep -q "^$h vm.sh driver dpdk@CONDUCTOR=own@.*_IDLE_STRATEGY=noop@RUSTERON_DPDK_STAGE_TRACE=64@RUSTERON_DPDK_CAPTURE_WINDOW_MS=10000:1000$" "$sb/calls" || why+=" host $h: no traced DPDK driver;"
+    grep -q "^$h vm.sh driver kernel-busy@CONDUCTOR=own@.*@NAPI_DEFER=0/0@RUSTERON_DPDK_STAGE_TRACE=64$" "$sb/calls" || why+=" host $h: no traced kernel driver;"
+    grep -q "^$h vm.sh driver dpdk@CONDUCTOR=own@.*_IDLE_STRATEGY=noop$" "$sb/calls" || why+=" host $h: no untraced DPDK driver;"
+done
+[[ $(grep -c -- '--stage-trace 64' "$sb/runs") == 12 ]] || why+=" $(grep -c -- '--stage-trace 64' "$sb/runs") runs with --stage-trace, not 12 (6 traced points, ping and pong);"
+! grep -- '--stage-trace' "$sb/runs" | grep -qv -- '-trace@\|-trace ' || why+=" an untraced arm's run with --stage-trace;"
+! grep -q -- '--capture-ms' "$sb/runs" || why+=" --capture-ms passed to a binary;"
+for p in "$d"/points/*; do
+    pid=${p##*/}
+    case $pid in
+    *-trace*) for h in a b; do [[ -s $p/stages-driver-$h.csv.gz ]] || why+=" $pid: no stages-driver-$h;"; done ;;
+    *) ! ls "$p"/stages-driver-* >/dev/null 2>&1 || why+=" $pid: an untraced point's driver stages;" ;;
+    esac
+    case $pid in
+    t1-*dpdk-aeron-rel-trace*-10000 | t32-*dpdk-aeron-rel-trace*-50000)
+        for h in a b; do [[ -s $p/capture-$h.pcapng.gz ]] || why+=" $pid: no capture-$h;"; done ;;
+    *) ! ls "$p"/capture-* >/dev/null 2>&1 || why+=" $pid: a capture past the arm's first point;" ;;
+    esac
+done
+[[ $(ls "$d"/points/*/0/stages-app.csv "$d"/points/*/pong/stages-app.csv 2>/dev/null | wc -l | tr -d ' ') == 12 ]] || why+=" the binaries' stages files not kept;"
+grep -q '^args=--mode udp --reliable true --stage-trace 64$' "$d"/manifest/t1-r1-dpdk-aeron-rel-trace*-10000.env || why+=" the traced arm's manifest args;"
+fv=$(python3 "$cloud/fairness.py" "$d" 2>&1) || why+=" fairness: $(head -5 <<<"$fv" | tr '\n' ' ');"
+sv=$(python3 "$cloud/transport_stages.py" run "$d" 2>&1) || why+=" transport_stages.py run: $(tail -3 <<<"$sv" | tr '\n' ' ');"
+[[ -s $d/stages.md && $(grep -c '^### ' "$d/stages.md") == 6 ]] || why+=" stages.md: $(grep -c '^### ' "$d/stages.md" 2>/dev/null) points, not 6;"
+[[ -z $why ]] && pass "transport.sh run, the stage-trace session: the traced arms' drivers traced (the DPDK one's capture window too), aeron_lat --stage-trace on their runs alone, --capture-ms the runner's, each traced point's driver files from both hosts and the capture on an arm's first point alone; fairness.py clean, transport_stages.py run over it" ||
+    fail "transport.sh run, the stage-trace session:$why"
+
+# the mixed-load sessions (transport-aws-aeron-mixed.tsv) on the fake hosts,
+# each pair (a the kernel's, b DPDK's): every point a row; each mixed arm's
+# driver mode with the duty-cycle thresholds (each threading's own keys
+# apart), --load mixed --hot-rate and two CPUs a host (hot, background); the
+# NIC counters read around every point and a mixed one's collected (a
+# DPDK host's the binary's own); the raw DPDK floor on dpdk-raw's set-up with
+# the driver's environment under sudo setpriv; fairness.py clean, its
+# mixed-load rules then flagging a fan-out subscription short; analyse.py's
+# mixed table and checklist
+for pair in a b; do
+    TRUN_SETS=$cloud/transport-aws-aeron-mixed.tsv trun "$pair" 1 "" && mrc=0 || mrc=$?
+    d=$sb/a/bench/transport-$pair
+    why=
+    [[ $mrc == 0 && $(cat "$d/rc") == 0 ]] || why+=" exit $mrc: $(tail -3 "$sb/run.out" | tr '\n' ' ');"
+    n=$(plan count "$pair" 1 "$matrix:arms" "$cloud/transport-aws-aeron-mixed.tsv")
+    [[ $n == 27 && $(grep -c . "$d/results.csv") == "$n" ]] || why+=" $(grep -c . "$d/results.csv") rows, $n planned (27);"
+    stack=kernel-busy
+    [[ $pair == b ]] && stack=dpdk
+    for h in a b; do
+        [[ $(grep -c "^$h vm.sh driver $stack@.*@AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD=10000@AERON_DRIVER_SENDER_CYCLE_THRESHOLD=10000@AERON_DRIVER_RECEIVER_CYCLE_THRESHOLD=10000" "$sb/calls") -ge 5 ]] ||
+            why+=" host $h: no driver mode with the thresholds;"
+        grep -q "^$h vm.sh driver dpdk-raw$" "$sb/calls" || why+=" host $h: no dpdk-raw set-up;"
+    done
+    for r in 'a aeron_lat --role ping' 'b aeron_lat --role pong'; do
+        [[ $(grep "^$r " "$sb/runs" | grep -c -- '--cpus 10,12 .*--load mixed --hot-rate 10000') == 24 ]] ||
+            why+=" ${r%% *}: not 24 mixed runs on CPUs 10,12: $(grep "^$r " "$sb/runs" | head -1);"
+    done
+    # the floor set's dpdk-raw (and on b its A/A)
+    floors=1
+    [[ $pair == b ]] && floors=2
+    [[ $(grep -c "^b floor --role pong .*--endpoint .* --reply .*\[driver.env dpdk-raw\]$" "$sb/runs") == "$floors" ]] ||
+        why+=" not $floors floor pongs with the driver's environment: $(grep floor "$sb/runs" | head -1);"
+    grep -q 'setpriv .*floor --role ping' "$sb/sudo" || why+=" the floor not under sudo setpriv;"
+    mixed_pts=$(grep -l -- '--load mixed' "$d"/manifest/*.env | wc -l | tr -d ' ')
+    all_pts=$(ls "$d"/manifest/*.env | wc -l | tr -d ' ')
+    [[ $mixed_pts == 24 && $(ls "$d"/nicstats | wc -l | tr -d ' ') == $((all_pts * 4)) ]] ||
+        why+=" $(ls "$d"/nicstats | wc -l) NIC snapshots for $all_pts points, $mixed_pts mixed (4 each);"
+    src=$(python3 -c 'import glob, json, sys
+for f in sorted(glob.glob(sys.argv[1] + "/*/manifest-*.json")):
+    m = json.load(open(f))
+    if (m.get("binary") or {}).get("settings", {}).get("load") == "mixed":
+        print(" ".join(sorted({c["source"] for c in (m.get("nic_counters") or {}).values()})) or "none")' "$d" | sort -u | tr '\n' ' ')
+    want=kernel
+    [[ $pair == b ]] && want=dpdk
+    [[ $src == "$want " ]] || why+=" NIC counters' sources $src, not $want;"
+    w=kernel
+    [[ $pair == b ]] && w=dpdk
+    [[ $(grep -- "aeron_lat --role .*--load mixed" "$sb/runs" | grep -c -- "--wire $w ") == 48 ]] || why+=" not every mixed run given --wire $w;"
+    # a mixed point traces the housekeeping and IRQ CPUs too (0 and 2 here)
+    for h in a b; do
+        [[ $(awk '$1 ~ /aeron-mix/ && ("," $2 ",") ~ /^,0,2,/' "$sb/$h/state/events-started" | wc -l | tr -d ' ') == 24 ]] ||
+            why+=" host $h: mixed points' traced CPUs not with 0 and 2: $(grep -m1 aeron-mix "$sb/$h/state/events-started");"
+    done
+    fv=$(python3 "$cloud/fairness.py" "$d" 2>&1) || why+=" fairness: $(head -5 <<<"$fv" | tr '\n' ' ');"
+    an=$(python3 "$cloud/analyse.py" --transport "$d" 2>&1) || why+=" analyse.py failed: $(tail -2 <<<"$an");"
+    grep -q '^## Mixed load: hot stream beside a background mix' <<<"$an" || why+=" no mixed table;"
+    [[ $(grep -c '^- \*\*' <<<"$an") == 6 ]] || why+=" $(grep -c '^- \*\*' <<<"$an") arms in the checklist, not 6 (five and the A/A);"
+    grep -q 'floor-relative overhead: hot p50 .* − dpdk-raw floor\|floor-relative overhead: hot p50 .* − mio-udp floor' <<<"$an" || why+=" no floor-relative line;"
+    [[ -z $why ]] && pass "transport.sh run, the mixed-load session, pair $pair: every point a row; the mixed arms' driver modes with the duty-cycle thresholds, --load mixed on CPUs 10,12 each end, --wire by set-up, the housekeeping and IRQ CPUs traced; NIC counters around every point, a mixed one's collected ($want); the raw DPDK floor on dpdk-raw with driver.env under sudo setpriv; fairness.py clean; analyse.py's mixed table, checklist and floor lines" ||
+        fail "transport.sh run, the mixed-load session, pair $pair:$why"
+done
+# The mixed-load stage-trace sessions (transport-aws-aeron-mixed-trace.tsv),
+# each pair: every arm's runs under --load mixed with --stage-trace 64 at
+# both ends (the INVOKER arm's under --driver invoker), each threading
+# model's driver asked for the stage trace (the embedded ones' through
+# driver.env), every point's driver files from both hosts and the binaries'
+# stages files kept; fairness.py clean (each declared twin, the invoker's
+# through -emb-trace) and transport_stages.py run over every point
+for pair in a b; do
+    TRUN_SETS=$cloud/transport-aws-aeron-mixed-trace.tsv trun "$pair" 1 "" && trc=0 || trc=$?
+    d=$sb/a/bench/transport-$pair
+    why=
+    [[ $trc == 0 && $(cat "$d/rc") == 0 ]] || why+=" exit $trc: $(tail -3 "$sb/run.out" | tr '\n' ' ');"
+    n=$(TRUN_SETS= plan count "$pair" 1 "$matrix:arms" "$cloud/transport-aws-aeron-mixed-trace.tsv")
+    [[ $n == 5 && $(grep -c . "$d/results.csv") == "$n" ]] || why+=" $(grep -c . "$d/results.csv") rows, plan $n (not 5);"
+    stack=kernel-busy
+    [[ $pair == b ]] && stack=dpdk
+    for h in a b; do
+        # DEDICATED (its own process, then embedded), SHARED, INVOKER (embedded)
+        for m in "CONDUCTOR=own@.*_CYCLE_THRESHOLD=10000" "CONDUCTOR=own@.*_CYCLE_THRESHOLD=10000@DRIVER=embedded" \
+            "AERON_THREADING_MODE=SHARED" "AERON_THREADING_MODE=INVOKER@DRIVER=embedded"; do
+            grep -q "^$h vm.sh driver $stack@.*$m@RUSTERON_DPDK_STAGE_TRACE=64$" "$sb/calls" ||
+                why+=" host $h: no traced driver $m;"
+        done
+        ! grep "^$h vm.sh driver " "$sb/calls" | grep -v "^$h vm.sh driver dpdk-raw$" | grep -qv 'RUSTERON_DPDK_STAGE_TRACE=64' ||
+            why+=" host $h: an untraced driver;"
+    done
+    for r in 'a aeron_lat --role ping' 'b aeron_lat --role pong'; do
+        [[ $(grep "^$r " "$sb/runs" | grep -c -- '--load mixed --hot-rate 10000 --stage-trace 64') == 5 ]] ||
+            why+=" ${r%% *}: not 5 mixed runs with --stage-trace 64: $(grep "^$r " "$sb/runs" | head -1);"
+        [[ $(grep "^$r " "$sb/runs" | grep -c -- '--driver invoker') == 1 ]] || why+=" ${r%% *}: not one invoker run;"
+    done
+    for p in "$d"/points/*; do
+        for h in a b; do [[ -s $p/stages-driver-$h.csv.gz ]] || why+=" ${p##*/}: no stages-driver-$h;"; done
+    done
+    [[ $(ls "$d"/points/*/0/stages-app.csv "$d"/points/*/pong/stages-app.csv 2>/dev/null | wc -l | tr -d ' ') == 10 ]] ||
+        why+=" the binaries' stages files not kept;"
+    fv=$(python3 "$cloud/fairness.py" "$d" 2>&1) || why+=" fairness: $(head -5 <<<"$fv" | tr '\n' ' ');"
+    sv=$(python3 "$cloud/transport_stages.py" run "$d" 2>&1) || why+=" transport_stages.py run: $(tail -3 <<<"$sv" | tr '\n' ' ');"
+    [[ -s $d/stages.md && $(grep -c '^### ' "$d/stages.md") == 5 ]] || why+=" stages.md: $(grep -c '^### ' "$d/stages.md" 2>/dev/null) points, not 5;"
+    [[ -z $why ]] && pass "transport.sh run, the mixed-load stage-trace session, pair $pair: every arm's mixed runs traced at both ends (INVOKER's under --driver invoker), each threading model's driver traced, every point's driver files and the binaries' stages files kept; fairness.py clean, transport_stages.py run over it" ||
+        fail "transport.sh run, the mixed-load stage-trace session, pair $pair:$why"
+done
+TRUN_SETS=$cloud/transport-aws-aeron-mixed.tsv trun a 1 "" FAKE_FANOUT_SHORT=ka:aeron-mix-shared@STREAMS=32 || true
+d=$sb/a/bench/transport-a
+fv=$(python3 "$cloud/fairness.py" "$d" 2>&1 || true)
+grep -q "^mixed-counts: ka: .*aeron-mix-shared@STREAMS=32.*: background stream 1 subscription 1 read" <<<"$fv" &&
+    pass "fairness.py mixed-counts: a fan-out subscription that read one message short is flagged" ||
+    fail "fairness.py mixed-counts: a short fan-out subscription not flagged: $(head -3 <<<"$fv")"
+
+# every mixed arm's driver mode, as vm.sh driver turns it into the
+# driver's environment (host.sh threading_env, then the mode's Aeron
+# overrides), clears vm.sh's conductor check with the one 10 us threshold
+# every threading model shares: the park is that of the agent that runs
+# the conductor's cycle (SHARED's shared agent, noop; INVOKER's client
+# thread, never idled), not AERON_CONDUCTOR_IDLE_STRATEGY's default backoff
+# that SHARED and INVOKER never run (aws-20261028-090239 lost
+# aeron-mix-shared, and would have lost -invoker, to that)
+got=$(
+    . "$cloud/transport.sh"
+    . "$cloud/host.sh"
+    eval "$(for f in duration_ns format_duration_ns conductor_max_park_ns conductor_cycle_threshold conductor_cycle_threshold_apply; do
+        awk -v f="$f() {" '$0 == f {on = 1} on {print} on && $0 == "}" {exit}' "$cloud/vm.sh"
+    done)"
+    tr_cloud=aws dir=$tmp/mixenv hk=0 tr_bin_path=P iso=4,6,8,10,12,14 kind=two cpus=10,12
+    mkdir -p "$dir"
+    for a in aeron-mix aeron-mix-emb aeron-mix-shnet aeron-mix-shared aeron-mix-invoker \
+        dpdk-aeron-mix dpdk-aeron-mix-emb dpdk-aeron-mix-shnet dpdk-aeron-mix-shared dpdk-aeron-mix-invoker; do
+        read -r bin setup _ rest <<<"$(tr_plan arm "$a")"
+        read -ra args <<<"$rest"
+        arm=$a
+        m=$(tr_driver_mode)
+        threading=DEDICATED
+        [[ $m =~ @AERON_THREADING_MODE=([A-Z_]+) ]] && threading=${BASH_REMATCH[1]}
+        f=$dir/$a.env
+        threading_env "$threading" 0 2 3 >"$f"
+        IFS=@ read -ra pairs <<<"${m#*@}"
+        for p in "${pairs[@]}"; do
+            [[ $p == AERON_* && $p != AERON_THREADING_MODE=* ]] && echo "export ${p%%=*}='${p#*=}'" >>"$f"
+        done
+        if conductor_cycle_threshold_apply "$f" 2>"$dir/err"; then
+            echo "$a $threading: $(sed -n "s/^export AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='\(.*\)'$/\1/p" "$f" | tail -1)"
+        else
+            echo "$a $threading: refused $(cat "$dir/err")"
+        fi
+    done
+)
+same "vm.sh's conductor check on every mixed arm's driver environment: each threading model's own conductor agent (SHARED's shared agent, INVOKER's client thread), so every arm keeps the one 10 us threshold" \
+"aeron-mix DEDICATED: 10000
+aeron-mix-emb DEDICATED: 10000
+aeron-mix-shnet SHARED_NETWORK: 10000
+aeron-mix-shared SHARED: 10000
+aeron-mix-invoker INVOKER: 10000
+dpdk-aeron-mix DEDICATED: 10000
+dpdk-aeron-mix-emb DEDICATED: 10000
+dpdk-aeron-mix-shnet SHARED_NETWORK: 10000
+dpdk-aeron-mix-shared SHARED: 10000
+dpdk-aeron-mix-invoker INVOKER: 10000" "$got"
+# the follow-up session (transport-aws-aeron-mixed-rerun.tsv): the lost
+# points plus each stack's DEDICATED anchor, both stacks on pair a, every point a row
+TRUN_SETS=$cloud/transport-aws-aeron-mixed-rerun.tsv trun a 1 "" && rrc=0 || rrc=$?
+d=$sb/a/bench/transport-a
+n=$(plan count a 1 "$matrix:arms" "$cloud/transport-aws-aeron-mixed-rerun.tsv")
+[[ $rrc == 0 && $n == 19 && $(grep -c . "$d/results.csv") == "$n" ]] &&
+    pass "transport.sh run, the mixed follow-up session: the dpdk-raw floor with mio-udp, and the kernel stack's DEDICATED (the anchor), SHARED and INVOKER (the DPDK stack reruns whole), every point a row (19 at one rep)" ||
+    fail "transport.sh run, the mixed follow-up session: exit $rrc, $(grep -c . "$d/results.csv" 2>/dev/null) rows, $n planned (19): $(tail -3 "$sb/run.out" | tr '\n' ' ')"
+
 # transport_prepare's steps on the operator machine (lib.sh's helpers faked):
 # the tree and the arms file to both VMs, the build, the map's boot line, a
 # reboot, transport-tune on both, VM a's key
@@ -1265,7 +2584,156 @@ both transport-tune
 key
 1" "$steps"
 
-for script in transport.sh azure/lab.sh azure/az.sh host.sh irqs.sh vm.sh modes.sh; do
+# ergon-io bypass matrix: the sets file the lab selects, the real arm lines,
+# kernel-peer loss, RTO 8 ms, and transport-build's split feature invocations
+sets=$cloud/transport-aws-io-bypass.tsv
+got=$(
+    . "$cloud/transport.sh"
+    dir=$tmp/bypass
+    mkdir -p "$dir"
+    printf 'sender ens6 ens6 0a:00:00:00:00:01 10.30.1.11 24 0000:00:06.0\nreceiver ens7 ens7 0a:00:00:00:00:02 10.30.1.21 24 0000:00:07.0\n' >"$dir/nics-a.txt"
+    printf 'sender ens6 ens6 0a:00:00:00:00:03 10.30.1.12 24 0000:00:06.0\nreceiver ens7 ens7 0a:00:00:00:00:04 10.30.1.22 24 0000:00:07.0\n' >"$dir/nics-b.txt"
+    sets_file=$sets tr_sets_file=$sets arms_file='' tr_arms_file=''
+    echo "loss: $(tr_plan loss)"
+    echo "rto: $(tr_knob rto_min_us)"
+    tr_wants_fstack && echo "wants: yes" || echo "wants: no"
+    echo "extras: [$(tr_build_extras)]"
+    sets_file='' tr_sets_file=''
+    tr_wants_fstack && echo "matrix: yes" || echo "matrix: no"
+    echo "matrix-extras: [$(tr_build_extras)]"
+    sets_file=$sets tr_sets_file=$sets
+    tr_plan rounds a 1 1 | awk -F'\t' '{print "round:", $5, $7, $8}'
+    for arm in io-tcp-epoll io-tcp-smol io-tcp-fstack io-ws-epoll io-ws-smol io-ws-fstack io-udp-epoll io-udp-smol; do
+        spec=$(tr_plan arm "$arm")
+        echo "arm $arm: $spec"
+        read -r bin setup _ rest <<<"$spec"
+        if [[ -n ${rest:-} ]]; then read -ra args <<<"$rest"; else args=(); fi
+        echo "ping $arm: $(tr_bin_args "$bin" ping 10.30.1.11 10.30.1.22 "${args[@]}")"
+        echo "alt $arm: $(tr_alt_args a sender b receiver)"
+    done
+    args=() bin=fstack_lat setup=fstack
+    echo "direct: $(tr_bin_args fstack_lat ping 10.30.1.11 10.30.1.22)"
+    hk=0 tr_bin_path=P
+    bin=fstack_spin_lat setup=sockets args=(--impl ergon)
+    echo "spin start: $(tr_start r/p.pid r/p.out fstack_spin_lat --role ping)"
+)
+why=
+[[ $got == *"loss: kernel-peer"* ]] || why+=" loss;"
+[[ $got == *"rto: 8000"* ]] || why+=" rto;"
+[[ $got == *"wants: yes"* && $got == *"matrix: no"* ]] || why+=" wants;"
+[[ $got == *"extras: [fstack]"* && $got == *"matrix-extras: []"* ]] || why+=" extras;"
+rounds=$(grep '^round:' <<<"$got")
+[[ $(wc -l <<<"$rounds") -eq 3 ]] || why+=" round count;"
+[[ $(awk '{print $3}' <<<"$rounds" | sort -u) == "10000,50000" ]] || why+=" loads;"
+[[ $(awk '{print $4}' <<<"$rounds" | sort -u) == "1,8" ]] || why+=" streams;"
+[[ $(awk '{print $2}' <<<"$rounds" | sort | tr '\n' ' ') == "0 0.1 1 " ]] || why+=" netem [$(awk '{print $2}' <<<"$rounds" | sort | tr '\n' ' ')];"
+[[ $got == *"arm io-tcp-fstack: fstack_spin_lat sockets two --impl ergon"* ]] || why+=" fstack arm;"
+[[ $got == *"ping io-tcp-fstack:"*"--rto-min-us 8000"* ]] || why+=" fstack rto;"
+[[ $got == *"alt io-tcp-fstack: --impl ergon"* ]] || why+=" fstack impl;"
+[[ $(grep -c -- '--impl' <<<"$(grep '^ping io-tcp-fstack:' <<<"$got")") -eq 0 ]] || why+=" impl duplicated in tr_bin_args;"
+[[ $got == *"arm io-tcp-epoll: wstls_lat sockets two --impl ergon --backend epoll-spin --echo tcp"* ]] || why+=" tcp epoll;"
+[[ $got == *"arm io-ws-epoll: wstls_lat sockets two --impl ergon --backend epoll-spin --echo wstls"* ]] || why+=" ws epoll;"
+[[ $got == *"arm io-tcp-smol: wstls_lat sockets two --impl ergon --backend smoltcp-spin --echo tcp"* ]] || why+=" tcp smol;"
+[[ $got == *"arm io-ws-fstack: wstls_fstack_lat sockets two --impl ergon --backend fstack-spin --echo wstls"* ]] || why+=" ws fstack;"
+[[ $got == *"ping io-ws-epoll:"*"--rto-min-us 8000"* && $got == *"ping io-tcp-epoll:"*"--rto-min-us 8000"* ]] || why+=" wstls rto;"
+[[ $got == *"arm io-udp-epoll: udp_lat sockets two --impl ergon --backend epoll-spin"* ]] || why+=" udp epoll;"
+[[ $got == *"arm io-udp-smol: udp_lat sockets two --impl ergon --backend smoltcp-spin"* ]] || why+=" udp smol;"
+udp=$(grep '^arm io-udp' <<<"$got")
+[[ $udp != *fstack* ]] || why+=" fstack udp;"
+direct_line=$(grep '^direct:' <<<"$got")
+[[ $direct_line == "direct: --source 10.30.1.11 --connect 10.30.1.22:22000 --pci 0000:00:06.0 --prefix-len 24 --gateway 10.30.1.1 --nodelay --delayed-ack false --rcvbuf $sb_ --sndbuf $sb_" ]] || why+=" direct fstack [$direct_line];"
+smol_tcp=$(grep '^ping io-tcp-smol:' <<<"$got")
+ws_fstack=$(grep '^ping io-ws-fstack:' <<<"$got")
+udp_smol=$(grep '^ping io-udp-smol:' <<<"$got")
+epoll_tcp=$(grep '^ping io-tcp-epoll:' <<<"$got")
+epoll_udp=$(grep '^ping io-udp-epoll:' <<<"$got")
+[[ $smol_tcp == *"--pci 0000:00:06.0"* && $smol_tcp == *"--source 10.30.1.11"* && $ws_fstack == *"--pci 0000:00:06.0"* ]] || why+=" bypass nic;"
+[[ $udp_smol == *"--pci 0000:00:06.0"* && $udp_smol == *"--rto-min-us 8000"* ]] || why+=" udp nic;"
+[[ $epoll_tcp != *"--pci"* && $epoll_udp != *"--pci"* && $epoll_udp != *"--rto-min-us"* ]] || why+=" epoll nic;"
+[[ $got != *"direct:"*"--rto-min-us"* && $got != *"direct:"*"--impl"* ]] || why+=" direct took ergon flags;"
+[[ $got == *"spin start: sudo -n setpriv"* && $got == *"spin start:"*"fstack_spin_lat --role ping"* ]] || why+=" spin priv;"
+[[ -z $why ]] && pass "transport.sh io bypass: fstack-spin, wstls tcp and wstls, udp kernel vs smoltcp, 1 and 8 connections, 10k and 50k, loss 0 0.1 1 on the kernel peer, RTO 8 ms; the direct fstack line is unchanged" ||
+    fail "transport.sh io bypass:$why"
+# transport_prepare under set -u: the bypass sets file builds F-Stack, and
+# transport-isolate is not given an unset onload word (that aborted a run
+# after the build line)
+prep=$(
+    set -u
+    . "$cloud/transport.sh"
+    log() { :; }
+    die() { echo "die $*"; exit 1; }
+    out=$tmp/prep-bypass
+    extra_src= arms_file= sets_file=$sets
+    A=1.1.1.1 B=2.2.2.2 user=u ssh_opts=()
+    mkdir -p "$out"
+    scp() { echo "scp $*"; }
+    on() { :; }
+    detached() { echo "detached $*"; }
+    both() { echo "both $*"; }
+    reboot_both() { :; }
+    remote_access() { :; }
+    transport_prepare
+) || prep="died:$prep"
+[[ $prep == *"detached transport-build transport-build fstack"* && $prep == *"both transport-isolate transport-isolate smt-off"* && $prep != *"onload"* && $prep != died:* ]] &&
+    pass "transport_prepare: the bypass sets file builds F-Stack and isolates without an onload word" ||
+    fail "transport_prepare bypass: [$prep]"
+# kernel-peer netem: egress on the kernel NIC and the same loss on ifb ingress
+cat >"$tmp/fakebin/modprobe" <<'SH'
+#!/usr/bin/env bash
+echo "modprobe $*" >>"$FAKE_LOG"
+exit 0
+SH
+chmod +x "$tmp/fakebin/modprobe"
+peer=$(hostrun netem_set_peer 0.1 eth1 2>&1; echo " rc $?")
+peer_chk=$(hostrun netem_check 0.1 ifb-eth1 2>&1; echo " rc $?")
+peer_eg=$(hostrun netem_check 0.1 eth1 2>&1; echo " rc $?")
+if [[ $peer == *"netem: ifb-eth1 at 0.1"* && $peer == *" rc 0"* && $peer_chk == *" rc 0"* && $peer_eg == *" rc 0"* ]]; then
+    pass "host.sh: kernel-peer netem is egress on the kernel NIC and the same loss on ifb ingress"
+else
+    fail "host.sh netem_set_peer: [$peer] ifb [$peer_chk] egress [$peer_eg]"
+fi
+# transport-build.sh: fstack and smoltcp-dpdk are separate cargo invocations;
+# a missing binary fails the script
+stub=$tmp/cargostub
+mkdir -p "$stub" "$tmp/prefix"
+: >"$tmp/prefix/BUILD"
+cat >"$stub/cargo" <<'SH'
+#!/usr/bin/env bash
+echo "cargo $*" >>"$CARGO_LOG"
+target= prev=
+for a in "$@"; do
+    if [[ $prev == --target-dir ]]; then target=$a; fi
+    if [[ $prev == --bin && $a != "${SKIP_BIN:-}" ]]; then
+        mkdir -p "$target/release"
+        : >"$target/release/$a"
+        chmod +x "$target/release/$a"
+    fi
+    prev=$a
+done
+SH
+chmod +x "$stub/cargo"
+export CARGO_LOG=$tmp/cargo.log
+: >"$CARGO_LOG"
+if PATH="$stub:$PATH" TR_FSTACK_PREFIX=$tmp/prefix bash "$cloud/transport-build.sh" "$cloud/../../.." "$tmp/tb-target"; then
+    blog=$(cat "$CARGO_LOG")
+    if grep -q -- '--features fstack ' <<<"$blog" && grep -q -- '--features fstack-spin ' <<<"$blog" &&
+        grep -q -- '--features smoltcp-dpdk ' <<<"$blog" &&
+        ! grep -- '--features' <<<"$blog" | grep -q 'fstack.*smoltcp\|smoltcp.*fstack'; then
+        pass "transport-build.sh: fstack, fstack-spin and smoltcp-dpdk are separate cargo invocations, and wstls_lat is built"
+    else
+        fail "transport-build.sh features: $blog"
+    fi
+else
+    fail "transport-build.sh exited $(echo $?) with a stub that creates every binary: $(cat "$CARGO_LOG")"
+fi
+: >"$CARGO_LOG"
+if PATH="$stub:$PATH" SKIP_BIN=wstls_lat TR_FSTACK_PREFIX=$tmp/prefix bash "$cloud/transport-build.sh" "$cloud/../../.." "$tmp/tb-missing"; then
+    fail "transport-build.sh succeeded with wstls_lat missing"
+else
+    pass "transport-build.sh fails when a required binary is missing"
+fi
+
+for script in transport.sh azure/lab.sh azure/az.sh aws/lab.sh host.sh irqs.sh vm.sh modes.sh; do
     bash -n "$cloud/$script" && pass "bash -n $script" || fail "bash -n $script"
 done
 if command -v shellcheck >/dev/null; then

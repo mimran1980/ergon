@@ -1,8 +1,9 @@
 //! # ergo-aeron-cluster
 //!
-//! Experimental Rust **client** for [Aeron Cluster](https://github.com/real-logic/aeron)
-//! on [`rusteron_client`] **0.2** (latest 0.2.x), using **ergo-sbe-generated**
-//! session codecs (schema 111).
+//! Experimental Rust **client** for [Aeron Cluster](https://github.com/real-logic/aeron).
+//!
+//! Built on [`rusteron_client`] **0.2** (latest 0.2.x), with
+//! **ergo-sbe-generated** session codecs (schema 111).
 //!
 //! # Documentation
 //!
@@ -34,8 +35,8 @@
 //!
 //! # Hot path
 //!
-//! 1. [`AeronCluster::try_claim`] — SessionMessageHeader into the claim via ergo-sbe
-//! 2. [`AeronCluster::poll`] — egress decode (SessionEvent, NewLeader, app) and session state
+//! 1. [`AeronCluster::try_claim`] — `SessionMessageHeader` into the claim via ergo-sbe
+//! 2. [`AeronCluster::poll`] — egress decode (`SessionEvent`, `NewLeader`, app) and session state
 //! 3. Keep-alive encode — periodic
 //! 4. Connect / auth / failover — cold path (correctness over nanoseconds)
 //!
@@ -95,7 +96,6 @@ pub mod transport {
     pub use rusteron_client::AeronSubscription;
 }
 
-/// High-level cluster client: connect, try_claim, offer, keep-alive, close.
 pub mod client;
 /// SBE codecs: ergo-sbe production modules + residual sbe-tool trees for benches.
 pub(crate) mod codecs;
@@ -154,10 +154,8 @@ pub use uri::AERON_IPC_STREAM;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     #[test]
-    fn scaffold_compiles() -> Result<(), Box<dyn std::error::Error>> {
+    fn scaffold_compiles() {
         // Smoke-check ergo-sbe production codecs are wired into the lib.
         assert_eq!(crate::codecs::session::SessionConnectRequestEncoder::SCHEMA_ID, 111);
-
-        Ok(())
     }
 }

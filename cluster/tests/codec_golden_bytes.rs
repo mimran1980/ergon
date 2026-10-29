@@ -6,7 +6,7 @@
 //! re-proven solely via **ergon** production encoders (`session`).
 //! Protocol goldens no longer require sbe-tool at runtime.
 //!
-//! Schema pin: aeron submodule 1.53.3, schema id 111 v17. Body bytes match the
+//! Schema pin: aeron submodule 1.54.0, schema id 111 v17. Body bytes match the
 //! 2026-07-18 capture; the header schema version is 17.
 
 #![allow(unused_must_use)]
@@ -82,41 +82,35 @@ use ergo_aeron_cluster::cluster_codec_types::{
 };
 
 #[test]
-fn parity_ergo_session_message_header() -> Result<(), Box<dyn std::error::Error>> {
+fn parity_ergo_session_message_header() {
     let mut b = [0u8; 64];
     let e =
         EsmSessionMessageHeaderEncoder::wrap_and_apply_header(&mut b, 0).fixed(&EsmSessionMessageHeaderFixedFields {
             leadership_term_id: 42,
             cluster_session_id: 99,
-            timestamp: 1234567890,
+            timestamp: 1_234_567_890,
         });
     assert_eq!(e.as_bytes_with_header(), &GOLDEN_SESSION_MESSAGE_HEADER[..]);
-
-    Ok(())
 }
 
 #[test]
-fn parity_ergo_session_keep_alive() -> Result<(), Box<dyn std::error::Error>> {
+fn parity_ergo_session_keep_alive() {
     let mut b = [0u8; 64];
     let e = EsmSessionKeepAliveEncoder::wrap_and_apply_header(&mut b, 0).fixed(&EsmSessionKeepAliveFixedFields {
         leadership_term_id: 5,
         cluster_session_id: 10,
     });
     assert_eq!(e.as_bytes_with_header(), &GOLDEN_SESSION_KEEP_ALIVE[..]);
-
-    Ok(())
 }
 
 #[test]
-fn parity_ergo_session_close_request() -> Result<(), Box<dyn std::error::Error>> {
+fn parity_ergo_session_close_request() {
     let mut b = [0u8; 64];
     let e = EsmSessionCloseRequestEncoder::wrap_and_apply_header(&mut b, 0).fixed(&EsmSessionCloseRequestFixedFields {
         leadership_term_id: 7,
         cluster_session_id: 42,
     });
     assert_eq!(e.as_bytes_with_header(), &GOLDEN_SESSION_CLOSE_REQUEST[..]);
-
-    Ok(())
 }
 
 #[test]

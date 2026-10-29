@@ -9,7 +9,9 @@ HTTP/1.1 over TLS 1.3, length-prefixed frames over plain TCP, and UDP.
 
 - One non-blocking `poll` moves bytes between your loop and the kernel.
 - The kernel interface (epoll or `io_uring`, with or without NIC polling) is
-  configuration, chosen at run time.
+  configuration, chosen at run time; so is kernel bypass, TCP on
+  F-Stack (`fstack-spin`, feature `fstack`) or TCP and UDP on smoltcp
+  over DPDK (`smoltcp-spin`, feature `smoltcp-dpdk`), both lab-tested only.
 - TLS records are decrypted in place and messages parsed in place: one copy
   per byte.
 
@@ -175,23 +177,42 @@ thread polls (feeds, order connections, `HttpClient` pool connections):
   needed; a NIC with NAPI ids is (not loopback or a plain veth):
   [busy polling on `epoll-spin`](https://mimran1980.github.io/ergon/io/backends.html#busy-polling-on-epoll-spin).
 
+- `fstack-spin`: TCP on [F-Stack](https://github.com/F-Stack/f-stack)
+  (FreeBSD's stack on DPDK) on a NIC of the process's own; framed TCP,
+  WebSocket and HTTP over TLS as `FrameConn<FstackTcp>`,
+  `WsConn<FstackTcp>`, `HttpConn<FstackTcp>`. Needs the `fstack` feature,
+  F-Stack built (`FSTACK_PREFIX`), hugepages and DPDK's privileges; a
+  binary using it links with `-C link-arg=-Wl,-z,nostart-stop-gc`.
+  Docker lab test, and measured on AWS against `epoll-spin`:
+  [transport comparison](https://mimran1980.github.io/ergon/transports/comparison.html#ergon-io-kernel-smoltcp-and-f-stack).
+- `smoltcp-spin`: TCP and UDP on [smoltcp](https://github.com/smoltcp-rs/smoltcp)
+  (0BSD, a stack in the process) over a DPDK port; `FrameConn<SmolTcp>`,
+  `WsConn<SmolTcp>`, `HttpConn<SmolTcp>`, `UdpConn<SmolUdp>`, after
+  `smoltcp_dpdk::Stack::init` on the polling thread. Needs the
+  `smoltcp-dpdk` feature and libdpdk; IPv4 only; a 10 ms RTO floor by
+  default (smoltcp's own is 1 s); no RACK/TLP, received SACK blocks
+  ignored. Docker lab test, and the same AWS comparison.
+
 The full table, the evidence and the node settings: the book's
 [choosing a backend](https://mimran1980.github.io/ergon/io/overview.html#choosing-a-backend).
 
 ## UDP or TCP, ergon-io or mio
 
 UDP and framed TCP, each through raw mio and through ergon-io, are measured
-beside Aeron on the same hosts, cores and settings (Azure x86, 64-byte
-messages, round trips, both arms `SO_BUSY_POLL` 50 µs): UDP at 1 to 128
-streams, TCP with and without loss. Tables and conclusion: the book's
+beside Aeron on the same hosts, cores and settings (64-byte messages,
+round trips, both arms `SO_BUSY_POLL` 50 µs): on Azure x86, UDP at 1 to
+128 streams and TCP with and without loss; on AWS `c7a.2xlarge`, TCP on
+one shared connection, and beside F-Stack (TCP on DPDK) and Aeron on DPDK.
+Tables and conclusion: the book's
 [transport latency comparison](https://mimran1980.github.io/ergon/transports/comparison.html).
 
 <!-- RESULTS: io README -->
 
 | question | answer |
 |---|---|
-| mio or ergon-io, UDP? | Either. ergon-io's p50 is 0.1 to 0.9 µs behind mio's (behind in every rep); p99.99 and max not separated |
-| mio or ergon-io, TCP? | No verdict: the median p50 gaps (ergon-io 2.4 µs ahead to 4.0 behind) are inside each arm's own spread across reps (up to 10.7 µs). A same-connection A/B (`tcp_lat --source-port`) is scheduled on AWS |
+| mio or ergon-io? | Either: no difference. UDP p50 within 0.1 to 0.9 µs (Azure), not separated (AWS). TCP on the same connection (AWS): p50 52.2 against 53.4 µs at 10,000 msg/s, not separated at 50,000; tails not separated. Both make 2 reads, 1 send and 1 `TCP_QUICKACK` re-arm a message. The earlier Azure TCP gap was unequal busy polling, fixed by `Config::busy_poll_us` |
+| overloaded (200,000 msg/s on one TCP loop)? | Neither keeps up; ergon-io drains slower: 104,000 to 134,000 msg/s carried against mio's 113,000 to 154,000 (AWS) |
+| kernel TCP or F-Stack (TCP on DPDK)? | F-Stack, where kernel bypass is allowed: p50 17 to 19 µs lower at 10,000 msg/s and 26 to 28 at 50,000 (AWS), and it carries 200,000 msg/s. ergon-io's `fstack-spin` runs its endpoints on F-Stack, lab-tested and not yet measured |
 | sockets or Aeron UDP? | One stream: Aeron (p50 55.6 against 61.8 µs at 50,000 msg/s). 32 to 128 streams: sockets (p50 lower by 3.7 to 10.5 µs), on 1 busy thread against Aeron's 4 |
 | at 200,000 msg/s? | Neither socket library keeps up (one `send` a message on one thread; 151,000 to 195,000 msg/s carried); Aeron does |
 | TCP or Aeron reliable? | Aeron's p50 is 7 to 15 µs lower without loss. Under loss neither tail wins everywhere: Aeron's maxima sit at its 10 ms retransmit linger, TCP's come from its retransmits (8 ms minimum RTO) |
@@ -219,6 +240,8 @@ streams, TCP with and without loss. Tables and conclusion: the book's
 | `uring` | on | the `io_uring` backend, `uring-sqpoll` (Linux); without it, choosing it returns `Error::Unsupported` |
 | `webpki-roots` | off | Mozilla's root store, `tls::webpki_roots` (CDLA-Permissive-2.0, so opt-in) |
 | `curl` | off | libcurl as an `HttpClient` implementation (the system libcurl, through pkg-config). It refuses every method but GET, HEAD, OPTIONS and DELETE unless `curl_allow_non_idempotent_methods` is set: libcurl can send a request twice |
+| `smoltcp-dpdk` | off | the `smoltcp-spin` backend (Linux `x86_64` or `aarch64`): smoltcp 0.14.0 over a DPDK port, compiled against the system's libdpdk >= 23.11 (pkg-config); elsewhere it compiles and `Stack::init` returns `Error::Unsupported` |
+| `fstack` | off | the `fstack-spin` backend (Linux): links F-Stack and its DPDK from `FSTACK_PREFIX` ([`build-fstack.sh`](https://github.com/mimran1980/ergon/blob/main/io/benches/fstack/build-fstack.sh)); without it the feature compiles and `fstack-spin` returns `Error::Unsupported` |
 
 Install with the features you need:
 

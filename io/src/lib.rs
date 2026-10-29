@@ -27,8 +27,13 @@
 //!   warning thread, `SQPOLL`), inside the process's cpuset.
 //! - [`outcome`]: what became of a request ([`Sent`], [`Verdict`]) and
 //!   `Retry-After` parsing.
-//! - [`net`] ([`Target`]), [`dns`], [`any`] ([`AnyConn`]:
+//! - [`net`] ([`Target`], [`net::StreamSocket`]: the kernel's or
+//!   F-Stack's socket under a TCP endpoint), [`dns`], [`any`] ([`AnyConn`]:
 //!   WebSocket and HTTP on one driver), [`clock`], [`error`].
+//! - [`fstack`]: the `fstack-spin` backend's settings and, with the
+//!   `fstack` feature on Linux, F-Stack itself (`FstackTcp`, `init`).
+//! - [`smoltcp_dpdk`]: the `smoltcp-spin` backend's stack (smoltcp over a
+//!   DPDK port, the `smoltcp-dpdk` feature): `Stack`, `SmolTcp`, `SmolUdp`.
 //!
 //! `Driver`, `HttpClient`, `sys` and `warnings` are Linux-only, so they are
 //! named here without links.
@@ -44,10 +49,12 @@ pub mod error;
 pub mod frame;
 pub mod http;
 pub mod net;
+mod netstack;
 pub mod outcome;
 pub mod placement;
 pub mod reconnect;
 pub mod route;
+pub mod smoltcp_dpdk;
 mod stream;
 pub mod text;
 pub mod tls;
@@ -65,6 +72,35 @@ mod driver;
 pub mod sys;
 #[cfg(target_os = "linux")]
 mod warn;
+
+/// The `fstack-spin` backend: TCP over F-Stack, FreeBSD's TCP/IP stack on
+/// DPDK (<https://github.com/F-Stack/f-stack>), on a NIC of its own.
+///
+/// - [`FstackConf`](crate::fstack::FstackConf) (every platform): the interface and EAL settings,
+///   `Config`'s `fstack_*` keys.
+/// - With the `fstack` feature on Linux: `FstackTcp`, the socket type of
+///   F-Stack endpoints (`FrameConn<FstackTcp>`, `WsConn<FstackTcp>`,
+///   `HttpConn<FstackTcp>`, made by their dials' `on_stack`); `init`, which
+///   starts F-Stack on the polling thread (`Driver::new` calls it when it
+///   has not run); `linked`, whether F-Stack was linked in (the build
+///   found `FSTACK_PREFIX`).
+///
+/// F-Stack is single-threaded: `ff_init` binds it to the thread that calls
+/// it, which must make every later call, so F-Stack endpoints are not
+/// `Send` and there is no `connect_background`.
+pub mod fstack {
+    #[cfg(all(target_os = "linux", feature = "fstack"))]
+    pub use crate::netstack::fstack::{FstackInit, FstackTcp, init, initialised, linked};
+    /// Test levers: a listening F-Stack socket (ergon-io itself only
+    /// connects), for an F-Stack peer in tests.
+    #[cfg(all(target_os = "linux", feature = "fstack"))]
+    #[doc(hidden)]
+    pub use crate::netstack::fstack::{FstackListener, bsd_tcp_info, run_once};
+    pub use crate::netstack::fstack_conf::FstackConf;
+    /// Test levers: FreeBSD's `struct tcp_info` as F-Stack reports it.
+    #[doc(hidden)]
+    pub use crate::netstack::fstack_conf::{BsdTcpInfo, TCPS_ESTABLISHED};
+}
 
 /// ergon-io's warning thread (see [`checks`]): waiting for it to catch up.
 #[cfg(target_os = "linux")]

@@ -107,12 +107,12 @@ mod raw_decode {
     use std::hint::black_box;
 
     #[inline(always)]
-    unsafe fn read_u16_le(ptr: *const u8) -> u16 {
+    const unsafe fn read_u16_le(ptr: *const u8) -> u16 {
         u16::from_le_bytes(unsafe { *(ptr as *const [u8; 2]) })
     }
 
     #[inline(always)]
-    unsafe fn read_u64_le(ptr: *const u8) -> u64 {
+    const unsafe fn read_u64_le(ptr: *const u8) -> u64 {
         u64::from_le_bytes(unsafe { *(ptr as *const [u8; 8]) })
     }
 

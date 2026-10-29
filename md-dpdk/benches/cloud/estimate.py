@@ -77,13 +77,20 @@ PRICES = {
     "c7gn.4xlarge": 0.9984, "c8gn.4xlarge": 0.948, "c9g.4xlarge": 0.69552,
     "c8i.4xlarge": 0.74968,
     "c9g.2xlarge": 0.34776, "c8gn.xlarge": 0.237, "c6in.4xlarge": 0.9072,
+    "c7a.2xlarge": 0.41056,
 }
 # us-east-1 Linux spot prices ($/h) for the types the final rounds use, as
 # of SPOT_AS_OF (instances.vantage.sh, its data of 2026-10-15 16:35): spot
 # moves by the hour and the zone, so refresh them before a round
 # (c8g.2xlarge: its page of 2026-10-23 16:36)
-SPOT_PRICES = {"c9g.2xlarge": 0.153, "c8g.xlarge": 0.077, "c8g.2xlarge": 0.147, "c7i.2xlarge": 0.200}
+SPOT_PRICES = {"c9g.2xlarge": 0.153, "c8g.xlarge": 0.077, "c8g.2xlarge": 0.147, "c7i.2xlarge": 0.200,
+               "c7a.2xlarge": 0.1907}
 SPOT_AS_OF, SPOT_SOURCE = "2026-10-15", "instances.vantage.sh"
+# a type whose spot price was read elsewhere than SPOT_SOURCE: c7a.2xlarge
+# (the AWS transport session) from aws ec2 describe-spot-price-history in
+# us-east-1 on 2026-10-27, us-east-1a's (the zones then 0.1495 to 0.2267);
+# its on-demand price from the AWS Price List API (effective 2026-10-01)
+SPOT_READ = {"c7a.2xlarge": ("2026-10-27", "aws ec2 describe-spot-price-history, us-east-1a")}
 # Azure pay-as-you-go Linux prices ($/h) in northcentralus, the lab's
 # default region (prices.azure.com/api/retail/prices on AZURE_AS_OF)
 AZURE_PRICES = {
@@ -223,10 +230,30 @@ def estimate(type_a, type_b, placement, reps, modes, local_modes, states, load_s
 # pong started and given 2 s to bind, the snapshots, its output fetched; the driver
 # or kernel path set up and stopped), each round TRANSPORT_ROUND_S (netem set, checked, cleared).
 TRANSPORT_PREP_S, TRANSPORT_RUN_S, TRANSPORT_ROUND_S = 900, 15, 5
+# a session with an F-Stack arm (setup fstack) also builds F-Stack and its
+# DPDK on both hosts at once (vm.sh transport-build fstack): not yet timed on
+# a run: DPDK's meson build and F-Stack's make on 8 cores, about 10 minutes
+TRANSPORT_FSTACK_BUILD_S = 600
+# a session with an Onload arm (setup onload) also builds and installs
+# OpenOnload on both hosts at once (vm.sh transport-build onload,
+# onload-build.sh): not yet timed on a run either; its kernel modules and
+# user-level libraries took 4 to 5 minutes natively in an arm64 container, so
+# 10 minutes on 8 cores with the packages and the clone
+TRANSPORT_ONLOAD_BUILD_S = 600
 # each point's events on its hosts (vm.sh events-start and events-stop: the
 # trace set up, read back and gzipped, the spinners and sampler started and
 # stopped), measured in the local smoke
 TRANSPORT_EVENTS_S = 6
+# a sink arm's point (hosts sink: aeron_lat --mode spy-udp) starts a sink on
+# host b for each of its two runs and stops it after (its ready line, then
+# TERM and up to 4 s of reading on): not yet timed on a run, taken at 5 s each
+TRANSPORT_SINK_S = 5
+# a mixed-load point (aeron_lat --load mixed): 32 or 128 streams'
+# publications and fan-out subscriptions added and connected on both hosts
+# (an embedded or invoked DPDK driver's EAL started with them), its DPDK
+# counters' refresh awaited, each host's NIC counters read before and after:
+# not yet timed on a run, taken at 20 s
+TRANSPORT_MIXED_S = 20
 
 
 def transport_estimate(pair, paths, reps, warmup_s, point_s, switch_s):
@@ -235,7 +262,7 @@ def transport_estimate(pair, paths, reps, warmup_s, point_s, switch_s):
     import os
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import transport_plan as tp
-    _, sets = tp.load(paths)
+    arms, sets = tp.load(paths)
     measuring = tp.seconds(sets, pair, reps, warmup_s, point_s, switch_s)
     runs = rounds = 0
     for g in tp.groups(sets, pair):
@@ -245,7 +272,23 @@ def transport_estimate(pair, paths, reps, warmup_s, point_s, switch_s):
                  * len(longest["netem"]) * reps)
         rounds += len(longest["netem"]) * reps
     overhead = runs * TRANSPORT_RUN_S + rounds * TRANSPORT_ROUND_S + tp.count(sets, pair, reps) * TRANSPORT_EVENTS_S
-    wall = SETUP_S + TRANSPORT_PREP_S + measuring + overhead + TEARDOWN_S
+    setups = {arms[a][1] for s in sets if s["pair"] == pair for a in s["arms"] if a != "aa"}
+    # sink arms' points (the A/A of one too): two sinks each
+    sink_points = sum(len(s["loads"]) * len(s["streams"]) * len(s["netem"]) * reps
+                      for s in sets if s["pair"] == pair
+                      for a in s["arms"] if arms[s["arms"][0] if a == "aa" else a][2] == "sink")
+    overhead += sink_points * 2 * TRANSPORT_SINK_S
+    # mixed-load points (the A/A of one too)
+    mixed = lambda a: " --load mixed " in " " + " ".join(arms[a][3]) + " "
+    mixed_points = sum(len(s["loads"]) * len(s["streams"]) * len(s["netem"]) * reps
+                       for s in sets if s["pair"] == pair
+                       for a in s["arms"] if mixed(s["arms"][0] if a == "aa" else a))
+    overhead += mixed_points * TRANSPORT_MIXED_S
+    if "fstack" in setups:
+        overhead += TRANSPORT_FSTACK_BUILD_S
+    if "onload" in setups:
+        overhead += TRANSPORT_ONLOAD_BUILD_S
+    wall =SETUP_S + TRANSPORT_PREP_S + measuring + overhead + TEARDOWN_S
     return {"points": tp.count(sets, pair, reps), "sets": [s["id"] for s in sets if s["pair"] == pair],
             "measuring_s": measuring, "overhead_s": overhead, "wall_s": wall,
             "over_deadline": False, "hours_needed": math.ceil(wall * 1.2 / 3600)}
@@ -297,9 +340,9 @@ def tune_estimate(pair, a):
 
 
 def transport_report(a):
-    """azure/lab.sh LAB_ESTIMATE=1 (and its deadline checks) for the
-    transport suite: the pair given, or both pairs (both tuning sessions
-    with --tune)."""
+    """azure/lab.sh and aws/lab.sh LAB_ESTIMATE=1 (and their deadline
+    checks) for the transport suite: the pair given, or both pairs (both
+    tuning sessions with --tune); AWS's own report transport_aws_report."""
     pairs = [a.pair] if a.pair else (["tune-a", "tune-b"] if a.tune else ["a", "b"])
     try:
         est = {p: (tune_estimate(p, a) if p.startswith("tune-") else
@@ -313,14 +356,18 @@ def transport_report(a):
     if a.print_hours:
         print(f"{est[pairs[0]]['wall_s'] / 3600:.2f}")
         return 0
+    cut = (f"each instance powers off (and so terminates) {a.max_hours} h after launch" if a.cloud == "aws" else
+           f"the backstop deletes the resource group {a.max_hours} h after creation")
     if a.refuse_over_deadline:
         for p, e in est.items():
             if e["over_deadline"]:
                 print(f"the plan takes pair {p} about {e['wall_s'] / 3600:.2f} h, longer than LAB_MAX_HOURS="
-                      f"{a.max_hours}: the backstop deletes the resource group {a.max_hours} h after creation, "
+                      f"{a.max_hours}: {cut}, "
                       f"cutting the session short: give LAB_MAX_HOURS={e['hours_needed']} or trim the plan", file=sys.stderr)
                 return 3
         return 0
+    if a.cloud == "aws":
+        return transport_aws_report(a, est)
     hourly = None
     if a.type_a in AZURE_PRICES and a.type_b in AZURE_PRICES:
         hourly = AZURE_PRICES[a.type_a] + AZURE_PRICES[a.type_b]
@@ -355,6 +402,48 @@ def transport_report(a):
     if len(est) > 1:
         print(f"both pairs: about ${total_usd:.2f}, wall about {max(e['wall_s'] for e in est.values()) / 3600:.2f} h "
               "run side by side")
+    return 0
+
+
+def transport_aws_report(a, est):
+    """aws/lab.sh LAB_SUITE=transport LAB_ESTIMATE=1: each pair session's
+    points, wall time, instance-hours and dollars (on-demand, and spot with
+    --market spot); no data transfer charge (one zone, cluster placement)."""
+    print(f"LAB_ESTIMATE: nothing created, no cloud call made. Transport suite on AWS, one zone (cluster placement), "
+          f"a {a.type_a}, b {a.type_b}, {a.market}, {a.reps} reps; {a.transport_warmup_s} s warm-up a run, "
+          f"{a.transport_point_s} s a point, {a.transport_switch_s} s a switch")
+    od = PRICES[a.type_a] + PRICES[a.type_b] if a.type_a in PRICES and a.type_b in PRICES else None
+    spot = (SPOT_PRICES[a.type_a] + SPOT_PRICES[a.type_b]
+            if od is not None and a.market == "spot" and a.type_a in SPOT_PRICES and a.type_b in SPOT_PRICES else None)
+    for p, e in est.items():
+        h = e["wall_s"] / 3600
+        line = (f"pair {p}: {e['points']} points (sets {', '.join(e['sets'])}): measuring {e['measuring_s'] / 3600:.2f} h, "
+                f"set-up, runs and teardown {(e['wall_s'] - e['measuring_s']) / 3600:.2f} h: "
+                f"wall about {h:.2f} h{' (over 2 h: lab.sh detaches it)' if e['wall_s'] > 7200 else ''}, "
+                f"{2 * h:.2f} instance-hours")
+        if spot is not None:
+            line += (f", about ${h * spot:.2f} at spot prices, at most ${h * od:.2f} on demand (at most "
+                     f"${a.max_hours * od:.2f} to LAB_MAX_HOURS={a.max_hours})")
+        elif od is not None:
+            line += f", about ${h * od:.2f} on demand (at most ${a.max_hours * od:.2f} to LAB_MAX_HOURS={a.max_hours})"
+        print(line)
+        if e["over_deadline"]:
+            print(f"WARNING: pair {p} is longer than LAB_MAX_HOURS={a.max_hours}: give LAB_MAX_HOURS={e['hours_needed']}")
+    if od is None:
+        unknown = [t for t in (a.type_a, a.type_b) if t not in PRICES]
+        print(f"instances: no price for {', '.join(unknown)} in estimate.py's table: their dollars unknown")
+        return 0
+    prices = f"on-demand, us-east-1: {a.type_a} ${PRICES[a.type_a]}/h, {a.type_b} ${PRICES[a.type_b]}/h"
+    if spot is not None:
+        read = sorted({SPOT_READ.get(t, (SPOT_AS_OF, SPOT_SOURCE)) for t in (a.type_a, a.type_b)})
+        prices += (f"; spot {a.type_a} ${SPOT_PRICES[a.type_a]}/h, {a.type_b} ${SPOT_PRICES[a.type_b]}/h ("
+                   + "; ".join(f"{src} on {day}" for day, src in read)
+                   + ": AWS bills each hour at the zone's spot price then, which moves; a one-time spot "
+                   "instance's maximum is the on-demand price)")
+    elif a.market == "spot":
+        prices += " (spot bills less, at a price not in estimate.py's table)"
+    print(f"prices: {prices}; EBS (40 GB gp3 each) and public IPv4 addresses extra, cents an hour; "
+          "no data transfer charge (one zone, private addresses)")
     return 0
 
 

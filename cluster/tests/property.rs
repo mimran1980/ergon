@@ -1,4 +1,6 @@
 #![allow(missing_docs)]
+// Test code: a failed unwrap, expect or panic is the test failing
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use ergo_aeron_cluster::cluster_codec_types::{
     ChallengeDecoder, ChallengeEncoder, ChallengeFixedFields, EventCode, NewLeaderEventDecoder, NewLeaderEventEncoder,
     NewLeaderEventFixedFields, SessionEventDecoder, SessionEventEncoder, SessionEventFixedFields,

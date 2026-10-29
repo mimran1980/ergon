@@ -42,6 +42,35 @@ path = "src/bin/udp_lat.rs"
 name = "tcp_lat"
 path = "src/bin/tcp_lat.rs"
 
+# TCP over F-Stack: needs F-Stack built by fstack/build-fstack.sh
+# (FSTACK_PREFIX), which build.rs links. Linux x86_64 and aarch64.
+[[bin]]
+name = "fstack_lat"
+path = "src/bin/fstack_lat.rs"
+required-features = ["fstack"]
+
+# ergon-io's fstack-spin measuring loop. Its own cargo invocation: combined
+# with `fstack` it would link two DPDKs. The kernel peer (pong) does not
+# start F-Stack.
+[[bin]]
+name = "fstack_spin_lat"
+path = "src/bin/fstack_spin_lat.rs"
+required-features = ["fstack-spin"]
+
+# WebSocket-over-TLS on fstack-spin. The same cargo invocation as
+# fstack_spin_lat. wstls_lat's smoltcp-dpdk build does not link F-Stack.
+[[bin]]
+name = "wstls_fstack_lat"
+path = "src/bin/wstls_fstack_lat.rs"
+required-features = ["fstack-spin"]
+
+# TCP echo and WebSocket-over-TLS echo. Kernel `epoll-spin` links nothing
+# extra. `fstack-spin` and `smoltcp-dpdk` are separate features: ergon-io
+# refuses to link F-Stack's DPDK and the system's libdpdk into one binary.
+[[bin]]
+name = "wstls_lat"
+path = "src/bin/wstls_lat.rs"
+
 # The mio parity gate: a timed benchmark test, so it runs in release on its
 # own lane (test-lanes.tsv, `just io-parity`), never in the debug test runs.
 [[test]]
@@ -50,8 +79,20 @@ path = "parity/mio_parity.rs"
 test = false
 
 [features]
+# fstack_lat and transport::fstack (build.rs links FSTACK_PREFIX's F-Stack)
+fstack = []
+# ergon-io's fstack-spin. Not combined with `fstack` in one cargo invocation:
+# that links two copies of DPDK. `fstack_lat --impl ergon` names this backend.
+fstack-spin = ["ergon-io/fstack"]
+# ergon-io's smoltcp-spin (Linux x86_64 and aarch64). Off Linux the
+# dependency compiles to nothing.
+smoltcp-dpdk = ["ergon-io/smoltcp-dpdk"]
 aws-lc = ["dep:aws-lc-rs", "rustls/aws_lc_rs"]
 openssl = ["dep:openssl"]
+
+[dev-dependencies]
+ergon-io = { path = ".." }
+rustls = { version = "0.23.46", default-features = false, features = ["std", "ring"] }
 
 [profile.release]
 debug = 1

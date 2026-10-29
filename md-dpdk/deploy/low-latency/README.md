@@ -10,12 +10,12 @@ manifest test keeps a copy as the case its rules must refuse.
 
 ## crates.io
 
-To use the driver from your own crate, pin the published versions (`0.1.33`
-is the crates.io release; this workspace is `0.1.34`):
+To use the driver from your own crate, pin the published versions (`0.1.35`
+is the crates.io release; this workspace is `0.1.35`):
 
 ```toml
-ergon-md-dpdk = "=0.1.33"
-ergon-tune = "=0.1.33"
+ergon-md-dpdk = "=0.1.35"
+ergon-tune = "=0.1.35"
 ```
 
 See [Cargo.toml.sample](Cargo.toml.sample). The crates.io crate named

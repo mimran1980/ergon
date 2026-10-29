@@ -89,6 +89,8 @@ struct Harness {
     transport: Box<aeron_udp_channel_transport_stct>,
     data_paths: Box<aeron_udp_channel_data_paths_stct>,
     initialized: bool,
+    /// The channel's `socket-tos`, handed to init (Aeron's unset is -1).
+    socket_tos: i32,
 }
 
 impl Harness {
@@ -119,6 +121,7 @@ impl Harness {
             transport,
             data_paths,
             initialized: false,
+            socket_tos: -1,
         }
     }
 
@@ -141,6 +144,7 @@ impl Harness {
         let mut conn = connect.map(|(ip, p)| SockAddrIn::new(ip, p));
         let mut params: aeron_udp_channel_transport_params_stct = unsafe { std::mem::zeroed() };
         params.mtu_length = mtu;
+        params.socket_tos = self.socket_tos;
 
         let rc = unsafe {
             let b = &*self.bindings;
@@ -285,6 +289,9 @@ const PAYLOAD: usize = UDP + 8;
 
 fn ip_ver_ihl(c: &FakeCapture) -> u8 {
     c.data[IP]
+}
+fn ip_tos(c: &FakeCapture) -> u8 {
+    c.data[IP + 1]
 }
 fn ip_flags_frag(c: &FakeCapture) -> u16 {
     u16_at(c, IP + 6)
@@ -456,6 +463,7 @@ fn frame_fields_are_ordinary_valid_ipv4_udp() {
     for c in &caps {
         assert_eq!(eth_type(c), 0x0800);
         assert_eq!(ip_ver_ihl(c), 0x45);
+        assert_eq!(ip_tos(c), 0, "no socket-tos: ToS 0");
         assert_eq!(ip_proto(c), 17);
         assert_eq!(ip_ttl(c), 64);
         assert_eq!(ip_flags_frag(c), 0x4000, "DF must be set, never fragment");
@@ -468,6 +476,31 @@ fn frame_fields_are_ordinary_valid_ipv4_udp() {
     assert_eq!(udp_payload(&caps[1]), b"efgh");
     assert_eq!(caps[0].len, 42 + 4);
     assert_eq!(caps[1].len, 42 + 4);
+    assert_no_leak();
+}
+
+/// A channel's `socket-tos` (Aeron 1.54, `AERON_SOCKET_TOS`) is the IPv4
+/// ToS byte of every frame it sends, as the kernel's IP_TOS makes it.
+#[test]
+#[serial]
+fn socket_tos_is_the_ipv4_tos_byte() {
+    let mut h = Harness::new();
+    h.socket_tos = 0xB8; // DSCP EF
+    h.init(
+        aeron_udp_channel_transport_affinity_t::AERON_UDP_CHANNEL_TRANSPORT_AFFINITY_SENDER,
+        SENDER_IP,
+        40000,
+        None,
+        1472,
+    );
+    h.arp_seed([10, 0, 0, 9], [0x02, 0, 0, 0, 0, 0x51]);
+    let (rc, _) = h.send_to(([10, 0, 0, 9], 40123), &[b"abcd", b"efgh"]);
+    assert_eq!(rc, 2);
+    let caps = captures();
+    assert_eq!(caps.len(), 2);
+    for c in &caps {
+        assert_eq!(ip_tos(c), 0xB8);
+    }
     assert_no_leak();
 }
 

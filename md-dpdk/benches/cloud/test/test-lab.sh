@@ -188,7 +188,7 @@
 #   * @CONDUCTOR=own in vm.sh (the conductor alone on the fifth core,
 #     spinning, housekeeping named apart, undone by `stop`, refused where it
 #     cannot be) and the fail-closed check of its thread at the driver's start;
-#   * Aeron's stall telemetry: the duty-cycle thresholds by Aeron 1.53.3's C
+#   * Aeron's stall telemetry: the duty-cycle thresholds by Aeron 1.54.0's C
 #     names, the counters read by their exact labels (no near miss, no other
 #     type), vm.sh loss carrying them, lib.sh's aeron rows beside unchanged
 #     loss rows (INVOKER's ledger taking the longest cycle), analyse.py's
@@ -2839,6 +2839,31 @@ if [[ $restored != "$want" ]]; then
 else
     pass "vm.sh: @IRQ=, @NAPI_DEFER= and @NAPI_BUSY= set for a mode and undone after it (queue IRQs back on housekeeping, the NAPIs' values and threading as before, nothing left)"
 fi
+# the transport suite under `driver dpdk`: DPDK holds both data NICs (on
+# igb_uio no interface is left, and `nics` prints its lines with those fields
+# empty, so data_ifaces gives MACs), so pin_irqs has none to move and says so,
+# 0; under set -e a 1 here had ended `driver dpdk` silently on AWS
+got=$(
+    set -e
+    exec 2>&1
+    LAB_PROC_ROOT=$rt/proc LAB_SYS_ROOT=$rt/sys
+    # shellcheck source=../irqs.sh
+    . "$cloud/irqs.sh" || exit 1
+    eval "$(vm_fn pin_irqs)"
+    run=$tmp/vm-dpdk-irqs HK_CPU=0
+    mkdir -p "$run"
+    echo "0 1 2,3,4,5,6,7" >"$run/transport-map"
+    irqs_pin() { :; }
+    data_ifaces() { printf '0a:00:00:00:00:01\n0a:00:00:00:00:02\n'; }
+    pin_irqs "before the driver starts"
+    echo "rc 0"
+)
+if [[ $got == "irqs before the driver starts: no data NIC in the kernel's hands
+rc 0" ]]; then
+    pass "vm.sh pin_irqs (transport suite): with DPDK holding every data NIC, none to move, said, not a silent failure under set -e"
+else
+    fail "vm.sh pin_irqs with DPDK holding the data NICs: $got"
+fi
 # SMT=off on a four-core x86 (c7i.2xlarge's fake /sys), as above: the
 # diagnostics' gap spinner on housekeeping's twin, CPU 4, which goes offline,
 # is stopped for the mode, the pause marked in its log for spikes.py; undone,
@@ -3220,6 +3245,36 @@ arm bootstrap without LAB_ALLOW_ARM: 2 0 [] 1"
         diff -u <(echo "$want") <(echo "$got") >&2 || true
     else
         pass "vm.sh in a sandbox: isolate on an isolated host covers every CPU, x86's line as before, Graviton's; bootstrap refuses aarch64 without LAB_ALLOW_ARM=1"
+    fi
+    # transport-isolate onload (a session with an Onload arm): ibt=off on an
+    # x86 CPU with IBT (Onload's module calls bpf() through the syscall
+    # table), nowhere else; without onload never
+    tiso() { # <arch> <sys root> <cpu flags> [onload]: the grub line's last word
+        mkdir -p "$sb/proc"
+        printf 'processor\t: 0\nflags\t\t: fpu sse2 %s\n' "$3" >"$sb/proc/cpuinfo"
+        echo aws >"$sb/home/bench/cloud"
+        : >"$sb/log"
+        local rc=0
+        # shellcheck disable=SC2031
+        env -i PATH="$sb/bin:$PATH" HOME="$sb/home" FAKE_LOG="$sb/log" FAKE_ARCH="$1" LAB_SYS_ROOT="$sys/$2" LAB_PROC_ROOT="$sb/proc" \
+            bash "$cloud/vm.sh" transport-isolate ${4:-} >"$sb/out" 2>&1 || rc=$?
+        # shellcheck disable=SC2016
+        echo "$rc $(sed -n 's/^  GRUB_CMDLINE_LINUX_DEFAULT="\$GRUB_CMDLINE_LINUX_DEFAULT \(.*\)"$/\1/p' "$sb/log" | awk '{print $NF}')"
+    }
+    got="intel onload: $(tiso x86_64 aws-x86 'ibt user_shstk' onload)
+intel: $(tiso x86_64 aws-x86 'ibt user_shstk')
+amd onload: $(tiso x86_64 aws-x86 'user_shstk' onload)
+graviton onload: $(tiso aarch64 graviton 'ibt' onload)"
+    want="intel onload: 0 ibt=off
+intel: 0 irqaffinity=0
+amd onload: 0 irqaffinity=0
+graviton onload: 0 irqaffinity=0"
+    if [[ $got != "$want" ]]; then
+        fail "vm.sh transport-isolate onload"
+        diff -u <(echo "$want") <(echo "$got") >&2 || true
+        tail -3 "$sb/out" >&2
+    else
+        pass "vm.sh transport-isolate onload: ibt=off on the boot line where the x86 CPU has IBT (Intel), not on AMD or Graviton, never without onload"
     fi
 fi
 
@@ -4485,12 +4540,14 @@ datanics=$(
     nics() { echo "expected two data NICs on 10.20.1.0/24, found: " >&2; return 1; }
     echo "unread: [$(data_nics_env 2>/dev/null)]; rc $?"
     kernel=$(awk '/^    kernel \| kernel-busy\)$/ {on = 1} on {print} on && /^        ;;$/ {exit}' "$cloud/vm.sh")
-    echo "kernel modes: $(grep -c '^ *data_nics_env >>"$env_file" ||' <<<"$kernel"); every call: $(grep -c 'data_nics_env >>' "$cloud/vm.sh")"
+    # the transport suite's Onload driver: kernel UDP too, under onload
+    onload=$(awk '/^    onload\)$/ {on = 1} on {print} on && /^        ;;$/ {exit}' "$cloud/vm.sh")
+    echo "kernel modes: $(grep -c '^ *data_nics_env >>"$env_file" ||' <<<"$kernel"); onload: $(grep -c '^ *data_nics_env >>"$env_file" ||' <<<"$onload"); every call: $(grep -c 'data_nics_env >>' "$cloud/vm.sh")"
 )
 want="aws: export RUSTERON_MEDIA_DRIVER_DATA_NICS='ens6,ens7'; rc 0
 azure: export RUSTERON_MEDIA_DRIVER_DATA_NICS='eth1,enP30832s1,eth2,enP30833s2'; rc 0
 unread: []; rc 1
-kernel modes: 1; every call: 1"
+kernel modes: 1; onload: 1; every call: 2"
 if [[ $datanics == "$want" ]]; then
     pass "vm.sh: the kernel modes' driver environment names the data NICs (RUSTERON_MEDIA_DRIVER_DATA_NICS: each interface, Azure's VF too, never the management NIC), the DPDK mode's does not; unread NICs fail"
 else
@@ -4499,7 +4556,7 @@ else
 fi
 
 # vm.sh rx-hw-delay: the receiver port's NIC-arrival-to-rx-burst counters
-# (type 81, by their exact labels, never a near miss) as "<mean ns>,<max
+# (type 1081, by their exact labels, never a near miss) as "<mean ns>,<max
 # ns>,<frames>,<min ns>,<negative>": the mean over the frames in the sum, and
 # apart the frames the NIC stamped after the host clock read at their burst
 # (PHC and host clock skew). The endpoint is the receive burst that carried
@@ -4880,8 +4937,8 @@ pre=$(
 ) || true
 want="keys: 2 2 2 2 2 0 0 0 0
 transports: 2 2 0 0 0 0
-mode dpdk@CONDUCTUR=own: CONDUCTUR is neither a setting the lab knows (THP BIN CSTATE BUSY_POLL COALESCE RX_RING MIN_FREE_PCT CLOCKSOURCE RELIABLE AGENTS SMT JUMBO PUB_PARAMS SUB_PARAMS IRQ NAPI_DEFER NAPI_BUSY CONDUCTOR HAIRPIN RTT_GAP_US KEEPALIVE_US FLUSH_KB DPDK) nor an AERON_* or RUSTERON_* variable: vm.sh would export it to a driver that never reads it, and the mode would measure its baseline under another name
-mode kernal: transport kernal: kernel, kernel-busy, dpdk, dpdk-spin, dpdk-adaptive, dpdk-epoll, the raw floor's kernel-raw or dpdk-raw, optionally -mono, or the pure floor's dpdk-pure (vm.sh refuses any other at the driver's start)
+mode dpdk@CONDUCTUR=own: CONDUCTUR is neither a setting the lab knows (THP BIN CSTATE BUSY_POLL COALESCE RX_RING MIN_FREE_PCT CLOCKSOURCE RELIABLE AGENTS SMT JUMBO PUB_PARAMS SUB_PARAMS IRQ NAPI_DEFER NAPI_BUSY CONDUCTOR HAIRPIN RTT_GAP_US KEEPALIVE_US FLUSH_KB DPDK DRIVER) nor an AERON_* or RUSTERON_* variable: vm.sh would export it to a driver that never reads it, and the mode would measure its baseline under another name
+mode kernal: transport kernal: kernel, kernel-busy, dpdk, dpdk-spin, dpdk-adaptive, dpdk-epoll, the raw floor's kernel-raw or dpdk-raw, optionally -mono, the pure floor's dpdk-pure, or onload (the transport suite's: kernel UDP under Onload) (vm.sh refuses any other at the driver's start)
 rx: 0 0 2 2 2 2 0 2 0
 tx: 0 2 0 0 2 2 2 0 2 2
 cache, burst: 0 0 2 0 2 2
@@ -5103,7 +5160,7 @@ else
 fi
 
 # Aeron's stall telemetry. The driver's environment (vm.sh common_env) sets
-# Aeron 1.53.3's duty-cycle thresholds by their C names and duration syntax
+# Aeron 1.54.0's duty-cycle thresholds by their C names and duration syntax
 # (aeron_driver_context.c: AERON_DRIVER_{CONDUCTOR,SENDER,RECEIVER}_CYCLE_THRESHOLD,
 # aeron_config_parse_duration_ns): the conductor's 1 ms, the sender's and
 # receiver's 50 us. host.sh aeron_telemetry reads them back from every counter
@@ -5244,6 +5301,21 @@ thr=$(
     threshold_case bad-threshold "export AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='1x'"
     threshold_case later-wins "export AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='1ms'" "export AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='10ms'"
     threshold_case unknown-strategy "export AERON_CONDUCTOR_IDLE_STRATEGY='sleeping'"
+    # the conductor's cycle is the agent's that runs it: SHARED's shared
+    # agent (AERON_SHARED_IDLE_STRATEGY, aeron_driver.c), never its own
+    # AERON_CONDUCTOR_IDLE_STRATEGY; INVOKER's client thread, which the
+    # harness never idles (shared NoOp, main_do_work alone); the mixed
+    # arms' 10 us threshold (aws-20261028-090239 lost aeron-mix-shared to it)
+    threshold_case shared-noop "export AERON_THREADING_MODE='SHARED'" "export AERON_SHARED_IDLE_STRATEGY='noop'" "export AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='10000'"
+    threshold_case shared-own-strategy-unused "export AERON_THREADING_MODE='SHARED'" "export AERON_SHARED_IDLE_STRATEGY='noop'" "export AERON_CONDUCTOR_IDLE_STRATEGY='sleeping'"
+    threshold_case shared-default "export AERON_THREADING_MODE='SHARED'"
+    threshold_case shared-tight "export AERON_THREADING_MODE='SHARED'" "export AERON_SHARED_IDLE_STRATEGY='backoff'" "export AERON_SHARED_IDLE_STRATEGY_INIT_ARGS='100-10-1us-20us'" "export AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='10000'"
+    threshold_case shared-unknown "export AERON_THREADING_MODE='SHARED'" "export AERON_SHARED_IDLE_STRATEGY='sleeping'"
+    threshold_case invoker "export AERON_THREADING_MODE='INVOKER'" "export AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='10000'"
+    threshold_case invoker-default "export AERON_THREADING_MODE='INVOKER'" "export AERON_CONDUCTOR_IDLE_STRATEGY='sleeping'"
+    threshold_case shnet-own "export AERON_THREADING_MODE='SHARED_NETWORK'" "export AERON_CONDUCTOR_IDLE_STRATEGY='spin'" "export AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='10000'"
+    threshold_case shnet-backoff "export AERON_THREADING_MODE='SHARED_NETWORK'" "export AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='10000'"
+    threshold_case dedicated-backoff "export AERON_THREADING_MODE='DEDICATED'" "export AERON_SHARED_IDLE_STRATEGY='noop'" "export AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='10000'"
 ) || true
 want="defined duration_ns
 defined format_duration_ns
@@ -5278,12 +5350,22 @@ apply tight: refused conductor: AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='1us' (10
 apply bad-init: refused conductor: AERON_CONDUCTOR_IDLE_STRATEGY='backoff' AERON_CONDUCTOR_IDLE_STRATEGY_INIT_ARGS='1-2-3': the park is not readable (backoff's init args are maxSpins-maxYields-minPark-maxPark, e.g. 100-10-1us-20us)
 apply bad-threshold: refused conductor: AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='1x': not an Aeron duration (bare ns, or the suffixes s, ms, us, ns)
 apply later-wins: kept 10ms
-apply unknown-strategy: refused conductor: AERON_CONDUCTOR_IDLE_STRATEGY='sleeping': not one whose longest park this lab knows (backoff, spin, noop)"
+apply unknown-strategy: refused conductor: AERON_CONDUCTOR_IDLE_STRATEGY='sleeping': not one whose longest park this lab knows (backoff, spin, noop)
+apply shared-noop: kept 10000
+apply shared-own-strategy-unused: appended 1ms
+apply shared-default: appended 2ms
+apply shared-tight: refused conductor: AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='10000' (10000 ns) is not above backoff's longest park (20000 ns), the SHARED agent's (AERON_SHARED_IDLE_STRATEGY): every full park would count as a stall. Use '1ms' or leave it unset.
+apply shared-unknown: refused conductor: AERON_SHARED_IDLE_STRATEGY='sleeping': not one whose longest park this lab knows (backoff, spin, noop)
+apply invoker: kept 10000
+apply invoker-default: appended 1ms
+apply shnet-own: kept 10000
+apply shnet-backoff: refused conductor: AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='10000' (10000 ns) is not above backoff's longest park (1000000 ns): every full park would count as a stall. Use '2ms' or leave it unset.
+apply dedicated-backoff: refused conductor: AERON_DRIVER_CONDUCTOR_CYCLE_THRESHOLD='10000' (10000 ns) is not above backoff's longest park (1000000 ns): every full park would count as a stall. Use '2ms' or leave it unset."
 if [[ $thr != "$want" ]]; then
     fail "the conductor's duty-cycle threshold above its idle strategy's longest park, derived after the overrides and refused where it does not clear it"
     diff -u <(echo "$want") <(echo "$thr") >&2 || true
 else
-    pass "the conductor's duty-cycle threshold derived from the idle strategy's longest park (twice it, never below 1 ms), applied after the mode's overrides, and an explicit threshold that does not clear the park refused before the driver starts, naming both values and the one to use"
+    pass "the conductor's duty-cycle threshold derived from the longest park of the agent that runs the conductor (its own under DEDICATED and SHARED_NETWORK, SHARED's shared agent, none under INVOKER; twice it, never below 1 ms), applied after the mode's overrides, and an explicit threshold that does not clear the park refused before the driver starts, naming both values and the one to use"
 fi
 # vm.sh loss in a sandbox (a media driver running; fake counters print a loss
 # line for `counters loss` and every counter for `counters ''`): the line

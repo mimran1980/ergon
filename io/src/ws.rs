@@ -150,6 +150,7 @@ pub fn parse_header(buf: &[u8]) -> Result<Option<FrameHeader>> {
     let b0 = buf[0];
     let b1 = buf[1];
     if b0 & 0x70 != 0 {
+        std::hint::cold_path();
         return Err(Error::Ws(
             "reserved bits set (no extensions were negotiated)",
         ));
@@ -160,13 +161,18 @@ pub fn parse_header(buf: &[u8]) -> Result<Option<FrameHeader>> {
         OP_CONT | OP_TEXT | OP_BINARY => {}
         OP_CLOSE | OP_PING | OP_PONG => {
             if !fin {
+                std::hint::cold_path();
                 return Err(Error::Ws("fragmented control frame"));
             }
             if b1 & 0x7F > 125 {
+                std::hint::cold_path();
                 return Err(Error::Ws("control frame longer than 125 bytes"));
             }
         }
-        _ => return Err(Error::Ws("unknown opcode")),
+        _ => {
+            std::hint::cold_path();
+            return Err(Error::Ws("unknown opcode"));
+        }
     }
     let masked = b1 & 0x80 != 0;
     let (payload_len, mut header_len) = match b1 & 0x7F {
@@ -184,6 +190,7 @@ pub fn parse_header(buf: &[u8]) -> Result<Option<FrameHeader>> {
             be.copy_from_slice(&buf[2..10]);
             let len = u64::from_be_bytes(be);
             if len >> 63 != 0 {
+                std::hint::cold_path();
                 return Err(Error::Ws("64-bit length with the top bit set"));
             }
             let len = usize::try_from(len).map_err(|_| Error::Ws("frame too large"))?;
@@ -225,6 +232,7 @@ pub fn apply_mask(data: &mut [u8], mask: [u8; 4]) {
 
 /// XORs `data` with the masking key, starting at key offset `offset`: for a
 /// payload masked in pieces, `offset` is the piece's position in it.
+#[inline]
 pub fn apply_mask_at(data: &mut [u8], mask: [u8; 4], offset: usize) {
     let mut rotated = mask;
     rotated.rotate_left(offset % 4);
@@ -258,6 +266,7 @@ pub fn encode_header(
 ) -> Result<usize> {
     let hl = header_len(payload_len, mask.is_some());
     if out.len() < hl {
+        std::hint::cold_path();
         return Err(Error::Ws("output buffer too small for frame"));
     }
     out[0] = 0x80 | opcode;
@@ -293,6 +302,7 @@ pub fn encode_frame(
 ) -> Result<usize> {
     let n = payload.len();
     if out.len() < header_len(n, mask.is_some()) + n {
+        std::hint::cold_path();
         return Err(Error::Ws("output buffer too small for frame"));
     }
     let pos = encode_header(opcode, n, mask, out)?;

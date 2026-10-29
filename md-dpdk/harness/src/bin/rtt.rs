@@ -63,9 +63,11 @@ mod lab;
 mod roundtrip;
 
 use lab::{Clock, Duty, External, Halt, Lab, Retry, STOP, cpu_arg, pin, sub_channel};
-use roundtrip::{Pace, Results, Stalls, realtime_ns};
-use rusteron_client::*;
+use roundtrip::{Pace, Results, Stalls, env_u64, realtime_ns};
+use rusteron_client::{AeronExclusivePublication, AeronImage};
+use std::error::Error;
 use std::ffi::{CStr, CString};
+use std::fmt::Write as _;
 use std::hint::spin_loop;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
@@ -100,16 +102,18 @@ struct OneWay {
 
 impl OneWay {
     /// `None` unless `RTT_ONE_WAY` is set; starts the run's clock mapping.
-    fn new(clock: &Clock) -> Option<Self> {
-        let path = std::env::var("RTT_ONE_WAY").ok().filter(|p| !p.is_empty())?;
-        let spike_ns: u64 = std::env::var("LOAD_SPIKE_NS").map_or(100_000, |v| v.parse().expect("LOAD_SPIKE_NS"));
-        Some(Self {
+    fn new(clock: &Clock) -> Result<Option<Self>, Box<dyn Error>> {
+        let Some(path) = std::env::var("RTT_ONE_WAY").ok().filter(|p| !p.is_empty()) else {
+            return Ok(None);
+        };
+        let spike_ns = env_u64("LOAD_SPIKE_NS", 100_000)?;
+        Ok(Some(Self {
             path,
             spike_ns,
             t0: clock.now(),
             t0_realtime: realtime_ns(),
             rows: Vec::with_capacity(ONE_WAY_CAPACITY),
-        })
+        }))
     }
 
     /// A stamp of the clients' clock on `CLOCK_REALTIME`.
@@ -129,54 +133,71 @@ impl OneWay {
         }
     }
 
-    fn write(&self) {
+    fn write(&self) -> Result<(), Box<dyn Error>> {
         let mut rows = format!(
             "# start_realtime_ns={}\nping,sent_realtime_ns,pong_rx_realtime_ns,ping_rx_realtime_ns,echoed_realtime_ns\n",
             self.t0_realtime
         );
         for (ping, sent, pong_rx, ping_rx, echoed) in &self.rows {
-            rows.push_str(&format!("{ping},{sent},{pong_rx},{ping_rx},{echoed}\n"));
+            writeln!(rows, "{ping},{sent},{pong_rx},{ping_rx},{echoed}")?;
         }
-        std::fs::write(&self.path, rows).unwrap_or_else(|e| panic!("RTT_ONE_WAY {}: {e}", self.path));
+        std::fs::write(&self.path, rows).map_err(|e| format!("RTT_ONE_WAY {}: {e}", self.path))?;
+        Ok(())
     }
 }
 
-fn udp(endpoint: Option<String>) -> CString {
-    CString::new(format!("aeron:udp?endpoint={}", endpoint.expect("host:port"))).unwrap()
+fn udp(endpoint: Option<String>) -> Result<CString, Box<dyn Error>> {
+    let endpoint = endpoint.ok_or("an endpoint: host:port")?;
+    Ok(CString::new(format!("aeron:udp?endpoint={endpoint}"))?)
 }
 
-fn main() {
-    lab::lock_memory();
+#[allow(
+    clippy::similar_names,
+    reason = "ping and pong name the two directions of a round trip"
+)]
+fn main() -> Result<(), Box<dyn Error>> {
+    lab::lock_memory()?;
     let mut args = std::env::args().skip(1);
-    let mode = args.next().expect("xping|xpong|idle");
+    let mode = args.next().ok_or("xping|xpong|idle")?;
     if mode == "idle" {
-        run_idle(&udp(args.next()), args.next().expect("seconds").parse().unwrap());
-        return;
+        let channel = udp(args.next())?;
+        let seconds = args.next().ok_or("seconds")?;
+        return run_idle(
+            &channel,
+            seconds.parse().map_err(|e| format!("seconds {seconds:?}: {e}"))?,
+        );
     }
-    let (ping_channel, pong_channel) = (udp(args.next()), udp(args.next()));
+    let (ping_channel, pong_channel) = (udp(args.next())?, udp(args.next())?);
     match mode.as_str() {
         "xpong" => {
-            let cpu = cpu_arg(args.next());
-            let lab = Lab::connect(cpu);
-            match lab.invoker() {
-                Some(duty) => run_pong(&lab, &duty, &ping_channel, &pong_channel, cpu),
-                None => run_pong(&lab, &External, &ping_channel, &pong_channel, cpu),
-            }
+            let cpu = cpu_arg(args.next())?;
+            let lab = Lab::connect(cpu)?;
+            lab.invoker().map_or_else(
+                || run_pong(&lab, &External, &ping_channel, &pong_channel, cpu),
+                |duty| run_pong(&lab, &duty, &ping_channel, &pong_channel, cpu),
+            )
         }
         "xping" => {
-            let number = |a: Option<String>| -> usize { a.expect("messages and warmup").parse().unwrap() };
-            let (messages, warmup) = (number(args.next()), number(args.next()));
-            let cpu = cpu_arg(args.next());
-            let lab = Lab::connect(cpu);
-            match lab.invoker() {
-                Some(duty) => run_ping(&lab, &duty, &ping_channel, &pong_channel, messages, warmup, cpu),
-                None => run_ping(&lab, &External, &ping_channel, &pong_channel, messages, warmup, cpu),
-            }
+            let number = |a: Option<String>| -> Result<usize, Box<dyn Error>> {
+                let a = a.ok_or("messages and warmup")?;
+                Ok(a.parse().map_err(|e| format!("{a:?}: a count: {e}"))?)
+            };
+            let (messages, warmup) = (number(args.next())?, number(args.next())?);
+            let cpu = cpu_arg(args.next())?;
+            let lab = Lab::connect(cpu)?;
+            lab.invoker().map_or_else(
+                || run_ping(&lab, &External, &ping_channel, &pong_channel, messages, warmup, cpu),
+                |duty| run_ping(&lab, &duty, &ping_channel, &pong_channel, messages, warmup, cpu),
+            )
         }
-        other => panic!("unknown mode {other}: xping, xpong or idle"),
+        other => Err(format!("unknown mode {other}: xping, xpong or idle").into()),
     }
 }
 
+#[allow(
+    clippy::similar_names,
+    reason = "ping and pong name the two directions of a round trip"
+)]
 fn run_ping(
     lab: &Lab,
     duty: &impl Duty,
@@ -185,25 +206,24 @@ fn run_ping(
     messages: usize,
     warmup: usize,
     cpu: Option<usize>,
-) {
-    let publication = lab.add_publication(ping_channel, PING_STREAM_ID);
-    let subscription = lab.add_subscription(&sub_channel(pong_channel), PONG_STREAM_ID);
+) -> Result<(), Box<dyn Error>> {
+    let publication = lab.add_publication(ping_channel, PING_STREAM_ID)?;
+    let subscription = lab.add_subscription(&sub_channel(pong_channel)?, PONG_STREAM_ID)?;
     lab.wait_until("pong", 30, || {
         publication.is_connected() && subscription.image_at_index(0).is_some()
-    });
-    let image = subscription.image_at_index(0).unwrap();
-    pin(cpu);
+    })?;
+    let image = subscription.image_at_index(0).ok_or("the pong's image went")?;
+    pin(cpu)?;
     let clock = Clock::calibrate();
 
-    let budget = Duration::from_secs(std::env::var("RTT_SECONDS").map_or(20, |s| s.parse().unwrap()));
-    let mut results = Results::new();
+    let budget = Duration::from_secs(env_u64("RTT_SECONDS", 20)?);
+    let mut results = Results::new()?;
     let mut buffer = [0u8; MESSAGE_LENGTH];
     // RTT_LOST_TIMEOUT_US: on an unreliable channel a lost ping or echo is
     // never repaired, so after this long it is counted lost and the next sent
-    let timeout_ns: u64 =
-        std::env::var("RTT_LOST_TIMEOUT_US").map_or(0, |v| v.parse::<u64>().expect("RTT_LOST_TIMEOUT_US") * 1000);
+    let timeout_ns = env_u64("RTT_LOST_TIMEOUT_US", 0)?.saturating_mul(1000);
     let mut seq = 0_u64;
-    let mut pace = Pace::from_env();
+    let mut pace = Pace::from_env()?;
     let start = Instant::now();
     for i in 0..warmup {
         seq += 1;
@@ -218,15 +238,15 @@ fn run_ping(
             seq,
             timeout_ns,
             |_: &Echo| {},
-        );
+        )?;
         if (pace.paced() || i % 64 == 0) && start.elapsed() > budget / 4 {
             break;
         }
     }
     let start = Instant::now();
     results.start(&clock);
-    let mut one_way = OneWay::new(&clock);
-    let mut stalls = Stalls::new(&clock);
+    let mut one_way = OneWay::new(&clock)?;
+    let mut stalls = Stalls::new(&clock)?;
     let mut lost = 0_u64;
     for i in 0..messages {
         seq += 1;
@@ -246,7 +266,7 @@ fn run_ping(
                     one_way.record(i, echo);
                 }
             },
-        );
+        )?;
         if !echoed {
             lost += 1;
         }
@@ -255,13 +275,14 @@ fn run_ping(
         }
     }
 
-    results.report(lost, PING_STREAM_ID);
+    results.report(lost, PING_STREAM_ID)?;
     if let Some(one_way) = &one_way {
-        one_way.write();
+        one_way.write()?;
     }
     if let Some(stalls) = &stalls {
-        stalls.write("stalls-ping.csv");
+        stalls.write("stalls-ping.csv")?;
     }
+    Ok(())
 }
 
 /// Sends one stamped ping and polls until pong's echo of it is back.
@@ -284,7 +305,7 @@ fn round_trip(
     seq: u64,
     timeout_ns: u64,
     mut record: impl FnMut(&Echo),
-) -> bool {
+) -> Result<bool, Box<dyn Error>> {
     if let Some(s) = stalls.as_mut() {
         s.pass(clock.now());
     }
@@ -293,9 +314,11 @@ fn round_trip(
             s.pass(clock.now());
         }
         let work = duty.run();
-        let fragments = image.poll_fn(|_, _| {}, FRAGMENT_COUNT_LIMIT).unwrap();
+        let fragments = image.poll_fn(|_, _| {}, FRAGMENT_COUNT_LIMIT)?;
         if fragments == 0 && work == 0 {
-            assert!(!image.is_closed(), "pong went away");
+            if image.is_closed() {
+                return Err(pong_went_away());
+            }
             spin_loop();
         }
     }
@@ -312,13 +335,13 @@ fn round_trip(
             }
             Err(e) if e.is_retryable() => {
                 if let Err(halt) = retry.check(publication, image) {
-                    pong_gone(halt);
+                    return Err(pong_gone(&halt));
                 }
                 if duty.run() == 0 {
                     spin_loop();
                 }
             }
-            Err(e) => panic!("offer: {e:?}"),
+            Err(e) => return Err(format!("offer: {e:?}").into()),
         }
     };
     let mut echoed = false;
@@ -327,55 +350,72 @@ fn round_trip(
             s.pass(clock.now());
         }
         let work = duty.run();
-        let fragments = image
-            .poll_fn(
-                |reply, header| {
-                    if u64::from_le_bytes(reply[8..16].try_into().unwrap()) == seq {
-                        let sent = u64::from_le_bytes(reply[..8].try_into().unwrap());
-                        let at = clock.stamp();
-                        record(&Echo {
-                            sent,
-                            echoed: at,
-                            pong_rx: i64::from_le_bytes(reply[PONG_RX..PONG_RX + 8].try_into().unwrap()),
-                            ping_rx: header.reserved_value().unwrap_or(0),
-                        });
-                        echoed = true;
-                    }
-                },
-                FRAGMENT_COUNT_LIMIT,
-            )
-            .unwrap();
+        let fragments = image.poll_fn(
+            |reply, header| {
+                if lab::le_u64(reply, 8) == seq {
+                    let sent = lab::le_u64(reply, 0);
+                    let at = clock.stamp();
+                    record(&Echo {
+                        sent,
+                        echoed: at,
+                        pong_rx: lab::le_u64(reply, PONG_RX).cast_signed(),
+                        ping_rx: header.reserved_value().unwrap_or(0),
+                    });
+                    echoed = true;
+                }
+            },
+            FRAGMENT_COUNT_LIMIT,
+        )?;
         if fragments == 0 && work == 0 {
-            assert!(!image.is_closed(), "pong went away");
+            if image.is_closed() {
+                return Err(pong_went_away());
+            }
             if timeout_ns != 0 && clock.now().wrapping_sub(started) > timeout_ns {
-                return false;
+                return Ok(false);
             }
             spin_loop();
         }
     }
-    true
+    Ok(true)
+}
+
+/// The ping's end when its pong's image closes while it waits.
+#[cold]
+#[inline(never)]
+fn pong_went_away() -> Box<dyn Error> {
+    "pong went away".into()
 }
 
 /// The ping's end when its pong is gone while it sends: it fails, as it
 /// does when the pong's image closes while it waits for an echo.
 #[cold]
 #[inline(never)]
-fn pong_gone(halt: Halt) -> ! {
-    panic!("pong went away: {halt} while the ping was back-pressured")
+fn pong_gone(halt: &Halt) -> Box<dyn Error> {
+    format!("pong went away: {halt} while the ping was back-pressured").into()
 }
 
 /// Echoes every ping until the ping side's image goes away, SIGTERM, or an
 /// echo given up (`lab::echo`: SIGTERM, the ping's image closed, or this
 /// publication not connected for over a second); says why on stderr.
-fn run_pong(lab: &Lab, duty: &impl Duty, ping_channel: &CStr, pong_channel: &CStr, cpu: Option<usize>) {
-    let publication = lab.add_publication(pong_channel, PONG_STREAM_ID);
-    let subscription = lab.add_subscription(&sub_channel(ping_channel), PING_STREAM_ID);
-    lab.wait_until("ping", 60, || subscription.image_at_index(0).is_some());
-    let image = subscription.image_at_index(0).unwrap();
-    pin(cpu);
+#[allow(
+    clippy::similar_names,
+    reason = "ping and pong name the two directions of a round trip"
+)]
+fn run_pong(
+    lab: &Lab,
+    duty: &impl Duty,
+    ping_channel: &CStr,
+    pong_channel: &CStr,
+    cpu: Option<usize>,
+) -> Result<(), Box<dyn Error>> {
+    let publication = lab.add_publication(pong_channel, PONG_STREAM_ID)?;
+    let subscription = lab.add_subscription(&sub_channel(ping_channel)?, PING_STREAM_ID)?;
+    lab.wait_until("ping", 60, || subscription.image_at_index(0).is_some())?;
+    let image = subscription.image_at_index(0).ok_or("the ping's image went")?;
+    pin(cpu)?;
     lab::stop_on_sigterm();
     let clock = Clock::calibrate();
-    let mut stalls = Stalls::new(&clock);
+    let mut stalls = Stalls::new(&clock)?;
     let mut halt = None;
     let mut stamped = [0u8; MESSAGE_LENGTH];
     while halt.is_none() && !image.is_closed() && !STOP.load(Ordering::Relaxed) {
@@ -383,55 +423,58 @@ fn run_pong(lab: &Lab, duty: &impl Duty, ping_channel: &CStr, pong_channel: &CSt
             s.pass(clock.now());
         }
         let work = duty.run();
-        let fragments = image
-            .poll_fn(
-                |ping, header| {
-                    // the ping's receive timestamp, where its frame has one,
-                    // into the echo (xping's one-way split)
-                    let echo = match header.reserved_value() {
-                        Some(rx) if rx != 0 && ping.len() == MESSAGE_LENGTH => {
-                            stamped.copy_from_slice(ping);
-                            stamped[PONG_RX..PONG_RX + 8].copy_from_slice(&rx.to_le_bytes());
-                            &stamped[..]
-                        }
-                        _ => ping,
-                    };
-                    if halt.is_none()
-                        && let Err(why) = lab::echo(duty, &publication, &image, echo)
-                    {
-                        halt = Some(why);
+        let fragments = image.poll_fn(
+            |ping, header| {
+                // the ping's receive timestamp, where its frame has one,
+                // into the echo (xping's one-way split)
+                let echo = match header.reserved_value() {
+                    Some(rx) if rx != 0 && ping.len() == MESSAGE_LENGTH => {
+                        stamped.copy_from_slice(ping);
+                        stamped[PONG_RX..PONG_RX + 8].copy_from_slice(&rx.to_le_bytes());
+                        &stamped[..]
                     }
-                },
-                FRAGMENT_COUNT_LIMIT,
-            )
-            .unwrap();
+                    _ => ping,
+                };
+                if halt.is_none()
+                    && let Err(why) = lab::echo(duty, &publication, &image, echo)
+                {
+                    halt = Some(why);
+                }
+            },
+            FRAGMENT_COUNT_LIMIT,
+        )?;
         if fragments == 0 && work == 0 {
             spin_loop();
         }
     }
     if let Some(stalls) = &stalls {
-        stalls.write("stalls-pong.csv");
+        stalls.write("stalls-pong.csv")?;
     }
     let why = match halt {
+        Some(Halt::Failed(why)) => return Err(format!("rtt: pong failed: {why}").into()),
         Some(Halt::Stopped) => "SIGTERM",
-        Some(Halt::ImageClosed) => "its ping's image closed",
-        Some(Halt::NotConnected) => "its publication not connected for over 1 s, its echoes unread",
         None if STOP.load(Ordering::Relaxed) => "SIGTERM",
-        None => "its ping's image closed",
+        Some(Halt::ImageClosed) | None => "its ping's image closed",
+        Some(Halt::NotConnected) => "its publication not connected for over 1 s, its echoes unread",
     };
     eprintln!("rtt: pong ended: {why}");
+    Ok(())
 }
 
 /// Holds a subscription on `channel` that nobody publishes to, for `seconds`:
 /// what an idle host-local channel costs an external driver's agents. An
 /// embedded driver would measure nothing of the kind, so it is refused.
-fn run_idle(channel: &CStr, seconds: u64) {
-    assert!(
-        !lab::embedded(),
-        "rtt idle measures an external driver's agents: HARNESS_DRIVER=invoker would embed one, which nothing else uses"
-    );
-    let lab = Lab::connect(None);
-    let _subscription = lab.add_subscription(channel, PONG_STREAM_ID + 100);
+fn run_idle(channel: &CStr, seconds: u64) -> Result<(), Box<dyn Error>> {
+    if lab::embedded() {
+        return Err(
+            "rtt idle measures an external driver's agents: HARNESS_DRIVER=invoker would embed one, \
+                    which nothing else uses"
+                .into(),
+        );
+    }
+    let lab = Lab::connect(None)?;
+    let _subscription = lab.add_subscription(channel, PONG_STREAM_ID + 100)?;
     eprintln!("rtt: idle subscription on {}", channel.to_string_lossy());
     std::thread::sleep(Duration::from_secs(seconds));
+    Ok(())
 }

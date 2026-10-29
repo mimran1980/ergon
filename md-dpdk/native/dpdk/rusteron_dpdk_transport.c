@@ -55,10 +55,6 @@ static int rusteron_dpdk_transport_init_delegated(
 #define RUSTERON_DPDK_BINDINGS_NAME "rusteron-dpdk-ena"
 #define RUSTERON_DPDK_BINDINGS_TYPE "media"
 
-/* Aeron never passes more than AERON_NETWORK_PUBLICATION_MAX_MESSAGES_PER_SEND
- * iovecs to one send; the batch buffer must hold a full burst regardless. */
-#define RUSTERON_DPDK_MAX_MESSAGES_PER_SEND 16
-
 /* The transport layout lives in rusteron_dpdk_internal.h. */
 
 /* Process-lifetime native runtime. EAL can be initialized exactly once, so
@@ -316,9 +312,11 @@ int rusteron_dpdk_transport_install(
         return -1;
     }
 
+    /* Where the agents run: Aeron resolves cpuset offsets into *_resolved. */
+
     if (rusteron_dpdk_runtime_agents_known(
-            transport, (int)context->threading_mode, context->conductor_cpu_affinity_no,
-            context->sender_cpu_affinity_no, context->receiver_cpu_affinity_no,
+            transport, (int)context->threading_mode, context->conductor_cpu_affinity_resolved,
+            context->sender_cpu_affinity_resolved, context->receiver_cpu_affinity_resolved,
             context->conductor_idle_strategy_name) < 0)
     {
         return -1;
@@ -1085,12 +1083,69 @@ static int rusteron_dpdk_transport_send_local(
     return rc;
 }
 
+/* The lab's tx_burst (rusteron_dpdk_stages.h): the call stamped for the
+ * stage trace (each accepted frame's sampled messages: tx-send at the send's
+ * entry, tx-call, tx-done), and the accepted frames captured in the window.
+ * The frames are read before the call, while they are still ours: a PMD may
+ * free a frame it pushed inline before tx_burst returns. Out of line: one
+ * branch on the ordinary path. */
+static __attribute__((noinline, cold)) uint16_t rusteron_dpdk_tx_burst_lab(
+    const rusteron_dpdk_port_ops_t *ops, rusteron_dpdk_port_t *port, rusteron_dpdk_mbuf_t **pkts, uint16_t nb,
+    uint32_t lab)
+{
+    rusteron_dpdk_stage_key_t keys[RUSTERON_DPDK_STAGE_KEYS_MAX];
+    int found = 0;
+    if (0 != (lab & RUSTERON_DPDK_LAB_STAGES))
+    {
+        for (uint16_t i = 0; i < nb; i++)
+        {
+            found = rusteron_dpdk_stage_frame_keys(
+                pkts[i]->data, pkts[i]->frame_len, i, keys, found, RUSTERON_DPDK_STAGE_KEYS_MAX);
+        }
+    }
+    const uint16_t staged = 0 != (lab & RUSTERON_DPDK_LAB_CAPTURE)
+        ? rusteron_dpdk_capture_stage(port->role, (struct rusteron_dpdk_mbuf_stct *const *)pkts, nb)
+        : 0;
+    const uint64_t call = rusteron_dpdk_counter();
+    uint16_t sent;
+    if (!rusteron_dpdk_gap_attrib_on())
+    {
+        sent = ops->tx_burst(port->port_id, port->tx_queue_id, pkts, nb);
+    }
+    else
+    {
+        const uint64_t start_ns = rusteron_dpdk_clock_now();
+        sent = ops->tx_burst(port->port_id, port->tx_queue_id, pkts, nb);
+        rusteron_dpdk_counters_burst(&port->counters, RD_COUNTER_TX_BURST_MAX, rusteron_dpdk_clock_now() - start_ns);
+    }
+    const uint64_t done = rusteron_dpdk_counter();
+    if (0 != found)
+    {
+        const uint64_t send = rusteron_dpdk_stage_send_tsc;
+        const uint8_t stages[3] = {
+            RUSTERON_DPDK_STAGE_TX_CALL, RUSTERON_DPDK_STAGE_TX_DONE, RUSTERON_DPDK_STAGE_TX_SEND};
+        const uint64_t tscs[3] = {call, done, send};
+        /* tx-send only for a send's own frames (none for a poll's flush) */
+        rusteron_dpdk_stage_put_keys(keys, found, sent, stages, tscs, 0 != send ? 3 : 2, 0);
+    }
+    if (0 != (lab & RUSTERON_DPDK_LAB_CAPTURE))
+    {
+        rusteron_dpdk_capture_publish(staged, sent, call);
+    }
+    return sent;
+}
+
 /* One tx_burst; with RUSTERON_DPDK_GAP_ATTRIB=1 or burst timed (two clock
  * reads): ENA reclaims sent descriptors inside the call once fewer than its
  * free threshold are left, ahead of the frames given it. */
 static inline uint16_t rusteron_dpdk_tx_burst(
     const rusteron_dpdk_port_ops_t *ops, rusteron_dpdk_port_t *port, rusteron_dpdk_mbuf_t **pkts, uint16_t nb)
 {
+    const uint32_t lab = rusteron_dpdk_lab_on();
+    if (__builtin_expect(0 != lab, 0))
+    {
+        return rusteron_dpdk_tx_burst_lab(ops, port, pkts, nb, lab);
+    }
     uint16_t sent;
     if (!rusteron_dpdk_gap_attrib_on())
     {
@@ -1329,6 +1384,8 @@ static inline __attribute__((always_inline)) int rusteron_dpdk_transport_send_re
     size_t built = 0;
     int oversized = 0;
     int nobufs = 0;
+    /* The channel's socket-tos (Aeron's unset: negative) as the IPv4 ToS. */
+    const uint8_t tos = client->params.socket_tos < 0 ? 0 : (uint8_t)client->params.socket_tos;
 
     /* Every iovec is one datagram (plan §7.4): build them all first, so the
      * vector is sent or queued whole. */
@@ -1347,7 +1404,7 @@ static inline __attribute__((always_inline)) int rusteron_dpdk_transport_send_re
         }
         if (rusteron_dpdk_packet_build_udp(
                 m, dst_mac, port->mac, dst_ip, src_ip,
-                client->local_udp_port, dst_port, &iov[i], 1, client->mtu,
+                client->local_udp_port, dst_port, tos, &iov[i], 1, client->mtu,
                 port->tx_udp_csum_offload) < 0)
         {
             ops->mbuf_release(m);
@@ -1501,6 +1558,9 @@ static int rusteron_dpdk_transport_send(
         rusteron_dpdk_set_error("DPDK transport send: failed to register thread with DPDK");
         return -1;
     }
+    /* The stage trace's pickup: the counter at entry, read only while on. */
+    const uint64_t send_tsc =
+        __builtin_expect(0 != (rusteron_dpdk_lab_on() & RUSTERON_DPDK_LAB_STAGES), 0) ? rusteron_dpdk_counter() : 0;
 
     rusteron_dpdk_transport_t *native = client->runtime;
     rusteron_dpdk_port_t *port = client->port;
@@ -1598,10 +1658,22 @@ static int rusteron_dpdk_transport_send(
         return 0; /* first resolution in flight; Aeron retries the zero result */
     }
 
+    /* The stage trace's tx-send: the counter at this send's entry for the
+     * frames its tx_burst hands over, cleared after (a poll's flush of
+     * queued frames has none). */
+    const uint32_t lab = rusteron_dpdk_lab_on() & RUSTERON_DPDK_LAB_STAGES;
+    if (__builtin_expect(0 != lab, 0))
+    {
+        rusteron_dpdk_stage_send_tsc = send_tsc;
+    }
     /* A refresh the resolve found due goes out after the data frames, never
      * before them: the data frame pays for no ARP build or transmit. */
     const int rc = rusteron_dpdk_transport_send_resolved(
         client, native, port, dst_ip, dst_port, dst_mac, now_ns, iov, iov_length, bytes_sent);
+    if (__builtin_expect(0 != lab, 0))
+    {
+        rusteron_dpdk_stage_send_tsc = 0;
+    }
     /* Checked inline: an ordinary send makes no call into arp.c for it. */
     if (__builtin_expect(port->arp.refresh_due, 0))
     {

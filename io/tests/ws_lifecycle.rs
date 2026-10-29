@@ -60,7 +60,7 @@ fn poll_until<E: Receive<App>>(d: &mut Driver<E>, h: &mut App, done: impl Fn(&Ap
 
 fn each_backend(test: impl Fn(Backend) -> R) -> R {
     let mut ran = 0;
-    for b in Backend::ALL {
+    for b in Backend::KERNEL {
         match test(b) {
             Ok(()) => ran += 1,
             // A pod with one CPU has no core for `uring-sqpoll`'s kernel
@@ -71,7 +71,7 @@ fn each_backend(test: impl Fn(Backend) -> R) -> R {
             Err(e) => return Err(format!("{b}: {e}").into()),
         }
     }
-    assert!(ran >= Backend::ALL.len() - 1, "only {ran} backends ran");
+    assert!(ran >= Backend::KERNEL.len() - 1, "only {ran} backends ran");
     Ok(())
 }
 

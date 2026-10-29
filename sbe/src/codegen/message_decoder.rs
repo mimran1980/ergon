@@ -303,13 +303,14 @@ pub(crate) fn generate_message_decoder(
         /// `message_start + 8`). ergo-sbe takes the **message** start so the
         /// same offset works for `wrap`, `decode`, and claim buffers.
         #[inline]
-        pub fn try_wrap(
+        pub const fn try_wrap(
             buf: &'a [u8],
             message_offset: usize,
             acting_block_length: usize,
             acting_version: u16,
         ) -> Result<Self, sbe_rt::DecodeError> {
             let Some(body_offset) = message_offset.checked_add(Self::HEADER_LENGTH) else {
+                sbe_rt::cold();
                 return Err(sbe_rt::DecodeError::BufferTooShort {
                     field: "message header",
                     needed: Self::HEADER_LENGTH,
@@ -324,6 +325,7 @@ pub(crate) fn generate_message_decoder(
                 min_fixed
             };
             if body_need > available_body {
+                sbe_rt::cold();
                 return Err(sbe_rt::DecodeError::BufferTooShort {
                     field: "message body",
                     needed: Self::HEADER_LENGTH.saturating_add(body_need),
@@ -379,7 +381,7 @@ pub(crate) fn generate_message_decoder(
         /// min_readable_fixed_extent(acting_version))` must not overflow
         /// and must be ≤ `buf.len()`.
         #[inline]
-        pub unsafe fn wrap_unchecked(
+        pub const unsafe fn wrap_unchecked(
             buf: &'a [u8],
             message_offset: usize,
             acting_block_length: usize,
@@ -410,6 +412,7 @@ pub(crate) fn generate_message_decoder(
         } else {
             quote::quote! {
                 if template_id != Self::TEMPLATE_ID {
+                    sbe_rt::cold();
                     return Err(sbe_rt::DecodeError::WrongTemplate {
                         expected: Self::TEMPLATE_ID,
                         actual: template_id,
@@ -423,6 +426,7 @@ pub(crate) fn generate_message_decoder(
         } else {
             quote::quote! {
                 if schema_id != Self::SCHEMA_ID {
+                    sbe_rt::cold();
                     return Err(sbe_rt::DecodeError::WrongSchema {
                         expected: Self::SCHEMA_ID,
                         actual: schema_id,
@@ -439,6 +443,7 @@ pub(crate) fn generate_message_decoder(
             #[inline]
             pub fn try_decode(buf: &'a [u8], offset: usize) -> Result<Self, sbe_rt::DecodeError> {
                 if #hs > buf.len().saturating_sub(offset) {
+                    sbe_rt::cold();
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: "message header",
                         needed: #hs,
@@ -869,7 +874,7 @@ pub(crate) fn generate_message_decoder(
                     impl_body.extend(quote::quote! {
                         #mu
                         #[inline]
-                        pub fn #fname_ident(&self) -> #target_decoder_name<'_> {
+                        pub const fn #fname_ident(&self) -> #target_decoder_name<'_> {
                             #target_decoder_name { buf: self.buf, offset: self.offset + #offset_lit }
                         }
                     });
@@ -1153,7 +1158,7 @@ pub(crate) fn generate_message_decoder(
     impl_body.extend(quote::quote! {
         /// Byte offset of the message body within `self.buf`.
         #[inline]
-        fn byte_offset(&self) -> usize {
+        const fn byte_offset(&self) -> usize {
             self.offset
         }
     });
@@ -1312,6 +1317,7 @@ pub(crate) fn generate_message_decoder(
                 let offset = self.#vd_tail_ident()?;
                 #vd_cache_hit
                 if offset + #prefix_size_lit > self.buf.len() {
+                    sbe_rt::cold();
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: stringify!(#vd_snake_ident),
                         needed: #prefix_size_lit,
@@ -1327,6 +1333,7 @@ pub(crate) fn generate_message_decoder(
                 let header = #type_pascal_ident(bytes);
                 let wire_length = header.#len_field_ident() as u64;
                 if wire_length > #max_lit as u64 {
+                    sbe_rt::cold();
                     return Err(sbe_rt::DecodeError::InvalidVarDataLength {
                         field: stringify!(#vd_snake_ident),
                         length: wire_length,
@@ -1365,7 +1372,7 @@ pub(crate) fn generate_message_decoder(
             /// Consume this stage and return a fresh decoder at the initial
             /// message position. The consumed stage cannot be reused.
             #[inline]
-            pub fn rewind(self) -> Self {
+            pub const fn rewind(self) -> Self {
                 Self {
                     buf: self.buf,
                     offset: self.offset,
@@ -1422,6 +1429,7 @@ pub(crate) fn generate_message_decoder(
     // Header + block_length preamble
     verify_stmts.push(quote::quote! {
         if buf.len() < #hs_lit {
+            sbe_rt::cold();
             return Err(sbe_rt::VerifyError::HeaderTooShort);
         }
         let header_bytes: [u8; #hs_lit] = read_bytes::<#hs_lit>(buf, 0);
@@ -1431,6 +1439,7 @@ pub(crate) fn generate_message_decoder(
             header.#hbl_ident() as u64,
         )?;
         if block_length < Self::BLOCK_LENGTH {
+            sbe_rt::cold();
             return Err(sbe_rt::VerifyError::InvalidBlockLength {
                 expected_min: Self::BLOCK_LENGTH,
                 actual: block_length,
@@ -1443,6 +1452,7 @@ pub(crate) fn generate_message_decoder(
             },
         )?;
         if body_end > buf.len() {
+            sbe_rt::cold();
             return Err(sbe_rt::VerifyError::MessageTooShort {
                 needed: body_end,
                 available: buf.len(),
@@ -1496,6 +1506,7 @@ pub(crate) fn generate_message_decoder(
             verify_stmts.push(quote::quote! {
                 {
                     if offset + #ds_lit > buf.len() {
+                        sbe_rt::cold();
                         return Err(sbe_rt::VerifyError::GroupDimOutOfBounds {
                             field: #g_snake,
                             offset,
@@ -1507,6 +1518,7 @@ pub(crate) fn generate_message_decoder(
                     let mut entry_offset = match offset.checked_add(#ds_lit) {
                         Some(v) => v,
                         None => {
+                            sbe_rt::cold();
                             return Err(sbe_rt::VerifyError::GroupDimOutOfBounds {
                                 field: #g_snake,
                                 offset,
@@ -1526,6 +1538,7 @@ pub(crate) fn generate_message_decoder(
             verify_stmts.push(quote::quote! {
                 {
                     if offset + #ds_lit > buf.len() {
+                        sbe_rt::cold();
                         return Err(sbe_rt::VerifyError::GroupDimOutOfBounds {
                             field: #g_snake,
                             offset,
@@ -1537,6 +1550,7 @@ pub(crate) fn generate_message_decoder(
                     let dim_end = match offset.checked_add(#ds_lit) {
                         Some(v) => v,
                         None => {
+                            sbe_rt::cold();
                             return Err(sbe_rt::VerifyError::GroupDimOutOfBounds {
                                 field: #g_snake,
                                 offset,
@@ -1546,6 +1560,7 @@ pub(crate) fn generate_message_decoder(
                     let entries = match count.checked_mul(group_block_length) {
                         Some(v) => v,
                         None => {
+                            sbe_rt::cold();
                             return Err(sbe_rt::VerifyError::MessageTooShort {
                                 needed: usize::MAX,
                                 available: buf.len(),
@@ -1555,6 +1570,7 @@ pub(crate) fn generate_message_decoder(
                     let entries_end = match dim_end.checked_add(entries) {
                         Some(v) => v,
                         None => {
+                            sbe_rt::cold();
                             return Err(sbe_rt::VerifyError::MessageTooShort {
                                 needed: usize::MAX,
                                 available: buf.len(),
@@ -1562,6 +1578,7 @@ pub(crate) fn generate_message_decoder(
                         }
                     };
                     if entries_end > buf.len() {
+                        sbe_rt::cold();
                         return Err(sbe_rt::VerifyError::MessageTooShort {
                             needed: entries_end,
                             available: buf.len(),
@@ -1583,6 +1600,7 @@ pub(crate) fn generate_message_decoder(
         verify_stmts.push(quote::quote! {
             {
                 if #ps_lit > buf.len().saturating_sub(offset) {
+                    sbe_rt::cold();
                     return Err(sbe_rt::VerifyError::VarDataOutOfBounds {
                         field: #vd_snake,
                         offset,
@@ -1600,11 +1618,14 @@ pub(crate) fn generate_message_decoder(
                     buf.len(),
                 ) {
                     Ok(bounds) => bounds,
-                    Err(_) => return Err(sbe_rt::VerifyError::VarDataOutOfBounds {
-                        field: #vd_snake,
-                        offset,
-                        length: len,
-                    }),
+                    Err(_) => {
+                        sbe_rt::cold();
+                        return Err(sbe_rt::VerifyError::VarDataOutOfBounds {
+                            field: #vd_snake,
+                            offset,
+                            length: len,
+                        });
+                    }
                 };
                 offset = data_end;
             }
@@ -1638,6 +1659,7 @@ pub(crate) fn generate_message_decoder(
                     let start = self.decoder.byte_offset();
                     let end = self.decoder.byte_offset() + self.decoder.acting_block_length;
                     if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
+                        sbe_rt::cold();
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: "body",
                             needed: end.saturating_sub(start),
@@ -1653,6 +1675,7 @@ pub(crate) fn generate_message_decoder(
                     let start = self.message_offset();
                     let end = self.decoder.byte_offset() + self.decoder.acting_block_length;
                     if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
+                        sbe_rt::cold();
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: "frame",
                             needed: end.saturating_sub(start),
@@ -1675,6 +1698,7 @@ pub(crate) fn generate_message_decoder(
                     let start = self.decoder.byte_offset();
                     let end = self.decoder.byte_offset() + self.decoder.acting_block_length;
                     if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
+                        sbe_rt::cold();
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: "body",
                             needed: end.saturating_sub(start),
@@ -1692,6 +1716,7 @@ pub(crate) fn generate_message_decoder(
                     let start = self.message_offset();
                     let end = self.decoder.byte_offset() + self.decoder.acting_block_length;
                     if start > self.decoder.buf.len() || end > self.decoder.buf.len() {
+                        sbe_rt::cold();
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: "frame",
                             needed: end.saturating_sub(start),
@@ -1719,7 +1744,7 @@ pub(crate) fn generate_message_decoder(
             /// within the underlying buffer.
             #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-            pub fn message_offset(&self) -> usize {
+            pub const fn message_offset(&self) -> usize {
                 self.decoder.byte_offset().saturating_sub(#decoder_ident::HEADER_LENGTH)
             }
             /// End of the **acting fixed block** (body start + acting block length).
@@ -1727,13 +1752,13 @@ pub(crate) fn generate_message_decoder(
             /// stage or inherent `encoded_length_with_header` after walking tails.
             #[must_use = "discarding this value is almost always a mistake"]
     #[inline]
-            pub fn limit(&self) -> usize {
+            pub const fn limit(&self) -> usize {
                 self.decoder.byte_offset() + self.decoder.acting_block_length
             }
             /// The full underlying buffer slice this decoder was wrapped on.
             #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
-            pub fn buffer(&self) -> &'a [u8] {
+            pub const fn buffer(&self) -> &'a [u8] {
                 self.decoder.buf
             }
             /// Bytes after the acting fixed block end. May still contain unread
@@ -1747,10 +1772,10 @@ pub(crate) fn generate_message_decoder(
             #meta_bytes
             /// Schema version from the header or wrap args, which `sinceVersion` fields follow.
             #[must_use = "discarding this value is almost always a mistake"]
-            #[inline] pub fn acting_version(&self) -> u16 { self.decoder.acting_version }
+            #[inline] pub const fn acting_version(&self) -> u16 { self.decoder.acting_version }
             /// Block length from the header or wrap args, which tail offsets use.
             #[must_use = "discarding this value is almost always a mistake"]
-            #[inline] pub fn acting_block_length(&self) -> usize { self.decoder.acting_block_length }
+            #[inline] pub const fn acting_block_length(&self) -> usize { self.decoder.acting_block_length }
         }
     });
 
@@ -1762,7 +1787,7 @@ pub(crate) fn generate_message_decoder(
             /// are scoped here so no schema field name can collide with them.
             #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
-            pub fn get_metadata(&self) -> #metadata_ident<'_, 'a> {
+            pub const fn get_metadata(&self) -> #metadata_ident<'_, 'a> {
                 #metadata_ident { decoder: self }
             }
 
@@ -1936,6 +1961,7 @@ pub(crate) fn vardata_text_helpers(
             pub fn #str_ident(&self) -> Result<&'a str, sbe_rt::DecodeError> {
                 let bytes = self.#vd_ident()?;
                 if bytes.iter().any(|b| *b > 0x7F) {
+                    sbe_rt::cold();
                     return Err(sbe_rt::DecodeError::InvalidAscii { field: #field_lit });
                 }
                 // Valid 7-bit ASCII is always valid UTF-8.

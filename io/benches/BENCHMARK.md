@@ -10,12 +10,13 @@ Every ergon-io latency figure lives here, once, except the in-memory WebSocket r
 |---|---|---|
 | Interrupt-driven or NIC polling? | Graviton, moderation off for every backend: at 1 socket polling is ahead at the median by 1.7–3.3 µs (WebSocket) and 1.1–2.6 µs (HTTP pool of 1); level at 4; at 16–64 sockets `uring-sqpoll` and the interrupt backends are level and `per_queue` is about 4–5 µs behind. Maxima do not separate them. x86: no fair comparison exists. | [Fair run](#interrupt-against-nic-polling-the-fair-run-graviton) |
 | Which polling backend, by socket count (x86)? | `recv-busy` to 4 sockets; past that `uring-sqpoll`, or `recv-busy,per_queue` on one CPU. Plain `recv-busy`'s poll grows with sockets (156 µs at 256). | [Polling backends](#polling-backends-by-socket-count-x86) |
-| SQPOLL on the loop's hyperthread sibling? | Works; about +2.3–2.5 µs p50 and +9–12 µs p99 at 10–100 connections against a core of its own. | [SMT sibling cost](#smt-sibling-cost) |
+| SQPOLL on the loop's hyperthread sibling? | The best use of one x86 core for one busy connection: round trip 2.3–7.3 µs p50 and 5.4–15.4 µs p99 below mio on the same hosts, and below mio with SMT off. Against a core of its own: level at 10–50k msg/s, 4–6 µs p50 dearer at 200k; on the receive side +2.3–2.5 µs p50 at 10–100 connections. | [SMT sibling cost](#smt-sibling-cost) |
 | ergon-io or libcurl for HTTP? | ergon-io is 5–12 µs ahead at the median on the same interrupt path. Its p99 and max are lower on Azure, not on AWS. | [HTTP clients](#http-clients) |
 | `connect_background` or `Driver::connect`? | Background: the loop's worst poll per connect is 6–12 µs p50 (max 98–102) against about 105 µs inline (max 775, the first connect). | [Connection set-up](#connection-set-up) |
 | mio as a backend? | No. On Linux it is `epoll-spin`'s mechanism: level on round trips, with 2.0× the `recvmsg` calls; a two-sided CI gate fails on a 10 % slowdown of either ([`mio-parity-docker-20261024T154626Z`](results/mio-parity-docker-20261024T154626Z/summary.md)). Its market-data arm was confounded. Reasons and its maxima without a cause: the book's [mio: measured, not a backend](https://mimran1980.github.io/ergon/io/backends.html#mio-measured-not-a-backend). | [Fair run](#interrupt-against-nic-polling-the-fair-run-graviton), [loop pass](#loop-pass-by-socket-count-graviton) |
 | UDP or TCP, between two hosts? | Not compared directly: the UDP and TCP sets ran on different Azure VM pairs. 1 stream, p50: UDP 61.8–62.9 µs, TCP 64.7–69.8 µs, each with no loss. | [Transport comparison](#transport-comparison-udp-tcp-mio-and-ergon-io) |
-| mio or ergon-io, for UDP and framed TCP? | UDP: ergon-io's p50 0.1–0.9 µs behind mio's in every rep; tails not separated. TCP: no verdict, the gap is inside run-to-run noise; a same-connection A/B is scheduled on AWS. Both read twice and send once a message. | [Transport comparison](#transport-comparison-udp-tcp-mio-and-ergon-io) |
+| mio or ergon-io, for UDP and framed TCP? | No difference. UDP: ergon-io's p50 0.1–0.9 µs behind mio's on Azure, not separated on AWS. TCP on one shared connection (AWS): mio 1.2 µs lower at p50 at 10,000 msg/s (A/A 0.8), not separated at 50,000; tails not separated. Both read twice and send once a message. Overloaded, ergon-io drains slower. | [Transport comparison](#transport-comparison-udp-tcp-mio-and-ergon-io) |
+| Kernel TCP or F-Stack (TCP on DPDK)? | F-Stack: p50 17–28 µs lower on AWS, and it carries 200,000 msg/s where kernel TCP does not. | [Transport comparison](#transport-comparison-udp-tcp-mio-and-ergon-io) |
 | ENA adaptive moderation? | Off stopped the polling loop's involuntary preemptions (about 8,900 in 8 min to 0) and cut WebSocket p99.99 from 117–119 to 72–76 µs. HTTP p99.99 did not move. | [Host and NIC settings](#host-and-nic-settings-aws-x86) |
 
 ## Hosts and runs
@@ -129,7 +130,50 @@ Run `flags-aws-20261015T101949Z`: AWS `c7i.2xlarge`, 1,024 market-data streams s
 
 ## SMT sibling cost
 
-Run `flags-aws-20261015T122127Z`: AWS `c7i.2xlarge`, one stream per connection, 60 s, three rounds. The SQPOLL kernel thread on its own core against on the loop's hyperthread sibling (as a Kubernetes `cpu: 2` x86 pod with `full-pcpus-only` gets). Arrival → decoded. Data: [`rows.md`](results/flags-aws-20261015T122127Z/rows.md).
+The question: with SMT on, the loop busy-spinning on one hyperthread and the SQPOLL kernel thread on its sibling (what a Kubernetes `cpu: 2` x86 pod with `full-pcpus-only` gets), how does latency compare with mio and SMT off? Each uses one physical core.
+
+### Round trips, 1 connection (2026-10-28)
+
+| | SMT off | SMT on |
+|---|---|---|
+| session | `aws-20261028-150900` | `aws-20261028-150920` |
+| hosts | two `c7i.4xlarge` (Xeon Platinum 8488C), on demand, us-east-1b, one cluster placement group; Debian 13, kernel 7.2.11, `intel_idle` | a second pair, the same |
+| CPUs | 0 housekeeping, 1 every data-NIC interrupt (capped at C1), 2 the loop, 3 SQPOLL (`eio-tcp-sqpoll-core`) | core 0 housekeeping, core 1 interrupts (capped at C1), CPU 2 the loop, CPU 10 (its sibling) SQPOLL or idle |
+| arms | `mio-tcp` (mio, `SO_BUSY_POLL` 50 µs), `eio-tcp` (`epoll-spin`, `busy_poll_us=50`), `eio-tcp-sqpoll-core`, A/A of `mio-tcp` | `eio-tcp-sqpoll-sib`, `mio-tcp-smt` (mio, its sibling idle), A/A of `eio-tcp-sqpoll-sib` |
+
+Both: TCP ping/pong, 64 B, open loop (latency from each message's intended send time), 10,000, 50,000 and 200,000 msg/s, 30 s measured per point after a 5–30 s warm-up, 3 reps, arms interleaved per rep. TCP autocorking off, `TCP_NODELAY`, quickack after every read, `tcp_rto_min_us` 8,000. No loss, no retransmit, no flagged point in any arm. Sets files: `md-dpdk/benches/cloud/transport-aws-smt-off.tsv`, `transport-aws-smt.tsv`. Data: [`tables.md`](results/smt-aws-20261028/tables.md), maxima [`maxima.md`](results/smt-aws-20261028/maxima.md). The first SMT sessions (`aws-20261028-071640`, `-071700`) ran with the interrupt CPU uncapped; its wake from C6 distorted mio at 10,000 msg/s, so both halves were rerun with the cap.
+
+p50 / p99, µs, range over 3 reps:
+
+| arm | 10,000 msg/s | 50,000 | 200,000 |
+|---|---|---|---|
+| `mio-tcp`, SMT off | 40.0–41.4 / 47.1–48.7 | 44.5–45.2 / 55.0–56.6 | 70.3–71.6 / 94.3–97.6 |
+| `eio-tcp` (`epoll-spin`), SMT off | 39.7–40.9 / 47.5–48.5 | 44.2 / 51.7–55.0 | 70.0–71.5 / 96.3–102.5 |
+| `eio-tcp-sqpoll-core`, SMT off (2 cores) | 36.6–38.6 / 41.2–46.1 | 35.8–37.7 / 43.3–47.4 | 61.4–62.5 / 79.0–81.6 |
+| **`eio-tcp-sqpoll-sib`, SMT on** | **35.7–36.9 / 40.7–42.0** | **34.7–36.5 / 43.0–47.3** | **64.5–67.5 / 84.4–88.7** |
+| `mio-tcp-smt`, SMT on (pair calibration) | 38.4–40.5 / 45.3–49.3 | 40.6–44.7 / 52.5–59.8 | 67.7–86.1 / 94.9–141.1 |
+
+A/A spread (largest per-rep difference), p50 / p99: `mio-tcp` 2.6 / 2.5, 1.6 / 3.0, 4.1 / 7.0; `eio-tcp-sqpoll-sib` 1.9 / 5.1, 2.0 / 6.6, 2.5 / 4.3.
+
+Medians compared (µs; negative: SQPOLL on the sibling lower):
+
+| comparison | p50 at 10k / 50k / 200k | p99 |
+|---|---|---|
+| sibling against mio, same pair (SMT on) | −2.3 / −7.3 / −5.0 | −5.4 / −8.5 / −15.4 |
+| sibling against mio SMT off, across pairs (raw) | −4.7 / −8.4 / −3.8 | −6.7 / −8.5 / −8.8 |
+| pair offset: `mio-tcp-smt` − `mio-tcp` | −2.4 / −1.1 / +1.2 | −1.3 / 0.0 / +6.6 |
+| sibling against own core, across pairs (raw) | −0.9 / +0.5 / +5.6 | −0.3 / +3.3 / +8.1 |
+| sibling against own core, less the pair offset | +1.5 / +1.6 / +4.4 | |
+
+- **SQPOLL on the sibling beats mio with SMT off on the same one-core budget.** On one pair it is 2.3 / 7.3 / 5.0 µs lower at p50 and 5.4 / 8.5 / 15.4 at p99, outside the A/A spread with no range overlap (`analyse.py`). The raw cross-pair gap (4.7 / 8.4 / 3.8 µs) differs from it by the pair offset: the SMT-on pair ran mio 1.1–2.4 µs faster at 10–50k and 1.2 slower at 200k.
+- **Sibling against a core of its own:** level within the A/A spread at 10–50k (+1.5 to +1.6 µs p50 after the pair offset); about 4–6 µs p50 and 8 µs p99 dearer at 200,000 msg/s, with no range overlap.
+- **`epoll-spin` and mio are level** at every rate (within the A/A spread).
+- **p99.99 and max are not ranked.** Every arm has millisecond round trips: 24 of 63 points hold a burst over 1 ms (max 1.0–8.7 ms), at no fixed second of the minute here (seconds 02 to 52). Three maxima are a TIMER softirq of 423–736 µs on host b's loop CPU or its sibling (`mio-tcp-smt` 50k, the sibling A/A 50k twice); the rest are unexplained (no recorded event on either host). `spikes.py` labels three of them "per-minute stall cluster (:49-:51)", Azure's window, which names no cause on these pairs.
+- **Fairness** (`fairness.py`): SQPOLL thread busy on its CPU and the loop's sibling idle (`mio-tcp-smt`) or holding only the arm's SQPOLL thread, in every sample that caught the benchmark. Two points' host-b sample (`eio-tcp-sqpoll-core` r3 10k, `eio-tcp-sqpoll-sib` r3 200k) caught no benchmark thread at all, the loop included, so the `sqpoll` rule fails there. 15 data-NIC interrupts reached a hot CPU across 10 points (one or two per IRQ, two on the loop's CPU) and break the `irq` rule there; that many in a 30 s point moves no p50 or p99. The `smt` rule ignores the runner's gap spinners, which fill the cores a point leaves idle.
+
+### Market data, receive side (2026-10-15)
+
+Run `flags-aws-20261015T122127Z`: AWS `c7i.2xlarge`, one stream per connection, 60 s, three rounds. The SQPOLL kernel thread on its own core against on the loop's hyperthread sibling. Arrival → decoded. Data: [`rows.md`](results/flags-aws-20261015T122127Z/rows.md).
 
 | connections | `uring-sqpoll`, own core | `uring-sqpoll`, sibling | `recv-busy,per_queue` (one CPU) |
 |---|---|---|---|
@@ -238,7 +282,7 @@ Run `flags-aws-20261015T062428Z`: NIC interrupts on the loop's CPU (`irqlocal`) 
 | market data, arrival → decoded | 2.9–3.4 / 7.9–8.1 (p99) / 36–48 | 4.7–6.5 / 20.1–26.1 (p99) / 74–99 |
 | HTTP round trip | 37.6–37.7 / 46.1–46.2 (p99) / 1,010–1,050 | 38.5–38.6 / 49.8–52.4 (p99) / 449–556 |
 
-The same run tried one NIC queue (`onequeue`) and capped idle states (`cstate`): their changes differ in sign between workloads. No conclusion.
+The same run tried one NIC queue (`onequeue`) and capped idle states (`cstate`): their changes differ in sign between workloads. No conclusion. For interrupt-driven receive the CPU that takes the NIC interrupts is what matters: capped at C1 on `c7i` it cut mio TCP's p50 from 43–160 to 37–39 µs ([md-dpdk BENCHMARKS.md](../../md-dpdk/BENCHMARKS.md#c7i-the-irq-cpus-idle-depth)).
 
 Not measured here: `prefer_busy_poll`, `busy_poll_budget`, route `quickack` and `rto_min` (every run used `quickack 1 rto_min 5ms`).
 
@@ -296,6 +340,42 @@ connection):
   its echo loop once overloaded. A bench bug, not ergon-io's; fixed in
   `55bee73a`.
 
+**AWS** (session `aws-20261027-062105`, two `c7a.2xlarge`, AMD Genoa, ENA,
+the same settings; sets d1, d8 and pin): framed TCP beside F-Stack (TCP on
+DPDK, 1 busy thread). Set pin binds both libraries to the same 4-tuple
+(`tcp_lat --source-port 31000`), so the NIC queue and flow path match.
+
+| counter, per message | `eio-tcp` | `mio-tcp` |
+|---|---|---|
+| reads (`recv`), 10,000 msg/s | 2.00 | 2.00 |
+| reads, 50,000 msg/s, 1 connection (fresh / pin) | 1.74–1.76 / 1.75–1.76 | 1.65–1.76 / 1.77–1.83 |
+| reads, 200,000 msg/s, 1 connection (past capacity) | 0.57–0.73 | 0.53–0.71 |
+| sends | 1.00 | 1.00 |
+| `TCP_QUICKACK` re-arms, 10,000 / 50,000 msg/s | 1.00 / 0.98–1.00 | 1.00 / 0.94–1.00 |
+| RTOs, retransmits | 0 | 0 |
+
+| p50, µs (median of 3 reps) | `eio-tcp` | `mio-tcp` | F-Stack |
+|---|---|---|---|
+| 1 connection, 10,000 msg/s | 53.2 | 52.3 | 33.9 |
+| 1 connection, 50,000 msg/s | 58.7 | 60.5 | 32.1 |
+| 8 connections, 10,000 msg/s | 52.8 | 52.2 | 35.0 |
+| 8 connections, 50,000 msg/s | 61.1 | 60.1 | 33.8 |
+| same connection (pin), 10,000 / 50,000 msg/s | 53.4 / 59.0 | 52.2 / 56.3 | |
+| 200,000 msg/s, carried (1 / 8 connections) | 119,027–134,125 / 104,470–111,679 | 147,274–153,776 / 113,359–121,313 | full rate |
+
+- **mio against ergon-io: no difference.** Separated at p50 only at 8
+  connections (mio 0.6 and 1.0 lower) and on the pin set at 10,000 msg/s
+  (mio 1.2 lower, A/A 0.8); ergon-io's p99 lower by 4.5 once; nothing else
+  separates. The Azure gap was unequal busy polling.
+- **Overloaded, ergon-io drains slower.** At 200,000 msg/s both fall
+  seconds behind (p50 backlog 5.2–6.1 s mio, 8.5–11.6 s ergon-io, 1
+  connection); ergon-io carries 18 % less at 1 connection and 7 % less at
+  8 (medians). Both loops then read several frames a read (0.53 to 0.73
+  reads a message), so the read count does not explain it. Not traced
+  further.
+- **F-Stack** is 17–28 µs lower at p50 than either and carries the full
+  200,000 msg/s; ergon-io has no DPDK backend.
+
 ## Worst cases
 
 - **Azure, once a minute:** loop stalls and slow samples bunch at seconds :49–:51 of every minute, on both hosts, in every workload and in a loop that only reads the counter, up to 2.1 ms ([`rows.md`](results/flags-azure-20261014T144146Z/rows.md), run `flags-azure-20261014T144146Z`).
@@ -306,7 +386,7 @@ connection):
 - Graviton against x86: not compared. x86 interrupt against polling: no fair run.
 - The fair run's `md-mio-c1` points show a sender batch up to 40 ms late on 0.07 % of batches, mio at one connection only (`work-counts.md`). No cause yet. It is listed with mio's other maxima still without a cause in the book's [mio: measured, not a backend](https://mimran1980.github.io/ergon/io/backends.html#mio-measured-not-a-backend).
 - Azure's once-a-minute stall: no kernel event explains it.
-- mio against ergon-io over TCP: no verdict on Azure (each point a new connection and source port). A same-connection A/B (`tcp_lat --source-port`) is scheduled on AWS.
+- Why ergon-io drains a TCP connection slower than mio once past capacity (200,000 msg/s on AWS).
 
 ## Reproduce
 

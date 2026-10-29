@@ -325,7 +325,7 @@ fn ordered_lane_without_groups_compiles() -> Result<(), Box<dyn std::error::Erro
         "the runtime is emitted whole, so consumers sharing it get EntryInfo"
     );
     assert!(
-        src.contains("pub fn ordered(self)"),
+        src.contains("pub const fn ordered(self)"),
         "the ordered lane is generated regardless of groups"
     );
 
@@ -377,7 +377,7 @@ fn ordered_lane_without_groups_compiles() -> Result<(), Box<dyn std::error::Erro
 fn entry_ordered_lane_walks_nested_tails() -> Result<(), Box<dyn std::error::Error>> {
     let (_schema, src) = generate(&Paths::example_schema(), "ordered_entry");
     assert!(
-        src.matches("pub fn ordered(self)").count() >= 3,
+        src.matches("pub const fn ordered(self)").count() >= 3,
         "entry decoders must gain an ordered() lane (message + fuelFigures + performanceFigures)"
     );
 
@@ -477,7 +477,7 @@ fn entry_field_named_ordered_keeps_its_accessor() -> Result<(), Box<dyn std::err
         .clone();
 
     assert!(
-        src.matches("pub fn ordered(self)").count() == 1,
+        src.matches("pub const fn ordered(self)").count() == 1,
         "the entry lane must yield to a field already named `ordered`"
     );
     assert!(
@@ -486,7 +486,7 @@ fn entry_field_named_ordered_keeps_its_accessor() -> Result<(), Box<dyn std::err
     );
     // The message-level lane is unaffected: `Msg` has no field named `ordered`.
     assert!(
-        src.contains("pub fn ordered(self)"),
+        src.contains("pub const fn ordered(self)"),
         "message-level ordered() is independent of the entry collision"
     );
 
@@ -745,7 +745,7 @@ fn converted_entry_field_named_ordered_keeps_the_lane() -> Result<(), Box<dyn st
         "conversion must rename the wire getter"
     );
     assert!(
-        src.matches("pub fn ordered(self)").count() >= 2,
+        src.matches("pub const fn ordered(self)").count() >= 2,
         "message and entry ordered() lanes must both exist when the field is converted"
     );
     compile_and_run(

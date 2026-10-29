@@ -98,11 +98,19 @@
 #        closed). Cross-host only, under DEDICATED or SHARED_NETWORK (SHARED's
 #        conductor is the shared agent; INVOKER has no conductor thread), never
 #        with IRQ=spare or NAPI_BUSY=spare, which would share its core
+#   DRIVER=embedded  (the transport suite's Aeron arms: transport.sh's knob
+#        aeron_driver) no media driver process: everything else set up as
+#        for one (the NICs, the host settings, driver.env, the agents' CPUs
+#        and threading mode), and the bench binary (aeron_lat --driver
+#        embedded, or invoker under INVOKER) starts the driver in its own
+#        process with driver.env. Never the lab clients' (vm.sh client
+#        refuses it: rtt, load and tput embed one only as INVOKER's
+#        HARNESS_DRIVER=invoker), nor the raw floors'
 # Any other upper-case @KEY must be an environment variable of the driver's,
 # AERON_* or RUSTERON_*: anything else would be exported to a driver that never
 # reads it, the mode measuring its baseline under another name (mode_check).
 #
-# The Aeron 1.53.3 URI parameters that matter over a long round trip (from
+# The Aeron 1.54.0 URI parameters that matter over a long round trip (from
 # its aeron_uri.h and the driver's aeron_driver_uri.c, which reads each into
 # a publication's or a subscription's parameters; the driver-wide defaults
 # are the AERON_* environment variables named, settable in a mode as
@@ -148,7 +156,7 @@
 #                  (AERON_CONGESTIONCONTROL_SUPPLIER,
 #                  AERON_CUBICCONGESTIONCONTROL_* for cubic's RTT measurement)
 #     nak-delay    how long the receiver waits on a gap before NAKing it
-#                  (AERON_NAK_UNICAST_DELAY: 1 us in Aeron 1.53.3's C driver,
+#                  (AERON_NAK_UNICAST_DELAY: 1 us in Aeron 1.54.0's C driver,
 #                  its minimum, aeron_driver_context.c; each retry
 #                  AERON_NAK_UNICAST_RETRY_DELAY_RATIO times it, 100: every
 #                  100 us). The sender's side of a NAK is
@@ -591,7 +599,7 @@ precision_modes_check() {
 # The settings vm.sh host_setting takes (a mode's @KEY=value for the host, the
 # clients or the driver's placement); any other key must be an environment
 # variable the driver reads, AERON_* (Aeron's) or RUSTERON_* (the transport's)
-LAB_SETTINGS=" THP BIN CSTATE BUSY_POLL COALESCE RX_RING MIN_FREE_PCT CLOCKSOURCE RELIABLE AGENTS SMT JUMBO PUB_PARAMS SUB_PARAMS IRQ NAPI_DEFER NAPI_BUSY CONDUCTOR HAIRPIN RTT_GAP_US KEEPALIVE_US FLUSH_KB DPDK "
+LAB_SETTINGS=" THP BIN CSTATE BUSY_POLL COALESCE RX_RING MIN_FREE_PCT CLOCKSOURCE RELIABLE AGENTS SMT JUMBO PUB_PARAMS SUB_PARAMS IRQ NAPI_DEFER NAPI_BUSY CONDUCTOR HAIRPIN RTT_GAP_US KEEPALIVE_US FLUSH_KB DPDK DRIVER "
 
 # @DPDK=<build>: the media driver and clients linked against DPDK 25.11 built
 # from source for the mode (vm.sh build-dpdk, into ~/bin-dpdk-<build>): stock,
@@ -704,13 +712,17 @@ dpdk_busy_idle() { [[ $1 =~ ^(spin|noop|aeron_idle_strategy_busy_spinning|aeron_
 # LAB_ARMS_FILE): " <name>=<setup>/<hosts> ..." as transport.sh's tr_load sets
 # it. An arm's mode is <name>[@STREAMS=<n>][@NETEM=<loss %>][@AA=1]:
 #   STREAMS=<n>  streams (UDP, Aeron) or connections (TCP), 1 to 1024
-#   NETEM=<pct>  netem's egress loss on every data NIC of both hosts, 0 to
-#                100 (0: a netem qdisc that drops nothing, the control);
+#   NETEM=<pct>  netem's loss, 0 to 100 (0: a qdisc that drops nothing).
+#                The default applies it on every data NIC of both hosts.
+#                A sets file's `loss kernel-peer` applies it on host b only
+#                (egress and ifb ingress), so a bypass arm's DPDK NIC has none.
 #                none: no qdisc, checked, in a loss set's round (the
 #                control's control);
-#                never on a DPDK arm (a dpdk* name or the dpdk setup): DPDK
+#                never on a DPDK arm (a dpdk* name, the dpdk or fstack setup): DPDK
 #                bypasses the kernel's qdiscs, so netem would drop nothing
-#                and the row would claim a loss it never saw
+#                and the row would claim a loss it never saw; nor on an
+#                Onload arm (setup onload): Onload's AF_XDP socket sends by
+#                the kernel's __dev_direct_xmit, which skips the qdisc too
 #   AA=1         the A/A arm: the round's first arm run again
 TRANSPORT_ARMS=${TRANSPORT_ARMS:-}
 ARM_SETTINGS=" STREAMS NETEM AA "
@@ -722,7 +734,7 @@ arm_of() {
     printf '%s' "$a"
 }
 
-# arm_setup <arm>: none, kernel, dpdk or sockets; arm_hosts <arm>: one or two
+# arm_setup <arm>: none, kernel, dpdk, sockets, fstack or onload; arm_hosts <arm>: one, two or sink
 arm_setup() { local s=${TRANSPORT_ARMS#* "$1"=}; s=${s%% *}; printf '%s' "${s%/*}"; }
 arm_hosts() { local s=${TRANSPORT_ARMS#* "$1"=}; s=${s%% *}; printf '%s' "${s#*/}"; }
 
@@ -746,8 +758,12 @@ arm_check() {
             [[ $value == none ]] && continue
             [[ $value =~ ^(0|[1-9][0-9]?|100)(\.[0-9]{1,3})?$ ]] && awk -v v="$value" 'BEGIN {exit !(v <= 100)}' ||
                 { echo "mode $m: NETEM=$value: egress loss in %, 0 to 100, at most three decimals" >&2; return 2; }
-            if [[ $a == dpdk* || $(arm_setup "$a") == dpdk ]]; then
+            if [[ $a == dpdk* || $(arm_setup "$a") == dpdk || $(arm_setup "$a") == fstack ]]; then
                 echo "mode $m: NETEM on a DPDK arm: DPDK bypasses the kernel's qdiscs, so netem would drop nothing (no DPDK in loss rows)" >&2
+                return 2
+            fi
+            if [[ $(arm_setup "$a") == onload ]]; then
+                echo "mode $m: NETEM on an Onload arm: its AF_XDP sends skip the kernel's qdiscs (__dev_direct_xmit), so netem would drop nothing (no Onload in loss rows)" >&2
                 return 2
             fi
             ;;
@@ -764,14 +780,30 @@ mode_check() {
     [[ $m != *,* ]] || { echo "mode $m: a comma would split its results.csv rows (COALESCE takes <rx>/<tx>)" >&2; return 2; }
     # a transport suite arm: its own settings alone
     if arm_of "$m" >/dev/null; then
+        # setup fstack: F-Stack runs on AWS's ENA, on x86_64 and Graviton
+        # (io/benches/fstack/build-fstack.sh, vm.sh fstack-up)
+        if [[ $(arm_setup "$(arm_of "$m")") == fstack && $cloud != aws ]]; then
+            echo "mode $m: an F-Stack arm runs on AWS only (its ENA; here $cloud)" >&2
+            return 2
+        fi
+        # setup onload: Onload over AF_XDP on ENA's native XDP (vm.sh
+        # onload-up), on x86_64 and Graviton; MANA was never tried
+        if [[ $(arm_setup "$(arm_of "$m")") == onload && $cloud != aws ]]; then
+            echo "mode $m: an Onload arm runs on AWS only (ENA's native XDP under Onload's AF_XDP; here $cloud)" >&2
+            return 2
+        fi
         arm_check "$m"
         return
     fi
     # the transport, as vm.sh driver takes it (any other stops the run there)
     transport=${m%+idle}
     transport=${transport%%@*}
-    [[ $transport =~ ^(kernel|kernel-busy|dpdk|dpdk-spin|dpdk-adaptive|dpdk-epoll|kernel-raw|dpdk-raw|dpdk-pure)(-mono)?$ ]] ||
-        { echo "mode $m: transport $transport: kernel, kernel-busy, dpdk, dpdk-spin, dpdk-adaptive, dpdk-epoll, the raw floor's kernel-raw or dpdk-raw, optionally -mono, or the pure floor's dpdk-pure (vm.sh refuses any other at the driver's start)" >&2; return 2; }
+    [[ $transport =~ ^(kernel|kernel-busy|dpdk|dpdk-spin|dpdk-adaptive|dpdk-epoll|kernel-raw|dpdk-raw|dpdk-pure)(-mono)?$ || $transport == onload ]] ||
+        { echo "mode $m: transport $transport: kernel, kernel-busy, dpdk, dpdk-spin, dpdk-adaptive, dpdk-epoll, the raw floor's kernel-raw or dpdk-raw, optionally -mono, the pure floor's dpdk-pure, or onload (the transport suite's: kernel UDP under Onload) (vm.sh refuses any other at the driver's start)" >&2; return 2; }
+    # onload: the transport suite's Onload arms' media driver (vm.sh driver
+    # onload, after vm.sh onload-up), AWS only
+    [[ $transport != onload || $cloud == aws ]] ||
+        { echo "mode $m: transport onload is AWS only (ENA's native XDP under Onload's AF_XDP; here $cloud)" >&2; return 2; }
     # the raw floor: no Aeron, so nothing only Aeron reads, and its round trip
     # alone, cross-host (floor.rs)
     if mode_raw "$m"; then
@@ -780,7 +812,7 @@ mode_check() {
         while IFS= read -r p; do
             key=${p%%=*}
             case $key in
-            AERON_* | PUB_PARAMS | SUB_PARAMS | RELIABLE | CONDUCTOR)
+            AERON_* | PUB_PARAMS | SUB_PARAMS | RELIABLE | CONDUCTOR | DRIVER)
                 echo "mode $m: $key is Aeron's, and the raw floor runs no Aeron (no media driver, no client): it would measure its baseline under another name" >&2
                 return 2
                 ;;
@@ -819,7 +851,7 @@ mode_check() {
             ;;
         esac
         case $key in
-        IRQ | NAPI_DEFER | NAPI_BUSY | CONDUCTOR | HAIRPIN | RTT_GAP_US | KEEPALIVE_US | FLUSH_KB | DPDK)
+        IRQ | NAPI_DEFER | NAPI_BUSY | CONDUCTOR | HAIRPIN | RTT_GAP_US | KEEPALIVE_US | FLUSH_KB | DPDK | DRIVER)
             [[ $seen != *" $key "* ]] || { echo "mode $m: one $key at most" >&2; return 2; }
             seen+="$key "
             ;;
@@ -851,6 +883,12 @@ mode_check() {
             [[ $value == own ]] || { echo "mode $m: CONDUCTOR=own (the conductor on the layout's fifth core, spinning) or nothing" >&2; return 2; }
             [[ $where != local ]] ||
                 { echo "mode $m: CONDUCTOR=own with both ends on one host (localhost): the run takes the fifth core for its second end" >&2; return 2; }
+            ;;
+        DRIVER)
+            [[ $value == embedded ]] ||
+                { echo "mode $m: DRIVER=embedded (the bench binary starts the driver in its own process) or nothing" >&2; return 2; }
+            [[ $m != *+idle ]] ||
+                { echo "mode $m: DRIVER=embedded with +idle: the idle subscription's client has no driver to join" >&2; return 2; }
             ;;
         HAIRPIN)
             [[ $value == 1 ]] || { echo "mode $m: HAIRPIN=1 or nothing" >&2; return 2; }

@@ -15,6 +15,9 @@ know fails loudly, so a new call in lab.sh needs a line here.
                       <region>a and <region>b)
   FAKE_NO_CAPACITY    where run-instances fails for capacity: <zone> (any
                       type) or <zone>/<instance type>
+  FAKE_NO_SPOT_CAPACITY  as FAKE_NO_CAPACITY, for spot launches alone (on
+                      demand there still launches)
+  FAKE_MAX_ENIS       describe-instance-types' MaximumNetworkInterfaces (4)
   FAKE_ARCH           what describe-instance-types reports for a Graviton-named
                       type (default arm64)
   FAKE_PENDING=1      instances stay pending (never run) until terminated
@@ -211,6 +214,8 @@ def ec2(region, verb):
             text([os.environ.get("FAKE_ARCH", "arm64")] if arm else ["i386", "x86_64"])
         elif "DefaultCores" in q:
             text([str(cores(t))])
+        elif q == "InstanceTypes[0].NetworkInfo.MaximumNetworkInterfaces":
+            text([os.environ.get("FAKE_MAX_ENIS", "4")])
         else:
             fail("InvalidParameterValue", f"fake: describe-instance-types --query {q}")
     elif verb == "describe-images":
@@ -267,6 +272,8 @@ def ec2(region, verb):
     elif verb == "run-instances":
         subnet = st["res"][opt("subnet-id")]
         full = os.environ.get("FAKE_NO_CAPACITY", "").split()
+        if (opt("instance-market-options") or "").startswith("MarketType=spot"):
+            full += os.environ.get("FAKE_NO_SPOT_CAPACITY", "").split()
         if subnet["az"] in full or f"{subnet['az']}/{opt('instance-type')}" in full:
             if (opt("instance-market-options") or "").startswith("MarketType=spot") and os.environ.get("FAKE_SPOT_LEAVE_OPEN") == "1":
                 rid = new_id("sir")

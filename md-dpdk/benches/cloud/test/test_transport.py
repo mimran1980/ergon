@@ -245,6 +245,12 @@ class FairnessTest(unittest.TestCase):
             f.write("T15 warn: another process may run on CPU 4 (evidence: /proc/77/status)\n")
         self.assertOnly(run, "hostcheck")
 
+    def test_hostcheck_wall_clock_warning_is_reported_only(self):
+        run = Run(self)
+        with open(run.path("2a", "a-hostcheck.txt"), "a") as f:
+            f.write("T11 warn: CLOCK_REALTIME is not disciplined to a PTP hardware clock (chronyd tracks NTP)\n")
+        self.assertEqual(fairness.check(run.run), [])
+
     def test_hostcheck_unproven_blocking_check(self):
         run = Run(self)
         with open(run.path("2a", "a-hostcheck.txt"), "a") as f:
@@ -265,6 +271,64 @@ class FairnessTest(unittest.TestCase):
         run = Run(self)
         run.edit(ONE, lambda m: m["settings"]["b"].update({"socket.rcvbuf": "4194304"}))
         self.assertOnly(run, "settings")
+
+    # a kernel-bypass arm (DPDK owns the data NIC: setup dpdk or fstack)
+    # never reads the kernel's socket busy-poll sysctls, and its set-up
+    # (vm.sh stop first) leaves them at 0
+    BUSY = {"net.core.busy_read": "0", "net.core.busy_poll": "0"}
+    DPDK = lambda m: m.get("arm") == "aeron-dpdk"
+
+    def test_kernel_bypass_arm_busy_poll_off_is_clean(self):
+        for setup in ("dpdk", "fstack", None):
+            with self.subTest(setup=setup):
+                run = Run(self)
+                run.edit(FairnessTest.DPDK, lambda m: (
+                    [s.update(self.BUSY) for s in m["settings"].values()],
+                    setup and m.update(runner={"setup": setup})), first=False)
+                self.assertEqual(run.rules(), [], "\n".join(str(v) for v in fairness.check(run.run)))
+
+    def test_dpdk_raw_floor_busy_poll_off_is_clean(self):
+        # the dpdk-raw floor (floor.rs: ergon-md-dpdk's packet path alone,
+        # set-up dpdk-raw, transport raw-dpdk) holds the NIC as DPDK does
+        for runner, transport in (({"setup": "dpdk-raw"}, "raw-dpdk"), (None, "raw-dpdk")):
+            with self.subTest(runner=runner):
+                run = Run(self)
+
+                def fn(m):
+                    for s in m["settings"].values():
+                        s.update(self.BUSY)
+                    m["transport"] = transport
+                    if runner:
+                        m["runner"] = dict(m.get("runner") or {}, **runner)
+                run.edit(FairnessTest.DPDK, fn, first=False)
+                self.assertNotIn("settings", run.rules(), "\n".join(str(v) for v in fairness.check(run.run)))
+
+    def test_kernel_arm_busy_poll_off_is_still_flagged(self):
+        for setup in ("sockets", "kernel", "onload", None):
+            with self.subTest(setup=setup):
+                run = Run(self)
+                run.edit(ONE, lambda m: (m["settings"]["a"].update({"net.core.busy_read": "0"}),
+                                         setup and m.update(runner={"setup": setup})))
+                got = fairness.check(run.run)
+                self.assertIn("settings", {v.rule for v in got})
+                self.assertTrue(any("net.core.busy_read=0" in v.detail for v in got if v.rule == "settings"))
+
+    def test_kernel_bypass_arm_needs_no_busy_poll_sweep(self):
+        # busy poll per arm (aeron-kernel's path at 0, swept), every other arm
+        # at 50 swept too, but aeron-dpdk, which bypasses the kernel
+        run = Run(self)
+        env = read(run.path("transport-settings.env"))
+        env = env.replace("shared.net.core.busy_poll=50\nshared.net.core.busy_read=50\n", "")
+        arms = sorted(fx.ARMS)
+        for k in self.BUSY:
+            env += "".join(f"{a}.{k}={0 if a == 'aeron-kernel' else 50}\n" for a in arms)
+            env += f"sweep.{k}={','.join(a for a in arms if a != 'aeron-dpdk')}\n"
+        write(run.path("transport-settings.env"), env)
+        run.edit(lambda m: "aeron-kernel" in (m["arm"], m.get("aa_of")),
+                 lambda m: [s.update(self.BUSY) for s in m["settings"].values()], first=False)
+        run.edit(FairnessTest.DPDK, lambda m: ([s.update(self.BUSY) for s in m["settings"].values()],
+                                               m.update(runner={"setup": "dpdk"})), first=False)
+        self.assertEqual(run.rules(), [], "\n".join(str(v) for v in fairness.check(run.run)))
 
     def test_settings_env_missing(self):
         run = Run(self)
@@ -564,6 +628,438 @@ class FairnessTest(unittest.TestCase):
         self.assertEqual(clean.returncode, 0, clean.stdout + clean.stderr)
 
 
+# a mixed-load point's ends as aeron_lat --load mixed writes them (mixed.rs):
+# nine streams, the background's eight one of each class, every message
+# accounted for, the drivers' and NICs' bytes those the counts give
+BG = 8
+FANOUT = [2, 3, 4, 1, 2, 3, 4, 1]
+PUBLISHERS = [1, 1, 1, 1, 1, 1, 1, 2]
+PER_STREAM = 1000
+FRAME = 320  # each background message 288 B, a 320-byte frame
+TERM = 65536
+# a stream's terms filled: 1,000 frames of 320 B over 64 KiB terms (the
+# two publishers' stream too: 500 each, two terms each)
+ROTATIONS = PER_STREAM * FRAME // TERM
+
+
+def mixed_ends(row, busy):
+    """(ping settings, pong settings, nic_counters) of a clean mixed point
+    whose hot stream's row is `row` (sent, received), `busy` busy threads a
+    host."""
+    lst = lambda v: ",".join(str(v) for _ in range(BG))
+    f = BG * PER_STREAM * FRAME
+    hot = row["sent"]
+    hot_rot = max(hot - 1, 0) // (TERM // 96)
+    profile = {"load": "mixed", "mixed.profile": "mixed-v1", "mixed.classes": "SSSSBBIM",
+               "mixed.publishers": ",".join(map(str, PUBLISHERS)), "mixed.fanout": ",".join(map(str, FANOUT)),
+               "mixed.period_ns": lst(1_000_000), "streams": str(BG + 1), "hot_rate": "10000", "warmup_s": "30",
+               "duration_s": "30", "busy_threads": str(busy)}
+    ps = dict(profile, **{
+        "mixed.scheduled": lst(PER_STREAM), "mixed.sent": lst(PER_STREAM), "mixed.echoes": lst(PER_STREAM),
+        "mixed.echo_gaps": lst(0), "mixed.echo_behind": lst(0), "mixed.bp_measured": lst(0), "mixed.bp": lst(0),
+        "mixed.admin": lst(ROTATIONS), "mixed.admin_measured": lst(ROTATIONS // 2), "admin_actions": str(hot_rot),
+        "mixed.admin_total": str(BG * ROTATIONS), "mixed.position": lst(PER_STREAM * FRAME),
+        "mixed.payload_bytes": lst(PER_STREAM * (FRAME - 32)), "term_length": str(TERM), "mtu": "1408",
+        "sent": str(hot), "backpressured": "0",
+        "mixed.hot_sent": str(hot), "mixed.hot_frame_bytes": str(hot * 96), "mixed.frame_bytes_sent": str(f),
+        "mixed.echo_frame_bytes_received": str(f), "mixed.frames_sent": str(BG * PER_STREAM),
+        "driver.bytes-sent": str(f + hot * 96), "driver.bytes-received": str(f + row["received"] * 96),
+        "driver.status-messages-sent": "100", "driver.status-messages-received": "100",
+        "driver.cycle.sender.exceeded": "0", "driver.cycle.receiver.exceeded": "0",
+        "driver.cycle.conductor.exceeded": "0", "mixed.bg.busy_ns": "10", "mixed.bg.loop_ns": "100",
+        "mixed.invoker.busy_calls": "0", "mixed.invoker.duty_calls": "0",
+        "all.p50_ns": "20000", "all.p99_ns": "30000", "all.p9999_ns": "40000", "all.max_ns": "250000",
+        "bg.max_ns": "250000"})
+    qs = dict(profile, **{
+        "mixed.recv": ",".join("/".join([str(PER_STREAM)] * n) for n in FANOUT), "mixed.echoed": lst(PER_STREAM),
+        "mixed.recv_gaps": lst(0), "mixed.recv_behind": lst(0), "mixed.recv_refused": lst(0),
+        "mixed.hot_echoes": str(hot), "mixed.frame_bytes_sent": str(f), "mixed.frame_bytes_received": str(f),
+        "mixed.frames_sent": str(BG * PER_STREAM), "driver.bytes-sent": str(f + hot * 96),
+        "driver.bytes-received": str(f + hot * 96), "driver.status-messages-sent": "100",
+        "driver.status-messages-received": "100"})
+    nic = {h: {"source": "kernel", "tx_bytes": int(s["driver.bytes-sent"]) + 10_000,
+               "rx_bytes": int(s["driver.bytes-received"]) + 10_000, "tx_packets": 1, "rx_packets": 1,
+               "allowance_exceeded": 0} for h, s in (("a", ps), ("b", qs))}
+    return ps, qs, nic
+
+
+def make_mixed(run, arm="aeron-kernel"):
+    """Every point of `arm` in set 2a (and its A/A's) a clean mixed-load one."""
+    rows = {}
+    for r in csv.reader(read(run.path("results.csv")).splitlines()):
+        if len(r) == len(COLUMNS):
+            d = dict(zip(COLUMNS, r))
+            rows[tag_of(d["label"], int(d["size"]), int(d["rep"]), int(d["rate"]), d["kind"])] = d
+
+    def fn(m):
+        d = rows[tag_of(m["label"], m["size"], m["rep"], m["rate"], m["kind"])]
+        ps, qs, nic = mixed_ends({"sent": int(d["sent"]), "received": int(d["received"])}, int(d["busy_threads"]))
+        m["binary"] = {"settings": ps}
+        m["pong"] = {"settings": qs}
+        m["nic_counters"] = nic
+    run.edit(lambda m: m["set"] == "2a" and arm in (m["arm"], m.get("aa_of")), fn, first=False)
+
+
+MIXED = lambda m: m["set"] == "2a" and m["arm"] == "aeron-kernel" and m["streams"] == 1 and m["rep"] == 1
+
+
+class TransportLabelTest(unittest.TestCase):
+    """fairness.py's transport rule: a row's transport against its arm's
+    set-up and its pong's."""
+
+    def check(self, setup, transport, pong=None):
+        run = Run(self)
+
+        def fn(m):
+            m["runner"] = dict(m.get("runner") or {}, setup=setup)
+            m["transport"] = transport
+            if pong:
+                m["pong"] = {"settings": {"transport": pong}}
+        run.edit(lambda m: m["set"] == "2a" and m["arm"] == "aeron-dpdk" and m["rep"] == 1, fn)
+        return [str(v) for v in fairness.check(run.run) if v.rule == "transport"]
+
+    def test_a_dpdk_arm_labelled_aeron_udp_is_flagged(self):
+        got = self.check("dpdk", "aeron-udp")
+        self.assertEqual(len(got), 1, got)
+        self.assertIn("transport 'aeron-udp' on set-up dpdk", got[0])
+
+    def test_a_kernel_arm_labelled_dpdk_is_flagged(self):
+        self.assertIn("a kernel arm's row labelled DPDK", " ".join(self.check("kernel", "aeron-dpdk")))
+
+    def test_ends_naming_different_transports_are_flagged(self):
+        self.assertIn("its pong's 'aeron-udp'", " ".join(self.check("dpdk", "aeron-dpdk", "aeron-udp")))
+
+    def test_an_agreeing_label_is_clean(self):
+        self.assertEqual(self.check("dpdk", "aeron-dpdk", "aeron-dpdk"), [])
+        self.assertEqual(self.check("dpdk-raw", "raw-dpdk"), [])
+
+
+class MixedLoadTest(unittest.TestCase):
+    """fairness.py's mixed-load rules (mixed-counts, mixed-wire, mixed-nic,
+    backpressure, budget) on the clean fixture's aeron-kernel points made
+    mixed-load ones, one thing broken at a time; and analyse.py's mixed
+    table and checklist."""
+
+    def mixed(self):
+        run = Run(self)
+        make_mixed(run)
+        return run
+
+    def broken(self, fn, pred=MIXED):
+        run = self.mixed()
+        run.edit(pred, fn)
+        return run, [v for v in fairness.check(run.run)]
+
+    def assertRule(self, fn, rule, text, pred=MIXED):
+        run, vs = self.broken(fn, pred)
+        self.assertEqual(sorted({v.rule for v in vs}), [rule], [str(v) for v in vs])
+        self.assertTrue(any(text in v.detail for v in vs), [str(v) for v in vs])
+
+    def test_clean_mixed_points_break_no_rule(self):
+        run = self.mixed()
+        self.assertEqual([str(v) for v in fairness.check(run.run)], [])
+
+    def test_a_message_never_sent(self):
+        def fn(m):
+            m["binary"]["settings"]["mixed.sent"] = "999" + m["binary"]["settings"]["mixed.sent"][4:]
+        run, vs = self.broken(fn)
+        self.assertIn("mixed-counts", {v.rule for v in vs})
+        self.assertTrue(any("background stream 1 sent 999 of the 1,000 it owed" in v.detail for v in vs))
+
+    def test_a_fanout_subscription_short(self):
+        def fn(m):
+            subs = m["pong"]["settings"]["mixed.recv"].split(",")
+            subs[2] = "1000/1000/999/1000"
+            m["pong"]["settings"]["mixed.recv"] = ",".join(subs)
+        self.assertRule(fn, "mixed-counts", "background stream 3 subscription 2 read 999 of 1,000")
+
+    def test_a_subscription_missing_from_the_fanout(self):
+        def fn(m):
+            subs = m["pong"]["settings"]["mixed.recv"].split(",")
+            subs[1] = "1000/1000"
+            m["pong"]["settings"]["mixed.recv"] = ",".join(subs)
+        self.assertRule(fn, "mixed-counts", "read by 2 subscriptions, its fan-out 3")
+
+    def test_an_echo_lost_on_the_way_back(self):
+        def fn(m):
+            m["binary"]["settings"]["mixed.echoes"] = "1000,1000,1000,1000,1000,1000,1000,998"
+        self.assertRule(fn, "mixed-counts", "background stream 8: 998 echoes back of 1,000 echoed")
+
+    def test_gaps_and_refusals_on_the_pong(self):
+        def fn(m):
+            m["pong"]["settings"]["mixed.recv_refused"] = "0,0,1,0,0,0,0,0"
+        self.assertRule(fn, "mixed-counts", "the pong's recv_refused")
+
+    def test_the_ends_ran_different_mixes(self):
+        def fn(m):
+            m["pong"]["settings"]["mixed.fanout"] = "1,1,1,1,1,1,1,1"
+        self.assertRule(fn, "mixed-counts", "the ends ran different mixes: mixed.fanout")
+
+    def test_no_pong_manifest(self):
+        def fn(m):
+            m["pong"] = None
+        run, vs = self.broken(fn)
+        self.assertIn("no pong manifest", " ".join(v.detail for v in vs))
+
+    def test_the_hot_streams_pings_not_all_echoed(self):
+        def fn(m):
+            m["pong"]["settings"]["mixed.hot_echoes"] = str(int(m["pong"]["settings"]["mixed.hot_echoes"]) - 1)
+        run, vs = self.broken(fn)
+        self.assertIn("mixed-counts", {v.rule for v in vs})
+        self.assertTrue(any("the hot stream" in v.detail for v in vs))
+
+    def test_a_driver_that_sent_less_than_the_frames(self):
+        def fn(m):
+            s = m["binary"]["settings"]
+            s["driver.bytes-sent"] = str(int(s["driver.bytes-sent"]) - 32)
+        run, vs = self.broken(fn)
+        self.assertIn("mixed-wire", {v.rule for v in vs})
+        self.assertTrue(any("a's driver sent" in v.detail for v in vs), [str(v) for v in vs])
+
+    def test_a_driver_that_sent_far_more_than_the_frames(self):
+        def fn(m):
+            s = m["pong"]["settings"]
+            s["driver.bytes-sent"] = str(int(s["driver.bytes-sent"]) * 2)
+        run, vs = self.broken(fn)
+        self.assertIn("mixed-wire", {v.rule for v in vs})
+        self.assertTrue(any("b's driver sent" in v.detail for v in vs), [str(v) for v in vs])
+
+    def test_retransmits_and_heartbeats_are_allowed_bytes(self):
+        def fn(m):
+            s = m["binary"]["settings"]
+            s["driver.retransmitted-bytes"] = "50000"
+            s["driver.bytes-sent"] = str(int(s["driver.bytes-sent"]) + 50_000 + 10_000)
+        run, vs = self.broken(fn)
+        self.assertNotIn("mixed-wire", {v.rule for v in vs}, [str(v) for v in vs])
+
+    def test_nic_counters_below_the_drivers(self):
+        def fn(m):
+            m["nic_counters"]["b"]["rx_bytes"] = 100
+        self.assertRule(fn, "mixed-nic", "b's data NICs received 100 bytes")
+
+    def test_nic_counters_far_above_the_drivers(self):
+        def fn(m):
+            m["nic_counters"]["a"]["tx_bytes"] += 50_000_000
+        self.assertRule(fn, "mixed-nic", "a's data NICs sent")
+
+    def test_an_allowance_exceeded(self):
+        def fn(m):
+            m["nic_counters"]["a"]["allowance_exceeded"] = 12
+        self.assertRule(fn, "mixed-nic", "allowance counters grew by 12")
+
+    def test_a_dpdk_receive_drop(self):
+        def fn(m):
+            m["nic_counters"]["b"] = dict(m["nic_counters"]["b"], source="dpdk", rx_missed=3)
+        self.assertRule(fn, "mixed-nic", "b's DPDK rx_missed grew by 3")
+
+    def test_dpdk_frames_to_a_closed_port_are_a_note(self):
+        # queue-drop: frames to a port nobody listens on (an endpoint not yet
+        # open or already closed), as the kernel's UdpNoPorts: not loss
+        def fn(m):
+            m["nic_counters"]["a"] = dict(m["nic_counters"]["a"], source="dpdk", queue_drop=5450)
+        run = self.mixed()
+        run.edit(MIXED, fn)
+        notes = []
+        self.assertEqual([str(v) for v in fairness.check(run.run, notes=notes)], [])
+        self.assertTrue(any(n.rule == "mixed-nic" and "a's DPDK queue_drop grew by 5,450" in n.detail
+                            for n in notes), [str(n) for n in notes])
+
+    def test_the_kernel_dropped_udp(self):
+        def fn(m):
+            m["loss_counters"]["b"]["nstat"] = {"UdpRcvbufErrors": 7}
+        self.assertRule(fn, "mixed-nic", "b's kernel dropped UDP: UdpRcvbufErrors 7")
+
+    def test_nic_counters_not_recorded(self):
+        def fn(m):
+            m["nic_counters"] = None
+        self.assertRule(fn, "mixed-nic", "a's data NIC counters not recorded")
+
+    def test_nicstats_traffic_among_the_moderation_and_driver_lines(self):
+        # vm.sh nicstats' one format: the traffic line the mixed-nic rule
+        # sums, the c7i diagnosis's coalesce and stat lines beside it
+        from transport_collect import nic_growth
+
+        def snap(n):
+            return "".join(
+                f"{role} {nic} tx_bytes={n * 1000} rx_bytes={n * 2000} tx_packets={n} rx_packets={n * 2} "
+                f"pps_allowance_exceeded={n - 1}\n{role} {nic} coalesce off n/a 20 64\n"
+                f"{role} {nic} stat queue_0_tx_unmask_interrupt {n * 7}\n{role} {nic} stat tx_bytes 999\n"
+                for role, nic in (("sender", "ens6"), ("receiver", "ens7")))
+        self.assertEqual(nic_growth(snap(1), snap(4), None),
+                         {"source": "kernel", "tx_bytes": 6000, "rx_bytes": 12000, "tx_packets": 6,
+                          "rx_packets": 12, "allowance_exceeded": 6})
+        dpdk = "sender ens6 dpdk\nreceiver ens7 dpdk\n"
+        self.assertIsNone(nic_growth(dpdk, dpdk, {}))
+        self.assertEqual(nic_growth(dpdk, dpdk, {"nic.tx_bytes": "5"})["source"], "dpdk")
+
+    def test_dpdk_nic_counters_come_from_the_binaries_when_nicstats_is_empty(self):
+        # under DPDK the kernel has no data NICs, so vm.sh nicstats finds
+        # none and prints nothing: the binaries' own nic.* counters stand
+        from transport_collect import nic_growth
+        own = {"nic.tx_bytes": "938138940", "nic.rx_bytes": "938176260", "nic.tx_pkts": "2524239",
+               "nic.rx_pkts": "2527436", "nic.rx_missed": "0", "nic.rx_nombuf": "0", "nic.queue_drop": "1105",
+               "nic.tx_eagain": "0", "nic.allowance_exceeded": "0"}
+        for before, after in (("", ""), (None, None), ("", None)):
+            got = nic_growth(before, after, own)
+            self.assertEqual(got, {"source": "dpdk", "tx_bytes": 938138940, "rx_bytes": 938176260,
+                                   "tx_pkts": 2524239, "rx_pkts": 2527436, "rx_missed": 0, "rx_nombuf": 0,
+                                   "queue_drop": 1105, "tx_eagain": 0, "allowance_exceeded": 0}, (before, after))
+        self.assertIsNone(nic_growth("", "", {}))
+        self.assertIsNone(nic_growth(None, None, None))
+
+    def test_backpressure_with_no_saturation_is_unexplained(self):
+        def fn(m):
+            m["binary"]["settings"]["mixed.bp_measured"] = "0,0,0,0,5,0,0,0"
+        self.assertRule(fn, "backpressure", "5 offers back-pressured in the measured window")
+
+    # Aeron's ADMIN_ACTION (a term rotation) is not back-pressure: counted
+    # apart (mixed.admin, admin_actions), held against the terms filled
+
+    def test_admin_actions_alone_are_not_backpressure(self):
+        from transport_points import flags, mixed_offers
+        run = self.mixed()
+        [p] = [p for p in read_points(run.run) if MIXED(p.manifest)]
+        self.assertNotIn("back-pressured", flags(p))
+        self.assertEqual(mixed_offers(p)["bp"], 0)
+        self.assertEqual(mixed_offers(p)["admin"], BG * ROTATIONS + int(
+            p.manifest["binary"]["settings"]["admin_actions"]))
+
+    def test_backpressure_beside_admin_actions_is_still_flagged(self):
+        from transport_points import flags
+        def fn(m):
+            m["binary"]["settings"]["mixed.bp_measured"] = "0,0,3,0,0,0,0,0"
+        run, vs = self.broken(fn)
+        self.assertEqual({v.rule for v in vs}, {"backpressure"}, [str(v) for v in vs])
+        self.assertTrue(any("3 offers back-pressured" in v.detail for v in vs), [str(v) for v in vs])
+        [p] = [p for p in read_points(run.run) if MIXED(p.manifest)]
+        self.assertIn("back-pressured", flags(p))
+
+    def test_admin_actions_beyond_the_terms_filled(self):
+        def fn(m):
+            m["binary"]["settings"]["mixed.admin"] = f"{ROTATIONS + 3}," + ",".join([str(ROTATIONS)] * (BG - 1))
+        self.assertRule(fn, "backpressure", "background stream 1: 7 admin actions (2 measured), its publications filled 4 terms")
+
+    def test_hot_admin_actions_beyond_the_terms_filled(self):
+        def fn(m):
+            m["binary"]["settings"]["admin_actions"] = "9"
+        self.assertRule(fn, "backpressure", "the hot stream: 9 admin actions")
+
+    def legacy(self, bp, hot_bp=None):
+        """A point from a binary that counted every retryable offer result
+        as back-pressure (no mixed.admin): its whole-run counts `bp` a
+        stream, measured half of each; the hot stream's (its row's) its
+        terms filled unless `hot_bp`. (run, violations)"""
+        run = self.mixed()
+        hot = {}
+
+        def fn(m):
+            s = m["binary"]["settings"]
+            for k in ("mixed.admin", "mixed.admin_measured", "mixed.admin_total", "mixed.position", "admin_actions"):
+                del s[k]
+            s["mixed.bp"] = ",".join(map(str, bp))
+            s["mixed.bp_measured"] = ",".join(str(b // 2) for b in bp)
+            hot["bp"] = max(int(s["sent"]) - 1, 0) // (TERM // 96) if hot_bp is None else hot_bp
+            s["backpressured"] = str(hot["bp"])
+        run.edit(MIXED, fn)
+
+        def row(r):
+            r[COLUMNS.index("backpressured")] = str(hot["bp"])
+        run.rows(lambda d: d["label"] == "2a:aeron-kernel" and d["rep"] == "1", row)
+        return run, fairness.check(run.run)
+
+    def test_legacy_counts_equal_to_the_term_rotations_are_admin_actions(self):
+        from transport_points import flags, mixed_offers
+        run, vs = self.legacy([ROTATIONS] * BG)
+        self.assertEqual([str(v) for v in vs], [])
+        [p] = [p for p in read_points(run.run) if MIXED(p.manifest)]
+        self.assertNotIn("back-pressured", flags(p))
+        self.assertEqual(mixed_offers(p)["how"], "term rotations")
+
+    def test_legacy_counts_beyond_the_term_rotations_stay_backpressure(self):
+        from transport_points import flags, mixed_offers
+        run, vs = self.legacy([ROTATIONS] * 4 + [ROTATIONS + 6] + [ROTATIONS] * 3)
+        self.assertEqual({v.rule for v in vs}, {"backpressure"}, [str(v) for v in vs])
+        [p] = [p for p in read_points(run.run) if MIXED(p.manifest)]
+        self.assertIn("back-pressured", flags(p))
+        self.assertGreater(mixed_offers(p)["bp"], 0)
+
+    def test_legacy_hot_count_beyond_its_rotations_stays_backpressure(self):
+        run, vs = self.legacy([ROTATIONS] * BG, hot_bp=500)
+        self.assertEqual({v.rule for v in vs}, {"backpressure"}, [str(v) for v in vs])
+
+    def test_backpressure_with_long_duty_cycles_is_explained_and_flagged(self):
+        from transport_points import flags
+        def fn(m):
+            m["binary"]["settings"]["mixed.bp_measured"] = "0,0,0,0,5,0,0,0"
+            m["pong"]["settings"]["driver.cycle.receiver.exceeded"] = "40"
+        run, vs = self.broken(fn)
+        self.assertNotIn("backpressure", {v.rule for v in vs}, [str(v) for v in vs])
+        [p] = [p for p in read_points(run.run) if MIXED(p.manifest)]
+        self.assertIn("back-pressured", flags(p))
+        self.assertEqual(fairness.mixed_backpressure(p)[1], ["b receiver cycles over threshold 40"])
+
+    def test_a_saturated_invoking_thread_explains_backpressure(self):
+        def fn(m):
+            s = m["binary"]["settings"]
+            s["mixed.bp_measured"] = "1,0,0,0,0,0,0,0"
+            s["mixed.invoker.busy_calls"], s["mixed.invoker.duty_calls"] = "95", "100"
+        run, vs = self.broken(fn)
+        self.assertNotIn("backpressure", {v.rule for v in vs}, [str(v) for v in vs])
+
+    def test_a_busy_thread_beyond_the_budget(self):
+        # (the fixture's hot CPUs all taken: placement flags where it ran too)
+        def fn(m):
+            for sample in m["threads"]["a"]:
+                sample.append({"tid": 999, "comm": "local-io", "cpu": 14, "util": 0.97})
+        run, vs = self.broken(fn)
+        self.assertTrue(any(v.rule == "budget" and "a ran 5 busy threads, its budget 4" in v.detail for v in vs),
+                        [str(v) for v in vs])
+
+    def test_gap_spinners_are_not_the_arms(self):
+        def fn(m):
+            for sample in m["threads"]["a"]:
+                sample.append({"tid": 999, "comm": "gapspin", "cpu": 14, "util": 1.0})
+        run, vs = self.broken(fn)
+        self.assertNotIn("budget", {v.rule for v in vs}, [str(v) for v in vs])
+
+    def test_fewer_busy_threads_than_the_budget_is_a_note(self):
+        def fn(m):
+            for sample in m["threads"]["b"]:
+                sample[:] = sample[1:]
+        run = self.mixed()
+        run.edit(MIXED, fn)
+        notes = []
+        self.assertEqual([str(v) for v in fairness.check(run.run, notes=notes)], [])
+        self.assertTrue(any(n.rule == "budget" and "b ran 3 busy threads, its budget 4" in n.detail for n in notes))
+
+    def test_the_analysis_shows_the_mixed_table_and_checklist(self):
+        run = self.mixed()
+        # a floor of the kernel's stack in the run: mio-udp's points
+        out = io.StringIO()
+        with redirect_stdout(out):
+            analyse.transport([run.run])
+        text = out.getvalue()
+        self.assertIn("## Mixed load: hot stream beside a background mix", text)
+        self.assertIn("budget a/b (seen)", text)
+        self.assertIn("### Adversarial checklist, per arm", text)
+        self.assertIn("- **aeron-kernel**", text)
+        self.assertIn("every message accounted for (sent = read by every subscription = echoed = back)? yes", text)
+        self.assertIn("A/A agrees? its repeat differs by up to", text)
+        self.assertIn("back-pressure? none in any measured window (", text)
+        self.assertIn("admin actions, term rotations: not back-pressure)", text)
+
+    def test_the_analysis_names_a_broken_rule_in_the_checklist(self):
+        def fn(m):
+            m["nic_counters"]["a"]["allowance_exceeded"] = 3
+        run, _ = self.broken(fn)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            analyse.transport(["--show-invalid", run.run])
+        text = out.getvalue()
+        self.assertIn("NIC counters agree, no allowance exceeded, no receive drops? no: 1 violation", text)
+        self.assertRegex(text, r"\| aeron-kernel .*\| mixed-nic")
+
+
 class SpikesLabelTest(unittest.TestCase):
     """One point, its max at a known time, one source of evidence at a time."""
     START = fx.BASE_S + 20
@@ -594,13 +1090,15 @@ class SpikesLabelTest(unittest.TestCase):
             f.write("kind,start_ns,end_ns,cpu,detail\n" + "".join(l + "\n" for l in lines))
 
     def cause(self, achieved=10_000, late=0, transport="udp"):
+        return spikes.transport_cause(self.folder, self.point(achieved, late, transport))
+
+    def point(self, achieved=10_000, late=0, transport="udp"):
         row = dict.fromkeys(COLUMNS)
         row.update(p50=self.P50, max=self.MAX, rate=10_000, achieved=achieved, scheduled=300_000, late=late,
                    samples=300_000)
         manifest = {"transport": transport, "cpus": {h: {"housekeeping": [0], "irq": [2], "hot": [4, 6]}
                                                      for h in "ab"}}
-        point = spikes.TransportPoint(set="2a", tag=self.tag, row=row, manifest=manifest, hosts=("a", "b"))
-        return spikes.transport_cause(self.folder, point)
+        return spikes.TransportPoint(set="2a", tag=self.tag, row=row, manifest=manifest, hosts=("a", "b"))
 
     def test_host_pause_from_the_gap_spinner(self):
         with open(os.path.join(self.folder, "b-diag-2a.log"), "w") as f:
@@ -612,13 +1110,80 @@ class SpikesLabelTest(unittest.TestCase):
             f.write(f"== gapspin\n{(self.mid + 10_000) / 1e9:.6f} 20\n")
         self.assertTrue(self.cause().startswith("unexplained"))
 
+    def session(self, *phases, arms=("mio-udp", "aeron-kernel", "aa"), lat=0.012, scatter=40):
+        """A session's maxima (spikes.session_periodic): for each phase
+        (seconds into a minute) one max a minute, the arms in turn, `lat`
+        long; then `scatter` maxima at phases spread over the minute."""
+        out = []
+        for i, ph in enumerate(phases):
+            t0 = fx.BASE_S + 600 + i * 60 + ph
+            out.append((t0, t0 + lat, arms[i % len(arms)], f"p{i}"))
+        for j in range(scatter):
+            t0 = fx.BASE_S + 7200 + j * 61.37 + (j * 7.919) % 60
+            out.append((t0, t0 + 0.0002, arms[j % len(arms)], f"s{j}"))
+        return spikes.session_periodic(out)
+
     def test_per_minute_cluster(self):
         self.write_spikes(due=30.0)  # :50 of the minute
-        self.assertTrue(self.cause().startswith("per-minute stall"), self.cause())
+        # the session's maxima recur in :49-:51 well above chance
+        got = spikes.transport_cause(self.folder, self.point(), self.session(49.2, 50.7, 51.4, 49.9, 50.1, 51.8, 49.5, 50.4, 51.1, 50.9))
+        self.assertTrue(got.startswith("per-minute stall"), got)
+
+    def test_per_minute_window_alone_is_no_evidence(self):
+        # one max in :49-:51, the session's others anywhere: chance
+        self.write_spikes(due=30.0)
+        self.assertTrue(self.cause().startswith("unexplained"), self.cause())
+        got = spikes.transport_cause(self.folder, self.point(), self.session(50.0))
+        self.assertTrue(got.startswith("unexplained"), got)
 
     def test_outside_the_per_minute_window(self):
         self.write_spikes(due=33.0)  # :53
-        self.assertTrue(self.cause().startswith("unexplained"))
+        got = spikes.transport_cause(self.folder, self.point(), self.session(49.2, 50.7, 51.4, 49.9, 50.1, 51.8, 49.5, 50.4, 51.1, 50.9))
+        self.assertTrue(got.startswith("unexplained"), got)
+
+    def test_periodic_path_outage(self):
+        # c7i: once a minute at one second on a VM pair, 4 to 16 ms, across
+        # arms and floors; this point's max starts there (:26 of the minute)
+        self.MAX = 9_000_000
+        self.write_spikes(due=6.0)
+        s = self.session(*[25.999 + k * 0.001 for k in range(8)])
+        self.assertEqual([c["second"] for c in s["clusters"]], [26], s)
+        self.assertFalse(s["minute"])
+        got = spikes.transport_cause(self.folder, self.point(), s)
+        self.assertEqual(got, "periodic path outage (second :26)")
+
+    def test_periodic_outage_elsewhere_explains_nothing_here(self):
+        self.write_spikes(due=13.0)  # :33
+        got = spikes.transport_cause(self.folder, self.point(), self.session(*[26.0] * 8))
+        self.assertTrue(got.startswith("unexplained"), got)
+
+    def test_a_periodic_cluster_in_the_minute_window_keeps_the_azure_label(self):
+        self.write_spikes(due=30.0)  # :50
+        s = self.session(*[50.0] * 8)
+        got = spikes.transport_cause(self.folder, self.point(), s)
+        self.assertTrue(got.startswith("per-minute stall"), got)
+
+    def test_no_periodic_cluster_from_scattered_maxima(self):
+        s = self.session(scatter=80)
+        self.assertEqual((s["clusters"], s["minute"]), ([], False))
+
+    def test_no_periodic_cluster_from_too_few(self):
+        self.assertEqual(self.session(*[25.0] * 3)["clusters"], [])
+
+    def test_no_periodic_cluster_from_one_arm(self):
+        self.assertEqual(self.session(*[25.0] * 10, arms=("mio-udp",))["clusters"], [])
+
+    def test_two_periodic_clusters(self):
+        s = self.session(*([35.29] * 6 + [44.24] * 7), lat=0.004)
+        self.assertEqual(sorted(c["second"] for c in s["clusters"]), [35, 44], s)
+
+    def test_recurring_maxima_under_a_millisecond_are_no_outage(self):
+        # a sub-millisecond max at one phase a minute is not the path's
+        # outage: left unexplained
+        self.assertEqual(self.session(*[26.0] * 10, lat=0.0003)["clusters"], [])
+        self.write_spikes(due=6.0)
+        got = spikes.transport_cause(self.folder, self.point(), self.session(*[26.0] * 8))
+        self.assertTrue(got.startswith("unexplained"), got)  # this point's max: 200 µs
 
     def test_irq_on_a_hot_cpu(self):
         self.events("a", f"irq,{self.mid - 50_000},{self.mid + 50_000},4,mana_q1")
@@ -936,6 +1501,117 @@ class A2SessionTest(unittest.TestCase):
             "I/O too (not measured here)"])
 
 
+def smt_on(run):
+    """The run as an SMT-on session's (a sets file's `smt on`): the declared
+    SMT state, read back at every point, and each hot CPU's SMT sibling (CPU
+    + 100) its neighbour in the map's hot list, every sibling idle."""
+    write(run.path("transport-settings.env"), read(run.path("transport-settings.env"))
+          + f"shared.{fairness.SMT_KNOB}=1\n")
+
+    def on(m):
+        for h, c in m["cpus"].items():
+            c["hot"] = [x for cpu in c["hot"] for x in (cpu, cpu + 100)]
+        for st in m["settings"].values():
+            st[fairness.SMT_KNOB] = "1"
+
+    run.edit(lambda m: True, on, first=False)
+
+
+def sqpoll_arm(cpu, on_cpu=None):
+    """fn(manifest): ONE's point as a uring-sqpoll arm with --sqpoll-cpu cpu,
+    its SQPOLL thread spinning on on_cpu (default cpu; False: none sampled)."""
+    def fn(m):
+        m["runner"] = {"args": f"--impl ergon --backend uring-sqpoll --sqpoll-cpu {cpu}"}
+        if on_cpu is False:
+            return
+        for samples in m["threads"].values():
+            for sample in samples:
+                sample.append({"tid": 700, "comm": "iou-sqp-650", "cpu": cpu if on_cpu is None else on_cpu,
+                               "util": 1.0})
+    return fn
+
+
+class SmtTest(unittest.TestCase):
+    """A session that declares SMT on: T10 reported, not refused; every busy
+    thread's SMT sibling idle, or running a uring-sqpoll arm's own SQPOLL
+    thread; a uring-sqpoll arm's SQPOLL thread on its --sqpoll-cpu."""
+
+    T10 = "T10 warn: SMT is on: on x86 a Kubernetes `cpu: 2` is one physical core, not two"
+
+    def test_an_smt_on_run_with_idle_siblings_is_clean(self):
+        run = Run(self)
+        smt_on(run)
+        self.assertEqual([str(v) for v in fairness.check(run.run)], [])
+
+    def test_t10_is_reported_only_where_the_run_declares_smt_on(self):
+        for declared in (False, True):
+            run = Run(self)
+            if declared:
+                smt_on(run)
+            for set_ in ("2a", "3b", "2b"):
+                for h in ("a", "b"):
+                    path = run.path(set_, f"{h}-hostcheck.txt")
+                    if os.path.exists(path):
+                        write(path, read(path).replace("T10 ok: SMT is off", self.T10))
+            os.makedirs(run.path("logs"))
+            write(run.path("logs", "2a-r1-mio-udp-10000.out"), f"ergon-io warning: {self.T10}. Fix: off\n")
+            run.edit(ONE, lambda m: m.update(runner={"point": "2a-r1-mio-udp-10000"}))
+            self.assertEqual(run.rules(), [] if declared else ["hostcheck"])
+
+    def test_a_busy_sibling_breaks_smt(self):
+        run = Run(self)
+        smt_on(run)
+        # mio-udp's busy0 is on CPU 4: its sibling, 104, runs something
+        run.edit(ONE, lambda m: m["threads"]["b"][1].append({"tid": 9, "comm": "gapspin", "cpu": 104, "util": 0.5}))
+        found = [str(v) for v in fairness.check(run.run)]
+        self.assertEqual(found, ["smt: 2a: 2a-mio-udp-64-1-r10000: sample 1: b gapspin (9) at 50% on CPU 104, the "
+                                 "SMT sibling of busy0's CPU 4: the sibling stays idle"])
+
+    def test_gap_spinners_filling_a_core_the_point_left_idle_are_clean(self):
+        run = Run(self)
+        smt_on(run)
+        # the runner's gap spinners on both threads of a core no arm uses
+        # (CPU 10 and its sibling 110): neither is a measured busy thread
+        run.edit(ONE, lambda m: m["threads"]["b"][1].extend(
+            {"tid": t, "comm": "gapspin", "cpu": c, "util": 1.0} for t, c in ((9, 10), (10, 110))))
+        self.assertEqual([str(v) for v in fairness.check(run.run)], [])
+
+    def test_without_smt_on_the_sibling_is_not_checked(self):
+        run = Run(self)
+        run.edit(ONE, lambda m: m["threads"]["b"][1].append({"tid": 9, "comm": "sshd", "cpu": 104, "util": 0.5}))
+        self.assertEqual(run.rules(), [])
+
+    def test_the_sqpoll_thread_on_the_loops_sibling_is_clean(self):
+        run = Run(self)
+        smt_on(run)
+        run.edit(ONE, sqpoll_arm(104))
+        self.assertEqual([str(v) for v in fairness.check(run.run)], [])
+
+    def test_another_thread_beside_the_sqpoll_thread_breaks_smt(self):
+        run = Run(self)
+        smt_on(run)
+        run.edit(ONE, sqpoll_arm(104))
+        run.edit(ONE, lambda m: m["threads"]["a"][0].append({"tid": 9, "comm": "kworker/104:1", "cpu": 104,
+                                                            "util": 0.2}))
+        self.assertIn("smt", run.rules())
+
+    def test_the_sqpoll_thread_off_its_cpu_breaks_sqpoll(self):
+        run = Run(self)
+        smt_on(run)
+        run.edit(ONE, sqpoll_arm(104, on_cpu=108))
+        found = [str(v) for v in fairness.check(run.run)]
+        self.assertEqual(sorted({v.split(":")[0] for v in found}), ["sqpoll"], "\n".join(found))
+        self.assertIn("sqpoll: 2a: 2a-mio-udp-64-1-r10000: a: no SQPOLL thread (iou-sqp-*) busy on --sqpoll-cpu 104 "
+                      "in any sample", found)
+        self.assertIn("sqpoll: 2a: 2a-mio-udp-64-1-r10000: sample 0: a iou-sqp-650 (700) at 100% on CPU 108, not on "
+                      "--sqpoll-cpu 104", found)
+
+    def test_an_sqpoll_thread_never_sampled_breaks_sqpoll_smt_off_too(self):
+        run = Run(self)
+        run.edit(ONE, sqpoll_arm(10, on_cpu=False))
+        self.assertEqual(run.rules(), ["sqpoll"])
+
+
 class AnalyseTest(unittest.TestCase):
     def analyse(self, *args):
         out = io.StringIO()
@@ -1103,6 +1779,23 @@ class EventsTest(unittest.TestCase):
         self.assertTrue(notes[0].startswith("events unavailable: no events log"), notes)
         rows, notes = te.events(self.log(notes=("events: trace unavailable: no tracefs at /sys/kernel/tracing",)))
         self.assertIn("trace unavailable: no tracefs at /sys/kernel/tracing", notes)
+
+
+class AgentCycleEventsTest(unittest.TestCase):
+    """transport_events.py: the 1 Hz sampler's driver duty-cycle counters
+    (counters loss' info-cycle-* keys) as events: cycles over the threshold
+    in a second, and a second where an agent's longest cycle rose."""
+
+    def test_an_agents_stall_placed_in_its_second(self):
+        import transport_events as te
+        t0 = 1_800_000_000 * 10**9
+        a = "info-cycle-conductor-max-ns=50000;info-cycle-sender-max-ns=9000;info-cycle-receiver-max-ns=8000"
+        line = lambda t, mx, ex: (f"t={t} tc=- tcp=- aeron=naks-sent=0;{a.replace('9000', str(mx))};"
+                                  f"info-cycle-sender-exceeded={ex};info-cycle-conductor-exceeded=0;"
+                                  "info-cycle-receiver-exceeded=0")
+        rows = te.sample_events([line(t0, 9000, 0), line(t0 + 10**9, 9000, 0), line(t0 + 2 * 10**9, 1_100_000, 3)])
+        self.assertEqual(rows, [("agent-cycle", t0 + 10**9, t0 + 2 * 10**9, None, "3"),
+                                ("agent-cycle-max", t0 + 10**9, t0 + 2 * 10**9, None, "sender 1100000")])
 
 
 class TuneTest(unittest.TestCase):

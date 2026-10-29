@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The transport latency suite (azure/lab.sh LAB_SUITE=transport): the matrix
+# The transport latency suite (azure/lab.sh and aws/lab.sh LAB_SUITE=transport): the matrix
 # (transport-matrix.tsv, plus LAB_ARMS_FILE's rows) as rounds of points on
 # the two VMs of one pair session (LAB_PAIR a or b). Each rep's round at a
 # netem level runs the set's arms in an order drawn from its own seed (the
@@ -7,7 +7,8 @@
 # first arm again, @AA=1) among them. Each point is one run of the arm's
 # bench binary (transport-cli.md) at one load: for two-host arms its pong on
 # host b (the ping starts once it says ready), then its ping on host a;
-# one-host arms --role local. The first load
+# one-host arms --role local; sink arms --role local on host a, each run with
+# a sink on host b (started before it, stopped after it). The first load
 # of an arm and stream count warms up 30 s, each later one 5 s (the switch).
 # Around every point, on each host it uses: the IRQ counts (deltas on the
 # isolated CPUs), a thread placement sample mid-window, and under netem the
@@ -31,8 +32,11 @@
 #                         durations; then transport_collect.py, fairness.py and
 #                         analyse.py --transport (test/transport-smoke-docker.sh runs it)
 #
-# Sourced (azure/lab.sh, the tests): functions only, among them
+# Sourced (azure/lab.sh, aws/lab.sh, the tests): functions only, among them
 # transport_prepare and transport_remote, the operator machine's side.
+# tr_cloud (azure unless the caller sets it; aws/lab.sh sets aws): the cloud
+# every mode_check judges a point's mode for (an F-Stack arm runs on AWS
+# alone).
 #
 # Durations (env, else the plan's): TRANSPORT_WARMUP_S (30), TRANSPORT_POINT_S
 # (30), TRANSPORT_SWITCH_S (5), TRANSPORT_READY_TIMEOUT_S (60: the longest the
@@ -77,6 +81,8 @@ tr_plan() {
 }
 
 # tr_check <pair> [<arms file>]: 0 and the pair's point count, or 2 saying why
+# (every mode judged for tr_cloud and tr_arch: x86_64 unless the caller sets
+# arm64, aws/lab.sh on Graviton)
 tr_check() {
     local pair=$1 m why n
     tr_arms_file=${2:-}
@@ -87,10 +93,13 @@ tr_check() {
     local modes
     modes=$(tr_plan modes "$pair") || return 2
     for m in $modes; do
-        why=$(mode_check "$m" remote x86_64 azure '' 2>&1) || { echo "$why" >&2; return 2; }
+        why=$(mode_check "$m" remote "${tr_arch:-x86_64}" "${tr_cloud:-azure}" '' 2>&1) || { echo "$why" >&2; return 2; }
     done
-    for m in "kernel-busy$TR_AERON_MODE_SUFFIX" "dpdk$TR_AERON_MODE_SUFFIX"; do
-        why=$(mode_check "$m" remote x86_64 azure '' 2>&1) || { echo "TR_AERON_MODE_SUFFIX: $why" >&2; return 2; }
+    local drivers="kernel-busy dpdk"
+    # the Onload arms' media driver: AWS's alone (modes.sh)
+    [[ ${tr_cloud:-azure} != aws ]] || drivers+=" onload"
+    for m in $drivers; do
+        why=$(mode_check "$m$TR_AERON_MODE_SUFFIX" remote "${tr_arch:-x86_64}" "${tr_cloud:-azure}" '' 2>&1) || { echo "TR_AERON_MODE_SUFFIX: $why" >&2; return 2; }
     done
     # the bench ports against the wildcard ranges and Linux's default
     # ephemeral range (each host's own is checked at transport-tune)
@@ -99,8 +108,99 @@ tr_check() {
     n=$(tr_plan count "$pair" "${reps:-5}") || return 2
     ((n > 0)) || { echo "LAB_PAIR $pair: no point to run in $(tr_files "$tr_arms_file" | tr '\n' ' ')" >&2; return 2; }
     tr_declared_check || return 2
+    tr_driver_modes_check "$pair" || return 2
     tr_huge_check "$pair" || return 2
+    tr_smt_check "$pair" || return 2
     echo "$n"
+}
+
+# tr_smt_check <pair>: the session's SMT (a sets file's `smt` row,
+# transport_plan.py smt) fits its arms: with `smt on` every arm a two-host
+# socket arm (the CPU map lists each isolated core whole, its threads
+# neighbours: a media driver's threads or a one-host arm's two ends would
+# land on one core's two hyperthreads); {loop_sibling} only with it. 2
+# saying why not
+tr_smt_check() {
+    local smt a b st k rest
+    smt=$(tr_plan smt) || return 2
+    for a in $(tr_plan rounds "$1" 1 1 | cut -f9 | tr ',' '\n' | sed 's/@.*//' | sort -u); do
+        read -r b st k rest <<<"$(tr_plan arm "$a")"
+        if [[ $smt == on ]]; then
+            [[ $st == sockets && $k == two ]] || {
+                echo "smt on: arm $a ($b, setup $st, hosts $k): an SMT-on session runs two-host socket arms only (each isolated core whole in the CPU map: a media driver's threads or a one-host arm's two ends would share a core)" >&2
+                return 2
+            }
+        elif [[ " ${rest:-} " == *"{loop_sibling}"* ]]; then
+            echo "arm $a: {loop_sibling} (the loop CPU's SMT sibling) needs a sets file with smt on" >&2
+            return 2
+        fi
+    done
+}
+
+# tr_cpu_arg <arg> <arm CPUs>: one arm argument with {next_core} (the first
+# CPU of the arm's next isolated core: the second of its CPUs with SMT off,
+# the third with it on) and {loop_sibling} (the loop CPU's SMT sibling, the
+# second of its CPUs: SMT on only, tr_smt_check) replaced; the loop's CPU is
+# the first (tr_role_cpus ping and pong). The map is the same on both hosts
+# (tr_run), so the CPU is the ping's and the pong's alike
+tr_cpu_arg() {
+    local a=$1 c
+    IFS=, read -ra c <<<"$2"
+    if [[ ${smt:-off} == on ]]; then
+        a=${a//\{loop_sibling\}/${c[1]:-}}
+        a=${a//\{next_core\}/${c[2]:-}}
+    else
+        a=${a//\{next_core\}/${c[1]:-}}
+    fi
+    echo "$a"
+}
+
+# tr_uring_sqpoll: 0 when the current arm runs ergon-io's uring-sqpoll
+# (tcp_lat --backend uring-sqpoll): no SO_BUSY_POLL (its SQPOLL thread polls
+# the NIC; ergon-io refuses the option), so no busy_read_us knob
+tr_uring_sqpoll() { [[ " ${args[*]:-} " == *" --backend uring-sqpoll "* ]]; }
+
+# tr_sqpoll_cpu: the current arm's SQPOLL CPU (--sqpoll-cpu's), or nothing
+tr_sqpoll_cpu() {
+    local i
+    for ((i = 0; i < ${#args[@]}; i++)); do
+        [[ ${args[i]} == --sqpoll-cpu ]] && { echo "${args[i + 1]:-}"; return 0; }
+    done
+    return 0
+}
+
+# tr_smt_partner <cpu>: under smt on, the map's other thread of <cpu>'s core
+# (each isolated core whole and its threads neighbours: transport_cpu_map),
+# else nothing
+tr_smt_partner() {
+    [[ ${smt:-off} == on ]] || return 0
+    local c i
+    IFS=, read -ra c <<<"$iso"
+    for ((i = 0; i < ${#c[@]}; i++)); do
+        [[ ${c[i]} == "$1" ]] && { echo "${c[i ^ 1]:-}"; return 0; }
+    done
+    return 0
+}
+
+# tr_driver_modes_check <pair>: each Aeron arm of the pair's rounds on a
+# media driver (setup kernel or dpdk) has a driver mode modes.sh's
+# mode_check passes (its threading and placement knobs: aeron_threading,
+# aeron_driver), and INVOKER only with the driver embedded (the binary's
+# measuring thread runs it: aeron_lat --driver invoker); 2 saying why not
+tr_driver_modes_check() {
+    local a m why arm bin setup args
+    for a in $(tr_plan rounds "$1" 1 1 | cut -f9 | tr ',' '\n' | sed 's/@.*//' | sort -u); do
+        read -r bin setup _ args <<<"$(tr_plan arm "$a" 2>/dev/null)"
+        [[ $bin == aeron_lat && ($setup == kernel || $setup == dpdk) ]] || continue
+        read -ra args <<<"${args:-}"
+        arm=$a
+        if [[ $(tr_knob aeron_threading 2>/dev/null) == INVOKER && $(tr_knob aeron_driver 2>/dev/null) != embedded ]]; then
+            echo "arm $a: aeron_threading INVOKER with aeron_driver $(tr_knob aeron_driver): an INVOKER driver is the binary's own (aeron_driver embedded)" >&2
+            return 2
+        fi
+        m=$(tr_driver_mode) || { echo "arm $a: its driver mode: see above" >&2; return 2; }
+        why=$(mode_check "$m" remote "${tr_arch:-x86_64}" "${tr_cloud:-azure}" '' 2>&1) || { echo "arm $a: driver mode $m: $why" >&2; return 2; }
+    done
 }
 
 # tr_declared <arm>: "<twin> <knob> <value>", the arm's TR_DECLARED entry
@@ -135,6 +235,17 @@ tr_declared_check() {
             { echo "TR_DECLARED $a: $k is not a per-arm knob of $bin (transport-settings.env's list)" >&2; return 2; }
         [[ $k != aeron_page || $v == 4096 || $v == 2097152 ]] ||
             { echo "TR_DECLARED $a: aeron_page $v: 4096 (TR_AERON_DIR, tmpfs) or 2097152 (TR_AERON_HUGE_DIR, 2 MiB hugetlbfs)" >&2; return 2; }
+        [[ $k != aeron_threading || $v =~ ^(DEDICATED|SHARED_NETWORK|SHARED|INVOKER)$ ]] ||
+            { echo "TR_DECLARED $a: aeron_threading $v: DEDICATED, SHARED_NETWORK, SHARED or INVOKER" >&2; return 2; }
+        [[ $k != aeron_driver || $v == external || $v == embedded ]] ||
+            { echo "TR_DECLARED $a: aeron_driver $v: external or embedded" >&2; return 2; }
+        # a twin may be declared another's (its knob then the twin's own
+        # difference on top): never round to itself
+        local seen=" $a $twin " t=$twin
+        while read -r t _ _ < <(tr_declared "$t"); do
+            [[ $seen != *" $t "* ]] || { echo "TR_DECLARED $a: its twins go round ($seen$t)" >&2; return 2; }
+            seen+="$t "
+        done
     done
 }
 
@@ -165,6 +276,16 @@ tr_huge_arms() {
         arm=$a
         [[ $(tr_knob aeron_page) != 2097152 ]] || echo "$a"
     done
+}
+
+# tr_setup_arms <setup> <rounds>: the arms of these rounds on that set-up,
+# one a line
+tr_setup_arms() {
+    local a
+    for a in $(cut -f9 <<<"$2" | tr ',' '\n' | sed 's/@.*//' | sort -u); do
+        [[ $(tr_plan arm "$a" 2>/dev/null | awk '{print $2}') == "$1" ]] && echo "$a"
+    done
+    return 0
 }
 
 # tr_aeron_dir: the current arm's Aeron directory (aeron_lat --aeron-dir,
@@ -208,11 +329,11 @@ tr_check_tune() {
             arm=$v
             [[ $setup == kernel || $setup == dpdk ]] || continue
             m=$(tr_driver_mode)
-            why=$(mode_check "$m" remote x86_64 azure '' 2>&1) || { echo "LAB_TUNE=1: variant $v's driver mode $m: $why" >&2; exit 2; }
+            why=$(mode_check "$m" remote x86_64 "${tr_cloud:-azure}" '' 2>&1) || { echo "LAB_TUNE=1: variant $v's driver mode $m: $why" >&2; exit 2; }
         done <"$tmpd/variants.txt"
         modes=$(tr_plan modes tune) || exit 2
         for m in $modes; do
-            why=$(mode_check "$m" remote x86_64 azure '' 2>&1) || { echo "$why" >&2; exit 2; }
+            why=$(mode_check "$m" remote x86_64 "${tr_cloud:-azure}" '' 2>&1) || { echo "$why" >&2; exit 2; }
         done
         tr_plan count tune 1
     ) || rc=2
@@ -220,7 +341,7 @@ tr_check_tune() {
     return $rc
 }
 
-# ---- the operator machine's side (azure/lab.sh, after lib.sh prepare_vms) ----
+# ---- the operator machine's side (azure/lab.sh and aws/lab.sh, after lib.sh prepare_vms) ----
 
 # transport_prepare: LAB_EXTRA_SRC's tree, LAB_ARMS_FILE and LAB_SETS_FILE on both VMs,
 # the bench binaries built (vm.sh transport-build), the CPU map's boot line,
@@ -245,12 +366,95 @@ transport_prepare() {
         fi
     done
     log "transport: bench binaries"
-    detached transport-build transport-build || die "transport-build failed"
-    log "transport: CPU map and its boot line"
-    both transport-isolate transport-isolate || die "transport-isolate failed"
+    # tr_build_extras, not tr_wants_setup fstack: ergon-io's fstack-spin and
+    # smoltcp-spin arms use setup sockets. tr_wants_fstack is what asks for
+    # vm.sh transport-build fstack, which sets TR_FSTACK_PREFIX and so builds
+    # fstack_spin_lat, wstls_fstack_lat and the smoltcp-dpdk binaries.
+    local extra onload=
+    extra=$(tr_build_extras)
+    if [[ $extra == *fstack* ]]; then
+        log "transport: F-Stack is built (fstack_lat, fstack_spin_lat, wstls_fstack_lat, and the smoltcp-dpdk binaries)"
+    fi
+    if [[ $extra == *onload* ]]; then
+        onload=onload
+        log "transport: an arm runs under Onload: OpenOnload $TR_ONLOAD_COMMIT is built and installed too (onload-build.sh)"
+    fi
+    # extra is empty, or the words fstack and onload
+    # shellcheck disable=SC2086
+    detached transport-build transport-build $extra || die "transport-build failed"
+    # the session's SMT (a sets file's `smt on`: kept on, each isolated core
+    # whole in the map; else off, as every other session)
+    local smt
+    smt=$(tr_arms_file=${arms_file:-} tr_sets_file=${sets_file:-} tr_plan smt) || die "the sets file's smt row does not parse"
+    log "transport: CPU map and its boot line (SMT $smt)"
+    both transport-isolate transport-isolate $onload "smt-$smt" || die "transport-isolate failed"
     reboot_both
     both transport-tune transport-tune || die "transport-tune failed: a setting did not hold ($out/{a,b}-transport-tune.log)"
     remote_access
+}
+
+# tr_wants_setup <setup>: 0 when a set of either pair runs an arm on that
+# set-up: fstack (vm.sh transport-build then builds F-Stack and fstack_lat)
+# or onload (OpenOnload built and installed, and vm.sh transport-isolate's
+# boot line takes what its in-kernel bpf() calls need)
+tr_wants_setup() {
+    local p m tr_arms_file=${arms_file:-} tr_sets_file=${sets_file:-}
+    for p in a b; do
+        while read -r m; do
+            [[ -n $m ]] || continue
+            [[ $(tr_plan arm "${m%%@*}" | awk '{print $2}') == "$1" ]] && return 0
+        done < <(tr_plan modes "$p" 2>/dev/null)
+    done
+    return 1
+}
+# tr_wants_fstack: a set-up named fstack, or an arm whose line is fstack_lat
+# with --impl ergon, or any arm whose arguments name --backend fstack-spin
+# (ergon-io's fstack-spin on setup sockets: the lab still builds F-Stack and
+# binds the NIC). The stock matrix has none of those, so it stays false.
+tr_wants_fstack() {
+    tr_wants_setup fstack && return 0
+    local names name line
+    local tr_arms_file=${arms_file:-} tr_sets_file=${sets_file:-}
+    names=$(tr_plan arms) || return 1
+    for name in $names; do
+        name=${name%%=*}
+        name=${name# }
+        [[ -n $name ]] || continue
+        line=$(tr_plan arm "$name") || continue
+        [[ $line == fstack_lat\ *\ --impl\ ergon* || $line == fstack_spin_lat\ *\ --impl\ ergon* || $line == *\ --backend\ fstack-spin* ]] && return 0
+    done
+    return 1
+}
+
+# tr_build_extras: the words transport_prepare passes to vm.sh transport-build.
+# `fstack` when tr_wants_fstack (setup fstack, or an ergon-io fstack-spin arm
+# on setup sockets). That build sets TR_FSTACK_PREFIX, so transport-build.sh
+# also links smoltcp-dpdk into wstls_lat, udp_lat and tcp_lat. `onload` when
+# an arm's set-up is onload. Empty for the stock matrix.
+tr_build_extras() {
+    local extra=
+    tr_wants_fstack && extra=fstack
+    if tr_wants_setup onload; then
+        extra=${extra:+$extra }onload
+    fi
+    printf '%s\n' "$extra"
+}
+
+# tr_bypass_arm: the current arm is ergon-io on DPDK (fstack_lat --impl ergon,
+# fstack_spin_lat, or --backend fstack-spin / smoltcp-spin). Host a then takes
+# fstack-up; host b stays on the kernel so netem can see the peer. Unset
+# bin/args is not one.
+tr_bypass_arm() {
+    local a=" ${args[*]:-} "
+    [[ ${bin:-} == fstack_spin_lat ]] && return 0
+    [[ ${bin:-} == fstack_lat && $a == *" --impl ergon "* ]] && return 0
+    [[ $a == *" --backend fstack-spin "* || $a == *" --backend smoltcp-spin "* ]] && return 0
+    return 1
+}
+
+# tr_loss_where: the sets file's `loss` row (both, or kernel-peer)
+tr_loss_where() {
+    tr_arms_file=${arms_file:-} tr_sets_file=${sets_file:-} tr_plan loss
 }
 
 # transport_remote <pair>: the session on VM a (transport.sh run), detached
@@ -300,6 +504,19 @@ tr_host() { if [[ $1 == a ]]; then echo "$A"; else echo "$B"; fi; }
 # tr_nic <a|b> <sender|receiver>: that host's data NIC address (vm.sh nics,
 # read once a session into nics-<host>.txt)
 tr_nic() { awk -v r="$2" '$1 == r {print $5}' "$dir/nics-$1.txt"; }
+# tr_nic_of <address> <field>: a field of the data NIC with that address on
+# either host (vm.sh nics: role iface vf mac address prefix pci)
+tr_nic_of() { awk -v ip="$1" -v f="$2" '$5 == ip {print $f; exit}' "$dir"/nics-[ab].txt; }
+# tr_gateway <address/prefix>: its subnet's router, the first address (AWS
+# and Azure both; host.sh subnet_gateway)
+tr_gateway() { python3 -c 'import ipaddress, sys; print(next(ipaddress.ip_network(sys.argv[1], strict=False).hosts()))' "$1"; }
+# tr_userspace_nic <own ip>: --source, PCI, prefix and gateway for a bypass
+# ping. The pong parses the same flags and does not start a stack.
+tr_userspace_nic() {
+    local own=$1 len
+    len=$(tr_nic_of "$own" 6)
+    echo "--source $own --pci $(tr_nic_of "$own" 7) --prefix-len $len --gateway $(tr_gateway "$own/$len")"
+}
 
 # tr_bin_path: the PATH a bench binary is found on, on either host
 tr_bin_path='"$HOME/ergon/target/release:$HOME/extra/bin:$PATH"'
@@ -318,25 +535,41 @@ tr_now() {
 # TR_PORT_BASE, stream i on port + i. aeron_lat --mode udp: --endpoint is the
 # pong's address (ping: the peer; pong: its own), --reply the ping's, and
 # --interface this end's own; --mode ipc and spy take no address (the binary
-# refuses one). udp_lat: --local own, --peer the other end (local: the
+# refuses one). aeron_lat --mode spy-udp: --endpoint and --reply are both the
+# sink's (local: the peer; its sink, pong: its own), the echoes TR_PORT_SPAN/2
+# above the pings; --interface as UDP's. udp_lat: --local own, --peer the other end (local: the
 # receiver binds --peer). tcp_lat: the pong (and local's receiver) listens,
 # the ping connects from its own address (--source: each data NIC has a
 # routing table its address selects, so the address is the NIC).
 # --busy-read-us goes to both socket impls: SO_BUSY_POLL on every socket
-# (mio by setsockopt, ergon-io's epoll-spin by its busy_poll_us key).
+# (mio by setsockopt, ergon-io's epoll-spin by its busy_poll_us key). Under
+# Onload (setup onload) 0, and no TCP timers: Onload spins itself
+# (EF_POLL_USEC), its SO_BUSY_POLL is a spin time that reads back rounded
+# through the CPU's clock rate (the binaries refuse that), and it has no
+# TCP_RTO_MIN_US or TCP_DELACK_MAX_US (TR_ONLOAD_ENV's EF_RFC_RTO_MIN is its
+# minimum RTO)
 tr_bin_args() {
     local b=$1 role=$2 own=$3 peer=$4 port=$TR_PORT_BASE out=
     shift 4
     local args=" $* " busy= sb qa
     busy="--busy-read-us $(tr_knob busy_read_us) "
+    [[ ${setup:-} != onload ]] || busy="--busy-read-us 0 "
+    ! tr_uring_sqpoll || busy="--busy-read-us 0 "
     sb=$(tr_knob sockbuf)
     qa="--quickack-per-read"
     [[ $(tr_knob quickack_per_read) == off ]] && qa+=" false"
     case $b in
     mpsc_lat) out="--capacity $(tr_knob capacity)" ;;
     aeron_lat)
-        out="--aeron-dir $(tr_aeron_dir) --driver external --driver-busy-threads $(tr_driver_busy) --term-length $(tr_knob term_length) --mtu $TR_MTU"
-        if [[ $args == *" --mode udp "* ]]; then
+        out="--aeron-dir $(tr_aeron_dir) --driver $(tr_aeron_driver) --driver-busy-threads $(tr_driver_busy) --term-length $(tr_knob term_length) --mtu $TR_MTU"
+        if [[ $args == *" --mode spy-udp "* ]]; then
+            # both channels to the sink's address (DPDK: no kernel interface)
+            local sk=$peer
+            [[ $role == pong ]] && sk=$own
+            out="--endpoint $sk:$port --reply $sk:$((port + TR_PORT_SPAN / 2)) $out"
+            [[ ${setup:-} == dpdk ]] || out="${out/ --aeron-dir / --interface $own --aeron-dir }"
+            out+=" --wire $(tr_wire)"
+        elif [[ $args == *" --mode udp "* ]]; then
             local ep=$peer rp=$own
             [[ $role == pong ]] && ep=$own rp=$peer
             # the kernel's path: the data NIC by its address; DPDK's transport
@@ -355,17 +588,55 @@ tr_bin_args() {
             else
                 out="--endpoint $ep:$port --reply $rp:$port --interface $own $out"
             fi
+            out+=" --wire $(tr_wire)"
         fi
+        ;;
+    floor)
+        # the raw floor (setup dpdk-raw): aeron_lat --mode udp's addresses on
+        # DPDK (the echo back to the ping host's receiver NIC, where DPDK
+        # receives), none of Aeron's settings
+        local ep=$peer rp
+        [[ $role == pong ]] && ep=$own
+        rp=$(tr_nic a receiver)
+        out="--endpoint $ep:$port --reply $rp:$port"
         ;;
     udp_lat)
         out="--local $own:$port --peer $peer:$port ${busy}--rcvbuf $sb --sndbuf $sb --epoll-events $(tr_knob epoll_events)"
         [[ $args == *" --impl ergon "* ]] && out+=" --datagram-burst $(tr_knob datagram_burst)"
+        # smoltcp's RTO floor is not a kernel socket option. epoll UDP stays
+        # without it, and without a PCI address.
+        if [[ $args == *" --backend smoltcp-spin "* ]]; then
+            out+=" $(tr_userspace_nic "$own") --rto-min-us $(tr_knob rto_min_us)"
+        fi
         ;;
     tcp_lat)
         local a="--source $own --connect $peer:$port"
         [[ $role == pong ]] && a="--listen $own:$port"
         [[ $role == local ]] && a="--source $own --listen $peer:$port"
-        out="$a --nodelay $qa $(tr_timer_args)${busy}--rcvbuf $sb --sndbuf $sb --epoll-events $(tr_knob epoll_events)"
+        local timers=
+        [[ ${setup:-} == onload ]] || timers=$(tr_timer_args)
+        out="$a --nodelay $qa ${timers}${busy}--rcvbuf $sb --sndbuf $sb --epoll-events $(tr_knob epoll_events)"
+        ;;
+    fstack_lat | fstack_spin_lat)
+        # TCP over F-Stack: tcp_lat's addresses (the F-Stack interface takes
+        # the address, so the NIC: its PCI address, prefix and gateway from
+        # vm.sh nics) and socket buffers; no busy poll, epoll or kernel TCP
+        # timers (F-Stack polls, and has none of them: the binary refuses
+        # them). The kernel TCP arms' TCP_NODELAY and quickack on every read
+        # are F-Stack's TCP_NODELAY and net.inet.tcp.delayed_ack=0: every
+        # segment acknowledged at once
+        local a="--source $own --connect $peer:$port" pci len
+        [[ $role == pong ]] && a="--listen $own:$port"
+        pci=$(tr_nic_of "$own" 7) len=$(tr_nic_of "$own" 6)
+        out="$a --pci $pci --prefix-len $len --gateway $(tr_gateway "$own/$len") --nodelay --delayed-ack false --rcvbuf $sb --sndbuf $sb"
+        # --impl ergon selects ergon-io's fstack-spin. The minimum RTO is
+        # FreeBSD's net.inet.tcp.rexmit_min (the binary rounds microseconds
+        # up to milliseconds). The direct libfstack path refuses the flag,
+        # so it is added only when the arm asked for ergon. --impl itself
+        # stays in the arm arguments (tr_alt_args), once.
+        if [[ $args == *" --impl ergon "* ]]; then
+            out+=" --rto-min-us $(tr_knob rto_min_us)"
+        fi
         ;;
     *)
         # an arms file's binary: its addresses, and on the kernel's path
@@ -373,11 +644,19 @@ tr_bin_args() {
         # arms get, so it cannot run with other ones (transport-cli.md)
         out="--local $own:$port --peer $peer:$port"
         [[ ${setup:-} == sockets ]] && out+=" --busy-read-us $(tr_knob busy_read_us) --rcvbuf $sb --sndbuf $sb --nodelay $qa $(tr_timer_args)"
+        if [[ $args == *" --backend smoltcp-spin "* || $args == *" --backend fstack-spin "* ]]; then
+            out+=" $(tr_userspace_nic "$own")"
+        fi
         out=${out% }
         ;;
     esac
     echo "$out"
 }
+
+# tr_wire: aeron_lat --wire for the current arm, the wire its set-up runs
+# the driver on (dpdk; the kernel's UDP for kernel and onload): the binary
+# checks its driver against it and labels the row by it, never by a guess
+tr_wire() { if [[ ${setup:-} == dpdk ]]; then echo dpdk; else echo kernel; fi; }
 
 # tr_other_nic <sender|receiver>: the other data NIC's role
 tr_other_nic() { if [[ $1 == sender ]]; then echo receiver; else echo sender; fi; }
@@ -407,10 +686,13 @@ tr_knob() {
         [[ -z $v ]] || { echo "$v"; return; }
     fi
     base=$(tr_base_arm)
-    if read -r twin dk dv < <(tr_declared "$base"); then
+    # a declared twin's own knob, else its twin's (a twin may be another's:
+    # dpdk-aeron-rel-invoker is dpdk-aeron-rel-emb's, which is dpdk-aeron-rel's)
+    local depth=0
+    while ((depth++ < 8)) && read -r twin dk dv < <(tr_declared "$base"); do
         [[ $dk == "$k" ]] && { echo "$dv"; return; }
         base=$twin
-    fi
+    done
     for kv in ${TR_ARM_KNOBS:-}; do
         [[ $kv == "$base:$k="* ]] && { echo "${kv#*=}"; return; }
     done
@@ -427,13 +709,17 @@ tr_knob() {
     aeron_so_rcvbuf) echo "$TR_AERON_SO_RCVBUF" ;;
     nak_delay_ns) echo "$TR_AERON_NAK_DELAY_NS" ;;
     rx_free_thresh) echo "$TR_DPDK_RX_FREE_THRESH" ;;
-    aeron_threading) echo "$TR_AERON_IPC_THREADING" ;;
+    aeron_threading) echo "$TR_AERON_THREADING" ;;
+    aeron_driver) echo "$TR_AERON_DRIVER" ;;
     capacity) echo "$TR_MPSC_CAPACITY" ;;
     aeron_page) echo "$TR_AERON_PAGE" ;;
+    irq_idle) echo "$TR_IRQ_IDLE" ;;
     # an Aeron arm's: its media driver's (kernel-busy defers, kernel not);
     # a socket arm's own default (transport-settings.env TR_SOCKET_NAPI_DEFER)
     napi_defer)
-        if [[ $bin == aeron_lat ]]; then
+        if [[ ${setup:-} == onload ]]; then
+            echo "$TR_ONLOAD_NAPI_DEFER"
+        elif [[ $bin == aeron_lat ]]; then
             if [[ $(tr_knob aeron_path) == kernel-busy ]]; then echo "$TR_AERON_NAPI_DEFER"; else echo 0; fi
         else
             echo "$TR_SOCKET_NAPI_DEFER"
@@ -456,13 +742,34 @@ tr_base_arm() {
 # its points' manifests (knob.<name>=<value>) for transport_collect.py
 tr_arm_knobs() {
     local a=" ${args[*]:-} "
+    # an Onload arm: the kernel arm's knobs Onload honours (no kernel busy
+    # poll, no kernel TCP timers or congestion control: Onload's own TCP);
+    # its media driver's socket buffer and NAK delay; the data NICs'
+    # interrupt deferral (vm.sh onload-up), read back as a socket arm's
+    if [[ ${setup:-} == onload ]]; then
+        case $bin in
+        udp_lat)
+            echo sockbuf epoll_events
+            if [[ $a == *" --impl ergon "* ]]; then echo datagram_burst; fi
+            ;;
+        tcp_lat) echo sockbuf epoll_events quickack_per_read ;;
+        aeron_lat)
+            echo term_length aeron_page aeron_so_rcvbuf
+            [[ $a == *" --mode udp "* && $a == *" --reliable true "* ]] && echo nak_delay_ns
+            ;;
+        esac
+        echo napi_defer irq_idle
+        return 0
+    fi
     case $bin in
     udp_lat)
         echo sockbuf epoll_events busy_read_us
         if [[ $a == *" --impl ergon "* ]]; then echo datagram_burst; fi
         ;;
     tcp_lat)
-        echo sockbuf epoll_events quickack_per_read congestion busy_read_us
+        echo sockbuf epoll_events quickack_per_read congestion
+        # uring-sqpoll: no SO_BUSY_POLL (its SQPOLL thread polls the NIC)
+        tr_uring_sqpoll || echo busy_read_us
         [[ $(tr_timer_args) == *--rto-min-us* ]] && echo rto_min_us
         ;;
     aeron_lat)
@@ -475,24 +782,39 @@ tr_arm_knobs() {
             echo aeron_path aeron_so_rcvbuf napi_defer
         fi
         [[ $a == *" --mode udp "* && $a == *" --reliable true "* ]] && echo nak_delay_ns
+        # a UDP arm's driver: its threading, and whether the binary runs it
+        # (embedded; INVOKER's measuring thread)
+        [[ $a == *" --mode udp "* ]] && echo aeron_threading aeron_driver
         ;;
     mpsc_lat) echo capacity ;;
+    fstack_lat | fstack_spin_lat)
+        echo sockbuf
+        [[ $a == *" --impl ergon "* || $bin == fstack_spin_lat ]] && echo rto_min_us
+        ;;
     esac
     # every arm on the kernel's sockets (an arms file's binary too): the data
     # NICs' interrupt deferral, its own host setting (tr_host_overrides)
     [[ ${setup:-} != sockets ]] || echo napi_defer
+    # every arm: the IRQ core's idle depth, the session's (TR_IRQ_IDLE,
+    # tr_irq_idle_session) unless a twin's own, set at each arm's set-up
+    echo irq_idle
     return 0
 }
 
 # tr_driver_mode: the current Aeron arm's media driver mode (vm.sh driver):
-# its path (aeron_path: kernel-busy or kernel; dpdk) and
+# its path (aeron_path: kernel-busy or kernel; dpdk; onload) and
 # TR_AERON_MODE_SUFFIX, with its driver knobs where they differ from the
 # driver's own (the socket buffer, the NAK delay, DPDK's rx_free_thresh) and
 # aeron-ipc's SHARED threading (one agent: no conductor of its own)
 tr_driver_mode() {
     local m s=$TR_AERON_MODE_SUFFIX v k knobs
     knobs=" $(tr_arm_knobs | tr '\n' ' ') "
-    if [[ $setup == dpdk ]]; then m=dpdk; else m=kernel-busy; fi
+    case $setup in
+    dpdk) m=dpdk ;;
+    # Onload's: the kernel's UDP transport, the driver under onload (vm.sh driver onload)
+    onload) m=onload ;;
+    *) m=kernel-busy ;;
+    esac
     [[ $knobs == *" aeron_path "* ]] && m=$(tr_knob aeron_path)
     for k in aeron_so_rcvbuf nak_delay_ns rx_free_thresh; do
         [[ $knobs == *" $k "* ]] || continue
@@ -509,20 +831,139 @@ tr_driver_mode() {
         v=$(tr_knob napi_defer)
         if [[ $v == 0 ]]; then s+="@NAPI_DEFER=0/0"; elif [[ $v != "$TR_NAPI_DEFER" ]]; then s+="@NAPI_DEFER=$v/$TR_GRO_FLUSH_NS"; fi
     fi
-    if [[ $knobs == *" aeron_threading "* && $(tr_knob aeron_threading) == SHARED ]]; then
-        s=${s//@CONDUCTOR=own/}
-        s=${s//@AERON_CONDUCTOR_IDLE_STRATEGY=spin/}
-        s=${s//@AERON_SENDER_IDLE_STRATEGY=noop/}
-        s=${s//@AERON_RECEIVER_IDLE_STRATEGY=noop/}
-        s+="@AERON_THREADING_MODE=SHARED"
+    # a mixed-load arm's driver counts its agents' duty cycles over
+    # TR_MIX_CYCLE_THRESHOLD_NS (the saturation its analysis reads), every
+    # threading model alike
+    if tr_mixed; then
+        for k in CONDUCTOR SENDER RECEIVER; do s+="@AERON_DRIVER_${k}_CYCLE_THRESHOLD=$TR_MIX_CYCLE_THRESHOLD_NS"; done
     fi
+    # the driver's threading (aeron_threading): SHARED_NETWORK one network
+    # agent (sender and receiver; the conductor kept on its own core),
+    # SHARED and INVOKER one agent for everything (no conductor of its own);
+    # the idle strategies of agents a mode has not got dropped
+    if [[ $knobs == *" aeron_threading "* ]]; then
+        v=$(tr_knob aeron_threading)
+        case $v in
+        DEDICATED) ;;
+        SHARED_NETWORK)
+            s=${s//@AERON_SENDER_IDLE_STRATEGY=noop/}
+            s=${s//@AERON_RECEIVER_IDLE_STRATEGY=noop/}
+            s+="@AERON_THREADING_MODE=SHARED_NETWORK"
+            ;;
+        SHARED | INVOKER)
+            s=${s//@CONDUCTOR=own/}
+            s=${s//@AERON_CONDUCTOR_IDLE_STRATEGY=spin/}
+            s=${s//@AERON_SENDER_IDLE_STRATEGY=noop/}
+            s=${s//@AERON_RECEIVER_IDLE_STRATEGY=noop/}
+            s+="@AERON_THREADING_MODE=$v"
+            ;;
+        *) echo "tr_driver_mode: aeron_threading $v: DEDICATED, SHARED_NETWORK, SHARED or INVOKER" >&2; return 2 ;;
+        esac
+    fi
+    # the binary starts the driver in its own process (aeron_driver
+    # embedded): vm.sh sets everything up but starts none
+    [[ $knobs == *" aeron_driver "* && $(tr_knob aeron_driver) == embedded ]] && s+="@DRIVER=embedded"
+    s+=$(tr_lab_suffix)
     echo "$m$s"
 }
 
-# tr_driver_busy: the external driver's busy threads (aeron_lat
-# --driver-busy-threads): TR_AERON_DRIVER_BUSY_THREADS, one under SHARED
+# tr_lab_suffix: the media driver's part of the arm's stage trace and capture
+# (md-dpdk's RUSTERON_DPDK_STAGE_TRACE and RUSTERON_DPDK_CAPTURE_WINDOW_MS;
+# vm.sh driver points each at its file in ~/bench): the arm argument
+# `--stage-trace N` (aeron_lat's own too) and the runner's `--capture-ms
+# <start>:<length>` (tr_set takes it off the binary's arguments into
+# capture_ms), else nothing
+tr_lab_suffix() {
+    local i out= cap=${capture_ms:-} a=(${args[@]+"${args[@]}"})
+    for ((i = 0; i < ${#a[@]}; i++)); do
+        case ${a[i]} in
+        --stage-trace) out+="@RUSTERON_DPDK_STAGE_TRACE=${a[i + 1]:-}" ;;
+        --capture-ms) cap=${a[i + 1]:-} ;;
+        esac
+    done
+    [[ -z $cap ]] || out+="@RUSTERON_DPDK_CAPTURE_WINDOW_MS=$cap"
+    echo "$out"
+}
+
+# tr_lab_fetch <point> <k>: an arm with a stage trace: each run host's
+# driver file as it stands (the arm's driver's, every point of it so far:
+# transport_stages.py takes the point's own stream ids) gzipped into
+# points/<point>/stages-driver-<host>.csv.gz; with a capture, on the arm's
+# first point (k 0: its window falls in that point's warm-up), each host's
+# capture-<host>.pcapng.gz. A missing file is logged, never fatal
+tr_lab_fetch() {
+    local pid=$1 k=$2 h f
+    for h in "${run_hosts[@]}"; do
+        if [[ " ${args[*]:-} " == *" --stage-trace "* ]]; then
+            f=$dir/points/$pid/stages-driver-$h.csv.gz
+            mkdir -p "$dir/points/$pid"
+            on "$(tr_host "$h")" "test -s bench/stages.csv && gzip -c bench/stages.csv" >"$f" 2>/dev/null ||
+                { rm -f "$f"; log "WARNING: point $pid: host $h has no driver stage trace (bench/stages.csv)"; }
+        fi
+        if [[ -n ${capture_ms:-} && $k == 0 ]]; then
+            f=$dir/points/$pid/capture-$h.pcapng.gz
+            mkdir -p "$dir/points/$pid"
+            on "$(tr_host "$h")" "test -s bench/capture.pcapng && gzip -c bench/capture.pcapng" >"$f" 2>/dev/null ||
+                { rm -f "$f"; log "WARNING: point $pid: host $h has no capture (bench/capture.pcapng)"; }
+        fi
+    done
+}
+
+# tr_mixed: 0 when the current arm is a mixed-load one (aeron_lat --load
+# mixed: a hot stream's thread and a background's a host)
+tr_mixed() { [[ " ${args[*]:-} " == *" --load mixed "* ]]; }
+
+# tr_aeron_driver: aeron_lat's --driver for the current arm: invoker (its
+# driver INVOKER, the binary's), embedded (the binary's, on threads of its
+# own), else external (vm.sh's media driver process)
+tr_aeron_driver() {
+    local m
+    m=$(tr_driver_mode) || return 2
+    case $m in
+    *@DRIVER=embedded*@AERON_THREADING_MODE=INVOKER* | *@AERON_THREADING_MODE=INVOKER*@DRIVER=embedded*) echo invoker ;;
+    *@DRIVER=embedded*) echo embedded ;;
+    *) echo external ;;
+    esac
+}
+
+# tr_driver_threading: the current arm's driver's threading mode, from its
+# driver mode (DEDICATED unless it names another)
+tr_driver_threading() {
+    local m t
+    m=$(tr_driver_mode) || return 2
+    t=${m#*@AERON_THREADING_MODE=}
+    [[ $t != "$m" ]] || { echo DEDICATED; return; }
+    echo "${t%%@*}"
+}
+
+# tr_driver_busy: the driver's busy threads (aeron_lat
+# --driver-busy-threads), in the driver's process or the binary's alike:
+# TR_AERON_DRIVER_BUSY_THREADS (DEDICATED: sender, receiver, the conductor
+# on its own core); SHARED_NETWORK one fewer (one network agent); SHARED
+# one (the shared agent); INVOKER none (the binary's measuring thread)
 tr_driver_busy() {
-    if [[ $(tr_driver_mode) == *@AERON_THREADING_MODE=SHARED* ]]; then echo 1; else echo "$TR_AERON_DRIVER_BUSY_THREADS"; fi
+    case $(tr_driver_threading) in
+    SHARED_NETWORK) echo $((TR_AERON_DRIVER_BUSY_THREADS - 1)) ;;
+    SHARED) echo 1 ;;
+    INVOKER) echo 0 ;;
+    *) echo "$TR_AERON_DRIVER_BUSY_THREADS" ;;
+    esac
+}
+
+# tr_driver_cpus: the isolated CPUs ($iso) the current arm's driver
+# busy-spins on (host.sh transport_layout: sender, receiver and conductor
+# the first three): DEDICATED all three; SHARED_NETWORK the network agent's
+# (the sender's) and the conductor's; SHARED the shared agent's (the
+# sender's); INVOKER none (the binary's own CPU); a space-separated list
+tr_driver_cpus() {
+    local all
+    IFS=, read -ra all <<<"$iso"
+    case $(tr_driver_threading) in
+    SHARED_NETWORK) echo "${all[0]} ${all[2]}" ;;
+    SHARED) echo "${all[0]}" ;;
+    INVOKER) echo ;;
+    *) echo "${all[0]} ${all[1]} ${all[2]}" ;;
+    esac
 }
 
 # tr_host_overrides: the TR_OVERRIDES the current arm's host set-up runs
@@ -530,7 +971,8 @@ tr_driver_busy() {
 # hosts' default, under the kernel path (no busy poll) the busy-poll
 # sysctls kernel's driver sets (0) for transport-net check, and a socket
 # arm's data-NIC interrupt deferral where not the hosts' (napi_defer: 0 is
-# 0/0, n is n/TR_GRO_FLUSH_NS)
+# 0/0, n is n/TR_GRO_FLUSH_NS); any arm's IRQ core idle depth where not the
+# session's (a declared twin's)
 tr_host_overrides() {
     local o= knobs n g
     knobs=" $(tr_arm_knobs | tr '\n' ' ') "
@@ -541,7 +983,36 @@ tr_host_overrides() {
         [[ $n == 0 ]] || g=$TR_GRO_FLUSH_NS
         [[ $n == "$TR_NAPI_DEFER" && $g == "$TR_GRO_FLUSH_NS" ]] || o+="TR_NAPI_DEFER=$n TR_GRO_FLUSH_NS=$g "
     fi
+    [[ $knobs == *" irq_idle "* && $(tr_knob irq_idle) != "$TR_IRQ_IDLE" ]] && o+="TR_IRQ_IDLE=$(tr_knob irq_idle) "
     echo "${o% }"
+}
+
+# tr_idle_value <file>: the knob irq_idle as a host's IRQ CPUs had it (vm.sh
+# idle: "cpu<N> <role> <index> <name> <disabled> ..." a state): all where no
+# IRQ CPU's state is disabled (or the host has no cpuidle driver: nothing
+# to cap), n where every IRQ CPU has its states up to the n-th enabled and
+# every deeper one disabled, else "<cpu>:<disabled flags>,..." as read (no
+# knob value: the settings rule refuses it), unread for no file
+tr_idle_value() {
+    [[ -s $1 ]] || { echo unread; return; }
+    awk '$1 ~ /^cpu[0-9]+$/ && $2 == "irq" {
+            cpu[$1] = 1; d[$1, $3] = $5; if (!($1 in top) || $3 + 0 > top[$1]) top[$1] = $3 + 0
+        }
+        END {
+            v = ""; raw = ""
+            for (c in cpu) {
+                cut = ""; ok = 1; flags = ""
+                for (i = 0; i <= top[c]; i++) {
+                    flags = flags d[c, i]
+                    if (d[c, i] == 1 && cut == "") cut = i - 1
+                    else if (d[c, i] != 1 && cut != "") ok = 0
+                }
+                w = (!ok || cut == -1) ? "x" : (cut == "" ? "all" : cut)
+                v = v == "" ? w : (v == w ? v : "x")
+                raw = raw (raw == "" ? "" : ",") c ":" flags
+            }
+            print (v == "" ? "all" : (v == "x" ? raw : v))
+        }' "$1"
 }
 
 # tr_napi_value <file>: the knob napi_defer as a host's data NICs had it
@@ -577,7 +1048,7 @@ tr_napi_raw() {
 tr_timer_args() {
     local k v out=
     for k in rto_min delack_max; do
-        grep -q "^net.ipv4.tcp_${k}_us=absent$" "$dir/settings-a.txt" "$dir/settings-b.txt" 2>/dev/null && continue
+        grep -q "^net.ipv4.tcp_${k}_us=absent$" "${dir:-}/settings-a.txt" "${dir:-}/settings-b.txt" 2>/dev/null && continue
         if [[ $k == rto_min ]]; then v=$(tr_knob rto_min_us); else v=$TR_TCP_DELACK_MAX_US; fi
         out+="--${k//_/-}-us $v "
     done
@@ -586,15 +1057,22 @@ tr_timer_args() {
 
 # tr_role_cpus <role>: the --cpus of a run, from the arm's CPUs ($cpus,
 # transport_clients): one per busy thread, in each binary's thread order:
-# local two (sender and receiver, or ping and echo), ping and pong one.
-# Under LAB_LOCAL_SMOKE both ends share one box, so the pong takes the last.
+# local two (sender and receiver, or ping and echo), ping and pong one; a
+# mixed-load arm's ping and pong two (the hot stream's, the background's).
+# Under LAB_LOCAL_SMOKE both ends share one box, so the pong takes the last
+# (a mixed one's the last two).
 tr_role_cpus() {
-    local c
+    local c n
     IFS=, read -ra c <<<"$cpus"
+    n=${#c[@]}
     case $1 in
     local) echo "${c[0]},${c[1]}" ;;
-    pong) if [[ -n ${LAB_LOCAL_SMOKE:-} ]]; then echo "${c[${#c[@]} - 1]}"; else echo "${c[0]}"; fi ;;
-    *) echo "${c[0]}" ;;
+    pong)
+        if tr_mixed; then
+            if [[ -n ${LAB_LOCAL_SMOKE:-} ]]; then echo "${c[n - 2]},${c[n - 1]}"; else echo "${c[0]},${c[1]}"; fi
+        elif [[ -n ${LAB_LOCAL_SMOKE:-} ]]; then echo "${c[n - 1]}"; else echo "${c[0]}"; fi
+        ;;
+    *) if tr_mixed; then echo "${c[0]},${c[1]}"; else echo "${c[0]}"; fi ;;
     esac
 }
 
@@ -610,12 +1088,71 @@ tr_label() {
 
 # tr_start <pid file> <out file> <binary> <args>...: the remote command that
 # runs a bench binary started on the housekeeping CPU (its Aeron client
-# conductor keeps that affinity; --cpus pins the busy threads), its PID
-# recorded first, so the runner's EXIT trap stops it by PID, never by name
+# conductor keeps that affinity; --cpus pins the busy threads), stdout to
+# <out file> (each caller adds stderr), its PID recorded (so the runner's
+# EXIT trap stops it by PID, never by name) and, once it ends, its exit
+# status in <pid file>.rc (128 + N: signal N), which the command exits with
+# too. Setup fstack's binary runs with tr_fstack_priv; setup onload's (but
+# aeron_lat, whose media driver runs under Onload instead: vm.sh driver
+# onload) with tr_onload_cmd. An Aeron arm whose driver is the binary's
+# (aeron_driver embedded: vm.sh driver ...@DRIVER=embedded started none)
+# runs with the driver's environment (~/bench/driver.env, sourced first)
+# and fstack_lat's privileges: the media driver it replaces runs as root,
+# and DPDK's EAL needs them.
 tr_start() {
-    local pidf=$1 outf=$2
+    local pidf=$1 outf=$2 priv= pre= src=
     shift 2
-    echo "sh -c 'echo \$\$ >$pidf; exec taskset -c $hk env PATH=$tr_bin_path $*' >$outf"
+    # fstack_spin_lat's EAL needs the same capabilities on igb_uio (setup
+    # stays sockets: host b is the kernel peer). A stock fstack_lat arm is
+    # setup fstack, so this does not change its start line.
+    if [[ ${setup:-} == fstack ]] || tr_bypass_arm; then priv="$tr_fstack_priv "; fi
+    [[ ${setup:-} == onload && ${bin:-} != aeron_lat ]] && pre="$(tr_onload_cmd) "
+    if [[ ${bin:-} == aeron_lat ]] && tr_has_driver && [[ $(tr_aeron_driver) != external ]]; then
+        priv="$tr_fstack_priv " src=". ~/bench/driver.env; "
+    fi
+    # the raw floor on DPDK: the transport from the driver's environment
+    # (vm.sh driver dpdk-raw's), the EAL's privileges
+    [[ ${setup:-} == dpdk-raw ]] && priv="$tr_fstack_priv " src=". ~/bench/driver.env; "
+    echo "${priv}sh -c '${src}taskset -c $hk env PATH=$tr_bin_path $pre$* & p=\$!; echo \$p >$pidf; wait \$p; r=\$?; echo \$r >$pidf.rc; exit \$r' >$outf"
+}
+
+# tr_onload_cmd: what a binary of an Onload arm runs under: the onload
+# launcher with the profile and TR_ONLOAD_ENV (transport-settings.env), the
+# same for every Onload arm and recorded in each manifest (onload_cmd)
+tr_onload_cmd() { echo "env $TR_ONLOAD_ENV onload --profile=$TR_ONLOAD_PROFILE"; }
+
+# tr_has_driver: 0 when the current arm runs a media driver (setup kernel or
+# dpdk, and an Onload arm's aeron_lat: its driver under Onload)
+tr_has_driver() {
+    [[ ${setup:-} == kernel || ${setup:-} == dpdk ]] || [[ ${setup:-} == onload && ${bin:-} == aeron_lat ]]
+}
+
+# tr_fstack_priv: what fstack_lat's own DPDK needs on igb_uio (and
+# aeron_lat's, with its driver embedded), which the media driver gets by
+# running as root: CAP_SYS_ADMIN (physical addresses in
+# /proc/self/pagemap: igb_uio has no IOMMU, so the EAL takes IOVA as PA; as
+# a plain user it stops with "Cannot use IOVA as 'PA'"), CAP_DAC_OVERRIDE
+# (/dev/uioN, the BARs' sysfs resource files, /dev/hugepages: root's),
+# CAP_IPC_LOCK and CAP_SYS_RAWIO (iopl). Ambient, under the user's own uid,
+# so the runner stops it by PID and owns what it writes.
+tr_fstack_priv='sudo -n setpriv --reuid="$(id -u)" --regid="$(id -g)" --init-groups --reset-env --inh-caps=+sys_admin,+dac_override,+ipc_lock,+sys_rawio --ambient-caps=+sys_admin,+dac_override,+ipc_lock,+sys_rawio'
+
+# tr_exit_text <status>: an exit status (tr_start's .rc) in words
+tr_exit_text() {
+    case ${1:-} in
+    '') echo "no exit status recorded" ;;
+    *[!0-9]*) echo "exit status '$1'" ;;
+    *) if (($1 > 128)); then echo "killed by signal $(($1 - 128)) ($(kill -l $(($1 - 128)) 2>/dev/null || echo '?'))"; else echo "exit $1"; fi ;;
+    esac
+}
+
+# tr_why_lines <log>: a failed binary's log in one line: its error lines
+# (the EAL's, F-Stack's, the binary's own, sudo's), else its last two
+tr_why_lines() {
+    local l
+    l=$(grep -E 'EAL: (Error|Cannot)|[Ee]rror|fstack_lat:|fstack_spin_lat:|wstls_lat:|wstls_fstack_lat:|udp_lat:|panicked|rte_exit|Cannot |[Ff]ailed|^sudo:|^setpriv:' "$1" 2>/dev/null | tail -3)
+    [[ -n $l ]] || l=$(tail -2 "$1" 2>/dev/null)
+    tr '\n' ' ' <<<"$l"
 }
 
 # tr_netem_line <pid> <host>: the point's netem verdict on that host:
@@ -657,6 +1194,14 @@ tr_snap() {
         [[ $1 == before || $bin != aeron_lat ]] || on "$(tr_host "$h")" "$(tr_arm_vm) aeron-page" >"$dir/aeronpage/$2-$h" 2>/dev/null
         # the data NICs' interrupt deferral, where the arm has it as a knob
         [[ $1 == before || " $(tr_arm_knobs | tr '\n' ' ') " != *" napi_defer "* ]] || on "$(tr_host "$h")" "$vm napi" >"$dir/napi/$2-$h" 2>/dev/null
+        # the housekeeping and IRQ CPUs' idle states (their cap, usage and
+        # time: how often and how long each slept), and the data NICs'
+        # traffic, interrupt moderation and driver counters (vm.sh nicstats:
+        # per queue interrupts unmasked, NAPI completions, queue stops; the
+        # allowance counters; a mixed-load point's traffic against its
+        # driver's bytes, fairness.py's mixed-nic rule)
+        on "$(tr_host "$h")" "$vm idle" >"$dir/idle/$2-$h-$1" 2>/dev/null || true
+        on "$(tr_host "$h")" "$vm nicstats" >"$dir/nicstats/$2-$h-$1" 2>/dev/null || true
     done
 }
 
@@ -685,6 +1230,7 @@ tr_manifest() {
         echo "vm_a=$vm_a"
         echo "vm_b=$vm_b"
         echo "bin=$bin"
+        echo "arm_hosts=$kind"
         echo "args=${args[*]:-}"
         for h in "${run_hosts[@]}"; do echo "bin_sha256_$h=$(awk -v b="$bin" '$2 ~ "/" b "$" {print $1}' "$dir/bins-$h.txt")"; done
         echo "commit=$commit"
@@ -695,7 +1241,22 @@ tr_manifest() {
         echo "base_arm=$(tr_base_arm)"
         echo "setup=$setup"
         for k in $(tr_arm_knobs); do echo "knob.$k=$(tr_knob "$k")"; done
-        [[ $setup == kernel || $setup == dpdk ]] && echo "driver_mode=$(tr_driver_mode)"
+        tr_has_driver && echo "driver_mode=$(tr_driver_mode)"
+        # an Onload arm: what it ran under (its binary, or its media
+        # driver), the build each host has (vm.sh onload-info, read as the
+        # session starts), and each host's Onload stacks mid-window (vm.sh
+        # onload-stacks: ok, or FAIL with none for the arm's process)
+        if [[ $setup == onload ]]; then
+            echo "onload_cmd=$(tr_onload_cmd)"
+            echo "onload_under=$(if [[ $bin == aeron_lat ]]; then echo media_driver; else echo "$bin"; fi)"
+            for h in "${run_hosts[@]}"; do
+                echo "onload_build_$h=$(head -1 "$dir/onload-$h.txt" 2>/dev/null || echo unread)"
+                v=$(head -1 "$dir/onload/$pid-$h" 2>/dev/null)
+                [[ $v == ok* || $v == FAIL* ]] || v=unread
+                echo "onload_$h=$v"
+                [[ $v == ok* ]] || log "WARNING: point $pid: host $h's Onload stacks: $v"
+            done
+        fi
         echo "start_ns=$4"
         echo "end_ns=$5"
         for h in a b; do
@@ -723,6 +1284,10 @@ tr_manifest() {
                 echo "napi_$h=$(tr_napi_raw "$dir/napi/$pid-$h")"
                 echo "napi_defer_$h=$(tr_napi_value "$dir/napi/$pid-$h" 2>/dev/null || echo unread)"
             fi
+            # the IRQ core's idle depth read back (the settings rule)
+            if [[ " $(tr_arm_knobs | tr '\n' ' ') " == *" irq_idle "* ]]; then
+                echo "irq_idle_$h=$(tr_idle_value "$dir/idle/$pid-$h-after" 2>/dev/null || echo unread)"
+            fi
             [[ $nline != *FAIL ]] || log "WARNING: point $pid: host $h's netem counters off its loss: $nline"
             [[ $place == ok* ]] || log "WARNING: point $pid: host $h's thread placement: $place"
         done
@@ -733,20 +1298,66 @@ tr_manifest() {
 
 # tr_arm_up <setup> <host>...: the arm's host set-up on each: a media driver
 # (kernel: kernel-busy's path, then transport-net check; dpdk), the kernel
-# path (sockets: transport-net), or nothing; tr_arm_down: the driver stopped
+# path (sockets: transport-net), F-Stack's NICs (fstack), Onload's (onload:
+# onload-up, or for Aeron its driver under Onload), or nothing; tr_arm_down:
+# the driver stopped, the NICs given back
 tr_arm_up() {
     local setup=$1 h ov
     shift
     ov=$(tr_host_overrides)
     [[ -z $ov ]] || ov="TR_OVERRIDES='$ov' "
+    local from
     for h in "$@"; do
+        from=$(($(cat "$dir/logs/setup-$h.log" 2>/dev/null | wc -l) + 1))
+        # each set-up then the IRQ core's idle depth (vm.sh irq-idle;
+        # transport-net sets a socket arm's): every arm at the session's
+        # TR_IRQ_IDLE, a declared twin at its own (TR_OVERRIDES)
         case $setup in
-        kernel) on "$(tr_host "$h")" "$(tr_arm_vm) driver $(tr_driver_mode) && ${ov}$vm transport-net check" ;;
-        dpdk) on "$(tr_host "$h")" "$(tr_arm_vm) driver $(tr_driver_mode)" ;;
-        sockets) on "$(tr_host "$h")" "${ov}$vm transport-net" ;;
-        none) true ;;
-        esac >>"$dir/logs/setup-$h.log" 2>&1 || { log "host $h: $setup set-up failed ($dir/logs/setup-$h.log)"; return 1; }
+        kernel) on "$(tr_host "$h")" "$(tr_arm_vm) driver $(tr_driver_mode) && ${ov}$vm transport-net check && ${ov}$vm irq-idle" ;;
+        dpdk) on "$(tr_host "$h")" "$(tr_arm_vm) driver $(tr_driver_mode) && ${ov}$vm irq-idle" ;;
+        # the raw floor's: the NICs on DPDK, no driver (its binary runs the
+        # transport's bindings itself with driver.env)
+        dpdk-raw) on "$(tr_host "$h")" "$vm driver dpdk-raw && ${ov}$vm irq-idle" ;;
+        sockets)
+            # a bypass arm: DPDK on host a only (fstack-up). Host b stays in
+            # the kernel, which is where kernel-peer netem is applied.
+            if [[ $h == a ]] && tr_bypass_arm; then
+                on "$(tr_host "$h")" "$vm fstack-up && ${ov}$vm irq-idle"
+            else
+                on "$(tr_host "$h")" "${ov}$vm transport-net"
+            fi
+            ;;
+        fstack) on "$(tr_host "$h")" "$vm fstack-up && ${ov}$vm irq-idle" ;;
+        # Onload over AF_XDP on the data NICs (vm.sh onload-up); an Aeron
+        # arm's media driver under it (vm.sh driver onload: onload-up first)
+        onload)
+            if [[ $bin == aeron_lat ]]; then
+                on "$(tr_host "$h")" "$(tr_arm_vm) driver $(tr_driver_mode) && ${ov}$vm irq-idle"
+            else
+                on "$(tr_host "$h")" "$vm onload-up && ${ov}$vm irq-idle"
+            fi
+            ;;
+        none) on "$(tr_host "$h")" "${ov}$vm irq-idle" ;;
+        esac >>"$dir/logs/setup-$h.log" 2>&1 || { tr_setup_failed "$setup" "$h" "$from"; return 1; }
     done
+}
+
+# tr_setup_failed <setup> <host> <first line>: a failed set-up in run.log
+# with its error lines (this set-up's part of the host's setup log, from
+# <first line>), and under kernel or dpdk the media driver's own log
+# (vm.sh's ~/bench/driver.log: this set-up's when it got as far as starting
+# one, else the last driver's) kept as logs/driver-<host>-<n>.log
+tr_setup_failed() {
+    local setup=$1 h=$2 why dl=
+    why=$(tail -n +"$3" "$dir/logs/setup-$h.log" 2>/dev/null |
+        grep -E 'stopping|[Ee]rror|[Ff]ailed|refused|EAL: |Cannot |^vm\.sh: line' | tail -3 | tr '\n' ' ')
+    if tr_has_driver; then
+        dl=$dir/logs/driver-$h-$(($(ls "$dir"/logs/driver-"$h"-*.log 2>/dev/null | wc -l) + 1)).log
+        on "$(tr_host "$h")" "cat bench/driver.log" >"$dl" 2>&1 || true
+        [[ -n $why ]] || why=$(grep -E '[Ee]rror|EAL: |Cannot |[Ff]ailed|panicked' "$dl" 2>/dev/null | tail -3 | tr '\n' ' ')
+    fi
+    why=${why% }
+    log "host $h: $setup set-up failed: ${why:-no error line} ($dir/logs/setup-$h.log${dl:+, driver log $dl})"
 }
 # (a socket arm whose host settings differed: the hosts' own put back)
 tr_arm_down() {
@@ -755,14 +1366,23 @@ tr_arm_down() {
     if [[ $setup == sockets && -n $(tr_host_overrides) ]]; then
         for h in "$@"; do on "$(tr_host "$h")" "$vm transport-net" >>"$dir/logs/setup-$h.log" 2>&1 || log "host $h: settings not put back"; done
     fi
-    [[ $setup == kernel || $setup == dpdk ]] || return 0
+    # bypass on setup sockets bound host a's NICs (fstack-up): give them back
+    if [[ $setup == sockets ]] && tr_bypass_arm; then
+        for h in "$@"; do
+            [[ $h == a ]] || continue
+            on "$(tr_host "$h")" "$(tr_arm_vm) stop" >>"$dir/logs/setup-$h.log" 2>&1 || log "host $h: vm.sh stop failed"
+        done
+    fi
+    # fstack: the data NICs back from igb_uio to the kernel; onload: back
+    # from AF_XDP, their queues and MTU as they were (vm.sh stop)
+    [[ $setup == kernel || $setup == dpdk || $setup == dpdk-raw || $setup == fstack || $setup == onload ]] || return 0
     for h in "$@"; do on "$(tr_host "$h")" "$(tr_arm_vm) stop" >>"$dir/logs/setup-$h.log" 2>&1 || log "host $h: vm.sh stop failed"; done
 }
 
 # tr_events_cpus <host>: "<traced cpus> <spinner cpus|->" for this point on
 # <host>, each a list: traced, the hot CPUs the point's busy threads run on
-# there (the media driver's three under kernel and dpdk: host.sh
-# transport_layout; the binary's: tr_role_cpus) and the spinners'; the
+# there (the media driver's under kernel and dpdk, as its threading has
+# them: tr_driver_cpus; the binary's: tr_role_cpus) and the spinners'; the
 # spinners', the map's isolated CPUs the point leaves idle (- with none).
 # Under LAB_LOCAL_SMOKE one box is both hosts: neither host spins on a CPU
 # either end uses, a two-host point's idle ones are dealt between a and b in
@@ -771,29 +1391,57 @@ tr_arm_down() {
 tr_events_cpus() {
     local h=$1 used=" " mine_used=" " c all out=() i=0 mine r
     IFS=, read -ra all <<<"$iso"
-    if [[ $setup == kernel || $setup == dpdk ]]; then used+="${all[0]} ${all[1]} ${all[2]} "; mine_used=$used; fi
-    if [[ $kind == two ]]; then
-        for r in ping pong; do
-            c=$(tr_role_cpus $r)
-            [[ $r == ping && $h == a || $r == pong && $h == b ]] && mine_used+="$c "
-            [[ -z ${LAB_LOCAL_SMOKE:-} && ! ($r == ping && $h == a || $r == pong && $h == b) ]] || used+="$c "
+    if tr_has_driver; then
+        for c in $(tr_driver_cpus); do used+="$c "; done
+        mine_used=$used
+    fi
+    if [[ $kind == two || $kind == sink ]]; then
+        # a sink arm: --role local's two on a, the sink (the pong's CPU) on b
+        local ra=ping
+        [[ $kind == sink ]] && ra=local
+        for r in $ra pong; do
+            c=$(tr_role_cpus $r | tr , ' ')
+            [[ $r == "$ra" && $h == a || $r == pong && $h == b ]] && mine_used+="$c "
+            [[ -z ${LAB_LOCAL_SMOKE:-} && ! ($r == "$ra" && $h == a || $r == pong && $h == b) ]] || used+="$c "
         done
     else
         used+="$(tr_role_cpus local | tr , ' ') "
         mine_used=$used
     fi
+    # the arm's SQPOLL threads (uring-sqpoll: one a host, on --sqpoll-cpu):
+    # traced, never a spinner's
+    c=$(tr_sqpoll_cpu)
+    [[ -z $c ]] || { used+="$c "; mine_used+="$c "; }
+    # SMT on: the SMT sibling of every CPU the point uses stays as the arm
+    # left it (idle, or its SQPOLL thread): traced, never a spinner's
+    if [[ ${smt:-off} == on ]]; then
+        for c in $used; do
+            r=$(tr_smt_partner "$c")
+            [[ -z $r || $used == *" $r "* ]] || used+="$r "
+        done
+        for c in $mine_used; do
+            r=$(tr_smt_partner "$c")
+            [[ -z $r || $mine_used == *" $r "* ]] || mine_used+="$r "
+        done
+    fi
     mine=0
     [[ $h == b ]] && mine=1
     for c in "${all[@]}"; do
         [[ $used == *" $c "* ]] && continue
-        if [[ -n ${LAB_LOCAL_SMOKE:-} && $kind == two ]]; then
+        if [[ -n ${LAB_LOCAL_SMOKE:-} && $kind != one ]]; then
             ((i++ % 2 == mine)) || continue
         fi
         out+=("$c")
     done
     [[ -z ${LAB_LOCAL_SMOKE:-} ]] || out=("${out[@]:0:1}")
+    # a mixed-load arm's housekeeping and IRQ CPUs too (the map's first two),
+    # where an embedded driver's helper threads and the clients' conductors
+    # run: a stall of its loops can be read against them (no spinner there,
+    # and no osnoise: vm.sh events-start keeps it to the isolated CPUs)
+    local quiet=
+    tr_mixed && quiet=$(awk '{print $1, $2}' <<<"${map:-}")
     local traced
-    traced=$(printf '%s\n' $mine_used "${out[@]}" | sort -nu | paste -sd, -)
+    traced=$(printf '%s\n' $mine_used $quiet "${out[@]}" | sort -nu | paste -sd, -)
     if ((${#out[@]})); then echo "$traced $(IFS=,; echo "${out[*]}")"; else echo "$traced -"; fi
 }
 
@@ -804,7 +1452,7 @@ tr_events_cpus() {
 # max then has no events to be labelled by, which spikes.py says.
 tr_events() {
     local what=$1 pid=$2 h ex=
-    [[ $setup == kernel || $setup == dpdk ]] && ex=aeron
+    tr_has_driver && ex=aeron
     for h in "${run_hosts[@]}"; do
         if [[ $what == start ]]; then
             on "$(tr_host "$h")" "$(tr_arm_vm) events-start $pid $(tr_events_cpus "$h") $ex" >>"$dir/logs/events-$h.log" 2>&1 ||
@@ -820,18 +1468,21 @@ tr_events() {
 # the snapshots around it, a placement sample half way through its window,
 # its rows (rep in their first column, the point column <channel>-r<rate>)
 # into results.csv and its --out directories into points/<point>/ (the
-# pong's as points/<point>/pong); 1 when it failed. A two-host arm's point is
+# pong's as points/<point>/pong, a sink's as points/<point>/sink<run>); 1 when
+# it failed. A two-host arm's point is
 # one run: its pong on b, which must print one `ready` line within
 # TRANSPORT_READY_TIMEOUT_S, then its ping on a (round trips). A one-host
 # arm's is two, one after the other: --role local (one way, the same TSC) and
-# --role local --round-trip. The first point of an arm and stream count warms
+# --role local --round-trip; a sink arm's the same two on host a, each with
+# its own sink on b (--role pong on the run's stream ids, ready before the
+# run starts, stopped after it ends). The first point of an arm and stream count warms
 # up TRANSPORT_WARMUP_S, each later one TRANSPORT_SWITCH_S (the new load,
 # unrecorded).
 tr_point() {
     local k=$1 load=${loads[$1]} warm pid rdir=bench/transport-$pair/run-$sid rc=0 meas log common pong= start end v runs=()
     # the arm's NICs: the ping's (and local's own) sender NIC and the pong's
     # (local's peer) receiver NIC, or each host's other one (--nics alt)
-    local ns=sender nr=receiver pargs rargs
+    local ns=sender nr=receiver pargs rargs sinkargs
     if ((${nics_alt:-0})); then ns=receiver nr=sender; fi
     warm=$TRANSPORT_SWITCH_S
     ((k == 0)) && warm=$TRANSPORT_WARMUP_S
@@ -848,6 +1499,15 @@ tr_point() {
         tr_stream_seq=$((tr_stream_seq + 1))
     fi
     for h in "${run_hosts[@]}"; do on "$(tr_host "$h")" "rm -rf $rdir && mkdir -p $rdir" || return 1; done
+    # an Onload socket arm: no stack of the last point's processes left on
+    # either host (the NICs' one queue takes one; vm.sh onload-idle kills
+    # orphans), else the point fails; an Aeron arm's driver keeps its own
+    if [[ $setup == onload && $bin != aeron_lat ]]; then
+        for h in "${run_hosts[@]}"; do
+            on "$(tr_host "$h")" "$vm onload-idle" >>"$dir/logs/setup-$h.log" 2>&1 ||
+                { log "point $pid: host $h: an Onload stack of an earlier point still holds the data NICs ($dir/logs/setup-$h.log)"; return 1; }
+        done
+    fi
     # the point's events on each host, begun before any binary of it starts
     # (so before its warm-up), read back after its window (tr_events)
     tr_events start "$pid"
@@ -860,21 +1520,17 @@ tr_point() {
         on "$B" "nohup $(tr_start "$rdir/pong.pid" "$rdir/pong.out" "$bin --role pong $common$sid0 --cpus $(tr_role_cpus pong) --out $rdir/out-pong $(tr_bin_args "$bin" pong "$(tr_nic b "$nr")" "$(tr_nic a "$ns")" "${args[@]}") $pargs") 2>&1 </dev/null &" ||
             { log "point $pid: pong did not start on b"; return 1; }
         pong=1
-        local why
-        tr_pong_ready "$rdir"
-        case $? in
-        0) why= ;;
-        2) why="the pong exited before it said ready" ;;
-        3) why="the pong said ready twice" ;;
-        *) why="the pong did not say ready within ${TRANSPORT_READY_TIMEOUT_S:-60} s" ;;
-        esac
-        if [[ -n $why ]]; then
-            on "$B" "kill -TERM \$(cat $rdir/pong.pid) 2>/dev/null; sleep 1; kill -KILL \$(cat $rdir/pong.pid) 2>/dev/null; cat $rdir/pong.out" >"$log.pong" 2>&1
-            log "point $pid: $why: $(tail -2 "$log.pong" | tr '\n' ' ')"
-            tr_events stop "$pid"
-            return 1
-        fi
+        tr_pong_wait pong || { tr_events stop "$pid"; return 1; }
         runs=("--role ping --cpus $(tr_role_cpus ping) $(tr_bin_args "$bin" ping "$(tr_nic a "$ns")" "$(tr_nic b "$nr")" "${args[@]}")$sid0")
+    elif [[ $kind == sink ]]; then
+        # --role local on a to the sink's address on b (as a two-host
+        # ping's to its pong), each run's sink started in the loop below
+        meas=a
+        rargs=$(tr_alt_args a "$ns" b "$nr")
+        pargs=$(tr_alt_args b "$nr" a "$ns")
+        sinkargs=$(tr_bin_args "$bin" pong "$(tr_nic b "$nr")" "$(tr_nic a "$ns")" "${args[@]}")
+        v=$(tr_bin_args "$bin" local "$(tr_nic a "$ns")" "$(tr_nic b "$nr")" "${args[@]}")
+        runs=("--role local --cpus $(tr_role_cpus local) $v$sid0" "--role local --round-trip --cpus $(tr_role_cpus local) $v$sid1")
     else
         meas=$host
         rargs=$(tr_alt_args "$host" "$ns" "$host" "$nr")
@@ -885,20 +1541,31 @@ tr_point() {
     (
         sleep "$(awk -v w="$warm" -v s="$TRANSPORT_POINT_S" 'BEGIN {print w + s / 2}')"
         for h in "${run_hosts[@]}"; do on "$(tr_host "$h")" "$vm sample" >"$dir/samples/$pid-$h" 2>/dev/null; done
+        # an Onload arm: its process's Onload stack on each host, mid-window
+        # (an unaccelerated socket would leave none; EF_NO_FAIL=0 fails it first)
+        if [[ $setup == onload ]]; then
+            local under=$bin
+            [[ $bin == aeron_lat ]] && under=media_driver
+            for h in "${run_hosts[@]}"; do on "$(tr_host "$h")" "$vm onload-stacks $under" >"$dir/onload/$pid-$h" 2>/dev/null; done
+        fi
     ) &
     local sampler=$!
     start=$(tr_now)
     : >"$log.out"
     : >"$log.err"
+    local sids=("$sid0" "$sid1")
     for v in "${!runs[@]}"; do
+        if [[ $kind == sink ]] && ! tr_sink_up "$v"; then rc=1; break; fi
         on "$(tr_host "$meas")" "$(tr_start "$rdir/run.pid" "$rdir/run$v.out" "$bin ${runs[$v]} $common --out $rdir/out$v $rargs") 2>&1" >>"$log.out" 2>>"$log.err" || rc=$?
         on "$(tr_host "$meas")" "cat $rdir/run$v.out" >>"$log.out" 2>/dev/null
+        [[ $kind != sink ]] || tr_sink_down "$v"
         ((rc == 0)) || break
     done
     end=$(tr_now)
     wait "$sampler" 2>/dev/null
     tr_snap after "$pid"
     tr_events stop "$pid"
+    tr_lab_fetch "$pid" "$k"
     if [[ -n $pong ]]; then
         on "$B" "kill -TERM \$(cat $rdir/pong.pid) 2>/dev/null; for _ in \$(seq 50); do kill -0 \$(cat $rdir/pong.pid) 2>/dev/null || break; sleep 0.1; done; kill -KILL \$(cat $rdir/pong.pid) 2>/dev/null; true" >/dev/null 2>&1
         on "$B" "cat $rdir/pong.out" >"$log.pong" 2>&1
@@ -914,10 +1581,51 @@ tr_point() {
         [[ -s $dir/points/$pid/$v/results.csv ]] && got=$((got + 1))
     done
     if ((rc != 0 || got != ${#runs[@]})); then
-        log "point $pid: $bin exit $rc, $got of ${#runs[@]} runs with a row: $(tail -2 "$log.err" 2>/dev/null | tr '\n' ' ')"
+        log "point $pid: $bin $(tr_exit_text "$rc"), $got of ${#runs[@]} runs with a row: $(tr_why_lines "$log.out")$(tail -2 "$log.err" 2>/dev/null | tr '\n' ' ')"
         return 1
     fi
     for v in "${!runs[@]}"; do tr_row "$rep" <"$dir/points/$pid/$v/results.csv" >>"$dir/results.csv"; done
+}
+
+# tr_pong_wait <pong|sink>: 0 once the pong (or a sink) on b says ready
+# (tr_pong_ready); else 1, it stopped, its output in <log>.pong and why it
+# failed logged (its exit status, tr_start's .rc read before the kill, which
+# would write TERM's, and its error lines, else its last two)
+tr_pong_wait() {
+    local who=$1 why prc
+    tr_pong_ready "$rdir"
+    case $? in
+    0) return 0 ;;
+    2) why="the $who exited before it said ready" ;;
+    3) why="the $who said ready twice" ;;
+    *) why="the $who did not say ready within ${TRANSPORT_READY_TIMEOUT_S:-60} s" ;;
+    esac
+    [[ $why == *exited* ]] && prc=$(on "$B" "for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s $rdir/pong.pid.rc ] && break; sleep 0.1; done; cat $rdir/pong.pid.rc 2>/dev/null")
+    on "$B" "kill -TERM \$(cat $rdir/pong.pid) 2>/dev/null; sleep 1; kill -KILL \$(cat $rdir/pong.pid) 2>/dev/null; cat $rdir/pong.out" >>"$log.pong" 2>&1
+    [[ $why == *exited* ]] && why+=" ($(tr_exit_text "$prc"))"
+    log "point $pid: $why: $(tr_why_lines "$log.pong")"
+    return 1
+}
+
+# tr_sink_up <run>: a sink arm's sink for run <run> of the point (tr_point's
+# variables) on b, on that run's stream ids: 0 once it says ready
+tr_sink_up() {
+    local v=$1
+    on "$B" "rm -f $rdir/pong.out $rdir/pong.pid $rdir/pong.pid.rc" >/dev/null 2>&1
+    on "$B" "nohup $(tr_start "$rdir/pong.pid" "$rdir/pong.out" "$bin --role pong $common${sids[$v]} --cpus $(tr_role_cpus pong) --out $rdir/out-sink$v $sinkargs $pargs") 2>&1 </dev/null &" ||
+        { log "point $pid: sink $v did not start on b"; return 1; }
+    tr_pong_wait sink
+}
+
+# tr_sink_down <run>: that sink stopped (TERM: it reads on until its frames
+# stop coming, 4 s at most; KILL after 5 s), its output in <log>.pong and its
+# --out directory in points/<point>/sink<run>
+tr_sink_down() {
+    local v=$1
+    on "$B" "kill -TERM \$(cat $rdir/pong.pid) 2>/dev/null; for _ in \$(seq 50); do kill -0 \$(cat $rdir/pong.pid) 2>/dev/null || break; sleep 0.1; done; kill -KILL \$(cat $rdir/pong.pid) 2>/dev/null; true" >/dev/null 2>&1
+    on "$B" "cat $rdir/pong.out" >>"$log.pong" 2>&1
+    mkdir -p "$dir/points/$pid/sink$v"
+    on "$B" "tar -C $rdir/out-sink$v -cf - . 2>/dev/null" | tar -xf - -C "$dir/points/$pid/sink$v" 2>/dev/null
 }
 
 # tr_stream_base: the next run's aeron_lat --stream-id: 1001 + 256 k for the
@@ -953,7 +1661,7 @@ tr_invoke() {
     ((aa)) && mode+="@AA=1"
     tag="$sid-r$rep-$(file_mode "$mode")"
     label=$(tr_label "$sid" "$arm" "$aa" "$n" "$netem")
-    if [[ $kind == two ]]; then run_hosts=(a b); else run_hosts=("$host"); fi
+    if [[ $kind == two || $kind == sink ]]; then run_hosts=(a b); else run_hosts=("$host"); fi
     cpus=$(transport_clients "$map" "$setup")
     for k in "${!loads[@]}"; do tr_point "$k" || rc=1; done
     return $rc
@@ -961,15 +1669,18 @@ tr_invoke() {
 
 
 # tr_netem_round <level> <host>...: the round's netem on each host (set and
-# checked; - checks there is none); tr_netem_off: cleared and checked
+# checked; - checks there is none). `loss kernel-peer` uses `netem set-peer`
+# (egress plus ifb ingress on the kernel NIC). `both` is `netem set`, today's
+# every-host egress. tr_netem_off: cleared and checked.
 tr_netem_round() {
-    local level=$1 h
+    local level=$1 h cmd=set
     shift
+    [[ $(tr_loss_where) == kernel-peer ]] && cmd=set-peer
     for h in "$@"; do
         if [[ $level == - || $level == none ]]; then
             on "$(tr_host "$h")" "$vm netem check none" >>"$dir/logs/netem-$h.log" 2>&1 || { log "host $h: a netem qdisc where the round has none"; return 1; }
         else
-            on "$(tr_host "$h")" "$vm netem set $level" >>"$dir/logs/netem-$h.log" 2>&1 || { log "host $h: netem $level% not set"; return 1; }
+            on "$(tr_host "$h")" "$vm netem $cmd $level" >>"$dir/logs/netem-$h.log" 2>&1 || { log "host $h: netem $level% not set"; return 1; }
         fi
     done
 }
@@ -982,15 +1693,18 @@ tr_netem_off() {
 # tr_set <set id>: every round of the set, in rounds.tsv's order
 tr_set() {
     local want=$1 gi sid host rep netem rseed loadlist streamlist order position armspec arm aa
-    local bin setup kind args loads streams rhosts failures=0 spec nics_alt=0
+    local bin setup kind args loads streams rhosts ahosts failures=0 spec nics_alt=0 capture_ms=
     while IFS=$'\t' read -r -u 9 gi sid host rep netem rseed loadlist streamlist order; do
         [[ $sid == "$want" ]] || continue
         IFS=, read -ra loads <<<"$loadlist"
         IFS=, read -ra streams <<<"$streamlist"
         if [[ $host == ab ]]; then rhosts=(a b); else rhosts=("$host"); fi
+        # loss kernel-peer: host b only, so host a's DPDK NIC has no qdisc
+        local lhosts=()
+        if [[ $(tr_loss_where) == kernel-peer ]]; then lhosts=(b); else lhosts=("${rhosts[@]}"); fi
         echo "$sid,$rep,$netem,$rseed,${order//,/ }" >>"$dir/order.csv"
         log "set $sid rep $rep netem $netem: seed $rseed, order $order"
-        tr_netem_round "$netem" "${rhosts[@]}" || return 1
+        tr_netem_round "$netem" "${lhosts[@]}" || return 1
         position=0
         for armspec in ${order//,/ }; do
             position=$((position + 1))
@@ -1002,17 +1716,32 @@ tr_set() {
             # --nics alt is the runner's (tr_point): the arm on each host's
             # other data NIC; not passed on
             local i kept=()
-            nics_alt=0
+            nics_alt=0 capture_ms=
             for ((i = 0; i < ${#args[@]}; i++)); do
                 if [[ ${args[i]} == --nics ]]; then
                     [[ ${args[i + 1]:-} == alt ]] || { log "arm $arm: --nics takes alt"; return 1; }
                     nics_alt=1 i=$((i + 1))
                     continue
                 fi
+                # --capture-ms <start>:<length> is the runner's too: the
+                # DPDK driver's capture window (tr_lab_suffix, tr_lab_fetch)
+                if [[ ${args[i]} == --capture-ms ]]; then
+                    [[ ${args[i + 1]:-} =~ ^[0-9]+:[1-9][0-9]*$ && $setup == dpdk ]] ||
+                        { log "arm $arm: --capture-ms takes <start>:<length> (ms), on a dpdk arm"; return 1; }
+                    capture_ms=${args[i + 1]} i=$((i + 1))
+                    continue
+                fi
                 kept+=("${args[i]}")
             done
             args=(${kept[@]+"${kept[@]}"})
-            if ! tr_arm_up "$setup" "${rhosts[@]}"; then
+            # {next_core} and {loop_sibling}: the arm's CPUs' (tr_cpu_arg)
+            local acpus
+            acpus=$(transport_clients "$map" "$setup")
+            for ((i = 0; i < ${#args[@]}; i++)); do args[i]=$(tr_cpu_arg "${args[i]}" "$acpus"); done
+            # a sink arm's set-up on its sink's host too
+            ahosts=("${rhosts[@]}")
+            [[ $kind != sink ]] || ahosts=(a b)
+            if ! tr_arm_up "$setup" "${ahosts[@]}"; then
                 echo "$sid,$rep,$netem,$arm,$aa,setup" >>"$dir/failures.csv"
                 failures=$((failures + 1))
             else
@@ -1024,10 +1753,10 @@ tr_set() {
                     ((failures < ${TRANSPORT_MAX_FAILURES:-3})) || break
                 done
             fi
-            tr_arm_down "$setup" "${rhosts[@]}"
-            ((failures < ${TRANSPORT_MAX_FAILURES:-3})) || { log "set $sid: $failures failed runs in a row: stopping the session"; [[ $netem == - ]] || tr_netem_off "${rhosts[@]}"; return 1; }
+            tr_arm_down "$setup" "${ahosts[@]}"
+            ((failures < ${TRANSPORT_MAX_FAILURES:-3})) || { log "set $sid: $failures failed runs in a row: stopping the session"; [[ $netem == - ]] || tr_netem_off "${lhosts[@]}"; return 1; }
         done
-        [[ $netem == - ]] || tr_netem_off "${rhosts[@]}" || return 1
+        [[ $netem == - ]] || tr_netem_off "${lhosts[@]}" || return 1
     done 9<"${rounds_file:-$dir/rounds.tsv}"
 }
 
@@ -1090,7 +1819,7 @@ tr_tune() {
         read -ra args <<<"${args:-}"
         [[ $setup == kernel || $setup == dpdk ]] || continue
         m=$(tr_driver_mode)
-        v=$(mode_check "$m" remote x86_64 azure '' 2>&1) || { log "tune: variant $arm's driver mode $m: $v"; return 1; }
+        v=$(mode_check "$m" remote x86_64 "${tr_cloud:-azure}" '' 2>&1) || { log "tune: variant $arm's driver mode $m: $v"; return 1; }
     done <"$dir/variants.txt"
     arm=
     tr_plan rounds tune "$seed" 1 >"$dir/rounds-sweep.tsv" || { log "tune: the sweep's rounds do not parse"; return 1; }
@@ -1116,6 +1845,30 @@ tr_tune() {
     return $rc
 }
 
+# tr_irq_idle_session: the session's TR_IRQ_IDLE, every arm's (a declared
+# twin's own apart): auto resolved on each host (vm.sh irq-idle resolve:
+# 1 under intel_idle, else all), which must agree and be what a sets file's
+# irq_idle row requires, then recorded at the end of
+# transport-settings.tr.env (its last assignment, fairness.py's and
+# transport_collect.py's) and logged; 1 when the hosts disagree, one cannot
+# say, or the row asks another
+tr_irq_idle_session() {
+    local h v got= want
+    want=$(tr_plan irq_idle) || { log "the sets file's irq_idle row does not parse"; return 1; }
+    for h in a b; do
+        v=$(on "$(tr_host "$h")" "$vm irq-idle resolve" 2>>"$dir/logs/irq-idle-$h.err") && [[ $v == all || $v =~ ^[0-9]+$ ]] ||
+            { log "host $h: no IRQ idle depth for TR_IRQ_IDLE=$TR_IRQ_IDLE (${v:-nothing}; $dir/logs/irq-idle-$h.err)"; return 1; }
+        [[ -z $got || $got == "$v" ]] || { log "the hosts' IRQ idle depths differ: a $got, b $v (TR_IRQ_IDLE=$TR_IRQ_IDLE)"; return 1; }
+        got=$v
+    done
+    [[ $want == auto || $want == "$got" ]] ||
+        { log "the sets file asks irq_idle $want, the hosts give $got (TR_IRQ_IDLE=$TR_IRQ_IDLE)"; return 1; }
+    printf '# the session'"'"'s IRQ core idle depth, every arm'"'"'s (transport.sh tr_irq_idle_session: TR_IRQ_IDLE=%s on these hosts)\nTR_IRQ_IDLE=%s\n' \
+        "$TR_IRQ_IDLE" "$got" >>"$dir/transport-settings.tr.env"
+    log "session $session: IRQ core idle depth $got for every arm (TR_IRQ_IDLE=$TR_IRQ_IDLE)"
+    TR_IRQ_IDLE=$got
+}
+
 # tr_run <pair>: the session on VM a
 tr_run() {
     pair=$1
@@ -1138,7 +1891,7 @@ tr_run() {
     . "$tr_here/irqs.sh"
     # shellcheck source=host.sh
     . "$tr_here/host.sh"
-    mkdir -p "$dir/manifest" "$dir/points" "$dir/logs" "$dir/irq" "$dir/netem" "$dir/samples" "$dir/nstat" "$dir/settings" "$dir/events" "$dir/aeronpage" "$dir/napi"
+    mkdir -p "$dir/manifest" "$dir/points" "$dir/logs" "$dir/irq" "$dir/netem" "$dir/samples" "$dir/nstat" "$dir/settings" "$dir/events" "$dir/aeronpage" "$dir/napi" "$dir/onload" "$dir/idle" "$dir/nicstats"
     # LAB_LOCAL_SMOKE: both hosts homes on this box (tr_smoke_hooks)
     [[ -z ${LAB_LOCAL_SMOKE:-} ]] || tr_smoke_hooks
     : >"$dir/failures.csv"
@@ -1154,13 +1907,22 @@ tr_run() {
     # transport-settings.env, fairness.py's form of them
     cp "$tr_here/transport-settings.env" "$dir/transport-settings.tr.env"
     transport_sysctls >"$dir/declared-sysctls.txt"
-    settings_sha=$(sha256sum "$dir/transport-settings.tr.env" 2>/dev/null | awk '{print $1}')
+    # the session's SMT (a sets file's `smt on`, else off): every point reads
+    # smt/active back on each host (vm.sh settings), held to this (optional:
+    # absent where the kernel has no SMT control at all; the local smoke's
+    # box is not ours to declare)
+    smt=$(tr_plan smt) || die "the sets file's smt row does not parse"
+    if [[ -z ${LAB_LOCAL_SMOKE:-} ]]; then
+        echo "devices/system/cpu/smt/active $([[ $smt == on ]] && echo 1 || echo 0) optional" >>"$dir/declared-sysctls.txt"
+    fi
+    log "session $session: SMT $smt"
     # the map, the NICs, the binaries and the ergon-tune report of each host
     # (and one on the hugetlbfs Aeron directory, where an arm of the plan
     # runs there: its points' report); a report with any warning stops the
     # session before its first point
-    local huge=
+    local huge= onload=
     [[ ! -s $dir/rounds.tsv ]] || huge=$(tr_huge_arms "$(cat "$dir/rounds.tsv")")
+    [[ ! -s $dir/rounds.tsv ]] || onload=$(tr_setup_arms onload "$(cat "$dir/rounds.tsv")")
     arm=
     for h in a b; do
         on "$(tr_host "$h")" "$vm transport-map" >"$dir/map-$h.txt" 2>"$dir/logs/map-$h.err" || die "host $h: no transport map"
@@ -1168,6 +1930,12 @@ tr_run() {
         on "$(tr_host "$h")" "$vm settings" >"$dir/settings-$h.txt" 2>/dev/null || die "host $h: settings not read"
         on "$(tr_host "$h")" "sha256sum ergon/target/release/* extra/bin/* 2>/dev/null" >"$dir/bins-$h.txt" 2>/dev/null
         on "$(tr_host "$h")" "$vm netem clear" >>"$dir/logs/netem-$h.log" 2>&1 || die "host $h: a netem qdisc not cleared before the session"
+        # the Onload arms' build on each host (its first line every point's
+        # onload_build_<host>): the version, commit, patch and kernel
+        if [[ -n $onload ]]; then
+            on "$(tr_host "$h")" "$vm onload-info" >"$dir/onload-$h.txt" 2>&1 ||
+                die "host $h: Onload, which $(echo $onload) run under, is not installed ($dir/onload-$h.txt: $(tail -1 "$dir/onload-$h.txt"))"
+        fi
         if ! on "$(tr_host "$h")" "$vm hostcheck" >"$dir/hostcheck-$h.txt" 2>&1; then
             # the smoke's box isolates nothing: its report stands, fairness.py flags it
             [[ -n ${LAB_LOCAL_SMOKE:-} ]] && { log "smoke: host $h's hostcheck report is not clean (no isolated CPUs here): recorded, not stopping"; continue; }
@@ -1179,6 +1947,8 @@ tr_run() {
     done
     cmp -s "$dir/map-a.txt" "$dir/map-b.txt" || die "the hosts' CPU maps differ: $(cat "$dir/map-a.txt") and $(cat "$dir/map-b.txt")"
     map=$(cat "$dir/map-a.txt")
+    tr_irq_idle_session || die "the IRQ core's idle depth: see above"
+    settings_sha=$(sha256sum "$dir/transport-settings.tr.env" 2>/dev/null | awk '{print $1}')
     read -r hk _ iso <<<"$map"
     if [[ $pair == tune-? ]]; then
         tr_tune || rc=1

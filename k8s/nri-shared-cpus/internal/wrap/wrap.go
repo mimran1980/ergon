@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -220,19 +221,21 @@ type EnvBinding struct {
 	Spec string
 }
 
-// AeronCpusetAffinity is the Aeron setting that makes AERON_*_CPU_AFFINITY
-// values indexes into the cgroup cpuset instead of real CPU numbers.
-const AeronCpusetAffinity = "AERON_DRIVER_CPUSET_AFFINITY"
+// AeronCpusetOffsets are the Aeron settings that make AERON_*_CPU_AFFINITY
+// values offsets into the cgroup cpuset instead of real CPU numbers: Aeron
+// 1.54's name, then the name before it.
+var AeronCpusetOffsets = []string{"AERON_THREAD_AFFINITY_USE_CPUSET_OFFSETS", "AERON_DRIVER_CPUSET_AFFINITY"}
 
 // Translate resolves every binding and returns the environment assignments.
-// It refuses a translated AERON_*_CPU_AFFINITY when
-// AERON_DRIVER_CPUSET_AFFINITY is true: Aeron would then read our real CPU
-// number as an index into the cpuset.
+// It refuses a translated AERON_*_CPU_AFFINITY when one of
+// AeronCpusetOffsets is true: Aeron would then read our real CPU number as
+// an offset into the cpuset.
 func (p *Plan) Translate(env []string, bindings []EnvBinding) ([]string, error) {
-	aeronCpuset := false
+	aeronCpuset := ""
 	for _, e := range env {
-		if k, v, ok := strings.Cut(e, "="); ok && k == AeronCpusetAffinity {
-			aeronCpuset = strings.EqualFold(v, "true") || v == "1"
+		k, v, ok := strings.Cut(e, "=")
+		if ok && slices.Contains(AeronCpusetOffsets, k) && (strings.EqualFold(v, "true") || v == "1") {
+			aeronCpuset = k
 		}
 	}
 	out := make([]string, 0, len(bindings))
@@ -241,9 +244,9 @@ func (p *Plan) Translate(env []string, bindings []EnvBinding) ([]string, error) 
 		if err != nil {
 			return nil, fmt.Errorf("--env %s=%s: %w", b.Name, b.Spec, err)
 		}
-		if aeronCpuset && strings.HasPrefix(b.Name, "AERON_") && strings.HasSuffix(b.Name, "_CPU_AFFINITY") {
-			return nil, fmt.Errorf("--env %s=%s: %s=true makes Aeron read this as an index into the cgroup cpuset; unset it or pass --affinity keep and set the variable by hand",
-				b.Name, b.Spec, AeronCpusetAffinity)
+		if aeronCpuset != "" && strings.HasPrefix(b.Name, "AERON_") && strings.HasSuffix(b.Name, "_CPU_AFFINITY") {
+			return nil, fmt.Errorf("--env %s=%s: %s=true makes Aeron read this as an offset into the cgroup cpuset; unset it or pass --affinity keep and set the variable by hand",
+				b.Name, b.Spec, aeronCpuset)
 		}
 		out = append(out, b.Name+"="+v)
 	}

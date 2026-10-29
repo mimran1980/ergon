@@ -1,0 +1,32 @@
+# The mixed-load stage-trace sessions' sets (aws/lab.sh LAB_SUITE=transport
+# LAB_SETS_FILE=<this file>, in place of the matrix's sets; the matrix's
+# arms are kept): where the hot stream's round trip goes under each
+# threading model at a realistic load. The arms are the mixed-load ones
+# (transport-aws-aeron-mixed.tsv) with `--stage-trace 64`: aeron_lat stamps
+# every 64th hot-stream message at each end (stream 1001 and its echo
+# alone, not the background's), the media driver (RUSTERON_DPDK_STAGE_TRACE,
+# kernel and DPDK alike) every 64th of each stream, and transport_stages.py
+# breaks each point down. One stack a session, the two in parallel
+# (LAB_PAIR=a the kernel's, LAB_PAIR=b DPDK's). No netem: DPDK holds its NICs.
+#
+#   aeron-mix-trace           DEDICATED, its own driver process
+#   aeron-mix-emb-trace       DEDICATED in the binary's process: in the set
+#                             because -invoker is declared its twin
+#                             (TR_DECLARED: INVOKER runs the driver embedded)
+#   aeron-mix-shared-trace    SHARED, one agent for the driver
+#   aeron-mix-invoker-trace   INVOKER: the hot stream's thread runs the driver
+#   aa                        aeron-mix-trace again
+#
+# 128 streams at 50k msg/s, every stream's and both directions (the hot
+# stream 10k of it). The traced arms are compared with each other; the
+# untraced ones' figures are transport-aws-aeron-mixed.tsv's sessions'.
+#
+#   ta    pair a: the kernel's four arms and A/A
+#   tb    pair b: DPDK's
+#
+# At LAB_REPS=3 each session is 15 points, about 0.93 h wall (LAB_ESTIMATE=1,
+# on demand): $1.33 on c7i.4xlarge, $0.60 on c8g.2xlarge (LAB_ALLOW_ARM=1).
+#
+# set   pair par host loads  streams  netem  arms
+set ta   a    -   ab   50000  128      -      aeron-mix-trace,aeron-mix-emb-trace,aeron-mix-shared-trace,aeron-mix-invoker-trace,aa
+set tb   b    -   ab   50000  128      -      dpdk-aeron-mix-trace,dpdk-aeron-mix-emb-trace,dpdk-aeron-mix-shared-trace,dpdk-aeron-mix-invoker-trace,aa

@@ -354,7 +354,7 @@ fn read_include_file(
     base_dir: Option<&Path>,
     walk: &IncludeWalk,
 ) -> Result<IncludeHit, Fault> {
-    fn is_not_found(f: &Fault) -> bool {
+    const fn is_not_found(f: &Fault) -> bool {
         matches!(
             &f.kind,
             FaultKind::Include {
@@ -363,7 +363,7 @@ fn read_include_file(
             }
         )
     }
-    fn is_cycle(f: &Fault) -> bool {
+    const fn is_cycle(f: &Fault) -> bool {
         matches!(
             &f.kind,
             FaultKind::Include {

@@ -13,7 +13,7 @@ ctrlc = { version = "=3.5.2", features = ["termination"] }
 ergon-tune = { path = "../../tune" }
 hdrhistogram = { version = "=7.6.0", default-features = false }
 quanta = { version = "=0.13.0", default-features = false }
-rusteron-client = { version = "=0.2.13", features = ["static"] }
+rusteron-client = { version = "=0.2.15", features = ["static"] }
 tracing = { version = "=0.1.44", features = ["release_max_level_info"] }
 tracing-appender = "=0.2.5"
 tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["fmt", "std", "registry"] }
@@ -27,7 +27,7 @@ rustix = { version = "=1.1.5", default-features = false, features = ["std", "std
 
 [dev-dependencies]
 proptest = { version = "=1.12.0", default-features = false, features = ["std"] }
-rusteron-media-driver = { version = "=0.2.13", features = ["static"] }
+rusteron-media-driver = { version = "=0.2.15", features = ["static"] }
 serde_yaml = "=0.9.34"
 stats_alloc = "=0.1.10"
 

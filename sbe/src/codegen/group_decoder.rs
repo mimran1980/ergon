@@ -99,6 +99,7 @@ pub(crate) fn generate_group_decoder(
                 },
             )?;
             if entries_length > buf.len().saturating_sub(entries_start) {
+                sbe_rt::cold();
                 return Err(sbe_rt::DecodeError::BufferTooShort {
                     field: #g_name_lit,
                     needed: entries_length,
@@ -166,6 +167,7 @@ pub(crate) fn generate_group_decoder(
     let dynamic_entry_extent_proof = quote::quote! {
         let __available = self.buf.len().saturating_sub(self.offset);
         if self.min_entry_extent > __available {
+            sbe_rt::cold();
             return Err(sbe_rt::DecodeError::BufferTooShort {
                 field: #g_name_lit,
                 needed: self.min_entry_extent,
@@ -263,6 +265,7 @@ pub(crate) fn generate_group_decoder(
             ) -> Result<#decoder_ident<'a, sbe_rt::Attached>, sbe_rt::DecodeError> {
                 // Trust boundary: always validate dimension header fits in buffer
                 if #dim_size_lit > buf.len().saturating_sub(offset) {
+                    sbe_rt::cold();
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: #g_name_lit,
                         needed: #dim_size_lit,
@@ -299,7 +302,7 @@ pub(crate) fn generate_group_decoder(
             /// body this group is nested in, and `offset` must be the byte
             /// position where this group would have started had it been present.
             #[inline]
-            unsafe fn wrap_absent_parent(
+            const unsafe fn wrap_absent_parent(
                 buf: &'a [u8],
                 offset: usize,
                 acting_version: u16,
@@ -324,7 +327,7 @@ pub(crate) fn generate_group_decoder(
 
             #mu
             #[inline]
-            pub fn is_empty(&self) -> bool {
+            pub const fn is_empty(&self) -> bool {
                 self.count == 0
             }
 
@@ -446,7 +449,7 @@ pub(crate) fn generate_group_decoder(
             /// start offset was validated at wrap time, so retrying from there
             /// is sound even after an entry failed.
             #[inline]
-            pub fn rewind(&mut self) -> &mut Self {
+            pub const fn rewind(&mut self) -> &mut Self {
                 self.offset = self.start;
                 self.count = self.total;
                 #clear_poison
@@ -545,6 +548,7 @@ pub(crate) fn generate_group_decoder(
                             available: 0,
                         })?;
                     if self.offset + needed > self.buf.len() {
+                        sbe_rt::cold();
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #g_name_lit,
                             needed,
@@ -582,8 +586,9 @@ pub(crate) fn generate_group_decoder(
         ts.extend(quote::quote! {
             impl<'a, C: sbe_rt::GroupContext> #decoder_ident<'a, C> {
                 #[inline]
-                pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
+                pub const fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
                     if n > self.count {
+                        sbe_rt::cold();
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #g_name_lit,
                             needed: n.saturating_mul(self.acting_block_length),
@@ -604,6 +609,7 @@ pub(crate) fn generate_group_decoder(
                 #[inline]
                 pub fn skip_n(&mut self, n: usize) -> Result<(), sbe_rt::DecodeError> {
                     if n > self.count {
+                        sbe_rt::cold();
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #g_name_lit,
                             needed: n.saturating_mul(<#decoder_ident<'_, sbe_rt::Detached>>::ENTRY_BLOCK_LENGTH),
@@ -639,6 +645,7 @@ pub(crate) fn generate_group_decoder(
                 #[inline]
                 pub fn entry_at(&self, idx: usize) -> Result<#entry_decoder_ident<'a>, sbe_rt::DecodeError> {
                     if idx >= self.total {
+                        sbe_rt::cold();
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #g_name_lit,
                             needed: idx.saturating_add(1).saturating_mul(self.acting_block_length),
@@ -660,6 +667,7 @@ pub(crate) fn generate_group_decoder(
                         },
                     )?;
                     if self.acting_block_length > self.buf.len().saturating_sub(offset) {
+                        sbe_rt::cold();
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #g_name_lit,
                             needed: self.acting_block_length,
@@ -684,6 +692,7 @@ pub(crate) fn generate_group_decoder(
                 #[inline]
                 pub fn scan_entry_at(&self, idx: usize) -> Result<#entry_decoder_ident<'a>, sbe_rt::DecodeError> {
                     if idx >= self.total {
+                        sbe_rt::cold();
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #g_name_lit,
                             needed: idx.saturating_add(1).saturating_mul(<#decoder_ident<'_, sbe_rt::Detached>>::ENTRY_BLOCK_LENGTH),
@@ -701,6 +710,7 @@ pub(crate) fn generate_group_decoder(
                     }
                     let available = self.buf.len().saturating_sub(offset);
                     if self.min_entry_extent > available {
+                        sbe_rt::cold();
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #g_name_lit,
                             needed: self.min_entry_extent,
@@ -791,6 +801,7 @@ pub(crate) fn generate_group_decoder(
                         // from `total`, so nothing is lost.
                         self.poisoned = Some(error);
                         self.count = 0;
+                        sbe_rt::cold();
                         return Some(Err(error));
                     }
                     // SAFETY: acting fixed block at offset proven directly above;
@@ -809,6 +820,7 @@ pub(crate) fn generate_group_decoder(
                         Err(e) => {
                             self.poisoned = Some(e);
                             self.count = 0;
+                            sbe_rt::cold();
                             return Some(Err(e));
                         }
                     };
@@ -877,7 +889,7 @@ pub(crate) fn generate_group_decoder(
             /// field offset used by accessors) must not overflow and must be
             /// ≤ `buf.len()`. Fixed-field getters may then use unchecked reads.
             #[inline]
-            unsafe fn wrap(
+            const unsafe fn wrap(
                 buf: &'a [u8],
                 offset: usize,
                 acting_block_length: usize,
@@ -901,7 +913,7 @@ pub(crate) fn generate_group_decoder(
             /// Fixed block at `offset` and every dynamic tail extent this entry
             /// will traverse must be fully in-bounds in `buf`.
             #[inline]
-            unsafe fn wrap(
+            const unsafe fn wrap(
                 buf: &'a [u8],
                 offset: usize,
                 acting_block_length: usize,
@@ -1159,7 +1171,7 @@ pub(crate) fn generate_group_decoder(
                     entry_body.extend(quote::quote! {
                         #mu
                         #[inline]
-                        pub fn #f_name_ident(&self) -> #target_decoder_name<'_> {
+                        pub const fn #f_name_ident(&self) -> #target_decoder_name<'_> {
                             let offset = self.offset + #offset_lit;
                             #target_decoder_name { buf: self.buf, offset: offset }
                         }
@@ -1481,6 +1493,7 @@ pub(crate) fn generate_group_decoder(
         &nested_entry_skip,
         quote::quote! {
             if self.acting_block_length > self.buf.len().saturating_sub(self.offset) {
+                sbe_rt::cold();
                 return Err(sbe_rt::DecodeError::BufferTooShort {
                     field: "group entry",
                     needed: self.acting_block_length,
@@ -1615,6 +1628,7 @@ pub(crate) fn generate_group_decoder(
             let max_lit = syn::LitInt::new(&max.to_string(), proc_macro2::Span::call_site());
             quote::quote! {
                 if wire_length > #max_lit as u64 {
+                    sbe_rt::cold();
                     return Err(sbe_rt::DecodeError::InvalidVarDataLength {
                         field: stringify!(#vd_snake_ident),
                         length: wire_length,
@@ -1761,12 +1775,13 @@ pub(crate) fn generate_group_decoder(
         entry_body.extend(quote::quote! {
             #mu
             #[inline]
-            pub fn encoded_length(&self) -> usize {
+            pub const fn encoded_length(&self) -> usize {
                 self.acting_block_length
             }
             #[inline]
-            pub fn skip(buf: &'a [u8], offset: usize, block_len: usize, _acting_version: u16) -> Result<usize, sbe_rt::DecodeError> {
+            pub const fn skip(buf: &'a [u8], offset: usize, block_len: usize, _acting_version: u16) -> Result<usize, sbe_rt::DecodeError> {
                 if block_len > buf.len().saturating_sub(offset) {
+                    sbe_rt::cold();
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: "group entry",
                         needed: block_len,
@@ -1793,6 +1808,7 @@ pub(crate) fn generate_group_decoder(
                 acting_version: u16,
             ) -> Result<usize, sbe_rt::DecodeError> {
                 if block_len > buf.len().saturating_sub(offset) {
+                    sbe_rt::cold();
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: "group entry",
                         needed: block_len,

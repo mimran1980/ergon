@@ -9,10 +9,9 @@ One daemon (a containerd NRI plugin and a kubelet device plugin) plus a small
 tool, `ergon-cpus`. Source:
 <https://github.com/mimran1980/ergon/tree/main/k8s/nri-shared-cpus>.
 
-**This is not a new idea.** [Prior art](#prior-art) names the projects that
-already do parts of it and the open Kubernetes issue it answers. Read that
-before you choose. What is here is the containerd path that needs no DRA
-feature gate, plus the pieces those leave out.
+**This is not a new idea.** [Related projects](#related-projects) credits the
+projects this builds on and the Kubernetes work in the same area. What is here
+is one containerd NRI approach; choose whichever fits your cluster.
 
 ## Status
 
@@ -336,8 +335,9 @@ env: [{ name: AERON_THREADING_MODE, value: DEDICATED }]
 
 Leave `AERON_CONDUCTOR_CPU_AFFINITY` and
 `AERON_DRIVER_NATIVE_RESOURCE_AGENT_CPU_AFFINITY` unset: those agents start
-on the shared CPUs. Keep `AERON_DRIVER_CPUSET_AFFINITY` false; the wrapper
-refuses to translate Aeron variables when it is true.
+on the shared CPUs. Keep `AERON_THREAD_AFFINITY_USE_CPUSET_OFFSETS` (before
+Aeron 1.54: `AERON_DRIVER_CPUSET_AFFINITY`) false; the wrapper refuses to
+translate Aeron variables when either is true.
 
 ## Chart values
 
@@ -508,59 +508,31 @@ A spike means an IRQ or a softirq reached the exclusive core: IRQ affinity or
 RPS is wrong, or `sharedCpus` is not where the interrupts are handled. No spike
 means the layout is doing its job. Run it with and without the plugin.
 
-## Prior art
+## Related projects
 
-The idea is not new. Several projects do part of it; one does most of it.
+This plugin builds on ideas and work from several projects, and owes them
+credit. Each takes its own approach; pick the one that fits your cluster.
 
-| project | what it does | state |
-|---|---|---|
-| [CRI-O `shared_cpuset`](https://github.com/cri-o/cri-o) | adds a node-wide shared CPU set to a Guaranteed container's cpuset on top of its exclusive CPUs | shipped, production, **CRI-O only** |
-| [openshift-kni/mixed-cpu-node-plugin](https://github.com/openshift-kni/mixed-cpu-node-plugin) | NRI plugin plus device plugin, "populates shared-cpus as a device" | **deprecated** — merged into CRI-O |
-| [kubernetes-sigs/dra-driver-cpu](https://github.com/kubernetes-sigs/dra-driver-cpu) | exclusive CPUs per container, shared pool for everything else, over DRA + CDI + NRI | active (★67), but exclusive ∪ shared in one container is **not landed** |
-| [containers/nri-plugins](https://github.com/containers/nri-plugins) topology-aware | exclusive and shared cores in one workload, plus IRQ, frequency and NUMA policy | active (★117), containerd NRI |
-| [antaloala/nri-cpuset-partition](https://github.com/antaloala/nri-cpuset-partition) | makes a container's cgroup a cgroup v2 `cpuset` partition | new (Oct 2026); covers the `cpu-partition` opt-in only |
-| kubelet CPU Manager `static` + `reservedSystemCPUs` | exclusive CPUs only | upstream; we build on it |
+| project | approach |
+|---|---|
+| [CRI-O `shared_cpuset`](https://github.com/cri-o/cri-o) | adds a node-wide shared CPU set to a Guaranteed container's cpuset, alongside its exclusive CPUs; built into CRI-O |
+| [openshift-kni/mixed-cpu-node-plugin](https://github.com/openshift-kni/mixed-cpu-node-plugin) | an NRI plugin plus a device plugin that offers the shared CPUs as a device; its work continued in CRI-O |
+| [kubernetes-sigs/dra-driver-cpu](https://github.com/kubernetes-sigs/dra-driver-cpu) | CPU allocation through DRA, CDI and NRI; mixed exclusive and shared allocation is being designed there ([#103](https://github.com/kubernetes-sigs/dra-driver-cpu/issues/103), [#149](https://github.com/kubernetes-sigs/dra-driver-cpu/pull/149), [#305](https://github.com/kubernetes-sigs/dra-driver-cpu/issues/305), [KEP-5517](https://github.com/kubernetes/enhancements/issues/5517)) |
+| [containers/nri-plugins](https://github.com/containers/nri-plugins) topology-aware | exclusive and shared cores in one workload, with IRQ, frequency and NUMA policy, on containerd NRI |
+| [antaloala/nri-cpuset-partition](https://github.com/antaloala/nri-cpuset-partition) | makes a container's cgroup a cgroup v2 `cpuset` partition |
+| kubelet CPU Manager `static` + `reservedSystemCPUs` | exclusive CPUs per container; this plugin builds on it |
 
-On the Kubernetes SIG driver the same feature is an open ask and a draft:
+### Design choices here
 
-| item | state | title |
-|---|---|---|
-| [#103](https://github.com/kubernetes-sigs/dra-driver-cpu/issues/103) | open, Mar 2026 | *Support mixed shared and isolated CPU allocation with CPU DRA* |
-| [#149](https://github.com/kubernetes-sigs/dra-driver-cpu/pull/149) | **draft, "Do Not Merge"** | *POC for Mixed CPU Allocation* — sets the affinity to "the union of their dedicated exclusive CPUs and the node's shared CPU pool" |
-| [#305](https://github.com/kubernetes-sigs/dra-driver-cpu/issues/305) | open, Aug 2026 | *Mixed CPU allocation via composable exclusive + shared devices* |
-
-So this is [issue #103](https://github.com/kubernetes-sigs/dra-driver-cpu/issues/103)
-working today, on plain containerd, with no DRA feature gate and without waiting
-on [KEP-5517](https://github.com/kubernetes/enhancements/issues/5517).
-
-### Why use this one
-
-| | CRI-O | dra-driver-cpu | **here** |
-|---|---|---|---|
-| exclusive ∪ shared in one container | yes | draft POC only | yes |
-| plain containerd, no feature gate | no | needs DRA + KEP-5517 | **yes** |
-| every new thread starts on the shared CPUs | no (exec affinity only) | no | **yes** (OCI `createRuntime`) |
-| pin by index, never a real CPU number | no | no | **yes** (`pin_isolated`, `ergon-cpus`) |
-| refuses a split SMT core, naming it | no | partial | **yes** |
-| refuses a NUMA binding from unread topology | no | picks best-fit | **yes** |
-| capacity the scheduler can see | no | DRA consumable capacity | **yes** (`ergon.io/shared-millicpus`) |
-
-### Why not wait for DRA
-
-`dra-driver-cpu` is the right long-term vehicle and will probably reach this
-behaviour eventually. It is not there now: it needs DRA (Kubernetes 1.34+) and a
-feature gate, the mixed-allocation POC is a non-mergeable draft waiting on
-KEP-5517, and its model treats a guaranteed container as exclusive-only, so its
-helper threads have nowhere to go but the exclusive set. When it lands, move.
-
-### Deliberate differences
-
-| elsewhere | here | why |
-|---|---|---|
-| CRI-O raises `cpu.cfs_quota_us` / `cpu.max` when it widens the cpuset | a container with a CPU quota is **refused** | a quota means the pod is not an exclusive Guaranteed integer-CPU pod; lifting the quota would hide that |
-| CRI-O takes the housekeeping CPUs from the SMT siblings of the container's first CPU | `sharedCpus` is set by the operator, and a split core is refused | on a trading node the housekeeping set is a choice, not a side effect |
-| dra-driver-cpu shrinks the shared pool as exclusives are allocated | `sharedCpus` is fixed and must sit inside `reservedSystemCPUs` | exclusives can never overlap it, so there is nothing to subtract |
-| `nri-plugins` topology-aware also sets IRQ affinity, governors and C-states | not here | that is a node policy product. This only places threads |
+| choice | why |
+|---|---|
+| runs on plain containerd NRI with no feature gate | the clusters it was written for run containerd |
+| every new thread starts on the shared CPUs (OCI `createRuntime`) | a busy-spin loop pins itself to its exclusive CPU; everything else stays off it |
+| pins by index (`pin_isolated`, `ergon-cpus`), never a real CPU number | the same image runs on any node layout |
+| a container with a CPU quota is refused | a quota means the pod is not an exclusive Guaranteed integer-CPU pod |
+| `sharedCpus` is set by the operator, inside `reservedSystemCPUs`; a split SMT core is refused | on a trading node the housekeeping set is a deliberate choice |
+| no IRQ, governor or C-state policy | it only places threads; node tuning lives in [Kubernetes HFT tuning](https://mimran1980.github.io/ergon/deploy/hft.html) |
+| the shared capacity is a scheduler resource (`ergon.io/shared-millicpus`) | the scheduler can see what is left |
 
 ## Develop
 

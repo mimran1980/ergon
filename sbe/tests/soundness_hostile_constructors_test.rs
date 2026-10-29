@@ -53,7 +53,7 @@ fn generated_source_has_no_public_safe_raw_helpers() -> Result<(), Box<dyn Error
     // Post-safe-ification: read_bytes / write_bytes are pub fn.
     // No unsafe in the generated public API surface.
     assert!(
-        src.contains("pub fn try_wrap_and_apply_header")
+        src.contains("pub const fn try_wrap_and_apply_header")
             && src.contains("Result<")
             && src.contains("EncodeError"),
         "checked encoder constructor try_wrap_and_apply_header must return Result"
@@ -112,7 +112,7 @@ fn checked_encoder_calls_core_in_source() -> Result<(), Box<dyn Error>> {
     // try_wrap_and_apply_header is the checked constructor; it delegates to
     // wrap_and_apply_header_unchecked after the extent proof.
     let idx = src
-        .find("pub fn try_wrap_and_apply_header")
+        .find("pub const fn try_wrap_and_apply_header")
         .ok_or("missing try_wrap_and_apply_header")?;
     let window = &src[idx..idx.saturating_add(800).min(src.len())];
     assert!(

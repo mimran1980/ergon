@@ -28,7 +28,7 @@
 //!   hold point stay valid.
 
 use std::net::TcpStream;
-use std::os::fd::{AsRawFd, RawFd};
+use std::os::fd::RawFd;
 
 use crate::endpoint::sealed::RouteSlot;
 use crate::error::{Error, Result};
@@ -48,9 +48,10 @@ pub struct StreamStats {
     pub compact_bytes: u64,
 }
 
-/// A connected TLS stream with its receive buffer and send queue.
-pub struct TlsStream {
-    sock: TcpStream,
+/// A connected TLS stream with its receive buffer and send queue, over a
+/// socket of type `T` ([`crate::net::StreamSocket`]).
+pub struct TlsStream<T = TcpStream> {
+    sock: T,
     buf: Box<[u8]>,
     head: usize,
     tail: usize,
@@ -69,11 +70,11 @@ pub struct TlsStream {
     route: RouteSlot,
 }
 
-impl TlsStream {
+impl<T: crate::netstack::Socket> TlsStream<T> {
     /// A stream whose buffer holds `plain` bytes of plaintext at the front,
     /// followed by `cipher` bytes of ciphertext.
     pub(crate) fn new(
-        sock: TcpStream,
+        sock: T,
         buf: Box<[u8]>,
         plain: usize,
         cipher: usize,
@@ -114,7 +115,7 @@ impl TlsStream {
     }
 
     pub(crate) fn fd(&self) -> RawFd {
-        self.sock.as_raw_fd()
+        self.sock.fd()
     }
 
     pub(crate) const fn stats(&self) -> &StreamStats {

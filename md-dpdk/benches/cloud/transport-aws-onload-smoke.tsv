@@ -1,0 +1,12 @@
+# The AWS Onload smoke (aws/lab.sh LAB_SUITE=transport LAB_PAIR=a LAB_REPS=1
+# LAB_SETS_FILE=<this file>): every Onload arm of the matrix once, one
+# stream at two loads, beside a kernel arm of tcp_lat's and of aeron_lat's
+# and the A/A arm, on one pair of the type the full session will
+# run on. It checks setup onload (the build, onload-up: one queue, Onload's
+# MTU, the AF_XDP registration read back; each binary's and the media
+# driver's stack under onload, EF_NO_FAIL=0) before a transport-aws-onload.tsv
+# session. No netem: Onload's AF_XDP sends skip the kernel's qdiscs.
+
+# set   pair par host loads         streams  netem  arms
+set ot   a    -   ab   10000,50000   1        -      onload-mio-tcp,onload-eio-tcp,mio-tcp,aa
+set ou   a    -   ab   10000,50000   1        -      onload-mio-udp,onload-eio-udp,onload-aeron-udp,onload-aeron-rel,aeron-rel,aa

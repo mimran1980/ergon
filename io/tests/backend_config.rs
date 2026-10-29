@@ -107,7 +107,7 @@ fn per_queue_as_struct_fields() {
 #[test]
 fn the_quickack_check_is_a_key_on_every_backend() -> R {
     use ergon_io::route::QuickAckCheck;
-    for b in Backend::ALL {
+    for b in Backend::KERNEL {
         assert_eq!(Config::new(b).quickack_check, QuickAckCheck::Warn, "{b}");
         for p in [
             QuickAckCheck::Off,
@@ -130,7 +130,7 @@ fn the_quickack_check_is_a_key_on_every_backend() -> R {
 
 #[test]
 fn tcp_keepalive_is_on_by_default_and_configurable() -> R {
-    for b in Backend::ALL {
+    for b in Backend::KERNEL {
         let c = Config::new(b);
         assert_eq!(c.keepalive_idle_s, 10, "{b}");
         assert_eq!(c.keepalive_interval_s, 5, "{b}");
@@ -244,13 +244,30 @@ fn tcp_timers_and_tcp_info_are_off_by_default_and_bounded() -> R {
     Ok(())
 }
 
-/// Only the backends the benchmarks measured in a busy-spin loop are left:
-/// `epoll-spin` (interrupt-driven), `recv-busy` and `uring-sqpoll` (NIC
-/// polling). `uring-spin`, `epoll-busy` and `uring-napi` are unknown names.
+/// Only the kernel backends the benchmarks measured in a busy-spin loop are
+/// left: `epoll-spin` (interrupt-driven), `recv-busy` and `uring-sqpoll`
+/// (NIC polling); `fstack-spin` and `smoltcp-spin` bypass the kernel.
+/// `uring-spin`, `epoll-busy` and `uring-napi` are unknown names.
 #[test]
 fn only_the_three_measured_backends_exist() -> R {
-    let names: Vec<&str> = Backend::ALL.iter().map(|b| b.name()).collect();
+    let names: Vec<&str> = Backend::KERNEL.iter().map(|b| b.name()).collect();
     assert_eq!(names, ["epoll-spin", "recv-busy", "uring-sqpoll"]);
+    let all: Vec<&str> = Backend::ALL.iter().map(|b| b.name()).collect();
+    assert_eq!(
+        all,
+        [
+            "epoll-spin",
+            "recv-busy",
+            "uring-sqpoll",
+            "fstack-spin",
+            "smoltcp-spin"
+        ]
+    );
+    assert!(
+        Backend::ALL
+            .iter()
+            .all(|b| b.bypasses_kernel() != Backend::KERNEL.contains(b))
+    );
     for gone in ["uring-spin", "epoll-busy", "uring-napi"] {
         let e = gone
             .parse::<Backend>()
@@ -352,5 +369,217 @@ fn epoll_events_and_datagram_burst_parse_and_are_bounded() -> R {
     let mut c = Config::new(Backend::EpollSpin);
     c.datagram_burst = 0;
     assert!(c.validate().is_err(), "a zero burst validated");
+    Ok(())
+}
+
+/// `fstack-spin`'s defaults leave out what F-Stack lacks (receive
+/// timestamps, the kernel's quick-ACK route check, `TCP_USER_TIMEOUT`); its
+/// `fstack_*` keys parse (a vdev's commas written `;`), and are refused on
+/// every other backend.
+#[test]
+fn fstack_spin_defaults_and_keys() -> R {
+    use ergon_io::route::QuickAckCheck;
+    let defaults = Config::new(Backend::FstackSpin);
+    assert!(!defaults.rx_timestamps);
+    assert_eq!(defaults.quickack_check, QuickAckCheck::Off);
+    assert_eq!(defaults.tcp_user_timeout_ms, 0);
+    assert_eq!(
+        (
+            defaults.keepalive_idle_s,
+            defaults.keepalive_interval_s,
+            defaults.keepalive_count
+        ),
+        (10, 5, 3)
+    );
+    assert!(defaults.fstack.is_default());
+    let parsed = Config::parse(
+        "fstack-spin,loop_cpu=2,fstack_addr=10.9.0.1,fstack_prefix_len=24,fstack_gateway=10.9.0.254,\
+         fstack_vdev=net_af_packet0;iface=va,fstack_no_huge=true,fstack_memory_mb=512,\
+         fstack_file_prefix=client,fstack_sysctl=net.inet.tcp.blackhole=0,fstack_hz=1000",
+    )?;
+    let fs = &parsed.fstack;
+    assert_eq!(fs.addr, Some([10, 9, 0, 1].into()));
+    assert_eq!(fs.gateway, Some([10, 9, 0, 254].into()));
+    assert_eq!(fs.vdev.as_deref(), Some("net_af_packet0,iface=va"));
+    assert!(fs.no_huge && fs.pci.is_none());
+    assert_eq!(
+        (fs.memory_mb, fs.hz, fs.file_prefix.as_str()),
+        (512, 1000, "client")
+    );
+    assert_eq!(
+        fs.sysctl,
+        [("net.inet.tcp.blackhole".to_owned(), "0".to_owned())]
+    );
+    fs.check()?;
+    for b in Backend::KERNEL {
+        let line = format!("{b},fstack_addr=10.9.0.1");
+        let e = Config::parse(&line)
+            .err()
+            .ok_or_else(|| format!("{line:?} accepted"))?;
+        assert!(
+            matches!(&e, ergon_io::Error::Config(m) if m.contains("fstack-spin")),
+            "{line}: {e}"
+        );
+    }
+    Ok(())
+}
+
+/// What the kernel has and F-Stack does not is refused typed, naming what
+/// F-Stack does instead.
+#[test]
+fn fstack_spin_refuses_kernel_only_keys() -> R {
+    for bad in [
+        "fstack-spin,tcp_user_timeout_ms=1000",
+        "fstack-spin,tcp_rto_min_us=5000",
+        "fstack-spin,tcp_delack_max_us=5000",
+        "fstack-spin,quickack_check=warn",
+        "fstack-spin,rx_timestamps=true",
+        "fstack-spin,per_queue=true",
+        "fstack-spin,busy_poll_us=1",
+        "fstack-spin,fstack_addr=10.9.0",
+        "fstack-spin,fstack_sysctl=novalue",
+    ] {
+        let e = Config::parse(bad)
+            .err()
+            .ok_or_else(|| format!("{bad:?} accepted"))?;
+        assert!(matches!(e, ergon_io::Error::Config(_)), "{bad:?}: {e}");
+    }
+    // Incomplete settings parse (a `Config` is built up), and are refused
+    // where F-Stack would start.
+    let c = Config::parse("fstack-spin,fstack_addr=10.9.0.1")?;
+    let e = c
+        .fstack
+        .check()
+        .err()
+        .ok_or("no gateway or port accepted")?;
+    assert!(e.to_string().contains("fstack_gateway"), "{e}");
+    Ok(())
+}
+
+/// `smoltcp-spin`: the kernel's per-socket keys it cannot honour are
+/// refused, the rest parse; its stack's settings are `StackConfig`'s.
+#[test]
+fn smoltcp_spin_refuses_what_its_stack_cannot_do() -> R {
+    let c = Config::parse("smoltcp-spin")?;
+    assert_eq!(c.backend, Backend::SmoltcpSpin);
+    assert!(c.backend.polls_nic());
+    for bad in [
+        // The RTO floor is the stack's (StackConfig::rto_min_us).
+        "smoltcp-spin,tcp_rto_min_us=8000",
+        "smoltcp-spin,quickack_check=require",
+        "smoltcp-spin,per_queue=true",
+        "smoltcp-spin,busy_poll_us=50",
+        // smoltcp aborts a connection that hears nothing for the user
+        // timeout, idle or not: keepalive must be on and shorter.
+        "smoltcp-spin,keepalive_idle_s=0",
+        "smoltcp-spin,keepalive_idle_s=30,tcp_user_timeout_ms=25000",
+    ] {
+        let e = Config::parse(bad)
+            .err()
+            .ok_or_else(|| format!("{bad:?} accepted"))?;
+        assert!(matches!(e, ergon_io::Error::Config(_)), "{bad}: {e}");
+    }
+    for good in [
+        "smoltcp-spin,tcp_delack_max_us=5000",
+        "smoltcp-spin,keepalive_idle_s=0,tcp_user_timeout_ms=0",
+        "smoltcp-spin,keepalive_idle_s=5,tcp_user_timeout_ms=6000",
+        "smoltcp-spin,quickack_check=off,rcvbuf=0,rx_timestamps=false",
+    ] {
+        Config::parse(good)?;
+    }
+    Ok(())
+}
+
+/// `StackConfig::parse`: every key, `eal=` last and taking the rest
+/// (commas included), and the checks.
+#[test]
+fn the_smoltcp_stack_config_parses_and_checks() -> R {
+    use ergon_io::smoltcp_dpdk::{Congestion, StackConfig};
+    let c = StackConfig::parse(
+        "port=0000:00:06.0,ip=10.1.2.3/20,gw=10.1.0.1,gw_mac=02:aa:bb:cc:dd:ee,mtu=9001,\
+         rx_desc=2048,tx_desc=512,mbufs=16383,max_sockets=8,tcp_rx_buf=65536,tcp_tx_buf=32768,\
+         udp_buf=4096,udp_packets=16,rto_min_us=8000,cc=none,timestamps=false,\
+         tx_csum_offload=false,link_wait_ms=100,eal=-a 0000:00:06.0,llq_policy=1 --huge-dir /mnt/h",
+    )?;
+    assert_eq!(c.port, "0000:00:06.0");
+    assert_eq!((c.ip, c.prefix_len), ("10.1.2.3".parse()?, 20));
+    assert_eq!(c.gateway, Some("10.1.0.1".parse()?));
+    assert_eq!(c.gateway_mac, Some([2, 0xaa, 0xbb, 0xcc, 0xdd, 0xee]));
+    assert_eq!(
+        (c.mtu, c.rx_desc, c.tx_desc, c.mbufs),
+        (9001, 2048, 512, 16383)
+    );
+    assert_eq!(
+        (c.max_sockets, c.tcp_rx_buf, c.tcp_tx_buf),
+        (8, 65536, 32768)
+    );
+    assert_eq!((c.udp_buf, c.udp_packets, c.rto_min_us), (4096, 16, 8000));
+    assert_eq!(c.congestion, Congestion::None);
+    assert!(!c.tcp_timestamps && !c.tx_checksum_offload);
+    assert_eq!(c.link_wait_ms, 100);
+    assert_eq!(
+        c.eal_args,
+        ["-a", "0000:00:06.0,llq_policy=1", "--huge-dir", "/mnt/h"]
+    );
+    assert!((c.clock_scale() - 125.0).abs() < 1e-9);
+    assert!(c.on_link("10.1.15.255".parse()?) && !c.on_link("10.1.16.1".parse()?));
+
+    // Defaults: a /24, a 10 ms RTO floor, Reno, timestamps on.
+    let d = StackConfig::parse("ip=192.168.7.9")?;
+    assert_eq!((d.prefix_len, d.rto_min_us, d.mtu), (24, 10_000, 1500));
+    assert_eq!(d.congestion, Congestion::Reno);
+    assert!(d.tcp_timestamps && d.tx_checksum_offload && d.eal_args.is_empty());
+    assert_eq!(
+        d,
+        StackConfig {
+            ip: "192.168.7.9".parse()?,
+            ..StackConfig::default()
+        }
+    );
+
+    for bad in [
+        "",                                                 // no address
+        "ip=0.0.0.0",                                       // not unicast
+        "ip=10.0.0.2/33",                                   // prefix
+        "ip=10.0.0.2,gw=10.0.1.1",                          // gateway off the prefix
+        "ip=10.0.0.2,gw=10.0.0.2",                          // gateway is us
+        "ip=10.0.0.2,gw_mac=02:00:00:00:00:01",             // MAC without a gateway
+        "ip=10.0.0.2,gw=10.0.0.1,gw_mac=01:00:5e:00:00:01", // multicast MAC
+        "ip=10.0.0.2,gw=10.0.0.1,gw_mac=02:00:00:00:00",    // short MAC
+        "ip=10.0.0.2,mtu=500",
+        "ip=10.0.0.2,mtu=70000",
+        "ip=10.0.0.2,rto_min_us=1000",
+        "ip=10.0.0.2,rto_min_us=2000000",
+        "ip=10.0.0.2,mbufs=100",
+        "ip=10.0.0.2,max_sockets=0",
+        "ip=10.0.0.2,tcp_rx_buf=100",
+        "ip=10.0.0.2,udp_packets=0",
+        "ip=10.0.0.2,cc=cubic",
+        "ip=10.0.0.2,timestamps=yes",
+        "ip=10.0.0.2,port=",
+        "ip=10.0.0.2,nope=1",
+        "ip=10.0.0.2,mtu",
+    ] {
+        let e = StackConfig::parse(bad)
+            .err()
+            .ok_or_else(|| format!("{bad:?} accepted"))?;
+        assert!(matches!(e, ergon_io::Error::Config(_)), "{bad}: {e}");
+    }
+    Ok(())
+}
+
+/// Without the `smoltcp-dpdk` feature, or off Linux, the stack cannot start
+/// and neither can a `smoltcp-spin` driver: `Error::Unsupported`, after the
+/// settings are checked.
+#[cfg(not(all(target_os = "linux", feature = "smoltcp-dpdk")))]
+#[test]
+fn without_the_feature_the_stack_is_unsupported() -> R {
+    use ergon_io::smoltcp_dpdk::{Stack, StackConfig};
+    let cfg = StackConfig::parse("ip=10.0.0.2")?;
+    let e = Stack::init(&cfg).err().ok_or("a stack started")?;
+    assert!(matches!(e, ergon_io::Error::Unsupported(_)), "{e}");
+    let bad = StackConfig::default();
+    let e = Stack::init(&bad).err().ok_or("a stack started")?;
+    assert!(matches!(e, ergon_io::Error::Config(_)), "{e}");
     Ok(())
 }

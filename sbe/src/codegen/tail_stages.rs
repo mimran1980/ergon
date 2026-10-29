@@ -188,6 +188,7 @@ pub(crate) fn generate_owner_consuming_stages(
             let max_lit = syn::LitInt::new(&max.to_string(), span);
             max_check.extend(quote::quote! {
                 if len > #max_lit {
+                    sbe_rt::cold();
                     return Err(sbe_rt::DecodeError::InvalidVarDataLength {
                         field: #vd_name_lit,
                         length: len,
@@ -226,6 +227,7 @@ pub(crate) fn generate_owner_consuming_stages(
                     #absent_vardata
                     let offset = #se;
                     if offset.checked_add(#prefix_size_lit).is_none_or(|end| end > self.buf.len()) {
+                        sbe_rt::cold();
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #vd_name_lit,
                             needed: #prefix_size_lit,
@@ -267,6 +269,7 @@ pub(crate) fn generate_owner_consuming_stages(
                     #slice_cached_tail
                     let offset = #se;
                     if offset.checked_add(#prefix_size_lit).is_none_or(|end| end > self.buf.len()) {
+                        sbe_rt::cold();
                         return Err(sbe_rt::DecodeError::BufferTooShort {
                             field: #vd_name_lit,
                             needed: #prefix_size_lit,
@@ -310,6 +313,7 @@ pub(crate) fn generate_owner_consuming_stages(
                             pub fn #as_str_ident(self) -> Result<(&'a str, #next_stage<'a>), sbe_rt::DecodeError> {
                                 let (bytes, next) = self.#into_ident()?;
                                 if !bytes.is_ascii() {
+                                    sbe_rt::cold();
                                     return Err(sbe_rt::DecodeError::InvalidAscii { field: #vd_name_lit });
                                 }
                                 let s = unsafe { core::str::from_utf8_unchecked(bytes) };
@@ -564,6 +568,8 @@ pub(crate) fn generate_owner_consuming_stages(
                             sbe_rt::EntryInfo,
                         ) -> Result<#entry_complete_ident<'a>, E>,
                     {
+                        // No `sbe_rt::cold()` on this loop's checks: it changed the
+                        // loop's layout and measured slower on the group parity bench.
                         if let Some(error) = self.poisoned {
                             return Err(E::from(error));
                         }
@@ -727,6 +733,7 @@ pub(crate) fn generate_owner_consuming_stages(
         let poisoned_finish_guard = tg.entries_have_tails.then(|| {
             quote::quote! {
                 if let Some(error) = self.poisoned {
+                    sbe_rt::cold();
                     return Err(error);
                 }
             }
@@ -770,7 +777,7 @@ pub(crate) fn generate_owner_consuming_stages(
         ts.extend(quote::quote! {
             impl<'a> #g_decoder_ident<'a, sbe_rt::Attached> {
                 #[inline]
-                fn into_parent_stage(self, tail_start: usize) -> #next_stage<'a> {
+                const fn into_parent_stage(self, tail_start: usize) -> #next_stage<'a> {
                     #next_stage {
                         buf: self.buf,
                         offset: self.parent_pos,
@@ -931,14 +938,14 @@ pub(crate) fn generate_owner_consuming_stages(
             /// Body length (excluding header).
             #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
-            pub fn encoded_length(&self) -> usize {
+            pub const fn encoded_length(&self) -> usize {
                 self.tail_start - self.offset
             }
             /// Total message length including the schema-declared header.
             /// Pure arithmetic: body length + `HEADER_LENGTH`.
             #[must_use = "discarding this value is almost always a mistake"]
             #[inline]
-            pub fn encoded_length_with_header(&self) -> usize {
+            pub const fn encoded_length_with_header(&self) -> usize {
                 self.tail_start - self.offset + #header_size_lit
             }
             /// Bytes after this message/entry.

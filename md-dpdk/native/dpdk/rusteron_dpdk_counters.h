@@ -2,8 +2,12 @@
  * ergon-md-dpdk DPDK transport — Aeron counters (plan §9).
  *
  * A per-role-port counter set surfaced through the driver's counters manager.
- * The type IDs (75..=95) are the driver's reserved range; no other media-driver
- * code allocates in it. Every counter carries a label with the role, PCI BDF,
+ * Type IDs: a counter Aeron's own DPDK transport also has takes Aeron's ID for
+ * it (AeronCounters DPDK_*_TYPE_ID: 75 to 79 and 82 to 95), so a tool that
+ * knows those reads these. 80 and 81 are left unassigned there (Aeron
+ * Premium's former discard counters). The counters only md-dpdk has (clock,
+ * NIC arrival delay) take IDs in Aeron's custom range, 1000 and up, as
+ * AeronCounters asks (below 1000 is Aeron's). Every counter carries a label with the role, PCI BDF,
  * DPDK port, queue and direction so a cluster-admin dashboard can attribute a
  * value to a specific ENA without extra state.
  *
@@ -35,14 +39,12 @@ struct rusteron_dpdk_event_ring_stct; /* rusteron_dpdk_events.h */
 extern "C" {
 #endif
 
-/* Aeron counter type IDs (plan §9). */
+/* Aeron counter type IDs (plan §9): Aeron's DPDK IDs, then md-dpdk's own. */
 #define RUSTERON_DPDK_TYPE_PORT_INFO                75
 #define RUSTERON_DPDK_TYPE_TRANSPORT                76
 #define RUSTERON_DPDK_TYPE_NOBUFS                   77
 #define RUSTERON_DPDK_TYPE_TX_EAGAIN                78
 #define RUSTERON_DPDK_TYPE_ERROR                    79
-#define RUSTERON_DPDK_TYPE_CLOCK                    80
-#define RUSTERON_DPDK_TYPE_RX_HW_DELAY              81
 #define RUSTERON_DPDK_TYPE_PKTS                     82
 #define RUSTERON_DPDK_TYPE_BYTES                    83
 #define RUSTERON_DPDK_TYPE_MISSED_PACKETS           84
@@ -57,6 +59,9 @@ extern "C" {
 #define RUSTERON_DPDK_TYPE_RX_UNSUPPORTED_ETHERTYPE 93
 #define RUSTERON_DPDK_TYPE_RX_UNSUPPORTED_PROTOCOL  94
 #define RUSTERON_DPDK_TYPE_RX_RECEIVER_DISCARD      95
+/* md-dpdk's own, in Aeron's custom range (1000 and up) */
+#define RUSTERON_DPDK_TYPE_CLOCK                    1080
+#define RUSTERON_DPDK_TYPE_RX_HW_DELAY              1081
 
 /* A port with no configured extended stats is a no-op for the 1 Hz sample. */
 #define RUSTERON_DPDK_MAX_XSTATS 256
@@ -85,10 +90,10 @@ enum rusteron_dpdk_counter_kind
     RD_COUNTER_UNSUPPORTED_PROTOCOL, /* 94   RX unsupported IP protocol */
     RD_COUNTER_POLLER,               /* 87   frames processed per poll */
     RD_COUNTER_MEMPOOL_AVAILABLE,    /* 91   free mbufs (1 Hz) */
-    RD_COUNTER_CLOCK,                /* 80   transport clock: 1 TSC, 2 CNTVCT_EL0, 0 monotonic */
-    RD_COUNTER_RX_HW_DELAY_MAX,      /* 81   max NIC arrival -> the frame's dispatch, ns */
-    RD_COUNTER_RX_HW_DELAY_SUM,      /* 81   sum of those delays, ns */
-    RD_COUNTER_RX_HW_TIMESTAMPED,    /* 81   frames in that sum (NIC-stamped, not after dispatch) */
+    RD_COUNTER_CLOCK,                /* 1080 transport clock: 1 TSC, 2 CNTVCT_EL0, 0 monotonic */
+    RD_COUNTER_RX_HW_DELAY_MAX,      /* 1081 max NIC arrival -> the frame's dispatch, ns */
+    RD_COUNTER_RX_HW_DELAY_SUM,      /* 1081 sum of those delays, ns */
+    RD_COUNTER_RX_HW_TIMESTAMPED,    /* 1081 frames in that sum (NIC-stamped, not after dispatch) */
     RD_COUNTER_RX_POLL_GAP_MAX,      /* 87   longest gap before a poll that found frames, ns */
     RD_COUNTER_RX_POLL_GAPS_100US,   /* 87   such gaps of 100 µs or more */
     RD_COUNTER_RX_BURST_FULL,        /* 87   polls that drained a full burst (a backlog) */
@@ -119,8 +124,8 @@ enum rusteron_dpdk_counter_kind
     RD_COUNTER_RX_BACKLOG_MAX,       /* 87   most frames one poll drained */
     RD_COUNTER_RX_RING_FULL_SUSPECTED, /* 87 polls that drained within a burst of a full ring */
     RD_COUNTER_NIC_RESET_REQUESTED,  /* 79   device resets the PMD asked for (RTE_ETH_EVENT_INTR_RESET; housekeeping) */
-    RD_COUNTER_RX_HW_DELAY_MIN,      /* 81   min NIC arrival -> the frame's dispatch, ns (meaningless while the count is 0) */
-    RD_COUNTER_RX_HW_DELAY_NEGATIVE, /* 81   NIC stamps later than the host clock read at that dispatch: PHC/host clock skew */
+    RD_COUNTER_RX_HW_DELAY_MIN,      /* 1081 min NIC arrival -> the frame's dispatch, ns (meaningless while the count is 0) */
+    RD_COUNTER_RX_HW_DELAY_NEGATIVE, /* 1081 NIC stamps later than the host clock read at that dispatch: PHC/host clock skew */
     /* RUSTERON_DPDK_GAP_ATTRIB=1: how long the PMD's burst calls took (an
      * rx_burst that returned frames, every tx_burst). ENA refills its receive
      * ring and reclaims sent descriptors inside them. 0 while off. Each

@@ -73,7 +73,7 @@ impl Schema {
     /// assert_eq!(schema.ir.version, 0);
     /// ```
     #[must_use]
-    pub fn from_ir(ir: Ir) -> Self {
+    pub const fn from_ir(ir: Ir) -> Self {
         Self { ir }
     }
 }

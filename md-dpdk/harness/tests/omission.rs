@@ -16,6 +16,13 @@
 //! so the histogram's max must exceed the max send lag. Measured from the
 //! offer instead, the same run would report only the round trip and the echo
 //! queue — milliseconds, not the lag.
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    reason = "an integration test fails by panicking: unwrap, expect and panic! are its assertions (as md-dpdk/tests)"
+)]
+#![allow(clippy::similar_names, reason = "ping and pong name the two ends of each round trip")]
 
 use std::io::Read;
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -226,7 +233,7 @@ fn a_message_offered_late_still_counts_the_wait_in_its_latency() {
         "never back-pressured, so nothing was late: the freeze of {frozen:?} did not stall the path: {fields:?}"
     );
     assert!(
-        max_lag >= frozen.as_nanos() as u64 / 4 && max_lag > 20_000_000,
+        max_lag >= u64::try_from(frozen.as_nanos()).unwrap() / 4 && max_lag > 20_000_000,
         "the max send lag ({max_lag} ns) is far under the {frozen:?} freeze: the generator did not fall behind it: {fields:?}"
     );
     assert!(sent == received && sent == 20_000, "messages went missing: {fields:?}");

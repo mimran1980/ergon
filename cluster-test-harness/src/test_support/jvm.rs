@@ -16,16 +16,17 @@ use std::sync::OnceLock;
 
 use ergo_aeron_cluster::ClusterError;
 
-/// The oldest Java Aeron 1.53.3 runs on: its jars are Java 17 bytecode.
+/// The oldest Java Aeron 1.54.0 runs on: its jars are Java 17 bytecode.
 pub const MIN_JAVA: u32 = 17;
 
 /// The Java the harness is tested on and the book recommends: Java 25, the
-/// newest LTS release in Aeron 1.53.3's own CI matrix (17, 21 and 25).
+/// newest LTS release in Aeron 1.54.0's own CI matrix (17, 21 and 25).
 pub const RECOMMENDED_JAVA: u32 = 25;
 
 /// `jvm/test.jvm`, the java argument file every Java process the harness
 /// starts reads: Aeron's own test settings (its `build.gradle`), so the
 /// checks stay on and nothing spins.
+#[must_use]
 pub fn test_options() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("jvm")
@@ -33,6 +34,7 @@ pub fn test_options() -> PathBuf {
 }
 
 /// The `java` binary: `$JAVA_HOME/bin/java`, else `java` on `PATH`.
+#[must_use]
 pub fn java_path() -> PathBuf {
     match std::env::var_os("JAVA_HOME") {
         Some(home) if !home.is_empty() => PathBuf::from(home).join("bin").join("java"),
@@ -43,6 +45,7 @@ pub fn java_path() -> PathBuf {
 /// The major version in `java -XshowSettings:properties -version` output:
 /// its `java.specification.version`, which is `25` on Java 25 and `1.8` on
 /// Java 8.
+#[must_use]
 pub fn parse_java_major(settings: &str) -> Option<u32> {
     let value = settings
         .lines()
@@ -87,6 +90,11 @@ fn checked() -> &'static Result<(PathBuf, u32), String> {
 }
 
 /// The major version of the `java` the harness runs, after its check.
+///
+/// # Errors
+///
+/// [`ClusterError::ConnectFailed`] when the `java` will not run or is older
+/// than [`MIN_JAVA`].
 pub fn try_java_major() -> Result<u32, ClusterError> {
     checked()
         .as_ref()
@@ -96,6 +104,10 @@ pub fn try_java_major() -> Result<u32, ClusterError> {
 
 /// A command for the checked `java`, with no flags: for a test that brings
 /// its own, as `tests/jvm_settings.rs` does with the recommended ones.
+///
+/// # Errors
+///
+/// As [`try_java_major`].
 pub fn try_java() -> Result<Command, ClusterError> {
     checked()
         .as_ref()
@@ -104,6 +116,10 @@ pub fn try_java() -> Result<Command, ClusterError> {
 }
 
 /// A command for the checked `java` reading [`test_options`].
+///
+/// # Errors
+///
+/// As [`try_java_major`].
 pub fn try_command() -> Result<Command, ClusterError> {
     let mut options = OsString::from("@");
     options.push(test_options());
@@ -112,12 +128,8 @@ pub fn try_command() -> Result<Command, ClusterError> {
     Ok(command)
 }
 
-/// [`try_command`], panicking with its error.
-pub fn command() -> Command {
-    try_command().unwrap_or_else(|e| panic!("{e}"))
-}
-
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
 

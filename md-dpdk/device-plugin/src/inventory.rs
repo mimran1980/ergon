@@ -7,7 +7,7 @@
 //! (virtualised EC2, where it is the only binding that maps the LLQ BAR
 //! write-combining). The plugin refuses any inventory with duplicate BDFs, an
 //! unsupported driver, a vfio-pci port without a unique IOMMU group, an
-//! igb_uio port without a unique `uioN` device, a member MAC equal to the
+//! `igb_uio` port without a unique `uioN` device, a member MAC equal to the
 //! primary ENA, or incomplete network identity (plan §10.3) — it must never
 //! advertise or allocate an unsafe pair.
 //!
@@ -78,7 +78,7 @@ fn default_driver() -> String {
     VFIO_PCI.into()
 }
 
-fn default_numa() -> i32 {
+const fn default_numa() -> i32 {
     -1
 }
 
@@ -101,9 +101,9 @@ pub enum InventoryError {
 impl fmt::Display for InventoryError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            InventoryError::Io(path, e) => write!(f, "cannot read {path}: {e}"),
-            InventoryError::Parse(e) => write!(f, "malformed inventory JSON: {e}"),
-            InventoryError::Validation(msg) => write!(f, "unsafe inventory: {msg}"),
+            Self::Io(path, e) => write!(f, "cannot read {path}: {e}"),
+            Self::Parse(e) => write!(f, "malformed inventory JSON: {e}"),
+            Self::Validation(msg) => write!(f, "unsafe inventory: {msg}"),
         }
     }
 }
@@ -112,9 +112,9 @@ impl std::error::Error for InventoryError {}
 
 impl Inventory {
     /// Load and validate the inventory at `path`.
-    pub fn load(path: &Path) -> Result<Inventory, InventoryError> {
+    pub fn load(path: &Path) -> Result<Self, InventoryError> {
         let raw = std::fs::read_to_string(path).map_err(|e| InventoryError::Io(path.display().to_string(), e))?;
-        let inv: Inventory = serde_json::from_str(&raw).map_err(|e| InventoryError::Parse(e.to_string()))?;
+        let inv: Self = serde_json::from_str(&raw).map_err(|e| InventoryError::Parse(e.to_string()))?;
         inv.validate()?;
         Ok(inv)
     }
@@ -329,10 +329,11 @@ fn is_bdf(s: &str) -> bool {
 
 /// Shared test fixtures (used by the inventory and service test suites).
 #[cfg(test)]
-pub(crate) mod fixtures {
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+pub mod fixtures {
     use super::{Inventory, Pair, Port};
 
-    pub(crate) fn port(pci: &str, group: &str, mac: &str) -> Port {
+    pub fn port(pci: &str, group: &str, mac: &str) -> Port {
         Port {
             pci: pci.into(),
             driver: "vfio-pci".into(),
@@ -349,8 +350,8 @@ pub(crate) mod fixtures {
         }
     }
 
-    /// An igb_uio-bound port: no IOMMU group, a `/dev/uioN` node instead.
-    pub(crate) fn uio_port(pci: &str, uio: &str, mac: &str) -> Port {
+    /// An `igb_uio`-bound port: no IOMMU group, a `/dev/uioN` node instead.
+    pub fn uio_port(pci: &str, uio: &str, mac: &str) -> Port {
         Port {
             driver: "igb_uio".into(),
             iommu_group: String::new(),
@@ -359,7 +360,7 @@ pub(crate) mod fixtures {
         }
     }
 
-    pub(crate) fn fixture() -> Inventory {
+    pub fn fixture() -> Inventory {
         Inventory {
             generated_at: "2026-08-07T00:00:00Z".into(),
             primary_ena_mac: "0a:00:00:00:00:01".into(),
@@ -371,8 +372,8 @@ pub(crate) mod fixtures {
         }
     }
 
-    /// The same pair as [`fixture`], bound to igb_uio as on virtualised EC2.
-    pub(crate) fn uio_fixture() -> Inventory {
+    /// The same pair as [`fixture`], bound to `igb_uio` as on virtualised EC2.
+    pub fn uio_fixture() -> Inventory {
         Inventory {
             pairs: vec![Pair {
                 id: "dpdk-pair-0".into(),
@@ -384,10 +385,10 @@ pub(crate) mod fixtures {
     }
 
     /// A scratch directory under the system temp dir, removed on drop.
-    pub(crate) struct ScratchDir(pub(crate) std::path::PathBuf);
+    pub struct ScratchDir(pub std::path::PathBuf);
 
     impl ScratchDir {
-        pub(crate) fn new(name: &str) -> Self {
+        pub fn new(name: &str) -> Self {
             let dir = std::env::temp_dir().join(format!("rusteron-dpdk-inventory-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
@@ -403,7 +404,7 @@ pub(crate) mod fixtures {
 
     /// Replace `path` the way the node bootstrap does (a temporary file renamed
     /// over it), with its mtime `secs` seconds past the epoch.
-    pub(crate) fn rewrite(path: &std::path::Path, json: &str, secs: u64) {
+    pub fn rewrite(path: &std::path::Path, json: &str, secs: u64) {
         let tmp = path.with_extension("tmp");
         std::fs::write(&tmp, json).unwrap();
         let mtime = std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
@@ -418,6 +419,7 @@ pub(crate) mod fixtures {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::fixtures::*;
     use super::*;
@@ -442,7 +444,7 @@ mod tests {
         inv.validate().unwrap();
         // Inventories written before the `driver` field are vfio-pci.
         assert_eq!(inv.pairs[0].sender.driver, "vfio-pci");
-        assert!(inv.pairs[0].sender.uio.is_empty());
+        assert_eq!(inv.pairs[0].sender.uio, "");
     }
 
     #[test]

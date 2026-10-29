@@ -11,14 +11,25 @@
 //! | [`mpsc`] | `std::sync::mpsc::sync_channel` (IPC baseline) |
 //! | [`mio_udp`], [`eio_udp`] | one connected UDP socket per stream (stream `i` on base port + `i`), raw mio and ergon-io |
 //! | [`mio_tcp`], [`eio_tcp`] | one TCP connection per stream, `ergon_latency_core::frame`'s u32 LE frames, raw mio and ergon-io |
+//! | [`fstack`] | one TCP connection per stream over F-Stack (FreeBSD's stack on DPDK), `--features fstack`; [`fstack_conf`] its flags, config and `tcp_info`. `--impl ergon` selects ergon-io's `fstack-spin`, measured by `fstack_spin_lat` |
+//! | [`bypass`] | NIC flags and stack config the bypass arms share. The measuring loops that open a NIC are Linux feature gates |
+//! | [`wstls`] | TCP echo and WebSocket-over-TLS echo (`wstls_lat`), the same point runner as `tcp_lat` |
 //! | [`sock`] | `udp_lat` and `tcp_lat`: their flags, connection set-up, threads and roles |
 //! | [`sockopt`] | the socket options the mio arms set and every socket arm reads back |
 //! | [`kstat`] | the namespace's TCP counters and a thread's run-queue wait, read around a point's traffic |
 
+pub mod bypass;
 #[cfg(target_os = "linux")]
 pub mod eio_tcp;
 #[cfg(target_os = "linux")]
 pub mod eio_udp;
+#[cfg(all(target_os = "linux", feature = "fstack"))]
+pub mod fstack;
+pub mod fstack_conf;
+#[cfg(all(target_os = "linux", feature = "fstack-spin"))]
+pub mod fstack_spin;
+#[cfg(all(target_os = "linux", feature = "fstack-spin"))]
+pub mod fstack_ws;
 #[cfg(target_os = "linux")]
 pub mod kstat;
 #[cfg(target_os = "linux")]
@@ -27,10 +38,13 @@ pub mod mio_tcp;
 pub mod mio_udp;
 pub mod mpsc;
 pub mod point;
+#[cfg(all(target_os = "linux", feature = "smoltcp-dpdk"))]
+pub mod smoltcp_spin;
 #[cfg(target_os = "linux")]
 pub mod sock;
 #[cfg(target_os = "linux")]
 pub mod sockopt;
+pub mod wstls;
 
 /// The longest UDP datagram either UDP arm takes, bytes: ergon-io's
 /// `UdpOptions::max_datagram` default, and the mio arm's receive buffer
