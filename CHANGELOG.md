@@ -101,9 +101,12 @@
   millisecond maxima stay listed as unexplained.
 - ergon-io on AWS (`c7i.4xlarge` and `c8g.2xlarge`, one rep each): kernel
   `epoll-spin` against smoltcp and F-Stack, in the book's transport
-  comparison. This matrix does not show the mixed-load `c7i` outage at
-  second :25. The `c8g` pair has a separate cluster at second :05, on
-  kernel `epoll-spin` only. Every max is labelled.
+  comparison. The ranking uses the cells whose echo was pinned: UDP, and
+  F-Stack TCP (`fstack_spin_lat`). Kernel TCP, smoltcp TCP and every
+  WebSocket echo stayed on the housekeeping CPU, so those rows are not
+  ranked. This matrix does not show the mixed-load `c7i` outage at
+  second :25. The `c8g` pair has a separate cluster at second :05 on
+  kernel UDP (echo pinned). Every pinned max is labelled.
 - `uring-sqpoll` with its SQPOLL thread on the loop's SMT sibling, against
   mio with SMT off, both on one physical core (TCP round trip, 1
   connection, AWS `c7i.4xlarge`, the IRQ CPU capped at C1): the sibling

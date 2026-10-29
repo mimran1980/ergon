@@ -12,9 +12,9 @@ configuration, so one binary can run with each. Which to pick:
 | `fstack-spin` | no kernel: one [F-Stack](#fstack-spin-tcp-on-f-stack) pass every poll, then its kqueue | yes, F-Stack's DPDK queue | no (a NIC of its own) |
 
 - **None sleeps in the kernel.** The first three are the kernel backends
-  the busy-spin benchmarks measured. `fstack-spin` and `smoltcp-spin` are
-  measured against `epoll-spin` on AWS in the
-  [transport comparison](../transports/comparison.md#ergon-io-kernel-smoltcp-and-f-stack).
+  the busy-spin benchmarks measured. `fstack-spin` and `smoltcp-spin` ran
+  on AWS; the ranking uses the cells whose echo was pinned
+  ([transport comparison](../transports/comparison.md#ergon-io-kernel-smoltcp-and-f-stack)).
 - **Among `epoll-spin`, `recv-busy` and `uring-sqpoll`, UDP (`UdpConn`) runs on `epoll-spin` only.** The other two refuse a UDP
   driver at `Driver::new` (`Error::Unsupported`); framed TCP and the TLS
   endpoints run on all three ([UDP](udp.md)). `smoltcp-spin` also carries UDP.
@@ -186,8 +186,8 @@ In a pod: [x86 with SMT, `cpu: 2`](kubernetes.md#x86-with-smt-cpu-2-one-physical
 Kernel bypass: [F-Stack](https://github.com/F-Stack/f-stack) (FreeBSD's
 TCP/IP stack on DPDK, Apache-2.0/BSD; ergon-io builds v2.0) owns a NIC of
 its own, and the polling thread runs it. **Status:** Docker lab test (two
-F-Stack processes over a veth pair), and an AWS comparison against
-`epoll-spin` on `c7i.4xlarge` and `c8g.2xlarge`
+F-Stack processes over a veth pair), and AWS `c7i` / `c8g` runs. The
+F-Stack TCP echo was pinned; kernel TCP and WebSocket echoes were on CPU 0
 ([ergon-io](../transports/comparison.md#ergon-io-kernel-smoltcp-and-f-stack)).
 
 | | |
@@ -257,8 +257,8 @@ Kernel bypass with a TCP/IP stack in the process:
 [smoltcp](https://github.com/smoltcp-rs/smoltcp) 0.14.0 (0BSD) over one
 DPDK port, driven by the polling thread. Pure Rust, so it runs on Graviton
 as on x86. **Status:** Docker lab test (a DPDK `net_af_packet` port against
-the kernel's stack across a veth pair, arm64), and the same AWS comparison
-against `epoll-spin` on `c7i.4xlarge` and `c8g.2xlarge`.
+the kernel's stack across a veth pair, arm64), and the same AWS runs. The
+UDP echo was pinned; its TCP and WebSocket echoes were on the housekeeping CPU.
 
 | | |
 |---|---|

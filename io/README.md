@@ -183,7 +183,9 @@ thread polls (feeds, order connections, `HttpClient` pool connections):
   `WsConn<FstackTcp>`, `HttpConn<FstackTcp>`. Needs the `fstack` feature,
   F-Stack built (`FSTACK_PREFIX`), hugepages and DPDK's privileges; a
   binary using it links with `-C link-arg=-Wl,-z,nostart-stop-gc`.
-  Docker lab test, and measured on AWS against `epoll-spin`:
+  Docker lab test, and measured on AWS. The F-Stack TCP echo was pinned;
+  kernel TCP and WebSocket echoes in that session were on the housekeeping
+  CPU:
   [transport comparison](https://mimran1980.github.io/ergon/transports/comparison.html#ergon-io-kernel-smoltcp-and-f-stack).
 - `smoltcp-spin`: TCP and UDP on [smoltcp](https://github.com/smoltcp-rs/smoltcp)
   (0BSD, a stack in the process) over a DPDK port; `FrameConn<SmolTcp>`,
@@ -191,7 +193,8 @@ thread polls (feeds, order connections, `HttpClient` pool connections):
   `smoltcp_dpdk::Stack::init` on the polling thread. Needs the
   `smoltcp-dpdk` feature and libdpdk; IPv4 only; a 10 ms RTO floor by
   default (smoltcp's own is 1 s); no RACK/TLP, received SACK blocks
-  ignored. Docker lab test, and the same AWS comparison.
+  ignored. Docker lab test, and the same AWS runs: the UDP echo was
+  pinned; its TCP and WebSocket echoes were on the housekeeping CPU.
 
 The full table, the evidence and the node settings: the book's
 [choosing a backend](https://mimran1980.github.io/ergon/io/overview.html#choosing-a-backend).
@@ -212,7 +215,7 @@ Tables and conclusion: the book's
 |---|---|
 | mio or ergon-io? | Either: no difference. UDP p50 within 0.1 to 0.9 µs (Azure), not separated (AWS). TCP on the same connection (AWS): p50 52.2 against 53.4 µs at 10,000 msg/s, not separated at 50,000; tails not separated. Both make 2 reads, 1 send and 1 `TCP_QUICKACK` re-arm a message. The earlier Azure TCP gap was unequal busy polling, fixed by `Config::busy_poll_us` |
 | overloaded (200,000 msg/s on one TCP loop)? | Neither keeps up; ergon-io drains slower: 104,000 to 134,000 msg/s carried against mio's 113,000 to 154,000 (AWS) |
-| kernel TCP or F-Stack (TCP on DPDK)? | F-Stack, where kernel bypass is allowed: p50 17 to 19 µs lower at 10,000 msg/s and 26 to 28 at 50,000 (AWS), and it carries 200,000 msg/s. ergon-io's `fstack-spin` runs its endpoints on F-Stack, lab-tested and not yet measured |
+| kernel TCP or F-Stack (TCP on DPDK)? | F-Stack, where kernel bypass is allowed: p50 17 to 19 µs lower at 10,000 msg/s and 26 to 28 at 50,000 (AWS `c7a`, the md-dpdk arm), and it carries 200,000 msg/s. ergon-io's `fstack-spin` TCP echo is measured on `c7i` and `c8g` with the echo pinned (no-loss max 134.6 to 359.3 µs). That session leaves kernel TCP, smoltcp TCP and WebSocket unranked: their echo stayed on the housekeeping CPU |
 | sockets or Aeron UDP? | One stream: Aeron (p50 55.6 against 61.8 µs at 50,000 msg/s). 32 to 128 streams: sockets (p50 lower by 3.7 to 10.5 µs), on 1 busy thread against Aeron's 4 |
 | at 200,000 msg/s? | Neither socket library keeps up (one `send` a message on one thread; 151,000 to 195,000 msg/s carried); Aeron does |
 | TCP or Aeron reliable? | Aeron's p50 is 7 to 15 µs lower without loss. Under loss neither tail wins everywhere: Aeron's maxima sit at its 10 ms retransmit linger, TCP's come from its retransmits (8 ms minimum RTO) |

@@ -16,7 +16,8 @@ Every ergon-io latency figure lives here, once, except the in-memory WebSocket r
 | mio as a backend? | No. On Linux it is `epoll-spin`'s mechanism: level on round trips, with 2.0× the `recvmsg` calls; a two-sided CI gate fails on a 10 % slowdown of either ([`mio-parity-docker-20261024T154626Z`](results/mio-parity-docker-20261024T154626Z/summary.md)). Its market-data arm was confounded. Reasons and its maxima without a cause: the book's [mio: measured, not a backend](https://mimran1980.github.io/ergon/io/backends.html#mio-measured-not-a-backend). | [Fair run](#interrupt-against-nic-polling-the-fair-run-graviton), [loop pass](#loop-pass-by-socket-count-graviton) |
 | UDP or TCP, between two hosts? | Not compared directly: the UDP and TCP sets ran on different Azure VM pairs. 1 stream, p50: UDP 61.8–62.9 µs, TCP 64.7–69.8 µs, each with no loss. | [Transport comparison](#transport-comparison-udp-tcp-mio-and-ergon-io) |
 | mio or ergon-io, for UDP and framed TCP? | No difference. UDP: ergon-io's p50 0.1–0.9 µs behind mio's on Azure, not separated on AWS. TCP on one shared connection (AWS): mio 1.2 µs lower at p50 at 10,000 msg/s (A/A 0.8), not separated at 50,000; tails not separated. Both read twice and send once a message. Overloaded, ergon-io drains slower. | [Transport comparison](#transport-comparison-udp-tcp-mio-and-ergon-io) |
-| Kernel TCP or F-Stack (TCP on DPDK)? | F-Stack: p50 17–28 µs lower on AWS, and it carries 200,000 msg/s where kernel TCP does not. | [Transport comparison](#transport-comparison-udp-tcp-mio-and-ergon-io) |
+| Kernel TCP or F-Stack (TCP on DPDK)? | F-Stack (the md-dpdk arm): p50 17–28 µs lower on AWS, and it carries 200,000 msg/s where kernel TCP does not. | [Transport comparison](#transport-comparison-udp-tcp-mio-and-ergon-io) |
+| ergon-io `fstack-spin`, `smoltcp-spin` or kernel `epoll-spin`? | UDP, both echoes pinned: smoltcp's no-loss p50 is 5.70–7.49 µs below the kernel on `c7i` and 3.78–4.02 µs below on `c8g`. F-Stack TCP, echo pinned, no-loss max 134.6–359.3 µs. Kernel TCP, smoltcp TCP and WebSocket echoes in that session stayed on the housekeeping CPU, so they are not ranked. | [ergon-io bypass](#ergon-io-kernel-smoltcp-and-f-stack) |
 | ENA adaptive moderation? | Off stopped the polling loop's involuntary preemptions (about 8,900 in 8 min to 0) and cut WebSocket p99.99 from 117–119 to 72–76 µs. HTTP p99.99 did not move. | [Host and NIC settings](#host-and-nic-settings-aws-x86) |
 
 ## Hosts and runs
@@ -373,8 +374,24 @@ DPDK, 1 busy thread). Set pin binds both libraries to the same 4-tuple
   8 (medians). Both loops then read several frames a read (0.53 to 0.73
   reads a message), so the read count does not explain it. Not traced
   further.
-- **F-Stack** is 17–28 µs lower at p50 than either and carries the full
-  200,000 msg/s; ergon-io has no DPDK backend.
+- **F-Stack** (the md-dpdk TCP arm in this session) is 17–28 µs lower at
+  p50 than either and carries the full 200,000 msg/s.
+
+## ergon-io: kernel, smoltcp and F-Stack
+
+`c7i.4xlarge` and `c8g.2xlarge`, us-east-1a, one rep, on demand,
+`aws-20261029-040029` and `aws-20261029-055245`. The tables and every
+max's label are in the book's
+[ergon-io section](https://mimran1980.github.io/ergon/transports/comparison.html#ergon-io-kernel-smoltcp-and-f-stack).
+
+UDP (`udp_lat`) and F-Stack TCP (`fstack_spin_lat`) pinned the echo.
+With no loss, smoltcp UDP's p50 is 5.70 to 7.49 µs below kernel
+`epoll-spin` on `c7i` and 3.78 to 4.02 µs below on `c8g`. F-Stack TCP's
+no-loss tail is p99 38.8 to 53.2 µs, p99.99 68.7 to 112.1, max 134.6 to
+359.3, each max unexplained. Kernel TCP, smoltcp TCP and every WebSocket
+arm left the echo on the housekeeping CPU, so this page does not rank
+them. The `c8g` kernel UDP points include a second-:05 cluster, max
+5,499 to 9,298 µs, p50 33.2 to 34.1.
 
 ## Worst cases
 
