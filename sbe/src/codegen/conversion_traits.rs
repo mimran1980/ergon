@@ -87,6 +87,7 @@ fn decimal_impl_tokens(
                 let pow = 10i128.checked_pow(shift.unsigned_abs())
                     .ok_or("Decimal exponent overflow")?;
                 if mantissa % pow != 0 {
+                    sbe_rt::cold();
                     return Err("Decimal has more digits than the constant exponent allows");
                 }
                 mantissa / pow
@@ -427,7 +428,7 @@ fn composite_targets(
         .collect()
 }
 
-fn is_constant_member(m: &crate::structured_ir::CompositeMember) -> bool {
+const fn is_constant_member(m: &crate::structured_ir::CompositeMember) -> bool {
     matches!(
         m.member_type,
         crate::structured_ir::MemberType::Primitive {
@@ -725,6 +726,7 @@ pub(crate) fn composite_mapping_impl_tokens(
                         None => #null,
                         Some(val) => {
                             if #is_null {
+                                sbe_rt::cold();
                                 return Err(sbe_rt::MappingError::SomeNullValue {
                                     composite: #wire_lit,
                                     member: #member_lit,

@@ -45,4 +45,4 @@ pub mod jvm;
 
 pub use archive::EmbeddedArchiveDriver;
 pub use cluster::TestCluster;
-pub use jar::{find_jar, try_find_jar};
+pub use jar::try_find_jar;

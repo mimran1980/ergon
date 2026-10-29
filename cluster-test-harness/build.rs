@@ -37,8 +37,8 @@ fn compile_test_harness_java(manifest_dir: &Path, aeron_dir: &Path, java_out: &P
             .unwrap_or_else(|e| panic!("failed to run {}: {e}", gradle.display()));
         if !status.success() {
             panic!(
-                "Gradle jar build failed ({status}). Aeron's Gradle wrapper (9.7.1 at Aeron 1.53.3) \
-                 runs on JDK 17 to 26, not 27 or newer: set JAVA_HOME to a JDK 25 and run \
+                "Gradle jar build failed ({status}). Aeron's Gradle wrapper (9.8.2 at Aeron 1.54.0) \
+                 runs on JDK 17 to 27, not 28 or newer: set JAVA_HOME to a JDK 25 and run \
                  `just build-aeron-jars`"
             );
         }

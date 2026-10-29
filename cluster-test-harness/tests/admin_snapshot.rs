@@ -13,13 +13,12 @@ use ergo_aeron_cluster::egress::EgressListener;
 use ergo_aeron_cluster::{AeronCluster, SessionBuilder};
 use rusteron_client::cformat;
 use serial_test::serial;
-use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 /// Records the first admin response (correlation id + response code).
 struct Rec {
-    admin_cid: Mutex<Option<i64>>,
-    admin_code: Mutex<Option<AdminResponseCode>>,
+    admin_cid: Option<i64>,
+    admin_code: Option<AdminResponseCode>,
 }
 
 impl EgressListener for Rec {
@@ -36,9 +35,9 @@ impl EgressListener for Rec {
         _msg: &str,
         _payload: &[u8],
     ) {
-        if self.admin_cid.lock().unwrap().is_none() {
-            *self.admin_cid.lock().unwrap() = Some(correlation_id);
-            *self.admin_code.lock().unwrap() = Some(response_code);
+        if self.admin_cid.is_none() {
+            self.admin_cid = Some(correlation_id);
+            self.admin_code = Some(response_code);
         }
     }
 }
@@ -46,7 +45,7 @@ impl EgressListener for Rec {
 #[test]
 #[serial]
 fn test_admin_snapshot_request_gets_response() -> Result<(), Box<dyn std::error::Error>> {
-    let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node();
+    let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node()?;
     let dir = cformat!("{}", cluster.aeron_dir().display());
 
     let builder = SessionBuilder::default()
@@ -54,8 +53,8 @@ fn test_admin_snapshot_request_gets_response() -> Result<(), Box<dyn std::error:
         .egress_channel(&cluster.egress_channel)?;
 
     let mut listener = Rec {
-        admin_cid: Mutex::new(None),
-        admin_code: Mutex::new(None),
+        admin_cid: None,
+        admin_code: None,
     };
     let mut client = AeronCluster::connect(&builder, &dir.to_string_lossy())?;
 
@@ -68,14 +67,14 @@ fn test_admin_snapshot_request_gets_response() -> Result<(), Box<dyn std::error:
     while Instant::now() < deadline {
         let _ = client.send_keep_alive();
         client.poll(&mut listener, 10)?;
-        if listener.admin_cid.lock().unwrap().is_some() {
+        if listener.admin_cid.is_some() {
             break;
         }
         std::thread::sleep(Duration::from_millis(5));
     }
 
-    let got_cid = *listener.admin_cid.lock().unwrap();
-    let got_code = *listener.admin_code.lock().unwrap();
+    let got_cid = listener.admin_cid;
+    let got_code = listener.admin_code;
     // The round-trip is the parity point: the cluster MUST reply on
     // on_admin_response with the matching correlation id. The response CODE
     // depends on cluster auth — the default single-node test cluster denies

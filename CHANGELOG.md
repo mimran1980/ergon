@@ -1,5 +1,123 @@
 # Changelog
 
+## [0.1.35] — 2026-10-29
+
+### Added
+
+- `ergon-io` `fstack-spin` (feature `fstack`, Linux): TCP on F-Stack, FreeBSD's
+  stack on DPDK, on a NIC of its own; framed TCP, WebSocket and HTTP over TLS
+  as `FrameConn<FstackTcp>`, `WsConn<FstackTcp>`, `HttpConn<FstackTcp>`
+  (dials' `on_stack`), configured by `Config`'s `fstack_*` keys
+  (`fstack::FstackConf`). Docker lab test, and measured on AWS against
+  kernel `epoll-spin` (the book's ergon-io section).
+- `ergon-io` `smoltcp-spin` (feature `smoltcp-dpdk`, Linux x86_64 and
+  aarch64): TCP and UDP on smoltcp 0.14.0 over a DPDK port, started by
+  `smoltcp_dpdk::Stack::init`; `FrameConn<SmolTcp>`, `WsConn<SmolTcp>`,
+  `HttpConn<SmolTcp>`, `UdpConn<SmolUdp>`. A 10 ms TCP RTO floor
+  (`StackConfig::rto_min_us`; smoltcp's own is 1 s), immediate ACKs, no
+  Nagle, timestamps; ARP entries refreshed or the gateway MAC pinned.
+  Docker lab test, and measured on AWS against kernel `epoll-spin`
+  (the book's ergon-io section).
+- `ergon-io` `FrameDial::connect_blocking` and `WsDial::connect_blocking`
+  (`HttpDial`'s exists), `Backend::KERNEL`, `Backend::bypasses_kernel`.
+- `ergon-tune` T20 (`t20_irq_idle`): warns when a CPU that takes the data NICs'
+  interrupts may sleep deeper than C1 (C1E, C6), with the per-CPU, boot-line
+  and `/dev/cpu_dma_latency` fixes; info on `acpi_idle` stopping at C1.
+- `ergon-tune` T21 (`t21_tcp_autocorking`): warns when `net.ipv4.tcp_autocorking`
+  is on for a caller sending latency-sensitive TCP, with the per-namespace fix.
+- `ergon-tune` T22 (`t22_aeron_affinity_names`): warns when an Aeron affinity
+  setting uses its pre-1.54 name (`AERON_DRIVER_CPUSET_AFFINITY`,
+  `AERON_DRIVER_CPUSET_WARNINGS_AS_ERRORS`), which Aeron 1.54 ignores. The
+  `ergon-md-dpdk` media driver runs it at start.
+- `ergon-md-dpdk` honours a channel's `socket-tos` (`AERON_SOCKET_TOS`, Aeron
+  1.54): the IPv4 ToS byte of DPDK frames, `IP_TOS` on its kernel sockets.
+- The transport suite's bypass matrix (`transport-aws-io-bypass.tsv`): kernel
+  `epoll-spin`, `smoltcp-spin` and `fstack-spin`, TCP echo and WebSocket-over-TLS
+  echo (`wstls_lat`, the same point runner as `tcp_lat`), plus UDP for the
+  kernel and smoltcp. 1 and 8 connections, 10k and 50k msg/s, loss 0, 0.1% and
+  1% on the kernel peer, minimum RTO 8 ms. `fstack_lat --impl ergon` selects
+  `fstack-spin`. `fstack_spin_lat` runs the TCP measuring loop: the ping is
+  `Driver<FrameConn<FstackTcp>>` and writes the row; the pong is the kernel
+  peer (`epoll-spin`). `wstls_fstack_lat` (the same `--features fstack-spin`
+  build) runs WebSocket-over-TLS the same way. `wstls_lat` and `udp_lat`
+  built with `--features smoltcp-dpdk` run the smoltcp measuring loops
+  (`StackConfig::rto_min_us`). A build without the feature still refuses
+  the flag and does not label a kernel socket as that stack. The WebSocket
+  client enables rustls secret extraction, stays on TLS 1.3, trusts the
+  bench certificate and offers no ALPN. The ergon F-Stack clock on that
+  path is 1000 Hz, so the 8 ms floor is 8 ticks (100 Hz rejects it).
+
+### Changed
+
+- Aeron 1.54.0 (rusteron 0.2.15) throughout: the `aeron` submodule, the Java
+  jars the cluster harness runs, and every crate and sample. Aeron's Gradle
+  9.8.2 builds on JDK 17 to 27.
+- `ergon-md-dpdk` pins the driver's agents to CPUs set through the context's
+  setters again: `pin_agents_to_configured_cpus` now runs Aeron's affinity
+  resolution (cpuset offsets, topology warnings), which Aeron 1.54's pinning
+  hook reads. Without it the sender and receiver floated. Housekeeping
+  placement and the host checks use the resolved CPUs.
+- `ergon-cpus` (nri-shared-cpus) refuses to translate `AERON_*_CPU_AFFINITY`
+  when `AERON_THREAD_AFFINITY_USE_CPUSET_OFFSETS` (Aeron 1.54's name) or
+  `AERON_DRIVER_CPUSET_AFFINITY` is true.
+- Breaking: `ergon-io`'s TCP endpoints and dials take their socket type,
+  `FrameConn<T = TcpStream>` (and `FrameDial`, `WsConn`, `WsDial`,
+  `HttpConn`, `HttpDial`); code naming them without `T` is unchanged.
+  `Backend::ALL` has five backends (`fstack-spin` and `smoltcp-spin` added;
+  `Backend::KERNEL` is the old three), and `Config` has an `fstack` field.
+  `UdpConn<D = UdpSocket>` takes its socket type too.
+- Breaking: `ergon-md-dpdk`'s `clock` counter is type 1080 (was 80) and its
+  `nic-arrival-to-dispatch-*` counters type 1081 (was 81), in Aeron's custom
+  range: Aeron leaves 80 and 81 unassigned. Its other counters keep Aeron's
+  DPDK type IDs.
+
+### Docs
+
+- The book's transport latency comparison has an AWS section (two
+  `c7a.2xlarge`, ENA): Aeron on DPDK (md-dpdk), F-Stack TCP on DPDK, kernel
+  Aeron, mio and ergon-io, at 1 and 8 streams. Aeron on DPDK is lowest
+  (p50 27.5 to 30.7 µs, flat to 200,000 msg/s); F-Stack's p50 is 17 to 28
+  µs below kernel TCP and it carries 200,000 msg/s where kernel TCP does
+  not. mio against ergon-io over TCP, on one shared connection: no
+  difference (the Azure gap was unequal busy polling); overloaded,
+  ergon-io drains slower. Every max is attributed or listed as unexplained.
+  `md-dpdk/BENCHMARKS.md`, `io/README.md` and `io/benches/BENCHMARK.md`
+  carry the matching rows and answers. DPDK on Azure stays excluded.
+- The transport comparison measures an Aeron spy whose publications also
+  send every frame over UDP (kernel or DPDK) to another host: p50 unchanged
+  (0.26 µs round trip, 0.14 one way), every frame verified at the sink.
+  This replaces the note that the published spy arm sent nothing.
+- Aeron driver threading on AWS, now under mixed load (`c7i` and `c8g`,
+  kernel UDP and DPDK, 32 and 128 streams, 50,000 and 200,000 msg/s): once
+  there are many streams every thread taken from the driver costs latency.
+  Hot p50 above dedicated: `SHARED_NETWORK` +1.9 to +32.6 µs, `SHARED`
+  +3.1 to +73.7, `INVOKER` +4.9 to +130.8; the in-process dedicated driver
+  is the same as its own process. At 128 streams `SHARED` and `INVOKER`
+  saturate their one thread; Graviton pays 1.4 to 2.9 times what Intel
+  pays. This replaces the 1-stream result as the guidance (at 1 stream
+  DPDK's modes were not separated to 50,000 msg/s, kernel `INVOKER` was
+  3.1 to 8.4 µs higher). The `c7i` once-a-minute path outage recurred
+  (second :25, 4.2 to 16.2 ms). The embedded kernel driver's 1-stream
+  millisecond maxima stay listed as unexplained.
+- ergon-io on AWS (`c7i.4xlarge` and `c8g.2xlarge`, one rep each): kernel
+  `epoll-spin` against smoltcp and F-Stack, in the book's transport
+  comparison. This matrix does not show the mixed-load `c7i` outage at
+  second :25. The `c8g` pair has a separate cluster at second :05, on
+  kernel `epoll-spin` only. Every max is labelled.
+- `uring-sqpoll` with its SQPOLL thread on the loop's SMT sibling, against
+  mio with SMT off, both on one physical core (TCP round trip, 1
+  connection, AWS `c7i.4xlarge`, the IRQ CPU capped at C1): the sibling
+  layout is 2.3 to 7.3 µs lower at p50 and 5.4 to 15.4 µs at p99 than mio
+  on the same hosts at 10,000 to 200,000 msg/s, and level with SQPOLL on
+  a core of its own to 50,000 msg/s (4 to 6 µs dearer at 200,000).
+  `epoll-spin` and mio are level. Tails are not ranked: millisecond round
+  trips in every arm, most unexplained. The book's backends page and the
+  Kubernetes x86 `cpu: 2` layout recommend it for one busy connection on
+  one core; `io/benches/BENCHMARK.md` has every figure.
+- Onload over AF_XDP on AWS ENA: not viable (kernel fault at NIC
+  registration, instance froze), no latency measured; the Onload runner
+  arms are marked experimental.
+
 ## [0.1.34] — 2026-10-27
 
 ### Added

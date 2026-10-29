@@ -24,11 +24,11 @@ test-harness = [
 ergo-sbe = { path = "../../sbe" }
 
 [dependencies.rusteron-media-driver]
-version = "0.2.13"
+version = "0.2.15"
 optional = true
 
 [dependencies.rusteron-client]
-version = "0.2.13"
+version = "0.2.15"
 optional = true
 
 [dependencies.serial_test]

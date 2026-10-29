@@ -13,9 +13,8 @@ check-aeron-cluster:
 test-aeron-cluster-harness:
     cargo test -p ergo-aeron-cluster-test-harness -- --test-threads=1
 
-# Run once before the test-harness tests. Aeron's Gradle 9.7.1 runs on JDK 17
-# to 26 ($JAVA_HOME, else java on PATH): 27 fails with "Unsupported class
-# file major version 71".
-# Build the Aeron cluster test jars (JDK 17 to 26; 25 recommended)
+# Run once before the test-harness tests. Aeron's Gradle 9.8.2 runs on JDK 17
+# to 27 ($JAVA_HOME, else java on PATH).
+# Build the Aeron cluster test jars (JDK 17 to 27; 25 recommended)
 build-aeron-jars:
     cd aeron && ./gradlew :aeron-cluster:jar :aeron-archive:jar :aeron-all:jar

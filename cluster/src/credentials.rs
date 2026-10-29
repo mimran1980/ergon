@@ -11,8 +11,8 @@ use std::borrow::Cow;
 /// is attempted; returning `None` from [`Self::on_challenge`] means the
 /// challenge cannot be answered and the session will be rejected.
 pub trait CredentialsSupplier: Send + Sync {
-    /// Credentials to include in the SessionConnectRequest.
-    /// `None` = no auth (NullCredentialsSupplier behaviour).
+    /// Credentials to include in the `SessionConnectRequest`.
+    /// `None` = no auth (`NullCredentialsSupplier` behaviour).
     fn encoded_credentials(&self) -> Option<Cow<'_, [u8]>>;
 
     /// Credentials to send in response to an auth challenge.
@@ -103,15 +103,15 @@ impl CredentialsSupplier for StaticCredentials {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_null_credentials_returns_none() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_null_credentials_returns_none() {
         let supplier = NullCredentialsSupplier;
         assert!(supplier.encoded_credentials().is_none());
         assert!(supplier.on_challenge(b"challenge").is_none());
-        Ok(())
     }
 
     fn assert_same_connect_and_challenge(
@@ -145,7 +145,7 @@ mod tests {
     }
 
     #[test]
-    fn debug_redacts_credential_bytes() -> Result<(), Box<dyn std::error::Error>> {
+    fn debug_redacts_credential_bytes() {
         let secret = b"leaked-credential-material-abc";
         let supplier = StaticCredentials::new(secret.to_vec());
         let dbg = format!("{supplier:?}");
@@ -162,6 +162,5 @@ mod tests {
             dbg.contains(&format!("{} bytes", secret.len())),
             "Debug may show length: {dbg}"
         );
-        Ok(())
     }
 }

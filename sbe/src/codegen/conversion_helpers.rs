@@ -187,7 +187,7 @@ pub(crate) fn message_field_infos(
         .collect()
 }
 
-pub(crate) fn presence_str(p: Presence) -> &'static str {
+pub(crate) const fn presence_str(p: Presence) -> &'static str {
     match p {
         Presence::Required => "required",
         Presence::Optional => "optional",
@@ -566,7 +566,7 @@ pub(crate) fn selector_matches(sel: &crate::ConversionSelector, field: &MessageF
 /// (see [`ConversionSelector`](crate::ConversionSelector)): exact `FieldPath`,
 /// then `SemanticType`, then `NamedType`. Resolution used to be "first match in
 /// registration order", so precedence silently depended on call order.
-fn selector_rank(sel: &crate::ConversionSelector) -> u8 {
+const fn selector_rank(sel: &crate::ConversionSelector) -> u8 {
     match sel {
         crate::ConversionSelector::FieldPath(_) => 0,
         crate::ConversionSelector::SemanticType(_) => 1,

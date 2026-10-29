@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 //! No poll waits on the media driver, a session follows its own egress image,
-//! and a NewLeaderEvent is applied as Java's client applies it.
+//! and a `NewLeaderEvent` is applied as Java's client applies it.
 //!
 //! The client runs on a Java media driver in its own process, which the tests
 //! freeze with `SIGSTOP`: an add that waited for the driver would hang until
@@ -96,7 +96,7 @@ impl JavaDriver {
             signal(pid, "-CONT").map_err(|e| e.to_string())
         });
         let frozen_at = Instant::now();
-        while frozen_at.elapsed() < FROZEN_FOR - Duration::from_millis(300) {
+        while frozen_at.elapsed() < FROZEN_FOR.saturating_sub(Duration::from_millis(300)) {
             let started = Instant::now();
             poll()?;
             assert!(
@@ -277,7 +277,7 @@ impl FakeCluster {
         Ok(egress)
     }
 
-    /// Poll `connecting` until `member` hears its SessionConnectRequest, then
+    /// Poll `connecting` until `member` hears its `SessionConnectRequest`, then
     /// answer over a new egress image. The reply echoes that request's
     /// correlation id.
     fn answer(
@@ -363,7 +363,7 @@ impl FakeCluster {
 struct Egress(Capture);
 
 impl Egress {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self(Capture::new())
     }
 
@@ -371,7 +371,7 @@ impl Egress {
         client.poll(&mut self.0, 10)
     }
 
-    fn new_leader_member_id(&self) -> Option<i32> {
+    const fn new_leader_member_id(&self) -> Option<i32> {
         self.0.new_leader_member_id
     }
 
@@ -811,7 +811,7 @@ fn a_new_leader_that_never_connects_times_out() -> Result<(), Box<dyn Error>> {
     }
     let waited = event_at.ok_or("no NewLeaderEvent")?.elapsed();
     assert!(
-        waited >= message_timeout - Duration::from_millis(100),
+        waited >= message_timeout.saturating_sub(Duration::from_millis(100)),
         "closed after {waited:?}, before message_timeout"
     );
     assert_eq!(client.state(), SessionState::Closed);

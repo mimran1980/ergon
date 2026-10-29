@@ -34,7 +34,7 @@ impl IngressSessionDecorator {
 
     /// Header fields set to Aeron's null (`-1`).
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             leadership_term_id: -1,
             cluster_session_id: -1,
@@ -42,13 +42,13 @@ impl IngressSessionDecorator {
     }
 
     /// Set the cluster session id carried in the header.
-    pub fn cluster_session_id(&mut self, cluster_session_id: i64) -> &mut Self {
+    pub const fn cluster_session_id(&mut self, cluster_session_id: i64) -> &mut Self {
         self.cluster_session_id = cluster_session_id;
         self
     }
 
     /// Set the leadership term id carried in the header.
-    pub fn leadership_term_id(&mut self, leadership_term_id: i64) -> &mut Self {
+    pub const fn leadership_term_id(&mut self, leadership_term_id: i64) -> &mut Self {
         self.leadership_term_id = leadership_term_id;
         self
     }

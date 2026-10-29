@@ -198,7 +198,7 @@ on different ports.
   `CLOCK_MONOTONIC` when the kernel's clock source is not the counter or a
   hypervisor's view of it, the TSC is not invariant (x86_64), or DPDK's rate
   is not `CNTFRQ_EL0` (aarch64).
-  `RUSTERON_DPDK_CLOCK=monotonic` forces it. Counter type 80 and
+  `RUSTERON_DPDK_CLOCK=monotonic` forces it. Counter type 1080 and
   `DpdkTransport::clock()` say which, and why.
 - **NIC receive timestamps:** `RUSTERON_DPDK_RX_HW_TIMESTAMP=1`. Only AWS ENA
   offers them (Gen7+ instances in a `precision-time` placement group, DPDK

@@ -168,11 +168,11 @@ fn source_checked_delegates_to_core() -> Result<(), Box<dyn Error>> {
     // 0.1.12: three-tier API — safe trusted core (bare name), unsafe _unchecked variant.
     assert!(
         src.contains("pub fn wrap_and_apply_header(")
-            && src.contains("pub unsafe fn wrap_and_apply_header_unchecked("),
+            && src.contains("pub const unsafe fn wrap_and_apply_header_unchecked("),
         "wrap_and_apply_header must be public safe with unsafe unstable variant"
     );
     assert!(
-        src.contains("pub fn wrap(") && src.contains("pub unsafe fn wrap_unchecked("),
+        src.contains("pub fn wrap(") && src.contains("pub const unsafe fn wrap_unchecked("),
         "wrap must be public safe with unsafe unchecked variant"
     );
     assert!(
@@ -180,7 +180,7 @@ fn source_checked_delegates_to_core() -> Result<(), Box<dyn Error>> {
         "decode must be public safe with unsafe unchecked variant"
     );
     let idx = src
-        .find("pub fn try_wrap_and_apply_header")
+        .find("pub const fn try_wrap_and_apply_header")
         .ok_or("missing try_wrap_and_apply_header")?;
     let window = &src[idx..idx.saturating_add(900).min(src.len())];
     assert!(

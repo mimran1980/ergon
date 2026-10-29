@@ -1,6 +1,6 @@
 [package]
 name = "ergon-tune"
-description = "Start-up and housekeeping checks of a host's low-latency settings (CPU isolation, NIC interrupts, transparent hugepages, the Aeron directory, NUMA, scheduling policy, SMT siblings, a CPU quota and its throttling, how CLOCK_REALTIME is kept and the kernel's clock source, background noise on the hot CPUs (unbound workqueues, compaction, other processes' tasks, kernel instrumentation, KSM, steal) and a hot thread's page faults, and with `nic` the NIC's moderation, deferral, VF and ring): pure functions returning findings, with no threads or statics, and one audited unsafe call (a read-only adjtimex)"
+description = "Start-up and housekeeping checks of a host's low-latency settings (CPU isolation, NIC interrupts, transparent hugepages, the Aeron directory, NUMA, scheduling policy, SMT siblings, a CPU quota and its throttling, how CLOCK_REALTIME is kept and the kernel's clock source, background noise on the hot CPUs (unbound workqueues, compaction, other processes' tasks, kernel instrumentation, KSM, steal), a hot thread's page faults, the IRQ CPUs' idle depth and TCP autocorking, and with `nic` the NIC's moderation, deferral, VF and ring): pure functions returning findings, with no threads or statics, and one audited unsafe call (a read-only adjtimex)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -11,7 +11,7 @@ use cluster_ha_orderbook::publish::{
     app_payload, session_header_template_id,
 };
 
-fn lvl(p: i64, s: i64) -> Level {
+const fn lvl(p: i64, s: i64) -> Level {
     Level {
         price: WireDec::new(p, -2),
         size: WireDec::new(s, -4),

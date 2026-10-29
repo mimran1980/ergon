@@ -5,8 +5,7 @@
 //! ```
 
 use ergo_aeron_cluster::{
-    AeronCluster, NullCredentialsSupplier, SessionBuilder, cluster_codec_types::EventCode,
-    egress::EgressListener,
+    AeronCluster, SessionBuilder, cluster_codec_types::EventCode, egress::EgressListener,
 };
 use std::time::Duration;
 
@@ -51,7 +50,7 @@ impl EgressListener for EchoListener {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Ergo Aeron Cluster Echo Client (library API) ===\n");
 
-    let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node();
+    let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node()?;
 
     let builder = SessionBuilder::default()
         .ingress_channel(cluster.ingress_channel.clone())?
@@ -91,7 +90,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         while std::time::Instant::now() < deadline {
             let _ = client.send_keep_alive();
             let _ = client.poll(&mut listener, 10);
-            if listener.count > n as usize {
+            if listener.count > n {
                 break;
             }
             std::thread::sleep(Duration::from_millis(20));
@@ -105,10 +104,4 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== Done ===");
 
     Ok(())
-}
-
-// suppress unused-import warning for NullCredentialsSupplier when not used
-#[allow(dead_code)]
-fn _unused() -> NullCredentialsSupplier {
-    NullCredentialsSupplier
 }

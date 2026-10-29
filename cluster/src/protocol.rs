@@ -13,27 +13,26 @@ use crate::poller::EgressEvent;
 use crate::state::SessionState;
 
 /// `PROTOCOL_SEMANTIC_VERSION` for 0.3.0: `(major << 16) | (minor << 8) | patch`.
-pub(crate) const PROTOCOL_SEMANTIC_VERSION: i32 = 3 << 8;
+pub const PROTOCOL_SEMANTIC_VERSION: i32 = 3 << 8;
 
 /// Java `ClusterConfig.LEADER_HEARTBEAT_TIMEOUT_DEFAULT_NS` (10 seconds).
-pub(crate) const LEADER_HEARTBEAT_TIMEOUT_DEFAULT_NS: u64 = 10_000_000_000;
+pub const LEADER_HEARTBEAT_TIMEOUT_DEFAULT_NS: u64 = 10_000_000_000;
 
 /// Java `AeronCluster.Configuration.CLIENT_NAME_DEFAULT`.
-pub(crate) const DEFAULT_CLIENT_NAME: &str = "cluster-client";
+pub const DEFAULT_CLIENT_NAME: &str = "cluster-client";
 
 /// The new-leader timeout in milliseconds once connect has an OK.
 ///
 /// A caller-supplied timeout wins. Otherwise the timeout is twice the leader
 /// heartbeat from that OK, and twice the Java default heartbeat when the
 /// cluster omits the field.
-pub(crate) fn conclude_new_leader_timeout_ms(configured: Option<u64>, heartbeat_ns: Option<i64>) -> u64 {
+pub fn conclude_new_leader_timeout_ms(configured: Option<u64>, heartbeat_ns: Option<i64>) -> u64 {
     if let Some(ms) = configured {
         return ms;
     }
     let ns = heartbeat_ns
         .filter(|ns| *ns > 0)
-        .map(|ns| ns as u64)
-        .unwrap_or(LEADER_HEARTBEAT_TIMEOUT_DEFAULT_NS);
+        .map_or(LEADER_HEARTBEAT_TIMEOUT_DEFAULT_NS, i64::cast_unsigned);
     (ns.saturating_mul(2) / 1_000_000).max(1)
 }
 
@@ -42,7 +41,7 @@ pub(crate) fn conclude_new_leader_timeout_ms(configured: Option<u64>, heartbeat_
 /// `NotConnected` and `Closed` wait for a new leader. `MaxPositionExceeded`
 /// closes the session. Any other failure, and any failure outside
 /// `Connected`, leaves the state alone.
-pub(crate) fn ingress_failure_state(state: SessionState, failure: PublicationFailure) -> SessionState {
+pub fn ingress_failure_state(state: SessionState, failure: PublicationFailure) -> SessionState {
     if state != SessionState::Connected {
         return state;
     }
@@ -54,7 +53,7 @@ pub(crate) fn ingress_failure_state(state: SessionState, failure: PublicationFai
 }
 
 /// Java `clientInfo`: `name=<client name> <package> <version>`.
-pub(crate) fn client_info_bytes(client_name: &str) -> Vec<u8> {
+pub fn client_info_bytes(client_name: &str) -> Vec<u8> {
     format!(
         "name={client_name} {} {}",
         env!("CARGO_PKG_NAME"),
@@ -65,7 +64,7 @@ pub(crate) fn client_info_bytes(client_name: &str) -> Vec<u8> {
 
 /// One `SessionConnectRequest`. The caller re-offers the same bytes, so the
 /// correlation id stays the one the cluster will echo.
-pub(crate) fn encode_connect_request(
+pub fn encode_connect_request(
     correlation_id: i64,
     response_stream_id: i32,
     response_channel: &[u8],
@@ -91,7 +90,7 @@ pub(crate) fn encode_connect_request(
 }
 
 /// One `ChallengeResponse`. `correlation_id` is a new id, not the challenge's.
-pub(crate) fn encode_challenge_response(
+pub fn encode_challenge_response(
     correlation_id: i64,
     cluster_session_id: i64,
     credentials: &[u8],
@@ -108,7 +107,7 @@ pub(crate) fn encode_challenge_response(
 }
 
 /// What a connect handshake does with one egress event.
-pub(crate) enum HandshakeEvent {
+pub enum HandshakeEvent {
     /// SessionEvent(OK) for this attempt.
     Established {
         cluster_session_id: i64,
@@ -132,7 +131,7 @@ pub(crate) enum HandshakeEvent {
 
 /// Classify one parsed egress event against the correlation of the request
 /// the handshake is waiting on. A mismatched id is [`HandshakeEvent::Ignore`].
-pub(crate) fn classify_handshake(
+pub fn classify_handshake(
     event: EgressEvent,
     expected_correlation: i64,
     image_session_id: Option<i32>,
@@ -191,6 +190,7 @@ pub(crate) fn classify_handshake(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
 

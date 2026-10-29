@@ -224,13 +224,15 @@ func TestTranslateReplacesEnv(t *testing.T) {
 
 func TestTranslateRefusesAeronCpusetAffinity(t *testing.T) {
 	p := &Plan{Isolated: cpuset.New(1), Shared: cpuset.New(4)}
-	env := []string{"AERON_DRIVER_CPUSET_AFFINITY=true"}
-	_, err := p.Translate(env, []EnvBinding{{Name: "AERON_RECEIVER_CPU_AFFINITY", Spec: "isolated:0"}})
-	if err == nil {
-		t.Fatal("Translate accepted an AERON_*_CPU_AFFINITY with AERON_DRIVER_CPUSET_AFFINITY=true")
-	}
-	if !strings.Contains(err.Error(), "AERON_DRIVER_CPUSET_AFFINITY") {
-		t.Fatalf("error %q does not name the guard", err)
+	for _, name := range []string{"AERON_THREAD_AFFINITY_USE_CPUSET_OFFSETS", "AERON_DRIVER_CPUSET_AFFINITY"} {
+		env := []string{name + "=true"}
+		_, err := p.Translate(env, []EnvBinding{{Name: "AERON_RECEIVER_CPU_AFFINITY", Spec: "isolated:0"}})
+		if err == nil {
+			t.Fatalf("Translate accepted an AERON_*_CPU_AFFINITY with %s=true", name)
+		}
+		if !strings.Contains(err.Error(), name) {
+			t.Fatalf("error %q does not name the guard %s", err, name)
+		}
 	}
 }
 

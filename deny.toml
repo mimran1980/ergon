@@ -93,6 +93,8 @@ allow = [
     "ISC",
     "BSD-3-Clause",
     "Zlib",
+    # smoltcp and its `managed` dependency (ergon-io's smoltcp-dpdk feature).
+    "0BSD",
 ]
 # The confidence threshold for detecting a license from license text.
 # The higher the value, the more closely the license text must be to the

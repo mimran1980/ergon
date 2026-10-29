@@ -7,10 +7,11 @@ book/src/cluster/chained-decoding.md:49 — deliberate; hidden cluster codec sea
 book/src/cluster/chained-decoding.md:87 — deliberate; hidden cluster codec seam requires the cluster crate, which is outside the SBE book harness
 book/src/cluster/session-builder.md:5 — deliberate; see page context
 book/src/cluster/session-builder.md:67 — deliberate; see page context
-book/src/io/backends.md:32 — deliberate; {{#include}} of io/tests/backend_config.rs (ergon-io), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it.
-book/src/io/backends.md:92 — deliberate; {{#include}} of io/tests/backend_config.rs (ergon-io), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it.
-book/src/io/backends.md:121 — deliberate; {{#include}} of io/tests/backend_config.rs (ergon-io), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it.
-book/src/io/backends.md:128 — deliberate; {{#include}} of io/tests/backend_config.rs (ergon-io), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it.
+book/src/io/backends.md:35 — deliberate; {{#include}} of io/tests/backend_config.rs (ergon-io), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it.
+book/src/io/backends.md:95 — deliberate; {{#include}} of io/tests/backend_config.rs (ergon-io), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it.
+book/src/io/backends.md:124 — deliberate; {{#include}} of io/tests/backend_config.rs (ergon-io), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it.
+book/src/io/backends.md:131 — deliberate; {{#include}} of io/tests/backend_config.rs (ergon-io), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it.
+book/src/io/backends.md:274 — deliberate; needs ergon-io's smoltcp-dpdk feature on Linux and a DPDK port. The same calls are compile-checked in io/tests-dpdk/smoltcp_vdev.rs (cargo clippy --features smoltcp-dpdk --test smoltcp_vdev).
 book/src/io/framed-tcp.md:20 — deliberate; {{#include}} of io/tests/frame.rs (ergon-io, Linux), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it on Linux, on every backend.
 book/src/io/udp.md:20 — deliberate; {{#include}} of io/tests/udp.rs (ergon-io, Linux), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it on Linux.
 book/src/io/http-client.md:20 — deliberate; {{#include}} of io/tests/client.rs (ergon-io, Linux), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it on Linux.
@@ -20,10 +21,10 @@ book/src/io/http-client.md:38 — deliberate; {{#include}} of io/tests/client.rs
 book/src/io/http-client.md:113 — deliberate; {{#include}} of io/tests/http_request.rs (ergon-io), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it on every platform.
 book/src/io/kubernetes.md:68 — deliberate; {{#include}} of io/tests/placement_book.rs (ergon-io), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it on every platform.
 book/src/io/kubernetes.md:87 — deliberate; {{#include}} of io/tests/placement_book.rs (ergon-io), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it on every platform.
-book/src/io/kubernetes.md:103 — deliberate; {{#include}} of io/tests/placement_book.rs (ergon-io), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it on every platform.
-book/src/io/kubernetes.md:119 — deliberate; {{#include}} of io/tests/placement_book.rs (ergon-io), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it on every platform.
-book/src/io/kubernetes.md:115 — deliberate; {{#include}} of io/tests/placement_book.rs (ergon-io), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it on every platform.
-book/src/io/kubernetes.md:147 — deliberate; {{#include}} of io/tests/placement_book.rs (ergon-io), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it on every platform.
+book/src/io/kubernetes.md:122 — deliberate; {{#include}} of io/tests/placement_book.rs (ergon-io), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it on every platform.
+book/src/io/kubernetes.md:138 — deliberate; {{#include}} of io/tests/placement_book.rs (ergon-io), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it on every platform.
+book/src/io/kubernetes.md:134 — deliberate; {{#include}} of io/tests/placement_book.rs (ergon-io), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it on every platform.
+book/src/io/kubernetes.md:166 — deliberate; {{#include}} of io/tests/placement_book.rs (ergon-io), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it on every platform.
 book/src/io/websocket.md:24 — deliberate; {{#include}} of io/examples/websocket.rs (ergon-io, Linux), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds the example and io/tests/example_websocket.rs runs it on Linux.
 book/src/io/websocket.md:105 — deliberate; {{#include}} of io/tests/ws_receive.rs (ergon-io), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it on every platform.
 book/src/io/websocket.md:114 — deliberate; {{#include}} of io/tests/ws_stream.rs (ergon-io), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-io builds and runs it on every platform.
@@ -112,7 +113,7 @@ book/src/sbe/recipes/timestamps.md:158 — deliberate; see page context
 book/src/sbe/recipes/timestamps.md:182 — deliberate; see page context
 book/src/sbe/recipes/timestamps.md:244 — deliberate; see page context
 book/src/sbe/recipes.md:23 — deliberate; see page context
-book/src/tune/overview.md:231 — deliberate; {{#include}} of tune/tests/live.rs (ergon-tune), a test file the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-tune builds and runs it.
-book/src/tune/overview.md:239 — deliberate; {{#include}} of tune/tests/live.rs (ergon-tune, feature nic, Linux), a fragment of a test the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-tune --all-features builds and runs it on Linux.
-book/src/tune/overview.md:289 — deliberate; {{#include}} of tune/tests/host_checks.rs (ergon-tune), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-tune builds and runs it.
+book/src/tune/overview.md:238 — deliberate; {{#include}} of tune/tests/live.rs (ergon-tune), a test file the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-tune builds and runs it.
+book/src/tune/overview.md:246 — deliberate; {{#include}} of tune/tests/live.rs (ergon-tune, feature nic, Linux), a fragment of a test the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-tune --all-features builds and runs it on Linux.
+book/src/tune/overview.md:296 — deliberate; {{#include}} of tune/tests/host_checks.rs (ergon-tune), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-tune builds and runs it.
 book/src/project/ai-assistance/what-did-not-work.md:39 — historical fabricated specification example, not executable library code; retained as disclosure evidence.

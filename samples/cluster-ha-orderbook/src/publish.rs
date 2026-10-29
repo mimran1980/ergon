@@ -128,7 +128,7 @@ pub struct ClusterBookPublisher<I: ClaimIngress> {
 }
 
 impl<I: ClaimIngress> ClusterBookPublisher<I> {
-    pub fn new(ingress: I) -> Self {
+    pub const fn new(ingress: I) -> Self {
         Self { ingress }
     }
 
@@ -136,7 +136,7 @@ impl<I: ClaimIngress> ClusterBookPublisher<I> {
         self.ingress
     }
 
-    pub fn ingress(&self) -> &I {
+    pub const fn ingress(&self) -> &I {
         &self.ingress
     }
 
@@ -209,7 +209,7 @@ impl<I: ClaimIngress> ClusterBookPublisher<I> {
 }
 
 #[must_use]
-pub fn session_header_template_id(frame: &[u8]) -> Option<u16> {
+pub const fn session_header_template_id(frame: &[u8]) -> Option<u16> {
     if frame.len() < 8 {
         return None;
     }

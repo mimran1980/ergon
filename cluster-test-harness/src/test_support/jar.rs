@@ -1,12 +1,12 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use ergo_aeron_cluster::ClusterError;
 
 /// Locate a jar in the aeron Gradle build output.
 ///
-/// Returns [`ClusterError::ConnectFailed`] when no matching jar is found
-/// (prefer this over panicking in CI). The legacy panic path is available
-/// via [`find_jar`].
+/// # Errors
+///
+/// [`ClusterError::ConnectFailed`] when no matching jar is found.
 pub fn try_find_jar(name_prefix: &str) -> Result<PathBuf, ClusterError> {
     let aeron = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -22,7 +22,9 @@ pub fn try_find_jar(name_prefix: &str) -> Result<PathBuf, ClusterError> {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
                 if name.starts_with(name_prefix)
-                    && name.ends_with(".jar")
+                    && Path::new(&name)
+                        .extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("jar"))
                     && !name.contains("sources")
                     && !name.contains("javadoc")
                 {
@@ -34,11 +36,6 @@ pub fn try_find_jar(name_prefix: &str) -> Result<PathBuf, ClusterError> {
     Err(ClusterError::connect(format!(
         "jar with prefix '{name_prefix}' not found. Run `just build-aeron-jars` first."
     )))
-}
-
-/// Locate a jar in the aeron Gradle build output (panics if missing).
-pub fn find_jar(name_prefix: &str) -> PathBuf {
-    try_find_jar(name_prefix).unwrap_or_else(|e| panic!("{e}"))
 }
 
 #[cfg(test)]

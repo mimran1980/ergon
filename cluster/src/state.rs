@@ -3,12 +3,12 @@
 //! Mirrors Java `AeronCluster` lifecycle: Connected → AwaitingNewLeader → …
 //! → Closed.
 
-/// Client-side session state. Mirrors the Java AeronCluster state machine.
+/// Client-side session state. Mirrors the Java `AeronCluster` state machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionState {
     /// Ingress connected to the leader; session is active.
     Connected,
-    /// Disconnected from leader; waiting for a NewLeaderEvent on egress (up to
+    /// Disconnected from leader; waiting for a `NewLeaderEvent` on egress (up to
     /// the new-leader timeout) or, once one has come, for the new leader's
     /// ingress publication to connect (up to the message timeout).
     AwaitingNewLeader,
@@ -19,23 +19,20 @@ pub enum SessionState {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_state_is_copy() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_state_is_copy() {
         let s = SessionState::Connected;
         let s2 = s;
         assert_eq!(s, s2);
-
-        Ok(())
     }
 
     #[test]
-    fn test_states_are_distinct() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_states_are_distinct() {
         assert_ne!(SessionState::Connected, SessionState::Closed);
         assert_ne!(SessionState::AwaitingNewLeader, SessionState::PendingClose);
-
-        Ok(())
     }
 }

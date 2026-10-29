@@ -14,13 +14,13 @@ fn test_session_message_header_roundtrip() -> Result<(), Box<dyn std::error::Err
         SessionMessageHeaderEncoder::wrap_and_apply_header(&mut data, 0).fixed(&SessionMessageHeaderFixedFields {
             leadership_term_id: 42,
             cluster_session_id: 99,
-            timestamp: 1234567890,
+            timestamp: 1_234_567_890,
         });
     let bytes = enc.as_bytes_with_header().to_vec();
     let dec = SessionMessageHeaderDecoder::decode(&bytes, 0)?;
     assert_eq!(dec.leadership_term_id(), 42);
     assert_eq!(dec.cluster_session_id(), 99);
-    assert_eq!(dec.timestamp(), 1234567890);
+    assert_eq!(dec.timestamp(), 1_234_567_890);
     assert!(
         dec.get_metadata().remaining().is_empty(),
         "remaining must be empty after full decode"
@@ -95,7 +95,7 @@ fn test_challenge_and_new_leader_encode() -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
-/// When a SessionMessageHeader is encoded alone (no app payload),
+/// When a `SessionMessageHeader` is encoded alone (no app payload),
 /// `remaining()` on the decoder must return an empty slice.
 #[test]
 fn test_remaining_empty_without_payload() -> Result<(), Box<dyn std::error::Error>> {
@@ -117,7 +117,7 @@ fn test_remaining_empty_without_payload() -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
-/// When a SessionMessageHeader is followed by payload bytes,
+/// When a `SessionMessageHeader` is followed by payload bytes,
 /// `remaining()` returns exactly those bytes.
 #[test]
 fn test_remaining_returns_payload_after_header() -> Result<(), Box<dyn std::error::Error>> {
@@ -156,7 +156,7 @@ fn test_whole_buffer_returns_entire_frame() -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
-/// After decoding a SessionMessageHeader, the remaining bytes can be decoded
+/// After decoding a `SessionMessageHeader`, the remaining bytes can be decoded
 /// via [`AnyMessage`] (they contain another SBE message with its own header).
 #[test]
 fn test_any_message_decode_chain_from_remaining() -> Result<(), Box<dyn std::error::Error>> {

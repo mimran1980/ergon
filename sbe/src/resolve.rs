@@ -120,7 +120,7 @@ impl ResolveError {
     /// Take the source code field, leaving `None` in its place.
     /// Used when wrapping this error in [`ParseError::Resolve`] to
     /// transfer the source code to the outer error's `#[source_code]`.
-    pub(crate) fn take_source_code(&mut self) -> Option<miette::NamedSource<String>> {
+    pub(crate) const fn take_source_code(&mut self) -> Option<miette::NamedSource<String>> {
         match self {
             ResolveError::DuplicateTemplateId { source_code, .. } => source_code.take(),
             ResolveError::UnknownType { source_code, .. } => source_code.take(),
@@ -133,7 +133,7 @@ impl ResolveError {
 
     /// Take the label spans, leaving `None` in their place.
     /// Returns `(primary, secondary)` for forwarding to [`ParseError::Resolve`].
-    pub(crate) fn take_spans(
+    pub(crate) const fn take_spans(
         &mut self,
     ) -> (Option<miette::SourceSpan>, Option<miette::SourceSpan>) {
         match self {
@@ -534,7 +534,7 @@ fn resolve_vardata_offsets(
     Ok(())
 }
 
-fn default_null(prim: PrimitiveType) -> Option<u64> {
+const fn default_null(prim: PrimitiveType) -> Option<u64> {
     match prim {
         PrimitiveType::Char => Some(0),
         PrimitiveType::Int8 => Some(-128i8 as u64),
@@ -551,7 +551,7 @@ fn default_null(prim: PrimitiveType) -> Option<u64> {
     }
 }
 
-fn default_min(prim: PrimitiveType) -> Option<u64> {
+const fn default_min(prim: PrimitiveType) -> Option<u64> {
     match prim {
         PrimitiveType::Char => Some(0x20),
         PrimitiveType::Int8 => Some(-127i8 as u64),
@@ -567,7 +567,7 @@ fn default_min(prim: PrimitiveType) -> Option<u64> {
     }
 }
 
-fn default_max(prim: PrimitiveType) -> Option<u64> {
+const fn default_max(prim: PrimitiveType) -> Option<u64> {
     match prim {
         PrimitiveType::Char => Some(0x7E),
         PrimitiveType::Int8 => Some(127),

@@ -38,8 +38,8 @@ jobs:
       - uses: taiki-e/install-action@cargo-llvm-cov
 
       # Java 25 runs the release-check's Aeron Archive and Cluster (the newest
-      # LTS in Aeron 1.53.3's CI matrix) and builds Aeron's and SBE's jars:
-      # both Gradle wrappers are 9.7.1, which runs on 17 to 26.
+      # LTS in Aeron 1.54.0's CI matrix) and builds Aeron's and SBE's jars:
+      # Gradle 9.8.2 (Aeron) and 9.8.1 (SBE), which run on 17 to 27.
       - uses: actions/setup-java@v6
         with:
           distribution: temurin

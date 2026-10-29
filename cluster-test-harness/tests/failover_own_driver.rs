@@ -23,7 +23,7 @@ use common::{Capture, await_echo, connect_own_driver, launch_own_driver};
 #[test]
 #[serial]
 fn test_deterministic_own_driver_udp_failover() -> Result<(), Box<dyn std::error::Error>> {
-    let mut cluster = ergo_aeron_cluster_test_harness::TestCluster::three_node();
+    let mut cluster = ergo_aeron_cluster_test_harness::TestCluster::three_node()?;
     let driver = launch_own_driver("fo-udp")?;
 
     let mut client = connect_own_driver(&cluster.ingress_channel, 19200, &driver.dir)?;
@@ -52,7 +52,7 @@ fn test_deterministic_own_driver_udp_failover() -> Result<(), Box<dyn std::error
     )?;
 
     // --- Kill the actual leader ---
-    cluster.kill_node(initial_leader as usize);
+    cluster.kill_node(usize::try_from(initial_leader)?);
 
     // --- Poll until NewLeaderEvent reconnects us to the new leader ---
     let deadline = Instant::now() + Duration::from_secs(60);
@@ -75,7 +75,7 @@ fn test_deterministic_own_driver_udp_failover() -> Result<(), Box<dyn std::error
 
     let new_leader = listener
         .new_leader_member_id
-        .expect("NewLeaderEvent observed");
+        .ok_or("no NewLeaderEvent observed")?;
     assert!(
         new_leader != initial_leader,
         "new leader {new_leader} must differ from killed leader {initial_leader}"

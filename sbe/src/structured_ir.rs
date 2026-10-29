@@ -111,7 +111,7 @@ pub(crate) fn is_bool_value_enum(elements: &SchemaElements, enum_name: &str) -> 
 }
 
 /// Heuristic: do the two enum value names form a true/false pair?
-pub(crate) fn is_boolean_value_pair(a: &str, b: &str) -> bool {
+pub(crate) const fn is_boolean_value_pair(a: &str, b: &str) -> bool {
     let (lower, upper) = if a.eq_ignore_ascii_case("true")
         || a.eq_ignore_ascii_case("yes")
         || a.eq_ignore_ascii_case("y")
@@ -319,7 +319,7 @@ impl MessageGroup {
 
     /// Entries have nested groups or var-data — no constant stride, so
     /// `entry_at` is not available and the iterator is poisoned on error.
-    pub(crate) fn has_dynamic_entries(&self) -> bool {
+    pub(crate) const fn has_dynamic_entries(&self) -> bool {
         !self.groups.is_empty() || !self.var_data.is_empty()
     }
 
@@ -362,7 +362,7 @@ impl MessageStructure {
     }
 
     /// The message has groups or var-data beyond its fixed block.
-    pub(crate) fn has_tails(&self) -> bool {
+    pub(crate) const fn has_tails(&self) -> bool {
         !self.groups.is_empty() || !self.var_data.is_empty()
     }
 
@@ -668,7 +668,7 @@ pub(crate) fn parse_vardata_structure(tokens: &[Token]) -> MessageVarData {
     }
 }
 
-pub(crate) fn rust_type(prim: PrimitiveType) -> &'static str {
+pub(crate) const fn rust_type(prim: PrimitiveType) -> &'static str {
     match prim {
         PrimitiveType::Char => "u8",
         PrimitiveType::Int8 => "i8",

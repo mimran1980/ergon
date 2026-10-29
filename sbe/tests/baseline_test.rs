@@ -2510,7 +2510,7 @@ fn generated_decoder_has_consuming_stages_and_rewind() -> Result<(), Box<dyn std
         "decoder must have the consuming into_fuel_figures() stage"
     );
     assert!(
-        src.contains("pub fn rewind(self) -> Self"),
+        src.contains("pub const fn rewind(self) -> Self"),
         "decoder must have consuming rewind(self) returning Self"
     );
     Ok(())

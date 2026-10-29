@@ -85,7 +85,7 @@ pub(crate) fn generate_memoized_decoder(
             /// separate empty cache.
             #[inline]
             #[must_use = "memoized() returns a new decoder; the original is consumed"]
-            pub fn memoized(self) -> #memo_ident<'a> {
+            pub const fn memoized(self) -> #memo_ident<'a> {
                 #memo_ident {
                     inner: self,
                     cache: sbe_rt::TailBoundaryCache::new(),
@@ -118,7 +118,7 @@ pub(crate) fn generate_memoized_decoder(
         /// Discard the cache and return the base decoder.
         #[inline]
         #[must_use = "discarding the returned decoder discards the message"]
-        pub fn into_inner(self) -> #decoder_ident<'a> {
+        pub const fn into_inner(self) -> #decoder_ident<'a> {
             self.inner
         }
     });
@@ -235,6 +235,7 @@ pub(crate) fn generate_memoized_decoder(
                     let data_start = offset + #prefix_lit;
                     let wire_length = (end - data_start) as u64;
                     if wire_length > #max_lit as u64 {
+                        sbe_rt::cold();
                         return Err(sbe_rt::DecodeError::InvalidVarDataLength {
                             field: stringify!(#vd_ident),
                             length: wire_length,
@@ -244,6 +245,7 @@ pub(crate) fn generate_memoized_decoder(
                     return Ok(&buf[data_start..end]);
                 }
                 if offset + #prefix_lit > buf.len() {
+                    sbe_rt::cold();
                     return Err(sbe_rt::DecodeError::BufferTooShort {
                         field: stringify!(#vd_ident),
                         needed: #prefix_lit,
@@ -254,6 +256,7 @@ pub(crate) fn generate_memoized_decoder(
                 let header = #type_pascal_ident(bytes);
                 let wire_length = header.#len_field_ident() as u64;
                 if wire_length > #max_lit as u64 {
+                    sbe_rt::cold();
                     return Err(sbe_rt::DecodeError::InvalidVarDataLength {
                         field: stringify!(#vd_ident),
                         length: wire_length,

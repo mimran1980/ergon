@@ -23,6 +23,9 @@
 //! | T17 | [`t17_ksm`] | no caller in this repository |
 //! | T18 | [`t18_steal`] (info) | no caller in this repository |
 //! | T19 | [`FaultWatch`] while running | io (the polling thread, every 5 s from the warning thread) |
+//! | T20 | [`t20_irq_idle`] | no caller in this repository (the lab's transport suite caps the IRQ CPU itself) |
+//! | T21 | [`t21_tcp_autocorking`] | no caller in this repository (the lab's transport suite sets it off itself) |
+//! | T22 | [`t22_aeron_affinity_names`] | md |
 //! | K1-K6 | [`k8s_checks`] (with T7 and T9), inside a pod only | io |
 //! | K7 | [`k8s_checks`] with [`Needs::with_nic`] | no caller in this repository names a NIC |
 //! | N1 (`nic`) | `n1_adaptive_rx` | io, md (kernel sockets) |
@@ -55,11 +58,13 @@
 //!   still returned), `on` (the default) or `require` (a warning is an error
 //!   at start). See [`HostCheckPolicy`] and [`host_check_line`].
 
+mod aeron;
 mod cpu;
 mod cpuset;
 mod faults;
 mod finding;
 mod host;
+mod idle;
 mod k8s;
 mod mem;
 mod net;
@@ -69,8 +74,10 @@ mod noise;
 mod platform;
 mod quota;
 mod report;
+mod tcp;
 mod time;
 
+pub use aeron::t22_aeron_affinity_names;
 pub use cpu::{
     SchedPolicy, Thread, t1_isolation, t7_sched_policy, t8_smt_siblings, t10_smt_on,
     thread_affinity, thread_policy,
@@ -79,6 +86,10 @@ pub use cpuset::{CPU_LIMIT, CpuSet, CpuSetError};
 pub use faults::{FaultWatch, Faults};
 pub use finding::{Component, Finding, HotCpu, HotSet, Role, Severity, Status};
 pub use host::{Host, ReadError};
+pub use idle::{
+    IdleState, ResumeLimit, T20_MAX_EXIT_LATENCY_US, cpu_idle_states, cpuidle_driver, resume_limit,
+    t20_irq_idle,
+};
 pub use k8s::{Needs, in_pod, k8s_checks};
 pub use mem::{FsMagic, fs_magic, t3_thp, t4_aeron_dir, t4_from, t5_numa_balancing};
 pub use net::{
@@ -101,6 +112,7 @@ pub use report::{
     HOST_CHECKS_ENV, HostCheckError, HostCheckPolicy, SILENCE, host_check_line,
     unknown_stops_require, warn_line,
 };
+pub use tcp::t21_tcp_autocorking;
 pub use time::{
     Bound, BoundSource, ChronyAnswer, ChronyError, ChronyReference, ChronyTracking,
     ClockBoundAnswer, ClockBoundError, ClockBoundReading, ClockBoundStatus, ClockSample,

@@ -829,7 +829,7 @@ checksum = "00d174d5400e5e8fd687ad1049e2f578285fa914201b1af7e8b112a4546bd826"
 
 [[package]]
 name = "ergo-aeron-cluster"
-version = "0.1.34"
+version = "0.1.35"
 dependencies = [
  "criterion",
  "ergo-sbe",
@@ -843,7 +843,7 @@ dependencies = [
 
 [[package]]
 name = "ergo-aeron-cluster-test-harness"
-version = "0.1.34"
+version = "0.1.35"
 dependencies = [
  "ergo-aeron-cluster",
  "rusteron-client",
@@ -853,7 +853,7 @@ dependencies = [
 
 [[package]]
 name = "ergo-sbe"
-version = "0.1.34"
+version = "0.1.35"
 dependencies = [
  "bytes",
  "chrono",
@@ -875,7 +875,7 @@ dependencies = [
 
 [[package]]
 name = "ergo-sbe-benchmarks"
-version = "0.1.34"
+version = "0.1.35"
 dependencies = [
  "bytes",
  "chrono",
@@ -893,20 +893,23 @@ dependencies = [
 
 [[package]]
 name = "ergon-io"
-version = "0.1.34"
+version = "0.1.35"
 dependencies = [
  "base64 0.23.1",
+ "cc",
  "curl",
  "ergon-tune",
  "httparse",
  "io-uring",
  "libc",
  "mio",
+ "pkg-config",
  "proptest",
  "rcgen",
  "ring",
  "rustix",
  "rustls",
+ "smoltcp",
  "socket2",
  "tokio",
  "webpki-roots",
@@ -914,7 +917,7 @@ dependencies = [
 
 [[package]]
 name = "ergon-latency-core"
-version = "0.1.34"
+version = "0.1.35"
 dependencies = [
  "hdrhistogram",
  "libc",
@@ -924,7 +927,7 @@ dependencies = [
 
 [[package]]
 name = "ergon-md-dpdk"
-version = "0.1.34"
+version = "0.1.35"
 dependencies = [
  "cc",
  "criterion",
@@ -941,7 +944,7 @@ dependencies = [
 
 [[package]]
 name = "ergon-md-dpdk-device-plugin"
-version = "0.1.34"
+version = "0.1.35"
 dependencies = [
  "env_logger",
  "hyper-util",
@@ -960,7 +963,7 @@ dependencies = [
 
 [[package]]
 name = "ergon-md-dpdk-harness"
-version = "0.1.34"
+version = "0.1.35"
 dependencies = [
  "env_logger",
  "ergon-latency-core",
@@ -976,7 +979,7 @@ dependencies = [
 
 [[package]]
 name = "ergon-tune"
-version = "0.1.34"
+version = "0.1.35"
 dependencies = [
  "rustix",
 ]
@@ -988,7 +991,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1170,6 +1173,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hash32"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47d60b12902ba28e2730cd37e95b8c9223af2808df9e902d4df49588d1470606"
+dependencies = [
+ "byteorder",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1196,6 +1208,16 @@ dependencies = [
  "flate2",
  "nom 8.0.0",
  "num-traits",
+]
+
+[[package]]
+name = "heapless"
+version = "0.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25ba4bd83f9415b58b4ed8dc5714c76e626a105be4646c02630ad730ad3b5aa4"
+dependencies = [
+ "hash32",
+ "stable_deref_trait",
 ]
 
 [[package]]
@@ -1631,6 +1653,12 @@ checksum = "52d3a9855747c17eaf4383823f135220716ab49bea5fbea7dd42cc9a92f8aa31"
 dependencies = [
  "logos-codegen",
 ]
+
+[[package]]
+name = "managed"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ca88d725a0a943b096803bd34e73a4437208b6077654cc4ecb2947a5f91618d"
 
 [[package]]
 name = "matchit"
@@ -2176,9 +2204,9 @@ dependencies = [
 
 [[package]]
 name = "pulldown-cmark"
-version = "0.13.4"
+version = "0.13.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9f068eba8e7071c5f9511831b44f32c740d5adf574e990f946ddb53db2f314e"
+checksum = "278e9268c93b9e498a2da46c34d90ba93a3255eb99009646398f34bc73ab36eb"
 dependencies = [
  "bitflags 2.13.2",
  "memchr",
@@ -2455,9 +2483,9 @@ checksum = "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d"
 
 [[package]]
 name = "rusteron-client"
-version = "0.2.13"
+version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f2a30b029053787cfb0fdd2a4fa31822e76fc2471d1075fc6fe8bb049aa761a"
+checksum = "b4bf180c74f10f39774fcd9ce401993eb19117fbe29eacc895fca844fc27d0f5"
 dependencies = [
  "bindgen",
  "cmake",
@@ -2471,9 +2499,9 @@ dependencies = [
 
 [[package]]
 name = "rusteron-code-gen"
-version = "0.2.13"
+version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d57c7f5f74d4074d7a1a9223e537e2a51ef33dc8f6b11efc92a493125f95009"
+checksum = "97dcfb6e38a1c486c64cde1eec6edee9ae047f96ca9a8f07176b0c397a812f6b"
 dependencies = [
  "itertools 0.15.0",
  "log",
@@ -2485,9 +2513,9 @@ dependencies = [
 
 [[package]]
 name = "rusteron-media-driver"
-version = "0.2.13"
+version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "55ef5cc5bb937fec073f45ab36e431235ee637ae707ebe63a4c41b429e05818a"
+checksum = "11bdf98e5b252d8a567a29b4a3beac2ea295178a5b4827ac516b90ddbffac0c8"
 dependencies = [
  "bindgen",
  "cmake",
@@ -2519,7 +2547,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2750,6 +2778,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "smoltcp"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6f8b28ad56c6e35524a37dd492af5d1a47e31e1a4d175cd12f89c075f01980f"
+dependencies = [
+ "bitflags 1.3.2",
+ "byteorder",
+ "cfg-if",
+ "defmt",
+ "heapless",
+ "managed",
+]
+
+[[package]]
 name = "socket2"
 version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2864,7 +2906,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3417,7 +3459,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

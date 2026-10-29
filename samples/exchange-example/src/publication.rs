@@ -151,7 +151,7 @@ impl<P: Publication> ClaimPublisher<P> {
         }
     }
 
-    pub fn counters(&self) -> &Counters {
+    pub const fn counters(&self) -> &Counters {
         &self.counters
     }
 
@@ -283,7 +283,7 @@ impl<P: Publication> ClaimPublisher<P> {
         }
     }
 
-    fn count(&mut self, outcome: PublishOutcome) {
+    const fn count(&mut self, outcome: PublishOutcome) {
         match outcome {
             PublishOutcome::Published => self.counters.published += 1,
             PublishOutcome::Dropped(DropReason::Backpressured) => {
@@ -311,7 +311,7 @@ impl<P: Publication> ClaimPublisher<P> {
 /// [`MAX_BOOK_LEVELS`](crate::config::MAX_BOOK_LEVELS) levels per side and a
 /// 16-byte symbol.
 #[must_use]
-pub fn worst_case_typed_claim_len() -> usize {
+pub const fn worst_case_typed_claim_len() -> usize {
     let inner = L2BookEncoder::compute_encoded_length_with_message_header(
         crate::config::MAX_BOOK_LEVELS,
         crate::config::MAX_BOOK_LEVELS,

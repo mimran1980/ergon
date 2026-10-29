@@ -201,7 +201,7 @@ fn schema_field_named_ordered_yields_to_the_lane_conversion()
         "field named ordered must rename when ordered() is a lane conversion"
     );
     assert!(
-        src.contains("pub fn ordered(self)"),
+        src.contains("pub const fn ordered(self)"),
         "ordered() lane conversion must exist on the base decoder"
     );
     assert!(
@@ -247,7 +247,7 @@ fn lean_and_full_profiles_omit_mutable_ordered() -> Result<(), Box<dyn std::erro
             "{module} must not emit the mutable OrderedDecoder"
         );
         assert!(
-            src.contains("pub fn ordered(self)"),
+            src.contains("pub const fn ordered(self)"),
             "{module} must emit the callback lane conversion"
         );
     }

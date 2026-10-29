@@ -17,7 +17,7 @@ fn check_docs(source: &str) -> Vec<(String, bool)> {
     results
 }
 
-fn is_public(vis: &syn::Visibility) -> bool {
+const fn is_public(vis: &syn::Visibility) -> bool {
     matches!(vis, syn::Visibility::Public(_))
 }
 

@@ -68,7 +68,7 @@ enum Arm {
 }
 
 impl Arm {
-    fn as_str(self) -> &'static str {
+    const fn as_str(self) -> &'static str {
         match self {
             Self::Ergon => "ergon",
             Self::SbeTool => "sbe-tool",

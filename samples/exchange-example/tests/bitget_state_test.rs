@@ -54,7 +54,7 @@ fn collect_books(
     }
 }
 
-fn snapshot<'a>(bids: &'a [[&'a str; 2]], asks: &'a [[&'a str; 2]]) -> BitgetEventRef<'a> {
+const fn snapshot<'a>(bids: &'a [[&'a str; 2]], asks: &'a [[&'a str; 2]]) -> BitgetEventRef<'a> {
     BitgetEventRef::BookSnapshot {
         symbol: "BTCUSDT",
         exchange_ts_ns: 1_700_000_000_000_000_000,
@@ -63,7 +63,7 @@ fn snapshot<'a>(bids: &'a [[&'a str; 2]], asks: &'a [[&'a str; 2]]) -> BitgetEve
     }
 }
 
-fn update<'a>(bids: &'a [[&'a str; 2]], asks: &'a [[&'a str; 2]]) -> BitgetEventRef<'a> {
+const fn update<'a>(bids: &'a [[&'a str; 2]], asks: &'a [[&'a str; 2]]) -> BitgetEventRef<'a> {
     BitgetEventRef::BookUpdate {
         symbol: "BTCUSDT",
         exchange_ts_ns: 1_700_000_000_000_000_001,

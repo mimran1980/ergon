@@ -111,7 +111,7 @@ fn bid(
 #[test]
 #[serial]
 fn auction_higher_bid_wins_and_lower_bid_loses() -> Result<(), Box<dyn std::error::Error>> {
-    let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node_auction();
+    let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node_auction()?;
     let mut client = connect(&cluster)?;
     let mut listener = Capture::new();
 

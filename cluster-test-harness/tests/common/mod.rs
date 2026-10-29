@@ -28,19 +28,19 @@ pub fn launch_own_driver(tag: &str) -> Result<OwnDriver, Box<dyn Error>> {
     dc.set_dir(&dir_cstr)?;
     dc.set_dir_delete_on_shutdown(true)?;
     dc.set_dir_delete_on_start(true)?;
-    let _guard = rusteron_media_driver::AeronDriver::launch_embedded_guard(dc, false);
+    let guard = rusteron_media_driver::AeronDriver::launch_embedded_guard(dc, false);
     Ok(OwnDriver {
         dir: dir
             .to_str()
             .ok_or("aeron dir is not valid UTF-8")?
             .to_string(),
-        _guard,
+        _guard: guard,
     })
 }
 
 /// Connect a high-level client to the cluster over own-driver UDP. The
 /// egress port is the client's own UDP endpoint (the cluster sends
-/// SessionEvent / echoes / NewLeaderEvent here).
+/// `SessionEvent` / echoes / `NewLeaderEvent` here).
 ///
 /// Egress URI is `aeron:udp?endpoint=localhost:{port}`.
 pub fn connect_own_driver(
@@ -65,7 +65,7 @@ pub struct Capture {
 }
 
 impl Capture {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             messages: Vec::new(),
             new_leader_member_id: None,

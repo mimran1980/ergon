@@ -22,7 +22,7 @@ In brackets: the check (T1–N4). Times are in µs.
 
 | term | what it is | pros / cons, or when it matters |
 |---|---|---|
-| [check](#what-it-checks), [finding](#read-a-finding) | A check tests one host (T1–T19, K1–K7) or NIC (N1–N4) setting. A finding is a check that fired, with its fix. | Data it cannot read gives *unknown*, never a warning. |
+| [check](#what-it-checks), [finding](#read-a-finding) | A check tests one host (T1–T22, K1–K7) or NIC (N1–N4) setting. A finding is a check that fired, with its fix. | Data it cannot read gives *unknown*, never a warning. |
 | busy-spinning thread | A thread that loops on one CPU and never sleeps. | Never waits to wake up, but takes a whole CPU. Anything else that runs there pauses it. |
 | [hot, housekeeping CPU](../deploy/hosts.md#cpu-layout) | Hot: a CPU a thread busy-spins on. Housekeeping: any other CPU. | Move the kernel's work and interrupts to housekeeping CPUs. |
 | p50, p99, p99.9, p99.99, max | The median; the slowest 1 in 100, 1,000 or 10,000; the slowest of all. The high ones are the *tail*. | Host noise shows in the tail and max; the p50 often hardly moves. |
@@ -103,6 +103,9 @@ In brackets: the check (T1–N4). Times are in µs.
 | T17 | KSM | `/sys/kernel/mm/ksm/run` 1: `ksmd` merges pages, and a write to a merged page takes a copy-on-write fault. Warn. |
 | T18 | steal on hot CPUs | `/proc/stat`'s steal since boot: the hypervisor ran something else while the vCPU had work. 0 also when the hypervisor does not report steal. Info. |
 | T19 | page faults on a hot thread | `FaultWatch` reads the thread's `minflt` and `majflt` again while it runs. Any fault since the last check warns. |
+| T20 | idle depth of the CPUs that take the NIC interrupts | cpuidle states each IRQ CPU may enter (enabled, within `pm_qos_resume_latency_us`). One with exit latency above 1 µs (C1E, C6) warns: each interrupt waits for the wake. Info for `acpi_idle` stopping at C1 and for a hot CPU that sleeps (the conductor); ok without a cpuidle driver (Graviton). |
+| T21 | TCP autocorking | `net.ipv4.tcp_autocorking` in the process's network namespace. On: a small send waits for the previous one's transmit to complete, `TCP_NODELAY` or not. A warning for latency-sensitive TCP, info otherwise. |
+| T22 | Aeron affinity names | Aeron's affinity settings named as before 1.54 (`AERON_DRIVER_CPUSET_AFFINITY`, `AERON_DRIVER_CPUSET_WARNINGS_AS_ERRORS`) in the environment. Aeron 1.54 ignores them: rename to `AERON_THREAD_AFFINITY_USE_CPUSET_OFFSETS` and `AERON_THREAD_AFFINITY_FAIL_ON_VALIDATION_ERRORS`. |
 | K1 | the pod's `QoS` class | Anything but Guaranteed gets a CPU limit and shares CPUs; the loop runs at the cap or with a neighbour. Fix (pod spec): `resources.requests` = `resources.limits`. |
 | K2 | exclusive CPUs | The shared pool means other pods land on the loop's CPU. Fix (node): kubelet `cpuManagerPolicy: static` (with `full-pcpus-only` on x86); fix (pod spec): whole-CPU requests in a Guaranteed pod. |
 | K3 | the loop's SMT sibling | A sibling in another pod is a busy neighbour (the T10 numbers). Fix (node): turn SMT off; fix (pod spec): ask for whole cores so both siblings come together. |
@@ -142,6 +145,8 @@ Not checked: CPU idle states and frequency.
 | `kworker/u` threads on the loop's CPU | T13 | on the node: `echo <housekeeping mask> > /sys/devices/virtual/workqueue/cpumask`, or boot with `nohz_full` |
 | page faults on a pinned, locked thread | T14, T17, T19 | on the node: `sysctl -w vm.compaction_proactiveness=0 vm.compact_unevictable_allowed=0`; `echo 2 > /sys/kernel/mm/ksm/run`; in the process: `mlockall` and touch every buffer before the loop |
 | another program's threads on the loop's CPU | T15 | boot with `isolcpus=domain,<hot>`; systemd `CPUAffinity=<housekeeping>`; `taskset -apc <housekeeping> <pid>`; kubelet `reservedSystemCPUs` |
+| interrupt-driven receive slow at low rates on Intel (p50 tens of µs above a polling arm); `intel_idle` | T20 | per IRQ CPU `echo 1 > /sys/devices/system/cpu/cpu<N>/cpuidle/state<i>/disable` for each state past C1, or `echo 1 > …/cpu<N>/power/pm_qos_resume_latency_us`; at boot `intel_idle.max_cstate=1` (every CPU). Node settings: a pod cannot write `/sys`, and holds `/dev/cpu_dma_latency` only privileged |
+| small TCP sends late though `TCP_NODELAY` is set; nstat `TcpExt TCPAutoCorking` grows | T21 | `sysctl -w net.ipv4.tcp_autocorking=0` in the sender's network namespace: a pod's `securityContext.sysctls` (an unsafe sysctl: kubelet `--allowed-unsafe-sysctls`), the node for `hostNetwork` |
 | stalls no host setting explains | T16, T18 | `bpftool prog show` and `/sys/kernel/debug/kprobes/list` (root) for the owners of instrumentation; for steal, an instance whose vCPUs are not shared, or bare metal |
 
 Each finding carries the fix for that host, with its real CPU lists and IRQ
@@ -162,7 +167,9 @@ Each finding's `evidence` field names its source. The A/B tables are in
 | T8 | two threads on one CPU: not measured here; a busy sibling: T10's run | partly measured |
 | T10, K3 | run `flags-aws-20261015T122127Z` (SQPOLL on the loop's sibling, three rounds); other sibling loads not measured | measured |
 | N1 | runs `flags-aws-20261015T070339Z` (`base`, `nodim`, `nocoalesce`, two reps each) | measured, x86 busy polling only |
-| T3, T4, T5, T6, T9, T11–T19, K1, K2, K4–K7, N2, N3, N4 | kernel, Kubernetes, Aeron, chrony, AWS or Azure documentation | not measured here |
+| T20 | lab session `aws-20261028-092158` (`c7i.4xlarge`, mio TCP at 10k msg/s, the IRQ CPU uncapped, at C1, polling; three reps, its cpuidle usage read per point): p50 43–160 → 37–39 µs, p99 315–559 → 44–49 µs ([BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#c7i-the-irq-cpus-idle-depth)) | measured, x86 `intel_idle` |
+| T21 | the same sessions' nstat `TCPAutoCorking`: 49k–164k of ~600k sends a host corked with the IRQ CPU in C6, 42–149 at C1; `net/ipv4/tcp.c` `tcp_should_autocork` | counted, latency not separated |
+| T3, T4, T5, T6, T9, T11–T19, T22, K1, K2, K4–K7, N2, N3, N4 | kernel, Kubernetes, Aeron, chrony, AWS or Azure documentation | not measured here |
 
 ## Where the checks run
 
@@ -171,10 +178,10 @@ Each finding's `evidence` field names its source. The A/B tables are in
 | ergon-io's `Driver` (`Component::Io`) | T1 and T8 on the loop's CPU (and `sqpoll_cpu`); T7 on the calling thread; T9, T10; T3 as info; K1–K6 inside a pod (K7 needs a named NIC, which ergon-io does not pass) | `Driver::new`; read them back with `Driver::host_report()` | `ERGON_HOST_CHECKS`: `on` (default), `off` (no warning line; the results stay) or `require` (a warning, or an unproven proof check, stops the start) |
 | ergon-io's `Driver` | T2, N1, N2 (interrupt-driven backends only), N3 on each connection's egress NIC | after the first route lookup to it; again after a NIC reset | `quickack_check=off` skips them |
 | ergon-io's `Driver` | T19 on the thread creating the driver (taken to be the polling thread, once per thread) | every 5 s, from its warning thread | `ERGON_HOST_CHECKS=off` drops the warning lines |
-| the ergon-md-dpdk media driver (`Component::Md`) | T1, T3, T4, T5, T7, T8, T9, T10; T2 and T6 on the data NICs; on the socket transport also N1, N2, and N4 with busy polling | before the driver starts; N1 and T2 again after a NIC reset, on its `md-host-checks` thread | `ERGON_HOST_CHECKS`: `on`/`warn` (default), `off` (no check runs at all) or `require` (any warning or unproven proof stops the start) |
-| your own busy loop (`Component::Rt`) | any of them: T1, T3, T4 (the directory it connects to), T5, T7, T8, T9, T10, T11, T12, T13–T18; K1–K7 inside a pod; on a kernel NIC also T2, N1, N2, N3; `ThrottleWatch`, `ClockWatch`, `FaultWatch` | before the loop; the NIC checks again when the NIC's `carrier_changes` moves; `ThrottleWatch::check`, `ClockWatch::check` and `FaultWatch::check` every few seconds from housekeeping | none: skip a check by not calling it |
+| the ergon-md-dpdk media driver (`Component::Md`) | T1, T3, T4, T5, T7, T8, T9, T10, T22; T2 and T6 on the data NICs; on the socket transport also N1, N2, and N4 with busy polling | before the driver starts; N1 and T2 again after a NIC reset, on its `md-host-checks` thread | `ERGON_HOST_CHECKS`: `on`/`warn` (default), `off` (no check runs at all) or `require` (any warning or unproven proof stops the start) |
+| your own busy loop (`Component::Rt`) | any of them: T1, T3, T4 (the directory it connects to), T5, T7, T8, T9, T10, T11, T12, T13–T18, T21, T22; K1–K7 inside a pod; on a kernel NIC also T2, T20, N1, N2, N3; `ThrottleWatch`, `ClockWatch`, `FaultWatch` | before the loop; the NIC checks again when the NIC's `carrier_changes` moves; `ThrottleWatch::check`, `ClockWatch::check` and `FaultWatch::check` every few seconds from housekeeping | none: skip a check by not calling it |
 
-Neither ergon-io nor the media driver runs T13–T18 yet: call them yourself.
+Neither ergon-io nor the media driver runs T13–T18, T20 or T21 yet: call them yourself.
 
 Every printed warning line ends with `(ERGON_HOST_CHECKS=off silences host-check
 warnings)`. The K checks run only inside a pod (the `kubepods` cgroup path, the
@@ -189,7 +196,7 @@ pass those checks exist to stop. An unknown of a check whose subsystem the
 node may not have (PSI and `memory.high`, a NUMA node, a NIC knob, THP) is
 printed and allowed through: that is a real host, and refusing there would
 stop every start on it. `unknown_stops_require(id)` says which: T3, T4, T5,
-T6, T11, T13-T19, K6, K7, N1-N4 and M4 do not block; every other id does, a
+T6, T11, T13-T21, K6, K7, N1-N4 and M4 do not block; every other id does, a
 caller's own included.
 
 Two consequences under `require`:

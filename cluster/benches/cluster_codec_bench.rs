@@ -36,6 +36,11 @@
 //!
 //! Diagnostic-only (not a ≤1.00 gate): NewLeaderEvent decode, connect request.
 #![allow(unused_must_use, unused_imports)]
+// The head-to-head gate's measured loops (the unchecked tier's `unsafe`,
+// `#[inline(always)]`, the casts both arms make) stay as the gate measured
+// them: as sbe/benchmarks' benches and cluster_perf_probe, no workspace lints
+#![allow(unsafe_code)]
+#![allow(clippy::all, clippy::pedantic, clippy::nursery, clippy::restriction)]
 
 use std::hint::black_box;
 use std::time::Duration;
@@ -82,7 +87,7 @@ const HDR: usize = 8;
 /// `base.add(off..off + len)` must be in bounds of the allocation the caller
 /// owns, and the returned view must not be aliased by any other live `&mut`.
 #[inline(always)]
-unsafe fn slot_slice<'a>(base: *mut u8, off: usize, len: usize) -> &'a mut [u8] {
+const unsafe fn slot_slice<'a>(base: *mut u8, off: usize, len: usize) -> &'a mut [u8] {
     unsafe { core::slice::from_raw_parts_mut(base.add(off), len) }
 }
 

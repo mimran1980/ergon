@@ -82,7 +82,7 @@ fn connect_and_send(
 #[test]
 #[serial]
 fn test_connect_with_null_credentials() -> Result<(), Box<dyn std::error::Error>> {
-    let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node();
+    let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node()?;
     let (sent, received) = connect_and_send(&cluster, b"")?;
     assert!(
         sent || received,
@@ -95,7 +95,7 @@ fn test_connect_with_null_credentials() -> Result<(), Box<dyn std::error::Error>
 #[test]
 #[serial]
 fn test_connect_with_simple_credentials() -> Result<(), Box<dyn std::error::Error>> {
-    let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node();
+    let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node()?;
     // Default authenticator accepts any credentials in SingleNodeCluster config
     let (sent, received) = connect_and_send(&cluster, b"admin:password")?;
     assert!(
@@ -109,7 +109,7 @@ fn test_connect_with_simple_credentials() -> Result<(), Box<dyn std::error::Erro
 #[test]
 #[serial]
 fn test_two_connections_to_same_cluster() -> Result<(), Box<dyn std::error::Error>> {
-    let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node();
+    let cluster = ergo_aeron_cluster_test_harness::TestCluster::single_node()?;
     let (s1, r1) = connect_and_send(&cluster, b"")?;
     let (s2, r2) = connect_and_send(&cluster, b"")?;
     assert!(s1 || r1, "first connect failed");

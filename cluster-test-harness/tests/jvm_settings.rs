@@ -159,7 +159,11 @@ fn jvm_log(dir: &Path) -> Result<String, Box<dyn Error>> {
     for entry in std::fs::read_dir(dir)? {
         let path = entry?.path();
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if name.starts_with("aeron-jvm-") && name.ends_with(".log") {
+        if name.starts_with("aeron-jvm-")
+            && path
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("log"))
+        {
             logs.push(path);
         }
     }
@@ -221,7 +225,7 @@ fn a_cluster_node_with_the_recommended_settings_serves_a_client() -> Result<(), 
     args.extend(["-Xms256m", "-Xmx256m"].map(OsString::from));
     args.extend(property_flags()?);
 
-    let cluster = TestCluster::single_node_with_jvm_args(&args);
+    let cluster = TestCluster::single_node_with_jvm_args(&args)?;
     let dir = cluster
         .aeron_dir()
         .to_str()
