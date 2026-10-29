@@ -169,8 +169,43 @@ Kubernetes:
 - `ll-probe` proves where every thread ran.
 
 md-dpdk is a lab proof of concept, and its BENCHMARKS recommend kernel UDP
-in production (`md-dpdk/BENCHMARKS.md:205-207`). Every DPDK setting below is
-lab only.
+in production (`md-dpdk/BENCHMARKS.md`, the opening note and
+[Recommended configuration](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#recommended-configuration)).
+Every DPDK setting below is lab only.
+
+### Which measured path these overlays run
+
+The overlays are the Aeron-on-DPDK lab layout. On AWS `c7a`, 1 stream,
+50,000 msg/s, same session, that path's p99 is 35.4 (max 169 to 178),
+against kernel Aeron p99 48.6, mio 60.8 (60.6 to 61.1) and ergon-io
+60.9 (58.4 to 61.8)
+(`book/src/transports/comparison.md`, unreliable UDP). It uses 4 busy
+threads a host. `eks-ena-arm64` and `eks-ena-x86` render and lint only:
+they have not been run on EKS, so that table is not an EKS measurement.
+
+Settings already in the manifests, and the evidence for each:
+
+| setting | where | evidence |
+|---|---|---|
+| `AERON_DIR=/mnt/huge-aeron/aeron`, `AERON_FILE_PAGE_SIZE=2097152`, `AERON_TERM_BUFFER_SPARSE_FILE=false`, driver `hugepages-2Mi: 2Gi` | `k8s/base/driver.env`, `k8s/base/app.env`, the driver DaemonSet | required for Aeron to start. The IPC 2 MiB directory against tmpfs was not separated at any load ([hugepages](../book/src/transports/comparison.md#hugepages)) |
+| `transparent_hugepage=never`, `hugepagesz=2M hugepages=2048` | the node prep row below | a tail result: Azure idle p99.99 67 to 53 µs and idle max 546 to 106 µs; one AWS run overlaps; a traced `khugepaged` drain was a 16.25 µs max. No p50 change is published |
+| `AERON_CLIENT_PRE_TOUCH_MAPPED_MEMORY=true` | `k8s/base/app.env` | no latency figure is published |
+| `RUSTERON_DPDK_HUGE_DIR=/dev/hugepages` | `k8s/base/driver.env` | DPDK packet buffers, about 37 MiB a NIC. `RUSTERON_DPDK_EAL_IN_MEMORY` has no published latency figure |
+| `AERON_RECEIVER_IO_VECTOR_CAPACITY=16` | `k8s/base/driver.env` | one AWS DPDK run: no NAK against 16,247, max 142 against 1,130 µs |
+| dedicated driver threads, exclusive CPUs | this sample's pod layout | once there are many streams, every thread taken from the driver costs latency (`book/src/transports/comparison.md`) |
+
+`vdev-local` strips hugepages (`--no-huge`). It is the kind layout, not
+the measured one.
+
+At 32 and 128 streams on Azure, mio and ergon-io kernel UDP are 3.7 to
+10.5 µs lower at p50 than Aeron, on 1 busy thread. That is set 2a, not a
+deployment on EKS, so there is no mio overlay here. The production line
+in BENCHMARKS stays kernel UDP.
+
+No overlay yet for WebSocket, ergon-io kernel TCP, smoltcp TCP, or
+ergon-io on DPDK (`fstack-spin`, `smoltcp-spin`). Those echoes are waiting
+on a pinned remeasure. F-Stack TCP in the `c7a` table is an md-dpdk bench
+arm, not this sample's driver.
 
 ### What has run, and where
 

@@ -113,6 +113,14 @@
   matrix does not show the mixed-load `c7i` outage at second :25. The
   `c8g` pair has a separate cluster at second :05 on kernel UDP (echo
   pinned). Every pinned max is labelled.
+- Aeron hugepages, from runs already published. The IPC 2 MiB directory
+  overlaps tmpfs at every load (round trip p50 0.20 to 0.25 against 0.22
+  to 0.25). A sized 2 MiB hugetlbfs is what lets Aeron start. Transparent
+  hugepages off cut an Azure idle tail (p99.99 67 to 53 µs, max 546 to
+  106) and a traced 16.25 µs `khugepaged` max; one AWS run overlaps. The
+  Kubernetes sample documents that Aeron-on-DPDK layout on the existing
+  `eks-ena` overlays (render only). WebSocket, ergon-io TCP and ergon-io
+  on DPDK stay without an overlay until their echoes are pinned.
 - `uring-sqpoll` with its SQPOLL thread on the loop's SMT sibling, against
   mio with SMT off, both on one physical core (TCP round trip, 1
   connection, AWS `c7i.4xlarge`, the IRQ CPU capped at C1): the sibling

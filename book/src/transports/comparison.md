@@ -51,6 +51,7 @@ median of the reps' maxima, with the range across reps in brackets after it.
 | ergon-io UDP against Aeron kernel UDP and Aeron on DPDK? | Same session only. AWS `c7a`, 1 stream, 50,000 msg/s: Aeron on DPDK p99 35.4 (max 169 to 178), Aeron on the kernel p99 48.6 (max 414 to 445), ergon-io kernel UDP p99 58.4 to 61.8 (max 226 to 553). smoltcp UDP was measured on `c7i` and `c8g`, not in that session | [unreliable UDP](#unreliable-udp-u) |
 | Does this `c7i` pair show the once-a-minute ~15 ms outage? | No. `spikes.py` names no periodic cluster in the 96 points, and none in the 36 whose echo was pinned (UDP and F-Stack TCP). Among those 36, maxima of 20 ms and more are 1% loss: three TCP retransmits (20,057 to 51,890) and one page fault of the measuring thread (417,929). The second-:25 outage remains the mixed-load session | [io bypass](#ergon-io-kernel-smoltcp-and-f-stack), [mixed load](#maxima-and-the-c7i-path-outages) |
 | Graviton, once a minute, in this bypass run? | Eight kernel `epoll-spin` UDP points, echo pinned, max 5,499 to 9,298, all at second :05. p50 stays 33.2 to 34.1. smoltcp UDP and F-Stack TCP are outside it. Two kernel WebSocket points at 10,000 msg/s share that second; their echo stayed on the housekeeping CPU | [io bypass](#ergon-io-kernel-smoltcp-and-f-stack) |
+| Did hugepages change Aeron's latency? | The IPC page-size A/B did not. Round trip p50 is 0.22 against 0.20 at 10,000 msg/s, 0.22 against 0.21 at 1,000,000, and 0.25 against 0.25 at 5,000,000. A sized 2 MiB hugetlbfs is what lets Aeron start. Transparent hugepages off is a tail result: Azure idle p99.99 67 to 53 µs and idle max 546 to 106; one AWS run overlaps; a traced `khugepaged` drain was a 16.25 µs max | [hugepages](#hugepages) |
 
 ## What was compared
 
@@ -390,7 +391,9 @@ offset between the two CPUs.
 
 - **Round trip, 10,000 msg/s:** Aeron IPC lower than `mpsc` by 0.11 at p50
   and 0.07 at p99. `aeron-ipc` and `aeron-ipc-huge` (2 MiB pages) are not
-  separated anywhere: the page size does not matter here.
+  separated anywhere: the page size does not matter here. That A/B, the
+  sized mount Aeron needs in order to start, and transparent hugepages are
+  three different things: [Hugepages](#hugepages).
 - **1,000,000 msg/s:** nothing separated. One A/A rep ran slow (p50 1.34,
   max 4,454; its max unexplained), which widens the A/A spread to 1.05 at p50.
 - **5,000,000 msg/s:** `mpsc` cannot keep a round trip at this rate: the
@@ -413,6 +416,56 @@ offset between the two CPUs.
   of the trace (36 to 61 s), which a thread that kept measuring cannot have
   had, so the label is a defect of `spikes.py`. A `kworker` ran on the CPU
   inside two of those spans: a candidate, not shown to be the cause.
+
+### Hugepages
+
+Three mechanisms share the name. Each row below is one of them, from the
+run that measured it. They are not one result, and none of them is a p50
+win for Aeron.
+
+**Explicit 2 MiB directory against tmpfs (set 1, this session).**
+`aeron-ipc-huge` puts `AERON_DIR` on 2 MiB pages. `aeron-ipc` uses tmpfs.
+Round trip, µs, median of 3 reps:
+
+| msg/s | `aeron-ipc` p50 | `aeron-ipc-huge` p50 | p99, both |
+|---|---|---|---|
+| 10,000 | 0.22 (0.21–0.22) | 0.20 (0.19–0.21) | 0.39 |
+| 1,000,000 | 0.22 (0.21–0.22) | 0.21 (0.19–0.22) | 0.30 and 0.29 |
+| 5,000,000 | 0.25 (0.25–0.26) | 0.25 (0.25–0.25) | 0.38 |
+
+One way, the same points, p50 is 0.10 against 0.10, 0.11 against 0.10, and
+0.11 against 0.09. The arms overlap at every load. The huge arm's 10,000
+msg/s max reaches 743 in one rep (median of maxima 125, against 146); the
+causes are a host pause or unexplained, the same labels as `aeron-ipc`.
+`md-dpdk/BENCHMARKS.md` records the same non-separation.
+
+**A sized 2 MiB hugetlbfs is what lets Aeron start.** `AERON_DIR` on a
+sized 2 MiB hugetlbfs, `AERON_FILE_PAGE_SIZE=2097152`, and
+`AERON_TERM_BUFFER_SPARSE_FILE=false`. An unsized hugetlbfs reports no
+free space, and Aeron refuses every log buffer. That is a start-up
+requirement
+([configuration](../md-dpdk/configuration.md#aeron-settings),
+[deploy](../deploy/hft.md)). It was not a latency A/B, and it is not the
+set 1 page-size comparison. `AERON_CLIENT_PRE_TOUCH_MAPPED_MEMORY` has no
+published latency figure. DPDK's packet buffers are a third pool, about
+37 MiB a NIC at the lab default; `RUSTERON_DPDK_EAL_IN_MEMORY` has no
+published latency figure either
+([configuration](../md-dpdk/configuration.md)).
+
+**Transparent hugepages off is a tail result.** `khugepaged` builds large
+pages in the background and its `lru_add_drain_all` runs a kworker on
+every CPU with queued pages.
+
+| where | what changed | figures |
+|---|---|---|
+| Azure rounds 4 and 6 | transparent hugepages off | idle p99.99 67 to 53 µs, idle max 546 to 106 µs (`md-dpdk/BENCHMARKS-ROUNDS-2026-10-18.md`). The round-3 trace that prompted it: 8–22 µs kworker LRU drains every 10.24 s on the agent CPUs |
+| AWS `aws-20261014-113947`, one run | the same switch | overlaps: idle p99.99 53.15 against 67.01 µs, max 90 (77–1,180) against 94 (80–498). Published as not separated ([configuration](../md-dpdk/configuration.md#aeron-settings)) |
+| `k8s/nri-shared-cpus`, run 20261024233129 | a trace of `khugepaged` on the housekeeping CPU | `lru_add_drain_all` ran `kworker` on the isolated CPU for 6 µs: that rep's only involuntary switch and its 16.25 µs max. With `transparent_hugepage=never` (run 20261024234841) the three untraced reps took 0 switches |
+
+The Kubernetes sample sets the sized directory and `transparent_hugepage=never`
+because of the start-up requirement and this tail evidence. It does not
+set them as a measured p50 improvement.
+[Which overlay that is](https://github.com/mimran1980/ergon/blob/main/samples/README.md#low-latency-k8s).
 
 ### Set 2a: unreliable UDP between hosts
 
