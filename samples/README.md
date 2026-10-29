@@ -196,7 +196,7 @@ images.
 | 1 stream between hosts, lowest latency, DPDK allowed (AWS `c7a`: p99 35.4, 4 busy threads) | `eks-ena-x86` or `eks-ena-arm64`, this section |
 | kernel UDP in production | no overlay. [BENCHMARKS](../md-dpdk/BENCHMARKS.md#recommended-configuration) recommend kernel UDP; those runs were VMs |
 | 32 or more streams, up to 50,000 msg/s | no overlay. On Azure, mio or ergon-io kernel UDP, 1 busy thread, p50 3.7 to 10.5 µs below Aeron |
-| WebSocket, ergon-io kernel TCP, smoltcp TCP, ergon-io on DPDK | no overlay until the pinned remeasure is in |
+| WebSocket, ergon-io kernel TCP, smoltcp TCP, ergon-io on DPDK | no overlay. The remeasure is one rep, and its tails are loss, faults and unexplained maxima |
 
 The overlays are the Aeron-on-DPDK lab layout. On AWS `c7a`, 1 stream,
 50,000 msg/s, same session, that path's p99 is 35.4 (max 169 to 178),
@@ -225,10 +225,12 @@ At 32 and 128 streams on Azure, mio and ergon-io kernel UDP are 3.7 to
 deployment on EKS, so there is no mio overlay here. The production line
 in BENCHMARKS stays kernel UDP.
 
-No overlay yet for WebSocket, ergon-io kernel TCP, smoltcp TCP, or
-ergon-io on DPDK (`fstack-spin`, `smoltcp-spin`). Those echoes are waiting
-on a pinned remeasure. F-Stack TCP in the `c7a` table is an md-dpdk bench
-arm, not this sample's driver.
+No overlay for WebSocket, ergon-io kernel TCP, smoltcp TCP, or
+ergon-io on DPDK (`fstack-spin`, `smoltcp-spin`). The remeasure is in
+(`aws-20261029-174643` on `c7i.4xlarge`, `aws-20261029-190425` on
+`c8g.2xlarge`): one rep, no A/A arm, and the tails are loss, page
+faults and unexplained maxima. F-Stack TCP in the `c7a` table is an
+md-dpdk bench arm, not this sample's driver.
 
 ### What has run, and where
 

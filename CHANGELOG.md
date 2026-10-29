@@ -113,6 +113,19 @@
   matrix does not show the mixed-load `c7i` outage at second :25. The
   `c8g` pair has a separate cluster at second :05 on kernel UDP (echo
   pinned). Every pinned max is labelled.
+- The pinned remeasure of those kernel TCP, smoltcp TCP and WebSocket
+  echoes (`aws-20261029-174643` on `c7i.4xlarge`, us-east-1c;
+  `aws-20261029-190425` on `c8g.2xlarge`, us-east-1b; one rep;
+  `placement_b=ok` on all 60 cells each). Inside that session,
+  smoltcp's no-loss p50 is 3.6 to 6.5 µs below kernel TCP on `c7i` and
+  3.0 to 8.9 below on `c8g`; WebSocket is 3.0 to 7.2 and 3.4 to 10.1
+  below. F-Stack WebSocket is 2.6 to 8.1 and 1.0 to 9.8 below kernel
+  WebSocket. No-loss p99 stays 39.5 to 58.5. At 1% loss every arm's p99
+  is milliseconds, and one `c8g` F-Stack WebSocket cell faults to a
+  15.3 s max and loses 38.0% of its messages. These sessions stay
+  separate from the first sessions' UDP and F-Stack TCP, and from
+  Aeron. No Kubernetes overlay is added: one rep, no A/A arm, and the
+  tails are loss, faults and unexplained maxima.
 - Aeron hugepages, from runs already published. The IPC 2 MiB directory
   overlaps tmpfs at every load (round trip p50 0.20 to 0.25 against 0.22
   to 0.25). A sized 2 MiB hugetlbfs is what lets Aeron start. Transparent
@@ -121,7 +134,8 @@
   Kubernetes sample documents that Aeron-on-DPDK layout on the existing
   `eks-ena` overlays (render only). The book and the READMEs link it at
   `samples/README.md#aws-k8s`. WebSocket, ergon-io TCP and ergon-io
-  on DPDK stay without an overlay until their echoes are pinned.
+  on DPDK stay without an overlay: the remeasure is one rep, and its
+  tails are loss, faults and unexplained maxima.
 - `hugepages.ergon.io/<container>: "2M"` now also sets
   `AERON_FILE_PAGE_SIZE=2097152` and `AERON_TERM_BUFFER_SPARSE_FILE=false`.
   The process still sets `AERON_DIR`. Address, gateway and PCI stay unset.

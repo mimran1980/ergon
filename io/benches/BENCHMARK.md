@@ -17,9 +17,9 @@ Every ergon-io latency figure lives here, once, except the in-memory WebSocket r
 | UDP or TCP, between two hosts? | Not compared directly: the UDP and TCP sets ran on different Azure VM pairs. 1 stream, p50: UDP 61.8–62.9 µs, TCP 64.7–69.8 µs, each with no loss. | [Transport comparison](#transport-comparison-udp-tcp-mio-and-ergon-io) |
 | mio or ergon-io, for UDP and framed TCP? | No difference. UDP: ergon-io's p50 0.1–0.9 µs behind mio's on Azure, not separated on AWS. TCP on one shared connection (AWS): mio 1.2 µs lower at p50 at 10,000 msg/s (A/A 0.8), not separated at 50,000; tails not separated. Both read twice and send once a message. Overloaded, ergon-io drains slower. | [Transport comparison](#transport-comparison-udp-tcp-mio-and-ergon-io) |
 | Kernel TCP or F-Stack (TCP on DPDK)? | F-Stack (the md-dpdk arm): p50 17–28 µs lower on AWS, and it carries 200,000 msg/s where kernel TCP does not. | [Transport comparison](#transport-comparison-udp-tcp-mio-and-ergon-io) |
-| ergon-io `fstack-spin`, `smoltcp-spin` or kernel `epoll-spin`? | UDP, both echoes pinned: smoltcp's no-loss p50 is 5.70–7.49 µs below the kernel on `c7i` and 3.78–4.02 µs below on `c8g`. UDP p99 stays under 52 (kernel) and under 46 (smoltcp) at 0, 0.1% and 1% loss. F-Stack TCP, echo pinned: no-loss p99 38.8–53.2, max 134.6–359.3; at 1% loss p99 2,216–255,984 and max 20,057–417,929. Kernel TCP, smoltcp TCP and WebSocket echoes stayed on the housekeeping CPU, so they are not ranked. | [ergon-io bypass](#ergon-io-kernel-smoltcp-and-f-stack) |
+| ergon-io `fstack-spin`, `smoltcp-spin` or kernel `epoll-spin`? | UDP, both echoes pinned: smoltcp's no-loss p50 is 5.70–7.49 µs below the kernel on `c7i` and 3.78–4.02 µs below on `c8g`. UDP p99 stays under 52 (kernel) and under 46 (smoltcp) at 0, 0.1% and 1% loss. F-Stack TCP, echo pinned: no-loss p99 38.8–53.2, max 134.6–359.3; at 1% loss p99 2,216–255,984 and max 20,057–417,929. The remeasure pins kernel TCP, smoltcp TCP and WebSocket (60 cells, `placement_b=ok`). Inside it, smoltcp TCP's no-loss p50 is 3.6–6.5 µs below kernel TCP on `c7i` and 3.0–8.9 below on `c8g`. Those sessions are separate from UDP and F-Stack TCP. At 1% loss the remeasure p99 is milliseconds, and one `c8g` F-Stack WebSocket cell reaches a 15.3 s max. | [ergon-io bypass](#ergon-io-kernel-smoltcp-and-f-stack) |
 | ENA adaptive moderation? | Off stopped the polling loop's involuntary preemptions (about 8,900 in 8 min to 0) and cut WebSocket p99.99 from 117–119 to 72–76 µs. HTTP p99.99 did not move. | [Host and NIC settings](#host-and-nic-settings-aws-x86) |
-| AWS Kubernetes for the measured 1-stream path? | Aeron on DPDK: [samples/README.md#aws-k8s](../../samples/README.md#aws-k8s) (`eks-ena-x86`, `eks-ena-arm64`). This page's ergon-io TCP and WebSocket rows are not an overlay. | [ergon-io bypass](#ergon-io-kernel-smoltcp-and-f-stack) |
+| AWS Kubernetes for the measured 1-stream path? | Aeron on DPDK: [samples/README.md#aws-k8s](../../samples/README.md#aws-k8s) (`eks-ena-x86`, `eks-ena-arm64`). ergon-io TCP and WebSocket have no overlay: the remeasure is one rep, and its tails are loss, faults and unexplained maxima. | [ergon-io bypass](#ergon-io-kernel-smoltcp-and-f-stack) |
 
 ## Hosts and runs
 
@@ -394,9 +394,33 @@ under 52 (kernel) and under 46 (smoltcp); UDP max stays under 2,300
 except the `c8g` kernel second-:05 cluster (max 5,499 to 9,298, p50
 33.2 to 34.1, all three loss levels). F-Stack TCP at 0.1% reaches p99
 395 and max 19,907; at 1% its p99 is 2,216 to 255,984 and its max
-20,057 to 417,929 (one page fault, and retransmits). Kernel TCP,
-smoltcp TCP and every WebSocket arm left the echo on the housekeeping
-CPU, so this page does not rank them.
+20,057 to 417,929 (one page fault, and retransmits).
+
+Kernel TCP, smoltcp TCP and WebSocket were rerun with the echo pinned:
+`aws-20261029-174643` (`c7i.4xlarge`, us-east-1c) and
+`aws-20261029-190425` (`c8g.2xlarge`, us-east-1b),
+`transport-aws-io-bypass-rerun.tsv`, 60 cells each, all
+`placement_b=ok`, one rep, no A/A arm. The pong is still kernel
+`epoll-spin`. Wire bytes are 122 (TCP) and 129 (WebSocket). Inside
+that session, smoltcp's no-loss p50 is below kernel `epoll-spin` at
+every load: TCP by 3.6 to 6.5 µs on `c7i` and 3.0 to 8.9 on `c8g`;
+WebSocket by 3.0 to 7.2 and 3.4 to 10.1. F-Stack WebSocket is 2.6 to
+8.1 and 1.0 to 9.8 below kernel WebSocket. The 1.0 is one cell
+(`c8g`, 1 connection, 50,000). No-loss p99, both machines: kernel TCP
+43.0 to 56.5, smoltcp TCP 39.5 to 48.4, kernel WebSocket 46.2 to 58.5,
+F-Stack WebSocket 41.9 to 48.9, smoltcp WebSocket 39.9 to 49.5. At 1%
+loss every arm's p99 is milliseconds. One `c8g` F-Stack WebSocket cell
+(1 connection, 1% loss, 50,000) faults (`handle_mm_fault`) to p99
+12,960,399.4 and max 15,289,197.3 and loses 664,763 of 1,750,000
+messages (38.0%). The other seven 1% F-Stack WebSocket cells stay at
+p50 34.7 to 42.9. `spikes.py --transport` labels every remeasure max:
+on `c7i`, 43 unexplained, 16 TCP retransmits and 1 page fault; on
+`c8g`, 27 unexplained, 16 retransmits, 8 page faults and 9 periodic
+at second :58 (max 5,569.0 to 9,656.4, p50 32.4 to 36.0). The
+retransmit label is the kernel TCP and smoltcp TCP loss cells.
+WebSocket 1% maxima other than the two faults are unexplained. These
+sessions stay separate from the UDP and F-Stack TCP rows above, and
+from Aeron. No overlay is added.
 
 The address, gateway and port are not detected. F-Stack requires
 `fstack_addr`, `fstack_gateway` and exactly one of `fstack_pci` and

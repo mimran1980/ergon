@@ -13,7 +13,8 @@ configuration, so one binary can run with each. Which to pick:
 
 - **None sleeps in the kernel.** The first three are the kernel backends
   the busy-spin benchmarks measured. `fstack-spin` and `smoltcp-spin` ran
-  on AWS; the ranking uses the cells whose echo was pinned
+  on AWS; the ranking uses the cells whose echo was pinned, including
+  the TCP and WebSocket remeasure
   ([transport comparison](../transports/comparison.md#ergon-io-kernel-smoltcp-and-f-stack)).
 - **Among `epoll-spin`, `recv-busy` and `uring-sqpoll`, UDP (`UdpConn`) runs on `epoll-spin` only.** The other two refuse a UDP
   driver at `Driver::new` (`Error::Unsupported`); framed TCP and the TLS
@@ -187,7 +188,8 @@ Kernel bypass: [F-Stack](https://github.com/F-Stack/f-stack) (FreeBSD's
 TCP/IP stack on DPDK, Apache-2.0/BSD; ergon-io builds v2.0) owns a NIC of
 its own, and the polling thread runs it. **Status:** Docker lab test (two
 F-Stack processes over a veth pair), and AWS `c7i` / `c8g` runs. The
-F-Stack TCP echo was pinned; kernel TCP and WebSocket echoes were on CPU 0
+F-Stack TCP echo was pinned. Kernel TCP and WebSocket echoes in that
+first session were on CPU 0; the remeasure pinned them
 ([ergon-io](../transports/comparison.md#ergon-io-kernel-smoltcp-and-f-stack)).
 
 | | |
@@ -275,7 +277,7 @@ Kernel bypass with a TCP/IP stack in the process:
 DPDK port, driven by the polling thread. Pure Rust, so it runs on Graviton
 as on x86. **Status:** Docker lab test (a DPDK `net_af_packet` port against
 the kernel's stack across a veth pair, arm64), and the same AWS runs. The
-UDP echo was pinned; its TCP and WebSocket echoes were on the housekeeping CPU.
+UDP echo was pinned. Its TCP and WebSocket echoes were on the housekeeping CPU in that session, and pinned in the remeasure.
 
 | | |
 |---|---|

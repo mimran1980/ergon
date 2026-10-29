@@ -183,9 +183,9 @@ thread polls (feeds, order connections, `HttpClient` pool connections):
   `WsConn<FstackTcp>`, `HttpConn<FstackTcp>`. Needs the `fstack` feature,
   F-Stack built (`FSTACK_PREFIX`), hugepages and DPDK's privileges; a
   binary using it links with `-C link-arg=-Wl,-z,nostart-stop-gc`.
-  Docker lab test, and measured on AWS. The F-Stack TCP echo was pinned;
-  kernel TCP and WebSocket echoes in that session were on the housekeeping
-  CPU:
+  Docker lab test, and measured on AWS. F-Stack TCP was pinned in the
+  first sessions. Kernel TCP and WebSocket were pinned in the remeasure
+  (`aws-20261029-174643`, `aws-20261029-190425`):
   [transport comparison](https://mimran1980.github.io/ergon/transports/comparison.html#ergon-io-kernel-smoltcp-and-f-stack).
 - `smoltcp-spin`: TCP and UDP on [smoltcp](https://github.com/smoltcp-rs/smoltcp)
   (0BSD, a stack in the process) over a DPDK port; `FrameConn<SmolTcp>`,
@@ -193,8 +193,9 @@ thread polls (feeds, order connections, `HttpClient` pool connections):
   `smoltcp_dpdk::Stack::init` on the polling thread. Needs the
   `smoltcp-dpdk` feature and libdpdk; IPv4 only; a 10 ms RTO floor by
   default (smoltcp's own is 1 s); no RACK/TLP, received SACK blocks
-  ignored. Docker lab test, and the same AWS runs: the UDP echo was
-  pinned; its TCP and WebSocket echoes were on the housekeeping CPU.
+  ignored. Docker lab test, and the same AWS runs. The UDP echo was
+  pinned on the first runs. TCP and WebSocket echoes were pinned in
+  the remeasure.
 
 Neither backend detects the address, the gateway or the port. DPDK takes
 the NIC from the kernel, so read those values before the bind and name
@@ -236,13 +237,14 @@ Tables and conclusion: the book's
 |---|---|
 | mio or ergon-io? | Either: no difference. UDP p50 within 0.1 to 0.9 µs (Azure), not separated (AWS). TCP on the same connection (AWS): p50 52.2 against 53.4 µs at 10,000 msg/s, not separated at 50,000; tails not separated. Both make 2 reads, 1 send and 1 `TCP_QUICKACK` re-arm a message. The earlier Azure TCP gap was unequal busy polling, fixed by `Config::busy_poll_us` |
 | overloaded (200,000 msg/s on one TCP loop)? | Neither keeps up; ergon-io drains slower: 104,000 to 134,000 msg/s carried against mio's 113,000 to 154,000 (AWS) |
-| kernel TCP or F-Stack (TCP on DPDK)? | F-Stack, where kernel bypass is allowed: p50 17 to 19 µs lower at 10,000 msg/s and 26 to 28 at 50,000 (AWS `c7a`, the md-dpdk arm), and it carries 200,000 msg/s. ergon-io's `fstack-spin` TCP echo is measured on `c7i` and `c8g` with the echo pinned (no-loss p99 38.8 to 53.2 µs, max 134.6 to 359.3). That session leaves kernel TCP, smoltcp TCP and WebSocket unranked: their echo stayed on the housekeeping CPU |
+| kernel TCP or F-Stack (TCP on DPDK)? | F-Stack, where kernel bypass is allowed: p50 17 to 19 µs lower at 10,000 msg/s and 26 to 28 at 50,000 (AWS `c7a`, the md-dpdk arm), and it carries 200,000 msg/s. ergon-io's `fstack-spin` TCP echo, first sessions, echo pinned: no-loss p99 38.8 to 53.2 µs, max 134.6 to 359.3. The remeasure is a different pair of sessions. Inside it, smoltcp TCP's no-loss p50 is 3.6 to 6.5 µs below kernel TCP on `c7i` and 3.0 to 8.9 below on `c8g` |
 | pinned tails, UDP and F-Stack TCP | UDP p99 stays under 52 µs (kernel) and under 46 (smoltcp) at 0, 0.1% and 1% loss. UDP max stays under 2,300 except the `c8g` kernel second-:05 cluster (5,499 to 9,298). F-Stack TCP at 0.1% reaches p99 395 and max 19,907; at 1% p99 2,216 to 255,984 and max 20,057 to 417,929 (one page fault, and retransmits) |
+| pinned remeasure: kernel TCP, smoltcp TCP, WebSocket | One rep, no A/A, `placement_b=ok` on all 60 cells (`aws-20261029-174643`, `aws-20261029-190425`). No-loss p99: kernel TCP 43.0 to 56.5, smoltcp TCP 39.5 to 48.4, kernel WebSocket 46.2 to 58.5, F-Stack WebSocket 41.9 to 48.9, smoltcp WebSocket 39.9 to 49.5. smoltcp WebSocket's no-loss p50 is 3.0 to 7.2 µs below the kernel on `c7i` and 3.4 to 10.1 below on `c8g`. F-Stack WebSocket is 2.6 to 8.1 and 1.0 to 9.8 below. At 1% loss every arm's p99 is milliseconds. One `c8g` F-Stack WebSocket cell (1 connection, 50,000) faults to max 15,289,197.3 and loses 38.0% of messages |
 | sockets or Aeron kernel UDP? (Azure) | One stream, 50,000 msg/s: Aeron p50 55.6, p99 60.7, max 231 to 243, against the sockets' p50 61.8 to 61.9, p99 67.6 to 68.9, max 637 to 2,915. At 32 and 128 streams the sockets' p50 is lower by 3.7 to 10.5. Aeron uses 4 busy threads, sockets 1 |
 | kernel UDP or Aeron, on one AWS session? (`c7a`, 1 stream, 50,000) | Aeron on DPDK: p50 28.0, p99 35.4, max 169 to 178. Aeron on the kernel: p50 40.9, p99 48.6, max 414 to 445. ergon-io kernel UDP: p50 48.4, p99 58.4 to 61.8, max 226 to 553. smoltcp UDP was not in this session |
 | at 200,000 msg/s? | Neither socket library keeps up (one `send` a message on one thread; 151,000 to 195,000 msg/s carried); Aeron does |
 | TCP or Aeron reliable? | Aeron's p50 is 7 to 15 µs lower without loss. Under loss neither tail wins everywhere: Aeron's maxima sit at its 10 ms retransmit linger, TCP's come from its retransmits (8 ms minimum RTO) |
-| where is the AWS Kubernetes layout? | Aeron on DPDK, the `c7a` 1-stream row: [`samples/README.md#aws-k8s`](../samples/README.md#aws-k8s) (`eks-ena-x86`, `eks-ena-arm64`). No overlay yet for WebSocket, ergon-io TCP or ergon-io on DPDK |
+| where is the AWS Kubernetes layout? | Aeron on DPDK, the `c7a` 1-stream row: [`samples/README.md#aws-k8s`](../samples/README.md#aws-k8s) (`eks-ena-x86`, `eks-ena-arm64`). WebSocket, ergon-io TCP and ergon-io on DPDK have no overlay: the remeasure is one rep, and its tails are loss, faults and unexplained maxima |
 
 ## Rate limits and errors
 
