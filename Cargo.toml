@@ -50,10 +50,10 @@ authors = ["Mohammed Imran"]
 # overriding default-features on an inherited dependency, so fancy is
 # disabled here.
 ergo-sbe = { version = "0.1.35", path = "sbe", default-features = false }
-# rusteron 0.2.15 (Aeron 1.54.0) or newer 0.2. Each crate needs `rusteron-code-gen` at exactly its
+# rusteron 0.2.16 (Aeron 1.54.0) or newer 0.2. Each crate needs `rusteron-code-gen` at exactly its
 # own version, so both resolve to one, and `cargo update` moves them together.
-rusteron-client = "0.2.15"
-rusteron-media-driver = "0.2.15"
+rusteron-client = "0.2.16"
+rusteron-media-driver = "0.2.16"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

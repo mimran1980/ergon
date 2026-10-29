@@ -49,7 +49,7 @@
 
 ### Changed
 
-- Aeron 1.54.0 (rusteron 0.2.15) throughout: the `aeron` submodule, the Java
+- Aeron 1.54.0 (rusteron 0.2.16) throughout: the `aeron` submodule, the Java
   jars the cluster harness runs, and every crate and sample. Aeron's Gradle
   9.8.2 builds on JDK 17 to 27.
 - `ergon-md-dpdk` pins the driver's agents to CPUs set through the context's

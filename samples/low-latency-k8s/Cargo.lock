@@ -205,7 +205,7 @@ checksum = "00d174d5400e5e8fd687ad1049e2f578285fa914201b1af7e8b112a4546bd826"
 
 [[package]]
 name = "ergon-tune"
-version = "0.1.34"
+version = "0.1.35"
 dependencies = [
  "rustix",
 ]
@@ -612,9 +612,9 @@ checksum = "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d"
 
 [[package]]
 name = "rusteron-client"
-version = "0.2.15"
+version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4bf180c74f10f39774fcd9ce401993eb19117fbe29eacc895fca844fc27d0f5"
+checksum = "aa444676ea700f39e58b145a1e6d623c92b6d44a7153ca7e3cc9c20c7aac8522"
 dependencies = [
  "bindgen",
  "cmake",
@@ -628,9 +628,9 @@ dependencies = [
 
 [[package]]
 name = "rusteron-code-gen"
-version = "0.2.15"
+version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97dcfb6e38a1c486c64cde1eec6edee9ae047f96ca9a8f07176b0c397a812f6b"
+checksum = "47bccf4af5b265bdf485e6aa3f6c8de829da08e4efc643059ecef68892f2800d"
 dependencies = [
  "itertools 0.15.0",
  "log",
@@ -642,9 +642,9 @@ dependencies = [
 
 [[package]]
 name = "rusteron-media-driver"
-version = "0.2.15"
+version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11bdf98e5b252d8a567a29b4a3beac2ea295178a5b4827ac516b90ddbffac0c8"
+checksum = "b9a2d91b1cfe142a324e4fa94ef91588e430cda14e09d05701af84efa4d0940b"
 dependencies = [
  "bindgen",
  "cmake",
