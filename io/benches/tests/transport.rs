@@ -989,3 +989,92 @@ fn mio_stream_sets_share_a_callers_registry() -> R {
     assert!(!tr.all_closed() && tr.stats.quickacks > 0);
     Ok(())
 }
+
+/// `Cpus_allowed_list` for `pid` (ranges expanded).
+fn allowed_list(pid: u32) -> R<Vec<usize>> {
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status"))?;
+    let line = status
+        .lines()
+        .find(|l| l.starts_with("Cpus_allowed_list:"))
+        .ok_or("no Cpus_allowed_list")?;
+    let spec = line
+        .split_whitespace()
+        .nth(1)
+        .ok_or("Cpus_allowed_list has no value")?;
+    let mut out = Vec::new();
+    for part in spec.split(',') {
+        if let Some((start, end)) = part.split_once('-') {
+            let start: usize = start.parse()?;
+            let end: usize = end.parse()?;
+            out.extend(start..=end);
+        } else {
+            out.push(part.parse()?);
+        }
+    }
+    Ok(out)
+}
+
+/// The kernel pong (`wstls_lat --role pong`) pins its echo thread before it
+/// says ready. smoltcp and F-Stack pongs call the same `kernel_serve`. The
+/// starting mask has to be wider than `--cpus`, or the pin is invisible.
+#[test]
+fn the_kernel_pong_pins_its_echo_thread() -> R {
+    let started = cpus();
+    assert!(
+        started.len() >= 2,
+        "this process can use only {started:?}: the pin cannot be told from the starting mask"
+    );
+    let cpu = started[started.len() - 1];
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+    let port = listener.local_addr()?.port();
+    drop(listener);
+    let out = scratch("wstls-pin")?;
+    let out_s = out.display().to_string();
+    let local = format!("127.0.0.1:{port}");
+    let cpu_s = cpu.to_string();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_wstls_lat"))
+        .args([
+            "--impl",
+            "ergon",
+            "--backend",
+            "epoll-spin",
+            "--echo",
+            "tcp",
+            "--role",
+            "pong",
+            "--local",
+            &local,
+            "--peer",
+            "127.0.0.1:9",
+            "--cpus",
+            &cpu_s,
+            "--streams",
+            "1",
+            "--rate",
+            "1",
+            "--warmup-s",
+            "0",
+            "--duration-s",
+            "1",
+            "--label",
+            "pin",
+            "--out",
+            &out_s,
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let ready = wait_ready(&mut child);
+    let mask = allowed_list(child.id());
+    let _ = child.kill();
+    let _ = child.wait();
+    ready.map_err(|e| format!("{e}"))?;
+    let mask = mask?;
+    assert_eq!(
+        mask,
+        vec![cpu],
+        "echo affinity {mask:?}, --cpus {cpu}, started on {started:?}"
+    );
+    std::fs::remove_dir_all(&out)?;
+    Ok(())
+}
