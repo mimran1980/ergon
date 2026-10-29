@@ -183,15 +183,15 @@ thread polls (feeds, order connections, `HttpClient` pool connections):
   `WsConn<FstackTcp>`, `HttpConn<FstackTcp>`. Needs the `fstack` feature,
   F-Stack built (`FSTACK_PREFIX`), hugepages and DPDK's privileges; a
   binary using it links with `-C link-arg=-Wl,-z,nostart-stop-gc`.
-  Lab-tested only: [`fstack-spin`](https://mimran1980.github.io/ergon/io/backends.html#fstack-spin-tcp-on-f-stack).
+  Docker lab test, and measured on AWS against `epoll-spin`:
+  [transport comparison](https://mimran1980.github.io/ergon/transports/comparison.html#ergon-io-kernel-smoltcp-and-f-stack).
 - `smoltcp-spin`: TCP and UDP on [smoltcp](https://github.com/smoltcp-rs/smoltcp)
   (0BSD, a stack in the process) over a DPDK port; `FrameConn<SmolTcp>`,
   `WsConn<SmolTcp>`, `HttpConn<SmolTcp>`, `UdpConn<SmolUdp>`, after
   `smoltcp_dpdk::Stack::init` on the polling thread. Needs the
   `smoltcp-dpdk` feature and libdpdk; IPv4 only; a 10 ms RTO floor by
   default (smoltcp's own is 1 s); no RACK/TLP, received SACK blocks
-  ignored. Lab-tested only:
-  [`smoltcp-spin`](https://mimran1980.github.io/ergon/io/backends.html#smoltcp-spin-tcp-and-udp-on-smoltcp-over-dpdk).
+  ignored. Docker lab test, and the same AWS comparison.
 
 The full table, the evidence and the node settings: the book's
 [choosing a backend](https://mimran1980.github.io/ergon/io/overview.html#choosing-a-backend).

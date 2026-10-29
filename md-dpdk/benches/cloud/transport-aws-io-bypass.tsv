@@ -1,0 +1,15 @@
+# ergon-io bypass matrix. Pair a, two hosts. Loss is the kernel peer (host b):
+# egress netem and ifb ingress, including on the bypass arms. Host a's DPDK
+# NIC has no qdisc. Minimum RTO is TR_TCP_RTO_MIN_US (8 ms) on every arm.
+# No 32 or 128 streams, no 200k msg/s, no F-Stack UDP.
+irq_idle auto
+loss kernel-peer
+arm io-tcp-epoll  wstls_lat  sockets two --impl ergon --backend epoll-spin --echo tcp
+arm io-tcp-smol   wstls_lat  sockets two --impl ergon --backend smoltcp-spin --echo tcp
+arm io-tcp-fstack fstack_spin_lat sockets two --impl ergon
+arm io-ws-epoll   wstls_lat  sockets two --impl ergon --backend epoll-spin --echo wstls
+arm io-ws-smol    wstls_lat  sockets two --impl ergon --backend smoltcp-spin --echo wstls
+arm io-ws-fstack  wstls_fstack_lat sockets two --impl ergon --backend fstack-spin --echo wstls
+arm io-udp-epoll  udp_lat    sockets two --impl ergon --backend epoll-spin
+arm io-udp-smol   udp_lat    sockets two --impl ergon --backend smoltcp-spin
+set io a - ab 10000,50000 1,8 0,0.1,1 io-tcp-epoll,io-tcp-smol,io-tcp-fstack,io-ws-epoll,io-ws-smol,io-ws-fstack,io-udp-epoll,io-udp-smol

@@ -50,7 +50,7 @@ use ergon_latency_core::frame::{self, Deframer, FRAME_HEADER};
 use ergon_latency_core::message::MESSAGE_LEN;
 
 use super::fstack_conf::{
-    BsdTcpInfo, FREEBSD_TCP_INFO, FSTACK_USAGE, FstackArgs, FstackConf, TCP_INFO_BUF,
+    BsdTcpInfo, FREEBSD_TCP_INFO, FSTACK_USAGE, FstackArgs, FstackConf, FstackImpl, TCP_INFO_BUF,
     TCPI_OPT_TIMESTAMPS, TCPS_ESTABLISHED,
 };
 use super::mio_tcp::tcp_wire_bytes;
@@ -975,6 +975,18 @@ pub fn fstack_main<I: IntoIterator<Item = String>>(args: I) -> Result<Option<Str
     let c = Common::parse(&mut f)?;
     let a = FstackArgs::parse(&mut f, c.role, &c.cpus)?;
     f.finish()?;
+    if a.imp == FstackImpl::Ergon {
+        return Err(Error::Usage(format!(
+            "--impl ergon selects ergon-io's {} backend (net.inet.tcp.rexmit_min {} ms from --rto-min-us). \
+             This binary is the direct libfstack path and will not label it {}. \
+             fstack_spin_lat runs that backend",
+            a.imp.backend(),
+            a.conf
+                .rexmit_min_ms
+                .map_or_else(|| "-".into(), |ms| ms.to_string()),
+            a.imp.backend()
+        )));
+    }
     let helpers = helper_cpus(&c.cpus);
     let path = c.out.join(format!("f-stack-{}.conf", c.role.name()));
     std::fs::create_dir_all(&c.out)

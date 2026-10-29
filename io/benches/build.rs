@@ -7,6 +7,15 @@ use std::process::Command;
 fn main() {
     println!("cargo:rerun-if-env-changed=FSTACK_PREFIX");
     println!("cargo:rerun-if-env-changed=CARGO_FEATURE_FSTACK");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_FSTACK_SPIN");
+    // fstack-spin links F-Stack from ergon-io's build.rs (one DPDK). The
+    // final link still needs the linker sets kept; the direct `fstack`
+    // feature sets the same flag on its own link line.
+    if std::env::var_os("CARGO_FEATURE_FSTACK_SPIN").is_some()
+        && std::env::var_os("CARGO_FEATURE_FSTACK").is_none()
+    {
+        println!("cargo:rustc-link-arg=-Wl,-z,nostart-stop-gc");
+    }
     if std::env::var_os("CARGO_FEATURE_FSTACK").is_none() {
         return;
     }

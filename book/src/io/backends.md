@@ -11,12 +11,13 @@ configuration, so one binary can run with each. Which to pick:
 | `uring-sqpoll` | an `SQPOLL` kernel thread submits, completes and polls the NIC | yes, on the kernel thread | yes |
 | `fstack-spin` | no kernel: one [F-Stack](#fstack-spin-tcp-on-f-stack) pass every poll, then its kqueue | yes, F-Stack's DPDK queue | no (a NIC of its own) |
 
-- **None sleeps in the kernel.** The first three are the backends the
-  benchmarks measured in a busy-spin loop; `fstack-spin` is lab-tested
-  only.
-- **UDP (`UdpConn`) runs on `epoll-spin` only.** The other two refuse a UDP
+- **None sleeps in the kernel.** The first three are the kernel backends
+  the busy-spin benchmarks measured. `fstack-spin` and `smoltcp-spin` are
+  measured against `epoll-spin` on AWS in the
+  [transport comparison](../transports/comparison.md#ergon-io-kernel-smoltcp-and-f-stack).
+- **Among `epoll-spin`, `recv-busy` and `uring-sqpoll`, UDP (`UdpConn`) runs on `epoll-spin` only.** The other two refuse a UDP
   driver at `Driver::new` (`Error::Unsupported`); framed TCP and the TLS
-  endpoints run on all three ([UDP](udp.md)).
+  endpoints run on all three ([UDP](udp.md)). `smoltcp-spin` also carries UDP.
 
 - **`epoll-spin` is [mio's mechanism](#mio-measured-not-a-backend), and so tokio's.**
   `epoll_wait(0)` never blocks, but never polls the NIC either.
@@ -184,9 +185,10 @@ In a pod: [x86 with SMT, `cpu: 2`](kubernetes.md#x86-with-smt-cpu-2-one-physical
 
 Kernel bypass: [F-Stack](https://github.com/F-Stack/f-stack) (FreeBSD's
 TCP/IP stack on DPDK, Apache-2.0/BSD; ergon-io builds v2.0) owns a NIC of
-its own, and the polling thread runs it. **Status: lab-tested only** (two
-F-Stack processes over a veth pair in Docker); an AWS benchmark against
-`epoll-spin` is pending.
+its own, and the polling thread runs it. **Status:** Docker lab test (two
+F-Stack processes over a veth pair), and an AWS comparison against
+`epoll-spin` on `c7i.4xlarge` and `c8g.2xlarge`
+([ergon-io](../transports/comparison.md#ergon-io-kernel-smoltcp-and-f-stack)).
 
 | | |
 |---|---|
@@ -221,7 +223,7 @@ What the kernel backends have and F-Stack does not:
 |---|---|
 | quick-ACK route check | off: `fstack_delayed_ack=false` acknowledges at once |
 | `TCP_NODELAY` | set on every socket |
-| `TCP_USER_TIMEOUT`, `tcp_rto_min_us`, `tcp_delack_max_us` | refused by `Config::validate`; `fstack_sysctl=net.inet.tcp.rexmit_min=…` sets the RTO floor (ms) for the stack |
+| `TCP_USER_TIMEOUT`, `tcp_rto_min_us`, `tcp_delack_max_us` | refused by `Config::validate`; `fstack_sysctl=net.inet.tcp.rexmit_min=…` sets the RTO floor (ms) for the stack. FreeBSD stores that value as `ms * fstack_hz / 1000` ticks and rejects 0 ticks, so an 8 ms floor needs `fstack_hz` of at least 125 (the latency arm uses 1000). The library default remains 100 |
 | receive timestamps | none (`rx_read_timestamp` still works) |
 | route, egress-device and NAPI checks | skipped: they describe kernel devices. The CPU checks still run |
 | `TCP_INFO` | FreeBSD's: RTT, RTT variation, RTO, retransmits (`Driver::tcp_info`). FreeBSD keeps RTT in clock ticks (`fstack_hz`): below one tick it reads a fixed value |
@@ -254,9 +256,9 @@ NIC raises none.
 Kernel bypass with a TCP/IP stack in the process:
 [smoltcp](https://github.com/smoltcp-rs/smoltcp) 0.14.0 (0BSD) over one
 DPDK port, driven by the polling thread. Pure Rust, so it runs on Graviton
-as on x86. **Status: lab-tested only** (a DPDK `net_af_packet` port against
-the kernel's stack across a veth pair, in Docker, arm64); an AWS benchmark
-is pending.
+as on x86. **Status:** Docker lab test (a DPDK `net_af_packet` port against
+the kernel's stack across a veth pair, arm64), and the same AWS comparison
+against `epoll-spin` on `c7i.4xlarge` and `c8g.2xlarge`.
 
 | | |
 |---|---|

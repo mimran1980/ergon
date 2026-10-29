@@ -33,6 +33,7 @@
 
 use std::fmt::Write as _;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::path::Path;
 use std::time::Duration;
 
 use super::point::{Error, Flags, Role};
@@ -62,8 +63,10 @@ pub struct FstackConf {
     pub file_prefix: String,
     /// The lcore: the thread's `--cpus` CPU.
     pub lcore: usize,
-    /// `--hz`, default 100 (F-Stack's): the FreeBSD clock tick, TCP's
-    /// timer granularity.
+    /// `--hz`. The direct path defaults to 100 (F-Stack's). The ergon path
+    /// defaults to [`ERGON_FSTACK_HZ`]: FreeBSD stores `rexmit_min` as
+    /// `ms * hz / 1000` ticks and rejects a write of 0 ticks, so 8 ms at
+    /// 100 Hz never applies.
     pub hz: u32,
     /// `--delayed-ack`, default true (FreeBSD's and F-Stack's).
     pub delayed_ack: bool,
@@ -71,6 +74,120 @@ pub struct FstackConf {
     pub rcvbuf: u32,
     /// `--sndbuf`, bytes; `None`: F-Stack's `sendspace` (16 KiB).
     pub sndbuf: Option<u32>,
+    /// `--impl ergon`'s `--rto-min-us`, as FreeBSD's `net.inet.tcp.rexmit_min`
+    /// in milliseconds. The direct path leaves this unset: it has no kernel
+    /// `TCP_RTO_MIN_US`.
+    pub rexmit_min_ms: Option<u32>,
+}
+
+/// Which F-Stack `fstack_lat` runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FstackImpl {
+    /// The direct libfstack path (`ff_*`).
+    Direct,
+    /// ergon-io's `fstack-spin` backend.
+    Ergon,
+}
+
+impl FstackImpl {
+    /// The backend name the manifest and the runner record.
+    #[must_use]
+    pub const fn backend(self) -> &'static str {
+        match self {
+            Self::Direct => "fstack",
+            Self::Ergon => "fstack-spin",
+        }
+    }
+}
+
+/// FreeBSD clock for the ergon `fstack-spin` path.
+///
+/// F-Stack's own default is 100 Hz. Its `sysctl_msec_to_ticks` stores
+/// `ms * hz / 1000` ticks and returns `EINVAL` below one tick, so
+/// `net.inet.tcp.rexmit_min=8` at 100 Hz is 0 ticks and the 8 ms floor
+/// never applies. 1000 Hz stores 8 ms as 8 ticks (Linux's clock) and the
+/// sysctl value stays `8`. The direct path keeps 100 Hz and does not set
+/// `rexmit_min`.
+pub const ERGON_FSTACK_HZ: u32 = 1000;
+
+/// Clock for an ergon config that sets `net.inet.tcp.rexmit_min`.
+///
+/// `requested` is `--hz` when the flag was passed, otherwise
+/// [`ERGON_FSTACK_HZ`]. A floor that would be 0 ticks at that clock is run
+/// at [`ERGON_FSTACK_HZ`] instead. No floor: `requested` is kept.
+#[must_use]
+pub fn hz_for_rexmit(requested: u32, rexmit_min_ms: Option<u32>) -> u32 {
+    match rexmit_min_ms {
+        Some(ms) if u64::from(ms) * u64::from(requested) / 1000 < 1 => ERGON_FSTACK_HZ,
+        _ => requested,
+    }
+}
+
+fn default_hz(imp: FstackImpl) -> u32 {
+    if imp == FstackImpl::Ergon {
+        ERGON_FSTACK_HZ
+    } else {
+        100
+    }
+}
+
+fn chosen_hz(imp: FstackImpl, requested: u32, rto_min_us: Option<u32>) -> u32 {
+    let rexmit = rto_min_us.map(|us| us.div_ceil(1000));
+    if imp == FstackImpl::Ergon {
+        hz_for_rexmit(requested, rexmit)
+    } else {
+        requested
+    }
+}
+
+/// ergon-io `Config` for [`FstackImpl::Ergon`].
+///
+/// `--rto-min-us` is FreeBSD's `net.inet.tcp.rexmit_min` (milliseconds,
+/// already rounded in [`FstackConf::rexmit_min_ms`]). The kernel's
+/// `tcp_rto_min_us` stays unset; `fstack-spin` refuses it. The clock is
+/// [`hz_for_rexmit`], so an 8 ms floor is not 0 ticks.
+/// `conf_path` is where `ff_init` reads the rendered file. `fstack_spin_lat`
+/// builds its driver from this.
+///
+/// # Errors
+/// [`Error::Usage`] when `a` is the direct path, the lcore does not fit, or
+/// [`ergon_io::Config::validate`] refuses the settings.
+pub fn spin_config(a: &FstackArgs, conf_path: &Path) -> Result<ergon_io::Config, Error> {
+    if a.imp != FstackImpl::Ergon {
+        return Err(Error::Usage(
+            "spin_config is fstack-spin (--impl ergon); the direct path is fstack_lat".into(),
+        ));
+    }
+    let lcore = u32::try_from(a.conf.lcore).map_err(|_| {
+        Error::Usage(format!(
+            "--cpus {}: the fstack-spin lcore does not fit",
+            a.conf.lcore
+        ))
+    })?;
+    let mut cfg = ergon_io::Config::new(ergon_io::Backend::FstackSpin);
+    cfg.loop_cpu = Some(lcore);
+    cfg.rcvbuf = Some(a.conf.rcvbuf);
+    let ms = u32::try_from(a.connect_timeout.as_millis()).unwrap_or(u32::MAX);
+    cfg.connect_timeout_ms = if ms == 0 { 1 } else { ms };
+    let f = &mut cfg.fstack;
+    f.addr = Some(a.conf.addr);
+    f.prefix_len = a.conf.prefix_len;
+    f.gateway = Some(a.conf.gateway);
+    f.pci.clone_from(&a.conf.pci);
+    f.vdev.clone_from(&a.conf.vdev);
+    f.no_huge = a.conf.no_huge;
+    f.memory_mb = a.conf.memory_mb;
+    f.file_prefix.clone_from(&a.conf.file_prefix);
+    f.hz = hz_for_rexmit(a.conf.hz, a.conf.rexmit_min_ms);
+    f.delayed_ack = a.conf.delayed_ack;
+    f.conf_path = Some(conf_path.to_path_buf());
+    if let Some(ms) = a.conf.rexmit_min_ms {
+        f.sysctl
+            .push(("net.inet.tcp.rexmit_min".to_owned(), ms.to_string()));
+    }
+    cfg.validate()
+        .map_err(|e| Error::Usage(format!("fstack-spin config: {e}")))?;
+    Ok(cfg)
 }
 
 /// `fstack_lat`'s own flags, after the common ones.
@@ -84,6 +201,12 @@ pub struct FstackArgs {
     pub connect: Option<SocketAddrV4>,
     /// `--connect-timeout-s`, default 30.
     pub connect_timeout: Duration,
+    /// `--impl`: absent or `fstack` is [`FstackImpl::Direct`]; `ergon` is
+    /// [`FstackImpl::Ergon`] (`fstack-spin`).
+    pub imp: FstackImpl,
+    /// `--rto-min-us` when [`FstackImpl::Ergon`] took it. The direct path
+    /// leaves the flag for [`Flags::finish`] to refuse.
+    pub rto_min_us: Option<u32>,
 }
 
 fn v4(f: &mut Flags, key: &str) -> Result<Option<SocketAddrV4>, Error> {
@@ -107,10 +230,13 @@ fn ip(f: &mut Flags, key: &str) -> Result<Option<Ipv4Addr>, Error> {
 impl FstackArgs {
     /// Takes `fstack_lat`'s flags from `f` for `role` on `cpus`.
     ///
-    /// `--nodelay` is always on (refused off), as in `tcp_lat`; the kernel's
-    /// socket flags (`--busy-read-us`, `--epoll-events`,
-    /// `--quickack-per-read`, `--rto-min-us`, `--delack-max-us`) are not
-    /// taken: F-Stack has none of them, and `Flags::finish` refuses them.
+    /// `--nodelay` is always on (refused off), as in `tcp_lat`. `--impl` is
+    /// `fstack` (absent: the same) or `ergon` ([`FstackImpl::Ergon`], backend
+    /// `fstack-spin`). The kernel's socket flags (`--busy-read-us`,
+    /// `--epoll-events`, `--quickack-per-read`, `--delack-max-us`) are not
+    /// taken. `--rto-min-us` is taken only for `--impl ergon`, as FreeBSD's
+    /// `net.inet.tcp.rexmit_min` (milliseconds, rounded up); the direct path
+    /// leaves it, and [`Flags::finish`] refuses it.
     ///
     /// # Errors
     /// [`Error::Usage`] for a flag missing, malformed or refused.
@@ -118,6 +244,24 @@ impl FstackArgs {
         if !f.bool("nodelay", true)? {
             return Err(Error::Usage("--nodelay is always on".into()));
         }
+        let imp = match f.take("impl").as_deref() {
+            None | Some("fstack") => FstackImpl::Direct,
+            Some("ergon") => FstackImpl::Ergon,
+            Some(v) => {
+                return Err(Error::Usage(format!("--impl {v}: fstack or ergon")));
+            }
+        };
+        let rto_min_us = if imp == FstackImpl::Ergon {
+            match f.take("rto-min-us") {
+                None => None,
+                Some(v) => Some(
+                    v.parse::<u32>()
+                        .map_err(|_| Error::Usage(format!("--rto-min-us {v}: microseconds")))?,
+                ),
+            }
+        } else {
+            None
+        };
         let listen = v4(f, "listen")?;
         let connect = v4(f, "connect")?;
         let source = ip(f, "source")?;
@@ -177,10 +321,11 @@ impl FstackArgs {
                 .take("file-prefix")
                 .unwrap_or_else(|| "ergon-fstack".to_owned()),
             lcore,
-            hz: f.num("hz", 100)?,
+            hz: chosen_hz(imp, f.num("hz", default_hz(imp))?, rto_min_us),
             delayed_ack: f.bool("delayed-ack", true)?,
             rcvbuf: f.num("rcvbuf", super::DEFAULT_RCVBUF)?,
             sndbuf,
+            rexmit_min_ms: rto_min_us.map(|us| us.div_ceil(1000)),
         };
         for a in listen.iter().chain(&connect) {
             super::port_plus(SocketAddr::V4(*a), 0)?;
@@ -190,6 +335,8 @@ impl FstackArgs {
             listen,
             connect,
             connect_timeout: Duration::from_secs(f.num("connect-timeout-s", 30)?),
+            imp,
+            rto_min_us,
         })
     }
 }
@@ -242,6 +389,9 @@ impl FstackConf {
             "net.inet.tcp.delayed_ack",
             u8::from(self.delayed_ack).to_string(),
         ));
+        if let Some(ms) = self.rexmit_min_ms {
+            sysctl.push(("net.inet.tcp.rexmit_min", ms.to_string()));
+        }
         let off = [("enable", "0".to_owned())];
         let mut s = String::new();
         for (section, keys) in [
@@ -462,6 +612,11 @@ fstack_lat --role ping|pong --rate MSG_PER_S --label SET:ARM --out DIR --cpus CP
         [--streams 1] [--warmup-s 30] [--duration-s 30] [--size 64] [--spike-ns 100000]
         [--stall-ns 10000] [--rcvbuf 4194304] [--sndbuf BYTES] [--nodelay] [--delayed-ack true]
         [--hz 100] [--no-huge] [--memory-mb 1024] [--file-prefix ergon-fstack] [--connect-timeout-s 30]
+        [--impl fstack|ergon] [--rto-min-us N]
 TCP over F-Stack (FreeBSD's stack on DPDK), one F-Stack per process on the --cpus lcore; the
 interface's address is --listen's (pong) or --source (ping). stream i: connection i.
+--impl ergon selects ergon-io's fstack-spin backend and takes --rto-min-us as
+net.inet.tcp.rexmit_min (milliseconds, rounded up). Its clock defaults to --hz 1000 so that
+floor is at least one FreeBSD tick (8 ms at 100 Hz is 0 ticks and the sysctl is rejected).
+Absent or fstack is the direct libfstack path, which keeps --hz 100 and refuses --rto-min-us.
 Linux only, built with --features fstack (FSTACK_PREFIX: io/benches/fstack/build-fstack.sh).";

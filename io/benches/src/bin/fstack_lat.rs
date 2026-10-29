@@ -49,6 +49,27 @@ fn main() -> ExitCode {
 
 #[cfg(not(target_os = "linux"))]
 fn main() -> ExitCode {
-    eprintln!("fstack_lat: Linux only (F-Stack on DPDK)");
+    use io_bench::transport::fstack_conf::{FSTACK_USAGE, FstackArgs};
+    use io_bench::transport::point::{Common, Flags};
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--help") {
+        println!("{FSTACK_USAGE}");
+        return ExitCode::SUCCESS;
+    }
+    let parsed = (|| {
+        let mut f = Flags::parse(args)?;
+        let c = Common::parse(&mut f)?;
+        let a = FstackArgs::parse(&mut f, c.role, &c.cpus)?;
+        f.finish()?;
+        Ok::<_, io_bench::transport::point::Error>(a.imp.backend())
+    })();
+    match parsed {
+        Ok(backend) => {
+            eprintln!("fstack_lat: Linux only (F-Stack on DPDK); selected backend {backend}");
+        }
+        Err(e) => {
+            eprintln!("fstack_lat: {e}");
+        }
+    }
     ExitCode::FAILURE
 }

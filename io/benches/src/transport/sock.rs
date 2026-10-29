@@ -718,9 +718,12 @@ udp_lat --impl mio|ergon --role ping|pong|local [--round-trip] --rate MSG_PER_S 
         [--size 64] [--cpus CSV] [--spike-ns 100000] [--stall-ns 10000] [--rcvbuf 4194304] [--sndbuf BYTES]
         [--epoll-events 64] [--busy-read-us 0] [--datagram-burst 64 (ergon)]
 stream i: --local port + i <-> --peer port + i (local: the echo/receiver end binds --peer).
---backend, --sqpoll-cpu: ergon-io's (--impl ergon): epoll-spin (the default), or uring-sqpoll
-        with its SQPOLL kernel thread on --sqpoll-cpu (required; never a --cpus CPU) and
-        --busy-read-us 0 (the SQPOLL thread polls the NIC).
+--backend: ergon-io's (--impl ergon). epoll-spin (the default) is the kernel.
+        smoltcp-spin measures when this binary is built with smoltcp-dpdk
+        (StackConfig::rto_min_us from --rto-min-us, plus --source, --pci or
+        --vdev, --prefix-len and --gateway). Without the feature the flag is
+        refused and a kernel socket is not labelled smoltcp-spin. fstack-spin
+        and uring-sqpoll have no UDP arm. --sqpoll-cpu is refused.
 --cpus: ping: ping; pong: echo; local: sender,receiver (--round-trip: ping,echo).";
 
 /// `tcp_lat`'s usage.
@@ -770,6 +773,7 @@ pub fn udp_main<I: IntoIterator<Item = String>>(args: I) -> Result<Option<String
             .parse()
             .map_err(|_| Error::Usage(format!("--datagram-burst {v}: a number")))?,
     };
+    let choice = super::bypass::udp_choice(&mut f, c.role, s.imp == Impl::Ergon, local)?;
     f.finish()?;
     // every stream's ports checked before any thread starts
     for i in 0..c.streams {
@@ -800,26 +804,32 @@ pub fn udp_main<I: IntoIterator<Item = String>>(args: I) -> Result<Option<String
             })
         }
         Impl::Fstack => Err(Error::Usage(FSTACK_ELSEWHERE.into())),
-        Impl::Ergon => {
-            let helpers = helper_cpus(&c);
-            run(&c, s.imp, "udp", &arm, false, |end, cpu| {
-                let (l, p) = ends(end);
-                eio_udp::pair(
-                    l,
-                    p,
-                    streams,
-                    EioUdpOptions {
-                        rcvbuf: s.rcvbuf,
-                        sndbuf: s.sndbuf,
-                        epoll_events: s.epoll_events,
-                        datagram_burst,
-                        busy_poll_us: s.busy_read_us,
-                        loop_cpu: cpu.and_then(|c| u32::try_from(c).ok()),
-                        helper_cpus: helpers.clone(),
-                    },
-                )
-            })
-        }
+        Impl::Ergon => match choice {
+            super::bypass::UdpChoice::Kernel => {
+                let helpers = helper_cpus(&c);
+                run(&c, s.imp, "udp", &arm, false, |end, cpu| {
+                    let (l, p) = ends(end);
+                    eio_udp::pair(
+                        l,
+                        p,
+                        streams,
+                        EioUdpOptions {
+                            rcvbuf: s.rcvbuf,
+                            sndbuf: s.sndbuf,
+                            epoll_events: s.epoll_events,
+                            datagram_burst,
+                            busy_poll_us: s.busy_read_us,
+                            loop_cpu: cpu.and_then(|c| u32::try_from(c).ok()),
+                            helper_cpus: helpers.clone(),
+                        },
+                    )
+                })
+            }
+            #[cfg(feature = "smoltcp-dpdk")]
+            super::bypass::UdpChoice::Smoltcp(nic) => {
+                super::smoltcp_spin::udp(&c, nic, local, peer, s.rcvbuf, s.sndbuf, datagram_burst)
+            }
+        },
     }
 }
 
@@ -1158,6 +1168,20 @@ fn eio_backend(f: &mut Flags, s: &Sock) -> Result<(ergon_io::Backend, Option<u32
     let backend = match backend.as_deref() {
         None | Some("epoll-spin") => ergon_io::Backend::EpollSpin,
         Some("uring-sqpoll") => ergon_io::Backend::UringSqpoll,
+        Some("smoltcp-spin") => {
+            return Err(Error::Usage(
+                "--backend smoltcp-spin is ergon-io's userspace UDP (StackConfig::rto_min_us). \
+                 A kernel socket will not be labelled smoltcp-spin"
+                    .into(),
+            ));
+        }
+        Some("fstack-spin") => {
+            return Err(Error::Usage(
+                "--backend fstack-spin has no UDP arm. A kernel socket will not be labelled \
+                 fstack-spin"
+                    .into(),
+            ));
+        }
         Some(b) => {
             return Err(Error::Usage(format!(
                 "--backend {b}: epoll-spin or uring-sqpoll"

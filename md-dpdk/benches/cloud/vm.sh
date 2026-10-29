@@ -3118,16 +3118,18 @@ onload-idle)
 netem)
     # netem on every data NIC's egress (the interfaces the kernel sends on;
     # under accelerated networking the VF below forwards what they send):
-    # netem set <loss %> | clear | check <loss %|none> | stats (host.sh)
+    # netem set <loss %> | set-peer <loss %> (egress plus ifb ingress, the
+    # kernel peer of a bypass arm) | clear | check <loss %|none> | stats (host.sh)
     mapfile -t ifaces < <(nics | awk '{print $2}')
     ((${#ifaces[@]})) || { echo "netem: no data NIC in the kernel's hands" >&2; exit 1; }
     case ${2:-} in
     set) netem_set "${3:?loss %}" "${ifaces[@]}" && netem_check "$3" "${ifaces[@]}" ;;
+    set-peer) netem_set_peer "${3:?loss %}" "${ifaces[@]}" && netem_check "$3" "${ifaces[@]}" ;;
     clear) netem_clear "${ifaces[@]}" && netem_check none "${ifaces[@]}" ;;
     check) netem_check "${3:?loss % or none}" "${ifaces[@]}" ;;
     stats) netem_stats "${ifaces[@]}" ;;
     show) netem_show "${ifaces[@]}" ;;
-    *) echo "netem set <loss %> | clear | check <loss %|none> | stats | show" >&2; exit 2 ;;
+    *) echo "netem set <loss %> | set-peer <loss %> | clear | check <loss %|none> | stats | show" >&2; exit 2 ;;
     esac
     ;;
 sample)

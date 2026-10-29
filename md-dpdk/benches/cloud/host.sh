@@ -1429,10 +1429,31 @@ netem_set() {
     shift
     for i in "$@"; do sudo tc qdisc replace dev "$i" root netem limit 100000 loss "$p%" || return 1; done
 }
+# netem_set_peer <loss %> <iface>...: the kernel peer. Egress is netem_set.
+# Ingress is the same loss on an ifb device, fed by a mirred redirect, so
+# both directions are dropped. The caller passes kernel interfaces only:
+# a DPDK NIC is not in the kernel and is not given a qdisc.
+netem_set_peer() {
+    local p=$1 i ifbs=()
+    shift
+    netem_set "$p" "$@" || return 1
+    sudo modprobe ifb || return 1
+    for i in "$@"; do
+        sudo ip link add "ifb-$i" type ifb 2>/dev/null || true
+        sudo ip link set "ifb-$i" up || return 1
+        sudo tc qdisc replace dev "$i" handle ffff: ingress || return 1
+        sudo tc filter replace dev "$i" parent ffff: protocol all u32 match u32 0 0 action mirred egress redirect dev "ifb-$i" || return 1
+        sudo tc qdisc replace dev "ifb-$i" root netem limit 100000 loss "$p%" || return 1
+        ifbs+=("ifb-$i")
+    done
+    netem_check "$p" "${ifbs[@]}"
+}
 netem_clear() {
     local i
     for i in "$@"; do
         if tc qdisc show dev "$i" 2>/dev/null | grep -q '^qdisc netem .* root'; then sudo tc qdisc del dev "$i" root || return 1; fi
+        if tc qdisc show dev "$i" ingress 2>/dev/null | grep -q ingress; then sudo tc qdisc del dev "$i" ingress || return 1; fi
+        if ip link show "ifb-$i" >/dev/null 2>&1; then sudo ip link del "ifb-$i" || return 1; fi
     done
 }
 

@@ -2584,6 +2584,155 @@ both transport-tune
 key
 1" "$steps"
 
+# ergon-io bypass matrix: the sets file the lab selects, the real arm lines,
+# kernel-peer loss, RTO 8 ms, and transport-build's split feature invocations
+sets=$cloud/transport-aws-io-bypass.tsv
+got=$(
+    . "$cloud/transport.sh"
+    dir=$tmp/bypass
+    mkdir -p "$dir"
+    printf 'sender ens6 ens6 0a:00:00:00:00:01 10.30.1.11 24 0000:00:06.0\nreceiver ens7 ens7 0a:00:00:00:00:02 10.30.1.21 24 0000:00:07.0\n' >"$dir/nics-a.txt"
+    printf 'sender ens6 ens6 0a:00:00:00:00:03 10.30.1.12 24 0000:00:06.0\nreceiver ens7 ens7 0a:00:00:00:00:04 10.30.1.22 24 0000:00:07.0\n' >"$dir/nics-b.txt"
+    sets_file=$sets tr_sets_file=$sets arms_file='' tr_arms_file=''
+    echo "loss: $(tr_plan loss)"
+    echo "rto: $(tr_knob rto_min_us)"
+    tr_wants_fstack && echo "wants: yes" || echo "wants: no"
+    echo "extras: [$(tr_build_extras)]"
+    sets_file='' tr_sets_file=''
+    tr_wants_fstack && echo "matrix: yes" || echo "matrix: no"
+    echo "matrix-extras: [$(tr_build_extras)]"
+    sets_file=$sets tr_sets_file=$sets
+    tr_plan rounds a 1 1 | awk -F'\t' '{print "round:", $5, $7, $8}'
+    for arm in io-tcp-epoll io-tcp-smol io-tcp-fstack io-ws-epoll io-ws-smol io-ws-fstack io-udp-epoll io-udp-smol; do
+        spec=$(tr_plan arm "$arm")
+        echo "arm $arm: $spec"
+        read -r bin setup _ rest <<<"$spec"
+        if [[ -n ${rest:-} ]]; then read -ra args <<<"$rest"; else args=(); fi
+        echo "ping $arm: $(tr_bin_args "$bin" ping 10.30.1.11 10.30.1.22 "${args[@]}")"
+        echo "alt $arm: $(tr_alt_args a sender b receiver)"
+    done
+    args=() bin=fstack_lat setup=fstack
+    echo "direct: $(tr_bin_args fstack_lat ping 10.30.1.11 10.30.1.22)"
+    hk=0 tr_bin_path=P
+    bin=fstack_spin_lat setup=sockets args=(--impl ergon)
+    echo "spin start: $(tr_start r/p.pid r/p.out fstack_spin_lat --role ping)"
+)
+why=
+[[ $got == *"loss: kernel-peer"* ]] || why+=" loss;"
+[[ $got == *"rto: 8000"* ]] || why+=" rto;"
+[[ $got == *"wants: yes"* && $got == *"matrix: no"* ]] || why+=" wants;"
+[[ $got == *"extras: [fstack]"* && $got == *"matrix-extras: []"* ]] || why+=" extras;"
+rounds=$(grep '^round:' <<<"$got")
+[[ $(wc -l <<<"$rounds") -eq 3 ]] || why+=" round count;"
+[[ $(awk '{print $3}' <<<"$rounds" | sort -u) == "10000,50000" ]] || why+=" loads;"
+[[ $(awk '{print $4}' <<<"$rounds" | sort -u) == "1,8" ]] || why+=" streams;"
+[[ $(awk '{print $2}' <<<"$rounds" | sort | tr '\n' ' ') == "0 0.1 1 " ]] || why+=" netem [$(awk '{print $2}' <<<"$rounds" | sort | tr '\n' ' ')];"
+[[ $got == *"arm io-tcp-fstack: fstack_spin_lat sockets two --impl ergon"* ]] || why+=" fstack arm;"
+[[ $got == *"ping io-tcp-fstack:"*"--rto-min-us 8000"* ]] || why+=" fstack rto;"
+[[ $got == *"alt io-tcp-fstack: --impl ergon"* ]] || why+=" fstack impl;"
+[[ $(grep -c -- '--impl' <<<"$(grep '^ping io-tcp-fstack:' <<<"$got")") -eq 0 ]] || why+=" impl duplicated in tr_bin_args;"
+[[ $got == *"arm io-tcp-epoll: wstls_lat sockets two --impl ergon --backend epoll-spin --echo tcp"* ]] || why+=" tcp epoll;"
+[[ $got == *"arm io-ws-epoll: wstls_lat sockets two --impl ergon --backend epoll-spin --echo wstls"* ]] || why+=" ws epoll;"
+[[ $got == *"arm io-tcp-smol: wstls_lat sockets two --impl ergon --backend smoltcp-spin --echo tcp"* ]] || why+=" tcp smol;"
+[[ $got == *"arm io-ws-fstack: wstls_fstack_lat sockets two --impl ergon --backend fstack-spin --echo wstls"* ]] || why+=" ws fstack;"
+[[ $got == *"ping io-ws-epoll:"*"--rto-min-us 8000"* && $got == *"ping io-tcp-epoll:"*"--rto-min-us 8000"* ]] || why+=" wstls rto;"
+[[ $got == *"arm io-udp-epoll: udp_lat sockets two --impl ergon --backend epoll-spin"* ]] || why+=" udp epoll;"
+[[ $got == *"arm io-udp-smol: udp_lat sockets two --impl ergon --backend smoltcp-spin"* ]] || why+=" udp smol;"
+udp=$(grep '^arm io-udp' <<<"$got")
+[[ $udp != *fstack* ]] || why+=" fstack udp;"
+direct_line=$(grep '^direct:' <<<"$got")
+[[ $direct_line == "direct: --source 10.30.1.11 --connect 10.30.1.22:22000 --pci 0000:00:06.0 --prefix-len 24 --gateway 10.30.1.1 --nodelay --delayed-ack false --rcvbuf $sb_ --sndbuf $sb_" ]] || why+=" direct fstack [$direct_line];"
+smol_tcp=$(grep '^ping io-tcp-smol:' <<<"$got")
+ws_fstack=$(grep '^ping io-ws-fstack:' <<<"$got")
+udp_smol=$(grep '^ping io-udp-smol:' <<<"$got")
+epoll_tcp=$(grep '^ping io-tcp-epoll:' <<<"$got")
+epoll_udp=$(grep '^ping io-udp-epoll:' <<<"$got")
+[[ $smol_tcp == *"--pci 0000:00:06.0"* && $smol_tcp == *"--source 10.30.1.11"* && $ws_fstack == *"--pci 0000:00:06.0"* ]] || why+=" bypass nic;"
+[[ $udp_smol == *"--pci 0000:00:06.0"* && $udp_smol == *"--rto-min-us 8000"* ]] || why+=" udp nic;"
+[[ $epoll_tcp != *"--pci"* && $epoll_udp != *"--pci"* && $epoll_udp != *"--rto-min-us"* ]] || why+=" epoll nic;"
+[[ $got != *"direct:"*"--rto-min-us"* && $got != *"direct:"*"--impl"* ]] || why+=" direct took ergon flags;"
+[[ $got == *"spin start: sudo -n setpriv"* && $got == *"spin start:"*"fstack_spin_lat --role ping"* ]] || why+=" spin priv;"
+[[ -z $why ]] && pass "transport.sh io bypass: fstack-spin, wstls tcp and wstls, udp kernel vs smoltcp, 1 and 8 connections, 10k and 50k, loss 0 0.1 1 on the kernel peer, RTO 8 ms; the direct fstack line is unchanged" ||
+    fail "transport.sh io bypass:$why"
+# transport_prepare under set -u: the bypass sets file builds F-Stack, and
+# transport-isolate is not given an unset onload word (that aborted a run
+# after the build line)
+prep=$(
+    set -u
+    . "$cloud/transport.sh"
+    log() { :; }
+    die() { echo "die $*"; exit 1; }
+    out=$tmp/prep-bypass
+    extra_src= arms_file= sets_file=$sets
+    A=1.1.1.1 B=2.2.2.2 user=u ssh_opts=()
+    mkdir -p "$out"
+    scp() { echo "scp $*"; }
+    on() { :; }
+    detached() { echo "detached $*"; }
+    both() { echo "both $*"; }
+    reboot_both() { :; }
+    remote_access() { :; }
+    transport_prepare
+) || prep="died:$prep"
+[[ $prep == *"detached transport-build transport-build fstack"* && $prep == *"both transport-isolate transport-isolate smt-off"* && $prep != *"onload"* && $prep != died:* ]] &&
+    pass "transport_prepare: the bypass sets file builds F-Stack and isolates without an onload word" ||
+    fail "transport_prepare bypass: [$prep]"
+# kernel-peer netem: egress on the kernel NIC and the same loss on ifb ingress
+cat >"$tmp/fakebin/modprobe" <<'SH'
+#!/usr/bin/env bash
+echo "modprobe $*" >>"$FAKE_LOG"
+exit 0
+SH
+chmod +x "$tmp/fakebin/modprobe"
+peer=$(hostrun netem_set_peer 0.1 eth1 2>&1; echo " rc $?")
+peer_chk=$(hostrun netem_check 0.1 ifb-eth1 2>&1; echo " rc $?")
+peer_eg=$(hostrun netem_check 0.1 eth1 2>&1; echo " rc $?")
+if [[ $peer == *"netem: ifb-eth1 at 0.1"* && $peer == *" rc 0"* && $peer_chk == *" rc 0"* && $peer_eg == *" rc 0"* ]]; then
+    pass "host.sh: kernel-peer netem is egress on the kernel NIC and the same loss on ifb ingress"
+else
+    fail "host.sh netem_set_peer: [$peer] ifb [$peer_chk] egress [$peer_eg]"
+fi
+# transport-build.sh: fstack and smoltcp-dpdk are separate cargo invocations;
+# a missing binary fails the script
+stub=$tmp/cargostub
+mkdir -p "$stub" "$tmp/prefix"
+: >"$tmp/prefix/BUILD"
+cat >"$stub/cargo" <<'SH'
+#!/usr/bin/env bash
+echo "cargo $*" >>"$CARGO_LOG"
+target= prev=
+for a in "$@"; do
+    if [[ $prev == --target-dir ]]; then target=$a; fi
+    if [[ $prev == --bin && $a != "${SKIP_BIN:-}" ]]; then
+        mkdir -p "$target/release"
+        : >"$target/release/$a"
+        chmod +x "$target/release/$a"
+    fi
+    prev=$a
+done
+SH
+chmod +x "$stub/cargo"
+export CARGO_LOG=$tmp/cargo.log
+: >"$CARGO_LOG"
+if PATH="$stub:$PATH" TR_FSTACK_PREFIX=$tmp/prefix bash "$cloud/transport-build.sh" "$cloud/../../.." "$tmp/tb-target"; then
+    blog=$(cat "$CARGO_LOG")
+    if grep -q -- '--features fstack ' <<<"$blog" && grep -q -- '--features fstack-spin ' <<<"$blog" &&
+        grep -q -- '--features smoltcp-dpdk ' <<<"$blog" &&
+        ! grep -- '--features' <<<"$blog" | grep -q 'fstack.*smoltcp\|smoltcp.*fstack'; then
+        pass "transport-build.sh: fstack, fstack-spin and smoltcp-dpdk are separate cargo invocations, and wstls_lat is built"
+    else
+        fail "transport-build.sh features: $blog"
+    fi
+else
+    fail "transport-build.sh exited $(echo $?) with a stub that creates every binary: $(cat "$CARGO_LOG")"
+fi
+: >"$CARGO_LOG"
+if PATH="$stub:$PATH" SKIP_BIN=wstls_lat TR_FSTACK_PREFIX=$tmp/prefix bash "$cloud/transport-build.sh" "$cloud/../../.." "$tmp/tb-missing"; then
+    fail "transport-build.sh succeeded with wstls_lat missing"
+else
+    pass "transport-build.sh fails when a required binary is missing"
+fi
+
 for script in transport.sh azure/lab.sh azure/az.sh aws/lab.sh host.sh irqs.sh vm.sh modes.sh; do
     bash -n "$cloud/$script" && pass "bash -n $script" || fail "bash -n $script"
 done

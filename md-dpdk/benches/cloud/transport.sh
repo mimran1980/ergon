@@ -366,16 +366,22 @@ transport_prepare() {
         fi
     done
     log "transport: bench binaries"
-    local fstack= onload=
-    if tr_wants_setup fstack; then
-        fstack=fstack
-        log "transport: an arm runs on F-Stack: it and fstack_lat are built too"
+    # tr_build_extras, not tr_wants_setup fstack: ergon-io's fstack-spin and
+    # smoltcp-spin arms use setup sockets. tr_wants_fstack is what asks for
+    # vm.sh transport-build fstack, which sets TR_FSTACK_PREFIX and so builds
+    # fstack_spin_lat, wstls_fstack_lat and the smoltcp-dpdk binaries.
+    local extra onload=
+    extra=$(tr_build_extras)
+    if [[ $extra == *fstack* ]]; then
+        log "transport: F-Stack is built (fstack_lat, fstack_spin_lat, wstls_fstack_lat, and the smoltcp-dpdk binaries)"
     fi
-    if tr_wants_setup onload; then
+    if [[ $extra == *onload* ]]; then
         onload=onload
         log "transport: an arm runs under Onload: OpenOnload $TR_ONLOAD_COMMIT is built and installed too (onload-build.sh)"
     fi
-    detached transport-build transport-build $fstack $onload || die "transport-build failed"
+    # extra is empty, or the words fstack and onload
+    # shellcheck disable=SC2086
+    detached transport-build transport-build $extra || die "transport-build failed"
     # the session's SMT (a sets file's `smt on`: kept on, each isolated core
     # whole in the map; else off, as every other session)
     local smt
@@ -401,8 +407,55 @@ tr_wants_setup() {
     done
     return 1
 }
-# tr_wants_fstack: tr_wants_setup fstack
-tr_wants_fstack() { tr_wants_setup fstack; }
+# tr_wants_fstack: a set-up named fstack, or an arm whose line is fstack_lat
+# with --impl ergon, or any arm whose arguments name --backend fstack-spin
+# (ergon-io's fstack-spin on setup sockets: the lab still builds F-Stack and
+# binds the NIC). The stock matrix has none of those, so it stays false.
+tr_wants_fstack() {
+    tr_wants_setup fstack && return 0
+    local names name line
+    local tr_arms_file=${arms_file:-} tr_sets_file=${sets_file:-}
+    names=$(tr_plan arms) || return 1
+    for name in $names; do
+        name=${name%%=*}
+        name=${name# }
+        [[ -n $name ]] || continue
+        line=$(tr_plan arm "$name") || continue
+        [[ $line == fstack_lat\ *\ --impl\ ergon* || $line == fstack_spin_lat\ *\ --impl\ ergon* || $line == *\ --backend\ fstack-spin* ]] && return 0
+    done
+    return 1
+}
+
+# tr_build_extras: the words transport_prepare passes to vm.sh transport-build.
+# `fstack` when tr_wants_fstack (setup fstack, or an ergon-io fstack-spin arm
+# on setup sockets). That build sets TR_FSTACK_PREFIX, so transport-build.sh
+# also links smoltcp-dpdk into wstls_lat, udp_lat and tcp_lat. `onload` when
+# an arm's set-up is onload. Empty for the stock matrix.
+tr_build_extras() {
+    local extra=
+    tr_wants_fstack && extra=fstack
+    if tr_wants_setup onload; then
+        extra=${extra:+$extra }onload
+    fi
+    printf '%s\n' "$extra"
+}
+
+# tr_bypass_arm: the current arm is ergon-io on DPDK (fstack_lat --impl ergon,
+# fstack_spin_lat, or --backend fstack-spin / smoltcp-spin). Host a then takes
+# fstack-up; host b stays on the kernel so netem can see the peer. Unset
+# bin/args is not one.
+tr_bypass_arm() {
+    local a=" ${args[*]:-} "
+    [[ ${bin:-} == fstack_spin_lat ]] && return 0
+    [[ ${bin:-} == fstack_lat && $a == *" --impl ergon "* ]] && return 0
+    [[ $a == *" --backend fstack-spin "* || $a == *" --backend smoltcp-spin "* ]] && return 0
+    return 1
+}
+
+# tr_loss_where: the sets file's `loss` row (both, or kernel-peer)
+tr_loss_where() {
+    tr_arms_file=${arms_file:-} tr_sets_file=${sets_file:-} tr_plan loss
+}
 
 # transport_remote <pair>: the session on VM a (transport.sh run), detached
 # there; polled until it ends (as long as the VMs live), its results so far
@@ -457,6 +510,13 @@ tr_nic_of() { awk -v ip="$1" -v f="$2" '$5 == ip {print $f; exit}' "$dir"/nics-[
 # tr_gateway <address/prefix>: its subnet's router, the first address (AWS
 # and Azure both; host.sh subnet_gateway)
 tr_gateway() { python3 -c 'import ipaddress, sys; print(next(ipaddress.ip_network(sys.argv[1], strict=False).hosts()))' "$1"; }
+# tr_userspace_nic <own ip>: --source, PCI, prefix and gateway for a bypass
+# ping. The pong parses the same flags and does not start a stack.
+tr_userspace_nic() {
+    local own=$1 len
+    len=$(tr_nic_of "$own" 6)
+    echo "--source $own --pci $(tr_nic_of "$own" 7) --prefix-len $len --gateway $(tr_gateway "$own/$len")"
+}
 
 # tr_bin_path: the PATH a bench binary is found on, on either host
 tr_bin_path='"$HOME/ergon/target/release:$HOME/extra/bin:$PATH"'
@@ -543,6 +603,11 @@ tr_bin_args() {
     udp_lat)
         out="--local $own:$port --peer $peer:$port ${busy}--rcvbuf $sb --sndbuf $sb --epoll-events $(tr_knob epoll_events)"
         [[ $args == *" --impl ergon "* ]] && out+=" --datagram-burst $(tr_knob datagram_burst)"
+        # smoltcp's RTO floor is not a kernel socket option. epoll UDP stays
+        # without it, and without a PCI address.
+        if [[ $args == *" --backend smoltcp-spin "* ]]; then
+            out+=" $(tr_userspace_nic "$own") --rto-min-us $(tr_knob rto_min_us)"
+        fi
         ;;
     tcp_lat)
         local a="--source $own --connect $peer:$port"
@@ -552,7 +617,7 @@ tr_bin_args() {
         [[ ${setup:-} == onload ]] || timers=$(tr_timer_args)
         out="$a --nodelay $qa ${timers}${busy}--rcvbuf $sb --sndbuf $sb --epoll-events $(tr_knob epoll_events)"
         ;;
-    fstack_lat)
+    fstack_lat | fstack_spin_lat)
         # TCP over F-Stack: tcp_lat's addresses (the F-Stack interface takes
         # the address, so the NIC: its PCI address, prefix and gateway from
         # vm.sh nics) and socket buffers; no busy poll, epoll or kernel TCP
@@ -564,6 +629,14 @@ tr_bin_args() {
         [[ $role == pong ]] && a="--listen $own:$port"
         pci=$(tr_nic_of "$own" 7) len=$(tr_nic_of "$own" 6)
         out="$a --pci $pci --prefix-len $len --gateway $(tr_gateway "$own/$len") --nodelay --delayed-ack false --rcvbuf $sb --sndbuf $sb"
+        # --impl ergon selects ergon-io's fstack-spin. The minimum RTO is
+        # FreeBSD's net.inet.tcp.rexmit_min (the binary rounds microseconds
+        # up to milliseconds). The direct libfstack path refuses the flag,
+        # so it is added only when the arm asked for ergon. --impl itself
+        # stays in the arm arguments (tr_alt_args), once.
+        if [[ $args == *" --impl ergon "* ]]; then
+            out+=" --rto-min-us $(tr_knob rto_min_us)"
+        fi
         ;;
     *)
         # an arms file's binary: its addresses, and on the kernel's path
@@ -571,6 +644,9 @@ tr_bin_args() {
         # arms get, so it cannot run with other ones (transport-cli.md)
         out="--local $own:$port --peer $peer:$port"
         [[ ${setup:-} == sockets ]] && out+=" --busy-read-us $(tr_knob busy_read_us) --rcvbuf $sb --sndbuf $sb --nodelay $qa $(tr_timer_args)"
+        if [[ $args == *" --backend smoltcp-spin "* || $args == *" --backend fstack-spin "* ]]; then
+            out+=" $(tr_userspace_nic "$own")"
+        fi
         out=${out% }
         ;;
     esac
@@ -711,7 +787,10 @@ tr_arm_knobs() {
         [[ $a == *" --mode udp "* ]] && echo aeron_threading aeron_driver
         ;;
     mpsc_lat) echo capacity ;;
-    fstack_lat) echo sockbuf ;;
+    fstack_lat | fstack_spin_lat)
+        echo sockbuf
+        [[ $a == *" --impl ergon "* || $bin == fstack_spin_lat ]] && echo rto_min_us
+        ;;
     esac
     # every arm on the kernel's sockets (an arms file's binary too): the data
     # NICs' interrupt deferral, its own host setting (tr_host_overrides)
@@ -1023,7 +1102,10 @@ tr_label() {
 tr_start() {
     local pidf=$1 outf=$2 priv= pre= src=
     shift 2
-    [[ ${setup:-} == fstack ]] && priv="$tr_fstack_priv "
+    # fstack_spin_lat's EAL needs the same capabilities on igb_uio (setup
+    # stays sockets: host b is the kernel peer). A stock fstack_lat arm is
+    # setup fstack, so this does not change its start line.
+    if [[ ${setup:-} == fstack ]] || tr_bypass_arm; then priv="$tr_fstack_priv "; fi
     [[ ${setup:-} == onload && ${bin:-} != aeron_lat ]] && pre="$(tr_onload_cmd) "
     if [[ ${bin:-} == aeron_lat ]] && tr_has_driver && [[ $(tr_aeron_driver) != external ]]; then
         priv="$tr_fstack_priv " src=". ~/bench/driver.env; "
@@ -1068,7 +1150,7 @@ tr_exit_text() {
 # (the EAL's, F-Stack's, the binary's own, sudo's), else its last two
 tr_why_lines() {
     local l
-    l=$(grep -E 'EAL: (Error|Cannot)|[Ee]rror|fstack_lat:|panicked|rte_exit|Cannot |[Ff]ailed|^sudo:|^setpriv:' "$1" 2>/dev/null | tail -3)
+    l=$(grep -E 'EAL: (Error|Cannot)|[Ee]rror|fstack_lat:|fstack_spin_lat:|wstls_lat:|wstls_fstack_lat:|udp_lat:|panicked|rte_exit|Cannot |[Ff]ailed|^sudo:|^setpriv:' "$1" 2>/dev/null | tail -3)
     [[ -n $l ]] || l=$(tail -2 "$1" 2>/dev/null)
     tr '\n' ' ' <<<"$l"
 }
@@ -1236,7 +1318,15 @@ tr_arm_up() {
         # the raw floor's: the NICs on DPDK, no driver (its binary runs the
         # transport's bindings itself with driver.env)
         dpdk-raw) on "$(tr_host "$h")" "$vm driver dpdk-raw && ${ov}$vm irq-idle" ;;
-        sockets) on "$(tr_host "$h")" "${ov}$vm transport-net" ;;
+        sockets)
+            # a bypass arm: DPDK on host a only (fstack-up). Host b stays in
+            # the kernel, which is where kernel-peer netem is applied.
+            if [[ $h == a ]] && tr_bypass_arm; then
+                on "$(tr_host "$h")" "$vm fstack-up && ${ov}$vm irq-idle"
+            else
+                on "$(tr_host "$h")" "${ov}$vm transport-net"
+            fi
+            ;;
         fstack) on "$(tr_host "$h")" "$vm fstack-up && ${ov}$vm irq-idle" ;;
         # Onload over AF_XDP on the data NICs (vm.sh onload-up); an Aeron
         # arm's media driver under it (vm.sh driver onload: onload-up first)
@@ -1275,6 +1365,13 @@ tr_arm_down() {
     shift
     if [[ $setup == sockets && -n $(tr_host_overrides) ]]; then
         for h in "$@"; do on "$(tr_host "$h")" "$vm transport-net" >>"$dir/logs/setup-$h.log" 2>&1 || log "host $h: settings not put back"; done
+    fi
+    # bypass on setup sockets bound host a's NICs (fstack-up): give them back
+    if [[ $setup == sockets ]] && tr_bypass_arm; then
+        for h in "$@"; do
+            [[ $h == a ]] || continue
+            on "$(tr_host "$h")" "$(tr_arm_vm) stop" >>"$dir/logs/setup-$h.log" 2>&1 || log "host $h: vm.sh stop failed"
+        done
     fi
     # fstack: the data NICs back from igb_uio to the kernel; onload: back
     # from AF_XDP, their queues and MTU as they were (vm.sh stop)
@@ -1572,15 +1669,18 @@ tr_invoke() {
 
 
 # tr_netem_round <level> <host>...: the round's netem on each host (set and
-# checked; - checks there is none); tr_netem_off: cleared and checked
+# checked; - checks there is none). `loss kernel-peer` uses `netem set-peer`
+# (egress plus ifb ingress on the kernel NIC). `both` is `netem set`, today's
+# every-host egress. tr_netem_off: cleared and checked.
 tr_netem_round() {
-    local level=$1 h
+    local level=$1 h cmd=set
     shift
+    [[ $(tr_loss_where) == kernel-peer ]] && cmd=set-peer
     for h in "$@"; do
         if [[ $level == - || $level == none ]]; then
             on "$(tr_host "$h")" "$vm netem check none" >>"$dir/logs/netem-$h.log" 2>&1 || { log "host $h: a netem qdisc where the round has none"; return 1; }
         else
-            on "$(tr_host "$h")" "$vm netem set $level" >>"$dir/logs/netem-$h.log" 2>&1 || { log "host $h: netem $level% not set"; return 1; }
+            on "$(tr_host "$h")" "$vm netem $cmd $level" >>"$dir/logs/netem-$h.log" 2>&1 || { log "host $h: netem $level% not set"; return 1; }
         fi
     done
 }
@@ -1599,9 +1699,12 @@ tr_set() {
         IFS=, read -ra loads <<<"$loadlist"
         IFS=, read -ra streams <<<"$streamlist"
         if [[ $host == ab ]]; then rhosts=(a b); else rhosts=("$host"); fi
+        # loss kernel-peer: host b only, so host a's DPDK NIC has no qdisc
+        local lhosts=()
+        if [[ $(tr_loss_where) == kernel-peer ]]; then lhosts=(b); else lhosts=("${rhosts[@]}"); fi
         echo "$sid,$rep,$netem,$rseed,${order//,/ }" >>"$dir/order.csv"
         log "set $sid rep $rep netem $netem: seed $rseed, order $order"
-        tr_netem_round "$netem" "${rhosts[@]}" || return 1
+        tr_netem_round "$netem" "${lhosts[@]}" || return 1
         position=0
         for armspec in ${order//,/ }; do
             position=$((position + 1))
@@ -1651,9 +1754,9 @@ tr_set() {
                 done
             fi
             tr_arm_down "$setup" "${ahosts[@]}"
-            ((failures < ${TRANSPORT_MAX_FAILURES:-3})) || { log "set $sid: $failures failed runs in a row: stopping the session"; [[ $netem == - ]] || tr_netem_off "${rhosts[@]}"; return 1; }
+            ((failures < ${TRANSPORT_MAX_FAILURES:-3})) || { log "set $sid: $failures failed runs in a row: stopping the session"; [[ $netem == - ]] || tr_netem_off "${lhosts[@]}"; return 1; }
         done
-        [[ $netem == - ]] || tr_netem_off "${rhosts[@]}" || return 1
+        [[ $netem == - ]] || tr_netem_off "${lhosts[@]}" || return 1
     done 9<"${rounds_file:-$dir/rounds.tsv}"
 }
 

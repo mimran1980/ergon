@@ -712,8 +712,10 @@ dpdk_busy_idle() { [[ $1 =~ ^(spin|noop|aeron_idle_strategy_busy_spinning|aeron_
 # LAB_ARMS_FILE): " <name>=<setup>/<hosts> ..." as transport.sh's tr_load sets
 # it. An arm's mode is <name>[@STREAMS=<n>][@NETEM=<loss %>][@AA=1]:
 #   STREAMS=<n>  streams (UDP, Aeron) or connections (TCP), 1 to 1024
-#   NETEM=<pct>  netem's egress loss on every data NIC of both hosts, 0 to
-#                100 (0: a netem qdisc that drops nothing, the control);
+#   NETEM=<pct>  netem's loss, 0 to 100 (0: a qdisc that drops nothing).
+#                The default applies it on every data NIC of both hosts.
+#                A sets file's `loss kernel-peer` applies it on host b only
+#                (egress and ifb ingress), so a bypass arm's DPDK NIC has none.
 #                none: no qdisc, checked, in a loss set's round (the
 #                control's control);
 #                never on a DPDK arm (a dpdk* name, the dpdk or fstack setup): DPDK

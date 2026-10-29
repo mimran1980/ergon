@@ -226,6 +226,66 @@ fn takes_exactly_the_runners_flags() {
     }
 }
 
+/// The runner's `--impl ergon` line, through `spin_config`: fstack-spin,
+/// `rexmit_min` 8 ms, the kernel RTO left unset.
+#[test]
+fn spin_config_follows_the_runner_ergon_line() {
+    use io_bench::transport::fstack_conf::{FstackImpl, spin_config};
+    use io_bench::transport::point::Common;
+    let point = "--streams 8 --rate 50000 --warmup-s 5 --duration-s 30 --size 64 --label d8:io-tcp-fstack@STREAMS=8 \
+                 --spike-ns 100000 --stall-ns 10000 --cpus 2 --out /tmp/x";
+    let ends = "--source 10.30.1.11 --connect 10.30.1.22:22000 --pci 0000:00:06.0 --prefix-len 24 \
+                --gateway 10.30.1.1 --nodelay --delayed-ack false --rcvbuf 2097152 --sndbuf 2097152 \
+                --impl ergon --rto-min-us 8000";
+    let mut f = flags(&format!("--role ping {point} {ends}"));
+    let c = Common::parse(&mut f).unwrap();
+    let a = FstackArgs::parse(&mut f, c.role, &c.cpus).unwrap();
+    f.finish().unwrap();
+    assert_eq!(a.imp, FstackImpl::Ergon);
+    let cfg = spin_config(&a, std::path::Path::new("fstack-spin.conf")).unwrap();
+    assert_eq!(cfg.backend.name(), "fstack-spin");
+    assert!(cfg.validate().is_ok());
+    assert!(
+        cfg.fstack
+            .sysctl
+            .iter()
+            .any(|(k, v)| k == "net.inet.tcp.rexmit_min" && v == "8")
+    );
+    assert_eq!(a.conf.hz, 1000);
+    assert_eq!(cfg.fstack.hz, 1000);
+    assert!(u64::from(8u32) * u64::from(cfg.fstack.hz) / 1000 >= 1);
+    assert!(
+        a.conf.render().lines().any(|l| l == "hz=1000"),
+        "{}",
+        a.conf.render()
+    );
+    assert_eq!(cfg.tcp_rto_min_us, None);
+    assert_eq!(
+        cfg.fstack.addr,
+        Some(std::net::Ipv4Addr::new(10, 30, 1, 11))
+    );
+    assert!(!cfg.fstack.delayed_ack);
+    assert_eq!(
+        cfg.fstack.conf_path.as_deref(),
+        Some(std::path::Path::new("fstack-spin.conf"))
+    );
+    let mut low = flags(&format!("--role ping {point} {ends} --hz 100"));
+    let low_c = Common::parse(&mut low).unwrap();
+    let low = FstackArgs::parse(&mut low, low_c.role, &low_c.cpus).unwrap();
+    assert_eq!(low.conf.hz, 1000, "explicit --hz 100 cannot store 8 ms");
+    assert_eq!(
+        spin_config(&low, std::path::Path::new("fstack-spin.conf"))
+            .unwrap()
+            .fstack
+            .hz,
+        1000
+    );
+    let mut direct = flags(&format!("--role ping {PING}"));
+    let direct = FstackArgs::parse(&mut direct, Role::Ping, &[2]).unwrap();
+    let err = spin_config(&direct, std::path::Path::new("fstack-spin.conf")).unwrap_err();
+    assert!(err.to_string().contains("fstack-spin"), "{err}");
+}
+
 #[test]
 fn a_pci_port_needs_sys_admin_and_dac_override_before_ff_init() {
     let mut f = flags(PONG);

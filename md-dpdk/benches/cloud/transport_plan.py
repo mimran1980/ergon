@@ -16,6 +16,8 @@ timings. Commands:
                                      row; off without one)
   irq_idle <files>...                the IRQ core idle depth the session requires (a sets
                                      file's `irq_idle` row; auto without one)
+  loss <files>...                    where a round's netem is applied (a sets file's
+                                     `loss` row; both without one, or kernel-peer)
   binom <offered> <dropped> <loss %> "<lo> <hi> ok|FAIL": the dropped count's
                                      interval at that loss (two-sided, 1 in 10,000)
 
@@ -30,6 +32,11 @@ depth its session must run every arm at (transport-settings.env
 TR_IRQ_IDLE, resolved on the hosts: transport.sh tr_irq_idle_session). A
 session whose hosts give another stops before its first point; auto (the
 default) takes what they give.
+
+A sets file may hold one `loss <both|kernel-peer>` row. `both` (the default)
+is netem on every host of the round. `kernel-peer` is host b only, the
+kernel peer: egress and an ifb ingress, so a bypass arm's DPDK NIC on host
+a has no qdisc.
 
 A round is one pass over a set's arms at one rep and netem level, in an order
 drawn from that round's own seed: sha256 of "<session seed>:<set>:<rep>:<netem>",
@@ -86,7 +93,7 @@ def load(paths):
                 if "--nics" in args and args[args.index("--nics") + 1:args.index("--nics") + 2] != ["alt"]:
                     raise PlanError(f"{where}: arm {name}: --nics takes alt (each host's other data NIC)")
                 arms[name] = (binary, setup, hosts, args)
-            elif words[0] in ("set", "smt", "irq_idle") and arms_only:
+            elif words[0] in ("set", "smt", "irq_idle", "loss") and arms_only:
                 continue
             elif words[0] == "smt":
                 if len(words) != 2 or words[1] not in ("off", "on"):
@@ -94,6 +101,9 @@ def load(paths):
             elif words[0] == "irq_idle":
                 if len(words) != 2 or not (words[1] in ("all", "auto") or words[1].isdigit()):
                     raise PlanError(f"{where}: irq_idle all, auto or a state index")
+            elif words[0] == "loss":
+                if len(words) != 2 or words[1] not in ("both", "kernel-peer"):
+                    raise PlanError(f"{where}: loss both or loss kernel-peer")
             elif words[0] == "set":
                 if len(words) != 9:
                     raise PlanError(f"{where}: set <id> <pair> <par> <host> <loads> <streams> <netem> <arms>")
@@ -114,7 +124,7 @@ def load(paths):
                 sets.append(dict(id=sid, pair=pair, par=par, host=host, loads=loads, streams=streams,
                                  netem=levels, arms=names, where=where))
             else:
-                raise PlanError(f"{where}: a row is arm, set, smt or irq_idle, not {words[0]}")
+                raise PlanError(f"{where}: a row is arm, set, smt, irq_idle or loss, not {words[0]}")
     for s in sets:
         if s["arms"][0] == "aa":
             raise PlanError(f"{s['where']}: set {s['id']}: aa repeats the set's first arm, so it cannot be first")
@@ -168,6 +178,11 @@ def smt(paths):
 def irq_idle(paths):
     """The IRQ core idle depth the session requires ("auto" without a row)."""
     return session_row(paths, "irq_idle", "auto")
+
+
+def loss(paths):
+    """Where a round's netem is applied ("both" without a row, or "kernel-peer")."""
+    return session_row(paths, "loss", "both")
 
 
 def seed_of(text):
@@ -310,6 +325,8 @@ def main(argv):
             print(smt(args))
         elif cmd == "irq_idle":
             print(irq_idle(args))
+        elif cmd == "loss":
+            print(loss(args))
         elif cmd == "count":
             _, sets = load(args[2:])
             print(count(sets, args[0], int(args[1])))

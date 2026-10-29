@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [0.1.35] — 2026-10-29
 
 ### Added
 
@@ -8,14 +8,16 @@
   stack on DPDK, on a NIC of its own; framed TCP, WebSocket and HTTP over TLS
   as `FrameConn<FstackTcp>`, `WsConn<FstackTcp>`, `HttpConn<FstackTcp>`
   (dials' `on_stack`), configured by `Config`'s `fstack_*` keys
-  (`fstack::FstackConf`). Lab-tested in Docker only.
+  (`fstack::FstackConf`). Docker lab test, and measured on AWS against
+  kernel `epoll-spin` (the book's ergon-io section).
 - `ergon-io` `smoltcp-spin` (feature `smoltcp-dpdk`, Linux x86_64 and
   aarch64): TCP and UDP on smoltcp 0.14.0 over a DPDK port, started by
   `smoltcp_dpdk::Stack::init`; `FrameConn<SmolTcp>`, `WsConn<SmolTcp>`,
   `HttpConn<SmolTcp>`, `UdpConn<SmolUdp>`. A 10 ms TCP RTO floor
   (`StackConfig::rto_min_us`; smoltcp's own is 1 s), immediate ACKs, no
   Nagle, timestamps; ARP entries refreshed or the gateway MAC pinned.
-  Lab-tested in Docker only.
+  Docker lab test, and measured on AWS against kernel `epoll-spin`
+  (the book's ergon-io section).
 - `ergon-io` `FrameDial::connect_blocking` and `WsDial::connect_blocking`
   (`HttpDial`'s exists), `Backend::KERNEL`, `Backend::bypasses_kernel`.
 - `ergon-tune` T20 (`t20_irq_idle`): warns when a CPU that takes the data NICs'
@@ -29,6 +31,21 @@
   `ergon-md-dpdk` media driver runs it at start.
 - `ergon-md-dpdk` honours a channel's `socket-tos` (`AERON_SOCKET_TOS`, Aeron
   1.54): the IPv4 ToS byte of DPDK frames, `IP_TOS` on its kernel sockets.
+- The transport suite's bypass matrix (`transport-aws-io-bypass.tsv`): kernel
+  `epoll-spin`, `smoltcp-spin` and `fstack-spin`, TCP echo and WebSocket-over-TLS
+  echo (`wstls_lat`, the same point runner as `tcp_lat`), plus UDP for the
+  kernel and smoltcp. 1 and 8 connections, 10k and 50k msg/s, loss 0, 0.1% and
+  1% on the kernel peer, minimum RTO 8 ms. `fstack_lat --impl ergon` selects
+  `fstack-spin`. `fstack_spin_lat` runs the TCP measuring loop: the ping is
+  `Driver<FrameConn<FstackTcp>>` and writes the row; the pong is the kernel
+  peer (`epoll-spin`). `wstls_fstack_lat` (the same `--features fstack-spin`
+  build) runs WebSocket-over-TLS the same way. `wstls_lat` and `udp_lat`
+  built with `--features smoltcp-dpdk` run the smoltcp measuring loops
+  (`StackConfig::rto_min_us`). A build without the feature still refuses
+  the flag and does not label a kernel socket as that stack. The WebSocket
+  client enables rustls secret extraction, stays on TLS 1.3, trusts the
+  bench certificate and offers no ALPN. The ergon F-Stack clock on that
+  path is 1000 Hz, so the 8 ms floor is 8 ticks (100 Hz rejects it).
 
 ### Changed
 
@@ -82,6 +99,11 @@
   3.1 to 8.4 µs higher). The `c7i` once-a-minute path outage recurred
   (second :25, 4.2 to 16.2 ms). The embedded kernel driver's 1-stream
   millisecond maxima stay listed as unexplained.
+- ergon-io on AWS (`c7i.4xlarge` and `c8g.2xlarge`, one rep each): kernel
+  `epoll-spin` against smoltcp and F-Stack, in the book's transport
+  comparison. This matrix does not show the mixed-load `c7i` outage at
+  second :25. The `c8g` pair has a separate cluster at second :05, on
+  kernel `epoll-spin` only. Every max is labelled.
 - `uring-sqpoll` with its SQPOLL thread on the loop's SMT sibling, against
   mio with SMT off, both on one physical core (TCP round trip, 1
   connection, AWS `c7i.4xlarge`, the IRQ CPU capped at C1): the sibling
