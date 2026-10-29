@@ -18,8 +18,57 @@
   value refuses the pod and names the key. No sysfs scan, no dpdk-devbind,
   no default-route fill.
 
+### Changed
+
+- rusteron 0.2.16 throughout, from 0.2.15: owned archive descriptor
+  pollers and checked counter reads. No ergon code changes were needed.
+- The book's transport comparison ranks only the cells whose echo was
+  pinned: UDP, and F-Stack TCP (`fstack_spin_lat`). Kernel TCP, smoltcp
+  TCP and every WebSocket echo stayed on the housekeeping CPU, so those
+  rows are not ranked. UDP p99 stays under 52 µs (kernel) and under 46
+  (smoltcp) at 0, 0.1% and 1% loss; F-Stack TCP's p99 and max rise with
+  loss (at 1%, p99 2,216 to 255,984 µs, max 20,057 to 417,929). The same
+  page's `c7a` UDP set is the Aeron comparison: DPDK p99 35.4, kernel
+  Aeron p99 48.6, ergon-io kernel UDP p99 58.4 to 61.8. smoltcp was not
+  in that session. F-Stack and smoltcp take the address, gateway and port
+  only from their config, copied from a granted pair; they never detect
+  them. The `c8g` pair's separate cluster at second :05 is on kernel UDP
+  (echo pinned). Every pinned max is labelled.
+- The pinned remeasure of those kernel TCP, smoltcp TCP and WebSocket
+  echoes (`aws-20261029-174643` on `c7i.4xlarge`, us-east-1c;
+  `aws-20261029-190425` on `c8g.2xlarge`, us-east-1b; one rep;
+  `placement_b=ok` on all 60 cells each). Inside that session,
+  smoltcp's no-loss p50 is 3.6 to 6.5 µs below kernel TCP on `c7i` and
+  3.0 to 8.9 below on `c8g`; WebSocket is 3.0 to 7.2 and 3.4 to 10.1
+  below. F-Stack WebSocket is 2.6 to 8.1 and 1.0 to 9.8 below kernel
+  WebSocket. No-loss p99 stays 39.5 to 58.5. At 1% loss every arm's p99
+  is milliseconds, and one `c8g` F-Stack WebSocket cell faults to a
+  15.3 s max and loses 38.0% of its messages. These sessions stay
+  separate from the first sessions' UDP and F-Stack TCP, and from
+  Aeron. No Kubernetes overlay is added: one rep, no A/A arm, and the
+  tails are loss, faults and unexplained maxima.
+- Aeron hugepages, from runs already published. The IPC 2 MiB directory
+  overlaps tmpfs at every load (round trip p50 0.20 to 0.25 against 0.22
+  to 0.25). A sized 2 MiB hugetlbfs is what lets Aeron start. Transparent
+  hugepages off cut an Azure idle tail (p99.99 67 to 53 µs, max 546 to
+  106) and a traced 16.25 µs `khugepaged` max; one AWS run overlaps. The
+  Kubernetes sample documents that Aeron-on-DPDK layout on the existing
+  `eks-ena` overlays (render only). The book and the READMEs link it at
+  `samples/README.md#aws-k8s`. WebSocket, ergon-io TCP and ergon-io
+  on DPDK stay without an overlay: the remeasure is one rep, and its
+  tails are loss, faults and unexplained maxima.
+- `hugepages.ergon.io/<container>: "2M"` now also sets
+  `AERON_FILE_PAGE_SIZE=2097152` and `AERON_TERM_BUFFER_SPARSE_FILE=false`.
+  The process still sets `AERON_DIR`. Address, gateway and PCI stay unset.
+  ergon-tune T23 warns when `AERON_DIR` is on hugetlbfs without those two.
+
 ### Docs
 
+- `md-dpdk/BENCHMARKS.md` records the Azure 288 B loss study (two
+  `Standard_D8ds_v6` pairs): the receive ring overflows while the receiver
+  agent stalls, an 80 KiB window stops the loss at a 2 M msgs/s cap, and
+  the 20 µs conductor park alone does not. Both runs' output files are
+  committed.
 - `samples/README.md` (aws-k8s) and the `ena-driver` component name the
   device plugin as what fills PCI, address and gateway for the Aeron driver,
   and give the two minimum lines; the ergon-io backends page now says the
@@ -74,7 +123,7 @@
 
 ### Changed
 
-- Aeron 1.54.0 (rusteron 0.2.16) throughout: the `aeron` submodule, the Java
+- Aeron 1.54.0 (rusteron 0.2.15) throughout: the `aeron` submodule, the Java
   jars the cluster harness runs, and every crate and sample. Aeron's Gradle
   9.8.2 builds on JDK 17 to 27.
 - `ergon-md-dpdk` pins the driver's agents to CPUs set through the context's
@@ -126,45 +175,9 @@
   millisecond maxima stay listed as unexplained.
 - ergon-io on AWS (`c7i.4xlarge` and `c8g.2xlarge`, one rep each): kernel
   `epoll-spin` against smoltcp and F-Stack, in the book's transport
-  comparison. The ranking uses the cells whose echo was pinned: UDP, and
-  F-Stack TCP (`fstack_spin_lat`). Kernel TCP, smoltcp TCP and every
-  WebSocket echo stayed on the housekeeping CPU, so those rows are not
-  ranked. UDP p99 stays under 52 µs (kernel) and under 46 (smoltcp) at
-  0, 0.1% and 1% loss; F-Stack TCP's p99 and max rise with loss (at 1%,
-  p99 2,216 to 255,984 µs, max 20,057 to 417,929). The same page's `c7a`
-  UDP set is the Aeron comparison: DPDK p99 35.4, kernel Aeron p99 48.6,
-  ergon-io kernel UDP p99 58.4 to 61.8. smoltcp was not in that session.
-  F-Stack and smoltcp do not detect the address, gateway or port. This
-  matrix does not show the mixed-load `c7i` outage at second :25. The
-  `c8g` pair has a separate cluster at second :05 on kernel UDP (echo
-  pinned). Every pinned max is labelled.
-- The pinned remeasure of those kernel TCP, smoltcp TCP and WebSocket
-  echoes (`aws-20261029-174643` on `c7i.4xlarge`, us-east-1c;
-  `aws-20261029-190425` on `c8g.2xlarge`, us-east-1b; one rep;
-  `placement_b=ok` on all 60 cells each). Inside that session,
-  smoltcp's no-loss p50 is 3.6 to 6.5 µs below kernel TCP on `c7i` and
-  3.0 to 8.9 below on `c8g`; WebSocket is 3.0 to 7.2 and 3.4 to 10.1
-  below. F-Stack WebSocket is 2.6 to 8.1 and 1.0 to 9.8 below kernel
-  WebSocket. No-loss p99 stays 39.5 to 58.5. At 1% loss every arm's p99
-  is milliseconds, and one `c8g` F-Stack WebSocket cell faults to a
-  15.3 s max and loses 38.0% of its messages. These sessions stay
-  separate from the first sessions' UDP and F-Stack TCP, and from
-  Aeron. No Kubernetes overlay is added: one rep, no A/A arm, and the
-  tails are loss, faults and unexplained maxima.
-- Aeron hugepages, from runs already published. The IPC 2 MiB directory
-  overlaps tmpfs at every load (round trip p50 0.20 to 0.25 against 0.22
-  to 0.25). A sized 2 MiB hugetlbfs is what lets Aeron start. Transparent
-  hugepages off cut an Azure idle tail (p99.99 67 to 53 µs, max 546 to
-  106) and a traced 16.25 µs `khugepaged` max; one AWS run overlaps. The
-  Kubernetes sample documents that Aeron-on-DPDK layout on the existing
-  `eks-ena` overlays (render only). The book and the READMEs link it at
-  `samples/README.md#aws-k8s`. WebSocket, ergon-io TCP and ergon-io
-  on DPDK stay without an overlay: the remeasure is one rep, and its
-  tails are loss, faults and unexplained maxima.
-- `hugepages.ergon.io/<container>: "2M"` now also sets
-  `AERON_FILE_PAGE_SIZE=2097152` and `AERON_TERM_BUFFER_SPARSE_FILE=false`.
-  The process still sets `AERON_DIR`. Address, gateway and PCI stay unset.
-  ergon-tune T23 warns when `AERON_DIR` is on hugetlbfs without those two.
+  comparison. This matrix does not show the mixed-load `c7i` outage at
+  second :25. The `c8g` pair has a separate cluster at second :05, on
+  kernel `epoll-spin` only. Every max is labelled.
 - `uring-sqpoll` with its SQPOLL thread on the loop's SMT sibling, against
   mio with SMT off, both on one physical core (TCP round trip, 1
   connection, AWS `c7i.4xlarge`, the IRQ CPU capped at C1): the sibling

@@ -205,7 +205,7 @@ checksum = "00d174d5400e5e8fd687ad1049e2f578285fa914201b1af7e8b112a4546bd826"
 
 [[package]]
 name = "ergon-tune"
-version = "0.1.35"
+version = "0.1.36"
 dependencies = [
  "rustix",
 ]
