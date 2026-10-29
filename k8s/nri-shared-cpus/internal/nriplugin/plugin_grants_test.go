@@ -83,6 +83,12 @@ func TestCreateHugepageMountSizedNoCgroupLimit(t *testing.T) {
 	if env[names.EnvHugepageSize] != "2097152" {
 		t.Errorf("%s = %q, want 2097152", names.EnvHugepageSize, env[names.EnvHugepageSize])
 	}
+	if env[latency.EnvAeronPageSize] != "2097152" {
+		t.Errorf("%s = %q, want 2097152", latency.EnvAeronPageSize, env[latency.EnvAeronPageSize])
+	}
+	if env[latency.EnvAeronSparse] != "false" {
+		t.Errorf("%s = %q, want false", latency.EnvAeronSparse, env[latency.EnvAeronSparse])
+	}
 	if _, ok := env[latency.EnvAeronDir]; ok {
 		t.Error("the app points AERON_DIR at $ERGON_HUGEPAGES_DIR/aeron itself; the plugin must not set it")
 	}

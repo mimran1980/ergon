@@ -348,6 +348,12 @@ func TestResolveGrantsHugepageMount(t *testing.T) {
 	if env["ERGON_HUGEPAGE_SIZE"] != "2097152" {
 		t.Errorf("ERGON_HUGEPAGE_SIZE = %q", env["ERGON_HUGEPAGE_SIZE"])
 	}
+	if env["AERON_FILE_PAGE_SIZE"] != "2097152" {
+		t.Errorf("AERON_FILE_PAGE_SIZE = %q", env["AERON_FILE_PAGE_SIZE"])
+	}
+	if env["AERON_TERM_BUFFER_SPARSE_FILE"] != "false" {
+		t.Errorf("AERON_TERM_BUFFER_SPARSE_FILE = %q", env["AERON_TERM_BUFFER_SPARSE_FILE"])
+	}
 	if _, ok := env["ERGON_HUGEPAGES"]; ok {
 		t.Error("ERGON_HUGEPAGES is replaced by ERGON_HUGEPAGES_DIR/_SIZE")
 	}

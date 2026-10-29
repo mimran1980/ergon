@@ -37,7 +37,7 @@ facts.
 
 | # | extension | mechanism | pod opt-in | env the app sees |
 |---|---|---|---|---|
-| 1 | sized hugetlbfs for `AERON_DIR` | NRI `AddMount` `type: hugetlbfs` with `pagesize=2M,size=N`, plus `AddLinuxHugepageLimit`; N is the container's `hugepages-2Mi` limit | `hugepages.ergon.io/<ctr>: "2M"` and a `hugepages-2Mi` resource (requests = limits) | `ERGON_HUGEPAGES_DIR`, `ERGON_HUGEPAGE_SIZE` |
+| 1 | sized hugetlbfs for `AERON_DIR` | NRI `AddMount` `type: hugetlbfs` with `pagesize=2M,size=N`, plus `AddLinuxHugepageLimit`; N is the container's `hugepages-2Mi` limit | `hugepages.ergon.io/<ctr>: "2M"` and a `hugepages-2Mi` resource (requests = limits) | `ERGON_HUGEPAGES_DIR`, `ERGON_HUGEPAGE_SIZE`, `AERON_FILE_PAGE_SIZE=2097152`, `AERON_TERM_BUFFER_SPARSE_FILE=false` |
 | 2 | `cpuset.cpus.partition=isolated` on the exclusive CPUs | a `createRuntime` hook makes a threaded **child** cgroup holding only those CPUs, unions them into the ancestors' `cpuset.cpus.exclusive`, then writes `cpuset.cpus.partition=isolated`, and reads every write back. Takes a process, then single threads (see below) | `cpu-partition.ergon.io/<ctr>: "isolated"` | `ERGON_ISOLATED_CGROUP`, `ERGON_ISOLATED_CPUS`, `ERGON_SHARED_CPUS` |
 | 3 | io_uring seccomp profile | (a) NRI `SetLinuxSeccompPolicy`: the request's profile plus the `io_uring_*` allow rules; (b) fallback, pod field `seccompProfile: Localhost` | `seccomp.ergon.io/<ctr>: "io-uring"` (or the Localhost fallback) | `ERGON_SECCOMP` |
 | 4 | no exec probes, no always-restart sidecars | `ValidatingAdmissionPolicy` (CEL, GA 1.30) | pod label `ergon.io/latency: "hot"` | — |
@@ -80,10 +80,10 @@ flowchart TD
 ### 1. The app owns `AERON_DIR`
 
 The plugin mounts a **sized** hugetlbfs at `/dev/hugepages` and exports
-`ERGON_HUGEPAGES_DIR` and `ERGON_HUGEPAGE_SIZE`. It does **not** set
-`AERON_DIR`. The app creates `$ERGON_HUGEPAGES_DIR/aeron`, points
-`AERON_DIR` there, and, if it runs the media driver, sets
-`AERON_FILE_PAGE_SIZE=$ERGON_HUGEPAGE_SIZE`.
+`ERGON_HUGEPAGES_DIR`, `ERGON_HUGEPAGE_SIZE`, `AERON_FILE_PAGE_SIZE=2097152`
+and `AERON_TERM_BUFFER_SPARSE_FILE=false`. It does **not** set
+`AERON_DIR`. The app creates `$ERGON_HUGEPAGES_DIR/aeron` and points
+`AERON_DIR` there.
 
 Why: an unsized hugetlbfs is what an emptyDir `medium: HugePages` gives
 you, and Aeron refuses it. A 4 KiB `AERON_DIR` takes a page fault on each

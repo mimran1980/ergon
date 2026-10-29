@@ -210,7 +210,7 @@ Settings already in the manifests, and the evidence for each:
 
 | setting | where | evidence |
 |---|---|---|
-| `AERON_DIR=/mnt/huge-aeron/aeron`, `AERON_FILE_PAGE_SIZE=2097152`, `AERON_TERM_BUFFER_SPARSE_FILE=false`, driver `hugepages-2Mi: 2Gi` | `k8s/base/driver.env`, `k8s/base/app.env`, the driver DaemonSet | required for Aeron to start. The IPC 2 MiB directory against tmpfs was not separated at any load ([hugepages](../book/src/transports/comparison.md#hugepages)) |
+| `AERON_DIR=/mnt/huge-aeron/aeron`, `AERON_FILE_PAGE_SIZE=2097152`, `AERON_TERM_BUFFER_SPARSE_FILE=false`, driver `hugepages-2Mi: 2Gi` | `k8s/base/driver.env`, `k8s/base/app.env`, the driver DaemonSet. A pod that opts in with `hugepages.ergon.io/<container>: "2M"` gets the page size and `SPARSE_FILE=false` from the plugin; it still sets `AERON_DIR` | required for Aeron to start. The IPC 2 MiB directory against tmpfs was not separated at any load ([hugepages](../book/src/transports/comparison.md#hugepages)). ergon-tune T23 warns when a hugetlbfs directory is missing either property |
 | `transparent_hugepage=never`, `hugepagesz=2M hugepages=2048` | the node prep row below | a tail result: Azure idle p99.99 67 to 53 µs and idle max 546 to 106 µs; one AWS run overlaps; a traced `khugepaged` drain was a 16.25 µs max. No p50 change is published |
 | `AERON_CLIENT_PRE_TOUCH_MAPPED_MEMORY=true` | `k8s/base/app.env` | no latency figure is published |
 | `RUSTERON_DPDK_HUGE_DIR=/dev/hugepages` | `k8s/base/driver.env` | DPDK packet buffers, about 37 MiB a NIC. `RUSTERON_DPDK_EAL_IN_MEMORY` has no published latency figure |

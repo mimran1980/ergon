@@ -122,6 +122,10 @@
   `eks-ena` overlays (render only). The book and the READMEs link it at
   `samples/README.md#aws-k8s`. WebSocket, ergon-io TCP and ergon-io
   on DPDK stay without an overlay until their echoes are pinned.
+- `hugepages.ergon.io/<container>: "2M"` now also sets
+  `AERON_FILE_PAGE_SIZE=2097152` and `AERON_TERM_BUFFER_SPARSE_FILE=false`.
+  The process still sets `AERON_DIR`. Address, gateway and PCI stay unset.
+  ergon-tune T23 warns when `AERON_DIR` is on hugetlbfs without those two.
 - `uring-sqpoll` with its SQPOLL thread on the loop's SMT sibling, against
   mio with SMT off, both on one physical core (TCP round trip, 1
   connection, AWS `c7i.4xlarge`, the IRQ CPU capped at C1): the sibling

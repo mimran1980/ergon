@@ -538,14 +538,23 @@ func TestGrantEnvHugepages(t *testing.T) {
 	if got[EnvHugepageSize] != "2097152" {
 		t.Errorf("%s missing from GrantEnv", EnvHugepageSize)
 	}
+	if got[EnvAeronPageSize] != "2097152" {
+		t.Errorf("%s = %q, want 2097152", EnvAeronPageSize, got[EnvAeronPageSize])
+	}
+	if got[EnvAeronSparse] != "false" {
+		t.Errorf("%s = %q, want false", EnvAeronSparse, got[EnvAeronSparse])
+	}
 	if _, ok := got["ERGON_HUGEPAGES"]; ok {
 		t.Error("ERGON_HUGEPAGES is replaced by ERGON_HUGEPAGES_DIR/_SIZE and must not be set")
+	}
+	if _, ok := got[EnvAeronDir]; ok {
+		t.Error("the app points AERON_DIR at $ERGON_HUGEPAGES_DIR/aeron itself; the plugin must not set it")
 	}
 }
 
 func TestGrantEnvNoHugepages(t *testing.T) {
 	got := kvMap(GrantEnv(EnvGrant{}))
-	for _, k := range []string{EnvHugepagesDir, EnvHugepageSize, "ERGON_HUGEPAGES"} {
+	for _, k := range []string{EnvHugepagesDir, EnvHugepageSize, EnvAeronPageSize, EnvAeronSparse, EnvAeronDir, "ERGON_HUGEPAGES"} {
 		if _, ok := got[k]; ok {
 			t.Errorf("%s must be absent when no hugepage mount was granted", k)
 		}

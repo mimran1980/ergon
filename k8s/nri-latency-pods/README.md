@@ -46,7 +46,7 @@ text in the pod's events as `CreateContainerError` and it names the fix.
 
 | # | extension | mechanism | pod opt-in | env the app sees |
 |---|---|---|---|---|
-| 1 | sized hugetlbfs mount for `AERON_DIR` | NRI `AddMount` `type: hugetlbfs` with `pagesize=2M,size=N` + `AddLinuxHugepageLimit`; N = the container's `hugepages-2Mi` limit | `hugepages.ergon.io/<ctr>: "2M"` + `hugepages-2Mi` (requests = limits) | `ERGON_HUGEPAGES_DIR`, `ERGON_HUGEPAGE_SIZE` |
+| 1 | sized hugetlbfs mount for `AERON_DIR` | NRI `AddMount` `type: hugetlbfs` with `pagesize=2M,size=N` + `AddLinuxHugepageLimit`; N = the container's `hugepages-2Mi` limit | `hugepages.ergon.io/<ctr>: "2M"` + `hugepages-2Mi` (requests = limits) | `ERGON_HUGEPAGES_DIR`, `ERGON_HUGEPAGE_SIZE`, `AERON_FILE_PAGE_SIZE=2097152`, `AERON_TERM_BUFFER_SPARSE_FILE=false` |
 | 2 | `cpuset.cpus.partition=isolated` on the exclusive CPUs | `createRuntime` hook makes a **child** cgroup holding only E, writes `cpuset.cpus.exclusive` down the hierarchy, then `cpuset.cpus.partition=isolated`, and reads it back | `cpu-partition.ergon.io/<ctr>: "isolated"` | `ERGON_ISOLATED_CGROUP`, `ERGON_ISOLATED_CPUS`, `ERGON_SHARED_CPUS` |
 | 3 | io_uring seccomp profile | (a) NRI `SetLinuxSeccompPolicy`: a clone of the request's profile plus the `io_uring_*` allow rule; (b) fallback, pod field `seccompProfile: Localhost` | `seccomp.ergon.io/<ctr>: "io-uring"` (or none, for the Localhost fallback) | `ERGON_SECCOMP` |
 | 4 | admission: refuse exec probes and always-restart sidecars | `ValidatingAdmissionPolicy` (CEL, GA 1.30) | pod label `ergon.io/latency: "hot"` | — |
@@ -55,10 +55,11 @@ text in the pod's events as `CreateContainerError` and it names the fix.
 ### Item 1: the app owns `AERON_DIR`
 
 The plugin mounts a **sized** hugetlbfs at `/dev/hugepages` and exports
-`ERGON_HUGEPAGES_DIR` and `ERGON_HUGEPAGE_SIZE`. It does **not** set
-`AERON_DIR`. The app creates `$ERGON_HUGEPAGES_DIR/aeron`, points `AERON_DIR`
-there, sets `AERON_FILE_PAGE_SIZE=$ERGON_HUGEPAGE_SIZE`, and does not set
-`AERON_PERFORM_STORAGE_CHECKS=false`.
+`ERGON_HUGEPAGES_DIR`, `ERGON_HUGEPAGE_SIZE`, `AERON_FILE_PAGE_SIZE=2097152`
+and `AERON_TERM_BUFFER_SPARSE_FILE=false`. It does **not** set `AERON_DIR`.
+The app creates `$ERGON_HUGEPAGES_DIR/aeron` and points `AERON_DIR` there.
+It does not set `AERON_PERFORM_STORAGE_CHECKS=false`. The address, the
+gateway and the PCI address are not filled in.
 
 `emptyDir: {medium: HugePages-2Mi}` is the wrong shape: Kubernetes mounts it
 without a `size=`, and Aeron refuses an unsized hugetlbfs. A sized hugetlbfs
@@ -197,7 +198,7 @@ Why it is off: its one committed A/B (run `070339Z`, `rt` arm) is mixed, and und
 
 | annotation | value | env the app sees |
 |---|---|---|
-| `hugepages.ergon.io/<ctr>` | `2M` | `ERGON_HUGEPAGES_DIR`, `ERGON_HUGEPAGE_SIZE` (the app sets `AERON_DIR`) |
+| `hugepages.ergon.io/<ctr>` | `2M` | `ERGON_HUGEPAGES_DIR`, `ERGON_HUGEPAGE_SIZE`, `AERON_FILE_PAGE_SIZE`, `AERON_TERM_BUFFER_SPARSE_FILE` (the app sets `AERON_DIR`) |
 | `cpu-partition.ergon.io/<ctr>` | `isolated` | `ERGON_ISOLATED_CGROUP`, `ERGON_ISOLATED_CPUS`, `ERGON_SHARED_CPUS` |
 | `seccomp.ergon.io/<ctr>` | `io-uring` or `runtime-default` | `ERGON_SECCOMP` |
 | `ptp.ergon.io/<ctr>` | `off`, `auto`, or `/dev/ptpN` | `ERGON_PTP_DEVICE`, `ERGON_NODE_FACTS` |

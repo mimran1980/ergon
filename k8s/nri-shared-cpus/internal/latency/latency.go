@@ -460,9 +460,14 @@ func HugepageMount(limitBytes int64) (HugepageSpec, []KV, error) {
 		LimitBytes: limitBytes,
 		PageSize:   HugepagePageSize,
 	}
+	// Page size and non-sparse terms match this 2 MiB mount. AERON_DIR stays
+	// unset: the process creates $ERGON_HUGEPAGES_DIR/aeron and points it
+	// there. Address, gateway and PCI are not set either.
 	envs := []KV{
 		{EnvHugepagesDir, HugepageMountPoint},
 		{EnvHugepageSize, strconv.Itoa(HugepageSizeBytes)},
+		{EnvAeronPageSize, strconv.Itoa(HugepageSizeBytes)},
+		{EnvAeronSparse, "false"},
 	}
 	return spec, envs, nil
 }
@@ -516,6 +521,7 @@ const (
 	EnvNodeFacts      = "ERGON_NODE_FACTS"
 	EnvAeronDir       = "AERON_DIR"
 	EnvAeronPageSize  = "AERON_FILE_PAGE_SIZE"
+	EnvAeronSparse    = "AERON_TERM_BUFFER_SPARSE_FILE"
 )
 
 // EnvGrant is the grant set one container got. A zero field means "not

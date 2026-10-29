@@ -26,6 +26,7 @@
 //! | T20 | [`t20_irq_idle`] | no caller in this repository (the lab's transport suite caps the IRQ CPU itself) |
 //! | T21 | [`t21_tcp_autocorking`] | no caller in this repository (the lab's transport suite sets it off itself) |
 //! | T22 | [`t22_aeron_affinity_names`] | md |
+//! | T23 | [`t23_aeron_hugepage_env`] | md |
 //! | K1-K6 | [`k8s_checks`] (with T7 and T9), inside a pod only | io |
 //! | K7 | [`k8s_checks`] with [`Needs::with_nic`] | no caller in this repository names a NIC |
 //! | N1 (`nic`) | `n1_adaptive_rx` | io, md (kernel sockets) |
@@ -77,7 +78,7 @@ mod report;
 mod tcp;
 mod time;
 
-pub use aeron::t22_aeron_affinity_names;
+pub use aeron::{AERON_HUGEPAGE_BYTES, t22_aeron_affinity_names, t23_aeron_hugepage_env};
 pub use cpu::{
     SchedPolicy, Thread, t1_isolation, t7_sched_policy, t8_smt_siblings, t10_smt_on,
     thread_affinity, thread_policy,
