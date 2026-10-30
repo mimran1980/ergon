@@ -38,7 +38,7 @@ use ergon_tune::{
     Component, Ethtool, EthtoolCache, Finding, Host, HostCheckError, HostCheckPolicy, HotSet,
     Needs, Netlink, Nic, Role, SILENCE, Severity, Status, Thread, carrier_changes, host_check_line,
     k8s_checks, n1_adaptive_rx, n2_deferred_irqs, n3_azure_vf, t1_isolation, t2_nic_irqs, t3_thp,
-    t7_sched_policy, t8_smt_siblings, t9_cpu_quota, t10_smt_on, thread_affinity,
+    t7_sched_policy, t8_smt_siblings, t9_cpu_quota, t10_smt_on, t24_dpdk_nic_pair, thread_affinity,
 };
 
 use crate::backend::{Backend, Config};
@@ -224,7 +224,8 @@ impl HostReport {
 ///
 /// For a driver created by the calling thread: T1 and T8 on the loop CPU
 /// (and `sqpoll_cpu` for `uring-sqpoll`) when it is known, T7 on the
-/// calling thread, T9 on the process's cgroup, and T3 as information.
+/// calling thread, T9 on the process's cgroup, T3 as information, and T24
+/// on the device plugin's NIC pair for the DPDK backends.
 #[must_use]
 pub fn host_report(host: &Host, cfg: &Config) -> HostReport {
     let loop_cpu = cfg.loop_cpu.map_or_else(
@@ -267,6 +268,10 @@ pub fn host_report(host: &Host, cfg: &Config) -> HostReport {
     findings.push(t9_cpu_quota(host));
     findings.extend(t3_thp(host, Component::Io));
     findings.push(t10_smt_on(host));
+    // this process's environment, which only the running host has; the
+    // sender pair applies to the DPDK backends alone.
+    let read_env = |name: &str| host.is_live().then(|| std::env::var(name).ok()).flatten();
+    findings.push(t24_dpdk_nic_pair(cfg.backend.bypasses_kernel(), read_env));
     // Inside a pod only: what its settings do to this layout (K1-K7, with
     // T7 and T9 again). Busy polling needs `CAP_NET_ADMIN`.
     let mut needs = Needs::new(Thread::Current, Role::Loop);

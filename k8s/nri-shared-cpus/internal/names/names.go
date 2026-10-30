@@ -73,6 +73,11 @@ const (
 	// /dev/cpu_dma_latency (PM QoS). The value is the target latency in
 	// microseconds. x86 only: ignored on arm64.
 	CpuqosPrefix = "cpuqos.ergon.io/"
+	// DpdkPrefix + container name is the opt-in pod annotation that makes the
+	// plugin copy the NIC pair the ENA device plugin already granted this
+	// container into five env keys. Default off: without the annotation
+	// nothing is exported, and the plugin never guesses a value of its own.
+	DpdkPrefix = "dpdk.ergon.io/"
 
 	// EnvIsolated is the container's exclusive CPUs, a sorted comma list.
 	EnvIsolated = "ERGON_ISOLATED_CPUS"
@@ -126,4 +131,6 @@ const (
 	CpuPartitionValue = "isolated"
 	// CpuPartitionChild is the child cgroup name under the container cgroup.
 	CpuPartitionChild = "ergon-isolated"
+	// DpdkEnaPairValue is the only accepted dpdk.ergon.io value.
+	DpdkEnaPairValue = "ena-pair"
 )

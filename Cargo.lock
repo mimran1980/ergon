@@ -829,7 +829,7 @@ checksum = "00d174d5400e5e8fd687ad1049e2f578285fa914201b1af7e8b112a4546bd826"
 
 [[package]]
 name = "ergo-aeron-cluster"
-version = "0.1.35"
+version = "0.1.36"
 dependencies = [
  "criterion",
  "ergo-sbe",
@@ -843,7 +843,7 @@ dependencies = [
 
 [[package]]
 name = "ergo-aeron-cluster-test-harness"
-version = "0.1.35"
+version = "0.1.36"
 dependencies = [
  "ergo-aeron-cluster",
  "rusteron-client",
@@ -853,7 +853,7 @@ dependencies = [
 
 [[package]]
 name = "ergo-sbe"
-version = "0.1.35"
+version = "0.1.36"
 dependencies = [
  "bytes",
  "chrono",
@@ -875,7 +875,7 @@ dependencies = [
 
 [[package]]
 name = "ergo-sbe-benchmarks"
-version = "0.1.35"
+version = "0.1.36"
 dependencies = [
  "bytes",
  "chrono",
@@ -893,7 +893,7 @@ dependencies = [
 
 [[package]]
 name = "ergon-io"
-version = "0.1.35"
+version = "0.1.36"
 dependencies = [
  "base64 0.23.1",
  "cc",
@@ -917,7 +917,7 @@ dependencies = [
 
 [[package]]
 name = "ergon-latency-core"
-version = "0.1.35"
+version = "0.1.36"
 dependencies = [
  "hdrhistogram",
  "libc",
@@ -927,7 +927,7 @@ dependencies = [
 
 [[package]]
 name = "ergon-md-dpdk"
-version = "0.1.35"
+version = "0.1.36"
 dependencies = [
  "cc",
  "criterion",
@@ -944,7 +944,7 @@ dependencies = [
 
 [[package]]
 name = "ergon-md-dpdk-device-plugin"
-version = "0.1.35"
+version = "0.1.36"
 dependencies = [
  "env_logger",
  "hyper-util",
@@ -963,7 +963,7 @@ dependencies = [
 
 [[package]]
 name = "ergon-md-dpdk-harness"
-version = "0.1.35"
+version = "0.1.36"
 dependencies = [
  "env_logger",
  "ergon-latency-core",
@@ -979,7 +979,7 @@ dependencies = [
 
 [[package]]
 name = "ergon-tune"
-version = "0.1.35"
+version = "0.1.36"
 dependencies = [
  "rustix",
 ]
@@ -1585,9 +1585,9 @@ dependencies = [
 
 [[package]]
 name = "libz-sys"
-version = "1.1.30"
+version = "1.1.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f710a23e6dbf193214fd46ca56a9d6864e550abe86202184532ae7275e46de19"
+checksum = "ff20308ecabd635a2dc1dd5834a86c462cca20efba1d5d3ddab1f8aea3455cb2"
 dependencies = [
  "cc",
  "libc",
@@ -2483,9 +2483,9 @@ checksum = "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d"
 
 [[package]]
 name = "rusteron-client"
-version = "0.2.15"
+version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4bf180c74f10f39774fcd9ce401993eb19117fbe29eacc895fca844fc27d0f5"
+checksum = "aa444676ea700f39e58b145a1e6d623c92b6d44a7153ca7e3cc9c20c7aac8522"
 dependencies = [
  "bindgen",
  "cmake",
@@ -2499,9 +2499,9 @@ dependencies = [
 
 [[package]]
 name = "rusteron-code-gen"
-version = "0.2.15"
+version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97dcfb6e38a1c486c64cde1eec6edee9ae047f96ca9a8f07176b0c397a812f6b"
+checksum = "47bccf4af5b265bdf485e6aa3f6c8de829da08e4efc643059ecef68892f2800d"
 dependencies = [
  "itertools 0.15.0",
  "log",
@@ -2513,9 +2513,9 @@ dependencies = [
 
 [[package]]
 name = "rusteron-media-driver"
-version = "0.2.15"
+version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11bdf98e5b252d8a567a29b4a3beac2ea295178a5b4827ac516b90ddbffac0c8"
+checksum = "b9a2d91b1cfe142a324e4fa94ef91588e430cda14e09d05701af84efa4d0940b"
 dependencies = [
  "bindgen",
  "cmake",

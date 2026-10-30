@@ -6,8 +6,8 @@ description = "Multi-exchange IPC sample: Bitget WebSocket → Aeron IPC, with B
 publish = false
 
 [dependencies]
-rusteron-client = "0.2.15"
-rusteron-media-driver = "0.2.15"
+rusteron-client = "0.2.16"
+rusteron-media-driver = "0.2.16"
 rust_decimal = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

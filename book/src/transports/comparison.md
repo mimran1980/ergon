@@ -45,10 +45,13 @@ median of the reps' maxima, with the range across reps in brackets after it.
 | TCP with 8 to 128 connections into one loop: mio or ergon-io? | Not measured fairly on Azure. On AWS, 8 connections into one loop: p50 within 0.6 to 1.0 (mio lower) | [AWS](#mio-against-ergon-io-the-verdict) |
 | Between hosts, lowest latency (AWS, DPDK allowed)? | Aeron on DPDK (md-dpdk). Reliable p50 27.5 to 30.7 at 1 and 8 streams, 10,000 to 200,000 msg/s: 3.9 to 5.9 below F-Stack TCP (23 at 1 stream, 200,000 msg/s) and 12.3 to 23.9 below kernel Aeron. Unreliable p50 28.0 against kernel Aeron 40.9, mio 47.7, ergon-io 48.4 (50,000 msg/s). Costs: 4 busy threads a host | [AWS](#aws-dpdk-f-stack-and-kernel) |
 | TCP on DPDK (F-Stack) or kernel TCP (AWS)? | F-Stack. p50 lower by 17 to 19 at 10,000 msg/s and 26 to 28 at 50,000 (32.1 to 35.0 against 52.2 to 61.1), and below kernel Aeron reliable by 8.4 to 19.5. At 200,000 msg/s F-Stack keeps up (p50 50.4 at 1 stream, 34.7 at 8) while kernel TCP falls 5 to 16 s behind. 1 busy thread | [AWS](#aws-dpdk-f-stack-and-kernel) |
-| ergon-io TCP, no loss: kernel `epoll-spin`, smoltcp or F-Stack? (`c7i` and `c8g`, one rep, no A/A arm) | F-Stack for the tail. Its TCP max is 134.6 to 359.3; kernel and smoltcp p99.99 sit at 2,189 to 3,254 and their max at 2,624 to 3,853, each unexplained. p50 at 8 connections: F-Stack 6.75 to 9.01 below the kernel and smoltcp 5.92 to 8.78, on both machines, both rates and all three loss levels. At 1 connection F-Stack is 1.20 to 4.45 below, except the `c7i` 1% / 50,000 cell whose measuring thread faulted (p50 47.6 against the kernel's 45.6). smoltcp's p50 stays with F-Stack. WebSocket-over-TLS keeps the p50 gap and not F-Stack's tail | [io bypass](#ergon-io-kernel-smoltcp-and-f-stack) |
+| ergon-io TCP, no loss: kernel `epoll-spin`, smoltcp or F-Stack? (`c7i` and `c8g`, one rep, no A/A arm) | F-Stack TCP (the first sessions) and kernel and smoltcp TCP (the remeasure) are different runs, so they are not ranked against each other. Inside the remeasure, smoltcp TCP's no-loss p50 is 3.6 to 6.5 below kernel TCP on `c7i` and 3.0 to 8.9 below on `c8g`. F-Stack TCP's own no-loss p99 is 38.8 to 53.2, max 134.6 to 359.3 | [io bypass](#ergon-io-kernel-smoltcp-and-f-stack) |
 | UDP: kernel `epoll-spin` or smoltcp? | smoltcp. No loss, p50 5.70 to 7.49 below on `c7i` and 3.78 to 4.02 below on `c8g`. Both lose the kernel peer's drops and nothing at 0% | [io bypass](#ergon-io-kernel-smoltcp-and-f-stack) |
-| Does this `c7i` pair show the once-a-minute ~15 ms outage? | No. No periodic cluster in the 96 points. Maxima of 20 ms and more are loss cells: a TCP retransmit after a netem drop, a page fault of the measuring thread, or unexplained (no recorded event). Two are 0.1% loss and the rest are 1%. The second-:25 outage remains the mixed-load session | [io bypass](#ergon-io-kernel-smoltcp-and-f-stack), [mixed load](#maxima-and-the-c7i-path-outages) |
-| Graviton, once a minute, in this bypass run? | A different cluster. Ten kernel `epoll-spin` points (UDP, and two WebSocket at 10,000 msg/s), max 4,676 to 9,298, all at second :05. p50 does not move. smoltcp and F-Stack are not in it | [io bypass](#ergon-io-kernel-smoltcp-and-f-stack) |
+| Pinned p99 and max, UDP, TCP and WebSocket, including loss? | UDP (first sessions) p99 stays under 52 (kernel) and under 46 (smoltcp) at 0, 0.1% and 1%. F-Stack TCP no-loss p99 38.8 to 53.2, max 134.6 to 359.3; at 1% its max is 20,057 to 417,929. The remeasure's no-loss p99 is 39.5 to 48.4 (smoltcp TCP), 43.0 to 56.5 (kernel TCP), 39.9 to 49.5 (smoltcp WebSocket), 41.9 to 48.9 (F-Stack WebSocket) and 46.2 to 58.5 (kernel WebSocket). At 1% every remeasure arm's p99 is milliseconds, and one `c8g` F-Stack WebSocket cell faults to a 15.3 s max | [io bypass](#ergon-io-kernel-smoltcp-and-f-stack) |
+| ergon-io UDP against Aeron kernel UDP and Aeron on DPDK? | Same session only. AWS `c7a`, 1 stream, 50,000 msg/s: Aeron on DPDK p99 35.4 (max 169 to 178), Aeron on the kernel p99 48.6 (max 414 to 445), ergon-io kernel UDP p99 58.4 to 61.8 (max 226 to 553). smoltcp UDP was measured on `c7i` and `c8g`, not in that session | [unreliable UDP](#unreliable-udp-u) |
+| Does this `c7i` pair show the once-a-minute ~15 ms outage? | No. `spikes.py` names no periodic cluster in `aws-20261029-040029` (96 points, 36 with the echo pinned) and none in the remeasure `aws-20261029-174643` (60 points, echo pinned). Among the first 36, maxima of 20 ms and more are 1% loss: three TCP retransmits (20,057 to 51,890) and one page fault (417,929). The second-:25 outage remains the mixed-load session | [io bypass](#ergon-io-kernel-smoltcp-and-f-stack), [mixed load](#maxima-and-the-c7i-path-outages) |
+| Graviton, once a minute, in this bypass run? | Two clusters, two sessions. `aws-20261029-055245`: eight kernel `epoll-spin` UDP points, echo pinned, max 5,499 to 9,298, all at second :05; p50 stays 33.2 to 34.1. The remeasure `aws-20261029-190425`: nine points at second :58, max 5,569 to 9,656, p50 32.4 to 36.0, across kernel TCP, kernel WebSocket, smoltcp and F-Stack WebSocket | [io bypass](#ergon-io-kernel-smoltcp-and-f-stack) |
+| Did hugepages change Aeron's latency? | The IPC page-size A/B did not. Round trip p50 is 0.22 against 0.20 at 10,000 msg/s, 0.22 against 0.21 at 1,000,000, and 0.25 against 0.25 at 5,000,000. A sized 2 MiB hugetlbfs is what lets Aeron start. Transparent hugepages off is a tail result: Azure idle p99.99 67 to 53 µs and idle max 546 to 106; one AWS run overlaps; a traced `khugepaged` drain was a 16.25 µs max | [hugepages](#hugepages) |
 
 ## What was compared
 
@@ -66,7 +69,7 @@ median of the reps' maxima, with the range across reps in brackets after it.
 | AWS spy | a spy whose publications also send over UDP | `aeron-spy` (no destination), `aeron-spy-udp` (kernel, to a sink on host b), `dpdk-aeron-spy-udp` | 1 | 50,000 | one way and round trip |
 | AWS h, k | the driver's threading modes | `dpdk-aeron-rel` and `aeron-rel` with the driver dedicated, in-process (`-emb`), `SHARED_NETWORK` (`-shnet`), `SHARED` (`-shared`), `INVOKER` (`-invoker`) | 1 | h: 10,000; 50,000; 200,000. k: 50,000 | round trip |
 | AWS mixed (`c7i`, `c8g`) | the driver's threading modes under mixed load | `dpdk-aeron-mix` and `aeron-mix` with the same five threadings | 32, 128 (1 hot, the rest background) | 50,000; 200,000 | round trip, hot stream and all streams |
-| AWS io (`c7i`, `c8g`) | ergon-io kernel against smoltcp and F-Stack | `epoll-spin`, `smoltcp-spin`, `fstack-spin`; TCP echo and WebSocket-over-TLS for all three; UDP for the kernel and smoltcp. Loss on the kernel peer, not on the bypass NIC. No A/A arm | 1, 8 | 10,000; 50,000 | round trip, one rep |
+| AWS io (`c7i`, `c8g`) | ergon-io kernel against smoltcp and F-Stack | `epoll-spin`, `smoltcp-spin`, `fstack-spin`; TCP echo and WebSocket-over-TLS for all three; UDP for the kernel and smoltcp. Loss on the kernel peer, not on the bypass NIC. No A/A arm. UDP and F-Stack TCP are `aws-20261029-040029` and `aws-20261029-055245`. Kernel TCP, smoltcp TCP and WebSocket are the remeasure `aws-20261029-174643` and `aws-20261029-190425`. Every ranked cell has `placement_b=ok` | 1, 8 | 10,000; 50,000 | round trip, one rep |
 
 Every set except AWS io adds an A/A arm (`aa`: one of its arms run again
 in the same round), so a difference smaller than two runs of the same arm
@@ -388,7 +391,9 @@ offset between the two CPUs.
 
 - **Round trip, 10,000 msg/s:** Aeron IPC lower than `mpsc` by 0.11 at p50
   and 0.07 at p99. `aeron-ipc` and `aeron-ipc-huge` (2 MiB pages) are not
-  separated anywhere: the page size does not matter here.
+  separated anywhere: the page size does not matter here. That A/B, the
+  sized mount Aeron needs in order to start, and transparent hugepages are
+  three different things: [Hugepages](#hugepages).
 - **1,000,000 msg/s:** nothing separated. One A/A rep ran slow (p50 1.34,
   max 4,454; its max unexplained), which widens the A/A spread to 1.05 at p50.
 - **5,000,000 msg/s:** `mpsc` cannot keep a round trip at this rate: the
@@ -411,6 +416,56 @@ offset between the two CPUs.
   of the trace (36 to 61 s), which a thread that kept measuring cannot have
   had, so the label is a defect of `spikes.py`. A `kworker` ran on the CPU
   inside two of those spans: a candidate, not shown to be the cause.
+
+### Hugepages
+
+Three mechanisms share the name. Each row below is one of them, from the
+run that measured it. They are not one result, and none of them is a p50
+win for Aeron.
+
+**Explicit 2 MiB directory against tmpfs (set 1, this session).**
+`aeron-ipc-huge` puts `AERON_DIR` on 2 MiB pages. `aeron-ipc` uses tmpfs.
+Round trip, µs, median of 3 reps:
+
+| msg/s | `aeron-ipc` p50 | `aeron-ipc-huge` p50 | p99, both |
+|---|---|---|---|
+| 10,000 | 0.22 (0.21–0.22) | 0.20 (0.19–0.21) | 0.39 |
+| 1,000,000 | 0.22 (0.21–0.22) | 0.21 (0.19–0.22) | 0.30 and 0.29 |
+| 5,000,000 | 0.25 (0.25–0.26) | 0.25 (0.25–0.25) | 0.38 |
+
+One way, the same points, p50 is 0.10 against 0.10, 0.11 against 0.10, and
+0.11 against 0.09. The arms overlap at every load. The huge arm's 10,000
+msg/s max reaches 743 in one rep (median of maxima 125, against 146); the
+causes are a host pause or unexplained, the same labels as `aeron-ipc`.
+`md-dpdk/BENCHMARKS.md` records the same non-separation.
+
+**A sized 2 MiB hugetlbfs is what lets Aeron start.** `AERON_DIR` on a
+sized 2 MiB hugetlbfs, `AERON_FILE_PAGE_SIZE=2097152`, and
+`AERON_TERM_BUFFER_SPARSE_FILE=false`. An unsized hugetlbfs reports no
+free space, and Aeron refuses every log buffer. That is a start-up
+requirement
+([configuration](../md-dpdk/configuration.md#aeron-settings),
+[deploy](../deploy/hft.md)). It was not a latency A/B, and it is not the
+set 1 page-size comparison. `AERON_CLIENT_PRE_TOUCH_MAPPED_MEMORY` has no
+published latency figure. DPDK's packet buffers are a third pool, about
+37 MiB a NIC at the lab default; `RUSTERON_DPDK_EAL_IN_MEMORY` has no
+published latency figure either
+([configuration](../md-dpdk/configuration.md)).
+
+**Transparent hugepages off is a tail result.** `khugepaged` builds large
+pages in the background and its `lru_add_drain_all` runs a kworker on
+every CPU with queued pages.
+
+| where | what changed | figures |
+|---|---|---|
+| Azure rounds 4 and 6 | transparent hugepages off | idle p99.99 67 to 53 µs, idle max 546 to 106 µs (`md-dpdk/BENCHMARKS-ROUNDS-2026-10-18.md`). The round-3 trace that prompted it: 8–22 µs kworker LRU drains every 10.24 s on the agent CPUs |
+| AWS `aws-20261014-113947`, one run | the same switch | overlaps: idle p99.99 53.15 against 67.01 µs, max 90 (77–1,180) against 94 (80–498). Published as not separated ([configuration](../md-dpdk/configuration.md#aeron-settings)) |
+| `k8s/nri-shared-cpus`, run 20261024233129 | a trace of `khugepaged` on the housekeeping CPU | `lru_add_drain_all` ran `kworker` on the isolated CPU for 6 µs: that rep's only involuntary switch and its 16.25 µs max. With `transparent_hugepage=never` (run 20261024234841) the three untraced reps took 0 switches |
+
+The Kubernetes sample sets the sized directory and `transparent_hugepage=never`
+because of the start-up requirement and this tail evidence. It does not
+set them as a measured p50 improvement.
+[AWS Kubernetes](https://github.com/mimran1980/ergon/blob/main/samples/README.md#aws-k8s).
 
 ### Set 2a: unreliable UDP between hosts
 
@@ -1535,9 +1590,10 @@ Hot p50 above the pair's `dpdk-raw` floor (µs):
   set the session's p99.99 and max and leave p50 and p99 alone. This is
   the once-a-minute `c7i` outage seen before, at a fixed second per pair;
   the Graviton sessions had none. The later ergon-io bypass runs are
-  separate: their `c7i` pair has no such cluster, and their `c8g` pair has
-  one at second :05 (4.7 to 9.3 ms, kernel UDP and two kernel WebSocket
-  points; [ergon-io](#ergon-io-kernel-smoltcp-and-f-stack)). 11 smaller stalls (1.3 to 5.7 ms) fell
+  separate: neither `c7i` session has such a cluster. `aws-20261029-055245`
+  has one at second :05 on kernel UDP whose echo was pinned (5.5 to 9.3 ms).
+  The remeasure `aws-20261029-190425` has a different one at second :58
+  (5.6 to 9.7 ms). [ergon-io](#ergon-io-kernel-smoltcp-and-f-stack). 11 smaller stalls (1.3 to 5.7 ms) fell
   at other seconds, unexplained.
 - **Intel DPDK** (the other pair, same zone, same hours): no mixed point's
   hot stream over 1 ms (max 850 µs). The background streams' max was 4.2
@@ -1592,14 +1648,15 @@ the named stack on host A. The pong is kernel `epoll-spin` on host B, for
 every arm, including F-Stack and smoltcp. Round trip, µs, from the
 intended send time, 64-byte payload, one busy thread a host. One rep
 (`LAB_REPS=1`): each figure is that rep, not a median of three, and the
-set has no A/A arm, so a gap of a couple of microseconds is the measured
-difference and is not separated from run-to-run noise. The 8-connection
-gap below is the one that repeats.
+set has no A/A arm, so a gap of a couple of microseconds on a pinned-echo
+cell is the measured difference and is not separated from run-to-run noise.
 
 | session | hosts | region | points |
 |---|---|---|---|
 | `aws-20261029-040029` | two `c7i.4xlarge`, on demand | us-east-1a | 96, 0 failures |
 | `aws-20261029-055245` | two `c8g.2xlarge`, on demand | us-east-1a | 96, 0 failures |
+| `aws-20261029-174643` | two `c7i.4xlarge`, on demand | us-east-1c | 60, 0 failures |
+| `aws-20261029-190425` | two `c8g.2xlarge`, on demand | us-east-1b | 60, 0 failures |
 
 The pairs ran one after the other. Both were deleted and the lab's
 verified line is empty of instances, volumes, snapshots, addresses, NAT
@@ -1615,66 +1672,47 @@ F-Stack TCP 134 (timestamps on), WebSocket-over-TLS 129 on all three,
 UDP 106. That 12-byte timestamp difference is F-Stack's TCP, and it is
 not what the tail below is.
 
-smoltcp and F-Stack are the stacks under test. The kernel's `epoll-spin`
-is the baseline on the same hosts.
+Echo placement decides which cells this page ranks. In
+`aws-20261029-040029` and `aws-20261029-055245`, UDP (`udp_lat`) and
+F-Stack TCP (`fstack_spin_lat`) pinned the echo: `placement_b=ok` on all
+36 of those points in each session. Kernel TCP, smoltcp TCP and every
+WebSocket arm in those two sessions left the echo on the housekeeping
+CPU. Those 60 points a session were run again, with the echo pinned
+before listen, as `aws-20261029-174643` (`c7i`, us-east-1c, tree
+`a23dd7da`) and `aws-20261029-190425` (`c8g`, us-east-1b, tree
+`ba46fa9a`). All 60 have `placement_b=ok`. One host-a sample was unread
+in each (`c7i` F-Stack WebSocket, 1 connection, 50,000, no loss; `c8g`
+kernel WebSocket, 8 connections, 10,000, no loss). The first two
+sessions' UDP and F-Stack TCP tables are unchanged. Kernel TCP, smoltcp
+TCP and WebSocket below are the remeasure only.
 
 ### No loss
 
-`fstack-spin` TCP is the arm whose tail stays in microseconds: p99 38.8
-to 53.2, p99.99 68.7 to 112.1, max 134.6 to 359.3, both machines and all
-four loads. Kernel and smoltcp TCP, and every WebSocket arm, have p99.99
-at 2,084 to 3,422 and a max of 2,593 to 4,172, except two Graviton kernel
-points that hit the second-:05 outage below (max 4,676 and 8,504).
-smoltcp's p50 sits with F-Stack. Its no-loss tail sits with the kernel.
+`fstack-spin` TCP, echo pinned, first sessions: p99 38.8 to 53.2,
+p99.99 68.7 to 112.1, max 134.6 to 359.3, both machines and all four
+loads. Each of those maxima is unexplained (one of them a host TCP
+counter with no netem drop). Kernel TCP, smoltcp TCP and WebSocket from
+the same sessions are not in this table. Their pinned rerun is below.
 
-At 8 connections, TCP p50 against kernel `epoll-spin` is 6.75 to 9.01
-lower for F-Stack and 5.92 to 8.78 lower for smoltcp, on both machines,
-both rates and all three loss levels (the loss cells too: the median
-does not move). At 1 connection F-Stack is 1.20 to 4.45 lower, except
-the `c7i` 1% / 50,000 cell in the page-fault table (p50 47.6 against
-the kernel's 45.6). WebSocket-over-TLS at 8 connections is 7.39 to 9.66
-lower for F-Stack and 6.53 to 10.11 lower for smoltcp; at 1 connection
-0.10 to 4.10 and 2.91 to 5.73. F-Stack's WebSocket tail does not follow
-its TCP tail.
-
-UDP, no loss: smoltcp's p50 is 5.70 to 7.49 below the kernel on `c7i`
-and 3.78 to 4.02 below on `c8g`. p99 stays under 51 on the kernel and
-under 43 on smoltcp.
+UDP, no loss, both echoes pinned: smoltcp's p50 is 5.70 to 7.49 below
+the kernel on `c7i` and 3.78 to 4.02 below on `c8g`. p99 stays under 51
+on the kernel and under 43 on smoltcp. Kernel UDP on `c8g` is the
+second-:05 cluster below; that moves the max, and p50 stays put.
 
 #### Intel `c7i.4xlarge`, no loss
 
 | conn | msg/s | arm | min | p50 | p99 | p99.99 | max | max cause |
 |---|---|---|---|---|---|---|---|---|
-| 1 | 10,000 | `epoll-spin` TCP | 35.7 | 40.8 | 82.0 | 2,234.4 | 2,753.5 | unexplained (no recorded event) |
-|  |  | `smoltcp-spin` TCP | 31.7 | 37.2 | 82.0 | 2,252.8 | 2,801.0 | unexplained (host TCP counter, no netem drop) |
-|  |  | `fstack-spin` TCP | 32.9 | 37.5 | 43.5 | 68.7 | 142.1 | unexplained (no recorded event) |
-|  |  | `epoll-spin` WS+TLS | 37.0 | 42.2 | 107.5 | 2,083.8 | 2,593.1 | unexplained (no recorded event) |
-|  |  | `smoltcp-spin` WS+TLS | 32.8 | 38.0 | 84.8 | 2,179.1 | 2,650.1 | unexplained (no recorded event) |
-|  |  | `fstack-spin` WS+TLS | 33.8 | 38.5 | 92.4 | 2,209.8 | 2,640.9 | unexplained (no recorded event) |
+| 1 | 10,000 | `fstack-spin` TCP | 32.9 | 37.5 | 43.5 | 68.7 | 142.1 | unexplained (no recorded event) |
 |  |  | `epoll-spin` UDP | 37.2 | 42.0 | 47.6 | 95.0 | 1,955.0 | unexplained (no recorded event) |
 |  |  | `smoltcp-spin` UDP | 31.3 | 36.2 | 41.9 | 70.1 | 181.5 | softirq TIMER (host b CPU 2, 202 µs) |
-| 1 | 50,000 | `epoll-spin` TCP | 32.8 | 44.5 | 194.0 | 2,256.9 | 2,672.4 | unexplained (no recorded event) |
-|  |  | `smoltcp-spin` TCP | 30.3 | 41.3 | 206.3 | 2,242.6 | 2,726.3 | unexplained (no recorded event) |
-|  |  | `fstack-spin` TCP | 30.8 | 42.6 | 53.2 | 104.8 | 359.3 | unexplained (host TCP counter, no netem drop) |
-|  |  | `epoll-spin` WS+TLS | 33.3 | 45.9 | 278.0 | 2,285.6 | 2,740.9 | unexplained (no recorded event) |
-|  |  | `smoltcp-spin` WS+TLS | 31.0 | 42.9 | 234.5 | 2,175.0 | 2,743.5 | unexplained (no recorded event) |
-|  |  | `fstack-spin` WS+TLS | 30.6 | 42.4 | 248.3 | 2,213.9 | 2,734.0 | unexplained (no recorded event) |
+| 1 | 50,000 | `fstack-spin` TCP | 30.8 | 42.6 | 53.2 | 104.8 | 359.3 | unexplained (host TCP counter, no netem drop) |
 |  |  | `epoll-spin` UDP | 33.4 | 41.0 | 49.9 | 103.4 | 320.4 | unexplained (no recorded event) |
 |  |  | `smoltcp-spin` UDP | 30.4 | 35.2 | 41.8 | 90.6 | 1,331.9 | unexplained (no recorded event) |
-| 8 | 10,000 | `epoll-spin` TCP | 38.6 | 47.1 | 96.8 | 2,248.7 | 2,623.6 | unexplained (no recorded event) |
-|  |  | `smoltcp-spin` TCP | 33.4 | 40.3 | 90.9 | 2,246.7 | 3,146.2 | unexplained (host TCP counter, no netem drop) |
-|  |  | `fstack-spin` TCP | 33.5 | 39.6 | 47.8 | 77.5 | 140.1 | unexplained (no recorded event) |
-|  |  | `epoll-spin` WS+TLS | 38.8 | 48.3 | 99.9 | 2,285.6 | 2,776.2 | unexplained (no recorded event) |
-|  |  | `smoltcp-spin` WS+TLS | 34.9 | 41.2 | 107.1 | 2,254.8 | 2,678.9 | unexplained (no recorded event) |
-|  |  | `fstack-spin` WS+TLS | 34.8 | 40.7 | 96.1 | 2,275.3 | 2,720.6 | unexplained (no recorded event) |
+| 8 | 10,000 | `fstack-spin` TCP | 33.5 | 39.6 | 47.8 | 77.5 | 140.1 | unexplained (no recorded event) |
 |  |  | `epoll-spin` UDP | 37.0 | 42.4 | 48.2 | 70.6 | 153.1 | unexplained (no recorded event) |
 |  |  | `smoltcp-spin` UDP | 32.2 | 36.7 | 42.8 | 67.8 | 188.3 | unexplained (no recorded event) |
-| 8 | 50,000 | `epoll-spin` TCP | 33.7 | 50.5 | 177.0 | 2,293.8 | 2,985.1 | unexplained (no recorded event) |
-|  |  | `smoltcp-spin` TCP | 34.0 | 44.6 | 151.6 | 2,189.3 | 2,723.3 | unexplained (no recorded event) |
-|  |  | `fstack-spin` TCP | 32.6 | 43.0 | 51.8 | 91.1 | 181.3 | unexplained (no recorded event) |
-|  |  | `epoll-spin` WS+TLS | 36.7 | 52.7 | 211.8 | 2,365.4 | 2,967.9 | unexplained (no recorded event) |
-|  |  | `smoltcp-spin` WS+TLS | 32.4 | 44.6 | 180.4 | 2,406.4 | 3,059.2 | unexplained (no recorded event) |
-|  |  | `fstack-spin` WS+TLS | 32.4 | 44.1 | 186.6 | 2,408.4 | 3,027.6 | unexplained (no recorded event) |
+| 8 | 50,000 | `fstack-spin` TCP | 32.6 | 43.0 | 51.8 | 91.1 | 181.3 | unexplained (no recorded event) |
 |  |  | `epoll-spin` UDP | 34.5 | 43.0 | 50.6 | 101.1 | 234.2 | unexplained (no recorded event) |
 |  |  | `smoltcp-spin` UDP | 31.2 | 35.5 | 42.6 | 75.7 | 211.8 | unexplained (no recorded event) |
 
@@ -1682,94 +1720,182 @@ under 43 on smoltcp.
 
 | conn | msg/s | arm | min | p50 | p99 | p99.99 | max | max cause |
 |---|---|---|---|---|---|---|---|---|
-| 1 | 10,000 | `epoll-spin` TCP | 31.6 | 34.1 | 75.1 | 2,967.6 | 3,544.2 | unexplained (no recorded event) |
-|  |  | `smoltcp-spin` TCP | 28.8 | 31.0 | 57.1 | 3,147.8 | 3,416.1 | unexplained (no recorded event) |
-|  |  | `fstack-spin` TCP | 29.7 | 31.9 | 38.8 | 91.1 | 134.6 | unexplained (no recorded event) |
-|  |  | `epoll-spin` WS+TLS | 33.0 | 35.7 | 139.1 | 3,321.9 | 4,676.0 | periodic path outage, second :05 |
-|  |  | `smoltcp-spin` WS+TLS | 29.7 | 32.5 | 91.2 | 3,117.1 | 3,536.1 | unexplained (no recorded event) |
-|  |  | `fstack-spin` WS+TLS | 30.3 | 32.6 | 71.9 | 3,098.6 | 3,588.6 | unexplained (no recorded event) |
+| 1 | 10,000 | `fstack-spin` TCP | 29.7 | 31.9 | 38.8 | 91.1 | 134.6 | unexplained (no recorded event) |
 |  |  | `epoll-spin` UDP | 31.6 | 33.7 | 39.8 | 90.5 | 240.6 | unexplained (no recorded event) |
 |  |  | `smoltcp-spin` UDP | 27.7 | 29.9 | 36.2 | 90.2 | 225.1 | unexplained (no recorded event) |
-| 1 | 50,000 | `epoll-spin` TCP | 30.4 | 33.2 | 211.5 | 2,965.5 | 3,517.3 | unexplained (no recorded event) |
-|  |  | `smoltcp-spin` TCP | 27.8 | 30.4 | 165.2 | 3,254.3 | 3,635.4 | unexplained (no recorded event) |
-|  |  | `fstack-spin` TCP | 29.4 | 31.5 | 40.3 | 112.1 | 204.7 | unexplained (no recorded event) |
-|  |  | `epoll-spin` WS+TLS | 31.9 | 34.5 | 262.4 | 3,194.9 | 3,634.6 | unexplained (no recorded event) |
-|  |  | `smoltcp-spin` WS+TLS | 29.2 | 31.3 | 259.7 | 3,145.7 | 3,692.1 | unexplained (no recorded event) |
-|  |  | `fstack-spin` WS+TLS | 29.6 | 31.7 | 256.9 | 3,147.8 | 3,624.9 | unexplained (no recorded event) |
+| 1 | 50,000 | `fstack-spin` TCP | 29.4 | 31.5 | 40.3 | 112.1 | 204.7 | unexplained (no recorded event) |
 |  |  | `epoll-spin` UDP | 31.1 | 33.2 | 40.5 | 6,610.9 | 9,215.0 | periodic path outage, second :05 |
 |  |  | `smoltcp-spin` UDP | 27.4 | 29.4 | 36.2 | 101.8 | 187.3 | unexplained (no recorded event) |
-| 8 | 10,000 | `epoll-spin` TCP | 34.0 | 40.8 | 73.0 | 3,057.7 | 3,583.6 | unexplained (no recorded event) |
-|  |  | `smoltcp-spin` TCP | 29.7 | 32.5 | 56.7 | 3,186.7 | 3,658.1 | unexplained (no recorded event) |
-|  |  | `fstack-spin` TCP | 30.0 | 32.3 | 39.6 | 78.8 | 168.9 | unexplained (host TCP counter, no netem drop) |
-|  |  | `epoll-spin` WS+TLS | 34.3 | 42.7 | 78.3 | 3,557.4 | 8,504.1 | periodic path outage, second :05 |
-|  |  | `smoltcp-spin` WS+TLS | 30.5 | 33.6 | 64.0 | 3,184.6 | 3,522.3 | unexplained (no recorded event) |
-|  |  | `fstack-spin` WS+TLS | 30.9 | 34.0 | 106.0 | 3,375.1 | 4,171.9 | unexplained (no recorded event) |
+| 8 | 10,000 | `fstack-spin` TCP | 30.0 | 32.3 | 39.6 | 78.8 | 168.9 | unexplained (host TCP counter, no netem drop) |
 |  |  | `epoll-spin` UDP | 31.7 | 34.0 | 41.1 | 6,463.5 | 9,298.2 | periodic path outage, second :05 |
 |  |  | `smoltcp-spin` UDP | 27.8 | 30.1 | 36.7 | 95.1 | 117.5 | unexplained (no recorded event) |
-| 8 | 50,000 | `epoll-spin` TCP | 32.3 | 41.1 | 156.0 | 3,158.0 | 3,801.1 | unexplained (no recorded event) |
-|  |  | `smoltcp-spin` TCP | 29.5 | 32.6 | 132.4 | 3,203.1 | 3,853.1 | unexplained (host TCP counter, no netem drop) |
-|  |  | `fstack-spin` TCP | 29.7 | 32.3 | 39.8 | 98.4 | 174.3 | unexplained (no recorded event) |
-|  |  | `epoll-spin` WS+TLS | 33.7 | 43.5 | 187.0 | 3,373.1 | 3,902.5 | unexplained (no recorded event) |
-|  |  | `smoltcp-spin` WS+TLS | 30.3 | 33.4 | 150.7 | 3,422.2 | 3,909.7 | unexplained (no recorded event) |
-|  |  | `fstack-spin` WS+TLS | 30.2 | 33.9 | 175.0 | 3,178.5 | 3,910.0 | unexplained (no recorded event) |
+| 8 | 50,000 | `fstack-spin` TCP | 29.7 | 32.3 | 39.8 | 98.4 | 174.3 | unexplained (no recorded event) |
 |  |  | `epoll-spin` UDP | 31.1 | 33.8 | 42.5 | 3,450.9 | 5,688.8 | periodic path outage, second :05 |
 |  |  | `smoltcp-spin` UDP | 27.5 | 29.8 | 37.2 | 96.3 | 197.3 | unexplained (no recorded event) |
 
 ### Under loss
 
-TCP and WebSocket lost nothing. UDP lost 0.193% to 0.215% of the point's
-messages at 0.1% netem and 1.959% to 2.019% at 1% (warm-up included in
-the loss count, both machines). Both directions of the peer at those
-rates are 0.200% and 1.990%. The row's retransmit column is empty: the
-bypass binaries do not fill it. `spikes.py` still reads the hosts' TCP
-counters.
+On the pinned cells, F-Stack TCP lost nothing. UDP lost 0.193% to 0.215%
+of the point's messages at 0.1% netem and 1.959% to 2.019% at 1% (warm-up
+included in the loss count, both machines). Both directions of the peer
+at those rates are 0.200% and 1.990%. The row's retransmit column is
+empty: the bypass binaries do not fill it. `spikes.py` still reads the
+hosts' TCP counters.
 
-### Every max
+p99 and max on the first sessions' pinned cells, both machines, all
+four loads. UDP does not retransmit, so its p99 barely moves as the
+loss rises. F-Stack TCP does retransmit, and that is the tail that
+grows. Kernel TCP, smoltcp TCP and WebSocket are the next section.
 
-`spikes.py --transport` on each run directory. The 192 labels:
+| arm | loss | p99 | max |
+|---|---|---|---|
+| `fstack-spin` TCP | 0 | 38.8 to 53.2 | 134.6 to 359.3 |
+| `fstack-spin` TCP | 0.1% | 43.0 to 395.3 | 737.1 to 19,907.2 |
+| `fstack-spin` TCP | 1% | 2,215.9 to 255,983.6 | 20,057.2 to 417,928.9 |
+| `epoll-spin` UDP | 0 | 39.8 to 50.6 | 153.1 to 9,298.2 |
+| `epoll-spin` UDP | 0.1% | 40.5 to 51.9 | 162.6 to 9,285.0 |
+| `epoll-spin` UDP | 1% | 40.4 to 51.5 | 145.9 to 9,265.4 |
+| `smoltcp-spin` UDP | 0 | 36.2 to 42.8 | 117.5 to 1,331.9 |
+| `smoltcp-spin` UDP | 0.1% | 36.0 to 43.8 | 108.2 to 2,297.8 |
+| `smoltcp-spin` UDP | 1% | 36.2 to 45.4 | 95.6 to 578.4 |
+
+The UDP maxima above a couple of milliseconds are the `c8g` kernel
+second-:05 cluster (all three loss levels) and two `c7i` smoltcp points
+(no loss, max 1,331.9; 0.1%, max 2,297.8). The F-Stack 1% top, p99
+255,983.6 and max 417,928.9, is the page fault in the table below (there
+rounded to the microsecond). The other 1% F-Stack maxima are
+retransmits, 20,057.2 to 210,817.8.
+
+### Pinned remeasure: kernel TCP, smoltcp TCP, WebSocket
+
+`transport-aws-io-bypass-rerun.tsv`: `io-tcp-epoll`, `io-tcp-smol`,
+`io-ws-epoll`, `io-ws-smol`, `io-ws-fstack`. Same loads, one rep, no A/A
+arm. The pong is still kernel `epoll-spin`. Wire bytes stay 122 for both
+TCP arms and 129 for every WebSocket arm. Every cell except one lost
+nothing. The sets file is named under [Reproduce](#reproduce).
+
+No loss, both machines, all four loads. smoltcp's p50 is below kernel
+`epoll-spin` at every load: TCP by 3.6 to 6.5 on `c7i` and 3.0 to 8.9 on
+`c8g`; WebSocket by 3.0 to 7.2 and 3.4 to 10.1. F-Stack WebSocket's p50
+is below kernel WebSocket by 2.6 to 8.1 on `c7i` and 1.0 to 9.8 on
+`c8g`. The 1.0 is one cell (`c8g`, 1 connection, 50,000) and is not
+separated from run-to-run noise. These are not the same sessions as
+F-Stack TCP or UDP above, so they are not ranked against those rows.
+
+| arm | p50 | p99 | max |
+|---|---|---|---|
+| kernel `epoll-spin` TCP | 34.8 to 48.7 | 43.0 to 56.5 | 107.3 to 9,242.5 |
+| `smoltcp-spin` TCP | 31.8 to 42.2 | 39.5 to 48.4 | 108.4 to 8,827.2 |
+| kernel `epoll-spin` WebSocket | 36.0 to 50.5 | 46.2 to 58.5 | 371.9 to 9,135.7 |
+| `fstack-spin` WebSocket | 34.0 to 42.4 | 41.9 to 48.9 | 147.5 to 9,000.0 |
+| `smoltcp-spin` WebSocket | 32.6 to 43.4 | 39.9 to 49.5 | 174.8 to 9,656.4 |
+
+The no-loss maxima above a couple of milliseconds are the `c8g`
+second-:58 cluster and `c8g` page faults (`handle_mm_fault`), not a p50
+move. `c7i` no-loss maxima stay 107.3 to 4,170.5.
+
+Under loss, p99 and max, both machines, all four loads. Kernel TCP and
+smoltcp TCP maxima at 0.1% and 1% are TCP retransmits after a netem
+drop (16 cells a session). WebSocket maxima at 1% are unexplained,
+except the two page faults named below.
+
+| arm | loss | p99 | max |
+|---|---|---|---|
+| kernel TCP | 0 | 43.0 to 56.5 | 107.3 to 9,242.5 |
+| kernel TCP | 0.1% | 45.8 to 64.2 | 1,581.6 to 18,803.2 |
+| kernel TCP | 1% | 879.1 to 11,403.3 | 20,155.7 to 52,055.2 |
+| smoltcp TCP | 0 | 39.5 to 48.4 | 108.4 to 8,827.2 |
+| smoltcp TCP | 0.1% | 42.8 to 59.3 | 447.6 to 14,319.8 |
+| smoltcp TCP | 1% | 2,465.8 to 9,084.9 | 23,195.3 to 56,050.3 |
+| kernel WebSocket | 0 | 46.2 to 58.5 | 371.9 to 9,135.7 |
+| kernel WebSocket | 0.1% | 45.6 to 62.1 | 2,232.8 to 16,889.4 |
+| kernel WebSocket | 1% | 881.7 to 12,107.8 | 21,680.6 to 46,156.1 |
+| F-Stack WebSocket | 0 | 41.9 to 48.9 | 147.5 to 9,000.0 |
+| F-Stack WebSocket | 0.1% | 46.0 to 312.6 | 512.4 to 17,877.1 |
+| F-Stack WebSocket | 1% | 2,467.8 to 12,960,399.4 | 18,797.4 to 15,289,197.3 |
+| smoltcp WebSocket | 0 | 39.9 to 49.5 | 174.8 to 9,656.4 |
+| smoltcp WebSocket | 0.1% | 46.2 to 70.0 | 2,584.1 to 18,038.8 |
+| smoltcp WebSocket | 1% | 2,467.8 to 11,796.5 | 20,674.0 to 51,532.2 |
+
+The F-Stack WebSocket 1% top is one cell. The other seven stay at p50
+34.7 to 42.9. That cell is below.
+
+`spikes.py --transport` on each remeasure directory, all 60 cells:
 
 | cause | `c7i` | `c8g` | what the label means |
 |---|---|---|---|
-| unexplained (no recorded event on either host) | 66 | 59 | IRQ, softirq, preemption, page fault and a gap-spinner pause were recorded and none overlaps the max |
-| TCP retransmit after a netem drop | 23 | 24 | the host's TCP retransmit counter and a netem drop share that second, or the one before. The tool does not require the max to be as long as an RTO: 7 of the `c7i` labels and 4 of the `c8g` labels are under 8 ms, so those are a same-second overlap. 12 on each machine are 20 ms or more |
-| periodic path outage, second :05 | 0 | 10 | the session's maxima of 1 ms or more recur at one phase of the minute, above chance. All ten are kernel `epoll-spin`: eight UDP, at both rates, and two WebSocket at 10,000 msg/s. Max 4,676 to 9,298. p50 stays 33.2 to 42.7 |
-| unexplained (a host TCP counter ticked, no netem drop) | 3 | 2 | the point's own connection counters are not what the label uses, and there was no qdisc drop. All five are no-loss TCP, max 168.9 to 3,146.2 |
-| page fault of the measuring thread, host A CPU 2 | 2 | 1 | below |
+| unexplained (no recorded event on either host) | 43 | 27 | IRQ, softirq, preemption, page fault and a gap-spinner pause were recorded and none overlaps the max. This includes the WebSocket 1% maxima other than the two faults |
+| TCP retransmit after a netem drop | 16 | 16 | kernel TCP and smoltcp TCP at 0.1% and 1%, every load. A same-second overlap of the host's TCP retransmit counter and a netem drop. The tool does not require the max to last an RTO |
+| page fault of a busy thread | 1 | 8 | the two large faults below, plus six `c8g` faults of 6,252.1 to 9,440.0 (`handle_mm_fault`) |
+| periodic path outage, second :58 | 0 | 9 | max 5,569.0 to 9,656.4. p50 stays 32.4 to 36.0. Not the first session's second :05 |
+
+Two cells faulted hard enough to move p99. The `c7i` one lost nothing.
+The `c8g` one lost 664,763 of 1,750,000 messages (38.0%) and is why that
+arm's 1% p99 and max sit in the seconds:
+
+| host | arm | conn | loss | msg/s | p50 | p99 | max | fault |
+|---|---|---|---|---|---|---|---|---|
+| `c7i` | F-Stack WebSocket | 1 | 1% | 50,000 | 42.5 | 283,377.7 | 370,529.9 | user, `0x7f0804a62000` |
+| `c8g` | F-Stack WebSocket | 1 | 1% | 50,000 | 393.0 | 12,960,399.4 | 15,289,197.3 | `handle_mm_fault`, host A CPU 2 |
+
+ergon-tune T14 already reports that compaction can unmap a hot thread's
+page. These traces show the fault and leave the cause of the unmap
+unrecorded, so no new check is added. No remeasure max is left without
+one of the labels above. One rep and no A/A arm, so this page does not
+add a Kubernetes overlay for these arms. The measured 1-stream layout
+when DPDK is allowed stays Aeron on DPDK
+([samples](../../../samples/README.md#aws-k8s)).
+
+### Against Aeron
+
+This session did not run Aeron. The comparison that did is the `c7a`
+unreliable-UDP set, 1 stream, 50,000 msg/s, three reps: Aeron on DPDK
+p50 28.0, p99 35.4, max 169 to 178; Aeron on the kernel p50 40.9, p99
+48.6, max 414 to 445; ergon-io's kernel UDP p50 48.4, p99 58.4 to 61.8,
+max 226 to 553. smoltcp's UDP figures above are from `c7i` and `c8g`,
+so they are not ranked against either Aeron arm.
+[Unreliable UDP (u)](#unreliable-udp-u).
+
+### Every max
+
+`spikes.py --transport` on each run directory, counted on the 72 pinned
+cells (36 a session):
+
+| cause | `c7i` | `c8g` | what the label means |
+|---|---|---|---|
+| unexplained (no recorded event on either host) | 25 | 19 | IRQ, softirq, preemption, page fault and a gap-spinner pause were recorded and none overlaps the max |
+| TCP retransmit after a netem drop | 7 | 8 | the host's TCP retransmit counter and a netem drop share that second, or the one before. The tool does not require the max to be as long as an RTO: 3 of the `c7i` labels and 4 of the `c8g` labels are under 8 ms, so those are a same-second overlap |
+| periodic path outage, second :05 | 0 | 8 | eight kernel `epoll-spin` UDP points, both rates and all three loss levels. Max 5,499 to 9,298. p50 stays 33.2 to 34.1 |
+| unexplained (a host TCP counter ticked, no netem drop) | 1 | 1 | no-loss F-Stack TCP: `c8g` 8 connections, 10,000, max 168.9; `c7i` 1 connection, 50,000, max 359.3 |
+| page fault of the measuring thread, host A CPU 2 | 1 | 0 | below |
 | softirq TIMER on the kernel peer's CPU 2 | 2 | 0 | `c7i` smoltcp UDP, 1 connection, 10,000, no loss: max 181.5, softirq 202 µs. `c7i` kernel UDP, 8 connections, 50,000, 0.1%: max 480.6, softirq 407 µs |
 
-The `c7i` pair has no periodic cluster. The seconds of its maxima of 1 ms
-or more are spread over the minute, and `spikes.py` names none. This is
-not the mixed-load session's once-a-minute outage at second :25.
+`spikes.py` names no periodic cluster on the `c7i` pinned cells, and none
+on that session's other 60 points either. That session is separate from
+the mixed-load pair's once-a-minute outage at second :25.
 
-The three page faults. p50 barely moves; p99 does, because a fault of
+One pinned cell faulted. p50 barely moves; p99 does, because a fault of
 a few hundred milliseconds delays the messages in flight behind it:
 
 | host | arm | conn | loss | msg/s | p50 | p99 | max | fault |
 |---|---|---|---|---|---|---|---|---|
 | `c7i` | `fstack-spin` TCP | 1 | 1% | 50,000 | 47.6 | 255,984 | 417,929 | user, `0x7f1fa4862000` |
-| `c7i` | `fstack-spin` WS+TLS | 1 | 1% | 50,000 | 48.5 | 318,767 | 416,413 | user, `0x7f20aca5f000` |
-| `c8g` | `fstack-spin` WS+TLS | 1 | 1% | 50,000 | 33.4 | 250,741 | 342,691 | `handle_mm_fault` |
 
 ergon-tune T14 already reports that compaction can unmap a hot thread's
-page. These traces show the fault and not that compaction caused it, so
-no new check is added. The other no-loss F-Stack TCP maxima stay 134.6
-to 359.3.
+page. This trace shows the fault and leaves the cause of the unmap
+unrecorded, so no new check is added. The other no-loss F-Stack TCP
+maxima stay 134.6 to 359.3. Two WebSocket faults in the same runs had
+the echo on the housekeeping CPU and stay in the run directory.
 
-Every other max of 20 ms or more is 1% loss, except two `c7i` cells at
-0.1%: kernel TCP, 1 connection, 10,000 msg/s, max 21,405 (a retransmit),
-and smoltcp WebSocket, 8 connections, 10,000 msg/s, max 20,628 (no
-recorded event).
-Where the label is a retransmit, the max is that recovery after the
-peer's drops in the same second: 20,057 to 51,890 on `c7i`, and 20,956
-to 210,818 on `c8g` (the 210,818 is `fstack-spin` TCP, 1 connection,
-50,000, with 1,662 drops counted on the kernel peer in that second).
-The ones `spikes.py` leaves unexplained have no recorded event. They are
-not labelled as the `c7i` outage, and their seconds do not share one
-phase. Largest unexplained: `c7i` smoltcp WebSocket, 8 connections, 1%,
-50,000, max 99,145; `c8g` smoltcp WebSocket, 1 connection, 1%, 50,000,
-max 56,219.
+Every other pinned max of 20 ms or more is 1% loss and a retransmit:
+20,057 to 51,890 on `c7i` (three cells), and 23,888 to 210,818 on `c8g`
+(four cells). The 210,818 is `fstack-spin` TCP, 1 connection, 50,000,
+with 1,662 drops counted on the kernel peer in that second.
 
-No max on this page is left without one of those labels.
+No pinned max on this page is left without one of those labels. The
+other 120 points of those two sessions left the echo on the
+housekeeping CPU. They were rerun with the echo pinned; their labels
+are in the remeasure section, not in this count.
 
 ## Conclusion
 
@@ -1790,7 +1916,7 @@ numbers only within one cloud:
 | mio or ergon-io | either: no difference. UDP p50 within 0.1–0.9 (Azure) and not separated (AWS); TCP on one connection within 1.2 (AWS), tails not separated. Overloaded, ergon-io drains slower | see [2a](#set-2a-unreliable-udp-between-hosts), [the verdict](#mio-against-ergon-io-the-verdict) | 1 busy thread each |
 | lowest latency between hosts, DPDK allowed (AWS) | Aeron on DPDK (md-dpdk), reliable or not; flat from 1 to 8 streams and to 200,000 msg/s | reliable 27.5–30.7 / 35.5–38.7 / 110–162 / 170–297; unreliable 28.0 / 35.4 / 131 / 177 | 4 busy threads a host |
 | TCP between hosts (AWS) | F-Stack (TCP on DPDK): 17–28 below kernel TCP at p50, below kernel Aeron reliable, and keeps up at 200,000 msg/s | F-Stack 32.1–50.4 / 40.2–83.8 / 111–207 / 165–297; kernel TCP 52.2–61.1 / 63.6–85.0 / 145–211 / 298–536 (to 50,000) | 1 busy thread |
-| ergon-io TCP, smoltcp or F-Stack (`c7i`, `c8g`, one rep) | F-Stack when the tail matters: its TCP max stays 135 to 359 with no loss, where the kernel and smoltcp sit at 2.6 to 3.9 ms. p50 at 8 connections is 6.8 to 9.0 below the kernel for F-Stack; smoltcp's p50 matches it and its tail matches the kernel. Not the md-dpdk F-Stack gap above | [io bypass](#ergon-io-kernel-smoltcp-and-f-stack) | 1 busy thread |
+| ergon-io on `c7i` and `c8g` (one rep, pinned echo) | UDP (first sessions): smoltcp, no-loss p50 5.70 to 7.49 below kernel `epoll-spin` on `c7i` and 3.78 to 4.02 below on `c8g`. F-Stack TCP no-loss p99 38.8 to 53.2, max 135 to 359. Remeasure, same session within each machine: smoltcp TCP no-loss p50 3.0 to 8.9 below kernel TCP. Not ranked against Aeron on DPDK, and not one overlay | [io bypass](#ergon-io-kernel-smoltcp-and-f-stack) | 1 busy thread |
 | reliable delivery between hosts, no loss | Aeron reliable UDP, for its p50, its p99 and its headroom | Aeron 54.8–57.6 / 59.9–64.3 / 269–1,335 / 902–3,725; TCP 64.7–69.8 / 79–225 / 559–6,017 / 1,366–8,027 (10,000 and 50,000 msg/s); TCP past capacity at 200,000 | Aeron 4 busy threads a host, TCP 1 |
 | reliable under loss | compare the tails at your loss rate: neither wins everywhere. Aeron keeps the lower p50 and, to 0.1 %, the lower p99; its maxima sit at its 10 ms retransmit linger, TCP's come from its retransmits (8 ms minimum RTO) | 0.1 %: Aeron 53.1–61.6 / 67.7–90.1 / 7,246–8,675 / 10,147–10,240; TCP 65.0–68.5 / 127–148 / 3,379–13,132 / 5,615–15,470 | as above |
 | Aeron driver threading with 32 or more streams (AWS `c7i`, `c8g`, kernel and DPDK) | dedicated driver threads, in their own process or in the application: each thread taken from the driver adds latency, more with more streams and on Graviton ([mixed load](#aeron-threading-under-mixed-load-intel-graviton)) | p50 above dedicated: `SHARED_NETWORK` +1.9 to +32.6, `SHARED` +3.1 to +73.7, `INVOKER` +4.9 to +130.8 | dedicated 3 driver threads a host; 2, 1 and 0 |
@@ -1808,6 +1934,16 @@ numbers only within one cloud:
 - On AWS the kernel's one IRQ CPU is the limit: kernel Aeron at 8 streams
   and 200,000 msg/s saturates it (p50 86.0); DPDK, which polls the NIC,
   stays at 28.8.
+
+The row "lowest latency between hosts, DPDK allowed" is the AWS
+Kubernetes layout: overlays `eks-ena-x86` (`c7i.4xlarge`) and
+`eks-ena-arm64` (`c9g.2xlarge`), render and lint only. The numbers in
+this table are from VMs.
+[AWS Kubernetes sample](https://github.com/mimran1980/ergon/blob/main/samples/README.md#aws-k8s).
+Kernel UDP has no overlay: the production recommendation is kernel UDP
+on VMs. WebSocket, ergon-io TCP and ergon-io on DPDK have no overlay:
+the remeasure is one rep, and its tails are loss, faults and unexplained
+maxima.
 
 ## Reproduce
 
@@ -1842,8 +1978,12 @@ md-dpdk/benches/cloud/aws/lab.sh   # results in target/md-dpdk-bench/aws-<stamp>
 ```
 
 On Graviton, add `LAB_ALLOW_ARM=1 LAB_TYPE=c8g.2xlarge`. The io-bypass
-set has run F-Stack on ENA there (`c8g.2xlarge`, one rep, on demand, the
-pairs one after the other, `LAB_MAX_HOURS=3`):
+set has run on ENA there (`c7i.4xlarge` then `c8g.2xlarge`, one rep, on
+demand, the pairs one after the other, `LAB_MAX_HOURS=3`). UDP and
+F-Stack TCP are `aws-20261029-040029` and `aws-20261029-055245`, where
+the echo was pinned. Kernel TCP, smoltcp TCP and WebSocket in those two
+sessions left the echo on the housekeeping CPU. The command that
+produced them:
 
 ```sh
 export LAB_SUITE=transport LAB_PAIR=a LAB_REPS=1 LAB_MAX_HOURS=3 \
@@ -1851,6 +1991,12 @@ export LAB_SUITE=transport LAB_PAIR=a LAB_REPS=1 LAB_MAX_HOURS=3 \
 LAB_ESTIMATE=1 md-dpdk/benches/cloud/aws/lab.sh
 md-dpdk/benches/cloud/aws/lab.sh
 ```
+
+The pinned remeasure of those five arms is
+`aws-20261029-174643` (`c7i.4xlarge`, us-east-1c) and
+`aws-20261029-190425` (`c8g.2xlarge`, us-east-1b), same flags, with
+`LAB_SETS_FILE=md-dpdk/benches/cloud/transport-aws-io-bypass-rerun.tsv`.
+All 60 cells in each have `placement_b=ok`.
 
 `transport-aws-fstack-smoke.tsv` is a narrower first step, not that result.
 
@@ -1881,8 +2027,10 @@ What the runner writes and the analysis reads:
   [ergon-io bypass set](#ergon-io-kernel-smoltcp-and-f-stack), not that session.
 - Kernel bypass for the socket arms (Onload): not viable on ENA, no latency measured ([Onload on ENA](#onload-on-ena-not-viable)).
 - Aeron driver threading under mixed load: no hot-stream stage trace, so the rise is not split across the hand-offs ([mixed load](#aeron-threading-under-mixed-load-intel-graviton)).
-- Kubernetes pods: the VMs run the arms directly. The node and pod settings
-  they need: [Kubernetes latency checklist](../deploy/kubernetes.md#latency-checklist).
+- Kubernetes pods: the VMs run the arms directly. Node and pod settings:
+  [Kubernetes latency checklist](../deploy/kubernetes.md#latency-checklist).
+  The Aeron-on-DPDK layout those settings belong to:
+  [AWS Kubernetes sample](https://github.com/mimran1980/ergon/blob/main/samples/README.md#aws-k8s).
 - Payloads other than 64 bytes, IPv6, multicast. WebSocket-over-TLS is the
   [ergon-io bypass set](#ergon-io-kernel-smoltcp-and-f-stack) only.
 - DPDK under loss (see above), and Aeron over IPC with more than one stream.

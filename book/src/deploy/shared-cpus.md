@@ -639,13 +639,13 @@ spec:
 | `isolcpus=managed_irq,domain,2-3` on the boot line | CPUs 2-3 leave the scheduler's load-balancing domains ([isolation](hft.md#isolation)) |
 
 **The app sets `AERON_DIR` itself.** The plugin exports
-`ERGON_HUGEPAGES_DIR` and `ERGON_HUGEPAGE_SIZE` and does not set `AERON_DIR`,
+`ERGON_HUGEPAGES_DIR`, `ERGON_HUGEPAGE_SIZE`, `AERON_FILE_PAGE_SIZE=2097152`
+and `AERON_TERM_BUFFER_SPARSE_FILE=false`. It does not set `AERON_DIR`,
 because the app must create the subdirectory:
 
 ```sh
 mkdir -p "$ERGON_HUGEPAGES_DIR/aeron"
 export AERON_DIR="$ERGON_HUGEPAGES_DIR/aeron"
-export AERON_FILE_PAGE_SIZE="$ERGON_HUGEPAGE_SIZE"
 ```
 
 An unsized hugetlbfs — what `emptyDir: {medium: HugePages}` gives you — is

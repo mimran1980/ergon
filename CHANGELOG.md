@@ -1,5 +1,79 @@
 # Changelog
 
+## [0.1.36] — 2026-10-29
+
+### Added
+
+- `ergon-tune` T24 (`t24_dpdk_nic_pair`): on the DPDK backends and the
+  `dpdk-ena` media driver, warns when the ENA device plugin's NIC pair
+  (`RUSTERON_DPDK_SENDER_{PCI,IPV4_CIDR,GATEWAY}`) is missing, empty or
+  unparsable, naming the exact keys. With all three set the finding prints
+  the shortest `fstack-spin` and `smoltcp-spin` lines built from them. No
+  pair granted is ok, not a guessed address; never unknown. Read-only: it
+  exports nothing, binds no NIC and sets no `AERON_DIR`.
+- The shared-CPU NRI plugin's opt-in `dpdk.ergon.io/<container>: "ena-pair"`
+  annotation: copies the granted NIC pair into `ERGON_IO_FSTACK`,
+  `ERGON_IO_SMOLTCP`, `ERGON_DPDK_PCI`, `ERGON_DPDK_ADDR` and
+  `ERGON_DPDK_GATEWAY`. Off by default; a missing, empty or unparsable
+  value refuses the pod and names the key. No sysfs scan, no dpdk-devbind,
+  no default-route fill.
+
+### Changed
+
+- rusteron 0.2.16 throughout, from 0.2.15: owned archive descriptor
+  pollers and checked counter reads. No ergon code changes were needed.
+- The book's transport comparison ranks only the cells whose echo was
+  pinned: UDP, and F-Stack TCP (`fstack_spin_lat`). Kernel TCP, smoltcp
+  TCP and every WebSocket echo stayed on the housekeeping CPU, so those
+  rows are not ranked. UDP p99 stays under 52 µs (kernel) and under 46
+  (smoltcp) at 0, 0.1% and 1% loss; F-Stack TCP's p99 and max rise with
+  loss (at 1%, p99 2,216 to 255,984 µs, max 20,057 to 417,929). The same
+  page's `c7a` UDP set is the Aeron comparison: DPDK p99 35.4, kernel
+  Aeron p99 48.6, ergon-io kernel UDP p99 58.4 to 61.8. smoltcp was not
+  in that session. F-Stack and smoltcp take the address, gateway and port
+  only from their config, copied from a granted pair; they never detect
+  them. The `c8g` pair's separate cluster at second :05 is on kernel UDP
+  (echo pinned). Every pinned max is labelled.
+- The pinned remeasure of those kernel TCP, smoltcp TCP and WebSocket
+  echoes (`aws-20261029-174643` on `c7i.4xlarge`, us-east-1c;
+  `aws-20261029-190425` on `c8g.2xlarge`, us-east-1b; one rep;
+  `placement_b=ok` on all 60 cells each). Inside that session,
+  smoltcp's no-loss p50 is 3.6 to 6.5 µs below kernel TCP on `c7i` and
+  3.0 to 8.9 below on `c8g`; WebSocket is 3.0 to 7.2 and 3.4 to 10.1
+  below. F-Stack WebSocket is 2.6 to 8.1 and 1.0 to 9.8 below kernel
+  WebSocket. No-loss p99 stays 39.5 to 58.5. At 1% loss every arm's p99
+  is milliseconds, and one `c8g` F-Stack WebSocket cell faults to a
+  15.3 s max and loses 38.0% of its messages. These sessions stay
+  separate from the first sessions' UDP and F-Stack TCP, and from
+  Aeron. No Kubernetes overlay is added: one rep, no A/A arm, and the
+  tails are loss, faults and unexplained maxima.
+- Aeron hugepages, from runs already published. The IPC 2 MiB directory
+  overlaps tmpfs at every load (round trip p50 0.20 to 0.25 against 0.22
+  to 0.25). A sized 2 MiB hugetlbfs is what lets Aeron start. Transparent
+  hugepages off cut an Azure idle tail (p99.99 67 to 53 µs, max 546 to
+  106) and a traced 16.25 µs `khugepaged` max; one AWS run overlaps. The
+  Kubernetes sample documents that Aeron-on-DPDK layout on the existing
+  `eks-ena` overlays (render only). The book and the READMEs link it at
+  `samples/README.md#aws-k8s`. WebSocket, ergon-io TCP and ergon-io
+  on DPDK stay without an overlay: the remeasure is one rep, and its
+  tails are loss, faults and unexplained maxima.
+- `hugepages.ergon.io/<container>: "2M"` now also sets
+  `AERON_FILE_PAGE_SIZE=2097152` and `AERON_TERM_BUFFER_SPARSE_FILE=false`.
+  The process still sets `AERON_DIR`. Address, gateway and PCI stay unset.
+  ergon-tune T23 warns when `AERON_DIR` is on hugetlbfs without those two.
+
+### Docs
+
+- `md-dpdk/BENCHMARKS.md` records the Azure 288 B loss study (two
+  `Standard_D8ds_v6` pairs): the receive ring overflows while the receiver
+  agent stalls, an 80 KiB window stops the loss at a 2 M msgs/s cap, and
+  the 20 µs conductor park alone does not. Both runs' output files are
+  committed.
+- `samples/README.md` (aws-k8s) and the `ena-driver` component name the
+  device plugin as what fills PCI, address and gateway for the Aeron driver,
+  and give the two minimum lines; the ergon-io backends page now says the
+  address, gateway and port are not guessed but copied from a granted pair.
+
 ## [0.1.35] — 2026-10-29
 
 ### Added

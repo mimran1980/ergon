@@ -400,12 +400,17 @@ fn kernel_run(c: &Common, a: &WstlsArgs) -> Result<Option<String>, Error> {
     }
 }
 
-/// The kernel peer: listens, prints `ready`, accepts one connection per
-/// stream and echoes. A bypass ping's pong runs this and writes no row.
+/// The kernel peer: pins this thread to the echo CPU, listens, prints
+/// `ready`, accepts one connection per stream and echoes. A bypass ping's
+/// pong runs this and writes no row. `smoltcp-spin` and `fstack-spin` pongs
+/// call it too, so their echo is on the same CPU.
 ///
 /// # Errors
-/// Bind, accept or the echo fails.
+/// Pinning, bind, accept or the echo fails.
 pub(crate) fn kernel_serve(c: &Common, a: &WstlsArgs) -> Result<(), Error> {
+    // Before `ready`, so a placement sample of the echo cannot see the
+    // housekeeping CPU. `sock::run`'s pong pins the same way.
+    point::pin(c.cpu(0))?;
     let listener = listen(a.local)?;
     println!("ready");
     let tls = tls_pair(a.echo)?;

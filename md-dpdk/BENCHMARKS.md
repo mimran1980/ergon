@@ -1,4 +1,4 @@
-# ergon-md-dpdk: kernel UDP against DPDK on AWS
+# ergon-md-dpdk: kernel UDP against DPDK on AWS, and Azure's loss under load
 
 Round-by-round write-up:
 [BENCHMARKS-ROUNDS-2026-10-18.md](BENCHMARKS-ROUNDS-2026-10-18.md). Quote
@@ -8,6 +8,8 @@ Aeron ping-pong between two hosts in one cluster placement group, isolated
 CPUs, 5 reps a mode. `ergon-md-dpdk` is a proof of concept, not for
 production ([README](README.md)); the DPDK rows show what kernel bypass is
 worth. Results depend on the instance and the pair: rerun on your own.
+[Azure](#azure-the-288-b-loss-under-load) has a section of its own, on DPDK's
+loss under load only.
 
 **How to read a cell.** µs. The median of the 5 reps, with the smallest and
 largest rep in brackets. `max X (a–b)`: X is the median of the five per-rep
@@ -22,7 +24,8 @@ different pairs, days or builds are never compared here.
 
 Every figure below is a row in one of these committed files, under
 [`benches/cloud/results/`](benches/cloud/results/). Each holds what the run
-printed before its directory was deleted, so each is partial.
+printed before its directory was deleted, so each is partial; the two Azure
+files hold their summary.md and results.csv whole.
 
 | run | instances | what it ran |
 | --- | --- | --- |
@@ -44,10 +47,13 @@ printed before its directory was deleted, so each is partial.
 | `aws-20261014-113947` | not recorded (an EC2 listing during the run showed two `c7i.2xlarge`) | receiver IO vectors, transparent hugepages |
 | `aws-20261014-220612` | not recorded (an EC2 listing during the run showed two `c7i.4xlarge`) | DPDK knobs (its base arm is not in the recovered rows) |
 | `eks-20261014-195824` | EKS, `c7i.4xlarge` | DPDK pods: [book](https://mimran1980.github.io/ergon/deploy/benchmarks.html#kubernetes-eks-on-c7i4xlarge) |
+| `azure-20261025-060005` (A) | Azure `Standard_D8ds_v6` pair | DPDK 288 B ladder: receiver window and conductor park, with an A/A ([Azure](#azure-the-288-b-loss-under-load)) |
+| `azure-20261025-081128` (B) | another `Standard_D8ds_v6` pair | the conductor park again, 8 reps, with an A/A |
 
 G7a, G7b and G7c ran at the same time on three pairs: compare only inside
 each. The last two ids' directories had no `aws-` prefix. `aws/lab.sh` names its
-runs `aws-<stamp>`; `azure/lab.sh` names them `<stamp>` alone. Their
+runs `aws-<stamp>`; `azure/lab.sh` names them `<stamp>` alone, and the Azure
+files here add `azure-`. Their
 platform is in neither directory nor rows; only the EC2 listing in each file's header points to AWS.
 
 ## Conclusions
@@ -627,10 +633,67 @@ CPU 1's cpuidle `usage` and `time` before and after (`idle/`).
   first ran uncapped and was rerun with the cap on both halves
   (`aws-20261028-150900`, `aws-20261028-150920`; both sets require
   `irq_idle 1`): [SMT sibling cost](../io/benches/BENCHMARK.md#smt-sibling-cost).
+## Azure: the 288 B loss under load
+
+Two runs, each on its own `Standard_D8ds_v6` pair (Xeon Platinum 8573C,
+MANA, 256 descriptors a ring, the most `vm.sh` sets there), West US 3,
+isolated CPUs, DPDK only. Each rep ran the 288 B ladder (1, 2, 3 and 4 M
+msgs/s, then bursts) in every mode, in a new random order each rep.
+`dpdk@THP=never` is an A/A control: the baseline already sets THP to never.
+A rep-point is lossy when either host sent a NAK or a retransmit.
+
+| run | reps | modes |
+| --- | --- | --- |
+| [`azure-20261025-060005`](benches/cloud/results/azure-20261025-060005.txt) (A) | 5 | plain, A/A, conductor park 20 µs, `rcv-wnd=80k`, both |
+| [`azure-20261025-081128`](benches/cloud/results/azure-20261025-081128.txt) (B) | 8 | plain, A/A, conductor park 20 µs, conductor park 200 µs |
+
+**Cause: the receiver's ring overflows while its agent stops polling.**
+Every one of the 53 host-points that sent a NAK, over both runs, also had
+its receive ring fill (`sat-dpdk-rx-ring-full-suspected`: a poll drained
+256 frames or more). No host-point lost without one. MANA's DPDK driver
+counts no receive drop (`dpdk-nic-rx-missed` 0 in every row), so the drop
+itself is inferred. Host-points whose ring filled had a median of 11 (run A)
+and 26–61 (run B) receiver duty cycles over 50 µs, against 1 where it
+did not. A stall overflows the ring when stall × frame rate exceeds 256.
+A higher rate needs a shorter stall, but loss begins at 1 M msgs/s. What
+stalls the receiver agent is not separated: run B's pair had about 50,000
+cycles over 50 µs an arm, run A's about 200.
+
+Lossy rep-points, NAKs in brackets:
+
+| run | mode | 1 M/s | 2 M/s | 3 M/s | 4 M/s | bursts |
+| --- | --- | --- | --- | --- | --- | --- |
+| A | plain | 2/5 (4) | 1/5 (23) | 1/5 (6) | 0/5 | 1/5 (1) |
+| A | A/A | 0/5 | 2/5 (14) | 0/5 | 2/5 (58) | 0/5 |
+| A | park 20 µs | 0/5 | 0/5 | 0/5 | 0/5 | 0/5 |
+| A | `rcv-wnd=80k` | 0/5 | 0/5 | 0/5 † | 0/5 † | 0/5 |
+| A | both | 0/5 | 0/5 | 0/5 † | 0/5 † | 0/5 |
+| B | plain | 2/8 (13) | 0/8 | 2/8 (26) | 3/8 (13) | 2/8 (15) |
+| B | A/A | 0/8 | 2/8 (37) | 4/8 (84) | 3/8 (28) | 1/8 (4) |
+| B | park 20 µs | 0/8 | 0/8 | 4/8 (87) | 3/8 (35) | 0/8 |
+| B | park 200 µs | 2/8 (45) | 3/8 (32) | 4/8 (103) | 7/8 (2,313) | 2/8 (11) |
+
+† Not the offered rate: it queued (p50 0.46–1.93 s, about 90,000–177,000
+back-pressured offers a point).
+
+| hypothesis | result |
+| --- | --- |
+| loss starts above about 2 M msgs/s | no: plain DPDK lost at 1 M msgs/s on both pairs |
+| a window of 256 × the smallest frame (80 KiB) stops it | yes: 0 of 50 lossy rep-points over the two window modes, against 9 of 50 in plain and A/A (run A, Fisher one-sided p = 0.001). The window keeps no more in flight than the ring holds |
+| the 80 KiB window caps the rate | yes: 288 B flat out 0.24 M msgs/s alone and 2.93 M with the 20 µs park, against 4.57 M; 32 B 1.21 and 14.32 M against 22.90 M. Both keep up to 2 M and queue at 3–4 M (†) |
+| the conductor's 20 µs park stops it | no: 0 of 25 in run A (p = 0.02) did not reproduce. Run B had 7 of 40 against 9 and 10 of 40. A 200 µs park lost more (18 of 40) |
+| late status messages let the sender burst | no: status messages sent were level, 428,784 and 429,247 (plain, A/A) against 430,946 (park); flow-control limits 304 and 213 against 380 (run A) |
+
+Figures: each file's summary.md "Loss by load point", "Sustained one-way
+maximum", "Round trip under open-loop load" and "Aeron's agents and flow
+control"; the per-host counts are the results.csv `loss` and `aeron` rows.
 
 ## Recommended configuration
 
-Kernel UDP in production ([README](README.md)). Only settings with a
+Kernel UDP in production ([README](README.md)). The lab DPDK layout on
+EKS is
+[samples/README.md#aws-k8s](../samples/README.md#aws-k8s)
+(`eks-ena-x86`, `eks-ena-arm64`, render only). Only settings with a
 separating result above are listed.
 
 | setting | evidence | where it is set |
@@ -666,7 +729,9 @@ not as an Aeron message.
   result in the recovered rows.
 - hugetlbfs `AERON_DIR` against tmpfs, and quiet-core pinning: not measured
   (CPU isolation: G7c, not separated).
-- Azure: no run output is committed, so no Azure figure is kept.
+- Azure: what stalls the receiver agent long enough to overflow MANA's
+  256-descriptor ring (the 288 B loss above), and the window that stops it
+  at more than 2 M msgs/s of 288 B.
 - Idle maxima: placed in flight and beneath the transport (above); one
   host's path reaches 76 µs, but the local card is not split from the
   hypervisor.

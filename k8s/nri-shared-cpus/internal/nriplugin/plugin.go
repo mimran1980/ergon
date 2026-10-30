@@ -456,7 +456,8 @@ func (p *Plugin) applyGrants(adj *api.ContainerAdjustment, g *Grants, d *Decisio
 	p.log.Info("grants", append(logArgs,
 		"rlimits", len(g.Rlimits), "seccomp", g.SeccompMode, "numa", g.NumaMems,
 		"ptp", g.PtpDevice, "sched_fifo", g.SchedFifo, "cpuqos", g.CpuqosDevice,
-		"hugepages", g.Hugepage != nil, "partition", g.CpuPartition)...)
+		"hugepages", g.Hugepage != nil, "partition", g.CpuPartition,
+		"dpdk_pair", len(g.DpdkEnvs) > 0)...)
 	return nil
 }
 
