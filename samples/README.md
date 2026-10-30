@@ -302,7 +302,7 @@ on. These overlays are still render-and-lint only.
 
    ```sh
    # kubeadm, kind, a plain VM: values-kind.yaml; EKS AL2023: values-eks.yaml
-   helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus --version 0.1.2 \
+   helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus --version 0.1.3 \
      -n ergon-system --create-namespace -f samples/low-latency-k8s/helm/values-kind.yaml
    kubectl apply -f k8s/nri-latency-pods/admission/priority-class.yaml \
                  -f k8s/nri-latency-pods/admission/validating-admission-policy.yaml

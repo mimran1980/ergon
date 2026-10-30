@@ -24,9 +24,9 @@ media driver and an Aeron ping/pong, with a verifier that proves where
 every thread ran) is the
 [`low-latency-k8s` sample](https://github.com/mimran1980/ergon/blob/main/samples/README.md#low-latency-k8s).
 
-Status: published as tag `0.1.2`. Anyone can pull the image and the chart.
+Status: published as tag `0.1.3`. Anyone can pull the image and the chart.
 The kind e2e passed at its source. **Verified on EKS AL2023** (Kubernetes
-1.36, `c8g.xlarge`) with the same plugin and chart source as published 0.1.2 (`85098f8b`), built by the lab and pushed to the run's ECR: the NRI socket, nodeadm's TOML
+1.36, `c8g.xlarge`) with the same plugin and chart source as published 0.1.2 (`85098f8b`; 0.1.3 adds environment exports only, not re-run on EKS), built by the lab and pushed to the run's ECR: the NRI socket, nodeadm's TOML
 merge, the kubelet drop-in merge, `/opt` writable, `system-node-critical`
 outside `kube-system`. Latency of the spin loop is measured on one Azure VM;
 the helpers' wake-up wait and the pin on EKS. AKS cannot run it.
@@ -48,7 +48,7 @@ the node, and it does not install the hot-pod admission policy.
 
 ```sh
 helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus \
-  --version 0.1.2 \
+  --version 0.1.3 \
   --namespace ergon-system --create-namespace \
   --set-string config.sharedCpus=0 \
   --set 'config.namespaces={trading}' \
@@ -66,7 +66,7 @@ kubelet does (lexical order, JSON merge patch):
 
 ```sh
 helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus \
-  --version 0.1.2 \
+  --version 0.1.3 \
   --namespace ergon-system --create-namespace \
   --set-string config.sharedCpus=0 \
   --set 'config.namespaces={trading}' \
@@ -81,16 +81,16 @@ Without `kubeletConfigDir` every hot pod is refused on AL2023. The drop-in direc
 sets `spec.kubelet.config`; without it the plugin pod does not start.
 
 Check the pulled image. This prints the index digest
-`sha256:33ddd06f6b2e58bae6a2bf13092366482b5a292bc50a01223b0b383b66026da6`:
+`sha256:440fb141f12876ed12dfb15f9ea512d60dfd212d704e4caf598396990c532d3f`:
 
 ```sh
-docker buildx imagetools inspect ghcr.io/mimran1980/ergon-shared-cpus:0.1.2
+docker buildx imagetools inspect ghcr.io/mimran1980/ergon-shared-cpus:0.1.3
 ```
 
 Chart digest
-`sha256:145054055d604e8a866bf86556cd3a1b46b92b1b6e3347183b8033dd7112b14d`.
+`sha256:3a771604cc0dee0b51333f4e23b588c951dc98d587b19a862147a14b0dbac4b4`.
 `image.digest` renders `repository@digest`; an empty digest keeps
-`repository:tag`, and the default tag is image `0.1.2`.
+`repository:tag`, and the default tag is image `0.1.3`.
 
 The chart renders every field `config.File` accepts, with
 `seccomp.ioUring`, `ptp` and `schedFifo` quoted `"off"`. The plugin leaves
@@ -130,7 +130,7 @@ or no `priorityClassName`.
 
 Flux: a `HelmRepository` of type `oci` at
 `oci://ghcr.io/mimran1980/charts`, chart `ergon-shared-cpus` version
-`0.1.2`, `targetNamespace: ergon-system`, and the same `config` and
+`0.1.3`, `targetNamespace: ergon-system`, and the same `config` and
 `hostContract` values.
 Copy the two admission files into the Git repo Flux already applies.
 Do not point Flux at the whole `admission/` directory: that directory
@@ -315,13 +315,13 @@ The plugin is public. No image pull secret.
 
 | what | address |
 |---|---|
-| image | `ghcr.io/mimran1980/ergon-shared-cpus:0.1.2` (and `:latest`) |
-| digest of `0.1.2` and `latest` | `sha256:33ddd06f6b2e58bae6a2bf13092366482b5a292bc50a01223b0b383b66026da6` |
-| chart | `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.2` |
+| image | `ghcr.io/mimran1980/ergon-shared-cpus:0.1.3` (and `:latest`) |
+| digest of `0.1.3` and `latest` | `sha256:440fb141f12876ed12dfb15f9ea512d60dfd212d704e4caf598396990c532d3f` |
+| chart | `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.3` |
 
 ```sh
 helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus \
-  --version 0.1.2 \
+  --version 0.1.3 \
   --namespace ergon-system --create-namespace \
   --set-string config.sharedCpus=0 \
   --set 'config.namespaces={trading}' \
