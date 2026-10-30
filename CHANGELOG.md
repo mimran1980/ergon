@@ -4,6 +4,10 @@
 
 ### Changed
 
+- ergon-io's and ergon-md-dpdk's start-up host checks now run T13-T18
+  (workqueue cpumask, compaction, other tasks on a hot CPU,
+  instrumentation, KSM, steal), and ergon-io also T21 (TCP autocorking).
+  They were in ergon-tune with no caller.
 - ergon-io `recv-busy` with `per_queue`: no poll looks up more than one NIC
   queue id. The look-again checks one socket every 16 polls in turn, instead
   of every socket in one poll every 4096 polls (256 `getsockopt` calls at 256

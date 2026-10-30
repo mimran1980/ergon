@@ -58,8 +58,9 @@ use ergon_tune::{
     BusyPoll, Component, CpuSet, Ethtool, EthtoolCache, Finding, FsMagic, HOST_CHECKS_ENV, Host, HotSet, Netlink, Nic,
     Role, Severity, Status, Thread, busy_poll_sysctls, carrier_changes, fs_magic, host_check_line, n1_adaptive_rx,
     n2_deferred_irqs, n4_rx_ring, t1_isolation, t2_nic_irqs, t3_thp, t4_aeron_dir, t5_numa_balancing, t6_nic_node,
-    t7_sched_policy, t8_smt_siblings, t9_cpu_quota, t10_smt_on, t22_aeron_affinity_names, t23_aeron_hugepage_env,
-    t24_dpdk_nic_pair, thread_affinity,
+    t7_sched_policy, t8_smt_siblings, t9_cpu_quota, t10_smt_on, t13_workqueue_cpumask, t14_compaction, t15_host_tasks,
+    t16_instrumentation, t17_ksm, t18_steal, t22_aeron_affinity_names, t23_aeron_hugepage_env, t24_dpdk_nic_pair,
+    thread_affinity,
 };
 use rusteron_media_driver::AeronDriverContext;
 use rusteron_media_driver::bindings::aeron_threading_mode_t;
@@ -829,6 +830,13 @@ pub fn host_report<E: Ethtool>(host: &Host, inputs: &Inputs, cache: &mut Ethtool
     findings.push(t24_dpdk_nic_pair(inputs.dpdk, read_env));
     findings.push(t5_numa_balancing(host));
     findings.push(t9_cpu_quota(host));
+    // Noise on the agents' CPUs from the rest of the host.
+    findings.push(t13_workqueue_cpumask(host, &cpus));
+    findings.push(t14_compaction(host));
+    findings.push(t15_host_tasks(host, &cpus));
+    findings.push(t16_instrumentation(host));
+    findings.push(t17_ksm(host));
+    findings.push(t18_steal(host, &cpus));
     match &inputs.nics {
         DataNics::Socket(names) if names.is_empty() => notes.push(format!(
             "ergon-md-dpdk info: {DATA_NICS_ENV} is not set, so the socket transport's data NICs are not \

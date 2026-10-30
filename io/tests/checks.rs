@@ -193,6 +193,47 @@ fn tuned(name: &str, cpus_allowed: &str) -> R<Fixture> {
         .thp("always madvise [never]\n")?
         .thread(0, cpus_allowed)?
         .cpu_max("max 100000\n")?;
+    // T13-T18 and T21: unbound workqueues on the housekeeping CPUs (0, 4),
+    // compaction and KSM off, no instrumentation, no steal, no other task
+    // on a hot CPU, autocorking off.
+    f.file("/sys/devices/virtual/workqueue/cpumask", "11\n")?
+        .file("/proc/sys/vm/compaction_proactiveness", "0\n")?
+        .file("/proc/sys/vm/compact_unevictable_allowed", "0\n")?
+        .file("/sys/kernel/mm/ksm/run", "0\n")?
+        .file("/sys/kernel/debug/kprobes/list", "")?
+        .file("/sys/kernel/debug/kprobes/enabled", "1\n")?
+        .file("/sys/kernel/tracing/enabled_functions", "")?
+        .file("/proc/kallsyms", "ffffffff81000000 T _stext\n")?
+        .file("/proc/sys/net/core/bpf_jit_enable", "1\n")?
+        .file("/proc/sys/net/core/bpf_jit_kallsyms", "1\n")?
+        .file("/proc/sys/net/core/bpf_jit_harden", "0\n")?
+        .file("/proc/sys/net/ipv4/tcp_autocorking", "0\n")?;
+    let stat: String = std::iter::once("cpu  800 0 800 80000 0 0 0 0 0 0\n".to_owned())
+        .chain((0..8).map(|c| format!("cpu{c} 100 0 100 10000 0 0 0 0 0 0\n")))
+        .collect();
+    f.file("/proc/stat", &stat)?;
+    for (pid, name, flags, cpus) in [
+        (2, "kthreadd", 0x0020_0000_u64, "0-7"),
+        (812, "sshd", 0, "0,4"),
+    ] {
+        let d = format!("/proc/{pid}/task/{pid}");
+        let mut fields = vec!["S".to_owned()];
+        fields.extend((4..=52).map(|i| {
+            if i == 9 {
+                flags.to_string()
+            } else {
+                "0".to_owned()
+            }
+        }));
+        f.file(
+            &format!("{d}/stat"),
+            &format!("{pid} ({name}) {}\n", fields.join(" ")),
+        )?
+        .file(
+            &format!("{d}/status"),
+            &format!("Name:\t{name}\nState:\tS (sleeping)\nCpus_allowed_list:\t{cpus}\n"),
+        )?;
+    }
     Ok(f)
 }
 
@@ -214,7 +255,9 @@ fn a_loop_pinned_to_one_cpu_is_checked_there() -> R {
     assert_eq!(r.loop_cpu, LoopCpu::Pinned(2));
     assert_eq!(r.hot, HotSet::new().with(2, Role::Loop));
     let found = ids(&r.findings);
-    for id in ["T1", "T3", "T7", "T8", "T9", "T10"] {
+    for id in [
+        "T1", "T3", "T7", "T8", "T9", "T10", "T13", "T14", "T15", "T16", "T17", "T18", "T21",
+    ] {
         assert!(found.contains(&id), "{id} missing: {found:?}");
     }
     let text = r.lines();
@@ -272,7 +315,9 @@ fn a_tuned_host_reports_nothing() -> R {
     let r = checks::host_report(&f.host(), &Config::new(Backend::RecvBusy));
     assert_eq!(r.lines(), Vec::<String>::new(), "{:#?}", r.findings);
     let found = ids(&r.findings);
-    for id in ["T1", "T3", "T7", "T8", "T9", "T10"] {
+    for id in [
+        "T1", "T3", "T7", "T8", "T9", "T10", "T13", "T14", "T15", "T16", "T17", "T18", "T21",
+    ] {
         assert!(found.contains(&id), "{id} not checked: {found:?}");
     }
     assert!(

@@ -16,15 +16,15 @@
 //! | T10 | [`t10_smt_on`] | io, md |
 //! | T11 | [`t11_time_sync`] at start; [`ClockWatch`] while running | rt (start, housekeeping) |
 //! | T12 | [`t12_clocksource`] at start; [`ClockWatch`] while running | rt (start, housekeeping) |
-//! | T13 | [`t13_workqueue_cpumask`] | no caller in this repository |
-//! | T14 | [`t14_compaction`] (info) | no caller in this repository |
-//! | T15 | [`t15_host_tasks`] | no caller in this repository |
-//! | T16 | [`t16_instrumentation`] (info) | no caller in this repository |
-//! | T17 | [`t17_ksm`] | no caller in this repository |
-//! | T18 | [`t18_steal`] (info) | no caller in this repository |
+//! | T13 | [`t13_workqueue_cpumask`] | io, md |
+//! | T14 | [`t14_compaction`] (info) | io, md |
+//! | T15 | [`t15_host_tasks`] | io, md |
+//! | T16 | [`t16_instrumentation`] (info) | io, md |
+//! | T17 | [`t17_ksm`] | io, md |
+//! | T18 | [`t18_steal`] (info) | io, md |
 //! | T19 | [`FaultWatch`] while running | io (the polling thread, every 5 s from the warning thread) |
 //! | T20 | [`t20_irq_idle`] | no caller in this repository (the lab's transport suite caps the IRQ CPU itself) |
-//! | T21 | [`t21_tcp_autocorking`] | no caller in this repository (the lab's transport suite sets it off itself) |
+//! | T21 | [`t21_tcp_autocorking`] | io (a warning: its connections send latency-sensitive TCP) |
 //! | T22 | [`t22_aeron_affinity_names`] | md |
 //! | T23 | [`t23_aeron_hugepage_env`] | md |
 //! | T24 | [`t24_dpdk_nic_pair`] | io (fstack-spin, smoltcp-spin), md (dpdk-ena) |

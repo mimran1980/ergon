@@ -878,7 +878,7 @@ fn the_host_checks_run_on_the_agents_cpus() {
     let t8 = warnings(&report.findings, "T8");
     assert_eq!(t8.len(), 1, "{t8:?}");
     assert!(t8[0].message.contains("CPU 2 (sender)") && t8[0].message.contains("CPU 6 (conductor)"));
-    for id in ["T3", "T4", "T5", "T7", "T9"] {
+    for id in ["T3", "T4", "T5", "T7", "T9", "T13", "T14", "T15", "T16", "T17", "T18"] {
         assert_eq!(with_id(&report.findings, id).len(), 1, "{id}: {:?}", report.findings);
     }
     // T4 reads the driver's own directory (on a fixture: unknown, never a warning)

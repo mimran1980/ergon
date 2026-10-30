@@ -38,7 +38,9 @@ use ergon_tune::{
     Component, Ethtool, EthtoolCache, Finding, Host, HostCheckError, HostCheckPolicy, HotSet,
     Needs, Netlink, Nic, Role, SILENCE, Severity, Status, Thread, carrier_changes, host_check_line,
     k8s_checks, n1_adaptive_rx, n2_deferred_irqs, n3_azure_vf, t1_isolation, t2_nic_irqs, t3_thp,
-    t7_sched_policy, t8_smt_siblings, t9_cpu_quota, t10_smt_on, t24_dpdk_nic_pair, thread_affinity,
+    t7_sched_policy, t8_smt_siblings, t9_cpu_quota, t10_smt_on, t13_workqueue_cpumask,
+    t14_compaction, t15_host_tasks, t16_instrumentation, t17_ksm, t18_steal, t21_tcp_autocorking,
+    t24_dpdk_nic_pair, thread_affinity,
 };
 
 use crate::backend::{Backend, Config};
@@ -268,6 +270,16 @@ pub fn host_report(host: &Host, cfg: &Config) -> HostReport {
     findings.push(t9_cpu_quota(host));
     findings.extend(t3_thp(host, Component::Io));
     findings.push(t10_smt_on(host));
+    // Noise on the busy-spinning CPUs from the rest of the host.
+    findings.push(t13_workqueue_cpumask(host, &cpus));
+    findings.push(t14_compaction(host));
+    findings.push(t15_host_tasks(host, &cpus));
+    findings.push(t16_instrumentation(host));
+    findings.push(t17_ksm(host));
+    findings.push(t18_steal(host, &cpus));
+    // ergon-io's TCP, WebSocket and HTTP connections send latency-sensitive
+    // requests.
+    findings.push(t21_tcp_autocorking(host, true));
     // this process's environment, which only the running host has; the
     // sender pair applies to the DPDK backends alone.
     let read_env = |name: &str| host.is_live().then(|| std::env::var(name).ok()).flatten();
