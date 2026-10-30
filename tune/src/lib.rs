@@ -82,7 +82,7 @@ mod time;
 
 pub use aeron::{AERON_HUGEPAGE_BYTES, t22_aeron_affinity_names, t23_aeron_hugepage_env};
 pub use cpu::{
-    SchedPolicy, Thread, t1_isolation, t7_sched_policy, t8_smt_siblings, t10_smt_on,
+    SchedPolicy, Thread, isolated_cpus, t1_isolation, t7_sched_policy, t8_smt_siblings, t10_smt_on,
     thread_affinity, thread_policy,
 };
 pub use cpuset::{CPU_LIMIT, CpuSet, CpuSetError};

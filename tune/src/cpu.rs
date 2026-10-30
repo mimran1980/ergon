@@ -117,10 +117,15 @@ pub fn thread_affinity(host: &Host, thread: Thread) -> Result<CpuSet, ReadError>
     CpuSet::parse_list(list).map_err(|e| ReadError::cpus(&path, e))
 }
 
-/// The CPUs isolated from the scheduler's load balancing: `isolcpus`
-/// (`/sys/devices/system/cpu/isolated`) and cgroup v2 isolated partitions
-/// (`cpuset.cpus.isolated`, Linux 6.7 and later, in the root cgroup only:
-/// absent in a container, which is not an error).
+/// The CPUs isolated from the scheduler's load balancing.
+///
+/// They are `isolcpus` (`/sys/devices/system/cpu/isolated`) and cgroup v2
+/// isolated partitions (`cpuset.cpus.isolated`, Linux 6.7 and later, in the
+/// root cgroup only: absent in a container, which is not an error).
+///
+/// # Errors
+///
+/// `/sys/devices/system/cpu/isolated` cannot be read or is not a CPU list.
 pub fn isolated_cpus(host: &Host) -> Result<CpuSet, ReadError> {
     let boot = host.read_cpu_list("/sys/devices/system/cpu/isolated")?;
     let partitions = host

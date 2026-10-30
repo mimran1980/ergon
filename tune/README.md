@@ -122,6 +122,32 @@ pure functions over a `Host`.
   opens `/dev/cpu_dma_latency` (opening it registers a request), so a
   process holding it is not seen.
 
+## Check a node first: the `ergon-tune` command
+
+Before deploying, run the checks on the node, or in a pod that mounts the
+node's root, and fix what they report:
+
+```sh
+cargo install ergon-tune
+ergon-tune --hot 2-7 --nic ens6 --tcp           # on the node
+ergon-tune --root /host --hot 2-7 --require     # a pod with the node's / at /host
+```
+
+| Option | Meaning |
+|---|---|
+| `--hot CPUS` | the busy-spinning CPUs; default the node's isolated ones |
+| `--nic NAME\|PCI` | a data NIC (`ens6`) or DPDK port (`0000:00:06.0`): adds T2, T6, T20; repeatable |
+| `--tcp` | the app sends latency-sensitive TCP: T21 warns |
+| `--busy-poll` | sockets busy-poll: K5 asks for `CAP_NET_ADMIN` |
+| `--component io\|md\|rt` | who spins, for T3's severity (default `md`) |
+| `--root DIR` | check a mounted tree instead of `/` |
+| `--all` | print the checks that passed too |
+| `--require` | exit 1 where `ERGON_HOST_CHECKS=require` would refuse a start |
+
+Each line is a finding (`WARN`, `info`, `UNKNOWN`, `ok`) with its evidence and
+its fix; a summary line ends the output. Exit status: 0 reported, 1 refused
+(`--require`), 2 usage.
+
 ## How to use it
 
 ```toml

@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- `ergon-tune` command: runs the host checks on a node (or a tree under
+  `--root`) and prints each finding with its fix; `--hot`, `--nic`, `--tcp`,
+  `--busy-poll`, `--component`, `--all`, `--require` (exit 1 where a start
+  under `ERGON_HOST_CHECKS=require` would refuse). `ergon_tune::isolated_cpus`
+  is now public.
+
 ### Changed
 
 - md-dpdk EKS image: Aeron's C is built for `x86-64-v2` or `armv8.2-a` by

@@ -12,8 +12,8 @@ readme = "README.md"
 documentation = "https://docs.rs/ergon-tune"
 keywords = ["latency", "tuning", "isolcpus", "irq", "ethtool"]
 categories = ["os::linux-apis", "hardware-support"]
-# Published (ergon-md-dpdk depends on it) as the library only: the tests and
-# their fixture trees are repo-only. Its callers are ergon-io (the
+# Published (ergon-md-dpdk depends on it) as the library and the ergon-tune
+# command (src/bin): the tests and their fixture trees are repo-only. Its callers are ergon-io (the
 # ergon-io-warn thread), the ergon-md-dpdk media driver (start-up,
 # housekeeping) and an application's busy-spinning runtime (before its loop);
 # see the crate documentation.
