@@ -44,6 +44,8 @@ samples/low-latency-k8s/tests/logger_*.rs	samples	cd samples/low-latency-k8s && 
 samples/low-latency-k8s/tests/placement_*.rs	samples-linux	bash samples/low-latency-k8s/scripts/test-docker.sh --arch arm64 && bash samples/low-latency-k8s/scripts/test-docker.sh --arch amd64
 samples/low-latency-k8s/tests/hot_stdout.rs	samples-linux	bash samples/low-latency-k8s/scripts/test-docker.sh --arch arm64 && bash samples/low-latency-k8s/scripts/test-docker.sh --arch amd64
 samples/low-latency-k8s/tests/manifests.rs	k8s	cd samples/low-latency-k8s && cargo test --test manifests -- --test-threads=1
+samples/low-latency-k8s/tests/aeron_client_book.rs	samples	cd samples/low-latency-k8s && cargo test --test aeron_client_book -- --test-threads=1
+samples/low-latency-k8s/tests/busy_loop_book.rs	samples-linux	bash samples/low-latency-k8s/scripts/test-docker.sh --arch arm64 && bash samples/low-latency-k8s/scripts/test-docker.sh --arch amd64
 samples/low-latency-k8s/benches/*.rs	benchmark	cd samples/low-latency-k8s && cargo bench --no-run
 md-dpdk/src/*.rs	dpdk	cargo test -p ergon-md-dpdk --lib -- --test-threads=1
 md-dpdk/tests/*.rs	dpdk	cargo test -p ergon-md-dpdk -- --test-threads=1 && cargo test -p ergon-md-dpdk --features dpdk -- --test-threads=1 && cargo test -p ergon-md-dpdk --features static,dpdk -- --test-threads=1

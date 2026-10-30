@@ -21,7 +21,7 @@ samples-cluster-ha-kill-leader:
 samples-ll:
     cd samples/low-latency-k8s && cargo fmt --check
     cd samples/low-latency-k8s && cargo clippy --all-targets -- -D warnings
-    cd samples/low-latency-k8s && cargo test --lib --test logger_nonblocking --test logger_alloc -- --test-threads=1
+    cd samples/low-latency-k8s && cargo test --lib --test logger_nonblocking --test logger_alloc --test aeron_client_book -- --test-threads=1
     cd samples/low-latency-k8s && cargo test --test manifests -- --test-threads=1
     bash samples/low-latency-k8s/scripts/test-entrypoint.sh
     bash samples/low-latency-k8s/scripts/test-verify.sh

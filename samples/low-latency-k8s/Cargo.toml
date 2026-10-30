@@ -26,6 +26,8 @@ rustix = { version = "=1.1.5", default-features = false, features = ["std", "thr
 rustix = { version = "=1.1.5", default-features = false, features = ["std", "stdio", "pipe"] }
 
 [dev-dependencies]
+# tests/busy_loop_book.rs: the book's busy-spin loop polls an ergon-io Driver
+ergon-io = { path = "../../io" }
 proptest = { version = "=1.12.0", default-features = false, features = ["std"] }
 rusteron-media-driver = { version = "=0.2.16", features = ["static"] }
 serde_yaml = "=0.9.34"
@@ -62,6 +64,14 @@ path = "tests/hot_stdout.rs"
 [[test]]
 name = "manifests"
 path = "tests/manifests.rs"
+
+[[test]]
+name = "aeron_client_book"
+path = "tests/aeron_client_book.rs"
+
+[[test]]
+name = "busy_loop_book"
+path = "tests/busy_loop_book.rs"
 
 [[bench]]
 name = "log_event"
