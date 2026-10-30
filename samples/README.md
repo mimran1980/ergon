@@ -553,12 +553,12 @@ tag's latency effect is not measured.
 
 ### Not verified
 
-- kind, the Linux VM lane and EKS: chart 0.1.2 on kind; chart 0.1.2 and
+- kind, the Linux VM lane and EKS: chart 0.1.3 on kind; chart 0.1.3 and
   nodeadm's containerd block on AL2023; AL2023's containerd version;
   `node/eks-userdata.sh`'s user data on EC2 (checked offline only).
 - The image's `ergon-cpus` comes from the published 0.1.1 image; its source
-  is unchanged in 0.1.2 (`docker/Dockerfile`), but it has not run under the
-  0.1.2 hook.
+  is unchanged since (`docker/Dockerfile`), but it has not run under the
+  0.1.3 hook.
 - The CPU tags `amd64-v3`, `arm64-n2`, `arm64-v3`: not built.
 - A tap PMD and bridge inside a pod's network namespace (the Docker e2e ran
   them in a container's).

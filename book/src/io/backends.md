@@ -270,7 +270,7 @@ Requirements:
 
 | need | why |
 |---|---|
-| Linux, the `fstack` feature, `FSTACK_PREFIX` at build time | build.rs links F-Stack and its DPDK, both static, from the prefix [`build-fstack.sh`](https://github.com/mimran1980/ergon/blob/main/io/benches/fstack/build-fstack.sh) builds (x86_64; arm64 is in progress). Without `FSTACK_PREFIX` the feature compiles and `fstack::init` returns `Error::Unsupported` |
+| Linux, the `fstack` feature, `FSTACK_PREFIX` at build time | build.rs links F-Stack and its DPDK, both static, from the prefix [`build-fstack.sh`](https://github.com/mimran1980/ergon/blob/main/io/benches/fstack/build-fstack.sh) builds (x86_64 and arm64). Without `FSTACK_PREFIX` the feature compiles and `fstack::init` returns `Error::Unsupported` |
 | `-C link-arg=-Wl,-z,nostart-stop-gc` in the binary's `RUSTFLAGS` | lld otherwise drops FreeBSD's linker sets and `ff_init` crashes; a dependency cannot pass it on |
 | a NIC of its own (on AWS a second ENI) bound to `vfio-pci` or `igb_uio` | DPDK takes the device from the kernel |
 | hugepages | DPDK's memory (`fstack_no_huge` is for tests) |
@@ -387,13 +387,13 @@ frames (`CLOCK_REALTIME`); `quickack_check` is off (`require` refused);
 
 Requirements: Linux x86_64 or aarch64; the `smoltcp-dpdk` feature;
 libdpdk >= 23.11 through pkg-config (Ubuntu 24.04's `libdpdk-dev`);
-a port DPDK can take (an ENA ENI bound to `vfio-pci`, as for
-[ergon-md-dpdk](../md-dpdk/overview.md)), hugepages, and the `vfio`
-privileges. It cannot be linked beside `fstack` with `FSTACK_PREFIX` (two
+a port DPDK can take (an ENA ENI bound to `igb_uio`, as the EKS node of
+[ergon-md-dpdk](../md-dpdk/overview.md) binds it, or to `vfio-pci`),
+hugepages, and that driver's privileges (as for `fstack-spin` above). It cannot be linked beside `fstack` with `FSTACK_PREFIX` (two
 DPDKs).
 
 Kubernetes: as for `fstack-spin`: the port from a device plugin,
-`hugepages-2Mi` as a resource, `CAP_IPC_LOCK`, whole CPUs (Guaranteed QoS,
+`hugepages-2Mi` as a resource, the driver's capabilities, whole CPUs (Guaranteed QoS,
 static CPU manager), the polling thread pinned to one before
 `Stack::init`. Housekeeping (closed sockets, ARP refreshes, the PMD's
 timers) runs on the polling thread once a millisecond, a few µs each.

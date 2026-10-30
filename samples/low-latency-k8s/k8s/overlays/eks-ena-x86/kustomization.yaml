@@ -1,9 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # EKS on AL2023 with the ENA pair: 2 x c7i.4xlarge, the smallest c7i with 5 physical cores. Render and lint only: not run.
-# A c7i.4xlarge run needs the user's approval first (the standing rule: no
-# c7i.4xlarge or metal runs unless asked). No c7i.2xlarge layout is written:
-# with SMT on and full-pcpus-only every exclusive CPU costs a whole core,
-# and the ping node's driver (2), app (1) and reserved (1) cores fill all 4.
+# No c7i.2xlarge layout is written: with SMT off it has 4 cores, and the
+# ping node's driver (2), app (1) and reserved (1) cores fill all 4.
 # The image runs only on its CPU family (SIGILL elsewhere): the node affinity
 # keeps it on c7i.4xlarge. Fill endpoints.env with each node's receiver ENA IP
 # before applying: the ping publishes to the pong node's receiver and
