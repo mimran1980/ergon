@@ -271,6 +271,13 @@ it still rewrites an IRQ's affinity only after moving that IRQ itself, so an
 interface brought up again in place keeps its hints. `irq-affinity.sh` gives
 the full reasoning.
 
+Both modes also cap the IRQ CPUs at C1: every cpuidle state with an exit
+latency above 1 µs is disabled, so an interrupt never waits for its CPU to
+wake from C6 (c7i, interrupt-driven TCP: p99 315–559 → 44–49 µs,
+[C-states](https://mimran1980.github.io/ergon/deploy/hft.html#c-states)).
+Graviton has no cpuidle driver, so nothing changes there.
+`RUSTERON_IRQ_CPU_DEEP_IDLE=1` in `node.env` leaves the states alone.
+
 `sudo /usr/local/sbin/irq-affinity.sh pin` re-pins and checks on demand:
 it exits 1 naming any IRQ that can move but whose requested affinity it
 cannot make the housekeeping CPUs, and warns about each one the kernel keeps
@@ -336,12 +343,12 @@ path serves it, with two differences:
   `provision-node.sh` on every node; a VM has no IOMMU, so it changes nothing
   there) puts every group in passthrough, and the preflight checks that each
   one is.
-- No C-state cap: on metal, C1 did not separate at idle, and at 288 B 1 M
-  msgs/s at least one rep of each capped arm had a p50 above 4 ms
+- C-states: only the IRQ CPUs are capped at C1, on every node
+  (`irq-affinity.sh`, below). Capping every CPU did not separate on metal at
+  idle, and at 288 B 1 M msgs/s at least one rep of each capped arm had a p50
+  above 4 ms
   ([data](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#measured-but-no-setting-recommended)),
-  and the one committed VM A/B was mixed
-  ([C-states](https://mimran1980.github.io/ergon/deploy/hft.html#c-states)),
-  so `provision-node.sh` sets it on no node.
+  so no node caps the other CPUs.
 - SMT off at boot, not by EC2: bare metal takes no CPU options, so
   `provision-node.sh` writes sysfs's `smt/control` before kubelet's first
   start and `nosmt` holds every later boot

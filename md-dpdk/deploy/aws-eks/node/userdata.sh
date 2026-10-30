@@ -26,8 +26,9 @@
 #
 # The output is binary: pass it as `--user-data fileb://userdata.gz`. EC2
 # limits raw user data to 16384 bytes, and cloud-init and nodeadm both
-# decompress gzip user data, which with the in-body comments left out is how
-# the scripts fit; this fails rather than print more than the limit.
+# decompress gzip user data, which with the comments left out (the shebang
+# kept) is how the scripts fit; this fails rather than print more than the
+# limit.
 #
 # Optional environment:
 #   RUSTERON_DPDK_DEVICE_NUMBERS  the sender's and receiver's ENI device numbers ("1 2")
@@ -90,11 +91,11 @@ for f in "${files[@]}"; do
     ! grep -qx "$eof" "$node_dir/$f" || fail "$f has a line '$eof'"
 done
 
-# A node file as the node gets it: the leading comment block, then every line
-# but a comment line. None of the files has a here-document or string with a
+# A node file as the node gets it: its shebang, then every line but a
+# comment line. None of the files has a here-document or string with a
 # line that starts with '#' (node/test/test-bootstrap.sh runs the result).
 node_file() {
-    awk 'head && /^#/ { print; next } { head = 0 } /^[[:space:]]*#/ { next } { print }' head=1 "$1"
+    awk 'NR == 1 && /^#!/ { print; next } /^[[:space:]]*#/ { next } { print }' "$1"
 }
 
 boundary="==rusteron-dpdk-node=="

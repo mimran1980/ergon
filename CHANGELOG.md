@@ -4,6 +4,11 @@
 
 ### Changed
 
+- md-dpdk EKS node: `irq-affinity.sh` (boot and the watcher) caps the IRQ
+  CPUs at C1 by disabling every cpuidle state with an exit latency above
+  1 µs (c7i p99 315-559 → 44-49 µs). `RUSTERON_IRQ_CPU_DEEP_IDLE=1` opts out.
+  The node's user data keeps only each script's shebang, not its header
+  comments (12 KiB of EC2's 16 KiB).
 - ergon-io's and ergon-md-dpdk's start-up host checks now run T13-T18
   (workqueue cpumask, compaction, other tasks on a hot CPU,
   instrumentation, KSM, steal), and ergon-io also T21 (TCP autocorking).

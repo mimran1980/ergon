@@ -377,6 +377,35 @@ assert_file "$PROC/irq/27/smp_affinity_list" "0"
 assert_grep "IRQs on CPUs 0 (1 moved, 0 refused by the kernel)" "$TMP/irq.err"
 assert_no_grep "isolated" "$TMP/irq.err"
 
+# The IRQ CPUs sleep no deeper than C1 (exit latency 1 us): on c7i a deeper
+# state on the CPU that takes the NIC's interrupts cost p99 315-559 against
+# 44-49 us (book/src/deploy/hft.md). Deeper states are disabled; POLL and C1
+# stay; an isolated CPU's states are not touched. Graviton (no cpuidle
+# driver) has nothing to cap.
+make_idle() { # cpu state name latency
+    mkdir -p "$SYSFS/devices/system/cpu/cpu$1/cpuidle/state$2"
+    echo "$3" > "$SYSFS/devices/system/cpu/cpu$1/cpuidle/state$2/name"
+    echo "$4" > "$SYSFS/devices/system/cpu/cpu$1/cpuidle/state$2/latency"
+    echo 0 > "$SYSFS/devices/system/cpu/cpu$1/cpuidle/state$2/disable"
+}
+for cpu in 0 3; do
+    make_idle "$cpu" 0 POLL 0
+    make_idle "$cpu" 1 C1 1
+    make_idle "$cpu" 2 C1E 2
+    make_idle "$cpu" 3 C6 170
+done
+fixture_env "$IRQ_AFFINITY" pin 2>"$TMP/irq.err" || { cat "$TMP/irq.err" >&2; die "irq-affinity pin failed with cpuidle states"; }
+for st in 0 1; do assert_file "$SYSFS/devices/system/cpu/cpu0/cpuidle/state$st/disable" "0"; done
+for st in 2 3; do assert_file "$SYSFS/devices/system/cpu/cpu0/cpuidle/state$st/disable" "1"; done
+for st in 0 1 2 3; do assert_file "$SYSFS/devices/system/cpu/cpu3/cpuidle/state$st/disable" "0"; done
+assert_grep "IRQ CPUs 0 sleep no deeper than C1 (2 deeper states disabled)" "$TMP/irq.err"
+# Opted out: deep idle left alone.
+for st in 2 3; do echo 0 > "$SYSFS/devices/system/cpu/cpu0/cpuidle/state$st/disable"; done
+fixture_env RUSTERON_IRQ_CPU_DEEP_IDLE=1 "$IRQ_AFFINITY" pin 2>"$TMP/irq.err" || { cat "$TMP/irq.err" >&2; die "irq-affinity pin failed, deep idle allowed"; }
+for st in 2 3; do assert_file "$SYSFS/devices/system/cpu/cpu0/cpuidle/state$st/disable" "0"; done
+assert_grep "RUSTERON_IRQ_CPU_DEEP_IDLE=1" "$TMP/irq.err"
+rm -rf "$SYSFS"/devices/system/cpu/cpu[03]/cpuidle
+
 # x86 without interrupt remapping (an EC2 VM) moves an MSI only at its next
 # interrupt: its requested affinity reads the housekeeping CPUs at once, its
 # effective one the isolated CPU until it fires there again, which an idle
@@ -805,12 +834,10 @@ mkdir -p "$TMP/unpacked"
 for f in provision-node.sh bootstrap-dpdk-ena.sh preflight.sh rusteron-dpdk-ena.service \
     irq-affinity.sh rusteron-irq-affinity.service; do
     sed -n "/^cat > $f <<'RUSTERON_NODE_FILE_EOF'\$/,/^RUSTERON_NODE_FILE_EOF\$/p" "$TMP/part.sh" | sed '1d;$d' > "$TMP/unpacked/$f"
-    python3 - "$NODE_DIR/$f" "$TMP/unpacked/$f" <<'PY' || die "embedded $f is not the repo's less its in-body comment lines"
+    python3 - "$NODE_DIR/$f" "$TMP/unpacked/$f" <<'PY' || die "embedded $f is not the repo's less its comment lines"
 import re, sys
 src = open(sys.argv[1]).read().splitlines(keepends=True)
-head = 0
-while head < len(src) and src[head].startswith("#"):
-    head += 1
+head = 1 if src and src[0].startswith("#!") else 0
 want = src[:head] + [line for line in src[head:] if not re.match(r"\s*#", line)]
 assert "".join(want) == open(sys.argv[2]).read()
 PY

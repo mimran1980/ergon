@@ -14,6 +14,11 @@ set -euo pipefail
 # data ENA back to the kernel's ena driver.
 # watch: a pass, then one after every network link event, until stopped
 # (rusteron-irq-affinity.service). It sleeps in the kernel between events.
+# Both modes also cap the IRQ CPUs' idle at C1: every cpuidle state with an
+# exit latency above 1 us is disabled (on c7i a deeper state on the CPU that
+# takes the NIC's interrupts cost p99 315-559 against 44-49 us; book
+# deploy/hft.md, ergon-tune T20). Graviton has no cpuidle driver: nothing to
+# cap. RUSTERON_IRQ_CPU_DEEP_IDLE=1 leaves the states alone.
 # Fixtures: RUSTERON_PROC_ROOT, RUSTERON_SYSFS_ROOT, RUSTERON_LINK_MONITOR.
 # See node/test/test-bootstrap.sh.
 
@@ -56,6 +61,7 @@ RUSTERON_PROC_ROOT="${RUSTERON_PROC_ROOT:-/proc}"
 RUSTERON_HOUSEKEEPING_CPUS="${RUSTERON_HOUSEKEEPING_CPUS:-}"
 RUSTERON_IRQ_CPUS="${RUSTERON_IRQ_CPUS:-}"
 RUSTERON_LINK_MONITOR="${RUSTERON_LINK_MONITOR:-ip -o monitor link}"
+RUSTERON_IRQ_CPU_DEEP_IDLE="${RUSTERON_IRQ_CPU_DEEP_IDLE:-0}"
 
 fail() { echo "irq-affinity FAIL: $*" >&2; exit 1; }
 ok()   { echo "irq-affinity ok: $*" >&2; }
@@ -235,10 +241,33 @@ watch_links() {
     fail "the link monitor ($RUSTERON_LINK_MONITOR) ended${last:+, last saying: $last}; systemd restarts the watcher"
 }
 
+# Disables every cpuidle state deeper than C1 (exit latency above 1 us) on
+# the IRQ CPUs. Idempotent; a state that will not take the write fails.
+cap_idle() {
+    local c st lat n=0
+    if [[ "$RUSTERON_IRQ_CPU_DEEP_IDLE" == 1 ]]; then
+        warn "IRQ CPUs $DEST may sleep deeper than C1 (RUSTERON_IRQ_CPU_DEEP_IDLE=1)"
+        return
+    fi
+    for c in "${!dest[@]}"; do
+        for st in "$RUSTERON_SYSFS_ROOT/devices/system/cpu/cpu$c/cpuidle"/state*; do
+            { read -r lat < "$st/latency"; } 2>/dev/null || continue
+            ((lat > 1)) || continue
+            { echo 1 > "$st/disable"; } 2>/dev/null || fail "cannot disable $st"
+            n=$((n + 1))
+        done
+    done
+    ((n == 0)) || ok "IRQ CPUs $DEST sleep no deeper than C1 ($n deeper states disabled)"
+}
+
 case "$mode" in
 pin)
+    cap_idle
     pass
     report
     ;;
-watch) watch_links ;;
+watch)
+    cap_idle
+    watch_links
+    ;;
 esac
