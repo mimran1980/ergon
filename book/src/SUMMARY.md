@@ -57,6 +57,7 @@
   - [Cluster Tutorial](./samples/cluster-tutorial.md)
   - [Cluster HA Orderbook](./samples/cluster-ha-orderbook.md)
   - [Cluster RFQ](./samples/cluster-rfq.md)
+  - [Low-Latency Kubernetes](./samples/low-latency-k8s.md)
 - [Build Patterns](./samples/build-patterns.md)
 - [Buffer Sizing Guide](./samples/buffer-sizing.md)
 
@@ -90,12 +91,15 @@
 
 # Transports
 
+- [Which Transport When](./transports/choose.md)
+- [Aeron Client](./transports/aeron-client.md)
 - [Transport Latency Comparison](./transports/comparison.md)
 - [Aeron with Many Streams](./transports/aeron-many-streams.md)
 
 # Deployment
 
 - [Low-Latency Hosts](./deploy/overview.md)
+  - [Busy-Spin Loop](./deploy/busy-spin-loop.md)
   - [Kubernetes HFT tuning](./deploy/hft.md)
   - [AWS and Azure, x86 and Graviton](./deploy/hosts.md)
   - [Clocks](./deploy/clocks.md)
@@ -104,6 +108,7 @@
   - [Latency Pods](./deploy/latency-pods.md)
   - [Benchmarks: x86 and Graviton](./deploy/benchmarks.md)
   - [Java for Archive and Cluster](./deploy/java.md)
+  - [Troubleshooting](./deploy/troubleshooting.md)
 
 # Project
 

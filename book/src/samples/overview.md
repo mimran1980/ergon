@@ -15,6 +15,7 @@ implementations — they move with experimental APIs on purpose.
 | Later | [Cluster Tutorial](cluster-tutorial.md) | Connect, offer, poll, keep-alive, close |
 | Later | [Cluster HA Orderbook](cluster-ha-orderbook.md) | Claim-based Cluster publishing + HA-shaped book |
 | Later | [Cluster RFQ](cluster-rfq.md) | RFQ / auction codecs over Cluster |
+| Deploy | [Low-Latency Kubernetes](low-latency-k8s.md) | Aeron ping/pong on exclusive CPUs, the media driver, node and pod settings, a verifier |
 
 ```sh
 # 1 — always start here

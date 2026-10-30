@@ -2,7 +2,8 @@
 
 ergo-sbe's exact sizing is built for encoding straight into a claimed
 region: size the frame, claim exactly that many bytes, encode into the claim,
-commit. No scratch buffer, no copy. The generated `send` and `send_fixed` do
+commit. No scratch buffer, no copy. Connecting and adding the publication:
+[Aeron client](../../transports/aeron-client.md). The generated `send` and `send_fixed` do
 the last three steps and check the result, so a frame that does not fill its
 claim is a typed error and the claim is aborted, never a corrupt publication.
 

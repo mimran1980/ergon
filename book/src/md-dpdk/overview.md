@@ -94,7 +94,8 @@ Terms this chapter uses. Host, Kubernetes and Java terms:
   [rusteron](https://crates.io/crates/rusteron-media-driver)). The driver
   sends and receives through a table of functions
   (`aeron_udp_channel_transport_bindings_t`); the crate fills that table with
-  DPDK versions. Aeron clients do not change.
+  DPDK versions. Aeron clients do not change
+  ([the client calls](../transports/aeron-client.md)).
 
 ```text
 kernel UDP:  client ─ media driver ─ system call ─ kernel UDP/IP ─ interrupt ─ NIC
@@ -137,13 +138,11 @@ pair [below](#measured-between-two-hosts) DPDK's median was lower: by
 
 ## Which transport should I use?
 
-| situation | use |
-| --- | --- |
-| both ends on one host | kernel UDP, or Aeron IPC (shared memory, no network); DPDK gives no bypass there |
-| between hosts, Graviton | kernel UDP, moderation off, the NIC's interrupts on a core of their own: the best kernel path measured (no lossy rep at 1 M msgs/s in G1 and G3, one in G2) |
-| between hosts, x86 | kernel UDP. No kernel setting is recommended on x86: busy polling with a 4,096-entry ring was the best kernel arm tried, but it changes two settings at once, and the Graviton settings are not measured on x86. On `c7i.4xlarge` at 1 M msgs/s that arm's max was 6,664 µs, with 4 NAKs and 849 short sends over 5 reps |
-| between hosts, the kernel's median or tail is not good enough | kernel bypass with [Aeron Premium](https://aeron.io/) |
-| learning how a transport binding works, or reproducing these numbers | this crate, in a lab |
+Not this crate in production. Kernel UDP between hosts, Aeron IPC on one
+host, and [Aeron Premium](https://aeron.io/) where the kernel's median or
+tail is not good enough; this crate is for learning and for reproducing
+the numbers below. The choice for every need:
+[which transport when](../transports/choose.md).
 
 ## Measured: between two hosts
 

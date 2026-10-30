@@ -1,7 +1,8 @@
 # Exchange Example
 
 Multi-schema exchange-shaped sample. **`with_conversion` only** for Decimal —
-no `with_domain_type`. `publish = false`.
+no `with_domain_type`. `publish = false`. The Aeron calls it makes
+(connect, offer, poll, close) one by one: [Aeron client](../transports/aeron-client.md).
 
 ## Conversion style
 

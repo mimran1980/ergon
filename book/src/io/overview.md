@@ -107,6 +107,9 @@ Pages: [WebSocket](websocket.md) (a complete client),
 
 ## Choosing a backend
 
+Whether ergon-io, Aeron or kernel bypass at all:
+[which transport when](../transports/choose.md). Within ergon-io:
+
 The backend is configuration: `Config::parse("recv-busy")`. Count every
 socket the loop thread polls: WebSocket feeds, order connections and every
 `HttpClient` pool connection (each `Driver` and `HttpClient` on the thread

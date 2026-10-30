@@ -36,6 +36,18 @@
   stream count, so use up to 8 Aeron streams per driver with the key in each
   message, and filter before decoding. Measured layouts, term lengths,
   settings and driver sharding at 1 to 128 streams.
+- Book: "Aeron Client": connect to a media driver by `AERON_DIR`, add a
+  publication and subscription, `offer` and `try_claim`, poll with a handler,
+  close in order; run by the sample's `aeron_client_book` test.
+- Book: "Busy-Spin Loop": one pinned thread polls ergon-io, an Aeron
+  subscription and publication and its timers, with `ThrottleWatch` and
+  `FaultWatch` on a housekeeping thread; run by the sample's `busy_loop_book`
+  test (Linux).
+- Book: "Which Transport When": one table from need to transport, which the
+  comparison, ergon-io and md-dpdk pages now link to.
+- Book: "Troubleshooting": symptom, check, fix, starting from the `ergon-tune`
+  command.
+- Book: "Low-Latency Kubernetes" points at the `low-latency-k8s` sample.
 
 ## [0.1.37] — 2026-10-30
 

@@ -1610,6 +1610,9 @@ Hot p50 above the pair's `dpdk-raw` floor (µs):
 
 ### What to use
 
+Aeron's driver threading; which transport for which need is
+[which transport when](choose.md).
+
 | need | use | cost |
 |---|---|---|
 | lowest latency, many streams (32 or more) | dedicated driver threads, in its own process or in the application (`-emb`: the same latency) | 3 driver cores a host |
@@ -1900,6 +1903,9 @@ are in the remeasure section, not in this count.
 ## Conclusion
 
 <!-- CONCLUSION -->
+
+The same choice without the numbers, with how to build each:
+[which transport when](choose.md).
 
 On AMD Genoa x86, 8 cores, 64-byte messages: Azure for the kernel paths,
 AWS (`c7a.2xlarge`, ENA) where a row names DPDK or F-Stack. Compare
