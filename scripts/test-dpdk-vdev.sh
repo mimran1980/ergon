@@ -1020,7 +1020,10 @@ build_harness
 # The harness links libaeron*.so dynamically from the build-script OUT_DIR
 # (a non-standard loader path), so a bare `target/debug/dpdk-harness` cannot
 # find them at runtime. Export the dirs so the launched harness resolves them.
-export LD_LIBRARY_PATH="$(find "${CARGO_TARGET_DIR:-target}" -name 'libaeron*.so' -printf '%h\n' 2>/dev/null | sort -u | tr '\n' ':' | sed 's/:$//' || true)"
+# The caller's entries stay after them: a libdpdk built into a prefix
+# outside the loader's paths is found through LD_LIBRARY_PATH.
+aeron_libs="$(find "${CARGO_TARGET_DIR:-target}" -name 'libaeron*.so' -printf '%h\n' 2>/dev/null | sort -u | tr '\n' ':' | sed 's/:$//' || true)"
+export LD_LIBRARY_PATH="${aeron_libs}${LD_LIBRARY_PATH:+${aeron_libs:+:}$LD_LIBRARY_PATH}"
 
 plan_cpus
 bridge_up
