@@ -45,8 +45,9 @@ Terms this chapter uses. Each links to the section that explains it.
 | [`recv-busy`](backends.md) | Reads every socket every poll; `SO_BUSY_POLL` makes each read poll the NIC too. | The pick at 1–4 sockets. Each socket adds to every poll. |
 | [`per_queue`](backends.md#per_queue-one-read-per-nic-queue) | A `recv-busy` option: one read per NIC queue, then only the ready sockets. | Its NIC polling stops growing at the queue count. The one-CPU pick past 4 sockets. |
 | [`io_uring`](backends.md#kernel) | A Linux interface: requests and results pass through rings shared with the kernel. | Needs feature `uring` (on by default) and Linux 6.9+ (NAPI). |
-| [`fstack-spin`](backends.md#fstack-spin-tcp-on-f-stack) | TCP on F-Stack (FreeBSD's stack on DPDK) on a NIC of its own; the polling thread runs the stack. | Kernel bypass, feature `fstack`. AWS comparison against `epoll-spin`: [ergon-io](../transports/comparison.md#ergon-io-kernel-smoltcp-and-f-stack). |
-| [`smoltcp-spin`](backends.md#smoltcp-spin-tcp-and-udp-on-smoltcp-over-dpdk) | TCP and UDP on smoltcp, a stack in the process, over a DPDK port; the polling thread runs it. | Kernel bypass, feature `smoltcp-dpdk`, x86 and Graviton. Same AWS comparison. |
+| [`fstack-spin`](backends.md#fstack-spin-tcp-on-f-stack) | TCP on F-Stack (FreeBSD's stack on DPDK) on a NIC of its own; the polling thread runs the stack. | Kernel bypass, feature `fstack`. AWS: F-Stack TCP was pinned in the first sessions. Kernel TCP and WebSocket were pinned in the remeasure ([ergon-io](../transports/comparison.md#ergon-io-kernel-smoltcp-and-f-stack)). |
+| [`smoltcp-spin`](backends.md#smoltcp-spin-tcp-and-udp-on-smoltcp-over-dpdk) | TCP and UDP on smoltcp, a stack in the process, over a DPDK port; the polling thread runs it. | Kernel bypass, feature `smoltcp-dpdk`, x86 and Graviton. UDP echo pinned on the first runs. TCP and WebSocket echoes were pinned in the remeasure. |
+| DPDK address | F-Stack: `fstack_addr`, `fstack_gateway`, and exactly one of `fstack_pci` and `fstack_vdev`. smoltcp: `ip`. | Not detected. DPDK takes the NIC from the kernel, so the kernel route lookup cannot fill these in afterwards. Name the data NIC before the bind. F-Stack's gateway is always required. smoltcp's gateway is optional when the peer is on the prefix (default /24). |
 | [`uring-sqpoll`](backends.md) | A kernel thread (SQPOLL) spins for the ring: submits, completes, polls the NIC. | Its kernel thread polls NIC queues, not sockets; the loop's own pass still grows with sockets ([cost per poll](backends.md#cost-per-poll)). Needs a second CPU or the loop's sibling. |
 | [crossover](backends.md#find-the-crossover-on-your-own-host) | The socket count where one backend stops beating another. | Depends on the NIC, its queue count, the interrupt path and the traffic: measure it on your host. |
 | [`TCP_NODELAY`](#defaults) | Turns off Nagle's algorithm, which holds a small send until earlier data is ACKed. | On for every socket: each send goes out at once. |
@@ -126,7 +127,10 @@ Evidence:
 A NIC of the process's own, where kernel bypass is allowed:
 [`fstack-spin`](backends.md#fstack-spin-tcp-on-f-stack) or
 [`smoltcp-spin`](backends.md#smoltcp-spin-tcp-and-udp-on-smoltcp-over-dpdk)
-(both lab-tested only).
+(both lab-tested only). The AWS Kubernetes layout for Aeron on DPDK,
+the measured 1-stream path when DPDK is allowed, is
+[samples/README.md#aws-k8s](https://github.com/mimran1980/ergon/blob/main/samples/README.md#aws-k8s).
+ergon-io on DPDK has no overlay: the remeasure is one rep, and its tails are loss, faults and unexplained maxima.
 
 - **Plain `recv-busy` reads every socket on every poll.** Its poll grows
   with sockets, so a message waits longer for its socket's turn. It leads

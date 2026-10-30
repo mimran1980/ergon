@@ -27,6 +27,8 @@ import (
 //	hugepages.ergon.io/<container>:    "2M"
 //	cpu-partition.ergon.io/<container>:"isolated"
 //	cpuqos.ergon.io/<container>:       "<microseconds>" (x86 only)
+//	dpdk.ergon.io/<container>:         "ena-pair" (copy the ENA device
+//	                                    plugin's NIC pair into env; default off)
 func resolveGrants(cfg *config.Config, r *Request) (*Grants, error) {
 	g := &Grants{}
 
@@ -114,6 +116,17 @@ func resolveGrants(cfg *config.Config, r *Request) (*Grants, error) {
 		g.HugepageEnvs = envs
 	}
 
+	// The ENA NIC pair: an opt-in copy of the trio the device plugin already
+	// granted this container. Default off; a missing or unparsable value is
+	// a typed refusal, and nothing here guesses a value.
+	if dpdkAsk, hasDpdk := lookup(r, names.DpdkPrefix+r.Container); hasDpdk {
+		envs, err := latency.DpdkEnaPair(dpdkAsk, r.Env)
+		if err != nil {
+			return nil, err
+		}
+		g.DpdkEnvs = envs
+	}
+
 	// Item 2: cpuset.cpus.partition=isolated on the exclusive CPUs. The
 	// createRuntime hook creates the child cgroup and writes the files.
 	if partAsk, hasPart := lookup(r, names.CpuPartitionPrefix+r.Container); hasPart {
@@ -134,7 +147,7 @@ func resolveGrants(cfg *config.Config, r *Request) (*Grants, error) {
 
 	if len(g.Rlimits) == 0 && g.SchedFifo == 0 && g.Seccomp == nil &&
 		g.NumaMems == "" && g.PtpDevice == "" && g.CpuqosDevice == "" &&
-		g.Hugepage == nil && !g.CpuPartition {
+		g.Hugepage == nil && !g.CpuPartition && len(g.DpdkEnvs) == 0 {
 		return nil, nil
 	}
 	return g, nil
@@ -167,6 +180,7 @@ func GrantEnv(g *Grants, _ *config.Config) []latency.KV {
 		Partition:    g.Partition,
 		NodeFacts:    g.NodeFacts,
 		HugepageEnvs: g.HugepageEnvs,
+		DpdkEnvs:     g.DpdkEnvs,
 	})
 }
 

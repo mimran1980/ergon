@@ -23,7 +23,7 @@ required-features = ["test-harness"]
 [dependencies]
 ergo-aeron-cluster = { path = "../../cluster" }
 ergo-aeron-cluster-test-harness = { path = "../../cluster-test-harness", optional = true }
-rusteron-client = "0.2.15"
+rusteron-client = "0.2.16"
 
 [features]
 default = []

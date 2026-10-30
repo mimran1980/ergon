@@ -12,9 +12,10 @@ configuration, so one binary can run with each. Which to pick:
 | `fstack-spin` | no kernel: one [F-Stack](#fstack-spin-tcp-on-f-stack) pass every poll, then its kqueue | yes, F-Stack's DPDK queue | no (a NIC of its own) |
 
 - **None sleeps in the kernel.** The first three are the kernel backends
-  the busy-spin benchmarks measured. `fstack-spin` and `smoltcp-spin` are
-  measured against `epoll-spin` on AWS in the
-  [transport comparison](../transports/comparison.md#ergon-io-kernel-smoltcp-and-f-stack).
+  the busy-spin benchmarks measured. `fstack-spin` and `smoltcp-spin` ran
+  on AWS; the ranking uses the cells whose echo was pinned, including
+  the TCP and WebSocket remeasure
+  ([transport comparison](../transports/comparison.md#ergon-io-kernel-smoltcp-and-f-stack)).
 - **Among `epoll-spin`, `recv-busy` and `uring-sqpoll`, UDP (`UdpConn`) runs on `epoll-spin` only.** The other two refuse a UDP
   driver at `Driver::new` (`Error::Unsupported`); framed TCP and the TLS
   endpoints run on all three ([UDP](udp.md)). `smoltcp-spin` also carries UDP.
@@ -186,8 +187,9 @@ In a pod: [x86 with SMT, `cpu: 2`](kubernetes.md#x86-with-smt-cpu-2-one-physical
 Kernel bypass: [F-Stack](https://github.com/F-Stack/f-stack) (FreeBSD's
 TCP/IP stack on DPDK, Apache-2.0/BSD; ergon-io builds v2.0) owns a NIC of
 its own, and the polling thread runs it. **Status:** Docker lab test (two
-F-Stack processes over a veth pair), and an AWS comparison against
-`epoll-spin` on `c7i.4xlarge` and `c8g.2xlarge`
+F-Stack processes over a veth pair), and AWS `c7i` / `c8g` runs. The
+F-Stack TCP echo was pinned. Kernel TCP and WebSocket echoes in that
+first session were on CPU 0; the remeasure pinned them
 ([ergon-io](../transports/comparison.md#ergon-io-kernel-smoltcp-and-f-stack)).
 
 | | |
@@ -216,6 +218,25 @@ fstack-spin,loop_cpu=3,fstack_addr=10.0.1.20,fstack_prefix_len=24,fstack_gateway
 
 Fixed: `pkt_tx_delay=0` and `idle_sleep=0` (no transmit hold, no sleep),
 TSO and LRO off. FreeBSD's other settings are F-Stack's shipped ones.
+
+ergon-io does not guess the address, the gateway or the port: with the
+pod's `dpdk.ergon.io` opt-in they are copied from the pair the ENA device
+plugin granted, and without one you set them yourself.
+`FstackConf::check` refuses a config that omits `fstack_addr`,
+`fstack_gateway`, or exactly one of `fstack_pci` and `fstack_vdev`.
+The prefix defaults to 24. A peer on that subnet still needs
+`fstack_gateway`: F-Stack's port has no on-link-only mode. The kernel
+route lookup does not run for this backend, and it cannot fill these
+fields in after DPDK has bound the NIC, because the kernel then has no
+address on that device. Read the address, prefix, gateway and PCI from
+the interface before the bind, and name the data NIC. On a host with a
+management interface and a data interface, the management address must
+stay with the kernel.
+
+The shortest line for a real NIC is
+`fstack-spin,fstack_addr=10.0.1.20,fstack_gateway=10.0.1.1,fstack_pci=0000:00:06.0`.
+A veth test uses `fstack_vdev=net_af_packet0;iface=eth1` instead of
+`fstack_pci`, and `fstack_no_huge=true` when there are no hugepages.
 
 What the kernel backends have and F-Stack does not:
 
@@ -257,8 +278,8 @@ Kernel bypass with a TCP/IP stack in the process:
 [smoltcp](https://github.com/smoltcp-rs/smoltcp) 0.14.0 (0BSD) over one
 DPDK port, driven by the polling thread. Pure Rust, so it runs on Graviton
 as on x86. **Status:** Docker lab test (a DPDK `net_af_packet` port against
-the kernel's stack across a veth pair, arm64), and the same AWS comparison
-against `epoll-spin` on `c7i.4xlarge` and `c8g.2xlarge`.
+the kernel's stack across a veth pair, arm64), and the same AWS runs. The
+UDP echo was pinned. Its TCP and WebSocket echoes were on the housekeeping CPU in that session, and pinned in the remeasure.
 
 | | |
 |---|---|
@@ -288,12 +309,22 @@ let id = driver.connect(FrameDial::<SmolTcp>::on_stack(target, FrameOptions::def
 | key | |
 |---|---|
 | `port` | the DPDK device name (`0000:00:06.0`, `net_af_packet0`) or port index |
-| `ip` (`a.b.c.d/len`), `gw`, `gw_mac` | the address; the default gateway; its MAC pinned (no ARP for it) |
+| `ip` (`a.b.c.d/len`), `gw`, `gw_mac` | the address, required (prefix defaults to 24); the gateway, optional when the peer is on that prefix; its MAC, optional, and only with `gw` |
 | `mtu` (1500, up to 9001 on ENA), `rx_desc`, `tx_desc` (1024), `mbufs` (8191) | the port |
 | `max_sockets` (64), `tcp_rx_buf`, `tcp_tx_buf` (256 KiB), `udp_buf` (256 KiB), `udp_packets` (256) | the sockets |
 | `rto_min_us` (10 000), `cc` (`reno`, `none`), `timestamps` (true) | TCP |
 | `tx_csum_offload` (true) | IPv4, TCP and UDP transmit checksums on the NIC when it has all three (ENA does); received checksums are checked in software |
 | `eal` | EAL arguments; the stack adds `--lcores=0@(<the thread's CPUs>)`, `--no-telemetry`, and `--in-memory` (`--no-shconf` with `--no-huge`) unless given |
+
+`ip` is the only field the parser requires. `StackConfig::parse("ip=10.0.1.20")`
+is a /24 with no gateway: on-link peers are reached by ARP. Set `gw` when
+the peer is on another subnet. `gw_mac` skips ARP for that gateway and is
+refused without `gw`. `port` defaults to `0`, the first DPDK port. These
+values are not guessed either: with the pod's `dpdk.ergon.io` opt-in they
+are copied from the pair the ENA device plugin granted. On a real NIC pass `eal=-a <pci>` last so DPDK
+allowlists that device, and name the data NIC before it is bound, as for
+`fstack-spin`. The shortest real-NIC line is
+`port=0000:00:06.0,ip=10.0.1.20/24,eal=-a 0000:00:06.0`.
 
 TCP, against smoltcp's defaults:
 

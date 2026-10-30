@@ -210,12 +210,13 @@ for profile in "${PROFILES[@]}"; do
     # Both profiles are blocking: a regression that only appears without LTO is
     # still a regression for every downstream consumer that does not use LTO.
     # Keep the gate's stdout beside the run it graded: the release ships
-    # `sbe-bench-gate-no-lto.txt`, and `package-bench-artifacts.sh` takes it
-    # from here rather than anyone remembering to capture a terminal. `if`
+    # `sbe-bench-gate-no-lto.txt`, and `package-bench-artifacts.sh` reads it
+    # from `<run>/<profile>/gate.txt`, not from under `criterion/`, so tee it
+    # there rather than anyone remembering to capture a terminal. `if`
     # is what stops `set -e` aborting on a gate failure, and `pipefail` is
     # what makes the pipeline report the gate's status rather than `tee`'s.
     if ! "$REPO_ROOT/scripts/check-bench-gate.sh" "$criterion_dir" 0 sbe --run-id "$RUN_ID" \
-            2>&1 | tee "$criterion_dir/gate.txt"; then
+            2>&1 | tee "$RUN_ROOT/$profile/gate.txt"; then
         failures=$((failures + 1))
     fi
 done

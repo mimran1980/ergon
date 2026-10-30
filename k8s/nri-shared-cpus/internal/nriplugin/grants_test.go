@@ -348,6 +348,12 @@ func TestResolveGrantsHugepageMount(t *testing.T) {
 	if env["ERGON_HUGEPAGE_SIZE"] != "2097152" {
 		t.Errorf("ERGON_HUGEPAGE_SIZE = %q", env["ERGON_HUGEPAGE_SIZE"])
 	}
+	if env["AERON_FILE_PAGE_SIZE"] != "2097152" {
+		t.Errorf("AERON_FILE_PAGE_SIZE = %q", env["AERON_FILE_PAGE_SIZE"])
+	}
+	if env["AERON_TERM_BUFFER_SPARSE_FILE"] != "false" {
+		t.Errorf("AERON_TERM_BUFFER_SPARSE_FILE = %q", env["AERON_TERM_BUFFER_SPARSE_FILE"])
+	}
 	if _, ok := env["ERGON_HUGEPAGES"]; ok {
 		t.Error("ERGON_HUGEPAGES is replaced by ERGON_HUGEPAGES_DIR/_SIZE")
 	}
@@ -472,6 +478,140 @@ func TestResolveGrantsCpuqosAMD64Grants(t *testing.T) {
 	env := kvMapOf(GrantEnv(g, cfg))
 	if env["ERGON_CPU_DMA_LATENCY"] != "/dev/cpu_dma_latency" {
 		t.Errorf("ERGON_CPU_DMA_LATENCY = %q", env["ERGON_CPU_DMA_LATENCY"])
+	}
+}
+
+// --- the dpdk.ergon.io ena-pair annotation (default off) ---
+
+// dpdkSenderEnv is the trio the ENA device plugin injected into the
+// container's env.
+func dpdkSenderEnv() map[string]string {
+	return map[string]string{
+		"RUSTERON_DPDK_SENDER_PCI":       "0000:00:06.0",
+		"RUSTERON_DPDK_SENDER_IPV4_CIDR": "10.0.1.20/24",
+		"RUSTERON_DPDK_SENDER_GATEWAY":   "10.0.1.1",
+	}
+}
+
+func TestResolveGrantsDpdkAnnotationOffKeepsKeysUnset(t *testing.T) {
+	cfg := grantConfig(t)
+	r := baseRequest()
+	r.Env = dpdkSenderEnv()
+	r.PodAnnotations = map[string]string{
+		names.RlimitsPrefix + r.Container: "memlock",
+	}
+	g, err := resolveGrants(cfg, &r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g == nil {
+		t.Fatal("want the rlimits grant, got nil")
+	}
+	env := kvMapOf(GrantEnv(g, cfg))
+	for _, k := range []string{
+		latency.EnvIOFstack, latency.EnvIOSmoltcp,
+		latency.EnvDpdkPCI, latency.EnvDpdkAddr, latency.EnvDpdkGateway,
+	} {
+		if _, ok := env[k]; ok {
+			t.Errorf("%s must stay unset without %s%s", k, names.DpdkPrefix, r.Container)
+		}
+	}
+}
+
+func TestResolveGrantsDpdkMissingPciFailsClosed(t *testing.T) {
+	cfg := grantConfig(t)
+	r := baseRequest()
+	r.Env = dpdkSenderEnv()
+	delete(r.Env, "RUSTERON_DPDK_SENDER_PCI")
+	r.PodAnnotations = map[string]string{
+		names.DpdkPrefix + r.Container: names.DpdkEnaPairValue,
+	}
+	_, err := resolveGrants(cfg, &r)
+	if err == nil {
+		t.Fatal("annotation without RUSTERON_DPDK_SENDER_PCI must be refused (fail closed)")
+	}
+	if !strings.Contains(err.Error(), "RUSTERON_DPDK_SENDER_PCI") {
+		t.Errorf("refusal %q must name the missing key", err)
+	}
+	// An empty value is a missing key.
+	r.Env["RUSTERON_DPDK_SENDER_PCI"] = "  "
+	_, err = resolveGrants(cfg, &r)
+	if err == nil || !strings.Contains(err.Error(), "RUSTERON_DPDK_SENDER_PCI") {
+		t.Errorf("an empty PCI must be refused naming the key, got %v", err)
+	}
+}
+
+func TestResolveGrantsDpdkPairCopiesTheTwoLines(t *testing.T) {
+	cfg := grantConfig(t)
+	r := baseRequest()
+	r.Env = dpdkSenderEnv()
+	r.PodAnnotations = map[string]string{
+		names.DpdkPrefix + r.Container: names.DpdkEnaPairValue,
+	}
+	g, err := resolveGrants(cfg, &r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g == nil {
+		t.Fatal("want the dpdk pair grant, got nil")
+	}
+	env := kvMapOf(GrantEnv(g, cfg))
+	want := map[string]string{
+		latency.EnvIOFstack:    "fstack-spin,fstack_addr=10.0.1.20,fstack_gateway=10.0.1.1,fstack_pci=0000:00:06.0",
+		latency.EnvIOSmoltcp:   "port=0000:00:06.0,ip=10.0.1.20/24,eal=-a 0000:00:06.0",
+		latency.EnvDpdkPCI:     "0000:00:06.0",
+		latency.EnvDpdkAddr:    "10.0.1.20",
+		latency.EnvDpdkGateway: "10.0.1.1",
+	}
+	for k, v := range want {
+		if env[k] != v {
+			t.Errorf("%s = %q, want %q", k, env[k], v)
+		}
+	}
+	if _, ok := env["AERON_DIR"]; ok {
+		t.Error("the plugin must not set AERON_DIR")
+	}
+	if _, ok := env["RUSTERON_DPDK_HUGE_DIR"]; ok {
+		t.Error("the plugin must not set RUSTERON_DPDK_HUGE_DIR")
+	}
+}
+
+func TestResolveGrantsDpdkBadValueRefused(t *testing.T) {
+	cfg := grantConfig(t)
+	r := baseRequest()
+	r.Env = dpdkSenderEnv()
+	r.PodAnnotations = map[string]string{
+		names.DpdkPrefix + r.Container: "auto",
+	}
+	_, err := resolveGrants(cfg, &r)
+	if err == nil {
+		t.Fatal("only \"ena-pair\" is accepted")
+	}
+	if !strings.Contains(err.Error(), names.DpdkEnaPairValue) {
+		t.Errorf("refusal %q must name the accepted value", err)
+	}
+}
+
+func TestResolveGrantsDpdkUnparsablePairRefused(t *testing.T) {
+	cfg := grantConfig(t)
+	for key, bad := range map[string]string{
+		"RUSTERON_DPDK_SENDER_IPV4_CIDR": "10.0.1.999/24",
+		"RUSTERON_DPDK_SENDER_GATEWAY":   "not-an-ip",
+	} {
+		r := baseRequest()
+		r.Env = dpdkSenderEnv()
+		r.Env[key] = bad
+		r.PodAnnotations = map[string]string{
+			names.DpdkPrefix + r.Container: names.DpdkEnaPairValue,
+		}
+		_, err := resolveGrants(cfg, &r)
+		if err == nil {
+			t.Errorf("%s=%q must be refused", key, bad)
+			continue
+		}
+		if !strings.Contains(err.Error(), key) || !strings.Contains(err.Error(), bad) {
+			t.Errorf("refusal %q must name %s and its value", err, key)
+		}
 	}
 }
 
