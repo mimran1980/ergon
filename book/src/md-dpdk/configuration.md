@@ -15,7 +15,10 @@
   path into a library call (GCC's `-moutline-atomics`): `CFLAGS=-mcpu=native` (as measured) or the core
   (`neoverse-v2` Graviton4, `neoverse-v3` Graviton5), and the same in
   `RUSTFLAGS=-Ctarget-cpu=`. rusteron builds Aeron's own C for the build
-  host's CPU unless `RUSTERON_C_MARCH` names another.
+  host's CPU unless `RUSTERON_C_MARCH` names another. The EKS image
+  (`Dockerfile.media-driver`) builds it for `armv8.2-a` (atomics inline) or
+  `x86-64-v2` unless its `RUSTERON_C_MARCH` build argument names the nodes'
+  level.
 
 ```sh
 cargo test -p ergon-md-dpdk -- --test-threads=1   # every platform, without the feature

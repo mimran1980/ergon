@@ -121,7 +121,8 @@ One physical core per role. SMT is off on x86 latency nodes
 
 - **x86:** rusteron builds Aeron's C with `-march=native` unless
   `RUSTERON_C_MARCH` names another, so build the media driver on, or for, the
-  instance type it runs on. ergon-io's measurements used generic x86-64
+  instance type it runs on. The EKS image defaults to `x86-64-v2`
+  (`armv8.2-a` on Graviton), never the build host's CPU. ergon-io's measurements used generic x86-64
   builds.
 - **Graviton:** Rust with `RUSTFLAGS=-Ctarget-cpu=neoverse-v2` (Graviton4),
   `neoverse-v3` (Graviton5) or `native`; C with `CFLAGS=-mcpu=...`. Without

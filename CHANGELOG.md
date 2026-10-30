@@ -4,6 +4,10 @@
 
 ### Changed
 
+- md-dpdk EKS image: Aeron's C is built for `x86-64-v2` or `armv8.2-a` by
+  default (build argument `RUSTERON_C_MARCH`), not for the CPU of the machine
+  or emulator that builds the image; the level is recorded in the image's
+  versions file.
 - md-dpdk EKS node: `irq-affinity.sh` (boot and the watcher) caps the IRQ
   CPUs at C1 by disabling every cpuidle state with an exit latency above
   1 µs (c7i p99 315-559 → 44-49 µs). `RUSTERON_IRQ_CPU_DEEP_IDLE=1` opts out.

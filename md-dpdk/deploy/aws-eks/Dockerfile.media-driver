@@ -28,6 +28,14 @@
 #                     on that CPU family (SIGILL elsewhere), so select its
 #                     nodes by instance family. AL2023's gcc must know the
 #                     name, or the build stops (build.rs checks it).
+#   RUSTERON_C_MARCH  -march for rusteron's Aeron C. Empty (default): the
+#                     portable level of the target architecture, x86-64-v2 or
+#                     armv8.2-a (Graviton2 and later), never the build host's
+#                     CPU (rusteron's own default, -march=native, would tune
+#                     Aeron to whatever machine or emulator builds the image).
+#                     A node family's level, with RUST_TARGET_CPU to match:
+#                     x86-64-v3 (c7i) or armv8.6-a (Graviton4/5; AL2023's
+#                     gcc 11 has no armv9-a).
 #   CARGO_BUILD_JOBS  empty (default): cargo's own; a number caps the build's
 #                     parallel jobs (a small Docker VM).
 FROM public.ecr.aws/amazonlinux/amazonlinux:2023 AS builder
@@ -89,11 +97,21 @@ COPY . .
 # source-built DPDK. The benchmark clients need no DPDK: they talk to the
 # driver through its Aeron directory (as benches/cloud/vm.sh builds them).
 ARG RUST_TARGET_CPU=
+ARG RUSTERON_C_MARCH=
 ARG CARGO_BUILD_JOBS=
 # An ARG is also an environment variable inside RUN, and cargo refuses an
 # empty CARGO_BUILD_JOBS ("could not parse ``"): unset it when it is empty.
 RUN if [ -z "$CARGO_BUILD_JOBS" ]; then unset CARGO_BUILD_JOBS; fi \
-    && export RUSTFLAGS="${RUST_TARGET_CPU:+-Ctarget-cpu=$RUST_TARGET_CPU}" \
+    && if [ -z "$RUSTERON_C_MARCH" ]; then \
+        case "$(uname -m)" in \
+            x86_64) RUSTERON_C_MARCH=x86-64-v2 ;; \
+            aarch64) RUSTERON_C_MARCH=armv8.2-a ;; \
+            *) echo "$(uname -m): x86_64 or aarch64" >&2; exit 1 ;; \
+        esac; \
+    fi \
+    && echo 'int main(void){return 0;}' > /tmp/m.c && gcc -march="$RUSTERON_C_MARCH" -c /tmp/m.c -o /tmp/m.o \
+    && echo "$RUSTERON_C_MARCH" > /tmp/aeron-c-march \
+    && export RUSTERON_C_MARCH RUSTFLAGS="${RUST_TARGET_CPU:+-Ctarget-cpu=$RUST_TARGET_CPU}" \
     && cargo build ${CARGO_BUILD_JOBS:+-j $CARGO_BUILD_JOBS} -p ergon-md-dpdk --release --features static,dpdk --bin media_driver \
     && cargo build ${CARGO_BUILD_JOBS:+-j $CARGO_BUILD_JOBS} -p ergon-md-dpdk-harness --release --features static --bin rtt --bin counters
 
@@ -107,6 +125,7 @@ RUN { \
         echo "ena-driver: $(modinfo -F version ena 2>/dev/null || echo not-loaded-in-container)"; \
         echo "rusteron-media-driver: $(cargo pkgid rusteron-media-driver 2>/dev/null || echo unknown)"; \
         echo "rust-target-cpu: ${RUST_TARGET_CPU:-generic} (md-dpdk's C: the same, via build.rs)"; \
+        echo "aeron-c-march: $(cat /tmp/aeron-c-march)"; \
     } > /etc/rusteron-dpdk-versions.txt
 
 # ---- runtime ----
