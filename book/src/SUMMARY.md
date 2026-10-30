@@ -91,6 +91,7 @@
 # Transports
 
 - [Transport Latency Comparison](./transports/comparison.md)
+- [Aeron with Many Streams](./transports/aeron-many-streams.md)
 
 # Deployment
 
