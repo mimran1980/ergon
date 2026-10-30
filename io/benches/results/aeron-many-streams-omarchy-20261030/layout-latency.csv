@@ -1,0 +1,415 @@
+run,arm,n,role,count,p50_us,p99_us,max_us,max_cause,syscalls_per_cycle
+L,idle,1,client,159494144,0.03,0.03,304.38,preempted,
+L,idle,1,conductor,9699505,0.11,0.11,40.80,under 100 us,
+L,idle,1,sender,10972385,0.88,0.91,566.27,preempted,recvmsg=0.97
+L,idle,1,receiver,10604330,0.90,0.94,2557.95,preempted,recvmmsg=0.99 sendmmsg=0.00
+L,idle,32,client,15421440,0.61,0.66,27.71,under 100 us,
+L,idle,32,conductor,4252351,1.37,1.46,30.59,under 100 us,
+L,idle,32,sender,4414014,2.22,2.35,108.99,preempted,epoll_wait=0.28 recvmsg=0.01
+L,idle,32,receiver,9090008,1.06,1.11,27.60,under 100 us,epoll_wait=0.99 recvmmsg=0.02 sendmmsg=0.00
+L,idle,64,client,6279168,1.55,1.62,68.73,under 100 us,
+L,idle,64,conductor,2349754,3.18,3.35,991.23,preempted,
+L,idle,64,sender,2558705,3.91,4.13,173.95,preempted,epoll_wait=0.12 recvmsg=0.01
+L,idle,64,receiver,6623913,1.49,1.57,38.08,under 100 us,epoll_wait=0.99 recvmmsg=0.02 sendmmsg=0.00
+L,idle,128,client,2510848,3.86,4.09,26148.86,preempted,
+L,idle,128,conductor,968964,9.21,11.86,666.62,preempted,
+L,idle,128,sender,1032150,9.72,12.34,425.73,no switch,epoll_wait=0.05 recvmsg=0.00
+L,idle,128,receiver,3901432,2.55,2.73,44.77,under 100 us,epoll_wait=1.00 recvmmsg=0.01 sendmmsg=0.00
+L,idle-sameport,1,client,159618048,0.03,0.03,25.73,under 100 us,
+L,idle-sameport,1,conductor,9769691,0.11,0.15,26.64,under 100 us,
+L,idle-sameport,1,sender,10957738,0.87,0.93,27.41,under 100 us,recvmsg=0.97
+L,idle-sameport,1,receiver,10459466,0.91,1.00,28.21,under 100 us,recvmmsg=1.00 sendmmsg=0.00
+L,idle-sameport,32,client,14517248,0.65,0.71,968.19,preempted,
+L,idle-sameport,32,conductor,4318870,1.34,1.44,519.68,preempted,
+L,idle-sameport,32,sender,4229847,2.32,2.48,350.46,preempted,recvmsg=0.28
+L,idle-sameport,32,receiver,7343889,1.33,1.41,1021.95,preempted,recvmmsg=1.00 sendmmsg=0.00
+L,idle-sameport,64,client,6376448,1.50,1.61,24920.06,preempted,
+L,idle-sameport,64,conductor,2337792,3.34,3.52,476.16,no switch,
+L,idle-sameport,64,sender,2298236,4.43,4.70,488.70,no switch,recvmsg=0.11
+L,idle-sameport,64,receiver,5550919,1.79,1.87,484.35,preempted,recvmmsg=1.00 sendmmsg=0.00
+L,idle-sameport,128,client,2644992,3.71,3.96,144.13,preempted,
+L,idle-sameport,128,conductor,996244,8.92,11.62,164.74,preempted,
+L,idle-sameport,128,sender,1065118,9.44,11.78,299.26,preempted,recvmsg=0.05
+L,idle-sameport,128,receiver,3493180,2.85,3.07,66.05,under 100 us,recvmmsg=1.00 sendmmsg=0.00
+L,idle-samestream,1,client,159434752,0.03,0.03,191.74,preempted,
+L,idle-samestream,1,conductor,9840528,0.10,0.11,24.61,under 100 us,
+L,idle-samestream,1,sender,10825631,0.89,0.92,34.75,under 100 us,recvmsg=0.97
+L,idle-samestream,1,receiver,10609165,0.91,0.94,26.59,under 100 us,recvmmsg=1.00 sendmmsg=0.00
+L,idle-samestream,32,client,15209472,0.62,0.68,1181.69,preempted,
+L,idle-samestream,32,conductor,4331090,1.29,1.41,48.58,under 100 us,
+L,idle-samestream,32,sender,4839697,2.02,2.13,2091.01,preempted,epoll_wait=0.30 recvmsg=0.01
+L,idle-samestream,32,receiver,9042621,1.07,1.14,642.05,preempted,epoll_wait=0.99 recvmmsg=0.02 sendmmsg=0.00
+L,idle-samestream,64,client,6529024,1.48,1.55,9306.11,preempted,
+L,idle-samestream,64,conductor,2442347,3.07,3.26,368.13,preempted,
+L,idle-samestream,64,sender,2538712,3.92,4.11,13631.49,preempted,epoll_wait=0.12 recvmsg=0.01
+L,idle-samestream,64,receiver,6516221,1.51,1.57,13148.16,preempted,epoll_wait=0.99 recvmmsg=0.02 sendmmsg=0.00
+L,idle-samestream,128,client,2583552,3.81,4.00,279.55,preempted,
+L,idle-samestream,128,conductor,966435,9.24,11.90,285.95,preempted,
+L,idle-samestream,128,sender,1035953,9.67,12.23,13828.09,preempted,epoll_wait=0.04 recvmsg=0.00
+L,idle-samestream,128,receiver,3924451,2.54,2.72,12124.16,preempted,epoll_wait=0.99 recvmmsg=0.02 sendmmsg=0.00
+L,plain,1,rtt,100000,11.67,18.24,1504.26,"ping stall 539.37 us, no switch",
+L,plain,1,ping,122745531,0.04,0.04,539.65,no switch,
+L,plain,1,pong,153837782,0.03,0.04,1008.64,preempted,
+L,plain,1,conductor,9535439,0.13,0.19,46.62,under 100 us,
+L,plain,1,sender,5335629,1.74,3.94,371.20,no switch,recvmsg=1.80
+L,plain,1,receiver,5530015,1.75,2.27,381.18,no switch,recvmmsg=2.00 sendmmsg=0.00
+L,plain,32,rtt,100000,18.03,2652.16,45875.20,"ping stall 31332.86 us, preempted",
+L,plain,32,ping,13925002,0.65,0.75,31342.59,preempted,
+L,plain,32,pong,14603284,0.65,0.75,26804.22,preempted,
+L,plain,32,conductor,2359824,3.24,3.56,443.13,preempted,
+L,plain,32,sender,2176391,4.09,8.67,16826.37,preempted,epoll_wait=0.16 recvmsg=0.01 sendmmsg=0.00
+L,plain,32,receiver,6309860,1.50,2.42,15917.06,preempted,epoll_wait=1.00 recvmmsg=0.03 sendmmsg=0.00
+L,plain,64,rtt,100000,28.24,46.11,2390.01,"receiver stall 2328.39 us, preempted",
+L,plain,64,ping,5520914,1.73,1.93,847.87,preempted,
+L,plain,64,pong,6073749,1.62,1.85,577.02,preempted,
+L,plain,64,conductor,984899,9.18,12.14,1775.62,preempted,
+L,plain,64,sender,967109,9.55,18.88,982.53,preempted,epoll_wait=0.05 recvmsg=0.00
+L,plain,64,receiver,3946907,2.54,2.82,2328.57,preempted,epoll_wait=1.00 recvmmsg=0.03 sendmmsg=0.00
+L,plain,128,rtt,100000,49.57,81.02,5746.69,"receiver stall 4677.79 us, preempted",
+L,plain,128,ping,2384164,4.05,4.66,1904.64,no switch,
+L,plain,128,pong,2475159,4.02,4.72,1593.34,preempted,
+L,plain,128,conductor,477580,20.11,34.21,1386.49,preempted,
+L,plain,128,sender,429191,24.14,40.29,2916.35,preempted,epoll_wait=0.02 recvmsg=0.00
+L,plain,128,receiver,2068853,5.06,11.38,4681.73,preempted,epoll_wait=1.00 recvmmsg=0.03 sendmmsg=0.00
+L,sameport,1,rtt,100000,11.67,23.89,495.10,no overlapping thread stall,
+L,sameport,1,ping,122481501,0.04,0.04,199.68,preempted,
+L,sameport,1,pong,153579431,0.03,0.04,132.48,preempted,
+L,sameport,1,conductor,9632347,0.13,0.20,23.86,under 100 us,
+L,sameport,1,sender,5351282,1.74,3.93,33.15,under 100 us,recvmsg=1.85
+L,sameport,1,receiver,5526748,1.75,2.27,375.55,preempted,recvmmsg=2.00 sendmmsg=0.00
+L,sameport,32,rtt,100000,17.17,35.42,16310.27,"receiver stall 13432.86 us, preempted",
+L,sameport,32,ping,14120649,0.65,0.73,9977.85,preempted,
+L,sameport,32,pong,14710633,0.65,0.76,11771.90,preempted,
+L,sameport,32,conductor,2514974,2.99,3.25,1845.25,preempted,
+L,sameport,32,sender,1911424,4.83,8.35,9994.24,preempted,recvmsg=0.27
+L,sameport,32,receiver,3747939,2.63,2.77,13434.88,preempted,recvmmsg=2.00 sendmmsg=0.00
+L,sameport,64,rtt,100000,27.25,46.17,1211.39,"ping stall 654.92 us, preempted",
+L,sameport,64,ping,5466496,1.75,1.94,655.36,preempted,
+L,sameport,64,pong,6028421,1.64,1.84,236.29,no switch,
+L,sameport,64,conductor,1002402,9.01,11.89,1409.02,preempted,
+L,sameport,64,sender,941041,10.04,18.35,5865.47,preempted,recvmsg=0.09
+L,sameport,64,receiver,2850598,3.60,4.27,14860.29,preempted,recvmmsg=2.00 sendmmsg=0.00
+L,sameport,128,rtt,100000,47.20,83.39,21053.44,"sender stall 20586.90 us, preempted",
+L,sameport,128,ping,2393294,4.03,4.63,4550.65,preempted,
+L,sameport,128,pong,2417201,4.12,4.83,1942.53,preempted,
+L,sameport,128,conductor,481910,19.90,33.98,214.53,preempted,
+L,sameport,128,sender,435241,22.32,39.01,20594.69,preempted,recvmsg=0.03
+L,sameport,128,receiver,1694296,6.28,12.49,16482.30,preempted,recvmmsg=2.00 sendmmsg=0.00
+L,samestream,1,rtt,100000,11.31,24.22,3256.32,"receiver stall 3262.99 us, preempted",
+L,samestream,1,ping,122550577,0.04,0.04,567.29,preempted,
+L,samestream,1,pong,153664148,0.03,0.04,135.94,preempted,
+L,samestream,1,conductor,9625235,0.13,0.21,34.75,under 100 us,
+L,samestream,1,sender,5201055,1.80,3.95,331.77,preempted,recvmsg=1.79
+L,samestream,1,receiver,5418826,1.79,2.28,3264.51,preempted,recvmmsg=2.00 sendmmsg=0.00
+L,samestream,32,rtt,100000,17.76,34.98,10952.70,"ping stall 6339.15 us, preempted",
+L,samestream,32,ping,14113089,0.65,0.75,6340.61,preempted,
+L,samestream,32,pong,14665608,0.65,0.74,3815.42,preempted,
+L,samestream,32,conductor,2367258,3.23,3.51,193.15,preempted,
+L,samestream,32,sender,2274389,3.93,8.62,522.75,preempted,epoll_wait=0.17 recvmsg=0.01
+L,samestream,32,receiver,6301730,1.51,2.42,1947.65,preempted,epoll_wait=1.00 recvmmsg=0.03 sendmmsg=0.00
+L,samestream,64,rtt,100000,28.35,45.44,1674.24,"ping stall 899.88 us, no switch",
+L,samestream,64,ping,5546617,1.72,1.90,900.10,no switch,
+L,samestream,64,pong,6054915,1.63,1.84,1000.96,preempted,
+L,samestream,64,conductor,979794,9.22,12.12,198.91,preempted,
+L,samestream,64,sender,952988,9.55,18.72,134.14,no switch,epoll_wait=0.05 recvmsg=0.00
+L,samestream,64,receiver,3822781,2.59,2.85,38.81,under 100 us,epoll_wait=1.00 recvmmsg=0.03 sendmmsg=0.00
+L,samestream,128,rtt,100000,49.70,79.17,5890.05,"ping stall 5548.53 us, preempted",
+L,samestream,128,ping,2370230,4.07,4.68,5550.08,preempted,
+L,samestream,128,pong,2610914,3.79,4.58,3319.81,preempted,
+L,samestream,128,conductor,476969,20.11,34.49,1042.43,preempted,
+L,samestream,128,sender,422681,24.48,40.41,880.64,preempted,epoll_wait=0.02 recvmsg=0.00
+L,samestream,128,receiver,2072699,4.97,11.34,1878.02,preempted,epoll_wait=1.00 recvmmsg=0.03 sendmmsg=0.00
+L,mux,1,rtt,100000,11.52,25.60,2334.72,"sender stall 2201.56 us, preempted",
+L,mux,1,ping,122516655,0.04,0.04,2433.02,preempted,
+L,mux,1,pong,153559947,0.03,0.04,918.01,preempted,
+L,mux,1,conductor,9521855,0.13,0.20,34.14,under 100 us,
+L,mux,1,sender,5376913,1.73,3.93,2201.60,preempted,recvmsg=1.79 sendmmsg=0.00
+L,mux,1,receiver,5489079,1.76,2.29,1864.70,preempted,recvmmsg=2.00 sendmmsg=0.00
+L,mux,32,rtt,100000,11.79,17.68,842.75,"ping stall 316.66 us, preempted",
+L,mux,32,ping,122517271,0.04,0.04,324.10,preempted,
+L,mux,32,pong,153674892,0.03,0.04,106.24,preempted,
+L,mux,32,conductor,9629487,0.13,0.20,27.10,under 100 us,
+L,mux,32,sender,5300564,1.77,3.96,30.54,under 100 us,recvmsg=1.80 sendmmsg=0.00
+L,mux,32,receiver,5467626,1.77,2.28,27.12,under 100 us,recvmmsg=2.00 sendmmsg=0.00
+L,mux,64,rtt,100000,11.72,27.93,12206.08,"receiver stall 12400.56 us, preempted",
+L,mux,64,ping,122205925,0.04,0.04,3774.46,preempted,
+L,mux,64,pong,153189698,0.03,0.04,9838.59,preempted,
+L,mux,64,conductor,9566506,0.13,0.21,47.90,under 100 us,
+L,mux,64,sender,5345443,1.73,3.92,3717.12,preempted,recvmsg=1.79 sendmmsg=0.00
+L,mux,64,receiver,5448392,1.77,2.30,12402.69,preempted,recvmmsg=2.00 sendmmsg=0.00
+L,mux,128,rtt,100000,11.85,26.40,21676.03,"pong stall 21644.65 us, preempted",
+L,mux,128,ping,122539249,0.04,0.04,568.32,no switch,
+L,mux,128,pong,153484900,0.03,0.04,21659.65,preempted,
+L,mux,128,conductor,9635743,0.13,0.21,28.13,under 100 us,
+L,mux,128,sender,5270270,1.78,3.94,3131.39,preempted,recvmsg=1.79 sendmmsg=0.00
+L,mux,128,receiver,5439069,1.77,2.29,18890.75,preempted,recvmmsg=2.00 sendmmsg=0.00
+L,mux4,1,rtt,100000,11.65,17.74,76.03,under 100 us,
+L,mux4,1,ping,122939752,0.04,0.04,51.81,under 100 us,
+L,mux4,1,pong,154169502,0.03,0.04,85.76,under 100 us,
+L,mux4,1,conductor,9523138,0.13,0.20,1020.41,preempted,
+L,mux4,1,sender,5396277,1.73,3.95,65.98,under 100 us,recvmsg=1.82
+L,mux4,1,receiver,5525998,1.75,2.29,66.11,under 100 us,recvmmsg=2.00 sendmmsg=0.00
+L,mux4,32,rtt,100000,12.56,28.24,15433.73,"receiver stall 14029.20 us, preempted",
+L,mux4,32,ping,75555303,0.09,0.11,4984.83,preempted,
+L,mux4,32,pong,87779676,0.08,0.11,13533.18,preempted,
+L,mux4,32,conductor,8327965,0.28,0.39,33.28,under 100 us,
+L,mux4,32,sender,4704510,1.98,4.32,8560.64,preempted,recvmsg=1.44
+L,mux4,32,receiver,5273323,1.83,2.27,14032.90,preempted,recvmmsg=2.00 sendmmsg=0.00
+L,mux4,64,rtt,100000,12.63,32.29,21200.90,"pong stall 18798.04 us, preempted",
+L,mux4,64,ping,75406819,0.09,0.11,2498.56,preempted,
+L,mux4,64,pong,87840107,0.08,0.10,18808.83,preempted,
+L,mux4,64,conductor,8208370,0.28,0.39,977.92,preempted,
+L,mux4,64,sender,4726093,1.96,4.35,17055.74,preempted,recvmsg=1.44 sendmmsg=0.00
+L,mux4,64,receiver,5293812,1.83,2.29,10543.10,preempted,recvmmsg=2.00 sendmmsg=0.00
+L,mux4,128,rtt,100000,12.70,21.15,593.41,"receiver stall 519.94 us, preempted",
+L,mux4,128,ping,75372502,0.09,0.11,169.98,preempted,
+L,mux4,128,pong,88082684,0.08,0.11,292.10,preempted,
+L,mux4,128,conductor,8251920,0.29,0.41,175.74,preempted,
+L,mux4,128,sender,4693151,1.99,4.36,73.73,under 100 us,recvmsg=1.43 sendmmsg=0.00
+L,mux4,128,receiver,5290498,1.83,2.31,520.19,preempted,recvmmsg=2.00 sendmmsg=0.00
+L,mux8,1,rtt,100000,11.61,24.18,68.54,under 100 us,
+L,mux8,1,ping,122700862,0.04,0.04,106.43,preempted,
+L,mux8,1,pong,153821356,0.03,0.04,137.85,preempted,
+L,mux8,1,conductor,9637667,0.13,0.21,27.17,under 100 us,
+L,mux8,1,sender,5377544,1.73,3.97,82.69,under 100 us,recvmsg=1.81
+L,mux8,1,receiver,5486796,1.76,2.31,40.00,under 100 us,recvmmsg=1.99 sendmmsg=0.00
+L,mux8,32,rtt,100000,13.64,2822.14,29933.57,"sender stall 26647.55 us, preempted",
+L,mux8,32,ping,47152443,0.16,0.23,4288.51,no switch,
+L,mux8,32,pong,53240514,0.15,0.21,300.54,preempted,
+L,mux8,32,conductor,6309561,0.66,0.76,54.21,under 100 us,
+L,mux8,32,sender,3708841,2.48,5.05,26656.77,preempted,recvmsg=1.09 sendmmsg=0.00
+L,mux8,32,receiver,5038925,1.92,2.33,373.76,no switch,recvmmsg=1.99 sendmmsg=0.00
+L,mux8,64,rtt,100000,13.74,29.02,19677.18,"pong stall 15818.52 us, preempted",
+L,mux8,64,ping,47919580,0.15,0.22,3837.95,preempted,
+L,mux8,64,pong,53348793,0.15,0.22,15818.75,preempted,
+L,mux8,64,conductor,6229512,0.67,0.80,35.62,under 100 us,
+L,mux8,64,sender,3718188,2.51,5.00,9461.76,preempted,recvmsg=1.03
+L,mux8,64,receiver,4959710,1.95,2.38,7110.65,preempted,recvmmsg=2.00 sendmmsg=0.00
+L,mux8,128,rtt,100000,13.99,6893.57,58982.40,"receiver stall 35624.20 us, preempted",
+L,mux8,128,ping,47429235,0.15,0.22,23887.87,preempted,
+L,mux8,128,pong,54219370,0.15,0.20,13180.93,preempted,
+L,mux8,128,conductor,6153201,0.68,0.81,155.65,preempted,
+L,mux8,128,sender,3711670,2.51,5.01,11362.30,preempted,recvmsg=1.03 sendmmsg=0.00
+L,mux8,128,receiver,4814397,2.00,2.38,35651.58,preempted,recvmmsg=2.00 sendmmsg=0.00
+B1,shard1,1,rtt,100000,11.44,16.01,42.59,under 100 us,
+B1,shard1,1,client,100498246,0.06,0.07,56.93,under 100 us,
+B1,shard1,1,conductor-a,9543438,0.13,0.22,92.67,under 100 us,
+B1,shard1,1,sender-a,5256577,1.79,3.92,28.56,under 100 us,recvmsg=1.64
+B1,shard1,1,receiver-a,5464442,1.78,2.28,32.77,under 100 us,recvmmsg=1.94 sendmmsg=0.00
+B1,shard1,32,rtt,100000,20.37,30.59,3723.26,"receiver-a stall 2746.74 us, preempted",
+B1,shard1,32,client,6151759,1.56,1.75,1185.79,preempted,
+B1,shard1,32,conductor-a,2205258,3.57,3.79,44.83,under 100 us,
+B1,shard1,32,sender-a,2232630,4.13,8.58,456.70,preempted,epoll_wait=0.11 recvmsg=0.01
+B1,shard1,32,receiver-a,6358328,1.53,2.43,2748.41,preempted,epoll_wait=0.99 recvmmsg=0.03 sendmmsg=0.00
+B1,shard1,64,rtt,100000,30.06,44.99,378.37,"conductor-a stall 2050.61 us, preempted",
+B1,shard1,64,client,2492449,3.91,4.50,141.31,preempted,
+B1,shard1,64,conductor-a,977696,9.18,11.81,2051.07,preempted,
+B1,shard1,64,sender-a,931948,9.83,19.39,162.69,preempted,epoll_wait=0.04 recvmsg=0.00
+B1,shard1,64,receiver-a,3816404,2.61,2.85,345.60,preempted,epoll_wait=0.98 recvmmsg=0.03 sendmmsg=0.00
+B1,shard1,128,rtt,100000,47.20,76.48,995.33,"sender-a stall 498.38 us, preempted",
+B1,shard1,128,client,1005368,9.78,12.47,305.15,no switch,
+B1,shard1,128,conductor-a,478096,20.16,23.09,491.52,no switch,
+B1,shard1,128,sender-a,435395,21.38,31.26,532.48,preempted,epoll_wait=0.02 recvmsg=0.00
+B1,shard1,128,receiver-a,2158454,4.77,7.62,397.06,preempted,epoll_wait=0.99 recvmmsg=0.02 sendmmsg=0.00
+B1,snshard1,1,rtt,100000,13.31,25.30,645.63,"net-a stall 346.88 us, preempted",
+B1,snshard1,1,client,102502492,0.05,0.07,1338.37,preempted,
+B1,snshard1,1,conductor-a,9841473,0.13,0.20,443.65,preempted,
+B1,snshard1,1,net-a,2815979,3.32,5.87,346.88,preempted,recvmmsg=1.91 recvmsg=1.75 sendmmsg=0.00
+B1,snshard1,32,rtt,100000,24.38,53.50,34439.17,"net-a stall 17009.15 us, preempted",
+B1,snshard1,32,client,6406796,1.48,1.66,5443.58,no switch,
+B1,snshard1,32,conductor-a,2415612,3.09,3.40,1452.03,preempted,
+B1,snshard1,32,net-a,1557853,5.67,13.32,17022.97,preempted,epoll_wait=1.36 recvmmsg=0.07 recvmsg=0.03 sendmmsg=0.00
+B1,snshard1,64,rtt,100000,39.45,65.60,233.98,"client stall 207.42 us, preempted",
+B1,snshard1,64,client,2716524,3.56,4.23,207.49,preempted,
+B1,snshard1,64,conductor-a,1016057,8.88,11.60,431.10,preempted,
+B1,snshard1,64,net-a,705947,13.23,24.50,75.97,under 100 us,epoll_wait=1.18 recvmmsg=0.05 recvmsg=0.02 sendmmsg=0.00
+B1,snshard1,128,rtt,100000,71.87,129.02,622.08,"net-a stall 439.54 us, preempted",
+B1,snshard1,128,client,1018843,9.32,24.46,269.31,preempted,
+B1,snshard1,128,conductor-a,495744,19.23,32.83,83.45,under 100 us,
+B1,snshard1,128,net-a,365585,27.20,45.66,439.55,preempted,epoll_wait=1.09 recvmmsg=0.03 recvmsg=0.01 sendmmsg=0.00
+B2,shard2,32,rtt,100000,17.20,579.58,14532.61,"client stall 14409.06 us, preempted",
+B2,shard2,32,client,5055734,1.87,2.08,14409.73,preempted,
+B2,shard2,32,conductor-a,1440007,2.09,2.26,156.93,preempted,
+B2,shard2,32,sender-a,4275422,2.25,6.14,3016.70,preempted,epoll_wait=0.31 recvmsg=0.01
+B2,shard2,32,receiver-a,8719043,1.12,2.40,331.01,preempted,epoll_wait=0.95 recvmmsg=0.02 sendmmsg=0.00
+B2,shard2,32,conductor-b,1434218,2.10,2.29,21.01,under 100 us,
+B2,shard2,32,sender-b,4519667,2.20,6.01,6516.73,preempted,epoll_wait=0.12 recvmsg=0.00
+B2,shard2,32,receiver-b,8927704,1.13,2.38,3028.99,preempted,epoll_wait=0.35 recvmmsg=0.01 sendmmsg=0.00
+B2,shard2,64,rtt,100000,22.72,255.87,34275.33,"receiver-b stall 36830.77 us, preempted",
+B2,shard2,64,client,2255110,4.24,5.05,10878.98,preempted,
+B2,shard2,64,conductor-a,805166,4.99,5.36,423.68,preempted,
+B2,shard2,64,sender-a,2263958,4.25,8.89,12083.20,preempted,epoll_wait=0.14 recvmsg=0.01
+B2,shard2,64,receiver-a,6153348,1.61,2.50,15843.33,preempted,epoll_wait=0.97 recvmmsg=0.02 sendmmsg=0.00
+B2,shard2,64,conductor-b,766700,5.08,5.43,403.71,preempted,
+B2,shard2,64,sender-b,2428642,4.20,8.80,5496.83,preempted,epoll_wait=0.04 recvmsg=0.00
+B2,shard2,64,receiver-b,6487427,1.59,2.48,36831.23,preempted,epoll_wait=0.21 recvmmsg=0.01 sendmmsg=0.00
+B2,shard2,128,rtt,100000,40.35,60.67,6574.08,"client stall 6609.55 us, preempted",
+B2,shard2,128,client,876477,11.11,14.18,6660.10,preempted,
+B2,shard2,128,conductor-a,421598,10.56,13.18,1140.73,preempted,
+B2,shard2,128,sender-a,957666,10.09,16.11,1552.38,no switch,epoll_wait=0.06 recvmsg=0.00
+B2,shard2,128,receiver-a,3675999,2.73,3.01,1251.33,preempted,epoll_wait=0.98 recvmmsg=0.02 sendmmsg=0.00
+B2,shard2,128,conductor-b,421508,10.43,13.05,973.31,preempted,
+B2,shard2,128,sender-b,1004313,10.14,16.22,276.74,no switch,epoll_wait=0.01 recvmsg=0.00
+B2,shard2,128,receiver-b,3817921,2.73,3.02,1360.89,preempted,epoll_wait=0.11 recvmmsg=0.00 sendmmsg=0.00
+B2,snshard2,32,rtt,100000,20.69,29.92,563.71,"net-b stall 526.41 us, preempted",
+B2,snshard2,32,client,5995204,1.61,1.79,226.43,preempted,
+B2,snshard2,32,conductor-a,1605524,1.79,1.96,39.33,under 100 us,
+B2,snshard2,32,net-a,3043834,3.14,8.29,102.85,preempted,epoll_wait=1.70 recvmmsg=0.05 recvmsg=0.03 sendmmsg=0.00
+B2,snshard2,32,conductor-b,1598690,1.68,1.84,1034.24,preempted,
+B2,snshard2,32,net-b,3093207,3.17,8.28,526.85,preempted,epoll_wait=0.36 recvmmsg=0.01 recvmsg=0.01 sendmmsg=0.00
+B2,snshard2,64,rtt,100000,29.68,42.69,3319.81,"client stall 3381.09 us, preempted",
+B2,snshard2,64,client,2533775,3.85,4.40,3381.25,preempted,
+B2,snshard2,64,conductor-a,829165,4.74,5.00,1020.41,preempted,
+B2,snshard2,64,net-a,1645421,5.80,11.42,205.82,preempted,epoll_wait=1.43 recvmmsg=0.05 recvmsg=0.03 sendmmsg=0.00
+B2,snshard2,64,conductor-b,824883,4.71,4.97,983.04,preempted,
+B2,snshard2,64,net-b,1711885,5.71,11.25,376.32,preempted,epoll_wait=0.17 recvmmsg=0.01 recvmsg=0.00 sendmmsg=0.00
+B2,snshard2,128,rtt,100000,49.47,74.37,175.36,"client stall 110.00 us, preempted",
+B2,snshard2,128,client,989804,9.93,12.72,122.88,preempted,
+B2,snshard2,128,conductor-a,447919,10.05,12.65,1024.00,preempted,
+B2,snshard2,128,net-a,688047,14.18,21.61,359.17,no switch,epoll_wait=1.22 recvmmsg=0.04 recvmsg=0.02 sendmmsg=0.00
+B2,snshard2,128,conductor-b,445850,9.95,12.49,66.88,under 100 us,
+B2,snshard2,128,net-b,722427,14.02,21.07,352.77,no switch,epoll_wait=0.10 recvmmsg=0.00 recvmsg=0.00 sendmmsg=0.00
+B2,snshard4,32,rtt,100000,19.18,80.19,26935.29,"net-d stall 26006.31 us, preempted",
+B2,snshard4,32,client,5322905,1.79,2.02,6402.05,preempted,
+B2,snshard4,32,conductor-a,986172,1.16,1.29,20.35,under 100 us,
+B2,snshard4,32,net-a,4509060,2.19,7.22,93.06,under 100 us,epoll_wait=1.71 recvmmsg=0.03 recvmsg=0.02 sendmmsg=0.00
+B2,snshard4,32,conductor-b,985895,1.06,1.21,18.88,under 100 us,
+B2,snshard4,32,net-b,4565604,2.21,7.13,20447.23,preempted,epoll_wait=0.76 recvmmsg=0.01 recvmsg=0.01 sendmmsg=0.00
+B2,snshard4,32,conductor-c,982400,1.16,1.29,365.82,preempted,
+B2,snshard4,32,net-c,4555725,2.27,7.23,42532.86,preempted,epoll_wait=0.47 recvmmsg=0.01 recvmsg=0.01 sendmmsg=0.00
+B2,snshard4,32,conductor-d,978536,1.10,1.23,21.61,under 100 us,
+B2,snshard4,32,net-d,4685438,2.25,7.12,26017.79,preempted,epoll_wait=0.33 recvmmsg=0.01 recvmsg=0.00 sendmmsg=0.00
+B2,snshard4,64,rtt,100000,22.99,459.26,34406.40,"client stall 34214.47 us, preempted",
+B2,snshard4,64,client,2129975,4.48,5.13,34242.56,preempted,
+B2,snshard4,64,conductor-a,628345,2.58,2.77,69.63,under 100 us,
+B2,snshard4,64,net-a,3035999,3.27,8.52,191.62,preempted,epoll_wait=1.60 recvmmsg=0.03 recvmsg=0.02 sendmmsg=0.00
+B2,snshard4,64,conductor-b,625590,2.55,2.74,411.39,preempted,
+B2,snshard4,64,net-b,3151921,3.24,8.34,1700.86,preempted,epoll_wait=0.45 recvmmsg=0.01 recvmsg=0.01 sendmmsg=0.00
+B2,snshard4,64,conductor-c,623800,2.61,2.79,237.18,preempted,
+B2,snshard4,64,net-c,3186031,3.29,8.48,2809.86,preempted,epoll_wait=0.23 recvmmsg=0.01 recvmsg=0.00 sendmmsg=0.00
+B2,snshard4,64,conductor-d,621214,2.60,2.78,427.52,preempted,
+B2,snshard4,64,net-d,3226299,3.27,8.49,26148.86,preempted,epoll_wait=0.14 recvmmsg=0.00 recvmsg=0.00 sendmmsg=0.00
+B2,snshard4,128,rtt,100000,34.34,126.72,6635.52,"client stall 6672.58 us, preempted",
+B2,snshard4,128,client,833077,11.62,14.87,6676.48,preempted,
+B2,snshard4,128,conductor-a,379370,5.28,5.62,2412.54,preempted,
+B2,snshard4,128,net-a,1674279,5.91,11.86,2486.27,no switch,epoll_wait=1.44 recvmmsg=0.03 recvmsg=0.02 sendmmsg=0.00
+B2,snshard4,128,conductor-b,376626,5.31,5.66,85.57,under 100 us,
+B2,snshard4,128,net-b,1754336,5.81,11.68,23658.49,preempted,epoll_wait=0.23 recvmmsg=0.01 recvmsg=0.00 sendmmsg=0.00
+B2,snshard4,128,conductor-c,380886,5.27,5.61,39.17,under 100 us,
+B2,snshard4,128,net-c,1709639,6.14,12.02,14336.00,preempted,epoll_wait=0.11 recvmmsg=0.00 recvmsg=0.00 sendmmsg=0.00
+B2,snshard4,128,conductor-d,379366,5.36,5.71,33.63,under 100 us,
+B2,snshard4,128,net-d,1698532,6.38,12.34,10158.08,preempted,epoll_wait=0.06 recvmmsg=0.00 recvmsg=0.00 sendmmsg=0.00
+C,sameport,32,rtt,100000,17.58,34.11,13131.77,"pong stall 9881.25 us, preempted",
+C,sameport,32,ping,14371999,0.64,0.72,3250.18,no switch,
+C,sameport,32,pong,14614795,0.65,0.76,9887.74,preempted,
+C,sameport,32,conductor,2363832,3.24,3.52,1183.74,preempted,
+C,sameport,32,sender,1811423,5.09,8.65,2156.54,preempted,recvmsg=0.27
+C,sameport,32,receiver,3717533,2.65,2.79,3723.26,preempted,recvmmsg=1.94 sendmmsg=0.00
+C,sameport,64,rtt,100000,28.37,3194.88,31326.21,"pong stall 26165.22 us, preempted",
+C,sameport,64,ping,5537440,1.71,1.91,4902.91,no switch,
+C,sameport,64,pong,5388362,1.81,2.06,26165.25,preempted,
+C,sameport,64,conductor,985554,9.16,12.04,2017.28,preempted,
+C,sameport,64,sender,885632,10.69,19.15,2062.34,preempted,recvmsg=0.09
+C,sameport,64,receiver,2822482,3.65,4.47,3266.56,preempted,recvmmsg=1.96 sendmmsg=0.00
+C,sameport,128,rtt,100000,48.41,14819.33,51249.15,"ping stall 35224.49 us, preempted",
+C,sameport,128,ping,2436976,3.85,4.58,35225.60,preempted,
+C,sameport,128,pong,2433833,3.99,4.63,25051.13,preempted,
+C,sameport,128,conductor,474075,20.21,34.40,1665.02,preempted,
+C,sameport,128,sender,429445,22.83,39.90,5025.79,preempted,recvmsg=0.03
+C,sameport,128,receiver,1720330,6.21,12.38,6803.45,preempted,recvmmsg=1.99 sendmmsg=0.00
+C,mux,32,rtt,100000,11.64,25.65,2105.34,"receiver stall 2025.39 us, preempted",
+C,mux,32,ping,122658134,0.04,0.04,557.05,preempted,
+C,mux,32,pong,153718642,0.03,0.04,311.81,preempted,
+C,mux,32,conductor,9499173,0.13,0.22,26.06,under 100 us,
+C,mux,32,sender,5372042,1.73,3.92,34.62,under 100 us,recvmsg=1.79 sendmmsg=0.00
+C,mux,32,receiver,5493153,1.76,2.28,2025.47,preempted,recvmmsg=1.96 sendmmsg=0.00
+C,mux,64,rtt,100000,11.78,19.71,872.96,"receiver stall 857.85 us, no switch",
+C,mux,64,ping,122671832,0.04,0.04,294.40,preempted,
+C,mux,64,pong,153618590,0.03,0.04,394.50,preempted,
+C,mux,64,conductor,9309483,0.14,0.24,531.97,preempted,
+C,mux,64,sender,5333208,1.74,3.98,533.50,preempted,recvmsg=1.80 sendmmsg=0.00
+C,mux,64,receiver,5418517,1.78,2.31,858.11,no switch,recvmmsg=1.99 sendmmsg=0.00
+C,mux,128,rtt,100000,11.62,71.94,35717.12,"receiver stall 17710.62 us, preempted",
+C,mux,128,ping,120756374,0.04,0.04,23281.66,preempted,
+C,mux,128,pong,153471415,0.03,0.04,1740.80,preempted,
+C,mux,128,conductor,9512581,0.14,0.21,479.49,no switch,
+C,mux,128,sender,5274624,1.77,3.96,544.25,preempted,recvmsg=1.79 sendmmsg=0.00
+C,mux,128,receiver,5316869,1.80,2.32,21463.04,preempted,recvmmsg=2.00 sendmmsg=0.00
+C,mux8,32,rtt,100000,13.87,22.02,382.72,"receiver stall 377.61 us, no switch",
+C,mux8,32,ping,47663506,0.16,0.23,166.27,preempted,
+C,mux8,32,pong,54442179,0.15,0.20,29.65,under 100 us,
+C,mux8,32,conductor,6359639,0.65,0.76,35.17,under 100 us,
+C,mux8,32,sender,3734685,2.50,5.13,29.38,under 100 us,recvmsg=1.03
+C,mux8,32,receiver,4907604,1.98,2.38,377.86,no switch,recvmmsg=2.00 sendmmsg=0.00
+C,mux8,64,rtt,100000,13.83,27.65,11182.08,"ping stall 4956.03 us, preempted",
+C,mux8,64,ping,48225701,0.15,0.22,4956.16,preempted,
+C,mux8,64,pong,53120963,0.15,0.23,1346.56,preempted,
+C,mux8,64,conductor,6431715,0.63,0.75,170.88,preempted,
+C,mux8,64,sender,3732009,2.51,5.04,2930.69,preempted,recvmsg=1.03
+C,mux8,64,receiver,4943023,1.97,2.39,1568.77,preempted,recvmmsg=2.00 sendmmsg=0.00
+C,mux8,128,rtt,100000,13.78,28.05,92.29,under 100 us,
+C,mux8,128,ping,48426860,0.15,0.21,547.33,preempted,
+C,mux8,128,pong,52675979,0.15,0.23,292.10,preempted,
+C,mux8,128,conductor,6191388,0.68,0.80,479.49,preempted,
+C,mux8,128,sender,3700236,2.53,5.01,76.86,under 100 us,recvmsg=1.06 sendmmsg=0.00
+C,mux8,128,receiver,4937016,1.97,2.39,26.45,under 100 us,recvmmsg=2.00 sendmmsg=0.00
+D,idle,1,client,159707136,0.03,0.03,236.03,preempted,
+D,idle,1,conductor,9609104,0.11,0.19,33.79,under 100 us,
+D,idle,1,sender,12866920,0.74,0.79,236.80,preempted,epoll_wait=0.98 recvmsg=0.00
+D,idle,1,receiver,13374085,0.71,0.77,2834.43,preempted,epoll_wait=1.00 recvmmsg=0.00 sendmmsg=0.00
+D,idle,4,client,92523520,0.07,0.09,1006.59,preempted,
+D,idle,4,conductor,8922127,0.20,0.25,31.14,under 100 us,
+D,idle,4,sender,11738937,0.81,0.88,1758.21,preempted,epoll_wait=0.89 recvmsg=0.00
+D,idle,4,receiver,12666089,0.76,0.84,353.28,preempted,epoll_wait=0.99 recvmmsg=0.00 sendmmsg=0.00
+D,idle,32,client,15709184,0.60,0.66,44.19,under 100 us,
+D,idle,32,conductor,4096270,1.40,1.49,2022.40,preempted,
+D,idle,32,sender,4305157,2.28,2.40,106.81,preempted,epoll_wait=0.29 recvmsg=0.00
+D,idle,32,receiver,8870802,1.09,1.16,377.09,no switch,epoll_wait=1.00 recvmmsg=0.00 sendmmsg=0.00
+D,idle-sameport,1,client,159570944,0.03,0.03,25.18,under 100 us,
+D,idle-sameport,1,conductor,9674387,0.11,0.16,24.57,under 100 us,
+D,idle-sameport,1,sender,13280420,0.71,0.79,27.52,under 100 us,epoll_wait=0.97 recvmsg=0.00
+D,idle-sameport,1,receiver,13347394,0.71,0.81,26.00,under 100 us,epoll_wait=0.99 recvmmsg=0.00 sendmmsg=0.00
+D,idle-sameport,4,client,92407808,0.07,0.09,336.89,preempted,
+D,idle-sameport,4,conductor,8915567,0.20,0.25,24.98,under 100 us,
+D,idle-sameport,4,sender,11731416,0.81,0.89,206.72,preempted,epoll_wait=0.88 recvmsg=0.00
+D,idle-sameport,4,receiver,12648925,0.76,0.84,171.26,preempted,epoll_wait=0.99 recvmmsg=0.00 sendmmsg=0.00
+D,idle-sameport,32,client,15696896,0.59,0.67,25919.49,preempted,
+D,idle-sameport,32,conductor,4322160,1.31,1.41,552.45,preempted,
+D,idle-sameport,32,sender,4827669,2.02,2.17,9879.55,preempted,epoll_wait=0.31 recvmsg=0.00
+D,idle-sameport,32,receiver,8939517,1.08,1.15,10723.33,preempted,epoll_wait=0.99 recvmmsg=0.00 sendmmsg=0.00
+D,sameport,32,rtt,100000,17.31,32.83,12107.77,"sender stall 4080.70 us, preempted",
+D,sameport,32,ping,13819832,0.66,0.76,2682.88,preempted,
+D,sameport,32,pong,14465871,0.66,0.77,376.83,preempted,
+D,sameport,32,conductor,2432915,3.12,3.38,196.99,preempted,
+D,sameport,32,sender,2419607,3.70,8.33,4081.66,preempted,epoll_wait=0.18 recvmsg=0.00
+D,sameport,32,receiver,6358919,1.50,2.37,3143.68,preempted,epoll_wait=1.00 recvmmsg=0.02 sendmmsg=0.00
+D,sameport,128,rtt,100000,47.94,1716.22,61472.77,"sender stall 21423.46 us, preempted",
+D,sameport,128,ping,2293978,4.16,4.78,20463.62,preempted,
+D,sameport,128,pong,2411732,4.09,4.82,14327.81,preempted,
+D,sameport,128,conductor,483737,19.81,33.85,445.18,preempted,
+D,sameport,128,sender,445424,21.25,39.13,21430.27,preempted,epoll_wait=0.02 recvmsg=0.00
+D,sameport,128,receiver,1993781,5.24,11.38,15712.25,preempted,epoll_wait=1.00 recvmmsg=0.02 sendmmsg=0.00
+D,mux8,32,rtt,100000,13.25,28.21,8519.68,"ping stall 5809.88 us, preempted",
+D,mux8,32,ping,47811291,0.15,0.22,5812.22,preempted,
+D,mux8,32,pong,53412515,0.15,0.22,356.10,preempted,
+D,mux8,32,conductor,6118411,0.69,0.82,417.54,preempted,
+D,mux8,32,sender,6359127,1.42,4.93,3086.34,preempted,epoll_wait=0.65 recvmsg=0.00
+D,mux8,32,receiver,10453123,0.88,2.26,1796.10,preempted,epoll_wait=1.00 recvmmsg=0.02 sendmmsg=0.00
+D,mux8,128,rtt,100000,13.21,26.51,276.74,"ping stall 179.66 us, preempted",
+D,mux8,128,ping,48253005,0.15,0.22,541.70,preempted,
+D,mux8,128,pong,53167764,0.15,0.22,67.71,under 100 us,
+D,mux8,128,conductor,6249654,0.66,0.78,36.70,under 100 us,
+D,mux8,128,sender,6530951,1.38,4.92,116.16,preempted,epoll_wait=0.66 recvmsg=0.00
+D,mux8,128,receiver,10503957,0.87,2.26,26.38,under 100 us,epoll_wait=1.00 recvmmsg=0.02 sendmmsg=0.00
+E64K,plain,128,rtt,100000,50.85,94.46,19283.97,"ping stall 16668.64 us, preempted",
+E64K,plain,128,ping,2327626,4.11,4.78,16670.72,preempted,
+E64K,plain,128,pong,2258144,4.40,5.09,10371.07,preempted,
+E64K,plain,128,conductor,448656,21.34,36.00,468.22,preempted,
+E64K,plain,128,sender,413278,25.66,41.38,4521.98,preempted,epoll_wait=0.02 recvmsg=0.00
+E64K,plain,128,receiver,2073682,5.05,11.34,383.49,preempted,epoll_wait=0.98 recvmmsg=0.03 sendmmsg=0.00
+E16M,plain,128,rtt,100000,67.97,111.87,21921.79,"ping stall 15873.68 us, preempted",
+E16M,plain,128,ping,1828266,5.22,8.10,15876.09,preempted,
+E16M,plain,128,pong,1967543,5.04,7.06,12009.47,preempted,
+E16M,plain,128,conductor,357144,27.14,43.52,1370.11,preempted,
+E16M,plain,128,sender,292006,35.58,54.21,701.95,no switch,epoll_wait=0.02 recvmsg=0.00
+E16M,plain,128,receiver,1363228,8.10,15.51,11534.33,preempted,epoll_wait=0.99 recvmmsg=0.03 sendmmsg=0.00

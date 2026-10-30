@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Docs
+
+- Book: "Aeron with Many Streams". Aeron's latency and memory grow with its
+  stream count, so use up to 8 Aeron streams per driver with the key in each
+  message, and filter before decoding. Measured layouts, term lengths,
+  settings and driver sharding at 1 to 128 streams.
+
 ## [0.1.37] — 2026-10-30
 
 ### Added

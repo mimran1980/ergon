@@ -117,3 +117,4 @@ book/src/tune/overview.md:241 — deliberate; {{#include}} of tune/tests/live.rs
 book/src/tune/overview.md:249 — deliberate; {{#include}} of tune/tests/live.rs (ergon-tune, feature nic, Linux), a fragment of a test the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-tune --all-features builds and runs it on Linux.
 book/src/tune/overview.md:299 — deliberate; {{#include}} of tune/tests/host_checks.rs (ergon-tune), which the SBE book harness cannot link. Compile-checked where it lives: cargo test -p ergon-tune builds and runs it.
 book/src/project/ai-assistance/what-did-not-work.md:39 — historical fabricated specification example, not executable library code; retained as disclosure evidence.
+book/src/transports/aeron-many-streams.md:87 — deliberate; a sketch of a rusteron-client poll handler, which the SBE book harness does not link.
