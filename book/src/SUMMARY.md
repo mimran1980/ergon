@@ -93,8 +93,8 @@
 
 - [Which Transport When](./transports/choose.md)
 - [Aeron Client](./transports/aeron-client.md)
+  - [Note: Many Streams](./transports/aeron-many-streams.md)
 - [Transport Latency Comparison](./transports/comparison.md)
-- [Aeron with Many Streams](./transports/aeron-many-streams.md)
 
 # Deployment
 
