@@ -110,8 +110,40 @@ Market data, `irqcore`, the same run. Pass = 1 ÷ the loop's passes per second (
 | `recv-busy,per_queue` | 933–934 ns | 5.56–5.58 µs | 804–897 µs |
 | `recv-busy` | 574–588 ns | 149.3–149.4 µs | 1,910–2,187 µs |
 
-- Every backend's pass grows with sockets, idle ones included: the `Driver` of this run checked each connection for queued sends on every pass. `uring-sqpoll`'s kernel thread polls NIC queues, but the loop's own pass still grows. The send pass now visits only connections with bytes queued (the send set); not re-measured.
+- Every backend's pass grows with sockets, idle ones included: the `Driver` of this run checked each connection for queued sends on every pass. `uring-sqpoll`'s kernel thread polls NIC queues, but the loop's own pass still grows. The send pass now visits only connections with bytes queued (the send set): `epoll-spin` re-measured below.
 - mio makes 2.0× the `recvmsg` calls of `epoll-spin` (WebSocket round trip, N = 1: 1,200,000 against 600,000), from reading until `WouldBlock`.
+
+### One poll pass by socket count, re-measured with the send set (x86, omarchy)
+
+`poll_pass` times single passes over N loopback TCP sockets (200,000 a
+point, raw counter, pinned to CPU 5, no page faults in the timed passes):
+idle (nothing to read) and ready (one 12-byte frame on socket `pass % N`,
+written before the pass). Host: i5-8500T, kernel 7.2.8, CPU 5 not isolated
+and the box running other builds: compare loops at one N, not absolutes; not
+a latency platform. Data:
+[`summary.csv`](results/poll-pass-omarchy-20261030T074950Z/summary.csv),
+slow passes per point in the `slow-*.csv` beside it.
+
+| loop | idle p50, N = 1 / 16 / 256 | ready p50, N = 1 / 16 / 256 | reads a message |
+|---|---|---|---|
+| `epoll-lt` | 588 / 605 / 606 ns | 4.36 / 4.64 / 4.69 µs | 1 |
+| `epoll-et-short` | 590 / 605 / 605 ns | 4.36 / 4.57 / 4.63 µs | 1 |
+| `epoll-et-drain` | 572 / 605 / 606 ns | 5.08 / 5.31 / 5.36 µs | 2 |
+| mio | 573 / 605 / 606 ns | 5.05 / 5.29 / 5.36 µs | 2 |
+| ergon-io `Driver` (`epoll-spin`) | 594 / 612 / 631 ns | 4.56 / 4.80 / 4.82 µs | 1 |
+
+- **Idle sockets cost nothing now.** An idle pass is one `epoll_wait(0)`,
+  about 0.6 µs on this kernel for every loop and every N. The `Driver`'s
+  pass grows 37 ns from 1 to 256 sockets (raw epoll 18 ns), where the
+  Graviton run above grew 274 ns before the send set.
+- **A second read costs about 0.7 µs.** Reading until `EAGAIN` (mio, edge
+  drain) adds one `recvmsg` a message. The `Driver` reads once and is 0.13 to
+  0.26 µs above raw one-read epoll.
+- The ready figures include loopback TCP's own receive and ACK work inside
+  the read: compare loops, not the absolute.
+- p99.9 0.6 to 22 µs and max 13 µs to 1.5 ms: not attributed (CPU 5 not
+  isolated, load 0.9 to 2.9 during the run). Every pass over 1 µs (idle) or
+  10 µs (ready) is in the run's `slow-*.csv` with its counter stamp.
 
 ## Polling backends by socket count (x86)
 

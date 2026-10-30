@@ -1,0 +1,6 @@
+7.2.8-9-omarchy
+CPU(s):                                  6
+Model name:                              Intel(R) Core(TM) i5-8500T CPU @ 2.10GHz
+CPU(s) scaling MHz:                      96%
+
+taskset=5

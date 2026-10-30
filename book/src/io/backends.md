@@ -219,11 +219,20 @@ fstack-spin,loop_cpu=3,fstack_addr=10.0.1.20,fstack_prefix_len=24,fstack_gateway
 Fixed: `pkt_tx_delay=0` and `idle_sleep=0` (no transmit hold, no sleep),
 TSO and LRO off. FreeBSD's other settings are F-Stack's shipped ones.
 
-ergon-io does not guess the address, the gateway or the port: with the
-pod's `dpdk.ergon.io` opt-in they are copied from the pair the ENA device
-plugin granted, and without one you set them yourself.
-`FstackConf::check` refuses a config that omits `fstack_addr`,
-`fstack_gateway`, or exactly one of `fstack_pci` and `fstack_vdev`.
+**In a pod granted the ENA NIC pair** (`rusteron.io/dpdk-ena-pair`), the
+line is just `fstack-spin`. A line that names no NIC (no `fstack_addr`,
+`fstack_gateway`, `fstack_pci` or `fstack_vdev`) takes the address,
+prefix, gateway and PCI port from the three variables the device plugin
+injects (`RUSTERON_DPDK_SENDER_PCI`, `_IPV4_CIDR`, `_GATEWAY`). They are
+copied from the device the kubelet allocated, never guessed, and never
+mixed with typed keys: name any NIC key and the pair is not read. A
+granted pair with an empty or unparsable value fails `Config::parse`,
+naming the key. `Config::parse_with_env` does the same with the
+environment passed in.
+
+Anywhere else, set the NIC yourself. `FstackConf::check` refuses a config
+that omits `fstack_addr`, `fstack_gateway`, or exactly one of
+`fstack_pci` and `fstack_vdev`.
 The prefix defaults to 24. A peer on that subnet still needs
 `fstack_gateway`: F-Stack's port has no on-link-only mode. The kernel
 route lookup does not run for this backend, and it cannot fill these
@@ -231,7 +240,13 @@ fields in after DPDK has bound the NIC, because the kernel then has no
 address on that device. Read the address, prefix, gateway and PCI from
 the interface before the bind, and name the data NIC. On a host with a
 management interface and a data interface, the management address must
-stay with the kernel.
+stay with the kernel. For the data NIC `ens6`, before binding it:
+
+```text
+ip -4 -o addr show dev ens6                  # address and prefix
+basename "$(readlink /sys/class/net/ens6/device)"   # PCI address
+ip route show table all dev ens6 | grep default     # gateway
+```
 
 The shortest line for a real NIC is
 `fstack-spin,fstack_addr=10.0.1.20,fstack_gateway=10.0.1.1,fstack_pci=0000:00:06.0`.
@@ -319,9 +334,11 @@ let id = driver.connect(FrameDial::<SmolTcp>::on_stack(target, FrameOptions::def
 `ip` is the only field the parser requires. `StackConfig::parse("ip=10.0.1.20")`
 is a /24 with no gateway: on-link peers are reached by ARP. Set `gw` when
 the peer is on another subnet. `gw_mac` skips ARP for that gateway and is
-refused without `gw`. `port` defaults to `0`, the first DPDK port. These
-values are not guessed either: with the pod's `dpdk.ergon.io` opt-in they
-are copied from the pair the ENA device plugin granted. On a real NIC pass `eal=-a <pci>` last so DPDK
+refused without `gw`. `port` defaults to `0`, the first DPDK port. In a
+pod granted the ENA NIC pair, a line that names no NIC (no `port`, `ip`,
+`gw`, `gw_mac` or `eal`), even an empty one, takes `port`, `ip`, `gw` and
+`eal=-a <pci>` from the pair, copied and never mixed with typed keys, as
+for `fstack-spin`. On a real NIC pass `eal=-a <pci>` last so DPDK
 allowlists that device, and name the data NIC before it is bound, as for
 `fstack-spin`. The shortest real-NIC line is
 `port=0000:00:06.0,ip=10.0.1.20/24,eal=-a 0000:00:06.0`.
@@ -444,8 +461,10 @@ only the ready sockets. Its NIC polling stops at the queue count.
 - **A send pass visits only the connections with bytes queued** (the
   driver's send set), so idle connections add nothing to it. The passes
   measured below predate the send set: each also checked every connection
-  for queued sends, which grew the pass with idle sockets (not re-measured
-  since).
+  for queued sends, which grew the pass with idle sockets. Re-measured on
+  `epoll-spin` with the send set (x86): an idle pass is one
+  `epoll_wait(0)`, 594 ns at 1 socket and 631 ns at 256
+  ([one poll pass by socket count](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#one-poll-pass-by-socket-count-re-measured-with-the-send-set-x86-omarchy)).
 - Where each polling backend stops winning:
   [choosing a backend](overview.md#choosing-a-backend).
 

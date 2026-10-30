@@ -38,6 +38,11 @@ path = "src/bin/mpsc_lat.rs"
 name = "udp_lat"
 path = "src/bin/udp_lat.rs"
 
+# One poll pass over N sockets: raw epoll (level, edge), mio and the Driver.
+[[bin]]
+name = "poll_pass"
+path = "src/bin/poll_pass.rs"
+
 [[bin]]
 name = "tcp_lat"
 path = "src/bin/tcp_lat.rs"

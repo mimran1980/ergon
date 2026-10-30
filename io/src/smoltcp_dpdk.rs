@@ -278,17 +278,34 @@ impl StackConfig {
     /// # Ok::<(), ergon_io::Error>(())
     /// ```
     ///
+    /// A line that names no NIC (no `port`, `ip`, `gw`, `gw_mac` or `eal`)
+    /// takes the pair the ENA device plugin granted the pod
+    /// ([`ergon_tune::DpdkNicPair`]): `port`, `ip`, `gw` and `eal=-a <pci>`.
+    /// Copied, never guessed, and never mixed with typed NIC keys.
+    ///
     /// # Errors
-    /// An unknown key, a malformed value, or a setting
-    /// [`StackConfig::validate`] refuses.
+    /// An unknown key, a malformed value, a setting
+    /// [`StackConfig::validate`] refuses, no NIC at all, or a granted pair
+    /// that is broken.
     pub fn parse(s: &str) -> Result<Self> {
+        Self::parse_with_env(s, |name| std::env::var(name).ok())
+    }
+
+    /// [`StackConfig::parse`], with the environment read through `env`
+    /// instead of this process's.
+    ///
+    /// # Errors
+    /// As [`StackConfig::parse`].
+    pub fn parse_with_env(s: &str, env: impl Fn(&str) -> Option<String>) -> Result<Self> {
         let mut cfg = Self::default();
+        let mut names_a_nic = false;
         let (pairs, eal) = match s.find("eal=") {
             Some(i) if i == 0 || s[..i].ends_with(',') => (&s[..i], Some(&s[i + 4..])),
             _ => (s, None),
         };
         if let Some(eal) = eal {
             cfg.eal_args = eal.split_whitespace().map(str::to_owned).collect();
+            names_a_nic = true;
         }
         for kv in pairs.split(',').map(str::trim).filter(|p| !p.is_empty()) {
             let (k, v) = kv.split_once('=').ok_or_else(|| {
@@ -296,6 +313,7 @@ impl StackConfig {
             })?;
             let bad = || Error::Config(format!("smoltcp stack: {k}: bad value {v:?}"));
             let flag = || v.parse::<bool>().map_err(|_| bad());
+            names_a_nic |= matches!(k, "port" | "ip" | "gw" | "gw_mac");
             match k {
                 "port" => v.clone_into(&mut cfg.port),
                 "ip" => {
@@ -326,6 +344,30 @@ impl StackConfig {
                 "tx_csum_offload" => cfg.tx_checksum_offload = flag()?,
                 "link_wait_ms" => cfg.link_wait_ms = v.parse().map_err(|_| bad())?,
                 _ => return Err(Error::Config(format!("smoltcp stack: unknown key {k:?}"))),
+            }
+        }
+        if !names_a_nic {
+            match ergon_tune::DpdkNicPair::from_env(env) {
+                Ok(Some(pair)) => {
+                    cfg.ip = pair.addr;
+                    cfg.prefix_len = pair.prefix_len;
+                    cfg.gateway = Some(pair.gateway);
+                    cfg.eal_args = pair.eal_args().to_vec();
+                    cfg.port = pair.pci;
+                }
+                Ok(None) => {
+                    return Err(Error::Config(format!(
+                        "smoltcp stack: no NIC: give port, ip and eal (gw for off-link peers), or \
+                         run in a pod granted the ENA device plugin's pair ({}), which a line \
+                         naming no NIC takes itself",
+                        ergon_tune::DpdkNicPair::ENV.join(", ")
+                    )));
+                }
+                Err(m) => {
+                    return Err(Error::Config(format!(
+                        "smoltcp stack: the device plugin's NIC pair is not usable: {m}"
+                    )));
+                }
             }
         }
         cfg.validate()?;

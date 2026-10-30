@@ -197,9 +197,12 @@ thread polls (feeds, order connections, `HttpClient` pool connections):
   pinned on the first runs. TCP and WebSocket echoes were pinned in
   the remeasure.
 
-Neither backend detects the address, the gateway or the port. DPDK takes
-the NIC from the kernel, so read those values before the bind and name
-the data NIC. F-Stack requires `fstack_addr`, `fstack_gateway` and exactly
+In a pod granted the ENA device plugin's NIC pair
+(`rusteron.io/dpdk-ena-pair`), the line is just `fstack-spin` (and an
+empty smoltcp stack line): a line that names no NIC copies the address,
+gateway and PCI port from the pair, never guessed. Elsewhere neither
+backend detects them. DPDK takes the NIC from the kernel, so read those
+values before the bind and name the data NIC. F-Stack requires `fstack_addr`, `fstack_gateway` and exactly
 one of `fstack_pci` and `fstack_vdev` (prefix defaults to 24; the gateway
 is required even for a peer on that subnet):
 

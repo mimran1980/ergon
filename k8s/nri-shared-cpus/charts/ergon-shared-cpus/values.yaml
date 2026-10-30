@@ -4,7 +4,7 @@
 # the nodes the DaemonSet runs on. It must be inside the kubelet's
 # reservedSystemCPUs, minus the CPU(s) kept for NIC IRQs.
 
-# Empty tag means the chart appVersion (image 0.1.2).
+# Empty tag means the chart appVersion (image 0.1.3).
 # image.digest, when set, wins and the pod uses repository@digest.
 image:
   repository: ghcr.io/mimran1980/ergon-shared-cpus

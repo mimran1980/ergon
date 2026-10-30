@@ -9,7 +9,7 @@ Latency-pod extensions for Kubernetes. One directory, three kinds of thing:
 | admission | things a policy should refuse or strip | `admission/` here (ValidatingAdmissionPolicy) |
 
 The grants are in the published `ergon-shared-cpus` image
-(`ghcr.io/mimran1980/ergon-shared-cpus:0.1.2`). This directory is not a
+(`ghcr.io/mimran1980/ergon-shared-cpus:0.1.3`). This directory is not a
 second image. Its admission YAML and node units stay in the repo. Experimental.
 On EKS the plugin's install is verified (`k8s/nri-shared-cpus/RELEASE.md`); the five
 grants' latency modes (M0-M6) have not yet run there.
@@ -98,6 +98,12 @@ device plugin already granted this container
 | `ERGON_DPDK_PCI` | `0000:00:06.0` |
 | `ERGON_DPDK_ADDR` | `10.0.1.20` — the address parsed out of the cidr |
 | `ERGON_DPDK_GATEWAY` | `10.0.1.1` |
+
+ergon-io does not need this opt-in: a bare `fstack-spin` (or an empty
+smoltcp stack line) reads the same three variables itself. The copies are
+for apps that log the lines or pass them on. A prefix other than 24 adds
+`fstack_prefix_len`, and a DPDK device name (test mode) becomes
+`fstack_vdev` and `eal=--vdev <name>`.
 
 The two lines are the shortest real-NIC lines from the
 [backends page](https://mimran1980.github.io/ergon/io/backends.html), copied
@@ -294,7 +300,7 @@ test/e2e.sh
 
    ```sh
    helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus \
-     --version 0.1.2 \
+     --version 0.1.3 \
      --namespace ergon-system --create-namespace \
      --set-string config.sharedCpus=0 \
      --set 'config.namespaces={trading}' \
@@ -312,7 +318,7 @@ test/e2e.sh
    it as the kubelet does. Without `kubeletConfigDir` every hot pod is refused on AL2023 and unlabelled pods still get the
    grants.
 
-   Image: `ghcr.io/mimran1980/ergon-shared-cpus:0.1.2` (the chart's
+   Image: `ghcr.io/mimran1980/ergon-shared-cpus:0.1.3` (the chart's
    `appVersion`). The chart writes
    `seccomp.ioUring` and `ptp` as `"off"`. A node that grants those writes them
    into the ConfigMap; the keys are in `k8s/nri-shared-cpus/README.md`.
