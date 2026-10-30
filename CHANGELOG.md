@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.1.37] — unreleased
+
+### Added
+
+- `fstack-spin` and `smoltcp-spin` work out the NIC in a pod granted the
+  ENA device plugin's pair (`rusteron.io/dpdk-ena-pair`): a line that names
+  no NIC takes the address, prefix, gateway and PCI port from
+  `RUSTERON_DPDK_SENDER_{PCI,IPV4_CIDR,GATEWAY}`, so the bare `fstack-spin`
+  (or an empty smoltcp stack line) is a whole config. Copied, never guessed,
+  never mixed with typed keys; a broken pair fails the parse naming the
+  key. New: `Config::parse_with_env`, `StackConfig::parse_with_env`,
+  `FstackConf::take_granted_pair` and `names_a_nic`, and
+  `ergon_tune::DpdkNicPair`.
+
+### Fixed
+
+- The `fstack-spin` line T24 prints and the NRI plugin's `ERGON_IO_FSTACK`
+  kept a subnet other than /24 as /24 (F-Stack's default); they now add
+  `fstack_prefix_len`. A DPDK device name in the pair (test mode) becomes
+  `fstack_vdev` and `eal=--vdev <name>` instead of a PCI port.
+
 ## [0.1.36] — 2026-10-29
 
 ### Added

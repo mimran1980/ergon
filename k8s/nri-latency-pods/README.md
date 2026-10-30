@@ -99,6 +99,12 @@ device plugin already granted this container
 | `ERGON_DPDK_ADDR` | `10.0.1.20` — the address parsed out of the cidr |
 | `ERGON_DPDK_GATEWAY` | `10.0.1.1` |
 
+ergon-io does not need this opt-in: a bare `fstack-spin` (or an empty
+smoltcp stack line) reads the same three variables itself. The copies are
+for apps that log the lines or pass them on. A prefix other than 24 adds
+`fstack_prefix_len`, and a DPDK device name (test mode) becomes
+`fstack_vdev` and `eal=--vdev <name>`.
+
 The two lines are the shortest real-NIC lines from the
 [backends page](https://mimran1980.github.io/ergon/io/backends.html), copied
 from the granted pair, never guessed. The pod is refused, naming the key,

@@ -136,6 +136,47 @@ impl FstackConf {
         Ok(true)
     }
 
+    /// Whether the settings name a NIC: an address, a gateway, a PCI port
+    /// or a vdev.
+    #[must_use]
+    pub const fn names_a_nic(&self) -> bool {
+        self.addr.is_some() || self.gateway.is_some() || self.pci.is_some() || self.vdev.is_some()
+    }
+
+    /// Takes the NIC the ENA device plugin granted this container
+    /// ([`ergon_tune::DpdkNicPair`], read through `env`) when the settings
+    /// name none ([`FstackConf::names_a_nic`]): its address, prefix,
+    /// gateway and PCI port (a device name becomes `fstack_vdev`). Copied,
+    /// never guessed: `Ok(false)` when a NIC is already named or no pair
+    /// was granted, and nothing is mixed. `Config::parse` calls it for
+    /// `fstack-spin`.
+    ///
+    /// # Errors
+    /// [`Error::Config`] naming every empty or unparsable variable of a
+    /// granted pair.
+    pub fn take_granted_pair(&mut self, env: impl Fn(&str) -> Option<String>) -> Result<bool> {
+        if self.names_a_nic() {
+            return Ok(false);
+        }
+        match ergon_tune::DpdkNicPair::from_env(env) {
+            Ok(None) => Ok(false),
+            Ok(Some(pair)) => {
+                self.addr = Some(pair.addr);
+                self.prefix_len = pair.prefix_len;
+                self.gateway = Some(pair.gateway);
+                if pair.is_pci_address() {
+                    self.pci = Some(pair.pci);
+                } else {
+                    self.vdev = Some(pair.pci);
+                }
+                Ok(true)
+            }
+            Err(m) => Err(Error::Config(format!(
+                "fstack-spin: the device plugin's NIC pair is not usable: {m}"
+            ))),
+        }
+    }
+
     /// Checks the settings `ff_init` needs.
     ///
     /// # Errors
@@ -145,6 +186,14 @@ impl FstackConf {
     /// (it would end its line of the file).
     pub fn check(&self) -> Result<()> {
         let need = |k: &str| Error::Config(format!("fstack-spin needs {k}"));
+        if !self.names_a_nic() {
+            return Err(Error::Config(format!(
+                "fstack-spin needs a NIC: fstack_addr, fstack_gateway and fstack_pci (or \
+                 fstack_vdev), or a pod granted the ENA device plugin's pair ({}), which a line \
+                 naming no NIC takes itself",
+                ergon_tune::DpdkNicPair::ENV.join(", ")
+            )));
+        }
         if self.addr.is_none() {
             return Err(need("fstack_addr"));
         }

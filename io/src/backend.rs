@@ -506,10 +506,23 @@ impl Config {
     /// `helper_cpus=1,3-4` keeps the parts after its commas that have no
     /// `=`), and `fstack-spin`'s `fstack_*` keys ([`crate::fstack::FstackConf`]).
     ///
+    /// `fstack-spin` with no NIC key takes the pair the ENA device plugin
+    /// granted the pod ([`crate::fstack::FstackConf::take_granted_pair`]),
+    /// so in such a pod the bare name is a whole line.
+    ///
     /// # Errors
-    /// Unknown backend or key, a malformed value, or a setting the backend
-    /// cannot use ([`Config::validate`]).
+    /// Unknown backend or key, a malformed value, a setting the backend
+    /// cannot use ([`Config::validate`]), or a granted pair that is broken.
     pub fn parse(s: &str) -> Result<Self> {
+        Self::parse_with_env(s, |name| std::env::var(name).ok())
+    }
+
+    /// [`Config::parse`], with the environment read through `env` instead
+    /// of this process's.
+    ///
+    /// # Errors
+    /// As [`Config::parse`].
+    pub fn parse_with_env(s: &str, env: impl Fn(&str) -> Option<String>) -> Result<Self> {
         let mut parts = s.split(',').map(str::trim);
         let mut cfg = Self::new(parts.next().unwrap_or_default().parse()?);
         let cpu_list = |k: &str, v: &str| -> Result<Vec<u32>> {
@@ -566,6 +579,9 @@ impl Config {
                 _ if cfg.fstack.set(k, v)? => {}
                 _ => return Err(Error::Config(format!("unknown key {k:?}"))),
             }
+        }
+        if cfg.backend == Backend::FstackSpin {
+            cfg.fstack.take_granted_pair(env)?;
         }
         cfg.validate()?;
         Ok(cfg)

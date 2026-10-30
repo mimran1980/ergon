@@ -5,6 +5,8 @@
 # The shortest lines built from that pair (samples/README.md, aws-k8s):
 #   fstack-spin,fstack_addr=10.0.1.20,fstack_gateway=10.0.1.1,fstack_pci=0000:00:06.0
 #   port=0000:00:06.0,ip=10.0.1.20/24,eal=-a 0000:00:06.0
+# A container granted the pair runs ergon-io with just "fstack-spin" (or an
+# empty smoltcp line): a line that names no NIC copies the pair itself.
 # The ERGON_IO_FSTACK/ERGON_DPDK_* copies appear only when the pod sets
 # dpdk.ergon.io/<container>: "ena-pair" (the NRI plugin, default off).
 # Lab only (md-dpdk/BENCHMARKS.md: kernel UDP in production).

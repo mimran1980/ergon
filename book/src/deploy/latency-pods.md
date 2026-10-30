@@ -95,7 +95,8 @@ The device plugin has already put
 this opt-in copies them into `ERGON_IO_FSTACK` and `ERGON_IO_SMOLTCP`
 (the two shortest real-NIC lines from the
 [backends page](../io/backends.md)) plus `ERGON_DPDK_PCI`,
-`ERGON_DPDK_ADDR` and `ERGON_DPDK_GATEWAY`. A missing, empty or
+`ERGON_DPDK_ADDR` and `ERGON_DPDK_GATEWAY`. ergon-io itself does not
+need it: a bare `fstack-spin` reads the pair directly. A missing, empty or
 unparsable value refuses the pod and names the key. Nothing here scans
 sysfs, runs `dpdk-devbind`, reads the node's default route (that is the
 management NIC), or sets `AERON_DIR`.

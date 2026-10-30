@@ -583,3 +583,106 @@ fn without_the_feature_the_stack_is_unsupported() -> R {
     assert!(matches!(e, ergon_io::Error::Config(_)), "{e}");
     Ok(())
 }
+
+/// The ENA device plugin's NIC pair, as a pod granted
+/// `rusteron.io/dpdk-ena-pair` sees it.
+const PAIR: [(&str, &str); 3] = [
+    ("RUSTERON_DPDK_SENDER_PCI", "0000:00:06.0"),
+    ("RUSTERON_DPDK_SENDER_IPV4_CIDR", "10.0.1.20/24"),
+    ("RUSTERON_DPDK_SENDER_GATEWAY", "10.0.1.1"),
+];
+
+fn env<'a>(vars: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+    move |name| {
+        vars.iter()
+            .find(|(k, _)| *k == name)
+            .map(|(_, v)| (*v).to_owned())
+    }
+}
+
+/// A bare `fstack-spin` takes the address, gateway and PCI device from
+/// the pair the device plugin granted; the kernel backends never read it.
+#[test]
+fn a_bare_fstack_spin_takes_the_granted_pair() -> R {
+    let c = Config::parse_with_env("fstack-spin,loop_cpu=2", env(&PAIR))?;
+    assert_eq!(c.fstack.addr, Some("10.0.1.20".parse()?));
+    assert_eq!(c.fstack.prefix_len, 24);
+    assert_eq!(c.fstack.gateway, Some("10.0.1.1".parse()?));
+    assert_eq!(c.fstack.pci.as_deref(), Some("0000:00:06.0"));
+    assert_eq!(c.fstack.vdev, None);
+    c.fstack.check()?;
+    for b in [Backend::EpollSpin, Backend::RecvBusy, Backend::SmoltcpSpin] {
+        assert_eq!(
+            Config::parse_with_env(b.name(), env(&PAIR))?,
+            Config::new(b)
+        );
+    }
+    Ok(())
+}
+
+/// Any NIC key in the line wins: the pair is then not read at all, so a
+/// line never mixes typed and granted values.
+#[test]
+fn a_named_nic_is_never_mixed_with_the_granted_pair() -> R {
+    let c = Config::parse_with_env("fstack-spin,fstack_vdev=net_tap0", env(&PAIR))?;
+    assert_eq!(c.fstack.vdev.as_deref(), Some("net_tap0"));
+    assert_eq!(
+        (c.fstack.addr, c.fstack.gateway, c.fstack.pci),
+        (None, None, None)
+    );
+    let c = Config::parse_with_env("fstack-spin,fstack_addr=10.9.0.2", env(&PAIR))?;
+    assert_eq!(c.fstack.addr, Some("10.9.0.2".parse()?));
+    assert_eq!((c.fstack.gateway, c.fstack.pci), (None, None));
+    Ok(())
+}
+
+/// No pair and no NIC keys: the check names both ways to give the NIC.
+#[test]
+fn without_a_pair_fstack_spin_names_both_ways() -> R {
+    let c = Config::parse_with_env("fstack-spin", env(&[]))?;
+    let e = c.fstack.check().err().ok_or("no NIC must fail the check")?;
+    let m = e.to_string();
+    assert!(m.contains("fstack_addr"), "{m}");
+    assert!(m.contains("RUSTERON_DPDK_SENDER_PCI"), "{m}");
+    Ok(())
+}
+
+/// A pair that is granted but broken fails the parse, naming the key.
+#[test]
+fn a_broken_pair_fails_the_parse_with_the_key() -> R {
+    let half = [PAIR[0], PAIR[1]];
+    let e = Config::parse_with_env("fstack-spin", env(&half))
+        .err()
+        .ok_or("a half pair must fail")?;
+    assert!(
+        e.to_string().contains("RUSTERON_DPDK_SENDER_GATEWAY"),
+        "{e}"
+    );
+    Ok(())
+}
+
+/// A smoltcp stack line that names no NIC (no `port`, `ip`, `gw` or
+/// `eal`) takes the granted pair; one that names any of them does not.
+#[test]
+fn a_smoltcp_line_without_a_nic_takes_the_granted_pair() -> R {
+    use ergon_io::smoltcp_dpdk::StackConfig;
+    for line in ["", "mtu=9001"] {
+        let s = StackConfig::parse_with_env(line, env(&PAIR))?;
+        assert_eq!(s.port, "0000:00:06.0", "{line:?}");
+        assert_eq!((s.ip, s.prefix_len), ("10.0.1.20".parse()?, 24), "{line:?}");
+        assert_eq!(s.gateway, Some("10.0.1.1".parse()?), "{line:?}");
+        assert_eq!(s.eal_args, ["-a", "0000:00:06.0"], "{line:?}");
+    }
+    assert_eq!(
+        StackConfig::parse_with_env("mtu=9001", env(&PAIR))?.mtu,
+        9001
+    );
+    let typed = StackConfig::parse_with_env("ip=10.9.0.2", env(&PAIR))?;
+    assert_eq!((typed.ip, typed.gateway), ("10.9.0.2".parse()?, None));
+    assert_eq!(typed.eal_args, Vec::<String>::new());
+    let e = StackConfig::parse_with_env("mtu=9001", env(&[]))
+        .err()
+        .ok_or("no NIC must fail")?;
+    assert!(e.to_string().contains("RUSTERON_DPDK_SENDER_PCI"), "{e}");
+    Ok(())
+}
