@@ -623,3 +623,35 @@ func kvMapOf(kvs []latency.KV) map[string]string {
 	}
 	return m
 }
+
+// A subnet other than /24 keeps its prefix in the fstack-spin line (F-Stack
+// defaults to 24), and a DPDK device name is a vdev, not a PCI port: the
+// same lines ergon-io builds from the pair itself.
+func TestResolveGrantsDpdkPairKeepsPrefixAndVdev(t *testing.T) {
+	cfg := grantConfig(t)
+	for _, tc := range []struct{ pci, cidr, fstack, smoltcp string }{
+		{"0000:00:06.0", "10.0.16.20/20",
+			"fstack-spin,fstack_addr=10.0.16.20,fstack_gateway=10.0.1.1,fstack_pci=0000:00:06.0,fstack_prefix_len=20",
+			"port=0000:00:06.0,ip=10.0.16.20/20,eal=-a 0000:00:06.0"},
+		{"net_tap0", "10.0.1.20/24",
+			"fstack-spin,fstack_addr=10.0.1.20,fstack_gateway=10.0.1.1,fstack_vdev=net_tap0",
+			"port=net_tap0,ip=10.0.1.20/24,eal=--vdev net_tap0"},
+	} {
+		r := baseRequest()
+		r.Env = dpdkSenderEnv()
+		r.Env["RUSTERON_DPDK_SENDER_PCI"] = tc.pci
+		r.Env["RUSTERON_DPDK_SENDER_IPV4_CIDR"] = tc.cidr
+		r.PodAnnotations = map[string]string{names.DpdkPrefix + r.Container: names.DpdkEnaPairValue}
+		g, err := resolveGrants(cfg, &r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		env := kvMapOf(GrantEnv(g, cfg))
+		if env[latency.EnvIOFstack] != tc.fstack {
+			t.Errorf("fstack line = %q, want %q", env[latency.EnvIOFstack], tc.fstack)
+		}
+		if env[latency.EnvIOSmoltcp] != tc.smoltcp {
+			t.Errorf("smoltcp line = %q, want %q", env[latency.EnvIOSmoltcp], tc.smoltcp)
+		}
+	}
+}

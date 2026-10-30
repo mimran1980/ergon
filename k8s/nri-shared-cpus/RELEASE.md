@@ -1,21 +1,22 @@
 # Release gate
 
-## Current release: 0.1.2
+## Current release: 0.1.3
 
 | what | value |
 |---|---|
-| image | `ghcr.io/mimran1980/ergon-shared-cpus:0.1.2` (and `:latest`) |
-| image digest | index `sha256:33ddd06f6b2e58bae6a2bf13092366482b5a292bc50a01223b0b383b66026da6` (amd64 `sha256:63946a9a9c11ec98be252778c16f9e7020186b1a5400ee711251b6510fb748a9`, arm64 `sha256:0d341b3cc0f9c125708120e216e12b61ed7827c74d24851c51afec10c728e102`); the index carries the `org.opencontainers.image.description` annotation |
-| chart | `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.2`, appVersion `0.1.2` |
-| chart digest | `sha256:145054055d604e8a866bf86556cd3a1b46b92b1b6e3347183b8033dd7112b14d` |
-| source | `85098f8b`, Actions run [40173324072](https://github.com/mimran1980/ergon/actions/runs/40173324072) (unit, vet, static build, helm lint and template, push) |
-| `--version` (amd64, arm64) | `ergon-shared-cpus 0.1.2 85098f8b16e17d80747c73d6069c1ec07d70496a nri=v0.12.3` |
-| checked | `helm template` of the OCI chart renders image `:0.1.2` with `--kubelet-config`; the kind e2e (`test/e2e.sh`) at that source: 18 steps, 0 failed (2026-10-25) |
-| verified on EKS | AL2023 `c8g.xlarge` spot, Kubernetes 1.36, kernel 6.18.54, containerd 2.3.5, runc 1.4.3, the same plugin and chart source as published 0.1.2 (`85098f8b`), built by the lab and pushed to the run's ECR (not the GHCR image), runs `eks-nri-20261025-070515` and `eks-nri-20261025-082023` ([`lab/results/`](lab/results/)): the NRI socket, nodeadm's TOML merge, the kubelet drop-in merge, `/opt` writable, `system-node-critical` in `ergon-system`, the device plugin, the quiet-CPU boot unit. Hot pods were refused while a late ENI's IRQs sat on the shared CPU (fail closed, as designed; `create refused ... reason node-contract` in the plugin log) |
+| image | `ghcr.io/mimran1980/ergon-shared-cpus:0.1.3` (and `:latest`) |
+| image digest | index `sha256:440fb141f12876ed12dfb15f9ea512d60dfd212d704e4caf598396990c532d3f` (amd64 `sha256:1fc13cb4570f3618fdbdd9e5332a0dc1a10cd93435e3c7fbdcca61e9138bb692`, arm64 `sha256:e08ca538d83391b5b2d2d4e65e23de14a85f33f4778cf562863914dd271e2760`); the index carries the description, source and licence annotations |
+| chart | `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.3`, appVersion `0.1.3` |
+| chart digest | `sha256:3a771604cc0dee0b51333f4e23b588c951dc98d587b19a862147a14b0dbac4b4` |
+| source | `4cf352f5`, Actions run [41022812913](https://github.com/mimran1980/ergon/actions/runs/41022812913) (unit, vet, static build, helm lint and template, push) |
+| `--version` (amd64, arm64) | `ergon-shared-cpus 0.1.3 4cf352f5698707de6448f12ef44dc7f5eb2bce04 nri=v0.12.3` |
+| checked | `helm template` of the OCI chart renders image `:0.1.3` with `--kubelet-config`; at that source the Go lane, the cgroup kernel lane and the kind e2e (`test/e2e.sh`: 18 steps, 0 failed), 2026-10-30 |
+| changed since 0.1.2 | environment only: the `dpdk.ergon.io` NIC pair exports, Aeron's hugepage variables, and Aeron 1.54's cpuset-offsets name in `ergon-cpus`. CPU placement and the hooks are unchanged, so the EKS lane and the benchmarks below, done at 0.1.2, still describe it; EKS was not re-run at 0.1.3 |
+| verified on EKS (0.1.2) | AL2023 `c8g.xlarge` spot, Kubernetes 1.36, kernel 6.18.54, containerd 2.3.5, runc 1.4.3, the same plugin and chart source as published 0.1.2 (`85098f8b`), built by the lab and pushed to the run's ECR (not the GHCR image), runs `eks-nri-20261025-070515` and `eks-nri-20261025-082023` ([`lab/results/`](lab/results/)): the NRI socket, nodeadm's TOML merge, the kubelet drop-in merge, `/opt` writable, `system-node-critical` in `ergon-system`, the device plugin, the quiet-CPU boot unit. Hot pods were refused while a late ENI's IRQs sat on the shared CPU (fail closed, as designed; `create refused ... reason node-contract` in the plugin log) |
 | measured | the hot thread with helpers on the shared CPU (the checkout, on kind on one Azure Cobalt VM, THP `never` and the fair server off on the isolated CPUs): p50 0.02 µs, p99.99 0.03 µs, max 4.81 to 5.52 µs, 0 involuntary switches a 60 s rep; the hypervisor's floor 3.5 to 5.5 µs. Shared-CPU scaling as designed ([BENCHMARKS.md](BENCHMARKS.md)) |
 | measured on EKS | a helper's wake-up wait on the shared CPU, the 1 ns timer slack, the pin's cost ([BENCHMARKS.md](BENCHMARKS.md#eks-c8gxlarge-run-eks-nri-20261025-082023)) |
 
-The EKS lane is verified for 0.1.2. Do not invent the figures of the
+The EKS lane is verified for 0.1.2; 0.1.3 changed environment exports only. Do not invent the figures of the
 benchmarks still open below.
 
 ## 1. Code defects

@@ -541,9 +541,19 @@ func DpdkEnaPair(ask string, env map[string]string) ([]KV, error) {
 	if strings.ContainsAny(pci, " \t,=") {
 		return nil, grantErr("dpdk", "dpdk.ergon.io: %s=%q is not a PCI address or a DPDK device name", senderPCI, pci)
 	}
+	// The same lines ergon-io builds from the pair itself (ergon_tune::DpdkNicPair):
+	// F-Stack's prefix defaults to 24, and a DPDK device name is a vdev, not a PCI port.
+	fstackPort, ealArgs := ",fstack_pci="+pci, "-a "+pci
+	if !strings.Contains(pci, ":") {
+		fstackPort, ealArgs = ",fstack_vdev="+pci, "--vdev "+pci
+	}
+	fstackPrefix := ""
+	if n != 24 {
+		fstackPrefix = ",fstack_prefix_len=" + strconv.Itoa(n)
+	}
 	return []KV{
-		{EnvIOFstack, "fstack-spin,fstack_addr=" + addr + ",fstack_gateway=" + gateway + ",fstack_pci=" + pci},
-		{EnvIOSmoltcp, "port=" + pci + ",ip=" + cidr + ",eal=-a " + pci},
+		{EnvIOFstack, "fstack-spin,fstack_addr=" + addr + ",fstack_gateway=" + gateway + fstackPort + fstackPrefix},
+		{EnvIOSmoltcp, "port=" + pci + ",ip=" + cidr + ",eal=" + ealArgs},
 		{EnvDpdkPCI, pci},
 		{EnvDpdkAddr, addr},
 		{EnvDpdkGateway, gateway},

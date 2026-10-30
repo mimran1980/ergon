@@ -86,7 +86,7 @@ pub use cpu::{
     thread_affinity, thread_policy,
 };
 pub use cpuset::{CPU_LIMIT, CpuSet, CpuSetError};
-pub use dpdk::t24_dpdk_nic_pair;
+pub use dpdk::{DpdkNicPair, t24_dpdk_nic_pair};
 pub use faults::{FaultWatch, Faults};
 pub use finding::{Component, Finding, HotCpu, HotSet, Role, Severity, Status};
 pub use host::{Host, ReadError};

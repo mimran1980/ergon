@@ -155,3 +155,30 @@ fn t24_accepts_a_dpdk_device_name_and_a_real_pci_address() {
     assert_eq!(upper.status, Status::Finding, "{upper}");
     assert!(upper.message.contains("fstack_pci=0000:81:00.4"), "{upper}");
 }
+
+/// `DpdkNicPair::from_env`: the same pair T24 reports, parsed once for
+/// ergon-io's DPDK backends to take. None when no pair was granted; an
+/// error naming every empty or unparsable key otherwise.
+#[test]
+fn the_pair_parses_once_for_the_backends_to_take() -> Result<(), String> {
+    use ergon_tune::DpdkNicPair;
+
+    assert_eq!(DpdkNicPair::from_env(env(&[]))?, None);
+
+    let pair = DpdkNicPair::from_env(env(&PAIR))?.ok_or("a complete pair parses")?;
+    assert_eq!(pair.pci, "0000:00:06.0");
+    assert_eq!(pair.addr, std::net::Ipv4Addr::new(10, 0, 1, 20));
+    assert_eq!(pair.prefix_len, 24);
+    assert_eq!(pair.gateway, std::net::Ipv4Addr::new(10, 0, 1, 1));
+    assert_eq!(pair.fstack_line(), FSTACK);
+    assert_eq!(pair.smoltcp_line(), SMOLTCP);
+
+    let e = DpdkNicPair::from_env(env(&[(CIDR, "10.0.1.20/24"), (GATEWAY, "x")]))
+        .err()
+        .ok_or("a half pair is an error")?;
+    for part in [PCI, GATEWAY] {
+        assert!(e.contains(part), "{part} missing from {e}");
+    }
+    assert!(!e.contains(CIDR), "a good key is not named: {e}");
+    Ok(())
+}

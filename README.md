@@ -19,12 +19,12 @@ Exit criteria: [Road to 1.0](https://mimran1980.github.io/ergon/project/road-to-
 
 | Package | Get it |
 |---|---|
-| Helm chart | `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.2` |
-| Image (amd64, arm64) | `docker pull ghcr.io/mimran1980/ergon-shared-cpus:0.1.2` |
+| Helm chart | `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.3` |
+| Image (amd64, arm64) | `docker pull ghcr.io/mimran1980/ergon-shared-cpus:0.1.3` |
 
 ```sh
 helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus \
-  --version 0.1.2 -n ergon-system --create-namespace \
+  --version 0.1.3 -n ergon-system --create-namespace \
   --set-string config.sharedCpus=0 \
   --set hostContract.kubeletConfig.enabled=true \
   --set hostContract.sys.enabled=true \

@@ -57,68 +57,168 @@ pub fn t24_dpdk_nic_pair(on_dpdk: bool, env: impl Fn(&str) -> Option<String>) ->
                 .to_owned(),
         );
     }
-    // the trimmed values, in SENDER's order; None only where the variable is unset.
-    let raw: [Option<String>; 3] = SENDER.map(|name| env(name).map(|v| v.trim().to_owned()));
-    if raw.iter().all(Option::is_none) {
-        return Finding::ok(
-            id,
-            sev,
-            T24_EVIDENCE,
-            format!(
-                "{} are unset: the device plugin has not granted a pair, so nothing here guesses \
-                 an address, a gateway or a PCI device",
-                SENDER.join(", ")
-            ),
-        );
-    }
-    let mut problems: Vec<String> = Vec::new();
-    let mut good: [Option<String>; 3] = [None, None, None];
-    for (i, name) in SENDER.iter().enumerate() {
-        match raw[i].as_deref() {
-            None | Some("") => problems.push(format!("{name} is still empty")),
-            Some(value) => {
-                let why = match i {
-                    0 => pci_why(value),
-                    1 => cidr_why(value),
-                    _ => address_why(value),
-                };
-                if let Some(why) = why {
-                    problems.push(format!("{name}={value} {why}"));
-                } else {
-                    good[i] = Some(value.to_owned());
-                }
-            }
+    let pair = match DpdkNicPair::from_env(env) {
+        Ok(Some(pair)) => pair,
+        Ok(None) => {
+            return Finding::ok(
+                id,
+                sev,
+                T24_EVIDENCE,
+                format!(
+                    "{} are unset: the device plugin has not granted a pair, so nothing here \
+                     guesses an address, a gateway or a PCI device",
+                    SENDER.join(", ")
+                ),
+            );
         }
-    }
-    // A cell is only missing when its problem is already recorded.
-    let (Some(pci), Some(cidr), Some(gateway)) =
-        (good[0].as_deref(), good[1].as_deref(), good[2].as_deref())
-    else {
-        return Finding::found(
-            id,
-            sev,
-            T24_EVIDENCE,
-            format!(
-                "the NIC pair is not usable: {}. Effect: no fstack-spin or smoltcp-spin line can \
-                 be copied from it. Fix: set every empty key and correct every bad one from the \
-                 pair the device plugin granted (rusteron.io/dpdk-ena-pair); this check copies \
-                 nothing, binds no NIC and sets no AERON_DIR",
-                problems.join("; ")
-            ),
-        );
+        Err(problems) => {
+            return Finding::found(
+                id,
+                sev,
+                T24_EVIDENCE,
+                format!(
+                    "the NIC pair is not usable: {problems}. Effect: no fstack-spin or \
+                     smoltcp-spin line can be copied from it. Fix: set every empty key and \
+                     correct every bad one from the pair the device plugin granted \
+                     (rusteron.io/dpdk-ena-pair); this check copies nothing, binds no NIC and \
+                     sets no AERON_DIR"
+                ),
+            );
+        }
     };
-    let addr = cidr.split_once('/').map_or(cidr, |(a, _)| a);
     Finding::found(
         id,
         Severity::Info,
         T24_EVIDENCE,
         format!(
             "the NIC pair is set; the two shortest lines built from it (copied, not guessed): \
-             fstack-spin,fstack_addr={addr},fstack_gateway={gateway},fstack_pci={pci}; \
-             port={pci},ip={cidr},eal=-a {pci}. This check copies nothing, binds no NIC and sets \
-             no AERON_DIR"
+             {}; {}. A bare fstack-spin or smoltcp-spin takes the same values itself. This \
+             check copies nothing, binds no NIC and sets no AERON_DIR",
+            pair.fstack_line(),
+            pair.smoltcp_line()
         ),
     )
+}
+
+/// The NIC the ENA device plugin granted this container.
+///
+/// `rusteron.io/dpdk-ena-pair` injects its sender PCI address, IPv4 address
+/// and prefix, and gateway as [`DpdkNicPair::ENV`]. ergon-io's `fstack-spin`
+/// and `smoltcp-spin` take it when their configuration names no NIC; T24
+/// reports it. Copied from what the kubelet allocated, never guessed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DpdkNicPair {
+    /// `RUSTERON_DPDK_SENDER_PCI`: `[domain:]bus:dev.func`, or a DPDK device
+    /// name (`net_tap0`) in the plugin's test mode.
+    pub pci: String,
+    /// The address of `RUSTERON_DPDK_SENDER_IPV4_CIDR`.
+    pub addr: Ipv4Addr,
+    /// The prefix length of `RUSTERON_DPDK_SENDER_IPV4_CIDR`, 0 to 32.
+    pub prefix_len: u8,
+    /// `RUSTERON_DPDK_SENDER_GATEWAY`.
+    pub gateway: Ipv4Addr,
+}
+
+impl DpdkNicPair {
+    /// The three variables the device plugin injects for the sender NIC,
+    /// in the order they are checked.
+    pub const ENV: [&'static str; 3] = SENDER;
+
+    /// Reads the pair through `env` (`|n| std::env::var(n).ok()` for this
+    /// process). `Ok(None)` when all three variables are unset: no pair was
+    /// granted.
+    ///
+    /// # Errors
+    /// Every empty or unparsable variable, by name and value, joined with
+    /// `; `.
+    pub fn from_env(env: impl Fn(&str) -> Option<String>) -> Result<Option<Self>, String> {
+        // the trimmed values, in SENDER's order; None only where the variable is unset.
+        let raw: [Option<String>; 3] = SENDER.map(|name| env(name).map(|v| v.trim().to_owned()));
+        if raw.iter().all(Option::is_none) {
+            return Ok(None);
+        }
+        let mut problems: Vec<String> = Vec::new();
+        for (i, name) in SENDER.iter().enumerate() {
+            match raw[i].as_deref() {
+                None | Some("") => problems.push(format!("{name} is still empty")),
+                Some(value) => {
+                    let why = match i {
+                        0 => pci_why(value),
+                        1 => cidr_why(value),
+                        _ => address_why(value),
+                    };
+                    if let Some(why) = why {
+                        problems.push(format!("{name}={value} {why}"));
+                    }
+                }
+            }
+        }
+        if !problems.is_empty() {
+            return Err(problems.join("; "));
+        }
+        let [Some(pci), Some(cidr), Some(gateway)] = raw else {
+            return Err("the NIC pair is incomplete".to_owned());
+        };
+        let (addr, prefix) = cidr.split_once('/').unwrap_or((cidr.as_str(), ""));
+        match (addr.parse(), prefix.parse(), gateway.parse()) {
+            (Ok(addr), Ok(prefix_len), Ok(gateway)) => Ok(Some(Self {
+                pci,
+                addr,
+                prefix_len,
+                gateway,
+            })),
+            _ => Err(format!("{} {CIDR_BAD}", SENDER[1])),
+        }
+    }
+
+    /// Whether [`DpdkNicPair::pci`] is a PCI address (a NIC bound to
+    /// `vfio-pci` or `igb_uio`) rather than a DPDK device name.
+    #[must_use]
+    pub fn is_pci_address(&self) -> bool {
+        self.pci.contains(':')
+    }
+
+    /// The EAL arguments that give DPDK this one port: `-a <pci>`, or
+    /// `--vdev=<name>` for a device name.
+    #[must_use]
+    pub fn eal_args(&self) -> [String; 2] {
+        if self.is_pci_address() {
+            ["-a".to_owned(), self.pci.clone()]
+        } else {
+            ["--vdev".to_owned(), self.pci.clone()]
+        }
+    }
+
+    /// The shortest `fstack-spin` configuration string for this NIC.
+    #[must_use]
+    pub fn fstack_line(&self) -> String {
+        let prefix = if self.prefix_len == 24 {
+            String::new()
+        } else {
+            format!(",fstack_prefix_len={}", self.prefix_len)
+        };
+        let port = if self.is_pci_address() {
+            "fstack_pci"
+        } else {
+            "fstack_vdev"
+        };
+        format!(
+            "fstack-spin,fstack_addr={},fstack_gateway={},{port}={}{prefix}",
+            self.addr, self.gateway, self.pci
+        )
+    }
+
+    /// The shortest `smoltcp-spin` stack line for this NIC.
+    #[must_use]
+    pub fn smoltcp_line(&self) -> String {
+        format!(
+            "port={},ip={}/{},eal={}",
+            self.pci,
+            self.addr,
+            self.prefix_len,
+            self.eal_args().join(" ")
+        )
+    }
 }
 
 /// `Some(reason)` when `value` is not `[domain:]bus:dev.func` and not a

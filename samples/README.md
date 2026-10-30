@@ -244,13 +244,13 @@ fstack-spin,fstack_addr=10.0.1.20,fstack_gateway=10.0.1.1,fstack_pci=0000:00:06.
 port=0000:00:06.0,ip=10.0.1.20/24,eal=-a 0000:00:06.0
 ```
 
-ergon-io does not read those env vars: it takes the line as config. The
-copies (`ERGON_IO_FSTACK`, `ERGON_IO_SMOLTCP`, `ERGON_DPDK_PCI`,
-`ERGON_DPDK_ADDR`, `ERGON_DPDK_GATEWAY`) are only in a container whose
-pod sets `dpdk.ergon.io/<container>: "ena-pair"` (the NRI plugin's
-opt-in, default off — `../k8s/nri-latency-pods/README.md`), so without
-the annotation there is nothing to read. These overlays are still
-render-and-lint only.
+A container granted that pair needs neither line: ergon-io reads the
+three variables itself when its line names no NIC, so `fstack-spin` (or
+an empty smoltcp stack line) is enough. The NRI plugin's
+`dpdk.ergon.io/<container>: "ena-pair"` opt-in (default off,
+`../k8s/nri-latency-pods/README.md`) still exports the lines as
+`ERGON_IO_FSTACK` and `ERGON_IO_SMOLTCP` for apps that log or pass them
+on. These overlays are still render-and-lint only.
 
 ### What has run, and where
 
@@ -302,7 +302,7 @@ render-and-lint only.
 
    ```sh
    # kubeadm, kind, a plain VM: values-kind.yaml; EKS AL2023: values-eks.yaml
-   helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus --version 0.1.2 \
+   helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus --version 0.1.3 \
      -n ergon-system --create-namespace -f samples/low-latency-k8s/helm/values-kind.yaml
    kubectl apply -f k8s/nri-latency-pods/admission/priority-class.yaml \
                  -f k8s/nri-latency-pods/admission/validating-admission-policy.yaml

@@ -12,8 +12,8 @@ built in the shared-cpus plugin and off by default
 ([evidence: mixed](hft.md#sched_fifo)).
 
 Status: the grants ship in the public image
-`ghcr.io/mimran1980/ergon-shared-cpus:0.1.2`. Install it with the chart
-`oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.2`
+`ghcr.io/mimran1980/ergon-shared-cpus:0.1.3`. Install it with the chart
+`oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.3`
 ([Shared CPUs](shared-cpus.md#use-the-public-chart)). On EKS AL2023 a pod
 labelled `ergon.io/latency: hot` needs `kubeletConfigDir`, which lets the
 plugin read nodeadm's kubelet drop-in; the EKS install line is on that page. This page's admission
@@ -95,7 +95,8 @@ The device plugin has already put
 this opt-in copies them into `ERGON_IO_FSTACK` and `ERGON_IO_SMOLTCP`
 (the two shortest real-NIC lines from the
 [backends page](../io/backends.md)) plus `ERGON_DPDK_PCI`,
-`ERGON_DPDK_ADDR` and `ERGON_DPDK_GATEWAY`. A missing, empty or
+`ERGON_DPDK_ADDR` and `ERGON_DPDK_GATEWAY`. ergon-io itself does not
+need it: a bare `fstack-spin` reads the pair directly. A missing, empty or
 unparsable value refuses the pod and names the key. Nothing here scans
 sysfs, runs `dpdk-devbind`, reads the node's default route (that is the
 management NIC), or sets `AERON_DIR`.
