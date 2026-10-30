@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Changed
+
+- ergon-io `recv-busy` with `per_queue`: no poll looks up more than one NIC
+  queue id. The look-again checks one socket every 16 polls in turn, instead
+  of every socket in one poll every 4096 polls (256 `getsockopt` calls at 256
+  sockets), and adding or removing a socket no longer re-reads every id.
+
 ### Docs
 
 - Book: "Aeron with Many Streams". Aeron's latency and memory grow with its
