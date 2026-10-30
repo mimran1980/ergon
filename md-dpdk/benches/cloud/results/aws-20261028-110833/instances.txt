@@ -1,0 +1,7 @@
+type a c7a.2xlarge b c7a.2xlarge
+arch x86_64
+zone us-east-1d
+ami ami-0b43a454bbb93640a
+placement cluster
+market spot
+transport pair a seed 2689393689

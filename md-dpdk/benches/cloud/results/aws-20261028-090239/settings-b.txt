@@ -1,0 +1,13 @@
+net.ipv4.tcp_congestion_control=cubic
+net.ipv4.tcp_sack=1
+net.ipv4.tcp_timestamps=1
+net.ipv4.tcp_slow_start_after_idle=0
+net.ipv4.tcp_rmem=4096 1048576 16777216
+net.ipv4.tcp_wmem=4096 1048576 16777216
+net.core.rmem_max=16777216
+net.core.wmem_max=16777216
+net.core.busy_read=50
+net.core.busy_poll=50
+net.ipv4.tcp_rto_min_us=8000
+net.ipv4.tcp_delack_max_us=absent
+devices.system.cpu.smt.active=0

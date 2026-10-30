@@ -1,0 +1,7 @@
+type a c8g.2xlarge b c8g.2xlarge
+arch arm64
+zone us-east-1d
+ami ami-029c960c78bfcd458
+placement cluster
+market on-demand
+transport pair a seed 227970927

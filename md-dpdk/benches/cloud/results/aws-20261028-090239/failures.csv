@@ -1,0 +1,9 @@
+fa,1,-,dpdk-raw,0,1
+fa,2,-,dpdk-raw,0,1
+fa,3,-,dpdk-raw,0,1
+ka,1,-,aeron-mix-shared,0,setup
+ka,1,-,aeron-mix-invoker,0,setup
+ka,2,-,aeron-mix-shared,0,setup
+ka,2,-,aeron-mix-invoker,0,setup
+ka,3,-,aeron-mix-invoker,0,setup
+ka,3,-,aeron-mix-shared,0,setup

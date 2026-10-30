@@ -1,0 +1,6 @@
+fa,1,-,156621309023083,dpdk-raw mio-udp mio-udp@AA=1
+fa,2,-,257644466306967,dpdk-raw mio-udp@AA=1 mio-udp
+fa,3,-,173564927390881,mio-udp dpdk-raw mio-udp@AA=1
+ka,1,-,12607682154460,aeron-mix-emb aeron-mix aeron-mix-invoker aeron-mix-shared aeron-mix-shnet aeron-mix@AA=1
+ka,2,-,149214604936262,aeron-mix-shnet aeron-mix aeron-mix@AA=1 aeron-mix-shared aeron-mix-emb aeron-mix-invoker
+ka,3,-,159065295897202,aeron-mix-invoker aeron-mix@AA=1 aeron-mix-shnet aeron-mix-shared aeron-mix aeron-mix-emb

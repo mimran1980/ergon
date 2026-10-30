@@ -1,0 +1,6 @@
+fr,1,-,121730718657072,dpdk-raw dpdk-raw@AA=1 mio-udp
+fr,2,-,96386871647628,dpdk-raw dpdk-raw@AA=1 mio-udp
+fr,3,-,86457073670031,mio-udp dpdk-raw dpdk-raw@AA=1
+kr,1,-,164703248896278,aeron-mix-invoker aeron-mix aeron-mix-shared aeron-mix@AA=1
+kr,2,-,104511119582019,aeron-mix-shared aeron-mix@AA=1 aeron-mix aeron-mix-invoker
+kr,3,-,239913617253764,aeron-mix-invoker aeron-mix-shared aeron-mix aeron-mix@AA=1

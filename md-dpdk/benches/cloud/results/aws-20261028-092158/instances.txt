@@ -1,0 +1,7 @@
+type a c7i.4xlarge b c7i.4xlarge
+arch x86_64
+zone us-east-1a
+ami ami-0b43a454bbb93640a
+placement cluster
+market on-demand
+transport pair a seed 834913561
