@@ -461,8 +461,10 @@ only the ready sockets. Its NIC polling stops at the queue count.
 - **A send pass visits only the connections with bytes queued** (the
   driver's send set), so idle connections add nothing to it. The passes
   measured below predate the send set: each also checked every connection
-  for queued sends, which grew the pass with idle sockets (not re-measured
-  since).
+  for queued sends, which grew the pass with idle sockets. Re-measured on
+  `epoll-spin` with the send set (x86): an idle pass is one
+  `epoll_wait(0)`, 594 ns at 1 socket and 631 ns at 256
+  ([one poll pass by socket count](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#one-poll-pass-by-socket-count-re-measured-with-the-send-set-x86-omarchy)).
 - Where each polling backend stops winning:
   [choosing a backend](overview.md#choosing-a-backend).
 
