@@ -11,10 +11,11 @@
 # and swapping its NodeConfig part for this one with the placeholders
 # filled in. userdata.sh's own example ("0") would isolate CPU 1.
 #
-# Not run. Blocked until a node passes `containerd --version` >= 2.2 (the
-# plugin's required-plugins annotation needs it) and the plugin's /readyz;
-# AL2023's containerd version and nodeadm's merge of the containerd block
-# below are not verified.
+# Not run as written. The plugin's EKS lane (k8s/nri-shared-cpus/RELEASE.md,
+# chart 0.1.2 on c8g.xlarge) verified what this file relies on: AL2023's
+# containerd (2.3.5; the required-plugins annotation needs >= 2.2), nodeadm's
+# merge of a containerd block like the one below, and the plugin's NRI
+# connection.
 ---
 apiVersion: node.eks.aws/v1alpha1
 kind: NodeConfig

@@ -12,20 +12,23 @@ The whole stack in one place (this page's node and pod settings, the
 [shared-CPU plugin](shared-cpus.md), the DPDK driver, an Aeron ping/pong
 that prints its own latency, and a verifier for the thread layout) is the
 [`low-latency-k8s` sample](https://github.com/mimran1980/ergon/blob/main/samples/README.md#low-latency-k8s).
-The AWS apply target for the measured Aeron-on-DPDK layout is the
-[AWS Kubernetes sample](https://github.com/mimran1980/ergon/blob/main/samples/README.md#aws-k8s)
-(`eks-ena-x86`, `eks-ena-arm64`).
+The sample's EKS overlays put the Aeron-on-DPDK lab layout on EKS:
+`eks-ena-x86` (`c7i.4xlarge`) and `eks-ena-arm64` (`c9g.2xlarge`). They
+render and lint only; they have not run on EKS, and that layout's numbers
+are from VMs
+([AWS Kubernetes sample](https://github.com/mimran1980/ergon/blob/main/samples/README.md#aws-k8s)).
 
 Terms: [deployment glossary](overview.md#glossary),
 [network and DPDK glossary](../md-dpdk/overview.md#glossary).
 
-| | x86 (`c7i`) | Graviton |
+| | x86 (`c7i`) | Graviton4 (`c8g`), Graviton5 (`c9g`) |
 |---|---|---|
-| manifests and node bootstrap | yes: Amazon Linux 2023, self-managed nodes | none: the bootstrap refuses non-Intel CPUs and the images are `linux/amd64` |
-| measured | no committed data. The live test runs the driver pod on 4 CPUs through an overlay (`md-dpdk/deploy/aws-eks/README.md`, Live test) | not measured |
+| manifests and node bootstrap | yes: Amazon Linux 2023, self-managed nodes | yes: the same bootstrap qualifies Graviton4 and 5 (VM types, not `*.metal`); images built for `linux/arm64` |
+| measured | no committed data. The live test runs the driver pod on 4 CPUs through an overlay (`md-dpdk/deploy/aws-eks/README.md`, Live test) | no committed data |
 
-The kubelet and pod settings are not x86-specific, but no Graviton node has
-been built with them. For Graviton's kernel arguments see [hosts](hosts.md).
+The kubelet and pod settings are the same on both. Graviton's kernel
+arguments: [hosts](hosts.md); the bootstrap's CPU table:
+[`md-dpdk/deploy/aws-eks/README.md`](https://github.com/mimran1980/ergon/blob/main/md-dpdk/deploy/aws-eks/README.md).
 
 ## Latency checklist
 

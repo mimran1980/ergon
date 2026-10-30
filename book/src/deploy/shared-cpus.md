@@ -57,7 +57,7 @@ helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus
   --set hostContract.proc.enabled=true
 ```
 
-**EKS AL2023** (verified on EKS 1.36 `c8g.xlarge` with the same plugin and chart source as published 0.1.2 (`85098f8b`), built by the lab and pushed to the run's ECR). nodeadm writes the base `/etc/kubernetes/kubelet/config.json`, puts
+**EKS AL2023** (verified at 0.1.2 on EKS 1.36 `c8g.xlarge`, containerd 2.3.5, with the same plugin and chart source as published 0.1.2 (`85098f8b`), built by the lab and pushed to the run's ECR; 0.1.3 changed environment exports only and was not re-run there). nodeadm writes the base `/etc/kubernetes/kubelet/config.json`, puts
 the `NodeConfig` kubelet settings in the drop-in
 `/etc/kubernetes/kubelet/config.json.d/40-nodeadm.conf`, and runs the
 kubelet with `--config-dir` on that directory. `kubeletConfigDir` mounts

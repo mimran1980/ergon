@@ -17,7 +17,7 @@ Kubernetes, if you deploy there. Tuning a node and pod for HFT:
 
 | module | what it does | how you use it |
 |---|---|---|
-| `k8s/nri-shared-cpus` | gives a pod its exclusive CPUs **and** the node's shared housekeeping CPUs, and starts every thread on the shared ones so the busy-spin loop keeps its core | chart `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.2`, installed with the flags in the [chapter](deploy/shared-cpus.md#use-the-public-chart). Image `ghcr.io/mimran1980/ergon-shared-cpus:0.1.2`. Prepare the node first. Sample: `k8s/nri-shared-cpus/examples/try` ([chapter](deploy/shared-cpus.md)) |
+| `k8s/nri-shared-cpus` | gives a pod its exclusive CPUs **and** the node's shared housekeeping CPUs, and starts every thread on the shared ones so the busy-spin loop keeps its core | chart `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.3`, installed with the flags in the [chapter](deploy/shared-cpus.md#use-the-public-chart). Image `ghcr.io/mimran1980/ergon-shared-cpus:0.1.3`. Prepare the node first. Sample: `k8s/nri-shared-cpus/examples/try` ([chapter](deploy/shared-cpus.md)) |
 | `k8s/nri-latency-pods` | node tuning and the hot-pod admission policy (no exec probes, no always-restart sidecars). The grants live in the shared-cpus image. This directory is the YAML and the node units | apply `admission/priority-class.yaml` and `admission/validating-admission-policy.yaml` after the chart. Pod authors set annotations and the `ergon.io/latency: hot` label ([chapter](deploy/latency-pods.md)) |
 
 Start with `ergo-sbe`. Add another crate only for a need you have:

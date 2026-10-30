@@ -178,7 +178,9 @@ Every DPDK setting below is lab only.
 
 The book's lowest 1-stream path, when DPDK is allowed, is Aeron on DPDK.
 On EKS that layout is `eks-ena-x86` (`c7i.4xlarge`) or `eks-ena-arm64`
-(`c9g.2xlarge`). The book and the READMEs link here. Both overlays render
+(`c9g.2xlarge`, Graviton5; for Graviton4 `c8g`, use the `baseline` image
+tag and change the overlay's instance type). The book and the READMEs
+link here. Both overlays render
 and lint only: they have not been run on EKS, so the latency figures stay
 the VM sessions.
 
@@ -262,7 +264,7 @@ on. These overlays are still render-and-lint only.
 | Docker linux/amd64 emulated on Apple silicon (`scripts/e2e-inside.sh` in the amd64 half of `baseline`) | the same e2e: `RESULT PASS checks=54` (`tests/fixtures/e2e-docker-baseline-amd64-emulated.txt`) | the amd64 image builds (x86-64-v2, DPDK, Aeron) and the layout holds; its latency is the emulator's |
 | kind (`e2e-vdev.sh --kind`, overlay `vdev-local`) | written, **not run** (needs kind, 8 Docker CPUs, containerd ≥ 2.2 in the node image) | the plugin's grant |
 | a Linux VM with `isolcpus` (overlay `vdev-isolated`, `node/linux-vm-prep.sh`) | **not run** (Azure Cobalt `D8ps_v6` and `F8as_v6` later) | the `full` contract |
-| EKS ENA (overlays `eks-ena-arm64`, `eks-ena-x86`) | render and lint only | arm64: blocked until AL2023 has containerd ≥ 2.2 (`node/eks-nodeconfig.yaml`); x86: c7i.4xlarge, which needs the user's approval to run |
+| EKS ENA (overlays `eks-ena-arm64` for `c9g.2xlarge`, `eks-ena-x86` for `c7i.4xlarge`) | render and lint only | the shared-CPU plugin's prerequisites on AL2023 (containerd 2.3.5, nodeadm's TOML merge) were verified by its own EKS lane on `c8g.xlarge` at chart 0.1.2; these overlays and the DPDK driver on EKS were not run |
 
 ### Quick start
 
@@ -553,9 +555,10 @@ tag's latency effect is not measured.
 
 ### Not verified
 
-- kind, the Linux VM lane and EKS: chart 0.1.3 on kind; chart 0.1.3 and
-  nodeadm's containerd block on AL2023; AL2023's containerd version;
-  `node/eks-userdata.sh`'s user data on EC2 (checked offline only).
+- kind, the Linux VM lane and EKS: chart 0.1.3 on kind; chart 0.1.3 on
+  AL2023 (0.1.2 passed the plugin's EKS lane there, with containerd 2.3.5
+  and nodeadm's containerd merge); `node/eks-userdata.sh`'s user data on
+  EC2 (checked offline only).
 - The image's `ergon-cpus` comes from the published 0.1.1 image; its source
   is unchanged since (`docker/Dockerfile`), but it has not run under the
   0.1.3 hook.

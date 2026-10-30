@@ -48,6 +48,9 @@
 - Book: "Troubleshooting": symptom, check, fix, starting from the `ergon-tune`
   command.
 - Book: "Low-Latency Kubernetes" points at the `low-latency-k8s` sample.
+- Docs: Graviton4 and 5 have EKS manifests and a bootstrap; the EKS overlays
+  render and lint only (`eks-ena-arm64` is for `c9g.2xlarge`); the shared-CPU
+  chart is 0.1.3, verified on EKS at 0.1.2.
 
 ## [0.1.37] — 2026-10-30
 

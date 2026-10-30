@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
-# EKS on AL2023 with the ENA pair: 2 x c9g.2xlarge (Graviton5), the BENCHMARKS pair. Blocked until a node passes containerd --version >= 2.2 and the plugin's /readyz (node/eks-nodeconfig.yaml).
+# EKS on AL2023 with the ENA pair: 2 x c9g.2xlarge (Graviton5), the BENCHMARKS pair. Render and lint only: not run.
+# Graviton4 (c8g): the arm64-v3 image does not run there; use the baseline
+# tag and change the instance type below.
 # The image runs only on its CPU family (SIGILL elsewhere): the node affinity
 # keeps it on c9g.2xlarge. Fill endpoints.env with each node's receiver ENA IP
 # before applying: the ping publishes to the pong node's receiver and

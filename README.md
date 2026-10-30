@@ -47,8 +47,9 @@ AL2023; a helper's wake-up wait on the shared CPU is measured there.
 - Node setup, install, configuration: [k8s/nri-shared-cpus](k8s/nri-shared-cpus/README.md).
 - Node and pod tuning, each setting marked measured or not, with copy-paste
   blocks: [Kubernetes HFT tuning](https://mimran1980.github.io/ergon/deploy/hft.html).
-- The measured Aeron-on-DPDK layout on EKS (`eks-ena-x86`, `eks-ena-arm64`):
-  [samples/README.md#aws-k8s](samples/README.md#aws-k8s).
+- The Aeron-on-DPDK lab layout as EKS overlays (`eks-ena-x86` for
+  `c7i.4xlarge`, `eks-ena-arm64` for `c9g.2xlarge`; render and lint only,
+  not run on EKS): [samples/README.md#aws-k8s](samples/README.md#aws-k8s).
 
 ## Crates
 
