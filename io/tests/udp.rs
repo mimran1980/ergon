@@ -409,3 +409,178 @@ fn busy_poll_us_sets_so_busy_poll_on_a_datagram_socket() -> R {
     assert_eq!((bp.usec, bp.prefer), (50, false));
     Ok(())
 }
+
+/// Datagrams waiting on a socket are read with one `recvmmsg` per
+/// `rx_batch` (up to `datagram_burst` a poll): ten queued, one call reads
+/// them all, in order, each with its own timestamp and sequence number.
+#[test]
+fn a_burst_waiting_on_a_socket_is_read_in_one_call() -> R {
+    let mut d = driver("epoll-spin")?;
+    let conn = UdpConn::bind(any_port(), &UdpOptions::default())?;
+    let at = conn.local_addr()?;
+    let fd = conn.raw_fd();
+    d.add(conn)?;
+    let s = UdpSocket::bind(any_port())?;
+    for i in 0..10u8 {
+        s.send_to(&[i; 3], at)?;
+    }
+    readable(fd)?;
+    let mut h = Got::default();
+    let before = d.stats().recvmsg_calls;
+    assert_eq!(d.poll(&mut h)?, 10);
+    assert_eq!(d.stats().recvmsg_calls - before, 1, "{:?}", d.stats());
+    let got: Vec<Vec<u8>> = h.dgrams.iter().map(|(_, p, _)| p.clone()).collect();
+    assert_eq!(got, (0..10u8).map(|i| vec![i; 3]).collect::<Vec<_>>());
+    assert!(h.dgrams.iter().all(|(_, _, m)| m.rx_sw_ns != 0));
+    let seqs: Vec<u64> = h.dgrams.iter().map(|(_, _, m)| m.read_seq).collect();
+    assert!(seqs.windows(2).all(|w| w[1] == w[0] + 1), "{seqs:?}");
+    Ok(())
+}
+
+/// `rx_batch` caps the datagrams one receive call takes: at 4, ten waiting
+/// datagrams take three calls (4, 4, 2) in one poll; at 1, one call each
+/// plus the empty read that ends the burst.
+#[test]
+fn rx_batch_caps_the_datagrams_one_call_reads() -> R {
+    for (batch, calls) in [(4usize, 3u64), (1, 11)] {
+        let mut d = driver("epoll-spin")?;
+        let opts = UdpOptions {
+            rx_batch: batch,
+            ..UdpOptions::default()
+        };
+        let conn = UdpConn::bind(any_port(), &opts)?;
+        let at = conn.local_addr()?;
+        let fd = conn.raw_fd();
+        d.add(conn)?;
+        let s = UdpSocket::bind(any_port())?;
+        for i in 0..10u8 {
+            s.send_to(&[i], at)?;
+        }
+        readable(fd)?;
+        let mut h = Got::default();
+        let before = d.stats().recvmsg_calls;
+        assert_eq!(d.poll(&mut h)?, 10, "rx_batch={batch}");
+        assert_eq!(d.stats().recvmsg_calls - before, calls, "rx_batch={batch}");
+        let got: Vec<u8> = h.dgrams.iter().map(|(_, p, _)| p[0]).collect();
+        assert_eq!(got, (0..10).collect::<Vec<u8>>(), "rx_batch={batch}");
+    }
+    Ok(())
+}
+
+/// A datagram cut short inside a batch is counted and dropped; those
+/// around it are delivered whole, from the same call.
+#[test]
+fn a_truncated_datagram_inside_a_batch_drops_only_itself() -> R {
+    let mut d = driver("epoll-spin")?;
+    let opts = UdpOptions {
+        max_datagram: 64,
+        ..UdpOptions::default()
+    };
+    let conn = UdpConn::bind(any_port(), &opts)?;
+    let at = conn.local_addr()?;
+    let fd = conn.raw_fd();
+    let id = d.add(conn)?;
+    let s = UdpSocket::bind(any_port())?;
+    s.send_to(&[1u8; 64], at)?;
+    s.send_to(&[2u8; 100], at)?;
+    s.send_to(&[3u8; 10], at)?;
+    readable(fd)?;
+    let mut h = Got::default();
+    let before = d.stats().recvmsg_calls;
+    d.poll(&mut h)?;
+    assert_eq!(d.stats().recvmsg_calls - before, 1);
+    let got: Vec<Vec<u8>> = h.dgrams.iter().map(|(_, p, _)| p.clone()).collect();
+    assert_eq!(got, [vec![1u8; 64], vec![3u8; 10]]);
+    assert_eq!(d.get(id).ok_or("gone")?.stats().truncated, 1);
+    Ok(())
+}
+
+/// Datagrams queued on one socket go to the kernel in one `sendmmsg`:
+/// ten queued, one send call, ten sends, arriving in order.
+#[test]
+fn queued_datagrams_leave_in_one_send_call() -> R {
+    let mut d = driver("epoll-spin")?;
+    let (a, b) = pair(&UdpOptions::default())?;
+    let (a, b) = (d.add(a)?, d.add(b)?);
+    for i in 0..10u8 {
+        d.get_mut(a).ok_or("a gone")?.send(&[i; 5])?;
+    }
+    let before = (d.stats().send_calls, d.stats().sends);
+    d.flush()?;
+    let after = (d.stats().send_calls, d.stats().sends);
+    assert_eq!((after.0 - before.0, after.1 - before.1), (1, 10));
+    assert_eq!(d.get(a).ok_or("a gone")?.stats().tx, 10);
+    let mut h = Got::default();
+    poll_until(&mut d, &mut h, |h| h.dgrams.len() == 10)?;
+    assert!(h.dgrams.iter().all(|(id, _, _)| *id == b));
+    let got: Vec<Vec<u8>> = h.dgrams.iter().map(|(_, p, _)| p.clone()).collect();
+    assert_eq!(got, (0..10u8).map(|i| vec![i; 5]).collect::<Vec<_>>());
+    Ok(())
+}
+
+/// The send ring wraps: datagrams queued across its end still leave in
+/// order, in one call.
+#[test]
+fn a_send_batch_across_the_ring_end_keeps_order() -> R {
+    let mut d = driver("epoll-spin")?;
+    let opts = UdpOptions {
+        tx_slots: 4,
+        ..UdpOptions::default()
+    };
+    let (a, b) = pair(&opts)?;
+    let (a, _b) = (d.add(a)?, d.add(b)?);
+    for i in 0..3u8 {
+        d.get_mut(a).ok_or("a gone")?.send(&[i])?;
+    }
+    d.flush()?;
+    for i in 3..7u8 {
+        d.get_mut(a).ok_or("a gone")?.send(&[i])?;
+    }
+    let before = d.stats().send_calls;
+    d.flush()?;
+    assert_eq!(d.stats().send_calls - before, 1);
+    let mut h = Got::default();
+    poll_until(&mut d, &mut h, |h| h.dgrams.len() == 7)?;
+    let got: Vec<u8> = h.dgrams.iter().map(|(_, p, _)| p[0]).collect();
+    assert_eq!(got, (0..7).collect::<Vec<u8>>());
+    Ok(())
+}
+
+/// `rx_batch` outside 1 to 1 024 is refused.
+#[test]
+fn rx_batch_out_of_range_is_refused() {
+    for bad in [0usize, 1_025] {
+        let opts = UdpOptions {
+            rx_batch: bad,
+            ..UdpOptions::default()
+        };
+        let r = UdpConn::bind(any_port(), &opts);
+        assert!(matches!(r, Err(Error::Config(_))), "rx_batch={bad}");
+    }
+}
+
+/// `ECONNREFUSED` on a batched send is counted, not a close: datagrams
+/// queued four at a time to a port nobody listens on keep going out.
+#[test]
+fn connection_refused_on_a_batched_send_is_counted_not_a_close() -> R {
+    let mut d = driver("epoll-spin")?;
+    let gone = UdpSocket::bind(any_port())?.local_addr()?;
+    let id = d.add(UdpConn::connect(any_port(), gone, &UdpOptions::default())?)?;
+    let mut h = Got::default();
+    let end = Instant::now() + Duration::from_secs(10);
+    while d.get(id).ok_or("closed")?.stats().refused < 2 {
+        if d.get(id).ok_or("closed")?.queued() == 0 {
+            for _ in 0..4 {
+                d.get_mut(id).ok_or("closed")?.send(b"anyone?")?;
+            }
+        }
+        d.poll(&mut h)?;
+        assert!(h.closed.is_empty(), "closed: {:?}", h.closed);
+        if Instant::now() > end {
+            return Err(format!("no refusal: {:?}", d.stats()).into());
+        }
+    }
+    assert_eq!(d.len(), 1);
+    assert!(d.get(id).ok_or("closed")?.stats().tx >= 4);
+    Ok(())
+}

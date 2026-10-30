@@ -786,24 +786,8 @@ impl MsgSlot {
     /// absent).
     #[must_use]
     pub fn timestamps(&self) -> (i64, i64) {
-        let mut sw = 0i64;
-        let mut hw = 0i64;
-        // SAFETY: the kernel filled `msg_controllen` bytes of well-formed cmsgs
-        // into `ctrl`; the CMSG_* helpers stay within that length.
-        unsafe {
-            let mut c = libc::CMSG_FIRSTHDR(&raw const self.hdr);
-            while !c.is_null() {
-                if (*c).cmsg_level == libc::SOL_SOCKET && (*c).cmsg_type == libc::SO_TIMESTAMPING {
-                    let ts = libc::CMSG_DATA(c)
-                        .cast::<[libc::timespec; 3]>()
-                        .read_unaligned();
-                    sw = ts_ns(&ts[0]);
-                    hw = ts_ns(&ts[2]);
-                }
-                c = libc::CMSG_NXTHDR(&raw const self.hdr, c);
-            }
-        }
-        (sw, hw)
+        // SAFETY: the kernel filled the control buffer `hdr` points at.
+        unsafe { hdr_timestamps(&self.hdr) }
     }
 
     /// Whether the last receive was cut short (`MSG_TRUNC`): a datagram
@@ -823,6 +807,204 @@ impl MsgSlot {
             read_seq,
             ..RxMeta::default()
         }
+    }
+}
+
+/// The `SO_TIMESTAMPING` software and hardware stamps in `hdr`'s control
+/// data (0 when absent).
+///
+/// # Safety
+/// `hdr` comes from a completed receive: the kernel wrote `msg_controllen`
+/// bytes of well-formed cmsgs into the buffer `msg_control` points at.
+unsafe fn hdr_timestamps(hdr: &libc::msghdr) -> (i64, i64) {
+    let mut sw = 0i64;
+    let mut hw = 0i64;
+    // SAFETY: per the contract; the CMSG_* helpers stay within
+    // `msg_controllen`.
+    unsafe {
+        let mut c = libc::CMSG_FIRSTHDR(hdr);
+        while !c.is_null() {
+            if (*c).cmsg_level == libc::SOL_SOCKET && (*c).cmsg_type == libc::SO_TIMESTAMPING {
+                let ts = libc::CMSG_DATA(c)
+                    .cast::<[libc::timespec; 3]>()
+                    .read_unaligned();
+                sw = ts_ns(&ts[0]);
+                hw = ts_ns(&ts[2]);
+            }
+            c = libc::CMSG_NXTHDR(hdr, c);
+        }
+    }
+    (sw, hw)
+}
+
+/// `mmsghdr`s for `recvmmsg` and `sendmmsg`, each with one iovec and (for
+/// receives) its own control buffer: the driver's, armed before every call
+/// with the endpoint's buffers, so nothing allocates per call.
+pub struct MmsgBatch {
+    hdrs: Box<[libc::mmsghdr]>,
+    iovs: Box<[libc::iovec]>,
+    ctrl: Box<[[u8; CTRL_LEN]]>,
+}
+
+impl MmsgBatch {
+    /// A batch of `cap` entries (at least 1).
+    #[must_use]
+    pub fn new(cap: usize) -> Self {
+        let cap = cap.max(1);
+        // SAFETY: all-zero is a valid mmsghdr and iovec.
+        let zero_hdr: libc::mmsghdr = unsafe { std::mem::zeroed() };
+        // SAFETY: as above.
+        let zero_iov: libc::iovec = unsafe { std::mem::zeroed() };
+        let mut b = Self {
+            hdrs: vec![zero_hdr; cap].into_boxed_slice(),
+            iovs: vec![zero_iov; cap].into_boxed_slice(),
+            // Non-zero fill maps every page now, not on the first receive.
+            ctrl: vec![[1u8; CTRL_LEN]; cap].into_boxed_slice(),
+        };
+        // The boxes never move: each header points at its own iovec once.
+        for (h, iov) in b.hdrs.iter_mut().zip(b.iovs.iter_mut()) {
+            h.msg_hdr.msg_iov = std::ptr::from_mut(iov);
+            h.msg_hdr.msg_iovlen = 1;
+        }
+        b
+    }
+
+    /// Entries.
+    #[must_use]
+    pub const fn capacity(&self) -> usize {
+        self.hdrs.len()
+    }
+
+    /// Arms entries for a receive into consecutive `stride`-byte slots of
+    /// `buf`: as many as `want`, the capacity and `buf` allow (at least 1
+    /// when `buf` holds a slot). Returns how many. `buf` must stay put until
+    /// the receive returns.
+    pub fn arm_rx(&mut self, buf: &mut [u8], stride: usize, want: usize) -> usize {
+        let stride = stride.max(1);
+        let n = want.min(self.capacity()).min(buf.len() / stride);
+        let base = buf.as_mut_ptr();
+        for k in 0..n {
+            let iov = &mut self.iovs[k];
+            // In bounds: k * stride + stride <= buf.len().
+            iov.iov_base = base.wrapping_add(k * stride).cast();
+            iov.iov_len = stride;
+            let h = &mut self.hdrs[k];
+            h.msg_hdr.msg_control = self.ctrl[k].as_mut_ptr().cast();
+            #[allow(clippy::cast_possible_truncation)]
+            {
+                h.msg_hdr.msg_controllen = CTRL_LEN as _;
+            }
+            h.msg_hdr.msg_flags = 0;
+            h.msg_len = 0;
+        }
+        n
+    }
+
+    /// Arms entry `k` to send `buf` whole, with no control data. `buf` must
+    /// stay put until the send returns.
+    pub fn arm_tx(&mut self, k: usize, buf: &[u8]) {
+        let (Some(iov), Some(h)) = (self.iovs.get_mut(k), self.hdrs.get_mut(k)) else {
+            return;
+        };
+        iov.iov_base = buf.as_ptr().cast_mut().cast();
+        iov.iov_len = buf.len();
+        h.msg_hdr.msg_control = std::ptr::null_mut();
+        h.msg_hdr.msg_controllen = 0;
+        h.msg_hdr.msg_flags = 0;
+        h.msg_len = 0;
+    }
+
+    /// Bytes of datagram `k` of the last receive.
+    #[must_use]
+    pub fn len(&self, k: usize) -> usize {
+        self.hdrs.get(k).map_or(0, |h| h.msg_len as usize)
+    }
+
+    /// Whether datagram `k` of the last receive was cut short (`MSG_TRUNC`).
+    #[must_use]
+    pub fn truncated(&self, k: usize) -> bool {
+        self.hdrs
+            .get(k)
+            .is_some_and(|h| h.msg_hdr.msg_flags & libc::MSG_TRUNC != 0)
+    }
+
+    /// The kernel stamps of datagram `k` of the last receive (0 when absent;
+    /// `read_seq` and `rx_read_ns` left 0).
+    #[must_use]
+    pub fn meta(&self, k: usize) -> RxMeta {
+        let Some(h) = self.hdrs.get(k) else {
+            return RxMeta::default();
+        };
+        // SAFETY: entry `k` was armed with its control buffer and filled by
+        // the receive that returned it.
+        let (rx_sw_ns, rx_hw_ns) = unsafe { hdr_timestamps(&h.msg_hdr) };
+        RxMeta {
+            rx_sw_ns,
+            rx_hw_ns,
+            ..RxMeta::default()
+        }
+    }
+}
+
+/// Non-blocking `recvmmsg` into the first `n` armed entries of `b`:
+/// datagrams read, `Ok(None)` on `EAGAIN`. Fewer than `n` means the queue
+/// ran dry (the read that found it empty ran, as a `recvmsg` would).
+///
+/// # Errors
+/// Any other `recvmmsg` error, reported only when no datagram was read.
+pub fn recvmmsg(fd: RawFd, b: &mut MmsgBatch, n: usize) -> io::Result<Option<usize>> {
+    let n = n.min(b.capacity());
+    #[allow(clippy::cast_possible_truncation)] // n <= capacity, set from a u32 range
+    // SAFETY: the first `n` entries were armed with buffers that outlive the
+    // call.
+    let got = unsafe {
+        libc::recvmmsg(
+            fd,
+            b.hdrs.as_mut_ptr(),
+            n as libc::c_uint,
+            libc::MSG_DONTWAIT,
+            std::ptr::null_mut(),
+        )
+    };
+    if let Ok(got) = usize::try_from(got) {
+        return Ok(Some(got));
+    }
+    let e = io::Error::last_os_error();
+    if e.raw_os_error() == Some(libc::EAGAIN) {
+        Ok(None)
+    } else {
+        Err(e)
+    }
+}
+
+/// Non-blocking `sendmmsg` of the first `n` armed entries of `b`, each one
+/// whole datagram: how many the kernel took, 0 on `EAGAIN` (a full send
+/// buffer). Fewer than `n`: the next call reports why.
+///
+/// # Errors
+/// Any other `sendmmsg` error, reported only when no datagram was sent
+/// (`ECONNREFUSED`: an earlier datagram's port was unreachable).
+pub fn sendmmsg(fd: RawFd, b: &mut MmsgBatch, n: usize) -> io::Result<usize> {
+    let n = n.min(b.capacity());
+    #[allow(clippy::cast_possible_truncation)] // n <= capacity
+    // SAFETY: the first `n` entries were armed with buffers that outlive the
+    // call.
+    let sent = unsafe {
+        libc::sendmmsg(
+            fd,
+            b.hdrs.as_mut_ptr(),
+            n as libc::c_uint,
+            libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL,
+        )
+    };
+    if let Ok(sent) = usize::try_from(sent) {
+        return Ok(sent);
+    }
+    let e = io::Error::last_os_error();
+    if e.raw_os_error() == Some(libc::EAGAIN) {
+        Ok(0)
+    } else {
+        Err(e)
     }
 }
 

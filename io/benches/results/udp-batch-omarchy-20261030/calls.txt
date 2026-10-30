@@ -1,0 +1,15 @@
+base n=1 send_calls=55000 recv_calls=110000 polls=55000
+base n=16 send_calls=880000 recv_calls=935000 polls=55000
+base n=32 send_calls=1760000 recv_calls=1815000 polls=55000
+base n=4 send_calls=220000 recv_calls=275000 polls=55000
+base n=8 send_calls=440000 recv_calls=495000 polls=55000
+new n=1 send_calls=55000 recv_calls=55000 polls=55000
+new n=16 send_calls=55000 recv_calls=110000 polls=55000
+new n=32 send_calls=55000 recv_calls=165000 polls=55000
+new n=4 send_calls=55000 recv_calls=55000 polls=55000
+new n=8 send_calls=55000 recv_calls=55000 polls=55000
+rx1 n=1 send_calls=55000 recv_calls=110000 polls=55000
+rx1 n=16 send_calls=55000 recv_calls=935000 polls=55000
+rx1 n=32 send_calls=55000 recv_calls=1815000 polls=55000
+rx1 n=4 send_calls=55000 recv_calls=275000 polls=55000
+rx1 n=8 send_calls=55000 recv_calls=495000 polls=55000

@@ -1,0 +1,84 @@
+//! A/B: N datagrams queued on one socket, flushed, drained on its peer.
+//! Times the flush (send pass) and the drain (polls until all N arrived)
+//! per burst. Prints n, arm, p50/p99/p99.9/max for each, ns.
+use std::net::{SocketAddr, UdpSocket};
+use std::time::Instant;
+
+use ergon_io::{Config, ConnId, Driver, Handler, RxMeta, UdpConn, UdpHandler, UdpOptions};
+
+#[derive(Default)]
+struct Count(u64);
+impl Handler for Count {
+    fn on_closed(&mut self, _: ConnId, e: ergon_io::Error) {
+        eprintln!("closed: {e}");
+        std::process::exit(1);
+    }
+}
+impl UdpHandler for Count {
+    fn on_datagram(&mut self, _: ConnId, p: &[u8], _: &RxMeta) {
+        self.0 += p.len() as u64 / p.len().max(1) as u64;
+    }
+}
+
+fn pct(v: &[u64], p: f64) -> u64 {
+    let i = ((v.len() as f64 - 1.0) * p).round() as usize;
+    v[i]
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let arm = std::env::args().nth(1).unwrap_or_else(|| "x".into());
+    let rounds: usize = 50_000;
+    for n in [1u64, 4, 8, 16, 32] {
+        let lo = SocketAddr::from(([127, 0, 0, 1], 0));
+        let (sa, sb) = (UdpSocket::bind(lo)?, UdpSocket::bind(lo)?);
+        let (pa, pb) = (sa.local_addr()?, sb.local_addr()?);
+        drop((sa, sb));
+        #[allow(unused_mut)]
+        let mut opts = UdpOptions::default();
+        #[cfg(rx_batch_1)]
+        {
+            opts.rx_batch = 1;
+        }
+        let mut d: Driver<UdpConn> = Driver::new(Config::parse(
+            "epoll-spin,rx_timestamps=true,datagram_burst=64,quickack_check=off",
+        )?)?;
+        let a = d.add(UdpConn::connect(pa, pb, &opts)?)?;
+        let _b = d.add(UdpConn::connect(pb, pa, &opts)?)?;
+        let payload = [7u8; 64];
+        let mut h = Count::default();
+        let mut tx = Vec::with_capacity(rounds);
+        let mut rx = Vec::with_capacity(rounds);
+        for r in 0..rounds + 5_000 {
+            for _ in 0..n {
+                d.get_mut(a).ok_or("a")?.send(&payload)?;
+            }
+            let want = h.0 + n;
+            let t0 = Instant::now();
+            d.flush()?;
+            let t1 = Instant::now();
+            while h.0 < want {
+                d.poll(&mut h)?;
+            }
+            let t2 = Instant::now();
+            if r >= 5_000 {
+                tx.push((t1 - t0).as_nanos() as u64);
+                rx.push((t2 - t1).as_nanos() as u64);
+            }
+        }
+        tx.sort_unstable();
+        rx.sort_unstable();
+        for (what, v) in [("send", &mut tx), ("drain", &mut rx)] {
+            println!(
+                "{arm}\tn={n}\t{what}\tp50={}\tp99={}\tp99.9={}\tmax={}\tper_dgram_p50={}",
+                pct(v, 0.5),
+                pct(v, 0.99),
+                pct(v, 0.999),
+                v[v.len() - 1],
+                pct(v, 0.5) / n
+            );
+        }
+        let (sc, rc, pl) = (d.stats().send_calls, d.stats().recvmsg_calls, d.stats().polls);
+        eprintln!("{arm} n={n} send_calls={sc} recv_calls={rc} polls={pl}");
+    }
+    Ok(())
+}

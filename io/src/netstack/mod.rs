@@ -238,6 +238,38 @@ pub trait NetStack {
     /// Any other send error.
     fn send_datagram(fd: libc::c_int, buf: &[u8]) -> io::Result<bool>;
 
+    /// Whether [`NetStack::recv_batch`] and [`NetStack::send_batch`] are
+    /// this stack's own (`recvmmsg` / `sendmmsg`). Without, the driver reads
+    /// and sends one datagram a call.
+    const BATCH: bool = false;
+
+    /// A non-blocking receive of up to `n` datagrams into the armed entries
+    /// of `b`: how many arrived, `Ok(None)` when none was queued.
+    ///
+    /// # Errors
+    /// Any other receive error; `Unsupported` without [`NetStack::BATCH`].
+    #[inline]
+    fn recv_batch(
+        fd: libc::c_int,
+        b: &mut crate::sys::MmsgBatch,
+        n: usize,
+    ) -> io::Result<Option<usize>> {
+        let _ = (fd, b, n);
+        Err(io::ErrorKind::Unsupported.into())
+    }
+
+    /// A non-blocking send of the first `n` armed entries of `b`, each one
+    /// whole datagram: how many the stack took (0 when its send buffer is
+    /// full).
+    ///
+    /// # Errors
+    /// Any other send error; `Unsupported` without [`NetStack::BATCH`].
+    #[inline]
+    fn send_batch(fd: libc::c_int, b: &mut crate::sys::MmsgBatch, n: usize) -> io::Result<usize> {
+        let _ = (fd, b, n);
+        Err(io::ErrorKind::Unsupported.into())
+    }
+
     /// Whether `e` reports an earlier datagram's ICMP port unreachable
     /// (`ECONNREFUSED`, in this stack's numbering).
     fn refused(e: &io::Error) -> bool;

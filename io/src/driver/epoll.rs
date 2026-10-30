@@ -26,7 +26,7 @@
 
 use std::os::fd::RawFd;
 
-use super::{Conns, recv_one};
+use super::{Conns, recv_batch, recv_one};
 use crate::backend::{Backend, Config};
 use crate::endpoint::{ConnId, DriverStats, Endpoint, Handler, Receive};
 use crate::error::{Error, Result};
@@ -35,6 +35,10 @@ use crate::netstack::{Kernel, NetStack};
 /// `recv-busy` with `per_queue`: the look-again checks one socket's queue
 /// id every this many polls.
 const LOOK_AGAIN_EVERY: u64 = 16;
+
+/// The fewest datagrams one batched send takes (the batch is
+/// `datagram_burst` entries when that is larger).
+const TX_BATCH: usize = 64;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -77,6 +81,9 @@ pub(super) struct Epoll<S: NetStack = Kernel> {
     events: Box<[S::Event]>,
     /// `Config::datagram_burst`: reads per ready datagram socket per poll.
     burst: u32,
+    /// Headers for batched datagram receives and sends, on a stack with
+    /// them ([`NetStack::BATCH`]).
+    mm: Option<Box<crate::sys::MmsgBatch>>,
     /// `epoll-spin` with `Config::busy_poll_us`: a socket read with data is
     /// read once more on the next poll. That read finds the queue
     /// empty and, with `SO_BUSY_POLL` set, makes one NAPI pass first.
@@ -122,6 +129,11 @@ impl<S: NetStack> Epoll<S> {
             slot: S::rx_slot(),
             events: vec![S::empty_event(); cfg.epoll_events as usize].into_boxed_slice(),
             burst: cfg.datagram_burst,
+            mm: S::BATCH.then(|| {
+                Box::new(crate::sys::MmsgBatch::new(
+                    (cfg.datagram_burst as usize).max(TX_BATCH),
+                ))
+            }),
             drain: mode == Mode::Spin && cfg.busy_poll_us > 0,
             again: Vec::new(),
             draining: Vec::new(),
@@ -264,6 +276,12 @@ impl<S: NetStack> Epoll<S> {
         }
     }
 
+    /// The batched-datagram headers, on a stack with them.
+    #[inline]
+    pub(super) fn batch(&mut self) -> Option<&mut crate::sys::MmsgBatch> {
+        self.mm.as_deref_mut()
+    }
+
     /// Data arrived on slot `i`: when its queue is unknown, look it up once
     /// (on the next poll), not every poll.
     #[inline]
@@ -290,11 +308,17 @@ impl<S: NetStack> Epoll<S> {
         let Some(conn) = conns.at(i) else {
             return;
         };
-        let mut r = recv_one::<S, _, _>(conn, id, &mut self.slot, handler, stats, reads);
         // With `drain`, a datagram socket epoll reports is read once and
         // its burst runs from the again list on the next poll, so the empty
         // read that ends it (the NIC poll) comes after this poll's replies.
-        if E::DATAGRAM && (!self.drain || self.again_pass) {
+        let burst = E::DATAGRAM && (!self.drain || self.again_pass);
+        let mut r = match self.mm.as_deref_mut() {
+            Some(mm) if burst => {
+                recv_batch::<S, _, _>(conn, id, mm, self.burst, handler, stats, reads)
+            }
+            _ => recv_one::<S, _, _>(conn, id, &mut self.slot, handler, stats, reads),
+        };
+        if burst && self.mm.is_none() {
             // Up to `burst` datagrams from this socket, then the next one;
             // what is left is reported again by the next `epoll_wait`.
             let mut left = self.burst;

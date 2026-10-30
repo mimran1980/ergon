@@ -14,7 +14,7 @@ whole datagrams out, on the `epoll-spin` backend only.
   read's sequence number.
 - `ConnMut::send(payload)` (or `UdpConn::send` before `Driver::add`)
   copies the datagram into a preallocated send slot. The driver's next send
-  pass (`poll` or `flush`) hands each one to the kernel whole. Nothing
+  pass (`poll` or `flush`) hands them to the kernel whole. Nothing
   allocates after the socket is made.
 
 ```rust,ignore
@@ -22,13 +22,28 @@ whole datagrams out, on the `epoll-spin` backend only.
 ```
 *(From `io/tests/udp.rs`; `cargo test -p ergon-io` runs it on Linux.)*
 
+## Batching
+
+| direction | system call | per call |
+|---|---|---|
+| receive | `recvmmsg` | up to `rx_batch` datagrams, each into its own slot, with its own kernel timestamp and sequence number |
+| send | `send` for one queued datagram, `sendmmsg` for two or more | every queued datagram, up to 64 (or `datagram_burst` if larger) |
+
+A burst of N datagrams costs one system call instead of N. A call that
+comes back short has already made the read that finds the socket empty, so
+a lone datagram is one call, not a read plus an empty read (with
+`busy_poll_us` the empty read still comes at the start of the next poll; see
+[backends](backends.md)). On loopback a burst of 8 drained in about half the
+time; measurements in `io/benches/results/udp-batch-omarchy-20261030`.
+
 ## Options
 
 `UdpOptions`, on `UdpConn::connect` and `UdpConn::bind`:
 
 | option | default | what it does |
 |---|---|---|
-| `max_datagram` | 2,048 | the receive buffer and each send slot, bytes; 1 to 65,507 |
+| `max_datagram` | 2,048 | each receive slot and each send slot, bytes; 1 to 65,507 |
+| `rx_batch` | 16 | receive slots: the most datagrams one `recvmmsg` takes; the receive buffer is `rx_batch` × `max_datagram`. 1 reads one a call; 1 to 1,024 |
 | `tx_slots` | 64 | datagrams queued and not yet sent; one more is `Error::Busy` |
 | `sndbuf` | unset | `SO_SNDBUF`; unset: the kernel's |
 
@@ -36,7 +51,7 @@ Driver keys (`Config`, [configuration strings](backends.md#configuration-strings
 
 | key | default | what it does |
 |---|---|---|
-| `datagram_burst` | 16 | the most datagrams one poll reads from one ready socket; the rest wait for the next poll, so one busy socket cannot hold up the others |
+| `datagram_burst` | 16 | the most datagrams one poll reads from one ready socket (in calls of up to `rx_batch`); the rest wait for the next poll, so one busy socket cannot hold up the others |
 | `epoll_events` | 64 | the most ready sockets one `epoll_wait` reports |
 | `rcvbuf`, `rx_timestamps`, `rx_read_timestamp` | as for TCP | apply to UDP sockets too |
 
@@ -62,5 +77,6 @@ Driver keys (`Config`, [configuration strings](backends.md#configuration-strings
 ## Counters
 
 `UdpConn::stats()`: `rx`, `tx`, `tx_full`, `truncated`, `refused`.
-`Driver::stats()` counts the system calls (`recvmsg_calls`, `send_calls`,
-`epoll_wait_calls`).
+`Driver::stats()` counts the system calls (`recvmsg_calls`, one per
+`recvmmsg`; `send_calls`, one per `send` or `sendmmsg`; `epoll_wait_calls`)
+and the datagrams (`completions` received, `sends` sent).

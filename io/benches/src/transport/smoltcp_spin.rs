@@ -89,6 +89,7 @@ pub fn udp(
             max_datagram: MAX_DATAGRAM,
             tx_slots: TX_SLOTS,
             sndbuf,
+            ..UdpOptions::default()
         };
         let n = usize_of(streams)?;
         let mut ids = Vec::with_capacity(n);

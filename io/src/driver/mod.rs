@@ -1653,6 +1653,42 @@ fn send_datagrams<S: NetStack, E: Endpoint, H: Handler>(
         let mut failed = None;
         let mut drained = false;
         loop {
+            // Two or more queued go in one `sendmmsg`; one goes alone.
+            if S::BATCH
+                && let Some(mm) = e.batch()
+                && c.pending_tx_at(1).is_some()
+            {
+                let mut n = 0;
+                while n < mm.capacity()
+                    && let Some(d) = c.pending_tx_at(n)
+                {
+                    mm.arm_tx(n, d);
+                    n += 1;
+                }
+                stats.send_calls += 1;
+                match S::send_batch(fd, mm, n) {
+                    Ok(0) => break,
+                    Ok(sent) => {
+                        for _ in 0..sent {
+                            c.sent_tx();
+                        }
+                        stats.sends += sent as u64;
+                        retried = false;
+                    }
+                    Err(err) if S::refused(&err) => {
+                        c.on_refused();
+                        if retried {
+                            break;
+                        }
+                        retried = true;
+                    }
+                    Err(err) => {
+                        failed = Some(c.close_reason(err.into()));
+                        break;
+                    }
+                }
+                continue;
+            }
             let Some(d) = c.pending_tx() else {
                 drained = true;
                 break;
@@ -1786,6 +1822,29 @@ impl Reads {
         }
     }
 
+    /// The read time for a batched read (`Config::rx_read_timestamp`), 0
+    /// when off: one clock read for the whole batch.
+    #[inline]
+    pub fn now(&self) -> i64 {
+        if self.stamp {
+            crate::clock::realtime_ns()
+        } else {
+            0
+        }
+    }
+
+    /// [`RxMeta`] for one datagram of a batched read: the next sequence
+    /// number, the kernel's stamps `kernel`, and the batch's read time.
+    #[inline]
+    pub const fn next_in_batch(&mut self, rx_read_ns: i64, kernel: RxMeta) -> RxMeta {
+        self.seq += 1;
+        RxMeta {
+            rx_read_ns,
+            read_seq: self.seq,
+            ..kernel
+        }
+    }
+
     /// [`RxMeta`] for input an endpoint already held when it was added (the
     /// frames the upgrade read with the 101, or bytes a blocking connect read
     /// before `Driver::add`): the next sequence number, no
@@ -1850,6 +1909,68 @@ where
         }
         Err(e) => Err(e.into()),
     }
+}
+
+/// Reads up to `burst` datagrams from `conn` through batched receives
+/// (`recvmmsg`) into its receive slots, and delivers each in order: `true`
+/// when anything arrived. The burst ends early once a call comes back short
+/// (the queue ran dry) or empty.
+fn recv_batch<S, E, H>(
+    conn: &mut E,
+    id: ConnId,
+    mm: &mut crate::sys::MmsgBatch,
+    burst: u32,
+    handler: &mut H,
+    stats: &mut DriverStats,
+    reads: &mut Reads,
+) -> Result<bool>
+where
+    S: NetStack,
+    E: Receive<H>,
+    H: Handler,
+{
+    let mut left = burst as usize;
+    let mut any = false;
+    while left > 0 {
+        let (buf, stride) = conn.rx_slots();
+        let want = mm.arm_rx(buf, stride, left);
+        stats.recvmsg_calls += 1;
+        match S::recv_batch(conn.fd(), mm, want) {
+            Ok(None) => {
+                stats.recvmsg_eagain += 1;
+                return Ok(any);
+            }
+            Ok(Some(got)) => {
+                let read_ns = reads.now();
+                for k in 0..got {
+                    // Longer than its slot: the kernel cut it. Dropped, counted.
+                    if mm.truncated(k) {
+                        conn.on_truncated();
+                        continue;
+                    }
+                    let meta = reads.next_in_batch(read_ns, mm.meta(k));
+                    stats.completions += 1;
+                    stats.messages += conn.on_datagram_at(id, k, mm.len(k), &meta, handler)? as u64;
+                }
+                any = true;
+                if got < want {
+                    // The read that found the queue empty ran in the call.
+                    stats.recvmsg_eagain += 1;
+                    return Ok(true);
+                }
+                left -= got;
+            }
+            // An ICMP port unreachable for an earlier datagram: counted, the
+            // socket stays open, the burst goes on.
+            Err(e) if S::refused(&e) => {
+                conn.on_refused();
+                any = true;
+                left -= 1;
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(any)
 }
 
 #[cfg(test)]

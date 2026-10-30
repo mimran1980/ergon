@@ -59,7 +59,7 @@ every platform.)*
 | `tcp_delack_max_us` | 0 (kernel: 200 ms) | `TCP_DELACK_MAX_US`, Linux 6.15+: the longest delayed ACK; same range and checks |
 | `tcp_info_interval_ms` | 0 (off) | passive `TCP_INFO` per connection (`Driver::tcp_info`); at most one `getsockopt` per poll, from the 250 µs deadline check |
 | `epoll_events` | 64 | the most ready sockets one `epoll_wait` reports (`epoll-spin`; `recv-busy` with `per_queue`); the rest are reported on the next poll; 1 to 65,536 |
-| `datagram_burst` | 16 | UDP: the most datagrams one poll reads from one ready socket; 1 to 1,024 ([UDP](udp.md)) |
+| `datagram_burst` | 16 | UDP: the most datagrams one poll reads from one ready socket, in `recvmmsg` calls of up to `rx_batch`; 1 to 1,024 ([UDP](udp.md)) |
 | `busy_poll_us` | 0 (off) | `epoll-spin` only: `SO_BUSY_POLL` on every socket, 0 to `i32::MAX` µs; above 0, the read that empties a socket polls the NIC once ([busy polling on `epoll-spin`](#busy-polling-on-epoll-spin)); other backends refuse it |
 
 An unknown key, a bad value or a setting the backend cannot use is an error

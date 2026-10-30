@@ -10,6 +10,13 @@
   under `ERGON_HOST_CHECKS=require` would refuse). `ergon_tune::isolated_cpus`
   is now public.
 
+- ergon-io UDP: batched system calls. A ready socket's datagrams are read
+  with `recvmmsg`, up to the new `UdpOptions::rx_batch` (default 16) a call,
+  each with its own timestamp; two or more queued datagrams leave in one
+  `sendmmsg`. A burst of N costs one call instead of N. The receive buffer is
+  now `rx_batch` × `max_datagram`. Breaking: a `UdpOptions` literal needs
+  the new field (or `..UdpOptions::default()`).
+
 ### Changed
 
 - md-dpdk EKS image: Aeron's C is built for `x86-64-v2` or `armv8.2-a` by

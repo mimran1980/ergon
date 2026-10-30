@@ -114,3 +114,55 @@ fn the_steady_state_udp_round_trip_does_not_allocate() -> R {
     assert_eq!(n, 0, "{n} allocations over 5000 round trips");
     Ok(())
 }
+
+/// Bursts of 8 datagrams each way, sent in one `sendmmsg` and read in one
+/// `recvmmsg`: after a warm-up, 2 000 bursts allocate nothing.
+#[test]
+fn batched_bursts_do_not_allocate() -> R {
+    let loopback = SocketAddr::from(([127, 0, 0, 1], 0));
+    let (sa, sb) = (UdpSocket::bind(loopback)?, UdpSocket::bind(loopback)?);
+    let (pa, pb) = (sa.local_addr()?, sb.local_addr()?);
+    drop((sa, sb));
+    let opts = UdpOptions::default();
+    let mut d: Driver<UdpConn> = Driver::new(Config::parse(
+        "epoll-spin,rx_timestamps=true,rx_read_timestamp=true",
+    )?)?;
+    let first = d.add(UdpConn::connect(pa, pb, &opts)?)?;
+    let second = d.add(UdpConn::connect(pb, pa, &opts)?)?;
+    let payload = [0x5Au8; 64];
+    let mut h = Sum::default();
+    let burst = |d: &mut Driver<UdpConn>, h: &mut Sum| -> R {
+        for from in [first, second] {
+            let want = h.n + 8;
+            for _ in 0..8 {
+                d.get_mut(from).ok_or("closed")?.send(&payload)?;
+            }
+            let end = Instant::now() + Duration::from_secs(5);
+            while h.n < want {
+                d.poll(h)?;
+                if Instant::now() > end {
+                    return Err("a burst never arrived".into());
+                }
+            }
+        }
+        Ok(())
+    };
+    for _ in 0..100 {
+        burst(&mut d, &mut h)?;
+    }
+    let calls = d.stats().send_calls;
+    let before = allocs();
+    for _ in 0..2_000 {
+        burst(&mut d, &mut h)?;
+    }
+    let n = allocs() - before;
+    assert_eq!(h.closed, 0);
+    assert_eq!(h.n, 16 * 2_100);
+    assert_eq!(
+        d.stats().send_calls - calls,
+        2 * 2_000,
+        "one send call a burst"
+    );
+    assert_eq!(n, 0, "{n} allocations over 2000 bursts");
+    Ok(())
+}

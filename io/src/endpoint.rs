@@ -88,6 +88,13 @@ pub(crate) mod sealed {
         fn pending_tx(&mut self) -> Option<&[u8]> {
             None
         }
+        /// Datagram endpoints: the `k`-th queued datagram (0 is the one
+        /// [`Io::pending_tx`] returns), if that many are queued.
+        #[inline]
+        fn pending_tx_at(&self, k: usize) -> Option<&[u8]> {
+            let _ = k;
+            None
+        }
         /// Datagram endpoints: the kernel took the datagram
         /// [`Io::pending_tx`] returned.
         #[inline]
@@ -111,6 +118,15 @@ pub(crate) mod sealed {
         /// writes into it after the call returns, so it must stay at the same
         /// address until `on_received`.
         fn rx_space(&mut self) -> &mut [u8];
+        /// Datagram endpoints: the receive slots for a batched read, as the
+        /// whole buffer and the slot size: `len / stride` datagrams of up to
+        /// `stride` bytes. One slot, [`Io::rx_space`], by default.
+        #[inline]
+        fn rx_slots(&mut self) -> (&mut [u8], usize) {
+            let b = self.rx_space();
+            let n = b.len();
+            (b, n)
+        }
         /// Bytes waiting to be sent; the driver sends from the front and
         /// marks what the kernel took ([`crate::stream::TxQueue::sent`]).
         fn tx_queue(&mut self) -> &mut crate::stream::TxQueue;
@@ -135,6 +151,22 @@ pub(crate) mod sealed {
             meta: &RxMeta,
             handler: &mut H,
         ) -> Result<usize>;
+
+        /// Datagram endpoints: delivers the `n`-byte datagram a batched read
+        /// left in receive slot `slot` ([`Io::rx_slots`]). The default has
+        /// one slot, the one [`Deliver::on_received`] reads.
+        #[inline]
+        fn on_datagram_at(
+            &mut self,
+            id: ConnId,
+            slot: usize,
+            n: usize,
+            meta: &RxMeta,
+            handler: &mut H,
+        ) -> Result<usize> {
+            let _ = slot;
+            self.on_received(id, n, meta, handler)
+        }
     }
 
     /// What a connection holds of its route check: the outcome, or the cell

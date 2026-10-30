@@ -193,6 +193,22 @@ mod linux {
             sys::send_datagram(fd, buf)
         }
 
+        const BATCH: bool = true;
+
+        #[inline]
+        fn recv_batch(
+            fd: libc::c_int,
+            b: &mut sys::MmsgBatch,
+            n: usize,
+        ) -> io::Result<Option<usize>> {
+            sys::recvmmsg(fd, b, n)
+        }
+
+        #[inline]
+        fn send_batch(fd: libc::c_int, b: &mut sys::MmsgBatch, n: usize) -> io::Result<usize> {
+            sys::sendmmsg(fd, b, n)
+        }
+
         #[inline]
         fn refused(e: &io::Error) -> bool {
             e.raw_os_error() == Some(libc::ECONNREFUSED)

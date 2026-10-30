@@ -278,8 +278,9 @@ pub struct Config {
     pub epoll_events: u32,
     /// UDP ([`crate::udp`]): the most datagrams one poll reads from one ready
     /// socket before it moves on, so one busy socket cannot hold up the
-    /// others. Each costs one `recvmsg`; the last read of a drained socket
-    /// returns `EAGAIN`. 1 to 1 024, default 16.
+    /// others. The kernel stack reads them with `recvmmsg`, up to
+    /// `UdpOptions::rx_batch` a call; a call that comes back short drained
+    /// the socket. 1 to 1 024, default 16.
     pub datagram_burst: u32,
     /// `fstack-spin`: F-Stack's interface and EAL (the `fstack_*` keys,
     /// [`crate::fstack::FstackConf`]). Other backends refuse any setting

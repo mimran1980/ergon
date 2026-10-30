@@ -188,6 +188,7 @@ pub fn pair(
         max_datagram: MAX_DATAGRAM,
         tx_slots: TX_SLOTS,
         sndbuf: opts.sndbuf,
+        ..UdpOptions::default()
     };
     let mut ids = Vec::with_capacity(streams as usize);
     for i in 0..streams {

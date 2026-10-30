@@ -9,10 +9,13 @@
 //!   delivered, never taken for a close. A datagram longer than
 //!   [`UdpOptions::max_datagram`] is dropped and counted
 //!   ([`UdpStats::truncated`]). The driver reads at most
-//!   `Config::datagram_burst` datagrams from one ready socket per poll.
+//!   `Config::datagram_burst` datagrams from one ready socket per poll,
+//!   [`UdpOptions::rx_batch`] per `recvmmsg` call, each into its own slot of
+//!   the receive buffer.
 //! - Sending: [`UdpConn::send`] copies the datagram into a ring of
-//!   preallocated slots; the driver's next send pass hands each to the
-//!   kernel whole. A full ring is [`Error::Busy`] ([`UdpStats::tx_full`]);
+//!   preallocated slots; the driver's next send pass hands them to the
+//!   kernel whole: one `send` for a lone datagram, one `sendmmsg` for two
+//!   or more. A full ring is [`Error::Busy`] ([`UdpStats::tx_full`]);
 //!   nothing allocates after [`UdpConn::connect`].
 //! - `ECONNREFUSED` (the peer's port answered ICMP unreachable) is counted
 //!   ([`UdpStats::refused`]) and the socket stays open.
@@ -36,6 +39,10 @@ use crate::stream::TxQueue;
 /// The largest UDP payload over IPv4 (65 535 less the IP and UDP headers).
 pub const MAX_UDP_PAYLOAD: usize = 65_507;
 
+/// The most datagrams one `recvmmsg` or `sendmmsg` takes (the kernel's
+/// `UIO_MAXIOV`).
+pub const MAX_BATCH: usize = 1_024;
+
 /// Receives datagrams.
 pub trait UdpHandler: Handler {
     /// One datagram from `conn`: its whole payload (possibly empty), a slice
@@ -56,6 +63,10 @@ pub struct UdpOptions {
     pub tx_slots: usize,
     /// `SO_SNDBUF`, bytes (`None`, the default: the kernel's).
     pub sndbuf: Option<u32>,
+    /// Receive slots: the most datagrams one receive call (`recvmmsg`)
+    /// takes. The receive buffer is `rx_batch` × `max_datagram` bytes. 1
+    /// reads one datagram a call. 1 to 1 024, default 16.
+    pub rx_batch: usize,
 }
 
 impl Default for UdpOptions {
@@ -64,6 +75,7 @@ impl Default for UdpOptions {
             max_datagram: 2_048,
             tx_slots: 64,
             sndbuf: None,
+            rx_batch: 16,
         }
     }
 }
@@ -80,6 +92,12 @@ impl UdpOptions {
             return Err(Error::Config(format!(
                 "udp tx_slots {}: 1 to 65536",
                 self.tx_slots
+            )));
+        }
+        if !(1..=MAX_BATCH).contains(&self.rx_batch) {
+            return Err(Error::Config(format!(
+                "udp rx_batch {}: 1 to {MAX_BATCH}",
+                self.rx_batch
             )));
         }
         Ok(())
@@ -168,12 +186,15 @@ impl<D: DatagramSocket> UdpConn<D> {
         let ring_len = max
             .checked_mul(opts.tx_slots)
             .ok_or_else(|| Error::Config("udp send ring too large".into()))?;
+        let rx_len = max
+            .checked_mul(opts.rx_batch)
+            .ok_or_else(|| Error::Config("udp receive slots too large".into()))?;
         Ok(Self {
             sock,
             connected,
             // Non-zero fill writes every page now (zeroed memory is mapped
             // lazily), so the first reads and sends take no page faults.
-            rx: vec![1u8; max].into_boxed_slice(),
+            rx: vec![1u8; rx_len].into_boxed_slice(),
             ring: vec![1u8; ring_len].into_boxed_slice(),
             lens: vec![0usize; opts.tx_slots].into_boxed_slice(),
             max,
@@ -280,7 +301,12 @@ impl<D: DatagramSocket> Io for UdpConn<D> {
     }
     #[inline]
     fn rx_space(&mut self) -> &mut [u8] {
-        &mut self.rx
+        let max = self.max;
+        &mut self.rx[..max]
+    }
+    #[inline]
+    fn rx_slots(&mut self) -> (&mut [u8], usize) {
+        (&mut self.rx, self.max)
     }
     #[inline]
     fn tx_queue(&mut self) -> &mut TxQueue {
@@ -302,6 +328,15 @@ impl<D: DatagramSocket> Io for UdpConn<D> {
         }
         let at = self.head * self.max;
         self.ring.get(at..at + self.lens[self.head])
+    }
+    #[inline]
+    fn pending_tx_at(&self, k: usize) -> Option<&[u8]> {
+        if k >= self.queued {
+            return None;
+        }
+        let slot = (self.head + k) % self.lens.len();
+        let at = slot * self.max;
+        self.ring.get(at..at + self.lens[slot])
     }
     #[inline]
     fn sent_tx(&mut self) {
@@ -336,6 +371,23 @@ impl<D: DatagramSocket, H: UdpHandler> Deliver<H> for UdpConn<D> {
     ) -> Result<usize> {
         // The kernel wrote `n` bytes into `rx_space`, the whole buffer.
         handler.on_datagram(id, &self.rx[..n.min(self.max)], meta);
+        self.stats.rx += 1;
+        Ok(1)
+    }
+
+    #[inline]
+    fn on_datagram_at(
+        &mut self,
+        id: ConnId,
+        slot: usize,
+        n: usize,
+        meta: &RxMeta,
+        handler: &mut H,
+    ) -> Result<usize> {
+        // The kernel wrote `n` bytes at the start of slot `slot`.
+        let at = slot * self.max;
+        let payload = self.rx.get(at..at + n.min(self.max)).unwrap_or_default();
+        handler.on_datagram(id, payload, meta);
         self.stats.rx += 1;
         Ok(1)
     }
