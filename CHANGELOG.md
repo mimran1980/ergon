@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.1.37] — unreleased
+## [0.1.37] — 2026-10-30
 
 ### Added
 
@@ -20,6 +20,22 @@
   kept a subnet other than /24 as /24 (F-Stack's default); they now add
   `fstack_prefix_len`. A DPDK device name in the pair (test mode) becomes
   `fstack_vdev` and `eal=--vdev <name>` instead of a PCI port.
+
+### Changed
+
+- `ergon-shared-cpus` image and chart 0.1.3: the first published image
+  with the `dpdk.ergon.io` NIC pair exports and the Aeron hugepage
+  variables (`AERON_FILE_PAGE_SIZE`, `AERON_TERM_BUFFER_SPARSE_FILE`).
+  Image 0.1.2 has neither.
+- Dependencies: roxmltree 0.21.2, smol_str 0.3.7, webpki-roots 1.0.11,
+  rustix 1.1.6, cc 1.10.0.
+
+### Docs
+
+- `io/benches`: `poll_pass` times one poll pass over N sockets for raw
+  epoll (level and edge), mio and the `Driver`. With the send set an idle
+  pass is one `epoll_wait(0)` at every N (x86: 594 ns at 1 socket, 631 ns
+  at 256); a second read to `EAGAIN` costs about 0.7 µs a message.
 
 ## [0.1.36] — 2026-10-29
 
