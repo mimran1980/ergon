@@ -1,0 +1,95 @@
+//! rx_batch sweep: N datagrams already queued on a socket; time from the
+//! first poll to the handler seeing the first and the last of them.
+//! Prints arm, n, rx_batch, first/last p50/p99/p99.9/max (ns) and calls.
+use std::net::{SocketAddr, UdpSocket};
+use std::time::Instant;
+
+use ergon_io::{Config, ConnId, Driver, Handler, RxMeta, UdpConn, UdpHandler, UdpOptions};
+
+struct Probe {
+    seen: u64,
+    first_at: u64, // datagram index stamped as "first"
+    last_at: u64,
+    first: Option<Instant>,
+    last: Option<Instant>,
+}
+impl Handler for Probe {
+    fn on_closed(&mut self, _: ConnId, e: ergon_io::Error) {
+        eprintln!("closed: {e}");
+        std::process::exit(1);
+    }
+}
+impl UdpHandler for Probe {
+    fn on_datagram(&mut self, _: ConnId, _: &[u8], _: &RxMeta) {
+        if self.seen == self.first_at {
+            self.first = Some(Instant::now());
+        }
+        if self.seen == self.last_at {
+            self.last = Some(Instant::now());
+        }
+        self.seen += 1;
+    }
+}
+
+fn pct(v: &[u64], p: f64) -> u64 {
+    v[((v.len() as f64 - 1.0) * p).round() as usize]
+}
+
+fn run(n: u64, batch: usize, size: usize, reps: usize, round: usize) -> Result<(), Box<dyn std::error::Error>> {
+    let lo = SocketAddr::from(([127, 0, 0, 1], 0));
+    let (sa, sb) = (UdpSocket::bind(lo)?, UdpSocket::bind(lo)?);
+    let (pa, pb) = (sa.local_addr()?, sb.local_addr()?);
+    drop((sa, sb));
+    let opts = UdpOptions { rx_batch: batch, ..UdpOptions::default() };
+    let mut d: Driver<UdpConn> = Driver::new(Config::parse(
+        "epoll-spin,rx_timestamps=true,datagram_burst=64,quickack_check=off",
+    )?)?;
+    let a = d.add(UdpConn::connect(pa, pb, &opts)?)?;
+    let _b = d.add(UdpConn::connect(pb, pa, &opts)?)?;
+    let payload = vec![7u8; size];
+    let mut h = Probe { seen: 0, first_at: 0, last_at: 0, first: None, last: None };
+    let (mut fv, mut lv) = (Vec::with_capacity(reps), Vec::with_capacity(reps));
+    let warm = reps / 10;
+    for r in 0..reps + warm {
+        for _ in 0..n {
+            d.get_mut(a).ok_or("a")?.send(&payload)?;
+        }
+        d.flush()?; // loopback: all N are in b's queue when this returns
+        h.first_at = h.seen;
+        h.last_at = h.seen + n - 1;
+        h.first = None;
+        h.last = None;
+        let t0 = Instant::now();
+        while h.last.is_none() {
+            d.poll(&mut h)?;
+        }
+        let (f, l) = (h.first.ok_or("first")?, h.last.ok_or("last")?);
+        if r >= warm {
+            fv.push((f - t0).as_nanos() as u64);
+            lv.push((l - t0).as_nanos() as u64);
+        }
+    }
+    fv.sort_unstable();
+    lv.sort_unstable();
+    let s = d.stats();
+    let calls = s.recvmsg_calls as f64 / (reps + warm) as f64;
+    for (what, v) in [("first", &fv), ("last", &lv)] {
+        println!(
+            "{round}\tn={n}\tsize={size}\trx_batch={batch}\t{what}\tp50={}\tp99={}\tp99.9={}\tmax={}\trecv_calls_per_burst={calls:.2}",
+            pct(v, 0.5), pct(v, 0.99), pct(v, 0.999), v[v.len() - 1]
+        );
+    }
+    Ok(())
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let reps = 50_000;
+    for round in 1..=3 {
+        for (n, size) in [(8u64, 64usize), (32, 64), (32, 1024)] {
+            for batch in [1usize, 4, 8, 16, 32] {
+                run(n, batch, size, reps, round)?;
+            }
+        }
+    }
+    Ok(())
+}

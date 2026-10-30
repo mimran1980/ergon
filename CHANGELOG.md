@@ -11,7 +11,7 @@
   is now public.
 
 - ergon-io UDP: batched system calls. A ready socket's datagrams are read
-  with `recvmmsg`, up to the new `UdpOptions::rx_batch` (default 16) a call,
+  with `recvmmsg`, up to the new `UdpOptions::rx_batch` (default 8) a call,
   each with its own timestamp; two or more queued datagrams leave in one
   `sendmmsg`. A burst of N costs one call instead of N. The receive buffer is
   now `rx_batch` × `max_datagram`. Breaking: a `UdpOptions` literal needs

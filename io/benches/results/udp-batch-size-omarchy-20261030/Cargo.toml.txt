@@ -1,0 +1,15 @@
+[package]
+name = "udp_batch_size"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+ergon-io = { path = "ERGON/io" }
+
+[profile.release]
+debug = false
+lto = "thin"
+codegen-units = 1
+
+[workspace]
