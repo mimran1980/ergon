@@ -1,0 +1,15 @@
+# Follow-up to transport-aws-udp-batch.tsv: ergon-io UDP on smoltcp over
+# DPDK (ping on the stack, pong on the kernel) beside Aeron on DPDK
+# (md-dpdk, both ends) and ergon-io on the kernel, same loads and bursts.
+# (The first session's smoltcp arm had no smoltcp-dpdk binary: the runner
+# built one only for an F-Stack arm.)
+#
+# arm   name                 binary     setup    hosts  arguments
+arm  eio-udp-smol        udp_lat    sockets  two  --impl ergon --backend smoltcp-spin
+arm  eio-udp-smol-b8     udp_lat    sockets  two  --impl ergon --backend smoltcp-spin --burst 8
+arm  eio-udp-b8          udp_lat    sockets  two  --impl ergon --burst 8
+arm  dpdk-aeron-udp-b8   aeron_lat  dpdk     two  --mode udp --reliable false --burst 8
+
+# set   pair par host loads                 streams  netem  arms
+set u1   a    -   ab   50000,200000,500000   1        -      eio-udp-smol,dpdk-aeron-udp,eio-udp,aa
+set b8   a    -   ab   50000,200000          1        -      eio-udp-smol-b8,dpdk-aeron-udp-b8,eio-udp-b8,aa

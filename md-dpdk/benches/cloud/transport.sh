@@ -408,9 +408,10 @@ tr_wants_setup() {
     return 1
 }
 # tr_wants_fstack: a set-up named fstack, or an arm whose line is fstack_lat
-# with --impl ergon, or any arm whose arguments name --backend fstack-spin
-# (ergon-io's fstack-spin on setup sockets: the lab still builds F-Stack and
-# binds the NIC). The stock matrix has none of those, so it stays false.
+# with --impl ergon, or any arm whose arguments name --backend fstack-spin or
+# smoltcp-spin (ergon-io on setup sockets: the lab still builds F-Stack, which
+# is what links smoltcp-dpdk into udp_lat, tcp_lat and wstls_lat, and binds
+# the NIC). The stock matrix has none of those, so it stays false.
 tr_wants_fstack() {
     tr_wants_setup fstack && return 0
     local names name line
@@ -421,14 +422,14 @@ tr_wants_fstack() {
         name=${name# }
         [[ -n $name ]] || continue
         line=$(tr_plan arm "$name") || continue
-        [[ $line == fstack_lat\ *\ --impl\ ergon* || $line == fstack_spin_lat\ *\ --impl\ ergon* || $line == *\ --backend\ fstack-spin* ]] && return 0
+        [[ $line == fstack_lat\ *\ --impl\ ergon* || $line == fstack_spin_lat\ *\ --impl\ ergon* || $line == *\ --backend\ fstack-spin* || $line == *\ --backend\ smoltcp-spin* ]] && return 0
     done
     return 1
 }
 
 # tr_build_extras: the words transport_prepare passes to vm.sh transport-build.
-# `fstack` when tr_wants_fstack (setup fstack, or an ergon-io fstack-spin arm
-# on setup sockets). That build sets TR_FSTACK_PREFIX, so transport-build.sh
+# `fstack` when tr_wants_fstack (setup fstack, or an ergon-io fstack-spin or
+# smoltcp-spin arm on setup sockets). That build sets TR_FSTACK_PREFIX, so transport-build.sh
 # also links smoltcp-dpdk into wstls_lat, udp_lat and tcp_lat. `onload` when
 # an arm's set-up is onload. Empty for the stock matrix.
 tr_build_extras() {

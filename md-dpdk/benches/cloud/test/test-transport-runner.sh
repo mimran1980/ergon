@@ -2584,6 +2584,16 @@ both transport-tune
 key
 1" "$steps"
 
+# a session whose only bypass arm is smoltcp-spin (no F-Stack arm) still
+# builds the smoltcp-dpdk binaries: transport-build.sh links them only under
+# TR_FSTACK_PREFIX, which the fstack build extra sets
+got=$(
+    . "$cloud/transport.sh"
+    sets_file=$cloud/transport-aws-udp-smol.tsv tr_sets_file=$cloud/transport-aws-udp-smol.tsv arms_file='' tr_arms_file=''
+    tr_wants_fstack && echo "smoltcp-only: yes" || echo "smoltcp-only: no"
+)
+same "a smoltcp-spin arm alone builds the smoltcp-dpdk binaries" "smoltcp-only: yes" "$got"
+
 # ergon-io bypass matrix: the sets file the lab selects, the real arm lines,
 # kernel-peer loss, RTO 8 ms, and transport-build's split feature invocations
 sets=$cloud/transport-aws-io-bypass.tsv
