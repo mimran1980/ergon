@@ -65,8 +65,7 @@ pub struct UdpOptions {
     pub sndbuf: Option<u32>,
     /// Receive slots: the most datagrams one receive call (`recvmmsg`)
     /// takes. The receive buffer is `rx_batch` × `max_datagram` bytes. 1
-    /// reads one datagram a call. 1 to 1 024, default 8: the first datagram
-    /// of a burst waits for at most 7 others to be copied.
+    /// reads one datagram a call. 1 to 1 024, default 16.
     pub rx_batch: usize,
 }
 
@@ -76,7 +75,7 @@ impl Default for UdpOptions {
             max_datagram: 2_048,
             tx_slots: 64,
             sndbuf: None,
-            rx_batch: 8,
+            rx_batch: 16,
         }
     }
 }

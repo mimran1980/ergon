@@ -411,11 +411,11 @@ fn busy_poll_us_sets_so_busy_poll_on_a_datagram_socket() -> R {
 }
 
 /// Datagrams waiting on a socket are read with one `recvmmsg` per
-/// `rx_batch` (default 8; up to `datagram_burst` a poll): ten queued, two
-/// calls (8, then 2) read them all, in order, each with its own timestamp
-/// and sequence number.
+/// `rx_batch` (default 16; up to `datagram_burst` a poll): ten queued, one
+/// call reads them all, in order, each with its own timestamp and sequence
+/// number.
 #[test]
-fn a_burst_waiting_on_a_socket_is_read_in_calls_of_rx_batch() -> R {
+fn a_burst_waiting_on_a_socket_is_read_in_one_call() -> R {
     let mut d = driver("epoll-spin")?;
     let conn = UdpConn::bind(any_port(), &UdpOptions::default())?;
     let at = conn.local_addr()?;
@@ -429,7 +429,7 @@ fn a_burst_waiting_on_a_socket_is_read_in_calls_of_rx_batch() -> R {
     let mut h = Got::default();
     let before = d.stats().recvmsg_calls;
     assert_eq!(d.poll(&mut h)?, 10);
-    assert_eq!(d.stats().recvmsg_calls - before, 2, "{:?}", d.stats());
+    assert_eq!(d.stats().recvmsg_calls - before, 1, "{:?}", d.stats());
     let got: Vec<Vec<u8>> = h.dgrams.iter().map(|(_, p, _)| p.clone()).collect();
     assert_eq!(got, (0..10u8).map(|i| vec![i; 3]).collect::<Vec<_>>());
     assert!(h.dgrams.iter().all(|(_, _, m)| m.rx_sw_ns != 0));

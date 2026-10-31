@@ -51,26 +51,29 @@ seeing the first and the last; µs, p50 / p99 / max, ranges over three runs:
 |---|---|---|---|
 | 1 | 2.0 / 2.2 / 7–21 | 34.5 / 37.6 / 48–77 | 33 |
 | 4 | 3.1 / 3.3–3.4 / 8–16 | 18.4 / 21.1–21.2 / 29–35 | 9 |
-| **8 (default)** | 4.6 / 4.7–4.9 / 9–12 | 15.5 / 18.1–18.2 / 20–25 | 5 |
-| 16 | 7.4 / 7.7–7.8 / 12–55 | 14.0 / 16.5–16.7 / 19–106 | 3 |
+| 8 | 4.6 / 4.7–4.9 / 9–12 | 15.5 / 18.1–18.2 / 20–25 | 5 |
+| **16 (default)** | 7.4 / 7.7–7.8 / 12–55 | 14.0 / 16.5–16.7 / 19–106 | 3 |
 | 32 | 13.1 / 15.6 / 18–26 | 13.2–13.3 / 15.8 / 18–26 | 2 |
 
 | you act on | `rx_batch` |
 |---|---|
 | the first update of a burst (quotes, signals) | 4 to 8 |
-| the state after the whole burst (rebuilding a book) | 16 to 32 |
+| the state after the whole burst (rebuilding a book) | 16 (default); 64 or 128 for feeds that burst harder |
 | one datagram at a time, with the lowest first-datagram latency | 1 |
 
 - Each datagram added to a batch costs about 0.35 µs before the handler
   runs, and saves about 0.7 µs against reading it in its own call.
   1,024-byte datagrams add under 0.05 µs a datagram.
-- Keep `datagram_burst` a multiple of `rx_batch` (the default 16 is two
-  calls of 8) so one busy socket cannot hold the others up.
+- Keep `datagram_burst` a multiple of `rx_batch` (both default to 16) so
+  one busy socket cannot hold the others up; raise both together (64, 128)
+  for feeds that burst harder.
 - Sending needs no setting: whatever is queued leaves in one call, and a
   lone datagram is a plain `send`.
 
-Loopback on an Intel i5-8500T without isolated CPUs: the shape holds
-elsewhere, not the absolute numbers, and the maxima are not attributed.
+Loopback on a desktop Intel i5-8500T with no isolated or pinned-away
+CPUs: the shape holds elsewhere, not the absolute numbers, and the maxima
+are not attributed. The default stays 16 until a tuned cloud host says
+otherwise.
 Method and every row: `io/benches/results/udp-batch-size-omarchy-20261030`.
 
 ## Options
@@ -80,7 +83,7 @@ Method and every row: `io/benches/results/udp-batch-size-omarchy-20261030`.
 | option | default | what it does |
 |---|---|---|
 | `max_datagram` | 2,048 | each receive slot and each send slot, bytes; 1 to 65,507 |
-| `rx_batch` | 8 | receive slots: the most datagrams one `recvmmsg` takes; the receive buffer is `rx_batch` × `max_datagram`. 1 reads one a call; 1 to 1,024 |
+| `rx_batch` | 16 | receive slots: the most datagrams one `recvmmsg` takes; the receive buffer is `rx_batch` × `max_datagram`. 1 reads one a call; 1 to 1,024 |
 | `tx_slots` | 64 | datagrams queued and not yet sent; one more is `Error::Busy` |
 | `sndbuf` | unset | `SO_SNDBUF`; unset: the kernel's |
 

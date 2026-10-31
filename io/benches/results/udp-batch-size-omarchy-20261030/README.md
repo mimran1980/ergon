@@ -52,7 +52,9 @@ rounds, ns.
   instead of its own call saves about 0.7 µs (last: 34.5 µs at 1, 13.2 at
   32).
 - 8 keeps the first datagram within 2.6 µs of the unbatched read and the
-  last within 2.3 µs of the best; it is the default. A burst no larger
+  last within 2.3 µs of the best. The default stays 16: omarchy is a
+  desktop without isolated CPUs, so the choice waits for a tuned cloud run
+  (sizes 8 to 128). A burst no larger
   than the batch (N = 8) costs the same at 8, 16 and 32.
 - 1,024-byte payloads add under 0.05 µs a datagram.
 - A full batch takes one more call to find the queue empty (N = 8 at
