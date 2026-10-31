@@ -146,12 +146,12 @@ impl fmt::Display for Finding {
 
 /// The component calling the checks. Some checks weigh differently per
 /// component (THP: a warning for the processes that run Aeron, information
-/// for ergon-io alone).
+/// for a network I/O layer alone).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Component {
-    /// The media driver (`ergon-md-dpdk`).
+    /// An Aeron media driver.
     Md,
-    /// ergon-io.
+    /// A busy-spinning network I/O layer.
     Io,
     /// An application's busy-spinning runtime: a loop that runs Aeron.
     Rt,
@@ -161,8 +161,8 @@ pub enum Component {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Role {
-    /// A busy-spinning event loop (ergon-io's polling thread, the runtime's
-    /// loop).
+    /// A busy-spinning event loop (a network I/O polling thread, the
+    /// runtime's loop).
     Loop,
     /// The media driver's sender agent.
     Sender,
@@ -170,7 +170,7 @@ pub enum Role {
     Receiver,
     /// The media driver's shared or shared-network agent.
     SharedAgent,
-    /// ergon-io's `io_uring` SQPOLL kernel thread (`sqpoll_cpu`).
+    /// An `io_uring` SQPOLL kernel thread polling a ring's submissions.
     SqPoll,
     /// The media driver's conductor: one of the component's threads, not a
     /// busy-spinner, so not checked for isolation itself.

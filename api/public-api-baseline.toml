@@ -55,4 +55,4 @@ composite_mappings = [
 snapshot = "api/generated/domain_mapping.txt"
 
 [metadata]
-packages = ["ergo-sbe", "ergo-aeron-cluster", "ergon-tune", "ergon-io", "ergon-md-dpdk"]
+packages = ["ergo-sbe", "ergo-aeron-cluster", "ergon-tune"]

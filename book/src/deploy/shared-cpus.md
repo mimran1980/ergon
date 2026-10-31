@@ -19,10 +19,7 @@ The busy-spin loop keeps its exclusive core. Only sleepy helpers go to the
 shared CPUs. Never a spinner or SQPOLL there: SQPOLL on a busy shared CPU
 measured p99 10 ms ([SQPOLL placement](#sqpoll-placement)).
 
-Source: `k8s/nri-shared-cpus/`. A full example on this plugin (a DPDK
-media driver and an Aeron ping/pong, with a verifier that proves where
-every thread ran) is the
-[`low-latency-k8s` sample](https://github.com/mimran1980/ergon/blob/main/samples/README.md#low-latency-k8s).
+Source: `k8s/nri-shared-cpus/`.
 
 Status: published as tag `0.1.3`. Anyone can pull the image and the chart.
 The kind e2e passed at its source. **Verified on EKS AL2023** (Kubernetes
@@ -57,7 +54,7 @@ helm install ergon-shared-cpus oci://ghcr.io/mimran1980/charts/ergon-shared-cpus
   --set hostContract.proc.enabled=true
 ```
 
-**EKS AL2023** (verified on EKS 1.36 `c8g.xlarge` with the same plugin and chart source as published 0.1.2 (`85098f8b`), built by the lab and pushed to the run's ECR). nodeadm writes the base `/etc/kubernetes/kubelet/config.json`, puts
+**EKS AL2023** (verified at 0.1.2 on EKS 1.36 `c8g.xlarge`, containerd 2.3.5, with the same plugin and chart source as published 0.1.2 (`85098f8b`), built by the lab and pushed to the run's ECR; 0.1.3 changed environment exports only and was not re-run there). nodeadm writes the base `/etc/kubernetes/kubelet/config.json`, puts
 the `NodeConfig` kubelet settings in the drop-in
 `/etc/kubernetes/kubelet/config.json.d/40-nodeadm.conf`, and runs the
 kubelet with `--config-dir` on that directory. `kubeletConfigDir` mounts
@@ -170,7 +167,7 @@ The 18-step `test/e2e.sh` is a different run. It builds
 |---|---|
 | exclusive CPUs | the kubelet's static CPU manager, `cpu: N` |
 | shared CPUs | `ergon.io/shared-millicpus: M` adds `ceil(M/1000)` shared CPUs |
-| start affinity | the hook pins threads that exist at create onto the shared CPUs. A later thread inherits its creator's mask. A helper created by a pinned hot thread inherits the hot mask. The application can change affinity. A C `pthread_create` did that on linuxkit with no `isolcpus`. A Go 1.27 OS thread started from the hot thread stayed on the shared CPU. Aeron: `aeron-client`, created by a thread before it pinned, kept that thread's mask (`samples/low-latency-k8s/tests/placement_aeron.rs`, Docker, without the plugin's hook); under the hook on a node, not run. JVM not run |
+| start affinity | the hook pins threads that exist at create onto the shared CPUs. A later thread inherits its creator's mask. A helper created by a pinned hot thread inherits the hot mask. The application can change affinity. A C `pthread_create` did that on linuxkit with no `isolcpus`. A Go 1.27 OS thread started from the hot thread stayed on the shared CPU. Aeron: `aeron-client`, created by a thread before it pinned, kept that thread's mask (a placement test in Docker, without the plugin's hook); under the hook on a node, not run. JVM not run |
 | timer slack | 1 ns on every thread, inherited by every thread and child the program makes |
 | pinning | the app pins hot threads by index into `ERGON_ISOLATED_CPUS` |
 
@@ -229,8 +226,8 @@ the app thread spinning on its exclusive CPU, IRQs on their own CPU (µs,
 - Idle, its two runs disagree by 2x at p50 and both reach 1.3 ms; it is
   not better than the spinning `recv`.
 - SQPOLL on an exclusive CPU of the pod's own was not measured on EKS: a
-  4-vCPU node cannot give a pod two exclusive CPUs. The `ergon-io`
-  rule stands: give it a CPU of the pod's own.
+  4-vCPU node cannot give a pod two exclusive CPUs. The rule stands: give
+  it a CPU of the pod's own.
 - The first no-io_uring run (p50 263 µs, 47,116 round trips) does not match
   its A/A repeat and is unexplained; it is left out of the table and kept in
   the run's `phase-x.csv`.
@@ -292,9 +289,8 @@ that the boot line leaves on ([what reached it, and the fix](https://github.com/
 | `/sys/kernel/mm/transparent_hugepage/enabled` | `never` (`madvise` still runs `khugepaged`) | `khugepaged` calls `lru_add_drain_all`: a kworker on every CPU with queued pages | or `transparent_hugepage=never` on the boot line |
 | `/sys/kernel/debug/sched/fair_server/cpu<N>/runtime`, each isolated N | `0` | the fair server's 1 s timer: a nohz kick and a reschedule IPI, and the tick kept on | kernel 6.12+; debugfs, so lost at reboot: a oneshot unit after `sys-kernel-debug.mount`; safe only where nothing real-time runs on those CPUs (not with `ergon-cpus --fifo`) |
 
-`samples/low-latency-k8s/node/quiet-cpus.sh` and
-`node/ergon-quiet-cpus.service` apply both at boot, with a read-only
-`--check`.
+Apply both at every boot from a oneshot unit, and check them read-only
+after it runs.
 
 **Keep node events out of trading hours.** Anything that calls
 `lru_add_drain_all` (block-device ioctls, `systemctl daemon-reload` and
@@ -371,8 +367,8 @@ devRoot: /host/dev       # where the DaemonSet mounts the host's /dev; without
 seccomp:
   ioUring: "allow"       # default "off". Without it, a pod asking for
                          # seccomp.ergon.io/<ctr>: "io-uring" is refused.
-                         # For apps that use io_uring (ergon-io's uring
-                         # backends). Aeron's C media driver does not use it
+                         # For apps that use io_uring. Aeron's C media
+                         # driver does not use it
 ptp: "auto"              # default "off". Without it, a pod asking for
                          # ptp.ergon.io/<ctr>: "auto" is refused. "auto" is
                          # the NIC's PHC, or give a /dev/ptp* path the node has
@@ -554,10 +550,8 @@ Rules:
   is not on `ERGON_SHARED_CPUS`;
 - never a spinner or SQPOLL on a shared CPU (SQPOLL there measured p99
   10 ms, max 19 ms once the CPU was busy: [SQPOLL placement](#sqpoll-placement)).
-  ergon-io keeps this: with no
-  `sqpoll_cpu`, `uring-sqpoll` takes a CPU of the pod's own outside
-  `ERGON_HELPER_CPUS` and refuses (`Error::Cpu`) when there is none
-  ([io: Kubernetes](../io/kubernetes.md#shared-cpus-from-the-node));
+  Give SQPOLL a CPU of the pod's own outside `ERGON_HELPER_CPUS`, and
+  refuse to start when there is none;
 - two indices are two physical cores only when they are two groups in
   `ERGON_ISOLATED_CORES`. On SMT, `1,5` is one core and its two threads
   share every execution unit: two "hot cores" there is one hot core.

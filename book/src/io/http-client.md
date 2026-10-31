@@ -1,3 +1,4 @@
+<!-- Generated page: edits here are overwritten by the next export. sha256:1be4253c4fda475628fb178bd1942ab9ab20305c7b49627883f103ba7902eaa9 -->
 # HTTP client
 
 `HttpClient` keeps a pool of warm HTTP/1.1 connections behind one API. The
@@ -18,27 +19,85 @@ implementation is configuration:
 The handler gets every result, keyed by request id:
 
 ```rust,ignore
-{{#include ../../../io/tests/client.rs:client_handler}}
+#[derive(Default)]
+struct Seen {
+    ok: Vec<(u64, u16, String)>,
+    errors: Vec<(u64, Sent, String)>,
+}
+
+impl ClientHandler for Seen {
+    fn on_response(&mut self, request: u64, r: &Response<'_>) {
+        self.ok.push((
+            request,
+            r.status,
+            String::from_utf8_lossy(r.body).into_owned(),
+        ));
+    }
+    // `Sent::No`: the server cannot have seen it; `Sent::Maybe`: it may
+    // have run (reconcile an order by its client order id).
+    fn on_error(&mut self, request: u64, sent: Sent, error: Error) {
+        self.errors.push((request, sent, error.to_string()));
+    }
+}
 ```
 
 Native:
 
 ```rust,ignore
-{{#include ../../../io/tests/client.rs:native}}
+/// The native implementation: `recv-busy`, connections opened in the
+/// background.
+fn native(lab: &Lab) -> R<HttpClient> {
+    let mut cfg = HttpClientConfig::new(HttpImpl::Native);
+    cfg.pool = 2; // warm connections, one request in flight each
+    // A pod with one CPU has no core for the connect helper: opt in to
+    // opening on the loop there (without this, `new` returns `Error::Cpu`).
+    cfg.driver.inline_connect_fallback = true;
+    let client = HttpClient::new(&cfg, lab.target("")?, lab.client_cfg.clone())?;
+    Ok(client)
+}
 ```
 
 libcurl:
 
 ```rust,ignore
-{{#include ../../../io/tests/client.rs:curl}}
+/// libcurl (feature `curl`): the same API. Without the feature, `new`
+/// returns `Error::Unsupported`.
+fn curl(lab: &Lab) -> R<HttpClient> {
+    let mut cfg = HttpClientConfig::new(HttpImpl::Curl);
+    cfg.pool = 2; // the most connections libcurl may use at once
+    cfg.curl_ca_file = Some(lab.ca_file()?.display().to_string()); // libcurl's trust store
+    let client = HttpClient::new(&cfg, lab.target("")?, lab.client_cfg.clone())?;
+    Ok(client)
+}
 ```
 
 One request, the same code for both:
 
 ```rust,ignore
-{{#include ../../../io/tests/client.rs:get}}
+/// One GET, the same code for both implementations: wait for a free
+/// connection, send, then poll until the answer.
+fn get(client: &mut HttpClient, path: &str) -> R<(u16, String)> {
+    let mut seen = Seen::default();
+    let end = Instant::now() + Duration::from_secs(10);
+    while client.idle() == 0 {
+        client.poll(&mut seen)?; // the pool connects in the background
+        if Instant::now() > end {
+            return Err("no connection".into());
+        }
+    }
+    let id = client.request("GET", path, &[], &[])?; // returns at once
+    while seen.ok.is_empty() && seen.errors.is_empty() {
+        client.poll(&mut seen)?; // one non-blocking pass
+        if Instant::now() > end {
+            return Err("no answer".into());
+        }
+    }
+    let (got, status, body) = seen.ok.pop().ok_or_else(|| format!("{:?}", seen.errors))?;
+    assert_eq!(got, id);
+    Ok((status, body))
+}
 ```
-*(From `io/tests/client.rs`. `cargo test -p ergon-io` runs `get` through
+*(From `ergon-io/tests/client.rs`. `cargo test -p ergon-io` runs `get` through
 the native client against a local TLS server on Linux; with
 `--features curl`, through libcurl too. `lab` is that server: in your code
 use `Target::new("api.example.com", 443, "")` and
@@ -63,7 +122,7 @@ use `Target::new("api.example.com", 443, "")` and
   (`Error::CurlResend`) unless `curl_allow_non_idempotent_methods` is
   set. Why: libcurl sends a request again, up to 5 times, when the reused
   connection it went out on dies before any reply byte, so an order could
-  be placed twice (`io/tests/client.rs` shows it happening). The native
+  be placed twice (`ergon-io/tests/client.rs` shows it happening). The native
   client never re-sends: send orders through it.
 - **Connections open in the background** (`background_connect`, on by
   default): the handshake runs off the loop, unless the driver's
@@ -99,7 +158,7 @@ use `Target::new("api.example.com", 443, "")` and
   (default) or `curl_multi_socket_action`; both never block. Compared once
   on Azure at 1,000/s: `curl_multi_perform` was 1–6 µs ahead at the
   median in both rounds and had the higher max
-  ([data](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#http-clients)).
+  (data).
   Trust comes from `curl_ca_file` or the system store, not from the rustls
   configuration.
 
@@ -111,9 +170,19 @@ built and checked once. `request_with` then writes only the target suffix,
 per-request headers, `Content-Length` and the body:
 
 ```rust,ignore
-{{#include ../../../io/tests/http_request.rs:template}}
+    // Once per endpoint and request kind: the request line around the path,
+    // `Host` and the target's headers, checked once.
+    let order = RequestTemplate::new(&target, "POST", "/api/order")?;
+    // Per request: only what varies.
+    let body = br#"{"id":7,"qty":1}"#;
+    conn.request_with(
+        &order,
+        "?test=1",
+        &[("Content-Type", "application/json")],
+        body,
+    )?;
 ```
-*(From `io/tests/http_request.rs`.)*
+*(From `ergon-io/tests/http_request.rs`.)*
 
 - The bytes on the wire equal `request`'s: the tests compare the
   ciphertext at every request size up to one TLS record.
@@ -144,10 +213,10 @@ per-request headers, `Content-Length` and the body:
 - Counters: `HttpStats::chunk_copy_bytes`, `span_copy_bytes`,
   `compact_bytes`, `head_parses`.
 
-`http_bench` (in `io/benches`) times the previous path (commit a003bf60)
+`http_bench` (in `ergon-io/benches`) times the previous path (commit a003bf60)
 and the current one interleaved on the same input, per response or
 request, ns. Native macOS, M1 Pro, loaded host, no pinning
-([data](https://github.com/mimran1980/ergon/blob/main/io/benches/results/http-merge-macos-20261024T184305Z/http_bench.md)):
+(data):
 
 | Row | Previous p50 / p99 / max | Current p50 / p99 / max | De-chunk copy B, previous → current |
 |---|---|---|---|
@@ -172,7 +241,7 @@ request, ns. Native macOS, M1 Pro, loaded host, no pinning
   figures are not comparable. Only the previous path's 1 MiB max was
   preempted; the other maxes show no context switch, and a host-side vCPU
   stall is invisible to the guest, so their cause is not established
-  ([data](https://github.com/mimran1980/ergon/blob/main/io/benches/results/http-merge-linux-arm64-20261024T184332Z/http_bench.md)).
+  (data).
 
 ## Body checks
 
@@ -197,9 +266,9 @@ through four connections that differ only in `body_check`, interleaved,
 five runs. Bodies are pure ASCII or mixed (a two-byte character every 64
 bytes); K = 64 responses per sample (16 at 16 KiB). The table is the
 first macOS run, ns per response, p50 / p99 / max
-([`http_bench-body-r1.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/text-trusted-macos-20261024T192059Z/http_bench-body-r1.md);
-[all runs](https://github.com/mimran1980/ergon/tree/main/io/benches/results/text-trusted-macos-20261024T192059Z),
-[Linux arm64 VM](https://github.com/mimran1980/ergon/tree/main/io/benches/results/text-trusted-linux-arm64-20261024T192258Z)):
+(`http_bench-body-r1.md`;
+all runs,
+Linux arm64 VM):
 
 | body | text | `None` | `Ascii` | `AsciiChecked` | `Utf8` |
 |---|---|---|---|---|---|
@@ -240,9 +309,9 @@ other authentication headers are supplied with `Target::with_header`.
 
 ## Measured results
 
-Every figure, with its max: [HTTP clients](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#http-clients)
+Every figure, with its max: HTTP clients
 (1 connection, x86) and the
-[fair run](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton)
+fair run
 (pool of 1 and 20, Graviton).
 
 - **Native against libcurl, same interrupt path:** native is ahead at the
@@ -254,7 +323,7 @@ Every figure, with its max: [HTTP clients](https://github.com/mimran1980/ergon/b
 ## Many connections
 
 Measured on Graviton with a pool of 20 on one loop, one request in flight
-([fair run](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton)):
+(fair run):
 `uring-sqpoll` and the interrupt backends lead, `per_queue` is behind them
 and plain `recv-busy` further behind.
 

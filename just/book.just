@@ -36,5 +36,6 @@ book-ci: policy book-deps
     cargo test -p ergo-sbe --test docs_validation_test --all-features -- --test-threads=2
     # mdbook builds dead links silently: every relative link and include must resolve
     ./scripts/check-book-content.sh
+    ./scripts/check-generated-book.py
     cd book && mdbook build
     @echo "book-ci: docs validated, book built"

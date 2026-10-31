@@ -1,3 +1,4 @@
+<!-- Generated page: edits here are overwritten by the next export. sha256:b6b5a4840292c6a90efd22d94c962242680a81b03a8ea9d2acd1f54920dacb9c -->
 # Kubernetes
 
 Where ergon-io's helper threads run inside a pod. On a host they run on
@@ -22,7 +23,7 @@ Terms: [io glossary](overview.md#glossary),
   it the same way.
 - **So the helper threads run on the pod's own CPUs.** `Driver::new`
   reads the pod's cpuset once and chooses from it
-  ([`placement`](https://docs.rs/ergon-io/latest/ergon_io/placement/)):
+  (`placement`):
   `helper_cpus` / `ERGON_HELPER_CPUS` first, then the loop CPU's SMT
   sibling, then the pod's other CPUs, preferring ones the host does not
   isolate. Never the polling CPU when it is known: set `loop_cpu`, or pin
@@ -66,13 +67,21 @@ refuses at `Driver::new`. The warning thread shares the core, parked
 until there is work. One warning line at start says all this.
 
 ```rust,ignore
-{{#include ../../../io/tests/placement_book.rs:one_cpu}}
+/// A pod with one CPU (`cpu: 1`). `connect_background` refuses: its dial
+/// helper would time-slice the polling thread. With
+/// `inline_connect_fallback=true` it connects as `Driver::connect` does
+/// (the TLS handshake on the loop, about 0.7 ms of CPU once per connect
+/// or reconnect). Never `uring-sqpoll` here: it is refused at
+/// `Driver::new`.
+fn one_cpu_pod() -> ergon_io::Result<Config> {
+    Config::parse("recv-busy,inline_connect_fallback=true")
+}
 ```
 
 - With `inline_connect_fallback=true`, `connect_background` connects as
   `Driver::connect` does: the TLS handshake runs on the loop, a long poll
   per connect or reconnect
-  ([connection set-up](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#connection-set-up)). A helper
+  (connection set-up). A helper
   thread sharing the loop's CPU was not measured.
 - **For production, give the pod 2 CPUs** (the warning line ends with
   that). `ERGON_HOST_CHECKS=off` silences the line; the typed refusals
@@ -85,20 +94,27 @@ hyperthreads. The loop takes one; `SQPOLL`, the dial helper and the
 warning thread take the other. Nothing to configure.
 
 ```rust,ignore
-{{#include ../../../io/tests/placement_book.rs:x86_two_cpus}}
+/// x86 with SMT, `cpu: 2` and the kubelet's `full-pcpus-only`: one
+/// physical core, its two hyperthreads. The loop takes one; `SQPOLL`, the
+/// dial helper and the warning thread take the other (the loop's SMT
+/// sibling). Nothing to configure.
+fn x86_two_cpu_pod() -> ergon_io::Result<Config> {
+    Config::parse("uring-sqpoll")
+}
 ```
 
 **For one busy connection this is the best use of one core.** TCP round
-trip, 1 connection, AWS `c7i.4xlarge`, p50 µs
+trip, 1 connection, AWS `c7i.4xlarge`, µs, p50 / max (range over 3 reps)
 ([measured](backends.md#uring-sqpoll-on-the-loops-smt-sibling-x86)):
 
 | one physical core | 10,000 msg/s | 50,000 | 200,000 |
 |---|---|---|---|
-| `uring-sqpoll`, loop + SQPOLL on its sibling | 35.7–36.9 | 34.7–36.5 | 64.5–67.5 |
-| mio (or `epoll-spin`), SMT off | 40.0–41.4 | 44.5–45.2 | 70.3–71.6 |
+| `uring-sqpoll`, loop + SQPOLL on its sibling | 35.7–36.9 / 1,009–4,414 | 34.7–36.5 / 194–4,694 | 64.5–67.5 / 237–344 |
+| mio (or `epoll-spin`), SMT off | 40.0–41.4 / 149–4,019 | 44.5–45.2 / 188–1,308 | 70.3–71.6 / 742–1,935 |
 
 On the same hosts the sibling layout is 2.3–7.3 µs lower at p50 and
-5.4–15.4 µs at p99 than mio. Caveats:
+5.4–15.4 µs at p99 than mio; the maxima (millisecond round trips in every
+arm) are not ranked. Caveats:
 
 - It needs both hyperthreads and nothing else busy on the sibling. The
   measured sibling held only the SQPOLL thread; the dial helper and the
@@ -106,10 +122,10 @@ On the same hosts the sibling layout is 2.3–7.3 µs lower at p50 and
   or reconnect) was not measured.
 - Measured with one connection on Intel. At many connections on the
   receive side the sibling cost +2.3–2.5 µs p50 and +9–12 µs p99 against
-  a core of its own
-  ([data](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#market-data-receive-side-2026-10-15)).
+  a core of its own (max 95–349 against 76–301, overlapping)
+  (data).
 - A core of its own is lower only at high rates (about 4–6 µs p50 at
-  200,000 msg/s): a `cpu: 4` pod (two physical cores) with `sqpoll_cpu` on
+  200,000 msg/s; max 377–4,564 against the sibling's 237–344): a `cpu: 4` pod (two physical cores) with `sqpoll_cpu` on
   the second core, or SMT off on the node and `cpu: 2`.
 - Tails (p99.99, max) were not separated: every layout had millisecond
   round trips on these hosts.
@@ -120,7 +136,11 @@ Graviton has no SMT: two vCPUs are two cores. The loop takes one; the
 helpers take the other. Nothing to configure.
 
 ```rust,ignore
-{{#include ../../../io/tests/placement_book.rs:graviton_two_cpus}}
+/// Graviton (no SMT), `cpu: 2`: two cores. The loop takes one; the
+/// helpers take the other. Nothing to configure.
+fn graviton_two_cpu_pod() -> ergon_io::Result<Config> {
+    Config::parse("recv-busy")
+}
 ```
 
 ### Shared CPUs from the node
@@ -132,11 +152,21 @@ CPUs in `Config::helper_cpus`, or let the mechanism set
 `ERGON_HELPER_CPUS` (same value: `ERGON_SHARED_CPUS`).
 
 ```rust,ignore
-{{#include ../../../io/tests/placement_book.rs:helper_cpus}}
+/// Shared CPUs a node-level mechanism added to the pod's cpuset: name
+/// them for the helper threads. A CPU outside the process's CPUs is
+/// refused (`Error::Cpu`), never used.
+fn shared_cpu_pod() -> ergon_io::Result<Config> {
+    Config::parse("recv-busy,helper_cpus=3-4")
+}
 ```
 
 ```rust,ignore
-{{#include ../../../io/tests/placement_book.rs:helper_cpus_env}}
+/// The same from the pod's environment: `ERGON_HELPER_CPUS` is a kernel
+/// CPU list (`3`, `3,7`, `2-3`). `Config::helper_cpus` wins when both are
+/// set. `Driver::new` reads the variable; the application does not.
+const fn helper_cpus_env_name() -> &'static str {
+    HELPER_CPUS_ENV
+}
 ```
 
 ```yaml
@@ -164,7 +194,19 @@ busy thread pins itself to one CPU of the pod's cpuset before
 CPU. Node settings: [deployment: Kubernetes](../deploy/kubernetes.md).
 
 ```rust,ignore
-{{#include ../../../io/tests/placement_book.rs:pin_loop}}
+/// Pin the loop thread to one of the pod's CPUs, before `Driver::new`.
+/// The kubelet gives the pod its CPUs (its cpuset); it never pins threads
+/// to them. `Driver::new` then knows the polling CPU, for its host checks
+/// and for the helper-thread choice.
+fn pin_loop() -> R {
+    let (cpus, source) = placement::process_cpus(&Host::system());
+    let cpu = cpus
+        .iter()
+        .next()
+        .ok_or_else(|| format!("no CPU to pin to: {source}"))?;
+    ergon_io::clock::pin_current_thread(usize::try_from(cpu)?)?;
+    Ok(())
+}
 ```
 
 - The pod's CPUs: `cpuset.cpus.effective` (what

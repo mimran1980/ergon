@@ -12,7 +12,7 @@ The grants are in the published `ergon-shared-cpus` image
 (`ghcr.io/mimran1980/ergon-shared-cpus:0.1.3`). This directory is not a
 second image. Its admission YAML and node units stay in the repo. Experimental.
 On EKS the plugin's install is verified (`k8s/nri-shared-cpus/RELEASE.md`); the five
-grants' latency modes (M0-M6) have not yet run there.
+grants' latency effect has not been measured there.
 
 Kubernetes HFT tuning
 ([book](https://mimran1980.github.io/ergon/deploy/hft.html)) is the list of
@@ -31,11 +31,8 @@ or a PHC. Not yet run on kind. The chart writes `seccomp`, `ptp` and `schedFifo`
 **AKS cannot do this.** It has no supported way to change containerd (so an
 NRI plugin cannot be installed) and no `reservedSystemCPUs` list. Everything
 here needs one of those. **The target is EKS on AL2023**: containerd 2.3.5
-with NRI on by default. The cloud lab
-(`md-dpdk/benches/cloud/aws/eks-nri.sh`) runs on EKS with SPOT `c8g.xlarge`
-nodes. If no enabled region has Spot capacity for that shape, it tries
-`c9g.xlarge` and then `c7g.xlarge` (also 4 vCPU and no SMT, so the same CPU
-pins) and only then on-demand, and the results name the type that ran.
+with NRI on by default. The EKS verification ran on spot `c8g.xlarge` nodes
+(4 vCPU, no SMT).
 
 ## The five extensions
 
@@ -60,7 +57,7 @@ and `AERON_TERM_BUFFER_SPARSE_FILE=false`. It does **not** set `AERON_DIR`.
 The app creates `$ERGON_HUGEPAGES_DIR/aeron` and points `AERON_DIR` there.
 It does not set `AERON_PERFORM_STORAGE_CHECKS=false`. The address, the
 gateway and the PCI address are not filled in by this grant; the opt-in
-`dpdk.ergon.io` ride-along below copies them from the pair the ENA device
+`dpdk.ergon.io` ride-along below copies them from a pair a NIC device
 plugin granted.
 
 `emptyDir: {medium: HugePages-2Mi}` is the wrong shape: Kubernetes mounts it
@@ -84,11 +81,11 @@ accounts the preallocated pool, so size the request to the pool you actually
 have. Allocation is **mmap-only** — `write()` on hugetlbfs returns `EINVAL`
 even with a full pool, so the storage layer has to map and fault.
 
-### Allowed ride-along: the ENA NIC pair (`dpdk.ergon.io`)
+### Allowed ride-along: a DPDK NIC pair (`dpdk.ergon.io`)
 
 Default **off**: without the annotation the five keys below stay unset. With
-`dpdk.ergon.io/<ctr>: "ena-pair"`, the plugin **copies** the NIC pair the ENA
-device plugin already granted this container
+`dpdk.ergon.io/<ctr>: "ena-pair"`, the plugin **copies** the NIC pair a NIC
+device plugin (not shipped here) already injected into this container
 (`RUSTERON_DPDK_SENDER_{PCI,IPV4_CIDR,GATEWAY}`) into:
 
 | env the app sees | value from the granted pair |
@@ -99,15 +96,14 @@ device plugin already granted this container
 | `ERGON_DPDK_ADDR` | `10.0.1.20` — the address parsed out of the cidr |
 | `ERGON_DPDK_GATEWAY` | `10.0.1.1` |
 
-ergon-io does not need this opt-in: a bare `fstack-spin` (or an empty
-smoltcp stack line) reads the same three variables itself. The copies are
-for apps that log the lines or pass them on. A prefix other than 24 adds
+An app that reads the three variables itself does not need this opt-in.
+The copies are for apps that log the lines or pass them on. A prefix other than 24 adds
 `fstack_prefix_len`, and a DPDK device name (test mode) becomes
 `fstack_vdev` and `eal=--vdev <name>`.
 
-The two lines are the shortest real-NIC lines from the
-[backends page](https://mimran1980.github.io/ergon/io/backends.html), copied
-from the granted pair, never guessed. The pod is refused, naming the key,
+The two lines are the shortest real-NIC lines, the same ones
+`ergon_tune::DpdkNicPair` builds, copied from the granted pair, never
+guessed. The pod is refused, naming the key,
 when the annotation is set and any of the three is missing, empty or does not
 parse. The plugin never scans sysfs, never runs `dpdk-devbind`, never takes a
 value from the node's default route (that is the management NIC), and sets no
@@ -127,8 +123,7 @@ thread back through the container cgroup's `cgroup.threads`, then pins the
 hot threads to `$ERGON_ISOLATED_CPUS` (kernel lane:
 `../nri-shared-cpus/test/cgroup/kernel_test.go`). containerd mounts
 `/sys/fs/cgroup` read-only in an unprivileged container, so there the move
-has to come from the node, as the EKS lab's `partition_move_script` and the
-kind e2e lane do. The partition file itself
+has to come from the node, as the kind e2e lane does. The partition file itself
 is parent-owned and not delegatable, so the plugin writes it. Needs
 `cpuset.cpus.exclusive` (Linux 6.7 or a vendor backport); without it every
 `cpu-partition` opt-in is refused, naming the cause. Do **not** use
@@ -230,7 +225,7 @@ Why it is off: its one committed A/B (run `070339Z`, `rt` arm) is mixed, and und
 | annotation | value | env the app sees |
 |---|---|---|
 | `hugepages.ergon.io/<ctr>` | `2M` | `ERGON_HUGEPAGES_DIR`, `ERGON_HUGEPAGE_SIZE`, `AERON_FILE_PAGE_SIZE`, `AERON_TERM_BUFFER_SPARSE_FILE` (the app sets `AERON_DIR`) |
-| `dpdk.ergon.io/<ctr>` | `ena-pair` | `ERGON_IO_FSTACK`, `ERGON_IO_SMOLTCP`, `ERGON_DPDK_PCI`, `ERGON_DPDK_ADDR`, `ERGON_DPDK_GATEWAY` (copied from the ENA device plugin's pair; default off) |
+| `dpdk.ergon.io/<ctr>` | `ena-pair` | `ERGON_IO_FSTACK`, `ERGON_IO_SMOLTCP`, `ERGON_DPDK_PCI`, `ERGON_DPDK_ADDR`, `ERGON_DPDK_GATEWAY` (copied from a NIC device plugin's pair; default off) |
 | `cpu-partition.ergon.io/<ctr>` | `isolated` | `ERGON_ISOLATED_CGROUP`, `ERGON_ISOLATED_CPUS`, `ERGON_SHARED_CPUS` |
 | `seccomp.ergon.io/<ctr>` | `io-uring` or `runtime-default` | `ERGON_SECCOMP` |
 | `ptp.ergon.io/<ctr>` | `off`, `auto`, or `/dev/ptpN` | `ERGON_PTP_DEVICE`, `ERGON_NODE_FACTS` |
@@ -255,22 +250,6 @@ Why it is off: its one committed A/B (run `070339Z`, `rt` arm) is mixed, and und
 | `test/manifests/` | one manifest per e2e case (`*-yes`, `*-no`, `*-nolimit`, `*-bad`, `seccomp-localhost`) |
 
 The two `node/` files are node config, not pod extensions.
-
-## Benchmark modes (M0–M6)
-
-One entry point, one mode set: `md-dpdk/benches/cloud/aws/eks-nri.sh`.
-Manifests live in `md-dpdk/benches/cloud/aws/latency-bench.d/`. No mode has
-a committed result yet.
-
-| mode | what it adds |
-|---|---|
-| M0 `baseline` | plain emptyDir `AERON_DIR`, default seccomp, no extension annotations, no probe |
-| M1 `hugepages` | sized hugetlbfs on `/dev/hugepages` via NRI `AddMount`; the app points `AERON_DIR` there |
-| M2 `partition` | `cpuset.cpus.partition=isolated` on the exclusive CPUs |
-| M3 `seccomp` | RuntimeDefault plus the `io_uring_*` allow rule (never Unconfined) |
-| M4 `devices` | PHC `/dev/ptp*` read-only via NRI `AddDevice`; `cpuqos` only on x86 |
-| M5 `probe` | baseline plus a `livenessProbe.exec` every 1 s: the harm the admission extension removes |
-| M6 `all` | M1+M2+M3+M4 together, no probe |
 
 ## Build and test
 

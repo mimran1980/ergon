@@ -4,8 +4,8 @@ ergon-tune checks a Linux host's low-latency settings. Each finding says what
 is wrong, the exact fix, and its evidence: an archived A/B where one exists
 ([evidence](#evidence-per-check)), otherwise the kernel's, Kubernetes', Aeron's
 or a vendor's documentation and "not measured here".
-It changes nothing. ergon-io and the ergon-md-dpdk media driver run the checks
-for you ([where](#where-the-checks-run)).
+It changes nothing. Call the checks from your own process, or run the
+`ergon-tune` command on the node ([where](#where-the-checks-run)).
 
 > **AI assistance.** Like the rest of ergon, this crate was written with heavy
 > AI assistance ([disclosure](../project/ai-assistance.md)). It is not
@@ -33,31 +33,31 @@ In brackets: the check (T1–N4). Times are in µs.
 | [`nohz_full`](../deploy/hosts.md#kernel-command-line) | A boot option that stops nearly all timer ticks on the listed CPUs while one task runs there. | Use it with `isolcpus` (T1). |
 | [`rcu_nocbs`](../deploy/hosts.md#kernel-command-line) | A boot option that moves RCU callbacks (the kernel's deferred clean-up work) off the listed CPUs. | Part of T1's boot line. Not measured alone. |
 | [IRQ affinity](../deploy/hosts.md#interrupts-and-the-nic) | The CPUs an interrupt may run on. `irqaffinity` sets the boot default; `/proc/irq/<n>/smp_affinity_list` sets one interrupt's. | NIC interrupts on the loop's CPU cost the tail (T2). |
-| [SMT siblings](../deploy/hosts.md#cpu-layout) (hyperthreads) | Two hardware threads that share one core. | A busy sibling slows the loop: measured for ergon-io's SQPOLL thread on the sibling (T10). Graviton, AWS's Arm CPU, has no SMT. |
+| [SMT siblings](../deploy/hosts.md#cpu-layout) (hyperthreads) | Two hardware threads that share one core. | A busy sibling slows the loop: measured for an `io_uring` SQPOLL thread on the sibling (T10). Graviton, AWS's Arm CPU, has no SMT. |
 | real-time scheduling (`SCHED_FIFO`, `SCHED_RR`) | Runs a thread ahead of all normal ones. RT throttling caps it at 0.95 s a second by default. | Its CPU's tick stays on; the latency A/B was inconclusive (T7). |
 | [CPU quota (CFS quota)](../deploy/kubernetes.md#latency-checklist) | A cgroup's CPU limit: its threads may run for the quota in each period (100 ms by default). Kubernetes sets one from a container's CPU limit, `docker run --cpus` too. | A busy-spinning thread runs at the cap: when the cgroup's threads use the quota up, the kernel stops all of them until the period ends (T9). |
 | throttled, `nr_throttled` | A cgroup stopped because its quota ran out. `nr_throttled` in its `cpu.stat` counts the periods it happened in. | Should not grow for a busy-spinning container. `cpu.stat.local` also counts a parent's (a pod's) quota (T9). |
 | [CPU idle states (C-states), frequency](../deploy/hosts.md#c-states) | How deeply an idle CPU sleeps, and how fast it runs. | Deeper sleep saves power but wakes later. Not checked. |
 | [transparent hugepages (THP)](../deploy/hosts.md#memory) | The kernel's own 2 MiB pages: `always`, or where the app asks (`madvise`). `khugepaged` builds them in the background. | `khugepaged` works in the background, under `madvise` too (on the regions that asked). Not measured with archived data (T3). |
-| Aeron directory | Where Aeron, the messaging library under ergon's transports, keeps its buffers as memory-mapped files. | On a disk filesystem, the kernel writes them back to disk (T4). |
-| media driver | Aeron's process that moves messages between the network and the applications, through the Aeron directory. | The ergon-md-dpdk one runs these checks before it starts. |
+| Aeron directory | Where Aeron, the messaging library, keeps its buffers as memory-mapped files. | On a disk filesystem, the kernel writes them back to disk (T4). |
+| media driver | Aeron's process that moves messages between the network and the applications, through the Aeron directory. | A media driver should run these checks before it starts (`Component::Md`). |
 | tmpfs, [hugetlbfs](../deploy/hosts.md#memory) | Filesystems held in memory. `/dev/shm` is tmpfs; hugetlbfs uses reserved 2 MiB pages. | T4 wants the Aeron directory on one: nothing is written back to disk. |
 | NUMA node | A group of CPUs and the memory nearest them. Large hosts have several. | A NIC on another node makes every packet cross between nodes (T6). Every lab host had one: not measured. |
 | automatic NUMA balancing | The kernel unmaps pages to see which CPU uses them, and moves them closer. | Each unmap gives a pinned thread a page fault: a stop to map the page back (T5). Not measured. |
-| kernel UDP | UDP through the kernel's network stack and sockets. *Plain*: interrupt-driven, no busy polling. | No setup. Against DPDK: [ergon-md-dpdk](../md-dpdk/overview.md). |
+| kernel UDP | UDP through the kernel's network stack and sockets. *Plain*: interrupt-driven, no busy polling. | No setup. |
 | interrupt-driven | Packets reach the socket through the NIC's interrupt, not busy polling. | Each packet waits for an interrupt (and any moderation delay: N1). |
 | [NIC receive queue](../deploy/hosts.md#interrupts-and-the-nic) | A lane the NIC puts arriving packets on. Each has its own interrupt. | After every reset, ENA puts queue *i*'s interrupt on CPU *i*, isolated CPUs included (T2). |
 | [interrupt moderation](../deploy/hosts.md#interrupts-and-the-nic) (`rx-usecs`) | The NIC waits up to `rx-usecs` µs so one interrupt covers several packets. | Fewer interrupts, later packets (N1). |
 | adaptive RX moderation | The driver re-tunes that wait by itself, from a kernel worker. | On AWS that worker pre-empted a busy-polling loop about 18 times a second, and not at all with it off (N1). |
-| [busy polling](../deploy/hosts.md#interrupts-and-the-nic) | A socket read polls the NIC queue itself instead of sleeping until an interrupt. | ergon-io's backends: [which backend](../io/backends.md). |
+| [busy polling](../deploy/hosts.md#interrupts-and-the-nic) | A socket read polls the NIC queue itself instead of sleeping until an interrupt. | Per socket with `SO_BUSY_POLL`; the global sysctls reach every socket on the host. |
 | deferred interrupts (`napi_defer_hard_irqs`, `gro_flush_timeout`) | The kernel keeps the NIC's interrupts off and polls from a timer instead, so a busy poller can take the packets. | With no busy poller, packets wait for the timer (N2). |
 | [RX ring](../deploy/hosts.md#interrupts-and-the-nic) | The NIC's buffer for arriving packets: how many it can hold. | Too small drops bursts (N4). |
 | NIC reset | The driver restarts the NIC: a device reset, `ethtool -G` or `-L`, a NIC back from DPDK. | On ENA it undoes T2 and N1: re-apply at each link-up. Checks re-run when `carrier_changes` moves. |
 | ENA | AWS's virtual NIC (Elastic Network Adapter) and its Linux driver. | N1 checks its adaptive moderation. |
 | `ethtool` | Linux's tool for NIC settings: `-C` moderation, `-G` ring sizes, `-L` queue counts. | N1 and N4 read the same settings over netlink (a kernel socket API), without root. |
 | accelerated networking (VF) | Azure gives the VM a virtual function (VF): a slice of the real NIC (SR-IOV). | Without it, traffic takes the hypervisor's (Hyper-V's) slower software path (N3). |
-| [DPDK](../md-dpdk/overview.md) | A library that drives the NIC from user space, skipping the kernel. | Its gains and costs: [ergon-md-dpdk](../md-dpdk/overview.md#why-bypass-is-faster-and-what-it-costs). |
-| [SQPOLL thread](../io/backends.md) | An io_uring kernel thread that runs the ring's requests, so the loop makes no system calls. `sqpoll_cpu` pins it. | It spins, so its CPU is hot: T1 and T8 check it. |
+| DPDK | A library that drives the NIC from user space, skipping the kernel. | Its process needs the NIC pair (T24) and its own isolated cores. |
+| SQPOLL thread | An io_uring kernel thread that runs the ring's requests, so the loop makes no system calls. Pin it to a CPU of its own. | It spins, so its CPU is hot: T1 and T8 check it. |
 | sysfs, `/proc` | Files under `/sys` and `/proc` where the kernel shows its settings. | Most checks only read these, so they also run on a copied tree (`Host::at`). |
 | NAK | An Aeron receiver's request to resend lost data. | NAKs in bursts with kernel busy polling: check the RX ring (N4). |
 | open loop | Each message is timed from when it was due, not when it was sent. | A stall counts against every message it delays. |
@@ -87,7 +87,7 @@ In brackets: the check (T1–N4). Times are in µs.
 | T1 | CPU isolation: `isolcpus`, `nohz_full`, `irqaffinity` | `isolcpus` keeps other tasks off the loop's CPU. `nohz_full` stops its timer tick, an interrupt `CONFIG_HZ` times a second (1,000 on the AWS lab's Ubuntu kernel). `irqaffinity` sends new interrupts elsewhere. `isolcpus` alone leaves the tick on. |
 | T2 | NIC interrupt placement | Each NIC receive queue raises interrupts. On the loop's CPU, the kernel runs the handler instead of the loop. |
 | T3 | transparent hugepages (THP) | The kernel thread `khugepaged` merges small pages into 2 MiB pages in the background. Its `lru_add_drain_all` ran a kworker on an isolated spin CPU ([nri-shared-cpus lab](https://github.com/mimran1980/ergon/blob/main/k8s/nri-shared-cpus/BENCHMARKS.md#what-reached-the-exclusive-cpu-and-the-fix)). |
-| T4 | the Aeron directory's filesystem | Aeron, the messaging library under ergon's transports, keeps its buffers in memory-mapped files in one directory. On a disk filesystem the kernel writes them back to disk. |
+| T4 | the Aeron directory's filesystem | Aeron, the messaging library, keeps its buffers in memory-mapped files in one directory. On a disk filesystem the kernel writes them back to disk. |
 | T5 | automatic NUMA balancing | On a host with several memory nodes, the kernel unmaps pages to see which CPU uses them, so pinned threads take page faults. |
 | T6 | the NIC's NUMA node | A NIC on another node makes every packet cross between the sockets. |
 | T7 | real-time scheduling | `SCHED_FIFO` or `SCHED_RR` keeps the CPU's tick on. RT throttling (the kernel's cap on real-time threads, 0.95 s of each second by default) can take the CPU away. |
@@ -107,7 +107,7 @@ In brackets: the check (T1–N4). Times are in µs.
 | T21 | TCP autocorking | `net.ipv4.tcp_autocorking` in the process's network namespace. On: a small send waits for the previous one's transmit to complete, `TCP_NODELAY` or not. A warning for latency-sensitive TCP, info otherwise. |
 | T22 | Aeron affinity names | Aeron's affinity settings named as before 1.54 (`AERON_DRIVER_CPUSET_AFFINITY`, `AERON_DRIVER_CPUSET_WARNINGS_AS_ERRORS`) in the environment. Aeron 1.54 ignores them: rename to `AERON_THREAD_AFFINITY_USE_CPUSET_OFFSETS` and `AERON_THREAD_AFFINITY_FAIL_ON_VALIDATION_ERRORS`. |
 | T23 | Aeron on 2 MiB pages | `AERON_DIR` on hugetlbfs without `AERON_FILE_PAGE_SIZE=2097152` and `AERON_TERM_BUFFER_SPARSE_FILE=false`. The shared-CPU plugin sets both from `hugepages.ergon.io/<container>: "2M"`. The process still sets `AERON_DIR`. Address, gateway and PCI stay unset. |
-| T24 | the device plugin's NIC pair | On `fstack-spin`, `smoltcp-spin` or the `dpdk-ena` media driver: `RUSTERON_DPDK_SENDER_{PCI,IPV4_CIDR,GATEWAY}` missing, empty or unparsable, warn with the exact keys. All three set: the finding prints the shortest `fstack-spin` and `smoltcp-spin` lines built from them (copied, never guessed); a bare `fstack-spin` or an empty smoltcp line takes the same values itself. Not on DPDK, or no pair granted: ok — the device plugin has not granted a pair, not a guessed address. Reads only: it exports nothing, binds no NIC, sets no `AERON_DIR`, and is never unknown. |
+| T24 | a DPDK NIC pair | For a caller on DPDK (the `fstack-spin` and `smoltcp-spin` line formats, or a `dpdk-ena` media driver), which needs a NIC device plugin, not shipped here, to inject the pair: `RUSTERON_DPDK_SENDER_{PCI,IPV4_CIDR,GATEWAY}` missing, empty or unparsable, warn with the exact keys. All three set: the finding prints the shortest `fstack-spin` and `smoltcp-spin` lines built from them (copied, never guessed); a bare `fstack-spin` or an empty smoltcp line takes the same values itself. Not on DPDK, or no pair granted: ok — no device plugin granted a pair, not a guessed address. Reads only: it exports nothing, binds no NIC, sets no `AERON_DIR`, and is never unknown. |
 | K1 | the pod's `QoS` class | Anything but Guaranteed gets a CPU limit and shares CPUs; the loop runs at the cap or with a neighbour. Fix (pod spec): `resources.requests` = `resources.limits`. |
 | K2 | exclusive CPUs | The shared pool means other pods land on the loop's CPU. Fix (node): kubelet `cpuManagerPolicy: static` (with `full-pcpus-only` on x86); fix (pod spec): whole-CPU requests in a Guaranteed pod. |
 | K3 | the loop's SMT sibling | A sibling in another pod is a busy neighbour (the T10 numbers). Fix (node): turn SMT off; fix (pod spec): ask for whole cores so both siblings come together. |
@@ -149,7 +149,7 @@ Not checked: CPU idle states and frequency.
 | another program's threads on the loop's CPU | T15 | boot with `isolcpus=domain,<hot>`; systemd `CPUAffinity=<housekeeping>`; `taskset -apc <housekeeping> <pid>`; kubelet `reservedSystemCPUs` |
 | interrupt-driven receive slow at low rates on Intel (p50 tens of µs above a polling arm); `intel_idle` | T20 | per IRQ CPU `echo 1 > /sys/devices/system/cpu/cpu<N>/cpuidle/state<i>/disable` for each state past C1, or `echo 1 > …/cpu<N>/power/pm_qos_resume_latency_us`; at boot `intel_idle.max_cstate=1` (every CPU). Node settings: a pod cannot write `/sys`, and holds `/dev/cpu_dma_latency` only privileged |
 | small TCP sends late though `TCP_NODELAY` is set; nstat `TcpExt TCPAutoCorking` grows | T21 | `sysctl -w net.ipv4.tcp_autocorking=0` in the sender's network namespace: a pod's `securityContext.sysctls` (an unsafe sysctl: kubelet `--allowed-unsafe-sysctls`), the node for `hostNetwork` |
-| a DPDK backend or the `dpdk-ena` media driver starts without the NIC pair, or with an unparsable one | T24 | give the pod the `rusteron.io/dpdk-ena-pair` resource: the device plugin injects the three `RUSTERON_DPDK_SENDER_*` keys, and the finding prints the copy lines built from them |
+| a DPDK process starts without the NIC pair, or with an unparsable one | T24 | the NIC device plugin (not shipped here) must inject the three `RUSTERON_DPDK_SENDER_*` keys; the finding prints the copy lines built from them |
 | stalls no host setting explains | T16, T18 | `bpftool prog show` and `/sys/kernel/debug/kprobes/list` (root) for the owners of instrumentation; for steal, an instance whose vCPUs are not shared, or bare metal |
 
 Each finding carries the fix for that host, with its real CPU lists and IRQ
@@ -158,9 +158,10 @@ numbers. T1 with the loop on CPU 2 of 8:
 
 ## Evidence per check
 
-Each finding's `evidence` field names its source. The A/B tables are in
-`io/benches/results/<run>/tables.md` (or `tables-local.md`). All are AWS
-`c7i` in Tokyo; each figure in a finding keeps its max.
+Each finding's `evidence` field names its source. The A/B tables are in git
+history: `git show 128747b9^:io/benches/results/<run>/tables.md` (or
+`tables-local.md`; reachable from tags v0.1.30 to v0.1.33). All are AWS `c7i` in Tokyo; each figure in a finding
+keeps its max.
 
 | check | evidence | status |
 |---|---|---|
@@ -170,21 +171,24 @@ Each finding's `evidence` field names its source. The A/B tables are in
 | T8 | two threads on one CPU: not measured here; a busy sibling: T10's run | partly measured |
 | T10, K3 | run `flags-aws-20261015T122127Z` (SQPOLL on the loop's sibling, three rounds); other sibling loads not measured | measured |
 | N1 | runs `flags-aws-20261015T070339Z` (`base`, `nodim`, `nocoalesce`, two reps each) | measured, x86 busy polling only |
-| T20 | lab session `aws-20261028-092158` (`c7i.4xlarge`, mio TCP at 10k msg/s, the IRQ CPU uncapped, at C1, polling; three reps, its cpuidle usage read per point): p50 43–160 → 37–39 µs, p99 315–559 → 44–49 µs ([BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#c7i-the-irq-cpus-idle-depth)) | measured, x86 `intel_idle` |
+| T20 | lab session `aws-20261028-092158` (`c7i.4xlarge`, mio TCP at 10k msg/s, the IRQ CPU uncapped, at C1, polling; three reps, its cpuidle usage read per point): p50 43–160 → 37–39 µs, p99 315–559 → 44–49 µs, max not recorded (`git show v0.1.37:md-dpdk/BENCHMARKS.md`, "c7i: the IRQ CPU's idle depth") | measured, x86 `intel_idle` |
 | T21 | the same sessions' nstat `TCPAutoCorking`: 49k–164k of ~600k sends a host corked with the IRQ CPU in C6, 42–149 at C1; `net/ipv4/tcp.c` `tcp_should_autocork` | counted, latency not separated |
 | T3, T4, T5, T6, T9, T11–T19, T22–T24, K1, K2, K4–K7, N2, N3, N4 | kernel, Kubernetes, Aeron, chrony, AWS or Azure documentation | not measured here |
 
 ## Where the checks run
 
-| component | checks | when | switch |
-|---|---|---|---|
-| ergon-io's `Driver` (`Component::Io`) | T1 and T8 on the loop's CPU (and `sqpoll_cpu`); T7 on the calling thread; T9, T10; T3 as info; T24 on the DPDK backends (`fstack-spin`, `smoltcp-spin`); K1–K6 inside a pod (K7 needs a named NIC, which ergon-io does not pass) | `Driver::new`; read them back with `Driver::host_report()` | `ERGON_HOST_CHECKS`: `on` (default), `off` (no warning line; the results stay) or `require` (a warning, or an unproven proof check, stops the start) |
-| ergon-io's `Driver` | T2, N1, N2 (interrupt-driven backends only), N3 on each connection's egress NIC | after the first route lookup to it; again after a NIC reset | `quickack_check=off` skips them |
-| ergon-io's `Driver` | T19 on the thread creating the driver (taken to be the polling thread, once per thread) | every 5 s, from its warning thread | `ERGON_HOST_CHECKS=off` drops the warning lines |
-| the ergon-md-dpdk media driver (`Component::Md`) | T1, T3, T4, T5, T7, T8, T9, T10, T22, T23; T24 when the DPDK transport is in use; T2 and T6 on the data NICs; on the socket transport also N1, N2, and N4 with busy polling | before the driver starts; N1 and T2 again after a NIC reset, on its `md-host-checks` thread | `ERGON_HOST_CHECKS`: `on`/`warn` (default), `off` (no check runs at all) or `require` (any warning or unproven proof stops the start) |
-| your own busy loop (`Component::Rt`) | any of them: T1, T3, T4 (the directory it connects to), T5, T7, T8, T9, T10, T11, T12, T13–T18, T21, T22; K1–K7 inside a pod; on a kernel NIC also T2, T20, N1, N2, N3; `ThrottleWatch`, `ClockWatch`, `FaultWatch` | before the loop; the NIC checks again when the NIC's `carrier_changes` moves; `ThrottleWatch::check`, `ClockWatch::check` and `FaultWatch::check` every few seconds from housekeeping | none: skip a check by not calling it |
+The callers are not in this repository: each row is what that kind of
+caller should run.
 
-Neither ergon-io nor the media driver runs T13–T18, T20 or T21 yet: call them yourself.
+| caller | checks | when |
+|---|---|---|
+| a network I/O loop (`Component::Io`) | T1 and T8 on the loop's CPU (and an SQPOLL CPU); T7 on the calling thread; T9, T10; T3 as info; T24 on DPDK; K1–K6 inside a pod; T2, N1, N2, N3 on each connection's egress NIC; T19 on the polling thread | at start; the NIC checks again after a NIC reset; T19 every few seconds from housekeeping |
+| a media driver (`Component::Md`) | T1, T3, T4, T5, T7, T8, T9, T10, T22, T23; T24 on a DPDK transport; T2 and T6 on the data NICs; on the socket transport also N1, N2, and N4 with busy polling | before the driver starts; N1 and T2 again after a NIC reset |
+| your own busy loop (`Component::Rt`) | any of them: T1, T3, T4 (the directory it connects to), T5, T7, T8, T9, T10, T11, T12, T13–T18, T21, T22; K1–K7 inside a pod; on a kernel NIC also T2, T20, N1, N2, N3; `ThrottleWatch`, `ClockWatch`, `FaultWatch` | before the loop; the NIC checks again when the NIC's `carrier_changes` moves; `ThrottleWatch::check`, `ClockWatch::check` and `FaultWatch::check` every few seconds from housekeeping |
+
+Read `ERGON_HOST_CHECKS` through `HostCheckPolicy`: `on` (default), `off`
+(no warning line; the results stay) or `require` (a warning, or an unproven
+proof check, stops the start). Skip a check by not calling it.
 
 Every printed warning line ends with `(ERGON_HOST_CHECKS=off silences host-check
 warnings)`. The K checks run only inside a pod (the `kubepods` cgroup path, the
@@ -214,17 +218,42 @@ Two consequences under `require`:
 
 Limits:
 
-- **ergon-io** needs the loop's CPU: pin the thread that calls `Driver::new`
-  to one CPU, or set `loop_cpu`. Otherwise it skips T1, T8 and T2, and says so.
-- **The media driver** checks the socket transport's NICs only if
-  `RUSTERON_MEDIA_DRIVER_DATA_NICS` names them. It adds its own checks, M1–M4
-  ([ergon-md-dpdk](../md-dpdk/overview.md)).
-- Both print each finding once on stderr, never from a busy thread.
+- **Name the loop's CPU.** T1, T8 and T2 need it in the `HotSet`: pin the
+  thread first, then pass its CPU.
+- **A media driver** knows its data NICs only if its configuration names
+  them; pass them to T2, T6 and the N checks.
+- Print each finding once on stderr, never from a busy thread.
 - **In a pod** the NIC checks report unknown: run them on the node
   ([Kubernetes](../deploy/kubernetes.md)). T9 reads the container's own
   cgroup; the pod's quota shows only in `cpu.stat.local` (Linux 6.6+), which
   `ThrottleWatch` reads.
 - **In CI**, run them on a captured `/sys` and `/proc` tree: `Host::at(dir)`.
+
+## Check a node first: the `ergon-tune` command
+
+Before deploying, run the checks on the node, or in a pod that mounts the
+node's root, and fix what they report:
+
+```sh
+cargo install ergon-tune
+ergon-tune --hot 2-7 --nic ens6 --tcp           # on the node
+ergon-tune --root /host --hot 2-7 --require     # a pod with the node's / at /host
+```
+
+| Option | Meaning |
+|---|---|
+| `--hot CPUS` | the busy-spinning CPUs; default the node's isolated ones |
+| `--nic NAME\|PCI` | a data NIC (`ens6`) or DPDK port (`0000:00:06.0`): adds T2, T6, T20; repeatable |
+| `--tcp` | the app sends latency-sensitive TCP: T21 warns |
+| `--busy-poll` | sockets busy-poll: K5 asks for `CAP_NET_ADMIN` |
+| `--component io\|md\|rt` | who spins, for T3's severity (default `md`) |
+| `--root DIR` | check a mounted tree instead of `/` |
+| `--all` | print the checks that passed too |
+| `--require` | exit 1 where `ERGON_HOST_CHECKS=require` would refuse a start |
+
+Each line is a finding (`WARN`, `info`, `UNKNOWN`, `ok`) with its evidence and
+its fix; a summary line ends the output. Exit status: 0 reported, 1 refused
+(`--require`), 2 usage.
 
 ## Call them yourself
 
@@ -301,7 +330,7 @@ too.
 ```
 
 - **Warn**: fix it.
-- **Info**: real but minor, such as THP for ergon-io or an IRQ whose new
+- **Info**: real but minor, such as THP for a network I/O loop or an IRQ whose new
   affinity takes effect at its next interrupt.
 - **Unknown** is never a warning: a pod's network namespace, `hidepid`, an
   interface with no device, not Linux. Log it as info.
@@ -318,8 +347,8 @@ too.
 
 ## Best practices and pitfalls
 
-- **Pin first, then check.** ergon-io takes the loop's CPU from the calling
-  thread's affinity.
+- **Pin first, then check.** Name the CPU the thread is pinned to, not the
+  one it happens to run on.
 - **Re-check after every NIC reset.** Whenever ENA brings an interface up (a
   device reset, `ethtool -G` or `-L`, a NIC handed back from DPDK), it puts
   queue *i*'s interrupt on CPU *i*, isolated CPUs included, and turns adaptive

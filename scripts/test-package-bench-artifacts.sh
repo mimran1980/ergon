@@ -236,7 +236,7 @@ check "missing cluster fails closed" \
 
 # ── 7. Cluster archive carries only the run's own evidence ──────────────
 # The cluster Criterion home is shared (`target/criterion` also holds
-# ergon-md-dpdk's `clock_read` groups) and Criterion leaves `new/` in place for groups
+# other binaries' groups) and Criterion leaves `new/` in place for groups
 # a run does not touch. `repeats/<k>/` is what the runner snapshotted for this
 # run and what the gate grades, so the archive and the manifest's estimate
 # count must come from there — not from whatever else lives under the home.

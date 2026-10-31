@@ -1,3 +1,4 @@
+<!-- Generated page: edits here are overwritten by the next export. sha256:8bc034d20058421f332057995dd440e678ccbaf7d3657b737f28749aa14b320f -->
 # WebSocket
 
 `WsConn` is a TLS 1.3 WebSocket client that a `Driver` owns.
@@ -22,10 +23,147 @@ Connect, subscribe, print each message, reconnect and subscribe again after
 a drop, then close cleanly:
 
 ```rust,ignore
-{{#include ../../../io/examples/websocket.rs:example}}
+use ergon_io::reconnect::{Closed, LinkId, LinkState, Retry};
+use ergon_io::{ConnId, Error, Handler, Reconnect, RxMeta, WsDial, WsHandler};
+
+/// Sent on every connect and reconnect.
+pub const SUBSCRIBE: &str = r#"{"action":"subscribe","channel":"updates"}"#;
+
+/// The application. `Driver::poll` calls it.
+pub struct App {
+    /// Keeps the connection open: reopens it with backoff after a drop.
+    pub links: Reconnect<WsDial>,
+    /// The one link (a connection that `links` keeps open).
+    pub link: LinkId,
+    /// Connections opened during the last poll: subscribe on them.
+    opened: Vec<ConnId>,
+    /// Close after this many messages.
+    pub limit: u64,
+    /// Messages received.
+    pub messages: u64,
+    /// Connections opened; more than 1 means it reconnected.
+    pub opens: u32,
+}
+
+impl App {
+    /// `dial` builds a fresh connection set-up for each attempt.
+    ///
+    /// # Errors
+    /// `retry` is out of range.
+    pub fn new(
+        retry: Retry,
+        dial: impl FnMut() -> ergon_io::Result<WsDial> + 'static,
+        limit: u64,
+    ) -> ergon_io::Result<Self> {
+        let mut links = Reconnect::new(retry)?;
+        let link = links.add(dial);
+        Ok(Self {
+            links,
+            link,
+            opened: Vec::new(),
+            limit,
+            messages: 0,
+            opens: 0,
+        })
+    }
+
+    /// Closed cleanly, or the link gave up.
+    #[must_use]
+    pub fn finished(&self) -> bool {
+        matches!(
+            self.links.state(self.link),
+            Some(LinkState::Stopped | LinkState::GaveUp)
+        )
+    }
+}
+
+impl Handler for App {
+    fn on_open(&mut self, id: ConnId) {
+        if let Some(opened) = self.links.on_open(id) {
+            self.opens += 1;
+            if opened.reconnect {
+                println!("reconnected: subscribing again");
+            }
+            // Sends wait until `poll` returns: remember the connection.
+            self.opened.push(id);
+        }
+    }
+
+    fn on_closed(&mut self, id: ConnId, error: Error) {
+        println!("closed: {error}");
+        if let Some(Closed::Retry { delay_ms, .. }) = self.links.on_closed_with(id, &error) {
+            println!("reconnecting in {delay_ms} ms");
+        }
+    }
+}
+
+impl WsHandler for App {
+    fn on_message(&mut self, _: ConnId, _: u8, payload: &[u8], _: &RxMeta, _: u16) {
+        // `payload` points into the receive buffer: use it during this call only.
+        println!("{}", std::str::from_utf8(payload).unwrap_or("<binary>"));
+        self.messages += 1;
+    }
+}
+
+/// The loop: runs until the clean close, or until the link gives up.
+///
+/// # Errors
+/// The backend failed. A connection that fails goes to `on_closed` instead.
+#[cfg(target_os = "linux")]
+pub fn run(config: ergon_io::Config, app: &mut App) -> ergon_io::Result<()> {
+    use ergon_io::{Driver, WsConn};
+
+    let mut driver: Driver<WsConn> = Driver::new(config)?;
+    let mut closing = false;
+    while !app.finished() {
+        driver.poll(app)?; // receive, decrypt, deliver, send
+        app.links.poll(&mut driver); // start a reconnect when one is due
+        for id in app.opened.drain(..) {
+            // A connection the server is already closing takes no sends.
+            if let Some(mut conn) = driver.get_mut(id)
+                && !conn.is_closing()
+            {
+                conn.send_text(SUBSCRIBE)?;
+            }
+        }
+        if app.messages >= app.limit && !closing {
+            closing = true;
+            app.links.stop(app.link); // no reconnect after this close
+            if let Some(LinkState::Open(id)) = app.links.state(app.link)
+                && let Some(mut conn) = driver.get_mut(id)
+                && !conn.is_closing()
+            {
+                // `on_closed` follows once the server answers.
+                conn.close(1000, "done")?;
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(all(target_os = "linux", feature = "webpki-roots"))]
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    use ergon_io::{Config, Target, WsOptions, tls};
+
+    let mut args = std::env::args().skip(1);
+    let limit: u64 = args.next().map_or(Ok(20), |a| a.parse())?;
+    let config = Config::parse(&args.next().unwrap_or_else(|| "recv-busy".into()))?;
+    // In production, pin this thread to an isolated core first.
+    let tls = tls::client_config(tls::webpki_roots())?;
+    let host = args.next().ok_or("missing WebSocket host")?;
+    let port = args.next().ok_or("missing WebSocket port")?.parse()?;
+    let path = args.next().ok_or("missing WebSocket path")?;
+    let target = Target::new(host, port, path);
+    // Limits, pings and timeouts: WsOptions.
+    let dial = move || WsDial::with_options(target.clone(), tls.clone(), WsOptions::default());
+    let mut app = App::new(Retry::default(), dial, limit)?;
+    run(config, &mut app)?;
+    println!("{} messages, {} connection(s)", app.messages, app.opens);
+    Ok(())
+}
 ```
-*(From `io/examples/websocket.rs`. `cargo test -p ergon-io` builds it, and
-`io/tests/example_websocket.rs` runs it against a local server on every
+*(From `ergon-io/examples/websocket.rs`. `cargo test -p ergon-io` builds it, and
+`ergon-io/tests/example_websocket.rs` runs it against a local server on every
 backend: a server close, the reconnect, the second subscribe and the clean
 close.)*
 
@@ -103,18 +241,108 @@ cargo run -p ergon-io --features webpki-roots --example websocket -- 20 recv-bus
 Keep one channel, skip the rest:
 
 ```rust,ignore
-{{#include ../../../io/tests/ws_receive.rs:skip}}
+/// Keeps one channel of a feed. Every other message is dropped on its first
+/// frame: never copied, never checked for UTF-8. A fragmented trade arrives
+/// as slices of the receive buffer.
+#[derive(Default)]
+struct Trades {
+    bytes: usize,
+    messages: usize,
+}
+
+impl Handler for Trades {}
+
+impl WsHandler for Trades {
+    fn on_message_start(
+        &mut self,
+        _: ConnId,
+        _: u8,
+        first: &[u8],
+        _: bool,
+        _: &RxMeta,
+    ) -> Interest {
+        if first.starts_with(br#"{"ch":"trades""#) {
+            Interest::Fragments
+        } else {
+            Interest::Skip
+        }
+    }
+
+    // Unfragmented: one slice.
+    fn on_message(&mut self, _: ConnId, _: u8, payload: &[u8], _: &RxMeta, _: u16) {
+        self.messages += 1;
+        self.bytes += payload.len();
+    }
+
+    // Fragmented: one slice per fragment, in order (`copy_to` joins them).
+    fn on_fragments(&mut self, _: ConnId, _: u8, m: &Fragments<'_>, _: &RxMeta, _: u16) -> Flow {
+        self.messages += 1;
+        for part in m {
+            self.bytes += part.len();
+        }
+        Flow::Continue
+    }
+}
 ```
-*(From `io/tests/ws_receive.rs`, which `cargo test -p ergon-io` runs on
+*(From `ergon-io/tests/ws_receive.rs`, which `cargo test -p ergon-io` runs on
 every platform; the test feeds it TLS records sealed with a real
 handshake's key.)*
 
 Stream large messages and stop early on the ones not needed:
 
 ```rust,ignore
-{{#include ../../../io/tests/ws_stream.rs:stream}}
+/// Reads only the messages it needs from a feed of large fragmented ones:
+/// the kind is in the first fragment, so every other message is dropped
+/// there (`SkipRest`: its other fragments are never copied or checked).
+/// With `TextCheck::AsciiChecked`, `meta.text` says each fragment is ASCII: any
+/// byte index is a character boundary.
+#[derive(Default)]
+struct FillReader {
+    fills: usize,
+    bytes: usize,
+    stopped: usize,
+    unchecked: usize,
+}
+
+impl Handler for FillReader {}
+
+impl WsHandler for FillReader {
+    // Unfragmented messages arrive whole.
+    fn on_message(&mut self, _: ConnId, _: u8, payload: &[u8], _: &RxMeta, _: u16) {
+        if payload.starts_with(br#"{"kind":"fill""#) {
+            self.fills += 1;
+            self.bytes += payload.len();
+        }
+    }
+
+    fn on_message_start(&mut self, _: ConnId, _: u8, _: &[u8], _: bool, _: &RxMeta) -> Interest {
+        Interest::Stream
+    }
+
+    // Fragmented ones arrive a fragment at a time, nothing held.
+    fn on_fragment(
+        &mut self,
+        _: ConnId,
+        _: u8,
+        part: &[u8],
+        index: u32,
+        fin: bool,
+        meta: &RxMeta,
+    ) -> Flow {
+        if index == 0 && !part.starts_with(br#"{"kind":"fill""#) {
+            self.stopped += 1;
+            return Flow::SkipRest;
+        }
+        if meta.text != TextStatus::Ascii {
+            self.unchecked += 1;
+        }
+        self.bytes += part.len();
+        self.fills += usize::from(fin);
+        Flow::Continue
+    }
+}
 ```
-*(From `io/tests/ws_stream.rs`, run the same way.)*
+*(From `ergon-io/tests/ws_stream.rs`, run the same way.)*
 
 `Fragments`: `len()` (payload bytes), `count()` (slices), `iter()` /
 `for part in &m`, `get(i)`, `contiguous()` (`Some` with one slice), and
@@ -185,9 +413,27 @@ operations, safe whatever the bytes are, and none allocates. Only
 undefined behaviour (debug builds assert; release builds read nothing).
 
 ```rust,ignore
-{{#include ../../../io/tests/ws_stream.rs:trusted}}
+/// A feed known to send ASCII, under `TextCheck::Ascii`: the payload is
+/// never scanned; the handler reads it by byte through `AsciiText`.
+#[derive(Default)]
+struct Prices {
+    last: Vec<u8>,
+}
+
+impl Handler for Prices {}
+
+impl WsHandler for Prices {
+    fn on_message(&mut self, _: ConnId, _: u8, payload: &[u8], _: &RxMeta, _: u16) {
+        let t = AsciiText::new(payload);
+        let Some(at) = t.find(b'=') else { return };
+        if let Some(price) = t.slice(at + 1..) {
+            self.last.clear();
+            self.last.extend_from_slice(price.as_bytes());
+        }
+    }
+}
 ```
-*(From `io/tests/ws_stream.rs`.)*
+*(From `ergon-io/tests/ws_stream.rs`.)*
 
 - On ASCII text `AsciiChecked` and `Utf8` cost the same (the same scan);
   on text with other characters `AsciiChecked` stays one scan while
@@ -204,7 +450,7 @@ undefined behaviour (debug builds assert; release builds read nothing).
   (from the warning thread). The next message starts again at `index` 0, so a handler
   that sees index 0 while it holds a partial message discards it. Pinned
   by `a_streamed_non_ascii_fragment_ends_the_message_without_fin`
-  (`io/tests/ws_stream.rs`).
+  (`ergon-io/tests/ws_stream.rs`).
 - RFC 6455 §8.1 requires invalid UTF-8 to fail the connection. A skipped
   message is never read, so invalid text in it does not close the
   connection. This relaxation is deliberate.
@@ -213,7 +459,7 @@ undefined behaviour (debug builds assert; release builds read nothing).
 
 ### Receive cost
 
-`ws_bench` (`io/benches/src/bin/ws_bench.rs`) times the receive path per
+`ws_bench` times the receive path per
 message on plaintext already in the receive buffer: no socket, no AEAD
 (`--suite rx`, `text`, `frag`, `span`). The handler reads each delivered
 payload's length and end bytes only, so a figure is the connection's cost,
@@ -225,11 +471,11 @@ The counter is `cntvct_el0` at 24 MHz: one tick is 0.65 ns per message at
 K = 64 and 5.2 ns at K = 8.
 
 All figures: ns per message, p50 / p99 / max, native macOS, Apple M1 Pro
-([results](https://github.com/mimran1980/ergon/tree/main/io/benches/results/ws-copy-macos-20261024T172501Z), [`env.txt`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-copy-macos-20261024T172501Z/env.txt)). Maxima are not attributed:
+(results, `env.txt`). Maxima are not attributed:
 macOS cannot pin the thread, and the host's 1-minute load average was
 27–35 during the run (other agents' builds and containers).
 
-**Keep against Fragments and Skip** ([`ws_bench-rx.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-copy-macos-20261024T172501Z/ws_bench-rx.md);
+**Keep against Fragments and Skip** (`ws_bench-rx.md`;
 `TextCheck::Utf8`):
 
 - shape: `whole`: unfragmented, one window; `frag4`: four fragments per
@@ -276,7 +522,7 @@ macOS cannot pin the thread, and the host's 1-minute load average was
   the copy (35.8 against 34.5 ns, 36.4 against 29.9 ns): four slices cost
   more than copying a few hundred bytes. Use `Keep` for small fragmented
   messages.
-- With `TextCheck::None` ([`ws_bench-rx-utf8-off.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-copy-macos-20261024T172501Z/ws_bench-rx-utf8-off.md))
+- With `TextCheck::None` (`ws_bench-rx-utf8-off.md`)
   an unfragmented skipped message costs about the same on both paths (5.2
   against 3.9 ns at 100 B, 7.1 against 7.1 at 4 KiB): the win above is the
   text scan the skip avoids.
@@ -285,13 +531,13 @@ macOS cannot pin the thread, and the host's 1-minute load average was
 
 One unfragmented kept text message per row, `Keep`, the four modes
 interleaved, five runs
-([macOS](https://github.com/mimran1980/ergon/tree/main/io/benches/results/text-trusted-macos-20261024T192059Z),
-[`env.txt`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/text-trusted-macos-20261024T192059Z/env.txt);
-[Linux arm64 VM](https://github.com/mimran1980/ergon/tree/main/io/benches/results/text-trusted-linux-arm64-20261024T192258Z),
-[`env.txt`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/text-trusted-linux-arm64-20261024T192258Z/env.txt)).
+(macOS,
+`env.txt`;
+Linux arm64 VM,
+`env.txt`).
 `ascii`: pure ASCII; `mixed`: a two-byte character every 64 bytes. The
 table is the first macOS run
-([`ws_bench-text-r1.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/text-trusted-macos-20261024T192059Z/ws_bench-text-r1.md)),
+(`ws_bench-text-r1.md`),
 K = 64 (16 at 16 KiB).
 
 | message | text | `None` | `Ascii` | `AsciiChecked` | `Utf8` |
@@ -323,7 +569,7 @@ K = 64 (16 at 16 KiB).
 #### Fragmented messages: Keep, Fragments, Stream
 
 Four fragments per message, `TextCheck::None`, the three interests
-interleaved ([`ws_bench-frag.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-copy-macos-20261024T172501Z/ws_bench-frag.md)):
+interleaved (`ws_bench-frag.md`):
 
 | message | `Keep` | `Fragments` | `Stream` |
 |---|---|---|---|
@@ -344,7 +590,7 @@ Messages back to back, stand-in records of 16 KiB cut wherever they fall,
 so almost every record ends inside a frame. old: the new record is always
 moved back next to the leftover (`WsConn::set_span_back_only`, the join
 before this change); new: the smaller side moves
-([`ws_bench-span.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-copy-macos-20261024T172501Z/ws_bench-span.md)):
+(`ws_bench-span.md`):
 
 | message | old: new record moved back | new: smaller side moved | bytes moved per message, old / new |
 |---|---|---|---|
@@ -360,22 +606,22 @@ before this change); new: the smaller side moves
 #### Linux arm64
 
 The same suites on Linux arm64 in a Docker VM on the same host, pinned to
-CPU 9 ([results](https://github.com/mimran1980/ergon/tree/main/io/benches/results/ws-copy-linux-arm64-20261024T172616Z), [`env.txt`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-copy-linux-arm64-20261024T172616Z/env.txt)),
+CPU 9 (results, `env.txt`),
 keep the same order, with bulk byte work (copies, scans) several times
 slower in that VM than natively, as in earlier runs there; the cause is
 not established, so take absolute figures from the native run:
 
 - skip: 3.9 against 20.1 ns at 100 B unfragmented, 41.6 against 9,721.5
-  at 64 KiB ([`ws_bench-rx.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-copy-linux-arm64-20261024T172616Z/ws_bench-rx.md));
+  at 64 KiB (`ws_bench-rx.md`);
 - `Fragments` 31.2 and `Stream` 35.1 against `Keep` 861.5 ns at 4 KiB in
-  four fragments ([`ws_bench-frag.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-copy-linux-arm64-20261024T172616Z/ws_bench-frag.md));
+  four fragments (`ws_bench-frag.md`);
 - on mixed text `Ascii` 619.9 against `Utf8` 1,276.7 ns at 4 KiB, equal on
-  ASCII ([`ws_bench-text.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-copy-linux-arm64-20261024T172616Z/ws_bench-text.md));
+  ASCII (`ws_bench-text.md`);
 - the split-frame join 828.7 → 203.0 ns at 4 KiB
-  ([`ws_bench-span.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-copy-linux-arm64-20261024T172616Z/ws_bench-span.md));
+  (`ws_bench-span.md`);
 - sending: within 2.1 % either way at every size (2,075.1 → 2,031.9 ns
   built at 4 KiB): there the copy, not the zero fill, dominates
-  ([`ws_bench-tx.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-copy-linux-arm64-20261024T172616Z/ws_bench-tx.md)).
+  (`ws_bench-tx.md`).
 
 Its maxima are not explained by the thread's own context switches (column
 `max sample preempted`, `no` in all but 14 rows); vCPU descheduling by the
@@ -410,7 +656,10 @@ and feed it every open and close.
 
 - `on_open(id)` returns `Opened { link, reconnect }`: subscribe either way;
   with `reconnect`, resync any state kept from the old connection.
-- `on_closed(id)` returns the next step: `Retry`, `GaveUp` or `Stopped`.
+- `on_closed_with(id, &error)` returns the next step: `Retry`, `GaveUp` or
+  `Stopped`. An error no retry can fix (`Error::TlsVersion`: the server has
+  no TLS 1.3) gives up at once. `on_closed(id)` does the same without the
+  error, so it always retries.
 - `stop(link)` vetoes reconnects; `resume(link)` starts again.
 - `Driver::close` reports nothing: call `on_closed(id)` yourself after it.
 - `poll` starts due attempts. It costs one branch while nothing waits.
@@ -422,17 +671,69 @@ pacing, serves every link on that IP. ergon-io has no rate limiter; the
 test's pacer is a few lines:
 
 ```rust,ignore
-{{#include ../../../io/tests/reconnect.rs:pace}}
+/// The application's connect pacing (ergon-io has none): at most `limit`
+/// starts in any `window_ns`, a hold until a time (a 429's wait), and a
+/// halt that only `clear` ends (a ban).
+struct Pace {
+    limit: usize,
+    window_ns: i64,
+    starts: VecDeque<i64>,
+    held_until: i64,
+    halted: bool,
+}
+
+impl Pace {
+    const fn new(limit: usize, window_ns: i64) -> Self {
+        Self {
+            limit,
+            window_ns,
+            starts: VecDeque::new(),
+            held_until: 0,
+            halted: false,
+        }
+    }
+
+    /// The gate: `Ok(())` and count a start, or `Err(wait_ns)`.
+    fn try_start(&mut self, now: i64) -> Result<(), u64> {
+        if self.halted {
+            return Err(u64::MAX);
+        }
+        if now < self.held_until {
+            return Err(self.held_until.abs_diff(now));
+        }
+        while self
+            .starts
+            .front()
+            .is_some_and(|&t| t + self.window_ns <= now)
+        {
+            self.starts.pop_front();
+        }
+        match self.starts.front() {
+            Some(&oldest) if self.starts.len() >= self.limit => {
+                Err((oldest + self.window_ns).abs_diff(now))
+            }
+            _ => {
+                self.starts.push_back(now);
+                Ok(())
+            }
+        }
+    }
+}
 ```
 
 ```rust,ignore
-{{#include ../../../io/tests/reconnect.rs:gate}}
+    // Connect attempts per IP: 3 per second (an illustrative service
+    // limit). One pacer, the gate of every WebSocket link on that IP.
+    let mut pace = Pace::new(3, 1_000 * MS);
+    let mut links = Reconnect::new(Retry::default())?;
 ```
 
 ```rust,ignore
-{{#include ../../../io/tests/reconnect.rs:gate_poll}}
+        // Once per loop pass; `now` is the pacer's clock, read once.
+        // Ok(()): connect now; Err(wait_ns): ask again after the wait.
+        let started = links.poll_at_gated(&mut f, now, || pace.try_start(now));
 ```
-*(From `io/tests/reconnect.rs`, which `cargo test -p ergon-io` runs on
+*(From `ergon-io/tests/reconnect.rs`, which `cargo test -p ergon-io` runs on
 every platform, with a stand-in connector and a fake clock.)*
 
 - `poll_gated(driver, gate)` starts an attempt only when the gate passes
@@ -448,7 +749,19 @@ every platform, with a stand-in connector and a fake clock.)*
 A refused handshake, in `on_closed`:
 
 ```rust,ignore
-{{#include ../../../io/tests/reconnect.rs:refused}}
+    // In `Handler::on_closed(id, error)`: a refused handshake (429) holds
+    // the connect gate for the server's wait, and the link waits it out.
+    let on_closed = |rc: &mut Reconnect<u32>, pace: &mut Pace, id, error: &Error, now: i64| -> R {
+        let link = rc.link_of(id).ok_or("not a link")?;
+        if let Some(Verdict::Throttled { retry_after_ms }) = outcome::refused_upgrade(error)? {
+            // No wait named: this application's own backoff, 1 s.
+            let wait_ns = retry_after_ms.unwrap_or(1_000) * 1_000_000;
+            pace.held_until = now + i64::try_from(wait_ns)?;
+            rc.defer_at(link, wait_ns, now);
+        }
+        rc.on_closed_at(id, now);
+        Ok(())
+    };
 ```
 
 - 429: `Throttled { retry_after_ms }`; hold the gate for it (your own
@@ -465,13 +778,41 @@ per IP, pace each IP on its own and let the gate pick one per connect. The
 test's pick, round-robin over one `Pace` per IP:
 
 ```rust,ignore
-{{#include ../../../io/tests/reconnect.rs:sourced}}
+/// The application's pick (ergon-io has none): each IP with its own
+/// [`Pace`], tried round-robin from after the last pick; none has room:
+/// the soonest wait.
+struct SourcePick {
+    ips: Vec<(IpAddr, Pace)>,
+    next: usize,
+}
+
+impl SourcePick {
+    fn try_pick(&mut self, now: i64) -> Result<IpAddr, u64> {
+        let n = self.ips.len();
+        let mut soonest = u64::MAX;
+        for step in 0..n {
+            let i = (self.next + step) % n;
+            let (ip, pace) = &mut self.ips[i];
+            match pace.try_start(now) {
+                Ok(()) => {
+                    self.next = (i + 1) % n;
+                    return Ok(*ip);
+                }
+                Err(wait) => soonest = soonest.min(wait),
+            }
+        }
+        Err(soonest)
+    }
+}
 ```
 
 ```rust,ignore
-{{#include ../../../io/tests/reconnect.rs:sourced_poll}}
+    // Once per loop pass; `now` is the pacer's clock, read once.
+    // Ok(ip): connect now from ip; Err(wait_ns): ask again after the wait.
+    let now = 0;
+    let started = rc.poll_at_sourced(&mut f, now, || pick.try_pick(now));
 ```
-*(From `io/tests/reconnect.rs`.)*
+*(From `ergon-io/tests/reconnect.rs`.)*
 
 | what | how |
 |---|---|
@@ -519,10 +860,10 @@ What a send costs before the kernel:
 (`build`) and inside a sealed record (`sealed`, AES-GCM in place). old:
 zeroed resize, copy, then XOR (`ws::encode_frame`), the path before this
 change; new: `ws::push_frame`. Both build the same bytes, checked before
-timing; `io/tests/ws_send.rs` checks `WsConn`'s output against the old
+timing; `ergon-io/tests/ws_send.rs` checks `WsConn`'s output against the old
 encoder for every length from 1 to 16 KiB and over several records. ns per
 message, p50 / p99 / max, same host and run as above
-([`ws_bench-tx.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/ws-copy-macos-20261024T172501Z/ws_bench-tx.md)):
+(`ws_bench-tx.md`):
 
 | message | stage | old | new |
 |---|---|---|---|
@@ -569,9 +910,9 @@ message, p50 / p99 / max, same host and run as above
 Order round trip: a 64-byte echo, one message in flight. Every figure, with
 its max:
 
-- [Fair run, Graviton](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton):
+- Fair run, Graviton:
   every backend (and mio) with 1, 4, 16 and 64 sockets on the loop.
-- [Round trips on x86](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#round-trips-on-x86-1-connection):
+- Round trips on x86:
   1 connection.
 
 Pick the backend by the total socket count on the loop, feeds included:

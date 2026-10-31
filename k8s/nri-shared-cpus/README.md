@@ -284,10 +284,8 @@ Why the second rule:
   `PinProcess` had set; it did not inherit the hot mask.
 - Aeron: the client conductor `aeron-client`, started by a thread before
   that thread pinned itself, kept the creator's mask
-  (`samples/low-latency-k8s/tests/placement_aeron.rs`, in Docker without
-  this hook). Aeron under the hook on a node, and the JVM, were not run.
-  The sample that runs Aeron with this plugin is
-  [`samples/README.md#low-latency-k8s`](../../samples/README.md#low-latency-k8s).
+  (a placement test in Docker without this hook). Aeron under the hook on a
+  node, and the JVM, were not run.
 
 How the pool is granted:
 
@@ -478,8 +476,9 @@ Set these on the node at every boot; the plugin does not:
 | `/sys/kernel/mm/transparent_hugepage/enabled` | `never`: that stops `khugepaged`; `madvise` still runs it (the lab's node was `madvise`) | `khugepaged` calls `lru_add_drain_all`, which runs a kworker on every CPU with queued pages | `transparent_hugepage=never` on the boot line also works. hugetlbfs pages are unaffected |
 | `/sys/kernel/debug/sched/fair_server/cpu<N>/runtime`, each isolated N | `0` | the fair server's 1 s timer sends a nohz kick and a reschedule IPI, and keeps the tick on | kernel 6.12 and later; debugfs, lost at reboot (a oneshot unit after `sys-kernel-debug.mount`); safe only where nothing real-time runs on those CPUs |
 
-`samples/low-latency-k8s/node/quiet-cpus.sh` and its unit
-`ergon-quiet-cpus.service` apply both, with a read-only `--check`.
+Apply both at every boot from a oneshot unit (the lab's
+`ergon-quiet-cpus.service`, with a read-only `--check`, is in git history at
+`v0.1.37:samples/low-latency-k8s/node/`).
 
 What still reaches every isolated CPU: anything that calls
 `lru_add_drain_all` (block-device ioctls, `systemctl daemon-reload` and

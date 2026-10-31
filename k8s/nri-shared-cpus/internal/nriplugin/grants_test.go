@@ -626,7 +626,7 @@ func kvMapOf(kvs []latency.KV) map[string]string {
 
 // A subnet other than /24 keeps its prefix in the fstack-spin line (F-Stack
 // defaults to 24), and a DPDK device name is a vdev, not a PCI port: the
-// same lines ergon-io builds from the pair itself.
+// same lines ergon_tune::DpdkNicPair builds from the pair.
 func TestResolveGrantsDpdkPairKeepsPrefixAndVdev(t *testing.T) {
 	cfg := grantConfig(t)
 	for _, tc := range []struct{ pci, cidr, fstack, smoltcp string }{

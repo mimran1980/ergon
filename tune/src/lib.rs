@@ -2,7 +2,7 @@
 //!
 //! ## The checks
 //!
-//! | Check | Function | Called by |
+//! | Check | Function | Meant for |
 //! |---|---|---|
 //! | T1 | [`t1_isolation`] | io, md, rt |
 //! | T2 | [`t2_nic_irqs`] | io (egress NIC), md (data NICs, DPDK ports) |
@@ -12,32 +12,32 @@
 //! | T6 | [`t6_nic_node`] | md |
 //! | T7 | [`t7_sched_policy`] | io, md, rt |
 //! | T8 | [`t8_smt_siblings`] | io, md, rt |
-//! | T9 | [`t9_cpu_quota`] at start; [`ThrottleWatch`] while running | io, md (start); `ThrottleWatch`: no caller in this repository |
+//! | T9 | [`t9_cpu_quota`] at start; [`ThrottleWatch`] while running | io, md (start); `ThrottleWatch`: a runtime's housekeeping |
 //! | T10 | [`t10_smt_on`] | io, md |
 //! | T11 | [`t11_time_sync`] at start; [`ClockWatch`] while running | rt (start, housekeeping) |
 //! | T12 | [`t12_clocksource`] at start; [`ClockWatch`] while running | rt (start, housekeeping) |
-//! | T13 | [`t13_workqueue_cpumask`] | no caller in this repository |
-//! | T14 | [`t14_compaction`] (info) | no caller in this repository |
-//! | T15 | [`t15_host_tasks`] | no caller in this repository |
-//! | T16 | [`t16_instrumentation`] (info) | no caller in this repository |
-//! | T17 | [`t17_ksm`] | no caller in this repository |
-//! | T18 | [`t18_steal`] (info) | no caller in this repository |
+//! | T13 | [`t13_workqueue_cpumask`] | io, md |
+//! | T14 | [`t14_compaction`] (info) | io, md |
+//! | T15 | [`t15_host_tasks`] | io, md |
+//! | T16 | [`t16_instrumentation`] (info) | io, md |
+//! | T17 | [`t17_ksm`] | io, md |
+//! | T18 | [`t18_steal`] (info) | io, md |
 //! | T19 | [`FaultWatch`] while running | io (the polling thread, every 5 s from the warning thread) |
-//! | T20 | [`t20_irq_idle`] | no caller in this repository (the lab's transport suite caps the IRQ CPU itself) |
-//! | T21 | [`t21_tcp_autocorking`] | no caller in this repository (the lab's transport suite sets it off itself) |
+//! | T20 | [`t20_irq_idle`] | a node check (the CPU taking NIC interrupts) |
+//! | T21 | [`t21_tcp_autocorking`] | io (a warning: its connections send latency-sensitive TCP) |
 //! | T22 | [`t22_aeron_affinity_names`] | md |
 //! | T23 | [`t23_aeron_hugepage_env`] | md |
-//! | T24 | [`t24_dpdk_nic_pair`] | io (fstack-spin, smoltcp-spin), md (dpdk-ena) |
+//! | T24 | [`t24_dpdk_nic_pair`] | io (DPDK backends), md (dpdk-ena) |
 //! | K1-K6 | [`k8s_checks`] (with T7 and T9), inside a pod only | io |
-//! | K7 | [`k8s_checks`] with [`Needs::with_nic`] | no caller in this repository names a NIC |
+//! | K7 | [`k8s_checks`] with [`Needs::with_nic`] | a caller that names its NIC |
 //! | N1 (`nic`) | `n1_adaptive_rx` | io, md (kernel sockets) |
 //! | N2 (`nic`) | `n2_deferred_irqs` | io, md |
 //! | N3 (`nic`) | `n3_azure_vf` | io |
 //! | N4 (`nic`) | `n4_rx_ring` | md (socket transport with busy polling) |
 //!
-//! - **Callers** ([`Component`]): io is ergon-io, md the ergon-md-dpdk media
-//!   driver, rt an application's busy-spinning runtime (outside this
-//!   repository; it calls what it chooses).
+//! - **Callers** ([`Component`]): io is a busy-spinning network I/O layer,
+//!   md an Aeron media driver, rt an application's busy-spinning runtime.
+//!   None of them is in this repository; each calls what it chooses.
 //! - **Results**: each is a [`Finding`]. Its [`Status`] says whether the check
 //!   fired; its [`Severity`] says how to log it.
 //! - **Cost**: file reads and allocations. T7 reads `/proc/thread-self` (no
@@ -82,7 +82,7 @@ mod time;
 
 pub use aeron::{AERON_HUGEPAGE_BYTES, t22_aeron_affinity_names, t23_aeron_hugepage_env};
 pub use cpu::{
-    SchedPolicy, Thread, t1_isolation, t7_sched_policy, t8_smt_siblings, t10_smt_on,
+    SchedPolicy, Thread, isolated_cpus, t1_isolation, t7_sched_policy, t8_smt_siblings, t10_smt_on,
     thread_affinity, thread_policy,
 };
 pub use cpuset::{CPU_LIMIT, CpuSet, CpuSetError};

@@ -251,7 +251,7 @@ fn bench_encode_checked_vs_unchecked(c: &mut Criterion) {
     group.finish();
 }
 
-/// `NewOrder` as ergon-stack's engine encodes it (`fixed()` + `asset`
+/// `NewOrder` as a trading engine encodes it (`fixed()` + `asset`
 /// setter) against `encode_from` through `NewOrderSource`. Both arms write
 /// the header and return the frame length.
 fn bench_new_order_encode(c: &mut Criterion) {

@@ -102,9 +102,9 @@ fn the_switch_is_one_variable_and_unset_is_on() -> R {
 
 #[test]
 fn every_warning_line_says_how_to_silence_it() -> R {
-    let line = host_check_line("ergon-io", &warn()).ok_or("no line")?;
+    let line = host_check_line("net-io", &warn()).ok_or("no line")?;
     assert!(
-        line.starts_with("ergon-io warning: T1 warn: a warning"),
+        line.starts_with("net-io warning: T1 warn: a warning"),
         "{line}"
     );
     assert!(line.ends_with(SILENCE), "{line}");
@@ -113,11 +113,11 @@ fn every_warning_line_says_how_to_silence_it() -> R {
         "(ERGON_HOST_CHECKS=off silences host-check warnings)"
     );
     // An info line is not a warning line: no silence clause.
-    let line = host_check_line("ergon-io", &info()).ok_or("no line")?;
-    assert!(line.starts_with("ergon-io info: T1 info:"), "{line}");
+    let line = host_check_line("net-io", &info()).ok_or("no line")?;
+    assert!(line.starts_with("net-io info: T1 info:"), "{line}");
     assert!(!line.contains("ERGON_HOST_CHECKS"), "{line}");
     // An ok prints nothing.
-    assert_eq!(host_check_line("ergon-io", &ok()), None);
+    assert_eq!(host_check_line("net-io", &ok()), None);
     Ok(())
 }
 
@@ -125,18 +125,18 @@ fn every_warning_line_says_how_to_silence_it() -> R {
 fn off_keeps_the_results_and_drops_only_the_warning_lines() {
     let findings = vec![warn(), info(), ok()];
     assert_eq!(
-        HostCheckPolicy::Off.warn_lines("ergon-io", &findings),
+        HostCheckPolicy::Off.warn_lines("net-io", &findings),
         Vec::<String>::new(),
         "no warning line is printed"
     );
     assert_eq!(findings.len(), 3, "the results are still returned");
     assert_eq!(HostCheckPolicy::Off.refusal(&findings), None);
-    let off = HostCheckPolicy::Off.lines("ergon-io", &findings);
+    let off = HostCheckPolicy::Off.lines("net-io", &findings);
     assert_eq!(off.len(), 1, "off keeps the info line: {off:#?}");
-    assert!(off[0].starts_with("ergon-io info:"), "{}", off[0]);
-    let on = HostCheckPolicy::On.lines("ergon-io", &findings);
+    assert!(off[0].starts_with("net-io info:"), "{}", off[0]);
+    let on = HostCheckPolicy::On.lines("net-io", &findings);
     assert_eq!(on.len(), 2, "{on:#?}");
-    let on = HostCheckPolicy::On.warn_lines("ergon-io", &findings);
+    let on = HostCheckPolicy::On.warn_lines("net-io", &findings);
     assert_eq!(on.len(), 1);
     assert!(on[0].ends_with(SILENCE), "{}", on[0]);
     assert_eq!(HostCheckPolicy::On.refusal(&findings), None);
@@ -184,9 +184,9 @@ fn require_refuses_to_start_on_a_warning() -> R {
 
 #[test]
 fn warn_line_is_none_for_everything_but_a_warning() {
-    assert!(warn_line("ergon-io", &warn()).is_some());
-    assert!(warn_line("ergon-io", &info()).is_none());
-    assert!(warn_line("ergon-io", &ok()).is_none());
+    assert!(warn_line("net-io", &warn()).is_some());
+    assert!(warn_line("net-io", &info()).is_none());
+    assert!(warn_line("net-io", &ok()).is_none());
 }
 
 /// `require` is a readiness gate, not a blanket refusal. An unknown of a
@@ -225,7 +225,7 @@ fn require_refuses_on_an_unproven_proof_but_not_on_a_missing_subsystem() -> R {
         "a host with no PSI and no NIC node is a real host"
     );
     // And the unknowns still print.
-    let lines = HostCheckPolicy::Require.lines("ergon-io", &findings);
+    let lines = HostCheckPolicy::Require.lines("net-io", &findings);
     assert!(
         lines.iter().any(|l| l.contains("K6 unknown:")),
         "{lines:#?}"

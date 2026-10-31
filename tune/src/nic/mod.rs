@@ -96,7 +96,7 @@ const EOPNOTSUPP: i32 = rustix::io::Errno::OPNOTSUPP.raw_os_error();
 #[cfg(not(target_os = "linux"))]
 const EOPNOTSUPP: i32 = 95;
 
-/// How long one netlink exchange may wait, as for ergon-io's route lookup.
+/// How long one netlink exchange may wait, as for an rtnetlink route lookup.
 const TIMEOUT: Duration = Duration::from_millis(100);
 
 /// Where ethtool settings come from: [`Netlink`] on the running host, or a
@@ -183,8 +183,8 @@ impl Ethtool for Netlink {
     }
 }
 
-/// One request and its reply on a fresh `NETLINK_GENERIC` socket, as
-/// ergon-io's rtnetlink exchange: the kernel answers inside `sendto`, a
+/// One request and its reply on a fresh `NETLINK_GENERIC` socket, as an
+/// rtnetlink exchange: the kernel answers inside `sendto`, a
 /// signal is the only reason to look twice, and a reply must come from the
 /// kernel (port 0) and fit the buffer.
 #[cfg(target_os = "linux")]
@@ -256,7 +256,7 @@ struct Entry {
 /// Ethtool answers per interface, valid while its index and
 /// `carrier_changes` stay the same.
 ///
-/// Owned by the caller (no global state): ergon-io's warning thread or the
+/// Owned by the caller (no global state): a network I/O layer's warning thread or the
 /// media driver's housekeeping keeps one. Timeouts and socket errors are
 /// not kept.
 #[derive(Debug, Default)]
@@ -408,14 +408,14 @@ const N1_EVIDENCE: &str = "git show \
      128747b9^:io/benches/results/flags-aws-20261015T070339Z/tables.md (c1/c2-base, -nodim, \
      -nocoalesce: lines 22-29, 50-57, 63-70; loop counters lines 386, 598, 1232, 1450; \
      pre-empting worker kworker/2:1, lines 186 and 190): AWS c7i, recv-busy, two 8-minute \
-     reps each; io/benches/results/flags-aws-20261019T175248Z/env-rcv.txt \
+     reps each; git show v0.1.37:io/benches/results/flags-aws-20261019T175248Z/env-rcv.txt \
      (lines 81-82, 146-149: on with rx-usecs 20 as found, back on after a reset); Linux \
      drivers/net/ethernet/amazon/ena/ena_netdev.c (ena_up enables adaptive moderation); \
      aws-graviton-getting-started perfrunbook (adaptive-rx off for latency-sensitive work)";
 
 /// N1: ENA's adaptive RX interrupt moderation is off on `interface`. For
-/// the kernel-socket paths (ergon-io, the media driver's socket transport)
-/// on AWS, x86 and Graviton; other drivers are not checked.
+/// kernel-socket paths on AWS, x86 and Graviton; other drivers are not
+/// checked.
 #[must_use]
 pub fn n1_adaptive_rx<E: Ethtool>(
     host: &Host,
@@ -499,7 +499,7 @@ pub fn n1_adaptive_rx<E: Ethtool>(
 }
 
 const N2_EVIDENCE: &str = "Linux Documentation/networking/napi.rst; the lab sets them only with busy \
-     polling (md-dpdk/benches/cloud/vm.sh); not measured here";
+     polling (git show v0.1.37:md-dpdk/benches/cloud/vm.sh); not measured here";
 
 /// One sysfs NAPI setting: absent (an older kernel) is 0.
 fn napi_setting(host: &Host, interface: &str, name: &str) -> Result<u64, ReadError> {

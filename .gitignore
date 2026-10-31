@@ -37,7 +37,7 @@ sbe/fuzz/artifacts/
 /package-lock.json
 /docs/research/TODO.md
 
-# Python bytecode (md-dpdk/benches/cloud scripts).
+# Python bytecode.
 __pycache__/
 *.pyc
 
@@ -46,7 +46,6 @@ book/mermaid.min.js
 book/mermaid-init.js
 
 # Stray scratch and LLVM profile dumps left at the repo root.
-# (Per-run lab bulk is already covered by io/benches/.gitignore.)
 /Idle2.java
 /Idle2.class
 /*.profraw

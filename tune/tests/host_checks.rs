@@ -505,7 +505,7 @@ fn t3_is_ok_with_every_size_off() -> R {
 }
 
 #[test]
-fn t3_warns_for_aeron_processes_and_informs_for_ergon_io() -> R {
+fn t3_warns_for_aeron_processes_and_informs_for_network_io() -> R {
     let f = debian_default("t3-always")?;
     for (component, severity) in [
         (Component::Md, Severity::Warn),
@@ -517,7 +517,7 @@ fn t3_warns_for_aeron_processes_and_informs_for_ergon_io() -> R {
         assert!(v[0].is_finding());
         assert_eq!(v[0].severity, severity, "{component:?}");
         assert!(v[0].message.contains("`always`"), "{}", v[0].message);
-        // The md-dpdk THP figures have no archived data: the finding
+        // The media driver's THP figures have no archived data: the finding
         // says so instead of quoting them.
         assert!(
             v[0].message.contains("not measured with archived data"),

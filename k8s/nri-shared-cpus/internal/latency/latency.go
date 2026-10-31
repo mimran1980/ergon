@@ -501,7 +501,7 @@ const (
 )
 
 // DpdkEnaPair is the env the plugin exports for
-// `dpdk.ergon.io/<container>: "ena-pair"`: the two shortest ergon-io lines
+// `dpdk.ergon.io/<container>: "ena-pair"`: the two shortest DPDK network-backend lines
 // built from the sender trio the ENA device plugin already put in this
 // container's env, plus the parsed pair. ask is the annotation value, env
 // the container's environment. A bad value, a missing or empty key or an
@@ -541,7 +541,7 @@ func DpdkEnaPair(ask string, env map[string]string) ([]KV, error) {
 	if strings.ContainsAny(pci, " \t,=") {
 		return nil, grantErr("dpdk", "dpdk.ergon.io: %s=%q is not a PCI address or a DPDK device name", senderPCI, pci)
 	}
-	// The same lines ergon-io builds from the pair itself (ergon_tune::DpdkNicPair):
+	// The same lines ergon_tune::DpdkNicPair builds from the pair:
 	// F-Stack's prefix defaults to 24, and a DPDK device name is a vdev, not a PCI port.
 	fstackPort, ealArgs := ",fstack_pci="+pci, "-a "+pci
 	if !strings.Contains(pci, ":") {

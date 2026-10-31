@@ -117,10 +117,15 @@ pub fn thread_affinity(host: &Host, thread: Thread) -> Result<CpuSet, ReadError>
     CpuSet::parse_list(list).map_err(|e| ReadError::cpus(&path, e))
 }
 
-/// The CPUs isolated from the scheduler's load balancing: `isolcpus`
-/// (`/sys/devices/system/cpu/isolated`) and cgroup v2 isolated partitions
-/// (`cpuset.cpus.isolated`, Linux 6.7 and later, in the root cgroup only:
-/// absent in a container, which is not an error).
+/// The CPUs isolated from the scheduler's load balancing.
+///
+/// They are `isolcpus` (`/sys/devices/system/cpu/isolated`) and cgroup v2
+/// isolated partitions (`cpuset.cpus.isolated`, Linux 6.7 and later, in the
+/// root cgroup only: absent in a container, which is not an error).
+///
+/// # Errors
+///
+/// `/sys/devices/system/cpu/isolated` cannot be read or is not a CPU list.
 pub fn isolated_cpus(host: &Host) -> Result<CpuSet, ReadError> {
     let boot = host.read_cpu_list("/sys/devices/system/cpu/isolated")?;
     let partitions = host
@@ -156,7 +161,7 @@ struct T1<'a> {
     cpus: &'a HotSet,
     spinning: CpuSet,
     /// The spinning CPUs asked to be `nohz_full`: all but those that hold
-    /// only ergon-io's SQPOLL thread (`nohz_full` there is not measured
+    /// only an `io_uring` SQPOLL thread (`nohz_full` there is not measured
     /// here).
     tickless: CpuSet,
     /// The spinning CPUs, described.
@@ -300,7 +305,7 @@ impl T1<'_> {
 /// `/proc/irq/default_smp_affinity`.
 ///
 /// Isolation and `nohz_full` are reported separately, per CPU: `isolcpus`
-/// alone left the tick running. A CPU that holds only ergon-io's SQPOLL
+/// alone left the tick running. A CPU that holds only an `io_uring` SQPOLL
 /// thread ([`Role::SqPoll`]) is not asked to be `nohz_full` (not measured
 /// here).
 #[must_use]
@@ -407,7 +412,7 @@ pub fn t7_sched_policy(host: &Host, thread: Thread, role: Role) -> Finding {
 
 const T8_EVIDENCE: &str = "git show \
      128747b9^:io/benches/results/flags-aws-20261015T122127Z/tables.md (lab-uring-sqpoll-c* \
-     against lab-uring-sqpoll-sib-c*, lines 174-279): ergon-io's SQPOLL thread on the loop's \
+     against lab-uring-sqpoll-sib-c*, lines 174-279): an io_uring SQPOLL thread on the loop's \
      sibling, AWS c7i, three rounds; other sibling loads and two threads on one CPU not \
      measured here";
 
@@ -479,7 +484,7 @@ impl T8<'_> {
                 Severity::Info,
                 format!(
                     "{me} shares its core with {them}: what runs there takes the core's execution \
-                     units from it (measured only for ergon-io's SQPOLL thread there: T10). Fix: \
+                     units from it (measured only for an io_uring SQPOLL thread there: T10). Fix: \
                      keep CPU {s} idle, or give it a core of its own"
                 ),
             );
@@ -491,7 +496,7 @@ impl T8<'_> {
                     format!(
                         "{me} shares its core with CPU {s}, which is not isolated: other tasks run \
                          there and take the core's execution units from it (measured only for \
-                         ergon-io's SQPOLL thread there: T10). Fix: isolate CPU {s} and leave it \
+                         an io_uring SQPOLL thread there: T10). Fix: isolate CPU {s} and leave it \
                          idle"
                     ),
                 ),
@@ -514,7 +519,7 @@ impl T8<'_> {
 /// of the component's threads.
 ///
 /// A warning when the SMT sibling (or the same CPU) holds another
-/// busy-spinner, the conductor or an EAL lcore, except ergon-io's SQPOLL
+/// busy-spinner, the conductor or an EAL lcore, except an `io_uring` SQPOLL
 /// thread on its loop's sibling (the recommended one-core layout); an
 /// information line when the sibling is the component's housekeeping or is
 /// not isolated. Without SMT (Graviton, c7a) it fires only when two
@@ -564,8 +569,8 @@ pub fn t8_smt_siblings(host: &Host, cpus: &HotSet) -> Vec<Finding> {
     t8.out
 }
 
-/// ergon-io's SQPOLL thread on its loop's SMT sibling: the one-core layout
-/// ergon-io documents. Its cost against a core of its own is T10's figure.
+/// an `io_uring` SQPOLL thread on its loop's SMT sibling: the one-core layout
+/// an `io_uring` loop can use. Its cost against a core of its own is T10's figure.
 fn sqpoll_with_loop(cpus: &HotSet, a: u32, b: u32) -> bool {
     let (ra, rb) = (cpus.roles(a), cpus.roles(b));
     (ra.contains(&Role::Loop) && rb.contains(&Role::SqPoll) && !rb.contains(&Role::Loop))
@@ -651,7 +656,7 @@ pub fn t10_smt_on(host: &Host) -> Finding {
             sev,
             T10_EVIDENCE,
             "SMT is on: on x86 a Kubernetes `cpu: 2` is one physical core, not two, and a busy \
-             sibling slows the loop. Measured for ergon-io's SQPOLL thread on the loop's sibling \
+             sibling slows the loop. Measured for an io_uring SQPOLL thread on the loop's sibling \
              against a core of its own (AWS c7i, arrival → decoded, p50 / p99 / max over three \
              rounds): 1 connection 4.0–4.3 / 7.0–11.7 / 35–46 µs against 3.5–3.8 / 8.4–12.9 / \
              32–118; 10 connections 7.5–8.4 / 29–33 / 96–349 against 5.2–6.0 / 20–24 / 77–109; \

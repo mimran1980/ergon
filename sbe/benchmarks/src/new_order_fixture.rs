@@ -1,5 +1,5 @@
 //! The `NewOrder` frame (`schemas/bench-new-order.xml`, shaped like
-//! ergon-stack's `trading.xml`) and the arms timed against it.
+//! a trading engine's order message) and the arms timed against it.
 //!
 //! Shared by `benches/encode_bench.rs`, `benches/decode_bench.rs`,
 //! `benches/latency_distribution.rs` and `tests/fairness_policy_test.rs`, so
@@ -37,7 +37,7 @@ pub struct AppPrice {
 }
 
 /// An order as the engine holds it: a flag for the side and plain
-/// mantissas, as ergon-stack's engine does before it encodes.
+/// mantissas, as a trading engine does before it encodes.
 #[derive(Clone, Copy, Debug)]
 pub struct Order<'a> {
     /// Wall-clock send time, ns.
@@ -112,7 +112,7 @@ impl NewOrderSource for Order<'_> {
     }
 }
 
-/// Encode `order` at offset 0 as ergon-stack's engine does: header,
+/// Encode `order` at offset 0 as a trading engine does: header,
 /// `fixed()`, then the `asset` setter. Returns the frame length.
 #[inline]
 pub fn encode_fixed(buf: &mut [u8], order: &Order<'_>) -> Result<usize, EncodeError> {

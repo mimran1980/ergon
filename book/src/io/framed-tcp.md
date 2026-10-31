@@ -1,3 +1,4 @@
+<!-- Generated page: edits here are overwritten by the next export. sha256:f975c9764a713068b50dca1748d9b37c16a973d8230de9dd5d5d58b3a798a9ee -->
 # Framed TCP
 
 `FrameConn` carries length-prefixed frames over plain TCP (no TLS), on
@@ -18,9 +19,45 @@ every backend.
   send queue; the driver's next send pass sends it.
 
 ```rust,ignore
-{{#include ../../../io/tests/frame.rs:frame_echo}}
+    /// `FrameDial` through `Driver::connect`: frames of every size out and
+    /// echoed back whole, then the peer's close reported as `Closed`.
+    #[test]
+    fn a_dialled_connection_echoes_frames_on_every_backend() -> R {
+        each_backend(|b| {
+            let mut d: Driver<FrameConn> = Driver::new(Config::new(b))?;
+            let l = TcpListener::bind("127.0.0.1:0")?;
+            let addr = l.local_addr()?;
+            let target = Target::new("localhost", addr.port(), "").with_addr(addr);
+            let id = d.connect(FrameDial::new(target, FrameOptions::default())?)?;
+            let (server, _) = l.accept()?;
+            let peer = echo(server.try_clone()?);
+            let mut h = Got::default();
+            poll_until(&mut d, &mut h, |h| h.opened.contains(&id))?;
+            assert!(nodelay(d.get(id).ok_or("gone")?.raw_fd())?, "TCP_NODELAY");
+            let sizes = [0usize, 1, 7, 1_000, 65_536, 3];
+            for &n in &sizes {
+                d.get_mut(id).ok_or("gone")?.send_frame(&vec![n as u8; n])?;
+            }
+            poll_until(&mut d, &mut h, |h| h.frames.len() == sizes.len())?;
+            let got: Vec<usize> = h.frames.iter().map(|(_, p)| p.len()).collect();
+            assert_eq!(got, sizes);
+            assert!(
+                h.frames
+                    .iter()
+                    .all(|(c, p)| *c == id && p.iter().all(|&x| x == p.len() as u8))
+            );
+            server.shutdown(Shutdown::Both)?;
+            poll_until(&mut d, &mut h, |h| !h.closed.is_empty())?;
+            assert_eq!(h.closed[0].0, id);
+            assert!(h.closed[0].1.contains("peer closed"), "{:?}", h.closed);
+            drop(d);
+            let echoed = peer.join().map_err(|_| "echo panicked")??;
+            assert!(echoed > 0);
+            Ok(())
+        })
+    }
 ```
-*(From `io/tests/frame.rs`; `cargo test -p ergon-io` runs it on Linux,
+*(From `ergon-io/tests/frame.rs`; `cargo test -p ergon-io` runs it on Linux,
 on every backend.)*
 
 ## Options

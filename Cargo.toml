@@ -4,20 +4,9 @@ members = [
     "sbe/benchmarks",
     "cluster",
     "cluster-test-harness",
-    "io",
-    # The transport latency suite's shared measurement core (publish = false),
-    # though under the excluded io/benches: md-dpdk/harness and io/benches
-    # both take it by path, and io/benches's own workspace excludes it.
-    "io/benches/core",
     # Low-latency host and NIC checks (pure functions returning findings),
-    # called by ergon-io, the media driver and downstream runtimes.
+    # called by media drivers and busy-spinning runtimes.
     "tune",
-    # DPDK ENA kernel-bypass transport for the rusteron media driver. Its
-    # `dpdk` feature is Linux x86_64 or aarch64 only, so `--all-features` runs
-    # exclude it and the harness (see the justfile's dpdk recipes).
-    "md-dpdk",
-    "md-dpdk/harness",
-    "md-dpdk/device-plugin",
 ]
 # Excluded because they require nightly toolchain:
 #   sbe/fuzz         — cargo-fuzz (libfuzzer), needs `cargo +nightly fuzz run`
@@ -33,11 +22,11 @@ members = [
 #          pointer casts that unit tests can't detect.
 #
 # Run with: just test-all
-exclude = ["samples", "sbe/fuzz", "sbe/miri-fixtures", "io/benches"]
+exclude = ["samples", "sbe/fuzz", "sbe/miri-fixtures"]
 resolver = "3"
 
 [workspace.package]
-version = "0.1.37"
+version = "0.1.38"
 edition = "2024"
 rust-version = "1.99"
 license = "Apache-2.0"
@@ -49,7 +38,7 @@ authors = ["Mohammed Imran"]
 # Inherited by the cluster crate for both edges. Cargo 1.95 rejects
 # overriding default-features on an inherited dependency, so fancy is
 # disabled here.
-ergo-sbe = { version = "0.1.37", path = "sbe", default-features = false }
+ergo-sbe = { version = "0.1.38", path = "sbe", default-features = false }
 # rusteron 0.2.16 (Aeron 1.54.0) or newer 0.2. Each crate needs `rusteron-code-gen` at exactly its
 # own version, so both resolve to one, and `cargo update` moves them together.
 rusteron-client = "0.2.16"

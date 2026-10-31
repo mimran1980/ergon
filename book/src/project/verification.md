@@ -12,6 +12,17 @@ fences + generated-API smoke), and rustdoc with `-D warnings`.
 
 ## Release path
 
+Before tagging, refresh the generated chapters: the pages under `book/src`
+whose first line marks them generated (ergon-io, ergon-md-dpdk, transports,
+findings and the two Kubernetes samples, listed in
+`book/generated/manifest.tsv`). This is a maintainer step: the export that
+rewrites them, their manifest and their `SUMMARY.md` block is not in this
+repository. Commit the result. `scripts/check-generated-book.py`
+(in `just preflight`, `just book-ci` and step 8/9) fails if a page was edited
+by hand, its hash or the manifest disagree, a generated page lies outside the
+export's paths, or `SUMMARY.md` drifted. It cannot tell whether a page is
+out of date with its source.
+
 `just release` and `just release-verified` run each gate once on the
 release commit:
 
@@ -21,7 +32,7 @@ release commit:
 | 2/8 | `just test`, including the sbe-tool reference check, rustdoc and bench compilation |
 | 4/8 | fuzz replay: one `cargo fuzz build`, then all six targets at once, 30 s each (`scripts/run-fuzz-replay.sh`) |
 | 5/8 | bench gates with `--noplot` (gates read only the JSON estimates). The parity and cluster gates reject estimates from another run id; `bench-historic` deletes earlier historic estimates first |
-| 8/9 | `_release-check-extras`: coverage, book checks, publish dry runs, packaged checks. `just release-check` is `just test` plus this |
+| 8/9 | `_release-check-extras`: coverage, book checks (generated pages' hashes included), publish dry runs, packaged checks. `just release-check` is `just test` plus this |
 
 `check-publish-set.sh` fails if `_release-pre` stops running `just test`, if
 a release recipe skips `_release-pre`, or if either path stops reaching the

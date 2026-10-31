@@ -10,7 +10,6 @@ node.
 | a timestamp written anywhere: the wire, a log, storage | `CLOCK_REALTIME`: `std::time::SystemTime::now()` | UTC. Every thread and process on the host reads the same kernel clock, through the vDSO when the clock source is the counter (T12) |
 | a duration or timer in one process | [`quanta`](https://docs.rs/quanta/0.13.0/quanta/): `Clock::now()`, or `Clock::raw()` then `Clock::delta_as_nanos()` | reads the CPU counter, scaled by one calibration per process against `CLOCK_MONOTONIC`; without a usable counter it reads `CLOCK_MONOTONIC` (quanta-0.13.0 `src/lib.rs:333-344`). Do not compare quanta values between processes: each calibrates on its own |
 | a duration off the hot path | `std::time::Instant` | `CLOCK_MONOTONIC`: never goes back |
-| the DPDK transport's stamps | its own clock | nanoseconds since boot: [Clocks and timestamps](../md-dpdk/configuration.md#clocks-and-timestamps) |
 
 **Not `minstant`** for portable code: it reads the counter only on Linux
 x86 and x86_64. On every other target, Graviton and macOS included, it
@@ -20,8 +19,8 @@ reads `SystemTime`, a wall clock that can go back (minstant-0.1.7
 **Read cost**, ns per read: median batch (slowest batch); each batch is the
 mean of 10,000 back-to-back reads, so the slowest single read is not
 recorded. AWS, isolated CPU, 2026-10-16 runs; c9g is a 50-batch run, the
-others 200. Source: committed
-`md-dpdk/benches/cloud/results/clockbench-aws-20261016.txt`.
+others 200. Source: in git history,
+`git show v0.1.37:md-dpdk/benches/cloud/results/clockbench-aws-20261016.txt`.
 
 | read | c7i.2xlarge | c8g.xlarge | c9g.2xlarge |
 |---|---|---|---|

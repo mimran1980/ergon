@@ -7,8 +7,7 @@ latency, for Aeron 1.54.0 (the release ergon pins). Each setting comes from
 Aeron's own scripts, benchmarks or wiki ([sources](#sources)); none has a
 latency A/B here.
 
-Terms: [deployment glossary](overview.md#glossary),
-[network and DPDK glossary](../md-dpdk/overview.md#glossary).
+Terms: [deployment glossary](overview.md#glossary).
 
 ## Which Java
 

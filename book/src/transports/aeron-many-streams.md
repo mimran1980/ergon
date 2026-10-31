@@ -1,3 +1,4 @@
+<!-- Generated page: edits here are overwritten by the next export. sha256:a24fc53991de8885e93673f03fbea79f2c301701f19a450a8901448c055bacdf -->
 # Aeron with Many Streams
 
 **Use a small number of Aeron streams: up to 8 per media driver, and 4 when
@@ -21,16 +22,16 @@ Measured with rusteron's `many_streams` bench on a 6-core desktop x86
 (i5-8500T, Linux 7.2, no isolated CPUs). The traffic was 10,000 msg/s in
 total of 32-byte messages, ping-pong in one process, with the driver's
 threads pinned. Read the shape and the ratios, not the absolute latencies:
-latency verdicts come from AWS. Figures are round-trip p50 in µs.
+latency verdicts come from AWS. Figures are round trips in µs, p50 / max.
 
 | Layout, for N logical streams | N = 1 | 32 | 64 | 128 |
 |---|---|---|---|---|
-| N Aeron streams, one per port | 11.7 | 18.0 | 28.2 | 49.6 |
-| N stream ids on one port | 11.7 | 17.2 | 27.3 | 47.2 |
-| One stream id on N ports | 11.3 | 17.8 | 28.4 | 49.7 |
-| **1 Aeron stream, N keys in the message** | 11.5 | **11.8** | **11.7** | **11.9** |
-| **4 Aeron streams, N keys** | 11.7 | **12.6** | **12.6** | **12.7** |
-| **8 Aeron streams, N keys** | 11.6 | **13.6** | **13.7** | **14.0** |
+| N Aeron streams, one per port | 11.7 / 1,504 | 18.0 / 45,875 | 28.2 / 2,390 | 49.6 / 5,747 |
+| N stream ids on one port | 11.7 / 495 | 17.2 / 16,310 | 27.3 / 1,211 | 47.2 / 21,053 |
+| One stream id on N ports | 11.3 / 3,256 | 17.8 / 10,953 | 28.4 / 1,674 | 49.7 / 5,890 |
+| **1 Aeron stream, N keys in the message** | 11.5 / 2,335 | **11.8** / 843 | **11.7** / 12,206 | **11.9** / 21,676 |
+| **4 Aeron streams, N keys** | 11.7 / 76 | **12.6** / 15,434 | **12.6** / 21,201 | **12.7** / 593 |
+| **8 Aeron streams, N keys** | 11.6 / 69 | **13.6** / 29,934 | **13.7** / 19,677 | **14.0** / 58,982 |
 
 - **The cost follows Aeron streams, not ports.** One port with N stream ids
   and N ports with one stream id cost the same as N ports with N ids: within
@@ -42,7 +43,8 @@ latency verdicts come from AWS. Figures are round-trip p50 in µs.
   streams cost the same as 1. Going from 1 to 8 Aeron streams costs about
   2 µs.
 
-p99 and max on this box are dominated by preemption (no isolated CPUs). Of
+The maxima on this box are set by preemption (no isolated CPUs), so only
+p50 is compared. Of
 414 recorded maxima, 303 overlap a thread stall with an involuntary context
 switch. One round-trip max has no overlapping stall: 495 µs (one port, N = 1).
 The per-arm causes are in the results.
@@ -64,7 +66,7 @@ keeps a log of the same size for each image.
 - **Once a log wraps, all of it is resident.** A busy stream holds its whole
   log. In Kubernetes, `/dev/shm` pages count against the pod's memory limit.
 - Bigger terms also cost latency: at 128 streams, 16 MiB terms took 68.0 µs
-  p50 against 50.9 µs with 64 KiB terms. The sender's cycle went from 25.7 to
+  p50 (max 21,922) against 50.9 µs (max 19,284) with 64 KiB terms. The sender's cycle went from 25.7 to
   35.6 µs.
 - 128 keyed streams on 1 Aeron stream used 4 log files (0.8 MiB), and on 8
   Aeron streams 32 files (6.1 MiB). The per-stream layouts used 512 files.
@@ -112,15 +114,15 @@ Rule 1 is what keeps both small.
 | One port, many stream ids | Same cost as many ports (table above). |
 | Concurrent instead of exclusive publications | No change beyond noise. |
 | Driver ratio settings (`AERON_SEND_TO_STATUS_POLL_RATIO`, `AERON_RECEIVER_POLL_TO_SLOW_WORK_RATIO`), status-message timeout, heartbeat and setup intervals, io vector sizes, idle strategies | None shortens the walk: an idle cycle still visits every publication and image. |
-| `AERON_UDP_CHANNEL_TRANSPORT_POLLER_ITERATION_THRESHOLD=0` | Saves 0.15 to 0.2 µs a cycle when there are few sockets (one `epoll_wait` instead of one `recvmmsg` per socket): 8 keyed streams went from 14.0 to 13.2 µs at 128. Useful, but small. |
-| `SHARED_NETWORK` drivers to spread streams | Sender and receiver on one thread are slower per stream: at 128 streams, 71.9 µs p50 on 1 driver, 49.5 µs on 2, 34.3 µs on 4. |
+| `AERON_UDP_CHANNEL_TRANSPORT_POLLER_ITERATION_THRESHOLD=0` | Saves 0.15 to 0.2 µs a cycle when there are few sockets (one `epoll_wait` instead of one `recvmmsg` per socket): 8 keyed streams went from 14.0 to 13.2 µs p50 at 128 (max 58,982 and 277). Useful, but small. |
+| `SHARED_NETWORK` drivers to spread streams | Sender and receiver on one thread are slower per stream: at 128 streams, 71.9 µs p50 on 1 driver, 49.5 µs on 2, 34.3 µs on 4 (max 622, 175 and 6,636). |
 
 ## If you need many Aeron streams anyway
 
 **Shard over several drivers** with dedicated threading. Each driver's walk
 then covers only its own streams: the sender's cycle was 10.1 µs for 2 × 64
 streams, against 9.8 µs for 1 × 64. At 128 streams, 2 dedicated drivers gave
-40.4 µs p50 against 47.2 µs on 1.
+40.4 µs p50 (max 6,574) against 47.2 µs (max 995) on 1.
 
 That gain is partial while one client thread still polls every subscription:
 its pass stayed at about 11 µs at 128 streams with any number of drivers.
@@ -137,5 +139,3 @@ cores per driver, and the memory per stream is unchanged.
 | Can Aeron settings fix it? | No. Only the stream count and the term length move it. |
 | Last resort | Several dedicated drivers, each with its own client thread. |
 
-Results, scripts and every max's cause:
-[`io/benches/results/aeron-many-streams-omarchy-20261030`](https://github.com/mimran1980/ergon/tree/main/io/benches/results/aeron-many-streams-omarchy-20261030).

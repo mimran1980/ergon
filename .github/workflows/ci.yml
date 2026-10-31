@@ -40,6 +40,7 @@ jobs:
           bash scripts/tests/test-stale-deny-ignores.sh
           bash scripts/tests/test-cluster-ergo-sbe-features.sh
           bash scripts/tests/test-book-content.sh
+          bash scripts/tests/test-generated-book.sh
           bash scripts/tests/test-rerun-if-changed.sh
           bash scripts/tests/test-aeron-version.sh
           ./scripts/check-test-policy.sh
@@ -51,8 +52,8 @@ jobs:
 
   lint:
     needs: policy
-    # x86_64 and aarch64 (Graviton): tune, io and md-dpdk have code
-    # for each architecture, and only the runner's architecture is compiled.
+    # x86_64 and aarch64 (Graviton): ergon-tune has code for each
+    # architecture, and only the runner's architecture is compiled.
     strategy:
       fail-fast: false
       matrix:
@@ -69,16 +70,9 @@ jobs:
           toolchain: "1.99.0"
           components: rustfmt, clippy
 
-      # --all-features builds ergon-io's `smoltcp-dpdk`, which compiles
-      # against libdpdk (found through pkg-config).
-      - name: Install libdpdk
-        run: sudo rm -f /etc/apt/sources.list.d/microsoft-prod.* && sudo apt-get update -qq && sudo apt-get install -y -qq pkg-config libdpdk-dev
-
       - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness -- -D warnings
+      - run: cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness -- -D warnings
       - run: cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
-      # ergon-md-dpdk without its Linux-only `dpdk` feature; the `dpdk` job lints the rest.
-      - run: cargo clippy -p ergon-md-dpdk -p ergon-md-dpdk-harness --all-targets -- -D warnings
       # rusteron's bundled Aeron and the aeron submodule pin are one release.
       # The check runs cargo metadata offline, which needs every platform's
       # crates (clippy fetches only this host's), so fetch them all first.
@@ -88,9 +82,8 @@ jobs:
       - run: cargo test --manifest-path sbe/miri-fixtures/Cargo.toml
       - run: RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-sbe --all-features --no-deps
       - run: RUSTDOCFLAGS='-D warnings' cargo doc -p ergo-aeron-cluster --no-deps
-      - run: RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-md-dpdk --no-deps
-      # Each crate page is the crate's README (`#![doc = include_str!]`).
-      - run: RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-tune -p ergon-io --all-features --no-deps
+      # The crate page is the crate's README (`#![doc = include_str!]`).
+      - run: RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-tune --all-features --no-deps
       # Generated codec surfaces match api/generated/*.txt (change tracking).
       - run: ./scripts/check-generated-public-api.sh
 
@@ -104,6 +97,8 @@ jobs:
         run: ./scripts/check-book-fences.sh
       - name: Book content checks
         run: ./scripts/check-book-content.sh
+      - name: Generated book pages unedited (hashes, manifest, SUMMARY)
+        run: ./scripts/check-generated-book.py
       - name: sbe-tool benchmark comparators match upstream
         run: ./scripts/regenerate-sbe-benchmark-reference.sh --check
       # Self-test of the release's fail-closed evidence packaging. This one had
@@ -115,8 +110,8 @@ jobs:
 
   test:
     needs: policy
-    # x86_64 and aarch64 (Graviton): tune, io and md-dpdk have code
-    # for each architecture, and only the runner's architecture is compiled.
+    # x86_64 and aarch64 (Graviton): ergon-tune has code for each
+    # architecture, and only the runner's architecture is compiled.
     strategy:
       fail-fast: false
       matrix:
@@ -148,80 +143,15 @@ jobs:
           distribution: temurin
           java-version: "25"
 
-      # libdpdk: --all-features builds ergon-io's `smoltcp-dpdk`.
       - name: Install native build dependencies
-        run: sudo rm -f /etc/apt/sources.list.d/microsoft-prod.* && sudo apt-get update && sudo apt-get install -y libbsd-dev uuid-dev curl pkg-config libdpdk-dev
+        run: sudo rm -f /etc/apt/sources.list.d/microsoft-prod.* && sudo apt-get update && sudo apt-get install -y libbsd-dev uuid-dev curl
 
       - run: ${{ matrix.suite }}
-
-  # ergon-md-dpdk: the DPDK ENA kernel-bypass transport. The `dpdk` feature
-  # needs Linux x86_64 or aarch64 and libdpdk >= 23.11, which Ubuntu 24.04
-  # ships; this job runs it on x86_64. Runs the whole md-dpdk test lane
-  # (test-lanes.tsv: portable, dpdk, static+dpdk), the node bootstrap
-  # fixtures, and the virtual-device interop scenarios over tap devices on a
-  # bridge, which need root.
-  dpdk:
-    needs: policy
-    # x86_64 and aarch64 (Graviton): tune, io and md-dpdk have code
-    # for each architecture, and only the runner's architecture is compiled.
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm]
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "1.99.0"
-          components: clippy
-
-      - name: Install native build dependencies
-        run: sudo rm -f /etc/apt/sources.list.d/microsoft-prod.* && sudo apt-get update && sudo apt-get install -y libbsd-dev uuid-dev curl pkg-config clang libdpdk-dev ethtool
-
-      # rusteron's Aeron build needs CMake >= 3.30; ubuntu-24.04 apt ships 3.28.
-      - name: Install newer CMake
-        run: |
-          sudo python3 -m pip install --break-system-packages --no-cache-dir cmake
-          cmake --version
-
-      - run: cargo clippy -p ergon-md-dpdk -p ergon-md-dpdk-harness --all-targets --features ergon-md-dpdk/dpdk,ergon-md-dpdk-harness/dpdk -- -D warnings
-      # ergon-io's smoltcp-spin backend: its vdev test and peer are left out
-      # of --all-targets (`test = false`), so they are linted by name.
-      - run: cargo clippy -p ergon-io --features smoltcp-dpdk --test smoltcp_vdev --example smoltcp_peer -- -D warnings
-      - run: cargo test -p ergon-io --features smoltcp-dpdk --lib -- --test-threads=1
-      - run: cargo test -p ergon-md-dpdk -- --test-threads=1
-      - run: cargo test -p ergon-md-dpdk --features dpdk -- --test-threads=1
-      - run: cargo test -p ergon-md-dpdk --features static,dpdk -- --test-threads=1
-      - run: cargo test -p ergon-md-dpdk-harness -- --test-threads=1
-      - run: bash md-dpdk/deploy/aws-eks/node/test/test-bootstrap.sh
-      # The rootless lane runs every vdev scenario as the runner user, in a
-      # user, network and mount namespace of its own (no root, hugetlbfs or
-      # host network changes). It runs before the sudo lane, whose root-owned
-      # build outputs would otherwise block this user's build in target/.
-      - run: bash scripts/tests/test-dpdk-vdev-rootless.sh
-      - name: Host settings for the rootless lane (root, once, as an administrator would)
-        # Ubuntu 24.04's AppArmor refuses unprivileged user namespaces, and a
-        # namespace cannot load modules (tun, bridge, sch_netem for
-        # loss_recovery's tc netem).
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 && sudo modprobe -a tun bridge sch_netem
-      - name: DPDK virtual-device interop (rootless)
-        run: scripts/test-dpdk-vdev-rootless.sh
-      - name: ergon-io smoltcp-spin over a veth pair (rootless)
-        run: scripts/test-io-smoltcp-vdev.sh
-      - name: DPDK virtual-device interop (root)
-        # `sudo env "PATH=$PATH"` keeps the runner's cargo on root's PATH: the
-        # vdev script builds ergon-md-dpdk-harness itself.
-        run: sudo env "PATH=$PATH" scripts/test-dpdk-vdev.sh
 
   # Fail-fast gate: downstream jobs need this, so if policy, lint, or test
   # fails the gate is skipped and everything else is cancelled.
   gate:
-    needs: [policy, lint, test, dpdk]
+    needs: [policy, lint, test]
     runs-on: ubuntu-24.04
     timeout-minutes: 1
     steps:

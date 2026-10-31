@@ -20,7 +20,7 @@ pub const T20_MAX_EXIT_LATENCY_US: u64 = 1;
 
 const CPUIDLE: &str = "/sys/devices/system/cpu/cpuidle";
 
-const T20_EVIDENCE: &str = "md-dpdk/BENCHMARKS.md, \"c7i: the IRQ CPU's idle depth\" (lab session \
+const T20_EVIDENCE: &str = "git show v0.1.37:md-dpdk/BENCHMARKS.md, \"c7i: the IRQ CPU's idle depth\" (lab session \
      aws-20261028-092158: AWS c7i.4xlarge, intel_idle, kernel 7.2, mio TCP round trips at 10k \
      msg/s, 3 reps, each point's cpuidle usage read before and after); Linux \
      Documentation/admin-guide/pm/cpuidle.rst (state<N>/disable, pm_qos_resume_latency_us, \

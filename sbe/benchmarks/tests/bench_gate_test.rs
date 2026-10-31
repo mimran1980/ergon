@@ -1967,13 +1967,12 @@ fn run_snapshot(dir: &Path, k: usize) -> Result<Output, Box<dyn std::error::Erro
     )
 }
 
-/// A group another bench binary (ergon-md-dpdk's `benches/clock.rs`) writes
-/// into the shared Criterion home.
+/// A group another bench binary writes into the shared Criterion home.
 const FOREIGN_GROUP: &str = "clock_read";
 /// The function inside [`FOREIGN_GROUP`].
 const FOREIGN_BENCH: &str = "std_instant";
 
-/// `target/criterion` is shared: `ergon-md-dpdk`'s clock bench writes
+/// `target/criterion` is shared: another binary's bench can write
 /// `clock_read` into the same Criterion home, and Criterion leaves `new/` in place for groups a run
 /// does not touch. A snapshot of "everything under the home" therefore folds
 /// another binary's estimates into this run's envelope and widens it with

@@ -60,6 +60,13 @@
 - [Build Patterns](./samples/build-patterns.md)
 - [Buffer Sizing Guide](./samples/buffer-sizing.md)
 
+<!-- generated:begin samples -->
+
+- [Kubernetes Quickstart](./samples/k8s-quickstart.md)
+- [Low-Latency Kubernetes](./samples/low-latency-k8s.md)
+
+<!-- generated:end samples -->
+
 # ergo-aeron-cluster
 
 - [Cluster Client](./cluster/overview.md)
@@ -67,6 +74,8 @@
   - [Egress Listeners](./cluster/egress-listeners.md)
   - [Chained Message Decoding](./cluster/chained-decoding.md)
   - [Compatibility](./cluster/compatibility.md)
+
+<!-- generated:begin ergon-io -->
 
 # ergon-io
 
@@ -79,23 +88,37 @@
   - [Rate Limits and Errors](./io/rate-limits.md)
   - [Kubernetes](./io/kubernetes.md)
 
+<!-- generated:end ergon-io -->
+
 # ergon-tune
 
 - [Host Checks](./tune/overview.md)
+
+<!-- generated:begin ergon-md-dpdk -->
 
 # ergon-md-dpdk (experimental)
 
 - [DPDK Transport: Proof of Concept](./md-dpdk/overview.md)
   - [Configuration](./md-dpdk/configuration.md)
 
+<!-- generated:end ergon-md-dpdk -->
+
+<!-- generated:begin transports -->
+
 # Transports
 
+- [Which Transport When](./transports/choose.md)
+- [Aeron Client](./transports/aeron-client.md)
+  - [Note: Many Streams](./transports/aeron-many-streams.md)
 - [Transport Latency Comparison](./transports/comparison.md)
-- [Aeron with Many Streams](./transports/aeron-many-streams.md)
+- [Latency Findings at a Glance](./findings.md)
+
+<!-- generated:end transports -->
 
 # Deployment
 
 - [Low-Latency Hosts](./deploy/overview.md)
+  - [Busy-Spin Loop](./deploy/busy-spin-loop.md)
   - [Kubernetes HFT tuning](./deploy/hft.md)
   - [AWS and Azure, x86 and Graviton](./deploy/hosts.md)
   - [Clocks](./deploy/clocks.md)
@@ -104,6 +127,7 @@
   - [Latency Pods](./deploy/latency-pods.md)
   - [Benchmarks: x86 and Graviton](./deploy/benchmarks.md)
   - [Java for Archive and Cluster](./deploy/java.md)
+  - [Troubleshooting](./deploy/troubleshooting.md)
 
 # Project
 

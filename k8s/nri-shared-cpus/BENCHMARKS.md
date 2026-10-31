@@ -122,7 +122,7 @@ every other thread on CPU 1, allowed 1. An exec-probe hot pod was denied.
 
 ## EKS c8g.xlarge (run eks-nri-20261025-082023)
 
-`md-dpdk/benches/cloud/aws/eks-nri.sh`: EKS 1.36, AL2023, 2 x `c8g.xlarge`
+The cloud lab's EKS runner: EKS 1.36, AL2023, 2 x `c8g.xlarge`
 spot (4 vCPUs, Graviton4, no SMT), kernel 6.18.54, containerd 2.3.5, this
 tree's chart and image 0.1.2. Files:
 [`lab/results/eks-nri-20261025-082023/`](lab/results/eks-nri-20261025-082023/)

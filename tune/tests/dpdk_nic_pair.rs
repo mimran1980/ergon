@@ -35,7 +35,7 @@ fn t24_is_ok_when_the_process_does_not_run_on_dpdk() {
     assert_eq!(v.id, "T24");
     assert_eq!(v.status, Status::Ok, "{v}");
     assert!(!v.is_unknown(), "{v}");
-    assert!(v.message.contains("not an ergon-io DPDK backend"), "{v}");
+    assert!(v.message.contains("not a DPDK network backend"), "{v}");
     assert!(!v.message.contains("10.0.1."), "{v}");
 }
 
@@ -157,7 +157,7 @@ fn t24_accepts_a_dpdk_device_name_and_a_real_pci_address() {
 }
 
 /// `DpdkNicPair::from_env`: the same pair T24 reports, parsed once for
-/// ergon-io's DPDK backends to take. None when no pair was granted; an
+/// DPDK network backends to take. None when no pair was granted; an
 /// error naming every empty or unparsable key otherwise.
 #[test]
 fn the_pair_parses_once_for_the_backends_to_take() -> Result<(), String> {

@@ -73,7 +73,7 @@ fn thp_on(host: &Host) -> Result<Option<(String, ThpOn)>, ReadError> {
 /// multi-size size (`hugepages-<n>kB/enabled`, Linux 6.8 and later; 16 KiB
 /// to 2 MiB on arm64) is `always` or `madvise` (a size at `inherit` follows
 /// the top level). A warning for the processes that run Aeron (the media
-/// driver, the runtime), information for ergon-io.
+/// driver, the runtime), information for a network I/O layer.
 #[must_use]
 pub fn t3_thp(host: &Host, component: Component) -> Vec<Finding> {
     let id = "T3";
@@ -133,7 +133,7 @@ pub fn t3_thp(host: &Host, component: Component) -> Vec<Finding> {
         ""
     };
     let io = if component == Component::Io {
-        "; ergon-io's own benchmarks ran under `madvise`"
+        "; the lab's network I/O benchmarks ran under `madvise`"
     } else {
         ""
     };
@@ -305,7 +305,7 @@ pub fn nodes_online(host: &Host) -> Result<Option<CpuSet>, ReadError> {
 }
 
 const T5_EVIDENCE: &str = "Linux Documentation/admin-guide/sysctl/kernel.rst (numa_balancing); \
-     the lab sets 0 (md-dpdk/benches/cloud/vm.sh); not measured";
+     the lab sets 0 (git show v0.1.37:md-dpdk/benches/cloud/vm.sh); not measured";
 
 /// T5: automatic NUMA balancing is off, on a host with more than one node.
 #[must_use]

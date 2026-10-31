@@ -1,10 +1,9 @@
 //! Fixture trees standing for a host's `/sys` and `/proc`, built in a fresh
 //! temporary directory per test and removed when dropped.
 //!
-//! Five hosts, from what the lab hosts showed (`md-dpdk/benches/cloud`,
-//! `io/benches`): a tuned AWS Graviton c9g (no SMT, no OS idle states), a
-//! tuned AWS c7i x86 with SMT, an untuned Debian 13 EC2 host at its
-//! defaults, an Azure host whose `hv_netvsc` interfaces have MANA and
+//! Five hosts, from what the AWS lab hosts showed: a tuned AWS Graviton
+//! c9g (no SMT, no OS idle states), a tuned AWS c7i x86 with SMT, an
+//! untuned Debian 13 EC2 host at its defaults, an Azure host whose `hv_netvsc` interfaces have MANA and
 //! Mellanox VFs, and a pod's network namespace (host CPU, IRQ and memory
 //! files, but only a veth and none of the host's network sysctls).
 #![allow(

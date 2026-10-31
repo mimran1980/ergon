@@ -22,8 +22,8 @@ Checks of a Linux host's low-latency settings, for start-up and housekeeping.
 - ergon-tune reads the host and returns findings: what is wrong, the exact
   fix, and the evidence (an archived A/B, or documentation and "not measured
   here"). It changes nothing.
-- ergon-io and the ergon-md-dpdk media driver run these checks themselves.
-  Call them yourself only from your own busy loop.
+- Call them at start-up and from housekeeping in your own busy loop, media
+  driver or network I/O layer.
 
 | Check | What it looks at |
 |---|---|
@@ -35,7 +35,7 @@ Checks of a Linux host's low-latency settings, for start-up and housekeeping.
 | T7 | no hot thread under `SCHED_FIFO` or `SCHED_RR` |
 | T8 | no two busy threads on one CPU or one physical core |
 | T9 | no CPU quota on the process's cgroup (a Kubernetes CPU limit, `docker run --cpus`); `ThrottleWatch` reads its throttling counters while the loop runs. Fix on Kubernetes: kubelet 1.33+, `cpuManagerPolicy: static`, a Guaranteed pod and a whole-number CPU request, so the kubelet drops the quota itself. Never `cpuCFSQuota: false`: it removes every pod's CPU limit on the node |
-| T10 | SMT (hyperthreading) off on x86 (Graviton and arm64 pass: one vCPU is one physical core). On x86 a Kubernetes `cpu: 2` is one physical core, and a busy sibling slows the loop (measured for ergon-io's SQPOLL thread on the sibling; the finding quotes the figures with their max). The fix is on the node: EKS/EC2 `CpuOptions: ThreadsPerCore: 1`, self-managed `nosmt`, or an Azure size without SMT (Fasv6, Falsv6, Famsv6, Dpsv6, Dplsv6) |
+| T10 | SMT (hyperthreading) off on x86 (Graviton and arm64 pass: one vCPU is one physical core). On x86 a Kubernetes `cpu: 2` is one physical core, and a busy sibling slows the loop (measured for an `io_uring` SQPOLL thread on the sibling; the finding quotes the figures with their max). The fix is on the node: EKS/EC2 `CpuOptions: ThreadsPerCore: 1`, self-managed `nosmt`, or an Azure size without SMT (Fasv6, Falsv6, Famsv6, Dpsv6, Dplsv6) |
 | K1-K7 | inside a Kubernetes pod only, with T7 and T9: Guaranteed `QoS`, exclusive CPUs (the static CPU manager, not the shared pool), the loop's SMT sibling inside the pod's cpuset, a CPU for the helper threads (`ERGON_SHARED_CPUS`/`ERGON_HELPER_CPUS`), the capabilities the caller says it uses (`Needs`: busy polling, `SCHED_FIFO`, `mlockall`), no `memory.high` and no CPU/memory pressure (any non-zero reading; no threshold is measured), and, when the caller names the NIC (`Needs::with_nic`), its NUMA node. Each finding says whether the fix goes in the pod spec or on the node, with the exact setting |
 | T11 | how `CLOCK_REALTIME` is kept: PTP-grade (chronyd locked to a PTP hardware clock, or phc2sys) is ok; NTP-disciplined or unsynchronised warns, with the chrony `refclock PHC` line for the host's PHC (a node setting); a correction still being slewed out, an error bound wider than 1 ms or a pending leap second warns. What the process cannot see (in a pod: the daemons and chronyd's port) is unknown, never a warning |
 | T12 | the kernel's clock source: the counter (`tsc`, `arch_sys_counter`) is ok; a hypervisor's view of it (`kvm-clock`, Hyper-V's TSC page) is info; anything else (`hpet`, `acpi_pm`) on x86-64 or 64-bit Arm warns: every `CLOCK_REALTIME` and `CLOCK_MONOTONIC` read is a system call. On another architecture a source other than `tsc` or `arch_sys_counter` is unknown |
@@ -50,7 +50,7 @@ Checks of a Linux host's low-latency settings, for start-up and housekeeping.
 | T21 | TCP autocorking off (`net.ipv4.tcp_autocorking` 0, in the process's network namespace): on, a small send waits for the previous one's transmit to complete, even with `TCP_NODELAY`. A warning for a caller sending latency-sensitive TCP, info otherwise. Fix `sysctl -w net.ipv4.tcp_autocorking=0`; on Kubernetes in the pod's `securityContext.sysctls` (an unsafe sysctl the kubelet must allow), or on the node for a `hostNetwork` pod |
 | T22 | No Aeron affinity setting named as before Aeron 1.54 (`AERON_DRIVER_CPUSET_AFFINITY`, `AERON_DRIVER_CPUSET_WARNINGS_AS_ERRORS`): 1.54 ignores those names. Fix: rename to `AERON_THREAD_AFFINITY_USE_CPUSET_OFFSETS` and `AERON_THREAD_AFFINITY_FAIL_ON_VALIDATION_ERRORS` |
 | T23 | `AERON_DIR` on hugetlbfs has `AERON_FILE_PAGE_SIZE=2097152` and `AERON_TERM_BUFFER_SPARSE_FILE=false`. The nri-shared-cpus plugin sets both when `hugepages.ergon.io/<container>` is `2M` and the container has a `hugepages-2Mi` limit. The process still sets `AERON_DIR` to `$ERGON_HUGEPAGES_DIR/aeron`. The address, the gateway and the PCI address are never filled in |
-| T24 | the ENA device plugin's NIC pair on the DPDK backends (`fstack-spin`, `smoltcp-spin`) and the `dpdk-ena` media driver: `RUSTERON_DPDK_SENDER_{PCI,IPV4_CIDR,GATEWAY}` missing, empty or unparsable warns with the exact keys; all three set, the finding prints the shortest `fstack-spin` and `smoltcp-spin` lines built from them (copied, never guessed), which a bare `fstack-spin` or an empty smoltcp line also takes itself. Off when this process is not on DPDK, ok with no pair granted: the device plugin has not granted a pair, not a guessed address. Reads only: no export, no bind, no `AERON_DIR`, never unknown |
+| T24 | a DPDK NIC pair, injected by a NIC device plugin not shipped here, for a caller on DPDK (the `fstack-spin` and `smoltcp-spin` line formats, or a `dpdk-ena` media driver): `RUSTERON_DPDK_SENDER_{PCI,IPV4_CIDR,GATEWAY}` missing, empty or unparsable warns with the exact keys; all three set, the finding prints the shortest `fstack-spin` and `smoltcp-spin` lines built from them (copied, never guessed), which a bare `fstack-spin` or an empty smoltcp line also takes itself. Off when this process is not on DPDK, ok with no pair granted: no device plugin granted a pair, not a guessed address. Reads only: no export, no bind, no `AERON_DIR`, never unknown |
 | N1-N4 (`nic`) | ENA adaptive RX moderation, deferred interrupts without a busy poller, the Azure accelerated-networking VF, the kernel RX ring |
 
 A finding names its fix. T1 on a stock host with its loop on CPU 2 of 8
@@ -58,7 +58,7 @@ gives `isolcpus=nohz,domain,managed_irq,2 nohz_full=2 rcu_nocbs=2 irqaffinity=0-
 
 ## The switch
 
-ergon-io and the media driver read one switch, `ERGON_HOST_CHECKS`, through
+Callers read one switch, `ERGON_HOST_CHECKS`, through
 `HostCheckPolicy` (any other value is an error at start):
 
 | Value | What it does |
@@ -82,9 +82,8 @@ stock static-CPU-manager pod: it proves exclusive CPUs only from an isolated
 or root cpuset partition (Linux 6.7+, as the nri-latency-pods plugin sets).
 
 Every printed warning line ends with `(ERGON_HOST_CHECKS=off silences host-check
-warnings)`. In the media driver `off` is stronger and runs no check at all.
-ergon-io's `Driver::new` and the media driver read the switch; the checks stay
-pure functions over a `Host`.
+warnings)`. A caller may make `off` stronger and run no check at all. The
+caller reads the switch; the checks stay pure functions over a `Host`.
 
 ## When to use it
 
@@ -116,11 +115,38 @@ pure functions over a `Host`.
   Kernel queries (T4's `statfs`, T11's `adjtimex`, N1's and N4's ethtool)
   reach only the running host; on a tree they report unknown.
 - **Evidence named.** Each finding's `evidence` names its source: an AWS
-  `c7i` A/B table in `io/benches/results/` (T1, T2, T7, T10, N1) or the lab's transport suite (T20, T21: `md-dpdk/BENCHMARKS.md`), or
+  `c7i` A/B table or transport-suite result in git history (`git show
+  <commit>:<path>`; T1, T2, T7, T10, N1, T20, T21), or
   documentation and "not measured here". Hosts differ: measure yours.
 - **Only what the table lists.** CPU frequency is not checked. T20 never
   opens `/dev/cpu_dma_latency` (opening it registers a request), so a
   process holding it is not seen.
+
+## Check a node first: the `ergon-tune` command
+
+Before deploying, run the checks on the node, or in a pod that mounts the
+node's root, and fix what they report:
+
+```sh
+cargo install ergon-tune
+ergon-tune --hot 2-7 --nic ens6 --tcp           # on the node
+ergon-tune --root /host --hot 2-7 --require     # a pod with the node's / at /host
+```
+
+| Option | Meaning |
+|---|---|
+| `--hot CPUS` | the busy-spinning CPUs; default the node's isolated ones |
+| `--nic NAME\|PCI` | a data NIC (`ens6`) or DPDK port (`0000:00:06.0`): adds T2, T6, T20; repeatable |
+| `--tcp` | the app sends latency-sensitive TCP: T21 warns |
+| `--busy-poll` | sockets busy-poll: K5 asks for `CAP_NET_ADMIN` |
+| `--component io\|md\|rt` | who spins, for T3's severity (default `md`) |
+| `--root DIR` | check a mounted tree instead of `/` |
+| `--all` | print the checks that passed too |
+| `--require` | exit 1 where `ERGON_HOST_CHECKS=require` would refuse a start |
+
+Each line is a finding (`WARN`, `info`, `UNKNOWN`, `ok`) with its evidence and
+its fix; a summary line ends the output. Exit status: 0 reported, 1 refused
+(`--require`), 2 usage.
 
 ## How to use it
 
@@ -130,7 +156,7 @@ ergon-tune = "0.1"   # features = ["nic"] for N1-N4
 ```
 
 At start-up, name the CPUs that busy-spin and log what the checks find.
-`Component` is the caller: the media driver (`Md`), ergon-io (`Io`) or an
+`Component` is the caller: a media driver (`Md`), a network I/O layer (`Io`) or an
 application's busy-spinning runtime (`Rt`). Transparent hugepages warn for
 `Md` and `Rt` and inform for `Io`.
 

@@ -2,30 +2,13 @@
 
 A busy-spinning pod needs what a busy-spinning process on a VM needs: a whole
 core per busy thread, interrupts elsewhere, no page faults. Kubelet has to be
-told to give it that. The worked example is the EKS deployment of the DPDK
-media driver,
-[`md-dpdk/deploy/aws-eks`](https://github.com/mimran1980/ergon/tree/main/md-dpdk/deploy/aws-eks).
-Its node and pod settings apply to any low-latency pod; its DPDK parts are a
-[proof of concept](../md-dpdk/overview.md), not for production.
+told to give it that. The settings below apply to any low-latency pod; the
+node examples are EKS on Amazon Linux 2023 with self-managed nodes.
 
-The whole stack in one place (this page's node and pod settings, the
-[shared-CPU plugin](shared-cpus.md), the DPDK driver, an Aeron ping/pong
-that prints its own latency, and a verifier for the thread layout) is the
-[`low-latency-k8s` sample](https://github.com/mimran1980/ergon/blob/main/samples/README.md#low-latency-k8s).
-The AWS apply target for the measured Aeron-on-DPDK layout is the
-[AWS Kubernetes sample](https://github.com/mimran1980/ergon/blob/main/samples/README.md#aws-k8s)
-(`eks-ena-x86`, `eks-ena-arm64`).
+Terms: [deployment glossary](overview.md#glossary).
 
-Terms: [deployment glossary](overview.md#glossary),
-[network and DPDK glossary](../md-dpdk/overview.md#glossary).
-
-| | x86 (`c7i`) | Graviton |
-|---|---|---|
-| manifests and node bootstrap | yes: Amazon Linux 2023, self-managed nodes | none: the bootstrap refuses non-Intel CPUs and the images are `linux/amd64` |
-| measured | no committed data. The live test runs the driver pod on 4 CPUs through an overlay (`md-dpdk/deploy/aws-eks/README.md`, Live test) | not measured |
-
-The kubelet and pod settings are not x86-specific, but no Graviton node has
-been built with them. For Graviton's kernel arguments see [hosts](hosts.md).
+The kubelet and pod settings are the same on x86 (`c7i`) and Graviton
+(`c8g`, `c9g`). Graviton's kernel arguments: [hosts](hosts.md).
 
 ## Latency checklist
 
@@ -62,9 +45,8 @@ Use a dedicated node pool, tainted so only latency pods land there
 
 **Check:**
 
-11. At start: ergon-io and the media driver run
-    [ergon-tune](../tune/overview.md), and T9 warns about a CPU quota. In
-    your own loop, call `t9_cpu_quota` before it.
+11. At start: call [ergon-tune](../tune/overview.md)'s `t9_cpu_quota`
+    before your loop; T9 warns about a CPU quota.
 12. While it runs: `nr_throttled` stays flat ([verify](#verify)). In your
     own loop, call ergon-tune's `ThrottleWatch::check` from housekeeping.
 
@@ -72,39 +54,57 @@ Use a dedicated node pool, tainted so only latency pods land there
 
 **Kubelet** gives Guaranteed pods whole cores of their own (the static CPU
 manager) and keeps a pod's CPUs and devices on one NUMA node (the topology
-manager). `node/userdata.sh` writes this, with `$reserved` the housekeeping
+manager). The EKS node's `NodeConfig`, with `$reserved` the housekeeping
 CPUs (`0` on a `c7i.4xlarge`: one CPU is one physical core, because SMT is
 off):
 
 ```yaml
-{{#include ../../../md-dpdk/deploy/aws-eks/node/userdata.sh:130:144}}
+apiVersion: node.eks.aws/v1alpha1
+kind: NodeConfig
+spec:
+  cluster:
+    name: $cluster
+    apiServerEndpoint: $endpoint
+    certificateAuthority: $ca
+    cidr: $cidr
+  kubelet:
+    config:
+      cpuManagerPolicy: static
+      cpuManagerPolicyOptions:
+        full-pcpus-only: "true"
+      reservedSystemCPUs: "$reserved"
+      kubeReservedCgroup: ""
+      systemReservedCgroup: ""
+      topologyManagerPolicy: single-numa-node
+      topologyManagerScope: pod
+      memoryManagerPolicy: None
 ```
 
 - `full-pcpus-only`: whole physical cores, never one hyperthread shared with
   another pod. With SMT off it is a safety net.
 - `kubeReservedCgroup` and `systemReservedCgroup` are emptied because kubelet
   rejects `reservedSystemCPUs` while they are set.
-- `memoryManagerPolicy: None`: the deployed `c7i.4xlarge` has one NUMA node
-  (`node/userdata.sh`). On a multi-socket type, revisit it.
+- `memoryManagerPolicy: None`: a `c7i.4xlarge` has one NUMA node. On a
+  multi-socket type, revisit it.
 - `cpuCFSQuota` is not set: it stays `true`, so every pod keeps its CPU
   limit. The kubelet drops the quota itself on a container with exclusive
   CPUs ([No CPU quota](#no-cpu-quota)).
 
-The node scripts (tested against fixtures by `just test-dpdk-bootstrap`):
+What the node needs before the kubelet starts:
 
-| script | when | what it does |
-|---|---|---|
-| `node/provision-node.sh` | once, then one reboot before kubelet | kernel command line: `nosmt`, every CPU but the reserved core isolated, interrupts on that core, no C-state cap ([evidence](hosts.md#c-states)), `iommu=pt`, `transparent_hugepage=never`, 2 MiB hugepages, so kubelet's first start advertises `hugepages-2Mi` |
-| `node/bootstrap-dpdk-ena.sh` | every boot, before kubelet | interrupts on housekeeping with a watcher that re-pins on each link event; `irqbalance`, KSM, NUMA balancing off; THP off; `rmem_max`/`wmem_max` 16 MiB; Aeron's directory on a sized hugetlbfs at `/mnt/huge-aeron`; for DPDK the two spare ENAs on `igb_uio`. On failure the node still runs kernel UDP and advertises no DPDK pair |
+| when | what |
+|---|---|
+| once, then one reboot before kubelet | kernel command line: `nosmt`, every CPU but the reserved core isolated, interrupts on that core, no C-state cap ([evidence](hosts.md#c-states)), `transparent_hugepage=never`, 2 MiB hugepages, so kubelet's first start advertises `hugepages-2Mi` |
+| every boot, before kubelet | interrupts on housekeeping, re-pinned on each link event; `irqbalance`, KSM, NUMA balancing off; THP off; `rmem_max`/`wmem_max` 16 MiB; Aeron's directory on a sized hugetlbfs |
 
-Clocksource is left to the kernel. A forced `clocksource=tsc tsc=reliable`
-turns the kernel's TSC checks off, so bare metal takes it only with
-`RUSTERON_FORCE_TSC=1`, after the TSC has been measured as the same across
-cores against a PTP/PHC reference. A VM never gets it.
+Leave clocksource to the kernel. A forced `clocksource=tsc tsc=reliable`
+turns the kernel's TSC checks off: use it only on bare metal, after the TSC
+has been measured as the same across cores against a PTP/PHC reference.
+Never on a VM.
 
 Kubelet's reserved CPUs and the kernel's housekeeping CPUs are the same set:
-interrupts and system daemons stay off the pods' cores. Dedicated nodes are
-labelled `rusteron-dpdk/ena=true` and tainted `rusteron-dpdk:NoSchedule`.
+interrupts and system daemons stay off the pods' cores. Label and taint the
+dedicated nodes ([keep other pods in check](#keep-other-pods-in-check)).
 
 ## SMT off
 
@@ -124,11 +124,8 @@ one Kubernetes CPU is one physical core, as on Graviton, which has no SMT.
 - With `ThreadsPerCore: 1` the instance runs half its usual vCPU count (a
   `c7i.4xlarge`: 8 cores, 8 vCPUs, not 16). Size pods and quotas for cores.
 - `thread_siblings_list` still lists the offline twin. Name one CPU per core
-  (the lowest id) in `reservedSystemCPUs` and in kernel arguments. The node
-  scripts do.
-- The launch template that sets it: `node/launch-template.py`. The live lab
-  fails a node whose `/sys/devices/system/cpu/smt/active` is `1`
-  (`md-dpdk/benches/cloud/aws/eks.sh`).
+  (the lowest id) in `reservedSystemCPUs` and in kernel arguments.
+- Check it on the node: `/sys/devices/system/cpu/smt/active` reads `0`.
 
 ## Pods
 
@@ -143,9 +140,9 @@ one Kubernetes CPU is one physical core, as on Graviton, which has no SMT.
   `AERON_CLIENT_PRE_TOUCH_MAPPED_MEMORY=true` on clients.
 - **Handle SIGTERM.** Kubelet stops a pod with it; a PID 1 with no handler
   ignores it until SIGKILL, closing nothing.
-- **Privileged only where needed:** the DPDK driver pod (it maps the NIC and
-  locks hugepages). A client that only reaches the driver through Aeron's
-  directory is not.
+- **Privileged only where needed:** a kernel-bypass driver that maps the NIC
+  and locks hugepages. A client that only reaches the media driver through
+  Aeron's directory is not.
 - **`hostNetwork: true`** takes a kernel-UDP pod off the pod network's virtual
   interface. Not measured here.
 
@@ -174,7 +171,7 @@ fractional sidecar can run on the reserved CPUs. `strict-cpu-reservation:
 "true"` keeps everything that was not given those CPUs off them. Use it only
 when nothing but the system (and threads you pin there yourself) may use
 them: it breaks anything that needs the shared pool by default, such as a
-fractional sidecar in a latency pod or ergon-stack's host-stats thread. The
+fractional sidecar in a latency pod or a helper thread left on the shared pool. The
 shared-CPU NRI plugin (`ghcr.io/mimran1980/ergon-shared-cpus:0.1.3`; chart `oci://ghcr.io/mimran1980/charts/ergon-shared-cpus` version `0.1.3`)
 lends shared CPUs from `reservedSystemCPUs` to a pod's helper threads and expects the
 default, so leave `strict-cpu-reservation` off while using it.
@@ -314,34 +311,8 @@ cat /sys/fs/cgroup/cpu.stat.local     # Linux 6.6+: counts the pod's quota too
   them twice, a minute apart.
 - In Prometheus, cAdvisor's `container_cpu_cfs_throttled_periods_total`
   stays flat.
-- [ergon-tune](../tune/overview.md): T9 runs at start in ergon-io and the
-  media driver. `ThrottleWatch` is for your own loop's housekeeping; nothing
-  in this repository calls it yet.
-
-## The media driver DaemonSet
-
-One driver pod per DPDK node: one ENA pair from the device plugin, six CPUs
-(one CPU is one core), memory and hugepages, requests equal to limits. The
-entrypoint uses three (housekeeping, sender, receiver) and leaves the rest
-for a client in the same pod (`entrypoint.sh:13-14`). The EKS lab ran the
-pod on four.
-
-```yaml
-{{#include ../../../md-dpdk/deploy/aws-eks/media-driver-daemonset.yaml}}
-```
-
-Its ConfigMap, with the reason for each value:
-
-```yaml
-{{#include ../../../md-dpdk/deploy/aws-eks/media-driver-config.yaml}}
-```
-*(`md-dpdk/deploy/aws-eks/`; the node scripts and the entrypoint are tested
-against fixtures by `just test-dpdk-bootstrap`.)*
-
-The entrypoint reads the pod's cpuset and hands out cores in order:
-housekeeping, sender, receiver, then the rest for a client. Node
-requirements, the hugepage budget and the device plugin: the deployment's
-[README](https://github.com/mimran1980/ergon/blob/main/md-dpdk/deploy/aws-eks/README.md).
+- [ergon-tune](../tune/overview.md): call T9 at start and
+  `ThrottleWatch::check` from your loop's housekeeping.
 
 ## Checks inside a pod
 
@@ -351,7 +322,7 @@ cannot read there as unknown, never as a warning. Run the NIC checks on the
 node, or in a pod on the host's network. T9 reads the container's own cgroup;
 the pod's quota shows only in `cpu.stat.local` ([verify](#verify)).
 
-Under `ERGON_HOST_CHECKS=require`, ergon-io refuses a stock
+Under `ERGON_HOST_CHECKS=require`, a caller refuses a stock
 static-CPU-manager pod: K2 cannot prove exclusive CPUs from the kubelet's
 cpuset, so it reports unknown. An isolated cpuset partition, as the
 [latency pods](latency-pods.md) plugin

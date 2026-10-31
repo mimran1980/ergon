@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  An order-entry message shaped like ergon-stack's trading.xml NewOrder: two
+  An order-entry message shaped like a trading engine's NewOrder: two
   timestamps, an id, an enum, two Decimal9 composites and one var-data field.
   Generated twice by build.rs: with source traits (fixed() + setters against
   encode_from) and with Side / Decimal9 mapped to application types (mapped

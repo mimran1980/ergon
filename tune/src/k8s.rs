@@ -402,7 +402,7 @@ fn k3_smt_sibling(host: &Host, cpus: &HotSet, cg: Option<&CpuCgroup>) -> Finding
         format!(
             "outside this pod's cpuset are the SMT siblings of the busy CPUs ({}): whatever runs \
              there (another pod, the kubelet) takes the core's execution units from the loop \
-             (measured only for ergon-io's SQPOLL thread on the sibling: T10's figures). Fix (node): turn SMT off (T10). Fix (pod spec): ask for both threads of the \
+             (measured only for an io_uring SQPOLL thread on the sibling: T10's figures). Fix (node): turn SMT off (T10). Fix (pod spec): ask for both threads of the \
              core (cpu: 2 with `full-pcpus-only`), so this pod owns its siblings",
             pairs.join(", ")
         ),

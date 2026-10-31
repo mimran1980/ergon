@@ -3,7 +3,7 @@
 ## Supported versions
 
 0.x experimental software. Only the latest published version of each crate
-(`ergo-sbe`, `ergo-aeron-cluster`, `ergon-tune`, `ergon-io`, `ergon-md-dpdk`)
+(`ergo-sbe`, `ergo-aeron-cluster`, `ergon-tune`)
 receives fixes. No backports.
 
 ## Reporting a vulnerability
@@ -27,8 +27,6 @@ Solo-maintained: no guaranteed response time.
 |---|---|
 | `ergo-sbe` | schema parser, code generator, generated codecs on malformed or truncated input |
 | `ergo-aeron-cluster` | client-side wire handling |
-| `ergon-io` | TLS 1.3 record layer after the rustls handshake (`io/src/tls.rs`), WebSocket and HTTP parsing |
-| `ergon-md-dpdk` | native C transport (`md-dpdk/native/`) |
 | `ergon-tune` | parsing of host files it reads |
 
 Out of scope: the `simple-binary-encoding` and `aeron` submodules (report

@@ -6,9 +6,9 @@
 [![Book](https://img.shields.io/badge/book-mimran1980.github.io%2Fergon-blue)](https://mimran1980.github.io/ergon/)
 
 Rust crates for low-latency trading: an SBE codec generator, an Aeron Cluster
-client, busy-spin network I/O, host checks and a DPDK transport for the Aeron
-media driver. 0.x alpha, not production-ready: any release may break the API,
-with no deprecation period; [CHANGELOG.md](CHANGELOG.md) lists each break.
+client and host checks, plus Kubernetes node setup for latency pods. 0.x
+alpha, not production-ready: any release may break the API, with no
+deprecation period; [CHANGELOG.md](CHANGELOG.md) lists each break.
 Exit criteria: [Road to 1.0](https://mimran1980.github.io/ergon/project/road-to-1.0.html).
 
 > **AI assistance.** This repository was developed with heavy AI assistance.
@@ -47,8 +47,6 @@ AL2023; a helper's wake-up wait on the shared CPU is measured there.
 - Node setup, install, configuration: [k8s/nri-shared-cpus](k8s/nri-shared-cpus/README.md).
 - Node and pod tuning, each setting marked measured or not, with copy-paste
   blocks: [Kubernetes HFT tuning](https://mimran1980.github.io/ergon/deploy/hft.html).
-- The measured Aeron-on-DPDK layout on EKS (`eks-ena-x86`, `eks-ena-arm64`):
-  [samples/README.md#aws-k8s](samples/README.md#aws-k8s).
 
 ## Crates
 
@@ -56,15 +54,17 @@ AL2023; a helper's wake-up wait on the shared CPU is measured there.
 |---|---|---|
 | [`sbe/`](sbe/) | `ergo-sbe` | SBE schema XML → Rust codecs, generated in `build.rs` |
 | [`cluster/`](cluster/) | `ergo-aeron-cluster` | Aeron Cluster client. Experimental, not a production substitute |
-| [`io/`](io/) | `ergon-io` | WebSocket and HTTP/1.1 over TLS 1.3 on one busy-spin thread; epoll or `io_uring` |
 | [`tune/`](tune/) | `ergon-tune` | Reads the host's low-latency settings and reports findings; changes nothing |
-| [`md-dpdk/`](md-dpdk/) | `ergon-md-dpdk` | DPDK transport for the Aeron media driver, Linux x86_64 and aarch64. Proof of concept |
 | [`k8s/nri-shared-cpus`](k8s/nri-shared-cpus/README.md) | Helm chart | Gives a pod its exclusive CPUs plus the node's shared CPUs. |
 | [`k8s/nri-latency-pods`](k8s/nri-latency-pods/) | node and admission setup | Node tuning, an admission policy and pod annotations for latency pods (EKS AL2023) |
 
-Unpublished support: `sbe/benchmarks`, `cluster-test-harness`,
-`io/benches`, `md-dpdk/harness`, `md-dpdk/device-plugin` and seven sample
+Unpublished support: `sbe/benchmarks`, `cluster-test-harness` and the sample
 crates in [`samples/`](samples/README.md).
+
+The book also covers
+[network I/O](https://mimran1980.github.io/ergon/io/overview.html),
+[the DPDK transport](https://mimran1980.github.io/ergon/md-dpdk/overview.html)
+and [transports](https://mimran1980.github.io/ergon/transports/choose.html).
 
 Start with `ergo-sbe`. Add another crate only for a need you have. Which one
 does what, and how to call it: the

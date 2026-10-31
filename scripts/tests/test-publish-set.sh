@@ -191,8 +191,8 @@ expect_failure 'util is published but not in api/public-api-baseline.toml'
 reset; write_api '"core", "util", "app", "tool"'
 expect_failure 'tool is in api/public-api-baseline.toml but not published'
 
-# A second dependant of one published sibling (ergon-io and ergon-md-dpdk
-# both need ergon-tune): in the same multi-package publish and dry run as
+# A second dependant of one published sibling (two crates that
+# both need one published library): in the same multi-package publish and dry run as
 # that sibling it passes; dry-run on its own, it fails.
 with_io() {
     write_metadata add-io

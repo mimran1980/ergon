@@ -1,3 +1,4 @@
+<!-- Generated page: edits here are overwritten by the next export. sha256:f1e8c546bb76005132acfaffe309fc022a38840c987c248dd1ede3d46a69ceb2 -->
 # ergon-io
 
 Network I/O for an exchange client on one busy-spinning thread: WebSocket
@@ -7,17 +8,13 @@ and HTTP/1.1 over TLS 1.3.
 - Written with heavy AI assistance ([disclosure](../project/ai-assistance.md)).
   Not production-ready.
 
-```sh
-cargo add ergon-io --features webpki-roots
-```
-
 - Features: `uring` (on by default) adds the `io_uring` backends;
   `webpki-roots` adds Mozilla's root store (`tls::webpki_roots`); `curl` adds
   libcurl as an `HttpClient` implementation.
-- API reference: [docs.rs/ergon-io](https://docs.rs/ergon-io/).
+- API reference: `cargo doc -p ergon-io --features webpki-roots --open`.
 - Every measured figure, with its max and its data file:
-  [`io/benches/BENCHMARK.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md)
-  (its first table answers the common questions).
+  the benchmark notes
+  (their first table answers the common questions).
 
 ## Glossary
 
@@ -28,11 +25,11 @@ Terms this chapter uses. Each links to the section that explains it.
 | [busy-spin thread](#when-to-use-it) | A thread that loops on its own core and never sleeps. | Pro: no wake-up delay. Con: uses a whole core all the time. |
 | [poll](backends.md#cost-per-poll) | One non-blocking pass of `Driver::poll`: send what was queued, receive, decrypt, decode, deliver, send. | A message can wait up to one whole poll for its turn. |
 | [isolated core](#best-practice) | A CPU the kernel keeps other work off. The rest are housekeeping CPUs. | Pin the loop to one. Helper threads (`connect_background`) run on housekeeping CPUs — in a pod, on its other CPUs ([Kubernetes](kubernetes.md)). |
-| [hyperthread (SMT) sibling](#choosing-a-backend) | The other logical CPU on the same physical core. | Can host the SQPOLL thread, at a cost in p50 and p99 against a core of its own ([data](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#smt-sibling-cost)). |
+| [hyperthread (SMT) sibling](#choosing-a-backend) | The other logical CPU on the same physical core. | Can host the SQPOLL thread, at a cost in p50 and p99 against a core of its own (data). |
 | [cpuset](kubernetes.md#why-a-pod-has-no-housekeeping-cpus) | The CPUs a process may run on: its cgroup's `cpuset.cpus.effective`. A pod's is what the kubelet gave it. | Helper threads and SQPOLL must land inside it; the kernel refuses a mask outside (`EINVAL`). |
 | [static CPU manager](kubernetes.md#pod-layouts) | The kubelet policy that gives a Guaranteed pod whole CPUs of its own. | What makes a second CPU the loop does not share possible; x86 with SMT: also `full-pcpus-only`. |
 | [Graviton](#when-to-use-it) | AWS's Arm CPUs. | Each vCPU is a whole core, so there is no hyperthread sibling. The fair backend comparison ran on it. |
-| [`SCHED_FIFO`](../tune/overview.md) | Real-time scheduling: the thread runs ahead of every normal one. | One A/B for the loop: no consistent change ([data](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#host-and-nic-settings-aws-x86)). |
+| [`SCHED_FIFO`](../tune/overview.md) | Real-time scheduling: the thread runs ahead of every normal one. | One A/B for the loop: no consistent change (data). |
 | [syscall](#choosing-a-backend) | A call from the program into the kernel. | Each costs CPU. `epoll-spin` makes one `epoll_wait` per poll, idle or not. |
 | [interrupt](#choosing-a-backend) | The NIC's signal to the CPU that packets arrived. | `epoll-spin` and mio wait for it. Compared fairly with NIC polling on Graviton only. |
 | [NIC polling (busy polling)](backends.md) | The reading thread checks the NIC queue itself instead of waiting for an interrupt. | Pro: skips the interrupt path. Con: CPU; plain `recv-busy` pays it per socket. |
@@ -56,7 +53,7 @@ Terms this chapter uses. Each links to the section that explains it.
 | [TCP keepalive](#defaults) | The kernel probes an idle connection to find a dead peer. | Default: 10 s idle, then every 5 s, 3 probes. One kernel timer per socket; WebSocket Pings already do this. |
 | [`TCP_USER_TIMEOUT`](#defaults) | How long sent data may stay unacknowledged before the kernel drops the connection. | 25 s here; the kernel default is about 15 minutes. |
 | [TLS 1.3](#connecting) | The encryption on every connection. | TLS 1.2 is refused with a clear error. |
-| [TLS handshake](#connecting) | The key exchange when a connection opens. | Makes one poll of the connecting thread long ([data](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#connection-set-up)). Keep it off the loop: `connect_background`. |
+| [TLS handshake](#connecting) | The key exchange when a connection opens. | Makes one poll of the connecting thread long (data). Keep it off the loop: `connect_background`. |
 | [TLS record](#when-to-use-it) | TLS's unit of encrypted data. | A native HTTP request is one record; a large WebSocket message goes out over several. |
 | [in place](#how-it-works) | Decrypted and parsed in the buffer the kernel wrote into: one copy per byte. | Pro: no extra copy. Con: the slice lives only during the call; copy what you keep. |
 | [WebSocket](websocket.md) | A two-way message stream over one TCP connection, opened by an HTTP upgrade (status 101). | No compression here: it would break in-place parsing. |
@@ -107,6 +104,9 @@ Pages: [WebSocket](websocket.md) (a complete client),
 
 ## Choosing a backend
 
+Whether ergon-io, Aeron or kernel bypass at all:
+[which transport when](../transports/choose.md). Within ergon-io:
+
 The backend is configuration: `Config::parse("recv-busy")`. Count every
 socket the loop thread polls: WebSocket feeds, order connections and every
 `HttpClient` pool connection (each `Driver` and `HttpClient` on the thread
@@ -119,9 +119,9 @@ adds its own). Then pick by what CPUs you have:
 | 65–256 | `recv-busy,per_queue=true` | `uring-sqpoll` | `uring-sqpoll` (interrupt backends not measured past 64) |
 
 Evidence:
-[fair run, Graviton](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton)
+fair run, Graviton
 (1–64 sockets, HTTP pool of 1 and 20) and
-[polling backends, x86](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#polling-backends-by-socket-count-x86)
+polling backends, x86
 (1–256 connections).
 
 A NIC of the process's own, where kernel bypass is allowed:
@@ -129,7 +129,7 @@ A NIC of the process's own, where kernel bypass is allowed:
 [`smoltcp-spin`](backends.md#smoltcp-spin-tcp-and-udp-on-smoltcp-over-dpdk)
 (both lab-tested only). The AWS Kubernetes layout for Aeron on DPDK,
 the measured 1-stream path when DPDK is allowed, is
-[samples/README.md#aws-k8s](https://github.com/mimran1980/ergon/blob/main/samples/README.md#aws-k8s).
+samples/README.md#aws-k8s.
 ergon-io on DPDK has no overlay: the remeasure is one rep, and its tails are loss, faults and unexplained maxima.
 
 - **Plain `recv-busy` reads every socket on every poll.** Its poll grows
@@ -164,7 +164,7 @@ ergon-io on DPDK has no overlay: the remeasure is one rep, and its tails are los
 | `Driver::connect_background(dial)` | a helper thread on the helper CPUs (`connect_cpu`; in a pod: [Kubernetes](kubernetes.md)), not the polling CPU when it is known | reconnects on a live loop |
 
 The loop's worst poll per connect, both ways:
-[connection set-up](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#connection-set-up).
+connection set-up.
 
 - **TLS 1.3 only.** TLS 1.2 is refused with a clear error.
 - **Trust** is the rustls configuration you pass
@@ -222,12 +222,12 @@ Node-level means the setting is on the host, not in the pod spec
 | practice | where | evidence |
 |---|---|---|
 | Pin the loop to an isolated CPU; give it whole CPUs (static CPU manager) | node and pod | [Kubernetes](kubernetes.md#pin-the-loop-thread-inside-the-pod) |
-| Reconnect off the loop: `connect_background` (the `Reconnect` default) | pod | [connection set-up](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#connection-set-up) |
-| AWS: ENA adaptive moderation off (`ethtool -C <nic> adaptive-rx off`), again after each NIC reset | node | [host and NIC settings](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#host-and-nic-settings-aws-x86) |
-| Interrupt backends: also `rx-usecs 0`, and the NIC's interrupts on a core of their own | node | interrupts on a core of their own: [fair run](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton) (`irqlocal` against `irqcore`). `rx-usecs 0`: the fair run's setting, not A/B tested for these backends; moderation delays the interrupt they wait for (kernel `Documentation/networking/device_drivers/ethernet/amazon/ena.rst`). That run also had idle CPUs polling (`nohlt`) |
-| Keep the NIC's interrupts off the loop's CPU | node | the `irqlocal` rows in [host and NIC settings](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#host-and-nic-settings-aws-x86) and in the [fair run](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton) |
+| Reconnect off the loop: `connect_background` (the `Reconnect` default) | pod | connection set-up |
+| AWS: ENA adaptive moderation off (`ethtool -C <nic> adaptive-rx off`), again after each NIC reset | node | host and NIC settings |
+| Interrupt backends: also `rx-usecs 0`, and the NIC's interrupts on a core of their own | node | interrupts on a core of their own: fair run (`irqlocal` against `irqcore`). `rx-usecs 0`: the fair run's setting, not A/B tested for these backends; moderation delays the interrupt they wait for (kernel `Documentation/networking/device_drivers/ethernet/amazon/ena.rst`). That run also had idle CPUs polling (`nohlt`) |
+| Keep the NIC's interrupts off the loop's CPU | node | the `irqlocal` rows in host and NIC settings and in the fair run |
 | Past 4 sockets: `recv-busy,per_queue=true`, or `uring-sqpoll` with a spare CPU | pod | [choosing a backend](#choosing-a-backend) |
-| Pack many streams onto a few connections | app | [polling backends](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#polling-backends-by-socket-count-x86) |
+| Pack many streams onto a few connections | app | polling backends |
 
 Measured with no consistent effect: `SCHED_FIFO` for the loop, one NIC
 queue, capped idle states. Not measured here: route `quickack` and
@@ -243,7 +243,7 @@ cargo clippy -p ergon-io --all-targets -- -D warnings
 ## Measured results
 
 Every figure, with its max and its data file:
-[`io/benches/BENCHMARK.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md).
+the benchmark notes.
 WebSocket and HTTP round trips: [WebSocket](websocket.md#measured-results),
 [HTTP client](http-client.md#measured-results).
 UDP against TCP, and mio against ergon-io, beside Aeron:

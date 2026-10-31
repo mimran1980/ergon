@@ -29,30 +29,30 @@ run on kind. It does not measure the rows below.
 | setting | what it does | where | evidence | apply |
 |---|---|---|---|---|
 | CPU isolation | keeps tasks, the timer tick, RCU callbacks and new interrupts off the busy CPUs | node | measured: [isolation](#isolation) | boot line `isolcpus=managed_irq,domain,<busy> nohz_full=<busy> rcu_nocbs=<busy> irqaffinity=<housekeeping>` ([hosts](hosts.md#kernel-command-line)) |
-| NIC queue interrupts off the loop's CPU, `irqbalance` off, re-pinned after every NIC reset | the interrupt handler does not run on the loop's CPU | node | measured: [interrupt placement](#interrupt-placement) | [hosts](hosts.md#interrupts-and-the-nic); EKS: `node/irq-affinity.sh watch` |
+| NIC queue interrupts off the loop's CPU, `irqbalance` off, re-pinned after every NIC reset | the interrupt handler does not run on the loop's CPU | node | measured: [interrupt placement](#interrupt-placement) | [hosts](hosts.md#interrupts-and-the-nic) |
 | ENA moderation off: `adaptive-rx off rx-usecs 0` | one interrupt per packet; no adaptive-moderation work on the polling CPU | node | measured, x86, polling backend: [moderation](#interrupt-moderation) | `ethtool -C <if> adaptive-rx off rx-usecs 0`, again after every NIC reset |
 | SMT off (x86) | one Kubernetes CPU is one physical core | node | measured, one case (SQPOLL on the loop's sibling): [SMT sibling](#smt-sibling) | EC2 `CpuOptions` `ThreadsPerCore: 1`, or `nosmt` ([SMT off](kubernetes.md#smt-off)) |
 | static CPU manager, `full-pcpus-only` | Guaranteed whole-CPU containers get CPUs of their own | node | [Kubernetes CPU management](https://kubernetes.io/docs/tasks/administer-cluster/cpu-management-policies/); not measured here | [kubelet block](#copy-paste) |
 | `reservedSystemCPUs` = the housekeeping CPUs | system daemons stay off the exclusive CPUs | node | same Kubernetes page; not measured here | [kubelet block](#copy-paste) |
 | no CPU quota on a busy container | the kernel never stops the container mid-period | node + pod | [sched-bwc](https://docs.kernel.org/scheduler/sched-bwc.html), Kubernetes PR #127525 (kubelet 1.33+); not measured here (`tune/src/quota.rs` T9) | kubelet 1.33+, static CPU manager, Guaranteed pod, whole-number `cpu`. Not `cpuCFSQuota: false` ([why](kubernetes.md#no-cpu-quota)) |
 | Guaranteed QoS, whole-number `cpu` | the only pods the static CPU manager gives exclusive CPUs | pod | Kubernetes CPU management page; not measured here | [pod block](#copy-paste) |
-| each busy thread pinned to one CPU of the pod's cpuset | the thread stays on its exclusive CPU | pod | the isolation runs pinned every loop; pinning alone is not measured | `sched_setaffinity` from `Cpus_allowed_list` ([io: Kubernetes](../io/kubernetes.md#pin-the-loop-thread-inside-the-pod)) |
-| `uring-sqpoll`: the SQPOLL thread on its own CPU | the kernel's polling thread does not share the loop's core | pod | measured at 10 and 100 connections: [SMT sibling](#smt-sibling) | ergon-io picks a CPU of the pod's own outside the shared CPUs ([shared CPUs](shared-cpus.md#pinning-by-index)) |
+| each busy thread pinned to one CPU of the pod's cpuset | the thread stays on its exclusive CPU | pod | the isolation runs pinned every loop; pinning alone is not measured | `sched_setaffinity` from `Cpus_allowed_list` ([busy-spin loop](busy-spin-loop.md#start-up-order)) |
+| an `io_uring` SQPOLL thread on its own CPU | the kernel's polling thread does not share the loop's core | pod | measured at 10 and 100 connections: [SMT sibling](#smt-sibling) | pin it to a CPU of the pod's own outside the shared CPUs ([shared CPUs](shared-cpus.md#pinning-by-index)) |
 | transparent hugepages `never` | no `khugepaged` (it runs under `madvise` too), whose `lru_add_drain_all` runs a kworker on every CPU with queued pages | node | traced: it was an isolated CPU's only context switch and its 16.25 µs max ([nri-shared-cpus](https://github.com/mimran1980/ergon/blob/main/k8s/nri-shared-cpus/BENCHMARKS.md#what-reached-the-exclusive-cpu-and-the-fix)) | `transparent_hugepage=never` on the boot line, or `never` into `/sys/kernel/mm/transparent_hugepage/enabled` at boot |
 | fair server off on the isolated CPUs | no 1 s deadline-server timer kicking them (a nohz kick and a reschedule IPI) and keeping their tick on | node | traced, kernel 6.12: 56 kicks a minute with gaps to 14.1 µs, then 0 after ([nri-shared-cpus](https://github.com/mimran1980/ergon/blob/main/k8s/nri-shared-cpus/BENCHMARKS.md#what-reached-the-exclusive-cpu-and-the-fix)) | `echo 0 > /sys/kernel/debug/sched/fair_server/cpu<N>/runtime` for each isolated N, at every boot after debugfs is mounted (not persistent; kernel 6.12+). Only where nothing real-time runs on those CPUs: not with `SCHED_FIFO` |
 | node events out of trading hours | `lru_add_drain_all` callers (block-device ioctls, `systemctl daemon-reload` and generators, `mlock`, page migration) and BPF loads (systemd units, container starts with seccomp, SSH logins) reach every isolated CPU | node (operations) | traced: a systemd daily timer gave a 40.60 µs max and one context switch ([nri-shared-cpus](https://github.com/mimran1980/ergon/blob/main/k8s/nri-shared-cpus/BENCHMARKS.md#remaining-risk-node-events)) | systemd timers moved off trading hours, no pod churn and no SSH logins on the node during trading |
-| Aeron directory on a sized 2 MiB hugetlbfs, `AERON_FILE_PAGE_SIZE=2097152`, `AERON_TERM_BUFFER_SPARSE_FILE=false` | no 4 KiB page faults on the log buffers | node (pool, mount) + driver pod | [hugetlbpage](https://docs.kernel.org/admin-guide/mm/hugetlbpage.html); not measured here. An unsized hugetlbfs reports no free space, which Aeron's storage check refuses (`aeron_fileutil.c:952-959` in rusteron-media-driver 0.2.11) | [hosts](hosts.md#memory); driver env as in `md-dpdk/deploy/aws-eks/media-driver-config.yaml` |
+| Aeron directory on a sized 2 MiB hugetlbfs, `AERON_FILE_PAGE_SIZE=2097152`, `AERON_TERM_BUFFER_SPARSE_FILE=false` | no 4 KiB page faults on the log buffers | node (pool, mount) + driver pod | [hugetlbpage](https://docs.kernel.org/admin-guide/mm/hugetlbpage.html); not measured here. An unsized hugetlbfs reports no free space, which Aeron's storage check refuses (`aeron_fileutil.c:952-959` in rusteron-media-driver 0.2.11) | [hosts](hosts.md#memory); the three variables in the driver pod's env |
 | `AERON_CLIENT_PRE_TOUCH_MAPPED_MEMORY=true` | a client faults its mapped terms in at start | pod (client) | `aeronc.h:170` (rusteron-client 0.2.11); not measured here | [pod block](#copy-paste) |
-| `net.core.rmem_max`, `wmem_max` ≥ Aeron's socket buffers | lets the kernel grant `AERON_SOCKET_SO_RCVBUF` | node | functional, not latency: the driver refuses a window larger than the granted `SO_RCVBUF` (`aeron_driver.c:407-456`, rusteron-media-driver 0.2.11). Aeron's default is 128 KiB (`aeron_driver_context.c:191`); only a raised buffer, such as the EKS ConfigMap's 2 MiB, needs it | `sysctl -w net.core.rmem_max=16777216 net.core.wmem_max=16777216` |
+| `net.core.rmem_max`, `wmem_max` ≥ Aeron's socket buffers | lets the kernel grant `AERON_SOCKET_SO_RCVBUF` | node | functional, not latency: the driver refuses a window larger than the granted `SO_RCVBUF` (`aeron_driver.c:407-456`, rusteron-media-driver 0.2.11). Aeron's default is 128 KiB (`aeron_driver_context.c:191`); only a raised buffer, such as 2 MiB, needs it | `sysctl -w net.core.rmem_max=16777216 net.core.wmem_max=16777216` |
 | automatic NUMA balancing off | no balancing page faults on pinned threads | node | not measured here (every lab host had one NUMA node) | `sysctl -w kernel.numa_balancing=0` |
 | topology manager `single-numa-node` | a pod's CPUs and devices on one NUMA node | node | Kubernetes topology manager docs; not measured here (one-node lab hosts) | [kubelet block](#copy-paste) |
-| the CPU that takes the NIC interrupts capped at C1 (`intel_idle`) | an interrupt does not wait for that CPU to wake from C6 | node | measured, AWS c7i, interrupt-driven TCP at 10k msg/s: p50 43–160 → 37–39 µs, p99 315–559 → 44–49 µs ([C-states](#c-states)). `acpi_idle` (AWS c7a): nothing deeper than C1 to cap. ergon-tune T20 | per CPU `echo 1 > /sys/devices/system/cpu/cpu<N>/cpuidle/state<i>/disable` for every state past C1, or `pm_qos_resume_latency_us` 1; `intel_idle.max_cstate=1` caps every CPU |
+| the CPU that takes the NIC interrupts capped at C1 (`intel_idle`) | an interrupt does not wait for that CPU to wake from C6 | node | measured, AWS c7i, interrupt-driven TCP at 10k msg/s: p50 43–160 → 37–39 µs, p99 315–559 → 44–49 µs, max not recorded ([C-states](#c-states)). `acpi_idle` (AWS c7a): nothing deeper than C1 to cap. ergon-tune T20 | per CPU `echo 1 > /sys/devices/system/cpu/cpu<N>/cpuidle/state<i>/disable` for every state past C1, or `pm_qos_resume_latency_us` 1; `intel_idle.max_cstate=1` caps every CPU. Write it at every boot |
 | C-states capped at C1 on every CPU (x86) | an idle housekeeping core wakes faster | node | VM, polling loop: measured, **mixed** ([C-states](#c-states)); metal: no gain ([hosts](hosts.md#c-states)). Not recommended on this evidence | leave unset beyond the IRQ CPU |
 | TCP autocorking off | a small send goes out at once, not after the previous one's transmit completes (`TCP_NODELAY` does not stop autocorking) | pod netns, or node for `hostNetwork` | counted, not timed: c7i corked 49k–164k of ~600k sends a host per point with the IRQ CPU in C6, 42–149 at C1 ([C-states](#c-states)). ergon-tune T21 | `sysctl -w net.ipv4.tcp_autocorking=0`; in a pod `securityContext.sysctls`, allowed by the kubelet's `--allowed-unsafe-sysctls` |
 | `SCHED_FIFO` on the loop | real-time priority | pod | measured, **mixed**: [SCHED_FIFO](#sched_fifo). Off by default | `ergon-cpus --fifo` ([latency pods](latency-pods.md#real-time-scheduling-built-default-off)) |
 | ENA receive ring `rx 4096` | room for bursts | node | not measured here | `ethtool -G <if> rx 4096` |
-| global busy polling (`net.core.busy_read`, `busy_poll`) | every socket read on the host spins | node | ergon-io: not measured as a global sysctl; `recv-busy` sets `SO_BUSY_POLL` per socket instead ([fair run](#interrupt-placement)). Aeron's media driver, kernel UDP: measured, polling not isolated. x86 round 7, with a 4,096 ring, lower p50 than plain kernel UDP (two settings differ); Graviton G1 lost at 1 M msgs/s in 5 of 5 reps (four settings differ) ([BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#measured-but-no-setting-recommended)) | not recommended on this evidence: leave unset. `ergon-md-dpdk` check M4 reports the state as information |
-| quiet-core spin test | finds CPUs the platform stalls | node | not measured here: the cloud lab skips CPUs that stalled 300 µs in a 120 s spin (`md-dpdk/benches/cloud/vm.sh:2022-2029`). A pod cannot choose its cores | run it on new nodes; cordon or replace noisy ones |
+| global busy polling (`net.core.busy_read`, `busy_poll`) | every socket read on the host spins | node | not measured as a global sysctl; a per-socket `SO_BUSY_POLL` was ([fair run](#interrupt-placement)). Aeron's media driver, kernel UDP: measured, polling not isolated. x86 round 7, with a 4,096 ring, lower p50 than plain kernel UDP (two settings differ); Graviton G1 lost at 1 M msgs/s in 5 of 5 reps (four settings differ) (`git show v0.1.37:md-dpdk/BENCHMARKS.md`, "Measured but no setting recommended") | not recommended on this evidence: leave unset |
+| quiet-core spin test | finds CPUs the platform stalls | node | not measured here: the cloud lab skipped CPUs that stalled 300 µs in a 120 s spin. A pod cannot choose its cores | run it on new nodes; cordon or replace noisy ones |
 | no exec probes, no `restartPolicy: Always` sidecars on hot pods | no probe process lands on the loop's CPU | pod | an exec starts on any CPU of the cpuset (`k8s/nri-shared-cpus/README.md`, Limits); not measured here | `httpGet`/`tcpSocket`/`grpc` probes; the [admission policy](latency-pods.md#4-admission) enforces it |
 | both hosts in one cluster placement group | shorter network path between the pair | node (cloud) | AWS docs; not measured here | the node group's placement group |
 | build for the CPU (`-mcpu`, `target-cpu`) | Graviton: inline atomics instead of gcc's outline helpers | build | not measured here | [hosts](hosts.md#build-for-the-cpu) |
@@ -61,12 +61,21 @@ run on kind. It does not measure the rows below.
 ## Evidence
 
 Every row: one run, arms compared only with the same run's baseline. µs.
-Raw tables: `git show <commit>:<path>` as named. Hosts: AWS `c7i.2xlarge`
+Raw tables: `git show <commit>:<path>` as named; commits `2517309d` and
+`128747b9` are reachable from tags v0.1.30 to v0.1.33. Hosts: AWS `c7i.2xlarge`
 receiver (SMT on), `c7i.xlarge` sender, kernel 7.0; Azure
-`Standard_D8ds_v6`, kernel 6.17; Graviton `c8g.2xlarge`
-([io/benches/BENCHMARK.md](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md)).
-Boot lines and NIC settings per run are in the committed `env-rcv*.txt`
-next to each run id under `io/benches/results/`.
+`Standard_D8ds_v6`, kernel 6.17; Graviton `c8g.2xlarge` (`git show v0.1.37:io/benches/BENCHMARK.md`).
+Boot lines and NIC settings per run are in the `env-rcv*.txt` next to each
+run id under `io/benches/results/` at that tag. The loops measured were
+busy-spinning WebSocket and HTTP clients over kernel sockets. The arms:
+
+| arm | how the loop receives |
+|---|---|
+| `mio`, `epoll-spin` | `epoll_wait(0)` every turn, then a `recvmsg` per ready socket: interrupt-driven |
+| `uring-spin` | `io_uring` completions, interrupt-driven |
+| `uring-sqpoll` | `io_uring` with an SQPOLL kernel thread submitting for the loop |
+| `recv-busy` | non-blocking `recvmsg` on every socket every turn, with `SO_BUSY_POLL` |
+| `recv-busy-pq` | one busy-polled read per NIC queue, then the sockets epoll reports ready |
 
 ### Isolation
 
@@ -92,8 +101,7 @@ two isolated lines.
 
 ### Interrupt placement
 
-**Graviton** (fair run, `io/benches/results/flags-aws-20261019T175248Z/fair.md`,
-committed): WebSocket round trip, interrupt-driven backends (`epoll-spin`,
+**Graviton** (fair run, `git show v0.1.37:io/benches/results/flags-aws-20261019T175248Z/fair.md`): WebSocket round trip, interrupt-driven backends (`epoll-spin`,
 `mio`, and `uring-spin`, since removed), moderation off everywhere, two
 rounds. Six points' senders fell behind; the file's top note names them.
 
@@ -122,8 +130,7 @@ The WebSocket round trip in that run showed no consistent change.
 ### Interrupt moderation
 
 `git show 2517309d:io/benches/results/flags-aws-20261015T070339Z/tables.md`,
-AWS c7i, `recv-busy`, 10,000 round trips a second. Baseline: adaptive-rx on
-(`io/benches/scripts/vm-setup.sh` `nodim`). Rounds 1 / 2.
+AWS c7i, `recv-busy`, 10,000 round trips a second. Baseline: adaptive-rx on. Rounds 1 / 2.
 
 | arm | WebSocket p50 | p99.99 | max | HTTP p99.99 | max |
 |---|---|---|---|---|---|
@@ -176,7 +183,9 @@ interrupt-driven receive every packet waits for that CPU to wake. Lab
 session `aws-20261028-092158` (two `c7i.4xlarge`, `intel_idle`, kernel 7.2,
 SMT off, CPU 1 takes every data-NIC interrupt): mio TCP round trips, 1
 stream, 10k msg/s, 3 reps, each arm mio-tcp but for one setting
-([BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#c7i-the-irq-cpus-idle-depth)).
+([transport comparison: c7i, the IRQ CPU's idle depth](../transports/comparison.md#c7i-the-irq-cpus-idle-depth)).
+
+Max not recorded.
 
 | arm | p50 µs | p99 µs | CPU 1's idle per 60 s point |
 |---|---|---|---|
@@ -245,7 +254,7 @@ spec:
 ```
 
 Pin each busy thread to one CPU of the pod's cpuset before the loop starts
-([io: Kubernetes](../io/kubernetes.md#pin-the-loop-thread-inside-the-pod)).
+([busy-spin loop](busy-spin-loop.md#start-up-order)).
 
 ## Check it
 
@@ -258,15 +267,14 @@ grep throttled /sys/fs/cgroup/cpu.stat   # nr_throttled stays flat
 grep Cpus_allowed_list /proc/self/status
 
 # 3. the host: ergon-tune names each missing setting and its fix
-#    (runs at start-up in ergon-io's Driver::new and the media driver)
+ergon-tune --hot <busy CPUs>         # on the node
 ```
 
-`ERGON_HOST_CHECKS=require` (ergon-io and the media driver) refuses to
-start while any check warns
-or a proof check stays unproven
+Under `ERGON_HOST_CHECKS=require` a caller of ergon-tune refuses to start
+while any check warns or a proof check stays unproven
 ([ergon-tune](../tune/overview.md#where-the-checks-run)). In a stock
-static-CPU-manager pod ergon-io's K2 stays unproven, so `require` refuses
-it ([checks inside a pod](kubernetes.md#checks-inside-a-pod)).
+static-CPU-manager pod K2 stays unproven, so `require` refuses it
+([checks inside a pod](kubernetes.md#checks-inside-a-pod)).
 
 ## Open
 
@@ -282,7 +290,7 @@ it ([checks inside a pod](kubernetes.md#checks-inside-a-pod)).
 
 | page | for |
 |---|---|
-| [Kubernetes](kubernetes.md) | the EKS manifests, `No CPU quota`, `SMT off`, keeping other pods off the node |
+| [Kubernetes](kubernetes.md) | the EKS node config, `No CPU quota`, `SMT off`, keeping other pods off the node |
 | [Hosts](hosts.md) | the same settings on a VM, and how to apply each |
 | [Benchmarks](benchmarks.md) | platform and cost side by side |
 | [Shared CPUs](shared-cpus.md) | helper threads on the node's housekeeping CPUs (`k8s/nri-shared-cpus`) |

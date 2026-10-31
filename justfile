@@ -10,7 +10,6 @@ import 'just/samples.just'
 import 'just/aeron.just'
 import 'just/housekeeping.just'
 import 'just/book.just'
-import 'just/dpdk.just'
 import 'just/nri.just'
 
 # Default: list available commands.
@@ -23,8 +22,7 @@ default:
 # Compile product workspace + sample harnesses, then check that rusteron, the
 # aeron submodule and any jars built in it are one Aeron release (no tests, no Java jars).
 build:
-    cargo build --workspace --all-features --exclude ergo-aeron-cluster-test-harness --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness
-    cargo build -p ergon-md-dpdk -p ergon-md-dpdk-harness --all-targets
+    cargo build --workspace --all-features --exclude ergo-aeron-cluster-test-harness
     cargo build -p ergo-aeron-cluster
     cd samples/exchange-example && cargo build
     cd samples/cluster-ha-orderbook && cargo build
@@ -48,10 +46,10 @@ policy:
         'bash scripts/tests/test-stale-deny-ignores.sh' \
         'bash scripts/tests/test-cluster-ergo-sbe-features.sh' \
         'bash scripts/tests/test-book-content.sh' \
+        'bash scripts/tests/test-generated-book.sh' \
         'bash scripts/tests/test-rerun-if-changed.sh' \
         'bash scripts/tests/test-aeron-version.sh' \
         'bash scripts/tests/test-publish-set.sh' \
-        'bash scripts/tests/test-dpdk-vdev-rootless.sh' \
         './scripts/check-test-policy.sh' \
         './scripts/check-mutation-config.sh' \
         './scripts/check-stale-deny-ignores.sh' \
@@ -83,9 +81,8 @@ preflight:
     cargo fmt --all --check
     cd samples/exchange-example && cargo fmt --check
     @echo "=== clippy (same workspace set as CI) ==="
-    cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster-test-harness --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness -- -D warnings
+    cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster-test-harness -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
-    cargo clippy -p ergon-md-dpdk -p ergon-md-dpdk-harness --all-targets -- -D warnings
     # The rest are independent (own mktemp directories; cargo's lock orders the
     # ones that build; the two sbe-tool checks share one Gradle project, and
     # test-generated-public-api.sh plants a change in api/generated/car_lean.txt
@@ -103,14 +100,15 @@ preflight:
         'bash scripts/tests/test-stale-deny-ignores.sh' \
         'bash scripts/tests/test-cluster-ergo-sbe-features.sh' \
         'bash scripts/tests/test-book-content.sh' \
+        'bash scripts/tests/test-generated-book.sh' \
         'bash scripts/tests/test-rerun-if-changed.sh' \
         'bash scripts/tests/test-aeron-version.sh' \
         'bash scripts/tests/test-publish-set.sh' \
-        'bash scripts/tests/test-dpdk-vdev-rootless.sh' \
         'bash scripts/test-package-bench-artifacts.sh' \
         './scripts/check-repository-hygiene.sh' \
         './scripts/check-book-fences.sh' \
         './scripts/check-book-content.sh' \
+        './scripts/check-generated-book.py' \
         'bash scripts/tests/test-generated-public-api.sh && ./scripts/check-generated-public-api.sh' \
         'bash scripts/check-packaged-cluster-features.sh --list' \
         './scripts/regenerate-golden.sh --check' \
@@ -129,14 +127,12 @@ preflight:
 check-local: policy
     ./scripts/check-repository-hygiene.sh
     cargo fmt --all --check
-    cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster-test-harness --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness -- -D warnings
+    cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster-test-harness -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
-    cargo clippy -p ergon-md-dpdk -p ergon-md-dpdk-harness --all-targets -- -D warnings
     # ergo-sbe and its benchmarks crate run tests in parallel (scratch crates
     # compile outside cargo's lock: sbe/tests/common/scratch.rs); the rest keep one thread.
     cargo test -p ergo-sbe -p ergo-sbe-benchmarks --all-features
-    cargo test --workspace --all-features --exclude ergo-sbe --exclude ergo-sbe-benchmarks --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness -- --test-threads=1
-    cargo test -p ergon-md-dpdk -- --test-threads=1
+    cargo test --workspace --all-features --exclude ergo-sbe --exclude ergo-sbe-benchmarks --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness -- --test-threads=1
     # runs the cluster doctests too — no separate `--doc` pass needed
     cargo test -p ergo-aeron-cluster -- --test-threads=1
     cd samples/exchange-example && cargo fmt --check
@@ -196,16 +192,15 @@ release-check: test _release-check-extras
 # already ran: bench compilation (`--no-run`), ergo-sbe and cluster rustdoc
 # and check-publish-set (in `policy`) are in `test`.
 _release-check-extras: check-coverage check-generated-rustdoc
+    # Generated book pages (book/src, marked generated) must be unedited and
+    # match their manifest: refresh them before tagging (book/src/project/
+    # verification.md, "Release path").
+    ./scripts/check-generated-book.py
     ./scripts/check-book-fences.sh
     ./scripts/check-book-content.sh
     cargo publish -p ergo-sbe --dry-run --allow-dirty
     RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-tune --all-features --no-deps
-    RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-io --features webpki-roots --no-deps
-    RUSTDOCFLAGS='-D warnings' cargo doc -p ergon-md-dpdk --no-deps
-    # One multi-package dry run, so ergon-io and ergon-md-dpdk verify against
-    # the packaged ergon-tune: none of the three is on crates.io at this
-    # version until the release publishes them.
-    cargo publish -p ergon-tune -p ergon-io -p ergon-md-dpdk --dry-run --allow-dirty
+    cargo publish -p ergon-tune --dry-run --allow-dirty
     bash scripts/check-packaged-cluster-features.sh --list
     bash scripts/check-packaged-cluster-features.sh --unpack --package ergo-sbe
     # ergo-aeron-cluster unpack-and-build waits until ergo-sbe is on crates.io (publish step below).
@@ -302,10 +297,8 @@ _release-post:
     bash scripts/check-packaged-cluster-features.sh --unpack
     @echo "=== publish ergo-aeron-cluster ==="
     cargo publish -p ergo-aeron-cluster
-    @echo "=== publish ergon-tune, ergon-io, ergon-md-dpdk ==="
-    # Cargo publishes them in dependency order and waits for crates.io to
-    # list ergon-tune before it publishes ergon-io and ergon-md-dpdk.
-    cargo publish -p ergon-tune -p ergon-io -p ergon-md-dpdk
+    @echo "=== publish ergon-tune ==="
+    cargo publish -p ergon-tune
     @echo "=== tag ==="
     just _tag
     @echo "=== GitHub release (with bench archives) ==="
@@ -334,9 +327,8 @@ test: policy
     @echo "=== 1/7 fmt ==="
     cargo fmt --all --check
     @echo "=== 2/7 clippy (workspace + samples) ==="
-    cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster-test-harness --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness -- -D warnings
+    cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster-test-harness -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets -- -D warnings
-    cargo clippy -p ergon-md-dpdk -p ergon-md-dpdk-harness --all-targets -- -D warnings
     @echo "=== 3/7 unit + integration tests ==="
     ./scripts/regenerate-golden.sh --check
     ./scripts/regenerate-sbe-tool-reference.sh --check
@@ -346,10 +338,8 @@ test: policy
     # ergo-sbe and its benchmarks crate run tests in parallel (scratch crates
     # compile outside cargo's lock: sbe/tests/common/scratch.rs); the rest keep one thread.
     cargo test -p ergo-sbe -p ergo-sbe-benchmarks --all-features
-    cargo test --workspace --all-features --exclude ergo-sbe --exclude ergo-sbe-benchmarks --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness -- --test-threads=1
-    cargo test -p ergon-md-dpdk -- --test-threads=1
+    cargo test --workspace --all-features --exclude ergo-sbe --exclude ergo-sbe-benchmarks --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness -- --test-threads=1
     cargo test -p ergo-aeron-cluster -- --test-threads=1
-    just io-parity
     @echo "=== 4/7 product rustdoc (-D warnings) ==="
     # ergo-sbe's doctests and docs_validation_test already ran in 3/7 via
     # `cargo test -p ergo-sbe --all-features`
@@ -381,8 +371,7 @@ test-unit: policy
     # ergo-sbe and its benchmarks crate run tests in parallel (scratch crates
     # compile outside cargo's lock: sbe/tests/common/scratch.rs); the rest keep one thread.
     cargo test -p ergo-sbe -p ergo-sbe-benchmarks --all-features
-    cargo test --workspace --all-features --exclude ergo-sbe --exclude ergo-sbe-benchmarks --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness -- --test-threads=1
-    cargo test -p ergon-md-dpdk -- --test-threads=1
+    cargo test --workspace --all-features --exclude ergo-sbe --exclude ergo-sbe-benchmarks --exclude ergo-aeron-cluster --exclude ergo-aeron-cluster-test-harness -- --test-threads=1
     cargo test -p ergo-aeron-cluster -- --test-threads=1
 
 # Every test gate: standard suite + Miri UB detection + fuzz corpus replay.
@@ -435,14 +424,12 @@ fmt:
     cd samples/cluster-ha-orderbook && cargo fmt
     cd samples/cluster-rfq && cargo fmt
     cd samples/cluster-tutorial && cargo fmt
-    cd samples/low-latency-k8s && cargo fmt
 
 # Auto-fix: fmt + clippy --fix (same feature split as check).
 fix:
     just fmt
-    cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster-test-harness --exclude ergon-md-dpdk --exclude ergon-md-dpdk-harness --fix --allow-dirty --allow-staged -- -D warnings
+    cargo clippy --workspace --all-targets --all-features --exclude ergo-aeron-cluster-test-harness --fix --allow-dirty --allow-staged -- -D warnings
     cargo clippy -p ergo-aeron-cluster --all-targets --fix --allow-dirty --allow-staged -- -D warnings
-    cargo clippy -p ergon-md-dpdk -p ergon-md-dpdk-harness --all-targets --fix --allow-dirty --allow-staged -- -D warnings
     cd samples/exchange-example && cargo clippy --all-targets --all-features --fix --allow-dirty --allow-staged -- -D warnings
     cd samples/cluster-ha-orderbook && cargo clippy --all-targets --fix --allow-dirty --allow-staged -- -D warnings
     cd samples/cluster-rfq && cargo clippy --all-targets --fix --allow-dirty --allow-staged -- -D warnings
@@ -461,15 +448,6 @@ fix:
 # Head-to-head ergon vs sbe-tool benches; every ratio gated against its ceiling in both LTO profiles
 bench:
     ./scripts/run-sbe-bench.sh
-
-# ergon-io's `epoll-spin` against a minimal mio loop (io/benches/parity):
-# the structural tests (one epoll_wait(0) per poll, one recvmsg per ready
-# socket; mio two reads per event) and the two-sided round-trip parity gate.
-# Linux runs all of it, in release; elsewhere only the decision rule's tests
-# compile. About 40 s of tests on Linux, after the build.
-# epoll-spin against mio: structure and the two-sided latency parity gate
-io-parity:
-    cargo test --release --manifest-path io/benches/Cargo.toml --test mio_parity -- --test-threads=1 --nocapture
 
 # Group-codegen comparison under both optimization profiles. sbe-tool is
 # intentionally measured in both: the audit found it stable without LTO while

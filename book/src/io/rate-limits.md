@@ -1,3 +1,4 @@
+<!-- Generated page: edits here are overwritten by the next export. sha256:3e9f1c94d6cdd714b63fc73be9d76335ebc6f1b2438d90ad6102bc9d25491eac -->
 # Rate Limits and Errors
 
 ergon-io has no rate limiter. Pacing requests, orders and connects to a

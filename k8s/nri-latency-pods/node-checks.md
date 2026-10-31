@@ -17,7 +17,7 @@ plugin and the pod can read them (the NIC's node and PHC name among them). The t
 | kernel | `>= 6.2` (cgroup v2) | keeps a thread's requested affinity across cpuset changes | `uname -r`; `stat -fc %T /sys/fs/cgroup` |
 | cgroup v2 | mounted | the plugin refuses cgroup v1 | `test -f /sys/fs/cgroup/cgroup.controllers` |
 | `net.core.rmem_max` / `wmem_max` | at least Aeron's `AERON_SOCKET_SO_RCVBUF` / `SNDBUF` (16 MiB on the EKS node) | the media driver refuses to start when its receive window is larger than the `SO_RCVBUF` the kernel granted (`aeron_driver.c`, rusteron-media-driver 0.2.11); Aeron's default buffer is 128 KiB | `sysctl net.core.rmem_max net.core.wmem_max` |
-| `net.core.busy_poll` / `busy_read` | `0` (unset) | global: every blocking read on the host would spin. Not measured from committed data; ergon-io busy-polls per socket instead | `sysctl net.core.busy_poll net.core.busy_read` |
+| `net.core.busy_poll` / `busy_read` | `0` (unset) | global: every blocking read on the host would spin. Not measured from committed data; busy-poll per socket instead (`SO_BUSY_POLL`) | `sysctl net.core.busy_poll net.core.busy_read` |
 | `kernel.numa_balancing` | `0` | no automatic page migration under a latency pod; matters only with several NUMA nodes; not measured | `sysctl kernel.numa_balancing` |
 | hugepages | boot `hugepagesz=2M hugepages=256` | `AERON_DIR` on hugetlbfs removes 4 KiB page faults | `grep HugePages /proc/meminfo` |
 | `transparent_hugepage` | `never` | `khugepaged` (it runs under `madvise` too) calls `lru_add_drain_all`, which ran a kworker on an isolated CPU ([evidence](../nri-shared-cpus/BENCHMARKS.md#what-reached-the-exclusive-cpu-and-the-fix)) | `cat /sys/kernel/mm/transparent_hugepage/enabled` |
@@ -26,7 +26,7 @@ plugin and the pod can read them (the NIC's node and PHC name among them). The t
 | `rcu_nocbs` | every non-reserved CPU | RCU callbacks off the hot cores | `cat /sys/devices/system/cpu/rcu_nocbs 2>/dev/null` or `grep rcu_nocbs /proc/cmdline` |
 | `isolcpus=managed_irq` | every non-reserved CPU | no stray IRQ on the loop's core | `grep isolcpus /proc/cmdline` |
 | `irqaffinity` | the reserved CPUs | NIC IRQs on the kept CPU, never the loop's | `grep irqaffinity /proc/cmdline`; `grep eth0 /proc/interrupts` |
-| NIC IRQ CPU | CPU 1 (kept), **not** a shared CPU | IRQs on a core of their own, not the loop's ([evidence](https://mimran1980.github.io/ergon/deploy/hft.html#interrupt-placement)); IRQs on a shared CPU are not measured | `md-dpdk/deploy/aws-eks/node/irq-affinity.sh` status |
+| NIC IRQ CPU | CPU 1 (kept), **not** a shared CPU | IRQs on a core of their own, not the loop's ([evidence](https://mimran1980.github.io/ergon/deploy/hft.html#interrupt-placement)); IRQs on a shared CPU are not measured | `grep . /proc/irq/*/smp_affinity_list` |
 | `gro_flush_timeout`, `napi_defer_hard_irqs` | node unit writes `/sys/class/net/<dev>/…` | per-netdev sysfs, not a sysctl | `cat /sys/class/net/eth0/gro_flush_timeout` |
 | `/dev/ptp*` | present or not | a clock source only; ENA has no hardware packet stamps | `ls /dev/ptp*` |
 | chrony | running, synced | pods read the node's `CLOCK_REALTIME`; chrony on the node keeps it on the PHC ([Clocks](https://mimran1980.github.io/ergon/deploy/clocks.html)) | `chronyc tracking` |

@@ -431,8 +431,8 @@ const T6_EVIDENCE: &str = "DPDK's documentation (NUMA placement of ports, cores 
      not measured: every lab host had one node";
 
 /// T6: on a host with more than one NUMA node, `nic` is on the node of the
-/// busy-spinning CPUs of `cpus`. The media driver's check (ergon-io does not
-/// call it).
+/// busy-spinning CPUs of `cpus`. The media driver's check (a network I/O
+/// layer need not call it).
 #[must_use]
 pub fn t6_nic_node(host: &Host, nic: &Nic, cpus: &HotSet) -> Vec<Finding> {
     let id = "T6";

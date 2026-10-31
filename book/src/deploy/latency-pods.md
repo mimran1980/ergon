@@ -89,14 +89,13 @@ Why: an unsized hugetlbfs is what an emptyDir `medium: HugePages` gives
 you, and Aeron refuses it. A 4 KiB `AERON_DIR` takes a page fault on each
 first touch of a page. Latency effect not measured here.
 
-**The ENA NIC pair** (`dpdk.ergon.io/<ctr>: "ena-pair"`, off by default).
-The device plugin has already put
+**A DPDK NIC pair** (`dpdk.ergon.io/<ctr>: "ena-pair"`, off by default).
+It needs a NIC device plugin, not shipped here, that puts
 `RUSTERON_DPDK_SENDER_{PCI,IPV4_CIDR,GATEWAY}` in the container's env;
 this opt-in copies them into `ERGON_IO_FSTACK` and `ERGON_IO_SMOLTCP`
-(the two shortest real-NIC lines from the
-[backends page](../io/backends.md)) plus `ERGON_DPDK_PCI`,
-`ERGON_DPDK_ADDR` and `ERGON_DPDK_GATEWAY`. ergon-io itself does not
-need it: a bare `fstack-spin` reads the pair directly. A missing, empty or
+(the two shortest real-NIC lines `ergon_tune::DpdkNicPair` builds) plus
+`ERGON_DPDK_PCI`, `ERGON_DPDK_ADDR` and `ERGON_DPDK_GATEWAY`. An app that
+reads the pair itself does not need it. A missing, empty or
 unparsable value refuses the pod and names the key. Nothing here scans
 sysfs, runs `dpdk-devbind`, reads the node's default route (that is the
 management NIC), or sets `AERON_DIR`.
@@ -119,11 +118,10 @@ shared CPUs. Latency effect not measured here.
 
 These writes need a writable cgroup mount. containerd mounts
 `/sys/fs/cgroup` read-only in an unprivileged container, so there the
-`cgroup.procs` write fails and the move has to come from the node. The EKS
-lab does that (`md-dpdk/benches/cloud/aws/eks-nri.sh`,
-`partition_move_script`): the pod publishes its pid and waits; a privileged
-node agent moves it only if exactly one task of that container's cgroup has
-that pid. The kind e2e lane also moves from the node.
+`cgroup.procs` write fails and the move has to come from the node: the pod
+publishes its pid and waits, and a privileged node agent moves it only if
+exactly one task of that container's cgroup has that pid. The kind e2e lane
+moves from the node this way.
 
 A program that does not make these moves itself, such as Aeron's C media
 driver, keeps the boot line's isolation and `sched_setaffinity`: see the
@@ -138,7 +136,7 @@ reads every write back; a write that does not stick fails the create.
 
 `RuntimeDefault` blocks io_uring (containerd issue 9320). Aeron's C media
 driver does **not** use io_uring; the grant is for applications that do,
-such as ergon-io's `uring-sqpoll` backend. It is a clone
+such as an `io_uring` SQPOLL network loop. It is a clone
 of the pod's own seccomp profile with the `io_uring_*` calls allowed —
 never `Unconfined`, which the plugin refuses.
 
@@ -207,7 +205,7 @@ The full check list is `k8s/nri-latency-pods/node-checks.md`. The short version:
 | `transparent_hugepage` | `never` |
 | fair server | `runtime` 0 on each isolated CPU at every boot, kernel 6.12+ ([shared CPUs](shared-cpus.md#quiet-isolated-cpus)). Not with the `SCHED_FIFO` opt-in: nothing real-time may run there |
 | `net.core.rmem_max` / `wmem_max` | at least Aeron's `AERON_SOCKET_SO_RCVBUF` / `SNDBUF` when raised ([hft](hft.md#settings)) |
-| `net.core.busy_poll` / `busy_read` | unset (global; not measured here). ergon-io busy-polls per socket |
+| `net.core.busy_poll` / `busy_read` | unset (global; not measured here). Busy-poll per socket (`SO_BUSY_POLL`) instead |
 | containerd | >= 2.2, NRI on, the default validator on |
 
 **Why not AKS:** it has no supported way to change containerd (so an NRI

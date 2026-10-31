@@ -87,7 +87,7 @@ const (
 	EnvShared = "ERGON_SHARED_CPUS"
 	// EnvMilli is the millicpus asked for.
 	EnvMilli = "ERGON_SHARED_MILLICPUS"
-	// EnvHelper is ergon-io's name for EnvShared.
+	// EnvHelper is the network I/O layer's name for EnvShared.
 	EnvHelper = "ERGON_HELPER_CPUS"
 	// EnvOpenShiftIsolated is CRI-O's name for the exclusive CPUs (with ranges).
 	EnvOpenShiftIsolated = "OPENSHIFT_ISOLATED_CPUS"

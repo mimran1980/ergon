@@ -1,10 +1,11 @@
+<!-- Generated page: edits here are overwritten by the next export. sha256:99d07ebe2af1585c13548980815f469698794da5961f1b7dfff032669f388379 -->
 # ergon-md-dpdk (experimental)
 
 > **Not recommended for production use.**
 >
 > This crate is a proof of concept. I wrote it to get a better understanding
-> of how a kernel-bypass transport for Aeron can be written. Of all of ergon's
-> modules, it is the one where I relied on AI the most, and I could not verify
+> of how a kernel-bypass transport for Aeron can be written. Of all the
+> modules I wrote, it is the one where I relied on AI the most, and I could not verify
 > that what it does is correct, unlike the other modules, whose domains I
 > understand well.
 >
@@ -21,7 +22,7 @@
 
 Terms this chapter uses. Host, Kubernetes and Java terms:
 [deployment glossary](../deploy/overview.md#glossary). Figures:
-[`md-dpdk/BENCHMARKS.md`](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md).
+`md-dpdk/BENCHMARKS.md`.
 
 | term | what it is | when it matters |
 | --- | --- | --- |
@@ -64,7 +65,7 @@ Terms this chapter uses. Host, Kubernetes and Java terms:
 | flow | packets between one source and one destination address and port | an Aeron channel is one flow; one flow topped out at 7.75–7.77 Gbit/s of Aeron frames on `c7i.4xlarge` |
 | placement group | hosts placed close together: a cluster placement group (AWS) or a proximity placement group (Azure) | two c7i.4xlarge pairs still differed by about 7 µs at the median |
 | spot instance | spare AWS capacity, sold cheaper; AWS can take it back | a `c9g.2xlarge` pair: $0.306 spot against $0.696 on demand an hour ([cost](../deploy/benchmarks.md#cost-per-hour)) |
-| x86, Graviton | x86: Intel and AMD CPUs. Graviton: AWS's Arm CPUs | never compared in one run: pairs, days and builds differ ([BENCHMARKS.md](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#open)) |
+| x86, Graviton | x86: Intel and AMD CPUs. Graviton: AWS's Arm CPUs | never compared in one run: pairs, days and builds differ (BENCHMARKS.md) |
 | SMT, hyperthread, sibling, vCPU | SMT runs two hyperthreads (siblings) on one core. A vCPU is a hyperthread on x86, a whole core on Graviton (no SMT) | on x86, leave each busy core's sibling idle |
 | bare metal | an instance with no hypervisor | `c7i.metal-24xl`, round 4: DPDK max 103 µs at 1 M msgs/s, 845 µs idle; 6 times a `c7i.4xlarge` pair's price |
 | round trip (ping-pong) | one message out and its reply back | every latency here is a round trip |
@@ -94,7 +95,8 @@ Terms this chapter uses. Host, Kubernetes and Java terms:
   [rusteron](https://crates.io/crates/rusteron-media-driver)). The driver
   sends and receives through a table of functions
   (`aeron_udp_channel_transport_bindings_t`); the crate fills that table with
-  DPDK versions. Aeron clients do not change.
+  DPDK versions. Aeron clients do not change
+  ([the client calls](../transports/aeron-client.md)).
 
 ```text
 kernel UDP:  client ─ media driver ─ system call ─ kernel UDP/IP ─ interrupt ─ NIC
@@ -118,13 +120,14 @@ All four are node-level settings
 | 4,096-entry receive ring | the NIC's receive queue holds a burst while the reader catches up | used with busy polling in the x86 rows below; not A/B'd alone here |
 
 Source:
-[BENCHMARKS.md, recommended configuration](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#recommended-configuration).
+BENCHMARKS.md, recommended configuration.
 
 ## Why bypass is faster, and what it costs
 
 No interrupt, no system call, no scheduler wake-up on the data path. In every
 pair [below](#measured-between-two-hosts) DPDK's median was lower: by
-4.96–6.94 µs idle and by 8.64–25.47 µs at 1 M msgs/s of 288 B.
+4.96–6.94 µs idle (max 79–845 against kernel 168–4,846) and by
+8.64–25.47 µs at 1 M msgs/s of 288 B (max 103–155 against 211–6,664).
 
 | cost | what it means |
 | --- | --- |
@@ -137,13 +140,11 @@ pair [below](#measured-between-two-hosts) DPDK's median was lower: by
 
 ## Which transport should I use?
 
-| situation | use |
-| --- | --- |
-| both ends on one host | kernel UDP, or Aeron IPC (shared memory, no network); DPDK gives no bypass there |
-| between hosts, Graviton | kernel UDP, moderation off, the NIC's interrupts on a core of their own: the best kernel path measured (no lossy rep at 1 M msgs/s in G1 and G3, one in G2) |
-| between hosts, x86 | kernel UDP. No kernel setting is recommended on x86: busy polling with a 4,096-entry ring was the best kernel arm tried, but it changes two settings at once, and the Graviton settings are not measured on x86. On `c7i.4xlarge` at 1 M msgs/s that arm's max was 6,664 µs, with 4 NAKs and 849 short sends over 5 reps |
-| between hosts, the kernel's median or tail is not good enough | kernel bypass with [Aeron Premium](https://aeron.io/) |
-| learning how a transport binding works, or reproducing these numbers | this crate, in a lab |
+Not this crate in production. Kernel UDP between hosts, Aeron IPC on one
+host, and [Aeron Premium](https://aeron.io/) where the kernel's median or
+tail is not good enough; this crate is for learning and for reproducing
+the numbers below. The choice for every need:
+[which transport when](../transports/choose.md).
 
 ## Measured: between two hosts
 
@@ -164,22 +165,32 @@ platform only.
 | | kernel UDP, busy polling | 33.70 / 307 | 42.94 / 1,150 | not in the table |
 
 Source:
-[BENCHMARKS.md, DPDK against the best kernel arm](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#dpdk-against-the-best-kernel-arm-same-run)
+BENCHMARKS.md, DPDK against the best kernel arm
 (its `max X (a–b)` cells: the max here is `b`). Azure has no kernel-against-DPDK
 run committed; its DPDK loss under load is in
-[BENCHMARKS.md, Azure](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md#azure-the-288-b-loss-under-load).
+BENCHMARKS.md, Azure.
 
 - DPDK's max was lower in every pair except bare-metal idle (845 against
   307 µs).
 - Two `c7i.4xlarge` pairs differed by about 7 µs at the median, so the
   platforms are not compared here.
 
+## Kubernetes: EKS on `c7i.4xlarge`
+
+DPDK at both ends, the media driver as a DaemonSet pod, round trips between
+the two nodes' pods, run `eks-20261014-195824`
+(rows):
+p50 28.37 (28.02–29.60), p99.99 63.33 (57.79–71.81) µs; max 148 µs (the
+median of the five reps' maxima 126, range 112–148).
+No NAK or retransmit; 4 short sends. One arm, so nothing is compared. Setup:
+EKS deployment.
+
 ## Localhost: no gain
 
 A DPDK NIC cannot reach its own host. Channels on loopback or the host's
 kernel interfaces run on kernel UDP sockets inside this driver, as Aeron's
 kernel transport would carry them
-([`rusteron_dpdk_kernel.c`](https://github.com/mimran1980/ergon/blob/main/md-dpdk/native/dpdk/rusteron_dpdk_kernel.c)).
+(`rusteron_dpdk_kernel.c`).
 So on one host the DPDK driver and Aeron's C driver take the same kernel path.
 No committed run compares the two drivers on one host.
 
@@ -222,8 +233,8 @@ are infrastructure.
 - Running it in Kubernetes (node and pod settings, no CPU quota):
   [Kubernetes latency checklist](../deploy/kubernetes.md#latency-checklist).
   The EKS overlays for this driver (`eks-ena-x86`, `eks-ena-arm64`):
-  [AWS Kubernetes sample](https://github.com/mimran1980/ergon/blob/main/samples/README.md#aws-k8s).
+  AWS Kubernetes sample.
 - Aeron kernel UDP and DPDK against mio, ergon-io and TCP:
   [transport latency comparison](../transports/comparison.md).
 - Every run, setting and range:
-  [`md-dpdk/BENCHMARKS.md`](https://github.com/mimran1980/ergon/blob/main/md-dpdk/BENCHMARKS.md).
+  `md-dpdk/BENCHMARKS.md`.

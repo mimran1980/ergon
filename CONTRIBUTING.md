@@ -65,7 +65,7 @@ failure.
 
 | Workflow | What it runs |
 |---|---|
-| `ci.yml` | policy; lint, test and DPDK jobs on `ubuntu-24.04` (x86_64) and `ubuntu-24.04-arm` (arm64); Rust 1.99.0; Java 25 for the Aeron jobs; the coverage ratchet; the fixture crate as ordinary tests; benches compiled with `--no-run`, none run |
+| `ci.yml` | policy; lint and test jobs on `ubuntu-24.04` (x86_64) and `ubuntu-24.04-arm` (arm64); Rust 1.99.0; Java 25 for the Aeron jobs; the coverage ratchet; the fixture crate as ordinary tests; benches compiled with `--no-run`, none run |
 | `cluster-compatibility.yml` | the cluster harness against Aeron 1.46.8 on Java 21, when `cluster/` or `sbe/src/` changes |
 | `nightly.yml` | weekly (Sunday): every fuzz target for 600 s, and the fixture crate under Miri |
 | `release.yml` | `just release-check`, then `just bench` and `just bench-cluster` on `ubuntu-latest`, blocking |
@@ -126,16 +126,15 @@ reviewed, not forbidden. After a reviewed change:
 
 ## Package boundaries
 
-The publication candidates are `ergo-sbe`, `ergo-aeron-cluster`, `ergon-tune`,
-`ergon-io` and `ergon-md-dpdk` (`api/public-api-baseline.toml`). `ergon-io` and
-`ergon-md-dpdk` depend on `ergon-tune`, so the release publishes it first.
+The publication candidates are `ergo-sbe`, `ergo-aeron-cluster` and
+`ergon-tune` (`api/public-api-baseline.toml`).
 `scripts/check-publish-set.sh` (in `just policy`) fails when a published crate
 depends on an unpublished one, on a path without a version, or on an older
 version than a published sibling's, or when the release recipe, workflow, dry
 runs or API manifest leave a crate out or publish it before its
 dependencies. A version bump therefore updates every `version` beside a
 workspace `path` with `[workspace.package]`: `ergo-sbe` in
-`[workspace.dependencies]` and the `ergon-tune` lines in `md-dpdk/` and `io/`.
+`[workspace.dependencies]`.
 
 Inspect the payloads before a release:
 
@@ -143,19 +142,19 @@ Inspect the payloads before a release:
 cargo package -p ergo-sbe --list --allow-dirty
 cargo package -p ergo-aeron-cluster --list --allow-dirty
 cargo package -p ergon-tune --list --allow-dirty
-cargo package -p ergon-io --list --allow-dirty
-cargo package -p ergon-md-dpdk --list --allow-dirty
 ```
 
 Packages exclude integration tests, fixtures not needed at build time,
 benchmarks, Java harness code, application protocols, samples and internal
-plans. `ergon-tune` and `ergon-io` ship their library sources and README only.
-`ergon-md-dpdk` ships its native C, including the test fakes its build
-compiles, but not its harness, device plugin or deployment assets.
+plans. `ergon-tune` ships its library sources and README only.
 
 Publishing, tagging and announcing a release need explicit maintainer
-authorisation. Before an authorised release, run `just release-check`; the
-release workflow runs the same command before `cargo release`.
+authorisation. Before an authorised release, a maintainer refreshes the
+generated book chapters (pages under `book/src` marked generated, written by
+an export that is not in this repository; see
+[Verification & Release](book/src/project/verification.md#release-path)),
+then run `just release-check`; the release workflow runs the same command
+before `cargo release`.
 
 ## Git hygiene
 

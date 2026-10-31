@@ -1,3 +1,4 @@
+<!-- Generated page: edits here are overwritten by the next export. sha256:761351f0bc874b9c6c8374af62cd2e8f92b81caebb88028f34c7992b094a857d -->
 # Backends and Configuration
 
 A backend is the kernel interface the `Driver` waits and reads with. It is
@@ -34,9 +35,17 @@ configuration, so one binary can run with each. Which to pick:
 `backend[,key=value...]`, parsed and checked by `Config::parse`:
 
 ```rust,ignore
-{{#include ../../../io/tests/backend_config.rs:config_strings}}
+#[test]
+fn keys_override_defaults() -> R {
+    let c = Config::parse("uring-sqpoll, sqpoll_cpu=3, rcvbuf=0, rx_timestamps=false")?;
+    assert_eq!(c.backend, Backend::UringSqpoll);
+    assert_eq!(c.sqpoll_cpu, Some(3));
+    assert_eq!(c.rcvbuf, None);
+    assert!(!c.rx_timestamps);
+    Ok(())
+}
 ```
-*(From `io/tests/backend_config.rs`; `cargo test -p ergon-io` runs it on
+*(From `ergon-io/tests/backend_config.rs`; `cargo test -p ergon-io` runs it on
 every platform.)*
 
 | key | default | meaning |
@@ -59,7 +68,7 @@ every platform.)*
 | `tcp_delack_max_us` | 0 (kernel: 200 ms) | `TCP_DELACK_MAX_US`, Linux 6.15+: the longest delayed ACK; same range and checks |
 | `tcp_info_interval_ms` | 0 (off) | passive `TCP_INFO` per connection (`Driver::tcp_info`); at most one `getsockopt` per poll, from the 250 µs deadline check |
 | `epoll_events` | 64 | the most ready sockets one `epoll_wait` reports (`epoll-spin`; `recv-busy` with `per_queue`); the rest are reported on the next poll; 1 to 65,536 |
-| `datagram_burst` | 16 | UDP: the most datagrams one poll reads from one ready socket; 1 to 1,024 ([UDP](udp.md)) |
+| `datagram_burst` | 16 | UDP: the most datagrams one poll reads from one ready socket, in `recvmmsg` calls of up to `rx_batch`; 1 to 1,024 ([UDP](udp.md)) |
 | `busy_poll_us` | 0 (off) | `epoll-spin` only: `SO_BUSY_POLL` on every socket, 0 to `i32::MAX` µs; above 0, the read that empties a socket polls the NIC once ([busy polling on `epoll-spin`](#busy-polling-on-epoll-spin)); other backends refuse it |
 
 An unknown key, a bad value or a setting the backend cannot use is an error
@@ -91,12 +100,35 @@ for the interrupt. To poll the NIC every poll, use `recv-busy`.
 alone: no `SQPOLL` kernel thread. `uring-sqpoll` is the only backend that
 needs another CPU; it is not in this section. The interrupt backend
 (`epoll-spin`) was measured with the NIC's interrupts on a core of their
-own; on the loop's CPU its p99 rose from 4 sockets ([fair run](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton)).
+own; on the loop's CPU its p99 rose from 4 sockets (fair run).
 
 ```rust,ignore
-{{#include ../../../io/tests/backend_config.rs:one_core_backends}}
+/// The backends that cost one core each. `uring-sqpoll` is not here: its
+/// SQPOLL kernel thread spins on a CPU of its own.
+#[test]
+fn the_one_core_backends() -> R {
+    // recv-busy: one recvmsg per socket per poll. Best at 1-4 sockets.
+    let plain = Config::parse("recv-busy")?;
+    assert_eq!(plain.backend, Backend::RecvBusy);
+    assert!(!plain.per_queue);
+
+    // per_queue: one busy-polled read per NIC queue, then only the sockets
+    // epoll_wait(0) reports ready. The same latency as plain at 1-16 sockets,
+    // and the only one-core choice still flat at 256.
+    let queued = Config::parse("recv-busy,per_queue=true")?;
+    assert_eq!(queued.backend, Backend::RecvBusy);
+    assert!(queued.per_queue);
+
+    // epoll-spin: epoll_wait(0), then recvmsg on the ready sockets. Cheapest
+    // per socket, but it waits for the NIC interrupt (mio's mechanism).
+    let epoll = Config::parse("epoll-spin")?;
+    assert_eq!(epoll.backend, Backend::EpollSpin);
+    assert!(!epoll.per_queue);
+
+    Ok(())
+}
 ```
-*(From `io/tests/backend_config.rs`; `cargo test -p ergon-io` runs it on
+*(From `ergon-io/tests/backend_config.rs`; `cargo test -p ergon-io` runs it on
 every platform.)*
 
 What one poll does:
@@ -123,14 +155,29 @@ that are ready. Its NIC polling stops growing at the queue count.
 As struct fields, for when more than one setting changes:
 
 ```rust,ignore
-{{#include ../../../io/tests/backend_config.rs:per_queue_struct}}
+/// The same choice as struct fields, for when more than one setting changes.
+#[test]
+fn per_queue_as_struct_fields() {
+    let mut cfg = Config::new(Backend::RecvBusy);
+    cfg.per_queue = true; // one read per NIC queue, then epoll_wait(0)
+    cfg.rcvbuf = Some(4 << 20);
+
+    assert!(cfg.per_queue);
+    assert_eq!(cfg.rcvbuf, Some(4 << 20));
+}
 ```
 
 It is `recv-busy` and nothing else. On any other backend it is a parse
 error, never ignored:
 
 ```rust,ignore
-{{#include ../../../io/tests/backend_config.rs:per_queue_errors}}
+    for bad in [
+        "epoll-spin,per_queue=true",   // error
+        "uring-sqpoll,per_queue=true", // error
+        "recv-busy,per_queue=1",       // error: not true/false
+    ] {
+        assert!(Config::parse(bad).is_err(), "{bad:?} accepted");
+    }
 ```
 
 On the lab command line:
@@ -148,7 +195,7 @@ $B/analyse --warmup-s 2 res/c100-*
 ```
 
 Measured against plain `recv-busy` and `uring-sqpoll` at 1–256
-connections: [polling backends](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#polling-backends-by-socket-count-x86).
+connections: polling backends.
 
 ## `uring-sqpoll` on the loop's SMT sibling (x86)
 
@@ -157,29 +204,31 @@ the SQPOLL kernel thread can spin on the other, so the pair costs one core,
 the same as mio or `epoll-spin` with SMT off.
 
 TCP round trip, 1 connection, 64 B, AWS `c7i.4xlarge` (Intel), the NIC
-interrupts on a core of their own capped at C1, 3 reps. µs, p50 / p99,
-range over reps:
+interrupts on a core of their own capped at C1, 3 reps. µs, p50 / p99 /
+max, range over reps:
 
 | arm | cores | 10,000 msg/s | 50,000 | 200,000 |
 |---|---|---|---|---|
-| mio, SMT off | 1 | 40.0–41.4 / 47.1–48.7 | 44.5–45.2 / 55.0–56.6 | 70.3–71.6 / 94.3–97.6 |
-| `epoll-spin`, SMT off | 1 | 39.7–40.9 / 47.5–48.5 | 44.2 / 51.7–55.0 | 70.0–71.5 / 96.3–102.5 |
-| **`uring-sqpoll`, SQPOLL on the sibling** | 1 | **35.7–36.9 / 40.7–42.0** | **34.7–36.5 / 43.0–47.3** | **64.5–67.5 / 84.4–88.7** |
-| `uring-sqpoll`, SQPOLL on another core, SMT off | 2 | 36.6–38.6 / 41.2–46.1 | 35.8–37.7 / 43.3–47.4 | 61.4–62.5 / 79.0–81.6 |
+| mio, SMT off | 1 | 40.0–41.4 / 47.1–48.7 / 149–4,019 | 44.5–45.2 / 55.0–56.6 / 188–1,308 | 70.3–71.6 / 94.3–97.6 / 742–1,935 |
+| `epoll-spin`, SMT off | 1 | 39.7–40.9 / 47.5–48.5 / 946–8,653 | 44.2 / 51.7–55.0 / 283–1,170 | 70.0–71.5 / 96.3–102.5 / 516–1,020 |
+| **`uring-sqpoll`, SQPOLL on the sibling** | 1 | **35.7–36.9 / 40.7–42.0** / 1,009–4,414 | **34.7–36.5 / 43.0–47.3** / 194–4,694 | **64.5–67.5 / 84.4–88.7** / 237–344 |
+| `uring-sqpoll`, SQPOLL on another core, SMT off | 2 | 36.6–38.6 / 41.2–46.1 / 133–4,833 | 35.8–37.7 / 43.3–47.4 / 146–436 | 61.4–62.5 / 79.0–81.6 / 377–4,564 |
 
 - **The sibling beats mio.** On the same hosts (mio with its sibling idle)
   `uring-sqpoll` is 2.3 / 7.3 / 5.0 µs lower at p50 and 5.4 / 8.5 / 15.4 at
-  p99. SMT on and SMT off ran on two host pairs; mio measured on both puts
+  p99; its maxima (in the table) against that mio's 120–3,942 / 226–1,737 /
+  224–265 are not ranked. SMT on and SMT off ran on two host pairs; mio measured on both puts
   the pairs 1.1–2.4 µs apart at 10–50k.
 - **A core of its own is better only at high rates:** level at 10–50k,
-  about 4–6 µs p50 and 8 µs p99 lower at 200,000 msg/s.
+  about 4–6 µs p50 and 8 µs p99 lower at 200,000 msg/s (max 377–4,564
+  against the sibling's 237–344).
 - **`epoll-spin` and mio are level.** Neither polls the NIC; both wait for
   the interrupt.
 - **Tails are not ranked:** every arm had millisecond round trips (24 of 63
   points, to 8.7 ms), most with no recorded cause.
 
 Every figure, the A/A controls and the fairness checks:
-[SMT sibling cost](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#smt-sibling-cost).
+SMT sibling cost.
 In a pod: [x86 with SMT, `cpu: 2`](kubernetes.md#x86-with-smt-cpu-2-one-physical-core).
 
 ## `fstack-spin`: TCP on F-Stack
@@ -270,7 +319,7 @@ Requirements:
 
 | need | why |
 |---|---|
-| Linux, the `fstack` feature, `FSTACK_PREFIX` at build time | build.rs links F-Stack and its DPDK, both static, from the prefix [`build-fstack.sh`](https://github.com/mimran1980/ergon/blob/main/io/benches/fstack/build-fstack.sh) builds (x86_64; arm64 is in progress). Without `FSTACK_PREFIX` the feature compiles and `fstack::init` returns `Error::Unsupported` |
+| Linux, the `fstack` feature, `FSTACK_PREFIX` at build time | build.rs links F-Stack and its DPDK, both static, from the prefix `build-fstack.sh` builds (x86_64 and arm64). Without `FSTACK_PREFIX` the feature compiles and `fstack::init` returns `Error::Unsupported` |
 | `-C link-arg=-Wl,-z,nostart-stop-gc` in the binary's `RUSTFLAGS` | lld otherwise drops FreeBSD's linker sets and `ff_init` crashes; a dependency cannot pass it on |
 | a NIC of its own (on AWS a second ENI) bound to `vfio-pci` or `igb_uio` | DPDK takes the device from the kernel |
 | hugepages | DPDK's memory (`fstack_no_huge` is for tests) |
@@ -342,6 +391,22 @@ for `fstack-spin`. On a real NIC pass `eal=-a <pci>` last so DPDK
 allowlists that device, and name the data NIC before it is bound, as for
 `fstack-spin`. The shortest real-NIC line is
 `port=0000:00:06.0,ip=10.0.1.20/24,eal=-a 0000:00:06.0`.
+`StackConfig::tune("rx_desc=4096,udp_packets=1024")` applies the port,
+socket and TCP keys to a configuration that already names its NIC, and
+refuses the NIC keys.
+
+Where a frame or datagram was lost or waited (`Stack::stats`,
+`Stack::port_xstats`):
+
+| counter | counts |
+|---|---|
+| `port[4]` (`imissed`), `port[5]` (`rx_nombuf`) | frames the port dropped: RX ring full, mbuf pool empty (`rte_eth_stats`) |
+| `rx_burst_full` | RX bursts that came back full (`rx_burst`, 32): frames were waiting in the ring |
+| `udp_rx_datagrams` | UDP datagrams to the stack's address |
+| `udp_rx_dropped` | datagrams to an open UDP socket it did not deliver: its buffer (`udp_packets`, `udp_buf`) was full, or smoltcp refused them. smoltcp drops these silently; the count is exact whenever the socket holds no datagram |
+| `udp_tx_full` | send attempts refused: the socket's send buffer was full. A caller that retries one datagram adds one a try |
+| `tx_burst_short` | TX bursts the port took only part of (its TX ring was full) |
+| `Stack::port_xstats()` | the port's extended counters; on ENA also `pps_allowance_exceeded`, `bw_in_allowance_exceeded` and the other ENI limits. Allocates, and is an admin command on ENA: off the hot path |
 
 TCP, against smoltcp's defaults:
 
@@ -387,13 +452,13 @@ frames (`CLOCK_REALTIME`); `quickack_check` is off (`require` refused);
 
 Requirements: Linux x86_64 or aarch64; the `smoltcp-dpdk` feature;
 libdpdk >= 23.11 through pkg-config (Ubuntu 24.04's `libdpdk-dev`);
-a port DPDK can take (an ENA ENI bound to `vfio-pci`, as for
-[ergon-md-dpdk](../md-dpdk/overview.md)), hugepages, and the `vfio`
-privileges. It cannot be linked beside `fstack` with `FSTACK_PREFIX` (two
+a port DPDK can take (an ENA ENI bound to `igb_uio`, as the EKS node of
+[ergon-md-dpdk](../md-dpdk/overview.md) binds it, or to `vfio-pci`),
+hugepages, and that driver's privileges (as for `fstack-spin` above). It cannot be linked beside `fstack` with `FSTACK_PREFIX` (two
 DPDKs).
 
 Kubernetes: as for `fstack-spin`: the port from a device plugin,
-`hugepages-2Mi` as a resource, `CAP_IPC_LOCK`, whole CPUs (Guaranteed QoS,
+`hugepages-2Mi` as a resource, the driver's capabilities, whole CPUs (Guaranteed QoS,
 static CPU manager), the polling thread pinned to one before
 `Stack::init`. Housekeeping (closed sockets, ARP refreshes, the PMD's
 timers) runs on the polling thread once a millisecond, a few µs each.
@@ -418,7 +483,7 @@ missing at start-up.
 ## Cost per poll
 
 One poll is 1 ÷ the loop's polls per second. Measured poll times:
-[polling backends](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#polling-backends-by-socket-count-x86).
+polling backends.
 
 One poll per backend. Where the NIC's NAPI pass runs is what separates
 them:
@@ -457,14 +522,14 @@ only the ready sockets. Its NIC polling stops at the queue count.
   count.
 - **`epoll-spin`** does not read idle sockets; it waits for the NIC
   interrupt instead. Against the polling backends:
-  [fair run](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton).
+  fair run.
 - **A send pass visits only the connections with bytes queued** (the
   driver's send set), so idle connections add nothing to it. The passes
   measured below predate the send set: each also checked every connection
   for queued sends, which grew the pass with idle sockets. Re-measured on
   `epoll-spin` with the send set (x86): an idle pass is one
   `epoll_wait(0)`, 594 ns at 1 socket and 631 ns at 256
-  ([one poll pass by socket count](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#one-poll-pass-by-socket-count-re-measured-with-the-send-set-x86-omarchy)).
+  (one poll pass by socket count).
 - Where each polling backend stops winning:
   [choosing a backend](overview.md#choosing-a-backend).
 
@@ -478,7 +543,7 @@ second (a mean), two rounds. The longest pass is not attributed to a cause.
 | `recv-busy,per_queue` | 933–934 ns | 5.56–5.58 µs | 804–897 µs |
 | `recv-busy` | 574–588 ns | 149.3–149.4 µs | 1,910–2,187 µs |
 
-Data: [`loop-counters.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/flags-aws-20261019T175248Z/loop-counters.md).
+Data: `loop-counters.md`.
 
 ## Find the crossover on your own host
 
@@ -492,10 +557,10 @@ count; run each backend separately.
 - On AWS, set the NIC on the node before each run (node-level):
   `ethtool -C <nic> adaptive-rx off rx-usecs 0`, with the NIC's interrupts
   on a core of their own, as in the
-  [fair run](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton).
+  fair run.
   Otherwise the interrupt backends wait for moderation.
 - HTTP with a pool: [HTTP with many connections](http-client.md#many-connections).
-- Everything about the method: [`io/benches/BENCHMARK.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md).
+- Everything about the method: the benchmark notes.
 
 ## mio: measured, not a backend
 
@@ -514,7 +579,7 @@ differences:
 
 **Measured level.** Graviton fair run `flags-aws-20261019T175248Z`
 (`c8g.2xlarge` / `c8g.xlarge`, moderation off, NIC interrupts on a core of
-their own). mio arm: ergon-stack's `mio_bench`, mio 1.2.4, rustls's buffered
+their own). mio arm: the benchmark suite's `mio_bench`, mio 1.2.4, rustls's buffered
 `ClientConnection`, `Poll::poll(0)` in a spin loop. µs, p50 / p99 / max,
 ranges over 2 rounds:
 
@@ -527,12 +592,12 @@ ranges over 2 rounds:
 | HTTP pool of 20 | 42.3–42.9 / 53.0–55.0 / 157–1,478 | 42.3–42.9 / 52.8–54.9 / 137–285 |
 
 Every row, the polling backends beside them, and the work counts:
-[fair run](https://github.com/mimran1980/ergon/blob/main/io/benches/BENCHMARK.md#interrupt-against-nic-polling-the-fair-run-graviton).
+fair run.
 mio makes 2.0× the `recvmsg` calls (WebSocket N = 1: 1.20 M against 0.60 M,
-[`loop-counters.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/flags-aws-20261019T175248Z/loop-counters.md)).
+`loop-counters.md`).
 
-**Gated.** [`io/benches/parity/mio_parity.rs`](https://github.com/mimran1980/ergon/blob/main/io/benches/parity/mio_parity.rs)
-runs in CI on Linux x86_64 and aarch64 (`just io-parity`, release):
+**Gated.** A parity bench
+runs in CI on Linux x86_64 and aarch64 (release):
 
 - **Structure**, exact counts from the `Driver`'s counters: one
   `epoll_wait` per poll; 20,000 idle polls return in milliseconds, so the
@@ -549,7 +614,7 @@ runs in CI on Linux x86_64 and aarch64 (`just io-parity`, release):
   pairs: an `epoll-spin` win that large is a suspected defect too.
 
 The tolerance comes from 10 runs, 140 pairs, in Docker on Apple silicon
-(arm64 and amd64; [`summary.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/mio-parity-docker-20261024T154626Z/summary.md)):
+(arm64 and amd64; `summary.md`):
 p50 5.3–15.3 µs, mio slower by +2.1 to +3.1 % at the median (its read to
 `WouldBlock` is timed), every run passed. With 10 % added to either loop's
 round trips every test failed, 7 of 7 pairs.
@@ -577,7 +642,7 @@ Why it is not a backend:
 
    Data: the last section of `loop-counters.md` (above); the sender
    lateness is in
-   [`fair.md`](https://github.com/mimran1980/ergon/blob/main/io/benches/results/flags-aws-20261019T175248Z/fair.md).
+   `fair.md`.
 5. **The market-data arm was confounded.** The default `SO_RCVBUF` gave
    receive-window pressure (`TCPWantZeroWindowAdv` up to 2,862 per point)
    that no ergon-io arm showed. So mio is not ranked on market data. Data:

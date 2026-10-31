@@ -2,12 +2,29 @@
 
 ## [Unreleased]
 
+## [0.1.38] — 2026-10-31
+
+### Added
+
+- `ergon-tune` command: runs the host checks on a node (or a tree under
+  `--root`) and prints each finding with its fix; `--hot`, `--nic`, `--tcp`,
+  `--busy-poll`, `--component`, `--all`, `--require` (exit 1 where a start
+  under `ERGON_HOST_CHECKS=require` would refuse). `ergon_tune::isolated_cpus`
+  is now public.
+
 ### Docs
 
-- Book: "Aeron with Many Streams". Aeron's latency and memory grow with its
-  stream count, so use up to 8 Aeron streams per driver with the key in each
-  message, and filter before decoding. Measured layouts, term lengths,
-  settings and driver sharding at 1 to 128 streams.
+- Book: the network I/O, DPDK transport, transport, latency findings and
+  Kubernetes sample chapters are generated pages with their code examples
+  inlined. `scripts/check-generated-book.py` (in `just preflight` and the
+  release check) fails on a hand edit; the release procedure refreshes them
+  before tagging.
+- Book: "Busy-Spin Loop": one pinned thread polls its network source, an
+  Aeron subscription and publication and its timers, with `ThrottleWatch`
+  and `FaultWatch` on a housekeeping thread.
+- Book: "Troubleshooting": symptom, check, fix, starting from the `ergon-tune`
+  command.
+- Docs: the shared-CPU chart is 0.1.3, verified on EKS at 0.1.2.
 
 ## [0.1.37] — 2026-10-30
 
